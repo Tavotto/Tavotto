@@ -352,9 +352,9 @@ describe('运行 / 取消 / 结果', () => {
     expect(ui.settingsOpen).toBe(false)
     const dialog = document.querySelector('[data-dialog="engine-environment"]')
     expect(dialog).not.toBeNull()
-    // 对话框的正文就是那一份渲染环境卡片（含「使用其他 Python 环境…」出口）
+    // 对话框的正文就是那一份渲染环境（一组行）；解释器那一行的「更换…」就是换 Python 环境的出口
     expect(dialog!.querySelector('[data-engine-env-card]')).not.toBeNull()
-    expect(dialog!.textContent).toContain('使用其他 Python 环境')
+    expect(dialog!.querySelector('[data-engine-interpreter] button')?.textContent).toBe('更换…')
     expect(dialog!.textContent).toContain('/usr/bin/python3')
   })
 

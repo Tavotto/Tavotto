@@ -132,7 +132,8 @@ describe('编码 Agent 一级页面', () => {
     const row = [...document.querySelectorAll('li')].find((li) =>
       li.textContent?.includes(ag('state.not_installed')),
     )!
-    expect(row.querySelector('.text-danger')).toBeNull()
+    expect(row.querySelector('.text-danger, [data-status-pill="danger"]')).toBeNull()
+    expect(row.querySelector('[data-agent-state]')!.getAttribute('data-status-pill')).toBe('neutral')
     expect(row.textContent).toContain(ag('subtitle.notInstalled', { product: 'Tavotto' }))
   })
 
@@ -140,7 +141,8 @@ describe('编码 Agent 一级页面', () => {
     await open(capsOf([agentCaps({ state: 'broken', installed: false, usable: false })]))
     expect(text()).toContain(ag('state.broken'))
     expect(text()).not.toContain(ag('state.not_installed'))
-    expect(document.querySelector('.text-danger')).not.toBeNull()
+    // 坏了是危险语气的状态胶囊；未安装是中性（见上一条）
+    expect(document.querySelector('[data-agent-state="broken"]')!.getAttribute('data-status-pill')).toBe('danger')
   })
 
   it('一级页面每行只有名称 · 状态：没有版本、没有路径、没有说明段（ADR 0038；审计 T44）', async () => {
@@ -224,45 +226,52 @@ describe('编码 Agent 一级页面', () => {
   })
 
   /**
-   * 每行行首一颗 `Radio`（2026-09-14 审计 D1）：默认助手是一组互斥取值，当前默认 = 选中，
-   * 其余可用的可点、不可用的禁用。此前是行尾一颗一会儿是状态一会儿是动作的按钮。
+   * 默认助手是组首**一个 Select**（2026-10-07 设计审计 §9.1，用户拍板；此前 2026-09-14 审计 D1 是每行行首一颗
+   * 单选——一行里单选 + 开关 + 整行 + chevron 四种操作）。选项只有此刻可用的那几个，触发器上是实际会派给的那一个。
    */
-  const defaultRadios = () =>
-    [...document.querySelectorAll<HTMLInputElement>('input[type="radio"][name="default-coding-agent"]')]
+  const defaultSelect = () =>
+    document.querySelector<HTMLElement>('[data-agent-default] [role="combobox"]')
+  const defaultOptions = async () => {
+    await act(async () => defaultSelect()!.click())
+    return [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+  }
 
-  it('每行行首一颗默认单选：当前默认的选中，不可用的禁用；不再有下拉框', async () => {
+  it('组首一个默认助手下拉：当前默认是它的值，选项只有可用的；行里不再有单选', async () => {
     await open(capsOf([agentCaps(), claudeCaps({ state: 'disabled', enabled: false, usable: false })]))
-    const radios = defaultRadios()
-    expect(radios).toHaveLength(2)
-    expect(radios.map((r) => r.checked)).toEqual([true, false])
-    expect(radios[1].disabled).toBe(true)
-    expect(radios[0].getAttribute('aria-label')).toBe(ag('currentDefaultAria', { name: agentCaps().display_name }))
-    expect(radios[1].getAttribute('aria-label')).toBe(ag('setDefaultAria', { name: claudeCaps().display_name }))
-    expect(document.querySelector('[role="combobox"]'), '不再有默认 Agent 下拉框').toBeNull()
+    expect(defaultSelect(), '没有默认助手下拉').toBeTruthy()
+    expect(defaultSelect()!.textContent).toContain(agentCaps().display_name)
+    expect(document.querySelectorAll('input[type="radio"]'), '行里不再有单选').toHaveLength(0)
+    const options = await defaultOptions()
+    expect(options.map((o) => o.textContent)).toEqual([agentCaps().display_name])
   })
 
-  it('选另一行的单选：真的写进 store，选中态跟着换', async () => {
+  it('选另一个：真的写进 store，下拉跟着换', async () => {
     await open(capsOf([agentCaps(), claudeCaps()]))
-    expect(defaultRadios().map((r) => r.checked)).toEqual([true, false])
-    await act(async () => {
-      defaultRadios()[1].click()
-    })
+    const options = await defaultOptions()
+    const claude = options.find((o) => o.textContent === claudeCaps().display_name)!
+    await act(async () => claude.click())
     expect(useAiStore.getState().agent).toBe('claude')
-    expect(defaultRadios().map((r) => r.checked)).toEqual([false, true])
+    expect(defaultSelect()!.textContent).toContain(claudeCaps().display_name)
   })
 
-  it('首选那个不可用时选中态落到第一个可用的，但不改用户存着的首选值', async () => {
+  it('首选那个不可用时显示第一个可用的，但不改用户存着的首选值', async () => {
     useAiStore.setState({ agent: 'claude' })
     await open(capsOf([agentCaps(), claudeCaps({ state: 'needs_auth', usable: false })]))
     expect(useAiStore.getState().agent).toBe('claude')   // 首选值原样留着
-    expect(defaultRadios().map((r) => r.checked)).toEqual([true, false])
+    expect(defaultSelect()!.textContent).toContain(agentCaps().display_name)
   })
 
-  it('localStorage 里存了不存在的 Agent 也不崩，选中态回退到第一个可用的', async () => {
+  it('localStorage 里存了不存在的 Agent 也不崩，下拉回退到第一个可用的', async () => {
     useAiStore.setState({ agent: 'opencode' })
     await open()
-    expect(defaultRadios()[0].checked).toBe(true)
+    expect(defaultSelect()!.textContent).toContain(agentCaps().display_name)
     expect(useAiStore.getState().agent).toBe('opencode')
+  })
+
+  it('一个可用的都没有：下拉停用，并就近说清', async () => {
+    await open(capsOf([agentCaps({ state: 'not_installed', installed: false, usable: false })]))
+    expect((defaultSelect() as HTMLButtonElement).disabled).toBe(true)
+    expect(text()).toContain(ag('noUsableAgent'))
   })
 
   it('刷新失败保留上一次结果，并给一条非破坏性提示', async () => {
@@ -307,7 +316,8 @@ describe('编码 Agent 一级页面', () => {
     try {
       await open()
       expect(text()).toContain(ag('codexInstall.action'))
-      expect(text()).toContain(ag('codexInstall.doctor'))
+      // 「重新诊断」是排障用的次级出口，在那一行的 ⋯ 里（2026-10-07 设计审计 §9.1）
+      expect(document.querySelector('[data-agent-codex-integration] [data-codex-more]')).toBeTruthy()
     } finally {
       delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
     }
@@ -356,23 +366,31 @@ describe('列表与详情不重复（审计 T44）', () => {
 })
 
 describe('三种状态明确区分（审计 T44 验收）', () => {
-  it('未安装 / 需要登录 / 可用是三句不同的话、三个不同的图标', async () => {
+  it('未安装 / 需要登录 / 可用是三句不同的话、三种不同的语气；「可用」也有字', async () => {
     const labels = ['not_installed', 'needs_auth', 'ready'].map((s) => ag(`state.${s}`))
     expect(new Set(labels).size).toBe(3)
-    await open(capsOf([agentCaps({ state: 'needs_auth', usable: false }), claudeCaps({ installed: false, state: 'not_installed', usable: false, version: null, executable_path: null })]))
+    await open(
+      capsOf([
+        agentCaps({ state: 'needs_auth', usable: false }),
+        claudeCaps({ installed: false, state: 'not_installed', usable: false, version: null, executable_path: null }),
+      ]),
+    )
     const rows = [...document.querySelectorAll('[data-agent-section="in-app"] ul li')]
     expect(rows[0].textContent).toContain(ag('state.needs_auth'))
     expect(rows[1].textContent).toContain(ag('state.not_installed'))
-    // **形状也不同**：等级不只靠颜色（灰度屏与色觉障碍下同样读得出）。
-    // 判据是两个图标的 图标类名不相等，不是"有图标"
-    // 量的是**状态徽标里**那个图标：一行里还有 Agent 的品牌图标，
-    // 不指名道姓就会量到它，而它每个 Agent 本来就不一样（恒真）
+    // 状态一律是带字的 StatusPill（2026-10-07 设计审计 §9.1）：等级不只靠颜色——判据是那句话，
+    // 语气（锚点派生的底与字）只是佐证
     const badgeOf = (r: Element) => r.querySelector('[data-agent-state]')!
-    const iconOf = (r: Element) =>
-      [...(badgeOf(r).querySelector('svg')?.classList ?? [])].find((c) => c.startsWith('icon-'))
-    expect(iconOf(rows[0])).toBeTruthy()
-    expect(iconOf(rows[0])).not.toBe(iconOf(rows[1]))
-    // 颜色也不同，但它只是佐证——上面那条才是判据
-    expect(badgeOf(rows[0]).className).not.toBe(badgeOf(rows[1]).className)
+    expect(badgeOf(rows[0]).getAttribute('data-status-pill')).toBe('warn')
+    expect(badgeOf(rows[1]).getAttribute('data-status-pill')).toBe('neutral')
   })
+
+  it('「可用」不再是一颗只有颜色的绿点：字是看得见的，不是 sr-only', async () => {
+    await open()
+    const ready = document.querySelector('[data-agent-state="ready"]')!
+    expect(ready.getAttribute('data-status-pill')).toBe('ok')
+    expect(ready.querySelector('.sr-only')).toBeNull()
+    expect(ready.textContent).toContain(ag('state.ready'))
+  })
+
 })
