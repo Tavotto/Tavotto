@@ -305,9 +305,10 @@ export function Dialog({
         <RD.Overlay
           className={cn(
             // 30%、不模糊：OpenAI 30% / shadcn 50%，两家都不做玻璃（2026-09-15 审计 B13）。
-            // 只有栈底的对话框画遮罩，叠着的那层遮罩透明（见 useScrimOwner）
+            // 只有栈底的对话框画遮罩，叠着的那层遮罩透明（见 useScrimOwner）。压暗用 shadow 色（不是 ink：
+            // ink 在暗色里是浅色，遮罩会变成提亮）
             'fixed inset-0 z-overlay',
-            ownsScrim ? 'bg-ink/30' : 'bg-transparent',
+            ownsScrim ? 'bg-shadow/30' : 'bg-transparent',
             'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
             covered && 'invisible',
           )}

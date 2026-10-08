@@ -538,7 +538,7 @@ export function AssetBrowser() {
       >
         {/* 白弹窗里不再给图套一个框：白上白无需边（宪法第八节；左栏审计 L39） */}
         {zoomed?.kind === 'file' && (
-          <div className="flex items-center justify-center bg-white p-2">
+          <div className="flex items-center justify-center bg-paper p-2">
             <img
               src={renderUrl(zoomed.panel.id, 800, zoomed.panel.mtime)}
               alt={ab('zoomAlt', { name: fileName(zoomed.panel.id) })}
@@ -957,7 +957,7 @@ function RuntimeAssetCard({
       style={{ contentVisibility: 'auto', containIntrinsicSize: '140px' }}
     >
       <Card appearance="raised" padding="none" interactive selected={selected} className="overflow-hidden">
-      <CardPreview>
+      <CardPreview empty={!asset.cached}>
         {asset.cached ? (
           <img
             loading="lazy"
@@ -1060,10 +1060,19 @@ function runtimeStaleKey(asset: RuntimeAssetInfo): string | null {
  */
 const CARD_ITEM = 'group relative rounded-lg outline-none focus-visible:focus-ring'
 
-/** 预览区：3:2、白底、内容按比例缩放；上面只有悬停时的就近入口，没有常驻标签 */
-function CardPreview({ children }: { children: ReactNode }) {
+/**
+ * 预览区：3:2、白底、内容按比例缩放；上面只有悬停时的就近入口，没有常驻标签。
+ * 底是纸（图本身的白，两套主题同值）；还没有图可画（运行时图没跑过）时里面是界面的说明字，不是图——
+ * 底换成界面的 surface-2（与行内缩略格「没图 = surface-2」同一手法），字不落在暗色里也不变的白纸上。
+ */
+function CardPreview({ children, empty = false }: { children: ReactNode; empty?: boolean }) {
   return (
-    <div className="relative flex aspect-[3/2] items-center justify-center overflow-hidden bg-white">
+    <div
+      className={cn(
+        'relative flex aspect-[3/2] items-center justify-center overflow-hidden',
+        empty ? 'bg-surface-2' : 'bg-paper',
+      )}
+    >
       {children}
     </div>
   )
@@ -1180,7 +1189,7 @@ function CardAction({
       // 光标一律箭头（宪法第二十六节）：卡片本身可拖（抓手），就近入口不是拖拽把手
       className={cn(
         'flex h-6 w-6 cursor-default items-center justify-center rounded-full',
-        'bg-surface text-ink shadow-thumb',
+        'bg-thumb text-ink shadow-thumb',
         'transition-colors duration-fast hover:bg-surface-2',
       )}
     >
@@ -1307,7 +1316,7 @@ function RuntimeZoom({ asset }: { asset: RuntimeAssetInfo }) {
     <div className="flex flex-col gap-2">
       {/* 白弹窗里不再给图套框（左栏审计 L39）；占位块只留一层浅底 */}
       {asset.cached ? (
-        <div className="flex items-center justify-center bg-white p-2">
+        <div className="flex items-center justify-center bg-paper p-2">
           <img
             src={runtimePreviewUrl(asset.id, nonce)}
             alt={ab('zoomAlt', { name: asset.stem })}

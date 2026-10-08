@@ -10,6 +10,7 @@
  * （src 归 tsconfig.app.json 管，不引 node:fs）。注释先剥掉——解释「为什么不用
  * `text-[11px]`」的那句话不该被自己咬到。
  */
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 const SOURCES = import.meta.glob('/src/**/*.{ts,tsx}', {
@@ -39,6 +40,9 @@ interface Rule {
 
 // 逐页阶段迁移的豁免表（LATER_PHASE）已删空删掉：shadow-card 的素材卡、问题卡、左轨激活态在左栏阶段迁完，
 // 版本对话框的缩略图框在对话框阶段迁到 Card（2026-10-07）。
+
+/** 画界面的代码（颜色门禁的判据范围；lib / store / types 里的颜色是文档数据） */
+const CHROME = /^\/src\/(?:(?:components|canvas|playground|mcp|embedded|onboarding)\/|(?:App|main)\.tsx$)/
 
 const RULES: Rule[] = [
   {
@@ -264,6 +268,62 @@ const RULES: Rule[] = [
     catches: '<span className="bg-ink text-white" />',
     spares: '<span className="bg-ink text-surface" />',
   },
+  /*
+   * ---- 颜色只经语义 token（2026-10-07 设计审计 P2 #13，暗色主题的前提）----
+   * 主语：界面代码（components / canvas / playground / mcp / embedded / onboarding、App / main）里**写出来的颜色字面量**。
+   * 换主题只换 index.css 的值表；组件里多一处 `#fff` / `rgba(…)` / `bg-white` / `color-mix(ink…)`，暗色里就多一块
+   * 不跟着走的颜色。判不出「这是界面色还是文档数据」——所以豁免表按文件、带个数、写明是哪一种：
+   *   - 文档数据：属性的缺省值（取色框没值时的 `#000000`、新填充的 `#FFFFFF`）、colormap 色标、样张图——那是图的颜色，
+   *     导出就是它，不该跟主题走；
+   *   - 遮罩：`mask` 里的黑白只是不透明度，不是颜色；
+   *   - 第三方品牌色（编码助手的标）。
+   * 前提：lib / store / types 里的颜色都是文档数据（覆盖值、样式预设、导出默认），不在判据范围内——它们不画界面。
+   */
+  {
+    name: '界面代码里没有原始颜色字面量（hex / rgb() / hsl()）：颜色只经语义 token（暗色只换值表）',
+    pattern: /(?<![\w&])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![\w-])|\b(?:rgba?|hsla?)\(/,
+    only: CHROME,
+    fix: 'var(--color-*) / bg-* text-* 语义类；纸上的东西用 --color-paper / --color-paper-ink；投影与遮罩从 --color-shadow 派生',
+    catches: "<rect fill=\"#fff\" /> const scrim = 'rgba(27,27,24,0.34)'",
+    spares: "<rect fill=\"var(--color-paper)\" /> <a href=\"#top\" /> url(#${maskId})",
+    exempt: {
+      '/src/components/StyleDialog.tsx': { count: 2, why: '文档数据：文字样式的缺省颜色 #000000' },
+      '/src/components/VersionDialog.tsx': { count: 2, why: '文档数据：页面底色缺省 #FFFFFF（比较两版页面是否同底）' },
+      '/src/components/CanvasTabs.tsx': { count: 4, why: '遮罩：标签条两端渐隐的 mask-image，黑只表示不透明度' },
+      '/src/components/ui/Input.tsx': { count: 1, why: '文档数据：原生取色框没有值时的占位 #000000（input[type=color] 只认 hex）' },
+      '/src/components/ui/icons/createIcon.tsx': { count: 4, why: '遮罩：图标的镂空 mask（白 = 留、黑 = 挖），不是颜色' },
+      '/src/components/inspector/StrokeSection.tsx': { count: 1, why: '文档数据：新加填充的缺省色 #FFFFFF' },
+      '/src/components/inspector/CanvasPage.tsx': { count: 2, why: '文档数据：页面底色缺省 #FFFFFF' },
+      '/src/components/inspector/TextSection.tsx': { count: 2, why: '文档数据：文字框底色 / 边框色的缺省值' },
+      '/src/components/inspector/ElementInspector.tsx': { count: 2, why: '文档数据：取色框没有值时的 #000000' },
+      '/src/components/inspector/LegendCard.tsx': { count: 1, why: '文档数据：图例句柄颜色缺省 #000000' },
+      '/src/components/inspector/controls/ColorbarPickers.tsx': { count: 2, why: '文档数据：色条样张的兜底色标' },
+      '/src/components/inspector/controls/colormapStops.ts': { count: 126, why: '文档数据：matplotlib colormap 的色标（样张画的就是图会用的颜色）' },
+      '/src/components/inspector/controls/SpineFrameCard.tsx': { count: 2, why: '文档数据：边框 / 刻度颜色缺省 #000000' },
+      '/src/components/inspector/controls/TypographyControls.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
+      '/src/components/settings/StyleSamplePreview.tsx': { count: 9, why: '文档数据：样式样张是一张小图（印刷色，跟纸一起不随主题变）' },
+      '/src/components/settings/AgentIcon.tsx': { count: 1, why: '第三方品牌色（编码助手的标）' },
+      '/src/canvas/context-bar/ElementBar.tsx': { count: 1, why: '文档数据：取色框没有值时的 #000000' },
+      '/src/canvas/context-bar/textQuick.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
+      '/src/canvas/interactions.ts': { count: 2, why: '文档数据：新画的标注 / 文字的缺省颜色' },
+    },
+  },
+  {
+    name: '界面代码里没有写死的白 / 黑颜色类（bg-white / text-black / fill-white …）：界面走 surface / ink，纸走 paper',
+    pattern: /\b(?:bg|text|border|fill|stroke|ring|inset-ring|outline|from|to|via|shadow|decoration|caret|divide|placeholder)-(?:white|black)\b/,
+    only: CHROME,
+    fix: '界面：bg-surface / text-surface（墨底上的字）/ text-ink；纸（页面、图的缩略图底）：bg-paper',
+    catches: '<div className="bg-white" /> <span className="text-black" />',
+    spares: '<div className="bg-paper text-surface fill-current" />',
+  },
+  {
+    name: '界面代码里的 color-mix 不调 ink：ink 在暗色里是浅色，叠加 / 遮罩 / 纸上的线要用语义 token',
+    pattern: /color-mix\([^;'"`]*--color-ink/,
+    only: CHROME,
+    fix: 'hover / active / selected / group / border（都已是 ink 的 N%）；遮罩 --color-scrim 或 bg-shadow/N；纸上的线 --color-paper-ink',
+    catches: "const grid = `color-mix(in srgb, var(--color-ink) 7%, transparent)`",
+    spares: "const grid = `color-mix(in srgb, var(--color-paper-ink) 7%, transparent)`",
+  },
   {
     name: '按钮层级是 primary / secondary / ghost / danger，没有 outline',
     pattern: /variant=["']outline["']/,
@@ -311,5 +371,155 @@ describe('Design Constitution：token 之外没有字面量', () => {
       // 注释里提到禁写法不算：那正是在解释为什么不用它
       expect(rule.pattern.test(stripComments(`// 别写 ${rule.catches}`)), rule.name).toBe(false)
     }
+  })
+})
+
+/*
+ * ---- 纸上的东西用纸上的墨（2026-10-07 暗色主题，宪法第二十八节）----
+ * 主语：画界面的代码里，**画在纸上**（纸两套主题同值，暗色里仍是白）的 JSX 子树中写出来的界面墨类
+ * （`text-ink` / `text-ink-2` / `text-ink-3` / `border-ink-faint` / `var(--color-ink-*)` …）。界面的 ink 一族在暗色里
+ * 变浅，落在白纸上只剩 1.8:1（ink-2）/ 2.8:1（ink-3）——缩略图里的文字框、标注线就这样看不见了（Codex P2）。
+ * 纸上的记号用 paper-ink / paper-ink-2 / paper-ink-3 / `paper-ink/N`。
+ *
+ * 「画在纸上」怎么认（AST，不是子串）：
+ *   - 元素自己的 className 里有一个字面的 `bg-paper` / `bg-paper-tint` / `bg-paper-checker` 类（不透明的纸底；
+ *     不含 bg-paper-chrome / bg-paper-ink）→ 这个元素整棵子树；
+ *   - SVG 图形 `fill="var(--color-paper)"`（缩略图的页面矩形）→ 它的父元素整棵子树（后面的兄弟画在它上面）。
+ * 判不出的（写明盲点，不假装覆盖）：`bg-paper` 存在变量里再拼进 className（RegistryDialog / FigurePicker 的 `box`）、
+ * 纸色经常量传入（PageSheet 的 `fill={PAPER}`）、内容经 children 从别的组件传进纸盒（AssetBrowser 的 CardPreview）。
+ * 这些处今天里面只有 <img> 或已按同一规则改过；新写的纸面请把 `bg-paper` 写成字面类。
+ */
+const INK_ON_PAPER =
+  /(?<![\w-])(?:[\w-]+:)*(?:text|border(?:-[trblxy])?|fill|stroke|bg|ring|inset-ring|outline|divide|decoration|placeholder|caret)-ink(?:-[23]|-faint)?(?![\w-])|var\(--color-ink(?:-[23]|-faint)?\)/g
+/** 不透明的纸底：纸本身与从纸派生的不透明纸色（`paper-tint` 占位纸片 / `paper-checker` 棋盘深格），都两套主题同值 */
+const BG_PAPER = /(?<![\w-])bg-paper(?:-tint|-checker)?(?![\w-])/
+
+function stringsIn(node: ts.Node, out: { text: string; pos: number }[] = []) {
+  if (
+    ts.isStringLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    ts.isTemplateHead(node) ||
+    ts.isTemplateMiddle(node) ||
+    ts.isTemplateTail(node) ||
+    ts.isJsxText(node)
+  ) {
+    out.push({ text: node.text, pos: node.getStart() })
+  }
+  ts.forEachChild(node, (c) => void stringsIn(c, out))
+  return out
+}
+
+function attr(el: ts.JsxOpeningLikeElement, name: string) {
+  return el.attributes.properties.find(
+    (p): p is ts.JsxAttribute => ts.isJsxAttribute(p) && p.name.getText() === name,
+  )
+}
+
+/** 一份源码里「纸上用了界面墨」的每一处（`行:类`） */
+function inkOnPaper(path: string, src: string): string[] {
+  const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const scopes = new Set<ts.Node>()
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const self = ts.isJsxOpeningElement(node) ? node.parent : node
+      const cls = attr(node, 'className')?.initializer
+      if (cls && stringsIn(cls).some((s) => BG_PAPER.test(s.text))) scopes.add(self)
+      const fill = attr(node, 'fill')?.initializer
+      if (fill && stringsIn(fill).some((s) => s.text.replace(/\s/g, '') === 'var(--color-paper)')) {
+        const parent = self.parent
+        if (ts.isJsxElement(parent)) scopes.add(parent)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  const hits = new Map<number, string>()
+  for (const scope of scopes) {
+    for (const s of stringsIn(scope)) {
+      for (const m of s.text.matchAll(INK_ON_PAPER)) {
+        const line = sf.getLineAndCharacterOfPosition(s.pos).line + 1
+        hits.set(s.pos * 1000 + (m.index ?? 0), `${line}:${m[0]}`)
+      }
+    }
+  }
+  return [...hits.values()]
+}
+
+describe('纸上的东西用纸上的墨（宪法第二十八节）', () => {
+  it('画在纸上（bg-paper / fill=var(--color-paper)）的子树里没有界面的 ink 一族：用 paper-ink / paper-ink-2 / paper-ink-3', () => {
+    const offenders: string[] = []
+    for (const [path, raw] of sources()) {
+      if (!CHROME.test(path) || !path.endsWith('.tsx')) continue
+      for (const h of inkOnPaper(path, raw)) offenders.push(`${path}:${h}`)
+    }
+    expect(offenders, '纸两套主题同值，界面的 ink 在暗色里变浅：改用 text-paper-ink / -2 / -3 或 paper-ink/N').toEqual([])
+  }, 60_000) // 逐文件建 AST：冷启动或满载的 CI 上要几秒（同 statusTone 扫描）
+
+  it('自检：抓得住纸上的界面墨（父元素是纸 / 兄弟矩形是纸），放得过纸上的纸墨与纸外的界面墨', () => {
+    const catches = [
+      '<div className="bg-paper"><span className="text-ink-3">x</span></div>',
+      "<div className={cn('rounded', on ? 'bg-transparent' : 'bg-paper')}><i className=\"border border-ink-faint\" /></div>",
+      '<svg><rect fill="var(--color-paper)" /><g>{xs.map(() => { const c = { className: \'text-ink-2\' }; return <text {...c} /> })}</g></svg>',
+      '<span className="bg-paper text-ink" />',
+      '<div className="bg-paper-tint"><span className="text-ink-3" /></div>',
+    ]
+    for (const c of catches) expect(inkOnPaper('x.tsx', c), c).toHaveLength(1)
+    const spares = [
+      '<div className="bg-paper text-paper-ink"><span className="text-paper-ink-2" /><i className="border-paper-ink/40" /></div>',
+      '<div className="bg-paper-chrome text-ink-3" />',
+      '<div><div className="bg-paper" /><span className="text-ink-3" /></div>',
+      '<div className="bg-paper-ink/[0.03] text-ink-2" />',
+    ]
+    for (const c of spares) expect(inkOnPaper('x.tsx', c), c).toEqual([])
+  })
+
+  /*
+   * paper-ink 是纸上的**墨**，不是底：`bg-paper-ink/N` 这种半透明的「纸色」只在它下面恰好是白纸时才是纸——
+   * 东西被拖到页面外（运行时图的占位框）就透出画布，暗色里画布近黑，paper-ink 的字成了深字压深底。
+   * 纸上的记号要坐在**不透明**的纸底上：bg-paper / bg-paper-tint / bg-paper-checker（2026-10-07 owner 拍板方案 A）。
+   */
+  const PAPER_INK_GROUND = /(?<![\w-])(?:[\w-]+:)*bg-paper-ink(?:-[23])?(?:\/[\w.[\]]+)?(?![\w-])/g
+  const paperInkGrounds = (path: string, src: string) => {
+    const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    const out: string[] = []
+    for (const s of stringsIn(sf)) {
+      for (const m of s.text.matchAll(PAPER_INK_GROUND)) {
+        out.push(`${sf.getLineAndCharacterOfPosition(s.pos).line + 1}:${m[0]}`)
+      }
+    }
+    return out
+  }
+
+  it('paper-ink 不当底：界面代码里没有 bg-paper-ink（半透明的墨当纸会透出画布）；纸上的墨坐在不透明的纸底上', () => {
+    const offenders: string[] = []
+    for (const [path, raw] of sources()) {
+      if (!CHROME.test(path) || !path.endsWith('.tsx')) continue
+      for (const h of paperInkGrounds(path, raw)) offenders.push(`${path}:${h}`)
+    }
+    expect(offenders, '改用不透明的纸底 bg-paper / bg-paper-tint（paper-ink N% 混进纸，定义在 index.css）').toEqual([])
+    // 自检
+    expect(paperInkGrounds('x.tsx', '<div className="border bg-paper-ink/[0.03]" />')).toHaveLength(1)
+    expect(paperInkGrounds('x.tsx', "cn('hover:bg-paper-ink/5')")).toHaveLength(1)
+    expect(paperInkGrounds('x.tsx', '<div className="bg-paper-tint text-paper-ink-2 border-paper-ink/25" />')).toEqual([])
+  })
+
+  it('运行时图的占位框是一张不透明的小纸片：底 bg-paper-tint，里面的字只用 paper-ink 一族、且都在这张纸片里', () => {
+    const [, src] = sources().find(([p]) => p === '/src/canvas/PanelView.tsx')!
+    const sf = ts.createSourceFile('PanelView.tsx', src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    let root: ts.JsxElement | undefined
+    const find = (n: ts.Node) => {
+      if (ts.isJsxOpeningElement(n) && attr(n, 'data-runtime-placeholder')) root = n.parent
+      ts.forEachChild(n, find)
+    }
+    find(sf)
+    expect(root, 'PanelView 里找不到 data-runtime-placeholder').toBeDefined()
+    const own = stringsIn(attr(root!.openingElement, 'className')!).map((s) => s.text).join(' ')
+    const bgs = own.split(/\s+/).filter((c) => c.startsWith('bg-'))
+    expect(bgs, '占位框的底').toEqual(['bg-paper-tint'])
+    const texts = stringsIn(root!)
+      .flatMap((s) => s.text.split(/\s+/))
+      .filter((c) => /^text-(?!xs$|sm$|center$|left$|right$)/.test(c))
+    expect(texts.length).toBeGreaterThan(0)
+    for (const c of texts) expect(['text-paper-ink', 'text-paper-ink-2', 'text-paper-ink-3'], c).toContain(c)
   })
 })

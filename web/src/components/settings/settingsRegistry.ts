@@ -53,6 +53,7 @@ const en = (key: string) => translate(`engine.${key}`, { ns: 'errors' })
 /** 键写成字面量（i18n 死键门禁按「源码里出现过这个串」判活） */
 export const SETTINGS_REGISTRY: readonly SettingsEntry[] = [
   // ---- 通用 ----
+  { id: 'general.theme', section: 'general', label: () => st('general.theme'), keywords: () => st('search.kw.theme') },
   { id: 'general.language', section: 'general', label: () => st('general.language'), keywords: () => st('search.kw.language') },
   { id: 'general.layout', section: 'general', label: () => st('general.layout'), keywords: () => st('search.kw.layout') },
   { id: 'general.shortcuts', section: 'general', label: () => st('shortcuts.label'), keywords: () => st('search.kw.shortcuts') },

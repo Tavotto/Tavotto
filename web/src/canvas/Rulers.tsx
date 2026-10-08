@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
+import { useEffectiveTheme } from '@/lib/theme'
 import { boundsOf, visualBounds } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -27,7 +28,8 @@ function pickStep(t: ViewTransform) {
 
 /**
  * 标尺用到的颜色与字体：只来自 token（index.css 的 @theme），**按挂载量一次**（2026-10-07 设计审计 §10.1）——
- * 此前每画一帧都 `getComputedStyle` 一遍，拖动 / 缩放时每帧两次强制样式计算。主题换了（暗色那一期）再按需重量。
+ * 此前每画一帧都 `getComputedStyle` 一遍，拖动 / 缩放时每帧两次强制样式计算。缓存以生效主题为键
+ * （`useEffectiveTheme`，Codex #834 P2）：切浅 / 深色或系统换外观时重量一次、当场重画，平移缩放不会再拿旧色。
  */
 interface RulerInk {
   bg: string
@@ -203,8 +205,9 @@ function useRuler(
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
   const cursor = useInteractionStore((s) => s.cursor)
-  // 颜色按挂载量一次（见 readInk）
-  const ink = useMemo(readInk, [])
+  // 颜色按生效主题量一次（见 readInk）：主题变了 ink 换新对象，下面的画就跟着重跑
+  const theme = useEffectiveTheme()
+  const ink = useMemo(readInk, [theme])
   const s0 = span?.[0]
   const s1 = span?.[1]
 
