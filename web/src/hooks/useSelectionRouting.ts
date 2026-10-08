@@ -7,7 +7,8 @@ import { useViewportStore } from '@/store/viewportStore'
 /**
  * 选择驱动的面板路由：
  * - 从左抽屉选择：互斥断点保留抽屉；宽窗仍显示属性。
- * - 从画布选择：打开属性；再次点击同一选区也能从树回到属性。
+ * - 从画布换选：打开属性；同一选区从树回到画布时也能打开属性。
+ * - 用户收起属性后重复点击同一画布选区，保留已收起的状态。
  * - 选择清空 → 未钉住的属性栏收起，不留「没有选中对象」的占位。
  */
 export function useSelectionRouting() {
@@ -17,6 +18,7 @@ export function useSelectionRouting() {
   const primaryGid = useUiStore((s) => s.selectedGids.at(-1) ?? null)
   const active = hasSelection || inElement
   const inDrawer = useRef<boolean | null>(null)
+  const treeHandoff = useRef(false)
   const pendingRouting = useRef(false)
   const [canvasPress, setCanvasPress] = useState(0)
   const [interactionEnd, setInteractionEnd] = useState(0)
@@ -35,11 +37,17 @@ export function useSelectionRouting() {
   useEffect(() => {
     const remember = (e: Event) => {
       const target = e.target instanceof Element ? e.target : null
+      const ui = useUiStore.getState()
       inDrawer.current = !!target?.closest('[data-left-drawer]')
+      if (inDrawer.current) treeHandoff.current = ui.leftTab !== 'assets'
+      else if (target?.closest('[data-inspector-panel]')) treeHandoff.current = false
       if (e instanceof PointerEvent && e.button === 0 && target?.closest('[data-canvas-stage]') &&
-        useUiStore.getState().tool === 'select' && !useViewportStore.getState().spaceDown) {
+        ui.tool === 'select' && !useViewportStore.getState().spaceDown) {
         // Space 平移 / 绘图起手不是换选；新对象真被选中后由下面的选择 effect 路由。
-        setCanvasPress(n => n + 1)
+        // 同一选区只在从树交接时请求路由；普通换选已有下面的 effect，不能请求两次。
+        const handoff = treeHandoff.current || (ui.leftOpen && ui.leftTab !== 'assets')
+        treeHandoff.current = false
+        if (handoff) setCanvasPress(n => n + 1)
       }
     }
     document.addEventListener('pointerdown', remember, true)
@@ -61,6 +69,7 @@ export function useSelectionRouting() {
     pendingRouting.current = false
     const ui = useUiStore.getState()
     if (!active) {
+      treeHandoff.current = false
       ui.autoHideProperties()
       return
     }

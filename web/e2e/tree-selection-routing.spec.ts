@@ -27,16 +27,29 @@ function syntheticProject(): string {
 }
 
 const line = 'axes_0.lines_0'
-const scatter = 'axes_0.collections_0'
+const scatter = 'axes_0.scatter_0'
 const title = 'axes_0.title'
 const row = (page: Page, gid: string) => page.locator(`[data-el="${gid}"]`)
 const rail = (page: Page) => page.locator('[data-rail="elements"]')
 
 async function openTree(page: Page) {
-  if (await rail(page).getAttribute('aria-expanded') !== 'true') await rail(page).click()
+  if (await rail(page).getAttribute('aria-expanded') !== 'true') {
+    // Narrow layouts put an open property drawer's scrim above the rail.
+    await dismissOverlay(page)
+    await rail(page).click({ timeout: 15_000 })
+  }
   await expect(rail(page)).toHaveAttribute('aria-expanded', 'true')
   await expect(page.locator('[data-left-drawer]')).toHaveAttribute('data-state', 'open')
-  await expect(row(page, line)).toBeVisible()
+  // Assert the worker's actual canonical IDs before any input can exhaust the test timeout.
+  for (const gid of [line, scatter, title]) await expect(row(page, gid)).toBeVisible()
+}
+
+async function dismissOverlay(page: Page) {
+  const scrim = page.locator('[data-scrim][data-state="open"]')
+  if (await scrim.count()) {
+    await scrim.click({ timeout: 15_000 })
+    await expect(scrim).toHaveCount(0)
+  }
 }
 
 async function openFigure(page: Page, app: RunningApp) {
@@ -129,7 +142,7 @@ for (const width of [820, 1100, 1366]) {
     // In overlay mode close the drawer explicitly to expose the canvas; the medium
     // mode exercises stale tree focus without an overlay obscuring the target.
     if (width < 1024) {
-      await rail(page).click()
+      await dismissOverlay(page)
       await expect(page.locator('[data-left-drawer]')).toHaveCount(0)
     }
     await clickCanvasTitle(page)
@@ -140,7 +153,7 @@ for (const width of [820, 1100, 1366]) {
     await openTree(page)
     await row(page, title).click()
     if (width < 1024) {
-      await rail(page).click()
+      await dismissOverlay(page)
       await expect(page.locator('[data-left-drawer]')).toHaveCount(0)
     }
     await clickCanvasTitle(page, 'right')
@@ -149,17 +162,14 @@ for (const width of [820, 1100, 1366]) {
   })
 }
 
-test('touchscreen narrow drawer keeps curve, scatter and title selection', async ({ app, browser }) => {
-  const a = await app({ figures: syntheticProject() })
-  const context = await browser.newContext({ viewport: { width: 820, height: 900 }, hasTouch: true, locale: 'zh-CN' })
-  try {
-    const page = await context.newPage()
+test.describe('narrow touchscreen', () => {
+  test.use({ viewport: { width: 820, height: 900 }, hasTouch: true })
+  test('touchscreen narrow drawer keeps curve, scatter and title selection', async ({ app, page }) => {
+    const a = await app({ figures: syntheticProject() })
     await openFigure(page, a)
     for (const gid of [line, scatter, title]) {
       await row(page, gid).tap()
       await assertSelection(page, [gid], true)
     }
-  } finally {
-    await context.close()
-  }
+  })
 })

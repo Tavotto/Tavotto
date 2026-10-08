@@ -22,7 +22,7 @@ const panel: PanelObject = {
   id: 'p1', type: 'panel', fileId: 'Synthetic.pdf', fileKind: 'pdf', script: 'synthetic.py',
   x: 0, y: 0, w: 80, h: 60, nativeW: 80, nativeH: 60, overrides: [],
 }
-const gids = ['axes_0.lines_0', 'axes_0.collections_0', 'axes_0.title']
+const gids = ['axes_0.lines_0', 'axes_0.scatter_0', 'axes_0.title']
 const manifest = {
   stem: 'Synthetic', size_mm: [80, 60],
   elements: [
@@ -50,7 +50,7 @@ function Harness() {
         useUiStore.getState().setElementPanel(panel.id)
       }
       useUiStore.getState().setSelectedGid(gids[0])
-    }} /></div>
+    }} /><span data-canvas-same /></div>
   </TooltipProvider>
 }
 
@@ -182,6 +182,32 @@ describe('selection routing keeps the active drawer workflow', () => {
     pointer('[data-canvas-hit]')
     expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
     expect(useUiStore.getState().rightOpen).toBe(true)
+    expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+
+  it.each(['medium', 'narrow'] as const)('%s canvas reselection preserves manually closed properties', layout => {
+    act(() => {
+      useUiStore.getState().setLayout(layout)
+      useUiStore.setState({ leftOpen: false })
+      useSelectionStore.getState().set([panel.id])
+    })
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    act(() => useUiStore.getState().toggleRight())
+    pointer('[data-canvas-same]')
+    expect(useSelectionStore.getState().ids).toEqual([panel.id])
+    expect(useUiStore.getState().rightOpen).toBe(false)
+    expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+
+  it.each(['medium', 'narrow'] as const)('%s tree handoff is consumed before properties are manually closed', layout => {
+    openElements(layout)
+    pointer(treeRow(gids[0]))
+    pointer('[data-canvas-hit]')
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    act(() => useUiStore.getState().toggleRight())
+    pointer('[data-canvas-same]')
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().rightOpen).toBe(false)
     expect(useUiStore.getState().leftOpen).toBe(false)
   })
 
