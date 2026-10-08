@@ -23,7 +23,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
-import { cn } from '@/lib/utils'
+import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { TreeChevron, TreeCount, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
@@ -730,6 +730,8 @@ const ElementRow = memo(function ElementRow({
         pointerFocusing.current = true
         e.currentTarget.focus({ preventScroll: true })
         pointerFocusing.current = false
+        // Mac Control-click 是上下文菜单入口；接住焦点，但不改变已有选区。
+        if (isMac && e.ctrlKey) return
         onSelect(gid, e.shiftKey || e.ctrlKey || e.metaKey)
       }}
       className={cn(listRowClass({ selected, hidden }), 'pr-0.5')}

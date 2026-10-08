@@ -24,7 +24,7 @@ import {
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
-import { cn } from '@/lib/utils'
+import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useFlip } from '@/lib/motion'
@@ -357,6 +357,8 @@ function LayerRow({
         pointerFocusing.current = true
         e.currentTarget.focus({ preventScroll: true })
         pointerFocusing.current = false
+        // Mac Control-click 是上下文菜单入口；接住焦点，但不改变已有选区。
+        if (isMac && e.ctrlKey) return
         const sel = useSelectionStore.getState()
         if (e.shiftKey || e.ctrlKey || e.metaKey) sel.toggle(obj.id)
         else sel.set([obj.id])
