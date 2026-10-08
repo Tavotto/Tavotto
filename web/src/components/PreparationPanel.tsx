@@ -6,6 +6,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendCodeMsg, type PreparationReport } from '@/lib/api'
 import { formatMessage, t as translate } from '@/i18n'
 import { prepView, targetName, type PrepPrimary, type PrepView } from '@/lib/preparationText'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -128,7 +129,9 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         await store.act(entry.key, p.action)
         return
       case 'adopt': {
+        const guard = captureProjectEpoch()
         const err = await useEnvStore.getState().adoptCandidate(p.candidate, script)
+        if (!guard.still()) return
         if (err) setLocalError(err)
         // 成功：envStore 的环境变了 → 会话只读地重新检查（store 订阅），下一步仍由报告给出
         return
@@ -149,7 +152,10 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         const d = figures[0]
         // 进入编辑 = 稳定动作 `openFastEdit`（加进文档并说出口 → 进入图内编辑 → 引擎按热会话渲染，脚本不再跑）。
         // 素材清单还没取到这张新图时先用这次捕获的描述符把它加进画布，再进入编辑
+        // 挂起期间可能切了项目：续延带着 A 的描述符，绝不能把 A 的面板加进 B 的版面
+        const guard = captureProjectEpoch(() => useProjectPreparationStore.getState().epoch)
         await useRuntimeAssetStore.getState().loadAssets()
+        if (!guard.still()) return
         if (!(useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)) {
           addRuntimePanelToCanvas(d)
         }
@@ -331,7 +337,9 @@ function PanelDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
               data-prep-use-builtin
               onClick={async () => {
                 setEnvError(null)
+                const guard = captureProjectEpoch()
                 const err = await useEnvStore.getState().setProjectPython(null)
+                if (!guard.still()) return
                 if (err) setEnvError(err)
               }}
             >

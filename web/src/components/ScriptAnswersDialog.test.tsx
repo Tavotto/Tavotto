@@ -630,6 +630,26 @@ describe('批量保存涉及多份配置：逐份真的重跑（Codex #816 P1）
     expect(JSON.stringify(useUiStore.getState().status)).toContain('manageRerunFailed')
   })
 
+  it('重跑期间换了项目：A 的「某份失败」提示不出现在 B 上（await 之后复核项目）', async () => {
+    let reject!: (e: Error) => void
+    mockProbe
+      .mockImplementationOnce(() => new Promise((_, rej) => (reject = rej)))
+      .mockResolvedValue({ descriptors: [] } as never)
+    setCurrentProjectId('pj-a')
+    try {
+      await openTwoConfigs()
+      await click(saveButton())
+      await flush()
+      setCurrentProjectId('pj-b') // 第一份还在飞，用户切走了
+      await act(async () => reject(new Error('boom')))
+      await flush()
+      await flush()
+      expect(JSON.stringify(useUiStore.getState().status)).not.toContain('manageRerunFailed')
+    } finally {
+      setCurrentProjectId(null)
+    }
+  })
+
   it('第一份停在运行目录门上：后面的挂起，门有了答案后两份各用自己的 run_config 重跑（Codex #816 r4221169169）', async () => {
     const confirmation = {
       kind: 'workdir', code: 'workdir_confirmation_required', script: 'pick.py', reason: 'script_dir_evidence',

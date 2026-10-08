@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useTranslation } from 'react-i18next'
 import { Ban, Copy, CornerDownLeft, Play, SearchX, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
@@ -731,6 +732,11 @@ export function ProbeResultsDialog({
 }) {
   useTranslation('workspace')
   const setStatus = useUiStore((s) => s.setStatus)
+  // 描述符属于这个对话框出现时的项目：之后切了项目（对话框还没来得及卸载）就不许把 A 的图加进 B 的版面
+  const guard = useRef<ProjectEpochGuard | null>(null)
+  useEffect(() => {
+    if (open) guard.current = captureProjectEpoch()
+  }, [open, descriptors])
   return (
     <Dialog
       open={open}
@@ -755,6 +761,7 @@ export function ProbeResultsDialog({
               variant="secondary"
               size="sm"
               onClick={() => {
+                if (guard.current && !guard.current.still()) return
                 const added = addRuntimePanelToCanvas(d)
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
                 onAdded?.(d, added)

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import type { RememberedAnswer } from '@/lib/api'
@@ -100,7 +101,10 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
    */
   const rerun = async (configs: Array<string | null>) => {
     useUiStore.getState().setStatus(msg('scriptInput.manageSaved', { script }, 'dialogs'), 'done')
+    const guard = captureProjectEpoch()
     const results = await runConfigsInOrder(script, configs)
+    // 重跑期间换了项目：A 的失败清单不许作为状态栏提示出现在 B 上
+    if (!guard.still()) return
     const failed = results.filter((r) => r.failed).map((r) => r.config ?? translate('scriptInput.manageDefaultConfig', { ns: 'dialogs' }))
     if (failed.length)
       useUiStore

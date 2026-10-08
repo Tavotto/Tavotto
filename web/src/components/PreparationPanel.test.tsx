@@ -389,6 +389,51 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
   })
 })
 
+describe('await 之后复核项目归属：A 的描述符绝不落进 B 的文档', () => {
+  const deferAssets = () => {
+    let release!: () => void
+    useRuntimeAssetStore.setState({ assets: [], loadAssets: () => new Promise<void>((r) => (release = r)) })
+    return () => release()
+  }
+  it('进入编辑：loadAssets 挂起时切到 B，解析后不调 addRuntimePanelToCanvas / openFastEdit，B 的文档不变', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const release = deferAssets()
+    await act(async () => primary()!.click())
+    const before = useDocumentStore.getState().doc
+    await act(async () => {
+      setCurrentProjectId('pj-b')
+      useProjectPreparationStore.getState().clear() // 与 projectStore 切项目时一样换代
+    })
+    await act(async () => release())
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+    expect(vi.mocked(openFastEdit)).not.toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc).toBe(before)
+  })
+  it('A → B → A（回到同一个项目 id）也算换过：同样放弃', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const release = deferAssets()
+    await act(async () => primary()!.click())
+    await act(async () => {
+      setCurrentProjectId('pj-b')
+      setCurrentProjectId('pj-a')
+    })
+    await act(async () => release())
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+    expect(vi.mocked(openFastEdit)).not.toHaveBeenCalled()
+  })
+  it('结果对话框开着时切项目（组件还没卸载）：点「加入画布」不改文档', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click())
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    await act(async () => setCurrentProjectId('pj-b'))
+    await act(async () => add[1].click())
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+  })
+})
+
 describe('「已进入编辑」只认入口动作创建的那个面板的精确新渲染', () => {
   it('markStale() 留下的旧渲染、同文件别的变体，都不算；该键上非 stale 的精确 manifest 才算', async () => {
     await mount()
