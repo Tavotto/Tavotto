@@ -384,7 +384,10 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       // 绑定回来的计划超出了用户看到的（offer 里那份）：不执行，按此刻的输入重新披露——脚本行重跑一次拿新的 offer，
       // 授权框关掉后重排那次失败的渲染（新的框带新的清单）。计划只是记录、不装，丢掉即可
       const seen = new Set(offer.plan.requirements.map(requirementKey))
-      if (plan.requirements.some((r) => !seen.has(requirementKey(r)))) {
+      // 影响摘要也要对上：同样的包名，环境代 / 约束 / 私有 Python 需求变了就是另一份影响（用户没看过），
+      // 名字比对看不出来。offer 带了摘要而新计划的对不上 = 同样按此刻的输入重新披露
+      const digestDrifted = !!offer.impact_digest && !!plan.impact_digest && plan.impact_digest !== offer.impact_digest
+      if (digestDrifted || plan.requirements.some((r) => !seen.has(requirementKey(r)))) {
         set({ busy: false, jointPlan: null, jointScript: '', jointOffer: null })
         useEnvStore.getState().dismissDependencyPreparation()
         useRenderStore.getState().retryEnvironmentFailures()
@@ -409,7 +412,8 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           script: plan.script,
         },
       })
-      await prepareJointDependencies(plan.plan_id)
+      // 带上**用户看到的**摘要（offer 的），不是刚绑回来的 plan 的：后端据此拒绝执行用户没确认过的影响
+      await prepareJointDependencies(plan.plan_id, offer.impact_digest ?? '')
       if (epoch !== projectEpoch) return // 作业照跑、已经收进 A 那格；B 的界面不动
       set({ busy: false })
     } catch (e) {

@@ -154,6 +154,7 @@ USER_VISIBLE_CODES = {
     "user_environment_gone": set(),
     # 环境建议 / 检查 / 采用（T05，ADR 0114）
     "environment_changed": set(),
+    "environment_generation_required": set(),
     "environment_candidate_gone": set(),
     "environment_locked": set(),
     "environment_check_running": set(),

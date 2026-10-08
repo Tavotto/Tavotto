@@ -1788,6 +1788,7 @@ def test_a_joint_plan_is_claimed_before_the_worker_starts(client, project, monke
     class _Plan:
         project = root
         plan_id = "jp-claim"
+        impact_digest = "d-claim"
 
     monkeypatch.setattr(
         deprepair, "get_joint_plan", lambda pid: _Plan if pid == "jp-claim" else None
@@ -1804,8 +1805,9 @@ def test_a_joint_plan_is_claimed_before_the_worker_starts(client, project, monke
         return {"state": "done"}
 
     monkeypatch.setattr(deprepair, "_prepare_guarded", _held)
-    first = client.post("/api/engine/dependencies/prepare", json={"plan_id": "jp-claim"})
-    second = client.post("/api/engine/dependencies/prepare", json={"plan_id": "jp-claim"})
+    body = {"plan_id": "jp-claim", "impact_digest": "d-claim"}
+    first = client.post("/api/engine/dependencies/prepare", json=body)
+    second = client.post("/api/engine/dependencies/prepare", json=body)
     assert first.status_code == 200 and first.get_json()["started"] is True
     assert second.status_code == 200 and second.get_json()["started"] is False
     deadline = time.time() + 5

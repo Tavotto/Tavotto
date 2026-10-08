@@ -7600,7 +7600,8 @@ def _set_project_environment(
 
     `candidate` + `expected_generation`（T05，ADR 0114）是**环境建议**上点的「使用」：候选 id 来自
     `recommendation.candidates[].id`，路径由后端自己的枚举换回（不接受调用方给）；`expected_generation` 是用户
-    看到建议那一刻的环境代，对不上（环境在这期间被重建）→ 409 `environment_changed`，不采用另一个环境。
+    看到建议那一刻的环境代，**必填**（缺 → 400 `environment_generation_required`）；对不上（环境在这期间被重建）→ 409
+    `environment_changed`，不采用另一个环境——体检之后、写入之前紧贴着再比一次（体检期间被重建同样 409、不落盘）。
     这是用户的明确动作：记 `automatic=False`；全局显式解释器压着时不假装能采用（`environment_locked`）。
     """
     root = str(require_project())
@@ -7628,9 +7629,15 @@ def _set_project_environment(
                     "code": "environment_candidate_gone",
                 }
             ), 400
-        if expected_generation and (
-            engine_projectenv.environment_generation(found) != expected_generation
-        ):
+        if not expected_generation:
+            # 采用必须绑着用户看到那一刻的环境代：不传就等于「采用此刻碰巧在那儿的任何环境」
+            return jsonify(
+                {
+                    "error": "采用候选环境需要带上你确认时看到的环境版本，请重新查看再确认",
+                    "code": "environment_generation_required",
+                }
+            ), 400
+        if engine_projectenv.environment_generation(found) != expected_generation:
             return jsonify(
                 {
                     "error": "这个环境在你确认之前被重建过，请重新查看再确认",
@@ -7720,29 +7727,46 @@ def _set_project_environment(
         return _environment_busy(
             engine_envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
         )
-    try:
-        engine_deprepair.unless_installing(
+    adopt_stale = False
+
+    def _commit():
+        nonlocal adopt_stale
+        # 候选采用的最后一道：体检（可能数十秒）期间环境可能被重建，health 量的就不是用户确认的那一代。
+        # 紧贴写入再比一次，不符就什么都不记
+        if adopted_from and engine_projectenv.environment_generation(str(candidate)) != (
+            expected_generation
+        ):
+            adopt_stale = True
+            return None
+        return engine_projectenv.remember(
             root,
-            lambda: engine_projectenv.remember(
-                root,
-                str(candidate),
-                automatic=False,
-                trigger=(
-                    adopted_from
-                    or (
-                        engine_deprepair.TRIGGER_USER_ENVIRONMENT
-                        if user_environment
-                        else "missing_dependency"
-                        if module
-                        else "user_selected"
-                    )
-                ),
-                module=module,
-                health=health,
+            str(candidate),
+            automatic=False,
+            trigger=(
+                adopted_from
+                or (
+                    engine_deprepair.TRIGGER_USER_ENVIRONMENT
+                    if user_environment
+                    else "missing_dependency"
+                    if module
+                    else "user_selected"
+                )
             ),
+            module=module,
+            health=health,
         )
+
+    try:
+        engine_deprepair.unless_installing(root, _commit)
     except engine_envlease.EnvironmentBusy as exc:
         return _environment_busy(exc)
+    if adopt_stale:
+        return jsonify(
+            {
+                "error": "这个环境在你确认之前被重建过，请重新查看再确认",
+                "code": "environment_changed",
+            }
+        ), 409
     engine_pool.reset_worker_python()
     engine_pool.shutdown_all(root)
     return jsonify({"ok": True, "health": health, "project": _project_environment_state()})
@@ -7887,7 +7911,7 @@ def api_dependency_state():
 #
 #   GET   /api/engine/dependencies?script=…   只读：联合计划 + 可选目标 + 轮次（不装）
 #   POST  /api/engine/dependencies/plan        绑定一份计划（不装）；blocked / 没缺的 → 409 + joint
-#   POST  /api/engine/dependencies/prepare     执行那个计划（请求体只有 plan_id）
+#   POST  /api/engine/dependencies/prepare     执行那个计划（请求体 plan_id + impact_digest，后者必填）
 #   POST  /api/engine/dependencies/cancel      取消；过了提交点回 accepted=false, reason=committed
 #   POST  /api/engine/dependencies/skip        「不准备，直接跑」：这个脚本的跑前门从此放行
 #   PATCH /api/engine/dependencies             选组（项目设置 `dependency_groups`）
@@ -7987,13 +8011,22 @@ def api_dependencies_prepare():
         ), 409
     # 认领与取消句柄都在 `prepare_async` 里、起线程**之前**：202 一回去用户就能取消，哪怕线程还在
     # 重算事实、还没拿锁；第一次完成前重复提交不起第二个线程，只把在途的进度交回去（Codex #470 P1）
-    # `impact_digest`（可选，T06）：调用方回显它看到的影响摘要；给了就必须与计划此刻的实际影响一致
+    # `impact_digest`（必填，T06 / ADR 0115）：调用方回显**它给用户看的**那份影响摘要，且必须与计划此刻的实际
+    # 影响一致。只带 plan_id 不行——弹框开着的期间环境代 / 约束 / 私有 Python 需求都可能变，而包名不变的计划
+    # 会照样通过前端的名字比对，执行用户没看过的影响（Codex r4217232854）。缺 → 400，对不上 → 409
     echoed = body.get("impact_digest")
+    if not isinstance(echoed, str) or not echoed:
+        return jsonify(
+            {
+                "error": "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。",
+                "code": engine_deprepair.ERROR_IMPACT_REQUIRED,
+            }
+        ), 400
     try:
         started = engine_deprepair.prepare_async(
             plan_id,
             _dependency_event_sink(current_ctx()),
-            confirmed_impact=echoed if isinstance(echoed, str) else None,
+            confirmed_impact=echoed,
         )
     except engine_deprepair.RepairError as exc:
         return _repair_error(exc, 409)

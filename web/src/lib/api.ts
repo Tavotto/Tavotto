@@ -4230,6 +4230,8 @@ export interface JointDependencyRepairPlan {
   network_required: boolean
   expires_at: number
   joint: JointDependencyPlan
+  /** 这份计划此刻的实际影响摘要（ADR 0115）；与 offer 里用户看到的那份比对。老后端没有 */
+  impact_digest?: string
   /** 这次授权包含先下载私有 Python（U05）；`replan` = 计划的事实是替身，供应后按真解释器重算 */
   private_python?: PrivatePythonOffer | null
   replan?: boolean
@@ -4251,11 +4253,15 @@ export const createJointDependencyPlan = (body: {
     body: JSON.stringify(body),
   })
 
-export const prepareJointDependencies = (planId: string) =>
+/**
+ * 执行一份联合计划。`impactDigest` 必填：用户**看到并确认**的那份影响摘要（offer.impact_digest）——后端核它与计划此刻的
+ * 实际影响一致（不一致 `dependency_impact_changed`，缺失 `dependency_impact_required`），不能只靠计划 id 或包名。
+ */
+export const prepareJointDependencies = (planId: string, impactDigest: string) =>
   jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependencies/prepare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ plan_id: planId, impact_digest: impactDigest }),
   })
 
 /** 取消；过了提交点（受管环境已切 active）回 accepted=false, reason=committed */

@@ -438,7 +438,7 @@ describe('DependencyPrepareDialog', () => {
     )
   })
 
-  it('「准备并继续」= 先绑定计划再只发 plan_id；进度到 done 关框并把「先准备」的面板重新排上', async () => {
+  it('「准备并继续」= 先绑定计划再发 plan_id + 用户看到的影响摘要；进度到 done 关框并把「先准备」的面板重新排上', async () => {
     planMock.mockResolvedValue({
       plan: {
         plan_id: 'jp1', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0', 'tabulate[widechars]==0.9.0'],
@@ -458,12 +458,12 @@ describe('DependencyPrepareDialog', () => {
       tracked: {},
     })
     await render(<DependencyPrepareDialog />)
-    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer({ impact_digest: 'd-shown' })))
     await act(async () => button(en('oneClickRepair'))!.click())
     await act(async () => {})
     expect(planMock).toHaveBeenCalledTimes(1)
     expect(planMock).toHaveBeenCalledWith({ script: 'figure.py', target: 'tavotto_managed' })
-    expect(prepareMock).toHaveBeenCalledWith('jp1')
+    expect(prepareMock).toHaveBeenCalledWith('jp1', 'd-shown')
     // 进度按 state 换文案
     await act(async () =>
       useDepRepairStore.getState().onProgress({ plan_id: 'jp1', state: 'installing', log: '', error: null, code: '', flow: 'joint' }),
@@ -536,6 +536,42 @@ describe('DependencyPrepareDialog', () => {
     expect(text()).toContain(t('engine.repairError.dependency_hash_mismatch', { ns: 'errors' }))
     expect(button(en('dependencyPrepareRetry'))).toBeDefined()
     expect(dialog()).not.toBeNull()
+  })
+
+  it('发给后端的是用户看到的摘要（offer 的），不是刚绑回来的计划自己的（Codex r4217232854）', async () => {
+    planMock.mockResolvedValue({
+      plan: {
+        plan_id: 'jp-d1', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0', 'tabulate[widechars]==0.9.0'],
+        constraints: [], require_hashes: false, adapter: [], identity: 'abc', needed_imports: [], groups: [],
+        modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint(),
+        impact_digest: 'd-shown',
+      },
+    })
+    prepareMock.mockResolvedValue({ started: true, plan_id: 'jp-d1', state: 'preparing', log: '', error: null, code: '' })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer({ impact_digest: 'd-shown' })))
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(1)
+    expect(prepareMock.mock.calls[0][1]).toBe('d-shown')
+  })
+
+  it('同样的包、绑回来的影响摘要却变了（环境代 / 约束变了）：不执行，按此刻的输入重新披露（Codex r4217232854）', async () => {
+    planMock.mockResolvedValue({
+      plan: {
+        plan_id: 'jp-d2', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0', 'tabulate[widechars]==0.9.0'],
+        constraints: [], require_hashes: false, adapter: [], identity: 'abc', needed_imports: [], groups: [],
+        modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint(),
+        impact_digest: 'd-NEW',
+      },
+    })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer({ impact_digest: 'd-shown' })))
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () => {})
+    expect(planMock).toHaveBeenCalledTimes(1)
+    expect(prepareMock, '名字没变，但摘要变了的计划被执行了').not.toHaveBeenCalled()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
   })
 
   it('blocked 的计划：理由摆出来、不装', async () => {

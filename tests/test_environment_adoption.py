@@ -948,4 +948,101 @@ def test_dependency_repair_offer_does_not_list_an_unbound_recommendation(tmp_pat
     for missing in ({}, {"id": "env-x"}, {"generation": "gen-x"}):
         detail = {**base, "recommended": {**base["recommended"], **missing}}
         offered = deprepair.offer(str(root), "figure.py", "matplotlib", detail)
-        assert [t for t in offered["targets"] if t["kind"] == deprepair.TARGET_SYSTEM] == [], missing
+        assert [t for t in offered["targets"] if t["kind"] == deprepair.TARGET_SYSTEM] == [], (
+            missing
+        )
+
+
+# ---------------------------------------------------------------------------
+# #814 Codex r4217064306：采用要在写入前再核一次环境代，且 expected_generation 必填
+# ---------------------------------------------------------------------------
+
+
+@needs_worker
+def test_a_rebuild_during_the_adoption_probe_is_refused_and_nothing_is_recorded(
+    client, tmp_path, monkeypatch
+):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    real_venv(root, ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    rec = client.get("/api/engine/environment", query_string={"pj": pj}).get_json()["project"][
+        "recommendation"
+    ]
+    row = next(c for c in rec["candidates"] if c["python_relative"] == ".venv/bin/python")
+
+    # 代次比较通过之后、写入之前（体检期间）环境被重建
+    def probe_then_rebuild(python, *a, **k):
+        rebuild_venv(root, ".venv", python=WORKER_PY)
+        return {"ok": True, "code": "", "support": "verified", "python_version": "3.12.1"}
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe_then_rebuild)
+    response = client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "candidate": row["id"], "expected_generation": row["generation"]},
+        query_string={"pj": pj},
+    )
+
+    assert response.status_code == 409 and response.get_json()["code"] == "environment_changed"
+    assert projectenv.remembered_record(root) is None  # 不落盘
+
+
+@needs_worker
+def test_a_candidate_adoption_without_expected_generation_is_refused(client, tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    real_venv(root, ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    rec = client.get("/api/engine/environment", query_string={"pj": pj}).get_json()["project"][
+        "recommendation"
+    ]
+    row = next(c for c in rec["candidates"] if c["python_relative"] == ".venv/bin/python")
+
+    response = client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "candidate": row["id"]},
+        query_string={"pj": pj},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "environment_generation_required"
+    assert projectenv.remembered_record(root) is None
+
+
+# ---------------------------------------------------------------------------
+# #814 Codex r4217064314：总时限也约束正在起的那个探测
+# ---------------------------------------------------------------------------
+
+
+def test_the_total_deadline_caps_each_probe_and_stops_starting_new_ones(tmp_path, monkeypatch):
+    from tavotto.engine import envadvice
+
+    root = tmp_path / "p"
+    for name in (".venv", "venv", "env"):
+        py = root / name / "bin" / "python"
+        py.parent.mkdir(parents=True)
+        py.write_text("#!/bin/sh\n", "utf-8")
+        (root / name / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
+
+    now = [1000.0]
+    timeouts: list[float] = []
+
+    def probe(python, *a, timeout=None, **k):
+        timeouts.append(timeout)
+        now[0] += 96.0  # 每个探测"跑"96 s（可注入时钟，不真等）
+        return {"ok": True, "code": "", "support": "verified", "python_version": "3.12.1"}
+
+    out = envadvice.check(root, "p.py", probe=probe, deadline_s=100.0, clock=lambda: now[0])
+
+    # 第一个探测拿到全部 100 s（但被单探测上限封顶）；第二个只剩 4 s（低于 MIN_PROBE_BUDGET_S）→ 不起
+    assert len(timeouts) == 1 and timeouts[0] == min(projectenv.PROBE_TIMEOUT_S, 100.0)
+    assert [s["reason"] for s in out["skipped"]] == ["deadline", "deadline"]
+
+    # 剩余预算够起，但比单探测上限小：超时被收紧到剩余
+    now[0], timeouts[:] = 2000.0, []
+    envadvice.check(root, "p.py", probe=probe, deadline_s=190.0, clock=lambda: now[0])
+    assert timeouts[0] == projectenv.PROBE_TIMEOUT_S
+    assert timeouts[1] == 190.0 - 96.0 and timeouts[1] < projectenv.PROBE_TIMEOUT_S
+    assert len(timeouts) == 2  # 第三个：剩余 <0 → deadline

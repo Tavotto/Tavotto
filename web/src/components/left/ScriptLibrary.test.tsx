@@ -877,6 +877,7 @@ describe('试运行撞上起会话之前的门', () => {
     ],
     rounds_remaining: 3,
     skipped: false,
+    impact_digest: 'row-digest',
   }
   const gateProbe = (): ProbeResult => ({
     ...ok([]),
@@ -934,7 +935,7 @@ describe('试运行撞上起会话之前的门', () => {
     await act(async () => prepDialog()!.querySelector<HTMLButtonElement>('[data-dependency-prepare-start]')!.click())
     await flush()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: 'fig_labels.py', target: 'tavotto_managed' })
-    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row')
+    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row', 'row-digest')
     // ④ 准备成功（SSE 带着计划所属的脚本）→ #740 的 `rerunGated`：这一行自动再试运行一次、出图
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })

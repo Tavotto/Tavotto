@@ -361,7 +361,7 @@
   `confirmation` 也接上，此前试运行把两道门都压成 `script_probe_failed`）、MCP `_bridge_error_from_worker`
   （`structuredContent.dependency_preparation` + `recovery`）。
 - **端点**：`GET /api/engine/dependencies?script=`、`POST …/plan`（非 ready → 409 `dependency_plan_blocked` + `joint`）、
-  `POST …/prepare`（只发 `plan_id`，进度 SSE `engine.dependency` `flow: joint`）、`POST …/cancel`
+  `POST …/prepare`（`plan_id` + 必填 `impact_digest`〔用户看到的摘要，缺 → 400 `dependency_impact_required`〕，进度 SSE `engine.dependency` `flow: joint`）、`POST …/cancel`
   （`accepted / reason`，过提交点 `committed`）、`POST …/skip`、`PATCH /api/engine/dependencies`（`groups`，改了就
   `reset_state(project)`）。`script` 参数按试运行端点同一份判据（realpath 之后在项目内、`.py`、存在），三个
   code 同一闭集。全部在会话认证之内。
@@ -386,10 +386,10 @@
   `unchecked` 如实写。`decision.needs_decision` = 有项目范围线索、没有项目级决定、没有全局锁。公开形态不带机器路径（项目内给相对路径，
   项目外只有不透明 id）。
 - **检查 `envadvice.check()` 是起候选解释器的唯一入口**：`POST /api/engine/environment/check`（范围 `candidates` / `scope`，
-  `include_login_shell` 才问登录 shell），候选数 / 总时限 / 每个候选超时都有上限，`DELETE` 取消，同一项目单飞（`CheckBusy`）。
+  `include_login_shell` 才问登录 shell），候选数 / 总时限 / 每个候选超时都有上限（单个探测超时取 min(单探测上限, 剩余总预算)，剩余不足 `MIN_PROBE_BUDGET_S` 不再起、记 deadline），`DELETE` 取消，同一项目单飞（`CheckBusy`）。
   结论缓存键 = (解释器路径, 环境代)。**不写项目设置**。
 - **采用 = `PATCH /api/engine/environment {scope: project, candidate, expected_generation}`**：id 只换本机自己枚举出来的路径；
-  环境代对不上 409 `environment_changed`；全局显式选择压着 409 `environment_locked`（是谁锁的在建议里的 `decision.locked_by`）；现场再体检仍是
+  `expected_generation` 必填（缺 → 400 `environment_generation_required`）；环境代对不上 409 `environment_changed`（体检之后、`remember` 之前紧贴再比一次，体检期间被重建同样 409、不落盘）；全局显式选择压着 409 `environment_locked`（是谁锁的在建议里的 `decision.locked_by`）；现场再体检仍是
   `probe_environment`，通过才 `remember(automatic=False, trigger=recommended)` 并存 `generation`。采用不带安装授权：没有 pip，
   内置 runtime 只读。
 - **环境代 `projectenv.environment_generation`**：解释器路径 `lstat` + `pyvenv.cfg` 各自的 (inode, mtime_ns, size) 摘要（不含 ctime / 权限位）；重建换代，装包 / chmod / 扩展属性不换。
@@ -417,10 +417,14 @@
   新增一类影响要升 `IMPACT_VERSION`。
 - **对不上就是 `dependency_impact_changed`，认领之前、零副作用**：`prepare_async(confirmed_impact=)` / `start_confirmed(digest)`；响应带此刻的实际影响。
   会改用户自己环境的动作必须回显摘要（会话 400 `preparation_impact_unconfirmed`）；使用（采用）环境不含修改权限。
+  **`POST …/prepare` 一律必填 `impact_digest`**（缺 → 400 `dependency_impact_required`）：前端回显的是 offer 里**用户看到的**那份，不是刚绑回来的计划自己的；
+  只带 plan_id 会让「包名不变、环境代 / 约束变了」的计划通过名字比对、执行没人看过的影响。
 - **认领幂等**：`_claim` 在起线程之前、锁内，联合准备与单包修复（`install_async` / `install`）一样；`start_confirmed` 在 `_lock` 里比较 + 认领，同一份摘要的在途作业
   （`_joined`）被另一个标签页 / 会话确认时认领原作业（`started=False, joined=True`，`add_listener` 追加监听），不起第二个 pip；不同摘要撞同一环境由 `envlease` 报忙。
 - **采用与安装互斥**：`unless_installing(project, action)`（与 `_claim` 同一把锁）包住项目范围的采用 / 选回默认；候选环境本身在被改动时也拒；计划记
-  `selection_signature`，执行前再比（`repair_plan_stale`）；`trigger=dependency_repair` 的记录不算用户的决定。
+  `selection_signature`，执行前再比（`repair_plan_stale`）；`trigger=dependency_repair` 的记录不算用户的决定。**签名在目标解析 / 事实探测之前取**
+  （`create_joint_plan` / `create_plan`），形成计划前再比一次，变了 → `repair_plan_stale`、不发计划（不把晚到的新签名记到按旧决定算的计划上）。
+- **两张作业表不同名**：`deprepair._jobs` 是包管理的 `PackageJob`（`create_package_job` / `get_package_job`），`_active_jobs` 是在途依赖作业元数据（`_claim` / `installing` / `unless_installing`）；`reset_state()` 两张都清。
 - **准备会话**：动作 `prepare_dependencies` 引用 `deprepair.start_confirmed`，phase `preparing_environment` 由依赖作业事实派生；终态 `done` 后同一会话按新环境重新检查，
   只重算差额（`dependency_delta`）；失败 / 取消在报告里带码并给**新的**授权动作；运行时缺包 = 新的一次尝试（outcome `needs_dependencies`）。认领了别人先起的作业不拥有它（不提供取消）。
 - **多作用域互斥（D04）**：账的每一笔记 `scope`（脚本所在目录）；`_with_scope_check` 对着账核：已装但不满足本作用域声明的 / 需求 / 约束与别的作用域装的版本互斥 → `blocked`
