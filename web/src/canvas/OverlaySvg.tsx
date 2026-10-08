@@ -42,6 +42,7 @@ import {
 } from './interactions'
 import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
+import { IssueOverlay } from './IssueOverlay'
 
 /**
  * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：
@@ -258,6 +259,9 @@ export function OverlaySvg() {
             />
           )
         })()}
+
+      {/* 问题面板的悬停轮廓与画布等级标记：自己一个文件（`IssueOverlay`），这里只挂进来 */}
+      <IssueOverlay objects={objects} t={t} />
 
       {/* hover 预示；线状与真实轮廓类对象沿自己的形状描示，不画对不上的包围盒 */}
       {hovered && <ObjectOutline obj={hovered} t={t} hover />}

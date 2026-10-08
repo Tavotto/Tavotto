@@ -1055,3 +1055,62 @@ test(
       .not.toMatch(/font-below-absolute-floor/)
   },
 )
+
+test(
+  '功能：问题面板「⋯」打开画布上的问题标记，点标记直达那条问题，关掉后标记消失',
+  { tag: ['@feature:problems.canvas-pins'] },
+  async ({ app, page }) => {
+    const a = await app({ figures: writeTwoPanelProject() })
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    await page.locator('[data-card="Fig_two.pdf"]').dblclick({ timeout: 30_000 })
+    await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 120_000 })
+    await waitExact(page)
+
+    const rail = page.locator('[data-rail="problems"]')
+    if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+    await expect(page.locator('li[data-problem-card="part"]').first()).toBeVisible({ timeout: 60_000 })
+    // 起点：卡片层，没有逐条清单、没有游标
+    await expect(page.locator('[data-issue-row]')).toHaveCount(0)
+    await expect(page.locator('[data-problem-cursor]')).toHaveCount(0)
+
+    const pins = page.locator('[data-issue-pin]')
+    await expect(pins, '默认不画标记').toHaveCount(0)
+    const menu = page.locator('[data-problem-menu]')
+    const pinsItem = page.locator('[data-problem-pins]')
+    await menu.click()
+    await expectInViewport(page, pinsItem, '「⋯」里的画布标记开关')
+    await expectHittable(pinsItem, '「⋯」里的画布标记开关')
+    await pinsItem.click()
+    await expect(pinsItem).toHaveAttribute('aria-checked', 'true')
+    await page.keyboard.press('Escape')
+    await expect(pinsItem).toHaveCount(0)
+
+    // 标记画在对象右上角；这张图在 109% 下右缘伸进浮动的右侧面板底下——先收起右侧面板，
+    // 让标记露出来（用户也是这么做的），再断言它点得到
+    const inspectorClose = page.locator('[data-inspector-close]')
+    if (await inspectorClose.count()) await inspectorClose.click()
+    // 这一屏只有那张两联图一个对象 → 恰好一枚标记，等级是阻断
+    await expect(pins, '打开之后那张有问题的图上应当有一枚标记').toHaveCount(1, { timeout: 30_000 })
+    const pin = pins.first()
+    await expect(pin).toHaveAttribute('data-issue-pin-severity', 'error')
+    await expectInViewport(page, pin, '画布上的问题标记')
+    await expectHittable(pin, '画布上的问题标记')
+    await pin.click()
+
+    // 画面真的变了：问题面板点开了那条问题所在的卡片、游标落在一行上
+    const current = page.locator('[data-issue-row][aria-current="true"]')
+    await expect(current, '点标记之后问题面板应当有一行是当前项').toHaveCount(1, { timeout: 30_000 })
+    await expect(current).toHaveAttribute('data-issue-rule', /font-below-absolute-floor/)
+    await expectInViewport(page, current, '当前那一行问题')
+    await expect(page.locator('[data-problem-cursor]')).toBeVisible()
+
+    // 关掉：标记消失
+    await menu.click()
+    await expect(pinsItem).toHaveAttribute('aria-checked', 'true')
+    await pinsItem.click()
+    await expect(pinsItem).toHaveAttribute('aria-checked', 'false')
+    await page.keyboard.press('Escape')
+    await expect(pins, '关掉之后画布上不应再有标记').toHaveCount(0)
+  },
+)
