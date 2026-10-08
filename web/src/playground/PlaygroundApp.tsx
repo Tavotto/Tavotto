@@ -408,7 +408,7 @@ function PickView({
             >
               <span className="block rounded-md bg-canvas p-2">
                 {f.preview ? (
-                  <img src={`data:image/png;base64,${f.preview}`} alt="" className="block w-full bg-white" />
+                  <img src={`data:image/png;base64,${f.preview}`} alt="" className="block w-full bg-paper" />
                 ) : (
                   <span className="flex h-24 items-center justify-center text-xs text-ink-3">{f.stem}</span>
                 )}
