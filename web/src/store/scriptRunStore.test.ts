@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cancelProbe, probeScript, type CapturedFigureDescriptor, type ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
+import { useUiStore } from './uiStore'
 import { useEnvStore } from './envStore'
 import { useScriptArgvStore } from './scriptArgvStore'
 import { useRenderStore } from './renderStore'
@@ -567,5 +568,19 @@ describe('门后排队续跑的排队语义（Codex #816 r4221258366 / r42212583
     await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b', 'rc_b2']))
     releases[2]()
     await b2
+  })
+
+  it('门后续跑：A 失败、B 成功时仍提示 A 重跑失败（r4221584209）', async () => {
+    mockProbe.mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a', 'rc_b']) // A 撞门，A/B 排队
+    mockProbe.mockReset()
+    mockProbe.mockResolvedValueOnce(failed('script_error')).mockResolvedValue(ok([desc('a')]))
+    useUiStore.getState().setStatus(null)
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b']))
+    await vi.waitFor(() => expect(useUiStore.getState().status).not.toBeNull())
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('captured_one') // 可见行是成功的 B
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('rc_a')
   })
 })

@@ -13,10 +13,12 @@ import {
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
 import { useAssetStore } from '@/store/assetStore'
+import { msg, t as translate } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { probeWithDraft, useScriptArgvStore } from '@/store/scriptArgvStore'
+import { useUiStore } from '@/store/uiStore'
 
 /**
  * 「运行并发现图」的状态机（Session 5 素材库普通入口）。
@@ -417,7 +419,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       // 批量重跑停在门上时留下了「还没跑完的配置」队列（可能攒了好几批）：整份按序续跑，不只重跑最后那一行。
       // `runConfigsInOrder` 在第一个 await 之前就同步认领脚本并起了第一份，所以下面通知监听者时脚本已是忙的
       const queued = takeGatedQueue(name, get().epoch, phase, rowSpec)
-      if (queued) void runSpecsInOrder(name, queued)
+      if (queued) void runSpecsInOrder(name, queued).then((results) => reportResumedFailures(name, results))
       else if (rowSpec) void runSpec(name, rowSpec)
     }
     for (const cb of [...gateListeners]) cb(phase, script)
@@ -456,6 +458,25 @@ const specOfRow = (row: ScriptRunState): RunSpec =>
   row.runConfig === undefined ? { kind: 'draft' } : { kind: 'config', id: row.runConfig }
 const runSpec = (script: string, spec: RunSpec): Promise<void> =>
   spec.kind === 'draft' ? useScriptRunStore.getState().run(script) : useScriptRunStore.getState().run(script, spec.id)
+
+/**
+ * 门后续跑的批是 fire-and-forget（发起它的对话框早已返回），结果数组没人接：A 失败、B 成功时 B 会盖掉可见行，
+ * 界面看着一切正常而 A 的产物是旧的（Codex #816 r4221584209）。这里是续跑批的结果出口：与对话框直接提交时
+ * 同一条 `manageRerunFailed` 提示，按配置说出失败的那几份，不管此刻可见的是哪一行。
+ */
+function reportResumedFailures(script: string, results: Array<{ spec: RunSpec; failed: boolean }>): void {
+  const failed = results
+    .filter((r) => r.failed)
+    .map((r) =>
+      r.spec.kind === 'config' && r.spec.id !== null
+        ? r.spec.id
+        : translate('scriptInput.manageDefaultConfig', { ns: 'dialogs' }),
+    )
+  if (failed.length)
+    useUiStore
+      .getState()
+      .setStatus(msg('scriptInput.manageRerunFailed', { script, configs: failed.join(', ') }, 'dialogs'), 'error')
+}
 
 const gatedQueues = new Map<string, { epoch: number; phase: GatePhase; specs: RunSpec[] }>()
 
