@@ -159,6 +159,14 @@ for (const width of [820, 1100, 1366]) {
     await clickCanvasTitle(page, 'right')
     await page.locator('[data-quick-item="open-inspector"]').click()
     await expect(page.locator('[data-inspector-panel]')).toHaveAttribute('data-state', 'open')
+    if (exclusive) {
+      // An explicit property visit consumes the tree workflow when the user dismisses it.
+      if (width < 1024) await dismissOverlay(page)
+      else await page.locator('[data-inspector-close]').click()
+      await expect(page.locator('[data-inspector-panel]')).toHaveCount(0)
+      await clickCanvasTitle(page)
+      await expect(page.locator('[data-inspector-panel]')).toHaveCount(0)
+    }
   })
 }
 

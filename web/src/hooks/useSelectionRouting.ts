@@ -40,7 +40,8 @@ export function useSelectionRouting() {
       const ui = useUiStore.getState()
       inDrawer.current = !!target?.closest('[data-left-drawer]')
       if (inDrawer.current) treeHandoff.current = ui.leftTab !== 'assets'
-      else if (target?.closest('[data-inspector-panel]')) treeHandoff.current = false
+      else if (target?.closest('[data-inspector-panel]') ||
+        (target?.closest('[data-scrim]') && ui.rightOpen)) treeHandoff.current = false
       if (e instanceof PointerEvent && e.button === 0 && target?.closest('[data-canvas-stage]') &&
         ui.tool === 'select' && !useViewportStore.getState().spaceDown) {
         // Space 平移 / 绘图起手不是换选；新对象真被选中后由下面的选择 effect 路由。

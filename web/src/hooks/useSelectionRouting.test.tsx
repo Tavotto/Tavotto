@@ -38,6 +38,11 @@ function Harness() {
   const tab = useUiStore(s => s.leftTab)
   return <TooltipProvider>
     <input data-outside />
+    <button data-scrim onClick={() => {
+      const ui = useUiStore.getState()
+      if (ui.leftOpen) ui.toggleLeft()
+      if (ui.rightOpen) ui.toggleRight()
+    }} />
     {leftOpen && <aside data-left-drawer>
       {tab === 'assets'
         ? <button data-asset onPointerDown={() => useSelectionStore.getState().set([panel.id])} />
@@ -205,6 +210,30 @@ describe('selection routing keeps the active drawer workflow', () => {
     pointer('[data-canvas-hit]')
     expect(useUiStore.getState().rightOpen).toBe(true)
     act(() => useUiStore.getState().toggleRight())
+    pointer('[data-canvas-same]')
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().rightOpen).toBe(false)
+    expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+
+  it('dismissing the narrow tree overlay still permits a canvas handoff', () => {
+    openElements('narrow')
+    pointer(treeRow(gids[0]))
+    pointer('[data-scrim]')
+    act(() => node('[data-scrim]').click())
+    expect(useUiStore.getState().leftOpen).toBe(false)
+    pointer('[data-canvas-hit]')
+    expect(useUiStore.getState().rightOpen).toBe(true)
+  })
+
+  it('dismissing explicit narrow properties cancels the previous tree handoff', () => {
+    openElements('narrow')
+    pointer(treeRow(gids[0]))
+    pointer('[data-explicit]')
+    act(() => node('[data-explicit]').click())
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    pointer('[data-scrim]')
+    act(() => node('[data-scrim]').click())
     pointer('[data-canvas-same]')
     expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
     expect(useUiStore.getState().rightOpen).toBe(false)
