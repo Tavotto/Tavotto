@@ -233,7 +233,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_write_source_files",
-          "line": 5610,
+          "line": 5719,
           "role": "写回 verify 阶段：把画布标注画进 staging 的 PDF，再由同一份 PDF 栅格化 PNG（incremental save）"
         }
       ],
@@ -300,7 +300,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_replay_pixel_diff",
-          "line": 5425,
+          "line": 5473,
           "role": "写回像素门（ADR 0049，issue #81）：热态 vs 一次性 worker 重放的 render_png 逐 RGBA 比，阈值 app.REPLAY_PIXEL_TOL"
         }
       ],
@@ -639,13 +639,13 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1343,
+          "line": 1348,
           "role": "请求里已解析的物理尺寸 → 页面 pt"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1343,
+          "line": 1348,
           "role": "originalspec 现算的逻辑尺寸 → 页面 pt"
         }
       ],
@@ -973,19 +973,19 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_original_page_pt",
-          "line": 1344,
+          "line": 1348,
           "role": "老客户端 / MCP 没带尺寸时现算位图页面"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_declared_density",
-          "line": 1360,
+          "line": 1371,
           "role": "TIFF 分辨率标签的来源判据（只认 dpi_source == metadata）"
         },
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 5777,
+          "line": 5828,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {

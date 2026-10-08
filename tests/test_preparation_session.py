@@ -789,8 +789,8 @@ def test_explicit_rerun_retires_the_cached_build(
     fake_pool["peek"] = cached
     retired = []
 
-    def invalidate(script, project_root, *, force=False):
-        assert force
+    def invalidate(script, project_root, run=None, *, only_run=False, force=False):
+        assert force and only_run and run is None
         retired.append((script, project_root))
         fake_pool["peek"] = None
 

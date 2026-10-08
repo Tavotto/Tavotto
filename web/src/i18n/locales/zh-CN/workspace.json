@@ -597,6 +597,7 @@
     "viewResults": "查看捕获结果",
     "groupInfraName": "工具与配置脚本",
     "recoveryDetails": "详情",
+    "rerunWithArgs": "用这些参数再试一次",
     "group_needsFix": "需要修复",
     "copyPath": "复制路径",
     "pathCopied": "已复制：{{path}}",

@@ -50,9 +50,13 @@ class ReplayAnswers:
     def of(cls, records) -> "ReplayAnswers":
         return cls(tuple(dict(r) for r in (records or []) if isinstance(r, dict)))
 
-    def reply_for(self, index: int, prompt: str) -> dict:
+    def reply_for(self, index: int, prompt: str, prompt_id: str | None = None) -> dict:
         for r in self.answers:
-            if r.get("index") == index and r.get("prompt") == prompt:
+            if (
+                r.get("index") == index
+                and r.get("prompt") == prompt
+                and r.get("prompt_id") == prompt_id
+            ):
                 answer = r.get("answer")
                 return {"answer": answer} if isinstance(answer, str) else {"eof": True}
         return {"no_answer": True, "reason": REASON_REPLAY_MISSING}
@@ -70,6 +74,7 @@ class Pending:
     kind: str
     directory: Path
     stdout_tail: str = ""
+    private: bool = False
     done: threading.Event = field(default_factory=threading.Event, repr=False)
     #: 同一问的作答 / 丢弃串行：只有赢下的那一次能落盘答案（两个界面同时答时，记住的 == worker 拿到的）
     guard: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -110,8 +115,15 @@ def _emit(event: str, project_root: str, data: dict) -> None:
         LOG.exception("脚本输入事件发送失败: %s", event)
 
 
-def _reply(directory: Path, index: int, payload: dict) -> None:
-    atomicio.write_json(directory / scriptinput.reply_name(index), payload)
+def _reply(directory: Path, index: int, payload: dict, *, private: bool = False) -> None:
+    """写回复。敏感会话的答案是明文：临时文件权限收成 0600（POSIX），读它的 worker 读完即删（Codex #812 P1）；
+    写失败由 `atomicio` 清掉临时文件，异常照常上抛。"""
+    path = directory / scriptinput.reply_name(index)
+    data = atomicio.dumps_json(payload)
+    if private:
+        atomicio.write_bytes(path, data, mode=0o600)
+    else:
+        atomicio.write_bytes(path, data)
 
 
 def pending() -> list[Pending]:
@@ -148,7 +160,7 @@ def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending |
             p.done.set()
             _emit("script.input_closed", p.project_root, {"id": p.id, "reason": "timed_out"})
             return None
-        if not (eof or text is None) and p.kind != "getpass":
+        if not (eof or text is None) and p.kind != "getpass" and not p.private:
             # 先校验、先落盘，**成功之后才出队**：答案不合法（太长）或写盘失败时这一问仍在等，界面改好再交一次
             # 照样答得上（Codex #680 P2）。先出队的话改好的那次拿到 404，而 worker 白等到超时。
             # 口令不落盘：getpass 的答案每次都问（ADR 0099 §四）
@@ -164,7 +176,7 @@ def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending |
     if eof or text is None:
         _reply(p.directory, p.index, {"eof": True})
     else:
-        _reply(p.directory, p.index, {"answer": text})
+        _reply(p.directory, p.index, {"answer": text}, private=p.private or p.kind == "getpass")
     LOG.info("脚本输入：第 %d 问已作答", p.index)
     p.done.set()
     _emit("script.input_closed", p.project_root, {"id": p.id, "reason": "answered"})
@@ -194,13 +206,18 @@ def _decide(worker, directory: Path, request: dict) -> None:
     kind = request.get("kind") if request.get("kind") in scriptinput.KINDS else "input"
     policy = getattr(worker, "script_input_policy", None)
     if isinstance(policy, ReplayAnswers):
-        _reply(directory, index, policy.reply_for(index, prompt))
+        _reply(directory, index, policy.reply_for(index, prompt, request.get("prompt_id")))
         return
     # 键用父进程自己记的脚本名与项目，不信 worker 写来的 `script`
     project_root = str(worker.figures_dir)
     script = str(worker.script_name)
+    # Suppressed private prompts deliberately display the same marker. Never
+    # auto-fill/remember them by that marker; frozen replay uses their keyed IDs.
+    private = bool(getattr(getattr(worker, "run", None), "sensitive", False))
     remembered = (
-        scriptanswers.lookup(project_root, script, index, prompt) if kind != "getpass" else None
+        scriptanswers.lookup(project_root, script, index, prompt)
+        if kind != "getpass" and not private
+        else None
     )
     if remembered is not None:
         _reply(directory, index, {"answer": remembered})
@@ -223,6 +240,7 @@ def _decide(worker, directory: Path, request: dict) -> None:
         kind=kind,
         directory=directory,
         stdout_tail=tail,
+        private=private,
     )
     with _lock:
         _pending[p.id] = p

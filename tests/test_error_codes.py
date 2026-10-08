@@ -71,6 +71,8 @@ _CODE_REGISTRIES = (
     # ADR 0110：改写脚本里的数据路径与共享的备份底座——`ScriptEditError(code)` 由 app 的 409 漏斗转出
     "tavotto.engine.scriptbackup",
     "tavotto.engine.scriptedit",
+    # T03：用户给的精确 argv 的运行配置——`RunConfigError.code` 由 app 的 errorhandler 转出
+    "tavotto.engine.runconfig",
     # issue #534：TIFF 素材的支持范围（`UnsupportedTiff(code)` 由 app 的 422 漏斗 / 导出作业转出）
     "tavotto.tiffprobe",
 )
@@ -221,6 +223,12 @@ USER_VISIBLE_CODES = {
     "preparation_plan_stale": set(),
     # --- T01：脚本目标会话执行完但没捕获到图（登记那一步的结局码；文案早已在 errors.json） ---
     "no_figures_captured": set(),
+    # --- T03：精确 argv。文案不插值（`reason` 是顶层短码，不含参数值） ---
+    "invalid_argv": set(),
+    "run_config_missing": set(),
+    "run_config_secret_missing": set(),
+    "run_config_unsupported": set(),
+    "run_config_unreadable": set(),
     # --- T02：导入即扫描。重启后 GET / 取消一个没开始过的扫描；客户端据此重新 POST 开始 ---
     "project_scan_not_started": set(),
     # --- U04（ADR 0061）：跑前的依赖门 ---

@@ -184,3 +184,11 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 改了回执 / 准备 / 数据绑定 / 轨迹 / manifest 身份（U09）：跑 `tests/test_execution_receipt.py test_preparation_api.py
   test_worker_runtime_report.py test_trace.py test_export_identity.py test_foundation_join.py`；FO32 两个出口在候选 venv 里带
   `TAVOTTO_FOUNDATION_PROJECT_PYTHON`（另一 minor + matplotlib + h5py）/ `TAVOTTO_PRIVATE_PYTHON_REAL=1` + `_CACHE` + `_WHEELHOUSE` 真跑；skip 不是绿。
+
+## 运行参数在计划 / 会话里（T03）
+
+`PreparationPlan.run`（`execspec.RunSelection`）是**私有**字段，`to_payload()` 只多 `run_config`（本机不透明引用）与 `argv_count`；
+`launch_context` 同样只带个数与引用。会话的 `target_key` 含引用（同脚本不同 argv = 不同会话），`_fingerprint` 含引用（换任一 token
+= 新 `config_revision`），`impact.script_arguments` 只给个数。请求体：`{script, entry?, argv?, argv_sensitive?}`，已知素材（`id`）
+不接受另给 argv（它的配置冻结在资产 id 里）。执行线程取消 / 复用 / 回执都带 `run`，所以取消 A 配置不会杀 B 配置的会话。
+

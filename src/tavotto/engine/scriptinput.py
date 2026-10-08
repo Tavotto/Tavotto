@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import hashlib
+import hmac
 import io
 import json
 import os
@@ -173,18 +175,30 @@ class StdoutTail(io.TextIOBase):
 class Channel:
     """一次 build 的问答通道：发问、等答、记账。"""
 
-    def __init__(self, directory: str | os.PathLike, script: str, tail: StdoutTail | None = None):
+    def __init__(
+        self,
+        directory: str | os.PathLike,
+        script: str,
+        tail: StdoutTail | None = None,
+        *,
+        private_key: str = "",
+    ):
         self.dir = Path(directory)
         self.script = script
         self.tail = tail
+        self.private_key = private_key
         self.count = 0
         #: 本次 build 实际用到的每一问（build 响应的 `script_inputs`）。
         self.record: list[dict] = []
         #: build 跑完之后置上：再有人读 stdin 一律 EOF，绝不再发问。
         self.closed = False
 
+    def _mkdir(self) -> None:
+        # 敏感会话：会合目录只给本用户（POSIX；Windows 上 mode 被忽略），明文答案短暂经过这里
+        self.dir.mkdir(parents=True, exist_ok=True, mode=0o700 if self.private_key else 0o777)
+
     def reset(self) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self._mkdir()
         for p in self.dir.iterdir():
             try:
                 p.unlink()
@@ -192,7 +206,7 @@ class Channel:
                 pass
 
     def _write_request(self, index: int, payload: dict) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self._mkdir()
         final = self.dir / request_name(index)
         tmp = self.dir / f".{final.name}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -220,19 +234,43 @@ class Channel:
             return None
         self.count += 1
         index = self.count
-        prompt = clip_prompt(prompt)
+        # Prompts can interpolate sensitive argv too. Neither those nor stdout
+        # snippets may cross the on-disk input rendezvous for a private run.
+        identity = {"prompt": clip_prompt(prompt)}
+        if self.private_key:
+            identity = {
+                "prompt": "[sensitive run: input prompt omitted]",
+                "prompt_id": hmac.new(
+                    bytes.fromhex(self.private_key), prompt.encode("utf-8"), hashlib.sha256
+                ).hexdigest(),
+            }
+        prompt = identity["prompt"]
         self._write_request(
             index,
             {
                 "index": index,
                 "kind": kind,
-                "prompt": prompt,
+                **identity,
                 "script": self.script,
                 "stdout_tail": self.tail.tail() if self.tail is not None else "",
             },
         )
         self._log(f"[input] 第 {index} 问等待作答\n")
         reply_path = self.dir / reply_name(index)
+        # 口令与敏感会话里的任何作答：回复文件里是明文答案，**无论走哪条出口**（读到、超时、解析失败、
+        # 抛 ScriptNeedsInput / KeyboardInterrupt）离开这一问时都删掉，不留在长期存在的会话缓存里
+        # （Codex #812 P1）。非敏感的普通 input 保持原样（文件随会合目录在 build 结束时清掉）。
+        scrub = kind == "getpass" or bool(self.private_key)
+        try:
+            return self._await_reply(index, kind, identity, prompt, reply_path)
+        finally:
+            if scrub:
+                with contextlib.suppress(OSError):
+                    reply_path.unlink()
+
+    def _await_reply(
+        self, index: int, kind: str, identity: dict, prompt: str, reply_path: Path
+    ) -> str | None:
         deadline = time.monotonic() + wait_timeout()
         # 答题方定了案却迟迟写不出回复（不该发生）时的兜底：再等这么久就按超时处理
         hard_stop = deadline + ANSWER_GRACE
@@ -254,7 +292,7 @@ class Channel:
         if not isinstance(reply, dict):
             self._log(f"[input] 第 {index} 问等待超时，按 EOF 处理\n")
             self.record.append(
-                {"index": index, "kind": kind, "prompt": prompt, "answer": None, "timed_out": True}
+                {"index": index, "kind": kind, **identity, "answer": None, "timed_out": True}
             )
             return None
         if reply.get("no_answer"):
@@ -262,19 +300,18 @@ class Channel:
             raise ScriptNeedsInput(prompt, str(reply.get("reason") or ""))
         if reply.get("eof") or not isinstance(reply.get("answer"), str):
             self._log(f"[input] 第 {index} 问：EOF\n")
-            self.record.append({"index": index, "kind": kind, "prompt": prompt, "answer": None})
+            self.record.append({"index": index, "kind": kind, **identity, "answer": None})
             return None
         answer = reply["answer"]
-        if kind == "getpass":
-            # 口令绝不落盘：worker.log 活得比会合目录久，还会进诊断包与错误里的日志尾巴（Codex #680 P1）。
-            # 只写一行固定的标记——看门狗照样在作答这一点清零；回复文件读完当场删掉
-            self._log(f"[input] 第 {index} 问已作答（口令不转录）\n")
-            with contextlib.suppress(OSError):
-                reply_path.unlink()
+        if kind == "getpass" or self.private_key:
+            # 口令 / 敏感会话的答案绝不落盘：worker.log 活得比会合目录久，还会进诊断包与错误里的日志尾巴
+            # （Codex #680 P1 / #812 P1）。只写一行固定的标记——看门狗照样在作答这一点清零；
+            # 回复文件由 ask() 的 finally 删掉
+            self._log(f"[input] 第 {index} 问已作答（不转录）\n")
         else:
             # 转录「提示 → 答案」：和终端里看到的一样
             self._log(f"{answer}\n")
-        self.record.append({"index": index, "kind": kind, "prompt": prompt, "answer": answer})
+        self.record.append({"index": index, "kind": kind, **identity, "answer": answer})
         return answer
 
 

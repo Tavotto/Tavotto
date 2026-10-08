@@ -40,6 +40,15 @@ cwd、argv、env、module invocation 每一项都与 safe worker 不同，逐条
 > 开关「在脚本目录里运行」。默认模式 argv 逐字节不变；project 模式只多 `--cwd`。
 > 守卫 / savefig 捕获 / 解释器链不动。**不是 native**：进程仍是 Tavotto 的 safe worker。
 
+> **2026-10-05（项目 Onboarding 收敛 T03）：safe 档的 argv 不再恒空。** §2 的「argv 换成脚本自身」
+> 现在是**缺省**：用户可以在界面里给**精确的 token 列表**（`safe_spec(argv=…, run_config=…)`），脚本的
+> `sys.argv[1:]` 就是这串数组，一个 token 不拆不并不排序；缺省仍是空，空 argv 的命令行、资产 id、描述符、
+> 回执形状与此前逐字节相同。**native 的定义不变**（用户自己的命令行、原终端、原 stdin）。
+> 三条随之而来的约束：① 参数值不进公开身份——产物绑定的是本机不透明引用 `rc_…`（`engine/runconfig.py`），
+> 公开投影只带个数与引用；② 产物保存**当初**的引用，冷重放 / 导出 / 重开 / 写回验证读它，不读"项目最新配置"；
+> ③ 本机没有那条引用、敏感值没保留、登记来自更新版本——一律显式拒绝（`run_config_*`），绝不回落成空 argv。
+> 细则见 `docs/rules/backend/figure-capture-and-execution.md`「运行参数（T03）」。
+
 所有"跑一个脚本"的入口统一经过一个不可变描述（字段名可按仓库风格调整）：
 
 ```python

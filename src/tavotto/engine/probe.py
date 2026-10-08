@@ -129,14 +129,18 @@ def _error_from_worker(
             params["project_env"] = detail.get("code", "")
         out = _err(
             ERROR_MISSING_DEPENDENCY,
-            f"缺少依赖包：{exc.module}（当前渲染环境里没有它）",
+            (
+                f"缺少依赖包：{exc.module}（当前渲染环境里没有它）"
+                if exc.module
+                else "缺少依赖包（含敏感参数的运行不显示包名）"
+            ),
             params=params,
             traceback_text=exc.traceback_text,
         )
         # 「能不能一键装上」（ADR 0019）。**素材库这条路必须也带上它**：
         # 用户打开旧项目走的就是这里，只在渲染端点上给恢复引导的话，
         # 「素材库里打不开、面板里能修」又是一次两个入口两个答案。
-        if figures_dir:
+        if figures_dir and exc.module:
             from . import deprepair
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
@@ -154,10 +158,20 @@ def _error_from_worker(
         # 文案由前端按 code 翻；`error` 给 `script_exited` 的占位符（`SystemExit: 2`
         # 那一行），`script_needs_arguments` 的 usage 在 traceback 里（pool 已接上）。
         lines = [ln for ln in (exc.traceback_text or "").splitlines() if ln.strip()]
+        params = {"error": (lines[-1].strip() if lines else str(exc))[:200]}
+        if exc.code == ERROR_NEEDS_ARGUMENTS:
+            # T03：用户给了精确 token 时（`argv_count` > 0）脚本自己的解析器仍拒绝；`parse_kind` 只在 worker
+            # 有 argparse 的实际证据时才有（missing_required / invalid_value / unknown）。
+            # 只带类别与个数，不带参数值。
+            extra = getattr(exc, "extra", None) or {}
+            if extra.get("argv_count"):
+                params["argv_count"] = str(int(extra["argv_count"]))
+            if extra.get("parse_kind"):
+                params["parse_kind"] = str(extra["parse_kind"])
         out = _err(
             exc.code,
             str(exc),
-            params={"error": (lines[-1].strip() if lines else str(exc))[:200]},
+            params=params,
             traceback_text=exc.traceback_text,
         )
         # 先 `exists()` 判空再 exit（ADR 0106）：脚本里写着、此刻哪儿都找不到的路径随错误带出
@@ -257,7 +271,11 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
 
 
 def probe(
-    figures_dir: str | Path, script: str, entries: list[str] | None = None, should_cancel=None
+    figures_dir: str | Path,
+    script: str,
+    entries: list[str] | None = None,
+    should_cancel=None,
+    run=None,
 ) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
@@ -280,6 +298,9 @@ def probe(
     **成功路径只执行一次**：build 好的热会话留在池里不 invalidate，随后的
     预览 / 渲染 / 登记拿着 (script, entry) 直接复用，不再重跑脚本。失败的
     entry 各自新建 worker（错误入口的进程绝不复用），互不污染。
+
+    `run`（T03）：用户给的精确 argv 的运行配置（`execspec.RunSelection`），None = 不带参数（旧行为）。
+    它同时是池键的一段：这次执行的热会话、作废、取消都只作用于这份配置，不碰同脚本别的参数。
 
     `should_cancel` 是协作取消的判据（app 层的 cancel 端点置 Event 并
     `pool.force_cancel` 硬杀在跑的 worker）：一旦为真，**不再尝试下一个
@@ -319,11 +340,13 @@ def probe(
                 ),
             }
 
+    run_ctx = {"run": run} if run is not None else {}
+
     def before_build(worker):
         # Cancellation may arrive while get() discovers an interpreter, before the
         # worker exists in the pool. Check again after every acquisition, including fallback.
         if cancelled():
-            if not pool.force_cancel(script, figures_dir, expected_worker=worker):
+            if not pool.force_cancel(script, figures_dir, expected_worker=worker, **run_ctx):
                 worker.force_kill()  # Already detached: never retire its replacement.
             raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
 
@@ -335,20 +358,22 @@ def probe(
         tried.append(entry)
         # 每次换 entry 都要换掉旧会话：worker 的 entry 是启动参数，
         # 复用旧进程等于一直用错的入口重试。
-        pool.invalidate(script, figures_dir)
+        pool.invalidate(script, figures_dir, run, only_run=True)
         try:
             # `pool.build` = get + ensure_built + **一次项目环境自动 fallback**
             # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——
             # 否则素材库里能打开的项目，`tavotto open` 打不开。
-            _worker, resp = pool.build(script, figures_dir, entry, before_build=before_build)
+            _worker, resp = pool.build(
+                script, figures_dir, entry, before_build=before_build, **run_ctx
+            )
         except pool.WorkerError as exc:
             if cancelled():
                 # worker 是被 cancel 硬杀的：报「进程崩溃」是把用户的取消
                 # 说成脚本的错。不再试下一个 entry——取消就是取消。
                 LOG.info("探测被取消 %s [entry=%s]", script, entry)
                 return {**empty, "tried": tried, "error": _cancel_err()}
-            pool.invalidate(script, figures_dir)
+            pool.invalidate(script, figures_dir, run, only_run=True)
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
                 first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)
@@ -369,6 +394,8 @@ def probe(
                 "dropped_figures": int(resp.get("dropped_figures") or 0),
                 # 这次试运行按哪一代改指表跑的（ADR 0106 §五）：登记 / 物化落地前核对
                 "remap_generation": getattr(_worker, "remap_generation", None),
+                # T03：这次执行绑定的运行配置引用（不透明 id；argv 原文不出现在结果里）
+                **({"run_config": run.config_id} if run is not None else {}),
             }
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:
@@ -382,7 +409,7 @@ def probe(
             offer = pool.missing_input_offer(script, figures_dir)
             if offer is not None:
                 first_error["missing_input"] = offer
-        pool.invalidate(script, figures_dir)
+        pool.invalidate(script, figures_dir, run, only_run=True)
 
     return {
         **empty,
@@ -425,7 +452,7 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
 
 
 def probe_and_register(
-    figures_dir: str | Path, script: str, cost: str = "medium", should_cancel=None
+    figures_dir: str | Path, script: str, cost: str = "medium", should_cancel=None, run=None
 ) -> dict:
     """探测成功就写进 tavotto_registry.json 并重载注册表。
 
@@ -438,7 +465,12 @@ def probe_and_register(
     取消（`should_cancel`）输给成功：脚本在取消到达前跑完了就是跑完了，
     照常登记——「已经发生的执行」不因迟到的取消而假装没发生。
     """
-    result = probe(figures_dir, script, should_cancel=should_cancel)
+    result = probe(
+        figures_dir,
+        script,
+        should_cancel=should_cancel,
+        **({"run": run} if run is not None else {}),
+    )
     if not result["stems"]:
         return {**result, "registered": False}
     return register_probed(figures_dir, script, result, cost=cost)
@@ -471,11 +503,20 @@ def register_probed(
     try:
         with inputremap.landing(figures_dir, result.get("remap_generation")):
             discover.register(
-                figures_dir, script, result["stems"], entry=result["entry"], cost=cost
+                figures_dir,
+                script,
+                result["stems"],
+                entry=result["entry"],
+                cost=cost,
+                # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让
+                # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
+                append=bool(result.get("run_config")),
             )
             registry.load(figures_dir)
             # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
             inputremap.record_registration(figures_dir, script)
+            if result.get("run_config"):
+                inputremap.record_registration(figures_dir, script, result["run_config"])
     except inputremap.RemapChanged as exc:
         LOG.info("试运行结果作废（%s）: %s", exc, script)
         return {

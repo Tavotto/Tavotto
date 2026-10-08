@@ -714,7 +714,18 @@
     },
     "title": "项目接入状态",
     "useScript": "用 {{script}}",
-    "write": "写入"
+    "write": "写入",
+    "argv": {
+      "title": "运行参数",
+      "none": "无",
+      "count": "{{n}} 项",
+      "hint": "每个参数单独一项，按顺序原样交给脚本（不会按空格拆开，空项也算一项）。不填就不带参数运行。",
+      "tokenAria": "{{script}} 的第 {{n}} 个参数",
+      "upAria": "把 {{script}} 的第 {{n}} 个参数上移",
+      "removeAria": "删除 {{script}} 的第 {{n}} 个参数",
+      "add": "添加参数",
+      "sensitive": "含密码或令牌（只保留在本次运行的内存里，重启后需重新输入）"
+    }
   },
   "registry": {
     "addToCanvas": "把 {{stem}} 添加到画布",
