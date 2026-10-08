@@ -7676,7 +7676,8 @@ def _set_project_environment(
 
     `candidate` + `expected_generation`（T05，ADR 0114）是**环境建议**上点的「使用」：候选 id 来自
     `recommendation.candidates[].id`，路径由后端自己的枚举换回（不接受调用方给）；`expected_generation` 是用户
-    看到建议那一刻的环境代，对不上（环境在这期间被重建）→ 409 `environment_changed`，不采用另一个环境。
+    看到建议那一刻的环境代，**必填**（缺 → 400 `environment_generation_required`）；对不上（环境在这期间被重建）→ 409
+    `environment_changed`，不采用另一个环境——体检之后、写入之前紧贴着再比一次（体检期间被重建同样 409、不落盘）。
     这是用户的明确动作：记 `automatic=False`；全局显式解释器压着时不假装能采用（`environment_locked`）。
     """
     root = str(require_project())
@@ -7925,7 +7926,8 @@ def api_dependency_plan():
 def api_dependency_install():
     """执行一个已经形成的计划。进度经 SSE `engine.dependency` 推送。
 
-    **请求体里只有 plan_id**：解释器、包名、版本、目标环境全部来自计划本身。
+    **请求体里是 plan_id + impact_digest**：解释器、包名、版本、目标环境全部来自计划本身；摘要是用户
+    看到的那一份影响的回显（必填，对不上就不执行）。
     用户看到的是「把 lmfit 装进 项目 .venv」，点下去执行的就必须是那一件事。
     """
     require_project()
@@ -7944,8 +7946,24 @@ def api_dependency_install():
         return jsonify(
             {"error": "这个修复计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
         ), 409
+    # `impact_digest`（必填，ADR 0115 / Codex r4217992305）：与联合准备同一道门。只带 plan_id 不行——点之前次要依赖的
+    # 约束可能变了（beta<2 → beta>=2），计划 id 照样有效，包名也没变，用户却没看过新的约束。缺 → 400，
+    # 对不上 → 409 `dependency_impact_changed`（认领之前、零副作用）
+    echoed = body.get("impact_digest")
+    if not isinstance(echoed, str) or not echoed:
+        return jsonify(
+            {
+                "error": "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。",
+                "code": engine_deprepair.ERROR_IMPACT_REQUIRED,
+            }
+        ), 400
     # 同一份计划只认领一次：另一个标签页先点了，这里得到的是在途的进度（`started: false`），不起第二个 pip
-    started = engine_deprepair.install_async(plan_id, _dependency_event_sink(current_ctx()))
+    try:
+        started = engine_deprepair.install_async(
+            plan_id, _dependency_event_sink(current_ctx()), confirmed_impact=echoed
+        )
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc, 409)
     return jsonify({"started": started, **engine_deprepair.progress(plan_id)})
 
 
@@ -7973,7 +7991,7 @@ def api_dependency_state():
 #
 #   GET   /api/engine/dependencies?script=…   只读：联合计划 + 可选目标 + 轮次（不装）
 #   POST  /api/engine/dependencies/plan        绑定一份计划（不装）；blocked / 没缺的 → 409 + joint
-#   POST  /api/engine/dependencies/prepare     执行那个计划（请求体只有 plan_id）
+#   POST  /api/engine/dependencies/prepare     执行那个计划（请求体 plan_id + impact_digest，后者必填）
 #   POST  /api/engine/dependencies/cancel      取消；过了提交点回 accepted=false, reason=committed
 #   POST  /api/engine/dependencies/skip        「不准备，直接跑」：这个脚本的跑前门从此放行
 #   PATCH /api/engine/dependencies             选组（项目设置 `dependency_groups`）
@@ -8073,13 +8091,22 @@ def api_dependencies_prepare():
         ), 409
     # 认领与取消句柄都在 `prepare_async` 里、起线程**之前**：202 一回去用户就能取消，哪怕线程还在
     # 重算事实、还没拿锁；第一次完成前重复提交不起第二个线程，只把在途的进度交回去（Codex #470 P1）
-    # `impact_digest`（可选，T06）：调用方回显它看到的影响摘要；给了就必须与计划此刻的实际影响一致
+    # `impact_digest`（必填，T06 / ADR 0115）：调用方回显**它给用户看的**那份影响摘要，且必须与计划此刻的实际
+    # 影响一致。只带 plan_id 不行——弹框开着的期间环境代 / 约束 / 私有 Python 需求都可能变，而包名不变的计划
+    # 会照样通过前端的名字比对，执行用户没看过的影响（Codex r4217232854）。缺 → 400，对不上 → 409
     echoed = body.get("impact_digest")
+    if not isinstance(echoed, str) or not echoed:
+        return jsonify(
+            {
+                "error": "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。",
+                "code": engine_deprepair.ERROR_IMPACT_REQUIRED,
+            }
+        ), 400
     try:
         started = engine_deprepair.prepare_async(
             plan_id,
             _dependency_event_sink(current_ctx()),
-            confirmed_impact=echoed if isinstance(echoed, str) else None,
+            confirmed_impact=echoed,
         )
     except engine_deprepair.RepairError as exc:
         return _repair_error(exc, 409)

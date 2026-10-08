@@ -901,19 +901,21 @@ class SessionService:
     ) -> tuple[bool, tuple[_DepAttempt, dict] | None]:
         """会话锁内：核对修订（调用方已做）→ 核对回显的影响摘要 → 失效检查 → 认领动作 → 交给 `deprepair`。
         比较—消费—提交副作用之间没有无保护窗口；重复点击 / 另一个标签页走 `act` 里的幂等分支，不会到这里。"""
-        if echoed is not None and echoed != action.impact_digest:
+        # 任何会装包的动作（受管 / 项目 venv / 私有 Python / 用户自己的环境……）都必须由**调用方**回显它看到的
+        # 影响摘要；服务端持有的 `action.impact_digest` 只用来比对，绝不替调用方填进执行器（Codex r4218802478）
+        if not isinstance(echoed, str) or not echoed:
+            raise SessionError(
+                ERROR_IMPACT_UNCONFIRMED,
+                "执行依赖准备需要带上你看到的影响摘要（impact_digest）才能确认",
+                400,
+                {"field": "impact_digest"},
+            )
+        if echoed != action.impact_digest:
             # 调用方看到的不是这个动作现在的影响（读了旧报告）：动作本身仍有效，不标失效；把现在的影响交回去
             raise self._impact_changed(
                 sess,
                 {"impact": action.impact_core, "impact_digest": action.impact_digest},
                 stale=False,
-            )
-        if action.impact.get("modifies_user_environment") and echoed is None:
-            raise SessionError(
-                ERROR_IMPACT_UNCONFIRMED,
-                "这会直接修改你自己的 Python 环境，需要带上你看到的影响摘要（impact_digest）才能确认",
-                400,
-                {"field": "impact_digest"},
             )
         if self._has_active_attempt(sess):
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
@@ -942,7 +944,7 @@ class SessionService:
             got = prepare(
                 project_root=sess.project_root,
                 script=sess.plan.script,
-                digest=action.impact_digest,
+                digest=echoed,
                 target_kind=action.target_kind,
                 module=action.module,
                 scope_policy=action.scope_policy,

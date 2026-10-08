@@ -31,7 +31,7 @@
 * 集合 / 目标 / 环境代 / 写入范围 / 私有 Python 下载任一变了摘要就变——旧同意**不覆盖**新增范围；以后新增一类影响要升 `IMPACT_VERSION`，
   旧版本摘要永远对不上；
 * 对不上 → `dependency_impact_changed`（HTTP 409；会话里 `preparation_impact_changed`），**认领之前、零副作用**，响应带此刻的实际影响让用户对着它重新确认；
-* 会改用户自己环境的动作（`modifies_user_environment`）必须**回显**它看到的摘要（`impact_digest`），光"点了一下"不够；使用（采用）环境不含修改权限，不变。
+* 会改用户自己环境的动作（`modifies_user_environment`）必须**回显**它看到的摘要（`impact_digest`），光"点了一下"不够；使用（采用）环境不含修改权限，不变。`POST /api/engine/dependencies/prepare` 对所有计划都必填 `impact_digest`（缺 → 400 `dependency_impact_required`）。 单包 `POST /api/engine/dependency/install` 与 MCP `prepare_dependencies=`（`prepare_impact_digest`）同一道门：每一个会执行依赖变更的入口都要求并校验摘要，不止联合准备端点。
 
 ### 二、准备会话的 `prepare_dependencies` 动作
 
@@ -51,7 +51,7 @@
 
 `deprepair.unless_installing(project, action)` 在 `_lock` 内：该项目有依赖作业在途 → `environment_mutating`；认领（`_claim`）与它同一把锁。`PATCH /api/engine/environment`
 （项目范围的采用 / 选回默认）经它写；候选环境本身正被别的安装改动时一并拒绝。另一个方向：计划记下形成那一刻项目级解释器决定的签名（`selection_signature`），
-执行前再比，期间用户采用了别的环境 → `repair_plan_stale`，一个字节不装。依赖安装自己写下的记录（`trigger=dependency_repair`）不算"用户的决定"。
+执行前再比，期间用户采用了别的环境 → `repair_plan_stale`，一个字节不装；签名在目标解析 / 事实探测**之前**取、形成计划前再比一次（变了不发计划）。依赖安装自己写下的记录（`trigger=dependency_repair`）不算"用户的决定"。
 
 ### 四、项目内多作用域依赖互斥：不硬合并，给明确的出路（D04）
 
