@@ -280,7 +280,7 @@ describe('Agent 详情', () => {
     expect(vi.mocked(setAiEndpointActive)).toHaveBeenCalledWith('codex', 'glm')
   })
 
-  it('删除接口先就地确认：点「删除」不发请求，Esc 退回，确认后才发（2026-09-14 二审 A2）', async () => {
+  it('删除接口：在行尾 ⋯ 里，是危险项；先确认（Esc / 取消 = 不删），确认后才发（2026-09-14 二审 A2，2026-10-07 §9.1）', async () => {
     vi.mocked(deleteAiEndpoint).mockResolvedValue(capsOf([agentCaps()]))
     await openDetail(capsOf([agentCaps()], {
       endpoints: [{
@@ -289,25 +289,38 @@ describe('Agent 详情', () => {
         default_model: 'm', wire_api: 'chat', has_key: true, key_hint: '…abcd',
       }],
     }))
-    const del = () => byName(ag('detail.delete'))!
-    await act(async () => del().click())
-    expect(vi.mocked(deleteAiEndpoint), '第一下不许发请求').not.toHaveBeenCalled()
-    const group = document.querySelector('[data-endpoint-delete-confirm="kimi"]') as HTMLElement
-    expect(group, '没有出现就地确认').toBeTruthy()
-    expect(group.textContent).toContain(ag('detail.deleteConfirm', { label: 'Kimi' }))
-    // 焦点落在「取消」——Enter 是安全的那一边
-    expect((document.activeElement as HTMLElement).textContent).toBe(t('actions.cancel'))
-    // Esc 退回：确认组消失，仍未发请求
-    await act(async () => {
-      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    })
-    expect(document.querySelector('[data-endpoint-delete-confirm]')).toBeNull()
+    // 行上不再常驻「编辑 / 删除」两颗钮
+    expect(byName(ag('detail.delete'))).toBeUndefined()
+    const pickDelete = async () => {
+      const more = document.querySelector<HTMLButtonElement>('[data-endpoint-menu="kimi"]')!
+      expect(more, '这一行没有 ⋯').toBeTruthy()
+      await act(async () => {
+        more.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+        await Promise.resolve()
+      })
+      const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (m) => m.textContent?.includes(ag('detail.delete')),
+      )!
+      expect(item, '⋯ 里没有删除').toBeTruthy()
+      await act(async () => item.click())
+    }
+    const answer = async (ok: boolean) => {
+      const req = useUiStore.getState().confirm
+      expect(req, '没有弹出确认').toBeTruthy()
+      expect(req!.danger).toBe(true)
+      expect(JSON.stringify(req!.title)).toContain('deleteConfirm')
+      await act(async () => {
+        useUiStore.getState().setConfirm(null)
+        req!.resolve(ok)
+      })
+      await act(async () => {})
+    }
+    await pickDelete()
+    expect(vi.mocked(deleteAiEndpoint), '点了删除项不许直接发请求').not.toHaveBeenCalled()
+    await answer(false)
     expect(vi.mocked(deleteAiEndpoint)).not.toHaveBeenCalled()
-    // 再点一次，这次确认
-    await act(async () => del().click())
-    const confirm = [...document.querySelector('[data-endpoint-delete-confirm]')!.querySelectorAll('button')]
-      .find((b) => b.textContent === ag('detail.delete'))!
-    await act(async () => confirm.click())
+    await pickDelete()
+    await answer(true)
     expect(vi.mocked(deleteAiEndpoint)).toHaveBeenCalledWith('kimi')
   })
 
