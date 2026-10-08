@@ -44,7 +44,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import ntpath
 import os
+import posixpath
 import stat
 import threading
 import time
@@ -198,18 +200,39 @@ def _registered_stems(root: Path) -> dict[str, list[str]]:
     return {script: list(reg.stems_of(script)) for script in reg.all_scripts()}
 
 
-def _no_follow_isfile(budget: scanbudget.Budget):
+def _project_relative_stem(stem: object) -> bool:
+    """注册表里的 stem 能不能当「项目内相对名」拼进路径：只认字符串，拒绝绝对（POSIX / Windows 两种写法都拒，
+    与当前操作系统无关）、盘符、UNC / 以分隔符开头、含 NUL、任一分量是 `..`。子目录 `sub/plot` 合法。
+    这一关在 `os.path.join` **之前**——拼出来再判太晚：Windows 上 `lstat` 一个 UNC 路径就已经同步连出去了。"""
+    if not isinstance(stem, str) or not stem or "\0" in stem:
+        return False
+    if posixpath.isabs(stem) or ntpath.isabs(stem) or stem[0] in "/\\":
+        return False
+    if ntpath.splitdrive(stem)[0]:
+        return False
+    return ".." not in stem.replace("\\", "/").split("/")
+
+
+def _no_follow_isfile(budget: scanbudget.Budget, root: Path):
     """扫描路径给 `figcapture.find_original_artifact(isfile=…)` 的谓词：只 lstat、不跟随，每问一次记一次预算。
 
     符号链接 / Windows 路径替身（junction、指向 UNC 的重解析点）一律不算原件——与素材清单拒绝这类重定向是
-    同一条规则（`scanbudget.is_redirect`），目标（可能是不可达的 UNC）不被探。预算用完 / 取消 / 超时后一律 False。
+    同一条规则（`scanbudget.is_redirect`），目标（可能是不可达的 UNC）不被探。拼接后的路径再做一次词法包含性
+    校验（归一化 + `startswith` 单独控制通往 lstat 的分支，CodeQL py/path-injection 的 barrier 形状）；
+    项目内中间目录若是链接 / 路径替身同样不探。预算用完 / 取消 / 超时后一律 False。
     GUI 库路径不传它，仍用默认的跟随式 `os.path.isfile`。"""
+    real_root = os.path.normpath(os.fspath(root))
 
     def isfile(path) -> bool:
         if not budget.charge_entry():
             return False
+        norm = os.path.normpath(os.fspath(path))
+        if not norm.startswith(real_root.rstrip(os.sep) + os.sep):
+            return False
+        if scanbudget.redirected_component(real_root, norm) is not None:
+            return False
         try:
-            st = os.lstat(path)
+            st = os.lstat(norm)
         except OSError:
             return False
         return not scanbudget.is_redirect(st) and stat.S_ISREG(st.st_mode)
@@ -217,28 +240,44 @@ def _no_follow_isfile(budget: scanbudget.Budget):
     return isfile
 
 
-def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> set[str]:
+def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> tuple[set[str], bool]:
     """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目里有同名的图文件，或这张图被某次执行捕获过
     （`probe.was_captured`：runtime cache 里有物化记录）。「有同名的图文件」只认 `figcapture.find_original_artifact`
     ——项目根一层、`ARTIFACT_EXTS`——与 handoff / probe 找原件是同一份判据，不另立「素材在哪」的第二条规则
     （递归素材清单里的 `archive/fig.pdf` 不是这个脚本的原件，不算连接）。
 
+    回 `(已连接的脚本, 是否查全)`：预算 / 取消 / 超时在查的途中耗尽时第二项为 False——没查到 ≠ 没连接，
+    调用方不得据此派生默认目标（三态里的「不确定」）。
+
+    扫描路径（有 `budget`）上，stem 先过 `_project_relative_stem`（绝对 / 盘符 / UNC / `..` 的 stem 不探、
+    不算连接）；GUI 库路径（无 `budget`）保持原行为。
+
     打开项目时的静态扫描会先把字面量 savefig 的图名写进注册表（T00 deliberate-boundary）——那只是猜测，脚本一次都没
     跑过、什么都打不开。只按「注册表里有」就报 `already_connected`（「素材已可编辑」）是假话，而且会把只有脚本的项目的
     「准备并运行」入口藏起来（T11 真首跑发现）。只读：文件名比对 + 数据目录里的 cache 元数据，不执行、不起解释器。"""
-    isfile = _no_follow_isfile(budget) if budget is not None else os.path.isfile
+    isfile = _no_follow_isfile(budget, root) if budget is not None else os.path.isfile
+    complete = True
 
     def linked(script: str, stems: list[str]) -> bool:
+        nonlocal complete
         for stem in stems:
-            if budget is not None and budget.stop_reason() is not None:
-                return False
+            if budget is not None:
+                if not _project_relative_stem(stem):
+                    continue
+                if budget.stop_reason() is not None:
+                    complete = False
+                    return False
             if figcapture.find_original_artifact(str(root), stem, isfile=isfile) is not None:
                 return True
+            if budget is not None and budget.stop_reason() is not None:
+                complete = False  # 预算在 isfile 内耗尽：上面的「没找到」是被截断的，不是真没有
+                return False
             if probe.was_captured(root, script, stem):
                 return True
         return False
 
-    return {script for script, stems in _registered_stems(root).items() if linked(script, stems)}
+    found = {script for script, stems in _registered_stems(root).items() if linked(script, stems)}
+    return found, complete
 
 
 def _rel_dir_posix(root: Path, directory: Path) -> str:
@@ -375,6 +414,7 @@ def _targets_of(
     items: list[dict],
     linked: set[str] | None = None,
     budget: scanbudget.Budget | None = None,
+    linkage_known: bool = True,
 ) -> tuple[list[dict], str | None, str]:
     """条目 → 目标列表、默认目标、选择状态。
 
@@ -410,6 +450,9 @@ def _targets_of(
         t["linked"] = t["script"] in linked
     pending = [t for t in targets if t["role"] == ROLE_PLOT and not t["linked"]]
     unknown = any(t["role"] == ROLE_UNKNOWN for t in targets)
+    if len(pending) == 1 and not unknown and not linkage_known:
+        # 「已连接」没查全（预算 / 取消 / 超时耗尽）：这一个「未连接」可能只是没查到——不派生 single、不给准备动作
+        return targets, None, "incomplete"
     if len(pending) == 1 and not unknown:
         # 还有未核验的 unknown 目标时不替用户挑默认（它可能才是要跑的那个）：落到下面的 ambiguous
         return targets, pending[0]["script"], "single"
@@ -584,6 +627,11 @@ def phase_of(state: str, targets: list[dict], choice: str, assets: int, partial:
             "phase": PHASE_ACTION_REQUIRED,
             "outcome": {"kind": OUTCOME_FAILED, "code": "project_scan_failed"},
         }
+    if choice == "incomplete":
+        return {
+            "phase": PHASE_ACTION_REQUIRED,
+            "outcome": {"kind": OUTCOME_UNCHECKED, "code": "scan_incomplete"},
+        }
     if choice == "single":
         return {"phase": PHASE_AWAITING_CONFIRMATION, "outcome": {"kind": OUTCOME_TARGET_FOUND}}
     if choice == "ambiguous":
@@ -691,12 +739,12 @@ def scan(
         asset_kinds[kind] = asset_kinds.get(kind, 0) + 1
 
     # 已停止的遍历不再起新的文件系统发现：停了就退回「注册表里有」的粗判（不碰磁盘）
-    linked = (
-        _linked_scripts(root, budget)
-        if budget.stop_reason() is None
-        else {i["script"] for i in items if i["registered"]}
-    )
-    targets, default_target, choice = _targets_of(root, items, linked, budget)
+    if budget.stop_reason() is None:
+        linked, linkage_known = _linked_scripts(root, budget)
+    else:
+        linked, linkage_known = {i["script"] for i in items if i["registered"]}, False
+    linkage_known = linkage_known and budget.stop_reason() is None
+    targets, default_target, choice = _targets_of(root, items, linked, budget, linkage_known)
     script_for_env = default_target or (targets[0]["script"] if len(targets) == 1 else None)
     # A stopped traversal must not start fresh filesystem discovery. Keep these
     # stages separately guarded: cancellation/timeout can occur in either one.

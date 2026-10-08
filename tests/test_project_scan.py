@@ -1293,7 +1293,92 @@ def test_linked_check_stops_on_an_expired_budget_and_returns_partial(tmp_path):
     _asset(root, "fig.pdf")
     budget = scanbudget.Budget(cancel=lambda: True)
 
-    assert projscan._linked_scripts(root, budget) == set()
+    assert projscan._linked_scripts(root, budget) == (set(), False)
     assert budget.stopped == scanbudget.ISSUE_CANCELLED
     # 无预算（非扫描路径）仍照旧跟随式判据
-    assert projscan._linked_scripts(root) == {"fig.py"}
+    assert projscan._linked_scripts(root) == ({"fig.py"}, True)
+
+
+@pytest.mark.parametrize("kind", ["absolute", "drive", "unc", "dotdot"])
+def test_a_registered_stem_that_leaves_the_project_is_never_probed(tmp_path, monkeypatch, kind):
+    """#819 r4221029694：注册表 stem 为绝对 / 盘符 / UNC / `../` 时，拼接前就拒绝——lstat / isfile 一次都不碰项目外路径，
+    也不把项目外（或兄弟目录里）的同名图当成 linked。"""
+    root = _project(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "fig.pdf").write_bytes(b"%PDF-1.4\n")
+    (tmp_path / "sibling.pdf").write_bytes(b"%PDF-1.4\n")
+    stem = {
+        "absolute": str(outside / "fig"),
+        "drive": "C:\\\\evil\\fig",
+        "unc": "\\\\attacker\\share\\fig",
+        "dotdot": "../sibling",
+    }[kind]
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": [stem]}}}),
+    )
+    probed: list[str] = []
+    real_lstat, real_isfile = os.lstat, os.path.isfile
+
+    def spy_lstat(p, *a, **k):
+        probed.append(os.fspath(p))
+        return real_lstat(p, *a, **k)
+
+    def spy_isfile(p):
+        probed.append(os.fspath(p))
+        return real_isfile(p)
+
+    monkeypatch.setattr(os, "lstat", spy_lstat)
+    monkeypatch.setattr(os.path, "isfile", spy_isfile)
+
+    linked, complete = projscan._linked_scripts(root, scanbudget.Budget())
+
+    assert linked == set()
+    assert complete is True
+    base = os.path.normpath(str(root))
+    leaked = [
+        p
+        for p in probed
+        if "sibling" in p
+        or "attacker" in p
+        or "evil" in p
+        or "outside" in p
+        or not os.path.normpath(p).startswith(base)
+    ]
+    assert leaked == []
+
+
+def test_a_subdirectory_stem_is_still_a_valid_project_stem():
+    assert projscan._project_relative_stem("sub/plot")
+    assert projscan._project_relative_stem("fig")
+    for bad in ("", "/etc/x", "\\\\h\\s\\x", "C:x", "a/../b", "..", "a\\..\\b", "x\0y"):
+        assert not projscan._project_relative_stem(bad)
+    assert not projscan._project_relative_stem(None)
+
+
+def test_budget_expiring_inside_isfile_is_scan_incomplete_not_a_single_target(
+    tmp_path, monkeypatch
+):
+    """#819 r4221029709：预算在 isfile 内耗尽时「没找到」不等于「没连接」。单脚本不得派生 single 目标 / 准备动作。"""
+    root = _project(tmp_path)
+    _registered_fig(root)
+    _asset(root, "fig.pdf")
+    budget = scanbudget.Budget()
+    real = projscan.figcapture.find_original_artifact
+
+    def expiring(project_root, stem, *, isfile=os.path.isfile):
+        budget._stopped = scanbudget.ISSUE_TIME  # 查原件的途中预算用尽，谓词报「没找到」
+        return None
+
+    monkeypatch.setattr(projscan.figcapture, "find_original_artifact", expiring)
+
+    report = projscan.scan(root, budget=budget)
+
+    assert real is not expiring
+    assert report["target_choice"] != "single"
+    assert report["phase"] != "awaiting_confirmation"
+    assert report["outcome"].get("code") == "scan_incomplete"
+    assert not any(a["kind"] == "prepare" for a in report["actions"])
