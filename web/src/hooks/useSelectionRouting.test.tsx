@@ -1,4 +1,5 @@
 import { act } from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ElementTree } from '@/components/left/ElementTree'
@@ -55,7 +56,8 @@ function Harness() {
         useUiStore.getState().setElementPanel(panel.id)
       }
       useUiStore.getState().setSelectedGid(gids[0])
-    }} /><span data-canvas-same /></div>
+    }} /><span data-canvas-same /><span data-canvas-drag
+      onPointerDown={() => useInteractionStore.getState().begin('element')} /></div>
   </TooltipProvider>
 }
 
@@ -273,6 +275,62 @@ describe('selection routing keeps the active drawer workflow', () => {
     })
     pointer('[data-canvas-hit]')
     expectTreeSelection([gids[0]])
+  })
+
+  it('keeps the tree when capture flushes before the target starts tracking', () => {
+    openElements()
+    pointer(treeRow(gids[0]))
+    const captured: Array<{ kind: string; leftOpen: boolean; rightOpen: boolean }> = []
+    const observeCapture = (e: Event) => {
+      if (e.target !== node('[data-canvas-drag]')) return
+      // Flush the capture request before React's target handler has begun tracking.
+      flushSync(() => root.render(<Harness />))
+      const ui = useUiStore.getState()
+      captured.push({ kind: useInteractionStore.getState().kind, leftOpen: ui.leftOpen, rightOpen: ui.rightOpen })
+    }
+    document.addEventListener('pointerdown', observeCapture, true)
+    try {
+      act(() => node('[data-canvas-drag]').dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, button: 0, pointerId: 9,
+      })))
+    } finally {
+      document.removeEventListener('pointerdown', observeCapture, true)
+    }
+    expect(captured).toEqual([{ kind: 'none', leftOpen: true, rightOpen: false }])
+    expect(useInteractionStore.getState().kind).toBe('element')
+    expectTreeSelection([gids[0]])
+    act(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 })))
+    expectTreeSelection([gids[0]])
+    act(() => useInteractionStore.getState().end())
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+
+  it('cancelling an unreleased canvas pointer preserves the next tree handoff', () => {
+    openElements()
+    pointer(treeRow(gids[0]))
+    act(() => node('[data-canvas-same]').dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, button: 0, pointerId: 9,
+    })))
+    expectTreeSelection([gids[0]])
+    act(() => document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 9 })))
+    expectTreeSelection([gids[0]])
+    pointer('[data-canvas-same]')
+    act(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })))
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+
+  it('native right-sidebar dismissal cancels an unreleased wide canvas pointer', () => {
+    openElements('wide')
+    pointer(treeRow(gids[0]))
+    act(() => node('[data-canvas-same]').dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, button: 0, pointerId: 9,
+    })))
+    act(() => useUiStore.getState().toggleRight())
+    act(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 })))
+    expect(useUiStore.getState().rightOpen).toBe(false)
+    expect(useUiStore.getState().leftOpen).toBe(true)
   })
 
   it.each(['move', 'resize', 'element'] as const)('%s defers sidebar routing until tracking ends', kind => {
