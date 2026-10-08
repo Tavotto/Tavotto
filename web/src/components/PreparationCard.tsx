@@ -195,7 +195,7 @@ const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
 function toneIcon(tone: PrepTone, state: string): ReactNode {
   if (!tone) return null
   // 几个状态有自己更具体的记号（设计稿 v2）
-  if (state === 'no_figure') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
+  if (state === 'no_figure' || state === 'no_figure_raster') return <ImageOff size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'offline') return <Unplug size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'restarted') return <RotateCcw size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
   if (state === 'input_secret') return <KeyRound size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
@@ -544,6 +544,7 @@ const ARGS_FOLDED = new Set([
   'rejected',
   'failed',
   'no_figure',
+  'no_figure_raster',
   'completed',
   'completed_unlinked',
   'cancelled',
@@ -569,6 +570,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.openSettings')
     case 'open_registry':
       return pt('btn.openRegistry')
+    case 'open_assets':
+      return pt('btn.openAssets')
     case 'background':
       return pt('btn.background')
     case 'dismiss':
@@ -624,6 +627,11 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
       case 'open_registry':
         useProjectReadinessStore.getState().openCenter({ source: 'panel' })
         return null
+      case 'open_assets':
+        // 脚本自己写出的图片文件，素材库本来就列（不新造导入入口）；卡片收起让位给素材库
+        ui.setLeftTab('assets')
+        ui.setGuideCard('closed')
+        return null
       case 'background':
         ui.setGuideCard('pill')
         return null
@@ -655,7 +663,12 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
 
   const p = view.primary
   const disabled = view.primaryDisabled && !(p?.kind === 'workdir' && workdir !== null)
-  const title = localError ?? pt(`line.${view.sentence.key}`, view.sentence.values)
+  const title =
+    localError ??
+    // 跑完没出 Matplotlib 图、但脚本自己用位图库写了图片：这句话独立成一组键（`prep.rasterHint.*`）
+    (view.state === 'no_figure_raster'
+      ? pt('rasterHint.line', view.sentence.values)
+      : pt(`line.${view.sentence.key}`, view.sentence.values))
   const attrs = {
     'data-prep-state': localError ? 'action_failed' : view.state,
     'data-prep-phase': report?.phase ?? '',
@@ -1000,6 +1013,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         <TaskDiagnostic key={dep.plan_id} kind="dependency" refId={dep.plan_id} folded={false} />
       )}
       {view.state === 'no_figure' && <p data-prep-nofigure-why>{pt('detail.noFigureWhy')}</p>}
+      {view.state === 'no_figure_raster' && <p data-prep-nofigure-raster-why>{pt('rasterHint.why')}</p>}
       {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
       )}

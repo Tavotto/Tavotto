@@ -4777,6 +4777,10 @@ export default interface Resources {
         "pending": "待准备",
         "pendingMany_other": "{{count}} 个绘图脚本待准备"
       },
+      "rasterHint": {
+        "line": "这个脚本是用 {{library}} 直接画成图片的，不是 Matplotlib 图",
+        "why": "可以把它生成的图片文件加进来排版；想逐个元素编辑，需要改成用 Matplotlib 画。"
+      },
       "row": {
         "attention": "需要处理",
         "cancelled": "已停止",

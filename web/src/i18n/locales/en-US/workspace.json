@@ -1036,6 +1036,10 @@
       "captured": "A figure was captured",
       "notCaptured": "No figure was captured"
     },
+    "rasterHint": {
+      "line": "This script draws an image directly with {{library}}, not a Matplotlib figure",
+      "why": "You can bring the image file it saves in to lay out; to edit it element by element, it has to be redrawn with Matplotlib."
+    },
     "row": {
       "checking": "Checking",
       "offline": "Disconnected",

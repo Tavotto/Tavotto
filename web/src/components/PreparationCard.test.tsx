@@ -494,6 +494,30 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(useUiStore.getState().guideCard).toBe('closed')
   })
 
+  it('跑完没图、但脚本自己用位图库写了图片：一句话说原因 + 一个主按钮去素材库，其余折叠在详情', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow' } }))
+    expect(panel().dataset.prepState).toBe('no_figure_raster')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
+    expect(primary()?.textContent).toBe('打开素材库')
+    // 一句话 + 一个主按钮：详情没展开时说明不在页面上
+    expect(panel().querySelector('[data-prep-nofigure-raster-why]')).toBeNull()
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-nofigure-raster-why]')?.textContent).toContain('改成用 Matplotlib 画')
+    expect(details()?.querySelector('[data-prep-nofigure-why]')).toBeNull()
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  it('没有提示（老后端 / 判不出）的跑完没图照旧', async () => {
+    await mount()
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: null }))
+    expect(panel().dataset.prepState).toBe('no_figure')
+    expect(primary()?.textContent).toBe('知道了')
+  })
+
   it('运行出错：详情第一行是脚本的错误原文（不是字面量占位符），下面是这一次的诊断', async () => {
     await mount()
     await openWith(

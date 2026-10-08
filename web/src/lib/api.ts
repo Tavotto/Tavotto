@@ -4749,6 +4749,9 @@ export interface PreparationAction {
 }
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
+/** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
+export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
+
 export interface PreparationReport {
   session_version: number
   session_id: string
@@ -4797,6 +4800,8 @@ export interface PreparationReport {
   captured?: CapturedFigureDescriptor[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
+  /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
+  no_figure_hint?: { kind: 'raster_script'; library: RasterLibrary } | null
   result: {
     status: string
     error?: { code?: string; message?: string; reason?: string; module?: string } | null

@@ -213,6 +213,51 @@ def test_an_attempt_without_figures_reports_no_captured_figures(
     assert final["captured"] == []  # 执行完成 ≠ 首图成功：没有图就不给「进入编辑」的东西
 
 
+def _no_figure_report(client, root, source: str) -> dict:
+    (root / "fig.py").write_text(source, encoding="utf-8")
+    report = _create(client, {"script": "fig.py"}).get_json()
+    assert report["no_figure_hint"] is None  # 还没有任何执行：没有「没出图」可解释
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    return _terminal(client, sid, timeout=10.0)
+
+
+def test_a_pillow_script_without_figures_gets_a_raster_hint(client, tmp_path, fake_pool, sessions):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    fake_pool["build_resp"] = lambda: {
+        "ok": True,
+        "stems": {},
+        "descriptors": [],
+        "runtime": {"pid": 1},
+    }
+    final = _no_figure_report(
+        client,
+        root,
+        "from PIL import Image\nImage.new('RGB', (4, 4)).save('out.png')\n",
+    )
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"] == {"kind": "raster_script", "library": "pillow"}
+    # 只是提示：事实与 outcome 不变
+    assert final["facts"] == {"execution_finished": True, "figure_captured": False}
+
+
+def test_a_matplotlib_script_without_figures_gets_no_hint(client, tmp_path, fake_pool, sessions):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    fake_pool["build_resp"] = lambda: {
+        "ok": True,
+        "stems": {},
+        "descriptors": [],
+        "runtime": {"pid": 1},
+    }
+    final = _no_figure_report(
+        client, root, "import matplotlib.pyplot as plt\nplt.subplots()\nplt.close('all')\n"
+    )
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"] is None
+
+
 class _KillableWorker(_FakeWorker):
     force_killed = False
 

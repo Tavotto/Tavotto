@@ -179,6 +179,12 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   = runtime cache 里有它的物化记录（无参数或这个脚本登记过的任一份运行配置）；打开项目时静态扫描先登记、条件分支里从没产出过的
   字面量图名被替换掉时不报（那句话对它是假话）。cache 按体积回收过的旧图会漏报——宁可少说不说假话。看护 `tests/test_probe_owner_and_unlinked_stems.py`、
   e2e `registry-center-preparation.spec.ts`。
+- **`no_figure_hint`（跑完没出图的原因）**：outcome 为 `execution_finished_no_figure` 时报告多一个键，`{"kind": "raster_script", "library": pillow|opencv|imageio|skimage}`，
+  其余时候 `null`（老后端没有这个键）。判据 `engine/rasterhint.detect`：**脚本源码**（含 `importscan` 有界跟进的本地模块）里有保存位图的调用
+  （`cv2.imwrite` / `imageio.imwrite…` / `skimage.io.imsave` / 导入了 PIL 的文件里非模块对象的 `.save(...)`，字面量扩展名不是图片格式的不算），
+  且这些文件**没有 import matplotlib 家族**（import 了没建 figure 也不提示——宁可不说）；扫描看不全（截断 / 读不了 / 动态 import）一律 `null`。
+  只是提示：不改 `outcome` / `facts`，不改捕获；不指认具体文件（引擎没有「脚本写了哪些文件」的记录）。界面一句话 + 主按钮「打开素材库」（现成入口），
+  原因说明折叠在详情。看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
   报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试
   （outcome `needs_dependencies`，`rerun_required`），不叫"从异常点继续"。认领与失效检查在会话锁内。
