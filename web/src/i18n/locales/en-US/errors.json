@@ -147,6 +147,7 @@
     "project_env_unusable": "The project environment couldn’t start.",
     "project_env_worker_import_failed": "The project environment can import matplotlib, but Tavotto’s rendering code can’t start inside it.",
     "project_python_unusable": "The interpreter chosen for this project can't be used; Tavotto won't silently switch to another one. Set it again in the rendering-environment settings, or clear it to return to automatic selection.",
+    "project_scan_not_started": "This project has not been checked yet (or the app was restarted). Run the check again.",
     "publish_failed": "The file was written but couldn't be moved into the export folder: {{error}}.",
     "python_missing": "No usable Python found on this machine. Install Python 3.10 or newer and retry.",
     "read_failed": "Couldn’t read: {{reason}}",
@@ -428,7 +429,7 @@
     "workdirChooseConflicts": "Files that differ between the two: {{files}}",
     "workdirChooseLater": "Later",
     "workdirChooseRootEvidence": "The data {{script}} reads is only found under the project root. Pick a working directory; this project is asked once.",
-    "workdirChooseRun": "Run",
+    "workdirChooseRun": "Run here",
     "workdirChooseScriptDirEvidence": "{{script}} looks for its data files in the current directory (glob / listdir / exists), which finds nothing in the sandbox; it needs to run in its own directory. Pick a working directory; this project is asked once.",
     "workdirChooseSuggest": "This figure hasn't been assigned a working directory yet.",
     "workdirChooseTitle": "Which directory should the script run in?",
@@ -626,7 +627,11 @@
     "inputRemapLabel": "Remembered data locations",
     "inputRemapAnyRelative": "(relative paths)",
     "inputRemapTargetGone": "(this location no longer exists)",
-    "inputRemapForget": "Remove"
+    "inputRemapForget": "Remove",
+    "workdirChooseWritesShort": "In a real directory, files the script writes land in the project.",
+    "workdirChooseWritesMore": "Details",
+    "dependencyPrepareHeading": "Prepare environment",
+    "missingInputStep": "{{n}}/{{total}}"
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",

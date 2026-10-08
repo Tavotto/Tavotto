@@ -98,6 +98,9 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
     e.stopPropagation()
     if (obj.type === 'text') useUiStore.getState().setEditingText(obj.id)
     else if (obj.type === 'panel') {
+      // 权威同步中图内命中层暂时让位，双击会落到这里。已经在编辑的面板
+      // 不能再进一次：enterElementEdit 会清掉图内选区，⌥ 双击也会误选整图。
+      if (useUiStore.getState().elementPanelId === obj.id) return
       // 可参数化面板双击进图内编辑，普通面板双击进裁剪
       // （旋转过的面板裁剪框方向会与画布对不上，先不进裁剪态）
       if (obj.script) enterElementEdit(obj.id)

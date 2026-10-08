@@ -147,6 +147,7 @@
     "project_env_unusable": "项目环境无法启动。",
     "project_env_worker_import_failed": "项目环境能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来。",
     "project_python_unusable": "为这个项目指定的解释器用不了；Tavotto 不会自动换成别的环境。请在渲染环境设置里重新指定，或清除它回到自动选择。",
+    "project_scan_not_started": "这个项目还没有开始检查（或应用重启过）。重新检查即可。",
     "publish_failed": "文件已写入，但无法移入导出目录：{{error}}。",
     "python_missing": "本机没有可用的 Python。请安装 Python 3.10 或更高版本后重试。",
     "read_failed": "无法读取：{{reason}}",
@@ -428,7 +429,7 @@
     "workdirChooseConflicts": "两处内容不同的文件：{{files}}",
     "workdirChooseLater": "稍后",
     "workdirChooseRootEvidence": "{{script}} 读的数据只有在项目根目录下才找得到。选一个运行目录，这个项目只问这一次。",
-    "workdirChooseRun": "运行",
+    "workdirChooseRun": "在这里运行",
     "workdirChooseScriptDirEvidence": "{{script}} 在当前目录里查找数据文件（glob / listdir / exists），在沙盒里找不到——它要在自己的目录里运行。选一个运行目录，这个项目只问这一次。",
     "workdirChooseSuggest": "这张图还没决定在哪个目录里运行。",
     "workdirChooseTitle": "脚本在哪个目录里运行？",
@@ -626,7 +627,11 @@
     "inputRemapLabel": "记住的数据位置",
     "inputRemapAnyRelative": "（相对路径）",
     "inputRemapTargetGone": "（这个位置现在不存在）",
-    "inputRemapForget": "删除"
+    "inputRemapForget": "删除",
+    "workdirChooseWritesShort": "在真实目录里运行时，脚本写出的文件会落进项目目录。",
+    "workdirChooseWritesMore": "详情",
+    "dependencyPrepareHeading": "准备环境",
+    "missingInputStep": "{{n}}/{{total}}"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",

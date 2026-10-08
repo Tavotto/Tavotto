@@ -120,7 +120,9 @@ def fake_pool(monkeypatch):
     )
     monkeypatch.setattr(engine_pool, "peek", lambda script, root: box["peek"])
     monkeypatch.setattr(
-        engine_pool, "force_cancel", lambda script, root: box["force_cancel"].append((script, root))
+        engine_pool,
+        "force_cancel",
+        lambda script, root, **kwargs: box["force_cancel"].append((script, root)) or True,
     )
     monkeypatch.setattr(engine_pool, "control_plane_of", lambda w: "python_pool")
     return box

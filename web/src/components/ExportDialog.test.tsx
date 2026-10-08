@@ -310,12 +310,25 @@ describe('信息架构：删掉的东西不许回来', () => {
     expect(body).toContain('默认规范')
   })
 
-  it('样式检查报告在「高级选项」里，默认收起', async () => {
+  it('「高级选项」拆散进三组：报告与严格核验在「检查」组、透明背景在「格式」组，开关看得见（2026-10-07 设计审计 §10.2）', async () => {
     await setup(9)
-    const details = document.body.querySelector('details') as HTMLDetailsElement
-    expect(details, '缺少高级选项').toBeTruthy()
-    expect(details.open).toBe(false)
-    expect(text()).toContain('样式检查报告')
+    const group = (id: string) => document.body.querySelector(`[data-export-group="${id}"]`)!
+    expect([...document.body.querySelectorAll('[data-export-group]')].map((g) => g.getAttribute('data-export-group'))).toEqual([
+      'output',
+      'format',
+      'checks',
+    ])
+    expect(group('checks').textContent).toContain('样式检查报告')
+    expect(group('checks').querySelector('[aria-label="严格核验产物"]')).not.toBeNull()
+    // 没有一个收起的「高级」把它们藏起来
+    for (const d of document.body.querySelectorAll('details')) expect(d.textContent).not.toContain('样式检查报告')
+    // 输出组里导出之前就看得见文件落到哪，「更改…」去设置 › 导出
+    expect(group('output').querySelector('[data-export-location]')).not.toBeNull()
+    await click(group('output').querySelector('[data-export-location-change]')!)
+    expect(useUiStore.getState().settingsOpen).toBe(true)
+    expect(useUiStore.getState().settingsSection).toBe('export')
+    // 设置压在导出上（dialogStack）：收起来，别把这一层栈带进后面的用例
+    await act(async () => useUiStore.getState().setSettingsOpen(false))
   })
 })
 
@@ -2018,14 +2031,16 @@ describe('状态区与完成态脚部', () => {
     expect(scrollBody?.textContent).not.toContain('a.pdf')
   })
 
-  it('撞名的两条出路也在状态区', async () => {
+  it('撞名：说明在状态区，两条出路在脚部——「另存一份」(secondary) +「覆盖」(危险浅底胶囊)', async () => {
     jobStatus = 'conflict'
     await setup(9)
     await click(q('[data-export-start]')!)
     expect(statusArea()!.textContent).toContain('已经有 a.pdf')
-    expect(statusArea()!.textContent).toContain('覆盖')
-    // 撞名不是完成：脚部仍是「开始导出」
-    expect(q('[data-export-start]')).toBeTruthy()
+    const footer = q('[data-dialog="export"] [data-dialog-footer]')!
+    expect(footer.querySelector('[data-export-conflict-replace]')!.getAttribute('data-variant')).toBe('danger-tinted')
+    expect(footer.querySelector('[data-export-conflict-rename]')!.getAttribute('data-variant')).toBe('secondary')
+    // 撞名不是完成，也不是「再点一次开始导出」：脚部只给两条出路
+    expect(q('[data-export-start]')).toBeNull()
     expect(q('[data-export-finish]')).toBeNull()
   })
 

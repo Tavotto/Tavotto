@@ -1272,6 +1272,35 @@ def resolve_worker_python(
     return select_worker_python()
 
 
+def peek_worker_python(figures_dir: str | Path) -> tuple[str, str] | None:
+    """项目**此刻已经定下来**的解释器，回 (路径, 来源)；没有回 None。**纯读：不起任何进程。**
+
+    `resolve_worker_python(discover=False)` 名字里的 `discover=False` 只关掉了「发现 venv」，**没关掉**
+    对「记住的解释器」的复检——`_has_matplotlib(remembered)` 会 `python -c "import matplotlib"`（每进程
+    每条解释器一次），也会在体检不过时作废记录（写配置）。要的只是「此刻有哪条路径」的读者
+    （静态扫描的目标解析器、脚本清单、导入即扫描）不该背这笔账：它们回答的是线索，不是「能不能用」。
+
+    规则与 `resolve_worker_python` 的前三档同序，但只**读**：
+
+    1. 全局显式（环境变量 / 设置里指定的）还在 → 它；
+    2. 项目记住的（`projectenv.remembered_record`，纯 `stat`）：文件在就是它，不体检、不作废；
+       `mode=default`（用户明确选回默认链条）= 没有项目级解释器；
+    3. 否则 None——**不**落到 `select_worker_python()`（那条链会为选内置 runtime 起子进程体检）。
+
+    回来的路径是**未核验的线索**：能不能用、装没装齐，是 T05 的明确检查动作，不是这里。
+    """
+    explicit = explicit_worker_python()
+    if explicit is not None:
+        return explicit
+    record = projectenv.remembered_record(figures_dir)
+    if record is None or record.get("mode") == projectenv.MODE_DEFAULT_CHAIN:
+        return None
+    if not record.get("exists"):
+        return None
+    path = record["path"]
+    return path, remembered_source(figures_dir, path)
+
+
 def explicit_worker_python() -> tuple[str, str] | None:
     """正在生效的**全局显式**解释器：回 (路径, 来源)，没有回 None。
 
@@ -2541,12 +2570,12 @@ class WorkerdWorker:
         finally:
             self._dead = True
 
-    def force_kill(self) -> None:
-        """硬关：workerd 当场杀掉 worker，不等在飞的活跑完。"""
+    def force_kill(self) -> bool:
+        """硬关：workerd 当场杀掉 worker，不等在飞的活跑完。False 表示关停未确认，不能据此重跑。"""
         from . import workerd_client
 
         if not self._session_id:
-            return
+            return True
         try:
             self._client.call(
                 "close_session",
@@ -2556,7 +2585,9 @@ class WorkerdWorker:
                 slack=2.0,
             )
         except workerd_client.WorkerdError:
-            pass
+            return False
+        else:
+            return True
         finally:
             self._dead = True
 
@@ -3313,17 +3344,29 @@ def _build_with(
     return worker, worker.ensure_built(), created or created_again
 
 
-def invalidate(script_name: str, figures_dir: str | None = None) -> None:
+def invalidate(script_name: str, figures_dir: str | None = None, *, force: bool = False) -> None:
     """脚本文件变更后作废其会话（下次请求自动重建）。
 
     不给 figures_dir 就作废所有项目里的同名脚本——watcher 回调走这条路，
     宁可多关一个也不能让某个项目留着过期会话。
+    `force=True` is an explicit rerun: synchronously retire old workers before
+    another acquisition can reuse workerd's spawn hash. An unconfirmed supervisor
+    close refuses the rerun and retains its handle for a later retirement retry.
     """
     with _lock:
         if figures_dir is None:
             keys = [k for k in _workers if k[1] == script_name]
         else:
             keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
+        if force:
+            for key in keys:
+                worker = _workers[key]
+                # force_kill bypasses the worker request lock and is bounded.
+                # Keep acquisition fenced until workerd has removed by_hash.
+                if worker.force_kill() is False:
+                    raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+                _workers.pop(key, None)
+            return
         victims = [_workers.pop(k) for k in keys]
     for w in victims:
         threading.Thread(target=w.shutdown, daemon=True).start()

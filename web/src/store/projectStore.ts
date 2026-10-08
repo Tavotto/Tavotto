@@ -45,6 +45,7 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { useProjectScanStore } from '@/store/projectScanStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
@@ -261,6 +262,10 @@ async function resetForNewProject() {
   // 关闭记录本身按项目 id 存在本机，切回去时仍然作数——清的只是内存里
   // 「当前项目关过哪一版」这个投影。
   useProjectReadinessStore.getState().clear()
+  // 导入即扫描（T02）：快照与「条被关掉」都属于旧项目；在途的补拉按换代失去落地资格。
+  // **后端那一笔账不取消**——它在项目关闭时才收；切回来时 `start()` 会复用或增量重扫
+  useProjectScanStore.getState().clear()
+  useUiStore.getState().setScanPanelOpen(false)
   // 导出作业的**前端状态**跟着丢：结果里的 `/exports/<name>` 是裸路径，
   // 渲染时由 `apiUrl()` 补上**当前**项目的 pj——不清的话，切完项目再打开
   // 导出面板会看到旧项目的结果，而那些链接指向的是新项目的导出目录（不是
@@ -390,6 +395,9 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     void markMoment('open')
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
+    // 统一认领完成：开始（或复用）导入即扫描。**不 await、不阻塞**——静态素材此刻已经可以排版；
+    // 教程副本不扫（它的状态是 onboarding 的，扫描条也不会为它出现）
+    if (status.tutorial !== true) void useProjectScanStore.getState().start({ reason: 'claim' })
     return status
   }
 
@@ -470,6 +478,10 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         ...(fresh ? { recent, opened } : {}),
         ...(fresh && rev === pinnedRev ? { pinned } : {}),
       })
+      // 启动恢复：应用重启 / 刷新页面后项目还开着——后端按 pj 复用或重开一轮扫描（与认领同一个入口）
+      if (project.open && project.tutorial !== true) {
+        void useProjectScanStore.getState().start({ reason: 'restore' })
+      }
     } catch {
       // 后端不可达时也进 Picker——它会在重试里继续探测
       set({ phase: 'none' })

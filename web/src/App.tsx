@@ -23,6 +23,7 @@ import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
+import { ProjectScanBar } from '@/components/ProjectScanBar'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
@@ -246,6 +247,7 @@ function Workspace() {
         {outdated && <UpdateBanner />}
         <DocumentBanner />
         <ProjectReadinessBanner />
+        <ProjectScanBar />
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}

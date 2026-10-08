@@ -29,18 +29,40 @@ void bootstrapDesktopSession().then((r) => {
   if (r === 'failed' || r === 'unauthenticated') {
     // 极少数情况（nonce 被吃掉/重复使用，或没有会话的手敲地址）：
     // 给出可操作的提示而不是白屏 + 一串 401
+    // 不经 React（会话都没有，React 树里的 store 一挂上就是一串 401），但外观照样走 token：
+    // 与崩溃页同一副——panel 圆角、对话框投影、17 / 600 标题、13 正文、一颗主按钮「重新加载」
     const div = document.createElement('div')
+    div.setAttribute('data-boot-failure', '')
     div.setAttribute(
       'style',
-      'display:flex;height:100%;align-items:center;justify-content:center;' +
-        'padding:0 24px;text-align:center;' +
-        // 颜色走 token（index.css 已随入口加载），不写第二份字面量
-        'font:13px/1.6 var(--font-sans);color:var(--color-ink-2);background:var(--color-bg)',
+      'display:flex;height:100%;align-items:center;justify-content:center;padding:16px;' +
+        'background:var(--color-bg);font-family:var(--font-sans)',
     )
-    div.textContent =
+    const card = document.createElement('div')
+    card.setAttribute('role', 'alert')
+    card.setAttribute(
+      'style',
+      'display:flex;flex-direction:column;gap:16px;width:420px;max-width:100%;padding:20px;' +
+        'border-radius:var(--radius-panel);background:var(--color-surface);box-shadow:var(--shadow-dialog)',
+    )
+    const body = document.createElement('p')
+    body.setAttribute('style', 'margin:0;font-size:13px;line-height:1.6;color:var(--color-ink-2)')
+    body.textContent =
       r === 'unauthenticated'
         ? t('boot.sessionUnauthenticated', { ns: 'workspace' })
         : t('boot.desktopSessionFailed', { ns: 'workspace' })
+    const reload = document.createElement('button')
+    reload.type = 'button'
+    reload.setAttribute('data-boot-reload', '')
+    reload.textContent = t('actions.reload')
+    reload.setAttribute(
+      'style',
+      'align-self:flex-end;height:32px;padding:0 14px;border:0;border-radius:9999px;' +
+        'font:13px var(--font-sans);background:var(--color-ink);color:var(--color-surface)',
+    )
+    reload.addEventListener('click', () => location.reload())
+    card.append(body, reload)
+    div.append(card)
     rootEl.replaceChildren(div)
     return
   }
