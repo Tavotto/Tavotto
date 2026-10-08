@@ -408,3 +408,64 @@ describe('依赖准备装完：画布上停在依赖门上的渲染重排（T09b
     }
   })
 })
+
+describe('换参数 / 修订前进 / 换尝试：上一轮的编辑记录作废', () => {
+  it('换参数再打开：「进入编辑」的记录不带进新参数的结果；同参数再打开仍保留', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-old' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a', { panelId: 'p1', renderKey: 'k1' })
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-old' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().editing).toEqual(['runtime:plot.py#a'])
+    expect(entry().editRenders).toEqual({ 'runtime:plot.py#a': { panelId: 'p1', renderKey: 'k1' } })
+
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-new' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().editing).toEqual([])
+    expect(entry().editRenders).toEqual({})
+  })
+
+  const done = (over: Partial<PreparationReport> = {}) =>
+    prepReport({
+      phase: 'completed',
+      outcome: { kind: 'succeeded' },
+      captured: [{ asset_id: 'runtime:plot.py#a' } as never],
+      provider: { plan_id: 'prep-plan', attempt_id: 'att-1', attempts: 1, dependency: null },
+      ...over,
+    })
+
+  it('补拉到更高修订（同一会话）清空；同一修订的补拉保留', async () => {
+    mockCreate.mockResolvedValueOnce(done())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a', { panelId: 'p1', renderKey: 'k1' })
+    mockGet.mockResolvedValueOnce(done({ observation_seq: 2 }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().editing).toEqual(['runtime:plot.py#a'])
+    mockGet.mockResolvedValueOnce(done({ config_revision: 2, observation_seq: 1 }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().editing).toEqual([])
+    expect(entry().editRenders).toEqual({})
+  })
+
+  it('同一会话里换了一轮尝试（attempt_id 变了）也清空', async () => {
+    mockCreate.mockResolvedValueOnce(done())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a')
+    mockGet.mockResolvedValueOnce(
+      done({ observation_seq: 2, provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null } }),
+    )
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().editing).toEqual([])
+  })
+
+  it('重开后会话 id 换了（重建检查会话）也清空', async () => {
+    mockCreate.mockResolvedValueOnce(done())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a')
+    mockCreate.mockResolvedValueOnce(done({ session_id: 'psess-2' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().editing).toEqual([])
+  })
+})

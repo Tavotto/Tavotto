@@ -44,7 +44,10 @@ import { PreparationCard } from '@/components/PreparationCard'
 import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { useDocumentStore } from '@/store/documentStore'
+import type { PanelObject } from '@/types/document'
+import { seedExactRender } from '@/test/renderFixtures'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useEnvStore } from '@/store/envStore'
@@ -277,6 +280,19 @@ async function openWith(r: PreparationReport) {
 const panel = () => host.querySelector('[data-prep-card]') as HTMLElement
 const primary = () => panel()?.querySelector('[data-prep-primary]') as HTMLButtonElement | null
 
+const panelFor = (fileId: string): PanelObject =>
+  ({
+    id: `panel-${fileId}`, type: 'panel', x: 0, y: 0, w: 100, h: 80, fileId, fileKind: 'png',
+    nativeW: 100, nativeH: 80, script: 'plot.py', overrides: [],
+  }) as unknown as PanelObject
+function putPanel(fileId: string): PanelObject {
+  const p = panelFor(fileId)
+  useDocumentStore.setState((st) => ({
+    doc: { ...st.doc, objects: [...st.doc.objects.filter((o) => o.id !== p.id), p] },
+  }))
+  return p
+}
+
 beforeEach(() => {
   mockCreate.mockReset()
   mockAct.mockReset()
@@ -288,6 +304,13 @@ beforeEach(() => {
   useProjectPreparationStore.getState().clear()
   useScriptInputStore.setState({ queue: [], presenters: [], busy: false, error: null })
   useRenderStore.setState({ byKey: {} })
+  useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [] } }))
+  // 入口动作做完之后，画布上有这张图的面板（真实实现由 `addRuntimePanelToCanvas` / `openFastEdit` 完成）
+  vi.mocked(openFastEdit).mockImplementation((id: string) => {
+    putPanel(id)
+    return 'editing'
+  })
+  vi.mocked(addRuntimePanelToCanvas).mockImplementation(((d: CapturedFigureDescriptor) => putPanel(d.asset_id)) as never)
   useScriptArgvStore.getState().clear()
   useUiStore.setState({ guideCard: 'closed' })
 })
@@ -578,18 +601,40 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     // 再从素材库打开：说的是编辑的进度（编辑渲染可用之后才说「已进入编辑」）
     await act(async () => useUiStore.getState().setGuideCard('card'))
     expect(panel().dataset.prepState).toBe('edit_opening')
-    await act(async () => {
-      useRenderStore.setState({
-        byKey: {
-          [`runtime:plot.py#a`]: {
-            fileId: 'runtime:plot.py#a',
-            status: 'ready',
-            manifest: { elements: [] } as never,
-          } as never,
-        },
-      })
-    })
+    await act(async () => seedExactRender(panelFor('runtime:plot.py#a'), { elements: [] } as never))
     expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+
+  it('「已进入编辑」只认入口动作创建的面板上的精确新渲染：markStale() 留下的旧渲染、同文件别的变体都不算', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const target = panelFor('runtime:plot.py#a')
+    useRenderStore.getState().patch(renderKeyOf(target), {
+      fileId: 'runtime:plot.py#a', status: 'ready', manifest: { elements: [] } as never, stale: true,
+      lastPatches: '[]', wantPatches: '[]',
+    })
+    useRenderStore.getState().patch('runtime:plot.py#a|other-variant', {
+      fileId: 'runtime:plot.py#a', status: 'ready', manifest: { elements: [] } as never, stale: false,
+      lastPatches: '[{"x":1}]', wantPatches: '[{"x":1}]',
+    })
+    await act(async () => primary()!.click())
+    await act(async () => useUiStore.getState().setGuideCard('card'))
+    expect(panel().dataset.prepState).toBe('edit_opening')
+    await act(async () => seedExactRender(target, { elements: [] } as never))
+    expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
+describe('多张图的结果对话框', () => {
+  it('从对话框里加进画布的图也记入编辑记录（卡片才会往前走）', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click()) // 多张：打开结果对话框
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    expect(add.length).toBe(3)
+    await act(async () => add[1].click())
+    expect(vi.mocked(addRuntimePanelToCanvas)).toHaveBeenCalledWith(fig('b'))
+    expect(useProjectPreparationStore.getState().entries['script:plot.py'].editing).toEqual(['runtime:plot.py#b'])
   })
 })
 
