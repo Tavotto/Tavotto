@@ -5,6 +5,7 @@ import { handleCopyEvent, handlePasteEvent } from './clipboard'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import { canvasToDoc, emptyProject, type TextObject } from '@/types/document'
 
 /**
@@ -59,6 +60,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  useWorkspaceStore.getState().clear()
   useUiStore.getState().setStatus(null)
   vi.restoreAllMocks()
 })
@@ -112,5 +114,43 @@ describe('handlePasteEvent', () => {
     const { e, preventDefault } = fakeEvent({ target: input, getData: payloadText })
     expect(handlePasteEvent(e)).toBe(false)
     expect(preventDefault).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Codex #833：快速编辑这一屏只画正在编辑的那张图（`CanvasLayers only=`）。⌘V 落下的副本在版面上、
+ * 换掉选区，用户什么都看不见——不落、不拦事件。图内文字编辑器 / 输入框里的粘贴照旧交给浏览器。
+ */
+describe('handlePasteEvent：快速编辑', () => {
+  it('本工具负载：不落进文档、不动选区、不拦事件', () => {
+    useWorkspaceStore.getState().enterFastEdit('t1')
+    useSelectionStore.getState().set(['t1'])
+    const { e, preventDefault } = fakeEvent({ getData: payloadText })
+    expect(handlePasteEvent(e)).toBe(false)
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(1)
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+    expect(useSelectionStore.getState().ids).toEqual(['t1'])
+  })
+
+  it('目标在输入框里（图内文字编辑）：照旧让位给原生粘贴', () => {
+    useWorkspaceStore.getState().enterFastEdit('t1')
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    const { e, preventDefault } = fakeEvent({ target: input, getData: payloadText })
+    expect(handlePasteEvent(e)).toBe(false)
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(1)
+    input.remove()
+  })
+
+  it('回到排版：同一份负载照常落下（对照组）', () => {
+    useWorkspaceStore.getState().enterFastEdit('t1')
+    useWorkspaceStore.getState().exitToLayout()
+    const { e, preventDefault } = fakeEvent({ getData: payloadText })
+    expect(handlePasteEvent(e)).toBe(true)
+    expect(preventDefault).toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(2)
   })
 })

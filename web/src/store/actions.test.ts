@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { emptyProject } from '@/types/document'
 import type { ArrowObject, ShapeObject, TextObject } from '@/types/document'
 import { duplicateSelected } from './actions'
+import { useWorkspaceStore } from './workspace'
 import { useDocumentStore } from './documentStore'
 import { useSelectionStore } from './selectionStore'
 
@@ -94,6 +95,21 @@ describe('duplicateSelected', () => {
 
     expect(formatMessage(s().undo())).toBe('复制对象')
     expect(s().doc.objects.map((o) => o.id)).toEqual(['t1', 'a1'])
+  })
+
+  // Codex #833：快速编辑这一屏只画那张图，副本落在版面上看不见。⌘D、系统菜单、对象右键菜单、属性页「⋯」都到这里
+  it('快速编辑里什么都不做：不加对象、不进历史、选区不动', () => {
+    seed(text('t1'))
+    useWorkspaceStore.getState().enterFastEdit('t1')
+    try {
+      const before = s().past.length
+      duplicateSelected()
+      expect(s().doc.objects).toHaveLength(1)
+      expect(s().past).toHaveLength(before)
+      expect(useSelectionStore.getState().ids).toEqual(['t1'])
+    } finally {
+      useWorkspaceStore.getState().clear()
+    }
   })
 
   it('没有选中对象时什么都不做', () => {

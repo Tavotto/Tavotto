@@ -7,6 +7,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspaceStore'
 import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
 import { objectLabel } from '@/types/document'
 import { modKey } from '@/lib/utils'
@@ -133,8 +134,9 @@ export function handlePasteEvent(e: ClipboardEvent): boolean {
   // 微调那条撤销（Codex #671）
   return (
     runDiscreteAction('canvas', e.target, () => {
+      // 快速编辑里不落（`consumePayload` 判）：不拦事件，也没有别的东西可粘
+      if (!consumePayload(payload)) return false
       e.preventDefault()
-      consumePayload(payload)
       return true
     }) ?? false
   )
@@ -235,6 +237,21 @@ export function materializeRelink(resolved: MissingAsset[]): void {
 }
 
 /**
+ * 菜单里的「粘贴」能不能真的读到剪贴板（Codex #833）。菜单项没有原生 paste 事件可接，只能走
+ * `pasteObjects()` 的异步 `readText`；两类引擎上它走不通，菜单就**不提供**这一项（⌘V 的原生事件照常可用）：
+ *   - 根本没有 `readText`（Firefox 默认）；
+ *   - WebKit（Safari、macOS / Linux 桌面壳的 WKWebView / WebKitGTK、iOS 上的一切浏览器）：非编辑区的
+ *     异步读不放行（`docs/rules/frontend/canvas-objects-and-workspace.md`「剪贴板」）。按 UA 认：
+ *     带 AppleWebKit、却不是 Chromium 一族（Chrome / Edge / WebView2 / Android WebView 都自报 `Chrome/`）。
+ */
+export function canPasteFromMenu(nav: Navigator | undefined = typeof navigator !== 'undefined' ? navigator : undefined): boolean {
+  if (typeof nav?.clipboard?.readText !== 'function') return false
+  const ua = nav.userAgent ?? ''
+  const webkit = /AppleWebKit\//.test(ua) && !/(Chrome|Chromium|Edg)\//.test(ua)
+  return !webkit
+}
+
+/**
  * 「浏览器根本不给读剪贴板」每会话只提示一次：粘贴键是高频操作，
  * 每按一次弹一条等于噪音，而这个结论一次就够用户知道了。
  * 会话级语义 → 模块级变量，不进文档态。
@@ -267,12 +284,19 @@ export async function pasteObjects(): Promise<boolean> {
   }
   const payload = parsePayload(text)
   if (!payload) return false
-  consumePayload(payload)
-  return true
+  return consumePayload(payload)
 }
 
-/** 负载落地：缺素材先走重新链接对话框，否则直接粘贴 */
-function consumePayload(payload: ClipPayload): void {
+/**
+ * 负载落地：缺素材先走重新链接对话框，否则直接粘贴。返回 false = 没落（快速编辑里）。
+ *
+ * ⌘V（原生 paste 事件）、两份右键菜单的「粘贴」（`pasteObjects`）都到这里，「这一屏能不能粘」只在这判一次
+ * （Codex #833）：快速编辑这一屏只画正在编辑的那张图（`CanvasLayers only=`），粘贴出来的副本落在版面上、
+ * 换掉选区，用户什么都看不见——与 ⌘D / 创建副本（`duplicateSelected`）同一个判据 `fastEditPanelOf`。
+ * 图内文字编辑器 / 输入框里的粘贴在 `handlePasteEvent` 的离散动作闸门那一步就让位给浏览器了，到不了这里。
+ */
+function consumePayload(payload: ClipPayload): boolean {
+  if (fastEditPanelOf(useWorkspaceStore.getState())) return false
   const assets = useAssetStore.getState().byId
   const missingMap = new Map<string, MissingAsset>()
   for (const o of payload.objects) {
@@ -296,9 +320,10 @@ function consumePayload(payload: ClipPayload): void {
       payload,
       missing: [...missingMap.values()],
     })
-    return
+    return true
   }
   materializePaste(payload, [])
+  return true
 }
 
 /** 真正落盘：一条历史记录。resolved 为缺失素材的处置结果。 */

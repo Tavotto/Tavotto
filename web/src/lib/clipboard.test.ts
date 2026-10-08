@@ -189,3 +189,29 @@ describe('pasteObjects 正常路径不受影响', () => {
     expect(l.useDocumentStore.getState().doc.objects).toHaveLength(0)
   })
 })
+
+/** 菜单里的「粘贴」只在异步 readText 走得通的引擎上提供（Codex #833） */
+describe('canPasteFromMenu', () => {
+  const nav = (userAgent: string, readText = true) =>
+    ({ userAgent, clipboard: readText ? { readText: async () => '' } : {} }) as unknown as Navigator
+  const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
+  const IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'
+
+  it.each([
+    ['Chrome', `${MAC} AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36`, true],
+    ['Edge / WebView2', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0', true],
+    ['Firefox（有 readText 时）', `${MAC}; rv:131.0) Gecko/20100101 Firefox/131.0`, true],
+    ['Safari', `${MAC} AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15`, false],
+    ['macOS 桌面壳 WKWebView', `${MAC} AppleWebKit/605.1.15 (KHTML, like Gecko)`, false],
+    ['iOS 上的 Chrome（WebKit）', `${IOS} AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/129.0 Mobile/15E148 Safari/604.1`, false],
+    ['iOS 上的 Edge（WebKit）', `${IOS} AppleWebKit/605.1.15 (KHTML, like Gecko) EdgiOS/129.0 Mobile/15E148 Safari/605.1.15`, false],
+  ] as const)('%s', async (_name, ua, expected) => {
+    const { canPasteFromMenu } = await import('./clipboard')
+    expect(canPasteFromMenu(nav(ua))).toBe(expected)
+  })
+
+  it('没有 readText → 不提供（哪个引擎都一样）', async () => {
+    const { canPasteFromMenu } = await import('./clipboard')
+    expect(canPasteFromMenu(nav(`${MAC} AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36`, false))).toBe(false)
+  })
+})

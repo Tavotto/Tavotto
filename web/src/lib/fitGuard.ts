@@ -2,7 +2,8 @@
  * 「双击工作区空白 → 适应当前画布」的触发判定（纯函数，便于测试）。
  *
  * 只有同时满足才触发：选择工具、非平移/绘制/裁剪/文字编辑/拖动中、
- * 双击点不在任何对象上、且落在页面之外的灰色工作区。
+ * 双击点不在任何对象上、且落在取景框（排版 = 页面，快速编辑 = 那张图的矩形，与
+ * `stageFitFrame` 同一个框）之外的灰色工作区。
  */
 export interface FitGuardCtx {
   tool: string
@@ -15,13 +16,14 @@ export interface FitGuardCtx {
   onObject: boolean
   /** 双击点的文档 mm 坐标 */
   point: { x: number; y: number }
-  page: { w: number; h: number }
+  /** 取景框（mm），与 `stageFitFrame` 交出的是同一块 */
+  frame: { x: number; y: number; w: number; h: number }
 }
 
 export function shouldFitOnDoubleClick(c: FitGuardCtx): boolean {
   if (c.tool !== 'select' || c.spaceDown) return false
   if (c.editingText || c.cropping || c.interacting || c.onObject) return false
-  const inPage =
-    c.point.x >= 0 && c.point.y >= 0 && c.point.x <= c.page.w && c.point.y <= c.page.h
-  return !inPage
+  const { x, y, w, h } = c.frame
+  const inFrame = c.point.x >= x && c.point.y >= y && c.point.x <= x + w && c.point.y <= y + h
+  return !inFrame
 }

@@ -93,6 +93,8 @@ describe('ContextBar', () => {
     const el = bar()!
     expect(el).not.toBeNull()
     expect(el.getAttribute('role')).toBe('toolbar')
+    // 单行浮动条 = 胶囊（浮动外观三档，2026-10-07 设计审计 §10.1）
+    expect(el.className).toContain('rounded-full')
     expect(el.querySelector('input')).toBeTruthy()
     expect(el.querySelector('[aria-label="加粗"]')).toBeTruthy()
     expect(el.querySelector('[aria-label="全部属性"]')).toBeTruthy()
