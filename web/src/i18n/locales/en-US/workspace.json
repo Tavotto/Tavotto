@@ -916,7 +916,7 @@
       "depsScope": "Component versions conflict",
       "depsUnknown": "{{module}} is missing and no package provides it",
       "depsRuntime": "{{module}} is missing",
-      "depsSameName": "Will install {{dist}} from PyPI",
+      "depsSameName": "Will install {{dist}} from PyPI (a same-named package not checked by Tavotto)",
       "depsSameNameMismatch": "{{dist}} on PyPI isn’t the {{module}} this script needs. Pick a Python environment that has it",
       "depsSameNameUnavailable": "{{dist}} can’t be installed from PyPI. Pick a Python environment that has {{module}}",
       "install": "Install missing components first",

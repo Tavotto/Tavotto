@@ -1525,6 +1525,27 @@ describe('安装进度', () => {
   })
 })
 
+describe('同名候选的披露在可见那一句里（Codex #864 P1）', () => {
+  const SAME_NAME: DependencyRepairOffer = {
+    ...OFFER,
+    import_name: 'lxml',
+    requirement: { ...OFFER.requirement!, import_name: 'lxml', distribution: 'lxml', specifier: '', requirement: 'lxml', resolution_source: 'same_name_unverified', confidence: 'unverified', unverified: true },
+    targets: OFFER.targets.filter((tg) => tg.kind === 'tavotto_managed'),
+  }
+
+  it('unverified 时可见句（非「高级」折叠区）含「未经 Tavotto 核对」；curated 不含', async () => {
+    await render(SAME_NAME)
+    const sentence = document.querySelector('[data-one-click-sentence]')!
+    expect(sentence.closest('details')).toBeNull()
+    expect(sentence.textContent).toContain('未经 Tavotto 核对')
+    expect(sentence.textContent).toContain('lxml')
+    await act(async () => root.unmount())
+    host.remove()
+    await render({ ...SAME_NAME, requirement: { ...SAME_NAME.requirement!, resolution_source: 'curated', confidence: 'high', unverified: false } })
+    expect(document.querySelector('[data-one-click-sentence]')!.textContent).not.toContain('未经 Tavotto 核对')
+  })
+})
+
 describe('英文界面', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en-US')

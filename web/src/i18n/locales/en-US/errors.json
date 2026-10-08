@@ -414,6 +414,7 @@
     "repairSystemUnverified": "matplotlib version not verified by Tavotto",
     "repairTitle": "This project is missing {{module}}",
     "repairUnresolved": "Tavotto can’t tell which package provides “{{module}}”, so it won’t install anything. Name the package, or switch to an environment that already has it.",
+    "oneClickUnverified": "{{packages}} (a same-named package not checked by Tavotto)",
     "repairUnverified": "Same-named package not checked by Tavotto; prebuilt wheels only, undone if the check after install fails.",
     "repairUseManaged": "Install into Tavotto environment",
     "repairUseOtherPythonShort": "Or use a Python environment you already have",

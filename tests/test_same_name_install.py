@@ -149,6 +149,13 @@ class TestResolution:
         # 大小写 / 连字符写法不同也在禁区里（文件系统不分大小写的平台上用户会这么写）
         assert depresolve.same_name_forbidden("Dotenv") and depresolve.same_name_forbidden("DOCX")
 
+    @pytest.mark.parametrize("name", ["tkinter", "sqlite3", "curses", "json"])
+    def test_a_stdlib_name_is_never_a_same_name_candidate(self, tmp_path, name):
+        """缺 `_tkinter` / 平台不带 curses 时，标准库名不能变成可装的同名 PyPI 候选；lxml 这类表外名仍是。"""
+        assert depresolve.resolve(tmp_path, name) is None, name
+        req = depresolve.resolve(tmp_path, "lxml")
+        assert req is not None and req.resolution_source == depresolve.SOURCE_SAME_NAME_UNVERIFIED
+
     @pytest.mark.parametrize("name", ["_private", "a.b", "not valid", "-r", ""])
     def test_a_name_that_is_not_a_package_name_is_never_a_candidate(self, tmp_path, name):
         assert depresolve.resolve(tmp_path, name) is None

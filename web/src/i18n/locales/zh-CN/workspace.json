@@ -866,7 +866,7 @@
       "depsScope": "组件版本冲突",
       "depsUnknown": "运行时缺 {{module}}，找不到安装包",
       "depsRuntime": "运行时缺 {{module}}",
-      "depsSameName": "将从 PyPI 安装 {{dist}}",
+      "depsSameName": "将从 PyPI 安装 {{dist}}（未经 Tavotto 核对的同名包）",
       "depsSameNameMismatch": "PyPI 上的 {{dist}} 不是这个脚本要的 {{module}}，请选一个装了它的 Python 环境",
       "depsSameNameUnavailable": "PyPI 上装不了 {{dist}}，请选一个装了 {{module}} 的 Python 环境",
       "install": "要先安装缺少的组件",

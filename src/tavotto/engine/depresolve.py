@@ -32,6 +32,7 @@ import dataclasses
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 
 from . import projectenv, scanbudget
@@ -1505,6 +1506,9 @@ def _contradictions(specs: list[str], specifiers, version_mod) -> list[str]:
 # ---------------------------------------------------------------------------
 # 解析入口
 # ---------------------------------------------------------------------------
+_STDLIB_NAMES = frozenset(getattr(sys, "stdlib_module_names", ()))
+
+
 def resolve(
     figures_dir: str | Path, import_name: str, script: str | None = None
 ) -> DependencyRequirement | None:
@@ -1552,6 +1556,9 @@ def resolve(
             resolution_source=SOURCE_CURATED,
             confidence=CONFIDENCE_HIGH,
         )
+    if import_name.split(".")[0] in _STDLIB_NAMES:
+        # 标准库名绝不进同名回退：缺 `_tkinter` / 平台不带 `curses` 时 `tkinter` 也不是 PyPI 上的同名包（Codex #864 P2）
+        return None
     if same_name_forbidden(import_name):
         return None
     if parse_requirement(import_name) is None:

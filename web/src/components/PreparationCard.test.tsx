@@ -452,7 +452,8 @@ describe('主按钮就是后端给的那件事', () => {
     await mount()
     await openWith(report(STATES.depsSameName))
     expect(panel().dataset.prepState).toBe('deps_same_name')
-    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('将从 PyPI 安装 lxml')
+    // 披露写进那唯一一句可见文案本身，不只在折叠的详情里（Codex #864 P1）
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('将从 PyPI 安装 lxml（未经 Tavotto 核对的同名包）')
     expect(primary()?.dataset.prepPrimary).toBe('prepare_dependencies')
     expect(primary()?.textContent).toBe('安装')
     expect(panel().querySelector('[data-prep-unverified]')?.textContent).toContain('未经 Tavotto 核对的同名包')
@@ -472,6 +473,7 @@ describe('主按钮就是后端给的那件事', () => {
     await openWith(report(STATES.depsRuntime))
     expect(panel().dataset.prepState).toBe('deps_runtime')
     expect(panel().querySelector('[data-prep-unverified]')).toBeNull()
+    expect(panel().querySelector('[data-prep-line]')?.textContent).not.toContain('未经 Tavotto 核对')
   })
 
   it('同名包核验不过：说清「PyPI 上的 lxml 不是脚本要的 lxml」，落到选自己的 Python（不是重试安装）', async () => {

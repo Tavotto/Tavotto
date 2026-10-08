@@ -63,6 +63,11 @@ export function packagesPhrase(requirements: string[]): string {
   return en('packagesMany', { first: names[0], count: names.length })
 }
 
+/** 同名候选（未经 Tavotto 核对）的包名后缀「（未经 Tavotto 核对的同名包）」；已核对的原样返回 */
+export function unverifiedPhrase(packages: string, unverified: boolean): string {
+  return unverified ? en('oneClickUnverified', { packages }) : packages
+}
+
 /** 进度行里「正在安装 X…」的 X：进度记录带着全部要装的包（多于一个）就说全部，否则是用户点的那一个 */
 export function progressPackages(progress: DependencyProgress, module: string): string {
   return progress.requirements && progress.requirements.length > 1
@@ -393,7 +398,11 @@ export function DependencyRepairCard({
         ) : (
           <p className="text-sm leading-relaxed text-ink" data-one-click-sentence>
             {managed
-              ? oneClickSentence(requirementList.length > 1 ? packagesPhrase(requirementList) : pkg, checking ? null : disclosed)
+              ? oneClickSentence(
+                  // 同名候选的披露写进这唯一一句可见文案本身：不能只放在默认折叠的「高级」里（Codex #864 P1）
+                  unverifiedPhrase(requirementList.length > 1 ? packagesPhrase(requirementList) : pkg, !!offer.requirement?.unverified),
+                  checking ? null : disclosed,
+                )
               : en('oneClickSentenceSystem', { module: pkg })}
           </p>
         )}
