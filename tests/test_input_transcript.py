@@ -263,3 +263,62 @@ def test_the_input_facts_projection_is_counts_and_closed_codes_only():
     assert inputbroker.facts_projection({**facts, "no_answer": "free text"})["no_answer"] is None
     assert inputbroker.facts_projection(inputbroker.InputFacts().payload()) is None
     assert inputbroker.facts_projection(None) is None
+
+
+def _block_replace(monkeypatch):
+    import os
+
+    real = os.replace
+
+    def blocked(src, dst, *a, **k):
+        if str(dst).endswith(".json") and "inputtranscripts" in str(dst):
+            raise OSError("blocked")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "replace", blocked)
+
+
+def test_a_failed_binding_write_never_leaves_the_old_transcript_usable(tmp_path, monkeypatch):
+    # r4221584222：新转录没落盘 → 旧绑定必须失效，冷重放不能用旧值
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is not None
+    _block_replace(monkeypatch)
+    try:
+        inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "new")])
+    except OSError:
+        pass
+    monkeypatch.undo()
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_a_failed_clear_write_never_leaves_the_old_transcript_usable(tmp_path, monkeypatch):
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    _block_replace(monkeypatch)
+    try:
+        inputtranscript.bind(tmp_path, "s.py", None, [])
+    except OSError:
+        pass
+    monkeypatch.undo()
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_when_the_old_binding_cannot_be_invalidated_the_execution_is_not_bound(
+    tmp_path, monkeypatch
+):
+    class _W:
+        figures_dir = str(tmp_path)
+        script_name = "s.py"
+        build_failed = False
+
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    _block_replace(monkeypatch)
+    from pathlib import Path
+
+    def no_unlink(self, *a, **k):
+        raise OSError("blocked")
+
+    monkeypatch.setattr(Path, "unlink", no_unlink)
+    import pytest
+
+    with pytest.raises(inputtranscript.StaleTranscriptError):
+        inputbroker.finished(_W(), [_rec(1, "new")])

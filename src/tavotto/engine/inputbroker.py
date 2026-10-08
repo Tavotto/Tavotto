@@ -498,7 +498,13 @@ def finished(worker, records) -> None:
         t = inputtranscript.bind(
             str(worker.figures_dir), str(worker.script_name), _run_config_of(worker), records
         )
+    except inputtranscript.StaleTranscriptError:
+        # 旧绑定没能作废：这次执行不算已绑定，明确失败（冷重放不会拿到旧值）
+        with contextlib.suppress(AttributeError):
+            worker.build_failed = True
+        raise
     except (OSError, AttributeError, TypeError) as exc:
+        # 新转录没落盘，但 `bind` 已保证旧绑定作废：冷重放回到上下文匹配
         LOG.warning("脚本输入转录写入失败: %r", exc)
         return
     with contextlib.suppress(AttributeError):

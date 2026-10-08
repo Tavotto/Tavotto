@@ -91,6 +91,32 @@ def _write(project_root: str | Path, bindings: dict) -> None:
     atomicio.write_json(path, {"version": FORMAT_VERSION, "bindings": bindings})
 
 
+class StaleTranscriptError(OSError):
+    """新转录没落盘、旧绑定也没能作废：这次执行不能算「已绑定」（冷重放可能套上旧值）。"""
+
+
+def _commit(project_root: str | Path, bindings: dict, key: str) -> None:
+    """写回绑定表；写不下去（`os.replace` 被占、磁盘满）就**保证旧绑定不再可用**：先试去掉这一条重写，
+    再不行就删掉整份存储（别的绑定丢了只是回到上下文匹配，不会套错）。作废成功 → 重抛原错（新转录没落盘，
+    调用方如实记一笔）；连作废都失败 → `StaleTranscriptError`，调用方不能当成功（Codex #816 r4221584222）。"""
+    try:
+        _write(project_root, bindings)
+        return
+    except OSError as exc:
+        original = exc
+    try:
+        rest = {k: v for k, v in bindings.items() if k != key}
+        _write(project_root, rest)
+    except OSError:
+        try:
+            store_path(project_root).unlink(missing_ok=True)
+        except OSError as inval:
+            raise StaleTranscriptError(
+                f"转录写入失败且旧绑定无法作废: {original!r}; {inval!r}"
+            ) from original
+    raise original
+
+
 def _clean(records) -> list[dict] | None:
     """worker 的 `script_inputs` → 转录条目；口令那一问不带答案。超出上限回 None（不留转录）。"""
     out: list[dict] = []
@@ -131,7 +157,7 @@ def bind(
                 return None
             bindings = _read(project_root)
             if bindings.pop(key, None) is not None:
-                _write(project_root, bindings)
+                _commit(project_root, bindings, key)
             return None
         bindings = _read(project_root)
         prev = bindings.get(key)
@@ -148,7 +174,7 @@ def bind(
             oldest = sorted(bindings, key=lambda k: float(bindings[k].get("created_at") or 0))
             for k in oldest[: len(bindings) - MAX_BINDINGS]:
                 bindings.pop(k, None)
-        _write(project_root, bindings)
+        _commit(project_root, bindings, key)
     return Transcript(tid, tuple(entries))
 
 
