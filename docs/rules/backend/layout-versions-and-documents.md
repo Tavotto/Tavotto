@@ -156,3 +156,7 @@
 - 另存为与自动保存共用 `_revision_conflict`、锁不可重入、GET 不用 `send_file`
 - 槽位清理顺带 `atomicio.reap_orphan_tmps`（只认 `_next_tmp` 的名字，年龄 + pid 已死，一天后只看年龄）
 - ⌘S 写回项目（ADR 0096）：`target=project` 必须开着项目、落点只在 `tavottofile/`（符号链接逃逸拒）、只读卷有自己的 code
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+- 文档落盘只有 `atomicio`；`project_layout_dir()` 是收纳规则唯一出处；会话状态以后端为准、槽位清理只动有归属的

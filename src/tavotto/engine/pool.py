@@ -2036,6 +2036,9 @@ class EngineWorker:
             # 脚本里的 input()（ADR 0099）：build 期间父进程当它的答题方——两条控制面同一个 context manager
             with inputbroker.serving(self):
                 resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
+        except inputbroker.TranscriptUnavailable as exc:
+            self.build_failed = True
+            raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True
             raise
@@ -2610,6 +2613,9 @@ class WorkerdWorker:
         try:
             with inputbroker.serving(self):  # 与 EngineWorker 同一个答题方（ADR 0099）
                 resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+        except inputbroker.TranscriptUnavailable as exc:
+            self.build_failed = True
+            raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True  # 与 EngineWorker 同一个判据
             raise

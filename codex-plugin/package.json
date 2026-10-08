@@ -1,6 +1,6 @@
 {
   "name": "tavotto-dsh",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "private": true,
   "description": "Tavotto for DeepSeek Harness: the Tavotto MCP server and figure skill as a dsh profile bundle",
   "license": "AGPL-3.0-only",
