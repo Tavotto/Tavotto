@@ -52,7 +52,7 @@ import dataclasses
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from . import depresolve, execspec, figcapture, projectenv, scanbudget
 
@@ -783,6 +783,8 @@ class _Finder:
     def find_in(self, d: Path, name: str) -> _Hit | None:
         """`FileFinder.find_spec` 在一个目录里的优先级：带 `__init__` 的目录包 > 扩展模块 > `.py` > 命名空间
         目录（目录里至少有一个 Python 文件才算候选——纯数据目录不是）。名字逐字匹配目录清单。"""
+        if not name.isidentifier():  # 拼进路径的每一段必须是合法标识符
+            return None
         ls = self.listing(d)
         if ls is None:
             return None
@@ -828,6 +830,24 @@ class _Top:
 
 
 # ---------------------------------------------------------------- 本地模块：读与解析
+
+
+def _pinned(root: Path, path: Path) -> str | None:
+    """`path` 钉在 `root` 之内（词法：绝对化 + 归一化 + 前缀）；越界回 None。读文件前的最后一道闸。
+
+    写成静态分析认得的 barrier 形状（同 `projectenv.contained_path`：`startswith` 单独控制通往返回值的
+    分支，相等那一支回 `root` 自身）。只做词法判断、不 realpath——no_follow 要靠未解析的路径看出链接，
+    链接指向项目外由 `_Finder.guard` 与 `projectenv.within` 另判。"""
+    try:
+        base = os.path.abspath(os.fspath(root))
+        cand = os.path.abspath(os.fspath(path))
+    except (OSError, ValueError):
+        return None
+    if os.path.normcase(cand) == os.path.normcase(base):
+        return base
+    if not os.path.normcase(cand).startswith(os.path.normcase(base).rstrip(os.sep) + os.sep):
+        return None
+    return cand
 
 
 def _rel(root: Path, path: Path) -> str:
@@ -919,6 +939,7 @@ class _Scanner:
         self.main_queue: list[Path] = []
         self.blocked_hit = False
         self.path_modified = False
+        self.cwd_rejected = False
         self.roots = self._search_roots()
 
     # ------------------------------------------------------------ 搜索根
@@ -933,9 +954,43 @@ class _Scanner:
                     _Root(self.root, "project_root", self.entry.profile == figcapture.PROFILE_SAFE)
                 )
             return roots
-        cwd = self.root / self.entry.cwd if self.entry.cwd else self.root
+        cwd = self._cwd_root()
+        if cwd is None:
+            # 调用方给的 cwd 出了项目：不拿它当搜索根、不读项目外任何东西；搜索面看不全
+            self.warn("cwd_outside_project")
+            self.cwd_rejected = True
+            return []
         confirmed = bool(self.entry.cwd) or self.entry.cwd_mode == execspec.CWD_PROJECT_ROOT
         return [_Root(cwd, "cwd", confirmed)]
+
+    def _cwd_root(self) -> Path | None:
+        """`entry.cwd` 钉在项目内：只收项目相对、规范化后不以 `..` 起头、realpath 之后仍在项目根内的目录。
+        绝对路径 / 盘符 / UNC / 反斜杠起头一律拒（不论宿主是 POSIX 还是 Windows：同一份输入两边判同一个结果）。"""
+        rel = self.entry.cwd
+        if not rel:
+            return self.root
+        win = PureWindowsPath(rel)
+        if (
+            PurePosixPath(rel).is_absolute()
+            or win.anchor
+            or win.drive
+            or rel.startswith(("/", "\\"))
+            or "\0" in rel
+        ):
+            return None
+        parts = PurePosixPath(rel.replace("\\", "/")).parts
+        depth = 0
+        for part in parts:  # 规范化后是否越出项目根（`a/../..` 越出，`a/../b` 不越出）
+            if part == "..":
+                depth -= 1
+                if depth < 0:
+                    return None
+            elif part != ".":
+                depth += 1
+        pinned = _pinned(self.root, self.root.joinpath(*parts))
+        if pinned is None or not projectenv.within(self.root, Path(pinned)):
+            return None
+        return Path(pinned)
 
     # ------------------------------------------------------------ 账本
     def warn(self, code: str, path: str = "", line: int = 0) -> None:
@@ -973,8 +1028,13 @@ class _Scanner:
         return _Parsed(v.uses, v.dynamic, v.relatives, v.path_mutations, tree)
 
     def _read(self, path: Path, rel: str) -> tuple[str | None, dict | None]:
+        # 读之前把路径钉在项目根内（词法）：越界不 stat、不读。链接指到项目外由 `_Finder.guard` / no_follow 另判
+        pinned = _pinned(self.root, path)
+        if pinned is None:
+            return None, {"path": rel, "kind": "outside_project"}
+        path = Path(pinned)
         try:
-            st = os.lstat(path) if self.no_follow else os.stat(path)
+            st = os.lstat(pinned) if self.no_follow else os.stat(pinned)
         except OSError as exc:
             return None, {"path": rel, "kind": "io", "detail": type(exc).__name__}
         if scanbudget.is_placeholder(st):
@@ -1341,6 +1401,7 @@ class _Scanner:
         )
         complete = (
             all(r.confirmed for r in self.roots)
+            and not self.cwd_rejected
             and not self.finder.unreadable
             and not self.blocked_hit
             and not self.path_modified
@@ -1614,13 +1675,16 @@ def _relative_targets(tree: ast.AST, file: Path, root: Path) -> list[Path] | Non
             base = base.parent
         if not projectenv.within(root, base):
             return None
-        target = base.joinpath(*node.module.split(".")) if node.module else base
+        segs = node.module.split(".") if node.module else []
+        if not all(seg.isidentifier() for seg in segs):
+            return None
+        target = base.joinpath(*segs) if segs else base
         found = _as_module(target)
         if found is None:
             return None
         out += found
         for alias in node.names:
-            if alias.name != "*":
+            if alias.name != "*" and alias.name.isidentifier():
                 out += _as_module(target / alias.name) or []
     return out
 
