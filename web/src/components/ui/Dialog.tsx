@@ -95,8 +95,11 @@ interface DialogProps {
    */
   status?: ReactNode
   size?: DialogSize
-  /** 特殊场合才用；常规尺寸走 size */
-  width?: number
+  /**
+   * 特殊场合才用；常规尺寸走 size。只给 `shell` 那种自己管布局的大窗口（版本预览按窗口比例：
+   * `"min(1200px, 80vw)"`）——字符串是 CSS 长度，窗口缩放时跟着变
+   */
+  width?: number | string
   /**
    * 固定高度（CSS 长度）。给「内容随分区变化」的外壳（设置）用：外框不随
    * 内容高低跳动，内容区自己滚。不给就是按内容撑高、上限 86vh 的老行为。
@@ -150,7 +153,7 @@ interface DialogProps {
 
 /**
  * 共用对话框外壳（宪法第五节 Dialog、第二十六节）：rounded-panel 16、标题 type-title 15 / 600、
- * 正文 type-reading 13 / 1.6、页脚三槽 32px、栈底才画遮罩、Esc = `onEscape` 给的安全答案。
+ * 说明 13 / ink-2、正文 type-reading 13 / 1.6、页脚三槽 32px、栈底才画遮罩、Esc = `onEscape` 给的安全答案。
  *
  * **常驻挂载**：调用方不要写 `if (!x) return null` 再把 `open` 写死成 true——那样只有进场、没有退场
  * （Radix 的 Presence 要等 animationend 才卸载内容）。写法是对话框常驻、`open={!!x}`，正文读一个
@@ -393,8 +396,13 @@ export function Dialog({
           >
             <div className="min-w-0">
               <RD.Title className="type-title">{title}</RD.Title>
+              {/* 说明与正文同一个阅读字号（13 / ink-2，2026-10-07 设计审计 §10.2）：此前 12 / ink-3，
+                  比它下面的正文还轻一档，读着像脚注 */}
               {description && (
-                <RD.Description className="type-caption mt-0.5">{description}</RD.Description>
+                // div 而不是 Radix 默认的 p：说明槽也可以是一段结构（导出对话框把「要导的是什么」的对象头放在这里）
+                <RD.Description asChild>
+                  <div className="mt-1 text-base leading-[1.5] text-ink-2">{description}</div>
+                </RD.Description>
               )}
             </div>
           </div>

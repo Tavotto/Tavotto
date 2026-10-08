@@ -23,6 +23,7 @@ export function Menu({
   width = 200,
   open,
   onOpenChange,
+  onCloseAutoFocus,
   modal,
   pointerKeepsFocus,
 }: {
@@ -33,6 +34,11 @@ export function Menu({
   /** 受控打开（`RowMenu` 用它让 ⇧F10 / 右键打开同一份菜单）；不给就是 Radix 自己管 */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /**
+   * 关闭时焦点回到触发器之前调用；`preventDefault()` = 不还焦点。只给「菜单项打开了一个要接焦点的
+   * 输入框」的场合（行内改名）：否则还给 ⋯ 的那一下就是那个输入框的 blur
+   */
+  onCloseAutoFocus?: (e: Event) => void
   /**
    * 默认模态（打开时页面其余部分不吃指针）。触发器自己还要认双击的（顶栏文档名：单击开菜单、双击改名，
    * 2026-10-07 设计审计 §10.1）给 false：第二下才落得回触发器上
@@ -72,8 +78,11 @@ export function Menu({
             'origin-[var(--radix-dropdown-menu-content-transform-origin)]',
           )}
           onCloseAutoFocus={
-            pointerKeepsFocus
+            onCloseAutoFocus || pointerKeepsFocus
               ? (e) => {
+                  // 调用方先说话（行内改名要把焦点留给输入框）；它拦下了就不再还焦点
+                  onCloseAutoFocus?.(e)
+                  if (e.defaultPrevented || !pointerKeepsFocus) return
                   const { pointer, before } = opened.current
                   if (!pointer) return
                   e.preventDefault()
