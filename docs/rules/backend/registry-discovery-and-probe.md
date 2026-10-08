@@ -134,6 +134,7 @@
   捕获过（`probe.was_captured`，与 `unlinked_stems` 同一判据）；目标多一个 `linked` 字段。打开项目时静态扫描先写进注册表的字面量图名
   不算（脚本一次没跑、什么都打不开）——否则只有脚本的项目报 `already_connected`（「图可以直接编辑」）、检查条的首跑入口被藏起来。
   只读：文件名比对 + 数据目录 cache 元数据；`linked` 集合进 `evidence_revision`。
+  **连接性是三态**：预算 / 取消 / 超时在检查前或检查中耗尽（任何原因、任何未连接个数）时 `linkage_known=False`，每个目标的 `linked` 是 `None`（未知，不是临时的 True/False），`target_choice` 一律 `incomplete`、`phase` 为 `action_required / scan_incomplete`，不得落成 `connected` / `single` / `ambiguous`，也不给 `prepare` 动作（仍可重扫 / 手选）——不要再按未连接个数分支。
 - **报告**：`phase` 是准备会话词汇的子集（`scanning` / `awaiting_confirmation` / `awaiting_configuration` / `completed` /
   `action_required` / `cancelled`，子集关系由测试钉着），`outcome` 单列事实；`checks` 里环境与依赖恒为 `unknown`
   （`environment.verified` 恒 False，不给推荐），依赖只说声明文件与条数（不带原文行）。`evidence_revision` 是内容证据的
