@@ -227,3 +227,39 @@ describe('选中卡片后的说明条', () => {
     expect(notice()).toBeNull()
   })
 })
+
+describe('卡片与页脚（2026-10-07 设计审计 §5 / §10.3）', () => {
+  it('卡片是 ui/Card（raised + interactive），选中走它的 selected 态，不再手写卡片投影', async () => {
+    await mount([panel('A.pdf', { capability: cap('auto_linkable') }), panel('B.pdf')])
+    const shell = cardOf('A.pdf').querySelector<HTMLElement>(':scope > [data-card="raised"]')!
+    expect(shell).toBeTruthy()
+    expect(shell.hasAttribute('data-interactive')).toBe(true)
+    expect(shell.hasAttribute('data-selected')).toBe(false)
+    await act(async () => cardOf('A.pdf').click())
+    expect(shell.hasAttribute('data-selected')).toBe(true)
+  })
+
+  it('选中之后只有一条页脚：动作行与接入说明在同一个容器里', async () => {
+    await mount([panel('A.pdf', { capability: cap('auto_linkable') })])
+    await act(async () => cardOf('A.pdf').click())
+    const footers = host.querySelectorAll('[data-asset-footer]')
+    expect(footers).toHaveLength(1)
+    expect(footers[0].querySelector('[data-selected-asset-actions]')).toBeTruthy()
+    expect(footers[0].querySelector('[data-capability-notice]')).toBeTruthy()
+  })
+
+  it('没有外壳时刷新钮就地画出；搜索行里只有搜索框', async () => {
+    await mount([panel('A.pdf')])
+    const refresh = host.querySelector('[data-asset-refresh]')!
+    expect(refresh).toBeTruthy()
+    const searchRow = host.querySelector('input')!.closest('div.flex-col')!
+    expect(searchRow.contains(refresh), '刷新不在搜索行里').toBe(false)
+  })
+
+  it('就近入口是箭头光标（卡片本身才是抓手）', async () => {
+    await mount([panel('A.pdf')])
+    const action = cardOf('A.pdf').querySelector<HTMLElement>('[data-card-actions] > span')!
+    expect(action.className).toContain('cursor-default')
+    expect(cardOf('A.pdf').className).toContain('cursor-grab')
+  })
+})

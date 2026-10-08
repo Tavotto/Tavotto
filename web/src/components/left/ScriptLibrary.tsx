@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Ban, Copy, CornerDownLeft, LoaderCircle, Play, Settings, Square } from '@/components/ui/icons'
+import { Ban, Copy, CornerDownLeft, Play, SearchX, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
 import { cn } from '@/lib/utils'
 import { Details, Summary } from '@/components/ui/Details'
@@ -31,6 +31,12 @@ import { Dialog } from '../ui/Dialog'
 import { ScriptArgvEditor } from '../ScriptArgvEditor'
 import { TaskDiagnostic } from '../TaskDiagnostic'
 import { EmptyState } from '../ui/EmptyState'
+import { MenuItem, MenuSeparator } from '../ui/Menu'
+import { Notice } from '../ui/Notice'
+import { RowMenu } from '../ui/RowMenu'
+import { useRowMenu } from '../ui/useRowMenu'
+import { useAssetStore } from '@/store/assetStore'
+import { useProjectStore } from '@/store/projectStore'
 import { DependencyRepairCard } from '../DependencyRepairCard'
 import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
@@ -126,19 +132,23 @@ export function ScriptLibrary({ query }: { query: string }) {
     else groups.set(g, [entry])
   }
 
+  // 三种「没有行」各有自己的形态（2026-10-07 设计审计 §10.3：此前都是一行裸字）：读不出来是一条 Notice、
+  // 还在读是静态骨架（加载四种写法之一）、筛不到是 EmptyState
   if (error && !view) {
     return (
-      <p className="px-3 py-1.5 text-xs text-danger">{sc('loadFailed', { error })}</p>
+      <div className="px-3 pb-2">
+        <Notice tone="danger" data-script-load-failed>
+          {sc('loadFailed', { error })}
+        </Notice>
+      </div>
     )
   }
   if (!view) {
-    return loading ? (
-      <p className="px-3 py-1.5 text-xs text-ink-3">{sc('loading')}</p>
-    ) : null
+    return loading ? <ScriptSkeleton /> : null
   }
   if (scripts.length === 0) {
     return q ? (
-      <p className="px-3 py-1.5 text-xs text-ink-3">{sc('noMatch')}</p>
+      <EmptyState icon={SearchX} title={sc('noMatch')} data-script-no-match />
     ) : (
       <div className="px-3">
         <EmptyState icon={Play} title={sc('emptyTitle')} />
@@ -155,10 +165,10 @@ export function ScriptLibrary({ query }: { query: string }) {
         const label = g === 'infra' ? sc('groupInfraName') : sc(`group_${g}`)
         return (
           <section key={g} className="mt-1">
-            {/* 分组名 + 计数是一行元数据，不是又一级标题 */}
-            <h4 className="flex h-6 items-center gap-1.5 px-1 type-meta">
-              {label}
-              <span className="tabular-nums">{groups.get(g)!.length}</span>
+            {/* 组头与左栏其它子节头同一种写法：28px · type-section 名字 + type-meta 计数（审计 §10.3） */}
+            <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group={g}>
+              <span className="type-section">{label}</span>
+              <span className="type-meta">{groups.get(g)!.length}</span>
             </h4>
             <ul aria-label={label}>
               {groups.get(g)!.map((entry) => (
@@ -177,10 +187,42 @@ export function ScriptLibrary({ query }: { query: string }) {
   )
 }
 
+/** 读清单时的静态骨架：与真实的行同高（28），不呼吸 */
+function ScriptSkeleton() {
+  return (
+    <div className="flex flex-col px-2 pb-2" aria-busy="true" data-script-loading>
+      <span role="status" className="sr-only">
+        {sc('loading')}
+      </span>
+      {[62, 48, 70].map((w, i) => (
+        <span key={i} aria-hidden className="mx-1 flex h-7 items-center gap-1.5 pl-1.5">
+          <span className="size-1.5 shrink-0 rounded-full bg-surface-hover opacity-65" />
+          <span className="ml-1 h-2.5 rounded-xs bg-surface-hover opacity-65" style={{ width: `${w}%` }} />
+        </span>
+      ))}
+    </div>
+  )
+}
+
 /**
- * safe 模式首次使用的简洁说明（关掉之后不再出现；不解释术语，只讲两件
- * 用户关心的事：写入被隔离、只有点了才会运行）。
+ * 一行脚本下面的「第二行」：所有恢复 / 补救入口（一键修复卡、跑前准备、运行目录、缺数据、失败详情）
+ * 都是这一行的延续，**同一种缩进、同一种间距**（2026-10-07 设计审计 §10.3：此前五种写法）——
+ * 缩进到文件名那一列（状态点列 + 间距），不套框。
  */
+function SecondRow({ children, ...rest }: { children: React.ReactNode } & Record<`data-${string}`, string | boolean | undefined>) {
+  return (
+    <div {...rest} className="flex flex-wrap items-center gap-1.5 pb-1.5 pl-8 pr-2">
+      {children}
+    </div>
+  )
+}
+
+/** 项目根 + 相对脚本名 → 绝对路径；根是 Windows 写法（只有反斜杠）时整条按反斜杠拼 */
+function joinProjectPath(root: string, rel: string): string {
+  const win = root.includes('\\') && !root.includes('/')
+  const sep = win ? '\\' : '/'
+  return `${root.replace(/[\\/]+$/, '')}${sep}${win ? rel.replace(/\//g, '\\') : rel}`
+}
 
 /**
  * 一行脚本（Tavotto File Row）：状态点 | 文件名 | 状态一句话 | 运行图标钮。
@@ -213,6 +255,13 @@ function ScriptRow({
   // T09（ADR 0116）：默认这颗钮打开准备面板（后端会话：检查 → 确认 → 运行 → 进入编辑），不直接执行；
   // 本地开关关掉时回到旧的同步试运行（保留一版）
   const viaPanel = preparationPanelEnabled() && !busy
+  // 脚本名相对项目根：根以项目状态（`/api/project` 的 figures_dir）为准，不等素材清单——/api/panels
+  // 失败时 assetStore.figuresDir 是空的，而脚本行照样在（Codex #832）；两边都不知道就不给「复制路径」
+  const projectRoot = useProjectStore((s) => s.project?.figures_dir)
+  const assetRoot = useAssetStore((s) => s.figuresDir)
+  const root = projectRoot || assetRoot
+  // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`，审计 §10.3）
+  const menu = useRowMenu()
 
   const onRunOrCancel = () => {
     if (viaPanel) {
@@ -223,10 +272,20 @@ function ScriptRow({
     if (busy) store.cancel(entry.script)
     else void store.run(entry.script)
   }
+  const path = root ? joinProjectPath(root, entry.script) : null
+  const copyPath = () => {
+    if (!path) return
+    const failed = () => useUiStore.getState().setStatus(msg('scripts.pathCopyFailed', { path }, 'workspace'), 'error')
+    // 非安全上下文 / 某些 WebView 里没有 `navigator.clipboard`：照样说「没复制成、路径在这」，不静默（Codex #832）
+    if (typeof navigator.clipboard?.writeText !== 'function') return failed()
+    void Promise.resolve()
+      .then(() => navigator.clipboard.writeText(path))
+      .then(() => useUiStore.getState().setStatus(msg('scripts.pathCopied', { path }, 'workspace'), 'done'), failed)
+  }
 
   return (
     <li className="flex flex-col" data-script-row={entry.script}>
-      <div className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
+      <div {...menu.rowProps} className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
         <StatusDot entry={entry} run={run} prep={prep} />
         {/* 脚本名是这一行的主文字：等宽（路径 / 脚本名那一档）但字号跟正文走 12，
             与右侧 11px 的状态一句话差一个台阶（左栏审计 L02） */}
@@ -279,6 +338,29 @@ function ScriptRow({
         >
           {busy ? <Square size={ICON_SIZE.sm} /> : <Play size={ICON_SIZE.sm} />}
         </IconButton>
+        <RowMenu state={menu} label={sc('rowActions', { script: entry.script })} width={200} data-script-menu={entry.script}>
+          <MenuItem
+            icon={busy ? Square : Play}
+            disabled={!!run?.cancelRequested}
+            onSelect={onRunOrCancel}
+          >
+            {busy ? sc('cancel') : sc(entry.registered ? 'rerun' : 'run')}
+          </MenuItem>
+          {hasAnswers && (
+            <MenuItem
+              icon={CornerDownLeft}
+              onSelect={() => useScriptInputStore.getState().openManager(entry.script)}
+            >
+              {translate('scriptInput.manageTip', { ns: 'dialogs' })}
+            </MenuItem>
+          )}
+          <MenuSeparator />
+          {path && (
+            <MenuItem icon={Copy} data-script-copy-path onSelect={copyPath}>
+              {sc('copyPath')}
+            </MenuItem>
+          )}
+        </RowMenu>
       </div>
 
       {repairCard && <ScriptDependencyRepair script={entry.script} run={run} />}
@@ -314,14 +396,16 @@ function ScriptDependencyRepair({ script, run }: { script: string; run: ScriptRu
   if (!found) return null
   return (
     // 与下面的恢复说明同一列缩进：它是这一行的延续，不是另一块区域
-    <div className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-dependency-repair>
-      <DependencyRepairCard
-        offer={found.offer}
-        module={found.module}
-        script={found.offer.script || script}
-        fromScriptRow
-      />
-    </div>
+    <SecondRow data-script-dependency-repair>
+      <div className="min-w-0 flex-1">
+        <DependencyRepairCard
+          offer={found.offer}
+          module={found.module}
+          script={found.offer.script || script}
+          fromScriptRow
+        />
+      </div>
+    </SecondRow>
   )
 }
 
@@ -339,7 +423,7 @@ function ScriptPreparation({ script, run }: { script: string; run: ScriptRunStat
   const offer = (run?.phase === 'needs_preparation' ? run.error?.dependency_preparation : undefined) ?? (mine && progress?.flow === 'joint' && progress.state !== 'done' ? jointOffer : null)
   if (!offer) return null
   return (
-    <div className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-preparation>
+    <SecondRow data-script-preparation>
       <Button
         variant="secondary"
         size="sm"
@@ -348,7 +432,7 @@ function ScriptPreparation({ script, run }: { script: string; run: ScriptRunStat
       >
         {translate('engine.oneClickRepair', { ns: 'errors' })}
       </Button>
-    </div>
+    </SecondRow>
   )
 }
 
@@ -396,9 +480,9 @@ function GateReopen({ run }: { run: ScriptRunState | undefined }) {
   // 依赖门的再打开入口在 `ScriptPreparation`，这里是运行目录门。
   if (run?.phase === 'needs_workdir' && run.error?.confirmation) {
     return (
-      <div className="mb-1.5 pl-8 pr-2" data-script-workdir-choose>
+      <SecondRow data-script-workdir-choose>
         <WorkdirChooseButton confirmation={run.error.confirmation} />
-      </div>
+      </SecondRow>
     )
   }
   return null
@@ -406,7 +490,9 @@ function GateReopen({ run }: { run: ScriptRunState | undefined }) {
 
 /**
  * 行首的状态点（6px，坐在 16px 列里）：实心 = 已关联；空心 = 还没跑过；
- * 转圈 = 正在跑；红 = 这次失败。纯装饰——状态本身由旁边那句话与可达名说出。
+ * accent = 正在跑（点是静止的，「在动」由旁边那句话的 shimmer 说——2026-10-07 设计审计 §10.3：
+ * 此前是一颗转圈 / 呼吸点，与 shimmer 两处同时在动）；红 = 这次失败。
+ * 纯装饰——状态本身由旁边那句话与可达名说出。
  */
 function StatusDot({
   entry,
@@ -427,19 +513,14 @@ function StatusDot({
     prepPhase === 'preparing_environment'
   // 停在门上不是失败（缺的是一个决定），不标红
   const failed = !running && !!run?.error && !isGatePhase(phase)
-  if (running) {
-    return (
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center text-ink-2" aria-hidden>
-        <LoaderCircle size={ICON_SIZE.xs} className="animate-spin" />
-      </span>
-    )
-  }
   return (
-    <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden>
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden data-script-dot={running ? 'running' : undefined}>
       <span
         className={cn(
           'h-1.5 w-1.5 rounded-full',
-          failed
+          running
+            ? 'bg-accent'
+            : failed
               ? 'bg-danger'
               : isLinked(entry)
                 ? 'bg-ink-2'
@@ -488,7 +569,8 @@ function StatusLine({
       </button>
     )
   } else if (phase === 'starting_runtime' || phase === 'running') {
-    body = sc(phase === 'running' ? 'running' : 'starting')
+    // 「在动」的唯一记号：shimmer 扫过这句话（加载四种写法之一）
+    body = <span className="text-shimmer" data-script-running>{sc(phase === 'running' ? 'running' : 'starting')}</span>
   } else if (phase === 'captured_one' || phase === 'captured_many') {
     body = (
       // 可见的是结果本身（「已发现 3 张图」），动作名「查看捕获结果」给读屏与气泡
@@ -537,7 +619,7 @@ function MissingInputRecovery({ run }: { run: ScriptRunState | undefined }) {
   const offer = run?.error?.missing_input
   if (!offer || isBusyPhase(run!.phase)) return null
   return (
-    <div className="mb-1.5 mt-0.5 flex flex-wrap items-center gap-1.5 pl-8 pr-2">
+    <SecondRow data-script-missing-input>
       <Button
         variant="secondary"
         size="sm"
@@ -546,7 +628,7 @@ function MissingInputRecovery({ run }: { run: ScriptRunState | undefined }) {
       >
         {translate('engine.missingInputOpen', { ns: 'errors' })}
       </Button>
-    </div>
+    </SecondRow>
   )
 }
 
@@ -584,7 +666,7 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
   return (
     // 缩进到文件名那一列（状态点列 + 间距），不套框：它是这一行的第二行，不是另一张卡。默认只露一个
     // 「详情」（2026-09-29 用户：不许堆说明）：原因解释、两个出口、诊断都在里面
-    <Details className="mb-1.5 mt-0.5 pl-8 pr-2" data-script-recovery>
+    <Details className="pb-1.5 pl-8 pr-2" data-script-recovery>
       <Summary className="type-meta">{sc('recoveryDetails')}</Summary>
       <div className="mt-1.5 flex flex-col gap-1.5">
         <p className="type-caption">{sc('recoveryBody')}</p>
