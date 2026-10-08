@@ -481,7 +481,7 @@ export interface ProjectScan {
   scripts?: ProjectScanScript[]
   targets?: ProjectScanTarget[]
   default_target?: string | null
-  target_choice?: 'single' | 'ambiguous' | 'connected' | 'none'
+  target_choice?: 'single' | 'ambiguous' | 'connected' | 'none' | 'incomplete'
   checks: ProjectScanCheck[]
   environment?: {
     verified: boolean
