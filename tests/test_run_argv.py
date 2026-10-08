@@ -190,49 +190,6 @@ class TestRunConfigStore:
         assert runconfig.get(lower, cfg.id, script="s.py").argv == ("--k", "1")
         assert runconfig.default_selection(lower, "s.py").config_id == cfg.id
 
-    def test_a_registry_written_under_the_legacy_digest_is_still_read(self, tmp_path, monkeypatch):
-        # 兼容：首版按 normcase 命名的登记文件（POSIX 上 = 原样大小写）在新判据下仍读得到。
-        from tavotto.engine import config as engine_config
-
-        root = tmp_path / "Plots"
-        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
-        cfg = runconfig.put(root, "s.py", ["--k", "1"])
-        legacy = runconfig.store_path(root)
-        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
-        assert runconfig.store_path(root) != legacy and legacy.exists()
-        assert runconfig._legacy_store_path(root) == legacy or os.name == "nt"
-        assert runconfig.get(root, cfg.id).argv == ("--k", "1")
-
-    def test_a_legacy_registry_is_found_through_a_case_alias_of_the_root(
-        self, tmp_path, monkeypatch
-    ):
-        # Codex r4214097447：旧登记按当初的拼写（Plots）算哈希；现在以别名（plots）打开，
-        # 回落候选要含磁盘真实拼写。模拟版：所有平台都跑得到。
-        from tavotto.engine import config as engine_config
-
-        real, alias = tmp_path / "Plots", tmp_path / "plots"
-        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
-        cfg = runconfig.put(real, "s.py", ["--k", "1"])
-        runconfig.set_default(real, "s.py", cfg.id)
-        legacy = runconfig.store_path(real)
-        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
-        monkeypatch.setattr(runconfig, "_on_disk_spelling", lambda p: p.replace("plots", "Plots"))
-        assert legacy.exists() and runconfig.store_path(alias) != legacy
-        assert runconfig.get(alias, cfg.id).argv == ("--k", "1")
-        assert runconfig.default_selection(alias, "s.py").config_id == cfg.id
-        runconfig.put(alias, "s.py", ["--k", "2"])  # 下次写入落新名
-        assert runconfig.store_path(alias).exists()
-
-    def test_on_disk_spelling_recovers_real_case(self, tmp_path):
-        (tmp_path / "Plots" / "Sub").mkdir(parents=True)
-        assert runconfig._on_disk_spelling(str(tmp_path / "missing" / "X")) == str(
-            tmp_path / "missing" / "X"
-        )
-        if not (tmp_path / "plots").exists():
-            pytest.skip("大小写敏感的卷：别名不存在，模拟版用例已覆盖")
-        got = runconfig._on_disk_spelling(str(tmp_path / "plots" / "SUB"))
-        assert got == str(tmp_path / "Plots" / "Sub")
-
     def test_a_newer_format_is_refused_by_this_reader(self, tmp_path):
         cfg = runconfig.put(tmp_path, "s.py", ["a"])
         path = runconfig.store_path(tmp_path)
@@ -365,17 +322,6 @@ class TestRunConfigStore:
         assert runconfig.put(tmp_path, "s.py", []) is None
         runconfig.set_default(tmp_path, "s.py", None)
         assert path.read_bytes() == before
-
-    def test_a_damaged_legacy_store_is_unreadable_too(self, tmp_path, monkeypatch):
-        legacy = tmp_path / "legacy.json"
-        legacy.write_text("{broken", encoding="utf-8")
-        monkeypatch.setattr(runconfig, "_legacy_store_paths", lambda _root: [legacy])
-        with pytest.raises(runconfig.RunConfigUnreadable):
-            runconfig.default_selection(tmp_path, "s.py")
-        with pytest.raises(runconfig.RunConfigUnreadable):  # 写路径同样拒绝，旧文件原样留着
-            runconfig.put(tmp_path, "s.py", ["z"])
-        assert legacy.read_text(encoding="utf-8") == "{broken"
-        assert not list(tmp_path.glob("legacy.json.corrupt-*"))
 
     def test_the_disk_panel_default_follows_the_last_explicit_run(self, tmp_path):
         a = runconfig.put(tmp_path, "s.py", ["a"])

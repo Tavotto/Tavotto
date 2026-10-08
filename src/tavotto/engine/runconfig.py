@@ -165,63 +165,20 @@ def store_path(project_root: str | Path) -> Path:
     return _digest_path(project_identity(project_root))
 
 
-def _on_disk_spelling(path: str) -> str:
-    """逐级按父目录列表取出磁盘上的真实大小写拼写（取不到的层原样保留）。
-    只在回落读旧登记时调用，不在热路径上。"""
-    parts = Path(path).parts
-    if not parts:
-        return path
-    cur = Path(parts[0])
-    for name in parts[1:]:
-        real = name
-        try:
-            entries = os.listdir(cur)
-        except OSError:
-            entries = []
-        if name not in entries:
-            folded = name.casefold()
-            real = next((e for e in entries if e.casefold() == folded), name)
-        cur = cur / real
-    return str(cur)
-
-
-def _legacy_store_paths(project_root: str | Path) -> list[Path]:
-    """#812 首版按 `os.path.normcase` 算的文件名（只在 Windows 折叠大小写）。旧文件里没记项目路径，
-    无法枚举所有曾用拼写；候选 = 传入拼写 + 磁盘真实拼写（当初多半经文件对话框拿到规范大小写）。
-    新文件不存在时依次回落读它们，下一次写入落到新名；不迁移删除，旧文件留着无害。"""
-    given = os.path.normpath(os.path.abspath(str(project_root)))
-    spellings = [given]
-    canonical = _on_disk_spelling(given)
-    if canonical != given:
-        spellings.append(canonical)
-    out: list[Path] = []
-    for sp in spellings:
-        p = _digest_path(os.path.normcase(sp))
-        if p not in out:
-            out.append(p)
-    return out
-
-
-def _legacy_store_path(project_root: str | Path) -> Path:
-    return _legacy_store_paths(project_root)[0]
-
-
 def _locate(project_root: str | Path) -> tuple[Path, str] | None:
-    """找到登记文件并读出原文：新名优先，再依次回落旧文件名。**不存在 = None**；
+    """找到登记文件并读出原文（只按 `project_identity` 一个身份定位；#812 分支上未发布的旧
+    normcase 文件名格式不做迁移）。**不存在 = None**；
     存在却读不了（权限 / 非 UTF-8 / IO 错）= `RunConfigUnreadable`，不当它不存在。"""
-    for path in [store_path(project_root), *_legacy_store_paths(project_root)]:
-        try:
-            return path, path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            continue
-        except NotADirectoryError:
-            continue
-        except (OSError, ValueError) as exc:
-            raise RunConfigUnreadable(
-                "这个项目的运行参数记录读不出来（文件损坏或无法访问）；为避免用错参数出图，已停止运行",
-                reason="unreadable_file",
-            ) from exc
-    return None
+    path = store_path(project_root)
+    try:
+        return path, path.read_text(encoding="utf-8")
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except (OSError, ValueError) as exc:
+        raise RunConfigUnreadable(
+            "这个项目的运行参数记录读不出来（文件损坏或无法访问）；为避免用错参数出图，已停止运行",
+            reason="unreadable_file",
+        ) from exc
 
 
 def _read(project_root: str | Path) -> dict:
