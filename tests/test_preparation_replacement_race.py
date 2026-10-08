@@ -124,6 +124,75 @@ def test_explicit_rerun_retires_only_its_frozen_run_configuration(
     }
 
 
+def test_a_stop_accepted_just_before_the_ready_commit_ends_as_cancelled(tmp_path, monkeypatch):
+    """Stop lands after the last cancel check, before `_finish(READY)`: accepted means terminal."""
+    service = preparation.PreparationService()
+    root = str(tmp_path)
+
+    class Worker:
+        generation = 1
+        built = True
+        killed = False
+
+        def alive(self):
+            return not self.killed
+
+        def force_kill(self):
+            self.killed = True
+
+    worker = Worker()
+
+    def runner(plan, **_kwargs):
+        return worker, {"stems": {"fig": {}}, "descriptors": []}, True
+
+    accepted = {}
+
+    def stop_between_check_and_commit(entry, *_args, **_kwargs):
+        # runs right after the cancel check, right before the READY commit
+        accepted.update(service.cancel(entry.plan.plan_id, "project"))
+        return False
+
+    monkeypatch.setattr(service, "_stale_reason", lambda plan: None)
+    monkeypatch.setattr(service, "_stem_missing", stop_between_check_and_commit)
+    monkeypatch.setattr(
+        preparation.receipt,
+        "from_worker",
+        lambda *args, **kwargs: SimpleNamespace(
+            completeness="partial",
+            runtime_rejected=None,
+            inputs=None,
+            binding_check=lambda: {"matched": True},
+        ),
+    )
+    plan = preparation.PreparationPlan(
+        plan_id="late",
+        project_id="project",
+        project_root=root,
+        interpreter="",
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        static_source=None,
+        environment={},
+        python_requirement={},
+        dependency_intents=(),
+        dependency_conflicts=(),
+        launch_context=None,
+        grant={},
+        budget={},
+        created_at=0,
+        target="asset",
+    )
+    service.register(plan, force_rebuild=True)
+    service.start("late", runner=runner)
+    assert service.wait("late", 10)
+    assert accepted["accepted"] is True
+    result = service.get("late", "project")[1]
+    assert result.status == preparation.STATUS_CANCELLED
+    assert result.cancel_requested_at is not None
+
+
 _LATE_BRANCHES = (
     "ready_fresh",
     "ready_reused",

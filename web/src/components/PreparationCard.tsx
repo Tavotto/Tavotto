@@ -630,9 +630,13 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
       case 'action':
         await store.act(entry.key, p.action)
         return null
-      case 'adopt':
+      case 'adopt': {
         // 成功：envStore 的环境变了 → 会话只读地重新检查（store 订阅），下一步仍由报告给出
-        return useEnvStore.getState().adoptCandidate(p.candidate, targetName(entry))
+        // 挂起期间可能切了项目：A 的采用失败文案不许落到 B 的卡片上
+        const guard = captureProjectEpoch()
+        const err = await useEnvStore.getState().adoptCandidate(p.candidate, targetName(entry))
+        return guard.still() ? err : null
+      }
       case 'workdir':
         // 卡里选的就是答案：同一次 PATCH（项目级、记住），答完会话只读地重新检查（store 订阅 envStore），**不运行**
         if (!workdir) return null

@@ -145,7 +145,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_plan_matches_the_faces_the_pdf_actually_uses",
-          "line": 173,
+          "line": 177,
           "contains": "CANVAS_TEXT_FAMILIES",
           "class": "user_contract",
           "note": "三个族的 plan 覆盖一致"
@@ -582,7 +582,7 @@
         {
           "file": "tests/test_glyph_plan.py",
           "symbol": "test_golden_vectors_match_python_side",
-          "line": 102,
+          "line": 103,
           "contains": "missing_glyphs",
           "class": "user_contract",
           "note": "golden 向量：哪些字符画不出来"
@@ -985,7 +985,7 @@
         {
           "file": "src/tavotto/app.py",
           "symbol": "_post_check_size",
-          "line": 6006,
+          "line": 6024,
           "role": "写回 commit 后自检：PDF 页面尺寸 vs 重放 manifest 的 size_mm（容差 0.5mm，不回滚）"
         },
         {
@@ -1009,13 +1009,13 @@
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_original_artifact_facts",
-          "line": 2668,
+          "line": 2763,
           "role": "MCP 规范化：原始产物事实（页面尺寸）"
         },
         {
           "file": "codex-plugin/mcp/tavotto_mcp/bridge.py",
           "symbol": "_probe_asset",
-          "line": 2544,
+          "line": 2654,
           "function": "_probe_asset",
           "role": "MCP 导出的产物检查（U08 C，ADR 0068）：没有 pikepdf 时 PDF 的基本观测经契约层 probe，按需 import"
         }
@@ -1086,7 +1086,7 @@
         {
           "file": "tests/test_mcp_normalize.py",
           "symbol": "test_zero_edit_roundtrip_keeps_page_size_and_pixels",
-          "line": 285,
+          "line": 287,
           "contains": "render_preview_png",
           "class": "user_contract",
           "note": "规范化前后预览像素差"

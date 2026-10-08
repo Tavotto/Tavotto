@@ -11,8 +11,11 @@ import {
   ENGINE_CAPABILITY_MISSING,
   ENGINE_FEATURE_SCRIPT_ARGV,
   fetchEngineFeatures,
+  fetchRuntimeStatus,
+  forgetScriptAnswer,
   probeScript,
   resetEngineFeatures,
+  updateScriptAnswer,
 } from '@/lib/api'
 import { formatMessage } from '@/i18n'
 
@@ -75,6 +78,39 @@ describe('新前端连旧引擎', () => {
   })
 })
 
+describe('新前端连旧引擎：任何带运行配置引用的请求（r4221289208）', () => {
+  const calls: [string, () => Promise<unknown>][] = [
+    ['复跑 probe（run_config）', () => probeScript('plot.py', undefined, { run_config: 'rc_1' })],
+    ['素材状态（source.run_config）', () => fetchRuntimeStatus('a', { script: 's.py', stem: 'F', run_config: 'rc_1' })],
+    ['更新已记住答案（runConfig）', () => updateScriptAnswer('s.py', 0, 'x', 'rc_1')],
+    ['忘记已记住答案（runConfig）', () => forgetScriptAnswer('s.py', 0, 'rc_1')],
+  ]
+  it.each(OLD_ENGINES.flatMap(([n, v]) => calls.map(([c, f]) => [`${n} / ${c}`, v, f] as const)))(
+    '%s：以 engine_capability_missing 停下，一次请求都不发',
+    async (_name, version, call) => {
+      engine(version)
+      const err = await call().catch((e) => e)
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).body.code).toBe(ENGINE_CAPABILITY_MISSING)
+      expect(runCalls()).toBe(0)
+    },
+  )
+
+  it('run_config: null（明确不带参数）与无引用的请求照旧发出，不问能力', async () => {
+    engine({ version: '0.17.0' })
+    await probeScript('plot.py', undefined, { run_config: null })
+    await fetchRuntimeStatus('a', { script: 's.py', stem: 'F' })
+    await updateScriptAnswer('s.py', 0, 'x')
+    expect(runCalls()).toBe(3)
+  })
+
+  it('新引擎：run_config 原样发出', async () => {
+    engine({ features: [ENGINE_FEATURE_SCRIPT_ARGV] })
+    await probeScript('plot.py', undefined, { run_config: 'rc_1' })
+    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body))).toEqual({ script: 'plot.py', run_config: 'rc_1' })
+  })
+})
+
 describe('新前端连新引擎', () => {
   it('宣告了 script-argv：参数原样发出，一个标签页只问一次', async () => {
     engine({ version: '0.19.0', features: ['desktop-remote-window', ENGINE_FEATURE_SCRIPT_ARGV] })
@@ -95,5 +131,20 @@ describe('新前端连新引擎', () => {
     expect(runCalls()).toBe(0)
     engine({ features: [ENGINE_FEATURE_SCRIPT_ARGV] })
     expect((await fetchEngineFeatures()).has(ENGINE_FEATURE_SCRIPT_ARGV)).toBe(true)
+  })
+})
+
+describe('/api/version 暂时失败后允许重试（Codex #818 r4221135447）', () => {
+  it('第一次 503、第二次 200：第二次拿到真实特性集，而不是缓存的空集', async () => {
+    let calls = 0
+    fetchMock.mockImplementation(async () => {
+      calls += 1
+      if (calls === 1) return { ok: false, status: 503, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => ({ features: [ENGINE_FEATURE_SCRIPT_ARGV] }) }
+    })
+    await expect(fetchEngineFeatures()).rejects.toThrow()
+    const features = await fetchEngineFeatures()
+    expect(features.has(ENGINE_FEATURE_SCRIPT_ARGV)).toBe(true)
+    expect(calls).toBe(2)
   })
 })

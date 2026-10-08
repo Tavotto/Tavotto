@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import type { RememberedAnswer } from '@/lib/api'
 import { useScriptInputStore } from '@/store/scriptInputStore'
-import { useScriptRunStore } from '@/store/scriptRunStore'
+import { runConfigsInOrder } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { cn } from '@/lib/utils'
 import { Button } from './ui/Button'
@@ -94,9 +95,21 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
       else next[key] = error
       return next
     })
-  const rerun = (configs: Array<string | null>) => {
+  /**
+   * 涉及几份配置就各重跑一次，**一份跑完再跑下一份**（同脚本防并发：一口气全发，只有第一份真的探测，
+   * Codex #816 P1）。某份失败不挡后面的；失败的配置在事后用一条错误提示说出来。
+   */
+  const rerun = async (configs: Array<string | null>) => {
     useUiStore.getState().setStatus(msg('scriptInput.manageSaved', { script }, 'dialogs'), 'done')
-    for (const config of configs) void useScriptRunStore.getState().run(script, config)
+    const guard = captureProjectEpoch()
+    const results = await runConfigsInOrder(script, configs)
+    // 重跑期间换了项目：A 的失败清单不许作为状态栏提示出现在 B 上
+    if (!guard.still()) return
+    const failed = results.filter((r) => r.failed).map((r) => r.config ?? translate('scriptInput.manageDefaultConfig', { ns: 'dialogs' }))
+    if (failed.length)
+      useUiStore
+        .getState()
+        .setStatus(msg('scriptInput.manageRerunFailed', { script, configs: failed.join(', ') }, 'dialogs'), 'error')
   }
   const toggleForget = (key: string, on: boolean) =>
     setForgets((prev) => {
@@ -174,7 +187,7 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
         return next
       })
     }
-    rerun(configs)
+    await rerun(configs)
   }
 
   return (

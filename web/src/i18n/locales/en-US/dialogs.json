@@ -1793,6 +1793,7 @@
     "manageSaveCount": "Save and rerun ({{n}})",
     "manageForget": "Remove",
     "manageSaved": "Saved; rerunning {{script}}",
+    "manageRerunFailed": "Rerunning {{script}} failed ({{configs}}); the other configurations ran as usual",
     "manageForgetStaged": "Will be forgotten on save",
     "manageForgetUndo": "Undo",
     "manageRowActions": "More actions for question {{index}}",

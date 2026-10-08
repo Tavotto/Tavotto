@@ -1052,3 +1052,98 @@ def test_the_total_deadline_caps_each_probe_and_stops_starting_new_ones(tmp_path
     assert timeouts[0] == projectenv.PROBE_TIMEOUT_S
     assert timeouts[1] == 190.0 - 96.0 and timeouts[1] < projectenv.PROBE_TIMEOUT_S
     assert len(timeouts) == 2  # 第三个：剩余 <0 → deadline
+
+
+# ---------------------------------------------------------------------------
+# #818 Codex r4220889695：项目设置写不进去（`remember()` 回 False）= 采用失败，不重置池、不开图
+# ---------------------------------------------------------------------------
+def _save_failure_world(client, tmp_path, monkeypatch):
+    """真 venv + 一个候选行；`remember()` 被换成「写不进去」（回 False、什么都不落盘）。"""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    real_venv(root, ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    rec = client.get("/api/engine/environment", query_string={"pj": pj}).get_json()["project"][
+        "recommendation"
+    ]
+    row = next(c for c in rec["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
+    resets: list[str] = []
+    monkeypatch.setattr(projectenv, "remember", lambda *a, **k: False)
+    monkeypatch.setattr(engine_pool, "reset_worker_python", lambda: resets.append("reset"))
+    monkeypatch.setattr(engine_pool, "shutdown_all", lambda *a, **k: resets.append("shutdown"))
+    return root, pj, row, resets
+
+
+@needs_worker
+def test_a_candidate_adoption_whose_settings_cannot_be_saved_fails_and_resets_nothing(
+    client, tmp_path, monkeypatch
+):
+    root, pj, row, resets = _save_failure_world(client, tmp_path, monkeypatch)
+
+    response = client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "candidate": row["id"], "expected_generation": row["generation"]},
+        query_string={"pj": pj},
+    )
+
+    assert response.status_code == 500
+    assert response.get_json()["code"] == "environment_save_failed"
+    assert resets == []  # 解析器没变：不重置池、不把旧会话关掉
+
+
+@needs_worker
+def test_a_typed_path_adoption_whose_settings_cannot_be_saved_fails_and_resets_nothing(
+    client, tmp_path, monkeypatch
+):
+    root, pj, _row, resets = _save_failure_world(client, tmp_path, monkeypatch)
+
+    response = client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "python": envworld.venv_rel(".venv")},
+        query_string={"pj": pj},
+    )
+
+    assert response.status_code == 500
+    assert response.get_json()["code"] == "environment_save_failed"
+    assert resets == []
+
+
+@needs_worker
+def test_an_mcp_adoption_whose_settings_cannot_be_saved_fails_and_never_runs_the_script(
+    client, tmp_path, monkeypatch
+):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "codex-plugin" / "mcp"))
+    from tavotto_mcp import bridge, server
+
+    root, _pj, row, resets = _save_failure_world(client, tmp_path, monkeypatch)
+    (root / "Fig1.pdf").write_bytes(b"%PDF-1.4\n")
+    (root / "tavotto_registry.json").write_text(
+        '{"scripts": {"figure.py": {"entry": "main", "cost": "light", "stems": ["Fig1"]}}}',
+        encoding="utf-8",
+    )
+    ran: list[str] = []
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        bridge.engine_pool, "get", lambda *a, **k: ran.append("run") or pytest.fail("不该开图")
+    )
+    bridge.reset_root_authority()
+    try:
+        res = server.call_tool(
+            "tavotto_open_figure",
+            {
+                "project_path": str(root),
+                "adopt_environment": row["id"],
+                "expected_environment_generation": row["generation"],
+            },
+        )
+    finally:
+        bridge.sessions().clear()
+        bridge.reset_root_authority()
+
+    assert res["isError"] is True
+    assert res["structuredContent"]["code"] == "environment_save_failed"
+    assert ran == [] and resets == []

@@ -138,7 +138,14 @@ CAPABILITY_MISSING = "engine_capability_missing"
 #: `BRIDGE_IMPORTS_AT_MIN`（那两处是「桥 import 得动吗」的判据，放进去等于把最低版本抬到今天），只经
 #: `_optional_engine()` 取；用到它们的路径先过能力协商（`_require_feature`），或在缺席时退回旧行为。
 #: `tests/test_mcp_compat.py` 钉住：可选集与必需集不相交、桥里取可选模块只有这一个入口。
-OPTIONAL_ENGINE_MODULES = ("capabilities", "envadvice", "envlease", "runconfig", "scriptargs")
+OPTIONAL_ENGINE_MODULES = (
+    "capabilities",
+    "envadvice",
+    "envlease",
+    "execspec",
+    "runconfig",
+    "scriptargs",
+)
 
 
 def _optional_engine(name: str):
@@ -214,45 +221,121 @@ def _argv_path_candidates(token: str) -> list[str]:
     return out
 
 
-def _argv_path_escapes(value: str, roots: list[str]) -> str | None:
+def _run_cwd(project: str, script: str) -> str | None:
+    """worker 这次实际用的 cwd（与 `execspec.safe_spec` 同一个函数 `run_cwd`、同一个模式出处
+    `workdir.mode_for`）。None = 会话沙盒（每次新建、开跑前是空的，里面没有预置的符号链接）。
+    引擎没有 `run_cwd`（比本插件旧）→ 保守取脚本目录与项目根两处都查，所以返回「项目根」并由调用方补查脚本目录。"""
+    execspec = _optional_engine("execspec")
+    mode = engine_workdir.mode_for(project)
+    run_cwd = getattr(execspec, "run_cwd", None)
+    if run_cwd is None:
+        return str(project)
+    return run_cwd(project, script, mode)
+
+
+def _response_file_prefixes(project: str, script: str) -> tuple[frozenset[str], bool]:
+    """脚本声明的 argparse 响应文件前缀：`(字符集, 是否可证明)`。静态读源码（`scriptargs`，不执行）；
+    引擎太旧没有 `scriptargs`、读不了、前缀不是字面量 → `(空, False)`，调用方走保守口径。"""
+    scriptargs = _optional_engine("scriptargs")
+    if scriptargs is None or not hasattr(scriptargs, "response_file_prefixes"):
+        return frozenset(), False
+    try:
+        path = Path(project, engine_figcapture.normalize_relative_script(script))
+        return scriptargs.response_file_prefixes(path)
+    except Exception:  # noqa: BLE001 - 读不了就当说不准，绝不放行
+        return frozenset(), False
+
+
+def _is_response_file_ref(value: str, prefixes: tuple[frozenset[str], bool]) -> bool:
+    """这段值会不会被 argparse 当成响应文件引用（首字符是 `fromfile_prefix_chars` 之一）。
+
+    `@` 恒拒（最常见的写法，不依赖静态分析）；首字符在**已证明**的前缀集合里就拒。
+    前缀说不准的脚本根本到不了这里：`_check_argv_scope` 先以 `argv_unverifiable` 整体拒掉。"""
+    lead = value[0]
+    return lead == "@" or lead in prefixes[0]
+
+
+def _argv_path_escapes(
+    value: str,
+    roots: list[str],
+    cwds: list[str] | None,
+    prefixes: tuple[frozenset[str], bool] = (frozenset(), False),
+) -> str | None:
     """这段文字若会指到已授权根之外，返回规范化后的路径（或原文）；否则 None。
 
-    只看「形状」：绝对路径（含盘符 / UNC / `~`）必须落在允许的根里；含 `..` 的相对路径一律拒
-    （worker 的 cwd 不一定是项目根，没法证明它不越界）。普通相对路径与非路径值放行。"""
-    if not value:
+    什么算「像路径」：**所有**非空值都按路径验——绝对（含 `~` / 盘符 / UNC）按原样；其余一律当作
+    相对 worker 真实 cwd 的路径：拼到 cwd 上、`realpath` 解开符号链接（不存在的部分原样保留在最近的
+    已存在祖先之后）、再用和绝对路径同一个根检查。数字 / 普通单词拼出来是 cwd 下不存在的名字，
+    天然在根内、照常放行；只有真的经符号链接或 `..` 走出根的才被拒。cwd 是会话沙盒（`cwds is None`）时
+    沙盒是空的新目录，相对值只剩 `..` 能出去，仍按文字拒。"""
+    if not value or "\0" in value:
         return None
+    if _is_response_file_ref(value, prefixes):
+        # argparse `fromfile_prefix_chars`（任意字符，不止 `@`）：以它开头的 token 会被脚本当文件名读出内容再展开，
+        # 内容还能再给出越界目标。不递归展开校验，MCP 来源的 argv 里一律拒（Codex #818 r4221135439 / r4221289231）。
+        return value
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里
         real = canonical_path(os.path.expanduser(value))
         return None if any(_within(real, r) for r in roots) else real
-    if ".." in re.split(r"[\\/]+", value):
-        return value
+    if cwds is None:
+        return value if ".." in re.split(r"[\\/]+", value) else None
+    for cwd in cwds:
+        real = canonical_path(os.path.join(cwd, value))
+        if not any(_within(real, r) for r in roots):
+            return real
     return None
 
 
-def _check_argv_scope(argv: list | None) -> None:
+def _check_argv_scope(argv: list | None, project: str, script: str) -> None:
     """MCP 的 `argv` 是 Agent 自己给的 token，会原样成为脚本的 `sys.argv`：脚本里
     `argparse.FileType('w')` 之类的路径选项能据此写项目之外的文件。`check_scope()` 只管项目目标，管不到这里。
 
     没有「用户绑定」的授权凭据可核（桥不能自证用户同意），所以**范围就是边界**：指到已授权根之外的 token
     一律拒，脚本不执行、不登记配置。用户要用项目外的路径，请他在 Tavotto 窗口里自己运行（GUI 的参数是
-    用户自己输入的）。`run_config` 引用来自用户在界面里登记的配置，不在此列。"""
+    用户自己输入的）。相对值按 worker 真实 cwd 解开符号链接再查（Codex #818 r4220778822）。
+    `run_config` 引用来自用户在界面里登记的配置，不在此列。"""
     if not argv:
         return
     roots = allowed_roots()
+    cwd = _run_cwd(project, script)
+    if cwd is None:
+        cwds = None
+    else:
+        cwds = [cwd]
+        if getattr(_optional_engine("execspec"), "run_cwd", None) is None:
+            cwds.append(
+                str(Path(project, engine_figcapture.normalize_relative_script(script)).parent)
+            )
+    prefixes = _response_file_prefixes(project, script)
+    if not prefixes[1]:
+        # 证明不了脚本有没有 / 有哪些响应文件前缀（前缀可以是字母，按首字符猜必有漏网）：MCP 的 argv 一概不收，
+        # 不按 token 形状放行（Codex #818 r4221652217）。精确证明「没有前缀」或「前缀集合」才继续往下查。
+        raise BridgeError(
+            "这个脚本的 argparse 响应文件前缀（fromfile_prefix_chars）无法静态确认，所以这次没有运行脚本，"
+            "也没有登记这份参数。",
+            code="argv_unverifiable",
+            recovery=(
+                "不要换写法重试。请用户在 Tavotto 窗口里自己输入这些参数并运行（窗口里的参数是用户自己输入的，"
+                "不受此限）；不带 argv 打开则照常。"
+            ),
+            requirements=[
+                {"kind": "script_arguments", "answer_with": None, "where": "tavotto_app"}
+            ],
+        )
     for token in argv:
         if not isinstance(token, str):
             continue  # 形状错误交给 validate_argv 报 invalid_argv
         for cand in _argv_path_candidates(token):
-            bad = _argv_path_escapes(cand, roots)
+            bad = _argv_path_escapes(cand, roots, cwds, prefixes)
             if bad is not None:
                 raise BridgeError(
                     "argv 里有一项指到了已授权的工作区之外，这次没有运行脚本，也没有登记这份参数。",
                     code="argv_path_out_of_scope",
                     recovery=(
-                        "只能传项目内的路径（相对路径不要含 ..）。需要写 / 读项目之外的位置，请用户在 Tavotto "
-                        "窗口里自己输入参数并运行；不要改写路径绕过，也不要把路径换成别的写法重试。"
+                        "只能传项目内的路径（相对路径也按脚本实际的运行目录解开符号链接再查）。需要写 / 读项目之外的"
+                        "位置，请用户在 Tavotto 窗口里自己输入参数并运行；不要改写路径绕过，也不要把路径换成别的写法重试。"
                     ),
                     roots=roots,
                     requirements=[
@@ -283,17 +366,28 @@ def _choose_run(
             run = runconfig.default_selection(project, script)
         except runconfig.RunConfigError as exc:
             raise _run_config_error(exc) from exc
+        _recheck_run(run, project, script)
         return (run, RUN_SOURCE_SCRIPT_DEFAULT) if run is not None else (None, None)
     _require_feature(SCRIPT_ARGV_FEATURE, "按精确参数运行脚本")
     if run_config is None:
-        _check_argv_scope(argv)
+        _check_argv_scope(argv, project, script)
     runconfig = _optional_engine("runconfig")
     try:
         if run_config is not None:
-            return runconfig.selection(project, run_config, script=script), RUN_SOURCE_REFERENCE
+            run = runconfig.selection(project, run_config, script=script)
+            _recheck_run(run, project, script)
+            return run, RUN_SOURCE_REFERENCE
         return runconfig.selection_for(project, script, argv, source="mcp"), RUN_SOURCE_ARGV
     except runconfig.RunConfigError as exc:
         raise _run_config_error(exc) from exc
+
+
+def _recheck_run(run, project: str, script: str) -> None:
+    """每次经桥执行 / 恢复一份**已登记**的配置前，按**当下**的真实 cwd 与 canonical 解析重查范围。
+    登记时在根内的相对路径，之后符号链接可能改指根外（Codex #818 r4221135428）。登记记录的 `source` 不可靠
+    （同一 (脚本, argv) GUI 与 MCP 共用一个引用，source 只记最先登记的入口），所以经桥执行的一律复核。"""
+    if run is not None:
+        _check_argv_scope(list(run.argv), project, script)
 
 
 def _run_projection(run, source: str | None) -> dict | None:
@@ -499,16 +593,29 @@ class Session:
         而且没有任何办法恢复。`pool.get()` 本来就负责「死了就重建」，
         每次问它一遍即可，代价是一次字典查找。
         """
-        # 无配置时调用形状与旧版一致（旧引擎的 `pool.get` 不认识 `run=`）
-        context = {"run": self.run} if self.run is not None else {}
         try:
-            return engine_pool.get(self.script, self.project, self.entry, **context)
+            return _spawn_worker(self, one_shot=False)
         except engine_pool.WorkerError as exc:
             raise _bridge_error_from_worker(exc, project=self.project, script=self.script) from exc
 
     @property
     def run_config_id(self) -> str | None:
         return getattr(self.run, "config_id", None)
+
+
+def _spawn_worker(session: "Session", *, one_shot: bool):
+    """**桥里唯一**能起 / 取回执行用户脚本的 worker 的地方（`engine_pool.get` / `.one_shot` 只在这里出现，
+    `tests/test_mcp_compat.py::test_bridge_has_a_single_worker_spawn_point` 用 AST 钉住）。
+
+    进程创建前**先**对会话冻结的运行配置按当下的真实 cwd 重查范围（`_recheck_run`）：worker 被池淘汰 / 死掉后重建、
+    一次性重放，都是「再跑一遍脚本」，登记之后符号链接可能已改指根外（Codex #818 r4221289223）。新增任何
+    取 worker 的入口都必须走这里，不许直接调池。"""
+    run = session.run
+    _recheck_run(run, session.project, session.script)
+    # 无配置时调用形状与旧版一致（旧引擎的池函数不认识 `run=`）
+    context = {"run": run} if run is not None else {}
+    fn = engine_pool.one_shot if one_shot else engine_pool.get
+    return fn(session.script, session.project, session.entry, **context)
 
 
 def _answer_workdir(project: str, mode: str) -> None:
@@ -829,7 +936,9 @@ def _project_needs(code: str, exc, extra: dict, *, project: str | None, script: 
         # 没有能答题的界面（MCP 进程里不接 SSE 前端）时 broker 立即回「无答案」，从不等待——这里只说清下一步。
         # 口令（secret_required）绝不经 Agent 转交：只能请用户在 Tavotto 窗口里输入
         reason = worker_extra.get("reason")
-        secret = reason == "secret_required"
+        # 首问的 getpass 的 reason 是 no_interactive_client（secret_required 只在重放已记录的口令时用）：
+        # 引擎带出的读取方式 `input_kind == "getpass"` 同样算口令；旧引擎没有这个字段就只认 reason
+        secret = reason == "secret_required" or worker_extra.get("input_kind") == "getpass"
         extra["input"] = {"reason": reason, "secret": secret}
         extra["recovery"] = (
             "脚本运行到一半要用户输入"
@@ -1010,6 +1119,7 @@ def _restore_session(session_id: str) -> Session | None:
             run = runconfig.selection(project, record["run_config"], script=info["script"])
         except runconfig.RunConfigError as exc:
             raise _run_config_error(exc) from exc
+        _recheck_run(run, project, info["script"])
     session = Session(
         id=session_id,
         project=project,
@@ -3146,8 +3256,7 @@ def verify_replay(session_id: str) -> dict:
     session = get_session(session_id)
     if session.manifest is None:
         raise BridgeError("会话还没有 manifest", code="no_manifest")
-    context = {"run": session.run} if session.run is not None else {}
-    worker = engine_pool.one_shot(session.script, session.project, session.entry, **context)
+    worker = _spawn_worker(session, one_shot=True)
     try:
         resp = worker.override(session.stem, session.patches, None, inline_svg=False)
         fresh = resp["manifest"]

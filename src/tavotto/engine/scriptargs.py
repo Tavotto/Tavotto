@@ -746,6 +746,107 @@ def analyze(source: str) -> dict:
     }
 
 
+def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], bool]:
+    """脚本里 argparse `fromfile_prefix_chars` 的字面量并集：`(前缀字符集, 是否可证明)`。
+
+    **只给 MCP 桥拒绝响应文件用**（Codex #818 r4221289231）：前缀可以是任意字符（`%`、`+`……），argparse 会把以它
+    开头的 token 当文件名读出内容再展开。第二个值为 False = 说不准（读不了 / 语法错 / 没有 argparse 证据——
+    解析器可能在别的模块里造 / `fromfile_prefix_chars` 不是字面量），调用方必须按保守口径处理。
+    不执行任何东西：只 `ast.parse`，沿用 `analyze_file` 的有界读取与缓存。"""
+    schema = analyze_file(path)
+    if schema.get("status") not in (STATUS_COMPLETE, STATUS_PARTIAL):
+        return frozenset(), False
+    try:
+        with open(path, "rb") as fh:
+            tree = ast.parse(fh.read(MAX_SOURCE_BYTES).decode("utf-8", errors="replace"))
+    except (OSError, SyntaxError, ValueError):
+        return frozenset(), False
+    # 与主分析器同一套名字解析（`import argparse as ap` / `from argparse import ArgumentParser as AP`）。
+    # 失败即封闭：每一处 ArgumentParser 构造都必须被完整证明，否则整体“说不准”。
+    names = _Names(tree)
+    chars: set[str] = set()
+    proven_funcs: set[int] = set()
+    allowed_kw: set[int] = set()
+    exact = True
+    if "*" in names.direct:  # `from argparse import *`：名字无从解析
+        exact = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if names.argparse_name(node.func) == "ArgumentParser":
+            proven = not node.args
+            for kw in node.keywords:
+                if kw.arg is None or kw.arg == "parents":
+                    proven = False
+                elif kw.arg == "fromfile_prefix_chars":
+                    ok, value = _literal(kw.value)
+                    if ok and value is None:
+                        continue
+                    if ok and isinstance(value, str):
+                        chars.update(value)
+                    else:
+                        proven = False
+            if proven:
+                proven_funcs.add(id(node.func))
+                allowed_kw.update(
+                    id(kw) for kw in node.keywords if kw.arg == "fromfile_prefix_chars"
+                )
+            else:
+                exact = False
+        elif any(kw.arg == "fromfile_prefix_chars" for kw in node.keywords):
+            exact = False  # 别处（工厂函数 / 子类 / 未知别名）带着这个关键字
+    for node in ast.walk(tree):
+        # 任何不是“被证明的直接构造”的 ArgumentParser 引用：子类、`P = AP`、作参数传递……
+        if id(node) not in proven_funcs and names.argparse_name(node) == "ArgumentParser":
+            exact = False
+    if exact and not _whitelist_clean(tree, allowed_kw):
+        exact = False
+    return frozenset(chars), exact
+
+
+# r4221772700：「exact」靠白名单证明，不再逐个堵绕过形状。出现这些名字 = 前缀可能在运行期被改写 / 动态取得。
+_DYNAMIC_NAMES = frozenset(
+    {
+        "setattr",
+        "getattr",
+        "delattr",
+        "vars",
+        "__dict__",
+        "__setattr__",
+        "__getattribute__",
+        "__builtins__",
+        "builtins",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+        "globals",
+        "locals",
+        "modules",
+    }
+)
+_PREFIX_IDENT = "fromfile_prefix_chars"
+
+
+def _whitelist_clean(tree: ast.AST, allowed_kw: set[int]) -> bool:
+    """`fromfile_prefix_chars` 只许作为“被证明的 ArgumentParser 构造”的关键字实参出现；源码里没有任何
+    动态取值 / 改写的形式。逐节点扫描所有字符串字段（Name.id / Attribute.attr / keyword.arg / alias /
+    函数名 / 字符串常量 / 字典键……），AST 覆盖不到的一律不通过（调用方按说不准处理）。"""
+    for node in ast.walk(tree):
+        for _field, value in ast.iter_fields(node):
+            if isinstance(value, bytes):
+                value = value.decode("utf-8", "replace")
+            if not isinstance(value, str):
+                continue
+            if _PREFIX_IDENT in value:
+                if isinstance(node, ast.keyword) and id(node) in allowed_kw:
+                    continue
+                return False
+            if value in _DYNAMIC_NAMES or value.split(".")[0] == "importlib":
+                return False
+    return True
+
+
 def _reads_argv_outside_parse(source: str) -> bool:
     """`sys.argv` 除了 `parse_args(sys.argv[1:])` 之外还被直接读过。"""
     tree = ast.parse(source)

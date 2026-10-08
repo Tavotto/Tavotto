@@ -1779,6 +1779,7 @@
     "manageSaveCount": "保存并重新运行（{{n}}）",
     "manageForget": "删除",
     "manageSaved": "已保存，正在重新运行 {{script}}",
+    "manageRerunFailed": "{{script}} 重新运行失败（{{configs}}）；其余配置已照常运行",
     "manageForgetStaged": "保存时删除这个答案",
     "manageForgetUndo": "撤销",
     "manageRowActions": "第 {{index}} 个问题的更多操作",

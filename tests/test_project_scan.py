@@ -253,6 +253,37 @@ def test_a_script_whose_figure_was_captured_before_counts_as_connected(tmp_path)
     assert report["targets"][0]["linked"] is True
 
 
+@pytest.mark.parametrize("newer", [False, True])
+def test_unreadable_run_configs_do_not_fail_the_scan(tmp_path, newer):
+    """r4220769153：运行配置登记坏了 / 来自新版本，`_linked_scripts` 的「是否捕获过」证据只当无证据，不炸整次扫描；
+    无参数那一份证据仍算数。（读不出配置时用空 argv 运行由 run_config_unreadable 另行拦住，这里不碰。）"""
+    from tavotto.engine import figcapture, runconfig, runtimeasset
+
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": ["fig"]}}}),
+    )
+    store = runconfig.store_path(root)
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text(
+        json.dumps({"version": 999, "configs": {}, "defaults": {}})
+        if newer
+        else '{"version": 1, "conf',
+        encoding="utf-8",
+    )
+    # 没有任何捕获证据：扫描照常完成，目标未连接
+    assert projscan.scan(root)["targets"][0]["linked"] is False
+    svg = tmp_path / "fig.svg"
+    svg.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+    assert runtimeasset.materialize(
+        root, {"asset_id": figcapture.runtime_asset_id("fig.py", "fig"), "script": "fig.py"}, svg
+    )
+    assert projscan.scan(root)["targets"][0]["linked"] is True
+
+
 def test_connected_plot_scripts_do_not_nag(tmp_path):
     """已经登记、并且真有可编辑的图（项目里有它产出的同名图文件）的绘图脚本：没有要准备的目标，也不要求用户选。"""
     root = _project(tmp_path)
@@ -1188,3 +1219,237 @@ def test_a_redirected_scope_marker_is_not_probed_and_is_partial(tmp_path, monkey
         i["code"] == "unreadable_file" and i["path"] == "requirements.txt" for i in report["issues"]
     )
     assert report["state"] == "partial"
+
+
+# ---------------------------------------------------------------- 已连接判据不跟随链接（#819 r4220955963）
+def _registered_fig(root: Path) -> None:
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": ["fig"]}}}),
+    )
+
+
+@posix_only
+def test_a_stem_that_is_a_symlink_to_an_outside_file_is_not_linked(tmp_path):
+    """#819 P2：`fig.pdf` 是指向项目外的符号链接。扫描路径不跟随它，不能判成「已连接」而藏起「准备」入口。"""
+    root = _project(tmp_path)
+    _registered_fig(root)
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"%PDF-1.4\n")
+    (root / "fig.pdf").symlink_to(outside)
+
+    report = projscan.scan(root)
+
+    (target,) = report["targets"]
+    assert target["linked"] is False
+    assert report["outcome"]["kind"] != "already_connected"
+    assert any(a["kind"] == "prepare" for a in report["actions"])
+
+
+def test_reparse_metadata_stem_never_reaches_the_follow_up_isfile(tmp_path, monkeypatch):
+    """合成 Windows 路径替身（同 junction 用例的 lstat 元数据）：目标不被 `isfile` 探。"""
+    root = _project(tmp_path)
+    _registered_fig(root)
+    _asset(root, "fig.pdf")
+    root = Path(os.path.realpath(root))
+    victim = os.path.normcase(str(root / "fig.pdf"))
+
+    class _Reparse:
+        st_mode = 0o100644
+        st_file_attributes = 0x400
+        st_reparse_tag = 0xA000000C  # IO_REPARSE_TAG_SYMLINK
+
+    real_lstat = os.lstat
+    monkeypatch.setattr(
+        os,
+        "lstat",
+        lambda p, *a, **k: (
+            _Reparse() if os.path.normcase(os.fspath(p)) == victim else real_lstat(p, *a, **k)
+        ),
+    )
+    hits: list[str] = []
+    real_isfile = os.path.isfile
+
+    def spy(p):
+        if os.path.normcase(os.fspath(p)) == victim:
+            hits.append(os.fspath(p))
+        return real_isfile(p)
+
+    monkeypatch.setattr(os.path, "isfile", spy)
+
+    report = projscan.scan(root)
+
+    assert hits == []
+    (target,) = report["targets"]
+    assert target["linked"] is False
+
+
+def test_linked_check_stops_on_an_expired_budget_and_returns_partial(tmp_path):
+    """预算用完后不再探原件：返回已得到的部分（这里为空），不继续碰磁盘。"""
+    root = _project(tmp_path)
+    _registered_fig(root)
+    _asset(root, "fig.pdf")
+    budget = scanbudget.Budget(cancel=lambda: True)
+
+    assert projscan._linked_scripts(root, budget) == (set(), False)
+    assert budget.stopped == scanbudget.ISSUE_CANCELLED
+    # 无预算（非扫描路径）仍照旧跟随式判据
+    assert projscan._linked_scripts(root) == ({"fig.py"}, True)
+
+
+@pytest.mark.parametrize("kind", ["absolute", "drive", "unc", "dotdot"])
+def test_a_registered_stem_that_leaves_the_project_is_never_probed(tmp_path, monkeypatch, kind):
+    """#819 r4221029694：注册表 stem 为绝对 / 盘符 / UNC / `../` 时，拼接前就拒绝——lstat / isfile 一次都不碰项目外路径，
+    也不把项目外（或兄弟目录里）的同名图当成 linked。"""
+    root = _project(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "fig.pdf").write_bytes(b"%PDF-1.4\n")
+    (tmp_path / "sibling.pdf").write_bytes(b"%PDF-1.4\n")
+    stem = {
+        "absolute": str(outside / "fig"),
+        "drive": "C:\\\\evil\\fig",
+        "unc": "\\\\attacker\\share\\fig",
+        "dotdot": "../sibling",
+    }[kind]
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": [stem]}}}),
+    )
+    probed: list[str] = []
+    real_lstat, real_isfile = os.lstat, os.path.isfile
+
+    def spy_lstat(p, *a, **k):
+        probed.append(os.fspath(p))
+        return real_lstat(p, *a, **k)
+
+    def spy_isfile(p):
+        probed.append(os.fspath(p))
+        return real_isfile(p)
+
+    monkeypatch.setattr(os, "lstat", spy_lstat)
+    monkeypatch.setattr(os.path, "isfile", spy_isfile)
+
+    linked, complete = projscan._linked_scripts(root, scanbudget.Budget())
+
+    assert linked == set()
+    assert complete is True
+    base = os.path.normpath(str(root))
+    leaked = [
+        p
+        for p in probed
+        if "sibling" in p
+        or "attacker" in p
+        or "evil" in p
+        or "outside" in p
+        or not os.path.normpath(p).startswith(base)
+    ]
+    assert leaked == []
+
+
+def test_a_subdirectory_stem_is_still_a_valid_project_stem():
+    assert projscan._project_relative_stem("sub/plot")
+    assert projscan._project_relative_stem("fig")
+    for bad in ("", "/etc/x", "\\\\h\\s\\x", "C:x", "a/../b", "..", "a\\..\\b", "x\0y"):
+        assert not projscan._project_relative_stem(bad)
+    assert not projscan._project_relative_stem(None)
+
+
+def test_budget_expiring_inside_isfile_is_scan_incomplete_not_a_single_target(
+    tmp_path, monkeypatch
+):
+    """#819 r4221029709：预算在 isfile 内耗尽时「没找到」不等于「没连接」。单脚本不得派生 single 目标 / 准备动作。"""
+    root = _project(tmp_path)
+    _registered_fig(root)
+    _asset(root, "fig.pdf")
+    budget = scanbudget.Budget()
+    real = projscan.figcapture.find_original_artifact
+
+    def expiring(project_root, stem, *, isfile=os.path.isfile):
+        budget._stopped = scanbudget.ISSUE_TIME  # 查原件的途中预算用尽，谓词报「没找到」
+        return None
+
+    monkeypatch.setattr(projscan.figcapture, "find_original_artifact", expiring)
+
+    report = projscan.scan(root, budget=budget)
+
+    assert real is not expiring
+    assert report["target_choice"] != "single"
+    assert report["phase"] != "awaiting_confirmation"
+    assert report["outcome"].get("code") == "scan_incomplete"
+    assert not any(a["kind"] == "prepare" for a in report["actions"])
+
+
+@pytest.mark.parametrize("pending", [0, 1, 3])
+@pytest.mark.parametrize("stop", ["after_parse", "during_check"])
+def test_any_incomplete_linkage_check_is_incomplete_whatever_the_pending_count(
+    tmp_path, monkeypatch, pending, stop
+):
+    """#819 r4221160446：连接性没查全（预算在解析后 / 检查中耗尽）时，无论未连接绘图脚本是 0 / 1 / 多个，
+    target_choice 都是 incomplete、phase 是 scan_incomplete，不得是 connected / single / ambiguous，
+    逐项 linked 是「未知」（None）而不是临时的 True。"""
+    root = _project(tmp_path)
+    scripts = {}
+    for n in range(max(pending, 1) + (1 if pending == 0 else 0)):
+        name = f"f{n}.py"
+        _write(root, name, PLOT.format(stem=f"f{n}"))
+        scripts[name] = {"entry": "__main__", "stems": [f"f{n}"]}
+        _asset(root, f"f{n}.pdf")
+    _write(root, "tavotto_registry.json", json.dumps({"version": 1, "scripts": scripts}))
+    budget = scanbudget.Budget()
+    done = set(list(scripts)[: len(scripts) - pending])  # pending 个脚本没查到连接
+
+    if stop == "after_parse":
+        real_assets = projscan.project_refresh.iter_assets
+
+        def assets_then_stop(*a, **k):
+            found = list(real_assets(*a, **k))
+            budget._stopped = scanbudget.ISSUE_TIME  # 脚本解析完、连接检查开始前预算耗尽
+            return found
+
+        monkeypatch.setattr(projscan.project_refresh, "iter_assets", assets_then_stop)
+    else:
+        # 检查途中耗尽：返回已查到的部分（complete=False）
+        monkeypatch.setattr(projscan, "_linked_scripts", lambda r, b: (done, False))
+
+    report = projscan.scan(root, budget=budget)
+
+    assert report["target_choice"] == "incomplete"
+    assert report["phase"] == "action_required"
+    assert report["outcome"].get("code") == "scan_incomplete"
+    assert report["default_target"] is None
+    assert not any(a["kind"] == "prepare" for a in report["actions"])
+    assert all(t["linked"] is None for t in report["targets"])
+
+
+def test_sensitive_run_config_without_its_secret_is_not_linkage_evidence(tmp_path):
+    """r4221248582：重启后敏感配置只剩 ID 占位（秘密值在内存里没了），它的 cache 还在——但打开会得到
+    run_config_secret_missing，不能算「已连接」；检查条的准备入口必须仍在。"""
+    from tavotto.engine import figcapture, runconfig, runtimeasset
+
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": ["fig"]}}}),
+    )
+    cfg = runconfig.put(root, "fig.py", ["--token", "s3cret"], sensitive=True)
+    svg = tmp_path / "fig.svg"
+    svg.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+    asset_id = figcapture.runtime_asset_id("fig.py", "fig", cfg.id)
+    assert runtimeasset.materialize(root, {"asset_id": asset_id, "script": "fig.py"}, svg)
+    # 还没重启：秘密在内存里，这份 cache 是可执行配置的产物，算连接
+    assert projscan.scan(root)["targets"][0]["linked"] is True
+
+    runconfig.forget_secrets()  # 模拟重启
+    report = projscan.scan(root)
+
+    assert report["targets"][0]["linked"] is False
+    assert report["target_choice"] == "single"
+    assert any(a["kind"] == "prepare" for a in report["actions"])
+    assert report["outcome"]["kind"] != "already_connected"

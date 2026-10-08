@@ -106,6 +106,11 @@ class RunConfig:
     source: str
     created_at: float
 
+    @property
+    def executable(self) -> bool:
+        """此刻还能按它运行：敏感配置的秘密值已不在（重启后）= 不能（`selection()` 会抛 `run_config_secret_missing`）。"""
+        return self.argv is not None
+
     def public(self) -> dict:
         """公开投影：**没有参数值**。给前端 / 计划 / 诊断用。"""
         return {
@@ -400,6 +405,19 @@ def configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
         if cfg is not None and cfg.script == script:
             out.append(cfg)
     return sorted(out, key=lambda c: -c.created_at)
+
+
+def executable_configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
+    """`configs_of` 里**此刻真能运行**的那些：敏感值已不在的占位、整份登记读不出 / 来自新版本，都当没有。
+
+    给「这个脚本的 cache 算不算可直接编辑的证据」用（`probe.was_captured`）：cache 在但配置不能再运行，
+    打开素材只会得到 `run_config_secret_missing` / `run_config_unreadable`，不算连接。
+    读不出配置的拒绝执行由执行侧负责，这里只做证据判断，不抛。"""
+    try:
+        configs = configs_of(project_root, script)
+    except RunConfigError:
+        return []
+    return [cfg for cfg in configs if cfg.executable]
 
 
 def forget_secrets() -> None:

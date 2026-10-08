@@ -2078,7 +2078,14 @@ class EngineWorker:
         self.last_build_runtime = _runtime_of(resp)
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
-        inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
+        try:
+            inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
+        except BaseException:
+            # 转录没绑上：这份热结果不能被后续渲染 / 导出复用——回到「没 build」，下次走 ensure_built
+            self.built = False
+            self.build_failed = True
+            self.last_build_descriptors = []
+            raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -2647,7 +2654,14 @@ class WorkerdWorker:
         self.last_build_runtime = _runtime_of(resp)
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
-        inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
+        try:
+            inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
+        except BaseException:
+            # 转录没绑上：这份热结果不能被后续渲染 / 导出复用——回到「没 build」，下次走 ensure_built
+            self.built = False
+            self.build_failed = True
+            self.last_build_descriptors = []
+            raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp

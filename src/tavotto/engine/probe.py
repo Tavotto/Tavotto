@@ -569,6 +569,13 @@ def register_probed(
             # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
             # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来；不改注册表格式（T09b）
             before = [] if append else discover.registered_stems(figures_dir, script)
+            # 「替换掉了哪些此前真捕获过的图名」的证据在**注册表提交之前**算完：任何环节在这里失败，整次登记失败、
+            # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
+            unlinked = sorted(
+                s
+                for s in set(before) - set(result["stems"])
+                if was_captured(figures_dir, script, s)
+            )
             discover.register(
                 figures_dir,
                 script,
@@ -591,9 +598,6 @@ def register_probed(
             "registered": False,
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
-    unlinked = sorted(
-        s for s in set(before) - set(result["stems"]) if was_captured(figures_dir, script, s)
-    )
     return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
 
 
@@ -603,10 +607,15 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
     注册表里的图名不全是执行结果——打开项目时的静态扫描会把字面量 `savefig` 的名字先登记上（T00 deliberate-boundary），
     条件分支里的那张从没产出过。对它说「此前带其他参数生成的……已不再关联」是假话（T11：第一次无参数运行就报）。
     cache 被按体积回收过的旧图会漏报——宁可少说，不说假话。导入即扫描判「这个脚本已经连着可编辑的图」也用它
-    （`projscan._linked_scripts`），一份判据两处用。"""
+    （`projscan._linked_scripts`），一份判据两处用。
+
+    运行配置登记读不出 / 来自新版本（`RunConfigError`）时，带配置那几份变体当**没有证据**：这是「是否捕获过」的
+    证据判断，宁可少说，不能因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
+    `run_config_secret_missing`，不是「可直接编辑」（r4221248582；两种情形共用 `runconfig.executable_configs_of`）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
+    `run_config_unreadable` 显式拒绝（那条不在这里）。"""
+    configs = runconfig.executable_configs_of(figures_dir, script)
     ids = [figcapture.runtime_asset_id(script, stem)] + [
-        figcapture.runtime_asset_id(script, stem, cfg.id)
-        for cfg in runconfig.configs_of(figures_dir, script)
+        figcapture.runtime_asset_id(script, stem, cfg.id) for cfg in configs
     ]
     return any(runtimeasset.load_metadata(figures_dir, asset_id) is not None for asset_id in ids)
 
@@ -618,16 +627,44 @@ def linked_scripts(figures_dir: str | Path, stems_by_script: dict[str, list[str]
     导入即扫描（`projscan`）与素材库脚本清单（`/api/registry` 的 `all_scripts[].linked`）都用它——打开项目时静态扫描
     先登记的字面量图名只是猜测，脚本一次没跑过时不算已关联（T11 修了扫描，T13b 发现素材库脚本行是第二个消费者）。
     只读：文件名比对 + cache 元数据，不执行、不起解释器。"""
+    return linked_scan(figures_dir, stems_by_script)[0]
+
+
+def linked_scan(
+    figures_dir: str | Path,
+    stems_by_script: dict[str, list[str]],
+    *,
+    isfile=None,
+    stem_ok=None,
+    stopped=None,
+) -> tuple[set[str], bool]:
+    """`linked_scripts` 的三态版：回 `(已关联的脚本, 是否查全)`。判据只有这一份——导入即扫描（带预算）与素材库脚本清单
+    （不带）共用，扫描路径只通过参数注入自己的约束：
+    `isfile`（`figcapture.find_original_artifact` 的探测谓词，扫描路径给不跟随链接的版本）、
+    `stem_ok`（先于任何路径拼接过滤掉非项目内相对名的 stem，不探也不算连接）、
+    `stopped`（预算 / 取消 / 超时是否已耗尽：耗尽时第二项为 False——没查到 ≠ 没关联，调用方不得据此派生默认目标）。"""
     root = str(figures_dir)
-    return {
-        script
-        for script, stems in stems_by_script.items()
-        if any(
-            figcapture.find_original_artifact(root, stem) is not None
-            or was_captured(figures_dir, script, stem)
-            for stem in stems
-        )
-    }
+    find_kwargs = {} if isfile is None else {"isfile": isfile}
+    complete = True
+
+    def linked(script: str, stems: list[str]) -> bool:
+        nonlocal complete
+        for stem in stems:
+            if stem_ok is not None and not stem_ok(stem):
+                continue
+            if stopped is not None and stopped():
+                complete = False
+                return False
+            if figcapture.find_original_artifact(root, stem, **find_kwargs) is not None:
+                return True
+            if stopped is not None and stopped():
+                complete = False  # 预算在 isfile 内耗尽：上面的「没找到」是被截断的，不是真没有
+                return False
+            if was_captured(figures_dir, script, stem):
+                return True
+        return False
+
+    return {script for script, stems in stems_by_script.items() if linked(script, stems)}, complete
 
 
 # ---------------------------------------------------------------------------
