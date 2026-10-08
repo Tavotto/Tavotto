@@ -139,3 +139,9 @@
   404 `project_scan_not_started` = 未开始或后端重启过，客户端重新 POST）、`POST …/cancel`。项目按 `current_ctx()` 认领。
 
 看护：`tests/test_project_scan.py`（行为与服务）、`tests/test_project_scan_zero_exec.py`（哨兵 + 进程 / 网络桩 + AST 门禁）。
+
+## 试运行的终局诊断快照（T04）
+
+`/api/registry/probe` 每次落地（成功或失败）冻结一份 `probe.diagnostic_projection`（`kind=script_run`），响应多一个可选键
+`diagnostic: {kind, ref}`（老客户端忽略）。投影只取：终局词汇（`ready` / `error` / `cancelled`）、`error.code`、argv 个数与
+`rc_…` 引用、捕获张数、耗时；`error.message` / `params` / `traceback`、`stems`、`entry`、`descriptors`、`stem_conflicts` 不进。

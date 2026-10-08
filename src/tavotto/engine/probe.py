@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import discover, inputremap, pool, projectenv, registry
+from . import discover, inputremap, pool, projectenv, registry, taskdiag
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -525,6 +525,54 @@ def register_probed(
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
     return {**result, "registered": True}
+
+
+# ---------------------------------------------------------------------------
+# 任务绑定诊断（T04）
+# ---------------------------------------------------------------------------
+#: 试运行的终局词汇（与准备的 `ready` / `error` / `cancelled` 同名，界面一套词）。
+OUTCOME_READY = "ready"
+OUTCOME_ERROR = "error"
+OUTCOME_CANCELLED = "cancelled"
+
+
+def outcome_of(result: dict) -> str:
+    # 已登记后物化 / 默认配置 / 刷新仍可能失败，成功登记不能盖掉这次终局错误。
+    error = result.get("error")
+    if error:
+        return OUTCOME_CANCELLED if error.get("code") == ERROR_CANCELLED else OUTCOME_ERROR
+    return OUTCOME_READY if result.get("registered") else OUTCOME_ERROR
+
+
+def diagnostic_projection(
+    result: dict,
+    *,
+    attempt_id: str,
+    argv_count: int,
+    run_config: str | None,
+    elapsed_ms: int | None,
+) -> dict:
+    """一次试运行的**白名单**投影。逐字段挑，不读 `result` 的其余部分：`error.message` / `params` /
+    `traceback` 是脚本自己的异常文字，`descriptors` / `stems` 有图名与路径，`entry` 是用户的函数名，
+    `stem_conflicts` 是别的脚本的名字——都不进。"""
+    err = result.get("error") or {}
+    return taskdiag.clean(
+        {
+            "snapshot_version": taskdiag.SNAPSHOT_VERSION,
+            "kind": taskdiag.KIND_SCRIPT_RUN,
+            "attempt_id": taskdiag.ident(attempt_id),
+            "outcome": outcome_of(result),
+            "target": {"category": "script", "has_entry": bool(result.get("entry"))},
+            "config": {"argv_count": argv_count, "run_config": taskdiag.ident(run_config)},
+            "execution": {
+                "captured_count": taskdiag.count(len(result.get("stems") or [])),
+                "registered": taskdiag.flag(bool(result.get("registered"))),
+                "stem_conflict_count": len(result.get("stem_conflicts") or {}),
+            },
+            "error": {"code": taskdiag.code(err.get("code"))} if err else None,
+            "timing": {"elapsed_ms": taskdiag.count(elapsed_ms)},
+        }
+    )
 
 
 # ---------------------------------------------------------------------------

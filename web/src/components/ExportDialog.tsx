@@ -156,6 +156,7 @@ import { Button } from "./ui/Button";
 import { FormRow } from "./FormRow";
 import { Dialog } from "./ui/Dialog";
 import { TextInput } from "./ui/Input";
+import { TaskDiagnostic } from "./TaskDiagnostic";
 import { Select } from "./ui/Select";
 import { Toggle } from "./ui/Toggle";
 import { Card } from "./ui/Card";
@@ -2091,6 +2092,8 @@ function ResultBlock({
             error: job.error?.code ?? "",
           }),
         })}
+        {/* 那一次的诊断（T04）：折叠，主按钮仍是重试；key 绑作业，重试出新作业就是新的一份 */}
+        {job.job_id && <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />}
       </Notice>
     );
   }
@@ -2113,6 +2116,10 @@ function ResultBlock({
       ))}
       {edited && (
         <p className="mt-1 text-sm text-warn-content">{ex("editedDuringExport")}</p>
+      )}
+      {/* 部分失败：同一个折叠入口（T04）；全部成功时不出现 */}
+      {job.status === "partial" && job.job_id && (
+        <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />
       )}
       {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
           （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}

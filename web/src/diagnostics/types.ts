@@ -19,10 +19,10 @@
 
 /**
  * 诊断包整体的 schema（老三件 + 新三件那一版是 2；3 = report.json 的 project 段换形，#524；
- * 4 = project 段新增 `missing_dependencies` 缺依赖现场）。
+ * 4 = project 段新增 `missing_dependencies` 缺依赖现场；5 = 新增 task-diagnostics.json 任务快照，T04）。
  * 与 `engine/diagnostics.py` 的同名常量是严格同源对。
  */
-export const BUNDLE_SCHEMA_VERSION = 4
+export const BUNDLE_SCHEMA_VERSION = 5
 /**
  * frontend-state.json 的 schema。
  *

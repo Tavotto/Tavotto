@@ -71,8 +71,10 @@ WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
 #: 新增 `location`，导出 / 备份 / 文档目录按段哈希——schema 2 的读法认不出这些，必须升号（#524 评审）。
 #: 4 = report.json 的 project 段新增 `missing_dependencies`（最近几次缺依赖的现场：import 名、脚本哈希、
 #: 当时的解释器来源、体检过的系统候选表、修复目标可用性；2026-09-28 Windows 实测诊断包说不清缺依赖）。
+#: 5 = 新增 `task-diagnostics.json`（T04）：本项目最近几次任务（导出 / 准备 / 脚本试运行）在终局时冻结的白名单
+#: 快照，失败在前；report.json 的形状没变，读不认识的文件的人忽略它即可。
 #: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
-BUNDLE_SCHEMA_VERSION = 4
+BUNDLE_SCHEMA_VERSION = 5
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1563,6 +1565,7 @@ def build_bundle(
     port: int | None = None,
     frontend: dict | None = None,
     frontend_dropped: bool = False,
+    task_snapshots: dict | None = None,
 ) -> bytes:
     """诊断包 zip 的字节流（全部内容已脱敏）。
 
@@ -1595,6 +1598,12 @@ def build_bundle(
         if trace:
             z.writestr("interaction-trace.jsonl", diagnostics_frontend.trace_to_jsonl(trace))
 
+        # ---- 任务快照（T04）：终局时冻结的白名单投影，这里原样放进去，不重新采集、不二次加工 ----
+        if task_snapshots is not None:
+            z.writestr(
+                "task-diagnostics.json", json.dumps(task_snapshots, ensure_ascii=False, indent=1)
+            )
+
         z.writestr(
             "manifest.json",
             json.dumps(
@@ -1604,6 +1613,8 @@ def build_bundle(
                     "tavotto_version": report.get("tavotto", {}).get("version"),
                     "contains_frontend_state": snapshot is not None,
                     "contains_interaction_trace": bool(trace),
+                    "contains_task_snapshots": task_snapshots is not None,
+                    "task_snapshot_count": len((task_snapshots or {}).get("snapshots") or []),
                     "privacy_mode": "safe-default",
                     "trace_event_count": len(trace),
                     "trace_truncated": truncated,
@@ -1616,7 +1627,12 @@ def build_bundle(
         )
         z.writestr(
             "README.txt",
-            _readme(snapshot is not None, bool(trace), list(report.get("project") or {})),
+            _readme(
+                snapshot is not None,
+                bool(trace),
+                list(report.get("project") or {}),
+                has_tasks=task_snapshots is not None,
+            ),
         )
     return buf.getvalue()
 
@@ -1643,7 +1659,13 @@ def _frontend_sections(frontend: dict | None) -> tuple[dict | None, list[dict], 
     return snapshot, trace, truncated
 
 
-def _readme(has_state: bool, has_trace: bool, project_keys: list[str] | None = None) -> str:
+def _readme(
+    has_state: bool,
+    has_trace: bool,
+    project_keys: list[str] | None = None,
+    *,
+    has_tasks: bool = False,
+) -> str:
     """包里有什么、**没有什么**。双语——用户得看得懂自己在往 issue 上贴什么。
 
     「不含」那一段是承诺，不是免责声明：它对应的是代码里的字段 allowlist
@@ -1660,6 +1682,20 @@ def _readme(has_state: bool, has_trace: bool, project_keys: list[str] | None = N
     if has_trace:
         extra_zh += "- interaction-trace.jsonl：最近的编辑操作记录（匿名，一行一条）\n"
         extra_en += "- interaction-trace.jsonl: recent anonymized interaction events\n"
+    if has_tasks:
+        extra_zh += (
+            "- task-diagnostics.json：最近几次导出 / 准备 / 试运行在结束那一刻留下的摘要"
+            "（阶段、状态、稳定错误码、格式、数量、开始/结束时间戳与耗时、Python/matplotlib 版本、"
+            "执行与配置选择、输出尺寸/PPI、修订摘要和本机不透明的任务/配置引用；"
+            "没有文件名、路径、参数原文、报错文字）\n"
+        )
+        extra_en += (
+            "- task-diagnostics.json: a summary of the last few exports / preparations / test runs "
+            "taken when each one ended (stages, statuses, stable error codes, formats, counts, "
+            "start/end timestamps and duration, Python/matplotlib versions, execution and "
+            "configuration choices, output dimensions/PPI, revision hashes and opaque local "
+            "attempt/configuration references; no file names, paths, argument values or error text)\n"
+        )
     return (
         "Tavotto 诊断包 / Tavotto diagnostic package\n"
         "\n"

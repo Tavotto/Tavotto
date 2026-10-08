@@ -192,3 +192,10 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 = 新 `config_revision`），`impact.script_arguments` 只给个数。请求体：`{script, entry?, argv?, argv_sensitive?}`，已知素材（`id`）
 不接受另给 argv（它的配置冻结在资产 id 里）。执行线程取消 / 复用 / 回执都带 `run`，所以取消 A 配置不会杀 B 配置的会话。
 
+## 终局诊断快照（T04）
+
+`PreparationService._finish` 在每个终局（`ready` / `error` / `cancelled`；`needs_input` 在执行线程里同走 `_finish`）之后调
+`preparation._record_terminal`，把 `diagnostic_projection(plan, result)` 冻结进 `taskdiag.STORE`（`kind=preparation`，
+id = `plan_id` = 会话报告的 `provider.attempt_id`）。白名单：目标类别、argv 个数与 `rc_…` 引用、计划那一刻的环境来源 / 版本、
+阶段轨迹（不含 `facts`）、回执的控制面 / 来源 / 完整度、`error.code` + 闭集 `reason`、取消事实、起止时间；**不含**脚本路径、
+入口名、解释器与项目路径、`error.message`、`note`、`required_input` 内容。完整规则见 `diagnostics.md`「任务绑定诊断」。

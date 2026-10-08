@@ -173,8 +173,41 @@
 
 - 先脱敏再交出、项目清单只留条数
 - 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
-- report.json 换形必升 bundle schema（现 4）
+- report.json 换形必升 bundle schema（现 5；5 = 新增 task-diagnostics.json）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
 - 不写盘不上传不进 telemetry
 - traceback 配收尾异常行、worker.log 只带证据行（#435）
+
+## 任务绑定诊断（T04，`engine/taskdiag.py`、`GET /api/diagnostics/task`、bundle schema 5）
+
+诊断包回答「这台机器现在什么样」，采集时会探测解释器；用户在导出 / 准备 / 脚本运行失败的那个提示旁边要的是
+**那一次**。所以这是另一条路，**不经 `build_report`**：
+
+- **终局即冻结，采集零执行。** 各来源在终局那一刻写一次白名单投影（`exportjob.diagnostic_projection`、
+  `preparation.diagnostic_projection`、`probe.diagnostic_projection`），存进 `taskdiag.STORE`（不可变 JSON 文本）。
+  取快照只读这张表：没有解释器体检、没有安装、没有联网、不重跑脚本，也不拿此刻的环境冒充当时的
+  （准备快照里的 `environment_at_plan` 是**计划那一刻**的事实）。看护 `test_collecting_a_task_diagnostic_executes_nothing`。
+- **白名单是结构，不是过滤。** 投影逐字段挑：闭集枚举（`taskdiag.closed`）、稳定码（`code`，小写标识符）、
+  不透明 id（`ident`）、计数、数字、文档修订的十六进制摘要。形状不对的值**丢掉**，不哈希（低熵值的哈希可猜）。
+  trace 的 `facts` 不读（那里可放任意短串）；`error.params` / `message` / traceback、文件名、导出目录、脚本与入口名、
+  argv（只有个数与本机不透明引用 `rc_…`）、`document_id` / `figure_id`（只在登记表里私下连重试关系，不出门）一律不进。
+  新来源加字段 = 在它的 `diagnostic_projection` 里加一行并过一个形状守卫；**不许**递归复制 `to_payload()`。
+  看护：`test_export_projection_never_reads_the_full_payload`（把 `to_payload` 毒化照样出快照）、各 sentinel 用例
+  （原文 + 大小写 + hex + base64 + urlsafe + url 编码 + md5/sha1/sha256 都不出现）。
+- **重试是新 attempt。** 每次尝试各有 id 与自己的快照；`retry_of` 在**写入新快照时**连到同一主语（同文档 / 同图 / 同脚本）
+  最近一次失败，旧快照不被改写；读旧失败时 `later_attempts` 现算（≤ 8 条）。后来的成功不会清掉旧失败的 request / error。
+- **认领。** 登记按 `(项目, 类别, id)`；端点只用请求的项目取。别的项目的 id、没有过的 id 一律 404 + `reason: not_found`，
+  「过期」（`expired`）只对记过它的项目说得出——墓碑也按项目查。`ExportJob.project_id` 同时让 `/api/export/state`、
+  `/api/export/cancel` 不再跨项目读取 / 取消（没记项目的作业不设防，与旧行为一致）。不带 `ref` = 本项目这一类最近一次失败。
+- **预算（`taskdiag` 常量，改了要同步 `tests/test_task_diagnostics.py`）：** 48 条、单条 6 KiB、总 128 KiB、保留 6 h、墓碑 128、
+  全局包里最多 8 条、整份文档 64 KiB。超单条上限先截 `stages` / `outputs` 的中间（头尾留着），再塌成核心字段；
+  一律带 `truncated` / `truncated_fields`，不静默变短。逐出先逐「没出问题」的，刚写入的这条不逐。只收终局：活跃作业不在表里，
+  清理动不到它们。
+- **全局包。** `GET/POST /api/diagnostics/bundle` 多一个 `task-diagnostics.json`（本项目最近 8 条，失败在前；同一份冻结投影，
+  不重新采集），manifest 加 `contains_task_snapshots` / `task_snapshot_count`；report.json 形状没变，但新增文件算 schema 5。
+- **前端：** `components/TaskDiagnostic.tsx`（折叠标题 + 一个下载按钮；项目取组件出现那一刻的；记录没有 / 过期如实说，
+  不去拿当前诊断包冒充）。导出失败 / 部分失败、脚本行「详情」里已挂；T09 的准备面板直接用
+  `<TaskDiagnostic kind="preparation" refId={report.provider.attempt_id} />`。
+
+字段隐私审查表与调用链见 T04 交接。
