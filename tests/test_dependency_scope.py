@@ -70,7 +70,7 @@ def two_scopes(tmp_path, house, offline_managed_env) -> Path:
     _scope(project, "a", f"{BETA[0]}<2\n{ALPHA[0]}\n", [BETA[1], ALPHA[1]])
     _scope(project, "b", f"{BETA[0]}>=2\n{GAMMA[0]}\n", [BETA[1], GAMMA[1]])
     plan = deprepair.create_joint_plan(project, "a/figure.py")
-    deprepair.prepare_async(plan.plan_id)
+    deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert wait_for(plan.plan_id)["state"] == deprepair.STATE_DONE
     entries = {e["distribution"]: e for e in managedenv.ledger_entries(project)}
     assert set(entries) == {BETA[0], ALPHA[0]}
@@ -265,7 +265,7 @@ class TestMutualExclusion:
         plan = deprepair.create_joint_plan(sub, "figure.py")
         assert plan.creates_environment is True
         assert sorted(plan.requirements) == sorted([f"{BETA[0]}>=2", GAMMA[0]])
-        deprepair.prepare_async(plan.plan_id)
+        deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert wait_for(plan.plan_id)["state"] == deprepair.STATE_DONE
         assert managedenv.active_generation(project) == active_a
         assert managedenv.ledger_entries(project) == ledger_a

@@ -1233,7 +1233,7 @@ def cancel(plan_id: str) -> bool:
     return cancel_status(plan_id)["accepted"]
 
 
-def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None = None) -> bool:
+def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None) -> bool:
     """起线程执行一份单包修复计划；回 False = 这份计划已在执行（不再起第二个线程）。认领在起线程之前
     （T06：联合准备早有的 `_claim` 纪律，单包路径同样——两个标签页点同一个「安装」只跑一个 pip）。"""
     pid = str(plan_id or "")
@@ -1244,6 +1244,7 @@ def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None =
         project_id=getattr(plan, "project_id", ""),
         digest=getattr(plan, "impact_digest", ""),
         flow=FLOW_SINGLE,
+        scope=_plan_scope(plan),
     ):
         return False
     _register_cancel(pid)
@@ -1255,12 +1256,14 @@ def install_async(plan_id: str, on_event=None, *, confirmed_impact: str | None =
     return True
 
 
-def _install_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
+def _install_guarded(
+    plan_id: str, on_event, *, claimed: bool = False, confirmed_impact: str | None = None
+) -> dict:
     # 计划是一次性的：`install()` 的 finally 会把它从表里摘掉，失败的终态要在这之前拿住它——
     # 终态上的 `retryable`（pip 跑成之后再失败的不给重试）按计划里的项目与需求算（Codex #709）
     plan = get_plan(plan_id)
     try:
-        return install(plan_id, on_event, claimed=claimed)
+        return install(plan_id, on_event, claimed=claimed, confirmed_impact=confirmed_impact)
     except RepairError as exc:
         _log_repair_failure("依赖修复", plan_id, exc.code)
         pinned = (exc.extra or {}).get("pinned")
@@ -1278,7 +1281,9 @@ def _install_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
         return _emit(plan_id, STATE_FAILED, on_event, plan=plan, code=ERROR_FAILED, error=str(exc))
 
 
-def install(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
+def install(
+    plan_id: str, on_event=None, *, claimed: bool = False, confirmed_impact: str | None
+) -> dict:
     """执行一个计划。**这是唯一一处会往磁盘上装包的代码。**
 
     执行端只认 `plan_id`：装什么、装到哪、哪个项目，全部来自计划本身
@@ -1287,15 +1292,20 @@ def install(plan_id: str, on_event=None, *, claimed: bool = False) -> dict:
 
     同一份计划只认领一次（T06，联合准备早有的 `_claim` 纪律）：已在执行的再来一次得
     `dependency_install_not_allowed`，不起第二个 pip。
+
+    `confirmed_impact` 是**必传**的关键字参数：调用方回显的、它给用户看过的影响摘要（见 `_check_confirmed`）。
+    只有 `claimed=True`（入口已在认领前核过摘要、这里是线程体）时可以传 None。
     """
     pid = str(plan_id or "")
     if not claimed:
         plan0 = get_plan(pid)
+        _check_confirmed(plan0, confirmed_impact)
         if not _claim(
             pid,
             project_id=getattr(plan0, "project_id", ""),
             digest=getattr(plan0, "impact_digest", ""),
             flow=FLOW_SINGLE,
+            scope=_plan_scope(plan0),
         ):
             raise RepairError(ERROR_NOT_ALLOWED, "这份修复计划已经在执行")
     try:
@@ -3978,22 +3988,36 @@ _running: set[str] = set()
 _active_jobs: dict[str, dict] = {}
 #: 同一份已确认影响摘要的在途作业：(项目指纹, 摘要) → plan_id。第二个提交者（另一个标签页 / 另一个会话）
 #: 认领原作业而不是再起一个（T06）。
-_joined: dict[tuple[str, str], str] = {}
+_joined: dict[tuple[str, str, str], str] = {}
 #: 在途作业的追加进度监听者：plan_id → [callable(snapshot)]（认领了原作业的另一方也要看到终局）。
 _listeners: dict[str, list] = {}
 FLOW_JOINT = "joint"
 FLOW_SINGLE = "single"
 
 
-def _claim(plan_id: str, *, project_id: str = "", digest: str = "", flow: str = FLOW_JOINT) -> bool:
-    """认领一份计划：回 True = 这次认领成功；False = 已有人在跑。**在起线程之前**。"""
+def _claim(
+    plan_id: str,
+    *,
+    project_id: str = "",
+    digest: str = "",
+    flow: str = FLOW_JOINT,
+    scope: str = "",
+) -> bool:
+    """认领一份计划：回 True = 这次认领成功；False = 已有人在跑。**在起线程之前**。
+    `scope` = 依赖作用域（脚本所在目录，`scope_of`）：同项目同摘要、不同目录的两次授权是两份作业，账上的归属
+    记在各自的作用域里（Codex r4218802492）——合并键必须带它。"""
     with _lock:
         if plan_id in _running:
             return False
         _running.add(plan_id)
-        _active_jobs[plan_id] = {"project_id": project_id, "digest": digest, "flow": flow}
+        _active_jobs[plan_id] = {
+            "project_id": project_id,
+            "digest": digest,
+            "flow": flow,
+            "scope": scope,
+        }
         if project_id and digest:
-            _joined[(project_id, digest)] = plan_id
+            _joined[(project_id, scope, digest)] = plan_id
         return True
 
 
@@ -4003,7 +4027,7 @@ def _release(plan_id: str) -> None:
         _running.discard(plan_id)
         meta = _active_jobs.pop(plan_id, None)
         if meta and meta.get("project_id") and meta.get("digest"):
-            key = (meta["project_id"], meta["digest"])
+            key = (meta["project_id"], meta.get("scope", ""), meta["digest"])
             if _joined.get(key) == plan_id:
                 _joined.pop(key, None)
         # 监听者不在这里清：失败终态常在作业返回之后才由 `_prepare_guarded` / `_install_guarded` 发出，
@@ -4050,10 +4074,24 @@ def add_listener(plan_id: str, fn) -> bool:
         return True
 
 
+def _plan_scope(plan) -> str:
+    """计划的依赖作用域（脚本所在目录）；没有脚本的计划 = 空。"""
+    script = getattr(plan, "script", "") or ""
+    return scope_of(script) if script else ""
+
+
 def _check_confirmed(plan, confirmed_impact: str | None) -> None:
-    """已确认的影响摘要与计划此刻的实际影响对不上 → `dependency_impact_changed`，零副作用。
-    `confirmed_impact=None` 表示调用方没有绑定摘要（旧客户端：计划 id 本身就是它看到的那份计划）。"""
-    if confirmed_impact is None or plan is None:
+    """执行入口的唯一一道门（Codex r4217992305 / r4218802478）：**调用方必须回显它给用户看的影响摘要**。
+
+    * 缺 / 空 / 非字符串 -> `dependency_impact_required`，零副作用。**不再有「None = 旧客户端、不绑定」**：
+      服务端自己持有的摘要（计划、动作、缓存里的）一律不得代替调用方回显——那等于没有确认。
+    * 与计划此刻的实际影响对不上 -> `dependency_impact_changed`，零副作用。
+    """
+    if not isinstance(confirmed_impact, str) or not confirmed_impact:
+        raise RepairError(
+            ERROR_IMPACT_REQUIRED, "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。"
+        )
+    if plan is None:
         return
     if plan.impact_digest != confirmed_impact:
         raise RepairError(
@@ -4064,14 +4102,14 @@ def _check_confirmed(plan, confirmed_impact: str | None) -> None:
         )
 
 
-def prepare_async(plan_id: str, on_event=None, *, confirmed_impact: str | None = None) -> bool:
+def prepare_async(plan_id: str, on_event=None, *, confirmed_impact: str | None) -> bool:
     """起线程执行一份联合计划；回 False = 这份计划已在执行，**不再起第二个线程**（调用方把
     在途的进度原样交回去）。**认领与取消句柄都在起线程之前**：调用方一回 202 用户就可能取消，
     那时线程可能还在重算事实、还没拿锁——句柄不在表里的话 `cancel_status` 只能回 `not_found`，
     安装照常改环境（Codex #470 P1）。`prepare()` 复用这一个句柄。
 
-    `confirmed_impact`（T06）：调用方给了它就必须等于计划此刻的 `impact_digest`，否则 `dependency_impact_changed`
-    （认领之前、零副作用）。"""
+    `confirmed_impact`（T06）：**必传**，且必须等于计划此刻的 `impact_digest`；缺 -> `dependency_impact_required`，
+    对不上 -> `dependency_impact_changed`（均在认领之前、零副作用）。"""
     pid = str(plan_id or "")
     plan = get_joint_plan(pid)
     _check_confirmed(plan, confirmed_impact)
@@ -4079,6 +4117,7 @@ def prepare_async(plan_id: str, on_event=None, *, confirmed_impact: str | None =
         pid,
         project_id=getattr(plan, "project_id", ""),
         digest=getattr(plan, "impact_digest", ""),
+        scope=_plan_scope(plan),
     ):
         return False
     _register_cancel(pid)
@@ -4114,7 +4153,11 @@ def start_confirmed(
     选中）；不接受路径。"""
     root = str(Path(project))
     pj = managedenv.project_fingerprint(root)
-    key = (pj, str(confirmed_digest or ""))
+    # 回显的摘要是**调用方给的**，不是服务端缓存的：缺 -> dependency_impact_required，零副作用（r4218802478）
+    if not isinstance(confirmed_digest, str) or not confirmed_digest:
+        _check_confirmed(None, confirmed_digest)
+    # 合并键带依赖作用域：同项目同摘要、不同目录的两次授权不能合并成一个作业（账上归属只记在第一个作用域里）
+    key = (pj, scope_of(script), confirmed_digest)
     joined = _join_running(key, on_event)
     if joined:
         return {"plan_id": joined, "started": False, "joined": True, "progress": progress(joined)}
@@ -4124,7 +4167,7 @@ def start_confirmed(
     else:
         plan = create_joint_plan(root, script, target_kind=target_kind, scope_policy=scope_policy)
     try:
-        _check_confirmed(plan, key[1])
+        _check_confirmed(plan, key[2])
     except RepairError:
         _discard_plan(plan.plan_id)
         raise
@@ -4133,7 +4176,7 @@ def start_confirmed(
         if again is not None and again in _running:
             claimed = False
         else:
-            claimed = _claim(plan.plan_id, project_id=pj, digest=key[1], flow=flow)
+            claimed = _claim(plan.plan_id, project_id=pj, digest=key[2], flow=flow, scope=key[1])
     if not claimed:
         _discard_plan(plan.plan_id)
         joined = _join_running(key, on_event)
@@ -4173,7 +4216,7 @@ def preview_impact(
         _discard_plan(plan.plan_id)
 
 
-def _join_running(key: tuple[str, str], on_event) -> str:
+def _join_running(key: tuple[str, str, str], on_event) -> str:
     """同一份摘要在途的作业：回它的 plan_id 并（作业还没到终态时）追加监听；没有回空串。"""
     with _lock:
         pid = _joined.get(key)
@@ -4222,9 +4265,11 @@ def _facts_for_plan(
     return run, install
 
 
-def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
+def _prepare_guarded(
+    plan_id: str, on_event, *, claimed: bool = False, confirmed_impact: str | None = None
+) -> dict:
     try:
-        return prepare(plan_id, on_event, claimed=claimed)
+        return prepare(plan_id, on_event, claimed=claimed, confirmed_impact=confirmed_impact)
     except RepairError as exc:
         _log_repair_failure("联合依赖准备", plan_id, exc.code)
         return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
@@ -4234,7 +4279,7 @@ def _prepare_guarded(plan_id: str, on_event, *, claimed: bool = False) -> dict:
 
 
 def prepare(
-    plan_id: str, on_event=None, *, claimed: bool = False, confirmed_impact: str | None = None
+    plan_id: str, on_event=None, *, claimed: bool = False, confirmed_impact: str | None
 ) -> dict:
     """执行一份联合计划。执行端只认 `plan_id`；执行前重算环境指纹与事实（`repair_plan_stale`）。
 
@@ -4251,6 +4296,7 @@ def prepare(
             pid,
             project_id=getattr(plan0, "project_id", ""),
             digest=getattr(plan0, "impact_digest", ""),
+            scope=_plan_scope(plan0),
         ):
             raise RepairError(ERROR_NOT_ALLOWED, "这份准备计划已经在执行")
     cancel_ev = _register_cancel(pid)

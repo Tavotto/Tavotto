@@ -122,7 +122,11 @@ def _project(tmp_path, name="paper") -> Path:
 
 def _prepare(plan_id: str) -> tuple[dict, list[dict]]:
     events: list[dict] = []
-    deprepair.prepare_async(plan_id, on_event=events.append)
+    deprepair.prepare_async(
+        plan_id,
+        on_event=events.append,
+        confirmed_impact=deprepair.get_joint_plan(plan_id).impact_digest,
+    )
     return wait_for(plan_id), events
 
 
@@ -286,7 +290,9 @@ class TestPrivateBase:
         assert plan.private_python is not None and plan.to_payload()["private_python"]["required"]
         assert server.requests == []
         events: list[dict] = []
-        deprepair.install_async(plan.plan_id, on_event=events.append)
+        deprepair.install_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         assert deprepair.STATE_DOWNLOADING_PYTHON in [e["state"] for e in events]
@@ -315,7 +321,7 @@ class TestPrivateBase:
         )
         assert plan.private_python is not None and plan.widened is not None
         assert set(plan.requirements) == {ALPHA[0], beta[0]}
-        deprepair.install_async(plan.plan_id)
+        deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)
         managed = managedenv.python_of(project)
@@ -421,7 +427,7 @@ class TestPrivateBase:
             project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
         )
         assert plan.private_python is not None
-        deprepair.install_async(plan.plan_id)
+        deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_FAILED
         assert rec["code"] == privatepython.ERROR_OFFLINE
@@ -431,7 +437,7 @@ class TestPrivateBase:
         again = deprepair.create_plan(
             project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
         )
-        deprepair.install_async(again.plan_id)
+        deprepair.install_async(again.plan_id, confirmed_impact=again.impact_digest)
         rec2 = wait_for(again.plan_id)
         assert rec2["state"] == deprepair.STATE_DONE, json.dumps(rec2, ensure_ascii=False)
 
@@ -489,7 +495,9 @@ class TestPrivateBase:
 
         monkeypatch.setattr(deprepair, "_prepare_guarded", _held_at_entry)
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         answer = deprepair.cancel_status(plan.plan_id)  # ack 之后立刻取消
         gate.set()
         assert answer == {"accepted": True, "reason": ""}, answer
@@ -526,14 +534,24 @@ class TestPrivateBase:
         project = _project(tmp_path)
         plan = deprepair.create_joint_plan(project, "figure.py")
         events: list[dict] = []
-        assert deprepair.prepare_async(plan.plan_id, on_event=events.append) is True
+        assert (
+            deprepair.prepare_async(
+                plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+            )
+            is True
+        )
         deadline = time.time() + 30
         while not server.requests and time.time() < deadline:
             time.sleep(0.05)
         assert server.requests == [f"/{src.archive_name}"]
-        assert deprepair.prepare_async(plan.plan_id, on_event=events.append) is False  # 已在跑
+        assert (
+            deprepair.prepare_async(
+                plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+            )
+            is False
+        )  # 已在跑
         with pytest.raises(deprepair.RepairError) as err:
-            deprepair.prepare(plan.plan_id)  # 同步入口同样认领
+            deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)  # 同步入口同样认领
         assert err.value.code == deprepair.ERROR_NOT_ALLOWED
         time.sleep(0.3)
         assert server.requests == [f"/{src.archive_name}"]  # 还是那一次
@@ -589,7 +607,9 @@ class TestPrivateBase:
         project = _project(tmp_path)
         plan = deprepair.create_joint_plan(project, "figure.py")
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         deadline = time.time() + 30
         while not server.requests and time.time() < deadline:
             time.sleep(0.05)
@@ -636,11 +656,11 @@ class TestPrivateBase:
         pa = deprepair.create_joint_plan(a, "figure.py")
         pb = deprepair.create_joint_plan(b, "figure.py")
         assert pa.private_python and pb.private_python
-        deprepair.prepare_async(pa.plan_id)
+        deprepair.prepare_async(pa.plan_id, confirmed_impact=pa.impact_digest)
         deadline = time.time() + 30
         while not server.requests and time.time() < deadline:
             time.sleep(0.05)
-        deprepair.prepare_async(pb.plan_id)
+        deprepair.prepare_async(pb.plan_id, confirmed_impact=pb.impact_digest)
         time.sleep(0.5)
         server.gate.set()
         ra, rb = wait_for(pa.plan_id), wait_for(pb.plan_id)
@@ -1024,7 +1044,9 @@ class TestCleanMachine:
         server.mode = "hold"
         server.gate.clear()
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         deadline = time.time() + 30
         while not server.requests and time.time() < deadline:
             time.sleep(0.05)
@@ -1150,7 +1172,9 @@ class TestRealChain:
         assert plan.private_python["id"] == src.id
         assert plan.private_python["download_bytes"] in (0, src.size)
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         rec = wait_for(plan.plan_id, timeout=1500)
         elapsed = round(time.perf_counter() - t0, 1)
         assert rec["state"] == deprepair.STATE_DONE, json.dumps(rec, ensure_ascii=False)

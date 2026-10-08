@@ -200,7 +200,7 @@ class TestImpactDigest:
         """装完一代之后，同一份"还缺的"意图装到的是**另一个环境代**：摘要的环境引用变了（旧同意不继承）。"""
         project = _project(tmp_path, ALPHA, BETA)
         first = deprepair.create_joint_plan(project, "figure.py")
-        deprepair.prepare_async(first.plan_id)
+        deprepair.prepare_async(first.plan_id, confirmed_impact=first.impact_digest)
         assert wait_for(first.plan_id)["state"] == deprepair.STATE_DONE
         _declare(project, ALPHA, BETA, GAMMA)
         second = deprepair.create_joint_plan(project, "figure.py")
@@ -384,7 +384,10 @@ class TestClaim:
             plan = real_create(*a, **kw)
             # 我们刚算完计划、还没认领：另一个标签页先认领了同一份摘要
             holder["other"] = deprepair._claim(
-                "someone-else", project_id=plan.project_id, digest=plan.impact_digest
+                "someone-else",
+                project_id=plan.project_id,
+                digest=plan.impact_digest,
+                scope=deprepair.scope_of("figure.py"),
             )
             return plan
 
@@ -417,11 +420,13 @@ class TestClaim:
             return {"ok": True}
 
         monkeypatch.setattr(deprepair, "_run_install", held)
-        assert deprepair.install_async(plan.plan_id) is True
+        assert deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
         _wait_until(lambda: calls)
-        assert deprepair.install_async(plan.plan_id) is False  # 同一份计划只认领一次
+        assert (
+            deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest) is False
+        )  # 同一份计划只认领一次
         with pytest.raises(deprepair.RepairError) as err:
-            deprepair.install(plan.plan_id)
+            deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert err.value.code == deprepair.ERROR_NOT_ALLOWED
         gate.set()
         _wait_until(lambda: not deprepair.is_running(plan.plan_id))
@@ -443,7 +448,7 @@ class TestClaim:
         )
         with engine_pool.mutating_environment(key, "", shutdown=False):
             with pytest.raises(deprepair.RepairError) as err:
-                deprepair.prepare(plan.plan_id)
+                deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
             assert err.value.code == deprepair.ERROR_BUSY
             assert envlease.is_mutating_key(key)  # 占用方还占着
         assert built == [] and managedenv.python_of(project) is None
@@ -459,7 +464,7 @@ class TestAdoptionFence:
         gate, calls = held_generation
         project = _project(tmp_path, ALPHA)
         plan = deprepair.create_joint_plan(project, "figure.py")
-        assert deprepair.prepare_async(plan.plan_id) is True
+        assert deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
         _wait_until(lambda: calls)
         wrote: list[str] = []
         with pytest.raises(envlease.EnvironmentBusy) as err:
@@ -483,7 +488,7 @@ class TestAdoptionFence:
         plan = deprepair.create_joint_plan(project, "figure.py")  # 此刻项目没有任何环境决定
         venv = real_venv(project)
         _adopt(project, venv)  # 确认期间用户采用了自己的 .venv
-        assert deprepair.prepare_async(plan.plan_id) is True
+        assert deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
         _wait_until(lambda: not deprepair.is_running(plan.plan_id))
         rec = deprepair.progress(plan.plan_id)
         assert rec["state"] == deprepair.STATE_FAILED and rec["code"] == deprepair.ERROR_PLAN_STALE
@@ -572,7 +577,9 @@ class TestAdoptionFence:
         m.open_project(str(project))
         try:
             plan = deprepair.create_joint_plan(project, "figure.py")
-            assert deprepair.prepare_async(plan.plan_id) is True
+            assert (
+                deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
+            )
             _wait_until(lambda: calls)
             python = projectenv.interpreter_of(venv)
             resp = client.patch(
@@ -638,7 +645,7 @@ class TestBoundaries:
             lambda *a, **k: (built.append("x"), real_create(*a, **k))[1],
         )
         monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", WORKER_PY)  # 确认窗口里被钉上
-        deprepair.prepare_async(plan.plan_id)
+        deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_FAILED
         assert rec["code"] == deprepair.ERROR_INTERPRETER_PINNED
@@ -654,7 +661,7 @@ class TestBoundaries:
         project = _project(tmp_path, ALPHA)
         m.open_project(str(project))
         plan = deprepair.create_joint_plan(project, "figure.py")
-        assert deprepair.prepare_async(plan.plan_id) is True
+        assert deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
         _wait_until(lambda: calls)
         for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
             m.close_project(pid, wait=True)
@@ -1026,7 +1033,7 @@ class TestDisclosureIsDerivedFromWhatPipReceives:
         deprepair._joint_plans[plan.plan_id] = plan
         seen = self._capture_generation(monkeypatch, "_run_generation")
         with pytest.raises(deprepair.RepairError, match="captured"):
-            deprepair.prepare(plan.plan_id)
+            deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
         job = seen["job"]
         final = self._generation_inputs(str(project), job)
         _assert_impact_covers(
@@ -1147,7 +1154,7 @@ class TestReplanAfterPrivatePythonMustMatchTheConfirmedInputs:
 
         monkeypatch.setattr(deprepair, "_run_generation", fake_generation)
         with pytest.raises(deprepair.RepairError, match="captured"):
-            deprepair.prepare(plan.plan_id)
+            deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
         job = dataclasses.replace(seen["job"], provision_private=True, replan=True)
         assert job.confirmed_inputs == plan.pip_inputs and job.confirmed_impact == plan.impact
         joint, _k, _p = deprepair.joint_plan_for(project, "figure.py")
