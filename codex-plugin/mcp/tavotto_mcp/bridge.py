@@ -138,7 +138,14 @@ CAPABILITY_MISSING = "engine_capability_missing"
 #: `BRIDGE_IMPORTS_AT_MIN`（那两处是「桥 import 得动吗」的判据，放进去等于把最低版本抬到今天），只经
 #: `_optional_engine()` 取；用到它们的路径先过能力协商（`_require_feature`），或在缺席时退回旧行为。
 #: `tests/test_mcp_compat.py` 钉住：可选集与必需集不相交、桥里取可选模块只有这一个入口。
-OPTIONAL_ENGINE_MODULES = ("capabilities", "envadvice", "envlease", "execspec", "runconfig", "scriptargs")
+OPTIONAL_ENGINE_MODULES = (
+    "capabilities",
+    "envadvice",
+    "envlease",
+    "execspec",
+    "runconfig",
+    "scriptargs",
+)
 
 
 def _optional_engine(name: str):
@@ -267,7 +274,9 @@ def _check_argv_scope(argv: list | None, project: str, script: str) -> None:
     else:
         cwds = [cwd]
         if getattr(_optional_engine("execspec"), "run_cwd", None) is None:
-            cwds.append(str(Path(project, engine_figcapture.normalize_relative_script(script)).parent))
+            cwds.append(
+                str(Path(project, engine_figcapture.normalize_relative_script(script)).parent)
+            )
     for token in argv:
         if not isinstance(token, str):
             continue  # 形状错误交给 validate_argv 报 invalid_argv
