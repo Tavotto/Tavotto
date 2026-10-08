@@ -438,6 +438,8 @@ def _captured_of(worker, build_resp) -> dict | None:
         "stems": sorted(stems),
         "descriptors": list(descriptors) if isinstance(descriptors, list) else [],
         "remap_generation": getattr(worker, "remap_generation", None),
+        # 这次执行的会话沙盒目录（safe 档默认模式下脚本的 cwd；`rasterhint` 据此核实相对路径写出的文件）
+        "sandbox": str(getattr(getattr(worker, "spec", None), "sandbox", "") or ""),
     }
 
 

@@ -1309,7 +1309,7 @@ class SessionService:
                 # 跑完没出图时的原因（`rasterhint`）：脚本自己把图片写成了文件（Pillow / OpenCV …），不是 Matplotlib 图。
                 # 只是提示——不改 outcome / facts；None = 不适用或判不出（老后端没有这个键）
                 "no_figure_hint": (
-                    self._no_figure_hint(sess, plan)
+                    self._no_figure_hint(sess, plan, result)
                     if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
                     else None
                 ),
@@ -1318,14 +1318,24 @@ class SessionService:
             }
 
     @staticmethod
-    def _no_figure_hint(sess: Session, attempt_plan: preparation.PreparationPlan) -> dict | None:
+    def _no_figure_hint(
+        sess: Session, attempt_plan: preparation.PreparationPlan, result=None
+    ) -> dict | None:
         """读一次脚本源码（含有界跟进的本地模块）判 `rasterhint`；按尝试 id 缓存，读不了就是 None。"""
         key = attempt_plan.plan_id
         if key not in sess.no_figure_hint:
             script = sess.plan.script
             cwd_mode = (attempt_plan.workdir_decision or {}).get("mode")
             sess.no_figure_hint[key] = (
-                rasterhint.detect(sess.project_root, script, cwd_mode) if script else None
+                rasterhint.detect(
+                    sess.project_root,
+                    script,
+                    cwd_mode,
+                    run_started_at=attempt_plan.created_at,
+                    sandbox_dir=((getattr(result, "captured", None) or {}).get("sandbox") or None),
+                )
+                if script
+                else None
             )
         hint = sess.no_figure_hint[key]
         return dict(hint) if hint else None

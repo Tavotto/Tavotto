@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
 import { refreshProjectNow } from '@/store/liveSync'
+import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -632,11 +633,17 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         // 脚本自己写出的图片文件，素材库本来就列（不新造导入入口）；卡片收起让位给素材库
         // 素材库挂载时不重载 `/api/panels`、项目 watcher 又要等轮询+防抖：刚写出的图不主动刷新就要等几秒才出现，
         // 按钮看起来像坏了。走素材库工具栏刷新按钮用的同一条统一刷新（不 await：切标签不等它，失败也不挡路）
-        // 切标签的同一刻素材库就进加载态（不展示刷新前的旧清单）；刷新结束（成败都算）再取清单、由 loadAssets 收尾加载态
-        useRuntimeAssetStore.setState({ assetsLoading: true })
+        // 切标签的同一刻素材库就进加载态：`AssetBrowser` 的磁盘素材面板与忙碌态读的是 `useAssetStore.loading`
+        // （不是 runtime 素材库的 `assetsLoading`，那个标志它不订阅），所以置的是它。
+        // 刷新自己结束时会 `refreshAssetsAndSync({ force })` 重取清单并收掉 loading；兜底：刷新抛在重取之前时
+        // loading 仍为真，则在这里补一次强制取清单，不让素材库永远转圈
+        useAssetStore.setState({ loading: true })
         void refreshProjectNow()
           .catch(() => {})
-          .finally(() => void useRuntimeAssetStore.getState().loadAssets())
+          .finally(() => {
+            if (useAssetStore.getState().loading) void useAssetStore.getState().load({ force: true })
+            void useRuntimeAssetStore.getState().loadAssets()
+          })
         ui.setLeftTab('assets')
         ui.setGuideCard('closed')
         return null

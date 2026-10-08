@@ -18,10 +18,18 @@
   pylab / seaborn / plotnine / mpl_toolkits / scienceplots / proplot）——哪怕没建 figure 也不提示：
   那种脚本没出图多半是别的原因（没调 plt、`Agg` 之外的怪后端……），说「是 Pillow 画的」会误导。
   只 import `PIL` 读图、再用 matplotlib 画的脚本同理不提示。
+* **文件证据（硬条件）**：静态上看到「会存位图」不等于这次真的存了（只定义没调用的 helper、没走到的分支）。
+  所以只有**字面量输出路径解析出的文件在运行后确实存在，且 mtime 不早于本次运行开始**（`run_started_at`，
+  `prepsession` 传入本次尝试的创建时间）才出提示。相对路径按本次运行**实际的 cwd** 解析：`project` /
+  `project_root` 模式是脚本目录 / 项目根，沙盒模式（默认）是这次尝试的会话沙盒目录（`sandbox_dir`，取自
+  执行结果 `captured["sandbox"]`，即 worker 的 `spec.sandbox`；沙盒随 worker 缓存目录存在，不在每次运行后清掉）。
+  沙盒里有新文件 → 给原因句，但 `in_project` 恒为 false（素材库看不见沙盒）。没有任何文件证据——动态路径、
+  未知运行目录、拿不到沙盒目录、没传开始时间、文件不存在或是旧文件——一律不出位图提示，回到普通「没出图」。
+  取舍：宁可漏说一个真 Pillow 脚本（动态路径写出的图），也不对「根本没写图」的脚本说「它画成图片了」。
 * **盲点（写在明处）**：跟进被截断 / 有读不了的本地模块 / 有动态 import 时，反面判据看不全，
   一律不提示；`.save` 的接收者只按「不是已 import 的非 PIL 模块」判（`np.save` / `torch.save` 排除），
   不做类型推断，所以一个导入了 PIL 又对自家对象调 `.save("x.png")` 的脚本会被算上。
-  本模块不知道脚本**实际**写出了哪个文件（引擎没有「脚本写了哪些文件」的记录），因此不指认文件名。
+  引擎没有「脚本写了哪些文件」的记录，所以文件证据只来自源码里的字面量路径；不指认文件名。
 
 纯标准库；被 `prepsession` import（Flask 父进程 import 链）。
 """
@@ -29,13 +37,14 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 from . import discover, importscan
 
 # 素材盘点的可见性判据：单一出处（`iter_assets` 同一份），不在这里抄第二份
 from .project_refresh import PDF_EXT as _PDF_EXT, is_inventoried
-from .workdir import MODE_PROJECT, MODE_PROJECT_ROOT
+from .workdir import MODE_PROJECT, MODE_PROJECT_ROOT, MODE_SANDBOX
 
 #: 会让 Tavotto 能捕获到 figure 的家族；脚本或其本地模块 import 了其中任何一个都不提示。
 MATPLOTLIB_FAMILY = frozenset(
@@ -218,6 +227,46 @@ def _lands_in_inventory(path: str | None, root: Path, script: str, cwd_mode: str
     return not _crosses_symlink_dir(root, rel)
 
 
+#: 文件系统时间戳粗糙（FAT / HFS+ 整秒）：mtime 允许比运行开始早这么多秒仍算「本次写的」
+_MTIME_SLACK_S = 1.0
+_WIN_ABS = re.compile(r"^([A-Za-z]:|[\\/]{2})")
+
+
+def _fs_path(
+    path: str | None,
+    root: Path,
+    script: str,
+    cwd_mode: str | None,
+    sandbox_dir: str | None = None,
+) -> Path | None:
+    """字面量输出路径 → 磁盘上的绝对路径；解析不了（动态 / 沙盒或未知运行目录下的相对路径 / 别的系统的路径）None。"""
+    if not path:
+        return None
+    if path.startswith("~") or Path(path).is_absolute():
+        return Path(path).expanduser()
+    if _WIN_ABS.match(path):
+        return None  # Windows 盘符 / UNC：在本机上无从核实
+    if cwd_mode == MODE_PROJECT_ROOT:
+        return root / path
+    if cwd_mode == MODE_PROJECT:
+        script_dir = [p for p in script.replace("\\", "/").split("/") if p and p != "."][:-1]
+        return root.joinpath(*script_dir, path)
+    if cwd_mode == MODE_SANDBOX and sandbox_dir:
+        return Path(sandbox_dir) / path  # 沙盒模式：脚本的 cwd 就是这次尝试的会话沙盒目录
+    return None  # 未知运行目录 / 沙盒目录拿不到：无从核实
+
+
+def _written_since(fs: Path | None, run_started_at: float | None) -> bool:
+    """文件此刻存在，且 mtime 不早于本次运行开始（旧文件不算本次写的）。"""
+    if fs is None or run_started_at is None:
+        return False
+    try:
+        st = fs.stat()
+        return fs.is_file() and st.st_mtime >= run_started_at - _MTIME_SLACK_S
+    except (OSError, ValueError):
+        return False
+
+
 def _crosses_symlink_dir(root: Path, rel: str) -> bool:
     """`rel` 的任一级目录分量按**磁盘当前状态**是符号链接（或解析后跑出项目根）→ True。
     `iter_assets` 的 os.walk 不跟链接，`plots -> /outside` 下的图素材库列不出，不能指向素材库。"""
@@ -256,9 +305,20 @@ def _literal_ext(node: ast.expr | None) -> str | None:
     return suffix or None
 
 
-def detect(root: str | Path, script: str, cwd_mode: str | None = None) -> dict | None:
+def detect(
+    root: str | Path,
+    script: str,
+    cwd_mode: str | None = None,
+    run_started_at: float | None = None,
+    sandbox_dir: str | None = None,
+) -> dict | None:
     """脚本（含有界跟进的本地模块）是不是用位图库自己写了图片文件；是则回 `{"kind": "raster_script",
     "library": <LIBRARIES 之一>, "in_project": bool}`，否则 None（含「看不全」）。读不了 / 解析不了一律 None，不抛。
+
+    **文件证据**：至少一处字面量输出路径解析出的文件此刻存在且 mtime 不早于 `run_started_at`（本次运行开始，
+    epoch 秒）才回提示；没传 `run_started_at` 也按没有证据（None）。沙盒模式（默认）下相对路径按
+    `sandbox_dir`（这次尝试实际使用的会话沙盒目录，脚本的 cwd）解析：沙盒里有新文件 → 给原因句，但
+    `in_project` 恒为 false（素材库看不见沙盒）；沙盒目录拿不到才没有证据。
 
     `in_project`：**能确定**那张图落在素材库盘点得到的地方才 True——运行目录模式是 `project` / `project_root`
     （沙盒模式下相对路径写进会话沙盒，素材库看不见；模式未知也算不确定），且至少有一处保存的路径是字面量相对
@@ -292,7 +352,14 @@ def detect(root: str | Path, script: str, cwd_mode: str | None = None) -> dict |
     if not libs:
         return None
     # 多个库时取先出现的；顺序按 LIBRARIES 稳定化，保证同一份脚本总给同一个答案
-    in_project = any(_lands_in_inventory(p, root_p, script, cwd_mode) for p in paths)
+    fresh = [
+        p
+        for p in paths
+        if _written_since(_fs_path(p, root_p, script, cwd_mode, sandbox_dir), run_started_at)
+    ]
+    if not fresh:
+        return None  # 没有这次运行写出文件的证据：不说（未调用的 helper / 没走到的分支 / 动态路径 / 旧文件）
+    in_project = any(_lands_in_inventory(p, root_p, script, cwd_mode) for p in fresh)
     for lib in LIBRARIES:
         if lib in libs:
             return {"kind": "raster_script", "library": lib, "in_project": in_project}

@@ -55,6 +55,7 @@ import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
 import { refreshProjectNow } from '@/store/liveSync'
+import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
 
@@ -519,20 +520,30 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(useUiStore.getState().guideCard).toBe('closed')
   })
 
-  it('点「打开素材库」：刷新还没结束时素材库已是加载态，刷新结束后才取清单', async () => {
+  it('点「打开素材库」：刷新还没结束时 AssetBrowser 读的 loading 已为真，刷新结束后才取清单', async () => {
     await mount()
     useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
     let finish: () => void = () => {}
     vi.mocked(refreshProjectNow).mockImplementationOnce(() => new Promise<void>((r) => (finish = r)))
     const loadAssets = vi.fn(async () => {})
-    useRuntimeAssetStore.setState({ assets: [], assetsLoading: false, loadAssets })
+    useRuntimeAssetStore.setState({ assets: [], loadAssets })
+    // `AssetBrowser` 的忙碌态 / 磁盘素材面板读的是 useAssetStore.loading（不是 runtime 的 assetsLoading）
+    const load = vi.fn(async () => {
+      useAssetStore.setState({ loading: false })
+      return null
+    })
+    useAssetStore.setState({ loading: false, load })
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
     await act(async () => primary()!.click())
     expect(useUiStore.getState().leftTab).toBe('assets')
-    expect(useRuntimeAssetStore.getState().assetsLoading).toBe(true)
+    expect(useAssetStore.getState().loading).toBe(true)
+    expect(load).not.toHaveBeenCalled()
     expect(loadAssets).not.toHaveBeenCalled()
     await act(async () => finish())
     expect(loadAssets).toHaveBeenCalledTimes(1)
+    // 刷新结束后若 loading 还挂着（没人去取清单）就补一次强制取清单，不让素材库一直转圈
+    expect(load).toHaveBeenCalledWith({ force: true })
+    expect(useAssetStore.getState().loading).toBe(false)
   })
 
   it.each([
