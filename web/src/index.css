@@ -859,6 +859,19 @@
     background: linear-gradient(var(--color-border), var(--color-border)) no-repeat 16px 0 / calc(100% - 32px) 1px;
   }
 
+  /* 搜索框（ui/SearchInput 用在 type="search" 时，如设置导航）自带清除钮：WebKit 原生的那颗蓝 × 藏掉，不出现两颗 */
+  input[type='search']::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  /* 设置搜索的落点（SettingsDialog，2026-10-07 设计审计 §9.1）：点了搜索结果，那一行亮一下（约 1.6s 后撤掉属性）。
+     只换底色、不动几何；排在字段组分隔线那条之后，同权重时它赢（分隔线用的是 background 简写）。 */
+  [data-settings-hit] {
+    background-color: var(--color-selected);
+    transition: background-color var(--duration-base) var(--ease-standard);
+  }
+
   /* 对话框的浮动页脚（ui/Dialog，2026-10-07 设计审计 §3.5）：页脚吸在可滚正文的底边，正文还有没滚到的部分时
      （`data-scrolled`）变成一层毛玻璃 + 顶上一条 hairline，内容从它底下滑过；滚到底 / 不滚时就是普通的白底页脚。
      prefers-reduced-transparency：不模糊，实底。 */

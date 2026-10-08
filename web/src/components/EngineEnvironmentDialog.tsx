@@ -26,8 +26,9 @@ export function EngineEnvironmentDialog() {
       size="lg"
       anchor="engine-environment"
     >
-      {/* Radix 只在打开时挂正文：卡片挂上时若还没有环境状态会自己取一次 */}
-      <EngineEnvironmentCard hideTitle />
+      {/* Radix 只在打开时挂正文：卡片挂上时若还没有环境状态会自己取一次。
+          组形态本来就没有与标题栏重复的「渲染环境」小标（审计 §10.2），不需要再传开关 */}
+      <EngineEnvironmentCard />
     </Dialog>
   )
 }

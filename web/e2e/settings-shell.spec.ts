@@ -43,6 +43,29 @@ async function openSettings(page: Page, baseURL: string) {
   return dialog
 }
 
+test(
+  '设置搜索：输入关键词只留匹配项，点结果切到那一页、那一行滚进视野并高亮',
+  { tag: '@feature:settings.search' },
+  async ({ app, page }) => {
+    const a = await app()
+    const dialog = await openSettings(page, a.baseURL)
+    const search = dialog.locator('[data-settings-search]')
+    await search.fill('ppi')
+    const hit = dialog.locator('[data-settings-result="export.ppi"]')
+    await expect(hit).toBeVisible()
+    // 只留匹配项：与 ppi 无关的设置项不在结果里
+    await expect(dialog.locator('[data-settings-result="general.language"]')).toHaveCount(0)
+    await hit.click()
+    await expect(dialog.locator('[data-section="export"]')).toHaveAttribute('aria-current', 'true')
+    const row = dialog.locator('[data-settings-anchor="export.ppi"]')
+    await expect(row).toBeInViewport()
+    await expect(row).toHaveAttribute('data-settings-hit', '')
+    // 没有匹配：说一句，不留空白
+    await search.fill('zzqqxx-no-such-setting')
+    await expect(dialog.locator('[data-settings-no-results]')).toBeVisible()
+  },
+)
+
 test('设置：切遍每个分区，外框不跳、内容区自己滚', async ({ app, page }) => {
   const a = await app()
   const dialog = await openSettings(page, a.baseURL)
@@ -90,6 +113,36 @@ test('设置：窄窗口（<640 CSS px，等价于高缩放）导航变成顶部
   const box = (await dialog.boundingBox())!
   expect(box.x + box.width).toBeLessThanOrEqual(600)
   expect(await horizontalOffenders(page, '[role="dialog"]')).toEqual([])
+})
+
+test('设置：极窄视口（~350 CSS px，桌面缩放可达）设置行改成上下叠放，控件不越出行（Codex #828 P2）', async ({
+  app,
+  page,
+}) => {
+  const a = await app()
+  await page.setViewportSize({ width: 350, height: 700 })
+  const dialog = await openSettings(page, a.baseURL)
+  const nav = dialog.getByRole('navigation')
+  for (const label of SECTION_LABELS) {
+    await nav.getByRole('button', { name: label, exact: true }).click()
+    await page.waitForTimeout(150)
+    // 行（overflow 可见）被定宽控件列撑破时 scrollWidth > clientWidth，这把尺子在行上就报；
+    // 再往外一层的内容区是 overflow-x-hidden，会把它裁掉、自己不报——所以必须逐个元素扫，不能只量外框
+    expect(await horizontalOffenders(page, '[role="dialog"]'), label).toEqual([])
+  }
+  // 正面判据：真的叠放了（控件格在标题格下面），宽回来又并排——只量「不溢出」的话，
+  // 把控件列整个藏掉也是绿的
+  const languageRow = dialog.locator('[data-settings-anchor="general.language"]')
+  const stacked = () =>
+    languageRow.evaluate((row) => {
+      const [labelCell, controlCell] = Array.from(row.children) as HTMLElement[]
+      return controlCell.getBoundingClientRect().top >= labelCell.getBoundingClientRect().bottom - 1
+    })
+  await nav.getByRole('button', { name: '通用', exact: true }).click()
+  await expect(languageRow).toHaveAttribute('data-setting-row')
+  expect(await stacked(), '350px：叠放').toBe(true)
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await expect.poll(stacked, { message: '1280px：并排' }).toBe(false)
 })
 
 test('设置：英文界面同样不溢出', async ({ app, page }) => {
