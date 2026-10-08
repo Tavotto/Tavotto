@@ -363,4 +363,6 @@ def test_terminal_status_is_only_written_by_finish():
 
     src = inspect.getsource(preparation.PreparationService)
     writes = re.findall(r"\.status = (\S+)", src)
-    assert sorted(writes) == sorted(["STATUS_STATIC", "STATUS_NEEDS_INPUT", "STATUS_RUNNING", "status"])
+    assert sorted(writes) == sorted(
+        ["STATUS_STATIC", "STATUS_NEEDS_INPUT", "STATUS_RUNNING", "status"]
+    )
