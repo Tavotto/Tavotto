@@ -228,6 +228,7 @@ USER_VISIBLE_CODES = {
     "run_config_missing": set(),
     "run_config_secret_missing": set(),
     "run_config_unsupported": set(),
+    "run_config_unreadable": set(),
     # --- T02：导入即扫描。重启后 GET / 取消一个没开始过的扫描；客户端据此重新 POST 开始 ---
     "project_scan_not_started": set(),
     # --- U04（ADR 0061）：跑前的依赖门 ---
