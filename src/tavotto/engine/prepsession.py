@@ -140,6 +140,14 @@ class SessionError(Exception):
 # ---------------------------------------------------------------- 检查（纯函数，吃计划）
 
 
+def _finalize_failure_code(fin: dict) -> str:
+    """finalizer 失败的稳定码：嵌套 `error.code`（`register_probed` 原样形状）优先，其次顶层 `code`
+    （`_finalize_script_attempt` 展平后的形状），都没有才是 `registration_failed`。"""
+    err = fin.get("error")
+    nested = err.get("code") if isinstance(err, dict) else None
+    return str(nested or fin.get("code") or "registration_failed")
+
+
 def _check(check_id: str, status: str, code: str = "", **detail) -> dict:
     out = {"id": check_id, "status": status}
     if code:
@@ -280,7 +288,7 @@ def derive(facts: dict) -> dict:
         return _result(
             PHASE_PARTIAL,
             OUTCOME_FAILED,
-            code=str(finalize.get("code") or "registration_failed"),
+            code=_finalize_failure_code(finalize),
             finished=True,
             captured=True,
         )
@@ -664,7 +672,7 @@ class SessionService:
                         done_plan.project_id,
                         taskdiag.KIND_PREPARATION,
                         done_plan.plan_id,
-                        fin.get("code") or "registration_failed",
+                        _finalize_failure_code(fin),
                     )
             with sess.lock:
                 attempt.finalize = fin

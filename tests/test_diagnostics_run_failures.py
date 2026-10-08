@@ -240,6 +240,28 @@ def test_finalizer_failure_after_ready_is_a_failed_run_with_its_code(
     assert item["captured_count"] == 1
 
 
+def test_finalizer_failure_code_is_read_from_nested_error_shape(
+    prep_client, tmp_path, run_aware_pool, sessions, monkeypatch
+):
+    """finalizer 自己返回 `register_probed` 的嵌套形状（`error.code`）时，recent_runs 也要带该码，
+    不能落成 registration_failed。上一条用例经过真实的 `_finalize_script_attempt`（它把码展平到顶层），
+    测不到 `_done` 对嵌套形状的读取，这里直接替换 finalizer。"""
+    client = prep_client
+    root = _project(tmp_path, "p")
+    (root / "tavotto_registry.json").unlink()
+    (root / "fig.pdf").unlink()
+    pj = _open(client, root)
+    monkeypatch.setattr(
+        m,
+        "_finalize_script_attempt",
+        lambda *a, **k: {"registered": False, "error": {"code": "stem_conflict"}},
+    )
+    _run_session(client, pj, {"script": "fig.py"})
+    runs = _report(client, pj)["project"]["recent_runs"]
+    assert runs["by_error_code"] == {"stem_conflict": 1}
+    assert runs["recent"][0]["error_code"] == "stem_conflict"
+
+
 def test_preparation_entry_has_elapsed_ms(prep_client, tmp_path, run_aware_pool, sessions):
     client = prep_client
     root = _project(tmp_path, "p")
