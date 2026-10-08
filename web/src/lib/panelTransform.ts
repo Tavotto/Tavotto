@@ -36,6 +36,23 @@ export function panelTransformCss(t: PanelContentTransform): string | undefined 
 }
 
 /**
+ * 同一变换写成 SVG `transform`，绕 (cx, cy)（面板包围盒中心 = 内容中心，视图坐标）。SVG 的变换列表
+ * 也是从右往左作用到点上：先在中心处翻转、再绕中心旋转——与 `panelTransformCss` 同一个结果。
+ * 画在面板内容坐标系里的覆盖物（问题面板的元素悬停轮廓）要跟着内容一起翻转 / 旋转就用它。恒等时 `undefined`。
+ */
+export function panelTransformSvg(t: PanelContentTransform, cx: number, cy: number): string | undefined {
+  const flip = t.scaleX < 0 || t.scaleY < 0
+  return (
+    [
+      t.rotate ? `rotate(${t.rotate} ${cx} ${cy})` : '',
+      flip ? `translate(${cx} ${cy}) scale(${t.scaleX} ${t.scaleY}) translate(${-cx} ${-cy})` : '',
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined
+  )
+}
+
+/**
  * 同一变换作用到 canvas 2D 上（原点已经平移到内容中心）。canvas 的变换按调用顺序右乘，
  * 与 CSS 的「从右往左」同一个结果：先 rotate 再 scale 的调用 = 先翻转、再旋转。
  */
