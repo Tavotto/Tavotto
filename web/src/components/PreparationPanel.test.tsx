@@ -454,13 +454,14 @@ describe('多张图的结果对话框', () => {
 })
 
 describe('切换聚焦条目：面板的条目局部状态不带到另一个脚本', () => {
-  const otherReport = () =>
+  const otherReport = (over: Partial<PreparationReport> = {}) =>
     report({
+      ...over,
       session_id: 'psess-2',
       target: { kind: 'script', script: 'other.py', entry: '__main__', asset_id: null, stem: null },
     })
-  const openOther = async () => {
-    mockCreate.mockResolvedValueOnce(otherReport())
+  const openOther = async (over: Partial<PreparationReport> = {}) => {
+    mockCreate.mockResolvedValueOnce(otherReport(over))
     await act(async () => {
       await useProjectPreparationStore.getState().open({ script: 'other.py' })
     })
@@ -502,13 +503,14 @@ describe('切换聚焦条目：面板的条目局部状态不带到另一个脚�
 
   it('详情里「改用内置环境」的失败文案同样不带过去', async () => {
     await mount()
-    await openOther()
+    await openOther(STATES.env) // B 也有「改用内置环境」按钮，才看得出失败文案是不是被带过来
     await openWith(report(STATES.env))
     const spy = vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockResolvedValueOnce('设置失败了')
     useEnvStore.setState({ setProjectPython: spy as never })
     await act(async () => (panel().querySelector('[data-prep-use-builtin]') as HTMLButtonElement).click())
     expect(panel().querySelector('[data-prep-env-error]')).not.toBeNull()
     await focusKey('script:other.py')
+    expect(panel().querySelector('[data-prep-use-builtin]')).not.toBeNull()
     expect(panel().querySelector('[data-prep-env-error]')).toBeNull()
   })
 })
