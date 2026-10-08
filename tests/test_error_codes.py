@@ -219,6 +219,10 @@ USER_VISIBLE_CODES = {
     "explicit_python_unusable": set(),
     "project_python_unusable": set(),
     "preparation_plan_stale": set(),
+    # --- T01：脚本目标会话执行完但没捕获到图（登记那一步的结局码；文案早已在 errors.json） ---
+    "no_figures_captured": set(),
+    # --- T02：导入即扫描。重启后 GET / 取消一个没开始过的扫描；客户端据此重新 POST 开始 ---
+    "project_scan_not_started": set(),
     # --- U04（ADR 0061）：跑前的依赖门 ---
     "dependency_preparation_required": set(),
     # 异步准备（统一实施包 U01，ADR 0053）：plan_id 不存在或属于别的项目

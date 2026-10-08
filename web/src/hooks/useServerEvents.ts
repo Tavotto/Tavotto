@@ -14,6 +14,7 @@ import { useEnvStore } from '@/store/envStore'
 import { applyExportJob } from '@/store/exportStore'
 import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
+import { useProjectScanStore } from '@/store/projectScanStore'
 import { useProjectStore } from '@/store/projectStore'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import {
@@ -255,6 +256,11 @@ export function handleServerEvent(ev: ServerEvent) {
       void refreshAssetsAndSync()
       break
     }
+
+    case 'project.scan':
+      // 导入即扫描有进展：只是「重读」提示，快照以 GET 为准（SSE 丢了轮询也会补上）
+      void useProjectScanStore.getState().refresh()
+      break
 
     case 'ai.delta':
       // 按 sid 写进自己的会话；不是本标签页此刻持有的会话就什么都不做

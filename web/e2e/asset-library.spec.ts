@@ -315,14 +315,16 @@ test('多 Figure：?pick= 打开选择器，选第二张加的就是第二张', 
 
   // `tavotto open` 多图交接的落地形态：?pick=<脚本> → Figure 选择器
   await page.goto(`${a.baseURL}/?pick=show_two.py`)
-  const dialog = page.getByRole('dialog', { name: /选择一张图/ })
+  const dialog = page.locator('[data-dialog="figure-picker"]')
   await expect(dialog).toBeVisible({ timeout: 30_000 })
-  const rows = dialog.getByRole('listitem')
+  const rows = dialog.locator('[data-figure-picker-row]')
   await expect(rows).toHaveCount(2)
 
-  // 选第二张：加的必须是第二张（stem/asset id 不串）
-  const secondStem = (await rows.nth(1).textContent())!.match(/[\w.-]+/)![0]
-  await rows.nth(1).getByRole('button', { name: '添加到画布' }).click()
+  // 选第二张：加的必须是第二张（stem/asset id 不串）。加一张不关框（2026-10-07 设计审计 §10.2），「完成」才关
+  const secondStem = (await rows.nth(1).getAttribute('data-figure-picker-row'))!
+  await rows.nth(1).locator('[data-figure-picker-add]').click()
+  await expect(rows.nth(1).locator('[data-figure-picker-placed]')).toBeVisible()
+  await dialog.locator('[data-figure-picker-done]').click()
   await expect(dialog).toHaveCount(0)
   await expect(page.getByText('画布是空的')).toHaveCount(0)
 
@@ -418,9 +420,9 @@ test('试运行撞上依赖门：直接弹一键修复框，稍后可重开；�
   await expect(dialog).toContainText('这个脚本还缺 adjusttext，点一下自动装好。')
   expect(probes).toBe(1)
 
-  // 「详情」里「其他方式（备选）」的「不准备，直接运行」：真 `POST /api/engine/dependencies/skip`，然后这一行自动再试运行
-  // （真 worker）→ 发现图（授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与 `dependency-one-click.spec.ts` 看护：SSE 在这里造不了）
-  await dialog.locator('[data-repair-advanced] > summary').click()
+  // 页脚 start 槽的「不准备，直接运行」（2026-10-07 设计审计 §10.2，不再埋在「详情」里）：真 `POST /api/engine/dependencies/skip`，
+  // 然后这一行自动再试运行（真 worker）→ 发现图（授权准备成功后的重跑由 `ScriptLibrary.test.tsx` 与
+  // `dependency-one-click.spec.ts` 看护：SSE 在这里造不了）
   const skipping = page.waitForResponse(response =>
     /\/api\/engine\/dependencies\/skip(\?|$)/.test(response.url()) && response.request().method() === 'POST')
   await dialog.locator('[data-dependency-skip]').click()

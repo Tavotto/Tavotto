@@ -202,7 +202,6 @@ export default interface Resources {
       "title": "渲染环境"
     },
     "export": {
-      "advanced": "高级选项",
       "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
       "blockingGroupCount": "{{count}} 项",
       "blockingListLabel": "阻断性问题",
@@ -249,6 +248,9 @@ export default interface Resources {
       "filenamePlaceholder": "图 1",
       "finish": "完成",
       "formatLabel": "格式",
+      "groupChecks": "检查",
+      "groupFormat": "格式",
+      "groupOutput": "输出",
       "ignored": {
         "crop": "裁剪",
         "flip": "翻转",
@@ -277,6 +279,9 @@ export default interface Resources {
       "locate": "定位",
       "locateAria": "定位到{{subject}}：{{title}}",
       "locatedHint": "再点「导出」回到导出面板，设置还在。",
+      "locationChange": "更改…",
+      "locationDefault": "项目的导出目录",
+      "locationLabel": "位置",
       "mmSize": "{{w}} × {{h}} mm",
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
@@ -348,7 +353,7 @@ export default interface Resources {
       "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
       "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
       "empty": "项目里还没有排版",
-      "load": "载入",
+      "load": "打开",
       "nameLabel": "排版名",
       "namePlaceholder": "排版名",
       "nameTaken": "已有同名排版。继续会覆盖它。",
@@ -356,6 +361,7 @@ export default interface Resources {
       "openTitle": "打开排版",
       "overwrite": "仍然覆盖",
       "projectSwitched": "保存途中切换了排版或项目：原来那份的同名排版已在别处改过，这次没有写入。回到那份排版再保存一次。",
+      "rename": "改名",
       "saveAs": "另存为",
       "saveTitle": "另存为新排版",
       "saveToProject": "存进项目",
@@ -602,6 +608,10 @@ export default interface Resources {
         "new-doc": {
           "keywords": "new blank xj xinjian pb paiban",
           "label": "新建空白排版"
+        },
+        "project-scan": {
+          "keywords": "scan check structure jc jiancha 检查 扫描 脚本 目标",
+          "label": "显示项目检查结果"
         },
         "readiness": {
           "keywords": "readiness status editable jr jieru 接入 可编辑 仅版面 仅排版 为什么不能编辑",
@@ -1041,12 +1051,15 @@ export default interface Resources {
       "cancelPaste": "取消粘贴",
       "confirmDoc": "重新链接所选素材",
       "confirmPaste": "按上述选择粘贴",
+      "descDoc": "排版里有图找不到原来的素材：为每一张选一个替代，或保持缺失。",
+      "descPaste": "粘贴的图找不到原来的素材：为每一张选一个替代，或跳过它。",
       "keepMissing": "保持缺失",
+      "matchedByName": "按名字匹配",
       "refCount_other": "（{{count}} 张图引用）",
       "selectAria": "为 {{name}} 选择替代素材",
       "skipPanel": "跳过这张图",
-      "titleDoc": "排版里的图缺少素材",
-      "titlePaste": "粘贴的图缺少素材"
+      "titleDoc": "重新链接素材",
+      "titlePaste": "粘贴前重新链接素材"
     },
     "scriptInput": {
       "answerLabel": "你的回答",
@@ -1059,12 +1072,12 @@ export default interface Resources {
       "manageAria": "查看和修改 {{script}} 记住的输入",
       "manageEmpty": "这个脚本没有记住的输入。",
       "manageForget": "删除",
-      "manageForgetAria": "删除第 {{index}} 个问题的答案",
-      "manageForgetBody": "删除后会立刻重新运行 {{script}}，它会重新问你这个问题。",
-      "manageForgetTitle": "删除第 {{index}} 个问题的答案？",
-      "manageIntro": "改好答案后点「保存并重新运行」，脚本只重新运行一次。",
+      "manageForgetStaged": "保存时删除这个答案",
+      "manageForgetUndo": "撤销",
+      "manageIntro": "改好答案或标记删除后点「保存并重新运行」，脚本只重新运行一次。",
       "manageNoPrompt": "第 {{index}} 个问题（读取标准输入）",
       "managePrompt": "第 {{index}} 个问题：{{prompt}}",
+      "manageRowActions": "第 {{index}} 个问题的更多操作",
       "manageSave": "保存并重新运行",
       "manageSaveCount": "保存并重新运行（{{n}}）",
       "manageSaved": "已保存，正在重新运行 {{script}}",
@@ -1674,6 +1687,17 @@ export default interface Resources {
         "series": "曲线与系列",
         "text": "文字"
       },
+      "impact": {
+        "entries": "字段",
+        "following_other": "这份排版里有 {{count}} 张画布跟随这套样式，存下的改动会自动跟上。",
+        "off": "关",
+        "on": "开",
+        "page": "页面尺寸",
+        "pageSize": "{{w}} × {{h}} mm",
+        "palette": "配色",
+        "title": "影响",
+        "unsavedDraft": "还没存下：存下之后才能让画布跟随它。"
+      },
       "includePageSize": "包含页面尺寸",
       "legendTitle": "图例标题",
       "nameLabel": "名称",
@@ -1708,6 +1732,7 @@ export default interface Resources {
       "textColorAria": "文字颜色",
       "title": "论文样式",
       "unmappableEntry": "{{label}}：无「{{prop}}」",
+      "unsaved": "未保存的修改",
       "willAffect": "将影响"
     },
     "telemetry": {
@@ -1739,6 +1764,7 @@ export default interface Resources {
       "install": "立即更新",
       "installed": "{{version}} 已安装。当前窗口仍是旧版本，重启后生效。",
       "later": "稍后",
+      "log": "日志",
       "notesTitle": "本版新增内容",
       "relaunch": "立即重启",
       "relaunchLater": "稍后重启",
@@ -1753,7 +1779,6 @@ export default interface Resources {
       "beforeRestore": "恢复前（{{time}}）",
       "budgetOver": "命名节点已占用 {{used}} MB，超过 {{limit}} MB 的上限。它们不会被自动删除，但删掉几个之前不能再命名新节点。",
       "close": "关闭排版时间线",
-      "closePreview": "关闭",
       "delete": "删除节点",
       "deleteBody": "删除后无法找回，当前排版不受影响。",
       "deleteTitle": "删除节点「{{name}}」？",
@@ -1819,6 +1844,7 @@ export default interface Resources {
       "previewTitle": "预览：{{time}} {{name}}",
       "rename": "改名…",
       "restore": "恢复到这里",
+      "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
       "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
       "restoreHistory": "恢复排版节点「{{name}}」",
       "restoreMissingCanvasBody": "这个节点来自已删除的画布「{{from}}」。继续会写进当前画布「{{to}}」，覆盖现有内容。",
@@ -2013,6 +2039,7 @@ export default interface Resources {
       "project_env_unusable": "项目环境无法启动。",
       "project_env_worker_import_failed": "项目环境能导入 matplotlib，但 Tavotto 的渲染代码在它里面起不来。",
       "project_python_unusable": "为这个项目指定的解释器用不了；Tavotto 不会自动换成别的环境。请在渲染环境设置里重新指定，或清除它回到自动选择。",
+      "project_scan_not_started": "这个项目还没有开始检查（或应用重启过）。重新检查即可。",
       "publish_failed": "文件已写入，但无法移入导出目录：{{error}}。",
       "python_missing": "本机没有可用的 Python。请安装 Python 3.10 或更高版本后重试。",
       "read_failed": "无法读取：{{reason}}",
@@ -2113,6 +2140,7 @@ export default interface Resources {
       "dependencyBlocked_dependency_target_unavailable": "目标 Python 环境无法检查。请在设置里检查渲染环境。",
       "dependencyPrepareCancel": "取消",
       "dependencyPrepareConstraints": "另有 {{count}} 条项目声明只作为版本约束参与求解，不安装。",
+      "dependencyPrepareHeading": "准备环境",
       "dependencyPrepareLater": "稍后",
       "dependencyPrepareNetwork": "需要联网下载；只装预编译的 wheel，不做源码构建。",
       "dependencyPrepareOpen": "准备依赖…",
@@ -2170,6 +2198,7 @@ export default interface Resources {
       "missingInputRewriteHint": "可以让 Tavotto 把脚本里写的这个路径改成数据现在的位置：改之前先给你看要改的每一行、先备份，随时能恢复。也可以把数据放回脚本写的位置（相对路径从脚本所在的文件夹算起）。",
       "missingInputSentence": "脚本要读的 {{name}} 不在原来的位置了，请指给 Tavotto 看它现在在哪。",
       "missingInputSentenceProbe": "脚本要读的 {{name}} 不在原来的位置了，请把它放回脚本写的位置。",
+      "missingInputStep": "{{n}}/{{total}}",
       "missingInputTitle": "找不到数据文件",
       "missingInputUsePath": "使用这个路径",
       "missingInputWhyAbsolute": "这是写死的完整路径。数据可能被移动了，或者换了一台电脑。请告诉 Tavotto 数据现在在哪。",
@@ -2452,11 +2481,13 @@ export default interface Resources {
       "workdirChooseConflicts": "两处内容不同的文件：{{files}}",
       "workdirChooseLater": "稍后",
       "workdirChooseRootEvidence": "{{script}} 读的数据只有在项目根目录下才找得到。选一个运行目录，这个项目只问这一次。",
-      "workdirChooseRun": "运行",
+      "workdirChooseRun": "在这里运行",
       "workdirChooseScriptDirEvidence": "{{script}} 在当前目录里查找数据文件（glob / listdir / exists），在沙盒里找不到——它要在自己的目录里运行。选一个运行目录，这个项目只问这一次。",
       "workdirChooseSuggest": "这张图还没决定在哪个目录里运行。",
       "workdirChooseTitle": "脚本在哪个目录里运行？",
       "workdirChooseWrites": "在真实目录里运行时，脚本用相对路径写出的文件会像在终端里一样落进项目目录，并改写同名文件。Tavotto 不会替它保存图片，并会拦下删除、改名和移动。",
+      "workdirChooseWritesMore": "详情",
+      "workdirChooseWritesShort": "在真实目录里运行时，脚本写出的文件会落进项目目录。",
       "workdirConfirmBody": "脚本在自己的目录里运行：相对路径读取的数据能直接找到；相对路径写出的文件会像在终端里一样落进项目目录，并改写同名文件。Tavotto 不会替它保存图片，并会拦下删除、改名和移动。只对这个项目生效。",
       "workdirConfirmOk": "在脚本目录里运行",
       "workdirConfirmTitle": "改为在脚本目录里运行？",
@@ -3980,12 +4011,16 @@ export default interface Resources {
       "titleOpen": "打开项目目录"
     },
     "figurePicker": {
+      "addAll": "全部添加（{{count}}）",
       "addToCanvas": "添加到画布",
+      "addedAll_other": "已加入 {{count}} 张图",
+      "done": "完成",
       "empty": "此脚本尚未登记任何图。在素材库的「脚本」区运行它以捕获图。",
       "listAria": "脚本产出的图",
       "needsRun": "先运行一次",
+      "onCanvas": "已在画布上",
       "runtimeBadge": "运行时图",
-      "title": "选择一张图——{{script}}"
+      "title": "{{script}} 的图"
     },
     "handoff": {
       "added": "已加入 {{name}}",
@@ -4306,6 +4341,7 @@ export default interface Resources {
     "crash": {
       "blank": "打开空白排版",
       "body": "排版已自动保存在本机，刷新后从最后一次快照继续。仍然出错可选「打开空白排版」，原排版不会删除。",
+      "details": "详情",
       "title": "界面出错了"
     },
     "docBanner": {
@@ -4686,6 +4722,53 @@ export default interface Resources {
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
       "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
+    },
+    "scan": {
+      "cancel": "取消检查",
+      "deps": {
+        "declared": "依赖声明：{{files}}（{{count}} 条），尚未检查是否已安装。"
+      },
+      "details": "详情",
+      "env": {
+        "none": "没有找到环境线索，选定脚本后再检查。",
+        "some": "找到 {{count}} 个可能的 Python 环境线索，都还没有核验。选定脚本后再检查。"
+      },
+      "issue": {
+        "asset_limit": "图很多，只数了一部分。",
+        "cancelled": "检查被取消了。",
+        "depth_limit": "{{path}} 层级较深，没有进入检查。",
+        "entry_budget": "项目文件很多，检查在中途停下了。",
+        "file_too_large": "{{path}} 太大，没有分析。",
+        "more_issues": "另外还有 {{count}} 处没看全。",
+        "parse_budget": "{{path}} 结构过于复杂，没有分析。",
+        "placeholder_file": "{{path}} 是还没下载到本机的云盘文件，没有读取。",
+        "script_limit": "脚本很多，只列出了一部分。",
+        "source_byte_budget": "脚本总量较大，后面的脚本没有分析。",
+        "symlinked_dir": "{{path}} 是链接或重定向项，未检查其目标。",
+        "time_budget": "检查用时较长，在中途停下了。",
+        "unreadable_dir": "没能读取目录 {{path}}。",
+        "unreadable_file": "没能读取文件 {{path}}。"
+      },
+      "line": {
+        "already_connected": "绘图脚本都已连接，图可以直接编辑。",
+        "cancelled": "已取消检查。已有的图仍可排版。",
+        "choose_target": "发现 {{count}} 个可能的绘图脚本，尚未连接。选一个来准备。",
+        "failed": "检查没有完成。已有的图仍可排版，可以重新检查。",
+        "nothing_found": "这个项目里还没有图和脚本。",
+        "scanning": "正在检查项目结构，已发现 {{scripts}} 个脚本、{{assets}} 张图。图可以先排版。",
+        "static_source": "没有发现脚本，图可以直接排版。",
+        "target_found": "发现绘图脚本 {{script}}。已有的图可直接排版；要编辑它生成的图，需要先准备并运行。",
+        "unchecked": "没能检查完整个项目（{{issues}} 处没看全），所以不能说这里没有脚本。已有的图仍可排版。"
+      },
+      "openAssets": "打开素材库",
+      "partialNote": "部分内容没有检查完。",
+      "rescan": "重新检查",
+      "role": {
+        "auxiliary": "辅助脚本",
+        "plot": "绘图脚本",
+        "unknown": "未核验"
+      },
+      "run": "试运行"
     },
     "scrim": {
       "collapse": "收起侧栏"

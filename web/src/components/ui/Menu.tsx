@@ -23,6 +23,7 @@ export function Menu({
   width = 200,
   open,
   onOpenChange,
+  onCloseAutoFocus,
 }: {
   trigger: ReactElement
   children: ReactNode
@@ -31,6 +32,11 @@ export function Menu({
   /** 受控打开（`RowMenu` 用它让 ⇧F10 / 右键打开同一份菜单）；不给就是 Radix 自己管 */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /**
+   * 关闭时焦点回到触发器之前调用；`preventDefault()` = 不还焦点。只给「菜单项打开了一个要接焦点的
+   * 输入框」的场合（行内改名）：否则还给 ⋯ 的那一下就是那个输入框的 blur
+   */
+  onCloseAutoFocus?: (e: Event) => void
 }) {
   return (
     <DM.Root open={open} onOpenChange={onOpenChange}>
@@ -40,6 +46,7 @@ export function Menu({
           align={align}
           sideOffset={6}
           style={{ minWidth: width }}
+          onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
             CONTENT_CLASS,
             // 从触发器那个角展开，而不是从自己中心——菜单与按钮的因果关系才看得出来
