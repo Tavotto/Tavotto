@@ -213,3 +213,40 @@ def test_run_summary_is_bounded_and_tolerates_unreadable_blobs():
     assert len(runs["recent"]) == taskdiag.RUN_SUMMARY_LIMIT
     assert runs["counts"] == {"error": 20}
     assert runs["by_error_code"] == {"script_probe_failed": 19}
+
+
+def test_finalizer_failure_after_ready_is_a_failed_run_with_its_code(
+    prep_client, tmp_path, run_aware_pool, sessions, monkeypatch
+):
+    """准备已按「执行成功」冻成 ready，之后构建后的登记（finalizer）失败、会话终局是 partial：
+    recent_runs / 单次诊断都要读成失败并带登记错误码，不能算 ready。"""
+    client = prep_client
+    root = _project(tmp_path, "p")
+    (root / "tavotto_registry.json").unlink()
+    (root / "fig.pdf").unlink()
+    pj = _open(client, root)
+    monkeypatch.setattr(
+        m.engine_probe,
+        "register_probed",
+        lambda *a, **k: {"registered": False, "error": {"code": "stem_conflict"}},
+    )
+    _run_session(client, pj, {"script": "fig.py"})
+    runs = _report(client, pj)["project"]["recent_runs"]
+    assert runs["counts"] == {"error": 1}
+    assert runs["by_error_code"] == {"stem_conflict": 1}
+    item = runs["recent"][0]
+    assert item["kind"] == "preparation" and item["outcome"] == "error"
+    assert item["error_code"] == "stem_conflict"
+    assert item["captured_count"] == 1
+
+
+def test_preparation_entry_has_elapsed_ms(prep_client, tmp_path, run_aware_pool, sessions):
+    client = prep_client
+    root = _project(tmp_path, "p")
+    (root / "tavotto_registry.json").unlink()
+    (root / "fig.pdf").unlink()
+    pj = _open(client, root)
+    _run_session(client, pj, {"script": "fig.py"})
+    item = _report(client, pj)["project"]["recent_runs"]["recent"][0]
+    assert item["kind"] == "preparation"
+    assert isinstance(item["elapsed_ms"], int) and item["elapsed_ms"] >= 0

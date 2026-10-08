@@ -32,7 +32,7 @@ import time
 import uuid
 from typing import Callable
 
-from . import preparation, registry
+from . import preparation, registry, taskdiag
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -657,6 +657,15 @@ class SessionService:
                 except Exception:  # noqa: BLE001 — 线程里不许静默死掉，如实记
                     LOG.exception("登记捕获结果失败 %s", done_plan.script)
                     fin = {"registered": False, "code": "registration_failed"}
+                if isinstance(fin, dict) and fin.get("registered") is False:
+                    # 任务诊断在 `_finish` 时已按「执行成功」冻成 ready；构建后的登记失败是终局之后的事，
+                    # 补记成失败 + 稳定码，否则 recent_runs / 单次诊断都会把它读成 ready
+                    taskdiag.STORE.amend_post_terminal_failure(
+                        done_plan.project_id,
+                        taskdiag.KIND_PREPARATION,
+                        done_plan.plan_id,
+                        fin.get("code") or "registration_failed",
+                    )
             with sess.lock:
                 attempt.finalize = fin
                 attempt.finalized = True

@@ -192,6 +192,11 @@
   `captured_count` / `elapsed_ms` / `at`。它是**已冻结快照的二次投影**，不另采集、不执行任何东西；值全部来自
   `diagnostic_projection` 已过形状守卫的字段，**不含**脚本名、路径、argv、图名、traceback、模块名。逐次详情仍在
   `task-diagnostics.json` 与引导卡的「下载这一次的诊断」。
+- **构建后的 finalizer 失败按失败算。** 准备在 `PreparationService._finish` 就把任务诊断按「执行成功」冻成 `ready`，
+  之后 `prepsession._done` 才跑登记（`register_probed` 撞 stem 等），会话终局是 partial。`_done` 在 finalizer 失败时
+  调 `taskdiag.STORE.amend_post_terminal_failure`：**唯一**允许改写冻结快照的入口，只把 `ready` 改成 `error` 并写
+  `error.code`（稳定码过闸），其余字段与 `recorded_at` 不动；非 ready 的终局不碰，幂等。这样 `recent_runs` 与单次
+  诊断读到同一个结论，不必让 taskdiag 反向依赖会话。准备条目的 `elapsed_ms` 由投影从起止时间算出（与 `script_run` 同名同单位）。
 - 缺依赖现场（`project.missing_dependencies`）现在也覆盖这两条路（`deprepair.note_missing_dependency_of`）。
   **敏感参数的运行不带模块名**：worker 在源头就把 `module` 清空，`note_missing_dependency_of` 没有模块名就不记——
   报告里仍有 `recent_runs` 的 `missing_dependency` 计数，但没有包名。

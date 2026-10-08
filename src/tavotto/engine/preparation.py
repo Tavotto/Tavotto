@@ -925,6 +925,16 @@ def _record_terminal(plan: PreparationPlan, result: PreparationResult) -> None:
         LOG.debug("准备诊断快照登记失败", exc_info=True)
 
 
+def _elapsed_ms(started_at, finished_at) -> int | None:
+    if (
+        isinstance(started_at, (int, float))
+        and isinstance(finished_at, (int, float))
+        and finished_at >= started_at
+    ):
+        return round((finished_at - started_at) * 1000)
+    return None
+
+
 def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> dict:
     """这一次尝试的**白名单**投影（T04）。逐字段挑，不读 `plan.to_payload()` / `result.to_payload()`。
 
@@ -1007,6 +1017,8 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
             "timing": {
                 "started_at": taskdiag.number(result.started_at),
                 "finished_at": taskdiag.number(result.finished_at),
+                # 与 script_run 条目同名同单位，`recent_runs` 才能一视同仁地读
+                "elapsed_ms": _elapsed_ms(result.started_at, result.finished_at),
             },
         }
     )

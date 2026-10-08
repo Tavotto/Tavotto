@@ -26,7 +26,7 @@ import json
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 SNAPSHOT_VERSION = 1
 DOCUMENT_SCHEMA = "tavotto.task-diagnostic"
@@ -275,6 +275,33 @@ class Store:
             self._tombstones.pop(key, None)
             self._evict(keep=key)
             return entry
+
+    def amend_post_terminal_failure(self, project_id, kind: str, ref, error_code) -> Entry | None:
+        """终局之后才发生的失败：把一条已冻结的 `ready` 改记为 `error` + 稳定码（准备会话的构建后 finalizer
+        失败，如登记撞 stem）。**唯一**允许改写冻结快照的入口，且只做这一件事：条目必须存在且当前是 `ready`
+        （其余终局——已失败 / 已取消——不动），只改 `outcome` 与 `error.code`（`code()` 过闸），其余字段
+        （阶段、计时、执行事实）原样保留；`recorded_at` / `retry_of` / `subject` 不变。幂等：改过一次就不再是 ready。"""
+        err = code(error_code)
+        if err is None:
+            return None
+        with self._lock:
+            key = (project_id, kind, ref)
+            e = self._entries.get(key)
+            if e is None or e.outcome != "ready":
+                return None
+            try:
+                snap = json.loads(e.blob)
+            except ValueError:
+                return None
+            if not isinstance(snap, dict):
+                return None
+            snap["outcome"] = "error"
+            snap["error"] = {"code": err}
+            new = replace(
+                e, outcome="error", failed=True, blob=json.dumps(snap, ensure_ascii=False)
+            )
+            self._entries[key] = new
+            return new
 
     def _latest_same_subject(self, project_id, kind, subj) -> Entry | None:
         best = None
