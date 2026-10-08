@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { ALT, MOD } from '@/lib/utils'
+import { keysOf, type KeyId } from '@/lib/keymap'
 import { useUiStore } from '@/store/uiStore'
 import { Dialog } from './ui/Dialog'
 import { KeyCaps } from './ui/Kbd'
@@ -31,38 +32,44 @@ interface Row {
   desc: string
 }
 
+/**
+ * 表里的键位**不在这里写**：`keys` 一律由 `lib/keymap` 的 `keysOf()` 取（2026-10-07 设计审计 §10.1 P2，
+ * 快捷键单一来源）；只有键位本身是自然语言的那几行（方向键 / Space+拖动 / 右键）走 `comboKey`。
+ */
+const row = (desc: string, ...ids: KeyId[]): Row => ({ keys: keysOf(...ids), desc })
+
 export const GROUPS: { id: string; rows: Row[] }[] = [
   {
     id: 'file',
     rows: [
-      { keys: `${MOD}S`, desc: 'saveDocument' },
-      { keys: `⇧${MOD}S`, desc: 'saveLayout' },
-      { keys: `⇧${MOD}H`, desc: 'timeline' },
-      { keys: `${ALT}${MOD}S`, desc: 'saveNamed' },
-      { keys: `${MOD}E`, desc: 'export' },
-      { keys: `${MOD}K`, desc: 'palette' },
-      { keys: '?', desc: 'help' },
+      row('saveDocument', 'save'),
+      row('saveLayout', 'saveAs'),
+      row('timeline', 'timeline'),
+      row('saveNamed', 'saveNamed'),
+      row('export', 'export'),
+      row('palette', 'palette'),
+      row('help', 'help'),
     ],
   },
   {
     id: 'selection',
     rows: [
-      { keys: `${MOD}A`, desc: 'selectAll' },
+      row('selectAll', 'selectAll'),
       // 多选与右键：真实存在的两条手势（ObjectView 的 shift 加选、QuickEdit 菜单）
       { comboKey: 'shiftClick', desc: 'multiSelect' },
       // 重叠元素的轮换（issue #216）：⌥ 点击画布；键盘走 ⌘K 里的同名命令
       { comboKey: 'altClick', comboValues: { alt: ALT }, desc: 'cycleOverlap' },
-      { keys: 'Enter', desc: 'enter' },
-      { keys: 'Esc', desc: 'escape' },
+      row('enter', 'enter'),
+      row('escape', 'escape'),
     ],
   },
   {
     id: 'editing',
     rows: [
-      { keys: `${MOD}Z / ⇧${MOD}Z`, desc: 'undoRedo' },
-      { keys: `${MOD}C / ${MOD}V`, desc: 'copyPaste' },
-      { keys: `${MOD}D`, desc: 'duplicate' },
-      { keys: 'Delete', desc: 'delete' },
+      row('undoRedo', 'undo', 'redo'),
+      row('copyPaste', 'copy', 'paste'),
+      row('duplicate', 'duplicate'),
+      row('delete', 'delete'),
       { comboKey: 'arrowKeys', comboValues: { alt: ALT }, desc: 'nudge' },
       { comboKey: 'rightClick', desc: 'quickEdit' },
       { keys: `${MOD}↑ / ${MOD}↓`, desc: 'script' },
@@ -71,16 +78,14 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
   },
   {
     id: 'arrange',
-    rows: [
-      { keys: `${MOD}] / ${MOD}[`, desc: 'zMove' },
-      { keys: `⇧${MOD}] / ⇧${MOD}[`, desc: 'zEnds' },
-    ],
+    rows: [row('zMove', 'zUp', 'zDown'), row('zEnds', 'zTop', 'zBottom')],
   },
   {
     id: 'view',
     rows: [
-      { keys: `${MOD}+ / ${MOD}−`, desc: 'zoom' },
-      { keys: `${MOD}0 / ${MOD}1`, desc: 'zoomPresets' },
+      row('zoom', 'zoomIn', 'zoomOut'),
+      row('zoomPresets', 'zoomActual', 'zoomFit'),
+      row('zoomSelection', 'zoomSelection'),
       { comboKey: 'wheelZoom', comboValues: { mod: MOD }, desc: 'wheelZoom' },
       { comboKey: 'spaceDrag', desc: 'pan' },
     ],
@@ -88,9 +93,10 @@ export const GROUPS: { id: string; rows: Row[] }[] = [
   {
     id: 'tools',
     rows: [
-      { comboKey: 'tools', desc: 'tools' },
+      row('tools', 'toolSelect', 'toolText', 'toolArrow', 'toolRect', 'toolEllipse', 'toolLine'),
       { comboKey: 'altDrag', comboValues: { alt: ALT }, desc: 'freeResize' },
-      { keys: 'Esc', desc: 'tutorialPause' },
+      row('tabs', 'tabRename', 'tabClose', 'tabReorder'),
+      row('tutorialPause', 'escape'),
     ],
   },
 ]
