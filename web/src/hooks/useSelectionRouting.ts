@@ -46,7 +46,8 @@ export function useSelectionRouting() {
       return
     }
     const fromDrawer = inDrawer.current ?? !!document.activeElement?.closest('[data-left-drawer]')
-    if (fromDrawer && ui.leftOpen && ui.layout !== 'wide') return
+    // 素材抽屉是挑一次即让位的入口；这条既有规则仍由 autoShowProperties 执行。
+    if (fromDrawer && ui.leftOpen && ui.leftTab !== 'assets' && ui.layout !== 'wide') return
     ui.autoShowProperties()
   }, [active, primaryId, primaryGid, canvasPress])
 }

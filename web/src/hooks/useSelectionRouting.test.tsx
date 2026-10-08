@@ -37,7 +37,9 @@ function Harness() {
   return <TooltipProvider>
     <input data-outside />
     {leftOpen && <aside data-left-drawer>
-      {tab === 'layers' ? <LayerTree /> : <ElementTree />}
+      {tab === 'assets'
+        ? <button data-asset onPointerDown={() => useSelectionStore.getState().set([panel.id])} />
+        : tab === 'layers' ? <LayerTree /> : <ElementTree />}
       <button data-explicit onClick={() => useUiStore.getState().setRightTab('properties')} />
     </aside>}
     <div data-canvas-stage><span data-canvas-hit onPointerDown={() => {
@@ -117,6 +119,24 @@ describe('selection routing keeps the active drawer workflow', () => {
     expect(useSelectionStore.getState().ids).toEqual(['p2'])
     expect(useUiStore.getState().leftOpen).toBe(true)
   })
+
+  for (const layout of ['medium', 'narrow'] as const) {
+    it.each([false, true])(`${layout}: asset insertion yields to properties (existing selection: %s)`, existing => {
+      if (existing) act(() => {
+        useDocumentStore.setState(s => ({ doc: { ...s.doc, objects: [panel, { ...panel, id: 'p2' }] } }))
+        useSelectionStore.getState().set(['p2'])
+      })
+      act(() => {
+        useUiStore.getState().setLayout(layout)
+        useUiStore.getState().setLeftTab('assets')
+      })
+      pointer('[data-asset]')
+      expect(useSelectionStore.getState().ids).toEqual(['p1'])
+      expect(useUiStore.getState().leftOpen).toBe(false)
+      expect(useUiStore.getState().rightOpen).toBe(true)
+      expect(useUiStore.getState().rightTab).toBe('properties')
+    })
+  }
 
   for (const layout of ['medium', 'narrow'] as const) {
     for (const gid of gids) {
