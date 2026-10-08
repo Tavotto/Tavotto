@@ -72,18 +72,16 @@ export const fieldHintKey = (prop: string): string | undefined => FIELD_HINTS[pr
 /**
  * 「图上看得见、但引擎没发编辑字段」的外观属性。
  *
- * 柱形是现成的例子：脚本给柱子画了斜线纹理，属性面板里却连一行纹理都没有
- * ——用户会在面板里反复找（审计 T19）。**这里不给引擎加字段**：新增纹理
- * 编辑能力是另一件事，审计原文明说「不能当作纯文案修复」。能做的是把
- * 「这一项在这里改不了、它来自脚本」说出口，并给出源对象入口。
+ * 柱形的纹理曾是现成的例子（审计 T19）：脚本给柱子画了斜线纹理，面板里连一行纹理都没有，
+ * 当时只能把「这一项在这里改不了、它来自脚本」说出口并给出源对象入口。纹理编辑能力补上之后
+ * （引擎发 `hatch` / `hatchcolor` / `hatch_linewidth`），这张表里不再有柱形。
+ * 表留着：下一个同形状的缺口——图上看得见、引擎没发字段——仍从这里点名，而不是摆一个
+ * 点了没反应的控件。
  *
  * 判据是**这个元素此刻的字段表里没有它**，不是「柱形永远没有纹理」——
  * 引擎哪天真发了这个字段，这条提示自己就消失了，不需要有人记得回来删。
  */
-const APPEARANCE_ABSENT: Record<string, string[]> = {
-  bar: ['hatch'],
-  bar_series: ['hatch'],
-}
+const APPEARANCE_ABSENT: Record<string, string[]> = {}
 
 /** 这个角色该说、而 manifest 此刻没发的外观属性 */
 export function absentAppearance(role: string, fields: EditableField[]): string[] {
