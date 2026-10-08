@@ -188,7 +188,7 @@ export function StepSlider({
         aria-hidden
         className={cn(
           'pointer-events-none absolute top-1/2 h-[var(--thumb)] w-[var(--thumb)] -translate-x-1/2 -translate-y-1/2 rounded-full',
-          'bg-surface shadow-thumb',
+          'bg-thumb shadow-thumb',
           'transition-[left] duration-[var(--duration-base)] ease-[var(--ease-pop)]',
           // 焦点环与全站 focus-ring 同一档：不透明的 accent（透明版对底色不到 2:1）
           'peer-focus-visible:ring-2 peer-focus-visible:ring-accent',

@@ -305,7 +305,7 @@ function Workspace() {
                 if (ui.leftOpen) ui.toggleLeft()
                 if (ui.rightOpen) ui.toggleRight()
               }}
-              className="absolute inset-0 z-canvas-chrome cursor-default bg-ink/10 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
+              className="absolute inset-0 z-canvas-chrome cursor-default bg-shadow/10 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out"
             />
           )}
           <VersionDrawer />

@@ -12,11 +12,26 @@ import {
 } from '@/lib/richText'
 import { layerOf } from '@/lib/glyphPlan'
 import { MM_PER_PT } from '@/lib/units'
+import { canvasSelectionFor, groundInkFor, type CanvasSelection, type SelectionInk } from '@/lib/canvasSelection'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
+
+/**
+ * 纸上的文字选区（`lib/canvasSelection`）：不透明的选区底 + 配它的纸墨，字对选区底的对比度与用户的底色无关。
+ * 类名写全（Tailwind 只扫字面量）；token 两套主题同值，不跟界面的 ink / accent 走。
+ */
+const SELECTION_CLASS: Record<CanvasSelection, string> = {
+  light: 'selection:bg-paper-selection selection:text-paper-ink',
+  deep: 'selection:bg-paper-selection-deep selection:text-paper',
+}
+/** 编辑态的占位落在底上本身：按底的深浅取纸墨的 65%（白纸上 ≈ 浅色里的 ink-3） */
+const PLACEHOLDER_CLASS: Record<SelectionInk, string> = {
+  'paper-ink': 'data-empty:before:text-paper-ink/65',
+  paper: 'data-empty:before:text-paper/65',
+}
 
 /**
  * 文字对象：字体族由对象自己选（`CANVAS_TEXT_FAMILIES` 三选一），没设过就是
@@ -25,6 +40,11 @@ import type { TextObject } from '@/types/document'
  */
 export function TextView({ obj }: { obj: TextObject }) {
   const editing = useUiStore((s) => s.editingTextId === obj.id)
+  const pageBg = useDocumentStore((s) => s.doc.page.bg)
+  const pageTransparent = useDocumentStore((s) => s.doc.page.transparent)
+  const ground = { bg: pageBg, transparent: pageTransparent }
+  const selectionClass = SELECTION_CLASS[canvasSelectionFor(obj.bg, ground)]
+  const placeholderClass = PLACEHOLDER_CLASS[groundInkFor(obj.bg, ground)]
   const setEditingText = useUiStore((s) => s.setEditingText)
   const ref = useRef<HTMLDivElement>(null)
   const heightRef = useRef(obj.h)
@@ -122,7 +142,11 @@ export function TextView({ obj }: { obj: TextObject }) {
       data-placeholder={editing ? translate('stage.textPlaceholder', { ns: 'workspace' }) : undefined}
       className={cn(
         'absolute left-0 top-0 w-full outline-none',
-        editing && 'data-empty:before:pointer-events-none data-empty:before:text-ink-3 data-empty:before:content-[attr(data-placeholder)]',
+        // 选区：全局 ::selection 是界面的（半透明 accent tint + 界面 ink）。纸上的底由用户定（深色页面、中灰文字框…），
+        // tint 叠上去配哪种墨都可能不到 4.5:1（Codex P2 两轮）——纸上的选区自己定不透明的底与墨
+        selectionClass,
+        // 占位：纸墨 65%，不是界面的 ink-3（暗色里是浅灰，落在白纸上看不见）
+        editing && cn('data-empty:before:pointer-events-none data-empty:before:content-[attr(data-placeholder)]', placeholderClass),
       )}
       style={{
         fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),
