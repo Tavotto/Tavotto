@@ -12,7 +12,7 @@ import {
 } from '@/lib/richText'
 import { layerOf } from '@/lib/glyphPlan'
 import { MM_PER_PT } from '@/lib/units'
-import { selectionInkFor, type SelectionInk } from '@/lib/selectionInk'
+import { canvasSelectionFor, groundInkFor, type CanvasSelection, type SelectionInk } from '@/lib/canvasSelection'
 import { useDocumentStore } from '@/store/documentStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, worldToMm } from '@/store/viewportStore'
@@ -20,12 +20,17 @@ import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import type { TextObject } from '@/types/document'
 
 /**
- * 纸上的墨按字实际坐着的底二选一（`lib/selectionInk`）：选中的字与编辑态的占位。类名写全（Tailwind 只扫字面量）。
- * 深底（用户把页面或文字框设成深色）用纸色，浅底用纸上的墨——两个 token 两套主题同值，不跟界面的 ink 走。
+ * 纸上的文字选区（`lib/canvasSelection`）：不透明的选区底 + 配它的纸墨，字对选区底的对比度与用户的底色无关。
+ * 类名写全（Tailwind 只扫字面量）；token 两套主题同值，不跟界面的 ink / accent 走。
  */
-const INK_ON_GROUND: Record<SelectionInk, { selection: string; placeholder: string }> = {
-  'paper-ink': { selection: 'selection:text-paper-ink', placeholder: 'empty:before:text-paper-ink/65' },
-  paper: { selection: 'selection:text-paper', placeholder: 'empty:before:text-paper/65' },
+const SELECTION_CLASS: Record<CanvasSelection, string> = {
+  light: 'selection:bg-paper-selection selection:text-paper-ink',
+  deep: 'selection:bg-paper-selection-deep selection:text-paper',
+}
+/** 编辑态的占位落在底上本身：按底的深浅取纸墨的 65%（白纸上 ≈ 浅色里的 ink-3） */
+const PLACEHOLDER_CLASS: Record<SelectionInk, string> = {
+  'paper-ink': 'empty:before:text-paper-ink/65',
+  paper: 'empty:before:text-paper/65',
 }
 
 /**
@@ -37,7 +42,9 @@ export function TextView({ obj }: { obj: TextObject }) {
   const editing = useUiStore((s) => s.editingTextId === obj.id)
   const pageBg = useDocumentStore((s) => s.doc.page.bg)
   const pageTransparent = useDocumentStore((s) => s.doc.page.transparent)
-  const ink = INK_ON_GROUND[selectionInkFor(obj.bg, { bg: pageBg, transparent: pageTransparent })]
+  const ground = { bg: pageBg, transparent: pageTransparent }
+  const selectionClass = SELECTION_CLASS[canvasSelectionFor(obj.bg, ground)]
+  const placeholderClass = PLACEHOLDER_CLASS[groundInkFor(obj.bg, ground)]
   const setEditingText = useUiStore((s) => s.setEditingText)
   const ref = useRef<HTMLDivElement>(null)
   const heightRef = useRef(obj.h)
@@ -132,11 +139,11 @@ export function TextView({ obj }: { obj: TextObject }) {
       data-placeholder={editing ? translate('stage.textPlaceholder', { ns: 'workspace' }) : undefined}
       className={cn(
         'absolute left-0 top-0 w-full outline-none',
-        // 选中的字：全局 ::selection 换成界面的 ink——暗色里是浅灰，落在白纸上看不见；这里换纸上的墨。
-        // 但纸不一定是白的：页面底色与文字框底色都由用户定，深底上换深墨又看不见（Codex P2）——按实际的底二选一
-        ink.selection,
-        // 占位画在同一块底上：所选墨的 65%（白纸上 ≈ 浅色里的 ink-3），不是界面的 ink-3（暗色里是浅灰，落在白纸上看不见）
-        editing && cn('empty:before:pointer-events-none empty:before:content-[attr(data-placeholder)]', ink.placeholder),
+        // 选区：全局 ::selection 是界面的（半透明 accent tint + 界面 ink）。纸上的底由用户定（深色页面、中灰文字框…），
+        // tint 叠上去配哪种墨都可能不到 4.5:1（Codex P2 两轮）——纸上的选区自己定不透明的底与墨
+        selectionClass,
+        // 占位：纸墨 65%，不是界面的 ink-3（暗色里是浅灰，落在白纸上看不见）
+        editing && cn('empty:before:pointer-events-none empty:before:content-[attr(data-placeholder)]', placeholderClass),
       )}
       style={{
         fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),

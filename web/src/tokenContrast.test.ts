@@ -21,7 +21,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { PIN_COLORS } from './canvas/issuePinColors'
-import { PAPER_INK_RGB, PAPER_RGB, selectionInkFor } from './lib/selectionInk'
+import { canvasSelectionFor, PAPER_INK_RGB, PAPER_RGB, SEL_RGB, SELECTION_RGB } from './lib/canvasSelection'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const CSS = readFileSync(path.resolve(HERE, 'index.css'), 'utf8')
@@ -444,28 +444,44 @@ for (const theme of THEMES) {
       }
     })
 
-    it('纸上改字（canvas/TextView）选中的字按实际的底取纸上的墨：深 / 浅底上合成后的选区与选中的字 ≥4.5:1、中灰一带取两者中较好的那个（Codex P2：深底上不再是深字）', () => {
-      // 主语：`lib/selectionInk` 对这块底选出的那个 token，落在「选区 tint 合成到这块底上」的颜色上——不是 token 字面、也不假设底是白纸
-      for (const cls of ['selection:text-paper-ink', 'selection:text-paper']) {
-        expect(TEXT_VIEW).toMatch(new RegExp(`['"\`\\s]${cls}['"\`\\s]`))
+    it('纸上改字（canvas/TextView）的文字选区自己定不透明的底：任何底（0–255 灰阶、accent、深 / 浅页面色）上选中的字 ≥4.5:1、选区与底 ≥1.3:1（Codex P2 两轮）', () => {
+      // 主语：`lib/canvasSelection` 对这块底挑出的那一块选区（index.css 里的 token，按公式合成成不透明色）与配它的纸墨——
+      // 字量的是对**选区底**，选区量的是对**用户的底**；不假设底是白纸，也不靠半透明 tint
+      for (const cls of [
+        'selection:bg-paper-selection selection:text-paper-ink',
+        'selection:bg-paper-selection-deep selection:text-paper',
+      ]) {
+        expect(TEXT_VIEW).toContain(`'${cls}'`)
       }
-      expect(hex([...PAPER_RGB]), 'selectionInk 链的最底层就是 --color-paper').toBe(t('paper'))
-      expect(hex([...PAPER_INK_RGB]), 'selectionInk 的换手点按 --color-paper-ink 算').toBe(t('paper-ink'))
-      const [base, alpha] = srgbAlphaOf(theme, 'text-selection')
-      // 用户能定的底：纯黑 / 深色页面 / 深蓝 / 深红 / 纸白 / 浅色页面；另扫一遍 0–255 的灰阶与 accent 色（含两种墨换手的那一段）
-      const named = ['#000000', '#101820', '#1a2b5c', '#5c1a1a', '#ffffff', '#fff8e1', '#e8f0ff']
-      const grays = ['#2c73de', ...Array.from({ length: 52 }, (_, i) => hex([i * 5, i * 5, i * 5]))]
-      const worst: [number, string] = [Infinity, '']
-      for (const g of [...named, ...grays]) {
-        const ink = t(selectionInkFor(g, {}))
-        const sel = mixOver(rc(base), alpha, g)
-        const c = contrast(ink, sel)
-        if (c < worst[0]) [worst[0], worst[1]] = [c, g]
-        if (named.includes(g)) expect(c, `${ink} on selection(${g})`).toBeGreaterThanOrEqual(4.5)
+      const selectionToken = (name: string, onto: 'paper' | 'paper-ink') => {
+        expect(DARK_VARS[`color-${name}`], `${name} 两套主题同值（纸上的东西）`).toBeUndefined()
+        const m = (VARS[theme][`color-${name}`] ?? '').match(
+          new RegExp(`^color-mix\\(in srgb, var\\(--color-sel\\) ([\\d.]+)%, var\\(--color-${onto}\\)\\)$`),
+        )
+        if (!m) throw new Error(`--color-${name} 不是「sel N% 混进 ${onto}」的不透明色`)
+        return mixOver(t('sel'), Number(m[1]) / 100, t(onto))
       }
-      // 中灰一带（亮度在两种墨换手点附近）两个固定的墨谁都到不了 4.5——任何底上对纸白与 paper-ink 二者取大，理论上限约 4.15。
-      // 这一段不假装覆盖：只守「选对了那一个」的下限（量出来浅色 3.95 @#7d7d7d、暗色 4.06 @#787878）。旧的一律 paper-ink 在 #000 上是 ≈1.1
-      expect(worst[0], `worst at ${worst[1]}`).toBeGreaterThanOrEqual(3.9)
+      const PAIR = {
+        light: { bg: selectionToken('paper-selection', 'paper'), ink: t('paper-ink') },
+        deep: { bg: selectionToken('paper-selection-deep', 'paper-ink'), ink: t('paper') },
+      }
+      // lib 里的镜像与 token 同值（它拿这几个算「与底拉得开」）
+      expect(hex([...PAPER_RGB])).toBe(t('paper'))
+      expect(hex([...PAPER_INK_RGB])).toBe(t('paper-ink'))
+      expect(hex([...SEL_RGB])).toBe(t('sel'))
+      expect(hex(SELECTION_RGB.light)).toBe(PAIR.light.bg)
+      expect(hex(SELECTION_RGB.deep)).toBe(PAIR.deep.bg)
+      // 用户能定的底：纯黑 / 深色页面 / 深蓝 / 深红 / 纸白 / 浅色页面 / 两套 accent / 选中蓝 / 两块选区自己，外加 0–255 的灰阶
+      const grounds = [
+        '#000000', '#101820', '#1a2b5c', '#5c1a1a', '#ffffff', '#fff8e1', '#e8f0ff',
+        '#2c73de', rc('accent'), t('sel'), PAIR.light.bg, PAIR.deep.bg,
+        ...Array.from({ length: 256 }, (_, i) => hex([i, i, i])),
+      ]
+      for (const g of grounds) {
+        const { bg, ink } = PAIR[canvasSelectionFor(g, {})]
+        expect(contrast(ink, bg), `${ink} on selection over ${g}`).toBeGreaterThanOrEqual(4.5)
+        expect(contrast(bg, g), `selection ${bg} visible on ${g}`).toBeGreaterThanOrEqual(1.3)
+      }
     })
 
     it('遮罩与投影从 --color-shadow 派生，shadow 比桌面暗（暗色里遮罩是压暗、不是提亮）', () => {
