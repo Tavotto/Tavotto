@@ -201,10 +201,24 @@ def test_single_drag_lands_on_the_independent_ruler(hot, gid):
                 abs(el["bbox"][0] - el0["bbox"][0] - dfx),
                 abs(el["bbox"][1] - el0["bbox"][1] - dfy),
             )
-            # 2. 墨迹框整体平移、尺寸不变
-            assert el["bbox"][0] - el0["bbox"][0] == pytest.approx(dfx, abs=tol_x), where
-            assert el["bbox"][1] - el0["bbox"][1] == pytest.approx(dfy, abs=tol_y), where
-            assert el["bbox"][2:] == pytest.approx(el0["bbox"][2:], abs=1e-6), where
+            # 2. 墨迹框整体平移、尺寸不变——Patch 例外：它被子图裁剪，选中框只罩画出来的
+            #    那部分（`_fold_into_clip`），拖到子图边上时 bbox 是「平移后的框 ∩ 子图框」。
+            #    交集用独立的 axes_0 框算；完全落在框内时仍严格要求原样平移、尺寸不变。
+            if ".patches_" in gid:
+                ax_x, ax_y, ax_w, ax_h = base["axes_0"]["bbox"]
+                bx, by, bw, bh = el0["bbox"]
+                tx, ty = bx + dfx, by + dfy
+                ix0, iy0 = max(tx, ax_x), max(ty, ax_y)
+                ix1, iy1 = min(tx + bw, ax_x + ax_w), min(ty + bh, ax_y + ax_h)
+                # 整个落在框外时不折（元素树仍可选），bbox 仍指到数据位置
+                expect = [tx, ty, bw, bh] if ix1 < ix0 or iy1 < iy0 else [ix0, iy0, ix1 - ix0, iy1 - iy0]
+                assert el["bbox"] == pytest.approx(expect, abs=max(tol_x, tol_y)), where
+                if expect == pytest.approx([tx, ty, bw, bh], abs=1e-9):
+                    assert el["bbox"][2:] == pytest.approx(el0["bbox"][2:], abs=1e-6), where
+            else:
+                assert el["bbox"][0] - el0["bbox"][0] == pytest.approx(dfx, abs=tol_x), where
+                assert el["bbox"][1] - el0["bbox"][1] == pytest.approx(dfy, abs=tol_y), where
+                assert el["bbox"][2:] == pytest.approx(el0["bbox"][2:], abs=1e-6), where
             # 4. 目标除位置外的属性原样
             assert _non_position_fields(el) == _non_position_fields(el0), where
             # 3. 非目标：锚点 / 墨迹框 / 曲线点序列都不动

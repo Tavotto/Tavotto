@@ -164,3 +164,7 @@
   的并集 bbox 跳过 `outside` 的成员（子柱自己的 bbox 仍是数据位置）；全部成员都在外才退回
   数据位置并集。超过 `MAX_MARKERS` 的系列没有 geometry，前端只用这个并集，故同样收窄。
   看护 `tests/test_manifest_geometry.py` 的 `ClipBarFig` 四条与 `ClipSeriesFig` / `ClipOverCapFig` 三条。
+  **不拆「变换参考框」字段**：Patch 的拖动参考是 `anchor` 增量（`resizable` 只给子图 / 网格 /
+  色条，Patch 无缩放手柄），bbox 只被选中框 / 命中 / 吸附 / 对齐消费，它们要的正是看得见的部分。
+  副作用：把 Patch 拖到子图边上时 bbox 尺寸会随裁剪收窄——`tests/test_geometry_reference.py`
+  GEO-01 对 Patch 改为「bbox = 平移后的框 ∩ 子图框（完全在外则不折）」，其余元素仍要求尺寸不变。
