@@ -34,7 +34,7 @@ from . import atomicio, config, execspec
 
 ID_PREFIX = "rc_"
 FORMAT_VERSION = 1
-#: 单个项目最多记多少条配置（超出丢最老的；被丢的引用之后得到 `run_config_missing`，不会静默换成别的）
+#: 单个项目最多记多少条配置（超出丢最老的**未被磁盘面板默认引用**的；被丢的引用之后得到 `run_config_missing`，不会静默换成别的）
 MAX_CONFIGS = 400
 
 ERROR_INVALID_ARGV = "invalid_argv"
@@ -128,13 +128,29 @@ _LOCK = threading.RLock()
 _SECRETS: dict[tuple[str, str], tuple[str, ...]] = {}
 
 
+def project_identity(project_root: str | Path) -> str:
+    """项目身份串：与 `app._project_id()` / `pool._norm_dir()` 共用 `config.normalize_path_identity`
+    （按**卷**判大小写；macOS APFS 上 `os.path.normcase` 是 no-op，同一项目换个大小写打开会哈希到另一份登记）。"""
+    return config.normalize_path_identity(os.path.normpath(os.path.abspath(str(project_root))))
+
+
 def _norm_project(project_root: str | Path) -> str:
-    return os.path.normcase(os.path.normpath(os.path.abspath(str(project_root))))
+    return project_identity(project_root)
+
+
+def _digest_path(identity: str) -> Path:
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return config.data_path("runconfigs", f"{digest}.json")
 
 
 def store_path(project_root: str | Path) -> Path:
-    digest = hashlib.sha256(_norm_project(project_root).encode("utf-8")).hexdigest()[:24]
-    return config.data_path("runconfigs", f"{digest}.json")
+    return _digest_path(project_identity(project_root))
+
+
+def _legacy_store_path(project_root: str | Path) -> Path:
+    """#812 首版按 `os.path.normcase` 算的文件名（只在 Windows 折叠大小写）。新文件不存在时回落读它，
+    下一次写入落到新名；不迁移删除，旧文件留着无害。"""
+    return _digest_path(os.path.normcase(os.path.normpath(os.path.abspath(str(project_root)))))
 
 
 def _read(project_root: str | Path) -> dict:
@@ -143,7 +159,10 @@ def _read(project_root: str | Path) -> dict:
     try:
         raw = store_path(project_root).read_text(encoding="utf-8")
     except OSError:
-        return {"configs": {}, "defaults": {}}
+        try:
+            raw = _legacy_store_path(project_root).read_text(encoding="utf-8")
+        except OSError:
+            return {"configs": {}, "defaults": {}}
     try:
         data = json.loads(raw)
     except ValueError:
@@ -234,12 +253,15 @@ def put(
         if sensitive:
             _SECRETS[(root, cid)] = tokens
         if len(configs) > MAX_CONFIGS:
-            for old in sorted(configs, key=lambda k: float(configs[k].get("created_at") or 0))[
+            # 被磁盘面板默认引用的配置不淘汰（淘汰会连带删掉默认，面板之后静默回落成空 argv 重跑）；
+            # 刚登记的这条也不动。全被引用时登记数可超过上限，上界是脚本数（默认按脚本各一条）。
+            pinned = {v for v in data["defaults"].values() if isinstance(v, str)} | {cid}
+            evictable = [k for k in configs if k not in pinned]
+            for old in sorted(evictable, key=lambda k: float(configs[k].get("created_at") or 0))[
                 : len(configs) - MAX_CONFIGS
             ]:
                 configs.pop(old, None)
                 _SECRETS.pop((root, old), None)
-                data["defaults"] = {k: v for k, v in data["defaults"].items() if v != old}
         _write(project_root, data)
         return _record_to_config(project_root, cid, configs[cid])
 

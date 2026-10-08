@@ -165,6 +165,44 @@ class TestRunConfigStore:
         with pytest.raises(runconfig.RunConfigMissing):  # 别的项目（另一台机器保存的文档）
             runconfig.get(tmp_path / "elsewhere", cfg.id)
 
+    def test_eviction_never_drops_a_config_a_panel_default_points_at(self, tmp_path, monkeypatch):
+        # Codex r4214001208：淘汰最老配置会连带删掉引用它的磁盘面板默认 -> default_selection() 变 None
+        # -> 面板静默用空 argv 重跑。被默认引用的配置必须留着。
+        monkeypatch.setattr(runconfig, "MAX_CONFIGS", 3)
+        pinned = runconfig.put(tmp_path, "s.py", ["--pinned"])
+        runconfig.set_default(tmp_path, "s.py", pinned.id)
+        for i in range(6):
+            runconfig.put(tmp_path, "s.py", [f"--n{i}"])
+        sel = runconfig.default_selection(tmp_path, "s.py")
+        assert sel is not None and sel.argv == ("--pinned",)
+        assert len(runconfig._load(tmp_path)) <= 3 + 1  # 受上限约束（默认引用的那条可多占一格）
+
+    def test_project_identity_follows_the_volume_not_normcase(self, tmp_path, monkeypatch):
+        # Codex r4214001213：macOS 卷大小写不敏感但 os.path.normcase 是 no-op；同一项目换大小写打开
+        # 必须指向同一份登记。
+        from tavotto.engine import config as engine_config
+
+        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
+        upper, lower = tmp_path / "Plots", tmp_path / "plots"
+        cfg = runconfig.put(upper, "s.py", ["--k", "1"])
+        runconfig.set_default(upper, "s.py", cfg.id)
+        assert runconfig.store_path(upper) == runconfig.store_path(lower)
+        assert runconfig.get(lower, cfg.id, script="s.py").argv == ("--k", "1")
+        assert runconfig.default_selection(lower, "s.py").config_id == cfg.id
+
+    def test_a_registry_written_under_the_legacy_digest_is_still_read(self, tmp_path, monkeypatch):
+        # 兼容：首版按 normcase 命名的登记文件（POSIX 上 = 原样大小写）在新判据下仍读得到。
+        from tavotto.engine import config as engine_config
+
+        root = tmp_path / "Plots"
+        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
+        cfg = runconfig.put(root, "s.py", ["--k", "1"])
+        legacy = runconfig.store_path(root)
+        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
+        assert runconfig.store_path(root) != legacy and legacy.exists()
+        assert runconfig._legacy_store_path(root) == legacy or os.name == "nt"
+        assert runconfig.get(root, cfg.id).argv == ("--k", "1")
+
     def test_a_newer_format_is_refused_by_this_reader(self, tmp_path):
         cfg = runconfig.put(tmp_path, "s.py", ["a"])
         path = runconfig.store_path(tmp_path)

@@ -145,7 +145,7 @@ def run_selection(project_root: str | Path, info: dict):
 # materialized cache
 # ---------------------------------------------------------------------------
 def _norm_project(project_root: str | Path) -> str:
-    return os.path.normcase(os.path.normpath(os.path.abspath(str(project_root))))
+    return runconfig.project_identity(project_root)
 
 
 def cache_dir(project_root: str | Path, asset_id: str) -> Path:
