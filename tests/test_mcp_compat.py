@@ -351,6 +351,46 @@ def test_runtime_input_without_a_ui_is_a_structured_requirement_not_a_wait(
         assert "不要" in body["recovery"] and "口令" in body["recovery"]
 
 
+def test_a_first_time_getpass_is_a_secret_even_though_the_reason_is_no_interactive_client(
+    project, monkeypatch
+):
+    """#818 r4220889705：首次 getpass 的 reason 是 no_interactive_client（secret_required 只在重放已记录的口令时用）；
+    引擎带出的读取方式 `input_kind == getpass` 才是口令的凭据——input.secret 为真并带「不要把口令交给 Agent」。"""
+    monkeypatch.setattr(
+        bridge.engine_pool,
+        "get",
+        _raising(
+            "script_needs_input",
+            extra={
+                "prompt": "Password:",
+                "reason": inputbroker.REASON_NO_CLIENT,
+                "input_kind": "getpass",
+            },
+        ),
+    )
+    body = _open(project)["structuredContent"]
+    assert body["input"] == {"reason": inputbroker.REASON_NO_CLIENT, "secret": True}
+    assert "不要让用户把口令发给你" in body["recovery"]
+
+
+def test_a_plain_input_stays_non_secret_and_carries_no_warning(project, monkeypatch):
+    monkeypatch.setattr(
+        bridge.engine_pool,
+        "get",
+        _raising(
+            "script_needs_input",
+            extra={
+                "prompt": "阈值",
+                "reason": inputbroker.REASON_NO_CLIENT,
+                "input_kind": "input",
+            },
+        ),
+    )
+    body = _open(project)["structuredContent"]
+    assert body["input"] == {"reason": inputbroker.REASON_NO_CLIENT, "secret": False}
+    assert "口令" not in body["recovery"]
+
+
 def test_missing_arguments_carry_a_read_only_schema_summary_and_the_argv_answer(
     project, monkeypatch
 ):

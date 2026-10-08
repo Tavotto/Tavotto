@@ -159,6 +159,7 @@ USER_VISIBLE_CODES = {
     "environment_changed": set(),
     "environment_generation_required": set(),
     "environment_candidate_gone": set(),
+    "environment_save_failed": set(),
     "environment_locked": set(),
     "environment_check_running": set(),
     # 交回的环境按此刻的计划复核仍缺包（Codex #522 P2）

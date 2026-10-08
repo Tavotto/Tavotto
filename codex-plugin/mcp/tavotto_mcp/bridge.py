@@ -865,7 +865,9 @@ def _project_needs(code: str, exc, extra: dict, *, project: str | None, script: 
         # 没有能答题的界面（MCP 进程里不接 SSE 前端）时 broker 立即回「无答案」，从不等待——这里只说清下一步。
         # 口令（secret_required）绝不经 Agent 转交：只能请用户在 Tavotto 窗口里输入
         reason = worker_extra.get("reason")
-        secret = reason == "secret_required"
+        # 首问的 getpass 的 reason 是 no_interactive_client（secret_required 只在重放已记录的口令时用）：
+        # 引擎带出的读取方式 `input_kind == "getpass"` 同样算口令；旧引擎没有这个字段就只认 reason
+        secret = reason == "secret_required" or worker_extra.get("input_kind") == "getpass"
         extra["input"] = {"reason": reason, "secret": secret}
         extra["recovery"] = (
             "脚本运行到一半要用户输入"

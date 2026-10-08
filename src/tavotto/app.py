@@ -7792,7 +7792,7 @@ def _set_project_environment(
             engine_envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
         )
     try:
-        engine_deprepair.unless_installing(
+        saved = engine_deprepair.unless_installing(
             root,
             lambda: engine_projectenv.remember(
                 root,
@@ -7811,6 +7811,14 @@ def _set_project_environment(
         )
     except engine_envlease.EnvironmentBusy as exc:
         return _environment_busy(exc)
+    if not saved:
+        # 项目设置写不进去（只读 / 满）：解析器没变，不重置池、不报成功（Codex #818 r4220889695）
+        return jsonify(
+            {
+                "error": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
+                "code": engine_envadvice.ERROR_SAVE_FAILED,
+            }
+        ), 500
     engine_pool.reset_worker_python()
     engine_pool.shutdown_all(root)
     return jsonify({"ok": True, "health": health, "project": _project_environment_state()})

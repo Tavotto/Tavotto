@@ -471,7 +471,8 @@ def _needs_input_error(exc) -> ProtocolError:
         message,
         retryable=False,
         traceback_text=traceback.format_exc(),
-        extra={"prompt": exc.prompt, "reason": exc.reason},
+        # `input_kind`：读取方式（getpass = 口令）。MCP 桥据此给 `input.secret`，首问的 getpass 也不例外
+        extra={"prompt": exc.prompt, "reason": exc.reason, "input_kind": exc.kind},
     )
 
 

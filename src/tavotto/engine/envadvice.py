@@ -303,12 +303,15 @@ ERROR_CANDIDATE_GONE = "environment_candidate_gone"
 ERROR_CHANGED = "environment_changed"
 ERROR_GENERATION_REQUIRED = "environment_generation_required"
 ERROR_INTERPRETER_NOT_FOUND = "interpreter_not_found"
+#: 项目设置写不进去（只读 / 数据卷满）：`projectenv.remember()` 回 False，决定没落盘、解析器不变
+ERROR_SAVE_FAILED = "environment_save_failed"
 ERROR_CODES = (
     ERROR_LOCKED,
     ERROR_CANDIDATE_GONE,
     ERROR_CHANGED,
     ERROR_GENERATION_REQUIRED,
     ERROR_INTERPRETER_NOT_FOUND,
+    ERROR_SAVE_FAILED,
 )
 
 
@@ -406,12 +409,20 @@ def adopt_candidate(
             health=health,
         )
 
-    deprepair.unless_installing(root, _commit)
+    saved = deprepair.unless_installing(root, _commit)
     if stale:
         raise AdoptionRefused(
             "这个环境在你确认之前被重建过，请重新查看再确认",
             code=ERROR_CHANGED,
             status=409,
+        )
+    if not saved:
+        # `remember()` 回 False = 决定没写进项目设置（只读 / 数据卷满）：解析器不变，后面的脚本仍在旧 / 默认
+        # 解释器里跑。不重置池、不假装采用（Codex #818 r4220889695）
+        raise AdoptionRefused(
+            "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
+            code=ERROR_SAVE_FAILED,
+            status=500,
         )
     pool.reset_worker_python()
     pool.shutdown_all(root)

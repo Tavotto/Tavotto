@@ -155,10 +155,13 @@ class ScriptNeedsInput(BaseException):
     继续跑，画出一张错的图而不报错（ADR 0099 §五）。
     """
 
-    def __init__(self, prompt: str, reason: str = ""):
+    def __init__(self, prompt: str, reason: str = "", kind: str = ""):
         super().__init__(prompt)
         self.prompt = prompt
         self.reason = reason
+        #: 这一问的读取方式（`input` / `getpass`…）：`getpass` 一律是口令，无论 `reason` 是首问的
+        #: `no_interactive_client` 还是重放时的 `secret_required`（Codex #818 r4220889705）
+        self.kind = kind
 
 
 class StdoutTail(io.TextIOBase):
@@ -355,7 +358,7 @@ class Channel:
             return None
         if reply.get("no_answer"):
             self._log(f"[input] 第 {index} 问没有可用的答案\n")
-            raise ScriptNeedsInput(prompt, str(reply.get("reason") or ""))
+            raise ScriptNeedsInput(prompt, str(reply.get("reason") or ""), kind)
         if reply.get("eof") or not isinstance(reply.get("answer"), str):
             self._log(f"[input] 第 {index} 问：EOF\n")
             self.record.append({**base, "answer": None})

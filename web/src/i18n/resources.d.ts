@@ -2060,6 +2060,7 @@ export default interface Resources {
       "environment_in_use_by_native_session": "该 Python 环境正被 Tavotto Run 使用。请先结束正在运行的脚本，再安装依赖。",
       "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
       "environment_mutating": "该 Python 环境正在安装依赖，请稍候再试。",
+      "environment_save_failed": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
       "eps_needs_script": "{{figure}} 没有可重新运行的脚本，无法生成 EPS。其余格式已照常导出。",
       "eps_not_for_canvas": "无法按画布导出 EPS。要 EPS，请按「原图尺寸」导出单张有脚本的图；其余格式已照常导出。",
       "execution_cancelled": "试运行已中断。",
