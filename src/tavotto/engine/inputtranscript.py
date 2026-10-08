@@ -57,7 +57,9 @@ class Transcript:
 
 
 def _norm_project(project_root: str | Path) -> str:
-    return os.path.normcase(os.path.normpath(os.path.abspath(str(project_root))))
+    """项目身份串：与 `app._project_id()` / `pool._norm_dir()` / `runconfig` 共用 `config.normalize_path_identity`
+    （按卷判大小写；macOS 上 `os.path.normcase` 是 no-op，大小写别名会哈希到两份存储）。"""
+    return config.normalize_path_identity(os.path.normpath(os.path.abspath(str(project_root))))
 
 
 def store_path(project_root: str | Path) -> Path:

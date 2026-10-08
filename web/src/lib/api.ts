@@ -4874,6 +4874,7 @@ export const actOnPreparationSession = (
   sessionId: string,
   body: { action_id: string; expected_config_revision: number; impact_digest?: string },
   pj: string | null,
+  signal?: AbortSignal,
 ) =>
   jsonFetch<{ claimed: boolean; report: PreparationReport }>(
     `/api/engine/preparation-sessions/${encodeURIComponent(sessionId)}/actions`,
@@ -4881,6 +4882,7 @@ export const actOnPreparationSession = (
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal,
     },
     pj,
   )

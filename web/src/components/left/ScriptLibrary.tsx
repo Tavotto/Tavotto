@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useTranslation } from 'react-i18next'
 import { Ban, Copy, CornerDownLeft, Play, SearchX, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
@@ -9,6 +10,7 @@ import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntr
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
+import type { PanelObject } from '@/types/document'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { prepRowKey } from '@/lib/preparationText'
 import {
@@ -725,11 +727,16 @@ export function ProbeResultsDialog({
   dropped: number
   open: boolean
   onOpenChange: (v: boolean) => void
-  /** 加进画布之后（准备面板据此观察那张图的首次编辑渲染，T09） */
-  onAdded?: (d: CapturedFigureDescriptor) => void
+  /** 加进画布之后，带上**刚新建的那个面板**（准备面板据此观察它的首次编辑渲染，T09；不能按素材 id 回找——文档里可能已有同素材的旧实例） */
+  onAdded?: (d: CapturedFigureDescriptor, panel: PanelObject) => void
 }) {
   useTranslation('workspace')
   const setStatus = useUiStore((s) => s.setStatus)
+  // 描述符属于这个对话框出现时的项目：之后切了项目（对话框还没来得及卸载）就不许把 A 的图加进 B 的版面
+  const guard = useRef<ProjectEpochGuard | null>(null)
+  useEffect(() => {
+    if (open) guard.current = captureProjectEpoch()
+  }, [open, descriptors])
   return (
     <Dialog
       open={open}
@@ -754,9 +761,10 @@ export function ProbeResultsDialog({
               variant="secondary"
               size="sm"
               onClick={() => {
-                addRuntimePanelToCanvas(d)
+                if (guard.current && !guard.current.still()) return
+                const added = addRuntimePanelToCanvas(d)
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
-                onAdded?.(d)
+                onAdded?.(d, added)
               }}
             >
               {sc('addToCanvas')}

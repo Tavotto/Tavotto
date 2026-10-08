@@ -322,6 +322,7 @@ describe('动作只交后端生成的 id', () => {
       'psess-1',
       { action_id: 'act-prepare_dependencies', expected_config_revision: 1, impact_digest: 'imp-123' },
       'pj-a',
+      expect.any(AbortSignal),
     )
     expect(entry().report?.phase).toBe('preparing_environment')
   })
@@ -400,6 +401,34 @@ describe('网络看门狗只改连接事实', () => {
     await vi.waitFor(() => expect(entry().connection).toBe('ok'), { timeout: 1000 })
     expect(entry().report?.phase).toBe('completed')
     expect(mockCreate).toHaveBeenCalledTimes(1) // 没有因为失联重新提交任何东西
+  })
+})
+
+describe('动作 POST 也走网络看门狗', () => {
+  it('动作永不返回：超时后 pending 清除、补拉一次报告、不重发动作', async () => {
+    __setPreparationTimingForTests({ requestTimeoutMs: 20, pollMs: [10_000] })
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockImplementationOnce(
+      (_id, _body, _pj, signal) =>
+        new Promise((_res, rej) => {
+          signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))
+        }),
+    )
+    mockGet.mockClear()
+    mockGet.mockResolvedValue(prepReport({ phase: 'running', actions: [action('cancel')], observation_seq: 3 }))
+    vi.useFakeTimers()
+    try {
+      const done = useProjectPreparationStore.getState().act(KEY, 'cancel')
+      expect(entry().pending).toBe('cancel')
+      await vi.advanceTimersByTimeAsync(25)
+      await done
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(entry().pending).toBeNull()
+    expect(mockAct).toHaveBeenCalledTimes(1) // 不盲目重发
+    expect(mockGet).toHaveBeenCalledTimes(1) // 补拉一次报告
   })
 })
 
@@ -495,5 +524,56 @@ describe('依赖准备装完：画布上停在依赖门上的渲染重排（T09b
     } finally {
       useRenderStore.setState({ retryEnvironmentFailures: real })
     }
+  })
+})
+
+describe('同一目标的修订前进：上一轮的编辑记录作废', () => {
+  const done = (over: Partial<PreparationReport> = {}) =>
+    prepReport({
+      phase: 'completed',
+      outcome: { kind: 'succeeded' },
+      captured: [{ asset_id: 'runtime:plot.py#a' } as never],
+      provider: { plan_id: 'prep-plan', attempt_id: 'att-1', attempts: 1, dependency: null },
+      ...over,
+    })
+
+  it('重开同一目标、后端已是更高修订的新一轮结果：editing 清空（入口按钮回来）', async () => {
+    mockCreate.mockResolvedValueOnce(done())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a', { panelId: 'p1', renderKey: 'k1' })
+    expect(entry().editing).toEqual(['runtime:plot.py#a'])
+    mockCreate.mockResolvedValueOnce(
+      done({
+        config_revision: 2,
+        provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null },
+      }),
+    )
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().report?.config_revision).toBe(2)
+    expect(entry().editing).toEqual([])
+    expect(entry().editRenders).toEqual({})
+  })
+
+  it('补拉到更高修订（同一会话）同样清空；同一修订的补拉保留', async () => {
+    mockCreate.mockResolvedValueOnce(done())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a')
+    mockGet.mockResolvedValueOnce(done({ observation_seq: 2 }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().editing).toEqual(['runtime:plot.py#a'])
+    mockGet.mockResolvedValueOnce(done({ config_revision: 2, observation_seq: 1 }))
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().editing).toEqual([])
+  })
+
+  it('同一会话里换了一轮尝试（attempt_id 变了）也清空', async () => {
+    mockCreate.mockResolvedValueOnce(done())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a')
+    mockGet.mockResolvedValueOnce(
+      done({ observation_seq: 2, provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null } }),
+    )
+    await useProjectPreparationStore.getState().refresh(KEY)
+    expect(entry().editing).toEqual([])
   })
 })
