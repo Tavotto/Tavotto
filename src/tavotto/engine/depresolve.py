@@ -1477,3 +1477,42 @@ def from_user_input(import_name: str, text: str) -> DependencyRequirement | None
         resolution_source=SOURCE_USER_SPECIFIED,
         confidence=CONFIDENCE_HIGH,
     )
+
+
+# ---------------------------------------------------------------------------
+# 多发行包提供同一个 import 名（Import Origin Resolver PR2，O-11）
+#
+# **只用于观测**：`resolve` / `curated_distribution` / `INSTALLABLE_SOURCES` 完全不读这张表——`cv2` 在
+# 安装路径上仍然是 `CURATED` 里那一个（`opencv-python`），没有任何新的自动可信来源。这张表只让静态来源解析
+# 知道「这个 import 名有不止一个发行包可以提供」，从而把候选全留着、状态报 `ambiguous`，不替用户挑。
+# 每一条都要能一眼看懂：这些发行包在 PyPI 上互相排斥地提供同一个顶级包。
+# ---------------------------------------------------------------------------
+ALTERNATIVE_DISTRIBUTIONS: dict[str, tuple[str, ...]] = {
+    "cv2": (
+        "opencv-python",
+        "opencv-python-headless",
+        "opencv-contrib-python",
+        "opencv-contrib-python-headless",
+    ),
+}
+
+
+def distribution_alternatives(import_name: str) -> tuple[str, ...]:
+    """提供同一个 import 名的全部已知发行包；没有登记（绝大多数）回 `()`。观测用，不是安装来源。"""
+    return ALTERNATIVE_DISTRIBUTIONS.get(str(import_name or ""), ())
+
+
+def version_satisfies(specifier: str, version: str) -> bool | None:
+    """已安装 `version` 是否满足声明的版本约束 `specifier`；约束或版本读不懂、没有 `packaging` 回 None（不判）。
+
+    预发布版本算在内（`prereleases=True`）：这里回答「已装的这个满不满足声明」，不是「该装哪个」。
+    """
+    if not specifier or not version:
+        return None
+    try:
+        _r, _m, specifiers, _u, version_mod = _pkg()
+        return specifiers.SpecifierSet(specifier).contains(
+            version_mod.Version(version), prereleases=True
+        )
+    except Exception:  # noqa: BLE001 — InvalidSpecifier / InvalidVersion / ImportError 都是「不判」
+        return None

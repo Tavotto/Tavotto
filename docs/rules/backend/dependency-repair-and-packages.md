@@ -281,9 +281,33 @@
 - **结论字段只加不改**：`ImportClass.origin_kind` / `resolution_status` / `evidence` / `shadowing` / `warnings`（闭集代码
   `EVIDENCE_CODES` / `WARNING_CODES`，项目相对路径，不带绝对路径或文件内容）与 `ScanResult.search_roots` /
   `search_complete` / `warnings` / `issues`；`bucket` / `context` / `needed` / 旧 `to_payload` 键语义不变，**本阶段 `depplan` /
-  `deprepair` 的决策不读新字段**（灰度第一阶段：只观测）。第三方只是映射表候选（`unverified`），已安装环境的证据是 PR2 之后的事。
+  `deprepair` 的决策不读新字段**（灰度第一阶段：只观测）。没给 `dists` 时第三方只是映射表候选（`unverified`）；给了才有已安装环境的证据（见下一条，PR2）。
   读文件走 `scanbudget`（占位文件不读、单文件 / 总字节 / 目录项 / 墙钟预算、`no_follow` 下符号链接不下探、指到项目外的链接
   永远不读），读不了 / 超限留痕在 `problems` / `issues`，而不是悄悄少读。
+- **发行包映射读已安装元数据，但只是证据（Import Origin Resolver PR2，`engine/distmeta.py`）**：给定环境前缀（venv /
+  Conda），从 `pyvenv.cfg` + 已知布局（`lib/pythonX.Y/site-packages`、Windows `Lib/site-packages`；基础解释器层要调用方
+  明确 `include_base`）**静态**推出 site-packages，读 `*.dist-info/{METADATA, top_level.txt, RECORD, direct_url.json,
+  INSTALLER}`、`*.egg-info`、`.egg-link` 文件名、`__editable__.*.pth` + 同目录 `__editable___*_finder.py` 的 `MAPPING`
+  字面量（`ast.parse` + `literal_eval`，不 exec）、Conda 的 `conda-meta/*.json`，建「顶级 import 名 → 候选发行包」反查。
+  **不起解释器、不 `importlib.metadata`、不 `find_spec`、不 import / exec 站点里任何东西、`.pth` 只当文本、路径行不跟进也不
+  stat（只计数 `uncovered_paths`）**；读文件走 `scanbudget`（占位文件 / `no_follow` / 字节·目录项·墙钟预算 / 取消），
+  `project_root` 内的前缀任何一级是链接就整个拒绝。预算用尽或有没跟进的路径行时，「没查到」报 `environment_not_checked`，
+  **不报 `not_installed`**。它是 `depplan._FACTS_SRC` / `deprepair.inventory`（目标解释器里 `importlib.metadata`，会执行，
+  授权路径）的**静态对偶**：两边发行包身份键同为 PEP 503 规范化名（`depresolve.normalize_distribution`），授权检查路径一行不动。
+  `tests/test_import_origin_metadata.py` 用「会留痕的 `.pth` / finder / `sitecustomize` / 包」+ 桩 + 路径间谍 + AST 门禁钉死。
+- **证据优先级与输出（`distmeta.resolve_module`，仍只观测）**：能对应到具体模块位置的已安装证据（`top_level.txt` / `RECORD` /
+  finder `MAPPING` / `conda-meta` 的 `files`）> 项目声明 > curated（`depresolve`）；`user_specified` 是用户在确认界面的显式输入，
+  扫描阶段没有，PR4/PR5 才出现。`importscan.scan(..., dists=Index)` 把结果挂到 `ImportClass` 的
+  `distribution_candidates` / `selected_distribution` / `observed_distribution` / `observed_version` / `declared_requirement` /
+  `declared_constraint` / `distribution_provenance` / `distribution_status` / `compatibility`（没给索引全空；审计里的
+  `installed_version` / `version_constraints` 即 `observed_version` / `declared_constraint`）。`selected_distribution` 只在
+  「唯一提供者且 `provenance=index`」时有值，editable / 本地路径 / 本地 wheel / VCS / URL / Conda、多候选、未确认一律为空，
+  状态说明白（`editable_dependency_not_reproducible` / `installed_source_not_reproducible` / `conda_package_not_pypi` /
+  `module_origin_ambiguous` / `unverified` / `distribution_version_conflict` / `not_installed` / `environment_not_checked`）。
+  多发行包（`cv2`）全留着（`depresolve.ALTERNATIVE_DISTRIBUTIONS`，**只观测**，`resolve` / `curated_distribution` 不读它），
+  不按名字相近挑；声明与已装版本冲突只报告，两边都不覆盖。**已安装元数据不是安装授权**：`distmeta` 不 import `deprepair`、
+  不产出 `DependencyRequirement`、`depresolve.INSTALLABLE_SOURCES` 仍是 project_declared / curated / user_specified 三个；
+  `bucket` / `needed` / `distribution` 不因元数据改变，`depplan` / `deprepair` 不读这些字段（用例钉着）。
 - **import 了却从未用到的不算「需要」（ADR 0061 §二 2026-09-24 修订）**：`importscan` 按 `figcapture.unused_imports`
   （唯一判据，只收 AST 能证明的：起了别名、不带点的 `import X as Y`——裸 `import X` 可能是为了副作用，一律不收；X 还必须在无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS` 里（别名也可能只为副作用，评审 #555 两条 P1）——判据是进程级副作用快照 `tests/support/import_side_effects.py`（matplotlib / 环境变量 / warnings / logging / 导入钩子 / 信号 / excepthook / atexit / builtins / codec 与 locale……任何一项变了就不进），扩名单要用它实测；不在 `try` / `with` 里、绑定名与 X 在别处一次都不出现、
   没有 `globals` / `eval` / `__dict__` 这类读不清的用法）标 `unused`，`needed` / `unknown` 不含它，`JointPlan.unused`

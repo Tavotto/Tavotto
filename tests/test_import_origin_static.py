@@ -909,12 +909,20 @@ class TestContract:
         ]
         payload = res.classes[0].to_payload()
         assert list(payload)[: len(old_keys)] == old_keys
-        assert set(payload) - set(old_keys) == {
-            "origin_kind",
-            "resolution_status",
-            "evidence",
-            "shadowing",
-            "warnings",
+        pr1_keys = ["origin_kind", "resolution_status", "evidence", "shadowing", "warnings"]
+        assert list(payload)[len(old_keys) : len(old_keys) + len(pr1_keys)] == pr1_keys
+        # PR2 的发行包字段追加在 PR1 的之后；没给 `dists` 时全是空值（只观测）
+        pr2 = {k: payload[k] for k in list(payload)[len(old_keys) + len(pr1_keys) :]}
+        assert pr2 == {
+            "distribution_candidates": [],
+            "selected_distribution": "",
+            "observed_distribution": "",
+            "observed_version": "",
+            "declared_requirement": "",
+            "declared_constraint": "",
+            "distribution_provenance": "",
+            "distribution_status": "",
+            "compatibility": [],
         }
         top = res.to_payload()
         assert {"classes", "dynamic", "problems", "truncated", "counts"} <= set(top)

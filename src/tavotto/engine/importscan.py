@@ -21,7 +21,10 @@
 * **命名空间目录**（无 `__init__` 的目录）：常规包 / 模块在整条 `sys.path` 上任何位置都压过命名
   空间——所以它不能被判成「唯一提供者」：`bucket=local`（宁可不装）、`resolution_status=ambiguous`；
 * **第三方**：不是上面几种、且能经**可信解析**（项目声明 / curated 表，`depresolve.resolve`
-  同一优先级）映射到一个 distribution——这里**只是候选**，本模块不看任何已安装环境；
+  同一优先级）映射到一个 distribution——这里**只是候选**；本模块自己不读任何已安装环境。调用方可以另给一份
+  `distmeta.Index`（静态读 site-packages 元数据，Import Origin Resolver PR2），这时第三方 / 未知名字会再带上
+  `distribution_*` 观测字段（已安装证据 > 项目声明 > curated，editable / 本地 / VCS / Conda 只给状态、
+  不给可重现的包名）；`bucket` / `needed` 仍不因它改变；
 * **未知**：不是 stdlib、不是本地、也映射不到——**永远不装、不猜同名**（FO-034），只报出来
   让用户指定。
 
@@ -41,8 +44,10 @@
 不下探）。纯标准库；被 `depplan` import。
 
 结论字段（`ImportClass`）在 `bucket` / `context` / `needed` 之外**只加可选字段**，供观测与后续阶段
-消费：`origin_kind` / `resolution_status` / `evidence` / `shadowing` / `warnings`——都是闭集代码或
-项目相对路径，不带绝对路径、不带文件内容。
+消费：`origin_kind` / `resolution_status` / `evidence` / `shadowing` / `warnings`，以及 PR2 的发行包
+观测字段（`distribution_candidates` / `selected_distribution` / `observed_*` / `declared_*` /
+`distribution_provenance` / `distribution_status` / `compatibility`）——都是闭集代码或项目 / 环境相对路径，
+不带绝对路径、不带文件内容。
 """
 
 from __future__ import annotations
@@ -54,7 +59,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import depresolve, execspec, figcapture, projectenv, scanbudget
+from . import depresolve, distmeta, execspec, figcapture, projectenv, scanbudget
 
 BUCKET_STDLIB = "stdlib"
 BUCKET_LOCAL = "local"
@@ -85,8 +90,11 @@ ORIGIN_STDLIB = "stdlib"
 ORIGIN_LOCAL = "project-local"
 ORIGIN_NAMESPACE = "namespace"
 ORIGIN_EXTENSION = "extension"
-#: 本阶段没有任何「已安装」证据：第三方候选与未知都落这一档，靠 `resolution_status` 区分。
+#: 没有已安装证据：第三方候选与未知都落这一档，靠 `resolution_status` 区分。PR2 起，调用方给了
+#: `distmeta.Index`（静态读 site-packages 元数据）才会出现下面两档。
 ORIGIN_UNRESOLVED = "unresolved"
+ORIGIN_SITE_PACKAGES = "site-packages"
+ORIGIN_EDITABLE = "editable"
 ORIGIN_KINDS = (
     ORIGIN_BUILTIN,
     ORIGIN_FROZEN,
@@ -95,13 +103,17 @@ ORIGIN_KINDS = (
     ORIGIN_NAMESPACE,
     ORIGIN_EXTENSION,
     ORIGIN_UNRESOLVED,
+    ORIGIN_SITE_PACKAGES,
+    ORIGIN_EDITABLE,
 )
 
 STATUS_RESOLVED = "resolved"  # 来源有静态证据、且只有一个答案
 STATUS_AMBIGUOUS = "ambiguous"  # 有不止一个合理答案（命名空间目录、目标解释器的内建名单不明）
 STATUS_UNVERIFIED = "unverified"  # 有候选，但缺少能确认它的证据（映射表候选、搜索根没确认）
 STATUS_UNRESOLVED = "unresolved"  # 找不到任何提供者
-STATUS_UNSUPPORTED = "unsupported"  # 认得出但不做（保留位：PR2 起用于 editable 等）
+STATUS_UNSUPPORTED = (
+    "unsupported"  # 认得出但不做（editable / 本地路径 / 本地 wheel / VCS / Conda 专有的提供者）
+)
 STATUSES = (
     STATUS_RESOLVED,
     STATUS_AMBIGUOUS,
@@ -111,29 +123,36 @@ STATUSES = (
 )
 
 #: `ImportClass.evidence` 的闭集（代码，不是自由文本；不带路径）。
-EVIDENCE_CODES = frozenset(
-    {
-        "builtin_module",
-        "frozen_module",
-        "preloaded_stdlib",
-        "stdlib_name_table",
-        "sys_path_script_dir",
-        "sys_path_project_root",
-        "sys_path_cwd",
-        "package_with_init",
-        "module_file",
-        "extension_file",
-        "namespace_dir",
-        "exact_name_match",
-        "case_mismatch_rejected",
-        "mapped_by_project_declared",
-        "mapped_by_curated",
-        "no_provider_found",
-        "sibling_dir_of_importer",
-        "link_not_followed",
-        "link_outside_project",
-    }
+EVIDENCE_CODES = (
+    frozenset(
+        {
+            "builtin_module",
+            "frozen_module",
+            "preloaded_stdlib",
+            "stdlib_name_table",
+            "sys_path_script_dir",
+            "sys_path_project_root",
+            "sys_path_cwd",
+            "package_with_init",
+            "module_file",
+            "extension_file",
+            "namespace_dir",
+            "exact_name_match",
+            "case_mismatch_rejected",
+            "mapped_by_project_declared",
+            "mapped_by_curated",
+            "no_provider_found",
+            "sibling_dir_of_importer",
+            "link_not_followed",
+            "link_outside_project",
+        }
+    )
+    | distmeta.EVIDENCE_CODES
 )
+#: `ImportClass.distribution_status` 的闭集（来自 `distmeta`；空 = 没给索引、没量）。
+DISTRIBUTION_STATUSES = frozenset(distmeta.STATUSES) | {distmeta.ST_NOT_CHECKED}
+#: `ImportClass.compatibility` 的闭集。
+COMPATIBILITY_CODES = distmeta.COMPAT_CODES
 #: `ImportClass.warnings` / `ScanResult.warnings[].code` 的闭集。
 WARNING_CODES = frozenset(
     {
@@ -290,6 +309,20 @@ class ImportClass:
     #: 的第三方）/ 空。
     shadowing: str = ""
     warnings: tuple[str, ...] = ()
+    # ---- 发行包映射（Import Origin Resolver PR2，`distmeta`；仍只观测，没有任何消费者读它们） ----
+    #: 全部候选提供者 `{distribution, version, source, ecosystem, provenance, evidence, evidence_file,
+    #: reproducible, shadowed}`：`source` ∈ installed / project_declared / curated。多发行包（`cv2`）全留着。
+    distribution_candidates: tuple[dict, ...] = ()
+    #: 可由 PyPI 名重现的**唯一**提供者（已安装证据确认过、`provenance=index`）；editable / 本地 / VCS / URL /
+    #: Conda、多候选、未确认一律为空——身份看 `observed_distribution`。**不是安装授权**。
+    selected_distribution: str = ""
+    observed_distribution: str = ""  # 已检查环境里实际提供它的发行包（唯一时）
+    observed_version: str = ""
+    declared_requirement: str = ""  # 项目声明里对应的发行包（规范化名）
+    declared_constraint: str = ""  # 声明的版本约束；与 `observed_version` 冲突只报告，不覆盖
+    distribution_provenance: str = ""  # `distmeta.PROVENANCES`：index / editable / local_path / …
+    distribution_status: str = ""  # `DISTRIBUTION_STATUSES`
+    compatibility: tuple[str, ...] = ()  # `COMPATIBILITY_CODES`
 
     @property
     def needed(self) -> bool:
@@ -317,6 +350,15 @@ class ImportClass:
             "evidence": list(self.evidence),
             "shadowing": self.shadowing,
             "warnings": list(self.warnings),
+            "distribution_candidates": [dict(c) for c in self.distribution_candidates],
+            "selected_distribution": self.selected_distribution,
+            "observed_distribution": self.observed_distribution,
+            "observed_version": self.observed_version,
+            "declared_requirement": self.declared_requirement,
+            "declared_constraint": self.declared_constraint,
+            "distribution_provenance": self.distribution_provenance,
+            "distribution_status": self.distribution_status,
+            "compatibility": list(self.compatibility),
         }
 
 
@@ -886,8 +928,10 @@ class _Scanner:
         builtin: frozenset[str] | None,
         no_follow: bool,
         budget: scanbudget.Budget | None,
+        dists: distmeta.Index | None = None,
     ) -> None:
         self.root = root
+        self.dists = dists
         self.script = script
         self.script_p = root / script
         self.declared = declared
@@ -1504,18 +1548,61 @@ class _Scanner:
             )
         else:
             evidence.append("no_provider_found")
+        origin, status = ORIGIN_UNRESOLVED, STATUS_UNVERIFIED if dist else STATUS_UNRESOLVED
+        extra: dict = {}
+        alternatives = depresolve.distribution_alternatives(name)
+        if self.dists is not None or len(alternatives) > 1:
+            res = distmeta.resolve_module(
+                self.dists,
+                name,
+                declared=self.declared,
+                curated=depresolve.curated_distribution(name) or "",
+                alternatives=alternatives,
+            )
+            origin, status = self._apply_resolution(res, origin, status)
+            evidence += [e for e in res.evidence if e not in evidence]
+            extra = {
+                "distribution_candidates": res.candidates,
+                "selected_distribution": res.selected,
+                "observed_distribution": res.observed_distribution,
+                "observed_version": res.observed_version,
+                "declared_requirement": res.declared_requirement,
+                "declared_constraint": res.declared_constraint,
+                "distribution_provenance": res.provenance,
+                "distribution_status": res.status,
+                "compatibility": res.compatibility,
+            }
         return ImportClass(
             bucket=BUCKET_THIRD_PARTY if dist else BUCKET_UNKNOWN,
             distribution=dist,
             resolution_source=source,
             # 本地模块也 import 了它 = 它的绑定在那边可能被读：照旧按上下文判
             unused=name in unused and not via,
-            origin_kind=ORIGIN_UNRESOLVED,
-            resolution_status=STATUS_UNVERIFIED if dist else STATUS_UNRESOLVED,
+            origin_kind=origin,
+            resolution_status=status,
             evidence=tuple(evidence),
             warnings=tuple(warns),
+            **extra,
             **base,
         )
+
+    @staticmethod
+    def _apply_resolution(res: distmeta.Resolution, origin: str, status: str) -> tuple[str, str]:
+        """`distmeta` 的结论 → `origin_kind` / `resolution_status`。`bucket` / `needed` 一概不动（PR4 才决定消费）。"""
+        in_site = any(c["source"] == distmeta.SRC_INSTALLED for c in res.candidates) or (
+            distmeta.EV_ORPHAN in res.evidence
+        )
+        if res.kind == distmeta.KIND_CONFIRMED:
+            return ORIGIN_SITE_PACKAGES, STATUS_RESOLVED
+        if res.kind == distmeta.KIND_EDITABLE:
+            return ORIGIN_EDITABLE, STATUS_UNSUPPORTED
+        if res.kind == distmeta.KIND_UNSUPPORTED:
+            return ORIGIN_SITE_PACKAGES, STATUS_UNSUPPORTED
+        if res.kind == distmeta.KIND_AMBIGUOUS:
+            return (ORIGIN_SITE_PACKAGES if in_site else origin), STATUS_AMBIGUOUS
+        if res.kind == distmeta.KIND_UNVERIFIED:
+            return (ORIGIN_SITE_PACKAGES if in_site else origin), STATUS_UNVERIFIED
+        return origin, status
 
 
 def _rank(top: _Top) -> int:
@@ -1540,6 +1627,7 @@ def scan(
     builtin: frozenset[str] | None = None,
     no_follow: bool = False,
     budget: scanbudget.Budget | None = None,
+    dists: distmeta.Index | None = None,
 ) -> ScanResult:
     """扫描脚本（及其本地模块）的 import，逐个顶级名分类。
 
@@ -1551,7 +1639,9 @@ def scan(
     与 `worker.py` 一致；见 `Entry`；`python -m` 时 `script` 被忽略，入口由 `entry.module` 定）。
     `no_follow=True`（导入即扫描的口径）：符号链接 / 路径替身不下探、不读；默认跟随项目内的链接，指到
     项目外的永远不读。`budget` 是 `scanbudget` 的预算 + 账本（没给就用默认上限）：占位文件不读、单文件 /
-    累计字节与墙钟有上限，超了留痕而不是悄悄少读。
+    累计字节与墙钟有上限，超了留痕而不是悄悄少读。`dists`（PR2）是调用方已经静态读好的某个环境的发行包
+    元数据索引（`distmeta.index_environment`，本函数**不**自己去读 site-packages）：给了就把已安装证据
+    挂到第三方 / 未知名字的 `distribution_*` 字段上；没给，这些字段保持为空（多发行包候选表除外）。
     """
     return _Scanner(
         Path(root),
@@ -1563,6 +1653,7 @@ def scan(
         builtin=builtin,
         no_follow=no_follow,
         budget=budget,
+        dists=dists,
     ).run()
 
 

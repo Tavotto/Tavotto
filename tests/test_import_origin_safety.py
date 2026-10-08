@@ -233,7 +233,7 @@ _ALLOWED_IMPORTS = {
     "pathlib",
     "__future__",
 }
-_ALLOWED_SIBLINGS = {"depresolve", "execspec", "figcapture", "projectenv", "scanbudget"}
+_ALLOWED_SIBLINGS = {"depresolve", "distmeta", "execspec", "figcapture", "projectenv", "scanbudget"}
 #: 对兄弟模块只许用这些属性（projectenv 里有起解释器的 `probe_environment`，不许碰）。
 _ALLOWED_ATTRS = {
     "projectenv": {"within"},
@@ -253,6 +253,25 @@ _ALLOWED_ATTRS = {
         "normalize_distribution",
         "SOURCE_PROJECT_DECLARED",
         "SOURCE_CURATED",
+        "distribution_alternatives",
+    },
+    #: importscan 只**消费**调用方读好的索引（`Index` 类型 + `resolve_module` 纯函数）；读 site-packages 的
+    #: `site_packages` / `build_index` / `index_environment` 不在白名单里——扫描自己不碰 site-packages。
+    "distmeta": {
+        "Index",
+        "Resolution",
+        "resolve_module",
+        "EVIDENCE_CODES",
+        "STATUSES",
+        "ST_NOT_CHECKED",
+        "COMPAT_CODES",
+        "KIND_CONFIRMED",
+        "KIND_EDITABLE",
+        "KIND_UNSUPPORTED",
+        "KIND_AMBIGUOUS",
+        "KIND_UNVERIFIED",
+        "SRC_INSTALLED",
+        "EV_ORPHAN",
     },
     "scanbudget": {
         "Budget",

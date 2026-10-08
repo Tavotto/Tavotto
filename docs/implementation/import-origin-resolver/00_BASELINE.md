@@ -390,3 +390,10 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 * M1–M4、M6、O-系列：对 `importscan.scan(tmpdir, "s.py")` 构造 fixture（`json.py`、`dup.py`+`dup/__init__.py`、`Utils` vs `utils.py`、`pkg/__init__.py`+`pkg/a.py`、`il.import_module`）并打印 `classes`；并用真 `python s.py` 对拍 `json` 遮蔽、大小写、包优先。
 * M5：`importscan.map_distribution("cv2", {"opencv-python-headless": ""})`；`depplan.plan(root,"s.py",facts=TargetFacts(installed={"opencv-python-headless":"4.9.0",…}),target_kind=TARGET_PROJECT_VENV)` → `status=ready, missing=['opencv-python']`。
 * 脚本保存在审计会话草稿目录，未入库（它们是一次性探针，不是门禁；PR1 的正式用例要重新写成带变异反证的测试）。
+
+## 10. PR2 实施记录（发行包元数据映射）
+
+* 新增 `src/tavotto/engine/distmeta.py`（纯标准库 + `depresolve` + `scanbudget`）。**没有扩展已有模块的理由**：§Q5 审计结论是全仓没有任何静态读 dist-info 的代码；已有的 `importlib.metadata` 读取（`depplan._FACTS_SRC` / `deprepair.inventory`）在目标解释器子进程里，是用户发起的检查（会执行），属于授权路径，本 PR 不动它；`distmeta` 是它的静态对偶，两边共用 PEP 503 规范化键。`projscan` 的禁用名单不涉及它，因为它不被默认扫描自动调用——调用方（PR3/PR4）显式构建 `distmeta.Index` 后传给 `importscan.scan(dists=...)`。
+* `depresolve` 只加两样东西，且安装路径一概不读：`ALTERNATIVE_DISTRIBUTIONS`（`cv2` 的四个发行包，仅观测）与 `version_satisfies`（已装版本是否满足声明约束，读不懂回 None）。`INSTALLABLE_SOURCES` 不变。
+* 审计 §ResolvedImport 的 `installed_version` / `version_constraints` 在实现里叫 `observed_version` / `declared_constraint`（计划 P2.3 的输出名）；不再另设别名，避免两处漂移。
+* 留给后续阶段：默认扫描里的接线与「哪个环境」的选择（PR3 环境覆盖度）、`depplan` 对 `distribution_status` 的消费与目标解释器 builtin 名单（PR4）、`user_specified` 作为最低一档（PR4/PR5）。
