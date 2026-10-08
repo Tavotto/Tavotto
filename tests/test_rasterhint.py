@@ -112,6 +112,16 @@ def test_non_module_savers_and_non_image_targets_are_not_flagged(tmp_path):
     assert _lib(tmp_path) is None
 
 
+def test_save_on_a_foreign_module_is_not_flagged_even_with_pil_imported(tmp_path):
+    """路径不是字面量（扩展名帮不上忙）：`np.save(path, a)` 的接收者是 numpy 模块，不是 Pillow 图。"""
+    _write(
+        tmp_path,
+        "make.py",
+        "import numpy as np\nimport torch\nfrom PIL import Image\nnp.save(path, a)\ntorch.save(m, path)\n",
+    )
+    assert _lib(tmp_path) is None
+
+
 def test_save_without_a_pil_import_is_not_flagged(tmp_path):
     _write(tmp_path, "make.py", "model.save('weights.png')\n")
     assert _lib(tmp_path) is None
