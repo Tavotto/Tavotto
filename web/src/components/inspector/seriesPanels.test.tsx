@@ -629,7 +629,7 @@ describe('填充区域：填充一组、描边一组，纹理有名字（T21）'
     ])
   })
 
-  it('形状：关掉「填充」之后填充色与纹理收起——写了也不显形', async () => {
+  it('形状：关掉「填充」之后只有填充色收起；纹理照样在（未填充形状也画纹理）', async () => {
     seedRender(makeManifest([elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields())]))
     await mount(['axes_0.patches_0'])
     expect(row('facecolor')).toBeTruthy()
@@ -640,13 +640,13 @@ describe('填充区域：填充一组、描边一组，纹理有名字（T21）'
     })
     expect(overrideOf('axes_0.patches_0', 'fill')).toBe(false)
     expect(row('facecolor')).toBeNull()
-    expect(row('hatch')).toBeNull()
+    expect(row('hatch')).toBeTruthy()
     // 开关自己当然还在，否则就再也开不回来了
     expect(row('fill')).toBeTruthy()
     expect(row('edgecolor')).toBeTruthy()
   })
 
-  it('形状：纹理线宽要「填充开着且有花纹」才出现——没有花纹时没有东西可加粗', async () => {
+  it('形状：纹理线宽只看有没有花纹，与「填充」无关', async () => {
     seedRender(makeManifest([elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields())]))
     await mount(['axes_0.patches_0'])
     expect(row('hatch')).toBeTruthy()
@@ -662,6 +662,30 @@ describe('填充区域：填充一组、描边一组，纹理有名字（T21）'
     await act(async () => {
       toggle.click()
     })
+    // fill=False + 有花纹：matplotlib 仍画纹理，线宽要在
+    expect(overrideOf('axes_0.patches_0', 'fill')).toBe(false)
+    expect(row('hatch_linewidth')).toBeTruthy()
+  })
+
+  it('形状：fill=False 脚本原值——有花纹显示纹理与线宽，无花纹不显示线宽', async () => {
+    seedRender(
+      makeManifest([
+        elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields({ fill: false, hatch: '//' })),
+      ]),
+    )
+    await mount(['axes_0.patches_0'])
+    expect(row('facecolor')).toBeNull()
+    expect(row('hatch')).toBeTruthy()
+    expect(row('hatch_linewidth')).toBeTruthy()
+    await act(async () => {
+      root.unmount()
+    })
+    document.body.innerHTML = ''
+    seedRender(
+      makeManifest([elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields({ fill: false }))]),
+    )
+    await mount(['axes_0.patches_0'])
+    expect(row('hatch')).toBeTruthy()
     expect(row('hatch_linewidth')).toBeNull()
   })
 })

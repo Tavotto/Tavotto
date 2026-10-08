@@ -164,12 +164,13 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     ],
     more: ['visible'],
     visibleWhen: {
-      // 「填充」关着时填充色与纹理画了也不显形——这是 `fill` 这个开关的定义
-      // （见 engine/manifest.py `_patch_fields` 的实测：fill 关着时 facecolor
-      // 一个像素都不出）。与画布图形的「添加填充」是同一种操作模型。
+      // 「填充」关着时只有填充色画了不显形（见 engine/manifest.py `_patch_fields`
+      // 的实测：fill 关着时 facecolor 一个像素都不出）。纹理不受 `fill` 管：
+      // matplotlib 3.11 实测 `Rectangle(fill=False, hatch='//')` 照样画出纹理
+      // （无边框 5638 个非背景像素，对照无纹理 0）。所以 hatch 不按 FILLED 门控，
+      // 否则用户没法给未填充的形状加纹理；线宽只看有没有花纹。
       facecolor: FILLED,
-      hatch: FILLED,
-      hatch_linewidth: (read) => FILLED(read) && HAS_HATCH(read),
+      hatch_linewidth: HAS_HATCH,
     },
   },
   errorbar: {
