@@ -24,7 +24,7 @@ import {
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
-import { ALT, cn, combo } from '@/lib/utils'
+import { ALT, cn, combo, isMac } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
@@ -323,6 +323,7 @@ function LayerRow({
   const menu = useRowMenu({ enabled: !editing })
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
+  const pointerFocusing = useRef(false)
   // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
   const stateLabel = [
     isScript && lt('editableState'),
@@ -349,7 +350,9 @@ function LayerRow({
       onFocus={(e) => {
         menu.rowProps.onFocus(e)
         // 焦点即选中（方向键漫游）；子按钮的焦点冒泡上来时不动选区
-        if (e.target === e.currentTarget && !selected) useSelectionStore.getState().set([obj.id])
+        if (e.target === e.currentTarget && !selected && !pointerFocusing.current) {
+          useSelectionStore.getState().set([obj.id])
+        }
       }}
       onKeyDown={(e) => {
         menu.rowProps.onKeyDown?.(e)
@@ -398,9 +401,14 @@ function LayerRow({
         reorderObject(from, obj.id, e.clientY < r.top + r.height / 2 ? 'above' : 'below')
       }}
       onPointerDown={(e) => {
-        if (editing) return
+        if (editing || e.button !== 0) return
+        pointerFocusing.current = true
+        e.currentTarget.focus({ preventScroll: true })
+        pointerFocusing.current = false
+        // Mac Control-click 是上下文菜单入口；接住焦点，但不改变已有选区。
+        if (isMac && e.ctrlKey) return
         const sel = useSelectionStore.getState()
-        if (e.shiftKey) sel.toggle(obj.id)
+        if (e.shiftKey || e.ctrlKey || e.metaKey) sel.toggle(obj.id)
         else sel.set([obj.id])
       }}
       onDoubleClick={() => setEditing(true)}
