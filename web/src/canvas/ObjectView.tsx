@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { msg } from '@/i18n'
 import { perfCount } from '@/perf/core'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -105,6 +106,9 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
       // （旋转过的面板裁剪框方向会与画布对不上，先不进裁剪态）
       if (obj.script) enterElementEdit(obj.id)
       else if (!panelRotation(obj)) beginCrop(obj.id)
+      // 双击什么都没发生时说出为什么（2026-10-07 设计审计 §10.1，与右键菜单里置灰的「裁剪」同一句原因）：
+      // 此前旋转过的普通面板双击毫无反应，用户以为没点中
+      else useUiStore.getState().setStatus(msg('quickEdit.cropRotatedReason', undefined, 'workspace'), 'info')
     }
   }
 

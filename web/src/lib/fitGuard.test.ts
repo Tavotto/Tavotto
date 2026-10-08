@@ -9,7 +9,7 @@ const base: FitGuardCtx = {
   interacting: false,
   onObject: false,
   point: { x: -20, y: 30 }, // 页面左侧灰色区域
-  page: { w: 150, h: 100 },
+  frame: { x: 0, y: 0, w: 150, h: 100 },
 }
 
 describe('双击回中触发判定', () => {
@@ -23,6 +23,15 @@ describe('双击回中触发判定', () => {
     expect(shouldFitOnDoubleClick({ ...base, point: { x: 75, y: 50 } })).toBe(false)
     expect(shouldFitOnDoubleClick({ ...base, point: { x: 0, y: 0 } })).toBe(false)
     expect(shouldFitOnDoubleClick({ ...base, point: { x: 150, y: 100 } })).toBe(false)
+  })
+
+  it('取景框不在原点（快速编辑里那张图的矩形）：按框本身判内外，不是 (0,0) 到右下角', () => {
+    const frame = { x: -15, y: -10, w: 40, h: 30 }
+    expect(shouldFitOnDoubleClick({ ...base, frame, point: { x: -10, y: -5 } })).toBe(false)
+    expect(shouldFitOnDoubleClick({ ...base, frame, point: { x: 30, y: 15 } })).toBe(true)
+    const off = { x: 10, y: 20, w: 40, h: 30 }
+    expect(shouldFitOnDoubleClick({ ...base, frame: off, point: { x: 5, y: 5 } })).toBe(true)
+    expect(shouldFitOnDoubleClick({ ...base, frame: off, point: { x: 30, y: 40 } })).toBe(false)
   })
 
   it('对象上双击不触发（越界对象也一样）', () => {

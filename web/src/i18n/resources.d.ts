@@ -695,6 +695,10 @@ export default interface Resources {
         "versions": {
           "keywords": "version history timeline banben shijianxian sjx lishi",
           "label": "排版时间线…"
+        },
+        "zoom-selection": {
+          "keywords": "zoom selection sfxz suofang xuanzhong",
+          "label": "缩放到选中对象"
         }
       },
       "listLabel": "命令",
@@ -1953,6 +1957,7 @@ export default interface Resources {
       "preview": "预览",
       "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
       "previewTitle": "预览：{{time}} {{name}}",
+      "quickNameTitle": "把现在存为命名节点",
       "rename": "改名…",
       "restore": "恢复到这里",
       "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
@@ -4280,7 +4285,6 @@ export default interface Resources {
       "rightClick": "右键",
       "shiftClick": "⇧+点击",
       "spaceDrag": "Space+拖动",
-      "tools": "V / T / A / R / O / L",
       "wheelZoom": "{{mod}}+滚轮"
     },
     "group": {
@@ -4312,6 +4316,7 @@ export default interface Resources {
       "saveNamed": "把现在存为命名节点",
       "script": "上标 / 下标（属性面板文字框内）",
       "selectAll": "全选",
+      "tabs": "焦点在画布标签上时：重命名 / 关闭 / 左右挪动",
       "timeline": "打开 / 关闭排版时间线",
       "tools": "选择 / 文字 / 箭头 / 矩形 / 椭圆 / 直线",
       "tutorialPause": "暂停教程（教程卡片有焦点时）",
@@ -4320,7 +4325,8 @@ export default interface Resources {
       "zEnds": "置顶 / 置底",
       "zMove": "上移 / 下移一层",
       "zoom": "放大 / 缩小",
-      "zoomPresets": "100% / 适应画布"
+      "zoomPresets": "100% / 适应画布",
+      "zoomSelection": "缩放到选中的对象"
     },
     "noMatch": "没有匹配的快捷键",
     "or": "或",
@@ -4430,6 +4436,14 @@ export default interface Resources {
       "search": "搜索画布…",
       "searchAria": "搜索画布"
     },
+    "canvasMenu": {
+      "aria": "画布操作",
+      "grid": "网格",
+      "paste": "粘贴",
+      "rulers": "标尺",
+      "safeArea": "安全区",
+      "selectAll": "全选"
+    },
     "canvasTools": {
       "fit": "适应",
       "label": "画布工具",
@@ -4480,6 +4494,7 @@ export default interface Resources {
       "lastDocOpen": "打开上次的排版",
       "lastDocTitle": "无法打开项目上次的排版「{{name}}」",
       "lastDocUnnamed": "未命名",
+      "moreActions": "其他处理方式",
       "overwrite": "用我的版本覆盖",
       "overwriteConfirmBodyExternal": "磁盘上被外部修改过的那份会被这个窗口的内容替换，那些外部改动会丢失。想两份都留，请改用「另存为」。",
       "overwriteConfirmBodyStale": "另一个窗口保存的较新版本会被这个窗口的内容替换，那个窗口的改动会丢失。想两份都留，请改用「另存为」。",
@@ -4663,11 +4678,6 @@ export default interface Resources {
       "zDown": "下移一层",
       "zTop": "置于顶层",
       "zUp": "上移一层"
-    },
-    "hud": {
-      "cursor": "光标",
-      "offset": "位移",
-      "size": "尺寸"
     },
     "layerTree": {
       "collapseGroup": "折叠组",
@@ -4860,6 +4870,7 @@ export default interface Resources {
       "arrangeRef": "参照：{{ref}}",
       "changeKind": "更改为",
       "connectSource": "连接源脚本",
+      "copy": "复制",
       "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
       "deleteCount": "删除 {{count}} 个对象",
       "duplicate": "创建副本",
@@ -4875,6 +4886,7 @@ export default interface Resources {
       "needObjects_other": "需要至少选中 {{count}} 个对象",
       "openArrange": "打开排列属性",
       "openInspector": "打开全部属性",
+      "paste": "粘贴",
       "rebuild": "重新构建",
       "resetOverridesCount_other": "恢复图内修改（{{count}} 项）",
       "scale": "缩放",
@@ -5071,6 +5083,9 @@ export default interface Resources {
       "emptyHintNoAssets": "把 PDF/PNG 或绘图脚本放进项目目录，就会出现在素材库。",
       "emptyTitle": "画布是空的",
       "exitTitle": "退出图内编辑，回到画布层（Esc）",
+      "rulerUnit": "mm",
+      "rulerUnitTitle": "标尺单位：毫米",
+      "textPlaceholder": "输入文字",
       "tryTutorial": "试用示例"
     },
     "status": {
@@ -5090,6 +5105,8 @@ export default interface Resources {
         "heavy": "冷启动可能需要几分钟",
         "medium": "冷启动约十几秒"
       },
+      "copiedDetails": "已复制",
+      "copyDetails": "复制详情",
       "dismissError": "关闭错误提示",
       "documentLoaded_other": "已载入：{{name}}（{{count}} 张画布）",
       "documentReopened_other": "已切回：{{name}}（{{count}} 张画布）",
@@ -5107,6 +5124,7 @@ export default interface Resources {
       "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
       "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
       "elementsHidden_other": "已隐藏 {{count}} 个元素，可在「已隐藏元素」里恢复",
+      "errorTitle": "这一步没有完成",
       "geometrySyncing": "正在同步图形几何，请稍候再试",
       "groupBlocked": {
         "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放",
@@ -5216,7 +5234,8 @@ export default interface Resources {
       "canvasName": "画布名",
       "closeTab": "关闭标签 {{name}}",
       "listLabel": "画布标签",
-      "newCanvas": "新建画布"
+      "newCanvas": "新建画布",
+      "unopened": "未打开"
     },
     "toolHint": {
       "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
@@ -5232,6 +5251,7 @@ export default interface Resources {
       "commandPalette": "命令面板",
       "documentLabel": "排版：{{name}}",
       "documentName": "排版名",
+      "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名",
       "export": "导出",
       "exportPackage": "导出项目包",
       "exportTip": "导出 PNG / PDF",
@@ -5240,6 +5260,9 @@ export default interface Resources {
       "fromProject": "· 项目 {{name}}",
       "importPackage": "导入项目包…",
       "insertShape": "插入形状",
+      "issueAria": "排版状态：{{status}}。查看详情",
+      "issueLastDoc": "上次的排版没打开",
+      "issueTooNew": "排版版本较新",
       "more": "更多",
       "moreWithUpdate": "更多（有新版本）",
       "newBlankDocument": "新建空白排版",
@@ -5284,12 +5307,13 @@ export default interface Resources {
       "versionTimeline": "排版时间线…",
       "zoomIn": "放大",
       "zoomOut": "缩小",
-      "zoomValue": "缩放 {{percent}}%"
+      "zoomSelection": "缩放到选中对象",
+      "zoomValue": "缩放 {{percent}}%",
+      "zoomValueInput": "缩放比例（%）"
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
-      "later": "稍后",
-      "title": "工具已更新"
+      "later": "稍后"
     }
   }
 }
