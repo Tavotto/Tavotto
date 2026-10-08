@@ -324,7 +324,7 @@ def _raising(code: str, **attrs):
 
 
 @pytest.mark.parametrize(
-    "reason", [inputbroker.REASON_NO_CLIENT, inputbroker.REASON_SECRET_REQUIRED]
+    "reason", [inputbroker.REASON_NO_CLIENT, inputbroker.REASON_MASKED_INPUT_REQUIRED]
 )
 def test_runtime_input_without_a_ui_is_a_structured_requirement_not_a_wait(
     project, monkeypatch, reason
@@ -340,14 +340,14 @@ def test_runtime_input_without_a_ui_is_a_structured_requirement_not_a_wait(
     assert body["code"] == "script_needs_input"
     assert body["input"] == {
         "reason": reason,
-        "secret": reason == inputbroker.REASON_SECRET_REQUIRED,
+        "secret": reason == inputbroker.REASON_MASKED_INPUT_REQUIRED,
     }
     assert body["requirements"] == [
         {"kind": "runtime_input", "answer_with": None, "where": "tavotto_app", "reason": reason}
     ]
     text = res["content"][0]["text"]
     assert "Tavotto" in text
-    if reason == inputbroker.REASON_SECRET_REQUIRED:
+    if reason == inputbroker.REASON_MASKED_INPUT_REQUIRED:
         assert "不要" in body["recovery"] and "口令" in body["recovery"]
 
 
