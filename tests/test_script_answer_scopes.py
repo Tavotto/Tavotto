@@ -310,7 +310,7 @@ def test_forget_commits_on_the_project_file_and_tolerates_an_orphaned_sidecar(an
     _block_sidecar(monkeypatch)
     assert scriptanswers.forget(answers, "s.py", 1, run_config="rc_a") is True
     monkeypatch.undo()
-    assert [e["run_config"] for e in scriptanswers.entries(answers, "s.py")] != []
+    assert len(scriptanswers.entries(answers, "s.py")) == 2
     assert all(e["answer"] != "alpha" for e in scriptanswers.entries(answers, "s.py"))
     assert (
         scriptanswers.recall(
