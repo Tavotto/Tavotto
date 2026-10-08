@@ -119,6 +119,35 @@ def test_sensitive_failures_keep_values_out_of_command_logs_and_errors(worker_fa
         assert error.extra["parse_kind"] in ("invalid_value", "unknown")
 
 
+def test_sensitive_missing_dependency_keeps_its_classification(worker_factory):
+    """敏感运行的自由文本诊断整段删掉，但「缺哪个顶层包」是安全的结构化事实：父进程仍得到
+    missing_dependency + 模块名（依赖修复 / 环境交接不能因为敏感就丢）。"""
+    worker = worker_factory("import sys\nimport tavotto_absent_pkg_xyz\n", ["--value", SECRET])
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    error = caught.value
+    assert error.code == "missing_dependency"
+    assert error.module == "tavotto_absent_pkg_xyz"
+    assert SECRET not in str(error)
+    assert SECRET not in error.traceback_text
+    assert SECRET not in worker.log_path.read_text(encoding="utf-8")
+
+
+def test_sensitive_missing_dependency_never_carries_an_argv_value_as_the_module_name(
+    worker_factory,
+):
+    """脚本把 argv 值塞进 ModuleNotFoundError.name 也夹带不出去：名字等于某个 token 就不带名字。"""
+    worker = worker_factory(
+        "import sys\nraise ModuleNotFoundError('x', name=sys.argv[-1])\n", ["--value", "secretpkg"]
+    )
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    error = caught.value
+    assert error.code != "missing_dependency"
+    assert "secretpkg" not in str(error)
+    assert "secretpkg" not in json.dumps(error.extra)
+
+
 def test_sensitive_native_and_child_output_is_suppressed_without_breaking_protocol(worker_factory):
     worker = worker_factory(
         """import sys, os, subprocess

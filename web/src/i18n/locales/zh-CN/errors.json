@@ -184,6 +184,7 @@
     "invalid_argv": "运行参数不合法：必须是字符串列表（每个参数一项，不能含空字符，数量和总长度有上限）。",
     "run_config_missing": "这台机器上没有这张图当初用的运行参数（可能来自另一台机器，或记录已清理）。请重新输入参数后再运行。",
     "run_config_secret_missing": "这次运行含敏感参数，Tavotto 没有保存它。请重新输入后再运行。",
+    "run_config_unreadable": "这个项目保存的运行参数记录已损坏，Tavotto 没有拿它去运行（否则可能用错参数画出一张看似正常的图）。请重新输入参数后再运行；损坏的原文件已留作备份。",
     "run_config_unsupported": "这份运行参数记录来自更新版本的 Tavotto，当前版本读不懂。请升级后再试，不会改用空参数运行。",
     "script_name_missing": "缺少脚本名",
     "script_no_figure": "脚本已运行，但没有捕获到任何 Figure。入口 {{entry}} 可能不出图。",

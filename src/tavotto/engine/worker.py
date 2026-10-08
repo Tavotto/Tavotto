@@ -43,6 +43,7 @@ import importlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -482,6 +483,9 @@ def _real_output():
         _intercept = True
 
 
+_MODULE_NAME_RE = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]{0,99}"
+)  # 顶层包名；带点的是已装包的子模块，不算缺依赖
 _PRIVATE_OUTPUT_NOTICE = "[sensitive run: script output omitted]\n"
 
 
@@ -688,7 +692,9 @@ class Worker(wireproto.V1Handler):
         err = resp.get("error")
         if isinstance(err, dict):
             safe = {
-                k: err[k] for k in ("code", "retryable", "argv_count", "parse_kind") if k in err
+                k: err[k]
+                for k in ("code", "retryable", "argv_count", "parse_kind", "missing_module")
+                if k in err
             }
             safe.update(
                 message="Sensitive run failed; script diagnostics were omitted.",
@@ -1121,13 +1127,40 @@ class Worker(wireproto.V1Handler):
             # 不是一次落空的只读打开、但异常链里确实有「文件不存在」（C++ 读取器）：码仍是
             # script_error，只多带一份事实；对不对得上脚本里哪串常量由父进程判（ADR 0110 §一）
             enoent = figcapture.enoent_fact(exc)
+            facts: dict = {"enoent": enoent} if enoent else {}
+            # 缺依赖的结构化事实：敏感运行会丢掉自由文本（父进程本来从消息 / traceback 里认出缺哪个包），
+            # 在丢之前先把「顶层模块名」这一个安全事实带上，依赖修复 / 环境交接才不会丢
+            module = self._missing_module_fact(exc)
+            if module:
+                facts["missing_module"] = module
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
                 retryable=False,
                 traceback_text=traceback.format_exc(),
-                extra={"enoent": enoent} if enoent else None,
+                extra=facts or None,
             ) from exc
+
+    def _missing_module_fact(self, exc: BaseException) -> str:
+        """异常链里 `ModuleNotFoundError.name`（顶层包名）；认不出回空串。
+
+        只取解释器自己填的 `name`，不解析消息文本（文本里可能引了 argv）。敏感运行再加一道：名字恰好
+        等于某个 argv token 就不带——脚本可以 `raise ModuleNotFoundError(name=sys.argv[1])` 把值夹带出去。"""
+        seen = 0
+        cur: BaseException | None = exc
+        while cur is not None and seen < 16:
+            if isinstance(cur, ModuleNotFoundError):
+                name = getattr(cur, "name", None)
+                if (
+                    isinstance(name, str)
+                    and _MODULE_NAME_RE.fullmatch(name)
+                    and not (self.sensitive_argv and name in self.script_argv)
+                ):
+                    return name
+                return ""
+            cur = cur.__cause__ or cur.__context__
+            seen += 1
+        return ""
 
     def build_result(self, timings: dict) -> dict:
         """v1 build 响应的 body（分派逻辑在 `wireproto.V1Handler`）。

@@ -41,7 +41,14 @@ ERROR_INVALID_ARGV = "invalid_argv"
 ERROR_MISSING = "run_config_missing"
 ERROR_SECRET_MISSING = "run_config_secret_missing"
 ERROR_UNSUPPORTED = "run_config_unsupported"
-ERROR_CODES = (ERROR_INVALID_ARGV, ERROR_MISSING, ERROR_SECRET_MISSING, ERROR_UNSUPPORTED)
+ERROR_UNREADABLE = "run_config_unreadable"
+ERROR_CODES = (
+    ERROR_INVALID_ARGV,
+    ERROR_MISSING,
+    ERROR_SECRET_MISSING,
+    ERROR_UNSUPPORTED,
+    ERROR_UNREADABLE,
+)
 
 
 class RunConfigError(Exception):
@@ -75,6 +82,13 @@ class RunConfigSecretMissing(RunConfigError):
 
 class RunConfigUnsupported(RunConfigError):
     code = ERROR_UNSUPPORTED
+
+
+class RunConfigUnreadable(RunConfigError):
+    """登记文件存在但读不出 / 格式坏（截断、非 JSON、顶层或 configs / defaults 类型不对）。
+    **不是"没有登记"**：把它当空会让磁盘面板的默认参数悄悄丢掉、下次按空 argv 重跑出一张错图。"""
+
+    code = ERROR_UNREADABLE
 
 
 @dataclasses.dataclass(frozen=True)
@@ -188,36 +202,90 @@ def _legacy_store_path(project_root: str | Path) -> Path:
     return _legacy_store_paths(project_root)[0]
 
 
-def _read(project_root: str | Path) -> dict:
-    """读登记（整份）；文件坏了 / 不存在 = 空（配置丢了得到明确的 `run_config_missing`，不是静默空 argv）。
-    **更新版本写的文件拒绝**（`RunConfigUnsupported`）——旧引擎在这里读不懂，不能当它是空的。"""
+def _locate(project_root: str | Path) -> tuple[Path, str] | None:
+    """找到登记文件并读出原文：新名优先，再依次回落旧文件名。**不存在 = None**；
+    存在却读不了（权限 / 非 UTF-8 / IO 错）= `RunConfigUnreadable`，不当它不存在。"""
+    for path in [store_path(project_root), *_legacy_store_paths(project_root)]:
+        try:
+            return path, path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except NotADirectoryError:
+            continue
+        except (OSError, ValueError) as exc:
+            raise RunConfigUnreadable(
+                "这个项目的运行参数记录读不出来（文件损坏或无法访问）；为避免用错参数出图，已停止运行",
+                reason="unreadable_file",
+            ) from exc
+    return None
+
+
+def _read(project_root: str | Path, *, quarantine: bool = False) -> dict:
+    """读登记（整份）。**不存在 = 空**；**读不出 / 格式坏 = `RunConfigUnreadable`**（显式失败，
+    绝不当空：否则磁盘面板默认参数悄悄丢掉、下次按空 argv 重跑）；**更新版本写的文件拒绝**
+    （`RunConfigUnsupported`）。
+
+    `quarantine=True` 只给写路径：坏文件先改名挪到旁边（`<名>.corrupt-<时间戳>`，原文保留可人工找回）
+    再从空登记写起——用户重新输入参数就能恢复，不会永远卡在读错上，也不会静默覆盖掉原文。
+    更新版本的文件不在此列，仍然拒绝。"""
+    found = _locate_or_quarantine(project_root, quarantine)
+    if found is None:
+        return {"configs": {}, "defaults": {}}
+    path, raw = found
     try:
-        raw = store_path(project_root).read_text(encoding="utf-8")
-    except OSError:
-        for legacy in _legacy_store_paths(project_root):
-            try:
-                raw = legacy.read_text(encoding="utf-8")
+        data = _parse(raw)
+    except RunConfigUnreadable:
+        if not quarantine:
+            raise
+        _quarantine_file(path)
+        return {"configs": {}, "defaults": {}}
+    return data
+
+
+def _locate_or_quarantine(project_root: str | Path, quarantine: bool):
+    try:
+        return _locate(project_root)
+    except RunConfigUnreadable:
+        if not quarantine:
+            raise
+        # 读不了的文件（非 UTF-8 / 权限）：挪走能挪的那一份，挪不动就保持拒绝
+        for path in [store_path(project_root), *_legacy_store_paths(project_root)]:
+            if path.exists():
+                _quarantine_file(path)
                 break
-            except OSError:
-                continue
-        else:
-            return {"configs": {}, "defaults": {}}
+        return None
+
+
+def _quarantine_file(path: Path) -> None:
+    target = path.with_name(f"{path.name}.corrupt-{int(time.time())}-{secrets.token_hex(2)}")
+    try:
+        os.replace(path, target)
+    except OSError as exc:
+        raise RunConfigUnreadable(
+            "这个项目的运行参数记录已损坏，且无法备份后重建；已停止运行", reason="quarantine_failed"
+        ) from exc
+
+
+def _parse(raw: str) -> dict:
+    bad = RunConfigUnreadable(
+        "这个项目的运行参数记录已损坏（格式不对）；为避免用错参数出图，已停止运行",
+        reason="malformed_store",
+    )
     try:
         data = json.loads(raw)
-    except ValueError:
-        return {"configs": {}, "defaults": {}}
+    except ValueError as exc:
+        raise bad from exc
     if not isinstance(data, dict):
-        return {"configs": {}, "defaults": {}}
+        raise bad
     version = data.get("version")
-    if isinstance(version, int) and version > FORMAT_VERSION:
+    if isinstance(version, int) and not isinstance(version, bool) and version > FORMAT_VERSION:
         raise RunConfigUnsupported(
             "这份运行配置是更新版本的 Tavotto 写的，当前版本读不懂", reason="newer_format"
         )
-    configs, defaults = data.get("configs"), data.get("defaults")
-    return {
-        "configs": configs if isinstance(configs, dict) else {},
-        "defaults": defaults if isinstance(defaults, dict) else {},
-    }
+    configs, defaults = data.get("configs", {}), data.get("defaults", {})
+    if not isinstance(configs, dict) or not isinstance(defaults, dict):
+        raise bad
+    return {"configs": configs, "defaults": defaults}
 
 
 def _write(project_root: str | Path, data: dict) -> None:
@@ -267,7 +335,7 @@ def put(
         return None
     root = _norm_project(project_root)
     with _LOCK:
-        data = _read(project_root)
+        data = _read(project_root, quarantine=True)
         configs = data["configs"]
         for cid, rec in configs.items():
             cfg = _record_to_config(project_root, cid, rec)
@@ -373,7 +441,7 @@ def set_default(project_root: str | Path, script: str, config_id: str | None) ->
     只能按脚本找配置。`runtime:` 素材**从不**读它——那些产物的资产 id 里自带冻结的配置引用。
     热会话 / 写回重放用的是会话自己冻结的 `worker.run`，与这里之后的变化无关。"""
     with _LOCK:
-        data = _read(project_root)
+        data = _read(project_root, quarantine=True)
         if config_id is None:
             if script not in data["defaults"]:
                 return

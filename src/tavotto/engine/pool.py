@@ -716,6 +716,7 @@ def _log_tail_from(path: Path, offset: int, n: int = 30, *, root: Path | None = 
     return "\n".join(text.splitlines()[-n:])
 
 
+_MODULE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
 _MISSING_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
 
 
@@ -870,6 +871,14 @@ def missing_module(text: str) -> str:
         # 交回原来的脚本错误与 traceback。
         return ""
     return name
+
+
+def structured_missing_module(value) -> str:
+    """worker 随错误带来的结构化缺包名（`error.missing_module`）。敏感运行的自由文本诊断被整段删掉，
+    `missing_module()` 的文本识别无从下手，靠它保住「缺依赖」分类；非法形状一律当没有。"""
+    if isinstance(value, str) and _MODULE_NAME_RE.fullmatch(value):
+        return value
+    return ""
 
 
 def is_frozen() -> bool:
@@ -1831,7 +1840,9 @@ class EngineWorker:
             code = ""
         # missing_dependency 优先于协议 code：worker 那边它只是一个普通的
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
-        mod = missing_module(f"{msg}\n{tb}")
+        mod = missing_module(f"{msg}\n{tb}") or (
+            structured_missing_module(err.get("missing_module")) if isinstance(err, dict) else ""
+        )
         if mod:
             exc = WorkerError(
                 f"脚本用到的 {mod} 在当前渲染环境里没有。"
@@ -2230,7 +2241,9 @@ def _worker_error(
     （有可执行出口：换成自己的环境）。前端认的是这个 code，不能因为换了控制面
     就变成一段没人能用的通用错误。
     """
-    mod = missing_module(f"{message}\n{traceback_text}")
+    mod = missing_module(f"{message}\n{traceback_text}") or structured_missing_module(
+        (extra or {}).get("missing_module")
+    )
     if mod:
         return WorkerError(
             f"脚本用到的 {mod} 在当前渲染环境里没有。"
