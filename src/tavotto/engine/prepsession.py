@@ -1323,8 +1323,9 @@ class SessionService:
         key = attempt_plan.plan_id
         if key not in sess.no_figure_hint:
             script = sess.plan.script
+            cwd_mode = (attempt_plan.workdir_decision or {}).get("mode")
             sess.no_figure_hint[key] = (
-                rasterhint.detect(sess.project_root, script) if script else None
+                rasterhint.detect(sess.project_root, script, cwd_mode) if script else None
             )
         hint = sess.no_figure_hint[key]
         return dict(hint) if hint else None

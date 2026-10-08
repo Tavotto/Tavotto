@@ -202,8 +202,9 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
       if (report.outcome.kind === 'execution_finished_no_figure') {
         const raster = report.no_figure_hint?.kind === 'raster_script' ? report.no_figure_hint : null
         if (raster) {
-          // 脚本自己用位图库画成了图片：说出原因，主按钮去素材库（现成入口），其余折叠进详情
-          return view('no_figure_raster', 'noFigureRaster', { ...v, library: RASTER_LIBRARY_NAME[raster.library] ?? raster.library }, { kind: 'open_assets' }, {
+          // 脚本自己用位图库画成了图片：说出原因；后端确认那张图落在素材库盘点范围内（in_project）才给「打开素材库」，
+          // 否则（绝对路径 / 沙盒 / 盘点不认的格式 / 判不出）素材库里找不到它，只给「知道了」。其余折叠进详情
+          return view('no_figure_raster', 'noFigureRaster', { ...v, library: RASTER_LIBRARY_NAME[raster.library] ?? raster.library }, raster.in_project === true ? { kind: 'open_assets' } : { kind: 'dismiss' }, {
             ghost: null,
             tone: 'mute',
             step: 1,

@@ -4801,7 +4801,7 @@ export interface PreparationReport {
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
-  no_figure_hint?: { kind: 'raster_script'; library: RasterLibrary } | null
+  no_figure_hint?: { kind: 'raster_script'; library: RasterLibrary; in_project?: boolean } | null
   result: {
     status: string
     error?: { code?: string; message?: string; reason?: string; module?: string } | null

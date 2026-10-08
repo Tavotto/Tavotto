@@ -33,6 +33,10 @@ from pathlib import Path
 
 from . import importscan
 
+# 素材盘点认的位图扩展名：单一出处，不在这里抄第二份
+from .project_refresh import IMG_EXT as _INVENTORY_EXT
+from .workdir import MODE_PROJECT, MODE_PROJECT_ROOT
+
 #: 会让 Tavotto 能捕获到 figure 的家族；脚本或其本地模块 import 了其中任何一个都不提示。
 MATPLOTLIB_FAMILY = frozenset(
     {"matplotlib", "pylab", "seaborn", "plotnine", "mpl_toolkits", "scienceplots", "proplot"}
@@ -91,6 +95,8 @@ class _FileScan(ast.NodeVisitor):
         self.imports_pil = False
         self.imports_mpl = False
         self.libs: list[str] = []
+        #: 每处「保存位图」调用的路径实参：字面量字符串原文；不是纯字符串字面量为 None
+        self.paths: list[str | None] = []
         self._save_calls: list[ast.Call] = []
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -140,6 +146,7 @@ class _FileScan(ast.NodeVisitor):
             if full is not None and full in _SAVE_FUNCS:
                 if _path_arg_is_image(call):
                     self.libs.append(_SAVE_FUNCS[full])
+                    self.paths.append(_literal_path(call))
                 continue
             if (
                 self.imports_pil
@@ -149,6 +156,7 @@ class _FileScan(ast.NodeVisitor):
                 and _path_arg_is_image(call)
             ):
                 self.libs.append(LIB_PILLOW)
+                self.paths.append(_literal_path(call))
 
     def _receiver_is_foreign_module(self, value: ast.expr) -> bool:
         """`np.save` / `torch.save` / `joblib.dump` 之类：接收者是 import 进来的、不是 PIL 的名字。"""
@@ -160,16 +168,35 @@ class _FileScan(ast.NodeVisitor):
         return False
 
 
+def _path_arg(call: ast.Call) -> ast.expr | None:
+    if call.args:
+        return call.args[0]
+    for kw in call.keywords:
+        if kw.arg in ("fp", "fname", "filename", "uri", "path", "im_path"):
+            return kw.value
+    return None
+
+
+def _literal_path(call: ast.Call) -> str | None:
+    node = _path_arg(call)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _lands_in_inventory(path: str | None) -> bool:
+    """字面量相对路径（不是绝对 / `~` / 带 `..` 往上跳 / Windows 盘符）且扩展名是素材盘点认的位图。"""
+    if not path or path.startswith(("/", "\\", "~")) or (len(path) > 1 and path[1] == ":"):
+        return False
+    parts = path.replace("\\", "/").split("/")
+    if ".." in parts:
+        return False
+    return Path(path).suffix.lower() in _INVENTORY_EXT
+
+
 def _path_arg_is_image(call: ast.Call) -> bool:
     """保存目标（这几个 API 的第一个实参）的字面量扩展名不是位图就 False；不是字面量按「可能是」True。"""
-    node: ast.expr | None = None
-    if call.args:
-        node = call.args[0]
-    else:
-        for kw in call.keywords:
-            if kw.arg in ("fp", "fname", "filename", "uri", "path", "im_path"):
-                node = kw.value
-                break
+    node = _path_arg(call)
     ext = _literal_ext(node)
     return ext is None or ext in _IMAGE_EXTS
 
@@ -189,9 +216,14 @@ def _literal_ext(node: ast.expr | None) -> str | None:
     return suffix or None
 
 
-def detect(root: str | Path, script: str) -> dict | None:
+def detect(root: str | Path, script: str, cwd_mode: str | None = None) -> dict | None:
     """脚本（含有界跟进的本地模块）是不是用位图库自己写了图片文件；是则回 `{"kind": "raster_script",
-    "library": <LIBRARIES 之一>}`，否则 None（含「看不全」）。读不了 / 解析不了一律 None，不抛。"""
+    "library": <LIBRARIES 之一>, "in_project": bool}`，否则 None（含「看不全」）。读不了 / 解析不了一律 None，不抛。
+
+    `in_project`：**能确定**那张图落在素材库盘点得到的地方才 True——运行目录模式是 `project` / `project_root`
+    （沙盒模式下相对路径写进会话沙盒，素材库看不见；模式未知也算不确定），且至少有一处保存的路径是字面量相对
+    路径、扩展名属于素材盘点集（`project_refresh.IMG_EXT`）。绝对路径 / `~` / `..` / 动态路径 / bmp·gif·webp 等
+    盘点不认的格式一律 False——原因句照样成立，只是不指向素材库。"""
     root_p = Path(root)
     try:
         scan = importscan.scan(root_p, script)
@@ -200,6 +232,7 @@ def detect(root: str | Path, script: str) -> dict | None:
     if scan.truncated or scan.problems or scan.dynamic:
         return None  # 反面判据（有没有 matplotlib）看不全：不说
     libs: list[str] = []
+    paths: list[str | None] = []
     for rel in scan.files:
         try:
             tree = ast.parse((root_p / rel).read_text(encoding="utf-8", errors="replace"))
@@ -211,11 +244,15 @@ def detect(root: str | Path, script: str) -> dict | None:
             return None
         fs.finish()
         libs += fs.libs
+        paths += fs.paths
     # 扫描只读 .py；编译扩展 / 命名空间包的内部看不见，已在 scan 里记入 problems 或不进 files，这里不再猜
     if not libs:
         return None
     # 多个库时取先出现的；顺序按 LIBRARIES 稳定化，保证同一份脚本总给同一个答案
+    in_project = cwd_mode in (MODE_PROJECT, MODE_PROJECT_ROOT) and any(
+        _lands_in_inventory(p) for p in paths
+    )
     for lib in LIBRARIES:
         if lib in libs:
-            return {"kind": "raster_script", "library": lib}
+            return {"kind": "raster_script", "library": lib, "in_project": in_project}
     return None

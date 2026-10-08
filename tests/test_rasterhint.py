@@ -161,3 +161,72 @@ def test_when_the_scan_cannot_see_everything_it_stays_silent(tmp_path):
         textwrap.dedent(PILLOW_SCRIPT) + "\nimport importlib\nimportlib.import_module(name)\n",
     )
     assert _lib(tmp_path) is None
+
+
+# ---- in_project：素材库按钮只在能确定那张图落进素材盘点范围时才给 ----
+
+
+def _hint(root: Path, body: str, cwd_mode: str | None = "project") -> dict:
+    _write(root, "make.py", body)
+    hint = rasterhint.detect(root, "make.py", cwd_mode)
+    assert hint is not None
+    return hint
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/tmp/out.png",
+        "~/out.png",
+        "../out.png",
+        "sub/../../out.png",
+        "C:/out.png",
+        "\\\\host\\share\\out.png",
+    ],
+)
+def test_saving_outside_the_project_keeps_the_reason_but_not_the_assets_button(tmp_path, target):
+    hint = _hint(tmp_path, f"from PIL import Image\nImage.new('L', (2, 2)).save({target!r})\n")
+    assert hint["library"] == "pillow"
+    assert hint["in_project"] is False
+
+
+def test_a_literal_relative_path_in_project_mode_is_in_project(tmp_path):
+    body = "from PIL import Image\nImage.new('L', (2, 2)).save('out/a.png')\n"
+    assert _hint(tmp_path, body, "project")["in_project"] is True
+    assert _hint(tmp_path, body, "project_root")["in_project"] is True
+
+
+@pytest.mark.parametrize("mode", ["sandbox", None])
+def test_sandbox_or_unknown_workdir_mode_is_never_in_project(tmp_path, mode):
+    body = "from PIL import Image\nImage.new('L', (2, 2)).save('out.png')\n"
+    assert _hint(tmp_path, body, mode)["in_project"] is False
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "from PIL import Image\nImage.new('L', (2, 2)).save(path)\n",
+        "from PIL import Image\nImage.new('L', (2, 2)).save(f'{name}.png')\n",
+    ],
+)
+def test_a_dynamic_path_cannot_be_confirmed_in_project(tmp_path, body):
+    assert _hint(tmp_path, body)["in_project"] is False
+
+
+@pytest.mark.parametrize("ext", ["bmp", "gif", "webp", "ppm", "ico", "pgm"])
+def test_formats_the_asset_inventory_does_not_scan_get_no_assets_button(tmp_path, ext):
+    hint = _hint(tmp_path, f"from PIL import Image\nImage.new('L', (2, 2)).save('out.{ext}')\n")
+    assert hint["library"] == "pillow"  # 原因句照样说
+    assert hint["in_project"] is False
+
+
+@pytest.mark.parametrize("ext", ["png", "jpg", "jpeg", "tif", "tiff", "PNG"])
+def test_formats_the_asset_inventory_scans_get_the_button(tmp_path, ext):
+    hint = _hint(tmp_path, f"from PIL import Image\nImage.new('L', (2, 2)).save('out.{ext}')\n")
+    assert hint["in_project"] is True
+
+
+def test_extension_set_is_the_inventorys_own_constant():
+    from tavotto.engine import project_refresh
+
+    assert rasterhint._INVENTORY_EXT is project_refresh.IMG_EXT

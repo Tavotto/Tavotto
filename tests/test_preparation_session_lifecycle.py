@@ -237,9 +237,35 @@ def test_a_pillow_script_without_figures_gets_a_raster_hint(client, tmp_path, fa
         "from PIL import Image\nImage.new('RGB', (4, 4)).save('out.png')\n",
     )
     assert final["outcome"]["kind"] == "execution_finished_no_figure"
-    assert final["no_figure_hint"] == {"kind": "raster_script", "library": "pillow"}
+    # 默认沙盒：相对路径写进会话沙盒，素材库看不见 → in_project False（只给原因句）
+    assert final["no_figure_hint"] == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": False,
+    }
     # 只是提示：事实与 outcome 不变
     assert final["facts"] == {"execution_finished": True, "figure_captured": False}
+
+
+def test_a_pillow_script_run_in_project_mode_is_in_project(client, tmp_path, fake_pool, sessions):
+    from tavotto.engine import workdir
+
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    workdir.set_mode(root, "project")
+    fake_pool["build_resp"] = lambda: {
+        "ok": True,
+        "stems": {},
+        "descriptors": [],
+        "runtime": {"pid": 1},
+    }
+    final = _no_figure_report(
+        client,
+        root,
+        "from PIL import Image\nImage.new('RGB', (4, 4)).save('out.png')\n",
+    )
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"]["in_project"] is True
 
 
 def test_a_matplotlib_script_without_figures_gets_no_hint(client, tmp_path, fake_pool, sessions):

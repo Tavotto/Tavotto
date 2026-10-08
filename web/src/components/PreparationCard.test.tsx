@@ -497,7 +497,7 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
   it('跑完没图、但脚本自己用位图库写了图片：一句话说原因 + 一个主按钮去素材库，其余折叠在详情', async () => {
     await mount()
     useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
-    await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow' } }))
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
     expect(primary()?.textContent).toBe('打开素材库')
@@ -508,6 +508,21 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(details()?.querySelector('[data-prep-nofigure-why]')).toBeNull()
     await act(async () => primary()!.click())
     expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  it.each([
+    ['in_project 为假', { kind: 'raster_script' as const, library: 'pillow' as const, in_project: false }],
+    ['老后端没有 in_project', { kind: 'raster_script' as const, library: 'pillow' as const }],
+  ])('位图提示但后端没确认图落在素材库范围内（%s）：原因句照说，主按钮只有「知道了」', async (_name, hint) => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+    expect(panel().dataset.prepState).toBe('no_figure_raster')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
+    expect(primary()?.textContent).toBe('知道了')
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().leftTab).toBe('layers')
     expect(useUiStore.getState().guideCard).toBe('closed')
   })
 
