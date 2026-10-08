@@ -358,6 +358,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   reset: (script) => {
     const st = get().byScript[script]
     if (!st || isBusyPhase(st.phase)) return
+    gatedQueues.delete(script) // 收起 = 不再等这道门
     set((s) => {
       const byScript = { ...s.byScript }
       delete byScript[script]
@@ -368,16 +369,90 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   rerunGated: (phase, script) => {
     const scripts = script ? [script] : Object.keys(get().byScript)
     for (const name of scripts) {
-      if (get().byScript[name]?.phase === phase) void get().run(name, get().byScript[name].runConfig)
+      const row = get().byScript[name]
+      if (row?.phase !== phase) continue
+      // 批量重跑停在门上时留下了「还没跑完的配置」队列（含停在门上的那份）：按序续跑，不只重跑最后那一行
+      const queued = takeGatedQueue(name, get().epoch, row.runConfig ?? null)
+      if (queued) void runConfigsInOrder(name, queued)
+      else void get().run(name, row.runConfig)
     }
   },
 
   clear: () => {
     // 换项目：参数草稿（可能含令牌）属于上一个项目的脚本，一并丢掉
     useScriptArgvStore.getState().clear()
+    gatedQueues.clear()
     set((s) => ({ byScript: {}, epoch: s.epoch + 1 }))
   },
 }))
+
+/**
+ * 批量重跑（`runConfigsInOrder`）中途撞上门时，把「停在门上的那份 + 后面还没跑的」按脚本记下来。
+ * `byScript` 一个脚本只存一行，门后的下一份会盖掉停在门上的那份，所以队列单独记；门有了答案时
+ * `rerunGated` 取回续跑（Codex #816 r4221169169）。只在同一代际、且队首就是停在门上的那份配置时才认。
+ */
+const gatedQueues = new Map<string, { epoch: number; configs: Array<string | null> }>()
+
+function takeGatedQueue(script: string, epoch: number, rowConfig: string | null): Array<string | null> | null {
+  const q = gatedQueues.get(script)
+  gatedQueues.delete(script)
+  if (!q || q.epoch !== epoch || q.configs.length === 0 || q.configs[0] !== rowConfig) return null
+  return q.configs
+}
+
+/** 等这个脚本离开忙态（换项目 = `clear()` 清了行，也算离开）；订阅一次性，不轮询 */
+function whenNotBusy(script: string): Promise<void> {
+  const busy = () => {
+    const st = useScriptRunStore.getState().byScript[script]
+    return !!st && isBusyPhase(st.phase)
+  }
+  if (!busy()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const off = useScriptRunStore.subscribe(() => {
+      if (busy()) return
+      off()
+      resolve()
+    })
+  })
+}
+
+/**
+ * 依次重跑同一个脚本的几份运行配置（答案管理一次批量提交涉及多份配置时用）。
+ * `run()` 对同脚本忙态直接 no-op（同脚本防并发），所以**不能**在循环里一口气全发：第一个同步把行置成
+ * `starting_runtime` 后，后面的都会被闸挡掉、永远没探测（Codex #816 P1）。这里每一份：先等脚本离开忙态
+ * （含上一份在 `INPUT_REMAP_CHANGED` 里自己重跑的那次）、再 `run`、再等它真正结束，然后才轮到下一份。
+ * 某一份失败不挡后面的（`run` 本身不抛，失败落在该行的 `error`）；返回每一份的结果，调用方据此说出失败。
+ * 中途换项目（`epoch` 变了）就不再发后面的：不在新项目里重跑同名脚本。
+ */
+export async function runConfigsInOrder(
+  script: string,
+  configs: ReadonlyArray<string | null>,
+): Promise<Array<{ config: string | null; failed: boolean }>> {
+  const epoch = useScriptRunStore.getState().epoch
+  const results: Array<{ config: string | null; failed: boolean }> = []
+  for (let i = 0; i < configs.length; i++) {
+    const config = configs[i]
+    await whenNotBusy(script)
+    if (useScriptRunStore.getState().epoch !== epoch) break
+    let failed = false
+    try {
+      await useScriptRunStore.getState().run(script, config)
+      await whenNotBusy(script)
+      const row = useScriptRunStore.getState().byScript[script]
+      if (isGatePhase(row?.phase) && useScriptRunStore.getState().epoch === epoch) {
+        // 停在门上（缺的是用户的一个决定，不是失败）：这份与后面的先挂起，门有了答案由 rerunGated 续跑
+        gatedQueues.set(script, { epoch, configs: configs.slice(i) })
+        results.push({ config, failed: false })
+        break
+      }
+      failed = !!row?.error
+    } catch {
+      failed = true
+    }
+    results.push({ config, failed })
+  }
+  return results
+}
 
 // 改指表 / 环境变了（ADR 0106）：envStore 的两个代际——作废按旧条件捕获的结果、重跑因「找不到数据」失败的脚本
 useEnvStore.subscribe((state, prev) => {
