@@ -166,6 +166,45 @@ def test_file_dialog_only_usage_is_recognised(tmp_path):
     )
 
 
+def test_file_dialog_aliases_and_root_boilerplate_are_recognised(tmp_path):
+    assert _tk_only(
+        tmp_path,
+        "import tkinter as tk\nfrom tkinter import filedialog as fd\nroot = tk.Tk()\n"
+        "root.withdraw()\nroot.attributes('-topmost', True)\n"
+        "p = fd.asksaveasfilename(parent=root)\nroot.update()\nroot.destroy()\n",
+    )
+    assert _tk_only(tmp_path, "from tkinter.filedialog import askdirectory as pick\npick()\n")
+    assert _tk_only(
+        tmp_path,
+        "from tkinter import Tk\nfrom tkinter.filedialog import askopenfilenames\n"
+        "Tk().withdraw()\nfs = askopenfilenames()\n",
+    )
+    assert _tk_only(tmp_path, "import tkinter.filedialog\ntkinter.filedialog.askopenfile()\n")
+
+
+def test_dialogs_without_a_file_picker_never_claim_a_path_is_enough(tmp_path):
+    # 只有提示框：写路径去不掉 tkinter
+    assert not _tk_only(
+        tmp_path, "from tkinter import messagebox\nmessagebox.showerror('t', 'm')\n"
+    )
+    assert not _tk_only(
+        tmp_path, "from tkinter import simpledialog\nsimpledialog.askstring('t', 'm')\n"
+    )
+    assert not _tk_only(tmp_path, "from tkinter import Tk\nTk().update()\n")
+    assert not _tk_only(tmp_path, "from tkinter import filedialog\n")  # 只 import 没调用
+    # 文件对话框 + 提示框混用 / 其他 Tk API
+    assert not _tk_only(
+        tmp_path,
+        "from tkinter import filedialog, messagebox\nf = filedialog.askopenfilename()\n"
+        "messagebox.showinfo('t', f)\n",
+    )
+    assert not _tk_only(
+        tmp_path,
+        "import tkinter as tk\nfrom tkinter import filedialog\nr = tk.Tk()\nr.title('x')\n"
+        "filedialog.askopenfilename()\n",
+    )
+
+
 def test_tk_widgets_or_tkagg_or_unknown_never_claim_a_path_is_enough(tmp_path):
     assert not _tk_only(
         tmp_path, "import tkinter as tk\nr = tk.Tk()\ntk.Label(r).pack()\nr.mainloop()\n"
@@ -184,7 +223,9 @@ def test_tk_widgets_or_tkagg_or_unknown_never_claim_a_path_is_enough(tmp_path):
 
 def test_prep_payload_carries_tk_file_dialog_only_by_what_the_script_does(tmp_path):
     err = {"code": "missing_dependency", "module": "tkinter", "install_route": "stdlib_missing"}
-    (tmp_path / "s.py").write_text("from tkinter import filedialog\n", encoding="utf-8")
+    (tmp_path / "s.py").write_text(
+        "from tkinter import filedialog\nfiledialog.askopenfilename()\n", encoding="utf-8"
+    )
     (tmp_path / "w.py").write_text("import tkinter as tk\ntk.Tk().mainloop()\n", encoding="utf-8")
     only = _observe(err, str(tmp_path), "s.py")
     widgets = _observe(err, str(tmp_path), "w.py")
