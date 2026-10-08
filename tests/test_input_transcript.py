@@ -322,3 +322,39 @@ def test_when_the_old_binding_cannot_be_invalidated_the_execution_is_not_bound(
 
     with pytest.raises(inputtranscript.StaleTranscriptError):
         inputbroker.finished(_W(), [_rec(1, "new")])
+
+
+class _Worker:
+    def __init__(self, root):
+        self.figures_dir = str(root)
+        self.script_name = "s.py"
+        self.out_dir = None
+        self.build_failed = False
+
+
+def test_an_edit_during_a_running_build_makes_its_late_transcript_unusable(tmp_path):
+    # r4221675644：build 在飞 → 改答案（forget）→ 旧 build 事后才绑定 → 冷重放不能用旧值
+    w = _Worker(tmp_path)
+    with inputbroker.serving(w):  # 进门取基线
+        inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)  # 用户改答案
+    inputbroker.finished(w, [_rec(1, "old")])  # 旧 build 事后绑定
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_the_reader_ignores_a_transcript_whose_basis_does_not_match(tmp_path):
+    # r4221675644：不依赖写入顺序——即使旧基线的转录被写进了盘，读者也不认
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is not None
+    path = inputtranscript.store_path(tmp_path)
+    data = json.loads(path.read_text("utf-8"))
+    data["generations"] = {"s.py": "g_changed"}
+    path.write_text(json.dumps(data), "utf-8")
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_a_single_configuration_edit_only_invalidates_that_configuration(tmp_path):
+    inputtranscript.bind(tmp_path, "s.py", "rc_a", [_rec(1, "a")])
+    inputtranscript.bind(tmp_path, "s.py", "rc_b", [_rec(1, "b")])
+    inputtranscript.forget(tmp_path, "s.py", run_config="rc_a", all_configs=False)
+    assert inputtranscript.lookup(tmp_path, "s.py", "rc_a") is None
+    assert inputtranscript.lookup(tmp_path, "s.py", "rc_b") is not None

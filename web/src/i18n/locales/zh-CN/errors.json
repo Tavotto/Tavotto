@@ -227,6 +227,7 @@
     "script_input_timeout": "脚本在等输入「{{prompt}}」，等了 10 分钟没有回答，按输入结束处理后脚本失败了。重新运行并作答即可。",
     "script_needs_input": "脚本需要输入：「{{prompt}}」。请在 Tavotto 界面里运行一次这个脚本并作答，答案会按项目记住。",
     "script_input_stream_gone": "事件流已经断开，正在重新连接。",
+    "script_input_transcript_failed": "没能作废这个脚本的旧执行记录，答案没有改动，请稍后重试。",
     "missing_input": "脚本要读取的数据文件找不到：{{error}}",
     "input_remap_chosen_invalid": "这个位置用不了：{{path}}。请选一个存在的文件或文件夹。",
     "input_remap_not_found_in_dir": "文件夹 {{path}} 里没有 {{name}}。请选它所在的那个文件夹，或直接选这个文件。",
