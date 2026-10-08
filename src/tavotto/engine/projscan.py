@@ -445,14 +445,17 @@ def _targets_of(
         target["session_target"] = body
         targets.append(target)
     # 「已连接」= 登记了且真有可编辑的图（`_linked_scripts`）；只在注册表里、什么都打不开的仍是待准备的目标
+    if not linkage_known:
+        # 「已连接」没查全（预算 / 取消 / 超时耗尽，任何原因、任何待准备个数）：每个目标的连接性都是「未知」（None），
+        # 不是已连接也不是未连接——不派生 single / ambiguous / connected，不给准备动作（#819 r4221160446）
+        for t in targets:
+            t["linked"] = None
+        return targets, None, "incomplete"
     linked = {t["script"] for t in targets if t["registered"]} if linked is None else linked
     for t in targets:
         t["linked"] = t["script"] in linked
     pending = [t for t in targets if t["role"] == ROLE_PLOT and not t["linked"]]
     unknown = any(t["role"] == ROLE_UNKNOWN for t in targets)
-    if len(pending) == 1 and not unknown and not linkage_known:
-        # 「已连接」没查全（预算 / 取消 / 超时耗尽）：这一个「未连接」可能只是没查到——不派生 single、不给准备动作
-        return targets, None, "incomplete"
     if len(pending) == 1 and not unknown:
         # 还有未核验的 unknown 目标时不替用户挑默认（它可能才是要跑的那个）：落到下面的 ambiguous
         return targets, pending[0]["script"], "single"
@@ -738,11 +741,11 @@ def scan(
     for _path, kind in assets:
         asset_kinds[kind] = asset_kinds.get(kind, 0) + 1
 
-    # 已停止的遍历不再起新的文件系统发现：停了就退回「注册表里有」的粗判（不碰磁盘）
+    # 已停止的遍历不再起新的文件系统发现：停了就是连接性未知（不碰磁盘，也不拿「注册表里有」冒充已连接）
     if budget.stop_reason() is None:
         linked, linkage_known = _linked_scripts(root, budget)
     else:
-        linked, linkage_known = {i["script"] for i in items if i["registered"]}, False
+        linked, linkage_known = set(), False
     linkage_known = linkage_known and budget.stop_reason() is None
     targets, default_target, choice = _targets_of(root, items, linked, budget, linkage_known)
     script_for_env = default_target or (targets[0]["script"] if len(targets) == 1 else None)
@@ -788,6 +791,7 @@ def scan(
         "sigs": sorted((rel, sig) for rel, (sig, _seen) in cache.items()),
         "assets": sorted((p.relative_to(root).as_posix(), k) for p, k in assets),
         "linked": sorted(linked),
+        "linkage_known": linkage_known,
         "env": [(c["id"], c["status"], c["fingerprint"]) for c in env["candidates"]],
         "deps": deps["files"],
         "issues": [(i["code"], i["severity"], i.get("path", "")) for i in issues],

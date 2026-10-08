@@ -1382,3 +1382,45 @@ def test_budget_expiring_inside_isfile_is_scan_incomplete_not_a_single_target(
     assert report["phase"] != "awaiting_confirmation"
     assert report["outcome"].get("code") == "scan_incomplete"
     assert not any(a["kind"] == "prepare" for a in report["actions"])
+
+
+@pytest.mark.parametrize("pending", [0, 1, 3])
+@pytest.mark.parametrize("stop", ["after_parse", "during_check"])
+def test_any_incomplete_linkage_check_is_incomplete_whatever_the_pending_count(
+    tmp_path, monkeypatch, pending, stop
+):
+    """#819 r4221160446：连接性没查全（预算在解析后 / 检查中耗尽）时，无论未连接绘图脚本是 0 / 1 / 多个，
+    target_choice 都是 incomplete、phase 是 scan_incomplete，不得是 connected / single / ambiguous，
+    逐项 linked 是「未知」（None）而不是临时的 True。"""
+    root = _project(tmp_path)
+    scripts = {}
+    for n in range(max(pending, 1) + (1 if pending == 0 else 0)):
+        name = f"f{n}.py"
+        _write(root, name, PLOT.format(stem=f"f{n}"))
+        scripts[name] = {"entry": "__main__", "stems": [f"f{n}"]}
+        _asset(root, f"f{n}.pdf")
+    _write(root, "tavotto_registry.json", json.dumps({"version": 1, "scripts": scripts}))
+    budget = scanbudget.Budget()
+    done = set(list(scripts)[: len(scripts) - pending])  # pending 个脚本没查到连接
+
+    if stop == "after_parse":
+        real_assets = projscan.project_refresh.iter_assets
+
+        def assets_then_stop(*a, **k):
+            found = list(real_assets(*a, **k))
+            budget._stopped = scanbudget.ISSUE_TIME  # 脚本解析完、连接检查开始前预算耗尽
+            return found
+
+        monkeypatch.setattr(projscan.project_refresh, "iter_assets", assets_then_stop)
+    else:
+        # 检查途中耗尽：返回已查到的部分（complete=False）
+        monkeypatch.setattr(projscan, "_linked_scripts", lambda r, b: (done, False))
+
+    report = projscan.scan(root, budget=budget)
+
+    assert report["target_choice"] == "incomplete"
+    assert report["phase"] == "action_required"
+    assert report["outcome"].get("code") == "scan_incomplete"
+    assert report["default_target"] is None
+    assert not any(a["kind"] == "prepare" for a in report["actions"])
+    assert all(t["linked"] is None for t in report["targets"])
