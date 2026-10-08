@@ -25,6 +25,7 @@ import pytest
 from tavotto import app as m
 from tavotto.engine import (
     discover as engine_discover,
+    figcapture,
     prepsession,
     probe as engine_probe,
     projectenv as engine_projectenv,
@@ -1367,13 +1368,13 @@ def test_budget_expiring_inside_isfile_is_scan_incomplete_not_a_single_target(
     _registered_fig(root)
     _asset(root, "fig.pdf")
     budget = scanbudget.Budget()
-    real = projscan.figcapture.find_original_artifact
+    real = figcapture.find_original_artifact
 
     def expiring(project_root, stem, *, isfile=os.path.isfile):
         budget._stopped = scanbudget.ISSUE_TIME  # 查原件的途中预算用尽，谓词报「没找到」
         return None
 
-    monkeypatch.setattr(projscan.figcapture, "find_original_artifact", expiring)
+    monkeypatch.setattr(figcapture, "find_original_artifact", expiring)
 
     report = projscan.scan(root, budget=budget)
 
