@@ -179,6 +179,7 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           dropped={0}
           open={resultsOpen}
           onOpenChange={setResultsOpen}
+          onAdded={(d) => useProjectPreparationStore.getState().noteEditing(entry.key, d.asset_id)}
         />
       )}
     </section>

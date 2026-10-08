@@ -205,15 +205,17 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     if (e.report && e.report.session_id !== report.session_id && !opts?.session) return
     if (!newer(e.report, report)) return
     const before = e.report
+    // 动态 import 之后项目 / 代可能已经换了：回调带着发起时的归属，落地前复核
+    const owner: Owner = { epoch: get().epoch, pj: e.pj }
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
     patch(key, () => ({ report, connection: 'ok' }))
-    if (report.phase === 'completed' && before?.phase !== 'completed') void onCompleted(report)
+    if (report.phase === 'completed' && before?.phase !== 'completed') void onCompleted(report, owner)
     // 同一会话里的依赖作业刚装完（T09b）：画布上因「要先准备依赖」停着的渲染与原授权框作答之后一样重排——同一份
     // 需求两个展示面，下游效果只有一种（重排的是渲染请求，不是脚本首跑；首跑仍由用户点报告里的 run）
     const depDone = (r: PreparationReport | null) =>
       r?.provider.dependency?.state === 'done' ? r.provider.dependency.plan_id : null
     if (before?.session_id === report.session_id && depDone(report) && depDone(report) !== depDone(before)) {
-      void onDependencyPrepared()
+      void onDependencyPrepared(owner)
     }
   }
 
@@ -291,7 +293,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             rejection: null,
             failure: null,
             pending: null,
-            editing: prev?.editing ?? [],
+            // 「进入编辑」的记录属于那份目标的结果：换了参数就是另一批图，旧图的编辑不许混进新结果的判断
+            editing: sameTarget ? (prev?.editing ?? []) : [],
           },
         },
       }))
@@ -416,7 +419,16 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
  * 一次尝试成功：素材库与画布上同一脚本的图要看到新结果（与试运行成功后同一串刷新）。只刷新清单与渲染态，
  * **不执行**：已经在画布上的这些图按热会话重画，脚本不再跑。
  */
-async function onCompleted(report: PreparationReport): Promise<void> {
+interface Owner {
+  epoch: number
+  pj: string | null
+}
+
+/** 动态 import 回来之后，发起这次回调的项目 / 代还是当前的吗？不是就整个丢掉（A 的素材 id 不许去动 B 的 store） */
+const stillOwned = (o: Owner): boolean =>
+  useProjectPreparationStore.getState().epoch === o.epoch && currentProjectId() === o.pj
+
+async function onCompleted(report: PreparationReport, owner: Owner): Promise<void> {
   const ids = (report.captured ?? []).map((d) => d.asset_id).filter(Boolean)
   if (!ids.length) return
   try {
@@ -425,6 +437,7 @@ async function onCompleted(report: PreparationReport): Promise<void> {
       import('@/store/assetStore'),
       import('@/store/renderStore'),
     ])
+    if (!stillOwned(owner)) return
     const runtime = useRuntimeAssetStore.getState()
     runtime.invalidate(ids)
     runtime.bumpPreview(ids)
@@ -437,9 +450,10 @@ async function onCompleted(report: PreparationReport): Promise<void> {
 }
 
 /** 会话里的依赖准备装完了：画布上停在依赖门上的渲染重排（与 `depRepairStore` 装完之后同一个出口） */
-async function onDependencyPrepared(): Promise<void> {
+async function onDependencyPrepared(owner: Owner): Promise<void> {
   try {
     const { useRenderStore } = await import('@/store/renderStore')
+    if (!stillOwned(owner)) return
     useRenderStore.getState().retryEnvironmentFailures()
   } catch {
     /* 尽力而为：下一次编辑 / 手动重试会补上 */

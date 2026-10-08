@@ -375,6 +375,19 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
   })
 })
 
+describe('多张图的结果对话框', () => {
+  it('从对话框里加进画布的图也记入编辑记录（面板才会往前走）', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click()) // 多张：打开结果对话框
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    expect(add.length).toBe(3)
+    await act(async () => add[1].click())
+    expect(vi.mocked(addRuntimePanelToCanvas)).toHaveBeenCalledWith(fig('b'))
+    expect(useProjectPreparationStore.getState().entries['script:plot.py'].editing).toEqual(['runtime:plot.py#b'])
+  })
+})
+
 describe('运行时 input：同一请求只有一个展示面', () => {
   const req = { id: 'req-1', script: 'plot.py', index: 1, input_kind: 'input' as const, prompt: '选哪个？', stdout_tail: '1) a\n2) b' }
 
