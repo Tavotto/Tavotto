@@ -246,7 +246,7 @@
 - **登记**（`engine/runconfig.py`）：本机 Tavotto 数据目录 `runconfigs/<项目摘要>.json`，不写用户项目（只读项目照样能用）。
   同 (脚本, argv, 敏感标记) 复用引用，改任一 token = 新引用（"编辑 = 新修订"，在途 spec 与旧产物不变）。`sensitive=True` 只活在进程内存，
   文件里只有占位；格式版本高于本读者 → `run_config_unsupported`。错误码：`invalid_argv`(400) / `run_config_missing` /
-  `run_config_secret_missing` / `run_config_unsupported` / `run_config_unreadable`(409)。登记文件**不存在**才算空；存在却读不出 / 格式坏 = `run_config_unreadable`（不当空、不回落空 argv）；写路径遇坏文件先改名备份（`.corrupt-*`）再从空写起，不静默覆盖原文。
+  `run_config_secret_missing` / `run_config_unsupported` / `run_config_unreadable`(409)。登记文件**不存在**才算空；存在却读不出 / 格式坏（含语法合法但内容不符 `put` 写出的结构：version、configs 每条的字段类型、defaults 的键值，整份校验，`runconfig._schema_ok`）= `run_config_unreadable`（不当空、不回落空 argv）；写路径遇坏文件先改名备份（`.corrupt-*`）再从空写起，不静默覆盖原文。
 - **谁读哪份配置**：`runtime:` 素材读资产 id 里冻结的引用（`runtimeasset.run_selection`）；热会话 / 写回重放读 `worker.run`
   （`pool.one_shot(run=)`）；磁盘面板（用户脚本自己写出的 `fig.pdf`）没有 Tavotto 的执行产物可绑，读脚本最近一次**明确运行**的配置
   （`runconfig.set_default`，无参数运行会清掉它）。**不存在**"项目最新配置"这个读取点。

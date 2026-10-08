@@ -100,30 +100,38 @@ def resolve(asset_id: str, registry) -> dict | None:
     """
     if not is_runtime_id(asset_id):
         return None
-    for script, info in registry.entries().items():
-        for stem in info.get("stems", ()):
-            try:
-                base = figcapture.runtime_asset_id(script, stem)
-            except ValueError:
-                continue  # 注册表里的坏条目不该让整个解析炸掉
-            if asset_id == base:
-                run_config = ""
-            elif asset_id.startswith(
-                base + figcapture.RUN_CONFIG_SEP
-            ) and _RUN_CONFIG_TAIL.fullmatch(asset_id[len(base) + 1 :]):
-                # T03：`<base>~rc_…`——同一 (script, stem) 的另一份运行配置。仍是"拿现登记的对重算比对"，
-                # 不是反解：后缀只能是 `rc_` + 12 位十六进制，别的形状一律不认。
-                run_config = asset_id[len(base) + 1 :]
-            else:
-                continue
-            return {
-                "script": script,
-                "stem": stem,
-                "entry": info.get("entry", "main"),
-                "cost": info.get("cost", "medium"),
-                # 没给参数的素材，返回形状与 T03 之前逐键相同（键只在有配置时才出现）
-                **({"run_config": run_config} if run_config else {}),
-            }
+    entries = registry.entries()
+    # 两趟：先整串精确匹配（无参数身份），再认 `~rc_…` 后缀。stem 本身可以合法地以 `~rc_<12 hex>` 结尾
+    # （`plot~rc_0123456789ab`），它的无参数 id 与 stem `plot` 的带参数 id 逐字相同；一趟扫描按注册表顺序
+    # 先遇到谁就判给谁，会把无参数面板解析成 `plot` + 运行配置引用。整串先行 = 已登记 stem 永远赢。
+    # 反向歧义（带参数的 `plot` 面板被当成无参数长 stem）由注册表在装载时拒绝同脚本两者并存来防住。
+    for suffix_pass in (False, True):
+        for script, info in entries.items():
+            for stem in info.get("stems", ()):
+                try:
+                    base = figcapture.runtime_asset_id(script, stem)
+                except ValueError:
+                    continue  # 注册表里的坏条目不该让整个解析炸掉
+                if not suffix_pass:
+                    if asset_id != base:
+                        continue
+                    run_config = ""
+                elif asset_id.startswith(
+                    base + figcapture.RUN_CONFIG_SEP
+                ) and _RUN_CONFIG_TAIL.fullmatch(asset_id[len(base) + 1 :]):
+                    # T03：`<base>~rc_…`——同一 (script, stem) 的另一份运行配置。仍是"拿现登记的对重算比对"，
+                    # 不是反解：后缀只能是 `rc_` + 12 位十六进制，别的形状一律不认。
+                    run_config = asset_id[len(base) + 1 :]
+                else:
+                    continue
+                return {
+                    "script": script,
+                    "stem": stem,
+                    "entry": info.get("entry", "main"),
+                    "cost": info.get("cost", "medium"),
+                    # 没给参数的素材，返回形状与 T03 之前逐键相同（键只在有配置时才出现）
+                    **({"run_config": run_config} if run_config else {}),
+                }
     return None
 
 

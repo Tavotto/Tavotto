@@ -282,10 +282,49 @@ def _parse(raw: str) -> dict:
         raise RunConfigUnsupported(
             "这份运行配置是更新版本的 Tavotto 写的，当前版本读不懂", reason="newer_format"
         )
+    if "version" in data and (
+        not isinstance(version, int) or isinstance(version, bool) or version < 1
+    ):
+        raise bad
     configs, defaults = data.get("configs", {}), data.get("defaults", {})
-    if not isinstance(configs, dict) or not isinstance(defaults, dict):
+    if not _schema_ok(configs, defaults):
         raise bad
     return {"configs": configs, "defaults": defaults}
+
+
+def _is_number(x) -> bool:
+    return (
+        isinstance(x, (int, float))
+        and not isinstance(x, bool)
+        and x == x
+        and abs(x) != float("inf")
+    )
+
+
+def _schema_ok(configs, defaults) -> bool:
+    """整份登记的结构校验——与 `put` 实际写出的格式一一对应。语法合法但内容坏的登记（如
+    `"defaults": {"s.py": 123}`）不能靠各读取点各自"碰到再跳过"：那会把坏默认当成没有默认、按空 argv
+    重跑。任何一处不符 = 整份不可信 = `RunConfigUnreadable`。
+    默认指向**不存在**的配置 id 不在此列（结构合法，由 `get` 报 `run_config_missing`）。"""
+    if not isinstance(configs, dict) or not isinstance(defaults, dict):
+        return False
+    for cid, rec in configs.items():
+        if not isinstance(cid, str) or not cid.startswith(ID_PREFIX) or not isinstance(rec, dict):
+            return False
+        if not isinstance(rec.get("script"), str) or not isinstance(rec.get("source"), str):
+            return False
+        if not isinstance(rec.get("sensitive"), bool) or not _is_number(rec.get("created_at")):
+            return False
+        argv = rec.get("argv")
+        if rec["sensitive"]:
+            if argv is not None:  # 敏感配置的 argv 绝不落盘
+                return False
+        elif not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
+            return False
+    for script, cid in defaults.items():
+        if not isinstance(script, str) or not isinstance(cid, str) or not cid.startswith(ID_PREFIX):
+            return False
+    return True
 
 
 def _write(project_root: str | Path, data: dict) -> None:

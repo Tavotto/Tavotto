@@ -267,6 +267,52 @@ class TestRunConfigStore:
         with pytest.raises(runconfig.RunConfigUnreadable):
             runconfig.selection(tmp_path, cfg.id)
 
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda d, c: d["defaults"].__setitem__("s.py", 123),
+            lambda d, c: d["defaults"].__setitem__("s.py", None),
+            lambda d, c: d["defaults"].__setitem__("s.py", ["rc_x"]),
+            lambda d, c: d["defaults"].__setitem__("s.py", "not_an_rc_id"),
+            lambda d, c: d.__setitem__("version", "1"),
+            lambda d, c: d.__setitem__("version", True),
+            lambda d, c: d.__setitem__("version", 0),
+            lambda d, c: d["configs"].__setitem__("bad_key", d["configs"][c]),
+            lambda d, c: d["configs"].__setitem__(c, "not a record"),
+            lambda d, c: d["configs"][c].pop("script"),
+            lambda d, c: d["configs"][c].__setitem__("script", 7),
+            lambda d, c: d["configs"][c].pop("argv"),
+            lambda d, c: d["configs"][c].__setitem__("argv", "--k 1"),
+            lambda d, c: d["configs"][c].__setitem__("argv", ["ok", 3]),
+            lambda d, c: d["configs"][c].__setitem__("sensitive", "yes"),
+            lambda d, c: d["configs"][c].__setitem__("sensitive", True),  # 敏感配置的 argv 不该落盘
+            lambda d, c: d["configs"][c].__setitem__("source", None),
+            lambda d, c: d["configs"][c].__setitem__("created_at", "now"),
+            lambda d, c: d["configs"][c].__setitem__("created_at", True),
+        ],
+    )
+    def test_a_syntactically_valid_but_malformed_store_is_unreadable_too(self, tmp_path, mutate):
+        cfg = runconfig.put(tmp_path, "s.py", ["a"])
+        runconfig.set_default(tmp_path, "s.py", cfg.id)
+        path = runconfig.store_path(tmp_path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        mutate(data, cfg.id)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.default_selection(tmp_path, "s.py")  # 不许回 None（= 静默空 argv 重跑）
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.get(tmp_path, cfg.id)
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.selection(tmp_path, cfg.id)
+        runconfig.put(tmp_path, "s.py", ["b"])  # 写路径：备份后重建
+        assert list(path.parent.glob(path.name + ".corrupt-*"))
+
+    def test_a_default_pointing_at_an_unknown_id_is_missing_not_unreadable(self, tmp_path):
+        runconfig.put(tmp_path, "s.py", ["a"])
+        runconfig.set_default(tmp_path, "s.py", "rc_ffffffffffff")
+        with pytest.raises(runconfig.RunConfigMissing):
+            runconfig.default_selection(tmp_path, "s.py")
+
     def test_a_non_utf8_store_is_unreadable_not_missing(self, tmp_path):
         runconfig.put(tmp_path, "s.py", ["a"])
         runconfig.store_path(tmp_path).write_bytes(b"\xff\xfe\x00bad")
