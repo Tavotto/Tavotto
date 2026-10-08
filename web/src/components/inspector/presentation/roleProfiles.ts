@@ -26,7 +26,7 @@ const HAS_MARKER = (read: (prop: string) => unknown): boolean => {
 const FILLED = (read: (prop: string) => unknown): boolean => read('fill') !== false
 
 /**
- * 有花纹（`hatch` 非空）才有意义的从属字段共用这一条：花纹颜色与花纹线宽在没有花纹时
+ * 有花纹（`hatch` 非空）才有意义的从属字段共用这一条：花纹线宽在没有花纹时
  * 没有东西可染、可加粗。`hatch` 是脚本里的开集字符串（`''` / `'/o'`…），只认空与否
  */
 const HAS_HATCH = (read: (prop: string) => unknown): boolean => {
@@ -144,22 +144,22 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
     more: ['label', 'visible'],
   },
-  // 纹理三项（图案 · 颜色 · 线宽）挨在一起；颜色与线宽只在有花纹时出现。
-  // 颜色（matplotlib 3.11+）与线宽（3.10+）是引擎按版本发的字段：旧版本没有这两行，
-  // 版面里点名而没有字段的 prop 本来就不画
+  // 纹理两项（图案 · 线宽）挨在一起；线宽只在有花纹时出现。
+  // 线宽（matplotlib 3.10+）是引擎按版本发的字段：旧版本没有这一行，
+  // 版面里点名而没有字段的 prop 本来就不画。纹理颜色未纳入（维护者裁决，见 PR 说明）
   bar_series: {
-    primary: ['label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatchcolor', 'hatch_linewidth', 'alpha'],
+    primary: ['label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatch_linewidth', 'alpha'],
     more: ['bar_width', 'visible'],
-    visibleWhen: { hatchcolor: HAS_HATCH, hatch_linewidth: HAS_HATCH },
+    visibleWhen: { hatch_linewidth: HAS_HATCH },
   },
   bar: {
-    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatchcolor', 'hatch_linewidth', 'alpha'],
+    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatch_linewidth', 'alpha'],
     more: ['visible'],
-    visibleWhen: { hatchcolor: HAS_HATCH, hatch_linewidth: HAS_HATCH },
+    visibleWhen: { hatch_linewidth: HAS_HATCH },
   },
   patch: {
     primary: [
-      'facecolor', 'fill', 'hatch', 'hatchcolor', 'hatch_linewidth',
+      'facecolor', 'fill', 'hatch', 'hatch_linewidth',
       'edgecolor', 'linewidth', 'linestyle', 'alpha',
     ],
     more: ['visible'],
@@ -169,7 +169,6 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       // 一个像素都不出）。与画布图形的「添加填充」是同一种操作模型。
       facecolor: FILLED,
       hatch: FILLED,
-      hatchcolor: (read) => FILLED(read) && HAS_HATCH(read),
       hatch_linewidth: (read) => FILLED(read) && HAS_HATCH(read),
     },
   },

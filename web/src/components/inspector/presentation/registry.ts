@@ -74,7 +74,7 @@ export const fieldHintKey = (prop: string): string | undefined => FIELD_HINTS[pr
  *
  * 柱形的纹理曾是现成的例子（审计 T19）：脚本给柱子画了斜线纹理，面板里连一行纹理都没有，
  * 当时只能把「这一项在这里改不了、它来自脚本」说出口并给出源对象入口。纹理编辑能力补上之后
- * （引擎发 `hatch` / `hatchcolor` / `hatch_linewidth`），这张表里不再有柱形。
+ * （引擎发 `hatch` / `hatch_linewidth`），这张表里不再有柱形。
  * 表留着：下一个同形状的缺口——图上看得见、引擎没发字段——仍从这里点名，而不是摆一个
  * 点了没反应的控件。
  *

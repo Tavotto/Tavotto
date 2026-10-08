@@ -1,18 +1,18 @@
-"""柱形 / 形状的**纹理三项**可编辑：图案 `hatch`、颜色 `hatchcolor`、线宽 `hatch_linewidth`。
+"""柱形 / 形状的**纹理两项**可编辑：图案 `hatch`、线宽 `hatch_linewidth`。
+
+纹理颜色 `hatchcolor` 不在范围内（维护者裁决 2026-10-08：3.11 的 `set_alpha` 会按当前 rcParams 重解析
+花纹色，与 `rc_context` 临时 `hatch.color` 叠加的热态一致性另开 issue 研究）。
 
 背景：真实 Windows beta 用户的分组柱状图——柱子带斜线纹理，选中「柱 7」后填充色 / 描边色 / 线宽 /
 不透明度都能改，唯独「纹理」一栏写着「此元素由脚本生成」。`_bar_fields` / `_bar_series_fields`
 根本没发 `hatch` 字段（`Patch` 族的 `_patch_fields` 早就有），引擎侧的 `("bar", "hatch")` setter
 却一直在（能力层 `_PATCH_CAPS` 注册给了 `bar`），系列级则整条缺席。
 
-两条**按版本发**的字段，判据是真实 getter 实况、不是版本号字符串：
+线宽字段**按版本发**，判据是真实 getter 实况、不是版本号字符串：`Patch.set_hatch_linewidth` 是
+matplotlib 3.10 才有的，之前只有 rcParams 全局值。
 
-  * `hatchcolor`：`Patch.set_hatchcolor` 是 matplotlib 3.11 才有的。之前花纹颜色就是边色，没有
-    独立属性（用户改「描边色」就是改花纹颜色）——旧版本不发字段，而不是发一条改了不生效的。
-  * `hatch_linewidth`：`Patch.set_hatch_linewidth` 是 3.10 才有的。之前只有 rcParams 全局值。
-
-本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里，那个解释器有没有这两个
-setter 由子进程探一次（`CAPS`），断言按能力集写——所以同一份用例在 3.8 / 3.10 / 3.11 上各自判
+本进程不 import matplotlib：worker 经 `pool.one_shot()` 起在科学栈解释器里，那个解释器有没有这个
+setter 由子进程探一次，断言按能力集写——所以同一份用例在 3.8 / 3.10 / 3.11 上各自判
 「该发的发了、不该发的没发」（nightly 的版本矩阵跑这个文件）。
 
 判据的主语（每条断言说谁的、哪个时刻）：
@@ -73,27 +73,27 @@ BAR_B1 = "axes_0.barseries_1.bar_1"
 
 PROBE = (
     "import matplotlib.patches as p; r = p.Rectangle((0, 0), 1, 1); "
-    "print(int(hasattr(r, 'set_hatchcolor')), int(hasattr(r, 'set_hatch_linewidth')))"
+    "print(int(hasattr(r, 'set_hatch_linewidth')))"
 )
 
 
-def _caps() -> tuple[bool, bool]:
+def _caps() -> bool:
     if WORKER_PY is None:  # 没有 worker：模块整体 skip，收集阶段不得起子进程
-        return False, False
+        return False
     out = subprocess.run(  # noqa: S603 — 测试里探 worker 解释器的能力
         [WORKER_PY, "-c", PROBE], capture_output=True, text=True, check=True
     ).stdout.split()
-    return out[0] == "1", out[1] == "1"
+    return out[0] == "1"
 
 
-HAS_COLOR, HAS_WIDTH = _caps()
+HAS_WIDTH = _caps()
 
-#: 该版本上应当发出的两条字段
-EXPECTED_EXTRA = [p for p, ok in (("hatchcolor", HAS_COLOR), ("hatch_linewidth", HAS_WIDTH)) if ok]
+#: 该版本上应当发出的线宽字段
+EXPECTED_EXTRA = ["hatch_linewidth"] if HAS_WIDTH else []
 #: 不该发的
-MISSING_EXTRA = [p for p in ("hatchcolor", "hatch_linewidth") if p not in EXPECTED_EXTRA]
+MISSING_EXTRA = [] if HAS_WIDTH else ["hatch_linewidth"]
 
-VALUES = {"hatch": "xx", "hatchcolor": "#d62728", "hatch_linewidth": 3.0}
+VALUES = {"hatch": "xx", "hatch_linewidth": 3.0}
 
 
 def _p(gid, prop, value):
@@ -149,13 +149,13 @@ def _patch_gid(man) -> str:
     return next(e["gid"] for e in man["elements"] if e["role"] == "patch")
 
 
-#: 带纹理的前提：B 组与独立形状脚本里没有花纹，先打开再量颜色 / 线宽
+#: 带纹理的前提：B 组与独立形状脚本里没有花纹，先打开再量线宽
 def _with_hatch(gid):
     return [_p(gid, "hatch", "/")]
 
 
 # ---------------------------------------------------------------------------
-# 字段：系列 / 单柱 / 形状口径一致，按版本发
+# 字段：系列 / 单柱 / 形状口径一致，线宽按版本发
 # ---------------------------------------------------------------------------
 def test_fixture_exposes_series_bars_and_a_standalone_patch(worker):
     man = _apply(worker, [])
@@ -180,15 +180,6 @@ def test_hatch_fields_are_advertised_for_series_single_bar_and_patch(worker):
     for code in ("", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*", "//", "///"):
         assert code in hatch["options"], f"选项里没有 {code!r}"
     assert _fields(man, SERIES_B)["hatch"]["value"] == ""
-
-
-@pytest.mark.skipif(not HAS_COLOR, reason="花纹颜色是 matplotlib 3.11 起的独立属性")
-def test_hatchcolor_reports_the_colour_the_hatch_is_drawn_in(worker):
-    """脚本给了黑色描边 → 花纹跟边色（`'edge'` 模式）→ 字段值是解析后的黑；改边色，字段跟着走。"""
-    man = _apply(worker, [])
-    assert _fields(man, SERIES_A)["hatchcolor"]["value"] == "#000000"
-    man = _apply(worker, [_p(SERIES_A, "edgecolor", "#ff00ff")])
-    assert _fields(man, SERIES_A)["hatchcolor"]["value"] == "#ff00ff"
 
 
 # ---------------------------------------------------------------------------
@@ -232,59 +223,6 @@ def test_setter_restore_roundtrip_is_exact(worker, gid):
     assert _png(worker, [], f"{gid}-all-undo") == base_png
 
 
-@pytest.mark.skipif(not HAS_COLOR, reason="花纹颜色是 matplotlib 3.11 起的独立属性")
-def test_undoing_hatchcolor_restores_the_follow_edge_mode_not_a_frozen_colour(worker, library):
-    """原样是「跟边色」这个**模式**，不是一个值：撤掉花纹颜色之后再改边色，花纹要跟着走。
-
-    getter 若回解析后的 RGBA，还原就把模式换成死颜色——manifest 这一刻看着一样，下一次改边色才
-    分岔（与 `_PatchEdge` / `_PatchFace` 同一个坑）。判据取撤销**之后**再改边色的结果。
-    """
-    _apply(worker, [_p(SERIES_A, "hatchcolor", "#00aa00")])
-    _apply(worker, [])
-    man = _apply(worker, [_p(SERIES_A, "edgecolor", "#ff00ff")])
-    assert _fields(man, SERIES_A)["hatchcolor"]["value"] == "#ff00ff", "花纹颜色没有回到跟边色"
-    fresh_man, fresh_png = _fresh(library, [_p(SERIES_A, "edgecolor", "#ff00ff")], "follow-fresh")
-    assert man == fresh_man
-    assert _png(worker, [_p(SERIES_A, "edgecolor", "#ff00ff")], "follow-hot") == fresh_png
-
-
-RC_LIBRARY = """\
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-
-
-def main():
-    fig, ax = plt.subplots(figsize=(3.6, 2.6))
-    with mpl.rc_context({"hatch.color": "#ff0000"}):
-        ax.bar([0, 1], [3, 5], 0.6, facecolor="#47749e", hatch="//")
-    ax.set_xlim(-0.7, 1.7)
-    ax.set_ylim(0, 7)
-    fig.savefig("Hatch.png")
-"""
-
-
-@pytest.mark.skipif(not HAS_COLOR, reason="花纹颜色是 matplotlib 3.11 起的独立属性")
-def test_undoing_hatchcolor_keeps_the_colour_resolved_inside_rc_context(tmp_path):
-    """脚本在 `rc_context({'hatch.color': ..})` 里建的 patch：`_original_hatchcolor` 是 None，
-    但解析后的 `_hatch_color` 是那个临时色。上下文早已退出，设 hatchcolor 再撤销，
-    restore 不得按**现在**的 rcParams 重新解析——热态 `_hatch_color` 与全新 worker 重放一致。"""
-    figs = tmp_path / "rc-figures"
-    figs.mkdir()
-    (figs / SCRIPT_NAME).write_text(RC_LIBRARY, encoding="utf-8")
-    gid = "axes_0.barseries_0"
-    w = _worker(figs)
-    try:
-        base_png = _png(w, [], "rc-base")
-        _apply(w, [_p(gid, "hatchcolor", "#00aa00")])
-        assert _png(w, [_p(gid, "hatchcolor", "#00aa00")], "rc-edit") != base_png
-        undone = _apply(w, [])
-        fresh_man, fresh_png = _fresh(figs, [], "rc-fresh")
-        assert undone == fresh_man
-        assert _png(w, [], "rc-undo") == fresh_png == base_png, "撤销后花纹颜色不是脚本里的临时色"
-    finally:
-        pool.discard(w)
-
-
 # ---------------------------------------------------------------------------
 # 热态 == 全量重放（含系列 ↔ 单柱的广播次序）
 # ---------------------------------------------------------------------------
@@ -310,20 +248,6 @@ SEQUENCES = {
 }
 
 
-RC_ALPHA_LIBRARY = """\
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-
-
-def main():
-    fig, ax = plt.subplots(figsize=(3.6, 2.6))
-    with mpl.rc_context({"hatch.color": "#ff0000"}):
-        ax.bar([0, 1], [3, 5], 0.6, facecolor="#47749e", hatch="//")
-    ax.set_xlim(-0.7, 1.7)
-    ax.set_ylim(0, 7)
-    fig.savefig("Hatch.png")
-"""
-
 ALPHA = 0.4
 #: 「改不透明度」与「改颜色」交错的全部次序；每步是完整的 override 列表（后一步 = 前一步的撤销 / 追加）。
 #: C = 颜色 override，a = 不透明度 override。
@@ -342,30 +266,23 @@ def _order_patches(gid, colour_prop, colour_value, keys):
     return [table[k] for k in keys]
 
 
-#: (库, gid, 颜色 prop, 值, 需要的能力)
+#: (库, gid, 颜色 prop, 值)。纹理色跟边色（≤3.10 就是边色，#861）：撤的是边色
 ALPHA_CASES = {
-    # 纹理色来自 rcParams（`_original_hatchcolor is None`，建 patch 时的 rc 临时色）：Codex 第二轮 P1
-    "rc-hatchcolor": (RC_ALPHA_LIBRARY, "axes_0.barseries_0", "hatchcolor", "#00aa00", "color"),
-    # 纹理色跟边色（3.11 'edge'；≤3.10 就是边色，#861）：撤的是边色
-    "script-edgecolor": (LIBRARY, SERIES_A, "edgecolor", "#ff00ff", None),
-    "script-hatchcolor": (LIBRARY, SERIES_A, "hatchcolor", "#00aa00", "color"),
+    "script-edgecolor": (LIBRARY, SERIES_A, "edgecolor", "#ff00ff"),
 }
 
 
 @pytest.mark.parametrize("order", sorted(ORDERS))
 @pytest.mark.parametrize("case", sorted(ALPHA_CASES))
-def test_alpha_and_hatch_colour_edits_undone_one_at_a_time_match_a_fresh_replay(
+def test_alpha_and_edge_colour_edits_undone_one_at_a_time_match_a_fresh_replay(
     tmp_path, case, order
 ):
-    """改不透明度 + 改纹理色 / 边色，再只撤其中一个：热态必须逐像素等于全新重放。
+    """改不透明度 + 改边色，再只撤其中一个：热态必须逐像素等于全新重放。
 
     `Patch.set_alpha` 会重算花纹的 RGBA；还原若把改 alpha **之前**缓存的 RGBA 写回，热态
-    停在旧不透明度，而全新重放带着保留的 alpha（写回像素门 409）。3.11 上钉 `_PatchHatchColor`
-    （rc 来源与跟边色两种），≤3.10 上钉 `_PatchEdge` 的花纹色快照（#861）。
+    停在旧不透明度，而全新重放带着保留的 alpha（写回像素门 409）。≤3.10 上钉 `_PatchEdge` 的花纹色快照（#861）。
     """
-    src, gid, prop, value, need = ALPHA_CASES[case]
-    if need == "color" and not HAS_COLOR:
-        pytest.skip("花纹颜色是 matplotlib 3.11 起的独立属性")
+    src, gid, prop, value = ALPHA_CASES[case]
     figs = tmp_path / "alpha-figures"
     figs.mkdir()
     (figs / SCRIPT_NAME).write_text(src, encoding="utf-8")
@@ -402,7 +319,7 @@ def test_hot_session_equals_a_fresh_replay_at_every_step(worker, library, name):
 
 def test_series_then_single_then_undo_returns_to_the_script_look(worker):
     """系列广播与单柱同名 prop 叠加：先改整体再改单条，单条记下的「原样」已被整体改过；
-    撤销要回到脚本原样（`ALIAS_GROUPS` 的 bar_series 一行必须点名纹理三项）。"""
+    撤销要回到脚本原样（`ALIAS_GROUPS` 的 bar_series 一行必须点名纹理两项）。"""
     base_man = _apply(worker, [])
     base_png = _png(worker, [], "base")
     for prop in ("hatch", *EXPECTED_EXTRA):
@@ -441,7 +358,7 @@ def test_patches_survive_json_and_patchspec_roundtrip(worker, library):
 # ---------------------------------------------------------------------------
 # 降级：旧版本上重放新存的 override——不炸、不 warning（warning 会阻断写回），也不假装生效
 # ---------------------------------------------------------------------------
-@pytest.mark.skipif(not MISSING_EXTRA, reason="本版本的 matplotlib 两条属性都有，没有可降级的")
+@pytest.mark.skipif(not MISSING_EXTRA, reason="本版本的 matplotlib 有线宽属性，没有可降级的")
 def test_overrides_for_properties_this_matplotlib_lacks_replay_as_a_quiet_noop(worker):
     on = _with_hatch(SERIES_B)
     on_png = _png(worker, on, "on")
@@ -496,7 +413,7 @@ def project(tmp_path, monkeypatch):
 
 
 def test_write_back_verifies_hatch_edits_hot_equals_file_equals_replay(project):
-    """纹理三项走写回：prepare → 一次性 worker 全量重放 → 几何 + 像素门，全过才落盘。
+    """纹理两项走写回：prepare → 一次性 worker 全量重放 → 几何 + 像素门，全过才落盘。
 
     像素门是这条的牙：颜色 / 线宽 / 图案都不动任何包围盒，只有逐像素比量得到热态与重放的分歧。
     """

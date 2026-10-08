@@ -3652,7 +3652,6 @@ export default interface Resources {
       "handletextpad": "线与文字间距",
       "hatch": "纹理",
       "hatch_linewidth": "纹理线宽",
-      "hatchcolor": "纹理颜色",
       "interpolation": "插值",
       "invert_x": "反转 X 轴",
       "invert_y": "反转 Y 轴",

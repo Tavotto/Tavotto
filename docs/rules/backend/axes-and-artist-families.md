@@ -136,16 +136,16 @@
     instrument 时采一次，不是每帧）：画在图上、既没进元素表也不是结构件的那些，
     按类名 + 归属报出来。容器消费掉的成员不算漏。旧前端不认识这个键会原样忽略，
     写回自检只比 gid 集合与几何。
-  * **花纹三项（图案 / 颜色 / 线宽）在柱形与形状上同口径可编辑（2026-10-08，Windows beta 用户的分组柱状图：
-    选中「柱 7」，纹理一栏写着「由脚本生成」）**。`hatch`（预设 + 重复字符的密度档位，`HATCHES`）、`hatchcolor`、
-    `hatch_linewidth` 对 `patch` / `bar` / `bar_series` 三处发字段、注册 setter；系列级的 `ALIAS_GROUPS` 一行点名这三项
-    （广播与单柱叠加时撤销才回得到脚本原样）。**两条新字段按真实 setter 是否存在发，不按版本号**：`hatchcolor` 是
-    3.11 起的独立属性（`Patch.set_hatchcolor`），之前花纹颜色就是边色——旧版本不发字段、用户改「描边色」就是改它；
-    `hatch_linewidth` 是 3.10 起（之前只有全局 `rcParams['hatch.linewidth']`）。旧版本上重放新存的 override 是**静默
-    空操作、不报 warning**（warning 会阻断写回，而用户在界面里已经找不到那一行去撤它）。`hatchcolor` 的 getter 回
-    `_original_hatchcolor`（`'edge'` / `None` / 颜色）而不是解析后的 RGBA——原样是「跟边色」这个**模式**，按值写回会把它
-    换成死颜色（与 `_PatchEdge` / `_PatchFace` 同一个坑）。看护 `tests/test_hatch_editing.py`（nightly 版本矩阵也跑它）。
-    Collection（`fill_between` / 散点）的 `hatch` 不变，没有颜色 / 线宽两项。
+  * **花纹两项（图案 / 线宽）在柱形与形状上同口径可编辑（2026-10-08，Windows beta 用户的分组柱状图：
+    选中「柱 7」，纹理一栏写着「由脚本生成」）**。`hatch`（预设 + 重复字符的密度档位，`HATCHES`）、
+    `hatch_linewidth` 对 `patch` / `bar` / `bar_series` 三处发字段、注册 setter；系列级的 `ALIAS_GROUPS` 一行点名这两项
+    （广播与单柱叠加时撤销才回得到脚本原样）。**`hatch_linewidth` 按真实 setter 是否存在发，不按版本号**：它是
+    3.10 起的 per-artist 属性（之前只有全局 `rcParams['hatch.linewidth']`）。旧版本上重放新存的 override 是**静默
+    空操作、不报 warning**（warning 会阻断写回，而用户在界面里已经找不到那一行去撤它）。
+    **纹理颜色（`hatchcolor`）不在此列（维护者裁决 2026-10-08）**：3.11 的 `Patch.set_alpha` 会按当前 rcParams 重解析花纹色，
+    与 `rc_context` 里临时的 `hatch.color`（`'edge'` / 自带 alpha 的 RGBA）叠加后，撤销与重放的热态一致性连续出 P1，
+    另开 issue 研究。看护 `tests/test_hatch_editing.py`（nightly 版本矩阵也跑它）。
+    Collection（`fill_between` / 散点）的 `hatch` 不变，没有线宽项。
   * **颜色字段不把「没有颜色」显示成一个实色（2026-09-19，#427）**：`overrides.to_hex`
     见到 alpha 为 0 的颜色报 `NO_COLOR`（`"none"`）——没设边色的 patch、`'none'`、空心
     marker 都是；半透明照报 RGB（alpha 另有字段）。之前 `mcolors.to_hex` 默认丢 alpha，

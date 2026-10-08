@@ -2054,21 +2054,16 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
 
 
 def _hatch_style_fields(pt) -> list[dict]:
-    """Patch 族花纹的**颜色**与**线宽**两条字段（`hatch` 本身另列）。
+    """Patch 族花纹的**线宽**字段（`hatch` 本身另列）。
 
-    两条都是 matplotlib 较新版本才有的 per-artist 属性，**按真实 getter 实况判，不按版本号**：
-
-      * `hatchcolor`：3.11 起（`Patch.set_hatchcolor`）。之前花纹颜色就是边色（没设边色时是
-        `rcParams['hatch.color']`），没有独立属性——用户改「描边色」就是改花纹颜色，所以旧版本
-        不发这条字段，而不是发一条改了不生效的。
-      * `hatch_linewidth`：3.10 起（`Patch.set_hatch_linewidth`）。之前只有 `rcParams['hatch.linewidth']`，
-        绘制时全局读取，改不了单个 artist。
+    `hatch_linewidth` 是 matplotlib 3.10 起的 per-artist 属性（`Patch.set_hatch_linewidth`），
+    **按真实 getter 实况判，不按版本号**：之前只有 `rcParams['hatch.linewidth']`，绘制时全局读取，
+    改不了单个 artist，所以旧版本不发这条字段，而不是发一条改了不生效的。
 
     没有花纹时照样给值（跟 `facecolor` 之于 `fill` 同一模型：界面 `visibleWhen` 收起，不是引擎隐藏）。
+    花纹**颜色**不在此列（维护者裁决：3.11 的 `set_alpha` 会按当前 rcParams 重解析花纹色，另开 issue 研究）。
     """
     out: list[dict] = []
-    if hasattr(pt, "set_hatchcolor"):
-        out.append({"prop": "hatchcolor", "type": "color", "value": to_hex(pt.get_hatchcolor())})
     if hasattr(pt, "set_hatch_linewidth"):
         out.append(
             {

@@ -94,10 +94,9 @@ export const scatterFields = (
 
 const HATCH_OPTIONS = ['', '/', '\\\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', 'xx', '///']
 
-/** 与 `_hatch_field` + `_hatch_style_fields` 同形（颜色 3.11+、线宽 3.10+ 才有） */
-const hatchTriple = (hatch = '', over: { color?: boolean; width?: boolean } = {}): EditableField[] => [
+/** 与 `_hatch_field` + `_hatch_style_fields` 同形（线宽 3.10+ 才有） */
+const hatchPair = (hatch = '', over: { width?: boolean } = {}): EditableField[] => [
   f('hatch', 'enum', hatch, { options: HATCH_OPTIONS }),
-  ...(over.color === false ? [] : [f('hatchcolor', 'color', '#000000')]),
   ...(over.width === false ? [] : [num('hatch_linewidth', 1)]),
 ]
 
@@ -107,7 +106,7 @@ export const barSeriesFields = (hatch = ''): EditableField[] => [
   f('facecolor', 'color', '#47749e'),
   f('edgecolor', 'color', '#000000'),
   num('linewidth', 1, { max: 5 }),
-  ...hatchTriple(hatch),
+  ...hatchPair(hatch),
   f('bar_width', 'number', 0.8, { min: 0.01, max: 5, step: 0.02, unit: '数据单位' }),
   alpha(1),
   f('visible', 'bool', true),
@@ -142,7 +141,7 @@ export const patchFields = (over: { fill?: boolean; hatch?: string } = {}): Edit
   f('edgecolor', 'color', '#000000'),
   num('linewidth', 1),
   f('linestyle', 'enum', '-', { options: ['-', '--', '-.', ':'] }),
-  ...hatchTriple(over.hatch ?? ''),
+  ...hatchPair(over.hatch ?? ''),
   alpha(1),
   f('visible', 'bool', true),
   f('zorder', 'number', 2, { min: -5, max: 50, step: 1, group: '排列' }),
@@ -519,7 +518,7 @@ describe('误差棒：示意图说清哪个数字改图上的哪一段（T20）'
 
 /* --------------------------------- 柱形 ---------------------------------- */
 
-describe('柱形：单位不折行，纹理三项可直接编辑（T19）', () => {
+describe('柱形：单位不折行，纹理图案与线宽可直接编辑（T19）', () => {
   it('柱宽的「数据单位」不折行——让位的是输入框', async () => {
     seedRender(
       makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', barSeriesFields())]),
@@ -557,14 +556,13 @@ describe('柱形：单位不折行，纹理三项可直接编辑（T19）', () =
     expect(overrideOf('axes_0.bars_0', 'hatch')).toBe('///')
   })
 
-  it('纹理颜色与线宽只在有花纹时出现；写回的是颜色串与 pt 数值', async () => {
+  it('纹理线宽只在有花纹时出现；写回的是 pt 数值', async () => {
     seedRender(
       makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', barSeriesFields())]),
     )
     await mount(['axes_0.bars_0'])
-    // 没有花纹：花纹的颜色与线宽没有东西可染、可加粗
+    // 没有花纹：花纹线宽没有东西可加粗
     expect(row('hatch')).toBeTruthy()
-    expect(row('hatchcolor')).toBeNull()
     expect(row('hatch_linewidth')).toBeNull()
     await act(async () => {
       root.unmount()
@@ -576,38 +574,36 @@ describe('柱形：单位不折行，纹理三项可直接编辑（T19）', () =
       ]),
     )
     await mount(['axes_0.bars_0'])
-    expect(row('hatchcolor')!.textContent).toContain('纹理颜色')
     expect(row('hatch_linewidth')!.textContent).toContain('纹理线宽')
     await typeNumber(inputIn('hatch_linewidth')!, '2.5')
     expect(overrideOf('axes_0.bars_0', 'hatch_linewidth')).toBe(2.5)
   })
 
-  it('旧版 matplotlib 不发颜色 / 线宽字段：只剩图案一行，不摆点了没反应的控件', async () => {
+  it('旧版 matplotlib 不发线宽字段：只剩图案一行，不摆点了没反应的控件', async () => {
     const older = [
       ...barSeriesFields().filter((x) => !x.prop.startsWith('hatch')),
-      ...hatchTriple('//', { color: false, width: false }),
+      ...hatchPair('//', { width: false }),
     ]
     seedRender(makeManifest([elementOf('axes_0.bars_0', 'bar_series', '柱形系列 “Measurements”', older)]))
     await mount(['axes_0.bars_0'])
     expect(row('hatch')).toBeTruthy()
-    expect(row('hatchcolor')).toBeNull()
     expect(row('hatch_linewidth')).toBeNull()
   })
 
-  it('单根柱同口径：纹理三项在「柱 n」的首屏', async () => {
+  it('单根柱同口径：纹理两项在「柱 n」的首屏', async () => {
     const bar = [
       f('facecolor', 'color', '#47749e'),
       f('edgecolor', 'color', '#000000'),
       num('linewidth', 1, { max: 5 }),
-      ...hatchTriple('xx'),
+      ...hatchPair('xx'),
       alpha(1),
       f('visible', 'bool', true),
     ]
     seedRender(makeManifest([elementOf('axes_0.bars_0.bar_6', 'bar', '柱 7', bar)]))
     await mount(['axes_0.bars_0.bar_6'])
     const props = Array.from(host.querySelectorAll<HTMLElement>('[data-prop]')).map((e) => e.dataset.prop)
-    expect(props.slice(0, 7)).toEqual([
-      'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatchcolor', 'hatch_linewidth', 'alpha',
+    expect(props.slice(0, 6)).toEqual([
+      'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatch_linewidth', 'alpha',
     ])
   })
 })
@@ -650,11 +646,10 @@ describe('填充区域：填充一组、描边一组，纹理有名字（T21）'
     expect(row('edgecolor')).toBeTruthy()
   })
 
-  it('形状：纹理颜色 / 线宽要「填充开着且有花纹」才出现——没有花纹时没有东西可染', async () => {
+  it('形状：纹理线宽要「填充开着且有花纹」才出现——没有花纹时没有东西可加粗', async () => {
     seedRender(makeManifest([elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields())]))
     await mount(['axes_0.patches_0'])
     expect(row('hatch')).toBeTruthy()
-    expect(row('hatchcolor')).toBeNull()
     expect(row('hatch_linewidth')).toBeNull()
     await act(async () => {
       root.unmount()
@@ -662,13 +657,11 @@ describe('填充区域：填充一组、描边一组，纹理有名字（T21）'
     document.body.innerHTML = ''
     seedRender(makeManifest([elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields({ hatch: 'xx' }))]))
     await mount(['axes_0.patches_0'])
-    expect(row('hatchcolor')).toBeTruthy()
     expect(row('hatch_linewidth')).toBeTruthy()
     const toggle = row('fill')!.querySelector<HTMLElement>('[role="switch"]')!
     await act(async () => {
       toggle.click()
     })
-    expect(row('hatchcolor')).toBeNull()
     expect(row('hatch_linewidth')).toBeNull()
   })
 })
