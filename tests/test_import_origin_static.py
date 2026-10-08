@@ -624,6 +624,32 @@ class TestEntryProfiles:
         assert not any(w["code"] == "relative_import_no_package" for w in res.warnings)
         assert res.files[0] == "app/__init__.py" or "app/run.py" in res.files
 
+    def test_o17_python_m_runs_the_parent_package_init_before_the_module(self, tmp_path):
+        """`python -m pkg.leaf` 先执行 `pkg/__init__.py`——即便 leaf 自己什么都没 import；用真解释器对拍顺序。"""
+        _tree(
+            tmp_path,
+            {
+                "pkg/__init__.py": "print('init')\nimport yaml\n",
+                "pkg/leaf.py": "print('leaf')\n",
+            },
+        )
+        real = subprocess.run(
+            [sys.executable, "-m", "pkg.leaf"],
+            cwd=tmp_path,
+            env={
+                **{k: v for k, v in os.environ.items() if not k.startswith("PYTHON")},
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        # yaml 在这台机器上装没装不影响对拍：init 先于 leaf 打印（没装 yaml 时停在 init 里的 import 上）
+        assert real.stdout.splitlines()[:1] == ["init"], (real.stdout, real.stderr)
+        entry = importscan.Entry(kind="module", module="pkg.leaf", cwd_mode="project_root")
+        res = _scan(tmp_path, "", entry=entry)
+        assert _by(res)["yaml"].via == ("pkg/__init__.py",) and _by(res)["yaml"].needed
+
     def test_o17_python_m_package_runs_its_dunder_main(self, tmp_path):
         _tree(tmp_path, self.FILES)
         entry = importscan.Entry(kind="module", module="app", cwd_mode="project_root")
