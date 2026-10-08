@@ -1,41 +1,28 @@
-import {
-  TriangleAlert,
-  Check,
-  CircleCheck,
-  CircleDashed,
-  KeyRound,
-  CircleMinus,
-  type IconComponent,
-} from '@/components/ui/icons'
-import { ICON_SIZE, ICON_STROKE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { PRODUCT_NAME } from '@/lib/brand'
 import type { AiAgentCaps, AiAgentUiState } from '@/lib/api'
+import type { StatusTone } from '../ui/Notice'
+import { StatusPill } from '../ui/StatusPill'
 
 /** 本节文案在 dialogs:settings.agents.* 下 */
 export const ag = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.agents.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
 /**
- * 状态 → 图标 + 颜色。**颜色只是佐证，判据是图形与文字**：
- * 每一档都有自己的图标形状和自己的一句话，色觉障碍与灰度截图下同样读得出。
+ * 状态 → `StatusPill` 的语气（2026-10-07 设计审计 §9.1）。**每一档都有字**：此前「可用」只有一颗绿点、别的状态
+ * 有字——一种状态一种写法，灰度截图与色觉障碍下「可用」读不出来。颜色只是佐证，判据是那句话。
  *
- * 「未安装」刻意用中性灰 + 虚线圆——它不是错误，是一件还没做的事；
- * 危险色只留给 `broken`（找到了安装却根本启动不了），警示色只留给
- * `needs_auth`（CLI 明确说要登录）。
+ * 「未安装」刻意用中性——它不是错误，是一件还没做的事；危险色只留给 `broken`（找到了安装却根本启动不了），
+ * 警示色只留给 `needs_auth`（CLI 明确说要登录）。
  */
-const PRESENTATION: Record<
-  AiAgentUiState,
-  { icon: IconComponent; tone: string; iconOnly?: boolean }
-> = {
-  detecting: { icon: CircleDashed, tone: 'text-ink-3' },
-  // 「可用」是唯一不带文字的一档：实心绿圆 + 白对勾，文字留给读屏与 title
-  ready: { icon: Check, tone: 'text-ok', iconOnly: true },
-  installed: { icon: CircleCheck, tone: 'text-ink-2' },
-  needs_auth: { icon: KeyRound, tone: 'text-warn-content' },
-  broken: { icon: TriangleAlert, tone: 'text-danger' },
-  not_installed: { icon: CircleDashed, tone: 'text-ink-3' },
-  disabled: { icon: CircleMinus, tone: 'text-ink-3' },
+const TONE: Record<AiAgentUiState, StatusTone> = {
+  detecting: 'neutral',
+  ready: 'ok',
+  installed: 'neutral',
+  needs_auth: 'warn',
+  broken: 'danger',
+  not_installed: 'neutral',
+  disabled: 'neutral',
 }
 
 export const stateLabel = (state: AiAgentUiState): string => ag(`state.${state}`)
@@ -47,29 +34,11 @@ export function AgentStateBadge({
   state: AiAgentUiState
   className?: string
 }) {
-  const { icon: Icon, tone, iconOnly } = PRESENTATION[state] ?? PRESENTATION.not_installed
-  const label = stateLabel(state)
+  // `data-agent-state` 给判据用：一行里还有 Agent 自己的品牌图标，判状态认它，不认图形
   return (
-    // `data-agent-state` 给判据用：一行里还有 Agent 自己的品牌图标，
-    // 不指名道姓地找 svg 会量到那一个（它本来就每个 Agent 各不相同，
-    // 于是「两档的图标不一样」在任何实现下都成立）
-    <span
-      data-agent-state={state}
-      title={iconOnly ? label : undefined}
-      className={`flex items-center gap-1 text-xs ${tone} ${className ?? ''}`}
-    >
-      {iconOnly ? (
-        <span
-          aria-hidden
-          className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-ok text-surface"
-        >
-          <Icon size={ICON_SIZE.sm} strokeWidth={ICON_STROKE.emphasis} />
-        </span>
-      ) : (
-        <Icon size={ICON_SIZE.sm} aria-hidden />
-      )}
-      {iconOnly ? <span className="sr-only">{label}</span> : label}
-    </span>
+    <StatusPill data-agent-state={state} tone={TONE[state] ?? 'neutral'} dot className={className}>
+      {stateLabel(state)}
+    </StatusPill>
   )
 }
 

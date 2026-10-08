@@ -171,8 +171,18 @@ describe('有更新', () => {
     })
     await render()
     expect(text()).toContain('0.14.0')
+    // 「有新版本」是组里一条 accent 语气的说明条，主动作是它右边那颗 32px 主按钮（2026-10-07 设计审计 §9.1）
+    const notice = document.querySelector('[data-update-available] [data-notice]')!
+    expect(notice.getAttribute('data-notice')).toBe('info')
+    const primary = byLabel(st('update.downloadAndUpgrade'))!
+    expect(primary).toBeTruthy()
+    expect(notice.contains(primary)).toBe(true)
+    expect(primary.getAttribute('data-variant')).toBe('primary')
+    expect(primary.className).toMatch(/\bh-8\b/)
+    // 发行说明收在下面一行，展开才看
+    expect(text()).not.toContain('修了三个导出缺陷')
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-update-notes] > div > button')!.click())
     expect(text()).toContain('修了三个导出缺陷')
-    expect(byLabel(st('update.downloadAndUpgrade'))).toBeTruthy()
     // 现状行仍写着上次检查的时刻，但**不给结论**：`checked` 这一档只留给
     // 「查过、没有新版、也没有错误」（全面打磨 D35 之后结论并进了那一行）
     expect(verdict()).toBe('pending')
