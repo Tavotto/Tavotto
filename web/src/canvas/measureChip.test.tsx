@@ -21,6 +21,7 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import { mmToWorld, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
 import { emptyProject, type PanelObject, type ShapeObject } from '@/types/document'
 
@@ -100,6 +101,25 @@ describe('MeasureChip', () => {
     expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
     expect(chip()!.style.left).toBe(`${mmToWorld(56) + mmToWorld(8) / 2}px`)
     expect(chip()!.style.top).toBe(`${mmToWorld(74) + 8}px`)
+  })
+
+  // Codex #833：快速编辑里舞台只画那一张图；从图层抽屉 ⇧ 选进来的别的对象看不见，读数与锚点都不算它
+  it('快速编辑：只量舞台上画着的那一张，选区里看不见的对象不并进来', () => {
+    const before = useWorkspaceStore.getState()
+    try {
+      act(() => {
+        useDocumentStore.getState().commit(literal('加'), (d) => {
+          d.objects.push({ ...rect(), id: 'r2', x: 0, y: 0, w: 300, h: 200 })
+        })
+        useSelectionStore.getState().set(['r1', 'r2'])
+        useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'r1' })
+        useInteractionStore.getState().begin('resize')
+      })
+      expect(chip()!.textContent).toBe('100.0 × 8.0 mm')
+      expect(chip()!.style.left).toBe(`${mmToWorld(10) + mmToWorld(100) / 2}px`)
+    } finally {
+      useWorkspaceStore.setState({ mode: before.mode, activePanelId: before.activePanelId })
+    }
   })
 
   it('方向键微调：Δ 带正负号', () => {
