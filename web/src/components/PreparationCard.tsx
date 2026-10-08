@@ -632,8 +632,11 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         // 脚本自己写出的图片文件，素材库本来就列（不新造导入入口）；卡片收起让位给素材库
         // 素材库挂载时不重载 `/api/panels`、项目 watcher 又要等轮询+防抖：刚写出的图不主动刷新就要等几秒才出现，
         // 按钮看起来像坏了。走素材库工具栏刷新按钮用的同一条统一刷新（不 await：切标签不等它，失败也不挡路）
-        void refreshProjectNow().catch(() => {})
-        void useRuntimeAssetStore.getState().loadAssets()
+        // 切标签的同一刻素材库就进加载态（不展示刷新前的旧清单）；刷新结束（成败都算）再取清单、由 loadAssets 收尾加载态
+        useRuntimeAssetStore.setState({ assetsLoading: true })
+        void refreshProjectNow()
+          .catch(() => {})
+          .finally(() => void useRuntimeAssetStore.getState().loadAssets())
         ui.setLeftTab('assets')
         ui.setGuideCard('closed')
         return null

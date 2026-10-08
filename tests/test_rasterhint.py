@@ -315,3 +315,17 @@ def test_a_pep263_gbk_script_still_gets_the_hint(tmp_path):
     body = "# -*- coding: gbk -*-\n# 生成位图\n" + textwrap.dedent(PILLOW_SCRIPT)
     (tmp_path / "make.py").write_bytes(body.encode("gbk"))
     assert _lib(tmp_path) == "pillow"
+
+
+def test_a_symlinked_output_directory_is_not_in_project(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "proj"
+    root.mkdir()
+    try:
+        (root / "plots").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create symlinks here")
+    body = "from PIL import Image\nImage.new('L', (2, 2)).save('plots/a.png')\n"
+    assert _hint(root, body, "project")["in_project"] is False
+    assert _hint(root, body, "project_root")["in_project"] is False

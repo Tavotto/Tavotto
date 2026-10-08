@@ -213,7 +213,25 @@ def _lands_in_inventory(path: str | None, root: Path, script: str, cwd_mode: str
     else:
         return False
     rel = "/".join([*base, *parts])
-    return is_inventoried(rel, pdf_twin=_has_pdf_twin(root, rel))
+    if not is_inventoried(rel, pdf_twin=_has_pdf_twin(root, rel)):
+        return False
+    return not _crosses_symlink_dir(root, rel)
+
+
+def _crosses_symlink_dir(root: Path, rel: str) -> bool:
+    """`rel` 的任一级目录分量按**磁盘当前状态**是符号链接（或解析后跑出项目根）→ True。
+    `iter_assets` 的 os.walk 不跟链接，`plots -> /outside` 下的图素材库列不出，不能指向素材库。"""
+    dirs = rel.replace("\\", "/").split("/")[:-1]
+    cur = root
+    try:
+        for d in dirs:
+            cur = cur / d
+            if cur.is_symlink():
+                return True
+        cur.resolve().relative_to(root.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return True
+    return False
 
 
 def _path_arg_is_image(call: ast.Call) -> bool:

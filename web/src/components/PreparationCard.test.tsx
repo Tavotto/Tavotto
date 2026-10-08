@@ -519,6 +519,22 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(useUiStore.getState().guideCard).toBe('closed')
   })
 
+  it('点「打开素材库」：刷新还没结束时素材库已是加载态，刷新结束后才取清单', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    let finish: () => void = () => {}
+    vi.mocked(refreshProjectNow).mockImplementationOnce(() => new Promise<void>((r) => (finish = r)))
+    const loadAssets = vi.fn(async () => {})
+    useRuntimeAssetStore.setState({ assets: [], assetsLoading: false, loadAssets })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(useRuntimeAssetStore.getState().assetsLoading).toBe(true)
+    expect(loadAssets).not.toHaveBeenCalled()
+    await act(async () => finish())
+    expect(loadAssets).toHaveBeenCalledTimes(1)
+  })
+
   it.each([
     ['in_project 为假', { kind: 'raster_script' as const, library: 'pillow' as const, in_project: false }],
     ['老后端没有 in_project', { kind: 'raster_script' as const, library: 'pillow' as const }],
