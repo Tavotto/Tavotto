@@ -34,7 +34,7 @@ if (missing.length) {
   const sep = translate('playground.bootListSeparator', { ns: 'dialogs' })
   rootEl.innerHTML = ''
   const p = document.createElement('p')
-  p.style.cssText = 'max-width:32rem;margin:20vh auto 0;padding:0 1.5rem;font-size:14px;line-height:1.6;color:#5c5c56;text-align:center'
+  p.style.cssText = 'max-width:32rem;margin:20vh auto 0;padding:0 1.5rem;font-size:14px;line-height:1.6;color:var(--color-ink-2);text-align:center'
   p.textContent = translate('playground.bootUnsupportedBrowser', {
     ns: 'dialogs',
     product: PRODUCT_NAME,
@@ -43,7 +43,7 @@ if (missing.length) {
   const a = document.createElement('a')
   a.href = RELEASES_LATEST_URL
   a.textContent = translate('playground.bootDownloadDesktop', { ns: 'dialogs', product: PRODUCT_NAME })
-  a.style.cssText = 'display:block;margin-top:1rem;color:#2868b7'
+  a.style.cssText = 'display:block;margin-top:1rem;color:var(--color-accent)'
   p.appendChild(a)
   rootEl.appendChild(p)
 } else {

@@ -252,6 +252,9 @@ export function CanvasStage() {
           data-view-tweening={tweening || undefined}
           className="absolute left-0 top-0 origin-top-left"
           style={{
+            // 世界层里的东西是页面内容：没写颜色的字继承纸上的墨（--color-paper-ink，两套主题同值），
+            // 不继承界面的 ink（暗色里是浅色，落在白纸上看不见）
+            color: 'var(--color-paper-ink)',
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
             width: mmToWorld(page.w),
             height: mmToWorld(page.h),
@@ -271,6 +274,7 @@ export function CanvasStage() {
               showSafeArea={showSafeArea}
             />
           )}
+          {fastEdit && <FastEditPaper panelId={activePanelId} objects={objects} />}
           <CanvasLayers only={fastEdit ? activePanelId : null} />
         </div>
 
@@ -409,6 +413,38 @@ function CanvasLayers({ only }: { only?: string | null }) {
   )
 }
 
+/**
+ * 快速编辑没有页面（纸），图直接摆在画布灰上——底是透明的图（`savefig(transparent=True)`）在暗色主题里
+ * 就成了深底黑字。图是印刷品：给它垫一张与它的框同大的纸（`--color-paper`，两套主题同值），
+ * 与排版模式里图坐在纸上是同一个意思（2026-10-07 暗色主题，宪法第二十八节）。只是画法，不进文档。
+ */
+function FastEditPaper({
+  panelId,
+  objects,
+}: {
+  panelId: string | null
+  objects: ReturnType<typeof useDocumentStore.getState>['doc']['objects']
+}) {
+  const o = panelId ? objects.find((x) => x.id === panelId) : undefined
+  if (!o) return null
+  // 与 ObjectView 给面板的落位同一种写法（#836）：left / top 恒 0，位置走 translate——WebKit 会把 left / top
+  // 上的小数原点吸到整像素，纸与图差半像素就露边。面板没有对象级旋转（`objectRotation` 对面板恒 0）。
+  return (
+    <div
+      aria-hidden
+      data-fast-edit-paper=""
+      className="pointer-events-none absolute bg-paper"
+      style={{
+        left: 0,
+        top: 0,
+        width: mmToWorld(o.w),
+        height: mmToWorld(o.h),
+        transform: `translate(${mmToWorld(o.x)}px, ${mmToWorld(o.y)}px)`,
+      }}
+    />
+  )
+}
+
 /** 画布层的文案在 workspace:stage.* 下 */
 const sg = (key: string, values?: Record<string, unknown>) =>
   translate(`stage.${key}`, { ns: 'workspace', ...(values ?? {}) })
@@ -450,7 +486,9 @@ function EmptyHint() {
       className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >
-      <div className="pointer-events-auto">
+      {/* 提示坐在页面（纸）上：纸两套主题都是白，暗色里给它一块面板色的底（`paper-chrome`，浅色里透明——
+          字照旧直接落在纸上），浅色的字才不会落在白纸上（2026-10-07 暗色主题，宪法第二十八节） */}
+      <div data-on-paper className="pointer-events-auto rounded-lg bg-paper-chrome p-4">
         <EmptyState
           icon={Images}
           title={sg('emptyTitle')}

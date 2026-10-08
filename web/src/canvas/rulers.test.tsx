@@ -11,6 +11,7 @@ import { literal } from '@/i18n'
 import { Rulers } from './Rulers'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject, type ShapeObject } from '@/types/document'
@@ -175,5 +176,73 @@ describe('标尺的选区带在快速编辑里只认那张图', () => {
     // 主语核对：确实重画了（刻度照画），不是什么都没画
     expect(calls.some((c) => c.op === 'fillText')).toBe(true)
     expect(calls.filter((c) => c.op === 'fillRect' && c.fill === '#4685e2')).toHaveLength(0)
+  })
+})
+
+/**
+ * 换主题后标尺重画成新颜色（Codex #834 P2）：墨色按挂载量一次是对的，但缓存必须以「当前生效的主题」为键——
+ * 此前 `useMemo(readInk, [])` 永不失效，切浅 / 深色（或跟随系统时系统换外观）后两条标尺留在旧色里，
+ * 之后平移 / 缩放的重画也一直拿旧色。主语：底色那一笔 `fillRect(0, 0, …)` 的 fillStyle。
+ * 显式偏好走真路径：`uiStore.setTheme` → `applyTheme` 挂 `data-theme`，值来自样式表里的 `[data-theme='dark']`；
+ * 跟随系统走假 matchMedia 的 change 事件（jsdom 不算 @media，值表的切换用根上的内联变量模拟）。
+ */
+describe('标尺跟着生效主题重画', () => {
+  const bgFills = () =>
+    calls
+      .filter((c) => c.op === 'fillRect' && ['0,0,600,20', '0,0,20,400'].includes(c.args.join(',')))
+      .map((c) => c.fill)
+  let sheet: HTMLStyleElement
+  beforeEach(() => {
+    sheet = document.createElement('style')
+    sheet.textContent = ":root { --color-bg: #f0f0f0; } :root[data-theme='dark'] { --color-bg: #101010; }"
+    document.head.appendChild(sheet)
+  })
+  afterEach(() => {
+    sheet.remove()
+    useUiStore.getState().setTheme('system')
+    document.documentElement.style.removeProperty('--color-bg')
+  })
+
+  it('设置里切到深色：两条标尺当场重画成深色，之后平移也不回到旧色', async () => {
+    useUiStore.getState().setTheme('light')
+    await act(async () => root.render(<Rulers viewW={600} viewH={400} />))
+    expect(bgFills()).toEqual(['#f0f0f0', '#f0f0f0'])
+    calls = []
+    await act(async () => useUiStore.getState().setTheme('dark'))
+    expect(bgFills()).toEqual(['#101010', '#101010'])
+    calls = []
+    await act(async () => useViewportStore.setState({ panX: 30 }))
+    expect(bgFills()).toEqual(['#101010', '#101010'])
+  })
+
+  it('跟随系统：系统换外观（matchMedia change）标尺跟着重画', async () => {
+    const listeners = new Set<(e: MediaQueryListEvent) => void>()
+    let dark = false
+    const mql = {
+      get matches() { return dark },
+      media: '(prefers-color-scheme: dark)',
+      addEventListener: (_: string, fn: (e: MediaQueryListEvent) => void) => listeners.add(fn),
+      removeEventListener: (_: string, fn: (e: MediaQueryListEvent) => void) => listeners.delete(fn),
+    }
+    vi.stubGlobal('matchMedia', vi.fn(() => mql))
+    try {
+      useUiStore.getState().setTheme('system')
+      document.documentElement.style.setProperty('--color-bg', '#f0f0f0')
+      await act(async () => root.render(<Rulers viewW={600} viewH={400} />))
+      expect(bgFills()).toEqual(['#f0f0f0', '#f0f0f0'])
+      calls = []
+      // 系统换成深色：媒体查询那一段生效（这里用内联变量模拟），然后 change 事件
+      dark = true
+      document.documentElement.style.setProperty('--color-bg', '#101010')
+      await act(async () => {
+        for (const fn of listeners) fn({ matches: true } as MediaQueryListEvent)
+      })
+      expect(bgFills()).toEqual(['#101010', '#101010'])
+      calls = []
+      await act(async () => useViewportStore.setState({ panX: 30 }))
+      expect(bgFills()).toEqual(['#101010', '#101010'])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

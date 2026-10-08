@@ -1567,7 +1567,7 @@ function FigureThumb({ figure }: { figure: ExportableFigure }) {
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
   return (
-    <span className="flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-white ring-1 ring-inset ring-border">
+    <span className="flex h-7 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border">
       {svg ? (
         // store 里的 SVG 已被 `prepareSvg` 改成 width/height 100%，得给它一个
         // 按图幅比例定好的盒子，否则会被拉成缩略格的形状
@@ -1765,7 +1765,7 @@ function TargetHeader({
   return (
     <div data-export-target className="flex items-center gap-3">
       {original ? (
-        <div className="flex h-10 w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-white">
+        <div className="flex h-10 w-[60px] shrink-0 items-center justify-center overflow-hidden rounded-xs border border-border bg-paper">
           {src ? (
             <RetryImg
               src={src}
@@ -1775,7 +1775,7 @@ function TargetHeader({
           ) : (
             <ImageOff
               size={ICON_SIZE.sm}
-              className="text-ink-faint"
+              className="text-paper-ink/40"
               aria-hidden
             />
           )}
