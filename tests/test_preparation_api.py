@@ -825,7 +825,7 @@ def test_the_first_open_projection_branches_carry_no_machine_paths(
     )
     monkeypatch.setattr(
         engine_pool,
-        "invalidated_decision",
+        "consume_invalidated",
         lambda r: {"python": str(outside), "reason": "missing", "trigger": "first_open"},
     )
     body = client.post("/api/engine/preparation", json={"id": "fig.pdf"}).get_json()

@@ -213,7 +213,7 @@ export function PreparationCard() {
         mode === 'pill' ? (
           <ScanPill scan={scan} card={scanned} />
         ) : (
-          <ScanCard scan={scan} card={scanned} />
+          <ScanCard key={scan.scan_id} scan={scan} card={scanned} />
         )
       ) : null}
     </div>
@@ -420,7 +420,12 @@ const Row = ({ k, v, attr }: { k: string; v: ReactNode; attr?: string }) => (
 function ScanCard({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKind; key: string; values: Record<string, unknown> } }) {
   useTranslation('workspace')
   const plots = (scan.targets ?? []).filter((x) => x.role !== 'auxiliary')
-  const [pick, setPick] = useState<string | null>(scan.default_target ?? plots[0]?.script ?? null)
+  const [picked, setPick] = useState<string | null>(null)
+  // 重新检查之后目标清单可能变了：用户点过的那个仍在清单里才算数，否则回到推荐 / 第一个（不拿旧文件名去开始准备）
+  const pick =
+    picked !== null && plots.some((x) => x.script === picked)
+      ? picked
+      : (scan.default_target ?? plots[0]?.script ?? null)
   const store = useProjectScanStore.getState()
   const title = scanLine(card)
   const attrs = { 'data-prep-state': card.kind, 'data-scan-state': scan.state, 'data-scan-phase': scan.phase }

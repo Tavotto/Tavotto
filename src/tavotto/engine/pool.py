@@ -1247,6 +1247,15 @@ def invalidated_decision(figures_dir: str | Path) -> dict | None:
         return _invalidated.get(projectenv._key(figures_dir))
 
 
+def consume_invalidated(figures_dir: str | Path) -> dict | None:
+    """取走（并清掉）这个项目上一条「刚被作废」的事实——**只报告一次**（Codex #820 r4221391657）。
+
+    `_invalidated` 只在 `reset_worker_python()` 时清，不消费的话之后每一次检查都会再报一遍「换过了」。
+    准备计划把它写进报告的那一刻就算这次转变已经说出口；下一次检查看不到它，除非又发生了新的作废。"""
+    with _project_python_lock:
+        return _invalidated.pop(projectenv._key(figures_dir), None)
+
+
 def first_open_outcome(figures_dir: str | Path) -> dict | None:
     """这个项目首开发现的结果（只读缓存；没做过回 None）——准备计划写 `environment.discovery`。"""
     return projectenv.cached_first_open(figures_dir)
@@ -3246,10 +3255,20 @@ def acquire(
         # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
-        want_python = resolve_worker_python(figures_dir, script=script_name)[0]
         decided = not ENVIRONMENT_DECIDERS
         pin: EnvironmentDecision | None = None
-        if not decided and (force_decide or not _reusable(key, entry, want_python)):
+        try:
+            want_python = resolve_worker_python(figures_dir, script=script_name)[0]
+        except WorkerError as exc:
+            # 默认链条里没有任何能跑的解释器（`no_worker_python`）时，项目 venv / 别处发现的用户环境也许能跑：
+            # 检测要先于「第一次解析失败」之后的一切（Codex #820 r4221391630），否则只经池的入口（渲染已有素材、
+            # 旧试运行、MCP）永远等不到自动检测。显式选择失效等其它错误照旧原样抛出。
+            if decided or getattr(exc, "explicit", None) or exc.code != "no_worker_python":
+                raise
+            want_python = ""
+        if not decided and (
+            force_decide or not want_python or not _reusable(key, entry, want_python)
+        ):
             # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
             # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
             # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。

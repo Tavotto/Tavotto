@@ -574,6 +574,94 @@ def test_a_live_worker_records_its_environment_generation(real_spawn):
 
 
 # ===========================================================================
+# 默认链条一个能跑的解释器都没有：检测要在第一次解析失败之后立刻跑（Codex #820 r4221391630）
+# ===========================================================================
+@pytest.fixture
+def no_default_python(rig, monkeypatch):
+    venv = rig["cand"]("proj/.venv", userenvs.SOURCE_PROJECT_VENV)
+    rig["satisfying"].add(venv)
+    root = rig["root"]
+
+    def resolve(figures_dir=None, *, script=None, discover=True):
+        record = projectenv.remembered_record(root)
+        if record and record.get("exists") and record.get("mode") != "default":
+            return record["path"], engine_pool.SOURCE_PROJECT_VENV
+        raise engine_pool.WorkerError("没有可用的 Python", code="no_worker_python")
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", resolve)
+    _Recorder.instances = []
+    monkeypatch.setattr(engine_pool, "_new_worker", lambda sn, fd, en, **k: _Recorder(sn, fd, en))
+    monkeypatch.setattr(engine_pool, "_schedule_prune", lambda: None)
+    yield {**rig, "venv": venv}
+    with engine_pool._lock:
+        engine_pool._workers.clear()
+
+
+@pytest.mark.parametrize("entry_point", ["acquire", "get"], ids=["render-acquire", "probe-mcp-get"])
+def test_pool_only_entry_points_detect_the_project_venv_when_the_default_chain_has_nothing(
+    no_default_python, entry_point
+):
+    """修复前：`acquire()` 的第一次解析就抛 `no_worker_python`，永远走不到决定者。渲染已有素材（acquire）与旧试运行 /
+    MCP（`get` → acquire）都只经池。修复后：检测先跑，项目 venv 能跑就用它。"""
+    root = str(no_default_python["root"])
+    got = getattr(engine_pool, entry_point)("fig.py", root, "__main__")
+    w = got[0] if isinstance(got, tuple) else got
+    assert w.python == no_default_python["venv"]
+
+
+def test_an_explicit_selection_failure_is_still_raised_untouched(no_default_python, monkeypatch):
+    def resolve(figures_dir=None, **kw):
+        err = engine_pool.WorkerError("x", code="explicit_python_unusable")
+        err.explicit = {"source": "env"}
+        raise err
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", resolve)
+    with pytest.raises(engine_pool.WorkerError) as caught:
+        engine_pool.acquire("fig.py", str(no_default_python["root"]), "__main__")
+    assert caught.value.code == "explicit_python_unusable"
+
+
+# ===========================================================================
+# 作废的事实只报一次（Codex #820 r4221391657）
+# ===========================================================================
+def test_the_replacement_is_reported_exactly_once(rig, monkeypatch):
+    root = str(rig["root"])
+    monkeypatch.setattr(deprepair, "gate", lambda r, s: None)
+    monkeypatch.setattr(deprepair, "preparation_offer", lambda r, s: None)
+    gone = rig["cand"]("gone-env", userenvs.SOURCE_CONDA)
+    assert projectenv.remember(root, gone, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED)
+    engine_pool.invalidate_remembered(root, projectenv.remembered_record(root), "missing")
+    rig["runs_now"] = True
+
+    def plan():
+        return preparation.plan_for(
+            project_id="pj",
+            project_root=root,
+            asset_id="a",
+            stem="fig",
+            script="fig.py",
+            entry="__main__",
+            original_artifact=None,
+        )
+
+    first = plan().environment
+    assert first["adoption"]["switched"] is True and first["adoption"]["replaced"] == {
+        "reason": "missing"
+    }
+    assert first["invalidated"] is not None
+    second = plan().environment
+    assert second["adoption"]["switched"] is False and second["adoption"]["replaced"] is None
+    assert second["invalidated"] is None
+    # 又发生了新的作废：再报一次
+    assert projectenv.remember(root, gone, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED)
+    engine_pool.invalidate_remembered(root, projectenv.remembered_record(root), "rebuilt")
+    third = plan().environment
+    assert third["adoption"]["switched"] is True and third["adoption"]["replaced"] == {
+        "reason": "rebuilt"
+    }
+
+
+# ===========================================================================
 # 报告里的「换过」：由生效的前后推导，作废→默认链条也算（Codex #820 r4220794183）
 # ===========================================================================
 def test_switched_is_derived_from_the_effective_before_and_after():

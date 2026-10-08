@@ -265,6 +265,38 @@ describe('引导卡：扫描发现绘图脚本', () => {
     expect(card()!.dataset.prepState).toBe('ready')
   })
 
+  it('重新检查后目标清单变了：旧的选择（已不在清单里）不再被拿去开始准备', async () => {
+    const tgt = (script: string) => ({
+      script, role: 'plot', evidence: 'dynamic_stems', registered: false, entry: '__main__', scope: '.',
+      checked: true, session_target: { script, entry: '__main__' },
+    })
+    const multi = (scanId: string, scripts: string[]) =>
+      ({
+        ...scan(),
+        scan_id: scanId,
+        outcome: { kind: 'choose_target' },
+        targets: scripts.map(tgt),
+        default_target: null,
+        target_choice: 'multiple',
+      }) as unknown as ProjectScan
+    useProjectScanStore.setState({ scan: multi('s1', ['a.py', 'b.py']) })
+    mockCreate.mockResolvedValue(prep())
+    await mount(<PreparationCard />)
+    await act(async () => card()!.querySelector<HTMLInputElement>('[data-scan-target="b.py"] input')!.click())
+    // 同一次扫描里清单变了（b.py 没了）
+    await act(async () => useProjectScanStore.setState({ scan: multi('s1', ['a.py', 'c.py']) }))
+    await act(async () => card()!.querySelector<HTMLButtonElement>('[data-prep-primary="start"]')!.click())
+    await flush()
+    expect(mockCreate).toHaveBeenLastCalledWith({ script: 'a.py' }, 'pj-a', expect.anything())
+    // 重新检查（新的 scan_id）：选择也不带过去
+    useProjectPreparationStore.getState().clear()
+    useUiStore.setState({ guideCard: 'card' })
+    await act(async () => useProjectScanStore.setState({ scan: multi('s2', ['a.py', 'b.py']) }))
+    await act(async () => card()!.querySelector<HTMLInputElement>('[data-scan-target="b.py"] input')!.click())
+    await act(async () => useProjectScanStore.setState({ scan: multi('s3', ['a.py', 'b.py']) }))
+    expect(card()!.querySelector<HTMLInputElement>('[data-scan-target="b.py"] input')!.checked).toBe(false)
+  })
+
   it('同一个项目第二次打开不再自动弹；「稍后」缩成角标，角标 × 才收起', async () => {
     useProjectScanStore.setState({ scan: scan() })
     await mount(<PreparationCard />)

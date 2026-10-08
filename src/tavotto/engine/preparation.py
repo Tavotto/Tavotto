@@ -284,7 +284,8 @@ def plan_for(
     # 公开身份：来源标签 + **项目相对**路径（项目外的解释器——bundled / system / 用户在别处
     # 挑的——一律 None：那是安装目录或用户目录，不进投影）+ 项目记住的版本事实。
     discovery = pool.first_open_outcome(root)
-    invalidated = pool.invalidated_decision(root)
+    # 作废的事实只报一次：写进这一份计划就消费掉，后面的检查不再重复说「换过了」
+    invalidated = pool.consume_invalidated(root)
     environment = {
         "python": _project_relative(root, python) if python else None,
         "source": source,
