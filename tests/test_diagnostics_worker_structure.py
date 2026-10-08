@@ -105,7 +105,21 @@ def test_user_defined_exception_name_never_leaves(tmp_path):
     got = _tail(tmp_path, log)
     assert "Patient_123" not in got["tail"] and "Cohort" not in got["tail"]
     # 帧还在 -> 只出一条无异常行的帧摘要
-    assert got["tail"] == "[structure] no-exception-line frames=1 (user=1)"
+    assert got["tail"] == "[structure] omitted-exception frames=1 (user=1)"
+
+
+def test_omitted_exception_closes_its_own_stack(tmp_path):
+    log = (
+        '  File "/x/a.py", line 1, in f\n'
+        '  File "/x/b.py", line 2, in g\n'
+        "PatientError: cohort B\n"
+        '  File "/x/c.py", line 3, in h\n'
+        "ValueError: bad\n"
+    )
+    lines = _tail(tmp_path, log)["tail"].splitlines()
+    assert "[structure] ValueError frames=1 (user=1)" in lines
+    assert "[structure] omitted-exception frames=2 (user=2)" in lines
+    assert "Patient" not in "".join(lines)
 
 
 def test_builtin_exception_message_is_never_copied(tmp_path):

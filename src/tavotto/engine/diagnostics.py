@@ -1304,6 +1304,7 @@ STRUCTURE_MAX_SUMMARIES = 3
 #: 自由行里的「异常行」：整行只能是 `[限定前缀.]类型名[: 文本]`，类型名（最后一段）必须是 builtins
 #: 里的异常类——用户自定义的异常名可能含业务词，一个字不出。Warning 家族不收（那是警告行不是失败）。
 _STRUCT_CLOSER = re.compile(r"^(?:[A-Za-z_][\w]*\.)*(?P<name>[A-Za-z_]\w*)(?::\s*(?P<msg>.*))?$")
+_STRUCT_OMITTED = "omitted-exception"  # 类型名被白名单略去的收尾行：只出这个固定占位
 _STRUCT_MODULE_ERRORS = frozenset({"ModuleNotFoundError", "ImportError"})
 _STRUCT_NO_MODULE = re.compile(
     r"^No module named '(?P<name>[A-Za-z_][\w.]*)'(?:; '[A-Za-z_][\w.]*' is not a package)?$"
@@ -1381,6 +1382,11 @@ def _structure_summaries(orphans: list[str], *, sensitive: bool) -> list[str]:
             continue
         name = m.group("name")
         if name not in _BUILTIN_EXCEPTIONS or issubclass(getattr(builtins, name), Warning):
+            # 收尾形状的行不论类型是否被略去都结束当前这段栈：否则它的帧会留在 pending 里，
+            # 记到后面另一段栈的 builtins 异常头上（评审 #868 P2）。名字不出，帧摘要仍留
+            if pending:
+                out.append(_structure_summary(_STRUCT_OMITTED, None, pending, sensitive=sensitive))
+            pending = []
             continue
         out.append(_structure_summary(name, m.group("msg"), pending, sensitive=sensitive))
         pending = []
