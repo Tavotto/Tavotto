@@ -650,6 +650,7 @@ def test_missing_or_bad_private_argv_payload_never_executes_empty_arguments(figs
         input="".join(json.dumps(r) + "\n" for r in [*requests, {"cmd": "build"}]),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
     assert done.returncode == 0, done.stderr
