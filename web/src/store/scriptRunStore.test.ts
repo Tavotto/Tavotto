@@ -16,10 +16,12 @@ vi.mock('@/lib/api', () => ({
   ApiError: class ApiError extends Error {
     status: number
     body: Record<string, unknown>
-    constructor(message: string, status: number, body: Record<string, unknown>) {
+    diagnosticRef: string | null
+    constructor(message: string, status: number, body: Record<string, unknown>, diagnosticRef: string | null = null) {
       super(message)
       this.status = status
       this.body = body
+      this.diagnosticRef = diagnosticRef
     }
   },
   // 成功副作用会触发的相邻 store（本文件只关心状态机，让它们安静成功）
@@ -228,6 +230,22 @@ describe('scriptRunStore 状态机', () => {
     await useScriptRunStore.getState().run('fig.py')
     expect(spy).toHaveBeenCalledWith(['runtime:fig.py#fig'])
     spy.mockRestore()
+  })
+
+  it('T04：请求被拒（非 2xx）时诊断引用也留下——体里的 diagnostic 先，响应头后，都没有就是 null', async () => {
+    const { ApiError } = await import('@/lib/api')
+    mockProbe.mockRejectedValueOnce(
+      new ApiError('炸了', 500, { code: 'internal_error', diagnostic: { kind: 'script_run', ref: 'body-1' } }, 'hdr-1'),
+    )
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().diagnostic).toEqual({ kind: 'script_run', ref: 'body-1' })
+    mockProbe.mockRejectedValueOnce(new ApiError('炸了', 500, {}, 'hdr-2'))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('failed')
+    expect(state().diagnostic).toEqual({ kind: 'script_run', ref: 'hdr-2' })
+    mockProbe.mockRejectedValueOnce(new ApiError('炸了', 500, {}))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().diagnostic ?? null).toBeNull()
   })
 
   it('HTTP 层失败（409 probe_in_progress 等）按 code 落相位', async () => {
