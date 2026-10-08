@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useViewportStore } from '@/store/viewportStore'
 
 /**
  * 选择驱动的面板路由：
@@ -24,7 +25,9 @@ export function useSelectionRouting() {
     const remember = (e: Event) => {
       const target = e.target instanceof Element ? e.target : null
       inDrawer.current = !!target?.closest('[data-left-drawer]')
-      if (e instanceof PointerEvent && e.button === 0 && target?.closest('[data-canvas-stage]')) {
+      if (e instanceof PointerEvent && e.button === 0 && target?.closest('[data-canvas-stage]') &&
+        useUiStore.getState().tool === 'select' && !useViewportStore.getState().spaceDown) {
+        // Space 平移 / 绘图起手不是换选；新对象真被选中后由下面的选择 effect 路由。
         setCanvasPress(n => n + 1)
       }
     }

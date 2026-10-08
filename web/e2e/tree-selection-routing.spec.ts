@@ -82,6 +82,24 @@ for (const width of [820, 1100, 1366]) {
     await page.keyboard.press('Enter')
     await assertSelection(page, [title], exclusive)
 
+    if (width === 1100) {
+      // Space drag changes the viewport, leaving both selection and the tree workflow intact.
+      const stage = await page.locator('[data-canvas-stage]').boundingBox()
+      expect(stage).not.toBeNull()
+      await page.keyboard.down('Space')
+      try {
+        const x = stage!.x + stage!.width / 2
+        const y = stage!.y + stage!.height / 2
+        await page.mouse.move(x, y)
+        await page.mouse.down()
+        await page.mouse.move(x + 24, y + 12, { steps: 4 })
+        await page.mouse.up()
+      } finally {
+        await page.keyboard.up('Space')
+      }
+      await assertSelection(page, [title], exclusive)
+    }
+
     // Focus remains in the tree while the same element is clicked on the canvas.
     // In overlay mode close the drawer explicitly to expose the canvas; the medium
     // mode exercises stale tree focus without an overlay obscuring the target.

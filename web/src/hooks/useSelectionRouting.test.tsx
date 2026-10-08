@@ -9,6 +9,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type WorkspaceLayout } from '@/store/uiStore'
+import { useViewportStore } from '@/store/viewportStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { useSelectionRouting } from './useSelectionRouting'
@@ -61,9 +62,10 @@ beforeEach(async () => {
   useDocumentStore.setState(s => ({ doc: { ...s.doc, objects: [panel] } }))
   seedExactRender(panel, manifest)
   useSelectionStore.getState().clear()
+  useViewportStore.setState({ spaceDown: false })
   useUiStore.setState({ layout: 'medium', leftOpen: true, leftTab: 'layers',
     rightOpen: false, rightTab: 'properties', rightPinned: false,
-    elementPanelId: null, selectedGids: [] })
+    elementPanelId: null, selectedGids: [], tool: 'select' })
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -179,6 +181,17 @@ describe('selection routing keeps the active drawer workflow', () => {
     expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
     expect(useUiStore.getState().rightOpen).toBe(true)
     expect(useUiStore.getState().leftOpen).toBe(false)
+  })
+
+  it.each(['pan', 'draw'] as const)('%s gesture leaves the tree workflow until selection changes', gesture => {
+    openElements()
+    pointer(treeRow(gids[0]))
+    act(() => {
+      if (gesture === 'pan') useViewportStore.setState({ spaceDown: true })
+      else useUiStore.getState().setTool('line')
+    })
+    pointer('[data-canvas-hit]')
+    expectTreeSelection([gids[0]])
   })
 
   it('wide windows show properties beside the tree', () => {
