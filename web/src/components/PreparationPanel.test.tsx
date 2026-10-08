@@ -322,7 +322,7 @@ describe('主按钮就是后端给的那件事', () => {
     expect(primary()?.dataset.prepPrimary).toBe('run')
     mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
     await act(async () => primary()!.click())
-    expect(mockAct).toHaveBeenCalledWith('psess-1', { action_id: 'act-run', expected_config_revision: 1 }, 'pj-a')
+    expect(mockAct).toHaveBeenCalledWith('psess-1', { action_id: 'act-run', expected_config_revision: 1 }, 'pj-a', expect.any(AbortSignal))
   })
 
   it('报告里没有 run 动作：就没有「确认并运行」', async () => {
