@@ -374,6 +374,10 @@
       "save-named-version": {
         "keywords": "named version bookmark snapshot milestone",
         "label": "Save now as named point…"
+      },
+      "zoom-selection": {
+        "label": "Zoom to selection",
+        "keywords": "zoom selection focus frame view fit selected"
       }
     },
     "listLabel": "Commands",
@@ -1550,7 +1554,8 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomFit": "Fit",
-    "diffTitle": "Compared with the current canvas"
+    "diffTitle": "Compared with the current canvas",
+    "quickNameTitle": "Save this moment as a named point"
   },
   "onboarding": {
     "pause": "Pause tutorial",
