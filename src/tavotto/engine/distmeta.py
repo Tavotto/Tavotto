@@ -42,7 +42,7 @@ import os
 import re
 import stat
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from . import depresolve, scanbudget
 
@@ -191,7 +191,9 @@ class _Dist:
         str  # site-packages 之下的条目名（dist-info 目录名等）；conda 为 "conda-meta/<name>.json"
     )
     modules: dict[str, set[str]] = field(default_factory=dict)  # 顶级模块 → 证据码
-    regular: set[str] = field(default_factory=set)  # RECORD 里有 `<top>/__init__.py` 的顶级包
+    regular: set[str] = field(
+        default_factory=set
+    )  # RECORD 里有 `<top>/__init__.py` 的顶级包，或单文件 / 扩展模块
     metadata_ok: bool = True
 
 
@@ -288,13 +290,20 @@ class Index:
         groups = {
             k: v for k, v in found.items() if not (k[1] == ECO_CONDA and k[0] in covered_roots)
         }
-        if groups:
-            best = min(k[0] for k in groups)
-        else:
-            best = 0
         cands: list[Candidate] = []
         for (root, _eco, key), ds in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][2])):
-            cands.append(self._merge(ds, module, shadowed=root > best, order=root))
+            cands.append(self._merge(ds, module, shadowed=False, order=root))
+        # 按 Python PathFinder 的真实语义算遮蔽：沿 sys.path 第一个**常规**提供者（包 / 单文件 / 扩展）胜出——
+        # 它之前的 namespace portion 不算提供者（被丢弃）、它之后的一切被遮蔽；没有常规提供者时所有 namespace
+        # portion 都是提供者（跨层也一样，下层 portion 不被上层遮蔽）
+        first_regular = min((c.order for c in cands if not c.namespace), default=None)
+        if first_regular is not None:
+            cands = [
+                replace(c, shadowed=True)
+                if c.order != first_regular and (c.order > first_regular or c.namespace)
+                else c
+                for c in cands
+            ]
         present = any(module in names for names in self._names)
         return Lookup(tuple(cands), present, self.complete, self.uncovered_paths)
 
@@ -439,42 +448,48 @@ class _Reader:
 
     def read(self, root: SiteRoot, *parts: str, max_bytes: int) -> str | None:
         """读 site-packages 之下的一个文件。不存在回 None（不留痕）；读不了 / 超限 / 占位 / 链接留痕回 None。"""
+        return self.read_state(root, *parts, max_bytes=max_bytes)[0]
+
+    def read_state(self, root: SiteRoot, *parts: str, max_bytes: int) -> tuple[str | None, bool]:
+        """同 `read`，另回「是否被拒读」：`(None, False)` = 确实不存在；`(None, True)` = 在那儿但没读成
+        （链接 / 非普通文件 / 占位 / 超限 / 预算 / IO 错误）——后者不许当成「不存在」。"""
         full = os.path.join(root.path, *parts)
         try:
             st = os.lstat(full)
         except (FileNotFoundError, NotADirectoryError):
-            return None
+            return None, False
         except OSError:
             self.note(scanbudget.ISSUE_UNREADABLE_FILE, root, "/".join(parts))
-            return None
+            return None, True
         rel = "/".join(parts)
         if scanbudget.is_redirect(st):
             self.note(scanbudget.ISSUE_SYMLINK_DIR, root, rel)
-            return None
+            return None, True
         if not stat.S_ISREG(st.st_mode):
             self.note(scanbudget.ISSUE_UNREADABLE_FILE, root, rel)
-            return None
+            return None, True
         if scanbudget.is_placeholder(st):
             self.note(scanbudget.ISSUE_PLACEHOLDER, root, rel)
-            return None
+            return None, True
         if st.st_size > max_bytes:
             self.note(scanbudget.ISSUE_TOO_LARGE, root, rel)
-            return None
+            return None, True
         if self.budget.stop_reason() is not None:
             self.complete = False
-            return None
+            return None, True
         refused = self.budget.charge_source(st.st_size)
         if refused is not None:
             self.note(refused, root, rel)
             self.complete = False
-            return None
+            return None, True
         try:
-            return scanbudget.read_regular_text(
+            text = scanbudget.read_regular_text(
                 root.path, *parts, no_follow=True, max_bytes=max_bytes
             )
         except OSError:
             self.note(scanbudget.ISSUE_UNREADABLE_FILE, root, rel)
-            return None
+            return None, True
+        return text, text is None
 
 
 def _safe_name(text: str) -> str:
@@ -514,7 +529,7 @@ def _top_level_names(text: str) -> set[str]:
 
 
 def _record_tops(text: str) -> tuple[set[str], set[str]] | None:
-    """RECORD → (顶级模块名, 其中有 `__init__.py` 的顶级包)。读不懂回 None。"""
+    """RECORD → (顶级模块名, 其中是常规提供者的：有 `__init__.py` 的包 / 单文件模块 / 扩展)。读不懂回 None。"""
     tops: set[str] = set()
     regular: set[str] = set()
     try:
@@ -540,10 +555,12 @@ def _record_tops(text: str) -> tuple[set[str], set[str]] | None:
                 continue
             if first.endswith(".py") and _IDENT_RE.match(first[:-3]):
                 tops.add(first[:-3])
+                regular.add(first[:-3])  # 单文件模块是「常规」提供者，不是 namespace portion
                 continue
             m = _EXT_RE.match(first)
             if m:
                 tops.add(m.group(1))
+                regular.add(m.group(1))
     except csv.Error:
         return None
     return tops, regular
@@ -617,6 +634,7 @@ def _list_root(
         it = os.scandir(root.path)
     except OSError:
         rd.note(scanbudget.ISSUE_UNREADABLE_DIR, root, "", scope="dir")
+        rd.complete = False  # 没列出来 ≠ 里面没有东西：不许让查询报 `not_installed`
         return dist_infos, egg_infos, egg_links, pths, names
     with it:
         for e in it:
@@ -628,11 +646,13 @@ def _list_root(
                 st = e.stat(follow_symlinks=False)
             except OSError:
                 rd.note(scanbudget.ISSUE_UNREADABLE_FILE, root, name)
+                rd.complete = False  # 条目被跳过 = 这个环境没读全
                 continue
             redirect = scanbudget.is_redirect(st)
             if name.endswith((".dist-info", ".egg-info")):
                 if redirect:
                     rd.note(scanbudget.ISSUE_SYMLINK_DIR, root, name)
+                    rd.complete = False  # 拒绝跟进的 dist-info：里面的发行包没被看到
                     continue
                 (dist_infos if name.endswith(".dist-info") else egg_infos).append(name)
             elif name.endswith(".egg-link"):
@@ -683,12 +703,14 @@ def _read_dist_info(rd: _Reader, root: SiteRoot, entry: str, kind: str) -> _Dist
         entry=entry,
         metadata_ok=ok,
     )
-    top = rd.read(root, entry, "top_level.txt", max_bytes=MAX_SMALL_BYTES)
+    top, top_refused = rd.read_state(root, entry, "top_level.txt", max_bytes=MAX_SMALL_BYTES)
+    rd.complete = rd.complete and not top_refused
     if top is not None:
         for m in _top_level_names(top):
             d.modules.setdefault(m, set()).add(EV_TOP_LEVEL)
     if kind == "dist-info":
-        rec = rd.read(root, entry, "RECORD", max_bytes=MAX_RECORD_BYTES)
+        rec, rec_refused = rd.read_state(root, entry, "RECORD", max_bytes=MAX_RECORD_BYTES)
+        rd.complete = rd.complete and not rec_refused
         if rec is not None:
             parsed = _record_tops(rec)
             if parsed is None:
@@ -697,9 +719,12 @@ def _read_dist_info(rd: _Reader, root: SiteRoot, entry: str, kind: str) -> _Dist
                 for m in parsed[0]:
                     d.modules.setdefault(m, set()).add(EV_RECORD)
                 d.regular |= parsed[1]
-        d.provenance = _direct_url(
-            rd.read(root, entry, "direct_url.json", max_bytes=MAX_SMALL_BYTES)
+        du_text, du_refused = rd.read_state(
+            root, entry, "direct_url.json", max_bytes=MAX_SMALL_BYTES
         )
+        # 在那儿但没读成（链接 / 占位 / 超限 / 读不了）≠ 不存在：不能当「从索引装的」，按「读不懂」记 `url`
+        # （不可重现、不选发行包）；只有确实没有这个文件才是 `index`（PEP 610）
+        d.provenance = PROV_URL if du_refused else _direct_url(du_text)
         installer = rd.read(root, entry, "INSTALLER", max_bytes=1024)
         if (
             installer is not None

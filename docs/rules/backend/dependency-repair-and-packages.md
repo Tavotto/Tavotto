@@ -292,7 +292,7 @@
   **不起解释器、不 `importlib.metadata`、不 `find_spec`、不 import / exec 站点里任何东西、`.pth` 只当文本、路径行不跟进也不
   stat（只计数 `uncovered_paths`）**；读文件走 `scanbudget`（占位文件 / `no_follow` / 字节·目录项·墙钟预算 / 取消），
   `project_root` 内的前缀任何一级是链接就整个拒绝。预算用尽或有没跟进的路径行时，「没查到」报 `environment_not_checked`，
-  **不报 `not_installed`**。它是 `depplan._FACTS_SRC` / `deprepair.inventory`（目标解释器里 `importlib.metadata`，会执行，
+  **不报 `not_installed`**；site-packages 根列不出来 / 条目 `stat` 失败 / 拒绝跟进的 dist-info 链接 / `top_level.txt`·`RECORD` 在那儿却没读成，同样让 `Index.complete=False`；`direct_url.json` 在那儿却没读成（链接 / 占位 / 超限 / 读不了）≠ 不存在，记 `provenance=url`（不可重现、不选发行包），只有确实没有这个文件才是 `index`。跨 site-packages 层的遮蔽按 Python PathFinder 的语义算：沿路径第一个**常规**提供者（包 / 单文件 / 扩展）胜出，它之前的 namespace portion 不算提供者、之后全部遮蔽；全是 namespace portion 时各层都是提供者（多提供者按 ambiguous 口径）。它是 `depplan._FACTS_SRC` / `deprepair.inventory`（目标解释器里 `importlib.metadata`，会执行，
   授权路径）的**静态对偶**：两边发行包身份键同为 PEP 503 规范化名（`depresolve.normalize_distribution`），授权检查路径一行不动。
   `tests/test_import_origin_metadata.py` 用「会留痕的 `.pth` / finder / `sitecustomize` / 包」+ 桩 + 路径间谍 + AST 门禁钉死。
 - **证据优先级与输出（`distmeta.resolve_module`，仍只观测）**：能对应到具体模块位置的已安装证据（`top_level.txt` / `RECORD` /

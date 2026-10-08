@@ -411,6 +411,54 @@ class TestEditableAndNonReproducibleSources:
         assert got.distribution_provenance == "url"
         assert got.selected_distribution == ""
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink / chmod")
+    @pytest.mark.parametrize("how", ["symlink", "oversize", "placeholder", "unreadable", "fifo"])
+    def test_a_direct_url_that_exists_but_cannot_be_read_is_never_taken_for_an_index_install(
+        self, tmp_path, monkeypatch, how
+    ):
+        if how == "fifo" and not hasattr(os, "mkfifo"):
+            pytest.skip("needs mkfifo")
+        prefix, site = _env(tmp_path)
+        d = _dist(site, "labtool", "1.2", top="labtool\n")
+        du = d / "direct_url.json"
+        payload = json.dumps({"url": "file:///x", "dir_info": {"editable": True}})
+        if how == "symlink":
+            real = _write(tmp_path / "real.json", payload)
+            du.symlink_to(real)
+        elif how == "oversize":
+            _write(du, payload + " " * (distmeta.MAX_SMALL_BYTES + 10))
+        elif how == "placeholder":
+            _write(du, payload)
+            real_is_ph = scanbudget.is_placeholder
+            monkeypatch.setattr(
+                scanbudget,
+                "is_placeholder",
+                lambda st: real_is_ph(st) or st.st_size == len(payload),
+            )
+        elif how == "unreadable":
+            _write(du, payload)
+            du.chmod(0)
+            if os.access(du, os.R_OK):
+                pytest.skip("running as a user that ignores file modes")
+        else:
+            os.mkfifo(du)
+        try:
+            idx = _index(prefix)
+        finally:
+            if how == "unreadable":
+                du.chmod(0o644)
+        got = _scan(tmp_path, "import labtool\n", idx)["labtool"]
+        assert got.distribution_provenance != "index"
+        assert [c["reproducible"] for c in got.distribution_candidates] == [False]
+        assert got.selected_distribution == ""
+        assert got.distribution_status == "installed_source_not_reproducible"
+
+    def test_a_direct_url_that_does_not_exist_is_still_an_index_install(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(site, "plain", "1.0", top="plain\n")
+        got = _scan(tmp_path, "import plain\n", _index(prefix))["plain"]
+        assert got.distribution_provenance == "index" and got.selected_distribution == "plain"
+
 
 # ---------------------------------------------------------------- Conda
 
@@ -556,6 +604,73 @@ class TestSeveralProviders:
         assert got.observed_version == "2.0.0" and got.selected_distribution == "numpy"
         assert "shadowed_by_higher_priority_layer" in got.compatibility
         assert [c["shadowed"] for c in got.distribution_candidates] == [False, True]
+
+    # ---- 跨 site-packages 层的遮蔽：与真解释器的 PathFinder 对拍 ----
+
+    @staticmethod
+    def _layer(site: Path, kind: str, tag: str) -> None:
+        """在一层 site-packages 里装 `lyr` 的一个提供者：ns = namespace portion（目录无 `__init__`）/ pkg = 常规包 / mod = 单文件。"""
+        rec = {
+            "ns": [f"lyr/part_{tag}/__init__.py"],
+            "pkg": ["lyr/__init__.py"],
+            "mod": ["lyr.py"],
+        }[kind]
+        for r in rec:
+            _write(site / r, "")
+        _dist(site, f"dist-{tag}", "1", record=rec)
+
+    @staticmethod
+    def _real_providers(sites: list[Path]) -> set[int]:
+        """真解释器（隔离模式、sys.path 只有这两层）导入 `lyr` 后，实际落在哪几层（下标）。"""
+        code = (
+            "import sys, json; sys.path[:] = json.loads(sys.argv[1]); import lyr; "
+            "print(json.dumps(list(lyr.__path__) if hasattr(lyr, '__path__') and "
+            "getattr(lyr, '__file__', None) is None else [lyr.__file__]))"
+        )
+        out = subprocess.run(
+            [sys.executable, "-I", "-S", "-c", code, json.dumps([str(x) for x in sites])],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        got = json.loads(out)
+        return {i for i, site in enumerate(sites) if any(g.startswith(str(site)) for g in got)}
+
+    @pytest.mark.parametrize("upper", ["ns", "pkg", "mod"])
+    @pytest.mark.parametrize("lower", ["ns", "pkg", "mod"])
+    def test_cross_layer_providers_match_the_real_interpreters_path_finder(
+        self, tmp_path, upper, lower
+    ):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, site = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg", f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        )
+        self._layer(site, upper, "u")
+        self._layer(base_site, lower, "l")
+        idx = _index(prefix, include_base=True)
+        cands = idx.lookup("lyr").candidates
+        assert [c.order for c in cands] == [0, 1]
+        ours = {c.order for c in cands if not c.shadowed}
+        assert ours == self._real_providers([site, base_site])
+
+    def test_two_layers_of_namespace_portions_are_both_providers_and_ambiguous(self, tmp_path):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, site = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg", f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        )
+        self._layer(site, "ns", "u")
+        self._layer(base_site, "ns", "l")
+        got = _scan(tmp_path, "import lyr\n", _index(prefix, include_base=True))["lyr"]
+        assert got.distribution_status == "module_origin_ambiguous"
+        assert [c["shadowed"] for c in got.distribution_candidates] == [False, False]
 
     def test_two_versions_of_one_distribution_in_one_site_packages_are_reported_not_resolved(
         self, tmp_path
@@ -1025,6 +1140,85 @@ class TestBudgetsLeaveATrace:
         got = _scan(tmp_path, "import mod29\n", idx)["mod29"]
         assert got.distribution_status == "environment_not_checked"
         assert "metadata_scan_incomplete" in got.compatibility
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX chmod")
+    def test_an_unlistable_site_packages_is_not_checked_rather_than_empty(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(site, "numpy", "2.0", top="numpy\n")
+        site.chmod(0)
+        try:
+            if os.access(site, os.R_OK):
+                pytest.skip("running as a user that ignores directory modes")
+            idx = _index(prefix)
+        finally:
+            site.chmod(0o755)
+        assert idx.complete is False
+        got = _scan(tmp_path, "import numpy\n", idx)["numpy"]
+        assert got.distribution_status == "environment_not_checked"
+
+    def test_scandir_failure_is_not_checked_not_not_installed(self, tmp_path, monkeypatch):
+        prefix, site = _env(tmp_path)
+        _dist(site, "numpy", "2.0", top="numpy\n")
+        real = os.scandir
+
+        def boom(path="."):
+            if str(path) == str(site):
+                raise PermissionError(13, "denied")
+            return real(path)
+
+        monkeypatch.setattr(os, "scandir", boom)
+        idx = _index(prefix)
+        assert idx.complete is False
+        assert (
+            _scan(tmp_path, "import numpy\n", idx)["numpy"].distribution_status
+            == "environment_not_checked"
+        )
+
+    def test_an_entry_whose_stat_fails_makes_the_environment_incomplete(
+        self, tmp_path, monkeypatch
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(site, "numpy", "2.0", top="numpy\n")
+        _dist(site, "scipy", "1.0", top="scipy\n")
+
+        class Wrapped:
+            def __init__(self, e):
+                self._e = e
+                self.name = e.name
+
+            def stat(self, **kw):
+                if self.name.startswith("scipy"):
+                    raise PermissionError(13, "denied")
+                return self._e.stat(**kw)
+
+            def __getattr__(self, k):
+                return getattr(self._e, k)
+
+        class It:
+            def __init__(self, it):
+                self._it = it
+
+            def __enter__(self):
+                self._it.__enter__()
+                return self
+
+            def __exit__(self, *a):
+                return self._it.__exit__(*a)
+
+            def __iter__(self):
+                return (Wrapped(e) for e in self._it)
+
+        real_scandir = os.scandir
+        monkeypatch.setattr(
+            os,
+            "scandir",
+            lambda p=".": It(real_scandir(p)) if str(p) == str(site) else real_scandir(p),
+        )
+        idx = _index(prefix)
+        assert idx.complete is False
+        assert any(i["code"] == "unreadable_file" for i in idx.issues)
+        got = _scan(tmp_path, "import scipy\n", idx)["scipy"]
+        assert got.distribution_status == "environment_not_checked"
 
     def test_byte_budget_stops_reading_and_is_recorded(self, tmp_path):
         prefix = self._many(tmp_path)
