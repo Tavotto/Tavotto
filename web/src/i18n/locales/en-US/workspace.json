@@ -102,7 +102,9 @@
     "search": "Search canvases…",
     "searchAria": "Search canvases",
     "moveUp": "Move up",
-    "moveDown": "Move down"
+    "moveDown": "Move down",
+    "count_one": "{{count}} canvas",
+    "count_other": "{{count}} canvases"
   },
   "canvasTools": {
     "fit": "Fit",
@@ -143,7 +145,8 @@
   "crash": {
     "blank": "Open a blank layout",
     "body": "Your layout is saved on this computer; reload to resume from the last snapshot. If it fails again, choose “Open a blank layout” — nothing is deleted.",
-    "title": "Something went wrong"
+    "title": "Something went wrong",
+    "details": "Details"
   },
   "docBanner": {
     "conflictDisk": "On disk: {{canvases}} canvases · {{objects}} objects · changed {{time}}",
@@ -168,7 +171,8 @@
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
     "tooNewBody": "Tavotto didn’t open it, so the file on disk is unchanged. Upgrade and try again.",
-    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})"
+    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})",
+    "moreActions": "More ways to resolve"
   },
   "document": {
     "defaultName": "Untitled"
@@ -338,11 +342,6 @@
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects"
   },
-  "hud": {
-    "cursor": "Cursor",
-    "offset": "Offset",
-    "size": "Size"
-  },
   "layerTree": {
     "collapseGroup": "Collapse group",
     "emptyTitle": "No objects on the canvas yet",
@@ -368,7 +367,8 @@
     "editableState": "editable",
     "rowActions": "Actions for {{label}}",
     "moveUp": "Bring forward",
-    "moveDown": "Send backward"
+    "moveDown": "Send backward",
+    "rename": "Rename"
   },
   "layoutKind": {
     "col": "column layout",
@@ -464,7 +464,9 @@
     "hideCount": "Hide {{count}} objects",
     "zOrder": "Stacking order",
     "deleteCount": "Delete {{count}} objects",
-    "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first"
+    "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first",
+    "copy": "Copy",
+    "paste": "Paste"
   },
   "rail": {
     "assets": "Assets",
@@ -489,7 +491,9 @@
       "workspace": "Project"
     },
     "style": "Style",
-    "workspace": "Workspace"
+    "workspace": "Projects",
+    "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
+    "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})"
   },
   "readiness": {
     "bannerSummary": "{{total}} figures found: {{editable}} editable, {{pending}} waiting to connect, {{layoutOnly}} layout only.",
@@ -620,7 +624,12 @@
     "viewResults": "View captured figures",
     "groupInfraName": "Tools and config scripts",
     "recoveryDetails": "Details",
-    "group_needsFix": "Needs fixing"
+    "rerunWithArgs": "Try again with these arguments",
+    "group_needsFix": "Needs fixing",
+    "copyPath": "Copy path",
+    "pathCopied": "Copied: {{path}}",
+    "pathCopyFailed": "Couldn’t write to the clipboard. The script is at: {{path}}",
+    "rowActions": "More actions for {{script}}"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",
@@ -640,7 +649,10 @@
     "emptyHintNoAssets": "Put PDF/PNG files or plotting scripts in the project folder, and they’ll show up in the asset library.",
     "emptyTitle": "The canvas is empty",
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
-    "tryTutorial": "Try the sample project"
+    "tryTutorial": "Try the sample project",
+    "rulerUnit": "mm",
+    "rulerUnitTitle": "Ruler unit: millimetres",
+    "textPlaceholder": "Type text"
   },
   "stylePanel": {
     "emptyTitle": "Select a figure on the canvas to see its style here",
@@ -798,14 +810,18 @@
       "notResizable": "Some members are positioned automatically by matplotlib, so the group can't be moved or scaled",
       "locked": "This group has a locked member; unlock it to move or scale the group",
       "incomplete": "Some members have no position in this render, so the group can't be moved or scaled right now"
-    }
+    },
+    "errorTitle": "Something didn’t work",
+    "copyDetails": "Copy details",
+    "copiedDetails": "Copied"
   },
   "tabs": {
     "allCanvases": "All canvases",
     "canvasName": "Canvas name",
     "closeTab": "Close tab {{name}}",
     "listLabel": "Canvas tabs",
-    "newCanvas": "New canvas"
+    "newCanvas": "New canvas",
+    "unopened": "Not open"
   },
   "toolHint": {
     "arrow": "Drag to draw an arrow; hold Shift to snap to 15°. Esc to cancel.",
@@ -875,12 +891,17 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%",
-    "timelineButton": "Layout timeline"
+    "timelineButton": "Layout timeline",
+    "issueLastDoc": "Last layout not opened",
+    "issueTooNew": "Newer layout",
+    "issueAria": "Layout status: {{status}}. Show details",
+    "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
+    "zoomValueInput": "Zoom (%)",
+    "zoomSelection": "Zoom to selection"
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",
-    "later": "Later",
-    "title": "Tool updated"
+    "later": "Later"
   },
   "hints": {
     "panel_editable": "Double-click to edit inside the figure.",
@@ -888,5 +909,13 @@
     "fast_edit_entered": "Your changes are saved to this layout. The original file stays untouched.",
     "multi_select": "Use the floating bar by the selection to align and distribute.",
     "problem_found": "“Problems” on the left locates the object and its property field."
+  },
+  "canvasMenu": {
+    "aria": "Canvas actions",
+    "paste": "Paste",
+    "selectAll": "Select all",
+    "rulers": "Rulers",
+    "grid": "Grid",
+    "safeArea": "Safe area"
   }
 }

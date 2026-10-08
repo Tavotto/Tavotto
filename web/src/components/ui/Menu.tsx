@@ -1,7 +1,7 @@
 import * as DM from '@radix-ui/react-dropdown-menu'
 import { Check, ChevronRight } from './icons'
 import { ICON_SIZE } from './Icon'
-import { useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type ReactNode } from 'react'
+import { useRef, useState, type ButtonHTMLAttributes, type ComponentType, type ReactElement, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 /** 浮层外壳样式：菜单本体与子菜单共用一份，别各抄一遍 */
@@ -23,6 +23,9 @@ export function Menu({
   width = 200,
   open,
   onOpenChange,
+  onCloseAutoFocus,
+  modal,
+  pointerKeepsFocus,
 }: {
   trigger: ReactElement
   children: ReactNode
@@ -31,10 +34,39 @@ export function Menu({
   /** 受控打开（`RowMenu` 用它让 ⇧F10 / 右键打开同一份菜单）；不给就是 Radix 自己管 */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /**
+   * 关闭时焦点回到触发器之前调用；`preventDefault()` = 不还焦点。只给「菜单项打开了一个要接焦点的
+   * 输入框」的场合（行内改名）：否则还给 ⋯ 的那一下就是那个输入框的 blur
+   */
+  onCloseAutoFocus?: (e: Event) => void
+  /**
+   * 默认模态（打开时页面其余部分不吃指针）。触发器自己还要认双击的（顶栏文档名：单击开菜单、双击改名，
+   * 2026-10-07 设计审计 §10.1）给 false：第二下才落得回触发器上
+   */
+  modal?: boolean
+  /**
+   * 指针打开的菜单关掉后，焦点回到**打开前**那里（还活着才还，否则不动），不落到触发器上。触发器本身按下
+   * 不拿焦点的（画布工具条：点完接着按方向键是在推画布上的对象）给 true——Radix 关菜单时默认把焦点还给
+   * 触发器，按下时拦住的那次聚焦会在这里被补上，下一个方向键就被工具条吃掉了（Codex #833）。
+   * 键盘打开的照旧回到触发器：键盘用户是从那里出发的。
+   */
+  pointerKeepsFocus?: boolean
 }) {
+  // 这一次是怎么打开的、打开前焦点在哪（`pointerKeepsFocus` 用）
+  const opened = useRef<{ pointer: boolean; before: Element | null }>({ pointer: false, before: null })
   return (
-    <DM.Root open={open} onOpenChange={onOpenChange}>
-      <DM.Trigger asChild>{trigger}</DM.Trigger>
+    <DM.Root open={open} onOpenChange={onOpenChange} modal={modal}>
+      <DM.Trigger
+        asChild
+        onPointerDown={() => {
+          opened.current = { pointer: true, before: document.activeElement }
+        }}
+        onKeyDown={() => {
+          opened.current = { pointer: false, before: null }
+        }}
+      >
+        {trigger}
+      </DM.Trigger>
       <DM.Portal>
         <DM.Content
           align={align}
@@ -45,6 +77,21 @@ export function Menu({
             // 从触发器那个角展开，而不是从自己中心——菜单与按钮的因果关系才看得出来
             'origin-[var(--radix-dropdown-menu-content-transform-origin)]',
           )}
+          onCloseAutoFocus={
+            onCloseAutoFocus || pointerKeepsFocus
+              ? (e) => {
+                  // 调用方先说话（行内改名要把焦点留给输入框）；它拦下了就不再还焦点
+                  onCloseAutoFocus?.(e)
+                  if (e.defaultPrevented || !pointerKeepsFocus) return
+                  const { pointer, before } = opened.current
+                  if (!pointer) return
+                  e.preventDefault()
+                  if (before instanceof HTMLElement && before !== document.body && before.isConnected) {
+                    before.focus({ preventScroll: true })
+                  }
+                }
+              : undefined
+          }
         >
           {children}
         </DM.Content>
@@ -233,13 +280,15 @@ export function MenuCheckItem({
   children,
   checked,
   onSelect,
+  ...rest
 }: {
   children: ReactNode
   checked: boolean
   onSelect: () => void
-}) {
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
     <DM.CheckboxItem
+      {...rest}
       checked={checked}
       onSelect={(e) => {
         e.preventDefault()
@@ -285,6 +334,8 @@ export function MenuRadioItem({
   children,
   icon: Icon,
   shortcut,
+  disabled,
+  reason,
   ...rest
 }: {
   value: string
@@ -292,16 +343,92 @@ export function MenuRadioItem({
   icon?: ComponentType<{ size?: number; className?: string }>
   /** 与 MenuItem 同一列的快捷键（标注工具的 A / R / O / L、缩放预设的 ⌘0） */
   shortcut?: string
+  disabled?: boolean
+  /** 不可用的原因，第二行常驻（与 `MenuItem.reason` 同一种写法；问题面板「当前图」没有当前图时） */
+  reason?: string
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
-    <DM.RadioItem {...rest} value={value} className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}>
+    <DM.RadioItem {...rest} value={value} disabled={disabled} className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}>
       <DM.ItemIndicator className="absolute left-1.5 flex items-center">
         <Check size={ICON_SIZE.sm} />
       </DM.ItemIndicator>
       {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}
-      <span className="min-w-0 flex-1 truncate">{children}</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate">{children}</span>
+        {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
+      </span>
       {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
     </DM.RadioItem>
+  )
+}
+
+/** 菜单里能停焦点的项（`MenuField` 用它把方向键 / Tab 交还给菜单） */
+const MENU_ITEM_SELECTOR = '[role="menuitem"]:not([data-disabled]),[role="menuitemradio"]:not([data-disabled]),[role="menuitemcheckbox"]:not([data-disabled])'
+
+/**
+ * 菜单里的一格**输入框**（缩放菜单顶上的倍率框，2026-10-07 设计审计 §10.1）。
+ *
+ * 不能是菜单里一个普通 `div`：Radix 菜单的方向键只在菜单项之间漫游、Tab 被它吞掉，键盘根本走不进去
+ * （Codex #833 P2）。这一行本身是一个 Radix 菜单项（进漫游顺序；键盘打开菜单时它是第一项），但角色是
+ * `group`（带名字）而不是 `menuitem`——菜单项里套可编辑控件是 nested-interactive。焦点落到这一行时转交给
+ * 里面的输入框；在输入框里：
+ *
+ * * ↓ / Tab 回到下一条菜单项（菜单的语义优先，框里不拿方向键步进），↑ / ⇧Tab 留在框里；
+ * * Enter 由输入框自己提交（`NumberField`），提交后焦点留在框里、菜单不关——看得见改完的读数；
+ * * Esc 照常关菜单、焦点还给触发器（Radix 在 document 上接住 Esc，先于这里）。
+ *
+ * 指针一侧与普通 `div` 一样：悬停不抢焦点（不让 Radix 把焦点挪到这一行、移出时挪回菜单本体——那会把正在
+ * 输入的框失焦提交），点进框里就是点进框里；点这一行不关菜单。
+ */
+export function MenuField({
+  label,
+  children,
+  ...rest
+}: { label: string; children: ReactNode } & Record<`data-${string}`, string | number | boolean | undefined>) {
+  const rowRef = useRef<HTMLDivElement>(null)
+  const field = () => rowRef.current?.querySelector<HTMLElement>('input, textarea') ?? null
+  const nextItem = () => {
+    const row = rowRef.current
+    const menu = row?.closest('[role="menu"]')
+    if (!row || !menu) return null
+    return (
+      [...menu.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR)].find(
+        (el) => row.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ) ?? null
+    )
+  }
+  return (
+    <DM.Item
+      {...rest}
+      ref={rowRef}
+      role="group"
+      aria-label={label}
+      textValue=""
+      className="px-1 pb-1 outline-none"
+      // 点进框里不是「选中一项」：菜单不关
+      onSelect={(e) => e.preventDefault()}
+      onPointerMove={(e) => e.preventDefault()}
+      onPointerLeave={(e) => e.preventDefault()}
+      onFocus={(e) => {
+        if (e.target === e.currentTarget) field()?.focus()
+      }}
+      onKeyDownCapture={(e) => {
+        if (e.target === e.currentTarget) return
+        const toMenu = e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)
+        const stay = e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)
+        if (toMenu || stay) {
+          e.preventDefault()
+          e.stopPropagation()
+          if (toMenu) nextItem()?.focus()
+        } else if (e.key === 'Enter') {
+          // 输入框提交后会自己失焦；焦点留在这一格，键盘用户不至于掉到 body 上
+          const el = field()
+          setTimeout(() => el?.isConnected && el.focus(), 0)
+        }
+      }}
+    >
+      {children}
+    </DM.Item>
   )
 }
 

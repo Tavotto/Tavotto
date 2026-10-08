@@ -30,9 +30,18 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
 `Button variant="danger-tinted"`（浅底危险胶囊，永不实心红）；按钮层级的稳定判据是 `data-variant`。门禁全在 `foundation.test`（含逐页阶段的 `LATER_PHASE` 豁免）。
 
+**2026-10-07 改图助手重做（宪法第十八节「2026-10-07 重做」小节）**：转录是一段对话而不是一轮一张卡——用户消息右对齐气泡（超 3 行折叠，hover 出复制 / 重新发送），
+助手回答不装卡、`type-reading` ink；过程折成一行「已思考 Ns · N 步」的环境行（耗时来自 `AiEntry.at` / `AiSession.finishedAt`，缺了不说），
+改了脚本是唯一带边框的显著卡（`DiffView`：文件头 + hover 替换计数的操作 + 22px 行 + 4px 变更条 + 行号 + 词级高亮）；代码块无边框 + 语言 + 复制 +
+`--color-syntax-*` 语法色（/try 的 Code Sheet 共用）；回答里的链接 accent 是「链接灰字」的唯一例外；输入框 42px 胶囊 ↔ 两行两态、聚焦只加深到
+border-strong、上方玻璃上下文带（目标 · 作用范围 chip）、工具行两颗模型 / 推理强度胶囊、26px 圆形发送 / 中止（交叉淡化不缩放，进行中 1px 轨道）；
+任务历史是 320px 弹层；错误是 danger `Notice` + 重试。600 字重在 `ai/Markdown`（h2 / h3）与 `ai/DiffView`（「已修改」）有带个数的门禁豁免。
+选择器认 `data-ai-*`（`data-ai-input` / `-composer[data-layout]` / `-context` / `-target` / `-pill` / `-user` / `-process-toggle` / `-step` /
+`-diff` / `-revert` / `-code` / `-history` …）。
+
 白色 surface；层级靠留白 / 字号 / 轻微背景差，
 边框只给区域边界、选择状态与浮层；可编辑框是 `field` 底、静态无边（聚焦 accent 边）。**持久表面里只有
-「真的是一张卡」的东西有投影（`--shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断卡），浮层用 `--shadow-pop` /
+「真的是一张卡」的东西有投影（`--shadow-card`：素材卡 / 诊断卡；助手的会话卡与任务行 2026-10-07 起撤了卡），浮层用 `--shadow-pop` /
 `--shadow-dialog`；改图助手输入框是浮在对话流上的玻璃（`--color-glass` + `backdrop-blur-lg` + `--shadow-composer`）**
 （宪法第二十二节，2026-09-15）。
 radius（2026-10-07 起，见上）：`xs` 4、`sm` 6、`md` 8（行 / 输入框 / 说明条）、`lg` 12（卡片 / 浮层外壳）、`panel` 16（对话框 / 工作面板）、`full`（带字的按钮 / 图标钮 / 分段）；
@@ -60,13 +69,14 @@ SearchInput / `inspector/controls/PickerTrigger` 共用；批次 2，形态 2026
 形状变化）。下拉的记号只有 chevron-down。支持 `prefers-reduced-motion`。
 Document 字体（Times）与 UI 字体严格分离。
 
-设置窗口（Session 5 / 6）：`SettingsDialog` 1000×680、`Dialog chrome="shell"`、导航四组
-（`NAV_GROUPS`）、内容模式 `CONTENT_MODE`（normal 最大宽 640 / wide 铺满）；一行设置是
+设置窗口（Session 5 / 6，2026-10-07 修订）：`SettingsDialog` 1000×680、`Dialog chrome="shell"`、导航 200px（顶上 28px 搜索，
+`settings/settingsRegistry.ts`；项 30px / 13px / 8 圆角，选中 600）四组（`NAV_GROUPS`）、内容模式 `CONTENT_MODE`（normal 一列居中
+最大宽 680 / wide 铺满）、每页一个页头（type-heading + 一句说明；钻入页是面包屑）；一行设置是
 `settings/SettingRow`（标题列弹性 + 控件列定宽 240、normal 48 / compact 32、`control="fill"`
-整行宽；**控件对齐 28px 的标题行而不是整行中线**，`description` / `status` / `illustration`
-都在标题列），分区 `SettingSection`（小标题 + 可选说明 + 行间 hairline，不是卡片）；页面
-不带页标题、不带外层 gap（`display: contents`），分区间距由外壳给。样式 / 规范页是
-「左库（`listRowClass` 行）右编辑器」，规范页顶部四个关键数；`CopyButton` 建在 `Button` 上；
+整行宽、`below` 跨两列的 fill 行；**控件对齐 28px 的标题行而不是整行中线**，`description` / `status`（只放文字）/ `illustration`
+都在标题列），分组 `ui/FormSection` + `ui/FieldGroup`（组里的说明条是 `ui/Notice`，原地展开的是 `DiagnosticDisclosure variant="row"`）；
+页面不带外层 gap（`display: contents`），分区间距由外壳给。样式 / 规范页是「一行库（一个 Select + ⋯）+ 编辑器」，规范页顶部
+「正在使用」组（四栏关键数 + 跟随更新），可编辑那份有吸底保存条；`CopyButton` 建在 `Button` 上；
 键位提示用 `ui/Kbd`。细则在 Design Constitution 第十二、十三节。**用例里渲染任何含
 `IconButton` 的设置页要包 `TooltipProvider`**（与 RegistryDialog.test 同一写法）。
 
@@ -83,11 +93,17 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 标题由 `RoleProfile.primaryGroups` 声明（曲线 = 线条 / 数据点），不在组件里手排
 （2026-09-13 审计 P1 第二批，细则在宪法第十六节）。
 
-工作台结构：顶栏 44px（左=品牌/文档名/autosave，中=撤销重做，右=导出/更多）；
+**2026-10-07 外壳与画布浮层（宪法第二十七节·外壳）**——与下文冲突处以它为准：画布视口四个角位各 12px 内距，右上一个堆叠容器
+（缩放 → 会话卡 → 探针，`data-canvas-corner="top-right"`）；覆盖层只描边不着色、虚线只有 `--sel-dash` 一种且只给暂定的东西、框选实线、
+手柄 8 + 16 命中 + 沿边命中带、吸附线带 × 帽；拖动读数贴着选区（`canvas/MeasureChip`：读数是逻辑盒，贴在 `visualBounds` 的并下面；标尺选区带同样按 `visualBounds`，与 `zoomToSelection` 同口径，取的对象也同一判据 `renderedSelection`——快速编辑里只认正在编辑的那张图，Codex #833），HUD 只剩工具提示；顶栏 = 首页胶囊（含品牌）/ 面包屑 /
+文档状态芯片 / 时间线 ……撤销重做 / 导出 / 更多（空心环 = 未写进项目文件，实心 accent 点 = 有更新）；提示条在工作面板里（`BannerStack`）；
+快捷键只出自 `lib/keymap.ts`（`lib/keymap.test.tsx` 对拍 `useKeyboard`，按美式布局合成真浏览器给的事件：⇧ 改写后的 key，⇧⌘] 是 `}`）；命令面板 = `Dialog chrome="palette"`。
+
+工作台结构：顶栏 44px（左=首页胶囊/文档名/状态芯片/时间线，右=撤销重做/导出/更多）；
 画布工具（选择 / 文字 / 标注 ▾ / 序号 | 适应）在画布底部居中的**浮动工具条**
 （`CanvasToolbar`，`data-canvas-toolbar`，只在排版模式出现、快速编辑时整条不在），缩放菜单在画布
 标签行最右（快速编辑没有标签行，悬在画布右上角），写回是「⋯」菜单第一项
-（`useWriteBackMenuEntry`，计数 n 在项右侧，属性栏「源文件」里那一颗不动）。工具条占掉画布
+（`useWriteBackMenuEntry`，计数 n 在项右侧，属性栏「源文件」里那一颗不动）。工具条（12 内距 + 40 高）占掉画布
 底边约 64px：底部居中的 toast 列与左下 HUD 在它显示时抬到 `bottom-16`（`useCanvasToolbarVisible`
 一处判据），`fixed` 的选中浮动栏 / 右键快编落位时给窗口底边留 `BOTTOM_SAFE`
 （`canvas/context-bar/position.ts`），三者都不许盖住工具条上的按钮；
@@ -96,9 +112,9 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 左侧 44px 常驻图标轨道（素材/结构/图内元素）+
 280–360px 上下文抽屉（再点收起）；右栏 296–320px 三模式（属性/改图助手/
 画布），无选择且未钉住时不占位；断点 ≥1440 双栏可钉住、1024–1439 左右
-互斥、<1024 覆盖式抽屉。底部无常驻状态栏：坐标/选区尺寸只在拖动中出现（HUD，左下），
-通知只有一条轨（`NotificationRail`，底部居中、最多两条叠着）：普通状态短暂即逝、错误常驻可关、
-操作提示可关、「已为编辑加入本文档」带撤销；autosave 显示在顶栏文档名旁。
+互斥、<1024 覆盖式抽屉。底部无常驻状态栏：拖动中的几何读数贴在选区下方（`MeasureChip`；放不下翻到上方，最后整体夹进舞台，选区占满 / 出界时也不被裁掉；底部浮动工具条显示时那一条（`viewportStore.fitBottomClear` = `TOOLBAR_FIT_CLEARANCE`，与「适应」取景同一个值）不算舞台，翻转与夹取都让开它；图内编辑态的方向键微调贴在被推的图内元素下面——位置与 Δ 都取 `InFigureMove.preview` 发布的预览（`elementPreview` / `gidDrag`，与 `ElementBoxes` 同源），落到页面走画布画这张图的同一个变换 `lib/panelTransform`（先翻转再旋转，翻转面板上贴在镜像后的元素下、Δ 报看得见的方向，#832 评审），子图贴边被钳住时芯片跟着停、Δ 报真正挪了的量，权威缺席时不报，不拿面板的框顶替，Codex #833），左下 HUD 只有工具提示，
+通知只有一条轨（`NotificationRail`，底部居中、最多两条叠着、最新的最靠近底边）：普通状态短暂即逝、错误常驻可关（面板形 + 复制详情）、
+操作提示可关、「已为编辑加入本文档」带撤销；保存状态是顶栏文档名旁的状态芯片。
 
 **图标**（2026-09-06 统一，2026-09-15 换成自绘图标集，ADR 0052；细则 `docs/ux/ICONOGRAPHY.md`）：
 全产品只有 `components/ui/icons` 一套（几何 `defs.ts`、工厂 `createIcon.tsx`，142 个名字与

@@ -97,7 +97,8 @@
     "search": "搜索画布…",
     "searchAria": "搜索画布",
     "moveUp": "上移",
-    "moveDown": "下移"
+    "moveDown": "下移",
+    "count_other": "{{count}} 张画布"
   },
   "canvasTools": {
     "fit": "适应",
@@ -135,7 +136,8 @@
   "crash": {
     "blank": "打开空白排版",
     "body": "排版已自动保存在本机，刷新后从最后一次快照继续。仍然出错可选「打开空白排版」，原排版不会删除。",
-    "title": "界面出错了"
+    "title": "界面出错了",
+    "details": "详情"
   },
   "docBanner": {
     "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
@@ -160,7 +162,8 @@
     "saveAs": "另存为…",
     "saveErrorBody": "改动已暂存，尚未写入磁盘。",
     "tooNewBody": "Tavotto 没有打开它，磁盘文件没有改动。升级后再试。",
-    "tooNewTitle": "这份排版来自更新的 Tavotto（schema {{schema}}）"
+    "tooNewTitle": "这份排版来自更新的 Tavotto（schema {{schema}}）",
+    "moreActions": "其他处理方式"
   },
   "document": {
     "defaultName": "新排版"
@@ -325,11 +328,6 @@
     "hideObjects": "隐藏 {{count}} 个对象",
     "showObjects": "显示 {{count}} 个对象"
   },
-  "hud": {
-    "cursor": "光标",
-    "offset": "位移",
-    "size": "尺寸"
-  },
   "layerTree": {
     "collapseGroup": "折叠组",
     "count_other": "{{count}} 个对象",
@@ -351,7 +349,8 @@
     "editableState": "可编辑",
     "rowActions": "{{label}} 的操作",
     "moveUp": "上移一层",
-    "moveDown": "下移一层"
+    "moveDown": "下移一层",
+    "rename": "重命名"
   },
   "layoutKind": {
     "col": "列布局",
@@ -444,7 +443,9 @@
     "hideCount": "隐藏 {{count}} 个",
     "zOrder": "排列层级",
     "deleteCount": "删除 {{count}} 个对象",
-    "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转"
+    "cropRotatedReason": "旋转过的图暂不能裁剪，先取消旋转",
+    "copy": "复制",
+    "paste": "粘贴"
   },
   "rail": {
     "assets": "素材",
@@ -468,7 +469,8 @@
       "workspace": "项目"
     },
     "style": "样式",
-    "workspace": "工作区"
+    "workspace": "项目",
+    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）"
   },
   "readiness": {
     "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅版面。",
@@ -595,7 +597,12 @@
     "viewResults": "查看捕获结果",
     "groupInfraName": "工具与配置脚本",
     "recoveryDetails": "详情",
-    "group_needsFix": "需要修复"
+    "rerunWithArgs": "用这些参数再试一次",
+    "group_needsFix": "需要修复",
+    "copyPath": "复制路径",
+    "pathCopied": "已复制：{{path}}",
+    "pathCopyFailed": "无法写入剪贴板。脚本在：{{path}}",
+    "rowActions": "{{script}} 的更多操作"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
@@ -615,7 +622,10 @@
     "emptyHintNoAssets": "把 PDF/PNG 或绘图脚本放进项目目录，就会出现在素材库。",
     "emptyTitle": "画布是空的",
     "exitTitle": "退出图内编辑，回到画布层（Esc）",
-    "tryTutorial": "试用示例"
+    "tryTutorial": "试用示例",
+    "rulerUnit": "mm",
+    "rulerUnitTitle": "标尺单位：毫米",
+    "textPlaceholder": "输入文字"
   },
   "stylePanel": {
     "emptyTitle": "在画布上选中一张图，这里显示它的样式",
@@ -753,14 +763,18 @@
       "notResizable": "组里有成员的位置由 matplotlib 自动决定，不能整组移动或缩放",
       "locked": "组里有锁定的成员，先解锁才能整组移动或缩放",
       "incomplete": "组里有成员这一版拿不到位置，暂时不能整组移动或缩放"
-    }
+    },
+    "errorTitle": "这一步没有完成",
+    "copyDetails": "复制详情",
+    "copiedDetails": "已复制"
   },
   "tabs": {
     "allCanvases": "全部画布",
     "canvasName": "画布名",
     "closeTab": "关闭标签 {{name}}",
     "listLabel": "画布标签",
-    "newCanvas": "新建画布"
+    "newCanvas": "新建画布",
+    "unopened": "未打开"
   },
   "toolHint": {
     "arrow": "拖动画出箭头，Shift 吸附 15° 角；Esc 取消",
@@ -828,12 +842,17 @@
     "zoomIn": "放大",
     "zoomOut": "缩小",
     "zoomValue": "缩放 {{percent}}%",
-    "timelineButton": "排版时间线"
+    "timelineButton": "排版时间线",
+    "issueLastDoc": "上次的排版没打开",
+    "issueTooNew": "排版版本较新",
+    "issueAria": "排版状态：{{status}}。查看详情",
+    "documentRenameHint": "单击打开排版菜单；双击或按 F2 重命名",
+    "zoomValueInput": "缩放比例（%）",
+    "zoomSelection": "缩放到选中对象"
   },
   "update": {
     "banner": "工具已更新，刷新后使用新版本",
-    "later": "稍后",
-    "title": "工具已更新"
+    "later": "稍后"
   },
   "hints": {
     "panel_editable": "双击进入图内编辑。",
@@ -841,5 +860,13 @@
     "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
     "multi_select": "用选区旁的浮动栏对齐和分布。",
     "problem_found": "左侧「问题」可定位对象和属性字段。"
+  },
+  "canvasMenu": {
+    "aria": "画布操作",
+    "paste": "粘贴",
+    "selectAll": "全选",
+    "rulers": "标尺",
+    "grid": "网格",
+    "safeArea": "安全区"
   }
 }

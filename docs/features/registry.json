@@ -294,6 +294,38 @@
       ]
     },
     {
+      "id": "canvas.zoom-to-selection",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "缩放到选区：把选中对象放大到铺满画布视口",
+        "en-US": "Zoom to selection: fit the selected objects to the canvas view"
+      },
+      "entry": "选中对象后 ⇧2 / 缩放菜单「缩放到选中」/ 命令面板",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：缩放到选区——⇧2、缩放菜单、命令面板都把选中对象放大到铺满画布视口"
+        }
+      ]
+    },
+    {
+      "id": "canvas.empty-menu",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "空白画布右键菜单：粘贴、全选、适应画布、标尺 / 网格 / 安全区开关、画布设置",
+        "en-US": "Empty-canvas context menu: paste, select all, fit, rulers / grid / safe-area toggles, canvas settings"
+      },
+      "entry": "在画布空白处右键",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：空白画布右键菜单——在视口内，「全选」选中对象，「标尺」开关真的收起 / 放出标尺"
+        }
+      ]
+    },
+    {
       "id": "figure.select-and-edit",
       "status": "active",
       "platform": "both",
@@ -518,6 +550,22 @@
       ]
     },
     {
+      "id": "problems.canvas-pins",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布问题标记：在问题面板「⋯」里打开后，有问题的对象上画等级标记，点它直达那条问题",
+        "en-US": "Canvas problem pins: turned on from the problems panel ⋯ menu, severity pins mark objects with issues and jump to the issue when clicked"
+      },
+      "entry": "左栏「问题」→「⋯」→「在画布上标出问题」",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：问题面板「⋯」打开画布上的问题标记，点标记直达那条问题，关掉后标记消失"
+        }
+      ]
+    },
+    {
       "id": "edit.undo-redo",
       "status": "active",
       "platform": "both",
@@ -697,6 +745,22 @@
         {
           "spec": "settings-shell.spec.ts",
           "title": "设置：切遍每个分区，外框不跳、内容区自己滚"
+        }
+      ]
+    },
+    {
+      "id": "settings.search",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "设置里搜索设置项：按名称或关键词过滤，点结果跳到那一页并高亮那一行",
+        "en-US": "Search settings by name or keyword; a result jumps to its page and highlights the row"
+      },
+      "entry": "设置 → 左上角搜索框",
+      "e2e": [
+        {
+          "spec": "settings-shell.spec.ts",
+          "title": "设置搜索：输入关键词只留匹配项，点结果切到那一页、那一行滚进视野并高亮"
         }
       ]
     },

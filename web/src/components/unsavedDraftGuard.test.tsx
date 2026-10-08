@@ -136,13 +136,21 @@ const currentSection = () =>
   document.querySelector('nav [aria-current="true"]')?.getAttribute('data-section')
 const profileName = () => document.body.querySelector<HTMLInputElement>('#profile-name')
 
+/** 在库（一个 Select，2026-10-07 设计审计 §9.1）里选一份：点触发器 → 点那一项 */
+async function pickProfile(name: string) {
+  Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+  await act(async () => document.body.querySelector<HTMLElement>('[data-profile-library] [role="combobox"]')!.click())
+  const opt = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
+    (o.textContent ?? '').startsWith(name),
+  )!
+  await act(async () => opt.click())
+}
+
 /** 打开设置 › 样式页，选中用户自建的那份，把名字改脏 */
 async function openSettingsWithDirtyStyle() {
   useUiStore.setState({ settingsOpen: true, settingsSection: 'style' })
   await mount(<SettingsDialog />)
-  await act(async () => {
-    buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('投稿用'))!.click()
-  })
+  await pickProfile('投稿用')
   await act(async () => {})
   expect(confirmReq(), '草稿干净时切换不问').toBeNull()
   await act(async () => typeInto(profileName()!, '投稿用 改'))
@@ -153,9 +161,7 @@ describe('设置 › 样式页：没存的草稿', () => {
     useUiStore.setState({ settingsOpen: true, settingsSection: 'style' })
     await mount(<SettingsDialog />)
     expect(document.querySelector('[data-nav-dirty]')).toBeNull()
-    await act(async () => {
-      buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     await act(async () => typeInto(profileName()!, '投稿用 改'))
     const dots = [...document.querySelectorAll('[data-nav-dirty]')]
     expect(dots).toHaveLength(1)
@@ -228,18 +234,26 @@ describe('设置 › 样式页：没存的草稿', () => {
 
   it('选库里的另一份先问：继续编辑 → 仍是这一份；放弃 → 换过去', async () => {
     await openSettingsWithDirtyStyle()
-    const builtin = () =>
-      buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('默认样式'))!
-    await act(async () => builtin().click())
+    // 库是一个 Select（2026-10-07 设计审计 §9.1）：点触发器 → 点「默认样式」那一项
+    Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+    const trigger = () => document.body.querySelector<HTMLElement>('[data-profile-library] [role="combobox"]')!
+    const pickBuiltin = async () => {
+      await act(async () => trigger().click())
+      const opt = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
+        (o.textContent ?? '').startsWith('默认样式'),
+      )!
+      await act(async () => opt.click())
+    }
+    await pickBuiltin()
     expect(confirmReq()).not.toBeNull()
     await answer(false)
     expect(profileName()!.value).toBe('投稿用 改')
 
-    await act(async () => builtin().click())
+    await pickBuiltin()
     await answer(true)
     // 内置那份只读：名字不再是输入框
     expect(profileName()).toBeNull()
-    expect(builtin().getAttribute('aria-checked')).toBe('true')
+    expect(trigger().textContent).toContain('默认样式')
   })
 
   it('草稿干净：切分区、关设置都不问', async () => {
@@ -282,33 +296,62 @@ describe('论文样式对话框：没存的草稿', () => {
     expect(saveButton().closest('[role="dialog"]')).not.toBeNull()
   })
 
-  it('切样式先问：继续编辑 → 改动还在；放弃 → 换成那一份', async () => {
+  // 2026-10-07 设计审计 §10.2：对话框里不再叠一层确认框——就地问（页脚正上方的状态区里一条警示 +
+  // 「继续编辑」「放弃修改」），问没问、答了之后发生什么，判据与原来那一问一致
+  const discardNotice = () => document.body.querySelector('[data-style-discard]')
+  async function answerInline(discard: boolean) {
+    const btn = document.body.querySelector<HTMLButtonElement>(
+      discard ? '[data-style-discard-confirm]' : '[data-style-discard-keep]',
+    )!
+    await act(async () => btn.click())
+    await act(async () => {})
+  }
+
+  it('切样式先就地问：继续编辑 → 改动还在；放弃 → 换成那一份', async () => {
     await openStyleDialogDirty()
     const builtin = () =>
       buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('默认样式'))!
     await act(async () => builtin().click())
-    expect(confirmReq()).toMatchObject({ danger: true })
-    await answer(false)
+    expect(confirmReq(), '不再叠一层确认框').toBeNull()
+    expect(discardNotice()).not.toBeNull()
+    expect(discardNotice()!.closest('[data-dialog-status]'), '问在页脚正上方、不随正文滚').not.toBeNull()
+    expect(discardNotice()!.textContent).toContain(dlg('title'))
+    await answerInline(false)
+    expect(discardNotice()).toBeNull()
     expect(styleName().value).toBe('投稿用 改')
 
     await act(async () => builtin().click())
-    await answer(true)
+    await answerInline(true)
     expect(styleName().value).toBe('默认样式')
     expect(saveButton().className).not.toContain('bg-ink')
   })
 
-  it('关对话框先问：继续编辑 → 还开着；放弃 → 关掉，再打开不带着丢掉的改动', async () => {
+  it('关对话框先就地问：继续编辑（或 Esc）→ 还开着；放弃 → 关掉，再打开不带着丢掉的改动', async () => {
     await openStyleDialogDirty()
     const close = () =>
       buttons().find((b) => b.textContent?.trim() === t('actions.close', { ns: 'common' }))!
     await act(async () => close().click())
-    expect(confirmReq()).not.toBeNull()
-    await answer(false)
+    expect(confirmReq()).toBeNull()
+    expect(discardNotice()).not.toBeNull()
+    await answerInline(false)
     expect(useUiStore.getState().stylesOpen).toBe(true)
     expect(styleName().value).toBe('投稿用 改')
 
+    // Esc 的安全答案：脏了也不直接关，先就地问；问着的时候再按 Esc = 继续编辑
+    const content = document.body.querySelector<HTMLElement>('[data-dialog="styles"]')!
+    const esc = () =>
+      act(async () => {
+        content.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      })
+    await esc()
+    expect(useUiStore.getState().stylesOpen).toBe(true)
+    expect(discardNotice()).not.toBeNull()
+    await esc()
+    expect(discardNotice()).toBeNull()
+    expect(useUiStore.getState().stylesOpen).toBe(true)
+
     await act(async () => close().click())
-    await answer(true)
+    await answerInline(true)
     expect(useUiStore.getState().stylesOpen).toBe(false)
 
     await act(async () => useUiStore.getState().setStylesOpen(true))
@@ -327,6 +370,7 @@ describe('论文样式对话框：没存的草稿', () => {
     })
     await act(async () => {})
     expect(confirmReq()).toBeNull()
+    expect(document.body.querySelector('[data-style-discard]')).toBeNull()
     expect(styleName().value).toBe('默认样式')
     await act(async () => {
       buttons().find((b) => b.textContent?.trim() === t('actions.close', { ns: 'common' }))!.click()

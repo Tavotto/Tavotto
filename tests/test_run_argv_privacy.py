@@ -1,0 +1,525 @@
+"""PR #812: the actual child command line, durable diagnostics and error adapter.
+
+Sensitive script output is deliberately omitted rather than token-replaced: argparse,
+repr, native writers and inherited subprocess streams can all transform/split a value.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from support import procprobe
+from tavotto.engine import execspec, pool, runconfig, workerd_client
+
+SECRET = "private-argv-SENTINEL-2026"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_quoting_heavy_argv_never_enters_either_spawn_command(tmp_path):
+    tokens = ['"' * 8180]
+    assert runconfig.validate_argv(tokens) == tuple(tokens)
+    run = execspec.RunSelection("rc_0123456789ab", tuple(tokens))
+    spec = execspec.safe_spec(
+        "s.py",
+        str(tmp_path),
+        "__main__",
+        interpreter=sys.executable,
+        sandbox=str(tmp_path / "sandbox"),
+        argv=tokens,
+        run_config=run.config_id,
+    )
+    command = execspec.worker_argv(spec, worker_py=pool.WORKER_PY, out_dir=tmp_path / "out")
+    spawn = pool._spawn_spec(
+        "s.py",
+        str(tmp_path),
+        "__main__",
+        tmp_path / "out",
+        tmp_path / "sandbox",
+        tmp_path / "worker.log",
+        sys.executable,
+        pool.SOURCE_CURRENT,
+        run=run,
+    )
+    for argv in (command, spawn["argv"]):
+        assert "--script-argv-json" not in argv
+        assert tokens[0] not in " ".join(argv)
+        assert len(subprocess.list2cmdline(argv).encode("utf-16-le")) // 2 < 32767
+
+
+def test_sensitive_selection_survives_reference_lookup(tmp_path):
+    run = runconfig.selection_for(tmp_path, "s.py", [SECRET], sensitive=True)
+    assert run.sensitive is True
+    assert runconfig.selection(tmp_path, run.config_id).sensitive is True
+
+
+@pytest.fixture(params=["python", "workerd"])
+def worker_factory(request, tmp_path, monkeypatch):
+    root = tmp_path / "project"
+    root.mkdir()
+    python = pool.find_worker_python()
+    monkeypatch.setattr(
+        pool, "resolve_worker_python", lambda *a, **kw: (python, pool.SOURCE_CURRENT)
+    )
+    client = None
+    if request.param == "workerd":
+        binary = ROOT / "workerd" / "target" / "debug" / workerd_client.EXE_NAME
+        if not binary.is_file():
+            pytest.skip("workerd binary has not been built")
+        client = workerd_client.WorkerdClient(str(binary))
+    workers = []
+
+    def create(source, tokens, *, sensitive=True):
+        (root / "s.py").write_text(source, encoding="utf-8")
+        run = runconfig.selection_for(root, "s.py", tokens, sensitive=sensitive)
+        cls = pool.EngineWorker if client is None else pool.WorkerdWorker
+        kw = {} if client is None else {"client": client}
+        worker = cls("s.py", str(root), "__main__", run=run, **kw)
+        workers.append(worker)
+        return worker
+
+    yield create
+    for worker in workers:
+        worker.shutdown()
+    if client is not None:
+        client.close()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "import argparse; p = argparse.ArgumentParser(); p.add_argument('--value', type=int); p.parse_args()",
+        "import argparse; argparse.ArgumentParser().parse_args()",
+        "raise RuntimeError(repr(sys.argv))",
+        "sys.exit(sys.argv[-1])",
+    ],
+)
+def test_sensitive_failures_keep_values_out_of_command_logs_and_errors(worker_factory, failure):
+    worker = worker_factory("import sys\n" + failure, ["--value", SECRET])
+    pid = worker.proc.pid if isinstance(worker, pool.EngineWorker) else worker.child_pid
+    if sys.platform.startswith("linux"):
+        assert SECRET.encode() not in Path(f"/proc/{pid}/cmdline").read_bytes()
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    time.sleep(0.1)  # permit the output drainer to consume the real fd stream
+    error = caught.value
+    assert SECRET not in str(error)
+    assert SECRET not in error.traceback_text
+    assert SECRET not in json.dumps(error.extra)
+    assert SECRET not in worker.log_path.read_text(encoding="utf-8")
+    if "argparse" in failure:
+        assert error.code == "script_needs_arguments"
+        assert error.extra["argv_count"] == 2
+        assert error.extra["parse_kind"] in ("invalid_value", "unknown")
+
+
+def test_sensitive_missing_dependency_keeps_its_classification(worker_factory):
+    """敏感运行的自由文本诊断整段删掉，但「缺哪个顶层包」是安全的结构化事实：父进程仍得到
+    missing_dependency + 模块名（依赖修复 / 环境交接不能因为敏感就丢）。"""
+    worker = worker_factory("import sys\nimport tavotto_absent_pkg_xyz\n", ["--value", SECRET])
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    error = caught.value
+    assert error.code == "missing_dependency"
+    assert error.module == "tavotto_absent_pkg_xyz"
+    assert SECRET not in str(error)
+    assert SECRET not in error.traceback_text
+    assert SECRET not in worker.log_path.read_text(encoding="utf-8")
+
+
+def test_sensitive_missing_dependency_never_carries_an_argv_value_as_the_module_name(
+    worker_factory,
+):
+    """脚本把 argv 值塞进 ModuleNotFoundError.name 也夹带不出去：名字不是静态 import 来的就不带名字，
+    但「缺依赖」分类保留（通用提示）。"""
+    worker = worker_factory(
+        "import sys\nraise ModuleNotFoundError('x', name=sys.argv[-1])\n", ["--value", "secretpkg"]
+    )
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    error = caught.value
+    assert error.code == "missing_dependency"
+    assert error.module == ""
+    assert "secretpkg" not in str(error)
+    assert "secretpkg" not in error.traceback_text
+    assert "secretpkg" not in json.dumps(error.extra)
+
+
+@pytest.mark.parametrize(
+    ("source", "tokens"),
+    [
+        # 动态 import 前把敏感 token 变形：加子模块后缀 -> name 是 "privatepkg"（整串 != token）
+        (
+            "import sys, importlib\nimportlib.import_module(sys.argv[-1] + '.submodule')\n",
+            ["--value", "privatepkg"],
+        ),
+        # 从 `--plugin=privatepkg` 里切出值 -> name == "privatepkg"
+        (
+            "import sys, importlib\nimportlib.import_module(sys.argv[-1].split('=', 1)[1])\n",
+            ["--plugin=privatepkg"],
+        ),
+    ],
+)
+def test_sensitive_missing_dependency_hides_names_derived_from_argv(worker_factory, source, tokens):
+    worker = worker_factory(source, tokens)
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    error = caught.value
+    assert error.code == "missing_dependency"  # 分类仍在
+    assert error.module == ""  # 名字不可独立归因到脚本 -> 不带
+    assert "privatepkg" not in str(error)
+    assert "privatepkg" not in error.traceback_text
+    assert "privatepkg" not in json.dumps(getattr(error, "extra", {}) or {})
+    assert "privatepkg" not in worker.log_path.read_text(encoding="utf-8")
+
+
+def test_sensitive_missing_dependency_names_only_static_imports(worker_factory):
+    """静态 `import x` 缺失仍带名字；`from x.y import z` 与函数里的 import 同样算入口脚本自己写的。"""
+    worker = worker_factory(
+        "import sys\ndef go():\n    from tavotto_absent_pkg_abc.sub import thing\ngo()\n",
+        ["--value", SECRET],
+    )
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    assert caught.value.code == "missing_dependency"
+    assert caught.value.module == "tavotto_absent_pkg_abc"
+
+
+def test_static_import_roots_fail_closed(tmp_path):
+    from tavotto.engine import worker as engine_worker
+
+    good = tmp_path / "g.py"
+    good.write_text("import a.b as c, d\nfrom e.f import g\nfrom . import h\n", encoding="utf-8")
+    assert engine_worker._static_import_roots(good) == {"a", "d", "e"}
+    bad = tmp_path / "b.py"
+    bad.write_text("def (:\n", encoding="utf-8")
+    assert engine_worker._static_import_roots(bad) == frozenset()
+    assert engine_worker._static_import_roots(tmp_path / "missing.py") == frozenset()
+    big = tmp_path / "big.py"
+    big.write_text("import a\n" + "#" * engine_worker._STATIC_IMPORT_SCAN_LIMIT, encoding="utf-8")
+    assert engine_worker._static_import_roots(big) == frozenset()
+
+
+def test_parent_handles_a_nameless_missing_dependency_without_crashing():
+    """无模块名的 missing_dependency：两条父进程路径都分类对；错误响应不带 module / 依赖修复，不崩。"""
+    from tavotto import app
+
+    err = pool._worker_error(
+        "Sensitive run failed", "script_error", "", {"missing_dependency": True}
+    )
+    assert (err.code, err.module) == ("missing_dependency", "")
+    assert pool.try_project_env("/nonexistent", "s.py", err.module)["ok"] is False
+    body = app._worker_error_payload(err)
+    assert body["code"] == "missing_dependency"
+    assert "module" not in body
+    assert "dependency_repair" not in body
+    # 非法形状一律当没有
+    other = pool._worker_error("x", "script_error", "", {"missing_dependency": "yes"})
+    assert other.code == "script_error"
+
+
+def test_sensitive_native_and_child_output_is_suppressed_without_breaking_protocol(worker_factory):
+    worker = worker_factory(
+        """import sys, os, subprocess
+value = sys.argv[-1]
+print(value, flush=True)
+print(repr(value), file=sys.stderr, flush=True)
+os.write(1, value.encode())
+os.write(2, value.encode())
+subprocess.run([sys.executable, "-c", "import os; os.write(1, b'native-child-private-argv-SENTINEL-2026'); os.write(2, b'native-child-private-argv-SENTINEL-2026')"], check=True)
+""",
+        [SECRET],
+    )
+    assert worker.ensure_built()["ok"]
+    time.sleep(0.1)
+    log = worker.log_path.read_text(encoding="utf-8")
+    assert SECRET not in log
+    assert "sensitive" in log.lower(), "watchdog needs a content-free output marker"
+
+
+def test_ordinary_output_still_has_the_original_diagnostics(worker_factory):
+    worker = worker_factory(
+        "import sys\nprint(sys.argv[-1], flush=True)\nraise RuntimeError(sys.argv[-1])",
+        [SECRET],
+        sensitive=False,
+    )
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    assert SECRET in worker.log_path.read_text(encoding="utf-8")
+    assert SECRET in caught.value.traceback_text
+
+
+def test_ordinary_worker_error_payload_preserves_parse_facts():
+    from tavotto import app
+
+    error = pool.WorkerError("Arguments rejected", code="script_needs_arguments")
+    error.extra = {"argv_count": 2, "parse_kind": "invalid_value"}
+    assert app._worker_error_payload(error)["params"] == {
+        "argv_count": "2",
+        "parse_kind": "invalid_value",
+    }
+
+
+@pytest.mark.parametrize("speaks", [True, False])
+def test_sensitive_output_only_keeps_the_watchdog_alive_while_it_progresses(
+    worker_factory, monkeypatch, speaks
+):
+    output = "print(sys.argv[-1], flush=True)" if speaks else "pass"
+    worker = worker_factory(
+        f"import sys, time\nfor i in range(35):\n    {output}\n    time.sleep(0.1)\n", [SECRET]
+    )
+    # Complete imports/handshake before measuring the script's idle budget.
+    if isinstance(worker, pool.EngineWorker):
+        worker.request({"cmd": "ping"}, 60)
+    initial_size = worker.log_path.stat().st_size
+    monkeypatch.setattr(pool, "BUILD_IDLE_TIMEOUT", 1.5)
+    monkeypatch.setattr(pool, "BUILD_HARD_TIMEOUT", 20)
+    if speaks:
+        assert worker.ensure_built()["ok"]
+        assert len(worker.log_path.read_bytes()) - initial_size < 2048
+    else:
+        with pytest.raises(pool.WorkerError) as caught:
+            worker.ensure_built()
+        assert caught.value.code == pool.BUILD_TIMEOUT_CODE
+    assert SECRET not in worker.log_path.read_text(encoding="utf-8")
+
+
+def test_sensitive_input_prompts_and_stdout_never_reach_the_disk_rendezvous(worker_factory):
+    worker = worker_factory(
+        "import sys\nprint(sys.argv[-1], flush=True)\ninput('Confirm ' + repr(sys.argv[-1]))\n",
+        [SECRET],
+    )
+    with pytest.raises(pool.WorkerError) as caught:
+        worker.ensure_built()
+    assert caught.value.code == "script_needs_input"
+    for path in worker.base.rglob("*"):
+        if path.is_file():
+            assert SECRET.encode() not in path.read_bytes(), path
+
+
+def test_workerd_reopen_resends_the_original_private_run_without_exposing_it_at_spawn(
+    tmp_path, monkeypatch
+):
+    run = runconfig.selection_for(tmp_path, "s.py", [SECRET], sensitive=True)
+    calls = []
+    results = iter(
+        [
+            {"ok": True, "session_id": "first"},
+            {"ok": True, "stems": {}},
+            workerd_client.WorkerdError("gone", code="unknown_session"),
+            {"ok": True, "session_id": "second"},
+            {"ok": True, "manifest": {}},
+            {"ok": True},
+        ]
+    )
+
+    class Client:
+        def call(self, operation, **kw):
+            calls.append((operation, kw))
+            result = next(results)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+    monkeypatch.setattr(
+        pool, "resolve_worker_python", lambda *a, **kw: (sys.executable, pool.SOURCE_CURRENT)
+    )
+    worker = pool.WorkerdWorker("s.py", str(tmp_path), "__main__", run=run, client=Client())
+    try:
+        worker.ensure_built()
+        # Updating the selected default must not affect a transparent restart.
+        runconfig.selection_for(tmp_path, "s.py", ["new value"])
+        worker.override("result", [])
+    finally:
+        worker.shutdown()
+    for operation, kw in calls:
+        if operation == "open_session":
+            assert SECRET not in json.dumps(kw)
+        elif operation in ("build", "render"):
+            assert kw["payload"]["run"] == pool._run_payload(run)["run"]
+    assert [op for op, _ in calls].count("render") == 2
+
+
+def test_successful_sensitive_render_preserves_but_suppresses_exception_warnings(worker_factory):
+    worker = worker_factory(
+        """import sys
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+line, = ax.plot([1, 2])
+original = line.set_linewidth
+def checked(value):
+    if value == 7:
+        raise ValueError('dataset rejected: ' + sys.argv[-1])
+    return original(value)
+line.set_linewidth = checked
+fig.savefig('plot.pdf')
+""",
+        [SECRET],
+    )
+    worker.ensure_built()
+    result = worker.override("plot", [{"gid": "axes_0.lines_0", "prop": "linewidth", "value": 7}])
+    assert result["ok"] and len(result["warnings"]) == 1
+    assert "sensitive" in result["warnings"][0]
+    assert SECRET not in json.dumps(result, ensure_ascii=False)
+
+
+def test_sensitive_native_writer_holding_the_gil_cannot_deadlock_the_drain(
+    worker_factory, monkeypatch
+):
+    # Windows: write through the *UCRT* (`ucrtbase`), the CRT that CPython and
+    # the worker's `os.dup2` use, so fd 2 is the redirected drain pipe. The
+    # legacy `msvcrt.dll` keeps its own descriptor table that never saw the
+    # dup2, so `_write(2, ...)` there fails (-1) and the script dies, which a
+    # sensitive run reports only as "script diagnostics were omitted".
+    worker = worker_factory(
+        """import ctypes, os, sys
+library = ctypes.PyDLL('ucrtbase' if os.name == 'nt' else None)
+write = library._write if os.name == 'nt' else library.write
+write.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_uint if os.name == 'nt' else ctypes.c_size_t]
+data = (sys.argv[-1] * 100000).encode()
+assert write(2, data, len(data)) == len(data)
+""",
+        [SECRET],
+    )
+    monkeypatch.setattr(pool, "BUILD_HARD_TIMEOUT", 20)
+    monkeypatch.setattr(pool, "BUILD_IDLE_TIMEOUT", 10)
+    assert worker.ensure_built()["ok"]
+    assert SECRET not in worker.log_path.read_text(encoding="utf-8")
+
+
+def test_private_questions_do_not_share_saved_answers_and_replay_checks_the_real_prompt(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from tavotto.engine import inputbroker, scriptanswers, scriptinput
+
+    run = runconfig.selection_for(tmp_path, "s.py", [SECRET], sensitive=True)
+    payloads = []
+    records = []
+    for i, prompt in enumerate((f"Column for {SECRET}", "Different question")):
+        directory = tmp_path / str(i)
+        channel = scriptinput.Channel(directory, "s.py", private_key=run.input_key)
+        channel.reset()
+
+        def publish(index, payload, channel=channel):
+            payloads.append(payload)
+            (channel.dir / scriptinput.reply_name(index)).write_text(
+                '{"answer":"2"}', encoding="utf-8"
+            )
+
+        monkeypatch.setattr(channel, "_write_request", publish)
+        assert channel.ask(prompt, "input") == "2"
+        records.append(channel.record[0])
+    first, second = payloads
+    assert first["prompt"] == second["prompt"]
+    assert first["prompt_id"] != second["prompt_id"]
+    assert SECRET not in json.dumps([payloads, records])
+    replay = inputbroker.ReplayAnswers.of([records[0]])
+    assert replay.reply_for(1, first["prompt"], first["prompt_id"]) == {"answer": "2"}
+    assert replay.reply_for(1, second["prompt"], second["prompt_id"])["no_answer"]
+
+    # No durable lookup, even if a previous answer already exists under the
+    # display marker. New answers in private runs must not be remembered either.
+    monkeypatch.setattr(scriptanswers, "lookup", lambda *a: pytest.fail("private answer lookup"))
+    monkeypatch.setattr(
+        scriptanswers, "remember", lambda *a: pytest.fail("private answer persisted")
+    )
+    monkeypatch.setattr(inputbroker, "_has_answerer", lambda *a: True)
+    monkeypatch.setattr(inputbroker, "_publish", None)
+    monkeypatch.setattr(inputbroker, "_pending", {})
+    worker = SimpleNamespace(figures_dir=str(tmp_path), script_name="s.py", run=run)
+    directory = tmp_path / "pending"
+    directory.mkdir()
+    inputbroker._decide(worker, directory, second)
+    pending = next(iter(inputbroker._pending.values()))
+    assert pending.private
+    assert inputbroker.answer(pending.id, "new answer") is pending
+
+
+@pytest.mark.skipif(os.name != "posix", reason="signal 0 is a read-only liveness probe on POSIX")
+@pytest.mark.parametrize("hard_exit", [False, True])
+def test_sensitive_output_helper_exits_with_its_worker(
+    worker_factory, hard_exit, tmp_path, monkeypatch
+):
+    pid_file = tmp_path / "helper-pid.txt"
+    monkeypatch.setenv("HELPER_PID_FILE", str(pid_file))
+    # Observe the actual Popen owned by this worker; no /proc enumeration or
+    # external process tools are required in restricted execution environments.
+    worker = worker_factory(
+        """import inspect, os
+frame = inspect.currentframe()
+while frame is not None:
+    guard = getattr(frame.f_locals.get("self"), "_private_output", None)
+    if guard is not None:
+        with open(os.environ["HELPER_PID_FILE"], "w") as out:
+            out.write(str(guard.pid))
+        break
+    frame = frame.f_back
+else:
+    raise AssertionError("worker has no output helper")
+""",
+        [SECRET],
+    )
+    worker.ensure_built()
+    helper = int(pid_file.read_text())
+    helper_born = procprobe.started(helper)
+    assert procprobe.alive(helper, helper_born)  # Proven alive before the action being tested.
+    pid = worker.proc.pid if isinstance(worker, pool.EngineWorker) else worker.child_pid
+    if hard_exit:
+        os.kill(pid, 9)
+    else:
+        worker.shutdown()
+    if procprobe.wait_gone(helper, helper_born, timeout=5):
+        return
+    pytest.fail("sensitive output helper outlived the worker")
+
+
+def test_private_input_identity_survives_hot_build_and_frozen_replay(worker_factory, monkeypatch):
+    from tavotto.engine import inputbroker, scriptanswers, scriptinput
+
+    asked = []
+
+    def publish(event, project, payload):
+        if event == "script.input_requested":
+            asked.append(payload)
+            inputbroker.answer(payload["id"], "2")
+
+    monkeypatch.setattr(inputbroker, "_publish", publish)
+    monkeypatch.setattr(inputbroker, "_has_answerer", lambda *a: True)
+    monkeypatch.setenv(scriptinput.TIMEOUT_ENV, "5")
+    hot = worker_factory(
+        "import sys\nassert input('Column for ' + sys.argv[-1]) == '2'\n", [SECRET]
+    )
+    hot.ensure_built()
+    assert len(asked) == 1
+    assert "prompt_id" in hot.last_build_script_inputs[0]
+    assert not scriptanswers.entries(hot.figures_dir, hot.script_name)
+    for changed in (False, True):
+        if changed:
+            (Path(hot.figures_dir) / hot.script_name).write_text(
+                "input('A different question')\n", encoding="utf-8"
+            )
+        fresh = pool.one_shot(
+            hot.script_name,
+            hot.figures_dir,
+            hot.entry,
+            run=hot.run,
+            script_inputs=hot.last_build_script_inputs,
+        )
+        try:
+            if changed:
+                with pytest.raises(pool.WorkerError) as caught:
+                    fresh.ensure_built()
+                assert caught.value.code == "script_needs_input"
+            else:
+                assert fresh.ensure_built()["script_inputs"] == hot.last_build_script_inputs
+        finally:
+            pool.discard(fresh)
+    assert len(asked) == 1

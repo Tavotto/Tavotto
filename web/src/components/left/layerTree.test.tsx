@@ -20,9 +20,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LayerTree } from '@/components/left/LayerTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
+import { useKeyboard } from '@/hooks/useKeyboard'
 import { t } from '@/i18n'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
+import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type CanvasObject } from '@/types/document'
 
 declare global {
@@ -100,8 +102,9 @@ async function openRowMenu(i: number) {
   return Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]'))
 }
 
+/** 菜单项的名字（快捷键提示「⌥↑」在同一项里，按开头认） */
 const menuItem = (items: HTMLElement[], label: string) =>
-  items.find((el) => el.textContent?.trim() === label)
+  items.find((el) => el.textContent?.trim().startsWith(label))
 
 beforeEach(() => {
   document.body.innerHTML = ''
@@ -113,9 +116,9 @@ describe('图层行的行尾', () => {
     const btns = rowButtons(0)
     expect(btns).toHaveLength(1)
     expect(btns[0].getAttribute('aria-label')).toBe(lt('rowActions', { label: 'Fig1' }))
-    // 那颗 ⋯ 平时是透明的，指到行 / 键盘落进来才浮出（与元素行同一条）
-    expect(btns[0].parentElement!.className).toContain('group-hover:opacity-100')
-    expect(btns[0].parentElement!.className).toContain('group-focus-within:opacity-100')
+    // 那颗 ⋯ 平时是透明的，指到行 / 键盘落进来才浮出（与元素行同一条，`ui/RowMenu`）
+    expect(btns[0].className).toContain('group-hover:opacity-100')
+    expect(btns[0].className).toContain('group-focus-within:opacity-100')
   })
 
   it('已锁 / 已隐藏：行尾画状态图标，动作仍在 ⋯ 里', async () => {
@@ -163,5 +166,103 @@ describe('图层行的行尾', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
     expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual(['p2', 'p1'])
+  })
+})
+
+// Codex #833：行内改名用 Enter / Esc 收起，焦点回到这一行（方向键漫游不断链）；点了别处收起的不抢回来——
+// 焦点已经在用户点的地方了，抢回这一行会让接下来的打字 / 快捷键落进图层树
+describe('图层改名收起后的焦点', () => {
+  const renameBox = () => rows()[0].querySelector('input')
+  const startRename = async () => {
+    await mount([panel('p1', 'Fig1')])
+    rows()[0].focus()
+    await act(async () => {
+      rows()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(renameBox())
+  }
+  const settle = () => act(async () => new Promise<void>((r) => setTimeout(r, 10)))
+
+  it.each(['Enter', 'Escape'])('%s 收起改名：焦点回到这一行', async (k) => {
+    await startRename()
+    await act(async () => {
+      renameBox()!.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    })
+    await settle()
+    expect(renameBox()).toBeNull()
+    expect(document.activeElement).toBe(rows()[0])
+  })
+
+  it('点别处收起改名：焦点留在用户点的那个输入框上', async () => {
+    await startRename()
+    const other = document.createElement('input')
+    document.body.appendChild(other)
+    await act(async () => other.focus())
+    await settle()
+    expect(renameBox()).toBeNull()
+    expect(document.activeElement).toBe(other)
+  })
+})
+
+describe('树的语义与键位契约（2026-10-07 设计审计 §10.3）', () => {
+  const key = (el: Element, k: string, init: KeyboardEventInit = {}) =>
+    act(() => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    })
+
+  it('role=tree，每行报层级与同层位置（aria-level / posinset / setsize）', async () => {
+    await mount([panel('p1', 'Fig1'), panel('p2', 'Fig2'), panel('p3', 'Fig3')])
+    expect(document.querySelector('ul[role="tree"]')).not.toBeNull()
+    const r = rows()
+    expect(r.map((x) => x.getAttribute('role'))).toEqual(['treeitem', 'treeitem', 'treeitem'])
+    expect(r.map((x) => x.getAttribute('aria-level'))).toEqual(['1', '1', '1'])
+    expect(r.map((x) => x.getAttribute('aria-posinset'))).toEqual(['1', '2', '3'])
+    expect(r.every((x) => x.getAttribute('aria-setsize') === '3')).toBe(true)
+  })
+
+  it('Enter = 只选这一个（主操作），F2 才是改名', async () => {
+    await mount([panel('p1', 'Fig1'), panel('p2', 'Fig2')])
+    useSelectionStore.getState().set(['p1', 'p2'])
+    key(rows()[0], 'Enter')
+    expect(useSelectionStore.getState().ids).toEqual(['p2'])
+    expect(rows()[0].querySelector('input')).toBeNull()
+    key(rows()[0], 'F2')
+    expect(rows()[0].querySelector('input')).not.toBeNull()
+  })
+
+  it('图内编辑态还开着时，行上按一次 Esc 只清选区：不再冒到窗口级快捷键去退元素 / 图内编辑（Codex #832）', async () => {
+    function Keys() {
+      useKeyboard()
+      return null
+    }
+    await mount([panel('p1', 'Fig1'), panel('p2', 'Fig2')])
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const keysRoot = createRoot(host)
+    await act(async () => keysRoot.render(<Keys />))
+    try {
+      // 换左栏页签不结束图内编辑：那一段与选中的元素都还在
+      useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['axes_0.title'] })
+      useSelectionStore.getState().set(['p2'])
+      act(() => rows()[0].focus())
+      key(rows()[0], 'Escape')
+      expect(useSelectionStore.getState().ids).toEqual([])
+      expect(useUiStore.getState().elementPanelId).toBe('p1')
+      expect(useUiStore.getState().selectedGids).toEqual(['axes_0.title'])
+    } finally {
+      await act(async () => keysRoot.unmount())
+      useUiStore.setState({ elementPanelId: null, selectedGids: [] })
+    }
+  })
+
+  it('⇧F10 开出与 ⋯ 同一份菜单；行有焦点时 ⋯ 进 Tab 顺序', async () => {
+    await mount([panel('p1', 'Fig1')])
+    const row = rows()[0]
+    const more = rowButtons(0).at(-1)!
+    expect(more.tabIndex).toBe(-1)
+    act(() => row.focus())
+    expect(more.tabIndex).toBe(0)
+    key(row, 'F10', { shiftKey: true })
+    expect(document.querySelector('[role="menu"]')).not.toBeNull()
   })
 })

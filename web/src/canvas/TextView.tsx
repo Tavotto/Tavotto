@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
-import { msg } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
+import { cn } from '@/lib/utils'
 import {
   DEFAULT_INTERPRETATION,
   interpretRuns,
@@ -55,6 +56,7 @@ export function TextView({ obj }: { obj: TextObject }) {
     const el = ref.current
     if (!el) return
     el.innerText = obj.text
+    syncEmpty(el)
     el.focus()
     const range = document.createRange()
     range.selectNodeContents(el)
@@ -91,6 +93,7 @@ export function TextView({ obj }: { obj: TextObject }) {
       suppressContentEditableWarning
       spellCheck={false}
       onBlur={editing ? commitText : undefined}
+      onInput={editing ? (e) => syncEmpty(e.currentTarget) : undefined}
       onKeyDown={
         editing
           ? (e) => {
@@ -113,7 +116,14 @@ export function TextView({ obj }: { obj: TextObject }) {
           : undefined
       }
       onPointerDown={editing ? (e) => e.stopPropagation() : undefined}
-      className="absolute left-0 top-0 w-full outline-none"
+      // 编辑时空着就写一句占位（2026-10-07 设计审计 §10.1）：此前清空之后框里什么都没有，看不出还在编辑。
+      // 占位只在 ::before 里（不进 innerText、不会被提交成正文）。「空」认 data-empty 不认 :empty：
+      // 全选删掉之后 Chromium/WebKit 常在框里留一个 <br>，:empty 就不再命中、占位恰在清空时不见。
+      data-placeholder={editing ? translate('stage.textPlaceholder', { ns: 'workspace' }) : undefined}
+      className={cn(
+        'absolute left-0 top-0 w-full outline-none',
+        editing && 'data-empty:before:pointer-events-none data-empty:before:text-ink-3 data-empty:before:content-[attr(data-placeholder)]',
+      )}
       style={{
         fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),
         fontSize: sizePx,
@@ -126,6 +136,8 @@ export function TextView({ obj }: { obj: TextObject }) {
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
         cursor: editing ? 'text' : 'inherit',
+        // 插入点是界面的东西，不是正文的颜色：accent（与所有可编辑框同一条规矩，宪法第二十六节）
+        caretColor: editing ? 'var(--color-accent)' : undefined,
         // 背景 / 描边 / 内边距（内容盒不变：宽度扣除 padding 由 border-box 承担）
         boxSizing: 'border-box',
         padding: obj.padding ? mmToWorld(obj.padding) : undefined,
@@ -140,6 +152,11 @@ export function TextView({ obj }: { obj: TextObject }) {
       )}
     </div>
   )
+}
+
+/** 编辑框「看起来空」：只剩浏览器留下的 <br> / 末尾换行也算空。DOM 归 contentEditable 管，故直接写属性、不走 state */
+function syncEmpty(el: HTMLElement) {
+  el.toggleAttribute('data-empty', (el.textContent ?? '').replace(/\n$/, '') === '')
 }
 
 /**

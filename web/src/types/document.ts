@@ -113,6 +113,11 @@ export interface RuntimePanelSource {
   captureSource: 'savefig' | 'pyplot'
   fingerprint: string
   sizeMm: [number, number]
+  /**
+   * 产出这张图的运行配置引用（T03；本机不透明 id `rc_…`，**不是参数值**，可以安全地随文档分享）。缺席 = 没给参数。
+   * 在别的机器上打开时那边没有这条引用，后端会显式拒绝（`run_config_missing`）而不是用空参数去跑。
+   */
+  runConfig?: string
 }
 
 export interface PanelObject extends ObjectBase {

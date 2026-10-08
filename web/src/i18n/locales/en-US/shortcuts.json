@@ -4,7 +4,6 @@
     "arrowKeys": "Arrow keys / ⇧+arrow keys / {{alt}}+arrow keys",
     "newline": "{{alt}}⏎ / {{mod}}⏎",
     "spaceDrag": "Space+drag",
-    "tools": "V / T / A / R / O / L",
     "wheelZoom": "{{mod}}+wheel",
     "shiftClick": "⇧+click",
     "rightClick": "Right-click",
@@ -47,7 +46,9 @@
     "tutorialPause": "Pause the tutorial (tutorial card focused)",
     "cycleOverlap": "Cycle the selection through overlapping figure elements",
     "timeline": "Open / close the layout timeline",
-    "saveNamed": "Save now as a named point"
+    "saveNamed": "Save now as a named point",
+    "zoomSelection": "Zoom to the selection",
+    "tabs": "On a focused canvas tab: rename / close / move left or right"
   },
   "or": "or",
   "title": "Keyboard shortcuts",

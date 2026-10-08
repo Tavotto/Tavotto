@@ -27,7 +27,7 @@ import {
 } from '@/store/viewportStore'
 import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import type { CanvasObject, LinearObject, PanelObject } from '@/types/document'
-import { isLinear, lineEndpoints, objectRotation, panelRotation } from '@/types/document'
+import { isLinear, lineEndpoints, objectRotation } from '@/types/document'
 import {
   guardStale,
   startArrowDrag,
@@ -38,10 +38,30 @@ import {
   startLegendScale,
   startGuideDrag,
   startResizeDrag,
+  DRAW_COLOR,
 } from './interactions'
+import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
+import { openQuickEdit } from './quickEditStore'
+import { IssueOverlay } from './IssueOverlay'
 
+/**
+ * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：
+ *   - 选中**只描边、不着色**（改颜色时看到的就是真颜色）；悬停描边 = `--sel-hover-opacity`；
+ *   - 虚线只有一种 `--sel-dash`，只给「暂定的」东西（正在编辑的文字、拖出中的参考线、草稿框、组框、图内编辑态的面板）；
+ *     框选是实线；
+ *   - 手柄 8px 视觉 + 16px 命中（透明的一层盖在上面）+ 沿边的命中带（`EdgeStrips`）；手柄填充 `--handle-fill`；
+ *   - 吸附线（实线 + 两端 × 帽）与用户参考线（静止 50%）分开画；
+ *   - 裁剪是遮罩 `--color-scrim` + L 形角标；
+ *   - 渲染默认 `geometricPrecision`，需要落在像素网格上的矩形自己做半像素对齐（`rectAttrs`）。
+ */
 const SEL = 'var(--color-sel)'
-const HANDLE = 7
+/** 手柄的视觉边长；命中区是它的两倍 */
+const HANDLE = 8
+const HANDLE_HIT = 16
+/** 沿边命中带的厚度（屏幕像素） */
+const EDGE_HIT = 8
+const DASH = { strokeDasharray: 'var(--sel-dash)' } as const
+const HOVER = { strokeOpacity: 'var(--sel-hover-opacity)' } as const
 
 const CURSORS: Record<ResizeDir, string> = {
   nw: 'nwse-resize',
@@ -174,7 +194,7 @@ export function OverlaySvg() {
       className="pointer-events-none absolute inset-0"
       width={viewW}
       height={viewH}
-      style={{ shapeRendering: 'crispEdges' }}
+      style={{ shapeRendering: 'geometricPrecision' }}
     >
       {/* 用户参考线：细线负责显示，粗透明线负责命中；拖出页面即删除 */}
       {guides.map((g, i) => {
@@ -184,8 +204,9 @@ export function OverlaySvg() {
             ? { x1: p, y1: 0, x2: p, y2: viewH }
             : { x1: 0, y1: p, x2: viewW, y2: p }
         return (
-          <g key={`guide-${i}`}>
-            <line {...coords} stroke="var(--color-sel)" strokeWidth={1} />
+          <g key={`guide-${i}`} data-user-guide={g.axis}>
+            {/* 用户参考线是静止的：50% 的 sel，与吸附线（满色 + × 帽，只在拖动中闪现）分开 */}
+            <line {...coords} stroke="var(--color-sel)" strokeOpacity={0.5} strokeWidth={1} />
             {!guidesLocked && (
               <line
                 {...coords}
@@ -208,7 +229,7 @@ export function OverlaySvg() {
           y2={pendingGuide.axis === 'x' ? viewH : mmToViewY(pendingGuide.pos, t) + 0.5}
           stroke="var(--color-sel)"
           strokeWidth={1}
-          strokeDasharray="3 3"
+          style={DASH}
         />
       )}
 
@@ -233,14 +254,17 @@ export function OverlaySvg() {
               fill="none"
               stroke={SEL}
               strokeWidth={2}
-              strokeDasharray="6 3"
+              style={DASH}
               className="motion-safe:animate-attention"
             />
           )
         })()}
 
+      {/* 问题面板的悬停轮廓与画布等级标记：自己一个文件（`IssueOverlay`），这里只挂进来 */}
+      <IssueOverlay objects={objects} t={t} />
+
       {/* hover 预示；线状与真实轮廓类对象沿自己的形状描示，不画对不上的包围盒 */}
-      {hovered && <ObjectOutline obj={hovered} t={t} opacity={0.4} />}
+      {hovered && <ObjectOutline obj={hovered} t={t} hover />}
 
       {/* 选择框；同上——形状对象只有沿真实轮廓的描示，没有矩形外框 */}
       {!cropTarget &&
@@ -264,68 +288,65 @@ export function OverlaySvg() {
           stroke={SEL}
           strokeWidth={1}
           strokeOpacity={0.45}
-          strokeDasharray="4 3"
+          style={DASH}
         />
       )}
 
       {/* 缩放手柄 + 线状对象端点（箭头 / 直线）：整组绕包围盒中心转到对象朝向 */}
       {single && !single.locked && (
-        <g transform={spinOf(single, toScreen(single, t))}>
-          {dirsFor(single).map((dir) => {
-            const p = handlePos(toScreen(single, t), dir)
-            return (
-              <rect
-                key={dir}
-                data-handle={dir}
-                x={p.x - HANDLE / 2}
-                y={p.y - HANDLE / 2}
-                width={HANDLE}
-                height={HANDLE}
-                fill="#fff"
-                stroke={SEL}
-                strokeWidth={1}
-                style={{ pointerEvents: 'all', cursor: cursorFor(dir, objectRotation(single)) }}
-                onPointerDown={(e) => startResizeDrag(e, single.id, dir)}
-              />
-            )
-          })}
+        <g
+          transform={spinOf(single, toScreen(single, t))}
+          // 手柄 / 命中带 / 端点不在 `[data-object-id]` 底下：右键它们要开**这个对象**的菜单，
+          // 不能冒到 CanvasStage 被当成空白处（Codex #833）。它就是唯一的选中，选区不用动
+          onContextMenu={(e) => onHandleContextMenu(e, single.id, editingTextId === single.id)}
+        >
+          <EdgeStrips
+            box={toScreen(single, t)}
+            dirs={dirsFor(single)}
+            cursor={(dir) => cursorFor(dir, objectRotation(single))}
+            onPointerDown={(e, dir) => startResizeDrag(e, single.id, dir)}
+          />
+          {dirsFor(single).map((dir) => (
+            <HandleMark
+              key={dir}
+              at={handlePos(toScreen(single, t), dir)}
+              hook={{ 'data-handle': dir }}
+              cursor={cursorFor(dir, objectRotation(single))}
+              onPointerDown={(e) => startResizeDrag(e, single.id, dir)}
+            />
+          ))}
           {isLinear(single) && <LinearEndpoints obj={single} t={t} />}
         </g>
       )}
 
-      {/* 吸附参考线 */}
+      {/* 吸附线：满色实线 + 两端 × 帽（只在拖动中闪现；用户参考线是静止的 50%，见上） */}
       {snapXs.map((x, i) => (
-        <line
+        <SnapLine
           key={`sx-${i}`}
-          x1={mmToViewX(x, t) + 0.5}
-          y1={pageBox.y - 24}
-          x2={mmToViewX(x, t) + 0.5}
-          y2={pageBox.y + pageBox.h + 24}
-          stroke={SEL}
-          strokeWidth={1}
+          axis="x"
+          a={{ x: mmToViewX(x, t) + 0.5, y: pageBox.y - 24 }}
+          b={{ x: mmToViewX(x, t) + 0.5, y: pageBox.y + pageBox.h + 24 }}
         />
       ))}
       {snapYs.map((y, i) => (
-        <line
+        <SnapLine
           key={`sy-${i}`}
-          x1={pageBox.x - 24}
-          y1={mmToViewY(y, t) + 0.5}
-          x2={pageBox.x + pageBox.w + 24}
-          y2={mmToViewY(y, t) + 0.5}
-          stroke={SEL}
-          strokeWidth={1}
+          axis="y"
+          a={{ x: pageBox.x - 24, y: mmToViewY(y, t) + 0.5 }}
+          b={{ x: pageBox.x + pageBox.w + 24, y: mmToViewY(y, t) + 0.5 }}
         />
       ))}
 
-      {/* 框选 */}
+      {/* 框选：实线框 + 极淡的底（它不是选中，是「正在圈」的范围；虚线只给暂定的东西） */}
       {marquee && (
         <rect
+          data-marquee
           {...rectAttrs(toScreen(marquee, t))}
           fill={SEL}
-          fillOpacity={0.07}
+          fillOpacity={0.06}
           stroke={SEL}
           strokeWidth={1}
-          strokeDasharray="3 2"
+          style={{ shapeRendering: 'crispEdges' }}
         />
       )}
 
@@ -339,7 +360,7 @@ export function OverlaySvg() {
             fill="none"
             stroke={SEL}
             strokeWidth={1}
-            strokeDasharray="3 2"
+            style={DASH}
           />
         ))}
 
@@ -369,7 +390,8 @@ function DraftLinePreview({
   const a = { x: mmToViewX(draft.start!.x, t), y: mmToViewY(draft.start!.y, t) }
   const b = { x: mmToViewX(draft.end!.x, t), y: mmToViewY(draft.end!.y, t) }
   const sw = Math.max(mmToPx(MM_PER_PT, t), 0.5) // 新对象默认 strokePt=1
-  const color = '#1B1B18' // 与 startDraw 落对象的默认色同一常量语义
+  // 预览即成品：画的是新对象自己的颜色（文档数据，不是界面色），与 startDraw 落对象同一个常量
+  const color = DRAW_COLOR
   const dx = b.x - a.x
   const dy = b.y - a.y
   const len = Math.hypot(dx, dy) || 1
@@ -381,7 +403,7 @@ function DraftLinePreview({
   const trim = isArrow ? headLen * 0.75 : 0
   const p2 = { x: b.x - ux * trim, y: b.y - uy * trim }
   return (
-    <g style={{ shapeRendering: 'geometricPrecision' }}>
+    <g>
       <line
         x1={a.x}
         y1={a.y}
@@ -425,18 +447,19 @@ function rectAttrs(box: Box) {
 function ObjectOutline({
   obj,
   t,
-  opacity,
+  hover,
   dashed,
   primary,
 }: {
   obj: CanvasObject
   t: ViewTransform
-  opacity?: number
+  /** 悬停预示：描边按 `--sel-hover-opacity` 淡一档 */
+  hover?: boolean
   dashed?: boolean
   /** 多选里的主选：轮廓 2px（其余 1px），并挂 `data-primary-selection` 锚点 */
   primary?: boolean
 }) {
-  if (isLinear(obj)) return <LinearOutline obj={obj} t={t} opacity={opacity} primary={primary} />
+  if (isLinear(obj)) return <LinearOutline obj={obj} t={t} hover={hover} primary={primary} />
   const box = toScreen(obj, t)
   const strokeWidth = primary ? 2 : 1
   const anchor = primary ? { 'data-primary-selection': obj.id } : {}
@@ -458,19 +481,17 @@ function ObjectOutline({
         transform={spinOf(obj, box)}
         fill="none"
         stroke={SEL}
-        strokeOpacity={opacity}
         strokeWidth={strokeWidth}
-        strokeDasharray={dashed ? '3 2' : undefined}
+        style={{ ...(hover ? HOVER : {}), ...(dashed ? DASH : {}), shapeRendering: 'crispEdges' }}
       />
     )
   }
   const common = {
     fill: 'none' as const,
     stroke: SEL,
-    strokeOpacity: opacity,
     strokeWidth,
     strokeLinejoin: 'round' as const,
-    style: { shapeRendering: 'geometricPrecision' as const },
+    style: hover ? HOVER : undefined,
   }
   // 轮廓算在对象自己的局部坐标里，先平移到包围盒左上角，再由 spin 转到朝向
   // （SVG 的 transform 列表从左往右应用，所以 rotate 写在 translate 前面）
@@ -495,12 +516,12 @@ function ObjectOutline({
 function LinearOutline({
   obj,
   t,
-  opacity,
+  hover,
   primary,
 }: {
   obj: LinearObject
   t: ViewTransform
-  opacity?: number
+  hover?: boolean
   primary?: boolean
 }) {
   const ends = lineEndpoints(obj)
@@ -514,10 +535,9 @@ function LinearOutline({
       y2={box.y + ends.end.ry * box.h}
       transform={spinOf(obj, box)}
       stroke={SEL}
-      strokeOpacity={opacity}
       strokeWidth={primary ? 2.5 : 1.5}
       strokeLinecap="round"
-      style={{ shapeRendering: 'geometricPrecision' }}
+      style={hover ? HOVER : undefined}
     />
   )
 }
@@ -549,10 +569,9 @@ function LinearEndpoints({ obj, t }: { obj: LinearObject; t: ViewTransform }) {
           cx={p.x}
           cy={p.y}
           r={4.5}
-          fill="#fff"
           stroke={SEL}
           strokeWidth={1}
-          style={{ pointerEvents: 'all', cursor: 'crosshair', shapeRendering: 'geometricPrecision' }}
+          style={{ fill: 'var(--handle-fill)', pointerEvents: 'all', cursor: 'crosshair' }}
           onPointerDown={(e) => startEndpointDrag(e, obj.id, p.key)}
         />
       ))}
@@ -560,26 +579,29 @@ function LinearEndpoints({ obj, t }: { obj: LinearObject; t: ViewTransform }) {
   )
 }
 
-/** 裁剪模式：框外压暗，八个手柄改裁剪比例，框内可拖动改取景位置 */
+/**
+ * 裁剪模式：框外压暗（`--color-scrim`），框内可拖动改取景位置；四角是 L 形角标、四边中点是短横杠
+ * （2026-10-07 设计审计 §10.1：此前八个白方块，看起来与对象缩放手柄是同一件事）。角标与横杠画在
+ * `--handle-fill` 上，命中区是盖在上面的 16px 透明方块。
+ */
 function CropFrame({ obj, t }: { obj: CanvasObject; t: ViewTransform }) {
   const box = toScreen(obj, t)
   const viewW = useViewportStore((s) => s.viewW)
   const viewH = useViewportStore((s) => s.viewH)
+  const ink = 'var(--handle-fill)'
 
   return (
     <>
       <path
         d={`M0,0 H${viewW} V${viewH} H0 Z M${box.x},${box.y} V${box.y + box.h} H${box.x + box.w} V${box.y} Z`}
-        fill="rgba(27,27,24,.34)"
         fillRule="evenodd"
-        style={{ pointerEvents: 'all' }}
+        style={{ fill: 'var(--color-scrim)', pointerEvents: 'all' }}
       />
       <rect
         {...rectAttrs(box)}
         fill="transparent"
-        stroke="#fff"
         strokeWidth={1}
-        style={{ pointerEvents: 'all', cursor: 'move' }}
+        style={{ stroke: ink, pointerEvents: 'all', cursor: 'move', shapeRendering: 'crispEdges' }}
         onPointerDown={(e) => startCropDrag(e, obj.id, 'move')}
       />
       {/* 三分线 */}
@@ -590,40 +612,60 @@ function CropFrame({ obj, t }: { obj: CanvasObject; t: ViewTransform }) {
             y1={box.y}
             x2={box.x + (box.w * i) / 3}
             y2={box.y + box.h}
-            stroke="#fff"
             strokeOpacity={0.35}
             strokeWidth={1}
+            style={{ stroke: ink }}
           />
           <line
             x1={box.x}
             y1={box.y + (box.h * i) / 3}
             x2={box.x + box.w}
             y2={box.y + (box.h * i) / 3}
-            stroke="#fff"
             strokeOpacity={0.35}
             strokeWidth={1}
+            style={{ stroke: ink }}
           />
         </Fragment>
       ))}
       {ALL_DIRS.map((dir) => {
         const p = handlePos(box, dir)
         return (
-          <rect
-            key={dir}
-            x={p.x - 5}
-            y={p.y - 5}
-            width={10}
-            height={10}
-            fill="#fff"
-            stroke="rgba(27,27,24,.35)"
-            strokeWidth={1}
-            style={{ pointerEvents: 'all', cursor: CURSORS[dir] }}
-            onPointerDown={(e) => startCropDrag(e, obj.id, dir)}
-          />
+          <Fragment key={dir}>
+            <path
+              data-crop-mark={dir}
+              d={cropMarkPath(dir, p)}
+              fill="none"
+              strokeWidth={3}
+              strokeLinecap="square"
+              style={{ stroke: ink, pointerEvents: 'none' }}
+            />
+            <rect
+              data-crop-handle={dir}
+              x={p.x - HANDLE_HIT / 2}
+              y={p.y - HANDLE_HIT / 2}
+              width={HANDLE_HIT}
+              height={HANDLE_HIT}
+              fill="transparent"
+              style={{ pointerEvents: 'all', cursor: CURSORS[dir] }}
+              onPointerDown={(e) => startCropDrag(e, obj.id, dir)}
+            />
+          </Fragment>
         )
       })}
     </>
   )
+}
+
+/** 角标长 12px（落在框里面那一侧）、边中点横杠长 16px；坐标是框上的那个点 */
+const CROP_MARK = 12
+function cropMarkPath(dir: ResizeDir, p: { x: number; y: number }): string {
+  const L = CROP_MARK
+  if (dir === 'n' || dir === 's') return `M${p.x - 8},${p.y} H${p.x + 8}`
+  if (dir === 'e' || dir === 'w') return `M${p.x},${p.y - 8} V${p.y + 8}`
+  // 角：两条腿伸向框内
+  const dx = dir.includes('w') ? L : -L
+  const dy = dir.includes('n') ? L : -L
+  return `M${p.x + dx},${p.y} H${p.x} V${p.y + dy}`
 }
 
 interface Resolved {
@@ -638,8 +680,8 @@ interface Resolved {
  * 沿**真实路径**的选中 / hover 描示（曲线、fill_between、多边形、PathPatch）。
  *
  * 为什么不是矩形：这些图形的包围盒里绝大部分是空白，画成矩形用户根本认不出
- * 选中的是哪一个（两条交叉曲线的框一模一样）。填充类再补一层很淡的底色，
- * 让「这一整块」看得出来；空心的只描线。
+ * 选中的是哪一个（两条交叉曲线的框一模一样）。**只描边、不着色**（2026-10-07 设计审计 §10.1）：
+ * 此前填充类补一层 12% 的蓝，改颜色的时候用户看到的是偏蓝的色。
  *
  * `clip` 是引擎给的矩形裁剪框：曲线的数据可能伸到子图之外，matplotlib 画的
  * 时候裁掉了，轮廓不裁就会在图上多出一截根本不存在的墨迹。
@@ -648,12 +690,12 @@ function GeometryOutline({
   id,
   geom,
   toPoint,
-  opacity,
+  hover,
 }: {
   id: string
   geom: ElementGeometry
   toPoint: (p: [number, number]) => { x: number; y: number }
-  opacity?: number
+  hover?: boolean
 }) {
   const d = geomPathD(geom, toPoint)
   if (!d) return null
@@ -674,17 +716,15 @@ function GeometryOutline({
         </clipPath>
       )}
       <path
+        data-element-outline={hover ? 'hover' : 'selected'}
         d={d}
         clipPath={c ? `url(#${clipId})` : undefined}
-        fill={geom.fill ? 'var(--color-sel)' : 'none'}
-        fillOpacity={geom.fill ? 0.12 : undefined}
-        fillRule="evenodd"
+        fill="none"
         stroke="var(--color-sel)"
-        strokeOpacity={opacity}
         strokeWidth={1.5}
         strokeLinejoin="round"
         strokeLinecap="round"
-        style={{ shapeRendering: 'geometricPrecision' }}
+        style={hover ? HOVER : undefined}
       />
     </>
   )
@@ -712,10 +752,8 @@ function PreviewLines({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   if (!lines.size) return null
   const full = panelFullRect(panel)
   const panelBox = toScreen(panel, t)
-  const rot = panelRotation(panel)
-  const spin = rot
-    ? `rotate(${rot} ${panelBox.x + panelBox.w / 2} ${panelBox.y + panelBox.h / 2})`
-    : undefined
+  // 与 PanelView 画这张图同一个变换（先翻转再旋转，`canvas/elementGeometry`）
+  const spin = elementOverlayTransform(panel, panelBox)
   const toPoint = (p: [number, number]) => {
     const b = toScreen({ x: full.x + p[0] * full.w, y: full.y + p[1] * full.h, w: 0, h: 0 }, t)
     return { x: b.x, y: b.y }
@@ -732,7 +770,7 @@ function PreviewLines({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           y2={toPoint(c.b).y}
           stroke="var(--color-sel)"
           strokeWidth={1}
-          strokeDasharray="4 3"
+          style={DASH}
         />
       ))}
     </g>
@@ -781,14 +819,15 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const panelBox = toScreen(panel, t)
   const primary = selectedGid ? resolve(selectedGid) : null
   const layout = { width: mmToWorld(full.w), height: mmToWorld(full.h) }
-  // 内容坐标系里算好的框，整组绕包围盒中心转到面板当前的朝向
-  const rot = panelRotation(panel)
-  const spin = rot
-    ? `rotate(${rot} ${panelBox.x + panelBox.w / 2} ${panelBox.y + panelBox.h / 2})`
-    : undefined
+  // 内容坐标系里算好的框，整组绕包围盒中心翻转、转到面板当前的样子——与 PanelView 画这张图同一个变换
+  // （`canvas/elementGeometry`）；只转不翻的话，翻转面板上的框停在元素的镜像位置（#832 / #833 评审）
+  const spin = elementOverlayTransform(panel, panelBox)
   // 手柄与命中层同一道闸：这一下按下之前捕获阶段刚提交了方向键微调，闭包里的 panel /
   // 包围框已经过期——吞掉，不拿旧基线起手（清单见 guardStale）
   const guarded = (start: (e: React.PointerEvent) => void) => guardStale(panel, start)
+  // 手柄按内容坐标摆、跟着整组翻转 / 旋转到画面上：光标按它在**画面上**的方位给（翻转面板上内容的东北角画在
+  // 西北，光标还按东北给就是斜反了）
+  const handleCursor = (dir: ResizeDir) => cursorFor(contentDirOnPage(panel, dir), 0)
   // 多选且全是子图 → 组包围框接管手柄，成组缩放
   const group = resolveGroup(panel, manifest, selectedGids)
   // 选中的是一个真实的组（从元素树选的，`Manifest.groups`）：组框之外，成员各描一道
@@ -827,7 +866,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
    * 同款语义）——斜线的 bbox 是一大块与线对不上的矩形，不画它。
    * 整体拖动跟随乐观位移；拖单端点时下方的虚线预览（arrowPreview）接管，这里不画。
    */
-  const arrowOutline = (target: ManifestElement, opacity?: number) => {
+  const arrowOutline = (target: ManifestElement, hover?: boolean) => {
     const pts = arrowEndpointsOf(panel, target)
     if (!pts || arrowPreview?.gid === target.gid) return null
     const dx = gidDrag?.gid === target.gid ? gidDrag.dfx : 0
@@ -841,10 +880,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
         x2={b.x}
         y2={b.y}
         stroke="var(--color-sel)"
-        strokeOpacity={opacity}
         strokeWidth={1.5}
         strokeLinecap="round"
-        style={{ shapeRendering: 'geometricPrecision' }}
+        style={hover ? HOVER : undefined}
       />
     )
   }
@@ -857,24 +895,34 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
         fill="none"
         stroke="var(--color-sel)"
         strokeWidth={1}
-        strokeDasharray="4 3"
         strokeOpacity={0.7}
+        style={DASH}
       />
-      <g transform={spin}>
+      <g
+        transform={spin}
+        // 元素 / 组框的手柄与命中带：右键开选中元素的菜单（与 PanelView 的右键同一个弹层），
+        // 不冒到 CanvasStage 被当成空白处（Codex #833）。选中的已在 selectedGids 里，不动选区
+        onContextMenu={guardStale(panel, (e: React.MouseEvent) => {
+          e.preventDefault()
+          e.stopPropagation()
+          if (selectedGid) openQuickEdit({ kind: 'element', panelId: panel.id, gid: selectedGid }, e)
+        })}
+      >
+        {/* 选中与悬停都只描边、不着色（2026-10-07 设计审计 §10.1）。`data-element-box` 是框的稳定钩子
+            （此前用例认的是 6% 底色那个 `fill-opacity` 属性——底色一撤就认不出了） */}
         {hover &&
           (hover.target.arrow_endpoints ? (
-            arrowOutline(hover.target, 0.5)
+            arrowOutline(hover.target, true)
           ) : hover.geom ? (
-            <GeometryOutline id={`hov-${panel.id}`} geom={hover.geom} toPoint={toPoint}
-              opacity={0.55} />
+            <GeometryOutline id={`hov-${panel.id}`} geom={hover.geom} toPoint={toPoint} hover />
           ) : (
             <rect
+              data-element-box="hover"
               {...rectAttrs(hover.box)}
-              fill="var(--color-sel)"
-              fillOpacity={0.06}
+              fill="none"
               stroke="var(--color-sel)"
               strokeWidth={1}
-              strokeOpacity={0.55}
+              style={HOVER}
             />
           ))}
         {[...picked].map(([key, r]) =>
@@ -886,9 +934,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
           ) : (
             <rect
               key={key}
+              data-element-box="selected"
               {...rectAttrs(r.box)}
-              fill="var(--color-sel)"
-              fillOpacity={0.06}
+              fill="none"
               stroke="var(--color-sel)"
               strokeWidth={1}
             />
@@ -903,21 +951,30 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
             stroke="var(--color-sel)"
             strokeWidth={1}
             strokeOpacity={0.5}
-            strokeDasharray="2 2"
+            style={DASH}
           />
         ))}
 
         {/* 组包围框：只有细虚线 + 手柄，不加底色，与单元素选中框区分 */}
         {groupBox && (
           <rect
+            data-element-group-box
             {...rectAttrs(groupBox)}
             fill="none"
             stroke="var(--color-sel)"
             strokeWidth={1}
-            strokeDasharray="4 2"
+            style={DASH}
           />
         )}
 
+        {groupBox && group && (
+          <EdgeStrips
+            box={groupBox}
+            dirs={ALL_DIRS}
+            cursor={handleCursor}
+            onPointerDown={(e, dir) => guarded((ev) => startGroupResize(ev, panel, group, layout, dir))(e)}
+          />
+        )}
         {groupBox &&
           group &&
           ALL_DIRS.map((dir) => (
@@ -925,10 +982,19 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               key={dir}
               box={groupBox}
               dir={dir}
+              cursor={handleCursor(dir)}
               onPointerDown={guarded((e) => startGroupResize(e, panel, group, layout, dir))}
             />
           ))}
 
+        {axesBox && primary && (
+          <EdgeStrips
+            box={axesBox}
+            dirs={ALL_DIRS}
+            cursor={handleCursor}
+            onPointerDown={(e, dir) => guarded((ev) => startAxesDrag(ev, panel, primary.target, layout, dir))(e)}
+          />
+        )}
         {axesBox &&
           primary &&
           ALL_DIRS.map((dir) => (
@@ -936,6 +1002,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               key={dir}
               box={axesBox}
               dir={dir}
+              cursor={handleCursor(dir)}
               onPointerDown={guarded((e) => startAxesDrag(e, panel, primary.target, layout, dir))}
             />
           ))}
@@ -947,6 +1014,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
               key={dir}
               box={legendBox}
               dir={dir}
+              cursor={handleCursor(dir)}
               data-legend-scale={dir}
               onPointerDown={guarded((e) => startLegendScale(e, panel, primary.target, layout, dir))}
             />
@@ -962,7 +1030,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
                 y2={toPoint(arrowPreview.b).y}
                 stroke="var(--color-sel)"
                 strokeWidth={1}
-                strokeDasharray="4 3"
+                style={DASH}
               />
             )}
             {(
@@ -983,14 +1051,9 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
                   cx={pt.x}
                   cy={pt.y}
                   r={4.5}
-                  fill="#fff"
                   stroke="var(--color-sel)"
                   strokeWidth={1}
-                  style={{
-                    pointerEvents: 'all',
-                    cursor: 'crosshair',
-                    shapeRendering: 'geometricPrecision',
-                  }}
+                  style={{ fill: 'var(--handle-fill)', pointerEvents: 'all', cursor: 'crosshair' }}
                   onPointerDown={guarded((e) => startArrowDrag(e, panel, arrowEl, layout, key))}
                 />
               )
@@ -1002,6 +1065,17 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   )
 }
 
+/**
+ * 对象缩放手柄 / 沿边命中带 / 线状端点上的右键 = 右键这个对象（`ObjectView.onContextMenu` 的同一个菜单）。
+ * 正在改字时与 ObjectView 一样留给浏览器自己的菜单——只是不让它冒到画布去开版面菜单。
+ */
+function onHandleContextMenu(e: React.MouseEvent, id: string, editing: boolean) {
+  e.stopPropagation()
+  if (editing) return
+  e.preventDefault()
+  openQuickEdit({ kind: 'object', id }, e)
+}
+
 /** 图例整体缩放只给四个角：等比缩放，边上的手柄没有意义 */
 const LEGEND_CORNERS = ['nw', 'ne', 'sw', 'se'] as const
 
@@ -1010,27 +1084,128 @@ function Handle({
   box,
   dir,
   onPointerDown,
+  cursor,
   'data-legend-scale': legendScale,
 }: {
   box: Box
   dir: ResizeDir
   onPointerDown: (e: React.PointerEvent) => void
+  /** 画面上的光标（翻转 / 旋转面板上与 `dir` 不同，见 ElementBoxes 的 `handleCursor`） */
+  cursor: string
   'data-legend-scale'?: string
 }) {
-  const p = handlePos(box, dir)
   return (
-    <rect
-      data-element-handle={dir}
-      data-legend-scale={legendScale}
-      x={p.x - HANDLE / 2}
-      y={p.y - HANDLE / 2}
-      width={HANDLE}
-      height={HANDLE}
-      fill="#fff"
-      stroke="var(--color-sel)"
-      strokeWidth={1}
-      style={{ pointerEvents: 'all', cursor: CURSORS[dir] }}
+    <HandleMark
+      at={handlePos(box, dir)}
+      hook={{ 'data-element-handle': dir, 'data-legend-scale': legendScale }}
+      cursor={cursor}
       onPointerDown={onPointerDown}
     />
+  )
+}
+
+/**
+ * 一枚缩放手柄：8px 的方块（`--handle-fill` 底、sel 描边）只负责被看见；盖在上面的 16px 透明方块负责被点中
+ * ——2026-10-07 设计审计 §10.1：此前 7px 的方块同时是视觉与命中区，触控板上要瞄半天。稳定钩子（`data-handle` /
+ * `data-element-handle`）挂在命中那一层上：它的中心就是手柄的位置。
+ */
+function HandleMark({
+  at,
+  hook,
+  cursor,
+  onPointerDown,
+}: {
+  at: { x: number; y: number }
+  hook: Record<`data-${string}`, string | undefined>
+  cursor: string
+  onPointerDown: (e: React.PointerEvent) => void
+}) {
+  return (
+    <>
+      <rect
+        x={Math.round(at.x - HANDLE / 2) + 0.5}
+        y={Math.round(at.y - HANDLE / 2) + 0.5}
+        width={HANDLE - 1}
+        height={HANDLE - 1}
+        stroke={SEL}
+        strokeWidth={1}
+        style={{ fill: 'var(--handle-fill)', pointerEvents: 'none' }}
+      />
+      <rect
+        {...hook}
+        x={at.x - HANDLE_HIT / 2}
+        y={at.y - HANDLE_HIT / 2}
+        width={HANDLE_HIT}
+        height={HANDLE_HIT}
+        fill="transparent"
+        style={{ pointerEvents: 'all', cursor }}
+        onPointerDown={onPointerDown}
+      />
+    </>
+  )
+}
+
+/**
+ * 沿边的命中带：整条边（除去两端手柄占的那 16px）都能按下去改那一边的尺寸，不必瞄准边中点的那枚手柄
+ * （2026-10-07 设计审计 §10.1）。只给这个对象真有的那几条边（`dirs` 里的 n / s / e / w）；透明、不画任何东西。
+ */
+function EdgeStrips({
+  box,
+  dirs,
+  cursor,
+  onPointerDown,
+}: {
+  box: Box
+  dirs: readonly ResizeDir[]
+  cursor: (dir: ResizeDir) => string
+  onPointerDown: (e: React.PointerEvent, dir: ResizeDir) => void
+}) {
+  const inset = HANDLE_HIT / 2
+  const strips = dirs.flatMap((dir): { dir: ResizeDir; x: number; y: number; w: number; h: number }[] => {
+    if (dir === 'n' || dir === 's') {
+      const w = box.w - inset * 2
+      if (w <= 0) return []
+      const y = dir === 'n' ? box.y : box.y + box.h
+      return [{ dir, x: box.x + inset, y: y - EDGE_HIT / 2, w, h: EDGE_HIT }]
+    }
+    if (dir === 'e' || dir === 'w') {
+      const h = box.h - inset * 2
+      if (h <= 0) return []
+      const x = dir === 'w' ? box.x : box.x + box.w
+      return [{ dir, x: x - EDGE_HIT / 2, y: box.y + inset, w: EDGE_HIT, h }]
+    }
+    return []
+  })
+  return (
+    <>
+      {strips.map((s) => (
+        <rect
+          key={s.dir}
+          data-edge-strip={s.dir}
+          x={s.x}
+          y={s.y}
+          width={s.w}
+          height={s.h}
+          fill="transparent"
+          style={{ pointerEvents: 'all', cursor: cursor(s.dir) }}
+          onPointerDown={(e) => onPointerDown(e, s.dir)}
+        />
+      ))}
+    </>
+  )
+}
+
+/**
+ * 吸附线：满色 sel 实线，两端各一个 × 帽（5px），看得出「它在这里截止、是吸附出来的」——与静止的 50% 用户参考线
+ * 分开（2026-10-07 设计审计 §10.1）。
+ */
+function SnapLine({ axis, a, b }: { axis: 'x' | 'y'; a: { x: number; y: number }; b: { x: number; y: number } }) {
+  const r = 2.5
+  const cap = (p: { x: number; y: number }) => `M${p.x - r},${p.y - r} L${p.x + r},${p.y + r} M${p.x - r},${p.y + r} L${p.x + r},${p.y - r}`
+  return (
+    <g data-snap-line={axis}>
+      <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={SEL} strokeWidth={1} style={{ shapeRendering: 'crispEdges' }} />
+      <path d={`${cap(a)} ${cap(b)}`} stroke={SEL} strokeWidth={1} fill="none" />
+    </g>
   )
 }

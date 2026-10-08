@@ -37,13 +37,8 @@ interface Rule {
   only?: RegExp
 }
 
-/**
- * 留给逐页阶段迁移的豁免（2026-10-07 设计刷新的 FOUNDATION 阶段落门禁时，这几处属于后面某一页的重做，
- * 不在原语阶段顺手改）。**TODO（逐页阶段）**：迁完一处删一条，删空了把这张表一起删掉。
- *   - shadow-card：素材卡（左栏阶段，换 Card interactive）、问题卡（问题面板阶段，换披露树）、
- *     左轨激活态（外壳阶段，改纯填充）、版本对话框的缩略图框（对话框阶段，改 shadow-thumb 或去掉）
- */
-const LATER_PHASE = '逐页阶段迁移（TODO，见文件头 LATER_PHASE 说明）'
+// 逐页阶段迁移的豁免表（LATER_PHASE）已删空删掉：shadow-card 的素材卡、问题卡、左轨激活态在左栏阶段迁完，
+// 版本对话框的缩略图框在对话框阶段迁到 Card（2026-10-07）。
 
 const RULES: Rule[] = [
   {
@@ -114,10 +109,6 @@ const RULES: Rule[] = [
         count: 1,
         why: '工作面板（data-work-panel，宪法第二十五节）不是卡，是一块面板；它的抬升与卡同一档是拍板过的，常驻豁免',
       },
-      '/src/components/left/AssetBrowser.tsx': { count: 1, why: `素材卡的 hover / 选中环：${LATER_PHASE}` },
-      '/src/components/left/ProblemCards.tsx': { count: 1, why: `问题卡：${LATER_PHASE}` },
-      '/src/components/left/LeftRail.tsx': { count: 1, why: `左轨激活态：${LATER_PHASE}` },
-      '/src/components/VersionDialog.tsx': { count: 1, why: `版本对话框的缩略图框：${LATER_PHASE}` },
     },
   },
   {
@@ -140,6 +131,14 @@ const RULES: Rule[] = [
       '/src/components/ui/listRow.ts': { count: 1, why: '选中的列表 / 树行：selected 底 + 600（2026-10-07 §10.3）' },
       '/src/components/ui/FormSection.tsx': { count: 1, why: '表单分区标题 13 / 600（没有对应的 type 角色，只此一处）' },
       '/src/components/ui/buttonClass.ts': { count: 1, why: '对话框页脚的危险浅底胶囊（danger-tinted）：600' },
+      '/src/components/ai/Markdown.tsx': {
+        count: 2,
+        why: '助手回答的 h2 14 / 600、h3 13 / 600（h1 走 type-title；没有 14 / 13 的 600 角色，宪法第十八节「2026-10-07 重做」）',
+      },
+      '/src/components/ai/DiffView.tsx': {
+        count: 1,
+        why: '显著卡文件头的粗体动作「已修改」13 / 600（OpenBitFun 的 ProminentToolCard，宪法第十八节「2026-10-07 重做」）',
+      },
     },
   },
   {

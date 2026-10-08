@@ -374,16 +374,47 @@ _worker_source: str = ""
 _workers: dict[tuple[str, ...], "EngineWorker"] = {}
 
 
-def _worker_key(figures_dir, script_name, artifact_source=None):
+def _run_kwargs(run) -> dict:
+    """`RunSelection` → `safe_spec` 的关键字参数（没有配置 = 空，调用形状与 T03 之前一致）。"""
+    return {} if run is None else {"argv": run.argv, "run_config": run.config_id}
+
+
+def _run_payload(run) -> dict:
+    """Exact argv only crosses the private request pipe, never spawn argv/env/logs.
+
+    Include it on executable requests too: a workerd retry can transparently reopen
+    a child before render/export, which must rebuild with this frozen selection.
+    """
+    if run is None:
+        return {}
+    private = {"input_key": run.input_key} if run.sensitive else {}
+    return {
+        "run": {
+            "config_id": run.config_id,
+            "argv": list(run.argv),
+            "sensitive": run.sensitive,
+            **private,
+        }
+    }
+
+
+def _worker_key(figures_dir, script_name, artifact_source=None, run=None):
+    """池键 = (项目, 脚本[, selected-artifact 字节身份][, 运行配置])。
+
+    **运行配置段（T03）**：同一脚本不同 argv 是不同的执行，永不共用一条热会话（否则 A 配置的图会被当成
+    B 配置的结果）。段内容是 `RunSelection.key`（带进程随机密钥的摘要），不是 argv 原文或裸 hash。
+    `invalidate()` 等按 `k[:2]` 取前缀，所以"这个脚本变了"会把它的全部配置变体一起作废。"""
     key = (_norm_dir(figures_dir), script_name)
     identity = figcapture.selected_artifact_key(artifact_source)
-    return (*key, identity) if identity else key
+    key = (*key, identity) if identity else key
+    return (*key, f"run:{run.key}") if run is not None else key
 
 
-def _worker_base(figures_dir, script_name, artifact_source=None):
+def _worker_base(figures_dir, script_name, artifact_source=None, run=None):
     slug = _cache_slug(_norm_dir(figures_dir), script_name)
     identity = figcapture.selected_artifact_key(artifact_source)
-    return ENGINE_CACHE / (f"{slug}-artifact-{identity}" if identity else slug)
+    slug = f"{slug}-artifact-{identity}" if identity else slug
+    return ENGINE_CACHE / (f"{slug}-run-{run.key}" if run is not None else slug)
 
 
 #: 一次性 worker（`one_shot()`）正在用的缓存目录。它们**不在池里**，
@@ -409,14 +440,14 @@ def _runtime_of(resp: dict) -> dict | None:
     return dict(rt) if isinstance(rt, dict) else None
 
 
-def peek(script_name: str, figures_dir: str | Path):
+def peek(script_name: str, figures_dir: str | Path, run=None):
     """池里**现在**有没有这个脚本的活会话——只读，不建、不复用判定、不淘汰。
 
     `get()` 的副作用（重建 / LRU）在这里一个都不发生；回来的可能是没 build 的
     会话（正在冷启动）。给准备接口回答「现有 runtime 正在运行」（ADR 0053）用：
     它要的是事实，不是一条新会话。
     """
-    key = (_norm_dir(figures_dir), script_name)
+    key = _worker_key(figures_dir, script_name, None, run)
     with _lock:
         w = _workers.get(key)
         return w if w is not None and w.alive() else None
@@ -685,6 +716,7 @@ def _log_tail_from(path: Path, offset: int, n: int = 30, *, root: Path | None = 
     return "\n".join(text.splitlines()[-n:])
 
 
+_MODULE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
 _MISSING_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
 
 
@@ -839,6 +871,43 @@ def missing_module(text: str) -> str:
         # 交回原来的脚本错误与 traceback。
         return ""
     return name
+
+
+def structured_missing_module(value) -> str:
+    """worker 随错误带来的结构化缺包名（`error.missing_module`）。敏感运行的自由文本诊断被整段删掉，
+    `missing_module()` 的文本识别无从下手，靠它保住「缺依赖」分类；非法形状一律当没有。"""
+    if isinstance(value, str) and _MODULE_NAME_RE.fullmatch(value):
+        return value
+    return ""
+
+
+def structured_missing_dependency(fields) -> tuple[bool, str]:
+    """worker 错误字段（`error` 对象 / `extra`）里的缺依赖事实 → `(是不是缺依赖, 模块名或空串)`。
+
+    敏感运行里模块名只在能归因到脚本静态 import 时才带；没有名字时只剩分类标志，调用方仍按
+    `missing_dependency` 处理（`module == ""`，界面走通用缺依赖提示）。形状不对一律当没有。"""
+    if not isinstance(fields, dict):
+        return False, ""
+    module = structured_missing_module(fields.get("missing_module"))
+    return bool(module) or fields.get("missing_dependency") is True, module
+
+
+def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":
+    if mod:
+        return WorkerError(
+            f"脚本用到的 {mod} 在当前渲染环境里没有。"
+            f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
+            f"Python / Conda 环境。",
+            traceback_text,
+            code="missing_dependency",
+            module=mod,
+        )
+    return WorkerError(
+        "脚本用到的某个依赖包在当前渲染环境里没有（这次运行含敏感参数，不显示包名）。"
+        "可以在设置 → 诊断 → 技术详情里改用装齐了依赖的 Python / Conda 环境。",
+        traceback_text,
+        code="missing_dependency",
+    )
 
 
 def is_frozen() -> bool:
@@ -1480,16 +1549,20 @@ class EngineWorker:
         base_dir: Path | None = None,
         *,
         artifact_source=None,
+        run=None,
     ):
         self.script_name = script_name
         self.figures_dir = figures_dir
         self.entry = entry
         self.artifact_source = figcapture.selected_artifact_context(artifact_source)
+        #: T03：这条会话冻结的运行配置（`execspec.RunSelection`；None = 没给参数，旧行为）。会话的整个生命周期
+        #: 里它不变——冷重放（`one_shot`）、导出、写回重放都从这里取，不读"项目最新配置"。
+        self.run = run
         self.artifact_admission_lock = threading.Lock()
         # `base_dir` 只给一次性 worker（`one_shot()`）用：与热会话共用 out/
         # 会让重放的 manifest/SVG 盖掉用户正在看的那份。池里的会话永远走
         # `_cache_slug`，落点一个字节都没变。
-        base = base_dir or _worker_base(figures_dir, script_name, self.artifact_source)
+        base = base_dir or _worker_base(figures_dir, script_name, self.artifact_source, run)
         self.base = base
         self.out_dir = base / "out"
         self.sandbox = base / "sandbox"
@@ -1502,7 +1575,7 @@ class EngineWorker:
         # 这一代的序号：同一 (项目, 脚本) 每重建一次 +1，随每个请求发给 worker
         # 并原样回显（worker 不理解它，校验归调用方/未来的 supervisor）。
         self.generation = _next_generation(
-            _worker_key(figures_dir, script_name, self.artifact_source)
+            _worker_key(figures_dir, script_name, self.artifact_source, run)
         )
         # spawn 那一刻脚本文件的内容指纹（写回前的「脚本变更防线」比对基准）
         self.script_sha1 = script_sha1(figures_dir, script_name)
@@ -1560,6 +1633,7 @@ class EngineWorker:
             cwd_mode=workdir.mode_for(figures_dir),
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
+            **_run_kwargs(run),
         )
         LOG.info(
             "worker 启动: %s（entry=%s，解释器来源=%s）",
@@ -1796,15 +1870,10 @@ class EngineWorker:
         # missing_dependency 优先于协议 code：worker 那边它只是一个普通的
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
         mod = missing_module(f"{msg}\n{tb}")
-        if mod:
-            exc = WorkerError(
-                f"脚本用到的 {mod} 在当前渲染环境里没有。"
-                f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
-                f"Python / Conda 环境。",
-                tb,
-                code="missing_dependency",
-                module=mod,
-            )
+        structured, structured_mod = structured_missing_dependency(err)
+        mod = mod or structured_mod
+        if mod or structured:
+            exc = _missing_dependency_error(mod, tb)
             # **谁的脚本缺这个包**：依赖修复要按 (项目, 脚本) 记轮次、按脚本
             # 所在目录找依赖声明。异常一路抛到 app 层时那边只剩下 exc。
             exc.script_name = self.script_name
@@ -1830,6 +1899,7 @@ class EngineWorker:
         )
 
     def request(self, obj: dict, timeout: float | None = None) -> dict:
+        obj = {**obj, **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             obj = {**obj, "artifact_source": self.artifact_source}
         # None → 取模块常量的**当前**值（默认参数会在 def 时定死，测试改不动）
@@ -2145,6 +2215,7 @@ def _spawn_spec(
     source: str,
     extra_env: dict | None = None,
     input_remap=None,
+    run=None,
 ) -> dict:
     """交给 workerd 的**完整** spawn 规格。
 
@@ -2165,6 +2236,7 @@ def _spawn_spec(
         cwd_mode=workdir.mode_for(figures_dir),
         # 会话自己那份（与它的代次同一刻取）；不给才现取——重开会话不许换成另一代的表
         input_remap=inputremap.rules_for(figures_dir) if input_remap is None else list(input_remap),
+        **_run_kwargs(run),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = dict(spec.env or {})
@@ -2192,15 +2264,10 @@ def _worker_error(
     就变成一段没人能用的通用错误。
     """
     mod = missing_module(f"{message}\n{traceback_text}")
-    if mod:
-        return WorkerError(
-            f"脚本用到的 {mod} 在当前渲染环境里没有。"
-            f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
-            f"Python / Conda 环境。",
-            traceback_text,
-            code="missing_dependency",
-            module=mod,
-        )
+    structured, structured_mod = structured_missing_dependency(extra)
+    mod = mod or structured_mod
+    if mod or structured:
+        return _missing_dependency_error(mod, traceback_text)
     err = WorkerError(message, traceback_text, code=code)
     if extra:
         # worker 多带的字段（unknown_stem 的 `known` 之类）留给上层
@@ -2229,6 +2296,7 @@ class WorkerdWorker:
         base_dir: Path | None = None,
         extra_env: dict | None = None,
         artifact_source=None,
+        run=None,
     ):
         from . import workerd_client
 
@@ -2236,10 +2304,11 @@ class WorkerdWorker:
         self.figures_dir = figures_dir
         self.entry = entry
         self.artifact_source = figcapture.selected_artifact_context(artifact_source)
+        self.run = run  # 与 EngineWorker 同源（T03）
         self.artifact_admission_lock = threading.Lock()
         # 目录布局与 EngineWorker 完全一致：prune_engine_cache 按 base 走，
         # 换个控制面就换个落点的话，清理会把正在用的会话目录当成垃圾删掉。
-        base = base_dir or _worker_base(figures_dir, script_name, self.artifact_source)
+        base = base_dir or _worker_base(figures_dir, script_name, self.artifact_source, run)
         self.base = base
         self._extra_env = dict(extra_env or {})
         self.out_dir = base / "out"
@@ -2252,7 +2321,7 @@ class WorkerdWorker:
         self._touch()
         self.rev = 0
         self.generation = _next_generation(
-            _worker_key(figures_dir, script_name, self.artifact_source)
+            _worker_key(figures_dir, script_name, self.artifact_source, run)
         )
         # 与 EngineWorker 同源：spawn 时的脚本指纹 + 最后应用的 patch 哈希
         self.script_sha1 = script_sha1(figures_dir, script_name)
@@ -2294,6 +2363,7 @@ class WorkerdWorker:
             cwd_mode=workdir.mode_for(figures_dir),
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
+            **_run_kwargs(run),
         )
         self._session_id = ""
         self._open()
@@ -2311,6 +2381,7 @@ class WorkerdWorker:
             self.python_source,
             self._extra_env,
             input_remap=self.spec.input_remap,
+            run=self.run,
         )
 
     def _open(self) -> None:
@@ -2409,6 +2480,7 @@ class WorkerdWorker:
     ) -> dict:
         from . import workerd_client
 
+        payload = {**(payload or {}), **_run_payload(getattr(self, "run", None))}
         if getattr(self, "artifact_source", None) is not None:
             payload = {**(payload or {}), "artifact_source": self.artifact_source}
         self.last_used = time.time()
@@ -2655,7 +2727,7 @@ def _workdir_gate(figures_dir: str, script_name: str) -> None:
         raise err from None
 
 
-def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_source=None):
+def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_source=None, run=None):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。
 
@@ -2673,6 +2745,8 @@ def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_sour
     for spawn_gate in SPAWN_GATES:
         spawn_gate(figures_dir, script_name)
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
+    if run is not None:
+        context["run"] = run
     if workerd_client.find_workerd():
         try:
             return WorkerdWorker(script_name, figures_dir, entry, **context)
@@ -2682,7 +2756,13 @@ def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_sour
 
 
 def one_shot(
-    script_name: str, figures_dir: str, entry: str, *, script_inputs=None, artifact_source=None
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    script_inputs=None,
+    artifact_source=None,
+    run=None,
 ):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
 
@@ -2717,6 +2797,9 @@ def one_shot(
     try:
         policy = inputbroker.ReplayAnswers.of(script_inputs)
         context = {"artifact_source": artifact_source} if artifact_source is not None else {}
+        if run is not None:
+            # T03：冷重放跑的是**原来那条配置**（调用方从热会话 `worker.run` 取），不是项目此刻的任何配置
+            context["run"] = run
         worker = None
         if workerd_client.find_workerd():
             try:
@@ -2950,14 +3033,18 @@ def safe_workers_using(python: str) -> int:
         return sum(1 for w in _workers.values() if same_python(w.python, python))
 
 
-def get(script_name: str, figures_dir: str, entry: str, *, artifact_source=None) -> EngineWorker:
+def get(
+    script_name: str, figures_dir: str, entry: str, *, artifact_source=None, run=None
+) -> EngineWorker:
     """取（或重建）某脚本的 worker；崩溃的自动换新；超出 MAX_ALIVE 按 LRU 淘汰。"""
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
+    if run is not None:
+        context["run"] = run
     return acquire(script_name, figures_dir, entry, **context)[0]
 
 
 def acquire(
-    script_name: str, figures_dir: str, entry: str, *, artifact_source=None
+    script_name: str, figures_dir: str, entry: str, *, artifact_source=None, run=None
 ) -> tuple[EngineWorker, bool]:
     """`get()` + 「这条会话是不是**这次调用**建的」——所有权在 `_lock` 里一并给出。
 
@@ -2966,7 +3053,7 @@ def acquire(
     `created` 只有一次调用拿到 True。
     """
     artifact_source = figcapture.selected_artifact_context(artifact_source)
-    key = _worker_key(figures_dir, script_name, artifact_source)
+    key = _worker_key(figures_dir, script_name, artifact_source, run)
     created = False
     # 「换不换解释器」要在锁外、查租约之前决定（见下）；锁外那次「能不能复用」只是窥视——窥视说能复用、
     # 进锁时它却死了 / 换了入口，就得出锁把决定补上再来一遍（Codex #562 P2），否则锁内重建走到只读的
@@ -3031,6 +3118,8 @@ def acquire(
                 context = (
                     {"artifact_source": artifact_source} if artifact_source is not None else {}
                 )
+                if run is not None:
+                    context["run"] = run
                 w = _new_worker(script_name, figures_dir, entry, **context)
                 _workers[key] = w
                 created = True
@@ -3253,6 +3342,7 @@ def build(
     *,
     allow_project_env: bool = True,
     before_build=None,
+    run=None,
 ):
     """取会话并确保脚本已 build——**带一次项目环境自动 fallback**。
 
@@ -3274,8 +3364,9 @@ def build(
     会话经 **`get()`** 取（不是 `acquire()`）：老调用方与用例只认这一个名字来
     替换会话（monkeypatch `pool.get`），改走别的入口它们会静默拿到真池。
     """
+    context = {"run": run} if run is not None else {}
     worker, resp, _created = _build_with(
-        lambda: (get(script_name, figures_dir, entry), False),
+        lambda: (get(script_name, figures_dir, entry, **context), False),
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,
@@ -3291,6 +3382,7 @@ def build_owned(
     *,
     allow_project_env: bool = True,
     before_retry=None,
+    run=None,
 ):
     """`build()` + 所有权：回 `(worker, build 响应, created)`。
 
@@ -3301,8 +3393,9 @@ def build_owned(
 
     `before_retry()`：缺包后自动接手成功、**第二次执行之前**调一次（见 `_build_with`）。
     """
+    context = {"run": run} if run is not None else {}
     return _build_with(
-        lambda: acquire(script_name, figures_dir, entry),
+        lambda: acquire(script_name, figures_dir, entry, **context),
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,
@@ -3344,18 +3437,33 @@ def _build_with(
     return worker, worker.ensure_built(), created or created_again
 
 
-def invalidate(script_name: str, figures_dir: str | None = None, *, force: bool = False) -> None:
+def invalidate(
+    script_name: str,
+    figures_dir: str | None = None,
+    run=None,
+    *,
+    only_run: bool = False,
+    force: bool = False,
+) -> None:
     """脚本文件变更后作废其会话（下次请求自动重建）。
 
     不给 figures_dir 就作废所有项目里的同名脚本——watcher 回调走这条路，
     宁可多关一个也不能让某个项目留着过期会话。
+
+    **运行配置（T03）**：不给 `run` = 这个脚本的**全部**变体（脚本变了，每份配置的会话都过期）；
+    给了 `run` = 只作废这一份配置的会话（用户重跑 / 试运行某一份参数，不该把同脚本别的参数的热会话顺手杀掉）。
+    `only_run=True` 把"这一份"也用在 `run=None` 上：只作废**不带参数**的那条会话（试运行 / 重跑无参数的脚本时，
+    同脚本别的配置的热态编辑不该被顺手打断）。
     `force=True` is an explicit rerun: synchronously retire old workers before
     another acquisition can reuse workerd's spawn hash. An unconfirmed supervisor
     close refuses the rerun and retains its handle for a later retirement retry.
+
     """
     with _lock:
         if figures_dir is None:
             keys = [k for k in _workers if k[1] == script_name]
+        elif run is not None or only_run:
+            keys = [k for k in _workers if k == _worker_key(figures_dir, script_name, None, run)]
         else:
             keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
         if force:
@@ -3391,7 +3499,7 @@ def invalidate_project(figures_dir: str | Path) -> None:
 
 
 def force_cancel(
-    script_name: str, figures_dir: str, *, artifact_source=None, expected_worker=None
+    script_name: str, figures_dir: str, *, artifact_source=None, expected_worker=None, run=None
 ) -> bool:
     """当场硬杀该脚本的在跑会话（探测取消的机制面）；返回是否真的杀了。
 
@@ -3402,7 +3510,7 @@ def force_cancel(
     调用方立刻收到 EOF → WorkerError；worker 先从表里摘掉，别的线程不会
     再复用一个正在死的会话。
     """
-    key = _worker_key(figures_dir, script_name, artifact_source)
+    key = _worker_key(figures_dir, script_name, artifact_source, run)
     with _lock:
         w = _workers.get(key)
         if expected_worker is not None and w is not expected_worker:

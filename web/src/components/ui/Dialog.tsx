@@ -15,6 +15,7 @@ import {
 } from 'react'
 import { cn } from '@/lib/utils'
 import { IconButton } from './Button'
+import { focusOrigin, holdFocusReturn, releaseFocusReturn } from './focusOrigin'
 
 /**
  * 宽度五档（2026-10-07 设计审计 §10.2：此前 8 种宽度）：sm 400 · md 480 · lg 560 · xl 760 · shell 1000。
@@ -94,8 +95,11 @@ interface DialogProps {
    */
   status?: ReactNode
   size?: DialogSize
-  /** 特殊场合才用；常规尺寸走 size */
-  width?: number
+  /**
+   * 特殊场合才用；常规尺寸走 size。只给 `shell` 那种自己管布局的大窗口（版本预览按窗口比例：
+   * `"min(1200px, 80vw)"`）——字符串是 CSS 长度，窗口缩放时跟着变
+   */
+  width?: number | string
   /**
    * 固定高度（CSS 长度）。给「内容随分区变化」的外壳（设置）用：外框不随
    * 内容高低跳动，内容区自己滚。不给就是按内容撑高、上限 86vh 的老行为。
@@ -135,8 +139,10 @@ interface DialogProps {
    * `shell`：给「左导航 + 右内容」这种自己管布局与滚动的窗口（设置）——标题栏
    * 收成 44px 一条、下面一根 hairline，正文**不带内边距也不滚**，子树自己铺满、
    * 自己决定哪一列滚。
+   * `palette`：命令面板（2026-10-07 设计审计 §10.1）——钉在视口上方 18vh、标题只给读屏、没有右上角 ×
+   * （Esc / 点外面就是关）、正文不带内边距也不滚（输入行与结果列表自己排）。焦点陷阱与归还照旧由本外壳给。
    */
-  chrome?: 'default' | 'shell'
+  chrome?: 'default' | 'shell' | 'palette'
   /**
    * 打开时焦点落在哪个控件上。**默认落在容器上**（第一下 Tab 进正文第一个控件，
    * 2026-09-14 审计 S1）；只给「默认动作必须是安全的那一个」的对话框用——排版
@@ -147,7 +153,7 @@ interface DialogProps {
 
 /**
  * 共用对话框外壳（宪法第五节 Dialog、第二十六节）：rounded-panel 16、标题 type-title 15 / 600、
- * 正文 type-reading 13 / 1.6、页脚三槽 32px、栈底才画遮罩、Esc = `onEscape` 给的安全答案。
+ * 说明 13 / ink-2、正文 type-reading 13 / 1.6、页脚三槽 32px、栈底才画遮罩、Esc = `onEscape` 给的安全答案。
  *
  * **常驻挂载**：调用方不要写 `if (!x) return null` 再把 `open` 写死成 true——那样只有进场、没有退场
  * （Radix 的 Presence 要等 animationend 才卸载内容）。写法是对话框常驻、`open={!!x}`，正文读一个
@@ -173,7 +179,9 @@ export function Dialog({
   chrome = 'default',
   initialFocusRef,
 }: DialogProps) {
-  const shell = chrome === 'shell' || size === 'shell'
+  const palette = chrome === 'palette'
+  // 命令面板与 shell 一样自己管正文的排版与滚动
+  const shell = chrome === 'shell' || size === 'shell' || palette
   const locked = busy || blockDismiss
   const ownsScrim = useScrimOwner(open && !covered)
   const slots = isSlots(footer) ? footer : null
@@ -210,6 +218,58 @@ export function Dialog({
   // 容器带 tabIndex=-1（Radix 自己给的），焦点停在它上面：读屏念标题与说明，
   // 用户再 Tab 进第一个控件；Tab 顺序不变，关闭钮仍在标题栏里。
   const contentRef = useRef<HTMLDivElement | null>(null)
+  // 关上的那一刻登记退场后的归还目标（见 `ui/focusOrigin`）；关闭归还跑完或再次打开时撤销
+  const [owner] = useState(() => Symbol('dialog-return'))
+  useLayoutEffect(() => {
+    if (open) releaseFocusReturn(owner)
+    else if (restoreTo.current) holdFocusReturn(owner, restoreTo.current)
+  }, [open, owner])
+  useEffect(() => () => releaseFocusReturn(owner), [owner])
+  // 关上的那一刻就把焦点还给打开者，不等退场。Radix 的归还（下面的 onCloseAutoFocus）要等 Presence
+  // 卸掉内容、再隔一个 setTimeout 才跑：那之间焦点要么还在一层已关的（`data-state=closed`、正淡出的）
+  // 对话框里，要么已经摔在 body 上——键盘用户这时按键落空，忙的机器上这个窗口能拉到几十毫秒
+  // （CI 满载时命令面板的归还用例就在这里撞见 body）。用被动 effect 而不是 layout effect：Radix 的
+  // 焦点陷阱（trapped={open}）在被动 effect 里才撤，早一步挪出去会被陷阱的 focusout 拽回来。
+  // 交接守卫与 onCloseAutoFocus 同一个判据：焦点已经在这层之外一个连着的非 body 元素上，是有意交接，不动它。
+  // 之后 onCloseAutoFocus 照常跑，看到焦点已在层外就什么都不做；打开者已卸掉的回退仍归它管。
+  //
+  // 反过来：退场动画还没放完又被打开（Ctrl-K → Esc → Ctrl-K，Codex #833 erwanjun 复核 8a349482）。Presence 让那个
+  // Content 原样留着、不重挂载，于是挂载时的 onOpenAutoFocus 不再跑；而上面已经把焦点还给了打开者——它这时被
+  // 重开的模态层 aria-hidden 着、在焦点陷阱之外。所以「关时还在的那个 Content 又开了」这一种，照 onOpenAutoFocus
+  // 的落点把焦点放回层里。层外一个**没被藏起来**的元素拿着焦点（重开之间命令把它交给了别的表面）仍是有意交接，不抢。
+  // 打开者照旧是关之前记下的那个（层外有新的打开者才换）：再关时还回去，退场登记也由上面的 layout effect 重新挂上。
+  const closingContent = useRef<HTMLDivElement | null>(null)
+  // 只在开 / 关切换的那一次提交里动焦点（initialFocusRef 换了身份不算）
+  const seenOpen = useRef(open)
+  useEffect(() => {
+    if (seenOpen.current === open) return
+    seenOpen.current = open
+    const content = contentRef.current
+    if (!open) {
+      closingContent.current = content
+      const el = restoreTo.current
+      if (!el?.isConnected) return
+      const now = document.activeElement
+      const inLayer = !!(now && content?.contains(now))
+      const lost = !(now instanceof HTMLElement) || now === document.body || !now.isConnected
+      if (inLayer || lost) el.focus()
+      return
+    }
+    const retained = !!content && content === closingContent.current && content.isConnected
+    closingContent.current = null
+    if (!retained) return
+    const now = document.activeElement
+    if (now && content.contains(now)) return
+    const handedOff =
+      now instanceof HTMLElement &&
+      now !== document.body &&
+      now.isConnected &&
+      !now.closest('[aria-hidden="true"], [inert]')
+    if (handedOff) return
+    const origin = focusOrigin()
+    if (origin?.isConnected && !content.contains(origin)) restoreTo.current = origin
+    ;(initialFocusRef?.current ?? content).focus({ preventScroll: true })
+  }, [open, initialFocusRef])
 
   const hasBody = children != null && children !== false
   // 浮动页脚：默认外壳、有正文、没有 status 区时，页脚往上叠进正文的底边（负 margin = 自己的高度），正文底部
@@ -261,12 +321,26 @@ export function Dialog({
           data-covered={covered || undefined}
           onKeyDown={(e) => e.stopPropagation()}
           onOpenAutoFocus={(e) => {
-            if (document.activeElement instanceof HTMLElement)
-              restoreTo.current = document.activeElement
+            // 从正在退场的命令面板里打开的：记面板的打开者，不记那颗马上消失的输入框
+            restoreTo.current = focusOrigin()
             e.preventDefault()
             ;(initialFocusRef?.current ?? contentRef.current)?.focus({ preventScroll: true })
           }}
           onCloseAutoFocus={(e) => {
+            releaseFocusReturn(owner)
+            // 焦点已经被交给了这层之外的一个元素（命令面板的命令打开了命名小框 / 另一个对话框）：
+            // 那是有意的交接，不抢回来——否则小框的 onBlur 当场把它关掉，命令一闪而过（Codex #833）。
+            // Esc / 取消 / 点外面关的那种，焦点原本在这层里，层卸掉后落在 body：照旧还给打开者
+            const now = document.activeElement
+            if (
+              now instanceof HTMLElement &&
+              now !== document.body &&
+              now.isConnected &&
+              !contentRef.current?.contains(now)
+            ) {
+              e.preventDefault()
+              return
+            }
             const el = restoreTo.current
             if (el?.isConnected) {
               e.preventDefault()
@@ -299,8 +373,8 @@ export function Dialog({
           }}
           onInteractOutside={(e) => locked && e.preventDefault()}
           className={cn(
-            'fixed left-1/2 top-1/2 z-dialog max-h-[86vh] max-w-[calc(100vw-2rem)]',
-            '-translate-x-1/2 -translate-y-1/2',
+            'fixed left-1/2 z-dialog max-h-[86vh] max-w-[calc(100vw-2rem)] -translate-x-1/2',
+            palette ? 'top-[18vh]' : 'top-1/2 -translate-y-1/2',
             'flex flex-col overflow-hidden rounded-panel bg-surface shadow-dialog',
             // 容器是初始焦点的落点：对话框自己的出现就是位置线索，不再套一圈焦点环
             'outline-none',
@@ -313,6 +387,7 @@ export function Dialog({
           <div
             className={cn(
               'flex gap-3',
+              palette && 'sr-only',
               // 右侧给关闭钮留位：它画在右上角，但 DOM 排在最后（见下）
               shell
                 ? 'h-11 shrink-0 items-center border-b border-border pl-4 pr-12'
@@ -321,8 +396,13 @@ export function Dialog({
           >
             <div className="min-w-0">
               <RD.Title className="type-title">{title}</RD.Title>
+              {/* 说明与正文同一个阅读字号（13 / ink-2，2026-10-07 设计审计 §10.2）：此前 12 / ink-3，
+                  比它下面的正文还轻一档，读着像脚注 */}
               {description && (
-                <RD.Description className="type-caption mt-0.5">{description}</RD.Description>
+                // div 而不是 Radix 默认的 p：说明槽也可以是一段结构（导出对话框把「要导的是什么」的对象头放在这里）
+                <RD.Description asChild>
+                  <div className="mt-1 text-base leading-[1.5] text-ink-2">{description}</div>
+                </RD.Description>
               )}
             </div>
           </div>
@@ -350,7 +430,7 @@ export function Dialog({
             </div>
           )}
           {hasFooter && footerEl}
-          {!locked && (
+          {!locked && !palette && (
             <RD.Close asChild>
               {/* `data-dialog-close` 是关闭按钮的稳定锚点：aria-label 是
                   本地化文案（`actions.close`），换语言就选不中——e2e 里

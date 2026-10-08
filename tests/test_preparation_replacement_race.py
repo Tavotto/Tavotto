@@ -3,7 +3,9 @@
 import threading
 from types import SimpleNamespace
 
-from tavotto.engine import pool, preparation
+import pytest
+
+from tavotto.engine import execspec, pool, preparation
 
 
 def test_cancel_after_a_rerun_replaced_the_worker_preserves_the_replacement(tmp_path, monkeypatch):
@@ -96,3 +98,27 @@ def test_cancel_after_a_rerun_replaced_the_worker_preserves_the_replacement(tmp_
             gate.set()
         for name in started:
             assert service.wait(name, 10)
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_explicit_rerun_retires_only_its_frozen_run_configuration(
+    tmp_path, monkeypatch, configured
+):
+    runs = [None, execspec.RunSelection("rc_a", ("a",)), execspec.RunSelection("rc_b", ("b",))]
+    killed = []
+    root = str(tmp_path)
+    workers = {
+        pool._worker_key(root, "fig.py", None, run): SimpleNamespace(
+            force_kill=lambda index=index: killed.append(index)
+        )
+        for index, run in enumerate(runs)
+    }
+    monkeypatch.setattr(pool, "_workers", workers)
+    selected = 1 if configured else 0
+    pool.invalidate("fig.py", root, runs[selected], only_run=True, force=True)
+    assert killed == [selected]
+    assert set(workers) == {
+        pool._worker_key(root, "fig.py", None, run)
+        for index, run in enumerate(runs)
+        if index != selected
+    }
