@@ -128,6 +128,17 @@ export const isGatePhase = (phase: ScriptRunPhase | undefined): boolean =>
  * 素材库脚本行（经 `run`）与接入中心的试运行共用这一处，别的试运行入口也走这里。
  */
 /**
+ * 试运行请求**抛出来**的失败的诊断引用：与成功路径同一优先级——错误体 `diagnostic` 先，响应头
+ * `X-Tavotto-Diagnostic-Ref`（体不是对象时后端放这里）后。取不到 = null（老后端）。
+ */
+export function probeDiagnosticOf(e: unknown): { kind: 'script_run'; ref: string } | null {
+  if (!(e instanceof ApiError)) return null
+  const d = e.body?.diagnostic as { kind?: unknown; ref?: unknown } | undefined
+  if (d && d.kind === 'script_run' && typeof d.ref === 'string' && d.ref) return { kind: 'script_run', ref: d.ref }
+  return e.diagnosticRef ? { kind: 'script_run', ref: e.diagnosticRef } : null
+}
+
+/**
  * 试运行请求**抛出来**的错误（非 2xx：门的两个 code 就是以 409 回来的）→ `ProbeError`，载荷一并带上。
  * 素材库脚本行与接入中心共用这一处：各自解析的话，一边认得门、一边把它当成普通失败（#740 Codex P2）。
  */
@@ -326,7 +337,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     } catch (e) {
       if (stale()) return
       const error = probeErrorOf(e)
-      settle({ phase: phaseOf(error), error, descriptors: [] })
+      settle({ phase: phaseOf(error), error, diagnostic: probeDiagnosticOf(e), descriptors: [] })
       handOffProbeGate(error, projectAtStart)
     }
   },
