@@ -11,9 +11,15 @@ import importlib.util
 import json
 import os
 import re
+import sys
 import time
 import urllib.request
 from pathlib import Path
+
+# Repository entry-point contract: redirected Windows streams are UTF-8 on both channels.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def fetch_checks(repository, head, token, api_base="https://api.github.com"):
