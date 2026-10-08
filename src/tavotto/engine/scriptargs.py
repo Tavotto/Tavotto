@@ -24,8 +24,13 @@ Python 这边钉 schema 与「token → 真 argparse 的 Namespace」，TS 那�
 from __future__ import annotations
 
 import ast
+import hashlib
+import io
+import json
 import os
+import re
 import threading
+import tokenize
 from collections import OrderedDict
 from pathlib import Path
 
@@ -729,6 +734,12 @@ def analyze(source: str) -> dict:
         for a in parser.arguments
         for f in a["flags"]
     )
+    negative_like_extended = any(
+        _looks_negative_number_extended(f)
+        for a in parser.arguments
+        for f in a["flags"]
+        if f.startswith("-")
+    )
     partial = bool(reasons)
     return {
         "version": SCHEMA_VERSION,
@@ -740,6 +751,8 @@ def analyze(source: str) -> dict:
         "parser_line": parser.line,
         "parse_call": parser.parse_calls[0] if parser.parse_calls else None,
         "negative_number_options": negative_like,
+        # 3.14 起 argparse 的负数 token 文法更宽（`-1e3` / `-.5` / `-1.`）：声明了这类选项名的要单独标出
+        "negative_number_options_extended": negative_like_extended,
         "arguments": parser.arguments,
         "exclusive_groups": [g for g in parser.groups if g["members"]],
         "subcommands": parser.subcommands,
@@ -774,19 +787,24 @@ def _reads_argv_outside_parse(source: str) -> bool:
     return False
 
 
+#: argparse 的 `_negative_number_matcher`，按 CPython 源码逐字（`re.compile(...).match(token)`）：
+#: * 3.13.13 / 3.12.12 / 3.11.14（本机实测 `argparse.ArgumentParser()._negative_number_matcher.pattern`）：
+#:   `'^-\\d+$|^-\\d*\\.\\d+$'`
+#: * 3.14.7：`'-\\.?\\d'`（`Lib/argparse.py` `ArgumentParser.__init__`；`-1e3` / `-.5` / `-1.` / `-1_0` / `-1j` 都算
+#:   负数 token；没有结尾锚，`-1abc` 也算）
+#: 前端 `web/src/lib/scriptArgsForm.ts` 的 `NEGATIVE_LEGACY` / `NEGATIVE_EXTENDED` 与这两条同形。
+NEGATIVE_NUMBER_LEGACY = re.compile(r"^-\d+$|^-\d*\.\d+$")
+NEGATIVE_NUMBER_EXTENDED = re.compile(r"-\.?\d")
+
+
 def _looks_negative_number(text: str) -> bool:
-    """argparse 的 `_negative_number_matcher`：`^-\\d+$|^-\\d*\\.\\d+$`。"""
-    body = text[1:]
-    if body.isdigit() and body.isascii():
-        return True
-    if "." in body:
-        head, _, tail = body.partition(".")
-        return (
-            (head == "" or (head.isdigit() and head.isascii()))
-            and tail.isdigit()
-            and tail.isascii()
-        )
-    return False
+    """3.14 之前的规则（`negative_number_options` 的判据；保持原字段语义）。"""
+    return NEGATIVE_NUMBER_LEGACY.match(text) is not None
+
+
+def _looks_negative_number_extended(text: str) -> bool:
+    """3.14 起的规则。"""
+    return NEGATIVE_NUMBER_EXTENDED.match(text) is not None
 
 
 def _empty(status: str, reasons: list[str]) -> dict:
@@ -800,6 +818,7 @@ def _empty(status: str, reasons: list[str]) -> dict:
         "parser_line": None,
         "parse_call": None,
         "negative_number_options": False,
+        "negative_number_options_extended": False,
         "arguments": [],
         "exclusive_groups": [],
         "subcommands": None,
@@ -832,12 +851,56 @@ def analyze_file(path: str | os.PathLike) -> dict:
         return _empty(STATUS_UNKNOWN, ["unreadable"])
     if len(raw) > MAX_SOURCE_BYTES:
         return _empty(STATUS_UNKNOWN, ["too_large"])
-    schema = analyze(raw.decode("utf-8", errors="replace"))
+    source = decode_source(raw)
+    if source is None:
+        # 编码声明坏了 / 声明的编码解不开：说不出话（unknown），不是「没有参数」，更不拿 U+FFFD 去猜 choices
+        return _cache_put(key, _empty(STATUS_UNKNOWN, ["unreadable"]))
+    return _cache_put(key, analyze(source))
+
+
+def decode_source(raw: bytes) -> str | None:
+    """按 Python 自己的源码编码规则解码（PEP 263 / PEP 3120：UTF-8 BOM、`# coding: xxx` 声明，默认 UTF-8）。
+    声明坏了 / 解不开 → None（调用方按「未知」安全回退，不用 replacement 字符糊过去）。"""
+    try:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        return raw.decode(encoding)
+    except (SyntaxError, LookupError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _cache_put(key: tuple, schema: dict) -> dict:
     with _cache_lock:
         _cache[key] = schema
         while len(_cache) > _CACHE_SIZE:
             _cache.popitem(last=False)
     return schema
+
+
+def source_revision(path: str | os.PathLike) -> str:
+    """脚本的「源码修订」：字节摘要 + 解析出的 schema 摘要。准备计划把它记下来，认领 / 执行前再算一次——
+    脚本在检查之后被改了（哪怕只是把一个普通参数改成 `FileType('w')`），当初披露的影响就不再是真的。
+    不走 mtime 缓存的字节部分：这是安全门，宁可多读一次小文件。读不到 = `unreadable`（与检查时同样读不到则相等）。"""
+    p = Path(path)
+    digest = hashlib.sha256()
+    try:
+        with open(p, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return "unreadable"
+    schema = json.dumps(_without_lines(analyze_file(p)), sort_keys=True, default=str).encode(
+        "utf-8"
+    )
+    return f"{digest.hexdigest()}:{hashlib.sha256(schema).hexdigest()[:16]}"
+
+
+def _without_lines(node):
+    """行号不是披露的内容：在参数声明上方加一行注释不算「声明变了」。"""
+    if isinstance(node, dict):
+        return {k: _without_lines(v) for k, v in node.items() if k not in ("line", "parser_line")}
+    if isinstance(node, list):
+        return [_without_lines(v) for v in node]
+    return node
 
 
 def summary(schema: dict) -> dict:

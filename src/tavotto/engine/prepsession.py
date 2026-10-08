@@ -376,7 +376,12 @@ def requirements_of(
                     "code": _ARGUMENTS_CODE,
                     "blocking": False,
                     "payload": {
-                        "schema": schema,
+                        # 计划那一刻 worker 的 Python 版本（项目记住的事实；没有 = 前端取较窄的负数规则）
+                        "schema": {
+                            **schema,
+                            "python_version": (plan.environment or {}).get("python_version")
+                            or None,
+                        },
                         # 这次检查用的配置：只有个数与本机引用（参数值不进报告）；表单写回的是前端草稿里的 token
                         "argv_count": len(plan.run.argv) if plan.run is not None else 0,
                         "run_config": plan.run.config_id if plan.run is not None else None,
@@ -919,7 +924,7 @@ class SessionService:
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
         if prepare is None:
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话不能起依赖准备", 409)
-        stale = preparation.stale_reason(sess.plan)
+        stale = preparation.stale_reason(sess.plan, source=False)
         if stale is not None:
             sess.stale = {"reason": stale[0]}
             sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
@@ -1182,6 +1187,7 @@ class SessionService:
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
         with sess.lock:
             sess.touched_at = self._clock()
+            self._note_source_change(sess)
             found = self._current_attempt(sess)
             checks = checks_of(sess.plan)
             # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
@@ -1276,6 +1282,22 @@ class SessionService:
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
+
+    def _note_source_change(self, sess: Session) -> None:
+        """脚本在检查之后被改了：披露过的影响（`script_writes` / 参数个数……）不再是真的。没有尝试在进行时，
+        提前把会话标失效、撤掉未认领的动作（等 `recheck` 重新披露）；认领时 `preparation.stale_reason` 仍会
+        再核一次（这里只是不再把过期的 `run` 摆给用户看）。"""
+        plan = sess.plan
+        if sess.stale or plan.script_revision is None or self._has_active_attempt(sess):
+            return
+        if sess.attempts and sess.attempts[-1].config_revision == sess.config_revision:
+            return  # 这一修订已经跑过：之后的源码改动（如写回）不回头改写它的结局；下一次 `run` 认领时仍会核
+        now = preparation._script_revision(plan.project_root, plan.script) or ""
+        # 只在披露得出的东西（schema 摘要）变了时提前撤：与依赖无关的字节改动不撤销已给出的授权（C03/C05），
+        # 但认领 `run` 时字节也核（执行的就是那份字节）
+        if now.partition(":")[2] != plan.script_revision.partition(":")[2]:
+            sess.stale = {"reason": preparation.STALE_SOURCE}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
 
     def get(self, session_id: str, project_id: str) -> Session | None:
         with self._lock:

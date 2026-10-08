@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import app as m
-from tavotto.engine import inputremap, pool as engine_pool, preparation
+from tavotto.engine import inputremap, pool as engine_pool, preparation, prepsession, scriptargs
 from test_preparation_api import _open, client, fake_pool  # noqa: F401
 from test_preparation_session import _act, _action, _create, _get, _settle, sessions  # noqa: F401
 
@@ -304,3 +304,105 @@ def test_an_asset_target_never_gets_a_form(client, tmp_path, fake_pool, sessions
     )
     assert prepsession.arguments_schema(plan) is None
     assert m  # app 已导入（夹具）
+
+
+# ---------------------------------------------------------------- 源码修订绑进计划与动作（Codex r4220829632）
+
+PLAIN_OUT = """\
+import argparse
+p = argparse.ArgumentParser()
+p.add_argument("--out", default="report.txt")
+args = p.parse_args()
+"""
+
+FILETYPE_OUT = """\
+import argparse
+p = argparse.ArgumentParser()
+p.add_argument("--out", type=argparse.FileType("w"), default="report.txt")
+args = p.parse_args()
+"""
+
+
+@pytest.mark.parametrize("polled_in_between", [False, True])
+def test_editing_the_script_after_a_run_action_was_issued_rejects_the_claim(
+    client, tmp_path, fake_pool, sessions, polled_in_between
+):
+    """发出 `run` 时 `--out` 是普通字符串；随后脚本改成 `FileType('w')`（打开即截断）。旧动作披露里没有
+    `script_writes`，认领它就是拿过期的影响披露去执行改过的脚本：必须拒绝、一行不跑、要求重新检查。"""
+    root = _proj(tmp_path, PLAIN_OUT)
+    existing = root / "existing.txt"
+    existing.write_bytes(b"keep me")
+    _open(client, root)
+    report = _create(client, {"script": "plot.py"}).get_json()
+    run = _action(report, "run")
+    assert "script_writes" not in run["impact"]
+
+    (root / "plot.py").write_text(FILETYPE_OUT, encoding="utf-8")
+    if polled_in_between:
+        # 读报告时就把过期的 run 撤掉（不再摆给用户），并标失效等 recheck
+        polled = _get(client, report["session_id"]).get_json()
+        assert not [a for a in polled["actions"] if a["kind"] == "run"]
+        assert polled["phase"] == "action_required" or polled["outcome"]["kind"] == "stale", polled
+        rejected = _act(client, report["session_id"], run["id"], report["config_revision"])
+        assert rejected.status_code == 404
+    else:
+        rejected = _act(client, report["session_id"], run["id"], report["config_revision"])
+        assert rejected.status_code == 409, rejected.get_json()
+        assert rejected.get_json()["code"] == "preparation_plan_stale"
+        assert rejected.get_json()["params"] == {"reason": "script_changed", "executed": False}
+    assert fake_pool["build_calls"] == 0
+    assert existing.read_bytes() == b"keep me"
+
+    stale = _get(client, report["session_id"]).get_json()
+    assert not [a for a in stale["actions"] if a["kind"] == "run"]
+    recheck = _act(
+        client, report["session_id"], _action(stale, "recheck")["id"], report["config_revision"]
+    )
+    assert recheck.status_code in (200, 202), recheck.get_json()
+    fresh = _get(client, report["session_id"]).get_json()
+    assert fresh["config_revision"] == report["config_revision"] + 1
+    # 重新披露：新的 run 动作带着 script_writes
+    assert _action(fresh, "run")["impact"]["script_writes"]["declared_output_arguments"] == 1
+
+
+def test_an_unchanged_script_keeps_its_run_action_valid(client, tmp_path, fake_pool, sessions):
+    root = _proj(tmp_path, PLAIN_OUT)
+    _open(client, root)
+    report = _create(client, {"script": "plot.py"}).get_json()
+    again = _get(client, report["session_id"]).get_json()
+    assert _action(again, "run")["id"] == _action(report, "run")["id"]
+    claimed = _act(client, report["session_id"], _action(report, "run")["id"], 1)
+    assert claimed.status_code == 202, claimed.get_json()
+
+
+def test_the_script_revision_covers_bytes_and_schema():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "s.py"
+        path.write_text(PLAIN_OUT, encoding="utf-8")
+        first = scriptargs.source_revision(path)
+        assert first == scriptargs.source_revision(path)
+        path.write_text(PLAIN_OUT + "# comment\n", encoding="utf-8")  # 字节变了、schema 没变
+        assert scriptargs.source_revision(path) != first
+        assert scriptargs.source_revision(path).split(":")[1] == first.split(":")[1]
+        path.write_text("# 一行注释\n" + PLAIN_OUT, encoding="utf-8")  # 只挪了行号：披露的内容没变
+        assert scriptargs.source_revision(path).split(":")[1] == first.split(":")[1]
+        path.write_text(FILETYPE_OUT, encoding="utf-8")  # schema 也变了
+        assert scriptargs.source_revision(path).split(":")[1] != first.split(":")[1]
+
+
+def test_a_dependency_authorisation_survives_script_edits_that_do_not_touch_the_schema(
+    client, tmp_path, fake_pool, sessions
+):
+    """依赖准备不执行脚本、用自己的影响摘要验证要装什么：与参数声明无关的脚本改动不撤销已发出的授权动作。"""
+    root = _proj(tmp_path, PLAIN_OUT)
+    _open(client, root)
+    report = _create(client, {"script": "plot.py"}).get_json()
+    (root / "plot.py").write_text("# 无关改动\n" + PLAIN_OUT, encoding="utf-8")
+    polled = _get(client, report["session_id"]).get_json()
+    assert polled["config_revision"] == report["config_revision"]
+    assert _action(polled, "run")["id"] == _action(report, "run")["id"]
+    sess = prepsession.SESSIONS.get(report["session_id"], polled["project_id"])
+    assert preparation.stale_reason(sess.plan, source=False) is None
+    assert preparation.stale_reason(sess.plan)[0] == "script_changed"  # 要执行脚本的认领仍核字节

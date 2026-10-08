@@ -6493,13 +6493,11 @@ def api_engine_script_arguments():
     script, rejected = _resolve_project_script(ctx, str(request.args.get("script") or "").strip())
     if rejected is not None:
         return rejected
-    return jsonify(
-        {
-            "ok": True,
-            "script": script,
-            "arguments": engine_scriptargs.analyze_file(ctx.path / script),
-        }
-    )
+    # 负数 token 的文法随 worker 的 Python 版本变（3.14 起更宽）：带上项目记住的版本（只读、不体检；没有就不带，
+    # 前端取较窄的旧规则）
+    version = str(engine_projectenv.state(str(ctx.path)).get("python_version") or "") or None
+    schema = {**engine_scriptargs.analyze_file(ctx.path / script), "python_version": version}
+    return jsonify({"ok": True, "script": script, "arguments": schema})
 
 
 #: 渲染失败里「会话按此刻的表 build 完了、只是图名对不上 / 一张没有」的码：据此重新登记

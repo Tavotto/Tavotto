@@ -218,6 +218,15 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   不一致就 `preparation_plan_stale / data_binding_changed`、`executed=False`，必须重新检查。
 - **输出参数**（P03）：schema 里 `role=output_file`（只来自 `FileType('w'|'a'|'x'|…)`）的个数进 `run` 动作的
   `impact.script_writes = {declared_output_arguments, cwd_mode}`（不含参数名与路径）。Tavotto 从不替用户加 overwrite / force 一类 token。
+- **源码修订绑进计划**（#815 Codex r4220829632）：`script` 目标的计划记 `script_revision`（`scriptargs.source_revision`：脚本字节摘要 +
+  去掉行号的 schema 摘要，私有）。披露给用户的 `run` 影响（含 `script_writes`）是按那一版源码算的，所以认领 `run` 与执行线程起跑前
+  经 `preparation.stale_reason` 再比一次，不同 = `preparation_plan_stale` / `reason=script_changed` / `executed=False`，会话标失效等 `recheck`
+  重新披露；读报告时 schema 摘要变了就提前撤掉未认领动作。`prepare_dependencies` 的认领不核（`source=False`：它不执行脚本，用自己的
+  `impact_digest` 验证要装什么，与依赖无关的脚本改动不撤销它）；这一修订已经跑过的会话不回头改写结局（写回改了脚本不让已完成的会话变 stale）。
+- **脚本源码按 Python 的规则解码**（r4220829659）：`scriptargs.decode_source` 用 `tokenize.detect_encoding`（BOM / `# coding:`），声明坏了或解不开
+  → `unknown` + `unreadable`，不用 replacement 字符糊过去。
+- **负数 token 文法随 worker 的 Python 版本变**（r4220829672）：≤ 3.13 是 `^-\d+$|^-\d*\.\d+$`，3.14 起是 `-\.?\d`（`.match`）；schema 同时带
+  `negative_number_options`（旧文法）与 `negative_number_options_extended`（新文法）和 `python_version`（项目记住的事实，未知 = 前端取较窄的旧文法）。
 - 看护：`tests/test_script_args_session.py`（假 pool）、`tests/test_script_args_e2e.py`（真 worker：A01 表单路径 = 原始 token 路径、
   A05 输出参数只执行一次不覆盖、数据指认后同一会话出图）。
 
