@@ -264,7 +264,7 @@ class TestInstalledEvidenceMapsImportNames:
         idx = _index(prefix)
         assert [c.distribution for c in idx.lookup("real").candidates] == ["tool"]
         assert [c.distribution for c in idx.lookup("mod").candidates] == ["tool"]
-        for junk in ("bin", "tool", "__pycache__", "scripts"):
+        for junk in ("bin", "tool", "__pycache__", "scripts", "..", ""):
             assert idx.lookup(junk).candidates == ()
 
 
