@@ -3581,12 +3581,14 @@ def api_registry_probe_cancel():
     ctx = current_ctx()
     body = request.get_json(force=True)
     script = str(body.get("script") or "").strip()
+    # 取消标志与运行配置必须在**同一把锁**里一起取：分两次加锁的话，带参数的试运行恰好在两次之间收尾
+    # （finally 把两张表都删了），run 会被读成 None，force_cancel 就打到同脚本无参数的 worker 上，
+    # 误杀别的面板的活会话。条目已经不在了 = 输了赛跑，按「没有在跑的」返回，什么也不杀。
     with _PROBES_LOCK:
         ev = _PROBES.get((ctx.id, script))
+        run = _PROBE_RUNS.get((ctx.id, script))
     if ev is None:
         return jsonify({"cancelling": False})
-    with _PROBES_LOCK:
-        run = _PROBE_RUNS.get((ctx.id, script))
     ev.set()  # 先置标志再杀：probe 醒来时答案已经在了
     engine_pool.force_cancel(script, str(ctx.path), **({"run": run} if run is not None else {}))
     return jsonify({"cancelling": True})
