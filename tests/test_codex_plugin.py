@@ -289,6 +289,44 @@ def test_skill_routes_each_reference_explicitly():
     assert "用到才读" in text
 
 
+def test_figure_contract_bundled_packages_match_runtime_lock():
+    """figure-contract 第 6 节手抄的两份依赖清单必须与各自出处一致。
+
+    便携集（处处可用）= （pyproject 基础 dependencies ∪ worker extra）∩ runtime-lock 的 top_level；
+    桌面独有 = top_level − 便携集。换包时这里红了就同步改文案。
+    """
+    if tomllib is None:
+        pytest.skip("需要 tomllib（Python 3.11+）")
+    from packaging.requirements import Requirement
+
+    def norm(req):
+        return re.sub(r"[-_.]+", "-", Requirement(req).name).lower()
+
+    lock = json.loads((ROOT / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
+    top_level = {re.sub(r"[-_.]+", "-", n).lower() for n in lock["top_level"]}
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    installed = {norm(r) for r in project["dependencies"]} | {
+        norm(r) for r in project["optional-dependencies"]["worker"]
+    }
+    expected_portable = installed & top_level
+    expected_desktop_only = top_level - expected_portable
+    text = (SKILL_DIR / "references" / "figure-contract.md").read_text(encoding="utf-8")
+    m = re.search(r"处处可用的只有([^（；]+)", text)
+    assert m, "figure-contract 第 6 节缺便携依赖清单"
+    portable = {x.strip().lower() for x in m.group(1).split("/")}
+    m = re.search(r"；([^；（]+)仅桌面版内置环境有", text)
+    assert m, "figure-contract 第 6 节缺桌面版独有清单"
+    desktop_only = {x.strip().lower() for x in m.group(1).split("/")}
+    assert portable == expected_portable
+    assert desktop_only == expected_desktop_only
+    assert not portable & desktop_only
+    assert "packaging/runtime-lock.json" in text
+    assert "pyproject.toml" in text
+    skill = _skill_text()
+    assert "figure-contract.md` 第 6 节" in skill
+    assert "numpy / matplotlib / pillow" in skill
+
+
 def test_skill_files_issues_only_with_consent():
     """撞上 Tavotto 的缺陷时写复现 issue，但外发必须经用户明确允许。
 
