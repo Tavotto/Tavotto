@@ -211,7 +211,9 @@ def test_single_drag_lands_on_the_independent_ruler(hot, gid):
                 ix0, iy0 = max(tx, ax_x), max(ty, ax_y)
                 ix1, iy1 = min(tx + bw, ax_x + ax_w), min(ty + bh, ax_y + ax_h)
                 # 整个落在框外时不折（元素树仍可选），bbox 仍指到数据位置
-                expect = [tx, ty, bw, bh] if ix1 < ix0 or iy1 < iy0 else [ix0, iy0, ix1 - ix0, iy1 - iy0]
+                expect = (
+                    [tx, ty, bw, bh] if ix1 < ix0 or iy1 < iy0 else [ix0, iy0, ix1 - ix0, iy1 - iy0]
+                )
                 assert el["bbox"] == pytest.approx(expect, abs=max(tol_x, tol_y)), where
                 if expect == pytest.approx([tx, ty, bw, bh], abs=1e-9):
                     assert el["bbox"][2:] == pytest.approx(el0["bbox"][2:], abs=1e-6), where
