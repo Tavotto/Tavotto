@@ -47,7 +47,9 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
+import { Card } from '../ui/Card'
 import { EmptyState } from '../ui/EmptyState'
+import { Notice } from '../ui/Notice'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
 import { Row } from '../ui/Field'
@@ -55,6 +57,7 @@ import { SearchInput } from '../ui/SearchInput'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
+import { DrawerHeaderActions } from './DrawerHeader'
 import { ScriptLibrary } from './ScriptLibrary'
 
 /** 面板文件名（带扩展名）：同 stem 的 PDF / PNG 靠它区分 */
@@ -297,61 +300,57 @@ export function AssetBrowser() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 工具栏：搜索框 + 三颗同权重的图标钮（只看可参数化 / 筛选 / 刷新）。
-          它们都是 IconButton：28px、透明底、hover 才浮出，名字与气泡同一份；
+      {/* 三颗同权重的图标钮（只看可参数化 / 筛选 / 刷新）进标题行的动作槽，搜索行只放搜索
+          （2026-10-07 设计审计 §10.3）。都是 IconButton：28px、透明底、hover 才浮出，名字与气泡同一份；
           图标走默认的 16px——与面板头的钉、画布页的「+」同一档（左栏审计 L13） */}
+      <DrawerHeaderActions>
+        {/* 一键只看可参数化：等价于筛选弹层里的类型=可参数化，走同一份状态，
+            生效时下方出现同一个可移除的筛选标签 */}
+        <IconButton
+          label={ab('scriptOnly')}
+          active={type === 'script'}
+          aria-pressed={type === 'script'}
+          onClick={() => setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))}
+        >
+          <EditableFigureIcon size={ICON_SIZE.md} className={type === 'script' ? undefined : 'text-ink-2'} />
+        </IconButton>
+        <FilterButton
+          filters={filters}
+          folders={folders}
+          figuresDir={figuresDir}
+          activeCount={chips.length}
+          onChange={setFilters}
+        />
+        <IconButton
+          label={ab('refresh')}
+          tip={ab('refreshTip')}
+          disabled={refreshing}
+          aria-busy={busy || undefined}
+          data-asset-refresh
+          onClick={() => {
+            // 走**统一刷新**（后端一次完整的一轮），不是自己再扫一遍：
+            // 「哪些文件是素材」「脚本怎么合进注册表」只有一份判据，
+            // 事件与手动刷新共用它。
+            setRefreshing(true)
+            void refreshProjectNow()
+              .catch((e: unknown) => useUiStore.getState().setStatus(backendErrorMsg(e), 'error'))
+              .finally(() => setRefreshing(false))
+            // runtime 图清单是另一个资源（不在 /api/panels 里），顺带取一次
+            void useRuntimeAssetStore.getState().loadAssets()
+          }}
+        >
+          {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
+              LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
+          <RefreshCw size={ICON_SIZE.md} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
+        </IconButton>
+      </DrawerHeaderActions>
       <div className="flex flex-col gap-1.5 px-3 pb-2">
-        <div className="flex items-center gap-0.5">
-          <SearchInput
-            value={query}
-            onValueChange={setQuery}
-            placeholder={ab('search')}
-            aria-label={ab('searchAria')}
-            className="mr-1"
-          />
-          {/* 一键只看可参数化：等价于筛选弹层里的类型=可参数化，走同一份状态，
-              生效时下方出现同一个可移除的筛选标签 */}
-          <IconButton
-            label={ab('scriptOnly')}
-            active={type === 'script'}
-            aria-pressed={type === 'script'}
-            onClick={() =>
-              setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))
-            }
-          >
-            <EditableFigureIcon size={ICON_SIZE.md} className={type === 'script' ? undefined : 'text-ink-2'} />
-          </IconButton>
-          <FilterButton
-            filters={filters}
-            folders={folders}
-            figuresDir={figuresDir}
-            activeCount={chips.length}
-            onChange={setFilters}
-          />
-          <IconButton
-            label={ab('refresh')}
-            tip={ab('refreshTip')}
-            disabled={refreshing}
-            data-asset-refresh
-            onClick={() => {
-              // 走**统一刷新**（后端一次完整的一轮），不是自己再扫一遍：
-              // 「哪些文件是素材」「脚本怎么合进注册表」只有一份判据，
-              // 事件与手动刷新共用它。
-              setRefreshing(true)
-              void refreshProjectNow()
-                .catch((e: unknown) =>
-                  useUiStore.getState().setStatus(backendErrorMsg(e), 'error'),
-                )
-                .finally(() => setRefreshing(false))
-              // runtime 图清单是另一个资源（不在 /api/panels 里），顺带取一次
-              void useRuntimeAssetStore.getState().loadAssets()
-            }}
-          >
-            {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
-                LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
-            <RefreshCw size={ICON_SIZE.md} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
-          </IconButton>
-        </div>
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder={ab('search')}
+          aria-label={ab('searchAria')}
+        />
 
         {chips.length > 0 && (
           <div className="flex flex-wrap gap-1" aria-label={ab('activeFilters')}>
@@ -360,9 +359,10 @@ export function AssetBrowser() {
                 key={c.key}
                 onClick={() => clearChip(c.key)}
                 aria-label={ab('removeFilter', { label: c.label })}
+                // 筛选 chip 是胶囊：白底 + 一圈细边（2026-10-07 设计审计 §10.3；chip 一律 rounded-full）
                 className={cn(
-                  'flex h-6 items-center gap-1 rounded-sm bg-selected px-1.5 text-xs text-ink',
-                  'outline-none transition-colors duration-fast hover:bg-surface-active focus-visible:focus-ring',
+                  'flex h-6 items-center gap-1 rounded-full bg-surface pl-2 pr-1.5 text-xs text-ink inset-ring inset-ring-border',
+                  'outline-none transition-colors duration-fast hover:bg-surface-2 focus-visible:focus-ring',
                 )}
               >
                 {c.label}
@@ -378,11 +378,6 @@ export function AssetBrowser() {
           {ab('refreshing')}
         </p>
       )}
-      {error && loaded && (
-        <p className="bg-danger-surface px-3 py-1.5 text-xs text-danger-content" role="status">
-          {ab('refreshFailed', { error })}
-        </p>
-      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* ---- 图：FileAsset + RuntimeFigureAsset ---- */}
@@ -395,24 +390,37 @@ export function AssetBrowser() {
           onToggle={() => useAssetBrowseStore.getState().setFiguresOpen(!figuresOpen)}
           controls="asset-figures-section"
         />
+        {/* 读不出 / 刷新失败**不收进可折叠的内容里**：图区收着时，头部「刷新」后端那一轮成了、
+            `/api/panels` 却失败——`assetStore.load()` 吞掉错误返回 null，`refreshProjectNow()` 照常
+            resolve、不弹提示，而这条 Notice 若在 hidden 的网格里，用户只看到图标停转（Codex #832）。
+            错误挂在区头下面、不跟着折叠走，展开与否都看得见 */}
+        {error && (
+          <div className="px-3 pb-2">
+            {/* 刷新失败：一条 Notice 坐在它说的那一区里（此前是贴着工具栏的一条红带）；
+                加载过就照旧列保留下来的那份，卡片不消失 */}
+            {loaded ? (
+              <Notice tone="danger" role="status" data-asset-refresh-failed>
+                {ab('refreshFailed', { error })}
+              </Notice>
+            ) : (
+              <EmptyState
+                icon={TriangleAlert}
+                title={ab('loadFailed')}
+                hint={error}
+                action={{
+                  label: ab('retry'),
+                  // 首次加载失败后的重试：**强制**另起一次，不复用可能同样
+                  // 失败的那个在途请求——用户点重试的原因正是"刚才没成"
+                  onClick: () => void useAssetStore.getState().load({ force: true }),
+                }}
+              />
+            )}
+          </div>
+        )}
         {/* 网格容器常驻（收起时只是 hidden）：列数由它的实测宽度决定，ResizeObserver
             只在挂载时接一次，卸了再挂就量不到了；display:none 报 0 宽 → 单列，再展开时
             报回真实宽度 → 双列，同一个观察者两边都接得住 */}
         <div id="asset-figures-section" ref={gridRef} className="px-3 pb-2" hidden={!figuresShown}>
-          {error && !loaded && (
-            <EmptyState
-              icon={TriangleAlert}
-              title={ab('loadFailed')}
-              hint={error}
-              action={{
-                label: ab('retry'),
-                // 首次加载失败后的重试：**强制**另起一次，不复用可能同样
-                // 失败的那个在途请求——用户点重试的原因正是"刚才没成"
-                onClick: () => void useAssetStore.getState().load({ force: true }),
-              }}
-            />
-          )}
-
           {!loaded && !error && <GridSkeleton columns={columns} />}
 
           {/* 用不了的文件也是「有东西可说」：只有一张范围之外的 TIFF 的项目不是「还没有图」，
@@ -495,8 +503,9 @@ export function AssetBrowser() {
           里不许再嵌可 Tab 的控件（axe nested-interactive，serious），而键盘 /
           读屏用户必须到得了「编辑原图」与「添加到画布」这两个不同的动作。
           目录路径不再单独占一行页脚：它是排查用信息，住在筛选弹层的最底一行 */}
-      <SelectedAssetActions item={items.find((it) => itemId(it) === activeId)} />
-      <AssetCapabilityNotice panel={panels.find((p) => p.id === activeId)} />
+      {/* 选中一张卡之后的页脚只有一条（2026-10-07 设计审计 §10.3：此前「动作条」与「接入说明」是两条
+          叠着的页脚）：上面一行是名字 + 动作，需要说话时下面跟一段接入说明 */}
+      <AssetFooter item={items.find((it) => itemId(it) === activeId)} panel={panels.find((p) => p.id === activeId)} />
 
       <Dialog
         open={!!zoomed}
@@ -791,9 +800,10 @@ function AssetCard({
         }
       }}
       title={ab('cardTitle', { id: panel.id })}
-      className={cn(cardClass(selected), 'cursor-grab active:cursor-grabbing')}
+      className={cn(CARD_ITEM, 'cursor-grab active:cursor-grabbing')}
       style={{ contentVisibility: 'auto', containIntrinsicSize: '140px' }}
     >
+      <Card appearance="raised" padding="none" interactive selected={selected} className="overflow-hidden">
       <CardPreview>
         <img
           loading="lazy"
@@ -843,6 +853,7 @@ function AssetCard({
         ]}
         used={used}
       />
+      </Card>
     </li>
   )
 }
@@ -942,9 +953,10 @@ function RuntimeAssetCard({
         }
       }}
       title={ab('runtimeCardTitle', { stem: asset.stem, script: asset.script })}
-      className={cardClass(selected)}
+      className={CARD_ITEM}
       style={{ contentVisibility: 'auto', containIntrinsicSize: '140px' }}
     >
+      <Card appearance="raised" padding="none" interactive selected={selected} className="overflow-hidden">
       <CardPreview>
         {asset.cached ? (
           <img
@@ -1022,6 +1034,7 @@ function RuntimeAssetCard({
           ) : undefined
         }
       />
+      </Card>
     </li>
   )
 }
@@ -1041,18 +1054,11 @@ function runtimeStaleKey(asset: RuntimeAssetInfo): string | null {
 }
 
 /**
- * 卡片外壳：真的是一张卡，所以有抬升——`shadow-card`（1px 环 + 近投影，2026-09-15 学 Beautiful UI，
- * 用户拍板）；hover 环加深到 border，选中 = 环再深一档（border-strong）+ 名字加粗，**不铺底**——
- * 预览区是白底，tint 只能落在下面 39px 的文字块上，读作「页脚变灰」而不是「整张卡被选中」
- * （2026-09-15 左栏审计 L10，拍板取 b）。圆角是卡片那一档（10）：卡比 28px 控件大一档以上
- * （宪法第二节；L11）。环走 ring 而不是 border：不占盒模型，三种状态下卡片尺寸不变。
+ * 卡片外壳（2026-10-07 设计审计 §5 / §10.3）：`ui/Card` raised + interactive——hover 画 1px outline、
+ * 选中 = border-strong outline + selected 底（选中的名字再加一档字重），几何永不变化；圆角 lg 12。
+ * `li` 只是 option 本身（焦点、键盘、拖拽在它上面），焦点环按卡片的圆角画在它外面。
  */
-const cardClass = (selected: boolean) =>
-  cn(
-    'group relative overflow-hidden rounded-lg bg-surface shadow-card outline-none transition-shadow duration-fast',
-    selected ? 'ring-1 ring-border-strong' : 'hover:ring-1 hover:ring-border',
-    'focus-visible:focus-ring',
-  )
+const CARD_ITEM = 'group relative rounded-lg outline-none focus-visible:focus-ring'
 
 /** 预览区：3:2、白底、内容按比例缩放；上面只有悬停时的就近入口，没有常驻标签 */
 function CardPreview({ children }: { children: ReactNode }) {
@@ -1171,8 +1177,9 @@ function CardAction({
         e.stopPropagation()
         onClick()
       }}
+      // 光标一律箭头（宪法第二十六节）：卡片本身可拖（抓手），就近入口不是拖拽把手
       className={cn(
-        'flex h-6 w-6 items-center justify-center rounded-sm',
+        'flex h-6 w-6 cursor-default items-center justify-center rounded-full',
         'bg-surface text-ink shadow-thumb',
         'transition-colors duration-fast hover:bg-surface-2',
       )}
@@ -1208,13 +1215,17 @@ function UnsupportedAssets({ items }: { items: UnsupportedAsset[] }) {
 }
 
 /**
- * 选中卡片的两个动作，**真按钮**，住在 listbox 外面（同 `AssetCapabilityNotice`
- * 的理由：option 里不许再嵌可 Tab 的控件）。鼠标用户有卡片上的就近入口，键盘
- * 用户有 Enter / Shift+Enter；这一条是读屏与"只想点按钮"的人的入口，三条路
- * 落到同一对 action 上。没跑过的 runtime 图只有「运行并发现图」——没有描述符
- * 就没有能编辑、能添加的东西。
+ * 选中一张卡之后的页脚：**一条**（2026-10-07 设计审计 §10.3，此前是两条叠着的页脚）。
+ *
+ * * 上一行：选中的名字 + 两个动作（**真按钮**，住在 listbox 外面：option 里不许再嵌可 Tab 的控件——
+ *   axe nested-interactive，serious）。鼠标用户有卡片上的就近入口，键盘用户有 Enter / Shift+Enter；
+ *   这一行是读屏与"只想点按钮"的人的入口，三条路落到同一对 action 上。没跑过的 runtime 图只有
+ *   「运行并发现图」——没有描述符就没有能编辑、能添加的东西。
+ * * 需要说话时下面跟一段接入说明（`data-capability-notice`）：`editable` 不说（那一档没有需要说的话），
+ *   `capability` 缺席也不说——「这一轮还不知道」不是一种状态，编一句出来就是替后端撒谎。
+ *   「查看接入状态」那个真按钮同样在 listbox 外面。
  */
-function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
+function AssetFooter({ item, panel }: { item: LibraryItem | undefined; panel?: PanelInfo }) {
   useTranslation('workspace')
   const run = useScriptRunStore((s) =>
     item?.kind === 'runtime' ? s.byScript[item.asset.script] : undefined,
@@ -1228,98 +1239,62 @@ function SelectedAssetActions({ item }: { item: LibraryItem | undefined }) {
   const runScript = () => {
     if (item.kind === 'runtime' && !busy) void useScriptRunStore.getState().run(item.asset.script)
   }
-  return (
-    <div
-      role="group"
-      aria-label={ab('selectedActionsAria', { name })}
-      data-selected-asset-actions
-      // 左栏页脚行只有一种语法：`border-t px-1.5 py-1` + 28px 控件，文字自己再让 6px
-      // 落到 56 那条竖线上（左栏审计 L27，此前五条页脚五套内边距）
-      className="flex shrink-0 items-center gap-1 border-t border-border px-1.5 py-1"
-    >
-      <span className="min-w-0 flex-1 truncate pl-1.5 text-xs text-ink-2" title={name}>
-        {name}
-      </span>
-      {actionable ? (
-        <>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              openFastEdit(itemId(item))
-            }}
-          >
-            <Pencil size={ICON_SIZE.xs} />
-            {ab('openFigure')}
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              addFigureToLayout(itemId(item))
-            }}
-          >
-            <Plus size={ICON_SIZE.xs} />
-            {ab('addToCanvas')}
-          </Button>
-          {stale && (
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={busy}
-              data-selected-asset-rerun
-              onClick={runScript}
-            >
-              <RefreshCw size={ICON_SIZE.xs} />
-              {translate(busy ? 'scripts.running' : 'scripts.rerun', { ns: 'workspace' })}
-            </Button>
-          )}
-        </>
-      ) : (
-        <Button size="sm" variant="secondary" disabled={busy} onClick={runScript}>
-          <Play size={ICON_SIZE.xs} />
-          {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
-        </Button>
-      )}
-    </div>
-  )
-}
-
-/**
- * 选中卡片的接入说明条。
- *
- * **住在 listbox 外面**，因为它里面有一个真按钮：`role="option"` 的卡片里再
- * 嵌可 Tab 的控件是 axe 的 nested-interactive（serious），而键盘用户又必须
- * 到得了「查看接入状态」。放在列表下方，两个约束同时成立——鼠标用户点卡片
- * 就看见，键盘用户 Tab 出列表就落在它上面。
- *
- * `editable` 不显示：那一档没有需要说的话，常驻一条只会挤掉缩略图。
- * `capability` 缺席同样不显示——「这一轮还不知道」不是一种状态，编一句出来
- * 就是替后端撒谎。
- */
-function AssetCapabilityNotice({ panel }: { panel?: PanelInfo }) {
-  useTranslation('workspace')
   const cap = panel?.capability
-  if (!panel || !cap || cap.status === 'editable') return null
+  const showCap = !!panel && !!cap && cap.status !== 'editable'
   return (
+    // 左栏页脚只有一种语法：`border-t px-1.5 py-1` + 28px 控件，底是抽屉底（`--drawer-bg`）
     <div
-      role="status"
-      data-capability-notice
-      // 与其它页脚行同一副内边距（左栏审计 L27）；两行文字各让 6px 落到 56，
-      // ghost 钮自己的 8px 内边距减去 2px 也落到 56
-      className="shrink-0 border-t border-border bg-surface-2 px-1.5 py-1"
+      data-asset-footer
+      className="shrink-0 border-t border-border bg-[var(--drawer-bg,var(--color-surface))] px-1.5 py-1"
     >
-      <p className="truncate px-1.5 text-xs text-ink" title={panel.id}>
-        {ab('capabilityHeading', { name: fileName(panel.id), status: statusLabel(cap.status) })}
-      </p>
-      <p className="mt-0.5 px-1.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
-      <Button
-        size="sm"
-        className="-ml-0.5 mt-0.5"
-        onClick={() => useProjectReadinessStore.getState().focusPanel(panel.id, 'panel')}
+      <div
+        role="group"
+        aria-label={ab('selectedActionsAria', { name })}
+        data-selected-asset-actions
+        className="flex items-center gap-1"
       >
-        {translate('readiness.openCenter', { ns: 'workspace' })}
-      </Button>
+        <span className="min-w-0 flex-1 truncate pl-1.5 text-xs text-ink-2" title={name}>
+          {name}
+        </span>
+        {actionable ? (
+          <>
+            <Button size="sm" variant="secondary" onClick={() => void openFastEdit(itemId(item))}>
+              <Pencil size={ICON_SIZE.xs} />
+              {ab('openFigure')}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => void addFigureToLayout(itemId(item))}>
+              <Plus size={ICON_SIZE.xs} />
+              {ab('addToCanvas')}
+            </Button>
+            {stale && (
+              <Button size="sm" variant="secondary" disabled={busy} data-selected-asset-rerun onClick={runScript}>
+                <RefreshCw size={ICON_SIZE.xs} />
+                {translate(busy ? 'scripts.running' : 'scripts.rerun', { ns: 'workspace' })}
+              </Button>
+            )}
+          </>
+        ) : (
+          <Button size="sm" variant="secondary" disabled={busy} onClick={runScript}>
+            <Play size={ICON_SIZE.xs} />
+            {translate(busy ? 'scripts.running' : 'scripts.run', { ns: 'workspace' })}
+          </Button>
+        )}
+      </div>
+      {showCap && (
+        <div role="status" data-capability-notice className="mt-1 border-t border-border pt-1">
+          <p className="truncate px-1.5 text-xs text-ink" title={panel.id}>
+            {ab('capabilityHeading', { name: fileName(panel.id), status: statusLabel(cap.status) })}
+          </p>
+          <p className="mt-0.5 px-1.5 text-xs leading-relaxed text-ink-2">{reasonText(cap)}</p>
+          <Button
+            size="sm"
+            className="-ml-0.5 mt-0.5"
+            onClick={() => useProjectReadinessStore.getState().focusPanel(panel.id, 'panel')}
+          >
+            {translate('readiness.openCenter', { ns: 'workspace' })}
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

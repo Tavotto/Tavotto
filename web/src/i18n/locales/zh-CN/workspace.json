@@ -97,7 +97,8 @@
     "search": "搜索画布…",
     "searchAria": "搜索画布",
     "moveUp": "上移",
-    "moveDown": "下移"
+    "moveDown": "下移",
+    "count_other": "{{count}} 张画布"
   },
   "canvasTools": {
     "fit": "适应",
@@ -352,7 +353,8 @@
     "editableState": "可编辑",
     "rowActions": "{{label}} 的操作",
     "moveUp": "上移一层",
-    "moveDown": "下移一层"
+    "moveDown": "下移一层",
+    "rename": "重命名"
   },
   "layoutKind": {
     "col": "列布局",
@@ -469,7 +471,8 @@
       "workspace": "项目"
     },
     "style": "样式",
-    "workspace": "工作区"
+    "workspace": "项目",
+    "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）"
   },
   "readiness": {
     "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅版面。",
@@ -599,7 +602,11 @@
     "recoveryDetails": "详情",
     "rerunWithArgs": "用这些参数再试一次",
     "group_needsFix": "需要修复",
-    "prepareAria": "准备并运行 {{script}}"
+    "prepareAria": "准备并运行 {{script}}",
+    "copyPath": "复制路径",
+    "pathCopied": "已复制：{{path}}",
+    "pathCopyFailed": "无法写入剪贴板。脚本在：{{path}}",
+    "rowActions": "{{script}} 的更多操作"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}}刻度 {{state}} · {{action}}",
