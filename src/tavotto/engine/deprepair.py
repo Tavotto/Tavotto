@@ -5478,8 +5478,14 @@ def _gate_open(root: str, script: str) -> bool:
 
 
 def decide_environment(project: str | Path, script: str) -> dict | None:
+    """`decide_environment_pinned` 的采用那一条（没换回 None）；只关心「换没换」的调用方用它。"""
+    return decide_environment_pinned(project, script).adopted
+
+
+def decide_environment_pinned(project: str | Path, script: str) -> pool.EnvironmentDecision:
     """「换不换解释器」的**唯一一处**决定（ADR 0079 §四）：缺包且有装齐的用户环境、此刻的解释器又是
-    机器替用户挑的，就把它记成本项目的自动决策；回采用的那一条（`userenvs.evaluate` 的形状），不换回 None。
+    机器替用户挑的，就把它记成本项目的自动决策；回 `pool.EnvironmentDecision`：`adopted` 是采用的那一条（`userenvs.evaluate` 的形状，没换 None）；检测模式还带
+    锁内钉下的解释器（见 `_detect_environment_pinned`）。
 
     **必须在「解析解释器」之前调**，它之后的一切都读决定之后的世界：准备计划的快照（`preparation.plan_for`：
     解释器、LaunchContext、环境事实——否则 `_stale_reason` 拿旧快照比新决策，第一次准备就以
@@ -5493,25 +5499,25 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
         # 确认模式（ADR 0114）：「换不换解释器」不再由机器决定。候选环境的体检结果仍随跑前的门 / 修复
         # 卡片的载荷（`user_environments`）交给用户，采用是他点的那一下——这里连门都不必问（不去量一遍
         # 只为了发现自己不该做这个决定）
-        return None
+        return pool.EnvironmentDecision()
     if mode == projectenv.ADOPTION_DETECT:
         root = str(Path(project))
         if workdir.decision_for(root, script)["needs_confirmation"]:
             # 与旧模式同一个顺序：运行目录那道门先问，没答之前一个进程都不起（检测要量解释器）
-            return None
-        return _detect_environment(root, script)
+            return pool.EnvironmentDecision()
+        return _detect_environment_pinned(root, script)
     root = str(Path(project))
     if not _gate_open(root, script):
-        return None
+        return pool.EnvironmentDecision()
     if workdir.decision_for(root, script)["needs_confirmation"]:
-        return None
+        return pool.EnvironmentDecision()
     got = _preparation_offer(root, script)
     if got is None:
-        return None
+        return pool.EnvironmentDecision()
     offer, user_envs = got
     if offer["plan"]["status"] != depplan.STATUS_READY and not offer.get("unknown_missing"):
-        return None
-    return _auto_adopt(root, offer, user_envs)
+        return pool.EnvironmentDecision()
+    return pool.EnvironmentDecision(adopted=_auto_adopt(root, offer, user_envs))
 
 
 #: 检测模式的单飞：同一项目同一时刻只有一次检测在体检候选；后到的等它落地，再按落地之后的项目记录判断（通常直接
@@ -5526,8 +5532,8 @@ def _detect_lock(root: str) -> threading.Lock:
         return _detect_locks.setdefault(key, threading.Lock())
 
 
-def _detect_environment(root: str, script: str) -> dict | None:
-    """检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
+def _detect_environment_unlocked(root: str, script: str) -> dict | None:
+    """**调用方持 `_detect_lock(root)`**（见 `_detect_environment_pinned`）。检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
     （`userenvs.evaluate` 的形状），不换回 None。
 
     「能跑」= 解释器健康 + 联合计划里脚本要的 import（缺的、已有的、映射不到包名的）全都 import 得到——与跑前的门、
@@ -5543,75 +5549,97 @@ def _detect_environment(root: str, script: str) -> dict | None:
       管理的环境，不往用户的环境里装），历史记录（`legacy_auto`）照旧；
     * 预算：候选上限 `userenvs.PROBE_LIMIT`、每个 `projectenv.PROBE_TIMEOUT_S`；正被安装占着的环境不挑；这个项目
       有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。"""
-    with _detect_lock(root):
-        try:
-            current = pool.resolve_worker_python(root, script=script, discover=False)[0]
-        except pool.WorkerError as exc:
-            if getattr(exc, "explicit", None):
-                return None  # 显式选择失效：那是另一条错误，原路径去报
-            current = ""  # 一个 Python 都没有：照样找用户的环境，找不到才是一键私有 Python
-        if not pool.machine_chosen_interpreter(root):
-            return None
-        record = projectenv.remembered_record(root)
-        try:
-            joint, _kind, python = joint_plan_for(root, script)
-        except pool.WorkerError:
-            return None
-        plan = joint.to_payload()
-        clean = private_python_target(root, script) is not None
-        runs_now = (
-            not clean
-            and joint.status == depplan.STATUS_NOTHING_NEEDED
-            and not unknown_imports_missing(plan, python)
-        )
-        if runs_now and record is not None:
-            return None  # 机器先前定下的那个仍能跑：不动
-        needed, unknown = _plan_imports(plan)
-        candidates = user_environment_candidates(root, script, exclude=current or python)
-        if runs_now:
-            # 默认链条能跑：只有项目自己声明 / 指向的环境排在它前面
-            candidates = [c for c in candidates if c.get("source") in userenvs.PROJECT_SOURCES]
-        candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
-        entry = None
-        if candidates and not _user_env_discovery_off():
-            entry = userenvs.best(userenvs.evaluate(candidates, needed, unknown), Path(root).name)
-        if entry is None:
-            if (
-                not runs_now
-                and record is not None
-                and record.get("trigger") == projectenv.TRIGGER_AUTO_DETECTED
-            ):
-                # 检测先前挑的环境不再能跑这个脚本、别处也没有能跑的：作废它，「安装缺少的组件」装进 Tavotto
-                # 管理的环境——检测从不把用户的环境当成安装目标
-                try:
-                    unless_installing(root, lambda: pool.invalidate_remembered(root, record))
-                except envlease.EnvironmentBusy:
-                    pass
-            return None
-        try:
-            adopted = unless_installing(
-                root,
-                lambda: projectenv.remember(
-                    root,
-                    entry["python"],
-                    automatic=True,
-                    trigger=projectenv.TRIGGER_AUTO_DETECTED,
-                    health=entry,
-                    only_if=_record_allows_auto_adopt,
-                ),
-            )
-        except envlease.EnvironmentBusy:
-            return None
-        if not adopted:
-            return None
-        pool.note_project_python_ok(entry["python"])
-        LOG.info("自动检测：改用 %s（%s）", entry["python"], entry.get("source"))
-        for listener in list(_adoption_listeners):
+    try:
+        current = pool.resolve_worker_python(root, script=script, discover=False)[0]
+    except pool.WorkerError as exc:
+        if getattr(exc, "explicit", None):
+            return None  # 显式选择失效：那是另一条错误，原路径去报
+        current = ""  # 一个 Python 都没有：照样找用户的环境，找不到才是一键私有 Python
+    if not pool.machine_chosen_interpreter(root):
+        return None
+    record = projectenv.remembered_record(root)
+    try:
+        joint, _kind, python = joint_plan_for(root, script)
+    except pool.WorkerError:
+        return None
+    plan = joint.to_payload()
+    clean = private_python_target(root, script) is not None
+    runs_now = (
+        not clean
+        and joint.status == depplan.STATUS_NOTHING_NEEDED
+        and not unknown_imports_missing(plan, python)
+    )
+    if runs_now and record is not None:
+        return None  # 机器先前定下的那个仍能跑：不动
+    needed, unknown = _plan_imports(plan)
+    candidates = user_environment_candidates(root, script, exclude=current or python)
+    if runs_now:
+        # 默认链条能跑：只有项目自己声明 / 指向的环境排在它前面
+        candidates = [c for c in candidates if c.get("source") in userenvs.PROJECT_SOURCES]
+    candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
+    entry = None
+    if candidates and not _user_env_discovery_off():
+        entry = userenvs.best(userenvs.evaluate(candidates, needed, unknown), Path(root).name)
+    if entry is None:
+        if (
+            not runs_now
+            and record is not None
+            and record.get("trigger") == projectenv.TRIGGER_AUTO_DETECTED
+        ):
+            # 检测先前挑的环境不再能跑这个脚本、别处也没有能跑的：作废它，「安装缺少的组件」装进 Tavotto
+            # 管理的环境——检测从不把用户的环境当成安装目标
             try:
-                listener(root, userenvs.public(entry))
-            except Exception:  # noqa: BLE001 — 通知失败不能挡住准备
-                LOG.exception("用户环境改用通知失败")
-        return entry
+                unless_installing(root, lambda: pool.invalidate_remembered(root, record))
+            except envlease.EnvironmentBusy:
+                pass
+        return None
+    try:
+        adopted = unless_installing(
+            root,
+            lambda: projectenv.remember(
+                root,
+                entry["python"],
+                automatic=True,
+                trigger=projectenv.TRIGGER_AUTO_DETECTED,
+                health=entry,
+                only_if=_record_allows_auto_adopt,
+            ),
+        )
+    except envlease.EnvironmentBusy:
+        return None
+    if not adopted:
+        return None
+    pool.note_project_python_ok(entry["python"])
+    LOG.info("自动检测：改用 %s（%s）", entry["python"], entry.get("source"))
+    for listener in list(_adoption_listeners):
+        try:
+            listener(root, userenvs.public(entry))
+        except Exception:  # noqa: BLE001 — 通知失败不能挡住准备
+            LOG.exception("用户环境改用通知失败")
+    return entry
+
+
+def _detect_environment_pinned(root: str, script: str) -> pool.EnvironmentDecision:
+    """检测 + 在**同一把锁内**把此刻生效的解释器、来源与环境代取下，作为不可变的 `EnvironmentDecision` 交出去。
+
+    锁只护住检测本身；返回之后消费方（`plan_for` 的快照、`pool.acquire` 起会话）若各自再解析共享的项目记录，
+    同一项目另一个脚本就能在两次解析之间把记录换成它的解释器（Codex #820 P1）。钉下的值之后只比对、不重新解析。"""
+    with _detect_lock(root):
+        adopted = _detect_environment_unlocked(root, script)
+        try:
+            python, source = pool.resolve_worker_python(root, script=script, discover=False)
+        except pool.WorkerError:
+            return pool.EnvironmentDecision(adopted=adopted)  # 解析不出来：原路径去报那条错
+        return pool.EnvironmentDecision(
+            adopted=adopted,
+            python=python,
+            source=source,
+            generation=projectenv.environment_generation(python),
+        )
+
+
+def _detect_environment(root: str, script: str) -> dict | None:
+    return _detect_environment_pinned(root, script).adopted
 
 
 def gate(project: str | Path, script: str) -> dict | None:
@@ -5658,7 +5686,7 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
 
 
 pool.register_spawn_gate(_spawn_gate)
-pool.register_environment_decider(decide_environment)
+pool.register_environment_decider(decide_environment_pinned)
 
 
 #: 日志里按闭集明文放行的失败码：本模块全部 `ERROR_*` 的值 + 私有 Python 的（`_log_repair_failure` /

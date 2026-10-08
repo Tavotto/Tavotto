@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import (
@@ -2769,6 +2770,40 @@ def register_spawn_gate(gate) -> None:
 #: `_new_worker()` 里，那时 `is_mutating` 已经查过了——在门里换解释器，查的是旧的、起的是新的（Codex #522 P1）。
 ENVIRONMENT_DECIDERS: list = []
 
+#: 起会话时检测出的解释器与记录已不是同一个（别的脚本在两次解析之间换了共享的项目记录）。
+ENVIRONMENT_CHANGED = "environment_changed"
+
+
+@dataclass(frozen=True)
+class EnvironmentDecision:
+    """「换不换解释器」那一次决定的**结果**——不可变值（Codex #820 r4220794171）。
+
+    检测模式的锁只护住检测本身；返回之后消费方（`preparation.plan_for` 的快照、`acquire()` 起会话）若再各自解析
+    共享的项目记录，同一项目的另一个脚本就能在两次解析之间把记录换成它的解释器，前一个脚本于是在一个从未为它验证过的
+    解释器下执行。所以决定在**锁内**把「此刻生效的解释器 + 来源 + 环境代」一并取下，消费方只认这份值：计划快照
+    用它，起会话用它，起出来的会话与它对不上就 `environment_changed`，绝不静默换。
+
+    `python` 为空 = 没有可钉的值（非检测模式 / 解析不出解释器），消费方照旧各自解析。"""
+
+    adopted: dict | None = None
+    python: str = ""
+    source: str = ""
+    generation: str = ""
+
+    @property
+    def pinned(self) -> bool:
+        return bool(self.python)
+
+    def matches(self, python: str) -> bool:
+        """某条解释器（路径 + 此刻的环境代）还是不是这次决定钉下的那一个。"""
+        return (
+            self.pinned
+            and same_python(python, self.python)
+            and (
+                not self.generation or projectenv.environment_generation(python) == self.generation
+            )
+        )
+
 
 def register_environment_decider(decider) -> None:
     if decider not in ENVIRONMENT_DECIDERS:
@@ -3126,13 +3161,19 @@ def acquire(
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
         want_python = resolve_worker_python(figures_dir, script=script_name)[0]
         decided = not ENVIRONMENT_DECIDERS
+        pin: EnvironmentDecision | None = None
         if not decided and (force_decide or not _reusable(key, entry, want_python)):
             # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
             # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
             # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。
             for decide in ENVIRONMENT_DECIDERS:
-                decide(figures_dir, script_name)
-            want_python = resolve_worker_python(figures_dir, script=script_name)[0]
+                got = decide(figures_dir, script_name)
+                if isinstance(got, EnvironmentDecision) and got.pinned:
+                    pin = got
+            # 决定带回了「检测出的解释器」就只认它，不再解析共享的项目记录（别的脚本可能刚把它换了）
+            want_python = (
+                pin.python if pin else resolve_worker_python(figures_dir, script=script_name)[0]
+            )
             decided = True
         _refuse_if_mutating(want_python)
         with _lock:
@@ -3182,6 +3223,14 @@ def acquire(
                 if run is not None:
                     context["run"] = run
                 w = _new_worker(script_name, figures_dir, entry, **context)
+                if pin is not None and not pin.matches(getattr(w, "python", pin.python)):
+                    # 会话构造时解析到的不是这次检测钉下的那一个（记录在两次解析之间被换了 / 环境被重建）：
+                    # 不替用户悄悄换解释器——收掉这条刚起的会话，按 `environment_changed` 让调用方重新准备
+                    w.shutdown()
+                    raise WorkerError(
+                        "这个项目的解释器在检测之后变了，请重新准备再运行。",
+                        code=ENVIRONMENT_CHANGED,
+                    )
                 _workers[key] = w
                 created = True
             w.last_used = time.time()

@@ -254,6 +254,7 @@ def test_the_scan_module_references_no_process_or_adoption_entry():
     forbidden_attrs = {
         "resolve_worker_python",
         "decide_environment",
+        "decide_environment_pinned",
         "plan_for",
         "gate",
         "first_open_candidate",

@@ -342,6 +342,34 @@ describe('主按钮就是后端给的那件事', () => {
     expect(primary()).toBeNull()
   })
 
+  const envFact = (over: object): PreparationReport['environment'] => ({
+    mode: 'detect',
+    kind: 'builtin',
+    decided_by: 'default',
+    switched: false,
+    replaced: null,
+    ...over,
+  })
+  const SWITCH_COPY: Record<string, [string, string]> = {
+    'zh-CN': ['Tavotto 自带的', '（原来那套不能用了，已自动换好）'],
+    'en-US': ["Tavotto's own", '(the previous one stopped working and was replaced)'],
+  }
+  for (const lng of Object.keys(SWITCH_COPY)) {
+    it(`${lng} · 记住的环境没了、回退到默认环境（switched + replaced）：详情里说换过；没换过就不说`, async () => {
+      const [label, hint] = SWITCH_COPY[lng]
+      await i18n.changeLanguage(lng)
+      await mount()
+      await openWith(report({ environment: envFact({ switched: true, replaced: { reason: 'missing' } }) }))
+      await toggleDetails()
+      const row = () => details()?.querySelector('[data-prep-row="environment"]')?.textContent ?? ''
+      expect(row()).toContain(label)
+      expect(row()).toContain(hint)
+      await openWith(report({ environment: envFact({}), observation_seq: 2 }))
+      expect(row()).toContain(label)
+      expect(row()).not.toContain(hint)
+    })
+  }
+
   it('缺组件：主按钮「安装」认领 prepare_dependencies 并回显影响摘要；一行说装什么、装到哪，详情里列全', async () => {
     await mount()
     await openWith(report(STATES.deps))

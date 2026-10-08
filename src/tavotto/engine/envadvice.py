@@ -314,8 +314,24 @@ DECIDED_DEFAULT = "default"
 DECIDED_LOCKED = "locked"
 
 
+def _switched(adopted: dict | None, invalidated: dict | None, effective: str) -> bool:
+    """这次生效的解释器与之前生效的是不是两个——由前后选择推导，不只看有没有「采用」（Codex #820 P2）。
+
+    记住的解释器消失 / 被重建、默认链条能跑脚本时，检测不采用任何新候选（`adopted` 为 None），用户却已经被
+    换到回退解释器；那一次作废记录里的 `python` 就是「之前」，此刻生效的 `effective` 是「之后」。"""
+    if adopted is not None:
+        return True
+    previous = str((invalidated or {}).get("python") or "")
+    return bool(previous and effective and not pool.same_python(previous, effective))
+
+
 def adoption_fact(
-    root: str | Path, source: str, *, adopted: dict | None, invalidated: dict | None
+    root: str | Path,
+    source: str,
+    *,
+    adopted: dict | None,
+    invalidated: dict | None,
+    effective: str = "",
 ) -> dict:
     """准备报告里关于环境**唯一**要给用户看的事实（ADR 0114 §六）：这次用的是哪一类、谁定的、这次检查是不是
     刚换了一个（`switched`）、换之前那个为什么不能用（`replaced`）。**不要求用户做任何事**——要用户动手的只有
@@ -334,7 +350,7 @@ def adoption_fact(
         "mode": projectenv.adoption_mode(),
         "kind": kind,
         "decided_by": decided,
-        "switched": adopted is not None,
+        "switched": _switched(adopted, invalidated, effective),
         "replaced": {"reason": str(invalidated.get("reason") or "")} if invalidated else None,
     }
 

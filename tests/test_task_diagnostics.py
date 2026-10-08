@@ -519,6 +519,7 @@ def test_collecting_a_task_diagnostic_executes_nothing(env, tmp_path, monkeypatc
         (engine_pool, "get"),
         (projectenv, "probe_environment"),
         (deprepair, "decide_environment"),
+        (deprepair, "decide_environment_pinned"),
         (deprepair, "gate"),
         (d, "build_report"),
         (subprocess, "run"),

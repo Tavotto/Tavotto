@@ -250,15 +250,22 @@ def plan_for(
     `error.explicit` 说明是哪一条、为什么。
     """
     root = str(project_root)
-    adopted = None
+    decision = pool.EnvironmentDecision()
     remap_generation = inputremap.generation(root)
     if script is not None:
         # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处；检测模式下就是那次自动检测，
         # ADR 0114 §六）：下面的解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
         # 决定之前拍，第一次准备就以 `preparation_plan_stale` 收场（Codex #522 P1）。
-        adopted = deprepair.decide_environment(root, script)
+        decision = deprepair.decide_environment_pinned(root, script)
+    adopted = decision.adopted
     try:
-        python, source = pool.resolve_worker_python(root, script=script)
+        if decision.pinned:
+            # 检测出的解释器是个不可变值（含环境代）：快照只认它，不再解析共享的项目记录——同一项目的另一个脚本
+            # 可能刚在两次解析之间把记录换了（Codex #820 P1）。换了的话执行前 `_stale_reason` 拿它与此刻比，
+            # 对不上就 `environment_changed`，绝不在没为这个脚本验证过的解释器下跑
+            python, source = decision.python, decision.source
+        else:
+            python, source = pool.resolve_worker_python(root, script=script)
         env_error = None
     except pool.WorkerError as exc:
         python, source, env_error = "", "", {"code": exc.code, "message": str(exc)}
@@ -285,7 +292,11 @@ def plan_for(
         "automatic": bool(state.get("automatic", False)),
         "trigger": state.get("trigger", ""),
         "module": state.get("module", ""),
-        "generation": projectenv.environment_generation(python) if python else "",
+        "generation": (
+            (decision.generation if decision.pinned else projectenv.environment_generation(python))
+            if python
+            else ""
+        ),
         # 项目级决定的授权来源：confirmed（用户明确采用）/ legacy_auto（ADR 0114 之前机器记下的，照用但不当确认）/ none
         "consent": state.get("consent", projectenv.CONSENT_NONE),
         "recommendation": recommendation,
@@ -327,7 +338,9 @@ def plan_for(
         ),
         "error": env_error,
         # 给用户看的那一个事实（ADR 0114 §六）：用的是哪一类、谁定的、这次是不是刚自动换了一个——不要求用户动作
-        "adoption": envadvice.adoption_fact(root, source, adopted=adopted, invalidated=invalidated),
+        "adoption": envadvice.adoption_fact(
+            root, source, adopted=adopted, invalidated=invalidated, effective=python
+        ),
     }
     grant = workdir.grant_for(root)
     launch_context = None

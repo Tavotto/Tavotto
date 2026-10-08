@@ -113,7 +113,7 @@ def test_the_default_is_detection_and_confirmation_stays_available(monkeypatch):
     monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "nonsense")
     assert projectenv.adoption_mode() == projectenv.ADOPTION_DETECT
     # 跑前的「换不换解释器」只有一个决定者，`pool.acquire`（编辑 / MCP）与准备计划都经它
-    assert deprepair.decide_environment in engine_pool.ENVIRONMENT_DECIDERS
+    assert deprepair.decide_environment_pinned in engine_pool.ENVIRONMENT_DECIDERS
 
 
 # ===========================================================================
@@ -330,6 +330,173 @@ def test_an_engaged_environment_is_not_picked(rig):
     rig["satisfying"] |= {busy, free}
     with envlease.mutating(envlease.env_key_of(busy), busy):  # 正在往它里面装包：体检读的是半成品
         assert deprepair.decide_environment(rig["root"], "fig.py")["python"] == free
+
+
+# ===========================================================================
+# 检测出的解释器是不可变值：同项目两个脚本并发时，不被另一个脚本换掉（Codex #820 r4220794171）
+# ===========================================================================
+class _Recorder:
+    """替身会话：照真 worker 那样在构造时**自己**解析解释器——这正是竞态要钉死的那一步。"""
+
+    instances: list = []
+
+    def __init__(self, script_name, figures_dir, entry):
+        self.script_name, self.entry = script_name, entry
+        self.python = engine_pool.resolve_worker_python(figures_dir, script=script_name)[0]
+        self.last_used = 0.0
+        self.down = False
+        _Recorder.instances.append(self)
+
+    def alive(self):
+        return not self.down
+
+    def shutdown(self):
+        self.down = True
+
+
+@pytest.fixture
+def raced(rig, monkeypatch):
+    """真 `pool.acquire()` + 真检测；在**检测落地之后、消费方起会话之前**，另一个脚本把共享的项目记录换成它的解释器。"""
+    _Recorder.instances = []
+    conda = rig["cand"]("conda-env", userenvs.SOURCE_CONDA)
+    rig["satisfying"].add(conda)
+    other = _touch(rig["root"].parent / "other-script-env" / "bin" / "python")
+    monkeypatch.setattr(engine_pool, "_new_worker", lambda sn, fd, en, **k: _Recorder(sn, fd, en))
+    monkeypatch.setattr(engine_pool, "_schedule_prune", lambda: None)
+    box = rig
+    box.update(conda=conda, other=other, race=True)
+
+    def racing_decider(project, script):
+        decision = deprepair.decide_environment_pinned(project, script)
+        if box["race"]:
+            # 另一个脚本的检测在第一个脚本探测成功与再解析之间落地：共享记录换成了它的解释器
+            assert projectenv.remember(
+                project, other, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED
+            )
+        return decision
+
+    monkeypatch.setattr(engine_pool, "ENVIRONMENT_DECIDERS", [racing_decider])
+    yield box
+    with engine_pool._lock:
+        engine_pool._workers.clear()
+
+
+def test_acquire_never_starts_the_session_on_an_interpreter_another_script_just_recorded(raced):
+    """修复前：`acquire()` 在锁外再解析一次共享记录，第一个脚本的会话起在第二个脚本的解释器上——那条解释器从未
+    为它验证过。修复后：检测钉下的解释器是不可变值，会话起出来与它对不上就 `environment_changed`，且收掉那条会话。"""
+    with pytest.raises(engine_pool.WorkerError) as caught:
+        engine_pool.acquire("fig.py", str(raced["root"]), "__main__")
+    assert caught.value.code == engine_pool.ENVIRONMENT_CHANGED
+    assert [w.down for w in _Recorder.instances] == [True]  # 刚起的会话被收掉，没留在池里
+    assert not engine_pool._workers
+
+
+def test_acquire_without_a_race_starts_on_the_detected_interpreter(raced):
+    raced["race"] = False
+    w, created = engine_pool.acquire("fig.py", str(raced["root"]), "__main__")
+    assert created and w.python == raced["conda"]
+
+
+def test_the_plan_snapshot_keeps_the_detected_interpreter_and_goes_stale_when_the_record_moves(
+    raced, monkeypatch
+):
+    """计划快照取的是检测钉下的解释器（含环境代），不重新解析共享记录；记录被别的脚本换走之后，执行前的对账
+    （`_stale_reason`）以 `environment_changed` 拦下，而不是在另一个解释器下跑。"""
+    root = str(raced["root"])
+    monkeypatch.setattr(deprepair, "gate", lambda r, s: None)
+    monkeypatch.setattr(deprepair, "preparation_offer", lambda r, s: None)
+    monkeypatch.setattr(
+        deprepair,
+        "decide_environment_pinned",
+        lambda r, s: pool_decision(raced["conda"]),
+    )
+
+    def pool_decision(python):
+        return engine_pool.EnvironmentDecision(
+            adopted={"python": python},
+            python=python,
+            source=engine_pool.SOURCE_SYSTEM,
+            generation=projectenv.environment_generation(python),
+        )
+
+    # 共享记录此刻已是另一个脚本的解释器
+    assert projectenv.remember(
+        root, raced["other"], automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED
+    )
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=root,
+        asset_id="a",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+    )
+    assert plan.interpreter == raced["conda"]
+    assert plan.environment["generation"] == projectenv.environment_generation(raced["conda"])
+    assert preparation.PreparationService._stale_reason(plan) == (
+        preparation.STALE_ENVIRONMENT,
+        {},
+    )
+
+
+# ===========================================================================
+# 报告里的「换过」：由生效的前后推导，作废→默认链条也算（Codex #820 r4220794183）
+# ===========================================================================
+def test_switched_is_derived_from_the_effective_before_and_after():
+    gone = {"python": "/old/venv/bin/python", "reason": "missing", "trigger": "auto_detected"}
+    fact = envadvice.adoption_fact(
+        "/p",
+        engine_pool.SOURCE_BUNDLED,
+        adopted=None,
+        invalidated=gone,
+        effective="/bundled/python",
+    )
+    assert fact["switched"] is True  # 记住的没了、没采用新候选，回退到默认链条：用户已被换了
+    assert fact["replaced"] == {"reason": "missing"}
+    # 作废之后又回到同一条路径（重建回来）：前后没变，不算换
+    same = envadvice.adoption_fact(
+        "/p", engine_pool.SOURCE_BUNDLED, adopted=None, invalidated=gone, effective=gone["python"]
+    )
+    assert same["switched"] is False
+    # 采用了新候选：照旧算换
+    adopted = envadvice.adoption_fact(
+        "/p", engine_pool.SOURCE_SYSTEM, adopted={"python": "/x"}, invalidated=None, effective="/x"
+    )
+    assert adopted["switched"] is True and adopted["replaced"] is None
+    # 什么都没发生
+    quiet = envadvice.adoption_fact(
+        "/p",
+        engine_pool.SOURCE_BUNDLED,
+        adopted=None,
+        invalidated=None,
+        effective="/bundled/python",
+    )
+    assert quiet["switched"] is False and quiet["replaced"] is None
+
+
+def test_a_vanished_remembered_interpreter_that_falls_back_to_the_default_chain_is_reported(
+    rig, monkeypatch
+):
+    """记住的解释器被作废、默认链条能跑脚本：检测没有可采用的新候选，报告仍要说「原来那套不能用了，已换好」。"""
+    root = str(rig["root"])
+    monkeypatch.setattr(deprepair, "gate", lambda r, s: None)
+    monkeypatch.setattr(deprepair, "preparation_offer", lambda r, s: None)
+    gone = rig["cand"]("gone-env", userenvs.SOURCE_CONDA)
+    assert projectenv.remember(root, gone, automatic=True, trigger=projectenv.TRIGGER_AUTO_DETECTED)
+    engine_pool.invalidate_remembered(root, projectenv.remembered_record(root), "missing")
+    rig["runs_now"] = True
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=root,
+        asset_id="a",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+    )
+    fact = plan.environment["adoption"]
+    assert fact["switched"] is True and fact["replaced"] == {"reason": "missing"}
 
 
 # ===========================================================================
