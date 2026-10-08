@@ -36,6 +36,8 @@ KIND_EXPORT = "export"
 KIND_PREPARATION = "preparation"
 KIND_SCRIPT_RUN = "script_run"
 KINDS = (KIND_EXPORT, KIND_PREPARATION, KIND_SCRIPT_RUN)
+#: 一次尝试的终局词汇（准备 `STATUSES` 与试运行 `OUTCOME_*` 共用这一套；不在里面的读作 other）
+_RUN_OUTCOMES = ("ready", "error", "cancelled", "needs_input")
 
 #: 登记表的上限。快照本身已被白名单限住（通常 1–3 KB），这里是第二道、与来源无关的闸。
 MAX_ENTRIES = 48
@@ -422,6 +424,64 @@ def bundle_section(store: Store, project_id, *, limit: int = BUNDLE_SNAPSHOTS) -
         "snapshots": docs,
         "omitted": omitted,
         "collection": {"executed_anything": False, "current_state_included": False},
+    }
+
+
+#: 全局报告 `project.recent_runs` 里「脚本是否跑得起来」的两类尝试（导出不算：它不执行用户脚本）。
+RUN_KINDS = (KIND_SCRIPT_RUN, KIND_PREPARATION)
+#: `recent_runs.recent` 最多列几条（逐条的结论）；`counts` / `by_error_code` 数的是登记表里的全部（≤ MAX_ENTRIES）。
+RUN_SUMMARY_LIMIT = 8
+
+
+def run_summary(store: Store, project_id, *, limit: int = RUN_SUMMARY_LIMIT) -> dict:
+    """全局报告 report.json 的 `project.recent_runs`：本项目最近几次脚本运行 / 准备的**结果分类**。
+
+    这是已冻结快照的二次投影，不是新的采集：只读登记表，一个脚本都不执行、不体检。输出里的每个值都来自
+    `diagnostic_projection` 已经过形状守卫的字段——outcome 与 kind 是闭集，`error_code` 是稳定码
+    （`taskdiag.code`），其余是计数 / 毫秒数。**没有**脚本名、路径、argv、图名、traceback 与模块名
+    （缺的包名走 `project.missing_dependencies`，那边有「敏感运行不带包名」的出处）。
+    读不出结构的快照当不存在，不抛。"""
+    with store._lock:
+        store._expire(time.time())
+        mine = [
+            e for e in store._entries.values() if e.project_id == project_id and e.kind in RUN_KINDS
+        ]
+    mine.sort(key=lambda e: -e.recorded_at)
+    counts: dict[str, int] = {}
+    by_code: dict[str, int] = {}
+    recent: list[dict] = []
+    for e in mine:
+        outcome = closed(e.outcome, _RUN_OUTCOMES) or "other"
+        counts[outcome] = counts.get(outcome, 0) + 1
+        try:
+            snap = json.loads(e.blob)
+        except ValueError:
+            snap = {}
+        snap = snap if isinstance(snap, dict) else {}
+        err = snap.get("error") if isinstance(snap.get("error"), dict) else {}
+        run_code = code(err.get("code"))
+        if run_code:
+            by_code[run_code] = by_code.get(run_code, 0) + 1
+        if len(recent) < limit:
+            ex = snap.get("execution") if isinstance(snap.get("execution"), dict) else {}
+            tm = snap.get("timing") if isinstance(snap.get("timing"), dict) else {}
+            recent.append(
+                clean(
+                    {
+                        "kind": e.kind,
+                        "outcome": outcome,
+                        "error_code": run_code,
+                        "captured_count": count(ex.get("captured_count")),
+                        "elapsed_ms": count(tm.get("elapsed_ms")),
+                        "at": round(e.recorded_at, 3),
+                    }
+                )
+            )
+    return {
+        "window": {"entries": len(mine), "retention_s": RETENTION_S},
+        "counts": dict(sorted(counts.items())),
+        "by_error_code": dict(sorted(by_code.items())),
+        "recent": recent,
     }
 
 

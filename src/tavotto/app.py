@@ -2887,6 +2887,9 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
+        # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。
+        status["recent_runs"] = engine_taskdiag.run_summary(engine_taskdiag.STORE, ctx.id)
     return status
 
 

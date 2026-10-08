@@ -151,7 +151,7 @@ def test_get_bundle_still_works_and_keeps_the_old_three_files(client):
 def test_manifest_declares_its_own_schema(client):
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["schema_version"] == 5
+    assert manifest["schema_version"] == 6
     assert manifest["frontend_snapshot_schema"] == 1
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"

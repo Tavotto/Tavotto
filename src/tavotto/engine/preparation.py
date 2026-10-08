@@ -682,6 +682,8 @@ class PreparationService:
                 )
                 return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
+            # 诊断包的「最近缺依赖现场」：准备路径把 WorkerError 接在这里，不经 `app._worker_error`
+            deprepair.note_missing_dependency_of(plan.project_root, exc, script=plan.script or "")
             module = getattr(exc, "module", "")
             if module:
                 error["module"] = module

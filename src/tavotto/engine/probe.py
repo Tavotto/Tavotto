@@ -144,6 +144,14 @@ def _error_from_worker(
             from . import deprepair
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
+        # 诊断包的「最近缺依赖现场」（bundle schema 4）：这条路在自己里面接住 WorkerError、以 200 + `error` 交出，
+        # 不经 `app._worker_error`，以前一条都没记。含敏感参数的运行 module 为空，记不下（见该函数）。
+        if figures_dir:
+            from . import deprepair
+
+            deprepair.note_missing_dependency_of(
+                figures_dir, exc, script=script, offer=out.get("dependency_repair")
+            )
         return out
     if exc.code in (ERROR_NEEDS_INPUT, ERROR_INPUT_TIMEOUT):
         # 脚本要输入而没人能答 / 等到超时（ADR 0099）：提示原文走 params，界面按 code 翻

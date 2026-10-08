@@ -2089,6 +2089,35 @@ def note_missing_dependency(
         _missing_evidence.append(record)
 
 
+def note_missing_dependency_of(
+    project: str | Path, exc: BaseException, *, script: str = "", offer: dict | None = None
+) -> bool:
+    """脚本试运行 / 准备路径上的 `missing_dependency` → 同一份进程内记录（与渲染端点 `app._note_missing_dependency` 同一张表）。
+
+    这两条路把 `WorkerError` 在自己里面接住、转成结果里的 `error`（HTTP 200 / 会话终局），不经 `app._worker_error`，
+    所以以前诊断包里一条缺依赖现场都没有。**没有模块名就不记**：含敏感参数的运行 worker 在源头就把模块名清空
+    （`worker.py` `_module_attributable_to_script`），这里不另判、也不去别处找回。记录失败不许盖掉原始错误。
+    返回是否记下了。"""
+    if getattr(exc, "code", "") != "missing_dependency":
+        return False
+    module = getattr(exc, "module", "") or ""
+    if not module or not project:
+        return False
+    detail = getattr(exc, "project_env", None)
+    try:
+        note_missing_dependency(
+            project,
+            script=script or getattr(exc, "script_name", "") or "",
+            module=module,
+            python_source=getattr(exc, "python_source", "") or "",
+            project_env=detail if isinstance(detail, dict) else None,
+            offer=offer,
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+    return True
+
+
 def recent_missing_dependencies(project: str | Path) -> list[dict]:
     """这个项目最近的缺依赖现场（旧 → 新，最多 `MISSING_DEPENDENCY_EVIDENCE_LIMIT` 条）。"""
     pid = managedenv.project_fingerprint(project)
