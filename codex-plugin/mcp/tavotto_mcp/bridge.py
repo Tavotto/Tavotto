@@ -138,7 +138,7 @@ CAPABILITY_MISSING = "engine_capability_missing"
 #: `BRIDGE_IMPORTS_AT_MIN`（那两处是「桥 import 得动吗」的判据，放进去等于把最低版本抬到今天），只经
 #: `_optional_engine()` 取；用到它们的路径先过能力协商（`_require_feature`），或在缺席时退回旧行为。
 #: `tests/test_mcp_compat.py` 钉住：可选集与必需集不相交、桥里取可选模块只有这一个入口。
-OPTIONAL_ENGINE_MODULES = ("capabilities", "envadvice", "envlease", "runconfig", "scriptargs")
+OPTIONAL_ENGINE_MODULES = ("capabilities", "envadvice", "envlease", "execspec", "runconfig", "scriptargs")
 
 
 def _optional_engine(name: str):
@@ -214,45 +214,72 @@ def _argv_path_candidates(token: str) -> list[str]:
     return out
 
 
-def _argv_path_escapes(value: str, roots: list[str]) -> str | None:
+def _run_cwd(project: str, script: str) -> str | None:
+    """worker 这次实际用的 cwd（与 `execspec.safe_spec` 同一个函数 `run_cwd`、同一个模式出处
+    `workdir.mode_for`）。None = 会话沙盒（每次新建、开跑前是空的，里面没有预置的符号链接）。
+    引擎没有 `run_cwd`（比本插件旧）→ 保守取脚本目录与项目根两处都查，所以返回「项目根」并由调用方补查脚本目录。"""
+    execspec = _optional_engine("execspec")
+    mode = engine_workdir.mode_for(project)
+    run_cwd = getattr(execspec, "run_cwd", None)
+    if run_cwd is None:
+        return str(project)
+    return run_cwd(project, script, mode)
+
+
+def _argv_path_escapes(value: str, roots: list[str], cwds: list[str] | None) -> str | None:
     """这段文字若会指到已授权根之外，返回规范化后的路径（或原文）；否则 None。
 
-    只看「形状」：绝对路径（含盘符 / UNC / `~`）必须落在允许的根里；含 `..` 的相对路径一律拒
-    （worker 的 cwd 不一定是项目根，没法证明它不越界）。普通相对路径与非路径值放行。"""
-    if not value:
+    什么算「像路径」：**所有**非空值都按路径验——绝对（含 `~` / 盘符 / UNC）按原样；其余一律当作
+    相对 worker 真实 cwd 的路径：拼到 cwd 上、`realpath` 解开符号链接（不存在的部分原样保留在最近的
+    已存在祖先之后）、再用和绝对路径同一个根检查。数字 / 普通单词拼出来是 cwd 下不存在的名字，
+    天然在根内、照常放行；只有真的经符号链接或 `..` 走出根的才被拒。cwd 是会话沙盒（`cwds is None`）时
+    沙盒是空的新目录，相对值只剩 `..` 能出去，仍按文字拒。"""
+    if not value or "\0" in value:
         return None
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里
         real = canonical_path(os.path.expanduser(value))
         return None if any(_within(real, r) for r in roots) else real
-    if ".." in re.split(r"[\\/]+", value):
-        return value
+    if cwds is None:
+        return value if ".." in re.split(r"[\\/]+", value) else None
+    for cwd in cwds:
+        real = canonical_path(os.path.join(cwd, value))
+        if not any(_within(real, r) for r in roots):
+            return real
     return None
 
 
-def _check_argv_scope(argv: list | None) -> None:
+def _check_argv_scope(argv: list | None, project: str, script: str) -> None:
     """MCP 的 `argv` 是 Agent 自己给的 token，会原样成为脚本的 `sys.argv`：脚本里
     `argparse.FileType('w')` 之类的路径选项能据此写项目之外的文件。`check_scope()` 只管项目目标，管不到这里。
 
     没有「用户绑定」的授权凭据可核（桥不能自证用户同意），所以**范围就是边界**：指到已授权根之外的 token
     一律拒，脚本不执行、不登记配置。用户要用项目外的路径，请他在 Tavotto 窗口里自己运行（GUI 的参数是
-    用户自己输入的）。`run_config` 引用来自用户在界面里登记的配置，不在此列。"""
+    用户自己输入的）。相对值按 worker 真实 cwd 解开符号链接再查（Codex #818 r4220778822）。
+    `run_config` 引用来自用户在界面里登记的配置，不在此列。"""
     if not argv:
         return
     roots = allowed_roots()
+    cwd = _run_cwd(project, script)
+    if cwd is None:
+        cwds = None
+    else:
+        cwds = [cwd]
+        if getattr(_optional_engine("execspec"), "run_cwd", None) is None:
+            cwds.append(str(Path(project, engine_figcapture.normalize_relative_script(script)).parent))
     for token in argv:
         if not isinstance(token, str):
             continue  # 形状错误交给 validate_argv 报 invalid_argv
         for cand in _argv_path_candidates(token):
-            bad = _argv_path_escapes(cand, roots)
+            bad = _argv_path_escapes(cand, roots, cwds)
             if bad is not None:
                 raise BridgeError(
                     "argv 里有一项指到了已授权的工作区之外，这次没有运行脚本，也没有登记这份参数。",
                     code="argv_path_out_of_scope",
                     recovery=(
-                        "只能传项目内的路径（相对路径不要含 ..）。需要写 / 读项目之外的位置，请用户在 Tavotto "
-                        "窗口里自己输入参数并运行；不要改写路径绕过，也不要把路径换成别的写法重试。"
+                        "只能传项目内的路径（相对路径也按脚本实际的运行目录解开符号链接再查）。需要写 / 读项目之外的"
+                        "位置，请用户在 Tavotto 窗口里自己输入参数并运行；不要改写路径绕过，也不要把路径换成别的写法重试。"
                     ),
                     roots=roots,
                     requirements=[
@@ -286,7 +313,7 @@ def _choose_run(
         return (run, RUN_SOURCE_SCRIPT_DEFAULT) if run is not None else (None, None)
     _require_feature(SCRIPT_ARGV_FEATURE, "按精确参数运行脚本")
     if run_config is None:
-        _check_argv_scope(argv)
+        _check_argv_scope(argv, project, script)
     runconfig = _optional_engine("runconfig")
     try:
         if run_config is not None:

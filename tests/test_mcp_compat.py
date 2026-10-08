@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -640,5 +641,50 @@ def test_argv_paths_outside_the_approved_workspace_are_refused(
 def test_argv_paths_inside_the_workspace_and_plain_values_still_pass(project, pool):
     inside = str(project / "out.csv")
     ok = _open(project, argv=["--freq", "2", "--out", inside, "--mode=a", "sub/dir.txt", "-1"])
+    assert ok["structuredContent"].get("ok") is True
+    assert pool.runs and pool.runs[-1] is not None
+
+
+@pytest.fixture
+def project_cwd(project, monkeypatch):
+    """worker 在脚本目录里跑（`workdir=project`）：相对路径落在真实目录里，符号链接会被跟随。"""
+    from tavotto.engine import workdir
+
+    monkeypatch.setattr(bridge.engine_workdir, "mode_for", lambda _p: workdir.MODE_PROJECT)
+    return project
+
+
+@pytest.mark.parametrize("shape", ["bare", "equals", "short_attached", "dir_link"])
+def test_relative_argv_escaping_through_a_symlink_is_refused(
+    project_cwd, pool, tmp_path_factory, shape
+):
+    """cwd 里的 `escape -> /outside`：`escape/victim.txt` 没有 `..`，但会截断项目外的文件（r4220778822）。"""
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "victim.txt").write_text("keep", encoding="utf-8")
+    try:
+        os.symlink(outside, project_cwd / "escape", target_is_directory=True)
+        os.symlink(outside / "victim.txt", project_cwd / "victim_link.txt")
+    except OSError:
+        pytest.skip("本机不能建符号链接")
+    token = {
+        "bare": "escape/victim.txt",
+        "equals": "--out=escape/new.txt",
+        "short_attached": "-oescape/victim.txt",
+        "dir_link": "victim_link.txt",
+    }[shape]
+    before = runconfig.configs_of(str(project_cwd), "fig1.py")
+    body = _open(project_cwd, argv=["--freq", "1", "--out", token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+    assert runconfig.configs_of(str(project_cwd), "fig1.py") == before
+    assert (outside / "victim.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_relative_argv_inside_the_project_is_allowed_in_the_run_cwd(project_cwd, pool):
+    (project_cwd / "sub").mkdir()
+    ok = _open(
+        project_cwd,
+        argv=["--freq", "2", "sub/out.csv", "--out=new/dir/x.txt", "-1", "../figures/y.txt"],
+    )
     assert ok["structuredContent"].get("ok") is True
     assert pool.runs and pool.runs[-1] is not None
