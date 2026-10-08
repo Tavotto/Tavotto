@@ -196,6 +196,23 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     ],
     actions: [action('recheck')],
   },
+  depsUnresolvable: {
+    phase: 'awaiting_confirmation',
+    outcome: { kind: 'needs_dependencies', code: 'missing_dependency' },
+    requirements: [
+      { id: 'dependencies', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'ROOT', installable: false, route: 'unresolvable' } },
+    ],
+    actions: [action('recheck')],
+  },
+  depsStdlib: {
+    phase: 'awaiting_confirmation',
+    outcome: { kind: 'needs_dependencies', code: 'missing_dependency' },
+    environment: { mode: 'detect', kind: 'builtin', decided_by: 'default', switched: false, replaced: null },
+    requirements: [
+      { id: 'dependencies', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'tkinter', installable: false, route: 'stdlib_missing' } },
+    ],
+    actions: [action('recheck')],
+  },
   needsArgs: {
     phase: 'action_required',
     outcome: { kind: 'failed', code: 'script_needs_arguments' },
@@ -374,6 +391,44 @@ describe('主按钮就是后端给的那件事', () => {
     mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'cancelled', observation_seq: 2 }) })
     await act(async () => (panel().querySelector('[data-prep-stop]') as HTMLButtonElement).click())
     expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-cancel' })
+  })
+})
+
+describe('缺依赖三类：可安装 / 装不了 / 标准库缺了——各一句话 + 一个真能走通的主按钮', () => {
+  it('可安装：主按钮「安装」认领 prepare_dependencies', async () => {
+    await mount()
+    await openWith(report(STATES.depsRuntime))
+    expect(panel().dataset.prepState).toBe('deps_runtime')
+    expect(primary()?.dataset.prepPrimary).toBe('prepare_dependencies')
+  })
+
+  it('装不了（ROOT）：说「装不了」，主按钮直接打开选 Python 环境（不是只开设置）', async () => {
+    await mount()
+    await openWith(report(STATES.depsUnresolvable))
+    expect(panel().dataset.prepState).toBe('deps_unknown')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('Tavotto 装不了 ROOT，请选一个装了它的 Python 环境')
+    expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+    expect(primary()?.textContent).toBe('换用我的 Python')
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().engineEnvOpen).toBe(true)
+    expect(useUiStore.getState().engineEnvPick).toBe(true)
+  })
+
+  it('内置环境缺的标准库（tkinter）：说清自带环境里没有；详情里补一句弹窗选文件不适用；主按钮同样是换用自己的 Python', async () => {
+    await mount()
+    await openWith(report(STATES.depsStdlib))
+    expect(panel().dataset.prepState).toBe('deps_stdlib')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('Tavotto 自带的环境里没有 tkinter')
+    expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+    expect(panel().querySelector('[data-prep-tk-note]')).toBeNull() // 默认折叠
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-tk-note]')?.textContent).toContain('文件路径直接写进脚本')
+  })
+
+  it('关上弹窗就清掉「直达选环境」的意图（下次从设置进来不会被预先展开）', () => {
+    useUiStore.getState().openEngineEnvPicker()
+    useUiStore.getState().setEngineEnvOpen(false)
+    expect(useUiStore.getState().engineEnvPick).toBe(false)
   })
 })
 

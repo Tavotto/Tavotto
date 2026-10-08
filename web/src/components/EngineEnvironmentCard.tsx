@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useEnvStore } from '@/store/envStore'
+import { useUiStore } from '@/store/uiStore'
 import { t as translate } from '@/i18n'
 import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -40,7 +41,8 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   const { env, log, installing, refresh, install, setPython } = useEnvStore()
   const [manual, setManual] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [advanced, setAdvanced] = useState(false)
+  // 缺依赖装不了时从引导卡直达（`openEngineEnvPicker`）：弹窗一开就是「使用其他 Python 环境」的输入，不让用户再找一遍
+  const [advanced, setAdvanced] = useState(() => useUiStore.getState().engineEnvPick)
 
   useEffect(() => {
     if (!env) void refresh()

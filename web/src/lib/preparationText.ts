@@ -32,6 +32,8 @@ export type PrepPrimary =
   | { kind: 'enter_edit'; count: number }
   | { kind: 'reopen'; label: 'retry' | 'continue' }
   | { kind: 'open_environment' }
+  /** 装不了 / 标准库缺了：直接打开「渲染环境」弹窗并展开「使用其他 Python 环境」（不是只打开设置） */
+  | { kind: 'pick_environment' }
   | { kind: 'open_registry' }
   /** 运行 / 安装期间：缩成角标，后台照跑（不是取消） */
   | { kind: 'background' }
@@ -251,8 +253,18 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   if (deps) {
     const prepare = has(report, 'prepare_dependencies') ? act('prepare_dependencies', 'install') : null
     if (deps.origin === 'runtime_missing') {
-      const p = (deps.payload ?? {}) as { module?: string; installable?: boolean }
-      if (!p.installable) return view('deps_unknown', 'depsUnknown', { script, module: p.module ?? '' }, { kind: 'open_environment' })
+      const p = (deps.payload ?? {}) as { module?: string; installable?: boolean; route?: string }
+      if (!p.installable) {
+        // 三类缺依赖的另外两类（按后端的稳定字段 `route`，不看文案）：标准库缺了（内置环境没带，如 Windows 上的 tkinter）/ 映射不到安装包（如 ROOT）。
+        // pip 都装不了——主按钮只有一个：换用自己的 Python，且直接落在选环境那一步
+        const values = { script, module: p.module ?? '' }
+        const pick: PrepPrimary = { kind: 'pick_environment' }
+        if (p.route === 'stdlib_missing') {
+          const builtin = report.environment?.kind === 'builtin'
+          return view('deps_stdlib', builtin ? 'depsStdlib' : 'depsStdlibOther', values, pick)
+        }
+        return view('deps_unknown', 'depsUnknown', values, pick)
+      }
       return view('deps_runtime', 'depsRuntime', { script, module: p.module ?? '' }, prepare, { slot: 'install' })
     }
     return view('deps', 'install', v, prepare, { slot: 'install' })

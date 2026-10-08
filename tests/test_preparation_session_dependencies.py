@@ -590,6 +590,7 @@ class TestRealRoundTrip:
         assert req["payload"]["module"] == "tavotto_test_unmapped"
         assert req["payload"]["installable"] is False
         assert req["payload"]["code"] == "dependency_unresolved"
+        assert req["payload"]["route"] == "unresolvable"
         assert req["payload"]["options"] == ["specify_package", "choose_environment"]
         assert "prepare_dependencies" not in _kinds(failed)
         assert installs == []

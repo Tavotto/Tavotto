@@ -729,6 +729,8 @@ class PreparationService:
             module = getattr(exc, "module", "")
             if module:
                 error["module"] = module
+            if getattr(exc, "install_route", ""):
+                error["install_route"] = exc.install_route
             project_env = getattr(exc, "project_env", None)
             if isinstance(project_env, dict):
                 error["project_env"] = _public_project_env(project_env)

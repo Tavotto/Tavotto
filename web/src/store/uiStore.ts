@@ -359,6 +359,8 @@ interface UiState extends Persisted {
    * 住在「诊断」页、环境正常时还折叠在技术详情里）。这是它**唯一**的开关。
    */
   engineEnvOpen: boolean
+  /** 打开「渲染环境」弹窗时直接展开「使用其他 Python 环境」（缺依赖装不了时的主按钮）；弹窗关上即清 */
+  engineEnvPick: boolean
   /** 快捷键帮助 */
   shortcutHelpOpen: boolean
   /** 设置面板 */
@@ -443,6 +445,7 @@ interface UiState extends Persisted {
   setRegistryOpen: (v: boolean) => void
   setGuideCard: (v: GuideCardMode) => void
   setEngineEnvOpen: (v: boolean) => void
+  openEngineEnvPicker: () => void
   setShortcutHelpOpen: (v: boolean) => void
   /**
    * 从导出面板深链进来时**不要先关导出面板**：设置压在它上面（`dialogStack`），
@@ -531,6 +534,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   registryOpen: false,
   guideCard: 'closed',
   engineEnvOpen: false,
+  engineEnvPick: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
   settingsSection: null,
@@ -772,7 +776,8 @@ export const useUiStore = create<UiState>((set, get) => ({
     })),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
   setGuideCard: (guideCard) => set({ guideCard }),
-  setEngineEnvOpen: (engineEnvOpen) => set({ engineEnvOpen }),
+  setEngineEnvOpen: (engineEnvOpen) => set(engineEnvOpen ? { engineEnvOpen } : { engineEnvOpen, engineEnvPick: false }),
+  openEngineEnvPicker: () => set({ engineEnvOpen: true, engineEnvPick: true }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>
     set((s) => ({

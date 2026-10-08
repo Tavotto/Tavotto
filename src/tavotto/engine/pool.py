@@ -612,6 +612,9 @@ class WorkerError(RuntimeError):
         self.extra: dict = {}
         #: 数据找不到（ADR 0106）时弹窗的结构化载荷（`inputremap.payload_for`）；没有就是 None。
         self.missing_input: dict | None = None
+        #: 缺依赖三类里的哪一类（`INSTALL_ROUTE_*`），只在 `missing_dependency` 时有意义。这里（池层）只认得出
+        #: 「标准库缺了」；「装得了 / 装不了」要查可信解析（`deprepair.offer`），由 app 层 / 准备会话补上。空 = 池层不知道。
+        self.install_route = ""
 
 
 #: 脚本跑完了、一张图都没捕获到，而调用方要的 stem 在注册表里登记过。worker
@@ -865,6 +868,44 @@ def missing_module(text: str) -> str:
         # 交回原来的脚本错误与 traceback。
         return ""
     return name
+
+
+#: 缺依赖的三类去向（前端按这个字段选引导，不按文案判断）：
+#: 可安装（能经可信解析映射到 PyPI distribution，一键安装）/ 装不了（映射不到，如 CERN ROOT，只能换一个装了它的
+#: Python 环境）/ 标准库缺了（模块在解释器的 `sys.stdlib_module_names` 里，却 import 不到，典型是 Windows 内置
+#: embeddable runtime 没有 tkinter）。pip 装不了标准库，所以后两类都只剩「换用自己的 Python」。
+INSTALL_ROUTE_INSTALLABLE = "installable"
+INSTALL_ROUTE_UNRESOLVABLE = "unresolvable"
+INSTALL_ROUTE_STDLIB = "stdlib_missing"
+INSTALL_ROUTES = (INSTALL_ROUTE_INSTALLABLE, INSTALL_ROUTE_UNRESOLVABLE, INSTALL_ROUTE_STDLIB)
+
+
+def stdlib_install_route(module: str) -> str:
+    """池层唯一能直接判的一类：`module` 是标准库名（宿主那份 `sys.stdlib_module_names`；目标解释器
+    与宿主同为受支持的 3.10+，tkinter 这类名字在各版本里一致）→ `stdlib_missing`，否则空串（待查可信解析）。"""
+    from . import importscan
+
+    return INSTALL_ROUTE_STDLIB if module in importscan.HOST_STDLIB else ""
+
+
+def missing_dependency_message(module: str, route: str = "") -> str:
+    """缺依赖的主文案（后端原文，界面按 code 翻、回退用它）。**只有「可安装」才许说一键装上**：
+    标准库缺了、映射不到 PyPI 的包（ROOT）装不上，说了就是骗人。"""
+    if route == INSTALL_ROUTE_STDLIB:
+        return (
+            f"{module} 是 Python 自带的标准库，但当前渲染环境里没有它（装不了）。"
+            f"请在设置 → 诊断 → 技术详情里改用一个带有 {module} 的 Python / Conda 环境。"
+        )
+    if route == INSTALL_ROUTE_UNRESOLVABLE:
+        return (
+            f"Tavotto 装不了 {module}（找不到对应的安装包）。"
+            f"请在设置 → 诊断 → 技术详情里改用一个装了 {module} 的 Python / Conda 环境。"
+        )
+    return (
+        f"脚本用到的 {module} 在当前渲染环境里没有。"
+        f"能装的话可以在这张图的提示里装上，也可以在设置 → 诊断 → 技术详情里改用你自己装了 {module} 的 "
+        f"Python / Conda 环境。"
+    )
 
 
 def is_frozen() -> bool:
@@ -1890,14 +1931,14 @@ class EngineWorker:
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
         mod = missing_module(f"{msg}\n{tb}")
         if mod:
+            route = stdlib_install_route(mod)
             exc = WorkerError(
-                f"脚本用到的 {mod} 在当前渲染环境里没有。"
-                f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
-                f"Python / Conda 环境。",
+                missing_dependency_message(mod, route),
                 tb,
                 code="missing_dependency",
                 module=mod,
             )
+            exc.install_route = route
             # **谁的脚本缺这个包**：依赖修复要按 (项目, 脚本) 记轮次、按脚本
             # 所在目录找依赖声明。异常一路抛到 app 层时那边只剩下 exc。
             exc.script_name = self.script_name
@@ -2290,14 +2331,15 @@ def _worker_error(
     """
     mod = missing_module(f"{message}\n{traceback_text}")
     if mod:
-        return WorkerError(
-            f"脚本用到的 {mod} 在当前渲染环境里没有。"
-            f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
-            f"Python / Conda 环境。",
+        route = stdlib_install_route(mod)
+        err = WorkerError(
+            missing_dependency_message(mod, route),
             traceback_text,
             code="missing_dependency",
             module=mod,
         )
+        err.install_route = route
+        return err
     err = WorkerError(message, traceback_text, code=code)
     if extra:
         # worker 多带的字段（unknown_stem 的 `known` 之类）留给上层

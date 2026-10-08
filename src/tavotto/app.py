@@ -682,9 +682,26 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
             ],
         }
     if exc.code == "missing_dependency" and getattr(exc, "module", ""):
-        repair = _dependency_repair_offer(exc, detail)
+        route = getattr(exc, "install_route", "") or ""
+        # 标准库缺了不提「一键装」：pip 装不了标准库，给个安装 offer 就是指一条走不通的路
+        repair = (
+            None
+            if route == engine_pool.INSTALL_ROUTE_STDLIB
+            else _dependency_repair_offer(exc, detail)
+        )
         if repair is not None:
             body["dependency_repair"] = repair
+            # 能经可信解析映射到 distribution = 可安装；映射不到（ROOT）= 装不了，主文案不能再说「一键装上」
+            route = (
+                engine_pool.INSTALL_ROUTE_INSTALLABLE
+                if repair.get("requirement")
+                else engine_pool.INSTALL_ROUTE_UNRESOLVABLE
+            )
+        if route:
+            # 前端按这个字段（稳定枚举）选引导，不按文案判断；没有打开项目时查不了解析，不带（老形状）
+            body["install_route"] = route
+            if route != engine_pool.INSTALL_ROUTE_INSTALLABLE:
+                body["error"] = engine_pool.missing_dependency_message(exc.module, route)
         _note_missing_dependency(exc, detail, repair)
     # 首开要先问用户运行目录（U03，ADR 0057）：结构化的「需要输入」原样带出去——
     # 选项 / 证据 / 怎么回答都在里面，前端据此弹一次确认框，不是错误块。状态码与别的

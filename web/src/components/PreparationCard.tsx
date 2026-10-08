@@ -567,6 +567,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt(p.label === 'continue' ? 'btn.continue' : 'btn.retry')
     case 'open_environment':
       return pt('btn.openSettings')
+    case 'pick_environment':
+      return pt('btn.pickPython')
     case 'open_registry':
       return pt('btn.openRegistry')
     case 'background':
@@ -620,6 +622,9 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return null
       case 'open_environment':
         ui.setEngineEnvOpen(true)
+        return null
+      case 'pick_environment':
+        ui.openEngineEnvPicker()
         return null
       case 'open_registry':
         useProjectReadinessStore.getState().openCenter({ source: 'panel' })
@@ -998,6 +1003,9 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       {attempt && failed && <TaskDiagnostic key={attempt} kind="preparation" refId={attempt} folded={false} />}
       {dep && report?.outcome.reason === 'dependency_preparation' && (
         <TaskDiagnostic key={dep.plan_id} kind="dependency" refId={dep.plan_id} folded={false} />
+      )}
+      {view.state === 'deps_stdlib' && view.sentence.values.module === 'tkinter' && (
+        <p data-prep-tk-note>{pt('detail.tkNote')}</p>
       )}
       {view.state === 'no_figure' && <p data-prep-nofigure-why>{pt('detail.noFigureWhy')}</p>}
       {(report?.unlinked_stems ?? []).length > 0 && report?.phase === 'completed' && (
