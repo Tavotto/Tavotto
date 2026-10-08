@@ -129,6 +129,7 @@
   （ADR 0099 §十，T12）；换机器 / 答案被别处改过 = 只当建议。build 成功后 `inputbroker.finished()` 把问答绑成
   执行转录（`inputtranscript`，数据目录，按 (脚本, 运行配置) 绑这批产物）；`serving()` 进门冻结策略：有转录就按转录重放、
   不读之后改过的项目答案文件；答案管理按 (脚本, 运行配置, 序号) 改 / 删，只作废对应配置的转录（明确重算）；显式整脚本删除才清全部配置。
+  **不变量：读者校验（Codex #816 r2/r3/r8/r9 收口）**。转录绑定时带「答案状态基线」`basis`（整脚本级 + 配置级两个作废令牌），基线在 build 开始时由 `serving()` 取、`finished()` 绑定时带上；答案管理改 / 删（`inputtranscript.forget`）先换令牌；`lookup()` 比对转录基线与**当前**令牌，对不上 = 当转录不存在（回到项目答案 + 上下文匹配），绝不重放旧值。因此作废 / 绑定 / 写盘的先后、build 在飞时被改答案、写盘失败都不是正确性前提（`bind` 里先作废旧绑定、基线不符不绑只是清理）。**绑定中止必须收回热结果**：`finished()` 抛错（`StaleTranscriptError`）时，两种 worker（`EngineWorker` / `WorkerdWorker`）的 `ensure_built` 在重抛前置 `built=False`、`build_failed=True`，下一次渲染 / 导出重新走 `ensure_built`，不复用未绑定的热结果。看护 `tests/test_input_transcript.py`（基线）、`tests/test_build_binding_abort.py`。
   管理投影保留不透明 `run_config`，无参数旧条目缺省；重跑按引用取回参数，不回落到空 argv 或当前草稿。getpass 那一问在 worker 记账里只有
   `secret: true`：build 响应、热会话、转录都没有值，重放时重新问，没人答 → `reason=secret_required`，绝不填空。
   问答去向计数（`InputFacts`）经 `facts_projection` 进 T04 任务诊断。不向协议 stdin 写答案；native / 子进程 input 不变。

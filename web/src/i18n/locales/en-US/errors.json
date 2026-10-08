@@ -228,6 +228,7 @@
     "script_input_timeout": "The script waited 10 minutes for an answer to “{{prompt}}”, got none, and failed after being told the input had ended. Run it again and answer.",
     "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project.",
     "script_input_stream_gone": "The event stream disconnected; reconnecting.",
+    "script_input_transcript_failed": "Couldn’t clear this script’s previous run record, so the answer was left unchanged. Please try again.",
     "missing_input": "The script's data file can't be found: {{error}}",
     "input_remap_chosen_invalid": "That location can't be used: {{path}}. Pick an existing file or folder.",
     "input_remap_not_found_in_dir": "There is no {{name}} in {{path}}. Pick the folder that contains it, or pick the file itself.",

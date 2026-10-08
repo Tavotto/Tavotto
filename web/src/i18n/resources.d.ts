@@ -2211,6 +2211,7 @@ export default interface Resources {
       "script_input_not_pending": "这个问题已经不在等待作答了（脚本可能已经结束或被停止）。",
       "script_input_stream_gone": "事件流已经断开，正在重新连接。",
       "script_input_timeout": "脚本在等输入「{{prompt}}」，等了 10 分钟没有回答，按输入结束处理后脚本失败了。重新运行并作答即可。",
+      "script_input_transcript_failed": "没能作废这个脚本的旧执行记录，答案没有改动，请稍后重试。",
       "script_is_symlink": "脚本经过符号链接（{{script}}），为了不改到别处的文件，Tavotto 不改它。",
       "script_name_missing": "缺少脚本名",
       "script_needs_arguments": "脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本自己），参数解析于是退出了。给这些参数写默认值，或在终端里用「tavotto run -- python 脚本.py 参数…」让 Tavotto 跟着你自己的命令跑。展开输出看它要哪些参数。",

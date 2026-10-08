@@ -496,9 +496,19 @@ def finished(worker, records) -> None:
         return
     try:
         t = inputtranscript.bind(
-            str(worker.figures_dir), str(worker.script_name), _run_config_of(worker), records
+            str(worker.figures_dir),
+            str(worker.script_name),
+            _run_config_of(worker),
+            records,
+            basis=getattr(worker, "transcript_basis", None),
         )
+    except inputtranscript.StaleTranscriptError:
+        # 旧绑定没能作废：这次执行不算已绑定，明确失败（冷重放不会拿到旧值）
+        with contextlib.suppress(AttributeError):
+            worker.build_failed = True
+        raise
     except (OSError, AttributeError, TypeError) as exc:
+        # 新转录没落盘，但 `bind` 已保证旧绑定作废：冷重放回到上下文匹配
         LOG.warning("脚本输入转录写入失败: %r", exc)
         return
     with contextlib.suppress(AttributeError):
@@ -509,6 +519,11 @@ def finished(worker, records) -> None:
 def serving(worker):
     """在 `worker` 这一次 build 期间当它的答题方。退出时关掉还在等的问、删掉会合目录；这一次的问答去向
     （`InputFacts.payload()`）挂在 `worker.last_input_facts` 上，build 失败时也挂在异常的 `input_facts` 上。"""
+    # 答案状态基线在 build 开始时取（读者校验，见 inputtranscript）：build 期间被改的答案，这次的转录不认
+    with contextlib.suppress(OSError, AttributeError, TypeError):
+        worker.transcript_basis = inputtranscript.basis(
+            str(worker.figures_dir), str(worker.script_name), _run_config_of(worker)
+        )
     out_dir = getattr(worker, "out_dir", None)
     if out_dir is None:
         # 没有会话缓存目录的就没有会合目录可轮询（只有测试里的替身会这样）：脚本要输入时照样由 worker 自己到点回 EOF
