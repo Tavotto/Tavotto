@@ -737,7 +737,7 @@ function EditorView({
           countLabel={translate('elementTree.count', { ns: 'workspace', count: elementCount })}
           className="hidden lg:flex"
         >
-          <ElementTree />
+          <ElementTree chrome="bare" />
         </DrawerShell>
         <div data-work-panel className={cn(WORK_PANEL, 'lg:ml-0')}>
         {/* CanvasStage 的根是 flex-1：外面必须是 flex 容器（见 McpApp 的注）。
