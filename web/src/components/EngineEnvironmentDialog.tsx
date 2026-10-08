@@ -27,7 +27,7 @@ export function EngineEnvironmentDialog() {
       anchor="engine-environment"
     >
       {/* Radix 只在打开时挂正文：卡片挂上时若还没有环境状态会自己取一次 */}
-      <EngineEnvironmentCard />
+      <EngineEnvironmentCard hideTitle />
     </Dialog>
   )
 }

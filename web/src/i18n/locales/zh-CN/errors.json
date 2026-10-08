@@ -434,7 +434,7 @@
     "workdirChooseConflicts": "两处内容不同的文件：{{files}}",
     "workdirChooseLater": "稍后",
     "workdirChooseRootEvidence": "{{script}} 读的数据只有在项目根目录下才找得到。选一个运行目录，这个项目只问这一次。",
-    "workdirChooseRun": "运行",
+    "workdirChooseRun": "在这里运行",
     "workdirChooseScriptDirEvidence": "{{script}} 在当前目录里查找数据文件（glob / listdir / exists），在沙盒里找不到——它要在自己的目录里运行。选一个运行目录，这个项目只问这一次。",
     "workdirChooseSuggest": "这张图还没决定在哪个目录里运行。",
     "workdirChooseTitle": "脚本在哪个目录里运行？",
@@ -632,7 +632,11 @@
     "inputRemapLabel": "记住的数据位置",
     "inputRemapAnyRelative": "（相对路径）",
     "inputRemapTargetGone": "（这个位置现在不存在）",
-    "inputRemapForget": "删除"
+    "inputRemapForget": "删除",
+    "workdirChooseWritesShort": "在真实目录里运行时，脚本写出的文件会落进项目目录。",
+    "workdirChooseWritesMore": "详情",
+    "dependencyPrepareHeading": "准备环境",
+    "missingInputStep": "{{n}}/{{total}}"
   },
   "preflight": {
     "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",
