@@ -312,14 +312,15 @@ def test_no_decision_is_written_while_an_install_holds_the_project(rig):
     conda = rig["cand"]("conda-env", userenvs.SOURCE_CONDA)
     rig["satisfying"].add(conda)
     pid = managedenv.project_fingerprint(str(rig["root"]))
+    # 在途依赖作业登记是 `_active_jobs`（#814 把它与包作业表 `_jobs` 分开了）；`unless_installing` 只看这张表
     with deprepair._lock:
-        deprepair._jobs["dp-held"] = {"project_id": pid}
+        deprepair._active_jobs["dp-held"] = {"project_id": pid}
     try:
         assert deprepair.decide_environment(rig["root"], "fig.py") is None
         assert projectenv.remembered_record(rig["root"]) is None
     finally:
         with deprepair._lock:
-            deprepair._jobs.pop("dp-held", None)
+            deprepair._active_jobs.pop("dp-held", None)
     assert deprepair.decide_environment(rig["root"], "fig.py")["python"] == conda
 
 
