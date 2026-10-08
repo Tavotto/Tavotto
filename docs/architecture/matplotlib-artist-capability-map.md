@@ -75,7 +75,7 @@ Artist
 | 表 | 覆盖 | 注册到 |
 | --- | --- | --- |
 | `_COLLECTION_CAPS` | label / facecolor / edgecolor / linewidth / linestyle / hatch / size / marker / cmap / vmin / vmax / alpha / visible / zorder | `("collection", *)` |
-| `_PATCH_CAPS` | facecolor / edgecolor / linewidth / linestyle / hatch / fill / alpha / visible / zorder | `("patch", *)`、`("bar", *)` |
+| `_PATCH_CAPS` | facecolor / edgecolor / linewidth / linestyle / hatch / hatchcolor / hatch_linewidth / fill / alpha / visible / zorder | `("patch", *)`、`("bar", *)`；柱形系列 `bar_series` 另有同名逐柱广播（`hatch` / `hatchcolor` / `hatch_linewidth`）。`hatchcolor` 需要 3.11+（`set_hatchcolor`）、`hatch_linewidth` 需要 3.10+（`set_hatch_linewidth`），manifest 按真实 setter 是否存在发字段 |
 | `_GENERIC_CAPS` | visible / zorder | `("artist", *)` |
 
 `_install_caps()` 用 **`setdefault`**：族里已有的**专用**契约（色条的 label、柱的

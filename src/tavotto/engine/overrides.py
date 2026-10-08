@@ -3151,6 +3151,38 @@ _CAP_HATCH = (
     lambda a: a.get_hatch(),
     lambda a, v: a.set_hatch(None if v in (None, "", "none") else str(v)),
 )
+
+
+def _get_hatchcolor(p):
+    """花纹颜色的**可回灌**表示：`_original_hatchcolor`（`None` = 没设，按 `rcParams['hatch.color']`
+    走，默认 `'edge'` = 跟边色）。
+
+    不能回 `get_hatchcolor()`：那是解析后的 RGBA，按值写回会把「跟边色」这个模式换成一个
+    死颜色——之后再改边色，花纹不再跟着走，热态与「只见最终列表的全新 worker」分岔
+    （与 `_PatchEdge` / `_PatchFace` 同一个坑）。`set_hatchcolor` 是 matplotlib 3.11 才有的
+    公开入口（`_original_hatchcolor` 同时出现）；≤3.10 花纹颜色就是边色，没有独立属性，
+    manifest 不发字段，这里的 getter / setter 只是让旧版本上重放新存的 override 时不炸。
+    """
+    return getattr(p, "_original_hatchcolor", None)
+
+
+def _set_hatchcolor(p, v) -> None:
+    if hasattr(p, "set_hatchcolor"):
+        p.set_hatchcolor(v)
+
+
+def _get_hatch_linewidth(p):
+    get = getattr(p, "get_hatch_linewidth", None)
+    return None if get is None else float(get())
+
+
+def _set_hatch_linewidth(p, v) -> None:
+    # 每个 Patch 自己的花纹线宽是 matplotlib 3.10 才有的（≤3.9 只认 rcParams['hatch.linewidth']，
+    # 绘制时全局读取）。旧版本上不发字段；这里留成空操作，旧版本重放新存的 override 不炸
+    if hasattr(p, "set_hatch_linewidth") and v is not None:
+        p.set_hatch_linewidth(float(v))
+
+
 #: 颜色映射（ScalarMappable / ColorizingArtist）：Collection 与 AxesImage 共享。
 #: 原生值存 Colormap 对象本身，`set_cmap` 两种都吃。
 _CAP_CMAP = (lambda a: a.get_cmap(), lambda a, v: a.set_cmap(v))
@@ -3164,7 +3196,11 @@ _CAP_VMAX = (
 )
 
 #: 花纹的可选项。`""` = 不用花纹（黑白印刷时区分同色区块的标准手段）。
-HATCHES = ["", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*", "//", "\\\\", "xx", "..", "++"]
+HATCHES = [
+    *("", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*"),
+    *("//", "\\\\", "xx", "..", "++"),
+    *("///", "\\\\\\", "xxx", "+++"),
+]
 
 #: Collection family（PathCollection / PolyCollection / LineCollection /
 #: QuadMesh / ContourSet / EventCollection / Quiver …）。颜色与线宽都是
@@ -3208,6 +3244,8 @@ _PATCH_CAPS: dict[str, tuple] = {
     "linewidth": (lambda a: float(a.get_linewidth()), lambda a, v: a.set_linewidth(float(v))),
     "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
     "hatch": _CAP_HATCH,
+    "hatchcolor": (_get_hatchcolor, _set_hatchcolor),
+    "hatch_linewidth": (_get_hatch_linewidth, _set_hatch_linewidth),
     "fill": (lambda a: bool(a.get_fill()), lambda a, v: a.set_fill(bool(v))),
     "alpha": _CAP_ALPHA,
     "visible": _CAP_VISIBLE,
@@ -3862,6 +3900,9 @@ for _prop, _g1, _s1 in [
     ("facecolor", _get_patch_facecolor, _set_patch_facecolor),  # 模式而非值，见 `_PatchFace`
     ("edgecolor", _get_patch_edgecolor, _set_patch_edgecolor),  # 模式而非值，见 `_PatchEdge`
     ("linewidth", lambda r: float(r.get_linewidth()), lambda r, v: r.set_linewidth(float(v))),
+    ("hatch", _CAP_HATCH[0], _CAP_HATCH[1]),
+    ("hatchcolor", _get_hatchcolor, _set_hatchcolor),
+    ("hatch_linewidth", _get_hatch_linewidth, _set_hatch_linewidth),
     ("alpha", lambda r: r.get_alpha(), lambda r, v: r.set_alpha(None if v is None else float(v))),
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),
     ("zorder", lambda r: float(r.get_zorder()), lambda r, v: r.set_zorder(float(v))),
@@ -4333,7 +4374,16 @@ ALIAS_GROUPS: dict[tuple[str, str], object] = {
 }
 # 柱形系列的样式 prop → 每一根柱的同名 prop。`bar_width` 与 `label` 不在此列：
 # 前者窄端没有对应 prop（`bar` 不暴露宽度），后者写的是 container 不是柱。
-for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
+for _bprop in (
+    "facecolor",
+    "edgecolor",
+    "linewidth",
+    "hatch",
+    "hatchcolor",
+    "hatch_linewidth",
+    "alpha",
+    "visible",
+):
     ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(lambda g: list(g.artists), _bprop)
 # stem 系列 → 被它消费掉的成员。这里的「窄端」不是界面上的另一个条目，而是
 # 那些成员的**旧 gid 别名**（`manifest._alias_consumed_member`）：容器化之前

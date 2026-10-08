@@ -2053,6 +2053,46 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
     return fields
 
 
+def _hatch_style_fields(pt) -> list[dict]:
+    """Patch 族花纹的**颜色**与**线宽**两条字段（`hatch` 本身另列）。
+
+    两条都是 matplotlib 较新版本才有的 per-artist 属性，**按真实 getter 实况判，不按版本号**：
+
+      * `hatchcolor`：3.11 起（`Patch.set_hatchcolor`）。之前花纹颜色就是边色（没设边色时是
+        `rcParams['hatch.color']`），没有独立属性——用户改「描边色」就是改花纹颜色，所以旧版本
+        不发这条字段，而不是发一条改了不生效的。
+      * `hatch_linewidth`：3.10 起（`Patch.set_hatch_linewidth`）。之前只有 `rcParams['hatch.linewidth']`，
+        绘制时全局读取，改不了单个 artist。
+
+    没有花纹时照样给值（跟 `facecolor` 之于 `fill` 同一模型：界面 `visibleWhen` 收起，不是引擎隐藏）。
+    """
+    out: list[dict] = []
+    if hasattr(pt, "set_hatchcolor"):
+        out.append({"prop": "hatchcolor", "type": "color", "value": to_hex(pt.get_hatchcolor())})
+    if hasattr(pt, "set_hatch_linewidth"):
+        out.append(
+            {
+                "prop": "hatch_linewidth",
+                "type": "number",
+                "value": round(float(pt.get_hatch_linewidth()), 2),
+                "min": 0,
+                "max": 8,
+                "step": 0.1,
+                "unit": "pt",
+            }
+        )
+    return out
+
+
+def _hatch_field(pt) -> dict:
+    return {
+        "prop": "hatch",
+        "type": "enum",
+        "value": str(pt.get_hatch() or ""),
+        "options": _hatch_options(pt.get_hatch()),
+    }
+
+
 def _hatch_options(current) -> list[str]:
     cur = str(current or "")
     return ([cur] if cur and cur not in HATCHES else []) + HATCHES
@@ -2330,6 +2370,8 @@ def _bar_series_fields(grp) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
+        _hatch_field(r0),
+        *_hatch_style_fields(r0),
         {
             "prop": "bar_width",
             "type": "number",
@@ -2373,6 +2415,8 @@ def _bar_fields(rect) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
+        _hatch_field(rect),
+        *_hatch_style_fields(rect),
         {
             "prop": "alpha",
             "type": "number",
@@ -2587,12 +2631,8 @@ def _patch_fields(pt) -> list[dict]:
             "value": _linestyle_name(pt),
             "options": ["-", "--", "-.", ":"],
         },
-        {
-            "prop": "hatch",
-            "type": "enum",
-            "value": str(pt.get_hatch() or ""),
-            "options": _hatch_options(pt.get_hatch()),
-        },
+        _hatch_field(pt),
+        *_hatch_style_fields(pt),
         {
             "prop": "alpha",
             "type": "number",
