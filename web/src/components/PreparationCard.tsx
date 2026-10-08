@@ -35,6 +35,7 @@ import { missingRequired, readTokens, type ScriptArgsSchema } from '@/lib/script
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
+import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
@@ -629,6 +630,10 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return null
       case 'open_assets':
         // 脚本自己写出的图片文件，素材库本来就列（不新造导入入口）；卡片收起让位给素材库
+        // 素材库挂载时不重载 `/api/panels`、项目 watcher 又要等轮询+防抖：刚写出的图不主动刷新就要等几秒才出现，
+        // 按钮看起来像坏了。走素材库工具栏刷新按钮用的同一条统一刷新（不 await：切标签不等它，失败也不挡路）
+        void refreshProjectNow().catch(() => {})
+        void useRuntimeAssetStore.getState().loadAssets()
         ui.setLeftTab('assets')
         ui.setGuideCard('closed')
         return null

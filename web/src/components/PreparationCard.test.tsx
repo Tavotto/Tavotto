@@ -23,6 +23,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
   fetchScriptArguments: vi.fn().mockResolvedValue({ ok: true, script: 'plot.py', arguments: { status: 'none', arguments: [] } }),
 }))
+vi.mock('@/store/liveSync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/liveSync')>()),
+  refreshProjectNow: vi.fn(async () => {}),
+}))
 vi.mock('@/store/workspace', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/workspace')>()),
   addRuntimePanelToCanvas: vi.fn(),
@@ -50,6 +54,7 @@ import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
+import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
 
@@ -282,6 +287,7 @@ beforeEach(() => {
   mockAct.mockReset()
   vi.mocked(addRuntimePanelToCanvas).mockReset()
   vi.mocked(openFastEdit).mockClear()
+  vi.mocked(refreshProjectNow).mockClear()
   useRuntimeAssetStore.setState({ assets: [], loadAssets: async () => {} })
   vi.mocked(probeScript).mockReset()
   setCurrentProjectId('pj-a')
@@ -507,6 +513,8 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(details()?.querySelector('[data-prep-nofigure-raster-why]')?.textContent).toContain('改成用 Matplotlib 画')
     expect(details()?.querySelector('[data-prep-nofigure-why]')).toBeNull()
     await act(async () => primary()!.click())
+    // 点按钮就主动刷新一次素材（刚写出的图不用等 watcher 轮询），再切标签
+    expect(vi.mocked(refreshProjectNow)).toHaveBeenCalledTimes(1)
     expect(useUiStore.getState().leftTab).toBe('assets')
     expect(useUiStore.getState().guideCard).toBe('closed')
   })

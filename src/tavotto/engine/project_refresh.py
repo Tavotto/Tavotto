@@ -66,6 +66,34 @@ PDF_EXT = {".pdf"}
 TIFF_EXT = {".tif", ".tiff"}
 IMG_EXT = {".png", ".jpg", ".jpeg"} | TIFF_EXT
 
+
+def is_pruned_dir(name: str) -> bool:
+    """素材盘点剪枝的目录名（隐藏目录与 `EXCLUDE_DIRS`）：`iter_assets` 的两条遍历路径与 `is_inventoried` 共用。"""
+    return name in EXCLUDE_DIRS or name.startswith(".")
+
+
+def asset_kind(name: str, *, pdf_twin: bool) -> str | None:
+    """文件名 → 素材 kind（`pdf` / `raster`）或 None（不算素材）。隐藏文件不算；
+    同目录同 stem 有 PDF（`pdf_twin`）时位图让位给矢量版。"""
+    if name.startswith("."):
+        return None
+    ext = Path(name).suffix.lower()
+    if ext in PDF_EXT:
+        return "pdf"
+    if ext in IMG_EXT and not pdf_twin:
+        return "raster"
+    return None
+
+
+def is_inventoried(rel: str, *, pdf_twin: bool = False) -> bool:
+    """项目内相对路径（`/` 或 `\\` 分隔）会不会被 `iter_assets` 列为素材——纯判据，不碰磁盘。
+    任何一级目录被剪枝（隐藏 / `EXCLUDE_DIRS`）、文件名隐藏、扩展名不是素材、或有同 stem PDF（调用方告知）都是 False。"""
+    parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
+    if not parts or any(is_pruned_dir(d) for d in parts[:-1]):
+        return False
+    return asset_kind(parts[-1], pdf_twin=pdf_twin) is not None
+
+
 #: 允许的刷新来由。**闭集**：它进日志、进事件、以后还会进遥测的枚举维度，
 #: 客户端传什么就记什么等于让外面的人往我们的指标里写自由文本。
 REASONS = ("manual", "watcher", "registry", "probe", "codex", "ai", "open", "external")
@@ -227,7 +255,7 @@ def iter_assets(
 
     if budget is None:
         for dirpath, dirnames, filenames in os.walk(root, onerror=on_error if strict else None):
-            dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
+            dirnames[:] = [d for d in dirnames if not is_pruned_dir(d)]
             files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
     else:
         # os.walk buffers each whole directory before yielding it. Charge scandir
@@ -273,7 +301,7 @@ def iter_assets(
                         if not stat.S_ISDIR(metadata.st_mode):
                             directory_files.append(path)
                             continue
-                        if entry.name in EXCLUDE_DIRS:
+                        if is_pruned_dir(entry.name):
                             continue
                         if len(rel.parts) > budget.limits.max_asset_depth:
                             budget.note(
@@ -299,12 +327,8 @@ def iter_assets(
 
     out: list[tuple[Path, str]] = []
     for p in files:
-        ext = p.suffix.lower()
-        if ext in PDF_EXT:
-            kind = "pdf"
-        elif ext in IMG_EXT and (p.parent, p.stem) not in pdf_stems:
-            kind = "raster"
-        else:
+        kind = asset_kind(p.name, pdf_twin=(p.parent, p.stem) in pdf_stems)
+        if kind is None:
             continue
         if budget is not None:
             if len(out) >= budget.limits.max_assets:

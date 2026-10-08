@@ -33,8 +33,8 @@ from pathlib import Path
 
 from . import importscan
 
-# 素材盘点认的位图扩展名：单一出处，不在这里抄第二份
-from .project_refresh import IMG_EXT as _INVENTORY_EXT
+# 素材盘点的可见性判据：单一出处（`iter_assets` 同一份），不在这里抄第二份
+from .project_refresh import PDF_EXT as _PDF_EXT, is_inventoried
 from .workdir import MODE_PROJECT, MODE_PROJECT_ROOT
 
 #: 会让 Tavotto 能捕获到 figure 的家族；脚本或其本地模块 import 了其中任何一个都不提示。
@@ -184,14 +184,36 @@ def _literal_path(call: ast.Call) -> str | None:
     return None
 
 
-def _lands_in_inventory(path: str | None) -> bool:
-    """字面量相对路径（不是绝对 / `~` / 带 `..` 往上跳 / Windows 盘符）且扩展名是素材盘点认的位图。"""
+def _has_pdf_twin(root: Path, rel: str) -> bool:
+    """磁盘上此刻同目录是否有同 stem 的 PDF（`iter_assets` 里矢量版压掉位图那条）。读不了按没有。"""
+    target = root / rel
+    try:
+        return any(
+            p.stem == target.stem and p.suffix.lower() in _PDF_EXT for p in target.parent.iterdir()
+        )
+    except OSError:
+        return False
+
+
+def _lands_in_inventory(path: str | None, root: Path, script: str, cwd_mode: str | None) -> bool:
+    """字面量相对路径（不是绝对 / `~` / 带 `..` 往上跳 / Windows 盘符）按运行目录解析成**项目内相对路径**后，
+    会被素材盘点（`project_refresh.is_inventoried`，与 `iter_assets` 同一判据）列出。
+
+    运行目录：`project_root` 相对项目根，`project` 相对脚本所在目录（沙盒 / 未知：写进会话沙盒，看不见）。
+    盲点（写在明处）：同 stem PDF 压位图只看**分析时磁盘当前状态**——脚本之后才生成 / 删除同名 PDF 时可能偏差。"""
     if not path or path.startswith(("/", "\\", "~")) or (len(path) > 1 and path[1] == ":"):
         return False
-    parts = path.replace("\\", "/").split("/")
-    if ".." in parts:
+    parts = [p for p in path.replace("\\", "/").split("/") if p and p != "."]
+    if not parts or ".." in parts:
         return False
-    return Path(path).suffix.lower() in _INVENTORY_EXT
+    if cwd_mode == MODE_PROJECT_ROOT:
+        base: list[str] = []
+    elif cwd_mode == MODE_PROJECT:
+        base = [p for p in script.replace("\\", "/").split("/") if p and p != "."][:-1]
+    else:
+        return False
+    rel = "/".join([*base, *parts])
+    return is_inventoried(rel, pdf_twin=_has_pdf_twin(root, rel))
 
 
 def _path_arg_is_image(call: ast.Call) -> bool:
@@ -249,9 +271,7 @@ def detect(root: str | Path, script: str, cwd_mode: str | None = None) -> dict |
     if not libs:
         return None
     # 多个库时取先出现的；顺序按 LIBRARIES 稳定化，保证同一份脚本总给同一个答案
-    in_project = cwd_mode in (MODE_PROJECT, MODE_PROJECT_ROOT) and any(
-        _lands_in_inventory(p) for p in paths
-    )
+    in_project = any(_lands_in_inventory(p, root_p, script, cwd_mode) for p in paths)
     for lib in LIBRARIES:
         if lib in libs:
             return {"kind": "raster_script", "library": lib, "in_project": in_project}

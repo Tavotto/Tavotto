@@ -226,7 +226,79 @@ def test_formats_the_asset_inventory_scans_get_the_button(tmp_path, ext):
     assert hint["in_project"] is True
 
 
-def test_extension_set_is_the_inventorys_own_constant():
+def test_visibility_rule_is_the_inventorys_own_predicate():
     from tavotto.engine import project_refresh
 
-    assert rasterhint._INVENTORY_EXT is project_refresh.IMG_EXT
+    assert rasterhint.is_inventoried is project_refresh.is_inventoried
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("tavottofile/out.png", False),
+        (".hidden/out.png", False),
+        ("scripts/out.png", False),
+        ("_cache/out.png", False),
+        ("a/.hidden/out.png", False),
+        (".out.png", False),
+        ("plots/out.png", True),
+        ("out.png", True),
+    ],
+)
+def test_pruned_or_hidden_locations_get_no_assets_button(tmp_path, target, expected):
+    body = f"from PIL import Image\nImage.new('L', (2, 2)).save({target!r})\n"
+    for mode in ("project", "project_root"):
+        assert _hint(tmp_path, body, mode)["in_project"] is expected
+
+
+def test_project_mode_resolves_relative_to_the_script_directory(tmp_path):
+    body = "from PIL import Image\nImage.new('L', (2, 2)).save('out.png')\n"
+    # 脚本在 scripts/ 下：project 模式落在 scripts/out.png（被剪枝），project_root 模式落在项目根（可见）
+    _write(tmp_path, "scripts/make.py", body)
+    assert rasterhint.detect(tmp_path, "scripts/make.py", "project")["in_project"] is False
+    assert rasterhint.detect(tmp_path, "scripts/make.py", "project_root")["in_project"] is True
+    # 普通子目录里的脚本：两种模式都可见
+    _write(tmp_path, "analysis/make.py", body)
+    assert rasterhint.detect(tmp_path, "analysis/make.py", "project")["in_project"] is True
+    # 脚本在 .hidden 目录：project 模式相对脚本目录，落进隐藏目录
+    _write(tmp_path, ".tools/make.py", body)
+    assert rasterhint.detect(tmp_path, ".tools/make.py", "project")["in_project"] is False
+
+
+def test_a_same_stem_pdf_on_disk_hides_the_raster(tmp_path):
+    body = "from PIL import Image\nImage.new('L', (2, 2)).save('out.png')\n"
+    assert _hint(tmp_path, body)["in_project"] is True
+    (tmp_path / "out.PDF").write_bytes(b"%PDF-1.4")
+    assert _hint(tmp_path, body)["in_project"] is False
+
+
+def test_is_inventoried_agrees_with_iter_assets(tmp_path):
+    from tavotto.engine import project_refresh
+
+    names = [
+        "a.png",
+        "a.pdf",
+        "b.jpg",
+        "c.bmp",
+        ".d.png",
+        "sub/e.tif",
+        ".hid/f.png",
+        "tavottofile/g.png",
+        "scripts/h.png",
+        "_cache/i.png",
+        "sub/.hid/j.png",
+        "sub/k.pdf",
+        "sub/k.png",
+    ]
+    for n in names:
+        _write(tmp_path, n, "x")
+    listed = {p.relative_to(tmp_path).as_posix() for p, _ in project_refresh.iter_assets(tmp_path)}
+    expected = {
+        n
+        for n in names
+        if project_refresh.is_inventoried(
+            n, pdf_twin=(tmp_path / n).with_suffix(".pdf").exists() and not n.endswith(".pdf")
+        )
+    }
+    assert listed == expected
+    assert listed == {"a.pdf", "b.jpg", "sub/e.tif", "sub/k.pdf"}
