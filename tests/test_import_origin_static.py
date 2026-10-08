@@ -76,7 +76,10 @@ def _real_python(root: Path, script: str, *args: str) -> subprocess.CompletedPro
 # 导入优先级：built-in / frozen 先于文件系统，本地同名文件遮蔽 stdlib，目录包 > 单文件
 # ===========================================================================
 class TestPriority:
-    def test_o06_a_local_json_py_shadows_the_stdlib_and_is_followed(self, tmp_path):
+    def test_o06_a_local_json_py_shadows_the_stdlib_and_is_followed(self, tmp_path, monkeypatch):
+        """这条测的是**另一个进程**：原生解释器 `python script.py`（启动时只有 site 链预加载）。Tavotto 的
+        wrapper 语义见 `test_import_origin_wrapper_preloaded.py`——所以这里把 wrapper 预加载表清空。"""
+        monkeypatch.setattr(importscan, "WRAPPER_PRELOADED", {})
         _tree(
             tmp_path,
             {SCRIPT: "import json\nimport numpy\n", "json.py": "import requests\n"},
@@ -246,7 +249,10 @@ class TestPriority:
 # 与真实 Python 对拍：同一棵树，真的解释器怎么选
 # ===========================================================================
 class TestRealPythonParity:
-    def test_json_shadowing_package_priority_and_case(self, tmp_path):
+    def test_json_shadowing_package_priority_and_case(self, tmp_path, monkeypatch):
+        """对拍的是**裸的 `python probe.py` 进程**，不是 Tavotto 的 wrapper（wrapper 已先 import json，
+        见 `test_import_origin_wrapper_preloaded.py`）：这里清空 wrapper 预加载表。"""
+        monkeypatch.setattr(importscan, "WRAPPER_PRELOADED", {})
         _tree(
             tmp_path,
             {
@@ -329,10 +335,12 @@ class TestNamespacePackages:
         assert got["h5py"].via == ("nsd/other.py",)
         assert "torch" not in got
 
-    def test_a_directory_with_no_python_files_is_not_a_provider(self, tmp_path):
+    def test_a_directory_with_no_python_files_is_still_a_namespace_portion(self, tmp_path):
+        """CPython 的 FileFinder：同名、无 `__init__` 的任何目录（空的、只有数据文件的）都是命名空间部分。"""
         _tree(tmp_path, {SCRIPT: "import results\n", "results/data.csv": "a,b\n"})
         c = _by(_scan(tmp_path))["results"]
-        assert c.bucket == "unknown" and c.resolution_status == "unresolved"
+        assert c.bucket == "local" and c.origin_kind == "namespace"
+        assert "namespace_may_be_overridden" in c.warnings
 
 
 # ===========================================================================
@@ -730,6 +738,8 @@ class TestLinks:
         return proj
 
     def test_o16_links_pointing_outside_the_project_are_never_read(self, tmp_path, monkeypatch):
+        # 裸 `python script.py` 语义（wrapper 预加载表清空）：指到项目外的 json.py 才真会遮蔽 stdlib json
+        monkeypatch.setattr(importscan, "WRAPPER_PRELOADED", {})
         proj = self._world(tmp_path)
         real_read = scanbudget.read_regular_text
         seen: list[tuple] = []
