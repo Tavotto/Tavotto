@@ -127,17 +127,25 @@ describe('隐私承诺常驻', () => {
 })
 
 describe('三档同意是三种可辨状态', () => {
-  it('同意：开关是开的，现状写「开启」', async () => {
+  /**
+   * 行上的现状**只说开关说不出的那两种**（尚未选择 / 待重新确认；2026-10-07 设计审计 §9.1）：开着 / 关着就是
+   * 开关本身，此前现状把「开启 / 关闭」再念一遍。三档仍然可辨——开着 = 同意；关着且没有现状 = 拒绝；
+   * 关着且写着「尚未选择」= 还没问过。
+   */
+  const telemetryStatus = () =>
+    document.querySelector('[data-settings-anchor="about.telemetry"] [data-setting-status]')
+
+  it('同意：开关是开的，行上不再复述一句「开启」', async () => {
     await open(settings({ consent: 'enabled', enabled: true }))
     expect(checked()).toBe('true')
-    expect(bodyText()).toContain(st('about.telemetry.optIn'))
+    expect(telemetryStatus()).toBeNull()
     expect(bodyText()).not.toContain(st('about.telemetry.unset'))
   })
 
-  it('拒绝：开关是关的，现状写「关闭」，而不是「什么都没选」', async () => {
+  it('拒绝：开关是关的，行上没有现状——不是「什么都没选」', async () => {
     await open(settings({ consent: 'disabled', enabled: false }))
     expect(checked()).toBe('false')
-    expect(bodyText()).toContain(st('about.telemetry.optOut'))
+    expect(telemetryStatus()).toBeNull()
     expect(bodyText()).not.toContain(st('about.telemetry.unset'))
   })
 
@@ -149,8 +157,7 @@ describe('三档同意是三种可辨状态', () => {
     await open(settings({ consent: 'unset', enabled: false }))
     expect(toggle()).toBeTruthy()
     expect(checked()).toBe('false')
-    expect(bodyText()).toContain(st('about.telemetry.unset'))
-    expect(bodyText()).not.toContain(st('about.telemetry.optOut'))
+    expect(telemetryStatus()?.textContent).toBe(st('about.telemetry.unset'))
   })
 
   it('未选择与拒绝画出来不一样', async () => {
@@ -163,7 +170,7 @@ describe('三档同意是三种可辨状态', () => {
     document.body.innerHTML = ''
     await open(settings({ consent: 'disabled', enabled: false }))
     expect(bodyText()).not.toEqual(unsetText)
-    expect(bodyText()).toContain(st('about.telemetry.optOut'))
+    expect(telemetryStatus()).toBeNull()
   })
 
   /**
@@ -181,6 +188,8 @@ describe('三档同意是三种可辨状态', () => {
       }),
     )
     expect(bodyText()).toContain(st('about.telemetry.needsReconsent'))
+    // 此刻一个字节都不发：开关画成关（拨开它 = 按新范围重新同意），不是一颗开着的开关配一句「待确认」
+    expect(checked()).toBe('false')
   })
 })
 

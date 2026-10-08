@@ -145,10 +145,30 @@ const byName = (name: string) =>
   buttons().find((b) => (b.getAttribute('aria-label') ?? b.textContent ?? '').trim() === name)
 const input = () => document.querySelector<HTMLInputElement>(`input[aria-label="${pk('specAria')}"]`)!
 const rows = (table: string) => [...document.querySelectorAll(`table[aria-label="${table}"] tbody tr`)]
+/**
+ * 打开一个 ⋯ 菜单并点其中一项（2026-10-07 设计审计 §9.1：卸载、重建都收进 ⋯）。
+ * Radix 的菜单开在 pointerdown 上，jsdom 没有 PointerEvent 构造器——同名的 MouseEvent 照样派发。
+ */
+const pickMenu = async (trigger: HTMLElement | null | undefined, item: string) => {
+  expect(trigger, '没有 ⋯').toBeTruthy()
+  await act(async () => {
+    trigger!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    await Promise.resolve()
+  })
+  const el = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((m) =>
+    (m.textContent ?? '').includes(item),
+  )
+  expect(el, `⋯ 里没有「${item}」`).toBeTruthy()
+  await act(async () => el!.click())
+}
+const uninstall = (name: string) => pickMenu(byName(pk('moreAria', { name })), pk('uninstall'))
+const rebuild = () => pickMenu(document.querySelector<HTMLElement>('[data-packages-env-menu]'), pk('env.rebuild'))
+
 /** 展开一个折叠区（内置清单与工程细节默认收起，审计 T46）。 */
 const expand = async (title: string) => {
   const head = [...document.querySelectorAll('button')].find(
-    (b) => b.textContent?.trim() === title && b.getAttribute('aria-expanded') !== null,
+    // 折叠行的按钮里还有行尾的值（「2 个 · 只读」）：认名字那一截，不认整颗钮的文字
+    (b) => b.getAttribute('aria-expanded') !== null && b.querySelector('span')?.textContent?.trim() === title,
   )!
   if (head.getAttribute('aria-expanded') === 'false') await act(async () => head.click())
   return head
@@ -218,7 +238,8 @@ describe('能力与禁用原因', () => {
     await mount({ ...LISTING, busy: true })
     expect(text()).toContain('lmfit')
     expect(input().disabled).toBe(true)
-    expect(byName(pk('uninstallAria', { name: 'lmfit' }))!.disabled).toBe(true)
+    // 卸载在 ⋯ 里：⋯ 本身停用
+    expect(byName(pk('moreAria', { name: 'lmfit' }))!.disabled).toBe(true)
   })
 })
 
@@ -232,10 +253,14 @@ describe('两份清单', () => {
       expect.arrayContaining([expect.stringContaining('matplotlib'), expect.stringContaining('numpy')]),
     )
     for (const r of builtin) expect(r.textContent).toContain(pk('readOnly'))
-    expect(byName(pk('updateAria', { name: 'lmfit' }))).toBeTruthy()
-    expect(byName(pk('uninstallAria', { name: 'lmfit' }))).toBeTruthy()
-    // numpy 在账上是用户装的，但在基础栈闭包里：没有卸载按钮，标只读
-    expect(byName(pk('uninstallAria', { name: 'numpy' }))).toBeUndefined()
+    // 每行一颗 ghost「升级」+ ⋯（卸载在 ⋯ 里，是危险项；2026-10-07 设计审计 §9.1）
+    const upgrade = byName(pk('updateAria', { name: 'lmfit' }))!
+    expect(upgrade).toBeTruthy()
+    expect(upgrade.getAttribute('data-variant')).toBe('ghost')
+    expect(byName(pk('moreAria', { name: 'lmfit' }))).toBeTruthy()
+    expect(byName(pk('uninstallAria', { name: 'lmfit' })), '行上不再常驻卸载钮').toBeUndefined()
+    // numpy 在账上是用户装的，但在基础栈闭包里：没有卸载入口，标只读
+    expect(byName(pk('moreAria', { name: 'numpy' }))).toBeUndefined()
     const numpyRow = rows(pk('userTitle')).find((r) => r.textContent?.includes('numpy'))!
     expect(numpyRow.textContent).toContain(pk('protected'))
   })
@@ -261,13 +286,25 @@ describe('两份清单', () => {
     expect(env.textContent).toContain('3.12.4')
     expect(env.textContent).toContain(pk('env.ready'))
     expect(env.textContent).toContain(pk('env.inUse'))
-    expect(byName(pk('env.rebuild'))).toBeTruthy()
+    // 状态是一枚胶囊（就绪 = ok 语气）；重建入口在 ⋯ 里
+    expect(env.querySelector('[data-packages-env-state="ready"]')!.getAttribute('data-status-pill')).toBe('ok')
+    expect(env.querySelector('[data-packages-env-menu]')).toBeTruthy()
   })
 
-  it('「装坏了就重建」那句话就在重建钮旁边；「没有回滚」与快照份数在工程细节里（审计 T46 / B39）', async () => {
+  it('「装坏了就重建」那句话就在重建项上（菜单项第二行）；「没有回滚」与快照份数在工程细节里（审计 T46 / B39）', async () => {
     await mount()
-    const env = document.querySelector('[data-packages-env]')!
-    expect(env.textContent).toContain(pk('env.rebuildDesc'))
+    const trigger = document.querySelector<HTMLElement>('[data-packages-env-menu]')!
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      await Promise.resolve()
+    })
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((m) =>
+      (m.textContent ?? '').includes(pk('env.rebuild')),
+    )!
+    expect(item.textContent).toContain(pk('env.rebuildDesc'))
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
     // 首屏不谈 pip 事务与快照份数——它们解释的是「为什么只能重建」
     expect(text()).not.toContain(pk('snapshotDetail', { count: 4 }))
     await expand(pk('techTitle'))
@@ -289,23 +326,19 @@ describe('两份清单', () => {
     await mount({ ...LISTING, environment: { ...LISTING.environment!, exists: false, in_use: false } })
     const env = document.querySelector('[data-packages-env]')!
     expect(env.textContent).toContain(pk('env.notCreated'))
-    expect(byName(pk('env.rebuild'))).toBeFalsy()
+    expect(env.querySelector('[data-packages-env-menu]')).toBeNull()
     expect(env.textContent).not.toContain(pk('env.rebuildDesc'))
   })
 
   it('重建是高影响动作：先确认，取消就什么都不做', async () => {
     await mount()
     const { rebuildManagedEnvironment } = await import('@/lib/api')
-    await act(async () => {
-      byName(pk('env.rebuild'))!.click()
-    })
+    await rebuild()
     const confirm = useUiStore.getState().confirm
     expect(confirm?.title).toEqual({ key: 'settings.packages.confirm.rebuildTitle', ns: 'dialogs' })
     await act(async () => confirm!.resolve(false))
     expect(rebuildManagedEnvironment).not.toHaveBeenCalled()
-    await act(async () => {
-      byName(pk('env.rebuild'))!.click()
-    })
+    await rebuild()
     await act(async () => useUiStore.getState().confirm!.resolve(true))
     expect(rebuildManagedEnvironment).toHaveBeenCalledTimes(1)
   })
@@ -442,11 +475,31 @@ describe('安装', () => {
   })
 })
 
+describe('反馈落在用户点的地方（2026-10-07 设计审计 P0 / §9.1）', () => {
+  it('作业一行紧跟安装框、在包表之前；安装主按钮在表单的收尾处', async () => {
+    planMock.mockResolvedValue({ job: job({ op: 'install' }) })
+    runMock.mockResolvedValue({ started: true, job_id: 'job-1', state: 'installing', log: '', error: null, code: '' })
+    await mount()
+    await type('lmfit')
+    await act(async () => byName(pk('install'))!.click())
+    const form = document.querySelector('[data-packages-form]')!
+    const jobRow = document.querySelector('[data-packages-job]')!
+    const table = document.querySelector(`table[aria-label="${pk('userTitle')}"]`)!
+    // 同一组里：表单的下一行就是作业
+    expect(form.nextElementSibling).toBe(jobRow)
+    expect(jobRow.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const formButtons = [...form.querySelectorAll('button')]
+    const install = formButtons.at(-1)!
+    expect(install.textContent).toBe(pk('install'))
+    expect(install.getAttribute('data-variant')).toBe('primary')
+  })
+})
+
 describe('卸载', () => {
   it('先问一句；有依赖它的包就把它们列出来；取消则不执行', async () => {
     planMock.mockResolvedValue({ job: job({ op: 'uninstall', dependents: ['mylab'] }) })
     await mount()
-    await act(async () => byName(pk('uninstallAria', { name: 'lmfit' }))!.click())
+    await uninstall('lmfit')
     const confirm = useUiStore.getState().confirm!
     expect(confirm).toBeTruthy()
     expect(confirm.danger).toBe(true)
@@ -459,7 +512,7 @@ describe('卸载', () => {
     planMock.mockResolvedValue({ job: job({ op: 'uninstall', distribution: 'mylab', requirement: 'mylab' }) })
     runMock.mockResolvedValue({ started: true, job_id: 'job-1', state: 'installing', log: '', error: null, code: '' })
     await mount()
-    await act(async () => byName(pk('uninstallAria', { name: 'mylab' }))!.click())
+    await uninstall('mylab')
     const confirm = useUiStore.getState().confirm!
     expect(JSON.stringify(confirm.body)).toContain('uninstallBody"')
     await act(async () => confirm.resolve(true))
@@ -471,7 +524,7 @@ describe('卸载', () => {
   it('后端拒绝卸内置：按 code 说清为什么', async () => {
     planMock.mockRejectedValue(new ApiError('x', 400, { code: 'package_protected', error: 'x' }))
     await mount()
-    await act(async () => byName(pk('uninstallAria', { name: 'lmfit' }))!.click())
+    await uninstall('lmfit')
     expect(useUiStore.getState().confirm).toBeNull()
     expect(text()).toContain(t('engine.repairError.package_protected', { ns: 'errors' }))
   })

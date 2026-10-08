@@ -1,15 +1,22 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/lib/utils'
 import { useEnvStore } from '@/store/envStore'
-import { t as translate } from '@/i18n'
+import { useDepRepairStore } from '@/store/depRepairStore'
+import { askConfirm } from '@/store/uiStore'
+import { msg, t as translate } from '@/i18n'
 import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { ManagedEnvironmentRow } from './DependencyRepairCard'
+import { currentProjectId } from '@/lib/session'
 import { InputRemapRows, ScriptBackupRows, WorkdirRow } from './WorkdirRow'
-import { Button } from './ui/Button'
+import { GroupNotice, SettingRow } from './settings/SettingRow'
+import { Ellipsis, RotateCcw } from './ui/icons'
+import { ICON_SIZE } from './ui/Icon'
+import { Button, IconButton } from './ui/Button'
+import { FieldGroup } from './ui/FormSection'
 import { TextInput } from './ui/Input'
 import { Card } from './ui/Card'
+import { Menu, MenuItem } from './ui/Menu'
+import { Notice } from './ui/Notice'
 
 /**
  * 渲染环境的状态与出口。
@@ -18,7 +25,7 @@ import { Card } from './ui/Card'
  *
  *  1. **一切正常**（多数用户，尤其 Windows 桌面版——安装包自带内置环境）。
  *     `compact` 时什么都不显示：正常工作流里不该有一个常驻卡片提醒你「环境没问题」。
- *     设置页里显示一行状态 + 折叠起来的高级入口。
+ *     设置页 / 「渲染环境」对话框里是一组行（解释器 / 项目环境 / 运行目录 / 记住的数据位置 / 脚本备份）。
  *  2. **缺环境**（源码 / pip 安装，机器上没有科学栈）：给「自动安装」按钮。
  *  3. **内置环境缺失或损坏**（桌面版）：这不是用户的环境问题，是我们的安装包
  *     不完整——只能让他重装，绝不假装能现场修（embeddable 里连 pip 都没有）。
@@ -36,22 +43,14 @@ const en = (key: string, values?: Record<string, unknown>) =>
 const sourceLabel = (source: EngineSource): string =>
   en(`sourceLabel.${source || 'unknown'}`, { product: PRODUCT_NAME })
 
-export function EngineEnvironmentCard({
-  compact,
-  hideTitle,
-}: {
-  compact?: boolean
-  /**
-   * 正常态那行小标「渲染环境」不画：装在同名的「渲染环境」对话框里时它与对话框标题重复
-   * （2026-10-07 设计审计 §10.2）。其余状态的小标是状态句（「尚未配置渲染环境」），照画。
-   */
-  hideTitle?: boolean
-}) {
+/**
+ * 标题：组形态（设置页 / 「渲染环境」对话框）没有「渲染环境」那行正常态小标——组标题由页面给、
+ * 对话框标题栏就是它（2026-10-07 设计审计 §10.2：小标与对话框标题重复）。状态句标题
+ * （「尚未配置渲染环境」「内置环境不完整」）说的是对话框标题说不出的事，任何宿主里都照画。
+ */
+export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   useTranslation('errors')
-  const { env, log, installing, refresh, install, setPython } = useEnvStore()
-  const [manual, setManual] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [advanced, setAdvanced] = useState(false)
+  const { env, log, installing, refresh } = useEnvStore()
 
   useEffect(() => {
     if (!env) void refresh()
@@ -61,140 +60,221 @@ export function EngineEnvironmentCard({
   // 正常工作流里不制造多余提示：环境没问题时，紧凑位置（图内元素面板）什么都不显示
   if (env.ok && compact) return null
 
-  const apply = async () => {
-    const failure = await setPython(manual.trim() || null)
-    setError(failure)
-    if (!failure) setManual('')
+  // ---- 紧凑位置（图内元素面板 / 脚本区里的错误块）：一张卡 ------------------------
+  // 它在那里是插进别的内容之间的一段独立提示，不套框就散了
+  if (compact) {
+    const title = (key: string) => <h3 className="type-section">{en(key)}</h3>
+    if (env.runtime?.expected) {
+      return (
+        <Card data-engine-env-card appearance="raised" padding="md" className="flex flex-col gap-2.5">
+          <div>
+            {title('incompleteTitle')}
+            <p className="mt-1 text-xs leading-relaxed text-ink-2">
+              {en('incompleteBefore')}
+              {en(env.code === 'bundled_runtime_invalid' ? 'incompleteInvalid' : 'incompleteMissing')}
+              {en('incompleteAfter')}
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('incompleteHint')}</p>
+            <EnvironmentAdviceRow />
+          </div>
+        </Card>
+      )
+    }
+    return (
+      <Card data-engine-env-card appearance="raised" padding="md" className="flex flex-col gap-2.5">
+        <div>
+          {title('missingTitle')}
+          <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingBody')}</p>
+          <EnvironmentAdviceRow />
+        </div>
+        <AutoInstall />
+        {log && <InstallLog log={log} />}
+      </Card>
+    )
   }
 
   /**
-   * 设置页里这**不是一张卡**（全面打磨 D14，§8 / §13：状态区不套框）：折叠区里
-   * 一张 632×224 的带框卡，里面还按 hairline 分成三段——框中有框。紧凑位置
-   * （图内元素面板 / 脚本区里的错误块）仍然是一张卡：它在那里是插进别的内容
-   * 之间的一段独立提示，不套框就散了。
+   * 设置页 / 「渲染环境」对话框：**一组行**（2026-10-07 设计审计 §9.1，P0「Python 与运行」组）。
+   * 此前是重复标题 + 段落 + 三段 `border-t` 碎片 + 左对齐按钮——读起来是一篇说明，不是设置。
+   * 现在：解释器 / 项目环境 / 运行目录 / 记住的数据位置 / 脚本备份各一行，缺件是组内一条 danger Notice。
+   * 这一组的根就是 `data-engine-env-card`（判「这里只有一份环境界面」认它）。
    */
-  const shell = { appearance: compact ? 'raised' : 'plain', padding: compact ? 'md' : 'none' } as const
-
-  const advancedBlock = (
-    <div className="flex flex-col gap-1.5 border-t border-border pt-2.5">
-      {advanced ? (
-        <>
-          <span className="text-xs text-ink-2">{en('useOther')}</span>
-          <div className="flex items-center gap-1.5">
-            <TextInput
-              value={manual}
-              onChange={(e) => setManual(e.target.value)}
-              placeholder={en('pathPlaceholder')}
-              aria-label={en('pathAria')}
-            />
-            <Button onClick={() => void apply()}>{en('apply')}</Button>
-          </div>
-          <p className="text-xs leading-relaxed text-ink-3">
-            {en('useOtherHintBefore')}
-            <strong className="font-medium text-ink-2">{en('useOtherHintStrong')}</strong>
-            {en('useOtherHintAfter')}
-          </p>
-          {error && <p className="text-xs text-danger">{error}</p>}
-        </>
-      ) : (
-        /* 动作是按钮，不是蓝字（全面打磨 D14，§1：accent 只给链接与焦点，不给动作）。
-           「使用其他 Python 环境…」会改本机设置，长成一条链接读起来像跳去某个页面 */
-        <Button variant="ghost" size="sm" className="self-start" onClick={() => setAdvanced(true)}>
-          {en('useOtherLink')}
-        </Button>
-      )}
-    </div>
-  )
-
-  // ---- 1. 一切正常 -------------------------------------------------------
-  if (env.ok) {
-    const label = sourceLabel(env.source)
-    return (
-      <Card data-engine-env-card {...shell} className="flex flex-col gap-2.5">
-        <div>
-          {!hideTitle && <h3 className="type-section">{en('okTitle')}</h3>}
-          <p className={cn('text-xs leading-relaxed text-ink-2', !hideTitle && 'mt-1')}>
-            {label}
-          </p>
-          {/* 内置环境不再重复说明自带科学栈；只有外部解释器才需要露出具体路径 */}
-          {!env.bundled && (
-            <p className="mt-1 break-all font-mono text-xs text-ink-3">{env.python}</p>
-          )}
-          <ProjectEnvironmentLine compact={compact} />
-          {!compact && <EnvironmentAdviceRow />}
-          {/* safe worker 在哪个目录里跑（ADR 0047）：项目级开关，设置页才显示 */}
-          {!compact && <WorkdirRow />}
-          {!compact && <InputRemapRows />}
-          {!compact && <ScriptBackupRows />}
-        </div>
-        {/* 内置包版本清单在设置 → 包管理（ADR 0038）；这张卡只说环境本身 */}
-        {!compact && advancedBlock}
-      </Card>
-    )
-  }
-
-  // ---- 3. 内置环境缺失 / 损坏（桌面版）-----------------------------------
-  if (env.runtime?.expected) {
-    return (
-      <Card data-engine-env-card {...shell} className="flex flex-col gap-2.5">
-        <div>
-          <h3 className="type-section">{en('incompleteTitle')}</h3>
-          <p className="mt-1 text-xs leading-relaxed text-ink-2">
-            {en('incompleteBefore')}
-            {en(env.code === 'bundled_runtime_invalid' ? 'incompleteInvalid' : 'incompleteMissing')}
-            {en('incompleteAfter')}
-          </p>
-          <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('incompleteHint')}</p>
-          <EnvironmentAdviceRow />
-        </div>
-        {!compact && advancedBlock}
-      </Card>
-    )
-  }
-
-  // ---- 2. 缺环境（源码 / pip 安装）---------------------------------------
   return (
-    <Card data-engine-env-card {...shell} className="flex flex-col gap-2.5">
-      <div>
-        <h3 className="type-section">{en('missingTitle')}</h3>
-        <p className="mt-1 text-xs leading-relaxed text-ink-2">{en('missingBody')}</p>
+    <FieldGroup data-engine-env-card>
+      {!env.ok && env.runtime?.expected && (
+        <GroupNotice tone="danger" title={en('incompleteTitle')}>
+          {en('incompleteBefore')}
+          {en(env.code === 'bundled_runtime_invalid' ? 'incompleteInvalid' : 'incompleteMissing')}
+          {en('incompleteAfter')} {en('incompleteHint')}
+        </GroupNotice>
+      )}
+      {!env.ok && !env.runtime?.expected && (
+        <GroupNotice
+          tone="danger"
+          title={en('missingTitle')}
+          action={env.can_install ? <AutoInstallButton size="sm" /> : undefined}
+        >
+          {en('missingBody')}
+          {env.can_install ? (
+            <span className="mt-1 block">
+              {en('autoInstallHintBefore')}
+              <strong className="font-medium">{en('autoInstallHintStrong')}</strong>
+              {en('autoInstallHintAfter')}
+            </span>
+          ) : (
+            <span className="mt-1 block">
+              <NoPython />
+            </span>
+          )}
+        </GroupNotice>
+      )}
+      {!env.ok && log && (
+        <div>
+          <InstallLog log={log} />
+        </div>
+      )}
+      <InterpreterRow />
+      {/* 项目里有自己的 Python 环境、用户还没决定时的一句话 + 一个主按钮（ADR 0114，T05） */}
+      <div className="empty:hidden">
         <EnvironmentAdviceRow />
       </div>
+      {env.ok && <ProjectEnvironmentRow />}
+      {env.ok && <WorkdirRow />}
+      {env.ok && <InputRemapRows />}
+      {env.ok && <ScriptBackupRows />}
+      {installing && <span className="sr-only">{en('installing')}</span>}
+    </FieldGroup>
+  )
+}
 
-      {env.can_install ? (
-        <>
-          <Button variant="primary" onClick={() => void install()} disabled={installing}>
-            {en(installing ? 'installing' : 'autoInstall')}
-          </Button>
-          <p className="text-xs leading-relaxed text-ink-3">
-            {en('autoInstallHintBefore')}
-            <strong className="font-medium text-ink-2">{en('autoInstallHintStrong')}</strong>
-            {en('autoInstallHintAfter')}
-          </p>
-        </>
-      ) : (
-        <p className="text-xs leading-relaxed text-danger">
-          {en('noPythonBefore')}{' '}
-          <a
-            href="https://www.python.org/downloads/"
-            target="_blank"
-            rel="noreferrer"
-            className="text-ink-2 underline-offset-2 hover:text-ink hover:underline"
-          >
-            {en('noPythonLink')}
-          </a>
-          {en('noPythonAfter')}
-        </p>
-      )}
+/** 「自动安装」那颗钮（紧凑卡里是整宽主按钮 + 一句说明；组里是 Notice 的动作） */
+function AutoInstallButton({ size }: { size?: 'sm' | 'md' }) {
+  const { installing, install } = useEnvStore()
+  return (
+    <Button variant="primary" size={size} onClick={() => void install()} disabled={installing}>
+      {en(installing ? 'installing' : 'autoInstall')}
+    </Button>
+  )
+}
 
-      {log && (
-        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs text-ink-3">
-          {log}
-        </pre>
-      )}
+function AutoInstall() {
+  const env = useEnvStore((s) => s.env)
+  if (!env?.can_install) {
+    return (
+      <p className="text-xs leading-relaxed text-danger">
+        <NoPython />
+      </p>
+    )
+  }
+  return (
+    <>
+      <AutoInstallButton />
+      <p className="text-xs leading-relaxed text-ink-3">
+        {en('autoInstallHintBefore')}
+        <strong className="font-medium text-ink-2">{en('autoInstallHintStrong')}</strong>
+        {en('autoInstallHintAfter')}
+      </p>
+    </>
+  )
+}
 
-      {!compact && advancedBlock}
-    </Card>
+function NoPython() {
+  return (
+    <>
+      {en('noPythonBefore')}{' '}
+      <a
+        href="https://www.python.org/downloads/"
+        target="_blank"
+        rel="noreferrer"
+        className="underline underline-offset-2 hover:text-ink"
+      >
+        {en('noPythonLink')}
+      </a>
+      {en('noPythonAfter')}
+    </>
+  )
+}
+
+function InstallLog({ log }: { log: string }) {
+  return (
+    <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs text-ink-3">
+      {log}
+    </pre>
+  )
+}
+
+/**
+ * 解释器一行：现状是「用的是哪一个」（来源的人话；外部解释器在 fill 行再给路径），控件列「更换…」——点开
+ * 才在这一行下面展开路径输入框（fill 行）。此前它是卡片底部一颗 ghost「使用其他 Python 环境…」。
+ */
+function InterpreterRow() {
+  useTranslation('errors')
+  const { env, setPython } = useEnvStore()
+  const [editing, setEditing] = useState(false)
+  const [manual, setManual] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  if (!env) return null
+  const apply = async () => {
+    const failure = await setPython(manual.trim() || null)
+    setError(failure)
+    if (!failure) {
+      setManual('')
+      setEditing(false)
+    }
+  }
+  const editorId = 'engine-interpreter-editor'
+  // 内置环境不再重复说明自带科学栈；只有外部解释器才需要露出具体路径
+  const showPath = env.ok && !env.bundled
+  return (
+    <SettingRow
+      label={en('interpreterLabel')}
+      status={env.ok ? sourceLabel(env.source) : undefined}
+      data-settings-anchor="project.python"
+      data-engine-interpreter
+      below={
+        showPath || editing ? (
+          <div className="flex min-w-0 flex-col gap-2">
+            {showPath && <p className="break-all font-mono text-xs text-ink-3">{env.python}</p>}
+            {editing && (
+              <div id={editorId} className="flex min-w-0 flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <TextInput
+                    value={manual}
+                    autoFocus
+                    onChange={(e) => setManual(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void apply()
+                    }}
+                    placeholder={en('pathPlaceholder')}
+                    aria-label={en('pathAria')}
+                    className="min-w-0 flex-1"
+                  />
+                  <Button variant="secondary" size="sm" onClick={() => void apply()}>
+                    {en('apply')}
+                  </Button>
+                </div>
+                <p className="type-caption">
+                  {en('useOtherHintBefore')}
+                  <strong className="font-medium text-ink-2">{en('useOtherHintStrong')}</strong>
+                  {en('useOtherHintAfter')}
+                </p>
+                {error && <Notice tone="danger">{error}</Notice>}
+              </div>
+            )}
+          </div>
+        ) : undefined
+      }
+    >
+      <Button
+        variant="secondary"
+        size="sm"
+        aria-expanded={editing}
+        aria-controls={editing ? editorId : undefined}
+        onClick={() => setEditing((v) => !v)}
+      >
+        {en('changeInterpreter')}
+      </Button>
+    </SettingRow>
   )
 }
 
@@ -254,13 +334,13 @@ function EnvironmentAdviceRow() {
  * `.venv` 接手了才显示——那一刻用户需要知道「跑我脚本的不是 Tavotto 自带的
  * 那个 Python」，否则版本对不上时无从查起。
  */
-function ProjectEnvironmentLine({ compact }: { compact?: boolean }) {
+function ProjectEnvironmentRow() {
   useTranslation('errors')
   const { env, setProjectPython } = useEnvStore()
   const project = env?.project
-  if (compact || !project?.open) return null
+  if (!project?.open) return null
   // Tavotto 替这个项目建的环境是另一种局面：它归我们管，所以那一行还带
-  // 「装了什么」与「重建」（ADR 0019），由 ManagedEnvironmentRow 单独渲染。
+  // 「装了什么」与「重建」（ADR 0019）
   if (project.source === 'managed_project_env') return <ManagedEnvironmentRow />
   // 项目之外的解释器（用户为这个项目挑的，或从依赖修复面板采用的系统 Python，
   // ADR 0044）与项目自带的 `.venv` 是两种局面：前者显示绝对路径、措辞是
@@ -268,32 +348,83 @@ function ProjectEnvironmentLine({ compact }: { compact?: boolean }) {
   const system = project.source === 'system'
   if (project.source !== 'project_venv' && !system) return null
   return (
-    <div className="mt-1.5 flex flex-col gap-0.5 border-t border-border pt-1.5">
-      <span className="text-xs text-ink-2">
-        {system
+    <SettingRow
+      label={en('projectEnvLabel')}
+      status={
+        system
           ? en('projectEnvUsingSystem', { path: project.python || '' })
-          : en('projectEnvUsing', { path: project.python || '.venv' })}
-      </span>
-      {project.module && (project.automatic || system) && (
-        <span className="text-xs text-ink-3">
-          {/* 缺包时无提示自动采用的（ADR 0107）不是「你选的」：措辞按 automatic 分 */}
-          {system
+          : en('projectEnvUsing', { path: project.python || '.venv' })
+      }
+      description={
+        project.module && (project.automatic || system)
+          ? // 缺包时无提示自动采用的（ADR 0107）不是「你选的」：措辞按 automatic 分
+            system
             ? project.automatic
               ? en('projectEnvWhySystemAuto', { module: project.module })
               : en('projectEnvWhySystem', { module: project.module })
-            : en('projectEnvWhy', { module: project.module })}
-        </span>
-      )}
-      {/* 同 D14：换环境是动作，给它一颗钮 */}
-      <Button
-        variant="ghost"
-        size="sm"
-        className="self-start"
-        onClick={() => void setProjectPython(null)}
-      >
+            : en('projectEnvWhy', { module: project.module })
+          : undefined
+      }
+    >
+      <Button variant="ghost" size="sm" onClick={() => void setProjectPython(null)}>
         {en('projectEnvUseBuiltIn')}
       </Button>
-    </div>
+    </SettingRow>
+  )
+}
+
+/**
+ * Tavotto 替这个项目建的环境（ADR 0019）：现状 = 版本，说明 = 装了什么；「重建」是会真动环境的高影响动作，
+ * 收进行尾 ⋯ 并先确认（与包管理页同一句确认、同一个 `rebuildManaged`）。此前它是 `DependencyRepairCard`
+ * 里的 `ManagedEnvironmentRow`（一段 `border-t` 碎片 + 左对齐的 secondary，点了就重建、不问）。
+ * 只对**我们自己建的**环境出现：用户的 `.venv` 不归我们重建，那是他的东西。
+ */
+function ManagedEnvironmentRow() {
+  useTranslation('errors')
+  const env = useEnvStore((s) => s.env)
+  const repairBusy = useDepRepairStore((s) => s.busy)
+  const rebuildRunningFor = useDepRepairStore((s) => s.rebuildRunningFor)
+  const rebuildManaged = useDepRepairStore((s) => s.rebuildManaged)
+  // 本项目的重建还没结束时起不了第二次（别的项目的重建不挡这里，#606）
+  const busy = repairBusy || rebuildRunningFor(currentProjectId())
+  const managed = env?.project?.managed
+  if (!env?.project?.open || !managed?.exists) return null
+  const rebuild = async () => {
+    const ok = await askConfirm({
+      title: msg('settings.packages.confirm.rebuildTitle', undefined, 'dialogs'),
+      body: msg('settings.packages.confirm.rebuildBody', undefined, 'dialogs'),
+      confirmLabel: msg('settings.packages.confirm.rebuildAction', undefined, 'dialogs'),
+      danger: true,
+    })
+    if (ok) await rebuildManaged()
+  }
+  return (
+    <SettingRow
+      label={en('projectEnvLabel')}
+      status={en('managedEnvUsing', { version: managed.python_version || '?', product: PRODUCT_NAME })}
+      description={
+        managed.installed.length > 0
+          ? en('managedEnvInstalled', {
+              packages: managed.installed.map((p) => `${p.distribution} ${p.resolved_version}`).join('、'),
+            })
+          : undefined
+      }
+      data-managed-env
+    >
+      <Menu
+        align="end"
+        width={220}
+        trigger={
+          <IconButton label={en('envActions')} iconSize="sm">
+            <Ellipsis size={ICON_SIZE.sm} aria-hidden />
+          </IconButton>
+        }
+      >
+        <MenuItem icon={RotateCcw} danger disabled={busy} onSelect={() => void rebuild()}>
+          {en('managedEnvRebuild')}
+        </MenuItem>
+      </Menu>
+    </SettingRow>
   )
 }
 
