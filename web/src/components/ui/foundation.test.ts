@@ -139,6 +139,14 @@ const RULES: Rule[] = [
       '/src/components/ui/listRow.ts': { count: 1, why: '选中的列表 / 树行：selected 底 + 600（2026-10-07 §10.3）' },
       '/src/components/ui/FormSection.tsx': { count: 1, why: '表单分区标题 13 / 600（没有对应的 type 角色，只此一处）' },
       '/src/components/ui/buttonClass.ts': { count: 1, why: '对话框页脚的危险浅底胶囊（danger-tinted）：600' },
+      '/src/components/ai/Markdown.tsx': {
+        count: 2,
+        why: '助手回答的 h2 14 / 600、h3 13 / 600（h1 走 type-title；没有 14 / 13 的 600 角色，宪法第十八节「2026-10-07 重做」）',
+      },
+      '/src/components/ai/DiffView.tsx': {
+        count: 1,
+        why: '显著卡文件头的粗体动作「已修改」13 / 600（OpenBitFun 的 ProminentToolCard，宪法第十八节「2026-10-07 重做」）',
+      },
     },
   },
   {
