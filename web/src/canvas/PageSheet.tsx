@@ -1,6 +1,11 @@
 import { perfCount } from '@/perf/core'
 import { mmToWorld } from '@/store/viewportStore'
 
+/** 纸的默认底色：**页面内容**（导出时就是这个白），不是界面的 surface——所以它不跟主题走 */
+const PAPER = '#ffffff'
+/** 网格线 / 棋盘格的墨：ink 的 N%（暗色主题只换 --color-ink，不留第二份 rgba 字面量） */
+const GRID_INK = (pct: number) => `color-mix(in srgb, var(--color-ink) ${pct}%, transparent)`
+
 interface PageSheetProps {
   w: number
   h: number
@@ -15,8 +20,11 @@ interface PageSheetProps {
 }
 
 /**
- * 白色纸面：画布的视觉中心。**没有投影**——持久表面不用投影（宪法第一节），
- * 只有一圈 1px 的 border-strong/60 轮廓把纸从画布灰上托出来。
+ * 白色纸面：画布的视觉中心。**没有投影**——持久表面不用投影（宪法第一节）。
+ *
+ * **也不画轮廓**（2026-10-07 设计审计 §10.1）：页面那一圈 1px 由 `PageOutsideMask` 在屏幕空间画（压在内容之上、
+ * 任何缩放下都是 1px）。此前这里在世界层里再画一圈 outline：它跟着缩放变粗（400% 时 4px），而且与
+ * 遮罩那一圈画了两遍。纸本身是真白（页面内容，不是界面色）；网格与透明棋盘格的线走 ink 的 color-mix。
  */
 export function PageSheet({
   w,
@@ -42,22 +50,22 @@ export function PageSheet({
       // 快速编辑与画布排版的可见差别——留一个测试落点，与 CanvasStage 的
       // `data-canvas-stage` 同一条理由
       data-page-sheet=""
-      className="absolute left-0 top-0 outline outline-1 outline-border-strong/60"
+      className="absolute left-0 top-0"
       style={{
         width: wPx,
         height: hPx,
         // 透明背景用棋盘格表示「导出时这里没有底色」
         background: transparent
-          ? 'repeating-conic-gradient(rgba(27,27,24,.06) 0% 25%, #fff 0% 50%) 0 0 / 12px 12px'
-          : (bg ?? '#ffffff'),
+          ? `repeating-conic-gradient(${GRID_INK(6)} 0% 25%, ${PAPER} 0% 50%) 0 0 / 12px 12px`
+          : (bg ?? PAPER),
       }}
     >
       {showGrid && (
         <div
           className="pointer-events-none absolute inset-0"
           style={{
-            backgroundImage: `linear-gradient(to right, rgba(27,27,24,.07) ${hair}px, transparent ${hair}px),
-                              linear-gradient(to bottom, rgba(27,27,24,.07) ${hair}px, transparent ${hair}px)`,
+            backgroundImage: `linear-gradient(to right, ${GRID_INK(7)} ${hair}px, transparent ${hair}px),
+                              linear-gradient(to bottom, ${GRID_INK(7)} ${hair}px, transparent ${hair}px)`,
             backgroundSize: `${cell}px ${cell}px`,
           }}
         />

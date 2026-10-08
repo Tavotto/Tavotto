@@ -169,6 +169,41 @@ describe('图层行的行尾', () => {
   })
 })
 
+// Codex #833：行内改名用 Enter / Esc 收起，焦点回到这一行（方向键漫游不断链）；点了别处收起的不抢回来——
+// 焦点已经在用户点的地方了，抢回这一行会让接下来的打字 / 快捷键落进图层树
+describe('图层改名收起后的焦点', () => {
+  const renameBox = () => rows()[0].querySelector('input')
+  const startRename = async () => {
+    await mount([panel('p1', 'Fig1')])
+    rows()[0].focus()
+    await act(async () => {
+      rows()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'F2', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(renameBox())
+  }
+  const settle = () => act(async () => new Promise<void>((r) => setTimeout(r, 10)))
+
+  it.each(['Enter', 'Escape'])('%s 收起改名：焦点回到这一行', async (k) => {
+    await startRename()
+    await act(async () => {
+      renameBox()!.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    })
+    await settle()
+    expect(renameBox()).toBeNull()
+    expect(document.activeElement).toBe(rows()[0])
+  })
+
+  it('点别处收起改名：焦点留在用户点的那个输入框上', async () => {
+    await startRename()
+    const other = document.createElement('input')
+    document.body.appendChild(other)
+    await act(async () => other.focus())
+    await settle()
+    expect(renameBox()).toBeNull()
+    expect(document.activeElement).toBe(other)
+  })
+})
+
 describe('树的语义与键位契约（2026-10-07 设计审计 §10.3）', () => {
   const key = (el: Element, k: string, init: KeyboardEventInit = {}) =>
     act(() => {

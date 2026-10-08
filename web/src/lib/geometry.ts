@@ -25,7 +25,8 @@ export function visualBounds(o: CanvasObject): Rect {
   return { x: o.x + o.w / 2 - w / 2, y: o.y + o.h / 2 - h / 2, w, h }
 }
 
-export function boundsOf(objs: CanvasObject[]): Rect | null {
+/** 一组盒（对象本身或 `visualBounds` 取出的盒）的并 */
+export function boundsOf(objs: readonly Rect[]): Rect | null {
   if (!objs.length) return null
   const x = Math.min(...objs.map((o) => o.x))
   const y = Math.min(...objs.map((o) => o.y))

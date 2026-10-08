@@ -10,7 +10,7 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { CanvasTabs } from '@/components/CanvasTabs'
 import { CanvasToolbar } from '@/components/CanvasToolbar'
@@ -142,5 +142,108 @@ describe('写回在「⋯」菜单第一项', () => {
     expect(menu!.firstElementChild).toBe(item())
     expect(item()!.getAttribute('data-disabled')).not.toBeNull()
     expect(item()!.getAttribute('data-write-back')).toBe('open')
+  })
+})
+
+/**
+ * 工具与动作分两种外观（2026-10-07 设计审计 §10.1）：工具 = 32 圆形图标钮、激活 = 墨色实底 + aria-pressed；
+ * 动作 = 28 带字 ghost 钮；中间一道竖线。条里 ←/→ 挪焦点（ARIA toolbar），鼠标点工具不拿焦点。
+ * 主语：认 `data-tool` / `data-toolbar-item` / `data-fit-canvas`，判的是 aria-pressed 与按钮的 `h-8 / h-7` 档。
+ */
+describe('浮动工具条：工具 vs 动作', () => {
+  it('工具 32 + aria-pressed，激活是墨色实底；动作 28', async () => {
+    await mount(<CanvasToolbar />)
+    const select = q('[data-tool="select"]')!
+    const text = q('[data-tool="text"]')!
+    expect(select.className).toContain('h-8')
+    expect(select.getAttribute('aria-pressed')).toBe('true')
+    expect(select.className).toContain('bg-ink')
+    expect(text.getAttribute('aria-pressed')).toBe('false')
+    expect(text.className).not.toContain('bg-ink')
+    expect(q('[data-fit-canvas]')!.className).toContain('h-7')
+    await act(async () => text.click())
+    expect(q('[data-tool="text"]')!.getAttribute('aria-pressed')).toBe('true')
+    expect(q('[data-tool="select"]')!.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('条里 → / End 挪焦点，事件被认领（不推画布上的选中对象）', async () => {
+    await mount(<CanvasToolbar />)
+    const items = [...host.querySelectorAll<HTMLElement>('[data-toolbar-item]')]
+    expect(items.length).toBe(5)
+    items[0].focus()
+    const ev = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+    act(() => {
+      items[0].dispatchEvent(ev)
+    })
+    expect(ev.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(items[1])
+    act(() => {
+      items[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(items[4])
+  })
+
+  // Codex #833：鼠标打开标注菜单、点「插入形状」——Radix 关菜单时默认把焦点还给触发器，下一个 ← / → 就被
+  // 工具条吃掉（换焦点），推不动刚插入的形状。指针打开的回到打开前的焦点；键盘打开的照旧回到触发器
+  describe('标注菜单关掉后的焦点', () => {
+    // Radix FocusScope 在卸载后的 setTimeout(0) 里归还焦点；act 只保证 React 更新，
+    // 菜单已移除不代表焦点已归还。固定并推进这一步，鼠标侧的否定断言也不能提前假绿。
+    beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }))
+    afterEach(async () => {
+      try {
+        await act(async () => { await vi.runOnlyPendingTimersAsync() })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+    const trigger = () => q('[data-tool-menu="annotate"]')!
+    const firstShape = () =>
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) =>
+        el.textContent?.includes('三角'),
+      )!
+    const shapes = () => useDocumentStore.getState().doc.objects.length
+
+    it.each([
+      ['焦点原在别处', true],
+      ['焦点原在 body', false],
+    ])('鼠标打开、插入形状（%s）：焦点不落回触发器', async (_n, elsewhere) => {
+      await mount(<CanvasToolbar />)
+      const other = document.createElement('button')
+      document.body.appendChild(other)
+      if (elsewhere) other.focus()
+      await act(async () => {
+        trigger().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, button: 0, ctrlKey: false }))
+      })
+      expect(document.body.querySelector('[role="menu"]'), '菜单没打开').toBeTruthy()
+      await act(async () => firstShape().click())
+      await act(async () => { await vi.runOnlyPendingTimersAsync() })
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
+      expect(shapes()).toBe(1)
+      expect(document.activeElement).not.toBe(trigger())
+      if (elsewhere) expect(document.activeElement).toBe(other)
+    })
+
+    it('键盘打开、插入形状：焦点回到触发器', async () => {
+      await mount(<CanvasToolbar />)
+      trigger().focus()
+      await act(async () => {
+        trigger().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+      })
+      expect(document.body.querySelector('[role="menu"]'), '菜单没打开').toBeTruthy()
+      await act(async () => firstShape().click())
+      await act(async () => { await vi.runOnlyPendingTimersAsync() })
+      expect(document.body.querySelector('[role="menu"]')).toBeNull()
+      expect(shapes()).toBe(1)
+      expect(document.activeElement).toBe(trigger())
+    })
+  })
+
+  it('鼠标按下工具不拿焦点（点完「选择」接着按方向键是在微调对象）', async () => {
+    await mount(<CanvasToolbar />)
+    const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    act(() => {
+      q('[data-tool="select"]')!.dispatchEvent(ev)
+    })
+    expect(ev.defaultPrevented).toBe(true)
   })
 })

@@ -57,32 +57,36 @@ export function ProjectScanBar() {
 
   return (
     <div data-project-scan data-scan-state={scan.state} data-scan-phase={scan.phase}>
-      <Banner icon={<Images size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />}>
-        <span className="min-w-0 flex-1 truncate" data-project-scan-line>
-          {scanLine(scan)}
-        </span>
-        <Button
-          size="sm"
-          className="shrink-0 text-ink-3"
-          aria-expanded={open}
-          onClick={() => ui.setScanPanelOpen(!open)}
-        >
-          {open ? <ChevronUp size={ICON_SIZE.sm} /> : <ChevronDown size={ICON_SIZE.sm} />}
-          {t('workspace:scan.details')}
-        </Button>
-        {running ? (
-          <Button size="sm" className="shrink-0" onClick={() => void store.cancel()}>
-            {t('workspace:scan.cancel')}
-          </Button>
-        ) : (
-          <Button size="sm" className="shrink-0" onClick={() => void store.start({ force: true, reason: 'manual' })}>
-            {t('workspace:scan.rescan')}
-          </Button>
-        )}
-        <Button size="sm" className="shrink-0 text-ink-3" onClick={() => store.hide()}>
-          {t('common:actions.close')}
-        </Button>
-      </Banner>
+      {/* 工作面板里的提示条是 `Banner`（Notice）：说明是 title、按钮在 action 槽（与同一摞里的其它条同一副） */}
+      <Banner
+        icon={Images}
+        title={<span data-project-scan-line>{scanLine(scan)}</span>}
+        action={
+          <>
+            <Button
+              size="sm"
+              className="shrink-0 text-ink-3"
+              aria-expanded={open}
+              onClick={() => ui.setScanPanelOpen(!open)}
+            >
+              {open ? <ChevronUp size={ICON_SIZE.sm} /> : <ChevronDown size={ICON_SIZE.sm} />}
+              {t('workspace:scan.details')}
+            </Button>
+            {running ? (
+              <Button size="sm" className="shrink-0" onClick={() => void store.cancel()}>
+                {t('workspace:scan.cancel')}
+              </Button>
+            ) : (
+              <Button size="sm" className="shrink-0" onClick={() => void store.start({ force: true, reason: 'manual' })}>
+                {t('workspace:scan.rescan')}
+              </Button>
+            )}
+            <Button size="sm" className="shrink-0 text-ink-3" onClick={() => store.hide()}>
+              {t('common:actions.close')}
+            </Button>
+          </>
+        }
+      />
       {open && (
         <div
           data-project-scan-details
