@@ -831,10 +831,15 @@ class _Top:
 
 
 def _rel(root: Path, path: Path) -> str:
+    """项目相对 POSIX 路径（纯字符串运算，不 `resolve`——不碰文件系统，也不跟随链接）；不在项目下回文件名。"""
     try:
-        return path.resolve(strict=False).relative_to(root.resolve(strict=False)).as_posix()
-    except ValueError:
+        rel = os.path.relpath(path, root)
+    except ValueError:  # Windows 跨盘符
         return path.name
+    parts = Path(rel).parts
+    if not parts or parts[0] == os.pardir:
+        return path.name if parts else ""
+    return "/".join(parts)
 
 
 def _parse(text: str, rel: str) -> tuple[ast.Module | None, dict | None]:
