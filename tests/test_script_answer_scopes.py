@@ -306,15 +306,18 @@ def test_http_edit_reports_failure_and_keeps_the_project_file_when_the_sidecar_i
     assert scriptanswers.answers_path(answers).read_bytes() == before
 
 
-def test_forget_commits_on_the_project_file_and_tolerates_an_orphaned_sidecar(
-    answers, monkeypatch
-):
+def test_forget_commits_on_the_project_file_and_tolerates_an_orphaned_sidecar(answers, monkeypatch):
     _block_sidecar(monkeypatch)
     assert scriptanswers.forget(answers, "s.py", 1, run_config="rc_a") is True
     monkeypatch.undo()
     assert [e["run_config"] for e in scriptanswers.entries(answers, "s.py")] != []
     assert all(e["answer"] != "alpha" for e in scriptanswers.entries(answers, "s.py"))
-    assert scriptanswers.recall(answers, "s.py", 1, "p: ", context="ctx:alpha", run_config="rc_a").answer is None
+    assert (
+        scriptanswers.recall(
+            answers, "s.py", 1, "p: ", context="ctx:alpha", run_config="rc_a"
+        ).answer
+        is None
+    )
 
 
 def test_normal_edit_commits_both_files(answers):
