@@ -98,6 +98,31 @@ for (const width of [820, 1100, 1366]) {
         await page.keyboard.up('Space')
       }
       await assertSelection(page, [title], exclusive)
+
+      // Drag the same selected title: sidebar swapping must wait until pointer tracking ends.
+      const target = await page.locator('[data-element-svg] svg [id="axes_0.title"]').boundingBox()
+      const beforeDrag = await page.locator('[data-canvas-stage]').boundingBox()
+      expect(target).not.toBeNull()
+      expect(beforeDrag).not.toBeNull()
+      await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2)
+      await page.mouse.down()
+      try {
+        await page.mouse.move(target!.x + target!.width / 2 + 24,
+          target!.y + target!.height / 2 + 12, { steps: 4 })
+        // Let the input's React effects settle before measuring the live gesture.
+        await page.evaluate(() => new Promise<void>(resolve => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        }))
+        await assertSelection(page, [title], exclusive)
+        const duringDrag = await page.locator('[data-canvas-stage]').boundingBox()
+        expect(duringDrag?.x).toBe(beforeDrag!.x)
+      } finally {
+        await page.mouse.up()
+      }
+      await expect(page.locator('[data-inspector-panel]')).toHaveAttribute('data-state', 'open')
+      await openTree(page)
+      await row(page, title).click()
+      await assertSelection(page, [title], exclusive)
     }
 
     // Focus remains in the tree while the same element is clicked on the canvas.

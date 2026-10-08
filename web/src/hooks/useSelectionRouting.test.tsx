@@ -6,6 +6,7 @@ import { LayerTree } from '@/components/left/LayerTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import type { Manifest } from '@/lib/api'
 import { useDocumentStore } from '@/store/documentStore'
+import { useInteractionStore } from '@/store/interactionStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type WorkspaceLayout } from '@/store/uiStore'
@@ -62,6 +63,7 @@ beforeEach(async () => {
   useDocumentStore.setState(s => ({ doc: { ...s.doc, objects: [panel] } }))
   seedExactRender(panel, manifest)
   useSelectionStore.getState().clear()
+  useInteractionStore.getState().end()
   useViewportStore.setState({ spaceDown: false })
   useUiStore.setState({ layout: 'medium', leftOpen: true, leftTab: 'layers',
     rightOpen: false, rightTab: 'properties', rightPinned: false,
@@ -192,6 +194,17 @@ describe('selection routing keeps the active drawer workflow', () => {
     })
     pointer('[data-canvas-hit]')
     expectTreeSelection([gids[0]])
+  })
+
+  it.each(['move', 'resize', 'element'] as const)('%s defers sidebar routing until tracking ends', kind => {
+    openElements()
+    pointer(treeRow(gids[0]))
+    act(() => useInteractionStore.getState().begin(kind))
+    pointer('[data-canvas-hit]')
+    expectTreeSelection([gids[0]])
+    act(() => useInteractionStore.getState().end())
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    expect(useUiStore.getState().leftOpen).toBe(false)
   })
 
   it('wide windows show properties beside the tree', () => {

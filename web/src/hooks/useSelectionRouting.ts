@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -16,7 +17,17 @@ export function useSelectionRouting() {
   const primaryGid = useUiStore((s) => s.selectedGids.at(-1) ?? null)
   const active = hasSelection || inElement
   const inDrawer = useRef<boolean | null>(null)
+  const pendingRouting = useRef(false)
   const [canvasPress, setCanvasPress] = useState(0)
+  const [interactionEnd, setInteractionEnd] = useState(0)
+
+  // 侧栏交换会改变画布原点；追踪指针期间只记请求，结束后再处理最新选区。
+  // 只唤醒确实有路由请求的手势：Space 平移本身不会请求属性栏。
+  useEffect(() => useInteractionStore.subscribe((state, prev) => {
+    if (state.kind === 'none' && prev.kind !== 'none' && pendingRouting.current) {
+      setInteractionEnd(n => n + 1)
+    }
+  }), [])
 
   // pointerdown 的选择更新可能早于浏览器默认聚焦；触屏也未必聚焦。
   // capture 在树 / 画布的选择处理器之前记下来源，不能拿旧 activeElement 猜。
@@ -43,6 +54,11 @@ export function useSelectionRouting() {
 
   // 首次出现选择与换选使用同一判据；显式 setRightTab 不经过自动路由。
   useEffect(() => {
+    if (useInteractionStore.getState().kind !== 'none') {
+      pendingRouting.current = true
+      return
+    }
+    pendingRouting.current = false
     const ui = useUiStore.getState()
     if (!active) {
       ui.autoHideProperties()
@@ -52,5 +68,5 @@ export function useSelectionRouting() {
     // 素材抽屉是挑一次即让位的入口；这条既有规则仍由 autoShowProperties 执行。
     if (fromDrawer && ui.leftOpen && ui.leftTab !== 'assets' && ui.layout !== 'wide') return
     ui.autoShowProperties()
-  }, [active, primaryId, primaryGid, canvasPress])
+  }, [active, primaryId, primaryGid, canvasPress, interactionEnd])
 }
