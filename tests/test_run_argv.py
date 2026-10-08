@@ -102,6 +102,25 @@ class TestPublicProjectionsCarryCountsNotValues:
         )
         assert native.stable_payload()["argv"] == ["a", "b"]
 
+    def test_native_long_cjk_token_is_not_bound_by_the_private_wire_budget(self):
+        # r4214909614：native 参数走 bridge_argv、不走私有管道；3000 个 CJK 字符 JSON 转义后远超 16384
+        token = "中" * 3000
+        assert len(execspec.argv_wire((token,))) > execspec.MAX_ARGV_WIRE_CHARS
+        native = execspec.native_spec(
+            "fig.py", interpreter="/usr/bin/python3", cwd="/c", project_root="/c", argv=(token,)
+        )
+        assert native.argv == (token,)
+        with pytest.raises(ValueError, match="NUL"):  # OS 装不下的约束仍在
+            execspec.native_spec(
+                "fig.py",
+                interpreter="/usr/bin/python3",
+                cwd="/c",
+                project_root="/c",
+                argv=("a\x00",),
+            )
+        with pytest.raises(ValueError, match="载荷"):  # safe 档同一输入仍被拒
+            _spec(argv=(token,), run_config="rc_x")
+
     def test_receipt_identity_differs_per_configuration_without_leaking(self):
         a = _spec(argv=(SENTINEL,), run_config="rc_aaaaaaaaaaaa").stable_payload()
         b = _spec(argv=(SENTINEL, "x"), run_config="rc_bbbbbbbbbbbb").stable_payload()

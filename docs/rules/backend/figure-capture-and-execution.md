@@ -229,7 +229,7 @@
   传入（两条控制面同源）。Windows 的命令行引号膨胀因此不受参数值影响。每条可执行请求带冻结配置，workerd 透明重开后仍能
   用原配置冷重建；worker 校验引用、类型与不可变性，缺失 / 错配就拒绝执行，绝不回落空 argv。
   worker 在 `sys.argv` 处设 `[script, *argv]`，仍在 `paper_style` / `runpy` / 导入期 `parse_args()` 之前。
-  `MAX_ARGV_TOKENS` / `MAX_ARGV_CHARS` / `MAX_ARGV_WIRE_CHARS` 仍是输入预算，超限与含 NUL 在边界上拒绝，不截断。
+  `MAX_ARGV_TOKENS` / `MAX_ARGV_CHARS` / `MAX_ARGV_WIRE_CHARS` 仍是 **safe 档**（私有请求管道）的输入预算，超限在边界上拒绝，不截断；native 的 argv 是用户自己的命令行（走 bridge_argv，不进私有管道），不受这三个预算约束，只拒绝含 NUL（操作系统装不下）。
 - **敏感配置的诊断**：`RunSelection.sensitive` 随冻结配置传入。该 worker 整个生命周期的 fd 1/2（含 native 与继承标准句柄的
   子进程）进独立解释器的有界丢弃管道（不抢 worker 的 GIL），只在有新输出时最多每秒四次写固定进度标记，保留两条控制面的静默看门狗；
   协议用独立不可继承 fd，辅助进程随 worker 正常关停被回收、异常死亡后自行退出。
