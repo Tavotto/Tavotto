@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { trackPointer } from '@/canvas/interactions'
 import { ElementTree } from '@/components/left/ElementTree'
 import { LayerTree } from '@/components/left/LayerTree'
@@ -17,6 +17,12 @@ import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { useKeyboard } from './useKeyboard'
 import { useSelectionRouting } from './useSelectionRouting'
+
+const platform = vi.hoisted(() => ({ isMac: false }))
+vi.mock('@/lib/utils', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/utils')>()),
+  get isMac() { return platform.isMac },
+}))
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 Element.prototype.scrollIntoView ??= function () {}
@@ -78,6 +84,7 @@ function KeyboardHarness() {
 let host: HTMLDivElement
 let root: Root
 beforeEach(async () => {
+  platform.isMac = false
   localStorage.clear()
   useRenderStore.getState().clear()
   await useDocumentStore.getState().switchDocument(emptyProject(), 'tree-routing-test')
@@ -128,6 +135,34 @@ function expectTreeSelection(gids: string[]) {
 }
 
 describe('selection routing keeps the active drawer workflow', () => {
+  it('Mac Control-click preserves layer selection while focusing the menu target', () => {
+    platform.isMac = true
+    act(() => useDocumentStore.setState(s => ({
+      doc: { ...s.doc, objects: [panel, { ...panel, id: 'p2', x: 90 }] },
+    })))
+    pointer('[data-layer="p1"]')
+    pointer('[data-layer="p1"]', { ctrlKey: true })
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    pointer('[data-layer="p2"]', { ctrlKey: true })
+    expect(document.activeElement).toBe(node('[data-layer="p2"]'))
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().rightOpen).toBe(false)
+  })
+
+  it('Mac Control-click preserves element selection while focusing the menu target', () => {
+    platform.isMac = true
+    openElements()
+    pointer(treeRow(gids[0]))
+    pointer(treeRow(gids[0]), { ctrlKey: true })
+    expectTreeSelection([gids[0]])
+    pointer(treeRow(gids[1]), { ctrlKey: true })
+    expect(document.activeElement).toBe(node(treeRow(gids[1])))
+    expectTreeSelection([gids[0]])
+    pointer(treeRow(gids[1]), { metaKey: true })
+    expectTreeSelection([gids[0], gids[1]])
+  })
+
   it('first object selection from the layer tree keeps the medium drawer', () => {
     node('[data-outside]').focus()
     pointer('[data-layer="p1"]')
