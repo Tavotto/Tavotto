@@ -227,5 +227,27 @@ describe('TextView 编辑态的插入点与占位', () => {
     expect(el().style.caretColor).toBe('var(--color-accent)')
     expect(el().dataset.placeholder).toBe('输入文字')
     expect(el().textContent, '占位不进正文').toBe('')
+    expect(el().hasAttribute('data-empty')).toBe(true)
+  })
+
+  it('打字后不算空；全选删掉只剩浏览器留下的 <br> 时又算空（不靠 :empty）', () => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj())
+    })
+    const obj = () => useDocumentStore.getState().doc.objects[0] as TextObject
+    act(() => useUiStore.setState({ editingTextId: 't1' }))
+    act(() => root.render(<TextView obj={obj()} />))
+    const el = () => container.querySelector<HTMLElement>('div')!
+    act(() => {
+      el().textContent = 'a'
+      el().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(el().hasAttribute('data-empty')).toBe(false)
+    act(() => {
+      el().replaceChildren(document.createElement('br'))
+      el().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(el().matches(':empty'), '留着 <br>，:empty 不命中').toBe(false)
+    expect(el().hasAttribute('data-empty')).toBe(true)
   })
 })
