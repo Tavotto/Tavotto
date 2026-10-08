@@ -97,3 +97,18 @@ describe('新前端连新引擎', () => {
     expect((await fetchEngineFeatures()).has(ENGINE_FEATURE_SCRIPT_ARGV)).toBe(true)
   })
 })
+
+describe('/api/version 暂时失败后允许重试（Codex #818 r4221135447）', () => {
+  it('第一次 503、第二次 200：第二次拿到真实特性集，而不是缓存的空集', async () => {
+    let calls = 0
+    fetchMock.mockImplementation(async () => {
+      calls += 1
+      if (calls === 1) return { ok: false, status: 503, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => ({ features: [ENGINE_FEATURE_SCRIPT_ARGV] }) }
+    })
+    await expect(fetchEngineFeatures()).rejects.toThrow()
+    const features = await fetchEngineFeatures()
+    expect(features.has(ENGINE_FEATURE_SCRIPT_ARGV)).toBe(true)
+    expect(calls).toBe(2)
+  })
+})

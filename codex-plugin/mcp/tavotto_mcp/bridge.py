@@ -243,6 +243,10 @@ def _argv_path_escapes(value: str, roots: list[str], cwds: list[str] | None) -> 
     沙盒是空的新目录，相对值只剩 `..` 能出去，仍按文字拒。"""
     if not value or "\0" in value:
         return None
+    if value.startswith("@"):
+        # argparse `fromfile_prefix_chars='@'`：`@/x`、`@rel` 会被脚本去掉 @ 后读文件（内容还能再给出越界目标）。
+        # 不递归展开校验，MCP 来源的 argv 里一律拒（Codex #818 r4221135439）。
+        return value
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里
@@ -319,6 +323,7 @@ def _choose_run(
             run = runconfig.default_selection(project, script)
         except runconfig.RunConfigError as exc:
             raise _run_config_error(exc) from exc
+        _recheck_run(run, project, script)
         return (run, RUN_SOURCE_SCRIPT_DEFAULT) if run is not None else (None, None)
     _require_feature(SCRIPT_ARGV_FEATURE, "按精确参数运行脚本")
     if run_config is None:
@@ -326,10 +331,20 @@ def _choose_run(
     runconfig = _optional_engine("runconfig")
     try:
         if run_config is not None:
-            return runconfig.selection(project, run_config, script=script), RUN_SOURCE_REFERENCE
+            run = runconfig.selection(project, run_config, script=script)
+            _recheck_run(run, project, script)
+            return run, RUN_SOURCE_REFERENCE
         return runconfig.selection_for(project, script, argv, source="mcp"), RUN_SOURCE_ARGV
     except runconfig.RunConfigError as exc:
         raise _run_config_error(exc) from exc
+
+
+def _recheck_run(run, project: str, script: str) -> None:
+    """每次经桥执行 / 恢复一份**已登记**的配置前，按**当下**的真实 cwd 与 canonical 解析重查范围。
+    登记时在根内的相对路径，之后符号链接可能改指根外（Codex #818 r4221135428）。登记记录的 `source` 不可靠
+    （同一 (脚本, argv) GUI 与 MCP 共用一个引用，source 只记最先登记的入口），所以经桥执行的一律复核。"""
+    if run is not None:
+        _check_argv_scope(list(run.argv), project, script)
 
 
 def _run_projection(run, source: str | None) -> dict | None:
@@ -1046,6 +1061,7 @@ def _restore_session(session_id: str) -> Session | None:
             run = runconfig.selection(project, record["run_config"], script=info["script"])
         except runconfig.RunConfigError as exc:
             raise _run_config_error(exc) from exc
+        _recheck_run(run, project, info["script"])
     session = Session(
         id=session_id,
         project=project,

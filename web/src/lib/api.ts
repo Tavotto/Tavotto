@@ -4614,11 +4614,14 @@ let engineFeaturesPromise: Promise<ReadonlySet<string>> | null = null
 
 /**
  * 引擎宣告的能力（`/api/version` 的 `features`；公开端点、不带项目）。一个标签页问一次：引擎升级后旧标签页
- * 由同一端点的 `build` 发现过期并刷新。网络失败不缓存（下次再问）；端点在、却没有 `features` = 旧引擎，一个都没有。
+ * 由同一端点的 `build` 发现过期并刷新。网络失败与非 2xx 都不缓存（下次再问）；端点在、却没有 `features` = 旧引擎，一个都没有。
  */
 export function fetchEngineFeatures(): Promise<ReadonlySet<string>> {
   engineFeaturesPromise ??= fetch(apiUrl('/api/version'), { cache: 'no-store' })
     .then(async (res) => {
+      // 404 = 更早的引擎根本没有这个端点（旧引擎，一个特性都没有）；其余非 2xx（启动期代理 502/503 等）是
+      // 暂时失败、不是「没有特性」：reject 走下面的 catch 清掉缓存，允许重试
+      if (!res.ok && res.status !== 404) throw new Error(`/api/version ${res.status}`)
       const body = res.ok ? ((await res.json()) as { features?: unknown }) : {}
       const list = Array.isArray(body?.features) ? body.features : []
       return new Set(list.filter((f): f is string => typeof f === 'string'))

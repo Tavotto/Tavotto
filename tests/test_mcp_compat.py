@@ -728,3 +728,65 @@ def test_relative_argv_inside_the_project_is_allowed_in_the_run_cwd(project_cwd,
     )
     assert ok["structuredContent"].get("ok") is True
     assert pool.runs and pool.runs[-1] is not None
+
+
+# ---------------------------------------------- #818 第三轮：登记后链接改指根外 / argparse @文件
+def _link_escape(project_cwd, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside")
+    link = project_cwd / "later"
+    inside = project_cwd / "data"
+    inside.mkdir()
+    try:
+        os.symlink(inside, link, target_is_directory=True)
+    except OSError:
+        pytest.skip("本机不能建符号链接")
+
+    def retarget():
+        link.unlink()
+        os.symlink(outside, link, target_is_directory=True)
+
+    return retarget
+
+
+def test_a_registered_run_config_is_rechecked_when_its_symlink_later_leaves_the_root(
+    project_cwd, pool, tmp_path_factory, monkeypatch
+):
+    """登记时 `later/out.txt` 在根内；之后链接改指根外：用 run_config 复用被拒；恢复路径用同一个 `_recheck_run`。"""
+    retarget = _link_escape(project_cwd, tmp_path_factory)
+    first = _open(project_cwd, argv=["--out", "later/out.txt"])["structuredContent"]
+    assert first.get("ok") is True
+    rc = first["run_config"]["id"]
+    runs_before = len(pool.runs)
+    retarget()
+    body = _open(project_cwd, run_config=rc)["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert len(pool.runs) == runs_before
+    run = runconfig.selection(str(project_cwd), rc, script="fig1.py")
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge._recheck_run(run, str(project_cwd), "fig1.py")  # 恢复路径用的同一个复核
+    assert exc.value.code == "argv_path_out_of_scope"
+
+
+def test_default_run_config_is_rechecked_before_it_is_reused(project_cwd, pool, tmp_path_factory):
+    retarget = _link_escape(project_cwd, tmp_path_factory)
+    runconfig.set_default(
+        str(project_cwd),
+        "fig1.py",
+        runconfig.put(str(project_cwd), "fig1.py", ["--out", "later/out.txt"]).id,
+    )
+    retarget()
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge._choose_run(str(project_cwd), "fig1.py", None, None)
+    assert exc.value.code == "argv_path_out_of_scope"
+
+
+@pytest.mark.parametrize(
+    "token", ["@/etc/passwd", "@args.txt", "--out=@args.txt", "-o@args.txt", "@"]
+)
+def test_argparse_response_files_are_refused(project, pool, token):
+    """`fromfile_prefix_chars='@'`：argparse 去掉 @ 读文件，文件内容还能再给越界目标。MCP 的 argv 里一律拒。"""
+    before = runconfig.configs_of(str(project), "fig1.py")
+    body = _open(project, argv=["--freq", "1", token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+    assert runconfig.configs_of(str(project), "fig1.py") == before
