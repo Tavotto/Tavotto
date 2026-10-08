@@ -193,10 +193,20 @@ export function ProfilesSettings({
 
   // 选中项换了就重置草稿。**不做 merge**：把上一条的编辑内容带到下一条上，
   // 是那种"我明明没改它"的 bug 里最难查的一种。
-  useEffect(() => {
+  // `loaded` 也是键：清单没回来之前 store 里是前端的内置占位（`builtinSpecRecords`），它与后端那份**同 id、
+  // 同 revision**、data 却不一定相同——只认 id + revision 的话占位的 data 会一直留在草稿里，页面显示旧值、
+  // 导航挂上「没存」的点、切页弹放弃确认，而用户什么都没改（e2e 350px 用例撞出）。占位只有只读内置，
+  // 所以只有只读记录把 `loaded` 算进键：加载中仍可复制 / 新建 / 导入，成功返回的可编辑记录已经是真数据，
+  // 用户也已经能编辑它；迟到的清单（包括写操作触发的重拉）不能用全局 loaded 切换抹掉这份草稿（Codex #828 P1）。
+  // 在渲染里换（React 的「随 props 调整 state」写法），不放 effect：effect 晚一拍，键变了的那一帧草稿还是旧的，
+  // `changed` 先报一次 true 再撤——导航上的点闪一下，恰好在那一帧点切页就会弹放弃确认。
+  const draftKey = selected ? `${selected.id}\u0000${selected.revision}\u0000${selected.read_only ? loaded : 'editable'}` : `none\u0000${loaded}`
+  const [draftFor, setDraftFor] = useState<string | null>(null)
+  if (draftFor !== draftKey) {
+    setDraftFor(draftKey)
     setDraft(selected ? structuredClone(selected.data) : null)
     setName(selected ? profileName(selected) : '')
-  }, [selected?.id, selected?.revision]) // eslint-disable-line react-hooks/exhaustive-deps
+  }
 
   const editable = !!selected && !selected.read_only
   // 空名字不算「改好了」：让它可保存的话，保存会静默跳过改名那一步
@@ -627,7 +637,8 @@ export function ProfilesSettings({
                   <Badge>{selected.built_in ? st('readOnlyBuiltinBadge') : st('readOnlyBadge')}</Badge>
                 </>
               )}
-              <span className="ml-auto flex items-center gap-1.5">
+              {/* 动作簇自己也折行：极窄（~350 CSS px）时「在用」+ 两颗按钮比组还宽，不折就越出组右缘被裁掉（Codex #828 P2 同族） */}
+              <span className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5">
                 {kind === 'spec' &&
                   (bound ? (
                     <>

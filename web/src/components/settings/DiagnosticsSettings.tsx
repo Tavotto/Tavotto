@@ -61,16 +61,23 @@ export function DiagnosticsSettings() {
    *  重取不等于重挑解释器，说成"刚检测过"就是在替它担保。 */
   const [fetchedAt, setFetchedAt] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  /** 取数失败（网络 / 鉴权 / 后端出错，或回包里没有 checks）。**不能当成「零项异常」**：那会在拿不到结果时
+   *  亮出「检查通过」的绿胶囊（Codex #828 P2） */
+  const [failed, setFailed] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true)
     try {
-      const d = await fetch(apiUrl('/api/diagnostics'), withProject()).then((r) => r.json())
-      setChecks(((d.checks ?? []) as Check[]).filter((c) => !DUPLICATED_ELSEWHERE.test(c.id)))
+      const r = await fetch(apiUrl('/api/diagnostics'), withProject())
+      const d = r.ok ? await r.json() : null
+      if (!Array.isArray(d?.checks)) throw new Error('diagnostics unavailable')
+      setChecks((d.checks as Check[]).filter((c) => !DUPLICATED_ELSEWHERE.test(c.id)))
+      setFetchedAt(Date.now())
+      setFailed(false)
     } catch {
       setChecks([])
+      setFailed(true)
     } finally {
-      setFetchedAt(Date.now())
       setBusy(false)
     }
   }, [])
@@ -98,14 +105,18 @@ export function DiagnosticsSettings() {
             status={
               checks === null ? (
                 <span data-diagnostics-loading>{st('about.detecting')}</span>
+              ) : failed ? (
+                st('diagnostics.fetchFailed')
               ) : fetchedAt !== null ? (
                 st('diagnostics.fetchedAt', { time: formatDateTime(fetchedAt) })
               ) : undefined
             }
           >
             {checks !== null && (
-              <StatusPill data-diagnostics-summary tone={failing.length ? 'danger' : 'ok'} dot>
-                {failing.length
+              <StatusPill data-diagnostics-summary tone={failed ? 'warn' : failing.length ? 'danger' : 'ok'} dot>
+                {failed
+                  ? st('diagnostics.summaryUnavailable')
+                  : failing.length
                   ? st('diagnostics.summaryFailing', { count: failing.length })
                   : st('diagnostics.summaryOk')}
               </StatusPill>

@@ -29,8 +29,8 @@ const SELECTION_CLASS: Record<CanvasSelection, string> = {
 }
 /** 编辑态的占位落在底上本身：按底的深浅取纸墨的 65%（白纸上 ≈ 浅色里的 ink-3） */
 const PLACEHOLDER_CLASS: Record<SelectionInk, string> = {
-  'paper-ink': 'empty:before:text-paper-ink/65',
-  paper: 'empty:before:text-paper/65',
+  'paper-ink': 'data-empty:before:text-paper-ink/65',
+  paper: 'data-empty:before:text-paper/65',
 }
 
 /**
@@ -76,6 +76,7 @@ export function TextView({ obj }: { obj: TextObject }) {
     const el = ref.current
     if (!el) return
     el.innerText = obj.text
+    syncEmpty(el)
     el.focus()
     const range = document.createRange()
     range.selectNodeContents(el)
@@ -112,6 +113,7 @@ export function TextView({ obj }: { obj: TextObject }) {
       suppressContentEditableWarning
       spellCheck={false}
       onBlur={editing ? commitText : undefined}
+      onInput={editing ? (e) => syncEmpty(e.currentTarget) : undefined}
       onKeyDown={
         editing
           ? (e) => {
@@ -135,7 +137,8 @@ export function TextView({ obj }: { obj: TextObject }) {
       }
       onPointerDown={editing ? (e) => e.stopPropagation() : undefined}
       // 编辑时空着就写一句占位（2026-10-07 设计审计 §10.1）：此前清空之后框里什么都没有，看不出还在编辑。
-      // 占位只在 ::before 里（不进 innerText、不会被提交成正文）
+      // 占位只在 ::before 里（不进 innerText、不会被提交成正文）。「空」认 data-empty 不认 :empty：
+      // 全选删掉之后 Chromium/WebKit 常在框里留一个 <br>，:empty 就不再命中、占位恰在清空时不见。
       data-placeholder={editing ? translate('stage.textPlaceholder', { ns: 'workspace' }) : undefined}
       className={cn(
         'absolute left-0 top-0 w-full outline-none',
@@ -143,7 +146,7 @@ export function TextView({ obj }: { obj: TextObject }) {
         // tint 叠上去配哪种墨都可能不到 4.5:1（Codex P2 两轮）——纸上的选区自己定不透明的底与墨
         selectionClass,
         // 占位：纸墨 65%，不是界面的 ink-3（暗色里是浅灰，落在白纸上看不见）
-        editing && cn('empty:before:pointer-events-none empty:before:content-[attr(data-placeholder)]', placeholderClass),
+        editing && cn('data-empty:before:pointer-events-none data-empty:before:content-[attr(data-placeholder)]', placeholderClass),
       )}
       style={{
         fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),
@@ -173,6 +176,11 @@ export function TextView({ obj }: { obj: TextObject }) {
       )}
     </div>
   )
+}
+
+/** 编辑框「看起来空」：只剩浏览器留下的 <br> / 末尾换行也算空。DOM 归 contentEditable 管，故直接写属性、不走 state */
+function syncEmpty(el: HTMLElement) {
+  el.toggleAttribute('data-empty', (el.textContent ?? '').replace(/\n$/, '') === '')
 }
 
 /**

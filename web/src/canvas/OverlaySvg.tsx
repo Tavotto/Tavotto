@@ -41,8 +41,8 @@ import {
   DRAW_COLOR,
 } from './interactions'
 import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
-import { IssueOverlay } from './IssueOverlay'
 import { openQuickEdit } from './quickEditStore'
+import { IssueOverlay } from './IssueOverlay'
 
 /**
  * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：

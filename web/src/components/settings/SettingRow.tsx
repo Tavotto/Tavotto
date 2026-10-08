@@ -43,6 +43,26 @@ export const settingControlStyle = {
 } as CSSProperties
 
 /**
+ * 并排时标题列至少留多宽（px）；再窄就**叠放**：标题在上、控件在下、控件从左缘起排（Codex #828 P2）。
+ * 定宽的控件列不会自己缩：组宽不够「标题最小 + 间距 24 + 控件列 240」时，此前标题列被压到 0、控件越出行右缘，
+ * 再被内容区的 `overflow-x-hidden` 裁掉（桌面缩放到 ~350 CSS px 可达；属性栏里的环境卡同理）。
+ */
+export const SETTING_LABEL_MIN = 128
+/**
+ * 叠放阈值 = **组的宽度**（`ui/FieldGroup` 是 `@container`；组内左右各 16 的内边距算在里面）。
+ * 量的是装着这一行的那个组，不是视口：同一个宽度的视口，设置页与属性栏里的组宽不同。
+ * Tailwind 只认字面量类名，所以下面几串里写的是 424；`settingsDisclosure.test` 核对它与这里的算式相等。
+ */
+export const SETTING_ROW_STACK_BELOW = SETTING_LABEL_MIN + 24 + SETTING_CONTROL_WIDTH + 32
+/** 叠放时行的网格：一列，标题与控件之间 6px */
+export const settingRowStacked = '@max-[424px]:grid-cols-1 @max-[424px]:gap-y-1.5'
+/** 叠放时控件格：撑满那一列、控件左起；定宽控件（`w-[var(--setting-control)]`）不超过这一列 */
+export const settingControlStacked =
+  '@max-[424px]:justify-self-stretch @max-[424px]:justify-start @max-[424px]:[--setting-control:min(240px,100%)]'
+/** 叠放时只读摘要行的值：左起，与标题同一条竖线 */
+export const settingValueStacked = '@max-[424px]:justify-self-start'
+
+/**
  * 一行设置（Visual Consolidation Session 5 定下的网格，Session 6 定下的对齐）：
  *
  * ```text
@@ -146,6 +166,7 @@ export function SettingRow({
       className={cn(
         'grid items-start gap-x-6',
         fill ? 'grid-cols-1 gap-y-1.5' : balanced ? 'grid-cols-[minmax(0,4fr)_minmax(0,6fr)]' : settingRowGrid,
+        !fill && settingRowStacked,
         compact ? cn('min-h-8', grouped ? 'py-1.5' : 'py-0.5') : grouped ? 'min-h-12' : 'min-h-12 py-2.5',
       )}
     >
@@ -181,7 +202,13 @@ export function SettingRow({
       </div>
       {/* 控件贴列右缘（2026-09-15 打磨批次 A，用户拍板）：定宽列里左起对齐会把控件漂在页面中间、
           右侧空一大片；整行宽的 fill 形态不在此列，照旧铺满 */}
-      <div className={cn('flex min-h-7 min-w-0 items-center gap-2', !fill && !balanced && 'justify-end justify-self-end')}>
+      <div
+        className={cn(
+          'flex min-h-7 min-w-0 items-center gap-2',
+          !fill && !balanced && 'justify-end justify-self-end',
+          !fill && settingControlStacked,
+        )}
+      >
         {children}
       </div>
       {below != null && (
@@ -210,12 +237,20 @@ export function SettingValueRow({
       {...rest}
       data-summary-row
       style={settingControlStyle}
-      className={cn('grid min-h-8 items-center gap-x-6 text-base', grouped ? 'py-1.5' : 'py-0.5', settingRowGrid)}
+      className={cn(
+        'grid min-h-8 items-center gap-x-6 text-base',
+        grouped ? 'py-1.5' : 'py-0.5',
+        settingRowGrid,
+        settingRowStacked,
+      )}
     >
       <span className="min-w-0 truncate text-ink" title={label}>
         {label}
       </span>
-      <span className="min-w-0 justify-self-end truncate text-sm text-ink-2 tabular-nums" title={value}>
+      <span
+        className={cn('min-w-0 justify-self-end truncate text-sm text-ink-2 tabular-nums', settingValueStacked)}
+        title={value}
+      >
         {value}
       </span>
     </div>

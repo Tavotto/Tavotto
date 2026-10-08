@@ -286,6 +286,41 @@ describe('画布标签条的键盘', () => {
     expect(document.activeElement).toBe(tab('c1'))
   })
 
+  // Codex #833：改名框用 Enter / Esc 收起，焦点回到这个页签；点了别处（另一个输入框、工具条上的钮）收起的
+  // 不抢回来——焦点已经在用户点的地方了，抢回页签会让接下来的打字 / 快捷键落进页签条
+  describe('改名收起后的焦点', () => {
+    const renameBox = () => host.querySelector<HTMLInputElement>('[data-canvas-tab-rename]')
+    const startRename = () => {
+      tab('c2').focus()
+      key(tab('c2'), { key: 'F2' })
+      expect(document.activeElement).toBe(renameBox())
+    }
+
+    it.each(['Enter', 'Escape'])('%s 收起改名：焦点回到这个页签', async (k) => {
+      mount()
+      startRename()
+      key(renameBox()!, { key: k })
+      await flush()
+      expect(renameBox()).toBeNull()
+      expect(document.activeElement).toBe(tab('c2'))
+    })
+
+    it('点别处收起改名：焦点留在用户点的那个输入框上', async () => {
+      const other = document.createElement('input')
+      document.body.appendChild(other)
+      try {
+        mount()
+        startRename()
+        act(() => other.focus())
+        await flush()
+        expect(renameBox()).toBeNull()
+        expect(document.activeElement).toBe(other)
+      } finally {
+        other.remove()
+      }
+    })
+  })
+
   // Codex #833：关掉第一个 / 中间那个页签后，焦点落到留下来的邻居上（右边那个，没有就左边那个），
   // 不按关之前的下标去取——那样会取回刚关掉的 id，焦点掉出页签条
   describe('Delete / ⌘W 关页签后焦点留在页签条里', () => {

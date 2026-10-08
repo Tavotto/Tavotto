@@ -513,6 +513,41 @@ describe('旧样式在设置里第一次被编辑：与样式面板同一条升�
   })
 })
 
+describe('清单还没从后端回来时打开规范页（Codex #828 P2 同族，e2e 350px 用例撞出）', () => {
+  it('占位的内置清单换成后端那份：草稿跟着换、不报「有没存的修改」', async () => {
+    // 同一个 id、同一个 revision（1）——占位记录（builtinCatalog）与后端那份只有 data 不同。草稿按 id + revision
+    // 重置的话，占位那份的 data 会一直留在草稿里：导航挂上蓝点，切页弹「放弃未保存的修改？」，而用户什么都没改
+    const serverSpecs = BUILTIN_SPECS.map((r) => ({ ...r, data: { ...(r.data as object), min_effective_font_size_pt: 7 } }))
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      await gate
+      return new Response(
+        JSON.stringify({ profiles: String(input).includes('/style') ? [BUILTIN_STYLE, USER_STYLE] : serverSpecs }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }) as typeof fetch
+    useProfileStore.setState({ specs: BUILTIN_SPECS as never, loaded: false })
+    const onDirty = vi.fn()
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ProfilesSettings kind="spec" onDirtyChange={onDirty} />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => {
+      release()
+      await gate
+    })
+    await act(async () => {})
+    expect(useProfileStore.getState().loaded, '前提：后端那份已经落进 store').toBe(true)
+    expect(onDirty).not.toHaveBeenCalledWith(true)
+    const rows = [...document.body.querySelectorAll('[data-field-group="fonts"] > div')]
+    expect(rows.find((r) => r.textContent?.startsWith('最小字号'))!.textContent, '显示的是后端那份').toContain('7 pt')
+  })
+})
+
 describe('规范页把边界与快照摊开（审计 T41）', () => {
   it('数值来自规范自己，行内不再复述检查判据（2026-09-11 用户反馈：去掉「检查 ≥ 6pt，否则记为警告」这类行）', async () => {
     await mount('spec')

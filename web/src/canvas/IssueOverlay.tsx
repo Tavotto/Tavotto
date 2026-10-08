@@ -3,6 +3,7 @@ import { t as translate } from '@/i18n'
 import { geomTarget, isElementHidden, panelFullRect } from '@/lib/elementGeom'
 import { openProblemAt, focusFailureMessage } from '@/lib/issueFocus'
 import { visualBounds } from '@/lib/geometry'
+import { panelContentTransform, panelTransformSvg } from '@/lib/panelTransform'
 import { currentFigureOf } from '@/lib/problemContext'
 import { SEVERITIES, type Severity } from '@/lib/profile'
 import type { ValidationIssue } from '@/lib/validation'
@@ -13,7 +14,6 @@ import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { mmToPx, mmToViewX, mmToViewY, type ViewTransform } from '@/store/viewportStore'
 import { objectRotation, type CanvasObject, type PanelObject } from '@/types/document'
-import { elementOverlayTransform } from './elementGeometry'
 import { PIN_COLORS, tokenVar } from './issuePinColors'
 
 /**
@@ -78,8 +78,8 @@ function HoverRect({
  * 问题落在图内某个元素上（刻度、轴标题、图例……，`issueHover.gid`）：轮廓描**那个元素**，不是整张图。
  * 换算与图内编辑的 `OverlaySvg.ElementBoxes` 同一套：只认此刻显示着的精确 manifest
  * （`useDisplayedExactManifest`，权威不在就不按旧墨迹框猜）、`geomTarget`（位图落到宿主子图）、
- * `panelFullRect`（裁剪 / 旋转的内容坐标系），再整体套上面板内容的显示变换（`canvas/elementGeometry.elementOverlayTransform`，
- * 底下是 `lib/panelTransform`：先翻转、再旋转，绕包围盒中心——与 `PanelView` 同一份权威）。
+ * `panelFullRect`（裁剪 / 旋转的内容坐标系），再整体套上面板内容的显示变换（`lib/panelTransform`：
+ * 先翻转、再旋转，绕包围盒中心——与 `PanelView` 同一份权威）。
  * 解不出来（manifest 没就位、gid 不在里面、是 `figure` 或已隐藏）退回整张图的轮廓（Codex #832）。
  */
 function ElementHover({ panel, gid, t }: { panel: PanelObject; gid: string; t: ViewTransform }) {
@@ -103,9 +103,9 @@ function ElementHover({ panel, gid, t }: { panel: PanelObject; gid: string; t: V
       y={y - pad}
       width={mmToPx(bw * full.w, t) + 2 * pad}
       height={mmToPx(bh * full.h, t) + 2 * pad}
-      // 与面板内容同一个显示变换，取自图内编辑框同一个出处（`canvas/elementGeometry`）：先翻转、再旋转，
-      // 都绕包围盒中心——只转不翻的话，水平 / 垂直翻转过的图上轮廓落在镜像位置（#832 / #833 评审）
-      transform={elementOverlayTransform(panel, pb)}
+      // 与面板内容同一个显示变换（`PanelView` 的 CSS transform 同出 `lib/panelTransform`）：先翻转、再旋转，
+      // 都绕包围盒中心——只转不翻的话，水平 / 垂直翻转过的图上轮廓落在镜像位置（#832 评审）
+      transform={panelTransformSvg(panelContentTransform(panel), pb.x + pb.w / 2, pb.y + pb.h / 2)}
     />
   )
 }

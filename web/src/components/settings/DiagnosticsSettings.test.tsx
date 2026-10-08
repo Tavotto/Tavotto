@@ -100,6 +100,22 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+describe('取数失败', () => {
+  // 拿不到结果不是「零项异常」：不许亮绿胶囊，也不报「本页数据取自 …」（Codex #828 P2）
+  it.each([
+    ['回包不是 2xx', () => Promise.resolve({ ok: false, json: () => Promise.resolve({ error: 'boom' }) } as Response)],
+    ['回包里没有 checks', () => Promise.resolve({ ok: true, json: () => Promise.resolve({ error: 'boom' }) } as Response)],
+    ['网络失败', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ])('%s → 「未能检测」而不是「检查通过」', async (_name, response) => {
+    await mount(CHECKS, response())
+    const summary = document.querySelector('[data-diagnostics-summary]')!
+    expect(summary.getAttribute('data-status-pill')).toBe('warn')
+    expect(summary.textContent).toContain(st('diagnostics.summaryUnavailable'))
+    expect(text()).not.toContain(st('diagnostics.summaryOk'))
+    expect(text()).toContain(st('diagnostics.fetchFailed'))
+  })
+})
+
 describe('首屏', () => {
   /**
    * 顺序是「健康 → 报告 → 开发者」（2026-10-07 设计审计 §9.1 P0），同时守住 #797「异步结果不挪动正在按的入口」：

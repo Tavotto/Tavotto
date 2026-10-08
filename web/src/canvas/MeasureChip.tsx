@@ -12,6 +12,8 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
+import { renderedSelection } from '@/store/zoomToSelection'
 import type { PanelObject } from '@/types/document'
 import { mmToPx, mmToViewX, mmToViewY, useViewportStore } from '@/store/viewportStore'
 import { elementDeltaOnPage, elementRectOnPage } from './elementGeometry'
@@ -52,6 +54,8 @@ export function MeasureChip() {
   const draft = useInteractionStore((s) => s.draft)
   const objects = useDocumentStore((s) => s.doc.objects)
   const ids = useSelectionStore((s) => s.ids)
+  // 快速编辑里舞台上只画那一张图：选区里别的对象（从图层抽屉 ⇧ 选进来的）看不见，不进读数也不进锚点（Codex #833）
+  const fastEditPanelId = useWorkspaceStore(fastEditPanelOf)
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
@@ -81,7 +85,7 @@ export function MeasureChip() {
   // 被改的那个框：画新对象时是草稿框，其余是选区里看得见的对象。读数（W × H / X, Y）说的是逻辑盒（未旋转的
   // x/y/w/h，与属性页同一套数）；芯片**贴在**看得见的外接框下面（`visualBounds` 的并，Codex #833）——
   // 旋转的文字 / 形状转出来比逻辑盒高时，按逻辑盒摆会压在对象上。
-  const sel = kind === 'draw' && draft ? [] : objects.filter((o) => ids.includes(o.id) && !o.hidden)
+  const sel = kind === 'draw' && draft ? [] : renderedSelection(objects, ids, fastEditPanelId)
   const box: Rect | null = kind === 'draw' && draft ? { x: draft.x, y: draft.y, w: draft.w, h: draft.h } : boundsOf(sel)
   const fig =
     figureNudge && editedPanel && manifest

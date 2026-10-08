@@ -414,6 +414,55 @@ describe('搜索（2026-10-07 设计审计 §9.1，settingsRegistry）', () => {
     expect(row!.hasAttribute('data-settings-hit')).toBe(true)
   })
 
+  it('钻入页挂着时点同一分区的分区级结果（没有锚点）：同样退回列表（Codex #828 P2）', async () => {
+    const caps = capsOf([agentCaps()])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(String(input).includes('/api/ai/capabilities') ? caps : { checks: [] }),
+        } as Response),
+      ),
+    )
+    await open('ai')
+    await act(async () => {})
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-agent-open]')!.click())
+    expect(document.querySelector('[data-agent-detail]'), '进了详情').toBeTruthy()
+    await type(st('section.ai'))
+    const sectionHit = document.querySelector<HTMLButtonElement>('[data-settings-results] [data-section="ai"]')
+    expect(sectionHit, '分区名本身是一条结果').toBeTruthy()
+    await act(async () => sectionHit!.click())
+    await act(async () => {})
+    expect(document.querySelector('[data-agent-detail]'), '离开了详情').toBeNull()
+    expect(document.querySelector('[data-settings-anchor="ai.default"]'), '回到了列表').toBeTruthy()
+  })
+
+  it('钻入页挂着时方向键落回当前分区（只剩一项可走）：不当作「去这一页」、不退出详情', async () => {
+    const caps = capsOf([agentCaps()])
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(String(input).includes('/api/ai/capabilities') ? caps : { checks: [] }),
+        } as Response),
+      ),
+    )
+    await open('ai')
+    await act(async () => {})
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-agent-open]')!.click())
+    // 搜索只剩当前分区一项时，任何方向键都落回它自己
+    await type(st('section.ai'))
+    expect(document.querySelectorAll('[data-settings-results] [data-section]').length, '前提：只剩一项').toBe(1)
+    const only = document.querySelector<HTMLButtonElement>('[data-settings-results] [data-section="ai"]')!
+    await act(async () => {
+      only.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    })
+    await act(async () => {})
+    expect(document.querySelector('[data-agent-detail]'), '方向键不是点击：详情还在').toBeTruthy()
+  })
+
   /** 注册表里每一条都在它那一页上找得到锚点：登记了、页面却没挂 `data-settings-anchor` 时，点结果什么都不发生 */
   it('注册表里的每一条在页面上都有锚点', async () => {
     const bySection = new Map<string, string[]>()

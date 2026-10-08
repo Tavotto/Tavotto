@@ -232,7 +232,8 @@ export function SettingsDialog() {
     if (!pendingAnchor) return
     const el = pendingAnchor
       .map((id) => contentRef.current?.querySelector<HTMLElement>(`[data-settings-anchor="${id}"]`))
-      .find(Boolean)
+      // 收起中的折叠组（Reveal 退场动画那几帧还挂着）里的行看不见：滚过去、亮一下都落空，退到下一个锚点（组本身）
+      .find((a) => a && !a.closest('[data-reveal][data-state="closed"]'))
     setPendingAnchor(null)
     if (!el) return
     el.scrollIntoView?.({ block: 'center' })
@@ -268,8 +269,9 @@ export function SettingsDialog() {
     if (id !== section) {
       if (!(await leaveSection())) return
       setSection(id)
-    } else if (anchor && crumb) {
-      // 同一分区里正挂着钻入页（改图助手 › Codex）：锚点都在列表态上，先退回列表再落地（Codex #828 P2）
+    } else if (crumb) {
+      // 同一分区里正挂着钻入页（改图助手 › Codex）：点这一页（导航项 / 分区级结果，没有锚点）就是回到这一页的顶层；
+      // 带锚点的结果，锚点也都在列表态上——两种都先退回列表（Codex #828 P2 ×2：此前只在有锚点时退，分区级结果点了不动）
       crumb.onBack()
     }
     if (anchor) setPendingAnchor(anchor)
@@ -292,6 +294,8 @@ export function SettingsDialog() {
           : e.key === 'ArrowDown' || e.key === 'ArrowRight'
             ? (i + 1) % visible.length
             : (i - 1 + visible.length) % visible.length
+    // 方向键落回当前分区（Home 已在首项、只剩一项可走）是「没走动」，不是「去这一页」：不退出钻入页
+    if (visible[next] === section) return
     void go(visible[next])
   }
 
