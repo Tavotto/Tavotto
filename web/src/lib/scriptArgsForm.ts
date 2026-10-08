@@ -48,7 +48,12 @@ export interface ScriptArgsSchema {
   reasons: string[]
   form_enabled: boolean
   parse_call: string | null
+  /** 声明了像负数的选项名（3.14 之前的文法：`^-\d+$|^-\d*\.\d+$`） */
   negative_number_options: boolean
+  /** 同上，按 3.14 起的文法（`-\.?\d`）；老后端没有这个键 = 当作与上一项相同 */
+  negative_number_options_extended?: boolean
+  /** worker 的 Python 版本（项目记住的事实，如 `3.14.7`）；不知道 = null / 缺省 → 取较窄的旧文法 */
+  python_version?: string | null
   arguments: ScriptArgument[]
   exclusive_groups: { id: string; required: boolean; members: string[] }[]
   subcommands: { dest: string | null; required: boolean; choices: string[]; dynamic: boolean } | null
@@ -108,14 +113,38 @@ export type EditError =
 
 export type EditResult = { ok: true; tokens: string[] } | { ok: false; error: EditError }
 
-const NEGATIVE = /^-\d+$|^-\d*\.\d+$/
+/**
+ * argparse 的 `_negative_number_matcher`，按 CPython 源码逐字（本机实测 `ArgumentParser()._negative_number_matcher.pattern`）：
+ * - Python <= 3.13（3.13.13 / 3.12.12 / 3.11.14）：`^-\d+$|^-\d*\.\d+$`
+ * - Python 3.14（3.14.7）：`-\.?\d`（`.match`，无结尾锚：`-1e3` / `-.5` / `-1.` / `-1_0` / `-1j` / `-1abc` 都算）
+ * Python 的 `\d` 是 Unicode 十进制数字（`\p{Nd}`）；`$` 也匹配结尾换行之前。后端同形：`scriptargs.NEGATIVE_NUMBER_*`。
+ */
+const NEGATIVE_LEGACY = /^-\p{Nd}+(?:\n)?$|^-\p{Nd}*\.\p{Nd}+(?:\n)?$/u
+const NEGATIVE_EXTENDED = /^-\.?\p{Nd}/u
+
+/** 3.14 起的文法？版本不明时取旧文法：旧文法认的负数是新文法的子集，不确定时把更多 token 当选项只会让表单更保守
+ *（拒绝写入、退回原始 token 编辑），反过来则会写出 3.13 的 parser 当选项吃掉的 token（运行时才报错）。 */
+export const usesExtendedNegativeGrammar = (schema: Pick<ScriptArgsSchema, 'python_version'>): boolean => {
+  const m = /^\s*(\d+)\.(\d+)/.exec(schema.python_version ?? '')
+  if (!m) return false
+  const major = Number(m[1])
+  return major > 3 || (major === 3 && Number(m[2]) >= 14)
+}
+
+export const looksLikeNegativeNumber = (schema: ScriptArgsSchema, token: string): boolean =>
+  (usesExtendedNegativeGrammar(schema) ? NEGATIVE_EXTENDED : NEGATIVE_LEGACY).test(token)
+
+const hasNegativeLookingOptions = (schema: ScriptArgsSchema): boolean =>
+  usesExtendedNegativeGrammar(schema)
+    ? (schema.negative_number_options_extended ?? schema.negative_number_options)
+    : schema.negative_number_options
 
 const byId = (schema: ScriptArgsSchema) => new Map(schema.arguments.map((a) => [a.id, a]))
 
 /** argparse 会不会把这个 token 当成选项（`_parse_optional` 的前几条判据）。 */
 export const looksLikeOption = (schema: ScriptArgsSchema, token: string): boolean => {
   if (token.length < 2 || token[0] !== '-') return false
-  if (NEGATIVE.test(token) && !schema.negative_number_options) return false
+  if (looksLikeNegativeNumber(schema, token) && !hasNegativeLookingOptions(schema)) return false
   return true
 }
 
