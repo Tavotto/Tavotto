@@ -171,7 +171,8 @@
     "saveAs": "Save as…",
     "saveErrorBody": "Your changes are kept for now, not yet on disk.",
     "tooNewBody": "Tavotto didn’t open it, so the file on disk is unchanged. Upgrade and try again.",
-    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})"
+    "tooNewTitle": "This layout comes from a newer Tavotto (schema {{schema}})",
+    "moreActions": "More ways to resolve"
   },
   "document": {
     "defaultName": "Untitled"
@@ -341,11 +342,6 @@
     "hideObjects": "Hide {{count}} objects",
     "showObjects": "Show {{count}} objects"
   },
-  "hud": {
-    "cursor": "Cursor",
-    "offset": "Offset",
-    "size": "Size"
-  },
   "layerTree": {
     "collapseGroup": "Collapse group",
     "emptyTitle": "No objects on the canvas yet",
@@ -468,7 +464,9 @@
     "hideCount": "Hide {{count}} objects",
     "zOrder": "Stacking order",
     "deleteCount": "Delete {{count}} objects",
-    "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first"
+    "cropRotatedReason": "Rotated figures can’t be cropped yet; reset the rotation first",
+    "copy": "Copy",
+    "paste": "Paste"
   },
   "rail": {
     "assets": "Assets",
@@ -644,7 +642,10 @@
     "emptyHintNoAssets": "Put PDF/PNG files or plotting scripts in the project folder, and they’ll show up in the asset library.",
     "emptyTitle": "The canvas is empty",
     "exitTitle": "Leave figure editing and go back to the canvas layer (Esc)",
-    "tryTutorial": "Try the sample project"
+    "tryTutorial": "Try the sample project",
+    "rulerUnit": "mm",
+    "rulerUnitTitle": "Ruler unit: millimetres",
+    "textPlaceholder": "Type text"
   },
   "stylePanel": {
     "emptyTitle": "Select a figure on the canvas to see its style here",
@@ -802,14 +803,18 @@
       "notResizable": "Some members are positioned automatically by matplotlib, so the group can't be moved or scaled",
       "locked": "This group has a locked member; unlock it to move or scale the group",
       "incomplete": "Some members have no position in this render, so the group can't be moved or scaled right now"
-    }
+    },
+    "errorTitle": "Something didn’t work",
+    "copyDetails": "Copy details",
+    "copiedDetails": "Copied"
   },
   "tabs": {
     "allCanvases": "All canvases",
     "canvasName": "Canvas name",
     "closeTab": "Close tab {{name}}",
     "listLabel": "Canvas tabs",
-    "newCanvas": "New canvas"
+    "newCanvas": "New canvas",
+    "unopened": "Not open"
   },
   "toolHint": {
     "arrow": "Drag to draw an arrow; hold Shift to snap to 15°. Esc to cancel.",
@@ -879,12 +884,17 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "zoomValue": "Zoom {{percent}}%",
-    "timelineButton": "Layout timeline"
+    "timelineButton": "Layout timeline",
+    "issueLastDoc": "Last layout not opened",
+    "issueTooNew": "Newer layout",
+    "issueAria": "Layout status: {{status}}. Show details",
+    "documentRenameHint": "Click for layout actions; double-click or F2 to rename",
+    "zoomValueInput": "Zoom (%)",
+    "zoomSelection": "Zoom to selection"
   },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",
-    "later": "Later",
-    "title": "Tool updated"
+    "later": "Later"
   },
   "hints": {
     "panel_editable": "Double-click to edit inside the figure.",
@@ -1060,5 +1070,13 @@
       "cancelled": "Stopped",
       "attention": "Needs attention"
     }
+  },
+  "canvasMenu": {
+    "aria": "Canvas actions",
+    "paste": "Paste",
+    "selectAll": "Select all",
+    "rulers": "Rulers",
+    "grid": "Grid",
+    "safeArea": "Safe area"
   }
 }

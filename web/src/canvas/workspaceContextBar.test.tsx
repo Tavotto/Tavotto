@@ -123,6 +123,8 @@ describe('什么时候出现', () => {
     useUiStore.getState().setElementPanel('p1')
     await mount()
     expect(bar()?.dataset.workspaceMode).toBe('layout')
+    // 浮动外观三档（2026-10-07 设计审计 §10.1）：一行的浮动条是胶囊
+    expect(bar()!.className).toContain('rounded-full')
   })
 
   it('快速编辑：出现，模式记为 fast_edit', async () => {

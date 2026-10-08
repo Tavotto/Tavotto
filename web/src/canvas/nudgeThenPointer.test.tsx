@@ -293,9 +293,8 @@ describe('选中框手柄：同一道闸', () => {
     document.body.appendChild(overlay)
     const overlayRoot = createRoot(overlay)
     act(() => overlayRoot.render(createElement(OverlaySvg)))
-    const handles = [...overlay.querySelectorAll('rect')].filter((r) =>
-      /resize/.test(r.getAttribute('style') ?? ''),
-    )
+    // 手柄认 `data-element-handle`（2026-10-07 起沿边还有同样带 resize 光标的命中带，按光标数会多出 4 条）
+    const handles = [...overlay.querySelectorAll<SVGRectElement>('rect[data-element-handle]')]
     expect(handles).toHaveLength(8)
 
     tap('ArrowRight')
