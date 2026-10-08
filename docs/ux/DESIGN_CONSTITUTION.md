@@ -36,7 +36,11 @@
 | warning | `warn`（锚点） | `#b07400` | 同上。锚点对白只有 3.9:1——只给图标 / 圆点，字一律 `warn-content` |
 | success | `ok`（锚点） | `#2b7649` | 同上 |
 | info | `info` | = accent | 同上（锚点就是 accent） |
-| shadow | `shadow`（只在投影 token 里） | `#1b1b18` | 所有投影的底色（`color-mix(shadow N%)`），暗色只换它 |
+| shadow | `shadow`（投影 token、遮罩） | `#1b1b18` | 所有投影模糊层与遮罩的底色（`color-mix(shadow N%)`；`bg-shadow/N` 是对话框 / 覆盖抽屉的遮罩） |
+| shadow-edge | `shadow-edge`（只在投影 token 里） | = shadow | 投影的 1px 环；暗色换白（暗底上的黑环看不见，第二十八节） |
+| paper | `paper` | `#ffffff` | **纸**：画布上的页面、图的缩略图底。文档内容的颜色，两套主题同值（第二十八节） |
+| paper-ink | `paper-ink` | `#1b1b18` | 界面画在纸上的记号（网格、透明棋盘格、占位框的字）。同上，不跟主题走 |
+| thumb | `thumb` | = surface | 浮起的那一块：分段 / 选项格的选中 thumb、开关钮、滑杆钮（配 `shadow-thumb`）；暗色比面板亮一档 |
 
 工具类名沿用旧名（不为了改名动七百处调用），对照表也写在 index.css 顶部。
 
@@ -882,7 +886,7 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   用 canvas-chrome（对话框盖住它），toast 档预留给它移出画布列那一期。门禁：数字 z-index（类名与内联 `zIndex`）不许出现。
 - **焦点环** 2px accent、offset 2；可编辑框聚焦只换边色，插入点 `caret-color: accent`。
 - **滚动条** 6px 胶囊，只在该滚动区被悬停或内含焦点时画出。
-- **画布覆盖层 token**：`--sel-hover-opacity` .6、唯一虚线 `--sel-dash` `4 3`、手柄填充 `--handle-fill` = surface、遮罩 `--color-scrim` = ink 34%。
+- **画布覆盖层 token**：`--sel-hover-opacity` .6、唯一虚线 `--sel-dash` `4 3`、手柄填充 `--handle-fill` = surface、遮罩 `--color-scrim` = shadow 34%（2026-10-07 暗色主题起从 shadow 派生，此前是 ink 34%——ink 在暗色里是浅色）。
   画布代码逐处迁移在画布那一期。
 - **抽屉底** `--drawer-bg`：`LeftPanel` 停靠 = bg、覆盖 = surface；吸顶组头这类「必须与抽屉同色」的子元素读它。
 
@@ -1031,3 +1035,61 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   条里方向键漫游，鼠标点工具不拿焦点。
 - 命令面板 = `ui/Dialog chrome="palette"`：焦点陷阱与归还、输入框是 combobox（`aria-activedescendant`）、行是 option 不嵌按钮；
   输入行 48 / 输入 15、行 32 / 13；不画 Esc 键帽；有选区时输入行右端说出作用对象。
+
+## 二十八、2026-10-07 token 分层与暗色主题（设计审计 P2 #13 / #14）
+
+值仍只在 `web/src/index.css`。这一节定的是**颜色怎么分层、暗色怎么换**；与前文冲突处以本节为准。
+
+### 分层：palette → semantic
+- **palette 是每个主题一张值表**，只住在 `index.css`：浅色 = `@theme` 里的 hex；暗色 = 文件末尾那一段。组件看不见 palette。
+- **semantic 是 `--color-*` 名字**（surface / ink-2 / danger-content / syntax-keyword / paper / thumb …）。组件**只**引用语义名：
+  不写 hex / `rgb()` / `hsl()`、不写 `bg-white` / `text-white` 这类颜色类、`color-mix()` 不调 ink（`foundation.test` 三条门禁，
+  判据范围是画界面的代码：components / canvas / playground / mcp / embedded / onboarding 与 App / main）。豁免按文件带个数、写明是哪一种：
+  **文档数据**（属性缺省色 `#000000` / `#FFFFFF`、colormap 色标、样式样张）、**遮罩**（mask 里的黑白只是不透明度）、**第三方品牌色**。
+  lib / store / types 里的颜色都是文档数据（覆盖值、预设、导出默认），不在判据里。
+- **公式类 token 两套共用**：hover 5% / active 8% / selected 10% / border 12% / group 3% = ink 的 N%；状态色 `-surface` / `-border` = 锚点混 surface；
+  glass = field 90%；handle-fill = surface；scrim = shadow 34%（暗色 50%）。暗色表只写锚点与底，公式自己跟着变。
+- **投影**：Tailwind 把 `--shadow-*` 的值内联进 `shadow-*` 工具类（只有里面的 `var()` 是活的），所以投影串不分主题，
+  只读两种颜色：模糊层 `--color-shadow`、1px 环 `--color-shadow-edge`（浅色里 = shadow）。
+- **遮罩**（对话框、覆盖式抽屉、裁剪框外）从 shadow 派生（`bg-shadow/30` · `bg-shadow/10` · `--color-scrim`），不从 ink——ink 在暗色里是浅色，遮罩会变成提亮。
+- **墨底上的字**是 `text-surface`（主按钮、Tooltip、ink 底角标），不是白；暗色里它们自然反过来（浅底深字）。
+
+### 暗色主题
+- **生效条件两条、同一张表写两遍**（`tokenContrast.test` 逐字比对）：系统是暗色且用户没选浅色——
+  `@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) {…} }`；用户选了深色——`:root[data-theme='dark'] {…}`。
+  两段都写 `color-scheme: dark`，原生控件（滚动条、取色框）跟着变。
+- **偏好**：设置 › 通用 › 外观 = 跟随系统 / 浅色 / 深色（三档 `Segmented`，`data-testid="settings-theme"`，每档 `data-value`）。
+  存在本机 `tavotto.ui` 的 `theme`（与侧栏、网格同一份界面偏好）；写入口只有 `uiStore.setTheme`，落到 `<html>` 上的只有
+  `lib/theme.applyTheme`（system = 不挂 `data-theme`，交给媒体查询，系统切外观当场跟着变；light / dark = 挂上）。首帧之前的落点是
+  `index.html` `<head>` 里一段同步内联脚本（入口是延迟执行的 module，等它就晚了一帧）：读同一个 `tavotto.ui`、只认 light / dark、存储抛错就不挂；
+  它与 uiStore + `applyTheme` 的读法由 `lib/themeBoot.test` 拿原文逐例对拍。入口在 React 挂载之前再调一次 `applyTheme` 对账。没有 CSP 拦内联脚本（Tauri `security.csp` 为 null，后端不发 CSP）——将来加 CSP 要给这段脚本放 hash。「界面看起来不对？」那颗重置**不动外观**。/try 与 Codex 画布没有这个设置，跟随系统。
+- **值表**（暗色）：桌面 `#161615` < 画布灰 `#1b1b1a` < 面板 `#222220` < surface-2 `#282826`；可编辑框 `#2c2c2a` / hover `#323230`（暗底上「深一级」是更亮一级）；
+  墨 `#ececea` / ink-2 `#c2c2bc` / ink-3 `#9b9b94` / faint `#6a6a64`；控件边界 `#7b7b74`；accent 就是品牌蓝 `#5a92e5`（暗底上它本身就够 4.5:1）、浅底 `#1d2a3d`；
+  锚点 danger `#ef6e55` · warn `#d9a23a` · ok `#4fb37a`，`-content` 改成锚点 70% 混**白**；语法色七档提亮一档、comment 仍 = ink-3；thumb `#3a3a37`；
+  shadow 纯黑、shadow-edge 白。
+- **纸不变**：`--color-paper` / `--color-paper-ink` 不在暗色表里。画布上的页面、图、图的缩略图底是印刷品，**不反相、不变暗**；暗色只改它周围的界面。
+  界面画在纸上的东西用纸上的墨（网格、透明棋盘格、运行时占位框、文字框的占位），世界层里没写颜色的字继承 paper-ink。
+  二 / 三级的纸上墨是 `paper-ink-2` / `paper-ink-3`（paper-ink 的 80% / 65%，画布 / 版本缩略图里的文字框与标注线）——纸上不写界面的
+  `ink-2` / `ink-3` / `ink-faint`（暗色里变浅，落在白纸上 1.8 / 2.8:1）；`foundation.test`「纸上的东西用纸上的墨」按 AST 认纸面子树。
+  透明页面的棋盘格是**不透明**的纸色：深格 `--color-paper-checker` = paper-ink 6% 混进纸（不是混进 transparent），
+  页面那一层自己就是底，半透明的格子会透出近黑的画布、成了黑白棋盘（Codex P2）；网格线这类半透明的纸上墨只能压在不透明的纸 / 棋盘格上。
+  纸盒里没有图可画时（运行时图没跑过）那块不是纸，底用 `surface-2`。
+  运行时图的占位框（`data-runtime-placeholder`）自己是一张小纸片：底 `bg-paper-tint`（paper-ink 3% 混进纸，**不透明**），字 `paper-ink-2` / `paper-ink-3`（合成后 ≥4.5:1）——拖到页面外落在暗色画布上也不是深字压深底；`paper-ink` 不当底（`bg-paper-ink/N` 会透出画布，`foundation.test` 拦）。
+  快速编辑没有页面：当前那张图底下垫一张与它同框的纸（`data-fast-edit-paper`），透明底的图也不落在深色画布上。
+  直接坐在纸上的界面（空画布的起步提示）垫 `bg-paper-chrome`：浅色里透明（字照旧落在纸上），暗色里是面板色——浅色的字不落在白纸上
+  （真浏览器在暗色下跑 `e2e/a11y` 的自算对比度尺子量出来的那一处）。
+  画布选择框 `sel` 两套同值（对纸白与两种画布灰都 ≥3:1）。
+- **对比度**：浅色里断言过的每一对字 / 底（要读的字 ≥4.5、焦点环与控件边界 ≥3、状态色、语法色、field 上的字、selected 上的字……）在暗色里**逐条再断言一遍**，
+  外加纸上的线与字、thumb 上的字、文字选区上的字。量的是合成后的颜色。
+- **文字选区**（`::selection`）：底是 accent 28%，**选中的字一律换成 `ink`**——保留原色的话 `ink-3` 的说明 / 元数据落在选区上只剩
+  3.65:1（浅色面板）/ 3.70:1（暗色面板），任何不透明度都救不回所有底色（Codex P2）。ink 落在合成后的选区上浅色最低 10.55、暗色最低 6.63；
+  画布上改字的那块（`canvas/TextView`）坐在文档的底上，不一定是白纸（页面底色、文字框底色都由用户定）：半透明 tint 叠在用户的底上，
+  深底换 paper-ink 看不见、中灰上配哪种纸墨都不到 4.5:1（Codex P2 两轮，#7d7d7d 上 3.95）。所以纸上的选区**自己定不透明的底**：
+  `--color-paper-selection`（sel 35% 混进纸）配 `paper-ink`、`--color-paper-selection-deep`（sel 50% 混进 paper-ink）配 `paper`，两套主题同值，
+  字对选区底恒为 11.4 / 8.2:1；`lib/canvasSelection` 按实际的底（文字框底色 → 页面底色 → 纸）挑同深浅的那块，与底拉不开 1.3:1 时换另一块。
+  `tokenContrast.test` 扫 0–255 灰阶 + accent + 深 / 浅页面色，两套主题都断言字 ≥4.5:1、选区与底 ≥1.3:1。编辑态占位按底的深浅取纸墨 65%。
+  `tokenContrast.test` 读 `::selection` 实际写的字色，合成到每一种能选字的底（面板 / 桌面 / 画布灰 / surface-2 / field / field-hover / thumb，外加纸）上断言 ≥4.5:1，
+  并要求选区底与原底至少拉开 1.3:1。
+- **桌面壳**：Tauri 窗口不设 `theme`，标题栏本来就跟随系统外观；壳自带的启动 / 出错 / 远程连接页各加一段 `prefers-color-scheme: dark`。
+  用户在应用里选了与系统相反的外观时，原生标题栏不跟（要给窗口加 `set_theme` 权限与一条桌面桥，ACL 三处同步——留到下一期）。
+

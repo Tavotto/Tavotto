@@ -9,6 +9,7 @@ import {
   useTutorialStore,
 } from '@/lib/onboarding/tutorial'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { THEME_PREFS, type ThemePref } from '@/lib/theme'
 import { useUiStore } from '@/store/uiStore'
 import { Ellipsis, Lightbulb, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -16,6 +17,7 @@ import { Button, IconButton } from '../ui/Button'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Kbd } from '../ui/Kbd'
 import { Menu, MenuItem } from '../ui/Menu'
+import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { CompanionDiagram } from './CompanionDiagram'
@@ -27,7 +29,10 @@ const st = (key: string, values?: Record<string, unknown>) =>
 /**
  * 通用（原「常规」+「界面」，2026-09-30 并页）。
  *
- * **四组**（2026-10-07 设计审计 §9.1）：语言与布局 / 侧栏 / 画布 / 学习。此前首个分区没有标题，五颗相同的
+ * **四组**（2026-10-07 设计审计 §9.1）：外观、语言与布局 / 侧栏 / 画布 / 学习。
+ *
+ * **外观**（2026-10-07 暗色主题，审计 P2 #14）：跟随系统 / 浅色 / 深色，一个三档 `Segmented`，选完当场生效
+ * （`uiStore.setTheme` → `<html data-theme>`）。说明一句话说清楚纸不变：画布上的页面与图是印刷品。此前首个分区没有标题，五颗相同的
  * 次级按钮里三颗是教程的——「开始教程」「重置教程项目」「重新显示操作提示」各占一行。现在教程是一行
  * （主动作 + ⋯：重置教程项目、重新显示操作提示），快捷键速查表与它同组（都是「学怎么用」）。
  *
@@ -53,11 +58,31 @@ export function GeneralSettings({ close }: { close: () => void }) {
   )
 }
 
+const THEME_LABEL: Record<ThemePref, string> = {
+  system: 'general.themeSystem',
+  light: 'general.themeLight',
+  dark: 'general.themeDark',
+}
+
 function LanguageAndLayout() {
   const locale = useLocale()
+  const theme = useUiStore((s) => s.theme)
   return (
     <FormSection title={st('general.groupLanguage')}>
       <FieldGroup>
+        <SettingRow
+          label={st('general.theme')}
+          description={st('general.themeDesc')}
+          data-settings-anchor="general.theme"
+        >
+          <Segmented
+            ariaLabel={st('general.theme')}
+            data-testid="settings-theme"
+            value={theme}
+            onChange={(v) => useUiStore.getState().setTheme(v)}
+            items={THEME_PREFS.map((v) => ({ value: v, label: st(THEME_LABEL[v]) }))}
+          />
+        </SettingRow>
         {/*
           语言：选完立刻生效（i18next 的 languageChanged 会让整棵树重渲染），
           偏好写在独立的 tavotto.locale 里，不进任何文档或项目数据。

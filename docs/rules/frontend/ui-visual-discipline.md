@@ -13,6 +13,18 @@ Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
 （`data-work-panel`：画布标签 + 画布 + 属性栏）里；画布灰铺到面板边缘。左轨写短名（`rail.short.*`）。带字的按钮与分段控件是胶囊，
 次按钮灰底无边；链接是灰字；品牌蓝 #5A92E5 压深两档当 accent / sel。下面是此前的速记，与第二十五节冲突处以第二十五节为准。
 
+**2026-10-07 token 分层与暗色主题（宪法第二十八节）**——与下文冲突处以它为准：颜色只经语义 token——界面代码（components / canvas /
+playground / mcp / embedded / onboarding、App / main）不写 hex / `rgb()` / `hsl()`、不写 `bg-white` 这类颜色类、`color-mix()` 不调 ink（`foundation.test`
+三条门禁；文档数据 / 遮罩 / 第三方品牌色按文件带个数豁免）；墨底上的字 `text-surface`；遮罩从 shadow 派生（`bg-shadow/N`、`--color-scrim`）；
+投影只读 `--color-shadow` 与 `--color-shadow-edge`（Tailwind 内联投影串）；浮起的那一块（分段 thumb、开关钮、选项格选中）`bg-thumb`。
+**纸**（`--color-paper` / `--color-paper-ink`：画布页面、图的缩略图底 `bg-paper`、纸上的网格 / 棋盘格 / 占位字）两套主题同值，图不反相；
+快速编辑给当前那张图垫一张同框的纸；直接坐在纸上的界面（空画布提示）垫 `bg-paper-chrome`（浅色透明、暗色面板色）。暗色值表在 `index.css` 末尾，媒体查询（没选浅色）与 `[data-theme='dark']` 两段逐字相同；
+外观偏好在设置 › 通用 › 外观（跟随系统 / 浅色 / 深色，`uiStore.setTheme` → `lib/theme.applyTheme`，本机 `tavotto.ui`）。
+把 token 量进 JS / canvas 并缓存的地方（`canvas/Rulers` 的 `readInk`）以 `lib/theme.useEffectiveTheme()` 为缓存键——它跟 `data-theme` 与系统外观，
+换主题当场重画；按挂载量一次、永不失效的缓存会留旧色（Codex #834，`canvas/rulers.test.tsx`）。
+`tokenContrast.test` 把浅色的每一对字 / 底在暗色里再断言一遍；`DESIGN.md` 的「### Dark」表由 `designMd.test` 对拍；真浏览器
+「切了主题计算色真的变了、纸仍是白」由 `e2e/theme.spec.ts`（`@feature:settings.appearance`）量。
+
 **2026-10-07 属性栏与画布栏（宪法第二十六节末）**：属性栏是一张行网格（`Row labelWidth="grid"`：标签 `--insp-label` · 控件 full / half ·
 20px 常驻状态槽），恢复钮在槽里、修改点悬挂在标签左 8px（部分修改空心环）；三级标题 32 / 24 / 32；一屏只有节间一条发丝线；折叠只有
 SummaryRow / GroupToggle / Details；身份头固定两行；`ColorField` 在属性栏里带可编辑 hex 与取色面板（`ColorFieldContext`）、`disabled` 是真禁用；
@@ -62,7 +74,7 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 SearchInput / `inspector/controls/PickerTrigger` 共用；批次 2，形态 2026-09-15 参考 Codex 改成只换底色）；带样张的取值选择器一律 `Popover + PickerTrigger + OptionGrid`
 （`onPick` 收弹层、方向键漫游不收）；数值与单位 `formatQuantity`；token 配对对比度由
 `src/tokenContrast.test.ts` 守着（焦点环 / 控件边界 ≥3:1，要读的字 ≥4.5:1）。文字对比：
-`ink-2`/`ink-3` 均 ≥4.5:1，`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、
+`ink-2`/`ink-3` 均 ≥4.5:1（文字选区上也算：`::selection` 把选中的字换成 `ink`，纸上改字的选区自己定不透明的底 `paper-selection` / `-deep` 配纸墨（`lib/canvasSelection`），宪法第二十八节），`ink-faint` 仅装饰 / 禁用——装饰记号（`当前 → 要求` 的箭头、
 `状态 · 时间` 的间隔点）必须 `aria-hidden`：e2e 的自算对比度尺子（`e2e/contrast.ts`）只放过
 「aria-hidden **且**自己的文字里没有字母数字」的元素，其余用 `ink-faint` 的字照样量、照样红
 （折叠 summary 是要读的字，用 `ink-3`；未选中的分段标签用 `ink-2`——2026-09-30 起分段槽叠在灰桌面上，ink-3 不到 4.5:1）。选中态不只靠颜色（字重 / check /
@@ -138,3 +150,10 @@ strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽
 - 图标只有一套、加图标是画不是挑
 - 装饰记号 `aria-hidden`
 - `IconButton` 的用例包 `TooltipProvider`
+
+2026-10-08 又收了一次（Windows 检出是 CRLF，同一串多出一行一字节，暗色主题加进那一格后越过 32 KiB）。
+那一格当时的原文照搬如下（按「；」分条），与上文同等有效：
+
+- 圆角族 4·6·8·12·16、字体角色、控件高 28 / lg 32、z-index 与状态色只走 token、卡只经 `ui/Card`
+- 颜色只经语义 token（纸两套同值）
+- 同类控件第二套先删
