@@ -1424,3 +1424,32 @@ def test_any_incomplete_linkage_check_is_incomplete_whatever_the_pending_count(
     assert report["default_target"] is None
     assert not any(a["kind"] == "prepare" for a in report["actions"])
     assert all(t["linked"] is None for t in report["targets"])
+
+
+def test_sensitive_run_config_without_its_secret_is_not_linkage_evidence(tmp_path):
+    """r4221248582：重启后敏感配置只剩 ID 占位（秘密值在内存里没了），它的 cache 还在——但打开会得到
+    run_config_secret_missing，不能算「已连接」；检查条的准备入口必须仍在。"""
+    from tavotto.engine import figcapture, runconfig, runtimeasset
+
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="fig"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": ["fig"]}}}),
+    )
+    cfg = runconfig.put(root, "fig.py", ["--token", "s3cret"], sensitive=True)
+    svg = tmp_path / "fig.svg"
+    svg.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+    asset_id = figcapture.runtime_asset_id("fig.py", "fig", cfg.id)
+    assert runtimeasset.materialize(root, {"asset_id": asset_id, "script": "fig.py"}, svg)
+    # 还没重启：秘密在内存里，这份 cache 是可执行配置的产物，算连接
+    assert projscan.scan(root)["targets"][0]["linked"] is True
+
+    runconfig.forget_secrets()  # 模拟重启
+    report = projscan.scan(root)
+
+    assert report["targets"][0]["linked"] is False
+    assert report["target_choice"] == "single"
+    assert any(a["kind"] == "prepare" for a in report["actions"])
+    assert report["outcome"]["kind"] != "already_connected"

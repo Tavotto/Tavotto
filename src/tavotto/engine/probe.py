@@ -610,12 +610,10 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
     （`projscan._linked_scripts`），一份判据两处用。
 
     运行配置登记读不出 / 来自新版本（`RunConfigError`）时，带配置那几份变体当**没有证据**：这是「是否捕获过」的
-    证据判断，宁可少说，不能因此炸掉扫描或登记。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
+    证据判断，宁可少说，不能因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
+    `run_config_secret_missing`，不是「可直接编辑」（r4221248582；两种情形共用 `runconfig.executable_configs_of`）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
     `run_config_unreadable` 显式拒绝（那条不在这里）。"""
-    try:
-        configs = runconfig.configs_of(figures_dir, script)
-    except runconfig.RunConfigError:
-        configs = []
+    configs = runconfig.executable_configs_of(figures_dir, script)
     ids = [figcapture.runtime_asset_id(script, stem)] + [
         figcapture.runtime_asset_id(script, stem, cfg.id) for cfg in configs
     ]
