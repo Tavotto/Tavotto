@@ -50,7 +50,7 @@ Repository CI runs the entire service suite once in the existing `backend-fast`
 Python 3.13 / shard 1 matrix leg on PR and merge-group events. A fresh venv under
 `RUNNER_TEMP` installs the exact three-package core dependency closure from official
 PyPI; it does not install the Tavotto app or Gunicorn. The runner rejects missing
-or mismatched dependencies, fewer than 38 tests, skips and expected failures.
+or mismatched dependencies, fewer than 41 tests, skips and expected failures.
 Failure propagates through the existing fast gate; no new job/context or write
 permission is added. The application dependency closure remains unchanged.
 

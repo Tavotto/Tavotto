@@ -15,6 +15,7 @@ import unittest
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import call, patch
 from urllib.parse import parse_qs, urlencode, urlsplit
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
@@ -68,11 +69,15 @@ class Peer(BaseHTTPRequestHandler):
                 self.reply(503, {"error": "unavailable"})
                 return
             if path == "/login/oauth/authorize":
+                # Model the OAuth provider registered-redirect check, not an open redirect.
+                if query.get("redirect_uri") != [state["callback_url"]]:
+                    self.reply(400, {"error": "unregistered redirect URI"})
+                    return
                 assert query["code_challenge_method"] == ["S256"]
                 code = "synthetic-code-" + str(len(state["codes"]))
                 state["codes"][code] = (state["next_user"], query["code_challenge"][0])
                 location = (
-                    query["redirect_uri"][0]
+                    state["callback_url"]
                     + "?"
                     + urlencode({"state": query["state"][0], "code": code})
                 )
@@ -242,6 +247,7 @@ class ServiceTests(unittest.TestCase):
         self.app = Application(self.config, self.store, self.github, self.policy)
         self.server.set_app(self.app)
         self.peer.state = {
+            "callback_url": self.config.origin + "/oauth/callback",
             "policy": json.loads(canonical(self.policy)),
             "public_key": self.key.public_key(),
             "requests": [],
@@ -363,6 +369,63 @@ class ServiceTests(unittest.TestCase):
         result, _ = self.sign(holder, path, "Jiaqi Wan")
         self.assertEqual(result[0], 303)
         return contributor, holder, path
+
+    def peer_authorize(self, redirect_uri, state="synthetic-state"):
+        query = urlencode(
+            {
+                "redirect_uri": redirect_uri,
+                "state": state,
+                "code_challenge": "synthetic-challenge",
+                "code_challenge_method": "S256",
+            }
+        )
+        conn = http.client.HTTPConnection("127.0.0.1", self.peer.server_port)
+        conn.request("GET", "/login/oauth/authorize?" + query)
+        response = conn.getresponse()
+        result = response.status, dict(response.getheaders())
+        response.read()
+        conn.close()
+        return result
+
+    def test_authorization_peer_rejects_crlf_and_external_redirects(self):
+        callback = self.config.origin + "/oauth/callback"
+        for invalid in (
+            callback + "\r\nX-Injected-Probe: confirmed",
+            "https://outside.example/callback",
+        ):
+            with self.subTest(redirect=invalid):
+                status, headers = self.peer_authorize(invalid)
+                self.assertEqual(status, 400)
+                self.assertNotIn("Location", headers)
+                self.assertNotIn("X-Injected-Probe", headers)
+        self.assertEqual(self.peer.state["codes"], {})
+
+    def test_authorization_peer_encodes_state_with_registered_callback(self):
+        callback = self.config.origin + "/oauth/callback"
+        state = "synthetic\r\nX-Injected-Probe: state"
+        status, headers = self.peer_authorize(callback, state)
+        self.assertEqual(status, 303)
+        self.assertNotIn("X-Injected-Probe", headers)
+        self.assertNotIn("\r", headers["Location"])
+        self.assertNotIn("\n", headers["Location"])
+        self.assertEqual(headers["Location"].split("?", 1)[0], callback)
+        self.assertEqual(parse_qs(urlsplit(headers["Location"]).query)["state"], [state])
+
+    def test_pkce_s256_uses_32_random_bytes_and_matches_rfc7636_vector(self):
+        # Public interoperability vector from RFC 7636 Appendix B, not a credential.
+        verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        with patch(
+            "services.cla.store.secrets.token_urlsafe",
+            side_effect=["synthetic-state", "synthetic-browser", verifier],
+        ) as random_token:
+            status, headers, _, _ = self.request("/login")
+        self.assertEqual(status, 303)
+        self.assertEqual(random_token.call_args_list, [call(32), call(32), call(32)])
+        query = parse_qs(urlsplit(headers["Location"]).query)
+        self.assertEqual(query["code_challenge_method"], ["S256"])
+        self.assertEqual(query["code_challenge"], ["E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"])
+        self.assertNotIn(verifier, headers["Location"])
+        self.assertEqual(len(unb64(self.store.oauth_start()[2])), 32)
 
     def test_real_http_oauth_double_signature_and_check(self):
         cookie = self.login(4)

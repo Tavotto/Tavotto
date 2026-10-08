@@ -72,3 +72,17 @@ Production activation still requires the explicit approvals and staged acceptanc
 listed in `DEPLOYMENT.md`. In particular, TTL metadata cannot itself expire a
 GitHub green check, and final success is a point-in-time decision with a post-check
 race, not an atomic continuous-revocation guarantee.
+
+
+## Published CI follow-up
+
+The first published CI run executed the service suite successfully. Its existing
+Windows entry-point guard found missing UTF-8 stdout/stderr setup in the new CI
+consumer; the six-line standard setup fixed it, with 143 Windows regression tests
+passing and five platform-condition skips. No signing logic changed.
+
+Two inline CodeQL findings were separately reconciled in `SECURITY_REVIEW.md`.
+The test-peer response splitting was reproduced and repaired; the PKCE S256
+password-hashing classification is a documented, protocol-backed false positive.
+Three added HTTP/security regressions raise the enforced suite minimum to 41.
+No scanner suppression or alert dismissal was applied.

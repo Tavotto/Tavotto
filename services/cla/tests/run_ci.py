@@ -7,6 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+MIN_TESTS = 41
 
 
 def main():
@@ -25,8 +26,10 @@ def main():
     sys.path.insert(0, str(ROOT))
     suite = unittest.defaultTestLoader.discover(str(ROOT / "services/cla/tests"))
     count = suite.countTestCases()
-    if count < 38:
-        raise RuntimeError(f"Expected at least 38 CLA security/contract tests, collected {count}")
+    if count < MIN_TESTS:
+        raise RuntimeError(
+            f"Expected at least {MIN_TESTS} CLA security/contract tests, collected {count}"
+        )
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     if result.skipped or result.expectedFailures:
         print("CLA service tests may not be skipped or expected failures", file=sys.stderr)

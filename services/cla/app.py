@@ -110,6 +110,9 @@ class Application:
                     "client_id": self.c.client_id,
                     "redirect_uri": self.c.origin + "/oauth/callback",
                     "state": state,
+                    # RFC 7636 section 4.2 requires SHA-256 for the S256 challenge.
+                    # oauth_start supplies 32 CSPRNG bytes, not a user password;
+                    # replacing this with a password KDF would break PKCE.
                     "code_challenge": b64(hashlib.sha256(verifier.encode()).digest()),
                     "code_challenge_method": "S256",
                     "allow_signup": "false",

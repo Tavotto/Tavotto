@@ -3168,7 +3168,7 @@ class TestCLAServiceContracts:
         runner = ROOT / "services/cla/tests/run_ci.py"
         tree = ast.parse(runner.read_text())
         # Execute the same small runner in a subprocess for its negative contracts;
-        # the positive 38-test run is the workflow step above.
+        # the positive full-suite run is the workflow step above.
         import subprocess
 
         program = """
@@ -3196,14 +3196,14 @@ class Skipped(unittest.TestCase):
     @unittest.skip('synthetic anti-skip probe')
     def test_probe(self):
         pass
-suite = unittest.TestSuite(Skipped('test_probe') for _ in range(38))
+suite = unittest.TestSuite(Skipped('test_probe') for _ in range(m.MIN_TESTS))
 with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.object(unittest.defaultTestLoader, 'discover', return_value=suite):
     assert m.main() == 1, 'skipped security suite passed'
 class ExpectedFailure(unittest.TestCase):
     @unittest.expectedFailure
     def test_probe(self):
         self.fail('synthetic anti-xfail probe')
-suite = unittest.TestSuite(ExpectedFailure('test_probe') for _ in range(38))
+suite = unittest.TestSuite(ExpectedFailure('test_probe') for _ in range(m.MIN_TESTS))
 with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.object(unittest.defaultTestLoader, 'discover', return_value=suite):
     assert m.main() == 1, 'expected-failure security suite passed'
 """
