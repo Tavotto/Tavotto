@@ -289,6 +289,11 @@ class TestRunConfigStore:
             lambda d, c: d["configs"][c].__setitem__("source", None),
             lambda d, c: d["configs"][c].__setitem__("created_at", "now"),
             lambda d, c: d["configs"][c].__setitem__("created_at", True),
+            # put() 写不出的 argv：空数组 / NUL / 超长 / token 太多（与 validate_argv 同一套边界）
+            lambda d, c: d["configs"][c].__setitem__("argv", []),
+            lambda d, c: d["configs"][c].__setitem__("argv", ["a\x00b"]),
+            lambda d, c: d["configs"][c].__setitem__("argv", ["x" * (execspec.MAX_ARGV_CHARS + 1)]),
+            lambda d, c: d["configs"][c].__setitem__("argv", ["a"] * (execspec.MAX_ARGV_TOKENS + 1)),
         ],
     )
     def test_a_syntactically_valid_but_malformed_store_is_unreadable_too(self, tmp_path, mutate):

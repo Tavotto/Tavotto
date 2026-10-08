@@ -319,8 +319,14 @@ def _schema_ok(configs, defaults) -> bool:
         if rec["sensitive"]:
             if argv is not None:  # 敏感配置的 argv 绝不落盘
                 return False
-        elif not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
-            return False
+        else:
+            # 与 put() 同一套边界：复用 validate_argv（不另写规则），且非空（put 不登记空 argv）
+            if not isinstance(argv, list) or not argv:
+                return False
+            try:
+                validate_argv(argv)
+            except InvalidArgv:
+                return False
     for script, cid in defaults.items():
         if not isinstance(script, str) or not isinstance(cid, str) or not cid.startswith(ID_PREFIX):
             return False
@@ -450,12 +456,10 @@ def selection_for(project_root: str | Path, script: str, argv, *, sensitive: boo
 
 
 def configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
-    """这个脚本登记过的配置（新→旧）；坏记录跳过。给素材清单列"同一脚本的几份配置"用。"""
-    try:
-        with _LOCK:
-            configs = _load(project_root)
-    except RunConfigError:
-        return []
+    """这个脚本登记过的配置（新→旧）；单条读不出的记录跳过。给素材清单列"同一脚本的几份配置"用。
+    登记整份读不出 / 更新版本写的 → `RunConfigError` 原样抛出（不当空列表：否则素材清单静默漏掉所有带参数变体）。"""
+    with _LOCK:
+        configs = _load(project_root)
     out = []
     for cid, rec in configs.items():
         cfg = _record_to_config(project_root, cid, rec)
