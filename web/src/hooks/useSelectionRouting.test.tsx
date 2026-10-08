@@ -163,6 +163,20 @@ describe('selection routing keeps the active drawer workflow', () => {
     expectTreeSelection([gids[0], gids[1]])
   })
 
+  it.each([true, false])('canvas Control-click respects platform context-menu semantics (Mac: %s)', isMac => {
+    platform.isMac = isMac
+    openElements()
+    pointer(treeRow(gids[0]))
+    pointer('[data-canvas-same]', { ctrlKey: true })
+    if (isMac) {
+      expectTreeSelection([gids[0]])
+      pointer('[data-canvas-same]')
+    }
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().leftOpen).toBe(false)
+    expect(useUiStore.getState().rightOpen).toBe(true)
+  })
+
   it('first object selection from the layer tree keeps the medium drawer', () => {
     node('[data-outside]').focus()
     pointer('[data-layer="p1"]')

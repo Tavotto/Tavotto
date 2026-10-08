@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { isMac } from '@/lib/utils'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -57,7 +58,8 @@ export function useSelectionRouting() {
       if (inDrawer.current) treeHandoff.current = ui.leftTab !== 'assets'
       else if (target?.closest('[data-inspector-panel]') ||
         (target?.closest('[data-scrim]') && ui.rightOpen)) treeHandoff.current = false
-      if (e instanceof PointerEvent && e.button === 0 && target?.closest('[data-canvas-stage]') &&
+      if (e instanceof PointerEvent && e.button === 0 && !(isMac && e.ctrlKey) &&
+        target?.closest('[data-canvas-stage]') &&
         ui.tool === 'select' && !useViewportStore.getState().spaceDown) {
         // Space 平移 / 绘图起手不是换选；新对象真被选中后由下面的选择 effect 路由。
         // 同一选区只在从树交接时请求路由；普通换选已有下面的 effect，不能请求两次。
