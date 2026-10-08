@@ -196,10 +196,11 @@ export function ProfilesSettings({
   // `loaded` 也是键：清单没回来之前 store 里是前端的内置占位（`builtinSpecRecords`），它与后端那份**同 id、
   // 同 revision**、data 却不一定相同——只认 id + revision 的话占位的 data 会一直留在草稿里，页面显示旧值、
   // 导航挂上「没存」的点、切页弹放弃确认，而用户什么都没改（e2e 350px 用例撞出）。占位只有只读内置，
-  // 那一刻没有可丢的编辑，所以在它换成真清单时重置是安全的。
+  // 所以只有只读记录把 `loaded` 算进键：加载中仍可复制 / 新建 / 导入，成功返回的可编辑记录已经是真数据，
+  // 用户也已经能编辑它；迟到的清单（包括写操作触发的重拉）不能用全局 loaded 切换抹掉这份草稿（Codex #828 P1）。
   // 在渲染里换（React 的「随 props 调整 state」写法），不放 effect：effect 晚一拍，键变了的那一帧草稿还是旧的，
   // `changed` 先报一次 true 再撤——导航上的点闪一下，恰好在那一帧点切页就会弹放弃确认。
-  const draftKey = selected ? `${selected.id}\u0000${selected.revision}\u0000${loaded}` : `none\u0000${loaded}`
+  const draftKey = selected ? `${selected.id}\u0000${selected.revision}\u0000${selected.read_only ? loaded : 'editable'}` : `none\u0000${loaded}`
   const [draftFor, setDraftFor] = useState<string | null>(null)
   if (draftFor !== draftKey) {
     setDraftFor(draftKey)
