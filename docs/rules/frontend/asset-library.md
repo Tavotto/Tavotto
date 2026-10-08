@@ -191,3 +191,17 @@
   `projectSwitchAssets.test.ts` +
   `e2e/asset-library.spec.ts`（show-only 项目真实后端黄金路径 + 窄视口 +
   保存/关闭/重开/重放/预检/导出完整链 + 多 Figure 选择器）。
+
+## 速查表原要点（2026-10-08 迁入，Windows CRLF 下的 32 KiB 硬线）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限按 Windows
+检出的 CRLF 字节量，#608）。下面是当时写在那一格的要点，原文照搬、一字未改（按「；」分条）；
+它们与上文同等有效，改规则时一并改这里。
+
+- 七个 store 都有项目代际
+- 同脚本防并发、取消等原请求以 `execution_cancelled` 落地
+- 多 Figure 结果绝不只显示第一张
+- runtime 卡没有假值
+- 「编辑原图」必然加进文档并说出口、素材卡的「添加到画布」走 `addFigureToLayout`（哪个入口走加图分层链哪一层以 `canvas-objects-and-workspace.md` 为准）
+- `role="option"` 里不嵌可 Tab 控件
+- TIFF 经 `panelSrc` 走 `/api/render`

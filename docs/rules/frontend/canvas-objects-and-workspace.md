@@ -180,3 +180,21 @@
   → `canvasSession` 的 `fitFrame`，切回来 `fitRect` 瞬时还原）：会话只记 `fitted` 的话，
   切走再切回按页面重新适配，伸出页面那截被裁掉、之后窗口缩放也只按页面算；取景的就是
   页面时存 null，回来按那时的页面算。
+
+## 速查表原要点（2026-10-08 迁入，Windows CRLF 下的 32 KiB 硬线）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限按 Windows
+检出的 CRLF 字节量，#608）。下面是当时写在那一格的要点，原文照搬、一字未改（按「；」分条）；
+它们与上文同等有效，改规则时一并改这里。
+
+- 剪贴板主路径是原生 ClipboardEvent
+- 默认画布名只有一个生成器
+- 缩略图只有一份组件、画的是当前素材
+- 类型切换一次 commit 不换 id、`KIND_FIELDS` 编译期完整
+- 前后端几何公式同源
+- 空态一屏只有一个行动
+- 「适应画布」是模式、直接操纵即退出、模式按画布各自记
+- 换页面尺寸即重新取景
+- 加图软上限缩放、不用阈值，非落点时先避开已有对象排右→下（`placePanelInPage` 的 `occupied`）
+- 页面外画淡（`PageOutsideMask`）
+- 加图是一条分层链 `addFigureToLayout`（去重 / 聚焦）→ `addPanelToCanvas`（取景，只由 `frameAddedPanel` 判）→ `actions.addPanel`（只改文档，只许 workspace 调），权威在该细则
