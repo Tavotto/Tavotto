@@ -220,6 +220,9 @@ describe('缩放菜单的倍率框：键盘走得进去', () => {
     await openByKeyboard()
     expect(document.activeElement).toBe(field())
     await key(field(), 'Escape')
+    // Radix FocusScope 在菜单卸载时排一个 setTimeout(0) 归还焦点；卸载发生在 key() 那个 act 收尾时，`key` 里等的那一拍
+    // 在它之前——负载高的 CI 上断言就抢在归还之前。再等一拍（定时器按先后执行，这一拍一定在归还之后）
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(document.querySelector('[data-zoom-value-row]')).toBeNull()
     expect(document.activeElement).toBe(trigger())
   })
