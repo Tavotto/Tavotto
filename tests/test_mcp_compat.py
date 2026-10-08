@@ -824,7 +824,9 @@ def test_declared_response_file_prefixes_are_refused(project, pool, token):
     assert pool.runs == []
 
 
-@pytest.mark.parametrize("token", ["%x", "+1", "--k=%x", "-k+x", "$y", "~", " lead"])
+@pytest.mark.parametrize(
+    "token", ["%x", "+1", "--k=%x", "-k+x", "$y", "~", " lead", "aoutside.txt", "2", "--freq"]
+)
 @pytest.mark.parametrize(
     "script",
     [
@@ -850,24 +852,40 @@ def test_declared_response_file_prefixes_are_refused(project, pool, token):
         "from argparse import *\np = ArgumentParser(fromfile_prefix_chars='%')\np.parse_args()\n",
     ],
 )
-def test_unprovable_script_refuses_any_symbol_led_token(project, script, token):
+def test_unprovable_script_refuses_any_argv(project, script, token):
+    """r4221652217：说不准脚本的前缀集合 -> MCP argv 一概不收（任何 token，含字母 / 数字开头），不再按首字符猜。"""
     _set_script(project, script)
-    assert _scope_code(project, [token]) == "argv_path_out_of_scope"
+    assert _scope_code(project, [token]) == "argv_unverifiable"
 
 
 @pytest.mark.parametrize(
-    "token", ["2", "-1", "--freq", "--freq=2", "-f2", "中 文", "", "a/b.csv", "./x", "_x", "--"]
+    "token",
+    ["2", "-1", "--freq", "--freq=2", "-f2", "中 文", "", "a/b.csv", "./x", "_x", "--", "#x"],
 )
-@pytest.mark.parametrize(
-    "script",
-    [
-        ARGPARSE_PCT.replace("'%+'", "'#'"),
-        "from helper import make_parser\nmake_parser().parse_args()\n",
-    ],
-)
-def test_ordinary_values_still_pass(project, script, token):
-    _set_script(project, script)
+def test_exactly_proven_no_prefix_script_passes_ordinary_argv(project, token):
+    _set_script(project, ARGPARSE_PCT.replace("'%+'", "None"))
     assert _scope_code(project, [token]) is None
+    _set_script(project, ARGPARSE_PCT.replace(", fromfile_prefix_chars='%+'", ""))
+    assert _scope_code(project, [token]) is None
+
+
+def test_unverifiable_argv_does_not_run_or_register(project, pool):
+    _set_script(project, "from helper import make_parser\nmake_parser().parse_args()\n")
+    before = runconfig.configs_of(str(project), "fig1.py")
+    body = _open(project, argv=["--freq", "1"])["structuredContent"]
+    assert body["code"] == "argv_unverifiable"
+    assert "Tavotto" in body["recovery"]
+    assert pool.runs == []
+    assert runconfig.configs_of(str(project), "fig1.py") == before
+    # 没有 argv 时这个脚本照常打开（GUI / 无参数路径不受影响）
+    assert _open(project)["structuredContent"].get("ok") is True
+
+
+def test_exact_prefix_a_rejects_tokens_led_by_a(project):
+    _set_script(project, ARGPARSE_PCT.replace("'%+'", "'a'"))
+    assert _scope_code(project, ["aoutside.txt"]) == "argv_path_out_of_scope"
+    assert _scope_code(project, ["--out=aoutside.txt"]) == "argv_path_out_of_scope"
+    assert _scope_code(project, ["boutside.txt"]) is None
 
 
 def test_pure_literal_alias_script_stays_exact(project):

@@ -71,7 +71,11 @@ def _isolated(tmp_path, monkeypatch):
 def project(tmp_path, monkeypatch):
     figures = tmp_path / "ws" / "figures"
     figures.mkdir(parents=True)
-    (figures / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    # argparse 脚本：前缀可静态证明为「无」（说不准的脚本带 argv 会以 argv_unverifiable 被拒）
+    (figures / "fig1.py").write_text(
+        "import argparse\np = argparse.ArgumentParser()\np.parse_args()\ndef main():\n    pass\n",
+        encoding="utf-8",
+    )
     (figures / "Fig1.pdf").write_bytes(b"%PDF-1.4\n")
     (figures / "tavotto_registry.json").write_text(
         json.dumps({"scripts": {"fig1.py": {"entry": "main", "cost": "light", "stems": ["Fig1"]}}}),

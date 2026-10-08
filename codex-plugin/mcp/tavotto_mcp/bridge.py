@@ -233,11 +233,6 @@ def _run_cwd(project: str, script: str) -> str | None:
     return run_cwd(project, script, mode)
 
 
-#: 无法证明脚本的 `fromfile_prefix_chars` 时，token 首字符只许这些（字母 / 数字 / `-` `.` `/` `_`）；其余首字符
-#: （`@` `%` `+` `~` 空白……）都按「可能是响应文件前缀」拒。代价：这类脚本在 MCP 里不能传以符号开头的值。
-_SAFE_ARGV_LEAD = frozenset("-./_")
-
-
 def _response_file_prefixes(project: str, script: str) -> tuple[frozenset[str], bool]:
     """脚本声明的 argparse 响应文件前缀：`(字符集, 是否可证明)`。静态读源码（`scriptargs`，不执行）；
     引擎太旧没有 `scriptargs`、读不了、前缀不是字面量 → `(空, False)`，调用方走保守口径。"""
@@ -254,15 +249,10 @@ def _response_file_prefixes(project: str, script: str) -> tuple[frozenset[str], 
 def _is_response_file_ref(value: str, prefixes: tuple[frozenset[str], bool]) -> bool:
     """这段值会不会被 argparse 当成响应文件引用（首字符是 `fromfile_prefix_chars` 之一）。
 
-    `@` 恒拒（最常见的写法，不依赖静态分析）；可证明的前缀集合 -> 首字符在集合里就拒；
-    说不准 -> 首字符不在安全集里就拒。"""
+    `@` 恒拒（最常见的写法，不依赖静态分析）；首字符在**已证明**的前缀集合里就拒。
+    前缀说不准的脚本根本到不了这里：`_check_argv_scope` 先以 `argv_unverifiable` 整体拒掉。"""
     lead = value[0]
-    if lead == "@":
-        return True
-    chars, exact = prefixes
-    if exact:
-        return lead in chars
-    return not (lead.isalnum() or lead in _SAFE_ARGV_LEAD)
+    return lead == "@" or lead in prefixes[0]
 
 
 def _argv_path_escapes(
@@ -319,6 +309,21 @@ def _check_argv_scope(argv: list | None, project: str, script: str) -> None:
                 str(Path(project, engine_figcapture.normalize_relative_script(script)).parent)
             )
     prefixes = _response_file_prefixes(project, script)
+    if not prefixes[1]:
+        # 证明不了脚本有没有 / 有哪些响应文件前缀（前缀可以是字母，按首字符猜必有漏网）：MCP 的 argv 一概不收，
+        # 不按 token 形状放行（Codex #818 r4221652217）。精确证明「没有前缀」或「前缀集合」才继续往下查。
+        raise BridgeError(
+            "这个脚本的 argparse 响应文件前缀（fromfile_prefix_chars）无法静态确认，所以这次没有运行脚本，"
+            "也没有登记这份参数。",
+            code="argv_unverifiable",
+            recovery=(
+                "不要换写法重试。请用户在 Tavotto 窗口里自己输入这些参数并运行（窗口里的参数是用户自己输入的，"
+                "不受此限）；不带 argv 打开则照常。"
+            ),
+            requirements=[
+                {"kind": "script_arguments", "answer_with": None, "where": "tavotto_app"}
+            ],
+        )
     for token in argv:
         if not isinstance(token, str):
             continue  # 形状错误交给 validate_argv 报 invalid_argv
