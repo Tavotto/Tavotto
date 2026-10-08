@@ -1,11 +1,9 @@
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, Folder, House } from '@/components/ui/icons'
+import { Folder, House } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { cn } from '@/lib/utils'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from './ui/Button'
-import { Tip } from './ui/Tooltip'
 
 /**
  * 顶栏左上角的项目名：点一下开 / 关左栏的「工作区」抽屉（`left/WorkspaceList.tsx`）。
@@ -59,28 +57,5 @@ export function HomeButton() {
     >
       <House size={ICON_SIZE.md} />
     </IconButton>
-  )
-}
-
-/** 顶栏上「把当前项目再开一个标签页」的快捷入口（图标按钮，不占字宽） */
-export function OpenInNewTabButton() {
-  const { t } = useTranslation('project')
-  const id = useProjectStore((s) => s.project?.id)
-  if (!id) return null
-  return (
-    <Tip label={t('switcher.newTabTip')}>
-      <button
-        onClick={() =>
-          window.open(`${location.pathname}?pj=${encodeURIComponent(id)}`, '_blank', 'noopener')
-        }
-        aria-label={t('switcher.newTabLabel')}
-        className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink-3',
-          'outline-none hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
-        )}
-      >
-        <ExternalLink size={ICON_SIZE.sm} />
-      </button>
-    </Tip>
   )
 }

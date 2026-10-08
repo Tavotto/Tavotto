@@ -7,6 +7,7 @@ import { emitActivity } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
 import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/lib/problemList'
+import { drillKey } from '@/lib/drillKey'
 
 export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -29,6 +30,12 @@ export interface LayoutConflict {
  * 参与「一次只显示一个主对话框」的三个主对话框（审计 T35）。
  * 导出 → 设置 → 论文样式是一条前进 / 返回的小流程，不是三层叠着的浮层。
  */
+/** 问题面板此刻指着的那个对象（`issueHover`）；对象身份即主人，见 `releaseIssueHover` */
+export interface IssueHover {
+  objectId: string
+  gid: string | null
+}
+
 export type MainDialog = 'export' | 'settings' | 'styles'
 
 /**
@@ -284,6 +291,20 @@ interface UiState extends Persisted {
    */
   issueHighlight: { objectId: string | null; gid: string | null; token: number } | null
   /**
+   * 问题面板里**指着**哪一条（2026-10-07 设计审计 §9.4）：画布上给那个对象画一道悬停轮廓
+   * （`canvas/IssueOverlay`），与画布自己的 hover 预示同一种画法。只是「我在看它」，不选中、
+   * 不定位、不进文档；指针离开 / 焦点离开 / 那一行卸载 / 面板卸载就清。
+   * **对象身份就是主人**：每次指上都是一个新对象，行撤销时用 `releaseIssueHover(它写下的那个)`
+   * 比对后再清——行被修好 / 筛掉 / 换文档卸载时不触发 pointerleave / blur，靠这个撤；
+   * 已经被别的行顶掉的就不动（Codex #832）。
+   */
+  issueHover: IssueHover | null
+  /**
+   * 画布上的问题标记（每张有问题的图右上角一枚等级记号，点它 = `openProblemAt`）。
+   * 默认关：问题面板「⋯」里打开。会话状态，同 `problemFilter`。
+   */
+  problemPins: boolean
+  /**
    * 问题面板的等级筛选（null = 不筛）。**UI 会话状态**：不进文档、不进
    * 撤销、不跨会话记——它是"我现在想看哪几类"，不是用户的长期偏好。
    */
@@ -407,6 +428,10 @@ interface UiState extends Persisted {
   clearStatusOwnedBy: (owner: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
+  setIssueHover: (v: IssueHover | null) => void
+  /** 比对后再清：此刻的 `issueHover` 还是 `v` 这个对象（同一身份）才撤，别的行写下的不动 */
+  releaseIssueHover: (v: IssueHover) => void
+  setProblemPins: (v: boolean) => void
   setProblemFilter: (v: Severity[] | null) => void
   setProblemScope: (v: ProblemScope | null) => void
   /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
@@ -414,7 +439,7 @@ interface UiState extends Persisted {
   /** 落游标要说明现场；现场换了，旧现场里点进的卡片一并作废 */
   setProblemCursor: { (v: null): void; (v: ProblemCursor, context: string): void }
   setProblemView: (v: ProblemView) => void
-  /** 点进卡片要说明现场；现场换了，旧现场里的游标一并作废。null = 回总览（连游标） */
+  /** 点进卡片要说明现场；现场换了、或同一现场换到另一支，旧游标一并作废。null = 回总览（连游标） */
   setProblemDrill: { (v: null): void; (v: ProblemDrill, context: string): void }
   /** 关掉设置、打开左栏「样式」面板（设置 › 样式页「用于当前画布」绑完之后去看结果） */
   openStylePanel: () => void
@@ -511,6 +536,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   elementPanelId: null,
   selectedGids: [],
   issueHighlight: null,
+  issueHover: null,
+  problemPins: false,
   problemFilter: null,
   problemScope: null,
   problemCursor: null,
@@ -677,6 +704,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null })
   },
 
+  // 不按值短路：值相同的新对象也要换上，否则后来者拿不到主人身份，`releaseIssueHover` 会认错人
+  setIssueHover: (v) => set((s) => (v === s.issueHover ? s : { issueHover: v })),
+  releaseIssueHover: (v) => set((s) => (s.issueHover === v ? { issueHover: null } : s)),
+  setProblemPins: (problemPins) => set({ problemPins }),
   setIssueHighlight: (v) =>
     set((s) => ({
       issueHighlight: v
@@ -704,13 +735,18 @@ export const useUiStore = create<UiState>((set, get) => ({
           : { problemCursor, problemContext: context ?? null, problemDrill: null },
     ),
   setProblemView: (problemView) => set({ problemView, problemDrill: null, problemCursor: null }),
+  // 游标只在点开的那一支里走（细则：「那一支强制开着、游标在它里面走」）：同一现场里换到**另一支**，
+  // 旧游标就没有主语了——留着它，页脚会拿 A 的规则 / 下标在 B 里说「已处理」、F8 跳过 B 的头几条（Codex #832）。
+  // 同一支再写一次（定位 / F8 在这一支里走）照旧留着；跨支的 F8 / 直达 / 定位都是先写支、再落游标
   setProblemDrill: (problemDrill: ProblemDrill | null, context?: string) =>
     set((s) =>
       !problemDrill
         ? { problemDrill: null, problemCursor: null }
-        : context === s.problemContext
-          ? { problemDrill }
-          : { problemDrill, problemContext: context ?? null, problemCursor: null },
+        : context !== s.problemContext
+          ? { problemDrill, problemContext: context ?? null, problemCursor: null }
+          : s.problemDrill && drillKey(s.problemDrill) === drillKey(problemDrill)
+            ? { problemDrill }
+            : { problemDrill, problemCursor: null },
     ),
   setFixing: (fixing) => set({ fixing }),
   setEditingText: (editingTextId) => set({ editingTextId }),
