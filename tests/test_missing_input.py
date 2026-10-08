@@ -1076,6 +1076,52 @@ def test_probe_registered_stems_follow_the_table_after_a_rebuild(
             m.close_project(pid, wait=True)
 
 
+def test_remap_resync_of_one_argv_variant_keeps_sibling_variant_stems(client, figs, tmp_path):
+    """Codex 评 #812 P2：A、B 两份 argv 配置各登记了自己的图名；改指后重渲染 A，注册表只并入 A 的新图名，
+    B 的留着；对完账的只是 A 这一份——B 渲染时仍会按它自己的真实产出对账一次。"""
+    import types
+
+    from tavotto import app as m
+    from tavotto.engine import discover, execspec, registry
+
+    m.open_project(str(figs))
+    try:
+        (figs / "fig.py").write_text("print(1)\n", encoding="utf-8")
+        discover.register(figs, "fig.py", ["a_old"], entry="__main__", append=True)
+        discover.register(figs, "fig.py", ["b_old"], entry="__main__", append=True)
+        ctx = m.current_ctx()
+        m.refresh_project(ctx, reason="probe", allow_static_merge=False)
+        inputremap.record_registration(figs, "fig.py")
+        inputremap.record_registration(figs, "fig.py", "rc_a")
+        inputremap.record_registration(figs, "fig.py", "rc_b")
+        inputremap.add_rule(figs, {"kind": P, "from": "", "to": str(tmp_path)})
+
+        def stems_on_disk():
+            path = registry.existing_registry_path(figs)
+            return json.loads(path.read_text(encoding="utf-8"))["scripts"]["fig.py"]["stems"]
+
+        def worker(config, stem):
+            return types.SimpleNamespace(
+                script_name="fig.py",
+                figures_dir=str(figs),
+                entry="__main__",
+                remap_generation=inputremap.generation(figs),
+                run=execspec.RunSelection(config, ("--k", config)),
+                last_build_descriptors=[{"stem": stem}],
+            )
+
+        assert m._resync_registration(ctx, worker("rc_a", "a_new")) is True
+        assert stems_on_disk() == ["a_new", "a_old", "b_old"]  # B 的图名还在
+        assert not inputremap.registration_stale(figs, "fig.py", "rc_a")
+        assert inputremap.registration_stale(figs, "fig.py", "rc_b")  # 只对了 A
+        assert m._resync_registration(ctx, worker("rc_b", "b_new")) is True
+        assert {"a_new", "b_new"} <= set(stems_on_disk())
+        assert not inputremap.registration_stale(figs, "fig.py", "rc_b")
+    finally:
+        for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(figs)]:
+            m.close_project(pid, wait=True)
+
+
 def test_a_remap_that_yields_no_figures_removes_the_old_registration(client, figs, tmp_path):
     """改指之后按新数据一张图都没出（`no_figures_captured`）：这也是按新表跑出的权威结果——旧 stems 整条摘掉，
     素材库不再挂着必然失败的条目（Codex 评 #716 P2）。没跑完的 build 说明不了什么，不动；没改指的项目不受影响。"""

@@ -259,6 +259,66 @@ class TestCancelSemantics:
         assert resp.status_code == 200
         assert resp.get_json()["cancelling"] is False
 
+    def test_cancel_reads_event_and_run_under_one_lock(self, client, tmp_path, monkeypatch):
+        """Codex #812 P2：取消端点必须在同一把锁里一起取 event 与 run。
+
+        桩模拟「端点拿到 event 之后、读 runs 之前，试运行收尾删表」：包一层锁，第一次释放时
+        把两张表清掉（= 带参数的试运行的 finally）。分两次加锁的旧实现会把 run 读成 None，
+        force_cancel 打到同脚本无参数的 worker；单锁实现拿到的是登记时的那份 run。
+        """
+        figs = _make_project(tmp_path)
+        client.post("/api/projects/open", json={"path": str(figs)})
+        calls = []
+        monkeypatch.setattr(
+            engine_pool, "force_cancel", lambda script, root, **kw: calls.append((script, kw))
+        )
+        sentinel_run = object()
+        real_lock = m._PROBES_LOCK
+
+        class _FinishAfterFirstRelease:
+            def __init__(self):
+                self.released = 0
+
+            def __enter__(self):
+                real_lock.acquire()
+
+            def __exit__(self, *exc):
+                real_lock.release()
+                self.released += 1
+                if self.released == 1:
+                    with real_lock:  # 试运行在两次加锁之间收尾
+                        m._PROBES.clear()
+                        m._PROBE_RUNS.clear()
+
+        with m.app.test_request_context("/", json={}):
+            key = (m.current_ctx().id, "slow.py")
+        ev = threading.Event()
+        m._PROBES[key] = ev
+        m._PROBE_RUNS[key] = sentinel_run
+        monkeypatch.setattr(m, "_PROBES_LOCK", _FinishAfterFirstRelease())
+        try:
+            resp = client.post("/api/registry/probe/cancel", json={"script": "slow.py"})
+        finally:
+            m._PROBES.pop(key, None)
+            m._PROBE_RUNS.pop(key, None)
+        assert resp.get_json()["cancelling"] is True
+        assert ev.is_set()
+        # 取消只能打到登记时那份配置的会话，绝不能是无参数的 worker
+        assert calls == [("slow.py", {"run": sentinel_run})]
+
+    def test_cancel_after_probe_finished_hits_no_worker(self, client, tmp_path, monkeypatch):
+        """输了赛跑（条目已经不在）：不取消、不打到任何 worker，形状与「没有在跑的」一致。"""
+        figs = _make_project(tmp_path)
+        client.post("/api/projects/open", json={"path": str(figs)})
+        calls = []
+        monkeypatch.setattr(
+            engine_pool, "force_cancel", lambda script, root, **kw: calls.append((script, kw))
+        )
+        resp = client.post("/api/registry/probe/cancel", json={"script": "slow.py"})
+        assert resp.status_code == 200
+        assert resp.get_json() == {"cancelling": False}
+        assert calls == []
+
 
 # ===========================================================================
 # 二、runtime 素材清单：只读、不双列

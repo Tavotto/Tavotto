@@ -179,14 +179,16 @@ describe('DependencyPrepareDialog', () => {
     expect(d.querySelector('[data-dependency-requirements]')!.closest('[data-repair-advanced]')).toBeTruthy()
     expect(visibleSentenceCount(d)).toBeLessThanOrEqual(1)
     expect(visiblePrimaryButtons(d)).toBe(1)
-    // 看得见的逐块钉死：标题、两个选项各「名字 + 一句短语」、折叠标题、底部两颗按钮——多一块说明就红
+    // 看得见的逐块钉死：固定标题、那一句、两个选项各「名字 + 一句短语」、折叠标题、底部三颗按钮——多一块说明就红
     expect(visibleBlocks(d).map((b) => b.text)).toEqual([
+      en('dependencyPrepareHeading'),
       en('dependencyPrepareTitle', { count: 2 }),
       en('dependencyTarget_project_venv'),
       en('dependencyTargetHint_project_venv', { venv: '.venv' }),
       en('dependencyTarget_tavotto_managed', { product: PRODUCT_NAME }),
       en('dependencyTargetHint_tavotto_managed'),
       en('repairAdvanced'),
+      en('dependencyPrepareSkip'),
       en('dependencyPrepareLater'),
       en('dependencyPrepareRun'),
     ])
@@ -194,12 +196,15 @@ describe('DependencyPrepareDialog', () => {
     expect(button(en('dependencyPrepareRun'))).toBeDefined()
   })
 
-  it('一键修复：默认可见的只有一句话 +「详情」+「稍后」「一键修复」（按可见元素数）；其余都在「详情」里', async () => {
+  it('一键修复：默认可见的只有固定标题 + 一句话 +「详情」+「直接运行」「稍后」「一键修复」（按可见元素数）；其余都在「详情」里', async () => {
     await render(<DependencyPrepareDialog />)
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    // 标题是固定的名词短语，那一句在正文里（2026-10-07 设计审计 §10.2）；「不准备，直接运行」在页脚 start 槽
     expect(visibleBlocks(dialog()!)).toEqual([
-      { tag: 'h2', text: en('oneClickSentence', { packages: listJoin(['six', 'tabulate']) }) },
+      { tag: 'h2', text: en('dependencyPrepareHeading') },
+      { tag: 'p', text: en('oneClickSentence', { packages: listJoin(['six', 'tabulate']) }) },
       { tag: 'summary', text: en('repairAdvanced') },
+      { tag: 'button', text: en('dependencyPrepareSkip') },
       { tag: 'button', text: en('dependencyPrepareLater') },
       { tag: 'button', text: en('oneClickRepair') },
     ])
@@ -210,8 +215,11 @@ describe('DependencyPrepareDialog', () => {
     expect(advanced.querySelector('[data-one-click-cost]')!.textContent).toBe(en('repairFactNetwork'))
     expect(advanced.querySelector('[data-dependency-requirements]')).toBeTruthy()
     expect(advanced.querySelector('[data-dependency-target]')).toBeTruthy()
-    // 「不准备，直接运行」不再是并列的次按钮，收在详情里
-    expect(advanced.querySelector('[data-dependency-skip]')).toBeTruthy()
+    // 「不准备，直接运行」是页脚 start 槽里的 ghost（不是第二颗主按钮），「详情」里不再 Details 套 Details
+    const skipBtn = dialog()!.querySelector('[data-dependency-skip]')!
+    expect(skipBtn.closest('[data-dialog-footer]')).toBeTruthy()
+    expect(skipBtn.getAttribute('data-variant')).toBe('ghost')
+    expect(advanced.querySelector('details')).toBeNull()
   })
 
   it('一键修复框展开「详情」后没有重复的句子，下载 / 联网 / 不改动各只说一次', async () => {
@@ -264,8 +272,8 @@ describe('DependencyPrepareDialog', () => {
     const note = document.querySelector('[data-repair-pypi-mirror]')!
     expect(note.textContent).toBe(en('repairPypiMirror', { mirror: 'https://pypi.tuna.tsinghua.edu.cn/simple' }))
     expect(note.closest('details')!.open).toBe(false)
-    // 默认可见区不变：一句（标题）、一行进度、「详情」、「取消」
-    expect(visibleBlocks(dialog()!).map((b) => b.tag)).toEqual(['h2', 'p', 'summary', 'button'])
+    // 默认可见区不变：固定标题、一行进度、「详情」、「取消」与原位置灰的主按钮（页脚不跳）
+    expect(visibleBlocks(dialog()!).map((b) => b.tag)).toEqual(['h2', 'p', 'summary', 'button', 'button'])
   })
 
   it('一键修复进行中：只剩一行进度', async () => {
@@ -281,8 +289,11 @@ describe('DependencyPrepareDialog', () => {
       } as never),
     )
     const tags = visibleBlocks(dialog()!).map((b) => b.tag)
-    // 一行进度 + 折叠的「详情」+「取消」
-    expect(tags).toEqual(['h2', 'p', 'summary', 'button'])
+    // 固定标题 + 一行进度 + 折叠的「详情」+「取消」+ 原位置灰、带转圈的主按钮
+    expect(tags).toEqual(['h2', 'p', 'summary', 'button', 'button'])
+    const running = dialog()!.querySelector('[data-dependency-prepare-running]') as HTMLButtonElement
+    expect(running.disabled).toBe(true)
+    expect(visiblePrimaryButtons(dialog()!)).toBe(1)
     expect(document.querySelector('[data-repair-line]')!.textContent).toBe(
       `${en('dependencyPrepareState_installing')}${en('repairStep', { n: 3, total: 4 })}`,
     )
@@ -322,7 +333,7 @@ describe('DependencyPrepareDialog', () => {
         plan: joint({ status: 'nothing_needed', missing: [], unknown: [], requirements: [], constraints: [] }),
       })
     await act(async () => useEnvStore.getState().requestDependencyPreparation(clean(pp)))
-    const title = () => dialog()!.querySelector('h2')!.textContent
+    const title = () => dialog()!.querySelector('[data-dependency-sentence]')!.textContent
     expect(title()).toBe(en('oneClickSentenceEnvDownload', { mb: 25 }))
     expect(visibleSentenceCount(dialog()!)).toBe(1)
     await act(async () => useEnvStore.getState().dismissDependencyPreparation())
@@ -373,10 +384,10 @@ describe('DependencyPrepareDialog', () => {
     await act(async () =>
       useEnvStore.getState().requestDependencyPreparation(offer({ targets: [managedWithPython, venvTarget] })),
     )
-    expect(dialog()!.querySelector('h2')!.textContent).toContain('25 MB')
+    expect(dialog()!.querySelector('[data-dependency-sentence]')!.textContent).toContain('25 MB')
     expect(document.querySelector('[data-dependency-private-python]')).not.toBeNull()
     await act(async () => radio('project_venv')!.click())
-    expect(dialog()!.querySelector('h2')!.textContent).not.toContain('MB')
+    expect(dialog()!.querySelector('[data-dependency-sentence]')!.textContent).not.toContain('MB')
     expect(document.querySelector('[data-dependency-private-python]')).toBeNull()
     // 项目 venv 不下载、不供应 Python：「要下载什么」那一条整条不出现，换成项目环境那句联网说明
     expect(document.querySelector('[data-one-click-cost]')).toBeNull()
@@ -406,8 +417,8 @@ describe('DependencyPrepareDialog', () => {
     expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(
       en('repairFactDownload', { version: '3.13.15', mb: 25, product: PRODUCT_NAME }),
     )
-    // 大小放进标题那一句里（括号），仍是一句
-    expect(dialog()!.querySelector('h2')!.textContent).toBe(
+    // 大小放进正文那一句里（括号），仍是一句
+    expect(dialog()!.querySelector('[data-dependency-sentence]')!.textContent).toBe(
       en('oneClickSentenceDownload', { packages: listJoin(['six', 'tabulate']), mb: 25 }),
     )
     expect(visibleSentenceCount(dialog()!)).toBe(1)
@@ -421,7 +432,7 @@ describe('DependencyPrepareDialog', () => {
     expect(document.querySelector('[data-one-click-cost]')!.textContent).toBe(
       en('repairFactBundled', { version: '3.13.15', product: PRODUCT_NAME }),
     )
-    expect(dialog()!.querySelector('h2')!.textContent).not.toContain('MB')
+    expect(dialog()!.querySelector('[data-dependency-sentence]')!.textContent).not.toContain('MB')
     expect(document.querySelector('[data-dependency-private-python]')!.textContent).toBe(
       en('repairFactBundled', { version: '3.13.15', product: PRODUCT_NAME }),
     )

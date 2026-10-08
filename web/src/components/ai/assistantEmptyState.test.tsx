@@ -5,8 +5,9 @@
  * 「助手会做什么」），起手式与输入框在最底下。要发一条请求得先在中间读一段、
  * 再把视线拉到底下——两处争同一份注意力，而只有底下那处是能动手的。
  *
- * 现在：正中留白，说明与起手式都贴着输入框；输入框旁那颗按钮直说「作用于：
- * 当前范围」，发送前不必点开任何东西就答得出「按下去会改什么」。
+ * 现在（2026-10-07 设计审计 §6.5 / §6.7）：正中是 EmptyState v2 + 至多三条可点的示例提示（chipsFor 的前三条，
+ * 点一下填进输入框）；输入框**上方**的上下文带里一枚「● 目标 · 作用范围」chip，发送前不必点开任何东西就答得出
+ * 「按下去会改什么」；模型与推理强度是输入框工具行上的两颗可见胶囊。
  *
  * 「选不到可编辑的图」是另一回事——那是真正的空状态，仍然留在正中。
  */
@@ -66,8 +67,16 @@ async function mount({ withPanel }: { withPanel: boolean }) {
   })
 }
 
-const textOf = () => host.textContent ?? ''
-const buttons = () => Array.from(host.querySelectorAll('button'))
+const q = <T extends Element = HTMLElement>(sel: string) => host.querySelector<T>(sel)
+const qa = <T extends Element = HTMLElement>(sel: string) => Array.from(host.querySelectorAll<T>(sel))
+const typeDraft = async (text: string) => {
+  const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+  await act(async () => {
+    setter.call(box, text)
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
 
 beforeEach(() => {
   localStorage.clear()
@@ -89,89 +98,109 @@ afterEach(async () => {
 describe('还没发过任务时的信息布局', () => {
   /**
    * 2026-09-14 二审 D2（部分收回审计 T37）：「助手会做什么」那一句是**空态**，放回滚动区正中；
-   * 起手式仍贴着输入框。T37 把两者都压到底部时，中间一屏全空、底部叠成四层。
+   * 2026-10-07 §6.7：空态换成 EmptyState v2，那一句是它的说明（hint）。
    */
-  it('说明是滚动区里的空态，不再和输入框叠在底部', async () => {
+  it('说明是滚动区里的空态，不和输入框叠在底部', async () => {
     await mount({ withPanel: true })
-    expect(textOf()).toContain(ai('panel.emptyHint'))
-    const hint = Array.from(host.querySelectorAll('p')).find(
-      (p) => p.textContent === ai('panel.emptyHint'),
-    )
-    expect(hint, '找不到那句说明').toBeTruthy()
-    const scroller = host.querySelector('.overflow-y-auto')!
-    expect(scroller.contains(hint!), '说明应在滚动区（空态）里').toBe(true)
-    const box = host.querySelector('textarea')!
-    expect(hint!.parentElement!.contains(box), '说明不该再和输入框叠在同一块').toBe(false)
+    const empty = q('[data-ai-empty]')
+    expect(empty, '找不到空态').toBeTruthy()
+    expect(q('[data-ai-scroller]')!.contains(empty)).toBe(true)
+    expect(empty!.querySelector('[data-empty-state]')!.textContent).toContain(ai('panel.emptyHint'))
+    expect(empty!.contains(q('[data-ai-input]'))).toBe(false)
   })
 
-  it('会话一来，空态让位', async () => {
+  it('空态里至多三条示例提示，取自 chipsFor；点一下填进输入框', async () => {
     await mount({ withPanel: true })
-    const scroller = host.querySelector('.overflow-y-auto')!
-    expect(scroller.textContent).toContain(ai('panel.emptyHint'))
+    const examples = qa<HTMLButtonElement>('[data-ai-example]')
+    expect(examples.map((b) => b.dataset.aiExample)).toEqual(['unifyFont', 'unifyLineWidth', 'checkMinFontSize'])
+    expect(examples[0].textContent).toBe(ai('chip.unifyFont'))
+    await act(async () => examples[0].click())
+    expect(q<HTMLTextAreaElement>('[data-ai-input]')!.value).toBe(ai('chip.unifyFont'))
   })
 
-  it('起手式仍然在输入框上方，点一下填进输入框', async () => {
+  it('空态时输入框上方不再重复摆同一组起手式（它们在正中）', async () => {
     await mount({ withPanel: true })
-    const chip = buttons().find((b) => b.textContent === ai('chip.unifyFont'))
-    expect(chip, '起手式不见了').toBeTruthy()
-    await act(async () => chip!.click())
-    expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe(
-      ai('chip.unifyFont'),
-    )
+    expect(q('[data-ai-chips]')).toBeNull()
   })
 
   it('选不到可编辑的图时，正中那个空状态照旧——那是真的没活可干', async () => {
     await mount({ withPanel: false })
-    const scroller = host.querySelector('.overflow-y-auto')!
-    expect(scroller.textContent).toContain(ai('panel.noPanelTitle'))
+    expect(q('[data-ai-scroller]')!.textContent).toContain(ai('panel.noPanelTitle'))
+    expect(q('[data-ai-example]')).toBeNull()
+    expect(q('[data-ai-context]'), '没有目标时没有上下文带').toBeNull()
   })
 })
 
-describe('发送前的作用范围摘要', () => {
-  it('输入框旁那颗按钮直说「作用于：…」，不是光一个范围名', async () => {
+describe('输入框两态（§6.5）', () => {
+  it('空着时是紧凑的单行胶囊、没有工具行；一有内容就展开成两行，工具行里是模型与推理强度两颗胶囊', async () => {
+    useAiStore.setState({ caps: capsOf([agentCaps({ efforts: ['low', 'high'], default_effort: 'high' })]) })
     await mount({ withPanel: true })
-    const btn = buttons().find((b) =>
-      b.getAttribute('aria-label') === ai('panel.scopeAndAgent'),
-    )
-    expect(btn, '找不到作用范围按钮').toBeTruthy()
-    expect(btn!.textContent).toContain(ai('panel.actsOn', { scope: ai('scope.figure') }))
-    // 交给谁执行也写在同一行上
-    expect(btn!.textContent).toContain('Codex')
+    const composer = q('[data-ai-composer]')!
+    expect(composer.dataset.layout).toBe('compact')
+    expect(q('[data-ai-pill]')).toBeNull()
+    await typeDraft('把图例移到左上角')
+    expect(composer.dataset.layout).toBe('expanded')
+    expect(q('[data-ai-pill="model"]')!.textContent).toContain('Codex')
+    expect(q('[data-ai-pill="effort"]')!.textContent).toContain(ai('effortLabel.high'))
+    // 同一个输入框节点换了格子，不是重建（焦点不丢）
+    const box = q('[data-ai-input]')
+    await typeDraft('')
+    expect(composer.dataset.layout).toBe('compact')
+    expect(q('[data-ai-input]')).toBe(box)
+  })
+
+  it('聚焦只加深边框，不用 accent 边', async () => {
+    await mount({ withPanel: true })
+    const cls = q('[data-ai-composer]')!.className
+    expect(cls).toContain('focus-within:border-border-strong')
+    expect(cls).not.toContain('border-accent')
+    expect(q('[data-ai-input]')!.className).toContain('text-base')
+  })
+})
+
+describe('发送前的作用范围摘要（上下文带）', () => {
+  it('输入框上方的上下文带直说「目标 · 作用范围」', async () => {
+    await mount({ withPanel: true })
+    const band = q('[data-ai-context]')
+    expect(band, '找不到上下文带').toBeTruthy()
+    // 带在输入框上方：DOM 顺序在前，而且不在输入框里
+    const composer = q('[data-ai-composer]')!
+    expect(band!.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const chip = q('[data-ai-target]')!
+    expect(chip.textContent).toContain('Fig1')
+    expect(chip.textContent).toContain(ai('scope.figure'))
   })
 
   /**
-   * 2026-09-15 全面打磨 L6：作用范围此前说两遍——顶部的目标片右端一个
-   * 「整张图」，输入框那颗按钮上又一个「作用于：整张图 · Codex」，两颗还
-   * 打开同一个弹层。范围只在输入框那一处说；顶部片只回答「改哪张图」。
-   *
-   * 判据数的是**出现次数**，不是「有没有」：留一处的实现与留两处的实现，
-   * 后者同样能通过「包含范围名」那种写法。
+   * 2026-09-15 全面打磨 L6：作用范围只说一次。判据数的是**出现次数**，不是「有没有」：
+   * 留一处的实现与留两处的实现，后者同样能通过「包含范围名」那种写法。
    */
-  it('作用范围只说一次：顶部的目标片不再复述它（L6）', async () => {
+  it('作用范围只说一次：只有上下文带的 chip 写着它', async () => {
     await mount({ withPanel: true })
     const scope = ai('scope.figure')
-    const withScope = buttons().filter((b) => b.textContent?.includes(scope))
+    await typeDraft('x') // 展开工具行：胶囊也在场时照样只有一处
+    const withScope = qa('button').filter((b) => b.textContent?.includes(scope))
     expect(withScope).toHaveLength(1)
-    expect(withScope[0].getAttribute('aria-label')).toBe(ai('panel.scopeAndAgent'))
-    // 目标片还在，只是不再挂范围：它就是面包屑
-    const prefix = ai('panel.targetAria', { target: '§' }).split('§')[0]
-    const target = buttons().find((b) => b.getAttribute('aria-label')?.startsWith(prefix))
-    expect(target, '目标片不见了').toBeTruthy()
-    expect(target!.textContent).not.toContain(scope)
+    expect(withScope[0].hasAttribute('data-ai-target')).toBe(true)
   })
 
   /**
    * 打磨 A5：发送钮左边那枚常驻的 `⌘↵` 删了——同一句话已经在发送钮的气泡里。
-   * 判据同时确认快捷键本身没丢（还在气泡 / 可达名里），否则「删干净了」和
-   * 「把功能一起删了」长得一样。
    */
   it('输入框上不再常驻一枚快捷键键帽，快捷键仍在发送钮的提示里（A5）', async () => {
     await mount({ withPanel: true })
     expect(host.querySelector('kbd')).toBeNull()
     expect(host.textContent ?? '').not.toContain('↵')
-    // 发送钮本身没动：快捷键说在它的气泡与可达名里（`panel.send` / `panel.sendAria`）
-    const send = host.querySelector('[data-ai-send="send"]') as HTMLElement
+    const send = q('[data-ai-send="send"]')
     expect(send, '找不到发送钮').toBeTruthy()
-    expect(send.getAttribute('aria-label')).toBe(ai('panel.sendAria'))
+    expect(send!.getAttribute('aria-label')).toBe(ai('panel.sendAria'))
+  })
+
+  it('发送钮是 26px 的圆（不是方块），没有 scale 换形', async () => {
+    await mount({ withPanel: true })
+    const send = q('[data-ai-send]')!
+    expect(send.className).toContain('rounded-full')
+    expect(send.className).toContain('h-[26px]')
+    expect(send.innerHTML).not.toContain('scale-50')
   })
 })
