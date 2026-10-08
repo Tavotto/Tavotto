@@ -661,7 +661,7 @@ describe('显示项目检查结果（project-scan）', () => {
     useUiStore.setState({ guideCard: 'closed' })
     mount()
     act(() => {
-      ;(document.querySelector('[data-cmd-id="project-scan"] button') as HTMLButtonElement).click()
+      ;document.querySelector<HTMLElement>('[data-cmd-id="project-scan"]')!.click()
     })
     expect(useProjectPreparationStore.getState().focus).toBeNull()
     expect(useProjectScanStore.getState().forced).toBe(true)
