@@ -95,6 +95,8 @@ const offer = (over: Partial<DependencyPreparationOffer> = {}): DependencyPrepar
   ],
   rounds_remaining: 3,
   skipped: false,
+  // 后端对能授权的计划一律带影响摘要；前端缺它就明确停下（327262712），夹具必须像真实响应一样带上
+  impact_digest: 'd-shown',
   ...over,
 })
 
@@ -501,6 +503,7 @@ describe('DependencyPrepareDialog', () => {
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
     await act(async () => button(en('oneClickRepair'))!.click())
     await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledWith('jp-mine', 'd-shown') // 回显的是界面上展示过的摘要
     // 同一条广播上来了别人的计划：installing 不换进度、done 不关框、不重排
     await act(async () =>
       useDepRepairStore.getState().onProgress({ plan_id: 'jp-theirs', state: 'installing', log: '', error: null, code: '', flow: 'joint' }),
