@@ -31,6 +31,14 @@ export function useSelectionRouting() {
     }
   }), [])
 
+  // 原生菜单没有 DOM 事件；右栏收起也取消尚未完成的自动交接请求。
+  useEffect(() => useUiStore.subscribe((state, prev) => {
+    if (prev.rightOpen && !state.rightOpen) {
+      treeHandoff.current = false
+      pendingRouting.current = false
+    }
+  }), [])
+
   // pointerdown 的选择更新可能早于浏览器默认聚焦；触屏也未必聚焦。
   // capture 在树 / 画布的选择处理器之前记下来源，不能拿旧 activeElement 猜。
   // focusin / keydown 则覆盖键盘漫游与从输入框发起的操作。
@@ -46,7 +54,7 @@ export function useSelectionRouting() {
         ui.tool === 'select' && !useViewportStore.getState().spaceDown) {
         // Space 平移 / 绘图起手不是换选；新对象真被选中后由下面的选择 effect 路由。
         // 同一选区只在从树交接时请求路由；普通换选已有下面的 effect，不能请求两次。
-        const handoff = treeHandoff.current || (ui.leftOpen && ui.leftTab !== 'assets')
+        const handoff = treeHandoff.current
         treeHandoff.current = false
         if (handoff) setCanvasPress(n => n + 1)
       }

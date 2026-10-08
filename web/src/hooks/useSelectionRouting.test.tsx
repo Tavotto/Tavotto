@@ -240,6 +240,30 @@ describe('selection routing keeps the active drawer workflow', () => {
     expect(useUiStore.getState().leftOpen).toBe(false)
   })
 
+  it('native right-sidebar dismissal cancels the wide tree handoff without a DOM event', () => {
+    openElements('wide')
+    pointer(treeRow(gids[0]))
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    // menu-toggle-right invokes this store action directly from the native menu.
+    act(() => useUiStore.getState().toggleRight())
+    pointer('[data-canvas-hit]')
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().rightOpen).toBe(false)
+  })
+
+  it('native right-sidebar dismissal cancels a pending wide gesture handoff', () => {
+    openElements('wide')
+    pointer(treeRow(gids[0]))
+    act(() => useInteractionStore.getState().begin('element'))
+    pointer('[data-canvas-hit]')
+    act(() => useUiStore.getState().toggleRight())
+    act(() => useInteractionStore.getState().end())
+    expect(useUiStore.getState().selectedGids).toEqual([gids[0]])
+    expect(useUiStore.getState().leftOpen).toBe(true)
+    expect(useUiStore.getState().rightOpen).toBe(false)
+  })
+
   it.each(['pan', 'draw'] as const)('%s gesture leaves the tree workflow until selection changes', gesture => {
     openElements()
     pointer(treeRow(gids[0]))
