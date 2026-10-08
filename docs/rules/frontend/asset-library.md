@@ -88,9 +88,11 @@
   判的是所属项目，不是代际（代际变了、所属项目却开着时停放下去就没人再取）；安装完成（`onProgress`）/ 迟到的失败（`lateFailure`）/ 重建实况都经它。模块级的停放槽（`startedPlans` / `parkedRetry` /
   `pendingReruns`）活得比 zustand reset 长，测试在 `beforeEach` 里调 `__resetDepRepairParkingForTests()`，用例互不串（「恢复自动检测」因此挪进
   store：`clearPinnedInterpreter`）。看护 `projectSwitchDepRepair.test.ts`「环境改动的回调按项目代际判」。跑前授权框
-  （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句（干净机器上什么包都
-  不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部只有「稍后」「一键修复」，
-  其余（含「不准备，直接运行」）进「详情」；默认目标是项目 venv（会改用户环境）时目标单选留在外面，每个选项的说明压成一句
+  （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，**正文**就是那一句（标题固定是「准备环境」，
+  2026-10-07 设计审计 §10.2：标题不是生成句、失败时不被错误句替换；干净机器上什么包都
+  不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部是
+  「稍后」「一键修复」与 start 槽里的「不准备，直接运行」（ghost），其余进「详情」（一组平铺的 `FieldGroup`，不再 Details 套 Details）；
+  失败是正文末尾一条危险 `Notice`，进行中页脚原位置灰；默认目标是项目 venv（会改用户环境）时目标单选留在外面，每个选项的说明压成一句
   短语，其余照样进「详情」。同一个包缺在几个脚本上**只挂一张卡**
   （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`；发起时把那几行记进 `scriptOffer.peers` 随作业收放，
   切走期间装好、切回来运行记录已清空时按名单补跑）；有修复 offer 的行不叠 `FailureRecovery`。
@@ -169,7 +171,8 @@
   面板时按 stem 查 `GET /api/runtime/assets`（只读），有描述符就
   经 `openFastEdit` 打开（它在 workspace 里新建，见加图分层链）；没有描述符**不造假面板**，引导去脚本区运行。多
   Figure 交接（`?pick=<脚本>` / `tavotto:open` 事件的 `pick`）打开
-  `FigurePickerDialog`——每张可见、各自可加、**绝不静默选第一张**；条目
+  `FigurePickerDialog`——每张可见、各自可加、**绝不静默选第一张**；加一张**不关框**，已在画布上的那张说「已在画布上」，
+  脚部「全部添加（N）」+「完成」（2026-10-07 设计审计 §10.2）；条目
   从 assetStore + runtimeAssetStore 现算（磁盘图走 `addPanelToCanvas`、runtime 走
   描述符 `addRuntimePanelToCanvas`，已有就只选中），没跑出预览的条目不渲染假按钮。看护
   `openRequest.test.ts` / `FigurePickerDialog.test.tsx`。
@@ -183,7 +186,7 @@
   一样保留上一份照常显示；来源筛选的选项由 `assetFolders()` 并上它的目录。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
 - **脚本 `input()` 的作答（ADR 0099）**：`scriptInputStore` 有项目代际（`clear()` 换代；后端那一问不取消，切回来经
   `loadAnswers()` 的 `pending` 接回对话框）；`ScriptInputDialog` 是闸（`blockDismiss`，出口只有提交 / 结束输入 / 停止脚本），
-  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`；答案按运行配置 `run_config` 分行，改 / 删只动那一行、重跑只重跑那份配置）行内只改值、没有主按钮，脚部唯一的主动作「保存并重新运行（N）」依次保存所有改过的答案、只重跑一次；删除先 `askConfirm`（danger），确认框开着时换了项目（store 换代）点头作废；改 / 删答案一次只许一件（批量保存整批算一件、删除一条算一件），锁归 `scriptInputStore`（`answersBusy` + `beginAnswersChange()` / `endAnswersChange(token)`）不归对话框组件：拿不到锁就一个请求都不发，`saveAnswer` / `forgetAnswer` 只认持锁 token，关掉再打开答案管理时新挂上的对话框读同一把锁、在飞的那件回来才放开（否则两份同项目整份快照互盖、重跑两次）；`clear()` 换代一并清锁，旧项目那件回来时 token 已不是持有者、放不掉新锁；「记住的输入」入口只在
+  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`；答案按运行配置 `run_config` 分行，改 / 删只动那一行、重跑只重跑那份配置，整批提交涉及几份配置就各重跑一次）行内只改值、没有主按钮，「删除」在行尾 ⋯ 里且是**暂存**的（行上标「保存时删除」、可撤销，2026-10-07 设计审计 §10.2），脚部唯一的主动作「保存并重新运行（N）」依次提交所有改过 / 标了删除的答案、只重跑一次（在飞时对话框 `busy`：×、点外面、Esc 都关不掉，半途关掉会只带部分改动重跑——Codex #831 P1）；没提交前什么都没发，换了项目（store 换代）暂存的删除随之作废；改 / 删答案一次只许一件（整批提交算一件、只拿一个 token），锁归 `scriptInputStore`（`answersBusy` + `beginAnswersChange()` / `endAnswersChange(token)`）不归对话框组件——对话框的 `busy` / 禁用都读 `answersBusy`：拿不到锁就一个请求都不发、也不重跑，`saveAnswer` / `forgetAnswer` 只认持锁 token，答案管理被卸载再挂上（`busy` 拦住了 ×/Esc，但 `closeManager()` 等别的路径仍能关）时新挂上的对话框读同一把锁、在飞的那批回来才放开（否则两份同项目整份快照互盖、重跑两次）；`clear()` 换代一并清锁，旧项目那批回来时 token 已不是持有者、放不掉新锁；`ScriptInputDialog` 打开时焦点直接在答案框（`initialFocusRef`），「停止脚本」在 start 槽（危险浅底胶囊）；「记住的输入」入口只在
   这个脚本真有答案时出现在脚本行上；zustand 选择器的空值用模块级常量（每次新建 `[]` = React #185 无限重渲染）。
   作答内容在 `ScriptInputForm`（`useScriptInputAnswer` + 字段 + 按钮），原对话框与准备面板共用；同一问只有一个展示面：
   面板挂载时 `claimPresentation`、卸载时 `releasePresentation`，对话框只在没有展示面认领时出现（关面板 = 换展示，不停脚本）。

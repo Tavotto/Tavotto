@@ -20,7 +20,6 @@
     "exportAgain": "Export again",
     "showInFolder": "Show in folder",
     "finish": "Done",
-    "advanced": "Advanced",
     "blockedTitle": "Blocking problems or items that can’t be verified. Tick the confirmation to export.",
     "blockingListLabel": "Blocking problems",
     "blockingMore_one": "{{count}} more — open the problems panel",
@@ -159,13 +158,19 @@
     "cancelNotAccepted": "The server did not accept cancellation. Check the export status and output folder before retrying.",
     "statusFailed": "Export status is unavailable; the job may still finish. {{error}}",
     "retryStatus": "Retry status check",
-    "connectionFailed": "Couldn’t reach the export service. Check the connection and that {{app}} is running, then retry. Check the output folder before starting another export."
+    "connectionFailed": "Couldn’t reach the export service. Check the connection and that {{app}} is running, then retry. Check the output folder before starting another export.",
+    "groupOutput": "Output",
+    "groupFormat": "Format",
+    "groupChecks": "Checks",
+    "locationLabel": "Location",
+    "locationDefault": "Project export folder",
+    "locationChange": "Change…"
   },
   "layout": {
     "conflict": "A layout named “{{name}}” already exists on disk, written by another window or tool.",
     "conflictDisk": "On disk: {{canvases}} canvases / {{objects}} objects",
     "empty": "No layouts in this project yet",
-    "load": "Load",
+    "load": "Open",
     "nameLabel": "Layout name",
     "namePlaceholder": "Layout name",
     "nameTaken": "A layout with this name already exists; saving replaces it.",
@@ -180,7 +185,8 @@
     "saveToProjectTitle": "Save to project",
     "saved": "Saved as a new layout: {{name}}",
     "saving": "Saving…",
-    "savesIntoLabel": "Save into"
+    "savesIntoLabel": "Save into",
+    "rename": "Rename"
   },
   "mcp": {
     "confirmBoth": "Export anyway: I understand the {{errors}} blocking problems and {{notVerifiable}} items that can’t be verified automatically. The confirmation goes in the proof report.",
@@ -807,8 +813,11 @@
     "refCount_other": " (referenced by {{count}} figures)",
     "selectAria": "Choose a replacement asset for {{name}}",
     "skipPanel": "Skip this figure",
-    "titleDoc": "Figures in this layout are missing assets",
-    "titlePaste": "The pasted figures are missing assets"
+    "titleDoc": "Relink assets",
+    "titlePaste": "Relink before pasting",
+    "descDoc": "Some figures in this layout can’t find their assets. Pick a replacement for each, or keep them missing.",
+    "descPaste": "Some pasted figures can’t find their assets. Pick a replacement for each, or skip it.",
+    "matchedByName": "Matched by name"
   },
   "settings": {
     "about": {
@@ -1384,7 +1393,20 @@
     "unmappableEntry": "{{label}}: no “{{prop}}”",
     "willAffect": "Will affect",
     "nameLabel": "Name",
-    "deleteBuiltinReason": "Built-in styles can’t be deleted"
+    "deleteBuiltinReason": "Built-in styles can’t be deleted",
+    "unsaved": "Unsaved changes",
+    "impact": {
+      "title": "Impact",
+      "entries": "Properties",
+      "palette": "Colors",
+      "page": "Page size",
+      "on": "On",
+      "off": "Off",
+      "pageSize": "{{w}} × {{h}} mm",
+      "following_one": "1 canvas in this layout follows this style and picks up saved changes.",
+      "following_other": "{{count}} canvases in this layout follow this style and pick up saved changes.",
+      "unsavedDraft": "Not saved yet — save it before a canvas can follow it."
+    }
   },
   "telemetry": {
     "allow": "Share anonymous usage",
@@ -1423,7 +1445,8 @@
     "gotIt": "Got it",
     "failed": "Couldn’t update. You’re still on the current version.",
     "retry": "Try again",
-    "sourceBody": "This is a source checkout, so Tavotto doesn’t upgrade itself. Run this in the repository:"
+    "sourceBody": "This is a source checkout, so Tavotto doesn’t upgrade itself. Run this in the repository:",
+    "log": "Log"
   },
   "versions": {
     "beforeRestore": "Before restore ({{time}})",
@@ -1516,11 +1539,11 @@
     "unname": "Remove name",
     "loadingList": "Loading this layout's timeline…",
     "restoreFailed": "Couldn’t save the current layout first, so nothing was restored: {{error}}",
+    "restoreAbortedEdited": "The layout changed while the point was loading, so nothing was restored. Your latest edit is kept.",
     "filterLabel": "Which points to show",
     "filterAll": "All",
     "filterNamed": "Named",
     "previewTitle": "Preview: {{time}} {{name}}",
-    "closePreview": "Close",
     "viewMoment": "This moment",
     "viewSide": "Side by side",
     "viewOverlay": "Overlay",
@@ -1689,7 +1712,7 @@
     "manageAria": "Review and change the remembered input for {{script}}",
     "manageTip": "Remembered input",
     "manageTitle": "Remembered input · {{script}}",
-    "manageIntro": "Edit any answers, then choose Save and rerun — the script reruns once.",
+    "manageIntro": "Edit answers or mark them for removal, then choose “Save and rerun” — the script reruns once.",
     "manageWhere": "Answers are stored in {{path}} in the project folder and travel with it; project packages don’t include them.",
     "manageEmpty": "This script has no remembered input.",
     "manageConfig": "Run configuration {{config}}",
@@ -1699,10 +1722,10 @@
     "manageSave": "Save and rerun",
     "manageSaveCount": "Save and rerun ({{n}})",
     "manageForget": "Remove",
-    "manageForgetAria": "Remove the answer to question {{index}}",
-    "manageForgetTitle": "Remove the answer to question {{index}}?",
-    "manageForgetBody": "{{script}} reruns right away and asks this question again.",
-    "manageSaved": "Saved; rerunning {{script}}"
+    "manageSaved": "Saved; rerunning {{script}}",
+    "manageForgetStaged": "Will be forgotten on save",
+    "manageForgetUndo": "Undo",
+    "manageRowActions": "More actions for question {{index}}"
   },
   "taskDiagnostic": {
     "busy": "Preparing…",
