@@ -772,6 +772,16 @@ export const panelSrc = (
 export const fetchLayoutNames = () =>
   jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
 
+/**
+ * 同一份清单 + 每份的修改时间（epoch 秒；后端加字段，老后端没有 = 空表、界面不写日期）。
+ * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
+ */
+export const fetchLayoutList = () =>
+  jsonFetch<{ layouts: string[]; modified?: Record<string, number> }>('/api/layouts').then((r) => ({
+    names: r.layouts,
+    modified: r.modified ?? {},
+  }))
+
 /** 读到的一份画布文件：`revision` 来自响应头，是后续覆盖它的基线 */
 export interface FetchedLayout {
   doc: unknown

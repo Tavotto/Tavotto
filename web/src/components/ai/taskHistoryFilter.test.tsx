@@ -83,9 +83,7 @@ afterEach(async () => {
 })
 
 const openFilter = async (): Promise<HTMLElement[]> => {
-  const trigger = document.querySelector(
-    `[role="combobox"][aria-label="${ai('history.filterAria')}"]`,
-  ) as HTMLElement
+  const trigger = document.querySelector('[data-ai-history-filter] > *') as HTMLElement
   expect(trigger, '状态筛选不见了（迁到 ui/Select 之后是 combobox）').toBeTruthy()
   await act(async () => {
     trigger.click()
@@ -132,10 +130,8 @@ describe('空历史不摆无效的搜索与筛选（审计 T37）', () => {
     await mount()
   }
 
-  const searchBox = () =>
-    document.querySelector(`input[aria-label="${ai('history.searchAria')}"]`)
-  const filterBox = () =>
-    document.querySelector(`[role="combobox"][aria-label="${ai('history.filterAria')}"]`)
+  const searchBox = () => document.querySelector('input[data-ai-history-search]')
+  const filterBox = () => document.querySelector('[data-ai-history-filter] > *')
 
   it('一条记录都没有：搜索与筛选都不渲染，只留一句空状态', async () => {
     await remount({ sessions: [], total: 0 })

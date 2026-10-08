@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { useEnvStore } from '@/store/envStore'
 import { t as translate } from '@/i18n'
 import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
@@ -35,7 +36,17 @@ const en = (key: string, values?: Record<string, unknown>) =>
 const sourceLabel = (source: EngineSource): string =>
   en(`sourceLabel.${source || 'unknown'}`, { product: PRODUCT_NAME })
 
-export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
+export function EngineEnvironmentCard({
+  compact,
+  hideTitle,
+}: {
+  compact?: boolean
+  /**
+   * 正常态那行小标「渲染环境」不画：装在同名的「渲染环境」对话框里时它与对话框标题重复
+   * （2026-10-07 设计审计 §10.2）。其余状态的小标是状态句（「尚未配置渲染环境」），照画。
+   */
+  hideTitle?: boolean
+}) {
   useTranslation('errors')
   const { env, log, installing, refresh, install, setPython } = useEnvStore()
   const [manual, setManual] = useState('')
@@ -101,8 +112,8 @@ export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
     return (
       <Card data-engine-env-card {...shell} className="flex flex-col gap-2.5">
         <div>
-          <h3 className="type-section">{en('okTitle')}</h3>
-          <p className="mt-1 text-xs leading-relaxed text-ink-2">
+          {!hideTitle && <h3 className="type-section">{en('okTitle')}</h3>}
+          <p className={cn('text-xs leading-relaxed text-ink-2', !hideTitle && 'mt-1')}>
             {label}
           </p>
           {/* 内置环境不再重复说明自带科学栈；只有外部解释器才需要露出具体路径 */}
