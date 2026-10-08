@@ -473,13 +473,15 @@ def _retire_timed_out(directory: Path) -> None:
 TRANSCRIPT_FAILED_CODE = "script_input_transcript_failed"
 
 
-def _transcript_failure(exc: BaseException):
-    """转录存储读不出来：这次 build 的失败（稳定 code，界面有文案）。懒导入：`pool` 在加载时导入本模块。"""
-    from .pool import WorkerError
+class TranscriptUnavailable(RuntimeError):
+    """转录存储读不出来：这次 build 不能开始。本模块在导入分层里低于 `pool`，不能反向依赖 `WorkerError`；
+    `pool.ensure_built` 把它换成带同一个 code 的 `WorkerError`。"""
 
-    return WorkerError(
-        f"脚本输入的执行记录读不出来，这次运行没有开始：{exc}", code=TRANSCRIPT_FAILED_CODE
-    )
+    code = TRANSCRIPT_FAILED_CODE
+
+
+def _transcript_failure(exc: BaseException) -> TranscriptUnavailable:
+    return TranscriptUnavailable(f"脚本输入的执行记录读不出来，这次运行没有开始：{exc}")
 
 
 def _frozen_policy(worker) -> "ReplayAnswers | None":

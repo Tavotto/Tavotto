@@ -376,15 +376,13 @@ def test_a_build_whose_basis_cannot_be_captured_fails(tmp_path, monkeypatch):
     # r4224357981：build 开始时 basis() 读失败 → build 直接失败（稳定 code），不存在没有基线的 build
     import pytest
 
-    from tavotto.engine.pool import WorkerError
-
     w = _Worker(tmp_path)
 
     def boom(*_a, **_k):
         raise OSError("transient")
 
     monkeypatch.setattr(inputtranscript, "basis", boom)
-    with pytest.raises(WorkerError) as ei:
+    with pytest.raises(inputbroker.TranscriptUnavailable) as ei:
         with inputbroker.serving(w):
             pytest.fail("build must not start")
     assert ei.value.code == "script_input_transcript_failed"
