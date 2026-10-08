@@ -78,6 +78,8 @@ PROBE = (
 
 
 def _caps() -> tuple[bool, bool]:
+    if WORKER_PY is None:  # 没有 worker：模块整体 skip，收集阶段不得起子进程
+        return False, False
     out = subprocess.run(  # noqa: S603 — 测试里探 worker 解释器的能力
         [WORKER_PY, "-c", PROBE], capture_output=True, text=True, check=True
     ).stdout.split()
@@ -244,6 +246,43 @@ def test_undoing_hatchcolor_restores_the_follow_edge_mode_not_a_frozen_colour(wo
     fresh_man, fresh_png = _fresh(library, [_p(SERIES_A, "edgecolor", "#ff00ff")], "follow-fresh")
     assert man == fresh_man
     assert _png(worker, [_p(SERIES_A, "edgecolor", "#ff00ff")], "follow-hot") == fresh_png
+
+
+RC_LIBRARY = """\
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(3.6, 2.6))
+    with mpl.rc_context({"hatch.color": "#ff0000"}):
+        ax.bar([0, 1], [3, 5], 0.6, facecolor="#47749e", hatch="//")
+    ax.set_xlim(-0.7, 1.7)
+    ax.set_ylim(0, 7)
+    fig.savefig("Hatch.png")
+"""
+
+
+@pytest.mark.skipif(not HAS_COLOR, reason="花纹颜色是 matplotlib 3.11 起的独立属性")
+def test_undoing_hatchcolor_keeps_the_colour_resolved_inside_rc_context(tmp_path):
+    """脚本在 `rc_context({'hatch.color': ..})` 里建的 patch：`_original_hatchcolor` 是 None，
+    但解析后的 `_hatch_color` 是那个临时色。上下文早已退出，设 hatchcolor 再撤销，
+    restore 不得按**现在**的 rcParams 重新解析——热态 `_hatch_color` 与全新 worker 重放一致。"""
+    figs = tmp_path / "rc-figures"
+    figs.mkdir()
+    (figs / SCRIPT_NAME).write_text(RC_LIBRARY, encoding="utf-8")
+    gid = "axes_0.barseries_0"
+    w = _worker(figs)
+    try:
+        base_png = _png(w, [], "rc-base")
+        _apply(w, [_p(gid, "hatchcolor", "#00aa00")])
+        assert _png(w, [_p(gid, "hatchcolor", "#00aa00")], "rc-edit") != base_png
+        undone = _apply(w, [])
+        fresh_man, fresh_png = _fresh(figs, [], "rc-fresh")
+        assert undone == fresh_man
+        assert _png(w, [], "rc-undo") == fresh_png == base_png, "撤销后花纹颜色不是脚本里的临时色"
+    finally:
+        pool.discard(w)
 
 
 # ---------------------------------------------------------------------------

@@ -3153,9 +3153,41 @@ _CAP_HATCH = (
 )
 
 
+class _PatchHatchColor:
+    """花纹颜色的**可回灌**表示：原始设定 `_original_hatchcolor` + 解析后的 `_hatch_color`。
+
+    `_original_hatchcolor is None` 时 matplotlib 在 `set_hatchcolor(None)` 里**按当时的**
+    `rcParams['hatch.color']` 解析出 `_hatch_color`。脚本若在 `rc_context({'hatch.color': ..})`
+    里建 patch，`_hatch_color` 记的是那个临时色；上下文退出后，改了 hatchcolor 再撤销，
+    restore 只调 `set_hatchcolor(None)` 会按**现在**的 rcParams 重新解析——热态颜色变了，
+    而全新 worker 重放脚本会重建原色（热态 != 重放）。所以模式与解析结果两样都快照、
+    都写回，不重新解析（与 `_PatchEdge` 同一条纪律：只活在 `originals` 里，不进 JSON）。
+    matplotlib 3.11 的 `_set_hatchcolor` 只写 `_hatch_color`（`'edge'` 或 RGBA），没有别的标志。
+    """
+
+    __slots__ = ("original", "resolved")
+
+    def __init__(self, original, resolved) -> None:
+        self.original = original
+        self.resolved = resolved
+
+    def __repr__(self) -> str:
+        return f"<patch hatchcolor {self.original!r} resolved={self.resolved!r}>"
+
+    def __eq__(self, other) -> bool:
+        return (
+            isinstance(other, _PatchHatchColor)
+            and _same_value(self.original, other.original)
+            and _same_value(self.resolved, other.resolved)
+        )
+
+    __hash__ = None
+
+
 def _get_hatchcolor(p):
-    """花纹颜色的**可回灌**表示：`_original_hatchcolor`（`None` = 没设，按 `rcParams['hatch.color']`
-    走，默认 `'edge'` = 跟边色）。
+    """花纹颜色的**可回灌**表示：模式（`_original_hatchcolor`，`None` = 没设，按
+    `rcParams['hatch.color']` 走，默认 `'edge'` = 跟边色）+ 解析结果（`_hatch_color`），
+    见 `_PatchHatchColor`。
 
     不能回 `get_hatchcolor()`：那是解析后的 RGBA，按值写回会把「跟边色」这个模式换成一个
     死颜色——之后再改边色，花纹不再跟着走，热态与「只见最终列表的全新 worker」分岔
@@ -3163,12 +3195,24 @@ def _get_hatchcolor(p):
     公开入口（`_original_hatchcolor` 同时出现）；≤3.10 花纹颜色就是边色，没有独立属性，
     manifest 不发字段，这里的 getter / setter 只是让旧版本上重放新存的 override 时不炸。
     """
-    return getattr(p, "_original_hatchcolor", None)
+    if not hasattr(p, "_original_hatchcolor"):
+        return None
+    resolved = getattr(p, "_hatch_color", None)
+    if isinstance(resolved, np.ndarray):
+        resolved = resolved.copy()
+    return _PatchHatchColor(p._original_hatchcolor, resolved)  # noqa: SLF001
 
 
 def _set_hatchcolor(p, v) -> None:
-    if hasattr(p, "set_hatchcolor"):
-        p.set_hatchcolor(v)
+    if not hasattr(p, "set_hatchcolor"):
+        return
+    if isinstance(v, _PatchHatchColor):
+        p.set_hatchcolor(v.original)
+        if v.original is None and v.resolved is not None:
+            # 「没设」的解析结果取决于**建 patch 那一刻**的 rcParams，不能按现在的重新解析
+            p._hatch_color = v.resolved  # noqa: SLF001
+        return
+    p.set_hatchcolor(v)
 
 
 def _get_hatch_linewidth(p):
