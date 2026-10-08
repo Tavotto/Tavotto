@@ -53,7 +53,7 @@ def _clean(monkeypatch):
 def world(tmp_path, monkeypatch):
     w = World(tmp_path)
     monkeypatch.setenv("SHELL", str(w.shell))
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    envworld.set_home(monkeypatch, tmp_path / "home")
     (tmp_path / "home").mkdir()
     return w
 
@@ -91,7 +91,7 @@ def test_the_environment_report_starts_no_interpreter_even_when_one_is_remembere
     assert world.fired() == []
     project = resp.get_json()["project"]
     assert project["source"] == engine_pool.SOURCE_PROJECT_VENV  # 线索照常给出：记住的就是它
-    assert project["python"] == ".venv/bin/python"
+    assert project["python"] == envworld.venv_rel(".venv")
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ def test_the_first_resolution_does_not_adopt_a_project_venv(tmp_path):
     python, source = engine_pool.resolve_worker_python(str(root), script="figure.py")
 
     assert source != engine_pool.SOURCE_PROJECT_VENV
-    assert not engine_pool.same_python(python, str(root / ".venv" / "bin" / "python"))
+    assert not engine_pool.same_python(python, str(envworld.venv_python(root / ".venv")))
     assert projectenv.remembered_record(root) is None  # 没有任何采用记录被写出来
 
 
@@ -275,7 +275,7 @@ def test_recommending_starts_nothing_with_every_entry_armed(world, monkeypatch):
 
     assert calls == [] and world.fired() == []
     names = {c["python_relative"] for c in rec["candidates"] if c["python_relative"]}
-    assert {".venv/bin/python", "env/bin/python"} <= names
+    assert {envworld.venv_rel(".venv"), envworld.venv_rel("env")} <= names
     project = [c for c in rec["candidates"] if c["scope"] == "project"]
     # 没检查过的候选如实写 unchecked，不冒充 verified；推荐的是线索里排最前的，凭的是项目声明
     assert {c["status"] for c in project} == {"unchecked"} and all(
@@ -296,18 +296,18 @@ def test_only_the_check_action_starts_a_candidate_and_only_the_named_one(world):
     rec = envadvice.recommend(world.root, "plot.py")
     by_rel = {c["python_relative"]: c["id"] for c in rec["candidates"] if c["python_relative"]}
 
-    out = envadvice.check(world.root, "plot.py", ids=[by_rel[".venv/bin/python"]])
+    out = envadvice.check(world.root, "plot.py", ids=[by_rel[envworld.venv_rel(".venv")]])
 
     assert world.fired() == [
         "venv_python"
     ]  # 点名的那一个（假 .venv 的哨兵名），没点名的 env 一次没起
-    assert out["checked"] == [by_rel[".venv/bin/python"]] and out["skipped"] == []
+    assert out["checked"] == [by_rel[envworld.venv_rel(".venv")]] and out["skipped"] == []
     rows = {c["id"]: c for c in out["recommendation"]["candidates"]}
-    assert rows[by_rel[".venv/bin/python"]]["checked"] is True
+    assert rows[by_rel[envworld.venv_rel(".venv")]]["checked"] is True
     # 假解释器通不过体检（不报版本）：如实写成不能用，绝不当 healthy / verified
-    assert rows[by_rel[".venv/bin/python"]]["status"] in ("unusable", "unsupported_python")
-    assert rows[by_rel[".venv/bin/python"]]["health"]["ok"] is False
-    assert rows[by_rel["env/bin/python"]]["checked"] is False
+    assert rows[by_rel[envworld.venv_rel(".venv")]]["status"] in ("unusable", "unsupported_python")
+    assert rows[by_rel[envworld.venv_rel(".venv")]]["health"]["ok"] is False
+    assert rows[by_rel[envworld.venv_rel("env")]]["checked"] is False
     # 检查 ≠ 采用：什么都没写进项目设置
     assert projectenv.remembered_record(world.root) is None
 
@@ -330,7 +330,7 @@ def test_a_check_has_a_candidate_budget_a_deadline_and_a_cancel(tmp_path, monkey
 
     root = tmp_path / "p"
     for name in (".venv", "venv", "env"):
-        py = root / name / "bin" / "python"
+        py = envworld.venv_python(root / name)
         py.parent.mkdir(parents=True)
         py.write_text("#!/bin/sh\n", "utf-8")
         (root / name / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
@@ -382,7 +382,7 @@ def test_a_check_tells_unsupported_python_missing_packages_and_a_broken_import_c
     from tavotto.engine import envadvice
 
     root = tmp_path / "p"
-    py = root / ".venv" / "bin" / "python"
+    py = envworld.venv_python(root / ".venv")
     py.parent.mkdir(parents=True)
     py.write_text("#!/bin/sh\n", "utf-8")
     (root / ".venv" / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
@@ -405,11 +405,11 @@ def test_the_evidence_order_not_the_python_version_decides_the_recommendation(
     home = tmp_path / "home"
     root = tmp_path / "p"
     root.mkdir()
-    monkeypatch.setenv("HOME", str(home))
+    envworld.set_home(monkeypatch, home)
     monkeypatch.delenv("PYENV_ROOT", raising=False)
     monkeypatch.setattr(userenvs, "_conda_roots", lambda: [])
     for version in ("3.10.9", "3.13.1"):
-        py = home / ".pyenv" / "versions" / version / "bin" / "python3"
+        py = envworld.pyenv_python(home, version)
         py.parent.mkdir(parents=True)
         py.write_text("#!/bin/sh\n", "utf-8")
 
@@ -439,7 +439,7 @@ def test_the_python_requirement_comes_from_the_matrix_and_a_hint_is_not_a_range(
     home = tmp_path / "home"
     root = tmp_path / "p"
     root.mkdir()
-    monkeypatch.setenv("HOME", str(home))
+    envworld.set_home(monkeypatch, home)
     monkeypatch.setattr(userenvs, "_conda_roots", lambda: [])
     plain = envadvice.recommend(root, "p.py")["python_requirement"]
     assert plain["declared"] is None and plain["status"] == "unknown"
@@ -449,7 +449,7 @@ def test_the_python_requirement_comes_from_the_matrix_and_a_hint_is_not_a_range(
     }
 
     (root / ".python-version").write_text("3.11.9\n", "utf-8")
-    py = home / ".pyenv" / "versions" / "3.11.9" / "bin" / "python3"
+    py = envworld.pyenv_python(home, "3.11.9")
     py.parent.mkdir(parents=True)
     py.write_text("#!/bin/sh\n", "utf-8")
     hinted = envadvice.recommend(root, "p.py")["python_requirement"]
@@ -478,7 +478,7 @@ def test_adopting_a_recommended_candidate_runs_the_worker_in_exactly_that_enviro
     )
     assert checked.status_code == 200, checked.get_json()
     rec = checked.get_json()["recommendation"]
-    row = next(c for c in rec["candidates"] if c["python_relative"] == ".venv/bin/python")
+    row = next(c for c in rec["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
     assert row["status"] == "healthy" and row["checked"] is True
     assert rec["recommended_id"] == row["id"] and rec["decision"]["consent"] == "none"
     assert projectenv.remembered_record(root) is None  # 检查 ≠ 采用
@@ -520,7 +520,7 @@ def test_an_adoption_confirmed_against_an_old_generation_is_refused(client, tmp_
     rec = client.get("/api/engine/environment", query_string={"pj": pj}).get_json()["project"][
         "recommendation"
     ]
-    row = next(c for c in rec["candidates"] if c["python_relative"] == ".venv/bin/python")
+    row = next(c for c in rec["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
 
     rebuild_venv(root, ".venv", python=WORKER_PY)  # 用户看到建议之后，环境被删了重建
     stale = client.patch(
@@ -564,7 +564,7 @@ def test_using_an_environment_does_not_modify_it(client, tmp_path):
     rec = client.post(
         "/api/engine/environment/check", json={"script": "figure.py"}, query_string={"pj": pj}
     ).get_json()["recommendation"]
-    row = next(c for c in rec["candidates"] if c["python_relative"] == ".venv/bin/python")
+    row = next(c for c in rec["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
     client.patch(
         "/api/engine/environment",
         json={"scope": "project", "candidate": row["id"], "expected_generation": row["generation"]},
@@ -577,7 +577,7 @@ def test_using_an_environment_does_not_modify_it(client, tmp_path):
 def test_adopting_never_reaches_the_installer(client, tmp_path, monkeypatch):
     """C30 的结构面：采用路径上 `deprepair` 的任何安装入口一碰就炸，采用照样成功。"""
     root = tmp_path / "proj"
-    py = root / ".venv" / "bin" / "python"
+    py = envworld.venv_python(root / ".venv")
     py.parent.mkdir(parents=True)
     py.write_text("#!/bin/sh\n", "utf-8")
     (root / ".venv" / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
@@ -613,7 +613,7 @@ def test_a_global_lock_is_named_and_nothing_is_adopted_into_an_environment_that_
     import sys
 
     root = tmp_path / "proj"
-    py = root / ".venv" / "bin" / "python"
+    py = envworld.venv_python(root / ".venv")
     py.parent.mkdir(parents=True)
     py.write_text("#!/bin/sh\n", "utf-8")
     (root / ".venv" / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
@@ -667,7 +667,7 @@ def test_a_pre_0114_automatic_record_keeps_working_and_is_not_counted_as_a_confi
     """迁移：历史自动记录照用（不重新询问、不终止已有运行），但授权来源是 legacy_auto——证明不了用户确认过；
     用户在建议上确认它之后才变成 confirmed。"""
     root = tmp_path / "proj"
-    py = root / ".venv" / "bin" / "python"
+    py = envworld.venv_python(root / ".venv")
     py.parent.mkdir(parents=True)
     py.write_text("#!/bin/sh\n", "utf-8")
     (root / ".venv" / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
@@ -680,7 +680,7 @@ def test_a_pre_0114_automatic_record_keeps_working_and_is_not_counted_as_a_confi
                 "automatic": True,
                 "trigger": "first_open",
                 "module": "",
-                "python_relative": ".venv/bin/python",
+                "python_relative": envworld.venv_rel(".venv"),
             }
         },
     )
@@ -719,11 +719,16 @@ def test_a_compatible_environment_the_user_chose_over_the_recommended_one_is_the
         "/api/engine/environment/check", json={"script": "figure.py"}, query_string={"pj": pj}
     ).get_json()["recommendation"]
     rows = {c["python_relative"]: c for c in rec["candidates"] if c["python_relative"]}
-    assert rec["recommended_id"] == rows[".venv/bin/python"]["id"]
-    assert rows[".venv/bin/python"]["id"] != rows["venv/bin/python"]["id"]  # 不按 realpath 合并
-    assert rows[".venv/bin/python"]["generation"] != rows["venv/bin/python"]["generation"]
+    assert rec["recommended_id"] == rows[envworld.venv_rel(".venv")]["id"]
+    assert (
+        rows[envworld.venv_rel(".venv")]["id"] != rows[envworld.venv_rel("venv")]["id"]
+    )  # 不按 realpath 合并
+    assert (
+        rows[envworld.venv_rel(".venv")]["generation"]
+        != rows[envworld.venv_rel("venv")]["generation"]
+    )
 
-    pick = rows["venv/bin/python"]
+    pick = rows[envworld.venv_rel("venv")]
     client.patch(
         "/api/engine/environment",
         json={
@@ -779,7 +784,7 @@ def test_progress_style_refreshes_do_not_ask_the_environment_question_again(
     from tavotto.engine import envadvice
 
     root = tmp_path / "proj"
-    py = root / ".venv" / "bin" / "python"
+    py = envworld.venv_python(root / ".venv")
     py.parent.mkdir(parents=True)
     py.write_text("#!/bin/sh\n", "utf-8")
     (root / ".venv" / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
@@ -834,7 +839,7 @@ def test_the_environment_generation_ignores_permission_bits_but_sees_a_rebuild(t
     import shutil
 
     def build(marker: str) -> str:
-        py = tmp_path / ".venv" / "bin" / "python"
+        py = envworld.venv_python(tmp_path / ".venv")
         py.parent.mkdir(parents=True)
         py.write_text(f"#!/bin/sh\n# {marker}\n", "utf-8")
         (tmp_path / ".venv" / "pyvenv.cfg").write_text(f"home = /{marker}\n", "utf-8")
@@ -941,7 +946,7 @@ def test_dependency_repair_offer_does_not_list_an_unbound_recommendation(tmp_pat
         "ok": False,
         "code": projectenv.ERROR_CONFIRMATION_REQUIRED,
         "recommended": {
-            "python": str(root / ".venv" / "bin" / "python"),
+            "python": str(envworld.venv_python(root / ".venv")),
             "venv": str(root / ".venv"),
             "health": {"python_version": "3.12.0", "support": "verified"},
         },
@@ -949,4 +954,101 @@ def test_dependency_repair_offer_does_not_list_an_unbound_recommendation(tmp_pat
     for missing in ({}, {"id": "env-x"}, {"generation": "gen-x"}):
         detail = {**base, "recommended": {**base["recommended"], **missing}}
         offered = deprepair.offer(str(root), "figure.py", "matplotlib", detail)
-        assert [t for t in offered["targets"] if t["kind"] == deprepair.TARGET_SYSTEM] == [], missing
+        assert [t for t in offered["targets"] if t["kind"] == deprepair.TARGET_SYSTEM] == [], (
+            missing
+        )
+
+
+# ---------------------------------------------------------------------------
+# #814 Codex r4217064306：采用要在写入前再核一次环境代，且 expected_generation 必填
+# ---------------------------------------------------------------------------
+
+
+@needs_worker
+def test_a_rebuild_during_the_adoption_probe_is_refused_and_nothing_is_recorded(
+    client, tmp_path, monkeypatch
+):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    real_venv(root, ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    rec = client.get("/api/engine/environment", query_string={"pj": pj}).get_json()["project"][
+        "recommendation"
+    ]
+    row = next(c for c in rec["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
+
+    # 代次比较通过之后、写入之前（体检期间）环境被重建
+    def probe_then_rebuild(python, *a, **k):
+        rebuild_venv(root, ".venv", python=WORKER_PY)
+        return {"ok": True, "code": "", "support": "verified", "python_version": "3.12.1"}
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe_then_rebuild)
+    response = client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "candidate": row["id"], "expected_generation": row["generation"]},
+        query_string={"pj": pj},
+    )
+
+    assert response.status_code == 409 and response.get_json()["code"] == "environment_changed"
+    assert projectenv.remembered_record(root) is None  # 不落盘
+
+
+@needs_worker
+def test_a_candidate_adoption_without_expected_generation_is_refused(client, tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "figure.py").write_text("import matplotlib\n", encoding="utf-8")
+    real_venv(root, ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    rec = client.get("/api/engine/environment", query_string={"pj": pj}).get_json()["project"][
+        "recommendation"
+    ]
+    row = next(c for c in rec["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
+
+    response = client.patch(
+        "/api/engine/environment",
+        json={"scope": "project", "candidate": row["id"]},
+        query_string={"pj": pj},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "environment_generation_required"
+    assert projectenv.remembered_record(root) is None
+
+
+# ---------------------------------------------------------------------------
+# #814 Codex r4217064314：总时限也约束正在起的那个探测
+# ---------------------------------------------------------------------------
+
+
+def test_the_total_deadline_caps_each_probe_and_stops_starting_new_ones(tmp_path, monkeypatch):
+    from tavotto.engine import envadvice
+
+    root = tmp_path / "p"
+    for name in (".venv", "venv", "env"):
+        py = envworld.venv_python(root / name)
+        py.parent.mkdir(parents=True)
+        py.write_text("#!/bin/sh\n", "utf-8")
+        (root / name / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
+
+    now = [1000.0]
+    timeouts: list[float] = []
+
+    def probe(python, *a, timeout=None, **k):
+        timeouts.append(timeout)
+        now[0] += 96.0  # 每个探测"跑"96 s（可注入时钟，不真等）
+        return {"ok": True, "code": "", "support": "verified", "python_version": "3.12.1"}
+
+    out = envadvice.check(root, "p.py", probe=probe, deadline_s=100.0, clock=lambda: now[0])
+
+    # 第一个探测拿到全部 100 s（但被单探测上限封顶）；第二个只剩 4 s（低于 MIN_PROBE_BUDGET_S）→ 不起
+    assert len(timeouts) == 1 and timeouts[0] == min(projectenv.PROBE_TIMEOUT_S, 100.0)
+    assert [s["reason"] for s in out["skipped"]] == ["deadline", "deadline"]
+
+    # 剩余预算够起，但比单探测上限小：超时被收紧到剩余
+    now[0], timeouts[:] = 2000.0, []
+    envadvice.check(root, "p.py", probe=probe, deadline_s=190.0, clock=lambda: now[0])
+    assert timeouts[0] == projectenv.PROBE_TIMEOUT_S
+    assert timeouts[1] == 190.0 - 96.0 and timeouts[1] < projectenv.PROBE_TIMEOUT_S
+    assert len(timeouts) == 2  # 第三个：剩余 <0 → deadline

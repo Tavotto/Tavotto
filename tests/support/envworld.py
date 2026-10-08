@@ -20,6 +20,31 @@ from pathlib import Path
 from support import venvfixture
 
 
+def venv_python(venv: Path) -> Path:
+    """venv 目录 → 里面解释器的路径，按平台（POSIX `bin/python`，Windows `Scripts/python.exe`）。
+    与产品侧 `projectenv._interpreter_names` 同一份布局，夹具别再手写 `bin/python`。"""
+    return venv / "Scripts" / "python.exe" if os.name == "nt" else venv / "bin" / "python"
+
+
+def venv_rel(name: str) -> str:
+    """`GET` 报告里 `python_relative` 的样子（POSIX 形态分隔符，Windows 是 `Scripts/python.exe`）。"""
+    return f"{name}/Scripts/python.exe" if os.name == "nt" else f"{name}/bin/python"
+
+
+def pyenv_python(home: Path, version: str) -> Path:
+    """`~/.pyenv` 下某个版本的解释器：POSIX `versions/<v>/bin/python3`，pyenv-win `pyenv-win/versions/<v>/python.exe`
+    （与 `userenvs._pyenv_version_dirs` / `_prefix_python` 同一份布局）。"""
+    if os.name == "nt":
+        return home / ".pyenv" / "pyenv-win" / "versions" / version / "python.exe"
+    return home / ".pyenv" / "versions" / version / "bin" / "python3"
+
+
+def set_home(monkeypatch, home: Path) -> None:
+    """让 `os.path.expanduser("~")` 指向 `home`：POSIX 读 HOME，Windows 读 USERPROFILE（只设 HOME 在 Windows 无效）。"""
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+
 class World:
     """一个带哨兵的项目。哨兵目录在项目**之外**。"""
 
@@ -44,9 +69,9 @@ class World:
 
     def fake_venv(self, name: str) -> Path:
         venv = self.root / name
-        (venv / "bin").mkdir(parents=True)
+        python = venv_python(venv)
+        python.parent.mkdir(parents=True)
         (venv / "pyvenv.cfg").write_text("home = /nowhere\n", "utf-8")
-        python = venv / "bin" / "python"
         python.write_text(
             f'#!/bin/sh\ntouch "{self.sentinel}/{name.strip(".")}_python.$$"\nexit 0\n', "utf-8"
         )

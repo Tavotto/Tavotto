@@ -217,7 +217,9 @@ def _authorize(app: fa.RunningApp, script: str, target: str, *, timeout: float =
     )
     plan = planned["plan"]
     _, started = app.call(
-        "/api/engine/dependencies/prepare", {"plan_id": plan["plan_id"]}, timeout=30
+        "/api/engine/dependencies/prepare",
+        {"plan_id": plan["plan_id"], "impact_digest": plan["impact_digest"]},
+        timeout=30,
     )
     assert started["started"] is True
     deadline = time.time() + timeout
@@ -554,7 +556,11 @@ def test_fo27_cancel_during_install_is_a_clean_terminal_state(tmp_path, slow_hou
             timeout=60,
         )
         plan_id = planned["plan"]["plan_id"]
-        app.call("/api/engine/dependencies/prepare", {"plan_id": plan_id}, timeout=30)
+        app.call(
+            "/api/engine/dependencies/prepare",
+            {"plan_id": plan_id, "impact_digest": planned["plan"]["impact_digest"]},
+            timeout=30,
+        )
         deadline = time.time() + 60
         while True:
             _, st = app.call(f"/api/engine/dependency/state?plan_id={plan_id}", timeout=30)

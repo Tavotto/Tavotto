@@ -640,8 +640,9 @@ test('guarded PNG: a dependency gate opens one-click repair and completion resum
     constraints: [], require_hashes: false, adapter: [], blocked: [], identity: planId,
     selection: { selected_groups: [], available_groups: [], unselected_groups: [], skipped_marker: [] },
   }
+  const impactDigest = 'png-entry-impact-digest-0123456789'
   const offer = {
-    code: 'dependency_preparation_required', script: 'figure.py', plan: joint,
+    code: 'dependency_preparation_required', script: 'figure.py', plan: joint, impact_digest: impactDigest,
     target_kind: 'tavotto_managed', rounds_remaining: 3, skipped: false, user_environments: [],
     targets: [{ kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false,
       creates_environment: true, available: true, reason: '' }],
@@ -666,7 +667,7 @@ test('guarded PNG: a dependency gate opens one-click repair and completion resum
   await page.route(/\/api\/engine\/dependencies\/plan(\?|$)/, async route => {
     plans.push(route.request().postDataJSON())
     await route.fulfill({json: {plan: {
-      plan_id: planId, script: 'figure.py', target_kind: 'tavotto_managed', python: '',
+      plan_id: planId, impact_digest: impactDigest, script: 'figure.py', target_kind: 'tavotto_managed', python: '',
       requirements, constraints: [], require_hashes: false, adapter: [], identity: planId,
       needed_imports: ['ovito'], groups: [], modifies_user_environment: false,
       creates_environment: true, network_required: true, expires_at: Date.now() / 1000 + 600, joint,
@@ -706,7 +707,7 @@ test('guarded PNG: a dependency gate opens one-click repair and completion resum
   expect(adopted.overrides).toEqual([FRAME])
   expect(placement(adopted)).toEqual(placement(data.objects[0]))
   expect(plans).toEqual([{script: 'figure.py', target: 'tavotto_managed'}])
-  expect(starts).toEqual([{plan_id: planId}])
+  expect(starts).toEqual([{plan_id: planId, impact_digest: impactDigest}])
   const admissions = traffic.requests.filter(r => r.request.patches.length === 0)
   expect(admissions).toHaveLength(2)
   expect(admissions.every(r => r.request.source_policy === POLICY)).toBe(true)

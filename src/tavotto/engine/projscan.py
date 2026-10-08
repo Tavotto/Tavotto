@@ -434,7 +434,11 @@ def dependency_evidence(
 
 # ---------------------------------------------------------------- 环境线索
 def environment_evidence(
-    root: Path, script: str | None, budget: scanbudget.Budget | None = None, *, private: bool = False
+    root: Path,
+    script: str | None,
+    budget: scanbudget.Budget | None = None,
+    *,
+    private: bool = False,
 ) -> dict:
     """环境**候选线索**（只读磁盘记录）：项目 venv、记住的决策、`.vscode` / `.python-version` /
     `environment.yml` / shebang、Conda / pyenv 的落盘记录。
