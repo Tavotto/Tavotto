@@ -3406,8 +3406,84 @@ export const WORKDIR_CODES = [
   WORKDIR_CONFIRMATION_CODE,
 ] as const
 
+/**
+ * 环境建议里一个候选的证据层次（后端 `envadvice.LABELS`，顺序即推荐顺序，ADR 0114）。
+ * 前端只读它做展示，不据此自算「能不能跑」。
+ */
+export type EnvCandidateLabel =
+  | 'selected'
+  | 'remembered_legacy'
+  | 'project_hint'
+  | 'checked_compatible'
+  | 'machine_hint'
+  | 'bundled'
+
+export type EnvCandidateStatus =
+  | 'unchecked'
+  | 'healthy'
+  | 'unsupported_python'
+  | 'no_matplotlib'
+  | 'worker_import_failed'
+  | 'unusable'
+  | 'missing'
+  | 'changed'
+
+export interface EnvCandidate {
+  /** 不透明身份（`userenvs.env_id`）；内置 / 默认链条固定为 `builtin` */
+  id: string
+  label: EnvCandidateLabel
+  name: string
+  sources: string[]
+  scope: 'project' | 'machine'
+  /** 项目内的解释器给相对路径；项目外的永远是 null（机器路径不出后端） */
+  python_relative: string | null
+  /** 环境代：采用时原样交回 `expected_generation`，环境在这期间被重建就会被拒 */
+  generation: string
+  status: EnvCandidateStatus
+  checked: boolean
+  health: {
+    ok: boolean
+    code: string
+    support: string
+    python_version: string
+    matplotlib_version: string
+    checked_at: number
+  } | null
+  current: boolean
+  read_only?: boolean
+}
+
+/** 后端 `envadvice.recommend()` 的公开投影：纯读线索，没被明确检查过的候选一律 `unchecked` */
+export interface EnvRecommendation {
+  version: number
+  decision: {
+    consent: 'none' | 'confirmed' | 'legacy_auto' | 'builtin'
+    /** 全局显式解释器压着时：谁锁的（采用不会生效，后端会 409 `environment_locked`） */
+    locked_by: { source: string } | null
+    needs_decision: boolean
+    current_id: string | null
+  }
+  recommended_id: string | null
+  candidates: EnvCandidate[]
+  python_requirement: {
+    supported: { min: string; max_exclusive: string }
+    declared: { source: string; value: string } | null
+    status: 'unknown'
+  }
+  check: {
+    executes_candidates: boolean
+    max_candidates: number
+    deadline_s: number
+    per_candidate_timeout_s: number
+    scopes: string[]
+  }
+}
+
 export interface ProjectEnvironment {
   open: boolean
+  /** 项目级决定的授权来源（后端 `projectenv.consent_of`）：用户明确采用 = confirmed；历史自动记录 = legacy_auto */
+  consent?: 'none' | 'confirmed' | 'legacy_auto'
+  recommendation?: EnvRecommendation
   /** 稳定枚举，与全局那份同一套（`project_venv` / `bundled` / …） */
   source?: EngineSource
   source_label?: string
@@ -3454,7 +3530,8 @@ export interface ManagedEnvironment {
 export interface ProjectEnvFailure {
   /** project_env_not_found / project_env_module_missing /
    *  project_env_no_matplotlib / project_env_unsupported_python /
-   *  project_env_unusable / project_env_already_attempted */
+   *  project_env_unusable / project_env_already_attempted /
+   *  environment_confirmation_required */
   code: string
   module: string
   venv: string
@@ -3462,6 +3539,11 @@ export interface ProjectEnvFailure {
   python_version: string
   /** 第二层的体检表（ADR 0044）：这台机器上已有的解释器各是什么结论 */
   system?: SystemInterpreterProbe[]
+  /**
+   * `code === 'environment_confirmation_required'`（ADR 0114）：项目自己的环境体检通过、缺的包也在里面——
+   * 这是建议不是决定，用户点一次才采用（候选按钮用 `candidates`）。路径不在公开投影里。
+   */
+  recommended?: { venv: string; id?: string; generation?: string }
 }
 
 /** 一个系统解释器的体检结论（只有结论字段，没有体检脚本的原始输出） */
@@ -3540,6 +3622,58 @@ export const setProjectEnvironment = (python: string | null, module?: string) =>
  * 为当前项目改用依赖弹窗里列出的用户环境（ADR 0079）：只交 id，路径由后端自己的发现结果换回，
  * 之后与手填路径走同一次体检。`script` 让后端按同一份发现（含项目线索）找这个 id。
  */
+/**
+ * 明确的环境检查（ADR 0114 §一）：只对被点名范围里的候选运行健康探测。**检查 ≠ 采用**——这里不写项目设置。
+ * 回更新后的建议；`checked` / `skipped` 是这一次的账（候选数 / 总时限 / 取消）。
+ */
+export const checkProjectEnvironment = (opts?: {
+  script?: string
+  candidates?: string[]
+  scope?: 'project' | 'machine' | 'all'
+  includeLoginShell?: boolean
+}) =>
+  jsonFetch<{
+    checked: string[]
+    skipped: { id: string; reason: 'limit' | 'deadline' | 'cancelled' }[]
+    cancelled: boolean
+    recommendation: EnvRecommendation
+  }>('/api/engine/environment/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(opts?.script ? { script: opts.script } : {}),
+      ...(opts?.candidates ? { candidates: opts.candidates } : {}),
+      ...(opts?.scope ? { scope: opts.scope } : {}),
+      ...(opts?.includeLoginShell ? { include_login_shell: true } : {}),
+    }),
+  })
+
+export const cancelProjectEnvironmentCheck = () =>
+  jsonFetch<{ cancelled: boolean }>('/api/engine/environment/check', { method: 'DELETE' })
+
+/**
+ * 在环境建议上点「使用」（ADR 0114 §四）：交回候选 id 与看到建议那一刻的环境代，后端用自己的枚举换回路径、
+ * 现场再体检、通过才记成用户的明确决定。环境在这期间被重建 → 409 `environment_changed`；全局解释器压着 → 409
+ * `environment_locked`。
+ */
+export const adoptEnvironmentCandidate = (
+  candidate: Pick<EnvCandidate, 'id' | 'generation'>,
+  script?: string,
+  module?: string,
+) =>
+  jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scope: 'project',
+      candidate: candidate.id,
+      expected_generation: candidate.generation,
+      ...(script ? { script } : {}),
+      // 依赖修复卡采用时带上缺的那个包：后端连它一起体检（与手填路径同一个 `module` 语义）
+      ...(module ? { module } : {}),
+    }),
+  })
+
 export const setProjectUserEnvironment = (id: string, script: string) =>
   jsonFetch<{ ok: boolean; project: ProjectEnvironment }>('/api/engine/environment', {
     method: 'PATCH',
@@ -3768,6 +3902,12 @@ export interface DependencyTarget {
   venv: string
   /** 项目 venv 是项目相对路径；系统解释器是项目外的绝对路径（它本来就不跟项目走） */
   python: string
+  /**
+   * 确认模式下「改用项目自己的环境」这一类目标才有：看到建议那一刻的候选 id 与环境代。采用必须把这一对
+   * 原样交给 `PATCH /api/engine/environment`（`candidate` + `expected_generation`），环境在这期间被重建 → 409。
+   * 没有它的目标是用户手边的机器解释器，按路径采用。
+   */
+  candidate?: { id: string; generation: string }
   /** true = 会修改用户自己的环境，界面必须说清楚 */
   modifies_user_environment: boolean
   creates_environment: boolean
@@ -3862,6 +4002,8 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
   /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
   requirements?: string[]
   target_kind: 'project_venv' | 'tavotto_managed'
+  /** 这份计划的影响摘要（执行请求必须回显它；老后端没有） */
+  impact_digest?: string
   python: string
   creates_environment: boolean
   modifies_user_environment: boolean
@@ -3921,11 +4063,12 @@ export const createDependencyPlan = (body: {
     body: JSON.stringify(body),
   })
 
-export const installDependencyPlan = (planId: string) =>
+/** 执行单包修复计划：`impactDigest` 必填，是用户看到的那份影响的摘要（对不上后端回 409 dependency_impact_changed） */
+export const installDependencyPlan = (planId: string, impactDigest: string) =>
   jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependency/install', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ plan_id: planId, impact_digest: impactDigest }),
   })
 
 export const cancelDependencyPlan = (planId: string) =>
@@ -3973,8 +4116,8 @@ export interface JointDependencyPlan {
   require_hashes: boolean
   /** 受管环境才有：matplotlib / numpy 的支持区间 */
   adapter: string[]
-  /** blocked 的理由闭集（dependency_declaration_unsupported / dependency_conflict / dependency_hashes_incomplete / dependency_target_unavailable） */
-  blocked: { code: string; declarations?: { raw: string; reason: string; source: string }[]; conflicts?: { name: string; specifiers: string[]; reasons: string[] }[]; lines?: string[]; count?: number }[]
+  /** blocked 的理由闭集（dependency_declaration_unsupported / dependency_conflict / dependency_hashes_incomplete / dependency_target_unavailable / dependency_scope_conflict） */
+  blocked: { code: string; declarations?: { raw: string; reason: string; source: string }[]; conflicts?: ({ name: string; specifiers: string[]; reasons: string[] } | { name: string; installed_version: string; installed_for: string; wanted: string; wanted_for: string; via: string })[]; lines?: string[]; count?: number; options?: string[] }[]
   selection: { selected_groups: string[]; available_groups: string[]; unselected_groups: string[]; skipped_marker: { raw: string; marker: string }[] }
   identity: string
 }
@@ -3998,10 +4141,47 @@ export interface DependencyPreparationOffer {
    * （ADR 0053 §二），采用时把 `id` 交回 `setProjectUserEnvironment`。老后端没有这个字段
    */
   user_environments?: UserEnvironment[]
+  /**
+   * 这次授权的实际影响（T06，ADR 0115）：安装集合 / 目标环境与代（不透明引用）/ 写入范围 / 回滚性质。
+   * `impact_digest` 是它的摘要——用户确认的是这一份，执行前后端按它核对；blocked / 没缺的计划为 null / 空串。老后端没有
+   */
+  impact?: DependencyImpact | null
+  impact_digest?: string
+  /** 作用域互斥（`dependency_scope_conflict`）时的"换成本作用域"出路及它自己更大的影响 */
+  scope_switch?: {
+    impact: DependencyImpact
+    impact_digest: string
+    requirements: string[]
+    drops: string[]
+    changes: string[]
+  } | null
+}
+
+/** `deprepair.impact_of` 的公开形态：没有机器路径 */
+export interface DependencyImpact {
+  impact_version: number
+  target_kind: 'project_venv' | 'tavotto_managed'
+  scope: 'managed_generation' | 'project_venv_in_place'
+  installs: string[]
+  constraints: string[]
+  adapter: string[]
+  require_hashes: boolean
+  groups: string[]
+  creates_environment: boolean
+  modifies_user_environment: boolean
+  private_python: { id: string; version: string; origin: string; download_bytes: number } | null
+  network_required: boolean
+  writes: string[]
+  rollback: 'generation_atomic' | 'none_partial_changes_possible'
+  scope_policy: '' | 'switch'
+  drops: string[]
+  changes: string[]
+  environment_ref: string
 }
 
 /** 用户环境从哪发现的（`engine/userenvs.py` 的来源闭集） */
 export type UserEnvironmentSource =
+  | 'project_venv'
   | 'vscode'
   | 'python_version_file'
   | 'environment_yml'
@@ -4017,16 +4197,21 @@ export interface UserEnvironment {
   source: UserEnvironmentSource
   /** Conda 环境名 / pyenv 版本名；其余来源为空 */
   label: string
-  /** 环境本身健康（Python 版本受支持、matplotlib 与 worker 起得来） */
-  ok: boolean
+  /**
+   * false = 还没有被检查过（ADR 0114：候选解释器不在没有用户动作的情况下被起）：`ok` / `satisfies` 此时是 null，
+   * 不冒充装齐也不冒充没装齐；用户点「检查并使用」时后端现场体检、装齐才采用。老后端没有这个字段 = 检查过。
+   */
+  checked?: boolean
+  /** 环境本身健康（Python 版本受支持、matplotlib 与 worker 起得来）；未检查时 null */
+  ok: boolean | null
   code: string
   support: string
   python_version: string
   matplotlib_version: string
   /** 还缺的包（distribution 名；映射不到的按 import 名） */
   missing: string[]
-  /** 健康且什么都不缺 */
-  satisfies: boolean
+  /** 健康且什么都不缺；未检查时 null */
+  satisfies: boolean | null
 }
 
 /** 绑定好的联合计划（`plan_id` 是这次授权的凭据，一次性、有有效期） */
@@ -4047,6 +4232,8 @@ export interface JointDependencyRepairPlan {
   network_required: boolean
   expires_at: number
   joint: JointDependencyPlan
+  /** 这份计划此刻的实际影响摘要（ADR 0115）；与 offer 里用户看到的那份比对。老后端没有 */
+  impact_digest?: string
   /** 这次授权包含先下载私有 Python（U05）；`replan` = 计划的事实是替身，供应后按真解释器重算 */
   private_python?: PrivatePythonOffer | null
   replan?: boolean
@@ -4068,11 +4255,15 @@ export const createJointDependencyPlan = (body: {
     body: JSON.stringify(body),
   })
 
-export const prepareJointDependencies = (planId: string) =>
+/**
+ * 执行一份联合计划。`impactDigest` 必填：用户**看到并确认**的那份影响摘要（offer.impact_digest）——后端核它与计划此刻的
+ * 实际影响一致（不一致 `dependency_impact_changed`，缺失 `dependency_impact_required`），不能只靠计划 id 或包名。
+ */
+export const prepareJointDependencies = (planId: string, impactDigest: string) =>
   jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependencies/prepare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ plan_id: planId, impact_digest: impactDigest }),
   })
 
 /** 取消；过了提交点（受管环境已切 active）回 accepted=false, reason=committed */

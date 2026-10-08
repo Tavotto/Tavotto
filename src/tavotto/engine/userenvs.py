@@ -41,10 +41,14 @@ SOURCE_PYTHON_VERSION = "python_version_file"
 SOURCE_ENVIRONMENT_YML = "environment_yml"
 SOURCE_SHEBANG = "shebang"
 SOURCE_LOGIN_SHELL = "login_shell"
+#: 项目自带的 venv（`projectenv.discover`）。确认模式（ADR 0114）下它和用户的其它环境一起进「改用这个环境」
+#: 的候选表——静默采用时代由 `pool` 第 4 档单独处理，不在这张表里
+SOURCE_PROJECT_VENV = "project_venv"
 SOURCE_CONDA = "conda"
 SOURCE_PYENV = "pyenv"
 #: 顺序即优先级（`discover()` 按它拼表）
 SOURCES = (
+    SOURCE_PROJECT_VENV,
     SOURCE_VSCODE,
     SOURCE_PYTHON_VERSION,
     SOURCE_ENVIRONMENT_YML,
@@ -293,6 +297,16 @@ def _ask_login_shell(shell: str) -> list[str]:
     return out
 
 
+def cached_login_shell_pythons() -> list[str]:
+    """登录 shell **已经被明确问过**的结果（没问过回空表）。纯读缓存，不启动 shell：确认模式下只有明确的
+    检查动作（`envadvice.check(include_login_shell=True)`）才会问，其余读者只看它留下的答案（ADR 0114 §三）。"""
+    shell = _login_shell()
+    if not shell:
+        return []
+    with _lock:
+        return list(_login_shell_cache.get(shell) or [])
+
+
 def login_shell_pythons() -> list[str]:
     shell = _login_shell()
     if not shell:
@@ -437,7 +451,7 @@ def discover(
     figures_dir: str | Path,
     script: str | None = None,
     *,
-    ask_login_shell: bool = True,
+    ask_login_shell: bool | None = True,
     no_follow: bool = False,
     budget: scanbudget.Budget | None = None,
 ) -> list[dict]:
@@ -446,7 +460,8 @@ def discover(
     **线索与体检分开**（T02）：`ask_login_shell=False` 时只读磁盘上的记录（项目里的线索、Conda 的
     `environments.txt` 与常见安装根、pyenv 的 versions），**不启动登录 shell**——登录 shell 要读用户的
     rc 文件（可能是任何东西）才答得出，那是 T05 的明确检查动作，不是导入时的读线索。导入即扫描永远
-    传 False；默认值保持老行为（准备 / 依赖门里的 `deprepair` 仍问）。
+    传 False；默认值保持老行为（静默采用兼容开关下，准备 / 依赖门里的 `deprepair` 仍问）。
+    `None`（T05）：不问、但把**已经被明确问过**的登录 shell 答案并进来（`cached_login_shell_pythons`）。
 
     `no_follow=True`（导入即扫描传）：项目里的线索文件（`.vscode/settings.json` / `.python-version` /
     `environment.yml` / 脚本 shebang）不跟随符号链接 / 路径替身，且无论哪种形态都只读有上限的普通文件。
@@ -471,6 +486,8 @@ def discover(
         raw.append((shebang, SOURCE_SHEBANG, ""))
     if ask_login_shell:
         raw += [(p, SOURCE_LOGIN_SHELL, "") for p in login_shell_pythons()]
+    elif ask_login_shell is None:
+        raw += [(p, SOURCE_LOGIN_SHELL, "") for p in cached_login_shell_pythons()]
     for pre in _conda_prefixes(budget):
         if budget is not None and budget.stop_reason() is not None:
             break
@@ -511,6 +528,7 @@ PROBE_WORKERS = 4
 
 #: 来源的档位（小 = 更接近用户意图）。`best()` 的第二把尺子
 _SOURCE_RANK = {
+    SOURCE_PROJECT_VENV: 0,
     SOURCE_VSCODE: 0,
     SOURCE_PYTHON_VERSION: 0,
     SOURCE_ENVIRONMENT_YML: 0,
@@ -555,11 +573,26 @@ def imports_missing(python: str, modules: list[str], *, bundled: bool = False) -
     return [m for m in mods if ok_map.get(m) is False]
 
 
+def cached_probe(python: str, modules: tuple[str, ...], *, bundled: bool = False) -> dict | None:
+    """这个候选在这组 import 上**已有**的体检结论（只读缓存，没有回 None；不起任何进程）。"""
+    with _lock:
+        hit = _probe_cache.get((_key(python), modules, bundled))
+    return hit
+
+
 def evaluate(
-    candidates: list[dict], needed: list[dict], unknown: list[str], *, use_cache: bool = True
+    candidates: list[dict],
+    needed: list[dict],
+    unknown: list[str],
+    *,
+    use_cache: bool = True,
+    cache_only: bool = False,
 ) -> list[dict]:
     """逐个体检候选，回同顺序的结果表。`use_cache=False` 真起一次、不读也不写缓存：采用前的
     复核要的是此刻的环境，不是弹窗打开那一刻（或并发的另一次）体检。
+
+    `cache_only=True`（ADR 0114 §三）：**一个候选也不起**——有缓存结论的照常给，没有的回一条 `checked=False` 的
+    「未检查」条目（`ok` / `satisfies` 都是 None，不冒充装齐也不冒充没装齐）；起候选解释器是明确的检查动作的事。
 
     `needed` 是联合计划里缺的那些（`{"import_name", "distribution"}`），`unknown` 是映射不到
     distribution 的无条件 import。**判「装没装齐」看 import 得不得到**，不看包元数据：worker 跑脚本
@@ -571,7 +604,21 @@ def evaluate(
     todo = candidates[:PROBE_LIMIT]
 
     def one(cand: dict) -> dict:
-        if use_cache:
+        if cache_only:
+            health = cached_probe(cand["python"], imports)
+            if health is None:
+                return {
+                    **cand,
+                    "ok": None,
+                    "code": "",
+                    "support": "",
+                    "python_version": "",
+                    "matplotlib_version": "",
+                    "missing": [],
+                    "satisfies": None,
+                    "checked": False,
+                }
+        elif use_cache:
             health = _probe(cand["python"], imports)
         else:
             from . import projectenv
@@ -595,6 +642,7 @@ def evaluate(
             "matplotlib_version": health.get("matplotlib_version") or "",
             "missing": missing if healthy else [],
             "satisfies": healthy and not missing,
+            "checked": True,
         }
 
     if not todo:
@@ -655,6 +703,7 @@ PUBLIC_FIELDS = (
     "matplotlib_version",
     "missing",
     "satisfies",
+    "checked",
 )
 
 

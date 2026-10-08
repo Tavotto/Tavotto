@@ -7,7 +7,7 @@
 三条纪律（每一条都有看护用例）：
 
 * **白名单投影，不是递归删键。** 各来源在自己的模块里写 `diagnostic_projection()`（`exportjob` / `preparation` /
-  `probe`），逐字段挑：闭集枚举、稳定码、计数、数字、不透明 id。完整请求、文件名、路径、argv、答案、stdout、
+  `probe` / `deprepair`），逐字段挑：闭集枚举、稳定码、计数、数字、不透明 id。完整请求、文件名、路径、argv、答案、stdout、
   报错文字、`error.params` 一个都不进快照——不是「过一遍正则」，而是根本不读。本模块只提供取值的形状守卫
   （`code` / `ident` / `closed` / `count`…）：不合形状的值**丢掉**，不哈希（低熵值的哈希是可猜的）。
 * **终局即冻结。** 作业走到终局那一刻写一次，之后不可改。重试是新的 attempt、新的快照；「谁重试了谁」用
@@ -35,7 +35,9 @@ DOCUMENT_VERSION = 1
 KIND_EXPORT = "export"
 KIND_PREPARATION = "preparation"
 KIND_SCRIPT_RUN = "script_run"
-KINDS = (KIND_EXPORT, KIND_PREPARATION, KIND_SCRIPT_RUN)
+#: 依赖安装 / 受管环境换代的终局（T06）：`deprepair.diagnostic_projection`
+KIND_DEPENDENCY = "dependency"
+KINDS = (KIND_EXPORT, KIND_PREPARATION, KIND_SCRIPT_RUN, KIND_DEPENDENCY)
 #: 一次尝试的终局词汇（准备 `STATUSES` 与试运行 `OUTCOME_*` 共用这一套；不在里面的读作 other）
 _RUN_OUTCOMES = ("ready", "error", "cancelled", "needs_input")
 
