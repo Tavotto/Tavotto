@@ -302,3 +302,16 @@ def test_is_inventoried_agrees_with_iter_assets(tmp_path):
     }
     assert listed == expected
     assert listed == {"a.pdf", "b.jpg", "sub/e.tif", "sub/k.pdf"}
+
+
+def test_a_utf8_bom_script_still_gets_the_hint(tmp_path):
+    (tmp_path / "make.py").write_bytes(
+        b"\xef\xbb\xbf" + textwrap.dedent(PILLOW_SCRIPT).encode("utf-8")
+    )
+    assert _lib(tmp_path) == "pillow"
+
+
+def test_a_pep263_gbk_script_still_gets_the_hint(tmp_path):
+    body = "# -*- coding: gbk -*-\n# 生成位图\n" + textwrap.dedent(PILLOW_SCRIPT)
+    (tmp_path / "make.py").write_bytes(body.encode("gbk"))
+    assert _lib(tmp_path) == "pillow"

@@ -31,7 +31,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from . import importscan
+from . import discover, importscan
 
 # 素材盘点的可见性判据：单一出处（`iter_assets` 同一份），不在这里抄第二份
 from .project_refresh import PDF_EXT as _PDF_EXT, is_inventoried
@@ -256,9 +256,12 @@ def detect(root: str | Path, script: str, cwd_mode: str | None = None) -> dict |
     libs: list[str] = []
     paths: list[str | None] = []
     for rel in scan.files:
+        text, problem = discover.read_source(root_p / rel)  # PEP 263 / BOM；解不出就不说
+        if problem is not None or text is None:
+            return None
         try:
-            tree = ast.parse((root_p / rel).read_text(encoding="utf-8", errors="replace"))
-        except (OSError, SyntaxError, ValueError, RecursionError):
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError, RecursionError):
             return None
         fs = _FileScan()
         fs.visit(tree)

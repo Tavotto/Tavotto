@@ -34,7 +34,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import depresolve, figcapture, projectenv
+from . import depresolve, discover, figcapture, projectenv
 
 BUCKET_STDLIB = "stdlib"
 BUCKET_LOCAL = "local"
@@ -378,9 +378,17 @@ def _read(path: Path) -> tuple[str | None, dict | None]:
     try:
         if path.stat().st_size > MAX_SOURCE_BYTES:
             return None, {"path": str(path), "kind": "too_large"}
-        return path.read_text(encoding="utf-8", errors="replace"), None
     except OSError as exc:
         return None, {"path": str(path), "kind": "io", "detail": str(exc)[:200]}
+    # 读用户脚本源码的单一出处：按 PEP 263 声明 / BOM 解码（带 BOM、`# coding: gbk` 的脚本不能被当 UTF-8 读坏）
+    text, prob = discover.read_source(path)
+    if prob is not None:
+        return None, {
+            "path": str(path),
+            "kind": prob["kind"],
+            "detail": str(prob.get("detail", ""))[:200],
+        }
+    return text, None
 
 
 def _parse(text: str, path: Path) -> tuple[ast.Module | None, dict | None]:
