@@ -55,7 +55,7 @@ let root: Root
 beforeEach(async () => {
   localStorage.clear()
   useRenderStore.getState().clear()
-  await useDocumentStore.getState().switchDocument(emptyProject(), null)
+  await useDocumentStore.getState().switchDocument(emptyProject(), 'tree-routing-test')
   useDocumentStore.setState(s => ({ doc: { ...s.doc, objects: [panel] } }))
   seedExactRender(panel, manifest)
   useSelectionStore.getState().clear()
