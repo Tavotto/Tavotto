@@ -673,8 +673,8 @@ const ElementRow = memo(function ElementRow({
 }) {
   useTranslation('workspace')
   const unsupported = unsupportedOf(role)
-  const shown = engineLabel(label)
   const pointerFocusing = useRef(false)
+  const shown = engineLabel(label)
 
   return (
     <li
@@ -690,7 +690,8 @@ const ElementRow = memo(function ElementRow({
       data-el={rowKey}
       style={treeIndent(depth)}
       onFocus={(e) => {
-        if (e.target !== e.currentTarget || selected || pointerFocusing.current) return
+        if (e.target !== e.currentTarget || selected) return
+        if (pointerFocusing.current) return
         // 焦点漫游即选中，与图层树一致
         onSelect(gid, false)
       }}
