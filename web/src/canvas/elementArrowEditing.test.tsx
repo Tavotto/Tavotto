@@ -220,8 +220,8 @@ describe('OverlaySvg：图内箭头选中沿线描示，无矩形外框', () => 
     act(() => root.render(<OverlaySvg />))
 
     expect(container.querySelectorAll('circle[data-arrow-endpoint]').length).toBe(2)
-    // 选中矩形的指纹是 fill-opacity=0.06 的 rect；箭头不许再有
-    expect(container.querySelectorAll('rect[fill-opacity]').length).toBe(0)
+    // 选中矩形认 `data-element-box`（2026-10-07 起不着色）；箭头不许再有
+    expect(container.querySelectorAll('[data-element-box]').length).toBe(0)
     const line = [...container.querySelectorAll('line')].find(
       (l) => l.getAttribute('stroke-width') === '1.5',
     )
@@ -234,7 +234,7 @@ describe('OverlaySvg：图内箭头选中沿线描示，无矩形外框', () => 
   it('选中文字元素仍是矩形选中框（回归对照）', () => {
     useUiStore.setState({ elementPanelId: 'p1', selectedGids: ['text_1'] })
     act(() => root.render(<OverlaySvg />))
-    expect(container.querySelectorAll('rect[fill-opacity]').length).toBe(1)
+    expect(container.querySelectorAll('[data-element-box]').length).toBe(1)
   })
 })
 

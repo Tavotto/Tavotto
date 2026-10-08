@@ -259,7 +259,7 @@ describe('PanelView：三档预览表示法', () => {
     seed({ svg: null, preview: RASTER })
     await mount()
 
-    const hint = container.querySelector('span[title]') as HTMLElement | null
+    const hint = container.querySelector('[data-badge-hint]') as HTMLElement | null
     expect(hint?.title).toContain('导出质量')
     expect(hint?.title).not.toContain('太大') // 不责怪用户
     expect(hint?.parentElement?.textContent).toContain('低内存编辑预览')
@@ -273,7 +273,7 @@ describe('PanelView：三档预览表示法', () => {
     seed({ svg: null, preview: RASTER })
     await mount()
 
-    const hint = container.querySelector('span[title]') as HTMLElement
+    const hint = container.querySelector('[data-badge-hint]') as HTMLElement
     const badge = hint.parentElement as HTMLElement
     expect(badge.className).not.toContain('pointer-events-auto')
     expect(hint.className).toContain('pointer-events-auto')

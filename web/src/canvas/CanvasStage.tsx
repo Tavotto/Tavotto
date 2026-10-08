@@ -12,19 +12,23 @@ import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { addPanelToCanvas, openFastEdit, useWorkspaceStore } from '@/store/workspace'
-import { clientToMm, mmToWorld, useViewportStore } from '@/store/viewportStore'
+import { clientToMm, mmToPx, mmToViewX, mmToViewY, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
+import { applyStageFit, fitStage, stageFitFrame } from '@/store/zoomToSelection'
 import { normalizeWheel } from '@/lib/wheel'
 import { ObjectView } from './ObjectView'
 import { WorkspaceContextBar } from './WorkspaceContextBar'
 import { OverlaySvg } from './OverlaySvg'
+import { MeasureChip } from './MeasureChip'
 import { PageSheet } from './PageSheet'
 import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
 import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { PageOutsideMask } from './PageOutsideMask'
 import { Rulers, RULER_SIZE } from './Rulers'
+import { CanvasContextMenu } from './CanvasContextMenu'
+import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
 
 export function CanvasStage() {
@@ -59,10 +63,19 @@ export function CanvasStage() {
   const page = useDocumentStore((s) => s.doc.page)
   const objects = useDocumentStore((s) => s.doc.objects)
   const dragging = useInteractionStore((s) => s.kind !== 'none')
+  /** 空白画布上的右键菜单落点（client 坐标）；null = 没开 */
+  const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number } | null>(null)
+  // 快速编辑这一屏只有那一张图，而画布菜单全是版面级动作（粘贴进版面、全选版面、适应页面、标尺 / 网格）——
+  // 与 useKeyboard 的 inFastEdit 同一条判据：快速编辑里不开。一处管两种来路：在快速编辑里右键（开了当场收掉、
+  // 不会提交出来），与开着菜单切进快速编辑。是收起不是藏起：藏起的话回排版时它会在旧落点上重新冒出来
+  if (fastEdit && canvasMenu) setCanvasMenu(null)
+  /** 素材拖进来时的落点预览（mm，与松手后 `addPanelToCanvas` 落的是同一个框） */
+  const ghost = useDropGhost(fastEdit)
 
   // 「适应」看的是哪一块。快速编辑下是那张图的包围盒（图比页面大是常态，
   // 按页面 fit 会把它切掉一半）；排版下是页面。
-  const frame = useFrame(fastEdit ? activePanelId : null, objects, page)
+  // 取景框只有 `stageFitFrame` 一份（⌘1 / 缩放菜单 / 命令面板的 `fitStage` 读同一份）
+  const frame = stageFitFrame(objects, page, fastEdit ? activePanelId : null)
 
   const pad = showRulers ? RULER_SIZE : 0
 
@@ -89,16 +102,18 @@ export function CanvasStage() {
     }
   }, [setViewRect, pad])
 
-  // 首次拿到尺寸后自动适应页面
+  // 首次拿到尺寸后自动适应（与 ⌘1 同一个框：快速编辑里那张图本身的矩形，排版里页面）。
+  // frame 每次渲染都是新对象：依赖它的各个分量，不是它本身
+  const { x: fx, y: fy, w: fw, h: fh, page: fpage } = frame
   const fittedRef = useRef(false)
   useEffect(() => {
     if (fittedRef.current) return
-    const { viewW, viewH, fit } = useViewportStore.getState()
+    const { viewW, viewH } = useViewportStore.getState()
     if (viewW && viewH) {
-      fit(frame.w, frame.h)
+      applyStageFit({ x: fx, y: fy, w: fw, h: fh, page: fpage }, false)
       fittedRef.current = true
     }
-  }, [outer.w, outer.h, frame.w, frame.h])
+  }, [outer.w, outer.h, fx, fy, fw, fh, fpage])
 
   // React 的 onWheel 是被动监听，缩放必须手动挂非被动监听器
   useEffect(() => {
@@ -165,9 +180,9 @@ export function CanvasStage() {
       interacting: useInteractionStore.getState().kind !== 'none',
       onObject: !!(e.target as HTMLElement).closest('[data-object-id]'),
       point: clientToMm(e.clientX, e.clientY),
-      page: { w: frame.w, h: frame.h },
+      frame: { x: frame.x, y: frame.y, w: frame.w, h: frame.h },
     })
-    if (ok) useViewportStore.getState().fitAnimated(frame.w, frame.h)
+    if (ok) fitStage()
   }
 
   const cursor = spaceDown
@@ -194,13 +209,27 @@ export function CanvasStage() {
         onPointerMove={onPointerMove}
         onDoubleClick={onDoubleClick}
         onPointerLeave={() => useInteractionStore.getState().setCursor(null)}
+        onContextMenu={(e) => {
+          // 对象自己的右键菜单在 ObjectView / PanelView 里，选中框的手柄 / 命中带在 OverlaySvg 里（它们都 stopPropagation）；
+          // 冒到这里的是空白处。
+          // 文字编辑 / 裁剪中落在对象上的右键也会冒上来——那时留给浏览器自己的菜单（复制 / 粘贴文字）
+          if ((e.target as HTMLElement).closest('[data-object-id]')) return
+          // 快速编辑里原生菜单照样拦下，画布菜单由上面 `fastEdit && canvasMenu` 那一句收掉
+          e.preventDefault()
+          setCanvasMenu({ x: e.clientX, y: e.clientY })
+        }}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes('application/x-panel-id')) {
             e.preventDefault()
             e.dataTransfer.dropEffect = 'copy'
+            ghost.over(e.clientX, e.clientY)
           }
         }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) ghost.clear()
+        }}
         onDrop={(e) => {
+          ghost.clear()
           const pid = e.dataTransfer.getData('application/x-panel-id')
           if (!pid) return
           e.preventDefault()
@@ -249,6 +278,9 @@ export function CanvasStage() {
         {!fastEdit && <PageOutsideMask />}
 
         <OverlaySvg />
+        {ghost.box && <DropGhost box={ghost.box} />}
+        {/* 贴着选区的尺寸芯片：与选框同一个视口坐标系（2026-10-07 设计审计 §10.1） */}
+        <MeasureChip />
 
         {!fastEdit && objects.length === 0 && <EmptyHint />}
       </div>
@@ -269,12 +301,71 @@ export function CanvasStage() {
 
       {/* 右键快捷编辑：自己 portal 到 body，不受世界变换影响 */}
       <QuickEdit />
+      {/* 空白画布的右键菜单（2026-10-07 设计审计 §10.1） */}
+      {canvasMenu && <CanvasContextMenu at={canvasMenu} close={() => setCanvasMenu(null)} />}
       {/* 「把这些修改用到同脚本的其他图…」的窗口：入口在上面那个右键菜单里 */}
       <SyncOverridesHost />
 
       {/* 单选时贴着选择框的上下文工具条（Quick Edit 的可发现入口） */}
       <ContextBar />
     </div>
+  )
+}
+
+/**
+ * 素材拖进画布时的落点预览（2026-10-07 设计审计 §10.1：此前拖进来什么都不显示，松手才知道落在哪、多大）。
+ *
+ * 框与松手后 `addPanelToCanvas → addPanel → placePanelInPage` 落的是**同一个计算**（按原图尺寸软上限缩放、
+ * 以指针为中心、夹在页面里）。拖动中浏览器不让读 dataTransfer 的内容，所以在 dragstart 冒泡到 document 时
+ * 记下被拖的素材 id（那一刻是可读的）；dragend / drop 清掉。快速编辑里拖进来是「改看这一张」，不预览。
+ */
+let draggedAssetId: string | null = null
+function useDropGhost(fastEdit: boolean) {
+  const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  useEffect(() => {
+    const start = (e: DragEvent) => {
+      draggedAssetId = e.dataTransfer?.getData('application/x-panel-id') || null
+    }
+    const end = () => {
+      draggedAssetId = null
+      setBox(null)
+    }
+    document.addEventListener('dragstart', start)
+    document.addEventListener('dragend', end)
+    document.addEventListener('drop', end)
+    return () => {
+      document.removeEventListener('dragstart', start)
+      document.removeEventListener('dragend', end)
+      document.removeEventListener('drop', end)
+    }
+  }, [])
+  return {
+    box: fastEdit ? null : box,
+    over: (clientX: number, clientY: number) => {
+      if (fastEdit || !draggedAssetId) return
+      const info = useAssetStore.getState().byId[draggedAssetId]
+      if (!info) return
+      const at = clientToMm(clientX, clientY)
+      const next = placePanelInPage(info.native_w_mm, info.native_h_mm, useDocumentStore.getState().doc.page, at)
+      setBox((b) => (b && b.x === next.x && b.y === next.y && b.w === next.w && b.h === next.h ? b : next))
+    },
+    clear: () => setBox(null),
+  }
+}
+
+/** 落点预览框：暂定的东西用唯一那种虚线（`--sel-dash` 的 CSS 等价：dashed 边） */
+function DropGhost({ box }: { box: { x: number; y: number; w: number; h: number } }) {
+  const zoom = useViewportStore((s) => s.zoom)
+  const panX = useViewportStore((s) => s.panX)
+  const panY = useViewportStore((s) => s.panY)
+  const t = { zoom, panX, panY, originX: 0, originY: 0 }
+  return (
+    <div
+      data-drop-ghost
+      aria-hidden
+      className="pointer-events-none absolute rounded-xs border border-dashed border-sel bg-sel/5"
+      style={{ left: mmToViewX(box.x, t), top: mmToViewY(box.y, t), width: mmToPx(box.w, t), height: mmToPx(box.h, t) }}
+    />
   )
 }
 
@@ -316,27 +407,6 @@ function CanvasLayers({ only }: { only?: string | null }) {
       })}
     </>
   )
-}
-
-/**
- * 「适应」的取景框：快速编辑对着那一张图，画布排版对着页面。
- *
- * 面板的包围盒原点不一定在 (0,0)，而视口的 `fit` 只吃宽高——所以这里把
- * **右下角**当框（`x+w`），图才不会被裁在视野外。取的是包围盒不是图幅：
- * 用户在画布上缩放过的面板，快速编辑照样把它整张放进视野（图幅是它的
- * 输出规格，不是它此刻在屏幕上占多大）。
- */
-function useFrame(
-  panelId: string | null,
-  objects: readonly { id: string; x: number; y: number; w: number; h: number }[],
-  page: { w: number; h: number },
-): { w: number; h: number } {
-  if (!panelId) return { w: page.w, h: page.h }
-  const o = objects.find((x) => x.id === panelId)
-  if (!o) return { w: page.w, h: page.h }
-  // 面板可能被拖到过页面左上角外面（x/y 为负）：框至少要有这张图那么大，
-  // 否则 fit 出来的比例装不下它。落位由随后的 revealRect 负责。
-  return { w: Math.max(o.x + o.w, o.w), h: Math.max(o.y + o.h, o.h) }
 }
 
 /** 画布层的文案在 workspace:stage.* 下 */
