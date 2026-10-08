@@ -120,6 +120,46 @@ describe('PlaygroundLanding', () => {
     expect(onFile.mock.calls[0][0].name).toBe('mine.py')
   })
 
+  it('案例卡是 Card interactive；「查看代码」只开代码页、不被整卡的启动吞掉', () => {
+    const { onLaunch } = renderLanding()
+    const card = container.querySelector<HTMLElement>('[data-example-card="kinetics"]')!
+    expect(card.dataset.card).toBe('raised')
+    expect(card.dataset.interactive).toBe('true')
+    const view = card.querySelector<HTMLElement>('[data-example-view-code]')!
+    act(() => view.click())
+    expect(onLaunch).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-dialog="playground-code"]')).not.toBeNull()
+  })
+
+  it('品牌色不借画布的选择色（sel）：首屏没有任何 sel 类名（2026-10-07 设计审计 §10.4）', () => {
+    renderLanding()
+    const offenders = [...container.querySelectorAll<HTMLElement>('*')].filter((el) =>
+      /(^|\s)(bg|border|text|outline|ring)-sel(\/|\s|$)/.test(el.getAttribute('class') ?? ''),
+    )
+    expect(offenders).toEqual([])
+  })
+
+  it('上传区与试验台平时不画虚线；拖着文件进上传区才是接收态，离开即收', () => {
+    renderLanding()
+    const zone = container.querySelector<HTMLElement>('[data-upload-zone]')!
+    const stage = container.querySelector<HTMLElement>('[data-stage-state]')!
+    expect(zone.className).not.toMatch(/dashed/)
+    expect(stage.className).not.toMatch(/dashed/)
+    const fire = (type: string) => {
+      const ev = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(ev, 'dataTransfer', { value: { types: ['Files'], files: [] } })
+      act(() => {
+        zone.dispatchEvent(ev)
+      })
+    }
+    fire('dragover')
+    expect(zone.dataset.dragging).toBe('true')
+    expect(zone.className).toContain('outline-dashed')
+    fire('dragleave')
+    expect(zone.dataset.dragging).toBeUndefined()
+    expect(zone.className).not.toMatch(/dashed/)
+  })
+
   it('桌面版出口存在（下载链接 + 完整项目说明）', () => {
     renderLanding()
     const links = [...container.querySelectorAll('a')].filter((a) =>

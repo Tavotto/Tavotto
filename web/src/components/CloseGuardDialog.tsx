@@ -12,8 +12,8 @@ const cg = (key: string) => translate(`closeGuard.${key}`, { ns: 'dialogs' })
  * 桌面壳的关窗三选一（issue #223，Prompt 03 §六的原始合同）。
  *
  * 壳在 `WindowEvent::CloseRequested` 上拦住窗口并发 `tavotto:close-requested`；
- * 这里回答它。**必须做出选择**（`blockDismiss`）：点外面 / Esc 都不算回答，
- * 随手关掉这个框的表现会是窗口挂在那儿，直到壳的看门狗超时。
+ * 这里回答它。**必须做出选择**（`blockDismiss`）：点外面不算回答（随手关掉这个框的表现会是
+ * 窗口挂在那儿，直到壳的看门狗超时）；Esc 是「取消」——一个真正的回答，窗口留着。
  *
  * 浏览器模式下 `onDesktopCloseRequested()` 是空订阅，这个组件永远不出现——
  * 那条路仍归 `beforeunload`（ADR 0024）。
@@ -85,22 +85,30 @@ export function CloseGuardDialog() {
       size="sm"
       busy={busy}
       blockDismiss
-      footer={
-        <>
-          <Button variant="secondary" size="md" disabled={busy} onClick={() => answer('cancel')}>
-            {translate('actions.cancel')}
-          </Button>
-          <Button variant="danger" size="md" disabled={busy} onClick={() => answer('discard')}>
+      // Esc = 取消（安全答案：窗口留着、什么都不丢）；点外面仍不算回答
+      onEscape={() => void answer('cancel')}
+      anchor="close-guard"
+      // 顺序 [不保存] …… [取消] [保存并关闭]（2026-10-07 设计审计 §10.2）：破坏性的那条路离主按钮最远
+      footer={{
+        start: (
+          <Button variant="danger-tinted" size="lg" disabled={busy} data-close-guard="discard" onClick={() => answer('discard')}>
             {cg('discard')}
           </Button>
-          <Button variant="primary" size="md" loading={busy} onClick={() => answer('save')}>
+        ),
+        secondary: (
+          <Button variant="secondary" size="lg" disabled={busy} data-close-guard="cancel" onClick={() => answer('cancel')}>
+            {translate('actions.cancel')}
+          </Button>
+        ),
+        primary: (
+          <Button variant="primary" size="lg" loading={busy} data-close-guard="save" onClick={() => answer('save')}>
             {cg('save')}
           </Button>
-        </>
-      }
+        ),
+      }}
     >
-      <p className="text-xs leading-relaxed text-ink-2">{cg('body')}</p>
-      {failed && <p className="mt-2 text-xs leading-relaxed text-danger">{cg('saveFailed')}</p>}
+      <p className="text-ink-2">{cg('body')}</p>
+      {failed && <p className="mt-2 text-danger">{cg('saveFailed')}</p>}
     </Dialog>
   )
 }

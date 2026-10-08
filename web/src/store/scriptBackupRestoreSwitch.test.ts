@@ -60,6 +60,7 @@ describe('复原脚本时换了项目', () => {
     expect(await pending).toBeNull()
     const status = useUiStore.getState().status as { key?: string } | null
     expect(status?.key).toBe('engine.scriptEditNotDurable')
+    expect(useUiStore.getState().statusTone, '没确认落盘是提醒，不打 ✓').toBe('info')
     expect(useRenderStore.getState().byKey['b.py']?.stale).toBe(true)
   })
 
@@ -69,6 +70,7 @@ describe('复原脚本时换了项目', () => {
     release(new Response(JSON.stringify({ ok: true, script: 'fig.py' }), { status: 200 }))
     expect(await pending).toBeNull()
     expect(useUiStore.getState().status).not.toBeNull()
+    expect(useUiStore.getState().statusTone, '恢复做成了打 ✓').toBe('done')
     expect(useRenderStore.getState().byKey['b.py']?.stale).toBe(true)
     expect(useEnvStore.getState().scriptBackupGeneration).toBe(generation + 1)
   })

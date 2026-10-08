@@ -108,6 +108,7 @@ export function TransformSection({ objs, foldKey }: { objs: CanvasObject[]; fold
         <div className="mt-1.5">
           <Row label={t('transform.rotation')} labelWidth={INSPECTOR_LABEL_W}>
             <NumberField
+              half
               value={shared(objs, (o) => o.rotationDeg ?? 0) ?? 0}
               mixed={shared(objs, (o) => o.rotationDeg ?? 0) === undefined}
               step={15}

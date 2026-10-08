@@ -45,6 +45,7 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { resetExportState } from '@/store/exportStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { useProjectScanStore } from '@/store/projectScanStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
@@ -112,8 +113,16 @@ export interface ProjectState {
    * 挪一条收藏：`{ delta }` 相对挪（上移 -1 / 下移 +1），`{ toPath }` 挪到那一条此刻
    * 的位置（拖动）。按**路径**描述、执行时才由后端查下标——排着队的两次挪动、前面
    * 排着的删除都不会让它移错项。
+   *
+   * `{ step, skip }` = 与**可见的**相邻一行换位（上移 / 下移、⌥↑ / ⌥↓）：跳过 `skip`
+   * （藏在顶上卡里的当前项目）。相邻那一行**轮到执行时**才按最新的 `pinned` 找，再按
+   * `to_path` 发——按下那一刻定的话，前一下还没回来时连按第二下，两下拿的是同一个旧邻居，
+   * 第二下把它挪回原处（Codex #832）。那时已在可见的一端 = 不发请求。
    */
-  movePinned: (path: string, by: { delta: number } | { toPath: string }) => Promise<void>
+  movePinned: (
+    path: string,
+    by: { delta: number } | { toPath: string } | { step: -1 | 1; skip?: string | null },
+  ) => Promise<void>
   /**
    * 把「发请求 + 认领」整个当成**一次**切换排进切换队列（教程的 open / reset 用它）：
    * 请求在路上时 `switching` 就亮着，后点的别的项目排在它后面，按点击顺序落地（Codex #550：
@@ -253,6 +262,10 @@ async function resetForNewProject() {
   // 关闭记录本身按项目 id 存在本机，切回去时仍然作数——清的只是内存里
   // 「当前项目关过哪一版」这个投影。
   useProjectReadinessStore.getState().clear()
+  // 导入即扫描（T02）：快照与「条被关掉」都属于旧项目；在途的补拉按换代失去落地资格。
+  // **后端那一笔账不取消**——它在项目关闭时才收；切回来时 `start()` 会复用或增量重扫
+  useProjectScanStore.getState().clear()
+  useUiStore.getState().setScanPanelOpen(false)
   // 导出作业的**前端状态**跟着丢：结果里的 `/exports/<name>` 是裸路径，
   // 渲染时由 `apiUrl()` 补上**当前**项目的 pj——不清的话，切完项目再打开
   // 导出面板会看到旧项目的结果，而那些链接指向的是新项目的导出目录（不是
@@ -382,6 +395,9 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     void markMoment('open')
     void get().refreshRecent()
     emitActivity({ kind: 'project.opened', tutorial: status.tutorial === true })
+    // 统一认领完成：开始（或复用）导入即扫描。**不 await、不阻塞**——静态素材此刻已经可以排版；
+    // 教程副本不扫（它的状态是 onboarding 的，扫描条也不会为它出现）
+    if (status.tutorial !== true) void useProjectScanStore.getState().start({ reason: 'claim' })
     return status
   }
 
@@ -400,7 +416,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
    * 改收藏：排进收藏队列，一次一个操作，界面以回包为准。队列保证回包按发出顺序落地
    * （不会有旧回包盖新回包）；操作本身按路径描述，所以与别的标签页交错也不会互相盖。
    */
-  const applyPinned = (op: PinnedOp | (() => PinnedOp)): Promise<void> => {
+  const applyPinned = (op: PinnedOp | (() => PinnedOp | null)): Promise<void> => {
     // 入队那一刻的 pj：轮到执行时它变了（前一个操作撞上 409 no_project、pj 被清掉；或
     // 换了项目），这个操作就作废、一个请求都不发——不然 pj 为空的请求会落到后端的默认
     // 项目上，把一个来自失效会话的操作写进配置（Codex #550）
@@ -408,8 +424,11 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     return pinQueue(async () => {
       if (currentProjectId() !== pj) return
       try {
-        // 函数形式 = 轮到自己时才定操作（收藏开关：连点两下是开了又关，不是两次「开」）
-        const pinned = await postPinnedOp(typeof op === 'function' ? op() : op)
+        // 函数形式 = 轮到自己时才定操作（收藏开关：连点两下是开了又关，不是两次「开」）；
+        // 回 null = 此刻已无事可做（例如已挪到可见的一端），一个请求都不发
+        const resolved = typeof op === 'function' ? op() : op
+        if (!resolved) return
+        const pinned = await postPinnedOp(resolved)
         pinnedRev += 1
         set({ pinned })
       } catch (e) {
@@ -459,6 +478,10 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         ...(fresh ? { recent, opened } : {}),
         ...(fresh && rev === pinnedRev ? { pinned } : {}),
       })
+      // 启动恢复：应用重启 / 刷新页面后项目还开着——后端按 pj 复用或重开一轮扫描（与认领同一个入口）
+      if (project.open && project.tutorial !== true) {
+        void useProjectScanStore.getState().start({ reason: 'restore' })
+      }
     } catch {
       // 后端不可达时也进 Picker——它会在重试里继续探测
       set({ phase: 'none' })
@@ -498,7 +521,14 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     applyPinned(
       'delta' in by
         ? { op: 'move', path, delta: by.delta }
-        : { op: 'move', path, to_path: by.toPath },
+        : 'toPath' in by
+          ? { op: 'move', path, to_path: by.toPath }
+          : () => {
+              const visible = get().pinned.filter((p) => p.path === path || p.path !== by.skip)
+              const at = visible.findIndex((p) => p.path === path)
+              const neighbour = at < 0 ? undefined : visible[at + by.step]
+              return neighbour ? { op: 'move', path, to_path: neighbour.path } : null
+            },
     ),
 
   remove: async (path) => {

@@ -1,6 +1,6 @@
 /**
  * 顶栏说清「存到哪」（ADR 0096）：保存状态的 tooltip 写明去向，绑定的项目文件落后
- * 时排版名旁边亮一颗圆点（与画布页签的「未保存」同一颗）。
+ * 时排版名旁边亮一颗圆点。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -42,6 +42,8 @@ async function render() {
 }
 
 const label = () => host.querySelector<HTMLElement>('[data-save-destination]')!
+/** 当前那句话（同一格里还叠着给宽度占位的几句，不可见，见 topBarSaveLabel.test） */
+const saveText = () => host.querySelector<HTMLElement>('[data-save-text]')!
 const dot = () => host.querySelector('[data-project-file-dirty]')
 
 beforeEach(async () => {
@@ -72,7 +74,7 @@ describe('保存去向', () => {
   it('没开项目：说「已存在本机」，tooltip 说没有打开项目', async () => {
     await render()
     expect(label().dataset.saveDestination).toBe('local')
-    expect(label().textContent).toContain('已存在本机')
+    expect(saveText().textContent).toContain('已存在本机')
     expect(label().title).toContain('没有打开项目')
     expect(dot()).toBeNull()
   })
@@ -91,7 +93,7 @@ describe('保存去向', () => {
     setProjectFile({ projectId: 'p1', name: 'A', file: 'tavottofile/A.json', revision: 'r', dirty: false })
     await render()
     expect(label().dataset.saveDestination).toBe('project')
-    expect(label().textContent).toBe('已保存到项目')
+    expect(saveText().textContent).toBe('已保存到项目')
     expect(label().title).toContain('已保存到项目：tavottofile/A.json')
     expect(dot()).toBeNull()
   })

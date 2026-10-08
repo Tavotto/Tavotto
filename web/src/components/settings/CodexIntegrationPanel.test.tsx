@@ -21,6 +21,7 @@ import { CodexShellError } from '@/lib/codexInstall'
 import { runCodexIntegration } from '@/lib/desktop'
 import { t } from '@/i18n'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -40,7 +41,11 @@ async function mount() {
   document.body.appendChild(host)
   root = createRoot(host)
   await act(async () => {
-    root.render(<CodexIntegrationPanel />)
+    root.render(
+      <TooltipProvider>
+        <CodexIntegrationPanel />
+      </TooltipProvider>,
+    )
   })
 }
 
@@ -55,6 +60,25 @@ const buttons = () => [...document.querySelectorAll('button')] as HTMLButtonElem
  */
 const alertText = () => document.querySelector('[role="alert"]')?.textContent ?? ''
 const byLabel = (label: string) => buttons().find((b) => (b.textContent ?? '').includes(label))!
+
+/**
+ * 点 ⋯ 里的「重新诊断」（2026-10-07 设计审计 §9.1：它是排障用的次级出口，收进行尾 ⋯）。
+ * Radix 的菜单开在 pointerdown 上，jsdom 没有 PointerEvent 构造器——同名的 MouseEvent 照样派发。
+ */
+async function clickDoctor() {
+  const more = document.querySelector<HTMLButtonElement>('[data-codex-more]')!
+  expect(more, '没有 ⋯').toBeTruthy()
+  await act(async () => {
+    more.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+    await Promise.resolve()
+  })
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((m) =>
+    (m.textContent ?? '').includes(ci('doctor')),
+  )!
+  expect(item, '⋯ 里没有「重新诊断」').toBeTruthy()
+  await act(async () => item.click())
+  await act(async () => {})
+}
 
 /** 点「安装 Codex 集成」，等这一轮 async 跑完 */
 async function clickInstall() {
@@ -185,9 +209,7 @@ describe('doctor 报的与 install 报的不是同一件事', () => {
     it(`doctor 的 ${code} 说的是「缺这一项」，不是「试过了失败了」`, async () => {
       runMock.mockResolvedValue(doctorFailed(code))
       await mount()
-      const b = byLabel(ci('doctor'))
-      await act(async () => b.click())
-      await act(async () => {})
+      await clickDoctor()
 
       expect(alertText()).toContain(ci(`error.doctor.${code}`))
       // install 那句（「没能把…」/「常见原因是没有网络」）绝不能出现
@@ -214,9 +236,7 @@ describe('doctor 报的与 install 报的不是同一件事', () => {
       }),
     )
     await mount()
-    const b = byLabel(ci('doctor'))
-    await act(async () => b.click())
-    await act(async () => {})
+    await clickDoctor()
 
     expect(alertText()).toContain(ci('error.health_failed'))
     expect(alertText()).not.toContain(ci('error.other'))
@@ -234,11 +254,15 @@ describe('成功路径', () => {
     ],
   })
 
-  it('逐步显示名字 + 状态，「跳过」是独立一档', async () => {
+  it('逐步显示名字 + 状态，「跳过」是独立一档；全部通过时折成一行（展开才看逐步）', async () => {
     runMock.mockResolvedValue(okJson)
     await mount()
     await clickInstall()
 
+    // 全部通过：逐步清单折成一行（读一次就够），行尾写「全部完成」
+    expect(text()).not.toContain(ci('step.marketplace'))
+    expect(text()).toContain(ci('stepsAllPassed'))
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-codex-steps] > div > button')!.click())
     expect(text()).toContain(ci('step.marketplace'))
     expect(text()).toContain(ci('step.plugin'))
     expect(text()).toContain(ci('stepState.skipped'))
@@ -255,15 +279,26 @@ describe('成功路径', () => {
   })
 })
 
+describe('逐步清单', () => {
+  it('有一步失败时清单直接摊开（不折叠），不带框', async () => {
+    runMock.mockResolvedValue(failedJson('marketplace_add_failed', 'raw'))
+    await mount()
+    await clickInstall()
+    const steps = document.querySelector('[data-codex-steps]')!
+    // 没有折叠头：失败的那一步就在眼前
+    expect(steps.querySelector('button[aria-expanded]')).toBeNull()
+    expect(steps.textContent).toContain(ci('step.marketplace'))
+    expect(steps.querySelector('.border')).toBeNull()
+  })
+})
+
 describe('重新诊断', () => {
   it('走的是 doctor（只诊断不改动），不是 install', async () => {
     runMock.mockResolvedValue(
       JSON.stringify({ ok: true, action: 'doctor', steps: [{ step: 'health', ok: true, skipped: false }] }),
     )
     await mount()
-    const b = byLabel(ci('doctor'))
-    await act(async () => b.click())
-    await act(async () => {})
+    await clickDoctor()
 
     expect(runMock).toHaveBeenCalledWith('doctor')
     expect(runMock).not.toHaveBeenCalledWith('install')

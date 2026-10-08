@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Check, Circle, LoaderCircle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { ProgressBar } from '@/components/ui/ProgressBar'
 import type { DependencyProgress } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -83,21 +84,8 @@ export function RepairProgressLine({ progress, text }: { progress: DependencyPro
         {line}
       </p>
       {download && (
-        <div
-          role="progressbar"
-          aria-label={t('engine.repairDownloadAria')}
-          aria-valuenow={pct ?? undefined}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          className="h-1 overflow-hidden rounded-full bg-surface-2"
-          data-repair-download
-        >
-          {/* 与更新下载同一种颜色：蓝色不做大块背景 */}
-          <div
-            className={cn('h-full bg-ink', pct === null && 'w-full animate-pulse')}
-            style={pct === null ? undefined : { width: `${pct}%` }}
-          />
-        </div>
+        // 与更新下载同一份进度条：蓝色不做大块背景
+        <ProgressBar pct={pct} label={t('engine.repairDownloadAria')} data-repair-download />
       )}
     </div>
   )

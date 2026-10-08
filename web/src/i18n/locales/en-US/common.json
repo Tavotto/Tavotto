@@ -12,7 +12,12 @@
   },
   "colorField": {
     "picker": "{{label}}: colour picker",
-    "none": "None"
+    "none": "None",
+    "open": "{{label}}: colours",
+    "hex": "{{label}}: hex",
+    "documentColors": "In this layout",
+    "recent": "Recent",
+    "system": "System colour picker…"
   },
   "count": {
     "selectedObjects_one": "{{count}} object selected",

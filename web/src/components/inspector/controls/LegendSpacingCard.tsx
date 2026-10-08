@@ -81,10 +81,12 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
               <Row
                 label={labeledWithState(label, overridden(prop))}
                 labelWidth={INSPECTOR_LABEL_W}
+                status={overridden(prop) ? <ResetChip label={label} onReset={() => clearOverride(panel.id, element.gid, prop)} /> : undefined}
               >
                 {/* 与同页其它行同一条控件竖线、同一档框宽（打磨 E4 / L3）：
                     此前标签 flex-1、112 宽的框贴右缘，是页内第三种行语法 */}
                 <NumberField
+                  half
                   ariaLabel={label}
                   title={lg('spacingUnitTitle')}
                   value={Number(w.read(prop) ?? 0)}
@@ -97,9 +99,6 @@ export function LegendSpacingCard({ panel, element }: { panel: PanelObject; elem
                   onScrubStart={() => w.beginGesture()}
                   onScrubEnd={w.endGesture}
                 />
-                {overridden(prop) && (
-                  <ResetChip label={label} onReset={() => clearOverride(panel.id, element.gid, prop)} />
-                )}
               </Row>
               </div>
             )

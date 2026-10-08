@@ -180,7 +180,7 @@ export async function saveNamedNode(name: string): Promise<void> {
   const trimmed = name.trim()
   if (!trimmed) return
   await takeCheckpoint({ auto: false, name: trimmed, allowEmpty: true })
-  useUiStore.getState().setStatus(msg('versions.saved', { name: trimmed }, 'dialogs'))
+  useUiStore.getState().setStatus(msg('versions.saved', { name: trimmed }, 'dialogs'), 'done')
 }
 
 /* ------------------------------ 关键时刻 ---------------------------------- */

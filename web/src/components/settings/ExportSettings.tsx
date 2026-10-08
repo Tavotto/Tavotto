@@ -5,8 +5,9 @@ import { onExportDefaultsHydrated, readExportDefaults, writeExportDefaults } fro
 import { FORMATS, hasRaster } from '@/lib/exportRequest'
 import { Select } from '../ui/Select'
 import { Checkbox } from '../ui/Checkbox'
+import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Toggle } from '../ui/Toggle'
-import { SettingRow, SettingSection, settingRowLabelId } from './SettingRow'
+import { SettingRow, settingRowLabelId } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -23,14 +24,13 @@ const ex = (key: string, values?: Record<string, unknown>) =>
 /**
  * 导出默认值。三项可调：默认格式、分辨率、要不要样式检查报告。
  *
- * 顺序跟着依赖关系走（与导出对话框一致）：**先格式后分辨率**。分辨率只对位图
- * 有意义，所以只选了矢量格式时那一行是停用的，并就近说明为什么——ADR 0031 的
- * 「PPI 只在有位图格式时是数字」在界面这一侧的样子。摆一个不影响任何结果的
- * 输入框，等于说了而不做。
+ * **一组**（2026-10-07 设计审计 §9.1）：此前三个分区（格式 / 位图输出 / 检查）各只有一行，三个小标题比内容
+ * 还多。现在是「默认导出」一组三行；顺序仍跟着依赖关系走（与导出对话框一致）：**先格式后分辨率**。
+ * 分辨率只对位图有意义，所以只选了矢量格式时那一行停用，并在行内就近说明为什么——ADR 0031 的
+ * 「PPI 只在有位图格式时是数字」在界面这一侧的样子。
  *
- * Session 6 起分成三个分区（格式 / 位图输出 / 检查）：三行平铺在一个没有标题的
- * 分区里时，「分辨率只管位图」这层依赖读不出来，页面也显得没做完。分区只是
- * 分组，`readExportDefaults` / `writeExportDefaults` 的合同一个字没动。
+ * 格式一行是 `balanced`（4 : 6）：四个复选框放不进 240 的控件列，标签 12px（此前 11px），从控件列左缘起排。
+ * `readExportDefaults` / `writeExportDefaults` 的合同一个字没动。
  */
 export function ExportSettings() {
   useTranslation('dialogs')
@@ -47,28 +47,26 @@ export function ExportSettings() {
   // 「有没有位图格式」的判据与导出请求同一处，不在这里另写一遍格式清单
   const raster = hasRaster(defaults.formats)
   return (
-    <>
-      <SettingSection title={st('export.sectionFormats')}>
-        {/* 「默认格式」这四个字已经说清了它管什么，下面不再复述一句「导出对话框打开时
-            预选这些格式」（全面打磨 D36） */}
-        <SettingRow label={st('export.defaultFormats')}>
-          <span className="flex items-center gap-3">
+    <FormSection title={st('export.sectionDefaults')}>
+      <FieldGroup>
+        {/* 「默认格式」这四个字已经说清了它管什么，下面不再复述一句（全面打磨 D36） */}
+        <SettingRow label={st('export.defaultFormats')} layout="balanced" data-settings-anchor="export.formats">
+          <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
             {FORMATS.map((f) => (
-              <label key={f} className="flex h-7 items-center gap-1.5 text-xs text-ink">
+              <label key={f} data-export-format={f} className="flex h-7 items-center gap-1.5 text-sm text-ink">
                 <Checkbox checked={defaults.formats.includes(f)} onChange={() => toggleFormat(f)} />
-                {/* 只列格式名，「矢量 / 位图」的类型旁注按 2026-09-11 设计包去掉；
-                    格式清单仍来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时自动跟上 */}
+                {/* 只列格式名；格式清单来自 `FORMATS`（唯一出处），EPS / TIFF 加进来时自动跟上 */}
                 {f.toUpperCase()}
               </label>
             ))}
           </span>
         </SettingRow>
-      </SettingSection>
-
-      <SettingSection title={st('export.sectionRaster')}>
         <SettingRow
           label={ex('ppiLabel')}
+          // 停用的原因就在行内（宪法第五节：禁用项收不到指针事件，气泡不能是唯一的说明）
           status={raster ? undefined : st('export.ppiNotForVector')}
+          data-settings-anchor="export.ppi"
+          data-ppi-disabled={raster ? undefined : ''}
         >
           <Select
             className="w-full"
@@ -82,10 +80,7 @@ export function ExportSettings() {
             }))}
           />
         </SettingRow>
-      </SettingSection>
-
-      <SettingSection title={st('export.sectionChecks')}>
-        <SettingRow label={ex('reportToggle')} controlId="setting-export-report">
+        <SettingRow label={ex('reportToggle')} controlId="setting-export-report" data-settings-anchor="export.report">
           <Toggle
             aria-labelledby={settingRowLabelId('setting-export-report')}
             id="setting-export-report"
@@ -93,7 +88,7 @@ export function ExportSettings() {
             onChange={(v) => update({ withProof: v })}
           />
         </SettingRow>
-      </SettingSection>
-    </>
+      </FieldGroup>
+    </FormSection>
   )
 }

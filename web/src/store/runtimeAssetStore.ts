@@ -103,7 +103,11 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
     inflight.add(id)
     const started = epoch
     const source = panel.source
-      ? { script: panel.source.script, stem: panel.source.stem }
+      ? {
+          script: panel.source.script,
+          stem: panel.source.stem,
+          ...(panel.source.runConfig ? { run_config: panel.source.runConfig } : {}),
+        }
       : undefined
     void fetchRuntimeStatus(id, source)
       .then((st) => {

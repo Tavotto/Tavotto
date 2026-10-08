@@ -23,6 +23,7 @@ import { fetchPanels, refreshProject } from '@/lib/api'
 import { AssetBrowser } from '@/components/left/AssetBrowser'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
+import { useAssetBrowseStore } from '@/store/assetBrowseStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
@@ -77,6 +78,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount())
   host.remove()
+  useAssetBrowseStore.getState().setFiguresOpen(true)
 })
 
 describe('刷新按钮', () => {
@@ -134,5 +136,30 @@ describe('刷新按钮', () => {
 
     expect(useUiStore.getState().statusTone).toBe('error')
     expect(useUiStore.getState().status).not.toBeNull()
+  })
+
+  /** 一个元素真看得见：自己与每一层祖先都没挂 `hidden` */
+  const visible = (el: Element | null) => {
+    for (let n = el; n; n = n.parentElement) if ((n as HTMLElement).hidden) return false
+    return !!el
+  }
+
+  it('图区收着时：后端那一轮成了、/api/panels 失败——错误照样看得见，不藏在收起的网格里（Codex #832）', async () => {
+    await act(async () => useAssetBrowseStore.getState().setFiguresOpen(false))
+    // 收起是真的：网格容器挂着 hidden
+    expect(host.querySelector<HTMLElement>('#asset-figures-section')!.hidden).toBe(true)
+    mockPanels.mockRejectedValue(new Error('panels 读不回来'))
+
+    await act(async () => {
+      refreshButton()!.click()
+      for (let i = 0; i < 6; i++) await Promise.resolve()
+    })
+
+    // 这一路不弹提示（load() 吞掉错误返回 null）——唯一的出口就是这条 Notice
+    expect(useUiStore.getState().statusTone).not.toBe('error')
+    const notice = host.querySelector('[data-asset-refresh-failed]')
+    expect(notice, '刷新失败的 Notice 没渲染').not.toBeNull()
+    expect(visible(notice), '错误挂在 hidden 的可折叠内容里，用户只看到图标停转').toBe(true)
+    expect(notice!.textContent).toContain('panels 读不回来')
   })
 })

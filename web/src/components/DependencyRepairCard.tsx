@@ -22,6 +22,7 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 import { Details, Summary } from '@/components/ui/Details'
+import { Card } from './ui/Card'
 
 /**
  * 「这个项目还缺 lmfit」→ 点一次 →「安装并继续」→ 图出来（ADR 0019）。
@@ -242,7 +243,7 @@ export function DependencyRepairCard({
   if (plan) {
     const toProject = plan.target_kind === 'project_venv'
     return (
-      <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
+      <Card className="flex flex-col gap-2.5">
         <div>
           {/* 小标题走 type-section（全面打磨 D14）：11/500/ink 是这一族自造的第七个角色 */}
           <h3 className="type-section">{en('repairConfirmTitle', { module: pkg })}</h3>
@@ -253,7 +254,7 @@ export function DependencyRepairCard({
           </p>
           {toProject && (
             // 改用户自己的环境是不可逆的，这句不能藏起来
-            <p className="mt-1 text-xs leading-relaxed text-warn">{en('repairModifiesEnv')}</p>
+            <p className="mt-1 text-xs leading-relaxed text-warn-content">{en('repairModifiesEnv')}</p>
           )}
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
             {en('repairWillInstall', {
@@ -270,7 +271,7 @@ export function DependencyRepairCard({
           <Button onClick={reset}>{en('repairBack')}</Button>
         </div>
         <Failure code={errorCode} text={errorText} />
-      </div>
+      </Card>
     )
   }
 
@@ -382,7 +383,7 @@ export function DependencyRepairCard({
   if (primary) {
     // 默认可见的只有：一句话 + 一个主按钮 +「详情」（折叠）。标题、解释、下载大小都不摆出来
     return (
-      <div className="flex flex-col gap-2 rounded-md bg-surface p-3 shadow-card" data-one-click-repair={primary.kind}>
+      <Card className="flex flex-col gap-2" data-one-click-repair={primary.kind}>
         {failing ? (
           // 失败了：那一句换成故障那一句（原因 + 下一步），不在它下面再叠一句；完整说明在「详情」里
           <p className="text-sm leading-relaxed text-danger" data-repair-failure>
@@ -406,14 +407,14 @@ export function DependencyRepairCard({
           {en('oneClickRepair')}
         </Button>
         {advanced}
-      </div>
+      </Card>
     )
   }
 
   if (managedUnavailable && targets.length === 0 && canInstall) {
     // 真的无路可走（没有可建环境的 Python，也没有可下载的那份）：同样一句话说清下一步，其余收进「详情」
     return (
-      <div className="flex flex-col gap-2 rounded-md bg-surface p-3 shadow-card">
+      <Card className="flex flex-col gap-2">
         {failing ? (
           <p className="text-sm leading-relaxed text-danger" data-repair-failure>
             {repairShortMessage(errorCode)}
@@ -424,12 +425,12 @@ export function DependencyRepairCard({
           </p>
         )}
         {advanced}
-      </div>
+      </Card>
     )
   }
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
+    <Card className="flex flex-col gap-2.5">
       <div>
         <h3 className="type-section">{en('repairTitle', { module: pkg })}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -448,7 +449,7 @@ export function DependencyRepairCard({
 
       <Failure code={errorCode} text={errorText} />
       {advanced}
-    </div>
+    </Card>
   )
 }
 
@@ -461,7 +462,7 @@ export function DependencyRepairCard({
 function Advanced({ children }: { children: ReactNode }) {
   return (
     <Details className="border-t border-border pt-2.5" data-repair-advanced>
-      <Summary className="type-meta cursor-pointer">{en('repairAdvanced')}</Summary>
+      <Summary className="type-meta">{en('repairAdvanced')}</Summary>
       <div className="mt-2 flex flex-col gap-2.5">{children}</div>
     </Details>
   )
@@ -657,7 +658,7 @@ function Pinned({
     setError(failure)
   }
   return (
-    <div data-dependency-repair-pinned className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
+    <Card data-dependency-repair-pinned className="flex flex-col gap-2.5">
       <div>
         <h3 className="type-section">{en('repairTitle', { module })}</h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-2">
@@ -679,7 +680,7 @@ function Pinned({
         </div>
       )}
       {(error || storeError) && <p className="text-xs text-danger">{error || storeError}</p>}
-    </div>
+    </Card>
   )
 }
 
@@ -836,7 +837,7 @@ function RepairProgress({
     progress.retryable !== false &&
     (cancelled || (failed && RETRYABLE_REPAIR_CODES.has(progress.code)))
   return (
-    <div className="flex flex-col gap-2.5 rounded-md bg-surface p-3 shadow-card">
+    <Card className="flex flex-col gap-2.5">
       {!failed && !cancelled ? (
         <RepairProgressLine progress={progress} text={en(key, { module: progressPackages(progress, module) })} />
       ) : (
@@ -899,7 +900,7 @@ function RepairProgress({
           )}
         </Details>
       )}
-    </div>
+    </Card>
   )
 }
 

@@ -7,6 +7,8 @@
  * 会话来源是案例本身失败时（理论上不该发生，但 worker 崩溃/超时都可能），
  * ②仍然给——重试同一条路是合理出口。
  */
+import { Button } from '@/components/ui/Button'
+import { buttonClass } from '@/components/ui/buttonClass'
 import { Download } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RELEASES_LATEST_URL } from '@/lib/brand'
@@ -22,22 +24,13 @@ export function PlaygroundFailureActions({
 }) {
   return (
     <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-      <button
-        onClick={onBack}
-        className="h-7 rounded-sm border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
-      >
+      <Button variant="secondary" onClick={onBack}>
         {pg('failBackGallery')}
-      </button>
-      <button
-        onClick={() => onLaunch(FEATURED_EXAMPLE)}
-        className="h-7 rounded-sm border border-border px-3 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
-      >
+      </Button>
+      <Button variant="secondary" onClick={() => onLaunch(FEATURED_EXAMPLE)}>
         {pg('failTryExample', { name: pg(FEATURED_EXAMPLE.titleKey) })}
-      </button>
-      <a
-        href={RELEASES_LATEST_URL}
-        className="flex h-7 items-center gap-1.5 rounded-sm bg-ink px-3 text-xs text-white transition-opacity hover:opacity-90"
-      >
+      </Button>
+      <a href={RELEASES_LATEST_URL} className={buttonClass({ variant: 'primary', size: 'md' })}>
         <Download size={ICON_SIZE.sm} aria-hidden />
         {pg('downloadDesktop')}
       </a>

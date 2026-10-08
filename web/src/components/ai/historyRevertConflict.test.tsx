@@ -10,7 +10,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiRevert, ApiError, fetchAiHistory, type AiHistoryEntry } from '@/lib/api'
-import { t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useUiStore } from '@/store/uiStore'
 import { TaskHistory } from './AiPanel'
@@ -71,9 +70,7 @@ afterEach(async () => {
 })
 
 const clickRevert = async () => {
-  const btn = document.querySelector(
-    `button[aria-label="${t('history.revert', { ns: 'ai' })}"]`,
-  ) as HTMLButtonElement | null
+  const btn = document.querySelector('button[data-ai-history-revert]') as HTMLButtonElement | null
   expect(btn, '历史条目上没有回滚按钮').toBeTruthy()
   await act(async () => {
     btn!.click()
@@ -100,7 +97,8 @@ describe('历史条目回滚：过期写入被拒时说出口', () => {
     vi.mocked(aiRevert).mockResolvedValue({ ok: true, script: 'fig1.py' })
     await clickRevert()
     const ui = useUiStore.getState()
-    expect(ui.statusTone).toBe('info')
+    // 成功是完成态（✓），不是中性提示（Codex #821 P2：成功类提示都显式标 done）
+    expect(ui.statusTone).toBe('done')
     expect(ui.status?.key).toBe('history.reverted')
   })
 })

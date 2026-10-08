@@ -1,8 +1,10 @@
-import type { ReactNode } from 'react'
+import { useEffect, useReducer, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeftRight, Trash2 } from '@/components/ui/icons'
+import { ArrowLeftRight, ExternalLink, LayoutGrid, Trash2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatMm } from '@/lib/units'
+import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
+import { hasRaster } from '@/lib/exportRequest'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { cn, MOD } from '@/lib/utils'
 import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
@@ -10,9 +12,11 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
-import { Row, Section } from '../ui/Field'
+import { Row, Section, ROW_GRID_COLS } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { ColorField, NumberField } from '../ui/Input'
+import { Segmented } from '../ui/Segmented'
+import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
 import { INSPECTOR_LABEL_COL, INSPECTOR_LABEL_W } from './layout'
@@ -29,54 +33,58 @@ const PRESETS = [
   { id: 'square', w: 100, h: 100 },
 ]
 
-/**
- * 本页所有设置行共用的标签列宽：数值行走 `Row`（内联宽度），开关行走 `ToggleRow`
- * （同宽的类名）。两种行的控件从同一条竖线起排——折叠区里「透明背景 / 背景色」
- * 上下两行的控件才对得齐（Session 2）。数是全检查器那一个（打磨 L1：此前本页 72、
- * 对象页 44 / 60、元素页 88 四种并存）。
- */
+/** 下拉里「自定义」那一项的取值：尺寸对不上任何预设时它就是当前值 */
+const CUSTOM = 'custom'
+
 const LABEL_W = INSPECTOR_LABEL_W
-const LABEL_COL = INSPECTOR_LABEL_COL
 
 /** 本页文案 inspector:canvas.*，历史标签 inspector:history.* */
 const cv = (key: string, values?: Record<string, unknown>) =>
   translate(`canvas.${key}`, { ns: 'inspector', ...(values ?? {}) })
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
-/** 本页五个摘要行的键（一次只展开一个） */
-const FOLD_KEYS = ['bg', 'aids', 'snap', 'guides', 'safe'] as const
-
 /**
- * 预设缩略图：**四档共用同一个 mm→px 比例**，所以「单栏比双栏窄一半」
- * 这件事在图形上是真的。各自撑满格子的话四个方块一样大，形状还在、
- * 比例没了，用户照样得读文字——那就白画了。
+ * 预设缩略图：**各档共用同一个 mm→px 比例**，所以「单栏比双栏窄一半」这件事在图形上是真的；
+ * 选项里的小图与触发器里的同一副。
  */
-const PREVIEW_BOX = 36
-const PREVIEW_SCALE = PREVIEW_BOX / Math.max(...PRESETS.map((p) => Math.max(p.w, p.h)))
+const THUMB_BOX = 16
+const THUMB_SCALE = THUMB_BOX / Math.max(...PRESETS.map((p) => Math.max(p.w, p.h)))
+
+function PageThumb({ w, h }: { w: number; h: number }) {
+  const k = Math.min(THUMB_SCALE, THUMB_BOX / Math.max(w, h))
+  return (
+    <span aria-hidden className="flex h-4 w-4 shrink-0 items-end justify-center">
+      <span
+        className="block rounded-xs border border-ink-3 bg-surface"
+        style={{ width: Math.max(3, w * k), height: Math.max(3, h * k) }}
+      />
+    </span>
+  )
+}
 
 /**
  * 画布页：页面尺寸是排版的第一约束，默认展开；
  * 背景、查看辅助、吸附、参考线、安全区域按需展开，折叠行给现状摘要。
+ *
+ * 2026-10-07 设计审计 §9.3：头部与属性页同一套两行（「画布」/ 画布名 + 尺寸）；四张 88px 的预设卡
+ * （占首屏约四分之一、第四种选中皮肤、尺寸对不上时没有「自定义」）换成一行带缩略图的下拉；
+ * 折叠行可以同时开多个、开合跨会话记住；关掉自动对齐时子开关不卸载、只变暗；
+ * 参考线列表的方向是一列 │ / ─ 字形；末尾一行只读的导出摘要，点它打开导出对话框（不另起导出管线）。
  */
 export function CanvasPage() {
   useTranslation('inspector')
   const page = useDocumentStore((s) => s.doc.page)
+  const name = useDocumentStore((s) => s.doc.name)
   const guides = useDocumentStore((s) => s.doc.guides)
   const ui = useUiStore()
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
-  // 一次只展开一组（审计 T31：多组同时展开显得冗长）；再点同一组就收起。
-  // 展开状态记在会话级 `inspectorPrefs.foldOpen`（键 `canvas:<组>`），不放局部 state：
-  // 切到「属性 / 改图助手」页签再回来时本页被卸载，局部 state 会让展开的行合上
+  // 摘要行互不排斥、各记各的（键 `canvas:<组>`）；开合跨会话记在 inspectorPrefs
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
   const open = (k: string) => foldOpen[`canvas:${k}`] ?? false
-  const toggle = (k: string) => {
-    const wasOpen = open(k)
-    for (const other of FOLD_KEYS) setFoldOpen(`canvas:${other}`, !wasOpen && other === k)
-  }
+  const toggle = (k: string) => setFoldOpen(`canvas:${k}`, !open(k))
 
-  // 收起时也得看得出网格状态（审计 T31 验收）：开着就把间距一起报出来，
-  // 只报「网格」的话用户还得展开才知道它多密
+  // 收起时也得看得出网格状态（审计 T31 验收）：开着就把间距一起报出来
   const aidsSummary =
     [ui.showRulers && cv('rulers'), ui.showGrid && cv('gridSummary', { size: ui.gridSize })]
       .filter(Boolean)
@@ -86,86 +94,128 @@ export function CanvasPage() {
         .filter(Boolean)
         .join(' · ') || cv('snapPageOnly')
     : cv('snapOff')
+  const portrait = page.h >= page.w
+  const square = page.w === page.h
+  // 导出摘要读的是本机缓存；后端那份（#715 PR-B）取回、覆盖缓存后要重读——画布页可能在
+  // 取回之前就已挂着（右栏记住的页签是画布），不订阅就整次会话停在空缓存的 600 ppi（Codex #829）
+  const [, onHydrated] = useReducer((n: number) => n + 1, 0)
+  useEffect(() => onExportDefaultsHydrated(onHydrated), [])
+  const exportDefaults = readExportDefaults()
+  const exportFormatsText = exportDefaults.formats.map((f) => f.toUpperCase()).join(' · ')
 
   return (
     <>
-      {/* 组头右侧原来挂着「150.0 × 100.0 mm」——它和 24px 下面的 `W [150 mm] H [100 mm]`
-          是同一对数，还是两种格式（150.0 vs 150）。已表达过的不重复（打磨 L9）：
-          尺寸留在可编辑的那两个框里，预设卡的 aria 名里也有 */}
-      <Section title={cv('pageSize')}>
-        <div className="mb-2 grid grid-cols-4 gap-1" role="radiogroup" aria-label={cv('presetGroup')}>
-          {PRESETS.map((p) => {
-            const on = active?.id === p.id
-            const label = cv(`presets.${p.id}.label`)
-            return (
-              <Tip key={p.id} label={cv(`presets.${p.id}.hint`)}>
-                <button
-                  onClick={() => setPageSize(p.w, p.h)}
-                  role="radio"
-                  aria-checked={on}
-                  aria-label={cv('presetAria', { label, w: p.w, h: p.h })}
-                  className={cn(
-                    // 定高 88：什么语言都是同一个骨架（打磨 C1）。英文名同期改短
-                    // （Single / Double，2026-09-15 拍板）——「column」由分区标题
-                    // Page size 与缩略图的比例说，四张卡这才真的一行一张
-                    'flex h-22 flex-col items-center justify-center gap-1 rounded-sm border px-1 py-1.5 outline-none transition-colors duration-fast focus-visible:focus-ring',
-                    // 选中：轻 tint + 稍强的边 + 稍强的预览线 + 字重，不用大灰块
-                    on
-                      ? 'border-border-strong bg-selected text-ink'
-                      : 'border-border bg-surface text-ink-2 hover:border-border-strong hover:text-ink',
-                  )}
-                >
-                  {/* 缩略图按真实比例摆，底边对齐——横竖两类放一排才看得出高矮 */}
-                  <span
-                    className="flex items-end justify-center"
-                    style={{ height: PREVIEW_BOX }}
-                    aria-hidden
-                  >
-                    <span
-                      className={cn(
-                        'block border',
-                        // 选中不只换颜色：空心变实心，色觉障碍下也分得出
-                        on ? 'border-ink bg-ink/15' : 'border-ink-faint bg-surface',
-                      )}
-                      style={{
-                        width: p.w * PREVIEW_SCALE,
-                        height: p.h * PREVIEW_SCALE,
-                      }}
-                    />
-                  </span>
-                  <span className={cn('line-clamp-2 text-center leading-tight text-xs', on && 'font-medium')}>
-                    {label}
-                  </span>
-                </button>
-              </Tip>
-            )
-          })}
-        </div>
-        {/* 宽、高与横竖交换同一行：两个字段与检查器的 X/Y/W/H 同一个 primitive
-            （单位在框里），交换是个小 ghost 图标钮 */}
-        <div data-page-size-row className="flex items-center gap-1.5">
-          <MmField
-            label="W"
-            historyLabel={hist('setPageW')}
-            min={10}
-            value={page.w}
-            onChange={(v) => setPageSize(v, page.h)}
-          />
-          <MmField
-            label="H"
-            historyLabel={hist('setPageH')}
-            min={10}
-            value={page.h}
-            onChange={(v) => setPageSize(page.w, v)}
-          />
-          <IconButton
-            label={cv('swap')}
-            iconSize="sm"
-            side="left"
-            onClick={() => setPageSize(page.h, page.w)}
+      {/* 两行头：与属性页的身份头同一副骨架（路径 24 + 名字 32），右端是尺寸 meta */}
+      <header data-identity data-canvas-identity className="mx-3 mb-1 flex shrink-0 flex-col pt-2">
+        <p className="flex h-6 min-w-0 items-center gap-1.5 text-sm text-ink-3">
+          <span className="min-w-0 flex-1 truncate">{translate('tab.canvas', { ns: 'inspector' })}</span>
+          <span className="type-meta shrink-0">
+            {cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}
+          </span>
+        </p>
+        <div className="flex min-h-8 items-center gap-2">
+          <span
+            data-identity-icon
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-surface-hover text-ink-2"
           >
-            <ArrowLeftRight size={ICON_SIZE.sm} />
-          </IconButton>
+            <LayoutGrid size={ICON_SIZE.md} aria-hidden />
+          </span>
+          <h2 title={name} className="type-heading line-clamp-2 min-w-0 break-words">
+            {name}
+          </h2>
+        </div>
+      </header>
+
+      <Section title={cv('pageSize')}>
+        <div className="flex flex-col gap-1.5">
+          <Row label={cv('preset')} labelWidth={LABEL_W}>
+            <Select
+              className="min-w-0 flex-1"
+              ariaLabel={cv('presetGroup')}
+              value={active?.id ?? CUSTOM}
+              onChange={(id) => {
+                const p = PRESETS.find((x) => x.id === id)
+                if (p) setPageSize(p.w, p.h)
+              }}
+              options={[
+                ...PRESETS.map((p) => ({
+                  value: p.id,
+                  hint: cv(`presets.${p.id}.hint`),
+                  label: (
+                    <span data-page-preset={p.id} className="flex min-w-0 items-center gap-2">
+                      <PageThumb w={p.w} h={p.h} />
+                      <span className="truncate">{cv(`presets.${p.id}.label`)}</span>
+                    </span>
+                  ),
+                })),
+                // 「自定义」只是「当前尺寸不是任何预设」的说法，不是一个能选的尺寸：只在它就是当前
+                // 值时出现。尺寸对上预设时还摆着它，选了什么都不写、受控下拉又弹回去（Codex #829 P2）
+                ...(active
+                  ? []
+                  : [
+                      {
+                        value: CUSTOM,
+                        label: (
+                          <span data-page-preset={CUSTOM} className="flex min-w-0 items-center gap-2">
+                            <PageThumb w={page.w} h={page.h} />
+                            <span className="truncate">{cv('presetCustom')}</span>
+                          </span>
+                        ),
+                      },
+                    ]),
+              ]}
+            />
+          </Row>
+          {/* 宽、高两个半列 + 横竖交换坐在状态槽里（与属性页的恢复钮同一格） */}
+          <div data-page-size-row>
+            <Row
+              label={cv('size')}
+              labelWidth={LABEL_W}
+              status={
+                <IconButton label={cv('swap')} iconSize="xs" side="left" onClick={() => setPageSize(page.h, page.w)}>
+                  <ArrowLeftRight size={ICON_SIZE.xs} />
+                </IconButton>
+              }
+            >
+              <div className="flex w-full min-w-0 items-center gap-1.5">
+                <span className="w-[calc((100%-0.375rem)/2)] min-w-0 shrink-0">
+                  <MmField
+                    label="W"
+                    historyLabel={hist('setPageW')}
+                    min={10}
+                    value={page.w}
+                    onChange={(v) => setPageSize(v, page.h)}
+                  />
+                </span>
+                <span className="w-[calc((100%-0.375rem)/2)] min-w-0 shrink-0">
+                  <MmField
+                    label="H"
+                    historyLabel={hist('setPageH')}
+                    min={10}
+                    value={page.h}
+                    onChange={(v) => setPageSize(page.w, v)}
+                  />
+                </span>
+              </div>
+            </Row>
+          </div>
+          <Row label={cv('orientation')} labelWidth={LABEL_W}>
+            <div data-page-orientation className="contents">
+              <Segmented
+                ariaLabel={cv('orientation')}
+                value={square ? null : portrait ? 'portrait' : 'landscape'}
+                // 方向是宽高的另一种说法：换方向 = 横竖交换。正方形没有方向：两档都不选、都禁用，
+                // 不摆一个看着能点却永远不变的控件（Codex #829 P2）
+                onChange={(v) => {
+                  if (!square && (v === 'portrait') !== portrait) setPageSize(page.h, page.w)
+                }}
+                items={[
+                  { value: 'portrait', label: cv('portrait'), disabled: square },
+                  { value: 'landscape', label: cv('landscape'), disabled: square },
+                ]}
+              />
+            </div>
+          </Row>
         </div>
       </Section>
 
@@ -173,7 +223,8 @@ export function CanvasPage() {
         label={cv('background')}
         open={open('bg')}
         onToggle={() => toggle('bg')}
-        value={page.transparent ? cv('transparent') : (page.bg ?? '#FFFFFF').toUpperCase()}
+        data-fold="canvas-bg"
+        value={page.transparent ? cv('transparent') : <SwatchValue color={page.bg ?? '#FFFFFF'} />}
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('transparentBg')}>
@@ -184,11 +235,12 @@ export function CanvasPage() {
             />
           </ToggleRow>
           <Row label={cv('bgColor')} labelWidth={LABEL_W}>
+            {/* 透明时真禁用（键盘也改不了），不再是 pointer-events-none 的假禁用（§9.3） */}
             <ColorField
               ariaLabel={cv('bgColor')}
               value={page.bg ?? '#FFFFFF'}
+              disabled={!!page.transparent}
               onChange={(v) => setPageSetup({ bg: v }, hist('setPageBgColor'))}
-              className={page.transparent ? 'pointer-events-none opacity-40' : undefined}
             />
           </Row>
         </div>
@@ -198,6 +250,7 @@ export function CanvasPage() {
         label={cv('viewAids')}
         open={open('aids')}
         onToggle={() => toggle('aids')}
+        data-fold="canvas-aids"
         value={aidsSummary}
       >
         <div className="flex flex-col gap-1.5">
@@ -207,19 +260,19 @@ export function CanvasPage() {
           <ToggleRow label={cv('grid')}>
             <Toggle aria-label={cv('grid')} checked={ui.showGrid} onChange={ui.setShowGrid} />
           </ToggleRow>
-          {ui.showGrid && (
-            <Row label={cv('gridSize')} labelWidth={LABEL_W}>
-              <NumberField
-                ariaLabel={cv('gridSize')}
-                value={ui.gridSize}
-                min={1}
-                max={50}
-                step={1}
-                unit="mm"
-                onChange={(v) => ui.setCanvasPref({ gridSize: v })}
-              />
-            </Row>
-          )}
+          <Row label={cv('gridSize')} labelWidth={LABEL_W}>
+            <NumberField
+              half
+              ariaLabel={cv('gridSize')}
+              value={ui.gridSize}
+              min={1}
+              max={50}
+              step={1}
+              unit="mm"
+              disabled={!ui.showGrid}
+              onChange={(v) => ui.setCanvasPref({ gridSize: v })}
+            />
+          </Row>
         </div>
       </SummaryRow>
 
@@ -227,6 +280,7 @@ export function CanvasPage() {
         label={cv('snap')}
         open={open('snap')}
         onToggle={() => toggle('snap')}
+        data-fold="canvas-snap"
         value={snapSummary}
       >
         <div className="flex flex-col gap-1.5">
@@ -237,35 +291,35 @@ export function CanvasPage() {
               onChange={(v) => ui.setCanvasPref({ snapEnabled: v })}
             />
           </ToggleRow>
-          {ui.snapEnabled && (
-            <>
-              <ToggleRow label={cv('snapGrid')}>
+          {/* 总开关关着时子开关不卸载：留在原位变暗（禁用），开回来时它们各自的状态还在、行不跳 */}
+          <ToggleRow label={cv('snapGrid')} dim={!ui.snapEnabled}>
+            <Toggle
+              aria-label={cv('snapGrid')}
+              checked={ui.snapToGrid}
+              disabled={!ui.snapEnabled}
+              onChange={(v) => ui.setCanvasPref({ snapToGrid: v })}
+            />
+          </ToggleRow>
+          <ToggleRow label={cv('snapGuides')} dim={!ui.snapEnabled}>
+            <Toggle
+              aria-label={cv('snapGuides')}
+              checked={ui.snapToGuides}
+              disabled={!ui.snapEnabled}
+              onChange={(v) => ui.setCanvasPref({ snapToGuides: v })}
+            />
+          </ToggleRow>
+          <ToggleRow label={cv('snapObjects')} dim={!ui.snapEnabled}>
+            <Tip label={cv('snapObjectsTip', { mod: MOD })} side="left">
+              <span className="flex">
                 <Toggle
-                  aria-label={cv('snapGrid')}
-                  checked={ui.snapToGrid}
-                  onChange={(v) => ui.setCanvasPref({ snapToGrid: v })}
+                  aria-label={cv('snapObjects')}
+                  checked={ui.snapToObjects}
+                  disabled={!ui.snapEnabled}
+                  onChange={(v) => ui.setCanvasPref({ snapToObjects: v })}
                 />
-              </ToggleRow>
-              <ToggleRow label={cv('snapGuides')}>
-                <Toggle
-                  aria-label={cv('snapGuides')}
-                  checked={ui.snapToGuides}
-                  onChange={(v) => ui.setCanvasPref({ snapToGuides: v })}
-                />
-              </ToggleRow>
-              <ToggleRow label={cv('snapObjects')}>
-                <Tip label={cv('snapObjectsTip', { mod: MOD })} side="left">
-                  <span className="flex">
-                    <Toggle
-                      aria-label={cv('snapObjects')}
-                      checked={ui.snapToObjects}
-                      onChange={(v) => ui.setCanvasPref({ snapToObjects: v })}
-                    />
-                  </span>
-                </Tip>
-              </ToggleRow>
-            </>
-          )}
+              </span>
+            </Tip>
+          </ToggleRow>
         </div>
       </SummaryRow>
 
@@ -273,10 +327,10 @@ export function CanvasPage() {
         label={cv('guides')}
         open={open('guides')}
         onToggle={() => toggle('guides')}
+        data-fold="canvas-guides"
         value={
           guides.length
-            ? cv('guideCount', { count: guides.length }) +
-              (ui.guidesLocked ? cv('guidesLockedSuffix') : '')
+            ? cv('guideCount', { count: guides.length }) + (ui.guidesLocked ? cv('guidesLockedSuffix') : '')
             : cv('guidesNone')
         }
       >
@@ -290,38 +344,41 @@ export function CanvasPage() {
           </ToggleRow>
           {guides.length > 0 && (
             <ul className="flex flex-col">
-              {guides.map((g, i) => (
-                <li key={`${g.axis}-${i}`} className="flex h-7 items-center gap-2">
-                  <span className={cn(LABEL_COL, 'shrink-0 truncate text-xs text-ink-2')}>
-                    {cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal')}
-                  </span>
-                  <span className="min-w-0 flex-1 text-xs tabular-nums text-ink">
-                    {translate('measure.mm', { value: formatMm(g.pos) })}
-                  </span>
-                  <IconButton
-                    label={cv('deleteGuide', {
-                      axis: cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal'),
-                      pos: formatMm(g.pos),
-                    })}
-                    tip={false}
-                    iconSize="sm"
-                    className="text-ink-3 hover:text-danger"
-                    disabled={ui.guidesLocked}
-                    onClick={() => removeGuide(i)}
-                  >
-                    <Trash2 size={ICON_SIZE.sm} />
-                  </IconButton>
-                </li>
-              ))}
+              {guides.map((g, i) => {
+                const axis = cv(g.axis === 'x' ? 'guideVertical' : 'guideHorizontal')
+                return (
+                  // 方向是一列字形（│ 垂直 / ─ 水平），不是每行重复一遍「垂直参考线」；名字在 sr-only 与删除钮里
+                  <li key={`${g.axis}-${i}`} data-guide-row={g.axis} className={cn('grid h-7 items-center gap-x-2', ROW_GRID_COLS)}>
+                    <span className="flex items-center text-ink-3">
+                      <span aria-hidden className="w-4 text-center font-mono text-sm leading-none">
+                        {g.axis === 'x' ? '│' : '─'}
+                      </span>
+                      <span className="sr-only">{axis}</span>
+                    </span>
+                    <span className="type-number min-w-0 text-ink">
+                      {translate('measure.mm', { value: formatMm(g.pos) })}
+                    </span>
+                    <IconButton
+                      label={cv('deleteGuide', { axis, pos: formatMm(g.pos) })}
+                      tip={false}
+                      iconSize="xs"
+                      className="text-ink-2 hover:text-danger"
+                      disabled={ui.guidesLocked}
+                      onClick={() => removeGuide(i)}
+                    >
+                      <Trash2 size={ICON_SIZE.xs} />
+                    </IconButton>
+                  </li>
+                )
+              })}
             </ul>
           )}
-          {/* 「全部清除」对齐到控件列，不与开关抢同一行 */}
-          <div className="flex items-center gap-2">
-            <span className={cn(LABEL_COL, 'shrink-0')} aria-hidden />
-            <Button variant="ghost" size="sm" className="-ml-2" disabled={!guides.length} onClick={clearGuides}>
+          {/* 「全部清除」对齐到控件列 */}
+          <Row labelWidth={LABEL_W}>
+            <Button variant="ghost" size="sm" className="-ml-2.5" disabled={!guides.length} onClick={clearGuides}>
               {cv('clearAll')}
             </Button>
-          </div>
+          </Row>
         </div>
       </SummaryRow>
 
@@ -329,9 +386,8 @@ export function CanvasPage() {
         label={cv('safeArea')}
         open={open('safe')}
         onToggle={() => toggle('safe')}
-        value={
-          ui.showSafeArea ? cv('marginSummary', { margin: page.margin ?? 0 }) : cv('safeAreaOff')
-        }
+        data-fold="canvas-safe"
+        value={ui.showSafeArea ? cv('marginSummary', { margin: page.margin ?? 0 }) : cv('safeAreaOff')}
       >
         <div className="flex flex-col gap-1.5">
           <ToggleRow label={cv('show')}>
@@ -347,6 +403,7 @@ export function CanvasPage() {
           </ToggleRow>
           <Row label={cv('margin')} labelWidth={LABEL_W}>
             <NumberField
+              half
               ariaLabel={cv('margin')}
               value={page.margin ?? 0}
               min={0}
@@ -358,28 +415,75 @@ export function CanvasPage() {
           </Row>
         </div>
       </SummaryRow>
+
+      {/* 只读的导出摘要：说的是导出对话框此刻的默认（格式 · ppi），点它打开同一个导出对话框——
+          这里不是第二个导出入口，没有第二条导出管线 */}
+      <div className="mx-3" data-summary-row>
+        <button
+          type="button"
+          data-canvas-export-summary
+          onClick={() => useUiStore.getState().setExportOpen(true)}
+          className="grid h-8 w-full grid-cols-[minmax(40%,1fr)_minmax(0,auto)_1.25rem] items-center gap-x-2 rounded-sm text-left text-sm text-ink outline-none focus-visible:focus-ring"
+        >
+          <span className="min-w-0 truncate">{cv('export')}</span>
+          <span className="min-w-0 truncate text-right text-ink-3">
+            <span className="sr-only">, </span>
+            {/* ppi 只对位图格式有意义：默认只有 PDF / EPS 时不报 ppi（与设置页、导出对话框同一判据 hasRaster，Codex #829 P2） */}
+            {hasRaster(exportDefaults.formats)
+              ? cv('exportSummary', { formats: exportFormatsText, dpi: exportDefaults.dpi })
+              : exportFormatsText}
+          </span>
+          <span aria-hidden className="flex w-5 justify-center text-ink-3">
+            <ExternalLink size={ICON_SIZE.xs} />
+          </span>
+        </button>
+      </div>
     </>
   )
 }
 
+/** 折叠行右值里的颜色：一小块色样 + 色号（摘要行「只写当前值」，色样比色号先被认出来） */
+function SwatchValue({ color }: { color: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span aria-hidden className="h-3 w-3 shrink-0 rounded-xs border border-border" style={{ background: color }} />
+      {color.toUpperCase()}
+    </span>
+  )
+}
+
 /**
- * 开关行：标签列与本页的数值行同宽（`LABEL_COL` = `LABEL_W`），开关从同一条控件列
- * 起排——不再把开关推到侧栏最右边让它漂着（Session 2；审计 T31 的「不折行」靠的
- * 是 72px 的列宽本身，「对齐参考线」放得下）。整行是一个 `<label>`：点文字也能切换。
+ * 开关行：标签列与本页的数值行同宽（`INSPECTOR_LABEL_COL` = 行网格的 `--insp-label`），开关从同一条控件列
+ * 起排。整行是一个 `<label>`：点文字也能切换。`dim` = 上级开关关着，这一行留在原位变暗。
  */
 function ToggleRow({
   label,
   children,
   className,
+  dim,
 }: {
   label: ReactNode
   children: ReactNode
   className?: string
+  dim?: boolean
 }) {
   return (
-    <label data-toggle-row className={cn('flex min-h-7 items-center gap-2', className)}>
-      <span className={cn(LABEL_COL, 'min-w-0 shrink-0 truncate text-xs text-ink-2')}>{label}</span>
-      <span className="flex shrink-0 items-center">{children}</span>
+    <label
+      data-toggle-row
+      data-dim={dim || undefined}
+      className={cn('grid min-h-7 items-center gap-x-2', ROW_GRID_COLS, className)}
+    >
+      <span
+        className={cn(
+          INSPECTOR_LABEL_COL,
+          'line-clamp-2 min-w-0 text-sm leading-tight text-ink-2',
+          dim && 'opacity-40',
+        )}
+      >
+        {label}
+      </span>
+      <span className="flex items-center">{children}</span>
+      <span aria-hidden />
     </label>
   )
 }

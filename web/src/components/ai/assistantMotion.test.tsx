@@ -93,11 +93,8 @@ async function mount(sessions: AiSession[]) {
 
 const sendButton = () => host.querySelector<HTMLButtonElement>('button[data-ai-send]')!
 const statusLine = () => host.querySelector<HTMLElement>('[data-ai-status]')!
-const scroller = () => host.querySelector<HTMLDivElement>('.overflow-y-auto')!
-const scrollPill = () =>
-  Array.from(host.querySelectorAll('button')).find(
-    (b) => b.getAttribute('aria-label') === ai('panel.scrollToBottom'),
-  )
+const scroller = () => host.querySelector<HTMLDivElement>('[data-ai-scroller]')!
+const scrollPill = () => host.querySelector<HTMLButtonElement>('[data-ai-scroll-bottom]') ?? undefined
 
 /**
  * jsdom 没有布局：把滚动几何装上去，scrollTop 才有「在不在底部」可言。
@@ -146,8 +143,8 @@ async function resized(el: Element) {
     for (const o of hits) o.cb()
   })
 }
-const composerEl = () => host.querySelector<HTMLElement>('.absolute.inset-x-0.bottom-0')!
-const contentEl = () => host.querySelector<HTMLElement>('.flex.flex-col.gap-3')!
+const composerEl = () => host.querySelector<HTMLElement>('[data-ai-composer-dock]')!
+const contentEl = () => host.querySelector<HTMLElement>('[data-ai-transcript]')!
 
 beforeEach(() => {
   localStorage.clear()
@@ -182,7 +179,7 @@ describe('进行中的信号', () => {
     expect(statusLine().textContent).toBe(ai('session.doneNoChange'))
     // running → done 那一下原位换（宪法第二十三节）：旧句留在 data-ghost 里退场，DOM 文本已是新句
     expect(statusLine().closest<HTMLElement>('.swap-text')!.dataset.ghost).toBe(ai('session.running'))
-    // 整个面板里没有 aria-busy 之外的忙碌指示（旧版在这里摆过 loader + 骨架）
+    // 整个面板里没有别的忙碌指示（旧版在这里摆过 loader + 骨架）；中止钮那圈轨道也随完成消失
     expect(host.querySelectorAll('.animate-spin')).toHaveLength(0)
   })
 
@@ -190,9 +187,7 @@ describe('进行中的信号', () => {
     await mount([session()])
     const block = host.querySelector<HTMLElement>('[data-ai-session]')!
     expect(block.classList.contains('animate-settle-in')).toBe(true)
-    const stops = Array.from(host.querySelectorAll('button')).filter(
-      (b) => b.getAttribute('aria-label') === ai('panel.abort'),
-    )
+    const stops = Array.from(host.querySelectorAll('[data-ai-send="stop"], [data-ai-stop]'))
     expect(stops).toHaveLength(1)
     expect(stops[0]).toBe(sendButton())
   })
@@ -307,9 +302,7 @@ describe('贴底跟随', () => {
 describe('过程与正文', () => {
   it('过程步骤：按钮带 aria-expanded，展开是 Reveal', async () => {
     await mount([session({ entries: [{ kind: 'thinking', text: '先看一眼脚本' }] })])
-    const toggle = Array.from(host.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes(ai('panel.processSteps', { count: 1 })),
-    )!
+    const toggle = host.querySelector<HTMLButtonElement>('[data-ai-process-toggle]')!
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(host.querySelector('[data-reveal]')).toBeNull()
     await act(async () => toggle.click())

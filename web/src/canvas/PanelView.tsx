@@ -1,5 +1,6 @@
 import { artifactRequestFields, artifactValidationIssue, ArtifactValidationError } from '@/lib/artifactValidation'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
 import { perfCount, perfRenderPainted } from '@/perf/core'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
@@ -65,7 +66,6 @@ import {
   panelKind,
   panelRotation,
   rotationSwaps,
-  unrotateVec,
 } from '@/types/document'
 import {
   cycleOverlapAt,
@@ -78,7 +78,9 @@ import {
   trackPointer,
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
-import { panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
+import { pageToContentVec, panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
+import { Info, LoaderCircle } from '@/components/ui/icons'
+import { ICON_SIZE } from '@/components/ui/Icon'
 
 /**
  * 面板显示：
@@ -318,6 +320,16 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const approxPreview =
     !runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc
 
+  // The canvas feedback portal consumes this same transform/opacity chain.
+  const contentStyle: CSSProperties = {
+    width: contentW,
+    height: contentH,
+    left: (boxW - contentW) / 2,
+    top: (boxH - contentH) / 2,
+    transform: panelTransformCss(panelContentTransform(obj)),
+    opacity: obj.opacity ?? undefined,
+  }
+
   return (
     <div
       className="absolute inset-0 overflow-hidden"
@@ -329,15 +341,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     >
       <div
         className="absolute overflow-hidden"
-        style={{
-          width: contentW,
-          height: contentH,
-          left: (boxW - contentW) / 2,
-          top: (boxH - contentH) / 2,
-          // 先在内容空间翻转，再旋转落位——与时间线缩略图共用 `lib/panelTransform` 这一份
-          transform: panelTransformCss(panelContentTransform(obj)),
-          opacity: obj.opacity ?? undefined,
-        }}
+        style={contentStyle}
       >
         {showSvg ? (
           <div
@@ -373,7 +377,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
           <RuntimePlaceholder obj={obj} layout={layout} />
         )}
 
-        {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} />}
+        {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} contentStyle={contentStyle} />}
       </div>
 
       <RenderStatusBadge obj={obj} approx={approxPreview} />
@@ -572,16 +576,19 @@ function RuntimePlaceholder({ obj, layout }: { obj: PanelObject; layout: Layout 
     translate(`runtimePanel.${key}`, { ns: 'workspace', ...(values ?? {}) })
   return (
     <div
-      className="absolute flex flex-col items-center justify-center gap-1 rounded-sm border border-dashed border-ink/25 bg-ink/[0.03] p-2 text-center"
+      // 自己就是一张小纸片：底是**不透明**的纸色（`bg-paper-tint` = paper-ink 3% 混进纸），墨是 paper-ink 一族——
+      // 占位框被拖到页面外、落在暗色画布上时也不是深字压深底（半透明的 `bg-paper-ink/N` 会透出画布；宪法第二十八节）
+      data-runtime-placeholder=""
+      className="absolute flex flex-col items-center justify-center gap-1 rounded-sm border border-dashed border-paper-ink/25 bg-paper-tint p-2 text-center"
       style={{ ...layout, maxWidth: 'none' }}
     >
-      <span className="text-xs text-ink-3">{rp('placeholder')}</span>
+      <span className="text-xs text-paper-ink-2">{rp('placeholder')}</span>
       {script && (
-        <span className="max-w-full truncate font-mono text-xs text-ink/40" title={script}>
+        <span className="max-w-full truncate font-mono text-xs text-paper-ink-3" title={script}>
           {script}
         </span>
       )}
-      <span className="text-xs text-ink/40">{rp('placeholderHint', { script })}</span>
+      <span className="text-xs text-paper-ink-3">{rp('placeholderHint', { script })}</span>
     </div>
   )
 }
@@ -600,10 +607,12 @@ function ElementHitLayer({
   obj,
   layout,
   rot,
+  contentStyle,
 }: {
   obj: PanelObject
   layout: Layout
   rot: PanelRotation
+  contentStyle: CSSProperties
 }) {
   perfCount('render.ElementHitLayer')
   // 换图解码那几帧（新权威已到、画面还是旧图）停摆，见 store/mountedSvgStore
@@ -615,6 +624,10 @@ function ElementHitLayer({
   const [band, setBand] = useState<{ l: number; t: number; w: number; h: number } | null>(null)
   /** 指针悬在某条边框的内 / 外侧命中带上（Prompt 16）：高亮 + 说明 + 点击即切 */
   const [spineHover, setSpineHover] = useState<SpineHover | null>(null)
+  const interacting = useInteractionStore((s) => s.kind !== 'none')
+  useEffect(() => {
+    if (interacting) setSpineHover(null)
+  }, [interacting])
 
   /** 一个分数单位对应的屏幕像素：命中带按屏幕像素定宽，zoom 变了带不变 */
   const zoneScale = { pxPerFracX: layout.width * zoom, pxPerFracY: layout.height * zoom }
@@ -665,10 +678,11 @@ function ElementHitLayer({
     const r = ref.current!.getBoundingClientRect()
     const w = rotationSwaps(rot) ? r.height : r.width
     const h = rotationSwaps(rot) ? r.width : r.height
-    const [u, v] = unrotateVec(
+    // 画这张图的变换（先翻转再旋转）整个反过来：翻转面板上点哪儿就命中画面上那儿的元素，不是它的镜像
+    const [u, v] = pageToContentVec(
+      panelContentTransform(obj),
       e.clientX - (r.left + r.width / 2),
       e.clientY - (r.top + r.height / 2),
-      rot,
     )
     return { fx: u / w + 0.5, fy: v / h + 0.5 }
   }
@@ -911,13 +925,14 @@ function ElementHitLayer({
             // 本层随世界 zoom 缩放，线宽反除才是屏幕上恒定的 1px。
             // 颜色是 sel：画布层的彩色线只有一种（2026-09-15 打磨 C2，与 OverlaySvg 的
             // 元素框 / 端点 / 手柄同源）
-            border: `${1 / zoom}px dashed var(--color-sel)`,
+            // 图内框选也是实线（2026-10-07 设计审计 §10.1：虚线只给暂定的东西）
+            border: `${1 / zoom}px solid var(--color-sel)`,
             background: 'color-mix(in srgb, var(--color-sel) 6%, transparent)',
           }}
         />
       )}
-      {spineHover && spineHover.zone !== 'neutral' && (
-        <SpineZoneFeedback hover={spineHover} layout={layout} zoom={zoom} rot={rot} />
+      {!interacting && spineHover && spineHover.zone !== 'neutral' && (
+        <SpineZoneFeedback obj={obj} hover={spineHover} layout={layout} zoom={zoom} rot={rot} contentStyle={contentStyle} />
       )}
     </div>
   )
@@ -975,16 +990,27 @@ const spineTip = (key: string, values?: Record<string, unknown>) =>
  *   * 只在 hover 期间存在，不常驻遮挡图形。
  */
 function SpineZoneFeedback({
+  obj,
   hover,
   layout,
   zoom,
   rot,
+  contentStyle,
 }: {
+  obj: PanelObject
   hover: SpineHover
   layout: Layout
   zoom: number
   rot: PanelRotation
+  contentStyle: CSSProperties
 }) {
+  const labelRef = useRef<HTMLDivElement>(null)
+  const [feedbackRoot, setFeedbackRoot] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    // Stay in the same persistent canvas tab, outside this panel's stacking
+    // context. A body portal would outlive the tab's CSS visibility boundary.
+    setFeedbackRoot(labelRef.current?.closest('[data-object-id]')?.parentElement ?? null)
+  }, [])
   const scale = { pxPerFracX: layout.width * zoom, pxPerFracY: layout.height * zoom }
   const zone = hover.zone as 'inner' | 'outer'
   const strip = (side: SpineSide, geom: SpineGeom, strong: boolean) => {
@@ -1027,27 +1053,43 @@ function SpineZoneFeedback({
   const r = zoneRectFrac(hover.side, hover.geom, zone, scale, hover.widths)
   const cx = (r.x + r.w / 2) * layout.width
   const cy = (r.y + r.h / 2) * layout.height
+  const label = (
+    <div
+      ref={labelRef}
+      role="status"
+      data-spine-zone-label={hover.side}
+      className={cn(
+        'pointer-events-none absolute z-sticky whitespace-nowrap rounded-sm bg-surface px-1.5 py-0.5',
+        'text-xs leading-4 text-ink shadow-pop',
+      )}
+      style={{
+        left: cx,
+        top: cy,
+        transform: `${LABEL_SHIFT[hover.side]} rotate(${-rot}deg) scale(${1 / zoom})`,
+        transformOrigin: 'center',
+      }}
+    >
+      {text}
+      {coupled ? <span className="text-ink-3"> {coupled}</span> : null}
+    </div>
+  )
   return (
     <>
       {strip(hover.side, hover.geom, true)}
       {hover.coupledGeoms.map((c) => strip(c.side, c.geom, false))}
-      <div
-        role="status"
-        data-spine-zone-label={hover.side}
-        className={cn(
-          'pointer-events-none absolute z-10 whitespace-nowrap rounded-sm bg-surface px-1.5 py-0.5',
-          'text-xs leading-4 text-ink shadow-pop',
-        )}
-        style={{
-          left: cx,
-          top: cy,
-          transform: `${LABEL_SHIFT[hover.side]} rotate(${-rot}deg) scale(${1 / zoom})`,
-          transformOrigin: 'center',
-        }}
-      >
-        {text}
-        {coupled ? <span className="text-ink-3"> {coupled}</span> : null}
-      </div>
+      {feedbackRoot ? createPortal(
+        <div
+          data-spine-feedback-layer={obj.id}
+          className="pointer-events-none absolute z-sticky overflow-hidden"
+          style={{ left: mmToWorld(obj.x), top: mmToWorld(obj.y), width: mmToWorld(obj.w), height: mmToWorld(obj.h) }}
+        >
+          {/* Mirror the existing clip/transform/crop wrappers, not a second coordinate formula. */}
+          <div className="absolute overflow-hidden" style={contentStyle}>
+            <div className="absolute" style={layout}>{label}</div>
+          </div>
+        </div>,
+        feedbackRoot,
+      ) : label}
     </>
   )
 }
@@ -1254,41 +1296,49 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       style={{ transform: `scale(${scale})` }}
     >
       <span
+        data-panel-badge={shown.tone}
         className={cn(
-          'relative flex items-center gap-1 overflow-hidden rounded-sm px-1.5 py-0.5 text-xs',
+          // 角标是 chip：胶囊（圆角族 full）。三种语气三种颜色（2026-10-07 设计审计 §10.1：此前「过期」与
+          // 「构建中」同为 ink 底，看不出哪个要处理）：构建中 = 墨 + 转圈；过期 = warn 锚点；出错 = danger 锚点
+          'relative flex items-center gap-1 overflow-hidden rounded-full px-1.5 py-0.5 text-xs',
           shown.tone === 'error'
-            ? 'bg-danger text-white'
+            ? 'bg-danger-surface font-medium text-danger-content inset-ring inset-ring-danger-border'
             : shown.tone === 'stale'
-              ? 'bg-ink text-white'
+              ? 'bg-warn-surface font-medium text-warn-content inset-ring inset-ring-warn-border'
               : shown.tone === 'info'
-                ? 'bg-ink/70 text-white'
+                ? 'bg-ink/70 text-surface'
                 // 进行中不是选中：ink 底状态角标（蓝色不做任何大块背景，accent 只剩焦点 / 链接 / AI）
-                : 'bg-ink text-white',
+                : 'bg-ink text-surface',
         )}
       >
         {shown.tone === 'busy' && (
-          <span className="h-2 w-2 animate-pulse rounded-full bg-white/80" />
+          <LoaderCircle size={ICON_SIZE.xs} aria-hidden className="animate-spin opacity-80" />
         )}
         {shown.text}
         {/* 只有这一小块接指针事件。整枚角标收回指针事件是不行的：外层刻意是
             `pointer-events-none`（角标画在面板左上角，图内标题常常就在那儿），
             而 raster 那一档的角标**整个编辑期间常驻**——89×19 的一块死区会让
             用户点不到自己的标题。实测撞见过。 */}
+        {/* 说明钮是一颗真按钮（2026-10-07 设计审计 §10.1）：键盘能 Tab 到、读屏念得出那句说明；
+            图标走图标集（此前是字符 ⓘ）。按下不冒到画布（不选中、不起拖） */}
         {shown.hint && (
-          <span
+          <button
+            type="button"
+            data-badge-hint
             title={shown.hint}
             aria-label={shown.hint}
-            className="pointer-events-auto cursor-help font-bold opacity-80"
+            onPointerDown={(e) => e.stopPropagation()}
+            className="pointer-events-auto -my-0.5 flex size-4 items-center justify-center rounded-full opacity-80 outline-none hover:opacity-100 focus-visible:focus-ring"
           >
-            ⓘ
-          </span>
+            <Info size={ICON_SIZE.xs} aria-hidden />
+          </button>
         )}
         {/* 冷启动可能要几分钟：一个呼吸的圆点表达不出「还在动」，补一条来回扫的
             不确定进度条。**不做百分比**——worker 那边根本没有进度可报，
             假进度条比没有更坏。 */}
         {shown.cold && (
           <span aria-hidden className="absolute inset-x-0 bottom-0 h-0.5">
-            <span className="block h-full w-1/4 rounded-full bg-white/75 animate-sweep" />
+            <span className="block h-full w-1/4 rounded-full bg-surface/75 animate-sweep" />
           </span>
         )}
       </span>

@@ -274,14 +274,14 @@ describe('图例的间距（摘要行；审计 T17 的排版详情）', () => {
     }
   })
 
-  it('这一行与全检查器同一条控件竖线：标签列 88，「线与文字间距」完整', async () => {
+  it('这一行与全检查器同一条控件竖线：行网格，「线与文字间距」完整', async () => {
     await mount()
     await openCard()
     const row = cardRow('handletextpad') as HTMLElement
-    const labelSpan = row.querySelector('span') as HTMLElement
     // 打磨 E4 / L1：此前标签是 flex-1、112 宽的框贴右缘，是页内第三种行语法。
-    // 现在走 `Row labelWidth={INSPECTOR_LABEL_W}`——88 容得下这个六字标签
-    expect(labelSpan.style.width).toBe('88px')
+    // 2026-10-07 起走全栏同一张行网格（`Row labelWidth="grid"`），标签放不下折两行、不截断
+    expect(row.querySelector('[data-row-grid]')).not.toBeNull()
+    const labelSpan = row.querySelector('[data-row-label]') as HTMLElement
     expect(labelSpan.textContent).toContain('线与文字间距')
   })
 

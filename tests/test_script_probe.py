@@ -543,6 +543,50 @@ class TestErrorModel:
                 assert used == params, f"{locale} {code}: {used} != {params}"
 
 
+@needs_worker
+class TestEntryLoopStopsOnNonEntryFailures:
+    """入口循环只在「入口猜错」时换下一个：缺参 / 要输入 / 缺依赖这类**与入口无关**的失败换入口
+    也一样，换了只是把顶层代码再跑一遍（T01，F7：缺参脚本顶层代码曾执行 3 次）。"""
+
+    NEEDS_ARGS = (
+        "import argparse\n"
+        "import matplotlib\n"
+        'matplotlib.use("Agg")\n'
+        "import matplotlib.pyplot as plt\n"
+        'open({counter!r}, "a").write("x")\n'
+        "def main():\n"
+        "    p = argparse.ArgumentParser()\n"
+        '    p.add_argument("--n", type=int, required=True)\n'
+        "    a = p.parse_args()\n"
+        "    plt.plot(range(a.n))\n"
+        "def render():\n"
+        "    main()\n"
+        'if __name__ == "__main__":\n'
+        "    main()\n"
+    )
+
+    def test_needs_arguments_runs_the_script_once_not_once_per_entry(self, figs, tmp_path):
+        counter = tmp_path / "runs.txt"
+        write(figs, "multi.py", self.NEEDS_ARGS.format(counter=str(counter)))
+        # 解析不了入口时会盲试 main / render / __main__；这份脚本三个入口都存在
+        result = engine_probe.probe(figs, "multi.py", entries=["main", "render", "__main__"])
+        assert result["error"]["code"] == "script_needs_arguments"
+        assert counter.read_text(encoding="utf-8") == "x"
+        assert result["tried"] == ["main"]
+
+    def test_a_wrong_entry_still_falls_through_to_the_next_one(self, figs):
+        """反面：真正「入口猜错」（没有这个函数）照旧换下一个——不能把换入口整个关掉。"""
+        write(
+            figs,
+            "only_main.py",
+            "import matplotlib.pyplot as plt\ndef main():\n    plt.plot([1, 2, 3])\n",
+        )
+        result = engine_probe.probe(figs, "only_main.py", entries=["render", "main"])
+        assert result["error"] is None
+        assert result["entry"] == "main"
+        assert result["tried"] == ["render", "main"]
+
+
 # ===========================================================================
 # 四、捕获结果：多 Figure、去重、一次执行、注册表效果
 # ===========================================================================

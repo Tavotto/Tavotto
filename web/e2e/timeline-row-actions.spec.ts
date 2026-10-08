@@ -44,7 +44,7 @@ test('双击一行进入改名（前导 click 不开模态），回车存成命�
   await expect(named.locator('[data-timeline-name]')).toHaveText('投稿前')
 })
 
-test('单击一行只选中；行上的「预览」钮打开预览，「改名」钮进入改名', async ({ app, page }) => {
+test('单击一行只选中；⋯ 里的「改名」进入改名，选中行下面的「预览」打开预览', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
   const { drawer, node } = await drawerWithOneNode(page)
@@ -52,7 +52,9 @@ test('单击一行只选中；行上的「预览」钮打开预览，「改名�
   await row.click()
   await expect(row).toHaveAttribute('aria-pressed', 'true')
   await expect(page.locator('[data-dialog="timeline-preview"]')).toHaveCount(0)
-  await (await only(node.locator('[data-timeline-rename-button]'))).click()
+  // 一行的动作只有一颗 ⋯（2026-10-07 设计审计 §10.2）；菜单 portal 在 body 上
+  await (await only(node.locator('[data-timeline-more]'))).click()
+  await (await only(page.locator('[data-timeline-rename-button]'))).click()
   await expect(await only(drawer.locator('[data-timeline-rename]'))).toBeFocused()
   await page.keyboard.press('Escape') // 放弃改名
   await expect(drawer.locator('[data-timeline-rename]')).toHaveCount(0)

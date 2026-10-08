@@ -24,6 +24,7 @@
 import { SEVERITIES, type Severity } from './profile'
 import { ruleEntry, type ProblemCategory, type ValidationIssue } from './validation'
 import type { SubplotPart } from './subplotParts'
+import { drillKey } from './drillKey'
 
 /* --------------------------------- 范围 ----------------------------------- */
 
@@ -322,20 +323,8 @@ export function drillOf(
  */
 export const isSplit = (f: Pick<FigureBucket, 'parts'>): boolean => f.parts.some((p) => p.part)
 
-/**
- * 卡片的稳定机器标识（`data-problem-card-key`）：新手教程与 e2e 要指向「这条问题
- * 所在的那张卡片」，靠它而不是文案。
- */
-export function drillKey(drill: ProblemDrill): string {
-  switch (drill.kind) {
-    case 'unverifiable':
-      return 'unverifiable'
-    case 'part':
-      return `part:${drill.figure}:${drill.key}`
-    default:
-      return `${drill.kind}:${drill.key}`
-  }
-}
+// 卡片的稳定机器标识住在叶子模块里（`uiStore` 要在运行时用它判「换没换支」，不能拖进本模块的依赖）
+export { drillKey } from './drillKey'
 
 /**
  * 一条问题可能落在哪几张卡片上（两种切法、拆没拆子图都算上）。此刻页面上只会有

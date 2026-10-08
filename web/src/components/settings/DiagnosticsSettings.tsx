@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { fetchDiagnosticsSummary } from '@/lib/api'
+import { fetchDiagnosticsSummary, postDiagnosticsBundle } from '@/lib/api'
+import { buildDiagnosticPayload } from '@/diagnostics'
 import { formatDateTime } from '@/i18n/format'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { apiUrl, withProject } from '@/lib/session'
-import { cn } from '@/lib/utils'
 import { usePerfProbeStore } from '@/perf/probeStore'
 import { useUiStore } from '@/store/uiStore'
 import { useEnvStore } from '@/store/envStore'
@@ -13,16 +13,11 @@ import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
 import { RefreshCw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Button } from '../ui/Button'
+import { FieldGroup, FormSection } from '../ui/FormSection'
+import { StatusPill } from '../ui/StatusPill'
 import { CopyButton } from './CopyButton'
 import { PathValue } from './PathValue'
-import { DiagnosticsExportButton } from './PrivacyAboutSettings'
-import {
-  DiagnosticDisclosure,
-  DiagnosticItem,
-  HelpTip,
-  SettingRow,
-  SettingSection,
-} from './SettingRow'
+import { DiagnosticDisclosure, DiagnosticItem, SettingRow } from './SettingRow'
 
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -45,25 +40,18 @@ const DUPLICATED_ELSEWHERE = /^cli_/
 /**
  * 设置 → 帮助与诊断（原「诊断」，ADR 0038）。
  *
- * 首屏只有三件事：**健康状态**、**复制诊断**（先预览脱敏后的文本，再复制）、
- * **导出诊断包**。渲染环境不正常时恢复卡片常驻（那是缺件，不许折叠）。
- * 「记录拖动性能」与技术详情收在「给开发者」折叠区；用哪个 Python、脚本运行目录
- * 等运行设置在「项目」页（2026-09-30）——用户不必懂 Python 环境路径也能知道能不能用。内置包版本在「包管理」，这里不重复。
+ * **顺序：健康 → 报告 → 开发者**（2026-10-07 设计审计 §9.1 P0：「环境是否正常」此前排在最后）。与 #797 的
+ * 「异步结果不挪动正在按的入口」同时成立的办法：**结论一行高度不变**——取数中与取数后是同一行（「运行环境」+
+ * 一行现状 + 控件列），只把现状那句话从「正在检测…」换成「本页数据取自 …」、控件列多一枚结论胶囊；会随结果
+ * 长高的东西（异常项逐条、各项检查结果、恢复卡）全部在**最后**的「检查结果」组里，报告与开发者两组的入口
+ * 一个像素都不动（`e2e/perf-probe.spec.ts` 的 clickAcrossUpdate 量它）。
  *
- * 审计 T47 改了三件事：
+ * 首屏只有三件事：**健康结论**、**诊断报告**（导出诊断包；复制诊断先预览脱敏后的文本，再复制）、**给开发者**
+ * （记录拖动性能 + 技术详情，默认折叠）。渲染环境不正常时恢复入口整组常驻（那是缺件，不许折叠）。用哪个 Python、
+ * 脚本运行目录等运行设置在「项目」页；内置包版本在「Python 库」，这里不重复。
  *
- * 1. **正常项默认折叠**。全绿时首屏只有一句结论，逐项结果在折叠区里——它们
- *    此前既铺在首屏、又在「技术详情」里重复了一遍。异常项照旧列在首屏。
- * 2. **说清检查的边界**。「全部正常」会被读成"图没问题"；这里查的只有运行
- *    环境，图合不合规范是「问题」面板的事，两者互不代表。
- * 3. **两个环境不再同名**。「{{product}} 自带的渲染环境」（随包、只读）与
- *    「这个项目的 {{product}} 环境」（装包时新建、可 pip）是两个不同的东西，
- *    以前都叫「Tavotto 环境」，于是包管理页说「尚未创建」、这一页同时说
- *    「matplotlib 3.11.1」，看起来像两页对不上。名字分开之后，这一句解释
- *    留在技术详情里。
- * 4. **说清这一页的数据什么时候取的**。`/api/diagnostics` 没有服务端时间戳，
- *    所以说的是**本页取数的时刻**（而不是"最近检测"——解释器选择在后端是
- *    进程级缓存，重取不会重挑）。
+ * 审计 T47 的四条照旧：正常项默认折叠、说清检查的边界、两个环境不再同名、说清这一页的数据什么时候取的
+ * （`/api/diagnostics` 没有服务端时间戳，说的是**本页取数的时刻**——解释器选择在后端是进程级缓存，重取不会重挑）。
  */
 export function DiagnosticsSettings() {
   useTranslation('dialogs')
@@ -73,16 +61,23 @@ export function DiagnosticsSettings() {
    *  重取不等于重挑解释器，说成"刚检测过"就是在替它担保。 */
   const [fetchedAt, setFetchedAt] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  /** 取数失败（网络 / 鉴权 / 后端出错，或回包里没有 checks）。**不能当成「零项异常」**：那会在拿不到结果时
+   *  亮出「检查通过」的绿胶囊（Codex #828 P2） */
+  const [failed, setFailed] = useState(false)
 
   const load = useCallback(async () => {
     setBusy(true)
     try {
-      const d = await fetch(apiUrl('/api/diagnostics'), withProject()).then((r) => r.json())
-      setChecks(((d.checks ?? []) as Check[]).filter((c) => !DUPLICATED_ELSEWHERE.test(c.id)))
+      const r = await fetch(apiUrl('/api/diagnostics'), withProject())
+      const d = r.ok ? await r.json() : null
+      if (!Array.isArray(d?.checks)) throw new Error('diagnostics unavailable')
+      setChecks((d.checks as Check[]).filter((c) => !DUPLICATED_ELSEWHERE.test(c.id)))
+      setFetchedAt(Date.now())
+      setFailed(false)
     } catch {
       setChecks([])
+      setFailed(true)
     } finally {
-      setFetchedAt(Date.now())
       setBusy(false)
     }
   }, [])
@@ -96,108 +91,121 @@ export function DiagnosticsSettings() {
 
   const failing = (checks ?? []).filter((c) => !c.ok)
   const passing = (checks ?? []).filter((c) => c.ok)
-  /** 恢复卡片此刻在不在这一屏上——「下一步」指得着它才说得出口 */
+  /** 恢复入口此刻在不在这一屏上——「下一步」指得着它才说得出口 */
   const repairCard = !!env && !env.ok
+  const showResults = checks !== null && (failing.length > 0 || passing.length > 0)
 
-  // 分区之间的间距由外壳统一给：`display: contents` 让三块直接成为内容容器的子项
   return (
     <div className="contents" data-diagnostics-page>
+      {/* ---------------- 健康：一行结论（高度不随结果变） ---------------- */}
+      <FormSection title={st('diagnostics.healthTitle')} data-settings-anchor="diagnostics.health" data-diagnostics-health>
+        <FieldGroup>
+          <SettingRow
+            label={st('diagnostics.verdictLabel')}
+            status={
+              checks === null ? (
+                <span data-diagnostics-loading>{st('about.detecting')}</span>
+              ) : failed ? (
+                st('diagnostics.fetchFailed')
+              ) : fetchedAt !== null ? (
+                st('diagnostics.fetchedAt', { time: formatDateTime(fetchedAt) })
+              ) : undefined
+            }
+          >
+            {checks !== null && (
+              <StatusPill data-diagnostics-summary tone={failed ? 'warn' : failing.length ? 'danger' : 'ok'} dot>
+                {failed
+                  ? st('diagnostics.summaryUnavailable')
+                  : failing.length
+                  ? st('diagnostics.summaryFailing', { count: failing.length })
+                  : st('diagnostics.summaryOk')}
+              </StatusPill>
+            )}
+            <Button
+              data-diagnostics-refetch
+              variant="ghost"
+              size="sm"
+              loading={busy}
+              onClick={() => void load()}
+            >
+              <RefreshCw size={ICON_SIZE.sm} aria-hidden />
+              {st('diagnostics.refetch')}
+            </Button>
+          </SettingRow>
+        </FieldGroup>
+      </FormSection>
+
       <DiagnosticsReportSection />
 
-      {/* 给开发者：记录拖动性能 + 技术详情（来源 / 版本 / 检查明细）。默认折叠；
-          运行设置（用哪个 Python、运行目录……）已搬到「项目」页 */}
-      <DiagnosticDisclosure title={st('diagnostics.devTitle')} data-diagnostics-dev>
-        <PerfProbeRow />
-        {env?.ok && (
-          <>
-            <DiagnosticItem
-              name={st('about.engineStatus')}
-              value={en(`sourceLabel.${env.source || 'unknown'}`, { product: PRODUCT_NAME })}
-            />
-            <DiagnosticItem name="matplotlib" value={env.matplotlib ?? '—'} />
-            {/* 两个环境曾经同名，于是两页的状态看起来对不上（审计 T47） */}
-            <p className="type-caption">
-              {st('diagnostics.envNote', { product: PRODUCT_NAME })}
-            </p>
-          </>
-        )}
-        {(checks ?? [])
-          .filter((c) => c.ok && c.detail)
-          .map((c) => (
-            <DiagnosticItem
-              key={c.id}
-              name={checkLabel(c)}
-              value={
-                DIR_DETAIL_CHECKS.has(c.id) ? (
-                  <PathValue path={c.detail} name={checkLabel(c)} />
-                ) : (
-                  c.detail
-                )
-              }
-            />
-          ))}
-      </DiagnosticDisclosure>
+      {/* ---------------- 给开发者：记录拖动性能 + 技术详情（默认折叠） ---------------- */}
+      <FieldGroup data-settings-anchor="diagnostics.dev">
+        <DiagnosticDisclosure variant="row" title={st('diagnostics.devTitle')} data-diagnostics-dev>
+          <PerfProbeRow />
+          {env?.ok && (
+            <>
+              <DiagnosticItem
+                name={st('about.engineStatus')}
+                value={en(`sourceLabel.${env.source || 'unknown'}`, { product: PRODUCT_NAME })}
+              />
+              <DiagnosticItem name="matplotlib" value={env.matplotlib ?? '—'} />
+              {/* 两个环境曾经同名，于是两页的状态看起来对不上（审计 T47） */}
+              <p className="type-caption">{st('diagnostics.envNote', { product: PRODUCT_NAME })}</p>
+            </>
+          )}
+          {(checks ?? [])
+            .filter((c) => c.ok && c.detail)
+            .map((c) => (
+              <DiagnosticItem
+                key={c.id}
+                name={checkLabel(c)}
+                value={DIR_DETAIL_CHECKS.has(c.id) ? <PathValue path={c.detail} name={checkLabel(c)} /> : c.detail}
+              />
+            ))}
+        </DiagnosticDisclosure>
+      </FieldGroup>
 
-      {/* 自动回包的高度不可预知：健康结果与恢复卡放在稳定入口之后，错误照旧常驻。 */}
-      <SettingSection title={st('diagnostics.healthTitle')}>
-        {checks === null ? (
-          <p data-diagnostics-loading className="type-meta">{st('about.detecting')}</p>
-        ) : (
-          <>
-            {/* 结论一行（全面打磨 D13）：结论是标签、取自何时是现状、「重新获取」在控件列
-                贴右——此前是一句 12px 正文 + 一段 11px meta + 一颗 ghost 挤在一条左对齐的
-                横排里，是这一页唯一不走行语法的东西 */}
-            <SettingRow
-              data-diagnostics-summary
-              label={
-                failing.length
-                  ? st('diagnostics.summaryFailing', { count: failing.length })
-                  : st('diagnostics.summaryOk')
-              }
-              status={
-                fetchedAt !== null
-                  ? st('diagnostics.fetchedAt', { time: formatDateTime(fetchedAt) })
-                  : undefined
-              }
-            >
-              <Button data-diagnostics-refetch variant="ghost" size="sm" loading={busy} onClick={() => void load()}>
-                <RefreshCw size={ICON_SIZE.sm} aria-hidden />
-                {st('diagnostics.refetch')}
-              </Button>
-            </SettingRow>
-            {/* 异常项常驻首屏；正常项折叠——它们在「技术详情」里还有一份带
-                取值的，铺在首屏等于同一件事说两遍。 */}
-            {failing.length > 0 && (
-              <ul data-diagnostics-failures className="flex flex-col gap-1">
-                {failing.map((c) => (
-                  <CheckLine key={c.id} check={c} repairCard={repairCard} />
-                ))}
-              </ul>
-            )}
-            {passing.length > 0 && (
-              <DiagnosticDisclosure title={st('diagnostics.okDetails')}>
-                <ul className="flex flex-col gap-1">
-                  {passing.map((c) => (
-                    <CheckLine key={c.id} check={c} repairCard={repairCard} />
-                  ))}
-                </ul>
-              </DiagnosticDisclosure>
-            )}
-          </>
-        )}
-        {/* 缺件 / 损坏：恢复入口整张常驻（那时它给的是「自动安装 / 换解释器」） */}
-        {env && !env.ok && <EngineEnvironmentCard />}
-      </SettingSection>
+      {/* ---------------- 检查结果：会随结果长高的都在这里（最后一组） ---------------- */}
+      {(showResults || repairCard) && (
+        <FormSection title={st('diagnostics.resultsTitle')}>
+          {showResults && (
+            <FieldGroup data-diagnostics-failures={failing.length ? '' : undefined}>
+              {/* 异常项一条一行、常驻；正常项收成一行原地展开——它们在「给开发者」里还有一份带取值的 */}
+              {failing.map((c) => (
+                <FailingCheckRow key={c.id} check={c} repairCard={repairCard} />
+              ))}
+              {passing.length > 0 && (
+                <DiagnosticDisclosure
+                  variant="row"
+                  title={st('diagnostics.okDetails')}
+                  value={st('diagnostics.okCount', { count: passing.length })}
+                >
+                  <ul className="flex flex-col gap-1">
+                    {passing.map((c) => (
+                      <li key={c.id} className="flex items-center gap-1.5 text-sm">
+                        <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-ok" />
+                        <span className="sr-only">{st('about.checkOk')}</span>
+                        <span className="text-ink-2">{checkLabel(c)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </DiagnosticDisclosure>
+              )}
+            </FieldGroup>
+          )}
+          {/* 缺件 / 损坏：恢复入口整组常驻（那时它给的是「自动安装 / 换解释器」） */}
+          {repairCard && <EngineEnvironmentCard />}
+        </FormSection>
+      )}
     </div>
   )
 }
 
-/** 渲染引擎那一族：它们的下一步都指向这一页上的恢复卡片。 */
+/** 渲染引擎那一族：它们的下一步都指向这一页上的恢复入口。 */
 const ENGINE_CHECKS = new Set(['worker_python', 'matplotlib', 'bundled_runtime'])
 
 /**
  * `detail` 是一条**裸的目录路径**的那几项——只有它们能交给 `PathValue`
- * （末级目录 + 展开看全文 + 复制，与项目设置、写回确认框同一份实现）。
+ * （末级目录 + 展开看全文 + 复制，与写回确认框同一份实现）。
  *
  * 这是一张**点名的表，不是形状猜测**：`worker_python` 的 detail 是
  * `路径（来源）`、`bundled_runtime` 是 `Python 3.13 + 14 个包`，拿末级目录去
@@ -212,7 +220,7 @@ const DIR_DETAIL_CHECKS = new Set(['project_readable', 'project_writable'])
  * 比不说更坏，它让人以为自己漏了什么。`registry_conflicts` 现在就没有登记，
  * 那条的处置路径我没能在代码里确认下来。
  *
- * 渲染引擎那三条指向的是这一页上的恢复卡片，所以**只在卡片真的在的时候才说**
+ * 渲染引擎那三条指向的是这一页上的恢复入口，所以**只在它真的在的时候才说**
  * ——指着一个不存在的东西，比不给下一步更糟。
  */
 function nextStepOf(id: string, repairCardVisible: boolean): string | null {
@@ -225,45 +233,27 @@ function nextStepOf(id: string, repairCardVisible: boolean): string | null {
 const checkLabel = (c: Check): string =>
   translate(`settings.about.check.${c.id}`, { ns: 'dialogs', defaultValue: c.label })
 
-/** 一条检查：状态点 + 名字（+ 坏了时的原因与下一步；原因是诊断数据，不翻）。 */
-function CheckLine({ check: c, repairCard }: { check: Check; repairCard: boolean }) {
+/**
+ * 一条异常：名字 + 原因（诊断数据，不翻）+ 下一步（说明一行）+ 控件列一枚「异常」胶囊。
+ * 目录类的原因走 `PathValue`（末级目录 + 展开 + 复制），在 fill 行里——现状槽只放文字。
+ */
+function FailingCheckRow({ check: c, repairCard }: { check: Check; repairCard: boolean }) {
   useTranslation('dialogs')
-  const next = c.ok ? null : nextStepOf(c.id, repairCard)
+  const next = nextStepOf(c.id, repairCard)
+  const dir = DIR_DETAIL_CHECKS.has(c.id)
   return (
-    <li className="flex flex-wrap items-start gap-1.5 text-xs">
-      <span
-        aria-hidden
-        className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', c.ok ? 'bg-ink-3' : 'bg-danger')}
-      />
-      <span className="sr-only">{st(c.ok ? 'about.checkOk' : 'about.checkFail')}</span>
-      <span className="shrink-0 text-ink-2">{checkLabel(c)}</span>
-      {!c.ok &&
-        (DIR_DETAIL_CHECKS.has(c.id) ? (
-          <PathValue path={c.detail} name={checkLabel(c)} className="min-w-0 flex-1" />
-        ) : (
-          <span className="min-w-0 flex-1 break-all font-mono text-ink-3">{c.detail}</span>
-        ))}
-      {next && (
-        <span data-next-step className="w-full pl-3 leading-relaxed text-ink-2">
-          {next}
-        </span>
-      )}
-    </li>
+    <SettingRow
+      label={checkLabel(c)}
+      data-diagnostics-check={c.id}
+      status={dir ? undefined : <span className="break-all font-mono text-xs">{c.detail}</span>}
+      description={next ? <span data-next-step>{next}</span> : undefined}
+      below={dir ? <PathValue path={c.detail} name={checkLabel(c)} /> : undefined}
+    >
+      <StatusPill tone="danger">{st('about.checkFail')}</StatusPill>
+    </SettingRow>
   )
 }
 
-/**
- * 「诊断报告」整段：标题 + 右侧的两颗动作，预览落在段内。
- *
- * 「复制诊断」先把脱敏后的文本摆出来，用户看过再复制。文本由后端
- * `/api/diagnostics/summary` 给（与诊断包同一份采集、同一道脱敏），前端不再
- * 自己拼一份——拼一份就是第二个采集出处。
- *
- * 动作在**分区标题行右侧**（全面打磨 D13）：此前是标题下面一排左对齐的钮，
- * 末尾还挂着一个不属于任何标签的 20px 问号。收进标题行之后，这一页从上到下
- * 只有一种读法——名字在左、控件贴右。名字不重复：分区标题已经叫「诊断报告」，
- * 不在下面再摆一行叫「诊断包」的标签。
- */
 /**
  * 性能分析（ADR 0075）：点「开始」关掉设置、在画布上挂出探针面板。报告只含
  * 数字，由用户自己保存、自己决定发给谁。
@@ -274,7 +264,7 @@ function PerfProbeRow() {
     if (usePerfProbeStore.getState().start()) useUiStore.getState().setSettingsOpen(false)
   }
   return (
-    <SettingRow label={st('diagnostics.perfRow')}>
+    <SettingRow label={st('diagnostics.perfRow')} data-settings-anchor="diagnostics.perf">
       <Button variant="secondary" size="sm" onClick={start} data-perf-probe-start>
         {st('diagnostics.perfStart')}
       </Button>
@@ -282,10 +272,52 @@ function PerfProbeRow() {
   )
 }
 
+/**
+ * 诊断包（ADR 0016）。
+ *
+ * 以前是「给浏览器一个链接让它自己下」，现在必须走 POST：前端状态与交互轨迹
+ * 只活在浏览器内存里，得随请求现交上去。代价是 zip 要过一遍前端内存——
+ * 它只有几十到几百 KB，可以接受。
+ *
+ * **载荷是现采的**：点这个按钮之前，什么都没有被序列化过。
+ */
+async function downloadDiagnostics(): Promise<void> {
+  const blob = await postDiagnosticsBundle(buildDiagnosticPayload())
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `tavotto-diagnostics-${stampForFilename()}.zip`
+    a.click()
+  } finally {
+    // 不撤销就是一条挂到刷新为止的引用，而 zip 全在内存里
+    URL.revokeObjectURL(url)
+  }
+}
+
+/** 本地时间的 YYYYMMDD-HHMMSS，与后端给的 Content-Disposition 同一形状 */
+function stampForFilename(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  )
+}
+
+/**
+ * 「诊断报告」组：两行。
+ *
+ *   * **诊断包**：导出（secondary）；结果（「诊断包已生成」/ 失败的人话）就是这一行的现状——此前它挤在分区头的
+ *     按钮组里（2026-10-07 设计审计 §9.1）。问号说清包里有什么、没有什么。
+ *   * **诊断摘要**：「复制诊断」先把脱敏后的文本摆出来，用户看过再复制；预览是这一行的 fill 行。文本由后端
+ *     `/api/diagnostics/summary` 给（与诊断包同一份采集、同一道脱敏），前端不再自己拼一份。
+ */
 function DiagnosticsReportSection() {
   useTranslation('dialogs')
   const [phase, setPhase] = useState<'idle' | 'busy' | 'ready' | 'error'>('idle')
   const [text, setText] = useState('')
+  const [bundle, setBundle] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   const prepare = async () => {
     setPhase('busy')
     try {
@@ -296,50 +328,74 @@ function DiagnosticsReportSection() {
       setPhase('error')
     }
   }
+  const exportBundle = () => {
+    setBundle('busy')
+    void downloadDiagnostics()
+      .then(() => setBundle('done'))
+      .catch(() => setBundle('error'))
+  }
   return (
-    <SettingSection
-      title={st('diagnostics.reportTitle')}
-      action={
-        /* 两颗钮分权重（2026-09-14 审计 D3）：交给支持的是「导出诊断包」（secondary），
-           「复制诊断」是轻量路径（ghost），不再并排两颗同权重的 secondary */
-        <span className="flex items-center gap-1.5">
+    <FormSection title={st('diagnostics.reportTitle')} data-settings-anchor="diagnostics.report">
+      <FieldGroup>
+        <SettingRow
+          label={st('diagnostics.bundleLabel')}
+          help={
+            <p>
+              {st('about.diagnosticsHintBefore')}
+              <strong className="font-medium text-ink">{st('about.diagnosticsHintStrong')}</strong>
+              {st('about.diagnosticsHintAfter')}
+            </p>
+          }
+          helpLabel={st('about.diagnosticsHelpAria')}
+          status={
+            bundle === 'done' ? (
+              <span role="status">{st('about.exported')}</span>
+            ) : bundle === 'error' ? (
+              <span role="alert" className="text-danger-content">
+                {st('about.exportFailed')}
+              </span>
+            ) : undefined
+          }
+          data-diagnostics-bundle
+        >
+          <Button variant="secondary" size="sm" onClick={exportBundle} disabled={bundle === 'busy'}>
+            {bundle === 'busy' ? st('about.exporting') : st('about.exportBundle')}
+          </Button>
+        </SettingRow>
+        <SettingRow
+          label={st('diagnostics.summaryLabel')}
+          status={
+            phase === 'error' ? (
+              <span role="alert" className="text-danger-content">
+                {st('diagnostics.prepareFailed')}
+              </span>
+            ) : undefined
+          }
+          below={
+            phase === 'ready' ? (
+              <div className="flex flex-col gap-1" data-diagnostics-preview>
+                <p className="type-caption">{st('diagnostics.previewNote')}</p>
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface p-2 font-mono text-xs leading-relaxed text-ink-3">
+                  {text}
+                </pre>
+              </div>
+            ) : undefined
+          }
+        >
           {phase !== 'ready' ? (
             <Button variant="ghost" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
               {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
             </Button>
           ) : (
             <>
-              <CopyButton text={text} label={st('diagnostics.copyReport')} variant="ghost" />
               <Button variant="ghost" size="sm" onClick={() => setPhase('idle')}>
                 {st('diagnostics.hidePreview')}
               </Button>
+              <CopyButton text={text} label={st('diagnostics.copyReport')} variant="secondary" />
             </>
           )}
-          <DiagnosticsExportButton />
-          {/* 问号挂在**分区标题**的动作组里，不再吊在钮组末尾当一颗孤儿 */}
-          <HelpTip label={st('about.diagnosticsHelpAria')}>
-            <p>
-              {st('about.diagnosticsHintBefore')}
-              <strong className="font-medium text-ink">{st('about.diagnosticsHintStrong')}</strong>
-              {st('about.diagnosticsHintAfter')}
-            </p>
-          </HelpTip>
-        </span>
-      }
-    >
-      {phase === 'error' && (
-        <span role="alert" className="text-xs text-danger">
-          {st('diagnostics.prepareFailed')}
-        </span>
-      )}
-      {phase === 'ready' && (
-        <div className="flex flex-col gap-1" data-diagnostics-preview>
-          <p className="type-caption">{st('diagnostics.previewNote')}</p>
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs leading-relaxed text-ink-3">
-            {text}
-          </pre>
-        </div>
-      )}
-    </SettingSection>
+        </SettingRow>
+      </FieldGroup>
+    </FormSection>
   )
 }

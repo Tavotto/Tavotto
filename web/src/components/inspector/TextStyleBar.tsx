@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import type { RowLabelWidth } from '../ui/Field'
 import type { ManifestElement } from '@/lib/api'
 import { propertyPathOf } from '@/lib/typography'
 import type { PanelObject } from '@/types/document'
@@ -50,7 +51,7 @@ export function TextStyleBar({
   element: ManifestElement
   className?: string
   /** 标签列宽：属性页显式传 `LABEL_W`（与 FieldRow 同一条竖线），快捷编辑弹层用默认的 72 */
-  labelWidth?: number
+  labelWidth?: RowLabelWidth
 }) {
   useTranslation('inspector')
   const adapter = useFigureTypography(panel, singleton(element), FIGURE_TEXT_SINGLE_PROPS)

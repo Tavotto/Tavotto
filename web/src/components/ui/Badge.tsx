@@ -6,9 +6,10 @@ type Tone = 'neutral' | 'accent' | 'danger' | 'warn' | 'ok'
 const TONES: Record<Tone, string> = {
   neutral: 'bg-surface-2 text-ink-2',
   accent: 'bg-accent-subtle text-accent',
-  danger: 'bg-danger-subtle text-danger',
-  warn: 'bg-warn-subtle text-warn',
-  ok: 'bg-ok-subtle text-ok',
+  // 字用锚点派生的 -content（≥4.5:1），底用 -surface（2026-10-07 设计审计 §1 状态色锚点）
+  danger: 'bg-danger-surface text-danger-content',
+  warn: 'bg-warn-surface text-warn-content',
+  ok: 'bg-ok-surface text-ok-content',
 }
 
 /**

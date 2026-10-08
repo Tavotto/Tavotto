@@ -323,7 +323,12 @@ def normalize_relative_script(script: str) -> str:
     return normalized
 
 
-def runtime_asset_id(script: str, stem: str) -> str:
+#: 资产 id 里运行配置段的分隔符（T03）：`runtime:<script>#<stem>~<rc_…>`。只有非空 argv 的运行才有这一段，
+#: 空 argv 的 id 与 T03 之前**逐字节相同**（保存的文档、override、画布引用全部照旧）。
+RUN_CONFIG_SEP = "~"
+
+
+def runtime_asset_id(script: str, stem: str, run_config: str = "") -> str:
     """捕获 Figure 的稳定身份：`runtime:<script 相对路径>#<stem>`（ADR 0013 §2）。
 
     只由 (脚本相对路径, stem) 决定——项目那一维由「id 存在哪个项目的文档里」
@@ -336,11 +341,18 @@ def runtime_asset_id(script: str, stem: str) -> str:
 
     id 是**不透明标识**：消费方不得从中反解 script/stem（脚本名里可以有
     `#`），要用就取描述符里那两个独立字段——这就是 stem 冲突的显式处理。
+
+    **运行配置维度（T03）**：同一脚本用不同 argv 跑出同名图是两张不同的图。`run_config` 是本机运行配置的
+    不透明引用（`engine/runconfig.py`），非空时拼在 id 末尾；它**不是 argv 的摘要**——参数值不进身份。
+    空串 = 没给参数，id 与旧版一致。
     """
     script = normalize_relative_script(script)
     if not isinstance(stem, str) or not stem:
         raise ValueError("stem 必须是非空字符串")
-    return f"runtime:{script}#{stem}"
+    if not isinstance(run_config, str):
+        raise ValueError("run_config 必须是字符串")
+    base = f"runtime:{script}#{stem}"
+    return f"{base}{RUN_CONFIG_SEP}{run_config}" if run_config else base
 
 
 def source_fingerprint(
@@ -423,9 +435,14 @@ class CapturedFigureDescriptor:
     #: `None` = 没观察到（`paper_style.save` 捷径整个被替换、看不见参数；旧 payload
     #: 没有这个键也是这一档）；`()` = 确实没有 savefig（pyplot 捕获）；非空 = 记下的调用。
     savefig_calls: tuple | None = None
+    #: 产出这张图的运行配置引用（T03；本机不透明 id，不是 argv）。空 = 没给参数——此时 payload 里**没有**
+    #: 这个键，旧描述符与对拍用例一个字节不变。
+    run_config: str = ""
 
     def to_payload(self) -> dict:
         out = dataclasses.asdict(self)
+        if not self.run_config:
+            out.pop("run_config")
         out["size_mm"] = [float(v) for v in self.size_mm]
         out["savefig_calls"] = (
             None if self.savefig_calls is None else [dict(c) for c in self.savefig_calls]
@@ -444,6 +461,7 @@ def build_descriptor(
     source_fingerprint: str,
     original_artifact: str | None = None,
     savefig_calls=None,
+    run_config: str = "",
 ) -> CapturedFigureDescriptor:
     """描述符工厂——**writeback 能力只能派生，不能指定**。
 
@@ -488,7 +506,7 @@ def build_descriptor(
             raise ValueError("pyplot 捕获的 Figure 没有 savefig 调用，savefig_calls 必须为空")
         savefig_calls = tuple(dict(c) for c in savefig_calls)
     return CapturedFigureDescriptor(
-        asset_id=runtime_asset_id(script, stem),
+        asset_id=runtime_asset_id(script, stem, run_config),
         script=script,
         entry=entry,
         stem=stem,
@@ -500,6 +518,7 @@ def build_descriptor(
         can_writeback_artifact=(capture_source == SOURCE_SAVEFIG and original_artifact is not None),
         can_writeback_source=False,
         savefig_calls=savefig_calls,
+        run_config=run_config,
     )
 
 
@@ -521,6 +540,7 @@ def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
         source_fingerprint=data.get("source_fingerprint"),
         original_artifact=data.get("original_artifact"),
         savefig_calls=data.get("savefig_calls"),
+        run_config=data.get("run_config") or "",
     )
     for key in ("asset_id", "can_writeback_artifact", "can_writeback_source"):
         if key in data and data[key] != getattr(desc, key):

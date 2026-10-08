@@ -545,3 +545,55 @@ describe('「全部项目」：设计稿上没有位置的功能都在这儿', (
     expect(buttonByText('返回当前项目')).toBeDefined()
   })
 })
+
+describe('2026-10-07 设计审计 §4.2：叙事句 / 卡片网格 / 拖放接收态', () => {
+  beforeEach(() => setOnboarding('completed'))
+
+  const chip = (kind: string) => host.querySelector<HTMLButtonElement>(`button[data-home-chip="${kind}"]`)
+
+  it('老手版的叙事句里嵌两枚 chip：最近项目直接打开最近那一个（跳过已不存在的），脚本 chip = 导入', async () => {
+    useProjectStore.setState({ recent: [recentOf('/Users/me/gone', { exists: false }), ...RECENT.slice(1)] })
+    await mount()
+    const narrative = host.querySelector<HTMLElement>('[data-home-narrative]')!
+    expect(narrative.contains(chip('recent'))).toBe(true)
+    expect(narrative.contains(chip('script'))).toBe(true)
+    expect(chip('recent')!.textContent).toContain('poster')
+    await click(chip('recent')!)
+    expect(open).toHaveBeenCalledWith('/Users/me/Desktop/poster', false)
+    open.mockClear()
+    await click(chip('script')!)
+    expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+  })
+
+  it('没有可打开的最近项目：句子只剩脚本那一半', async () => {
+    useProjectStore.setState({ recent: [] })
+    await mount()
+    expect(chip('recent')).toBeNull()
+    expect(chip('script')).not.toBeNull()
+  })
+
+  it('最近项目是 Card interactive 网格（两版都是），不是 hover 行', async () => {
+    await mount()
+    const items = [...host.querySelectorAll<HTMLElement>('[data-home-recent]')]
+    expect(items.length).toBeGreaterThan(0)
+    for (const li of items) {
+      const card = li.querySelector<HTMLElement>('[data-card]')!
+      expect(card.dataset.interactive).toBe('true')
+    }
+  })
+
+  it('拖放区静态时没有虚线；带文件拖进页面才是接收态（accent 虚线 + 浅底）', async () => {
+    await mount()
+    const zone = host.querySelector<HTMLElement>('[data-home-dropzone]')!
+    expect(zone.className).not.toMatch(/dashed/)
+    const ev = new Event('dragenter', { bubbles: true, cancelable: true })
+    Object.defineProperty(ev, 'dataTransfer', { value: { types: ['Files'] } })
+    await act(async () => {
+      main().dispatchEvent(ev)
+    })
+    expect(zone.dataset.dragging).toBe('true')
+    expect(zone.className).toContain('outline-dashed')
+    expect(zone.className).toContain('bg-accent-subtle')
+  })
+})

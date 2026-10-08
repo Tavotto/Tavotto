@@ -434,3 +434,119 @@ def test_one_shot_without_answers_fails_instead_of_asking(plane, figs, frontend)
         pool.discard(fresh)
     assert ei.value.code == "script_needs_input"
     assert fe.of("script.input_requested") == []
+
+
+# ---- 敏感会话的回复文件读后即删（Codex #812 P1）------------------------------------------------------------
+
+_PRIVATE_KEY = "ab" * 16
+
+
+def _channel(tmp_path, *, private: bool):
+    ch = scriptinput.Channel(
+        tmp_path / scriptinput.DIRNAME, "s.py", private_key=_PRIVATE_KEY if private else ""
+    )
+    ch.reset()
+    return ch
+
+
+def _leftover_plaintext(directory, needle: str) -> list[str]:
+    return [p.name for p in directory.iterdir() if needle in p.read_text(encoding="utf-8")]
+
+
+def _answer_with(channel, monkeypatch, content: str):
+    def publish(index, payload):
+        (channel.dir / scriptinput.reply_name(index)).write_text(content, encoding="utf-8")
+
+    monkeypatch.setattr(channel, "_write_request", publish)
+
+
+@pytest.mark.parametrize("kind", ["input", "readline", "read", "getpass"])
+def test_private_reply_file_is_deleted_after_reading_for_every_kind(tmp_path, monkeypatch, kind):
+    ch = _channel(tmp_path, private=True)
+    _answer_with(ch, monkeypatch, '{"answer": "hunter2"}')
+    assert ch.ask("q", kind) == "hunter2"
+    assert not (ch.dir / scriptinput.reply_name(1)).exists()
+    assert _leftover_plaintext(ch.dir, "hunter2") == []
+
+
+def test_non_private_plain_input_reply_is_kept_as_before(tmp_path, monkeypatch):
+    ch = _channel(tmp_path, private=False)
+    _answer_with(ch, monkeypatch, '{"answer": "visible"}')
+    assert ch.ask("q", "input") == "visible"
+    assert (ch.dir / scriptinput.reply_name(1)).exists()
+
+
+def test_non_private_getpass_reply_is_still_deleted(tmp_path, monkeypatch):
+    ch = _channel(tmp_path, private=False)
+    _answer_with(ch, monkeypatch, '{"answer": "pw"}')
+    assert ch.ask("q", "getpass") == "pw"
+    assert not (ch.dir / scriptinput.reply_name(1)).exists()
+
+
+def test_private_reply_is_deleted_when_parsing_never_succeeds(tmp_path, monkeypatch):
+    # 半截 / 非 dict 的回复读不出来 → 一路等到超时；文件在任何出口都不能留下
+    monkeypatch.setenv(scriptinput.TIMEOUT_ENV, "0.3")
+    monkeypatch.setattr(scriptinput, "ANSWER_GRACE", 0.3)
+    monkeypatch.setattr(scriptinput, "WORKER_POLL", 0.05)
+    ch = _channel(tmp_path, private=True)
+    _answer_with(ch, monkeypatch, '{"answer": "hunter2"')
+    assert ch.ask("q", "input") is None
+    assert not (ch.dir / scriptinput.reply_name(1)).exists()
+
+
+def test_private_reply_is_deleted_when_the_read_raises(tmp_path, monkeypatch):
+    ch = _channel(tmp_path, private=True)
+    _answer_with(ch, monkeypatch, '{"answer": "hunter2"}')
+
+    def boom(*a, **k):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(scriptinput.json, "loads", boom)
+    with pytest.raises(KeyboardInterrupt):
+        ch.ask("q", "input")
+    assert not (ch.dir / scriptinput.reply_name(1)).exists()
+
+
+def test_private_no_answer_reply_raises_and_leaves_nothing(tmp_path, monkeypatch):
+    ch = _channel(tmp_path, private=True)
+    _answer_with(ch, monkeypatch, '{"no_answer": true, "reason": "x"}')
+    with pytest.raises(scriptinput.ScriptNeedsInput):
+        ch.ask("q", "input")
+    assert list(p.name for p in ch.dir.iterdir() if p.name.startswith("reply-")) == []
+
+
+def test_private_answer_is_not_transcribed_to_stderr_log(tmp_path, monkeypatch, capsys):
+    ch = _channel(tmp_path, private=True)
+    _answer_with(ch, monkeypatch, '{"answer": "hunter2"}')
+    ch.ask("q", "input")
+    assert "hunter2" not in capsys.readouterr().err
+
+
+def test_broker_writes_private_reply_owner_only_and_leaves_no_temp(tmp_path):
+    if os.name != "posix":
+        pytest.skip("mode bits are POSIX-only")
+    d = tmp_path / "rv"
+    d.mkdir()
+    seen = {}
+    real = inputbroker.atomicio.write_bytes
+
+    def spy(path, data, *, mode=None):
+        seen["mode"] = mode
+        real(path, data, mode=mode)
+        seen["names"] = sorted(p.name for p in d.iterdir())
+
+    inputbroker.atomicio.write_bytes, saved = spy, real
+    try:
+        inputbroker._reply(d, 1, {"answer": "hunter2"}, private=True)
+    finally:
+        inputbroker.atomicio.write_bytes = saved
+    assert seen["mode"] == 0o600
+    assert seen["names"] == [scriptinput.reply_name(1)]
+    assert (d / scriptinput.reply_name(1)).stat().st_mode & 0o077 == 0
+
+
+def test_private_channel_directory_is_owner_only(tmp_path):
+    if os.name != "posix":
+        pytest.skip("mode bits are POSIX-only")
+    ch = _channel(tmp_path, private=True)
+    assert ch.dir.stat().st_mode & 0o077 == 0

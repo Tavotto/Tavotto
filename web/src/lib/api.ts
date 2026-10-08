@@ -195,10 +195,13 @@ export interface UnsupportedAsset {
 export class ApiError extends Error {
   status: number
   body: Record<string, unknown>
-  constructor(message: string, status: number, body: Record<string, unknown>) {
+  /** 响应头 `X-Tavotto-Diagnostic-Ref`：错误体不是对象时后端把诊断引用放在这里（T04）；没有 = null */
+  diagnosticRef: string | null
+  constructor(message: string, status: number, body: Record<string, unknown>, diagnosticRef: string | null = null) {
     super(message)
     this.status = status
     this.body = body
+    this.diagnosticRef = diagnosticRef
   }
 }
 
@@ -285,6 +288,10 @@ export function backendCodeMsg(
   // parseMissingKeyHandler 会把缺失的 key 原样吐回来（界面上看得见是哪条），
   // 那样 defaultValue 永远轮不到，缺文案时用户看到的就是 `backend.xxx`。
   if (code === 'artifact_source_unavailable') return artifactErrorMsg(params?.reason)
+  // T03：用户给了精确参数、脚本自己的解析器仍然拒绝——同一个稳定码，文案不能再说"没带参数"
+  if (code === 'script_needs_arguments' && Number(params?.argv_count) > 0) {
+    return msg('backend.script_rejected_arguments', params ?? {}, 'errors')
+  }
   if (code && i18n.exists(`backend.${code}`, { ns: 'errors' })) {
     return msg(`backend.${code}`, params ?? {}, 'errors')
   }
@@ -357,7 +364,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
       /* 非 JSON 错误体，保留状态码 */
     }
     noteProjectGone(res.status, body)
-    throw new ApiError(detail, res.status, body)
+    throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
   return res.json() as Promise<T>
 }
@@ -371,6 +378,144 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
  * capability 也可以从 `/api/panels` 拿（同一次计算的投影），两处必然一致。
  */
 export const fetchReadiness = () => jsonFetch<ReadinessReport>('/api/project/readiness')
+
+/* ------------------- 导入即扫描（T02，`engine/projscan.py`） ------------------- */
+
+/** 扫描状态；`running` 之外都是终局。 */
+export type ProjectScanState = 'running' | 'complete' | 'partial' | 'cancelled' | 'failed'
+/** phase 词汇是准备会话 phase 的子集（同一份闭集）。 */
+export type ProjectScanPhase =
+  | 'scanning'
+  | 'awaiting_confirmation'
+  | 'awaiting_configuration'
+  | 'completed'
+  | 'action_required'
+  | 'cancelled'
+export type ProjectScanOutcome =
+  | 'scanning'
+  | 'target_found'
+  | 'already_connected'
+  | 'choose_target'
+  | 'static_source'
+  | 'nothing_found'
+  | 'unchecked'
+  | 'cancelled'
+  | 'failed'
+
+export interface ProjectScanIssue {
+  /** `scanbudget.ISSUE_CODES` 的闭集；前端按 code 查句子 */
+  code: string
+  /** `partial` = 这里确实有东西没看见；`note` = 设计内的静默剪枝 */
+  severity: 'partial' | 'note'
+  scope: string
+  /** 项目相对路径；可能没有 */
+  path?: string
+  count: number
+}
+
+export interface ProjectScanScript {
+  script: string
+  reason: string
+  registered: boolean
+  checked: boolean
+  unchecked_reason?: string
+  entry_candidates: string[]
+  static_stems: string[]
+}
+
+export interface ProjectScanTarget {
+  script: string
+  role: 'plot' | 'auxiliary' | 'unknown'
+  evidence: string
+  registered: boolean
+  entry: string | null
+  scope: string | null
+  checked: boolean
+  /** 创建准备会话（T01 端点）的请求体 */
+  session_target: { script: string; entry?: string }
+}
+
+export interface ProjectScanAction {
+  id: string
+  kind: 'rescan' | 'cancel_scan' | 'prepare' | 'choose_target'
+  target?: { script: string; entry?: string }
+}
+
+export interface ProjectScanCheck {
+  id: string
+  status: 'ok' | 'unknown' | 'partial' | 'needs_action' | 'blocked'
+  code?: string
+  detail?: Record<string, number>
+}
+
+export interface ProjectScanEnvCandidate {
+  id: string
+  source: string
+  scope: 'project' | 'machine'
+  label: string
+  python_relative: string | null
+  /** 没有任何一条被体检过：`unchecked` / `remembered_unverified` / `missing` */
+  status: string
+}
+
+/**
+ * 后端的扫描快照。**前端只读不判**：phase / outcome / 目标选择 / 检查状态都是后端给的事实，这里没有
+ * 第二份「能不能运行」的判据。运行中的快照只有 `found` 计数（没有百分比）；终局快照带完整报告。
+ */
+export interface ProjectScan {
+  scan_version: number
+  project_id: string
+  scan_id: string
+  /** 同一进程内单调；前端靠 (scan_id, epoch) 丢旧响应 */
+  epoch: number
+  observation_seq: number
+  reason: string
+  state: ProjectScanState
+  phase: ProjectScanPhase
+  outcome: { kind: ProjectScanOutcome; code?: string }
+  budget: { entries: number; scripts: number; assets: number; elapsed_s: number }
+  issues: ProjectScanIssue[]
+  found?: { scripts: number; assets: number }
+  assets?: { count: number; pdf: number; raster: number; browsable: boolean }
+  scripts?: ProjectScanScript[]
+  targets?: ProjectScanTarget[]
+  default_target?: string | null
+  target_choice?: 'single' | 'ambiguous' | 'connected' | 'none'
+  checks: ProjectScanCheck[]
+  environment?: {
+    verified: boolean
+    remembered: { automatic: boolean; exists: boolean } | null
+    candidates: ProjectScanEnvCandidate[]
+    truncated: boolean
+  }
+  dependencies?: {
+    script: string | null
+    files: string[]
+    requirements: number
+    unsupported: string[]
+    evaluated: boolean
+  }
+  actions: ProjectScanAction[]
+  evidence_revision?: string
+}
+
+/** 开始（或复用）扫描。不阻塞：后端在后台线程里扫，轮询 / SSE 提示后用 `fetchProjectScan` 补拉。 */
+export const startProjectScan = (opts?: {
+  force?: boolean
+  reason?: 'claim' | 'restore' | 'manual' | 'refresh'
+}) =>
+  jsonFetch<ProjectScan>('/api/project/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts ?? {}),
+  })
+
+/** 读当前快照（404 `project_scan_not_started` = 还没开始 / 后端重启过）。 */
+export const fetchProjectScan = () => jsonFetch<ProjectScan>('/api/project/scan')
+
+/** 只取消扫描；不碰执行、安装与 worker。 */
+export const cancelProjectScan = () =>
+  jsonFetch<ProjectScan>('/api/project/scan/cancel', { method: 'POST' })
 
 /* ----------------------------- 项目（Project） ------------------------------ */
 /** 层级见 docs/adr/0001-project-canvas-tab-object.md；未打开项目时后端回 409。 */
@@ -629,6 +774,16 @@ export const panelSrc = (
 
 export const fetchLayoutNames = () =>
   jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
+
+/**
+ * 同一份清单 + 每份的修改时间（epoch 秒；后端加字段，老后端没有 = 空表、界面不写日期）。
+ * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
+ */
+export const fetchLayoutList = () =>
+  jsonFetch<{ layouts: string[]; modified?: Record<string, number> }>('/api/layouts').then((r) => ({
+    names: r.layouts,
+    modified: r.modified ?? {},
+  }))
 
 /** 读到的一份画布文件：`revision` 来自响应头，是后续覆盖它的基线 */
 export interface FetchedLayout {
@@ -957,6 +1112,34 @@ export async function postDiagnosticsBundle(payload: unknown): Promise<Blob> {
   )
   if (!res.ok) throw new ApiError(`diagnostics_bundle_${res.status}`, res.status, {})
   return res.blob()
+}
+
+/**
+ * 某一次失败尝试的诊断（T04）：`kind` + `ref` 指定那一次（导出作业 id / 准备尝试 id / 试运行 `diagnostic.ref`）。
+ *
+ * 后端只读一份**终局时冻结**的快照，不采集、不探测；记录没有 / 过期时答 404 + 原因，这里原样交回——
+ * 调用方必须如实说「当时的诊断已经没有了」，**不许**退而去拿一份当前状态的诊断包冒充。
+ * `pj` 默认取调用这一刻的项目；失败提示可能比项目切换活得久，组件应传它出现时的项目。
+ */
+export type TaskDiagnosticKind = 'export' | 'preparation' | 'script_run'
+export type TaskDiagnosticResult =
+  | { available: true; blob: Blob; filename: string }
+  | { available: false; reason: 'not_found' | 'expired' }
+
+export async function fetchTaskDiagnostic(
+  kind: TaskDiagnosticKind,
+  ref: string,
+  pj: string | null = currentProjectId(),
+): Promise<TaskDiagnosticResult> {
+  const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`
+  const res = await fetch(apiUrlFor(`/api/diagnostics/task?${qs}`, pj), withProjectFor(undefined, pj))
+  if (res.status === 404) {
+    const body = (await res.json().catch(() => ({}))) as { reason?: string }
+    return { available: false, reason: body.reason === 'expired' ? 'expired' : 'not_found' }
+  }
+  if (!res.ok) throw new ApiError(`task_diagnostic_${res.status}`, res.status, {})
+  const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')
+  return { available: true, blob: await res.blob(), filename: match?.[1] ?? 'tavotto-task-diagnostic.json' }
 }
 
 /**
@@ -2755,6 +2938,8 @@ export type ServerEvent =
       conflicts?: Record<string, string[]>
       script?: string
     } & ProjectScoped)
+  /** 导入即扫描有进展 / 到终局：只是「重新读一遍快照」的提示，不带 phase、路径与计数（T02） */
+  | ({ kind: 'project.scan'; scan_id: string; epoch: number } & ProjectScoped)
   /** 素材（PDF/PNG/JPG）变了：`ids` = 三类的并集，够用时不必再看细分 */
   | ({
       kind: 'assets.changed'
@@ -2835,6 +3020,7 @@ const EVENT_KINDS = [
   'panel.file_changed',
   'registry.changed',
   'assets.changed',
+  'project.scan',
   'project.error',
   'probe.started',
   'native.session',
@@ -4138,6 +4324,11 @@ export interface CapturedFigureDescriptor {
    * `paper_style.save` 捷径）；`[]` = pyplot 捕获、从没存过盘。只记不用（tight 图幅的决定之前）。
    */
   savefig_calls?: SavefigCall[] | null
+  /**
+   * 产出这张图的运行配置引用（T03；本机不透明 id `rc_…`，**不是参数值**）。缺席 = 没给参数，
+   * 此时 `asset_id` 与之前逐字节相同。同一脚本不同参数跑出的同名图靠它分成两张素材。
+   */
+  run_config?: string
 }
 
 /** 一次 savefig 调用的实效参数（`figcapture.savefig_call` 的形态） */
@@ -4190,15 +4381,44 @@ export interface ProbeResult {
   dropped_figures?: number
   /** multiple_stem_conflict 时：stem → 现登记的归属脚本 */
   stem_conflicts?: Record<string, string>
+  /** 给了参数的那次运行：它的运行配置引用（T03；不含参数值） */
+  run_config?: string
+  /** 这一次的诊断引用（T04）：`fetchTaskDiagnostic('script_run', ref)` 取回终局时冻结的快照；老后端没有 */
+  diagnostic?: { kind: 'script_run'; ref: string }
+}
+
+/**
+ * 试运行给脚本的**精确 token 列表**（T03）：一项一个参数，空串、空格、中文、重复、`--` 原样保留，
+ * 不按空格拆、不去重、不排序。缺省 / 空 = 不带参数（请求体里**没有** `argv` 字段，与旧版逐字节相同）。
+ * `sensitive`：含密码 / 令牌——后端只在内存里保留，不落盘，重启后需要重新输入。
+ */
+export interface ScriptArgs {
+  argv?: readonly string[]
+  sensitive?: boolean
 }
 
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
-export const probeScript = (script: string, cost?: string) =>
+export const probeScript = (script: string, cost?: string, args?: ScriptArgs) =>
   jsonFetch<ProbeResult>('/api/registry/probe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ script, cost }),
+    body: JSON.stringify({
+      script,
+      cost,
+      ...(args?.argv && args.argv.length > 0
+        ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
+        : {}),
+    }),
   })
+
+/** 运行参数（T03）的稳定错误码：界面按它们翻文案（`errors:backend.*`） */
+export const RUN_ARGV_ERROR_CODES = [
+  'invalid_argv',
+  'run_config_missing',
+  'run_config_secret_missing',
+  'run_config_unsupported',
+  'run_config_unreadable',
+] as const
 
 /**
  * 取消一个在跑的试运行。后端置取消标志并**硬杀**该脚本的 worker 会话——
@@ -4348,7 +4568,7 @@ export interface RuntimeStatus {
  */
 export const fetchRuntimeStatus = (
   id: string,
-  source?: { script: string; stem: string },
+  source?: { script: string; stem: string; run_config?: string },
 ) =>
   jsonFetch<RuntimeStatus>('/api/runtime/status', {
     method: 'POST',

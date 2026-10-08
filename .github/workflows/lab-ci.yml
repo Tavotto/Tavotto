@@ -102,7 +102,7 @@ jobs:
   # ────────────────────────────────────────────────────────────────
   trust-check:
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       mode: ${{ steps.resolve.outputs.mode }}
@@ -191,7 +191,7 @@ jobs:
   dispatch:
     needs: trust-check
     timeout-minutes: 10  # 一次 API 调用加一次列表查询；到 10 分钟只可能是 gh 挂了
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # fine-grained PAT，只对 Tavotto/ci-infra 有 `actions: write`。不是 GITHUB_TOKEN：
       # 本 workflow 的 GITHUB_TOKEN 只有 contents: read，也不该拿到跨仓库的派发权。

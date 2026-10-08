@@ -15,7 +15,7 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Select } from '@/components/ui/Select'
 import { t as translate } from '@/i18n'
-import { MOD } from '@/lib/utils'
+import { cn, MOD } from '@/lib/utils'
 import {
   alignModeLabel,
   alignRefLabel,
@@ -42,7 +42,7 @@ import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useSelectionStore } from '@/store/selectionStore'
 import type { CanvasObject, LayoutGroup } from '@/types/document'
 import { Button, IconButton } from '../ui/Button'
-import { Row, Section } from '../ui/Field'
+import { Row, ROW_GRID_COLS, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { INSPECTOR_LABEL_W } from './layout'
 import { NumberField } from '../ui/Input'
@@ -71,14 +71,8 @@ type AlignMode = Parameters<typeof alignSelectedTo>[0]
  * 缩放 / 取景那几行是 44——一页两种控件竖线）。
  */
 function ArrangeGrid({ children }: { children: ReactNode }) {
-  return (
-    <div
-      className="grid items-center gap-x-2 gap-y-2"
-      style={{ gridTemplateColumns: `${INSPECTOR_LABEL_W}px minmax(0,1fr)` }}
-    >
-      {children}
-    </div>
-  )
+  // 与全栏同一张行网格（`ROW_GRID_COLS`：标签 · 控件 · 20px 状态槽），这里状态槽空着
+  return <div className={cn('grid items-center gap-x-2 gap-y-2', ROW_GRID_COLS)}>{children}</div>
 }
 
 /** 网格里的一行：标签 + 操作区。传 htmlFor 时标签是真正的 <label>。 */
@@ -91,7 +85,8 @@ function ArrangeRow({
   htmlFor?: string
   children: ReactNode
 }) {
-  const cls = 'min-w-0 truncate text-xs text-ink-2'
+  // 标签 12/400 ink-2，放不下折两行（全栏同一条规则）
+  const cls = 'line-clamp-2 min-w-0 break-words text-sm leading-tight text-ink-2'
   return (
     <>
       {htmlFor ? (
@@ -104,6 +99,7 @@ function ArrangeRow({
         </span>
       )}
       <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">{children}</div>
+      <span aria-hidden />
     </>
   )
 }
@@ -111,10 +107,11 @@ function ArrangeRow({
 /**
  * 面板内的工具键全部走公共 primitive（Session 2 删掉了这里的第二套 ToolButton）：
  * 方块键 = `IconButton`（ghost、28×28、16px 图标、名字即气泡），文字键 = `Button`
- * ghost sm。一组键之间 `gap-0.5`，组与组之间一根 hairline（`GroupGap`）。
+ * ghost sm。一组键之间 `gap-0.5`，**组与组之间是一段 12px 的空**（`GroupGap`）——
+ * 2026-10-07 设计审计 §9.2：不再画竖线，发丝线只留给节与节之间。
  */
 function GroupGap() {
-  return <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-border" />
+  return <span aria-hidden data-group-gap className="w-3 shrink-0" />
 }
 
 const ZORDER: { move: ZMove; icon: typeof MoveUp; key: string; shortcut?: string }[] = [
@@ -532,6 +529,7 @@ function LayoutGroupControls() {
       </Row>
       <Row label={ar('spacing')} labelWidth={INSPECTOR_LABEL_W}>
         <NumberField
+          half
           unit="mm"
           ariaLabel={ar('spacing')}
           value={group.gap}

@@ -117,6 +117,44 @@ describe('状态 toast 的自动收起', () => {
   })
 })
 
+describe('状态 toast 的语气（2026-10-07 审计 P0：此前非错误一律打 ✓，「正在构建…」也打勾）', () => {
+  // 主语：此刻那条状态 toast 的 `data-status-tone`（图标由它一处取），不认图标类名
+  const tone = () => statusToast()!.dataset.statusTone
+  const shape = () => statusToast()!.querySelector('svg')!.getAttribute('class') ?? ''
+
+  it('缺省是 info：中性图标，不打勾', () => {
+    say('没有可撤销的操作')
+    expect(tone()).toBe('info')
+    expect(shape()).toContain('icon-info')
+    expect(shape()).not.toContain('icon-check')
+  })
+
+  it('progress：转圈（与 Button 忙碌态同一个 LoaderCircle）', () => {
+    act(() => useUiStore.getState().setStatus(literal('正在构建 a…'), 'progress'))
+    expect(tone()).toBe('progress')
+    expect(shape()).toContain('icon-loader-circle')
+    expect(shape()).toContain('animate-spin')
+  })
+
+  it('done：打勾；三档都照常自己走、都进 polite 播报区', () => {
+    act(() => useUiStore.getState().setStatus(literal('已导出'), 'done'))
+    expect(tone()).toBe('done')
+    expect(shape()).toContain('icon-check')
+    expect(container.querySelector('[data-status-live]')!.textContent).toBe('已导出')
+    tick(STATUS_AUTO_DISMISS_MS)
+    expect(status()).toBeNull()
+  })
+
+  it('error 不变：叹号、常驻、走 assertive，不进 polite 播报区', () => {
+    act(() => useUiStore.getState().setStatus(literal('无法保存'), 'error'))
+    expect(tone()).toBe('error')
+    expect(shape()).toContain('icon-circle-alert')
+    expect(container.querySelector('[data-status-live]')!.textContent).toBe('')
+    tick(STATUS_AUTO_DISMISS_MS * 2)
+    expect(status()).not.toBeNull()
+  })
+})
+
 describe('操作提示的自动收起', () => {
   it('焦点落在它的 × 上不走表；焦点离开后接着数', () => {
     act(() => {
@@ -191,5 +229,40 @@ describe('「已改用你的环境」', () => {
     const byKey = useRenderStore.getState().byKey
     expect(byKey.a.stale && byKey.b.stale, '所有在用的面板都要重建，不只是失败的').toBe(true)
     expect(status()?.key).toBe('engine.userEnvReverted')
+    expect(useUiStore.getState().statusTone, '改回做成了打 ✓').toBe('done')
+  })
+})
+
+/**
+ * 通知轨的外形与顺序（2026-10-07 设计审计 §10.1）：普通的一条是胶囊；错误是圆角 12 的面板——左侧 danger
+ * 竖条 + 标题 + 至多两行原文 + 「复制详情」；**最新的一条最靠近底边**（CSS order，DOM 顺序不动）。
+ * 主语：`data-toast-layout` / `data-toast-bar` / `data-copy-details`；顺序认 style.order 的大小。
+ */
+describe('通知轨：外形与先后', () => {
+  it('普通状态是胶囊；错误是面板：竖条 + 标题 + 原文 + 复制详情', async () => {
+    say('已导出')
+    expect(statusToast()!.dataset.toastLayout).toBe('pill')
+    expect(statusToast()!.className).toContain('rounded-full')
+    act(() => useUiStore.getState().setStatus(literal('写盘失败：/very/long/path/that/goes/on'), 'error'))
+    const box = statusToast()!
+    expect(box.dataset.toastLayout).toBe('panel')
+    expect(box.className).toContain('rounded-lg')
+    expect(box.querySelector('[data-toast-bar]')).not.toBeNull()
+    expect(box.textContent).toContain('写盘失败：/very/long/path/that/goes/on')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    await act(async () => box.querySelector<HTMLButtonElement>('[data-copy-details]')!.click())
+    expect(writeText).toHaveBeenCalledWith('写盘失败：/very/long/path/that/goes/on')
+  })
+
+  it('最新的一条最靠近底边：先有状态、后来提示 → 提示排在后面；再来一条状态 → 状态又到最后', () => {
+    say('正在构建')
+    act(() => {
+      showHint('multi_select')
+    })
+    const orderOf = (el: HTMLElement | null) => Number(el!.style.order)
+    expect(orderOf(hintToast())).toBeGreaterThan(orderOf(statusToast()))
+    say('已导出')
+    expect(orderOf(statusToast())).toBeGreaterThan(orderOf(hintToast()))
   })
 })

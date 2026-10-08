@@ -22,6 +22,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchExportDefaultsRemote: vi.fn(() => Promise.resolve(undefined)),
 }))
 
+// 「在文件夹中显示」走桌面壳的 IPC；只有个别用例把 `__TAURI_INTERNALS__` 装上
+const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
+
 import { ExportDialog } from '@/components/ExportDialog'
 import { pixelPreview } from '@/lib/exportRequest'
 import { hydrateExportDefaults, readExportDefaults, writeExportDefaults } from '@/lib/exportDefaults'
@@ -306,12 +310,25 @@ describe('信息架构：删掉的东西不许回来', () => {
     expect(body).toContain('默认规范')
   })
 
-  it('样式检查报告在「高级选项」里，默认收起', async () => {
+  it('「高级选项」拆散进三组：报告与严格核验在「检查」组、透明背景在「格式」组，开关看得见（2026-10-07 设计审计 §10.2）', async () => {
     await setup(9)
-    const details = document.body.querySelector('details') as HTMLDetailsElement
-    expect(details, '缺少高级选项').toBeTruthy()
-    expect(details.open).toBe(false)
-    expect(text()).toContain('样式检查报告')
+    const group = (id: string) => document.body.querySelector(`[data-export-group="${id}"]`)!
+    expect([...document.body.querySelectorAll('[data-export-group]')].map((g) => g.getAttribute('data-export-group'))).toEqual([
+      'output',
+      'format',
+      'checks',
+    ])
+    expect(group('checks').textContent).toContain('样式检查报告')
+    expect(group('checks').querySelector('[aria-label="严格核验产物"]')).not.toBeNull()
+    // 没有一个收起的「高级」把它们藏起来
+    for (const d of document.body.querySelectorAll('details')) expect(d.textContent).not.toContain('样式检查报告')
+    // 输出组里导出之前就看得见文件落到哪，「更改…」去设置 › 导出
+    expect(group('output').querySelector('[data-export-location]')).not.toBeNull()
+    await click(group('output').querySelector('[data-export-location-change]')!)
+    expect(useUiStore.getState().settingsOpen).toBe(true)
+    expect(useUiStore.getState().settingsSection).toBe('export')
+    // 设置压在导出上（dialogStack）：收起来，别把这一层栈带进后面的用例
+    await act(async () => useUiStore.getState().setSettingsOpen(false))
   })
 })
 
@@ -890,7 +907,8 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     // 对照：画布范围 = 当前画布，规范跟着换成 lab-publication
     await click(document.body.querySelectorAll('[role="radio"]')[1])
     expect(document.body.querySelector('[data-export-profile-canvas]')).toBeNull()
-    await click(button('开始导出')!)
+    // 上一次已经导完：新的一次是显式的「再次导出」
+    await click(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!)
     expect(exportBodies).toHaveLength(2)
     expect(exportBodies[1].scope).toBe('canvas')
     const canvasReport = exportBodies[1].style_check_report as Record<string, unknown>
@@ -1014,7 +1032,7 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     const toggle = document.body.querySelector<HTMLElement>('[aria-label="严格核验产物"]')
     expect(toggle, '高级选项里缺少严格核验开关').toBeTruthy()
     await click(toggle!)
-    await click(button('开始导出')!)
+    await click(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!)
     expect(exportBodies[1].inspection).toEqual({
       mode: 'strict',
       profile_id: useDocumentStore.getState().doc.profile?.id ?? readExportDefaults().profileId,
@@ -1919,7 +1937,8 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     // 再把 PDF / PNG 都取消：只剩一个发不出去的 EPS，主按钮必须灰
     await click(formatBox('PDF'))
     await click(formatBox('PNG'))
-    expect((button('开始导出') as HTMLButtonElement).disabled).toBe(true)
+    // 刚导完一次：此刻的「开始」是完成态脚部的「再次导出」，同一个闸
+    expect(document.body.querySelector<HTMLButtonElement>('[data-export-again]')!.disabled).toBe(true)
   })
 })
 
@@ -1982,5 +2001,134 @@ describe('visible export recovery', () => {
     expect(useExportStore.getState().running).toBe(true)
     await act(async () => { applyExportJob({ ...runningJob, status: 'cancelled' }) })
     expect(document.querySelector('[data-export-cancel]')).toBeNull()
+  })
+})
+
+
+/**
+ * 设计审计 §10.2 P0：进度 / 冲突 / 结果在可滚正文的最末尾（正文一长就在视口外），
+ * 导完之后脚部还挂着「开始导出」——再点一下就撞上自己刚写出的同名文件。
+ */
+describe('状态区与完成态脚部', () => {
+  const statusArea = () => document.body.querySelector<HTMLElement>('[data-dialog-status]')
+  const q = (sel: string) => document.body.querySelector<HTMLButtonElement>(sel)
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    tauriInvoke.mockReset()
+  })
+
+  it('结果落在脚部正上方的状态区，不在可滚正文里', async () => {
+    await setup(9)
+    expect(statusArea(), '还没导：状态区不占位').toBeNull()
+    await click(q('[data-export-start]')!)
+    const area = statusArea()
+    expect(area).toBeTruthy()
+    expect(area!.textContent).toContain('a.pdf')
+    // 状态区与可滚正文是兄弟，不是它的后代：正文怎么滚都不会把结果滚出视口
+    const scrollBody = document.body.querySelector('[data-dialog="export"] .overflow-y-auto')
+    expect(scrollBody?.contains(area!)).toBe(false)
+    expect(scrollBody?.textContent).not.toContain('a.pdf')
+  })
+
+  it('撞名：说明在状态区，两条出路在脚部——「另存一份」(secondary) +「覆盖」(危险浅底胶囊)', async () => {
+    jobStatus = 'conflict'
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(statusArea()!.textContent).toContain('已经有 a.pdf')
+    const footer = q('[data-dialog="export"] [data-dialog-footer]')!
+    expect(footer.querySelector('[data-export-conflict-replace]')!.getAttribute('data-variant')).toBe('danger-tinted')
+    expect(footer.querySelector('[data-export-conflict-rename]')!.getAttribute('data-variant')).toBe('secondary')
+    // 撞名不是完成，也不是「再点一次开始导出」：脚部只给两条出路
+    expect(q('[data-export-start]')).toBeNull()
+    expect(q('[data-export-finish]')).toBeNull()
+  })
+
+  it('导完：脚部换成「再次导出 · 完成」，没有第二颗「开始导出」', async () => {
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-start]')).toBeNull()
+    const again = q('[data-export-again]')!
+    const finish = q('[data-export-finish]')!
+    expect(again.textContent).toBe('再次导出')
+    expect(finish.textContent).toBe('完成')
+    // 一个上下文只有一个填色主动作：「完成」；「再次导出」是次要的
+    expect(finish.className).toContain('bg-ink')
+    expect(again.className).not.toContain('bg-ink')
+    // 浏览器模式没有文件管理器：不摆一颗点了没用的按钮
+    expect(q('[data-export-reveal]')).toBeNull()
+  })
+
+  it('键盘在「开始导出」上按下去：那颗按钮卸掉后焦点接到「完成」，不摔到 body', async () => {
+    await setup(9)
+    const start = q('[data-export-start]')!
+    start.focus()
+    expect(document.activeElement).toBe(start)
+    await click(start)
+    expect(document.activeElement).toBe(q('[data-export-finish]'))
+  })
+
+  it('「完成」关掉对话框，不发第二次导出', async () => {
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    await click(q('[data-export-finish]')!)
+    expect(useUiStore.getState().exportOpen).toBe(false)
+    expect(exportBodies).toHaveLength(1)
+  })
+
+  it('「再次导出」是显式的新一次导出（同名照样先问）', async () => {
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    jobStatus = 'conflict'
+    await click(q('[data-export-again]')!)
+    expect(exportBodies).toHaveLength(2)
+    expect(exportBodies[1].overwrite).toBe('ask')
+    expect(statusArea()!.textContent).toContain('已经有 a.pdf')
+  })
+
+  it('重新打开对话框：上一回的完成态不留在脚部', async () => {
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-finish]')).toBeTruthy()
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    expect(q('[data-export-start]')).toBeTruthy()
+    expect(q('[data-export-finish]')).toBeNull()
+  })
+
+  it('桌面里有「在文件夹中显示」，定位的是刚写出的那个文件；失败时说出完整路径', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    const reveal = q('[data-export-reveal]')!
+    expect(reveal.textContent).toBe('在文件夹中显示')
+    expect(reveal.className).not.toContain('bg-ink')
+    await click(reveal)
+    expect(tauriInvoke).toHaveBeenCalledWith('reveal_export', { dir: '/out', name: 'a.pdf' })
+    expect(document.body.querySelector('[data-export-reveal-error]')).toBeNull()
+
+    tauriInvoke.mockRejectedValueOnce(new Error('denied'))
+    await click(reveal)
+    expect(document.body.querySelector('[data-export-reveal-error]')?.textContent).toContain(
+      '/out/a.pdf',
+    )
+  })
+  it('连点两次「在文件夹中显示」：先发的那次迟到失败，不覆盖后一次的成功（Codex #821 P2）', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    const reveal = q('[data-export-reveal]')!
+    let rejectFirst!: (e: Error) => void
+    tauriInvoke.mockReturnValueOnce(new Promise((_, rej) => (rejectFirst = rej)))
+    await click(reveal)
+    await click(reveal)
+    await act(async () => {
+      rejectFirst(new Error('late'))
+    })
+    expect(document.body.querySelector('[data-export-reveal-error]')).toBeNull()
   })
 })

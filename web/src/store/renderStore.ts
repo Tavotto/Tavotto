@@ -657,7 +657,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             // 版本对不上时用户得知道去哪儿看。
             useUiStore.getState().setStatus(
               msg('render.projectEnvSwitched',
-                  { path: res.environment_switched.python }, 'errors'))
+                  { path: res.environment_switched.python }, 'errors'), 'info')
             void useEnvStore.getState().refresh()
           }
           const next: Partial<PanelRender> = {

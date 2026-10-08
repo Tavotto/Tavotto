@@ -87,7 +87,7 @@ export function ColorScaleLink({
           data-colorbar-ownership
           className="mb-2 rounded-sm border border-border px-2 py-1 text-xs text-ink-2"
         >
-          <Summary className="cursor-pointer">{el('colorbarOwnershipUnknown')}</Summary>
+          <Summary>{el('colorbarOwnershipUnknown')}</Summary>
           <p className="mt-2">{el('colorbarOwnershipHelp')}</p>
           <code className="mt-1 block break-all">fig.colorbar(mappable, cax=cax, ax=ax)</code>
           <p className="mt-2">{el('colorbarOwnershipShared')}</p>

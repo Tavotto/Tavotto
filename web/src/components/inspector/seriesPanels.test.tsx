@@ -388,7 +388,7 @@ describe('曲线：标记为无时不摆标记参数，选了标记才铺开（T
     )
     await mount(['axes_0.lines_0'])
     // 按文档顺序取「组标题 | 字段」：线条 → color → … → 标记 → marker → …
-    const seq = Array.from(host.querySelectorAll<HTMLElement>('[data-prop], p.type-section')).map((e) =>
+    const seq = Array.from(host.querySelectorAll<HTMLElement>('[data-prop], [data-group-head]')).map((e) =>
       e.dataset.prop ? e.dataset.prop : `#${e.textContent}`,
     )
     const at = (s: string) => seq.indexOf(s)

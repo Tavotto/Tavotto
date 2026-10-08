@@ -10,8 +10,10 @@
  * 「把整个项目拖进来」。
  */
 import { useRef, useState } from 'react'
+import { Button } from '@/components/ui/Button'
 import { Upload } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { dropZoneClass } from '@/components/ui/dropZone'
 import { cn } from '@/lib/utils'
 import { pg } from '../pgText'
 
@@ -26,16 +28,22 @@ export function IndependentScriptUpload({ onFile }: { onFile: (f: File) => void 
           e.preventDefault()
           setOver(true)
         }}
-        onDragLeave={() => setOver(false)}
+        onDragLeave={(e) => {
+          // 在子元素之间穿行不算离开（否则接收态一闪一闪）
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false)
+        }}
         onDrop={(e) => {
           e.preventDefault()
           setOver(false)
           const f = e.dataTransfer.files?.[0]
           if (f) onFile(f)
         }}
+        data-upload-zone
+        data-dragging={over || undefined}
         className={cn(
-          'flex flex-col gap-2 rounded-md border border-dashed px-4 py-3 transition-colors',
-          over ? 'border-sel bg-sel/5' : 'border-border',
+          // 平时是一块安静的白面（不画虚线，2026-10-07 设计审计 §10.4 P2）；拖着文件进来才是接收态
+          'flex flex-col gap-2 rounded-lg bg-surface px-4 py-3',
+          dropZoneClass(over),
         )}
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -43,13 +51,10 @@ export function IndependentScriptUpload({ onFile }: { onFile: (f: File) => void 
             <p className="text-base font-medium text-ink">{pg('uploadHeading')}</p>
             <p className="mt-0.5 text-xs leading-relaxed text-ink-3">{pg('uploadNote')}</p>
           </div>
-          <button
-            onClick={() => inputRef.current?.click()}
-            className="flex h-7 shrink-0 items-center gap-1.5 rounded-sm border border-border bg-surface px-2.5 text-xs text-ink-2 transition-colors hover:border-ink-faint hover:text-ink"
-          >
+          <Button variant="secondary" onClick={() => inputRef.current?.click()}>
             <Upload size={ICON_SIZE.sm} aria-hidden />
             {pg('uploadButton')}
-          </button>
+          </Button>
         </div>
       </div>
       <input

@@ -40,7 +40,7 @@ function place(objs: CanvasObject[], label: UiMessage, name: string): void {
   useSelectionStore.getState().set(objs.map((o) => o.id))
   useUiStore
     .getState()
-    .setStatus(msg('status.inserted', { name, undo: modKey('Z') }, 'workspace'))
+    .setStatus(msg('status.inserted', { name, undo: modKey('Z') }, 'workspace'), 'done')
 }
 
 const baseArrow = (x: number, y: number, w: number, h: number): ArrowObject => ({

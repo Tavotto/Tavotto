@@ -158,11 +158,12 @@ test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能�
   await strip.evaluate((el) => (el.scrollLeft = 0))
   await strip.getByRole('tab').first().click()
   await expect(strip.getByRole('tab').first()).toHaveAttribute('aria-selected', 'true')
-  const lastName = (await strip.getByRole('tab').last().getAttribute('title'))!
+  // 菜单项认 `data-all-canvases-item=<画布 id>`（2026-10-07 起打开着的那组是 radio 组，role 是 menuitemradio）
+  const lastId = (await strip.locator('[data-canvas-tab]').last().getAttribute('data-canvas-tab'))!
   const before = await activeTabInView(strip)
   expect(before.scrollLeft, JSON.stringify(before)).toBe(0)
   await page.locator('[data-all-canvases]').click()
-  await page.getByRole('menuitem', { name: lastName, exact: true }).click()
+  await page.locator(`[data-all-canvases-item="${lastId}"]`).click()
   await expect(strip.getByRole('tab').last()).toHaveAttribute('aria-selected', 'true')
   await expect.poll(async () => JSON.stringify(await activeTabInView(strip))).toContain('"inView":true')
 })
@@ -210,10 +211,10 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
   await strip.evaluate((el) => (el.scrollLeft = 0))
   await tabs.first().click()
   await expect(tabs.first()).toHaveAttribute('aria-selected', 'true')
-  const lastName = (await tabs.last().getAttribute('title'))!
+  const lastId = (await strip.locator('[data-canvas-tab]').last().getAttribute('data-canvas-tab'))!
   expect((await activeTabInView(strip)).scrollLeft).toBe(0)
   await menu.click()
-  await page.getByRole('menuitem', { name: lastName, exact: true }).click()
+  await page.locator(`[data-all-canvases-item="${lastId}"]`).click()
   await expect(tabs.last()).toHaveAttribute('aria-selected', 'true')
   await expect.poll(async () => JSON.stringify(await activeTabInView(strip))).toContain('"inView":true')
 

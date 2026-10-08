@@ -112,7 +112,7 @@ async function writeOnce(ctx: SaveContext): Promise<boolean> {
       // 写的途中又改过：项目里这份已经落后了，圆点不能灭
       setProjectFile({ ...now, name, file, revision: res.revision, dirty: edited() }, ctx.documentId)
     }
-    ui.setStatus(msg('save.doneProject', { file }, 'workspace'))
+    ui.setStatus(msg('save.doneProject', { file }, 'workspace'), 'done')
     return true
   } catch (e) {
     const revision =

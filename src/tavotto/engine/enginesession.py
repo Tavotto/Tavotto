@@ -95,6 +95,7 @@ def resolve(
     execution_profile: str = PROFILE_SAFE,
     registry=None,
     artifact_source=None,
+    run=None,
 ):
     """按 profile 给出一个 **Worker-like** 的东西。
 
@@ -119,6 +120,9 @@ def resolve(
     # safe 侧：**即使**这个 (script, stem) 上正好挂着一条 native route 也不切
     # 过去。profile 是面板的属性，不是"现在哪条路通"。
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
+    if run is not None:
+        # T03：产物绑定的运行配置（`execspec.RunSelection`）；没有 = 旧调用形状，一个字节不变
+        context["run"] = run
     return pool.get(script, str(project_root), entry, **context)
 
 

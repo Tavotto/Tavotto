@@ -136,14 +136,11 @@ const toggleByText = (text: string) =>
     | undefined
 
 describe('对象页的版式（2026-09-15 全面打磨）', () => {
-  it('一个表单一种行语法：这一页所有标签列同宽（L1）', () => {
-    // 此前一页两种：缩放 / 取景那几行 44，对齐 / 层级 60——控件起点差 16px
-    const widths = new Set(
-      all('span[style*="width"]')
-        .map((el) => (el as HTMLElement).style.width)
-        .filter(Boolean),
-    )
-    expect(widths).toEqual(new Set(['88px']))
+  it('一个表单一种行语法：这一页所有行都是同一张行网格（L1；2026-10-07 行网格）', () => {
+    // 此前一页两种：缩放 / 取景那几行 44，对齐 / 层级 60——控件起点差 16px。现在没有任何定宽标签，
+    // 所有 Row 都是 `data-row-grid`（标签列宽由 --insp-label 一处给）
+    expect(all('span[style*="width"]')).toHaveLength(0)
+    expect(all('[data-row-grid]').length).toBeGreaterThan(0)
   })
 
   it('低频项统一是摘要行（名字 + 当前值 + ›）：同一个形状，名字是字重 500 的一行（2026-10-01）', () => {
@@ -187,7 +184,7 @@ describe('对象页的版式（2026-09-15 全面打磨）', () => {
     // 只读值不套容器：这一行上没有填充底
     let node: Element | null = value
     for (let i = 0; i < 3 && node; i++) {
-      expect(node.className).not.toMatch(/bg-surface-2|bg-danger-subtle/)
+      expect(node.className).not.toMatch(/bg-surface-2|bg-danger-surface/)
       node = node.parentElement
     }
   })

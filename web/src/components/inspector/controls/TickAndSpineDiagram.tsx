@@ -225,7 +225,7 @@ const haloRect = (
 
 /** 每个开关的外壳：悬停 / 聚焦整体变深（ink），路径都用 currentColor */
 const SWITCH_CLS =
-  'group cursor-pointer outline-none transition-colors hover:text-ink focus-visible:text-ink'
+  'group outline-none transition-colors hover:text-ink focus-visible:text-ink'
 /** 开关里的线：不吃指针（命中只认 hit 矩形）；悬停 / 聚焦时不管开关全亮 */
 const MARK_CLS = 'pointer-events-none group-hover:opacity-100 group-focus-visible:opacity-100'
 

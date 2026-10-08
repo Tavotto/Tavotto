@@ -45,6 +45,7 @@ export function PercentField({
 }) {
   return (
     <NumberField
+      half
       value={mixed ? 0 : toPercent(value)}
       mixed={mixed}
       min={Math.round(min * 100)}

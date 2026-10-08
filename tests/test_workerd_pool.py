@@ -597,3 +597,43 @@ def test_recorded_stem_hash_survives_a_transparent_session_reopen():
     assert pool.stem_patch_hash(w, "Fig2_correlation") == ""
     W.built = True
     assert pool.stem_patch_hash(w, "Fig2_correlation") == patchspec.patch_hash([])
+
+
+def test_explicit_invalidation_fences_acquisition_until_workerd_force_close(monkeypatch, tmp_path):
+    worker, client = _worker(monkeypatch, tmp_path, [{"ok": True, "session_id": "old"}])
+    key = pool._worker_key(str(tmp_path), "fig.py")
+    monkeypatch.setattr(pool, "_workers", {key: worker})
+    closed = []
+
+    def close(op, **kw):
+        assert op == "close_session" and kw["session_id"] == "old"
+        assert kw["payload"] == {"force": True}
+        acquired = pool._lock.acquire(blocking=False)
+        if acquired:
+            pool._lock.release()
+        assert not acquired, "replacement acquisition must wait for supervisor retirement"
+        closed.append(op)
+        return {"ok": True, "closed": True}
+
+    monkeypatch.setattr(client, "call", close)
+    pool.invalidate("fig.py", str(tmp_path), force=True)
+    assert closed == ["close_session"]
+    assert key not in pool._workers
+    assert not worker.alive()
+
+
+def test_explicit_invalidation_refuses_an_unconfirmed_supervisor_close(monkeypatch, tmp_path):
+    worker, _client = _worker(
+        monkeypatch,
+        tmp_path,
+        [
+            {"ok": True, "session_id": "old"},
+            workerd_client.WorkerdError("timeout", code="worker_timeout"),
+        ],
+    )
+    key = pool._worker_key(str(tmp_path), "fig.py")
+    monkeypatch.setattr(pool, "_workers", {key: worker})
+    with pytest.raises(pool.WorkerError) as caught:
+        pool.invalidate("fig.py", str(tmp_path), force=True)
+    assert caught.value.code == "session_dead"
+    assert pool._workers[key] is worker  # Retry must still be able to retire the old session.

@@ -26,22 +26,26 @@ autosave / 版本历史目录（Prompt 02–03 的文档合同）。这个模块
 from __future__ import annotations
 
 import os
+import stat
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import atomicio, discover, pool, registry
+from . import atomicio, discover, pool, registry, scanbudget
 
 
 def _target_parser(root) -> str | None:
-    """静态 merge 的目标解析器（U03 / FO12）：这个项目此刻决定用的解释器——宿主 AST 不认识的
-    合法语法交给它再解析一遍。只读决策、不发现、不体检；决策不成立（显式选择失效 / 没有
-    解释器）就没有目标解析器，静态扫描照常只用宿主。"""
-    try:
-        return pool.resolve_worker_python(str(root), discover=False)[0]
-    except pool.WorkerError:
-        return None
+    """静态 merge 的目标解析器（U03 / FO12）：这个项目此刻定下来的解释器——宿主 AST 不认识的
+    合法语法交给它再解析一遍。
+
+    **只读 `pool.peek_worker_python`，不复检**（T02）：原先走 `resolve_worker_python(discover=False)`，
+    项目记住过解释器时它每个进程每条解释器会 `import matplotlib` 一次——也就是每次打开 / 刷新
+    都可能因此起项目的解释器（T00 F6 实测）。现在读出路径就算数；只有宿主 `ast.parse` 真的判了
+    语法错误，`discover.inspect_script` 才会用它做一次**静态**再解析（`-I -B`，不 import 用户模块，
+    FO12），那是既有的、已登记的唯一例外；导入即扫描（`projscan`）从不传目标解析器。"""
+    found = pool.peek_worker_python(root)
+    return found[0] if found else None
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +193,9 @@ def _reraise(exc: OSError) -> None:
     raise exc
 
 
-def iter_assets(root: Path, *, strict: bool = False) -> list[tuple[Path, str]]:
+def iter_assets(
+    root: Path, *, strict: bool = False, budget: scanbudget.Budget | None = None
+) -> list[tuple[Path, str]]:
     """项目里的素材文件与它们的 kind —— `/api/panels` 与刷新共用这一份判据。
 
     * 隐藏目录与 `EXCLUDE_DIRS` **当场剪枝，不下探**：图库里常有 .venv、.git、
@@ -199,22 +205,113 @@ def iter_assets(root: Path, *, strict: bool = False) -> list[tuple[Path, str]]:
     `strict=True` 时中途读不动就抛（`_reraise`），**不返回半张表**。
     `/api/panels` 与刷新照旧宽容：一个读不动的子目录不该让素材面板整个空掉；
     watcher 则必须严格——半张表与「用户删了这些文件」在 diff 里没有区别。
+
+    `budget`（T02 导入即扫描）：给了就**有界且留痕**——目录项数 / 素材数 / 层级 / 时间 / 取消，读不动的
+    目录与没跟进的符号链接目录进账本（`strict` 与 `budget` 同时给时读不动仍然抛，账本只管宽容路径）。
+    判据（哪些算素材、怎么剪枝）与不带预算时是同一份。
     """
     root = Path(root)
     files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, onerror=_reraise if strict else None):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
-        files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
+    uncertain_pdf_stems: set[tuple[Path, str]] = set()
+
+    def on_error(exc: OSError, directory: Path | None = None) -> None:
+        if strict:
+            raise exc
+        if budget is not None:
+            where = getattr(exc, "filename", None) or directory
+            try:
+                rel = Path(where).relative_to(root).as_posix() if where else "."
+            except (ValueError, TypeError):
+                rel = "."
+            budget.note(scanbudget.ISSUE_UNREADABLE_DIR, path=rel or ".")
+
+    if budget is None:
+        for dirpath, dirnames, filenames in os.walk(root, onerror=on_error if strict else None):
+            dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS and not d.startswith(".")]
+            files += [Path(dirpath) / fn for fn in filenames if not fn.startswith(".")]
+    else:
+        # os.walk buffers each whole directory before yielding it. Charge scandir
+        # entries as they arrive, including entries we prune, so a huge directory
+        # cannot exhaust memory or defer cancellation before the budget is checked.
+        pending = [root]
+        while pending and budget.stop_reason() is None:
+            here = pending.pop()
+            subdirs: list[Path] = []
+            directory_files: list[Path] = []
+            try:
+                if here != root and scanbudget.is_redirect(here.lstat()):
+                    budget.note(
+                        scanbudget.ISSUE_SYMLINK_DIR, path=here.relative_to(root).as_posix()
+                    )
+                    continue
+                with os.scandir(here) as entries:
+                    for entry in entries:
+                        if not budget.charge_entry():
+                            break
+                        if entry.name.startswith("."):
+                            continue
+                        path = here / entry.name
+                        rel = path.relative_to(root)
+                        try:
+                            metadata = entry.stat(follow_symlinks=False)
+                        except FileNotFoundError:
+                            if strict:
+                                raise
+                            budget.note(
+                                scanbudget.ISSUE_UNREADABLE_FILE, scope="entry", path=rel.as_posix()
+                            )
+                            # 单项消失不抹掉其它已发现的素材/子目录；但未知 PDF
+                            # 仍遮住同名位图，不能把不完整观测误当成「没有 PDF」。
+                            if path.suffix.lower() in PDF_EXT:
+                                uncertain_pdf_stems.add((path.parent, path.stem))
+                            continue
+                        if scanbudget.is_redirect(metadata):
+                            budget.note(
+                                scanbudget.ISSUE_SYMLINK_DIR, scope="entry", path=rel.as_posix()
+                            )
+                            continue
+                        if not stat.S_ISDIR(metadata.st_mode):
+                            directory_files.append(path)
+                            continue
+                        if entry.name in EXCLUDE_DIRS:
+                            continue
+                        if len(rel.parts) > budget.limits.max_asset_depth:
+                            budget.note(
+                                scanbudget.ISSUE_DEPTH,
+                                severity=scanbudget.SEVERITY_NOTE,
+                                path=rel.as_posix(),
+                            )
+                        else:
+                            subdirs.append(path)
+            except OSError as exc:
+                on_error(exc, here)
+                continue
+            if budget.stopped is not None:
+                break
+            # A raster from an incomplete directory may have an unseen PDF twin.
+            # Keep the old all-or-nothing directory boundary for asset precedence.
+            files.extend(directory_files)
+            pending.extend(reversed(subdirs))
     files.sort()
-    pdf_stems = {(p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT}
+    pdf_stems = uncertain_pdf_stems | {
+        (p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT
+    }
 
     out: list[tuple[Path, str]] = []
     for p in files:
         ext = p.suffix.lower()
         if ext in PDF_EXT:
-            out.append((p, "pdf"))
+            kind = "pdf"
         elif ext in IMG_EXT and (p.parent, p.stem) not in pdf_stems:
-            out.append((p, "raster"))
+            kind = "raster"
+        else:
+            continue
+        if budget is not None:
+            if len(out) >= budget.limits.max_assets:
+                budget.note(scanbudget.ISSUE_ASSETS, scope="walk")
+                break
+            budget.assets = len(out) + 1
+        out.append((p, kind))
     return out
 
 

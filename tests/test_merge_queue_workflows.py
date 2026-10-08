@@ -1665,7 +1665,7 @@ class TestPlaywrightShards:
 
     @pytest.mark.parametrize(
         "job_id, step_minutes, job_minutes",
-        [("windows-exe-smoke", 30, 60), ("posix-e2e", 35, 45)],
+        [("windows-exe-smoke", 45, 60), ("posix-e2e", 35, 45)],
     )
     def test_the_playwright_step_has_a_step_level_timeout(self, job_id, step_minutes, job_minutes):
         """主语是 **step** 的 `timeout-minutes`（缩进 8），不是 job 的（缩进 4）——job 级的不动。"""

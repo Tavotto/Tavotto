@@ -7,6 +7,8 @@ import { emitActivity } from '@/lib/activity'
 import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
 import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/lib/problemList'
+import { drillKey } from '@/lib/drillKey'
+import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
 export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -29,6 +31,12 @@ export interface LayoutConflict {
  * 参与「一次只显示一个主对话框」的三个主对话框（审计 T35）。
  * 导出 → 设置 → 论文样式是一条前进 / 返回的小流程，不是三层叠着的浮层。
  */
+/** 问题面板此刻指着的那个对象（`issueHover`）；对象身份即主人，见 `releaseIssueHover` */
+export interface IssueHover {
+  objectId: string
+  gid: string | null
+}
+
 export type MainDialog = 'export' | 'settings' | 'styles'
 
 /**
@@ -48,7 +56,9 @@ const pushDialog = (stack: readonly MainDialog[], id: MainDialog): MainDialog[] 
 const popDialog = (stack: readonly MainDialog[], id: MainDialog): MainDialog[] =>
   stack.filter((d) => d !== id)
 
-const LS_KEY = 'tavotto.ui'
+/** 本机界面偏好的存储键。`index.html` 里那段开机脚本也读它（先挂 `data-theme`），`themeBoot.test` 对拍两边 */
+export const UI_PREFS_KEY = 'tavotto.ui'
+const LS_KEY = UI_PREFS_KEY
 
 export const LEFT_MIN = 280
 export const LEFT_MAX = 360
@@ -118,6 +128,11 @@ interface Persisted {
   rightTab: RightTab
   showRulers: boolean
   showGrid: boolean
+  /**
+   * 外观（设置 › 通用 › 外观）：跟随系统 / 浅色 / 深色（2026-10-07 暗色主题，`lib/theme.ts`）。
+   * 本机偏好，不进文档；「界面看起来不对？」那颗重置**不**动它——它是用户亲口选的外观，不是排布。
+   */
+  theme: ThemePref
 }
 
 export const PREFS_VERSION = 2
@@ -144,6 +159,7 @@ const DEFAULTS: Persisted = {
   rightTab: 'properties',
   showRulers: true,
   showGrid: true,
+  theme: 'system',
 }
 
 /**
@@ -192,6 +208,8 @@ function readPersisted(): Persisted {
   // 界面拿到一个画不出来的宽度
   state = {
     ...state,
+    // 手改过 / 未来版本写进来的未知外观值当「跟随系统」
+    theme: isThemePref(state.theme) ? state.theme : DEFAULTS.theme,
     rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, state.rightWidth)),
     leftWidth: Math.min(LEFT_MAX, Math.max(LEFT_MIN, state.leftWidth)),
   }
@@ -212,6 +230,17 @@ function readPersisted(): Persisted {
  * 文案全部是**描述符**而不是翻译好的字符串：确认框可能挂着等用户很久，
  * 中途切了语言得跟着换。用户自己的内容（文件名、画布名）走 values 插值。
  */
+/**
+ * toast 的语气，决定图标（2026-10-07 审计 P0）：此前所有非错误状态一律打 ✓，「正在构建…」
+ * 也打勾，读起来像已经做完了。
+ *   - `info`（缺省）：中性的一句话（提示、没有可撤销的操作、已取消）——Info 图标；
+ *   - `progress`：事情还在进行（正在构建 / 正在修复）——转圈；
+ *   - `done`：报告一件**做成了**的事（已保存 / 已导出 / 渲染完成）——✓；
+ *   - `error`：失败，常驻到用户关掉。
+ * 只有 `error` 改变行为（不自动消失、走 assertive 播报）；其余三档只换图标。
+ */
+export type StatusTone = 'info' | 'progress' | 'done' | 'error'
+
 export interface ConfirmRequest {
   title: UiMessage
   body: UiMessage
@@ -234,7 +263,7 @@ export interface CropBaseline {
 interface UiState extends Persisted {
   /** 当前 toast 的描述符；null = 没有 toast。切语言时 toast 跟着换 */
   status: UiMessage | null
-  statusTone: 'info' | 'error'
+  statusTone: StatusTone
   /**
    * 这条 toast 是不是**被动通知**（后台渲染完成 / 正在构建）。被动通知不许顶掉一条
    * 还挂着的非被动 toast：「已修复 8 项，可撤销」是用户点完按钮要读的那句，而修复
@@ -272,6 +301,20 @@ interface UiState extends Persisted {
    * 静静地显示同样长的时间）。
    */
   issueHighlight: { objectId: string | null; gid: string | null; token: number } | null
+  /**
+   * 问题面板里**指着**哪一条（2026-10-07 设计审计 §9.4）：画布上给那个对象画一道悬停轮廓
+   * （`canvas/IssueOverlay`），与画布自己的 hover 预示同一种画法。只是「我在看它」，不选中、
+   * 不定位、不进文档；指针离开 / 焦点离开 / 那一行卸载 / 面板卸载就清。
+   * **对象身份就是主人**：每次指上都是一个新对象，行撤销时用 `releaseIssueHover(它写下的那个)`
+   * 比对后再清——行被修好 / 筛掉 / 换文档卸载时不触发 pointerleave / blur，靠这个撤；
+   * 已经被别的行顶掉的就不动（Codex #832）。
+   */
+  issueHover: IssueHover | null
+  /**
+   * 画布上的问题标记（每张有问题的图右上角一枚等级记号，点它 = `openProblemAt`）。
+   * 默认关：问题面板「⋯」里打开。会话状态，同 `problemFilter`。
+   */
+  problemPins: boolean
   /**
    * 问题面板的等级筛选（null = 不筛）。**UI 会话状态**：不进文档、不进
    * 撤销、不跨会话记——它是"我现在想看哪几类"，不是用户的长期偏好。
@@ -334,6 +377,12 @@ interface UiState extends Persisted {
    */
   registryOpen: boolean
   /**
+   * 「项目检查」条的详情是否展开（T02，导入即扫描）。**只是呈现**：业务事实在 `projectScanStore`
+   * 里读后端的扫描快照；关掉 / 收起它不取消扫描（取消扫描是 `projectScanStore.cancel`，另一个动作）。
+   * 这是它**唯一**的开关；不进持久化（每次打开项目从收起开始）。
+   */
+  scanPanelOpen: boolean
+  /**
    * 「渲染环境」对话框：`EngineEnvironmentCard` 的独立出口。脚本区「可能需要原环境」
    * 那一组的「选择渲染环境」直接开它，不把用户扔进设置页去找那张卡（卡在设置里
    * 住在「诊断」页、环境正常时还折叠在技术详情里）。这是它**唯一**的开关。
@@ -377,10 +426,18 @@ interface UiState extends Persisted {
   autoHideProperties: () => void
   setCanvasPref: (patch: Partial<Persisted>) => void
   setShowRulers: (v: boolean) => void
+  /** 设置 › 通用 › 外观：写偏好并当场把 `data-theme` 落到 `<html>` 上（`lib/theme.applyTheme`） */
+  setTheme: (theme: ThemePref) => void
   setShowGrid: (v: boolean) => void
+  /**
+   * 设置 › 通用「界面看起来不对？」：本机的界面偏好（侧栏开合 / 宽度 / 固定、标尺网格、吸附、
+   * 命令面板最近项……`Persisted` 那一整份，外观 `theme` 除外）**当场**回到默认并写回本机——此前只删掉存储里的那一份，
+   * 要用户自己刷新才生效，而在刷新之前的任何一次 persist 又会把旧值写回去（2026-10-07 设计审计 §9.1）。
+   */
+  resetLayoutPrefs: () => void
   setStatus: (
     msg: UiMessage | null,
-    tone?: 'info' | 'error',
+    tone?: StatusTone,
     opts?: { passive?: boolean; owner?: string },
   ) => void
   /**
@@ -390,6 +447,10 @@ interface UiState extends Persisted {
   clearStatusOwnedBy: (owner: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
+  setIssueHover: (v: IssueHover | null) => void
+  /** 比对后再清：此刻的 `issueHover` 还是 `v` 这个对象（同一身份）才撤，别的行写下的不动 */
+  releaseIssueHover: (v: IssueHover) => void
+  setProblemPins: (v: boolean) => void
   setProblemFilter: (v: Severity[] | null) => void
   setProblemScope: (v: ProblemScope | null) => void
   /** 命令面板跑完一条命令就记一笔（去重、最近在前、封顶） */
@@ -397,7 +458,7 @@ interface UiState extends Persisted {
   /** 落游标要说明现场；现场换了，旧现场里点进的卡片一并作废 */
   setProblemCursor: { (v: null): void; (v: ProblemCursor, context: string): void }
   setProblemView: (v: ProblemView) => void
-  /** 点进卡片要说明现场；现场换了，旧现场里的游标一并作废。null = 回总览（连游标） */
+  /** 点进卡片要说明现场；现场换了、或同一现场换到另一支，旧游标一并作废。null = 回总览（连游标） */
   setProblemDrill: { (v: null): void; (v: ProblemDrill, context: string): void }
   /** 关掉设置、打开左栏「样式」面板（设置 › 样式页「用于当前画布」绑完之后去看结果） */
   openStylePanel: () => void
@@ -421,6 +482,7 @@ interface UiState extends Persisted {
   /** `presetId`：打开时预选哪一条已存样式（设置页「应用到当前图」带过来的） */
   setStylesOpen: (v: boolean, opts?: { presetId?: string | null }) => void
   setRegistryOpen: (v: boolean) => void
+  setScanPanelOpen: (v: boolean) => void
   setEngineEnvOpen: (v: boolean) => void
   setShortcutHelpOpen: (v: boolean) => void
   /**
@@ -441,7 +503,7 @@ function persist(state: UiState) {
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
     'leftWidth', 'rightWidth', 'leftPinned', 'rightPinned', 'gridSize',
     'snapEnabled', 'snapToGrid', 'snapToGuides', 'snapToObjects',
-    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'recentCommands',
+    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'recentCommands', 'theme',
   ]
   try {
     localStorage.setItem(
@@ -493,6 +555,8 @@ export const useUiStore = create<UiState>((set, get) => ({
   elementPanelId: null,
   selectedGids: [],
   issueHighlight: null,
+  issueHover: null,
+  problemPins: false,
   problemFilter: null,
   problemScope: null,
   problemCursor: null,
@@ -508,6 +572,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   stylesPresetId: null,
   dialogStack: [],
   registryOpen: false,
+  scanPanelOpen: false,
   engineEnvOpen: false,
   shortcutHelpOpen: false,
   settingsOpen: false,
@@ -629,6 +694,26 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ showRulers })
     persist(get())
   },
+  setTheme: (theme) => {
+    set({ theme })
+    applyTheme(theme)
+    persist(get())
+  },
+  resetLayoutPrefs: () => {
+    prefOpen = { left: DEFAULTS.leftOpen, right: DEFAULTS.rightOpen }
+    const s = get()
+    // 两侧开合按此刻的窗口裁一次（与开机读偏好同一条规矩：偏好是默认值，排布跟着窗口走）
+    const layout = s.layout
+    const open =
+      layout === 'narrow'
+        ? { leftOpen: DEFAULTS.leftOpen, rightOpen: false }
+        : layout === 'medium' && DEFAULTS.leftOpen && DEFAULTS.rightOpen
+          ? { leftOpen: false, rightOpen: true }
+          : { leftOpen: DEFAULTS.leftOpen, rightOpen: DEFAULTS.rightOpen }
+    // 外观不算排布：保留用户选的那一套（否则「重置布局」顺手把深色切回跟随系统）
+    set({ ...DEFAULTS, ...open, theme: s.theme })
+    persist(get())
+  },
   setShowGrid: (showGrid) => {
     set({ showGrid })
     persist(get())
@@ -658,6 +743,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null })
   },
 
+  // 不按值短路：值相同的新对象也要换上，否则后来者拿不到主人身份，`releaseIssueHover` 会认错人
+  setIssueHover: (v) => set((s) => (v === s.issueHover ? s : { issueHover: v })),
+  releaseIssueHover: (v) => set((s) => (s.issueHover === v ? { issueHover: null } : s)),
+  setProblemPins: (problemPins) => set({ problemPins }),
   setIssueHighlight: (v) =>
     set((s) => ({
       issueHighlight: v
@@ -685,13 +774,18 @@ export const useUiStore = create<UiState>((set, get) => ({
           : { problemCursor, problemContext: context ?? null, problemDrill: null },
     ),
   setProblemView: (problemView) => set({ problemView, problemDrill: null, problemCursor: null }),
+  // 游标只在点开的那一支里走（细则：「那一支强制开着、游标在它里面走」）：同一现场里换到**另一支**，
+  // 旧游标就没有主语了——留着它，页脚会拿 A 的规则 / 下标在 B 里说「已处理」、F8 跳过 B 的头几条（Codex #832）。
+  // 同一支再写一次（定位 / F8 在这一支里走）照旧留着；跨支的 F8 / 直达 / 定位都是先写支、再落游标
   setProblemDrill: (problemDrill: ProblemDrill | null, context?: string) =>
     set((s) =>
       !problemDrill
         ? { problemDrill: null, problemCursor: null }
-        : context === s.problemContext
-          ? { problemDrill }
-          : { problemDrill, problemContext: context ?? null, problemCursor: null },
+        : context !== s.problemContext
+          ? { problemDrill, problemContext: context ?? null, problemCursor: null }
+          : s.problemDrill && drillKey(s.problemDrill) === drillKey(problemDrill)
+            ? { problemDrill }
+            : { problemDrill, problemCursor: null },
     ),
   setFixing: (fixing) => set({ fixing }),
   setEditingText: (editingTextId) => set({ editingTextId }),
@@ -749,6 +843,7 @@ export const useUiStore = create<UiState>((set, get) => ({
         : popDialog(s.dialogStack, 'styles'),
     })),
   setRegistryOpen: (registryOpen) => set({ registryOpen }),
+  setScanPanelOpen: (scanPanelOpen) => set({ scanPanelOpen }),
   setEngineEnvOpen: (engineEnvOpen) => set({ engineEnvOpen }),
   setShortcutHelpOpen: (shortcutHelpOpen) => set({ shortcutHelpOpen }),
   setSettingsOpen: (settingsOpen, settingsSection = undefined) =>

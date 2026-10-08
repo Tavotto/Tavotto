@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, ContextManager
 
-from . import atomicio, exportreq, trace as tracemod
+from . import atomicio, exportreq, taskdiag, trace as tracemod
 from .exportreq import ExportRequest, ExportRequestError
 
 #: 作业状态。`partial` 是独立一档 —— 把它并进 `done` 或 `failed` 都会说谎。
@@ -203,6 +203,11 @@ class ExportJob:
     #: 阶段轨迹（U09，ADR 0071）：prepare → source / compile / compose / raster（生产者按自己的步子记）→
     #: inspect → publish → report；坏在哪一步就停在哪一步。有界、不记内容，随 `to_payload()` 走。
     trace: tracemod.Trace = field(default_factory=tracemod.Trace, repr=False)
+    #: 发起这次导出的项目（T04）。任务绑定诊断与 `/api/export/state` 按它认领：别的项目拿 job_id 读不到。
+    #: 私有，不进 `to_payload()`。`None` = 没有项目上下文的调用方（测试 / 内部探针）。
+    project_id: str | None = field(default=None, repr=False)
+    #: 终局快照只写一次（`_emit` 在每个终局都会走到，这里去重）。
+    _diag_recorded: bool = field(default=False, repr=False)
 
     # -- 取消 ---------------------------------------------------------------
     @property
@@ -341,6 +346,7 @@ def prepare(
     export_dir: Path,
     *,
     allowed_formats: tuple[str, ...] = exportreq.FORMATS,
+    project_id: str | None = None,
 ) -> ExportJob:
     """规范化 + 登记。**不碰磁盘、不出文件**。
 
@@ -354,7 +360,12 @@ def prepare(
     request = exportreq.normalize(spec, allowed_formats=allowed_formats)
     with _LOCK:
         _sweep()
-        job = ExportJob(id=uuid.uuid4().hex[:16], request=request, export_dir=Path(export_dir))
+        job = ExportJob(
+            id=uuid.uuid4().hex[:16],
+            request=request,
+            export_dir=Path(export_dir),
+            project_id=project_id,
+        )
         _JOBS[job.id] = job
     return job
 
@@ -856,12 +867,124 @@ def _fail(
 
 
 def _emit(job: ExportJob, publish: Callable[[dict], None] | None) -> None:
+    if job.status in _TERMINAL_STATUSES:
+        _record_terminal(job)
     if publish is None:
         return
     try:
         publish(job.to_payload())
     except Exception:  # noqa: BLE001 —— 推送失败不影响导出本身
         pass
+
+
+def _record_terminal(job: ExportJob) -> None:
+    """终局那一刻冻结一份诊断快照（T04）。每个终局路径都经 `_emit`，终局字段先于 `status` 已写完。
+    记录失败不许影响导出本身。"""
+    if job._diag_recorded or not job.project_id:
+        return
+    job._diag_recorded = True
+    try:
+        subject = {("doc", job.request.document_id)} if job.request.document_id else set()
+        if job.request.original and job.request.original.figure_id:
+            subject.add(("fig", job.request.original.figure_id))
+        taskdiag.STORE.record(
+            job.project_id,
+            taskdiag.KIND_EXPORT,
+            job.id,
+            diagnostic_projection(job),
+            outcome=job.status,
+            failed=job.status in (STATUS_FAILED, STATUS_PARTIAL),
+            subject=subject,
+        )
+    except Exception:  # noqa: BLE001 —— 诊断登记不是导出的一部分
+        pass
+
+
+def diagnostic_projection(job: ExportJob) -> dict:
+    """失败那一次的**白名单**投影（T04）。逐字段挑，不读 `to_payload()`：
+
+    不进来的：文件名、导出目录、`error.params` / `Output.error_params`（里面有异常文字）、警告文字、冲突的名字、
+    manifest 的文字与字体名、`figure_id` / `document_id`（只用来在登记表里私下连重试关系）。"""
+    req = job.request
+    outputs = []
+    for o in [*job.outputs, *([job.report] if job.report is not None else [])]:
+        outputs.append(
+            {
+                "format": taskdiag.closed(o.format, (*exportreq.ENGINE_FORMATS, REPORT_KEY)),
+                "status": taskdiag.closed(o.status, STATUSES),
+                "error_code": taskdiag.code(o.error_code),
+                "vector": taskdiag.flag(o.vector),
+                "replaced": taskdiag.flag(o.replaced),
+                "bytes": taskdiag.count(o.bytes),
+                "px": [taskdiag.count(o.width_px), taskdiag.count(o.height_px)]
+                if o.width_px and o.height_px
+                else None,
+                "mm": [taskdiag.number(o.width_mm), taskdiag.number(o.height_mm)]
+                if o.width_mm and o.height_mm
+                else None,
+                "inspection_verdict": taskdiag.code((o.manifest or {}).get("verdict"))
+                if isinstance(o.manifest, dict)
+                else None,
+            }
+        )
+    elapsed = (
+        round((job.finished_at - job.started_at) * 1000)
+        if job.started_at and job.finished_at
+        else None
+    )
+    return taskdiag.clean(
+        {
+            "snapshot_version": taskdiag.SNAPSHOT_VERSION,
+            "kind": taskdiag.KIND_EXPORT,
+            "attempt_id": taskdiag.ident(job.id),
+            "outcome": taskdiag.closed(job.status, STATUSES),
+            "target": {"category": taskdiag.closed(req.scope, exportreq.SCOPES)},
+            "request": {
+                "scope": taskdiag.closed(req.scope, exportreq.SCOPES),
+                "formats": [
+                    f
+                    for f in (taskdiag.closed(x, exportreq.ENGINE_FORMATS) for x in req.formats)
+                    if f
+                ],
+                "ppi": taskdiag.count(req.ppi),
+                "background": taskdiag.closed(req.background, exportreq.BACKGROUNDS),
+                "overwrite": taskdiag.closed(req.overwrite, exportreq.OVERWRITE_POLICIES),
+                "validation_policy": taskdiag.closed(
+                    req.validation_policy, exportreq.VALIDATION_POLICIES
+                ),
+                "include_report": taskdiag.flag(req.include_report),
+                "legacy_naming": taskdiag.flag(req.legacy_naming),
+                "acknowledged_count": len(req.acknowledged),
+                "inspection_mode": taskdiag.closed(
+                    req.inspection.mode, exportreq.INSPECTION_POLICIES
+                ),
+                "document_revision": taskdiag.digest(req.document_revision),
+            },
+            "stages": taskdiag.stages(job.trace.to_payload(), tracemod.PHASES),
+            "progress": {
+                "phase": taskdiag.ident(job.phase),
+                "step": taskdiag.count(job.step),
+                "total": taskdiag.count(job.total),
+            },
+            "outputs": outputs,
+            "warnings_count": len(job.warnings),
+            "conflicts_count": len(job.conflicts),
+            "error": (
+                {
+                    "code": taskdiag.code(job.error_code),
+                    "recoverable": taskdiag.flag(job.error_recoverable),
+                }
+                if job.error_code
+                else None
+            ),
+            "cancel_requested": job.cancelled,
+            "timing": {
+                "started_at": taskdiag.number(job.started_at or None),
+                "finished_at": taskdiag.number(job.finished_at or None),
+                "elapsed_ms": elapsed,
+            },
+        }
+    )
 
 
 def run_async(

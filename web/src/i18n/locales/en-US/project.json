@@ -35,7 +35,12 @@
     "listAria": "Figures produced by this script",
     "needsRun": "Run it first",
     "runtimeBadge": "Runtime figure",
-    "title": "Choose a figure — {{script}}"
+    "title": "Figures from {{script}}",
+    "addAll": "Add all ({{count}})",
+    "done": "Done",
+    "onCanvas": "On canvas",
+    "addedAll_one": "Added {{count}} figure",
+    "addedAll_other": "Added {{count}} figures"
   },
   "handoff": {
     "added": "Added {{name}}",
@@ -70,7 +75,6 @@
     "recentLabel": "Recent projects",
     "regionLabel": "Choose a project",
     "removeAllMissing": "Remove all",
-    "removeFromList": "Remove {{name}} from the list. Nothing on disk is deleted.",
     "removeFromListTitle": "Remove from the list — deletes nothing",
     "tagline": "A project is the folder that holds your plotting scripts. Choose one to start laying out.",
     "tutorial": {
@@ -98,6 +102,11 @@
     },
     "menuOpen": "Open",
     "more": "More",
+    "narrative": {
+      "script": "Open a script",
+      "scriptOnly": "<script/> and turn it into an editable paper figure.",
+      "withRecent": "Continue <recent/>, or <script/> to start a new layout."
+    },
     "newcomer": {
       "import": "Import my script",
       "title": "Where is your plotting script?",
@@ -114,15 +123,12 @@
       "dropOr": "or ",
       "dropRelease": "Release to import",
       "dropTitle": "Drag a Python script here",
-      "lead": "Turn your Python plotting scripts into editable paper figures.",
       "sample": "Try a sample script",
       "sampleHint": "{{product}} finds the figures the script makes and opens the layout view."
     }
   },
   "switcher": {
     "home": "Back to projects",
-    "newTabLabel": "Open in a new tab",
-    "newTabTip": "Open in a new tab",
     "trigger": "Current project {{name}} — click to switch"
   },
   "workspace": {

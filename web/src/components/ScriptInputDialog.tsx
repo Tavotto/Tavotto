@@ -5,6 +5,7 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
+import { Notice } from './ui/Notice'
 
 const si = (key: string, values?: Record<string, unknown>) =>
   translate(`scriptInput.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -20,11 +21,18 @@ const si = (key: string, values?: Record<string, unknown>) =>
  */
 export function ScriptInputDialog() {
   useTranslation('dialogs')
-  const head = useScriptInputStore((s) => s.queue[0] ?? null)
+  const current = useScriptInputStore((s) => s.queue[0] ?? null)
   const busy = useScriptInputStore((s) => s.busy)
   const error = useScriptInputStore((s) => s.error)
   const [value, setValue] = useState('')
   const outRef = useRef<HTMLPreElement>(null)
+  // 只有一个输入框的对话框：打开时焦点直接落在答案框上（`initialFocusRef`，2026-10-07 设计审计 §10.2——
+  // 此前 `autoFocus` 被 Dialog 的「焦点落容器」盖掉，用户得先点一下才能打字）
+  const answerRef = useRef<HTMLInputElement>(null)
+  // 常驻挂载：答完的那 90ms 里队列已空，正文按最后一问画（Dialog 的常驻写法）
+  const last = useRef(current)
+  if (current) last.current = current
+  const head = last.current
 
   // 换了一问就清空输入框：上一问的答案与这一问无关
   useEffect(() => setValue(''), [head?.id])
@@ -40,74 +48,82 @@ export function ScriptInputDialog() {
 
   return (
     <Dialog
-      open
+      open={!!current}
       onOpenChange={() => {}}
+      // 闸：Esc / 点外面都不算回答（出口只有提交 / 结束输入 / 停止脚本），所以不给 onEscape
       blockDismiss
       busy={busy}
       anchor="script-input"
       size="lg"
       title={si('title')}
       description={si('question', { index: head.index, script: head.script })}
-      footer={
-        <>
-          <Button variant="danger" size="md" disabled={busy} onClick={() => store.stop()}>
+      initialFocusRef={answerRef}
+      footer={{
+        // 停止脚本是破坏性的另一条路：start 槽、危险浅底胶囊
+        start: (
+          <Button variant="danger-tinted" size="lg" data-script-input-stop disabled={busy} onClick={() => store.stop()}>
             {si('stop')}
           </Button>
-          <span className="flex-1" />
+        ),
+        secondary: (
           <Button
             variant="secondary"
-            size="md"
+            size="lg"
+            data-script-input-eof
             disabled={busy}
             title={si('eofTip')}
             onClick={() => store.submit(null)}
           >
             {si('eof')}
           </Button>
+        ),
+        primary: (
           <Button
             variant="primary"
-            size="md"
+            size="lg"
             loading={busy}
             data-script-input-submit=""
             onClick={() => store.submit(value)}
           >
             {si('submit')}
           </Button>
-        </>
-      }
+        ),
+      }}
     >
       <form
-        className="flex flex-col gap-3 text-xs"
+        className="flex flex-col gap-3"
         onSubmit={(e) => {
           e.preventDefault()
           if (!busy) void store.submit(value)
         }}
       >
         {head.stdout_tail && (
-          <section className="flex flex-col gap-1">
-            <h3 className="type-meta">{si('outputLabel')}</h3>
+          <section className="flex flex-col gap-1.5">
+            <h3 className="type-section">{si('outputLabel')}</h3>
+            {/* 代码块的样子（与助手回答里的围栏代码同一副）：脚本刚打印的编号清单 */}
             <pre
               ref={outRef}
               data-script-input-output=""
-              className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 px-2 py-1.5 font-mono text-xs text-ink"
+              className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-sm leading-[1.5] text-ink"
             >
               {head.stdout_tail}
             </pre>
           </section>
         )}
-        <section className="flex flex-col gap-1">
-          <h3 className="type-meta">{si('promptLabel')}</h3>
+        <section className="flex flex-col gap-1.5">
+          <h3 className="type-section">{si('promptLabel')}</h3>
           {head.prompt ? (
-            <p data-script-input-prompt="" className="whitespace-pre-wrap break-words font-mono text-ink">
+            <p data-script-input-prompt="" className="whitespace-pre-wrap break-words font-mono text-sm text-ink">
               {head.prompt}
             </p>
           ) : (
             <p className="text-ink-3">{si('noPrompt')}</p>
           )}
         </section>
-        <label className="flex flex-col gap-1">
-          <span className="type-meta">{si('answerLabel')}</span>
+        <label className="flex flex-col gap-1.5">
+          <span className="type-section">{si('answerLabel')}</span>
           <TextInput
-            autoFocus
+            ref={answerRef}
             align="left"
             value={value}
             disabled={busy}
@@ -115,12 +131,8 @@ export function ScriptInputDialog() {
             onChange={(e) => setValue(e.target.value)}
           />
         </label>
-        <p className="text-ink-3">{secret ? si('getpassNote') : si('rememberNote')}</p>
-        {error && (
-          <p role="alert" className="text-danger">
-            {si('failed', { error })}
-          </p>
-        )}
+        <p className="text-sm text-ink-3">{secret ? si('getpassNote') : si('rememberNote')}</p>
+        {error && <Notice tone="danger">{si('failed', { error })}</Notice>}
       </form>
     </Dialog>
   )

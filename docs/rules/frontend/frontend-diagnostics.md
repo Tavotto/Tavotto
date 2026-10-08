@@ -40,3 +40,16 @@
 - 只观察不当真源、吞异常
 - 序列化遍历 schema 不遍历输入
 - 定长 240 纯内存、切项目清环
+
+## 「本次问题的诊断」入口（T04，`components/TaskDiagnostic.tsx`）
+
+失败提示处一键取回**那一次**尝试的快照（后端 `GET /api/diagnostics/task`，见 `docs/rules/backend/diagnostics.md`「任务绑定诊断」）：
+
+- **卡片一句话**：默认只露一个折叠标题（`Details`），主按钮仍是失败提示自己的「重试」；展开才是一句说明 + 一个下载按钮。
+  已经住在折叠区里的调用方（脚本行的「详情」）传 `folded={false}`，只出按钮与结果。
+- **项目取组件出现那一刻的**（`useRef(currentProjectId())`），不在点击时再取——失败提示可能比项目切换活得久。
+- **记录没有 / 过期如实说没有**（`data-task-diagnostic-gone`）；**绝不**退而求其次下载一份当前状态的诊断包冒充当时的状态。
+- 引用来源：导出 = `job.job_id`；脚本试运行 = `ProbeResult.diagnostic.ref`（存在 `ScriptRunState.diagnostic`，下一次运行清掉）；
+  准备 = 会话报告的 `provider.attempt_id`（T09 的面板直接挂）。
+- 文案在 `dialogs:taskDiagnostic.*`，看护 `components/taskDiagnostic.test.tsx`（两个语种 × 默认可见块数 / 主按钮数、项目绑定、
+  过期 / 不存在 / 服务端错误三种结局）、`store/scriptRunStore.test.ts`。

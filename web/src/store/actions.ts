@@ -71,17 +71,18 @@ import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveConte
 import { useInteractionStore } from './interactionStore'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
-import { askConfirm, useUiStore } from './uiStore'
+import { askConfirm, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
+import { fastEditPanelOf, useWorkspaceStore } from './workspaceStore'
 import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
   panelContentSize,
   panelRotation,
-  rotateVec,
   rotationSwaps,
 } from '@/types/document'
+import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
@@ -105,7 +106,8 @@ const doc = () => useDocumentStore.getState().doc
 const commit = (label: UiMessage, recipe: (d: FigureDocument) => void, opts?: CommitOptions) =>
   useDocumentStore.getState().commit(label, recipe, opts)
 const select = (ids: string[]) => useSelectionStore.getState().set(ids)
-const status = (message: UiMessage, tone?: 'info' | 'error') =>
+/** 语气必填（Codex #821 P1）：可选会让包装层把 undefined 透传下去，静默落回 info */
+const status = (message: UiMessage, tone: StatusTone) =>
   useUiStore.getState().setStatus(message, tone)
 
 export const findObject = (id: string): CanvasObject | undefined =>
@@ -182,6 +184,7 @@ export function addRuntimePanel(desc: CapturedFigureDescriptor, atX?: number, at
       captureSource: desc.capture_source,
       fingerprint: desc.source_fingerprint,
       sizeMm: [w, h],
+      ...(desc.run_config ? { runConfig: desc.run_config } : {}),
     },
     overrides: [],
     name: desc.stem,
@@ -270,7 +273,7 @@ export function addShape(shape: ShapeObject['shape'], partial: Partial<ShapeObje
 export function addSubLabels() {
   const panels = readingOrder(doc().objects.filter((o) => o.type === 'panel'))
   if (!panels.length) {
-    status(note('noPanels'))
+    status(note('noPanels'), 'info')
     return
   }
   const created: string[] = []
@@ -297,7 +300,7 @@ export function addSubLabels() {
     })
   })
   select(created)
-  status(note('subLabelsAdded', { count: panels.length }))
+  status(note('subLabelsAdded', { count: panels.length }), 'done')
 }
 
 /* ------------------------------- 编辑操作 --------------------------------- */
@@ -388,7 +391,11 @@ export function updateObjects(ids: string[], label: UiMessage, patch: (o: Canvas
 }
 
 export function deleteSelected() {
-  const ids = useSelectionStore.getState().ids
+  // 快速编辑里只删得到这一屏画着的那张图：选区里可能还挂着看不见的版面对象（进快编之前留下的、
+  // 图层面板点的），删掉它们 = 用户看不见的东西从版上消失（Codex #833）。删那张图本身照旧——
+  // 看得见、可撤销，对象没了快速编辑随之退出（`usePruneSelection` 的 `usable`）
+  const fe = fastEditPanelOf(useWorkspaceStore.getState())
+  const ids = useSelectionStore.getState().ids.filter((id) => fe === null || id === fe)
   if (!ids.length) return
   // 单选时把对象名（用户自己的内容，不翻译）插进去，多选才说数量——这是
   // **两句不同的话**，不是同一句的单复数：中文没有单数档（Intl.PluralRules
@@ -412,6 +419,10 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
+  // 快速编辑这一屏只画正在编辑的那张图：副本落在版面上、换掉选区，用户什么都看不见（Codex #833）。
+  // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里，判据只在这一处（与粘贴的
+  // `clipboard.consumePayload` 同一个 `fastEditPanelOf`）
+  if (fastEditPanelOf(useWorkspaceStore.getState())) return
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   // 克隆**必须**在 commit 的 recipe 外面做：recipe 里的 d 是 Immer 草稿，
@@ -483,7 +494,7 @@ export function alignSelected(mode: AlignMode) {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   if ((mode === 'hdist' || mode === 'vdist') && ids.length < 3) {
-    status(note('needThreeForDistribute'))
+    status(note('needThreeForDistribute'), 'info')
     return
   }
   const primaryId = ids.at(-1)!
@@ -503,8 +514,22 @@ export function revealObjects(ids: string[]) {
   if (bounds) useViewportStore.getState().revealRect(bounds)
 }
 
+/** 「全选」收进来的对象：看得见、没锁。判据只有这一份——`selectAll` 与画布菜单「全选」可不可用都读它 */
+export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
+
+/**
+ * 「全选」此刻收进来的 id：排版里是整版看得见、没锁的对象；**快速编辑里只有正在编辑的那张图**（它也得
+ * 过 `isSelectAllTarget`，否则什么都不选）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`
+ * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
+ */
+export function selectAllIds(objects: readonly CanvasObject[], fastEditPanel: string | null): string[] {
+  return objects
+    .filter((o) => isSelectAllTarget(o) && (fastEditPanel === null || o.id === fastEditPanel))
+    .map((o) => o.id)
+}
+
 export function selectAll() {
-  select(doc().objects.filter((o) => !o.hidden && !o.locked).map((o) => o.id))
+  select(selectAllIds(doc().objects, fastEditPanelOf(useWorkspaceStore.getState())))
 }
 
 /* ------------------------------- 文档切换 --------------------------------- */
@@ -570,7 +595,7 @@ export async function runManualSave(): Promise<void> {
   // 但按下那一刻的内容已经在盘上了（Codex #679）
   if (wrote) emitLayoutSaved('local', { moment: ctx.moment })
   if (state === 'saved' || state === 'clean') {
-    ui.setStatus(msg('save.doneLocal', undefined, 'workspace'))
+    ui.setStatus(msg('save.doneLocal', undefined, 'workspace'), 'done')
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
   } else if (state === 'save_error') {
@@ -600,7 +625,7 @@ export async function newBlankDocument(): Promise<void> {
   const next = emptyProject()
   if (!(await useDocumentStore.getState().switchDocument(next, newId('d'), confirmLoss))) return
   afterSwitch()
-  status(note('blankCreated'))
+  status(note('blankCreated'), 'done')
 }
 
 /**
@@ -617,7 +642,7 @@ export async function openLayoutDocument(
   if (projectFile) setProjectFile(projectFile)
   afterSwitch()
   const s = useDocumentStore.getState()
-  status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }))
+  status(note('documentLoaded', { name: s.projectMeta.name, count: s.canvases.length }), 'done')
   return true
 }
 
@@ -633,7 +658,7 @@ export async function openRecentDocument(id: string): Promise<void> {
   afterSwitch()
   // 未决的恢复副本跟着这份文档走：switchDocument 刚把待裁决事项清空了
   if (notice) useDocumentStore.setState({ docNotice: notice })
-  status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }))
+  status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }), 'done')
 }
 
 /* --------------------------------- 页面 ----------------------------------- */
@@ -916,7 +941,7 @@ export function disableTextEffect(panelId: string, gid: string, prop: string) {
  */
 export function hideElement(panelId: string, gid: string, label: string) {
   setOverride(panelId, gid, 'visible', false, true)
-  status(note('elementHidden', { label }))
+  status(note('elementHidden', { label }), 'done')
 }
 
 /** 多选一起隐藏：一次撤销、一次渲染（键盘 Delete 走这条） */
@@ -931,7 +956,7 @@ export function hideElements(panelId: string, targets: { gid: string; label: str
     hist('hideElements', { count: targets.length }),
     targets.map((x) => ({ gid: x.gid, prop: 'visible', value: false })),
   )
-  status(note('elementsHidden', { count: targets.length }))
+  status(note('elementsHidden', { count: targets.length }), 'done')
 }
 
 /** 锁定/解锁图内元素：命中测试跳过锁定元素，元素树是唯一的解锁入口 */
@@ -950,7 +975,7 @@ export function toggleElementLocked(panelId: string, gid: string, label?: string
     if (ui.selectedGids.includes(gid)) {
       ui.setSelectedGid(null)
     }
-    status(note('elementLocked', { label: label ?? gid }))
+    status(note('elementLocked', { label: label ?? gid }), 'done')
   }
 }
 
@@ -1138,13 +1163,13 @@ export function resetOverrides(panelId: string) {
   })
   if (Object.hasOwn(panel, 'artifactValidation')) {
     useUiStore.getState().setElementPanel(null)
-    status(note('overridesCleared'))
+    status(note('overridesCleared'), 'done')
     return
   }
   // 清空之后的那个面板才是要渲染的变体（overrides 已经是空表）
   const cleared = findObject(panelId)
   if (cleared?.type === 'panel') requestRender(cleared, true)
-  status(note('overridesCleared'))
+  status(note('overridesCleared'), 'done')
 }
 
 /**
@@ -1251,7 +1276,7 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, fresh.artifactValidation)
   await settledRender(key)
   if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
-  status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'))
+  status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'), 'done')
   return invalidated ? 'rebuilt' : 'rerendered'
 }
 
@@ -1490,7 +1515,7 @@ export function enterElementEdit(
   if (sourceEntry) return admitPngEntry(panel, leftTab)
   const entered = finishElementEntry(panelId, leftTab)
   if (panel.fileKind === 'raster' && /\.png$/i.test(panel.fileId) && panel.overrides.length) {
-    status(engineErrorMsg(new ArtifactValidationError('not_untouched')))
+    status(engineErrorMsg(new ArtifactValidationError('not_untouched')), 'info')
   }
   return entered
 }
@@ -1530,9 +1555,9 @@ function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): bool
   }
   // 焦点救援的接手者：左栏留在哪一页，就交给那一页的轨道入口
   const rail = leftTab === 'keep' ? ui.leftTab : 'elements'
-  if (seeded) status(note('bakedSeeded', { count: seeded }))
+  if (seeded) status(note('bakedSeeded', { count: seeded }), 'info')
   // 只说「进了图内编辑」；此刻是快速编辑还是画布排版，订阅方自己问 workspace store
-  // （这里不 import 它：`store/workspace` 已经 import 本模块，别绕成环）
+  // （本模块只许 import 叶子 `store/workspaceStore`，不许 import `store/workspace`：那边已经 import 本模块，别绕成环）
   emitActivity({ kind: 'figure.element_edit_entered' })
   // **焦点救援**：调用方多半是一个自己会被卸载的控件（画布工具条上那个
   // 「编辑图内元素」按钮点完就没了）。焦点掉回 body 之后 WebKit 的 Tab 与
@@ -1622,7 +1647,7 @@ export function createLayoutGroup(kind: LayoutGroup['kind']) {
   const ids = useSelectionStore.getState().ids
   const objs = selectedObjects().filter((o) => !o.hidden)
   if (objs.length < 2) {
-    status(note('needTwoForLayoutGroup'))
+    status(note('needTwoForLayoutGroup'), 'info')
     return
   }
   const gid = newId('g')
@@ -1641,7 +1666,7 @@ export function createLayoutGroup(kind: LayoutGroup['kind']) {
     d.layoutGroups = [...(d.layoutGroups ?? []), group]
     applyReflowDraft(d, group)
   })
-  status(note('layoutGroupCreated', { kind: layoutKindLabel(kind), count: objs.length }))
+  status(note('layoutGroupCreated', { kind: layoutKindLabel(kind), count: objs.length }), 'done')
 }
 
 /** 在 immer draft 里就地重排（创建 / 参数修改 / 自动触发共用） */
@@ -1686,7 +1711,7 @@ export function dissolveLayoutGroup(id: string) {
     d.layoutGroups = (d.layoutGroups ?? []).filter((g) => g.id !== id)
     for (const o of d.objects) if (o.groupId === id) o.groupId = undefined
   })
-  status(note('layoutGroupDissolved'))
+  status(note('layoutGroupDissolved'), 'done')
 }
 
 export function toggleLayoutPinned(ids: string[]) {
@@ -1831,7 +1856,7 @@ export function startLayoutAutoReflow(): () => void {
       snapshot(useDocumentStore.getState().doc)
       if (moved) {
         play()
-        status(note('layoutAutoReflowed', { undo: modKey('Z') }))
+        status(note('layoutAutoReflowed', { undo: modKey('Z') }), 'info')
       }
     }, 120)
   })
@@ -1887,6 +1912,7 @@ export function warnBlockedGroups(blockedGroups: number, movedAny: boolean) {
     movedAny
       ? note('blockedGroupsSkipped', { count: blockedGroups })
       : note('blockedGroupsAll'),
+    'info',
   )
 }
 
@@ -1907,7 +1933,7 @@ export function expandGroups(ids: string[]): string[] {
 export function groupSelected() {
   const ids = useSelectionStore.getState().ids
   if (ids.length < 2) {
-    status(note('needTwoForGroup'))
+    status(note('needTwoForGroup'), 'info')
     return
   }
   // 离散动作：先收掉还开着的连续手势，否则这次 commit 会并进上一条历史
@@ -1916,7 +1942,7 @@ export function groupSelected() {
   updateObjects(ids, hist('group', { count: ids.length }), (o) => {
     o.groupId = gid
   })
-  status(note('grouped', { count: ids.length }))
+  status(note('grouped', { count: ids.length }), 'done')
   emitActivity({ kind: 'selection.grouped', count: ids.length })
 }
 
@@ -1926,7 +1952,7 @@ export function ungroupSelected() {
     selectedObjects().map((o) => o.groupId).filter(Boolean) as string[],
   )
   if (!gids.size) {
-    status(note('notInAnyGroup'))
+    status(note('notInAnyGroup'), 'info')
     return
   }
   finishActiveGesture()
@@ -2028,7 +2054,7 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   if ((mode === 'hdist' || mode === 'vdist') && ids.length < 3) {
-    status(note('needThreeForDistribute'))
+    status(note('needThreeForDistribute'), 'info')
     return
   }
   // 离散动作：先收掉还开着的连续手势（字号还在安静计时里时点对齐），否则这次
@@ -2041,7 +2067,7 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
   const { objects: movable, blockedGroups } = movableTargets(ids)
   const movableIds = new Set(movable.filter((o) => ids.includes(o.id)).map((o) => o.id))
   if (!movableIds.size) {
-    status(blockedGroups ? note('blockedGroupsAll') : note('alignAllLocked'))
+    status(blockedGroups ? note('blockedGroupsAll') : note('alignAllLocked'), 'info')
     return
   }
   commit(hist('alignWithRef', { mode: alignModeMsg(mode), ref: alignRefMsg(ref) }), (d) => {
@@ -2061,7 +2087,7 @@ export function alignSelectedTo(mode: AlignMode, ref: AlignRef) {
     alignIn(targets, mode, box)
   })
   const skipped = ids.length - movableIds.size
-  if (skipped > 0) status(note('alignLockedSkipped', { count: skipped }))
+  if (skipped > 0) status(note('alignLockedSkipped', { count: skipped }), 'info')
   emitActivity({ kind: 'selection.aligned', mode, ref, count: ids.length })
 }
 
@@ -2127,16 +2153,16 @@ export function copySelectionStyle() {
       rotation: src.rotation,
       opacity: src.opacity,
     }
-    status(note('styleCopiedPanel'))
+    status(note('styleCopiedPanel'), 'done')
   } else if (src?.type === 'text') {
     styleClip = { kind: 'text', ...pickKeys(src, TEXT_STYLE_KEYS) }
-    status(note('styleCopiedText'))
+    status(note('styleCopiedText'), 'done')
   } else if (src?.type === 'arrow') {
     styleClip = { kind: 'arrow', ...pickKeys(src, ARROW_STYLE_KEYS) }
-    status(note('styleCopiedArrow'))
+    status(note('styleCopiedArrow'), 'done')
   } else if (src?.type === 'shape') {
     styleClip = { kind: 'shape', ...pickKeys(src, SHAPE_STYLE_KEYS) }
-    status(note('styleCopiedShape'))
+    status(note('styleCopiedShape'), 'done')
   } else {
     status(note('styleCopyNeedSelection'), 'error')
   }
@@ -2165,7 +2191,7 @@ export function pasteSelectionStyle() {
       assignKeys(o, clip, SHAPE_STYLE_KEYS)
     }
   })
-  status(note('stylePasted', { count: ids.length }))
+  status(note('stylePasted', { count: ids.length }), 'done')
 }
 
 /* ========================================================================== */
@@ -2206,17 +2232,17 @@ export function rotatePanelDraft(o: PanelObject, next: PanelRotation): void {
  * 与画布上拖裁剪框、以及原来的「重置裁剪」是同一套语义。
  */
 export function applyCropDraft(o: PanelObject, next?: CropRect): void {
-  const rot = panelRotation(o)
   const cur = o.crop ?? { x: 0, y: 0, w: 1, h: 1 }
   const to = next ?? { x: 0, y: 0, w: 1, h: 1 }
   const content = panelContentSize(o)
   const fullW = content.w / cur.w
   const fullH = content.h / cur.h
-  // 可见区中心在完整图里挪了多少（内容空间 → 页面空间）
-  const [pdx, pdy] = rotateVec(
+  // 可见区中心在完整图里挪了多少（内容空间 → 页面空间：与画布画这张图同一个变换，先翻转再旋转——
+  // 只认旋转的话翻转面板上换取景 / 重置裁剪，整张图会跳到镜像那边去，#833）
+  const [pdx, pdy] = contentToPageVec(
+    panelContentTransform(o),
     (to.x + to.w / 2 - (cur.x + cur.w / 2)) * fullW,
     (to.y + to.h / 2 - (cur.y + cur.h / 2)) * fullH,
-    rot,
   )
   const cx = o.x + o.w / 2 + pdx
   const cy = o.y + o.h / 2 + pdy
@@ -2428,6 +2454,6 @@ export async function replacePanelAsset(panelId: string, info: PanelInfo): Promi
     // **旧素材**的，按它抄会抄到另一张图的对象上（ADR 0083）
   }, { overrides: 'restored' })
   useAssetStore.getState().markUsed(info.id)
-  status(note('assetReplaced', { name: info.name }))
+  status(note('assetReplaced', { name: info.name }), 'done')
   return true
 }

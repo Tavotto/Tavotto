@@ -329,6 +329,7 @@ export function WriteBackDialog({
                 { files: listJoin(res.updated), dir: res.backup_dir },
                 'inspector',
               ),
+          'done',
         )
     } catch (e) {
       setError(

@@ -739,6 +739,7 @@ class LiveFigureSession:
         execution_profile: str,
         source_fingerprint: str,
         project_root: str | None,
+        run_config: str = "",
     ) -> list[dict]:
         """每张捕获 Figure 的统一描述——**语义全在 figcapture，这里只是装配**。
 
@@ -764,6 +765,7 @@ class LiveFigureSession:
                     source_fingerprint=source_fingerprint,
                     original_artifact=artifact,
                     savefig_calls=figcapture.savefig_calls_of(self.savefig_calls, stem, source),
+                    run_config=run_config,
                 ).to_payload()
             )
         return out

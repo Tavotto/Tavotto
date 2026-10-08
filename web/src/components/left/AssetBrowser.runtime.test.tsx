@@ -148,11 +148,36 @@ describe('RuntimeAssetCard', () => {
     expect(mockProbe).toHaveBeenCalledWith('show.py')
   })
 
-  it('stale 素材显示状态与「重新运行」', async () => {
+  it('stale 素材：卡片里只写状态，「重新运行」是列表外选中页脚的真按钮', async () => {
     useRuntimeAssetStore.setState({ assets: [asset({ status: 'possibly_stale' })] })
+    mockProbe.mockImplementation(() => new Promise(() => {}))
     await mount()
     const card = host.querySelector<HTMLElement>('[data-card="runtime:show.py#show"]')!
-    expect(card.textContent).toContain('可能有变')
-    expect(card.textContent).toContain('重新运行')
+    expect(card.querySelector('[data-runtime-stale]')?.textContent).toContain('可能有变')
+    // option 里不嵌可 Tab 控件（axe nested-interactive）
+    expect(card.querySelector('button, input, select, textarea, a[href]')).toBeNull()
+    expect(host.querySelector('[data-selected-asset-rerun]')).toBeNull()
+    await act(async () => card.click())
+    const rerun = host.querySelector<HTMLButtonElement>('[data-selected-asset-rerun]')!
+    expect(rerun.closest('[data-selected-asset-actions]')).toBeTruthy()
+    expect(rerun.closest('[role="option"]')).toBeNull()
+    expect(rerun.textContent).toContain('重新运行')
+    await act(async () => rerun.click())
+    expect(mockProbe).toHaveBeenCalledWith('show.py')
+    // 跑着的时候按钮置灰、文案换成「运行中」，不重复发
+    const busy = host.querySelector<HTMLButtonElement>('[data-selected-asset-rerun]')!
+    expect(busy.disabled).toBe(true)
+    await act(async () => busy.click())
+    expect(mockProbe).toHaveBeenCalledTimes(1)
+  })
+
+  it('fresh 素材的选中页脚没有「重新运行」', async () => {
+    useRuntimeAssetStore.setState({ assets: [asset()] })
+    await mount()
+    const card = host.querySelector<HTMLElement>('[data-card="runtime:show.py#show"]')!
+    await act(async () => card.click())
+    expect(host.querySelector('[data-selected-asset-actions]')).toBeTruthy()
+    expect(host.querySelector('[data-selected-asset-rerun]')).toBeNull()
+    expect(card.querySelector('[data-runtime-stale]')).toBeNull()
   })
 })

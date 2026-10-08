@@ -124,6 +124,17 @@
   过期锁可言。**改环境的一方拿锁**：`--provision`（后台的与手动 / `tavotto codex install`
   跑的同一条路）动 venv 之前非阻塞地拿，拿不到就不动、报 `provision_in_progress`；
   启动器只探一下锁（拿到即放）省掉明显多余的 spawn，多起一个子进程也只会有一个真跑 pip。
-  `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉。本次会话仍是降级、payload 带 `auto_provision`，
+  `TAVOTTO_MCP_NO_AUTO_PROVISION=1` 关掉（它在 `codex.mcp.json` 的 `env_vars` 里：Codex 起 server 前清空环境，
+  只放默认那几个与点了名的，漏掉开关就是死的）。**Windows 上后台那次用 `CREATE_NO_WINDOW`，不用
+  `DETACHED_PROCESS`**：前者让控制台应用无控制台窗口运行且不设置控制台句柄，不是新建隐藏控制台；
+  后者不继承父控制台、子进程之后仍可调 AllocConsole。两者混用时前者被忽略（见
+  [Win32 process creation flags](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags)）。
+  0.18.0 用户报告 Win11 + Codex 弹窗与 0x800700e8；flag 语义不能单独证明其原因或修复效果，仍需真机回验。本文件其余探测 /
+  pip 子进程也都带 `CREATE_NO_WINDOW`（引擎 `runtime.CREATE_NO_WINDOW` 的镜像），**唯一例外是 Windows
+  交棒的 `subprocess.call`**：保持既有 flags 与 stdio 继承，不改变这条协议传输路径。
+  **Popen 返回且记号写入后退避 `AUTO_PROVISION_BACKOFF_SEC`（30 分钟）**；Popen 自己抛 OSError 不写记号、下次仍可重试。
+  记号是 `mcp-runtime/provision.kicked` 的 mtime，
+  手动 `--provision` 成功时清掉；退避期内降级话术指出 `provision.log` 与手动命令，不说「已在后台」。
+  本次会话仍是降级、payload 带 `auto_provision`，
   文案说「后台在装、装完新开会话」。**只管「在、却 import 不过」**：能 import 但版本旧的
   自管环境不在这里重装（它此刻正被本会话用着）。看护 `tests/test_mcp_resolver.py` 末节。

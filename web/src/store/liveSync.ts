@@ -88,9 +88,9 @@ function applyPanelSync(result: PanelSyncResult): void {
   if (editingLost) {
     ui.setStatus(msg('status.sourceLostEditing', undefined, 'workspace'), 'error')
   } else if (result.downgraded.length) {
-    ui.setStatus(msg('status.sourceLost', { count: result.downgraded.length }, 'workspace'))
+    ui.setStatus(msg('status.sourceLost', { count: result.downgraded.length }, 'workspace'), 'info')
   } else if (result.upgraded.length) {
-    ui.setStatus(msg('status.sourceLinked', { count: result.upgraded.length }, 'workspace'))
+    ui.setStatus(msg('status.sourceLinked', { count: result.upgraded.length }, 'workspace'), 'done')
   }
 }
 

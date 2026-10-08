@@ -186,7 +186,7 @@ function VersionRow({
         loading="lazy"
         src={historyPreviewUrl(panel.fileId, version.n, 320)}
         alt=""
-        className="h-14 w-[92px] shrink-0 rounded-xs border border-border bg-white object-contain"
+        className="h-14 w-[92px] shrink-0 rounded-xs border border-border bg-paper object-contain"
       />
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
         <p className={cn('truncate text-xs', isCurrent ? 'text-ink' : 'text-ink-2')}>
@@ -262,7 +262,7 @@ function RestoreDialog({
       useRenderStore.getState().markStale([panel.fileId])
       useUiStore
         .getState()
-        .setStatus(msg('versionHistory.restored', { dir: res.backup_dir }, 'inspector'))
+        .setStatus(msg('versionHistory.restored', { dir: res.backup_dir }, 'inspector'), 'done')
       onClose()
       onDone()
     } catch (e) {
@@ -312,9 +312,9 @@ function RestoreDialog({
         </div>
 
         {version?.n === -1 && (
-          <div className="flex items-start gap-1.5 rounded-sm bg-danger-subtle p-2">
+          <div className="flex items-start gap-1.5 rounded-sm bg-danger-surface p-2">
             <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
-            <p className="text-xs leading-relaxed text-danger">
+            <p className="text-xs leading-relaxed text-danger-content">
               {/* 句中有 <b> 强调，走 Trans 保留标签而不是把句子切三段 */}
               <Trans
                 t={t}

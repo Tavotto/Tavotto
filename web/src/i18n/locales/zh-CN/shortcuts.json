@@ -4,7 +4,6 @@
     "arrowKeys": "方向键 / ⇧+方向键 / {{alt}}+方向键",
     "newline": "{{alt}}⏎ / {{mod}}⏎",
     "spaceDrag": "Space+拖动",
-    "tools": "V / T / A / R / O / L",
     "wheelZoom": "{{mod}}+滚轮",
     "shiftClick": "⇧+点击",
     "rightClick": "右键",
@@ -47,7 +46,9 @@
     "tutorialPause": "暂停教程（教程卡片有焦点时）",
     "cycleOverlap": "在重叠的图内元素之间轮换选中",
     "timeline": "打开 / 关闭排版时间线",
-    "saveNamed": "把现在存为命名节点"
+    "saveNamed": "把现在存为命名节点",
+    "zoomSelection": "缩放到选中的对象",
+    "tabs": "焦点在画布标签上时：重命名 / 关闭 / 左右挪动"
   },
   "or": "或",
   "title": "快捷键",

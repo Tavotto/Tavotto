@@ -14,16 +14,17 @@
 import { createElement } from 'react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useKeyboard } from './useKeyboard'
 import { resetNudge } from '@/canvas/nudge'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { canvasToDoc } from '@/types/document'
-import type { CanvasData, PanelObject } from '@/types/document'
+import type { CanvasData, PanelObject, TextObject } from '@/types/document'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -98,6 +99,7 @@ afterEach(() => {
   root = null
   document.body.innerHTML = ''
   useWorkspaceStore.getState().clear()
+  vi.restoreAllMocks()
 })
 
 describe('快速编辑里的版面快捷键', () => {
@@ -135,5 +137,154 @@ describe('快速编辑里的版面快捷键', () => {
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     press('v')
     expect(useUiStore.getState().tool).toBe('select')
+  })
+})
+
+/**
+ * ⇧2「缩放到选中」在快速编辑里只认正在编辑的那张图（Codex #833）：这一屏只画这一张，⌘A 之后选区里还有
+ * 一整版看不见的对象——按整个选区取景会把唯一看得见的图挪走、缩小。对照组：排版里照常框整个选区。
+ */
+describe('快速编辑里的 ⇧2', () => {
+  const NOTE: TextObject = {
+    id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
+    color: '#000', align: 'left', x: 100, y: 80, w: 30, h: 8,
+  }
+  const shift2 = () =>
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '@', code: 'Digit2', shiftKey: true, bubbles: true, cancelable: true }),
+      )
+    })
+  const selectAllKey = () =>
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+  beforeEach(() => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push({ ...NOTE })
+    })
+  })
+
+  it('排版里 ⌘A 后 ⇧2：框整个选区（对照组）', () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    selectAllKey()
+    expect(useSelectionStore.getState().ids).toEqual(['p1', 't1'])
+    shift2()
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 120, h: 68 })
+  })
+
+  it('快速编辑里 ⌘A 后 ⇧2：只框正在编辑的那张图', () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    selectAllKey()
+    shift2()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 40, h: 30 })
+  })
+
+  it('快速编辑里选区不含那张图：⇧2 不动视口', () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    useSelectionStore.getState().set([NOTE.id])
+    shift2()
+    expect(spy).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * 快速编辑里的 ⌘A / Delete（Codex #833，数据丢失）：这一屏只画正在编辑的那张图，`selectAll` 曾经不看模式，
+ * 把整版看不见的对象全选上，紧接着 Backspace（不在图内元素编辑里时）就经 `deleteSelected` 把它们从版上删掉。
+ * 现在全选只收那张图，删除也只删得到那张图（选区里挂着的旧版面对象不动）。对照组：排版里 ⌘A 照常全选、
+ * Backspace 照常整选区删除——否则「没删」也可能是判据自己没执行到。
+ */
+describe('快速编辑里的 ⌘A / Delete', () => {
+  const NOTE: TextObject = {
+    id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
+    color: '#000', align: 'left', x: 100, y: 80, w: 30, h: 8,
+  }
+  const modKey = (key: string) =>
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+  const ids = () => useDocumentStore.getState().doc.objects.map((o) => o.id)
+  beforeEach(() => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push({ ...NOTE })
+    })
+    useSelectionStore.getState().clear()
+  })
+
+  it('排版里 ⌘A 全选、Backspace 整选区删除（对照组）', () => {
+    modKey('a')
+    expect(useSelectionStore.getState().ids).toEqual(['p1', 't1'])
+    press('Backspace')
+    expect(ids()).toEqual([])
+  })
+
+  it('快速编辑里 ⌘A 只选正在编辑的那张图', () => {
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    modKey('a')
+    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+  })
+
+  it('快速编辑里那张图锁着：⌘A 什么都不选（不退到整版）', () => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects[0].locked = true
+    })
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    modKey('a')
+    expect(useSelectionStore.getState().ids).toEqual([])
+  })
+
+  it('快速编辑里 ⌘A 后 Backspace：看不见的版面对象一个不少，只删看得见的那张图', () => {
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    modKey('a')
+    press('Backspace')
+    // 删那张图本身是既有语义（看得见、可撤销，对象没了快速编辑随之退出）；版上别的对象原样在
+    expect(ids()).toEqual(['t1'])
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('快速编辑里选区挂着进来之前的版面对象：Backspace 只删那张图', () => {
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    useSelectionStore.getState().set(['p1', 't1'])
+    press('Backspace')
+    expect(ids()).toEqual(['t1'])
+  })
+
+  it('快速编辑里选区只有看不见的对象：Backspace 什么都不删、不进历史', () => {
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    useSelectionStore.getState().set(['t1'])
+    press('Backspace')
+    expect(ids()).toEqual(['p1', 't1'])
+    expect(useDocumentStore.getState().past).toHaveLength(0)
+  })
+})
+
+/**
+ * ⌘1「适应」与舞台双击同一个取景框（`stageFitFrame`，Codex #833）：快速编辑里适应那张图本身的矩形（含原点，
+ * `fitRectAnimated`；视口终点的几何见 `canvas/stageFitRect.test.tsx`），
+ * 不是适应这一屏根本没画的页面。对照组：排版里适应页面。
+ */
+describe('快速编辑里的 ⌘1', () => {
+  const cmd1 = () =>
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '1', ctrlKey: true, bubbles: true, cancelable: true }))
+    })
+
+  it('排版里 ⌘1 适应页面（对照组）', () => {
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitAnimated').mockImplementation(() => {})
+    cmd1()
+    expect(spy).toHaveBeenCalledWith(150, 100)
+  })
+
+  it('快速编辑里 ⌘1 适应正在编辑的那张图（它自己的矩形，不是 (0,0) 到右下角）', () => {
+    const page = vi.spyOn(useViewportStore.getState(), 'fitAnimated').mockImplementation(() => {})
+    const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    cmd1()
+    expect(page).not.toHaveBeenCalled()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 40, h: 30 })
   })
 })

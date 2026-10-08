@@ -34,7 +34,7 @@ import os
 import re
 from pathlib import Path
 
-from . import projectenv
+from . import projectenv, scanbudget
 
 LOG = logging.getLogger("tavotto.depresolve")
 
@@ -336,9 +336,27 @@ MAX_DECL_FILES = 12
 MAX_DECL_BYTES = 512 * 1024
 
 
-def _decl_dirs(figures_dir: str | Path, script: str | None) -> list[Path]:
-    """从脚本所在目录逐级向上到项目根——与 venv 发现同一套范围纪律。"""
+def _decl_dirs(
+    figures_dir: str | Path, script: str | None, *, no_follow: bool = False
+) -> list[Path]:
+    """从脚本所在目录逐级向上到项目根——与 venv 发现同一套范围纪律。
+
+    `no_follow`（导入即扫描）：脚本目录按字面串走，中途有符号链接 / 路径替身就退回项目根（不探目标）。"""
     root = Path(figures_dir)
+    if no_follow:
+        try:
+            root_real = root.resolve(strict=False)
+        except OSError:
+            return [root]
+        start = root_real
+        if script:
+            cand = Path(os.path.normpath(root_real / script)).parent
+            if _lexical_rel(root_real, cand) is not None and not _redirected_below(root_real, cand):
+                start = cand
+        dirs = [start]
+        while dirs[-1] != root_real and dirs[-1].parent != dirs[-1]:
+            dirs.append(dirs[-1].parent)
+        return dirs
     try:
         root_real = root.resolve(strict=False)
         start = ((root / script).parent if script else root).resolve(strict=False)
@@ -363,14 +381,50 @@ def _read_text(path: Path) -> str:
     return text or ""
 
 
-def _read_declaration(path: Path) -> tuple[str | None, str]:
-    """无损读法用的：回 `(文本, "")` 或 `(None, 原因)`——读不了不是「没有依赖」。"""
+def _read_declaration(path: Path, *, no_follow_root: Path | None = None) -> tuple[str | None, str]:
+    """无损读法用的：回 `(文本, "")` 或 `(None, 原因)`——读不了不是「没有依赖」。
+
+    读法唯一出处 `scanbudget.read_regular_text`：只认普通文件、有 `MAX_DECL_BYTES` 上限、不阻塞在 FIFO 上。
+    `no_follow_root`（导入即扫描传，已 realpath 的项目根）：根之下每一级先 `lstat`，符号链接 / 路径替身
+    不探目标（UNC 目标会触发 SMB 访问）；默认形态（准备 / 依赖门）仍跟随用户自己的符号链接。"""
     try:
-        if path.stat().st_size > MAX_DECL_BYTES:
-            return None, f"超过 {MAX_DECL_BYTES} 字节"
-        return path.read_text(encoding="utf-8", errors="replace"), ""
+        if no_follow_root is not None:
+            rel = _lexical_rel(no_follow_root, path)
+            if rel is None:
+                return None, "outside project root"
+            text = scanbudget.read_regular_text(
+                no_follow_root, *rel, no_follow=True, max_bytes=MAX_DECL_BYTES
+            )
+        else:
+            text = scanbudget.read_regular_text(path.parent, path.name, max_bytes=MAX_DECL_BYTES)
+        return text, ""
     except OSError as exc:
         return None, str(exc)[:200]
+
+
+def _lexical_rel(root: Path, path: Path) -> tuple[str, ...] | None:
+    """`path` 相对 `root` 的各级名字——只做字符串运算（不 resolve、不 stat，UNC 不被触碰）；不在根下回 None。"""
+    try:
+        rel = Path(os.path.normpath(path)).relative_to(os.path.normpath(root))
+    except ValueError:
+        return None
+    return rel.parts
+
+
+def _redirected_below(root: Path, path: Path) -> bool:
+    """`root` 之下通往 `path` 的任何一级是不是符号链接 / 路径替身（只 lstat、不跟随；不存在的级不算）。"""
+    cur = Path(root)
+    rel = _lexical_rel(root, path)
+    if rel is None:
+        return True
+    for part in rel:
+        cur = cur / part
+        try:
+            if scanbudget.is_redirect(cur.lstat()):
+                return True
+        except OSError:
+            return False
+    return False
 
 
 def parse_requirements_text(text: str) -> dict[str, str]:
@@ -1005,13 +1059,18 @@ def pep723_intents(script_text: str, *, source: str) -> list[DependencyIntent]:
 class _Walk:
     """一次 `declared_intents()` 的账：读过几个文件、正在跟进的链（防环）。"""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, no_follow: bool = False) -> None:
         self.root = root
         self.root_real = root.resolve(strict=False)
+        #: 导入即扫描：不跟随符号链接 / 路径替身，被拒的记 unreadable（报告 partial）
+        self.no_follow = no_follow
         self.files = 0
         self.seen: set[tuple[str, str, str]] = set()
 
     def rel(self, path: Path) -> str:
+        if self.no_follow:
+            parts = _lexical_rel(self.root_real, path)
+            return "/".join(parts) if parts else path.name
         try:
             return path.resolve(strict=False).relative_to(self.root_real).as_posix()
         except ValueError:
@@ -1019,7 +1078,18 @@ class _Walk:
 
     def inside(self, path: Path) -> bool:
         # 「在不在项目根内」只有 `projectenv.within` 一处判据（realpath；软链接跳出去也算越界）
+        if self.no_follow:
+            return _lexical_rel(self.root_real, path) is not None and not _redirected_below(
+                self.root_real, path
+            )
         return projectenv.within(self.root, path)
+
+    def refused(self, path: Path) -> bool:
+        """no_follow 下这个路径是不是被拒读（链接 / 替身 / 根外）。先于任何 resolve / stat 调用。"""
+        return self.no_follow and not self.inside(path)
+
+    def read(self, path: Path) -> tuple[str | None, str]:
+        return _read_declaration(path, no_follow_root=self.root_real if self.no_follow else None)
 
 
 def _read_declaration_file(
@@ -1032,8 +1102,10 @@ def _read_declaration_file(
     出现的文件是环；缺失 / 越界 / 环 / 超限各记一条 unsupported **留在引用它的那一行的
     位置**，不是忽略。
     """
-    key = os.path.normcase(str(path.resolve(strict=False)))
     source = walk.rel(path)
+    if walk.refused(path):
+        return [_unsupported(source, UNSUPPORTED_UNREADABLE, group=group, source=source)]
+    key = os.path.normcase(str(path.resolve(strict=False)))
     if (key, group, kind) in walk.seen:
         # 同一次 walk 里同一个文件在**同一组、同一 kind** 下只读一次（菱形 include：a -r c、
         # b -r c 是常态，不是环）。换一个组或换成约束再 include 它是另一件事——那份条目要归
@@ -1041,7 +1113,7 @@ def _read_declaration_file(
         return []
     walk.seen.add((key, group, kind))
     walk.files += 1
-    text, why = _read_declaration(path)
+    text, why = walk.read(path)
     if text is None:
         return [_unsupported(source, UNSUPPORTED_UNREADABLE, group=group, source=source)]
     out: list[DependencyIntent] = []
@@ -1066,6 +1138,23 @@ def _read_declaration_file(
             )
             continue
         inc = (path.parent / target) if not os.path.isabs(target) else Path(target)
+        if walk.no_follow:
+            # 先字面判（`-r //server/share/x.txt` 不能被 realpath 碰到），再逐级 lstat
+            if _lexical_rel(walk.root_real, inc) is None:
+                out.append(
+                    _unsupported(line, UNSUPPORTED_INCLUDE_OUTSIDE, group=group, source=source)
+                )
+                continue
+            if _redirected_below(walk.root_real, inc):
+                out.append(
+                    _unsupported(
+                        walk.rel(inc),
+                        UNSUPPORTED_UNREADABLE,
+                        group=group,
+                        source=walk.rel(inc),
+                    )
+                )
+                continue
         if not walk.inside(inc):
             out.append(_unsupported(line, UNSUPPORTED_INCLUDE_OUTSIDE, group=group, source=source))
             continue
@@ -1089,22 +1178,40 @@ def _read_declaration_file(
     return out
 
 
-def declared_intents(figures_dir: str | Path, script: str | None = None) -> list[DependencyIntent]:
+def declared_intents(
+    figures_dir: str | Path, script: str | None = None, *, no_follow: bool = False
+) -> list[DependencyIntent]:
     """项目声明过的**全部**依赖意图（无损）：requirements 各文件（含有界跟进的 `-r` / `-c`）
     + constraints.txt + pyproject（PEP 621 / 735 / Poetry 表）+ 脚本的 PEP 723 + 管理器锁文件
     的存在（unsupported）。
 
     与 `project_declared()` 同一套目录范围与文件上限；只读。返回顺序 = 脚本 PEP 723 →
     目录由近到远、文件名排序、行序——稳定，可进指纹。
+
+    `no_follow=True`（导入即扫描传）：声明文件不跟随符号链接 / 路径替身（UNC 目标会触发 SMB 访问），
+    且只读有上限的普通文件（FIFO 不会挂住）；被拒的记 `unsupported(unreadable)`，不是「没有依赖」。
+    默认形态（准备 / 依赖门）保持跟随用户自己的符号链接，但读法同样只认有上限的普通文件。
     """
     root = Path(figures_dir)
-    walk = _Walk(root)
+    walk = _Walk(root, no_follow=no_follow)
     out: list[DependencyIntent] = []
     if script:
         try:
             script_path = root / script
-            if walk.inside(script_path) and script_path.is_file():
-                text, why = _read_declaration(script_path)
+            if walk.no_follow and walk.refused(script_path):
+                rel = Path(script).as_posix()
+                out.append(
+                    _unsupported(
+                        rel, UNSUPPORTED_UNREADABLE, group=f"{GROUP_PEP723}:{rel}", source=rel
+                    )
+                )
+            elif (
+                # `script` 可来自请求体：先经净化器钉在项目内，下游只用它回的那一条（CodeQL py/path-injection）
+                (safe_script := projectenv.contained_path(root, script)) is not None
+                and walk.inside(Path(safe_script))
+                and os.path.isfile(safe_script)
+            ):
+                text, why = walk.read(Path(safe_script))
                 rel = Path(script).as_posix()
                 if text is None:
                     out.append(
@@ -1116,9 +1223,15 @@ def declared_intents(figures_dir: str | Path, script: str | None = None) -> list
                     out += pep723_intents(text, source=rel)
         except OSError:
             pass
-    for directory in _decl_dirs(figures_dir, script):
+    for directory in _decl_dirs(figures_dir, script, no_follow=no_follow):
         candidates: list[tuple[Path, str]] = []
         for pattern in REQUIREMENTS_GLOBS:
+            if walk.no_follow and "/" in pattern:
+                sub = directory / pattern.split("/", 1)[0]
+                if walk.refused(sub):  # `requirements` 目录本身是链接：不列它
+                    rel = walk.rel(sub)
+                    out.append(_unsupported(rel, UNSUPPORTED_UNREADABLE, group=rel, source=rel))
+                    continue
             try:
                 candidates += [
                     (p, INTENT_KIND_REQUIREMENT) for p in sorted(directory.glob(pattern))
@@ -1128,14 +1241,17 @@ def declared_intents(figures_dir: str | Path, script: str | None = None) -> list
         for name, kind in ((CONSTRAINTS_NAME, INTENT_KIND_CONSTRAINT), (PYPROJECT_NAME, "")):
             path = directory / name
             try:
-                if path.is_file():
+                if walk.refused(path):
+                    rel = walk.rel(path)
+                    out.append(_unsupported(rel, UNSUPPORTED_UNREADABLE, group=rel, source=rel))
+                elif path.is_file():
                     candidates.append((path, kind))
             except OSError:
                 pass
         for name in MANAGER_LOCK_NAMES:
             path = directory / name
             try:
-                if path.is_file():
+                if not walk.refused(path) and path.is_file():
                     out.append(
                         _unsupported(
                             name,
@@ -1160,7 +1276,7 @@ def declared_intents(figures_dir: str | Path, script: str | None = None) -> list
             try:
                 if path.name == PYPROJECT_NAME:
                     walk.files += 1
-                    text, why = _read_declaration(path)
+                    text, why = walk.read(path)
                     if text is None:
                         rel = walk.rel(path)
                         out.append(

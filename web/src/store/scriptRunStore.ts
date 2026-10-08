@@ -16,6 +16,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { probeWithDraft, useScriptArgvStore } from '@/store/scriptArgvStore'
 
 /**
  * 「运行并发现图」的状态机（Session 5 素材库普通入口）。
@@ -64,6 +65,8 @@ export interface ScriptRunState {
   /** pyplot 兜底超上限被丢弃的张数（如实报，不静默） */
   droppedFigures: number
   error: ProbeError | null
+  /** 这一次失败的诊断引用（T04）：只在带错误落地时有；老后端没有 */
+  diagnostic?: { kind: 'script_run'; ref: string } | null
   /** 用户已点取消、原请求尚未落地 */
   cancelRequested: boolean
   gen: number
@@ -74,6 +77,7 @@ const IDLE: ScriptRunState = {
   descriptors: [],
   droppedFigures: 0,
   error: null,
+  diagnostic: null,
   cancelRequested: false,
   gen: 0,
 }
@@ -123,6 +127,17 @@ export const isGatePhase = (phase: ScriptRunPhase | undefined): boolean =>
  * 旧载荷不弹——判据在 `envStore` 那一侧）。`projectId` 是发这次试运行时的项目。回 true = 是门、已交出。
  * 素材库脚本行（经 `run`）与接入中心的试运行共用这一处，别的试运行入口也走这里。
  */
+/**
+ * 试运行请求**抛出来**的失败的诊断引用：与成功路径同一优先级——错误体 `diagnostic` 先，响应头
+ * `X-Tavotto-Diagnostic-Ref`（体不是对象时后端放这里）后。取不到 = null（老后端）。
+ */
+export function probeDiagnosticOf(e: unknown): { kind: 'script_run'; ref: string } | null {
+  if (!(e instanceof ApiError)) return null
+  const d = e.body?.diagnostic as { kind?: unknown; ref?: unknown } | undefined
+  if (d && d.kind === 'script_run' && typeof d.ref === 'string' && d.ref) return { kind: 'script_run', ref: d.ref }
+  return e.diagnosticRef ? { kind: 'script_run', ref: e.diagnosticRef } : null
+}
+
 /**
  * 试运行请求**抛出来**的错误（非 2xx：门的两个 code 就是以 409 回来的）→ `ProbeError`，载荷一并带上。
  * 素材库脚本行与接入中心共用这一处：各自解析的话，一边认得门、一边把它当成普通失败（#740 Codex P2）。
@@ -267,7 +282,8 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     }
 
     try {
-      const res = await probeScript(script)
+      // T03：参数草稿在**运行开始那一刻**取一份拷贝；此后再编辑不影响这一次
+      const res = await probeWithDraft(probeScript, script)
       if (stale()) return
       if (res.error?.code === INPUT_REMAP_CHANGED_CODE) {
         // 试运行途中改了指认，后端按代次丢弃了这次结果（ADR 0106 §五）：按新表重跑一次，不报失败
@@ -287,6 +303,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         settle({
           phase: phaseOf(res.error),
           error: res.error,
+          diagnostic: res.diagnostic ?? null,
           descriptors: [],
         })
         // 起会话之前的门：弹与渲染那条路同一个框；行上留着载荷，「稍后」之后能再开
@@ -320,7 +337,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     } catch (e) {
       if (stale()) return
       const error = probeErrorOf(e)
-      settle({ phase: phaseOf(error), error, descriptors: [] })
+      settle({ phase: phaseOf(error), error, diagnostic: probeDiagnosticOf(e), descriptors: [] })
       handOffProbeGate(error, projectAtStart)
     }
   },
@@ -386,7 +403,11 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     for (const cb of [...gateListeners]) cb(phase, script)
   },
 
-  clear: () => set((s) => ({ byScript: {}, epoch: s.epoch + 1 })),
+  clear: () => {
+    // 换项目：参数草稿（可能含令牌）属于上一个项目的脚本，一并丢掉
+    useScriptArgvStore.getState().clear()
+    set((s) => ({ byScript: {}, epoch: s.epoch + 1 }))
+  },
 }))
 
 // 改指表 / 环境变了（ADR 0106）：envStore 的两个代际——作废按旧条件捕获的结果、重跑因「找不到数据」失败的脚本

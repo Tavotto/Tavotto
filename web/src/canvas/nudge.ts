@@ -39,7 +39,8 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { moveLabel, warnBlockedGroups } from '@/store/actions'
-import { panelRotation, unrotateVec, type PanelObject } from '@/types/document'
+import { pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
+import type { PanelObject } from '@/types/document'
 import {
   draggableSelection,
   groupMove,
@@ -119,7 +120,7 @@ const held = new Set<string>()
 const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
 const interaction = () => useInteractionStore.getState()
 const status = (key: string) =>
-  useUiStore.getState().setStatus(msg(`status.${key}`, undefined, 'workspace'))
+  useUiStore.getState().setStatus(msg(`status.${key}`, undefined, 'workspace'), 'info')
 
 /**
  * 选中的图内元素都不能动：只选了一个时说出**为什么**（与拖动同一句话，`immovableMessage`，
@@ -131,14 +132,14 @@ function announceUnmovable(b: FigureBurst): void {
   // 选中的组不能整体变换：按原因说，与拖它时同一句（`explainBlockedGroupDrag`）
   const [blocked] = blockedGroupsIn(panel, manifest, b.gids)
   if (blocked) {
-    useUiStore.getState().setStatus(groupBlockedMessage(blocked.reason))
+    useUiStore.getState().setStatus(groupBlockedMessage(blocked.reason), 'info')
     return
   }
   const el = b.gids.length === 1 ? manifest?.elements.find((e) => e.gid === b.gids[0]) : undefined
   // 锁定 / 隐藏的不动是另一回事（用户自己锁的），不按「按设计」解释
   const own =
     el && el.gid !== 'figure' && !(panel?.lockedGids ?? []).includes(el.gid) && !isElementHidden(el)
-  if (own) useUiStore.getState().setStatus(immovableMessage(el))
+  if (own) useUiStore.getState().setStatus(immovableMessage(el), 'info')
   else status('nudgeNotMovable')
 }
 
@@ -231,16 +232,17 @@ function beginBurst(key: string): boolean {
     const panel = findPanel(ui.elementPanelId!)
     if (!panel) return false
     const full = panelFullRect(panel)
-    const rot = panelRotation(panel)
+    const tf = panelContentTransform(panel)
     b = {
       ...common,
       kind: 'figure',
       panelId: panel.id,
       gids: [...ui.selectedGids],
       mover: null,
-      // 面板可能被旋转过：页面上的位移先转回内容坐标系，再按面板在页面上的实际大小折成分数
+      // 面板可能被旋转 / 翻转过：页面上的位移先折回内容坐标系（与画布画这张图同一个变换的逆，
+      // 翻转面板上按 → 元素在画面上也往右走），再按面板在页面上的实际大小折成分数
       toFrac: (dx, dy) => {
-        const [cx, cy] = unrotateVec(dx, dy, rot)
+        const [cx, cy] = pageToContentVec(tf, dx, dy)
         return [cx / full.w, cy / full.h]
       },
       unwatchAuthority: null,

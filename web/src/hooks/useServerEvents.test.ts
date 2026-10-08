@@ -418,6 +418,17 @@ describe('project.error', () => {
   })
 })
 
+describe('渲染通知的语气（2026-10-07 审计 P0）', () => {
+  it('冷启动「正在构建…」是 progress，随后的「渲染完成」是 done', () => {
+    handleServerEvent(ev({ kind: 'render.started', pj: 'p1', id: 'Fig1.pdf', cold: true }))
+    expect(statusKey()).toBe('status.building')
+    expect(useUiStore.getState().statusTone).toBe('progress')
+    handleServerEvent(ev({ kind: 'render.done', pj: 'p1', id: 'Fig1.pdf' }))
+    expect(statusKey()).toBe('status.renderDone')
+    expect(useUiStore.getState().statusTone).toBe('done')
+  })
+})
+
 describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
   // 2026-09-28 Windows 实测：缺依赖时弹「无法渲染 Fig_labels。脚本用到的 adjustText……」，在修复卡片里
   // 装好依赖、同一张图自动重渲染成功之后，这条红色 toast 还挂着，直到手动点 ×。
@@ -432,7 +443,7 @@ describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
 
     done('Fig_labels.pdf')
     expect(statusKey()).toBe('status.renderDone')
-    expect(useUiStore.getState().statusTone).toBe('info')
+    expect(useUiStore.getState().statusTone).toBe('done')
   })
 
   it('另一张图渲染成功不撤它（短名相同、路径不同也算另一张）', () => {
@@ -497,7 +508,7 @@ describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
     failed('Fig1.pdf')
     done('Fig1.pdf')
     expect(statusKey()).toBe('status.renderDone')
-    expect(useUiStore.getState().statusTone).toBe('info')
+    expect(useUiStore.getState().statusTone).toBe('done')
   })
 
   it('用户已经关掉的不会被重新挂回来', () => {
@@ -505,7 +516,7 @@ describe('渲染失败的 toast 在同一张图渲染成功后撤掉', () => {
     useUiStore.getState().setStatus(null)
     done('Fig1.pdf')
     expect(statusKey()).toBe('status.renderDone')
-    expect(useUiStore.getState().statusTone).toBe('info')
+    expect(useUiStore.getState().statusTone).toBe('done')
   })
 })
 

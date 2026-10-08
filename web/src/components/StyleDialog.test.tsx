@@ -282,3 +282,71 @@ describe('旧样式在样式对话框里第一次被存：升级成按页面 pt 
     expect(saves[0]).toMatchObject({ pt_basis: 'page', element: (USER as unknown as { data: { element: unknown } }).data.element })
   })
 })
+
+describe('右栏的影响摘要（2026-10-07 设计审计 §10.2）', () => {
+  it('xl 760；摘要卡数出这份样式管几项，以及这份文档里有几张画布跟随它（脱离的不算）', async () => {
+    await mount()
+    await act(async () => {
+      useUiStore.getState().setStylesOpen(true, { presetId: 's1' })
+    })
+    await act(async () => {})
+    const dialog = document.querySelector<HTMLElement>('[data-dialog="styles"]')!
+    expect(dialog.style.width).toBe('760px')
+    const card = () => document.querySelector('[data-style-impact]')!
+    expect(card().closest('[data-card="subtle"]')).not.toBeNull()
+    expect(card().querySelector('[data-style-following]')!.getAttribute('data-style-following')).toBe('0')
+    await act(async () => {
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, style: { id: 's1', snapshot: {} } } }))
+    })
+    expect(card().querySelector('[data-style-following]')!.getAttribute('data-style-following')).toBe('1')
+    await act(async () => {
+      useDocumentStore.setState((s) => ({ doc: { ...s.doc, style: { id: 's1', snapshot: {}, detached: true } } }))
+    })
+    expect(card().querySelector('[data-style-following]')!.getAttribute('data-style-following')).toBe('0')
+  })
+})
+
+describe('就地「放弃修改？」开着时点了「保存」（Codex P2）', () => {
+  it('问题作废：「放弃修改」不再在场，关闭直接走；重开不带着旧草稿显示未保存', async () => {
+    await mount()
+    await act(async () => {
+      useUiStore.getState().setStylesOpen(true, { presetId: 's1' })
+    })
+    await act(async () => {})
+    useProfileStore.setState({
+      save: async (_k, id, data) => ({ ...(USER as never as object), id, data }) as never,
+      rename: async (_k, id, name) => ({ ...(USER as never as object), id, display_name: name }) as never,
+    })
+    const button = (label: string) =>
+      [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)
+    // 改名 → 脏
+    await act(async () => {
+      const input = nameInput()!
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '投稿用 v2')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.querySelector('[data-style-dirty]')).not.toBeNull()
+    // 关闭 → 就地问
+    await act(async () => button('关闭')!.click())
+    expect(document.querySelector('[data-style-discard]')).not.toBeNull()
+    expect(useUiStore.getState().stylesOpen).toBe(true)
+    // 不答那一问，点页脚「保存」
+    await act(async () => button('保存')!.click())
+    await act(async () => {})
+    expect(document.querySelector('[data-style-dirty]')).toBeNull()
+    expect(document.querySelector('[data-style-discard]'), '那一问作废').toBeNull()
+    expect(document.querySelector('[data-style-discard-confirm]')).toBeNull()
+    expect(nameInput()!.value).toBe('投稿用 v2')
+    // 草稿干净：关闭直接关，不再问
+    await act(async () => button('关闭')!.click())
+    await act(async () => {})
+    expect(useUiStore.getState().stylesOpen).toBe(false)
+    // 不带预选重开：草稿仍是刚存的那份，且不显示未保存
+    await act(async () => {
+      useUiStore.getState().setStylesOpen(true)
+    })
+    await act(async () => {})
+    expect(nameInput()!.value).toBe('投稿用 v2')
+    expect(document.querySelector('[data-style-dirty]')).toBeNull()
+  })
+})

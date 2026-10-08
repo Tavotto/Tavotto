@@ -15,27 +15,37 @@
 
 | 语义 | 工具类 | 值 | 用途 |
 | --- | --- | --- | --- |
-| surface-app | `bg` | `#eeede9` | 桌面：顶栏、左轨、停靠的抽屉坐在它上面；作品在白色工作面板里（2026-09-30 重设计，第二十五节。此前是纸白 #f7f6f3） |
+| surface-app | `bg` | `#efefed` | 桌面：顶栏、左轨、停靠的抽屉坐在它上面；作品在白色工作面板里（2026-09-30 重设计，第二十五节；2026-10-07 降黄，第二十六节） |
 | surface-panel | `surface` | `#ffffff` | 面板 / 输入框 / 浮层 |
-| surface-subtle | `surface-2` | `#f7f7f4` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
+| surface-subtle | `surface-2` | `#f7f7f5` | 只读值、徽章底、禁用框的底（数字框不再用它做静态底，S8） |
 | surface-hover | `surface-hover` | ink 5% | hover。三档里最弱 |
 | surface-active | `surface-active` | ink 8% | 按下、小 chip 的静态底 |
 | surface-selected | `selected` | ink 10% | 选中：hover 的两倍，白面板与纸底上都成立（2026-09-15 打磨批次 A，此前固定 #ebebe6 在纸底上只有 1.07:1）；配字重 / 对勾再说一遍 |
 | ink-1 | `ink` | `#1b1b18` | 主文字，不是纯黑 |
-| ink-2 | `ink-2` | `#5c5c55` | 次级文字、标签 |
-| ink-3 | `ink-3` | `#6b6b64` | 元数据、单位、占位。仍 ≥4.5:1 |
+| ink-2 | `ink-2` | `#4a4a45` | 次级文字、标签（2026-10-07 拉深：此前与 ink-3 几乎同色） |
+| ink-3 | `ink-3` | `#6c6c66` | 元数据、单位、占位、说明（type-caption / type-meta）。所有底色上 ≥4.5:1（画布灰 4.84） |
 | ink-disabled | `ink-faint` | `#a3a39a` | 禁用 / 装饰。不用于要读的字 |
 | border | `border` | ink 12% | hairline。只给区域边界、次级按钮；浮层不再画边（环在投影里） |
 | border-strong | `border-strong` | ink 18% | hover 中的区域边界 |
 | border-control | `border-control` | `#84847c` | 未选中的复选框 / 单选、开关关态轨道：边界就是控件的全部识别信息，≥3:1（2026-09-14 审计 S10） |
-| field | `field` / `field-hover` | `#f1f0ec` / `#edece8` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：比面板深一级、静态无边线，聚焦 / 打开才是不透明 accent 边（2026-09-15 参考 Codex，第二十二节）。**有框 = 能改**不变，「框」是一块底；此前是 ink 16% 的边（批次 A T1，已作废） |
-| accent | `accent` / `accent-subtle` | `#2c73de` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 1px offset——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、AI。色相取自品牌蓝 #5A92E5，压深到蓝字 4.5:1（第二十五节）；链接不再用蓝 |
-| danger / warning / success | `danger` / `warn` / `ok`（各带 `-subtle`） | | 只表达语义 |
+| field | `field` / `field-hover` | `#f2f2f0` / `#eeeeec` | 所有可编辑框的**底**（`ui/fieldBox.ts`）：比面板深一级、静态无边线，聚焦 / 打开才是不透明 accent 边（2026-09-15 参考 Codex，第二十二节）。**有框 = 能改**不变，「框」是一块底；此前是 ink 16% 的边（批次 A T1，已作废） |
+| canvas | `canvas` | `#f5f5f3` | 工作面板里画布那一块的底，比桌面浅一档，纸放在它上面 |
+| group | `group` | ink 3% | 设置页字段组（`FieldGroup`）的底，比 hover 还淡一档 |
+| accent | `accent` / `accent-subtle` | `#2c73de` | **小面积**：焦点环（`focus-ring`，**不透明** 2px + 2px offset（2026-10-07 从 1 改 2）——45% 透明那一版对所有底色只有 1.9:1，2026-09-14 审计 S2）、AI。色相取自品牌蓝 #5A92E5，压深到蓝字 4.5:1（第二十五节）；链接不再用蓝 |
+| danger | `danger`（锚点） | `#c4442a` | 只表达语义。派生 `-surface` / `-border` / `-content`（第二十六节） |
+| warning | `warn`（锚点） | `#b07400` | 同上。锚点对白只有 3.9:1——只给图标 / 圆点，字一律 `warn-content` |
+| success | `ok`（锚点） | `#2b7649` | 同上 |
+| info | `info` | = accent | 同上（锚点就是 accent） |
+| shadow | `shadow`（投影 token、遮罩） | `#1b1b18` | 所有投影模糊层与遮罩的底色（`color-mix(shadow N%)`；`bg-shadow/N` 是对话框 / 覆盖抽屉的遮罩） |
+| shadow-edge | `shadow-edge`（只在投影 token 里） | = shadow | 投影的 1px 环；暗色换白（暗底上的黑环看不见，第二十八节） |
+| paper | `paper` | `#ffffff` | **纸**：画布上的页面、图的缩略图底。文档内容的颜色，两套主题同值（第二十八节） |
+| paper-ink | `paper-ink` | `#1b1b18` | 界面画在纸上的记号（网格、透明棋盘格、占位框的字）。同上，不跟主题走 |
+| thumb | `thumb` | = surface | 浮起的那一块：分段 / 选项格的选中 thumb、开关钮、滑杆钮（配 `shadow-thumb`）；暗色比面板亮一档 |
 
 工具类名沿用旧名（不为了改名动七百处调用），对照表也写在 index.css 顶部。
 
-规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`）；持久表面里只有「真的是一张卡」的
-东西有投影（`shadow-card`：素材卡 / 会话卡 / 任务行 / 诊断与修复卡，第二十二节），分区 / 列表行 / 输入框仍是平的；
+规矩：蓝色不做任何大块背景、不做按钮填色（主按钮是近黑 `bg-ink`、字是 `surface` 色）；持久表面里只有「真的是一张卡」的
+东西有投影（`shadow-card`，**只经 `ui/Card` 一处**：素材卡 / 诊断与修复卡，第二十二节、第二十六节；助手的会话卡与任务行 2026-10-07 撤了，见第十八节），分区 / 列表行 / 输入框仍是平的；
 浮层只有 `shadow-pop`（菜单 / popover / 浮条）与 `shadow-dialog`（对话框 / 命令面板）两种，都是
 「1px 半透明环 + 一层大模糊」，浮层**不再画实色 border**；Tooltip 是 ink 底白字；surface 之间靠极轻的
 明度差与半透明 hairline 分层，不靠框。
@@ -46,14 +56,18 @@
 
 | 档 | 值 | 给谁 |
 | --- | --- | --- |
-| `rounded-xs` | 3 | 16px 高以下的小片：kbd、计数角标、缩略图上的标签、分段选择器的 thumb |
-| `rounded-sm` | 6 | 控件：输入框、按钮、图标钮、选项格、树行、tooltip |
-| `rounded-md` | 10 | 卡片与浮层：菜单、popover、select 弹层（2026-09-15 从 8 抬到 10：浮层要比控件大一档以上） |
-| `rounded-lg` | 14 | 对话框、命令面板（2026-09-15 从 12 抬到 14） |
-| `rounded-panel` | 16 | 工作面板（画布标签 + 画布 + 属性栏那一整块），全产品只有这一处（2026-09-30） |
-| `rounded-full` | | 带字的按钮与分段控件（2026-09-30 起是胶囊）、圆点、开关、徽章 |
+| `rounded-xs` | 4 | 16px 高以下的小片：kbd、计数角标、缩略图上的标签、复选框 |
+| `rounded-sm` | 6 | tooltip、20px 行内小片 |
+| `rounded-md` | 8 | 行（列表 / 树 / 菜单项 / select 项）、可编辑框、小卡 / 缩略图、说明条（`Notice`） |
+| `rounded-lg` | 12 | 卡片（`Card`）、菜单 / popover / select 弹层的外壳、多行浮动面板、空态图标底座 |
+| `rounded-panel` | 16 | 对话框、工作面板、改图助手输入框、命令面板 |
+| `rounded-full` | | 带字的按钮、**图标钮**、分段控件、chip、toast、单行浮动条、圆点、开关、徽章 |
 
-2026-09-30 重设计的改动（第二十五节）：带字的按钮 / 分段控件 `sm` → `full`；输入框 `sm` → `md`；图标钮 `sm` → `md`。
+**外层圆角 = 内层圆角 + 内边距**（菜单 lg 12 = 项 md 8 + 内边距 4；卡 12 包 8 的封面）。
+**浮动外观三档**：单行（≤36px）的浮动条 = 胶囊；多行浮动面板 = 12；模态 / 面板 / 命令面板 = 16。
+2026-09-30 重设计的改动（第二十五节）：带字的按钮 / 分段控件 `sm` → `full`。2026-10-07（第二十六节）：圆角族
+4 / 6 / 8 / 12 / 16（此前 3 / 6 / 10 / 14 / 16），图标钮 → `full`，对话框 → `panel`，菜单 / popover 外壳 → `lg`。
+门禁：`rounded-*-[…]` 任意值与内联 `borderRadius` 都不许出现。
 
 ## 三、密度
 
@@ -64,7 +78,7 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 三档定义：
 
 - compact row 28：控件与列表行（已落地）
-- normal control 32：对话框脚部主动作（待定，看真实页面再决定要不要拉高）
+- normal control 32：对话框页脚的按钮、页面级 CTA、命令面板输入行（2026-10-07 落地：`Button size="lg"` / `IconButton iconSize="lg"`）
 - setting row 48：设置页一行（Session 5 落地：`SettingRow` `density="normal"` 最小 48px，
   `compact` 最小 32px；见第十二节）
 
@@ -80,10 +94,13 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 
 ## 五、控件
 
-- **Button**：四档 `primary`（近黑填色，每个上下文最多一个）/ `secondary`（细边白底，
-  工具操作默认）/ `ghost`（无边无底）/ `danger`（红字 ghost）。`active` 是 selected 轻 tint +
-  字重。忙碌态自带。
-- **IconButton**：`label` 既是可达名也是气泡，一份文案两处用。
+- **Button**：五档 `primary`（近黑填色、surface 色字，每个上下文最多一个）/ `secondary`（灰底胶囊，
+  工具操作默认）/ `ghost`（无边无底）/ `danger`（红字 ghost，行内 / 菜单旁）/ `danger-tinted`（**只给对话框页脚**的
+  破坏性确认：danger-surface 底 + danger-border 内描边 + danger-content 字 + 600，配 `size="lg"`；永远不用实心红，
+  2026-10-07）。高度 28（sm / md）与 32（`lg`，对话框页脚 / 页面 CTA）。`active` 是 selected 轻 tint +
+  字重。忙碌态自带。层级落在 `data-variant` 上，用例认它，不认类名。
+- **IconButton**：`label` 既是可达名也是气泡，一份文案两处用。**圆形**（`rounded-full`，2026-10-07）：28（md / sm）、
+  32（`iconSize="lg"`）、20（`xs`，只给行内）。
 - **可编辑框只有一副**（`ui/fieldBox.ts`，2026-09-14 审计 S8）：`field` 底、静态无边，hover 底加深一档，
   聚焦 / 打开不透明 accent 边，禁用 opacity-40（形态 2026-09-15 参考 Codex 改成「只换底色」，第二十二节）。
   TextInput / TextArea / NumberField / Select / SearchInput / 样张选择器触发器（`PickerTrigger`）全从这里取；
@@ -126,14 +143,27 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   **键盘**（2026-09-14 审计 S3）：整组只占一个 Tab 停靠点（选中项），← → Home End 换值并带
   焦点，禁用项跳过；`role="radio"` 字面量只许出现在它与空间型选择器（OptionGrid 一族）里，
   `foundation.test` 守着。
-- **listRowClass**：树行 / 列表行的共同外观（28px、hover / selected / hidden 三态）。
+- **listRowClass**：树行 / 列表行的共同外观：`size` sm 28 / md 44 / lg 52、圆角 md 8、hover / selected / hidden 三态，
+  **选中 = selected 底 + 600**（2026-10-07）；行里的 meta 用 `rowMetaClass(selected)`（选中时 ink-3 → ink-2）。
+  拖放落点是 `dropLineClass(pos)`：2px accent 条 + 左端 4px 圆点。
+- **RowMenu**（`useRowMenu` + `RowMenu`）：一行的 ⋯、右键、⇧F10 / ContextMenu 键打开**同一份** `MenuItem` 清单；⋯ 只在
+  hover / focus-within / 打开时看得见，行聚焦时它在 Tab 顺序里（tabIndex 0），否则 -1；自己管 roving focus、整张列表只许一个
+  Tab 停靠点的列表传 `tabStop={false}`，⋯ 恒为 -1，键盘入口只剩 ⇧F10 / ContextMenu 键；宿主自己不可聚焦、又不在一列里
+  （当前项目卡）时 `tabbable`，⋯ 常驻 Tab 顺序（两者互斥，`tabStop={false}` 优先）。行的主操作「常态打不开」（目录已不在）用
+  `aria-disabled` 不用 `disabled`：焦点仍落得进行里，⋯ 才够得着。菜单项标的快捷键只标那个键在这一行上真会做的事。菜单项图标一律经 `MenuItem icon=`
+  （ink-2，危险项跟字走红），不在 children 里自己排。
 - **TreeRow**（`treeIndent` / `TreeChevron` / `TreeIcon` / `TreeCount`）：树行的固定列——
   缩进 8 + 14 × 层级、16px 折叠箭头列、16px 类型图标列、右对齐计数。图层树与图内
   元素树共用；叶子行留空的箭头列，同层的图标才对得齐。层级只靠缩进与箭头，不靠留白。
 - **SearchInput**：面板顶部的搜索框，唯一的一种——与其它可编辑框同一副框（S8 之前是安静的
   surface-2 填充框）；左侧放大镜固定列，有内容才出清除钮；Esc 先清空再失焦。
-- **说明条**：没有独立原语（`Notice` 于 2026-09-15 删除，最后一个调用点是批次 G 删掉的安全导入说明）。要警告语义
-  用设置页的 `InlineWarning`；状态一句话是 surface-2 底的一条，不套框。
+- **说明条 `Notice`**（2026-10-07 恢复为原语，第二十六节；2026-09-15 那次删除作废）：`tone` neutral / info / ok / warn / danger，
+  8 圆角、内边距 8 / 12、锚点派生的底 / 内描边 / 字，图标按语气（阻断八角 / 警告三角 / 信息圆 / 完成对勾），可选 `title` 与右侧 `action`。
+  对话框里放在页脚上方（加载错误放顶部）；设置组里作为组内最后一行。设置页的 `InlineWarning` 逐页迁到它。
+- **StatusPill**：20px 胶囊、11 / 500、锚点派生的底与字，可选锚点色圆点。**状态**（就绪 / 需要登录 / 失败）用它，计数与版本号仍是 `Badge`。
+- **Card**：`appearance` raised（白 + shadow-card）/ subtle（surface-2 填充）/ plain；`padding` none / sm 8 / md 12；
+  `interactive`（hover 画 1px outline，offset -1，几何不变）/ `selected`（border-strong outline + selected 底）；可交互的卡
+  `:has(:focus-visible)` 画 accent 环。圆角 lg 12。`shadow-card` 只在 `Card.tsx` 里写（门禁）。
 - **Section / SettingSection / Disclosure / Details**：分区与折叠。
 - **「去到」的记号只有一枚**（2026-09-14 审计 A4）：尾随的 `ChevronRight`（xs），给「X 轴刻度 ›」
   「在子图页编辑刻度线与边框 ›」这种往下 / 往旁边走的入口；往上走的路是身份头的**面包屑**，
@@ -145,10 +175,10 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
   问题面板 / 导出清单 / 上下文栏 / 图例项一律生效；引擎按字数截断的名字在树行用 `untruncatedLabel`
   补回全文、由 CSS 按宽度截（S15）。
 
-- **光标一律箭头**（2026-09-15 拍板）：按钮 / 复选 / 单选 / 折叠头一律箭头，手形只给真正的
-  `<a>` 链接。原语里的 `cursor-pointer` 全部删掉，`index.css` 的 base 层兜住 UA 默认值
-  （`button` / `summary` / `input[type=checkbox|radio|color]`）——同一行里按钮手形、
-  分段选择器箭头，是「同一件事第二种写法」的最小形态。
+- **光标一律箭头**（2026-09-15 拍板；2026-10-07 门禁化）：按钮 / 复选 / 单选 / 折叠头 / 标签一律箭头，手形只给真正的
+  `<a>` 链接。页面里的手形光标类全部删掉、`foundation.test` 禁止再写，`index.css` 的 base 层兜住 UA 默认值
+  （`button` / `summary` / `label` / `input[type=checkbox|radio|color]`）——同一行里按钮手形、
+  分段选择器箭头，是「同一件事第二种写法」的最小形态。**唯一例外**是可拖的卡（素材卡）：抓手光标说的是「能拖」。
 
 状态四态必须可辨：hover（surface-hover）< active（surface-active）≈ selected（selected +
 字重 / 对勾）；disabled 统一 **`opacity-40 + cursor-not-allowed`**（一档，2026-09-14 审计 S7 之前
@@ -160,18 +190,28 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Dialog**：打开后焦点落在 `role=dialog` 容器本身（不预选控件；读屏先念标题与说明），
   关闭钮画在右上角但 DOM 排在正文与脚部之后——第一下 Tab 进正文第一个控件，Shift+Tab 或走到
   末尾才到关闭钮；Esc、`busy` / `blockDismiss` / `covered`、关闭还焦不变（2026-09-14 审计 S1）。
+  2026-10-07（第二十六节）：宽度 sm 400 / md 480 / lg 560 / xl 760 / shell；`rounded-panel` 16；标题 15 / 600、正文
+  `type-reading`；页脚三槽 `{ start, secondary, primary }`（旧的整段 `footer` 仍可用），按钮 32；正文会滚时页脚吸底变毛玻璃
+  （`data-scrolled`，尊重 reduced-transparency）；**Esc 永远是安全答案**（`onEscape`：确认框 = 取消、关窗三选一 = 取消；
+  `blockDismiss` 时点外面仍不算回答；真正的闸门 NativeConfirm / ScriptInput 不给它）；遮罩只由最底下那个开着的对话框画；
+  **每个上下文一颗主按钮**，对话框页脚的破坏性动作用 `danger-tinted`（CloseGuard：`[不保存] … [取消] [保存并关闭]`）；
+  对话框常驻挂载、`open` 由载荷驱动（不写 `if (!x) return null`）。
 
 ## 六、文字
 
-六个角色（`index.css` 的 `@utility type-*`），层级由角色定，不由页面自己挑组合：
+十个角色（`index.css` 的 `@utility type-*`），层级由角色定，不由页面自己挑组合（2026-10-07 增 display / heading / reading，
+title 升 600、caption 升 12 / ink-3，第二十六节）：
 
 | 角色 | 值 | 给谁 |
 | --- | --- | --- |
-| `type-title` | 15 / 20 · 500 · ink | 对话框 / 页面标题（2026-09-15 打磨批次 A 从 14 抬到 15：与正文 12 之间要有 3px 台阶） |
+| `type-display` | 24 / 30 · 600 · -0.02em · ink | 首页、空画布这类「一屏只有一件事」的大标题（取代 `text-[24px]` 一类例外） |
+| `type-heading` | 17 / 24 · 600 · -0.01em · ink | 属性栏对象名、设置页页头 |
+| `type-title` | 15 / 20 · 600 · ink | 对话框标题、空态标题（2026-09-15 从 14 抬到 15；2026-10-07 从 500 升 600） |
+| `type-reading` | 13 · 行距 1.6 · ink | 阅读面正文：改图助手回答、对话框正文（Dialog 默认给）、设置说明 |
 | `type-section` | 12 / 16 · 500 · ink | 分区小标题、菜单组标题。2026-09-14 审计 S9：中文没有大写、字距看不见，靠「深 + 重」与行标签（12 · 400 · ink-2）拉开；二审 B2（拍板「甲」）英文也去掉大写 + 字距，两种语言同一个骨架 |
 | `type-body` | 12 / 16 · ink | 正文 |
 | `type-control` | 12 · 颜色随控件 | 控件里**要读的值**（输入框 / 数字框 / 下拉 / 分段 / 样张格）。2026-09-14 审计分歧 1 拍板：值试到正文档，标签 / caption / meta 留 11，28px 不变 |
-| `type-caption` | 11 · 行距 1.5 · ink-2 | 说明文字 |
+| `type-caption` | 12 · 行距 1.5 · ink-3 | 说明文字（2026-10-07 从 11 / ink-2 改：ink-2 拉深后留给标签） |
 | `type-meta` | 11 · ink-3 | 元数据、路径、计数 |
 | `type-number` | 12 / 16 · 系统字体 + tabular-nums | 数值：输入框里的值与单位、只读的尺寸 / 计数 / 缩放 / 像素读数（二审 B1，拍板「乙」）。快捷键与 `Kbd` 同样是系统字体 + tabular-nums（2026-09-15 全面打磨 B05：Claude 的 kbd 全部 `font: inherit`）。等宽字体只留给代码、路径、脚本名与 matplotlib 取值代号 |
 
@@ -182,9 +222,10 @@ ppi）前一个空格，`%` / `°` 贴着数字；i18n 字串里写 `{{x}} pt`�
 i18n 字串里写 `{{w}} × {{h}} mm`，`resources.test` 守着（此前 `{{w}}×{{h}} mm` 十处、`{{w}} × {{h}} mm` 五处、
 `{{w}}×{{h}}cm` 一处并存，`measure.mmSize` 与 `mmSizeSpaced` 两个 key 同一件事）。
 
-字号阶梯只有 xs 11 / sm 12 / base 13 / lg 14 / xl 15 五档（xl 只给 `type-title`）；`text-[Npx]` 不许出现
-（营销页 /try 的三个展示级字号按个数豁免在门禁里）。字重只有 400 / 500；**600 只给页签 / 分段选择器
-的选中态**（`tabClass` / `Segmented`，2026-09-15 打磨批次 A，用户拍板），`foundation.test` 按文件计数守住。
+字号阶梯只有 xs 11 / sm 12 / base 13 / lg 14 / xl 15 五档（xl 只给 `type-title`；17 / 24 只经 heading / display 两个角色出现）；
+`text-[Npx]` 不许出现（营销页 /try 的三个展示级字号按个数豁免在门禁里）。字重 400 / 500 / 600：**600 只在角色与原语里**——
+标题角色（title / heading / display）、页签 / 分段 / 列表行的选中态（`tabClass` / `Segmented` / `listRowClass`）、表单分区标题
+（`FormSection`）、对话框页脚的危险浅底胶囊（`danger-tinted`）；页面里不写 `font-semibold`，`foundation.test` 按文件计数守住。
 
 ## 七、动效
 
@@ -205,6 +246,10 @@ opacity + ≤4px 位移 + scale 0.97~1；没有缩放炫技、漂浮。`prefers-
 实现只有一份：`ui/slidingIndicator.useSlidingIndicator`（Tabs / Segmented 共用）与 `ui/Field.Reveal`
 （Disclosure；原生 `<details>` 用 `::details-content` 在支持 `interpolate-size` 的引擎里同样长高）。
 
+**加载只有四种写法**（2026-10-07，第二十六节）：不定进度 = `animate-sweep`（`ui/ProgressBar`，轨道 border 色）；骨架 = 静态
+`bg-surface-hover` + 65% 不透明，不动；「进行中」的字 = `text-shimmer`；按钮 / 行内 = `LoaderCircle animate-spin`。Tailwind 的
+呼吸动画（pulse）被 `foundation.test` 禁掉。一次性的「看这里」（问题定位高亮）是 `animate-attention`，有限三次。
+
 **写了 `transition-*` 没写时长的，默认档也是 token**（二审 E1）：`--default-transition-duration`
 = `--duration-fast`、`--default-transition-timing-function` = `--ease-standard`（对称曲线，给 hover /
 颜色 / 折叠箭头这类来回都要顺的过渡；`--ease-pop` 进场、`--ease-exit` 退场不变）。此前 53 处落在
@@ -214,7 +259,7 @@ Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，�
 ## 八、少用容器
 
 留白、对齐、字体层级、hairline 优先；卡片只给「真的是一张卡」的东西（注册表条目、
-会话卡）。一个页面里所有东西都有框，说明设计失败。
+改图助手里改了脚本的那张 diff 卡）。一个页面里所有东西都有框，说明设计失败。
 
 ## 九、素材库 / 脚本区 / 树（Session 3 定下的形态）
 
@@ -266,25 +311,30 @@ Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，�
   hairline 边框、`shadow-pop`，纸白 surface，没有玻璃。`Dialog chrome="shell"`：44px 标题栏
   （type-title「设置」+ ghost `IconButton` 关闭）+ 一根 hairline，正文不带内边距、不滚，
   子树自己决定哪一列滚。
-- **导航**：左列固定 192px（`sm:w-48`），与内容之间一根 hairline。十一个分区按 `NAV_GROUPS`
-  分四组：通用（常规 / 界面 / 项目）· 工作流（样式 / 规范 / 导出）· 集成（编码 Agent / 包管理）·
-  系统（诊断 / 更新 / 关于与隐私）；组名 12/400/ink-3——比项淡一档（2026-09-15 全面打磨 D07，此前是 type-section 与选中项同重），
-  只在 ≥640px 显示，组间 16px。项 28px、12px、`rounded-sm`；当前项 = `selected` 轻 tint + 字重，hover = `surface-hover`，
-  没有深灰块、没有蓝。<640px 时导航变顶部一条可横滚，组名藏起来只留组间距。
+- **导航**（2026-10-07 修订，设计审计 §9.1）：左列固定 **200px**（`sm:w-50`），与内容之间一根 hairline。顶上一个
+  28px 的**搜索框**（`SearchInput type="search"`；按 `settings/settingsRegistry.ts` 登记的行名 + 按语言给的关键词纯本地过滤，
+  搜索时分组隐去、只剩命中的分区与它们命中的行，点一行 = 切到那一页并把那一行滚进视野、亮一下；不发任何请求）。
+  九个分区按 `NAV_GROUPS` 分四组：应用（通用 / 项目）· 工作流（样式 / 规范 / 导出）· 集成（改图助手 / Python 库）·
+  系统（帮助与诊断 / 关于与更新）；组名 **12 / 500 / ink-3**，只在 ≥640px 显示，组间 16px。项 **30px、13px、8 圆角**
+  （`listRowClass` 那一份）；当前项 = `selected` 轻 tint + **600**，hover = `surface-hover`，没有深灰块、没有蓝。
+  有没存的草稿的那一页，项上挂一颗 6px accent 点，切页 / 关设置先问（`askDiscardDraft`）。<640px 时导航变顶部一条可横滚，
+  组名与搜索藏起来只留组间距。
 - **内容区**：`[data-settings-content]` 独立滚动，`px-6 py-5`，`scrollbar-gutter: stable`
-  （有没有滚动条内容都从同一条竖线起排），底部 `mb-2` 让滚动条在圆角之前结束。分区之间
-  `gap-7`（28px）由这里统一给，页面自己不带外层 gap。**内容模式**由 `CONTENT_MODE` 按分区
-  声明：`normal` 最大宽 `CONTENT_MAX_WIDTH` = 640（常规 / 界面 / 项目 / 导出 / 编码 Agent /
-  诊断 / 更新 / 关于）；`wide` 铺满（只剩包管理的表格；样式 / 规范自 2026-09-15 打磨批次 B 起是普通分区）。
-  不给每一页自己随意布局。
-- **SettingSection**：type-section 小标题 + 可选一句 type-caption 说明 + 若干行；相邻两个
-  `SettingRow` 之间一根 hairline（行与警示条 / 折叠区之间不画）。**不是卡片**。
+  （有没有滚动条内容都从同一条竖线起排），底部 `mb-2` 让滚动条在圆角之前结束。分区之间 `gap-6`（24px）由这里统一给，
+  页面自己不带外层 gap。**内容模式**由 `CONTENT_MODE` 按分区声明：`normal` 是一列**居中**、最大宽 `CONTENT_MAX_WIDTH` = **680**
+  （2026-10-07 修订：此前 640 靠左，右侧空出约 120px，控件浮在对话框中部）；`wide` 铺满（只剩 Python 库的表格）。
+  换页时新的一列淡入一次（只有进场，减弱动效时不播）。不给每一页自己随意布局。
+- **分组是 `ui/FormSection` + `ui/FieldGroup`**（2026-10-07 修订；此前的 `SettingSection` 已删）：分区标题 13 / 600 +
+  可选一句说明，下面一个或几个 12 圆角、ink 3% 底的字段组，行内边距 12 / 16、行间一条左右各内缩 16 的 hairline。
+  组里的说明条是 `ui/Notice`（`GroupNotice`，作为组内最后一行；`InlineWarning` 设置页不再用）。原地展开的低频内容是组里的
+  一行（`DiagnosticDisclosure variant="row"`：13px 名字 + 行尾当前值 + ›）。**不是卡片**——组底只是分组，不画边框、不投影。
 - **SettingRow**：`标题 [?] / 说明 / 现状 ‖ 控件` 的两列网格——标题列弹性，**控件列定宽
   `SETTING_CONTROL_WIDTH` = 240**，开关 / 下拉 / 按钮 / 数字框在列内**贴右缘对齐**（2026-09-15 打磨批次 A，
   用户拍板：此前左起对齐在页面中间、右侧空一大片；Codex / ChatGPT / macOS 的设置行都是控件贴内容区右缘）。
-  标题 type-body（12 / ink），说明 type-caption，现状 type-meta。`density="normal"` 最小 48px
+  标题 **13 / ink**，说明 type-caption（12 / ink-3），现状 **12 / ink-2 / 等宽数字**（2026-10-07 修订）；**现状槽只放文字**——
+  路径展开、目录编辑器、预览这类要宽度的东西走 `below`（跨两列的 fill 行），不塞进现状里把整行撑跳。`density="normal"` 最小 48px
   （默认）、`compact` 最小 32px（密集字段清单，不放说明）；`control="fill"` 时控件整行宽、落到
-  标题下一行（路径输入框那种）。样式 / 规范页的只读摘要行（`SummaryRow`）共用同一份网格，
+  标题下一行（路径输入框那种）。样式 / 规范页的只读摘要行（`SettingValueRow`，一份，2026-10-07 起两页不再各写一份）共用同一份网格，
   「摘要 ↔ 输入框」切换时整列不跳（`settingsDisclosure.test` 量它）。
 
 ## 十三、设置页（Session 6 定下的形态）
@@ -294,33 +344,50 @@ Tailwind 自带的 150ms——`foundation.test` 抓 `duration-150` 字面量，�
 - **控件对齐标题行**：`SettingRow` 的标题行是一个 28px 的盒（与控件同高），行本身 `items-start`。
   有说明 / 现状 / 示意图时开关仍与标题并排，不漂到整行中线。示意图走 `illustration` 槽
   （说明下方、无底无框），只给「空间关系用图讲比文字快」的那几处——关联对象那一张。
-- **值在标题列，动作在控件列**：一行既有现状（目录名、脚本数）又有动作时，现状是 `status`，
-  控件列只放那颗 secondary 按钮；路径这类要整行宽的输入走 `control="fill"`，下面一行
-  「实际位置 › 末级目录 复制」是 type-meta。
-- **副作用一句话不套框**：开关开着时的低调提醒（「修改可直接写入原始脚本」）是 `status`；
-  `InlineWarning` 只给关掉 / 错误 / 缺件那一档，底色是 `surface-hover` token，不是黄块。
+- **值在标题列，动作在控件列**：一行既有现状（目录名、脚本数）又有动作时，现状是 `status`（只放文字），
+  控件列只放那颗 secondary 按钮（+ 行尾 ⋯：恢复默认 / 显示完整路径 / 复制）；完整路径与目录编辑器展开在这一行的
+  `below`（跨两列的 fill 行，2026-10-07 修订）。
+- **副作用一句话不套框**：开关管什么（「写回会覆盖原始文件，先备份」）是常驻的 `description`；
+  组里的 `Notice` 只给关掉 / 错误 / 缺件那一档（warn / danger，锚点派生的底与字；2026-10-07 修订：此前是 `InlineWarning`）。
 - **小问号是 20px 的 IconButton**（透明底、hover 浮 surface-hover、6px 圆角）；键位提示用
   `ui/Kbd`（`sm` 16px 内联小片、无边框；`md` 22px 键帽只给快捷键速查表），不再长得像一颗按钮。
 - **单选用 `ui/Radio`**（14px 圆、与 Checkbox 同一套状态；编码 Agent 详情的模型服务），不用
   原生 `accent-*` 单选；选项行的选中态是 `selected` 轻 tint。
-- **状态区不是卡片**：包管理的查找结果 / 作业进度是 surface-2 底的一条（与 Notice 同一档），
+- **状态区不是卡片**：包管理的查找结果 / 作业进度是安装组里紧跟安装框的一行（2026-10-07 修订：此前是 surface-2 底的一块），
   不带边框。
-- **分区标题一律 type-section**；页面自己不带页标题（导航项已经是它的名字）、不带外层 gap
-  （`display: contents` 让分区直接成为外壳内容容器的子项，分区间距全仓统一 28px）。
-- **样式 / 规范是「一行库 + 编辑器」**（2026-09-15 打磨批次 B，L3 / L4）：库是一行 `SettingRow`——
-  一份时只写名字、二到四份是 `Segmented`、再多换 `Select`，新建 / 复制 / 导入 / 导出收进行尾的 ⋯ 菜单；
+- **每页一个页头**（2026-10-07 修订，设计审计 §9.1，推翻 Session 6 的「导航项即其名」）：`type-heading` 17 / 600 的页名 +
+  一句 type-caption 说明（短于一行，说这一页管什么），由外壳画；钻入页（改图助手 › Codex）把页头换成面包屑，分区名那一截是
+  返回（`useSettingsCrumb`）。此前没有页头，钻入页与长页滚动后失去上下文。分区标题是 `FormSection` 的 13 / 600；页面自己
+  不带外层 gap（`display: contents` 让分区直接成为外壳内容容器的子项，分区间距全仓统一 24px）。
+- **样式 / 规范是「一行库 + 编辑器」**（2026-09-15 打磨批次 B，L3 / L4；2026-10-07 修订）：库是一行 `SettingRow`——
+  **固定一个约 260px 的 `Select`**（此前一份 / 二到四份 / 五份以上各一种控件，宽度跟着跳），新建 / 复制 / 导入 / 导出 / 恢复 / 删除收进行尾的 ⋯ 菜单；
+  规范页最上面是「正在使用」组：在用的那一份（名字 + 来源）、四个关键数的**四栏统计条**（17 / 600 等宽数字 + type-caption 名字）、
+  「跟随更新」（项目绑定的属性，从页尾搬来）、本项目实际检查的规则（折叠行）；样式页的示例图坐在 plain `Card` 里；字段清单按组
+  `FormSection` + `FieldGroup`；可编辑那份有一条**吸底保存条**（「放弃修改」secondary + 「保存」primary，都是 32px；没改过时停用；
+  保存失败的原因就在条上），导航蓝点 + 切页 / 关设置的放弃确认照旧；
   此前左边一列 176px 只有两行、右边才是编辑器。样式页先看示例图（360px），规范页顶部先看四个关键数
   （最小字号 / 单栏宽 / 双栏宽 / 最低分辨率，15px 500 + type-meta 标签），两页在第一眼上就分开。
   身份行 = 名字（type-title）+ 徽标 + **这一份唯一的主动作**贴右（2026-09-15 全面打磨 D03 / D04）：样式页是「应用到当前图…」，
   可编辑时是「保存」（恢复 / 删除收进库行的 ⋯）；规范页「本项目在用」按 `resolveDocumentSpec` 的实际在用判定（没显式绑定时
   走内置默认也算在用），回退态只给 ghost「固定为本项目规范」；没用的只读规范给「本项目用这套规范」secondary；
   「复制一份再修改」是 ghost。字段清单是 compact 行，值贴右缘，数字框的单位在框内。
-- **导出**分三个分区（格式 / 位图输出 / 检查）：分辨率只在选了位图格式时可用，停用时就近说明。
-- **管理页**（编码 Agent / 包管理 / 诊断 / 更新 / 关于）保持各自的信息架构，只把字级、按钮、
-  折叠区、间距收到同一套；「有新版本」是一段内容不是一张卡；默认 Agent 是**行首一颗 `ui/Radio`**
-  （2026-09-14 审计 D1：此前是行尾一颗一会儿写「当前默认」一会儿写「设为默认」的按钮——同一个控件
-  既当状态又当动作）；`CopyButton` 建在 `Button` 上（ghost 小钮，主动作位传 secondary）；诊断页
-  「导出诊断包」secondary、「复制诊断」ghost。
+- **导出**是「默认导出」一组三行（2026-10-07 修订：此前三个分区各一行）：格式一行 `layout="balanced"`、复选框标签 12px；
+  分辨率只在选了位图格式时可用，停用时原因就在行内现状里。
+- **管理页**（改图助手 / Python 库 / 诊断 / 关于与更新）保持各自的信息架构，只把字级、按钮、折叠区、间距收到同一套
+  （2026-10-07 修订）：
+  - **改图助手**：默认助手是组首**一个 `Select`**（推翻 2026-09-14 D1 的行首 Radio：一行里单选 + 开关 + 整行 + chevron 四种操作）；
+    每行只剩一个开关 + ›；状态一律带字的 `StatusPill`（「可用」也有字）；「重新检测」在组标题右侧，失败原因是组里第一行的 Notice；
+    「Tavotto for Codex」一行是「安装」+ ⋯（重新诊断 · 使用指南），逐步结论不带框、全部通过时折成一行。详情页：面包屑页头、
+    分组 `FieldGroup`、模型服务每条一行 + ⋯（编辑 · 删除，删除是危险项且先确认）、高级设置三条原地展开的行。
+  - **Python 库**：环境状态是 `StatusPill`，「重建环境…」在 ⋯ 里先确认；安装一行「输入框 · 在 PyPI 查找 · 安装（primary，贴右）」，
+    作业是紧跟它的一行（`ProgressBar`），包表坐在 `FieldGroup` 里、行 36px，每行一颗 ghost「升级」+ ⋯（卸载是危险项）；
+    内置包与技术细节是「背景信息」组里的两条折叠行。
+  - **帮助与诊断**：健康 → 报告 → 开发者；结论是一枚 `StatusPill`（不是行标签），结论那一行取数前后同高；会随结果长高的
+    （异常项逐条、各项检查结果、恢复入口）在开发者之后的「检查结果」组里——异步结果不挪动正在按的入口（#797）。
+    导出诊断包的结果是那一行的现状，诊断摘要的预览是那一行的 fill 行。
+  - **关于与更新**：产品信息在页首；「有新版本」是组里一条 accent（info）Notice + 32px 主按钮，发行说明折叠；自动检查那一行
+    桌面 / 浏览器同形（桌面版开着、停用、原因在行内）；遥测那一行的现状**只说开关说不出的**（尚未选择 / 待重新确认）。
+  `CopyButton` 建在 `Button` 上（ghost 小钮，主动作位传 secondary）。
 
 ## 十四、「Remove the Demo Feeling」终审（2026-09-11 最终 Session）
 
@@ -461,6 +528,47 @@ B02 / B09 / B25 / B31 / B45 / B52「像同一套产品」：
 - 没做的：逐字光标（ChatGPT 的圆点常被当作「卡住了」）、消息气泡从输入框飞到对话区（侧栏是顶部对齐的，
   第一条会飞过整个面板高度）、思考过程逐行浮现（过程默认折叠，展开时一次到位）。
 
+### 2026-10-07 重做：从「一张卡」到「一段对话」（用户拍板，审计 §6.1–§6.7，对照 OpenBitFun FlowChat）
+
+全部在 `components/ai/`（`AiPanel` 外壳与输入框、`Transcript` 转录、`Markdown` + `CodeBlock`、`DiffView`、`TaskHistory`、`CopyAction`）。
+与上文冲突处以这一小节为准。
+
+- **角色分离**：用户消息是右对齐、自适应宽度的气泡（最宽 85%、lg 12 圆角、surface-hover 底、`type-reading`），超过 3 行折叠
+  （换行数或真布局的溢出，二者其一），「展开 / 收起」在气泡里；目标 · 时刻与「复制 / 重新发送」只在 hover / 键盘进入时浮出
+  （占位常驻，不跳）。「重新发送」按那一轮的原话、当前的作用范围再发一次，不动输入框里的草稿；与发送钮同一条可发判据。
+- **助手回答不装卡**：`Markdown` 直接坐在面板上，正文 `type-reading`（13 / 1.6、**ink**）。h1 15 / h2 14 / h3 13，一律 600 + 上方 12；
+  块间 8，第一块无上边距、最后一块无下边距。行内代码 `box-decoration-clone`（换行时两段都有圆角）。表格无外框、12 圆角包住、表头 surface-2、
+  行间 hairline、行 hover。**链接例外**：回答里的链接是 accent + 1px 下划线（offset 2）——第二十五节「链接不再是蓝字」管的是界面导航，
+  回答里的链接是要点开的出处，这是那条规矩唯一的例外。
+- **节奏由列表容器管**：转录容器定义 `--turn-gap` 16 / `--item-gap` 8，轮与块都不带外边距。
+- **过程是环境级**：连续的思考 / 动作折成**一行**「已思考 6s · 4 步」（ink-3、13）；14px 图标列 hover 时换成 chevron（不 hover 不显示展开提示）；
+  进行中这一行是最新一步的原位替换（`text-shimmer`）。展开（`Reveal`）后每步一行：图标 · 动词 · 等宽参数片（surface-hover 底）· 右侧耗时
+  （`type-meta` tabular）；动作行可再展开，surface-2 的 md 圆角面板里是完整参数。耗时 = 相邻两条的到达时刻之差（`AiEntry.at`、
+  `AiSession.finishedAt`），缺了就不说，绝不编。失败的那一轮，最后一组过程自动展开。
+- **改了脚本是显著级**：`DiffView` 是唯一有边框的块——1px border、lg 12；40px 文件头「图标 · **已修改**（13 / 600）· 文件名（等宽、中段省略）·
+  右侧 +N −N · 竖线 · ✓」；回滚 / 复制补丁 / 放大在 hover 或键盘进入时**替换**计数的位置（始终可 Tab 到）；文件头可收起行。
+  行 22px、整行 `-surface` 淡底、左侧 4px 粘性变更条（新增实色、删除 1px 条纹——不靠颜色也能分）、粘性 tabular 行号（删除行用旧行号，
+  其余用新行号）、hunk 之间「⋯ 未改动 N 行」（hunk 之间的内容不在 diff 里，只说行数，不可展开）、相邻删 / 增按顺序配对做**词级**高亮（`-border` 那一档）。
+  游离的「回滚」钮删了。
+- **代码块**：无边框、lg 12、surface-2 底；28px 工具带（group 底）= 语言名（meta）+ 复制（✓ 停 1.2s）；Python 一族与没写语言的块按
+  `--color-syntax-*` 上色（复用 `playground/pythonHighlight`，`ai/codeHighlight` 在它之上细分 function / builtin / type）；行 hover 浮 surface-hover。
+  语法色是一组 token（keyword / function / string / number / comment / type / builtin，每个在 surface-2 与白上 ≥4.5:1），/try 的 Code Sheet 用同一组。
+- **输入框两态**：空着时是 42px 单行胶囊 [内容 | 发送]；一有内容（或正在跑）就是 panel 16 圆角的两行 [内容 / 工具行 · 发送]，最小 96；同一个
+  textarea 换格子（`data-layout`），焦点不丢。输入 13px、插入点 accent；**聚焦只把边框加深到 border-strong，不用 accent 边**（只变色、无环）。
+  玻璃照旧（第二十二节）。工具行里「执行器 · 模型」与「推理 强度」是两颗可见的 24px 胶囊，点开是原来那份详情弹层（详情仍是唯一能改的地方）。
+- **上下文带**：输入框**上方**一条玻璃带（lg 圆角上沿，下沿压在输入框后 10px），里面一枚「● 目标 · 作用范围」chip（accent 圆点——AI 的那一点蓝），
+  点开是作用范围与执行器的详情弹层。作用范围只在这里说一次（打磨 L6 的判据改成数这枚 chip）。
+- **发送 / 中止**：26px 黑圆；↑ 与 9px 圆角方块（图标集的 Square 填实）在同一格**交叉淡化，不缩放**（`scale-50` 删了）；进行中（含请求在飞）圆里多一圈 1px 弧线
+  绕着转——它是「此刻点下去是停」这个状态的一部分，**不算**第二个「还活着」信号（那仍只有状态行），完成即消失。
+- **起手式**：前置小图标、`bg-surface` + 1px border 内描边、hover 填充；一行、溢出向右渐隐、横向滚。**空态时**它们以「示例提示」的形态出现在正中
+  （EmptyState v2 + `chipsFor` 的前三条，点一下填进输入框），输入框上方那条只在已有对话、输入框空着、没在跑时出现——同一组字不在一屏摆两遍。
+- **回到底部**：34px 毛玻璃圆（glass + 背景模糊 + shadow-pop）。
+- **任务历史是弹层**：面板顶部那颗钮下拉一块 320px 的 popover（最近 20 条 + 搜索 + 状态筛选 + 翻页），不再盖住整个面板；每条是 md 圆角行
+  （hover 浮底），状态用 `StatusPill`。
+- **错误**：发送失败与会话失败都是 danger `Notice`（图标 + 600 标题 + 说明 + 「重试」），不再是一行红字。
+- 没做的（路线图里另立）：`@` 提及图元素 / 附件、Custom Highlight API 的 paint-only 流式淡入、轮次轨、回到底部的未读数、发送时气泡的 WAAPI
+  形变（一轮落位已有 settle-in）。
+
 ## 十九、2026-09-15 打磨批次 A：token 与原语（用户拍板）
 
 调研 OpenAI `@openai/apps-sdk-ui`（ChatGPT 组件库，25 档灰 / 18 档 alpha / 9 档控件全部一手）与
@@ -553,6 +661,9 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
 - 改图助手：输入框走 fieldBox；会话块 surface-2 无边、meta 走 type-meta；回滚 danger ghost；⌘↵ 小片删；目标片是钮形。
 - 图例「最佳位置」是这一组的**第十格**、画布页预设卡英文改短名（Single / Double）——两条都是 2026-09-15 拍板，见下。
 - 保留：字号内联标签、示意图无标签列、组内「更多」无 chevron、32px 样张格。
+  **2026-10-07 修订（设计审计 §9.2 拍板①）**：字号内联标签**取消**——文字组改为四行同一张行网格：
+  「字体 [全宽] / 字号 [半列][B I 图标组] / 颜色 [色块 + hex] / 对齐 [Segmented]」。B / I 不再单独一行靠 paddingLeft 对齐，
+  与字号同一行坐在后半列；画布文字的下划线跟在 B / I 后面（同一组）。细则见第二十六节末「属性栏与画布栏」。
 
 **顶栏 · 画布 · 浮动栏 · 通知 · 命令面板**
 - 顶栏所有带字的钮同一副壳（`Button size="md"`、12、圆角 6）；项目 / 文档面包屑两颗同形；缩放值 `type-number`；chevron 一律 ink-3。
@@ -565,9 +676,11 @@ UI 正文 14 / 控件字最小 12、台阶 2px；强调至少高一档且配深�
   禁用一律 40%（门禁也抓 `aria-disabled` 那条路）。
 - 菜单只有一份实现：缩放弹层是 `Menu` + `MenuRadioGroup`（当前档带勾）；标注工具是 `MenuRadioItem`（带 `shortcut`）；
   `role="dialog"` 的快捷编辑弹层用 `MenuButton`（同一份 ITEM_CLASS）；菜单从触发钮右缘垂下；分隔线只在真分组之间。
+  菜单里要放一格输入框（缩放菜单的倍率框）一律包 `MenuField`，不放裸 `div`：它是漫游顺序里的一项（`role="group"` 带名字、焦点转交给框），
+  键盘打开先落在框里、↓ / Tab 回到菜单项、Enter 提交后焦点留在框里、Esc 关菜单还焦点给触发器；指针一侧悬停不抢焦点（Codex #833）。
 - 通知轨最多两条：状态来了先顶掉操作提示（提示稍后重播），「已加入」优先级最高；toast 无实边、只 shadow-pop、12 号 ink、底距 16、一种高度；
   HUD 读数盒 `rounded-md shadow-pop` 无边。两种横幅合成一种（贴边、surface-2、border-b、min-h 32）。
-- 命令面板 520 宽、行 32 / 12、选中 `selected` 10%、遮罩与 Dialog 同一串、右上不写「Esc」；快捷键帮助用 `SearchInput`、说明 12、组头 type-section、页脚不重复关闭。
+- 命令面板 520 宽、行 32 / 12（2026-10-07 起 32 / 13，见第二十七节·外壳）、选中 `selected` 10%、遮罩与 Dialog 同一串、右上不写「Esc」；快捷键帮助用 `SearchInput`、说明 12、组头 type-section、页脚不重复关闭。
 - 引导卡：标题 type-title、关闭钮 20 档、箭头无描边、按钮 md、间距只有 8 / 12。
 - 文案：「导出项目包（.tavotto）」去掉括号后缀；「可参数化脚本」改「已关联脚本」。
 
@@ -738,7 +851,7 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   选中 = 白底 + `shadow-card` + 实心图标。
 - **品牌蓝 #5A92E5**：对白只有 3.14:1，不能直接当焦点环或蓝字。同色相压深两档：`accent` `#2c73de`（焦点环 /
   蓝字，≥4.5:1）、`sel` `#4685e2`（画布选择框 / 参考线，对纸白与画布灰 ≥3:1）；浅底 `accent-subtle` `#ebf2fc`。
-  **链接不再是蓝字**：`ink-2` + 悬停变 ink 加下划线。蓝色只剩选择与焦点。
+  **链接不再是蓝字**：`ink-2` + 悬停变 ink 加下划线。蓝色只剩选择与焦点（唯一例外：改图助手回答里的链接，见第十八节「2026-10-07 重做」）。
 - **分段控件未选中的字是 `ink-2`**（此前 ink-3）：槽是 ink 5% 叠在灰桌面上，ink-3 只剩 4.14:1（e2e 的 axe 在问题面板里量到）。
 - **形状**：带字的按钮、分段控件是胶囊（`rounded-full`）；次按钮 = 灰底（`surface-hover`）无边线，与黑色主按钮
   一浅一深两档；输入框与图标钮 `rounded-md`。控件高仍是 28。
@@ -747,3 +860,236 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   下缘一条 hairline。选中一张图时，第一件事「改图里的内容」是整行宽的次按钮。
 - **属性栏分组线**：相邻两个 `Section` 之间一条左右各内缩 12px 的 hairline（`index.css` 的 `[data-inspector-panel] [data-section]` 规则），
   只在属性栏里；设置页与抽屉仍靠留白。
+
+## 二十六、2026-10-07 设计刷新 · 基础层（用户拍板，对照 OpenBitFun）
+
+审计全文 `docs/ux/DESIGN_AUDIT_2026-10-07_vs_OpenBitFun.md`（§1–§10 全部认可，§7「不学」除外）。这一节只收**基础层**
+（token、原语、门禁）——页面的重做按页分期落，每期仍先改这里。与前文冲突处以本节为准。
+
+### token
+- **墨阶拉开**：ink-2 `#4a4a45`（白 8.9:1）、ink-3 `#6c6c66`。拍板值 `#74746e` 在桌面上只有 4.08:1、可编辑框 hover 底 3.98:1，
+  按「不过就最小幅度压深」收到 `#6c6c66`——所有底色 ≥4.5:1（画布灰也过了，第一节那条「画布灰上用 ink-2」的限制取消）。
+  字段标签 ink-2；单位、元信息、摘要值、说明 ink-3。
+- **中性面降黄，三档 + 可编辑框**：桌面 `#efefed` < 画布灰 `#f5f5f3` < 白；surface-2 `#f7f7f5`；field `#f2f2f0` / hover `#eeeeec`；
+  字段组底 `group` = ink 3%。「纸感」只留在画布上那张纸本身。
+- **圆角族** 4 / 6 / 8 / 12 / 16 / full，「外层 = 内层 + 内边距」，浮动外观三档（第二节）。
+- **字体角色** 增 display 24 / heading 17 / reading 13，title 600，caption 12 / ink-3（第六节）。
+- **投影**全部写成 `color-mix(in srgb, var(--color-shadow) N%, transparent)`：card = 环 6% + `0 1px 2px` 4% + `0 4px 12px` 4%（此前
+  4% / 4% 在白底上几乎看不见）；pop / dialog / thumb / composer 数值不变、只换写法。暗色只换 `--color-shadow`。
+- **状态色锚点派生**：danger `#c4442a` · warn `#b07400` · ok `#2b7649` · info = accent；
+  `--color-<s>-surface` = `color-mix(in oklab, 锚点 10%, surface)`、`-border` = 30%、`-content` = `color-mix(in oklab, 锚点 70%, black)`。
+  字一律用 `-content`（`tokenContrast.test` 按 oklab 重算合成色量 ≥4.5:1）；锚点给图标 / 圆点 / 进度（≥3:1），danger / ok 锚点
+  对白 ≥4.5 也可当字（红字 ghost），warn 锚点不当字。旧名 `*-subtle` 是 `-surface` 的别名，迁完删除。
+- **层级 token**（`:root` 的 `--z-*` + 同名工具类）：sticky 10 · canvas-chrome 20 · drawer 30 · overlay 40 · dialog 50 · popover 60 ·
+  tooltip 70 · toast 80 · onboarding 90（引导高亮环 89）。逐档对应 token 化之前的裸值，叠放顺序不变；原来同为 50 的三类拆成
+  dialog < popover < tooltip——从对话框里打开的弹层本来就在它上面（后挂进 DOM），现在由 token 而不是 DOM 顺序保证。通知轨仍在画布列里
+  用 canvas-chrome（对话框盖住它），toast 档预留给它移出画布列那一期。门禁：数字 z-index（类名与内联 `zIndex`）不许出现。
+- **焦点环** 2px accent、offset 2；可编辑框聚焦只换边色，插入点 `caret-color: accent`。
+- **滚动条** 6px 胶囊，只在该滚动区被悬停或内含焦点时画出。
+- **画布覆盖层 token**：`--sel-hover-opacity` .6、唯一虚线 `--sel-dash` `4 3`、手柄填充 `--handle-fill` = surface、遮罩 `--color-scrim` = shadow 34%（2026-10-07 暗色主题起从 shadow 派生，此前是 ink 34%——ink 在暗色里是浅色）。
+  画布代码逐处迁移在画布那一期。
+- **抽屉底** `--drawer-bg`：`LeftPanel` 停靠 = bg、覆盖 = surface；吸顶组头这类「必须与抽屉同色」的子元素读它。
+
+### 原语（`web/src/components/ui/`）
+- **Button / IconButton**：`lg` 32；图标钮一律圆；primary 字 `text-surface`；`danger-tinted` 只给对话框页脚；`data-variant` 是层级的稳定判据（第五节）。
+- **Card**、**Notice**、**StatusPill**、**FormSection + FieldGroup**（`SettingRow layout="balanced"` 4 : 6；行坐在组里时内边距交给组）、
+  **EmptyState v2**（40px lg 圆角图标底座 + type-title + type-caption 42ch + 32px 主动作）、**listRowClass** 三档 + `rowMetaClass` + `dropLineClass`、
+  **RowMenu**（第五节）。
+- **Dialog**：宽度五档、页脚三槽、浮动毛玻璃页脚、`onEscape`、栈底遮罩、常驻挂载（第五节）。ConfirmDialog 的 Esc = 取消、危险确认 `danger-tinted`；
+  CloseGuardDialog `[不保存]（start）… [取消] [保存并关闭]`、Esc = 取消。
+- **MenuItem** 的图标一律经 `icon=`（ink-2，危险项跟字走红）。
+
+### 规矩
+- **每个上下文一颗主按钮**（顶栏 = 导出、助手 = 发送、对话框 = 确认、空态 = 它自己那一颗）。
+- **对话框页脚的危险动作是浅底危险胶囊**，永远不用实心红；行内 / 菜单里的危险动作仍是红字。
+- **Esc 永远是安全答案**；只有真正的闸门（NativeConfirm、ScriptInput）不给 Esc 答案。
+- **浮动外观三档**：单行浮动条胶囊、多行浮动面板 12、模态 16。
+- **加载四种写法**（第七节）；**光标一律箭头**（第五节）；**界面外观不写死白**：原语里 `bg-white` / `text-white` 换成 surface token，
+  图与页面内容（纸）才是真白。
+
+### 逐页 · 主页 / Playground / MCP 画布（2026-10-07，审计 §4.2 / §10.4）
+- **拖放接收态只有一种样子**（`ui/dropZone.dropZoneClass`）：静态什么都不画（没有常驻虚线框）；有东西拖到上面时 1.5px
+  accent 虚线 + accent-subtle 底 + 一圈柔和外发光，画在 outline 上、几何不变。主页拖放区、/try 上传区与试验台共用。
+- **`sel` 只在画布上**：内嵌面（/try、MCP）的拖动、接收、进行中用 accent，横幅用 Notice / ink 胶囊。
+- **代码着色七档 token** `syntax-keyword / function / string / number / comment / type / builtin`：只读代码块不写 hex，
+  每档在白 / 桌面 / surface-2 上 ≥4.5:1（`tokenContrast.test`）。
+- **内嵌工作台的顶栏是一份**（`embedded/WidgetHeader`，44px：20px 品牌标 + 名字 + type-meta 标题，坐在桌面上不画底线）；
+  左侧元素抽屉 280 + 36px 标题行（`DrawerShell`），画布 + 属性页在白色圆角工作面板里，侧栏读 `--drawer-bg`、不画分隔线。
+- **严重度在 MCP 画布上与问题面板同一张图标表**（`lib/validationText.SEVERITY_ICON`），颜色是锚点；预检结论是 `StatusPill`。
+- **主页**：标题走 `type-display`（没有像素字号）；老手版是一句 15px 叙事句 + 两枚 24px 行内 chip（chip = full 圆角、白底）；
+  最近项目是 Card interactive 网格。
+
+### 门禁（`components/ui/foundation.test.ts`）
+新增：任意值圆角与内联 `borderRadius`、Tailwind 呼吸动画、数字 z-index（类名与内联）、手形光标类、`ui/` 里的写死白、`shadow-card`
+只在 `Card.tsx`；`font-semibold` 的豁免扩到 listRow / FormSection / buttonClass。逐页阶段才迁的几处 `shadow-card`（素材卡、问题卡、
+左轨激活态）以带个数的 `LATER_PHASE` 豁免列在门禁里，迁完一处删一条（版本对话框缩略图框已在对话框那一期迁到 `Card`）；工作面板是常驻豁免。
+`tokenContrast.test` 增：状态色派生（oklab 重算）、墨阶间距、ink-3 在画布灰上；`designMd.test` 对拍新增的四个角色、`control-lg`、Card / danger-tinted / lg 按钮。
+
+### 属性栏与画布栏（逐页阶段，2026-10-07 设计审计 §9.2 / §9.3 / §9.4 P2，用户全部认可）
+- **一张行网格**：`[标签 --insp-label] 8 [控件 minmax(0,1fr)] 8 [状态槽 20]`，`--insp-label = clamp(88px, 28cqi, 112px)`
+  由属性栏容器（`@container`）给；`ui/Field.Row labelWidth="grid"`（检查器常量 `INSPECTOR_LABEL_W`）。控件只有 **full / half** 两档
+  （`NumberField half`、`INSPECTOR_HALF`）；不走 Row 却要对到控件列的块用 `INSPECTOR_CONTROL_X`，不再手写 `pl-20` / `paddingLeft: 88`，
+  `[data-stroke-fields]` 那条 CSS 删除。
+- **状态槽常驻**：恢复到脚本的 ↺ 是 20px 小钮（`ResetChip`，图标 ink-2），住在第三列——改值不再让控件少 34px；
+  一行一颗（成对 / 多开关的行清掉这一行改过的全部）。**修改点悬挂在标签左边 8px**，标签不右移；全部修改实心点、部分修改（多选里只改了几个）空心环。
+- **标签** 12/400 ink-2，放不下折两行（line-clamp-2），全栏一条规则。
+- **三级标题**：节（`Section`）32px 12/500 ink · 组（`GroupHead`）24px 11/500 ink-3 · 折叠行（`SummaryRow`）32px 12/400 ink + ink-3 右值，
+  chevron 坐在与 Row 同一条 20px 状态槽里。
+- **发丝线预算**：一屏只有「节与节之间」一条内缩线（节后面接一串摘要行时画在第一行上面）；摘要行之间不画线、身份头下面不画线、
+  对齐工具条的组间是 12px 空而不是竖线。
+- **折叠只有三种写法**：SummaryRow（低频项）/ GroupToggle（卡内小尾巴）/ Details（技术细节，如渲染失败的 traceback）。
+- **身份头固定两行**（路径 24 + 名字 32）：面包屑每级 24px 命中区、长名字中间省略（`TruncateMiddle`）；名字 `type-heading`、折两行、全文在 title；
+  角色图标底座圆角 8；右侧簇两种对象同一副——路径行右端是状态胶囊（n 项已修改 / n 个问题 / 已锁定 / 已隐藏，点它就是撤销那个状态或去看问题），
+  名字行右端是 ⋯；修改徽标是胶囊、hover 只加深；多选图标是 Layers。「n 个问题 ›」直达问题面板里的那一条（`openProblemAt`）。
+- **ColorField**：属性栏里（宿主挂 `ColorFieldContext`）色块旁是可编辑的 hex，点色块开取色面板（文档颜色 / 最近使用 / 系统取色器…）；
+  浮动栏不挂这层，色块照旧直接开系统取色盘。`disabled` 是真禁用（画布页透明背景时的背景色），不再 `pointer-events-none` 假禁用。
+  「无」与不透明度不进面板：有这两件事的属性各有自己的开关 / 一行（同一属性不出第二个控件）。
+- **OptionGrid 与 Segmented 同一副皮**：灰槽 + 无边样张格，选中格浮起白底 + shadow-thumb + 600，不再压角标 check。
+- **说明条只有 `Notice` 一种**（能力说明、旧图幅、渲染失败、引擎不支持、运行时无原文件）；图内编辑入口下的引擎状态只占一行。
+- **图例项行**：常驻只有色样（真实 marker 图形）+ 名字 + 非默认徽标；拖动柄与 ⋯ 在 hover / focus-within 出现；整张列表一个 Tab 停靠点
+  （↑↓ 漫游、⌥↑ / ⌥↓ 排序、拖动柄拖放、⋯ / 右键 / ⇧F10 同一份菜单；⋯ 是 `RowMenu tabStop={false}`，焦点在项上时 Tab 直接离开列表）。
+- **文字内容框**：上标 / 下标 / 换行是框右下角 20px 的图标钮。
+- **空属性页**是文档摘要卡（尺寸、几张图、几处文字与标注、几处修改、「画布设置 ›」）。
+- **页签顺序** 属性 | 画布 | 助手（ADR 0010 §3 当日修订）；右栏宽度把手键盘聚焦是一条 2px accent 竖线。
+- **画布页**：与属性页同一副两行头（「画布」/ 画布名 + 尺寸 meta）；页面尺寸 = 一行带缩略图的预设下拉（含「自定义」）+ W / H 两个半列
+  （横竖交换在状态槽）+ 方向 Segmented；折叠行可同时开多个、跨会话记住；关掉自动对齐时子开关留在原位变暗；参考线列表用 │ / ─ 字形列；
+  末尾一行只读「导出 · PDF · 600 ppi ↗」打开导出对话框（不是第二条导出管线）。
+
+### 左侧外壳与抽屉（逐页阶段，2026-10-07 审计 §9.4 / §10.3）
+- **左轨**：选中 = 白底 + 1px `border` 轮廓（outline，几何不变）+ 实心图标，**不用投影**（第二十五节「白底 + 卡片投影」作废）。
+  「问题」的图标是 `ListChecks`，轨上只为**阻断**亮一颗 danger 色小点（贴在图标上），数字在可达名与气泡里（「N 项阻断（共 M）」）。
+  第一格叫「项目」（全名与短名一致）。
+- **抽屉外壳**：标题行 36px 一行——名字 · 计数 / 范围（meta 槽）……动作（actions 槽：「+」「刷新」「⋯」）· 钉住；
+  **搜索行只放搜索**。吸顶头、摘要条、页脚的底色一律读 `--drawer-bg`。宽度把手的命中区 8px、看得见的只有 1px 发丝线。
+- **一套行系统**：`listRowClass` 28 / 44 / 52（树与规则行 / 两行文字的列表 / 带缩略图或文件夹记号的行）；子节头 28px
+  `type-section` + `type-meta` 计数；页脚 `border-t px-1.5 py-1` + 28px 控件。每一行的菜单只有一份、三个入口（`ui/RowMenu`）。
+- **键位契约**（列表与树同一套）：↑↓ 走行（一列一个 Tab 停靠点）· Enter 主操作 · F2 改名 · ⌥↑↓ 排序 · ⇧F10 菜单 · Esc 清除；
+  拖动重排画 `dropLineClass` 落点线。树是 `role="tree"` + `aria-level` / `aria-posinset` / `aria-setsize`。
+- **问题面板**：卡片 → 就地展开的披露树（图 32 / 子图 28 / 规则 28 / 对象 28）；每行一个 **88px 尾随格**——静止是值，
+  热了（指到 / 聚焦 / 当前）**同一格**换成动作，宽高不变；一个动词（修复 / 修复… / 修复 N）；等级记号一张表
+  （阻断八角 / 警告三角 / 建议灯泡 / 无法核验虚线圆），只有阻断着色。
+- **缩略图画内容本身**：画布缩略图画的是页面矩形（方向看得出），盒子透明；缩略图圆角 4（小）/ 6（大）。
+
+### 对话框与引导（2026-10-07 第三期，审计 §10.2 的 P1 / P2）
+- **对话框的说明槽**是 13 / ink-2（与正文同一个阅读字号，不再是比正文还轻的 12 / ink-3），可以是一段结构：导出对话框把
+  「要导的是什么」的对象头放在这里。标题是 4–12 字的名词短语或问句——不是生成的长句、不被错误句替换（依赖准备 =「准备环境」，
+  那一句话在正文里）。
+- **常驻挂载**：对话框常驻、`open={!!x}`、正文读 ref 里最后一份载荷（退场动画画得出来）；多步流程是**一个**对话框换正文
+  （缺数据文件 1/2 → 2/2，同一个 md；第 2 步「返回」在 start 槽、Esc = 返回；`tavotto run` 确认从载入到作废一直是同一个 lg）。
+- **回应只有 `Notice` 一种**：加载错误放正文顶部，动作的回应（失败、撞名、作废）放页脚正上方；进行中页脚**不撤**——同一副按钮
+  原位置灰，主按钮上写进度（「正在下载 42%」）或转圈。会滚的长正文里，回应进 `Dialog status`（不随正文滚）。
+- **岔口进页脚**：撞名 / 覆盖这类二选一，安全的那条是 secondary、破坏性的那条是 `danger-tinted`，Esc = 安全的那条（另存一份 / 改名 /
+  继续编辑 / 稍后 / 返回）。对话框里**不再叠一层确认框**问「放弃修改？」——在状态区里就地问（`Notice` + 「继续编辑」「放弃修改」）。
+- **列表里的删除是暂存的**：行尾一颗 ⋯（`RowMenu`，右键 / ⇧F10 同一份）里点「删除」只在行上标出来、可撤销，页脚唯一的主按钮
+  一次提交（「保存并重新运行（N）」）。一行的动作只有一颗 ⋯；选中行要露出的那一两件事是行下面的一条内联条，不是一排图标。
+- **小标**：字段标签 / 角色小标 / 日分组头用 `type-section`（12 / 500 / ink）。审计稿里写的「12 / 600」与「600 只在原语里」
+  的门禁冲突，按门禁办：600 只经 `FormSection` 标题（13 / 600）与选中态出现；需要更重一档的组头用 `FormSection`。
+- **只有一个输入框的对话框**（脚本作答、新建项目起名）打开时焦点直接在那个框上（`initialFocusRef`）；浏览型对话框（渲染环境、
+  打开排版）没有页脚。
+- **引导卡**是多行浮动面板那一档：圆角 12、宽 320、内边距 16、正文 13、分段进度、关闭写明「暂停教程」。高亮环的圆角 = 锚点圆角 + 4（取最近的圆角 token），
+  锚点在对话框里时环也画进对话框。换步骤时焦点原本在卡片里才交接到新卡片。
+- **崩溃页 / 启动失败页**与对话框同一副外壳（panel 16 + dialog 投影 + 17 / 600 标题 + 13 正文）：一颗主按钮「重新加载」，
+  「打开空白排版」在左、危险浅底胶囊；报错原文收在「详情」里、可复制。启动失败页不经 React，同样只读 CSS 变量。
+
+## 二十七（外壳）、2026-10-07 设计刷新 · 外壳与画布浮层（用户拍板，审计 §10.1）
+
+基础层在第二十六节；这一节是外壳（顶栏 / 画布标签 / 工具条 / 提示条 / 通知轨 / 命令面板）与画布浮层（覆盖层、读数、菜单）
+那一期的规矩。与前文冲突处以本节为准。
+
+### 角位与浮动外观
+- **画布视口四个角位**，每角 12px 内距、一个堆叠容器：底边居中 = 浮动工具条 + 通知轨；左下 = 工具提示（HUD）；顶边居中 = 工作区
+  上下文条；**右上 = 一个容器从上往下：缩放（快速编辑没有标签行时）→ `tavotto run` 会话卡 → 性能探针**（`data-canvas-corner="top-right"`）。
+  浮层不各自 absolute 到同一个角上互相压。
+- 浮动外观三档落到每一件：工具条 / 选中浮动栏 / 一行的上下文条 / HUD / 普通 toast / 收起的会话卡 = 胶囊；
+  错误 toast / 快速编辑弹层 / 命名小框 / 会话卡 / 两行的上下文条 = 12；命令面板 = 16。
+
+### 画布覆盖层语法（token 见第二十六节）
+- 选中**只描边、不着色**（图内与画布对象都一样）；悬停描边 = `--sel-hover-opacity`。
+- 虚线只有一种（`--sel-dash`），只给**暂定的**东西：正在编辑的文字、拖出中的参考线、草稿框、组框与成员框、图内编辑态的面板、
+  落点预览。框选是**实线**（图内框选同）。
+- 用户参考线静止 50%；吸附线满色实线、两端 × 帽，只在拖动中闪现。（间距胶囊：吸附判据还不报间距，留到它报的那一期。）
+- 手柄 8px 视觉（`--handle-fill` 底、sel 描边）+ 16px 透明命中层 + 沿边命中带；裁剪 = `--color-scrim` 遮罩 + L 形角标 / 边中点短横杠。
+- 覆盖层默认 `geometricPrecision`；需要落在像素网格上的 1px 矩形自己做半像素对齐。覆盖层里不写 `#fff` / `rgba(27,27,24,…)`。
+- 页面轮廓只有 `PageOutsideMask` 那一圈（屏幕空间、任何缩放下 1px）；纸本身是真白（内容，不是界面色）。
+- 拖动中的几何读数**贴着被改的那个框**（W × H / 对象的 X, Y / 微调的 Δ，`canvas/MeasureChip`），左下角只剩工具提示。
+- 标尺：单位角、选区带、整数刻度；颜色按挂载读一次 token。
+
+### 顶栏
+- 品牌并进「回到项目列表」那颗胶囊；撤销 / 重做挨着导出。
+- **文档状态芯片**：落定 = 一枚图标（✓ 已在项目里 / 硬盘 = 在本机）；进行中满 600ms 才出字、定宽；出事（冲突 / 保存失败 /
+  未恢复的编辑 / 上次的排版没打开 / 版本过新）= 锚点色 24px 胶囊 + 320 宽说明块，出口与提示条是同一批函数；读屏只播报进入错误。
+- **点的词汇**：空心环 = 还没写进项目文件；实心 accent 点 = 有更新。别处不再用圆点说别的事。
+- 文档名：单击开菜单，双击 / F2 改名。
+
+### 提示条、通知轨
+- 文档 / 项目级提示条在**工作面板里**、画布标签行上方，是一条内嵌 `Notice`（锚点色分轻重，丢编辑的那几条 `role="alert"`），
+  不横贯窗口、不把应用往下推。冲突的三个出口：重新加载（主）、另存为（次）、覆盖（⋯ 里的危险项 + 确认）。
+  「构建版本不一致」是非模态的一条，不是自动弹出的对话框。
+- 通知轨按出现先后排，**最新的一条最靠近底边**；错误 toast = 左侧 danger 竖条 + 标题 + 至多两行原文 + 「复制详情」。
+
+### 键盘与语义
+- **快捷键只有一个出处**：`web/src/lib/keymap.ts`。快捷键帮助、Tip / MenuItem 右侧的键位、命令面板都从它取；
+  `lib/keymap.test.tsx` 把整张按键表派发给 `useKeyboard`，被消费却没登记的键当场红。
+- 画布标签：一个 Tab 停靠点（roving）、←/→ 挪焦点、Enter 切换、F2 改名、Delete / ⌘W 关、⌥← / ⌥→ 挪位置；× 不进 Tab 顺序。
+- 浮动工具条：工具（模式）= 32 圆形图标钮、激活 = 墨色实底 + 实心图标 + `aria-pressed`；一次性动作 = 28 带字 ghost 钮，中间一道竖线；
+  条里方向键漫游，鼠标点工具不拿焦点。
+- 命令面板 = `ui/Dialog chrome="palette"`：焦点陷阱与归还、输入框是 combobox（`aria-activedescendant`）、行是 option 不嵌按钮；
+  输入行 48 / 输入 15、行 32 / 13；不画 Esc 键帽；有选区时输入行右端说出作用对象。
+
+## 二十八、2026-10-07 token 分层与暗色主题（设计审计 P2 #13 / #14）
+
+值仍只在 `web/src/index.css`。这一节定的是**颜色怎么分层、暗色怎么换**；与前文冲突处以本节为准。
+
+### 分层：palette → semantic
+- **palette 是每个主题一张值表**，只住在 `index.css`：浅色 = `@theme` 里的 hex；暗色 = 文件末尾那一段。组件看不见 palette。
+- **semantic 是 `--color-*` 名字**（surface / ink-2 / danger-content / syntax-keyword / paper / thumb …）。组件**只**引用语义名：
+  不写 hex / `rgb()` / `hsl()`、不写 `bg-white` / `text-white` 这类颜色类、`color-mix()` 不调 ink（`foundation.test` 三条门禁，
+  判据范围是画界面的代码：components / canvas / playground / mcp / embedded / onboarding 与 App / main）。豁免按文件带个数、写明是哪一种：
+  **文档数据**（属性缺省色 `#000000` / `#FFFFFF`、colormap 色标、样式样张）、**遮罩**（mask 里的黑白只是不透明度）、**第三方品牌色**。
+  lib / store / types 里的颜色都是文档数据（覆盖值、预设、导出默认），不在判据里。
+- **公式类 token 两套共用**：hover 5% / active 8% / selected 10% / border 12% / group 3% = ink 的 N%；状态色 `-surface` / `-border` = 锚点混 surface；
+  glass = field 90%；handle-fill = surface；scrim = shadow 34%（暗色 50%）。暗色表只写锚点与底，公式自己跟着变。
+- **投影**：Tailwind 把 `--shadow-*` 的值内联进 `shadow-*` 工具类（只有里面的 `var()` 是活的），所以投影串不分主题，
+  只读两种颜色：模糊层 `--color-shadow`、1px 环 `--color-shadow-edge`（浅色里 = shadow）。
+- **遮罩**（对话框、覆盖式抽屉、裁剪框外）从 shadow 派生（`bg-shadow/30` · `bg-shadow/10` · `--color-scrim`），不从 ink——ink 在暗色里是浅色，遮罩会变成提亮。
+- **墨底上的字**是 `text-surface`（主按钮、Tooltip、ink 底角标），不是白；暗色里它们自然反过来（浅底深字）。
+
+### 暗色主题
+- **生效条件两条、同一张表写两遍**（`tokenContrast.test` 逐字比对）：系统是暗色且用户没选浅色——
+  `@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) {…} }`；用户选了深色——`:root[data-theme='dark'] {…}`。
+  两段都写 `color-scheme: dark`，原生控件（滚动条、取色框）跟着变。
+- **偏好**：设置 › 通用 › 外观 = 跟随系统 / 浅色 / 深色（三档 `Segmented`，`data-testid="settings-theme"`，每档 `data-value`）。
+  存在本机 `tavotto.ui` 的 `theme`（与侧栏、网格同一份界面偏好）；写入口只有 `uiStore.setTheme`，落到 `<html>` 上的只有
+  `lib/theme.applyTheme`（system = 不挂 `data-theme`，交给媒体查询，系统切外观当场跟着变；light / dark = 挂上）。首帧之前的落点是
+  `index.html` `<head>` 里一段同步内联脚本（入口是延迟执行的 module，等它就晚了一帧）：读同一个 `tavotto.ui`、只认 light / dark、存储抛错就不挂；
+  它与 uiStore + `applyTheme` 的读法由 `lib/themeBoot.test` 拿原文逐例对拍。入口在 React 挂载之前再调一次 `applyTheme` 对账。没有 CSP 拦内联脚本（Tauri `security.csp` 为 null，后端不发 CSP）——将来加 CSP 要给这段脚本放 hash。「界面看起来不对？」那颗重置**不动外观**。/try 与 Codex 画布没有这个设置，跟随系统。
+- **值表**（暗色）：桌面 `#161615` < 画布灰 `#1b1b1a` < 面板 `#222220` < surface-2 `#282826`；可编辑框 `#2c2c2a` / hover `#323230`（暗底上「深一级」是更亮一级）；
+  墨 `#ececea` / ink-2 `#c2c2bc` / ink-3 `#9b9b94` / faint `#6a6a64`；控件边界 `#7b7b74`；accent 就是品牌蓝 `#5a92e5`（暗底上它本身就够 4.5:1）、浅底 `#1d2a3d`；
+  锚点 danger `#ef6e55` · warn `#d9a23a` · ok `#4fb37a`，`-content` 改成锚点 70% 混**白**；语法色七档提亮一档、comment 仍 = ink-3；thumb `#3a3a37`；
+  shadow 纯黑、shadow-edge 白。
+- **纸不变**：`--color-paper` / `--color-paper-ink` 不在暗色表里。画布上的页面、图、图的缩略图底是印刷品，**不反相、不变暗**；暗色只改它周围的界面。
+  界面画在纸上的东西用纸上的墨（网格、透明棋盘格、运行时占位框、文字框的占位），世界层里没写颜色的字继承 paper-ink。
+  二 / 三级的纸上墨是 `paper-ink-2` / `paper-ink-3`（paper-ink 的 80% / 65%，画布 / 版本缩略图里的文字框与标注线）——纸上不写界面的
+  `ink-2` / `ink-3` / `ink-faint`（暗色里变浅，落在白纸上 1.8 / 2.8:1）；`foundation.test`「纸上的东西用纸上的墨」按 AST 认纸面子树。
+  透明页面的棋盘格是**不透明**的纸色：深格 `--color-paper-checker` = paper-ink 6% 混进纸（不是混进 transparent），
+  页面那一层自己就是底，半透明的格子会透出近黑的画布、成了黑白棋盘（Codex P2）；网格线这类半透明的纸上墨只能压在不透明的纸 / 棋盘格上。
+  纸盒里没有图可画时（运行时图没跑过）那块不是纸，底用 `surface-2`。
+  运行时图的占位框（`data-runtime-placeholder`）自己是一张小纸片：底 `bg-paper-tint`（paper-ink 3% 混进纸，**不透明**），字 `paper-ink-2` / `paper-ink-3`（合成后 ≥4.5:1）——拖到页面外落在暗色画布上也不是深字压深底；`paper-ink` 不当底（`bg-paper-ink/N` 会透出画布，`foundation.test` 拦）。
+  快速编辑没有页面：当前那张图底下垫一张与它同框的纸（`data-fast-edit-paper`），透明底的图也不落在深色画布上。
+  直接坐在纸上的界面（空画布的起步提示）垫 `bg-paper-chrome`：浅色里透明（字照旧落在纸上），暗色里是面板色——浅色的字不落在白纸上
+  （真浏览器在暗色下跑 `e2e/a11y` 的自算对比度尺子量出来的那一处）。
+  画布选择框 `sel` 两套同值（对纸白与两种画布灰都 ≥3:1）。
+- **对比度**：浅色里断言过的每一对字 / 底（要读的字 ≥4.5、焦点环与控件边界 ≥3、状态色、语法色、field 上的字、selected 上的字……）在暗色里**逐条再断言一遍**，
+  外加纸上的线与字、thumb 上的字、文字选区上的字。量的是合成后的颜色。
+- **文字选区**（`::selection`）：底是 accent 28%，**选中的字一律换成 `ink`**——保留原色的话 `ink-3` 的说明 / 元数据落在选区上只剩
+  3.65:1（浅色面板）/ 3.70:1（暗色面板），任何不透明度都救不回所有底色（Codex P2）。ink 落在合成后的选区上浅色最低 10.55、暗色最低 6.63；
+  画布上改字的那块（`canvas/TextView`）坐在文档的底上，不一定是白纸（页面底色、文字框底色都由用户定）：半透明 tint 叠在用户的底上，
+  深底换 paper-ink 看不见、中灰上配哪种纸墨都不到 4.5:1（Codex P2 两轮，#7d7d7d 上 3.95）。所以纸上的选区**自己定不透明的底**：
+  `--color-paper-selection`（sel 35% 混进纸）配 `paper-ink`、`--color-paper-selection-deep`（sel 50% 混进 paper-ink）配 `paper`，两套主题同值，
+  字对选区底恒为 11.4 / 8.2:1；`lib/canvasSelection` 按实际的底（文字框底色 → 页面底色 → 纸）挑同深浅的那块，与底拉不开 1.3:1 时换另一块。
+  `tokenContrast.test` 扫 0–255 灰阶 + accent + 深 / 浅页面色，两套主题都断言字 ≥4.5:1、选区与底 ≥1.3:1。编辑态占位按底的深浅取纸墨 65%。
+  `tokenContrast.test` 读 `::selection` 实际写的字色，合成到每一种能选字的底（面板 / 桌面 / 画布灰 / surface-2 / field / field-hover / thumb，外加纸）上断言 ≥4.5:1，
+  并要求选区底与原底至少拉开 1.3:1。
+- **桌面壳**：Tauri 窗口不设 `theme`，标题栏本来就跟随系统外观；壳自带的启动 / 出错 / 远程连接页各加一段 `prefers-color-scheme: dark`。
+  用户在应用里选了与系统相反的外观时，原生标题栏不跟（要给窗口加 `set_theme` 权限与一条桌面桥，ACL 三处同步——留到下一期）。
+

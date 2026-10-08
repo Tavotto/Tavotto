@@ -11,8 +11,9 @@
  * **不需要**拖放：aria-label 直接说明点击案例即可，卡片的按钮就是同一动作。
  *
  * 视觉：纸面质感（白 surface + 细边框 + 内衬网格线），不是上传云、不是
- * 垃圾桶、不是大面积虚线框。reduced-motion 下不缩放，只有边框与文字变化。
+ * 垃圾桶；虚线只在拖动时出现（接收态），平时不画。reduced-motion 下不缩放，只有边框与文字变化。
  */
+import { dropZoneClass } from '@/components/ui/dropZone'
 import { cn } from '@/lib/utils'
 import type { PlaygroundExample } from '../examples'
 import { pg } from '../pgText'
@@ -33,9 +34,12 @@ export function ExampleStage({
       aria-label={pg('stageAria')}
       data-stage-state={active ? 'active' : drag ? 'ready' : 'idle'}
       className={cn(
-        'relative flex min-h-[260px] flex-1 flex-col items-center justify-center gap-2 rounded-md border bg-surface p-8',
-        'transition-colors duration-fast',
-        active ? 'border-sel bg-sel/5' : drag ? 'border-ink-faint' : 'border-border',
+        'relative flex min-h-[260px] flex-1 flex-col items-center justify-center gap-2 rounded-lg border bg-surface p-8',
+        // 有卡被拖起但还没进来：边线加深一档；指针进到台面上 = 接收态（ui/dropZone：accent 虚线 +
+        // accent-subtle 底 + 外发光，与主页拖放区、上传区同一副「能放下」的样子）。
+        // sel 是画布专用的选择色，不在这里当品牌色（2026-10-07 设计审计 §10.4）
+        active ? 'border-transparent' : drag ? 'border-border-strong' : 'border-border',
+        dropZoneClass(active),
       )}
     >
       {/* 工作纸的衬线：极淡的方格，暗示这是画布语言的一部分（纯装饰） */}
@@ -53,7 +57,7 @@ export function ExampleStage({
         // 顶部而不是居中：被拖的卡片正悬在台面中央，居中的话这句话会被
         // 它自己盖住——说给用户听的话必须躲开用户手里的东西
         <p
-          className="absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap rounded-sm bg-sel px-3 py-1.5 text-lg font-medium text-white"
+          className="absolute left-1/2 top-6 -translate-x-1/2 whitespace-nowrap rounded-full bg-ink px-3 py-1 text-base font-medium text-surface"
           aria-live="polite"
         >
           {pg('stageActive', { name: pg(drag!.example.titleKey) })}

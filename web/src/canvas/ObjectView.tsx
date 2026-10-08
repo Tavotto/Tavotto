@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { msg } from '@/i18n'
 import { perfCount } from '@/perf/core'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -98,10 +99,16 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
     e.stopPropagation()
     if (obj.type === 'text') useUiStore.getState().setEditingText(obj.id)
     else if (obj.type === 'panel') {
+      // 权威同步中图内命中层暂时让位，双击会落到这里。已经在编辑的面板
+      // 不能再进一次：enterElementEdit 会清掉图内选区，⌥ 双击也会误选整图。
+      if (useUiStore.getState().elementPanelId === obj.id) return
       // 可参数化面板双击进图内编辑，普通面板双击进裁剪
       // （旋转过的面板裁剪框方向会与画布对不上，先不进裁剪态）
       if (obj.script) enterElementEdit(obj.id)
       else if (!panelRotation(obj)) beginCrop(obj.id)
+      // 双击什么都没发生时说出为什么（2026-10-07 设计审计 §10.1，与右键菜单里置灰的「裁剪」同一句原因）：
+      // 此前旋转过的普通面板双击毫无反应，用户以为没点中
+      else useUiStore.getState().setStatus(msg('quickEdit.cropRotatedReason', undefined, 'workspace'), 'info')
     }
   }
 
@@ -123,12 +130,18 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
       }}
       className="absolute"
       style={{
-        left: mmToWorld(obj.x),
-        top: mmToWorld(obj.y),
+        // WebKit can snap an inline SVG's layout paint origin before canvas zoom.
+        // Keep panel layout at zero and carry its exact position in a transform;
+        // the document and screen-space overlays still use the same coordinates.
+        left: obj.type === 'panel' ? 0 : mmToWorld(obj.x),
+        top: obj.type === 'panel' ? 0 : mmToWorld(obj.y),
         width: mmToWorld(obj.w),
         height: mmToWorld(obj.h),
-        // 任意角度旋转（text/arrow/shape）：绕中心，包围盒字段保持未旋转值
-        transform: objectRotation(obj) ? `rotate(${objectRotation(obj)}deg)` : undefined,
+        // Panel crop/rotation/flips stay inside PanelView. Other objects retain
+        // their center rotation and unrotated bounding-box fields.
+        transform: obj.type === 'panel'
+          ? `translate(${mmToWorld(obj.x)}px, ${mmToWorld(obj.y)}px)`
+          : objectRotation(obj) ? `rotate(${objectRotation(obj)}deg)` : undefined,
         // 不写 'auto'：绘制工具激活时世界层整体设为 none，靠继承让对象一起失去命中。
         // 细长线状对象让位给自己的命中线（事件仍会从命中线冒泡到这里的 handler）
         pointerEvents: obj.locked || isThinLinear || pathHitShape ? 'none' : undefined,

@@ -31,6 +31,7 @@ import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, rotateVec, type PanelObject, type PanelRotation } from '@/types/document'
 import { PanelView } from './PanelView'
+import { ObjectView } from './ObjectView'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -145,14 +146,17 @@ let rot: PanelRotation = 0
 
 const LAYOUT = { width: mmToWorld(100), height: mmToWorld(80) }
 
-function Harness() {
+function Harness({ objectViews = false }: { objectViews?: boolean }) {
+  const objects = useDocumentStore((s) => s.doc.objects)
   const p = useDocumentStore((s) => s.doc.objects.find((o) => o.id === 'p1')) as PanelObject
-  return <PanelView obj={p} />
+  return objectViews
+    ? <div data-test-canvas-layer>{objects.map(o => <ObjectView key={o.id} obj={o} />)}</div>
+    : <PanelView obj={p} />
 }
 
-async function mount() {
+async function mount(objectViews = false) {
   await act(async () => {
-    root.render(<Harness />)
+    root.render(<Harness objectViews={objectViews} />)
   })
   const layer = hitLayer()
   // 命中层在屏幕上的矩形：内容 × zoom；旋转 90/270 时外框长宽互换
@@ -480,5 +484,76 @@ describe('几何：zoom / 触控 / 旋转 / 偏出去的边框', () => {
     expect(strip()).toBeNull()
     await press(0.3, 0.9 - dy(5))
     expect(livePanel().overrides).toEqual([])
+  })
+})
+
+
+/** DOM stacking/coordinate contracts; the browser overlap spec checks painted pixels. */
+describe('spine feedback outside translated panel stacking contexts', () => {
+  async function overlap() {
+    useDocumentStore.getState().commit(literal('overlap fixture'), d => {
+      // This later panel covers the label midpoint, but not the hover point at x=.3.
+      d.objects.push(panel({ id: 'p2', x: 40, y: 50 }))
+    })
+    await mount(true)
+    await hover(0.3, 0.9 - dy(5))
+    expect(label()).not.toBeNull()
+  }
+
+  it('keeps feedback above later panels without raising their artwork', async () => {
+    await overlap()
+    const canvas = container.querySelector('[data-test-canvas-layer]') as HTMLElement
+    const feedback = label()!.closest('[data-spine-feedback-layer]') as HTMLElement
+    expect(feedback, 'the label must escape the translated panel stacking context').not.toBeNull()
+    expect(feedback.parentElement).toBe(canvas)
+    expect(label()!.closest('[data-object-id]')).toBeNull()
+    expect(feedback.classList.contains('z-sticky')).toBe(true)
+    expect(feedback.classList.contains('pointer-events-none')).toBe(true)
+    expect(feedback.classList.contains('overflow-hidden')).toBe(true)
+    expect([...canvas.querySelectorAll('[data-object-id]')].map(n => n.getAttribute('data-object-id'))).toEqual(['p1', 'p2'])
+    expect((canvas.querySelector('[data-object-id="p1"]') as HTMLElement).style.zIndex).toBe('')
+    // The portal belongs to this persistent canvas tab, not document.body.
+    canvas.style.display = 'none'
+    expect(canvas.contains(label())).toBe(true)
+    canvas.style.display = ''
+    await hover(0.5, 0.5)
+    expect(container.querySelector('[data-spine-feedback-layer]')).toBeNull()
+  })
+
+  it('clears on drag, does not revive on release, and clears on edit exit', async () => {
+    await overlap()
+    await act(async () => { useInteractionStore.getState().begin('move') })
+    expect(label()).toBeNull()
+    await act(async () => { useInteractionStore.getState().end() })
+    expect(label()).toBeNull()
+    await hover(0.3, 0.9 - dy(5))
+    expect(label()).not.toBeNull()
+    await act(async () => { useUiStore.getState().setElementPanel(null) })
+    expect(container.querySelector('[data-spine-feedback-layer]')).toBeNull()
+  })
+
+  const transforms = ([0, 90, 180, 270] as const).flatMap(rotation =>
+    [false, true].flatMap(flipH => [false, true].map(flipV => ({ rotation, flipH, flipV }))))
+  it.each(transforms)('reuses the real content clipping/transform chain: %j', async transform => {
+    await overlap()
+    await act(async () => {
+      useDocumentStore.getState().commit(literal('transform fixture'), d => {
+        Object.assign(d.objects[0], transform, { crop: { x: .1, y: .15, w: .7, h: .65 }, opacity: .8 })
+      })
+      useViewportStore.setState({ zoom: 2 })
+    })
+    const feedback = label()!.closest('[data-spine-feedback-layer]') as HTMLElement
+    expect(feedback).not.toBeNull()
+    const content = container.querySelector('[data-element-svg="p1"]')!.parentElement!
+    const feedbackContent = feedback.firstElementChild as HTMLElement
+    expect(feedbackContent.style.cssText).toBe(content.style.cssText)
+    expect(feedbackContent.classList.contains('overflow-hidden')).toBe(true)
+    const full = feedbackContent.firstElementChild as HTMLElement
+    for (const field of ['width', 'height', 'left', 'top'] as const) {
+      expect(full.style[field]).toBe((container.querySelector('[data-element-svg="p1"]') as HTMLElement).style[field])
+    }
+    expect(feedback.style.width).toBe(`${mmToWorld(livePanel().w)}px`)
+    expect(feedback.style.height).toBe(`${mmToWorld(livePanel().h)}px`)
+    expect((label() as HTMLElement).style.transform).toContain('scale(0.5)')
   })
 })

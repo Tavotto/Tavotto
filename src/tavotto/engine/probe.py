@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import discover, inputremap, pool, projectenv, registry
+from . import discover, inputremap, pool, projectenv, registry, taskdiag
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -68,6 +68,33 @@ ERROR_INPUT_TIMEOUT = "script_input_timeout"
 #: 素材库这条入口弹的是与画布同一个「指认数据位置」对话框。
 ERROR_MISSING_INPUT = pool.MISSING_INPUT_CODE
 
+#: 与「入口猜没猜对」无关的失败码：换一个入口只是把顶层代码再跑一遍，得到同一个失败（T01，F7：缺参脚本的
+#: 顶层代码曾跑满 3 个入口）。缺参 / 要输入 / 读不到数据 / 缺包 / 超时 / 取消都在里面。
+_ENTRY_INDEPENDENT_CODES = frozenset(
+    {
+        ERROR_NEEDS_ARGUMENTS,
+        ERROR_NEEDS_INPUT,
+        ERROR_INPUT_TIMEOUT,
+        ERROR_MISSING_INPUT,
+        ERROR_MISSING_DEPENDENCY,
+        ERROR_CANCELLED,
+        "worker_timeout",
+        pool.BUILD_TIMEOUT_CODE,
+    }
+)
+
+
+def entry_retry_allowed(exc: pool.WorkerError) -> bool:
+    """这次失败之后值不值得换下一个入口再试一次。只有「入口猜错」一类（找不到函数 / 脚本没出图）才换；
+    起会话之前的两道门（运行目录 / 依赖准备）是「要用户先答」，同样不换。判据只此一份，探测的入口循环用它。"""
+    if getattr(exc, "code", "") in _ENTRY_INDEPENDENT_CODES:
+        return False
+    return not (
+        isinstance(getattr(exc, "confirmation", None), dict)
+        or isinstance(getattr(exc, "dependency_preparation", None), dict)
+    )
+
+
 #: traceback 进诊断详情的截断上限（完整日志仍在 worker.log）。
 _TRACEBACK_LIMIT = 4000
 
@@ -102,14 +129,18 @@ def _error_from_worker(
             params["project_env"] = detail.get("code", "")
         out = _err(
             ERROR_MISSING_DEPENDENCY,
-            f"缺少依赖包：{exc.module}（当前渲染环境里没有它）",
+            (
+                f"缺少依赖包：{exc.module}（当前渲染环境里没有它）"
+                if exc.module
+                else "缺少依赖包（含敏感参数的运行不显示包名）"
+            ),
             params=params,
             traceback_text=exc.traceback_text,
         )
         # 「能不能一键装上」（ADR 0019）。**素材库这条路必须也带上它**：
         # 用户打开旧项目走的就是这里，只在渲染端点上给恢复引导的话，
         # 「素材库里打不开、面板里能修」又是一次两个入口两个答案。
-        if figures_dir:
+        if figures_dir and exc.module:
             from . import deprepair
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
@@ -127,10 +158,20 @@ def _error_from_worker(
         # 文案由前端按 code 翻；`error` 给 `script_exited` 的占位符（`SystemExit: 2`
         # 那一行），`script_needs_arguments` 的 usage 在 traceback 里（pool 已接上）。
         lines = [ln for ln in (exc.traceback_text or "").splitlines() if ln.strip()]
+        params = {"error": (lines[-1].strip() if lines else str(exc))[:200]}
+        if exc.code == ERROR_NEEDS_ARGUMENTS:
+            # T03：用户给了精确 token 时（`argv_count` > 0）脚本自己的解析器仍拒绝；`parse_kind` 只在 worker
+            # 有 argparse 的实际证据时才有（missing_required / invalid_value / unknown）。
+            # 只带类别与个数，不带参数值。
+            extra = getattr(exc, "extra", None) or {}
+            if extra.get("argv_count"):
+                params["argv_count"] = str(int(extra["argv_count"]))
+            if extra.get("parse_kind"):
+                params["parse_kind"] = str(extra["parse_kind"])
         out = _err(
             exc.code,
             str(exc),
-            params={"error": (lines[-1].strip() if lines else str(exc))[:200]},
+            params=params,
             traceback_text=exc.traceback_text,
         )
         # 先 `exists()` 判空再 exit（ADR 0106）：脚本里写着、此刻哪儿都找不到的路径随错误带出
@@ -230,7 +271,11 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
 
 
 def probe(
-    figures_dir: str | Path, script: str, entries: list[str] | None = None, should_cancel=None
+    figures_dir: str | Path,
+    script: str,
+    entries: list[str] | None = None,
+    should_cancel=None,
+    run=None,
 ) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
@@ -253,6 +298,9 @@ def probe(
     **成功路径只执行一次**：build 好的热会话留在池里不 invalidate，随后的
     预览 / 渲染 / 登记拿着 (script, entry) 直接复用，不再重跑脚本。失败的
     entry 各自新建 worker（错误入口的进程绝不复用），互不污染。
+
+    `run`（T03）：用户给的精确 argv 的运行配置（`execspec.RunSelection`），None = 不带参数（旧行为）。
+    它同时是池键的一段：这次执行的热会话、作废、取消都只作用于这份配置，不碰同脚本别的参数。
 
     `should_cancel` 是协作取消的判据（app 层的 cancel 端点置 Event 并
     `pool.force_cancel` 硬杀在跑的 worker）：一旦为真，**不再尝试下一个
@@ -292,11 +340,13 @@ def probe(
                 ),
             }
 
+    run_ctx = {"run": run} if run is not None else {}
+
     def before_build(worker):
         # Cancellation may arrive while get() discovers an interpreter, before the
         # worker exists in the pool. Check again after every acquisition, including fallback.
         if cancelled():
-            if not pool.force_cancel(script, figures_dir, expected_worker=worker):
+            if not pool.force_cancel(script, figures_dir, expected_worker=worker, **run_ctx):
                 worker.force_kill()  # Already detached: never retire its replacement.
             raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
 
@@ -308,23 +358,27 @@ def probe(
         tried.append(entry)
         # 每次换 entry 都要换掉旧会话：worker 的 entry 是启动参数，
         # 复用旧进程等于一直用错的入口重试。
-        pool.invalidate(script, figures_dir)
+        pool.invalidate(script, figures_dir, run, only_run=True)
         try:
             # `pool.build` = get + ensure_built + **一次项目环境自动 fallback**
             # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——
             # 否则素材库里能打开的项目，`tavotto open` 打不开。
-            _worker, resp = pool.build(script, figures_dir, entry, before_build=before_build)
+            _worker, resp = pool.build(
+                script, figures_dir, entry, before_build=before_build, **run_ctx
+            )
         except pool.WorkerError as exc:
             if cancelled():
                 # worker 是被 cancel 硬杀的：报「进程崩溃」是把用户的取消
                 # 说成脚本的错。不再试下一个 entry——取消就是取消。
                 LOG.info("探测被取消 %s [entry=%s]", script, entry)
                 return {**empty, "tried": tried, "error": _cancel_err()}
-            pool.invalidate(script, figures_dir)
+            pool.invalidate(script, figures_dir, run, only_run=True)
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
                 first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)
+            if not entry_retry_allowed(exc):
+                break  # 与入口无关的失败：再换入口只会把顶层代码重跑一遍
             continue
         stems = sorted(resp.get("stems") or {})
         if stems:
@@ -340,6 +394,8 @@ def probe(
                 "dropped_figures": int(resp.get("dropped_figures") or 0),
                 # 这次试运行按哪一代改指表跑的（ADR 0106 §五）：登记 / 物化落地前核对
                 "remap_generation": getattr(_worker, "remap_generation", None),
+                # T03：这次执行绑定的运行配置引用（不透明 id；argv 原文不出现在结果里）
+                **({"run_config": run.config_id} if run is not None else {}),
             }
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:
@@ -353,7 +409,7 @@ def probe(
             offer = pool.missing_input_offer(script, figures_dir)
             if offer is not None:
                 first_error["missing_input"] = offer
-        pool.invalidate(script, figures_dir)
+        pool.invalidate(script, figures_dir, run, only_run=True)
 
     return {
         **empty,
@@ -396,7 +452,7 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
 
 
 def probe_and_register(
-    figures_dir: str | Path, script: str, cost: str = "medium", should_cancel=None
+    figures_dir: str | Path, script: str, cost: str = "medium", should_cancel=None, run=None
 ) -> dict:
     """探测成功就写进 tavotto_registry.json 并重载注册表。
 
@@ -409,9 +465,26 @@ def probe_and_register(
     取消（`should_cancel`）输给成功：脚本在取消到达前跑完了就是跑完了，
     照常登记——「已经发生的执行」不因迟到的取消而假装没发生。
     """
-    result = probe(figures_dir, script, should_cancel=should_cancel)
+    result = probe(
+        figures_dir,
+        script,
+        should_cancel=should_cancel,
+        **({"run": run} if run is not None else {}),
+    )
     if not result["stems"]:
         return {**result, "registered": False}
+    return register_probed(figures_dir, script, result, cost=cost)
+
+
+def register_probed(
+    figures_dir: str | Path, script: str, result: dict, cost: str = "medium"
+) -> dict:
+    """把一次**已经成功**的执行（`stems` 非空）按真实产出登记进注册表：冲突 / 改指代次的判据只此一份。
+
+    试运行（`probe_and_register`）与准备会话（`prepsession`，T01）的执行结束后都走这里——登记不是
+    探测的私事，是「捕获到的图要能被编辑请求按 stem 找到」的那一步。`result` 至少带 `stems` /
+    `entry` / `remap_generation`；原样展开回去，加 `registered`（与可能的 `error` / `stem_conflicts`）。
+    """
     conflicts = _live_stem_conflicts(figures_dir, script, result["stems"])
     if conflicts:
         detail = "；".join(f"{stem} → {owner}" for stem, owner in sorted(conflicts.items()))
@@ -430,11 +503,20 @@ def probe_and_register(
     try:
         with inputremap.landing(figures_dir, result.get("remap_generation")):
             discover.register(
-                figures_dir, script, result["stems"], entry=result["entry"], cost=cost
+                figures_dir,
+                script,
+                result["stems"],
+                entry=result["entry"],
+                cost=cost,
+                # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让
+                # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
+                append=bool(result.get("run_config")),
             )
             registry.load(figures_dir)
             # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
             inputremap.record_registration(figures_dir, script)
+            if result.get("run_config"):
+                inputremap.record_registration(figures_dir, script, result["run_config"])
     except inputremap.RemapChanged as exc:
         LOG.info("试运行结果作废（%s）: %s", exc, script)
         return {
@@ -443,6 +525,54 @@ def probe_and_register(
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
     return {**result, "registered": True}
+
+
+# ---------------------------------------------------------------------------
+# 任务绑定诊断（T04）
+# ---------------------------------------------------------------------------
+#: 试运行的终局词汇（与准备的 `ready` / `error` / `cancelled` 同名，界面一套词）。
+OUTCOME_READY = "ready"
+OUTCOME_ERROR = "error"
+OUTCOME_CANCELLED = "cancelled"
+
+
+def outcome_of(result: dict) -> str:
+    # 已登记后物化 / 默认配置 / 刷新仍可能失败，成功登记不能盖掉这次终局错误。
+    error = result.get("error")
+    if error:
+        return OUTCOME_CANCELLED if error.get("code") == ERROR_CANCELLED else OUTCOME_ERROR
+    return OUTCOME_READY if result.get("registered") else OUTCOME_ERROR
+
+
+def diagnostic_projection(
+    result: dict,
+    *,
+    attempt_id: str,
+    argv_count: int,
+    run_config: str | None,
+    elapsed_ms: int | None,
+) -> dict:
+    """一次试运行的**白名单**投影。逐字段挑，不读 `result` 的其余部分：`error.message` / `params` /
+    `traceback` 是脚本自己的异常文字，`descriptors` / `stems` 有图名与路径，`entry` 是用户的函数名，
+    `stem_conflicts` 是别的脚本的名字——都不进。"""
+    err = result.get("error") or {}
+    return taskdiag.clean(
+        {
+            "snapshot_version": taskdiag.SNAPSHOT_VERSION,
+            "kind": taskdiag.KIND_SCRIPT_RUN,
+            "attempt_id": taskdiag.ident(attempt_id),
+            "outcome": outcome_of(result),
+            "target": {"category": "script", "has_entry": bool(result.get("entry"))},
+            "config": {"argv_count": argv_count, "run_config": taskdiag.ident(run_config)},
+            "execution": {
+                "captured_count": taskdiag.count(len(result.get("stems") or [])),
+                "registered": taskdiag.flag(bool(result.get("registered"))),
+                "stem_conflict_count": len(result.get("stem_conflicts") or {}),
+            },
+            "error": {"code": taskdiag.code(err.get("code"))} if err else None,
+            "timing": {"elapsed_ms": taskdiag.count(elapsed_ms)},
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -482,47 +612,56 @@ def script_inventory(figures_dir: str | Path, registered: set[str] | None = None
         except (FileNotFoundError, RuntimeError):
             registered = set()
     # 目标解析器（U03 / FO12）：宿主 AST 不认识的合法语法交给项目自己的解释器再解析一遍。
-    # 只读此刻的决策，不发现、不体检（`discover=False`）；决策不成立就没有目标解析器。
-    try:
-        target_python = pool.resolve_worker_python(str(figures_dir), discover=False)[0]
-    except pool.WorkerError:
-        target_python = None
-    out: list[dict] = []
-    for path in discover.iter_all_scripts(figures_dir):
-        rel = discover.rel_key(path, figures_dir)
-        seen = discover.inspect_script(path, figures_dir, target_python=target_python)
-        info, problem, static = seen["info"], seen["problem"], seen["entry_candidates"]
-        candidates: list[str] = []
-        if info:
-            candidates.append(info["entry"])
-        for e in static if static is not None else FALLBACK_ENTRIES:
-            if e not in candidates:
-                candidates.append(e)
-        if rel in registered:
-            reason = REASON_REGISTERED
-        elif discover.is_infrastructure_name(path.name):
-            reason = REASON_INFRASTRUCTURE
-        elif problem is not None:
-            # 读不动 / 解码不了 / 两边都判语法错误：`problem` 说清是哪一种（U03）。
-            # 文件**照样在清单里**，可以试运行——运行期会给出真正的报错。
-            reason = REASON_UNPARSEABLE
-        elif info is None:
-            reason = REASON_NO_STATIC_OUTPUT  # 确认不产图（工具 / 样式模块）
-        elif info["dynamic_names"]:
-            reason = REASON_DYNAMIC
-        else:
-            reason = REASON_STATIC
-        out.append(
-            {
-                "script": rel,
-                "registered": rel in registered,
-                "static_stems": list(info["stems"]) if info else [],
-                "entry_candidates": candidates,
-                "reason": reason,
-                "can_probe": True,
-                # 加字段（老前端忽略）：解析不了时是哪一种问题；由目标解释器解析的标 parser
-                "problem": problem,
-                "parser": seen.get("parser"),
-            }
+    # 只读此刻定下来的路径（`pool.peek_worker_python`，T02：不复检、不起进程）；没有就没有目标解析器。
+    found = pool.peek_worker_python(figures_dir)
+    target_python = found[0] if found else None
+    return [
+        inventory_entry(
+            path,
+            figures_dir,
+            registered,
+            discover.inspect_script(path, figures_dir, target_python=target_python),
         )
-    return out
+        for path in discover.iter_all_scripts(figures_dir)
+    ]
+
+
+def inventory_entry(path: Path, figures_dir: Path, registered: set[str], seen: dict) -> dict:
+    """一个脚本的清单条目：`seen` 是 `discover.inspect_script()` 的结果——**分类只有这一份**。
+
+    `script_inventory`（用户主动打开清单）与导入即扫描（`projscan`，T02，带预算、不传目标解析器）
+    各自负责「读不读、怎么读」，读出来之后的 reason / entry 候选判据共用这里，不分叉成两套脚本分类。
+    纯函数：不碰文件系统、不起进程。"""
+    rel = discover.rel_key(path, figures_dir)
+    info, problem, static = seen["info"], seen["problem"], seen["entry_candidates"]
+    candidates: list[str] = []
+    if info:
+        candidates.append(info["entry"])
+    for e in static if static is not None else FALLBACK_ENTRIES:
+        if e not in candidates:
+            candidates.append(e)
+    if rel in registered:
+        reason = REASON_REGISTERED
+    elif discover.is_infrastructure_name(path.name):
+        reason = REASON_INFRASTRUCTURE
+    elif problem is not None:
+        # 读不动 / 解码不了 / 两边都判语法错误：`problem` 说清是哪一种（U03）。
+        # 文件**照样在清单里**，可以试运行——运行期会给出真正的报错。
+        reason = REASON_UNPARSEABLE
+    elif info is None:
+        reason = REASON_NO_STATIC_OUTPUT  # 确认不产图（工具 / 样式模块）
+    elif info["dynamic_names"]:
+        reason = REASON_DYNAMIC
+    else:
+        reason = REASON_STATIC
+    return {
+        "script": rel,
+        "registered": rel in registered,
+        "static_stems": list(info["stems"]) if info else [],
+        "entry_candidates": candidates,
+        "reason": reason,
+        "can_probe": True,
+        # 加字段（老前端忽略）：解析不了时是哪一种问题；由目标解释器解析的标 parser
+        "problem": problem,
+        "parser": seen.get("parser"),
+    }

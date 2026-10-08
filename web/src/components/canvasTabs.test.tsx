@@ -137,6 +137,19 @@ describe('画布标签条', () => {
     }
   })
 
+  it('页签上没有「未保存」记号：文档级 dirty 来回翻，每个页签的 DOM 一字不变（2026-10-07 审计 P0）', () => {
+    // 保存状态是整份文档的事，只在顶栏文档名旁说。此前当前页签拿文档级 dirty 画一个点：
+    // 哪页激活哪页「未保存」，自动保存每轮还让它闪一秒
+    act(() => useDocumentStore.setState({ dirty: false }))
+    mount()
+    const snapshot = () =>
+      [...host.querySelectorAll<HTMLElement>('[data-canvas-tab]')].map((t) => t.outerHTML)
+    const clean = snapshot()
+    expect(clean).toHaveLength(2)
+    act(() => useDocumentStore.setState({ dirty: true }))
+    expect(snapshot(), 'dirty 置位后页签不变').toEqual(clean)
+  })
+
   it('当前页签认稳定的 data 钩子：每个页签带自己的 id，只有当前那一个带 data-active', () => {
     mount()
     const hooked = () =>
@@ -191,9 +204,9 @@ describe('画布标签条', () => {
       mount()
       expect(scrollLeft).toBe(0)
 
-      // 用户横滑到第二个页签那里；随后一次与页签几何无关的重渲染（改了图 → dirty）
+      // 用户横滑到第二个页签那里；随后一次与页签几何无关的重渲染（画布表换了引用、内容没变）
       scrollLeft = 100
-      act(() => useDocumentStore.setState({ dirty: true }))
+      act(() => useDocumentStore.setState({ canvases: [...useDocumentStore.getState().canvases] }))
       expect(scrollLeft, '当前页签没动：不许把条拽回来').toBe(100)
 
       // 当前页签改了名、变宽了（activeId 与 openTabs 都没变）：它在条外，要滚回来
@@ -211,5 +224,125 @@ describe('画布标签条', () => {
       stubs.forEach(([o, k], i) => Object.defineProperty(o, k, real[i]))
       globalThis.ResizeObserver = realRO
     }
+  })
+})
+
+/**
+ * 键盘（2026-10-07 设计审计 §10.1，ARIA tabs 模式）：整条一个 Tab 停靠点（roving tabindex）、←/→ 挪焦点、
+ * F2 改名、Delete / ⌘W 关、⌥← / ⌥→ 重排；× 不进 Tab 顺序。主语：页签认 `data-canvas-tab`，× 认
+ * `data-canvas-tab-close`，改名框认 `data-canvas-tab-rename`。
+ */
+describe('画布标签条的键盘', () => {
+  const tab = (id: string) => host.querySelector<HTMLElement>(`[data-canvas-tab="${id}"]`)!
+  const key = (el: HTMLElement, init: KeyboardEventInit) => {
+    const ev = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+    act(() => {
+      el.dispatchEvent(ev)
+    })
+    return ev
+  }
+  const flush = () => act(async () => new Promise<void>((r) => requestAnimationFrame(() => r())))
+
+  it('只有当前画布那个页签在 Tab 顺序里；× 永远不在', () => {
+    mount()
+    expect(tab('c1').tabIndex).toBe(0)
+    expect(tab('c2').tabIndex).toBe(-1)
+    for (const x of host.querySelectorAll<HTMLElement>('[data-canvas-tab-close]')) expect(x.tabIndex).toBe(-1)
+  })
+
+  it('→ 把焦点挪到下一个页签（不切画布），Enter 才切', async () => {
+    mount()
+    tab('c1').focus()
+    key(tab('c1'), { key: 'ArrowRight' })
+    await flush()
+    expect(document.activeElement).toBe(tab('c2'))
+    expect(tab('c2').tabIndex).toBe(0)
+    expect(useDocumentStore.getState().activeCanvasId, '方向键不切画布').toBe('c1')
+  })
+
+  it('F2 进入改名；Delete 关掉这个页签，而且不冒到全局（不删画布上的选中对象）', () => {
+    mount()
+    key(tab('c2'), { key: 'F2' })
+    expect(host.querySelector('[data-canvas-tab-rename]')).not.toBeNull()
+    act(() => {
+      ;(host.querySelector('[data-canvas-tab-rename]') as HTMLElement).blur()
+    })
+    const seen: string[] = []
+    const spy = (e: Event) => seen.push((e as KeyboardEvent).key)
+    window.addEventListener('keydown', spy)
+    const ev = key(tab('c2'), { key: 'Delete' })
+    window.removeEventListener('keydown', spy)
+    expect(ev.defaultPrevented).toBe(true)
+    expect(seen, 'Delete 没冒到 window 上的全局快捷键').toEqual([])
+    expect(useDocumentStore.getState().openTabs).toEqual(['c1'])
+  })
+
+  it('⌥→ 把页签往右挪一格（与拖动同一个 reorderTabs），焦点跟着它', async () => {
+    mount()
+    tab('c1').focus()
+    key(tab('c1'), { key: 'ArrowRight', altKey: true })
+    expect(useDocumentStore.getState().openTabs).toEqual(['c2', 'c1'])
+    await flush()
+    expect(document.activeElement).toBe(tab('c1'))
+  })
+
+  // Codex #833：改名框用 Enter / Esc 收起，焦点回到这个页签；点了别处（另一个输入框、工具条上的钮）收起的
+  // 不抢回来——焦点已经在用户点的地方了，抢回页签会让接下来的打字 / 快捷键落进页签条
+  describe('改名收起后的焦点', () => {
+    const renameBox = () => host.querySelector<HTMLInputElement>('[data-canvas-tab-rename]')
+    const startRename = () => {
+      tab('c2').focus()
+      key(tab('c2'), { key: 'F2' })
+      expect(document.activeElement).toBe(renameBox())
+    }
+
+    it.each(['Enter', 'Escape'])('%s 收起改名：焦点回到这个页签', async (k) => {
+      mount()
+      startRename()
+      key(renameBox()!, { key: k })
+      await flush()
+      expect(renameBox()).toBeNull()
+      expect(document.activeElement).toBe(tab('c2'))
+    })
+
+    it('点别处收起改名：焦点留在用户点的那个输入框上', async () => {
+      const other = document.createElement('input')
+      document.body.appendChild(other)
+      try {
+        mount()
+        startRename()
+        act(() => other.focus())
+        await flush()
+        expect(renameBox()).toBeNull()
+        expect(document.activeElement).toBe(other)
+      } finally {
+        other.remove()
+      }
+    })
+  })
+
+  // Codex #833：关掉第一个 / 中间那个页签后，焦点落到留下来的邻居上（右边那个，没有就左边那个），
+  // 不按关之前的下标去取——那样会取回刚关掉的 id，焦点掉出页签条
+  describe('Delete / ⌘W 关页签后焦点留在页签条里', () => {
+    beforeEach(() => {
+      const st = useDocumentStore.getState()
+      const c3 = { ...st.canvases[0], id: 'c3', name: 'Figure 3' }
+      useDocumentStore.setState({ canvases: [...st.canvases, c3], openTabs: ['c1', 'c2', 'c3'] })
+    })
+
+    it.each([
+      ['第一个（Delete）', 'c1', { key: 'Delete' }, ['c2', 'c3'], 'c2'],
+      ['中间那个（Delete）', 'c2', { key: 'Delete' }, ['c1', 'c3'], 'c3'],
+      ['中间那个（⌘W）', 'c2', { key: 'w', metaKey: true }, ['c1', 'c3'], 'c3'],
+      ['最后一个（Delete）', 'c3', { key: 'Delete' }, ['c1', 'c2'], 'c2'],
+    ] as const)('%s → 焦点到 %s 的邻居', async (_name, closing, init, rest, focused) => {
+      mount()
+      tab(closing).focus()
+      key(tab(closing), init)
+      expect(useDocumentStore.getState().openTabs).toEqual(rest)
+      await flush()
+      expect(document.activeElement).toBe(tab(focused))
+      expect(tab(focused).tabIndex).toBe(0)
+    })
   })
 })

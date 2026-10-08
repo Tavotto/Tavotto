@@ -25,7 +25,11 @@
   是唯一判据——`completed` / `skipped` → 老手版，`not_started` / `active` / `paused` → 新手版；
   **不另设标志、渲染主页不写任何东西**（派生出来的版式不许回写偏好）。新手版 = 一句大问题 + 拖放区 + 黑色主按钮「导入我的脚本」，教程入口
   （`runTutorialEntry('picker')`，锚点 `tutorial-entry`，暂停过的显示「继续」）降为次按钮「用示例学一遍（带引导）」
-  （三步说明卡与提示条已删，拖放区标题本身就是说明；两版共用一个 `DropZone`）；老手版的「使用示例
+  （三步说明卡与提示条已删，拖放区标题本身就是说明；两版共用一个 `DropZone`）。**2026-10-07 设计刷新（审计 §4.2）**：
+  拖放区静态时是一张普通 `ui/Card`、只有带文件拖进页面才是接收态（`ui/dropZone`）；两颗 CTA 是 `size="lg"`、一屏一颗
+  填色主按钮；老手版标题下是一句叙事句，句中两枚 24px chip（`data-home-chip="recent"` 直接打开最近一个仍存在的项目、
+  `"script"` = 导入），整句经 `Trans` 进翻译；两版的最近项目都是 Card interactive 网格（`RecentProject` 不带画布数据，
+  缩略图格是画布灰上的文件夹图标）。老手版的「使用示例
   脚本试试看」走 `openSampleProject()` = `startTutorial(source, { guide: false })`：同一条认领链路打开
   示例项目，**onboarding 一个字段都不碰**、不记 `tutorial_started`——否则一次「看看示例」就把
   `completed` 改回 `active`，下次回主页又成了新手版。「重新开始教程」照旧在「全部项目」视图、帮助菜单、
@@ -105,6 +109,10 @@
 * **coachmark 没有遮罩、不改偏好**：`reveal()` 露出折叠侧栏直接 `uiStore.setState`（不经 `setLeftTab`
   的 persist）；画布对象被平移出 `[data-canvas-stage]` 时只调 `viewportStore.revealRect`。锚点在
   `[role=dialog]` 里就 portal 进那个节点（模态层外面点不到）。Esc 只在焦点落在卡片里时暂停。
+  **高亮环也画进那个对话框**（对话框内坐标，2026-10-07 设计审计 §10.2：此前锚点在导出对话框里时一圈都没有），
+  环的圆角 = 锚点圆角 + 4（环画在锚点外 4px），落到最近的圆角 token 上（不写内联 borderRadius）。卡片：圆角 12、宽 320、内边距 16、正文 13、分段进度（字面的
+  「第 n 步，共 N 步」仍在 `data-onboarding-progress` 里）、关闭是写明「暂停教程」的文字按钮（`data-onboarding-pause`）。
+  **换步骤时焦点交接**：上一张卡片卸载时焦点在它里面、且是直接换到下一步（教程仍 active、步骤已变），新卡片接手；焦点在别处（画布、输入框）一律不抢；「暂停教程」/ 完成 / 跳过整个教程卸掉卡片不算交接，之后「继续」不抢焦点（#831 Codex P2）。
 * **卡片挪位不许从锚点上扫过（2026-09-26，#581）**：滑行途中卡片是可点的，而锚点正是用户此刻要点
   的东西。`lib/onboarding/position.ts` 的 `shouldGlide(from, to, anchor)` 是唯一判据：没落过位（挂载
   那一帧在 -9999）直接出现，两框外接矩形碰到锚点也直接跳，其余才带 left/top 过渡。`from` 是卡片**此刻

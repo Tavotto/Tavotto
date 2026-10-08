@@ -91,15 +91,18 @@ from .engine import (
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
+    prepsession as engine_prepsession,
     probe as engine_probe,
     profilestore as engine_profilestore,
     project_refresh as engine_refresh,
     project_watch as engine_watch,
     projectenv as engine_projectenv,
+    projscan as engine_projscan,
     readiness as engine_readiness,
     receipt as engine_receipt,
     registry as engine_registry,
     runcodes as engine_runcodes,
+    runconfig as engine_runconfig,
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
     scriptanswers as engine_scriptanswers,
@@ -108,6 +111,7 @@ from .engine import (
     scriptlock as engine_scriptlock,
     session_client as engine_session_client,
     specfix as engine_specfix,
+    taskdiag as engine_taskdiag,
     telemetry as engine_telemetry,
     tutorial as engine_tutorial,
     updater as engine_updater,
@@ -548,6 +552,14 @@ def _input_remap_changed(exc):
     return jsonify({"error": str(exc), "code": exc.code, "params": {}, "retryable": True}), 409
 
 
+@app.errorhandler(engine_runconfig.RunConfigError)
+def _run_config_error(exc):
+    """运行配置（T03）不能用：给的 argv 不合法 400；本机没有 / 敏感值没保留 / 来自更新版本 409。
+    一律显式拒绝，**绝不回落成空参数去跑**（那会拿错的参数画出一张看似正常的图）。"""
+    status = 400 if exc.code == engine_runconfig.ERROR_INVALID_ARGV else 409
+    return jsonify(exc.to_payload()), status
+
+
 @app.errorhandler(NoProjectError)
 def _no_project(_exc):
     return jsonify({"error": "尚未打开项目", "code": "no_project"}), 409
@@ -610,6 +622,14 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         # 脚本要输入（ADR 0099）：界面按 code 翻译，提示原文走 params
         extra = getattr(exc, "extra", None) or {}
         body["params"] = {"prompt": str(extra.get("prompt") or "")}
+    if exc.code == "script_needs_arguments":
+        extra = getattr(exc, "extra", None) or {}
+        params = {}
+        if extra.get("argv_count"):
+            params["argv_count"] = str(int(extra["argv_count"]))
+        if extra.get("parse_kind"):
+            params["parse_kind"] = str(extra["parse_kind"])
+        body["params"] = params
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -1645,7 +1665,9 @@ def _prepare_export_job(spec: dict):
     pdfbackend.selected()
     out_dir = project_export_dir()
     try:
-        job = engine_exportjob.prepare(spec, out_dir)
+        job = engine_exportjob.prepare(
+            spec, out_dir, project_id=getattr(_request_ctx(), "id", None)
+        )
     except engine_exportreq.ExportRequestError as exc:
         return None, (
             jsonify({"error": exc.message, "code": exc.code, "params": exc.params}),
@@ -1753,9 +1775,20 @@ def api_export_start():
 @app.get("/api/export/state")
 def api_export_state():
     """某个作业的当前状态（SSE 断了之后的补拉）。"""
-    resp = jsonify(engine_exportjob.progress(request.args.get("job_id", "")))
+    job_id = request.args.get("job_id", "")
+    job = engine_exportjob.get(job_id)
+    if job is not None and not _export_job_is_mine(job):
+        # 别的项目的作业对本项目就是不存在：回得和真不存在的 id 一模一样（不泄露它存在，也不泄露它的请求与导出目录）
+        job = None
+    resp = jsonify(job.to_payload() if job is not None else {"job_id": job_id, "status": "unknown"})
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+def _export_job_is_mine(job) -> bool:
+    """作业属于发起请求的这个项目（T04）。没记项目的作业（测试 / 内部探针）不设防，与旧行为一致。"""
+    owner = getattr(job, "project_id", None)
+    return owner is None or owner == getattr(_request_ctx(), "id", None)
 
 
 @app.post("/api/export/cancel")
@@ -1763,7 +1796,9 @@ def api_export_cancel():
     """取消一个作业。回的是「有没有这个作业可取消」，**不是「已经取消了」**
     ——真正的清理发生在执行线程回到检查点的那一刻。"""
     body = request.get_json(force=True) or {}
-    ok = engine_exportjob.cancel(str(body.get("job_id") or ""))
+    job_id = str(body.get("job_id") or "")
+    job = engine_exportjob.get(job_id)
+    ok = engine_exportjob.cancel(job_id) if job is None or _export_job_is_mine(job) else False
     return jsonify({"cancelling": bool(ok)})
 
 
@@ -2275,6 +2310,8 @@ def close_project(pid: str, wait: bool = False) -> bool:
             engine_watch.stop(str(ctx.path))
     if ctx is None:
         return False
+    # 导入即扫描：取消在跑的扫描并忘掉它的账（只此一件——没有执行 / 安装归它所有）
+    engine_projscan.SCANS.drop(pid)
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
@@ -2671,6 +2708,42 @@ def api_diagnostics_bundle_post():
     return _diagnostics_bundle_response(frontend=frontend, frontend_dropped=dropped)
 
 
+@app.get("/api/diagnostics/task")
+def api_diagnostics_task():
+    """某一次失败尝试的诊断（T04）：`?kind=export|preparation|script_run&ref=<作业/尝试 id>`。
+
+    **只读一份终局时冻结的快照**，不采集、不探测：没有解释器体检、没有安装、没有联网、不重跑脚本，也不拿
+    此刻的环境冒充当时的环境（`engine/taskdiag.py`）。不带 `ref` = 本项目这一类里最近一次失败。
+    记录按项目认领：别的项目的 id、已被清理的 id、从未有过的 id 都回 404 + `available:false`，其中
+    「过期」只有本项目自己记过的才说得出，别的项目的 id 一律读作「没有」。
+    """
+    ctx = _request_ctx()
+    pid = getattr(ctx, "id", None)
+    kind = request.args.get("kind") or None
+    ref = request.args.get("ref") or None
+    if kind is not None and kind not in engine_taskdiag.KINDS:
+        return jsonify({"error": "kind 不认识", "code": "bad_request"}), 400
+    store = engine_taskdiag.STORE
+    reason = engine_taskdiag.REASON_NOT_FOUND
+    entry = None
+    if pid is not None:
+        if ref is None:
+            entry = store.latest_failure(pid, kind)
+        elif kind is not None:
+            found = store.get(pid, kind, ref)
+            entry, reason = found.entry, found.reason or reason
+    if entry is None:
+        resp = jsonify(engine_taskdiag.unavailable(reason, kind=kind))
+        resp.status_code = 404
+    else:
+        resp = jsonify(engine_taskdiag.document(store, entry))
+        resp.headers["Content-Disposition"] = (
+            f'attachment; filename="tavotto-task-diagnostic-{time.strftime("%Y%m%d-%H%M%S")}.json"'
+        )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def _read_body_capped(limit: int) -> bytes:
     """从请求流**最多读 `limit + 1` 字节**——收请求体的端点共用这一份有界读取。
 
@@ -2819,11 +2892,14 @@ def _diagnostics_project_status() -> dict:
 
 def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
     status = _diagnostics_project_status()
+    pid = getattr(_request_ctx(), "id", None)
     data = engine_diagnostics.build_bundle(
         project=status,
         port=request.host.rsplit(":", 1)[-1],
         frontend=frontend,
         frontend_dropped=frontend_dropped,
+        # 本项目最近几次任务的冻结快照（失败在前）；只读登记表，不采集（T04）
+        task_snapshots=engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid) if pid else None,
     )
     name = f"tavotto-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     return Response(
@@ -3414,7 +3490,70 @@ def api_registry_scan():
 # 硬杀 worker，probe 循环据此把失败归类为 execution_cancelled 且不再试下一个
 # entry。key 用 ctx.id（项目身份），与 SSE 的 pj 同一口径。
 _PROBES: dict[tuple[str, str], threading.Event] = {}
+#: 在跑的试运行各自的运行配置（T03；`_PROBES` 同一把锁）：取消要杀的是**这份配置**的会话，不是同脚本别的参数的
+_PROBE_RUNS: dict[tuple[str, str], object] = {}
 _PROBES_LOCK = threading.Lock()
+
+
+def _resolve_project_script(ctx: "ProjectCtx", raw: str):
+    """用户给的脚本路径 → 项目相对 POSIX 路径；不行就回现成的拒绝响应。回 `(script, None)` 或 `(None, 响应)`。
+
+    `/api/registry/probe` 与准备会话的 `script` 目标共用这一份：这两个入口都会真的执行代码，越权必须挡死。
+    三种拒绝各有稳定 code（前端按码换文案）；判据一律在 **realpath 之后**——`..` 回溯、symlink/junction
+    指到项目外、项目外绝对路径都在 resolve 那一步现出原形，逐条模式匹配防不完。
+    """
+    # 只允许跑项目目录内的 .py
+    if not raw:
+        return None, (
+            jsonify(
+                {
+                    "error": f"脚本不存在: {raw}",
+                    "code": "script_not_found",
+                    "params": {"script": raw},
+                }
+            ),
+            404,
+        )
+    root = ctx.path.resolve()
+    resolved = engine_projectenv.contained_path(root, raw)
+    if resolved is None:
+        return None, (
+            jsonify(
+                {
+                    "error": f"脚本路径在项目目录之外: {raw}",
+                    "code": "script_path_outside_project",
+                    "params": {"script": raw},
+                }
+            ),
+            400,
+        )
+    # Filesystem sinks use only the common sanitizer's returned path; duplicating
+    # containment checks here also obscures the barrier from CodeQL.
+    target = Path(resolved)
+    if target.suffix.lower() != ".py" or target.is_dir():
+        return None, (
+            jsonify(
+                {
+                    "error": f"不是可试运行的 .py 脚本: {raw}",
+                    "code": "unsupported_script_type",
+                    "params": {"script": raw},
+                }
+            ),
+            400,
+        )
+    if not target.is_file():
+        return None, (
+            jsonify(
+                {
+                    "error": f"脚本不存在: {raw}",
+                    "code": "script_not_found",
+                    "params": {"script": raw},
+                }
+            ),
+            404,
+        )
+    # 注册表键 = 项目相对路径（POSIX）——与清单 / 静态起草同一种写法
+    return target.relative_to(root).as_posix(), None
 
 
 @app.post("/api/registry/probe")
@@ -3430,44 +3569,13 @@ def api_registry_probe():
     """
     ctx = current_ctx()
     body = request.get_json(force=True)
-    raw = str(body.get("script") or "").strip()
-    # 只允许跑项目目录内的 .py：这个端点会真的执行代码，越权必须挡死。
-    # 三种拒绝各有稳定 code（前端按码换文案）；判据一律在 **realpath 之后**
-    # ——`..` 回溯、symlink/junction 指到项目外、项目外绝对路径都在 resolve
-    # 那一步现出原形，逐条模式匹配防不完。
-    if not raw:
-        return jsonify(
-            {"error": f"脚本不存在: {raw}", "code": "script_not_found", "params": {"script": raw}}
-        ), 404
-    root = ctx.path.resolve()
-    try:
-        target = (Path(raw) if Path(raw).is_absolute() else ctx.path / raw).resolve()
-    except OSError:
-        return jsonify(
-            {"error": f"脚本不存在: {raw}", "code": "script_not_found", "params": {"script": raw}}
-        ), 404
-    if not target.is_relative_to(root):
-        return jsonify(
-            {
-                "error": f"脚本路径在项目目录之外: {raw}",
-                "code": "script_path_outside_project",
-                "params": {"script": raw},
-            }
-        ), 400
-    if target.suffix.lower() != ".py" or target.is_dir():
-        return jsonify(
-            {
-                "error": f"不是可试运行的 .py 脚本: {raw}",
-                "code": "unsupported_script_type",
-                "params": {"script": raw},
-            }
-        ), 400
-    if not target.is_file():
-        return jsonify(
-            {"error": f"脚本不存在: {raw}", "code": "script_not_found", "params": {"script": raw}}
-        ), 404
-    # 注册表键 = 项目相对路径（POSIX）——与清单 / 静态起草同一种写法
-    script = target.relative_to(root).as_posix()
+    script, rejected = _resolve_project_script(ctx, str(body.get("script") or "").strip())
+    if rejected is not None:
+        return rejected
+    # T03：用户给的精确 argv（字符串数组，空 = 不带参数）。校验 + 登记一次做完；坏的当场 400，不截断不"修"
+    run = engine_runconfig.selection_for(
+        ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
+    )
     key = (ctx.id, script)
     cancel_ev = threading.Event()
     with _PROBES_LOCK:
@@ -3480,30 +3588,80 @@ def api_registry_probe():
                 }
             ), 409
         _PROBES[key] = cancel_ev
-    sse_publish("probe.started", {"pj": ctx.id, "script": script})
+        _PROBE_RUNS[key] = run
+    attempt_id = f"run-{uuid.uuid4().hex}"
+    started = time.monotonic()
+    result = {"registered": False, "stems": []}
+    failure_response = None
     try:
+        sse_publish("probe.started", {"pj": ctx.id, "script": script})
         result = engine_probe.probe_and_register(
-            ctx.path, script, cost=str(body.get("cost") or "medium"), should_cancel=cancel_ev.is_set
+            ctx.path,
+            script,
+            cost=str(body.get("cost") or "medium"),
+            should_cancel=cancel_ev.is_set,
+            **({"run": run} if run is not None else {}),
         )
+        if result.get("registered"):
+            # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
+            # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
+            # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
+            # 清单与预览，那时 cache 里得已经有东西。
+            _materialize_runtime(
+                script,
+                result.get("entry") or "",
+                result.get("descriptors") or [],
+                remap_generation=result.get("remap_generation"),
+                run=run,
+            )
+            # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
+            engine_runconfig.set_default(
+                ctx.path, script, run.config_id if run is not None else None
+            )
+            # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
+            # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
+            # 裁决好的归属重新掀一遍。
+            refresh_project(ctx, reason="probe", allow_static_merge=False)
+    except Exception as exc:  # noqa: BLE001 — 保留原异常响应，同时给终局补上诊断引用
+        # 复用 Flask 已登记的处理器，保留 RefreshError 的 400 等既有契约；
+        # 快照只取稳定错误码，异常文字仍留在原错误响应，不进入可分享的投影。
+        failure_response = app.make_response(app.handle_user_exception(exc))
+        failure_body = failure_response.get_json(silent=True)
+        failure_code = failure_body.get("code") if isinstance(failure_body, dict) else None
+        result = {
+            **result,
+            "error": {"code": failure_code or "internal_error"},
+        }
     finally:
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
-    if result.get("registered"):
-        # 每张捕获图当场物化进 runtime cache（复制热 worker 已写好的预览
-        # SVG + 描述符——不触发第二次执行）。重开文档时的首帧占位靠它。
-        # **在刷新之前**：刷新会发 `registry.changed`，前端收到就去取 runtime
-        # 清单与预览，那时 cache 里得已经有东西。
-        _materialize_runtime(
-            script,
-            result.get("entry") or "",
-            result.get("descriptors") or [],
-            remap_generation=result.get("remap_generation"),
-        )
-        # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
-        # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
-        # 裁决好的归属重新掀一遍。
-        refresh_project(ctx, reason="probe", allow_static_merge=False)
-    return jsonify(result)
+            _PROBE_RUNS.pop(key, None)
+    # 失败（和成功）那一次的现场冻结成一份小快照（T04）：界面凭 `diagnostic.ref` 一键取回，之后的重试是新的 attempt
+    engine_taskdiag.STORE.record(
+        ctx.id,
+        engine_taskdiag.KIND_SCRIPT_RUN,
+        attempt_id,
+        engine_probe.diagnostic_projection(
+            result,
+            attempt_id=attempt_id,
+            argv_count=len(run.argv) if run is not None else 0,
+            run_config=run.config_id if run is not None else None,
+            elapsed_ms=round((time.monotonic() - started) * 1000),
+        ),
+        outcome=engine_probe.outcome_of(result),
+        failed=engine_probe.outcome_of(result) == engine_probe.OUTCOME_ERROR,
+        subject={("script", script)},
+    )
+    diagnostic = {"kind": engine_taskdiag.KIND_SCRIPT_RUN, "ref": attempt_id}
+    if failure_response is not None:
+        failure_body = failure_response.get_json(silent=True)
+        if isinstance(failure_body, dict):
+            failure_response.set_data(app.json.dumps({**failure_body, "diagnostic": diagnostic}))
+        else:
+            # HTTPException / 自定义处理器的非对象响应保持原样，引用由响应头取回。
+            failure_response.headers["X-Tavotto-Diagnostic-Ref"] = attempt_id
+        return failure_response
+    return jsonify({**result, "diagnostic": diagnostic})
 
 
 @app.post("/api/registry/probe/cancel")
@@ -3519,12 +3677,16 @@ def api_registry_probe_cancel():
     ctx = current_ctx()
     body = request.get_json(force=True)
     script = str(body.get("script") or "").strip()
+    # 取消标志与运行配置必须在**同一把锁**里一起取：分两次加锁的话，带参数的试运行恰好在两次之间收尾
+    # （finally 把两张表都删了），run 会被读成 None，force_cancel 就打到同脚本无参数的 worker 上，
+    # 误杀别的面板的活会话。条目已经不在了 = 输了赛跑，按「没有在跑的」返回，什么也不杀。
     with _PROBES_LOCK:
         ev = _PROBES.get((ctx.id, script))
+        run = _PROBE_RUNS.get((ctx.id, script))
     if ev is None:
         return jsonify({"cancelling": False})
     ev.set()  # 先置标志再杀：probe 醒来时答案已经在了
-    engine_pool.force_cancel(script, str(ctx.path))
+    engine_pool.force_cancel(script, str(ctx.path), **({"run": run} if run is not None else {}))
     return jsonify({"cancelling": True})
 
 
@@ -4085,7 +4247,7 @@ def _materialize_native(session) -> None:
 
 
 def _materialize_runtime(
-    script: str, entry: str, descriptors: list, *, remap_generation: int | None
+    script: str, entry: str, descriptors: list, *, remap_generation: int | None, run=None
 ) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
 
@@ -4099,8 +4261,9 @@ def _materialize_runtime(
         return
     root = require_project()
     # 取会话在锁外：取不到现成的会起一条新的、跑脚本——持锁执行脚本会把改指堵在一次 build 后面
+    # `run`（T03）：产出这批图的那份运行配置——取的必须是同一条热会话，否则会为别的参数另起一次执行
     try:
-        worker = _safe_worker(script, entry)
+        worker = _safe_worker(script, entry, run=run)
     except engine_pool.WorkerError:
         return
     try:
@@ -4302,7 +4465,16 @@ def _engine_attempt(
         )
 
 
-def _safe_worker(script: str, entry: str, stem: str = "", *, artifact_source=None):
+_DISK_RUN = object()
+
+
+def _disk_panel_run(script: str):
+    """磁盘面板（用户脚本自己写出来的 `fig.pdf`）重跑该用的运行配置：脚本最近一次**明确运行**用的那份
+    （`runconfig.set_default`），没有 = 不带参数（旧行为）。`runtime:` 素材不走这里——它们的配置冻结在资产 id 里。"""
+    return engine_runconfig.default_selection(require_project(), script)
+
+
+def _safe_worker(script: str, entry: str, stem: str = "", *, artifact_source=None, run=_DISK_RUN):
     """**磁盘面板永远是 safe**——它有自己的原始产物，那是 safe worker 产出的
     世界（写回、画布合成、两图同步走的都是这条）。
 
@@ -4311,12 +4483,15 @@ def _safe_worker(script: str, entry: str, stem: str = "", *, artifact_source=Non
     绕过去的那几处正是"共享判据修了一处、第二个消费点还是老样子"的形状，
     仓库里同形状的缺陷出现过三次。
     """
+    if run is _DISK_RUN:
+        run = _disk_panel_run(script)
     return engine_enginesession.resolve(
         project_root=str(require_project()),
         script=script,
         entry=entry,
         stem=stem,
         execution_profile=engine_enginesession.PROFILE_SAFE,
+        **({"run": run} if run is not None else {}),
         **_artifact_kwargs(artifact_source),
     )
 
@@ -4359,6 +4534,8 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
         info = engine_runtimeasset.resolve(rel_id, current_registry())
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
+        # T03：这张图当初的运行配置（资产 id 里冻结的引用）——不是项目此刻的任何配置。本机没有就显式拒绝
+        run = engine_runtimeasset.run_selection(root, info)
         return (
             engine_enginesession.resolve(
                 project_root=root,
@@ -4366,6 +4543,7 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
                 entry=info["entry"],
                 stem=info["stem"],
                 execution_profile=engine_enginesession.profile_of(root, rel_id),
+                **({"run": run} if run is not None else {}),
             ),
             info["stem"],
         )
@@ -4378,6 +4556,7 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
             )
         abort(404)
     # 磁盘面板永远是 safe：它有自己的原始产物，那是 safe worker 产出的世界。
+    disk_run = _disk_panel_run(info["script"])
     return (
         engine_enginesession.resolve(
             project_root=root,
@@ -4385,6 +4564,7 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None):
             entry=info["entry"],
             stem=path.stem,
             execution_profile=engine_enginesession.PROFILE_SAFE,
+            **({"run": disk_run} if disk_run is not None else {}),
             **_artifact_kwargs(artifact_source),
         ),
         path.stem,
@@ -4523,6 +4703,7 @@ def api_engine_render():
             info.get("entry", ""),
             worker.last_build_descriptors,
             remap_generation=getattr(worker, "remap_generation", None),
+            run=getattr(worker, "run", None),
         )
     out = {
         "rev": worker.rev,
@@ -4709,7 +4890,13 @@ def _retire_hot_worker(worker) -> bool:
     if engine_enginesession.is_native(worker):
         LOG.warning("按规范修图后热态不可信，但 native 会话不作废: %s", worker)
         return False
-    engine_pool.invalidate(worker.script_name, worker.figures_dir)
+    # 热态不可信的只是这一条会话（它冻结的那份运行配置）；同脚本别的 argv 变体的会话不动
+    if getattr(worker, "artifact_source", None) is None:
+        engine_pool.invalidate(
+            worker.script_name, worker.figures_dir, getattr(worker, "run", None), only_run=True
+        )
+    else:  # 选定产物的会话键里带产物身份，按脚本整体作废（旧行为）
+        engine_pool.invalidate(worker.script_name, worker.figures_dir)
     LOG.warning("按规范修图后热态不可信，作废会话: %s", worker.script_name)
     return True
 
@@ -4917,13 +5104,18 @@ def api_engine_invalidate():
         if engine_enginesession.profile_of(root, rel_id) == engine_enginesession.PROFILE_NATIVE:
             return jsonify({"invalidated": False, "reason": "native_session"})
         script = info["script"]
+        # T03：重新构建的是**这张图的那份配置**，同脚本别的参数的热会话不动
+        run = engine_runtimeasset.run_selection(root, info)
     else:
         path = safe_resolve(rel_id)
         info = current_registry().for_stem(path.stem)
         if info is None:
             abort(404)
         script = info["script"]
-    engine_pool.invalidate(script, root)
+        # 磁盘面板重跑用的就是脚本最近一次明确运行的那份配置（与 `_resolve_engine_worker` 同一判据）
+        run = _disk_panel_run(script)
+    # `only_run=True`：只作废**这一份**配置的会话（无参数变体 = run=None 那条），不是同脚本全部变体
+    engine_pool.invalidate(script, root, run, only_run=True)
     LOG.info("引擎会话作废（用户重新构建）: %s", script)
     return jsonify({"invalidated": True})
 
@@ -5594,6 +5786,9 @@ def _write_source_files(
         worker.figures_dir,
         worker.entry,
         script_inputs=getattr(worker, "last_build_script_inputs", None) or [],
+        # T03：重放跑的是**热会话自己冻结的那份运行配置**（argv），与热态一致才谈得上"重放 == 热态"；
+        # 不读项目此刻的默认配置——之后用户换了参数也不能让这次验证拿另一组参数去比
+        **({"run": worker.run} if getattr(worker, "run", None) is not None else {}),
     )
     tmps: list[tuple[Path, Path]] = []
     warnings: list[str] = []
@@ -6293,7 +6488,11 @@ def _resync_registration(ctx, worker) -> bool:
     # 只对账**已登记**的脚本：没登记过的不在这里替它登记（那是试运行 / 发现的事）
     if not script or not root or registry is None or script not in registry.all_scripts():
         return False
-    if not engine_inputremap.registration_stale(root, script):
+    # 带运行配置的会话只是这个脚本的**另一份配置**：对账与登记都按这一份来（与 `probe.register_probed`
+    # 同一判据），不许把同脚本别的 argv 变体登记的图名换掉、也不许把它们一并标成已对账（Codex 评 #812 P2）
+    run = getattr(worker, "run", None)
+    variant = str(getattr(run, "config_id", "") or "") if run is not None else ""
+    if not engine_inputremap.registration_stale(root, script, variant):
         return False
     stems = sorted(
         {
@@ -6312,8 +6511,10 @@ def _resync_registration(ctx, worker) -> bool:
     try:
         with engine_inputremap.landing(root, getattr(worker, "remap_generation", None)):
             # cost 给空串：`register` 保留磁盘上原来那个值
-            engine_discover.register(root, script, stems, entry=worker.entry, cost="")
-            engine_inputremap.record_registration(root, script)
+            engine_discover.register(
+                root, script, stems, entry=worker.entry, cost="", append=bool(variant)
+            )
+            engine_inputremap.record_registration(root, script, variant)
     except engine_inputremap.RemapChanged:
         return False
     LOG.info("改指表变了，按这次 build 的产出重新登记: %s → %s", script, stems)
@@ -6704,16 +6905,20 @@ def _preparation_target(rel_id: str) -> dict:
         info = engine_runtimeasset.resolve(rel_id, current_registry())
         if info is None:
             abort(_runtime_asset_unknown(rel_id))
+        run = engine_runtimeasset.run_selection(require_project(), info)
         return {
             "stem": info["stem"],
             "script": info["script"],
             "entry": info["entry"],
             "original_artifact": None,
             "original_path": None,
+            **({"run": run} if run is not None else {}),
         }
     path = safe_resolve(rel_id)  # 已判：在项目根之内、是文件、扩展名在闭集里
     info = current_registry().for_stem(path.stem) or {}
+    disk_run = _disk_panel_run(info["script"]) if info.get("script") else None
     return {
+        **({"run": disk_run} if disk_run is not None else {}),
         "stem": path.stem,
         "script": info.get("script"),
         "entry": info.get("entry"),
@@ -6721,6 +6926,29 @@ def _preparation_target(rel_id: str) -> dict:
         # 读字节算 hash 用的是 safe_resolve 校验过的那一个路径，不再拿原串重拼
         "original_path": str(path),
     }
+
+
+def _preparation_runner(pl, before_retry=None):
+    """「真的把 runtime 起起来」只有一份实现：`pool.build_owned`（`pool.build` + 所有权，带一次项目环境
+    自动 fallback）。这里不另写 get + ensure_built。"""
+    return engine_pool.build_owned(
+        pl.script,
+        pl.project_root,
+        pl.entry,
+        before_retry=before_retry,
+        # T03：计划冻结的运行配置；没有配置时调用形状与以前一致
+        **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
+    )
+
+
+def _launch_preparation(ctx: "ProjectCtx", plan, on_done=None) -> None:
+    """把一份已登记的计划交给执行线程（旧的 `/api/engine/preparation` 与准备会话共用这一处）。"""
+    engine_preparation.SERVICE.start(
+        plan.plan_id,
+        runner=_preparation_runner,
+        bind=lambda: bound_project(ctx),
+        on_done=on_done,
+    )
 
 
 def _preparation_payload(plan, result) -> dict:
@@ -6762,18 +6990,11 @@ def api_engine_preparation_start():
         entry=target["entry"],
         original_artifact=target["original_artifact"],
         original_path=target["original_path"],
+        **({"run": target["run"]} if target.get("run") is not None else {}),
     )
     result = engine_preparation.SERVICE.register(plan)
     if plan.script is not None:
-        engine_preparation.SERVICE.start(
-            plan.plan_id,
-            # 「真的把 runtime 起起来」只有一份实现：`pool.build`（带一次项目环境
-            # 自动 fallback）。这里不另写 get + ensure_built。
-            runner=lambda pl, before_retry=None: engine_pool.build_owned(
-                pl.script, pl.project_root, pl.entry, before_retry=before_retry
-            ),
-            bind=lambda: bound_project(ctx),
-        )
+        _launch_preparation(ctx, plan)
     resp = jsonify(_preparation_payload(plan, result))
     resp.status_code = 202
     resp.headers["Cache-Control"] = "no-store"
@@ -6799,6 +7020,307 @@ def api_engine_preparation_cancel(plan_id: str):
         return _preparation_not_found(plan_id)
     plan, result = engine_preparation.SERVICE.get(plan_id, ctx.id)
     return jsonify({"cancelling": outcome["accepted"], **_preparation_payload(plan, result)})
+
+
+# ------------------ 准备会话（T01）：script-first 的共同准备 / 执行合同 ------------------
+# 三个端点、一个登记表（`engine/prepsession.SESSIONS`），全部在会话认证之内（没有旁路）。会话按
+# `ctx.id` 认领——别的项目的会话 id 就是不存在（404）。检查不执行任何用户代码；执行只在认领后端
+# 生成的 `run` 动作之后发生，且仍走 `PreparationService` → `pool.build_owned`。
+
+
+def _session_error(exc: engine_prepsession.SessionError):
+    resp = jsonify({"error": str(exc), "code": exc.code, "params": exc.params})
+    resp.status_code = exc.status
+    return resp
+
+
+def _session_target(ctx: "ProjectCtx", body: dict):
+    """请求体 → 会话目标（`script` 目标或已知素材）；不行回现成的拒绝响应。回 `(target, None)` 或 `(None, 响应)`。"""
+    has_script, has_id = "script" in body, "id" in body
+    if has_id and body.get("argv") not in (None, []):
+        # 已知素材的运行配置冻结在它的资产 id 里；请求体里另给一份 argv 是歧义，不猜
+        return None, (
+            jsonify(
+                {
+                    "error": "argv 只能跟 script 目标一起给；已知素材沿用它当初的运行配置",
+                    "code": "bad_request",
+                    "params": {"fields": ["argv", "id"]},
+                }
+            ),
+            400,
+        )
+    if has_script == has_id:
+        return None, (
+            jsonify(
+                {
+                    "error": "需要且只需要 script 或 id 之一",
+                    "code": "bad_request",
+                    "params": {"fields": ["script", "id"]},
+                }
+            ),
+            400,
+        )
+    if has_id:
+        rel_id = str(body.get("id") or "")
+        if not rel_id:
+            return None, (
+                jsonify({"error": "缺少面板 id", "code": "bad_request", "params": {}}),
+                400,
+            )
+        found = _preparation_target(rel_id)
+        return {**found, "kind": engine_preparation.TARGET_ASSET, "asset_id": rel_id}, None
+    script, rejected = _resolve_project_script(ctx, str(body.get("script") or "").strip())
+    if rejected is not None:
+        return None, rejected
+    entry = body.get("entry")
+    if entry is None:
+        registered = current_registry().entries().get(script) or {}
+        entry = registered.get("entry") or engine_probe.entry_candidates(ctx.path, script)[0]
+    elif not isinstance(entry, str) or not engine_registry.valid_entry(entry):
+        return None, (
+            jsonify(
+                {
+                    "error": f"entry 非法: {entry}",
+                    "code": engine_probe.ERROR_INVALID_ENTRY,
+                    "params": {"entry": str(entry)},
+                }
+            ),
+            400,
+        )
+    # T03：精确 argv。只接受字符串数组——不接受一整串 shell 命令（那要猜 token 边界）；坏的抛 `InvalidArgv`
+    # （app 级 errorhandler 回 400 + `invalid_argv`），不截断不"修好"
+    run = engine_runconfig.selection_for(
+        ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
+    )
+    return {
+        "kind": engine_preparation.TARGET_SCRIPT,
+        "script": script,
+        "entry": entry,
+        "stem": "",
+        "asset_id": "",
+        "original_artifact": None,
+        "original_path": None,
+        **({"run": run} if run is not None else {}),
+    }, None
+
+
+def _session_awaiting_input(ctx: "ProjectCtx", sess) -> bool:
+    """这个会话的脚本此刻有没有在等一个 `input()` 的回答（回答本身走既有的 `/api/script_input/*`）。"""
+    script = sess.plan.script
+    if not script:
+        return False
+    return any(
+        p.script == script and _script_input_pending_of(ctx, p.id) is not None
+        for p in engine_inputbroker.pending()
+    )
+
+
+def _session_report(ctx: "ProjectCtx", sess) -> dict:
+    return engine_prepsession.SESSIONS.report(
+        sess, awaiting_input=_session_awaiting_input(ctx, sess)
+    )
+
+
+def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
+    """脚本目标执行成功之后：把真实产出的图名登记进注册表、物化 runtime cache、刷新项目——与
+    `/api/registry/probe` 成功之后是同一串（`probe.register_probed` 是登记的唯一实现）。在执行线程上、
+    项目绑定里调；只回公开字段。"""
+    captured = result.captured or {}
+    stems = list(captured.get("stems") or [])
+    if not stems:
+        return {"registered": False, "code": "no_figures_captured"}
+    descriptors = list(captured.get("descriptors") or [])
+    registered = engine_probe.register_probed(
+        ctx.path,
+        plan.script,
+        {
+            "script": plan.script,
+            "entry": plan.entry,
+            "stems": stems,
+            "descriptors": descriptors,
+            "remap_generation": captured.get("remap_generation"),
+            # T03：带配置的执行并进注册表，不换掉（见 `probe.register_probed`）
+            **(
+                {"run_config": plan.run.config_id} if getattr(plan, "run", None) is not None else {}
+            ),
+        },
+    )
+    if not registered.get("registered"):
+        return {
+            "registered": False,
+            "code": (registered.get("error") or {}).get("code") or "registration_failed",
+        }
+    # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
+    run = getattr(plan, "run", None)
+    _materialize_runtime(
+        plan.script,
+        plan.entry,
+        descriptors,
+        remap_generation=captured.get("remap_generation"),
+        run=run,
+    )
+    engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
+    refresh_project(ctx, reason="probe", allow_static_merge=False)
+    return {"registered": True}
+
+
+def _publish_preparation_session(payload: dict) -> None:
+    sse_publish("preparation.session", {"pj": payload["project_id"], **payload})
+
+
+engine_prepsession.SESSIONS.notifier = _publish_preparation_session
+
+
+@app.post("/api/engine/preparation-sessions")
+def api_engine_preparation_session_create():
+    """为一个目标（`{script, entry?}` 一份只有脚本的目标，或 `{id}` 一张已知素材）创建 / 复用检查会话。
+
+    **检查不执行任何用户代码**：回 201（新建）或 200（同一目标复用）+ 会话报告（phase / checks /
+    requirements / 后端生成的 actions）。要运行，认领报告里的 `run` 动作。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    target, rejected = _session_target(ctx, body)
+    if rejected is not None:
+        return rejected
+    try:
+        sess, created = engine_prepsession.SESSIONS.check(
+            project_id=ctx.id, project_root=str(ctx.path), target=target
+        )
+    except engine_prepsession.SessionError as exc:
+        return _session_error(exc)
+    resp = jsonify(_session_report(ctx, sess))
+    resp.status_code = 201 if created else 200
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/engine/preparation-sessions/<session_id>")
+def api_engine_preparation_session_state(session_id: str):
+    """读会话报告（断线 / 刷新后的补拉；**不会**重新执行任何东西）。"""
+    ctx = current_ctx()
+    try:
+        sess = engine_prepsession.SESSIONS.session(session_id, ctx.id)
+    except engine_prepsession.SessionError as exc:
+        return _session_error(exc)
+    resp = jsonify(_session_report(ctx, sess))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/engine/preparation-sessions/<session_id>/actions")
+def api_engine_preparation_session_action(session_id: str):
+    """认领一个后端生成的动作：`{action_id, expected_config_revision}`——只认这两个字段。
+
+    `run` 首次认领回 202 + `claimed: true`；重复认领（重复点击 / 另一个标签页）回 200 + `claimed: false`
+    和当初那次尝试，没有新副作用。`cancel` 只退役本会话拥有的工作；`recheck` 重新做一次只读检查。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    extra = sorted(set(body) - {"action_id", "expected_config_revision"})
+    revision = body.get("expected_config_revision")
+    if (
+        extra
+        or not isinstance(body.get("action_id"), str)
+        or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
+    ):
+        return jsonify(
+            {
+                "error": "只接受 action_id（字符串）与 expected_config_revision（整数）",
+                "code": "bad_request",
+                "params": {"unexpected": extra},
+            }
+        ), 400
+    try:
+        sess, claimed, kind = engine_prepsession.SESSIONS.act(
+            session_id,
+            ctx.id,
+            body["action_id"],
+            revision,
+            launch=lambda plan, on_done: _launch_preparation(ctx, plan, on_done),
+            finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
+        )
+    except engine_prepsession.SessionError as exc:
+        return _session_error(exc)
+    report = _session_report(ctx, sess)
+    resp = jsonify({"claimed": claimed, "report": report})
+    # 202 = 这次请求起了一次新的执行；其余（重复认领 / 取消 / 重新检查）都是 200
+    resp.status_code = 202 if claimed and kind == engine_prepsession.ACTION_RUN else 200
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+_SCAN_BODY_KEYS = frozenset({"force", "reason"})
+_SCAN_REASONS = ("claim", "restore", "manual", "refresh")
+
+
+def _scan_json(snapshot: dict, status: int = 200):
+    resp = jsonify(snapshot)
+    resp.status_code = status
+    # 扫描快照靠 `evidence_revision` / `observation_seq` 判"变了没有"，别再让 HTTP 缓存插一脚
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/project/scan")
+def api_project_scan_start():
+    """开始（或复用）当前项目的**导入即扫描**：有界、只读、零执行（`engine/projscan.py`）。
+
+    项目认领完成 / 启动恢复时由前端调一次；同一项目已有一次在跑就返回它（单飞），刚完成不久的报告被
+    重复认领直接复用（A→B→A、两个标签页）。回 202（起了新的一轮）或 200（复用）+ 快照；
+    `{"force": true}` 是用户点「重新检查」。**不执行任何用户代码、不起解释器 / 登录 shell、不写用户项目。**
+    """
+    ctx = current_ctx()
+    body = request.get_json(silent=True) or {}
+    force = body.get("force", False)
+    reason = body.get("reason", "claim")
+    extra = sorted(set(body) - _SCAN_BODY_KEYS)
+    if extra or not isinstance(force, bool) or reason not in _SCAN_REASONS:
+        return jsonify(
+            {
+                "error": "只接受 force（布尔）与 reason（claim / restore / manual / refresh）",
+                "code": "bad_request",
+                "params": {"unexpected": extra},
+            }
+        ), 400
+    before = engine_projscan.SCANS.get(ctx.id)
+    snap = engine_projscan.SCANS.ensure(
+        ctx.id, ctx.path, reason=reason, force=force, publish=sse_publish
+    )
+    started = before is None or before["scan_id"] != snap["scan_id"]
+    return _scan_json(snap, 202 if started else 200)
+
+
+@app.get("/api/project/scan")
+def api_project_scan_state():
+    """读当前项目的扫描快照（断线 / 刷新后的补拉；**不会**开始扫描）。"""
+    ctx = current_ctx()
+    snap = engine_projscan.SCANS.get(ctx.id)
+    if snap is None:
+        return jsonify(
+            {
+                "error": "这个项目还没有开始扫描",
+                "code": "project_scan_not_started",
+                "params": {"reason": "unknown_or_restarted"},
+            }
+        ), 404
+    return _scan_json(snap)
+
+
+@app.post("/api/project/scan/cancel")
+def api_project_scan_cancel():
+    """取消**扫描**（只此一件事）：不碰执行、安装与任何 worker。已经终局就原样返回。"""
+    ctx = current_ctx()
+    snap = engine_projscan.SCANS.cancel(ctx.id)
+    if snap is None:
+        return jsonify(
+            {
+                "error": "这个项目还没有开始扫描",
+                "code": "project_scan_not_started",
+                "params": {"reason": "unknown_or_restarted"},
+            }
+        ), 404
+    return _scan_json(snap)
 
 
 @app.post("/api/engine/environment/install")
@@ -7806,10 +8328,20 @@ def api_layouts():
         for p in d.glob("*.json"):
             if not engine_documents.is_user_document_stem(p.stem):
                 continue
-            if p.stem not in seen:
+            if p.stem in seen:
+                continue
+            # 逐个 stat：断开的符号链接、读不了的、glob 与 stat 之间被删掉的，
+            # 都只跳过这一条（它本来也打不开），不能让整张列表 500。跳过而不是
+            # 记下名字：同名的旧位置文件还能顶上，`GET /api/layouts/<name>` 也是
+            # 按 `exists()` 往下找的。
+            try:
                 seen[p.stem] = p.stat().st_mtime
+            except OSError:
+                continue
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
-    return jsonify({"layouts": names})
+    # `modified`（加字段，老前端不认也无妨）：每份文档的修改时间（epoch 秒），
+    # 「打开」列表在名字旁写「几分钟前」——只是展示，排序仍以 `layouts` 的顺序为准
+    return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
 def serve_document(path: Path):
