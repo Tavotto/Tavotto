@@ -393,7 +393,8 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   reset: (script) => {
     const st = get().byScript[script]
     if (!st || isBusyPhase(st.phase)) return
-    gatedQueues.delete(script) // 收起 = 不再等这道门
+    // 收起一行停在门上的 = 不再等这道门；收起的是别的配置跑出来的行（排队的配置与可见行无关）不动队列
+    if (isGatePhase(st.phase)) gatedQueues.delete(script)
     set((s) => {
       const byScript = { ...s.byScript }
       delete byScript[script]
@@ -402,15 +403,20 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   },
 
   rerunGated: (phase, script) => {
-    const scripts = script ? [script] : Object.keys(get().byScript)
-    for (const name of scripts) {
+    // 候选 = 可见行停在这道门上的 ∪ 排队状态停在这道门上的：排队以队列自己为准，与当前可见行解耦
+    // （门后排队期间同脚本别的配置跑完会替换 `byScript` 那一行，不能因此丢掉队列）
+    const names = new Set<string>()
+    for (const [name, row] of Object.entries(get().byScript)) if (row.phase === phase) names.add(name)
+    for (const [name, q] of gatedQueues) if (q.phase === phase) names.add(name)
+    for (const name of names) {
+      if (script && name !== script) continue
       const row = get().byScript[name]
-      if (row?.phase !== phase) continue
+      const rowConfig = row?.phase === phase ? (row.runConfig ?? null) : undefined
       // 批量重跑停在门上时留下了「还没跑完的配置」队列（可能攒了好几批）：整份按序续跑，不只重跑最后那一行。
       // `runConfigsInOrder` 在第一个 await 之前就同步认领脚本并起了第一份，所以下面通知监听者时脚本已是忙的
-      const queued = takeGatedQueue(name, get().epoch, row.runConfig ?? null)
+      const queued = takeGatedQueue(name, get().epoch, phase, rowConfig)
       if (queued) void runConfigsInOrder(name, queued)
-      else void get().run(name, row.runConfig)
+      else if (rowConfig !== undefined) void get().run(name, rowConfig)
     }
     for (const cb of [...gateListeners]) cb(phase, script)
   },
@@ -433,20 +439,31 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
  * 取回时不再要求队首等于停在门上的那份（用户可能关了门又保存另一批）：整份并集都跑，停在门上的那份
  * 若不在队里（用户手动重跑过别的配置）追加到队尾——宁可多跑一次，不丢一份。
  */
-const gatedQueues = new Map<string, { epoch: number; configs: Array<string | null> }>()
+type GatePhase = 'needs_workdir' | 'needs_preparation'
+const gatedQueues = new Map<string, { epoch: number; phase: GatePhase; configs: Array<string | null> }>()
 
-function enqueueGated(script: string, epoch: number, configs: ReadonlyArray<string | null>): void {
+function enqueueGated(script: string, epoch: number, phase: GatePhase, configs: ReadonlyArray<string | null>): void {
   const prev = gatedQueues.get(script)
   const merged = prev && prev.epoch === epoch ? [...prev.configs] : []
   for (const c of configs) if (!merged.includes(c)) merged.push(c)
-  gatedQueues.set(script, { epoch, configs: merged })
+  gatedQueues.set(script, { epoch, phase, configs: merged })
 }
 
-function takeGatedQueue(script: string, epoch: number, rowConfig: string | null): Array<string | null> | null {
+/**
+ * 取回并清掉该脚本停在 `phase` 这道门上的队列。`rowConfig`：可见行也停在这道门上时它的配置（不在队里就追加队尾）；
+ * `undefined` = 可见行已不是这道门（被别的配置的结果替换了），只按队列本身续跑。
+ */
+function takeGatedQueue(
+  script: string,
+  epoch: number,
+  phase: GatePhase,
+  rowConfig: string | null | undefined,
+): Array<string | null> | null {
   const q = gatedQueues.get(script)
+  if (!q || q.phase !== phase) return null
   gatedQueues.delete(script)
-  if (!q || q.epoch !== epoch || q.configs.length === 0) return null
-  return q.configs.includes(rowConfig) ? q.configs : [...q.configs, rowConfig]
+  if (q.epoch !== epoch || q.configs.length === 0) return null
+  return rowConfig === undefined || q.configs.includes(rowConfig) ? q.configs : [...q.configs, rowConfig]
 }
 
 /**
@@ -508,10 +525,14 @@ export async function runConfigsInOrder(
   script: string,
   configs: ReadonlyArray<string | null>,
 ): Promise<Array<{ config: string | null; failed: boolean }>> {
-  // 别的批正占着这个脚本：排在它后面（先来先跑）。检查与占用之间没有 await，所以不会两批同时进场
-  while (batchClaims.has(script)) await whenClaimFree(script)
-  batchClaims.add(script)
+  // 项目代际在**第一个 await 之前**取：等认领期间切了项目，醒来时代际对不上就放弃，不在新项目里跑旧项目的配置
   const epoch = useScriptRunStore.getState().epoch
+  // 别的批正占着这个脚本：排在它后面（先来先跑）。检查与占用之间没有 await，所以不会两批同时进场
+  while (batchClaims.has(script)) {
+    await whenClaimFree(script)
+    if (useScriptRunStore.getState().epoch !== epoch) return []
+  }
+  batchClaims.add(script)
   const results: Array<{ config: string | null; failed: boolean }> = []
   try {
     for (let i = 0; i < configs.length; i++) {
@@ -526,7 +547,7 @@ export async function runConfigsInOrder(
         const row = useScriptRunStore.getState().byScript[script]
         if (isGatePhase(row?.phase) && useScriptRunStore.getState().epoch === epoch) {
           // 停在门上（缺的是用户的一个决定，不是失败）：这份与后面的先挂起，门有了答案由 rerunGated 续跑
-          enqueueGated(script, epoch, configs.slice(i))
+          enqueueGated(script, epoch, row.phase as GatePhase, configs.slice(i))
           results.push({ config, failed: false })
           break
         }

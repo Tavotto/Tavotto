@@ -486,4 +486,32 @@ describe('门后排队续跑的排队语义（Codex #816 r4221258366 / r42212583
     expect(maxInFlight).toBe(1)
     off()
   })
+
+  it('等认领时切项目：第二批不在新项目里执行（r4221391273）', async () => {
+    let release: () => void = () => {}
+    mockProbe.mockImplementationOnce(() => new Promise((resolve) => (release = () => resolve(ok([desc('a')])))))
+    const first = runConfigsInOrder('fig.py', ['rc_a'])
+    await flush()
+    const second = runConfigsInOrder('fig.py', ['rc_b']) // 等第一批释放认领
+    await flush()
+    useScriptRunStore.getState().clear() // 切到项目 B
+    setCurrentProjectId('p2')
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    release()
+    await first
+    expect(await second).toEqual([])
+    await flush()
+    expect(configsOf()).toEqual(['rc_a'])
+  })
+
+  it('A 门后排队、C 跑完替换可见行、再解门：A 及后续仍被重跑（r4221391291）', async () => {
+    mockProbe.mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a', 'rc_b']) // A 撞门，A/B 排队
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    await useScriptRunStore.getState().run('fig.py', 'rc_c') // C 没撞门，替换了可见行
+    expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('captured_one')
+    mockProbe.mockClear()
+    useScriptRunStore.getState().rerunGated('needs_workdir') // 项目级：不指定脚本
+    await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b']))
+  })
 })
