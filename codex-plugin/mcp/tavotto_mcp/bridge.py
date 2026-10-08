@@ -334,7 +334,9 @@ def _answer_workdir(project: str, mode: str) -> None:
         engine_pool.shutdown_all(project)
 
 
-def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict:
+def _answer_prepare_dependencies(
+    project: str, script: str, target: str, impact_digest: str | None = None
+) -> dict:
     """`tavotto_open_figure(prepare_dependencies=…)`：对跑前那一次「需要先准备依赖」的回答
     （U04，ADR 0061）——绑定联合计划 + **同步**执行到终态（几十秒到几分钟：要联网装包），
     再由调用方接着开图。与桌面授权框 / HTTP 端点是同一份决定、同一个事务。
@@ -359,12 +361,31 @@ def _answer_prepare_dependencies(project: str, script: str, target: str) -> dict
         # 用户明确不准备、直接运行：这道门从此放行（缺包会以 missing_dependency 回来）
         skip(project, script)
         return {"target_kind": "skip", "generation": "", "installed": {}, "requirements": []}
+    # 会改环境的两个目标必须带上用户授权时看到的影响摘要（ADR 0115 / Codex r4217992305）：与 HTTP 的
+    # `/dependencies/prepare` 同一道门——只给目标不行，计划是此刻现算的，约束可能已经不是用户看过的那份
+    if not isinstance(impact_digest, str) or not impact_digest:
+        raise BridgeError(
+            "执行依赖准备需要带上授权时看到的影响摘要（dependency_preparation.impact_digest），请重新查看再确认",
+            code="dependency_impact_required",
+        )
+    # 老引擎的 `prepare` 不认摘要：不能静默退回「只带 plan_id」去装——升级 Tavotto
+    import inspect  # noqa: PLC0415
+
+    if "confirmed_impact" not in inspect.signature(engine_deprepair.prepare).parameters:
+        raise BridgeError(
+            "本机 Tavotto 版本不支持按影响摘要执行依赖准备，请升级 Tavotto", code="engine_too_old"
+        )
     try:
         plan = create(project, script, target_kind=target)
-        outcome = engine_deprepair.prepare(plan.plan_id)
+        outcome = engine_deprepair.prepare(plan.plan_id, confirmed_impact=impact_digest)
     except engine_deprepair.RepairError as exc:
         joint = (exc.extra or {}).get("joint")
-        raise BridgeError(str(exc), code=exc.code, **({"joint": joint} if joint else {})) from exc
+        extra = {"joint": joint} if joint else {}
+        # 摘要对不上：把此刻的实际影响交回去，Codex 据此请用户重新确认（不是静默换成新摘要再装）
+        if (exc.extra or {}).get("impact_digest"):
+            extra["impact"] = exc.extra.get("impact")
+            extra["impact_digest"] = exc.extra["impact_digest"]
+        raise BridgeError(str(exc), code=exc.code, **extra) from exc
     if not outcome.get("ok"):
         code = str(outcome.get("code") or "dependency_install_failed")
         raise BridgeError(f"依赖准备没有完成: {code}", code=code, result=outcome)
@@ -487,7 +508,8 @@ def _bridge_error_from_worker(exc: engine_pool.WorkerError) -> BridgeError:
             private_note = ""
         extra["recovery"] = (
             f"脚本开跑就需要的包目标环境里没有：{reqs}。请用户授权一次联合安装：再调一次 "
-            f"tavotto_open_figure 并带 prepare_dependencies=<目标>（可选 {kinds}；"
+            f"tavotto_open_figure 并带 prepare_dependencies=<目标> 与 prepare_impact_digest="
+            f"{dependency.get('impact_digest') or '<dependency_preparation.impact_digest>'}（原样回显授权时看到的摘要；可选 {kinds}；"
             "tavotto_managed 是 Tavotto 自己的隔离环境、不改用户环境，project_venv 会修改项目自己的 "
             "venv；skip = 不准备、直接运行）。安装需要联网、只装预编译 wheel；这道门一直问到有答案。"
             + (f" 认不出对应包名、不会安装的 import：{unknown}。" if unknown else "")
@@ -815,6 +837,7 @@ def open_figure(
     include_png: bool = False,
     workdir: str | None = None,
     prepare_dependencies: str | None = None,
+    prepare_impact_digest: str | None = None,
 ) -> dict:
     """解析 → 登记 → 起会话 → 渲染一次。返回给 Codex 的第一份快照。
 
@@ -825,6 +848,7 @@ def open_figure(
 
     `prepare_dependencies` 是对跑前那一次「需要先准备依赖」的回答（U04，ADR 0061）：目标
     `tavotto_managed` / `project_venv`，先同步把联合安装做完再开图；返回里多一段 `prepared`。
+    这两个目标必须同时带 `prepare_impact_digest`（授权时看到的 `dependency_preparation.impact_digest`）。
     没给而脚本开跑要的包目标里没有时，这次 open 以 `dependency_preparation_required` 回来。
     """
     ctx = _resolve_project(target, stem)
@@ -838,7 +862,9 @@ def open_figure(
     assert info is not None
     prepared = None
     if prepare_dependencies is not None:
-        prepared = _answer_prepare_dependencies(project, info["script"], prepare_dependencies)
+        prepared = _answer_prepare_dependencies(
+            project, info["script"], prepare_dependencies, prepare_impact_digest
+        )
 
     # 目录级交接时 `ensure_registered` 还不知道要哪个 stem，`parameterizable`
     # 会是 None。stem 定下来之后必须补判——留着 None 等于把「这张图能不能进

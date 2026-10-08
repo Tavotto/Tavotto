@@ -62,6 +62,7 @@ from . import (
     databinding,
     deprepair,
     depresolve,
+    envadvice,
     execspec,
     figcapture,
     pool,
@@ -264,6 +265,9 @@ def plan_for(
                 "python": _project_relative(root, str(explicit.get("python", ""))),
             }
     state = projectenv.state(root)
+    # 环境建议（T05，ADR 0114）：纯读，不起任何解释器。`generation` 是计划那一刻解释器所在环境的「代」——
+    # 起会话之前比一次（`_stale_reason`），同一路径被重建的环境不能拿旧计划去跑
+    recommendation = envadvice.recommend(root, script)
     # 公开身份：来源标签 + **项目相对**路径（项目外的解释器——bundled / system / 用户在别处
     # 挑的——一律 None：那是安装目录或用户目录，不进投影）+ 项目记住的版本事实。
     discovery = pool.first_open_outcome(root)
@@ -274,6 +278,10 @@ def plan_for(
         "automatic": bool(state.get("automatic", False)),
         "trigger": state.get("trigger", ""),
         "module": state.get("module", ""),
+        "generation": projectenv.environment_generation(python) if python else "",
+        # 项目级决定的授权来源：confirmed（用户明确采用）/ legacy_auto（ADR 0114 之前机器记下的，照用但不当确认）/ none
+        "consent": state.get("consent", projectenv.CONSENT_NONE),
+        "recommendation": recommendation,
         # 选中那条解释器体检时量到的事实（记住时存进项目设置；没体检过的老链条为空）
         "python_version": state.get("python_version", ""),
         "matplotlib_version": state.get("matplotlib_version", ""),
@@ -778,6 +786,10 @@ class PreparationService:
                 and not pool.same_python(python_now, plan.interpreter)
             ):
                 # 只报「变了」，不报路径（公开投影不带机器路径，ADR 0053 §二）
+                return STALE_ENVIRONMENT, {}
+            # 路径没变、环境换了一代（删了重建）：计划确认的是上一代（ADR 0114 §四）
+            planned = (plan.environment or {}).get("generation")
+            if planned and projectenv.environment_generation(plan.interpreter) != planned:
                 return STALE_ENVIRONMENT, {}
         if plan.binding is not None:
             now = databinding.binding_for(

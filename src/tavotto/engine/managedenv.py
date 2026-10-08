@@ -234,11 +234,16 @@ def record_install(
     requested_specifier: str,
     resolved_version: str,
     reason: str,
+    scope: str = "",
 ) -> None:
     """记一笔「Tavotto 往这个环境里装过什么」。
 
     重建时照着这份装回去。**同一个 distribution 只留最后一笔**：装过两次的
     是同一个包的两个版本，不是两个包。
+
+    `scope`（T06）：这笔是为哪个作用域装的——脚本所在目录的项目相对 POSIX 路径（根目录 = `.`）。受管环境是
+    项目级的，一个项目里两个子目录的依赖可能互斥；有了归属才分得清「用户改了自己的声明」与「另一个作用域已经
+    占着这个版本」。老账没有这个字段（空串 = 归属未知，不参与互斥判断）。
     """
     with _lock:
         data = read_manifest(project)
@@ -257,9 +262,27 @@ def record_install(
                 "resolved_version": resolved_version,
                 "reason": reason,
                 "at": int(time.time()),
+                **({"scope": scope} if scope else {}),
             }
         )
         data["installed_by_tavotto"] = entries[-64:]
+        write_manifest(project, data)
+
+
+def ledger_entries(project: str | Path) -> list[dict]:
+    """账上的条目（只读副本）：`distribution` / `resolved_version` / `requested_specifier` / `scope`（可能没有）。"""
+    data = read_manifest(project) or {}
+    return [dict(e) for e in data.get("installed_by_tavotto") or [] if isinstance(e, dict)]
+
+
+def replace_ledger(project: str | Path) -> None:
+    """清空账（「换成这个作用域」的新一代 active 之后调用）：新一代只装了本作用域的集合，账要如实反映——
+    否则重建会把别的作用域的包又装回去、重新撞上互斥。只清账，不碰任何环境目录。"""
+    with _lock:
+        data = read_manifest(project)
+        if not data:
+            return
+        data["installed_by_tavotto"] = []
         write_manifest(project, data)
 
 

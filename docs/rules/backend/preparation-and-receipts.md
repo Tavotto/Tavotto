@@ -34,7 +34,9 @@
   与 `worker_argv` 的 golden 一个字节不动。四个 `cwd_origin` 各有且只有一个生产者
   （`sandbox` / `project`=脚本目录 / `project_root`=项目根 / native；ADR 0057 §二）；
   grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人，多 `mode` 与 `decided`。
-- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一）：它调 `pool.resolve_worker_python(root,
+- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一；**ADR 0114 起默认的确认模式下不再替用户发现 / 体检 / 记住
+  项目 venv**，那一整段只在兼容开关 `TAVOTTO_ENV_ADOPTION=auto` 下发生，默认由 `envadvice.recommend()` 给纯读建议、用户采用后
+  才有项目级记录）：它调 `pool.resolve_worker_python(root,
   script=…)`——项目 venv 的发现 + 体检 + 记住在这里已经发生（每进程每项目一次），计划里
   `environment.python_version / matplotlib_version / support / discovery / invalidated / error.explicit`
   如实写下选了谁、凭什么（体检量到的事实，ADR 0053 的公开投影：项目外的路径一律 None）、发现了什么
@@ -114,7 +116,8 @@
 input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/preparation-sessions`（创建 / 复用检查会话）·
 `GET …/<session_id>`（补拉，不重新执行）· `POST …/<session_id>/actions`（只认 `action_id` 与 `expected_config_revision`）。
 
-**会话与导入即扫描（T02）的关系**：会话的「检查」要走 `plan_for`（环境决策，有解释器体检与写配置的副作用），是用户选定目标之后的
+**会话与导入即扫描（T02）的关系**：会话的「检查」要走 `plan_for`（T05 起默认不再有候选解释器体检与采用写配置：环境只给纯读建议，
+但依赖门仍会为 `ready` 的计划体检候选环境，见 `dependency-repair-and-packages.md`），是用户选定目标之后的
 明确动作；项目被认领 / 恢复时自动发生的是**只读零执行**的结构扫描（`engine/projscan.py`，规则全文在
 `registry-discovery-and-probe.md`「导入即扫描」），它列出候选目标并给每个目标一份 `session_target`（= 本端点的创建请求体）。
 扫描**不得**调用 `plan_for` / `decide_environment` / `gate` / `resolve_worker_python`；两者共用 `probe.inventory_entry` 的脚本分类，
@@ -134,7 +137,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   写的是 Tavotto 自己的数据目录配置）——这是 T00 登记的既有行为，T01 没有新增，由 T02（只读扫描）/ T05（推荐与采用分离）拆开；
   会话层不得借「检查」之名再加新的执行或对用户项目的写。动作是不透明 id，
   绑定会话 / `config_revision` / 影响摘要（`executes_user_script` / `writes_to_project` …），kind 闭集 `run` / `cancel` /
-  `recheck`，请求体多一个字段就 400。已知素材的 provenance / frame / selected-source 拒绝逻辑在原路径里，原样生效。
+  `recheck` / `prepare_dependencies`（T06，授权一次依赖准备，绑定 `deprepair.impact_digest`，规则在
+  `dependency-repair-and-packages.md`「授权影响摘要」），请求体除 `action_id` / `expected_config_revision` 外只多一个可选的
+  `impact_digest`（回显用户看到的影响摘要），多别的字段就 400。已知素材的 provenance / frame / selected-source 拒绝逻辑在原路径里，原样生效。
 - **check-use 窗口**：「比对修订 → `preparation.stale_reason`（授权 / 解释器 / 数据绑定）→ 认领 → 提交 provider」整段在会话锁内；
   失效就 409 `preparation_plan_stale`、一行不跑、会话标失效等 `recheck`；同一个动作重复认领（重复点击 / 两个标签页）回当初那次
   尝试（`claimed=false`，200），不重复起 worker；新的 `run` 动作（终局之后才有）才是用户明确的重跑，产生新的 attempt。
@@ -150,8 +155,13 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   `outcome.unknown/attempt_expired`。登记表有界（64 会话，闲置 30 min 回收）：有尝试在跑或登记没完成的会话**永不**被 TTL 回收，
   满了且全部活跃就 429 `preparation_sessions_full`，不驱逐。
 - **取消**只经 `PreparationService.cancel`：本会话新起的会话才关，别人的不碰；关闭面板 / 切项目是展示层的事，不取消。
+  依赖作业的取消同样只退役**自己拥有**的（认领了别人先起的同一份作业的会话没有 `cancel`）。
+- **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
+  报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试
+  （outcome `needs_dependencies`，`rerun_required`），不叫"从异常点继续"。认领与失效检查在会话锁内。
 - **SSE**：`preparation.session`（`pj` / `session_id` / `target` / `config_revision`）只是「重新读报告」的提示，不带 phase 与序号。
 - 看护：`tests/test_preparation_session.py`（假 pool：合同、并发认领、修订、失效、取消所有权、回收、项目绑定）、
+  `tests/test_preparation_session_dependencies.py`（T06：授权 / 认领 / 差额 / 真安装到首图）、
   `tests/test_preparation_session_e2e.py`（真 worker、真服务：只有脚本的项目 → 一次执行 → 进编辑请求不重跑）、
   `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。尚未接入的旧入口（GUI 素材库的 `/api/registry/probe`、
   MCP / CLI）由 T09 / T10 接续，它们是暂存的薄兼容 wrapper。
@@ -166,7 +176,8 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 回执两半缺一半就是 `partial`
 - 身份三分不混（私有键含路径、公开身份不含、文件 hash 单列）
 - LaunchContext 是派生视图、四个来源各一个生产者
-- 环境选择前移的落点是 `plan_for`（证据 / 发现 / 作废 / 显式失效如实写）
+- 环境选择前移的落点是 `plan_for`（证据 / 作废 / 显式失效如实写）；ADR 0114 起解析解释器不再发现 / 体检 / 采用项目 venv，计划里多
+  `environment.{generation, consent, recommendation}`（纯读建议），`discovery` 只在兼容开关 `TAVOTTO_ENV_ADOPTION=auto` 下有值
 - 首开要问的是终局 `needs_input`
 - 过期计划 `preparation_plan_stale` 不执行
 - DependencyIntent 只读不装

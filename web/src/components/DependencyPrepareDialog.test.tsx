@@ -95,6 +95,8 @@ const offer = (over: Partial<DependencyPreparationOffer> = {}): DependencyPrepar
   ],
   rounds_remaining: 3,
   skipped: false,
+  // 后端对能授权的计划一律带影响摘要；前端缺它就明确停下（327262712），夹具必须像真实响应一样带上
+  impact_digest: 'd-shown',
   ...over,
 })
 
@@ -438,7 +440,7 @@ describe('DependencyPrepareDialog', () => {
     )
   })
 
-  it('「准备并继续」= 先绑定计划再只发 plan_id；进度到 done 关框并把「先准备」的面板重新排上', async () => {
+  it('「准备并继续」= 先绑定计划再发 plan_id + 用户看到的影响摘要；进度到 done 关框并把「先准备」的面板重新排上', async () => {
     planMock.mockResolvedValue({
       plan: {
         plan_id: 'jp1', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0', 'tabulate[widechars]==0.9.0'],
@@ -458,12 +460,12 @@ describe('DependencyPrepareDialog', () => {
       tracked: {},
     })
     await render(<DependencyPrepareDialog />)
-    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer({ impact_digest: 'd-shown' })))
     await act(async () => button(en('oneClickRepair'))!.click())
     await act(async () => {})
     expect(planMock).toHaveBeenCalledTimes(1)
     expect(planMock).toHaveBeenCalledWith({ script: 'figure.py', target: 'tavotto_managed' })
-    expect(prepareMock).toHaveBeenCalledWith('jp1')
+    expect(prepareMock).toHaveBeenCalledWith('jp1', 'd-shown')
     // 进度按 state 换文案
     await act(async () =>
       useDepRepairStore.getState().onProgress({ plan_id: 'jp1', state: 'installing', log: '', error: null, code: '', flow: 'joint' }),
@@ -501,6 +503,7 @@ describe('DependencyPrepareDialog', () => {
     await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
     await act(async () => button(en('oneClickRepair'))!.click())
     await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledWith('jp-mine', 'd-shown') // 回显的是界面上展示过的摘要
     // 同一条广播上来了别人的计划：installing 不换进度、done 不关框、不重排
     await act(async () =>
       useDepRepairStore.getState().onProgress({ plan_id: 'jp-theirs', state: 'installing', log: '', error: null, code: '', flow: 'joint' }),
@@ -536,6 +539,42 @@ describe('DependencyPrepareDialog', () => {
     expect(text()).toContain(t('engine.repairError.dependency_hash_mismatch', { ns: 'errors' }))
     expect(button(en('dependencyPrepareRetry'))).toBeDefined()
     expect(dialog()).not.toBeNull()
+  })
+
+  it('发给后端的是用户看到的摘要（offer 的），不是刚绑回来的计划自己的（Codex r4217232854）', async () => {
+    planMock.mockResolvedValue({
+      plan: {
+        plan_id: 'jp-d1', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0', 'tabulate[widechars]==0.9.0'],
+        constraints: [], require_hashes: false, adapter: [], identity: 'abc', needed_imports: [], groups: [],
+        modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint(),
+        impact_digest: 'd-shown',
+      },
+    })
+    prepareMock.mockResolvedValue({ started: true, plan_id: 'jp-d1', state: 'preparing', log: '', error: null, code: '' })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer({ impact_digest: 'd-shown' })))
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(1)
+    expect(prepareMock.mock.calls[0][1]).toBe('d-shown')
+  })
+
+  it('同样的包、绑回来的影响摘要却变了（环境代 / 约束变了）：不执行，按此刻的输入重新披露（Codex r4217232854）', async () => {
+    planMock.mockResolvedValue({
+      plan: {
+        plan_id: 'jp-d2', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0', 'tabulate[widechars]==0.9.0'],
+        constraints: [], require_hashes: false, adapter: [], identity: 'abc', needed_imports: [], groups: [],
+        modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint(),
+        impact_digest: 'd-NEW',
+      },
+    })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer({ impact_digest: 'd-shown' })))
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () => {})
+    expect(planMock).toHaveBeenCalledTimes(1)
+    expect(prepareMock, '名字没变，但摘要变了的计划被执行了').not.toHaveBeenCalled()
+    expect(useEnvStore.getState().dependencyPreparation).toBeNull()
   })
 
   it('blocked 的计划：理由摆出来、不装', async () => {
@@ -717,6 +756,42 @@ describe('DependencyPrepareDialog：用户自己的环境', () => {
     expect(planMock).not.toHaveBeenCalled()
     expect(useEnvStore.getState().dependencyPreparation).toBeNull()
     expect(useRenderStore.getState().byKey.k.stale, '没重新排上').toBe(true)
+  })
+
+  it('没检查过的环境（ADR 0114）：单列、不冒充装齐也不冒充没装齐；选它 = 「检查并使用」，只交 id 与脚本', async () => {
+    adoptMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({
+          user_environments: [
+            userEnv({
+              id: 'venv1',
+              source: 'project_venv',
+              label: '.venv',
+              checked: false,
+              ok: null,
+              satisfies: null,
+              support: '',
+              python_version: '',
+              matplotlib_version: '',
+            }),
+          ],
+        }),
+      ),
+    )
+    // 没有「装齐」的：默认还是安装目标（一键修复形态不变）；「没有装齐这些包的环境」那句不说——它没被检查过
+    expect(radio('tavotto_managed')!.checked).toBe(true)
+    expect(text()).not.toContain(en('userEnvNone'))
+    expect(text()).toContain(en('userEnvSource_project_venv', { label: '.venv' }))
+    expect(text()).toContain(en('userEnvUnchecked'))
+    expect(text()).not.toContain(en('userEnvComplete'))
+    await act(async () => envRadio('project_venv')!.click())
+    expect(button(en('userEnvUse'))).toBeUndefined()
+    await act(async () => button(en('userEnvCheckUse'))!.click())
+    await act(async () => {})
+    expect(adoptMock).toHaveBeenCalledWith('venv1', 'figure.py')
+    expect(planMock).not.toHaveBeenCalled()
   })
 
   it('一个都没装齐：说出口、安装目标预选；没装齐的收在折叠里只说还缺什么（不可选）', async () => {

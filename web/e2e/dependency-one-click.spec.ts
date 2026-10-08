@@ -18,6 +18,8 @@ import { expect, test } from './fixtures'
 
 const SCRIPT = 'fit_curve.py'
 const PLAN_ID = 'e2e-one-click-plan'
+// 用户在界面上看到的影响摘要：执行请求必须原样带回它（后端据此拒绝执行没确认过的影响）
+const IMPACT_DIGEST = 'e2e-impact-digest-0123456789abcdef'
 const MB = 1048576
 
 function writeProject(dir: string): void {
@@ -189,6 +191,7 @@ test(
           plan: {
             ...REQUIREMENT,
             plan_id: PLAN_ID,
+            impact_digest: IMPACT_DIGEST,
             target_kind: 'tavotto_managed',
             python: '',
             creates_environment: true,
@@ -232,10 +235,10 @@ test(
     await expect(card.locator('[data-one-click-cost]')).toHaveText('需下载 Tavotto 自己的 Python 3.13.15（约 25 MB），装包也需要联网。')
     await card.locator('[data-repair-advanced] > summary').click()
 
-    // ② 点一次：形成计划并直接开始（安装请求只带 plan_id），没有第二步确认
+    // ② 点一次：形成计划并直接开始（安装请求带 plan_id 与用户看到的影响摘要），没有第二步确认
     await button.click()
     await expect.poll(() => installBodies.length).toBe(1)
-    expect(installBodies[0]).toEqual({ plan_id: PLAN_ID })
+    expect(installBodies[0]).toEqual({ plan_id: PLAN_ID, impact_digest: IMPACT_DIGEST })
     // 卡片一出现就预读一次计划（新建第一代时要装的全部包只有计划里才有），点下去再形成一次真正执行的
     const body = { module: 'openpyxl', script: SCRIPT, target: 'tavotto_managed' }
     expect(planBodies).toEqual([body, body])
@@ -311,6 +314,7 @@ test(
       code: 'dependency_preparation_required',
       script: SCRIPT,
       plan: joint,
+      impact_digest: IMPACT_DIGEST,
       target_kind: 'tavotto_managed',
       targets: [
         {
@@ -372,6 +376,7 @@ test(
         json: {
           plan: {
             plan_id: JOINT_PLAN_ID,
+            impact_digest: IMPACT_DIGEST,
             script: SCRIPT,
             target_kind: 'tavotto_managed',
             python: '',
@@ -414,11 +419,11 @@ test(
     await expect(dialog.locator('[data-repair-advanced]')).not.toHaveAttribute('open')
     await page.screenshot({ path: testInfo.outputPath('script-environment-repair-dialog.png') })
 
-    // ② 点一次：绑定联合计划、只发 plan_id 执行；弹窗承载进度。
+    // ② 点一次：绑定联合计划、发 plan_id 与用户看到的影响摘要执行；弹窗承载进度。
     await button.click()
     await expect.poll(() => prepareBodies.length).toBe(1)
     expect(planBodies).toEqual([{ script: SCRIPT, target: 'tavotto_managed' }])
-    expect(prepareBodies[0]).toEqual({ plan_id: JOINT_PLAN_ID })
+    expect(prepareBodies[0]).toEqual({ plan_id: JOINT_PLAN_ID, impact_digest: IMPACT_DIGEST })
     await expect(dialog).toBeVisible()
 
     // ③ 进度一行，跟着换

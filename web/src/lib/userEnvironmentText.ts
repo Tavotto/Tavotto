@@ -6,6 +6,7 @@ import type { UserEnvironmentSource } from '@/lib/api'
  * 文案键写成字面量：i18n 的死键门禁按「源码里出现过这个串」判活。
  */
 const SOURCE_NAME: Record<UserEnvironmentSource, string> = {
+  project_venv: 'engine.userEnvSource_project_venv',
   vscode: 'engine.userEnvSource_vscode',
   python_version_file: 'engine.userEnvSource_python_version_file',
   environment_yml: 'engine.userEnvSource_environment_yml',
