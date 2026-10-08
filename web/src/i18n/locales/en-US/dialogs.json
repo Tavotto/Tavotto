@@ -1077,11 +1077,16 @@
       "layout": "Interface looks off?",
       "layoutReset": "Interface layout reset to defaults",
       "resetLayout": "Reset to default",
-      "groupLanguage": "Language and layout",
+      "groupLanguage": "Appearance, language and layout",
       "groupSidebars": "Sidebars",
       "groupCanvas": "Canvas",
       "groupLearning": "Learning",
-      "layoutDesc": "Panel widths, open panels and canvas preferences go back to their defaults right away"
+      "layoutDesc": "Panel widths, open panels and canvas preferences go back to their defaults right away",
+      "theme": "Appearance",
+      "themeDesc": "Canvas pages and figures keep their print colours",
+      "themeSystem": "System",
+      "themeLight": "Light",
+      "themeDark": "Dark"
     },
     "helpAbout": "About {{label}}",
     "navLabel": "Settings sections",
@@ -1338,7 +1343,8 @@
         "packages": "packages install pip pypi libraries",
         "diagnostics": "diagnostics report logs export bug",
         "updates": "updates version upgrade",
-        "telemetry": "privacy statistics telemetry data"
+        "telemetry": "privacy statistics telemetry data",
+        "theme": "theme dark light mode appearance night colour color"
       }
     }
   },

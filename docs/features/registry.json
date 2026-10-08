@@ -765,6 +765,22 @@
       ]
     },
     {
+      "id": "settings.appearance",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "外观：跟随系统 / 浅色 / 深色，界面当场换色，画布上的页面与图保持印刷色",
+        "en-US": "Appearance: System / Light / Dark; the interface switches immediately while canvas pages and figures keep their print colours"
+      },
+      "entry": "设置 › 通用 › 外观",
+      "e2e": [
+        {
+          "spec": "theme.spec.ts",
+          "title": "外观：设置里选「深色」界面当场变暗、纸仍是白、刷新后还是深色；「跟随系统」随 prefers-color-scheme 变"
+        }
+      ]
+    },
+    {
       "id": "settings.coding-agents",
       "status": "active",
       "platform": "both",

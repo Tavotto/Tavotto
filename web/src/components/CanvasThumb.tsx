@@ -85,7 +85,8 @@ export function CanvasThumb({
        * **尺寸必须来自 CSS**：调用方给的 className 不带宽高的话，盒子会塌。
        */
       style={{ contentVisibility: 'auto' }}
-      className={cn('shrink-0 text-ink', className ?? 'h-10 w-14')}
+      // 画的是纸（两套主题同值）：纸上的记号用纸上的墨（paper-ink 一族），不用界面的 ink——暗色里 ink 变浅，落在白纸上看不见
+      className={cn('shrink-0 text-paper-ink', className ?? 'h-10 w-14')}
       preserveAspectRatio="xMidYMid meet"
     >
       <defs>
@@ -101,7 +102,7 @@ export function CanvasThumb({
         width={w}
         height={h}
         rx={radius}
-        fill="#fff"
+        fill="var(--color-paper)"
         stroke="var(--color-border-strong)"
         strokeWidth={1}
         vectorEffect="non-scaling-stroke"
@@ -137,7 +138,7 @@ export function CanvasThumb({
                 y={o.y + o.h * 0.8}
                 fontSize={Math.max(o.h * 0.7, h / 20)}
                 fill="currentColor"
-                className="text-ink-2"
+                className="text-paper-ink-2"
               >
                 {(o.text ?? '').slice(0, THUMB_TEXT_CHARS)}
               </text>
@@ -148,7 +149,7 @@ export function CanvasThumb({
             fill: 'none',
             stroke: 'currentColor',
             strokeWidth: Math.max(w, h) / 150,
-            className: 'text-ink-3',
+            className: 'text-paper-ink-3',
           }
           if (o.type === 'shape' && o.shape === 'ellipse') {
             return <ellipse {...common} cx={o.x + o.w / 2} cy={o.y + o.h / 2} rx={o.w / 2} ry={o.h / 2} />

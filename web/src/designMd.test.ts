@@ -173,6 +173,22 @@ describe('DESIGN.md 的 frontmatter 是 index.css @theme 的镜像', () => {
     }
   })
 
+  it('暗色值表（正文「### Dark」那张表）与 index.css 的 data-theme="dark" 那一段逐条相同（闭集，两个方向）', () => {
+    const block = INDEX_CSS.match(/\n:root\[data-theme='dark'\] \{([\s\S]*?)\n\}/)?.[1]
+    expect(block, 'index.css 没有暗色那一段').toBeTruthy()
+    const dark = Object.fromEntries(
+      Object.entries(cssVars(block!))
+        .filter(([k, v]) => k.startsWith('color-') && /^#[0-9a-f]{6}$/i.test(v))
+        .map(([k, v]) => [k.slice('color-'.length), v.toLowerCase()]),
+    )
+    const section = DESIGN_MD.slice(DESIGN_MD.indexOf('### Dark'), DESIGN_MD.indexOf('### Named Rules'))
+    const rows = Object.fromEntries(
+      [...section.matchAll(/^\|\s*`([a-z0-9-]+)`\s*\|\s*`(#[0-9a-fA-F]{6})`\s*\|/gm)].map((m) => [m[1], m[2].toLowerCase()]),
+    )
+    expect(Object.keys(rows).length, '暗色表一行都没解析到：判据恒真').toBeGreaterThan(15)
+    expect(rows).toEqual(dark)
+  })
+
   it('投影：正文里写的 --shadow-pop 与 index.css 逐字相同', () => {
     const m = DESIGN_MD.match(/`--shadow-pop: ([^`]+)`/)
     expect(m, '正文里没写 --shadow-pop').toBeTruthy()
