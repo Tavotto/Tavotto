@@ -129,14 +129,18 @@ def _error_from_worker(
             params["project_env"] = detail.get("code", "")
         out = _err(
             ERROR_MISSING_DEPENDENCY,
-            f"缺少依赖包：{exc.module}（当前渲染环境里没有它）",
+            (
+                f"缺少依赖包：{exc.module}（当前渲染环境里没有它）"
+                if exc.module
+                else "缺少依赖包（含敏感参数的运行不显示包名）"
+            ),
             params=params,
             traceback_text=exc.traceback_text,
         )
         # 「能不能一键装上」（ADR 0019）。**素材库这条路必须也带上它**：
         # 用户打开旧项目走的就是这里，只在渲染端点上给恢复引导的话，
         # 「素材库里打不开、面板里能修」又是一次两个入口两个答案。
-        if figures_dir:
+        if figures_dir and exc.module:
             from . import deprepair
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)

@@ -858,8 +858,6 @@
         "needsReconsent": "Scope changed, waiting for you to confirm again",
         "never": "figures, scripts, filenames, paths, scientific data, text inside figures, or assistant prompts.",
         "neverLabel": "Never sent: ",
-        "optIn": "On",
-        "optOut": "Off",
         "policy": "Privacy policy",
         "sends": {
           "ai_assistant_invoked": "Invoking the assistant: whether it ran Codex, Claude or something else.",
@@ -897,7 +895,6 @@
         "failed": "Check failed. Showing the last result."
       },
       "backAria": "Back to the figure assistant list",
-      "backToList": "Figure assistants",
       "codexInstall": {
         "action": "Install the Codex integration",
         "announce": {
@@ -950,7 +947,10 @@
           "done": "done",
           "failed": "failed",
           "skipped": "skipped (already fine)"
-        }
+        },
+        "more": "More Codex integration actions",
+        "stepsTitle": "Steps",
+        "stepsAllPassed": "All done"
       },
       "codexIntegrationName": "{{product}} for Codex",
       "defaultButton": "Default",
@@ -991,7 +991,9 @@
         "useCustomExecutable": "Use a custom executable",
         "useCustomService": "A custom or third-party model service",
         "validateAndSave": "Check and save",
-        "version": "Version"
+        "version": "Version",
+        "deleteBody": "Keys are never shown again; you’ll have to enter it anew.",
+        "endpointActions": "More actions for {{label}}"
       },
       "endpoint": {
         "addTitle": "Add a model service for {{name}}",
@@ -1048,7 +1050,6 @@
       "refreshFailed": "Rescan failed. Showing the last result.",
       "rescan": "Rescan",
       "rowAria": "{{name}} details",
-      "setDefaultAria": "Make {{name}} the default figure assistant",
       "source": {
         "chatgpt_bundle": "Bundled with the ChatGPT app",
         "codex_desktop_bundled": "Bundled with the Codex desktop app",
@@ -1079,7 +1080,8 @@
       "useFromAgents": "Connect an external tool",
       "useInProduct": "Set up the figure assistant",
       "viewGuide": "Read the guide",
-      "currentDefaultAria": "{{name}} is the current default figure assistant"
+      "defaultLabel": "Default assistant",
+      "defaultNone": "No assistant available"
     },
     "canvas": {
       "companionsExplain": "Companion elements are hand-placed titles, axis labels, legends, colorbar axes and twinx twins. Without this, they stay behind when the axes move; turn it off to move only the axes.",
@@ -1095,6 +1097,7 @@
       "copyReport": "Copy diagnostics",
       "envNote": "The rendering environment that ships with {{product}} is read-only. Installing packages creates a separate “this project’s {{product}} environment”; the two track state separately.",
       "fetchedAt": "Data on this page was read at {{time}}",
+      "fetchFailed": "Couldn’t read the check results. Choose “Fetch again” to retry.",
       "healthTitle": "Health",
       "hidePreview": "Hide",
       "nextStep": {
@@ -1111,22 +1114,32 @@
       "reportTitle": "Diagnostic report",
       "summaryFailing": "{{count}} problem(s)",
       "summaryOk": "Runtime environment checks passed",
+      "summaryUnavailable": "Couldn’t check",
       "perfRow": "Record drag performance",
       "perfStart": "Start",
-      "devTitle": "For developers"
+      "devTitle": "For developers",
+      "verdictLabel": "Runtime environment",
+      "resultsTitle": "Check results",
+      "okCount_other": "{{count}} OK",
+      "bundleLabel": "Diagnostics bundle",
+      "summaryLabel": "Diagnostics summary",
+      "okCount_one": "{{count}} OK"
     },
     "export": {
       "defaultFormats": "Default formats",
       "ppiNotForVector": "Vector formats only — resolution has no effect",
-      "sectionFormats": "Formats",
-      "sectionRaster": "Raster output",
-      "sectionChecks": "Checks"
+      "sectionDefaults": "Export defaults"
     },
     "general": {
       "language": "Language",
       "layout": "Interface looks off?",
-      "layoutReset": "Interface layout reset; reload the page to see it",
-      "resetLayout": "Reset to default"
+      "layoutReset": "Interface layout reset to defaults",
+      "resetLayout": "Reset to default",
+      "groupLanguage": "Language and layout",
+      "groupSidebars": "Sidebars",
+      "groupCanvas": "Canvas",
+      "groupLearning": "Learning",
+      "layoutDesc": "Panel widths, open panels and canvas preferences go back to their defaults right away"
     },
     "helpAbout": "About {{label}}",
     "navLabel": "Settings sections",
@@ -1164,7 +1177,9 @@
         "python": "Python {{version}}",
         "ready": "Ready",
         "rebuild": "Rebuild environment…",
-        "rebuildDesc": "Rebuild a broken environment: creates a fresh one and reinstalls every recorded package"
+        "rebuildDesc": "Rebuild a broken environment: creates a fresh one and reinstalls every recorded package",
+        "notCreatedShort": "Not created",
+        "actions": "Environment actions"
       },
       "envTarget": "Installs go here",
       "envTitle": "This project’s {{product}} environment",
@@ -1240,7 +1255,9 @@
       "userEmpty": "No packages installed yet.",
       "userTitle": "Installed by you",
       "envSection": "Environment",
-      "builtinCountMeta": "{{count}} · read-only"
+      "builtinCountMeta": "{{count}} · read-only",
+      "backgroundTitle": "Background",
+      "moreAria": "More actions for {{name}}"
     },
     "project": {
       "backupDir": "Original file backups",
@@ -1263,20 +1280,22 @@
       "sectionProject": "Project",
       "sectionLocations": "Locations",
       "sectionWriteBack": "Writing back to sources",
-      "sectionRuntime": "Running scripts",
+      "sectionRuntime": "Python and running",
       "writeBackDesc": "Write-back overwrites the original PDF / PNG; the originals are backed up to the location above first.",
-      "change": "Change…"
+      "change": "Change…",
+      "python": "Python interpreter",
+      "pathActions": "More actions for {{name}}",
+      "hideFullPath": "Hide the full path",
+      "alreadyDefault": "Already using the default location"
     },
     "section": {
       "about": "About & updates",
       "ai": "Figure assistants",
-      "canvas": "Canvas and editing",
       "diagnostics": "Help & diagnostics",
       "export": "Export",
       "general": "General",
       "packages": "Python libraries",
       "project": "Project",
-      "sidebars": "Keep open",
       "spec": "Journal specs",
       "style": "Styles"
     },
@@ -1323,7 +1342,11 @@
       "sourceUpgrade": "For a source checkout, run",
       "upgrading": "Upgrading…",
       "lastCheckedNoUpdate": "{{time}} · No new version",
-      "lastCheckedUnknown": "Never checked, so the latest version is unknown"
+      "lastCheckedUnknown": "Never checked, so the latest version is unknown",
+      "title": "Updates",
+      "notesTitle": "What’s new",
+      "autoCheckDesktop": "Check at startup",
+      "autoCheckDesktopReason": "The desktop app checks every time it starts; this can’t be turned off yet"
     },
     "tutorial": {
       "label": "Tutorial",
@@ -1333,13 +1356,48 @@
       "reset": "Reset the tutorial project",
       "hints": "Action hints",
       "resetHints": "Show action hints again",
-      "resetAction": "Reset"
+      "more": "More tutorial actions"
     },
     "navGroup": {
       "general": "App",
       "workflow": "Workflow",
       "integrations": "Integrations",
       "system": "System"
+    },
+    "pageDesc": {
+      "general": "Language, sidebars, canvas and the tutorial.",
+      "project": "Where this project lives, how it runs, and write-back.",
+      "style": "How figures look: fonts, sizes and line widths.",
+      "spec": "What figures must meet: the rules checked before you submit.",
+      "export": "What the export dialog starts with.",
+      "ai": "Figure assistants on this computer, and Tavotto inside Codex.",
+      "packages": "What is installed in this project’s Python environment.",
+      "diagnostics": "Whether the runtime is healthy, and reports to send us.",
+      "about": "Version, updates and privacy."
+    },
+    "search": {
+      "placeholder": "Search settings",
+      "label": "Search settings",
+      "clear": "Clear search",
+      "noResults": "No matching settings",
+      "kw": {
+        "language": "language locale chinese english",
+        "layout": "layout reset restore panel width interface",
+        "shortcuts": "keyboard shortcuts hotkeys cheat sheet",
+        "canvas": "canvas grid snap rulers guides",
+        "tutorial": "tutorial onboarding hints tips",
+        "scripts": "scripts sources registry",
+        "python": "python interpreter environment conda venv",
+        "writeBack": "write back original files overwrite backup",
+        "spec": "spec journal checks font size column width",
+        "formats": "formats pdf png svg tiff eps",
+        "ppi": "resolution dpi ppi raster bitmap",
+        "agents": "assistant codex claude agent default",
+        "packages": "packages install pip pypi libraries",
+        "diagnostics": "diagnostics report logs export bug",
+        "updates": "updates version upgrade",
+        "telemetry": "privacy statistics telemetry data"
+      }
     }
   },
   "style": {

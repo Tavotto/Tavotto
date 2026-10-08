@@ -4812,6 +4812,7 @@ export const RUN_ARGV_ERROR_CODES = [
   'run_config_missing',
   'run_config_secret_missing',
   'run_config_unsupported',
+  'run_config_unreadable',
 ] as const
 
 /**

@@ -351,6 +351,27 @@ class TestRuntimeAssetListing:
         # 没跑过：needs_rerun；机器上连解释器都没有时如实报 missing_environment
         assert a["status"] in {"needs_rerun", "missing_environment"}
 
+    def test_an_unreadable_run_config_store_is_an_explicit_error_not_an_empty_variant_list(
+        self, client, tmp_path
+    ):
+        """Codex 评审 P2（#812 r4214383757）：登记坏 / 新版本写的，清单不得把它吞成「没有变体」。"""
+        from tavotto.engine import runconfig
+
+        figs = _make_project(tmp_path)
+        write(figs, "show_only.py", SHOW_ONLY)
+        write_registry(figs, {"show_only.py": {"entry": "__main__", "stems": ["show_only"]}})
+        client.post("/api/projects/open", json={"path": str(figs)})
+        runconfig.put(figs, "show_only.py", ["--k", "1"])
+        store = runconfig.store_path(figs)
+        store.write_text("not json", encoding="utf-8")
+        resp = client.get("/api/runtime/assets")
+        assert resp.status_code == 409
+        assert resp.get_json()["code"] == "run_config_unreadable"
+        store.write_text(json.dumps({"version": runconfig.FORMAT_VERSION + 1}), encoding="utf-8")
+        resp = client.get("/api/runtime/assets")
+        assert resp.status_code == 409
+        assert resp.get_json()["code"] == "run_config_unsupported"
+
     def test_stems_with_disk_artifacts_are_file_assets_not_runtime(self, tmp_path):
         """同一张图绝不双列：磁盘有原件的 stem 归 FileAsset（scan_panels），
         清单只列没有原件的。负向反证 #2 的邻接看护：runtime 条目不带

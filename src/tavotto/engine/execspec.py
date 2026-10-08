@@ -229,12 +229,15 @@ class ExecutionSpec:
             raise ValueError("safe profile 必须指定 entry（内联脚本用 '__main__'）")
         if not isinstance(self.argv, tuple) or not all(isinstance(a, str) for a in self.argv):
             raise ValueError(f"argv 必须是字符串元组: {self.argv!r}")
-        if len(self.argv) > MAX_ARGV_TOKENS or sum(len(a) for a in self.argv) > MAX_ARGV_CHARS:
-            raise ValueError("argv 超出上限（token 数或总字符数）")
         if any("\x00" in a for a in self.argv):
             raise ValueError("argv 的 token 不能含 NUL（操作系统的 argv 装不下）")
-        if len(argv_wire(self.argv)) > MAX_ARGV_WIRE_CHARS:
-            raise ValueError("argv 序列化后超出载荷长度上限")
+        # T03 的输入预算只管走私有请求管道的 safe 档；native 的 argv 是用户自己的命令行
+        # （走 bridge_argv，不进私有管道），沿用操作系统本身的约束，不新加更严的上限。
+        if self.profile == PROFILE_SAFE:
+            if len(self.argv) > MAX_ARGV_TOKENS or sum(len(a) for a in self.argv) > MAX_ARGV_CHARS:
+                raise ValueError("argv 超出上限（token 数或总字符数）")
+            if len(argv_wire(self.argv)) > MAX_ARGV_WIRE_CHARS:
+                raise ValueError("argv 序列化后超出载荷长度上限")
         if not isinstance(self.run_config, str):
             raise ValueError("run_config 必须是字符串")
         if self.profile == PROFILE_SAFE and self.argv and not self.run_config:

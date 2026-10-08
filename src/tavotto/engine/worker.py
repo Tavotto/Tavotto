@@ -37,12 +37,14 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import faulthandler
 import importlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -493,6 +495,34 @@ def _real_output():
         _intercept = True
 
 
+_MODULE_NAME_RE = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]{0,99}"
+)  # 顶层包名；带点的是已装包的子模块，不算缺依赖
+#: 读入口脚本源码做静态 import 归因的上限；超过即视为不可归因（只带分类、不带模块名）。
+_STATIC_IMPORT_SCAN_LIMIT = 1_000_000
+
+
+def _static_import_roots(script: Path) -> frozenset[str]:
+    """入口脚本源码里静态 `import x` / `from x import …` 的顶层包名；读不了 / 太大 / 解析失败回空集。
+
+    只读、不执行。绝对导入才算（`from . import y` 的 level > 0 不是第三方包）。"""
+    try:
+        with open(script, "rb") as fh:
+            raw = fh.read(_STATIC_IMPORT_SCAN_LIMIT + 1)
+        if len(raw) > _STATIC_IMPORT_SCAN_LIMIT:
+            return frozenset()
+        tree = ast.parse(raw.decode("utf-8", errors="replace"))
+    except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
+        return frozenset()
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots.update(a.name.split(".", 1)[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            roots.add(node.module.split(".", 1)[0])
+    return frozenset(roots)
+
+
 _PRIVATE_OUTPUT_NOTICE = "[sensitive run: script output omitted]\n"
 
 
@@ -699,7 +729,16 @@ class Worker(wireproto.V1Handler):
         err = resp.get("error")
         if isinstance(err, dict):
             safe = {
-                k: err[k] for k in ("code", "retryable", "argv_count", "parse_kind") if k in err
+                k: err[k]
+                for k in (
+                    "code",
+                    "retryable",
+                    "argv_count",
+                    "parse_kind",
+                    "missing_module",
+                    "missing_dependency",
+                )
+                if k in err
             }
             safe.update(
                 message="Sensitive run failed; script diagnostics were omitted.",
@@ -1132,13 +1171,51 @@ class Worker(wireproto.V1Handler):
             # 不是一次落空的只读打开、但异常链里确实有「文件不存在」（C++ 读取器）：码仍是
             # script_error，只多带一份事实；对不对得上脚本里哪串常量由父进程判（ADR 0110 §一）
             enoent = figcapture.enoent_fact(exc)
+            facts: dict = {"enoent": enoent} if enoent else {}
+            # 缺依赖的结构化事实：敏感运行会丢掉自由文本（父进程本来从消息 / traceback 里认出缺哪个包），
+            # 在丢之前先把「顶层模块名」这一个安全事实带上，依赖修复 / 环境交接才不会丢
+            facts.update(self._missing_module_fact(exc))
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
                 retryable=False,
                 traceback_text=traceback.format_exc(),
-                extra={"enoent": enoent} if enoent else None,
+                extra=facts or None,
             ) from exc
+
+    def _missing_module_fact(self, exc: BaseException) -> dict:
+        """缺依赖的结构化事实：`{"missing_dependency": True, "missing_module": 顶层包名?}`；不是缺依赖回 `{}`。
+
+        只取解释器自己填的 `ModuleNotFoundError.name`，不解析消息文本（文本里可能引了 argv）。带点的名字
+        （已装包的子模块）不算缺依赖，与父进程 `pool.missing_module` 同一判据。
+
+        **敏感运行里模块名只在能独立归因到脚本时才带出**：名字可以由敏感 argv 变形而来
+        （`importlib.import_module(sys.argv[1] + ".sub")`、`--plugin=pkg` → name == "pkg"），整串比较
+        认不出。所以敏感运行只有两种情况带名字：入口脚本源码里有静态 `import x` / `from x import …`
+        且 x 就是这个顶层包（`_static_import_roots`），并且名字与任一敏感 token 无关（casefold 子串，
+        任一方向）。否则只带分类标志 `missing_dependency`，父进程走通用缺依赖提示、不带模块名。"""
+        seen = 0
+        cur: BaseException | None = exc
+        while cur is not None and seen < 16:
+            if isinstance(cur, ModuleNotFoundError):
+                name = getattr(cur, "name", None)
+                if not (isinstance(name, str) and _MODULE_NAME_RE.fullmatch(name)):
+                    return {}
+                facts: dict = {"missing_dependency": True}
+                if not self.sensitive_argv or self._module_attributable_to_script(name):
+                    facts["missing_module"] = name
+                return facts
+            cur = cur.__cause__ or cur.__context__
+            seen += 1
+        return {}
+
+    def _module_attributable_to_script(self, name: str) -> bool:
+        folded = name.casefold()
+        for token in self.script_argv:
+            t = str(token).casefold()
+            if t and (t in folded or folded in t):
+                return False
+        return name in _static_import_roots(self.script)
 
     def build_result(self, timings: dict) -> dict:
         """v1 build 响应的 body（分派逻辑在 `wireproto.V1Handler`）。
