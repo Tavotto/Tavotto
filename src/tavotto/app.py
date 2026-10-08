@@ -91,11 +91,13 @@ from .engine import (
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
+    prepsession as engine_prepsession,
     probe as engine_probe,
     profilestore as engine_profilestore,
     project_refresh as engine_refresh,
     project_watch as engine_watch,
     projectenv as engine_projectenv,
+    projscan as engine_projscan,
     readiness as engine_readiness,
     receipt as engine_receipt,
     registry as engine_registry,
@@ -2275,6 +2277,8 @@ def close_project(pid: str, wait: bool = False) -> bool:
             engine_watch.stop(str(ctx.path))
     if ctx is None:
         return False
+    # 导入即扫描：取消在跑的扫描并忘掉它的账（只此一件——没有执行 / 安装归它所有）
+    engine_projscan.SCANS.drop(pid)
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
@@ -3417,6 +3421,67 @@ _PROBES: dict[tuple[str, str], threading.Event] = {}
 _PROBES_LOCK = threading.Lock()
 
 
+def _resolve_project_script(ctx: "ProjectCtx", raw: str):
+    """用户给的脚本路径 → 项目相对 POSIX 路径；不行就回现成的拒绝响应。回 `(script, None)` 或 `(None, 响应)`。
+
+    `/api/registry/probe` 与准备会话的 `script` 目标共用这一份：这两个入口都会真的执行代码，越权必须挡死。
+    三种拒绝各有稳定 code（前端按码换文案）；判据一律在 **realpath 之后**——`..` 回溯、symlink/junction
+    指到项目外、项目外绝对路径都在 resolve 那一步现出原形，逐条模式匹配防不完。
+    """
+    # 只允许跑项目目录内的 .py
+    if not raw:
+        return None, (
+            jsonify(
+                {
+                    "error": f"脚本不存在: {raw}",
+                    "code": "script_not_found",
+                    "params": {"script": raw},
+                }
+            ),
+            404,
+        )
+    root = ctx.path.resolve()
+    resolved = engine_projectenv.contained_path(root, raw)
+    if resolved is None:
+        return None, (
+            jsonify(
+                {
+                    "error": f"脚本路径在项目目录之外: {raw}",
+                    "code": "script_path_outside_project",
+                    "params": {"script": raw},
+                }
+            ),
+            400,
+        )
+    # Filesystem sinks use only the common sanitizer's returned path; duplicating
+    # containment checks here also obscures the barrier from CodeQL.
+    target = Path(resolved)
+    if target.suffix.lower() != ".py" or target.is_dir():
+        return None, (
+            jsonify(
+                {
+                    "error": f"不是可试运行的 .py 脚本: {raw}",
+                    "code": "unsupported_script_type",
+                    "params": {"script": raw},
+                }
+            ),
+            400,
+        )
+    if not target.is_file():
+        return None, (
+            jsonify(
+                {
+                    "error": f"脚本不存在: {raw}",
+                    "code": "script_not_found",
+                    "params": {"script": raw},
+                }
+            ),
+            404,
+        )
+    # 注册表键 = 项目相对路径（POSIX）——与清单 / 静态起草同一种写法
+    return target.relative_to(root).as_posix(), None
+
+
 @app.post("/api/registry/probe")
 def api_registry_probe():
     """试运行一个脚本，按**真实产出**的文件名登记 stem。
@@ -3430,44 +3495,9 @@ def api_registry_probe():
     """
     ctx = current_ctx()
     body = request.get_json(force=True)
-    raw = str(body.get("script") or "").strip()
-    # 只允许跑项目目录内的 .py：这个端点会真的执行代码，越权必须挡死。
-    # 三种拒绝各有稳定 code（前端按码换文案）；判据一律在 **realpath 之后**
-    # ——`..` 回溯、symlink/junction 指到项目外、项目外绝对路径都在 resolve
-    # 那一步现出原形，逐条模式匹配防不完。
-    if not raw:
-        return jsonify(
-            {"error": f"脚本不存在: {raw}", "code": "script_not_found", "params": {"script": raw}}
-        ), 404
-    root = ctx.path.resolve()
-    try:
-        target = (Path(raw) if Path(raw).is_absolute() else ctx.path / raw).resolve()
-    except OSError:
-        return jsonify(
-            {"error": f"脚本不存在: {raw}", "code": "script_not_found", "params": {"script": raw}}
-        ), 404
-    if not target.is_relative_to(root):
-        return jsonify(
-            {
-                "error": f"脚本路径在项目目录之外: {raw}",
-                "code": "script_path_outside_project",
-                "params": {"script": raw},
-            }
-        ), 400
-    if target.suffix.lower() != ".py" or target.is_dir():
-        return jsonify(
-            {
-                "error": f"不是可试运行的 .py 脚本: {raw}",
-                "code": "unsupported_script_type",
-                "params": {"script": raw},
-            }
-        ), 400
-    if not target.is_file():
-        return jsonify(
-            {"error": f"脚本不存在: {raw}", "code": "script_not_found", "params": {"script": raw}}
-        ), 404
-    # 注册表键 = 项目相对路径（POSIX）——与清单 / 静态起草同一种写法
-    script = target.relative_to(root).as_posix()
+    script, rejected = _resolve_project_script(ctx, str(body.get("script") or "").strip())
+    if rejected is not None:
+        return rejected
     key = (ctx.id, script)
     cancel_ev = threading.Event()
     with _PROBES_LOCK:
@@ -6723,6 +6753,22 @@ def _preparation_target(rel_id: str) -> dict:
     }
 
 
+def _preparation_runner(pl, before_retry=None):
+    """「真的把 runtime 起起来」只有一份实现：`pool.build_owned`（`pool.build` + 所有权，带一次项目环境
+    自动 fallback）。这里不另写 get + ensure_built。"""
+    return engine_pool.build_owned(pl.script, pl.project_root, pl.entry, before_retry=before_retry)
+
+
+def _launch_preparation(ctx: "ProjectCtx", plan, on_done=None) -> None:
+    """把一份已登记的计划交给执行线程（旧的 `/api/engine/preparation` 与准备会话共用这一处）。"""
+    engine_preparation.SERVICE.start(
+        plan.plan_id,
+        runner=_preparation_runner,
+        bind=lambda: bound_project(ctx),
+        on_done=on_done,
+    )
+
+
 def _preparation_payload(plan, result) -> dict:
     return {"plan": plan.to_payload(), "result": result.to_payload()}
 
@@ -6765,15 +6811,7 @@ def api_engine_preparation_start():
     )
     result = engine_preparation.SERVICE.register(plan)
     if plan.script is not None:
-        engine_preparation.SERVICE.start(
-            plan.plan_id,
-            # 「真的把 runtime 起起来」只有一份实现：`pool.build`（带一次项目环境
-            # 自动 fallback）。这里不另写 get + ensure_built。
-            runner=lambda pl, before_retry=None: engine_pool.build_owned(
-                pl.script, pl.project_root, pl.entry, before_retry=before_retry
-            ),
-            bind=lambda: bound_project(ctx),
-        )
+        _launch_preparation(ctx, plan)
     resp = jsonify(_preparation_payload(plan, result))
     resp.status_code = 202
     resp.headers["Cache-Control"] = "no-store"
@@ -6799,6 +6837,279 @@ def api_engine_preparation_cancel(plan_id: str):
         return _preparation_not_found(plan_id)
     plan, result = engine_preparation.SERVICE.get(plan_id, ctx.id)
     return jsonify({"cancelling": outcome["accepted"], **_preparation_payload(plan, result)})
+
+
+# ------------------ 准备会话（T01）：script-first 的共同准备 / 执行合同 ------------------
+# 三个端点、一个登记表（`engine/prepsession.SESSIONS`），全部在会话认证之内（没有旁路）。会话按
+# `ctx.id` 认领——别的项目的会话 id 就是不存在（404）。检查不执行任何用户代码；执行只在认领后端
+# 生成的 `run` 动作之后发生，且仍走 `PreparationService` → `pool.build_owned`。
+
+
+def _session_error(exc: engine_prepsession.SessionError):
+    resp = jsonify({"error": str(exc), "code": exc.code, "params": exc.params})
+    resp.status_code = exc.status
+    return resp
+
+
+def _session_target(ctx: "ProjectCtx", body: dict):
+    """请求体 → 会话目标（`script` 目标或已知素材）；不行回现成的拒绝响应。回 `(target, None)` 或 `(None, 响应)`。"""
+    has_script, has_id = "script" in body, "id" in body
+    if has_script == has_id:
+        return None, (
+            jsonify(
+                {
+                    "error": "需要且只需要 script 或 id 之一",
+                    "code": "bad_request",
+                    "params": {"fields": ["script", "id"]},
+                }
+            ),
+            400,
+        )
+    if has_id:
+        rel_id = str(body.get("id") or "")
+        if not rel_id:
+            return None, (
+                jsonify({"error": "缺少面板 id", "code": "bad_request", "params": {}}),
+                400,
+            )
+        found = _preparation_target(rel_id)
+        return {**found, "kind": engine_preparation.TARGET_ASSET, "asset_id": rel_id}, None
+    script, rejected = _resolve_project_script(ctx, str(body.get("script") or "").strip())
+    if rejected is not None:
+        return None, rejected
+    entry = body.get("entry")
+    if entry is None:
+        registered = current_registry().entries().get(script) or {}
+        entry = registered.get("entry") or engine_probe.entry_candidates(ctx.path, script)[0]
+    elif not isinstance(entry, str) or not engine_registry.valid_entry(entry):
+        return None, (
+            jsonify(
+                {
+                    "error": f"entry 非法: {entry}",
+                    "code": engine_probe.ERROR_INVALID_ENTRY,
+                    "params": {"entry": str(entry)},
+                }
+            ),
+            400,
+        )
+    return {
+        "kind": engine_preparation.TARGET_SCRIPT,
+        "script": script,
+        "entry": entry,
+        "stem": "",
+        "asset_id": "",
+        "original_artifact": None,
+        "original_path": None,
+    }, None
+
+
+def _session_awaiting_input(ctx: "ProjectCtx", sess) -> bool:
+    """这个会话的脚本此刻有没有在等一个 `input()` 的回答（回答本身走既有的 `/api/script_input/*`）。"""
+    script = sess.plan.script
+    if not script:
+        return False
+    return any(
+        p.script == script and _script_input_pending_of(ctx, p.id) is not None
+        for p in engine_inputbroker.pending()
+    )
+
+
+def _session_report(ctx: "ProjectCtx", sess) -> dict:
+    return engine_prepsession.SESSIONS.report(
+        sess, awaiting_input=_session_awaiting_input(ctx, sess)
+    )
+
+
+def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
+    """脚本目标执行成功之后：把真实产出的图名登记进注册表、物化 runtime cache、刷新项目——与
+    `/api/registry/probe` 成功之后是同一串（`probe.register_probed` 是登记的唯一实现）。在执行线程上、
+    项目绑定里调；只回公开字段。"""
+    captured = result.captured or {}
+    stems = list(captured.get("stems") or [])
+    if not stems:
+        return {"registered": False, "code": "no_figures_captured"}
+    descriptors = list(captured.get("descriptors") or [])
+    registered = engine_probe.register_probed(
+        ctx.path,
+        plan.script,
+        {
+            "script": plan.script,
+            "entry": plan.entry,
+            "stems": stems,
+            "descriptors": descriptors,
+            "remap_generation": captured.get("remap_generation"),
+        },
+    )
+    if not registered.get("registered"):
+        return {
+            "registered": False,
+            "code": (registered.get("error") or {}).get("code") or "registration_failed",
+        }
+    # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
+    _materialize_runtime(
+        plan.script, plan.entry, descriptors, remap_generation=captured.get("remap_generation")
+    )
+    refresh_project(ctx, reason="probe", allow_static_merge=False)
+    return {"registered": True}
+
+
+def _publish_preparation_session(payload: dict) -> None:
+    sse_publish("preparation.session", {"pj": payload["project_id"], **payload})
+
+
+engine_prepsession.SESSIONS.notifier = _publish_preparation_session
+
+
+@app.post("/api/engine/preparation-sessions")
+def api_engine_preparation_session_create():
+    """为一个目标（`{script, entry?}` 一份只有脚本的目标，或 `{id}` 一张已知素材）创建 / 复用检查会话。
+
+    **检查不执行任何用户代码**：回 201（新建）或 200（同一目标复用）+ 会话报告（phase / checks /
+    requirements / 后端生成的 actions）。要运行，认领报告里的 `run` 动作。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    target, rejected = _session_target(ctx, body)
+    if rejected is not None:
+        return rejected
+    try:
+        sess, created = engine_prepsession.SESSIONS.check(
+            project_id=ctx.id, project_root=str(ctx.path), target=target
+        )
+    except engine_prepsession.SessionError as exc:
+        return _session_error(exc)
+    resp = jsonify(_session_report(ctx, sess))
+    resp.status_code = 201 if created else 200
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/engine/preparation-sessions/<session_id>")
+def api_engine_preparation_session_state(session_id: str):
+    """读会话报告（断线 / 刷新后的补拉；**不会**重新执行任何东西）。"""
+    ctx = current_ctx()
+    try:
+        sess = engine_prepsession.SESSIONS.session(session_id, ctx.id)
+    except engine_prepsession.SessionError as exc:
+        return _session_error(exc)
+    resp = jsonify(_session_report(ctx, sess))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/engine/preparation-sessions/<session_id>/actions")
+def api_engine_preparation_session_action(session_id: str):
+    """认领一个后端生成的动作：`{action_id, expected_config_revision}`——只认这两个字段。
+
+    `run` 首次认领回 202 + `claimed: true`；重复认领（重复点击 / 另一个标签页）回 200 + `claimed: false`
+    和当初那次尝试，没有新副作用。`cancel` 只退役本会话拥有的工作；`recheck` 重新做一次只读检查。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True) or {}
+    extra = sorted(set(body) - {"action_id", "expected_config_revision"})
+    revision = body.get("expected_config_revision")
+    if (
+        extra
+        or not isinstance(body.get("action_id"), str)
+        or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
+    ):
+        return jsonify(
+            {
+                "error": "只接受 action_id（字符串）与 expected_config_revision（整数）",
+                "code": "bad_request",
+                "params": {"unexpected": extra},
+            }
+        ), 400
+    try:
+        sess, claimed, kind = engine_prepsession.SESSIONS.act(
+            session_id,
+            ctx.id,
+            body["action_id"],
+            revision,
+            launch=lambda plan, on_done: _launch_preparation(ctx, plan, on_done),
+            finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
+        )
+    except engine_prepsession.SessionError as exc:
+        return _session_error(exc)
+    report = _session_report(ctx, sess)
+    resp = jsonify({"claimed": claimed, "report": report})
+    # 202 = 这次请求起了一次新的执行；其余（重复认领 / 取消 / 重新检查）都是 200
+    resp.status_code = 202 if claimed and kind == engine_prepsession.ACTION_RUN else 200
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+_SCAN_BODY_KEYS = frozenset({"force", "reason"})
+_SCAN_REASONS = ("claim", "restore", "manual", "refresh")
+
+
+def _scan_json(snapshot: dict, status: int = 200):
+    resp = jsonify(snapshot)
+    resp.status_code = status
+    # 扫描快照靠 `evidence_revision` / `observation_seq` 判"变了没有"，别再让 HTTP 缓存插一脚
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/project/scan")
+def api_project_scan_start():
+    """开始（或复用）当前项目的**导入即扫描**：有界、只读、零执行（`engine/projscan.py`）。
+
+    项目认领完成 / 启动恢复时由前端调一次；同一项目已有一次在跑就返回它（单飞），刚完成不久的报告被
+    重复认领直接复用（A→B→A、两个标签页）。回 202（起了新的一轮）或 200（复用）+ 快照；
+    `{"force": true}` 是用户点「重新检查」。**不执行任何用户代码、不起解释器 / 登录 shell、不写用户项目。**
+    """
+    ctx = current_ctx()
+    body = request.get_json(silent=True) or {}
+    force = body.get("force", False)
+    reason = body.get("reason", "claim")
+    extra = sorted(set(body) - _SCAN_BODY_KEYS)
+    if extra or not isinstance(force, bool) or reason not in _SCAN_REASONS:
+        return jsonify(
+            {
+                "error": "只接受 force（布尔）与 reason（claim / restore / manual / refresh）",
+                "code": "bad_request",
+                "params": {"unexpected": extra},
+            }
+        ), 400
+    before = engine_projscan.SCANS.get(ctx.id)
+    snap = engine_projscan.SCANS.ensure(
+        ctx.id, ctx.path, reason=reason, force=force, publish=sse_publish
+    )
+    started = before is None or before["scan_id"] != snap["scan_id"]
+    return _scan_json(snap, 202 if started else 200)
+
+
+@app.get("/api/project/scan")
+def api_project_scan_state():
+    """读当前项目的扫描快照（断线 / 刷新后的补拉；**不会**开始扫描）。"""
+    ctx = current_ctx()
+    snap = engine_projscan.SCANS.get(ctx.id)
+    if snap is None:
+        return jsonify(
+            {
+                "error": "这个项目还没有开始扫描",
+                "code": "project_scan_not_started",
+                "params": {"reason": "unknown_or_restarted"},
+            }
+        ), 404
+    return _scan_json(snap)
+
+
+@app.post("/api/project/scan/cancel")
+def api_project_scan_cancel():
+    """取消**扫描**（只此一件事）：不碰执行、安装与任何 worker。已经终局就原样返回。"""
+    ctx = current_ctx()
+    snap = engine_projscan.SCANS.cancel(ctx.id)
+    if snap is None:
+        return jsonify(
+            {
+                "error": "这个项目还没有开始扫描",
+                "code": "project_scan_not_started",
+                "params": {"reason": "unknown_or_restarted"},
+            }
+        ), 404
+    return _scan_json(snap)
 
 
 @app.post("/api/engine/environment/install")
@@ -7806,10 +8117,20 @@ def api_layouts():
         for p in d.glob("*.json"):
             if not engine_documents.is_user_document_stem(p.stem):
                 continue
-            if p.stem not in seen:
+            if p.stem in seen:
+                continue
+            # 逐个 stat：断开的符号链接、读不了的、glob 与 stat 之间被删掉的，
+            # 都只跳过这一条（它本来也打不开），不能让整张列表 500。跳过而不是
+            # 记下名字：同名的旧位置文件还能顶上，`GET /api/layouts/<name>` 也是
+            # 按 `exists()` 往下找的。
+            try:
                 seen[p.stem] = p.stat().st_mtime
+            except OSError:
+                continue
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
-    return jsonify({"layouts": names})
+    # `modified`（加字段，老前端不认也无妨）：每份文档的修改时间（epoch 秒），
+    # 「打开」列表在名字旁写「几分钟前」——只是展示，排序仍以 `layouts` 的顺序为准
+    return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
 def serve_document(path: Path):

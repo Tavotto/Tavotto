@@ -35,7 +35,12 @@
     "listAria": "Figures produced by this script",
     "needsRun": "Run it first",
     "runtimeBadge": "Runtime figure",
-    "title": "Choose a figure — {{script}}"
+    "title": "Figures from {{script}}",
+    "addAll": "Add all ({{count}})",
+    "done": "Done",
+    "onCanvas": "On canvas",
+    "addedAll_one": "Added {{count}} figure",
+    "addedAll_other": "Added {{count}} figures"
   },
   "handoff": {
     "added": "Added {{name}}",

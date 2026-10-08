@@ -135,7 +135,8 @@
   "crash": {
     "blank": "打开空白排版",
     "body": "排版已自动保存在本机，刷新后从最后一次快照继续。仍然出错可选「打开空白排版」，原排版不会删除。",
-    "title": "界面出错了"
+    "title": "界面出错了",
+    "details": "详情"
   },
   "docBanner": {
     "conflictDisk": "磁盘上：{{canvases}} 张画布 · {{objects}} 个对象 · 改动于 {{time}}",
@@ -498,6 +499,53 @@
   "runtimePanel": {
     "placeholder": "由脚本生成的图",
     "placeholderHint": "双击即可编辑，会运行 {{script}} 重新生成。"
+  },
+  "scan": {
+    "details": "详情",
+    "rescan": "重新检查",
+    "cancel": "取消检查",
+    "run": "试运行",
+    "openAssets": "打开素材库",
+    "partialNote": "部分内容没有检查完。",
+    "line": {
+      "scanning": "正在检查项目结构，已发现 {{scripts}} 个脚本、{{assets}} 张图。图可以先排版。",
+      "target_found": "发现绘图脚本 {{script}}。已有的图可直接排版；要编辑它生成的图，需要先准备并运行。",
+      "already_connected": "绘图脚本都已连接，图可以直接编辑。",
+      "choose_target": "发现 {{count}} 个可能的绘图脚本，尚未连接。选一个来准备。",
+      "static_source": "没有发现脚本，图可以直接排版。",
+      "nothing_found": "这个项目里还没有图和脚本。",
+      "unchecked": "没能检查完整个项目（{{issues}} 处没看全），所以不能说这里没有脚本。已有的图仍可排版。",
+      "cancelled": "已取消检查。已有的图仍可排版。",
+      "failed": "检查没有完成。已有的图仍可排版，可以重新检查。"
+    },
+    "issue": {
+      "unreadable_dir": "没能读取目录 {{path}}。",
+      "unreadable_file": "没能读取文件 {{path}}。",
+      "symlinked_dir": "{{path}} 是链接或重定向项，未检查其目标。",
+      "placeholder_file": "{{path}} 是还没下载到本机的云盘文件，没有读取。",
+      "file_too_large": "{{path}} 太大，没有分析。",
+      "parse_budget": "{{path}} 结构过于复杂，没有分析。",
+      "depth_limit": "{{path}} 层级较深，没有进入检查。",
+      "entry_budget": "项目文件很多，检查在中途停下了。",
+      "script_limit": "脚本很多，只列出了一部分。",
+      "asset_limit": "图很多，只数了一部分。",
+      "source_byte_budget": "脚本总量较大，后面的脚本没有分析。",
+      "time_budget": "检查用时较长，在中途停下了。",
+      "cancelled": "检查被取消了。",
+      "more_issues": "另外还有 {{count}} 处没看全。"
+    },
+    "role": {
+      "plot": "绘图脚本",
+      "unknown": "未核验",
+      "auxiliary": "辅助脚本"
+    },
+    "env": {
+      "some": "找到 {{count}} 个可能的 Python 环境线索，都还没有核验。选定脚本后再检查。",
+      "none": "没有找到环境线索，选定脚本后再检查。"
+    },
+    "deps": {
+      "declared": "依赖声明：{{files}}（{{count}} 条），尚未检查是否已安装。"
+    }
   },
   "save": {
     "conflict": "排版已在别处改过，请先处理冲突。",

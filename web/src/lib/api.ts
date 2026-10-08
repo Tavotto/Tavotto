@@ -372,6 +372,144 @@ export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
  */
 export const fetchReadiness = () => jsonFetch<ReadinessReport>('/api/project/readiness')
 
+/* ------------------- 导入即扫描（T02，`engine/projscan.py`） ------------------- */
+
+/** 扫描状态；`running` 之外都是终局。 */
+export type ProjectScanState = 'running' | 'complete' | 'partial' | 'cancelled' | 'failed'
+/** phase 词汇是准备会话 phase 的子集（同一份闭集）。 */
+export type ProjectScanPhase =
+  | 'scanning'
+  | 'awaiting_confirmation'
+  | 'awaiting_configuration'
+  | 'completed'
+  | 'action_required'
+  | 'cancelled'
+export type ProjectScanOutcome =
+  | 'scanning'
+  | 'target_found'
+  | 'already_connected'
+  | 'choose_target'
+  | 'static_source'
+  | 'nothing_found'
+  | 'unchecked'
+  | 'cancelled'
+  | 'failed'
+
+export interface ProjectScanIssue {
+  /** `scanbudget.ISSUE_CODES` 的闭集；前端按 code 查句子 */
+  code: string
+  /** `partial` = 这里确实有东西没看见；`note` = 设计内的静默剪枝 */
+  severity: 'partial' | 'note'
+  scope: string
+  /** 项目相对路径；可能没有 */
+  path?: string
+  count: number
+}
+
+export interface ProjectScanScript {
+  script: string
+  reason: string
+  registered: boolean
+  checked: boolean
+  unchecked_reason?: string
+  entry_candidates: string[]
+  static_stems: string[]
+}
+
+export interface ProjectScanTarget {
+  script: string
+  role: 'plot' | 'auxiliary' | 'unknown'
+  evidence: string
+  registered: boolean
+  entry: string | null
+  scope: string | null
+  checked: boolean
+  /** 创建准备会话（T01 端点）的请求体 */
+  session_target: { script: string; entry?: string }
+}
+
+export interface ProjectScanAction {
+  id: string
+  kind: 'rescan' | 'cancel_scan' | 'prepare' | 'choose_target'
+  target?: { script: string; entry?: string }
+}
+
+export interface ProjectScanCheck {
+  id: string
+  status: 'ok' | 'unknown' | 'partial' | 'needs_action' | 'blocked'
+  code?: string
+  detail?: Record<string, number>
+}
+
+export interface ProjectScanEnvCandidate {
+  id: string
+  source: string
+  scope: 'project' | 'machine'
+  label: string
+  python_relative: string | null
+  /** 没有任何一条被体检过：`unchecked` / `remembered_unverified` / `missing` */
+  status: string
+}
+
+/**
+ * 后端的扫描快照。**前端只读不判**：phase / outcome / 目标选择 / 检查状态都是后端给的事实，这里没有
+ * 第二份「能不能运行」的判据。运行中的快照只有 `found` 计数（没有百分比）；终局快照带完整报告。
+ */
+export interface ProjectScan {
+  scan_version: number
+  project_id: string
+  scan_id: string
+  /** 同一进程内单调；前端靠 (scan_id, epoch) 丢旧响应 */
+  epoch: number
+  observation_seq: number
+  reason: string
+  state: ProjectScanState
+  phase: ProjectScanPhase
+  outcome: { kind: ProjectScanOutcome; code?: string }
+  budget: { entries: number; scripts: number; assets: number; elapsed_s: number }
+  issues: ProjectScanIssue[]
+  found?: { scripts: number; assets: number }
+  assets?: { count: number; pdf: number; raster: number; browsable: boolean }
+  scripts?: ProjectScanScript[]
+  targets?: ProjectScanTarget[]
+  default_target?: string | null
+  target_choice?: 'single' | 'ambiguous' | 'connected' | 'none'
+  checks: ProjectScanCheck[]
+  environment?: {
+    verified: boolean
+    remembered: { automatic: boolean; exists: boolean } | null
+    candidates: ProjectScanEnvCandidate[]
+    truncated: boolean
+  }
+  dependencies?: {
+    script: string | null
+    files: string[]
+    requirements: number
+    unsupported: string[]
+    evaluated: boolean
+  }
+  actions: ProjectScanAction[]
+  evidence_revision?: string
+}
+
+/** 开始（或复用）扫描。不阻塞：后端在后台线程里扫，轮询 / SSE 提示后用 `fetchProjectScan` 补拉。 */
+export const startProjectScan = (opts?: {
+  force?: boolean
+  reason?: 'claim' | 'restore' | 'manual' | 'refresh'
+}) =>
+  jsonFetch<ProjectScan>('/api/project/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts ?? {}),
+  })
+
+/** 读当前快照（404 `project_scan_not_started` = 还没开始 / 后端重启过）。 */
+export const fetchProjectScan = () => jsonFetch<ProjectScan>('/api/project/scan')
+
+/** 只取消扫描；不碰执行、安装与 worker。 */
+export const cancelProjectScan = () =>
+  jsonFetch<ProjectScan>('/api/project/scan/cancel', { method: 'POST' })
+
 /* ----------------------------- 项目（Project） ------------------------------ */
 /** 层级见 docs/adr/0001-project-canvas-tab-object.md；未打开项目时后端回 409。 */
 
@@ -629,6 +767,16 @@ export const panelSrc = (
 
 export const fetchLayoutNames = () =>
   jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
+
+/**
+ * 同一份清单 + 每份的修改时间（epoch 秒；后端加字段，老后端没有 = 空表、界面不写日期）。
+ * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
+ */
+export const fetchLayoutList = () =>
+  jsonFetch<{ layouts: string[]; modified?: Record<string, number> }>('/api/layouts').then((r) => ({
+    names: r.layouts,
+    modified: r.modified ?? {},
+  }))
 
 /** 读到的一份画布文件：`revision` 来自响应头，是后续覆盖它的基线 */
 export interface FetchedLayout {
@@ -2755,6 +2903,8 @@ export type ServerEvent =
       conflicts?: Record<string, string[]>
       script?: string
     } & ProjectScoped)
+  /** 导入即扫描有进展 / 到终局：只是「重新读一遍快照」的提示，不带 phase、路径与计数（T02） */
+  | ({ kind: 'project.scan'; scan_id: string; epoch: number } & ProjectScoped)
   /** 素材（PDF/PNG/JPG）变了：`ids` = 三类的并集，够用时不必再看细分 */
   | ({
       kind: 'assets.changed'
@@ -2835,6 +2985,7 @@ const EVENT_KINDS = [
   'panel.file_changed',
   'registry.changed',
   'assets.changed',
+  'project.scan',
   'project.error',
   'probe.started',
   'native.session',

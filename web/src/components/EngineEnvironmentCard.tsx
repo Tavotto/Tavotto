@@ -43,17 +43,12 @@ const en = (key: string, values?: Record<string, unknown>) =>
 const sourceLabel = (source: EngineSource): string =>
   en(`sourceLabel.${source || 'unknown'}`, { product: PRODUCT_NAME })
 
-export function EngineEnvironmentCard({
-  compact,
-  hideTitle,
-}: {
-  compact?: boolean
-  /**
-   * 不画卡片自己的标题（「尚未配置渲染环境」那类）：外面已经有一个说同一件事的标题时用——
-   * 「渲染环境」对话框的标题栏。设置页的分组版本没有卡片标题（组标题由页面给）。
-   */
-  hideTitle?: boolean
-}) {
+/**
+ * 标题：组形态（设置页 / 「渲染环境」对话框）没有「渲染环境」那行正常态小标——组标题由页面给、
+ * 对话框标题栏就是它（2026-10-07 设计审计 §10.2：小标与对话框标题重复）。状态句标题
+ * （「尚未配置渲染环境」「内置环境不完整」）说的是对话框标题说不出的事，任何宿主里都照画。
+ */
+export function EngineEnvironmentCard({ compact }: { compact?: boolean }) {
   useTranslation('errors')
   const { env, log, installing, refresh } = useEnvStore()
 
@@ -68,7 +63,7 @@ export function EngineEnvironmentCard({
   // ---- 紧凑位置（图内元素面板 / 脚本区里的错误块）：一张卡 ------------------------
   // 它在那里是插进别的内容之间的一段独立提示，不套框就散了
   if (compact) {
-    const title = (key: string) => (hideTitle ? null : <h3 className="type-section">{en(key)}</h3>)
+    const title = (key: string) => <h3 className="type-section">{en(key)}</h3>
     if (env.runtime?.expected) {
       return (
         <Card data-engine-env-card appearance="raised" padding="md" className="flex flex-col gap-2.5">
@@ -105,7 +100,7 @@ export function EngineEnvironmentCard({
   return (
     <FieldGroup data-engine-env-card>
       {!env.ok && env.runtime?.expected && (
-        <GroupNotice tone="danger" title={hideTitle ? undefined : en('incompleteTitle')}>
+        <GroupNotice tone="danger" title={en('incompleteTitle')}>
           {en('incompleteBefore')}
           {en(env.code === 'bundled_runtime_invalid' ? 'incompleteInvalid' : 'incompleteMissing')}
           {en('incompleteAfter')} {en('incompleteHint')}
@@ -114,7 +109,7 @@ export function EngineEnvironmentCard({
       {!env.ok && !env.runtime?.expected && (
         <GroupNotice
           tone="danger"
-          title={hideTitle ? undefined : en('missingTitle')}
+          title={en('missingTitle')}
           action={env.can_install ? <AutoInstallButton size="sm" /> : undefined}
         >
           {en('missingBody')}
