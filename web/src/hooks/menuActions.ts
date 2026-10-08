@@ -131,7 +131,7 @@ function performMenuAction(action: MenuAction) {
       return
     }
     // 画布对齐写的是版面上的 x/y：快速编辑这一屏没有版面，改了用户也看不见
-    // （与方向键 / ⌘D / 工具字母同一条判据 `inFastEdit`）
+    // （与方向键 / 工具字母同一条判据 `inFastEdit`）
     if (inFastEdit()) return
     // 菜单看不见选区：没选东西时说出口，而不是点了没反应
     const count = useSelectionStore.getState().ids.length
@@ -166,8 +166,8 @@ function performMenuAction(action: MenuAction) {
       ui.setExportOpen(true)
       break
     case 'menu-duplicate':
-      // 快速编辑里不往看不见的版面上加副本（与 keydown 的 ⌘D 同一条判据）
-      if (!inFastEdit()) duplicateSelected()
+      // 快速编辑里不往看不见的版面上加副本：判据在 `duplicateSelected` 里（与 ⌘D 同一处）
+      duplicateSelected()
       break
     case 'menu-delete':
       deleteSelection()

@@ -1,4 +1,4 @@
-import { panelRotation, type PanelObject, type PanelRotation } from '@/types/document'
+import { panelRotation, rotateVec, unrotateVec, type PanelObject, type PanelRotation } from '@/types/document'
 
 /**
  * 面板内容的变换（绕内容中心）：**先在内容空间翻转，再旋转落位**。
@@ -59,4 +59,21 @@ export function panelTransformSvg(t: PanelContentTransform, cx: number, cy: numb
 export function applyPanelTransform(ctx: CanvasRenderingContext2D, t: PanelContentTransform): void {
   if (t.rotate) ctx.rotate((t.rotate * Math.PI) / 180)
   if (t.scaleX < 0 || t.scaleY < 0) ctx.scale(t.scaleX, t.scaleY)
+}
+
+/**
+ * 同一变换作用到向量上：内容空间（未翻转、未旋转，y 向下）→ 页面 / 屏幕空间。先翻转、再旋转，与
+ * `panelTransformCss` 同序。图内元素的框、读数、吸附线落到页面都走它（`canvas/elementGeometry`）。
+ */
+export function contentToPageVec(t: PanelContentTransform, x: number, y: number): [number, number] {
+  return rotateVec(x * t.scaleX, y * t.scaleY, t.rotate)
+}
+
+/**
+ * `contentToPageVec` 的逆：页面 / 屏幕向量 → 内容空间（先反转旋转、再反翻转）。指针点选、拖动、方向键
+ * 微调把屏幕上的位移折回内容分数时走它——翻转过的面板上往右拖，图里的元素在画面上也往右走。
+ */
+export function pageToContentVec(t: PanelContentTransform, x: number, y: number): [number, number] {
+  const [u, v] = unrotateVec(x, y, t.rotate)
+  return [u * t.scaleX, v * t.scaleY]
 }

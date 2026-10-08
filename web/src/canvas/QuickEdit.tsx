@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { engineLabel } from '@/components/inspector/roles/registry'
+import { engineLabel, groupName } from '@/components/inspector/roles/registry'
 import { createPortal } from 'react-dom'
 import { ExternalLink, Eye, EyeOff, Minus, Plus, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -33,6 +33,7 @@ import { NumberField, TextArea } from '@/components/ui/Input'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { BOTTOM_SAFE } from './context-bar/position'
+import { trapTab } from '@/lib/focusTrap'
 
 /**
  * 右键快捷编辑：光标处的小弹层。
@@ -118,6 +119,12 @@ function ElementPopover({
   useEffect(() => {
     // Esc 走捕获阶段：全局快捷键里的 Esc 另有职责（退编辑态），这里要先接住
     const onKey = (e: KeyboardEvent) => {
+      // 焦点陷阱（2026-10-07 设计审计 §10.1）：Tab 在弹层里转圈，不掉回画布 / 页面后面那一串控件——
+      // 它是一个对话框（role=dialog），Tab 出去了用户就找不回来，Esc 也没人接
+      if (e.key === 'Tab') {
+        trapTab(e, ref.current)
+        return
+      }
       if (e.key !== 'Escape') return
       e.preventDefault()
       e.stopPropagation()
@@ -185,8 +192,11 @@ function Line({
   return (
     /* 行高 28：宪法第十四节「高度只有 28 与 24 两档，24 只给就近入口 / 筛选小片 / 角标」，
        这里是一整块可编辑的字段，不是角标（2026-09-15 打磨 M2） */
-    <div className="flex min-h-7 items-center gap-1.5 px-2 py-0.5" title={hint}>
-      <span className="w-11 shrink-0 truncate text-ink-2">{label}</span>
+    <div className="grid min-h-7 grid-cols-[4rem_minmax(0,1fr)] items-center gap-1.5 px-2 py-0.5" title={hint}>
+      {/* 标签列 64（2026-10-07 设计审计 §10.1）：此前 44，英文的 Legend position / Font size 被截成两三个字母 */}
+      <span className="truncate text-ink-2" title={label}>
+        {label}
+      </span>
       <div className="flex min-w-0 flex-1 items-center gap-1">{children}</div>
     </div>
   )
@@ -212,10 +222,30 @@ function ElementQuick({
   ) as PanelObject | undefined
   const manifest = usePanelDisplayManifest(panel)
   const el = manifest?.elements.find((e) => e.gid === target.gid)
+  // 从元素树选中的真实组（ADR 0102，`Manifest.groups`）不在元素表里：右键它的组框手柄时目标是组 gid
+  // （Codex #833）。组没有自己的样式字段，弹层只说它是谁、给「全部属性」——不把一个不存在的元素当目标关掉
+  const group = el ? undefined : manifest?.groups?.find((g) => g.gid === target.gid)
 
   useEffect(() => {
-    if (!panel || !el) close()
-  }, [panel, el, close])
+    if (!panel || (!el && !group)) close()
+  }, [panel, el, group, close])
+  if (panel && manifest && group) {
+    return (
+      <div data-quick-target="group">
+        <Head>{groupName(group, manifest)}</Head>
+        {/* 选区本来就是这个组：只换到属性页，不动选区 */}
+        <MenuButton
+          icon={ExternalLink}
+          onClick={() => {
+            useUiStore.getState().setRightTab('properties')
+            close()
+          }}
+        >
+          {qe('openInspector')}
+        </MenuButton>
+      </div>
+    )
+  }
   if (!panel || !el || !manifest) return null
 
   // 以 pt 计的量进出都是页面上的值（`pagePtLens`，与属性页、样式面板同一个换算）

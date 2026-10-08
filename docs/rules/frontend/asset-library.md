@@ -217,3 +217,17 @@
 - **脚本区**：组头 28px `type-section` + `type-meta` 计数；运行中 = 一颗静止的 accent 点 + 状态句的 `text-shimmer`（不转圈）；
   所有恢复入口（一键修复卡、跑前准备、运行目录、缺数据、失败详情）是同一种「第二行」（`SecondRow`）；读清单 = 静态骨架、
   筛不到 = `EmptyState`、读不出 = danger `Notice`；每行一份 `ui/RowMenu`（运行 / 取消、记住的输入、复制路径）。复制路径按**项目根**（`projectStore.project.figures_dir`，退一步才用 `assetStore.figuresDir`）拼绝对路径——不等素材清单；两边都不知道就不给这一项，不复制会在别处解析的相对名；没有 `navigator.clipboard` / 写入被拒一律报 `pathCopyFailed`（带路径），不静默（Codex #832）。
+
+## 速查表原要点（2026-10-08 迁入，Windows CRLF 下的 32 KiB 硬线）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限按 Windows
+检出的 CRLF 字节量，#608）。下面是当时写在那一格的要点，原文照搬、一字未改（按「；」分条）；
+它们与上文同等有效，改规则时一并改这里。
+
+- 七个 store 都有项目代际
+- 同脚本防并发、取消等原请求以 `execution_cancelled` 落地
+- 多 Figure 结果绝不只显示第一张
+- runtime 卡没有假值
+- 「编辑原图」必然加进文档并说出口、素材卡的「添加到画布」走 `addFigureToLayout`（哪个入口走加图分层链哪一层以 `canvas-objects-and-workspace.md` 为准）
+- `role="option"` 里不嵌可 Tab 控件
+- TIFF 经 `panelSrc` 走 `/api/render`

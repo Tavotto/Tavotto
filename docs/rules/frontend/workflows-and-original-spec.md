@@ -13,7 +13,7 @@ writer、第二份对象模型：一张图在文档里只有**一个**面板对�
 同一个对象。快速编辑 = 把它单独摆出来（页面纸 / 网格 / 参考线 / 别的对象
 全部让开），画布排版 = 它在页面上的落位。
 
-- **模式是工作区状态**：`store/workspace.ts` 的 `mode` / `activePanelId`，
+- **模式是工作区状态**：`store/workspace.ts` 的 `mode` / `activePanelId`（状态本体在叶子模块 `store/workspaceStore.ts`，`workspace.ts` 再导出；拆开是为了 `actions` 读它不成环），
   不进文档、不进撤销、不置 dirty，按 documentId 存本机一档
   （`tavotto.workspace.<id>`，与 `tavotto.tabs.<id>` 同一条纪律）。
   不变式：`mode === 'fast_edit'` ⟺ `activePanelId !== null`。

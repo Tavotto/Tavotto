@@ -27,6 +27,7 @@ import { deleteSelected, duplicateSelected, hideElement, updateObjects } from '@
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
+import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspace'
 import { objectLabel, type CanvasObject, type PanelObject } from '@/types/document'
 import { Button } from '../ui/Button'
 import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
@@ -347,6 +348,8 @@ function ElementIdentity({ panel }: { panel: PanelObject }) {
 
 function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
   const { t } = useTranslation('inspector')
+  // 快速编辑里不摆「创建副本」：副本落在版面上，这一屏看不见（`duplicateSelected` 自己也挡，Codex #833）
+  const fastEdit = useWorkspaceStore((s) => fastEditPanelOf(s) !== null)
   const one = objs.length === 1 ? objs[0] : null
   const kinds = [...new Set(objs.map((o) => o.type))]
   // 标注的图标按**它自己那一种**画（与 MarkerPicker 同一条纪律——形状是事实）；
@@ -419,9 +422,11 @@ function ObjectIdentity({ objs }: { objs: CanvasObject[] }) {
       name={title != null ? <NameHeading>{title}</NameHeading> : <ObjectKindSwitch objs={objs} />}
       menu={
         <MoreMenu label={t('objectActions')}>
-          <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected} icon={Copy}>
-            {translate('actions.copy')}
-          </MenuItem>
+          {!fastEdit && (
+            <MenuItem shortcut={`${MOD}D`} onSelect={duplicateSelected} icon={Copy}>
+              {translate('actions.copy')}
+            </MenuItem>
+          )}
           <MenuItem icon={hidden ? Eye : EyeOff} onSelect={() => setHidden(!hidden)}>
             {t(hidden ? 'show' : 'hide')}
           </MenuItem>
