@@ -4706,6 +4706,19 @@ export interface PreparationCheck {
  * 要用户先答的事（`prepsession.requirements_of`）。载荷原样是既有的回答协议的载荷——回答走既有端点
  * （采用环境 / 运行目录 / 指认数据）或会话动作（依赖授权），答完由会话 `recheck`。`blocking: false` 的不拦运行。
  */
+export interface GuiDialogCall {
+  /** 解析后的全名（如 `tkinter.filedialog.askopenfilename`），不是用户写的别名 */
+  api: string
+  /** `file` = 选文件 / 目录；`prompt` = 询问文字 / 是否 */
+  kind: 'file' | 'prompt'
+  line: number
+}
+
+export interface GuiDialogPayload {
+  calls: GuiDialogCall[]
+  truncated: boolean
+}
+
 export type PreparationRequirement =
   | { id: 'environment'; kind: 'environment_choice'; code: string; payload: EnvRecommendation }
   | { id: 'workdir'; kind: 'workdir_choice'; code: string; payload: WorkdirConfirmation | null }
@@ -4719,6 +4732,8 @@ export type PreparationRequirement =
   | { id: 'dependencies'; kind: 'dependency_scope_choice'; code: string; payload: Record<string, unknown> }
   | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string } }
   | { id: 'data'; kind: 'input_location'; code: string; origin: 'last_attempt'; blocking: false; payload: MissingInputOffer }
+  /** 脚本源码里有弹窗选文件 / 询问的写法（`engine/dialogscan`）：不阻塞的提示，运行照样可用 */
+  | { id: 'interaction'; kind: 'gui_dialog'; code: string; blocking: false; payload: GuiDialogPayload }
   | {
       id: 'arguments'
       kind: 'script_arguments'

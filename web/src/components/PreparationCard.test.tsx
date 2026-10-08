@@ -116,6 +116,28 @@ const report = (over: Partial<PreparationReport> = {}): PreparationReport => ({
 /** 面板要面对的每一种状态（报告形状来自后端合同 `prepsession.report`） */
 const STATES: Record<string, Partial<PreparationReport>> = {
   ready: {},
+  dialogFile: {
+    requirements: [
+      {
+        id: 'interaction',
+        kind: 'gui_dialog',
+        code: 'script_uses_gui_dialog',
+        blocking: false,
+        payload: { calls: [{ api: 'tkinter.filedialog.askopenfilename', kind: 'file', line: 7 }], truncated: false },
+      },
+    ],
+  },
+  dialogAsk: {
+    requirements: [
+      {
+        id: 'interaction',
+        kind: 'gui_dialog',
+        code: 'script_uses_gui_dialog',
+        blocking: false,
+        payload: { calls: [{ api: 'tkinter.simpledialog.askstring', kind: 'prompt', line: 3 }], truncated: false },
+      },
+    ],
+  },
   readyArgs: { actions: [action('run', { script_arguments: 3 }), action('recheck')] },
   running: { phase: 'running', outcome: { kind: 'running' }, actions: [action('cancel')] },
   stopping: { phase: 'running', outcome: { kind: 'running', reason: 'cancel_requested' }, actions: [] },
@@ -334,6 +356,61 @@ describe('主按钮就是后端给的那件事', () => {
     mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
     await act(async () => primary()!.click())
     expect(mockAct).toHaveBeenCalledWith('psess-1', { action_id: 'act-run', expected_config_revision: 1 }, 'pj-a')
+  })
+
+  describe('脚本会弹窗（后端静态识别，不阻塞）', () => {
+    const dialogReport = (kind: 'file' | 'prompt', over: Partial<PreparationReport> = {}) =>
+      report({
+        requirements: [
+          {
+            id: 'interaction',
+            kind: 'gui_dialog',
+            code: 'script_uses_gui_dialog',
+            blocking: false,
+            payload: { calls: [{ api: 'tkinter.filedialog.askopenfilename', kind, line: 7 }], truncated: false },
+          },
+        ],
+        ...over,
+      })
+
+    it('一句话说清 + 主按钮是「仍然运行」（认领报告里的 run）；怎么改与位置在默认收起的详情里', async () => {
+      await mount()
+      await openWith(dialogReport('file'))
+      expect(panel().dataset.prepState).toBe('gui_dialog')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('脚本会弹窗选文件，这里弹不出来，请把文件路径写进脚本')
+      expect(primary()?.dataset.prepPrimary).toBe('run')
+      expect(primary()?.textContent).toBe('仍然运行')
+      expect(panel().querySelector('[data-prep-dialog]')).toBeNull()
+      await toggleDetails()
+      expect(details()?.querySelector('[data-prep-dialog-how]')?.textContent).toContain('相对路径')
+      expect(details()?.querySelector('[data-prep-row="dialog-call"]')?.textContent).toContain('第 7 行')
+      expect(details()?.querySelector('[data-prep-row="dialog-call"]')?.textContent).toContain('tkinter.filedialog.askopenfilename')
+      mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
+      await act(async () => primary()!.click())
+      expect(mockAct).toHaveBeenCalledWith('psess-1', { action_id: 'act-run', expected_config_revision: 1 }, 'pj-a')
+    })
+
+    it('英文同样；询问类弹窗换一句话', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(dialogReport('prompt'))
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe("This script opens a prompt that can't appear here, so put the answer in the script")
+      expect(primary()?.textContent).toBe('Run anyway')
+    })
+
+    it('没有 run 动作就没有按钮（不替用户造入口）', async () => {
+      await mount()
+      await openWith(dialogReport('file', { actions: [action('recheck')] }))
+      expect(panel().dataset.prepState).toBe('gui_dialog')
+      expect(primary()).toBeNull()
+    })
+
+    it('不带弹窗的报告仍是「可以运行了」', async () => {
+      await mount()
+      await openWith(report())
+      expect(panel().dataset.prepState).toBe('ready')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('可以运行了')
+    })
   })
 
   it('报告里没有 run 动作：就没有「运行」', async () => {

@@ -234,6 +234,10 @@
   （只摆必填项；其余参数、原样 token、粘贴命令在折叠里）、主按钮置灰。参数块在可以运行 / 出错 / 没出图 / 画好的卡上以折叠摆着，按同一个
   React key 留在原位——改参数时输入框不重建、焦点不丢。一句话 + 至多一个主按钮，其余在默认不展开的「详情」；看护
   `PreparationCard.test.tsx` 的「每一种状态 × 每一种语种」（`visibleSentenceCount` / `visiblePrimaryButtons`）。
+- **脚本会弹窗**（`gui_dialog` 待办，后端静态识别，不阻塞）：`ready_to_run` 且报告带它时，标题换成一句「脚本会弹窗选文件 / 询问，
+  这里弹不出来，请把文件路径 / 答案写进脚本」（`state = gui_dialog`），主按钮仍是报告里的 `run`，文案「仍然运行」；怎么改（路径写进脚本、
+  数据放项目里用相对路径）与哪几行、哪个调用在默认收起的详情里。报告没有 `run` 动作就没有按钮；叠栈里没有「让助手改脚本」的现成入口，
+  不为它另造。必填参数没填齐时仍让位给参数卡。看护 `PreparationCard.test.tsx`「脚本会弹窗」。
 - **运行目录在卡里选**：推荐项（后端 `recommended`）预选，「换一个」才展开其余；歧义时全部摆出、不预选、选中前按钮置灰。确认 =
   `envStore.setWorkdirMode(mode, {confirmed:true})`（与原对话框同一次 PATCH），会话随 `envStore` 订阅只读地 `recheck`，**不运行**；
   按钮说「用项目根目录」之类，不说「运行」（原对话框同改为「用这个目录」）。缺数据仍交 `envStore.requestMissingInput`；

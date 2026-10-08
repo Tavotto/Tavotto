@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import deprepair, preparation, registry, scriptargs
+from . import deprepair, dialogscan, preparation, registry, scriptargs
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -143,6 +143,8 @@ _ENVIRONMENT_CODE = "environment_choice_required"
 _ARGUMENTS_CODE = "script_arguments_available"
 #: 上一次尝试读不到数据（ADR 0106 的 `missing_input` 载荷）：回答走既有 `/api/engine/input-remap`，答完 `recheck`
 _MISSING_INPUT_CODE = "missing_input"
+#: 脚本源码里有弹窗选文件 / 询问的写法（`dialogscan`）：不阻塞的提示，运行照样可用
+_GUI_DIALOG_CODE = "script_uses_gui_dialog"
 
 #: 数量 / 生命周期预算。活跃的（有没跑完 / 没登记完的尝试）永远不被这里回收。
 MAX_SESSIONS = 64
@@ -257,6 +259,14 @@ def arguments_schema(plan: preparation.PreparationPlan) -> dict | None:
     if schema["status"] not in (scriptargs.STATUS_COMPLETE, scriptargs.STATUS_PARTIAL):
         return None
     return schema
+
+
+def gui_dialogs(plan: preparation.PreparationPlan) -> dict | None:
+    """计划里那份脚本的弹窗写法（`dialogscan.analyze_file`，只读源码、按 mtime 缓存）；没有 → None。"""
+    if plan.script is None or plan.target != TARGET_SCRIPT:
+        return None
+    found = dialogscan.analyze_file(Path(plan.project_root) / plan.script)
+    return found if found["status"] == "found" else None
 
 
 def requirements_of(
@@ -383,6 +393,19 @@ def requirements_of(
                     },
                 }
             )
+    dialogs = gui_dialogs(plan)
+    if dialogs is not None:
+        # 脚本会弹窗：无界面 worker 里弹不出来（且每次编辑都重跑）。**只是提示**——不阻塞运行、不改任何 phase；
+        # 出路是用户把路径 / 答案直接写进脚本，界面不替他改
+        out.append(
+            {
+                "id": "interaction",
+                "kind": "gui_dialog",
+                "code": _GUI_DIALOG_CODE,
+                "blocking": False,
+                "payload": {"calls": dialogs["calls"], "truncated": dialogs["truncated"]},
+            }
+        )
     return out
 
 

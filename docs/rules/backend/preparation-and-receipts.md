@@ -234,6 +234,12 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 
 ## 参数、数据与输出在同一个会话里（T07）
 
+- **弹窗写法只是提示**（`engine/dialogscan.py`）：脚本源码里有 `tkinter.filedialog.*` / `simpledialog` / `messagebox` 询问类、
+  Qt 四家的 `QFileDialog.get*`、`easygui.fileopenbox` 等、`wx.FileDialog` 的调用（AST、按 import 解析后的全名判，注释 / 字符串 /
+  没有 import 绑定的同名函数不算）时，`requirements` 多一条 `gui_dialog`（`blocking: false`，载荷只有 API 全名 / 种类 / 行号，至多 8 处）。
+  不是检查项、不改 phase、不拦 `run`；只读脚本本身（不跟进本地模块），按 mtime 缓存，每次出报告重读。**取舍**：与 `importscan`
+  相反，这里看全部写在源码里的调用（函数体、`if` / `try` 里的都算），只跳过 `if TYPE_CHECKING:` 与常量假的分支——结果只是一句
+  不阻塞的提示，多提示一次只花一次点击，漏提示就是原来那条看不懂的运行失败。运行时 `input()` / getpass 是 ADR 0099 的作答桥，不在这里。
 - **参数**：脚本有 argparse 字面量证据（`scriptargs.analyze_file`，只读源码、按 mtime 缓存）时才多一项检查 `arguments`
   （**永远 `ok`**，`detail` 只有计数：`schema` / `arguments` / `required` / `output_files` / `form_enabled`）和一项
   `requirements[kind=script_arguments, blocking=False]`（`payload.schema` + 本次配置的 `argv_count` / `run_config`）。它是表单建议，

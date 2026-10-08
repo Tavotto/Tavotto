@@ -4662,6 +4662,7 @@ export default interface Resources {
         "retry": "再试一次",
         "run": "运行",
         "runAgain": "再运行",
+        "runAnyway": "仍然运行",
         "start": "开始准备",
         "stop": "停止",
         "switchScope": "用本项目的版本",
@@ -4709,6 +4710,11 @@ export default interface Resources {
         "usedBy": "用的是",
         "workdir": "运行目录"
       },
+      "dialog": {
+        "howAsk": "把要填的内容直接写进脚本，别用弹窗问。",
+        "howFile": "把文件路径直接写进脚本；数据放在项目里，用相对路径，比如 data/points.csv。",
+        "where": "第 {{line}} 行"
+      },
       "env": {
         "builtin": "Tavotto 自带的",
         "locked": "设置里指定的",
@@ -4747,6 +4753,8 @@ export default interface Resources {
         "depsRuntime": "运行时缺 {{module}}",
         "depsScope": "组件版本冲突",
         "depsUnknown": "运行时缺 {{module}}，找不到安装包",
+        "dialogAsk": "脚本会弹窗询问，这里弹不出来，请把答案写进脚本",
+        "dialogFile": "脚本会弹窗选文件，这里弹不出来，请把文件路径写进脚本",
         "editOpening": "正在打开编辑…",
         "editReady": "已进入编辑",
         "envChoice": "用项目里自带的那套运行？",

@@ -281,6 +281,42 @@ def test_an_unanswered_workdir_question_is_awaiting_configuration_and_never_runn
     assert fake_pool["build_calls"] == 0
 
 
+def test_a_script_that_opens_a_file_dialog_gets_a_non_blocking_hint_and_still_runs(
+    client, tmp_path, fake_pool, sessions
+):
+    """弹窗写法只是提示：requirements 里多一条 `gui_dialog`（blocking False），phase 仍是 ready_to_run、仍有 run 动作；
+    检查不执行脚本（零 build）；脚本改掉之后下一次读报告提示就消失（按 mtime 重读，不是会话创建时定死）。"""
+    root = _project(tmp_path, "p")
+    (root / "fig.py").write_text(
+        "from tkinter import filedialog\nimport matplotlib.pyplot as plt\n"
+        "path = filedialog.askopenfilename()\nplt.plot([1, 2])\nplt.savefig('fig.pdf')\n",
+        encoding="utf-8",
+    )
+    _open(client, root)
+    report = _create(client, {"script": "fig.py"}).get_json()
+    (req,) = [r for r in report["requirements"] if r["kind"] == "gui_dialog"]
+    assert req["blocking"] is False and req["code"] == "script_uses_gui_dialog"
+    assert req["payload"]["calls"] == [
+        {"api": "tkinter.filedialog.askopenfilename", "kind": "file", "line": 3}
+    ]
+    assert report["phase"] == "ready_to_run"
+    assert _action(report, "run")["kind"] == "run"
+    assert fake_pool["build_calls"] == 0
+    (root / "fig.py").write_text(
+        "import matplotlib.pyplot as plt\nplt.plot([1, 2])\nplt.savefig('fig.pdf')\n"
+        "# filedialog.askopenfilename() 现在写成了注释\n",
+        encoding="utf-8",
+    )
+    again = _get(client, report["session_id"]).get_json()
+    assert [r for r in again["requirements"] if r["kind"] == "gui_dialog"] == []
+
+
+def test_a_plain_script_has_no_dialog_hint(client, tmp_path, fake_pool, sessions):
+    _open(client, _project(tmp_path, "p"))
+    report = _create(client, {"script": "fig.py"}).get_json()
+    assert [r for r in report["requirements"] if r["kind"] == "gui_dialog"] == []
+
+
 def test_a_missing_interpreter_blocks_the_session(
     client, tmp_path, fake_pool, sessions, monkeypatch
 ):

@@ -20,6 +20,7 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
+  type GuiDialogPayload,
   type PreparationReport,
   type ProjectScan,
   type WorkdirConfirmation,
@@ -540,6 +541,7 @@ function ScanPill({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKin
  */
 const ARGS_FOLDED = new Set([
   'ready',
+  'gui_dialog',
   'restarted',
   'rejected',
   'failed',
@@ -957,12 +959,32 @@ function ArgsBlock({ script, schema, expanded }: { script: string; schema: Scrip
 }
 
 /** 默认收起的「详情」：脚本、用的是哪一套、运行目录、参数；要装什么；结果的三件事；错误原文与那一次的诊断 */
+/** 详情里的弹窗提示：怎么改（把路径 / 答案写进脚本）+ 在哪几行、是哪个调用。标题那一句话已经说了结论，这里只放细节 */
+function GuiDialogHint({ payload }: { payload: GuiDialogPayload }) {
+  const file = payload.calls.some((c) => c.kind === 'file')
+  return (
+    <div className="flex flex-col gap-1.5" data-prep-dialog>
+      <p data-prep-dialog-how>{pt(file ? 'dialog.howFile' : 'dialog.howAsk')}</p>
+      {payload.calls.slice(0, 3).map((c) => (
+        <Row
+          key={`${c.line}:${c.api}`}
+          k={pt('dialog.where', { line: c.line })}
+          v={<span className="font-mono">{c.api}</span>}
+          attr="dialog-call"
+        />
+      ))}
+    </div>
+  )
+}
+
 function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   useTranslation(['workspace', 'errors'])
   const report = entry.report
   const store = useProjectPreparationStore.getState()
   const mode = useEnvStore((s) => s.env?.project?.workdir?.mode ?? null)
   const wdReq = report?.requirements.find((r) => r.kind === 'workdir_choice')
+  const dialogReq = report?.requirements.find((r) => r.kind === 'gui_dialog')
+  const dialog = dialogReq?.kind === 'gui_dialog' ? dialogReq.payload : null
   const prepare = report?.actions.find((a) => a.kind === 'prepare_dependencies')
   const error = report?.result?.error as
     | { code?: string; message?: string; params?: Record<string, unknown>; traceback?: string }
@@ -985,6 +1007,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
     .pop()
   return (
     <>
+      {dialog && <GuiDialogHint payload={dialog} />}
       {failed && original && (
         <pre
           data-prep-error={error?.code ?? ''}

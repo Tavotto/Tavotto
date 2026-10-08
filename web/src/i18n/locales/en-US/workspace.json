@@ -900,6 +900,8 @@
       "inputSecret": "The script wants a password",
       "preparing": "Installing…",
       "ready": "Ready to run",
+      "dialogFile": "This script opens a file picker that can't appear here, so put the file path in the script",
+      "dialogAsk": "This script opens a prompt that can't appear here, so put the answer in the script",
       "completed_one": "Drew 1 figure",
       "completed_other": "Drew {{count}} figures",
       "completedNoList": "Done, figures are in the library",
@@ -932,6 +934,7 @@
       "start": "Get ready",
       "later": "Later",
       "run": "Run",
+      "runAnyway": "Run anyway",
       "runAgain": "Run again",
       "retry": "Try again",
       "stop": "Stop",
@@ -1035,6 +1038,11 @@
       "notFinished": "The script didn't finish",
       "captured": "A figure was captured",
       "notCaptured": "No figure was captured"
+    },
+    "dialog": {
+      "howFile": "Write the file path straight into the script. Keep the data in the project and use a relative path, such as data/points.csv.",
+      "howAsk": "Write the value straight into the script instead of asking in a pop-up.",
+      "where": "Line {{line}}"
     },
     "row": {
       "checking": "Checking",
