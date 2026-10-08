@@ -169,7 +169,7 @@ export function probeErrorOf(e: unknown): ProbeError {
  */
 export function whenScriptIdle(script: string): Promise<void> {
   // 「忙」= 本 store 有在跑的试运行，或有一批按序重跑（`runConfigsInOrder`）正占着这个脚本（含批内两份之间的空档）
-  const busy = () => isBusyNow(script) || batchClaims.has(script)
+  const busy = () => isBusyNow(script) || isClaimed(script)
   if (!busy()) return Promise.resolve()
   return new Promise((resolve) => {
     const done = () => {
@@ -411,12 +411,14 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
     for (const name of names) {
       if (script && name !== script) continue
       const row = get().byScript[name]
-      const rowConfig = row?.phase === phase ? (row.runConfig ?? null) : undefined
+      // 可见行也停在这道门上时它的运行方式：草稿模式（`runConfig` 为 undefined）与显式配置（含 null = 无参数）
+      // 是两回事，必须原样带过去——折成 null 会让草稿运行解门后丢参数重跑
+      const rowSpec: RunSpec | undefined = row?.phase === phase ? specOfRow(row) : undefined
       // 批量重跑停在门上时留下了「还没跑完的配置」队列（可能攒了好几批）：整份按序续跑，不只重跑最后那一行。
       // `runConfigsInOrder` 在第一个 await 之前就同步认领脚本并起了第一份，所以下面通知监听者时脚本已是忙的
-      const queued = takeGatedQueue(name, get().epoch, phase, rowConfig)
-      if (queued) void runConfigsInOrder(name, queued)
-      else if (rowConfig !== undefined) void get().run(name, rowConfig)
+      const queued = takeGatedQueue(name, get().epoch, phase, rowSpec)
+      if (queued) void runSpecsInOrder(name, queued)
+      else if (rowSpec) void runSpec(name, rowSpec)
     }
     for (const cb of [...gateListeners]) cb(phase, script)
   },
@@ -440,13 +442,28 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
  * 若不在队里（用户手动重跑过别的配置）追加到队尾——宁可多跑一次，不丢一份。
  */
 type GatePhase = 'needs_workdir' | 'needs_preparation'
-const gatedQueues = new Map<string, { epoch: number; phase: GatePhase; configs: Array<string | null> }>()
 
-function enqueueGated(script: string, epoch: number, phase: GatePhase, configs: ReadonlyArray<string | null>): void {
+/**
+ * 一次重跑的运行方式，显式判别、不靠 undefined/null 区分（Codex #816 r4221496552）：
+ * - `draft`：读运行那一刻的参数草稿（`run(script)`，`runConfig === undefined`）；
+ * - `config`：答案管理的固定配置，`id: null` = 显式「无参数」（`run(script, null)`，不读草稿）。
+ */
+export type RunSpec = { kind: 'draft' } | { kind: 'config'; id: string | null }
+
+const specKey = (spec: RunSpec): string => (spec.kind === 'draft' ? 'draft' : `config:${spec.id ?? ''}:${spec.id === null}`)
+const sameSpec = (a: RunSpec, b: RunSpec): boolean => specKey(a) === specKey(b)
+const specOfRow = (row: ScriptRunState): RunSpec =>
+  row.runConfig === undefined ? { kind: 'draft' } : { kind: 'config', id: row.runConfig }
+const runSpec = (script: string, spec: RunSpec): Promise<void> =>
+  spec.kind === 'draft' ? useScriptRunStore.getState().run(script) : useScriptRunStore.getState().run(script, spec.id)
+
+const gatedQueues = new Map<string, { epoch: number; phase: GatePhase; specs: RunSpec[] }>()
+
+function enqueueGated(script: string, epoch: number, phase: GatePhase, specs: ReadonlyArray<RunSpec>): void {
   const prev = gatedQueues.get(script)
-  const merged = prev && prev.epoch === epoch ? [...prev.configs] : []
-  for (const c of configs) if (!merged.includes(c)) merged.push(c)
-  gatedQueues.set(script, { epoch, phase, configs: merged })
+  const merged = prev && prev.epoch === epoch ? [...prev.specs] : []
+  for (const c of specs) if (!merged.some((m) => sameSpec(m, c))) merged.push(c)
+  gatedQueues.set(script, { epoch, phase, specs: merged })
 }
 
 /**
@@ -457,13 +474,13 @@ function takeGatedQueue(
   script: string,
   epoch: number,
   phase: GatePhase,
-  rowConfig: string | null | undefined,
-): Array<string | null> | null {
+  rowSpec: RunSpec | undefined,
+): RunSpec[] | null {
   const q = gatedQueues.get(script)
   if (!q || q.phase !== phase) return null
   gatedQueues.delete(script)
-  if (q.epoch !== epoch || q.configs.length === 0) return null
-  return rowConfig === undefined || q.configs.includes(rowConfig) ? q.configs : [...q.configs, rowConfig]
+  if (q.epoch !== epoch || q.specs.length === 0) return null
+  return !rowSpec || q.specs.some((m) => sameSpec(m, rowSpec)) ? q.specs : [...q.specs, rowSpec]
 }
 
 /**
@@ -471,20 +488,24 @@ function takeGatedQueue(
  * 包括批内两份之间的空档与第一个 await 之前。其它等这个脚本空闲的人（接入中心的门后重跑 `whenScriptIdle`、
  * 另一批答案）都排在它后面，不会在空档里抢跑撞 `probe_in_progress`。认领在 `runConfigsInOrder` 同步段完成。
  */
+// 认领按 (项目代际, 脚本) 记（Codex #816 r4221496560）：切项目后旧代的长批不拖住新项目的同名脚本，
+// 旧代收尾释放的是自己那一代的键，删不到新项目的认领
 const batchClaims = new Set<string>()
+const claimKey = (epoch: number, script: string) => `${epoch}\u0000${script}`
+const isClaimed = (script: string, epoch = useScriptRunStore.getState().epoch) => batchClaims.has(claimKey(epoch, script))
 const claimListeners = new Set<() => void>()
 
-function releaseClaim(script: string): void {
-  batchClaims.delete(script)
+function releaseClaim(script: string, epoch: number): void {
+  batchClaims.delete(claimKey(epoch, script))
   for (const cb of [...claimListeners]) cb()
 }
 
-/** 等别的批释放对这个脚本的认领（只看认领，不看试运行相位——批内自己的等待用 `whenNotBusy`） */
-function whenClaimFree(script: string): Promise<void> {
-  if (!batchClaims.has(script)) return Promise.resolve()
+/** 等别的批释放对这个脚本（该代际）的认领（只看认领，不看试运行相位——批内自己的等待用 `whenNotBusy`） */
+function whenClaimFree(script: string, epoch: number): Promise<void> {
+  if (!isClaimed(script, epoch)) return Promise.resolve()
   return new Promise((resolve) => {
     const done = () => {
-      if (batchClaims.has(script)) return
+      if (isClaimed(script, epoch)) return
       claimListeners.delete(done)
       resolve()
     }
@@ -498,8 +519,10 @@ function isBusyNow(script: string): boolean {
 }
 
 /** 等这个脚本离开忙态（换项目 = `clear()` 清了行，也算离开）；订阅一次性，不轮询 */
-function whenNotBusy(script: string): Promise<void> {
+function whenNotBusy(script: string, epoch = useScriptRunStore.getState().epoch): Promise<void> {
   const busy = () => {
+    // 换了项目代际：这一代的批不再关心新项目里同名脚本的忙闲（`byScript` 是按当前项目的）
+    if (useScriptRunStore.getState().epoch !== epoch) return false
     const st = useScriptRunStore.getState().byScript[script]
     return !!st && isBusyPhase(st.phase)
   }
@@ -525,40 +548,52 @@ export async function runConfigsInOrder(
   script: string,
   configs: ReadonlyArray<string | null>,
 ): Promise<Array<{ config: string | null; failed: boolean }>> {
+  const results = await runSpecsInOrder(
+    script,
+    configs.map((id): RunSpec => ({ kind: 'config', id })),
+  )
+  return results.map((r) => ({ config: r.spec.kind === 'config' ? r.spec.id : null, failed: r.failed }))
+}
+
+async function runSpecsInOrder(
+  script: string,
+  configs: ReadonlyArray<RunSpec>,
+): Promise<Array<{ spec: RunSpec; failed: boolean }>> {
   // 项目代际在**第一个 await 之前**取：等认领期间切了项目，醒来时代际对不上就放弃，不在新项目里跑旧项目的配置
   const epoch = useScriptRunStore.getState().epoch
   // 别的批正占着这个脚本：排在它后面（先来先跑）。检查与占用之间没有 await，所以不会两批同时进场
-  while (batchClaims.has(script)) {
-    await whenClaimFree(script)
+  while (isClaimed(script, epoch)) {
+    await whenClaimFree(script, epoch)
     if (useScriptRunStore.getState().epoch !== epoch) return []
   }
-  batchClaims.add(script)
-  const results: Array<{ config: string | null; failed: boolean }> = []
+  batchClaims.add(claimKey(epoch, script))
+  const results: Array<{ spec: RunSpec; failed: boolean }> = []
   try {
     for (let i = 0; i < configs.length; i++) {
       const config = configs[i]
       // 已空闲就不让出：第一份必须在认领的同一个同步段里起跑，通知门监听者之前脚本就已经是忙的
-      if (i > 0 || isBusyNow(script)) await whenNotBusy(script)
+      if (i > 0 || isBusyNow(script)) await whenNotBusy(script, epoch)
       if (useScriptRunStore.getState().epoch !== epoch) break
       let failed = false
       try {
-        await useScriptRunStore.getState().run(script, config)
-        await whenNotBusy(script)
+        await runSpec(script, config)
+        await whenNotBusy(script, epoch)
+        if (useScriptRunStore.getState().epoch !== epoch) break
         const row = useScriptRunStore.getState().byScript[script]
         if (isGatePhase(row?.phase) && useScriptRunStore.getState().epoch === epoch) {
           // 停在门上（缺的是用户的一个决定，不是失败）：这份与后面的先挂起，门有了答案由 rerunGated 续跑
           enqueueGated(script, epoch, row.phase as GatePhase, configs.slice(i))
-          results.push({ config, failed: false })
+          results.push({ spec: config, failed: false })
           break
         }
         failed = !!row?.error
       } catch {
         failed = true
       }
-      results.push({ config, failed })
+      results.push({ spec: config, failed })
     }
   } finally {
-    releaseClaim(script)
+    releaseClaim(script, epoch)
   }
   return results
 }

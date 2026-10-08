@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cancelProbe, probeScript, type CapturedFigureDescriptor, type ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useEnvStore } from './envStore'
+import { useScriptArgvStore } from './scriptArgvStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
 import {
@@ -513,5 +514,58 @@ describe('门后排队续跑的排队语义（Codex #816 r4221258366 / r42212583
     mockProbe.mockClear()
     useScriptRunStore.getState().rerunGated('needs_workdir') // 项目级：不指定脚本
     await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b']))
+  })
+
+  it('草稿运行撞门后解门：用原草稿重跑，不退成无参数配置（r4221496552）', async () => {
+    useScriptArgvStore.getState().addToken('fig.py', '--label')
+    mockProbe.mockResolvedValueOnce(gate())
+    await useScriptRunStore.getState().run('fig.py') // 草稿模式：runConfig 为 undefined
+    const first = mockProbe.mock.calls[0][2]
+    expect(first).toBeDefined()
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    await vi.waitFor(() => expect(mockProbe).toHaveBeenCalledTimes(2))
+    expect(mockProbe.mock.calls[1][2]).toEqual(first)
+    expect(mockProbe.mock.calls[1][2]).not.toHaveProperty('run_config')
+  })
+
+  it('草稿运行撞门后又有显式配置排队：解门时草稿与排队配置各自保持原模式（r4221496552）', async () => {
+    useScriptArgvStore.getState().addToken('fig.py', '--label')
+    mockProbe.mockResolvedValueOnce(gate()).mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a']) // 排队 rc_a
+    await useScriptRunStore.getState().run('fig.py') // 草稿运行也撞门（可见行是草稿）
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    await vi.waitFor(() => expect(mockProbe).toHaveBeenCalledTimes(2))
+    expect(mockProbe.mock.calls[0][2]).toEqual({ run_config: 'rc_a' })
+    expect(mockProbe.mock.calls[1][2]).not.toHaveProperty('run_config')
+    expect(mockProbe.mock.calls[1][2]).toBeDefined()
+  })
+
+  it('认领按项目代际隔离：A 的长批不拖住 B 的同名脚本，A 释放也不删 B 的认领（r4221496560）', async () => {
+    const releases: Array<() => void> = []
+    mockProbe.mockImplementation(
+      () => new Promise((resolve) => releases.push(() => resolve(ok([desc('a')])))),
+    )
+    const a = runConfigsInOrder('fig.py', ['rc_a'])
+    await flush()
+    useScriptRunStore.getState().clear() // 切到 B
+    setCurrentProjectId('p2')
+    const b = runConfigsInOrder('fig.py', ['rc_b'])
+    await flush()
+    expect(configsOf()).toEqual(['rc_a', 'rc_b']) // B 立即开跑，不等 A
+    releases[0]() // A 收尾、释放自己那一代的认领
+    await a
+    await flush()
+    // B 的认领还在：B 里的第二批要排在 B 的第一批后面
+    const b2 = runConfigsInOrder('fig.py', ['rc_b2'])
+    await flush()
+    expect(configsOf()).toEqual(['rc_a', 'rc_b'])
+    releases[1]()
+    await b
+    await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b', 'rc_b2']))
+    releases[2]()
+    await b2
   })
 })
