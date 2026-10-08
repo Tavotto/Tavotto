@@ -251,6 +251,7 @@
     "script_restore_stale": "{{script}} changed after this backup was listed, so the list has been refreshed. Choose how to restore again based on its current state (you can undo just those paths).",
     "script_restore_conflict": "Those paths were changed again afterwards, so they can't be undone on their own. You can restore the whole file instead (the current version is saved first).",
     "environment_changed": "That environment was rebuilt before you confirmed. Review it again, then confirm.",
+    "environment_generation_required": "Adopting an environment needs the version you were shown. Review it again, then confirm.",
     "environment_candidate_gone": "That environment can no longer be found. Check again.",
     "environment_locked": "A globally chosen Python is in effect, so a project-level choice would not be used. Clear the global choice first.",
     "environment_check_running": "An environment check is already running for this project."

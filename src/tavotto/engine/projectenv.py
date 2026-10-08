@@ -422,7 +422,12 @@ def _probe_scratch_dir() -> str:
 
 
 def probe_environment(
-    python: str, module: str | None = None, *, modules: tuple[str, ...] = (), bundled: bool = False
+    python: str,
+    module: str | None = None,
+    *,
+    modules: tuple[str, ...] = (),
+    bundled: bool = False,
+    timeout: float | None = None,
 ) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
 
@@ -439,6 +444,8 @@ def probe_environment(
     `bundled`：这是 Tavotto 的内置 runtime——按 worker 起它的同一套来量（`runtime.child_args()` 的 `-B`、
     `runtime.child_env()` 摘掉 `PYTHONPATH` 等），与 `pool._has_matplotlib(bundled=True)` 同一条纪律：
     从终端启动时 shell 里的 `PYTHONPATH` 会让体检看见 worker 看不见的包（Codex #609 P2）。
+
+    `timeout`：调用方的剩余预算（`envadvice.check` 的总时限）；只会收紧、不会放宽 `PROBE_TIMEOUT_S`。
     """
     modules = tuple(m for m in modules if valid_module_name(m))
     if module and not valid_module_name(module):
@@ -471,7 +478,7 @@ def probe_environment(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=PROBE_TIMEOUT_S,
+            timeout=PROBE_TIMEOUT_S if timeout is None else min(PROBE_TIMEOUT_S, timeout),
             stdin=subprocess.DEVNULL,
             cwd=scratch,
             env=runtime.probe_env(python, bundled=bundled),

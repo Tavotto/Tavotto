@@ -7581,7 +7581,8 @@ def _set_project_environment(
 
     `candidate` + `expected_generation`（T05，ADR 0114）是**环境建议**上点的「使用」：候选 id 来自
     `recommendation.candidates[].id`，路径由后端自己的枚举换回（不接受调用方给）；`expected_generation` 是用户
-    看到建议那一刻的环境代，对不上（环境在这期间被重建）→ 409 `environment_changed`，不采用另一个环境。
+    看到建议那一刻的环境代，**必填**（缺 → 400 `environment_generation_required`）；对不上（环境在这期间被重建）→ 409
+    `environment_changed`，不采用另一个环境——体检之后、写入之前紧贴着再比一次（体检期间被重建同样 409、不落盘）。
     这是用户的明确动作：记 `automatic=False`；全局显式解释器压着时不假装能采用（`environment_locked`）。
     """
     root = str(require_project())
@@ -7609,9 +7610,15 @@ def _set_project_environment(
                     "code": "environment_candidate_gone",
                 }
             ), 400
-        if expected_generation and (
-            engine_projectenv.environment_generation(found) != expected_generation
-        ):
+        if not expected_generation:
+            # 采用必须绑着用户看到那一刻的环境代：不传就等于「采用此刻碰巧在那儿的任何环境」
+            return jsonify(
+                {
+                    "error": "采用候选环境需要带上你确认时看到的环境版本，请重新查看再确认",
+                    "code": "environment_generation_required",
+                }
+            ), 400
+        if engine_projectenv.environment_generation(found) != expected_generation:
             return jsonify(
                 {
                     "error": "这个环境在你确认之前被重建过，请重新查看再确认",
@@ -7701,29 +7708,46 @@ def _set_project_environment(
         return _environment_busy(
             engine_envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
         )
-    try:
-        engine_deprepair.unless_installing(
+    adopt_stale = False
+
+    def _commit():
+        nonlocal adopt_stale
+        # 候选采用的最后一道：体检（可能数十秒）期间环境可能被重建，health 量的就不是用户确认的那一代。
+        # 紧贴写入再比一次，不符就什么都不记
+        if adopted_from and engine_projectenv.environment_generation(str(candidate)) != (
+            expected_generation
+        ):
+            adopt_stale = True
+            return None
+        return engine_projectenv.remember(
             root,
-            lambda: engine_projectenv.remember(
-                root,
-                str(candidate),
-                automatic=False,
-                trigger=(
-                    adopted_from
-                    or (
-                        engine_deprepair.TRIGGER_USER_ENVIRONMENT
-                        if user_environment
-                        else "missing_dependency"
-                        if module
-                        else "user_selected"
-                    )
-                ),
-                module=module,
-                health=health,
+            str(candidate),
+            automatic=False,
+            trigger=(
+                adopted_from
+                or (
+                    engine_deprepair.TRIGGER_USER_ENVIRONMENT
+                    if user_environment
+                    else "missing_dependency"
+                    if module
+                    else "user_selected"
+                )
             ),
+            module=module,
+            health=health,
         )
+
+    try:
+        engine_deprepair.unless_installing(root, _commit)
     except engine_envlease.EnvironmentBusy as exc:
         return _environment_busy(exc)
+    if adopt_stale:
+        return jsonify(
+            {
+                "error": "这个环境在你确认之前被重建过，请重新查看再确认",
+                "code": "environment_changed",
+            }
+        ), 409
     engine_pool.reset_worker_python()
     engine_pool.shutdown_all(root)
     return jsonify({"ok": True, "health": health, "project": _project_environment_state()})

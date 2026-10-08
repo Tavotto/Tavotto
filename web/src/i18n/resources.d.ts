@@ -1990,6 +1990,7 @@ export default interface Resources {
       "environment_candidate_gone": "这个环境已经找不到了，请重新检查",
       "environment_changed": "这个环境在你确认之前被重建过，请重新查看再确认",
       "environment_check_running": "这个项目的环境检查正在进行",
+      "environment_generation_required": "采用候选环境需要带上你确认时看到的环境版本，请重新查看再确认",
       "environment_in_use_by_native_session": "该 Python 环境正被 Tavotto Run 使用。请先结束正在运行的脚本，再安装依赖。",
       "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
       "environment_mutating": "该 Python 环境正在安装依赖，请稍候再试。",
