@@ -3814,12 +3814,9 @@ def api_script_input_answers():
     return jsonify(_script_answers_payload(current_ctx()))
 
 
-def _after_script_answers_changed(
-    ctx: "ProjectCtx", script: str, *, run_config: str | None = None, all_configs: bool = True
-) -> None:
+def _after_script_answers_changed(ctx: "ProjectCtx", script: str) -> None:
     """答案变了必须重跑（ADR 0099 §七）：作废热会话 + `panel.file_changed`（reason=script_input）。
-    改答案是「明确要用新答案重算」：对应配置的执行转录一并作废（T08），否则冷重放仍按旧转录作答。"""
-    engine_inputtranscript.forget(ctx.path, script, run_config=run_config, all_configs=all_configs)
+    执行转录的作废不在这里——它必须**先于**答案提交（见 `api_script_input_answers_update`）。"""
     engine_pool.invalidate(script, str(ctx.path))
     _script_change_handler(ctx, "script_input")([script])
 
@@ -3843,19 +3840,40 @@ def api_script_input_answers_update():
         return jsonify({"error": "指定 run_config 时需要 index", "code": "bad_request"}), 400
     if not script or script not in engine_scriptanswers.load(ctx.path):
         return jsonify({"error": "这个脚本没有记住的答案", "code": "script_input_not_found"}), 404
-    if body.get("forget"):
-        changed = engine_scriptanswers.forget(ctx.path, script, index, run_config=ref)
-    else:
-        answer = body.get("answer")
-        if index is None or not isinstance(answer, str):
-            return jsonify({"error": "需要 index 与 answer", "code": "bad_request"}), 400
-        try:
-            changed = engine_scriptanswers.update(ctx.path, script, index, answer, run_config=ref)
-        except ValueError as exc:
-            return jsonify({"error": str(exc), "code": "script_input_invalid"}), 400
+    answer = body.get("answer")
+    if not body.get("forget") and (index is None or not isinstance(answer, str)):
+        return jsonify({"error": "需要 index 与 answer", "code": "bad_request"}), 400
+    # 改 / 删答案是「明确要用新答案重算」（T08）：旧转录必须**先**失效、再提交答案——转录写不动（Windows 上
+    # 读者 / 杀软挡住 os.replace）就整个操作失败、答案原样不动；反过来会留下「项目是新答案、转录还是旧答案」，
+    # 冷重放静默用旧值。先失效的代价只是冷重放回到「项目答案 + 上下文匹配」，永远不会套错。
+    try:
+        engine_inputtranscript.forget(ctx.path, script, run_config=ref, all_configs=index is None)
+    except OSError as exc:
+        return jsonify(
+            {
+                "error": f"无法作废这个脚本的旧执行记录，答案没有改动：{exc}",
+                "code": "script_input_transcript_failed",
+            }
+        ), 500
+    changed = False
+    invalid: str | None = None
+    try:
+        if body.get("forget"):
+            changed = engine_scriptanswers.forget(ctx.path, script, index, run_config=ref)
+        else:
+            try:
+                changed = engine_scriptanswers.update(
+                    ctx.path, script, index, answer, run_config=ref
+                )
+            except ValueError as exc:
+                invalid = str(exc)
+    finally:
+        # 转录已先作废：答案提交抛错也要作废热池并发事件，热 worker 不能还握着旧答案跑出的会话
+        _after_script_answers_changed(ctx, script)
+    if invalid is not None:
+        return jsonify({"error": invalid, "code": "script_input_invalid"}), 400
     if not changed:
         return jsonify({"error": "没有这一条答案", "code": "script_input_not_found"}), 404
-    _after_script_answers_changed(ctx, script, run_config=ref, all_configs=index is None)
     return jsonify(_script_answers_payload(ctx))
 
 

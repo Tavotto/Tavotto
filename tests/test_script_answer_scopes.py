@@ -193,3 +193,61 @@ def test_probe_rejects_invalid_or_ambiguous_reference_without_executing(
     response = client.post("/api/registry/probe", json={"script": "s.py", **extra})
     assert response.status_code in (400, 409)
     assert calls == []
+
+
+def _post_edit(client, answer="new-alpha"):
+    return client.post(
+        "/api/script_input/answers",
+        json={"script": "s.py", "index": 1, "run_config": "rc_a", "answer": answer},
+    )
+
+
+def test_a_transcript_that_cannot_be_invalidated_fails_the_edit_and_leaves_the_answer(
+    client, answers, monkeypatch
+):
+    """r4220906173: os.replace 被挡住时不能出现「项目是新答案、转录还是旧答案」。"""
+    before = scriptanswers.answers_path(answers).read_bytes()
+    real = inputtranscript.atomicio.write_json
+
+    def blocked(path, *a, **kw):
+        if "inputtranscripts" in str(path):
+            raise PermissionError("os.replace blocked")
+        return real(path, *a, **kw)
+
+    monkeypatch.setattr(inputtranscript.atomicio, "write_json", blocked)
+    response = _post_edit(client)
+    assert response.status_code == 500
+    assert response.get_json()["code"] == "script_input_transcript_failed"
+    assert scriptanswers.answers_path(answers).read_bytes() == before
+    assert recall(answers, "rc_a", "ctx:alpha") == "alpha"
+    # 旧转录与旧答案仍然一致，冷重放用的是同一个旧值
+    assert inputtranscript.lookup(answers, "s.py", "rc_a").entries[0]["answer"] == "alpha"
+
+
+def test_a_failing_answer_commit_still_drops_the_old_transcript_and_the_hot_pool(
+    client, answers, monkeypatch
+):
+    invalidated = []
+    monkeypatch.setattr(m.engine_pool, "invalidate", lambda *a, **k: invalidated.append(a))
+
+    def boom(*a, **kw):
+        raise OSError("answers write blocked")
+
+    monkeypatch.setattr(scriptanswers, "update", boom)
+    assert _post_edit(client).status_code >= 500
+    assert inputtranscript.lookup(answers, "s.py", "rc_a") is None  # 旧转录不可再被冷重放用
+    assert inputtranscript.lookup(answers, "s.py", "rc_b") is not None
+    assert [a[0] for a in invalidated] == ["s.py"]
+
+
+def test_case_aliases_of_a_project_share_the_local_stores(tmp_path, monkeypatch):
+    """r4220906187: 大小写不敏感卷上 /Project 与 /project 是同一个项目。"""
+    from tavotto.engine import config as engine_config
+
+    monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
+    upper, lower = tmp_path / "Project", tmp_path / "project"
+    assert inputtranscript.store_path(upper) == inputtranscript.store_path(lower)
+    assert scriptanswers.contexts_path(upper) == scriptanswers.contexts_path(lower)
+    monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: False)
+    assert inputtranscript.store_path(upper) != inputtranscript.store_path(lower)
+    assert scriptanswers.contexts_path(upper) != scriptanswers.contexts_path(lower)

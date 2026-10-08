@@ -110,7 +110,7 @@ def _write(project_root: str | Path, scripts: dict[str, list[dict]]) -> None:
 
 def contexts_path(project_root: str | Path) -> Path:
     """上下文摘要的本机侧表：Tavotto 数据目录，不写用户项目、不进项目包。"""
-    norm = os.path.normcase(os.path.normpath(os.path.abspath(str(project_root))))
+    norm = config.normalize_path_identity(os.path.normpath(os.path.abspath(str(project_root))))
     digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:24]
     return config.data_path("scriptanswer-contexts", f"{digest}.json")
 
