@@ -385,6 +385,18 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
     )
 
 
+def run_cwd(figures_dir: str | os.PathLike, script: str, cwd_mode: str) -> str | None:
+    """safe 档脚本的 cwd：`project` = 脚本所在目录、`project_root` = 项目根、`sandbox` = None
+    （由调用方给会话沙盒）。`safe_spec` 与 MCP 桥的 argv 范围检查读这同一个出处（#818）。"""
+    if cwd_mode not in CWD_MODES:
+        raise ValueError(f"cwd_mode 非法: {cwd_mode!r}（可选 {CWD_MODES}）")
+    if cwd_mode == CWD_PROJECT:
+        return str((Path(figures_dir) / figcapture.normalize_relative_script(script)).parent)
+    if cwd_mode == CWD_PROJECT_ROOT:
+        return str(Path(figures_dir))
+    return None
+
+
 def safe_spec(
     script: str,
     figures_dir: str | os.PathLike,
@@ -412,13 +424,8 @@ def safe_spec(
     照旧。脚本用相对路径**写**的中间文件会像终端里一样落进项目目录——
     这是这两个模式的定义，不是漏洞；文案里要如实说。
     """
-    if cwd_mode not in CWD_MODES:
-        raise ValueError(f"cwd_mode 非法: {cwd_mode!r}（可选 {CWD_MODES}）")
-    if cwd_mode == CWD_PROJECT:
-        cwd = str((Path(figures_dir) / figcapture.normalize_relative_script(script)).parent)
-    elif cwd_mode == CWD_PROJECT_ROOT:
-        cwd = str(Path(figures_dir))
-    else:
+    cwd = run_cwd(figures_dir, script, cwd_mode)
+    if cwd is None:
         cwd = sandbox
     return ExecutionSpec(
         profile=PROFILE_SAFE,

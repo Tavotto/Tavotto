@@ -71,7 +71,11 @@ def _isolated(tmp_path, monkeypatch):
 def project(tmp_path, monkeypatch):
     figures = tmp_path / "ws" / "figures"
     figures.mkdir(parents=True)
-    (figures / "fig1.py").write_text("def main():\n    pass\n", encoding="utf-8")
+    # argparse 脚本：前缀可静态证明为「无」（说不准的脚本带 argv 会以 argv_unverifiable 被拒）
+    (figures / "fig1.py").write_text(
+        "import argparse\np = argparse.ArgumentParser()\np.parse_args()\ndef main():\n    pass\n",
+        encoding="utf-8",
+    )
     (figures / "Fig1.pdf").write_bytes(b"%PDF-1.4\n")
     (figures / "tavotto_registry.json").write_text(
         json.dumps({"scripts": {"fig1.py": {"entry": "main", "cost": "light", "stems": ["Fig1"]}}}),
@@ -305,3 +309,32 @@ def test_a_record_of_the_wrong_shape_counts_as_absent(tmp_path):
         path.write_text(json.dumps(good), encoding="utf-8")
     path.write_text("{half", encoding="utf-8")
     assert sessionjournal.load(base, "s-0123456789ab") is None
+
+
+def test_a_restored_session_rechecks_its_run_config_scope(project, worker, tmp_path, monkeypatch):
+    """登记时在根内的相对路径，进程切换前链接改指根外：恢复被拒，一次渲染都不做（Codex #818 r4221135428）。"""
+    from tavotto.engine import workdir
+
+    monkeypatch.setattr(bridge.engine_workdir, "mode_for", lambda _p: workdir.MODE_PROJECT)
+    inside = project / "data"
+    inside.mkdir()
+    link = project / "later"
+    try:
+        os.symlink(inside, link, target_is_directory=True)
+    except OSError:
+        pytest.skip("本机不能建符号链接")
+    opened = _body(
+        server.call_tool(
+            "tavotto_open_figure",
+            {"project_path": str(project), "argv": ["--out", "later/out.txt"]},
+        )
+    )
+    sid = opened["session_id"]
+    assert opened.get("ok") is True, opened
+    link.unlink()
+    os.symlink(tmp_path / "elsewhere", link, target_is_directory=True)
+    _new_process()
+    renders = len(worker.calls)
+    res = server.call_tool("tavotto_apply_overrides", {"session_id": sid, "patches": [PATCH]})
+    assert _body(res)["code"] == "argv_path_out_of_scope"
+    assert len(worker.calls) == renders

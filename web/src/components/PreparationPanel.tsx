@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
+import type { PanelObject } from '@/types/document'
 import { useTranslation } from 'react-i18next'
 import { X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendCodeMsg, type PreparationReport } from '@/lib/api'
 import { formatMessage, t as translate } from '@/i18n'
 import { prepView, targetName, type PrepPrimary, type PrepView } from '@/lib/preparationText'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -13,9 +16,11 @@ import {
   draftDiffers,
   scriptTarget,
   useProjectPreparationStore,
+  type EditRender,
   type PrepEntry,
 } from '@/store/projectPreparationStore'
-import { useRenderStore } from '@/store/renderStore'
+import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { findFigurePanel } from '@/store/documentStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useUiStore } from '@/store/uiStore'
@@ -32,10 +37,43 @@ const pt = (key: string, values?: Record<string, unknown>) =>
 /** 展示面的名字（`scriptInputStore.claimPresentation`）：面板挂着且正展示那一问时，原对话框让开 */
 const SURFACE = 'prep-panel'
 
-/** 加进画布的图首次编辑渲染好了没有：渲染态里那张图有了精确 manifest（这是前端自己观察到的事实，不是后端判据） */
-function useEditReady(ids: string[]): boolean {
+/**
+ * 入口动作为这张图创建 / 复用的面板与渲染键（动作做完、面板已在文档里的那一刻记下）。
+ * 文档里找不到面板就没有可观察的渲染——不猜。
+ */
+function editRenderOf(assetId: string): EditRender | undefined {
+  const found = findFigurePanel(assetId)
+  return found ? { panelId: found.panel.id, renderKey: renderKeyOf(found.panel) } : undefined
+}
+
+/** 记入编辑记录：资产 id + 它在画布上那个面板的渲染键 */
+function noteEditingFor(entryKey: string, assetId: string): void {
+  useProjectPreparationStore.getState().noteEditing(entryKey, assetId, editRenderOf(assetId))
+}
+
+/**
+ * 结果对话框刚加进画布的那个面板：**直接**记它的 id 与渲染键，不按 assetId 去文档里找——同一素材文档里可能已经有
+ * 别的实例，按 assetId 找会选中旧实例、它已有的就绪渲染会让「首次编辑渲染」立刻成立。
+ * 取文档里的现值（加图之后取景等动作可能改过对象），找不到才用返回的那个对象。
+ */
+function noteAddedPanelFor(entryKey: string, assetId: string, added: PanelObject): void {
+  const live = findFigurePanel(assetId, added.id)?.panel ?? added
+  useProjectPreparationStore
+    .getState()
+    .noteEditing(entryKey, assetId, { panelId: live.id, renderKey: renderKeyOf(live) })
+}
+
+/**
+ * 加进画布的图首次编辑渲染好了没有（这是前端自己观察到的事实，不是后端判据）：只认入口动作记下的那个面板、
+ * 那把渲染键上的**非 stale 精确 manifest**（`exactPanelRender`）。按文件 id 扫会把 `markStale()` 留下的旧渲染、
+ * 或同一文件别的 override 变体当成这一次。
+ */
+function useEditReady(renders: Record<string, EditRender>): boolean {
   return useRenderStore((s) =>
-    ids.some((id) => Object.values(s.byKey).some((r) => r.fileId === id && r.status === 'ready' && r.manifest !== null)),
+    Object.entries(renders).some(([assetId, r]) => {
+      const found = findFigurePanel(assetId, r.panelId)
+      return !!found && renderKeyOf(found.panel) === r.renderKey && exactPanelRender(s, found.panel) !== null
+    }),
   )
 }
 
@@ -65,11 +103,13 @@ export function PreparationPanel() {
   const entry = useProjectPreparationStore((s) => (s.focus ? s.entries[s.focus] : undefined))
   // 草稿变了要重新渲染（参数改了 → 「按新参数检查」）
   useScriptArgvStore((s) => s.drafts)
-  const editReady = useEditReady(entry?.editing ?? [])
+  const editReady = useEditReady(entry?.editRenders ?? {})
   if (!open || !focus || !entry) return null
   const argsChanged = draftDiffers(entry.target)
   const v = prepView(entry, { argsChanged, editReady })
-  return <PanelBody entry={entry} view={v} />
+  // 以条目为 key：切换聚焦条目时整个 PanelBody 卸载重建，条目局部状态（本地失败、结果对话框、详情里的环境失败…）
+  // 一个不带到另一个脚本上
+  return <PanelBody key={entry.key} entry={entry} view={v} />
 }
 
 function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
@@ -89,7 +129,9 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         await store.act(entry.key, p.action)
         return
       case 'adopt': {
+        const guard = captureProjectEpoch()
         const err = await useEnvStore.getState().adoptCandidate(p.candidate, script)
+        if (!guard.still()) return
         if (err) setLocalError(err)
         // 成功：envStore 的环境变了 → 会话只读地重新检查（store 订阅），下一步仍由报告给出
         return
@@ -110,12 +152,19 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         const d = figures[0]
         // 进入编辑 = 稳定动作 `openFastEdit`（加进文档并说出口 → 进入图内编辑 → 引擎按热会话渲染，脚本不再跑）。
         // 素材清单还没取到这张新图时先用这次捕获的描述符把它加进画布，再进入编辑
+        // 挂起期间可能切了项目：续延带着 A 的描述符，绝不能把 A 的面板加进 B 的版面
+        const guard = captureProjectEpoch(() => useProjectPreparationStore.getState().epoch)
         await useRuntimeAssetStore.getState().loadAssets()
+        if (!guard.still()) return
         if (!(useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)) {
           addRuntimePanelToCanvas(d)
         }
         openFastEdit(d.asset_id)
-        store.noteEditing(entry.key, d.asset_id)
+        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个
+        const opened = useWorkspaceStore.getState().activePanelId
+        const found = opened ? findFigurePanel(d.asset_id, opened) : null
+        if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
+        else noteEditingFor(entry.key, d.asset_id)
         return
       }
       case 'reopen':
@@ -179,6 +228,7 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           dropped={0}
           open={resultsOpen}
           onOpenChange={setResultsOpen}
+          onAdded={(d, added) => noteAddedPanelFor(entry.key, d.asset_id, added)}
         />
       )}
     </section>
@@ -239,6 +289,9 @@ function PanelDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   useTranslation(['workspace', 'errors'])
   const report = entry.report
   const store = useProjectPreparationStore.getState()
+  const [envError, setEnvError] = useState<string | null>(null)
+  // 报告换了（新修订 / 新观察）就把上一次「改用内置」的失败收起
+  useEffect(() => setEnvError(null), [report?.config_revision, report?.observation_seq])
   const primary = view.primary && view.primary.kind === 'action' ? view.primary.action : null
   const secondary = (['recheck', 'cancel'] as const).filter(
     (k) => k !== primary && report?.actions.some((a) => a.kind === k),
@@ -275,15 +328,28 @@ function PanelDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
             </span>
           </div>
         )}
-        {env && (
-          <div>
+        {/* 全局显式解释器压着（`locked_by`）时选环境不会生效：不给这个动作（点了只会丢掉项目原偏好而环境不变） */}
+        {env && !env.payload?.decision?.locked_by && (
+          <div className="flex flex-col gap-1">
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => void useEnvStore.getState().setProjectPython(null)}
+              data-prep-use-builtin
+              onClick={async () => {
+                setEnvError(null)
+                const guard = captureProjectEpoch()
+                const err = await useEnvStore.getState().setProjectPython(null)
+                if (!guard.still()) return
+                if (err) setEnvError(err)
+              }}
             >
               {pt('btn.useBuiltin')}
             </Button>
+            {envError && (
+              <p className="text-danger" data-prep-env-error>
+                {envError}
+              </p>
+            )}
           </div>
         )}
         {!view.argsOpen && !('id' in entry.target) && <ScriptArgvEditor script={entry.target.script} />}

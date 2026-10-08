@@ -263,3 +263,98 @@ def test_the_input_facts_projection_is_counts_and_closed_codes_only():
     assert inputbroker.facts_projection({**facts, "no_answer": "free text"})["no_answer"] is None
     assert inputbroker.facts_projection(inputbroker.InputFacts().payload()) is None
     assert inputbroker.facts_projection(None) is None
+
+
+def _block_replace(monkeypatch):
+    import os
+
+    real = os.replace
+
+    def blocked(src, dst, *a, **k):
+        if str(dst).endswith(".json") and "inputtranscripts" in str(dst):
+            raise OSError("blocked")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "replace", blocked)
+
+
+def test_a_failed_binding_write_never_leaves_the_old_transcript_usable(tmp_path, monkeypatch):
+    # r4221584222：新转录没落盘 → 旧绑定必须失效，冷重放不能用旧值
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is not None
+    _block_replace(monkeypatch)
+    try:
+        inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "new")])
+    except OSError:
+        pass
+    monkeypatch.undo()
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_a_failed_clear_write_never_leaves_the_old_transcript_usable(tmp_path, monkeypatch):
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    _block_replace(monkeypatch)
+    try:
+        inputtranscript.bind(tmp_path, "s.py", None, [])
+    except OSError:
+        pass
+    monkeypatch.undo()
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_when_the_old_binding_cannot_be_invalidated_the_execution_is_not_bound(
+    tmp_path, monkeypatch
+):
+    class _W:
+        figures_dir = str(tmp_path)
+        script_name = "s.py"
+        build_failed = False
+
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    _block_replace(monkeypatch)
+    from pathlib import Path
+
+    def no_unlink(self, *a, **k):
+        raise OSError("blocked")
+
+    monkeypatch.setattr(Path, "unlink", no_unlink)
+    import pytest
+
+    with pytest.raises(inputtranscript.StaleTranscriptError):
+        inputbroker.finished(_W(), [_rec(1, "new")])
+
+
+class _Worker:
+    def __init__(self, root):
+        self.figures_dir = str(root)
+        self.script_name = "s.py"
+        self.out_dir = None
+        self.build_failed = False
+
+
+def test_an_edit_during_a_running_build_makes_its_late_transcript_unusable(tmp_path):
+    # r4221675644：build 在飞 → 改答案（forget）→ 旧 build 事后才绑定 → 冷重放不能用旧值
+    w = _Worker(tmp_path)
+    with inputbroker.serving(w):  # 进门取基线
+        inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)  # 用户改答案
+    inputbroker.finished(w, [_rec(1, "old")])  # 旧 build 事后绑定
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_the_reader_ignores_a_transcript_whose_basis_does_not_match(tmp_path):
+    # r4221675644：不依赖写入顺序——即使旧基线的转录被写进了盘，读者也不认
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is not None
+    path = inputtranscript.store_path(tmp_path)
+    data = json.loads(path.read_text("utf-8"))
+    data["generations"] = {"s.py": "g_changed"}
+    path.write_text(json.dumps(data), "utf-8")
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_a_single_configuration_edit_only_invalidates_that_configuration(tmp_path):
+    inputtranscript.bind(tmp_path, "s.py", "rc_a", [_rec(1, "a")])
+    inputtranscript.bind(tmp_path, "s.py", "rc_b", [_rec(1, "b")])
+    inputtranscript.forget(tmp_path, "s.py", run_config="rc_a", all_configs=False)
+    assert inputtranscript.lookup(tmp_path, "s.py", "rc_a") is None
+    assert inputtranscript.lookup(tmp_path, "s.py", "rc_b") is not None

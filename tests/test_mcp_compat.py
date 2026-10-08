@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -350,6 +351,46 @@ def test_runtime_input_without_a_ui_is_a_structured_requirement_not_a_wait(
         assert "不要" in body["recovery"] and "口令" in body["recovery"]
 
 
+def test_a_first_time_getpass_is_a_secret_even_though_the_reason_is_no_interactive_client(
+    project, monkeypatch
+):
+    """#818 r4220889705：首次 getpass 的 reason 是 no_interactive_client（secret_required 只在重放已记录的口令时用）；
+    引擎带出的读取方式 `input_kind == getpass` 才是口令的凭据——input.secret 为真并带「不要把口令交给 Agent」。"""
+    monkeypatch.setattr(
+        bridge.engine_pool,
+        "get",
+        _raising(
+            "script_needs_input",
+            extra={
+                "prompt": "Password:",
+                "reason": inputbroker.REASON_NO_CLIENT,
+                "input_kind": "getpass",
+            },
+        ),
+    )
+    body = _open(project)["structuredContent"]
+    assert body["input"] == {"reason": inputbroker.REASON_NO_CLIENT, "secret": True}
+    assert "不要让用户把口令发给你" in body["recovery"]
+
+
+def test_a_plain_input_stays_non_secret_and_carries_no_warning(project, monkeypatch):
+    monkeypatch.setattr(
+        bridge.engine_pool,
+        "get",
+        _raising(
+            "script_needs_input",
+            extra={
+                "prompt": "阈值",
+                "reason": inputbroker.REASON_NO_CLIENT,
+                "input_kind": "input",
+            },
+        ),
+    )
+    body = _open(project)["structuredContent"]
+    assert body["input"] == {"reason": inputbroker.REASON_NO_CLIENT, "secret": False}
+    assert "口令" not in body["recovery"]
+
+
 def test_missing_arguments_carry_a_read_only_schema_summary_and_the_argv_answer(
     project, monkeypatch
 ):
@@ -642,3 +683,312 @@ def test_argv_paths_inside_the_workspace_and_plain_values_still_pass(project, po
     ok = _open(project, argv=["--freq", "2", "--out", inside, "--mode=a", "sub/dir.txt", "-1"])
     assert ok["structuredContent"].get("ok") is True
     assert pool.runs and pool.runs[-1] is not None
+
+
+@pytest.fixture
+def project_cwd(project, monkeypatch):
+    """worker 在脚本目录里跑（`workdir=project`）：相对路径落在真实目录里，符号链接会被跟随。"""
+    from tavotto.engine import workdir
+
+    monkeypatch.setattr(bridge.engine_workdir, "mode_for", lambda _p: workdir.MODE_PROJECT)
+    return project
+
+
+@pytest.mark.parametrize("shape", ["bare", "equals", "short_attached", "dir_link"])
+def test_relative_argv_escaping_through_a_symlink_is_refused(
+    project_cwd, pool, tmp_path_factory, shape
+):
+    """cwd 里的 `escape -> /outside`：`escape/victim.txt` 没有 `..`，但会截断项目外的文件（r4220778822）。"""
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "victim.txt").write_text("keep", encoding="utf-8")
+    try:
+        os.symlink(outside, project_cwd / "escape", target_is_directory=True)
+        os.symlink(outside / "victim.txt", project_cwd / "victim_link.txt")
+    except OSError:
+        pytest.skip("本机不能建符号链接")
+    token = {
+        "bare": "escape/victim.txt",
+        "equals": "--out=escape/new.txt",
+        "short_attached": "-oescape/victim.txt",
+        "dir_link": "victim_link.txt",
+    }[shape]
+    before = runconfig.configs_of(str(project_cwd), "fig1.py")
+    body = _open(project_cwd, argv=["--freq", "1", "--out", token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+    assert runconfig.configs_of(str(project_cwd), "fig1.py") == before
+    assert (outside / "victim.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_relative_argv_inside_the_project_is_allowed_in_the_run_cwd(project_cwd, pool):
+    (project_cwd / "sub").mkdir()
+    ok = _open(
+        project_cwd,
+        argv=["--freq", "2", "sub/out.csv", "--out=new/dir/x.txt", "-1", "../figures/y.txt"],
+    )
+    assert ok["structuredContent"].get("ok") is True
+    assert pool.runs and pool.runs[-1] is not None
+
+
+# ---------------------------------------------- #818 第三轮：登记后链接改指根外 / argparse @文件
+def _link_escape(project_cwd, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside")
+    link = project_cwd / "later"
+    inside = project_cwd / "data"
+    inside.mkdir()
+    try:
+        os.symlink(inside, link, target_is_directory=True)
+    except OSError:
+        pytest.skip("本机不能建符号链接")
+
+    def retarget():
+        link.unlink()
+        os.symlink(outside, link, target_is_directory=True)
+
+    return retarget
+
+
+def test_a_registered_run_config_is_rechecked_when_its_symlink_later_leaves_the_root(
+    project_cwd, pool, tmp_path_factory, monkeypatch
+):
+    """登记时 `later/out.txt` 在根内；之后链接改指根外：用 run_config 复用被拒；恢复路径用同一个 `_recheck_run`。"""
+    retarget = _link_escape(project_cwd, tmp_path_factory)
+    first = _open(project_cwd, argv=["--out", "later/out.txt"])["structuredContent"]
+    assert first.get("ok") is True
+    rc = first["run_config"]["id"]
+    runs_before = len(pool.runs)
+    retarget()
+    body = _open(project_cwd, run_config=rc)["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert len(pool.runs) == runs_before
+    run = runconfig.selection(str(project_cwd), rc, script="fig1.py")
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge._recheck_run(run, str(project_cwd), "fig1.py")  # 恢复路径用的同一个复核
+    assert exc.value.code == "argv_path_out_of_scope"
+
+
+def test_default_run_config_is_rechecked_before_it_is_reused(project_cwd, pool, tmp_path_factory):
+    retarget = _link_escape(project_cwd, tmp_path_factory)
+    runconfig.set_default(
+        str(project_cwd),
+        "fig1.py",
+        runconfig.put(str(project_cwd), "fig1.py", ["--out", "later/out.txt"]).id,
+    )
+    retarget()
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge._choose_run(str(project_cwd), "fig1.py", None, None)
+    assert exc.value.code == "argv_path_out_of_scope"
+
+
+@pytest.mark.parametrize(
+    "token", ["@/etc/passwd", "@args.txt", "--out=@args.txt", "-o@args.txt", "@"]
+)
+def test_argparse_response_files_are_refused(project, pool, token):
+    """`fromfile_prefix_chars='@'`：argparse 去掉 @ 读文件，文件内容还能再给越界目标。MCP 的 argv 里一律拒。"""
+    before = runconfig.configs_of(str(project), "fig1.py")
+    body = _open(project, argv=["--freq", "1", token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+    assert runconfig.configs_of(str(project), "fig1.py") == before
+
+
+# ------------------------------------------------ r4221289208..31：重拉 worker 的复核 / 任意响应文件前缀
+def _scope_code(project, argv):
+    try:
+        bridge._check_argv_scope(argv, str(project), "fig1.py")
+    except bridge.BridgeError as exc:
+        return exc.code
+    return None
+
+
+def _set_script(project, body):
+    (Path(project) / "fig1.py").write_text(body, encoding="utf-8")
+
+
+ARGPARSE_PCT = (
+    "import argparse\n"
+    "p = argparse.ArgumentParser(fromfile_prefix_chars='%+')\n"
+    "p.add_argument('--freq', type=float)\n"
+    "args = p.parse_args()\n"
+)
+
+
+@pytest.mark.parametrize(
+    "token", ["%args.txt", "+args.txt", "--out=%args.txt", "-o+args.txt", "@args.txt", "%"]
+)
+def test_declared_response_file_prefixes_are_refused(project, pool, token):
+    """脚本声明 `fromfile_prefix_chars='%+'`：以这些字符（及恒拒的 @）开头的整项 / `--x=值` / `-oVALUE` 都拒。"""
+    _set_script(project, ARGPARSE_PCT)
+    body = _open(project, argv=["--freq", "1", token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+
+
+@pytest.mark.parametrize(
+    "token", ["%x", "+1", "--k=%x", "-k+x", "$y", "~", " lead", "aoutside.txt", "2", "--freq"]
+)
+@pytest.mark.parametrize(
+    "script",
+    [
+        # 前缀不是字面量
+        "import argparse\nPFX='%'\np = argparse.ArgumentParser(fromfile_prefix_chars=PFX)\np.parse_args()\n",
+        # 关键字藏在 **cfg 里
+        "import argparse\ncfg={}\np = argparse.ArgumentParser(**cfg)\np.parse_args()\n",
+        # 没有 argparse 证据（解析器可能在别的模块里造）
+        "from helper import make_parser\nmake_parser().parse_args()\n",
+        # 语法错误
+        "def (:\n",
+        # r4221559036：别名 + **cfg
+        "from argparse import ArgumentParser as AP\ncfg={'fromfile_prefix_chars':'%'}\np = AP(**cfg)\np.parse_args()\n",
+        # 前缀来自变量（别名模块）
+        "import argparse as ap\nv='%'\np = ap.ArgumentParser(fromfile_prefix_chars=v)\np.parse_args()\n",
+        # 子类构造
+        "import argparse\nclass P(argparse.ArgumentParser):\n    pass\np = P(fromfile_prefix_chars='%')\np.parse_args()\n",
+        # parents=
+        "import argparse\nb = argparse.ArgumentParser(add_help=False)\np = argparse.ArgumentParser(parents=[b])\np.parse_args()\n",
+        # 再赋值的别名 / 位置参数 / 星号导入
+        "import argparse\nQ = argparse.ArgumentParser\np = Q(fromfile_prefix_chars='%')\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser('prog')\np.parse_args()\n",
+        "from argparse import *\np = ArgumentParser(fromfile_prefix_chars='%')\np.parse_args()\n",
+        # r4221772700：构造之后改写解析器 / 动态取值（白名单口径）
+        "import argparse\np = argparse.ArgumentParser()\np.fromfile_prefix_chars = '%'\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\nsetattr(p, 'fromfile_prefix_chars', '%')\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\nvars(p)['fromfile_prefix_chars'] = '%'\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\nexec('p.fromfile_' + 'prefix_chars = \"%\"')\np.parse_args()\n",
+        "import argparse\nd = {'fromfile_prefix_chars': '%'}\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\np.__dict__.update(x=1)\np.parse_args()\n",
+        "import argparse, importlib\np = argparse.ArgumentParser()\np.parse_args()\n",
+    ],
+)
+def test_unprovable_script_refuses_any_argv(project, script, token):
+    """r4221652217：说不准脚本的前缀集合 -> MCP argv 一概不收（任何 token，含字母 / 数字开头），不再按首字符猜。"""
+    _set_script(project, script)
+    assert _scope_code(project, [token]) == "argv_unverifiable"
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["2", "-1", "--freq", "--freq=2", "-f2", "中 文", "", "a/b.csv", "./x", "_x", "--", "#x"],
+)
+def test_exactly_proven_no_prefix_script_passes_ordinary_argv(project, token):
+    _set_script(project, ARGPARSE_PCT.replace("'%+'", "None"))
+    assert _scope_code(project, [token]) is None
+    _set_script(project, ARGPARSE_PCT.replace(", fromfile_prefix_chars='%+'", ""))
+    assert _scope_code(project, [token]) is None
+
+
+def test_unverifiable_argv_does_not_run_or_register(project, pool):
+    _set_script(project, "from helper import make_parser\nmake_parser().parse_args()\n")
+    before = runconfig.configs_of(str(project), "fig1.py")
+    body = _open(project, argv=["--freq", "1"])["structuredContent"]
+    assert body["code"] == "argv_unverifiable"
+    assert "Tavotto" in body["recovery"]
+    assert pool.runs == []
+    assert runconfig.configs_of(str(project), "fig1.py") == before
+    # 没有 argv 时这个脚本照常打开（GUI / 无参数路径不受影响）
+    assert _open(project)["structuredContent"].get("ok") is True
+
+
+def test_exact_prefix_a_rejects_tokens_led_by_a(project):
+    _set_script(project, ARGPARSE_PCT.replace("'%+'", "'a'"))
+    assert _scope_code(project, ["aoutside.txt"]) == "argv_path_out_of_scope"
+    assert _scope_code(project, ["--out=aoutside.txt"]) == "argv_path_out_of_scope"
+    assert _scope_code(project, ["boutside.txt"]) is None
+
+
+def test_pure_literal_alias_script_stays_exact(project):
+    """r4221559036：别名 import + 纯字面量仍可证明（精确集合），不退化成保守口径。"""
+    from tavotto.engine import scriptargs
+
+    path = Path(project) / "fig1.py"
+    path.write_text(
+        "from argparse import ArgumentParser as AP\n"
+        "p = AP(fromfile_prefix_chars='%', description='x')\np.parse_args()\n",
+        encoding="utf-8",
+    )
+    assert scriptargs.response_file_prefixes(path) == (frozenset("%"), True)
+    path.write_text(
+        "import argparse as ap\np = ap.ArgumentParser()\np.parse_args()\n", encoding="utf-8"
+    )
+    assert scriptargs.response_file_prefixes(path) == (frozenset(), True)
+    assert _scope_code(project, ["#x"]) is None
+
+
+def test_exact_prefix_set_does_not_over_reject_other_symbols(project):
+    """可证明的前缀集合 = `%+`：`#x` 不在其中，放行；conservative 口径只用于说不准的脚本。"""
+    _set_script(project, ARGPARSE_PCT)
+    assert _scope_code(project, ["#x"]) is None
+    assert _scope_code(project, ["%x"]) == "argv_path_out_of_scope"
+
+
+def test_worker_respawn_rechecks_the_frozen_run(project_cwd, pool, tmp_path_factory, monkeypatch):
+    """打开时在根内的相对路径，之后符号链接改指根外：worker 被淘汰 / 死亡后 `Session.acquire()` 重建前必须重查，
+    一次性重放（`verify_replay`）同理；池一次都不许被调。"""
+    one_shots: list = []
+    monkeypatch.setattr(
+        bridge.engine_pool, "one_shot", lambda *a, **k: one_shots.append(k) or pool.worker
+    )
+    retarget = _link_escape(project_cwd, tmp_path_factory)
+    first = _open(project_cwd, argv=["--out", "later/out.txt"])["structuredContent"]
+    assert first.get("ok") is True
+    sid = first["session_id"]
+    session = bridge.get_session(sid)
+    spawned = len(pool.runs)
+    assert session.acquire() is pool.worker  # 没变：照常
+    assert len(pool.runs) == spawned + 1
+    retarget()
+    with pytest.raises(bridge.BridgeError) as exc:
+        session.acquire()
+    assert exc.value.code == "argv_path_out_of_scope"
+    assert len(pool.runs) == spawned + 1
+    with pytest.raises(bridge.BridgeError) as exc:
+        bridge.verify_replay(sid)
+    assert exc.value.code == "argv_path_out_of_scope"
+    assert one_shots == []
+
+
+def test_bridge_has_a_single_worker_spawn_point():
+    """结构性看护：`engine_pool.get` / `.one_shot` 在桥里只许出现在 `_spawn_worker` 里；
+    新入口想直接调池会红，必须改走带复核的那一个函数。"""
+    import ast
+
+    tree = ast.parse(Path(bridge.__file__).read_text(encoding="utf-8"))
+    hits: list[tuple[str, str]] = []
+
+    class V(ast.NodeVisitor):
+        def __init__(self):
+            self.fn = [""]
+
+        def visit_FunctionDef(self, node):
+            self.fn.append(node.name)
+            self.generic_visit(node)
+            self.fn.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Attribute(self, node):
+            if (
+                isinstance(node.value, ast.Name)
+                and node.value.id == "engine_pool"
+                and node.attr in {"get", "one_shot", "EngineWorker", "_spawn_spec"}
+            ):
+                hits.append((self.fn[-1], node.attr))
+            self.generic_visit(node)
+
+    V().visit(tree)
+    assert {fn for fn, _ in hits} == {"_spawn_worker"}, hits
+
+
+def test_pure_literal_scripts_stay_exact_under_whitelist(project):
+    """r4221772700：白名单只拒动态 / 改写形状；纯字面量脚本（含合法关键字）仍是 exact。"""
+    from tavotto.engine import scriptargs
+
+    path = Path(project) / "fig1.py"
+    path.write_text(ARGPARSE_PCT, encoding="utf-8")
+    assert scriptargs.response_file_prefixes(path) == (frozenset("%+"), True)
+    path.write_text(
+        "import argparse\np = argparse.ArgumentParser(description='d')\n"
+        "p.add_argument('--freq', type=float, default=1.0)\np.parse_args()\n",
+        encoding="utf-8",
+    )
+    assert scriptargs.response_file_prefixes(path) == (frozenset(), True)

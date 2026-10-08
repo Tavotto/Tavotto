@@ -228,6 +228,7 @@
     "script_input_timeout": "The script waited 10 minutes for an answer to “{{prompt}}”, got none, and failed after being told the input had ended. Run it again and answer.",
     "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project.",
     "script_input_stream_gone": "The event stream disconnected; reconnecting.",
+    "script_input_transcript_failed": "Couldn’t clear this script’s previous run record, so the answer was left unchanged. Please try again.",
     "missing_input": "The script's data file can't be found: {{error}}",
     "input_remap_chosen_invalid": "That location can't be used: {{path}}. Pick an existing file or folder.",
     "input_remap_not_found_in_dir": "There is no {{name}} in {{path}}. Pick the folder that contains it, or pick the file itself.",
@@ -254,6 +255,7 @@
     "environment_changed": "That environment was rebuilt before you confirmed. Review it again, then confirm.",
     "environment_generation_required": "Adopting an environment needs the version you were shown. Review it again, then confirm.",
     "environment_candidate_gone": "That environment can no longer be found. Check again.",
+    "environment_save_failed": "Couldn't save that environment to the project settings (read-only or disk full), so it was not adopted.",
     "environment_locked": "A globally chosen Python is in effect, so a project-level choice would not be used. Clear the global choice first.",
     "environment_check_running": "An environment check is already running for this project."
   },

@@ -228,6 +228,7 @@
     "script_input_timeout": "脚本在等输入「{{prompt}}」，等了 10 分钟没有回答，按输入结束处理后脚本失败了。重新运行并作答即可。",
     "script_needs_input": "脚本需要输入：「{{prompt}}」。请在 Tavotto 界面里运行一次这个脚本并作答，答案会按项目记住。",
     "script_input_stream_gone": "事件流已经断开，正在重新连接。",
+    "script_input_transcript_failed": "没能作废这个脚本的旧执行记录，答案没有改动，请稍后重试。",
     "missing_input": "脚本要读取的数据文件找不到：{{error}}",
     "input_remap_chosen_invalid": "这个位置用不了：{{path}}。请选一个存在的文件或文件夹。",
     "input_remap_not_found_in_dir": "文件夹 {{path}} 里没有 {{name}}。请选它所在的那个文件夹，或直接选这个文件。",
@@ -254,6 +255,7 @@
     "environment_changed": "这个环境在你确认之前被重建过，请重新查看再确认",
     "environment_generation_required": "采用候选环境需要带上你确认时看到的环境版本，请重新查看再确认",
     "environment_candidate_gone": "这个环境已经找不到了，请重新检查",
+    "environment_save_failed": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
     "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
     "environment_check_running": "这个项目的环境检查正在进行"
   },

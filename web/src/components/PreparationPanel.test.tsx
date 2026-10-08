@@ -40,6 +40,11 @@ import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useRenderStore } from '@/store/renderStore'
+import { useDocumentStore } from '@/store/documentStore'
+import { useEnvStore } from '@/store/envStore'
+import { renderKeyOf } from '@/store/renderStore'
+import { seedExactRender } from '@/test/renderFixtures'
+import type { PanelObject } from '@/types/document'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useUiStore } from '@/store/uiStore'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
@@ -264,7 +269,27 @@ beforeEach(() => {
   useProjectPreparationStore.getState().clear()
   useScriptInputStore.setState({ queue: [], presenters: [], busy: false, error: null })
   useRenderStore.setState({ byKey: {} })
+  useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [] } }))
+  // 入口动作做完之后，画布上有这张图的面板（真实实现由 `addRuntimePanelToCanvas` / `openFastEdit` 完成）
+  vi.mocked(openFastEdit).mockImplementation((id: string) => {
+    putPanel(id)
+    return 'editing'
+  })
+  vi.mocked(addRuntimePanelToCanvas).mockImplementation(((d: CapturedFigureDescriptor) => putPanel(d.asset_id)) as never)
 })
+
+const panelFor = (fileId: string): PanelObject =>
+  ({
+    id: `panel-${fileId}`, type: 'panel', x: 0, y: 0, w: 100, h: 80, fileId, fileKind: 'png',
+    nativeW: 100, nativeH: 80, script: 'plot.py', overrides: [],
+  }) as unknown as PanelObject
+function putPanel(fileId: string): PanelObject {
+  const p = panelFor(fileId)
+  useDocumentStore.setState((st) => ({
+    doc: { ...st.doc, objects: [...st.doc.objects.filter((o) => o.id !== p.id), p] },
+  }))
+  return p
+}
 
 afterEach(async () => {
   await act(async () => root?.unmount())
@@ -297,7 +322,7 @@ describe('主按钮就是后端给的那件事', () => {
     expect(primary()?.dataset.prepPrimary).toBe('run')
     mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
     await act(async () => primary()!.click())
-    expect(mockAct).toHaveBeenCalledWith('psess-1', { action_id: 'act-run', expected_config_revision: 1 }, 'pj-a')
+    expect(mockAct).toHaveBeenCalledWith('psess-1', { action_id: 'act-run', expected_config_revision: 1 }, 'pj-a', expect.any(AbortSignal))
   })
 
   it('报告里没有 run 动作：就没有「确认并运行」', async () => {
@@ -359,18 +384,204 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(vi.mocked(probeScript)).not.toHaveBeenCalled()
     expect(mockCreate).toHaveBeenCalledTimes(1) // 只有打开时那一次只读检查
     expect(panel().dataset.prepState).toBe('edit_opening')
+    await act(async () => seedExactRender(panelFor('runtime:plot.py#a'), { elements: [] } as never))
+    expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
+describe('await 之后复核项目归属：A 的描述符绝不落进 B 的文档', () => {
+  const deferAssets = () => {
+    let release!: () => void
+    useRuntimeAssetStore.setState({ assets: [], loadAssets: () => new Promise<void>((r) => (release = r)) })
+    return () => release()
+  }
+  it('进入编辑：loadAssets 挂起时切到 B，解析后不调 addRuntimePanelToCanvas / openFastEdit，B 的文档不变', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const release = deferAssets()
+    await act(async () => primary()!.click())
+    const before = useDocumentStore.getState().doc
     await act(async () => {
-      useRenderStore.setState({
-        byKey: {
-          [`runtime:plot.py#a`]: {
-            ...(useRenderStore.getState().byKey['x'] ?? {}),
-            fileId: 'runtime:plot.py#a',
-            status: 'ready',
-            manifest: { elements: [] } as never,
-          } as never,
-        },
-      })
+      setCurrentProjectId('pj-b')
+      useProjectPreparationStore.getState().clear() // 与 projectStore 切项目时一样换代
     })
+    await act(async () => release())
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+    expect(vi.mocked(openFastEdit)).not.toHaveBeenCalled()
+    expect(useDocumentStore.getState().doc).toBe(before)
+  })
+  it('A → B → A（回到同一个项目 id）也算换过：同样放弃', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const release = deferAssets()
+    await act(async () => primary()!.click())
+    await act(async () => {
+      setCurrentProjectId('pj-b')
+      setCurrentProjectId('pj-a')
+    })
+    await act(async () => release())
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+    expect(vi.mocked(openFastEdit)).not.toHaveBeenCalled()
+  })
+  it('结果对话框开着时切项目（组件还没卸载）：点「加入画布」不改文档', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click())
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    await act(async () => setCurrentProjectId('pj-b'))
+    await act(async () => add[1].click())
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+  })
+})
+
+describe('「已进入编辑」只认入口动作创建的那个面板的精确新渲染', () => {
+  it('markStale() 留下的旧渲染、同文件别的变体，都不算；该键上非 stale 的精确 manifest 才算', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const stalePanel = panelFor('runtime:plot.py#a')
+    // 点击之前，画布上这张图已经有一份被 markStale() 留下的旧渲染，以及一个别的 override 变体的就绪渲染
+    useRenderStore.getState().patch(renderKeyOf(stalePanel), {
+      fileId: 'runtime:plot.py#a', status: 'ready', manifest: { elements: [] } as never, stale: true,
+      lastPatches: '[]', wantPatches: '[]',
+    })
+    useRenderStore.getState().patch('runtime:plot.py#a|other-variant', {
+      fileId: 'runtime:plot.py#a', status: 'ready', manifest: { elements: [] } as never, stale: false,
+      lastPatches: '[{"x":1}]', wantPatches: '[{"x":1}]',
+    })
+    await act(async () => primary()!.click())
+    expect(panel().dataset.prepState).toBe('edit_opening')
+    // 新渲染到了（同一键上非 stale、与 overrides 对得上）才说已进入编辑
+    await act(async () => seedExactRender(stalePanel, { elements: [] } as never))
+    expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
+describe('「改用内置环境」只在需求允许选环境时给', () => {
+  const lockedEnv = () => {
+    const base = STATES.env.requirements![0] as { payload: { decision: Record<string, unknown> } }
+    return {
+      ...STATES.env,
+      requirements: [{ ...base, payload: { ...base.payload, decision: { ...base.payload.decision, locked_by: { source: 'global' } } } }],
+    } as Partial<PreparationReport>
+  }
+
+  it('locked_by 在：详情里没有这个按钮（点了只会丢掉项目偏好而环境不变）', async () => {
+    await mount()
+    await openWith(report(lockedEnv()))
+    const labels = Array.from(panel().querySelectorAll('button')).map((b) => b.textContent)
+    expect(labels).not.toContain('改用内置环境')
+  })
+
+  it('没锁时有；设置失败要显示出来', async () => {
+    await mount()
+    await openWith(report(STATES.env))
+    const btn = panel().querySelector('[data-prep-use-builtin]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    const spy = vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockResolvedValueOnce('设置失败了')
+    useEnvStore.setState({ setProjectPython: spy as never })
+    await act(async () => btn.click())
+    expect(spy).toHaveBeenCalledWith(null)
+    expect(panel().querySelector('[data-prep-env-error]')?.textContent).toBe('设置失败了')
+  })
+})
+
+describe('多张图的结果对话框', () => {
+  it('从对话框里加进画布的图也记入编辑记录（面板才会往前走）', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click()) // 多张：打开结果对话框
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    expect(add.length).toBe(3)
+    await act(async () => add[1].click())
+    expect(vi.mocked(addRuntimePanelToCanvas)).toHaveBeenCalledWith(fig('b'))
+    expect(useProjectPreparationStore.getState().entries['script:plot.py'].editing).toEqual(['runtime:plot.py#b'])
+  })
+})
+
+describe('切换聚焦条目：面板的条目局部状态不带到另一个脚本', () => {
+  const otherReport = (over: Partial<PreparationReport> = {}) =>
+    report({
+      ...over,
+      session_id: 'psess-2',
+      target: { kind: 'script', script: 'other.py', entry: '__main__', asset_id: null, stem: null },
+    })
+  const openOther = async (over: Partial<PreparationReport> = {}) => {
+    mockCreate.mockResolvedValueOnce(otherReport(over))
+    await act(async () => {
+      await useProjectPreparationStore.getState().open({ script: 'other.py' })
+    })
+  }
+  const focusKey = async (key: string) => {
+    await act(async () => useProjectPreparationStore.setState({ focus: key }))
+  }
+
+  it('A 的本地失败文案（采用环境失败）不出现在 B 上；切回 A 也是干净的', async () => {
+    await mount()
+    await openOther() // B 先开好（报告已到），再回 A 制造失败，最后只切焦点：切换时两份报告的修订 / 观察序号相同
+    await openWith(report(STATES.env))
+    const spy = vi.spyOn(useEnvStore.getState(), 'adoptCandidate').mockResolvedValue('采用失败了')
+    useEnvStore.setState({ adoptCandidate: spy as never })
+    expect(primary()?.dataset.prepPrimary).toBe('adopt')
+    await act(async () => primary()!.click())
+    expect(panel().dataset.prepState).toBe('action_failed')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('采用失败了')
+    await focusKey('script:other.py')
+    expect(panel().getAttribute('aria-label')).toContain('other.py')
+    expect(panel().dataset.prepState).not.toBe('action_failed')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).not.toBe('采用失败了')
+    await focusKey('script:plot.py')
+    expect(panel().dataset.prepState).not.toBe('action_failed')
+  })
+
+  it('A 的多图结果对话框开着，切到 B：对话框不跟过去（切回 A 也是关着的）', async () => {
+    await mount()
+    await openOther()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click())
+    expect(document.body.querySelectorAll('[role="dialog"] ul button').length).toBe(3)
+    await focusKey('script:other.py')
+    expect(panel().getAttribute('aria-label')).toContain('other.py')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    await focusKey('script:plot.py')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('详情里「改用内置环境」的失败文案同样不带过去', async () => {
+    await mount()
+    await openOther(STATES.env) // B 也有「改用内置环境」按钮，才看得出失败文案是不是被带过来
+    await openWith(report(STATES.env))
+    const spy = vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockResolvedValueOnce('设置失败了')
+    useEnvStore.setState({ setProjectPython: spy as never })
+    await act(async () => (panel().querySelector('[data-prep-use-builtin]') as HTMLButtonElement).click())
+    expect(panel().querySelector('[data-prep-env-error]')).not.toBeNull()
+    await focusKey('script:other.py')
+    expect(panel().querySelector('[data-prep-use-builtin]')).not.toBeNull()
+    expect(panel().querySelector('[data-prep-env-error]')).toBeNull()
+  })
+})
+
+describe('结果对话框记录的是它刚加进画布的那个面板', () => {
+  it('同一素材文档里已有一个面板（旧的就绪渲染）：新加的还在渲染时不报就绪', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    // 文档里已有 b 的旧实例（用户改过样式 = 另一个渲染键），且它有一份就绪的精确渲染；
+    // 按素材 id 回找会选中它，它的就绪渲染会让「首次编辑渲染」立刻成立
+    const old = { ...panelFor('runtime:plot.py#b'), id: 'panel-old-b', overrides: [{ op: 'x' }] } as unknown as PanelObject
+    useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [...st.doc.objects, old] } }))
+    seedExactRender(old, { elements: [] } as never)
+    // 对话框加图：新实例是另一个 id
+    const fresh = { ...panelFor('runtime:plot.py#b'), id: 'panel-new-b' } as PanelObject
+    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => {
+      useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [...st.doc.objects, fresh] } }))
+      return fresh
+    }) as never)
+    await act(async () => primary()!.click())
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    await act(async () => add[1].click())
+    const rec = useProjectPreparationStore.getState().entries['script:plot.py'].editRenders
+    expect(rec['runtime:plot.py#b']?.panelId).toBe('panel-new-b')
+    expect(panel().dataset.prepState).toBe('edit_opening') // 旧实例的就绪渲染不算
+    await act(async () => seedExactRender(fresh, { elements: [] } as never))
     expect(panel().dataset.prepState).toBe('edit_ready')
   })
 })
