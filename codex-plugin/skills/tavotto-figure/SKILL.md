@@ -102,7 +102,7 @@ python3 scripts/prefs.py --set font="Times New Roman" --set legend_frame=off --j
 4. **交付物是矢量 PDF**（`imshow` 的位图除外，≥300 dpi）。
 5. **可复现**：固定随机种子，不 `plt.show()`。
 6. **只用 Matplotlib 出图、不弹窗不等输入**：tkinter / Qt 对话框、`input()`、Pillow 直接画图
-   在 Tavotto 里跑不起来。依赖：处处可用的只有 numpy / matplotlib；默认环境没有的包（如 ROOT），
+   在 Tavotto 里跑不起来。依赖：处处可用的只有 numpy / matplotlib / pillow（pillow 只读图、处理数据，出图仍只用 Matplotlib）；默认环境没有的包（如 ROOT），
    要么用户在 Tavotto 里选了装有它的 Python，要么拆成先导出 CSV 的单独脚本。改用户已有脚本时
    保留原计算与配色。细则见 `references/figure-contract.md` 第 6 节。
 
