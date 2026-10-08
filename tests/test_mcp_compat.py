@@ -850,6 +850,14 @@ def test_declared_response_file_prefixes_are_refused(project, pool, token):
         "import argparse\nQ = argparse.ArgumentParser\np = Q(fromfile_prefix_chars='%')\np.parse_args()\n",
         "import argparse\np = argparse.ArgumentParser('prog')\np.parse_args()\n",
         "from argparse import *\np = ArgumentParser(fromfile_prefix_chars='%')\np.parse_args()\n",
+        # r4221772700：构造之后改写解析器 / 动态取值（白名单口径）
+        "import argparse\np = argparse.ArgumentParser()\np.fromfile_prefix_chars = '%'\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\nsetattr(p, 'fromfile_prefix_chars', '%')\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\nvars(p)['fromfile_prefix_chars'] = '%'\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\nexec('p.fromfile_' + 'prefix_chars = \"%\"')\np.parse_args()\n",
+        "import argparse\nd = {'fromfile_prefix_chars': '%'}\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\np.__dict__.update(x=1)\np.parse_args()\n",
+        "import argparse, importlib\np = argparse.ArgumentParser()\np.parse_args()\n",
     ],
 )
 def test_unprovable_script_refuses_any_argv(project, script, token):
@@ -969,3 +977,18 @@ def test_bridge_has_a_single_worker_spawn_point():
 
     V().visit(tree)
     assert {fn for fn, _ in hits} == {"_spawn_worker"}, hits
+
+
+def test_pure_literal_scripts_stay_exact_under_whitelist(project):
+    """r4221772700：白名单只拒动态 / 改写形状；纯字面量脚本（含合法关键字）仍是 exact。"""
+    from tavotto.engine import scriptargs
+
+    path = Path(project) / "fig1.py"
+    path.write_text(ARGPARSE_PCT, encoding="utf-8")
+    assert scriptargs.response_file_prefixes(path) == (frozenset("%+"), True)
+    path.write_text(
+        "import argparse\np = argparse.ArgumentParser(description='d')\n"
+        "p.add_argument('--freq', type=float, default=1.0)\np.parse_args()\n",
+        encoding="utf-8",
+    )
+    assert scriptargs.response_file_prefixes(path) == (frozenset(), True)

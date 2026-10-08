@@ -766,6 +766,7 @@ def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], boo
     names = _Names(tree)
     chars: set[str] = set()
     proven_funcs: set[int] = set()
+    allowed_kw: set[int] = set()
     exact = True
     if "*" in names.direct:  # `from argparse import *`：名字无从解析
         exact = False
@@ -787,6 +788,9 @@ def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], boo
                         proven = False
             if proven:
                 proven_funcs.add(id(node.func))
+                allowed_kw.update(
+                    id(kw) for kw in node.keywords if kw.arg == "fromfile_prefix_chars"
+                )
             else:
                 exact = False
         elif any(kw.arg == "fromfile_prefix_chars" for kw in node.keywords):
@@ -795,7 +799,52 @@ def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], boo
         # 任何不是“被证明的直接构造”的 ArgumentParser 引用：子类、`P = AP`、作参数传递……
         if id(node) not in proven_funcs and names.argparse_name(node) == "ArgumentParser":
             exact = False
+    if exact and not _whitelist_clean(tree, allowed_kw):
+        exact = False
     return frozenset(chars), exact
+
+
+# r4221772700：「exact」靠白名单证明，不再逐个堵绕过形状。出现这些名字 = 前缀可能在运行期被改写 / 动态取得。
+_DYNAMIC_NAMES = frozenset(
+    {
+        "setattr",
+        "getattr",
+        "delattr",
+        "vars",
+        "__dict__",
+        "__setattr__",
+        "__getattribute__",
+        "__builtins__",
+        "builtins",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+        "globals",
+        "locals",
+        "modules",
+    }
+)
+_PREFIX_IDENT = "fromfile_prefix_chars"
+
+
+def _whitelist_clean(tree: ast.AST, allowed_kw: set[int]) -> bool:
+    """`fromfile_prefix_chars` 只许作为“被证明的 ArgumentParser 构造”的关键字实参出现；源码里没有任何
+    动态取值 / 改写的形式。逐节点扫描所有字符串字段（Name.id / Attribute.attr / keyword.arg / alias /
+    函数名 / 字符串常量 / 字典键……），AST 覆盖不到的一律不通过（调用方按说不准处理）。"""
+    for node in ast.walk(tree):
+        for _field, value in ast.iter_fields(node):
+            if isinstance(value, bytes):
+                value = value.decode("utf-8", "replace")
+            if not isinstance(value, str):
+                continue
+            if _PREFIX_IDENT in value:
+                if isinstance(node, ast.keyword) and id(node) in allowed_kw:
+                    continue
+                return False
+            if value in _DYNAMIC_NAMES or value.split(".")[0] == "importlib":
+                return False
+    return True
 
 
 def _reads_argv_outside_parse(source: str) -> bool:
