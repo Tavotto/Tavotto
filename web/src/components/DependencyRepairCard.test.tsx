@@ -243,6 +243,17 @@ describe('缺依赖的修复卡片', () => {
     expect(installMock.mock.calls[0]).toHaveLength(2)
   })
 
+  it('计划没有影响摘要 —— 不发空串去撞后端的 400，明确停下、不执行', async () => {
+    planMock.mockResolvedValue({ plan: { ...PLAN, impact_digest: undefined } })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render()
+    await click(en('repairUseProjectEnv'))
+    await click(en('repairInstallToProject'))
+    expect(installMock).not.toHaveBeenCalled()
+    expect(useDepRepairStore.getState().errorCode).toBe('dependency_impact_required')
+    expect(useDepRepairStore.getState().busy).toBe(false)
+  })
+
   it('解析不出包名时不给一键安装，只给「指定安装包」', async () => {
     await render({ ...OFFER, requirement: null, targets: [], code: 'dependency_unresolved' })
     expect(text()).toContain(en('repairUnresolved', { module: 'lmfit' }))

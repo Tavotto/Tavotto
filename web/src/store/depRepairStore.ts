@@ -379,6 +379,11 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   prepare: async (target, offerArg) => {
     const offer = offerArg ?? useEnvStore.getState().dependencyPreparation
     if (!offer || get().busy) return
+    // offer 没有影响摘要（不该发生：能授权的计划才会弹框）：不发空串，明确停下，不绑定、不执行
+    if (!offer.impact_digest) {
+      set({ errorCode: 'dependency_impact_required', errorText: '' })
+      return
+    }
     const epoch = projectEpoch
     let planId = ''
     // 脚本行也直接弹框：按发起时的运行记录记归属，切回项目后继续那次试运行。
@@ -421,7 +426,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         },
       })
       // 带上**用户看到的**摘要（offer 的），不是刚绑回来的 plan 的：后端据此拒绝执行用户没确认过的影响
-      await prepareJointDependencies(plan.plan_id, offer.impact_digest ?? '')
+      await prepareJointDependencies(plan.plan_id, offer.impact_digest)
       if (epoch !== projectEpoch) return // 作业照跑、已经收进 A 那格；B 的界面不动
       set({ busy: false })
     } catch (e) {
@@ -541,6 +546,12 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   install: async () => {
     const plan = get().plan
     if (!plan || get().busy) return
+    // 计划没有影响摘要（老后端 / 异常响应）：没有可回显的"用户看到的影响"，后端会拒（dependency_impact_required）。
+    // 不发空串去撞 400，明确停在这里，不执行、不留半截状态
+    if (!plan.impact_digest) {
+      set({ errorCode: 'dependency_impact_required', errorText: '' })
+      return
+    }
     const epoch = projectEpoch
     startedPlans.set(plan.plan_id, currentProjectId())
     set({ busy: true, errorCode: '', errorText: '' })
@@ -576,7 +587,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
         },
       })
       // 带上**界面上这份计划**的摘要（确认页 / 一次授权里已逐字比对过的那份）：后端据此拒绝执行用户没看过的影响
-      await installDependencyPlan(plan.plan_id, plan.impact_digest ?? '')
+      await installDependencyPlan(plan.plan_id, plan.impact_digest as string)
       if (epoch !== projectEpoch) return
       set({ busy: false })
     } catch (e) {
