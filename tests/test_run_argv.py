@@ -293,7 +293,9 @@ class TestRunConfigStore:
             lambda d, c: d["configs"][c].__setitem__("argv", []),
             lambda d, c: d["configs"][c].__setitem__("argv", ["a\x00b"]),
             lambda d, c: d["configs"][c].__setitem__("argv", ["x" * (execspec.MAX_ARGV_CHARS + 1)]),
-            lambda d, c: d["configs"][c].__setitem__("argv", ["a"] * (execspec.MAX_ARGV_TOKENS + 1)),
+            lambda d, c: d["configs"][c].__setitem__(
+                "argv", ["a"] * (execspec.MAX_ARGV_TOKENS + 1)
+            ),
         ],
     )
     def test_a_syntactically_valid_but_malformed_store_is_unreadable_too(self, tmp_path, mutate):
