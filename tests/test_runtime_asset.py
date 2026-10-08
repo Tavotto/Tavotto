@@ -144,36 +144,36 @@ class TestIdentityAndResolve:
         assert got is not None
         assert got["script"] == "a#b.py" and got["stem"] == "x"
 
-    def test_a_stem_that_looks_like_a_run_config_suffix_resolves_exactly_first(self):
-        """stem `plot` 与合法 stem `plot~rc_…` 的 id 会撞：整串精确命中的无参数身份必须先于后缀拆解。"""
+    def test_an_id_with_two_readings_is_unresolvable_not_guessed(self):
+        """同脚本同时登记 `plot` 与 `plot~rc_…`：后者的无参数 id 与前者带参数的 id 逐字相同。
+        注册表照常装载；这个 id 解析为 None（显式失败），两个方向都不猜。"""
         long_stem = "plot~rc_0123456789ab"
-
-        class _Reg:  # 绕过装载期拒绝，直接喂 resolve（beta 写过的注册表 / 手改文件的防线）
-            def entries(self):
-                return {"s.py": _reg_entry(["plot", long_stem])}
-
-        got = runtimeasset.resolve(figcapture.runtime_asset_id("s.py", long_stem), _Reg())
-        assert got["stem"] == long_stem and "run_config" not in got
-        # 带参数的 `plot` 仍能认出（id 另有一个 rc，不与长 stem 相撞）
-        other = figcapture.runtime_asset_id("s.py", "plot", "rc_ffffffffffff")
-        got = runtimeasset.resolve(other, _Reg())
+        reg = _registry_of({"s.py": _reg_entry(["plot", long_stem])})  # 不再拒绝装载
+        assert runtimeasset.resolve(figcapture.runtime_asset_id("s.py", long_stem), reg) is None
+        assert (
+            runtimeasset.resolve(
+                figcapture.runtime_asset_id("s.py", "plot", "rc_0123456789ab"), reg
+            )
+            is None
+        )
+        # 同一对里没撞的 id 不受影响
+        got = runtimeasset.resolve(figcapture.runtime_asset_id("s.py", "plot"), reg)
+        assert got["stem"] == "plot" and "run_config" not in got
+        got = runtimeasset.resolve(
+            figcapture.runtime_asset_id("s.py", "plot", "rc_ffffffffffff"), reg
+        )
         assert got["stem"] == "plot" and got["run_config"] == "rc_ffffffffffff"
 
-    def test_registry_refuses_a_stem_shadowed_by_a_run_config_suffix(self):
-        both = {"s.py": _reg_entry(["plot", "plot~rc_0123456789ab"])}
-        with pytest.raises(RuntimeError, match="运行配置后缀"):
-            _registry_of(both)
-        # 不同脚本不相撞（id 里带脚本）；单独一个形如后缀的 stem 无歧义，照旧可用
-        _registry_of({"s.py": _reg_entry(["plot"]), "t.py": _reg_entry(["plot~rc_0123456789ab"])})
-        reg = _registry_of({"s.py": _reg_entry(["plot~rc_0123456789ab"])})
-        got = runtimeasset.resolve(figcapture.runtime_asset_id("s.py", "plot~rc_0123456789ab"), reg)
-        assert got["stem"] == "plot~rc_0123456789ab" and "run_config" not in got
-
-    def test_registry_suffix_shape_matches_the_run_config_id_format(self):
-        from tavotto.engine import runconfig
-
-        cid = runconfig.ID_PREFIX + "0123456789ab"
-        assert engine_registry._RUN_CONFIG_SHAPED.search(figcapture.RUN_CONFIG_SEP + cid)
+    def test_a_lone_suffix_shaped_stem_or_other_scripts_are_not_ambiguous(self):
+        reg = _registry_of(
+            {"s.py": _reg_entry(["plot"]), "t.py": _reg_entry(["plot~rc_0123456789ab"])}
+        )
+        got = runtimeasset.resolve(figcapture.runtime_asset_id("t.py", "plot~rc_0123456789ab"), reg)
+        assert got["script"] == "t.py" and "run_config" not in got
+        got = runtimeasset.resolve(
+            figcapture.runtime_asset_id("s.py", "plot", "rc_0123456789ab"), reg
+        )
+        assert got["script"] == "s.py" and got["run_config"] == "rc_0123456789ab"
 
     def test_asset_id_is_project_relative_and_machine_stable(self, tmp_path):
         """同一 (脚本, stem) 在两个不同项目根下 id 完全相同——id 里绝不混入

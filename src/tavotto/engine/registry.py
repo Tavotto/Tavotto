@@ -32,7 +32,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 REGISTRY_NAME = "tavotto_registry.json"
@@ -71,22 +70,6 @@ def existing_registry_path(figures_dir: str | Path) -> Path | None:
         if p.is_file():
             return p
     return None
-
-
-#: 运行配置后缀的形状（与 `runconfig.ID_PREFIX` + 12 位十六进制、`figcapture.RUN_CONFIG_SEP` 同源；
-#: 本模块保持纯标准库、不 import 它们，`tests/test_runtime_asset.py` 钉住两边一致）。
-_RUN_CONFIG_SHAPED = re.compile(r"~rc_[0-9a-f]{12}\Z")
-
-
-def _reject_run_config_shadow(source: str, script: str, stem: str, stems: list[str]) -> None:
-    """同一脚本不许同时登记 `plot` 与 `plot~rc_<12 hex>`：后者的无参数资产 id 与前者带运行配置的 id 逐字
-    相同，面板身份有两种读法。只拒绝**并存**；单独一个形如 `x~rc_…` 的 stem 没有歧义，照旧可用。"""
-    m = _RUN_CONFIG_SHAPED.search(stem)
-    if m and stem[: m.start()] in stems:
-        raise RuntimeError(
-            f"{source}: {script} 同时登记了 stem {stem[: m.start()]!r} 与 {stem!r}；"
-            "后者的末尾形如运行配置后缀，资产 id 会与前者带参数的运行重名，请改掉其中一个"
-        )
 
 
 class Registry:
@@ -138,7 +121,6 @@ class Registry:
             if not isinstance(stems, list) or not all(isinstance(s, str) for s in stems):
                 raise RuntimeError(f"{source}: {script} stems 必须是字符串列表")
             for stem in stems:
-                _reject_run_config_shadow(source, script, stem, stems)
                 if stem in index:
                     raise RuntimeError(f"stem 重复注册: {stem} ({index[stem]} vs {script})")
                 index[stem] = script
