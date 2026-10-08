@@ -1407,6 +1407,8 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             # 计划里带着下载 = 事实来自替身：供应之后按真解释器重算，那时仍要把用户点的这一个并进去
             groups=wide.groups if wide else (),
             replan=bool(wide and plan.private_python is not None),
+            confirmed_inputs=pi,
+            confirmed_impact=plan.impact,
             inputs_digest=wide.inputs_digest if wide else "",
             requested=req if wide else None,
         )
@@ -2409,6 +2411,7 @@ def _emit(
     error: str | None = None,
     result: dict | None = None,
     pinned: dict | None = None,
+    impact: dict | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
@@ -2448,6 +2451,10 @@ def _emit(
             if source is not None:
                 rec["impact"] = source.impact
                 rec["impact_digest"] = source.impact_digest
+        if impact is not None:
+            # 供应私有 Python 之后重算出的、与用户确认的不同的实际影响：终态上带着它与新摘要，界面 / MCP 据此重新披露
+            rec["impact"] = impact
+            rec["impact_digest"] = impact_digest(impact)
         # 最后一个非终态的阶段：失败 / 取消的终态覆盖了 `state`，「坏在哪一步」靠它
         if state not in TERMINAL_STATES:
             rec["stage"] = state
@@ -4294,6 +4301,8 @@ def prepare(
                 private_plan=plan.private_python,
                 groups=plan.groups,
                 replan=plan.replan,
+                confirmed_inputs=pi,
+                confirmed_impact=plan.impact,
                 inputs_digest=plan.inputs_digest,
                 replace_ledger=plan.scope_policy == SCOPE_POLICY_SWITCH,
                 refuse_pinned=True,
@@ -4412,6 +4421,10 @@ class _GenerationJob:
     private_plan: dict | None = None
     #: 计划的事实来自替身：供应之后按真解释器重算 delta / 关键 import / 记账（`_replan_on_base`）。
     replan: bool = False
+    #: 用户确认的那份 pip 输入与影响（`plan.pip_inputs` / `plan.impact`）：替身重算之后的真输入必须与之逐项
+    #: 相同，否则 `dependency_impact_changed`、不装（Codex #814 r4218254708 后续，`_replan_on_base`）。
+    confirmed_inputs: "PipInputs | None" = None
+    confirmed_impact: dict | None = None
     #: 单包修复才有：`_attempted` 的键 (项目指纹, 环境 key, 需求串)。**只在 pip 退出码 0 之后**登记
     #: （#466 的纪律；下载私有 Python 失败 / 取消 / pip 没跑成都不算「装过」）；其余三条路为空。
     attempted: tuple = ()
@@ -4732,6 +4745,43 @@ def _private_runtime_of(base: str) -> str:
     return source.id if same else ""
 
 
+def _verify_replanned_inputs(job: _GenerationJob, new: _GenerationJob, adapter) -> None:
+    """重算出的真 pip 输入（同一个 `PipInputs`）必须与用户确认的逐项相同；不同 = 用户授权的不是这件事：
+    把此刻的实际影响与新摘要记进进度终态（界面 / MCP 重新披露），抛 `dependency_impact_changed`，一个字节不装。"""
+    confirmed = job.confirmed_inputs
+    if confirmed is None:
+        return
+    actual = PipInputs(
+        requirements=tuple(new.delta),
+        constraints=tuple(new.constraints),
+        hashes={k: tuple(v) for k, v in new.hashes.items()},
+        require_hashes=new.require_hashes,
+        adapter=tuple(adapter),
+    )
+
+    def view(pi: PipInputs) -> tuple:
+        return (
+            sorted(pi.requirements),
+            sorted(pi.constraints),
+            sorted((k, tuple(v)) for k, v in pi.hashes.items()),
+            bool(pi.require_hashes),
+            sorted(pi.adapter),
+        )
+
+    if view(actual) == view(confirmed):
+        return
+    now = {
+        **(job.confirmed_impact or {}),
+        "installs": sorted(actual.requirements),
+        "constraints": sorted(actual.constraints),
+        "adapter": sorted(actual.adapter),
+        "require_hashes": bool(actual.require_hashes),
+    }
+    message = "私有 Python 就位后重算出的安装内容与你确认的不一致，请重新查看再确认"
+    job.emit(STATE_FAILED, code=ERROR_IMPACT_CHANGED, error=message, impact=now)
+    raise RepairError(ERROR_IMPACT_CHANGED, message, impact=now, impact_digest=impact_digest(now))
+
+
 def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
     """替身算的计划在真解释器上重算一遍：delta / 关键 import / 记账 / 身份都换成真量的（U05 PR B）。
 
@@ -4761,7 +4811,7 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         wide = _fold_requested(job.requested, plan)
         if wide is None:
             raise RepairError(ERROR_PLAN_BLOCKED, "联合计划不可执行", joint=plan.to_payload())
-        return dataclasses.replace(
+        new = dataclasses.replace(
             job,
             delta=wide.requirements,
             constraints=wide.constraints,
@@ -4772,7 +4822,12 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
             identity="",
             replan=False,
         )
-    return dataclasses.replace(
+        # 单包的 adapter 是常量（`generation_requirements` 恒并入），与确认时同一份
+        _verify_replanned_inputs(
+            job, new, job.confirmed_inputs.adapter if job.confirmed_inputs else ()
+        )
+        return new
+    new = dataclasses.replace(
         job,
         delta=tuple(plan.requirements),
         constraints=tuple(plan.constraints),
@@ -4790,6 +4845,8 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         identity=plan.identity,
         replan=False,
     )
+    _verify_replanned_inputs(job, new, plan.adapter)
+    return new
 
 
 def _provision_private_base(job: _GenerationJob, cancel_ev: threading.Event) -> dict:

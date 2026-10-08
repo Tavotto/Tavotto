@@ -1127,3 +1127,72 @@ class TestDisclosureIsDerivedFromWhatPipReceives:
             src = inspect.getsource(cls.impact.fget)
             for field in ("requirements", "constraints", "require_hashes", "adapter"):
                 assert f"{field}=pi.{field}" in src, (cls.__name__, field)
+
+
+class TestReplanAfterPrivatePythonMustMatchTheConfirmedInputs:
+    """私有 Python 就位后按真解释器重算：重算出的 pip 输入（同一个 `PipInputs`）必须与用户确认的逐项相同，
+    否则 `dependency_impact_changed`、进度终态带着此刻的实际影响与新摘要、一个字节不装（Codex #814 r4218254708 后续）。"""
+
+    def _run(self, tmp_path, monkeypatch, replanned_constraints):
+        import dataclasses
+
+        project = _project(tmp_path, ALPHA, BETA)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        deprepair._joint_plans[plan.plan_id] = plan
+        seen = {}
+
+        def fake_generation(job, *a, **kw):
+            seen["job"] = job
+            raise deprepair.RepairError("captured")
+
+        monkeypatch.setattr(deprepair, "_run_generation", fake_generation)
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair.prepare(plan.plan_id)
+        job = dataclasses.replace(seen["job"], provision_private=True, replan=True)
+        assert job.confirmed_inputs == plan.pip_inputs and job.confirmed_impact == plan.impact
+        joint, _k, _p = deprepair.joint_plan_for(project, "figure.py")
+        joint = dataclasses.replace(
+            joint, constraints=replanned_constraints, inputs_digest=job.inputs_digest
+        )
+        effects: list[str] = []
+        monkeypatch.setattr(deprepair, "base_python", lambda: None)
+        monkeypatch.setattr(
+            deprepair, "_provision_private_base", lambda j, ev: {"python": "/x/py", "runtime": "r"}
+        )
+        monkeypatch.setattr(depplan, "fresh_venv_facts", lambda *a, **kw: object())
+        monkeypatch.setattr(depplan, "plan", lambda *a, **kw: joint)
+        for name in ("register_generation", "create_generation_venv", "fresh_generation"):
+            monkeypatch.setattr(
+                managedenv, name, lambda *a, _n=name, **kw: effects.append(_n) or 1 / 0
+            )
+        monkeypatch.setattr(
+            deprepair, "_run_pip_install", lambda *a, **kw: effects.append("pip") or 1 / 0
+        )
+        return plan, job, effects
+
+    def test_inputs_that_differ_from_the_disclosure_are_never_installed(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        plan, job, effects = self._run(tmp_path, monkeypatch, ("tavotto-test-beta>=1",))
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair._run_generation_locked(job, threading.Event(), "k")
+        assert err.value.code == deprepair.ERROR_IMPACT_CHANGED
+        assert effects == []  # 没登记代、没建 venv、没起 pip
+        now = err.value.extra["impact"]
+        assert now["constraints"] == ["tavotto-test-beta>=1"]
+        assert err.value.extra["impact_digest"] == deprepair.impact_digest(now)
+        assert err.value.extra["impact_digest"] != plan.impact_digest
+        # 终态记着此刻的实际影响与新摘要（界面 / MCP 据此重新披露），不是用户确认的那份
+        rec = deprepair.progress(plan.plan_id)
+        assert (
+            rec["state"] == deprepair.STATE_FAILED and rec["code"] == deprepair.ERROR_IMPACT_CHANGED
+        )
+        assert rec["impact_digest"] == err.value.extra["impact_digest"]
+
+    def test_identical_inputs_go_on_to_install(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        plan, job, effects = self._run(tmp_path, monkeypatch, ())
+        with pytest.raises(ZeroDivisionError):  # 走到了「登记代」这一步（被替身截断）
+            deprepair._run_generation_locked(job, threading.Event(), "k")
+        assert effects and effects[0] in ("fresh_generation", "register_generation")
