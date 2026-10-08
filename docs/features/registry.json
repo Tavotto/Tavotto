@@ -717,6 +717,22 @@
       ]
     },
     {
+      "id": "settings.search",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "设置里搜索设置项：按名称或关键词过滤，点结果跳到那一页并高亮那一行",
+        "en-US": "Search settings by name or keyword; a result jumps to its page and highlights the row"
+      },
+      "entry": "设置 → 左上角搜索框",
+      "e2e": [
+        {
+          "spec": "settings-shell.spec.ts",
+          "title": "设置搜索：输入关键词只留匹配项，点结果切到那一页、那一行滚进视野并高亮"
+        }
+      ]
+    },
+    {
       "id": "settings.coding-agents",
       "status": "active",
       "platform": "both",
