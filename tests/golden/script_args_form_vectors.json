@@ -21,6 +21,7 @@
    "parser_line": 2,
    "parse_call": "parse_args",
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -121,6 +122,7 @@
    "parser_line": 2,
    "parse_call": "parse_args",
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -295,6 +297,7 @@
    "parser_line": 2,
    "parse_call": "parse_args",
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -596,6 +599,7 @@
    "parser_line": 2,
    "parse_call": "parse_args",
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -671,6 +675,7 @@
    "parser_line": 2,
    "parse_call": "parse_args",
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -712,6 +717,7 @@
    "parser_line": 2,
    "parse_call": "parse_args",
    "negative_number_options": true,
+   "negative_number_options_extended": true,
    "arguments": [
     {
      "flags": [
@@ -781,6 +787,7 @@
    "parser_line": 2,
    "parse_call": "parse_args",
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
