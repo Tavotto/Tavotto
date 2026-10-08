@@ -53,6 +53,7 @@ import { Menu, MenuItem, MenuLabel, MenuSeparator } from './ui/Menu'
 import { Popover } from './ui/Popover'
 import { TextInput } from './ui/Input'
 import { Tip } from './ui/Tooltip'
+import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
 import { MOD, cn } from '@/lib/utils'
@@ -578,18 +579,10 @@ export function DocumentMenu() {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  /**
-   * 改名框是用 Enter / Esc 收的：收完把焦点还给文档名按钮（框一卸载焦点就掉到 body 上，键盘用户得从头 Tab）。
-   * 点别处收的（失焦）不还——焦点已经在用户点的地方了，抢回来是打断（Codex #833）
-   */
-  const refocusTrigger = useRef(false)
+  // Enter / Esc 收起改名把焦点还给文档名按钮；点别处收的（失焦）不还（Codex #833，判据见 `ui/useRenameFocusReturn`）
+  const markKeyFinish = useRenameFocusReturn(editing, triggerRef)
 
   useEffect(() => setDraft(name), [name])
-  useEffect(() => {
-    if (editing || !refocusTrigger.current) return
-    refocusTrigger.current = false
-    triggerRef.current?.focus()
-  }, [editing])
 
   const recent = useMemo(
     () => recentDocs.filter((r) => r.id !== documentId),
@@ -610,11 +603,11 @@ export function DocumentMenu() {
         onKeyDown={(e) => {
           e.stopPropagation()
           if (e.key === 'Enter') {
-            refocusTrigger.current = true
+            markKeyFinish()
             ;(e.target as HTMLInputElement).blur()
           }
           if (e.key === 'Escape') {
-            refocusTrigger.current = true
+            markKeyFinish()
             setDraft(name)
             setEditing(false)
           }

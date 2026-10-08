@@ -13,6 +13,7 @@ import { ZoomControls } from './ZoomControls'
 import { Menu, MenuItem, MenuLabel, MenuRadioGroup, MenuRadioItem, MenuSeparator } from './ui/Menu'
 import { TAB_UNDERLINE, tabClass } from './ui/tabClass'
 import { useBoldWidthLock } from './ui/useBoldWidthLock'
+import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import { Tip } from './ui/Tooltip'
 
 /**
@@ -204,7 +205,6 @@ export function CanvasTabs() {
             onRenamed={(name) => {
               setRenaming(null)
               if (name) useDocumentStore.getState().renameCanvas(id, name)
-              focusTab(i)
             }}
             onClose={() => useDocumentStore.getState().closeCanvasTab(id)}
             onKeyDown={(e) => onTabKey(e, id, i)}
@@ -298,6 +298,10 @@ function TabItem({
   const nameRef = useRef<HTMLSpanElement>(null)
   useBoldWidthLock(nameRef)
 
+  // Enter / Esc 收起改名把焦点还给这个页签；点了别处（另一个输入框、工具条上的钮）收起的不抢回来（Codex #833）
+  const tabRef = useRef<HTMLDivElement>(null)
+  const markKeyFinish = useRenameFocusReturn(renaming, tabRef)
+
   if (renaming) {
     return (
       <TextInput
@@ -309,8 +313,14 @@ function TabItem({
         onBlur={() => onRenamed(draft.trim() || null)}
         onKeyDown={(e) => {
           e.stopPropagation()
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-          if (e.key === 'Escape') onRenamed(null)
+          if (e.key === 'Enter') {
+            markKeyFinish()
+            ;(e.target as HTMLInputElement).blur()
+          }
+          if (e.key === 'Escape') {
+            markKeyFinish()
+            onRenamed(null)
+          }
         }}
         className="w-28 shrink-0"
       />
@@ -319,6 +329,7 @@ function TabItem({
 
   return (
     <div
+      ref={tabRef}
       role="tab"
       data-flip-id={id}
       data-canvas-tab={id}
