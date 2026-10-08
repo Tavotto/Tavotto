@@ -20,7 +20,7 @@ Tavotto 里的脚本是无界面 worker 跑的、而且每次编辑都会重跑�
 **取舍：看全部写在源码里的调用，只跳过确定不会执行的。** 与 `importscan` 相反：那里「宁可少装不误装」，因为动作会改用户的环境；
 这里的结果只是一句**不阻塞**的提示（主按钮仍是运行），多提示一次的代价是点一下「仍然运行」，漏提示就是原来的那条看不懂的报错。
 函数体里的调用（`def pick(): return filedialog.askopenfilename()` 再在入口调用，是最常见的写法）和 `if` / `try` /
-`for` 里的调用都算；只有 `if TYPE_CHECKING:` 的那一半与 `if False:` / `if 0:` 这类常量假的分支被跳过。
+`for` 里的调用都算；只有 `if TYPE_CHECKING:`（解析到 `typing.TYPE_CHECKING` 才算）的那一半与 `if False:` / `if 0:` 这类常量假的分支被跳过。
 只看脚本本身，不跟进它 import 的本地模块（跟进是另一件事，本包不做）。
 """
 
@@ -31,6 +31,8 @@ import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
+
+from . import discover
 
 #: 与 `scriptargs.MAX_SOURCE_BYTES` 同量级：超了按看不全处理（不提示，不猜）。
 MAX_SOURCE_BYTES = 1024 * 1024
@@ -114,10 +116,15 @@ def _never_runs(test: ast.expr) -> bool:
     return isinstance(test, ast.Constant) and not test.value
 
 
-def _is_type_checking(test: ast.expr) -> bool:
-    if isinstance(test, ast.Name):
-        return test.id == "TYPE_CHECKING"
-    return isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+_TYPE_CHECKING_NAMES = frozenset({"typing.TYPE_CHECKING", "typing_extensions.TYPE_CHECKING"})
+
+
+def _is_type_checking(test: ast.expr, names: dict[str, str]) -> bool:
+    """只认**解析到** `typing.TYPE_CHECKING`（`from typing import TYPE_CHECKING [as X]`、`import typing [as t]`
+    后的 `t.TYPE_CHECKING`；`typing_extensions` 同理）。脚本自己定义的同名变量 / `obj.TYPE_CHECKING` 运行时可能为真，不剪。"""
+    if not isinstance(test, (ast.Name, ast.Attribute)):
+        return False
+    return _resolve(test, names) in _TYPE_CHECKING_NAMES
 
 
 class _Finder(ast.NodeVisitor):
@@ -127,7 +134,7 @@ class _Finder(ast.NodeVisitor):
 
     def visit_If(self, node: ast.If) -> None:
         self.visit(node.test)
-        if _is_type_checking(node.test):
+        if _is_type_checking(node.test, self.names):
             body: list[ast.stmt] = []
             rest = node.orelse  # `else:` 是运行时那一半
         elif _never_runs(node.test):
@@ -202,14 +209,10 @@ def analyze_file(path: str | os.PathLike) -> dict:
         if hit is not None:
             _cache.move_to_end(key)
             return hit
-    try:
-        with open(p, "rb") as fh:
-            raw = fh.read(MAX_SOURCE_BYTES + 1)
-    except OSError:
-        return dict(unknown)
-    if len(raw) > MAX_SOURCE_BYTES:
-        return dict(unknown)
-    result = analyze(raw.decode("utf-8", errors="replace"))
+    # 按 PEP 263 / BOM 解码（`discover.read_source`，单一出处）；读不到 / 解不出 → 看不全，不猜。
+    # 大小上限已由上面的 stat 卡住（> MAX_SOURCE_BYTES 不会走到这里）。
+    text, problem = discover.read_source(p)
+    result = dict(unknown) if problem is not None or text is None else analyze(text)
     with _cache_lock:
         _cache[key] = result
         while len(_cache) > _CACHE_SIZE:

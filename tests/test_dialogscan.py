@@ -154,3 +154,62 @@ def test_file_reading_is_bounded_and_cached(tmp_path, monkeypatch):
     big.write_text("x = 1\n" * 10, encoding="utf-8")
     monkeypatch.setattr(dialogscan, "MAX_SOURCE_BYTES", 5)
     assert dialogscan.analyze_file(big)["status"] == "unknown"
+
+
+_PICK = "from tkinter import filedialog\nfiledialog.askopenfilename()\n"
+
+
+@pytest.mark.parametrize(
+    ("raw", "label"),
+    [
+        (b"\xef\xbb\xbf" + _PICK.encode(), "utf-8-bom"),
+        (("# coding: gbk\n# 选择文件\n" + _PICK).encode("gbk"), "gbk-declared"),
+        (("# -*- coding: gbk -*-\nx = '中文'\n" + _PICK).encode("gbk"), "gbk-emacs-style"),
+    ],
+)
+def test_file_decoding_follows_python_source_rules(tmp_path, raw, label):
+    p = tmp_path / f"{label}.py"
+    p.write_bytes(raw)
+    out = dialogscan.analyze_file(p)
+    assert out["status"] == "found" and out["kinds"] == ["file"], label
+
+
+def test_undecodable_file_is_unknown(tmp_path):
+    p = tmp_path / "bad.py"
+    p.write_bytes(b"# coding: nosuchcodec\n" + _PICK.encode())
+    assert dialogscan.analyze_file(p)["status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "TYPE_CHECKING = True\nif TYPE_CHECKING:\n    filedialog.askopenfilename()\n",
+        "import mylib\nif mylib.TYPE_CHECKING:\n    filedialog.askopenfilename()\n",
+    ],
+)
+def test_non_typing_type_checking_names_are_not_pruned(guard):
+    out = dialogscan.analyze("from tkinter import filedialog\n" + guard)
+    assert len(out["calls"]) == 1
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "from typing import TYPE_CHECKING\n",
+        "from typing import TYPE_CHECKING as TC\n",
+        "import typing\n",
+        "import typing as t\n",
+        "from typing_extensions import TYPE_CHECKING\n",
+    ],
+)
+def test_typing_type_checking_is_pruned(head):
+    name = {"TC": "TC", "t": "t.TYPE_CHECKING", "typing": "typing.TYPE_CHECKING"}
+    guard = "TYPE_CHECKING"
+    if "as TC" in head:
+        guard = "TC"
+    elif head.strip() == "import typing":
+        guard = name["typing"]
+    elif head.strip() == "import typing as t":
+        guard = name["t"]
+    src = f"{head}from tkinter import filedialog\nif {guard}:\n    filedialog.askopenfilename()\n"
+    assert dialogscan.analyze(src)["calls"] == []
