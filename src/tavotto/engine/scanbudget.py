@@ -14,7 +14,8 @@
 「没测量」不是「测量结果是零」（`readiness.py` 同一条纪律）：任何 `partial` 都不许被当成「这个目录
 里没有脚本」。
 
-纯标准库、叶子模块（不 import 兄弟模块）：被 `discover` / `project_refresh` / `projscan` 共同依赖，
+纯标准库、叶子模块（不 import 兄弟模块）：被 `discover` / `project_refresh` / `projscan` / `importscan`（本地模块跟进的读文件与
+清单，Import Origin Resolver PR1）共同依赖，
 自己不能再依赖它们。
 """
 
