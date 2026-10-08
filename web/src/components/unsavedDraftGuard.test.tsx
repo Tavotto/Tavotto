@@ -136,13 +136,21 @@ const currentSection = () =>
   document.querySelector('nav [aria-current="true"]')?.getAttribute('data-section')
 const profileName = () => document.body.querySelector<HTMLInputElement>('#profile-name')
 
+/** 在库（一个 Select，2026-10-07 设计审计 §9.1）里选一份：点触发器 → 点那一项 */
+async function pickProfile(name: string) {
+  Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+  await act(async () => document.body.querySelector<HTMLElement>('[data-profile-library] [role="combobox"]')!.click())
+  const opt = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
+    (o.textContent ?? '').startsWith(name),
+  )!
+  await act(async () => opt.click())
+}
+
 /** 打开设置 › 样式页，选中用户自建的那份，把名字改脏 */
 async function openSettingsWithDirtyStyle() {
   useUiStore.setState({ settingsOpen: true, settingsSection: 'style' })
   await mount(<SettingsDialog />)
-  await act(async () => {
-    buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('投稿用'))!.click()
-  })
+  await pickProfile('投稿用')
   await act(async () => {})
   expect(confirmReq(), '草稿干净时切换不问').toBeNull()
   await act(async () => typeInto(profileName()!, '投稿用 改'))
@@ -153,9 +161,7 @@ describe('设置 › 样式页：没存的草稿', () => {
     useUiStore.setState({ settingsOpen: true, settingsSection: 'style' })
     await mount(<SettingsDialog />)
     expect(document.querySelector('[data-nav-dirty]')).toBeNull()
-    await act(async () => {
-      buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('投稿用'))!.click()
-    })
+    await pickProfile('投稿用')
     await act(async () => typeInto(profileName()!, '投稿用 改'))
     const dots = [...document.querySelectorAll('[data-nav-dirty]')]
     expect(dots).toHaveLength(1)
@@ -228,18 +234,26 @@ describe('设置 › 样式页：没存的草稿', () => {
 
   it('选库里的另一份先问：继续编辑 → 仍是这一份；放弃 → 换过去', async () => {
     await openSettingsWithDirtyStyle()
-    const builtin = () =>
-      buttons().find((b) => b.getAttribute('role') === 'radio' && b.textContent?.includes('默认样式'))!
-    await act(async () => builtin().click())
+    // 库是一个 Select（2026-10-07 设计审计 §9.1）：点触发器 → 点「默认样式」那一项
+    Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+    const trigger = () => document.body.querySelector<HTMLElement>('[data-profile-library] [role="combobox"]')!
+    const pickBuiltin = async () => {
+      await act(async () => trigger().click())
+      const opt = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
+        (o.textContent ?? '').startsWith('默认样式'),
+      )!
+      await act(async () => opt.click())
+    }
+    await pickBuiltin()
     expect(confirmReq()).not.toBeNull()
     await answer(false)
     expect(profileName()!.value).toBe('投稿用 改')
 
-    await act(async () => builtin().click())
+    await pickBuiltin()
     await answer(true)
     // 内置那份只读：名字不再是输入框
     expect(profileName()).toBeNull()
-    expect(builtin().getAttribute('aria-checked')).toBe('true')
+    expect(trigger().textContent).toContain('默认样式')
   })
 
   it('草稿干净：切分区、关设置都不问', async () => {
