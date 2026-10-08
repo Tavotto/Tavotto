@@ -252,6 +252,7 @@
     "script_restore_stale": "{{script}} changed after this backup was listed, so the list has been refreshed. Choose how to restore again based on its current state (you can undo just those paths).",
     "script_restore_conflict": "Those paths were changed again afterwards, so they can't be undone on their own. You can restore the whole file instead (the current version is saved first).",
     "environment_changed": "That environment was rebuilt before you confirmed. Review it again, then confirm.",
+    "environment_generation_required": "Adopting an environment needs the version you were shown. Review it again, then confirm.",
     "environment_candidate_gone": "That environment can no longer be found. Check again.",
     "environment_locked": "A globally chosen Python is in effect, so a project-level choice would not be used. Clear the global choice first.",
     "environment_check_running": "An environment check is already running for this project."
@@ -345,6 +346,7 @@
       "dependency_consistency_failed": "pip check reported inconsistent dependencies after installing; the environment was not switched.",
       "dependency_hash_mismatch": "A downloaded package doesn't match the declared hash; the environment was not switched. Check the lock file and retry.",
       "dependency_impact_changed": "What would be installed, or where, changed after you confirmed. Review it again before confirming.",
+      "dependency_impact_required": "Installing needs the impact summary you were shown. Review it again before confirming.",
       "dependency_import_still_failed": "It still cannot be imported after installing. The full output is in the installation details.",
       "dependency_install_busy": "That environment is already installing something. Try again shortly.",
       "dependency_install_cancelled": "Installation cancelled.",
@@ -527,6 +529,7 @@
       "dependency_consistency_failed": "The installed packages don’t fit together, so nothing was switched; the full output is under Details.",
       "dependency_hash_mismatch": "The downloaded package doesn’t match what the project declares; check the lock file, then try again.",
       "dependency_impact_changed": "What would be installed changed; confirm again.",
+      "dependency_impact_required": "Review what would be installed, then confirm.",
       "dependency_import_still_failed": "It installed but still can’t be imported; the full output is under Details.",
       "dependency_install_busy": "The environment is busy installing something else; click Retry in a moment.",
       "dependency_install_cancelled": "Cancelled; click Retry when you’re ready.",
