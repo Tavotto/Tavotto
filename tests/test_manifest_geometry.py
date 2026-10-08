@@ -196,6 +196,22 @@ def main():
     ax13.bar([0, 1, 2], [-5.0, 3.0, -2.0])
     ax13.set_ylim(-2.5, 3.5)
     fig10.savefig("ClipBarFig.pdf")
+
+    # ClipSeriesFig：系列并集不并入完全被裁掉的成员。
+    # axes_0：两根可见 + 一根整根在 ylim 之外；axes_1：三根全在外（退回数据位置并集）。
+    fig11, (ax14, ax15) = plt.subplots(1, 2, figsize=(5.0, 3.0))
+    ax14.bar([0, 1, 2], [5.0, 6.0, 1.0])
+    ax14.set_ylim(bottom=4.0, top=8.0)
+    ax15.bar([0, 1, 2], [1.0, 2.0, 3.0])
+    ax15.set_ylim(bottom=4.0, top=8.0)
+    fig11.savefig("ClipSeriesFig.pdf")
+    # 超过 MAX_MARKERS 的系列（geometry 省略）：最后一根整根在外
+    fig12, ax16 = plt.subplots(figsize=(4.0, 3.0))
+    h = np.ones(__CAP__ + 1)
+    h[-1] = 0.2
+    ax16.bar(np.arange(__CAP__ + 1), h)
+    ax16.set_ylim(0.5, 1.5)
+    fig12.savefig("ClipOverCapFig.pdf")
 """
 
 
@@ -550,6 +566,38 @@ def test_bar_entirely_outside_the_clip_box_keeps_its_data_position(library):
     bar = _el(man, "axes_0.barseries_2.bar_0")
     assert bar["bbox"][2] > 0 and bar["bbox"][3] > 0
     assert not _inside_frac(bar["bbox"], ax_box)
+
+
+def test_series_union_skips_members_entirely_outside_the_clip(library):
+    """可见柱 + 一根整根在轴外的柱：子柱保留数据位置 bbox，但系列并集只并画出来的成员。"""
+    man = _manifest(library, stem="ClipSeriesFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    gone = _el(man, "axes_0.barseries_0.bar_2")["bbox"]
+    assert not _inside_frac(gone, ax_box)  # 子柱自己仍在数据位置
+    assert _inside_frac(_el(man, "axes_0.barseries_0")["bbox"], ax_box)
+
+
+def test_series_union_falls_back_to_data_positions_when_all_members_outside(library):
+    """全部成员都被裁掉：系列 bbox 退回数据位置的并集（与单元素「全在外不折」同一取舍）。"""
+    man = _manifest(library, stem="ClipSeriesFig")
+    ax_box = _el(man, "axes_1")["bbox"]
+    kids = [_el(man, f"axes_1.barseries_0.bar_{k}")["bbox"] for k in range(3)]
+    x0 = min(b[0] for b in kids)
+    y0 = min(b[1] for b in kids)
+    x1 = max(b[0] + b[2] for b in kids)
+    y1 = max(b[1] + b[3] for b in kids)
+    series = _el(man, "axes_1.barseries_0")["bbox"]
+    assert series == pytest.approx([x0, y0, x1 - x0, y1 - y0], abs=2e-3)
+    assert not _inside_frac(series, ax_box)
+
+
+def test_over_cap_series_without_geometry_is_also_narrowed(library):
+    """超过 MAX_MARKERS 的系列没有 geometry，前端只剩 bbox 可用：它同样不能被轴外成员撑大。"""
+    man = _manifest(library, stem="ClipOverCapFig")
+    ax_box = _el(man, "axes_0")["bbox"]
+    series = _el(man, "axes_0.barseries_0")
+    assert "geometry" not in series
+    assert _inside_frac(series["bbox"], ax_box)
 
 
 def test_negative_bars_are_cut_at_the_axes_edge(library):

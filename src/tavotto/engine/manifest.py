@@ -4221,7 +4221,12 @@ def _clip_extents(artist):
 
 
 def _fold_into_clip(artist, bb):
-    """display Bbox 折进 artist 真正被裁到的矩形（画出来的那部分）；返回 `(bb, folded)`。
+    """display Bbox 折进 artist 真正被裁到的矩形（画出来的那部分）；返回 `(bb, folded, outside)`。
+
+    `folded`：bb 已被收窄到画出来的部分。`outside`：artist 受裁剪、且**整个**落在裁剪框
+    外（画出来的部分为空，bb 原样回）。「不受裁剪」与「完全在外」两种情形 `folded` 都是
+    False，只有 `outside` 能区分——调用方（系列并集）据此排除完全被裁掉的成员，别靠比较
+    bbox 是否相等来猜。
 
     **选中框 / 命中框 / 对齐吸附的参考框只该罩住看得见的墨迹。** 柱子从 y=0 画起而
     `set_ylim(bottom=正数)` 时，`Rectangle.get_window_extent` 是**未裁剪**的整根柱，
@@ -4236,22 +4241,22 @@ def _fold_into_clip(artist, bb):
     「未验证范围」。
 
     **画出来的部分为空**（整个元素落在裁剪框外，什么都看不见）时**不折**，原样回
-    `(bb, False)`：元素仍留在元素树里、仍可从那里选中与改属性，选中框如实指到它
+    `(bb, False, True)`：元素仍留在元素树里、仍可从那里选中与改属性，选中框如实指到它
     数据所在的位置，好过塌成一个零面积的点（或让它从元素表里凭空消失）。命中不受影响
     ——`geometry.clip` 本来就把裁剪框外的点判为不中。
     """
     ext = _clip_extents(artist)
     if ext is None:
-        return bb, False
+        return bb, False, False
     try:
         x0, y0 = max(float(bb.x0), ext[0]), max(float(bb.y0), ext[1])
         x1, y1 = min(float(bb.x1), ext[2]), min(float(bb.y1), ext[3])
     except (AttributeError, TypeError, ValueError):
-        return bb, False
+        return bb, False, False
     # 退化（扁平线正好压在裁剪边上）用 `<` 判：零厚度的交仍是「画出来的那条线」
     if x1 < x0 or y1 < y0:
-        return bb, False
-    return Bbox.from_extents(x0, y0, x1, y1), True
+        return bb, False, True
+    return Bbox.from_extents(x0, y0, x1, y1), True, False
 
 
 def _clip_bbox(artist, W: float, H: float):
@@ -4792,6 +4797,11 @@ def _measure_manifest(
             entry["bbox"] = [x0 / W, 1.0 - y1 / H, (x1 - x0) / W, (y1 - y0) / H]
         elif isinstance(artist, SeriesGroup):
             boxes = []
+            # 完全被裁到框外的 Patch 成员：子元素自己的 bbox 保留数据位置（可选），但
+            # 不并入**系列**的并集——否则系列框又伸出轴外，而超过 MAX_MARKERS 时
+            # geometry 省略，前端正是拿这个并集矩形选中 / 命中。全部成员都在外时才退回
+            # 数据位置的并集（与单元素「全在外不折」同一取舍：框不塌成点、系列仍可选）
+            outside_boxes = []
             members = artist.artists if artist.kind == "bar_series" else artist.members()
             for m in members:
                 try:
@@ -4803,9 +4813,16 @@ def _measure_manifest(
                         else m.get_window_extent(renderer)
                     )
                     if bb is not None and (bb.width > 0 or bb.height > 0):
-                        boxes.append(_fold_into_clip(m, bb)[0] if isinstance(m, Patch) else bb)
+                        if isinstance(m, Patch):
+                            bb, _folded, outside = _fold_into_clip(m, bb)
+                            if outside:
+                                outside_boxes.append(bb)
+                                continue
+                        boxes.append(bb)
                 except Exception:
                     pass
+            if not boxes:
+                boxes = outside_boxes
             if not boxes:
                 _drop(el, "no_geometry")
                 continue

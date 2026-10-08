@@ -160,4 +160,7 @@
   系列成员的 bbox 折进 `_clip_extents`（与 `clip_bbox`、`geometry.clip` 同一个裁剪判据，
   `clip_on=False` 不裁）。整个元素落在裁剪框外时**不折**，bbox 仍指到数据位置（元素树仍可选，
   命中由 `geometry.clip` 挡住）。曲线 / 散点 / 集合刻意不折（扁平线垫宽、预检负对照靠未裁剪口径）。
-  看护 `tests/test_manifest_geometry.py` 的 `ClipBarFig` 四条。
+  **系列并集不并入完全在外的成员**：`_fold_into_clip` 回 `(bb, folded, outside)`，柱形系列
+  的并集 bbox 跳过 `outside` 的成员（子柱自己的 bbox 仍是数据位置）；全部成员都在外才退回
+  数据位置并集。超过 `MAX_MARKERS` 的系列没有 geometry，前端只用这个并集，故同样收窄。
+  看护 `tests/test_manifest_geometry.py` 的 `ClipBarFig` 四条与 `ClipSeriesFig` / `ClipOverCapFig` 三条。
