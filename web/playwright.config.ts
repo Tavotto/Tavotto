@@ -63,6 +63,8 @@ export default defineConfig({
         'a11y.spec.ts',
         'keyboard-golden-path.spec.ts',
         'twin-axes-pick.spec.ts',
+        // Tree pointer selection precedes default focus; verify the WebKit sequence and touch taps.
+        'tree-selection-routing.spec.ts',
         // Translated panels must not trap transient spine text behind sibling artwork.
         'spine-feedback.spec.ts',
         // 性能探针（ADR 0075）量的就是用户那台 WKWebView：rAF / MessageChannel 的
