@@ -761,26 +761,40 @@ def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], boo
             tree = ast.parse(fh.read(MAX_SOURCE_BYTES).decode("utf-8", errors="replace"))
     except (OSError, SyntaxError, ValueError):
         return frozenset(), False
+    # 与主分析器同一套名字解析（`import argparse as ap` / `from argparse import ArgumentParser as AP`）。
+    # 失败即封闭：每一处 ArgumentParser 构造都必须被完整证明，否则整体“说不准”。
+    names = _Names(tree)
     chars: set[str] = set()
+    proven_funcs: set[int] = set()
     exact = True
+    if "*" in names.direct:  # `from argparse import *`：名字无从解析
+        exact = False
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        for kw in node.keywords:
-            if kw.arg is None:
-                # `ArgumentParser(**cfg)`：关键字藏在运行时的字典里，说不准；别的调用的 `**kw` 与解析器无关
-                func = node.func
-                name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-                if "Parser" in name:
-                    exact = False
-            elif kw.arg == "fromfile_prefix_chars":
-                ok, value = _literal(kw.value)
-                if ok and value is None:
-                    continue
-                if ok and isinstance(value, str):
-                    chars.update(value)
-                else:
-                    exact = False
+        if names.argparse_name(node.func) == "ArgumentParser":
+            proven = not node.args
+            for kw in node.keywords:
+                if kw.arg is None or kw.arg == "parents":
+                    proven = False
+                elif kw.arg == "fromfile_prefix_chars":
+                    ok, value = _literal(kw.value)
+                    if ok and value is None:
+                        continue
+                    if ok and isinstance(value, str):
+                        chars.update(value)
+                    else:
+                        proven = False
+            if proven:
+                proven_funcs.add(id(node.func))
+            else:
+                exact = False
+        elif any(kw.arg == "fromfile_prefix_chars" for kw in node.keywords):
+            exact = False  # 别处（工厂函数 / 子类 / 未知别名）带着这个关键字
+    for node in ast.walk(tree):
+        # 任何不是“被证明的直接构造”的 ArgumentParser 引用：子类、`P = AP`、作参数传递……
+        if id(node) not in proven_funcs and names.argparse_name(node) == "ArgumentParser":
+            exact = False
     return frozenset(chars), exact
 
 

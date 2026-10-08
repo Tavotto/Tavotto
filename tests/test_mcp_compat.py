@@ -836,6 +836,18 @@ def test_declared_response_file_prefixes_are_refused(project, pool, token):
         "from helper import make_parser\nmake_parser().parse_args()\n",
         # 语法错误
         "def (:\n",
+        # r4221559036：别名 + **cfg
+        "from argparse import ArgumentParser as AP\ncfg={'fromfile_prefix_chars':'%'}\np = AP(**cfg)\np.parse_args()\n",
+        # 前缀来自变量（别名模块）
+        "import argparse as ap\nv='%'\np = ap.ArgumentParser(fromfile_prefix_chars=v)\np.parse_args()\n",
+        # 子类构造
+        "import argparse\nclass P(argparse.ArgumentParser):\n    pass\np = P(fromfile_prefix_chars='%')\np.parse_args()\n",
+        # parents=
+        "import argparse\nb = argparse.ArgumentParser(add_help=False)\np = argparse.ArgumentParser(parents=[b])\np.parse_args()\n",
+        # 再赋值的别名 / 位置参数 / 星号导入
+        "import argparse\nQ = argparse.ArgumentParser\np = Q(fromfile_prefix_chars='%')\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser('prog')\np.parse_args()\n",
+        "from argparse import *\np = ArgumentParser(fromfile_prefix_chars='%')\np.parse_args()\n",
     ],
 )
 def test_unprovable_script_refuses_any_symbol_led_token(project, script, token):
@@ -856,6 +868,24 @@ def test_unprovable_script_refuses_any_symbol_led_token(project, script, token):
 def test_ordinary_values_still_pass(project, script, token):
     _set_script(project, script)
     assert _scope_code(project, [token]) is None
+
+
+def test_pure_literal_alias_script_stays_exact(project):
+    """r4221559036：别名 import + 纯字面量仍可证明（精确集合），不退化成保守口径。"""
+    from tavotto.engine import scriptargs
+
+    path = Path(project) / "fig1.py"
+    path.write_text(
+        "from argparse import ArgumentParser as AP\n"
+        "p = AP(fromfile_prefix_chars='%', description='x')\np.parse_args()\n",
+        encoding="utf-8",
+    )
+    assert scriptargs.response_file_prefixes(path) == (frozenset("%"), True)
+    path.write_text(
+        "import argparse as ap\np = ap.ArgumentParser()\np.parse_args()\n", encoding="utf-8"
+    )
+    assert scriptargs.response_file_prefixes(path) == (frozenset(), True)
+    assert _scope_code(project, ["#x"]) is None
 
 
 def test_exact_prefix_set_does_not_over_reject_other_symbols(project):
