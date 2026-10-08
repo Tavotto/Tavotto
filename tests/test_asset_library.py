@@ -262,15 +262,18 @@ class TestCancelSemantics:
     def test_cancel_reads_event_and_run_under_one_lock(self, client, tmp_path, monkeypatch):
         """Codex #812 P2：取消端点必须在同一把锁里一起取 event 与 run。
 
-        桩模拟「端点拿到 event 之后、读 runs 之前，试运行收尾删表」：包一层锁，第一次释放时
-        把两张表清掉（= 带参数的试运行的 finally）。分两次加锁的旧实现会把 run 读成 None，
-        force_cancel 打到同脚本无参数的 worker；单锁实现拿到的是登记时的那份 run。
+        桩模拟「端点拿到 event 之后、读 runs 之前，运行配置那张表被收」：包一层锁，第一次释放时
+        把 runs 清掉。分两次加锁的旧实现会把 run 读成 None，force_cancel 打到同脚本无参数的 worker；
+        单锁实现拿到的是登记时的那份 run。（T09b 起 owner 另在 event 置位之后再读，且要求条目仍是同一个
+        event——整条收尾的赛跑由下面「输了赛跑」那条钉住，这里只收 runs 表以保 owner 判定仍成立。）
         """
         figs = _make_project(tmp_path)
         client.post("/api/projects/open", json={"path": str(figs)})
         calls = []
         monkeypatch.setattr(
-            engine_pool, "force_cancel", lambda script, root, **kw: calls.append((script, kw))
+            engine_pool,
+            "force_cancel",
+            lambda script, root, **kw: calls.append((script, kw)) or True,
         )
         sentinel_run = object()
         real_lock = m._PROBES_LOCK
@@ -286,25 +289,27 @@ class TestCancelSemantics:
                 real_lock.release()
                 self.released += 1
                 if self.released == 1:
-                    with real_lock:  # 试运行在两次加锁之间收尾
-                        m._PROBES.clear()
+                    with real_lock:  # 带参数的试运行在两次加锁之间把运行配置那张表收了尾
                         m._PROBE_RUNS.clear()
 
         with m.app.test_request_context("/", json={}):
             key = (m.current_ctx().id, "slow.py")
         ev = threading.Event()
+        owner_worker = object()
         m._PROBES[key] = ev
         m._PROBE_RUNS[key] = sentinel_run
+        m._PROBE_OWNERS[key] = (owner_worker, True)
         monkeypatch.setattr(m, "_PROBES_LOCK", _FinishAfterFirstRelease())
         try:
             resp = client.post("/api/registry/probe/cancel", json={"script": "slow.py"})
         finally:
             m._PROBES.pop(key, None)
             m._PROBE_RUNS.pop(key, None)
+            m._PROBE_OWNERS.pop(key, None)
         assert resp.get_json()["cancelling"] is True
         assert ev.is_set()
-        # 取消只能打到登记时那份配置的会话，绝不能是无参数的 worker
-        assert calls == [("slow.py", {"run": sentinel_run})]
+        # 取消只能打到登记时那份配置的会话（run 在第一把锁里与 event 一起取），且只杀这次试运行自己取到的那条
+        assert calls == [("slow.py", {"expected_worker": owner_worker, "run": sentinel_run})]
 
     def test_cancel_after_probe_finished_hits_no_worker(self, client, tmp_path, monkeypatch):
         """输了赛跑（条目已经不在）：不取消、不打到任何 worker，形状与「没有在跑的」一致。"""
