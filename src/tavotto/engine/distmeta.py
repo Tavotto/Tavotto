@@ -692,7 +692,11 @@ def _list_root(
                 if not redirect:
                     egg_links.append(name)
             elif name.endswith(".pth"):
-                if not redirect:
+                if redirect:
+                    # Python 的 site 会跟进链接读它：拒绝跟进 = 它提供的路径条目没被看到，不许当成「没有」
+                    rd.note(scanbudget.ISSUE_SYMLINK_DIR, root, name)
+                    rd.complete = False
+                else:
                     pths.append(name)
             elif redirect or name in _SKIP_ENTRIES or name.endswith(".data"):
                 continue
@@ -878,7 +882,11 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
         if d.root == root.order and d.ecosystem == ECO_PYPI and d.kind != "pth"
     }
     for pth in pths:
-        text = rd.read(root, pth, max_bytes=MAX_SMALL_BYTES)
+        text, refused = rd.read_state(root, pth, max_bytes=MAX_SMALL_BYTES)
+        if refused:
+            rd.complete = (
+                False  # 超限 / 占位 / 读不了的 `.pth`：解释器照样处理它的路径条目，不能当「没装」
+            )
         if text is None:
             continue
         finders: list[str] = []
@@ -897,7 +905,9 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
         key = depresolve.normalize_distribution(dist_name)
         mods: set[str] = set()
         for f in dict.fromkeys(finders):
-            src = rd.read(root, f + ".py", max_bytes=MAX_FINDER_BYTES)
+            src, f_refused = rd.read_state(root, f + ".py", max_bytes=MAX_FINDER_BYTES)
+            if f_refused:
+                rd.complete = False  # editable finder 没读成：它映射的模块没被看到
             if src is not None:
                 mods |= _finder_mapping(src)
         d = by_key.get(key)

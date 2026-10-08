@@ -453,6 +453,55 @@ class TestEditableAndNonReproducibleSources:
         assert got.selected_distribution == ""
         assert got.distribution_status == "installed_source_not_reproducible"
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink / chmod")
+    @pytest.mark.parametrize("how", ["symlink", "oversize", "placeholder", "unreadable"])
+    def test_a_pth_the_scan_could_not_read_makes_the_environment_not_checked_not_not_installed(
+        self, tmp_path, monkeypatch, how
+    ):
+        prefix, site = _env(tmp_path)
+        outside = tmp_path / "elsewhere"
+        _write(outside / "viapth.py", "X = 1\n")
+        line = f"{outside}\n"
+        pth = site / "extra.pth"
+        if how == "symlink":
+            real = _write(tmp_path / "real.pth", line)
+            pth.symlink_to(real)
+        elif how == "oversize":
+            _write(pth, line + "#" * (distmeta.MAX_SMALL_BYTES + 10) + "\n")
+        elif how == "placeholder":
+            _write(pth, line)
+            real_is_ph = scanbudget.is_placeholder
+            monkeypatch.setattr(
+                scanbudget,
+                "is_placeholder",
+                lambda st: real_is_ph(st) or st.st_size == len(line),
+            )
+        else:
+            _write(pth, line)
+            pth.chmod(0)
+            if os.access(pth, os.R_OK):
+                pytest.skip("running as a user that ignores file modes")
+        try:
+            idx = _index(prefix)
+        finally:
+            if how == "unreadable":
+                pth.chmod(0o644)
+        if how != "unreadable":
+            # 真解释器（站点目录用 addsitedir 处理）能经这个 `.pth` 导入 `viapth`——所以「没装」是错的
+            code = "import site, sys; site.addsitedir(sys.argv[1]); import viapth"
+            subprocess.run(
+                [sys.executable, "-I", "-S", "-c", code, str(site)], check=True, capture_output=True
+            )
+        assert not idx.complete
+        got = _scan(tmp_path, "import viapth\n", idx)["viapth"]
+        assert got.distribution_status == "environment_not_checked"
+        assert "metadata_scan_incomplete" in got.compatibility
+
+    def test_a_readable_pth_alone_does_not_make_the_scan_incomplete(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _write(site / "ok.pth", "import sys\n")
+        assert _index(prefix).complete
+
     def test_a_direct_url_that_does_not_exist_is_still_an_index_install(self, tmp_path):
         prefix, site = _env(tmp_path)
         _dist(site, "plain", "1.0", top="plain\n")
