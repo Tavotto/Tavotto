@@ -1900,11 +1900,12 @@ class _PatchEdge:
     `_NO_BBOX` 同一条纪律：只活在 `originals` 里，不进 patch、不过 JSON。
     """
 
-    __slots__ = ("original", "hatch")
+    __slots__ = ("original", "hatch", "alpha")
 
-    def __init__(self, original, hatch) -> None:
+    def __init__(self, original, hatch, alpha=None) -> None:
         self.original = original
         self.hatch = hatch
+        self.alpha = alpha  # 采样那一刻的 patch alpha：hatch 的 RGBA 是按它合成的
 
     def __repr__(self) -> str:
         return f"<patch edge {self.original!r} hatch={self.hatch!r}>"
@@ -1963,7 +1964,7 @@ def _get_patch_edgecolor(p):
     if not hasattr(p, "_original_edgecolor"):
         return p.get_edgecolor()  # 认不出的实现：退回按值（老行为）
     hatch = None if hasattr(p, "set_hatchcolor") else getattr(p, "_hatch_color", None)
-    return _PatchEdge(p._original_edgecolor, hatch)  # noqa: SLF001
+    return _PatchEdge(p._original_edgecolor, hatch, getattr(p, "_alpha", None))  # noqa: SLF001
 
 
 def _set_patch_edgecolor(p, v) -> None:
@@ -1971,9 +1972,47 @@ def _set_patch_edgecolor(p, v) -> None:
     if isinstance(v, _PatchEdge):
         p.set_edgecolor(v.original)
         if v.hatch is not None and not hasattr(p, "set_hatchcolor"):
-            p._hatch_color = v.hatch  # noqa: SLF001 — ≤3.10 没有公开入口，见类注释
+            # ≤3.10 没有公开入口，见类注释。快照里的花纹色带着**采样那一刻**的 alpha；
+            # 之后用户若改过不透明度，`set_edgecolor(original)` 刚按**当前** alpha 重算过
+            # 一遍——这里必须按当前 alpha 重新合成（matplotlib 自己就是 `to_rgba(color, alpha)`），
+            # 否则热态停在旧不透明度，全新重放带着保留的 alpha（#861）
+            p._hatch_color = _hatch_rgba_with_alpha(v.hatch, p, v.alpha)  # noqa: SLF001
         return
     p.set_edgecolor(v)
+
+
+def _hatch_rgba_with_alpha(rgba, p, src_alpha=None):
+    """把快照里的花纹 RGBA 按 patch **当前生效的** alpha 重新合成。
+
+    与 matplotlib 同一条路径：`Patch._set_edgecolor`（≤3.10）/ `_set_hatchcolor`（3.11）都是
+    `colors.to_rgba(color, self._alpha)`——`_alpha` 非 None 时覆盖颜色自带的 alpha。
+    `_alpha is None` 时 alpha 不被覆盖：快照也是在 `_alpha is None` 时采的（`src_alpha is None`），
+    它的 alpha 就是颜色自带的，原样用；否则快照的 alpha 是旧不透明度合成出来的，颜色自带的
+    已无从恢复，按不透明（matplotlib 对没有 alpha 的颜色也是这么补的）。
+    """
+    if isinstance(rgba, str):
+        return rgba
+    alpha = getattr(p, "_alpha", None)
+    if alpha is None:
+        return tuple(rgba) if src_alpha is None else mcolors.to_rgba(tuple(rgba)[:3], 1.0)
+    return mcolors.to_rgba(tuple(rgba)[:3], alpha)
+
+
+def _set_patch_alpha(p, v) -> None:
+    """Patch 的不透明度。3.11 的 `Patch.set_alpha` 会把花纹颜色**按当前 rcParams 重新解析**
+    （`_original_hatchcolor is None` 时 `_set_hatchcolor(None)` 读 `rcParams['hatch.color']`）。
+    脚本若在 `rc_context` 里建的 patch，花纹色就在这一步被换成「现在的」rc 值——而这是**我们的**
+    override 造成的，脚本原样里并没有；撤销 / 与花纹颜色的 override 叠加时热态因此 ≠ 重放。
+    所以 `set_alpha` 前后把「没设」模式的解析结果钉住，只让 alpha 按 matplotlib 同一条
+    `to_rgba(color, alpha)` 重新合成。"""
+    pinned = prior = None
+    if getattr(p, "_original_hatchcolor", _NOTHING) is None:  # 3.11 起；None = 「没设」
+        cur = getattr(p, "_hatch_color", None)
+        if cur is not None and not isinstance(cur, str):
+            pinned, prior = tuple(cur), getattr(p, "_alpha", None)
+    p.set_alpha(None if v is None else float(v))
+    if pinned is not None:
+        p._hatch_color = _hatch_rgba_with_alpha(pinned, p, prior)  # noqa: SLF001
 
 
 #: 「没有值」——不能用 None，None 本身可以是一个合法的原样。
@@ -3163,22 +3202,33 @@ class _PatchHatchColor:
     而全新 worker 重放脚本会重建原色（热态 != 重放）。所以模式与解析结果两样都快照、
     都写回，不重新解析（与 `_PatchEdge` 同一条纪律：只活在 `originals` 里，不进 JSON）。
     matplotlib 3.11 的 `_set_hatchcolor` 只写 `_hatch_color`（`'edge'` 或 RGBA），没有别的标志。
+
+    **alpha 不进快照**：`Patch.set_alpha` 会按新不透明度重算 `_hatch_color`
+    （`to_rgba(color, alpha)`），所以快照里的 RGBA 带着采样那一刻的 alpha；用户随后改了
+    不透明度、再只撤花纹颜色，原样写回旧 RGBA 会让热态停在旧不透明度，而全新重放带着
+    保留的 alpha（写回像素门 409）。还原时只取其 RGB，按**当前** `_alpha` 重新合成
+    （`_hatch_rgba_with_alpha`，与 matplotlib 同一条 `to_rgba(color, alpha)`）。
     """
 
-    __slots__ = ("original", "resolved")
+    __slots__ = ("original", "resolved", "alpha")
 
-    def __init__(self, original, resolved) -> None:
+    def __init__(self, original, resolved, alpha=None) -> None:
         self.original = original
         self.resolved = resolved
+        self.alpha = alpha  # 采样那一刻的 patch alpha：resolved 的 RGBA 是按它合成的
 
     def __repr__(self) -> str:
         return f"<patch hatchcolor {self.original!r} resolved={self.resolved!r}>"
 
     def __eq__(self, other) -> bool:
+        # 只比 RGB：解析结果的 alpha 是 patch 当前不透明度合成出来的，不是花纹色本身的属性
+        def rgb(v):
+            return v if v is None or isinstance(v, str) else tuple(v)[:3]
+
         return (
             isinstance(other, _PatchHatchColor)
             and _same_value(self.original, other.original)
-            and _same_value(self.resolved, other.resolved)
+            and _same_value(rgb(self.resolved), rgb(other.resolved))
         )
 
     __hash__ = None
@@ -3200,7 +3250,7 @@ def _get_hatchcolor(p):
     resolved = getattr(p, "_hatch_color", None)
     if isinstance(resolved, np.ndarray):
         resolved = resolved.copy()
-    return _PatchHatchColor(p._original_hatchcolor, resolved)  # noqa: SLF001
+    return _PatchHatchColor(p._original_hatchcolor, resolved, getattr(p, "_alpha", None))  # noqa: SLF001
 
 
 def _set_hatchcolor(p, v) -> None:
@@ -3210,7 +3260,7 @@ def _set_hatchcolor(p, v) -> None:
         p.set_hatchcolor(v.original)
         if v.original is None and v.resolved is not None:
             # 「没设」的解析结果取决于**建 patch 那一刻**的 rcParams，不能按现在的重新解析
-            p._hatch_color = v.resolved  # noqa: SLF001
+            p._hatch_color = _hatch_rgba_with_alpha(v.resolved, p, v.alpha)  # noqa: SLF001
         return
     p.set_hatchcolor(v)
 
@@ -3291,7 +3341,7 @@ _PATCH_CAPS: dict[str, tuple] = {
     "hatchcolor": (_get_hatchcolor, _set_hatchcolor),
     "hatch_linewidth": (_get_hatch_linewidth, _set_hatch_linewidth),
     "fill": (lambda a: bool(a.get_fill()), lambda a, v: a.set_fill(bool(v))),
-    "alpha": _CAP_ALPHA,
+    "alpha": (_CAP_ALPHA[0], _set_patch_alpha),
     "visible": _CAP_VISIBLE,
     "zorder": _CAP_ZORDER,
 }
@@ -3947,7 +3997,7 @@ for _prop, _g1, _s1 in [
     ("hatch", _CAP_HATCH[0], _CAP_HATCH[1]),
     ("hatchcolor", _get_hatchcolor, _set_hatchcolor),
     ("hatch_linewidth", _get_hatch_linewidth, _set_hatch_linewidth),
-    ("alpha", lambda r: r.get_alpha(), lambda r, v: r.set_alpha(None if v is None else float(v))),
+    ("alpha", lambda r: r.get_alpha(), _set_patch_alpha),
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),
     ("zorder", lambda r: float(r.get_zorder()), lambda r, v: r.set_zorder(float(v))),
     ("bar_width", _bar_width_get, _bar_width_set),

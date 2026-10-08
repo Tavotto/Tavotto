@@ -299,15 +299,87 @@ SEQUENCES = {
         [_p(BAR_B1, "hatch", "xx"), _p(SERIES_B, "hatch", "///")],
         [_p(SERIES_B, "hatch", "///")],
     ],
-    # 不撤边色：≤3.10 上「撤边色 + 不透明度还在」本来就热态 ≠ 重放（`_PatchEdge` 快照的花纹色
-    # 不带 alpha，见回报；与本文件的三条属性无关，不在这里钉）
+    # 含「设边色 → 设不透明度 → 只撤边色」（#861：≤3.10 上 `_PatchEdge` 的花纹色快照曾不带当前 alpha）
     "colour-width-alpha": [
         [_p(SERIES_A, "edgecolor", "#ff00ff")],
         [_p(SERIES_A, "edgecolor", "#ff00ff"), _p(SERIES_A, "alpha", 0.5)],
         [_p(SERIES_A, "edgecolor", "#ff00ff"), _p(SERIES_A, "alpha", 0.5)],
+        [_p(SERIES_A, "alpha", 0.5)],
         [_p(SERIES_A, "edgecolor", "#ff00ff"), _p(SERIES_A, "linewidth", 2.0)],
     ],
 }
+
+
+RC_ALPHA_LIBRARY = """\
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+
+
+def main():
+    fig, ax = plt.subplots(figsize=(3.6, 2.6))
+    with mpl.rc_context({"hatch.color": "#ff0000"}):
+        ax.bar([0, 1], [3, 5], 0.6, facecolor="#47749e", hatch="//")
+    ax.set_xlim(-0.7, 1.7)
+    ax.set_ylim(0, 7)
+    fig.savefig("Hatch.png")
+"""
+
+ALPHA = 0.4
+#: 「改不透明度」与「改颜色」交错的全部次序；每步是完整的 override 列表（后一步 = 前一步的撤销 / 追加）。
+#: C = 颜色 override，a = 不透明度 override。
+ORDERS = {
+    "alpha-then-colour-undo-colour": [("a",), ("a", "C"), ("a",)],
+    "colour-then-alpha-undo-colour": [("C",), ("C", "a"), ("a",)],
+    "colour-then-alpha-undo-alpha": [("C",), ("C", "a"), ("C",)],
+    "alpha-then-colour-undo-alpha": [("a",), ("a", "C"), ("C",)],
+    "both-then-undo-all": [("C", "a"), ()],
+    "alpha-only-roundtrip": [("a",), ()],
+}
+
+
+def _order_patches(gid, colour_prop, colour_value, keys):
+    table = {"C": _p(gid, colour_prop, colour_value), "a": _p(gid, "alpha", ALPHA)}
+    return [table[k] for k in keys]
+
+
+#: (库, gid, 颜色 prop, 值, 需要的能力)
+ALPHA_CASES = {
+    # 纹理色来自 rcParams（`_original_hatchcolor is None`，建 patch 时的 rc 临时色）：Codex 第二轮 P1
+    "rc-hatchcolor": (RC_ALPHA_LIBRARY, "axes_0.barseries_0", "hatchcolor", "#00aa00", "color"),
+    # 纹理色跟边色（3.11 'edge'；≤3.10 就是边色，#861）：撤的是边色
+    "script-edgecolor": (LIBRARY, SERIES_A, "edgecolor", "#ff00ff", None),
+    "script-hatchcolor": (LIBRARY, SERIES_A, "hatchcolor", "#00aa00", "color"),
+}
+
+
+@pytest.mark.parametrize("order", sorted(ORDERS))
+@pytest.mark.parametrize("case", sorted(ALPHA_CASES))
+def test_alpha_and_hatch_colour_edits_undone_one_at_a_time_match_a_fresh_replay(
+    tmp_path, case, order
+):
+    """改不透明度 + 改纹理色 / 边色，再只撤其中一个：热态必须逐像素等于全新重放。
+
+    `Patch.set_alpha` 会重算花纹的 RGBA；还原若把改 alpha **之前**缓存的 RGBA 写回，热态
+    停在旧不透明度，而全新重放带着保留的 alpha（写回像素门 409）。3.11 上钉 `_PatchHatchColor`
+    （rc 来源与跟边色两种），≤3.10 上钉 `_PatchEdge` 的花纹色快照（#861）。
+    """
+    src, gid, prop, value, need = ALPHA_CASES[case]
+    if need == "color" and not HAS_COLOR:
+        pytest.skip("花纹颜色是 matplotlib 3.11 起的独立属性")
+    figs = tmp_path / "alpha-figures"
+    figs.mkdir()
+    (figs / SCRIPT_NAME).write_text(src, encoding="utf-8")
+    w = _worker(figs)
+    try:
+        for i, keys in enumerate(ORDERS[order]):
+            patches = _order_patches(gid, prop, value, keys)
+            hot_man = _apply(w, patches)
+            hot_png = _png(w, patches, f"{case}-{order}-{i}-hot")
+            fresh_man, fresh_png = _fresh(figs, patches, f"{case}-{order}-{i}-fresh")
+            assert hot_man == fresh_man, f"{case}/{order} 第 {i} 步：热态 manifest ≠ 全量重放"
+            assert hot_png == fresh_png, f"{case}/{order} 第 {i} 步：manifest 一样但像素不同"
+    finally:
+        pool.discard(w)
 
 
 def _extras(gid):
