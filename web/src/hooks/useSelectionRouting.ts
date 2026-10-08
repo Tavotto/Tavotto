@@ -27,8 +27,10 @@ export function useSelectionRouting() {
   // 侧栏交换会改变画布原点；追踪指针期间只记请求，结束后再处理最新选区。
   // 只唤醒确实有路由请求的手势：Space 平移本身不会请求属性栏。
   useEffect(() => useInteractionStore.subscribe((state, prev) => {
-    if (state.kind === 'none' && prev.kind !== 'none' && pendingRouting.current) {
-      setInteractionEnd(n => n + 1)
+    if (state.kind === 'none' && prev.kind !== 'none') {
+      // Esc / 失去捕获可在 pointerup 前结束追踪；后续松手不能重新完成已取消的交接。
+      canvasPointer.current = null
+      if (pendingRouting.current) setInteractionEnd(n => n + 1)
     }
   }), [])
 

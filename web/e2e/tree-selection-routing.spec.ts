@@ -136,6 +136,27 @@ for (const width of [820, 1100, 1366]) {
       await openTree(page)
       await row(page, title).click()
       await assertSelection(page, [title], exclusive)
+
+      // Escape cancels tracking without pointercancel; later mouseup must keep the tree.
+      const cancelTarget = await page.locator('[data-element-svg] svg [id="axes_0.title"]').boundingBox()
+      const beforeCancel = await page.locator('[data-canvas-stage]').boundingBox()
+      expect(cancelTarget).not.toBeNull()
+      expect(beforeCancel).not.toBeNull()
+      await page.mouse.move(cancelTarget!.x + cancelTarget!.width / 2,
+        cancelTarget!.y + cancelTarget!.height / 2)
+      await page.mouse.down()
+      try {
+        await page.mouse.move(cancelTarget!.x + cancelTarget!.width / 2 + 24,
+          cancelTarget!.y + cancelTarget!.height / 2 + 12, { steps: 4 })
+        await assertSelection(page, [title], exclusive)
+        await page.keyboard.press('Escape')
+        await assertSelection(page, [title], exclusive)
+      } finally {
+        await page.mouse.up()
+      }
+      await assertSelection(page, [title], exclusive)
+      const afterCancel = await page.locator('[data-canvas-stage]').boundingBox()
+      expect(afterCancel?.x).toBe(beforeCancel!.x)
     }
 
     // Focus remains in the tree while the same element is clicked on the canvas.
