@@ -115,9 +115,24 @@ def _basis_of(gens: dict, script: str, run_config: str | None) -> list:
 
 
 def basis(project_root: str | Path, script: str, run_config: str | None) -> list:
-    """此刻这份 (脚本, 运行配置) 的答案状态基线（build 开始时取，绑定时带上；读者拿它对当前令牌）。"""
+    """此刻这份 (脚本, 运行配置) 的答案状态基线（build 开始时取，绑定时带上；读者拿它对当前令牌）。
+
+    **严格读**：存储文件不存在 = 还没人改过（空令牌）；读不出来 / 损坏 = 抛错——不能把「读失败」当成
+    「没人改过」，否则之后绑定会把基线误当成当前（Codex #816 r4224223190）。调用方拿不到基线就不绑转录。"""
     with _LOCK:
-        return _basis_of(_read_gens(project_root), script, run_config)
+        try:
+            data = json.loads(store_path(project_root).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return [None, None]
+        gens = data.get("generations") if isinstance(data, dict) else None
+        return _basis_of(gens if isinstance(gens, dict) else {}, script, run_config)
+
+
+class _CurrentBasis:
+    """`bind` 的 basis 缺省哨兵：调用方明确不关心基线（直接绑定当前状态，测试 / 非 build 路径）。"""
+
+
+CURRENT = _CurrentBasis()
 
 
 class StaleTranscriptError(OSError):
@@ -178,7 +193,7 @@ def bind(
     script: str,
     run_config: str | None,
     records,
-    basis: list | None = None,
+    basis: list | None | _CurrentBasis = CURRENT,
 ) -> Transcript | None:
     """一次**成功**执行结束：把它的输入记录绑成这批产物的转录。没有问过任何输入 → 清掉旧绑定（这批图此刻
     来自一次没有输入的执行），回 None；超出上限同样不留。"""
@@ -186,9 +201,12 @@ def bind(
     key = _key(script, run_config)
     with _LOCK:
         current = _basis_of(_read_gens(project_root), script, run_config)
-        if basis is not None and list(basis) != current:
+        if basis is None:
+            return None  # 没取到 build 开始时的基线：无法证明答案没被改过，不绑（绝不退回「用当前令牌」）
+        if isinstance(basis, _CurrentBasis):
+            basis = current
+        elif list(basis) != current:
             return None  # build 在飞时答案被改过：这份转录基于旧答案，不绑（读者也会拒收）
-        basis = current
         if not entries:
             if not store_path(project_root).exists():
                 return None

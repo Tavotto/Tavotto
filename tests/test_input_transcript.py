@@ -309,6 +309,7 @@ def test_when_the_old_binding_cannot_be_invalidated_the_execution_is_not_bound(
         figures_dir = str(tmp_path)
         script_name = "s.py"
         build_failed = False
+        transcript_basis = [None, None]  # serving() 取到的基线
 
     inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
     _block_replace(monkeypatch)
@@ -369,3 +370,32 @@ def test_the_secret_reason_code_keeps_its_wire_value_under_a_name_without_secret
     assert worker._REASON_MASKED_INPUT_REQUIRED == inputbroker.REASON_MASKED_INPUT_REQUIRED
     assert inputbroker.REASON_MASKED_INPUT_REQUIRED in inputbroker.REASONS
     assert not [n for n in vars(inputbroker) if n.startswith("REASON_") and "SECRET" in n]
+
+
+def test_a_build_without_a_captured_basis_never_binds(tmp_path, monkeypatch):
+    # r4224223190：build 开始时 basis() 读失败 → 用户期间改了答案 → build 结束不绑，冷重放不用旧值
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "older")])
+    w = _Worker(tmp_path)
+
+    def boom(*_a, **_k):
+        raise OSError("transient")
+
+    real = inputtranscript.basis
+    monkeypatch.setattr(inputtranscript, "basis", boom)
+    with inputbroker.serving(w):
+        monkeypatch.setattr(inputtranscript, "basis", real)
+        inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)  # 用户改答案
+    assert w.transcript_basis is None
+    inputbroker.finished(w, [_rec(1, "old")])
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_bind_refuses_an_explicit_missing_basis_and_basis_read_is_strict(tmp_path):
+    assert inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")], basis=None) is None
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")])
+    inputtranscript.store_path(tmp_path).write_text("{broken", "utf-8")
+    import pytest
+
+    with pytest.raises(ValueError):
+        inputtranscript.basis(tmp_path, "s.py", None)

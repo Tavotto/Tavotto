@@ -502,6 +502,7 @@ def finished(worker, records) -> None:
             str(worker.script_name),
             _run_config_of(worker),
             records,
+            # 没有 serving() 取的基线（替身 worker 以外不该出现）= 取不到：None 让 bind 拒绝绑定
             basis=getattr(worker, "transcript_basis", None),
         )
     except inputtranscript.StaleTranscriptError:
@@ -522,10 +523,14 @@ def serving(worker):
     """在 `worker` 这一次 build 期间当它的答题方。退出时关掉还在等的问、删掉会合目录；这一次的问答去向
     （`InputFacts.payload()`）挂在 `worker.last_input_facts` 上，build 失败时也挂在异常的 `input_facts` 上。"""
     # 答案状态基线在 build 开始时取（读者校验，见 inputtranscript）：build 期间被改的答案，这次的转录不认
-    with contextlib.suppress(OSError, AttributeError, TypeError):
+    # 取不到（读失败）就明确置 None：`finished()` 看到 None 不绑转录，不会在事后拿「当前状态」冒充基线
+    try:
         worker.transcript_basis = inputtranscript.basis(
             str(worker.figures_dir), str(worker.script_name), _run_config_of(worker)
         )
+    except (OSError, ValueError, AttributeError, TypeError):
+        with contextlib.suppress(AttributeError):
+            worker.transcript_basis = None
     out_dir = getattr(worker, "out_dir", None)
     if out_dir is None:
         # 没有会话缓存目录的就没有会合目录可轮询（只有测试里的替身会这样）：脚本要输入时照样由 worker 自己到点回 EOF
