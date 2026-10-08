@@ -471,6 +471,7 @@ describe('切换聚焦条目：面板的条目局部状态不带到另一个脚�
 
   it('A 的本地失败文案（采用环境失败）不出现在 B 上；切回 A 也是干净的', async () => {
     await mount()
+    await openOther() // B 先开好（报告已到），再回 A 制造失败，最后只切焦点：切换时两份报告的修订 / 观察序号相同
     await openWith(report(STATES.env))
     const spy = vi.spyOn(useEnvStore.getState(), 'adoptCandidate').mockResolvedValue('采用失败了')
     useEnvStore.setState({ adoptCandidate: spy as never })
@@ -478,7 +479,7 @@ describe('切换聚焦条目：面板的条目局部状态不带到另一个脚�
     await act(async () => primary()!.click())
     expect(panel().dataset.prepState).toBe('action_failed')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('采用失败了')
-    await openOther()
+    await focusKey('script:other.py')
     expect(panel().getAttribute('aria-label')).toContain('other.py')
     expect(panel().dataset.prepState).not.toBe('action_failed')
     expect(panel().querySelector('[data-prep-line]')?.textContent).not.toBe('采用失败了')
@@ -488,10 +489,11 @@ describe('切换聚焦条目：面板的条目局部状态不带到另一个脚�
 
   it('A 的多图结果对话框开着，切到 B：对话框不跟过去（切回 A 也是关着的）', async () => {
     await mount()
+    await openOther()
     await openWith(report(STATES.completedMany))
     await act(async () => primary()!.click())
     expect(document.body.querySelectorAll('[role="dialog"] ul button').length).toBe(3)
-    await openOther()
+    await focusKey('script:other.py')
     expect(panel().getAttribute('aria-label')).toContain('other.py')
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     await focusKey('script:plot.py')
@@ -500,12 +502,13 @@ describe('切换聚焦条目：面板的条目局部状态不带到另一个脚�
 
   it('详情里「改用内置环境」的失败文案同样不带过去', async () => {
     await mount()
+    await openOther()
     await openWith(report(STATES.env))
     const spy = vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockResolvedValueOnce('设置失败了')
     useEnvStore.setState({ setProjectPython: spy as never })
     await act(async () => (panel().querySelector('[data-prep-use-builtin]') as HTMLButtonElement).click())
     expect(panel().querySelector('[data-prep-env-error]')).not.toBeNull()
-    await openOther()
+    await focusKey('script:other.py')
     expect(panel().querySelector('[data-prep-env-error]')).toBeNull()
   })
 })
