@@ -309,7 +309,7 @@ function ElementQuick({
           {qe(hidden ? 'unhide' : 'hide')}
         </MenuButton>
       )}
-      <MenuButton icon={ExternalLink} onClick={openInPanel}>
+      <MenuButton icon={ExternalLink} onClick={openInPanel} data-quick-item="open-inspector">
         {qe('openInspector')}
       </MenuButton>
     </>
