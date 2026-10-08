@@ -322,6 +322,7 @@ describe('动作只交后端生成的 id', () => {
       'psess-1',
       { action_id: 'act-prepare_dependencies', expected_config_revision: 1, impact_digest: 'imp-123' },
       'pj-a',
+      expect.any(AbortSignal),
     )
     expect(entry().report?.phase).toBe('preparing_environment')
   })
@@ -400,6 +401,34 @@ describe('网络看门狗只改连接事实', () => {
     await vi.waitFor(() => expect(entry().connection).toBe('ok'), { timeout: 1000 })
     expect(entry().report?.phase).toBe('completed')
     expect(mockCreate).toHaveBeenCalledTimes(1) // 没有因为失联重新提交任何东西
+  })
+})
+
+describe('动作 POST 也走网络看门狗', () => {
+  it('动作永不返回：超时后 pending 清除、补拉一次报告、不重发动作', async () => {
+    __setPreparationTimingForTests({ requestTimeoutMs: 20, pollMs: [10_000] })
+    mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    mockAct.mockImplementationOnce(
+      (_id, _body, _pj, signal) =>
+        new Promise((_res, rej) => {
+          signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))
+        }),
+    )
+    mockGet.mockClear()
+    mockGet.mockResolvedValue(prepReport({ phase: 'running', actions: [action('cancel')], observation_seq: 3 }))
+    vi.useFakeTimers()
+    try {
+      const done = useProjectPreparationStore.getState().act(KEY, 'cancel')
+      expect(entry().pending).toBe('cancel')
+      await vi.advanceTimersByTimeAsync(25)
+      await done
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(entry().pending).toBeNull()
+    expect(mockAct).toHaveBeenCalledTimes(1) // 不盲目重发
+    expect(mockGet).toHaveBeenCalledTimes(1) // 补拉一次报告
   })
 })
 

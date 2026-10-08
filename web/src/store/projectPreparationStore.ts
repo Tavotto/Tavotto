@@ -389,14 +389,18 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       const pj = e.pj
       patch(key, () => ({ pending: kind, rejection: null }))
       try {
-        const res = await actOnPreparationSession(
-          report.session_id,
-          {
-            action_id: action.id,
-            expected_config_revision: report.config_revision,
-            ...(action.impact.impact_digest ? { impact_digest: action.impact.impact_digest } : {}),
-          },
-          pj,
+        // 动作 POST 与创建 / 轮询走同一个看门狗：连接卡住时超时落进下面的「连接失败 → 补拉报告」，不重发
+        const res = await withWatchdog((signal) =>
+          actOnPreparationSession(
+            report.session_id,
+            {
+              action_id: action.id,
+              expected_config_revision: report.config_revision,
+              ...(action.impact.impact_digest ? { impact_digest: action.impact.impact_digest } : {}),
+            },
+            pj,
+            signal,
+          ),
         )
         if (!live(key, epoch, pj)) return
         patch(key, () => ({ pending: null }))
