@@ -27,6 +27,7 @@ import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ALT, cn, combo } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
+import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
 import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -315,6 +316,9 @@ function LayerRow({
 }: RowProps) {
   useTranslation('workspace')
   const [editing, setEditing] = useState(false)
+  // 重命名用 Enter / Esc 收起时把焦点接回行上，方向键漫游不断链；点了别处收起的不抢回来（Codex #833）
+  const rowRef = useRef<HTMLLIElement>(null)
+  const markKeyFinish = useRenameFocusReturn(editing, rowRef)
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序
   const menu = useRowMenu({ enabled: !editing })
   const Icon = iconFor(obj)
@@ -330,6 +334,7 @@ function LayerRow({
 
   return (
     <li
+      ref={rowRef}
       {...menu.rowProps}
       role="treeitem"
       aria-selected={selected}
@@ -414,17 +419,16 @@ function LayerRow({
           onBlur={(e) => {
             renameObject(obj.id, e.target.value)
             setEditing(false)
-            // 重命名结束把焦点接回行上，方向键漫游不断链
-            const li = e.currentTarget.closest('li')
-            setTimeout(() => li?.focus(), 0)
           }}
           onKeyDown={(e) => {
             e.stopPropagation()
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            if (e.key === 'Enter') {
+              markKeyFinish()
+              ;(e.target as HTMLInputElement).blur()
+            }
             if (e.key === 'Escape') {
-              const li = e.currentTarget.closest('li')
+              markKeyFinish()
               setEditing(false)
-              setTimeout(() => li?.focus(), 0)
             }
           }}
           // 行内改名框是「可编辑框」那一副（fieldBox），28 高 = 整行（左栏审计 L31）

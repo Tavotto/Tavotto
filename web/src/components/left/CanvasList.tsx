@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { ArrowDown, ArrowUp, Copy, Pencil, Plus, SearchX, Trash2 } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { dropLineClass, listRowClass, rowMetaClass } from '@/components/ui/listRow'
+import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
 import {
   activateCanvas,
   createCanvasAndActivate,
@@ -151,16 +152,10 @@ function CanvasRow({
   const [drop, setDrop] = useState<'before' | 'after' | null>(null)
   const canMove = (delta: -1 | 1) => !filtered && (delta < 0 ? index > 0 : index < count - 1)
   const openRef = useRef<HTMLButtonElement>(null)
-  // Enter / Esc 结束改名后焦点回到这一行的按钮；失焦提交（点了别处）不抢焦点
-  const refocus = useRef(false)
-  useEffect(() => {
-    if (!renaming && refocus.current) {
-      refocus.current = false
-      openRef.current?.focus()
-    }
-  }, [renaming])
+  // Enter / Esc 结束改名后焦点回到这一行的按钮；失焦提交（点了别处）不抢焦点（判据见 `ui/useRenameFocusReturn`）
+  const markKeyFinish = useRenameFocusReturn(renaming, openRef)
   const finishRename = (name: string | null, viaKey: boolean) => {
-    refocus.current = viaKey
+    if (viaKey) markKeyFinish()
     onRenamed(name)
   }
 
