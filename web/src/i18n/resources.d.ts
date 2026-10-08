@@ -1155,8 +1155,6 @@ export default interface Resources {
           "needsReconsent": "采集范围有变化，待重新确认",
           "never": "图、脚本、文件名、路径、科研数据、图内文字与助手提示词。",
           "neverLabel": "绝不发送：",
-          "optIn": "开启",
-          "optOut": "关闭",
           "policy": "隐私政策",
           "sends": {
             "ai_assistant_invoked": "调用改图助手：用的是 Codex、Claude 还是其他 Agent。",
@@ -1193,7 +1191,6 @@ export default interface Resources {
           "failed": "检测失败。显示上次结果。"
         },
         "backAria": "返回改图助手列表",
-        "backToList": "改图助手",
         "codexInstall": {
           "action": "安装 Codex 集成",
           "announce": {
@@ -1232,6 +1229,7 @@ export default interface Resources {
             "uninstall_failed": "移除未完成。详情里是命令的原话。"
           },
           "healthy": "各项都没问题，不用做任何事。",
+          "more": "更多 Codex 集成操作",
           "running": "正在安装…",
           "step": {
             "canvas": "内嵌画布完整性",
@@ -1246,11 +1244,14 @@ export default interface Resources {
             "done": "已完成",
             "failed": "失败",
             "skipped": "跳过（已正常）"
-          }
+          },
+          "stepsAllPassed": "全部完成",
+          "stepsTitle": "安装步骤"
         },
         "codexIntegrationName": "{{product}} for Codex",
-        "currentDefaultAria": "{{name}} 是当前默认的改图助手",
         "defaultButton": "默认",
+        "defaultLabel": "默认助手",
+        "defaultNone": "没有可用的助手",
         "detail": {
           "addEndpoint": "添加服务…",
           "advanced": "高级设置",
@@ -1265,9 +1266,11 @@ export default interface Resources {
           "customExecutable": "自定义可执行文件",
           "customPath": "自定义路径",
           "delete": "删除",
+          "deleteBody": "密钥不会回显，删除后需要重新填写。",
           "deleteConfirm": "删除「{{label}}」？",
           "diagnostics": "诊断信息",
           "edit": "编辑",
+          "endpointActions": "{{label}}的更多操作",
           "executable": "可执行文件",
           "install": "安装",
           "loginAndModels": "登录与模型",
@@ -1345,7 +1348,6 @@ export default interface Resources {
         "refreshFailed": "重新检测失败。下面仍是上次结果。",
         "rescan": "重新检测",
         "rowAria": "{{name}} 的详情",
-        "setDefaultAria": "把 {{name}} 设为默认改图助手",
         "source": {
           "chatgpt_bundle": "ChatGPT 应用内置",
           "codex_desktop_bundled": "Codex 桌面版内置",
@@ -1388,9 +1390,11 @@ export default interface Resources {
       "copied": "已复制",
       "copy": "复制",
       "diagnostics": {
+        "bundleLabel": "诊断包",
         "copyReport": "复制诊断",
         "devTitle": "给开发者",
         "envNote": "「{{product}} 自带的渲染环境」随安装包附带，只读。装包会另建「本项目的 {{product}} 环境」，两者状态各自独立。",
+        "fetchFailed": "没能取到检查结果，可点「重新获取」再试",
         "fetchedAt": "本页数据取自 {{time}}",
         "healthTitle": "健康状态",
         "hidePreview": "收起",
@@ -1400,6 +1404,7 @@ export default interface Resources {
           "project_readable": "这个目录暂时读不到。重新打开这个项目，或在「全部项目」里换一个。",
           "project_writable": "「写回原始文件」需要这个目录可写。调整权限后，回来点「重新获取」。"
         },
+        "okCount_other": "{{count}} 项正常",
         "okDetails": "各项检查结果",
         "perfRow": "记录拖动性能",
         "perfStart": "开始",
@@ -1408,20 +1413,27 @@ export default interface Resources {
         "previewNote": "以下是将要复制的内容，密钥与个人路径已脱敏。确认后再复制。",
         "refetch": "重新获取",
         "reportTitle": "诊断报告",
+        "resultsTitle": "检查结果",
         "summaryFailing": "{{count}} 项异常",
-        "summaryOk": "运行环境检查通过"
+        "summaryLabel": "诊断摘要",
+        "summaryOk": "运行环境检查通过",
+        "summaryUnavailable": "未能检测",
+        "verdictLabel": "运行环境"
       },
       "export": {
         "defaultFormats": "默认格式",
         "ppiNotForVector": "只选了矢量格式，分辨率不生效",
-        "sectionChecks": "检查",
-        "sectionFormats": "格式",
-        "sectionRaster": "位图输出"
+        "sectionDefaults": "默认导出"
       },
       "general": {
+        "groupCanvas": "画布",
+        "groupLanguage": "语言与布局",
+        "groupLearning": "学习",
+        "groupSidebars": "侧栏",
         "language": "界面语言",
         "layout": "界面乱了？",
-        "layoutReset": "界面布局已重置，刷新页面后生效",
+        "layoutDesc": "侧栏宽度、开合与画布偏好回到默认，当场生效",
+        "layoutReset": "界面布局已恢复默认",
         "resetLayout": "恢复默认"
       },
       "helpAbout": "关于{{label}}",
@@ -1433,6 +1445,7 @@ export default interface Resources {
       },
       "navLabel": "设置分区",
       "packages": {
+        "backgroundTitle": "背景信息",
         "builtinCountMeta": "{{count}} 个 · 只读",
         "builtinEmpty": "没有内置包信息。",
         "builtinFromBundled": "随 {{product}} 安装包附带，只读。",
@@ -1460,9 +1473,11 @@ export default interface Resources {
           "other": "包管理暂时不可用。"
         },
         "env": {
+          "actions": "环境操作",
           "inUse": "本项目正在使用",
           "incomplete": "未完成，下次操作前重建",
           "notCreated": "尚未创建，首次安装时自动创建",
+          "notCreatedShort": "尚未创建",
           "notInUse": "本项目暂未使用",
           "python": "Python {{version}}",
           "ready": "就绪",
@@ -1488,6 +1503,7 @@ export default interface Resources {
           "verifying": "正在验证环境…"
         },
         "loading": "正在读取…",
+        "moreAria": "{{name}} 的更多操作",
         "network": {
           "customIndex": "使用自定义软件源",
           "proxy": "当前走代理"
@@ -1544,8 +1560,20 @@ export default interface Resources {
         "userEmpty": "还没有安装过包。",
         "userTitle": "用户安装"
       },
+      "pageDesc": {
+        "about": "版本、更新与隐私。",
+        "ai": "本机的改图助手，以及在 Codex 里用 Tavotto。",
+        "diagnostics": "运行环境是否正常，以及给我们的诊断报告。",
+        "export": "导出对话框打开时的默认选择。",
+        "general": "语言、侧栏、画布与教程。",
+        "packages": "这个项目的 Python 环境里装了什么。",
+        "project": "当前项目的位置、运行环境与写回。",
+        "spec": "图要满足什么：投稿前检查用的规则。",
+        "style": "图长什么样：字体、字号与线宽。"
+      },
       "project": {
         "allowWriteBack": "允许写回原始文件",
+        "alreadyDefault": "正在使用默认位置",
         "backupDir": "原始文件备份",
         "change": "更改…",
         "chooseFolder": "选择…",
@@ -1554,13 +1582,16 @@ export default interface Resources {
         "dirPlaceholder": "留空使用默认位置",
         "effectivePath": "实际位置",
         "exportDir": "导出位置",
+        "hideFullPath": "收起完整路径",
         "noScriptsSuffix": "（此项目的图暂不支持图内编辑）",
+        "pathActions": "{{name}}的更多操作",
+        "python": "Python 解释器",
         "registry": "管理来源…",
         "scriptCount_other": "{{count}} 个脚本",
         "scripts": "可编辑来源",
         "sectionLocations": "位置",
         "sectionProject": "项目",
-        "sectionRuntime": "运行",
+        "sectionRuntime": "Python 与运行",
         "sectionWriteBack": "写回源图",
         "showFullPath": "显示 {{name}} 的完整路径",
         "switch": "切换项目…",
@@ -1568,16 +1599,38 @@ export default interface Resources {
         "writeBackDesc": "写回会覆盖原始 PDF / PNG；执行前先将原文件备份到上面的位置。",
         "writeBackOffHint": "写回已关闭。原始文件不会被覆盖，「写回原始文件」已停用。"
       },
+      "search": {
+        "clear": "清除搜索",
+        "kw": {
+          "agents": "助手 codex claude agent 默认",
+          "canvas": "画布 网格 吸附 标尺 参考线",
+          "diagnostics": "诊断 报告 日志 导出 问题",
+          "formats": "格式 pdf png svg tiff eps",
+          "language": "语言 中文 英文 locale",
+          "layout": "布局 重置 恢复 侧栏宽度 界面",
+          "packages": "包 安装 pip pypi 库",
+          "ppi": "分辨率 dpi ppi 位图",
+          "python": "python 解释器 环境 conda venv",
+          "scripts": "脚本 来源 注册",
+          "shortcuts": "快捷键 键盘 速查表",
+          "spec": "规范 期刊 检查 字号 栏宽",
+          "telemetry": "隐私 统计 遥测 数据",
+          "tutorial": "教程 新手 提示 引导",
+          "updates": "更新 版本 升级",
+          "writeBack": "写回 原始文件 覆盖 备份"
+        },
+        "label": "搜索设置",
+        "noResults": "没有匹配的设置",
+        "placeholder": "搜索设置"
+      },
       "section": {
         "about": "关于与更新",
         "ai": "改图助手",
-        "canvas": "画布与编辑",
         "diagnostics": "帮助与诊断",
         "export": "导出",
         "general": "通用",
         "packages": "Python 库",
         "project": "项目",
-        "sidebars": "一直开着",
         "spec": "期刊规范",
         "style": "样式"
       },
@@ -1596,8 +1649,8 @@ export default interface Resources {
       "tutorial": {
         "hints": "操作提示",
         "label": "新手教程",
+        "more": "更多教程操作",
         "reset": "重置教程项目",
-        "resetAction": "重置",
         "resetHints": "重新显示操作提示",
         "restart": "再看一遍教程",
         "resume": "继续教程",
@@ -1606,6 +1659,8 @@ export default interface Resources {
       "update": {
         "applyFailedRetry": "升级未完成，当前版本未变。可以再点一次「下载并升级」，或查看下方日志排查。",
         "autoCheck": "每天自动检查",
+        "autoCheckDesktop": "启动时自动检查",
+        "autoCheckDesktopReason": "桌面版每次启动都会检查，暂时不能关闭",
         "autoCheckRetry": "重新保存",
         "autoCheckSaveFailed": "未能确认设置已保存。开关仍显示上次确认的值，请重试。",
         "autoCheckSaving": "正在保存…",
@@ -1627,6 +1682,7 @@ export default interface Resources {
         "lastCheckedUnknown": "尚未检查，无法判断是不是最新",
         "manualDownload": "连不上更新服务时，也可以从 Releases 手动下载",
         "methodSource": "源码检出。升级用 git pull。",
+        "notesTitle": "更新内容",
         "relaunch": "重启并使用新版本",
         "releaseNotes": "查看发行说明",
         "restartAfter": "后生效。当前进程仍运行旧版本代码。",
@@ -1634,6 +1690,7 @@ export default interface Resources {
         "restartStrong": "请重启 Tavotto",
         "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
         "sourceUpgrade": "源码检出，请执行",
+        "title": "更新",
         "upgrading": "升级中…"
       }
     },
@@ -2101,6 +2158,7 @@ export default interface Resources {
       "autoInstallHintAfter": "。首次需要下载几十 MB。",
       "autoInstallHintBefore": "会在 Tavotto 自己的目录里建一个独立环境并装上 matplotlib，",
       "autoInstallHintStrong": "不会改动你现有的任何 Python 环境",
+      "changeInterpreter": "更换…",
       "dependencyBlocked_dependency_conflict": "项目的依赖声明互相矛盾。修改声明后重试；现有环境未改动。",
       "dependencyBlocked_dependency_declaration_unsupported": "项目的依赖声明里有 Tavotto 不能替你兑现的行（本地路径、URL、可编辑安装、Poetry 语法或读不了的文件）。可改用你自己的环境，或修改那几行。",
       "dependencyBlocked_dependency_hashes_incomplete": "依赖声明带了哈希，但不是每一条都有。补齐或全部去掉。",
@@ -2129,6 +2187,7 @@ export default interface Resources {
       "dependencyTargetHint_tavotto_managed": "新建一份，装好验证后才启用，可随时重建",
       "dependencyTarget_project_venv": "项目现有的 Python 环境",
       "dependencyTarget_tavotto_managed": "{{product}} 为项目准备的环境",
+      "envActions": "环境操作",
       "incompleteAfter": "——请重新安装 Tavotto。如果是杀毒软件误删，装好后把 Tavotto 的安装目录加入白名单。",
       "incompleteBefore": "Tavotto 渲染环境",
       "incompleteHint": "摆放、标注和导出不受影响，只有图内元素编辑需要渲染环境。设置 →「环境诊断」可以导出诊断包。",
@@ -2141,6 +2200,7 @@ export default interface Resources {
       "inputRemapTargetGone": "（这个位置现在不存在）",
       "installFailed": "安装失败",
       "installing": "正在安装…",
+      "interpreterLabel": "Python 解释器",
       "managedEnvInstalled": "已安装：{{packages}}",
       "managedEnvRebuild": "重建 Tavotto 环境",
       "managedEnvUsing": "本项目的 {{product}} 环境：Python {{version}}",
@@ -2175,7 +2235,6 @@ export default interface Resources {
       "noPythonAfter": "（或 Anaconda），再回到这里。",
       "noPythonBefore": "这台机器上没找到可用的 Python。请先安装",
       "noPythonLink": "Python 3.10 以上",
-      "okTitle": "渲染环境",
       "oneClickChecking": "正在检查这台电脑…",
       "oneClickRepair": "一键修复",
       "oneClickSentence": "这个脚本还缺 {{packages}}，点一下自动装好。",
@@ -2187,6 +2246,7 @@ export default interface Resources {
       "pathAria": "渲染解释器路径",
       "pathPlaceholder": "/path/to/python",
       "projectEnvAlsoMissing": "项目环境 {{venv}} 里也没有 {{module}}。",
+      "projectEnvLabel": "项目环境",
       "projectEnvNoMatplotlib": "项目环境 {{venv}} 无法导入 matplotlib，不是可用的绘图环境。",
       "projectEnvNotFound": "内置环境里没有 {{module}}，项目附近也没有可用的 Python 虚拟环境。",
       "projectEnvPick": "用这个项目自己的 Python 环境",
@@ -2395,7 +2455,7 @@ export default interface Resources {
       "rewriteSkippedTitle": "这些地方没改：",
       "rewriteTitle": "确认修改脚本",
       "rewriteWarning": "这会修改你的脚本文件：",
-      "scriptBackupLabel": "改写脚本之前留下的备份：",
+      "scriptBackupLabel": "改写脚本前留下的备份",
       "scriptBackupRestore": "恢复原脚本",
       "scriptBackupRestoreFull": "整份恢复",
       "scriptBackupRestored": "已恢复「{{script}}」，正在重新运行",
@@ -2422,7 +2482,6 @@ export default interface Resources {
       "useOtherHintAfter": "，只是启动它来渲染。",
       "useOtherHintBefore": "脚本需要内置环境里没有的包（rdkit、astropy…）时，换用你自己的环境。留空并应用即可恢复默认。Tavotto",
       "useOtherHintStrong": "不会改动你选中的环境",
-      "useOtherLink": "使用其他 Python 环境…",
       "userEnvAdopted": "已改用「{{name}}」（Python {{version}}），需要的包它都装好了",
       "userEnvBody": "{{script}} 一开始就要用到的包，渲染环境里没有；这台电脑上已有装好它们的 Python 环境。",
       "userEnvComplete": "需要的包都已装好",
