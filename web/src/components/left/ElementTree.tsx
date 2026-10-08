@@ -24,7 +24,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import type { Manifest, ManifestElement, ManifestGroup } from '@/lib/api'
 import { isElementHidden } from '@/canvas/interactions'
-import { cn } from '@/lib/utils'
+import { cn, isMac } from '@/lib/utils'
 import { listRowClass } from '@/components/ui/listRow'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { TreeChevron, TreeCount, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
@@ -715,6 +715,7 @@ const ElementRow = memo(function ElementRow({
 }) {
   useTranslation('workspace')
   const unsupported = unsupportedOf(role)
+  const pointerFocusing = useRef(false)
   const shown = engineLabel(label)
   // ⋯ / 右键 / ⇧F10 同一份菜单（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序（此前 tabIndex=-1，键盘够不着）
   const menu = useRowMenu()
@@ -739,6 +740,7 @@ const ElementRow = memo(function ElementRow({
       onFocus={(e) => {
         menu.rowProps.onFocus(e)
         if (e.target !== e.currentTarget || selected) return
+        if (pointerFocusing.current) return
         // 焦点漫游即选中，与图层树一致
         onSelect(gid, false)
       }}
@@ -760,7 +762,7 @@ const ElementRow = memo(function ElementRow({
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
-          onSelect(gid, e.shiftKey)
+          onSelect(gid, e.shiftKey || e.ctrlKey || e.metaKey)
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
           e.preventDefault()
           e.stopPropagation()
@@ -774,7 +776,13 @@ const ElementRow = memo(function ElementRow({
       }}
       onPointerDown={(e) => {
         if (e.button !== 0) return
-        onSelect(gid, e.shiftKey)
+        // 先接住焦点，但让这次选择只由指针做一次：加减多选不能被 onFocus 重选。
+        pointerFocusing.current = true
+        e.currentTarget.focus({ preventScroll: true })
+        pointerFocusing.current = false
+        // Mac Control-click 是上下文菜单入口；接住焦点，但不改变已有选区。
+        if (isMac && e.ctrlKey) return
+        onSelect(gid, e.shiftKey || e.ctrlKey || e.metaKey)
       }}
       className={cn(listRowClass({ selected, hidden }), 'pr-0.5')}
     >
