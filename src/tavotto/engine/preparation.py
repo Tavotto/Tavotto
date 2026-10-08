@@ -901,13 +901,17 @@ class PreparationService:
             if entry.result.status in TERMINAL:
                 # 已经由取消落了终局（共享会话的等待者不再等，T09）：执行线程迟到的结局不改写它
                 return
-            if status == STATUS_READY and entry.cancel.is_set():
-                # 取消在最后一次检查之后、提交 ready 之前被接受（`cancel()` 已回 accepted、已杀自有 worker）：
-                # 接受即终局——这里在同一把锁内复查，ready 让位给 cancelled，完成回调不会对死会话注册 / 物化
+            if status != STATUS_CANCELLED and entry.cancel.is_set():
+                # 取消在最后一次检查之后、提交终局之前被接受（`cancel()` 已回 accepted、已杀自有 worker）：
+                # 接受即终局——**所有**终局提交（ready / error / needs_input）都经这一个入口，在同一把锁内复查，
+                # 一律让位给 cancelled；完成回调不会对死会话注册 / 物化，也不会把用户的 Stop 落成 failed / awaiting
                 status = STATUS_CANCELLED
                 note = (
                     "取消：在完成前被接受；本计划新起的会话已关闭，脚本已经产生的外部副作用不撤销"
                 )
+                entry.result.error = None
+                entry.result.required_input = None
+                entry.result.missing_input = None
                 entry.result.trace.cancel("receipt")
             entry.result.finished_at = time.time()
             if note:
