@@ -1030,7 +1030,7 @@
       "argsHidden_other": "{{count}} (has a password, hidden)",
       "installs": "Installs",
       "installTo": "Into",
-      "tkNote": "A file-picker pop-up doesn't work inside Tavotto. Put the file path straight into the script and you won't need another environment.",
+      "tkNote": "This script only uses tkinter for a file-picker pop-up, which doesn't work inside Tavotto. You can also put the file path straight into the script and skip switching environments.",
       "noFigureWhy": "It never called savefig and left no Figure open.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it."
     },

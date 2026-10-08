@@ -673,3 +673,79 @@ def _rel(root: Path, path: Path) -> str:
         return path.resolve(strict=False).relative_to(root.resolve(strict=False)).as_posix()
     except ValueError:
         return path.name
+
+
+#: 只弹「选文件 / 提示」对话框的 tkinter 子模块与 `Tk` 根窗口（脚本把它藏起来再弹框的惯用写法）
+_TK_DIALOG_NAMES = frozenset({"filedialog", "messagebox", "simpledialog", "commondialog", "Tk"})
+_TK_ROOTS = frozenset({"tkinter", "Tkinter"})
+
+
+def tk_file_dialog_only(path: str | Path) -> bool:
+    """脚本对 tkinter 的用法是否**仅限弹窗选文件 / 提示框**（轻量 AST 判断，只读这一个脚本）。
+
+    只有这种情形「把文件路径直接写进脚本」才能去掉对 tkinter 的依赖；用了 Tk 控件（`Label` / `Canvas` / `mainloop`）、
+    TkAgg 后端等，写路径也去不掉 import。**拿不准一律 False**（读不了 / 解析不了 / 别的 tkinter 名 / 出现 `mainloop` /
+    出现 `tkagg` 字样都算）：宁可不给这条建议，也不承诺写路径就够。
+    """
+    # 读用户脚本源码的单一出处（PEP 263 声明 / BOM）；函数内导入：discover 在模块层依赖面更宽，避免 importscan 被它拖成环
+    from . import discover
+
+    text, problem = discover.read_source(Path(path))
+    if text is None or problem is not None:
+        return False
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+    aliases: set[str] = set()  # 指向 tkinter 包本身的名字（`import tkinter as tk` → tk）
+    dialog_modules: set[str] = (
+        set()
+    )  # 指向对话框子模块 / Tk 的名字（`from tkinter import filedialog`）
+    seen = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                top = a.name.split(".")[0]
+                if top not in _TK_ROOTS:
+                    continue
+                seen = True
+                parts = a.name.split(".")
+                if len(parts) == 1:
+                    aliases.add(a.asname or parts[0])
+                elif parts[1] in _TK_DIALOG_NAMES and len(parts) == 2:
+                    if a.asname:
+                        dialog_modules.add(a.asname)
+                    else:
+                        aliases.add(parts[0])  # `import tkinter.filedialog` 绑定的是 tkinter
+                else:
+                    return False
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if node.level or top not in _TK_ROOTS:
+                continue
+            seen = True
+            if node.module in _TK_ROOTS:
+                for a in node.names:
+                    if a.name not in _TK_DIALOG_NAMES:
+                        return False  # `from tkinter import *` 也在这里：拿不准
+                    dialog_modules.add(a.asname or a.name)
+            elif (node.module or "").split(".")[1:2] and (node.module or "").split(".")[
+                1
+            ] not in _TK_DIALOG_NAMES:
+                return False
+    if not seen:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if node.attr == "mainloop":
+                return False
+            if (
+                isinstance(node.value, ast.Name)
+                and node.value.id in aliases
+                and node.attr not in _TK_DIALOG_NAMES
+            ):
+                return False
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "tkagg" in node.value.lower():
+                return False
+    return True

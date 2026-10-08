@@ -4706,7 +4706,7 @@ export default interface Resources {
         "installs": "将安装",
         "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
         "script": "脚本",
-        "tkNote": "弹出窗口选文件在 Tavotto 里行不通；把文件路径直接写进脚本即可，不必换环境。",
+        "tkNote": "这个脚本只用 tkinter 弹窗选文件，而弹窗在 Tavotto 里行不通；也可以把文件路径直接写进脚本，就不必换环境。",
         "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
         "usedBy": "用的是",
         "workdir": "运行目录"

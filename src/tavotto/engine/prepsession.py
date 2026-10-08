@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import deprepair, pool, preparation, registry, scriptargs
+from . import deprepair, importscan, pool, preparation, registry, scriptargs
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -1076,10 +1076,15 @@ class SessionService:
         info: dict = {"module": module, "installable": False}
         if not module:
             return info
-        if err.get("install_route") == pool.INSTALL_ROUTE_STDLIB:
+        if pool.install_offer_blocked(str(err.get("install_route") or "")):
             # 标准库缺了：不查可信解析（不许把 tkinter 之类映射成某个同名 PyPI 包去装），只剩换环境
             info["code"] = "stdlib_module_missing"
             info["route"] = pool.INSTALL_ROUTE_STDLIB
+            if module == "tkinter":
+                # 只在脚本对 tkinter 的用法仅是弹窗选文件时，界面才许说「把路径写进脚本即可」（用了 Tk 控件 / TkAgg 写路径也去不掉 import）
+                info["tk_file_dialog_only"] = importscan.tk_file_dialog_only(
+                    Path(sess.project_root) / plan.script
+                )
             return info
         try:
             offer = deprepair.offer(sess.project_root, plan.script, module)
@@ -1425,6 +1430,7 @@ class SessionService:
                 # 装不了的两种去向（前端按它选一句话，不按 code 文案判断）：unresolvable = 映射不到 PyPI；
                 # stdlib_missing = 标准库缺了。预览失败等拿不准的情形回落 unresolvable：同样只剩换环境这条路
                 "route": missing.get("route") or pool.INSTALL_ROUTE_UNRESOLVABLE,
+                "tk_file_dialog_only": bool(missing.get("tk_file_dialog_only")),
                 "code": missing.get("code", ""),
                 "options": ["specify_package", "choose_environment"],
                 "rerun_required": True,

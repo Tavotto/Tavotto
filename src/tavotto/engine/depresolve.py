@@ -32,6 +32,7 @@ import dataclasses
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 
 from . import projectenv, scanbudget
@@ -1418,6 +1419,9 @@ def _contradictions(specs: list[str], specifiers, version_mod) -> list[str]:
 # ---------------------------------------------------------------------------
 # 解析入口
 # ---------------------------------------------------------------------------
+_STDLIB_NAMES = frozenset(getattr(sys, "stdlib_module_names", ()))
+
+
 def resolve(
     figures_dir: str | Path, import_name: str, script: str | None = None
 ) -> DependencyRequirement | None:
@@ -1433,6 +1437,9 @@ def resolve(
        **绝不**拿 import 名当包名装。
     """
     if not valid_import_name(import_name):
+        return None
+    if import_name.split(".")[0] in _STDLIB_NAMES:
+        # 标准库名不是可装的包：项目 requirements 里即便写了 `tkinter` 也不当可信依赖（pip 上没有它）
         return None
     declared = project_declared(figures_dir, script)
     curated = curated_distribution(import_name)

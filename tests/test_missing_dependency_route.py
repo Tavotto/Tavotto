@@ -81,7 +81,9 @@ def test_stdlib_module_gets_no_install_offer_at_all(monkeypatch):
 
 
 # ---- 准备会话：差异计划的去向 --------------------------------------------------
-def _observe(error: dict):
+def _observe(error: dict, root: str = "", script: str = "s.py"):
+    from types import SimpleNamespace
+
     svc = object.__new__(prepsession.SessionService)
 
     class _Result:
@@ -89,7 +91,9 @@ def _observe(error: dict):
 
     r = _Result()
     r.error = error
-    return svc._observe_missing(None, None, r)
+    return svc._observe_missing(
+        SimpleNamespace(project_root=root), SimpleNamespace(script=script), r
+    )
 
 
 def test_prep_stdlib_missing_short_circuits_the_resolver_and_is_public_as_stdlib():
@@ -106,3 +110,95 @@ def test_prep_unmapped_is_public_as_unresolvable():
         {"module": "ROOT", "installable": False, "code": "dependency_unresolved"}
     )
     assert public["route"] == "unresolvable"
+
+
+# ---- 素材库探测路径：与 Flask worker 错误同一个判据（Codex #859 P2）-------------
+def test_probe_path_skips_offer_for_stdlib_even_when_project_declares_it(tmp_path, monkeypatch):
+    from tavotto.engine import deprepair, probe
+
+    (tmp_path / "requirements.txt").write_text("tkinter\n", encoding="utf-8")
+    calls: list[str] = []
+    real = deprepair.offer
+    monkeypatch.setattr(deprepair, "offer", lambda *a, **k: calls.append(a[2]) or real(*a, **k))
+    out = probe._error_from_worker(
+        _exc("tkinter"), "fit.py", figures_dir=str(tmp_path), script="fit.py"
+    )
+    assert out["install_route"] == "stdlib_missing"
+    assert "dependency_repair" not in out and calls == []
+
+
+def test_probe_path_still_offers_for_a_third_party_module(tmp_path, monkeypatch):
+    from tavotto.engine import deprepair, probe
+
+    monkeypatch.setattr(
+        deprepair, "offer", lambda *a, **k: {"requirement": {"distribution": "scipy"}}
+    )
+    out = probe._error_from_worker(
+        _exc("scipy"), "fit.py", figures_dir=str(tmp_path), script="fit.py"
+    )
+    assert out["dependency_repair"]["requirement"]["distribution"] == "scipy"
+
+
+def test_a_stdlib_name_declared_in_requirements_is_never_a_trusted_install_target(tmp_path):
+    from tavotto.engine import deprepair, depresolve
+
+    (tmp_path / "requirements.txt").write_text("tkinter\nscipy\n", encoding="utf-8")
+    assert depresolve.resolve(str(tmp_path), "tkinter", "fit.py") is None
+    assert depresolve.resolve(str(tmp_path), "scipy", "fit.py") is not None
+    assert deprepair.offer(str(tmp_path), "fit.py", "tkinter")["requirement"] is None
+
+
+# ---- tkinter 建议「把路径写进脚本」只在用法仅是文件对话框时才给 ----------------
+def _tk_only(tmp_path, code: str) -> bool:
+    from tavotto.engine import importscan
+
+    p = tmp_path / "s.py"
+    p.write_text(code, encoding="utf-8")
+    return importscan.tk_file_dialog_only(p)
+
+
+def test_file_dialog_only_usage_is_recognised(tmp_path):
+    assert _tk_only(tmp_path, "from tkinter import filedialog\nf = filedialog.askopenfilename()\n")
+    assert _tk_only(
+        tmp_path,
+        "import tkinter as tk\nfrom tkinter import filedialog\nr = tk.Tk()\nr.withdraw()\n"
+        "p = filedialog.askopenfilename()\n",
+    )
+
+
+def test_tk_widgets_or_tkagg_or_unknown_never_claim_a_path_is_enough(tmp_path):
+    assert not _tk_only(
+        tmp_path, "import tkinter as tk\nr = tk.Tk()\ntk.Label(r).pack()\nr.mainloop()\n"
+    )
+    assert not _tk_only(tmp_path, "import tkinter as tk\nr = tk.Tk()\nr.mainloop()\n")
+    assert not _tk_only(tmp_path, "from tkinter import *\n")
+    assert not _tk_only(
+        tmp_path, "import matplotlib\nmatplotlib.use('TkAgg')\nfrom tkinter import filedialog\n"
+    )
+    assert not _tk_only(tmp_path, "import numpy\n")  # 根本没 import tkinter
+    assert not _tk_only(tmp_path, "def (:\n")  # 解析不了
+    from tavotto.engine import importscan
+
+    assert not importscan.tk_file_dialog_only(tmp_path / "nope.py")  # 读不了
+
+
+def test_prep_payload_carries_tk_file_dialog_only_by_what_the_script_does(tmp_path):
+    err = {"code": "missing_dependency", "module": "tkinter", "install_route": "stdlib_missing"}
+    (tmp_path / "s.py").write_text("from tkinter import filedialog\n", encoding="utf-8")
+    (tmp_path / "w.py").write_text("import tkinter as tk\ntk.Tk().mainloop()\n", encoding="utf-8")
+    only = _observe(err, str(tmp_path), "s.py")
+    widgets = _observe(err, str(tmp_path), "w.py")
+    pub = prepsession.SessionService._public_missing
+    assert pub(only)["tk_file_dialog_only"] is True
+    assert pub(widgets)["tk_file_dialog_only"] is False
+
+
+def test_bom_and_pep263_gbk_scripts_with_chinese_comments_are_still_recognised(tmp_path):
+    from tavotto.engine import importscan
+
+    body = "from tkinter import filedialog\n# 选择文件\nf = filedialog.askopenfilename()\n"
+    bom = tmp_path / "bom.py"
+    bom.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
+    gbk = tmp_path / "gbk.py"
+    gbk.write_bytes(("# coding: gbk\n" + body).encode("gbk"))
+    assert importscan.tk_file_dialog_only(bom) and importscan.tk_file_dialog_only(gbk)

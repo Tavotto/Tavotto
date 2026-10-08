@@ -888,6 +888,12 @@ def stdlib_install_route(module: str) -> str:
     return INSTALL_ROUTE_STDLIB if module in importscan.HOST_STDLIB else ""
 
 
+def install_offer_blocked(route: str) -> bool:
+    """这个去向下**不许出安装 offer**（pip 装不了标准库；项目 requirements 里即便写了 tkinter 也不算可信依赖）。
+    三条入口——Flask worker 错误、准备会话、素材库探测——共用这一个判据，别各写各的。"""
+    return route == INSTALL_ROUTE_STDLIB
+
+
 def missing_dependency_message(module: str, route: str = "") -> str:
     """缺依赖的主文案（后端原文，界面按 code 翻、回退用它）。**只有「可安装」才许说一键装上**：
     标准库缺了、映射不到 PyPI 的包（ROOT）装不上，说了就是骗人。"""

@@ -209,7 +209,16 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     outcome: { kind: 'needs_dependencies', code: 'missing_dependency' },
     environment: { mode: 'detect', kind: 'builtin', decided_by: 'default', switched: false, replaced: null },
     requirements: [
-      { id: 'dependencies', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'tkinter', installable: false, route: 'stdlib_missing' } },
+      { id: 'dependencies', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'tkinter', installable: false, route: 'stdlib_missing', tk_file_dialog_only: true } },
+    ],
+    actions: [action('recheck')],
+  },
+  depsStdlibWidgets: {
+    phase: 'awaiting_confirmation',
+    outcome: { kind: 'needs_dependencies', code: 'missing_dependency' },
+    environment: { mode: 'detect', kind: 'builtin', decided_by: 'default', switched: false, replaced: null },
+    requirements: [
+      { id: 'dependencies', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'tkinter', installable: false, route: 'stdlib_missing', tk_file_dialog_only: false } },
     ],
     actions: [action('recheck')],
   },
@@ -423,6 +432,15 @@ describe('缺依赖三类：可安装 / 装不了 / 标准库缺了——各一�
     expect(panel().querySelector('[data-prep-tk-note]')).toBeNull() // 默认折叠
     await toggleDetails()
     expect(details()?.querySelector('[data-prep-tk-note]')?.textContent).toContain('文件路径直接写进脚本')
+  })
+
+  it('tkinter 但脚本用了 Tk 控件 / TkAgg（不只是选文件）：不承诺「写路径就够」，只剩换环境', async () => {
+    await mount()
+    await openWith(report(STATES.depsStdlibWidgets))
+    expect(panel().dataset.prepState).toBe('deps_stdlib')
+    expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+    await toggleDetails()
+    expect(panel().querySelector('[data-prep-tk-note]')).toBeNull()
   })
 
   it('关上弹窗就清掉「直达选环境」的意图（下次从设置进来不会被预先展开）', () => {

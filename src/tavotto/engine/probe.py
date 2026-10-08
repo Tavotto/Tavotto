@@ -147,7 +147,11 @@ def _error_from_worker(
         # 「能不能一键装上」（ADR 0019）。**素材库这条路必须也带上它**：
         # 用户打开旧项目走的就是这里，只在渲染端点上给恢复引导的话，
         # 「素材库里打不开、面板里能修」又是一次两个入口两个答案。
-        if figures_dir:
+        route = getattr(exc, "install_route", "") or ""
+        if route:
+            out["install_route"] = route
+        # 标准库缺了不出安装 offer（与 Flask worker 错误、准备会话同一个判据 `pool.install_offer_blocked`）
+        if figures_dir and not pool.install_offer_blocked(route):
             from . import deprepair
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)
@@ -605,9 +609,7 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
     return any(runtimeasset.load_metadata(figures_dir, asset_id) is not None for asset_id in ids)
 
 
-def linked_scripts(
-    figures_dir: str | Path, stems_by_script: dict[str, list[str]]
-) -> set[str]:
+def linked_scripts(figures_dir: str | Path, stems_by_script: dict[str, list[str]]) -> set[str]:
     """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目根一层有这个图名的原件
     （`figcapture.find_original_artifact`——与 handoff / probe 找原件是同一份判据；递归素材清单里的 `archive/fig.pdf`
     不是这个脚本的原件，不算，#819 P2），或这张图被某次执行捕获过（`was_captured`）。「已关联」只有这一份判据：

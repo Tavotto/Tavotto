@@ -686,7 +686,7 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         # 标准库缺了不提「一键装」：pip 装不了标准库，给个安装 offer 就是指一条走不通的路
         repair = (
             None
-            if route == engine_pool.INSTALL_ROUTE_STDLIB
+            if engine_pool.install_offer_blocked(route)
             else _dependency_repair_offer(exc, detail)
         )
         if repair is not None:
