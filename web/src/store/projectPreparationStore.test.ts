@@ -469,3 +469,38 @@ describe('换参数 / 修订前进 / 换尝试：上一轮的编辑记录作废'
     expect(entry().editing).toEqual([])
   })
 })
+
+describe('完成回调的项目归属（动态 import 之后复核）', () => {
+  const done = (seq: number) =>
+    prepReport({
+      phase: 'completed',
+      outcome: { kind: 'succeeded' },
+      observation_seq: seq,
+      captured: [{ asset_id: 'runtime:plot.py#a' } as never],
+    })
+
+  it('A 刚完成就切到 B：A 的素材 id 不去动 B 的运行态 / 渲染态 store', async () => {
+    const { useRuntimeAssetStore } = await import('./runtimeAssetStore')
+    const { useRenderStore } = await import('./renderStore')
+    const invalidate = vi.fn()
+    const markStale = vi.fn()
+    const realInv = useRuntimeAssetStore.getState().invalidate
+    const realStale = useRenderStore.getState().markStale
+    useRuntimeAssetStore.setState({ invalidate })
+    useRenderStore.setState({ markStale })
+    try {
+      mockCreate.mockResolvedValueOnce(prepReport({ observation_seq: 1 }))
+      await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+      mockGet.mockResolvedValueOnce(done(2))
+      const refreshing = useProjectPreparationStore.getState().refresh(KEY)
+      await refreshing
+      setCurrentProjectId('pj-b') // 动态 import 还没回来就切了项目
+      await flush()
+      expect(invalidate).not.toHaveBeenCalled()
+      expect(markStale).not.toHaveBeenCalled()
+    } finally {
+      useRuntimeAssetStore.setState({ invalidate: realInv })
+      useRenderStore.setState({ markStale: realStale })
+    }
+  })
+})

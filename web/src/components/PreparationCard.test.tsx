@@ -638,6 +638,108 @@ describe('多张图的结果对话框', () => {
   })
 })
 
+describe('切换聚焦条目：卡体的条目局部状态不带到另一个脚本', () => {
+  const otherReport = () =>
+    report({
+      session_id: 'psess-2',
+      target: { kind: 'script', script: 'other.py', entry: '__main__', asset_id: null, stem: null },
+    })
+  const openOther = async () => {
+    mockCreate.mockResolvedValueOnce(otherReport())
+    await act(async () => {
+      await useProjectPreparationStore.getState().open({ script: 'other.py' })
+    })
+  }
+  const focusKey = async (key: string) => {
+    await act(async () => useProjectPreparationStore.setState({ focus: key }))
+  }
+
+  it('A 的本地失败文案不出现在 B 上；切回 A 也是干净的', async () => {
+    const workdirReport = report({
+      phase: 'awaiting_configuration',
+      requirements: [
+        {
+          id: 'workdir',
+          kind: 'workdir_choice',
+          code: 'workdir_confirmation_required',
+          payload: {
+            kind: 'workdir', code: 'workdir_confirmation_required', script: 'plot.py', reason: 'project_root_evidence',
+            recommended: 'project_root',
+            options: [{ mode: 'project_root', cwd_origin: 'project_root', write_mode: 'real', found: ['d.csv'], recommended: true }],
+            conflicts: [], reads: ['d.csv'],
+          } as never,
+        },
+      ],
+      actions: [action('recheck')],
+    })
+    useEnvStore.setState({ setWorkdirMode: vi.fn().mockResolvedValue('设置失败了') })
+    await mount()
+    await openWith(workdirReport)
+    // 先把 B 开好（报告修订相同：不靠「报告换了就收起」的 effect 蒙混），再回到 A 制造失败，最后切到 B
+    await openOther()
+    await focusKey('script:plot.py')
+    await act(async () => primary()!.click())
+    expect(panel().dataset.prepState).toBe('action_failed')
+    await focusKey('script:other.py')
+    expect(panel().dataset.prepSession).toBe('psess-2')
+    expect(panel().dataset.prepState).not.toBe('action_failed')
+    await focusKey('script:plot.py')
+    expect(panel().dataset.prepState).not.toBe('action_failed')
+  })
+
+  it('A 的多图结果对话框开着，切到 B：对话框不跟过去（切回 A 也是关着的）', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click())
+    expect(document.body.querySelectorAll('[role="dialog"] ul button').length).toBe(3)
+    await openOther()
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    await focusKey('script:plot.py')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+})
+
+describe('结果对话框记录的是它刚加进画布的那个面板', () => {
+  it('同一素材文档里已有一个面板（旧的就绪渲染）：新加的还在渲染时不报就绪', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    // 文档里已有 b 的旧实例（另一个渲染键），且有一份就绪的精确渲染：按素材 id 回找会选中它
+    const old = { ...panelFor('runtime:plot.py#b'), id: 'panel-old-b', overrides: [{ op: 'x' }] } as unknown as PanelObject
+    useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [...st.doc.objects, old] } }))
+    seedExactRender(old, { elements: [] } as never)
+    const fresh = { ...panelFor('runtime:plot.py#b'), id: 'panel-new-b' } as PanelObject
+    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => {
+      useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [...st.doc.objects, fresh] } }))
+      return fresh
+    }) as never)
+    await act(async () => primary()!.click())
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    await act(async () => add[1].click())
+    const rec = useProjectPreparationStore.getState().entries['script:plot.py'].editRenders
+    expect(rec['runtime:plot.py#b']?.panelId).toBe('panel-new-b')
+    await act(async () => useUiStore.getState().setGuideCard('card'))
+    expect(panel().dataset.prepState).toBe('edit_opening') // 旧实例的就绪渲染不算
+    await act(async () => seedExactRender(fresh, { elements: [] } as never))
+    expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
+describe('进入编辑：挂起期间换了项目，续延整个丢弃', () => {
+  it('loadAssets 之后项目已换：不把 A 的面板加进 B 的版面，也不打开编辑、不记录', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    let release!: () => void
+    useRuntimeAssetStore.setState({ assets: [], loadAssets: () => new Promise<void>((r) => (release = r)) })
+    const click = act(async () => primary()!.click())
+    setCurrentProjectId('pj-b') // 切项目（与 `clear()` 同一时刻的后果）
+    useProjectPreparationStore.getState().clear()
+    await act(async () => release())
+    await click
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+    expect(vi.mocked(openFastEdit)).not.toHaveBeenCalled()
+  })
+})
+
 describe('运行时 input：同一请求只有一个展示面', () => {
   const req = { id: 'req-1', script: 'plot.py', index: 1, input_kind: 'input' as const, prompt: 'mode?', stdout_tail: 'a\nb\nc\n0) raw\n1) smooth' }
 

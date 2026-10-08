@@ -50,6 +50,9 @@ import {
 } from '@/store/projectPreparationStore'
 import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { findFigurePanel } from '@/store/documentStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { PanelObject } from '@/types/document'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -83,6 +86,18 @@ function editRenderOf(assetId: string): EditRender | undefined {
 /** 记入编辑记录：资产 id + 它在画布上那个面板的渲染键 */
 function noteEditingFor(entryKey: string, assetId: string): void {
   useProjectPreparationStore.getState().noteEditing(entryKey, assetId, editRenderOf(assetId))
+}
+
+/**
+ * 结果对话框刚加进画布的那个面板：**直接**记它的 id 与渲染键，不按 assetId 去文档里找——同一素材文档里可能已经有
+ * 别的实例，按 assetId 找会选中旧实例、它已有的就绪渲染会让「首次编辑渲染」立刻成立。
+ * 取文档里的现值（加图之后取景等动作可能改过对象），找不到才用返回的那个对象。
+ */
+function noteAddedPanelFor(entryKey: string, assetId: string, added: PanelObject): void {
+  const live = findFigurePanel(assetId, added.id)?.panel ?? added
+  useProjectPreparationStore
+    .getState()
+    .noteEditing(entryKey, assetId, { panelId: live.id, renderKey: renderKeyOf(live) })
 }
 
 /**
@@ -191,7 +206,8 @@ export function PreparationCard() {
         mode === 'pill' ? (
           <SessionPill entry={entry} view={view} />
         ) : (
-          <SessionCard entry={entry} view={view} />
+          // 以条目为 key：切换聚焦条目时整张卡体卸载重建，条目局部状态（本地失败、结果对话框、运行目录选择…）不带到另一个脚本
+          <SessionCard key={entry.key} entry={entry} view={view} />
         )
       ) : scan && scanned ? (
         mode === 'pill' ? (
@@ -628,12 +644,19 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         const d = figures[0]
         // 进入编辑 = 稳定动作 `openFastEdit`（加进文档并说出口 → 进入图内编辑 → 引擎按热会话渲染，脚本不再跑）。
         // 素材清单还没取到这张新图时先用这次捕获的描述符把它加进画布，再进入编辑
+        // 挂起期间可能切了项目：续延带着 A 的描述符，绝不能把 A 的面板加进 B 的版面
+        const guard = captureProjectEpoch(() => useProjectPreparationStore.getState().epoch)
         await useRuntimeAssetStore.getState().loadAssets()
+        if (!guard.still()) return null
         if (!(useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)) {
           addRuntimePanelToCanvas(d)
         }
         openFastEdit(d.asset_id)
-        noteEditingFor(entry.key, d.asset_id)
+        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个
+        const opened = useWorkspaceStore.getState().activePanelId
+        const found = opened ? findFigurePanel(d.asset_id, opened) : null
+        if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
+        else noteEditingFor(entry.key, d.asset_id)
         // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
         ui.setGuideCard('closed')
         return null
@@ -760,7 +783,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           descriptors={report.captured ?? []}
           dropped={0}
           open={resultsOpen}
-          onAdded={(d) => noteEditingFor(entry.key, d.asset_id)}
+          onAdded={(d, added) => noteAddedPanelFor(entry.key, d.asset_id, added)}
           onOpenChange={(v) => {
             setResultsOpen(v)
             if (!v) useUiStore.getState().setGuideCard('closed')
