@@ -234,8 +234,12 @@ class Channel:
         #: build 跑完之后置上：再有人读 stdin 一律 EOF，绝不再发问。
         self.closed = False
 
+    def _mkdir(self) -> None:
+        # 敏感会话：会合目录只给本用户（POSIX；Windows 上 mode 被忽略），明文答案短暂经过这里
+        self.dir.mkdir(parents=True, exist_ok=True, mode=0o700 if self.private_key else 0o777)
+
     def reset(self) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self._mkdir()
         for p in self.dir.iterdir():
             try:
                 p.unlink()
@@ -243,7 +247,7 @@ class Channel:
                 pass
 
     def _write_request(self, index: int, payload: dict) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
+        self._mkdir()
         final = self.dir / request_name(index)
         tmp = self.dir / f".{final.name}.tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -306,6 +310,26 @@ class Channel:
             self.tail.mark()  # 下一问的上下文只看这一问之后打印的
         self._log(f"[input] 第 {index} 问等待作答\n")
         reply_path = self.dir / reply_name(index)
+        # 口令与敏感会话里的任何作答：回复文件里是明文答案，**无论走哪条出口**（读到、超时、解析失败、
+        # 抛 ScriptNeedsInput / KeyboardInterrupt）离开这一问时都删掉，不留在长期存在的会话缓存里
+        # （Codex #812 P1）。非敏感的普通 input 保持原样（文件随会合目录在 build 结束时清掉）。
+        scrub = kind == "getpass" or bool(self.private_key)
+        try:
+            return self._await_reply(index, kind, identity, context, prompt, reply_path)
+        finally:
+            if scrub:
+                with contextlib.suppress(OSError):
+                    reply_path.unlink()
+
+    def _await_reply(
+        self,
+        index: int,
+        kind: str,
+        identity: dict,
+        context: str,
+        prompt: str,
+        reply_path: Path,
+    ) -> str | None:
         deadline = time.monotonic() + wait_timeout()
         # 答题方定了案却迟迟写不出回复（不该发生）时的兜底：再等这么久就按超时处理
         hard_stop = deadline + ANSWER_GRACE
@@ -339,15 +363,17 @@ class Channel:
         answer = reply["answer"]
         if kind == "getpass":
             # 口令绝不落盘：worker.log 活得比会合目录久，还会进诊断包与错误里的日志尾巴（Codex #680 P1）。
-            # 只写一行固定的标记——看门狗照样在作答这一点清零；回复文件读完当场删掉。
+            # 只写一行固定的标记——看门狗照样在作答这一点清零；回复文件由 ask() 的 finally 删掉。
             # 记账里也**没有**它（T08）：build 响应、热会话、执行转录都拿不到，重放需要时重新问
             self._log(f"[input] 第 {index} 问已作答（口令不转录）\n")
-            with contextlib.suppress(OSError):
-                reply_path.unlink()
             self.record.append({**base, "answer": None, "secret": True})
             return answer
-        # 转录「提示 → 答案」：和终端里看到的一样
-        self._log(f"{answer}\n")
+        if self.private_key:
+            # 敏感会话的答案同样不进日志（Codex #812 P1）；记账照旧带着答案供重放比对
+            self._log(f"[input] 第 {index} 问已作答（不转录）\n")
+        else:
+            # 转录「提示 → 答案」：和终端里看到的一样
+            self._log(f"{answer}\n")
         self.record.append({**base, "answer": answer})
         return answer
 

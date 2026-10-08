@@ -241,6 +241,17 @@ describe('ScriptInputDialog', () => {
     expect(document.body.textContent).not.toContain('leak')
   })
 
+  it('打开时焦点直接在答案框上（initialFocusRef），停止脚本在页脚 start 槽、危险浅底胶囊', () => {
+    useScriptInputStore.getState().onRequested(req())
+    render()
+    expect(document.activeElement).toBe(answerBox())
+    const stop = document.body.querySelector('[data-script-input-stop]')!
+    expect(stop.closest('[data-dialog-footer]')).not.toBeNull()
+    expect(stop.getAttribute('data-variant')).toBe('danger-tinted')
+    const primaries = dialog()!.parentElement!.querySelectorAll('[data-variant="primary"]')
+    expect(primaries).toHaveLength(1)
+  })
+
   it('换项目之后旧项目的问不再显示', () => {
     useScriptInputStore.getState().onRequested(req())
     useScriptInputStore.getState().clear()

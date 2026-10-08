@@ -5,6 +5,8 @@ import type { ScriptInputRequest } from '@/lib/api'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
+import { Notice } from './ui/Notice'
+import type { DialogFooterSlots } from './ui/Dialog'
 
 const si = (key: string, values?: Record<string, unknown>) =>
   translate(`scriptInput.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -67,7 +69,17 @@ export function suggestionText(req: ScriptInputRequest, answer: string): string 
   return si('suggestion', { answer })
 }
 
-export function ScriptInputFields({ answer }: { answer: ScriptInputAnswer }) {
+/**
+ * @param answerRef 给了就把焦点交给对话框的 `initialFocusRef`（`autoFocus` 会被 Dialog 的「焦点落容器」盖掉，
+ *   用户得先点一下才能打字，2026-10-07 设计审计 §10.2）；不给（准备面板等内嵌展示面）仍用 `autoFocus`
+ */
+export function ScriptInputFields({
+  answer,
+  answerRef,
+}: {
+  answer: ScriptInputAnswer
+  answerRef?: React.Ref<HTMLInputElement>
+}) {
   useTranslation('dialogs')
   const { head, value, setValue, busy, error } = answer
   const outRef = useRef<HTMLPreElement>(null)
@@ -82,38 +94,39 @@ export function ScriptInputFields({ answer }: { answer: ScriptInputAnswer }) {
 
   return (
     <form
-      className="flex flex-col gap-3 text-xs"
+      className="flex flex-col gap-3"
       onSubmit={(e) => {
         e.preventDefault()
         answer.submit()
       }}
     >
       {head.stdout_tail && (
-        <section className="flex flex-col gap-1">
-          <h3 className="type-meta">{si('outputLabel')}</h3>
+        <section className="flex flex-col gap-1.5">
+          <h3 className="type-section">{si('outputLabel')}</h3>
           <pre
             ref={outRef}
             data-script-input-output=""
-            className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 px-2 py-1.5 font-mono text-xs text-ink"
+            className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-sm leading-[1.5] text-ink"
           >
             {head.stdout_tail}
           </pre>
         </section>
       )}
-      <section className="flex flex-col gap-1">
-        <h3 className="type-meta">{si('promptLabel')}</h3>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="type-section">{si('promptLabel')}</h3>
         {head.prompt ? (
-          <p data-script-input-prompt="" className="whitespace-pre-wrap break-words font-mono text-ink">
+          <p data-script-input-prompt="" className="whitespace-pre-wrap break-words font-mono text-sm text-ink">
             {head.prompt}
           </p>
         ) : (
           <p className="text-ink-3">{si('noPrompt')}</p>
         )}
       </section>
-      <label className="flex flex-col gap-1">
-        <span className="type-meta">{si('answerLabel')}</span>
+      <label className="flex flex-col gap-1.5">
+        <span className="type-section">{si('answerLabel')}</span>
         <TextInput
-          autoFocus
+          ref={answerRef}
+          autoFocus={answerRef ? undefined : true}
           align="left"
           type={secret ? 'password' : 'text'}
           autoComplete={secret ? 'off' : undefined}
@@ -125,16 +138,12 @@ export function ScriptInputFields({ answer }: { answer: ScriptInputAnswer }) {
         />
       </label>
       {suggestion !== null && (
-        <p data-script-input-suggestion="" className="whitespace-pre-wrap break-words text-ink-2">
+        <p data-script-input-suggestion="" className="whitespace-pre-wrap break-words text-sm text-ink-2">
           {suggestionText(head, suggestion)}
         </p>
       )}
-      <p className="text-ink-3">{secret ? si('getpassNote') : si('rememberNote')}</p>
-      {error && (
-        <p role="alert" className="text-danger">
-          {si('failed', { error })}
-        </p>
-      )}
+      <p className="text-sm text-ink-3">{secret ? si('getpassNote') : si('rememberNote')}</p>
+      {error && <Notice tone="danger">{si('failed', { error })}</Notice>}
     </form>
   )
 }
@@ -162,4 +171,33 @@ export function ScriptInputActions({ answer }: { answer: ScriptInputAnswer }) {
       </Button>
     </>
   )
+}
+
+/** 对话框脚部（分槽）：停止脚本是破坏性的另一条路——start 槽、危险浅底胶囊；结束输入 secondary；提交 primary */
+export function scriptInputFooterSlots(answer: ScriptInputAnswer): DialogFooterSlots {
+  const { busy } = answer
+  return {
+    start: (
+      <Button variant="danger-tinted" size="lg" data-script-input-stop disabled={busy} onClick={answer.stop}>
+        {si('stop')}
+      </Button>
+    ),
+    secondary: (
+      <Button
+        variant="secondary"
+        size="lg"
+        data-script-input-eof
+        disabled={busy}
+        title={si('eofTip')}
+        onClick={answer.eof}
+      >
+        {si('eof')}
+      </Button>
+    ),
+    primary: (
+      <Button variant="primary" size="lg" loading={busy} data-script-input-submit="" onClick={answer.submit}>
+        {si('submit')}
+      </Button>
+    ),
+  }
 }

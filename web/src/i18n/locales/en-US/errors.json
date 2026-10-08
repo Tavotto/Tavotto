@@ -650,7 +650,11 @@
     "projectEnvRecommended": "The project environment {{venv}} already has {{module}} and can run this. Switch to it?",
     "userEnvSource_project_venv": "the project’s {{label}} environment",
     "userEnvUnchecked": "Not checked yet. “Check and use” checks it first and switches only if everything is there.",
-    "userEnvCheckUse": "Check and use"
+    "userEnvCheckUse": "Check and use",
+    "workdirChooseWritesShort": "In a real directory, files the script writes land in the project.",
+    "workdirChooseWritesMore": "Details",
+    "dependencyPrepareHeading": "Prepare environment",
+    "missingInputStep": "{{n}}/{{total}}"
   },
   "preflight": {
     "axisLabelFormat": "The axis title “{{label}}” isn't in the profile's “{{want}}” form.",
