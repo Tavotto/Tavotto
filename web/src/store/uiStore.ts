@@ -8,6 +8,7 @@ import { createDismissTimer } from '@/lib/dismissTimer'
 import type { Severity } from '@/lib/profile'
 import type { ProblemCursor, ProblemDrill, ProblemScope, ProblemView } from '@/lib/problemList'
 import { drillKey } from '@/lib/drillKey'
+import { applyTheme, isThemePref, type ThemePref } from '@/lib/theme'
 
 export type LeftTab = 'workspace' | 'canvases' | 'assets' | 'layers' | 'elements' | 'style' | 'problems'
 /** 右栏三模式：属性 / 改图助手 / 画布设置 */
@@ -57,7 +58,9 @@ const pushDialog = (stack: readonly MainDialog[], id: MainDialog): MainDialog[] 
 const popDialog = (stack: readonly MainDialog[], id: MainDialog): MainDialog[] =>
   stack.filter((d) => d !== id)
 
-const LS_KEY = 'tavotto.ui'
+/** 本机界面偏好的存储键。`index.html` 里那段开机脚本也读它（先挂 `data-theme`），`themeBoot.test` 对拍两边 */
+export const UI_PREFS_KEY = 'tavotto.ui'
+const LS_KEY = UI_PREFS_KEY
 
 export const LEFT_MIN = 280
 export const LEFT_MAX = 360
@@ -127,6 +130,11 @@ interface Persisted {
   rightTab: RightTab
   showRulers: boolean
   showGrid: boolean
+  /**
+   * 外观（设置 › 通用 › 外观）：跟随系统 / 浅色 / 深色（2026-10-07 暗色主题，`lib/theme.ts`）。
+   * 本机偏好，不进文档；「界面看起来不对？」那颗重置**不**动它——它是用户亲口选的外观，不是排布。
+   */
+  theme: ThemePref
 }
 
 export const PREFS_VERSION = 2
@@ -153,6 +161,7 @@ const DEFAULTS: Persisted = {
   rightTab: 'properties',
   showRulers: true,
   showGrid: true,
+  theme: 'system',
 }
 
 /**
@@ -201,6 +210,8 @@ function readPersisted(): Persisted {
   // 界面拿到一个画不出来的宽度
   state = {
     ...state,
+    // 手改过 / 未来版本写进来的未知外观值当「跟随系统」
+    theme: isThemePref(state.theme) ? state.theme : DEFAULTS.theme,
     rightWidth: Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, state.rightWidth)),
     leftWidth: Math.min(LEFT_MAX, Math.max(LEFT_MIN, state.leftWidth)),
   }
@@ -418,10 +429,12 @@ interface UiState extends Persisted {
   autoHideProperties: () => void
   setCanvasPref: (patch: Partial<Persisted>) => void
   setShowRulers: (v: boolean) => void
+  /** 设置 › 通用 › 外观：写偏好并当场把 `data-theme` 落到 `<html>` 上（`lib/theme.applyTheme`） */
+  setTheme: (theme: ThemePref) => void
   setShowGrid: (v: boolean) => void
   /**
    * 设置 › 通用「界面看起来不对？」：本机的界面偏好（侧栏开合 / 宽度 / 固定、标尺网格、吸附、
-   * 命令面板最近项……`Persisted` 那一整份）**当场**回到默认并写回本机——此前只删掉存储里的那一份，
+   * 命令面板最近项……`Persisted` 那一整份，外观 `theme` 除外）**当场**回到默认并写回本机——此前只删掉存储里的那一份，
    * 要用户自己刷新才生效，而在刷新之前的任何一次 persist 又会把旧值写回去（2026-10-07 设计审计 §9.1）。
    */
   resetLayoutPrefs: () => void
@@ -493,7 +506,7 @@ function persist(state: UiState) {
     'leftOpen', 'rightOpen', 'leftTab', 'rightTab', 'showRulers', 'showGrid',
     'leftWidth', 'rightWidth', 'leftPinned', 'rightPinned', 'gridSize',
     'snapEnabled', 'snapToGrid', 'snapToGuides', 'snapToObjects',
-    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'recentCommands',
+    'guidesLocked', 'showSafeArea', 'dragAxesWithCompanions', 'recentCommands', 'theme',
   ]
   try {
     localStorage.setItem(
@@ -684,6 +697,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ showRulers })
     persist(get())
   },
+  setTheme: (theme) => {
+    set({ theme })
+    applyTheme(theme)
+    persist(get())
+  },
   resetLayoutPrefs: () => {
     prefOpen = { left: DEFAULTS.leftOpen, right: DEFAULTS.rightOpen }
     const s = get()
@@ -695,7 +713,8 @@ export const useUiStore = create<UiState>((set, get) => ({
         : layout === 'medium' && DEFAULTS.leftOpen && DEFAULTS.rightOpen
           ? { leftOpen: false, rightOpen: true }
           : { leftOpen: DEFAULTS.leftOpen, rightOpen: DEFAULTS.rightOpen }
-    set({ ...DEFAULTS, ...open })
+    // 外观不算排布：保留用户选的那一套（否则「重置布局」顺手把深色切回跟随系统）
+    set({ ...DEFAULTS, ...open, theme: s.theme })
     persist(get())
   },
   setShowGrid: (showGrid) => {

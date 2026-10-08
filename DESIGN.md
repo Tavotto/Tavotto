@@ -6,6 +6,8 @@ colors:
   canvas: "#f5f5f3"
   surface: "#ffffff"
   surface-2: "#f7f7f5"
+  paper: "#ffffff"
+  paper-ink: "#1b1b18"
   field: "#f2f2f0"
   field-hover: "#eeeeec"
   border-control: "#84847c"
@@ -186,10 +188,48 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 ### Syntax
 - **代码着色七档** `syntax-keyword / function / string / number / comment / type / builtin`：只读代码块（/try 的 Code Sheet、助手的代码块）共用，组件里不写 hex；每档在白 / 桌面 / surface-2 上 ≥4.5:1，comment 与 ink-3 同值。
 
+### Paper
+- **Paper** (`#ffffff`) / **Paper-ink** (`#1b1b18`)：画布上的页面、图的缩略图底与界面画在纸上的记号（网格、透明棋盘格、占位框的字）。**文档内容的颜色，两套主题同值**——图是印刷品，暗色只改它周围的界面。快速编辑没有页面，当前那张图底下也垫一张与它同框的纸。直接坐在纸上的界面（空画布提示）垫 `paper-chrome`：浅色透明、暗色是面板色。
+
+### Dark
+暗色是第二张值表（`index.css` 末尾：`prefers-color-scheme: dark` 且没选浅色 / `data-theme="dark"`，两段逐字相同）；设置 › 通用 › 外观 = 跟随系统 / 浅色 / 深色。
+表里只有变了的值；公式类（hover / selected / border / group、状态色的 -surface / -border、glass、handle-fill）跟着重算，`-content` 在暗色里改成锚点 70% 混**白**。
+纸、纸上的墨与画布选择框 `sel` 两套同值。全文 **宪法第二十八节**；每一对字 / 底在两套主题里都有对比度断言（`tokenContrast.test`）。
+
+| token | 暗色 |
+| --- | --- |
+| `bg` | `#161615` |
+| `canvas` | `#1b1b1a` |
+| `surface` | `#222220` |
+| `surface-2` | `#282826` |
+| `field` | `#2c2c2a` |
+| `field-hover` | `#323230` |
+| `border-control` | `#7b7b74` |
+| `ink` | `#ececea` |
+| `ink-2` | `#c2c2bc` |
+| `ink-3` | `#9b9b94` |
+| `ink-faint` | `#6a6a64` |
+| `accent` | `#5a92e5` |
+| `accent-subtle` | `#1d2a3d` |
+| `danger` | `#ef6e55` |
+| `warn` | `#d9a23a` |
+| `ok` | `#4fb37a` |
+| `syntax-keyword` | `#e6809f` |
+| `syntax-function` | `#ad9cf0` |
+| `syntax-string` | `#d6ad72` |
+| `syntax-number` | `#74abf2` |
+| `syntax-comment` | `#9b9b94` |
+| `syntax-type` | `#6fc7ad` |
+| `syntax-builtin` | `#e3a457` |
+| `thumb` | `#3a3a37` |
+| `shadow` | `#000000` |
+| `shadow-edge` | `#ffffff` |
+
 ### Named Rules
 **The Small Blue Rule.** 蓝色不做任何大块背景、不做按钮填色；主按钮是近黑 `bg-ink`。
 **The Hairline Rule.** surface 之间靠极轻的明度差与 hairline 分层，不靠框。
 **The Anchor Rule.** 状态色只写锚点，底 / 描边 / 字由公式派生；字一律用 `-content`。
+**The Semantic-Only Rule.** 组件只引用语义 token：不写 hex / rgb() / hsl()、`bg-white`、`color-mix(ink…)`（文档数据与遮罩按文件带个数豁免，`foundation.test` 守着）；换主题只换值表。
 
 ## Typography
 
@@ -216,8 +256,8 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 
 ## Elevation & Depth
 
-**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西例外**，而且只经 `ui/Card` 一处（`appearance="raised"`，门禁守着）：`--shadow-card`（环 6% + 0 1px 2px 4% + 0 4px 12px 4%）；分区、列表行、输入框、分段控件仍是平的。改图助手的输入框是浮在对话流上的玻璃（`--color-glass` field 90% + 16px 背景模糊 + `--shadow-composer`，参考 Codex）。浮层是「1px 半透明环 + 一层大模糊」，不画实色边；所有投影都写成 `color-mix(var(--color-shadow) N%)`，暗色只换 `--color-shadow`：
-`--shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
+**The Flat-By-Default Rule.** 持久表面不用投影——**只有「真的是一张卡」的东西例外**，而且只经 `ui/Card` 一处（`appearance="raised"`，门禁守着）：`--shadow-card`（环 6% + 0 1px 2px 4% + 0 4px 12px 4%）；分区、列表行、输入框、分段控件仍是平的。改图助手的输入框是浮在对话流上的玻璃（`--color-glass` field 90% + 16px 背景模糊 + `--shadow-composer`，参考 Codex）。浮层是「1px 半透明环 + 一层大模糊」，不画实色边；所有投影都写成 `color-mix(var(--color-shadow) N%)`（1px 环读 `--color-shadow-edge`，浅色里它就是 shadow），暗色只换这两种颜色（模糊层纯黑、环换白——Tailwind 把投影串内联进工具类，只有 `var()` 是活的；**宪法第二十八节**）：
+`--shadow-pop: 0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 8%, transparent), 0 8px 24px color-mix(in srgb, var(--color-shadow) 8%, transparent)`（菜单 / popover / 浮条），对话框与命令面板用更深一档的 `--shadow-dialog`；Tooltip 是 ink 底白字，不带投影。
 
 ## Shapes
 
@@ -262,4 +302,5 @@ disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖�
 - **Don't** 给蓝色大块背景或按钮填色；不用实心红按钮。
 - **Don't** 在 `Card` 以外写 `shadow-card`，或用第二种投影。
 - **Don't** 写 `text-[Npx]`、`rounded-xl`、任意值圆角、数字 z-index、手形光标类、第二套下拉、第二种开关。
+- **Don't** 在界面代码里写颜色字面量或 `bg-white`：界面走 surface / ink，纸（页面、图的缩略图底）走 `bg-paper`，遮罩走 shadow。
 - **Don't** 在注释里写完整的 Tailwind 类名（扫描器会把它编进产物 CSS）。
