@@ -414,6 +414,52 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
   },
 }))
 
+/** 等这个脚本离开忙态（换项目 = `clear()` 清了行，也算离开）；订阅一次性，不轮询 */
+function whenNotBusy(script: string): Promise<void> {
+  const busy = () => {
+    const st = useScriptRunStore.getState().byScript[script]
+    return !!st && isBusyPhase(st.phase)
+  }
+  if (!busy()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const off = useScriptRunStore.subscribe(() => {
+      if (busy()) return
+      off()
+      resolve()
+    })
+  })
+}
+
+/**
+ * 依次重跑同一个脚本的几份运行配置（答案管理一次批量提交涉及多份配置时用）。
+ * `run()` 对同脚本忙态直接 no-op（同脚本防并发），所以**不能**在循环里一口气全发：第一个同步把行置成
+ * `starting_runtime` 后，后面的都会被闸挡掉、永远没探测（Codex #816 P1）。这里每一份：先等脚本离开忙态
+ * （含上一份在 `INPUT_REMAP_CHANGED` 里自己重跑的那次）、再 `run`、再等它真正结束，然后才轮到下一份。
+ * 某一份失败不挡后面的（`run` 本身不抛，失败落在该行的 `error`）；返回每一份的结果，调用方据此说出失败。
+ * 中途换项目（`epoch` 变了）就不再发后面的：不在新项目里重跑同名脚本。
+ */
+export async function runConfigsInOrder(
+  script: string,
+  configs: ReadonlyArray<string | null>,
+): Promise<Array<{ config: string | null; failed: boolean }>> {
+  const epoch = useScriptRunStore.getState().epoch
+  const results: Array<{ config: string | null; failed: boolean }> = []
+  for (const config of configs) {
+    await whenNotBusy(script)
+    if (useScriptRunStore.getState().epoch !== epoch) break
+    let failed = false
+    try {
+      await useScriptRunStore.getState().run(script, config)
+      await whenNotBusy(script)
+      failed = !!useScriptRunStore.getState().byScript[script]?.error
+    } catch {
+      failed = true
+    }
+    results.push({ config, failed })
+  }
+  return results
+}
+
 // 改指表 / 环境变了（ADR 0106）：envStore 的两个代际——作废按旧条件捕获的结果、重跑因「找不到数据」失败的脚本
 useEnvStore.subscribe((state, prev) => {
   const store = useScriptRunStore.getState()

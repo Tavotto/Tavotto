@@ -1178,6 +1178,7 @@ export default interface Resources {
       "manageIntro": "改好答案或标记删除后点「保存并重新运行」，脚本只重新运行一次。",
       "manageNoPrompt": "第 {{index}} 个问题（读取标准输入）",
       "managePrompt": "第 {{index}} 个问题：{{prompt}}",
+      "manageRerunFailed": "{{script}} 重新运行失败（{{configs}}）；其余配置已照常运行",
       "manageRowActions": "第 {{index}} 个问题的更多操作",
       "manageSave": "保存并重新运行",
       "manageSaveCount": "保存并重新运行（{{n}}）",

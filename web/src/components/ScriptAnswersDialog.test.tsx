@@ -9,10 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (orig) => {
   const real = await orig<typeof import('@/lib/api')>()
-  return { ...real, updateScriptAnswer: vi.fn(), forgetScriptAnswer: vi.fn() }
+  return { ...real, updateScriptAnswer: vi.fn(), forgetScriptAnswer: vi.fn(), probeScript: vi.fn() }
 })
 
-import { forgetScriptAnswer, updateScriptAnswer } from '@/lib/api'
+import { forgetScriptAnswer, probeScript, updateScriptAnswer } from '@/lib/api'
 import { ScriptAnswersDialog } from '@/components/ScriptAnswersDialog'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -28,6 +28,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const mockUpdate = vi.mocked(updateScriptAnswer)
 const mockForget = vi.mocked(forgetScriptAnswer)
+const mockProbe = vi.mocked(probeScript)
+/** 真的 `run`（beforeEach 把它换成 spy；下面两条要走真的同脚本防并发闸） */
+const realRun = useScriptRunStore.getState().run
 const ANSWERS = { 'pick.py': [{ index: 1, prompt: 'numbers: ', answer: '1,2', kind: 'input' }] }
 const TWO = {
   'pick.py': [
@@ -579,4 +582,50 @@ it('batch save over two configurations reruns each configuration exactly once', 
     ['pick.py', 'rc_a'],
     ['pick.py', 'rc_b'],
   ])
+})
+
+describe('批量保存涉及多份配置：逐份真的重跑（Codex #816 P1）', () => {
+  const rows = [
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_a', answer: 'alpha' },
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_b', answer: 'beta' },
+  ]
+  const openTwoConfigs = async () => {
+    mockUpdate.mockResolvedValue({ scripts: { 'pick.py': rows }, location: '', pending: [] })
+    useScriptRunStore.setState({ run: realRun, byScript: {} })
+    useScriptInputStore.setState({ answers: { 'pick.py': rows } })
+    useScriptInputStore.getState().openManager('pick.py')
+    render()
+    const boxes = dialog()!.querySelectorAll<HTMLInputElement>('input')
+    await typeInto(boxes[0], 'x1')
+    await typeInto(boxes[1], 'x2')
+  }
+  const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+
+  it('真实 run：两份配置都收到探测，第二份等第一份结束才发', async () => {
+    const releases: Array<() => void> = []
+    mockProbe.mockImplementation(
+      () => new Promise((resolve) => releases.push(() => resolve({ descriptors: [] } as never))),
+    )
+    await openTwoConfigs()
+    await click(saveButton())
+    await flush()
+    // 第一份在飞：第二份不能被同脚本防并发闸吞掉，也不能抢跑
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }])
+    await act(async () => releases[0]())
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }, { run_config: 'rc_b' }])
+    await act(async () => releases[1]())
+    await flush()
+    expect(useScriptRunStore.getState().byScript['pick.py']?.runConfig).toBe('rc_b')
+  })
+
+  it('第一份失败：第二份照样运行，并说出哪一份失败', async () => {
+    mockProbe.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce({ descriptors: [] } as never)
+    await openTwoConfigs()
+    await click(saveButton())
+    await flush()
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }, { run_config: 'rc_b' }])
+    expect(useUiStore.getState().status?.tone).toBe('error')
+  })
 })
