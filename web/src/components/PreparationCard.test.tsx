@@ -702,6 +702,27 @@ describe('切换聚焦条目：卡体的条目局部状态不带到另一个脚�
     await focusKey('script:plot.py')
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
   })
+
+  it('采用环境挂起期间切了项目：A 的失败文案不落到卡片上', async () => {
+    let release: (v: string) => void = () => {}
+    useEnvStore.setState({ adoptCandidate: vi.fn(() => new Promise<string>((r) => (release = r))) as never })
+    await mount()
+    await openWith(report(STATES.env))
+    await act(async () => primary()!.click())
+    await act(async () => setCurrentProjectId('pj-b'))
+    await act(async () => release('采用失败了'))
+    expect(panel()?.dataset.prepState).not.toBe('action_failed')
+  })
+
+  it('结果对话框开着时切项目（组件还没卸载）：点「加入画布」不改文档', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click())
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    await act(async () => setCurrentProjectId('pj-b'))
+    await act(async () => add[1].click())
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+  })
 })
 
 describe('结果对话框记录的是它刚加进画布的那个面板', () => {
