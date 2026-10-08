@@ -4,7 +4,15 @@ import { setCurrentProjectId } from '@/lib/session'
 import { useEnvStore } from './envStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
-import { isBusyPhase, isGatePhase, needsNative, useScriptRunStore } from './scriptRunStore'
+import {
+  isBusyPhase,
+  isGatePhase,
+  needsNative,
+  onGateResolved,
+  runConfigsInOrder,
+  useScriptRunStore,
+  whenScriptIdle,
+} from './scriptRunStore'
 
 vi.mock('@/lib/api', () => ({
   // scriptRunStore 直接用的三样
@@ -392,5 +400,90 @@ describe('试运行途中改了指认（ADR 0106 §五）', () => {
     await useScriptRunStore.getState().run('fig.py')
     await vi.waitFor(() => expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('captured_one'))
     expect(mockProbe).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('门后排队续跑的排队语义（Codex #816 r4221258366 / r4221258376）', () => {
+  const confirmation = {
+    kind: 'workdir',
+    code: 'workdir_confirmation_required',
+    script: 'fig.py',
+    reason: 'script_dir_evidence',
+    recommended: 'project',
+    options: [],
+    conflicts: [],
+    reads: [],
+  }
+  const gate = (): ProbeResult => ({
+    ...failed('workdir_confirmation_required'),
+    error: { code: 'workdir_confirmation_required', message: 'x', confirmation } as ProbeResult['error'],
+  })
+  const configsOf = () => mockProbe.mock.calls.map((c) => (c[2] as { run_config?: string } | undefined)?.run_config)
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+  }
+
+  beforeEach(() => {
+    setCurrentProjectId('p1')
+  })
+
+  it('A/B 排队 → 关门 → C 排队 → 解门：A、B、C 各跑一次，不丢旧批', async () => {
+    mockProbe.mockResolvedValueOnce(gate()).mockResolvedValueOnce(gate()).mockResolvedValue(ok([desc('a')]))
+    await runConfigsInOrder('fig.py', ['rc_a', 'rc_b']) // A 撞门，A/B 挂起
+    expect(configsOf()).toEqual(['rc_a'])
+    // 关掉门（不 reset）后又保存另一批答案：C 也撞门
+    await runConfigsInOrder('fig.py', ['rc_c'])
+    expect(configsOf()).toEqual(['rc_a', 'rc_c'])
+    // 同一配置再排一次不重复
+    mockProbe.mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a'])
+    expect(useScriptRunStore.getState().byScript['fig.py']?.phase).toBe('needs_workdir')
+    mockProbe.mockClear()
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    await vi.waitFor(() => expect(configsOf()).toEqual(['rc_a', 'rc_b', 'rc_c']))
+  })
+
+  it('答案批次与 Registry 同时等门：解门后依次执行，Registry 不在批内空档抢跑（无 probe_in_progress）', async () => {
+    mockProbe.mockResolvedValueOnce(gate())
+    await runConfigsInOrder('fig.py', ['rc_a', 'rc_b'])
+    mockProbe.mockReset()
+    let inFlight = 0
+    let maxInFlight = 0
+    const releases: Array<() => void> = []
+    mockProbe.mockImplementation(() => {
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      return new Promise((resolve) =>
+        releases.push(() => {
+          inFlight--
+          resolve(ok([desc('a')]))
+        }),
+      )
+    })
+    const registryRuns: string[] = []
+    const off = onGateResolved((_phase, script) => {
+      void whenScriptIdle(script ?? 'fig.py').then(() => {
+        registryRuns.push('registry')
+        inFlight++
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        inFlight--
+      })
+    })
+    useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+    // 通知监听者的同一刻脚本已被认领：A 在飞，Registry 等着
+    expect(configsOf()).toEqual(['rc_a'])
+    await flush()
+    expect(registryRuns).toEqual([])
+    releases[0]()
+    await flush()
+    // 批内两份之间的空档里 Registry 也不能进
+    expect(configsOf()).toEqual(['rc_a', 'rc_b'])
+    expect(registryRuns).toEqual([])
+    releases[1]()
+    await flush()
+    expect(registryRuns).toEqual(['registry'])
+    expect(maxInFlight).toBe(1)
+    off()
   })
 })
