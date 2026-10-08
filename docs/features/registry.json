@@ -518,6 +518,22 @@
       ]
     },
     {
+      "id": "problems.canvas-pins",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "画布问题标记：在问题面板「⋯」里打开后，有问题的对象上画等级标记，点它直达那条问题",
+        "en-US": "Canvas problem pins: turned on from the problems panel ⋯ menu, severity pins mark objects with issues and jump to the issue when clicked"
+      },
+      "entry": "左栏「问题」→「⋯」→「在画布上标出问题」",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：问题面板「⋯」打开画布上的问题标记，点标记直达那条问题，关掉后标记消失"
+        }
+      ]
+    },
+    {
       "id": "edit.undo-redo",
       "status": "active",
       "platform": "both",

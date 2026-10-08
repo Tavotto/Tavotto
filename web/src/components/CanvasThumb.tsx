@@ -38,6 +38,12 @@ export const THUMB_OBJECT_LIMIT = 40
 /** 缩略图里一段文字最多画几个字（同上，只有这一处）。 */
 export const THUMB_TEXT_CHARS = 24
 
+/** 默认盒子（`h-10 w-14`）：页面矩形的圆角按它折成用户单位 */
+const BOX_W = 56
+const BOX_H = 40
+/** 页面矩形四周留的边（占长边的比例）：页面边线不贴着盒子边被裁掉一半 */
+const PAD = 0.04
+
 export function CanvasThumb({
   page,
   objects,
@@ -51,9 +57,19 @@ export function CanvasThumb({
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
   const nonce = useRuntimeAssetStore((s) => s.previewNonce)
+  // 裁切 id 只由页面尺寸决定：同一份内容在画布列表与版本列表里画出的 DOM 逐字相同（同尺寸的两张共用一个也无妨，几何一样）
+  const clip = `thumb-page-${w}x${h}`
+  // 盒子是透明的，**画出来的是页面本身**（2026-10-07 设计审计 §10.3）：此前白底与边框画在 svg 盒上，
+  // 横版与竖版的缩略图一模一样（都是一个 56×40 的白框）。现在页面矩形按真实比例居中，方向一眼可辨；
+  // 圆角 4px（缩略图半径族 4 / 6 的小档），按默认盒子的缩放折成用户单位
+  const pad = Math.max(w, h) * PAD
+  const vw = w + 2 * pad
+  const vh = h + 2 * pad
+  const unitsPerPx = 1 / Math.min(BOX_W / vw, BOX_H / vh)
+  const radius = 4 * unitsPerPx
   return (
     <svg
-      viewBox={`0 0 ${w} ${h}`}
+      viewBox={`${-pad} ${-pad} ${vw} ${vh}`}
       aria-hidden
       data-canvas-thumb
       /*
@@ -69,12 +85,28 @@ export function CanvasThumb({
        * **尺寸必须来自 CSS**：调用方给的 className 不带宽高的话，盒子会塌。
        */
       style={{ contentVisibility: 'auto' }}
-      className={cn(
-        'shrink-0 rounded-xs border border-border bg-white text-ink',
-        className ?? 'h-10 w-14',
-      )}
+      className={cn('shrink-0 text-ink', className ?? 'h-10 w-14')}
       preserveAspectRatio="xMidYMid meet"
     >
+      <defs>
+        <clipPath id={clip}>
+          <rect x={0} y={0} width={w} height={h} rx={radius} />
+        </clipPath>
+      </defs>
+      {/* 页面：纸白 + 一圈 hairline（1px，不随缩放变粗变细） */}
+      <rect
+        data-thumb-page
+        x={0}
+        y={0}
+        width={w}
+        height={h}
+        rx={radius}
+        fill="#fff"
+        stroke="var(--color-border-strong)"
+        strokeWidth={1}
+        vectorEffect="non-scaling-stroke"
+      />
+      <g clipPath={`url(#${clip})`}>
       {objects
         .filter((o) => !o.hidden)
         .slice(0, THUMB_OBJECT_LIMIT)
@@ -134,6 +166,7 @@ export function CanvasThumb({
             />
           )
         })}
+      </g>
     </svg>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
@@ -6,6 +6,8 @@ import { useEnvStore } from '@/store/envStore'
 import { Button } from './ui/Button'
 import { Details, Summary } from './ui/Details'
 import { Dialog } from './ui/Dialog'
+import { FieldGroup } from './ui/FormSection'
+import { Notice } from './ui/Notice'
 import { Radio } from './ui/Radio'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import type { DependencyPreparationOffer, PrivatePythonOffer } from '@/lib/api'
@@ -89,7 +91,7 @@ export function oneClickShape(offer: DependencyPreparationOffer): {
 
 export function DependencyPrepareDialog() {
   const { t } = useTranslation('errors')
-  const offer = useEnvStore((s) => s.dependencyPreparation)
+  const current = useEnvStore((s) => s.dependencyPreparation)
   const dismiss = useEnvStore((s) => s.dismissDependencyPreparation)
   const progress = useDepRepairStore((s) => s.progress)
   const busy = useDepRepairStore((s) => s.busy)
@@ -101,11 +103,16 @@ export function DependencyPrepareDialog() {
   const skip = useDepRepairStore((s) => s.skipPreparation)
   const adoptEnv = useDepRepairStore((s) => s.adoptUserEnvironment)
   const [choice, setChoice] = useState<Choice>('tavotto_managed')
+  // 常驻挂载（Dialog 的常驻写法）：关的那 90ms 里载荷已经清掉，正文按最后一份画
+  const last = useRef(current)
+  if (current) last.current = current
+  const offer = last.current
   useEffect(() => {
     // 每一份新载荷：有装齐的用户环境就预选后端排在第一的那个，否则从后端算出来的安装目标起步
-    const first = offer?.user_environments?.find((e) => e.satisfies)
-    setChoice(first ? `env:${first.id}` : (offer?.target_kind ?? 'tavotto_managed'))
-  }, [offer])
+    if (!current) return
+    const first = current.user_environments?.find((e) => e.satisfies)
+    setChoice(first ? `env:${first.id}` : (current.target_kind ?? 'tavotto_managed'))
+  }, [current])
   if (!offer) return null
   const complete = (offer.user_environments ?? []).filter((e) => e.satisfies)
   const partial = (offer.user_environments ?? []).filter((e) => e.ok && !e.satisfies)
@@ -120,8 +127,8 @@ export function DependencyPrepareDialog() {
   const errorLine = code
     ? t(codeKey, { defaultValue: errorText || progress?.error || code })
     : errorText || progress?.error || ''
-  // 故障同样只露一句（原因 + 下一步，`repairShortMessage`）：一键修复框里它就是标题，别的框里它接在标题下面、
-  // 顶掉那段说明；完整的说明、错误码、blocked 的逐条理由都在「详情」里
+  // 故障同样只露一句（原因 + 下一步，`repairShortMessage`）：一条危险 Notice，顶掉正文那一句（标题固定是「准备环境」，
+  // 不被错误句替换——2026-10-07 设计审计 §10.2）；完整的说明、错误码、blocked 的逐条理由都在「详情」里
   const failing = !running && !!errorLine
   const targets = offer.targets.filter((o) => o.kind !== 'system_interpreter')
   const chosen = targets.find((o) => o.kind === target)
@@ -137,7 +144,7 @@ export function DependencyPrepareDialog() {
   const cost = downloadFact(privatePython, { packages: plan.requirements.length > 0 })
   const targetChoice = (
     <>
-      <fieldset className="flex flex-col gap-1" data-dependency-target>
+      <fieldset className="flex flex-col gap-0.5" data-dependency-target>
         <legend className="sr-only">
           {en(complete.length ? 'engine.userEnvLegend' : 'engine.dependencyPrepareTargetLegend')}
         </legend>
@@ -148,7 +155,7 @@ export function DependencyPrepareDialog() {
             <label
               key={env.id}
               className={cn(
-                'flex items-start gap-2 rounded-sm px-2 py-1.5',
+                'flex items-start gap-2 rounded-md px-2 py-1.5',
                 selected ? 'bg-selected' : 'hover:bg-surface-hover',
               )}
               data-user-env={env.source}
@@ -161,10 +168,10 @@ export function DependencyPrepareDialog() {
                 onChange={() => setChoice(value)}
               />
               <span className="min-w-0 flex-1">
-                <span className="block text-sm text-ink first-letter:uppercase">
+                <span className="block text-ink first-letter:uppercase">
                   {userEnvironmentName(env)}
                 </span>
-                <span className="mt-0.5 block text-xs leading-relaxed text-ink-3">
+                <span className="mt-0.5 block text-sm text-ink-3">
                   {en('engine.userEnvVersion', { version: env.python_version })} ·{' '}
                   {en('engine.userEnvComplete')}
                 </span>
@@ -179,7 +186,7 @@ export function DependencyPrepareDialog() {
             <label
               key={kind}
               className={cn(
-                'flex items-start gap-2 rounded-sm px-2 py-1.5',
+                'flex items-start gap-2 rounded-md px-2 py-1.5',
                 selected ? 'bg-selected' : 'hover:bg-surface-hover',
                 opt.available === false && 'opacity-60',
               )}
@@ -193,14 +200,14 @@ export function DependencyPrepareDialog() {
                 onChange={() => setChoice(kind)}
               />
               <span className="min-w-0 flex-1">
-                <span className="block text-sm text-ink">{en(TARGET_LABEL[kind], { product: PRODUCT_NAME })}</span>
-                <span className="mt-0.5 block text-xs leading-relaxed text-ink-3">
+                <span className="block text-ink">{en(TARGET_LABEL[kind], { product: PRODUCT_NAME })}</span>
+                <span className="mt-0.5 block text-sm text-ink-3">
                   {kind === 'project_venv'
                     ? en(TARGET_HINT[kind], { venv: opt.venv || opt.python })
                     : en(TARGET_HINT[kind])}
                 </span>
                 {opt.available === false && (
-                  <span className="mt-0.5 block text-xs text-danger">
+                  <span className="mt-0.5 block text-sm text-danger-content">
                     {t(`engine.repairError.${opt.reason}`, { defaultValue: opt.reason })}
                   </span>
                 )}
@@ -211,200 +218,216 @@ export function DependencyPrepareDialog() {
       </fieldset>
     </>
   )
+  // 「详情」里是一组平铺的行（FieldGroup），不再 Details 套 Details（2026-10-07 设计审计 §10.2）
   const details = (
     <>
-      {/* 「详情」第一段：将安装的全部包；下面是项目声明的完整形态（extras / 版本），用户自己的名字，不翻译 */}
-      {plan.requirements.length > 0 && (
-        <p className="mb-1 text-xs leading-relaxed text-ink-2" data-dependency-will-install>
-          {t('engine.repairWillInstall', { requirement: listJoin(plan.requirements) })}
-        </p>
+      {failing && (
+        <div className="flex flex-col gap-1 text-sm text-ink-2" data-dependency-error-detail>
+          <p>{errorLine}</p>
+          {blocked && blocked.blocked.length > 0 && (
+            <ul className="flex flex-col gap-0.5" data-dependency-blocked>
+              {blocked.blocked.map((b) => (
+                <li key={b.code}>
+                  {en(BLOCKED_TEXT[b.code] ?? 'engine.dependencyBlocked_dependency_target_unavailable')}
+                </li>
+              ))}
+            </ul>
+          )}
+          {code && <p className="font-mono text-xs text-ink-3">{en('engine.repairErrorCode', { code })}</p>}
+        </div>
       )}
-      <ul className="flex flex-col gap-0.5 font-mono text-xs text-ink-2" data-dependency-requirements>
-        {plan.requirements.map((req) => (
-          <li key={req}>{req}</li>
-        ))}
-      </ul>
-      {plan.constraints.length > 0 && (
-        <p className="mt-1.5 text-xs leading-relaxed text-ink-3">
-          {en('engine.dependencyPrepareConstraints', { count: plan.constraints.length })}
-        </p>
-      )}
-      {plan.unknown.length > 0 && (
-        <p className="mt-1.5 text-xs leading-relaxed text-ink-2" data-dependency-unknown>
-          {en('engine.dependencyPrepareUnknown', { modules: plan.unknown.join(', ') })}
-        </p>
-      )}
-      {offer.user_environments && complete.length === 0 && (
-        <p className="mt-2 text-xs leading-relaxed text-ink-3" data-user-env-none>
-          {en('engine.userEnvNone')}
-        </p>
-      )}
-      {partial.length > 0 && (
-        <Details className="mt-2 text-xs text-ink-3" data-user-env-partial>
-          <Summary>{en('engine.userEnvPartial')}</Summary>
-          <ul className="mt-1 flex flex-col gap-0.5 pl-3">
-            {partial.map((env) => (
-              <li key={env.id}>
-                <span className="text-ink-2 first-letter:uppercase">{userEnvironmentName(env)}</span>
-                {' · '}
-                {en('engine.userEnvMissing', { packages: env.missing.join(', ') })}
-              </li>
-            ))}
-          </ul>
-        </Details>
+      {/* 第一行：将安装的全部包；下面是项目声明的完整形态（extras / 版本），用户自己的名字，不翻译 */}
+      <div className="flex flex-col gap-1">
+        {plan.requirements.length > 0 && (
+          <p className="text-sm text-ink-2" data-dependency-will-install>
+            {t('engine.repairWillInstall', { requirement: listJoin(plan.requirements) })}
+          </p>
+        )}
+        <ul className="flex flex-col gap-0.5 font-mono text-sm text-ink-2" data-dependency-requirements>
+          {plan.requirements.map((req) => (
+            <li key={req}>{req}</li>
+          ))}
+        </ul>
+        {plan.constraints.length > 0 && (
+          <p className="text-sm text-ink-3">
+            {en('engine.dependencyPrepareConstraints', { count: plan.constraints.length })}
+          </p>
+        )}
+        {plan.unknown.length > 0 && (
+          <p className="text-sm text-ink-2" data-dependency-unknown>
+            {en('engine.dependencyPrepareUnknown', { modules: plan.unknown.join(', ') })}
+          </p>
+        )}
+      </div>
+      {((offer.user_environments && complete.length === 0) || partial.length > 0) && (
+        <div className="flex flex-col gap-1 text-sm text-ink-3">
+          {offer.user_environments && complete.length === 0 && <p data-user-env-none>{en('engine.userEnvNone')}</p>}
+          {partial.length > 0 && (
+            <div data-user-env-partial>
+              <p className="text-ink-2">{en('engine.userEnvPartial')}</p>
+              <ul className="mt-0.5 flex flex-col gap-0.5">
+                {partial.map((env) => (
+                  <li key={env.id}>
+                    <span className="text-ink-2 first-letter:uppercase">{userEnvironmentName(env)}</span>
+                    {' · '}
+                    {en('engine.userEnvMissing', { packages: env.missing.join(', ') })}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
       )}
       {!envChosen && target === 'tavotto_managed' && (
         // 装进 Tavotto 自己的环境：要装什么是上面那张清单，这里只补另外两件事、各一条（与修复卡同一套，不重复）——
         // 要下载什么（私有 Python 多大 / 自带的是哪一份；联网只在这一条里说）、不改动什么
-        <>
+        <div className="flex flex-col gap-1 text-sm">
           {cost && (
             <p
-              className="mt-2 text-xs leading-relaxed text-ink-2"
+              className="text-ink-2"
               data-one-click-cost
               {...(privatePython ? { 'data-dependency-private-python': '' } : {})}
             >
               {cost}
             </p>
           )}
-          <p className="mt-1 text-xs leading-relaxed text-ink-3">{en('engine.repairFactUntouched')}</p>
-        </>
+          <p className="text-ink-3">{en('engine.repairFactUntouched')}</p>
+        </div>
       )}
       {!envChosen && target === 'project_venv' && plan.requirements.length > 0 && (
-        <p className="mt-2 text-xs leading-relaxed text-ink-3">{en('engine.dependencyPrepareNetwork')}</p>
+        <p className="text-sm text-ink-3">{en('engine.dependencyPrepareNetwork')}</p>
       )}
+      {simple && <div>{targetChoice}</div>}
     </>
   )
+  // 正文那一句（标题固定，句子在正文里）：一键修复 = 那句人话；否则 = 「要先准备 N 个依赖」+（有装齐的用户环境时）原因
+  const sentence = simple
+    ? // 干净机器上什么包都不缺（`requirements: []`）时，要授权的是准备环境本身：换一句，不写「还缺 」（Codex #742）
+      plan.requirements.length
+      ? oneClickSentence(packages, privatePython)
+      : oneClickEnvironmentSentence(privatePython)
+    : en('engine.dependencyPrepareTitle', { count: plan.requirements.length })
+  const primaryLabel =
+    failed || code
+      ? en('engine.dependencyPrepareRetry')
+      : oneClick
+        ? en('engine.oneClickRepair')
+        : en('engine.dependencyPrepareRun')
   return (
     <Dialog
-      open
+      open={!!current}
       onOpenChange={(v) => {
         if (!v && !busy && !running) dismiss()
       }}
-      title={
-        simple && failing
-          ? repairShortMessage(code)
-          : simple
-          ? // 干净机器上什么包都不缺（`requirements: []`）时，要授权的是准备环境本身：换一句，不写「还缺 」（Codex #742）
-            plan.requirements.length
-            ? oneClickSentence(packages, privatePython)
-            : oneClickEnvironmentSentence(privatePython)
-          : en('engine.dependencyPrepareTitle', { count: plan.requirements.length })
-      }
-      description={
-        !simple && complete.length && !failing ? en('engine.userEnvBody', { script: offer.script }) : undefined
-      }
-      size="sm"
+      // Esc = 稍后（只关框，错误块里还能再打开）；进行中 busy 锁住，Esc 什么都不做
+      onEscape={busy || running ? undefined : dismiss}
+      // 标题固定是名词短语（2026-10-07 设计审计 §10.2：此前是会变的长句，失败时还被错误句替换）
+      title={en('engine.dependencyPrepareHeading')}
+      size="md"
       busy={busy || running}
       anchor="dependency-prepare"
       footer={
-        running ? (
-          <>
-            <Button variant="secondary" size="md" data-dependency-prepare-cancel onClick={() => void cancel()}>
-              {en('engine.dependencyPrepareCancel')}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button variant="secondary" size="md" data-dependency-prepare-later disabled={busy} onClick={dismiss}>
-              {en('engine.dependencyPrepareLater')}
-            </Button>
-            {envChosen ? (
-              <Button
-                variant="primary"
-                size="md"
-                data-dependency-prepare-start
-                disabled={busy}
-                onClick={() => void adoptEnv(envChosen, offer.script)}
-              >
-                {en('engine.userEnvUse')}
-              </Button>
-            ) : (
-              <Button
-                variant="primary"
-                size="md"
-                data-dependency-prepare-start
-                disabled={busy || !chosen || chosen.available === false}
-                onClick={() => void prepare(target)}
-              >
-                {failed || code
-                  ? en('engine.dependencyPrepareRetry')
-                  : oneClick
-                    ? en('engine.oneClickRepair')
-                    : en('engine.dependencyPrepareRun')}
-              </Button>
-            )}
-          </>
-        )
+        running
+          ? {
+              secondary: (
+                <Button variant="secondary" size="lg" data-dependency-prepare-cancel onClick={() => void cancel()}>
+                  {en('engine.dependencyPrepareCancel')}
+                </Button>
+              ),
+              // 进行中页脚不跳：主按钮原位置灰、带转圈
+              primary: (
+                <Button variant="primary" size="lg" data-dependency-prepare-running loading disabled>
+                  {primaryLabel}
+                </Button>
+              ),
+            }
+          : {
+              // 「不准备，直接运行」是明确的 skip：start 槽里的次要入口，不再埋在「详情」最底下
+              start: (
+                <Button variant="ghost" size="lg" disabled={busy} data-dependency-skip onClick={() => void skip()}>
+                  {en('engine.dependencyPrepareSkip')}
+                </Button>
+              ),
+              secondary: (
+                <Button variant="secondary" size="lg" data-dependency-prepare-later disabled={busy} onClick={dismiss}>
+                  {en('engine.dependencyPrepareLater')}
+                </Button>
+              ),
+              primary: envChosen ? (
+                <Button
+                  variant="primary"
+                  size="lg"
+                  data-dependency-prepare-start
+                  disabled={busy}
+                  onClick={() => void adoptEnv(envChosen, offer.script)}
+                >
+                  {en('engine.userEnvUse')}
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="lg"
+                  data-dependency-prepare-start
+                  disabled={busy || !chosen || chosen.available === false}
+                  onClick={() => void prepare(target)}
+                >
+                  {primaryLabel}
+                </Button>
+              ),
+            }
       }
     >
-      {/* 默认可见的只有标题那一句（+ 非一键修复时的目标单选，每个选项一句短语）与底部「稍后」+ 一个主按钮；
-          下载大小、要装的完整需求串、「不准备，直接运行」都在「详情」里。进行中只剩一行进度 */}
-      {!simple && !running && targetChoice}
-      {!running && (
-        <Details className={cn('text-xs', !simple && 'mt-2')} data-repair-advanced>
-          <Summary className="type-meta">{en('engine.repairAdvanced')}</Summary>
-          <div className="mt-2">
-            {failing && (
-              <div className="mb-2 flex flex-col gap-0.5 text-xs leading-relaxed text-ink-3" data-dependency-error-detail>
-                <p>{errorLine}</p>
-                {blocked && blocked.blocked.length > 0 && (
-                  <ul className="flex flex-col gap-0.5" data-dependency-blocked>
-                    {blocked.blocked.map((b) => (
-                      <li key={b.code}>
-                        {en(BLOCKED_TEXT[b.code] ?? 'engine.dependencyBlocked_dependency_target_unavailable')}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {code && <p className="font-mono">{en('engine.repairErrorCode', { code })}</p>}
-              </div>
+      {/* 默认可见：正文一句（失败时换成一条危险 Notice）+ 非一键修复时的目标单选（每个选项一句短语）+ 折叠的「详情」；
+          下载大小、要装的完整需求串都在「详情」里。进行中只剩一行进度 */}
+      <div className="flex flex-col gap-3">
+        {!running && !(simple && failing) && (
+          <div className="flex flex-col gap-1">
+            <p className="text-ink" data-dependency-sentence>
+              {sentence}
+            </p>
+            {!simple && complete.length > 0 && !failing && (
+              <p className="text-ink-2">{en('engine.userEnvBody', { script: offer.script })}</p>
             )}
-            {details}
-            {simple && <div className="mt-2">{targetChoice}</div>}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2"
-              disabled={busy}
-              data-dependency-skip
-              onClick={() => void skip()}
-            >
-              {en('engine.dependencyPrepareSkip')}
-            </Button>
           </div>
-        </Details>
-      )}
-      {running && progress && (
-        <div data-dependency-state={progress.state}>
-          <RepairProgressLine
-            progress={progress}
-            text={jointProgressText(progress, (state) => en(STATE_TEXT[state] ?? 'engine.dependencyPrepareState_preparing'))}
-          />
-          {/* 与修复卡同一套：默认只有那一行，完整的阶段列表、换用 PyPI 镜像的说明（进度记录顶层的 `pypi_mirror`，
-              #743 的联合准备两条路与单包修复同一个字段；没有这个键时一个字都不说）、日志都折叠在「详情」里 */}
-          <Details className="mt-1.5 text-xs text-ink-3" data-repair-progress-details>
-            <Summary className="text-ink-2">{en('engine.repairDetails')}</Summary>
-            <div className="mt-1">
-              <RepairStageList progress={progress} />
-            </div>
-            {progress.pypi_mirror && (
-              <p className="mt-1 leading-relaxed" data-repair-pypi-mirror>
-                {en('engine.repairPypiMirror', { mirror: progress.pypi_mirror })}
-              </p>
-            )}
-            {progress.log && (
-              <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs">
-                {progress.log}
-              </pre>
-            )}
+        )}
+        {!simple && !running && targetChoice}
+        {running && progress && (
+          <div data-dependency-state={progress.state} className="flex flex-col gap-2">
+            <RepairProgressLine
+              progress={progress}
+              text={jointProgressText(progress, (state) => en(STATE_TEXT[state] ?? 'engine.dependencyPrepareState_preparing'))}
+            />
+            {/* 与修复卡同一套：默认只有那一行，完整的阶段列表、换用 PyPI 镜像的说明（进度记录顶层的 `pypi_mirror`，
+                #743 的联合准备两条路与单包修复同一个字段；没有这个键时一个字都不说）、日志都折叠在「详情」里 */}
+            <Details className="text-sm text-ink-3" data-repair-progress-details>
+              <Summary className="text-ink-2 hover:text-ink">{en('engine.repairDetails')}</Summary>
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                <RepairStageList progress={progress} />
+                {progress.pypi_mirror && (
+                  <p data-repair-pypi-mirror>{en('engine.repairPypiMirror', { mirror: progress.pypi_mirror })}</p>
+                )}
+                {progress.log && (
+                  <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-surface-2 p-2 font-mono text-xs">
+                    {progress.log}
+                  </pre>
+                )}
+              </div>
+            </Details>
+          </div>
+        )}
+        {!running && (
+          <Details className="text-sm" data-repair-advanced>
+            <Summary className="text-ink-2 hover:text-ink">{en('engine.repairAdvanced')}</Summary>
+            <FieldGroup className="mt-2">{details}</FieldGroup>
           </Details>
-        </div>
-      )}
-      {failing && !simple && (
-        <p className="mt-2 text-xs text-danger" data-dependency-error={code}>
-          {repairShortMessage(code)}
-        </p>
-      )}
+        )}
+        {/* 失败：一条危险 Notice，放在页脚上方 */}
+        {failing && (
+          <Notice tone="danger" data-dependency-error={code}>
+            {repairShortMessage(code)}
+          </Notice>
+        )}
+      </div>
     </Dialog>
   )
 }

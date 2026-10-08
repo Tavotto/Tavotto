@@ -102,7 +102,9 @@
     "search": "Search canvases…",
     "searchAria": "Search canvases",
     "moveUp": "Move up",
-    "moveDown": "Move down"
+    "moveDown": "Move down",
+    "count_one": "{{count}} canvas",
+    "count_other": "{{count}} canvases"
   },
   "canvasTools": {
     "fit": "Fit",
@@ -143,7 +145,8 @@
   "crash": {
     "blank": "Open a blank layout",
     "body": "Your layout is saved on this computer; reload to resume from the last snapshot. If it fails again, choose “Open a blank layout” — nothing is deleted.",
-    "title": "Something went wrong"
+    "title": "Something went wrong",
+    "details": "Details"
   },
   "docBanner": {
     "conflictDisk": "On disk: {{canvases}} canvases · {{objects}} objects · changed {{time}}",
@@ -368,7 +371,8 @@
     "editableState": "editable",
     "rowActions": "Actions for {{label}}",
     "moveUp": "Bring forward",
-    "moveDown": "Send backward"
+    "moveDown": "Send backward",
+    "rename": "Rename"
   },
   "layoutKind": {
     "col": "column layout",
@@ -489,7 +493,9 @@
       "workspace": "Project"
     },
     "style": "Style",
-    "workspace": "Workspace"
+    "workspace": "Projects",
+    "problemsBlocking_one": "Problems · {{count}} blocking (of {{total}})",
+    "problemsBlocking_other": "Problems · {{count}} blocking (of {{total}})"
   },
   "readiness": {
     "bannerSummary": "{{total}} figures found: {{editable}} editable, {{pending}} waiting to connect, {{layoutOnly}} layout only.",
@@ -621,7 +627,11 @@
     "groupInfraName": "Tools and config scripts",
     "recoveryDetails": "Details",
     "rerunWithArgs": "Try again with these arguments",
-    "group_needsFix": "Needs fixing"
+    "group_needsFix": "Needs fixing",
+    "copyPath": "Copy path",
+    "pathCopied": "Copied: {{path}}",
+    "pathCopyFailed": "Couldn’t write to the clipboard. The script is at: {{path}}",
+    "rowActions": "More actions for {{script}}"
   },
   "spineZone": {
     "label": "{{side}} · {{dir}} ticks {{state}} · {{action}}",

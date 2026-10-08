@@ -173,7 +173,7 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 
 ### Primary
 - **Ink（近黑）** (`#1b1b18`)：主文字、主按钮填色。不是纯黑。主按钮上的字是 `surface` 色（不写死白）。
-- **Tavotto Blue（品牌蓝）**：色相取自用户定的 `#5A92E5`（2026-09-30）。它本身对白只有 3.14:1，所以焦点环 / 蓝字用同色相压深的 `#2c73de`（≥4.5:1），画布选择框用 `#4685e2`（≥3:1）；浅底 `#ebf2fc`。只给选择、焦点、AI——链接是灰字（`ink-2` + 悬停下划线）。
+- **Tavotto Blue（品牌蓝）**：色相取自用户定的 `#5A92E5`（2026-09-30）。它本身对白只有 3.14:1，所以焦点环 / 蓝字用同色相压深的 `#2c73de`（≥4.5:1），画布选择框用 `#4685e2`（≥3:1）；浅底 `#ebf2fc`。只给选择、焦点、AI——链接是灰字（`ink-2` + 悬停下划线）；唯一的例外是改图助手回答里的链接（accent + 1px 下划线，宪法第十八节）。
 
 ### Neutral
 - **Desk（桌面）** (`#efefed`) 应用底：顶栏、左轨、停靠的抽屉坐在它上面 · **Canvas（画布灰）** (`#f5f5f3`) 工作面板里画布那一块 · **Surface（白）** (`#ffffff`) 工作面板 / 浮层 / 卡 · **Surface-2** (`#f7f7f5`) 只读值与徽章底 · **Field** (`#f2f2f0`，hover `#eeeeec`) 所有可编辑框的底（比面板深一级、无边；参考 Codex） · **Selected**（ink 10% 叠加：hover 5% < active 8% < selected 10%） · **Group**（ink 3%：设置页字段组的底）
@@ -230,7 +230,8 @@ lg 12（卡片、菜单 / popover 外壳、多行浮动面板）、panel 16（�
 TextInput / NumberField（框内单位）、Select（全仓唯一的下拉）、Checkbox、Toggle（名字必填）、
 Badge、StatusPill、Notice、Card、Tabs（选中 600 + 2px 下划线）、Segmented（灰容器 + 白色浮起的 thumb，选中 600）、listRowClass（28 / 44 / 52，选中 600）/ rowMetaClass / dropLineClass / TreeRow、
 RowMenu（⋯ + 右键 + ⇧F10 同一份菜单）、dropZoneClass（拖放接收态：静态不画、拖入才是 accent 虚线 + 浅底 + 外发光）、SearchInput、Section / Disclosure、FormSection / FieldGroup、EmptyState（40px 图标底座 + 15 / 600 标题）、
-Dialog（sm 400 / md 480 / lg 560 / xl 760 / shell；页脚 `{ start, secondary, primary }` 三槽、32px；栈底才画遮罩；Esc = 安全答案）。
+Dialog（sm 400 / md 480 / lg 560 / xl 760 / shell；标题 15 / 600、说明 13 / ink-2、正文 13；页脚 `{ start, secondary, primary }` 三槽、32px；
+栈底才画遮罩；Esc = 安全答案；回应一律 `Notice`，进行中页脚不撤——对话框页的细则在 **宪法第二十六节「对话框与引导」**）。
 四态：hover（surface-hover 5%）< active（surface-active 8%）< selected（selected 10% + 字重 / 对勾）；
 disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖的卡用抓手）。每个上下文一颗主按钮；对话框里的破坏性确认是浅底危险胶囊，不是实心红。
 图标只有自绘的一套（`web/src/components/ui/icons/`，ADR 0052；说明书 `docs/ux/ICONOGRAPHY.md`）。
@@ -239,7 +240,8 @@ disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖�
 进场 `--ease-pop`、退场 `--ease-exit`、落位收尾 `--ease-spring`、其余 `--ease-standard`；没写时长的
 `transition-*` 默认就是 fast + standard（`--default-transition-*`）；`prefers-reduced-motion` 是硬约束。
 加载只有四种写法：不定进度 `animate-sweep`、静态骨架、进行中的字 `text-shimmer`、转圈；Tailwind 的呼吸动画被门禁禁了。
-改图助手对话区（流式逐词淡入 / 亮带状态 / 发送 ↔ 中止同钮 / 贴底跟随）见 **宪法第十八节**。
+改图助手对话区（流式逐词淡入 / 亮带状态 / 发送 ↔ 中止同钮 / 贴底跟随）见 **宪法第十八节**；转录的形态（用户气泡 / 无卡回答 / 环境行与显著卡 /
+代码块 / diff / 两态输入框 + 上下文带 / 历史弹层）见 **宪法第十八节「2026-10-07 重做」**。
 通知轨的计时会让路（hover / focus / 页面不可见时不走表）、同一位置换文字原位换（`ui/SwapText`）见 **宪法第二十三节**。
 
 ## Do's and Don'ts
@@ -249,6 +251,7 @@ disabled 统一 `opacity-40 + cursor-not-allowed`。光标一律箭头（可拖�
 - **Do** 用角色（`type-*`）定字体层级，用 token 定时长与层级（`z-*`），用 `IconButton` 的 `label` 同时给可达名与气泡。
 - **Do** 卡片用 `ui/Card`，状态说明用 `Notice` / `StatusPill`，对话框页脚用三槽。
 - **Do** 让品牌名只来自 `web/src/lib/brand.ts`。
+- **Do** 左侧抽屉的「+ / 刷新 / ⋯」放标题行动作槽（`left/DrawerHeader`），搜索行只放搜索；列表与树的每一行用 `listRowClass` + `RowMenu`，键位同一套（**宪法第二十六节「左侧外壳与抽屉」**）。
 
 ### Don't:
 - **Don't** 给蓝色大块背景或按钮填色；不用实心红按钮。

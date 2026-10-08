@@ -1,33 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import {
-  ArrowDown,
-  ArrowUp,
-  Copy,
-  Ellipsis,
-  Pencil,
-  Plus,
-  SearchX,
-  Trash2,
-} from '@/components/ui/icons'
+import { ArrowDown, ArrowUp, Copy, Pencil, Plus, SearchX, Trash2 } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { listRowClass } from '@/components/ui/listRow'
+import { dropLineClass, listRowClass, rowMetaClass } from '@/components/ui/listRow'
 import {
   activateCanvas,
   createCanvasAndActivate,
   deleteCanvasWithSession,
 } from '@/store/canvasSession'
-import { cn } from '@/lib/utils'
+import { ALT, cn, combo } from '@/lib/utils'
 import { useDocumentStore } from '@/store/documentStore'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { CanvasData } from '@/types/document'
 import { IconButton } from '../ui/Button'
 import { CanvasThumb } from '../CanvasThumb'
 import { EmptyState } from '../ui/EmptyState'
-import { Menu, MenuItem, MenuSeparator } from '../ui/Menu'
+import { MenuItem, MenuSeparator } from '../ui/Menu'
+import { RowMenu } from '../ui/RowMenu'
 import { SearchInput } from '../ui/SearchInput'
+import { useRowMenu } from '../ui/useRowMenu'
+import { DrawerCount } from './DrawerCount'
+import { DrawerHeaderActions, DrawerTitleMeta } from './DrawerHeader'
+import { useRovingList } from './rovingList'
 
 /**
  * 画布列表（项目里的全部画布，含未打开成标签的）。
@@ -48,6 +44,7 @@ export function CanvasList() {
   const [query, setQuery] = useState('')
   const [renaming, setRenaming] = useState<string | null>(null)
   const dragFrom = useRef<number | null>(null)
+  const roving = useRovingList<HTMLUListElement>()
 
   // 激活画布的内容以 doc 为准（canvases 里是最后同步的快照）
   const rows = useMemo(() => {
@@ -64,21 +61,34 @@ export function CanvasList() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2">
+      {/* 计数进标题、「+」进标题行的动作槽，搜索行只放搜索（2026-10-07 设计审计 §10.3） */}
+      <DrawerTitleMeta>
+        <DrawerCount value={canvases.length} label={cl('count', { count: canvases.length })} />
+      </DrawerTitleMeta>
+      <DrawerHeaderActions>
+        {/* 图标钮走 IconButton：名字与气泡同一份（宪法第四、五节；左栏审计 L14） */}
+        <IconButton label={cl('newCanvas')} data-canvas-new onClick={() => void createCanvasAndActivate()}>
+          <Plus size={ICON_SIZE.md} />
+        </IconButton>
+      </DrawerHeaderActions>
+      <div className="flex shrink-0 items-center px-3 pb-2">
         <SearchInput
           value={query}
           onValueChange={setQuery}
           placeholder={cl('search')}
           aria-label={cl('searchAria')}
         />
-        {/* 图标钮走 IconButton：名字与气泡同一份（宪法第四、五节；左栏审计 L14） */}
-        <IconButton label={cl('newCanvas')} onClick={() => void createCanvasAndActivate()}>
-          <Plus size={ICON_SIZE.md} />
-        </IconButton>
       </div>
 
-      {/* 行自己带 `mx-1`（listRowClass），列表不再另加左右内边距：缩略图落在 56 那条竖线上 */}
-      <ul aria-label={cl('listLabel')} className="min-h-0 flex-1 overflow-y-auto pb-2">
+      {/* 行自己带 `mx-1`（listRowClass），列表不再另加左右内边距：缩略图落在 56 那条竖线上。
+          一列一个 Tab 停靠点（↑↓ 走行，Enter 打开，F2 改名，⌥↑↓ 排序，⇧F10 菜单） */}
+      <ul
+        ref={roving.ref}
+        onFocus={roving.onFocus}
+        onKeyDown={roving.onKeyDown}
+        aria-label={cl('listLabel')}
+        className="min-h-0 flex-1 overflow-y-auto pb-2"
+      >
         {rows.map((c, i) => (
           <CanvasRow
             key={c.id}
@@ -95,6 +105,7 @@ export function CanvasList() {
               if (name) useDocumentStore.getState().renameCanvas(c.id, name)
             }}
             dragFrom={dragFrom}
+            onMove={(delta) => useDocumentStore.getState().reorderCanvases(i, i + delta)}
           />
         ))}
         {rows.length === 0 && (
@@ -118,6 +129,7 @@ function CanvasRow({
   onRenameStart,
   onRenamed,
   dragFrom,
+  onMove,
 }: {
   canvas: CanvasData
   index: number
@@ -131,8 +143,13 @@ function CanvasRow({
   onRenameStart: () => void
   onRenamed: (name: string | null) => void
   dragFrom: React.RefObject<number | null>
+  /** 上移 / 下移一格（菜单与 ⌥↑↓ 同一个动作；过滤中禁用） */
+  onMove: (delta: -1 | 1) => void
 }) {
   useTranslation('workspace')
+  const menu = useRowMenu()
+  const [drop, setDrop] = useState<'before' | 'after' | null>(null)
+  const canMove = (delta: -1 | 1) => !filtered && (delta < 0 ? index > 0 : index < count - 1)
   const openRef = useRef<HTMLButtonElement>(null)
   // Enter / Esc 结束改名后焦点回到这一行的按钮；失焦提交（点了别处）不抢焦点
   const refocus = useRef(false)
@@ -168,6 +185,15 @@ function CanvasRow({
 
   return (
     <li
+      {...menu.rowProps}
+      onKeyDown={(e) => {
+        menu.rowProps.onKeyDown?.(e)
+        if (e.defaultPrevented || renaming || !e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
+        const delta = e.key === 'ArrowUp' ? -1 : 1
+        if (!canMove(delta)) return
+        e.preventDefault()
+        onMove(delta)
+      }}
       data-canvas-row
       draggable={!filtered && !renaming}
       onDragStart={() => {
@@ -178,21 +204,28 @@ function CanvasRow({
       // 当时那个位置上此刻的画布（与工作区抽屉的收藏行同一个缺陷，Codex #550）
       onDragEnd={() => {
         dragFrom.current = null
+        setDrop(null)
       }}
       // 只接本列表内部发起的重排：起点为空 = 外部拖进来的，不 preventDefault（不接收）
       onDragOver={(e) => {
-        if (dragFrom.current != null) e.preventDefault()
+        const from = dragFrom.current
+        if (from == null || from === index) return
+        e.preventDefault()
+        // 落点线（2px accent + 圆点）：落下之后它占这一行，从上面拖下来画在下缘
+        setDrop(from < index ? 'after' : 'before')
       }}
+      onDragLeave={() => setDrop(null)}
       onDrop={() => {
         if (!filtered && dragFrom.current != null && dragFrom.current !== index) {
           useDocumentStore.getState().reorderCanvases(dragFrom.current, index)
         }
         dragFrom.current = null
+        setDrop(null)
       }}
-      // 与树行 / 列表行同一副外观（hover / selected / mx-1）；高度是例外——缩略图 40 撑到 52
-      // （左栏审计 L32）
-      className={cn(listRowClass({ selected: active }), 'h-auto gap-2 px-2 py-1.5')}
+      // 与树行 / 列表行同一副外观（hover / selected / mx-1），带缩略图的行是 lg 52（审计 §10.3）
+      className={cn(listRowClass({ size: 'lg', selected: active }), 'gap-2 pl-2 pr-1')}
     >
+      <span aria-hidden className={dropLineClass(drop)} />
       <CanvasThumb page={canvas.page} objects={canvas.objects} />
       {/* 改名框与「打开」按钮是兄弟、不是父子：此前框嵌在 <button> 里（嵌套交互控件，
           读屏与键盘都乱）。改名时整颗按钮让位给框，结束后焦点回到按钮 */}
@@ -201,6 +234,7 @@ function CanvasRow({
       ) : (
         <button
           ref={openRef}
+          data-roving
           data-canvas-open
           onClick={onOpen}
           onDoubleClick={onRenameStart}
@@ -211,14 +245,14 @@ function CanvasRow({
               onRenameStart()
             }
           }}
-          className="min-w-0 flex-1 text-left outline-none focus-visible:focus-ring"
+          className="min-w-0 flex-1 self-stretch text-left outline-none focus-visible:focus-ring"
           aria-label={cl('openCanvas', { name: canvas.name })}
           aria-current={active || undefined}
         >
           {/* 画布名是主文字：12 / ink（选中时行自己加粗），与树行 / 卡名同一档（L02 / L32）；
               元数据 11 / ink-3，选中时不跟着行加粗 */}
           <span className="block truncate text-sm text-ink">{canvas.name}</span>
-          <span className="block text-xs font-normal text-ink-3">
+          <span className={cn('block', rowMetaClass(active))}>
             {cl('meta', {
               w: canvas.page.w,
               h: canvas.page.h,
@@ -227,35 +261,16 @@ function CanvasRow({
           </span>
         </button>
       )}
-      <Menu
-        width={148}
-        align="end"
-        trigger={
-          <IconButton
-            iconSize="sm"
-            label={cl('rowActions', { name: canvas.name })}
-            className="opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
-          >
-            <Ellipsis size={ICON_SIZE.sm} className="text-ink-3" />
-          </IconButton>
-        }
-      >
-        <MenuItem onSelect={onRenameStart} icon={Pencil}>
+      {/* 一份清单三个入口：⋯ / 右键 / ⇧F10（`ui/RowMenu`）；行有焦点时 ⋯ 进 Tab 顺序 */}
+      <RowMenu state={menu} label={cl('rowActions', { name: canvas.name })} width={180} data-canvas-menu>
+        <MenuItem onSelect={onRenameStart} icon={Pencil} shortcut="F2">
           {cl('rename')}
         </MenuItem>
         {/* 拖动重排只有鼠标能用：菜单里给键盘一条同样的路（搜索过滤中索引对不上，禁用） */}
-        <MenuItem
-          icon={ArrowUp}
-          disabled={filtered || index === 0}
-          onSelect={() => useDocumentStore.getState().reorderCanvases(index, index - 1)}
-        >
+        <MenuItem icon={ArrowUp} disabled={!canMove(-1)} shortcut={combo(ALT, '↑')} onSelect={() => onMove(-1)}>
           {cl('moveUp')}
         </MenuItem>
-        <MenuItem
-          icon={ArrowDown}
-          disabled={filtered || index >= count - 1}
-          onSelect={() => useDocumentStore.getState().reorderCanvases(index, index + 1)}
-        >
+        <MenuItem icon={ArrowDown} disabled={!canMove(1)} shortcut={combo(ALT, '↓')} onSelect={() => onMove(1)}>
           {cl('moveDown')}
         </MenuItem>
         <MenuItem
@@ -271,7 +286,7 @@ function CanvasRow({
         <MenuItem danger onSelect={() => void remove()} icon={Trash2}>
           {cl('delete')}
         </MenuItem>
-      </Menu>
+      </RowMenu>
     </li>
   )
 }

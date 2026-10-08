@@ -8232,10 +8232,20 @@ def api_layouts():
         for p in d.glob("*.json"):
             if not engine_documents.is_user_document_stem(p.stem):
                 continue
-            if p.stem not in seen:
+            if p.stem in seen:
+                continue
+            # 逐个 stat：断开的符号链接、读不了的、glob 与 stat 之间被删掉的，
+            # 都只跳过这一条（它本来也打不开），不能让整张列表 500。跳过而不是
+            # 记下名字：同名的旧位置文件还能顶上，`GET /api/layouts/<name>` 也是
+            # 按 `exists()` 往下找的。
+            try:
                 seen[p.stem] = p.stat().st_mtime
+            except OSError:
+                continue
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
-    return jsonify({"layouts": names})
+    # `modified`（加字段，老前端不认也无妨）：每份文档的修改时间（epoch 秒），
+    # 「打开」列表在名字旁写「几分钟前」——只是展示，排序仍以 `layouts` 的顺序为准
+    return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
 def serve_document(path: Path):

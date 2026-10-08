@@ -20,7 +20,6 @@
     "exportAgain": "再次导出",
     "showInFolder": "在文件夹中显示",
     "finish": "完成",
-    "advanced": "高级选项",
     "blockedTitle": "有阻断问题或无法核验的项。勾选确认后才能导出。",
     "blockingListLabel": "阻断性问题",
     "blockingMore_other": "还有 {{count}} 条，在问题面板中查看",
@@ -157,13 +156,19 @@
     "cancelNotAccepted": "服务器未接受取消请求。请先检查导出状态和输出文件夹，再重试。",
     "statusFailed": "暂时无法获取导出状态，作业仍可能完成。{{error}}",
     "retryStatus": "重试获取状态",
-    "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。"
+    "connectionFailed": "无法连接导出服务。请检查连接并确认 {{app}} 正在运行，再重试。重新导出前请先检查输出文件夹。",
+    "groupOutput": "输出",
+    "groupFormat": "格式",
+    "groupChecks": "检查",
+    "locationLabel": "位置",
+    "locationDefault": "项目的导出目录",
+    "locationChange": "更改…"
   },
   "layout": {
     "conflict": "磁盘上已存在名为「{{name}}」的排版，由其他窗口或外部工具写入。",
     "conflictDisk": "磁盘上那份：{{canvases}} 张画布 / {{objects}} 个对象",
     "empty": "项目里还没有排版",
-    "load": "载入",
+    "load": "打开",
     "nameLabel": "排版名",
     "namePlaceholder": "排版名",
     "nameTaken": "已有同名排版。继续会覆盖它。",
@@ -178,7 +183,8 @@
     "saveToProjectTitle": "存进项目",
     "saved": "已另存为新排版：{{name}}",
     "saving": "正在保存…",
-    "savesIntoLabel": "保存到"
+    "savesIntoLabel": "保存到",
+    "rename": "改名"
   },
   "mcp": {
     "confirmBoth": "仍要导出：已知悉 {{errors}} 条阻断项与 {{notVerifiable}} 条无法核验的项。确认会记入 proof report。",
@@ -738,8 +744,11 @@
     "refCount_other": "（{{count}} 张图引用）",
     "selectAria": "为 {{name}} 选择替代素材",
     "skipPanel": "跳过这张图",
-    "titleDoc": "排版里的图缺少素材",
-    "titlePaste": "粘贴的图缺少素材"
+    "titleDoc": "重新链接素材",
+    "titlePaste": "粘贴前重新链接素材",
+    "descDoc": "排版里有图找不到原来的素材：为每一张选一个替代，或保持缺失。",
+    "descPaste": "粘贴的图找不到原来的素材：为每一张选一个替代，或跳过它。",
+    "matchedByName": "按名字匹配"
   },
   "settings": {
     "about": {
@@ -1314,7 +1323,19 @@
     "unmappableEntry": "{{label}}：无「{{prop}}」",
     "willAffect": "将影响",
     "nameLabel": "名称",
-    "deleteBuiltinReason": "内置样式删不掉"
+    "deleteBuiltinReason": "内置样式删不掉",
+    "unsaved": "未保存的修改",
+    "impact": {
+      "title": "影响",
+      "entries": "字段",
+      "palette": "配色",
+      "page": "页面尺寸",
+      "on": "开",
+      "off": "关",
+      "pageSize": "{{w}} × {{h}} mm",
+      "following_other": "这份排版里有 {{count}} 张画布跟随这套样式，存下的改动会自动跟上。",
+      "unsavedDraft": "还没存下：存下之后才能让画布跟随它。"
+    }
   },
   "telemetry": {
     "allow": "分享匿名用量",
@@ -1353,7 +1374,8 @@
     "gotIt": "知道了",
     "failed": "无法更新。当前版本不变。",
     "retry": "再试一次",
-    "sourceBody": "源码检出，Tavotto 不会自动升级。请在仓库目录执行："
+    "sourceBody": "源码检出，Tavotto 不会自动升级。请在仓库目录执行：",
+    "log": "日志"
   },
   "versions": {
     "beforeRestore": "恢复前（{{time}}）",
@@ -1443,11 +1465,11 @@
     "unname": "删除名字",
     "loadingList": "正在读取这份排版的时间线…",
     "restoreFailed": "恢复前没能先存下当前排版，这次没有恢复：{{error}}",
+    "restoreAbortedEdited": "读取节点期间排版有了改动，这次没有恢复，刚才的改动保留着。",
     "filterLabel": "显示哪些节点",
     "filterAll": "全部",
     "filterNamed": "命名",
     "previewTitle": "预览：{{time}} {{name}}",
-    "closePreview": "关闭",
     "viewMoment": "这一刻",
     "viewSide": "并排对比",
     "viewOverlay": "叠加对比",
@@ -1615,7 +1637,7 @@
     "manageAria": "查看和修改 {{script}} 记住的输入",
     "manageTip": "记住的输入",
     "manageTitle": "记住的输入 · {{script}}",
-    "manageIntro": "改好答案后点「保存并重新运行」，脚本只重新运行一次。",
+    "manageIntro": "改好答案或标记删除后点「保存并重新运行」，脚本只重新运行一次。",
     "manageWhere": "答案存在项目文件夹的 {{path}} 里，随文件夹一起复制或分享；项目包不含它。",
     "manageEmpty": "这个脚本没有记住的输入。",
     "managePrompt": "第 {{index}} 个问题：{{prompt}}",
@@ -1623,9 +1645,9 @@
     "manageSave": "保存并重新运行",
     "manageSaveCount": "保存并重新运行（{{n}}）",
     "manageForget": "删除",
-    "manageForgetAria": "删除第 {{index}} 个问题的答案",
-    "manageForgetTitle": "删除第 {{index}} 个问题的答案？",
-    "manageForgetBody": "删除后会立刻重新运行 {{script}}，它会重新问你这个问题。",
-    "manageSaved": "已保存，正在重新运行 {{script}}"
+    "manageSaved": "已保存，正在重新运行 {{script}}",
+    "manageForgetStaged": "保存时删除这个答案",
+    "manageForgetUndo": "撤销",
+    "manageRowActions": "第 {{index}} 个问题的更多操作"
   }
 }

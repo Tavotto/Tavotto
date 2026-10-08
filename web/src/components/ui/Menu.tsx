@@ -23,6 +23,7 @@ export function Menu({
   width = 200,
   open,
   onOpenChange,
+  onCloseAutoFocus,
 }: {
   trigger: ReactElement
   children: ReactNode
@@ -31,6 +32,11 @@ export function Menu({
   /** 受控打开（`RowMenu` 用它让 ⇧F10 / 右键打开同一份菜单）；不给就是 Radix 自己管 */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /**
+   * 关闭时焦点回到触发器之前调用；`preventDefault()` = 不还焦点。只给「菜单项打开了一个要接焦点的
+   * 输入框」的场合（行内改名）：否则还给 ⋯ 的那一下就是那个输入框的 blur
+   */
+  onCloseAutoFocus?: (e: Event) => void
 }) {
   return (
     <DM.Root open={open} onOpenChange={onOpenChange}>
@@ -40,6 +46,7 @@ export function Menu({
           align={align}
           sideOffset={6}
           style={{ minWidth: width }}
+          onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
             CONTENT_CLASS,
             // 从触发器那个角展开，而不是从自己中心——菜单与按钮的因果关系才看得出来
@@ -233,13 +240,15 @@ export function MenuCheckItem({
   children,
   checked,
   onSelect,
+  ...rest
 }: {
   children: ReactNode
   checked: boolean
   onSelect: () => void
-}) {
+} & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
     <DM.CheckboxItem
+      {...rest}
       checked={checked}
       onSelect={(e) => {
         e.preventDefault()
@@ -285,6 +294,8 @@ export function MenuRadioItem({
   children,
   icon: Icon,
   shortcut,
+  disabled,
+  reason,
   ...rest
 }: {
   value: string
@@ -292,14 +303,20 @@ export function MenuRadioItem({
   icon?: ComponentType<{ size?: number; className?: string }>
   /** 与 MenuItem 同一列的快捷键（标注工具的 A / R / O / L、缩放预设的 ⌘0） */
   shortcut?: string
+  disabled?: boolean
+  /** 不可用的原因，第二行常驻（与 `MenuItem.reason` 同一种写法；问题面板「当前图」没有当前图时） */
+  reason?: string
 } & Record<`data-${string}`, string | number | boolean | undefined>) {
   return (
-    <DM.RadioItem {...rest} value={value} className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}>
+    <DM.RadioItem {...rest} value={value} disabled={disabled} className={cn(ITEM_CLASS, 'relative pl-6 text-ink')}>
       <DM.ItemIndicator className="absolute left-1.5 flex items-center">
         <Check size={ICON_SIZE.sm} />
       </DM.ItemIndicator>
       {Icon && <Icon size={ICON_SIZE.sm} className="shrink-0 text-ink-2" aria-hidden />}
-      <span className="min-w-0 flex-1 truncate">{children}</span>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate">{children}</span>
+        {reason && <span className="truncate text-xs leading-4 text-ink-3">{reason}</span>}
+      </span>
       {shortcut && <span className="shrink-0 text-xs tabular-nums text-ink-3">{shortcut}</span>}
     </DM.RadioItem>
   )

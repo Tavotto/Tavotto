@@ -35,7 +35,11 @@
     "listAria": "脚本产出的图",
     "needsRun": "先运行一次",
     "runtimeBadge": "运行时图",
-    "title": "选择一张图——{{script}}"
+    "title": "{{script}} 的图",
+    "addAll": "全部添加（{{count}}）",
+    "done": "完成",
+    "onCanvas": "已在画布上",
+    "addedAll_other": "已加入 {{count}} 张图"
   },
   "handoff": {
     "added": "已加入 {{name}}",
@@ -70,7 +74,6 @@
     "recentLabel": "最近项目",
     "regionLabel": "选择项目",
     "removeAllMissing": "全部移除",
-    "removeFromList": "从列表移除 {{name}}，不删除磁盘文件。",
     "removeFromListTitle": "从列表移除，不删文件",
     "tagline": "项目是绘图脚本所在的文件夹。选择一个开始做图。",
     "tutorial": {
@@ -125,8 +128,6 @@
   },
   "switcher": {
     "home": "回到项目列表",
-    "newTabLabel": "在新标签页打开",
-    "newTabTip": "在新标签页打开",
     "trigger": "当前项目 {{name}}，点击切换"
   },
   "workspace": {
