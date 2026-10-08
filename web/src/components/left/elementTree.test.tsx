@@ -13,7 +13,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { literal, t } from '@/i18n'
+import { literal, setLocale, t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { LeftPanel } from './LeftPanel'
 import { useAssetStore } from '@/store/assetStore'
@@ -347,5 +347,54 @@ describe('空态', () => {
     expect(tick).toBeTruthy()
     // 夹具的刻度文字没有 text 字段：退回完整名字；有 text 的那条只显示值
     expect(tick.textContent).toContain('刻度文字 0.75')
+  })
+})
+
+describe('树的语义、行菜单与「只看这一支」（2026-10-07 设计审计 §10.3）', () => {
+  const row = (gid: string) => host.querySelector(`[data-el="${gid}"]`) as HTMLElement
+
+  it('每行报层级与同层位置（aria-level / posinset / setsize）', async () => {
+    await mount()
+    const ticks = row('axes_0.yticks')
+    const level = Number(ticks.getAttribute('aria-level'))
+    expect(level).toBeGreaterThan(1)
+    expect(Number(ticks.getAttribute('aria-posinset'))).toBeGreaterThan(0)
+    expect(Number(ticks.getAttribute('aria-setsize'))).toBeGreaterThanOrEqual(Number(ticks.getAttribute('aria-posinset')))
+    expect(row('figure').getAttribute('aria-level')).toBe('1')
+  })
+
+  it('⇧F10 开行菜单；「只看这一支」是搜索行里的一枚 chip，点 × 退出', async () => {
+    await mount()
+    const ticks = row('axes_0.yticks')
+    await act(async () => {
+      ticks.focus()
+      ticks.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    expect(items.length).toBeGreaterThan(0)
+    await act(async () => {
+      items[0].click() // 第一项是「只看这一支」
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    const chip = host.querySelector<HTMLElement>('[data-element-isolate]')!
+    expect(chip, '只看这一支：搜索行里出现 chip').toBeTruthy()
+    // 与搜索框同一行（不是另起一条横幅）
+    expect(chip.parentElement).toBe(search().closest('div')!.parentElement)
+    expect(rowGids()).not.toContain('axes_0.xlabel')
+    // chip 的文案在 memo 里成文：换语言要跟着换（Codex #832）
+    expect(chip.textContent).toContain('只看')
+    try {
+      await act(async () => {
+        setLocale('en-US')
+      })
+      expect(host.querySelector<HTMLElement>('[data-element-isolate]')!.textContent).toContain('Isolated')
+    } finally {
+      await act(async () => {
+        setLocale('zh-CN')
+      })
+    }
+    await act(async () => host.querySelector<HTMLElement>('[data-element-isolate-exit]')!.click())
+    expect(host.querySelector('[data-element-isolate]')).toBeNull()
+    expect(rowGids()).toContain('axes_0.xlabel')
   })
 })

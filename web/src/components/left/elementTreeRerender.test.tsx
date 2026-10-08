@@ -336,6 +336,36 @@ describe('A3 一行自己的状态变了：那一行重画并显示新状态', (
   })
 })
 
+describe('行菜单的「隐藏 / 显示」与 ⌫（Codex #832）', () => {
+  const openRowMenu = (gid: string) =>
+    act(() => {
+      row(gid).dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    })
+  const item = (key: string) =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((m) =>
+      m.textContent?.startsWith(t(`elementTree.${key}`, { ns: 'workspace' })),
+    )!
+
+  it('可见的行：「隐藏」标 ⌫', async () => {
+    await mount(<ElementTree />)
+    openRowMenu('axes_0.lines_0')
+    expect(item('hide').textContent).toContain('⌫')
+  })
+
+  it('已隐藏的行：「显示」不标 ⌫——⌫ 只隐藏，在这一行上什么也不做', async () => {
+    await commit((p) => {
+      p.overrides.push({ gid: 'axes_0.lines_0', prop: 'visible', value: false } as never)
+    })
+    await mount(<ElementTree />)
+    openRowMenu('axes_0.lines_0')
+    expect(item('unhide').textContent).not.toContain('⌫')
+    await act(async () => {
+      row('axes_0.lines_0').dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true }))
+    })
+    expect(cur().overrides).toContainEqual({ gid: 'axes_0.lines_0', prop: 'visible', value: false })
+  })
+})
+
 describe('A4 新图到达：元素树只提交一次', () => {
   /**
    * 与 App 的 Workspace 同一个形状：文档一侧的同步挂在宿主上，渲染态一侧挂在叶子

@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { PIN_COLORS } from './canvas/issuePinColors'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const CSS = readFileSync(path.resolve(HERE, 'index.css'), 'utf8')
@@ -228,6 +229,16 @@ describe('token 配对的对比度', () => {
 
   it('对话框页脚的危险浅底胶囊：danger-content 在 hover 底上也 ≥4.5:1', () => {
     expect(contrast(resolveColor('danger-content'), resolveColor('danger-surface-hover'))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('画布等级标记：每一档 pin 的项数字（10px）对它自己的底色 ≥4.5:1；底色对画布灰 / 纸白 ≥3:1（Codex #832）', () => {
+    for (const [severity, { fill, text }] of Object.entries(PIN_COLORS)) {
+      const f = resolveColor(fill)
+      expect(contrast(resolveColor(text), f), `${severity}: ${text} on ${fill}`).toBeGreaterThanOrEqual(4.5)
+      for (const g of ['surface', 'canvas']) {
+        expect(contrast(f, token(g)), `${severity}: ${fill} on ${g}`).toBeGreaterThanOrEqual(3)
+      }
+    }
   })
 
   it('Tooltip 是 ink 底白字：surface 对 ink ≥4.5:1', () => {

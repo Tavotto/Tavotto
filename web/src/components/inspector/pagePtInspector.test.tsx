@@ -219,12 +219,13 @@ const fieldInput = (prop: string) =>
   region('inspector').querySelector<HTMLInputElement>(`[data-prop="${prop}"] input`)!
 const styleInput = (label: string) =>
   region('style').querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!
-/** 问题面板这一行说的「当前 X pt」 */
+/** 问题面板这一行说的「当前 X pt」（问题树的尾随格里，`data-issue-values`） */
 const problemCurrent = () => {
-  const row = [...region('problems').querySelectorAll<HTMLElement>('[data-issue-row]')].find(
-    (r) => r.getAttribute('data-issue-object') === 'p1' && (r.textContent ?? '').includes('pt'),
-  )
-  return row ? Number(/([\d.]+) pt/.exec(row.textContent ?? '')?.[1]) : null
+  const values = [...region('problems').querySelectorAll<HTMLElement>('[data-issue-row]')]
+    .filter((r) => r.getAttribute('data-issue-object') === 'p1')
+    .map((r) => r.closest('li')?.querySelector<HTMLElement>('[data-issue-values]')?.textContent ?? '')
+    .find((v) => v.includes('pt'))
+  return values ? Number(/([\d.]+) pt/.exec(values)?.[1]) : null
 }
 const titleIssue = () =>
   useValidationStore
