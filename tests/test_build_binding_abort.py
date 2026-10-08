@@ -38,3 +38,23 @@ def test_a_binding_abort_leaves_the_worker_unbuilt(cls, monkeypatch):
     with pytest.raises(inputtranscript.StaleTranscriptError):
         w.ensure_built()
     assert w.built is False and w.build_failed is True
+
+
+@pytest.mark.parametrize("cls", [pool.EngineWorker, pool.WorkerdWorker])
+def test_a_build_that_cannot_capture_its_basis_fails_and_the_worker_is_not_reused(cls, monkeypatch):
+    # r4224357981：基线取不到 → build 失败（不跑脚本），worker 不算已 build
+    def boom(*_a, **_k):
+        raise OSError("transient")
+
+    monkeypatch.setattr(inputtranscript, "basis", boom)
+    w = _bare(cls)
+    w.figures_dir = "/nonexistent-project"
+    w.script_name = "s.py"
+    w.out_dir = None
+    ran = []
+    monkeypatch.setattr(w, "request", lambda *a, **k: ran.append(1), raising=False)
+    monkeypatch.setattr(w, "_call", lambda *a, **k: ran.append(1), raising=False)
+    with pytest.raises(pool.WorkerError) as ei:
+        w.ensure_built()
+    assert ei.value.code == "script_input_transcript_failed"
+    assert not ran and w.built is False and w.build_failed is True

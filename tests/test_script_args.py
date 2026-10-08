@@ -282,6 +282,51 @@ def test_ordinary_shapes_are_complete(source):
     assert _by_dest(schema)["n"]["required"] is True
 
 
+_MAIN_GUARD_PRELUDE = (
+    "import argparse\np = argparse.ArgumentParser()\np.add_argument('--n', required=True)\n"
+)
+
+
+@pytest.mark.parametrize("guard", ["__name__ == '__main__'", "'__main__' == __name__"])
+def test_both_operand_orders_of_the_main_guard_count_as_the_entry_path(guard):
+    # Codex r4221224241：`"__main__" == __name__` 与 `__name__ == "__main__"` 同样是脚本被直接运行时走的路。
+    schema = scriptargs.analyze(
+        f"{_MAIN_GUARD_PRELUDE}if {guard}:\n    p.add_argument('--m')\n    p.parse_args()\n"
+    )
+    assert schema["status"] == "complete", schema["reasons"]
+    assert {"n", "m"} <= set(_by_dest(schema))
+    assert _by_dest(schema)["m"]["conditional"] is False
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "__name__ != '__main__'",
+        "'__main__' != __name__",
+        "__name__ is '__main__'",
+        "__name__ in ('__main__',)",
+        "__name__ == '__main__' and sys.argv",
+        "__name__ == 'other'",
+        "__name__ == '__main__' == __name__",
+    ],
+)
+def test_a_comparison_that_is_not_the_main_guard_is_conditional(guard):
+    # `!=`（以及 is / in / 别的字面量）不是主守卫：里面的 add_argument 不能当「一定注册」，不得拿到完整 schema。
+    schema = scriptargs.analyze(
+        f"import sys\n{_MAIN_GUARD_PRELUDE}if {guard}:\n    p.add_argument('--m')\np.parse_args()\n"
+    )
+    by = _by_dest(schema)
+    assert "m" not in by or by["m"]["conditional"] is True
+    assert not (schema["status"] == "complete" and schema["form_enabled"] and "m" not in by)
+
+
+def test_the_else_of_the_main_guard_stays_conditional():
+    schema = scriptargs.analyze(
+        f"{_MAIN_GUARD_PRELUDE}if __name__ == '__main__':\n    p.parse_args()\nelse:\n    p.add_argument('--m')\n"
+    )
+    assert "m" not in _by_dest(schema) or _by_dest(schema)["m"]["conditional"] is True
+
+
 @pytest.mark.parametrize(
     ("source", "status", "reasons"),
     [
@@ -350,3 +395,90 @@ def test_rejected_paste_vectors_use_the_closed_error_set():
         "unrecognized_launcher",
     }
     assert {v["error"] for v in PASTE["rejected"]} <= codes
+
+
+# ---------------------------------------------------------------- 源码编码（Codex r4220829659）
+
+_CHOICES = "import argparse\np = argparse.ArgumentParser()\np.add_argument('--city', choices=['café'])\np.parse_args()\n"
+
+
+def _choices_of(schema: dict) -> list:
+    return _by_dest(schema)["city"]["choices"]
+
+
+def test_a_cp1252_coding_declaration_is_honoured(tmp_path):
+    path = tmp_path / "s.py"
+    path.write_bytes(("# coding: cp1252\n" + _CHOICES).encode("cp1252"))
+    schema = scriptargs.analyze_file(path)
+    assert schema["status"] == "complete", schema
+    assert _choices_of(schema) == ["café"]  # 不是 'caf�'
+
+
+def test_a_utf8_bom_does_not_break_the_parse(tmp_path):
+    path = tmp_path / "s.py"
+    path.write_bytes(b"\xef\xbb\xbf" + _CHOICES.encode("utf-8"))
+    schema = scriptargs.analyze_file(path)
+    assert schema["status"] == "complete", schema
+    assert _choices_of(schema) == ["café"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"# coding: no-such-codec\n" + _CHOICES.encode("utf-8"),  # 声明了不存在的编码
+        b"# coding: ascii\n" + _CHOICES.encode("utf-8"),  # 声明的编码解不开内容
+        b"\xef\xbb\xbf# coding: latin-1\n" + _CHOICES.encode("utf-8"),  # BOM 与声明冲突
+        b"import argparse\n# \xff\xfe not utf-8\n",  # 默认 UTF-8 却不是 UTF-8
+    ],
+)
+def test_an_undecodable_source_falls_back_to_unknown(tmp_path, raw):
+    path = tmp_path / "s.py"
+    path.write_bytes(raw)
+    schema = scriptargs.analyze_file(path)
+    assert schema["status"] == "unknown" and not schema["arguments"], schema
+    assert schema["form_enabled"] is False
+
+
+# ---------------------------------------------------------------- 负数 token 文法（Codex r4220829672）
+
+
+@pytest.mark.parametrize(
+    ("token", "legacy", "extended"),
+    [
+        ("-1", True, True),
+        ("-1.5", True, True),
+        ("-.5", True, True),
+        ("-1.", False, True),
+        ("-1e3", False, True),
+        ("-1.5E-3", False, True),
+        ("-1_0", False, True),
+        ("-1j", False, True),
+        ("-1abc", False, True),  # 3.14 的 match 没有结尾锚
+        ("-inf", False, False),
+        ("-x", False, False),
+        ("-", False, False),
+    ],
+)
+def test_the_two_negative_number_grammars_match_cpython(token, legacy, extended):
+    assert scriptargs._looks_negative_number(token) is legacy
+    assert scriptargs._looks_negative_number_extended(token) is extended
+
+
+def test_the_grammars_equal_the_running_interpreters_argparse():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    pattern = parser._negative_number_matcher.pattern
+    expected = (
+        scriptargs.NEGATIVE_NUMBER_EXTENDED
+        if sys.version_info >= (3, 14)
+        else scriptargs.NEGATIVE_NUMBER_LEGACY
+    )
+    assert pattern == expected.pattern
+
+
+def test_declared_negative_looking_options_are_flagged_per_grammar():
+    src = "import argparse\np = argparse.ArgumentParser()\np.add_argument('-1e3', dest='x')\np.parse_args()\n"
+    schema = scriptargs.analyze(src)
+    assert schema["negative_number_options"] is False  # 3.13 的文法下 `-1e3` 不像负数
+    assert schema["negative_number_options_extended"] is True

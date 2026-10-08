@@ -453,14 +453,14 @@ def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError
     )
 
 
-#: 重放到口令那一问而没人能答（`inputbroker.REASON_SECRET_REQUIRED`；本模块不 import 兄弟模块，按值比）
-_REASON_SECRET_REQUIRED = "secret_required"
+#: 重放到口令那一问而没人能答（`inputbroker.REASON_MASKED_INPUT_REQUIRED`；本模块不 import 兄弟模块，按值比）
+_REASON_MASKED_INPUT_REQUIRED = "secret_required"
 
 
 def _needs_input_error(exc) -> ProtocolError:
     """脚本要输入而没有人能答 → 结构化错误（ADR 0099 §五）。提示原文进 message：CLI / MCP 读的就是这一句。"""
     what = exc.prompt.strip() or "（读取标准输入）"
-    if exc.reason == _REASON_SECRET_REQUIRED:
+    if exc.reason == _REASON_MASKED_INPUT_REQUIRED:
         message = (
             f"脚本需要重新输入口令：{what}。Tavotto 不保存口令，请在 Tavotto 界面里运行并重新输入。"
         )
