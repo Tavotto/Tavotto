@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  TriangleAlert,
   ArrowLeft,
   BookOpen,
   ChevronRight,
   CornerDownLeft,
-  Folder,
   FolderOpen,
   FolderPlus,
-  X,
+  SearchX,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendErrorText, type RecentProject } from '@/lib/api'
+import { useRovingList } from './left/rovingList'
+import { ProjectRow } from './ProjectPickerRow'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { useFormatMessage } from '@/i18n/react'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -30,8 +30,10 @@ import { useProjectStore } from '@/store/projectStore'
 import { DirBrowser, NewProjectNameDialog, TailPath } from './DirBrowser'
 import { HomeView } from './home/HomeView'
 import { BrandMark } from './ui/BrandMark'
-import { Button, IconButton } from './ui/Button'
+import { Button } from './ui/Button'
+import { EmptyState } from './ui/EmptyState'
 import { TextInput } from './ui/Input'
+import { TooltipProvider } from './ui/Tooltip'
 
 export { DirBrowser, TailPath }
 
@@ -80,16 +82,20 @@ export function ProjectPicker() {
       />
     )
   }
+  // 选择器不在工作台的 TooltipProvider 里（App 在没有项目时只渲染这一屏）：行的「⋯」是带气泡的
+  // IconButton（`ui/RowMenu`），这里自己给一层
   return (
-    <AllProjects
-      error={error}
-      busyPath={busyPath}
-      openPath={openPath}
-      onBack={() => {
-        setError(null)
-        setView('home')
-      }}
-    />
+    <TooltipProvider>
+      <AllProjects
+        error={error}
+        busyPath={busyPath}
+        openPath={openPath}
+        onBack={() => {
+          setError(null)
+          setView('home')
+        }}
+      />
+    </TooltipProvider>
   )
 }
 
@@ -132,6 +138,7 @@ function AllProjects({
   const hints = useMemo(() => disambiguateRecent(recent), [recent])
   const target = submitTargetFor(typed, available)
   const entry = useProjectEntry((path, create) => void openPath(path, create))
+  const roving = useRovingList<HTMLDivElement>()
 
   return (
     <div className="flex h-full justify-center bg-bg">
@@ -154,9 +161,10 @@ function AllProjects({
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{t('picker.tagline')}</p>
 
           <div className="mt-5 flex gap-2">
+            {/* 页面 CTA 是 32px（lg，审计 §10.3）；一屏一颗填色主动作 */}
             <Button
               variant="primary"
-              size="md"
+              size="lg"
               disabled={switching}
               onClick={entry.startCreate}
             >
@@ -165,7 +173,7 @@ function AllProjects({
             </Button>
             <Button
               variant="secondary"
-              size="md"
+              size="lg"
               disabled={switching}
               onClick={entry.startOpen}
             >
@@ -232,23 +240,31 @@ function AllProjects({
             className="flex min-h-0 flex-1 flex-col pb-6 pt-7"
           >
             {/* 分区小标走 type-section（全面打磨 D44） */}
-            <h2 className="type-section mb-1.5 flex shrink-0 items-baseline gap-1.5">
-              {t('picker.recentHeading')}
-              <span className="font-mono text-ink-3">
-                {t('picker.recentCount', { count: available.length + missing.length })}
-              </span>
+            <h2 className="mb-1.5 flex h-7 shrink-0 items-center gap-1.5">
+              <span className="type-section">{t('picker.recentHeading')}</span>
+              {/* 计数是 type-meta（等宽数字），不是等宽字体（审计 §10.3） */}
+              <span className="type-meta">{t('picker.recentCount', { count: available.length + missing.length })}</span>
             </h2>
             {/* 只有这一块滚：`min-h-0` 让它在 flex 列里真的能收缩，否则它会把
                 自己撑到内容高度、把滚动交还给页面（= 改造前的样子） */}
-            <div data-recent-scroll className="min-h-0 flex-1 overflow-y-auto">
+            <div
+              data-recent-scroll
+              ref={roving.ref}
+              onFocus={roving.onFocus}
+              onKeyDown={roving.onKeyDown}
+              className="-mx-2 min-h-0 flex-1 overflow-y-auto px-1"
+            >
+              {/* 行与左栏「项目」抽屉同一份（`ProjectRow`，这里 density="page"：52px + 文件夹记号）；
+                  一列一个 Tab 停靠点，↑↓ 走行、Enter 打开 */}
               <ul className="flex flex-col">
                 {available.map((r) => (
-                  <RecentRow
+                  <ProjectRow
                     key={r.path}
                     entry={r}
+                    density="page"
                     hint={hints.get(r.path)}
                     busy={busyPath === r.path}
-                    disabled={switching}
+                    switching={switching}
                     onOpen={() => void openPath(r.path)}
                     onRemove={() => void remove(r.path)}
                   />
@@ -263,7 +279,7 @@ function AllProjects({
                 />
               )}
               {available.length + missing.length === 0 && (
-                <p className="py-4 text-xs text-ink-3">{t('picker.filterNoMatch', { query: typed.trim() })}</p>
+                <EmptyState icon={SearchX} title={t('picker.filterNoMatch', { query: typed.trim() })} data-picker-no-match />
               )}
             </div>
           </section>
@@ -436,11 +452,13 @@ function MissingGroup({
           <p className="mt-1 text-xs leading-relaxed text-ink-3">{t('picker.missingHint')}</p>
           <ul id={id} className="mt-1 flex flex-col">
             {entries.map((r) => (
-              <RecentRow
+              <ProjectRow
                 key={r.path}
                 entry={r}
+                density="page"
                 hint={hints.get(r.path)}
                 busy={false}
+                switching={false}
                 onOpen={() => {}}
                 onRemove={() => onRemove(r.path)}
               />
@@ -449,73 +467,5 @@ function MissingGroup({
         </>
       )}
     </section>
-  )
-}
-
-function RecentRow({
-  entry,
-  hint,
-  busy,
-  disabled = false,
-  onOpen,
-  onRemove,
-}: {
-  entry: RecentProject
-  /** 同名项目的辨认后缀（`lib/recentProjects.disambiguateRecent`） */
-  hint?: string
-  busy: boolean
-  /** 有一次切换正在进行：打开不了（移除仍可以） */
-  disabled?: boolean
-  onOpen: () => void
-  onRemove: () => void
-}) {
-  const { t } = useTranslation('project')
-  return (
-    <li className="group flex items-center gap-2 border-b border-border py-2 last:border-b-0">
-      <Folder size={ICON_SIZE.md} className="shrink-0 text-ink-3" />
-      <button
-        onClick={onOpen}
-        disabled={busy || disabled || !entry.exists}
-        className={cn(
-          'min-w-0 flex-1 cursor-default text-left outline-none focus-visible:focus-ring',
-        )}
-        aria-label={t('picker.openProject', { name: entry.name })}
-        title={entry.tutorial ? undefined : entry.path}
-      >
-        <span className="flex items-center gap-1.5">
-          <span className="truncate text-xs font-medium text-ink">{entry.name}</span>
-          {!entry.exists && (
-            <span className="flex shrink-0 items-center gap-1 text-xs text-danger">
-              <TriangleAlert size={ICON_SIZE.xs} />
-              {t('picker.missingDir')}
-            </span>
-          )}
-          {busy && <span className="shrink-0 text-xs text-ink-3">{t('picker.opening')}</span>}
-        </span>
-        {/* 教程副本躺在数据目录里：显示「教程」而不是那条路径（T-104） */}
-        {entry.tutorial ? (
-          <span className="block text-xs text-ink-3">{t('picker.tutorialBadge')}</span>
-        ) : hint ? (
-          <span className="block truncate font-mono text-xs text-ink-3">{hint}</span>
-        ) : (
-          <TailPath path={entry.path} />
-        )}
-      </button>
-      <IconButton
-        iconSize="sm"
-        tip={false}
-        onClick={onRemove}
-        label={t('picker.removeFromList', { name: entry.name })}
-        title={t('picker.removeFromListTitle')}
-        className={cn(
-          'text-ink-3 transition-[opacity,background-color,color]',
-          'focus-visible:opacity-100 group-hover:opacity-100',
-          // 打不开的条目只剩「移除」一个动作：常驻显示，不藏在悬停后面
-          entry.exists ? 'opacity-0' : 'opacity-100',
-        )}
-      >
-        <X size={ICON_SIZE.sm} />
-      </IconButton>
-    </li>
   )
 }
