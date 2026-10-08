@@ -2,6 +2,7 @@ import { act } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { trackPointer } from '@/canvas/interactions'
 import { ElementTree } from '@/components/left/ElementTree'
 import { LayerTree } from '@/components/left/LayerTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -14,6 +15,7 @@ import { useUiStore, type WorkspaceLayout } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { useKeyboard } from './useKeyboard'
 import { useSelectionRouting } from './useSelectionRouting'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -57,8 +59,20 @@ function Harness() {
       }
       useUiStore.getState().setSelectedGid(gids[0])
     }} /><span data-canvas-same /><span data-canvas-drag
-      onPointerDown={() => useInteractionStore.getState().begin('element')} /></div>
+      onPointerDown={() => useInteractionStore.getState().begin('element')} />
+      <span data-canvas-track onPointerDown={e => {
+        useInteractionStore.getState().begin('element')
+        trackPointer(e, {
+          onMove: () => {},
+          onEnd: () => useInteractionStore.getState().end(),
+        })
+      }} /></div>
   </TooltipProvider>
+}
+
+function KeyboardHarness() {
+  useKeyboard()
+  return <Harness />
 }
 
 let host: HTMLDivElement
@@ -334,6 +348,30 @@ describe('selection routing keeps the active drawer workflow', () => {
     act(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 })))
     expect(useUiStore.getState().rightOpen).toBe(false)
     expect(useUiStore.getState().leftOpen).toBe(true)
+  })
+
+  it.each(['medium', 'narrow'] as const)('%s: Escape cancels the held handoff without a pointercancel event', layout => {
+    act(() => root.render(<KeyboardHarness />))
+    openElements(layout)
+    pointer(treeRow(gids[0]))
+    act(() => node('[data-canvas-track]').dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, button: 0, pointerId: 9,
+    })))
+    try {
+      expect(useInteractionStore.getState().kind).toBe('element')
+      expectTreeSelection([gids[0]])
+      act(() => window.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape', bubbles: true, cancelable: true,
+      })))
+      expect(useInteractionStore.getState().kind).toBe('none')
+      expectTreeSelection([gids[0]])
+    } finally {
+      act(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9 })))
+    }
+    expectTreeSelection([gids[0]])
+    pointer('[data-canvas-same]')
+    expect(useUiStore.getState().rightOpen).toBe(true)
+    expect(useUiStore.getState().leftOpen).toBe(false)
   })
 
   it.each(['move', 'resize', 'element'] as const)('%s defers sidebar routing until tracking ends', kind => {
