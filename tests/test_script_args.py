@@ -282,6 +282,51 @@ def test_ordinary_shapes_are_complete(source):
     assert _by_dest(schema)["n"]["required"] is True
 
 
+_MAIN_GUARD_PRELUDE = (
+    "import argparse\np = argparse.ArgumentParser()\np.add_argument('--n', required=True)\n"
+)
+
+
+@pytest.mark.parametrize("guard", ["__name__ == '__main__'", "'__main__' == __name__"])
+def test_both_operand_orders_of_the_main_guard_count_as_the_entry_path(guard):
+    # Codex r4221224241：`"__main__" == __name__` 与 `__name__ == "__main__"` 同样是脚本被直接运行时走的路。
+    schema = scriptargs.analyze(
+        f"{_MAIN_GUARD_PRELUDE}if {guard}:\n    p.add_argument('--m')\n    p.parse_args()\n"
+    )
+    assert schema["status"] == "complete", schema["reasons"]
+    assert {"n", "m"} <= set(_by_dest(schema))
+    assert _by_dest(schema)["m"]["conditional"] is False
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "__name__ != '__main__'",
+        "'__main__' != __name__",
+        "__name__ is '__main__'",
+        "__name__ in ('__main__',)",
+        "__name__ == '__main__' and sys.argv",
+        "__name__ == 'other'",
+        "__name__ == '__main__' == __name__",
+    ],
+)
+def test_a_comparison_that_is_not_the_main_guard_is_conditional(guard):
+    # `!=`（以及 is / in / 别的字面量）不是主守卫：里面的 add_argument 不能当「一定注册」，不得拿到完整 schema。
+    schema = scriptargs.analyze(
+        f"import sys\n{_MAIN_GUARD_PRELUDE}if {guard}:\n    p.add_argument('--m')\np.parse_args()\n"
+    )
+    by = _by_dest(schema)
+    assert "m" not in by or by["m"]["conditional"] is True
+    assert not (schema["status"] == "complete" and schema["form_enabled"] and "m" not in by)
+
+
+def test_the_else_of_the_main_guard_stays_conditional():
+    schema = scriptargs.analyze(
+        f"{_MAIN_GUARD_PRELUDE}if __name__ == '__main__':\n    p.parse_args()\nelse:\n    p.add_argument('--m')\n"
+    )
+    assert "m" not in _by_dest(schema) or _by_dest(schema)["m"]["conditional"] is True
+
+
 @pytest.mark.parametrize(
     ("source", "status", "reasons"),
     [

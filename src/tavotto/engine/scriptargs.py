@@ -250,6 +250,22 @@ class _Parser:
                     self.reasons.add("fromfile")
 
 
+def _is_main_guard(test: ast.expr) -> bool:
+    """恰好是 `__name__ == "__main__"` 或 `"__main__" == __name__`；`!=` / `is` / `in` / 链式比较都不是。"""
+    if not (
+        isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
+    ):
+        return False
+    pair = (test.left, test.comparators[0])
+    return any(
+        isinstance(name, ast.Name)
+        and name.id == "__name__"
+        and isinstance(lit, ast.Constant)
+        and lit.value == "__main__"
+        for name, lit in (pair, pair[::-1])
+    )
+
+
 class _Scanner(ast.NodeVisitor):
     def __init__(self, names: _Names) -> None:
         self.names = names
@@ -280,15 +296,7 @@ class _Scanner(ast.NodeVisitor):
 
     def visit_If(self, node: ast.If) -> None:
         # `if __name__ == "__main__":` 不是条件分支——那就是脚本被 `python x.py` 跑时走的路
-        test = node.test
-        is_main = (
-            isinstance(test, ast.Compare)
-            and isinstance(test.left, ast.Name)
-            and test.left.id == "__name__"
-            and len(test.comparators) == 1
-            and isinstance(test.comparators[0], ast.Constant)
-            and test.comparators[0].value == "__main__"
-        )
+        is_main = _is_main_guard(node.test)
         if is_main:
             for stmt in node.body:
                 self.visit(stmt)
