@@ -307,9 +307,7 @@ class Index:
         if not evidence:
             evidence = {EV_NAME_ONLY}
         # 本模块在这个发行包里的所有提供者都没有 `<top>/__init__.py` 时，才说它是命名空间式的
-        namespace = (
-            EV_RECORD in evidence and module not in set().union(*(d.regular for d in ds))
-        ) and first.ecosystem == ECO_PYPI
+        namespace = EV_RECORD in evidence and module not in set().union(*(d.regular for d in ds))
         provenance = first.provenance
         for d in ds:
             if d.provenance != PROV_INDEX:
@@ -323,7 +321,7 @@ class Index:
             provenance=provenance,
             evidence=tuple(sorted(evidence)),
             evidence_file=file_rel,
-            reproducible=provenance in REPRODUCIBLE_PROVENANCES and first.ecosystem == ECO_PYPI,
+            reproducible=provenance in REPRODUCIBLE_PROVENANCES,
             shadowed=shadowed,
             namespace=namespace,
             duplicate_versions=len(versions) > 1,
@@ -526,9 +524,9 @@ def _record_tops(text: str) -> tuple[set[str], set[str]] | None:
             if not row:
                 continue
             path = row[0].replace("\\", "/")
-            if path.startswith(("../", "/")) or (len(path) > 1 and path[1] == ":"):
-                continue  # 装到 site-packages 之外的（脚本、数据）不是 import 名
             parts = path.split("/")
+            # `../../bin/x`、`/abs/x`、`C:/x` 这类装到 site-packages 之外的（脚本、数据）首段不是标识符，
+            # 下面的 `_IDENT_RE` 自然把它们挡掉——不另写一条会漂移的前缀判据
             first = parts[0]
             if first in _SKIP_ENTRIES or first.endswith(
                 (".dist-info", ".data", ".egg-info", ".pth")
