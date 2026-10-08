@@ -9,6 +9,7 @@ import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntr
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
+import type { PanelObject } from '@/types/document'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { prepRowKey } from '@/lib/preparationText'
 import {
@@ -725,8 +726,8 @@ export function ProbeResultsDialog({
   dropped: number
   open: boolean
   onOpenChange: (v: boolean) => void
-  /** 加进画布之后（准备面板据此观察那张图的首次编辑渲染，T09） */
-  onAdded?: (d: CapturedFigureDescriptor) => void
+  /** 加进画布之后，带上**刚新建的那个面板**（准备面板据此观察它的首次编辑渲染，T09；不能按素材 id 回找——文档里可能已有同素材的旧实例） */
+  onAdded?: (d: CapturedFigureDescriptor, panel: PanelObject) => void
 }) {
   useTranslation('workspace')
   const setStatus = useUiStore((s) => s.setStatus)
@@ -754,9 +755,9 @@ export function ProbeResultsDialog({
               variant="secondary"
               size="sm"
               onClick={() => {
-                addRuntimePanelToCanvas(d)
+                const added = addRuntimePanelToCanvas(d)
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
-                onAdded?.(d)
+                onAdded?.(d, added)
               }}
             >
               {sc('addToCanvas')}

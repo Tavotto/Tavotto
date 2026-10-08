@@ -453,6 +453,89 @@ describe('多张图的结果对话框', () => {
   })
 })
 
+describe('切换聚焦条目：面板的条目局部状态不带到另一个脚本', () => {
+  const otherReport = () =>
+    report({
+      session_id: 'psess-2',
+      target: { kind: 'script', script: 'other.py', entry: '__main__', asset_id: null, stem: null },
+    })
+  const openOther = async () => {
+    mockCreate.mockResolvedValueOnce(otherReport())
+    await act(async () => {
+      await useProjectPreparationStore.getState().open({ script: 'other.py' })
+    })
+  }
+  const focusKey = async (key: string) => {
+    await act(async () => useProjectPreparationStore.setState({ focus: key }))
+  }
+
+  it('A 的本地失败文案（采用环境失败）不出现在 B 上；切回 A 也是干净的', async () => {
+    await mount()
+    await openWith(report(STATES.env))
+    const spy = vi.spyOn(useEnvStore.getState(), 'adoptCandidate').mockResolvedValue('采用失败了')
+    useEnvStore.setState({ adoptCandidate: spy as never })
+    expect(primary()?.dataset.prepPrimary).toBe('adopt')
+    await act(async () => primary()!.click())
+    expect(panel().dataset.prepState).toBe('action_failed')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('采用失败了')
+    await openOther()
+    expect(panel().getAttribute('aria-label')).toContain('other.py')
+    expect(panel().dataset.prepState).not.toBe('action_failed')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).not.toBe('采用失败了')
+    await focusKey('script:plot.py')
+    expect(panel().dataset.prepState).not.toBe('action_failed')
+  })
+
+  it('A 的多图结果对话框开着，切到 B：对话框不跟过去（切回 A 也是关着的）', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    await act(async () => primary()!.click())
+    expect(document.body.querySelectorAll('[role="dialog"] ul button').length).toBe(3)
+    await openOther()
+    expect(panel().getAttribute('aria-label')).toContain('other.py')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    await focusKey('script:plot.py')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('详情里「改用内置环境」的失败文案同样不带过去', async () => {
+    await mount()
+    await openWith(report(STATES.env))
+    const spy = vi.spyOn(useEnvStore.getState(), 'setProjectPython').mockResolvedValueOnce('设置失败了')
+    useEnvStore.setState({ setProjectPython: spy as never })
+    await act(async () => (panel().querySelector('[data-prep-use-builtin]') as HTMLButtonElement).click())
+    expect(panel().querySelector('[data-prep-env-error]')).not.toBeNull()
+    await openOther()
+    expect(panel().querySelector('[data-prep-env-error]')).toBeNull()
+  })
+})
+
+describe('结果对话框记录的是它刚加进画布的那个面板', () => {
+  it('同一素材文档里已有一个面板（旧的就绪渲染）：新加的还在渲染时不报就绪', async () => {
+    await mount()
+    await openWith(report(STATES.completedMany))
+    // 文档里已有 b 的旧实例（用户改过样式 = 另一个渲染键），且它有一份就绪的精确渲染；
+    // 按素材 id 回找会选中它，它的就绪渲染会让「首次编辑渲染」立刻成立
+    const old = { ...panelFor('runtime:plot.py#b'), id: 'panel-old-b', overrides: [{ op: 'x' }] } as unknown as PanelObject
+    useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [...st.doc.objects, old] } }))
+    seedExactRender(old, { elements: [] } as never)
+    // 对话框加图：新实例是另一个 id
+    const fresh = { ...panelFor('runtime:plot.py#b'), id: 'panel-new-b' } as PanelObject
+    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => {
+      useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [...st.doc.objects, fresh] } }))
+      return fresh
+    }) as never)
+    await act(async () => primary()!.click())
+    const add = Array.from(document.body.querySelectorAll('[role="dialog"] ul button')) as HTMLButtonElement[]
+    await act(async () => add[1].click())
+    const rec = useProjectPreparationStore.getState().entries['script:plot.py'].editRenders
+    expect(rec['runtime:plot.py#b']?.panelId).toBe('panel-new-b')
+    expect(panel().dataset.prepState).toBe('edit_opening') // 旧实例的就绪渲染不算
+    await act(async () => seedExactRender(fresh, { elements: [] } as never))
+    expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
 describe('运行时 input：同一请求只有一个展示面', () => {
   const req = { id: 'req-1', script: 'plot.py', index: 1, input_kind: 'input' as const, prompt: '选哪个？', stdout_tail: '1) a\n2) b' }
 

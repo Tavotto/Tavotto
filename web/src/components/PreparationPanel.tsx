@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { PanelObject } from '@/types/document'
 import { useTranslation } from 'react-i18next'
 import { X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -6,6 +7,7 @@ import { backendCodeMsg, type PreparationReport } from '@/lib/api'
 import { formatMessage, t as translate } from '@/i18n'
 import { prepView, targetName, type PrepPrimary, type PrepView } from '@/lib/preparationText'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useEnvStore } from '@/store/envStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -46,6 +48,18 @@ function editRenderOf(assetId: string): EditRender | undefined {
 /** 记入编辑记录：资产 id + 它在画布上那个面板的渲染键 */
 function noteEditingFor(entryKey: string, assetId: string): void {
   useProjectPreparationStore.getState().noteEditing(entryKey, assetId, editRenderOf(assetId))
+}
+
+/**
+ * 结果对话框刚加进画布的那个面板：**直接**记它的 id 与渲染键，不按 assetId 去文档里找——同一素材文档里可能已经有
+ * 别的实例，按 assetId 找会选中旧实例、它已有的就绪渲染会让「首次编辑渲染」立刻成立。
+ * 取文档里的现值（加图之后取景等动作可能改过对象），找不到才用返回的那个对象。
+ */
+function noteAddedPanelFor(entryKey: string, assetId: string, added: PanelObject): void {
+  const live = findFigurePanel(assetId, added.id)?.panel ?? added
+  useProjectPreparationStore
+    .getState()
+    .noteEditing(entryKey, assetId, { panelId: live.id, renderKey: renderKeyOf(live) })
 }
 
 /**
@@ -92,7 +106,9 @@ export function PreparationPanel() {
   if (!open || !focus || !entry) return null
   const argsChanged = draftDiffers(entry.target)
   const v = prepView(entry, { argsChanged, editReady })
-  return <PanelBody entry={entry} view={v} />
+  // 以条目为 key：切换聚焦条目时整个 PanelBody 卸载重建，条目局部状态（本地失败、结果对话框、详情里的环境失败…）
+  // 一个不带到另一个脚本上
+  return <PanelBody key={entry.key} entry={entry} view={v} />
 }
 
 function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
@@ -138,7 +154,11 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           addRuntimePanelToCanvas(d)
         }
         openFastEdit(d.asset_id)
-        noteEditingFor(entry.key, d.asset_id)
+        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个
+        const opened = useWorkspaceStore.getState().activePanelId
+        const found = opened ? findFigurePanel(d.asset_id, opened) : null
+        if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
+        else noteEditingFor(entry.key, d.asset_id)
         return
       }
       case 'reopen':
@@ -202,7 +222,7 @@ function PanelBody({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           dropped={0}
           open={resultsOpen}
           onOpenChange={setResultsOpen}
-          onAdded={(d) => noteEditingFor(entry.key, d.asset_id)}
+          onAdded={(d, added) => noteAddedPanelFor(entry.key, d.asset_id, added)}
         />
       )}
     </section>
