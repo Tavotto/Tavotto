@@ -1569,6 +1569,78 @@ def test_installing_a_missing_package_into_the_same_env_invalidates_the_cached_n
     assert now["satisfies"] is True, "装进同一个环境之后，旧的『缺』仍被缓存命中"
 
 
+class _FakeReparse:
+    """lstat 结果的替身：Windows junction（reparse point，tag = MOUNT_POINT，name-surrogate 位）。"""
+
+    def __init__(self, real):
+        self._real = real
+        self.st_mode = real.st_mode & ~0o170000 | 0o040000  # 目录，不是符号链接
+        self.st_file_attributes = 0x400 | 0x10
+        self.st_reparse_tag = 0xA0000003
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+@posix_only
+@pytest.mark.parametrize("flavour", ["symlink", "junction"])
+def test_discovery_never_follows_a_redirect_inside_the_project(tmp_path, monkeypatch, flavour):
+    """Codex 安全 #820 r4234904358：项目里的符号链接 / Windows junction 可以把"看着像本地"的线索指到攻击者的共享，任何跟随的
+    stat / is_file / realpath 都会发出网络认证。准备会话的发现（不是导入即扫描）也先逐级 lstat、被重定向的整条丢弃。"""
+    outside = tmp_path / "attacker"
+    (outside / "bin").mkdir(parents=True)
+    exe = outside / "bin" / "python"
+    exe.write_text("#!/bin/sh\n", "utf-8")
+    exe.chmod(0o755)
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "fig.py").write_text("import json\n", "utf-8")
+    link = root / "linkdir"
+    link.symlink_to(outside, target_is_directory=True)
+    (root / ".vscode").mkdir()
+    (root / ".vscode" / "settings.json").write_text(
+        '{"python.defaultInterpreterPath": "${workspaceFolder}/linkdir/bin/python"}', "utf-8"
+    )
+    (root / ".venv").symlink_to(outside, target_is_directory=True)  # 项目 venv 目录自己也是重定向
+
+    real_lstat = os.lstat
+    if flavour == "junction":
+        # 在 POSIX 上模拟 Windows：把 linkdir / .venv 的 lstat 说成 reparse point（不是符号链接）
+        monkeypatch.setattr(
+            os,
+            "lstat",
+            lambda p, *a, **k: (
+                _FakeReparse(real_lstat(p, *a, **k))
+                if os.fspath(p).rstrip("/").endswith(("linkdir", ".venv"))
+                else real_lstat(p, *a, **k)
+            ),
+        )
+    followed = []
+    real_stat, real_realpath, real_isfile = os.stat, os.path.realpath, os.path.isfile
+
+    def spy(fn):
+        def wrapper(path, *a, **k):
+            if os.fspath(path).startswith((str(link), str(root / ".venv"))):
+                followed.append(os.fspath(path))
+            return fn(path, *a, **k)
+
+        return wrapper
+
+    monkeypatch.setattr(os, "stat", spy(real_stat))
+    monkeypatch.setattr(os.path, "realpath", spy(real_realpath))
+    monkeypatch.setattr(os.path, "isfile", spy(real_isfile))
+    monkeypatch.setattr(Path, "is_file", lambda self, **k: (spy(real_isfile)(str(self)), False)[1])
+
+    cands = userenvs.discover(str(root), "fig.py", ask_login_shell=False)
+    projs = projectenv.discover(str(root), "fig.py")
+    assert not any(
+        c["python"].startswith(str(link)) or c["source"] == userenvs.SOURCE_PROJECT_VENV
+        for c in cands
+    )
+    assert projs == []
+    assert followed == [], f"跟随了项目里的重定向: {followed[:3]}"
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC

@@ -85,6 +85,10 @@ def is_project_controlled(cand: dict, root: str | Path) -> bool:
     python = cand.get("python") or ""
     if not python:
         return False
+    # 分类不得先 realpath：项目里被重定向的路径（junction / 符号链接）一经 realpath 就会去探目标。逐级 lstat 发现重定向
+    # 直接判"项目说了算"，不碰目标
+    if scanbudget.redirected_component(root, python, allow_final_link=True) is not None:
+        return True
     base = os.path.abspath(str(root))
     for path in (os.path.abspath(python), os.path.realpath(python)):
         try:
@@ -507,6 +511,10 @@ def discover(
 
     `budget`（导入即扫描传）：Conda `environments.txt` / `envs` 与 pyenv `versions` 的枚举拿得到墙钟预算与取消回调，
     到期 / 取消就停在已枚举到的部分（账本记 time_budget / cancelled → 报告 partial）。不传 = 老行为。"""
+    # 项目派生的线索 / 候选**永远**不跟随符号链接 / junction（Codex 安全 #820 r4234904358）：不止导入即扫描——准备会话的
+    # 检查也走这里，Windows 上项目里的 junction 可以把"看着像本地"的 `.vscode` 线索指到攻击者的 SMB / WebDAV 共享，
+    # 一次 `is_file` 就会发出网络认证。先逐级 lstat、再谈别的
+    no_follow = True
     # `script` 可能来自请求体：先钉在项目内，下游一律用净化器回的那一条；越界就当没给脚本
     root_real = os.path.realpath(os.fspath(figures_dir))
     script_path = projectenv.contained_path(root_real, script) if script else None

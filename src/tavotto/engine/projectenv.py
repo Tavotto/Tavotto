@@ -289,6 +289,8 @@ def discover(
     不顺软链接跳出去（`within`）。项目根就是 Tavotto 打开的图库目录
     `figures_dir`——用户交给我们的边界只有这一条。
     """
+    # 项目派生的 venv 线索永远不跟随重定向（Codex 安全 #820 r4234904358）：见 `userenvs.discover`
+    no_follow = True
     root = Path(figures_dir)
     start = (root / script).parent if script else root
     if no_follow and scanbudget.redirected_component(root, start) is not None:
@@ -367,7 +369,15 @@ def _norm(path):
 
 
 def _inside(path, root):
-    # 规范化（realpath + normcase，Windows 上不分大小写）之后用 commonpath 判包含，不做子串比较
+    # 先做纯字符串的判断（规范化 + commonpath）：词法上已在项目里就不 realpath——项目里的路径可能是指向 UNC 的 junction，
+    # realpath 会去探它（Codex 安全 #820 r4234904358）。词法上在项目外的才 realpath（它在项目外，探它不碰项目派生路径）
+    try:
+        la = os.path.normcase(os.path.abspath(path))
+        lb = os.path.normcase(os.path.abspath(root))
+        if os.path.commonpath([la, lb]) == lb:
+            return True
+    except (ValueError, OSError):
+        pass
     try:
         a = _norm(path)
         b = _norm(root)
