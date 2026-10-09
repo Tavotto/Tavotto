@@ -570,7 +570,28 @@ def legend_fresh_handle(leg: Legend, orig, box=None):
     if box is None:
         box = DrawingArea(width=width, height=height, xdescent=0.0, ydescent=descent)
         box.set_figure(_owning_figure(leg))
-    return handler.legend_artist(leg, orig, leg._fontsize, box)  # noqa: SLF001
+    fresh = handler.legend_artist(leg, orig, leg._fontsize, box)  # noqa: SLF001
+    _carry_hatch_linewidth(fresh, orig)
+    return fresh
+
+
+def _carry_hatch_linewidth(fresh, orig) -> None:
+    """把源 patch 的花纹线宽带到示意线上。
+
+    matplotlib 3.10/3.11 的 `Patch.update_from` 复制花纹图案却**不复制** `_hatch_linewidth`，
+    patch 示意线（柱 / 形状）于是永远画默认线宽，改了源的 `hatch_linewidth` 图例仍是旧粗细
+    （图 ≠ 图例，违反跟随源契约）。≤3.9 没有 per-artist 线宽（绘制时读 rcParams），两头都没
+    这个属性就什么都不做。源取 handler 同样的「第一个子 artist」（`BarContainer` → 首根柱）。
+    """
+    if not hasattr(fresh, "set_hatch_linewidth"):
+        return
+    src = orig
+    if not hasattr(src, "get_hatch_linewidth"):
+        kids = getattr(orig, "get_children", lambda: [])()
+        src = kids[0] if len(kids) else None
+    if src is None or not hasattr(src, "get_hatch_linewidth"):
+        return
+    fresh.set_hatch_linewidth(float(src.get_hatch_linewidth()))
 
 
 def _rgba(c):

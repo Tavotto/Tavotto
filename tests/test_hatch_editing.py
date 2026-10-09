@@ -28,6 +28,7 @@ import hashlib
 import json
 import re
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -81,7 +82,7 @@ def _caps() -> bool:
     if WORKER_PY is None:  # 没有 worker：模块整体 skip，收集阶段不得起子进程
         return False
     out = subprocess.run(  # noqa: S603 — 测试里探 worker 解释器的能力
-        [WORKER_PY, "-c", PROBE], capture_output=True, text=True, check=True
+        [WORKER_PY, "-c", PROBE], capture_output=True, text=True, encoding="utf-8", check=True
     ).stdout.split()
     return out[0] == "1"
 
@@ -439,3 +440,79 @@ def test_write_back_verifies_hatch_edits_hot_equals_file_equals_replay(project):
     assert (figs / "Hatch.pdf").read_bytes() != plain_bytes, "写回的文件里没有纹理的改动"
     # 脚本原件一个字节不动：编辑只存在于 override 里（最小侵入）
     assert (figs / SCRIPT_NAME).read_text(encoding="utf-8").count("hatch") == 1
+
+
+# ---------------------------------------------------------------------------
+# 图例跟随：patch 示意线带上源的花纹线宽（Codex r4225640876）
+# ---------------------------------------------------------------------------
+ENGINE_DIR = Path(__file__).resolve().parent.parent / "src" / "tavotto" / "engine"
+
+#: 在 worker 的解释器里直接驱动引擎，读图例示意线此刻的 `hatch_linewidth`。
+#: matplotlib 3.10/3.11 的 `Patch.update_from` 不复制 `_hatch_linewidth`，所以光靠 matplotlib 自己的
+#: handler 造出来的示意线永远是默认线宽，图与图例分家。
+_LEGEND_WIDTH_DRIVER = """\
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+import manifest
+import overrides
+
+SERIES = "axes_0.barseries_0"
+
+
+def build():
+    fig, ax = plt.subplots(figsize=(3.6, 2.6))
+    ax.bar([0, 1], [3, 5], 0.4, label="A", hatch="//")
+    ax.bar([0.2, 1.2], [2, 4], 0.4, label="B")
+    ax.legend()
+    st = overrides.FigState(fig)
+    manifest.instrument(st)
+    return fig, ax, st
+
+
+def widths(ax):
+    leg = ax.get_legend()
+    src = ax.containers[0].patches[0].get_hatch_linewidth()
+    return [src, leg.legend_handles[0].get_hatch_linewidth(), leg.legend_handles[1].get_hatch_linewidth()]
+
+
+patch = [{"gid": SERIES, "prop": "hatch_linewidth", "value": 3.0}]
+fig, ax, st = build()
+overrides.apply(st, [])
+base = widths(ax)
+warns = overrides.apply(st, patch)
+hot = widths(ax)
+overrides.apply(st, [])
+undone = widths(ax)
+fig2, ax2, st2 = build()
+overrides.apply(st2, patch)
+fresh = widths(ax2)
+print(json.dumps({"base": base, "hot": hot, "undone": undone, "fresh": fresh, "warn": [str(w) for w in warns or []]}))
+"""
+
+
+@pytest.mark.skipif(not HAS_WIDTH, reason="该 matplotlib 没有 per-artist 花纹线宽（≤3.9）")
+def test_legend_patch_handle_follows_the_source_hatch_linewidth():
+    """改源的花纹线宽 → 跟随源的图例色块同步；撤销 → 回到原样；热态 == 全新构图重放。"""
+    proc = subprocess.run(  # noqa: S603 — 测试里在 worker 解释器里驱动引擎
+        [WORKER_PY, "-c", _LEGEND_WIDTH_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    got = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert not got["warn"], got
+    default = got["base"][0]
+    assert got["base"][1] == default, f"没改之前图例色块就与源不一致：{got}"
+    assert got["hot"][0] == 3.0, got
+    assert got["hot"][1] == 3.0, f"图例色块没有跟着源变粗（图 ≠ 图例）：{got}"
+    assert got["hot"][2] == got["base"][2], f"没有纹理的系列 B 的图例色块被误动：{got}"
+    assert got["undone"] == got["base"], f"撤销后图例色块没回到原样：{got}"
+    assert got["fresh"] == got["hot"], f"热态 ≠ 全新构图重放：{got}"
