@@ -36,15 +36,16 @@ ENV = {"TAVOTTO_USER_ENV_DISCOVERY": "0", "PYTHONPATH": str(ROOT / "src")}
 
 YS = [1.0, 2.0, 4.0]
 SCRIPT = """\
-import json, sys
+import argparse, json, sys
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-args = sys.argv[1:]
-scale = float(args[args.index("--scale") + 1]) if "--scale" in args else 1.0
+p = argparse.ArgumentParser()
+p.add_argument("--scale", type=float, default=1.0)
+scale = p.parse_args().scale
 with open({counter!r}, "a", encoding="utf-8") as fh:
-    fh.write(json.dumps(args, ensure_ascii=False) + "\\n")
+    fh.write(json.dumps(sys.argv[1:], ensure_ascii=False) + "\\n")
 fig, ax = plt.subplots(figsize=(3, 2))
 ax.plot([0, 1, 2], [v * scale for v in {ys!r}])
 fig.savefig("result.pdf")

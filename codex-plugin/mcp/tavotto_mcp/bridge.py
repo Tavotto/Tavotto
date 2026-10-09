@@ -255,6 +255,10 @@ def _is_response_file_ref(value: str, prefixes: tuple[frozenset[str], bool]) -> 
     return lead == "@" or lead in prefixes[0]
 
 
+_ENV_EXPANSION_RE = re.compile(r"\$[A-Za-z0-9_{]|%[^%\s]+%")
+_TILDE_USER_RE = re.compile(r"~[^/\\]")
+
+
 def _argv_path_escapes(
     value: str,
     roots: list[str],
@@ -273,6 +277,11 @@ def _argv_path_escapes(
     if _is_response_file_ref(value, prefixes):
         # argparse `fromfile_prefix_chars`（任意字符，不止 `@`）：以它开头的 token 会被脚本当文件名读出内容再展开，
         # 内容还能再给出越界目标。不递归展开校验，MCP 来源的 argv 里一律拒（Codex #818 r4221135439 / r4221289231）。
+        return value
+    if _ENV_EXPANSION_RE.search(value) or _TILDE_USER_RE.match(value):
+        # 环境变量展开形状（`$NAME` / `${NAME}` / `%NAME%`）与 `~user`：脚本若对路径做 `os.path.expandvars` /
+        # `expanduser`，未展开的字面量在 cwd 下看着在根内、展开后却落到根外。展开结果取决于脚本运行时的环境，
+        # 桥不去猜，失败封闭：MCP 来源的 argv 里含这些形状一律拒（Codex #818 r4229588335）。
         return value
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
