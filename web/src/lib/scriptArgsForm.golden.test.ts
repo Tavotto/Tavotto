@@ -260,4 +260,24 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
       expect(count(mk(['subcommands', r]), ['@args.txt'])).toBe(0)
     }
   })
+  it('条件式声明不当运行闸：分支里的必填选项 / 互斥组 / 子命令，表单开着也不拦（r4234436263）', () => {
+    const opt = (id: string, over: Record<string, unknown> = {}) => ({ ...base.arguments[0], id, flags: [`--${id}`], required: true, positional: false, arity: 1 as const, nargs: null, action: 'store', group: null, conditional: false, ...over })
+    const sch = (args: unknown[], extra: Record<string, unknown> = {}) =>
+      ({ ...base, form_enabled: true, arguments: args, exclusive_groups: [], subcommands: null, ...extra }) as unknown as ScriptArgsSchema
+    const count = (s: ScriptArgsSchema, t: string[]) => missingRequirements(s, readTokens(s, t), t).count
+    expect(count(sch([opt('plain')]), [])).toBe(1) // 无条件必填：照旧拦
+    expect(count(sch([opt('win_only', { conditional: true })]), [])).toBe(0) // 只在 win32 分支里声明
+    const grp = sch([opt('a', { required: false, conditional: true, group: 'g0' }), opt('b', { required: false, group: 'g0' })], {
+      exclusive_groups: [{ id: 'g0', required: true, members: ['a', 'b'] }],
+    })
+    expect(count(grp, [])).toBe(0) // 组里有条件成员
+    const plainGrp = sch([opt('a', { required: false, group: 'g0' }), opt('b', { required: false, group: 'g0' })], {
+      exclusive_groups: [{ id: 'g0', required: true, members: ['a', 'b'] }],
+    })
+    expect(count(plainGrp, [])).toBe(1)
+    const cond = sch([], { subcommands: { dest: 'c', required: true, choices: ['x'], dynamic: false, position: 0, conditional: true } })
+    expect(count(cond, [])).toBe(0)
+    const sure = sch([], { subcommands: { dest: 'c', required: true, choices: ['x'], dynamic: false, position: 0, conditional: false } })
+    expect(count(sure, [])).toBe(1)
+  })
 })

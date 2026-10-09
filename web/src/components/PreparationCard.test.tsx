@@ -521,6 +521,20 @@ describe('必填参数没填齐时任何卡都不说「可以运行」', () => {
     expect(primary()?.disabled).toBe(false)
   })
 
+  // r4234436263：分支里声明的必填选项运行时可能不存在——不拦「运行」
+  it('条件式声明的必填选项（表单开着）不拦运行', async () => {
+    const condSchema = { ...schema, arguments: [{ ...schema.arguments[0], conditional: true }], exclusive_groups: [], subcommands: null }
+    const rep = report({
+      requirements: [
+        { id: 'arguments', kind: 'script_arguments', code: 'script_arguments_available', blocking: false, payload: { schema: condSchema as never, argv_count: 0, run_config: null } },
+      ],
+    })
+    await mount()
+    await openWith(rep)
+    expect(panel().dataset.prepState).not.toBe('args')
+    expect(primary()?.disabled).toBe(false)
+  })
+
   // r4232531822：必选互斥组里每个参数自己都 required=false，不能因此放行「运行」
   it('必选互斥组一个都没给：参数卡、主按钮置灰；给了其中一个才放行', async () => {
     const opt = (id: string) => ({ ...schema.arguments[2], id, dest: id, flags: [`--${id}`], default: null, group: 'g0' })

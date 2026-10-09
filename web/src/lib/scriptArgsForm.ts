@@ -65,6 +65,8 @@ export interface ScriptArgsSchema {
     dynamic: boolean
     /** `add_subparsers` 之前已声明的位置参数个数；老后端没有 = 不预留（宁可放过不错拦） */
     position?: number
+    /** 在 if / try 分支里声明（运行时可能不存在）：不拿它当运行闸 */
+    conditional?: boolean
   } | null
 }
 
@@ -458,10 +460,12 @@ export const missingRequirements = (
   if (!schema.form_enabled && (schema.reasons ?? []).some((r) => OPAQUE_BLOCKERS.has(r))) {
     return { args: [], groups: [], subcommand: false, count: 0 }
   }
+  // 条件式声明（if / try 分支里加的参数、分支里的 add_subparsers）运行时可能根本不存在：无论表单开没开都不当运行闸
+  // （宁可放过，不错拦）。表单仍可以显示这些字段，只是不计入「还缺」
   const reliable = (id: string): boolean => {
-    if (schema.form_enabled) return true
     const a = schema.arguments.find((x) => x.id === id)
-    return !!a && !a.positional && !a.conditional
+    if (!a || a.conditional) return false
+    return schema.form_enabled || !a.positional
   }
   const args: string[] = []
   for (const arg of schema.arguments) {
@@ -477,7 +481,7 @@ export const missingRequirements = (
     // 成员只写了选项名、值还没给（incomplete）不算答案：运行时 argparse 会报缺值
     if (fs.every((f) => f.state === 'unset' || f.incomplete)) groups.push(g.id)
   }
-  const subcommand = tokens !== undefined && subcommandMissing(schema, tokens)
+  const subcommand = tokens !== undefined && !schema.subcommands?.conditional && subcommandMissing(schema, tokens)
   return { args, groups, subcommand, count: args.length + groups.length + (subcommand ? 1 : 0) }
 }
 

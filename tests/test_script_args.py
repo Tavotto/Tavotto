@@ -532,3 +532,16 @@ def test_allow_abbrev_is_recorded_literal_false_off_non_literal_unknown():
         ]
         is None
     )
+
+
+def test_subparsers_declared_in_a_branch_are_marked_conditional():
+    plain = (
+        "import argparse\np = argparse.ArgumentParser()\ns = p.add_subparsers(required=True, dest='c')\n"
+        "s.add_parser('a')\np.parse_args()\n"
+    )
+    branch = (
+        "import argparse, sys\np = argparse.ArgumentParser()\nif sys.platform == 'win32':\n"
+        "    s = p.add_subparsers(required=True, dest='c')\n    s.add_parser('a')\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(plain)["subcommands"]["conditional"] is False
+    assert scriptargs.analyze(branch)["subcommands"]["conditional"] is True
