@@ -632,6 +632,20 @@ class TestRefusalNeverBecomesAbsence:
         (prefix / "lib" / "python3.11").symlink_to(tmp_path / "realpy", target_is_directory=True)
         self._incomplete(tmp_path, _index(prefix), "anything")
 
+    def test_an_unlistable_lib_dir_next_to_a_good_one_is_incomplete(self, tmp_path, monkeypatch):
+        prefix = tmp_path / "mixed"
+        (prefix / "Lib" / "site-packages").mkdir(parents=True)
+        real_listdir = os.listdir
+
+        def listdir(path="."):
+            if os.path.basename(os.fspath(path)).lower() == "lib":
+                raise PermissionError("denied")
+            return real_listdir(path)
+
+        monkeypatch.setattr(os, "listdir", listdir)
+        idx = _index(prefix)
+        assert idx.checked and not idx.complete
+
     @pytest.mark.parametrize("how", ["oversize", "placeholder", "badjson", "notdict", "nofiles"])
     def test_a_conda_meta_record_that_was_not_read_makes_the_environment_incomplete(
         self, tmp_path, monkeypatch, how
