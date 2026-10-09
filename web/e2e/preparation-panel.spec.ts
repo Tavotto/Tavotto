@@ -22,7 +22,7 @@ const panel = (page: Page) => page.locator('[data-preparation-panel]')
 const primary = (page: Page) => panel(page).locator('[data-prep-primary]')
 
 interface Run {
-  event: 'start' | 'done'
+  event: 'start' | 'gate' | 'done'
   argv?: string[]
   values?: number[]
   choice?: string
@@ -66,6 +66,7 @@ function script(log: string, hold: string, readsData: boolean): string {
     '    choice = input("order: ").strip()',
     '    if choice == "2":',
     '        values = values[::-1]',
+    '    note("gate")  # input 已答完，接下来停在闸门上：测试以此判「脚本真的停在闸门上」',
     '    deadline = time.time() + 90',
     '    while os.path.exists(HOLD) and time.time() < deadline:',
     '        time.sleep(0.1)',
@@ -226,26 +227,39 @@ test('恢复：关面板换展示面、HTTP 断开后台照跑、应用重启不
     // 明确停止：本会话新建的会话在停住时当场关掉（不等脚本自己跑完）
     writeFileSync(hold, 'hold')
     await primary(page).click()
-    // 记住的回答按上下文原样复用（ADR 0099 §九）或再问一次：两种都接着走到停在闸门上
+    // 记住的回答按上下文原样复用（ADR 0099 §九）或再问一次：两种都接着走到停在闸门上。
+    // 判据是脚本自己写的 gate 行（input 答完之后才写）——不能拿 data-prep-state=running 当「已在闸门上」：
+    // 它在 input 出现之前也是 running（Windows 上更慢，曾在这一瞬点到没有主按钮的 input 态而挂满 180s）
     const state = panel(page)
+    let answered = false
     await expect
-      .poll(async () => state.getAttribute('data-prep-state'), { timeout: 120_000 })
-      .toMatch(/^(running|input)$/)
-    if ((await state.getAttribute('data-prep-state')) === 'input') {
-      const form = panel(page).locator('[data-prep-input]')
-      await form.locator('[data-script-input-answer]').fill('1')
-      await form.locator('[data-script-input-submit]').click()
-      await expect(state).toHaveAttribute('data-prep-state', 'running', { timeout: 60_000 })
-    }
-    await expect.poll(() => starts(log), { timeout: 60_000 }).toBe(2) // 脚本真的开跑了（停在闸门上）
-    await expect(state).toHaveAttribute('data-prep-state', 'running')
+      .poll(
+        async () => {
+          if (runs(log).filter((r) => r.event === 'gate').length >= 2) return true
+          if ((await state.getAttribute('data-prep-state')) === 'input' && !answered) {
+            const form = panel(page).locator('[data-prep-input]')
+            if (await form.count()) {
+              answered = true
+              await form.locator('[data-script-input-answer]').fill('1')
+              await form.locator('[data-script-input-submit]').click()
+            }
+          }
+          return false
+        },
+        { timeout: 120_000 },
+      )
+      .toBe(true)
+    expect(starts(log)).toBe(2) // 脚本真的开跑了（停在闸门上）
+    await expect(state).toHaveAttribute('data-prep-state', 'running', { timeout: 60_000 })
     await primary(page).click() // 停止
     await expect(state).toHaveAttribute('data-prep-state', 'cancelled', { timeout: 30_000 })
     expect(existsSync(hold)).toBe(true) // 闸门还在：是取消当场关掉了会话，不是脚本自己跑完
     expect(runs(log).filter((r) => r.event === 'done').length).toBe(1)
   } finally {
     if (existsSync(hold)) rmSync(hold)
-    await second?.stop()
-    rmSync(root, { recursive: true, force: true })
+    // 先放掉闸门并等应用真正退出，再删目录：Windows 上 worker 还握着 sandbox 目录时 rmSync 会 EBUSY，
+    // 且清理报错不许盖住主失败
+    await second?.stop().catch(() => undefined)
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }
 })
