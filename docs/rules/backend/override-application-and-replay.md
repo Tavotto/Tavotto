@@ -192,3 +192,5 @@
 - 原样是模式的 getter 回哨兵（`_AUTOSCALE` / `_NO_BBOX` / `_PatchEdge` / `_PatchFace`）
 - 颜色字段 alpha 0 报 `NO_COLOR`
 - 拖过的文字不进重排（`_ensure_text_pin_hook`）
+
+速查表看护列精简时挪出的用例（仍是本主题的看护）：`tests/test_text_bbox_visibility.py`、`test_patch_edgecolor_mode.py`、`test_text_drag_anchor.py`、`test_drag_coverage.py`、`test_scientific_text_matrix.py`、`test_restore_failure_retry.py`、`test_manifest_value_original.py`。
