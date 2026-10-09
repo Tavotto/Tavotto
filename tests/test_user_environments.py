@@ -910,8 +910,9 @@ def test_an_unmapped_import_finds_and_adopts_the_named_conda_env_that_has_it(con
     assert offer["plan"]["status"] == "nothing_needed", offer["plan"]["status"]
     assert offer["plan"]["unknown"] == ["qa_probe_pkg"]
     assert offer["unknown_missing"] == ["qa_probe_pkg"]
-    complete = [e for e in offer["user_environments"] if e["satisfies"]]
-    assert [e["label"] for e in complete] == ["lab"], offer["user_environments"]
+    # 运行之前只读了 dist-info（没 import）：lab 装了它但健康没量过，列成"未检查"，不可采用；起会话（运行）时才真量并采用
+    pending = [e["label"] for e in offer["user_environments"] if e.get("checked") is False]
+    assert pending == ["lab"], offer["user_environments"]
     assert str(conda_layout["lab"]) not in json.dumps(offer), "载荷不带路径（ADR 0053 §二）"
     # 起会话：决定在解析解释器之前（`pool.ENVIRONMENT_DECIDERS`）
     worker, resp = engine_pool.build("figure.py", str(project), "__main__")

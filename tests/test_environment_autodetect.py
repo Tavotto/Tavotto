@@ -1372,12 +1372,15 @@ def test_spec_probe_results_are_per_project_root(tmp_path, a_first):
     order = [("a", root_a), ("b", root_b)] if a_first else [("b", root_b), ("a", root_a)]
     results = {name: check(root) for name, root in order}
     assert results["a"].get("deferred") is True and results["a"]["satisfies"] is None
-    assert results["b"]["satisfies"] is True and not results["b"].get("deferred")
+    assert not results["a"].get("health_deferred")  # A：模块解析进了项目
+    # B：模块在项目外，装齐；但运行之前没 import 过，健康留到运行再量（不可采用）
+    assert results["b"].get("health_deferred") is True and results["b"]["satisfies"] is None
     assert not marker.exists()
     # cache_only 读也按各自的项目根
     (ca,) = userenvs.evaluate(cand, need, [], cache_only=True, root=str(root_a))
     (cb,) = userenvs.evaluate(cand, need, [], cache_only=True, root=str(root_b))
-    assert ca.get("deferred") is True and cb["satisfies"] is True
+    assert ca.get("deferred") is True and not ca.get("health_deferred")
+    assert cb.get("health_deferred") is True
 
 
 def test_the_spec_probe_launches_isolated_without_site(monkeypatch, tmp_path):
@@ -1566,7 +1569,9 @@ def test_installing_a_missing_package_into_the_same_env_invalidates_the_cached_n
     (site_dir / "late_installed_pkg").mkdir()
     (site_dir / "late_installed_pkg" / "__init__.py").write_text("", "utf-8")
     (now,) = userenvs.evaluate(cand, need, [], **kw)
-    assert now["satisfies"] is True, "装进同一个环境之后，旧的『缺』仍被缓存命中"
+    # 装进去之后不再是"缺"：import 方式 = 装齐；spec 方式 = 找到了但健康留到运行再量
+    ok_now = now.get("health_deferred") if spec else now["satisfies"]
+    assert ok_now is True, "装进同一个环境之后，旧的『缺』仍被缓存命中"
 
 
 class _FakeReparse:
@@ -1754,6 +1759,41 @@ def test_the_isolated_probe_imports_nothing_outside_the_stdlib(tmp_path):
     assert health.get("deferred_env") is not True
     assert health["new_imports"] == [], health["new_imports"]
     assert health["health_deferred"] is True and health["matplotlib_version"]
+
+
+@posix_only
+@needs_worker
+def test_a_metadata_only_candidate_is_not_adopted_at_check_and_run_probes_it_for_real(
+    tmp_path, monkeypatch
+):
+    """Codex #820 r4235263575：运行之前只读了 dist-info（没 import matplotlib）——元数据在、包却坏了的声明环境不能在检查阶段被采用
+    （更不能顶掉能跑的默认）。点运行才用 import 方式真量；量出坏的就不采用。"""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "fig.py").write_text("import json\n", "utf-8")
+    (root / ".python-version").write_text("3.11\n", "utf-8")
+    base = tmp_path / "pyenv"
+    base.mkdir()
+    py = envworld.real_venv(base, "3.11", python=WORKER_PY)
+    site_dir = next((base / "3.11" / "lib").glob("python*")) / "site-packages"
+    (site_dir / "matplotlib").mkdir()
+    (site_dir / "matplotlib" / "__init__.py").write_text(
+        "raise ImportError('broken native dependency')\n", "utf-8"
+    )
+    dist = site_dir / "matplotlib-3.9.0.dist-info"
+    dist.mkdir()
+    (dist / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: matplotlib\nVersion: 3.9.0\n", "utf-8"
+    )
+    monkeypatch.setattr(userenvs, "_pyenv_version_dirs", lambda: [str(base)])
+    userenvs.reset_cache()
+
+    cands = deprepair.user_environment_candidates(str(root), "fig.py")
+    assert any(_env_root(c["python"]) == _env_root(py) for c in cands)
+    assert deprepair.decide_environment_pinned(root, "fig.py", project_exec=False).adopted is None
+    assert projectenv.remembered_record(root) is None  # 元数据在 != 能跑
+    assert deprepair.decide_environment(root, "fig.py") is None  # 点运行：真量，坏的不采用
+    assert projectenv.remembered_record(root) is None
 
 
 @posix_only

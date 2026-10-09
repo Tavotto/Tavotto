@@ -778,6 +778,28 @@ def evaluate(
                 "checked": False,
                 "deferred": True,
             }
+        if (
+            root
+            and health.get("health_deferred")
+            and health.get("ok")
+            and all(v is True for v in ok_map.values())
+        ):
+            # 运行之前只读了 dist-info（没 import matplotlib / worker 启动链）：元数据在不等于能跑（坏的包 / 二进制依赖）。
+            # 不可采用——和延后的候选同一套机器，运行时用 import 方式真量一次，不合格再按排序落到下一个
+            # （Codex #820 r4235263575）。已经确定缺包的（有 False）照旧回"缺"：那个结论不依赖健康检查
+            return {
+                **cand,
+                "ok": None,
+                "code": "",
+                "support": "",
+                "python_version": health.get("python_version", ""),
+                "matplotlib_version": "",
+                "missing": [],
+                "satisfies": None,
+                "checked": False,
+                "deferred": True,
+                "health_deferred": True,
+            }
         missing = sorted(
             {n["distribution"] for n in needed if ok_map.get(n.get("import_name")) is not True}
         )

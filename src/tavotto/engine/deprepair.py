@@ -5451,6 +5451,19 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
     # site-packages，记下来就是把一次半成品的观测变成项目的决策。这只是挑选时的过滤；真正挡住
     # 「在被占用的环境上起会话」的是调用方的顺序——决定落地之后才解析解释器、才查租约（`decide_environment`）
     free = [e for e in user_envs if not envlease.is_mutating(e["python"])]
+    # 旧模式（legacy）的采用发生在起会话 / 运行的时刻：运行之前只读了 dist-info 的候选（`health_deferred`）现在用 import 方式真量
+    pending = [e for e in free if e.get("health_deferred")]
+    if pending:
+        needed, unknown = _plan_imports(offer.get("plan") or {})
+        real = {
+            e["python"]: e
+            for e in userenvs.evaluate(
+                [{k: e[k] for k in ("python", "source", "label") if k in e} for e in pending],
+                needed,
+                unknown,
+            )
+        }
+        free = [real.get(e["python"], e) if e.get("health_deferred") else e for e in free]
     entry = userenvs.best(free, Path(project).name)
     if entry is None or not _auto_adopt_allowed(project, offer):
         return None
