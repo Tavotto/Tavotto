@@ -31,7 +31,7 @@ import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
-import { missingRequirements, readTokens, subcommandMissing, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
+import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
@@ -164,14 +164,8 @@ export function PreparationCard() {
     const script = 'id' in entry.target ? null : entry.target.script
     const schema = argsSchemaOf(entry.report)
     const tokens = script ? (drafts[script]?.tokens ?? []) : []
-    // 表单关着（子命令等）读不准参数，但必选子命令没选依旧要拦住「运行」
-    const missingArgs = !schema
-      ? null
-      : schema.form_enabled
-        ? missingRequirements(schema, readTokens(schema, tokens), tokens).count
-        : subcommandMissing(schema, tokens)
-          ? 1
-          : null
+    // 单一入口：表单关着时 missingRequirements 自己只认读得准的必填项，并照旧拦必选子命令
+    const missingArgs = !schema ? null : missingRequirements(schema, readTokens(schema, tokens), tokens).count
     view = prepView(entry, { argsChanged: draftDiffers(entry.target), editReady, missingArgs })
   }
 

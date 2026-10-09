@@ -197,4 +197,34 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
     expect(groupProblems(grp, view).map((p) => p.problem)).toEqual(['missing'])
     expect(missingRequirements(grp, readTokens(grp, ['--output', 'a'])).groups).toEqual([])
   })
+  it("前面是 nargs='+' 的位置参数：先预留 1 个 token 再认子命令（r4232790912）", () => {
+    const files = { ...base.arguments[0], id: 'files', flags: [], required: true, positional: true, arity: '+' as const, nargs: '+', action: 'store', group: null }
+    const sub = {
+      ...base,
+      arguments: [files],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    } as unknown as ScriptArgsSchema
+    const miss = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t).subcommand
+    expect(miss(['plot'])).toBe(true) // 唯一的 token 归 `+`
+    expect(miss(['a.csv', 'plot'])).toBe(false)
+    const star = { ...sub, arguments: [{ ...files, arity: '*' as const, nargs: '*' }] } as unknown as ScriptArgsSchema
+    expect(missingRequirements(star, readTokens(star, ['plot']), ['plot']).subcommand).toBe(false) // `*` 预留 0
+  })
+
+  it('表单关着：只认读得准的必填选项与互斥组，位置 / 条件式参数不拦（r4232790899）', () => {
+    const opt = { ...base.arguments[0], id: 'input', flags: ['--input'], required: true, positional: false, arity: 1 as const, nargs: null, action: 'store', group: null, conditional: false }
+    const pos = { ...opt, id: 'pos', flags: [], positional: true }
+    const cond = { ...opt, id: 'cond', flags: ['--cond'], conditional: true }
+    const sub = {
+      ...base,
+      form_enabled: false,
+      arguments: [opt, pos, cond],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    } as unknown as ScriptArgsSchema
+    const r = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t)
+    expect(r(['plot']).args).toEqual(['input'])
+    expect(r(['--input', 'a', 'x', 'plot']).count).toBe(0)
+  })
 })

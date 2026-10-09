@@ -526,6 +526,29 @@ describe('必填参数没填齐时任何卡都不说「可以运行」', () => {
     await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['plot', '--x']))
     expect(panel().dataset.prepState).not.toBe('args')
   })
+
+  // r4232790899：表单关着时，读得准的必填选项（--scale）照拦，不能只看子命令
+  it('表单关着：必填选项没给也不放行，补齐 + 选了子命令才放行', async () => {
+    const subSchema = {
+      ...schema,
+      form_enabled: false,
+      reasons: ['subcommands'],
+      arguments: [schema.arguments[0]],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    }
+    const rep = report({
+      requirements: [
+        { id: 'arguments', kind: 'script_arguments', code: 'script_arguments_available', blocking: false, payload: { schema: subSchema as never, argv_count: 0, run_config: null } },
+      ],
+    })
+    await mount()
+    await openWith(rep)
+    await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['plot']))
+    expect(panel().dataset.prepState).toBe('args')
+    expect(primary()?.disabled).toBe(true)
+    await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['--scale', '2', 'plot']))
+    expect(panel().dataset.prepState).not.toBe('args')
+  })
 })
 
 describe('运行目录在卡里选', () => {

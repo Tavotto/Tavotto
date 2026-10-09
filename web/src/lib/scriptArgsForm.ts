@@ -375,12 +375,13 @@ export const subcommandMissing = (schema: ScriptArgsSchema, tokens: string[]): b
   if (!sub || !sub.required) return false
   const s = scan(schema, tokens)
   let positional = s.positionalIdx.map((j) => tokens[j])
-  // 子命令前面的位置参数（`name` 然后 `{plot,stats}`）会先吃掉位置 token：`['plot']` 是 `name`，子命令仍没选。
-  // 前面的位置参数全是定长才能数得准；有变长（`*` `+` `?` REMAINDER）说不清吃几个，沿用「拿不准就当选了」
-  const preceding = positionalArgs(schema)
-  if (preceding.length > 0 && preceding.every((a) => typeof a.arity === 'number' && a.arity >= 1)) {
-    positional = positional.slice(preceding.reduce((n, a) => n + (a.arity as number), 0))
-  }
+  // 子命令前面的位置参数先吃位置 token：先预留各自的最少个数（定长 n、`+` 1），`*` `?` 预留 0；其余 token 才可能是子命令名。
+  // 变长的可能多吃，所以超出最少个数的部分仍按「拿不准就当选了」处理；arity 说不清（自定义 / REMAINDER）= 不预留
+  const reserve = positionalArgs(schema).reduce((n, a) => {
+    if (typeof a.arity === 'number') return n + a.arity
+    return n + (a.arity === '+' ? 1 : 0)
+  }, 0)
+  positional = positional.slice(reserve)
   const chosen =
     !sub.dynamic && sub.choices.length > 0 ? positional.some((t) => sub.choices.includes(t)) : positional.length > 0
   if (chosen) return false
@@ -407,17 +408,24 @@ export const missingRequirements = (
   view: TokenView,
   tokens?: string[],
 ): MissingRequirements => {
+  // 表单关着（子命令 / parents 等）时位置参数读不准、条件式参数也说不清：只认**非位置、非条件**的必填选项与
+  // 全由它们组成的必选互斥组；其余当不确定、不拦。这样准备卡的运行闸只有这一个入口
+  const reliable = (id: string): boolean => {
+    if (schema.form_enabled) return true
+    const a = schema.arguments.find((x) => x.id === id)
+    return !!a && !a.positional && !a.conditional
+  }
   const args: string[] = []
   for (const arg of schema.arguments) {
     const f = view.fields[arg.id]
-    if (arg.required !== true || !f || f.uncertain) continue
+    if (arg.required !== true || !f || f.uncertain || !reliable(arg.id)) continue
     if (f.state === 'unset' || f.incomplete) args.push(arg.id)
   }
   const groups: string[] = []
   for (const g of schema.exclusive_groups) {
     if (!g.required) continue
     const fs = g.members.map((m) => view.fields[m])
-    if (fs.some((f) => !f || f.uncertain)) continue
+    if (fs.some((f) => !f || f.uncertain) || !g.members.every(reliable)) continue
     // 成员只写了选项名、值还没给（incomplete）不算答案：运行时 argparse 会报缺值
     if (fs.every((f) => f.state === 'unset' || f.incomplete)) groups.push(g.id)
   }
