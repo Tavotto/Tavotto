@@ -434,6 +434,18 @@ export interface MissingRequirements {
  * 还缺的必填项（default 不算答案），分类型给：消费者各取所需，不会把组 id 当参数 id 去查表。位置参数读不准时不算缺（不知道）。
  * **所有「还缺必填」的判断都走这里**（表单高亮与准备卡的运行闸同源）。
  */
+/** 让「token 里没出现 = 没给」不成立的表单关闭理由（和 `subcommands` 不同：子命令只是把后面的 token 交给子 parser）。 */
+const OPAQUE_BLOCKERS = new Set([
+  'fromfile',
+  'prefix_chars',
+  'parents',
+  'explicit_parse_args',
+  'multiple_parsers',
+  'unresolved_parse_call',
+  'no_parse_call',
+  'remainder',
+])
+
 export const missingRequirements = (
   schema: ScriptArgsSchema,
   view: TokenView,
@@ -441,6 +453,11 @@ export const missingRequirements = (
 ): MissingRequirements => {
   // 表单关着（子命令 / parents 等）时位置参数读不准、条件式参数也说不清：只认**非位置、非条件**的必填选项与
   // 全由它们组成的必选互斥组；其余当不确定、不拦。这样准备卡的运行闸只有这一个入口
+  // 参数可能走带外通道 / 解析规则说不清（`@文件` 响应文件、非 `-` 选项前缀、写死的 argv、`parents` 继承的选项、多个 / 找不到的
+  // parser、REMAINDER 吞一切）：token 里没出现不代表没给——什么都不拦（宁可放过，不错拦）
+  if (!schema.form_enabled && (schema.reasons ?? []).some((r) => OPAQUE_BLOCKERS.has(r))) {
+    return { args: [], groups: [], subcommand: false, count: 0 }
+  }
   const reliable = (id: string): boolean => {
     if (schema.form_enabled) return true
     const a = schema.arguments.find((x) => x.id === id)

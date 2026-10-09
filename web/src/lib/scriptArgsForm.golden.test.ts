@@ -250,4 +250,14 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
     expect(miss({ ...sch, allow_abbrev: false } as ScriptArgsSchema, ['--inp', 'a.csv'])).toEqual(['input'])
     expect(miss({ ...sch, allow_abbrev: null } as ScriptArgsSchema, ['--inp', 'a.csv'])).toEqual([])
   })
+  it('响应文件 / 前缀 / 写死 argv 等说不清的表单关闭理由：什么都不拦（r4234219374）', () => {
+    const opt = { ...base.arguments[0], id: 'input', flags: ['--input'], required: true, positional: false, arity: 1 as const, nargs: null, action: 'store', group: null, conditional: false }
+    const mk = (reasons: string[]) =>
+      ({ ...base, form_enabled: false, reasons, arguments: [opt], exclusive_groups: [], subcommands: { dest: 'cmd', required: true, choices: ['plot'], dynamic: false, position: 0 } }) as unknown as ScriptArgsSchema
+    const count = (s: ScriptArgsSchema, t: string[]) => missingRequirements(s, readTokens(s, t), t).count
+    expect(count(mk(['subcommands']), ['x'])).toBeGreaterThan(0) // 只有子命令：照旧拦
+    for (const r of ['fromfile', 'prefix_chars', 'parents', 'explicit_parse_args', 'multiple_parsers', 'unresolved_parse_call', 'no_parse_call', 'remainder']) {
+      expect(count(mk(['subcommands', r]), ['@args.txt'])).toBe(0)
+    }
+  })
 })
