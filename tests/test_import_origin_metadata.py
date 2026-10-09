@@ -710,15 +710,23 @@ class TestRefusalNeverBecomesAbsence:
     def test_an_unlistable_lib_dir_next_to_a_good_one_is_incomplete(self, tmp_path, monkeypatch):
         prefix = tmp_path / "mixed"
         (prefix / "Lib" / "site-packages").mkdir(parents=True)
+        # 大小写敏感的文件系统（Linux CI）上 Lib 和 lib 是两个目录：_layout_dirs 只对小写 lib 调 os.listdir，
+        # 所以显式建出它；大小写不敏感的（macOS / Windows）上它就是 Lib 本身，exist_ok 即可。两种都真走到被拒的列目录。
+        (prefix / "lib").mkdir(exist_ok=True)
+        # 对照：不拦截时这个环境是读全的，红只能来自下面被拒的 listing
+        assert _index(prefix).complete
         real_listdir = os.listdir
+        refused: list[str] = []
 
         def listdir(path="."):
             if os.path.basename(os.fspath(path)).lower() == "lib":
+                refused.append(os.fspath(path))
                 raise PermissionError("denied")
             return real_listdir(path)
 
         monkeypatch.setattr(os, "listdir", listdir)
         idx = _index(prefix)
+        assert refused, "monkeypatch 的 os.listdir 没被调用：用例是空对照"
         assert idx.checked and not idx.complete
 
     @pytest.mark.parametrize("how", ["oversize", "placeholder", "badjson", "notdict", "nofiles"])
