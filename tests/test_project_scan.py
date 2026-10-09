@@ -1489,6 +1489,12 @@ def test_cache_evidence_probes_are_charged_to_the_scan_budget(tmp_path, monkeypa
     from tavotto.engine import figcapture, runtimeasset
 
     root = _many_stems_project(tmp_path, stems=200)
+    # 每个 stem 都有一个 cache 目录（元数据不完整 = 没有证据）：cache 按目录名做成员判断，只有目录在才读元数据，
+    # 所以要让这 200 次元数据读真的发生，预算才有东西可记（r4232302927 之后不存在的目录零读盘）
+    for n in range(200):
+        runtimeasset.cache_dir(root, figcapture.runtime_asset_id("fig.py", f"s{n}")).mkdir(
+            parents=True
+        )
     probes = []
     real = runtimeasset.load_metadata
     monkeypatch.setattr(
@@ -1503,3 +1509,60 @@ def test_cache_evidence_probes_are_charged_to_the_scan_budget(tmp_path, monkeypa
     assert report["state"] == projscan.STATE_PARTIAL
     assert len(probes) <= 30  # 有界：不随 stems 数（200）线性增长
     assert report["targets"][0]["linked"] is None  # 没查全 ≠ 没连接
+
+
+@pytest.mark.parametrize("bad_key", ["/abs/fig.py", "C:/x.py", "C:\\x.py", "\\\\srv\\share\\x.py"])
+def test_malformed_registry_script_key_is_no_evidence_not_a_crash(tmp_path, bad_key):
+    """#819 r4232302913：手改过的注册表里绝对 / 盘符的脚本键，`runtime_asset_id` 会抛 ValueError——扫描不能因此
+    `project_scan_failed`，该条目当没有 cache 证据（不连接），好的条目照常。"""
+    root = _project(tmp_path)
+    _write(root, "good.py", PLOT.format(stem="good"))
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    bad_key: {"entry": "__main__", "stems": ["nowhere"]},
+                    "good.py": {"entry": "__main__", "stems": ["good"]},
+                },
+            }
+        ),
+    )
+
+    report = projscan.scan(root)
+    again = projscan.scan(root)  # 重复重扫也要能恢复
+
+    assert report["state"] != "failed" and again["state"] == report["state"]
+    assert not any(i.get("code") == "project_scan_failed" for i in report.get("issues", []))
+    assert [t for t in report["targets"] if t["linked"]] == []
+    linked, complete = projscan._linked_scripts(root, scanbudget.Budget())
+    assert linked == set() and complete is True
+
+
+def test_cache_evidence_is_indexed_once_per_script_not_stems_times_configs(tmp_path, monkeypatch):
+    """#819 r4232302927（扫描路径）：200 个 stem × 5 份运行配置，cache 目录只列一次、元数据只读真存在的那几个。"""
+    from tavotto.engine import figcapture, runconfig, runtimeasset
+
+    root = _many_stems_project(tmp_path, stems=200)
+    cfgs = [runconfig.put(root, "fig.py", ["--n", str(i)]) for i in range(5)]
+    svg = tmp_path / "x.svg"
+    svg.write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+    asset_id = figcapture.runtime_asset_id("fig.py", "s150", cfgs[3].id)
+    assert runtimeasset.materialize(root, {"asset_id": asset_id, "script": "fig.py"}, svg)
+    metas, lists = [], []
+    real_meta, real_list = runtimeasset.load_metadata, runtimeasset.cached_slugs
+    monkeypatch.setattr(
+        runtimeasset, "load_metadata", lambda *a, **k: metas.append(a) or real_meta(*a, **k)
+    )
+    monkeypatch.setattr(
+        runtimeasset, "cached_slugs", lambda *a, **k: lists.append(a) or real_list(*a, **k)
+    )
+    monkeypatch.setattr(figcapture, "find_original_artifact", lambda *a, **k: None)
+
+    linked, complete = projscan._linked_scripts(root, scanbudget.Budget())
+
+    assert linked == {"fig.py"} and complete is True
+    assert len(lists) == 1
+    assert len(metas) == 1  # 不是 200 × 6

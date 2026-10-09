@@ -62,7 +62,6 @@ from . import (
     project_refresh,
     projectenv,
     registry,
-    runconfig,
     scanbudget,
     userenvs,
 )
@@ -261,8 +260,7 @@ def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> tupl
 
     def linked(script: str, stems: list[str]) -> bool:
         nonlocal complete
-        # 运行配置登记按脚本读一次（不是每个 stem 一次）；懒读：没有 stem 走到 cache 证据就不读
-        configs: list | None = None
+        candidates: list[str] = []
         for stem in stems:
             if budget is not None:
                 if not _project_relative_stem(stem):
@@ -275,19 +273,20 @@ def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> tupl
             if budget is not None and budget.stop_reason() is not None:
                 complete = False  # 预算在 isfile 内耗尽：上面的「没找到」是被截断的，不是真没有
                 return False
-            if budget is not None and configs is None:
-                configs = runconfig.executable_configs_of(root, script)
-            if probe.was_captured(
-                root,
-                script,
-                stem,
-                configs=configs,
-                charge=budget.charge_entry if budget is not None else None,
-            ):
-                return True
-            if budget is not None and budget.stop_reason() is not None:
-                complete = False  # cache 元数据探测中耗尽预算：没查到 ≠ 没捕获
-                return False
+            candidates.append(stem)
+        # cache 证据按脚本一次判完（运行配置读一次、cache 目录列一次；`probe.captured_stems`），不是每个 stem 探一遍
+        found_any, done = probe.captured_stems(
+            root,
+            script,
+            candidates,
+            charge=budget.charge_entry if budget is not None else None,
+            stop_at_first=True,
+        )
+        if found_any:
+            return True
+        if not done or (budget is not None and budget.stop_reason() is not None):
+            complete = False  # cache 探测中耗尽预算：没查到 ≠ 没捕获
+            return False
         return False
 
     found = {script for script, stems in _registered_stems(root).items() if linked(script, stems)}
