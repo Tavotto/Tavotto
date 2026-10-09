@@ -497,3 +497,18 @@ def test_subcommands_record_how_many_positionals_precede_them():
     )
     assert scriptargs.analyze(before)["subcommands"]["position"] == 1
     assert scriptargs.analyze(after)["subcommands"]["position"] == 0
+
+
+def test_subcommand_aliases_are_choices_and_unresolvable_ones_make_it_dynamic():
+    """r4233563613：`add_parser('plot', aliases=['p'])` 的 `p` 也是 argparse 认的子命令名。"""
+    lit = (
+        "import argparse\np = argparse.ArgumentParser()\ns = p.add_subparsers(required=True, dest='c')\n"
+        "s.add_parser('plot', aliases=['p', 'pl'])\ns.add_parser('stats')\np.parse_args()\n"
+    )
+    sub = scriptargs.analyze(lit)["subcommands"]
+    assert sub["choices"] == ["plot", "p", "pl", "stats"] and sub["dynamic"] is False
+    dyn = (
+        "import argparse\nA = ['x']\np = argparse.ArgumentParser()\ns = p.add_subparsers(dest='c')\n"
+        "s.add_parser('plot', aliases=A + ['y'])\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(dyn)["subcommands"]["dynamic"] is True

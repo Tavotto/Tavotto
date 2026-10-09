@@ -230,4 +230,14 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
     expect(r(['plot']).args).toEqual(['input'])
     expect(r(['--input', 'a', 'x', 'plot']).count).toBe(0)
   })
+  it("子命令别名（aliases）是 choices 的一员：['p'] 算选了（r4233563613）", () => {
+    const sub = {
+      ...base,
+      arguments: [],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'p', 'stats'], dynamic: false, position: 0 },
+    } as ScriptArgsSchema
+    expect(missingRequirements(sub, readTokens(sub, ['p']), ['p']).subcommand).toBe(false)
+    expect(missingRequirements(sub, readTokens(sub, ['q']), ['q']).subcommand).toBe(true)
+  })
 })

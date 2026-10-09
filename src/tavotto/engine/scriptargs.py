@@ -418,6 +418,22 @@ class _Scanner(ast.NodeVisitor):
                         names.append(value)
                 else:
                     parent.subcommands["dynamic"] = True
+                # `aliases=[...]` 也是 argparse 认的子命令名：字面量全进 choices；认不全（非字面量 / 不是字符串列表）= 动态
+                for kw in node.keywords:
+                    if kw.arg is None:
+                        parent.subcommands["dynamic"] = True
+                    elif kw.arg == "aliases":
+                        ok_a, alias_list = _literal(kw.value)
+                        if (
+                            ok_a
+                            and isinstance(alias_list, (list, tuple))
+                            and all(isinstance(a, str) for a in alias_list)
+                        ):
+                            for a in alias_list:
+                                if a not in names and len(names) < MAX_CHOICES:
+                                    names.append(a)
+                        else:
+                            parent.subcommands["dynamic"] = True
         elif func.attr in _PARSE_CALLS:
             self._parse_call(node)
 
