@@ -281,6 +281,7 @@ _ALLOWED_ATTRS = {
         "ISSUE_PLACEHOLDER",
         "ISSUE_TOO_LARGE",
         "ISSUE_SYMLINK_DIR",
+        "ISSUE_CODES",
         "is_placeholder",
         "is_redirect",
         "read_regular_text",
