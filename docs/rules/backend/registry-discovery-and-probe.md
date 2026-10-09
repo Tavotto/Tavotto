@@ -59,7 +59,10 @@
     `_PROBES` 按 (项目 id, script) 登记在跑的试运行（第二个请求 409
     `probe_in_progress`）；`POST /api/registry/probe/cancel` 置取消
     Event 并 `pool.force_cancel`（**当场 kill**，不走优雅关停——shutdown
-    要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。
+    要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。**按 owner（T09b）**：
+    只杀这次试运行取到、自己建的那条（`expected_worker`，所有权来自
+    `pool.acquired_here`），别人正在用的同键会话 / 同键替换者不碰——全文在
+    `preparation-and-receipts.md`「准备会话」末段。
     `probe(should_cancel=...)` 一旦判取消**不再尝试下一个 entry**，被杀
     worker 的失败如实归类 `execution_cancelled`（不报「脚本坏了」）；
     取消可能先于 worker 入池：共享 build 编排在初次 / 环境 fallback 每次取得会话后、

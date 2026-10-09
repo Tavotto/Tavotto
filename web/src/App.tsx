@@ -24,6 +24,7 @@ import { StyleDialog } from '@/components/StyleDialog'
 import { BannerStack, DocumentBanner } from '@/components/DocumentBanner'
 import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
 import { ProjectScanBar } from '@/components/ProjectScanBar'
+import { PreparationPanel } from '@/components/PreparationPanel'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
@@ -244,6 +245,8 @@ function Workspace() {
           提示条不再横贯整个窗口：进了工作面板（见下面的 BannerStack） */}
       <div className="flex h-full flex-col overflow-hidden bg-bg text-ink">
         <TopBar />
+        {/* 准备面板（T09）：所有「准备并打开」入口共用的一个可恢复展示面；非模态，关掉只改呈现 */}
+        <PreparationPanel />
         <div className="relative flex min-h-0 flex-1">
           <LeftRail />
           {/* 窄屏时抽屉盖在画布上（绝对定位在轨道右侧），画布宽度不被侵占 */}

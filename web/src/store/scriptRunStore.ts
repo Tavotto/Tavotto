@@ -44,6 +44,9 @@ import { useUiStore } from '@/store/uiStore'
  * 那条路（`renderStore`）同一个确认框 / 授权框、同一次作答；相位是 `needs_workdir` / `needs_preparation`，
  * **不进「可能需要原环境」**（那组的出口只有换环境 / 复制诊断，新脚本的图还没上画布时就再也走不到安装，
  * Windows 真机验收 main 493a1310）。作答之后由作答的那一方调 `rerunGated` 重跑停在门上的那一行。
+ *
+ * **这是开关关闭时的旧路径（T09 / T09b，ADR 0116 §七）**：准备面板开着（默认）时素材库脚本行、检查条、接入中心都打开
+ * 准备会话，不经过这里；开关关闭时这三处共用**这一台**状态机（接入中心 T09b 起不再自己记一份门与重跑，委派到 `run`）。
  */
 export type ScriptRunPhase =
   | 'idle'
@@ -71,6 +74,10 @@ export interface ScriptRunState {
   error: ProbeError | null
   /** 这一次失败的诊断引用（T04）：只在带错误落地时有；老后端没有 */
   diagnostic?: { kind: 'script_run'; ref: string } | null
+  /** 成功那次真实产出并登记的图名（后端 `stems`；接入中心那一行说「已连接 …」用） */
+  stems?: string[]
+  /** 成功那次（无参数）整条替换掉的旧图名（T09b，后端 `unlinked_stems`）：界面给「用原参数再运行」的提示 */
+  unlinkedStems?: string[]
   /** 用户已点取消、原请求尚未落地 */
   cancelRequested: boolean
   gen: number
@@ -127,11 +134,6 @@ export const isGatePhase = (phase: ScriptRunPhase | undefined): boolean =>
   phase === 'needs_workdir' || phase === 'needs_preparation'
 
 /**
- * 试运行撞上起会话之前的门：载荷交给 `envStore`，弹与渲染那条路同一个框（同一时刻只开一份、换了项目的
- * 旧载荷不弹——判据在 `envStore` 那一侧）。`projectId` 是发这次试运行时的项目。回 true = 是门、已交出。
- * 素材库脚本行（经 `run`）与接入中心的试运行共用这一处，别的试运行入口也走这里。
- */
-/**
  * 试运行请求**抛出来**的失败的诊断引用：与成功路径同一优先级——错误体 `diagnostic` 先，响应头
  * `X-Tavotto-Diagnostic-Ref`（体不是对象时后端放这里）后。取不到 = null（老后端）。
  */
@@ -144,9 +146,9 @@ export function probeDiagnosticOf(e: unknown): { kind: 'script_run'; ref: string
 
 /**
  * 试运行请求**抛出来**的错误（非 2xx：门的两个 code 就是以 409 回来的）→ `ProbeError`，载荷一并带上。
- * 素材库脚本行与接入中心共用这一处：各自解析的话，一边认得门、一边把它当成普通失败（#740 Codex P2）。
+ * 只有 `run` 一处试运行（接入中心 T09b 起委派到这里），解析也只此一份（#740 Codex P2 的根因是两处各解析一遍）。
  */
-export function probeErrorOf(e: unknown): ProbeError {
+function probeErrorOf(e: unknown): ProbeError {
   const api = e instanceof ApiError ? e : null
   const body = (api?.body ?? {}) as {
     code?: string
@@ -191,29 +193,11 @@ export function whenScriptIdle(script: string): Promise<void> {
  */
 export const scriptRunEpoch = (): number => useScriptRunStore.getState().epoch
 
-/** 门的 code → 它对应的相位（不是门回 null） */
-export function gatePhaseOf(error: ProbeError | null | undefined): 'needs_workdir' | 'needs_preparation' | null {
-  if (!error) return null
-  if (error.code === DEPENDENCY_PREPARATION_CODE && error.dependency_preparation) return 'needs_preparation'
-  if (error.code === WORKDIR_CONFIRMATION_CODE && error.confirmation) return 'needs_workdir'
-  return null
-}
-
-type GateResolved = (phase: 'needs_workdir' | 'needs_preparation', script?: string) => void
-const gateListeners = new Set<GateResolved>()
-
 /**
- * 门有了答案时通知：不在本 store 里记账的试运行入口（接入中心的逐行试运行）靠它重跑自己停在门上的那一行
- * ——否则作答之后那一行停在「还差一步」上、要用户再点一次（#740 Codex P2）。回退订函数。
+ * 试运行撞上起会话之前的门：载荷交给 `envStore`，弹与渲染那条路同一个框（同一时刻只开一份、换了项目的
+ * 旧载荷不弹——判据在 `envStore` 那一侧）。`projectId` 是发这次试运行时的项目。回 true = 是门、已交出。
  */
-export function onGateResolved(cb: GateResolved): () => void {
-  gateListeners.add(cb)
-  return () => {
-    gateListeners.delete(cb)
-  }
-}
-
-export function handOffProbeGate(error: ProbeError | null | undefined, projectId: string | null): boolean {
+function handOffProbeGate(error: ProbeError | null | undefined, projectId: string | null): boolean {
   if (!error) return false
   if (error.code === DEPENDENCY_PREPARATION_CODE && error.dependency_preparation) {
     useEnvStore.getState().requestDependencyPreparation(error.dependency_preparation, projectId)
@@ -321,6 +305,8 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         phase: res.descriptors.length > 1 ? 'captured_many' : 'captured_one',
         descriptors: res.descriptors,
         droppedFigures: res.dropped_figures ?? 0,
+        stems: res.stems,
+        unlinkedStems: res.unlinked_stems ?? [],
         error: null,
       })
       // 成功的副作用：素材库立即出现新东西。
@@ -422,7 +408,6 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
       if (queued) void runSpecsInOrder(name, queued).then((results) => reportResumedFailures(name, results))
       else if (rowSpec) void runSpec(name, rowSpec)
     }
-    for (const cb of [...gateListeners]) cb(phase, script)
   },
 
   clear: () => {

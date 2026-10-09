@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useTranslation } from 'react-i18next'
 import { Ban, Copy, CornerDownLeft, Play, SearchX, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
@@ -9,6 +10,14 @@ import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntr
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
+import type { PanelObject } from '@/types/document'
+import { preparationPanelEnabled } from '@/lib/preparationFlag'
+import { prepRowKey } from '@/lib/preparationText'
+import {
+  scriptTarget,
+  useProjectPreparationStore,
+  type PrepEntry,
+} from '@/store/projectPreparationStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import {
@@ -227,9 +236,13 @@ function ScriptRow({
 }) {
   useTranslation('workspace')
   const run = useScriptRunStore((s) => s.byScript[entry.script])
+  const prep = useProjectPreparationStore((s) => s.entries[`script:${entry.script}`])
   const busy = !!run && isBusyPhase(run.phase)
   const [resultsOpen, setResultsOpen] = useState(false)
   const hasAnswers = useScriptInputStore((s) => (s.answers?.[entry.script]?.length ?? 0) > 0)
+  // T09（ADR 0116）：默认这颗钮打开准备面板（后端会话：检查 → 确认 → 运行 → 进入编辑），不直接执行；
+  // 本地开关关掉时回到旧的同步试运行（保留一版）
+  const viaPanel = preparationPanelEnabled() && !busy
   // 脚本名相对项目根：根以项目状态（`/api/project` 的 figures_dir）为准，不等素材清单——/api/panels
   // 失败时 assetStore.figuresDir 是空的，而脚本行照样在（Codex #832）；两边都不知道就不给「复制路径」
   const projectRoot = useProjectStore((s) => s.project?.figures_dir)
@@ -239,6 +252,10 @@ function ScriptRow({
   const menu = useRowMenu()
 
   const onRunOrCancel = () => {
+    if (viaPanel) {
+      void useProjectPreparationStore.getState().open(scriptTarget(entry.script))
+      return
+    }
     const store = useScriptRunStore.getState()
     if (busy) store.cancel(entry.script)
     else void store.run(entry.script)
@@ -257,7 +274,7 @@ function ScriptRow({
   return (
     <li className="flex flex-col" data-script-row={entry.script}>
       <div {...menu.rowProps} className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
-        <StatusDot entry={entry} run={run} />
+        <StatusDot entry={entry} run={run} prep={prep} />
         {/* 脚本名是这一行的主文字：等宽（路径 / 脚本名那一档）但字号跟正文走 12，
             与右侧 11px 的状态一句话差一个台阶（左栏审计 L02） */}
         <span
@@ -266,7 +283,13 @@ function ScriptRow({
         >
           {entry.script}
         </span>
-        <StatusLine entry={entry} stems={stems} run={run} onViewResults={() => setResultsOpen(true)} />
+        <StatusLine
+          entry={entry}
+          stems={stems}
+          run={run}
+          prep={prep}
+          onViewResults={() => setResultsOpen(true)}
+        />
         {/* 脚本 input() 记住的答案（ADR 0099）：只在这个脚本真有答案时出现，其余行一个像素不变 */}
         {hasAnswers && (
           <IconButton
@@ -285,9 +308,17 @@ function ScriptRow({
           label={
             busy
               ? sc('cancelAria', { script: entry.script })
-              : sc(entry.registered ? 'rerunAria' : 'runAria', { script: entry.script })
+              : viaPanel
+                ? sc('prepareAria', { script: entry.script })
+                : sc(entry.registered ? 'rerunAria' : 'runAria', { script: entry.script })
           }
-          tip={busy ? sc(run?.cancelRequested ? 'cancelling' : 'cancel') : sc(entry.registered ? 'rerun' : 'run')}
+          tip={
+            busy
+              ? sc(run?.cancelRequested ? 'cancelling' : 'cancel')
+              : viaPanel
+                ? sc('prepareAria', { script: entry.script })
+                : sc(entry.registered ? 'rerun' : 'run')
+          }
           disabled={!!run?.cancelRequested}
           data-script-run={entry.script}
           onClick={onRunOrCancel}
@@ -451,9 +482,23 @@ function GateReopen({ run }: { run: ScriptRunState | undefined }) {
  * 此前是一颗转圈 / 呼吸点，与 shimmer 两处同时在动）；红 = 这次失败。
  * 纯装饰——状态本身由旁边那句话与可达名说出。
  */
-function StatusDot({ entry, run }: { entry: ScriptInventoryEntry; run: ScriptRunState | undefined }) {
+function StatusDot({
+  entry,
+  run,
+  prep,
+}: {
+  entry: ScriptInventoryEntry
+  run: ScriptRunState | undefined
+  prep?: PrepEntry
+}) {
   const phase = run?.phase ?? 'idle'
-  const running = phase === 'starting_runtime' || phase === 'running'
+  const prepPhase = prep?.report?.phase
+  const running =
+    phase === 'starting_runtime' ||
+    phase === 'running' ||
+    prepPhase === 'running' ||
+    prepPhase === 'awaiting_runtime_input' ||
+    prepPhase === 'preparing_environment'
   // 停在门上不是失败（缺的是一个决定），不标红
   const failed = !running && !!run?.error && !isGatePhase(phase)
   return (
@@ -482,19 +527,36 @@ function StatusLine({
   entry,
   stems,
   run,
+  prep,
   onViewResults,
 }: {
   entry: ScriptInventoryEntry
   stems: string[]
   run: ScriptRunState | undefined
+  prep?: PrepEntry
   onViewResults: () => void
 }) {
   useTranslation('workspace')
   const phase = run?.phase ?? 'idle'
+  // 准备会话（T09）在这一行上：只翻译它的 phase（`prepRowKey`），点一下回到面板；旧试运行的状态机此刻不在跑
+  const prepKey = !isBusyPhase(phase) ? prepRowKey(prep) : null
 
   let body: React.ReactNode = null
   let title: string | undefined
-  if (phase === 'starting_runtime' || phase === 'running') {
+  if (prepKey && prep) {
+    body = (
+      <button
+        data-script-prep-status={prep.report?.phase ?? 'checking'}
+        onClick={() => {
+          useProjectPreparationStore.setState({ focus: prep.key })
+          useUiStore.getState().setPreparationOpen(true)
+        }}
+        className="max-w-full truncate rounded-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
+      >
+        {translate(`prep.row.${prepKey.key}`, { ns: 'workspace', ...prepKey.values })}
+      </button>
+    )
+  } else if (phase === 'starting_runtime' || phase === 'running') {
     // 「在动」的唯一记号：shimmer 扫过这句话（加载四种写法之一）
     body = <span className="text-shimmer" data-script-running>{sc(phase === 'running' ? 'running' : 'starting')}</span>
   } else if (phase === 'captured_one' || phase === 'captured_many') {
@@ -658,15 +720,23 @@ export function ProbeResultsDialog({
   dropped,
   open,
   onOpenChange,
+  onAdded,
 }: {
   script: string
   descriptors: CapturedFigureDescriptor[]
   dropped: number
   open: boolean
   onOpenChange: (v: boolean) => void
+  /** 加进画布之后，带上**刚新建的那个面板**（准备面板据此观察它的首次编辑渲染，T09；不能按素材 id 回找——文档里可能已有同素材的旧实例） */
+  onAdded?: (d: CapturedFigureDescriptor, panel: PanelObject) => void
 }) {
   useTranslation('workspace')
   const setStatus = useUiStore((s) => s.setStatus)
+  // 描述符属于这个对话框出现时的项目：之后切了项目（对话框还没来得及卸载）就不许把 A 的图加进 B 的版面
+  const guard = useRef<ProjectEpochGuard | null>(null)
+  useEffect(() => {
+    if (open) guard.current = captureProjectEpoch()
+  }, [open, descriptors])
   return (
     <Dialog
       open={open}
@@ -691,8 +761,10 @@ export function ProbeResultsDialog({
               variant="secondary"
               size="sm"
               onClick={() => {
-                addRuntimePanelToCanvas(d)
+                if (guard.current && !guard.current.still()) return
+                const added = addRuntimePanelToCanvas(d)
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
+                onAdded?.(d, added)
               }}
             >
               {sc('addToCanvas')}

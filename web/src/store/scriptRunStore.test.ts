@@ -10,7 +10,6 @@ import {
   isBusyPhase,
   isGatePhase,
   needsNative,
-  onGateResolved,
   runConfigsInOrder,
   useScriptRunStore,
   whenScriptIdle,
@@ -464,16 +463,14 @@ describe('门后排队续跑的排队语义（Codex #816 r4221258366 / r42212583
       )
     })
     const registryRuns: string[] = []
-    const off = onGateResolved((_phase, script) => {
-      void whenScriptIdle(script ?? 'fig.py').then(() => {
-        registryRuns.push('registry')
-        inFlight++
-        maxInFlight = Math.max(maxInFlight, inFlight)
-        inFlight--
-      })
-    })
     useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
-    // 通知监听者的同一刻脚本已被认领：A 在飞，Registry 等着
+    // rerunGated 返回的同一刻脚本已被认领：A 在飞，等空闲的一方（whenScriptIdle）等着
+    void whenScriptIdle('fig.py').then(() => {
+      registryRuns.push('registry')
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      inFlight--
+    })
     expect(configsOf()).toEqual(['rc_a'])
     await flush()
     expect(registryRuns).toEqual([])
@@ -486,7 +483,6 @@ describe('门后排队续跑的排队语义（Codex #816 r4221258366 / r42212583
     await flush()
     expect(registryRuns).toEqual(['registry'])
     expect(maxInFlight).toBe(1)
-    off()
   })
 
   it('等认领时切项目：第二批不在新项目里执行（r4221391273）', async () => {
