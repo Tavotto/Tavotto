@@ -1098,3 +1098,49 @@ def test_ordinary_argparse_scripts_are_judged_exact(project, script):
     _set_script(project, script)
     assert scriptargs.response_file_prefixes(Path(project) / "fig1.py") == (frozenset(), True)
     assert _scope_code(project, ["--scale", "2"]) is None
+
+
+# ------------------------------------------------ Windows 带根形状（#818 Windows 腿：`/` 在 3.13 的 nt 上不是绝对路径）
+_NT_ROOTS = ["C:\\ws", "D:\\data\\proj"]
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "/",
+        "/x",
+        "\\",
+        "\\x",
+        "/ws/../etc",
+        "C:",
+        "C:x",
+        "C:ws\\a",
+        "E:\\out.txt",
+        "C:\\ws\\..\\etc",
+        "C:/ws/../../x",
+        "\\\\srv\\share\\a",
+        "//srv/share/a",
+        "\\\\?\\C:\\ws\\a",
+        "\\\\.\\PhysicalDrive0",
+        "//?/C:/ws/a",
+    ],
+)
+def test_nt_rooted_tokens_outside_the_roots_are_refused(token):
+    assert bridge._nt_rooted_escape(token, _NT_ROOTS, "C:") is not None
+
+
+@pytest.mark.parametrize(
+    "token", ["C:\\ws\\out.csv", "c:/WS/sub/../x", "D:\\data\\proj\\a", "/ws/out.txt", "\\ws"]
+)
+def test_nt_rooted_tokens_inside_the_roots_pass(token):
+    assert bridge._nt_rooted_escape(token, _NT_ROOTS, "C:") is None
+
+
+def test_nt_root_relative_token_without_a_known_drive_is_refused():
+    assert bridge._nt_rooted_escape("/ws/a", _NT_ROOTS, "") is not None
+
+
+@pytest.mark.parametrize("token", ["\\x", "C:x", "C:", "\\\\?\\C:\\a", "--out=C:x", "-o\\x"])
+def test_windows_rooted_shapes_are_refused_on_every_platform(project, token):
+    """POSIX 上这些不是绝对路径，但脚本可能在任何平台被当成路径；绝不落进「相对 cwd」分支。"""
+    assert _scope_code(project, ["--freq", "1", token]) == "argv_path_out_of_scope"

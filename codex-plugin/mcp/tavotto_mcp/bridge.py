@@ -26,6 +26,7 @@ import base64
 import hashlib
 import importlib
 import json
+import ntpath
 import os
 import re
 import sys
@@ -209,6 +210,10 @@ def _run_config_error(exc) -> BridgeError:
 #: Windows 盘符 / UNC 开头的绝对路径（`os.path.isabs` 在 POSIX 上认不出它们，但脚本可能在任何平台上被
 #: 当成路径打开：一律按「像路径」处理）。
 _WIN_ABS_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]{2})")
+#: Windows「带根」的形状：`/x` `\x`（当前盘根）、`C:x` / `C:`（盘符相对）、UNC、`\\?\` / `\\.\` 设备路径。
+#: 它们在 Windows 上都不是「相对 cwd」的路径（3.13 起 `ntpath.isabs("/x")` 还是 False），绝不能走相对分支。
+_WIN_ROOTED_RE = re.compile(r"^(?:[A-Za-z]:|[\\/])")
+_NT_DEVICE_PREFIXES = ("\\\\?\\", "\\\\.\\", "//?/", "//./", "\\\\?/", "//?\\")
 
 
 def _argv_path_candidates(token: str) -> list[str]:
@@ -255,6 +260,31 @@ def _is_response_file_ref(value: str, prefixes: tuple[frozenset[str], bool]) -> 
     return lead == "@" or lead in prefixes[0]
 
 
+def _nt_rooted_escape(value: str, roots: list[str], drive: str, resolve=lambda p: p) -> str | None:
+    """按 Windows 口径判一个带根形状的 token（纯 ntpath，任何平台都能跑）：指到授权根之外返回文字，否则 None。
+
+    设备路径（`\\\\?\\` / `\\\\.\\`）与盘符相对（`C:x`、`C:`）一律拒（无法证明落点）；`/x` `\\x`
+    补上当前盘（`drive`）；UNC 与带盘符绝对路径原样；规范化后（`resolve` 在真 Windows 上解开链接）再对根检查。"""
+    if value.startswith(_NT_DEVICE_PREFIXES):
+        return value
+    vdrive, rest = ntpath.splitdrive(value)
+    if vdrive and rest[:1] not in ("\\", "/"):
+        return value  # `C:` / `C:x`：盘符相对
+    if not vdrive:
+        if not drive:
+            return value
+        value = drive + value
+    real = resolve(ntpath.normpath(value))
+    for root in roots:
+        try:
+            common = ntpath.commonpath([real, root])
+        except ValueError:
+            continue
+        if ntpath.normcase(common) == ntpath.normcase(root):
+            return None
+    return real
+
+
 _ENV_EXPANSION_RE = re.compile(r"\$[A-Za-z0-9_{]|%[^%\s]+%")
 _TILDE_USER_RE = re.compile(r"~[^/\\]")
 
@@ -283,6 +313,13 @@ def _argv_path_escapes(
         # `expanduser`，未展开的字面量在 cwd 下看着在根内、展开后却落到根外。展开结果取决于脚本运行时的环境，
         # 桥不去猜，失败封闭：MCP 来源的 argv 里含这些形状一律拒（Codex #818 r4229588335）。
         return value
+    if _WIN_ROOTED_RE.match(value):
+        if os.name == "nt":
+            return _nt_rooted_escape(
+                value, roots, ntpath.splitdrive(os.getcwd())[0], resolve=canonical_path
+            )
+        if not os.path.isabs(value):
+            return value  # 非本平台的带根形状（`\x` / `C:x` / `C:\x`）：无法证明它在根里
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里
