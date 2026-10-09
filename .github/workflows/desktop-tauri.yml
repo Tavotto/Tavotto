@@ -732,9 +732,10 @@ jobs:
           }
           Write-Host "SignPath 签名有效：$($signature.SignerCertificate.Subject)"
 
-      - name: 标记未签名产物
+      - name: 未签名即拦停（fail-closed）
         if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true'
-        run: Write-Warning "SIGNPATH_ENABLED 未开启：本次 Windows 安装包没有 Authenticode 签名（更新包的 minisign 签名不受影响）"
+        shell: pwsh
+        run: throw "SIGNPATH_ENABLED 未开启：Windows 安装包没有 Authenticode 签名，fail-closed 拒绝继续"
 
       - name: Windows 更新包（必须在 SignPath 签名之后重做）
         # 与 macOS 同一条道理：打包器顺手打的那个 nsis.zip 装的是**还没签名**的
