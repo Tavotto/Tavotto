@@ -42,6 +42,7 @@ from . import (
     registry,
     runconfig,
     runtimeasset,
+    scanbudget,
     taskdiag,
 )
 
@@ -723,14 +724,20 @@ def linked_scan(
     `charge`（每次真实的 cache 磁盘操作前记一笔预算，返回 False 即停，见 `captured_stems`）。cache 证据按脚本一次
     索引，不是 stems × 配置逐个探（#819 r4232209726 / r4232302927）。"""
     root = str(figures_dir)
-    find_kwargs = {} if isfile is None else {"isfile": isfile}
+    # 默认就是安全形状（#820 r4232425162）：stem 先过项目内相对名校验、探文件只 lstat 不跟随且限于项目内；
+    # 扫描路径只是把同一谓词换成「每问一次记一笔预算」的版本
+    if isfile is None:
+        isfile = scanbudget.no_follow_isfile(root)
+    if stem_ok is None:
+        stem_ok = figcapture.project_relative_stem
+    find_kwargs = {"isfile": isfile}
     complete = True
 
     def linked(script: str, stems: list[str]) -> bool:
         nonlocal complete
         candidates: list[str] = []
         for stem in stems:
-            if stem_ok is not None and not stem_ok(stem):
+            if not stem_ok(stem):
                 continue
             if stopped is not None and stopped():
                 complete = False

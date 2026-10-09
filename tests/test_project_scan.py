@@ -1353,11 +1353,11 @@ def test_a_registered_stem_that_leaves_the_project_is_never_probed(tmp_path, mon
 
 
 def test_a_subdirectory_stem_is_still_a_valid_project_stem():
-    assert projscan._project_relative_stem("sub/plot")
-    assert projscan._project_relative_stem("fig")
+    assert figcapture.project_relative_stem("sub/plot")
+    assert figcapture.project_relative_stem("fig")
     for bad in ("", "/etc/x", "\\\\h\\s\\x", "C:x", "a/../b", "..", "a\\..\\b", "x\0y"):
-        assert not projscan._project_relative_stem(bad)
-    assert not projscan._project_relative_stem(None)
+        assert not figcapture.project_relative_stem(bad)
+    assert not figcapture.project_relative_stem(None)
 
 
 def test_budget_expiring_inside_isfile_is_scan_incomplete_not_a_single_target(
