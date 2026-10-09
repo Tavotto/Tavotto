@@ -222,7 +222,10 @@ def _argv_path_candidates(token: str) -> list[str]:
     if token.startswith("-") and "=" in token:
         out.append(token.split("=", 1)[1])
     if len(token) > 2 and token[0] == "-" and token[1] != "-":
-        out.append(token[2:])
+        # 单横线簇：argparse 把 `-abo/tmp/x` 解成 `-a -b -o /tmp/x`，值从**任意**一个字符之后开始，所以每个后缀
+        # `token[k:]`（k >= 2）都是候选，各自走完整检查（Codex #818 r4231001442）。负数（`-1.5`）的后缀是相对的
+        # 数字片段，落在 cwd 下的根内，照常放行。
+        out.extend(token[k:] for k in range(2, len(token)))
     return out
 
 

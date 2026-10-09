@@ -995,6 +995,40 @@ def test_ordinary_values_still_pass_env_shape_check(project, token):
         assert code is None
 
 
+@pytest.mark.parametrize(
+    "token",
+    [
+        "-abo/tmp/victim",
+        "-abo\\outside",
+        "-abo~/x",
+        "-abo$HOME/x",
+        "-abo${HOME}/x",
+        "-abo%USERPROFILE%\\x",
+        "-abo~root/x",
+        "-abC:\\outside",
+        "-ab=/tmp/victim",
+        "-abo../../outside",
+    ],
+)
+def test_clustered_short_options_hide_no_paths(project, pool, token):
+    """r4231001442：`-abo/tmp/victim` 在 argparse 里是 `-a -b -o /tmp/victim`；值可以从第 2 个字符之后的
+    任意位置开始，所以单横线簇的每个后缀都要过完整检查。脚本不跑。"""
+    _set_script(project, PLAIN_ARGPARSE)
+    assert _scope_code(project, [token]) == "argv_path_out_of_scope"
+    body = _open(project, argv=[token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["-abc"], ["-1.5"], ["-f2"], ["-abo", "out.png"], ["-o", "out/x.png"]],
+)
+def test_clustered_short_options_without_outside_paths_still_pass(project, argv):
+    _set_script(project, PLAIN_ARGPARSE)
+    assert _scope_code(project, argv) is None
+
+
 def test_worker_respawn_rechecks_the_frozen_run(project_cwd, pool, tmp_path_factory, monkeypatch):
     """打开时在根内的相对路径，之后符号链接改指根外：worker 被淘汰 / 死亡后 `Session.acquire()` 重建前必须重查，
     一次性重放（`verify_replay`）同理；池一次都不许被调。"""
