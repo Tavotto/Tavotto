@@ -512,3 +512,23 @@ def test_subcommand_aliases_are_choices_and_unresolvable_ones_make_it_dynamic():
         "s.add_parser('plot', aliases=A + ['y'])\np.parse_args()\n"
     )
     assert scriptargs.analyze(dyn)["subcommands"]["dynamic"] is True
+
+
+def test_allow_abbrev_is_recorded_literal_false_off_non_literal_unknown():
+    base = "import argparse\n{decl}\np.add_argument('--input')\np.parse_args()\n"
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser()"))["allow_abbrev"]
+        is True
+    )
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser(allow_abbrev=False)"))[
+            "allow_abbrev"
+        ]
+        is False
+    )
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser(allow_abbrev=FLAG)"))[
+            "allow_abbrev"
+        ]
+        is None
+    )

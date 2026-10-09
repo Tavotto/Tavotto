@@ -47,6 +47,8 @@ export interface ScriptArgsSchema {
   status: 'none' | 'complete' | 'partial' | 'unknown'
   reasons: string[]
   form_enabled: boolean
+  /** argparse `allow_abbrev`：false = 关；true / null / 缺 = 认长选项的唯一前缀缩写（说不准时宽松，宁可放过不错拦） */
+  allow_abbrev?: boolean | null
   parse_call: string | null
   /** 声明了像负数的选项名（3.14 之前的文法：`^-\d+$|^-\d*\.\d+$`） */
   negative_number_options: boolean
@@ -182,6 +184,25 @@ interface Scan {
   doubleDash: number
 }
 
+/**
+ * argparse 的长选项缩写：`--inp x` 是 `--input x`（唯一前缀才算；有歧义 argparse 自己会报错，这里当不认识）。
+ * `allow_abbrev === false` 不缩写。回展开后的 token（保留 `=值` 部分）；不是缩写原样回。
+ */
+const expandAbbrev = (
+  schema: ScriptArgsSchema,
+  exact: Map<string, { arg: ScriptArgument; negated: boolean }>,
+  token: string,
+): string => {
+  if (schema.allow_abbrev === false || !token.startsWith('--') || token === '--') return token
+  const eq = token.indexOf('=')
+  const name = eq > 0 ? token.slice(0, eq) : token
+  if (exact.has(name)) return token
+  const hits = [...exact.entries()].filter(([flag]) => flag.startsWith('--') && flag.startsWith(name))
+  const keys = new Set(hits.map(([, v]) => `${v.arg.id}|${v.negated}`))
+  if (keys.size !== 1) return token
+  return hits[0][0] + (eq > 0 ? token.slice(eq) : '')
+}
+
 const scan = (schema: ScriptArgsSchema, tokens: string[]): Scan => {
   const { exact } = indexOptions(schema)
   const occurrences = new Map<string, Occurrence[]>()
@@ -196,7 +217,8 @@ const scan = (schema: ScriptArgsSchema, tokens: string[]): Scan => {
 
   let i = 0
   while (i < tokens.length) {
-    const t = tokens[i]
+    const raw = tokens[i]
+    const t = expandAbbrev(schema, exact, raw)
     if (doubleDash >= 0) {
       positionalIdx.push(i)
       i += 1

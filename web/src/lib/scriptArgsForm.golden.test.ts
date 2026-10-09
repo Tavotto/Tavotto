@@ -240,4 +240,14 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
     expect(missingRequirements(sub, readTokens(sub, ['p']), ['p']).subcommand).toBe(false)
     expect(missingRequirements(sub, readTokens(sub, ['q']), ['q']).subcommand).toBe(true)
   })
+  it('argparse 长选项缩写：`--inp file` 算给了 `--input`；关了 allow_abbrev 或有歧义才算没给（r4233842668）', () => {
+    const opt = (id: string) => ({ ...base.arguments[0], id, flags: [`--${id}`], required: id === 'input', positional: false, arity: 1 as const, nargs: null, action: 'store', group: null })
+    const sch = { ...base, arguments: [opt('input'), opt('index')], exclusive_groups: [], subcommands: null, allow_abbrev: true } as unknown as ScriptArgsSchema
+    const miss = (s: ScriptArgsSchema, t: string[]) => missingRequirements(s, readTokens(s, t), t).args
+    expect(miss(sch, ['--inp', 'a.csv'])).toEqual([])
+    expect(miss(sch, ['--inp=a.csv'])).toEqual([])
+    expect(miss(sch, ['--in', 'a.csv'])).toEqual(['input']) // 有歧义：argparse 会报错，不当作给了
+    expect(miss({ ...sch, allow_abbrev: false } as ScriptArgsSchema, ['--inp', 'a.csv'])).toEqual(['input'])
+    expect(miss({ ...sch, allow_abbrev: null } as ScriptArgsSchema, ['--inp', 'a.csv'])).toEqual([])
+  })
 })

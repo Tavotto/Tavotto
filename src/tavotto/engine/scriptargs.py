@@ -235,9 +235,14 @@ class _Parser:
         self.reasons: set[str] = set()
         self.parse_calls: list[str] = []
         self.subcommands: dict | None = None
+        # argparse 默认允许长选项缩写（`--inp` = `--input`）：字面量 False 才关；不是字面量 = None（说不准，前端按宽松认缩写）
+        self.allow_abbrev: bool | None = True
         for kw in node.keywords:
             if kw.arg is None:
                 self.reasons.add("dynamic_value")
+            elif kw.arg == "allow_abbrev":
+                ok, value = _literal(kw.value)
+                self.allow_abbrev = bool(value) if ok and isinstance(value, bool) else None
             elif kw.arg == "parents":
                 self.reasons.add("parents")
             elif kw.arg == "prefix_chars":
@@ -777,6 +782,7 @@ def analyze(source: str) -> dict:
         "form_enabled": not (reasons & FORM_BLOCKING),
         "parser_line": parser.line,
         "parse_call": parser.parse_calls[0] if parser.parse_calls else None,
+        "allow_abbrev": parser.allow_abbrev,
         "negative_number_options": negative_like,
         # 3.14 起 argparse 的负数 token 文法更宽（`-1e3` / `-.5` / `-1.`）：声明了这类选项名的要单独标出
         "negative_number_options_extended": negative_like_extended,
@@ -1131,6 +1137,7 @@ def _empty(status: str, reasons: list[str]) -> dict:
         "form_enabled": False,
         "parser_line": None,
         "parse_call": None,
+        "allow_abbrev": True,
         "negative_number_options": False,
         "negative_number_options_extended": False,
         "arguments": [],
