@@ -152,7 +152,13 @@ WARNING_CODES = frozenset(
         "relative_import_beyond_top",
         "sys_path_modified",
         "module_not_found",
+        "cwd_outside_project",
     }
+)
+#: `ScanResult.problems[].kind` 的闭集：自己的几个读 / 解析失败码 + `scanbudget` 的账本码。
+PROBLEM_KINDS = frozenset(
+    {"syntax", "outside_project", "io", "too_large", "module_not_found"}
+    | set(scanbudget.ISSUE_CODES)
 )
 
 #: 本地模块跟进的上限：文件数与深度。科研项目的本地模块通常两三个；上限只挡住误把整个
@@ -587,13 +593,20 @@ class _Visitor(ast.NodeVisitor):
             self.path_mutations.append(node.lineno)
         self.generic_visit(node)
 
-    # ---- sys.path 被整体改写 / 就地改写 ----
+    # ---- sys.path 被整体改写 / 就地改写 / 删除 ----
     def _mutates_path(self, target: ast.AST) -> bool:
         if isinstance(target, ast.Subscript):
             return _is_sys_path(target.value, self.al)
         return _is_sys_path(target, self.al) and isinstance(target, ast.Attribute)
 
     def visit_Assign(self, node):
+        if any(self._mutates_path(t) for t in node.targets):
+            self.path_mutations.append(node.lineno)
+        self.generic_visit(node)
+
+    def visit_Delete(self, node):
+        # `del sys.path[0]` / `del s.path[:]` / `del path[0]`（`from sys import path`）/ `del sys.path`：
+        # 与赋值同一个判据——删除也让搜索路径不再静态可定
         if any(self._mutates_path(t) for t in node.targets):
             self.path_mutations.append(node.lineno)
         self.generic_visit(node)

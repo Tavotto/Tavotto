@@ -583,6 +583,13 @@ class TestDynamicImports:
                 "import sys\nsys.path += ['x']\n",
                 "import sys\nsys.path[0] = 'x'\n",
                 "import site\nsite.addsitedir('x')\n",
+                # 删除 / 弹出也算改写
+                "import sys\ndel sys.path[0]\n",
+                "import sys as s\ndel s.path[:]\n",
+                "from sys import path\ndel path[0]\n",
+                "import sys\nsys.path.pop(0)\n",
+                "import sys\nsys.path.remove('x')\n",
+                "import sys\nsys.path.clear()\n",
             ]
         ):
             _write(tmp_path, f"e{i}.py", src)
@@ -969,6 +976,86 @@ class TestContract:
             assert c.shadowing in ("", "stdlib", "third_party")
         assert {w["code"] for w in res.warnings} <= importscan.WARNING_CODES
         assert str(root) not in json.dumps(res.to_payload())
+
+    def test_every_literal_the_scanner_emits_is_in_its_closed_set(self):
+        """结构性：AST 扫 importscan.py，所有发出的 warning code / problem kind / issue code 的字面量
+        都在各自的闭集里（别只靠「某次扫描恰好没发出来」的运行时断言）。"""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(importscan))
+        warns: list[tuple[int, set[str]]] = []
+        kinds: list[tuple[int, set[str]]] = []
+        issues: list[tuple[int, set[str]]] = []
+
+        def scan(scope: ast.AST) -> None:
+            # 变量按所在函数解析（`code` / `kind` 在别的函数里是别的东西）
+            # `reason` 来自 `Budget.charge_source`：它只回 scanbudget 的账本码
+            assigned: dict[str, set[str]] = {"reason": set(scanbudget.ISSUE_CODES)}
+
+            def lits(node) -> set[str] | None:
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    return {node.value}
+                if isinstance(node, ast.IfExp):
+                    x, y = lits(node.body), lits(node.orelse)
+                    return None if x is None or y is None else x | y
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "scanbudget"
+                ):
+                    return {getattr(scanbudget, node.attr)}
+                if isinstance(node, ast.Name):
+                    return assigned.get(node.id)
+                return None
+
+            for n in ast.walk(scope):
+                if isinstance(n, ast.Assign) and len(n.targets) == 1:
+                    t = n.targets[0]
+                    if isinstance(t, ast.Name):
+                        v = lits(n.value)
+                        if v is not None:
+                            assigned.setdefault(t.id, set()).update(v)
+            for n in ast.walk(scope):
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.args:
+                    if n.func.attr == "warn" or (
+                        n.func.attr == "append"
+                        and isinstance(n.func.value, ast.Name)
+                        and n.func.value.id == "warns"
+                    ):
+                        v = lits(n.args[0])
+                        assert v is not None, f"line {n.lineno}: warning code not checkable"
+                        warns.append((n.lineno, v))
+                    elif n.func.attr == "note":
+                        v = lits(n.args[0])
+                        assert v is not None, f"line {n.lineno}: issue code not checkable"
+                        issues.append((n.lineno, v))
+                if (
+                    isinstance(n, ast.keyword)
+                    and n.arg == "warnings"
+                    and isinstance(n.value, ast.Tuple)
+                ):
+                    for e in n.value.elts:
+                        v = lits(e)
+                        if v is not None:
+                            warns.append((n.value.lineno, v))
+                if isinstance(n, ast.Dict):
+                    for k, val in zip(n.keys, n.values, strict=True):
+                        if isinstance(k, ast.Constant) and k.value == "kind":
+                            v = lits(val)
+                            assert v is not None, f"line {val.lineno}: problem kind not checkable"
+                            kinds.append((val.lineno, v))
+
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scan(fn)
+        assert warns and kinds and issues  # 扫描本身没落空
+        for line, v in warns:
+            assert v <= importscan.WARNING_CODES, (line, v - importscan.WARNING_CODES)
+        for line, v in kinds:
+            assert v <= importscan.PROBLEM_KINDS, (line, v - importscan.PROBLEM_KINDS)
+        for line, v in issues:
+            assert v <= set(scanbudget.ISSUE_CODES), (line, v)
 
     def test_the_stable_stdlib_sets_do_not_overlap_in_a_way_that_would_misreport(self):
         assert not importscan.BUILTIN_NAMES & importscan.PRELOADED_STDLIB
