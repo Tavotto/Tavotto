@@ -390,19 +390,54 @@ if out["matplotlib_version"]:
         out["error"] = "worker: %s: %s" % (type(exc).__name__, exc)
     finally:
         sys.dont_write_bytecode = dont_write
-if module:
-    out["requested_module"] = module
+mode = sys.argv[4] if len(sys.argv) > 4 else ""
+project_root = sys.argv[5] if len(sys.argv) > 5 else ""
+
+
+def _inside(path, root):
+    import os
     try:
-        __import__(module)
-        out["requested_module_ok"] = True
+        a = os.path.normcase(os.path.realpath(path))
+        b = os.path.normcase(os.path.realpath(root))
+        return os.path.commonpath([a, b]) == b
+    except (ValueError, OSError):
+        return False
+
+
+def _spec_state(name):
+    # 用户点「运行」之前（Codex 安全 #820 r4234465621）：**绝不 import 脚本要的模块**——可编辑安装的 .pth 可以把项目里的
+    # 包解析成它们，import 就是执行项目代码。只问顶层名的 find_spec（点号名的 find_spec 会 import 父包）：True = 找得到且
+    # 不在项目里；False = 找不到；None = 落在项目里（延后到运行再量，不冒充"装了"也不冒充"没装"）。
+    import importlib.util
+    top = name.split(".")[0]
+    try:
+        spec = importlib.util.find_spec(top)
     except Exception:
-        out["requested_module_ok"] = False
-for name in extra:
+        return False
+    if spec is None:
+        return False
+    places = list(spec.submodule_search_locations or [])
+    if spec.origin and spec.origin not in ("built-in", "frozen"):
+        places.append(spec.origin)
+    if project_root and any(_inside(p, project_root) for p in places):
+        return None
+    return True
+
+
+def _import_state(name):
     try:
         __import__(name)
-        out["modules_ok"][name] = True
+        return True
     except Exception:
-        out["modules_ok"][name] = False
+        return False
+
+
+_state = _spec_state if mode == "spec" else _import_state
+if module:
+    out["requested_module"] = module
+    out["requested_module_ok"] = _state(module)
+for name in extra:
+    out["modules_ok"][name] = _state(name)
 sys.stdout.write(json.dumps(out))
 """
 
@@ -428,8 +463,15 @@ def probe_environment(
     modules: tuple[str, ...] = (),
     bundled: bool = False,
     timeout: float | None = None,
+    import_mode: str = "import",
+    project_root: str = "",
 ) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
+
+    `import_mode="spec"`（用户点「运行」之前）：脚本要的模块**不 import**，只问顶层名的 `find_spec`，路径落在
+    `project_root` 里的回 `None`（延后到运行）。体检进程本身：cwd 是空的临时目录、`-c` 的 `sys.path[0]` 就是它——项目目录
+    不会隐式进 `sys.path`。第三方环境 `.pth` 里的可执行 `import` 行属于用户自己的环境（除非那个 `.pth` 本身在项目里，
+    那样它在 `site` 启动时就是项目代码，由 `userenvs.is_project_controlled` 的路径判据先拦下这个解释器）。
 
     只 import、不执行用户脚本、不装任何东西。`module` 给了就顺带确认那个包
     在这个环境里真的 import 得到——**「找到了 .venv」不等于「它能解决问题」**，
@@ -464,8 +506,9 @@ def probe_environment(
     # `-B` 不碰 sys.path / site / env，上面说的「与 worker 对齐」的几个维度一个都不变。
     argv = [python, *runtime.probe_args(bundled=bundled), "-c", _PROBE_SRC, engine_dir]
     argv.append(module or "")
-    if modules:
-        argv.append(",".join(modules))
+    argv.append(",".join(modules))
+    argv.append(import_mode if import_mode == "spec" else "")
+    argv.append(project_root if import_mode == "spec" else "")
     scratch = ""
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），

@@ -458,6 +458,14 @@
   跑不了才按既有排序落到下一个），`dependencies` 检查项是 `ok` + `detail.deferred="project_environment"`，主动作是 `run`（界面句子
   `line.readyProject`）；运行时体检跑不了 → 起会话那道依赖门回「需要输入」，`_done` 重新检查一次，报告带上常规的安装待办与影响摘要
   （受管环境）。其余候选（用户的 Conda / pyenv / 系统 / 登录 shell）行为不变。
+- **运行之前的体检不 import 脚本要的模块（Codex 安全 #820 r4234465621）**：可编辑安装（外部 venv 里 `.pth` 指向 `<项目>/src`）会把脚本的
+  `import payload` 解析进项目里，`__import__` 它就是执行项目代码。所以运行之前（`_evaluate_candidates` 的非项目说了算那一份、
+  `user_environment_offer`、`unknown_imports_missing(root=)`、采用前复核）用 `projectenv.probe_environment(import_mode="spec",
+  project_root=…)`：只问**顶层名**的 `find_spec`（点号名的 `find_spec` 会 import 父包，不用），`modules_ok` 里 `True` = 找得到且不在项目里、
+  `False` = 找不到、`None` = 路径落在项目根里 → `userenvs.evaluate` 回 `checked=False, deferred=True`，同项目说了算的候选一样等运行再量
+  （`project_check_pending` / 检测都看它）。`spec` 与 `import` 是缓存键的一维；`import` 的结论运行之前也可以信，反过来不行。体检进程的
+  cwd 是空的临时目录，项目目录不会隐式进 `sys.path`；第三方环境 `.pth` 里的可执行 `import` 行属于用户自己的环境（除非那个 `.pth` 本身
+  在项目里——那个解释器由 `is_project_controlled` 的路径判据先拦下）。真 `import`（含坏二进制 wheel 的发现）只在用户点「运行」之后。
 - **确认模式（`TAVOTTO_ENV_ADOPTION=confirm` 或设置 `worker.environment_adoption=confirm`）下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
   `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
   `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个

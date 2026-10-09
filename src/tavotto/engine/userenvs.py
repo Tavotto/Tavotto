@@ -582,41 +582,63 @@ _SOURCE_RANK = {
 _probe_cache: dict[tuple, dict] = {}
 
 
-def _cache_key(python: str, modules: tuple[str, ...], bundled: bool) -> tuple:
+def _cache_key(python: str, modules: tuple[str, ...], bundled: bool, mode: str = "import") -> tuple:
     """体检缓存的键：路径 + **环境代**（`projectenv.environment_generation`，与池 / 项目记录同一个"代"的概念）+ 要量的 import
-    + 是否内置。同一路径上被重建的环境换代，旧结论不再命中（Codex #820 r4233884149）。"""
+    + 是否内置 + 体检方式（`spec` = 运行之前不 import 的版本）。同一路径上被重建的环境换代，旧结论不再命中
+    （Codex #820 r4233884149）。"""
     from . import projectenv
 
-    return (_key(python), projectenv.environment_generation(python), modules, bundled)
+    return (_key(python), projectenv.environment_generation(python), modules, bundled, mode)
 
 
-def _probe(python: str, modules: tuple[str, ...], *, bundled: bool = False) -> dict:
+def _probe(
+    python: str,
+    modules: tuple[str, ...],
+    *,
+    bundled: bool = False,
+    mode: str = "import",
+    root: str = "",
+) -> dict:
     from . import projectenv
 
-    key = _cache_key(python, modules, bundled)
+    key = _cache_key(python, modules, bundled, mode)
     with _lock:
         hit = _probe_cache.get(key)
+        if hit is None and mode == "spec":
+            # 点过「运行」之后量过的 import 结论更强，运行之前也可以直接信
+            hit = _probe_cache.get(_cache_key(python, modules, bundled, "import"))
     if hit is not None:
         return hit
     # 只在内置 runtime 时才带这个参数：用户环境的体检调用形状与以前逐字相同
     extra = {"bundled": True} if bundled else {}
+    if mode == "spec":
+        extra.update(import_mode="spec", project_root=root)
     health = projectenv.probe_environment(python, modules=modules, **extra)
     with _lock:
         _probe_cache[key] = health
     return health
 
 
-def imports_missing(python: str, modules: list[str], *, bundled: bool = False) -> list[str]:
+def imports_missing(
+    python: str, modules: list[str], *, bundled: bool = False, root: str = ""
+) -> list[str]:
     """`modules` 里此刻这个解释器**确实** import 不到的那几个（ADR 0079 修订 2026-09-25）。
 
     与 `evaluate()` 同一条体检（同一个缓存）。判不出的不算缺：体检起不来、结果里没有这一项
     （`modules_ok` 只有真 import 过的才有 True / False）——拿「没量到」去触发发现，就是在一个
     根本没问过的解释器上替用户换环境。`bundled`：它是内置 runtime，按 worker 的环境与参数量
-    （`projectenv.probe_environment(bundled=True)`）。"""
+    （`projectenv.probe_environment(bundled=True)`）。
+
+    `root` 给了（运行之前）= 不 import、只 `find_spec`，落在项目里的（`None`）不算缺。"""
     mods = tuple(dict.fromkeys(m for m in modules if m))
     if not mods:
         return []
-    ok_map = _probe(python, mods, bundled=bundled).get("modules_ok") or {}
+    probed = (
+        _probe(python, mods, bundled=bundled, mode="spec", root=root)
+        if root
+        else _probe(python, mods, bundled=bundled)
+    )
+    ok_map = probed.get("modules_ok") or {}
     return [m for m in mods if ok_map.get(m) is False]
 
 
@@ -624,6 +646,8 @@ def cached_probe(python: str, modules: tuple[str, ...], *, bundled: bool = False
     """这个候选在这组 import 上**已有**的体检结论（只读缓存，没有回 None；不起任何进程）。"""
     with _lock:
         hit = _probe_cache.get(_cache_key(python, modules, bundled))
+        if hit is None:
+            hit = _probe_cache.get(_cache_key(python, modules, bundled, "spec"))
     return hit
 
 
@@ -634,9 +658,13 @@ def evaluate(
     *,
     use_cache: bool = True,
     cache_only: bool = False,
+    root: str = "",
 ) -> list[dict]:
     """逐个体检候选，回同顺序的结果表。`use_cache=False` 真起一次、不读也不写缓存：采用前的
     复核要的是此刻的环境，不是弹窗打开那一刻（或并发的另一次）体检。
+
+    `root` 给了（点「运行」之前）= 脚本要的模块不 import、只 `find_spec`，路径落在项目里的**延后**：该候选回「未检查」
+    （`checked=False`），与项目说了算的候选同一套机器（Codex 安全 #820 r4234465621）。
 
     `cache_only=True`（ADR 0114 §三）：**一个候选也不起**——有缓存结论的照常给，没有的回一条 `checked=False` 的
     「未检查」条目（`ok` / `satisfies` 都是 None，不冒充装齐也不冒充没装齐）；起候选解释器是明确的检查动作的事。
@@ -666,15 +694,41 @@ def evaluate(
                     "checked": False,
                 }
         elif use_cache:
-            health = _probe(cand["python"], imports)
+            health = (
+                _probe(cand["python"], imports, mode="spec", root=root)
+                if root
+                else _probe(cand["python"], imports)
+            )
         else:
             from . import projectenv
 
             # 不经缓存、也不回写：「先删缓存再走 `_probe`」不是原子的——删完放锁到 `_probe` 再读之间，
             # 并发的一次（更早开始的）体检可以把它的旧结论塞回去，复核于是收下一次过期的「装齐」
             # （Codex #562 P2）。回写同理会让在途的旧体检与这次新结论互相覆盖，所以这里只量、不记。
-            health = projectenv.probe_environment(cand["python"], modules=imports)
+            health = projectenv.probe_environment(
+                cand["python"],
+                modules=imports,
+                **({"import_mode": "spec", "project_root": root} if root else {}),
+            )
         ok_map = health.get("modules_ok") or {}
+        if (
+            health.get("ok")
+            and any(v is None for v in ok_map.values())
+            and not any(v is False for v in ok_map.values())
+        ):
+            # 有模块解析到了项目里（可编辑安装指向项目）：运行之前不 import，延后——不冒充装齐也不冒充没装齐
+            return {
+                **cand,
+                "ok": None,
+                "code": "",
+                "support": "",
+                "python_version": health.get("python_version", ""),
+                "matplotlib_version": "",
+                "missing": [],
+                "satisfies": None,
+                "checked": False,
+                "deferred": True,
+            }
         missing = sorted(
             {n["distribution"] for n in needed if ok_map.get(n.get("import_name")) is not True}
         )

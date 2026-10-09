@@ -217,7 +217,7 @@ def rig(tmp_path, monkeypatch):
     monkeypatch.setattr(engine_pool, "resolve_worker_python", resolve)
     monkeypatch.setattr(deprepair, "joint_plan_for", joint_plan_for)
     monkeypatch.setattr(deprepair, "private_python_target", lambda r, s: None)
-    monkeypatch.setattr(deprepair, "unknown_imports_missing", lambda plan, py: [])
+    monkeypatch.setattr(deprepair, "unknown_imports_missing", lambda plan, py, root="": [])
     monkeypatch.setattr(
         deprepair,
         "user_environment_candidates",
@@ -1302,6 +1302,79 @@ def test_the_run_acquires_the_planned_interpreter_even_if_the_record_moves_just_
         assert _env_root(worker.python) == _env_root(planned), "跑进了另一个解释器"
     else:
         assert final["phase"] != "completed", final
+
+
+def _editable_world(tmp_path: Path):
+    """Codex 安全 #820 r4234465621：项目外的 venv 装了指向 `<项目>/src` 的 .pth（可编辑安装），`payload/__init__.py` 在被
+    import 时写哨兵。脚本 `import payload`——import 它就是执行项目代码。"""
+    root = tmp_path / "proj"
+    (root / "src" / "payload").mkdir(parents=True)
+    marker = tmp_path / "payload-ran"
+    (root / "src" / "payload" / "__init__.py").write_text(
+        f"open({str(marker)!r}, 'w').write('x')\n", "utf-8"
+    )
+    (root / "fig.py").write_text(
+        "import payload\nimport matplotlib.pyplot as plt\nplt.plot([1])\nplt.savefig('o.pdf')\n",
+        "utf-8",
+    )
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    (next((base / "lab" / "lib").glob("python*")) / "site-packages" / "proj.pth").write_text(
+        str(root / "src") + "\n", "utf-8"
+    )
+    return root, marker, py, base
+
+
+@posix_only
+@needs_worker
+def test_the_pre_run_probe_never_imports_modules_that_resolve_into_the_project(tmp_path):
+    root, marker, py, _base = _editable_world(tmp_path)
+    spec = projectenv.probe_environment(
+        py, modules=("payload", "json"), import_mode="spec", project_root=str(root)
+    )
+    assert not marker.exists(), "运行之前的体检 import 了项目里的模块"
+    assert spec["modules_ok"] == {"payload": None, "json": True}
+    # 对照（尺子是活的）：import 方式真的会执行它
+    projectenv.probe_environment(py, modules=("payload",))
+    assert marker.exists()
+
+
+def test_the_spec_probe_source_has_no_import_of_requested_modules():
+    """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
+    src = projectenv._PROBE_SRC
+    start = src.index("def _spec_state")
+    body = src[start : src.index("def _import_state")]
+    assert "__import__" not in body and "import_module" not in body
+    assert 'name.split(".")[0]' in body
+
+
+@posix_only
+@needs_worker
+def test_check_defers_imports_that_resolve_into_the_project_and_run_is_the_consent(
+    tmp_path, monkeypatch
+):
+    root, marker, py, base = _editable_world(tmp_path)
+    monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
+    userenvs.reset_cache()
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+    )
+    deprepair.decide_environment_pinned(root, "fig.py", project_exec=False)
+    assert not marker.exists(), "检查阶段执行了项目里的代码"
+    assert projectenv.remembered_record(root) is None
+    del plan
+    # 点了运行：同意体检，import 它（项目代码在这时才跑）
+    deprepair.decide_environment(root, "fig.py")
+    assert marker.exists()
 
 
 @needs_worker

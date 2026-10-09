@@ -5323,7 +5323,8 @@ def _evaluate_candidates(
     held = [userenvs.is_project_controlled(c, root) for c in candidates]
     live_in = [c for c, h in zip(candidates, held) if not h]
     cached_in = [c for c, h in zip(candidates, held) if h]
-    live = userenvs.evaluate(live_in, needed, unknown, **extra)
+    # 运行之前：脚本要的模块不 import（落在项目里的延后），见 `userenvs.evaluate(root=)`
+    live = userenvs.evaluate(live_in, needed, unknown, root=root, **extra)
     cached = userenvs.evaluate(cached_in, needed, unknown, **{**extra, "cache_only": True})
     by_id = {id(c): e for c, e in zip(live_in, live)}
     by_id.update({id(c): e for c, e in zip(cached_in, cached)})
@@ -5348,15 +5349,21 @@ def project_check_pending(project: str | Path, script: str, plan_payload: dict) 
     needed, unknown = _plan_imports(plan_payload)
     if not needed and not unknown:
         return False
-    held = [
+    candidates = [
         c
         for c in user_environment_candidates(root, script)
-        if userenvs.is_project_controlled(c, root) and not envlease.is_mutating(c["python"])
+        if not envlease.is_mutating(c["python"])
     ]
-    if not held:
-        return False
-    return any(
+    held = [c for c in candidates if userenvs.is_project_controlled(c, root)]
+    free = [c for c in candidates if c not in held]
+    # 项目说了算的候选还没体检；或别的候选已经体检（不 import）过、有模块解析进了项目——都等运行再量
+    if held and any(
         e.get("checked") is False for e in userenvs.evaluate(held, needed, unknown, cache_only=True)
+    ):
+        return True
+    return bool(free) and any(
+        e.get("deferred")
+        for e in userenvs.evaluate(free, needed, unknown, cache_only=True, root=root)
     )
 
 
@@ -5382,7 +5389,7 @@ def _user_env_discovery_off() -> bool:
     return projectenv.auto_adoption_off()
 
 
-def unknown_imports_missing(plan: dict, python: str) -> list[str]:
+def unknown_imports_missing(plan: dict, python: str, root: str = "") -> list[str]:
     """计划里映射不到包名的无条件 import，此刻的解释器里**确实** import 不到的那几个（ADR 0079 修订
     2026-09-25，QA ENV-08-B1）。
 
@@ -5397,7 +5404,7 @@ def unknown_imports_missing(plan: dict, python: str) -> list[str]:
         return []
     # 内置 runtime 由 worker 按 `runtime.child_env()` / `child_args()` 起：体检用同一套（Codex #609 P2）
     bundled = pool.same_python(python, runtime.bundled_python())
-    return userenvs.imports_missing(python, unknown, bundled=bundled)
+    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root)
 
 
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
@@ -5503,7 +5510,7 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
     elif joint.status == depplan.STATUS_NOTHING_NEEDED and not clean:
         # 没有能装的，但有映射不到包名、此刻又确实 import 不到的：同样的三步去找用户环境（只找、只改用，
         # 仍不装）。门不因此弹框——弹窗是「授权安装」，这里没有可装的东西；决定在 `decide_environment`
-        unknown_missing = unknown_imports_missing(plan_payload, python)
+        unknown_missing = unknown_imports_missing(plan_payload, python, root)
         if unknown_missing:
             user_envs = user_environment_offer(root, script, plan_payload, python)
     # 授权的实际影响（T06）：只有真能授权的计划才有——与 `create_joint_plan` 绑定出的计划同一个函数算出，
@@ -5690,7 +5697,7 @@ def _detect_environment_unlocked(
     runs_now = (
         not clean
         and joint.status == depplan.STATUS_NOTHING_NEEDED
-        and not unknown_imports_missing(plan, python)
+        and not unknown_imports_missing(plan, python, "" if project_exec else root)
     )
     needed, unknown = _plan_imports(plan)
     candidates = user_environment_candidates(root, script, exclude=current or python)
@@ -5726,13 +5733,22 @@ def _detect_environment_unlocked(
     entry = None
     if candidates and not _user_env_discovery_off():
         entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
+        if not project_exec and any(e.get("deferred") for e in entries):
+            # 有候选的某个模块解析进了项目（可编辑安装指向项目）：运行之前不 import，它的结论延后——这一轮不采用排在后面的
+            return None
         while True:
             entry = userenvs.best(entries, Path(root).name)
             if entry is None or not _reprobe_needed(entry, root, project_exec):
                 break
             # 缓存里的"装齐"结论来自过去的某一刻（装包被卸掉不换代）：记下之前现量一次，量不过就换下一个
             # （Codex #820 r4233884149）。项目说了算的候选在运行之前不能现量，只信带环境代的缓存
-            fresh = userenvs.evaluate([entry], needed, unknown, use_cache=False)[0]
+            fresh = userenvs.evaluate(
+                [entry],
+                needed,
+                unknown,
+                use_cache=False,
+                **({} if project_exec else {"root": root}),
+            )[0]
             if fresh.get("satisfies"):
                 entry = {**entry, **fresh}
                 break

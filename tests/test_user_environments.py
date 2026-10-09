@@ -659,7 +659,7 @@ def adopt_api(project, client, monkeypatch, tmp_path):
     )
     state = {"has_openpyxl": True}
 
-    def probe(python, module=None, *, modules=()):
+    def probe(python, module=None, *, modules=(), **kw):
         return {
             "ok": True,
             "code": "",
@@ -790,7 +790,7 @@ def test_the_recheck_measures_everything_the_script_needs_not_only_the_current_g
     )
     probed = []
 
-    def probe(python, module=None, *, modules=()):
+    def probe(python, module=None, *, modules=(), **kw):
         probed.append(tuple(modules))
         return {
             "ok": True,
