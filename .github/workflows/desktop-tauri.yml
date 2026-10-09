@@ -54,6 +54,19 @@ on:
         required: false
         default: false
         type: boolean
+      signing-mode:
+        description: >-
+          Windows SignPath 签名模式。'wait'（默认）：提交后等待签名完成，
+          适合测试证书或能及时手动批准的场景。'submit-only'：只提交签名请求
+          不等待，把审批链接输出到 step summary，由人工在 SignPath UI 批准后，
+          再手动触发 complete-windows-signing.yml 完成下载/校验/重打更新包。
+          生产证书要求每次手动批准，长时间等待会占住 runner，用 submit-only 拆开。
+        required: false
+        default: 'wait'
+        type: choice
+        options:
+          - 'wait'
+          - 'submit-only'
     # **每一个 secret 都显式声明。** `secrets: inherit` 只能写在**调用方**
     # （`jobs.<id>.secrets: inherit`），写在被调用方是语法错误——actionlint
     # 当场逮到了。显式列一遍还有第二个好处：这份清单就是「桌面发布链需要
@@ -698,13 +711,51 @@ jobs:
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
           artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
           github-artifact-id: ${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}
-          wait-for-completion: true
+          # submit-only 模式：只提交不等待，人工批准后由 complete-windows-signing.yml 接手。
+          # wait 模式：等待签名完成（默认，适合测试证书）。
+          wait-for-completion: ${{ inputs.signing-mode != 'submit-only' }}
           output-artifact-directory: signed-out
           parameters: |
             version: "${{ env.APP_VERSION }}"
 
+      - name: 输出签名审批链接（submit-only 模式）
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode == 'submit-only'
+        shell: pwsh
+        run: |
+          $requestId = "${{ steps.signpath-windows.outputs.signing-request-id }}"
+          $webUrl = "${{ steps.signpath-windows.outputs.signing-request-web-url }}"
+          Write-Host "SignPath 签名请求已提交，等待人工批准：$webUrl"
+          @{
+            signing_request_id = $requestId
+            signing_request_web_url = $webUrl
+            app_version = "$env:APP_VERSION"
+            source_run_id = "$env:GITHUB_RUN_ID"
+            submitted_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+          } | ConvertTo-Json | Out-File -FilePath "signpath-pending.json" -Encoding utf8
+          Get-Content "signpath-pending.json"
+          {
+            echo "## 等待人工批准 Windows 签名"
+            echo ""
+            echo "签名请求已提交到 SignPath，**请在 SignPath UI 手动批准**（生产证书要求每次手动批准）："
+            echo ""
+            echo "$webUrl"
+            echo ""
+            echo "批准后，手动触发 complete-windows-signing.yml workflow 完成后续步骤，填入："
+            echo "- signing-request-id: $requestId"
+            echo "- source-run-id: $env:GITHUB_RUN_ID"
+            echo "- app-version: $env:APP_VERSION"
+          } >> $env:GITHUB_STEP_SUMMARY
+
+      - name: 上传待签名信息（submit-only 模式）
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode == 'submit-only'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: signpath-pending-${{ github.run_id }}
+          path: signpath-pending.json
+          if-no-files-found: error
+
       - name: 替换为 SignPath 签名结果
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode != 'submit-only'
         shell: pwsh
         run: |
           $signed = @(Get-ChildItem signed-out -Recurse -File -Filter "Tavotto-$env:APP_VERSION-Windows-Setup.exe")
@@ -738,7 +789,7 @@ jobs:
         # 装出去的每一次应用内更新都会在下载完成后报「无法安装更新」——
         # v0.7.0 到 v0.10.0 的 Windows 更新包全是这么坏的，而整条链全绿。
         # 判据与复现记录见 make_updater_zip.py 抬头与 tests/test_updater_zip.py。
-        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != '' && inputs.signing-mode != 'submit-only'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
