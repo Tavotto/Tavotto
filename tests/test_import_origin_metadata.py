@@ -1099,7 +1099,7 @@ class TestSeveralProviders:
 
     @pytest.mark.parametrize("upper", ["none", "ns", "pkg"])
     def test_a_top_level_only_provider_whose_shape_cannot_be_read_is_ambiguous_never_unique(
-        self, tmp_path, upper
+        self, tmp_path, monkeypatch, upper
     ):
         base = tmp_path / "base"
         base_site = base / SP_REL
@@ -1112,22 +1112,28 @@ class TestSeveralProviders:
         # 上层元数据说有 lyr、磁盘上却没有（或形状读不了）；下层是常规包
         self._top_only_layer(site, "none", "u")
         if upper == "pkg":
-            os.symlink(tmp_path, site / "lyr")  # 目录链接：拒绝跟进 = 形状推不出
+            # 目录链接：拒绝跟进 = 形状推不出
+            os.symlink(tmp_path, site / "lyr", target_is_directory=True)
         elif upper == "ns":
+            # 目录在、清单读不了。不用 chmod 0：Windows 上 chmod 只管只读位，挡不住 scandir
             (site / "lyr").mkdir()
-            os.chmod(site / "lyr", 0)
+            real_scandir = os.scandir
+            blocked = str(site / "lyr")
+
+            def scandir(path=".", *a, **k):
+                if os.fspath(path) == blocked:
+                    raise PermissionError(13, "denied", blocked)
+                return real_scandir(path, *a, **k)
+
+            monkeypatch.setattr(os, "scandir", scandir)
         self._top_only_layer(base_site, "pkg", "l")
-        try:
-            idx = _index(prefix, include_base=True)
-            look = idx.lookup("lyr")
-            assert look.order_unresolved
-            assert not any(c.shadowed for c in look.candidates)
-            got = _scan(tmp_path, "import lyr\n", idx)["lyr"]
-            assert got.distribution_status == "module_origin_ambiguous"
-            assert "layer_order_unresolved" in got.compatibility
-        finally:
-            if upper == "ns":
-                os.chmod(site / "lyr", 0o755)
+        idx = _index(prefix, include_base=True)
+        look = idx.lookup("lyr")
+        assert look.order_unresolved
+        assert not any(c.shadowed for c in look.candidates)
+        got = _scan(tmp_path, "import lyr\n", idx)["lyr"]
+        assert got.distribution_status == "module_origin_ambiguous"
+        assert "layer_order_unresolved" in got.compatibility
 
     def test_a_single_top_level_only_provider_with_an_unknown_shape_is_still_the_one_candidate(
         self, tmp_path
