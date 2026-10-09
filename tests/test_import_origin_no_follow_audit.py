@@ -20,9 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import importscan
+from tavotto.engine import distmeta, importscan
 
 SRC = Path(importscan.__file__)
+SRC_DISTMETA = Path(distmeta.__file__)
 
 # ----------------------------------------------------------------------------------- 结构性
 
@@ -41,6 +42,7 @@ _PURE_OS = {
     "os.sep",
     "os.pardir",
     "os.stat_result",
+    "os.PathLike",  # 类型注解
 }
 
 # 会触碰文件系统元数据的调用。键 = 点分名（os.* / projectenv.* / scanbudget.*）或 ".方法名"（任意接收者）。
@@ -80,6 +82,30 @@ _ALLOW: dict[str, dict[str, str]] = {
         "_Finder.guard": "只做逐级 lstat",
     },
 }
+# distmeta.py（读用户环境目录里的 dist-info / egg-link / conda-meta）同样受审。它的调用本来就几乎都不跟随：
+# 条目只取 entry.stat(follow_symlinks=False)，其余先 os.lstat 再动；没有 os.walk / Path.* / DirEntry.is_dir()。
+_ALLOW_DISTMETA: dict[str, dict[str, str]] = {
+    "os.lstat": {
+        "_dir_state": "lstat 本身不跟随；链接 / junction / 文件一律判 refused，不 stat 目标",
+        "_Reader._read_state": "lstat 取类型 / 大小，链接与占位文件在读之前拒掉",
+        "_probe_shape": "lstat 判 redirect，链接就不 scandir（返回 unknown）",
+    },
+    "os.listdir": {
+        "_layout_dirs": "参数 lib 刚被 _dir_state 判为真目录（非链接）才列；只取名字，不 stat 各项",
+        "_read_conda_meta": "参数 meta_dir 刚被 _dir_state 判为真目录（非链接）才列；只取名字，不 stat 各项",
+    },
+    "os.scandir": {
+        "_list_root": "root.path 来自 _layout_dirs 逐级 _dir_state 守卫 / 项目内显式根；目录项只取 e.stat(follow_symlinks=False)",
+        "_probe_shape": "先 os.lstat 判非 redirect 才 scandir；只用 e.name，不 stat 目录项",
+    },
+    "scanbudget.read_regular_text": {
+        "_site_packages_state": "no_follow=True：逐级 lstat + O_NOFOLLOW 读 pyvenv.cfg",
+        "_Reader._read_state": "no_follow=True：lstat 过滤之后再 O_NOFOLLOW 读",
+    },
+    "scanbudget.redirected_component": {
+        "_site_packages_state": "只做逐级 lstat，找出 prefix 里被重定向的那一级",
+    },
+}
 # 带 follow_symlinks 关键字的方法：必须显式 False（不论接收者是什么，宁可错杀）
 _KW_METHODS = {"is_dir", "is_file", "stat"}
 # 其它「碰元数据 / 内容」的方法：任何接收者都只许白名单
@@ -116,7 +142,8 @@ def _dotted(node: ast.AST) -> str | None:
 
 
 class _Auditor(ast.NodeVisitor):
-    def __init__(self) -> None:
+    def __init__(self, allow: dict[str, dict[str, str]] | None = None) -> None:
+        self.allow = _ALLOW if allow is None else allow
         self.stack: list[str] = []
         self.used: set[tuple[str, str]] = set()
         self.bad: list[str] = []
@@ -144,7 +171,7 @@ class _Auditor(ast.NodeVisitor):
 
     def _allowed(self, key: str, lineno: int) -> None:
         where = self._where()
-        if where in _ALLOW.get(key, {}):
+        if where in self.allow.get(key, {}):
             self.used.add((key, where))
         else:
             self.bad.append(f"{lineno}: {key} 出现在 {where}，不在白名单")
@@ -161,7 +188,7 @@ class _Auditor(ast.NodeVisitor):
             else:
                 self._allowed(name, node.lineno)
             return  # 不再下钻（os.path.realpath 里的 os.path）
-        if name and name.split(".")[0] in _TRACKED_MODULES and name in _ALLOW:
+        if name and name.split(".")[0] in _TRACKED_MODULES and name in self.allow:
             self._allowed(name, node.lineno)
         elif name and name.split(".")[0] in _TRACKED_MODULES and name.split(".")[0] == "projectenv":
             # projectenv 里除 within / contained_path 之外的成员本模块不用；用了就必须先审
@@ -198,31 +225,50 @@ class _Auditor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def _audit() -> _Auditor:
-    a = _Auditor()
-    a.visit(ast.parse(SRC.read_text(encoding="utf-8")))
+# (源文件, 白名单)：importscan 与 distmeta 同受一套审计——它们读的都是用户环境 / 项目里不受信的目录
+_TARGETS = [
+    pytest.param(SRC, _ALLOW, id="importscan"),
+    pytest.param(SRC_DISTMETA, _ALLOW_DISTMETA, id="distmeta"),
+]
+
+
+def _audit(src: Path = SRC, allow: dict[str, dict[str, str]] | None = None) -> _Auditor:
+    a = _Auditor(allow)
+    a.visit(ast.parse(src.read_text(encoding="utf-8")))
     return a
 
 
 class TestFollowingCallsAreAudited:
-    def test_every_filesystem_touching_call_is_non_following_or_whitelisted(self):
-        a = _audit()
+    @pytest.mark.parametrize(("src", "allow"), _TARGETS)
+    def test_every_filesystem_touching_call_is_non_following_or_whitelisted(self, src, allow):
+        a = _audit(src, allow)
         assert a.bad == []
 
-    def test_the_whitelist_has_no_stale_entries_and_every_entry_has_a_reason(self):
-        a = _audit()
-        declared = {(k, fn) for k, v in _ALLOW.items() for fn in v}
+    @pytest.mark.parametrize(("src", "allow"), _TARGETS)
+    def test_the_whitelist_has_no_stale_entries_and_every_entry_has_a_reason(self, src, allow):
+        a = _audit(src, allow)
+        declared = {(k, fn) for k, v in allow.items() for fn in v}
         assert declared == a.used, sorted(declared ^ a.used)
-        assert all(len(r) >= 8 for v in _ALLOW.values() for r in v.values())
+        assert all(len(r) >= 8 for v in allow.values() for r in v.values())
 
-    def test_no_direntry_follow_default_in_the_listing_functions(self):
+    @pytest.mark.parametrize(
+        ("src", "names"),
+        [
+            (SRC, ("listing", "_package_files", "walk")),
+            (SRC_DISTMETA, ("_list_root", "_probe_shape")),
+        ],
+    )
+    def test_no_direntry_follow_default_in_the_listing_functions(self, src, names):
         """正面钉住这次的病根：列目录那段只许 `entry.stat(follow_symlinks=False)`，不许 is_dir / is_file。"""
-        tree = ast.parse(SRC.read_text(encoding="utf-8"))
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+        found = 0
         for fn in ast.walk(tree):
-            if isinstance(fn, ast.FunctionDef) and fn.name in ("listing", "_package_files", "walk"):
+            if isinstance(fn, ast.FunctionDef) and fn.name in names:
+                found += 1
                 for n in ast.walk(fn):
                     if isinstance(n, ast.Attribute):
                         assert n.attr not in ("is_dir", "is_file"), fn.name
+        assert found >= 1, names
 
     def test_the_auditor_catches_the_shapes_it_claims_to(self):
         bad = ast.parse(

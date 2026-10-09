@@ -146,10 +146,10 @@ def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflo
     # CI03a 起 matrix 是轴（python × shard），解析器回的是 {轴: 值}，不再是 include 列表
     assert live_workflow["backend-fast"]["matrix"] == {
         "python": ["3.10", "3.13", "3.14"],
-        "shard": ["1", "2"],
+        "shard": ["1", "2", "3"],
     }
-    # backend-platforms 2026-09-30 起是 3 片（backend-fast 仍是 2 片；两个 job 片数不必
-    # 相同，理由见 docs/rules/ci/pytest-shards.md）。
+    # backend-platforms 2026-09-30、backend-fast 2026-10-09 起各为 3 片；两个 job
+    # 片数不必相同，理由见 docs/rules/ci/pytest-shards.md。
     assert live_workflow["backend-platforms"]["matrix"] == {
         "os": ["macos-latest", "windows-latest"],
         "shard": ["1", "2", "3"],
@@ -161,7 +161,7 @@ def test_sharded_display_names_map_back_to_the_job_id(live_workflow):
     ——矩阵的值按轴顺序排进括号，os 不在轴上就不出现。仍要映射回 job id，否则下一轮
     基线采集会把这两个 job 的时间算丢。"""
     assert CB.display_to_job_id("backend-fast (3.10, 1)", live_workflow) == "backend-fast"
-    assert CB.display_to_job_id("backend-fast (3.14, 2)", live_workflow) == "backend-fast"
+    assert CB.display_to_job_id("backend-fast (3.14, 3)", live_workflow) == "backend-fast"
     assert CB.display_to_job_id("backend-platforms (windows-latest, 2)", live_workflow) == (
         "backend-platforms"
     )
