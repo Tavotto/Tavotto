@@ -141,8 +141,8 @@ def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflo
     heavy = live_workflow["ci-integration-gate"]
     assert fast["name"] == "CI fast gate" and heavy["name"] == "CI integration gate"
     assert "backend-fast" in fast["needs"] and "backend-fast" not in heavy["needs"]
-    # 2026-09-25 从 40 抬到 60 止血（#636）
-    assert live_workflow["backend-fast"]["timeout_minutes"] == 60
+    # 2026-09-25 从 40 抬到 60 止血（#636）；2026-10-09 套件继续变大、合并组每片实测近 60，再抬到 90
+    assert live_workflow["backend-fast"]["timeout_minutes"] == 90
     # CI03a 起 matrix 是轴（python × shard），解析器回的是 {轴: 值}，不再是 include 列表
     assert live_workflow["backend-fast"]["matrix"] == {
         "python": ["3.10", "3.13", "3.14"],
