@@ -163,4 +163,38 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
     expect(miss(['--', 'plot'])).toBe(false)
     expect(miss(['--mystery', 'plot'])).toBe(false) // 不认识的选项：拿不准，当选了
   })
+  it('子命令前的位置参数先吃位置 token：`name plot` 才算选了（r4232654895）', () => {
+    const name = { ...base.arguments[0], id: 'name', flags: [], required: true, positional: true, arity: 1 as const, nargs: null, action: 'store', group: null }
+    const sub = {
+      ...base,
+      arguments: [name],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    } as ScriptArgsSchema
+    const miss = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t).subcommand
+    expect(miss(['plot'])).toBe(true) // `plot` 是 name，子命令还没选
+    expect(miss(['x'])).toBe(true)
+    expect(miss(['x', 'plot'])).toBe(false)
+    // 前面有变长位置参数：说不清吃几个，拿不准当选了
+    const rest = { ...name, arity: null, nargs: '*' }
+    const loose = { ...sub, arguments: [rest] } as unknown as ScriptArgsSchema
+    expect(missingRequirements(loose, readTokens(loose, ['plot']), ['plot']).subcommand).toBe(false)
+  })
+
+  it('必选互斥组：成员只写了选项名没给值（incomplete）不算满足（r4232654901）', () => {
+    const grp = {
+      ...base,
+      arguments: [
+        { ...base.arguments[0], id: 'output', flags: ['--output'], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: 'gx' },
+        { ...base.arguments[0], id: 'json', flags: ['--json'], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: 'gx' },
+      ],
+      exclusive_groups: [{ id: 'gx', required: true, members: ['output', 'json'] }],
+      subcommands: null,
+    } as ScriptArgsSchema
+    const view = readTokens(grp, ['--output'])
+    expect(view.fields.output).toMatchObject({ state: 'value', incomplete: true })
+    expect(missingRequirements(grp, view).groups).toEqual(['gx'])
+    expect(groupProblems(grp, view).map((p) => p.problem)).toEqual(['missing'])
+    expect(missingRequirements(grp, readTokens(grp, ['--output', 'a'])).groups).toEqual([])
+  })
 })

@@ -374,7 +374,13 @@ export const subcommandMissing = (schema: ScriptArgsSchema, tokens: string[]): b
   const sub = schema.subcommands
   if (!sub || !sub.required) return false
   const s = scan(schema, tokens)
-  const positional = s.positionalIdx.map((j) => tokens[j])
+  let positional = s.positionalIdx.map((j) => tokens[j])
+  // 子命令前面的位置参数（`name` 然后 `{plot,stats}`）会先吃掉位置 token：`['plot']` 是 `name`，子命令仍没选。
+  // 前面的位置参数全是定长才能数得准；有变长（`*` `+` `?` REMAINDER）说不清吃几个，沿用「拿不准就当选了」
+  const preceding = positionalArgs(schema)
+  if (preceding.length > 0 && preceding.every((a) => typeof a.arity === 'number' && a.arity >= 1)) {
+    positional = positional.slice(preceding.reduce((n, a) => n + (a.arity as number), 0))
+  }
   const chosen =
     !sub.dynamic && sub.choices.length > 0 ? positional.some((t) => sub.choices.includes(t)) : positional.length > 0
   if (chosen) return false
@@ -412,7 +418,8 @@ export const missingRequirements = (
     if (!g.required) continue
     const fs = g.members.map((m) => view.fields[m])
     if (fs.some((f) => !f || f.uncertain)) continue
-    if (fs.every((f) => f.state === 'unset')) groups.push(g.id)
+    // 成员只写了选项名、值还没给（incomplete）不算答案：运行时 argparse 会报缺值
+    if (fs.every((f) => f.state === 'unset' || f.incomplete)) groups.push(g.id)
   }
   const subcommand = tokens !== undefined && subcommandMissing(schema, tokens)
   return { args, groups, subcommand, count: args.length + groups.length + (subcommand ? 1 : 0) }
@@ -434,7 +441,7 @@ export const groupProblems = (
       return s !== undefined && s !== 'unset'
     })
     if (set.length > 1) out.push({ id: g.id, problem: 'conflict', members: set })
-    else if (g.required && set.length === 0) out.push({ id: g.id, problem: 'missing', members: g.members })
+    else if (g.required && !set.some((m) => !view.fields[m]?.incomplete)) out.push({ id: g.id, problem: 'missing', members: g.members })
   }
   return out
 }
