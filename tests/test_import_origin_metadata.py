@@ -524,7 +524,50 @@ class TestEditableAndNonReproducibleSources:
     def test_a_readable_pth_alone_does_not_make_the_scan_incomplete(self, tmp_path):
         prefix, site = _env(tmp_path)
         _write(site / "ok.pth", "import sys\n")
-        assert _index(prefix).complete
+        idx = _index(prefix)
+        assert idx.complete
+        assert idx.uncovered_paths == 1  # 没建模的 import 行：计数，不假装看过
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "import sys; sys.path.insert(0, {outside!r})",
+            "import mypkg_hook",
+            "import __editable___x_finder; import sys; sys.path.insert(0, {outside!r})",
+            "import __editable___x_finder; __editable___x_finder.install(); import sys",
+        ],
+    )
+    def test_an_unmodelled_import_line_in_a_pth_makes_unfound_modules_not_checked(
+        self, tmp_path, line
+    ):
+        prefix, site = _env(tmp_path)
+        outside = tmp_path / "elsewhere"
+        _write(outside / "viahook.py", "X = 1\n")
+        _write(site / "hook.pth", line.format(outside=str(outside)) + "\n")
+        if line.startswith("import sys; sys.path"):
+            # 真解释器：Python 执行这一行，目录外的模块因此可导入
+            code = "import site, sys; site.addsitedir(sys.argv[1]); import viahook"
+            subprocess.run(
+                [sys.executable, "-I", "-S", "-c", code, str(site)], check=True, capture_output=True
+            )
+        idx = _index(prefix)
+        assert idx.uncovered_paths == 1
+        got = _scan(tmp_path, "import viahook\n", idx)["viahook"]
+        assert got.distribution_status == "environment_not_checked"
+        assert "path_entries_not_followed" in got.compatibility
+
+    def test_the_modelled_editable_finder_line_is_still_covered(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _write(
+            site / "__editable__.solo-2.0.pth",
+            "import __editable___solo_2_0_finder; __editable___solo_2_0_finder.install()\n",
+        )
+        _write(site / "__editable___solo_2_0_finder.py", "MAPPING = {'solomod': '/x/solomod'}\n")
+        idx = _index(prefix)
+        assert idx.uncovered_paths == 0
+        got = _scan(tmp_path, "import solomod\nimport nothere\n", idx)
+        assert got["solomod"].distribution_status == "editable_dependency_not_reproducible"
+        assert got["nothere"].distribution_status == "not_installed"
 
     def test_a_direct_url_that_does_not_exist_is_still_an_index_install(self, tmp_path):
         prefix, site = _env(tmp_path)

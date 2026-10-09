@@ -12,7 +12,7 @@
   不 import / exec / eval 任何站点里的东西，不调 `importlib.metadata` / `find_spec`，不起子进程，不联网；
 * `.pth` 只当**文本**解析：`import …` 行一律不执行，只从 `__editable___*_finder` 这个名字去读**同一个
   site-packages 里**的 finder 源码，且用 `ast.parse` + `ast.literal_eval` 取 `MAPPING` 字面量（不是 exec）；
-  路径行（指向 site-packages 之外）**不跟进、不 stat**，只计数——数量非零时「没查到」不再等于「没装」；
+  路径行（指向 site-packages 之外）和任何没建模的 `import …` 行（Python 启动时会执行它）**不跟进、不执行**，只计数——数量非零时「没查到」不再等于「没装」；
 * 读的范围：环境前缀下的 `pyvenv.cfg`、`lib/pythonX.Y/site-packages`（Windows `Lib/site-packages`）、`conda-meta/*.json`
   （Conda 环境，只读 `name` / `version` / `files`）。可选的基础解释器 site-packages（`include_base`，默认关）
   只在调用方明确要求且 `pyvenv.cfg` 声明 `include-system-site-packages = true` 时才列；
@@ -161,7 +161,9 @@ _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+!_*-]{0,63}$")
 _PYDIR_RE = re.compile(r"^python3\.\d{1,2}t?$")
 _PYVER_RE = re.compile(r"^(\d{1,2})\.(\d{1,3})(?![0-9])")
 _EXT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z0-9_-]+)*\.(?:so|pyd)$")
-_FINDER_RE = re.compile(r"\b(__editable___[A-Za-z0-9_]+_finder)\b")
+_FINDER_LINE_RE = re.compile(
+    r"import\s+(__editable___[A-Za-z0-9_]+_finder)\s*;\s*\1\s*\.\s*install\s*\(\s*\)\s*;?"
+)
 _SKIP_ENTRIES = ("__pycache__",)
 
 
@@ -947,7 +949,7 @@ def _read_conda_meta(rd: _Reader, prefix: str, roots: Sequence[SiteRoot]) -> lis
 
 
 def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist]) -> None:
-    """`.pth` 当文本：`import` 行不执行；`__editable___*_finder` 读同一目录里的 finder 源码取 MAPPING；
+    """`.pth` 当文本：`import` 行不执行（只认 editable finder 的已建模形式，其余计入 uncovered）；`__editable___*_finder` 读同一目录里的 finder 源码取 MAPPING；
     路径行不跟进（计数）。"""
     by_key = {
         d.key: d
@@ -963,9 +965,12 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
-            if line.startswith(("import ", "import\t")):
-                finders += _FINDER_RE.findall(line)
+            m = _FINDER_LINE_RE.fullmatch(line) if pth.startswith("__editable__.") else None
+            if m is not None:
+                finders.append(m.group(1))  # 已建模形式：setuptools 的 editable finder 安装行
             else:
+                # 路径行（指向 site-packages 之外）和任何没建模的 `import …` 行（Python 会执行它：
+                # 改 sys.path、装自定义 finder……）都可能让目录外的模块可导入：计数，「没查到」不再等于「没装」
                 rd.uncovered += 1
         if not pth.startswith("__editable__."):
             continue
