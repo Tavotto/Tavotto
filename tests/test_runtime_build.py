@@ -960,24 +960,24 @@ def test_release_signing_gate_still_hard_fails_on_everything_but_authenticode():
     assert "exit 1" in step, "凑齐 missing 之后必须真的退出非零"
     # 例外只有这一个，而且不许扩散到别处
     assert "SIGNPATH" not in joined, (
-        "SignPath 是自觉的例外（见 docs/code-signing-policy.md），不该回到硬失败；"
+        "SignPath 不走 missing 列表：它有独立的 fail-closed 分支"
         "要恢复的话连同这条用例一起改"
     )
 
 
-def test_unsigned_windows_release_is_loud_not_silent():
-    """降级成 warning 的那一支必须**看得见**，否则就是 P1-07 原本要挡的东西。
+def test_unsigned_windows_release_is_fail_closed():
+    """未签名的 Windows 发行构建会被直接拦停（fail-closed），不再是 warning 放行。
 
-    审计 P1-07 的真正指控不是「没签名」，是「没签名而且工作流全绿」。所以
-    例外成立的前提是它自己会喊：运行页顶部一条 annotation + job summary 里
+    vars.SIGNPATH_ENABLED 未开启时，发行构建的 Windows 安装包没有 Authenticode 签名，
+    门禁必须打出 ::error（而不是 ::warning）、往作业摘要写明拦停原因，然后 exit 1 拦停发行。
     一段说明。把这两样删掉，这道门禁就退化成一句注释。
     """
     step = _release_signing_gate()
-    assert "::warning" in step, "未签名的发行必须在运行页顶部留下 annotation"
-    assert "GITHUB_STEP_SUMMARY" in step, (
-        "还要写进 job summary——日志第 33 步里的一行 warning 没人会翻到"
+    assert "::error" in step, "未签名的 Windows 发行必须打出 ::error"
+    assert "::warning" not in step, "未签名不再是 warning 放行：门禁里不该再有 ::warning"
+    assert "exit 1" in step, "门禁必须 exit 1 拦停发行"
     )
-    assert "minisign" in step, "摘要要说清更新链仍可信，否则读的人会以为自动更新也不安全了"
+    assert "已拦停" in step or "fail-closed" in step, "作业摘要里必须写明已拦停 / fail-closed"
 
 
 # ---------------- 真产物（构建过才跑）------------------------------------------
