@@ -719,7 +719,8 @@ def evaluate(
             )
         ok_map = health.get("modules_ok") or {}
         if (
-            health.get("ok")
+            health.get("deferred_env")
+            or health.get("ok")
             and any(v is None for v in ok_map.values())
             and not any(v is False for v in ok_map.values())
         ):

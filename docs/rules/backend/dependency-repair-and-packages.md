@@ -466,6 +466,13 @@
   （`project_check_pending` / 检测都看它）。`spec` 与 `import` 是缓存键的一维；`import` 的结论运行之前也可以信，反过来不行。体检进程的
   cwd 是空的临时目录，项目目录不会隐式进 `sys.path`；第三方环境 `.pth` 里的可执行 `import` 行属于用户自己的环境（除非那个 `.pth` 本身
   在项目里——那个解释器由 `is_project_controlled` 的路径判据先拦下）。真 `import`（含坏二进制 wheel 的发现）只在用户点「运行」之后。
+- **运行之前的体检以 `-I -S` 启动（Codex 安全 #820 r4234643135）**：解释器启动期的 `site` 会处理 `.pth`（含可执行的 `import` 行）并 import
+  `sitecustomize`，装了本项目的外部环境（可编辑安装，无论是不是 `.python-version` / `environment.yml` 点名的）因此在"检查"里就执行项目代码。
+  `spec` 体检（用户的环境；内置 runtime 不加）因此不带 `site`：`projectenv._prepare_isolated_path` 手工补回 venv / 系统 / 用户的
+  site-packages，**`.pth` 只当文本读**——路径行指进项目根、`import` 行带 `__editable__`（finder）且旁边的 finder 文件提到项目根或找不到、
+  `sitecustomize` / `usercustomize` 解析进项目，任一成立 = 整个环境 `deferred_env`，不 import 任何东西，`userenvs.evaluate` 回
+  `checked=False, deferred=True`，等运行再量。其余 `import` 行不执行（只是少了它们的副作用，运行时的真 import 会补上）。`import` 方式
+  （运行之后）原样不变，运行就是同意。
 - **确认模式（`TAVOTTO_ENV_ADOPTION=confirm` 或设置 `worker.environment_adoption=confirm`）下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
   `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
   `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个

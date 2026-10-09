@@ -357,6 +357,123 @@ out = {"executable": sys.executable, "prefix": sys.prefix,
 engine_dir = sys.argv[1]
 module = sys.argv[2] if len(sys.argv) > 2 else ""
 extra = [m for m in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if m]
+mode = sys.argv[4] if len(sys.argv) > 4 else ""
+project_root = sys.argv[5] if len(sys.argv) > 5 else ""
+isolated = (sys.argv[6] if len(sys.argv) > 6 else "") == "isolated"
+
+
+def _inside(path, root):
+    import os
+    try:
+        a = os.path.normcase(os.path.realpath(path))
+        b = os.path.normcase(os.path.realpath(root))
+        return os.path.commonpath([a, b]) == b
+    except (ValueError, OSError):
+        return False
+
+
+def _prepare_isolated_path():
+    # 运行之前的体检以 `-I -S` 启动（Codex 安全 #820 r4234643135）：没有 `site`，所以没有 .pth 处理、没有 sitecustomize /
+    # usercustomize、没有 PYTHONPATH、没有 cwd。可编辑安装的 .pth 可以把项目里的代码拽进启动期，这里把 site-packages
+    # 手工补回 sys.path，**.pth 只当文本读、一行都不执行**：路径行指进项目 = 这个环境带着项目里的代码 -> 整个候选延后到运行；
+    # `import` 行（可编辑安装的 finder）不执行，只在它旁边的 `__editable__*` 文件里找项目根，找到 / 找不到文件都延后。
+    import os, sysconfig
+    dirs = []
+
+    def add(d):
+        if d and d not in dirs and os.path.isdir(d):
+            dirs.append(d)
+
+    # `-S` 下 `sys.prefix` 不一定指到 venv（site 才做这件事的构建上，它回基础解释器）：从可执行文件的位置自己认 venv
+    import glob
+    exe_root = os.path.dirname(os.path.dirname(sys.executable or ""))
+    cfg = os.path.join(exe_root, "pyvenv.cfg")
+    include_system = False
+    is_venv = os.path.isfile(cfg)
+    if is_venv:
+        # venv 自己的 site-packages 不靠 sysconfig（`vars` 在某些发行版的 scheme 里不生效）：按布局找
+        for pattern in ("lib/python*/site-packages", "lib64/python*/site-packages", "Lib/site-packages"):
+            for d in sorted(glob.glob(os.path.join(exe_root, pattern))):
+                add(d)
+        try:
+            with open(cfg, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    k, _, v = line.partition("=")
+                    if k.strip().lower() == "include-system-site-packages":
+                        include_system = v.strip().lower() == "true"
+        except OSError:
+            pass
+    if not is_venv or include_system:
+        paths = sysconfig.get_paths()
+        for key in ("purelib", "platlib"):
+            add(paths.get(key))
+    try:
+        import site
+        add(site.getusersitepackages())
+    except Exception:
+        pass
+    extra_paths = []
+    deferred = False
+    for d in dirs:
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for fname in names:
+            if not fname.endswith(".pth"):
+                continue
+            try:
+                with open(os.path.join(d, fname), encoding="utf-8", errors="replace") as fh:
+                    lines = fh.read().splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith(("import ", "import\t")):
+                    if "__editable__" not in line:
+                        continue  # 不执行；别的 import 行不是可编辑安装的 finder
+                    finders = [n for n in names if n.startswith("__editable__") and n.endswith(".py")]
+                    if not finders:
+                        deferred = True
+                        continue
+                    for n in finders:
+                        try:
+                            with open(os.path.join(d, n), encoding="utf-8", errors="replace") as fh:
+                                text = fh.read()
+                        except OSError:
+                            deferred = True
+                            continue
+                        if project_root and (project_root in text or os.path.realpath(project_root) in text):
+                            deferred = True
+                    continue
+                target = os.path.normpath(os.path.join(d, line))
+                if project_root and _inside(target, project_root):
+                    deferred = True
+                elif os.path.isdir(target):
+                    extra_paths.append(target)
+    for d in dirs + extra_paths:
+        if d not in sys.path:
+            sys.path.append(d)
+    if not deferred:
+        # sitecustomize / usercustomize 本该由 site 在启动期执行：不执行，只问它们会解析到哪（find_spec 不 import）
+        import importlib.util
+        for name in ("sitecustomize", "usercustomize"):
+            try:
+                spec = importlib.util.find_spec(name)
+            except Exception:
+                spec = None
+            if spec is not None and spec.origin and project_root and _inside(spec.origin, project_root):
+                deferred = True
+    return deferred
+
+
+if isolated:
+    if _prepare_isolated_path():
+        out["deferred_env"] = True
+        sys.stdout.write(json.dumps(out))
+        sys.exit(0)
 try:
     import matplotlib
     matplotlib.use("Agg")
@@ -390,20 +507,6 @@ if out["matplotlib_version"]:
         out["error"] = "worker: %s: %s" % (type(exc).__name__, exc)
     finally:
         sys.dont_write_bytecode = dont_write
-mode = sys.argv[4] if len(sys.argv) > 4 else ""
-project_root = sys.argv[5] if len(sys.argv) > 5 else ""
-
-
-def _inside(path, root):
-    import os
-    try:
-        a = os.path.normcase(os.path.realpath(path))
-        b = os.path.normcase(os.path.realpath(root))
-        return os.path.commonpath([a, b]) == b
-    except (ValueError, OSError):
-        return False
-
-
 def _spec_state(name):
     # 用户点「运行」之前（Codex 安全 #820 r4234465621）：**绝不 import 脚本要的模块**——可编辑安装的 .pth 可以把项目里的
     # 包解析成它们，import 就是执行项目代码。只问顶层名的 find_spec（点号名的 find_spec 会 import 父包）：True = 找得到且
@@ -504,11 +607,23 @@ def probe_environment(
     # `-B`（`runtime.probe_args`）：体检是我们单方面去看一眼，不许把缺的 .pyc 写回用户解释器的
     # 安装目录（2026-09-28 Windows 实测：体检一次 Python 3.7.6，它的 `Lib\__pycache__` 多了两个）。
     # `-B` 不碰 sys.path / site / env，上面说的「与 worker 对齐」的几个维度一个都不变。
-    argv = [python, *runtime.probe_args(bundled=bundled), "-c", _PROBE_SRC, engine_dir]
+    spec_mode = import_mode == "spec"
+    # 运行之前（spec）：用户的环境以 `-I -S` 启动（见 `_prepare_isolated_path`）；内置 runtime 是 Tavotto 自己的、
+    # 靠 `child_args()` 的启动条件，不加（项目的 .pth 不会在里面）
+    isolate = spec_mode and not bundled
+    argv = [
+        python,
+        *runtime.probe_args(bundled=bundled),
+        *(["-I", "-S"] if isolate else []),
+        "-c",
+        _PROBE_SRC,
+        engine_dir,
+    ]
     argv.append(module or "")
     argv.append(",".join(modules))
-    argv.append(import_mode if import_mode == "spec" else "")
-    argv.append(project_root if import_mode == "spec" else "")
+    argv.append("spec" if spec_mode else "")
+    argv.append(project_root if spec_mode else "")
+    argv.append("isolated" if isolate else "")
     scratch = ""
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
@@ -552,6 +667,10 @@ def probe_environment(
         }
 
     info["python"] = python
+    if info.get("deferred_env"):
+        # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
+        info.update(ok=True, code="", deferred_env=True)
+        return info
     version = tuple(info.get("version_info") or ())[:2]
     if not version or not (PYTHON_MIN <= version < PYTHON_MAX_EXCLUSIVE):
         info.update(ok=False, code=ERROR_UNSUPPORTED_PYTHON, support=SUPPORT_UNSUPPORTED)

@@ -1304,7 +1304,7 @@ def test_the_run_acquires_the_planned_interpreter_even_if_the_record_moves_just_
         assert final["phase"] != "completed", final
 
 
-def _editable_world(tmp_path: Path):
+def _editable_world(tmp_path: Path, *, sitecustomize: bool = False):
     """Codex 安全 #820 r4234465621：项目外的 venv 装了指向 `<项目>/src` 的 .pth（可编辑安装），`payload/__init__.py` 在被
     import 时写哨兵。脚本 `import payload`——import 它就是执行项目代码。"""
     root = tmp_path / "proj"
@@ -1313,6 +1313,15 @@ def _editable_world(tmp_path: Path):
     (root / "src" / "payload" / "__init__.py").write_text(
         f"open({str(marker)!r}, 'w').write('x')\n", "utf-8"
     )
+    if sitecustomize:
+        # 解释器一启动（site 处理 .pth 时）就执行项目代码：sitecustomize.py，以及 .pth 里的 `import` 行解析进项目
+        # （可编辑安装的 finder 就是这个形状）。有的发行版自带 stdlib 级 sitecustomize 会遮住前者，所以两条都放
+        (root / "src" / "sitecustomize.py").write_text(
+            f"open({str(marker)!r}, 'w').write('boot')\n", "utf-8"
+        )
+        (root / "src" / "startup_hook.py").write_text(
+            f"open({str(marker)!r}, 'w').write('boot')\n", "utf-8"
+        )
     (root / "fig.py").write_text(
         "import payload\nimport matplotlib.pyplot as plt\nplt.plot([1])\nplt.savefig('o.pdf')\n",
         "utf-8",
@@ -1320,9 +1329,10 @@ def _editable_world(tmp_path: Path):
     base = tmp_path / "ext"
     base.mkdir()
     py = envworld.real_venv(base, "lab", python=WORKER_PY)
-    (next((base / "lab" / "lib").glob("python*")) / "site-packages" / "proj.pth").write_text(
-        str(root / "src") + "\n", "utf-8"
-    )
+    site_dir = next((base / "lab" / "lib").glob("python*")) / "site-packages"
+    (site_dir / "proj.pth").write_text(str(root / "src") + "\n", "utf-8")
+    if sitecustomize:
+        (site_dir / "zz_boot.pth").write_text("import startup_hook\n", "utf-8")
     return root, marker, py, base
 
 
@@ -1334,7 +1344,8 @@ def test_the_pre_run_probe_never_imports_modules_that_resolve_into_the_project(t
         py, modules=("payload", "json"), import_mode="spec", project_root=str(root)
     )
     assert not marker.exists(), "运行之前的体检 import 了项目里的模块"
-    assert spec["modules_ok"] == {"payload": None, "json": True}
+    # 环境的 site-packages 里有指向项目的 .pth：整个环境延后（什么都没 import、.pth 只当文本读）
+    assert spec.get("deferred_env") is True
     # 对照（尺子是活的）：import 方式真的会执行它
     projectenv.probe_environment(py, modules=("payload",))
     assert marker.exists()
@@ -1366,6 +1377,66 @@ def test_spec_probe_results_are_per_project_root(tmp_path, a_first):
     (ca,) = userenvs.evaluate(cand, need, [], cache_only=True, root=str(root_a))
     (cb,) = userenvs.evaluate(cand, need, [], cache_only=True, root=str(root_b))
     assert ca.get("deferred") is True and cb["satisfies"] is True
+
+
+def test_the_spec_probe_launches_isolated_without_site(monkeypatch, tmp_path):
+    """结构守卫：运行之前的体检（用户的环境）以 `-I -S` 启动；内置 runtime 与 import 方式（运行之后）不变。"""
+    seen = []
+
+    def fake_run(argv, **kw):
+        seen.append(list(argv))
+        raise OSError("stop")
+
+    monkeypatch.setattr(projectenv.subprocess, "run", fake_run)
+    projectenv.probe_environment("/x/python", modules=("a",), import_mode="spec", project_root="/p")
+    projectenv.probe_environment("/x/python", modules=("a",))
+    spec_argv, import_argv = seen
+    assert "-I" in spec_argv and "-S" in spec_argv
+    assert "-I" not in import_argv and "-S" not in import_argv
+
+
+@posix_only
+@needs_worker
+@pytest.mark.parametrize(
+    "declared", [True, False], ids=["python-version-declared", "undeclared-conda"]
+)
+def test_an_external_env_with_the_project_installed_editable_is_not_started_before_run(
+    tmp_path, monkeypatch, declared
+):
+    """Codex 安全 #820 r4234643135：外部环境装了指向 `<项目>/src` 的 .pth，src 里的 sitecustomize.py 在解释器启动期执行。
+    检查（plan_for / 决定 / offer）不得启动它的任何一种形态；点运行才体检。"""
+    root, marker, py, base = _editable_world(tmp_path, sitecustomize=True)
+    if declared:
+        (root / ".python-version").write_text("lab\n", "utf-8")
+        monkeypatch.setattr(userenvs, "_pyenv_version_dirs", lambda: [str(base)])
+    else:
+        monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
+    userenvs.reset_cache()
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    cands = deprepair.user_environment_candidates(str(root), "fig.py")
+    assert any(
+        os.path.realpath(c["python"]) and _env_root(c["python"]) == _env_root(py) for c in cands
+    )
+    preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+    )
+    deprepair.decide_environment_pinned(root, "fig.py", project_exec=False)
+    plan = {"missing": [{"import_name": "payload", "distribution": "payload"}], "unknown": []}
+    offer = deprepair.user_environment_offer(root, "fig.py", plan, "")
+    assert not marker.exists(), "检查阶段启动了装着项目的外部环境（sitecustomize / .pth）"
+    assert projectenv.remembered_record(root) is None
+    lab = [e for e in offer if _env_root(e["python"]) == _env_root(py)]
+    assert lab and all(e.get("deferred") for e in lab)
+    # 点了运行：同意体检，真启动它
+    deprepair.decide_environment(root, "fig.py")
+    assert marker.exists()
 
 
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
