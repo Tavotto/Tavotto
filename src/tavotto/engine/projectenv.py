@@ -92,6 +92,9 @@ ERROR_UNUSABLE = "project_env_unusable"
 #: 解释器里断了。与「没有 matplotlib」是两件事、两条出路：前者装包，这条多半是
 #: Conda / pip 混装后某个 DLL 或 numpy ABI 对不上，`error` 字段带着那句异常。
 ERROR_WORKER_IMPORT = "project_env_worker_import_failed"
+#: 找到了一个能用的候选环境，但采用它是用户的决定（ADR 0114）：接手的结构上带 `recommended`，
+#: 由用户点一次采用（`PATCH /api/engine/environment`），之后才进项目设置。
+ERROR_CONFIRMATION_REQUIRED = "environment_confirmation_required"
 
 #: 找哪些目录名。顺序即优先级（同一层同时存在时按这个顺序裁决）。
 VENV_DIRNAMES = (".venv", "venv", "env")
@@ -419,7 +422,12 @@ def _probe_scratch_dir() -> str:
 
 
 def probe_environment(
-    python: str, module: str | None = None, *, modules: tuple[str, ...] = (), bundled: bool = False
+    python: str,
+    module: str | None = None,
+    *,
+    modules: tuple[str, ...] = (),
+    bundled: bool = False,
+    timeout: float | None = None,
 ) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
 
@@ -436,6 +444,8 @@ def probe_environment(
     `bundled`：这是 Tavotto 的内置 runtime——按 worker 起它的同一套来量（`runtime.child_args()` 的 `-B`、
     `runtime.child_env()` 摘掉 `PYTHONPATH` 等），与 `pool._has_matplotlib(bundled=True)` 同一条纪律：
     从终端启动时 shell 里的 `PYTHONPATH` 会让体检看见 worker 看不见的包（Codex #609 P2）。
+
+    `timeout`：调用方的剩余预算（`envadvice.check` 的总时限）；只会收紧、不会放宽 `PROBE_TIMEOUT_S`。
     """
     modules = tuple(m for m in modules if valid_module_name(m))
     if module and not valid_module_name(module):
@@ -468,7 +478,7 @@ def probe_environment(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=PROBE_TIMEOUT_S,
+            timeout=PROBE_TIMEOUT_S if timeout is None else min(PROBE_TIMEOUT_S, timeout),
             stdin=subprocess.DEVNULL,
             cwd=scratch,
             env=runtime.probe_env(python, bundled=bundled),
@@ -699,6 +709,67 @@ def auto_adoption_off() -> bool:
     return os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0"
 
 
+#: 恢复 ADR 0057 / 0079 / 0107 静默采用的兼容开关（ADR 0114 §五，保留一版）。默认不设 = **确认模式**：
+#: 首开 / 跑前的门 / 缺包后的接手只给**建议**，采用是用户的明确动作。无头环境（CI、没有界面的脚本调用）在
+#: 还没有可确认的界面之前设成 `auto` 回到旧行为。判据的唯一出处——三个自动采用点都读这里。
+ADOPTION_ENV = "TAVOTTO_ENV_ADOPTION"
+
+
+def silent_adoption_enabled() -> bool:
+    """机器是否可以**替用户**把一个候选环境记成本项目的决定（兼容开关 `TAVOTTO_ENV_ADOPTION=auto`）。
+
+    False（默认）= 确认模式：候选只作为建议出现，采用必须是用户的明确动作。注意这与
+    `auto_adoption_off()`（`TAVOTTO_USER_ENV_DISCOVERY=0`，连发现 / 体检都关掉）是两件事。"""
+    return os.environ.get(ADOPTION_ENV, "").strip().lower() == "auto"
+
+
+def environment_generation(python: str) -> str:
+    """这条路径上的环境此刻是**哪一代**：重建（删了再建）换代，装包 / 升级内部文件 / 改权限位 / 贴扩展属性不换。
+
+    取能区分「重建」的两样——解释器路径本身（`lstat`：venv 的 `bin/python` 是软链接，重建时换的是这条链接）与
+    venv 根上的 `pyvenv.cfg`（每次 `python -m venv` / `uv venv` 都重写）——各自的 (inode, mtime_ns, size)。
+    **刻意不含 ctime / 权限位**：它们会被 `chmod`、扩展属性（macOS 的 quarantine / provenance）、备份工具悄悄改动，
+    拿它们判「换代」会把用户确认过的环境误判成被重建（这与 `interpreter_fingerprint` 不同——那个管的是「还能不能
+    起」，要看 ctime 与权限位）。**不含**软链接指向的真实文件：基础 Python 被小版本升级不是「另一个环境」，
+    那条由 worker 体检兜住。纯 `os.stat`，不起子进程；对外是不透明的短摘要，不带路径 / inode。路径不存在回空串。
+    """
+    p = Path(python)
+    try:
+        link = os.stat(p, follow_symlinks=False)
+    except (OSError, ValueError):
+        return ""
+    cfg = None
+    try:
+        st = os.stat(p.parent.parent / "pyvenv.cfg")
+        cfg = (st.st_ino, st.st_mtime_ns, st.st_size)
+    except (OSError, ValueError):
+        pass
+    import hashlib
+
+    parts = ((link.st_ino, link.st_mtime_ns, link.st_size), cfg)
+    return hashlib.sha256(repr(parts).encode()).hexdigest()[:16]
+
+
+CONSENT_CONFIRMED = "confirmed"  # 用户明确采用 / 选回默认链条（`automatic=False`）
+CONSENT_LEGACY_AUTO = "legacy_auto"  # ADR 0114 之前机器替用户记下的：仍照用，但证明不了用户确认过
+CONSENT_NONE = "none"  # 没有项目级决定
+
+
+def consent_of(record: dict | None) -> str:
+    """项目记录的授权来源（给环境状态 / 建议 / 迁移用）：显式的就是确认过；`automatic=True` 的历史记录证明不了
+    授权——继续使用（迁移不重新询问），但不当作用户的显式确认。"""
+    if record is None:
+        return CONSENT_NONE
+    return CONSENT_LEGACY_AUTO if record.get("automatic", False) else CONSENT_CONFIRMED
+
+
+def generation_changed(record: dict | None) -> bool:
+    """记录里存着环境代、而路径上现在的环境已是另一代（重建）。没存环境代的老记录回 False（不追溯）。"""
+    if not record or not record.get("exists") or not record.get("generation"):
+        return False
+    return environment_generation(record["path"]) != record["generation"]
+
+
 def rejected_system_candidates(system: list[dict] | None) -> list[dict]:
     """体检表里「缺的那个包其实有、但环境本身不合格」的条目。
 
@@ -892,6 +963,10 @@ def _remember(figures_dir, python, automatic, trigger, module, health) -> bool:
     for key in ("python_version", "matplotlib_version", "support"):
         if (health or {}).get(key):
             payload[key] = str(health[key])
+    generation = environment_generation(python)
+    if generation:
+        # 采用时的环境代：解析解释器时对一遍，同一路径被重建就要重新确认（ADR 0114 §四）
+        payload["generation"] = generation
     rel = project_relative(root, python)
     if rel:
         payload["python_relative"] = rel
@@ -1106,6 +1181,9 @@ TRIGGER_MISSING_DEPENDENCY = "missing_dependency"
 #: 「内置跑错一次之后接手」，这条是「一次都没跑错、开门就选对」）。
 TRIGGER_FIRST_OPEN = "first_open"
 
+#: 用户在环境建议上点「使用」时记进项目设置的 trigger（ADR 0114）：采用的是 `envadvice.recommend()` 列出的候选
+TRIGGER_RECOMMENDED = "recommended"
+
 
 def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> dict:
     """首次科学执行**之前**：这个项目自己带的 venv 里有没有一条健康的解释器（U03，ADR 0057）。
@@ -1176,6 +1254,7 @@ def state(figures_dir: str | Path) -> dict:
         "python_version": stored.get("python_version") or "",
         "matplotlib_version": stored.get("matplotlib_version") or "",
         "support": stored.get("support") or "",
+        "consent": consent_of(remembered_record(figures_dir)),
     }
     if python:
         out["python_relative"] = project_relative(figures_dir, python)

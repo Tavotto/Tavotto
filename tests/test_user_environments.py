@@ -27,6 +27,13 @@ POSIX = pytest.mark.skipif(os.name == "nt", reason="登录 shell / bin/python �
 
 
 @pytest.fixture(autouse=True)
+def _legacy_silent_adoption(monkeypatch):
+    """本文件测的是 ADR 0057 / 0079 / 0107 的**静默采用**机制——ADR 0114 把它收进兼容开关保留一版
+    （`TAVOTTO_ENV_ADOPTION=auto`）。默认的确认模式（建议 → 检查 → 采用）见 `test_environment_adoption.py`。"""
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "auto")
+
+
+@pytest.fixture(autouse=True)
 def _clean(clean_state, monkeypatch):
     # conftest 默认把这件事关掉（别的用例不许随机器变）；这里测的就是它
     monkeypatch.delenv("TAVOTTO_USER_ENV_DISCOVERY", raising=False)

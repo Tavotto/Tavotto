@@ -22,11 +22,13 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   cancelDependencyPlan: vi.fn(),
   fetchEngineEnvironment: vi.fn(),
   setProjectEnvironment: vi.fn(),
+  adoptEnvironmentCandidate: vi.fn(),
   setEngineEnvironment: vi.fn(),
 }))
 
 import {
   ApiError,
+  adoptEnvironmentCandidate,
   cancelDependencyPlan,
   createDependencyPlan,
   fetchEngineEnvironment,
@@ -60,6 +62,7 @@ const installMock = vi.mocked(installDependencyPlan)
 const cancelMock = vi.mocked(cancelDependencyPlan)
 const envMock = vi.mocked(fetchEngineEnvironment)
 const adoptMock = vi.mocked(setProjectEnvironment)
+const adoptCandidateMock = vi.mocked(adoptEnvironmentCandidate)
 const clearGlobalMock = vi.mocked(setEngineEnvironment)
 
 const en = (key: string, v?: Record<string, unknown>) =>
@@ -108,6 +111,7 @@ const PRIVATE_PYTHON = {
 
 const PLAN: DependencyRepairPlan = {
   plan_id: 'plan-abc',
+  impact_digest: 'dg-abc',
   target_kind: 'project_venv',
   python: '.venv/bin/python',
   creates_environment: false,
@@ -127,6 +131,7 @@ const PLAN: DependencyRepairPlan = {
 const MANAGED_PLAN: DependencyRepairPlan = {
   ...PLAN,
   plan_id: 'plan-managed',
+  impact_digest: 'dg-managed',
   target_kind: 'tavotto_managed',
   python: '',
   creates_environment: true,
@@ -170,6 +175,7 @@ beforeEach(() => {
   envMock.mockReset()
   envMock.mockResolvedValue({} as never)
   adoptMock.mockReset()
+  adoptCandidateMock.mockReset()
   clearGlobalMock.mockReset()
   useDepRepairStore.getState().reset()
   // 预读按卡分格、`reset()` 不动它们（关一张卡不该让另一张回到「正在检查」）：用例之间自己清
@@ -232,8 +238,20 @@ describe('缺依赖的修复卡片', () => {
     await render()
     await click(en('repairUseProjectEnv'))
     await click(en('repairInstallToProject'))
-    expect(installMock).toHaveBeenCalledWith('plan-abc')
-    expect(installMock.mock.calls[0]).toHaveLength(1)
+    // 计划 id + 界面上这份计划的影响摘要（Codex r4217992305）；没有第三样东西
+    expect(installMock).toHaveBeenCalledWith('plan-abc', 'dg-abc')
+    expect(installMock.mock.calls[0]).toHaveLength(2)
+  })
+
+  it('计划没有影响摘要 —— 不发空串去撞后端的 400，明确停下、不执行', async () => {
+    planMock.mockResolvedValue({ plan: { ...PLAN, impact_digest: undefined } })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render()
+    await click(en('repairUseProjectEnv'))
+    await click(en('repairInstallToProject'))
+    expect(installMock).not.toHaveBeenCalled()
+    expect(useDepRepairStore.getState().errorCode).toBe('dependency_impact_required')
+    expect(useDepRepairStore.getState().busy).toBe(false)
   })
 
   it('解析不出包名时不给一键安装，只给「指定安装包」', async () => {
@@ -560,7 +578,7 @@ describe('一键修复（2026-09-29：面向不懂 Python 的用户）', () => {
     planMock.mockResolvedValue({ plan: MANAGED_PLAN })
     await click(en('oneClickRepair'))
     expect(installMock).toHaveBeenCalledTimes(1)
-    expect(installMock).toHaveBeenCalledWith('plan-managed')
+    expect(installMock).toHaveBeenCalledWith('plan-managed', 'dg-managed')
     expect(byName(en('repairPrepareAndContinue'))).toBeUndefined()
   })
 
@@ -834,6 +852,46 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
     expect(text()).toContain('这个环境里也没有 lmfit')
   })
 
+  // 确认模式（ADR 0114）下列出的「改用项目自己的环境」：采用必须绑定用户看到它那一刻的候选 id 与环境代，
+  // 与 `MissingDependencyCard` 同一个端点、同一个 409 语义（#814 评审 PRRT_kwDOT51-YM6pwk-Q 的第二个消费者）
+  const PROJECT_RECOMMENDED = {
+    ...SYSTEM,
+    venv: '.venv',
+    python: '.venv/bin/python',
+    candidate: { id: 'env-shown', generation: 'gen-shown' },
+  }
+
+  it('带绑定的项目环境建议：点下去按「候选 id + 看到时的环境代」采用，绝不退回按路径采用', async () => {
+    adoptCandidateMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await render({ ...OFFER, targets: [PROJECT_RECOMMENDED, ...OFFER.targets] })
+    await click(en('oneClickRepair'))
+    expect(adoptCandidateMock).toHaveBeenCalledTimes(1)
+    const [bound, , module] = adoptCandidateMock.mock.calls[0]
+    expect(bound).toEqual({ id: 'env-shown', generation: 'gen-shown' })
+    expect(module).toBe('lmfit')
+    expect(adoptMock, '按路径无代次采用会拿到被重建后的另一代').not.toHaveBeenCalled()
+    expect(planMock).not.toHaveBeenCalled()
+  })
+
+  it('环境在看到建议之后被重建（409 environment_changed）：报错、不改按路径重试', async () => {
+    adoptCandidateMock.mockRejectedValue(
+      new ApiError('这个环境在你确认之前被重建过，请重新查看再确认', 409, { code: 'environment_changed' }),
+    )
+    await render({ ...OFFER, targets: [PROJECT_RECOMMENDED, ...OFFER.targets] })
+    await click(en('oneClickRepair'))
+    expect(adoptCandidateMock).toHaveBeenCalledTimes(1)
+    expect(adoptMock).not.toHaveBeenCalled()
+    expect(text()).toContain('被重建过')
+  })
+
+  it('对照：用户手边的机器解释器（没有候选绑定）仍按路径采用', async () => {
+    adoptMock.mockResolvedValue({ ok: true, project: { open: true } } as never)
+    await render(WITH_SYSTEM)
+    await click(en('oneClickRepair'))
+    expect(adoptMock).toHaveBeenCalledWith('/usr/local/bin/python3', 'lmfit')
+    expect(adoptCandidateMock).not.toHaveBeenCalled()
+  })
+
   it('「指定安装包」装到第一个**安装**目标，绝不装进系统解释器', async () => {
     planMock.mockResolvedValue({ plan: PLAN })
     await render({ ...WITH_SYSTEM, requirement: null, code: 'dependency_unresolved' })
@@ -1030,7 +1088,7 @@ describe('受管环境一次授权（2026-09-28）', () => {
     await click(managedButton())
     expect(planMock).toHaveBeenCalledWith({ module: 'lmfit', script: 'figure.py', target: 'tavotto_managed' })
     expect(installMock).toHaveBeenCalledTimes(1)
-    expect(installMock).toHaveBeenCalledWith('plan-managed')
+    expect(installMock).toHaveBeenCalledWith('plan-managed', 'dg-managed')
     expect(byName(en('repairPrepareAndContinue'))).toBeUndefined()
     expect(text()).toContain(en('repairPreparing'))
   })
@@ -1042,7 +1100,42 @@ describe('受管环境一次授权（2026-09-28）', () => {
     installMock.mockResolvedValue({ started: true } as never)
     await render(MANAGED_OFFER)
     await click(managedButton())
-    expect(installMock).toHaveBeenCalledWith('plan-managed')
+    expect(installMock).toHaveBeenCalledWith('plan-managed', 'dg-managed')
+  })
+
+  it('包名一个没变、影响摘要变了（次要依赖约束 beta<2 → beta>=2）：不执行，停在确认页按新计划重新披露（Codex r4217992305）', async () => {
+    let resolvePreview!: (v: { plan: DependencyRepairPlan }) => void
+    planMock.mockImplementationOnce(() => new Promise((r) => (resolvePreview = r)))
+    installMock.mockResolvedValue({ started: true } as never)
+    await render({ ...OFFER, targets: [{ ...OFFER.targets[1], available: null }] })
+    // 卡片预读到的计划：用户点之前看到的就是这一份
+    await act(async () => resolvePreview({ plan: { ...MANAGED_PLAN, plan_id: 'plan-preview' } }))
+    // 点击时新形成的计划：包名 / 私有 Python 都与卡片说的相符，只有影响摘要变了
+    planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, plan_id: 'plan-new', impact_digest: 'dg-changed' } })
+    await click(en('oneClickRepair'))
+    expect(installMock).not.toHaveBeenCalled()
+    expect(useDepRepairStore.getState().plan?.plan_id).toBe('plan-new')
+    // 用户在确认页对着新计划再点一次：发的是这份新计划自己的摘要（他刚看过的），不是旧的
+    expect(byName(en('repairPrepareAndContinue'))).toBeTruthy()
+    await click(en('repairPrepareAndContinue'))
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(installMock).toHaveBeenCalledWith('plan-new', 'dg-changed')
+  })
+
+  it('摘要没变的重试照常；摘要变了的重试回到确认页而不是静默执行', async () => {
+    planMock.mockResolvedValue({ plan: MANAGED_PLAN })
+    installMock.mockResolvedValue({ started: true } as never)
+    await render(MANAGED_OFFER)
+    await click(en('oneClickRepair'))
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(useDepRepairStore.getState().authorized?.impact_digest).toBe('dg-managed')
+    // 重试时计划的影响变了：授权记的是上一份，新的不在其内 → 不执行
+    planMock.mockResolvedValue({ plan: { ...MANAGED_PLAN, plan_id: 'plan-retry', impact_digest: 'dg-retry' } })
+    await act(async () => {
+      await useDepRepairStore.getState().retry()
+    })
+    expect(installMock).toHaveBeenCalledTimes(1)
+    expect(useDepRepairStore.getState().plan?.plan_id).toBe('plan-retry')
   })
 
   it('私有 Python 的来源变了（卡片说自带 / 已缓存，计划换成另一个）：两边都零字节也停在确认页，不执行（Codex #742）', async () => {
@@ -1174,7 +1267,7 @@ describe('失败 / 取消之后就地重试', () => {
     await act(async () => retryButton()!.click())
     await act(async () => {})
     expect(planMock).toHaveBeenCalledTimes(3) // 预读 + 第一次授权 + 重试
-    expect(installMock).toHaveBeenLastCalledWith('plan-again')
+    expect(installMock).toHaveBeenLastCalledWith('plan-again', 'dg-managed')
   })
 
   it('私有 Python 的来源在确认之后变了（#743 private_python_source_changed）：与计划过期同类，给「重试」', async () => {

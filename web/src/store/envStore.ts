@@ -12,12 +12,16 @@ import {
   type InputRemapRule,
   type MissingInputOffer,
   removeInputRemap,
+  adoptEnvironmentCandidate,
+  cancelProjectEnvironmentCheck,
+  checkProjectEnvironment,
   fetchEngineEnvironment,
   installEngineEnvironment,
   setEngineEnvironment,
   setProjectEnvironment,
   setProjectWorkdir,
   type EngineEnvironment,
+  type EnvCandidate,
   type UserEnvironmentSource,
   type WorkdirConfirmation,
   type WorkdirMode,
@@ -50,6 +54,20 @@ interface EnvState {
    * 全局设置，会连带改变别的项目的渲染环境。
    */
   setProjectPython: (path: string | null, module?: string) => Promise<string | null>
+  /**
+   * 环境建议（ADR 0114）：候选 / 推荐 / 是否需要用户先选，都是后端 `project.recommendation` 的投影，这里只保存
+   * 与转发，**不自写「能不能跑」的判据**。`checkEnvironment` 是明确的检查动作（后端对被点名范围里的候选运行健康
+   * 探测，有预算 / 可取消），检查 ≠ 采用；`adoptCandidate` 是用户在建议上点「使用」——把候选 id 与看到建议那一刻
+   * 的环境代交回，后端现场再体检、环境代对不上会拒绝。回 null 或一句失败原文（本地化过的）。
+   */
+  checkingEnvironment: boolean
+  checkEnvironment: (opts?: {
+    script?: string
+    scope?: 'project' | 'machine' | 'all'
+    includeLoginShell?: boolean
+  }) => Promise<string | null>
+  cancelEnvironmentCheck: () => Promise<void>
+  adoptCandidate: (candidate: Pick<EnvCandidate, 'id' | 'generation'>, script?: string) => Promise<string | null>
   /**
    * 切当前项目 safe worker 的工作目录模式（ADR 0047）。开到 `project` 要先
    * 确认一次——文案与机制逐条一致：相对路径读得到、相对路径写的文件落进项目、
@@ -221,6 +239,7 @@ async function restaleProjectRenders(epoch: number, retryMissingInput = false): 
 
 export const useEnvStore = create<EnvState>((set, get) => ({
   env: null,
+  checkingEnvironment: false,
   adoptedEnvironment: null,
   log: '',
   installing: false,
@@ -475,6 +494,56 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     }
   },
 
+  checkEnvironment: async (opts) => {
+    if (get().checkingEnvironment) return null
+    const epoch = projectEpoch
+    set({ checkingEnvironment: true })
+    try {
+      const res = await checkProjectEnvironment(opts)
+      // 检查结论属于发请求那个项目：A 的建议不摆到 B 上
+      if (epoch !== projectEpoch) return null
+      const env = get().env
+      if (env?.project) set({ env: { ...env, project: { ...env.project, recommendation: res.recommendation } } })
+      else await get().refresh()
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      return backendErrorText(e)
+    } finally {
+      // 换了项目时清空已由 `resetProject` 做过；这里只收自己这一次
+      if (epoch === projectEpoch) set({ checkingEnvironment: false })
+    }
+  },
+
+  cancelEnvironmentCheck: async () => {
+    try {
+      await cancelProjectEnvironmentCheck()
+    } catch {
+      // 取消失败不打扰：检查自己有总时限
+    }
+  },
+
+  adoptCandidate: async (candidate, script) => {
+    const epoch = projectEpoch
+    try {
+      const res = await adoptEnvironmentCandidate(candidate, script)
+      // 采用记在 A 上；B 的环境状态、面板与建议一个都不动
+      if (epoch !== projectEpoch) return null
+      const env = get().env
+      if (env) set({ env: { ...env, project: res.project } })
+      else await get().refresh()
+      // 后端已关掉本项目的会话；每个在用的面板按新环境重建（成功画过的也可能是按旧环境画的）
+      await restaleProjectRenders(epoch)
+      return null
+    } catch (e) {
+      if (epoch !== projectEpoch) return null
+      // 环境在看到建议之后被重建 / 候选没了：建议已经过期，重新拿一份再让用户看
+      if (e instanceof ApiError && (e.body?.code === 'environment_changed' || e.body?.code === 'environment_candidate_gone'))
+        await get().refresh()
+      return backendErrorText(e)
+    }
+  },
+
   setWorkdirMode: async (mode, opts) => {
     const current = get().env?.project?.workdir?.mode ?? 'sandbox'
     // 「决定过」与「模式相同」是两件事：首开确认框里选「继续沙盒」时模式没变，但要把
@@ -543,6 +612,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         rewriteSkipped: [],
         rewriteError: null,
         adoptedEnvironment: null,
+        checkingEnvironment: false,
       })
     else
       set({
@@ -554,6 +624,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         rewriteSkipped: [],
         rewriteError: null,
         adoptedEnvironment: null,
+        checkingEnvironment: false,
       })
     void get().refresh()
   },

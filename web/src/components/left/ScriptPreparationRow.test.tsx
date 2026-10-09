@@ -102,6 +102,7 @@ const offerOf = (over: Partial<DependencyPreparationOffer> = {}): DependencyPrep
   ],
   rounds_remaining: 3,
   skipped: false,
+  impact_digest: 'shown-digest',
   ...over,
 })
 
@@ -244,10 +245,10 @@ describe('脚本行：开跑前要先准备依赖', () => {
     expect(createJointDependencyPlan).not.toHaveBeenCalled()
   })
 
-  it('点一次绑定计划并只发 plan_id；进度留在弹窗，完成后关框并自动重跑一次', async () => {
+  it('点一次绑定计划并发 plan_id + 用户看到的影响摘要；进度留在弹窗，完成后关框并自动重跑一次', async () => {
     await startRepair()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: SCRIPT, target: 'tavotto_managed' })
-    expect(prepareJointDependencies).toHaveBeenCalledWith('joint-row')
+    expect(prepareJointDependencies).toHaveBeenCalledWith('joint-row', 'shown-digest')
     expect(useDepRepairStore.getState().jointScript).toBe(SCRIPT)
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
     expect(dialog()!.querySelector('[data-repair-line]')!.textContent).toBe('正在安装 pandas 和 openpyxl…（3/4）')

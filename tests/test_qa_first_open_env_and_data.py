@@ -120,6 +120,13 @@ def _text(manifest: dict, gid: str) -> str:
     return next(f["value"] for f in el["editable"] if f["prop"] == "text")
 
 
+@pytest.fixture(autouse=True)
+def _legacy_silent_adoption(monkeypatch):
+    """本文件测的是 ADR 0057 / 0107 的**首开静默采用**机制——ADR 0114 把它收进兼容开关保留一版
+    （`TAVOTTO_ENV_ADOPTION=auto`）。默认的确认模式（建议 → 检查 → 采用）见 `test_environment_adoption.py`。"""
+    monkeypatch.setenv("TAVOTTO_ENV_ADOPTION", "auto")
+
+
 @needs_worker
 def test_project_venv_and_same_name_decoy_resolve_to_the_true_interpreter_and_file(tmp_path):
     proj = tmp_path / "paper"

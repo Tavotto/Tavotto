@@ -191,7 +191,7 @@ export function DependencyRepairCard({
   const act = (tg: DependencyTarget) =>
     tg.kind === 'system_interpreter'
       ? // 采用已有的解释器不经 plan：没有要安装的东西可以「计划」
-        void adoptSystemPython(tg.python, module, script, origin)
+        void adoptSystemPython(tg.python, module, script, origin, tg.candidate ?? null)
       : tg.kind === 'tavotto_managed' && offer.requirement
         ? // 一次授权：卡片已经把计划的要素说出口，点一次就开始
           void installNow(
@@ -201,6 +201,8 @@ export function DependencyRepairCard({
               ...(requirementList.length > 1 ? { requirements: requirementList } : {}),
               target_kind: 'tavotto_managed',
               private_python: disclosed,
+              // 卡片说过的那份计划（预读）的摘要：新形成的计划影响变了就不一键执行
+              ...(preview?.plan?.impact_digest ? { impact_digest: preview.plan.impact_digest } : {}),
             },
             origin,
           )

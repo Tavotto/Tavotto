@@ -41,6 +41,7 @@ let projectPython = ''
 
 const PLAN_A: DependencyRepairPlan = {
   plan_id: 'plan-a',
+  impact_digest: 'dg-a',
   module: 'lmfit',
   distribution: 'lmfit',
   target_kind: 'tavotto_managed',
@@ -107,6 +108,7 @@ const offer = (script: string): DependencyPreparationOffer =>
     code: 'dependency_preparation_required',
     script,
     plan: { status: 'ready', missing: [], requirements: ['lmfit'] },
+    impact_digest: 'dg-offer',
     target_kind: 'tavotto_managed',
     targets: [],
     rounds_remaining: 3,
@@ -317,6 +319,14 @@ describe('换项目时的依赖修复状态（issue #590）', () => {
     expect(useEnvStore.getState().dependencyPreparation?.script).toBe('b.py')
     expect(retry).not.toHaveBeenCalled()
     expect(JSON.stringify(useEnvStore.getState().env ?? {})).not.toContain('/envs/a')
+  })
+
+  it('offer 没有影响摘要：不发空串、不绑定计划，明确停下', async () => {
+    useEnvStore.getState().requestDependencyPreparation({ ...offer('a.py'), impact_digest: undefined })
+    await useDepRepairStore.getState().prepare('tavotto_managed')
+    expect(useDepRepairStore.getState().errorCode).toBe('dependency_impact_required')
+    expect(useDepRepairStore.getState().busy).toBe(false)
+    expect(calls.some((c) => c.url.includes('/api/engine/dependencies/'))).toBe(false)
   })
 
   it('A 的联合计划绑定在途时切到 B：绑定回来不在 B 上执行，也不显示', async () => {

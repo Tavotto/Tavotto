@@ -85,7 +85,15 @@
   （来源 → 文案键的字面量表）。后端在门里**已经自动改用**时不弹框，SSE `engine.environment_adopted`
   进 `envStore.adoptedEnvironment`，通知轨（与「刚为编辑加入本文档」同一档）说一句并给「改回」=
   `revertAdoptedEnvironment()`（`setProjectPython(null)` → 后端 `remember_default`，所有在用的面板
-  `markStale`，不只是失败的）。
+  `markStale`，不只是失败的）。**ADR 0114 起默认不再有「已经自动改用」**（只在后端兼容开关
+  `TAVOTTO_ENV_ADOPTION=auto` 下才发这条 SSE）：候选里没检查过的（`checked === false`，`ok` / `satisfies` 为 null，
+  含 `project_venv` 来源）单列成「还没检查」的单选，选中后主按钮是「检查并使用」，仍是同一个 `adoptUserEnvironment`
+  ——后端现场体检、装齐才采用，不冒充装齐也不冒充没装齐；「没有装齐的环境」那句只在没有未检查的候选时才说。
+- **环境建议（ADR 0114）**：`project.recommendation` / `project.consent` 是后端 `envadvice.recommend()` 的原样投影，
+  `envStore` 只保存与转发（`checkEnvironment` = 明确的检查动作、`adoptCandidate` = 在建议上点「使用」，带候选 id 与看到建议那一刻
+  的环境代 `expected_generation`），**不自写「能不能跑」的判据**；`EngineEnvironmentCard` 的 `EnvironmentAdviceRow` 只在
+  `decision.needs_decision` 时问一句 + 一个主按钮，全局解释器压着（`locked_by`）时只说原因不给按钮。看护
+  `store/envAdvice.test.ts`、`components/EngineEnvironmentCard.test.tsx`、`e2e/environment-advice.spec.ts`。
 - **元素树的行只在自己显示的东西变了时重画（2026-09-24，松手卡顿剖析）**：
   `ElementTree` 的 `ElementRow` / `ClusterRow` 是 `React.memo`，props 全是这一行显示与
   交互实际用到的值（`gid` / `label` / `role` / 行名 `name` / `canHide` / `readonly` /

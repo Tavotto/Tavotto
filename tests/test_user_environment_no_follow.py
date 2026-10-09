@@ -149,7 +149,8 @@ def test_project_scan_asks_for_no_follow_environment_hints(tmp_path, monkeypatch
 
     monkeypatch.setattr(userenvs, "discover", fake)
     projscan.environment_evidence(tmp_path, None)
-    assert seen == {"ask_login_shell": False, "no_follow": True, "budget": None}
+    # T05：None = 不启动登录 shell（与 False 同样不问），只并入已被明确问过的答案
+    assert seen == {"ask_login_shell": None, "no_follow": True, "budget": None}
 
 
 @posix_only

@@ -587,7 +587,7 @@ describe('运行 / 取消 / 结果', () => {
     })
     vi.mocked(createDependencyPlan).mockResolvedValue({
       plan: {
-        plan_id: 'plan-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        plan_id: 'plan-row', impact_digest: 'dg-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
         modifies_user_environment: false, network_required: true, expires_at: 0,
         private_python: privatePython, ...offer.requirement!,
       },
@@ -606,7 +606,7 @@ describe('运行 / 取消 / 结果', () => {
     expect(createDependencyPlan).toHaveBeenCalledWith({
       module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
     })
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     // 装好：后端的进度带着计划所属的脚本 → 这一行自动重跑
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
@@ -689,7 +689,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     })
     vi.mocked(createDependencyPlan).mockResolvedValue({
       plan: {
-        plan_id: 'plan-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        plan_id: 'plan-row', impact_digest: 'dg-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
         modifies_user_environment: false, network_required: true, expires_at: 0,
         private_python: privatePython, ...offer.requirement!,
       },
@@ -709,7 +709,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     await flush()
     await act(async () => buttonByText('一键修复').click())
     await flush()
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
     expect(buttonByText('取消'), 'A 上安装中应有「取消」').toBeTruthy()
     await switchTo('pB')
@@ -748,7 +748,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     expect(createDependencyPlan).toHaveBeenCalledWith({
       module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
     })
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     expect(card(), '重试之后卡片仍在脚本行上').toBeTruthy()
   })
 
@@ -877,6 +877,7 @@ describe('试运行撞上起会话之前的门', () => {
     ],
     rounds_remaining: 3,
     skipped: false,
+    impact_digest: 'row-digest',
   }
   const gateProbe = (): ProbeResult => ({
     ...ok([]),
@@ -934,7 +935,7 @@ describe('试运行撞上起会话之前的门', () => {
     await act(async () => prepDialog()!.querySelector<HTMLButtonElement>('[data-dependency-prepare-start]')!.click())
     await flush()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: 'fig_labels.py', target: 'tavotto_managed' })
-    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row')
+    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row', 'row-digest')
     // ④ 准备成功（SSE 带着计划所属的脚本）→ #740 的 `rerunGated`：这一行自动再试运行一次、出图
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })

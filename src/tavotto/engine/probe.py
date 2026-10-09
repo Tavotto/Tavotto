@@ -358,8 +358,12 @@ def probe(
         tried.append(entry)
         # 每次换 entry 都要换掉旧会话：worker 的 entry 是启动参数，
         # 复用旧进程等于一直用错的入口重试。
-        pool.invalidate(script, figures_dir, run, only_run=True)
         try:
+            # 重跑必须**同步**退役旧会话（`force=True`）：workerd 对同一份 spawn 规格复用活着的会话，异步关停还没落地
+            # 就开新的会拿到旧会话——它的 `build` 命中「已建好」直接回缓存，脚本一行没重跑，`input()` 不再被问、
+            # 自动回填的轻提示也就不会出（Windows 打包产物上 `script-input.spec` 的红）。关停未确认 =
+            # WorkerError，当作这次试运行失败如实报，不假装重跑过。
+            pool.invalidate(script, figures_dir, run, only_run=True, force=True)
             # `pool.build` = get + ensure_built + **一次项目环境自动 fallback**
             # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——

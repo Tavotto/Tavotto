@@ -87,6 +87,18 @@ class RunningApp:
                 body = {}
             raise HttpError(exc.code, body) from None
 
+    def adopt_project_environment(self) -> dict:
+        """用户在渲染环境里点「使用」项目自己的 `.venv`（真实采用端点，体检通过才记）。
+
+        ADR 0114 起首开不再静默采用项目 venv；依赖准备类用例的前提「目标环境就是用户的项目 venv」
+        由这一步显式建立，而不是靠机器替用户挑。"""
+        rel = ".venv/Scripts/python.exe" if sys.platform == "win32" else ".venv/bin/python"
+        status, body = self.call(
+            "/api/engine/environment", {"scope": "project", "python": rel}, method="PATCH"
+        )
+        assert status == 200 and body.get("ok"), body
+        return body
+
     def prepare(self, panel_id: str, *, timeout: float = 300.0) -> dict:
         """POST 准备 → 轮询到终局，回 `{plan, result}`。"""
         status, prep = self.call("/api/engine/preparation", {"id": panel_id}, timeout=30)

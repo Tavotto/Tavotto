@@ -34,7 +34,9 @@
   与 `worker_argv` 的 golden 一个字节不动。四个 `cwd_origin` 各有且只有一个生产者
   （`sandbox` / `project`=脚本目录 / `project_root`=项目根 / native；ADR 0057 §二）；
   grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人，多 `mode` 与 `decided`。
-- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一）：它调 `pool.resolve_worker_python(root,
+- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一；**ADR 0114 起默认的确认模式下不再替用户发现 / 体检 / 记住
+  项目 venv**，那一整段只在兼容开关 `TAVOTTO_ENV_ADOPTION=auto` 下发生，默认由 `envadvice.recommend()` 给纯读建议、用户采用后
+  才有项目级记录）：它调 `pool.resolve_worker_python(root,
   script=…)`——项目 venv 的发现 + 体检 + 记住在这里已经发生（每进程每项目一次），计划里
   `environment.python_version / matplotlib_version / support / discovery / invalidated / error.explicit`
   如实写下选了谁、凭什么（体检量到的事实，ADR 0053 的公开投影：项目外的路径一律 None）、发现了什么
@@ -114,7 +116,8 @@
 input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/preparation-sessions`（创建 / 复用检查会话）·
 `GET …/<session_id>`（补拉，不重新执行）· `POST …/<session_id>/actions`（只认 `action_id` 与 `expected_config_revision`）。
 
-**会话与导入即扫描（T02）的关系**：会话的「检查」要走 `plan_for`（环境决策，有解释器体检与写配置的副作用），是用户选定目标之后的
+**会话与导入即扫描（T02）的关系**：会话的「检查」要走 `plan_for`（T05 起默认不再有候选解释器体检与采用写配置：环境只给纯读建议，
+但依赖门仍会为 `ready` 的计划体检候选环境，见 `dependency-repair-and-packages.md`），是用户选定目标之后的
 明确动作；项目被认领 / 恢复时自动发生的是**只读零执行**的结构扫描（`engine/projscan.py`，规则全文在
 `registry-discovery-and-probe.md`「导入即扫描」），它列出候选目标并给每个目标一份 `session_target`（= 本端点的创建请求体）。
 扫描**不得**调用 `plan_for` / `decide_environment` / `gate` / `resolve_worker_python`；两者共用 `probe.inventory_entry` 的脚本分类，
@@ -134,7 +137,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   写的是 Tavotto 自己的数据目录配置）——这是 T00 登记的既有行为，T01 没有新增，由 T02（只读扫描）/ T05（推荐与采用分离）拆开；
   会话层不得借「检查」之名再加新的执行或对用户项目的写。动作是不透明 id，
   绑定会话 / `config_revision` / 影响摘要（`executes_user_script` / `writes_to_project` …），kind 闭集 `run` / `cancel` /
-  `recheck`，请求体多一个字段就 400。已知素材的 provenance / frame / selected-source 拒绝逻辑在原路径里，原样生效。
+  `recheck` / `prepare_dependencies`（T06，授权一次依赖准备，绑定 `deprepair.impact_digest`，规则在
+  `dependency-repair-and-packages.md`「授权影响摘要」），请求体除 `action_id` / `expected_config_revision` 外只多一个可选的
+  `impact_digest`（回显用户看到的影响摘要），多别的字段就 400。已知素材的 provenance / frame / selected-source 拒绝逻辑在原路径里，原样生效。
 - **check-use 窗口**：「比对修订 → `preparation.stale_reason`（授权 / 解释器 / 数据绑定）→ 认领 → 提交 provider」整段在会话锁内；
   失效就 409 `preparation_plan_stale`、一行不跑、会话标失效等 `recheck`；同一个动作重复认领（重复点击 / 两个标签页）回当初那次
   尝试（`claimed=false`，200），不重复起 worker；新的 `run` 动作（终局之后才有）才是用户明确的重跑，产生新的 attempt。
@@ -150,8 +155,13 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   `outcome.unknown/attempt_expired`。登记表有界（64 会话，闲置 30 min 回收）：有尝试在跑或登记没完成的会话**永不**被 TTL 回收，
   满了且全部活跃就 429 `preparation_sessions_full`，不驱逐。
 - **取消**只经 `PreparationService.cancel`：本会话新起的会话才关，别人的不碰；关闭面板 / 切项目是展示层的事，不取消。
+  依赖作业的取消同样只退役**自己拥有**的（认领了别人先起的同一份作业的会话没有 `cancel`）。
+- **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
+  报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试
+  （outcome `needs_dependencies`，`rerun_required`），不叫"从异常点继续"。认领与失效检查在会话锁内。
 - **SSE**：`preparation.session`（`pj` / `session_id` / `target` / `config_revision`）只是「重新读报告」的提示，不带 phase 与序号。
 - 看护：`tests/test_preparation_session.py`（假 pool：合同、并发认领、修订、失效、取消所有权、回收、项目绑定）、
+  `tests/test_preparation_session_dependencies.py`（T06：授权 / 认领 / 差额 / 真安装到首图）、
   `tests/test_preparation_session_e2e.py`（真 worker、真服务：只有脚本的项目 → 一次执行 → 进编辑请求不重跑）、
   `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。尚未接入的旧入口（GUI 素材库的 `/api/registry/probe`、
   MCP / CLI）由 T09 / T10 接续，它们是暂存的薄兼容 wrapper。
@@ -166,7 +176,8 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 回执两半缺一半就是 `partial`
 - 身份三分不混（私有键含路径、公开身份不含、文件 hash 单列）
 - LaunchContext 是派生视图、四个来源各一个生产者
-- 环境选择前移的落点是 `plan_for`（证据 / 发现 / 作废 / 显式失效如实写）
+- 环境选择前移的落点是 `plan_for`（证据 / 作废 / 显式失效如实写）；ADR 0114 起解析解释器不再发现 / 体检 / 采用项目 venv，计划里多
+  `environment.{generation, consent, recommendation}`（纯读建议），`discovery` 只在兼容开关 `TAVOTTO_ENV_ADOPTION=auto` 下有值
 - 首开要问的是终局 `needs_input`
 - 过期计划 `preparation_plan_stale` 不执行
 - DependencyIntent 只读不装
@@ -192,6 +203,33 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 = 新 `config_revision`），`impact.script_arguments` 只给个数。请求体：`{script, entry?, argv?, argv_sensitive?}`，已知素材（`id`）
 不接受另给 argv（它的配置冻结在资产 id 里）。执行线程取消 / 复用 / 回执都带 `run`，所以取消 A 配置不会杀 B 配置的会话。
 
+## 参数、数据与输出在同一个会话里（T07）
+
+- **参数**：脚本有 argparse 字面量证据（`scriptargs.analyze_file`，只读源码、按 mtime 缓存）时才多一项检查 `arguments`
+  （**永远 `ok`**，`detail` 只有计数：`schema` / `arguments` / `required` / `output_files` / `form_enabled`）和一项
+  `requirements[kind=script_arguments, blocking=False]`（`payload.schema` + 本次配置的 `argv_count` / `run_config`）。它是表单建议，
+  不改 phase、不撤 `run`：静态看缺必填照样能跑（真 parser 说缺参仍是既有的 `script_needs_arguments`），识别不全标 `partial`。
+  没有 argparse 证据的脚本报告形状与 T06 一字不差；已知素材目标（`asset`）不提议表单。
+- **数据缺失**：执行线程把 `WorkerError.missing_input`（ADR 0106 的指认载荷）存进 `PreparationResult.missing_input`（**不进**
+  `to_payload()`、回执与诊断快照）；当前修订的尝试以错误收场且带它时，报告多 `requirements[kind=input_location, origin=last_attempt,
+  blocking=False]`。回答走既有 `POST /api/engine/input-remap`（用户亲手指认，同名不同内容不就近猜），之后 `recheck`：
+  计划私有字段 `input_remap_generation` 冻结检查时的代次，`_fingerprint` 用这份快照；改指表变了 = 新
+  `config_revision`，旧失败不再是当前的。认领 `run` 与执行线程起跑前均经 `preparation.stale_reason` 核对代次，
+  不一致就 `preparation_plan_stale / data_binding_changed`、`executed=False`，必须重新检查。
+- **输出参数**（P03）：schema 里 `role=output_file`（只来自 `FileType('w'|'a'|'x'|…)`）的个数进 `run` 动作的
+  `impact.script_writes = {declared_output_arguments, cwd_mode}`（不含参数名与路径）。Tavotto 从不替用户加 overwrite / force 一类 token。
+- **源码修订绑进计划**（#815 Codex r4220829632）：`script` 目标的计划记 `script_revision`（`scriptargs.source_revision`：脚本字节摘要 +
+  去掉行号的 schema 摘要，私有）。披露给用户的 `run` 影响（含 `script_writes`）是按那一版源码算的，所以认领 `run` 与执行线程起跑前
+  经 `preparation.stale_reason` 再比一次，不同 = `preparation_plan_stale` / `reason=script_changed` / `executed=False`，会话标失效等 `recheck`
+  重新披露；读报告时 schema 摘要变了就提前撤掉未认领动作。`prepare_dependencies` 的认领不核（`source=False`：它不执行脚本，用自己的
+  `impact_digest` 验证要装什么，与依赖无关的脚本改动不撤销它）；这一修订已经跑过的会话不回头改写结局（写回改了脚本不让已完成的会话变 stale）。
+- **脚本源码按 Python 的规则解码**（r4220829659）：`scriptargs.decode_source` 用 `tokenize.detect_encoding`（BOM / `# coding:`），声明坏了或解不开
+  → `unknown` + `unreadable`，不用 replacement 字符糊过去。
+- **负数 token 文法随 worker 的 Python 版本变**（r4220829672）：≤ 3.13 是 `^-\d+$|^-\d*\.\d+$`，3.14 起是 `-\.?\d`（`.match`）；schema 同时带
+  `negative_number_options`（旧文法）与 `negative_number_options_extended`（新文法）和 `python_version`（项目记住的事实，未知 = 前端取较窄的旧文法）。
+- 看护：`tests/test_script_args_session.py`（假 pool）、`tests/test_script_args_e2e.py`（真 worker：A01 表单路径 = 原始 token 路径、
+  A05 输出参数只执行一次不覆盖、数据指认后同一会话出图）。
+
 ## 终局诊断快照（T04）
 
 `PreparationService._finish` 在每个终局（`ready` / `error` / `cancelled`；`needs_input` 在执行线程里同走 `_finish`）之后调
@@ -199,3 +237,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 id = `plan_id` = 会话报告的 `provider.attempt_id`）。白名单：目标类别、argv 个数与 `rc_…` 引用、计划那一刻的环境来源 / 版本、
 阶段轨迹（不含 `facts`）、回执的控制面 / 来源 / 完整度、`error.code` + 闭集 `reason`、取消事实、起止时间；**不含**脚本路径、
 入口名、解释器与项目路径、`error.message`、`note`、`required_input` 内容。完整规则见 `diagnostics.md`「任务绑定诊断」。
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
+
+- 计划与观测分开；执行只走 `pool.build`；过期计划 `preparation_plan_stale` 不执行；会话 phase 纯派生、`unknown` 不当通过、动作在会话锁内一次认领
