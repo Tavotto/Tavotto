@@ -646,10 +646,12 @@ class PreparationService:
             target=plan.target,
             **({"run": plan.run} if plan.run is not None else {}),
         )
-        # 只吸收「采用换了环境」带来的变化（解释器、授权档，以及随工作目录档重新按档记的数据绑定）：源码 / 改指表若也变了，
-        # 那是别的过期原因，照旧拦
+        # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
+        # 换计划（交回 None，由对账给出过期结局）
         if (
-            fresh.script_revision != plan.script_revision
+            fresh.grant != plan.grant
+            or (fresh.binding or {}).get("revision") != (plan.binding or {}).get("revision")
+            or fresh.script_revision != plan.script_revision
             or fresh.input_remap_generation != plan.input_remap_generation
         ):
             return None
@@ -692,8 +694,8 @@ class PreparationService:
             decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
             if decision.adopted is not None:
                 before = self._stale_reason(plan)
-                if before is None or before[0] in (STALE_ENVIRONMENT, STALE_GRANT):
-                    # 换到用户自己的环境同时会换默认工作目录档（ADR 0107 §二），所以授权档变了也是采用的后果
+                if before is None or before[0] == STALE_ENVIRONMENT:
+                    # 只吸收环境变化。工作目录授权档（用户确认过的）变了不吸收：照旧走下面的过期结局，让用户重新检查、看到新档
                     plan = self._replan_in_place(entry, plan) or plan
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:

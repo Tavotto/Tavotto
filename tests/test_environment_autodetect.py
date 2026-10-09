@@ -1061,8 +1061,19 @@ def test_when_the_pending_project_env_cannot_run_the_next_candidate_is_used(
     assert _act(client, report, "run").status_code == 202
     final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
 
-    assert final["phase"] == "completed", final
+    # 落到下一个候选（项目外的用户环境）：采用了它，同时默认工作目录档变成「在脚本目录里跑」（ADR 0107 §二）——授权档变了
+    # 不就地吸收（那是用户没确认过的写入范围），照旧报过期、让用户重新检查看到新档；重新检查之后一次运行就出图
     assert os.path.realpath(projectenv.remembered_record(proj)["path"]) == os.path.realpath(lab)
+    assert final["outcome"]["kind"] == "stale" and final["outcome"]["reason"] == "grant_changed", (
+        final
+    )
+    again = _act(client, final, "recheck")
+    assert again.status_code in (200, 202)
+    fresh = _get(client, report["session_id"])
+    assert "run" in _kinds(fresh)
+    assert _act(client, fresh, "run").status_code == 202
+    done = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
+    assert done["phase"] == "completed", done
 
 
 @needs_worker
