@@ -126,6 +126,8 @@ _ENABLERS: dict[str, tuple[tuple[str, object], ...]] = {
     "stroke_width": (("stroke_enabled", True), ("stroke_color", "#ff00ff")),
     # 花纹画在**边色**上；线宽 / 线型同样要先有一条看得见的边
     "hatch": (("edgecolor", "#ff00ff"), ("linewidth", 1.0)),
+    # 花纹的线宽要先有花纹才有东西可加粗（3.10 起才有这条字段）
+    "hatch_linewidth": (("hatch", "/"),),
     "linewidth": (("edgecolor", "#ff00ff"),),
     "linestyle": (("edgecolor", "#ff00ff"), ("linewidth", 1.5)),
     "facecolor": (("fill", True),),

@@ -25,6 +25,15 @@ const HAS_MARKER = (read: (prop: string) => unknown): boolean => {
 /** 填充开着（`fill`）才有意义的从属字段共用这一条 */
 const FILLED = (read: (prop: string) => unknown): boolean => read('fill') !== false
 
+/**
+ * 有花纹（`hatch` 非空）才有意义的从属字段共用这一条：花纹线宽在没有花纹时
+ * 没有东西可染、可加粗。`hatch` 是脚本里的开集字符串（`''` / `'/o'`…），只认空与否
+ */
+const HAS_HATCH = (read: (prop: string) => unknown): boolean => {
+  const h = read('hatch')
+  return h !== undefined && h !== null && String(h) !== '' && String(h).toLowerCase() !== 'none'
+}
+
 /** 次刻度开着（`minor_visible`）才有意义的从属字段共用这一条 */
 const MINOR_ON = (read: (prop: string) => unknown): boolean => read('minor_visible') === true
 
@@ -135,23 +144,33 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
     more: ['label', 'visible'],
   },
+  // 纹理两项（图案 · 线宽）挨在一起；线宽只在有花纹时出现。
+  // 线宽（matplotlib 3.10+）是引擎按版本发的字段：旧版本没有这一行，
+  // 版面里点名而没有字段的 prop 本来就不画。纹理颜色未纳入（维护者裁决，见 PR 说明）
   bar_series: {
-    primary: ['label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
+    primary: ['label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatch_linewidth', 'alpha'],
     more: ['bar_width', 'visible'],
+    visibleWhen: { hatch_linewidth: HAS_HATCH },
   },
   bar: {
-    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'alpha'],
+    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatch_linewidth', 'alpha'],
     more: ['visible'],
+    visibleWhen: { hatch_linewidth: HAS_HATCH },
   },
   patch: {
-    primary: ['facecolor', 'fill', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
+    primary: [
+      'facecolor', 'fill', 'hatch', 'hatch_linewidth',
+      'edgecolor', 'linewidth', 'linestyle', 'alpha',
+    ],
     more: ['visible'],
     visibleWhen: {
-      // 「填充」关着时填充色与纹理画了也不显形——这是 `fill` 这个开关的定义
-      // （见 engine/manifest.py `_patch_fields` 的实测：fill 关着时 facecolor
-      // 一个像素都不出）。与画布图形的「添加填充」是同一种操作模型。
+      // 「填充」关着时只有填充色画了不显形（见 engine/manifest.py `_patch_fields`
+      // 的实测：fill 关着时 facecolor 一个像素都不出）。纹理不受 `fill` 管：
+      // matplotlib 3.11 实测 `Rectangle(fill=False, hatch='//')` 照样画出纹理
+      // （无边框 5638 个非背景像素，对照无纹理 0）。所以 hatch 不按 FILLED 门控，
+      // 否则用户没法给未填充的形状加纹理；线宽只看有没有花纹。
       facecolor: FILLED,
-      hatch: FILLED,
+      hatch_linewidth: HAS_HATCH,
     },
   },
   errorbar: {
