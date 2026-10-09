@@ -159,7 +159,7 @@ def test_relative_import_with_non_identifier_segments_is_not_followed(tmp_path):
     proj, _ = _project(tmp_path)
     tree = ast.parse("from .a import b\n")
     tree.body[0].module = "../../outside"  # AST 正常不会产生；直接构造
-    assert importscan._relative_targets(tree, proj / "s.py", proj) is None
+    assert importscan._relative_targets(tree, proj / "s.py", proj, no_follow=True) is None
 
 
 # ---------------------------------------------------------------------------
