@@ -43,6 +43,11 @@ def _by(res: importscan.ScanResult) -> dict[str, importscan.ImportClass]:
     return {c.module: c for c in res.classes}
 
 
+BARE = importscan.Entry(
+    profile=importscan.PROFILE_BARE
+)  # 裸 `python script.py`（没有 Tavotto wrapper）
+
+
 def _scan(root: Path, script: str = SCRIPT, **kw) -> importscan.ScanResult:
     return importscan.scan(root, script, **kw)
 
@@ -79,13 +84,12 @@ def _real_python(root: Path, script: str, *args: str) -> subprocess.CompletedPro
 class TestPriority:
     def test_o06_a_local_json_py_shadows_the_stdlib_and_is_followed(self, tmp_path, monkeypatch):
         """这条测的是**另一个进程**：原生解释器 `python script.py`（启动时只有 site 链预加载）。Tavotto 的
-        wrapper 语义见 `test_import_origin_wrapper_preloaded.py`——所以这里把 wrapper 预加载表清空。"""
-        monkeypatch.setattr(importscan, "WRAPPER_PRELOADED", {})
+        wrapper 语义见 `test_import_origin_wrapper_preloaded.py`——所以这里用 BARE profile。"""
         _tree(
             tmp_path,
             {SCRIPT: "import json\nimport numpy\n", "json.py": "import requests\n"},
         )
-        res = _scan(tmp_path, declared={"numpy": ""})
+        res = _scan(tmp_path, declared={"numpy": ""}, entry=BARE)
         c = _by(res)["json"]
         assert (c.bucket, c.origin_kind, c.local_path) == ("local", "project-local", "json.py")
         assert c.shadowing == "stdlib"
@@ -138,7 +142,7 @@ class TestPriority:
         monkeypatch.setattr(importscan, "HOST_BUILTIN_EXTRA", frozenset({"hostonly"}))
         _tree(tmp_path, {SCRIPT: "import hostonly\n", "hostonly.py": ""})
         stdlib = frozenset({"hostonly"})
-        c = _by(_scan(tmp_path, stdlib=stdlib))["hostonly"]
+        c = _by(_scan(tmp_path, stdlib=stdlib, entry=BARE))["hostonly"]
         assert (c.bucket, c.resolution_status, c.shadowing) == ("local", "ambiguous", "stdlib")
         assert "may_shadow_builtin" in c.warnings
         # 目标解释器明说它是内建 → 本地文件到不了它，答案确定
@@ -149,7 +153,9 @@ class TestPriority:
             "resolved",
         )
         # 目标解释器明说它不是内建 → 本地文件遮蔽它，也是确定的
-        shadowed = _by(_scan(tmp_path, stdlib=stdlib, builtin=frozenset({"sys"})))["hostonly"]
+        shadowed = _by(_scan(tmp_path, stdlib=stdlib, builtin=frozenset({"sys"}), entry=BARE))[
+            "hostonly"
+        ]
         assert (shadowed.bucket, shadowed.resolution_status) == ("local", "resolved")
 
     def test_o18_a_package_directory_wins_over_a_same_named_module(self, tmp_path):
@@ -251,9 +257,8 @@ class TestPriority:
 # ===========================================================================
 class TestRealPythonParity:
     def test_json_shadowing_package_priority_and_case(self, tmp_path, monkeypatch):
-        """对拍的是**裸的 `python probe.py` 进程**，不是 Tavotto 的 wrapper（wrapper 已先 import json，
-        见 `test_import_origin_wrapper_preloaded.py`）：这里清空 wrapper 预加载表。"""
-        monkeypatch.setattr(importscan, "WRAPPER_PRELOADED", {})
+        """对拍的是**裸的 `python probe.py` 进程**，不是 Tavotto 的 wrapper（wrapper 下的保守规则
+        见 `test_import_origin_wrapper_preloaded.py`）：这里用 BARE profile。"""
         _tree(
             tmp_path,
             {
@@ -279,7 +284,7 @@ class TestRealPythonParity:
         # 真实 Python：本地 json.py 遮蔽 stdlib；dup 是目录包；sys / os 不被本地文件遮蔽；Utils 不匹配 utils.py
         assert proc.stdout.splitlines() == ["json.py", "__init__.py", "False", "False", "MNF Utils"]
         # 静态扫描给出同样的答案
-        got = _by(_scan(tmp_path, "probe.py"))
+        got = _by(_scan(tmp_path, "probe.py", entry=BARE))
         assert got["json"].local_path == "json.py" and got["json"].shadowing == "stdlib"
         assert got["dup"].local_path == "dup/__init__.py"
         assert got["sys"].bucket == "stdlib" and got["os"].bucket == "stdlib"
@@ -740,8 +745,7 @@ class TestLinks:
         return proj
 
     def test_o16_links_pointing_outside_the_project_are_never_read(self, tmp_path, monkeypatch):
-        # 裸 `python script.py` 语义（wrapper 预加载表清空）：指到项目外的 json.py 才真会遮蔽 stdlib json
-        monkeypatch.setattr(importscan, "WRAPPER_PRELOADED", {})
+        # 裸 `python script.py` 语义（BARE）：指到项目外的 json.py 才真会遮蔽 stdlib json
         proj = self._world(tmp_path)
         real_read = scanbudget.read_regular_text
         seen: list[tuple] = []
@@ -751,7 +755,7 @@ class TestLinks:
             return real_read(base, *parts, **kw)
 
         monkeypatch.setattr(scanbudget, "read_regular_text", spy)
-        res = _scan(proj)
+        res = _scan(proj, entry=BARE)
         got = _by(res)
         assert not any(m.startswith("secret_") for m in got)
         assert all("outside" not in b for b, _ in seen)

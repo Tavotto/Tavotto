@@ -256,6 +256,17 @@
   本机无产物，行为未执行；运行时才产生的答案（getpass / 动态 input）的冻结转录是 T08。
 - 看护：`tests/test_run_argv.py`（模型 + 真 worker 对拍）、`tests/test_run_argv_e2e.py`（HTTP 全链路）、`tests/test_run_argv_privacy.py`（真实进程 argv / fd 输出 / 错误 / 静默看门狗）。
 
+## 参数表单的静态 schema（T07）
+
+`engine/scriptargs.py` 只读源码（`ast.parse`，不 import / eval / `literal_eval`、不跑 parser、不调 `--help`、不打开 `FileType` 的文件），
+回答「这个脚本的 argparse 字面量声明了哪些参数」。权威仍是 token 列表：schema 只是表单建议与校验提示。只认可证明的字面量；
+循环 / `**kwargs` / 自定义 Action / 子命令 / `parents` / `parse_args([...])` / `parse_known_args` / 多 parser 等一律 `partial` + 闭集理由
+（`REASONS`；`FORM_BLOCKING` 里的让表单整体只读）。`required` 只来自显式 `required=True` 或位置参数规则，`default` 只展示、不注入；
+角色只来自 `FileType` 的模式（名字 `x` / `time` / `range` 不定角色与单位）。表单 ↔ token 的转换在前端 `lib/scriptArgsForm.ts`，
+与这里共用 `tests/golden/script_args_form_vectors.json`（后端跑真 argparse 对拍 Namespace，前端对拍编辑结果；重生成
+`scripts/dev/gen_script_args_vectors.py`）。端点 `GET /api/engine/script-arguments?script=`（与试运行同一道路径检查，只读）。
+看护：`tests/test_script_args.py`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。
@@ -325,3 +336,11 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 旧坐标兼容采用。`/api/export/validate` 在已验证的选中源请求上附 `artifact_sources`；
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
+
+- 捕获与显式 cax 宿主三条入口同源；selected 队列替换不退役共享 worker；`safe_spec()` / `worker_argv()` 唯一出处；argv 非空只经 `safe_spec(argv,run_config)`、公开投影只带个数与引用、缺引用显式拒绝不回落空 argv（T03）；argparse 表单 schema 只读源码、是建议不是门槛（T07）；首开问不问由 `workdir.resolve_mode` 定，不猜不就近；数据改指只在原路径打不开之后、只读、用户亲手指认（ADR 0106）
+
+速查表看护列精简时挪出的用例（仍是本主题的看护）：`tests/test_workerd_pool.py`、`test_first_open_workdir.py`、`test_zero_capture.py`、`test_savefig_capture_params.py`、`test_colorbar_capture.py`。

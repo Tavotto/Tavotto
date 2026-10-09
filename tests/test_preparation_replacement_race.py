@@ -46,7 +46,7 @@ def test_cancel_after_a_rerun_replaced_the_worker_preserves_the_replacement(tmp_
         return worker, {"stems": {"fig": {}}, "descriptors": []}, True
 
     monkeypatch.setattr(pool, "_workers", {})
-    monkeypatch.setattr(service, "_stale_reason", lambda plan: None)
+    monkeypatch.setattr(service, "_stale_reason", lambda plan, **_kw: None)
     monkeypatch.setattr(
         preparation.receipt,
         "from_worker",

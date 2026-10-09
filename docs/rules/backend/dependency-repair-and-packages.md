@@ -273,7 +273,7 @@
   然后沿搜索根（`python script.py` = 脚本目录 + 项目根；`python -m` = cwd，`importscan.Entry`）按 `FileFinder` 的顺序
   **目录包 > 扩展模块 > .py > 命名空间目录**，名字按目录清单**逐字**匹配（`Utils` 不匹配 `utils.py`）；搜索根在 stdlib 之前，
   所以本地 `json.py` 遮蔽标准库（`shadowing="stdlib"`，这是对旧口径「stdlib 名字表先判」的**修正**：`bucket` 由 stdlib 变
-  local，被遮蔽文件里的 import 会被跟进，`needed` / `inputs_digest` / 受管环境 `identity` 随之可能变）。命名空间目录
+  local，被遮蔽文件里的 import 会被跟进，`needed` / `inputs_digest` / 受管环境 `identity` 随之可能变）。**但这只对裸 `python script.py` / `python -m`（`Entry(profile=PROFILE_BARE)`）成立**：Tavotto 的 wrapper（`safe` / `native`）在用户目录进 `sys.path` 之前已装了一批标准库，且它们传递带进别的标准库（`re` → `enum`），精确闭包随解释器版本变、静态量不出——维护者裁决不追闭包：wrapper profile 下**任何**与标准库（目标 `stdlib` 名字表）同名的本地文件 / 包一律 `resolution_status=ambiguous`、`shadowing="stdlib"`、警告 `local_shadows_stdlib_in_wrapper`，**不跟进它的 import**（里面的第三方不进 needed）。内建 / 冻结 / `site` 链预加载（`PRELOADED_STDLIB`）仍是确定的 resolved。没有「wrapper 预加载表」（旧 `WRAPPER_PRELOADED` 已删）；用例 `tests/test_import_origin_wrapper_preloaded.py`。命名空间目录
   （无 `__init__`）不当唯一提供者：`bucket=local`（不装）+ `resolution_status=ambiguous`。本地包跟进按真实加载语义：
   `import a.b.c` 加载各级，`from pkg import x` 只在 `pkg/x` 真是子模块时跟进，相对导入按包上下文解析（入口脚本无包：记
   `relative_import_no_package`，不猜）；先 try 后无条件的同一本地模块以更强的上下文重放。`importlib` 别名调用
@@ -505,3 +505,9 @@
 - 「需要」按 import 上下文判，本地模块永不装、unknown 永不猜
 - 交给安装器的串一律重新序列化
 - 跑前的门先找用户自己的环境（ADR 0079）：只读磁盘记录 + 问一次登录 shell，装齐按 import 判，装齐的里按 `userenvs.rank()` 挑最好的自动改用，用户显式决定过的一个都不碰（`_auto_adopt_allowed`），载荷与 SSE 只带 `env_id` 不带路径
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
+
+- 内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境一个都不碰；环境建议纯读、检查是唯一起候选的入口、采用要用户点（ADR 0114）；镜像只在网络失败或官方源太慢 / 超时、且无自配源时重试一次，两次共用预算

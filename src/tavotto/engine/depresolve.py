@@ -94,6 +94,8 @@ CURATED: dict[str, str] = {
     "gi": "PyGObject",
     "zmq": "pyzmq",
     "wx": "wxPython",
+    # 生成 / 读写文档（import 名 ≠ 包名）
+    "odf": "odfpy",
 }
 
 #: import 名与发行包名相同、且确认过的高频科研包。
@@ -162,6 +164,17 @@ SAME_NAME: frozenset[str] = frozenset(
         "openpyxl",
         "xlrd",
         "tabulate",
+        # 生成报告 / 读写文档与表格（python-docx 的 `docx` 在 CURATED；它硬依赖 lxml）
+        "lxml",
+        "xlsxwriter",
+        "xlwt",
+        "docxtpl",
+        "reportlab",
+        "markdown",
+        "jinja2",
+        "tifffile",
+        "imageio",
+        "pyreadstat",
         # 拼图脚本常用来合并 / 裁切导出的 PDF；PyPDF2 是它改名前的旧名（同一上游 py-pdf，已冻结）
         "pypdf",
         "PyPDF2",

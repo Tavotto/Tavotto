@@ -237,7 +237,7 @@ _ALLOWED_IMPORTS = {
 _ALLOWED_SIBLINGS = {"depresolve", "distmeta", "execspec", "figcapture", "projectenv", "scanbudget"}
 #: 对兄弟模块只许用这些属性（projectenv 里有起解释器的 `probe_environment`，不许碰）。
 _ALLOWED_ATTRS = {
-    "projectenv": {"within"},
+    "projectenv": {"within", "contained_path"},
     "figcapture": {"PROFILE_SAFE", "PROFILE_NATIVE", "unused_imports", "reaches_main"},
     "execspec": {
         "TARGET_SCRIPT",
@@ -326,7 +326,10 @@ class TestStructuralGate:
                 used.setdefault(node.value.id, set()).add(node.attr)
         for mod, attrs in used.items():
             assert attrs <= _ALLOWED_ATTRS[mod], f"{mod}: {sorted(attrs - _ALLOWED_ATTRS[mod])}"
-        assert used["projectenv"] == {"within"}  # 前提：这个门禁真的在看 projectenv
+        assert used["projectenv"] == {
+            "within",
+            "contained_path",
+        }  # 前提：这个门禁真的在看 projectenv
 
 
 class TestCostScalesWithTheImportGraph:

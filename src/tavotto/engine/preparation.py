@@ -65,9 +65,11 @@ from . import (
     envadvice,
     execspec,
     figcapture,
+    inputremap,
     pool,
     projectenv,
     receipt,
+    scriptargs,
     taskdiag,
     trace as tracemod,
     workdir,
@@ -115,11 +117,13 @@ ERROR_CODES = (ERROR_PLAN_STALE,)
 STALE_GRANT = "grant_changed"
 STALE_ENVIRONMENT = "environment_changed"
 STALE_DATA_BINDING = "data_binding_changed"
-STALE_REASONS = (STALE_GRANT, STALE_ENVIRONMENT, STALE_DATA_BINDING)
+STALE_SOURCE = "script_changed"
+STALE_REASONS = (STALE_GRANT, STALE_ENVIRONMENT, STALE_DATA_BINDING, STALE_SOURCE)
 _STALE_MESSAGES = {
     STALE_GRANT: "工作目录的授权在计划之后变了，这份计划作废；请重新准备",
     STALE_ENVIRONMENT: "这个项目选中的解释器在计划之后变了，这份计划作废；请重新准备",
     STALE_DATA_BINDING: "脚本要读的数据在预检之后变了，这份计划作废；请重新准备",
+    STALE_SOURCE: "脚本在检查之后被改了（参数声明 / 输出文件可能不同），这份计划作废；请重新检查",
 }
 
 
@@ -183,6 +187,12 @@ class PreparationPlan:
     #: 用户给的精确 argv 的运行配置（T03，`execspec.RunSelection`）。**私有**：argv 原文只在这里和 worker
     #: 命令行里，`to_payload()` / 回执 / LaunchContext 只带数量与本机不透明引用 `run_config`。None = 没给参数。
     run: object | None = None
+    #: 数据改指也是计划的输入快照。私有字段；动作认领与执行线程都经 `_stale_reason` 对账。
+    input_remap_generation: int | None = None
+    #: 脚本目标的源码修订（`scriptargs.source_revision`：字节摘要 + 解析出的 schema 摘要，私有）。披露给用户的影响
+    #: （含 `script_writes`）是按这一版源码算的；认领 / 执行前再算一次，不同 = `preparation_plan_stale` /
+    #: `script_changed`，一行不跑。资产目标（已知图）不记（None）：它们的源码修订由写回事务管。
+    script_revision: str | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -246,6 +256,7 @@ def plan_for(
     `error.explicit` 说明是哪一条、为什么。
     """
     root = str(project_root)
+    remap_generation = inputremap.generation(root)
     if script is not None:
         # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处）：下面的
         # 解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
@@ -401,7 +412,15 @@ def plan_for(
         binding=binding,
         target=target,
         run=run,
+        input_remap_generation=remap_generation,
+        script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
     )
+
+
+def _script_revision(root: str, script: str | None) -> str | None:
+    if script is None:
+        return None
+    return scriptargs.source_revision(Path(root) / figcapture.normalize_relative_script(script))
 
 
 def _captured_stems(build_resp) -> list[str] | None:
@@ -481,6 +500,10 @@ class PreparationResult:
     #: 这次 build 捕获到的东西（T01）：`{"stems", "descriptors", "remap_generation"}`——执行之后要登记 /
     #: 物化的调用方（`prepsession`）从这里拿，不必再问 worker。**不进 `to_payload()`**（描述符里有路径）。
     captured: dict | None = None
+    #: 数据找不到时的指认载荷（ADR 0106，`pool._offer_missing_input` 挂在 `WorkerError.missing_input` 上的那份）。
+    #: T07：准备会话把它当一项待答的需求（回答走既有的 `/api/engine/input-remap`）。**不进 `to_payload()`**：
+    #: 里面是脚本里写的路径串，诊断快照与回执都不带它。
+    missing_input: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -696,6 +719,9 @@ class PreparationService:
             project_env = getattr(exc, "project_env", None)
             if isinstance(project_env, dict):
                 error["project_env"] = _public_project_env(project_env)
+            missing_input = getattr(exc, "missing_input", None)
+            if isinstance(missing_input, dict):
+                result.missing_input = dict(missing_input)
             result.error = error
             # 脚本自己炸 / 缺依赖是「执行」那一步坏的；起不来（解释器 / 沙盒）是「起会话」坏的
             tr.fail("execute" if getattr(exc, "traceback_text", None) else "spawn", error["code"])
@@ -770,12 +796,19 @@ class PreparationService:
         return True
 
     @staticmethod
-    def _stale_reason(plan: PreparationPlan) -> tuple[str, dict] | None:
-        """起会话之前把计划记下的三样东西与此刻各比一次：授权（`workdir.grant_for`）、项目的解释器决策
-        （`pool.resolve_worker_python`）、数据绑定（`databinding.binding_for`）。第一条不一致的就是理由。"""
+    def _stale_reason(plan: PreparationPlan, *, source: bool = True) -> tuple[str, dict] | None:
+        """起会话之前核对授权、解释器、数据绑定与改指表代次；第一条不一致的就是理由。
+
+        `source`：还核对脚本的源码修订（`script_revision`）——凡是**要执行脚本**的认领与起跑都核；依赖准备的认领
+        不核（它不执行脚本，且用自己的影响摘要 `impact_digest` 验证要装什么，与依赖无关的脚本改动不撤销它）。"""
         root = plan.project_root
         if workdir.grant_for(root) != plan.grant:
             return STALE_GRANT, {}
+        if (
+            plan.input_remap_generation is not None
+            and inputremap.generation(root) != plan.input_remap_generation
+        ):
+            return STALE_DATA_BINDING, {}
         if plan.interpreter:
             try:
                 python_now = pool.resolve_worker_python(root, script=plan.script)[0]
@@ -791,6 +824,12 @@ class PreparationService:
             planned = (plan.environment or {}).get("generation")
             if planned and projectenv.environment_generation(plan.interpreter) != planned:
                 return STALE_ENVIRONMENT, {}
+        if (
+            source
+            and plan.script_revision is not None
+            and plan.script_revision != _script_revision(root, plan.script)
+        ):
+            return STALE_SOURCE, {}
         if plan.binding is not None:
             now = databinding.binding_for(
                 Path(root) / figcapture.normalize_relative_script(plan.script),
@@ -1022,10 +1061,11 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
     )
 
 
-def stale_reason(plan: PreparationPlan) -> tuple[str, dict] | None:
-    """计划此刻还成不成立（授权 / 解释器决策 / 数据绑定各比一次）；`None` = 成立。准备会话在认领动作之前
-    用它核「检查那一刻的世界」还在不在——与执行线程起会话之前是同一份判据。"""
-    return PreparationService._stale_reason(plan)
+def stale_reason(plan: PreparationPlan, *, source: bool = True) -> tuple[str, dict] | None:
+    """计划此刻还成不成立（授权 / 解释器决策 / 数据绑定 / 脚本源码修订各比一次）；`None` = 成立。准备会话在认领动作之前
+    用它核「检查那一刻的世界」还在不在——与执行线程起会话之前是同一份判据。`source=False`：不执行脚本的认领
+    （依赖准备）不核源码修订。"""
+    return PreparationService._stale_reason(plan, source=source)
 
 
 #: 进程内唯一登记表（app.py 用它）。

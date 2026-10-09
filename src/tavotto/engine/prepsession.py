@@ -31,9 +31,10 @@ import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Callable
 
-from . import deprepair, preparation, registry
+from . import deprepair, preparation, registry, scriptargs
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -137,6 +138,11 @@ _PINNED_CODE = "dependency_interpreter_pinned"
 _SCOPE_CONFLICT_CODE = "dependency_scope_conflict"
 #: 环境检查项的 needs_action code（T05）：项目有自己的环境线索，用户还没选
 _ENVIRONMENT_CODE = "environment_choice_required"
+#: 参数（T07）：脚本里有 argparse 的字面量声明——给一份表单建议。**不是**待答项：识别不全 / 静态看缺必填都照样
+#: 能运行（argv 的权威是 token；真 parser 说缺参时是既有的 `script_needs_arguments`）
+_ARGUMENTS_CODE = "script_arguments_available"
+#: 上一次尝试读不到数据（ADR 0106 的 `missing_input` 载荷）：回答走既有 `/api/engine/input-remap`，答完 `recheck`
+_MISSING_INPUT_CODE = "missing_input"
 
 #: 数量 / 生命周期预算。活跃的（有没跑完 / 没登记完的尝试）永远不被这里回收。
 MAX_SESSIONS = 64
@@ -236,11 +242,29 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
     checks.append(
         _check("data", CHECK_OK) if plan.binding is not None else _check("data", CHECK_UNKNOWN)
     )
+    schema = arguments_schema(plan)
+    if schema is not None:
+        # T07：只有 argparse 的字面量证据时才出现；永远 ok——参数表单是建议，不是执行门槛
+        checks.append(_check("arguments", CHECK_OK, **scriptargs.summary(schema)))
     return checks
 
 
+def arguments_schema(plan: preparation.PreparationPlan) -> dict | None:
+    """计划里那份脚本的静态参数 schema（`scriptargs.analyze_file`，只读源码、按 mtime 缓存）；没有 argparse 证据 → None。"""
+    if plan.script is None or plan.target != TARGET_SCRIPT:
+        return None
+    schema = scriptargs.analyze_file(Path(plan.project_root) / plan.script)
+    if schema["status"] not in (scriptargs.STATUS_COMPLETE, scriptargs.STATUS_PARTIAL):
+        return None
+    return schema
+
+
 def requirements_of(
-    plan: preparation.PreparationPlan, checks: list[dict], *, runtime_missing: dict | None = None
+    plan: preparation.PreparationPlan,
+    checks: list[dict],
+    *,
+    runtime_missing: dict | None = None,
+    missing_input: dict | None = None,
 ) -> list[dict]:
     """要用户先答的事（`needs_action` 的检查项）。载荷原样是既有的 `required_input`——回答走既有端点，
     答完 `recheck`；会话不复制那两条回答协议。
@@ -329,6 +353,41 @@ def requirements_of(
                 "payload": dict(runtime_missing),
             }
         )
+    if missing_input is not None:
+        # T07：上一次尝试读不到数据——载荷就是既有指认对话框那份（ADR 0106）；用户亲手指认、同名不同内容不就近猜。
+        # 不阻塞再次运行（用户也可能自己把文件放回去），答完 `recheck` 换修订
+        out.append(
+            {
+                "id": "data",
+                "kind": "input_location",
+                "origin": "last_attempt",
+                "code": _MISSING_INPUT_CODE,
+                "blocking": False,
+                "payload": dict(missing_input),
+            }
+        )
+    if any(c["id"] == "arguments" for c in checks):
+        schema = arguments_schema(plan)
+        if schema is not None:
+            out.append(
+                {
+                    "id": "arguments",
+                    "kind": "script_arguments",
+                    "code": _ARGUMENTS_CODE,
+                    "blocking": False,
+                    "payload": {
+                        # 计划那一刻 worker 的 Python 版本（项目记住的事实；没有 = 前端取较窄的负数规则）
+                        "schema": {
+                            **schema,
+                            "python_version": (plan.environment or {}).get("python_version")
+                            or None,
+                        },
+                        # 这次检查用的配置：只有个数与本机引用（参数值不进报告）；表单写回的是前端草稿里的 token
+                        "argv_count": len(plan.run.argv) if plan.run is not None else 0,
+                        "run_config": plan.run.config_id if plan.run is not None else None,
+                    },
+                }
+            )
     return out
 
 
@@ -640,6 +699,8 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         "cwd_decided": decision.get("decided"),
         "grant": plan.grant,
         "binding": (plan.binding or {}).get("revision"),
+        # T07：数据改指表的代次（ADR 0106）：用户指认了数据位置，同一个目标的执行意图就变了（新修订，旧失败不再是当前的）
+        "input_remap": plan.input_remap_generation,
         "required": (plan.required_input or {}).get("code"),
         # T03：运行配置引用（不透明 id，换任何一个 token 都是新引用）——不放 argv 原文
         "run": plan.run.config_id if plan.run is not None else None,
@@ -863,7 +924,7 @@ class SessionService:
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
         if prepare is None:
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话不能起依赖准备", 409)
-        stale = preparation.stale_reason(sess.plan)
+        stale = preparation.stale_reason(sess.plan, source=False)
         if stale is not None:
             sess.stale = {"reason": stale[0]}
             sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
@@ -1126,6 +1187,7 @@ class SessionService:
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
         with sess.lock:
             sess.touched_at = self._clock()
+            self._note_source_change(sess)
             found = self._current_attempt(sess)
             checks = checks_of(sess.plan)
             # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
@@ -1197,6 +1259,13 @@ class SessionService:
                     sess.plan,
                     checks,
                     runtime_missing=self._public_missing(missing or self._unresolved_missing(sess)),
+                    missing_input=(
+                        result.missing_input
+                        if result is not None
+                        and attempt_fact is not None
+                        and result.status == preparation.STATUS_ERROR
+                        else None
+                    ),
                 ),
                 "actions": [
                     self._action_payload(a) for a in sess.actions.values() if self._open(a)
@@ -1213,6 +1282,22 @@ class SessionService:
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
+
+    def _note_source_change(self, sess: Session) -> None:
+        """脚本在检查之后被改了：披露过的影响（`script_writes` / 参数个数……）不再是真的。没有尝试在进行时，
+        提前把会话标失效、撤掉未认领的动作（等 `recheck` 重新披露）；认领时 `preparation.stale_reason` 仍会
+        再核一次（这里只是不再把过期的 `run` 摆给用户看）。"""
+        plan = sess.plan
+        if sess.stale or plan.script_revision is None or self._has_active_attempt(sess):
+            return
+        if sess.attempts and sess.attempts[-1].config_revision == sess.config_revision:
+            return  # 这一修订已经跑过：之后的源码改动（如写回）不回头改写它的结局；下一次 `run` 认领时仍会核
+        now = preparation._script_revision(plan.project_root, plan.script) or ""
+        # 只在披露得出的东西（schema 摘要）变了时提前撤：与依赖无关的字节改动不撤销已给出的授权（C03/C05），
+        # 但认领 `run` 时字节也核（执行的就是那份字节）
+        if now.partition(":")[2] != plan.script_revision.partition(":")[2]:
+            sess.stale = {"reason": preparation.STALE_SOURCE}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
 
     def get(self, session_id: str, project_id: str) -> Session | None:
         with self._lock:
@@ -1556,6 +1641,7 @@ class SessionService:
                 "writes_to_project": (
                     [registry.REGISTRY_NAME] if sess.plan.target == TARGET_SCRIPT else []
                 ),
+                **SessionService._script_writes(sess.plan),
             }
         return {
             "executes_user_script": False,
@@ -1563,6 +1649,17 @@ class SessionService:
             "changes_environment": False,
             "writes_to_project": [],
         }
+
+    @staticmethod
+    def _script_writes(plan: preparation.PreparationPlan) -> dict:
+        """T07（P03）：脚本自己声明了输出文件参数（`FileType('w')` 一类）时，说清这些相对路径会落在哪个工作目录档。
+        只给个数与档位，不给参数名 / 路径；Tavotto 从不替用户加 overwrite / force 一类开关。"""
+        schema = arguments_schema(plan)
+        outputs = scriptargs.summary(schema)["output_files"] if schema is not None else 0
+        if not outputs:
+            return {}
+        mode = str((plan.workdir_decision or {}).get("mode") or "")
+        return {"script_writes": {"declared_output_arguments": outputs, "cwd_mode": mode}}
 
     @staticmethod
     def _action_payload(action: _Action) -> dict:
