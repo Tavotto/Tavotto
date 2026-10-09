@@ -194,7 +194,7 @@ def test_mcp_adoption_runs_the_figure_in_exactly_the_chosen_environment(tmp_path
     venv_python = real_venv(root, ".venv", python=WORKER_PY)
     monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
     rec = envadvice.recommend(root, "fig.py")
-    row = next(c for c in rec["candidates"] if c["python_relative"] == ".venv/bin/python")
+    row = next(c for c in rec["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
 
     out = bridge.open_figure(
         str(root),
