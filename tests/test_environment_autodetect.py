@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -1031,7 +1032,7 @@ def test_unchecked_project_env_makes_run_primary_and_run_adopts_it_in_one_action
 
 @needs_worker
 def test_run_probe_that_finds_the_project_env_unfit_falls_back_to_the_install_outcome(
-    client, house, opened
+    client, house, opened, monkeypatch
 ):
     """项目 venv 存在但没装脚本要的包：点运行 → 体检跑不了 → 回到常规的「需要安装」（受管环境、带影响摘要），不是错误。"""
     proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
@@ -1039,6 +1040,14 @@ def test_run_probe_that_finds_the_project_env_unfit_falls_back_to_the_install_ou
 
     report = _create(client, {"script": "figure.py"})
     assert "run" in _kinds(report) and "prepare_dependencies" not in _kinds(report)
+    # 刷新到安装待办必须和"尝试收尾"原子落地：把运行之后的重新规划拖慢，读者一旦看到尝试结束，报告就已经是安装待办
+    slow = prepsession.SessionService._plan_of
+
+    def slow_plan_of(*a, **k):
+        time.sleep(1.5)
+        return slow(*a, **k)
+
+    monkeypatch.setattr(prepsession.SessionService, "_plan_of", staticmethod(slow_plan_of))
     assert _act(client, report, "run").status_code == 202
     final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
     assert final["phase"] != "completed", final

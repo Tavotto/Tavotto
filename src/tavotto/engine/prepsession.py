@@ -776,18 +776,7 @@ class SessionService:
             existing = self._by_key.get(key)
             if existing is not None and self._active(existing):
                 return existing, False
-        plan = preparation.plan_for(
-            project_id=project_id,
-            project_root=project_root,
-            asset_id=target.get("asset_id") or "",
-            stem=target.get("stem") or "",
-            script=target.get("script"),
-            entry=target.get("entry"),
-            original_artifact=target.get("original_artifact"),
-            original_path=target.get("original_path"),
-            target=target["kind"],
-            **({"run": target["run"]} if target.get("run") is not None else {}),
-        )
+        plan = self._plan_of(project_id, project_root, target)
         fingerprint = _fingerprint(plan)
         now = self._clock()
         created = False
@@ -825,6 +814,21 @@ class SessionService:
                     }
         self._notify(sess)
         return sess, created
+
+    @staticmethod
+    def _plan_of(project_id: str, project_root: str, target: dict) -> preparation.PreparationPlan:
+        return preparation.plan_for(
+            project_id=project_id,
+            project_root=project_root,
+            asset_id=target.get("asset_id") or "",
+            stem=target.get("stem") or "",
+            script=target.get("script"),
+            entry=target.get("entry"),
+            original_artifact=target.get("original_artifact"),
+            original_path=target.get("original_path"),
+            target=target["kind"],
+            **({"run": target["run"]} if target.get("run") is not None else {}),
+        )
 
     # ---- 动作 ----
     def act(
@@ -1180,6 +1184,19 @@ class SessionService:
                 missing = self._observe_missing(sess, done_plan, done_result)
             except Exception:  # noqa: BLE001 — 差异计划算不出来不能影响这次尝试的终局
                 LOG.exception("缺包差异计划失败 %s", done_plan.script)
+            # 点「运行」时体检了项目自带的环境，跑不了这个脚本：回到常规的「需要安装」。新计划在锁外先算好，再和"尝试收尾"
+            # 在**同一把锁里**一起落地——读者不会看到"尝试已结束、报告却还是旧的『可运行』"的中间态（否则用户能对着同一个
+            # 跑不了的环境再点一次运行）
+            refresh = None
+            if (
+                (sess.plan.dependency_preparation or {}).get("project_check_pending")
+                and done_result.status == preparation.STATUS_NEEDS_INPUT
+                and (done_result.required_input or {}).get("code") == _DEPENDENCY_CODE
+            ):
+                try:
+                    refresh = self._plan_of(sess.project_id, sess.project_root, sess.target)
+                except Exception:  # noqa: BLE001 — 刷新失败不改这次尝试的终局
+                    LOG.exception("运行后重新检查失败 %s", done_plan.script)
             with sess.lock:
                 if done_plan.interpreter != sess.plan.interpreter:
                     # 点「运行」时采用了项目环境，执行线程就地重算了计划：会话的计划跟上（不加修订——这次尝试的结局
@@ -1189,25 +1206,16 @@ class SessionService:
                 attempt.finalize = fin
                 attempt.missing = missing
                 attempt.finalized = True
-                deferred = bool(
-                    (sess.plan.dependency_preparation or {}).get("project_check_pending")
-                )
-            if (
-                deferred
-                and done_result.status == preparation.STATUS_NEEDS_INPUT
-                and (done_result.required_input or {}).get("code") == _DEPENDENCY_CODE
-            ):
-                # 点「运行」时体检了项目自带的环境，跑不了这个脚本：回到常规的「需要安装」——重新检查一次，让报告
-                # 带上安装待办与影响摘要（不是留一句"需要输入"让用户自己去找出路）
-                try:
-                    self.check(
-                        project_id=sess.project_id,
-                        project_root=sess.project_root,
-                        target=sess.target,
-                        force=True,
-                    )
-                except Exception:  # noqa: BLE001 — 刷新失败不改这次尝试的终局
-                    LOG.exception("运行后重新检查失败 %s", done_plan.script)
+                if refresh is not None:
+                    sess.plan = refresh
+                    sess.fingerprint = _fingerprint(refresh)
+                    sess.config_revision += 1
+                    sess.stale = None
+                    sess.actions = {
+                        k: v
+                        for k, v in sess.actions.items()
+                        if v.kind in (ACTION_RUN, ACTION_PREPARE) and v.attempt_id
+                    }
             self._notify(sess)
 
         # A new action after a settled attempt is an explicit rerun. The provider
