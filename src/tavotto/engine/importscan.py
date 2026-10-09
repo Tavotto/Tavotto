@@ -1111,11 +1111,7 @@ class _Scanner:
         """顶级名的查找：内建 / 冻结 / 启动即加载的 stdlib 先于文件系统；然后沿 `sys.path` 的搜索根
         （常规命中立即胜出，命名空间目录继续往后找）；最后才是 importer 自己目录里的兄弟文件（Python 3
         里并不在 `sys.path` 上，标 implicit）。"""
-        if (
-            name in self.builtin_names
-            or name in FROZEN_NAMES
-            or name in PRELOADED_STDLIB
-        ):
+        if name in self.builtin_names or name in FROZEN_NAMES or name in PRELOADED_STDLIB:
             kind = (
                 "builtin"
                 if name in self.builtin_names
