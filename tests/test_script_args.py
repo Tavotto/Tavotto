@@ -545,3 +545,27 @@ def test_subparsers_declared_in_a_branch_are_marked_conditional():
     )
     assert scriptargs.analyze(plain)["subcommands"]["conditional"] is False
     assert scriptargs.analyze(branch)["subcommands"]["conditional"] is True
+
+
+def test_declarations_in_helpers_are_unproven_but_the_main_path_is_not():
+    """Codex #820 r4234766738：运行闸只数证明得出属于被解析那个 parser 的声明。函数 / 类体里往别处造的 parser 上加参数的
+    辅助函数标 `conditional`（表单仍显示，闸不数）；模块级、或 `build_parser()` 里自己造自己加的不受影响。"""
+    helper = (
+        "import argparse\nparser = argparse.ArgumentParser()\nparser.add_argument('--out')\n"
+        "def unused_helper():\n    parser.add_argument('--input', required=True)\n"
+        "class K:\n    def m(self):\n        parser.add_argument('--k', required=True)\n"
+        "args = parser.parse_args()\n"
+    )
+    got = {a["flags"][0]: a["conditional"] for a in scriptargs.analyze(helper)["arguments"]}
+    assert got == {"--out": False, "--input": True, "--k": True}
+    built = (
+        "import argparse\ndef build_parser():\n    p = argparse.ArgumentParser()\n"
+        "    p.add_argument('--input', required=True)\n    return p\n"
+        "if __name__ == '__main__':\n    build_parser().parse_args()\n"
+    )
+    assert [a["conditional"] for a in scriptargs.analyze(built)["arguments"]] == [False]
+    main = (
+        "import argparse\ndef main():\n    p = argparse.ArgumentParser()\n    p.add_argument('--input', required=True)\n"
+        "    p.parse_args()\nmain()\n"
+    )
+    assert [a["conditional"] for a in scriptargs.analyze(main)["arguments"]] == [False]

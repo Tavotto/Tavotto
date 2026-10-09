@@ -237,6 +237,7 @@ class _Parser:
         self.subcommands: dict | None = None
         # argparse 默认允许长选项缩写（`--inp` = `--input`）：字面量 False 才关；不是字面量 = None（说不准，前端按宽松认缩写）
         self.allow_abbrev: bool | None = True
+        self.scope: ast.AST | None = None  # 创建它的作用域（函数 / 类 / None = 模块）
         for kw in node.keywords:
             if kw.arg is None:
                 self.reasons.add("dynamic_value")
@@ -284,6 +285,7 @@ class _Scanner(ast.NodeVisitor):
         self.unresolved_calls: list[ast.Call] = []
         self.functions: dict[str, ast.FunctionDef] = {}
         self.reads_sys_argv = False
+        self.scopes: list[ast.AST] = []
 
     # ---- 上下文 ----
     def _loop(self, node: ast.AST) -> None:
@@ -318,9 +320,25 @@ class _Scanner(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.functions.setdefault(node.name, node)
+        self.scopes.append(node)
         self.generic_visit(node)
+        self.scopes.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.scopes.append(node)
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def _scope(self) -> ast.AST | None:
+        return self.scopes[-1] if self.scopes else None
+
+    def _proven(self, parser: "_Parser") -> bool:
+        """这条声明是不是**证明得出**属于会被解析的那个 parser：声明所在的作用域就是创建这个 parser 的作用域（模块级对模块级；
+        `build_parser()` / `main()` 里自己造、自己加、自己解析）。函数 / 类体里往**别处造的** parser 上加参数的
+        辅助函数（没被证明走到）不算——它们不该拦运行。"""
+        return self._scope() is parser.scope
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr == "argv" and isinstance(node.value, ast.Name) and node.value.id == "sys":
@@ -347,6 +365,7 @@ class _Scanner(ast.NodeVisitor):
             if name in self.parsers or self.loop_depth:
                 self.reasons.add("multiple_parsers")
             parser = _Parser(name, line, value, self.names, sub=False)
+            parser.scope = self._scope()
             self.parsers[name] = parser
             self.order.append(parser)
             return
@@ -357,6 +376,7 @@ class _Scanner(ast.NodeVisitor):
             parent = self.subparsers.get(func.value.id)
             if parent is not None:
                 sub = _Parser(name, line, value, self.names, sub=True)
+                sub.scope = self._scope()
                 self.parsers[name] = sub
                 return
         if owner is None:
@@ -462,7 +482,7 @@ class _Scanner(ast.NodeVisitor):
                 # （之后声明的位置参数在子命令之后；前端预留 token 时只数前面这几个）
                 "position": sum(1 for a in parser.arguments if a.get("positional")),
                 # 在 if / try 分支里声明的 add_subparsers 运行时可能根本不存在：前端不拿它当运行闸
-                "conditional": bool(self.branch_depth),
+                "conditional": bool(self.branch_depth) or not self._proven(parser),
             }
 
     def _parse_call(self, node: ast.Call) -> None:
@@ -517,7 +537,8 @@ class _Scanner(ast.NodeVisitor):
         if positional and len(flags) > 1:
             parser.reasons.add("dynamic_add_argument")  # argparse 自己会报错；这里不替它猜
             return
-        if self.branch_depth:
+        unproven = not self._proven(parser)
+        if self.branch_depth or unproven:
             parser.reasons.add("conditional_argument")
         key = tuple(flags)
         if any(tuple(a["flags"]) == key for a in parser.arguments):
@@ -526,7 +547,7 @@ class _Scanner(ast.NodeVisitor):
         arg = _argument(flags, positional, kws, self.names, parser.reasons)
         arg["id"] = f"a{len(parser.arguments)}"
         arg["line"] = node.lineno
-        arg["conditional"] = bool(self.branch_depth)
+        arg["conditional"] = bool(self.branch_depth) or unproven
         if group is not None:
             arg["group"] = group["id"]
             group["members"].append(arg["id"])
