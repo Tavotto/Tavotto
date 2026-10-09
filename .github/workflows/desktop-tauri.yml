@@ -281,18 +281,20 @@ jobs:
           elif [ "${SIGNPATH_ENABLED_VAR:-}" != "true" ]; then
             # 不进 missing——见上面那段。但要在**运行页顶部**看得见，而不是
             # 只在第 33 步的日志里躺着：发出去的东西没签名，得有人知道。
-            echo "::warning title=Windows 安装包未签名::vars.SIGNPATH_ENABLED 未开启——本次发行的 Windows 安装包没有 Authenticode 签名，用户首次运行会看到 SmartScreen 警告。更新包仍有 minisign 签名，自动更新链是可信的。"
+            echo "::error title=Windows 安装包未签名::vars.SIGNPATH_ENABLED 未开启——本次发行的 Windows 安装包没有 Authenticode 签名。fail-closed：拒绝继续。"
             {
-              echo "### ⚠️ Windows 安装包未签名"
+              echo "### ❌ Windows 安装包未签名——已拦停"
               echo
               echo "\`vars.SIGNPATH_ENABLED\` 未开启，本次发行的 \`Tavotto-*-Windows-Setup.exe\` **没有 Authenticode 签名**。"
               echo
-              echo "- 用户首次运行会看到 SmartScreen 警告；"
-              echo "- 更新包（\`*-setup.nsis.zip\`）仍带 minisign 签名，自动更新链本身可信；"
-              echo "- 安装包仍有 build provenance attestation，可用 \`gh attestation verify\` 核对来源。"
+              echo "fail-closed：未签名的 Windows 安装包不再放行，签名门禁在这里直接失败。"
+              
+              
               echo
               echo "配好 SignPath 之后这条会自动消失，见 \`docs/code-signing-policy.md\`。"
             } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+            
           fi
           if [ "${#missing[@]}" -gt 0 ]; then
             printf '::error::发行构建缺少签名凭据：%s\n' "${missing[*]}"
