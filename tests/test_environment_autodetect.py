@@ -294,6 +294,16 @@ def test_project_declared_envs_outside_the_project_keep_precedence_at_check_time
     assert entry is not None and entry["python"] == venv
 
 
+def test_a_declared_pyenv_env_is_preferred_over_the_runnable_default_but_conda_is_not(rig):
+    pyenv = rig["cand"]("pyenv-ver", userenvs.SOURCE_PYTHON_VERSION, "3.11")
+    conda = rig["cand"]("conda-env", userenvs.SOURCE_CONDA, "other")
+    rig["satisfying"] |= {pyenv, conda}
+    rig["runs_now"] = True
+    entry = deprepair.decide_environment_pinned(rig["root"], "fig.py", project_exec=False).adopted
+    assert entry is not None and entry["python"] == pyenv
+    assert rig["probed"] == [[pyenv]]
+
+
 def test_nothing_runnable_adopts_nothing_and_drops_an_auto_choice_that_stopped_working(rig):
     venv = rig["cand"]("proj/.venv", userenvs.SOURCE_PROJECT_VENV)
     assert deprepair.decide_environment(rig["root"], "fig.py") is None
