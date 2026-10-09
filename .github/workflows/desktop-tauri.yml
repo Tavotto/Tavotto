@@ -718,8 +718,44 @@ jobs:
           parameters: |
             version: "${{ env.APP_VERSION }}"
 
+      - name: 输出签名审批链接（submit-only 模式）
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode == 'submit-only'
+        shell: pwsh
+        run: |
+          $requestId = "${{ steps.signpath-windows.outputs.signing-request-id }}"
+          $webUrl = "${{ steps.signpath-windows.outputs.signing-request-web-url }}"
+          Write-Host "SignPath 签名请求已提交，等待人工批准：$webUrl"
+          @{
+            signing_request_id = $requestId
+            signing_request_web_url = $webUrl
+            app_version = "$env:APP_VERSION"
+            source_run_id = "$env:GITHUB_RUN_ID"
+            submitted_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+          } | ConvertTo-Json | Out-File -FilePath "signpath-pending.json" -Encoding utf8
+          Get-Content "signpath-pending.json"
+          {
+            echo "## 等待人工批准 Windows 签名"
+            echo ""
+            echo "签名请求已提交到 SignPath，**请在 SignPath UI 手动批准**（生产证书要求每次手动批准）："
+            echo ""
+            echo "$webUrl"
+            echo ""
+            echo "批准后，手动触发 complete-windows-signing.yml workflow 完成后续步骤，填入："
+            echo "- signing-request-id: $requestId"
+            echo "- source-run-id: $env:GITHUB_RUN_ID"
+            echo "- app-version: $env:APP_VERSION"
+          } >> $env:GITHUB_STEP_SUMMARY
+
+      - name: 上传待签名信息（submit-only 模式）
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode == 'submit-only'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: signpath-pending-${{ github.run_id }}
+          path: signpath-pending.json
+          if-no-files-found: error
+
       - name: 替换为 SignPath 签名结果
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode != 'submit-only'
         shell: pwsh
         run: |
           $signed = @(Get-ChildItem signed-out -Recurse -File -Filter "Tavotto-$env:APP_VERSION-Windows-Setup.exe")
@@ -753,7 +789,7 @@ jobs:
         # 装出去的每一次应用内更新都会在下载完成后报「无法安装更新」——
         # v0.7.0 到 v0.10.0 的 Windows 更新包全是这么坏的，而整条链全绿。
         # 判据与复现记录见 make_updater_zip.py 抬头与 tests/test_updater_zip.py。
-        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != '' && inputs.signing-mode != 'submit-only'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
