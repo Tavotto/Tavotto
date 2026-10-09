@@ -125,6 +125,30 @@ describe('打开：参数在这一刻冻结', () => {
   })
 })
 
+describe('报告落地时刻（脚本库据此判结局新旧）', () => {
+  it('重连后补拉到同一份快照：不换落地时刻；报告前进了才换（Codex #820 r4234324635）', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(1_000)
+      mockCreate.mockResolvedValueOnce(prepReport({ phase: 'partial', observation_seq: 3 }))
+      await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+      expect(entry().reportAt).toBe(1_000)
+      // 之后注册表刷新、SSE 重连又取到完全相同的快照
+      vi.setSystemTime(5_000)
+      mockGet.mockResolvedValueOnce(prepReport({ phase: 'partial', observation_seq: 3 }))
+      await useProjectPreparationStore.getState().refresh(KEY)
+      expect(entry().reportAt).toBe(1_000)
+      // 报告真的前进了（观察序号加一）
+      vi.setSystemTime(6_000)
+      mockGet.mockResolvedValueOnce(prepReport({ phase: 'partial', observation_seq: 4 }))
+      await useProjectPreparationStore.getState().refresh(KEY)
+      expect(entry().reportAt).toBe(6_000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('同一脚本换参数再打开', () => {
   it('旧参数的报告不留：新会话建不出来（超时）时重试的是新目标，不去补拉旧会话', async () => {
     useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])

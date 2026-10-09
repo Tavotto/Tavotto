@@ -221,6 +221,11 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     if (e.report && e.report.session_id !== report.session_id && !opts?.session) return
     if (!newer(e.report, report)) return
     const before = e.report
+    const advanced =
+      !before ||
+      before.session_id !== report.session_id ||
+      before.config_revision !== report.config_revision ||
+      before.observation_seq !== report.observation_seq
     // 同一目标的后端状态前进了（更高修订 / 换了会话 / 开了新一轮尝试）：上一轮的「进入编辑」记录属于旧结果，
     // 不许让新一轮跑完的 `completed` 把旧资产当成当前结果、压掉「进入编辑」
     const newRound =
@@ -237,7 +242,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
     patch(key, () => ({
       report,
-      reportAt: Date.now(),
+      // 只有报告真的前进了才换落地时刻：重连后补拉到同一份旧快照（会话 / 修订 / 观察序号都没变）不能因此显得比注册表刷新更新
+      ...(advanced ? { reportAt: Date.now() } : {}),
       connection: 'ok',
       ...(newRound
         ? { editing: [], editRenders: {}, ...(before?.session_id === report.session_id ? { restarted: false } : {}) }
