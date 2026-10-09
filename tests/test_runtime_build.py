@@ -975,7 +975,12 @@ def test_unsigned_windows_release_is_fail_closed():
     step = _release_signing_gate()
     assert "::error" in step, "未签名的 Windows 发行必须打出 ::error"
     assert "::warning" not in step, "未签名不再是 warning 放行：门禁里不该再有 ::warning"
-    assert "exit 1" in step, "门禁必须 exit 1 拦停发行"
+    # exit 1 必须在 SignPath 分支里，不能是后面通用 missing 块里的那个——
+    # 否则删掉 SignPath 分支的 exit 1 也能过，门禁就空转了。
+    branch_start = step.index('elif [ "${SIGNPATH_ENABLED_VAR:-}" != "true" ]; then')
+    branch_end = step.index("\n          fi", branch_start)
+    signpath_branch = step[branch_start:branch_end]
+    assert "exit 1" in signpath_branch, "SignPath 分支必须自己 exit 1 拦停发行"
     )
     assert "已拦停" in step or "fail-closed" in step, "作业摘要里必须写明已拦停 / fail-closed"
 
