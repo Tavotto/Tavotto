@@ -968,6 +968,38 @@ def test_when_nothing_can_run_the_only_todo_is_installing_into_tavottos_environm
 
 
 @needs_worker
+def test_clean_machine_with_an_unchecked_project_venv_offers_run_and_run_adopts_it(
+    client, house, opened, monkeypatch
+):
+    """Codex #820 r4233563595：默认链条一个解释器都没有（干净机器）+ 项目 .venv 还没体检：首份报告主动作是运行（不先推
+    私有 Python / 受管环境安装），点一次运行：体检、采用 .venv、就地重算、出图。"""
+    proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
+    venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
+    _install_into(venv_python, house, ALPHA[0])
+    orig = engine_pool.resolve_worker_python
+
+    def resolve(*a, **k):
+        rec = projectenv.remembered_record(proj)
+        if not (rec and rec.get("exists") and rec.get("mode") != "default"):
+            raise engine_pool.WorkerError("没有可用的 Python", code="no_worker_python")
+        return orig(*a, **k)
+
+    monkeypatch.setattr(engine_pool, "resolve_worker_python", resolve)
+
+    report = _create(client, {"script": "figure.py"})
+    assert projectenv.remembered_record(proj) is None  # 检查没起 .venv
+    assert report["phase"] == "ready_to_run", report
+    kinds = _kinds(report)
+    assert "run" in kinds and "prepare_dependencies" not in kinds
+    assert _act(client, report, "run").status_code == 202
+    final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
+    assert final["phase"] == "completed", final
+    assert os.path.realpath(projectenv.remembered_record(proj)["path"]) == os.path.realpath(
+        venv_python
+    )
+
+
+@needs_worker
 def test_unchecked_project_env_makes_run_primary_and_run_adopts_it_in_one_action(
     client, house, opened
 ):

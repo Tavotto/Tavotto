@@ -5327,6 +5327,14 @@ def _evaluate_candidates(
     return [next(cached_it) if h else next(live_it) for h in held]
 
 
+def static_plan_payload(project: str | Path, script: str) -> dict | None:
+    """不解析任何解释器的联合计划载荷（`_static_joint_plan`）；算不出来回 None。"""
+    try:
+        return _static_joint_plan(str(Path(project)), script).to_payload()
+    except Exception:  # noqa: BLE001 — 算不出来就当没有
+        return None
+
+
 def project_check_pending(project: str | Path, script: str, plan_payload: dict) -> bool:
     """检测模式下，项目自带的候选解释器（`userenvs.is_project_controlled`）里有没有**还没体检**、也许能跑这个脚本的：
     有 = 现在不能说「这个脚本需要安装包」——项目环境要等用户点「运行」才会被体检（Codex 安全 #820 r4232804805），

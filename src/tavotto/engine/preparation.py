@@ -406,6 +406,19 @@ def plan_for(
             # 安装待办（`_execute` 里点运行时重算计划）。不要求授权，所以也不挂 `required_input`
             dependency = {**dependency, "project_check_pending": True}
             required = None
+    if (
+        script is not None
+        and clean_machine
+        and not python
+        and (required is None or required.get("code") == deprepair.ERROR_PREPARATION_REQUIRED)
+    ):
+        # 默认链条一个解释器都没有（干净机器）而项目带了还没体检的环境（如 .venv）：同样等用户点「运行」才体检——主动作是
+        # 运行，不先推去装私有 Python / 受管环境；体检跑不了再回到安装待办（Codex #820 r4233563595）。脚本的 import 静态推出
+        payload = (dependency or {}).get("plan") or deprepair.static_plan_payload(root, script)
+        if payload is not None and deprepair.project_check_pending(root, script, payload):
+            dependency = {**(dependency or {}), "project_check_pending": True}
+            environment["project_check_pending"] = True
+            required = None
     static = None
     if original_artifact and original_path:
         try:

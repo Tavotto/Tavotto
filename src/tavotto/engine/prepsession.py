@@ -195,7 +195,10 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
     env_error = env.get("error")
     checks: list[dict] = [_check("target", CHECK_OK)]
     decision = ((env.get("recommendation") or {}).get("decision")) or {}
-    if env_error:
+    if env_error and env.get("project_check_pending"):
+        # 没有默认解释器，但项目自带的环境等用户点「运行」才体检（Codex #820 r4233563595）：不先报"没有 Python"
+        checks.append(_check("environment", CHECK_OK, deferred="project_environment"))
+    elif env_error:
         checks.append(_check("environment", CHECK_BLOCKED, str(env_error.get("code") or "")))
     elif decision.get("needs_decision"):
         # T05：项目里有自己的环境线索而用户还没决定用哪个——这不是机器的决定。建议在 requirements 里，
@@ -237,6 +240,8 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
                 **({"impact_digest": digest} if digest else {}),
             )
         )
+    elif (offer or {}).get("project_check_pending"):
+        checks.append(_check("dependencies", CHECK_OK, deferred="project_environment"))
     elif offer is None:
         # 工作目录要先答 / 环境走不通时依赖没有被评估——如实 unknown，不虚构已满足
         checks.append(_check("dependencies", CHECK_UNKNOWN))
@@ -245,9 +250,6 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
         # 作用域互斥（D04）单列一个码：它有用户能走的出路（换成本作用域 / 子目录独立成项目），其余 blocked 没有
         code = _SCOPE_CONFLICT_CODE if _SCOPE_CONFLICT_CODE in reasons else "dependency_blocked"
         checks.append(_check("dependencies", CHECK_BLOCKED, code, reasons=reasons[:8]))
-    elif (offer or {}).get("project_check_pending"):
-        # 项目自带的环境要等用户点「运行」才体检（Codex 安全 #820）：现在不说要装包，运行是主动作；体检跑不了会回到安装待办
-        checks.append(_check("dependencies", CHECK_OK, deferred="project_environment"))
     else:
         checks.append(_check("dependencies", CHECK_OK))
     checks.append(
