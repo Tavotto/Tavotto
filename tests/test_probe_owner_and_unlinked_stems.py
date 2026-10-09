@@ -126,6 +126,7 @@ def probe_pool(monkeypatch):
         "pool_worker": None,
         "force_cancel": [],
         "taking": threading.Event(),  # 清掉 = 卡在「取会话之前」
+        "at_take": threading.Event(),  # build 已进入、正站在「取会话」门口（早于它的取消不会有会话可关）
         "gate": threading.Event(),  # 清掉 = 卡在 build 里
         "entered": threading.Event(),  # 取到会话、过了 before_build、正卡在 build 里
     }
@@ -133,6 +134,7 @@ def probe_pool(monkeypatch):
     box["taking"].set()
 
     def build(script, root, entry, *, before_build=None, **kw):
+        box["at_take"].set()
         box["taking"].wait(timeout=30)
         worker = box["mine"]
         if before_build is not None:
@@ -181,6 +183,18 @@ def _start_probe(client) -> tuple[threading.Thread, dict]:
 def _wait_entered(box: dict, timeout: float = 5.0) -> None:
     """等到试运行已经取到会话、正卡在 build 里（「运行中」那条路，不是「取到会话之前」）。"""
     assert box["entered"].wait(timeout), "试运行一直没有取到会话"
+
+
+def _wait_at_take(box: dict, pj: str, timeout: float = 5.0) -> None:
+    """等到试运行已登记、且 build 正站在「取会话」门口。
+
+    只等 `_PROBES` 登记不够：取消若赶在探测线程走到 entry 循环首句 `cancelled()` 之前，探测直接返回取消、
+    根本没取过会话——没有会话可关，`force_cancel` 为空是对的（高负载下偶发红的根因）。"""
+    deadline = time.time() + timeout
+    while (pj, "fig.py") not in m._PROBES:
+        assert time.time() < deadline
+        time.sleep(0.01)
+    assert box["at_take"].wait(timeout), "试运行一直没有走到取会话"
 
 
 def _cancel(client) -> dict:
@@ -249,10 +263,7 @@ def test_a_cancel_before_the_session_is_taken_spares_a_shared_session(client, tm
     probe_pool["owned"] = False
     probe_pool["taking"].clear()  # 还在取会话（解析解释器 / 等池锁）
     th, done = _start_probe(client)
-    deadline = time.time() + 5
-    while (pj, "fig.py") not in m._PROBES:
-        assert time.time() < deadline
-        time.sleep(0.01)
+    _wait_at_take(probe_pool, pj)
     assert _cancel(client)["cancelling"] is True
     assert probe_pool["force_cancel"] == []  # 还没取到会话：只立标志
     probe_pool["taking"].set()
@@ -269,16 +280,39 @@ def test_a_cancel_before_the_session_is_taken_closes_a_session_it_creates(
     pj = _open(client, root)
     probe_pool["taking"].clear()
     th, done = _start_probe(client)
-    deadline = time.time() + 5
-    while (pj, "fig.py") not in m._PROBES:
-        assert time.time() < deadline
-        time.sleep(0.01)
+    _wait_at_take(probe_pool, pj)
     assert _cancel(client)["cancelling"] is True
     probe_pool["taking"].set()
     th.join(timeout=5)
     assert not th.is_alive()
     assert done["json"]["error"]["code"] == "execution_cancelled"
     assert probe_pool["force_cancel"] == [probe_pool["mine"]]
+
+
+def test_a_cancel_before_the_probe_reaches_the_entry_loop_never_takes_a_session(
+    client, tmp_path, probe_pool, monkeypatch
+):
+    """取消赶在探测线程走到 entry 循环之前：直接返回取消，没取过会话，也就没有 `force_cancel`（确定性复现原先的偶发红）。"""
+    root = _project(tmp_path, "p")
+    pj = _open(client, root)
+    parked, release = threading.Event(), threading.Event()
+
+    def parked_candidates(*a, **kw):
+        parked.set()
+        release.wait(timeout=30)
+        return ["fig.py"]
+
+    monkeypatch.setattr(engine_probe, "entry_candidates", parked_candidates)
+    th, done = _start_probe(client)
+    assert parked.wait(5)
+    assert (pj, "fig.py") in m._PROBES
+    assert _cancel(client)["cancelling"] is True
+    release.set()
+    th.join(timeout=5)
+    assert not th.is_alive()
+    assert done["json"]["error"]["code"] == "execution_cancelled"
+    assert not probe_pool["at_take"].is_set()
+    assert probe_pool["force_cancel"] == [] and not probe_pool["mine"].killed.is_set()
 
 
 def test_acquired_here_answers_only_for_this_threads_last_acquisition(monkeypatch, tmp_path):
