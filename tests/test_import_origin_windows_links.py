@@ -106,7 +106,11 @@ def _pretend_windows(monkeypatch, link, *, tag: int, mode: int | None = None, re
 
     def fake_readlink(path, *a, **kw):
         if os.path.abspath(os.fspath(path)) == target:
-            return readlink if readlink is not None else "\\\\?\\" + real_readlink(path)
+            if readlink is not None:
+                return readlink
+            raw = real_readlink(path)
+            # 真 Windows 的 readlink 本来就带 `\\?\` 前缀：只补不叠，两种平台测同一件事
+            return raw if raw.startswith("\\\\?\\") else "\\\\?\\" + raw
         return real_readlink(path, *a, **kw)
 
     monkeypatch.setattr(os, "lstat", fake_lstat)
