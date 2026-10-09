@@ -1488,7 +1488,7 @@ def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerE
 
 
 #: 会话重建的原因（闭集，诊断日志按它放行明文）。
-_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变", "改指表已变")
+_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变", "环境代已变", "改指表已变")
 
 
 def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, record: dict) -> None:
@@ -2843,6 +2843,25 @@ class EnvironmentDecision:
             )
         )
 
+    def matches_worker(self, worker) -> bool:
+        """缓存的会话是不是这次决定钉下的那一个：路径与**起会话那一刻的环境代**都要对得上。
+
+        钉下的有环境代而会话没记（空）= 对不上——同一路径的环境可能已被原地重建，复用旧进程会拿旧 / 混合的包出图
+        （Codex #820 r4232403630）。钉下的没有环境代 = 只比路径。"""
+        if not (self.pinned and same_python(getattr(worker, "python", ""), self.python)):
+            return False
+        born = getattr(worker, "python_generation", "") or ""
+        return not self.generation or born == self.generation
+
+
+def generation_stale(worker) -> bool:
+    """会话起的时候记下的环境代，与它的解释器**此刻**的环境代不是同一代（环境被原地重建了）。
+    会话没记环境代（替身 / 路径不存在）不判陈旧。"""
+    born = getattr(worker, "python_generation", "") or ""
+    if not born:
+        return False
+    return projectenv.environment_generation(getattr(worker, "python", "")) != born
+
 
 def pin_of_worker(worker) -> EnvironmentDecision:
     """热会话自己的解释器（路径 + 来源 + 起会话那一刻的环境代）——写回重放、冷重放要钉的就是它，不是项目此刻的记录。"""
@@ -3315,6 +3334,10 @@ def acquire(
                     # 还复用那条内置 runtime 起的会话，用户看到的就是「明明切了环境，
                     # 还是报缺包」。判据与 `entry` 那条同形，不另起一套 key。
                     why = "渲染解释器已变"
+                elif generation_stale(w) or (pin is not None and not pin.matches_worker(w)):
+                    # 同一路径、环境却被原地重建过（r4232403630）：缓存的进程还握着旧 / 混合的包。拆掉它，
+                    # 重建出来的新会话再过下面「起出来的与钉下的对不上就 environment_changed」那一道
+                    why = "环境代已变"
                 elif not _remap_current(w, figures_dir):
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图
@@ -3406,6 +3429,7 @@ def _reusable(key: tuple[str, ...], entry: str, want_python: str) -> bool:
             and w.alive()
             and w.entry == entry
             and same_python(w.python, want_python)
+            and not generation_stale(w)
             and _remap_current(w, key[0])
         )
 

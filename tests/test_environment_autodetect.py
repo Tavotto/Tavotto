@@ -397,6 +397,49 @@ def test_acquire_without_a_race_starts_on_the_detected_interpreter(raced):
     assert created and w.python == raced["conda"]
 
 
+def _cache_worker(raced, generation):
+    """把一条已活的缓存会话放进池里：解释器是检测会选的那一个，环境代由调用方指定。"""
+    w = _Recorder("fig.py", str(raced["root"]), "__main__")
+    w.python = raced["conda"]
+    w.python_generation = generation
+    key = engine_pool._worker_key(str(raced["root"]), "fig.py", None, None)
+    with engine_pool._lock:
+        engine_pool._workers[key] = w
+    return w
+
+
+def test_acquire_rebuilds_a_cached_worker_born_in_an_obsolete_environment_generation(raced):
+    """#820 r4232403630：同一路径的环境被原地重建后，缓存的进程还握着旧 / 混合的包——不许复用，拆掉重建。"""
+    raced["race"] = False
+    stale = _cache_worker(raced, "obsolete-generation")
+    w, created = engine_pool.acquire("fig.py", str(raced["root"]), "__main__")
+    assert stale.down and created and w is not stale
+    assert w.python == raced["conda"]
+
+
+def test_acquire_reuses_a_cached_worker_of_the_current_environment_generation(raced):
+    raced["race"] = False
+    fresh = _cache_worker(raced, projectenv.environment_generation(raced["conda"]))
+    w, created = engine_pool.acquire("fig.py", str(raced["root"]), "__main__")
+    assert w is fresh and not created and not fresh.down
+
+
+def test_a_pin_with_a_generation_rejects_a_worker_that_does_not_record_one(raced):
+    py = raced["conda"]
+    gen = projectenv.environment_generation(py)
+    pin = engine_pool.EnvironmentDecision(python=py, generation=gen)
+    w = _Recorder("fig.py", str(raced["root"]), "__main__")
+    w.python = py
+    w.python_generation = ""
+    assert not pin.matches_worker(w)  # 钉下有环境代、会话没记：当作不一致
+    w.python_generation = gen
+    assert pin.matches_worker(w)
+    w.python_generation = "old"
+    assert not pin.matches_worker(w)
+    # 钉下没有环境代：只比路径
+    assert engine_pool.EnvironmentDecision(python=py).matches_worker(w)
+
+
 def test_the_plan_snapshot_keeps_the_detected_interpreter_and_goes_stale_when_the_record_moves(
     raced, monkeypatch
 ):
