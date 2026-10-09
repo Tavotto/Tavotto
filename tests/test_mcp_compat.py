@@ -921,6 +921,54 @@ def test_exact_prefix_set_does_not_over_reject_other_symbols(project):
     assert _scope_code(project, ["%x"]) == "argv_path_out_of_scope"
 
 
+PLAIN_ARGPARSE = (
+    "import argparse\np = argparse.ArgumentParser()\np.add_argument('--freq')\np.parse_args()\n"
+)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "$HOME/x",
+        "${HOME}/x",
+        "%USERPROFILE%\\x",
+        "--out=$HOME/x",
+        "--out=${HOME}/x",
+        "--out=%USERPROFILE%\\x",
+        "-o$HOME/x",
+        "-o${HOME}/x",
+        "sub/$HOME/x",
+        "~root/x",
+        "~someone",
+        "--out=~root/x",
+        "-o~root/x",
+        "price$5",  # 宁可保守：含 `$数字` 也拒
+    ],
+)
+def test_env_expansion_shapes_in_argv_are_refused(project, pool, token):
+    """r4229588335：脚本若对路径做 expandvars / expanduser，未展开的字面量在根内、展开后在根外。
+    含 `$NAME` / `${NAME}` / `%NAME%` / `~user` 形状一律 argv_path_out_of_scope，脚本不跑。"""
+    _set_script(project, PLAIN_ARGPARSE)
+    assert _scope_code(project, [token]) == "argv_path_out_of_scope"
+    body = _open(project, argv=[token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert "Tavotto" in body["recovery"]
+    assert pool.runs == []
+
+
+@pytest.mark.parametrize(
+    "token", ["data.csv", "--freq=3", "-o out.png", "100%", "a%b", "50% off", "~", "~/x"]
+)
+def test_ordinary_values_still_pass_env_shape_check(project, token):
+    """没有展开形状的普通值照旧（`~` / `~/x` 走原有的根内检查，不属于 `~user`）。"""
+    _set_script(project, PLAIN_ARGPARSE)
+    code = _scope_code(project, [token])
+    if token.startswith("~"):
+        assert code == "argv_path_out_of_scope"  # 家目录在授权根外：原行为
+    else:
+        assert code is None
+
+
 def test_worker_respawn_rechecks_the_frozen_run(project_cwd, pool, tmp_path_factory, monkeypatch):
     """打开时在根内的相对路径，之后符号链接改指根外：worker 被淘汰 / 死亡后 `Session.acquire()` 重建前必须重查，
     一次性重放（`verify_replay`）同理；池一次都不许被调。"""
