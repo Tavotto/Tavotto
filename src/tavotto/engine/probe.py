@@ -29,6 +29,7 @@ spawn 路径都是 `execspec.safe_spec()` 的消费者）：cwd 在沙盒、argv
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from . import (
@@ -613,7 +614,14 @@ def register_probed(
     return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
 
 
-def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
+def was_captured(
+    figures_dir: str | Path,
+    script: str,
+    stem: str,
+    *,
+    configs: list | None = None,
+    charge: Callable[[], bool] | None = None,
+) -> bool:
     """这个图名此前真被某次执行捕获过：runtime cache 里有它的物化记录（无参数或这个脚本登记过的任一份运行配置）。
 
     注册表里的图名不全是执行结果——打开项目时的静态扫描会把字面量 `savefig` 的名字先登记上（T00 deliberate-boundary），
@@ -624,12 +632,23 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
     运行配置登记读不出 / 来自新版本（`RunConfigError`）时，带配置那几份变体当**没有证据**：这是「是否捕获过」的
     证据判断，宁可少说，不能因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
     `run_config_secret_missing`，不是「可直接编辑」（r4221248582；两种情形共用 `runconfig.executable_configs_of`）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
-    `run_config_unreadable` 显式拒绝（那条不在这里）。"""
-    configs = runconfig.executable_configs_of(figures_dir, script)
+    `run_config_unreadable` 显式拒绝（那条不在这里）。
+
+    导入即扫描（`projscan`）传两个可选参数把它纳入扫描预算：`configs` 是调用方按脚本读好的
+    `runconfig.executable_configs_of` 结果（不再每个 stem 重读一次登记）；`charge` 在每次 cache 元数据探测前调用，
+    返回 False（预算用完 / 超时 / 取消）就停止探测并回 False——调用方据预算状态判「没查全」，不是「没捕获」。
+    不传则行为与原来完全一致。"""
+    if configs is None:
+        configs = runconfig.executable_configs_of(figures_dir, script)
     ids = [figcapture.runtime_asset_id(script, stem)] + [
         figcapture.runtime_asset_id(script, stem, cfg.id) for cfg in configs
     ]
-    return any(runtimeasset.load_metadata(figures_dir, asset_id) is not None for asset_id in ids)
+    for asset_id in ids:
+        if charge is not None and not charge():
+            return False
+        if runtimeasset.load_metadata(figures_dir, asset_id) is not None:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
