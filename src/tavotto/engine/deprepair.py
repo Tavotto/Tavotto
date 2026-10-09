@@ -5686,22 +5686,34 @@ def _detect_environment_unlocked(
     )
     needed, unknown = _plan_imports(plan)
     candidates = user_environment_candidates(root, script, exclude=current or python)
+    # 两个互不相同的子集（Codex #820 r4233842661）：`declared` = 项目声明 / 指向的（排序里排在默认链条前面的那一档：
+    # 项目 venv / `.vscode` / `.python-version` / `environment.yml` / shebang，加上路径落在项目根里的）；`held` ⊂ 它 = 其中
+    # 项目说了算路径的（`is_project_controlled`），点「运行」之前不能起。`.python-version` / `environment.yml` 指向用户
+    # 自己 pyenv / Conda 里的环境，属于 `declared` 但不是 `held`：检查阶段照旧体检、按排序采用
     held = [c for c in candidates if userenvs.is_project_controlled(c, root)]
+    declared = [
+        c
+        for c in candidates
+        if c.get("source") in userenvs.PROJECT_SOURCES or userenvs.is_project_controlled(c, root)
+    ]
+    free_declared = [c for c in declared if c not in held]
     if runs_now and record is not None:
         # 机器先前定下的那个仍能跑：不动——除非它不是项目自己的环境，而项目带了更靠前的候选还没被体检过（点「运行」
         # 才体检，Codex #820 r4233340712）：不能让一个排在后面的先前选择把项目环境永远挡在体检之外
         mine = userenvs.is_project_controlled({"python": current or python, "source": ""}, root)
-        if mine or not project_exec or not held:
+        if mine or not declared or (not project_exec and not free_declared):
             return None
     if not project_exec and any(
         e.get("checked") is False for e in userenvs.evaluate(held, needed, unknown, cache_only=True)
     ):
         # 项目自带的候选还没体检、检查阶段又不能起它：不在这时采用排在它后面的候选（点「运行」先体检项目的那个，
-        # 跑不了才按既有排序落到下一个；Codex #820 r4233340712）
-        return None
-    if runs_now:
-        # 默认链条能跑：只有项目自己声明 / 指向的环境排在它前面
-        candidates = held
+        # 跑不了才按既有排序落到下一个；Codex #820 r4233340712）。同档但不归项目说了算的（pyenv / Conda 里的）照旧可体检
+        if not free_declared:
+            return None
+        candidates = free_declared
+    elif runs_now:
+        # 默认链条能跑：只有项目自己声明 / 指向的环境排在它前面（不只是项目说了算路径的那几个）
+        candidates = declared
     candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
     entry = None
     if candidates and not _user_env_discovery_off():

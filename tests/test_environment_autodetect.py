@@ -276,6 +276,24 @@ def test_a_runnable_builtin_is_kept_unless_the_project_brings_its_own_runnable_e
     assert rig["probed"] == [[venv]]
 
 
+def test_project_declared_envs_outside_the_project_keep_precedence_at_check_time(rig):
+    """Codex #820 r4233842661：默认链条能跑时，`.python-version` → pyenv 里的环境（项目声明、不在项目里）仍按排序在检查阶段
+    体检、采用；项目里的 .venv（项目说了算）等运行才体检；机器上别处的 Conda 不抢在前面。"""
+    pyenv = rig["cand"]("pyenv-ver", userenvs.SOURCE_PYTHON_VERSION, "3.11")
+    conda = rig["cand"]("conda-env", userenvs.SOURCE_CONDA, "other")
+    venv = rig["cand"]("proj/.venv", userenvs.SOURCE_PROJECT_VENV)
+    rig["satisfying"] |= {pyenv, conda, venv}
+    rig["runs_now"] = True
+
+    entry = deprepair.decide_environment_pinned(rig["root"], "fig.py", project_exec=False).adopted
+    assert entry is not None and entry["python"] == pyenv
+    assert rig["probed"] == [[pyenv]]  # .venv 与 Conda 都没被体检
+    # 点运行：项目里的 .venv 才体检（排在前面），能跑就换过去
+    rig["probed"].clear()
+    entry = deprepair.decide_environment(rig["root"], "fig.py")
+    assert entry is not None and entry["python"] == venv
+
+
 def test_nothing_runnable_adopts_nothing_and_drops_an_auto_choice_that_stopped_working(rig):
     venv = rig["cand"]("proj/.venv", userenvs.SOURCE_PROJECT_VENV)
     assert deprepair.decide_environment(rig["root"], "fig.py") is None
