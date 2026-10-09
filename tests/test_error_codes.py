@@ -381,6 +381,7 @@ USER_VISIBLE_CODES = {
     "script_input_not_found": set(),
     "script_input_invalid": set(),
     "script_input_stream_gone": set(),
+    "script_input_transcript_failed": set(),
 }
 
 pytestmark = pytest.mark.skipif(

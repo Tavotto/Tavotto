@@ -73,8 +73,11 @@ WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
 #: 当时的解释器来源、体检过的系统候选表、修复目标可用性；2026-09-28 Windows 实测诊断包说不清缺依赖）。
 #: 5 = 新增 `task-diagnostics.json`（T04）：本项目最近几次任务（导出 / 准备 / 脚本试运行）在终局时冻结的白名单
 #: 快照，失败在前；report.json 的形状没变，读不认识的文件的人忽略它即可。
+#: 6 = report.json 的 project 段新增 `recent_runs`（本项目最近几次脚本运行 / 准备的结果分类：成功 / 失败 / 取消计数、
+#: 稳定错误码计数、逐条的 outcome + error_code；2026-10 Windows 实测脚本跑失败多次，recent_errors / worker_logs /
+#: missing_dependencies 全空）；缺依赖现场也开始覆盖试运行与准备两条路（此前只有渲染端点）。
 #: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
-BUNDLE_SCHEMA_VERSION = 5
+BUNDLE_SCHEMA_VERSION = 6
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1

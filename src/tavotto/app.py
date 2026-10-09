@@ -79,6 +79,7 @@ from .engine import (
     handoff as engine_handoff,
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
+    inputtranscript as engine_inputtranscript,
     layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
@@ -107,6 +108,7 @@ from .engine import (
     runtime as engine_runtime,
     runtimeasset as engine_runtimeasset,
     scriptanswers as engine_scriptanswers,
+    scriptargs as engine_scriptargs,
     scriptbackup as engine_scriptbackup,
     scriptedit as engine_scriptedit,
     scriptlock as engine_scriptlock,
@@ -623,6 +625,9 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         # 脚本要输入（ADR 0099）：界面按 code 翻译，提示原文走 params
         extra = getattr(exc, "extra", None) or {}
         body["params"] = {"prompt": str(extra.get("prompt") or "")}
+        # 为什么没人能答（闭集，T08）：口令要重新提供 / 冷重放的上下文对不上——界面据此说清下一步
+        if extra.get("reason") in engine_inputbroker.REASONS:
+            body["params"]["reason"] = extra["reason"]
     if exc.code == "script_needs_arguments":
         extra = getattr(exc, "extra", None) or {}
         params = {}
@@ -2901,6 +2906,9 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
+        # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。
+        status["recent_runs"] = engine_taskdiag.run_summary(engine_taskdiag.STORE, ctx.id)
     return status
 
 
@@ -3587,9 +3595,22 @@ def api_registry_probe():
     if rejected is not None:
         return rejected
     # T03：用户给的精确 argv（字符串数组，空 = 不带参数）。校验 + 登记一次做完；坏的当场 400，不截断不"修"
-    run = engine_runconfig.selection_for(
-        ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
-    )
+    if "run_config" in body:
+        # 答案管理重跑的是那一条答案的配置，不是此刻参数编辑器里的草稿。null 显式选无参数。
+        ref = body["run_config"]
+        if (
+            "argv" in body
+            or "argv_sensitive" in body
+            or (ref is not None and not isinstance(ref, str))
+        ):
+            return jsonify(
+                {"error": "run_config 不能与 argv 混用且必须是引用或 null", "code": "bad_request"}
+            ), 400
+        run = engine_runconfig.selection(ctx.path, ref, script=script) if ref is not None else None
+    else:
+        run = engine_runconfig.selection_for(
+            ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
+        )
     key = (ctx.id, script)
     cancel_ev = threading.Event()
     with _PROBES_LOCK:
@@ -3650,6 +3671,8 @@ def api_registry_probe():
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
             _PROBE_RUNS.pop(key, None)
+    # 这次运行里每一问的去向（T08）：只给任务诊断的白名单投影，不进响应体（响应形状不变）
+    input_facts = result.pop(engine_probe.INPUT_FACTS_KEY, None)
     # 失败（和成功）那一次的现场冻结成一份小快照（T04）：界面凭 `diagnostic.ref` 一键取回，之后的重试是新的 attempt
     engine_taskdiag.STORE.record(
         ctx.id,
@@ -3661,6 +3684,7 @@ def api_registry_probe():
             argv_count=len(run.argv) if run is not None else 0,
             run_config=run.config_id if run is not None else None,
             elapsed_ms=round((time.monotonic() - started) * 1000),
+            input_facts=input_facts,
         ),
         outcome=engine_probe.outcome_of(result),
         failed=engine_probe.outcome_of(result) == engine_probe.OUTCOME_ERROR,
@@ -3794,36 +3818,65 @@ def api_script_input_answers():
 
 
 def _after_script_answers_changed(ctx: "ProjectCtx", script: str) -> None:
-    """答案变了必须重跑（ADR 0099 §七）：作废热会话 + `panel.file_changed`（reason=script_input）。"""
+    """答案变了必须重跑（ADR 0099 §七）：作废热会话 + `panel.file_changed`（reason=script_input）。
+    执行转录的作废不在这里——它必须**先于**答案提交（见 `api_script_input_answers_update`）。"""
     engine_pool.invalidate(script, str(ctx.path))
     _script_change_handler(ctx, "script_input")([script])
 
 
 @app.post("/api/script_input/answers")
 def api_script_input_answers_update():
-    """答案管理：`{script, index, answer}` 改一条；`{script, index, forget: true}` 删一条；
-    `{script, forget: true}` 删这个脚本的全部。改了就重跑。"""
+    """答案管理：index + run_config（缺省 / null = 无参数）只改 / 删一条；
+    仅 `{script, forget: true}` 明确删除整个脚本的答案。"""
     ctx = current_ctx()
     body = request.get_json(force=True) or {}
     script = str(body.get("script") or "")
     index = body.get("index")
-    if index is not None and (not isinstance(index, int) or isinstance(index, bool)):
+    ref = body.get("run_config")
+    if "forget" in body and not isinstance(body["forget"], bool):
+        return jsonify({"error": "forget 必须是布尔值", "code": "bad_request"}), 400
+    if "index" in body and (not isinstance(index, int) or isinstance(index, bool)):
         return jsonify({"error": "index 必须是整数", "code": "bad_request"}), 400
+    if ref is not None and (not isinstance(ref, str) or not ref):
+        return jsonify({"error": "run_config 必须是非空引用或 null", "code": "bad_request"}), 400
+    if "run_config" in body and index is None:
+        return jsonify({"error": "指定 run_config 时需要 index", "code": "bad_request"}), 400
     if not script or script not in engine_scriptanswers.load(ctx.path):
         return jsonify({"error": "这个脚本没有记住的答案", "code": "script_input_not_found"}), 404
-    if body.get("forget"):
-        changed = engine_scriptanswers.forget(ctx.path, script, index)
-    else:
-        answer = body.get("answer")
-        if index is None or not isinstance(answer, str):
-            return jsonify({"error": "需要 index 与 answer", "code": "bad_request"}), 400
-        try:
-            changed = engine_scriptanswers.update(ctx.path, script, index, answer)
-        except ValueError as exc:
-            return jsonify({"error": str(exc), "code": "script_input_invalid"}), 400
+    answer = body.get("answer")
+    if not body.get("forget") and (index is None or not isinstance(answer, str)):
+        return jsonify({"error": "需要 index 与 answer", "code": "bad_request"}), 400
+    # 改 / 删答案是「明确要用新答案重算」（T08）：旧转录必须**先**失效、再提交答案——转录写不动（Windows 上
+    # 读者 / 杀软挡住 os.replace）就整个操作失败、答案原样不动；反过来会留下「项目是新答案、转录还是旧答案」，
+    # 冷重放静默用旧值。先失效的代价只是冷重放回到「项目答案 + 上下文匹配」，永远不会套错。
+    try:
+        engine_inputtranscript.forget(ctx.path, script, run_config=ref, all_configs=index is None)
+    except OSError as exc:
+        return jsonify(
+            {
+                "error": f"无法作废这个脚本的旧执行记录，答案没有改动：{exc}",
+                "code": "script_input_transcript_failed",
+            }
+        ), 500
+    changed = False
+    invalid: str | None = None
+    try:
+        if body.get("forget"):
+            changed = engine_scriptanswers.forget(ctx.path, script, index, run_config=ref)
+        else:
+            try:
+                changed = engine_scriptanswers.update(
+                    ctx.path, script, index, answer, run_config=ref
+                )
+            except ValueError as exc:
+                invalid = str(exc)
+    finally:
+        # 转录已先作废：答案提交抛错也要作废热池并发事件，热 worker 不能还握着旧答案跑出的会话
+        _after_script_answers_changed(ctx, script)
+    if invalid is not None:
+        return jsonify({"error": invalid, "code": "script_input_invalid"}), 400
     if not changed:
         return jsonify({"error": "没有这一条答案", "code": "script_input_not_found"}), 404
-    _after_script_answers_changed(ctx, script)
     return jsonify(_script_answers_payload(ctx))
 
 
@@ -6483,6 +6536,22 @@ def api_engine_input_remap_get():
     return jsonify({"ok": True, "input_remap": engine_inputremap.state(root)})
 
 
+@app.get("/api/engine/script-arguments")
+def api_engine_script_arguments():
+    """脚本参数的静态 schema（T07，`engine/scriptargs.py`）：只读源码，不执行、不 import、不调 `--help`。
+
+    给「运行参数」编辑器的表单视图用；它是建议，token 列表仍是权威。脚本路径与试运行同一道越权检查。"""
+    ctx = current_ctx()
+    script, rejected = _resolve_project_script(ctx, str(request.args.get("script") or "").strip())
+    if rejected is not None:
+        return rejected
+    # 负数 token 的文法随 worker 的 Python 版本变（3.14 起更宽）：带上项目记住的版本（只读、不体检；没有就不带，
+    # 前端取较窄的旧规则）
+    version = str(engine_projectenv.state(str(ctx.path)).get("python_version") or "") or None
+    schema = {**engine_scriptargs.analyze_file(ctx.path / script), "python_version": version}
+    return jsonify({"ok": True, "script": script, "arguments": schema})
+
+
 #: 渲染失败里「会话按此刻的表 build 完了、只是图名对不上 / 一张没有」的码：据此重新登记
 _RESYNC_RENDER_CODES = (
     "unknown_stem",
@@ -7123,20 +7192,28 @@ def _session_target(ctx: "ProjectCtx", body: dict):
     }, None
 
 
-def _session_awaiting_input(ctx: "ProjectCtx", sess) -> bool:
-    """这个会话的脚本此刻有没有在等一个 `input()` 的回答（回答本身走既有的 `/api/script_input/*`）。"""
+def _session_runtime_input(ctx: "ProjectCtx", sess) -> dict | None:
+    """这个会话的脚本（同一份运行配置）此刻在等的那一问的公开投影；没有 = None。回答本身走既有的
+    `/api/script_input/*`，同一问只有一个 id：准备面板与原对话框答的是同一个请求（T08）。"""
     script = sess.plan.script
     if not script:
-        return False
-    return any(
-        p.script == script and _script_input_pending_of(ctx, p.id) is not None
-        for p in engine_inputbroker.pending()
-    )
+        return None
+    run = getattr(sess.plan, "run", None)
+    config_id = run.config_id if run is not None else None
+    for p in engine_inputbroker.pending():
+        if (
+            p.script == script
+            and p.run_config == config_id
+            and _script_input_pending_of(ctx, p.id) is not None
+        ):
+            return p.public()
+    return None
 
 
 def _session_report(ctx: "ProjectCtx", sess) -> dict:
+    waiting = _session_runtime_input(ctx, sess)
     return engine_prepsession.SESSIONS.report(
-        sess, awaiting_input=_session_awaiting_input(ctx, sess)
+        sess, awaiting_input=waiting is not None, runtime_input=waiting
     )
 
 

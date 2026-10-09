@@ -126,3 +126,7 @@
 - 取消按消费者、提交点后无效
 - 旧 runtime 有代记着（`referenced_base_runtimes`）就不退役
 - `enabled` 按 ADR 0064 §四 逐目标翻（例外写进 ADR），`TAVOTTO_PRIVATE_PYTHON` 只是工程逃生门
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+- 只补基础解释器来源、安装器仍是 pip；校验先于一切执行；归档来源包内 → 缓存 → 锁 URL（主地址慢或失败换镜像）、下载/缓存认原锁 SHA，macOS 包内签名派生物另验同 Team 的 app 封条（ADR 0111 修订）；证书按平台原生校验、失败报 `private_python_tls`；`enabled` 全 false 直到目标资格取得

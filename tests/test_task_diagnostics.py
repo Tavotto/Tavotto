@@ -678,7 +678,7 @@ def test_a_stale_plan_failure_keeps_its_closed_reason(
     pj = _open(client, root)
     calls = {"n": 0}
 
-    def stale(plan):
+    def stale(plan, **_kw):
         # 第 1 次是会话认领动作前的复核（通过），第 2 次是执行线程起会话前的（作废）
         calls["n"] += 1
         return (preparation.STALE_GRANT, {}) if calls["n"] >= 2 else None
@@ -741,7 +741,7 @@ def test_the_global_bundle_carries_this_projects_snapshots_and_nothing_else(env,
     _, job = _export(client, _canvas(filename=f"n-{SECRET[:6]}", formats=["pdf", "eps"]), a)
     files = _bundle_files(client, a)
     manifest = json.loads(files["manifest.json"])
-    assert manifest["schema_version"] == 5 and manifest["contains_task_snapshots"] is True
+    assert manifest["schema_version"] == 6 and manifest["contains_task_snapshots"] is True
     section = json.loads(files["task-diagnostics.json"])
     assert [s["snapshot"]["attempt_id"] for s in section["snapshots"]] == [job["job_id"]]
     for name, data in files.items():

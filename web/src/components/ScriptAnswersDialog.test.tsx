@@ -9,10 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/api', async (orig) => {
   const real = await orig<typeof import('@/lib/api')>()
-  return { ...real, updateScriptAnswer: vi.fn(), forgetScriptAnswer: vi.fn() }
+  return { ...real, updateScriptAnswer: vi.fn(), forgetScriptAnswer: vi.fn(), probeScript: vi.fn() }
 })
 
-import { forgetScriptAnswer, updateScriptAnswer } from '@/lib/api'
+import { forgetScriptAnswer, probeScript, updateScriptAnswer } from '@/lib/api'
 import { ScriptAnswersDialog } from '@/components/ScriptAnswersDialog'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -28,6 +28,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const mockUpdate = vi.mocked(updateScriptAnswer)
 const mockForget = vi.mocked(forgetScriptAnswer)
+const mockProbe = vi.mocked(probeScript)
+/** 真的 `run`（beforeEach 把它换成 spy；下面两条要走真的同脚本防并发闸） */
+const realRun = useScriptRunStore.getState().run
 const ANSWERS = { 'pick.py': [{ index: 1, prompt: 'numbers: ', answer: '1,2', kind: 'input' }] }
 const TWO = {
   'pick.py': [
@@ -120,8 +123,8 @@ describe('ScriptAnswersDialog', () => {
       box.dispatchEvent(new Event('input', { bubbles: true }))
     })
     await click(buttonWith('保存并重新运行'))
-    expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, '2')
-    expect(runSpy).toHaveBeenCalledWith('pick.py')
+    expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, '2', null)
+    expect(runSpy).toHaveBeenCalledWith('pick.py', null)
   })
 
   it('请求在飞时换了项目：不在新项目里重新运行（Codex #680 P1）', async () => {
@@ -164,9 +167,9 @@ describe('ScriptAnswersDialog', () => {
     expect(saveButton().disabled).toBe(false)
     expect(saveButton().textContent).toBe('保存并重新运行（1）')
     await click(saveButton())
-    expect(mockForget).toHaveBeenCalledWith('pick.py', 1)
+    expect(mockForget).toHaveBeenCalledWith('pick.py', 1, null)
     expect(runSpy).toHaveBeenCalledTimes(1)
-    expect(runSpy).toHaveBeenCalledWith('pick.py')
+    expect(runSpy).toHaveBeenCalledWith('pick.py', null)
   })
 
   it('删除可撤销：撤销之后什么都不发', async () => {
@@ -191,8 +194,8 @@ describe('ScriptAnswersDialog', () => {
     await forgetRow(dialog()!.querySelector('[data-script-answer="2"]')!)
     expect(saveButton().textContent).toBe('保存并重新运行（2）')
     await click(saveButton())
-    expect(mockUpdate.mock.calls).toEqual([['pick.py', 1, '3']])
-    expect(mockForget.mock.calls).toEqual([['pick.py', 2]])
+    expect(mockUpdate.mock.calls).toEqual([['pick.py', 1, '3', null]])
+    expect(mockForget.mock.calls).toEqual([['pick.py', 2, null]])
     expect(runSpy).toHaveBeenCalledTimes(1)
   })
 
@@ -240,11 +243,11 @@ describe('ScriptAnswersDialog', () => {
     await typeInto(boxes[1], 'b')
     await click(saveButton())
     expect(mockUpdate.mock.calls).toEqual([
-      ['pick.py', 1, '3'],
-      ['pick.py', 2, 'b'],
+      ['pick.py', 1, '3', null],
+      ['pick.py', 2, 'b', null],
     ])
     expect(runSpy).toHaveBeenCalledTimes(1)
-    expect(runSpy).toHaveBeenCalledWith('pick.py')
+    expect(runSpy).toHaveBeenCalledWith('pick.py', null)
   })
 
   it('一条保存失败：失败的那行说出原因并保留改动，存好的照样重跑一次', async () => {
@@ -354,8 +357,8 @@ describe('ScriptAnswersDialog', () => {
     await act(async () => {
       resolve({ scripts: TWO, location: '', pending: [] })
     })
-    expect(mockUpdate.mock.calls).toEqual([['pick.py', 1, '3']])
-    expect(mockForget.mock.calls).toEqual([['pick.py', 2]])
+    expect(mockUpdate.mock.calls).toEqual([['pick.py', 1, '3', null]])
+    expect(mockForget.mock.calls).toEqual([['pick.py', 2, null]])
     expect(runSpy).toHaveBeenCalledTimes(1)
     // 走完放开：× 回来
     expect(dialog()!.querySelector('[data-dialog-close]')).toBeTruthy()
@@ -372,7 +375,7 @@ describe('ScriptAnswersDialog', () => {
     await typeInto(boxes()[1], 'b')
     await forgetRow(dialog()!.querySelector('[data-script-answer="1"]')!)
     await click(saveButton())
-    expect(mockForget).toHaveBeenCalledWith('pick.py', 1)
+    expect(mockForget).toHaveBeenCalledWith('pick.py', 1, null)
     expect(boxes().every((b) => b.disabled)).toBe(true)
     expect(menus().every((b) => b.disabled)).toBe(true)
     expect(saveButton().disabled).toBe(true)
@@ -400,7 +403,7 @@ describe('ScriptAnswersDialog', () => {
       render()
       await forgetRow(dialog()!.querySelector('[data-script-answer="1"]')!)
       await click(saveButton())
-      expect(mockForget).toHaveBeenCalledWith('pick.py', 1)
+      expect(mockForget).toHaveBeenCalledWith('pick.py', 1, null)
       expect(locked()).toBe(true)
       // 在飞时 busy 拦住了 × / Esc / 点外面 / 「取消」；还能把它关掉的只剩 store 那条路
       // （closeManager()，例如别处的入口）——关掉再打开换一代 key，AnswersManager 卸载、重新挂上
@@ -484,7 +487,7 @@ describe('ScriptAnswersDialog', () => {
       expect(locked()).toBe(false)
       await typeInto(boxes()[0], '3')
       await click(saveButton())
-      expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, '3')
+      expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, '3', null)
       expect(locked()).toBe(true)
       // 旧项目的删除回来：快照丢弃、不重跑、也不放掉新项目那把锁
       await act(async () => {
@@ -500,5 +503,160 @@ describe('ScriptAnswersDialog', () => {
       expect(runSpy).toHaveBeenCalledTimes(1)
       setCurrentProjectId(null)
     })
+  })
+})
+
+const rowsOf = () => Array.from(dialog()!.querySelectorAll<HTMLElement>('[data-script-answer]'))
+
+it('same-index configurations have distinct rows; editing and deleting target that row', async () => {
+  const rows = [
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_a', answer: 'alpha' },
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_b', answer: 'beta' },
+  ]
+  useScriptInputStore.setState({ answers: { 'pick.py': rows } })
+  useScriptInputStore.getState().openManager('pick.py')
+  render()
+  const before = rowsOf()
+  expect(before[0].textContent).toContain('rc_a')
+  expect(before[1].textContent).toContain('rc_b')
+  const box = before[1].querySelector('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(box, 'new-beta')
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    // Reorder incoming rows: the draft must stay with B, not with its old position.
+    useScriptInputStore.setState({ answers: { 'pick.py': [rows[1], rows[0]] } })
+  })
+  const reordered = rowsOf()
+  expect(reordered[0]).toBe(before[1])
+  expect(reordered[0].querySelector('input')!.value).toBe('new-beta')
+  mockUpdate.mockResolvedValue({ scripts: { 'pick.py': [rows[1], rows[0]] }, location: '', pending: [] })
+  await click(saveButton())
+  expect(mockUpdate).toHaveBeenCalledWith('pick.py', 1, 'new-beta', 'rc_b')
+  expect(runSpy).toHaveBeenLastCalledWith('pick.py', 'rc_b')
+  // 删除是暂存的：标 rc_a 那一行、脚部提交，forget 只带 rc_a
+  await forgetRow(rowsOf()[1])
+  await click(saveButton())
+  expect(mockForget).toHaveBeenCalledWith('pick.py', 1, 'rc_a')
+  expect(runSpy).toHaveBeenLastCalledWith('pick.py', 'rc_a')
+})
+
+it('a delayed configured delete cannot rerun after switching projects', async () => {
+  setCurrentProjectId('A')
+  let resolve!: (v: Awaited<ReturnType<typeof forgetScriptAnswer>>) => void
+  mockForget.mockReturnValue(new Promise((r) => (resolve = r)))
+  useScriptInputStore.setState({ answers: { 'pick.py': [{ ...ANSWERS['pick.py'][0], run_config: 'rc_a' }] } })
+  useScriptInputStore.getState().openManager('pick.py')
+  render()
+  await forgetRow(rowsOf()[0])
+  await click(saveButton())
+  expect(mockForget).toHaveBeenCalledWith('pick.py', 1, 'rc_a')
+  await act(async () => {
+    useScriptInputStore.getState().clear()
+    setCurrentProjectId('B')
+    resolve({ scripts: {}, location: '', pending: [] })
+  })
+  expect(runSpy).not.toHaveBeenCalled()
+  expect(useScriptInputStore.getState().answers).toBeNull()
+  setCurrentProjectId(null)
+})
+
+it('batch save over two configurations reruns each configuration exactly once', async () => {
+  const rows = [
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_a', answer: 'alpha' },
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_a', index: 2, prompt: 'p2', answer: 'a2' },
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_b', answer: 'beta' },
+  ]
+  mockUpdate.mockResolvedValue({ scripts: { 'pick.py': rows }, location: '', pending: [] })
+  useScriptInputStore.setState({ answers: { 'pick.py': rows } })
+  useScriptInputStore.getState().openManager('pick.py')
+  render()
+  const boxes = dialog()!.querySelectorAll<HTMLInputElement>('input')
+  for (const [i, v] of ['x1', 'x2', 'x3'].entries()) await typeInto(boxes[i], v)
+  await click(saveButton())
+  expect(mockUpdate.mock.calls).toEqual([
+    ['pick.py', 1, 'x1', 'rc_a'],
+    ['pick.py', 2, 'x2', 'rc_a'],
+    ['pick.py', 1, 'x3', 'rc_b'],
+  ])
+  expect(runSpy.mock.calls).toEqual([
+    ['pick.py', 'rc_a'],
+    ['pick.py', 'rc_b'],
+  ])
+})
+
+describe('批量保存涉及多份配置：逐份真的重跑（Codex #816 P1）', () => {
+  const rows = [
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_a', answer: 'alpha' },
+    { ...ANSWERS['pick.py'][0], run_config: 'rc_b', answer: 'beta' },
+  ]
+  const openTwoConfigs = async () => {
+    mockUpdate.mockResolvedValue({ scripts: { 'pick.py': rows }, location: '', pending: [] })
+    useScriptRunStore.setState({ run: realRun, byScript: {} })
+    useScriptInputStore.setState({ answers: { 'pick.py': rows } })
+    useScriptInputStore.getState().openManager('pick.py')
+    render()
+    const boxes = dialog()!.querySelectorAll<HTMLInputElement>('input')
+    await typeInto(boxes[0], 'x1')
+    await typeInto(boxes[1], 'x2')
+  }
+  const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+
+  it('真实 run：两份配置都收到探测，第二份等第一份结束才发', async () => {
+    const releases: Array<() => void> = []
+    mockProbe.mockImplementation(
+      () => new Promise((resolve) => releases.push(() => resolve({ descriptors: [] } as never))),
+    )
+    await openTwoConfigs()
+    await click(saveButton())
+    await flush()
+    // 第一份在飞：第二份不能被同脚本防并发闸吞掉，也不能抢跑
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }])
+    await act(async () => releases[0]())
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }, { run_config: 'rc_b' }])
+    await act(async () => releases[1]())
+    await flush()
+    expect(useScriptRunStore.getState().byScript['pick.py']?.runConfig).toBe('rc_b')
+  })
+
+  it('第一份失败：第二份照样运行，并说出哪一份失败', async () => {
+    mockProbe.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce({ descriptors: [] } as never)
+    await openTwoConfigs()
+    await click(saveButton())
+    await flush()
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }, { run_config: 'rc_b' }])
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('manageRerunFailed')
+  })
+
+  it('第一份停在运行目录门上：后面的挂起，门有了答案后两份各用自己的 run_config 重跑（Codex #816 r4221169169）', async () => {
+    const confirmation = {
+      kind: 'workdir', code: 'workdir_confirmation_required', script: 'pick.py', reason: 'script_dir_evidence',
+      recommended: 'project', options: [], conflicts: [], reads: [],
+    }
+    mockProbe
+      .mockResolvedValueOnce({
+        descriptors: [],
+        error: { code: 'workdir_confirmation_required', message: 'x', confirmation },
+      } as never)
+      .mockResolvedValue({ descriptors: [] } as never)
+    await openTwoConfigs()
+    await click(saveButton())
+    await flush()
+    await flush()
+    // 门没答之前不发 rc_b（否则它会盖掉停在门上的 rc_a）
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }])
+    expect(useScriptRunStore.getState().byScript['pick.py']?.phase).toBe('needs_workdir')
+    expect(JSON.stringify(useUiStore.getState().status)).not.toContain('manageRerunFailed')
+    await act(async () => useScriptRunStore.getState().rerunGated('needs_workdir'))
+    await flush()
+    await flush()
+    expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([
+      { run_config: 'rc_a' },
+      { run_config: 'rc_a' },
+      { run_config: 'rc_b' },
+    ])
+    expect(useScriptRunStore.getState().byScript['pick.py']?.runConfig).toBe('rc_b')
   })
 })
