@@ -126,7 +126,7 @@ def test_a_failing_evidence_check_leaves_the_registry_bytes_untouched(tmp_path, 
     def boom(*_a, **_k):
         raise RuntimeError("evidence failed")
 
-    monkeypatch.setattr(engine_probe, "was_captured", boom)
+    monkeypatch.setattr(engine_probe, "captured_stems", boom)
     with pytest.raises(RuntimeError):
         engine_probe.register_probed(
             root,
@@ -626,3 +626,50 @@ def test_a_probe_that_looks_at_the_flag_before_recording_its_owner_is_still_canc
     # 取消丢了的样子：试运行 3 s 后「成功」登记（error 为空）、会话没被杀
     assert (done["json"].get("error") or {}).get("code") == "execution_cancelled", done["json"]
     assert jittery_pool["workers"][-1].killed.is_set()
+
+
+def test_registration_probes_cache_once_per_script_not_per_replaced_stem(tmp_path, monkeypatch):
+    """#819 r4232302927：无参数重跑替换 N 个旧图名、项目里有 M 份运行配置——运行配置登记读一次、cache 目录列一次，
+    元数据只读真存在的 cache；不是 N × (1+M) 次逐个探。"""
+    from tavotto.engine import runconfig, runtimeasset
+
+    root = _project(tmp_path, "p")
+    old = [f"old{i}" for i in range(120)]
+    _write_registry(root, ["fig", *old])
+    cfgs = [runconfig.put(root, "fig.py", ["--n", str(i)]) for i in range(8)]
+    _captured_before(root, "old7", tmp_path, cfgs[5].id)
+    _captured_before(root, "old9", tmp_path)
+    reads, metas, lists = [], [], []
+    real_cfg, real_meta, real_list = (
+        runconfig.executable_configs_of,
+        runtimeasset.load_metadata,
+        runtimeasset.cached_slugs,
+    )
+    monkeypatch.setattr(
+        runconfig, "executable_configs_of", lambda *a, **k: reads.append(a) or real_cfg(*a, **k)
+    )
+    monkeypatch.setattr(
+        runtimeasset, "load_metadata", lambda *a, **k: metas.append(a) or real_meta(*a, **k)
+    )
+    monkeypatch.setattr(
+        runtimeasset, "cached_slugs", lambda *a, **k: lists.append(a) or real_list(*a, **k)
+    )
+
+    got = engine_probe.register_probed(
+        root,
+        "fig.py",
+        {"script": "fig.py", "entry": "__main__", "stems": ["fig"], "descriptors": []},
+    )
+
+    assert got["registered"] is True
+    assert got["unlinked_stems"] == ["old7", "old9"]
+    assert len(reads) == 1 and len(lists) == 1
+    assert len(metas) == 2  # 只读真存在的两份，与 120 × 9 无关
+
+
+@pytest.mark.parametrize("bad_key", ["/abs/fig.py", "C:/x.py"])
+def test_was_captured_treats_a_malformed_script_key_as_no_evidence(tmp_path, bad_key):
+    """#819 r4232302913：`was_captured` / `captured_stems` 不让 `runtime_asset_id` 的 ValueError 漏出去。"""
+    root = _project(tmp_path, "p")
+    assert engine_probe.was_captured(root, bad_key, "x") is False
+    assert engine_probe.captured_stems(root, bad_key, ["x", "y"]) == (set(), True)
