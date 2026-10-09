@@ -191,6 +191,10 @@ def rig(tmp_path, monkeypatch):
         return _Joint("nothing_needed" if runs else "ready"), "managed", current
 
     def evaluate(cands, needed, unknown, **kw):
+        if kw.get("cache_only"):  # 没有缓存结论：未检查，不探测
+            return [
+                {**c, "ok": None, "satisfies": None, "checked": False, "missing": []} for c in cands
+            ]
         box["probed"].append([c["python"] for c in cands])
         return [
             {
@@ -240,11 +244,15 @@ def test_when_the_builtin_cannot_run_the_best_runnable_one_is_used_without_askin
     record = projectenv.remembered_record(rig["root"])
     assert record["automatic"] is True and record["trigger"] == projectenv.TRIGGER_AUTO_DETECTED
     assert projectenv.consent_of(record) == projectenv.CONSENT_AUTO_DETECTED
-    # 下一次检查：它仍能跑 → 不动、不再体检——哪怕项目里后来多了一个同样能跑的 venv（在用的 A 能跑，就不换成 B）
+    # 项目后来多了一个能跑的 venv（项目自己的线索排在前面）：检查阶段不起它、不动已有选择；点运行才体检，能跑就换过去
+    # （Codex #820 r4233340712：排在后面的先前选择不能把项目环境永远挡在体检之外）
     venv = rig["cand"]("proj/.venv", userenvs.SOURCE_PROJECT_VENV)
     rig["satisfying"].add(venv)
     rig["probed"].clear()
-    assert deprepair.decide_environment(rig["root"], "fig.py") is None
+    assert (
+        deprepair.decide_environment_pinned(rig["root"], "fig.py", project_exec=False).adopted
+        is None
+    )
     assert rig["probed"] == []
     assert projectenv.remembered_record(rig["root"])["path"] == shell
 
@@ -1005,6 +1013,77 @@ def test_run_probe_that_finds_the_project_env_unfit_falls_back_to_the_install_ou
     assert "environment_changed" not in json.dumps(final)
     assert projectenv.remembered_record(proj) is None  # 跑不了的项目 venv 不被采用
     assert "prepare_dependencies" in _kinds(_get(client, report["session_id"]))
+
+
+def _lower_priority_env(tmp_path, monkeypatch, house, *, with_alpha: bool = True) -> str:
+    """项目外的一个 Conda 环境（排在项目自己的环境后面）；`with_alpha` = 装了脚本要的包。"""
+    base = tmp_path / "conda"
+    base.mkdir()
+    python = envworld.real_venv(base, "lab", python=WORKER_PY)
+    if with_alpha:
+        _install_into(python, house, ALPHA[0])
+    monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
+    userenvs.reset_cache()
+    return python
+
+
+@needs_worker
+def test_a_pending_project_env_is_probed_on_run_before_a_lower_priority_one_is_adopted(
+    client, house, opened, tmp_path, monkeypatch
+):
+    """Codex #820 r4233340712：默认链条跑不了、项目 .venv 还没体检、项目外有个能跑的 Conda：检查阶段什么都不采用（不让
+    排在后面的先挡住项目的），点运行先体检 .venv，能跑就用它。"""
+    proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
+    venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
+    _install_into(venv_python, house, ALPHA[0])
+    _lower_priority_env(tmp_path, monkeypatch, house)
+
+    report = _create(client, {"script": "figure.py"})
+    assert projectenv.remembered_record(proj) is None  # 检查没采用任何环境
+    assert "run" in _kinds(report) and "prepare_dependencies" not in _kinds(report)
+    assert _act(client, report, "run").status_code == 202
+    final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
+    assert final["phase"] == "completed", final
+    record = projectenv.remembered_record(proj)
+    assert os.path.realpath(record["path"]) == os.path.realpath(venv_python)
+
+
+@needs_worker
+def test_when_the_pending_project_env_cannot_run_the_next_candidate_is_used(
+    client, house, opened, tmp_path, monkeypatch
+):
+    proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
+    envworld.real_venv(proj, ".venv", python=WORKER_PY)  # 没装 alpha
+    lab = _lower_priority_env(tmp_path, monkeypatch, house)
+
+    report = _create(client, {"script": "figure.py"})
+    assert projectenv.remembered_record(proj) is None
+    assert _act(client, report, "run").status_code == 202
+    final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
+
+    assert final["phase"] == "completed", final
+    assert os.path.realpath(projectenv.remembered_record(proj)["path"]) == os.path.realpath(lab)
+
+
+@needs_worker
+def test_an_earlier_lower_priority_choice_does_not_keep_a_new_project_env_unprobed(
+    house, opened, tmp_path, monkeypatch
+):
+    proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
+    lab = _lower_priority_env(tmp_path, monkeypatch, house)
+    first = deprepair.decide_environment(proj, "figure.py")
+    assert first is not None and os.path.realpath(first["python"]) == os.path.realpath(lab)
+    venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
+    _install_into(venv_python, house, ALPHA[0])
+    # 检查阶段：不起 .venv，已有的选择不动
+    assert (
+        deprepair.decide_environment_pinned(proj, "figure.py", project_exec=False).adopted is None
+    )
+    # 运行：先体检 .venv（排在前面），能跑就换过去
+    second = deprepair.decide_environment(proj, "figure.py")
+    assert second is not None and os.path.realpath(second["python"]) == os.path.realpath(
+        venv_python
+    )
 
 
 @needs_worker

@@ -5676,13 +5676,24 @@ def _detect_environment_unlocked(
         and joint.status == depplan.STATUS_NOTHING_NEEDED
         and not unknown_imports_missing(plan, python)
     )
-    if runs_now and record is not None:
-        return None  # 机器先前定下的那个仍能跑：不动
     needed, unknown = _plan_imports(plan)
     candidates = user_environment_candidates(root, script, exclude=current or python)
+    held = [c for c in candidates if userenvs.is_project_controlled(c, root)]
+    if runs_now and record is not None:
+        # 机器先前定下的那个仍能跑：不动——除非它不是项目自己的环境，而项目带了更靠前的候选还没被体检过（点「运行」
+        # 才体检，Codex #820 r4233340712）：不能让一个排在后面的先前选择把项目环境永远挡在体检之外
+        mine = userenvs.is_project_controlled({"python": current or python, "source": ""}, root)
+        if mine or not project_exec or not held:
+            return None
+    if not project_exec and any(
+        e.get("checked") is False for e in userenvs.evaluate(held, needed, unknown, cache_only=True)
+    ):
+        # 项目自带的候选还没体检、检查阶段又不能起它：不在这时采用排在它后面的候选（点「运行」先体检项目的那个，
+        # 跑不了才按既有排序落到下一个；Codex #820 r4233340712）
+        return None
     if runs_now:
         # 默认链条能跑：只有项目自己声明 / 指向的环境排在它前面
-        candidates = [c for c in candidates if c.get("source") in userenvs.PROJECT_SOURCES]
+        candidates = held
     candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
     entry = None
     if candidates and not _user_env_discovery_off():

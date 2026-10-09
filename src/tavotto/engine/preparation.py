@@ -633,7 +633,7 @@ class PreparationService:
         entry.thread.start()
 
     @staticmethod
-    def _replan_in_place(entry: _Entry, plan: PreparationPlan) -> PreparationPlan:
+    def _replan_in_place(entry: _Entry, plan: PreparationPlan) -> PreparationPlan | None:
         """按此刻（已采用项目环境之后）的世界重算同一份计划，沿用计划 id / 创建时间 / 静态原件；换进条目里。"""
         fresh = plan_for(
             project_id=plan.project_id,
@@ -646,6 +646,13 @@ class PreparationService:
             target=plan.target,
             **({"run": plan.run} if plan.run is not None else {}),
         )
+        # 只吸收「采用换了环境」带来的变化（解释器、授权档，以及随工作目录档重新按档记的数据绑定）：源码 / 改指表若也变了，
+        # 那是别的过期原因，照旧拦
+        if (
+            fresh.script_revision != plan.script_revision
+            or fresh.input_remap_generation != plan.input_remap_generation
+        ):
+            return None
         fresh = dataclasses.replace(
             fresh,
             plan_id=plan.plan_id,
@@ -685,8 +692,9 @@ class PreparationService:
             decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
             if decision.adopted is not None:
                 before = self._stale_reason(plan)
-                if before is None or before[0] == STALE_ENVIRONMENT:
-                    plan = self._replan_in_place(entry, plan)
+                if before is None or before[0] in (STALE_ENVIRONMENT, STALE_GRANT):
+                    # 换到用户自己的环境同时会换默认工作目录档（ADR 0107 §二），所以授权档变了也是采用的后果
+                    plan = self._replan_in_place(entry, plan) or plan
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale

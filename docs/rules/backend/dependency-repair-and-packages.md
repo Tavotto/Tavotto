@@ -454,7 +454,8 @@
   （`_stale_reason` == `environment_changed`），`PreparationService._replan_in_place` 就地按采用后的解释器重算计划再往下跑（会话的计划
   由 `prepsession._done` 跟上，不加修订）；别的过期原因照旧拦。首查时若有**还没体检、也许能跑**的项目候选
   （`deprepair.project_check_pending`），依赖门不推「安装缺少的组件」：计划的 `dependency_preparation.project_check_pending=True`、不挂
-  `required_input`，`dependencies` 检查项是 `ok` + `detail.deferred="project_environment"`，主动作是 `run`（界面句子
+  `required_input`（同时**不在检查阶段采用排在项目候选后面的候选**，也不让先前选的较低优先级环境挡住项目候选的首次体检：点「运行」先体检项目的，
+  跑不了才按既有排序落到下一个），`dependencies` 检查项是 `ok` + `detail.deferred="project_environment"`，主动作是 `run`（界面句子
   `line.readyProject`）；运行时体检跑不了 → 起会话那道依赖门回「需要输入」，`_done` 重新检查一次，报告带上常规的安装待办与影响摘要
   （受管环境）。其余候选（用户的 Conda / pyenv / 系统 / 登录 shell）行为不变。
 - **确认模式（`TAVOTTO_ENV_ADOPTION=confirm` 或设置 `worker.environment_adoption=confirm`）下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
