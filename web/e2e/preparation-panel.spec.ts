@@ -110,7 +110,7 @@ test('首跑闭环：只有脚本与数据 → 面板里选目录、改参数、
     const workdir = page.locator('[data-dialog="workdir-confirm"]')
     await expect(workdir).toBeVisible()
     await workdir.locator('[data-workdir-option="project_root"]').click()
-    await workdir.getByRole('button', { name: '运行', exact: true }).click()
+    await workdir.locator('[data-workdir-run]').click()
     await expect(panel(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
     expect(starts(log)).toBe(0) // 选了目录也只是重新检查，不运行
 
