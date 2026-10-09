@@ -347,7 +347,7 @@ def _same_dir(a: Path, b: Path) -> bool:
 #: 是 `sys.path.insert(0, HERE)` 的平铺 import，Tavotto 自己把 worker 代码
 #: 交给用户的解释器执行，绝不往用户 venv 里 pip install 任何东西。
 _PROBE_SRC = r"""
-import json, platform, sys
+import ast, json, os, platform, sys
 out = {"executable": sys.executable, "prefix": sys.prefix,
        "python_version": platform.python_version(),
        "version_info": list(sys.version_info[:3]),
@@ -362,14 +362,39 @@ project_root = sys.argv[5] if len(sys.argv) > 5 else ""
 isolated = (sys.argv[6] if len(sys.argv) > 6 else "") == "isolated"
 
 
+def _norm(path):
+    return os.path.normcase(os.path.realpath(path))
+
+
 def _inside(path, root):
-    import os
+    # 规范化（realpath + normcase，Windows 上不分大小写）之后用 commonpath 判包含，不做子串比较
     try:
-        a = os.path.normcase(os.path.realpath(path))
-        b = os.path.normcase(os.path.realpath(root))
+        a = _norm(path)
+        b = _norm(root)
         return os.path.commonpath([a, b]) == b
     except (ValueError, OSError):
         return False
+
+
+def _finder_defers(text, root):
+    # 可编辑安装的 finder（PEP 660 `__editable___*_finder.py`）把 MAPPING 写成 Python 字符串字面量（Windows 上反斜杠成双、
+    # 大小写不定）：用 ast 解析（**从不执行**），取所有字符串常量，路径形的逐个规范化后判是否落在项目里。解析不了 / 有无法解析
+    # 成绝对路径的路径形常量 = 证明不了在项目外 -> 延后（Run 再真量），而不是报"没装"（Codex #820 r4234882840）
+    try:
+        tree = ast.parse(text)
+    except Exception:
+        return True
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        v = node.value
+        if len(v) < 2 or not ("/" in v or "\\" in v):
+            continue
+        if not os.path.isabs(v):
+            return True
+        if _inside(v, root):
+            return True
+    return False
 
 
 def _prepare_isolated_path():
@@ -377,7 +402,7 @@ def _prepare_isolated_path():
     # usercustomize、没有 PYTHONPATH、没有 cwd。可编辑安装的 .pth 可以把项目里的代码拽进启动期，这里把 site-packages
     # 手工补回 sys.path，**.pth 只当文本读、一行都不执行**：路径行指进项目 = 这个环境带着项目里的代码 -> 整个候选延后到运行；
     # `import` 行（可编辑安装的 finder）不执行，只在它旁边的 `__editable__*` 文件里找项目根，找到 / 找不到文件都延后。
-    import os, sysconfig
+    import sysconfig
     dirs = []
 
     def add(d):
@@ -455,7 +480,7 @@ def _prepare_isolated_path():
                         except OSError:
                             deferred = True
                             continue
-                        if project_root and (project_root in text or os.path.realpath(project_root) in text):
+                        if project_root and _finder_defers(text, project_root):
                             deferred = True
                     continue
                 target = os.path.normpath(os.path.join(d, line))

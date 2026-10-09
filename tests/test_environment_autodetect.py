@@ -1483,6 +1483,65 @@ def test_the_isolated_probe_only_sees_the_user_site_when_the_interpreter_would(
     assert plain["modules_ok"] == {"usermod_only": True}
 
 
+def _probe_helpers(os_module):
+    """把体检进程里的 `_norm` / `_inside` / `_finder_defers` 原样取出来，在给定的 `os`（可以是 ntpath 冒充的）上跑——在 macOS /
+    Linux 上也能模拟 Windows 的路径规则。"""
+    import ast as _ast
+    import re
+    import types
+
+    src = projectenv._PROBE_SRC
+    start = src.index("def _norm(")
+    end = src.index("def _prepare_isolated_path")
+    ns = {"os": types.SimpleNamespace(path=os_module), "ast": _ast}
+    exec(re.sub(r"\n{3,}", "\n\n", src[start:end]), ns)  # noqa: S102 — 只执行我们自己的源码片段
+    return ns
+
+
+def test_editable_finder_paths_are_normalised_before_the_project_check():
+    """Codex #820 r4234882840：Windows 的 PEP 660 finder 把 MAPPING 写成双反斜杠、大小写不定的字符串字面量。ast 解析（从不执行）后
+    规范化再用 commonpath 判，解析不了就延后。"""
+    import ntpath
+
+    h = _probe_helpers(ntpath)
+    root = "C:\\Users\\Me\\Proj"
+    inside = "MAPPING = {'payload': 'c:\\\\users\\\\me\\\\PROJ\\\\src\\\\payload'}\n"
+    outside = "MAPPING = {'payload': 'D:\\\\elsewhere\\\\payload'}\nNAME = 'x'\n"
+    sibling = "MAPPING = {'payload': 'C:\\\\Users\\\\Me\\\\Proj2\\\\src'}\n"
+    assert h["_finder_defers"](inside, root) is True  # 双反斜杠 + 不同大小写
+    assert h["_finder_defers"](outside, root) is False
+    assert h["_finder_defers"](sibling, root) is False  # 前缀相同的兄弟目录不算在项目里
+    assert h["_finder_defers"]("MAPPING = {'a': ", root) is True  # 解析不了 -> 延后
+    assert (
+        h["_finder_defers"]("MAPPING = {'a': 'rel/path'}\n", root) is True
+    )  # 证明不了在项目外 -> 延后
+
+
+@posix_only
+@needs_worker
+def test_a_finder_pointing_into_the_project_defers_and_one_pointing_out_does_not(tmp_path):
+    root, marker, py, base = _editable_world(tmp_path)
+    site_dir = next((base / "lab" / "lib").glob("python*")) / "site-packages"
+    (site_dir / "proj.pth").unlink()
+    (site_dir / "a_editable.pth").write_text(
+        "import __editable___payload_finder; __editable___payload_finder.install()\n", "utf-8"
+    )
+    finder = site_dir / "__editable___payload_finder.py"
+
+    def probe():
+        return projectenv.probe_environment(
+            py, modules=("payload",), import_mode="spec", project_root=str(root)
+        )
+
+    finder.write_text(f"MAPPING = {{'payload': {str(root / 'src' / 'payload')!r}}}\n", "utf-8")
+    assert probe().get("deferred_env") is True
+    finder.write_text("MAPPING = {'payload': '/nowhere/else/payload'}\n", "utf-8")
+    assert not probe().get("deferred_env")
+    finder.write_text("MAPPING = {'payload': ", "utf-8")  # 解析不了
+    assert probe().get("deferred_env") is True
+    assert not marker.exists()
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC
