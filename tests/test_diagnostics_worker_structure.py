@@ -234,6 +234,51 @@ def test_sensitive_notice_far_before_the_scan_window_still_withholds(tmp_path):
         assert canary not in tail
 
 
+def test_sensitivity_uses_the_same_offset_as_the_tail_scan(tmp_path, monkeypatch):
+    """评审 #868 第三轮 P2-1：导出期间 worker 重生，`log_generation_start` 第二次会返回下一代的
+    偏移；敏感判定必须沿用第一次的（代 A 敏感，代 B 还没写提示行）。"""
+    log_text = (
+        "[sensitive run: script output omitted]\n"
+        + '  File "/Users/a/secret_study.py", line 4, in <module>\n'
+        + "ModuleNotFoundError: No module named 'canary_private_mod'\n"
+    )
+    _session(tmp_path, "fig.py", log_text)
+    calls = []
+
+    def fake_start(_path):
+        calls.append(1)
+        return 0 if len(calls) == 1 else len(log_text.encode("utf-8"))
+
+    monkeypatch.setattr(pool, "log_generation_start", fake_start)
+    (got,) = diagnostics.worker_log_tails(tmp_path, project_dir=PROJECT)
+    assert got["tail"] == "[structure] ModuleNotFoundError (sensitive run: details withheld)"
+    assert "canary_private_mod" not in got["tail"]
+    assert len(calls) == 1
+
+
+def test_oversized_generation_fails_closed(tmp_path, monkeypatch):
+    """评审 #868 第三轮 P2-2：一代超过敏感扫描预算、预算内没见到提示行 → 按敏感处理。"""
+    monkeypatch.setattr(diagnostics, "WORKER_LOG_SENSITIVE_SCAN_BYTES", 2048)
+    log = "x" * 4096 + "\n" + "ModuleNotFoundError: No module named 'canary_private_mod'\n"
+    _session(tmp_path, "fig.py", log)
+    p = next(tmp_path.glob("*/worker.log"))
+    assert diagnostics._generation_is_sensitive(p, 0, p.stat().st_size) is True
+    # 预算内扫完的同形日志不是敏感运行
+    monkeypatch.setattr(diagnostics, "WORKER_LOG_SENSITIVE_SCAN_BYTES", 1 << 20)
+    assert diagnostics._generation_is_sensitive(p, 0, p.stat().st_size) is False
+
+
+def test_sensitivity_scan_stops_at_the_snapshot_size(tmp_path):
+    """评审 #868 第三轮 P2-2：快照之后追加的字节不读——持续写入的日志不会拖住导出。"""
+    log = tmp_path / "worker.log"
+    log.write_text("quiet\n", encoding="utf-8")
+    snap = log.stat().st_size
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write("[sensitive run: script output omitted]\n")
+    assert diagnostics._generation_is_sensitive(log, 0, snap) is False
+    assert diagnostics._read_tail_bytes(log, 1 << 20, end=snap) == b"quiet\n"
+
+
 def test_headless_frames_do_not_leak_across_a_complete_block(tmp_path):
     """评审 #868 P2：无头帧 + 完整 traceback + 裸 ValueError，ValueError 不继承块前的帧。"""
     log = (

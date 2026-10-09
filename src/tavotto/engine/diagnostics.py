@@ -63,6 +63,9 @@ WORKER_LOG_SCAN_LINES = 400
 #: 读文件时的字节上限（一份 worker.log 可能被脚本刷到几十 MB）。`_scan_start` 会从这一截
 #: 里回溯到最近一个崩溃头，所以它要远大于一段完整的崩溃栈。
 WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
+# 敏感判据要扫「这一代」的全部字节（提示行可能在诊断窗口之前），但必须有界：超出这个预算还没扫完
+# 就按敏感处理（fail closed）。比诊断窗口大 4 倍：正常运行的一代远小于它
+WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
@@ -1472,16 +1475,20 @@ def worker_log_tails(
     out: list[dict] = []
     for mtime, p in stamped[:files]:
         try:
+            # 起点与大小各**只读一次**：tail 扫描与敏感判定共用同一份快照。worker 在导出期间
+            # 重生时，第二次读到的是下一代的偏移，上一代的敏感判定会错位（评审 #868 第三轮）
+            gen_start = pool.log_generation_start(p)
+            gen_end = p.stat().st_size
             # 只看**这一代**：worker.log 是跨代追加的，`pool.start_log_generation` 在 spawn
             # 前把起点落在旁边；不带这个边界会把上一代的 traceback 当成这一代的
-            text = _read_tail_bytes(
-                p, WORKER_LOG_SCAN_BYTES, start=pool.log_generation_start(p)
-            ).decode("utf-8", errors="replace")
+            text = _read_tail_bytes(p, WORKER_LOG_SCAN_BYTES, start=gen_start, end=gen_end).decode(
+                "utf-8", errors="replace"
+            )
         except OSError:
             continue
         all_lines = text.splitlines()
         scanned = all_lines[_scan_start(all_lines) :]
-        sensitive = _generation_is_sensitive(p, pool.log_generation_start(p))
+        sensitive = _generation_is_sensitive(p, gen_start, gen_end)
         blocks, omitted, orphans = _scan_evidence(scanned)
         kept = last_blocks_within(blocks, lines)
         summaries = _structure_summaries(orphans, sensitive=sensitive)
@@ -1501,40 +1508,56 @@ def worker_log_tails(
     return out
 
 
-def _generation_is_sensitive(path: Path, start: int) -> bool:
+def _generation_is_sensitive(path: Path, start: int, end: int | None = None) -> bool:
     """这一代 worker.log 里**任何位置**出现排空器的提示行 = 敏感运行。
 
     敏感与否只在 worker 子进程里知道，父进程唯一的载体就是这句提示。它可能出现在诊断扫描窗口
     （最后 400 行 / 4 MB）之前——一次早期 stdout 写入后大量 stderr——所以不能从窗口里判，
-    要流式扫这一代的全部字节（评审 #868 P2）。读不了就按敏感处理：宁可少出。"""
+    要流式扫这一代的字节（评审 #868 P2）。
+
+    **有界**（第三轮）：只读 `[start, end)`，`end` 是调用方快照的文件大小（缺省取现在的大小），
+    日志在扫描期间继续增长也不会多读；总预算 `WORKER_LOG_SENSITIVE_SCAN_BYTES`，预算内没找到
+    提示行、又还有没扫的区间 → 按敏感处理。读不了同样按敏感处理：宁可少出。"""
     needle = _SENSITIVE_NOTICE.encode("utf-8")
     try:
         with path.open("rb") as fh:
-            fh.seek(max(start, 0))
+            if end is None:
+                fh.seek(0, os.SEEK_END)
+                end = fh.tell()
+            pos = max(start, 0)
+            if end - pos > WORKER_LOG_SENSITIVE_SCAN_BYTES:
+                budget_end = pos + WORKER_LOG_SENSITIVE_SCAN_BYTES
+            else:
+                budget_end = end
+            fh.seek(pos)
             carry = b""
-            while True:
-                chunk = fh.read(1 << 20)
+            while pos < budget_end:
+                chunk = fh.read(min(1 << 20, budget_end - pos))
                 if not chunk:
-                    return False
+                    break
+                pos += len(chunk)
                 buf = carry + chunk
                 if needle in buf:
                     return True
                 carry = buf[-(len(needle) - 1) :]
+            return budget_end < end
     except OSError:
         return True
 
 
-def _read_tail_bytes(path: Path, limit: int, *, start: int = 0) -> bytes:
+def _read_tail_bytes(path: Path, limit: int, *, start: int = 0, end: int | None = None) -> bytes:
     """`start` 之后、最多最后 `limit` 字节——**seek 过去再读**，不是整个读进来再切（评审
     #443 第十一轮）：一份被脚本刷了几个小时的 worker.log 能有几百 MB，`read_bytes()[-limit:]`
     会先把整个文件装进 Flask 进程的内存，「扫描上限」就成了一句空话。`start` 是这一代的
-    起点（第十四轮）：之前的字节属于上一代，一个都不读。"""
+    起点（第十四轮）：之前的字节属于上一代，一个都不读。`end` 是调用方快照的大小：
+    之后追加的字节不读（缺省取现在的大小）。"""
     with path.open("rb") as fh:
-        fh.seek(0, os.SEEK_END)
-        size = fh.tell()
-        begin = max(start, size - limit, 0)
+        if end is None:
+            fh.seek(0, os.SEEK_END)
+            end = fh.tell()
+        begin = max(start, end - limit, 0)
         fh.seek(begin)
-        return fh.read(max(0, size - begin))
+        return fh.read(max(0, end - begin))
 
 
 def _scan_start(all_lines: list[str]) -> int:
