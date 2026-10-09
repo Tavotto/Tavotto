@@ -142,6 +142,7 @@ WARNING_CODES = frozenset(
         "may_shadow_builtin",
         "namespace_may_be_overridden",
         "local_namespace_dir_ignored",
+        "local_shadows_stdlib_in_wrapper",
         "name_differs_in_case_from_file",
         "path_not_confirmed",
         "implicit_sibling_import",
@@ -212,77 +213,13 @@ PRELOADED_STDLIB: frozenset[str] = frozenset(
         "_sitebuiltins",
     }
 )
-#: Tavotto 的执行 wrapper 在把用户目录插进 `sys.path` **之前**已经 import 的标准库顶层模块。用户脚本的
-#: `import json` 命中 `sys.modules` 里 wrapper 先装好的那份，项目里的 `json.py` 到不了。
-#: 单一出处；`tests/test_import_origin_wrapper_preloaded.py` 用 AST 重算这两张表（wrapper 自己模块层的
-#: import + 它们在用户路径之前装的引擎模块的模块层 import），wrapper 改了而这里没同步就红。
-#: 不含 matplotlib / numpy 等第三方库自己传递带进来的标准库（它们随第三方版本变，静态量不出）。
-#: * safe：`engine/worker.py` + 它的 `_ENGINE_MODULES`（一次装完）；
-#: * native：`engine/bridge_runner.py` + `bridgeboot` + 它的 `_PHASE1`（第二阶段在用户 import 之后才装）。
-WRAPPER_PRELOADED: dict[str, frozenset[str]] = {
-    figcapture.PROFILE_SAFE: frozenset(
-        {
-            "__future__",
-            "argparse",
-            "ast",
-            "base64",
-            "builtins",
-            "collections",
-            "contextlib",
-            "contextvars",
-            "copy",
-            "dataclasses",
-            "faulthandler",
-            "filecmp",
-            "functools",
-            "hashlib",
-            "hmac",
-            "importlib",
-            "inspect",
-            "io",
-            "json",
-            "math",
-            "numbers",
-            "os",
-            "pathlib",
-            "platform",
-            "re",
-            "shutil",
-            "subprocess",
-            "sys",
-            "sysconfig",
-            "threading",
-            "time",
-            "traceback",
-            "typing",
-            "weakref",
-        }
-    ),
-    figcapture.PROFILE_NATIVE: frozenset(
-        {
-            "__future__",
-            "argparse",
-            "builtins",
-            "contextlib",
-            "dataclasses",
-            "hashlib",
-            "importlib",
-            "inspect",
-            "io",
-            "json",
-            "math",
-            "os",
-            "pathlib",
-            "re",
-            "socket",
-            "sys",
-            "threading",
-            "traceback",
-            "types",
-            "weakref",
-        }
-    ),
-}
+#: 入口的执行语义。`safe` / `native` 是 Tavotto 的 wrapper（`engine/worker.py` / `engine/bridge_runner.py`）：
+#: 它们在把用户目录插进 `sys.path` 之前已 import 了一批标准库，而那些模块又**传递**带进别的标准库（`re` 带进
+#: `enum` ……）——静态量不出精确闭包（随解释器版本变）。所以 wrapper 下用保守规则：**任何**与标准库同名的本地
+#: 文件 / 包都判 `ambiguous`、不跟进它的 import（见 `_Top("wrapper_shadow")`）。`bare` 是裸 `python script.py` /
+#: `python -m`：没有 wrapper，只有 `site` 链预加载（`PRELOADED_STDLIB`），本地同名文件按真实解释器遮蔽标准库并被跟进。
+PROFILE_BARE = "bare"
+_WRAPPER_PROFILES = frozenset({figcapture.PROFILE_SAFE, figcapture.PROFILE_NATIVE})
 #: 宿主上是内建、但不在上面恒成立表里的名字（`itertools` / `gc` / `pwd` …）：别的构建上它们可能是
 #: 文件，所以没拿到目标解释器的内建名单时，本地同名文件对它们的遮蔽是 `ambiguous`。
 HOST_BUILTIN_EXTRA: frozenset[str] = (
@@ -458,7 +395,7 @@ class Entry:
     def __post_init__(self) -> None:
         if self.kind not in execspec.TARGET_KINDS:
             raise ValueError(f"entry.kind 非法: {self.kind!r}")
-        if self.profile not in execspec.PROFILES:
+        if self.profile not in execspec.PROFILES and self.profile != PROFILE_BARE:
             raise ValueError(f"entry.profile 非法: {self.profile!r}")
         if self.cwd_mode not in execspec.CWD_MODES:
             raise ValueError(f"entry.cwd_mode 非法: {self.cwd_mode!r}")
@@ -911,7 +848,7 @@ class _Finder:
 class _Top:
     """一个顶级名的查找结论。"""
 
-    kind: str  # builtin | frozen | preloaded | found | none
+    kind: str  # builtin | frozen | preloaded | found | wrapper_shadow | none
     found: _Found | None = None
     ignored_local: bool = (
         False  # 内建 / 预加载名，磁盘上却有同名本地文件（真实 Python 不会 import 它）
@@ -1008,7 +945,7 @@ class _Scanner:
         self.tree_given = tree
         self.entry = entry
         self.builtin_names = BUILTIN_NAMES | (frozenset(builtin) if builtin else frozenset())
-        self.wrapper_preloaded = WRAPPER_PRELOADED.get(entry.profile, frozenset())
+        self.wrapper = entry.profile in _WRAPPER_PROFILES
         self.ambiguous_builtin = HOST_BUILTIN_EXTRA if builtin is None else frozenset()
         self.no_follow = no_follow
         self.budget = budget if budget is not None else scanbudget.Budget()
@@ -1166,7 +1103,6 @@ class _Scanner:
             name in self.builtin_names
             or name in FROZEN_NAMES
             or name in PRELOADED_STDLIB
-            or name in self.wrapper_preloaded
         ):
             kind = (
                 "builtin"
@@ -1180,6 +1116,17 @@ class _Scanner:
         if name not in self._tops:
             self._tops[name] = self._search_roots_for(name)
         top = self._tops[name]
+        if (
+            self.wrapper
+            and name in self.stdlib_names
+            and top.kind == "found"
+            and top.found is not None
+            and top.found.kind in ("package", "module", "extension")
+            and not top.found.hit.blocked
+        ):
+            # Tavotto wrapper 下本地同名文件会不会盖过标准库取决于 wrapper 先装了哪些模块（含传递加载）：
+            # 不追闭包，一律判 ambiguous、不跟进（保守：宁可少装，不拿被遮蔽的文件里的依赖冒充 needed）
+            return _Top("wrapper_shadow", top.found)
         if top.kind == "none" and importer_dir is not None and name not in self.stdlib_names:
             key = (name, os.path.normcase(str(importer_dir)))
             if key not in self._implicit:
@@ -1556,6 +1503,19 @@ class _Scanner:
         dist, source = map_distribution(name, self.declared)
         in_stdlib = name in self.stdlib_names
 
+        # 1b. Tavotto wrapper 下与标准库同名的本地文件：不知道它进不进得来——ambiguous，不跟进、不进 needed
+        if top.kind == "wrapper_shadow" and top.found is not None:
+            return ImportClass(
+                bucket=BUCKET_LOCAL,
+                local_path=_rel(self.root, top.found.hit.path),
+                origin_kind=ORIGIN_EXTENSION if top.found.kind == "extension" else ORIGIN_LOCAL,
+                resolution_status=STATUS_AMBIGUOUS,
+                evidence=("exact_name_match",),
+                shadowing="stdlib",
+                warnings=("local_shadows_stdlib_in_wrapper",),
+                **base,
+            )
+
         # 2. 本地常规命中（包 / 模块 / 扩展）：在 sys.path 上排在标准库之前
         if found is not None and found.kind in ("package", "module", "extension"):
             hit = found.hit
@@ -1680,7 +1640,7 @@ class _Scanner:
 def _rank(top: _Top) -> int:
     if top.kind in ("builtin", "frozen", "preloaded"):
         return 4
-    if top.kind == "found" and top.found is not None:
+    if top.kind in ("found", "wrapper_shadow") and top.found is not None:
         return 2 if top.found.implicit else 3
     return 1
 

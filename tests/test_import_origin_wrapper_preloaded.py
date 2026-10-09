@@ -1,133 +1,95 @@
-"""Tavotto wrapper 先于用户路径预加载的标准库模块（Codex 第一轮 P1-a）。
+"""Tavotto wrapper 下与标准库同名的本地文件（Codex 第一轮 P1-a + 定向复核 r4222101043）。
 
 主语：**执行脚本的那个进程是 Tavotto 的 wrapper**（safe：`engine/worker.py`；native：
-`engine/bridge_runner.py`），不是裸的 `python script.py`。wrapper 在把用户目录插进 `sys.path` 之前
-已 `import json` 等，所以用户脚本里的 `import json` 命中 `sys.modules` 缓存，项目里的 `json.py` 永远到不了，
-它里面的 import 也不会被执行。`importscan.WRAPPER_PRELOADED` 是这件事的单一出处；这里用 AST 重算它，
-wrapper 改了 import 而表没同步就红。
-
-裸 `python script.py` 的对拍（另一个进程）留在 `test_import_origin_static.py::TestRealPythonParity`，
-那边把这张表清空再比。
+`engine/bridge_runner.py`），不是裸的 `python script.py`。wrapper 在把用户目录插进 `sys.path` 之前已 import
+一批标准库，这些模块又传递带进别的标准库（`re` 带进 `enum` ……），精确闭包随解释器版本变、静态量不出。
+维护者裁决：不追闭包，用保守规则——wrapper profile（safe / native）下**任何**与标准库同名的本地文件 / 包
+一律 `resolution_status=ambiguous`、不跟进它的 import（里面的第三方依赖不进 needed）、`shadowing="stdlib"`、
+给 `local_shadows_stdlib_in_wrapper` 警告；只有裸 `python script.py`（`PROFILE_BARE`）才按遮蔽判本地并跟进。
+裸解释器的对拍留在 `test_import_origin_static.py::TestRealPythonParity`。
 """
 
 from __future__ import annotations
 
-import ast
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
 from tavotto.engine import figcapture, importscan
 
-ENGINE = Path(importscan.__file__).resolve().parent
-STDLIB = set(sys.stdlib_module_names) | {"__future__"}
+WRAPPERS = [figcapture.PROFILE_SAFE, figcapture.PROFILE_NATIVE]
 
 
-def _module_level_imports(path: Path) -> set[str]:
-    """模块层（含模块层的 if / try 分支，不含函数体）import 的顶层模块名。"""
-    out: set[str] = set()
-
-    def walk(body):
-        for node in body:
-            if isinstance(node, ast.Import):
-                out.update(a.name.split(".")[0] for a in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                out.add(node.module.split(".")[0])
-            elif isinstance(node, (ast.If, ast.Try)):
-                walk(node.body)
-                walk(node.orelse)
-                walk(getattr(node, "finalbody", []))
-                for handler in getattr(node, "handlers", []):
-                    walk(handler.body)
-
-    walk(ast.parse(path.read_text(encoding="utf-8")).body)
-    return out
+def _scan(root, profile, **kw):
+    res = importscan.scan(root, "s.py", entry=importscan.Entry(profile=profile), **kw)
+    return res, {c.module: c for c in res.classes}
 
 
-def _tuple_constant(path: Path, name: str) -> list[str]:
-    for node in ast.parse(path.read_text(encoding="utf-8")).body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == name for t in node.targets
-        ):
-            return [e.value for e in node.value.elts]
-    raise AssertionError(f"{path.name} 里找不到 {name}")
-
-
-def _closure(paths: list[Path], engine_modules: list[str]) -> set[str]:
-    mods = set()
-    for p in paths:
-        mods |= _module_level_imports(p)
-    for m in engine_modules:
-        mods |= _module_level_imports(ENGINE / f"{m}.py")
-    return mods & STDLIB
-
-
-class TestTableMatchesTheWrappers:
-    def test_safe_table_is_the_worker_py_closure(self):
-        worker = ENGINE / "worker.py"
-        want = _closure([worker], _tuple_constant(worker, "_ENGINE_MODULES"))
-        assert importscan.WRAPPER_PRELOADED[figcapture.PROFILE_SAFE] == want
-
-    def test_native_table_is_the_bridge_runner_py_closure(self):
-        runner = ENGINE / "bridge_runner.py"
-        want = _closure([runner, ENGINE / "bridgeboot.py"], _tuple_constant(runner, "_PHASE1"))
-        assert importscan.WRAPPER_PRELOADED[figcapture.PROFILE_NATIVE] == want
-
-    def test_the_tables_contain_json_which_both_wrappers_import_first(self):
-        for profile in (figcapture.PROFILE_SAFE, figcapture.PROFILE_NATIVE):
-            assert "json" in importscan.WRAPPER_PRELOADED[profile]
-
-    def test_phase2_engine_modules_are_not_counted_for_native(self):
-        """native 的第二阶段在用户 import 之后才装：它们的 import 不算预加载。"""
-        runner = ENGINE / "bridge_runner.py"
-        phase1 = set(_tuple_constant(runner, "_PHASE1"))
-        phase2 = [m for m in _tuple_constant(runner, "_PHASE2") if m not in phase1]
-        assert phase2  # 前提：确有第二阶段模块
-        only_phase2 = _closure([], phase2) - _closure(
-            [runner, ENGINE / "bridgeboot.py"], list(phase1)
-        )
-        assert not (only_phase2 & importscan.WRAPPER_PRELOADED[figcapture.PROFILE_NATIVE])
-
-
-@pytest.mark.parametrize("profile", [figcapture.PROFILE_SAFE, figcapture.PROFILE_NATIVE])
-class TestWrapperSemantics:
-    def test_a_local_json_py_is_ignored_and_its_imports_are_not_followed(self, tmp_path, profile):
-        (tmp_path / "s.py").write_text("import json\nimport numpy\n", encoding="utf-8")
-        (tmp_path / "json.py").write_text("import requests\n", encoding="utf-8")
-        res = importscan.scan(
-            tmp_path, "s.py", declared={"numpy": ""}, entry=importscan.Entry(profile=profile)
-        )
-        got = {c.module: c for c in res.classes}
-        assert (got["json"].bucket, got["json"].origin_kind) == ("stdlib", "stdlib")
-        assert got["json"].shadowing == "stdlib"
-        assert "local_file_never_imported" in got["json"].warnings
-        assert got["json"].evidence == ("preloaded_stdlib",)
-        assert "requests" not in got and not any(
-            c.needed for c in got.values() if c.module != "numpy"
-        )
+@pytest.mark.parametrize("profile", WRAPPERS)
+class TestWrapperConservativeRule:
+    def test_enum_py_with_requests_is_ambiguous_and_not_followed(self, tmp_path, profile):
+        (tmp_path / "s.py").write_text("import enum\nimport numpy\n", encoding="utf-8")
+        (tmp_path / "enum.py").write_text("import requests\n", encoding="utf-8")
+        res, got = _scan(tmp_path, profile, declared={"numpy": ""})
+        c = got["enum"]
+        assert (c.bucket, c.resolution_status, c.shadowing) == ("local", "ambiguous", "stdlib")
+        assert c.local_path == "enum.py"
+        assert "local_shadows_stdlib_in_wrapper" in c.warnings
+        assert "requests" not in got
+        assert not any(x.needed for x in got.values() if x.module != "numpy")
         assert res.files == ("s.py",)
 
-    def test_a_name_the_wrapper_never_imported_is_still_shadowable(self, tmp_path, profile):
+    def test_a_json_py_and_a_package_dir_are_the_same(self, tmp_path, profile):
+        (tmp_path / "s.py").write_text("import json\nimport colorsys\n", encoding="utf-8")
+        (tmp_path / "json.py").write_text("import requests\n", encoding="utf-8")
+        (tmp_path / "colorsys").mkdir()
+        (tmp_path / "colorsys" / "__init__.py").write_text("import scipy\n", encoding="utf-8")
+        res, got = _scan(tmp_path, profile)
+        for name in ("json", "colorsys"):
+            assert got[name].resolution_status == "ambiguous"
+            assert got[name].shadowing == "stdlib"
+        assert "requests" not in got and "scipy" not in got
+        assert res.files == ("s.py",)
+
+    def test_a_non_stdlib_local_module_is_still_followed(self, tmp_path, profile):
+        (tmp_path / "s.py").write_text("import helper\n", encoding="utf-8")
+        (tmp_path / "helper.py").write_text("import requests\n", encoding="utf-8")
+        _, got = _scan(tmp_path, profile)
+        assert got["helper"].resolution_status == "resolved" and got["requests"].needed
+
+    def test_a_stdlib_name_without_a_local_file_stays_plain_stdlib(self, tmp_path, profile):
+        (tmp_path / "s.py").write_text("import enum\n", encoding="utf-8")
+        _, got = _scan(tmp_path, profile)
+        assert (got["enum"].bucket, got["enum"].resolution_status) == ("stdlib", "resolved")
+
+
+class TestBareScriptKeepsTheRealShadowing:
+    def test_enum_py_is_local_and_followed(self, tmp_path):
+        (tmp_path / "s.py").write_text("import enum\n", encoding="utf-8")
+        (tmp_path / "enum.py").write_text("import requests\n", encoding="utf-8")
+        _, got = _scan(tmp_path, importscan.PROFILE_BARE)
+        assert (got["enum"].bucket, got["enum"].resolution_status) == ("local", "resolved")
+        assert got["enum"].shadowing == "stdlib"
+        assert got["requests"].needed and got["requests"].via == ("enum.py",)
+
+    def test_a_real_bare_interpreter_agrees(self, tmp_path):
+        """对拍：裸 `python s.py` 真的执行了本地 colorsys.py（遮蔽标准库）。"""
         (tmp_path / "s.py").write_text("import colorsys\n", encoding="utf-8")
-        (tmp_path / "colorsys.py").write_text("import requests\n", encoding="utf-8")
-        res = importscan.scan(tmp_path, "s.py", entry=importscan.Entry(profile=profile))
-        got = {c.module: c for c in res.classes}
-        assert got["colorsys"].bucket == "local" and "requests" in got
+        (tmp_path / "colorsys.py").write_text("print('LOCAL-COLORSYS')\n", encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, "-S", "s.py"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "LOCAL-COLORSYS" in proc.stdout
+        _, got = _scan(tmp_path, importscan.PROFILE_BARE)
+        assert got["colorsys"].bucket == "local"
 
 
-def test_a_real_interpreter_with_the_wrapper_order_agrees(tmp_path):
-    """另一个进程：先 import json 再把项目目录插到 sys.path 最前（wrapper 的顺序）——拿到的是 stdlib 的 json。"""
-    (tmp_path / "json.py").write_text("raise SystemExit('local json.py executed')\n", "utf-8")
-    code = (
-        "import json, sys\n"
-        f"sys.path.insert(0, {str(tmp_path)!r})\n"
-        "import json as again\n"
-        "print(again is json, 'json.py' in (again.__file__ or '').rsplit('/', 1)[-1:])\n"
-    )
-    proc = subprocess.run(
-        [sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60
-    )
-    assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.split() == ["True", "False"]
+def test_the_removed_preload_table_is_gone():
+    assert not hasattr(importscan, "WRAPPER_PRELOADED")
