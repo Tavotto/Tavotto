@@ -26,6 +26,7 @@ import base64
 import hashlib
 import importlib
 import json
+import ntpath
 import os
 import re
 import sys
@@ -209,6 +210,10 @@ def _run_config_error(exc) -> BridgeError:
 #: Windows 盘符 / UNC 开头的绝对路径（`os.path.isabs` 在 POSIX 上认不出它们，但脚本可能在任何平台上被
 #: 当成路径打开：一律按「像路径」处理）。
 _WIN_ABS_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]{2})")
+#: Windows「带根」的形状：`/x` `\x`（当前盘根）、`C:x` / `C:`（盘符相对）、UNC、`\\?\` / `\\.\` 设备路径。
+#: 它们在 Windows 上都不是「相对 cwd」的路径（3.13 起 `ntpath.isabs("/x")` 还是 False），绝不能走相对分支。
+_WIN_ROOTED_RE = re.compile(r"^(?:[A-Za-z]:|[\\/])")
+_NT_DEVICE_PREFIXES = ("\\\\?\\", "\\\\.\\", "//?/", "//./", "\\\\?/", "//?\\")
 
 
 def _argv_path_candidates(token: str) -> list[str]:
@@ -217,7 +222,10 @@ def _argv_path_candidates(token: str) -> list[str]:
     if token.startswith("-") and "=" in token:
         out.append(token.split("=", 1)[1])
     if len(token) > 2 and token[0] == "-" and token[1] != "-":
-        out.append(token[2:])
+        # 单横线簇：argparse 把 `-abo/tmp/x` 解成 `-a -b -o /tmp/x`，值从**任意**一个字符之后开始，所以每个后缀
+        # `token[k:]`（k >= 2）都是候选，各自走完整检查（Codex #818 r4231001442）。负数（`-1.5`）的后缀是相对的
+        # 数字片段，落在 cwd 下的根内，照常放行。
+        out.extend(token[k:] for k in range(2, len(token)))
     return out
 
 
@@ -255,6 +263,34 @@ def _is_response_file_ref(value: str, prefixes: tuple[frozenset[str], bool]) -> 
     return lead == "@" or lead in prefixes[0]
 
 
+def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str | None:
+    """按 Windows 口径判一个带根形状的 token（纯 ntpath，任何平台都能跑）：指到授权根之外返回文字，否则 None。
+
+    设备路径（`\\\\?\\` / `\\\\.\\`）、盘符相对（`C:x`、`C:`）、有根无盘符（`\\x`、`/x`、单独的 `\\` `/`）一律拒：
+    它们落在哪个盘取决于 worker 的 cwd 盘，而桥自己的 `os.getcwd()` 可能在另一个盘，桥不推断（Codex #818 r4230323352）。
+    只有完整限定的绝对路径（`C:\\x`、UNC）规范化后（`resolve` 在真 Windows 上解开链接）才对根检查。"""
+    if value.startswith(_NT_DEVICE_PREFIXES):
+        return value
+    vdrive, rest = ntpath.splitdrive(value)
+    if vdrive and rest[:1] not in ("\\", "/"):
+        return value  # `C:` / `C:x`：盘符相对
+    if not vdrive:
+        return value  # `\x` / `/x` / `\` / `/`：有根无盘符，落点取决于 worker 的盘
+    real = resolve(ntpath.normpath(value))
+    for root in roots:
+        try:
+            common = ntpath.commonpath([real, root])
+        except ValueError:
+            continue
+        if ntpath.normcase(common) == ntpath.normcase(root):
+            return None
+    return real
+
+
+_ENV_EXPANSION_RE = re.compile(r"\$[A-Za-z0-9_{]|%[^%\s]+%")
+_TILDE_USER_RE = re.compile(r"~[^/\\]")
+
+
 def _argv_path_escapes(
     value: str,
     roots: list[str],
@@ -274,6 +310,16 @@ def _argv_path_escapes(
         # argparse `fromfile_prefix_chars`（任意字符，不止 `@`）：以它开头的 token 会被脚本当文件名读出内容再展开，
         # 内容还能再给出越界目标。不递归展开校验，MCP 来源的 argv 里一律拒（Codex #818 r4221135439 / r4221289231）。
         return value
+    if _ENV_EXPANSION_RE.search(value) or _TILDE_USER_RE.match(value):
+        # 环境变量展开形状（`$NAME` / `${NAME}` / `%NAME%`）与 `~user`：脚本若对路径做 `os.path.expandvars` /
+        # `expanduser`，未展开的字面量在 cwd 下看着在根内、展开后却落到根外。展开结果取决于脚本运行时的环境，
+        # 桥不去猜，失败封闭：MCP 来源的 argv 里含这些形状一律拒（Codex #818 r4229588335）。
+        return value
+    if _WIN_ROOTED_RE.match(value):
+        if os.name == "nt":
+            return _nt_rooted_escape(value, roots, resolve=canonical_path)
+        if not os.path.isabs(value):
+            return value  # 非本平台的带根形状（`\x` / `C:x` / `C:\x`）：无法证明它在根里
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):
         if _WIN_ABS_RE.match(value) and not os.path.isabs(value):
             return value  # 非本平台的绝对路径形状：无法证明它在根里

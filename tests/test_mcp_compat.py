@@ -858,6 +858,32 @@ def test_declared_response_file_prefixes_are_refused(project, pool, token):
         "import argparse\nd = {'fromfile_prefix_chars': '%'}\np = argparse.ArgumentParser()\np.parse_args()\n",
         "import argparse\np = argparse.ArgumentParser()\np.__dict__.update(x=1)\np.parse_args()\n",
         "import argparse, importlib\np = argparse.ArgumentParser()\np.parse_args()\n",
+        # r4229653195：解析器流到看不见的代码（逃逸）
+        "import argparse\nfrom helper import configure\np = argparse.ArgumentParser()\nconfigure(p)\np.parse_args()\n",
+        "import argparse\nimport helpers\np = argparse.ArgumentParser()\nhelpers.setup(p)\np.parse_args()\n",
+        "import argparse\nfrom helper import f\np = argparse.ArgumentParser()\nq = p\nf(q)\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\nparsers = [p]\np.parse_args()\n",
+        "import argparse\ndef build():\n    p = argparse.ArgumentParser()\n    p.add_argument('--a')\n    return p\nbuild().parse_args()\n",
+        "import argparse\nfrom helper import f\nf(argparse.ArgumentParser())\n",
+        "import argparse\nfrom helper import f\np = argparse.ArgumentParser()\nsub = p.add_subparsers()\nf(sub.add_parser('x'))\np.parse_args()\n",
+        "import argparse\nfrom helper import f\np = argparse.ArgumentParser()\ng = p.add_argument_group('g')\nf(g)\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\ndef go():\n    f = lambda: p.parse_args()\n    return f\nq = [p.add_argument]\n",
+        "import argparse\ndef main():\n    p = argparse.ArgumentParser()\n    def inner():\n        return p.parse_args()\n    inner()\n",
+        "import argparse\nclass A:\n    pass\na = A()\na.p = argparse.ArgumentParser()\na.p.parse_args()\n",
+        # r4229718719：标准名字被重新绑定 / 解析器变量被重绑 = 说不准
+        "import argparse\nfrom helper import argparse\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nimport helper\nargparse = helper\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "from argparse import ArgumentParser\nfrom helper import make\ndef ArgumentParser(**k):\n    return make(**k)\np = ArgumentParser()\np.parse_args()\n",
+        "from argparse import ArgumentParser\nclass ArgumentParser:\n    pass\np = ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import mods\nfor argparse in mods:\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import ctx\nwith ctx() as argparse:\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import mk\nif (argparse := mk()):\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import mk\ntry:\n    mk()\nexcept Exception as argparse:\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\ndef f():\n    global argparse\n    argparse = None\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import *\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "def setup():\n    import argparse\n    return argparse\nimport argparse\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import Other\np = argparse.ArgumentParser()\np = Other()\np.parse_args()\n",
+        "import argparse\nfrom helper import Other\np = argparse.ArgumentParser()\np.add_argument('--a')\nfor p in [Other()]:\n    pass\np.parse_args()\n",
     ],
 )
 def test_unprovable_script_refuses_any_argv(project, script, token):
@@ -919,6 +945,88 @@ def test_exact_prefix_set_does_not_over_reject_other_symbols(project):
     _set_script(project, ARGPARSE_PCT)
     assert _scope_code(project, ["#x"]) is None
     assert _scope_code(project, ["%x"]) == "argv_path_out_of_scope"
+
+
+PLAIN_ARGPARSE = (
+    "import argparse\np = argparse.ArgumentParser()\np.add_argument('--freq')\np.parse_args()\n"
+)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "$HOME/x",
+        "${HOME}/x",
+        "%USERPROFILE%\\x",
+        "--out=$HOME/x",
+        "--out=${HOME}/x",
+        "--out=%USERPROFILE%\\x",
+        "-o$HOME/x",
+        "-o${HOME}/x",
+        "sub/$HOME/x",
+        "~root/x",
+        "~someone",
+        "--out=~root/x",
+        "-o~root/x",
+        "price$5",  # 宁可保守：含 `$数字` 也拒
+    ],
+)
+def test_env_expansion_shapes_in_argv_are_refused(project, pool, token):
+    """r4229588335：脚本若对路径做 expandvars / expanduser，未展开的字面量在根内、展开后在根外。
+    含 `$NAME` / `${NAME}` / `%NAME%` / `~user` 形状一律 argv_path_out_of_scope，脚本不跑。"""
+    _set_script(project, PLAIN_ARGPARSE)
+    assert _scope_code(project, [token]) == "argv_path_out_of_scope"
+    body = _open(project, argv=[token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert "Tavotto" in body["recovery"]
+    assert pool.runs == []
+
+
+@pytest.mark.parametrize(
+    "token", ["data.csv", "--freq=3", "-o out.png", "100%", "a%b", "50% off", "~", "~/x"]
+)
+def test_ordinary_values_still_pass_env_shape_check(project, token):
+    """没有展开形状的普通值照旧（`~` / `~/x` 走原有的根内检查，不属于 `~user`）。"""
+    _set_script(project, PLAIN_ARGPARSE)
+    code = _scope_code(project, [token])
+    if token.startswith("~"):
+        assert code == "argv_path_out_of_scope"  # 家目录在授权根外：原行为
+    else:
+        assert code is None
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "-abo/tmp/victim",
+        "-abo\\outside",
+        "-abo~/x",
+        "-abo$HOME/x",
+        "-abo${HOME}/x",
+        "-abo%USERPROFILE%\\x",
+        "-abo~root/x",
+        "-abC:\\outside",
+        "-ab=/tmp/victim",
+        "-abo../../outside",
+    ],
+)
+def test_clustered_short_options_hide_no_paths(project, pool, token):
+    """r4231001442：`-abo/tmp/victim` 在 argparse 里是 `-a -b -o /tmp/victim`；值可以从第 2 个字符之后的
+    任意位置开始，所以单横线簇的每个后缀都要过完整检查。脚本不跑。"""
+    _set_script(project, PLAIN_ARGPARSE)
+    assert _scope_code(project, [token]) == "argv_path_out_of_scope"
+    body = _open(project, argv=[token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["-abc"], ["-1.5"], ["-f2"], ["-abo", "out.png"], ["-o", "out/x.png"]],
+)
+def test_clustered_short_options_without_outside_paths_still_pass(project, argv):
+    _set_script(project, PLAIN_ARGPARSE)
+    assert _scope_code(project, argv) is None
 
 
 def test_worker_respawn_rechecks_the_frozen_run(project_cwd, pool, tmp_path_factory, monkeypatch):
@@ -992,3 +1100,97 @@ def test_pure_literal_scripts_stay_exact_under_whitelist(project):
         encoding="utf-8",
     )
     assert scriptargs.response_file_prefixes(path) == (frozenset(), True)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "import argparse\nimport matplotlib.pyplot as plt\n"
+        "p = argparse.ArgumentParser(description='d')\n"
+        "p.add_argument('--scale', type=float, default=1.0)\n"
+        "p.add_argument('src', nargs='?')\n"
+        "a = p.parse_args()\nplt.plot([0, a.scale])\n",
+        "import argparse\n\ndef main():\n    p = argparse.ArgumentParser()\n"
+        "    g = p.add_mutually_exclusive_group()\n    g.add_argument('--a')\n"
+        "    g.add_argument('--b')\n    return p.parse_args()\n\n"
+        "if __name__ == '__main__':\n    main()\n",
+        # r4229653195：只用方法（含子解析器变量、模块级解析器被函数读用）仍 exact
+        "import argparse\np = argparse.ArgumentParser()\nsub = p.add_subparsers(dest='cmd')\nsub.required = True\n"
+        "a = sub.add_parser('a')\na.add_argument('--n', type=int)\na.set_defaults(f=1)\n"
+        "def main():\n    return p.parse_args()\nmain()\n",
+        "from argparse import ArgumentParser\n"
+        "p = ArgumentParser(formatter_class=None)\nsub = p.add_subparsers(dest='cmd')\n"
+        "sub.add_parser('run').add_argument('--n', type=int)\np.parse_args()\n",
+    ],
+)
+def test_ordinary_argparse_scripts_are_judged_exact(project, script):
+    """r7 白名单不得把普通 argparse 脚本判成说不准：这些写法下 MCP argv 必须可用。
+    （没有任何 argparse 证据、直接读 `sys.argv` 的脚本是另一回事：解析器可能在别的模块里造，
+    仍按 `argv_unverifiable` 保守处理，见 `test_unprovable_script_refuses_any_argv`。）"""
+    from tavotto.engine import scriptargs
+
+    _set_script(project, script)
+    assert scriptargs.response_file_prefixes(Path(project) / "fig1.py") == (frozenset(), True)
+    assert _scope_code(project, ["--scale", "2"]) is None
+
+
+# ------------------------------------------------ Windows 带根形状（#818 Windows 腿：`/` 在 3.13 的 nt 上不是绝对路径）
+_NT_ROOTS = ["C:\\ws", "D:\\data\\proj"]
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "/",
+        "/x",
+        "\\",
+        "\\x",
+        "/ws/../etc",
+        "C:",
+        "C:x",
+        "C:ws\\a",
+        "E:\\out.txt",
+        "C:\\ws\\..\\etc",
+        "C:/ws/../../x",
+        "\\\\srv\\share\\a",
+        "//srv/share/a",
+        "\\\\?\\C:\\ws\\a",
+        "\\\\.\\PhysicalDrive0",
+        "//?/C:/ws/a",
+    ],
+)
+def test_nt_rooted_tokens_outside_the_roots_are_refused(token):
+    assert bridge._nt_rooted_escape(token, _NT_ROOTS) is not None
+
+
+@pytest.mark.parametrize("token", ["C:\\ws\\out.csv", "c:/WS/sub/../x", "D:\\data\\proj\\a"])
+def test_nt_rooted_tokens_inside_the_roots_pass(token):
+    assert bridge._nt_rooted_escape(token, _NT_ROOTS) is None
+
+
+@pytest.mark.parametrize(
+    "token", ["\\safe\\victim.txt", "/safe/x", "\\", "/", "/ws/out.txt", "\\ws", "C:x"]
+)
+def test_nt_root_without_drive_is_refused_even_inside_a_root_path(token):
+    """r4230323352：桥的 cwd 盘与 worker 的 cwd 盘可以不同，`\\safe\\x` 在 worker 那边是 D:\\safe\\x。
+    有根无盘符一律拒，不推断盘；完整限定的 `C:\\ws\\x` 仍照常按根检查。"""
+    roots = ["C:\\safe", "D:\\project"]
+    assert bridge._nt_rooted_escape(token, roots) is not None
+    assert bridge._nt_rooted_escape("C:\\safe\\x", roots) is None
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["\\x", "/safe/x", "\\", "C:x", "C:", "\\\\?\\C:\\a", "--out=C:x", "--out=\\x", "-o\\x"],
+)
+def test_windows_rooted_shapes_are_refused_on_every_platform(project, token):
+    """POSIX 上这些不是绝对路径，但脚本可能在任何平台被当成路径；绝不落进「相对 cwd」分支。"""
+    assert _scope_code(project, ["--freq", "1", token]) == "argv_path_out_of_scope"
+
+
+def test_posix_absolute_path_inside_the_root_is_unchanged(project):
+    """r4230323352 的拒绝只属于 Windows 口径：POSIX 的 `/abs` 是普通绝对路径，仍按授权根检查。"""
+    if os.name == "nt":
+        pytest.skip("POSIX 口径")
+    assert _scope_code(project, ["--freq", "1", str(Path(project) / "out.csv")]) is None
+    assert _scope_code(project, ["--freq", "1", "/etc/passwd"]) == "argv_path_out_of_scope"

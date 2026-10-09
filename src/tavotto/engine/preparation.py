@@ -754,6 +754,23 @@ class PreparationService:
                 )
                 return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
+            # 诊断包的「最近缺依赖现场」：准备路径把 WorkerError 接在这里，不经 `app._worker_error`
+            # 修复 offer 与试运行路径（probe.py）同一个函数、同样的入参：只读判断，不起解释器、不联网，
+            # 复用异常里已体检好的 project_env；算不出来不许盖掉原始错误（线程里不能抛）
+            repair_offer = None
+            if getattr(exc, "code", "") == "missing_dependency" and getattr(exc, "module", ""):
+                try:
+                    repair_offer = deprepair.offer(
+                        plan.project_root,
+                        plan.script or "",
+                        exc.module,
+                        getattr(exc, "project_env", None),
+                    )
+                except Exception:  # noqa: BLE001
+                    repair_offer = None
+            deprepair.note_missing_dependency_of(
+                plan.project_root, exc, script=plan.script or "", offer=repair_offer
+            )
             module = getattr(exc, "module", "")
             if module:
                 error["module"] = module
@@ -1085,6 +1102,16 @@ def _record_terminal(plan: PreparationPlan, result: PreparationResult) -> None:
         LOG.debug("准备诊断快照登记失败", exc_info=True)
 
 
+def _elapsed_ms(started_at, finished_at) -> int | None:
+    if (
+        isinstance(started_at, (int, float))
+        and isinstance(finished_at, (int, float))
+        and finished_at >= started_at
+    ):
+        return round((finished_at - started_at) * 1000)
+    return None
+
+
 def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> dict:
     """这一次尝试的**白名单**投影（T04）。逐字段挑，不读 `plan.to_payload()` / `result.to_payload()`。
 
@@ -1168,6 +1195,8 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
             "timing": {
                 "started_at": taskdiag.number(result.started_at),
                 "finished_at": taskdiag.number(result.finished_at),
+                # 与 script_run 条目同名同单位，`recent_runs` 才能一视同仁地读
+                "elapsed_ms": _elapsed_ms(result.started_at, result.finished_at),
             },
         }
     )

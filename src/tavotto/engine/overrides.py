@@ -1900,11 +1900,12 @@ class _PatchEdge:
     `_NO_BBOX` 同一条纪律：只活在 `originals` 里，不进 patch、不过 JSON。
     """
 
-    __slots__ = ("original", "hatch")
+    __slots__ = ("original", "hatch", "alpha")
 
-    def __init__(self, original, hatch) -> None:
+    def __init__(self, original, hatch, alpha=None) -> None:
         self.original = original
         self.hatch = hatch
+        self.alpha = alpha  # 采样那一刻的 patch alpha：hatch 的 RGBA 是按它合成的
 
     def __repr__(self) -> str:
         return f"<patch edge {self.original!r} hatch={self.hatch!r}>"
@@ -1963,7 +1964,7 @@ def _get_patch_edgecolor(p):
     if not hasattr(p, "_original_edgecolor"):
         return p.get_edgecolor()  # 认不出的实现：退回按值（老行为）
     hatch = None if hasattr(p, "set_hatchcolor") else getattr(p, "_hatch_color", None)
-    return _PatchEdge(p._original_edgecolor, hatch)  # noqa: SLF001
+    return _PatchEdge(p._original_edgecolor, hatch, getattr(p, "_alpha", None))  # noqa: SLF001
 
 
 def _set_patch_edgecolor(p, v) -> None:
@@ -1971,9 +1972,30 @@ def _set_patch_edgecolor(p, v) -> None:
     if isinstance(v, _PatchEdge):
         p.set_edgecolor(v.original)
         if v.hatch is not None and not hasattr(p, "set_hatchcolor"):
-            p._hatch_color = v.hatch  # noqa: SLF001 — ≤3.10 没有公开入口，见类注释
+            # ≤3.10 没有公开入口，见类注释。快照里的花纹色带着**采样那一刻**的 alpha；
+            # 之后用户若改过不透明度，`set_edgecolor(original)` 刚按**当前** alpha 重算过
+            # 一遍——这里必须按当前 alpha 重新合成（matplotlib 自己就是 `to_rgba(color, alpha)`），
+            # 否则热态停在旧不透明度，全新重放带着保留的 alpha（#861）
+            p._hatch_color = _hatch_rgba_with_alpha(v.hatch, p, v.alpha)  # noqa: SLF001
         return
     p.set_edgecolor(v)
+
+
+def _hatch_rgba_with_alpha(rgba, p, src_alpha=None):
+    """把快照里的花纹 RGBA 按 patch **当前生效的** alpha 重新合成。
+
+    与 matplotlib 同一条路径：`Patch._set_edgecolor`（≤3.10）是
+    `colors.to_rgba(color, self._alpha)`——`_alpha` 非 None 时覆盖颜色自带的 alpha。
+    `_alpha is None` 时 alpha 不被覆盖：快照也是在 `_alpha is None` 时采的（`src_alpha is None`），
+    它的 alpha 就是颜色自带的，原样用；否则快照的 alpha 是旧不透明度合成出来的，颜色自带的
+    已无从恢复，按不透明（matplotlib 对没有 alpha 的颜色也是这么补的）。
+    """
+    if isinstance(rgba, str):
+        return rgba
+    alpha = getattr(p, "_alpha", None)
+    if alpha is None:
+        return tuple(rgba) if src_alpha is None else mcolors.to_rgba(tuple(rgba)[:3], 1.0)
+    return mcolors.to_rgba(tuple(rgba)[:3], alpha)
 
 
 #: 「没有值」——不能用 None，None 本身可以是一个合法的原样。
@@ -3151,6 +3173,20 @@ _CAP_HATCH = (
     lambda a: a.get_hatch(),
     lambda a, v: a.set_hatch(None if v in (None, "", "none") else str(v)),
 )
+
+
+def _get_hatch_linewidth(p):
+    get = getattr(p, "get_hatch_linewidth", None)
+    return None if get is None else float(get())
+
+
+def _set_hatch_linewidth(p, v) -> None:
+    # 每个 Patch 自己的花纹线宽是 matplotlib 3.10 才有的（≤3.9 只认 rcParams['hatch.linewidth']，
+    # 绘制时全局读取）。旧版本上不发字段；这里留成空操作，旧版本重放新存的 override 不炸
+    if hasattr(p, "set_hatch_linewidth") and v is not None:
+        p.set_hatch_linewidth(float(v))
+
+
 #: 颜色映射（ScalarMappable / ColorizingArtist）：Collection 与 AxesImage 共享。
 #: 原生值存 Colormap 对象本身，`set_cmap` 两种都吃。
 _CAP_CMAP = (lambda a: a.get_cmap(), lambda a, v: a.set_cmap(v))
@@ -3164,7 +3200,11 @@ _CAP_VMAX = (
 )
 
 #: 花纹的可选项。`""` = 不用花纹（黑白印刷时区分同色区块的标准手段）。
-HATCHES = ["", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*", "//", "\\\\", "xx", "..", "++"]
+HATCHES = [
+    *("", "/", "\\", "|", "-", "+", "x", "o", "O", ".", "*"),
+    *("//", "\\\\", "xx", "..", "++"),
+    *("///", "\\\\\\", "xxx", "+++"),
+]
 
 #: Collection family（PathCollection / PolyCollection / LineCollection /
 #: QuadMesh / ContourSet / EventCollection / Quiver …）。颜色与线宽都是
@@ -3208,6 +3248,7 @@ _PATCH_CAPS: dict[str, tuple] = {
     "linewidth": (lambda a: float(a.get_linewidth()), lambda a, v: a.set_linewidth(float(v))),
     "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
     "hatch": _CAP_HATCH,
+    "hatch_linewidth": (_get_hatch_linewidth, _set_hatch_linewidth),
     "fill": (lambda a: bool(a.get_fill()), lambda a, v: a.set_fill(bool(v))),
     "alpha": _CAP_ALPHA,
     "visible": _CAP_VISIBLE,
@@ -3862,6 +3903,8 @@ for _prop, _g1, _s1 in [
     ("facecolor", _get_patch_facecolor, _set_patch_facecolor),  # 模式而非值，见 `_PatchFace`
     ("edgecolor", _get_patch_edgecolor, _set_patch_edgecolor),  # 模式而非值，见 `_PatchEdge`
     ("linewidth", lambda r: float(r.get_linewidth()), lambda r, v: r.set_linewidth(float(v))),
+    ("hatch", _CAP_HATCH[0], _CAP_HATCH[1]),
+    ("hatch_linewidth", _get_hatch_linewidth, _set_hatch_linewidth),
     ("alpha", lambda r: r.get_alpha(), lambda r, v: r.set_alpha(None if v is None else float(v))),
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),
     ("zorder", lambda r: float(r.get_zorder()), lambda r, v: r.set_zorder(float(v))),
@@ -4333,7 +4376,15 @@ ALIAS_GROUPS: dict[tuple[str, str], object] = {
 }
 # 柱形系列的样式 prop → 每一根柱的同名 prop。`bar_width` 与 `label` 不在此列：
 # 前者窄端没有对应 prop（`bar` 不暴露宽度），后者写的是 container 不是柱。
-for _bprop in ("facecolor", "edgecolor", "linewidth", "alpha", "visible"):
+for _bprop in (
+    "facecolor",
+    "edgecolor",
+    "linewidth",
+    "hatch",
+    "hatch_linewidth",
+    "alpha",
+    "visible",
+):
     ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(lambda g: list(g.artists), _bprop)
 # stem 系列 → 被它消费掉的成员。这里的「窄端」不是界面上的另一个条目，而是
 # 那些成员的**旧 gid 别名**（`manifest._alias_consumed_member`）：容器化之前
