@@ -992,3 +992,31 @@ def test_pure_literal_scripts_stay_exact_under_whitelist(project):
         encoding="utf-8",
     )
     assert scriptargs.response_file_prefixes(path) == (frozenset(), True)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "import argparse\nimport matplotlib.pyplot as plt\n"
+        "p = argparse.ArgumentParser(description='d')\n"
+        "p.add_argument('--scale', type=float, default=1.0)\n"
+        "p.add_argument('src', nargs='?')\n"
+        "a = p.parse_args()\nplt.plot([0, a.scale])\n",
+        "import argparse\n\ndef main():\n    p = argparse.ArgumentParser()\n"
+        "    g = p.add_mutually_exclusive_group()\n    g.add_argument('--a')\n"
+        "    g.add_argument('--b')\n    return p.parse_args()\n\n"
+        "if __name__ == '__main__':\n    main()\n",
+        "from argparse import ArgumentParser\n"
+        "p = ArgumentParser(formatter_class=None)\nsub = p.add_subparsers(dest='cmd')\n"
+        "sub.add_parser('run').add_argument('--n', type=int)\np.parse_args()\n",
+    ],
+)
+def test_ordinary_argparse_scripts_are_judged_exact(project, script):
+    """r7 白名单不得把普通 argparse 脚本判成说不准：这些写法下 MCP argv 必须可用。
+    （没有任何 argparse 证据、直接读 `sys.argv` 的脚本是另一回事：解析器可能在别的模块里造，
+    仍按 `argv_unverifiable` 保守处理，见 `test_unprovable_script_refuses_any_argv`。）"""
+    from tavotto.engine import scriptargs
+
+    _set_script(project, script)
+    assert scriptargs.response_file_prefixes(Path(project) / "fig1.py") == (frozenset(), True)
+    assert _scope_code(project, ["--scale", "2"]) is None
