@@ -33,32 +33,18 @@ The workflow is fail-closed when SignPath signing is enabled: a release build
 that has the variables set but cannot obtain a valid signature fails rather
 than attaching an unsigned file.
 
-Until the project subscription and repository variables are configured, a
-release still attaches an **unsigned** Windows installer. That is a deliberate
-choice made on 2026-08-22, when the release signing gate first fired for real:
-refusing to build without SignPath does not withhold an unsigned installer, it
-withholds the entire Windows desktop application — and, because the updater
-manifest requires both platforms to be present, it also leaves macOS users with
-no in-app update at all. Shipping unsigned is the lesser harm, and it is the
-same form every release through 0.8.0 took.
+Without a configured SignPath subscription, a release build fails instead of
+attaching an unsigned Windows installer. The gate emits a `::error` annotation,
+writes the reason to the job summary, and exits non-zero — the release is
+stopped, not shipped. The temporary exception granted on 2026-08-22 has been
+revoked: shipping unsigned is no longer permitted.
+The hard requirements are unchanged: the minisign key that signs update packages
+and the Apple Developer ID certificate remain hard requirements — a release
+build missing either still fails.
 
-The exception is narrow and it is never silent:
+An unsigned installer must never be described as a signed release. `tests/test_runtime_build.py` guards the hard requirements and the fail-closed behavior.
 
-* it covers **Authenticode only**. The minisign key that signs update packages
-  and the Apple Developer ID certificate remain hard requirements — a release
-  build missing either still fails;
-* the run page carries a warning annotation and a job summary section saying
-  the installer is unsigned, what users will see (a SmartScreen prompt), and
-  that the update chain is still trustworthy because it rests on minisign
-  rather than on Authenticode;
-* the installer still carries a build provenance attestation, so its origin is
-  verifiable with `gh attestation verify` even though it is not code-signed.
 
-An unsigned installer must never be described as a signed release. Once the
-subscription is in place, restore the hard failure by moving the SignPath check
-back into the gate's `missing` list; `tests/test_runtime_build.py` guards both
-the remaining hard requirements and the fact that the exception announces
-itself.
 
 ## macOS artifacts (out of scope for this subscription)
 
