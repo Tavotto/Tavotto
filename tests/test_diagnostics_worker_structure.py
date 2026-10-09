@@ -271,10 +271,11 @@ def test_oversized_generation_fails_closed(tmp_path, monkeypatch):
 def test_sensitivity_scan_stops_at_the_snapshot_size(tmp_path):
     """评审 #868 第三轮 P2-2：快照之后追加的字节不读——持续写入的日志不会拖住导出。"""
     log = tmp_path / "worker.log"
-    log.write_text("quiet\n", encoding="utf-8")
+    # 字节写入：Windows 文本模式会把 \n 写成 \r\n，断言的是原样字节
+    log.write_bytes(b"quiet\n")
     snap = log.stat().st_size
-    with log.open("a", encoding="utf-8") as fh:
-        fh.write("[sensitive run: script output omitted]\n")
+    with log.open("ab") as fh:
+        fh.write(b"[sensitive run: script output omitted]\n")
     assert diagnostics._generation_is_sensitive(log, 0, snap) is False
     assert diagnostics._read_tail_bytes(log, 1 << 20, end=snap) == b"quiet\n"
 
