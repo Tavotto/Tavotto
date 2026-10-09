@@ -68,7 +68,12 @@ const GROUP_ORDER: Group[] = ['needsFix', 'linked', 'noFigure', 'notRun', 'runti
  */
 const isLinked = (entry: ScriptInventoryEntry): boolean => entry.registered && entry.linked !== false
 
-function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined, prep?: PrepEntry): Group {
+export function groupOf(
+  entry: ScriptInventoryEntry,
+  run: ScriptRunState | undefined,
+  prep?: PrepEntry,
+  registryAt = 0,
+): Group {
   // 缺包是能一键修好的那一类：单独一组「需要修复」、排在最前（2026-09-29：「可能需要原环境」对不懂 Python 的
   // 用户是术语）。超时与一般失败仍在下面那组——它们真的可能与原来的环境 / 运行方式有关
   // 「开跑前要先准备依赖」（联合准备的授权）同样能一键修好：与缺包同一组
@@ -78,7 +83,10 @@ function groupOf(entry: ScriptInventoryEntry, run: ScriptRunState | undefined, p
   if (needsNative(run)) return 'needsEnv'
   // 准备会话（T09）里这一次的结局：跑出错了 → 需要处理；跑完没图 → 单独一组；捕获到图 → 已关联。
   // 只翻译报告的 outcome，不另判（旧试运行的状态机此刻不在跑时才轮到它）
-  const outcome = !run || !isBusyPhase(run.phase) ? prep?.report?.outcome : undefined
+  // 准备结局只管**这次的**：比最近一次注册表刷新旧的（之后脚本被 MCP / CLI 跑通了、或旧的成功已被后端撤销），以刷新后
+  // 权威的 `linked` 为准。没有落地时刻的（老条目）当新的
+  const prepFresh = !prep?.reportAt || prep.reportAt >= registryAt
+  const outcome = (!run || !isBusyPhase(run.phase)) && prepFresh ? prep?.report?.outcome : undefined
   if (outcome?.kind === 'failed') return 'needsFix'
   if (outcome?.kind === 'execution_finished_no_figure') return 'noFigure'
   if (outcome?.kind === 'succeeded' && (prep?.report?.captured ?? []).length > 0) return 'linked'
@@ -96,6 +104,7 @@ export function ScriptLibrary({ query }: { query: string }) {
   const error = useScriptLibraryStore((s) => s.error)
   const runStates = useScriptRunStore((s) => s.byScript)
   const prepEntries = useProjectPreparationStore((s) => s.entries)
+  const registryAt = useScriptLibraryStore((s) => s.loadedAt)
 
   const answersLoaded = useScriptInputStore((s) => s.answers !== null)
   const repairOwner = useRepairOwner()
@@ -128,7 +137,7 @@ export function ScriptLibrary({ query }: { query: string }) {
 
   const groups = new Map<Group, ScriptInventoryEntry[]>()
   for (const entry of scripts) {
-    const g = groupOf(entry, runStates[entry.script], prepEntries[`script:${entry.script}`])
+    const g = groupOf(entry, runStates[entry.script], prepEntries[`script:${entry.script}`], registryAt)
     const list = groups.get(g)
     if (list) list.push(entry)
     else groups.set(g, [entry])

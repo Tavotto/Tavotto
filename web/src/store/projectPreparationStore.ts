@@ -61,6 +61,8 @@ export interface PrepEntry {
   /** 发起时认领的项目 */
   pj: string | null
   report: PreparationReport | null
+  /** 这份报告落地的时刻（毫秒）：脚本库据此判它比最近一次注册表刷新新还是旧 */
+  reportAt?: number
   connection: PrepConnection
   /** 旧会话已不在（应用重启 / 回收）、已经重新检查过——**没有**自动运行 */
   restarted: boolean
@@ -235,6 +237,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
     patch(key, () => ({
       report,
+      reportAt: Date.now(),
       connection: 'ok',
       ...(newRound
         ? { editing: [], editRenders: {}, ...(before?.session_id === report.session_id ? { restarted: false } : {}) }
