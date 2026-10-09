@@ -571,8 +571,32 @@ def legend_fresh_handle(leg: Legend, orig, box=None):
         box = DrawingArea(width=width, height=height, xdescent=0.0, ydescent=descent)
         box.set_figure(_owning_figure(leg))
     fresh = handler.legend_artist(leg, orig, leg._fontsize, box)  # noqa: SLF001
-    _carry_hatch_linewidth(fresh, orig)
+    if _is_stock_hatch_handler(handler):
+        _carry_hatch_linewidth(fresh, orig)
     return fresh
+
+
+def _is_stock_hatch_handler(handler) -> bool:
+    """handler 是 matplotlib 自带、且会丢掉 `_hatch_linewidth` 的那几个默认类。
+
+    判据是**类型恰好等于**（`type(h) is C`，子类不算）：脚本注册的自定义 handler（含子类）
+    故意让色块线宽异于源时，输出一律保留，不被源线宽覆盖。丢线宽的三个（3.10 / 3.11 源码
+    `legend_handler.py` 核过）：`HandlerPatch`（经 `Patch.update_from`，柱 / 形状 / `BarContainer`
+    的 `update_from_first_child`）、`HandlerStepPatch`（填充的 `stairs`，同走 `update_from`）、
+    `HandlerPolyCollection`（`fill_between` / `stackplot`，`_update_prop` 只写颜色与
+    线宽等私有属性）。`HandlerPatch(patch_func=…)` / 非默认 `update_func` 是脚本自己造色块，
+    也不算默认。
+    """
+    from matplotlib import legend_handler as lh
+
+    t = type(handler)
+    if t is lh.HandlerPatch:
+        return getattr(handler, "_patch_func", None) is None and getattr(
+            handler, "_update_prop_func", None
+        ) in (None, lh.update_from_first_child)
+    if t is lh.HandlerStepPatch or t is lh.HandlerPolyCollection:
+        return getattr(handler, "_update_prop_func", None) is None
+    return False
 
 
 def _carry_hatch_linewidth(fresh, orig) -> None:
@@ -622,6 +646,20 @@ def _dash_key(h: Line2D):
     )
 
 
+def _hatch_lw_key(h) -> tuple:
+    """花纹线宽进指纹（3.10+ 才有 per-artist 属性）；没有该属性的版本不追加，指纹保持旧形状。
+
+    指纹只活在内存里（`orig_fp` 每次建模型从活的图例重算，不入文件、前端也不比对），所以没有
+    「旧文件里不含线宽的指纹」要迁移；旧版本（≤3.9）算出的仍是不含线宽的旧形状，判定不变。
+    只有无花纹时线宽无意义，也记 `None`，避免默认线宽差异把无花纹条目拆开。"""
+    get = getattr(h, "get_hatch_linewidth", None)
+    if get is None:
+        return ()
+    if not h.get_hatch():
+        return (None,)
+    return (round(float(get()), 3),)
+
+
 def legend_handle_fingerprint(h) -> tuple:
     """示意线的**样式指纹**：两份指纹相等 = 画出来一模一样。
 
@@ -653,6 +691,7 @@ def legend_handle_fingerprint(h) -> tuple:
             h.get_hatch(),
             h.get_alpha(),
             bool(h.get_fill()),
+            *_hatch_lw_key(h),
         )
     if isinstance(h, Collection):
         fc = _first(h.get_facecolor())
@@ -664,6 +703,7 @@ def legend_handle_fingerprint(h) -> tuple:
             round(float(_first(h.get_linewidth(), 0.0) or 0.0), 3),
             h.get_hatch(),
             h.get_alpha(),
+            *_hatch_lw_key(h),
         )
     return (kind, id(h))
 

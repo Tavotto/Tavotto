@@ -516,3 +516,159 @@ def test_legend_patch_handle_follows_the_source_hatch_linewidth():
     assert got["hot"][2] == got["base"][2], f"没有纹理的系列 B 的图例色块被误动：{got}"
     assert got["undone"] == got["base"], f"撤销后图例色块没回到原样：{got}"
     assert got["fresh"] == got["hot"], f"热态 ≠ 全新构图重放：{got}"
+
+
+# ---------------------------------------------------------------------------
+# 图例线宽同步只对 matplotlib 默认 handler；自定义 handler 的输出一律保留（Codex r4225846407）
+# ---------------------------------------------------------------------------
+_CUSTOM_HANDLER_DRIVER = """\
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.container import BarContainer
+from matplotlib.legend_handler import HandlerPatch, update_from_first_child
+
+import legendmodel
+import manifest
+import overrides
+
+SERIES = "axes_0.barseries_0"
+MODE = sys.argv[2]
+# handler 模式：固定值恰与源初值（默认 1.0）相同——此时基线指纹相等、条目照旧跟随源，改源线宽后
+# 若同步误把源值写进自定义 handler 的色块，就是肉眼可见的覆盖；posthoc 模式用不同值
+FIXED = 1.0 if MODE == "handler" else 0.25
+
+
+class FixedWidthHandler(HandlerPatch):  # 子类：脚本故意让色块线宽固定
+    def create_artists(self, *a, **k):
+        arts = super().create_artists(*a, **k)
+        for p in arts:
+            p.set_hatch_linewidth(FIXED)
+        return arts
+
+
+def build():
+    fig, ax = plt.subplots(figsize=(3.6, 2.6))
+    ax.bar([0, 1], [3, 5], 0.4, label="A", hatch="//")
+    ax.bar([0.2, 1.2], [2, 4], 0.4, label="B", hatch="\\\\")
+    if MODE == "handler":
+        ax.legend(handler_map={BarContainer: FixedWidthHandler(update_func=update_from_first_child)})
+    else:  # 默认 handler，但脚本事后把图例色块线宽改成别的值
+        leg = ax.legend()
+        leg.legend_handles[0].set_hatch_linewidth(FIXED)
+    st = overrides.FigState(fig)
+    manifest.instrument(st)
+    return fig, ax, st
+
+
+def snap(ax):
+    leg = ax.get_legend()
+    model = legendmodel.legend_entries(leg)
+    return {
+        "src": ax.containers[0].patches[0].get_hatch_linewidth(),
+        "leg": [h.get_hatch_linewidth() for h in leg.legend_handles],
+        "binding": [model.effective_binding(j) for j in range(model.n)],
+        "fp_len": len(model.orig_fp[0]),
+    }
+
+
+patch = [{"gid": SERIES, "prop": "hatch_linewidth", "value": 3.0}]
+fig, ax, st = build()
+overrides.apply(st, [])
+base = snap(ax)
+overrides.apply(st, patch)
+hot = snap(ax)
+overrides.apply(st, [])
+undone = snap(ax)
+fig2, ax2, st2 = build()
+overrides.apply(st2, patch)
+print(json.dumps({"base": base, "hot": hot, "undone": undone, "fresh": snap(ax2)}))
+"""
+
+
+@pytest.mark.skipif(not HAS_WIDTH, reason="该 matplotlib 没有 per-artist 花纹线宽（≤3.9）")
+@pytest.mark.parametrize("mode", ["handler", "posthoc"])
+def test_legend_custom_handler_keeps_its_hatch_linewidth(mode):
+    """脚本让色块线宽异于源（自定义 handler 子类 / 默认 handler 后事后改色块）：改源线宽后
+    色块仍是脚本的值；事后改的那种指纹含线宽，对不上默认派生 -> 不判成跟随源；
+    apply / 撤销都不替换，热态 == 全新构图重放。"""
+    proc = subprocess.run(  # noqa: S603 — 测试里在 worker 解释器里驱动引擎
+        [WORKER_PY, "-c", _CUSTOM_HANDLER_DRIVER, str(ENGINE_DIR), mode],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    got = json.loads(proc.stdout.strip().splitlines()[-1])
+    fixed = 1.0 if mode == "handler" else 0.25
+    assert got["base"]["leg"][0] == fixed, got
+    assert got["hot"]["src"] == 3.0, got
+    assert got["hot"]["leg"] == got["base"]["leg"], f"自定义 handler 的色块线宽被源覆盖：{got}"
+    if mode == "posthoc":
+        # 指纹含线宽：脚本的 0.25 与默认 handler 从源重派生的值对不上 -> 不是跟随源
+        assert got["base"]["binding"][0] != "follow_source", got
+        assert got["hot"]["binding"][0] != "follow_source", got
+    assert got["undone"]["leg"] == got["base"]["leg"], got
+    assert got["fresh"]["leg"] == got["hot"]["leg"], f"热态 ≠ 全新构图重放：{got}"
+
+
+_FINGERPRINT_DRIVER = """\
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch, Rectangle
+
+import legendmodel
+
+a = Rectangle((0, 0), 1, 1, hatch="//")
+b = Rectangle((0, 0), 1, 1, hatch="//")
+b.set_hatch_linewidth(4.0)
+n = Rectangle((0, 0), 1, 1)
+m = Rectangle((0, 0), 1, 1)
+m.set_hatch_linewidth(4.0)
+with_lw = legendmodel.legend_handle_fingerprint(a)
+# 旧形状：没有 per-artist 线宽属性（≤3.9）时指纹不追加线宽
+saved = Patch.get_hatch_linewidth
+del Patch.get_hatch_linewidth
+try:
+    old = legendmodel.legend_handle_fingerprint(a)
+    old_b = legendmodel.legend_handle_fingerprint(b)
+finally:
+    Patch.get_hatch_linewidth = saved
+print(json.dumps({
+    "len_new": len(with_lw), "len_old": len(old),
+    "differs": with_lw != legendmodel.legend_handle_fingerprint(b),
+    "old_equal": old == old_b,
+    "no_hatch_equal": legendmodel.legend_handle_fingerprint(n) == legendmodel.legend_handle_fingerprint(m),
+    "prefix": list(with_lw[:8]) == list(old),
+}))
+"""
+
+
+@pytest.mark.skipif(not HAS_WIDTH, reason="该 matplotlib 没有 per-artist 花纹线宽（≤3.9）")
+def test_legend_fingerprint_hatch_linewidth_and_old_shape_compat():
+    """线宽进指纹（有花纹时）；没有该属性的版本指纹保持旧形状且判定不变；
+    无花纹的色块线宽无意义，不拆开。指纹只在内存里（不入文件），旧文件无迁移问题。"""
+    proc = subprocess.run(  # noqa: S603
+        [WORKER_PY, "-c", _FINGERPRINT_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=180,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    got = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert got["len_new"] == got["len_old"] + 1, got
+    assert got["prefix"], got
+    assert got["differs"], f"线宽不同的两个色块指纹相同：{got}"
+    assert got["old_equal"], f"旧形状指纹仍应只看原有字段：{got}"
+    assert got["no_hatch_equal"], got
