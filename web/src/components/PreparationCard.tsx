@@ -31,7 +31,7 @@ import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
-import { missingRequired, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
+import { missingRequired, readTokens, subcommandMissing, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
@@ -164,8 +164,14 @@ export function PreparationCard() {
     const script = 'id' in entry.target ? null : entry.target.script
     const schema = argsSchemaOf(entry.report)
     const tokens = script ? (drafts[script]?.tokens ?? []) : []
-    const missingArgs =
-      schema && schema.form_enabled ? missingRequired(schema, readTokens(schema, tokens)).length : null
+    // 表单关着（子命令等）读不准参数，但必选子命令没选依旧要拦住「运行」
+    const missingArgs = !schema
+      ? null
+      : schema.form_enabled
+        ? missingRequired(schema, readTokens(schema, tokens), tokens).length
+        : subcommandMissing(schema, tokens)
+          ? 1
+          : null
     view = prepView(entry, { argsChanged: draftDiffers(entry.target), editReady, missingArgs })
   }
 

@@ -112,3 +112,36 @@ describe('只动自己的 token', () => {
     expect(missingRequired(fft, view)).toContain('a0')
   })
 })
+
+describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822）', () => {
+  const base = schemas.fft6
+  const arg = (id: string) => ({ ...base.arguments[0], id, flags: [`--${id}`], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: 'gx' })
+  const grp = {
+    ...base,
+    arguments: [arg('csv'), arg('json')],
+    exclusive_groups: [{ id: 'gx', required: true, members: ['csv', 'json'] }],
+    subcommands: null,
+  } as ScriptArgsSchema
+
+  it('一个成员都没给 = 缺 1；给了一个 = 0；组不必选 = 0', () => {
+    expect(missingRequired(grp, readTokens(grp, []))).toEqual(['gx'])
+    expect(missingRequired(grp, readTokens(grp, ['--csv', 'a']))).toEqual([])
+    const optional = { ...grp, exclusive_groups: [{ id: 'gx', required: false, members: ['csv', 'json'] }] }
+    expect(missingRequired(optional, readTokens(optional, []))).toEqual([])
+  })
+
+  it('必选子命令：没选 = subcommand；选了（或不必选）= 0；不传 tokens 不判', () => {
+    const sub = {
+      ...base,
+      arguments: [],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    } as ScriptArgsSchema
+    expect(missingRequired(sub, readTokens(sub, []), [])).toEqual(['subcommand'])
+    expect(missingRequired(sub, readTokens(sub, []), ['--v'])).toEqual(['subcommand'])
+    expect(missingRequired(sub, readTokens(sub, []), ['-v', 'plot'])).toEqual([])
+    expect(missingRequired(sub, readTokens(sub, []))).toEqual([])
+    const notRequired = { ...sub, subcommands: { ...sub.subcommands!, required: false } }
+    expect(missingRequired(notRequired, readTokens(notRequired, []), [])).toEqual([])
+  })
+})

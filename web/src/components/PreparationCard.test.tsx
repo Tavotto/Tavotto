@@ -482,6 +482,50 @@ describe('必填参数没填齐时任何卡都不说「可以运行」', () => {
     expect(mockAct).not.toHaveBeenCalled()
     expect(panel().dataset.prepState).toBe('ready')
   })
+
+  // r4232531822：必选互斥组里每个参数自己都 required=false，不能因此放行「运行」
+  it('必选互斥组一个都没给：参数卡、主按钮置灰；给了其中一个才放行', async () => {
+    const opt = (id: string) => ({ ...schema.arguments[2], id, dest: id, flags: [`--${id}`], default: null, group: 'g0' })
+    const groupSchema = {
+      ...schema,
+      arguments: [opt('csv'), opt('json')],
+      exclusive_groups: [{ id: 'g0', required: true, members: ['csv', 'json'] }],
+    }
+    const rep = report({
+      requirements: [
+        { id: 'arguments', kind: 'script_arguments', code: 'script_arguments_available', blocking: false, payload: { schema: groupSchema as never, argv_count: 0, run_config: null } },
+      ],
+    })
+    await mount()
+    await openWith(rep)
+    expect(panel().dataset.prepState).toBe('args')
+    expect(primary()?.disabled).toBe(true)
+    expect(panel().textContent).not.toContain('可以运行')
+    await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['--csv', 'a.csv']))
+    expect(panel().dataset.prepState).not.toBe('args')
+    expect(primary()?.disabled).toBe(false)
+  })
+
+  it('必选子命令没选（表单关着）：同样不放行；选了才放行', async () => {
+    const subSchema = {
+      ...schema,
+      form_enabled: false,
+      reasons: ['subcommands'],
+      arguments: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    }
+    const rep = report({
+      requirements: [
+        { id: 'arguments', kind: 'script_arguments', code: 'script_arguments_available', blocking: false, payload: { schema: subSchema as never, argv_count: 0, run_config: null } },
+      ],
+    })
+    await mount()
+    await openWith(rep)
+    expect(panel().dataset.prepState).toBe('args')
+    expect(primary()?.disabled).toBe(true)
+    await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['plot', '--x']))
+    expect(panel().dataset.prepState).not.toBe('args')
+  })
 })
 
 describe('运行目录在卡里选', () => {

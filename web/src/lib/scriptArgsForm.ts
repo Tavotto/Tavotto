@@ -365,14 +365,35 @@ export const readTokens = (schema: ScriptArgsSchema, tokens: string[]): TokenVie
   return { fields, unattributed, positionalsCertain: mappable, doubleDash: s.doubleDash }
 }
 
-/** 必填但 token 里没有的参数（default 不算答案）。位置参数读不准时不算缺（不知道）。 */
-export const missingRequired = (schema: ScriptArgsSchema, view: TokenView): string[] => {
+/** 必选子命令（`add_subparsers(required=True)`）token 里没选：`choices` 里任一名字出现过才算选了；
+ * 名字不可枚举（动态）时退到「有任何不以 `-` 开头的 token」。拿不准就当选了（不拦用户）。 */
+export const subcommandMissing = (schema: ScriptArgsSchema, tokens: string[]): boolean => {
+  const sub = schema.subcommands
+  if (!sub || !sub.required) return false
+  const end = tokens.indexOf('--')
+  const head = end >= 0 ? tokens.slice(0, end) : tokens
+  if (!sub.dynamic && sub.choices.length > 0) return !head.some((t) => sub.choices.includes(t))
+  return !head.some((t) => !t.startsWith('-'))
+}
+
+/**
+ * 必填但 token 里没有的项（default 不算答案）：必填参数 id、必选互斥组 id（一个成员都没给）、`'subcommand'`（必选子命令没选，
+ * 仅在传了 `tokens` 时判）。位置参数读不准时不算缺（不知道）。**所有「还缺必填」的判断都走这里**（表单高亮与准备卡的运行闸同源）。
+ */
+export const missingRequired = (schema: ScriptArgsSchema, view: TokenView, tokens?: string[]): string[] => {
   const out: string[] = []
   for (const arg of schema.arguments) {
     const f = view.fields[arg.id]
     if (arg.required !== true || !f || f.uncertain) continue
     if (f.state === 'unset' || f.incomplete) out.push(arg.id)
   }
+  for (const g of schema.exclusive_groups) {
+    if (!g.required) continue
+    const fs = g.members.map((m) => view.fields[m])
+    if (fs.some((f) => !f || f.uncertain)) continue
+    if (fs.every((f) => f.state === 'unset')) out.push(g.id)
+  }
+  if (tokens && subcommandMissing(schema, tokens)) out.push('subcommand')
   return out
 }
 
