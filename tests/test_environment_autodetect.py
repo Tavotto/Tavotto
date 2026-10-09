@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -1437,6 +1438,49 @@ def test_an_external_env_with_the_project_installed_editable_is_not_started_befo
     # 点了运行：同意体检，真启动它
     deprepair.decide_environment(root, "fig.py")
     assert marker.exists()
+
+
+@posix_only
+@needs_worker
+def test_the_isolated_probe_only_sees_the_user_site_when_the_interpreter_would(
+    tmp_path, monkeypatch
+):
+    """Codex #820 r4234766732：`pip install --user` 的包只在这个解释器正常启动会启用用户 site 时才算数——venv（不含系统
+    site-packages）默认关，非 venv 的解释器开。"""
+    user_base = tmp_path / "ubase"
+    ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    site_dir = user_base / "lib" / ver / "site-packages"
+    if sys.platform == "darwin":
+        site_dir = user_base / "lib" / "python" / "site-packages"
+    site_dir.mkdir(parents=True)
+    (site_dir / "usermod_only.py").write_text("X = 1\n", "utf-8")
+    monkeypatch.setenv("PYTHONUSERBASE", str(user_base))
+    monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+
+    base = tmp_path / "ext"
+    base.mkdir()
+    venv_py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    cfg = base / "lab" / "pyvenv.cfg"
+    cfg.write_text(
+        cfg.read_text("utf-8").replace(
+            "include-system-site-packages = true", "include-system-site-packages = false"
+        ),
+        "utf-8",
+    )
+    spec = projectenv.probe_environment(
+        venv_py, modules=("usermod_only",), import_mode="spec", project_root=str(tmp_path / "proj")
+    )
+    assert spec["modules_ok"] == {"usermod_only": False}, (
+        "venv 的用户 site 默认关，--user 装的包不算"
+    )
+    # 非 venv 的解释器：用户 site 正常启用
+    plain = projectenv.probe_environment(
+        os.path.realpath(getattr(sys, "_base_executable", sys.executable)),
+        modules=("usermod_only",),
+        import_mode="spec",
+        project_root=str(tmp_path / "proj"),
+    )
+    assert plain["modules_ok"] == {"usermod_only": True}
 
 
 def test_the_spec_probe_source_has_no_import_of_requested_modules():

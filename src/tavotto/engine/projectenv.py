@@ -407,11 +407,21 @@ def _prepare_isolated_path():
         paths = sysconfig.get_paths()
         for key in ("purelib", "platlib"):
             add(paths.get(key))
+    # 用户 site 只在这个解释器**正常启动时会启用**才加（镜像 `site.check_enableusersite` / `site.venv`）：venv 默认关（除非
+    # include-system-site-packages = true）、`PYTHONNOUSERSITE`、uid != euid / gid != egid 都关。否则 `pip install --user`
+    # 装的包会让一个 venv 显得"装齐"，而 worker 起来根本看不见它（Codex #820 r4234766732）。`-s` 不在此列：worker 不带 `-s`
+    user_site_on = not (is_venv and not include_system) and not os.environ.get("PYTHONNOUSERSITE")
     try:
-        import site
-        add(site.getusersitepackages())
-    except Exception:
+        if hasattr(os, "getuid") and (os.getuid() != os.geteuid() or os.getgid() != os.getegid()):
+            user_site_on = False
+    except OSError:
         pass
+    if user_site_on:
+        try:
+            import site
+            add(site.getusersitepackages())
+        except Exception:
+            pass
     extra_paths = []
     deferred = False
     for d in dirs:
