@@ -549,15 +549,15 @@ def _startup_site_dirs():
         pass
     try:
         stdlib = {os.path.normcase(os.path.realpath(p)) for p in (sysconfig.get_paths().get("stdlib"), sysconfig.get_paths().get("platstdlib")) if p}
-        bases = [b for b in (sys.prefix, sys.base_prefix, getattr(site, "USER_BASE", None)) if b]
+        # **有效 sys.path 上每一个非标准库目录**（Codex #820 r4235263580）：`.pth` 可以加 `/opt/shared` 这样前缀之外的目录，
+        # 往里装包也要让旧结论失效。排除标准库 / lib-dynload / zip 与空串（= 探测自己的临时 cwd）
         for entry in list(sys.path):
             if not entry or not os.path.isdir(entry):
                 continue
             real = os.path.normcase(os.path.realpath(entry))
             if real in stdlib or real.endswith(("lib-dynload", ".zip")):
                 continue
-            if any(real.startswith(os.path.normcase(os.path.realpath(b))) for b in bases):
-                add(entry)
+            add(entry)
     except Exception:
         pass
     return found

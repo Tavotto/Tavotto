@@ -1756,6 +1756,33 @@ def test_the_isolated_probe_imports_nothing_outside_the_stdlib(tmp_path):
     assert health["health_deferred"] is True and health["matplotlib_version"]
 
 
+@posix_only
+@needs_worker
+@pytest.mark.parametrize("spec", [False, True], ids=["import-mode", "spec-mode"])
+def test_installs_into_a_pth_added_external_dir_invalidate_the_cached_negative(tmp_path, spec):
+    """Codex #820 r4235263580：`.pth` 加的 /opt/shared 这类前缀之外的目录也在指纹里。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    site_dir = next((base / "lab" / "lib").glob("python*")) / "site-packages"
+    (site_dir / "0shared.pth").write_text(str(shared) + "\n", "utf-8")
+    userenvs.reset_cache()
+    root = str(tmp_path / "proj")
+
+    def probe():
+        if spec:
+            return userenvs._probe(py, ("shared_late_pkg",), mode="spec", root=root)["modules_ok"]
+        return userenvs._probe(py, ("shared_late_pkg",))["modules_ok"]
+
+    assert probe() == {"shared_late_pkg": False}
+    assert probe() == {"shared_late_pkg": False}
+    time.sleep(0.02)
+    (shared / "shared_late_pkg.py").write_text("X = 1\n", "utf-8")
+    assert probe() == {"shared_late_pkg": True}, ".pth 加的外部目录里装了包，旧的『缺』仍被缓存命中"
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC
