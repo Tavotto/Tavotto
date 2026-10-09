@@ -192,6 +192,7 @@ def rig(tmp_path, monkeypatch):
         return _Joint("nothing_needed" if runs else "ready"), "managed", current
 
     def evaluate(cands, needed, unknown, **kw):
+        cands = cands[: userenvs.PROBE_LIMIT]  # 与真 evaluate 同一个上限
         if kw.get("cache_only"):  # 没有缓存结论：未检查，不探测
             return [
                 {**c, "ok": None, "satisfies": None, "checked": False, "missing": []} for c in cands
@@ -303,6 +304,48 @@ def test_a_declared_pyenv_env_is_preferred_over_the_runnable_default_but_conda_i
     entry = deprepair.decide_environment_pinned(rig["root"], "fig.py", project_exec=False).adopted
     assert entry is not None and entry["python"] == pyenv
     assert rig["probed"] == [[pyenv]]
+
+
+def test_more_candidates_than_the_probe_limit_never_abort_preparation(rig):
+    """Codex #820 r4234324630：候选多于体检上限时（13 个 Conda / pyenv），`evaluate` 只回前 12 个——按原候选逐个取结果会取空。
+    检查阶段（project_exec=False）要正常收场：上限内最好的被采用，或者什么都不采用，都不抛。"""
+    many = [
+        rig["cand"](f"conda-{i}", userenvs.SOURCE_CONDA, f"e{i}")
+        for i in range(userenvs.PROBE_LIMIT + 1)
+    ]
+    rig["satisfying"].add(many[2])
+    entry = deprepair.decide_environment_pinned(rig["root"], "fig.py", project_exec=False).adopted
+    assert entry is not None and entry["python"] == many[2]
+    assert len(rig["probed"][0]) == userenvs.PROBE_LIMIT
+    # 能跑的排在上限之外：这一轮看不到，也不抛
+    projectenv.forget(rig["root"])
+    rig["satisfying"].clear()
+    rig["satisfying"].add(many[-1])
+    assert (
+        deprepair.decide_environment_pinned(rig["root"], "fig.py", project_exec=False).adopted
+        is None
+    )
+
+
+def test_a_mixed_split_over_the_limit_keeps_ranking_order_and_returns_only_evaluated(rig):
+    free = [rig["cand"](f"conda-{i}", userenvs.SOURCE_CONDA) for i in range(8)]
+    held = [rig["cand"](f"proj/venv{i}/x", userenvs.SOURCE_PROJECT_VENV) for i in range(6)]
+    got = deprepair._evaluate_candidates(
+        str(rig["root"]),
+        [
+            {
+                "python": p,
+                "source": userenvs.SOURCE_CONDA if p in free else userenvs.SOURCE_PROJECT_VENV,
+                "label": "",
+            }
+            for p in free + held
+        ],
+        [],
+        [],
+        project_exec=False,
+    )
+    assert [e["python"] for e in got] == (free + held)[: userenvs.PROBE_LIMIT]
+    assert all(e["checked"] is False for e in got if e["python"] in held)
 
 
 def test_nothing_runnable_adopts_nothing_and_drops_an_auto_choice_that_stopped_working(rig):

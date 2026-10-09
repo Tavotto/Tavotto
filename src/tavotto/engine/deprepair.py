@@ -5316,15 +5316,18 @@ def _evaluate_candidates(
     `checked=False` 的「未检查」条目，与确认模式同一套机器），其余候选照旧。同顺序回（Codex 安全 #820 r4232804805）。"""
     if project_exec or extra.get("cache_only"):
         return userenvs.evaluate(candidates, needed, unknown, **extra)
+    # 体检上限（`userenvs.PROBE_LIMIT`）只在这里、拆分之前用一次：拆成两份各自再被 `evaluate` 截断，合起来就超过上限，
+    # 而且下面按原候选逐个取结果会取空（StopIteration 掐断准备；Codex #820 r4234324630）。超出上限的候选这一轮不看，
+    # 与 `evaluate` 自己的口径一致；结果只按**实际回来的**条目重组
+    candidates = candidates[: userenvs.PROBE_LIMIT]
     held = [userenvs.is_project_controlled(c, root) for c in candidates]
-    live = userenvs.evaluate(
-        [c for c, h in zip(candidates, held) if not h], needed, unknown, **extra
-    )
-    cached = userenvs.evaluate(
-        [c for c, h in zip(candidates, held) if h], needed, unknown, **{**extra, "cache_only": True}
-    )
-    live_it, cached_it = iter(live), iter(cached)
-    return [next(cached_it) if h else next(live_it) for h in held]
+    live_in = [c for c, h in zip(candidates, held) if not h]
+    cached_in = [c for c, h in zip(candidates, held) if h]
+    live = userenvs.evaluate(live_in, needed, unknown, **extra)
+    cached = userenvs.evaluate(cached_in, needed, unknown, **{**extra, "cache_only": True})
+    by_id = {id(c): e for c, e in zip(live_in, live)}
+    by_id.update({id(c): e for c, e in zip(cached_in, cached)})
+    return [by_id[id(c)] for c in candidates if id(c) in by_id]
 
 
 def static_plan_payload(project: str | Path, script: str) -> dict | None:
