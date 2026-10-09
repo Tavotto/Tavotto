@@ -870,6 +870,21 @@ def test_declared_response_file_prefixes_are_refused(project, pool, token):
         "import argparse\np = argparse.ArgumentParser()\ndef go():\n    f = lambda: p.parse_args()\n    return f\nq = [p.add_argument]\n",
         "import argparse\ndef main():\n    p = argparse.ArgumentParser()\n    def inner():\n        return p.parse_args()\n    inner()\n",
         "import argparse\nclass A:\n    pass\na = A()\na.p = argparse.ArgumentParser()\na.p.parse_args()\n",
+        # r4229718719：标准名字被重新绑定 / 解析器变量被重绑 = 说不准
+        "import argparse\nfrom helper import argparse\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nimport helper\nargparse = helper\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\ndef ArgumentParser(*a, **k):\n    return None\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "from argparse import ArgumentParser\nfrom helper import make\ndef ArgumentParser(**k):\n    return make(**k)\np = ArgumentParser()\np.parse_args()\n",
+        "from argparse import ArgumentParser\nclass ArgumentParser:\n    pass\np = ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import mods\nfor argparse in mods:\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import ctx\nwith ctx() as argparse:\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import mk\nif (argparse := mk()):\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import mk\ntry:\n    mk()\nexcept Exception as argparse:\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\ndef f():\n    global argparse\n    argparse = None\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import *\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "def setup():\n    import argparse\n    return argparse\nimport argparse\np = argparse.ArgumentParser()\np.parse_args()\n",
+        "import argparse\nfrom helper import Other\np = argparse.ArgumentParser()\np = Other()\np.parse_args()\n",
+        "import argparse\nfrom helper import Other\np = argparse.ArgumentParser()\np.add_argument('--a')\nfor p in [Other()]:\n    pass\np.parse_args()\n",
     ],
 )
 def test_unprovable_script_refuses_any_argv(project, script, token):

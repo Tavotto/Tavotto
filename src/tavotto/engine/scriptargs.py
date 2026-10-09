@@ -824,7 +824,93 @@ def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], boo
         exact = False
     if exact and not _parser_never_escapes(tree, names):
         exact = False
+    if exact and not _bindings_unshadowed(tree, names):
+        exact = False
     return frozenset(chars), exact
+
+
+# r4229718719：名字只在“全文件恰好绑定一次、且那一次就是模块级标准 import”时才算标准 argparse。
+def _binding_sites(tree: ast.AST) -> tuple[dict[str, list[bool]], bool]:
+    """每个名字的全部绑定点（值 = 该绑定是否在模块级）；第二个值 = 出现过 `from x import *`。
+    单趟遍历，与出现顺序无关。覆盖：import / 赋值 / 增强赋值 / 注解赋值 / def / class / 形参 / for 与推导式目标 /
+    with-as / except-as / 海象 / global / nonlocal / del / match 捕获。"""
+    sites: dict[str, list[bool]] = {}
+    star = False
+    scope_kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+    def add(name: str | None, top: bool) -> None:
+        if name:
+            sites.setdefault(name, []).append(top)
+
+    def walk(node: ast.AST, top: bool) -> None:
+        nonlocal star
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            add(node.id, top)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            add(node.name, top)
+        elif isinstance(node, ast.arg):
+            add(node.arg, False)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name == "*":
+                    star = True
+                elif alias.asname:
+                    add(alias.asname, top)
+                else:
+                    add(alias.name.split(".")[0], top)
+        elif isinstance(node, ast.ExceptHandler):
+            add(node.name, top)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for n in node.names:
+                add(n, False)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            add(node.name, top)
+        elif isinstance(node, ast.MatchMapping):
+            add(node.rest, top)
+        inner = top and not isinstance(node, scope_kinds)
+        for child in ast.iter_child_nodes(node):
+            walk(child, inner)
+
+    walk(tree, True)
+    return sites, star
+
+
+def _bindings_unshadowed(tree: ast.AST, names: _Names) -> bool:
+    """argparse 模块名 / `from argparse import` 来的名字 / 被跟踪的解析器变量：全文件（所有作用域）
+    只绑定一次（标准 import 还须在模块级；解析器变量不限作用域）。任何第二次绑定（含 `from helper import argparse`、`argparse = helper`、
+    def / class / for / with / except / 海象 / global / del / match 捕获）或函数内绑定 = 说不准。
+    出现 `from x import *` 同样说不准。"""
+    sites, star = _binding_sites(tree)
+    if star:
+        return False
+    for name in (*names.modules, *names.direct):  # 标准 import：恰好一次，且在模块级
+        got = sites.get(name, [])
+        if len(got) != 1 or not got[0]:
+            return False
+    for name in _tracked_parser_names(tree, names):  # 解析器变量：恰好一次（函数内构造的常见写法允许）
+        if len(sites.get(name, [])) != 1:
+            return False
+    return True
+
+
+def _tracked_parser_names(tree: ast.AST, names: _Names) -> set[str]:
+    """`p = argparse.ArgumentParser()` / `sub = p.add_subparsers()` 一类被赋给简单名字的解析器变量。"""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        value = None
+        targets: list[ast.AST] = []
+        if isinstance(node, ast.Assign):
+            value, targets = node.value, list(node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            value, targets = node.value, [node.target]
+        if not isinstance(value, ast.Call):
+            continue
+        func = value.func
+        if names.argparse_name(func) == "ArgumentParser" or (
+            isinstance(func, ast.Attribute) and func.attr in _PARSER_PRODUCERS
+        ):
+            out.update(t.id for t in targets if isinstance(t, ast.Name))
+    return out
 
 
 # r4229653195：解析器对象（及其别名）流到看不见的代码（`configure(parser)` 这类 import 来的助手）= 说不准。
