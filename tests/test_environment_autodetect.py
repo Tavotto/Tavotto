@@ -1340,6 +1340,34 @@ def test_the_pre_run_probe_never_imports_modules_that_resolve_into_the_project(t
     assert marker.exists()
 
 
+@posix_only
+@needs_worker
+@pytest.mark.parametrize("a_first", [True, False], ids=["A-then-B", "B-then-A"])
+def test_spec_probe_results_are_per_project_root(tmp_path, a_first):
+    """Codex #820 r4234612525：一个共享的外部解释器里，模块可编辑安装指向项目 A 的 src——在 A 里它解析进项目（延后），
+    在 B 里不在项目里（装齐）。两个项目的检查顺序无论怎样，结论都各算各的。"""
+    root_a, marker, py, _base = _editable_world(tmp_path)
+    root_b = tmp_path / "other"
+    root_b.mkdir()
+    need = [{"import_name": "payload", "distribution": "payload"}]
+    cand = [{"python": py, "source": userenvs.SOURCE_CONDA, "label": "lab"}]
+    userenvs.reset_cache()
+
+    def check(root):
+        (got,) = userenvs.evaluate(cand, need, [], root=str(root))
+        return got
+
+    order = [("a", root_a), ("b", root_b)] if a_first else [("b", root_b), ("a", root_a)]
+    results = {name: check(root) for name, root in order}
+    assert results["a"].get("deferred") is True and results["a"]["satisfies"] is None
+    assert results["b"]["satisfies"] is True and not results["b"].get("deferred")
+    assert not marker.exists()
+    # cache_only 读也按各自的项目根
+    (ca,) = userenvs.evaluate(cand, need, [], cache_only=True, root=str(root_a))
+    (cb,) = userenvs.evaluate(cand, need, [], cache_only=True, root=str(root_b))
+    assert ca.get("deferred") is True and cb["satisfies"] is True
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC

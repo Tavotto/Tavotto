@@ -582,13 +582,18 @@ _SOURCE_RANK = {
 _probe_cache: dict[tuple, dict] = {}
 
 
-def _cache_key(python: str, modules: tuple[str, ...], bundled: bool, mode: str = "import") -> tuple:
+def _cache_key(
+    python: str, modules: tuple[str, ...], bundled: bool, mode: str = "import", root: str = ""
+) -> tuple:
     """体检缓存的键：路径 + **环境代**（`projectenv.environment_generation`，与池 / 项目记录同一个"代"的概念）+ 要量的 import
-    + 是否内置 + 体检方式（`spec` = 运行之前不 import 的版本）。同一路径上被重建的环境换代，旧结论不再命中
-    （Codex #820 r4233884149）。"""
+    + 是否内置 + 体检方式。同一路径上被重建的环境换代，旧结论不再命中（Codex #820 r4233884149）。
+
+    `spec`（运行之前不 import 的版本）的结论取决于**项目根**——同一个可编辑安装的模块在项目 A 里解析进项目、在项目 B 里不是——
+    所以键里带规范化（realpath）的项目根；`import` 的结论与项目无关，键里没有它（Codex #820 r4234612525）。"""
     from . import projectenv
 
-    return (_key(python), projectenv.environment_generation(python), modules, bundled, mode)
+    how: object = ("spec", os.path.normcase(os.path.realpath(root))) if mode == "spec" else "import"
+    return (_key(python), projectenv.environment_generation(python), modules, bundled, how)
 
 
 def _probe(
@@ -601,7 +606,7 @@ def _probe(
 ) -> dict:
     from . import projectenv
 
-    key = _cache_key(python, modules, bundled, mode)
+    key = _cache_key(python, modules, bundled, mode, root)
     with _lock:
         hit = _probe_cache.get(key)
         if hit is None and mode == "spec":
@@ -642,12 +647,14 @@ def imports_missing(
     return [m for m in mods if ok_map.get(m) is False]
 
 
-def cached_probe(python: str, modules: tuple[str, ...], *, bundled: bool = False) -> dict | None:
+def cached_probe(
+    python: str, modules: tuple[str, ...], *, bundled: bool = False, root: str = ""
+) -> dict | None:
     """这个候选在这组 import 上**已有**的体检结论（只读缓存，没有回 None；不起任何进程）。"""
     with _lock:
         hit = _probe_cache.get(_cache_key(python, modules, bundled))
-        if hit is None:
-            hit = _probe_cache.get(_cache_key(python, modules, bundled, "spec"))
+        if hit is None and root:
+            hit = _probe_cache.get(_cache_key(python, modules, bundled, "spec", root))
     return hit
 
 
@@ -680,7 +687,7 @@ def evaluate(
 
     def one(cand: dict) -> dict:
         if cache_only:
-            health = cached_probe(cand["python"], imports)
+            health = cached_probe(cand["python"], imports, root=root)
             if health is None:
                 return {
                     **cand,
