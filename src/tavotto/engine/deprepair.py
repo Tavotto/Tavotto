@@ -5327,6 +5327,28 @@ def _evaluate_candidates(
     return [next(cached_it) if h else next(live_it) for h in held]
 
 
+def project_check_pending(project: str | Path, script: str, plan_payload: dict) -> bool:
+    """检测模式下，项目自带的候选解释器（`userenvs.is_project_controlled`）里有没有**还没体检**、也许能跑这个脚本的：
+    有 = 现在不能说「这个脚本需要安装包」——项目环境要等用户点「运行」才会被体检（Codex 安全 #820 r4232804805），
+    报告于是以「运行」为主，不先推用户去往受管环境装包。体检缓存里已有「跑不了」结论的不算。"""
+    if projectenv.adoption_mode() != projectenv.ADOPTION_DETECT or _user_env_discovery_off():
+        return False
+    root = str(Path(project))
+    needed, unknown = _plan_imports(plan_payload)
+    if not needed and not unknown:
+        return False
+    held = [
+        c
+        for c in user_environment_candidates(root, script)
+        if userenvs.is_project_controlled(c, root) and not envlease.is_mutating(c["python"])
+    ]
+    if not held:
+        return False
+    return any(
+        e.get("checked") is False for e in userenvs.evaluate(held, needed, unknown, cache_only=True)
+    )
+
+
 def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
     """联合计划载荷里「候选环境要 import 得到」的两份：脚本开跑要的第三方包（`missing` + `satisfied`，
     带 distribution）与映射不到包名的。**不只是 `missing`**：`missing` 是相对**此刻的**解释器量的差集——

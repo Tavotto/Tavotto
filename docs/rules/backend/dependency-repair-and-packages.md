@@ -450,8 +450,13 @@
   `environment.yml` 只给名字、路径在用户自己的 pyenv / Conda 里查，不算。检查（`plan_for` → `decide_environment_pinned(project_exec=False)`、
   门 / 准备计划的 `user_environment_offer`）经 `deprepair._evaluate_candidates`：这类候选只读体检缓存（`cache_only`，没有就是
   `checked=False` 的「未检查」），一个都不起。用户点「运行」那一下（`PreparationService._run` 里的 `decide_environment_pinned`、
-  以及 `pool.acquire`）才体检、采用；采用了就换了解释器，`_stale_reason` 报 `environment_changed`，重新检查读到的是已采用的记录。
-  其余候选（用户的 Conda / pyenv / 系统 / 登录 shell）行为不变。
+  以及 `pool.acquire`）才体检、采用。**点「运行」就是同意**：运行线程采用了项目环境后，若计划唯一过期的原因是这次采用换了解释器
+  （`_stale_reason` == `environment_changed`），`PreparationService._replan_in_place` 就地按采用后的解释器重算计划再往下跑（会话的计划
+  由 `prepsession._done` 跟上，不加修订）；别的过期原因照旧拦。首查时若有**还没体检、也许能跑**的项目候选
+  （`deprepair.project_check_pending`），依赖门不推「安装缺少的组件」：计划的 `dependency_preparation.project_check_pending=True`、不挂
+  `required_input`，`dependencies` 检查项是 `ok` + `detail.deferred="project_environment"`，主动作是 `run`（界面句子
+  `line.readyProject`）；运行时体检跑不了 → 起会话那道依赖门回「需要输入」，`_done` 重新检查一次，报告带上常规的安装待办与影响摘要
+  （受管环境）。其余候选（用户的 Conda / pyenv / 系统 / 登录 shell）行为不变。
 - **确认模式（`TAVOTTO_ENV_ADOPTION=confirm` 或设置 `worker.environment_adoption=confirm`）下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
   `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
   `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个

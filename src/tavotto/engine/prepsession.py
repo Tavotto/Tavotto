@@ -245,6 +245,9 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
         # 作用域互斥（D04）单列一个码：它有用户能走的出路（换成本作用域 / 子目录独立成项目），其余 blocked 没有
         code = _SCOPE_CONFLICT_CODE if _SCOPE_CONFLICT_CODE in reasons else "dependency_blocked"
         checks.append(_check("dependencies", CHECK_BLOCKED, code, reasons=reasons[:8]))
+    elif (offer or {}).get("project_check_pending"):
+        # 项目自带的环境要等用户点「运行」才体检（Codex 安全 #820）：现在不说要装包，运行是主动作；体检跑不了会回到安装待办
+        checks.append(_check("dependencies", CHECK_OK, deferred="project_environment"))
     else:
         checks.append(_check("dependencies", CHECK_OK))
     checks.append(
@@ -1176,9 +1179,33 @@ class SessionService:
             except Exception:  # noqa: BLE001 — 差异计划算不出来不能影响这次尝试的终局
                 LOG.exception("缺包差异计划失败 %s", done_plan.script)
             with sess.lock:
+                if done_plan.interpreter != sess.plan.interpreter:
+                    # 点「运行」时采用了项目环境，执行线程就地重算了计划：会话的计划跟上（不加修订——这次尝试的结局
+                    # 仍属于当前修订），之后的检查 / 再次运行读到的是已采用的环境
+                    sess.plan = done_plan
+                    sess.fingerprint = _fingerprint(done_plan)
                 attempt.finalize = fin
                 attempt.missing = missing
                 attempt.finalized = True
+                deferred = bool(
+                    (sess.plan.dependency_preparation or {}).get("project_check_pending")
+                )
+            if (
+                deferred
+                and done_result.status == preparation.STATUS_NEEDS_INPUT
+                and (done_result.required_input or {}).get("code") == _DEPENDENCY_CODE
+            ):
+                # 点「运行」时体检了项目自带的环境，跑不了这个脚本：回到常规的「需要安装」——重新检查一次，让报告
+                # 带上安装待办与影响摘要（不是留一句"需要输入"让用户自己去找出路）
+                try:
+                    self.check(
+                        project_id=sess.project_id,
+                        project_root=sess.project_root,
+                        target=sess.target,
+                        force=True,
+                    )
+                except Exception:  # noqa: BLE001 — 刷新失败不改这次尝试的终局
+                    LOG.exception("运行后重新检查失败 %s", done_plan.script)
             self._notify(sess)
 
         # A new action after a settled attempt is an explicit rerun. The provider

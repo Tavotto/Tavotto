@@ -920,6 +920,7 @@
       "inputSecret": "The script wants a password",
       "preparing": "Installing…",
       "ready": "Ready to run",
+      "readyProject": "Ready to run — your project's own environment is checked when it runs",
       "completed_one": "Drew 1 figure",
       "completed_other": "Drew {{count}} figures",
       "completedNoList": "Done, figures are in the library",

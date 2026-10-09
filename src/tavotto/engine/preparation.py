@@ -395,6 +395,17 @@ def plan_for(
             required = gate
         else:
             dependency = deprepair.preparation_offer(root, script)
+        if (
+            dependency is not None
+            and python
+            and required is not None
+            and required.get("code") == deprepair.ERROR_PREPARATION_REQUIRED
+            and deprepair.project_check_pending(root, script, dependency.get("plan") or {})
+        ):
+            # 项目自带的环境还没体检（用户点「运行」才体检）：现在不说「需要安装」，主动作是运行；体检跑不了再回到
+            # 安装待办（`_execute` 里点运行时重算计划）。不要求授权，所以也不挂 `required_input`
+            dependency = {**dependency, "project_check_pending": True}
+            required = None
     static = None
     if original_artifact and original_path:
         try:
@@ -621,6 +632,29 @@ class PreparationService:
         )
         entry.thread.start()
 
+    @staticmethod
+    def _replan_in_place(entry: _Entry, plan: PreparationPlan) -> PreparationPlan:
+        """按此刻（已采用项目环境之后）的世界重算同一份计划，沿用计划 id / 创建时间 / 静态原件；换进条目里。"""
+        fresh = plan_for(
+            project_id=plan.project_id,
+            project_root=plan.project_root,
+            asset_id=plan.asset_id,
+            stem=plan.stem,
+            script=plan.script,
+            entry=plan.entry,
+            original_artifact=None,
+            target=plan.target,
+            **({"run": plan.run} if plan.run is not None else {}),
+        )
+        fresh = dataclasses.replace(
+            fresh,
+            plan_id=plan.plan_id,
+            created_at=plan.created_at,
+            static_source=plan.static_source,
+        )
+        entry.plan = fresh
+        return fresh
+
     def _execute(self, entry: _Entry, runner) -> None:
         plan, result = entry.plan, entry.result
         tr = result.trace
@@ -645,9 +679,14 @@ class PreparationService:
         # 旧数据的判断执行，按新设置跑等于回执与计划两张嘴。报 `preparation_plan_stale` + `reason`，
         # 让调用方重新准备（用户的 live 编辑在文档里，不在这份计划里，一个字不丢）。
         if plan.script is not None:
-            # 用户点了「运行」：项目自带的候选解释器现在才可以体检、采用。采用了就换了解释器，下面的过期判据于是报
-            # `environment_changed`、用户重新检查一次即可（检查读到的是已采用的记录）——不会按旧计划在没验证过的解释器下跑
-            deprepair.decide_environment_pinned(plan.project_root, plan.script)
+            # 用户点了「运行」= 同意体检项目自带的候选解释器（Codex 安全 #820）：现在才可以体检、采用。采用了就换了
+            # 解释器——这一步是**本次运行自己**做的，不是别人改了环境：就地按采用后的解释器重算计划再往下走（能跑就跑；
+            # 缺包由起会话那道依赖门收成「需要安装」），不让用户为此重新检查一次。别的过期原因照旧由下面的对账拦下
+            decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
+            if decision.adopted is not None:
+                before = self._stale_reason(plan)
+                if before is None or before[0] == STALE_ENVIRONMENT:
+                    plan = self._replan_in_place(entry, plan)
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale

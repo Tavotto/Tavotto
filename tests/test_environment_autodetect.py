@@ -19,6 +19,7 @@
 # ruff: noqa: F811 — 夹具（house / opened / offline_managed_env）按 pytest 的参数名注入
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -933,7 +934,12 @@ def test_when_nothing_can_run_the_only_todo_is_installing_into_tavottos_environm
     proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
     envworld.real_venv(proj, ".venv", python=WORKER_PY)  # 健康，但没有 tavotto_test_alpha
 
-    report = _create(client, {"script": "figure.py"})
+    first = _create(client, {"script": "figure.py"})
+    # 项目 venv 还没体检（要等「运行」）：首查以运行为主；体检跑不了才回到安装待办
+    assert "run" in _kinds(first) and "prepare_dependencies" not in _kinds(first)
+    assert _act(client, first, "run").status_code == 202
+    _wait(client, first["session_id"], lambda r: "prepare_dependencies" in _kinds(r))
+    report = _get(client, first["session_id"])
 
     assert report["phase"] == "awaiting_confirmation", report
     assert [r["kind"] for r in report["requirements"]] == ["dependency_authorization"]
@@ -951,6 +957,54 @@ def test_when_nothing_can_run_the_only_todo_is_installing_into_tavottos_environm
     assert _act(client, ready, "run").status_code == 202
     final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
     assert final["phase"] == "completed", final
+
+
+@needs_worker
+def test_unchecked_project_env_makes_run_primary_and_run_adopts_it_in_one_action(
+    client, house, opened
+):
+    """首查：项目 venv 还没体检 → 主动作是运行（不推去受管环境装包），不起它；点「运行」一次：体检、采用、就地重算计划、
+    在项目 venv 里出图——不报 `environment_changed`、不要用户重新检查。"""
+    proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
+    venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
+    _install_into(venv_python, house, ALPHA[0])
+
+    report = _create(client, {"script": "figure.py"})
+    assert report["phase"] == "ready_to_run", report
+    kinds = _kinds(report)
+    assert "run" in kinds and "prepare_dependencies" not in kinds
+    deps = next(c for c in report["checks"] if c["id"] == "dependencies")
+    assert deps["status"] == "ok" and deps["detail"] == {"deferred": "project_environment"}
+    assert projectenv.remembered_record(proj) is None  # 检查没起它
+
+    assert _act(client, report, "run").status_code == 202
+    final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
+    assert final["phase"] == "completed", final
+    assert "environment_changed" not in json.dumps(final)
+    record = projectenv.remembered_record(proj)
+    assert record["trigger"] == projectenv.TRIGGER_AUTO_DETECTED
+    assert os.path.realpath(record["path"]) == os.path.realpath(venv_python)
+    # 会话的计划跟上了：再读一次报告，环境是项目的，没有安装待办
+    again = _get(client, report["session_id"])
+    assert again["environment"]["kind"] == "project" and "prepare_dependencies" not in _kinds(again)
+
+
+@needs_worker
+def test_run_probe_that_finds_the_project_env_unfit_falls_back_to_the_install_outcome(
+    client, house, opened
+):
+    """项目 venv 存在但没装脚本要的包：点运行 → 体检跑不了 → 回到常规的「需要安装」（受管环境、带影响摘要），不是错误。"""
+    proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
+    envworld.real_venv(proj, ".venv", python=WORKER_PY)  # 不装 alpha
+
+    report = _create(client, {"script": "figure.py"})
+    assert "run" in _kinds(report) and "prepare_dependencies" not in _kinds(report)
+    assert _act(client, report, "run").status_code == 202
+    final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
+    assert final["phase"] != "completed", final
+    assert "environment_changed" not in json.dumps(final)
+    assert projectenv.remembered_record(proj) is None  # 跑不了的项目 venv 不被采用
+    assert "prepare_dependencies" in _kinds(_get(client, report["session_id"]))
 
 
 @needs_worker

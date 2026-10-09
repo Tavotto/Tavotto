@@ -4896,6 +4896,7 @@ export default interface Resources {
         "offline": "连接断了，正在重连…",
         "preparing": "正在安装…",
         "ready": "可以运行了",
+        "readyProject": "可以运行了，项目自带的环境会在运行时检查",
         "rejected": "设置变了，已刷新",
         "restarted": "已重启，没有自动运行",
         "running": "正在运行…",

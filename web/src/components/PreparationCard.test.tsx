@@ -483,6 +483,23 @@ describe('必填参数没填齐时任何卡都不说「可以运行」', () => {
     expect(panel().dataset.prepState).toBe('ready')
   })
 
+  // Codex 安全 #820：项目自带的环境要运行时才体检——首查以「运行」为主，不推去安装
+  it('依赖检查项标了 deferred=project_environment：主按钮是运行、句子说明项目环境运行时检查', async () => {
+    const rep = report({
+      checks: [
+        { id: 'target', status: 'ok' },
+        { id: 'environment', status: 'ok' },
+        { id: 'dependencies', status: 'ok', detail: { deferred: 'project_environment' } },
+      ],
+    })
+    await mount()
+    await openWith(rep)
+    expect(panel().dataset.prepState).toBe('ready')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('可以运行了，项目自带的环境会在运行时检查')
+    expect(primary()?.textContent).toBe('运行')
+    expect(primary()?.disabled).toBe(false)
+  })
+
   // r4232531822：必选互斥组里每个参数自己都 required=false，不能因此放行「运行」
   it('必选互斥组一个都没给：参数卡、主按钮置灰；给了其中一个才放行', async () => {
     const opt = (id: string) => ({ ...schema.arguments[2], id, dest: id, flags: [`--${id}`], default: null, group: 'g0' })
