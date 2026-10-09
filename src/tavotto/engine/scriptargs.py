@@ -437,6 +437,9 @@ class _Scanner(ast.NodeVisitor):
                 "required": required,
                 "choices": [],
                 "dynamic": False,
+                # 声明 `add_subparsers` 时它前面已经声明了几个位置参数：只有这几个会先于子命令吃位置 token
+                # （之后声明的位置参数在子命令之后；前端预留 token 时只数前面这几个）
+                "position": sum(1 for a in parser.arguments if a.get("positional")),
             }
 
     def _parse_call(self, node: ast.Call) -> None:

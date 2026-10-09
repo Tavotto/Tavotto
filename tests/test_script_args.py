@@ -482,3 +482,18 @@ def test_declared_negative_looking_options_are_flagged_per_grammar():
     schema = scriptargs.analyze(src)
     assert schema["negative_number_options"] is False  # 3.13 的文法下 `-1e3` 不像负数
     assert schema["negative_number_options_extended"] is True
+
+
+def test_subcommands_record_how_many_positionals_precede_them():
+    """r4233340718：前端预留位置 token 只数 `add_subparsers` 之前声明的位置参数；之后声明的在子命令之后。"""
+    before = (
+        "import argparse\np = argparse.ArgumentParser()\np.add_argument('name')\n"
+        "s = p.add_subparsers(required=True, dest='cmd')\ns.add_parser('plot')\np.parse_args()\n"
+    )
+    after = (
+        "import argparse\np = argparse.ArgumentParser()\n"
+        "s = p.add_subparsers(required=True, dest='cmd')\ns.add_parser('plot')\n"
+        "p.add_argument('output')\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(before)["subcommands"]["position"] == 1
+    assert scriptargs.analyze(after)["subcommands"]["position"] == 0

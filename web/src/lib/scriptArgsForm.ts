@@ -56,7 +56,14 @@ export interface ScriptArgsSchema {
   python_version?: string | null
   arguments: ScriptArgument[]
   exclusive_groups: { id: string; required: boolean; members: string[] }[]
-  subcommands: { dest: string | null; required: boolean; choices: string[]; dynamic: boolean } | null
+  subcommands: {
+    dest: string | null
+    required: boolean
+    choices: string[]
+    dynamic: boolean
+    /** `add_subparsers` 之前已声明的位置参数个数；老后端没有 = 不预留（宁可放过不错拦） */
+    position?: number
+  } | null
 }
 
 type Style = 'separate' | 'equals' | 'attached' | 'flag'
@@ -377,7 +384,9 @@ export const subcommandMissing = (schema: ScriptArgsSchema, tokens: string[]): b
   let positional = s.positionalIdx.map((j) => tokens[j])
   // 子命令前面的位置参数先吃位置 token：先预留各自的最少个数（定长 n、`+` 1），`*` `?` 预留 0；其余 token 才可能是子命令名。
   // 变长的可能多吃，所以超出最少个数的部分仍按「拿不准就当选了」处理；arity 说不清（自定义 / REMAINDER）= 不预留
-  const reserve = positionalArgs(schema).reduce((n, a) => {
+  const reserve = positionalArgs(schema)
+    .slice(0, sub.position ?? 0)
+    .reduce((n, a) => {
     if (typeof a.arity === 'number') return n + a.arity
     return n + (a.arity === '+' ? 1 : 0)
   }, 0)

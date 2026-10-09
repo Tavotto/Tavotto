@@ -169,12 +169,15 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
       ...base,
       arguments: [name],
       exclusive_groups: [],
-      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false, position: 1 },
     } as ScriptArgsSchema
     const miss = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t).subcommand
     expect(miss(['plot'])).toBe(true) // `plot` 是 name，子命令还没选
     expect(miss(['x'])).toBe(true)
     expect(miss(['x', 'plot'])).toBe(false)
+    // 位置参数声明在 add_subparsers 之后（position: 0）：不预留，`plot out.pdf` 不能被错拦（r4233340718）
+    const after = { ...sub, subcommands: { ...sub.subcommands!, position: 0 } }
+    expect(missingRequirements(after, readTokens(after, ['plot', 'out.pdf']), ['plot', 'out.pdf']).subcommand).toBe(false)
     // 前面有变长位置参数：说不清吃几个，拿不准当选了
     const rest = { ...name, arity: null, nargs: '*' }
     const loose = { ...sub, arguments: [rest] } as unknown as ScriptArgsSchema
@@ -203,7 +206,7 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
       ...base,
       arguments: [files],
       exclusive_groups: [],
-      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false, position: 1 },
     } as unknown as ScriptArgsSchema
     const miss = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t).subcommand
     expect(miss(['plot'])).toBe(true) // 唯一的 token 归 `+`
