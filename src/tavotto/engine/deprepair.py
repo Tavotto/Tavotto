@@ -5302,6 +5302,31 @@ def recheck_user_environment(project: str | Path, script: str, env_id: str) -> d
     return userenvs.evaluate([cand], needed, unknown, use_cache=False)[0]
 
 
+def _evaluate_candidates(
+    root: str,
+    candidates: list[dict],
+    needed: list[dict],
+    unknown: list[str],
+    *,
+    project_exec: bool,
+    **extra,
+) -> list[dict]:
+    """`userenvs.evaluate` 的唯一入口（检测 / 门的候选体检都经它）。**项目说了算的候选**（`userenvs.is_project_controlled`）
+    在用户明确点「运行」之前一个都不起：`project_exec=False` 时它们只读已有的体检缓存（`cache_only`，没有就是
+    `checked=False` 的「未检查」条目，与确认模式同一套机器），其余候选照旧。同顺序回（Codex 安全 #820 r4232804805）。"""
+    if project_exec or extra.get("cache_only"):
+        return userenvs.evaluate(candidates, needed, unknown, **extra)
+    held = [userenvs.is_project_controlled(c, root) for c in candidates]
+    live = userenvs.evaluate(
+        [c for c, h in zip(candidates, held) if not h], needed, unknown, **extra
+    )
+    cached = userenvs.evaluate(
+        [c for c, h in zip(candidates, held) if h], needed, unknown, **{**extra, "cache_only": True}
+    )
+    live_it, cached_it = iter(live), iter(cached)
+    return [next(cached_it) if h else next(live_it) for h in held]
+
+
 def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
     """联合计划载荷里「候选环境要 import 得到」的两份：脚本开跑要的第三方包（`missing` + `satisfied`，
     带 distribution）与映射不到包名的。**不只是 `missing`**：`missing` 是相对**此刻的**解释器量的差集——
@@ -5350,8 +5375,14 @@ def user_environment_offer(project: str | Path, script: str, plan: dict, python:
     # 确认模式（ADR 0114）：门不为了「显示推荐」去起候选解释器——只给已有的检查结论，没检查过的列成
     # `checked=False`，用户点「检查并使用」时才由采用端点（`recheck_user_environment`）现场体检
     extra = {} if projectenv.silent_adoption_enabled() else {"cache_only": True}
-    entries = userenvs.evaluate(
-        user_environment_candidates(root, script, exclude=python), needed, unknown, **extra
+    # 门 / 准备计划发生在用户点「运行」之前：项目自己的解释器只读缓存，不起（Codex 安全 #820 r4232804805）
+    entries = _evaluate_candidates(
+        root,
+        user_environment_candidates(root, script, exclude=python),
+        needed,
+        unknown,
+        project_exec=False,
+        **extra,
     )
     name = Path(root).name
     return sorted(entries, key=lambda e: (not e["satisfies"], userenvs.rank(e, name)))
@@ -5511,7 +5542,9 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
     return decide_environment_pinned(project, script).adopted
 
 
-def decide_environment_pinned(project: str | Path, script: str) -> pool.EnvironmentDecision:
+def decide_environment_pinned(
+    project: str | Path, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
     """「换不换解释器」的**唯一一处**决定（ADR 0079 §四）：缺包且有装齐的用户环境、此刻的解释器又是
     机器替用户挑的，就把它记成本项目的自动决策；回 `pool.EnvironmentDecision`：`adopted` 是采用的那一条（`userenvs.evaluate` 的形状，没换 None）；检测模式还带
     锁内钉下的解释器（见 `_detect_environment_pinned`）。
@@ -5534,7 +5567,7 @@ def decide_environment_pinned(project: str | Path, script: str) -> pool.Environm
         if workdir.decision_for(root, script)["needs_confirmation"]:
             # 与旧模式同一个顺序：运行目录那道门先问，没答之前一个进程都不起（检测要量解释器）
             return pool.EnvironmentDecision()
-        return _detect_environment_pinned(root, script)
+        return _detect_environment_pinned(root, script, project_exec=project_exec)
     root = str(Path(project))
     if not _gate_open(root, script):
         return pool.EnvironmentDecision()
@@ -5573,7 +5606,9 @@ def _static_joint_plan(root: str, script: str) -> depplan.JointPlan:
     )
 
 
-def _detect_environment_unlocked(root: str, script: str) -> dict | None:
+def _detect_environment_unlocked(
+    root: str, script: str, *, project_exec: bool = True
+) -> dict | None:
     """**调用方持 `_detect_lock(root)`**（见 `_detect_environment_pinned`）。检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
     （`userenvs.evaluate` 的形状），不换回 None。
 
@@ -5629,7 +5664,10 @@ def _detect_environment_unlocked(root: str, script: str) -> dict | None:
     candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
     entry = None
     if candidates and not _user_env_discovery_off():
-        entry = userenvs.best(userenvs.evaluate(candidates, needed, unknown), Path(root).name)
+        entry = userenvs.best(
+            _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec),
+            Path(root).name,
+        )
     if entry is None:
         if (
             not runs_now
@@ -5669,13 +5707,15 @@ def _detect_environment_unlocked(root: str, script: str) -> dict | None:
     return entry
 
 
-def _detect_environment_pinned(root: str, script: str) -> pool.EnvironmentDecision:
+def _detect_environment_pinned(
+    root: str, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
     """检测 + 在**同一把锁内**把此刻生效的解释器、来源与环境代取下，作为不可变的 `EnvironmentDecision` 交出去。
 
     锁只护住检测本身；返回之后消费方（`plan_for` 的快照、`pool.acquire` 起会话）若各自再解析共享的项目记录，
     同一项目另一个脚本就能在两次解析之间把记录换成它的解释器（Codex #820 P1）。钉下的值之后只比对、不重新解析。"""
     with _detect_lock(root):
-        adopted = _detect_environment_unlocked(root, script)
+        adopted = _detect_environment_unlocked(root, script, project_exec=project_exec)
         try:
             python, source = pool.resolve_worker_python(root, script=script, discover=False)
         except pool.WorkerError:

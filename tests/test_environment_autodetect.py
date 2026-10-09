@@ -453,7 +453,7 @@ def test_the_plan_snapshot_keeps_the_detected_interpreter_and_goes_stale_when_th
     monkeypatch.setattr(
         deprepair,
         "decide_environment_pinned",
-        lambda r, s: pool_decision(raced["conda"]),
+        lambda r, s, **kw: pool_decision(raced["conda"]),
     )
 
     def pool_decision(python):
@@ -676,6 +676,90 @@ def test_detection_derives_imports_without_the_missing_default_interpreter(
     )
 
 
+# ===========================================================================
+# 项目自带的解释器在用户点「运行」之前不执行（Codex 安全 #820 r4232804805）
+# ===========================================================================
+def _evil_project(tmp_path: Path) -> dict:
+    root = tmp_path / "attacker"
+    root.mkdir()
+    (root / "fig.py").write_text("import alpha\n", "utf-8")
+    marks = tmp_path / "marks"
+    marks.mkdir()
+
+    def trap(path: Path, name: str) -> str:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"#!/bin/sh\necho x > '{marks / name}'\nexit 3\n", "utf-8")
+        path.chmod(0o755)
+        return str(path)
+
+    evil = trap(root / "python-evil", "vscode")
+    (root / ".vscode").mkdir()
+    (root / ".vscode" / "settings.json").write_text(
+        '{"python.defaultInterpreterPath": "${workspaceFolder}/python-evil"}', "utf-8"
+    )
+    venv = trap(root / ".venv" / "bin" / "python", "venv")
+    (root / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\n", "utf-8")
+    return {"root": root, "marks": marks, "evil": evil, "venv": venv}
+
+
+@posix_only
+@pytest.mark.parametrize("no_default", [False, True], ids=["default-chain", "no-default-python"])
+def test_project_controlled_interpreters_are_not_executed_before_run(
+    tmp_path, monkeypatch, no_default
+):
+    """检查（建会话 / 出报告 / 门）发现 `.vscode` 指向的 `python-evil` 与项目里的 `.venv/bin/python` 都只列不起；
+    运行那一下（`decide_environment`）才体检。no_default：默认链条一个解释器都没有时（静态计划那条路）同样成立。"""
+    world = _evil_project(tmp_path)
+    root = str(world["root"])
+    if no_default:
+
+        def resolve(figures_dir=None, *, script=None, discover=True):
+            raise engine_pool.WorkerError("没有可用的 Python", code="no_worker_python")
+
+        monkeypatch.setattr(engine_pool, "resolve_worker_python", resolve)
+    cands = deprepair.user_environment_candidates(root, "fig.py")
+    assert {c["source"] for c in cands} >= {userenvs.SOURCE_VSCODE, userenvs.SOURCE_PROJECT_VENV}
+    assert all(userenvs.is_project_controlled(c, root) for c in cands)
+
+    preparation.plan_for(
+        project_id="pj",
+        project_root=root,
+        asset_id="a",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+    )
+    plan = {"missing": [{"import_name": "alpha", "distribution": "alpha"}], "unknown": []}
+    offer = deprepair.user_environment_offer(root, "fig.py", plan, "")
+    assert offer and all(e["checked"] is False for e in offer)  # 列出来，未检查
+    assert sorted(p.name for p in world["marks"].iterdir()) == []
+    assert projectenv.remembered_record(root) is None
+
+    # 用户点了「运行」：现在才体检（候选起了；它们跑不了，所以不采用）
+    assert deprepair.decide_environment(root, "fig.py") is None
+    assert {p.name for p in world["marks"].iterdir()} == {"vscode", "venv"}
+
+
+def test_the_project_controlled_predicate_has_one_definition(tmp_path):
+    root = tmp_path / "p"
+    (root / "sub").mkdir(parents=True)
+    outside = tmp_path / "out" / "bin" / "python"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("")
+    inside = root / "sub" / "python"
+    inside.write_text("")
+    pc = userenvs.is_project_controlled
+    assert pc({"python": str(inside), "source": userenvs.SOURCE_CONDA}, root)  # 路径在项目根里
+    assert pc(
+        {"python": str(outside), "source": userenvs.SOURCE_VSCODE}, root
+    )  # 项目文件写出的路径
+    assert pc({"python": str(outside), "source": userenvs.SOURCE_SHEBANG}, root)
+    assert not pc({"python": str(outside), "source": userenvs.SOURCE_CONDA}, root)
+    assert not pc({"python": str(outside), "source": userenvs.SOURCE_PYTHON_VERSION}, root)
+    assert not pc({"python": str(root) + "-sibling/python", "source": userenvs.SOURCE_SYSTEM}, root)
+
+
 def test_an_explicit_selection_failure_is_still_raised_untouched(no_default_python, monkeypatch):
     def resolve(figures_dir=None, **kw):
         err = engine_pool.WorkerError("x", code="explicit_python_unusable")
@@ -810,8 +894,16 @@ def test_a_project_env_that_can_run_the_script_is_used_and_the_report_only_says_
     venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
     _install_into(venv_python, house, ALPHA[0])
 
+    # 检查（用户点「开始准备」）不起项目自带的解释器（Codex 安全 #820 r4232804805）：此刻还没采用它
     report = _create(client, {"script": "figure.py"})
-
+    assert projectenv.remembered_record(proj) is None
+    assert report["environment"]["decided_by"] != "auto"
+    # 点「运行」那一下才体检、采用：能跑就记下，之后的检查读到的就是它
+    entry = deprepair.decide_environment(proj, "figure.py")
+    assert entry is not None and entry["python"] == venv_python
+    record = projectenv.remembered_record(proj)
+    assert record["trigger"] == projectenv.TRIGGER_AUTO_DETECTED and record["generation"]
+    report = _create(client, {"script": "figure.py"})
     assert report["phase"] == "ready_to_run", report
     assert [r for r in report["requirements"] if r.get("blocking", True)] == []
     assert "run" in _kinds(report) and "prepare_dependencies" not in _kinds(report)
@@ -819,13 +911,11 @@ def test_a_project_env_that_can_run_the_script_is_used_and_the_report_only_says_
         "mode": "detect",
         "kind": "project",
         "decided_by": "auto",
-        "switched": True,
+        "switched": False,
         "replaced": None,
     }
     env_check = next(c for c in report["checks"] if c["id"] == "environment")
     assert env_check["status"] == "ok"
-    record = projectenv.remembered_record(proj)
-    assert record["trigger"] == projectenv.TRIGGER_AUTO_DETECTED and record["generation"]
 
     assert _act(client, report, "run").status_code == 202
     final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
@@ -900,11 +990,12 @@ def test_a_rebuilt_environment_is_redetected_said_out_loud_and_old_actions_stop_
     )
     assert redo.status_code == 200, redo.get_json()
     after = _get(client, first["session_id"])
-    assert after["phase"] == "ready_to_run", after
     assert after["config_revision"] == first["config_revision"] + 1
     assert after["environment"]["switched"] is True
     assert after["environment"]["replaced"] == {"reason": "rebuilt"}
-    assert after["environment"]["decided_by"] == "auto"
+    # 重新检查（运行之前）不起重建后的项目 venv：作废了旧决定，新决定等用户点「运行」那一下才体检、采用
+    assert after["environment"]["decided_by"] != "auto"
+    assert deprepair.decide_environment(proj, "figure.py")["python"] == venv_python
     record = projectenv.remembered_record(proj)
     assert record["trigger"] == projectenv.TRIGGER_AUTO_DETECTED
     assert record["generation"] == projectenv.environment_generation(venv_python)

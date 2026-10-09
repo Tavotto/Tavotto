@@ -70,6 +70,33 @@ PROJECT_SOURCES = frozenset(
     }
 )
 
+#: 路径由项目文件**直接写出**的来源（`.vscode/settings.json` 的 `python.defaultInterpreterPath`、脚本 shebang、项目里的 venv）。
+#: `.python-version` / `environment.yml` 只给版本名 / 环境名，路径是在用户自己的 pyenv / Conda 里查出来的——不在此列
+PROJECT_PATH_SOURCES = frozenset({SOURCE_PROJECT_VENV, SOURCE_VSCODE, SOURCE_SHEBANG})
+
+
+def is_project_controlled(cand: dict, root: str | Path) -> bool:
+    """候选解释器是不是**项目说了算**的（唯一判据；Codex 安全 #820 r4232804805）：来源是项目文件直接写出路径的
+    （`PROJECT_PATH_SOURCES`：项目 venv、`.vscode`、shebang），或者它的路径（原样 / 解
+    符号链接后）落在项目根里。攻击者提供的项目可以让这样的路径指向一个会执行任意代码的文件，所以用户点「运行」之前不
+    起它（体检就是起它）。"""
+    if cand.get("source") in PROJECT_PATH_SOURCES:
+        return True
+    python = cand.get("python") or ""
+    if not python:
+        return False
+    base = os.path.abspath(str(root))
+    for path in (os.path.abspath(python), os.path.realpath(python)):
+        try:
+            if os.path.commonpath(
+                [os.path.normcase(base), os.path.normcase(path)]
+            ) == os.path.normcase(base):
+                return True
+        except ValueError:  # 不同盘符
+            continue
+    return False
+
+
 #: 问登录 shell 最多等多久。交互式 shell 要读 rc 文件（Conda init、oh-my-zsh……），冷启动一两秒常见
 LOGIN_SHELL_TIMEOUT_S = 8.0
 _MARK = "__TAVOTTO_PY__"

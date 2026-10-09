@@ -263,7 +263,9 @@ def plan_for(
         # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处；检测模式下就是那次自动检测，
         # ADR 0114 §六）：下面的解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
         # 决定之前拍，第一次准备就以 `preparation_plan_stale` 收场（Codex #522 P1）。
-        decision = deprepair.decide_environment_pinned(root, script)
+        # 检查（建会话 / 出报告）在用户点「运行」之前：项目自己带的解释器（项目 venv、`.vscode` 指向的……）不在这里
+        # 起，体检推迟到运行那一下（`_run` 里的 `decide_environment_pinned`；Codex 安全 #820 r4232804805）
+        decision = deprepair.decide_environment_pinned(root, script, project_exec=False)
     adopted = decision.adopted
     try:
         if decision.pinned:
@@ -642,6 +644,10 @@ class PreparationService:
         # 或预检记下的数据绑定变了——计划记下的与此刻的不一致时**不跑**：按旧计划跑等于拿撤销前的许可 /
         # 旧数据的判断执行，按新设置跑等于回执与计划两张嘴。报 `preparation_plan_stale` + `reason`，
         # 让调用方重新准备（用户的 live 编辑在文档里，不在这份计划里，一个字不丢）。
+        if plan.script is not None:
+            # 用户点了「运行」：项目自带的候选解释器现在才可以体检、采用。采用了就换了解释器，下面的过期判据于是报
+            # `environment_changed`、用户重新检查一次即可（检查读到的是已采用的记录）——不会按旧计划在没验证过的解释器下跑
+            deprepair.decide_environment_pinned(plan.project_root, plan.script)
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale

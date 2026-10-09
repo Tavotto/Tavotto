@@ -445,6 +445,13 @@
   不采用（检测自己记下的那条作废，`cannot_run`），会话只有依赖待办 + `prepare_dependencies`（受管目标）。全局锁定 / 用户选过且有效 /
   选回内置不碰；第 3 档失效的记录在检测模式下一律作废后重新检测（`pool._stops_when_unusable`）。运行后缺包的接手
   （`try_project_env` / `_adopt_system_interpreter`）在检测模式下与旧模式同样会采用（`silent_adoption_enabled()` 为真）。
+- **项目自带的解释器在「运行」之前不执行（Codex 安全 #820 r4232804805）**：`userenvs.is_project_controlled`（唯一判据）= 来源是项目文件直接
+  写出路径的（项目 venv / `.vscode` / shebang，`PROJECT_PATH_SOURCES`）或路径（原样 / 解符号链接后）在项目根里；`.python-version` /
+  `environment.yml` 只给名字、路径在用户自己的 pyenv / Conda 里查，不算。检查（`plan_for` → `decide_environment_pinned(project_exec=False)`、
+  门 / 准备计划的 `user_environment_offer`）经 `deprepair._evaluate_candidates`：这类候选只读体检缓存（`cache_only`，没有就是
+  `checked=False` 的「未检查」），一个都不起。用户点「运行」那一下（`PreparationService._run` 里的 `decide_environment_pinned`、
+  以及 `pool.acquire`）才体检、采用；采用了就换了解释器，`_stale_reason` 报 `environment_changed`，重新检查读到的是已采用的记录。
+  其余候选（用户的 Conda / pyenv / 系统 / 登录 shell）行为不变。
 - **确认模式（`TAVOTTO_ENV_ADOPTION=confirm` 或设置 `worker.environment_adoption=confirm`）下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
   `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
   `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个

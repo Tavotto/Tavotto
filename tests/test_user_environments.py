@@ -368,7 +368,7 @@ def test_offer_excludes_the_interpreter_that_is_missing_things(tmp_path, monkeyp
     monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [(str(good), "system")])
     probed = []
 
-    def fake_eval(cands, needed, unknown):
+    def fake_eval(cands, needed, unknown, **kw):
         probed.extend(c["python"] for c in cands)
         return [_entry(c["python"], c["source"], label=c["label"]) for c in cands]
 
