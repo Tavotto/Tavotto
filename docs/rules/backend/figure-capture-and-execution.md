@@ -224,7 +224,8 @@
 
 用户手动给的**精确 argv** 贯通 探测 → 热编辑 → 冷重放 → 导出 → 重开；自动 argparse 表单是 T07，不在这里。
 
-- **载荷**：`safe_spec(argv=, run_config=)` 是唯一构造入口（缺省空 = 旧行为逐字节不变）。`worker_argv` 只在 argv 非空时
+- **载荷**：`safe_spec(argv=, run_config=)` 是唯一构造入口（缺省空 = 旧行为逐字节不变）；调用方一律 `**execspec.run_kwargs(run)`，`RunSelection` 只由
+  `runconfig.selection*` 产生（T12，`test_execspec.py::TestSingleAssembly` AST 看护）。`worker_argv` 只在 argv 非空时
   多 `--run-config <rc_…>`；**参数值不进 OS 命令行、环境变量或临时文件**，由 `pool._run_payload` 经已有私有 JSON 请求管道
   传入（两条控制面同源）。Windows 的命令行引号膨胀因此不受参数值影响。每条可执行请求带冻结配置，workerd 透明重开后仍能
   用原配置冷重建；worker 校验引用、类型与不可变性，缺失 / 错配就拒绝执行，绝不回落空 argv。

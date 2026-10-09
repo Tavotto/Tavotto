@@ -1,6 +1,6 @@
 # U00 合成 fixture（统一实施包 · 基线）
 
-十组**全合成、小体积、进 git** 的项目夹具（前六组 U00 建，第七组 U03 加，第八组 U04 加，第九组 U05 加，第十组 U09 加），服务 `docs/implementation/tavotto-foundation/`
+十一组**全合成、小体积、进 git** 的项目夹具（前六组 U00 建，第七组 U03 加，第八组 U04 加，第九组 U05 加，第十组 U09 加，第十一组 T11 加），服务 `docs/implementation/tavotto-foundation/`
 的 U01–U09（FirstOpenBench / RenderBench / 联合依赖）。每组自带 `truth.json`：输入真值
 **不用产品代码就能校验**（`tests/test_foundation_fixtures.py`）。这些夹具在 U00 只被
 「真值测试」与「原生参考隔离测试」消费；**没有一条产品用例挂在它们上**（首开链路的
@@ -18,6 +18,7 @@
 | `private_python/` | ⑨（U05）干净机器：脚本要一个只存在于测试 wheelhouse 里的纯 Python 包，而这台机器没有任何可用的 Python（用例把发现链末端置空）——Tavotto 先按锁自备私有 Python，再建受管环境装它 | y = 42·x → [42, 84, 126]；标题 `u05 private python` | 把 wheel 装进一个 venv 再本目录 `python figure.py` → `figure.pdf` |
 | `shadowed_engine_modules/` | ⑦（U03）用户自己的 `manifest.py` / `overrides.py`（与引擎模块重名）+ 本地包 `lab_utils/`；脚本 `import manifest` 必须命中用户那份（issue #447 / FO19） | 标题 sentinel `user-manifest|user-overrides|user-lab_utils`；y = [3, 6, 12] | 本目录 `python figure.py` → `figure.pdf`，标题里三个 sentinel 齐全 |
 | `join_h5/` | ⑩（U09 / FO32）真实 h5py：`scripts/figure_h5.py` 站在项目根读 `data/measure.h5`（x = [2, 4, 8]，正确）；脚本目录另有同名 `scripts/data/measure.h5`（x = [200, 400, 800]，干扰）；h5py 经 C 库打开，Python `open` 看不见（回执 `partial`）；项目 `.venv` 由 `project_venv/make_venv.py` 现建，基础解释器 **≠ 应用**且已有 matplotlib + h5py（`--link-host-site`） | 正确 [7, 13, 25]；干扰 [601, 1201, 2401]；`make_h5.py` 重生成、字节确定 | 项目根 `python scripts/figure_h5.py --dump` 打 `7,13,25`；`cd scripts && python figure_h5.py --dump` 打 `601,1201,2401` |
+| `script_only_first_run/` | ⑪（T11 / C23）**只有脚本 / 数据 / 依赖声明**的首跑：`tools/spectrum.py` 按 **cwd** 读项目根的 `data/values.csv`；必填 `--scale` / `--label`（中文与空格）、可选 `--offset`（负数）/ `--tag`（空串）；运行中问一次菜单，菜单随 `--scale` 变（`<2` 两项、`≥2` 三项）；不同参数存同一个 `spectrum.pdf`；每次执行往项目目录**之外**（父目录 `t11_exec_log.jsonl`）记解释器 / prefix / argv / cwd / 选项 / 画出的 y | x = [0..4]，y = [1, 3, 2, 5, 4]；带种子噪声（`--seed`）由参考运行与被测运行各自算出、逐值对拍 | 复制到**另一个**临时根（排除 `truth.json`），项目根 `python tools/spectrum.py --scale … --label …`，stdin 答菜单；被测项目从不先跑 |
 
 ## 纪律
 

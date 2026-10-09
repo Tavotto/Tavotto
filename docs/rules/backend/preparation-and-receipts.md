@@ -99,6 +99,10 @@
   （`tests/test_foundation_first_open.py`，经真实 HTTP 入口，装置在 `tests/support/foundation_app.py`）；
   safe_stop 的 case 记录 `product_outcome=safe_stop` + `test_verdict=pass`，校验器按台账预期的结果
   对拍（`outcome_mismatch`）并分开计数，**不进自动兼容成功的分子**。
+- **台账里 T11 的一条（onboarding 收敛，C23）**：`T11-S1` → enforced（pr），`tests/test_foundation_script_first_run.py`——FO 场景都先在
+  待测目录跑原生脚本生成原件（那是首开），这一条**不预热**：待测项目起点只有夹具 ⑪ 的脚本 / 数据 / 依赖声明，原生参考在另一个临时根，
+  真值是被执行进程自己写在项目外的日志（prefix / argv / cwd / 菜单 / 选项 / y），走扫描 → 会话 → 运行目录待办 → 运行中作答 → 捕获 →
+  进编辑 → 保存排版 → 冷重放 → 导出 → 关掉再开。打开项目时写的注册表（静态图名）是 T00 裁决的既有边界，结果记录里如实记下。
 - **台账里 U09 的两条**：FO30 → enforced（registry 的 contractual 拆成三条 safe_stop 合同在 `tests/test_preparation_api.py`
   + 一条 guided 合同经真实入口 `tests/test_foundation_join.py::test_fo30_*`）；FO32 → observing（两个出口
   `existing_env_join` / `managed_env_join` 各挂一条具名任务：`foundation-u06-rendercore.yml` 的「U09 联调」步、
@@ -132,6 +136,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   provider 状态保留原权威，旧终局 `needs_input` 投影成 `awaiting_configuration` / `awaiting_confirmation`；失败事实永远单列在
   `outcome{kind,code,reason}`。「脚本跑完了但没有图」是 `partial` + `execution_finished_no_figure`，不算首图成功。
   `scanning`（T02）与 `preparing_environment`（T06）词汇已进闭集，本阶段不产生。前端只存这份投影，不另算。
+  **执行线程收尾之前仍是 `running`（T11）**：provider 已写下 `ready` / `error`、但 `_done`（登记 / 缺包差异计划 `_observe_missing`）
+  还没做完时，`attempt_running` 与 `_has_active_attempt` 同一判据——否则 `missing_dependency` 会先投影成没有待办的 `failed`、
+  随后又被改写成 `awaiting_confirmation`（T09b 登记的 unmapped_import 抖动的根因）。取消落地即终局，不等执行线程。
 - **检查不执行用户代码、不写用户项目**（`plan_for` 不跑脚本；e2e 用项目外的计数文件与目录树比对钉着）；执行只在认领后端生成的 `run`
   动作之后发生。注意 `plan_for` **不是**零副作用：它仍会做解释器体检与「记住」（`decide_environment` / `resolve_worker_python`，
   写的是 Tavotto 自己的数据目录配置）——这是 T00 登记的既有行为，T01 没有新增，由 T02（只读扫描）/ T05（推荐与采用分离）拆开；
@@ -166,7 +173,9 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - **`unlinked_stems`（T09b，T03 已知缺口的可恢复提示）**：无参数的执行按脚本整条替换注册表里的 stems（`discover.register` 的旧语义，
   注册表格式不动）；`probe.register_probed` 把替换之前登记在这个脚本名下、这次没产出的图名如实带回（带运行配置的执行是并入，不替换，
   没有这个键）。`/api/registry/probe` 响应与会话报告（outcome `succeeded` 时）同一口径：只是图名（与 `captured[].stem` 同口径），不含参数。
-  界面据此说「此前带其他参数生成的 … 已不再关联，用原参数再运行一次即可恢复」。看护 `tests/test_probe_owner_and_unlinked_stems.py`、
+  界面据此说「此前带其他参数生成的 … 已不再关联，用原参数再运行一次即可恢复」。**只报此前真被捕获过的图名（T11）**：`probe._was_captured`
+  = runtime cache 里有它的物化记录（无参数或这个脚本登记过的任一份运行配置）；打开项目时静态扫描先登记、条件分支里从没产出过的
+  字面量图名被替换掉时不报（那句话对它是假话）。cache 按体积回收过的旧图会漏报——宁可少说不说假话。看护 `tests/test_probe_owner_and_unlinked_stems.py`、
   e2e `registry-center-preparation.spec.ts`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
   报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试

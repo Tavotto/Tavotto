@@ -102,6 +102,23 @@ T09b 时第一、三条仍未满足，所以开关与 `scriptRunStore` 旧状态
 `ScriptLibrary` 的修复卡 / 门再打开 / 失败恢复 / 「复制诊断」块、`/api/registry/probe` 的前端调用（后端端点保留为 MCP / 旧客户端的兼容入口直到 T10/T12）。
 渲染路上的门对话框是**普通编辑时的替代展示面**（合同 §K），保留；它们的「答完重排渲染」（`retryEnvironmentFailures`）重排的是渲染请求，不是脚本首跑。
 
+### 八、T12 复核：开关与旧路径的退出条件（2026-10-06）
+
+T11 已用真实首跑资格（台账 `T11-S1` + L3 `first-run-qualification.spec.ts`）满足 §七 的第一条；第二条 T09b 已满足。第三条
+「一个发布周期内没有回到 `'off'` 的需要」本包内**无法满足**（还没有带默认开面板的正式版本），所以开关与 `scriptRunStore`
+旧状态机本包内保留。写死判据，免得「一个周期」变成永久：
+
+* **何时删**：默认开面板的那个正式版本发布之后的**下一个**正式版本。前提：① 期间没有登记「必须回到 off 才能用」的 issue
+  （有就先修面板，不延长开关）；② `tavotto open` 交接（`engine/handoff.py` → `/api/registry/probe`）已改为建准备会话或
+  明确保留为 CLI 兼容入口（二选一，写进本 ADR）；③ 合并组的 chromium / chromium-en / webkit 与 Windows 重腿在删除 PR 上绿。
+* **一起删**：`lib/preparationFlag.ts`；`scriptRunStore` 的门相位、`handOffProbeGate` / `rerunGated` / `probeErrorOf` 与
+  envStore 代际订阅的自动重跑；`WorkdirConfirmDialog` / `depRepairStore` 里对 `rerunGated` 的调用；`ScriptLibrary` 的修复卡 /
+  门再打开 / 失败恢复 / 「复制诊断」块；前端 `probeScript` / `probeWithDraft`。回归用例：`first-run-qualification.spec.ts`、
+  `preparation-panel.spec.ts`、`preparationEntries.test.ts`；钉在 `'off'` 上的旧 vitest 随之删除。
+* **不删**：`/api/registry/probe` + `/cancel` 后端（MCP / CLI / 旧客户端的兼容入口，薄 wrapper：路径校验
+  `_resolve_project_script`、运行配置 `runconfig.selection*`、登记 `probe.register_probed`、诊断 `taskdiag` 都与会话同一份）；
+  渲染门对话框与 PNG 准入（§二，编辑执行器的薄展示适配器）。
+
 ## 后果
 
 * 正面：首跑有任务句柄，断线 / 刷新 / 重启都能以 GET 补回真实状态；停止当场生效且只关自己的；「答完自动重跑」从已迁移入口上消失；

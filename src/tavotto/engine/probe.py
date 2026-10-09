@@ -29,9 +29,21 @@ spawn 路径都是 `execspec.safe_spec()` 的消费者）：cwd 在沙盒、argv
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from . import discover, inputbroker, inputremap, pool, projectenv, registry, taskdiag
+from . import (
+    discover,
+    figcapture,
+    inputbroker,
+    inputremap,
+    pool,
+    projectenv,
+    registry,
+    runconfig,
+    runtimeasset,
+    taskdiag,
+)
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -570,6 +582,12 @@ def register_probed(
             # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
             # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来；不改注册表格式（T09b）
             before = [] if append else discover.registered_stems(figures_dir, script)
+            # 「替换掉了哪些此前真捕获过的图名」的证据在**注册表提交之前**算完：任何环节在这里失败，整次登记失败、
+            # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
+            # 一次索引：运行配置读一次、cache 目录列一次，不随被替换 stem 数 × 配置数增长（#819 r4232302927）
+            unlinked = sorted(
+                captured_stems(figures_dir, script, set(before) - set(result["stems"]))[0]
+            )
             discover.register(
                 figures_dir,
                 script,
@@ -592,8 +610,96 @@ def register_probed(
             "registered": False,
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
-    unlinked = sorted(set(before) - set(result["stems"]))
     return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
+
+
+def captured_stems(
+    figures_dir: str | Path,
+    script: str,
+    stems: Iterable[str],
+    *,
+    configs: list | None = None,
+    charge: Callable[[], bool] | None = None,
+    stop_at_first: bool = False,
+) -> tuple[set[str], bool]:
+    """`stems` 里此前真被某次执行捕获过的那些：runtime cache 里有物化记录（无参数或这个脚本登记过的任一份
+    运行配置）。回 `(捕获过的 stem, 是否查全)`。
+
+    注册表里的图名不全是执行结果——打开项目时的静态扫描会把字面量 `savefig` 的名字先登记上（T00 deliberate-boundary），
+    条件分支里的那张从没产出过。对它说「此前带其他参数生成的……已不再关联」是假话（T11：第一次无参数运行就报）。
+    cache 被按体积回收过的旧图会漏报——宁可少说，不说假话。导入即扫描判「这个脚本已经连着可编辑的图」与登记时判
+    「替换掉了哪些图名」都用它（`projscan._linked_scripts` / `register_probed`），一份判据两处用。
+
+    成本是**每个脚本**的，不是 stems × 配置：运行配置登记读一次（`configs` 可由调用方预读）；cache 根目录列一次，
+    候选 id 的目录名纯计算后做成员判断，只有真存在的目录才读元数据（#819 r4232302927）。
+
+    坏的脚本键（绝对 / 盘符 / 空——`figcapture.normalize_relative_script` 拒的那些，与 `runtime_asset_id` 同一条判据）、
+    坏的 stem 都当**没有证据**：手改过的注册表不能让扫描或登记炸掉（r4232302913）。
+
+    运行配置登记读不出 / 来自新版本（`RunConfigError`）时，**整个脚本**当没有证据（连无参数变体也不算）：素材清单
+    （`/api/runtime/assets`）此刻对该脚本报 `run_config_unreadable`，用户打不开任何一张，说「已连接」是假话（r4232390785）；
+    登记（`register_probed`）也因此不声称「已不再关联」——读不出就什么都不说。不因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
+    `run_config_secret_missing`，不是「可直接编辑」（r4221248582）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
+    `run_config_unreadable` 显式拒绝（那条不在这里）。
+
+    `charge`（导入即扫描传 `budget.charge_entry`）在每次真实的磁盘操作（列目录、读元数据）前调用，返回 False
+    （预算用完 / 超时 / 取消）就停止并回 `complete=False`——调用方据此判「没查全」，绝不是「没捕获」。
+    `stop_at_first` 为真时找到第一个就返回（只要「有没有」的调用方用）。"""
+    wanted = [s for s in stems if isinstance(s, str) and s]
+    try:
+        figcapture.normalize_relative_script(script)
+    except ValueError:
+        return set(), True
+    if not wanted:
+        return set(), True
+    if configs is None:
+        try:
+            configs = runconfig.executable_configs_of(figures_dir, script)
+        except runconfig.RunConfigError:
+            # 登记读不出 / 来自新版本：素材清单此刻整个报 `run_config_unreadable`，连无参数变体也打不开——
+            # 没有任何可用的 cache 证据（不是「没有配置」，r4232390785）。调用方据此既不判已连接，也不声称「已不再关联」
+            return set(), True
+    if charge is not None and not charge():
+        return set(), False
+    present = runtimeasset.cached_slugs()
+    if not present:
+        return set(), True
+    identity = runconfig.project_identity(figures_dir)
+    found: set[str] = set()
+    for stem in wanted:
+        if stem in found:
+            continue
+        for run_config in ["", *(cfg.id for cfg in configs)]:
+            try:
+                asset_id = figcapture.runtime_asset_id(script, stem, run_config)
+            except ValueError:
+                break
+            if runtimeasset.cache_slug(identity, asset_id) not in present:
+                continue
+            if charge is not None and not charge():
+                return found, False
+            if runtimeasset.load_metadata(figures_dir, asset_id) is not None:
+                found.add(stem)
+                if stop_at_first:
+                    return found, True
+                break
+    return found, True
+
+
+def was_captured(
+    figures_dir: str | Path,
+    script: str,
+    stem: str,
+    *,
+    configs: list | None = None,
+    charge: Callable[[], bool] | None = None,
+) -> bool:
+    """单个图名版的 `captured_stems`（语义、预算协议见那里）；预算在途中耗尽回 False——要区分「没查全」的
+    调用方直接用 `captured_stems`。"""
+    found, _complete = captured_stems(
+        figures_dir, script, [stem], configs=configs, charge=charge, stop_at_first=True
+    )
+    return bool(found)
 
 
 # ---------------------------------------------------------------------------

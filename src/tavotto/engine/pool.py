@@ -374,11 +374,6 @@ _worker_source: str = ""
 _workers: dict[tuple[str, ...], "EngineWorker"] = {}
 
 
-def _run_kwargs(run) -> dict:
-    """`RunSelection` → `safe_spec` 的关键字参数（没有配置 = 空，调用形状与 T03 之前一致）。"""
-    return {} if run is None else {"argv": run.argv, "run_config": run.config_id}
-
-
 def _run_payload(run) -> dict:
     """Exact argv only crosses the private request pipe, never spawn argv/env/logs.
 
@@ -1672,7 +1667,7 @@ class EngineWorker:
             cwd_mode=workdir.mode_for(figures_dir),
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
-            **_run_kwargs(run),
+            **execspec.run_kwargs(run),
         )
         LOG.info(
             "worker 启动: %s（entry=%s，解释器来源=%s）",
@@ -2289,7 +2284,7 @@ def _spawn_spec(
         cwd_mode=workdir.mode_for(figures_dir),
         # 会话自己那份（与它的代次同一刻取）；不给才现取——重开会话不许换成另一代的表
         input_remap=inputremap.rules_for(figures_dir) if input_remap is None else list(input_remap),
-        **_run_kwargs(run),
+        **execspec.run_kwargs(run),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = dict(spec.env or {})
@@ -2418,7 +2413,7 @@ class WorkerdWorker:
             cwd_mode=workdir.mode_for(figures_dir),
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
-            **_run_kwargs(run),
+            **execspec.run_kwargs(run),
         )
         self._session_id = ""
         self._open()
