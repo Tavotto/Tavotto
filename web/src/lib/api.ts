@@ -4585,6 +4585,8 @@ export interface ProbeResult {
  * `sensitive`：含密码 / 令牌——后端只在内存里保留，不落盘，重启后需要重新输入。
  */
 export interface ScriptArgs {
+  /** Opaque existing configuration for an answer-management rerun; null explicitly selects no arguments. */
+  run_config?: string | null
   argv?: readonly string[]
   sensitive?: boolean
 }
@@ -4597,9 +4599,11 @@ export const probeScript = (script: string, cost?: string, args?: ScriptArgs) =>
     body: JSON.stringify({
       script,
       cost,
-      ...(args?.argv && args.argv.length > 0
-        ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
-        : {}),
+      ...(args?.run_config !== undefined
+        ? { run_config: args.run_config }
+        : args?.argv && args.argv.length > 0
+          ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
+          : {}),
     }),
   })
 
@@ -4635,9 +4639,17 @@ export interface ScriptInputRequest {
   input_kind: 'input' | 'readline' | 'read' | 'getpass'
   prompt: string
   stdout_tail: string
+  /** 口令（getpass）：密码框作答、不记住、不预填（T08） */
+  secret?: boolean
+  /** 上次的回答——**只是建议**：这次的输出 / 前面的回答 / 运行参数与上次不同，要人确认（口令永远没有） */
+  suggestion?: string | null
+  /** 为什么要重新确认：`context_changed` / `config_changed` / `legacy_answer` */
+  recheck?: string | null
 }
 
 export interface RememberedAnswer {
+  /** Opaque configuration identity only; omitted for legacy no-argument answers. */
+  run_config?: string | null
   index: number
   prompt: string
   answer: string
@@ -4686,11 +4698,11 @@ export const stopScriptInput = (id: string) =>
 
 export const fetchScriptAnswers = () => jsonFetch<ScriptAnswersResponse>('/api/script_input/answers')
 
-export const updateScriptAnswer = (script: string, index: number, answer: string) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer })
+export const updateScriptAnswer = (script: string, index: number, answer: string, runConfig: string | null = null) =>
+  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
 
-export const forgetScriptAnswer = (script: string, index: number) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true })
+export const forgetScriptAnswer = (script: string, index: number, runConfig: string | null = null) =>
+  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
 
 export const cancelProbe = (script: string) =>
   jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {

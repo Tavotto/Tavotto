@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import type { RememberedAnswer } from '@/lib/api'
 import { useScriptInputStore } from '@/store/scriptInputStore'
-import { useScriptRunStore } from '@/store/scriptRunStore'
+import { runConfigsInOrder } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { cn } from '@/lib/utils'
 import { Button } from './ui/Button'
@@ -31,6 +31,9 @@ const si = (key: string, values?: Record<string, unknown>) =>
  * 不问就忘掉答案并重跑。现在每一行是字段组里的一行：行内只改值，「删除」收进行尾 ⋯、是**暂存**的
  * （行上标「将删除」、可撤销）；脚部**唯一**的主动作「保存并重新运行（N）」依次提交所有改过 / 标了删除的
  * 答案、**只重跑一次**。没提交前什么都没发生，所以不再需要第二层确认框。
+ *
+ * 答案按运行配置分开记（`run_config`，null = 默认配置）：同一序号在两份配置下是两行，改 / 删只动那一行，
+ * 重跑也只重跑那份配置（`run(script, run_config)`）。批量提交涉及几份配置就各重跑一次，一份配置仍是一次。
  */
 export function ScriptAnswersDialog() {
   useTranslation('dialogs')
@@ -49,6 +52,9 @@ export function ScriptAnswersDialog() {
   return <AnswersManager key={`${shown.script}:${shown.gen}`} script={shown.script} open={!!managing} />
 }
 
+/** 一行答案的身份：同一序号在不同运行配置下是不同的行 */
+const rowKey = (a: RememberedAnswer) => JSON.stringify([a.run_config ?? null, a.index])
+
 /** 这次请求还属于发起时那个项目 / 那个对话框吗（换项目 = store 换代，`managing` 被清） */
 function stillCurrent(epoch: number, script: string): boolean {
   const s = useScriptInputStore.getState()
@@ -64,12 +70,12 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
   useTranslation('dialogs')
   const answers = useScriptInputStore((s) => s.answers?.[script] ?? NONE)
   const location = useScriptInputStore((s) => s.location)
-  /** 行内改过、还没保存的值（按问题序号）；与已存答案相同的不算改过 */
-  const [edits, setEdits] = useState<Record<number, string>>({})
-  /** 标了「删除」、还没提交的问题序号（暂存：脚部主按钮才真的忘掉） */
-  const [forgets, setForgets] = useState<ReadonlySet<number>>(EMPTY)
+  /** 行内改过、还没保存的值（按行身份 `rowKey`）；与已存答案相同的不算改过 */
+  const [edits, setEdits] = useState<Record<string, string>>({})
+  /** 标了「删除」、还没提交的行身份（暂存：脚部主按钮才真的忘掉） */
+  const [forgets, setForgets] = useState<ReadonlySet<string>>(EMPTY)
   /** 每一行最近一次保存 / 删除失败的原因 */
-  const [errors, setErrors] = useState<Record<number, string>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
   /**
    * 答案改动锁归 store（`answersBusy`）：关掉再打开，新挂上的对话框照样锁着，直到在飞的那件回来
    * （维护者复审：组件自己的 `saving` 随卸载消失，重开后能再存一次、两份快照互盖、重跑两次）
@@ -77,26 +83,35 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
   const saving = useScriptInputStore((s) => s.answersBusy)
 
   const close = () => useScriptInputStore.getState().closeManager()
-  const valueOf = (a: RememberedAnswer) => edits[a.index] ?? a.answer
-  const staged = answers.filter((a) => forgets.has(a.index))
-  const changed = answers.filter((a) => !forgets.has(a.index) && valueOf(a) !== a.answer)
+  const valueOf = (a: RememberedAnswer) => edits[rowKey(a)] ?? a.answer
+  const staged = answers.filter((a) => forgets.has(rowKey(a)))
+  const changed = answers.filter((a) => !forgets.has(rowKey(a)) && valueOf(a) !== a.answer)
   const pending = changed.length + staged.length
-  const setError = (index: number, error: string | null) =>
+  const setError = (key: string, error: string | null) =>
     setErrors((prev) => {
       const next = { ...prev }
-      if (error === null) delete next[index]
-      else next[index] = error
+      if (error === null) delete next[key]
+      else next[key] = error
       return next
     })
-  const rerun = () => {
+  /**
+   * 涉及几份配置就各重跑一次，**一份跑完再跑下一份**（同脚本防并发：一口气全发，只有第一份真的探测，
+   * Codex #816 P1）。某份失败不挡后面的；失败的配置在事后用一条错误提示说出来。
+   */
+  const rerun = async (configs: Array<string | null>) => {
     useUiStore.getState().setStatus(msg('scriptInput.manageSaved', { script }, 'dialogs'), 'done')
-    void useScriptRunStore.getState().run(script)
+    const results = await runConfigsInOrder(script, configs)
+    const failed = results.filter((r) => r.failed).map((r) => r.config ?? translate('scriptInput.manageDefaultConfig', { ns: 'dialogs' }))
+    if (failed.length)
+      useUiStore
+        .getState()
+        .setStatus(msg('scriptInput.manageRerunFailed', { script, configs: failed.join(', ') }, 'dialogs'), 'error')
   }
-  const toggleForget = (index: number, on: boolean) =>
+  const toggleForget = (key: string, on: boolean) =>
     setForgets((prev) => {
       const next = new Set(prev)
-      if (on) next.add(index)
-      else next.delete(index)
+      if (on) next.add(key)
+      else next.delete(key)
       return next
     })
 
@@ -112,26 +127,38 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
     const epoch = store.epoch
     const token = store.beginAnswersChange()
     if (token === null) return
-    const batch: { index: number; value: string | null }[] = [
-      ...changed.map((a) => ({ index: a.index, value: valueOf(a) })),
-      ...staged.map((a) => ({ index: a.index, value: null })),
+    const batch: { key: string; index: number; config: string | null; value: string | null }[] = [
+      ...changed.map((a) => ({
+        key: rowKey(a),
+        index: a.index,
+        config: a.run_config ?? null,
+        value: valueOf(a),
+      })),
+      ...staged.map((a) => ({
+        key: rowKey(a),
+        index: a.index,
+        config: a.run_config ?? null,
+        value: null,
+      })),
     ]
-    const submitted = new Map(batch.map((b) => [b.index, b.value]))
-    const done: number[] = []
+    const submitted = new Map(batch.map((b) => [b.key, b.value]))
+    const done: string[] = []
+    const configs: Array<string | null> = []
     try {
-      for (const { index, value } of batch) {
+      for (const { key, index, config, value } of batch) {
         const res =
           value === null
-            ? await useScriptInputStore.getState().forgetAnswer(token, script, index)
-            : await useScriptInputStore.getState().saveAnswer(token, script, index, value)
+            ? await useScriptInputStore.getState().forgetAnswer(token, script, index, config)
+            : await useScriptInputStore.getState().saveAnswer(token, script, index, value, config)
         // 请求在飞时换了项目：什么都不做——尤其不在新项目里重跑同名脚本
         if (res.status === 'stale' || !sameProject(epoch)) return
         const stillOpen = stillCurrent(epoch, script)
         if (res.status === 'error') {
-          if (stillOpen) setError(index, res.error)
+          if (stillOpen) setError(key, res.error)
         } else {
-          if (stillOpen) setError(index, null)
-          done.push(index)
+          if (stillOpen) setError(key, null)
+          done.push(key)
+          if (!configs.includes(config)) configs.push(config)
         }
         // 对话框已关：剩下的改动没人看得见，不再接着发；已提交好的照常重跑
         if (!stillOpen) break
@@ -145,18 +172,18 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
       setEdits((prev) => {
         const next = { ...prev }
         // 只丢掉与提交时一致的那份；之后又改过的保留（双保险，输入框在批量保存时本就锁着）
-        for (const index of done) {
-          if (submitted.get(index) === null || next[index] === submitted.get(index)) delete next[index]
+        for (const key of done) {
+          if (submitted.get(key) === null || next[key] === submitted.get(key)) delete next[key]
         }
         return next
       })
       setForgets((prev) => {
         const next = new Set(prev)
-        for (const index of done) if (submitted.get(index) === null) next.delete(index)
+        for (const key of done) if (submitted.get(key) === null) next.delete(key)
         return next
       })
     }
-    rerun()
+    await rerun(configs)
   }
 
   return (
@@ -200,14 +227,14 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
           <FieldGroup data-script-answers-rows>
             {answers.map((a) => (
               <AnswerRow
-                key={`${a.index}:${a.prompt}`}
+                key={JSON.stringify([script, a.run_config ?? null, a.index, a.prompt])}
                 entry={a}
                 value={valueOf(a)}
-                forgetting={forgets.has(a.index)}
-                error={errors[a.index] ?? null}
+                forgetting={forgets.has(rowKey(a))}
+                error={errors[rowKey(a)] ?? null}
                 disabled={saving}
-                onChange={(v) => setEdits((prev) => ({ ...prev, [a.index]: v }))}
-                onForget={(on) => toggleForget(a.index, on)}
+                onChange={(v) => setEdits((prev) => ({ ...prev, [rowKey(a)]: v }))}
+                onForget={(on) => toggleForget(rowKey(a), on)}
               />
             ))}
           </FieldGroup>
@@ -218,7 +245,7 @@ function AnswersManager({ script, open }: { script: string; open: boolean }) {
   )
 }
 
-const EMPTY: ReadonlySet<number> = new Set()
+const EMPTY: ReadonlySet<string> = new Set()
 
 function AnswerRow({
   entry,
@@ -246,6 +273,9 @@ function AnswerRow({
       data-dirty={(!forgetting && value !== entry.answer) || undefined}
       data-forgetting={forgetting || undefined}
     >
+      <span className="text-sm text-ink-3">
+        {entry.run_config ? si('manageConfig', { config: entry.run_config }) : si('manageDefaultConfig')}
+      </span>
       <span
         className={cn(
           'whitespace-pre-wrap break-words font-mono text-sm text-ink-2',
