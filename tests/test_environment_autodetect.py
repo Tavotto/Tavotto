@@ -1227,6 +1227,41 @@ def test_a_cached_fit_verdict_is_not_trusted_after_the_env_lost_its_packages(
 
 
 @needs_worker
+def test_the_run_acquires_the_planned_interpreter_even_if_the_record_moves_just_before(
+    client, house, opened, monkeypatch
+):
+    """Codex #820 r4234067402：检查对账之后、取会话之前，另一个脚本把项目记录换成别的能跑的解释器——这次运行钉着计划自己的
+    解释器：要么在计划的解释器里跑，要么 `environment_changed`，绝不静默跑进另一个。"""
+    proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
+    planned = envworld.real_venv(proj, ".venv", python=WORKER_PY)
+    other = envworld.real_venv(proj, ".venv2", python=WORKER_PY)
+    for py in (planned, other):
+        _install_into(py, house, ALPHA[0])
+    assert projectenv.remember(proj, planned, automatic=False, trigger="user_selected")
+    report = _create(client, {"script": "figure.py"})
+    assert "run" in _kinds(report)
+
+    real_acquire = engine_pool.acquire
+    moved = []
+
+    def racy(*a, **k):
+        if not moved:  # 对账之后、取会话之前：另一个脚本换了共享记录
+            moved.append(1)
+            assert projectenv.remember(proj, other, automatic=False, trigger="user_selected")
+        return real_acquire(*a, **k)
+
+    monkeypatch.setattr(engine_pool, "acquire", racy)
+    assert _act(client, report, "run").status_code == 202
+    final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
+    assert moved
+    worker = engine_pool.peek("figure.py", str(proj))
+    if worker is not None:
+        assert _env_root(worker.python) == _env_root(planned), "跑进了另一个解释器"
+    else:
+        assert final["phase"] != "completed", final
+
+
+@needs_worker
 def test_a_rebuilt_environment_is_redetected_said_out_loud_and_old_actions_stop_working(
     client, opened
 ):

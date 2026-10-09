@@ -3275,7 +3275,13 @@ def get(
 
 
 def acquire(
-    script_name: str, figures_dir: str, entry: str, *, artifact_source=None, run=None
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    artifact_source=None,
+    run=None,
+    pinned: EnvironmentDecision | None = None,
 ) -> tuple[EngineWorker, bool]:
     """`get()` + 「这条会话是不是**这次调用**建的」——所有权在 `_lock` 里一并给出。
 
@@ -3296,8 +3302,16 @@ def acquire(
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
         decided = not ENVIRONMENT_DECIDERS
         pin: EnvironmentDecision | None = None
+        if pinned is not None and pinned.pinned:
+            # 调用方（准备的一次运行）已经带着自己的不可变决定：只认它——不再让决定者对共享的项目记录重新决定
+            # （另一个脚本在检查之后、取会话之前换了记录，这次运行不能悄悄跑在别的解释器里；Codex #820 r4234067402）
+            decided, pin = True, pinned
         try:
-            want_python = resolve_worker_python(figures_dir, script=script_name)[0]
+            want_python = (
+                pinned.python
+                if pin is not None
+                else resolve_worker_python(figures_dir, script=script_name)[0]
+            )
         except WorkerError as exc:
             # 默认链条里没有任何能跑的解释器（`no_worker_python`）时，项目 venv / 别处发现的用户环境也许能跑：
             # 检测要先于「第一次解析失败」之后的一切（Codex #820 r4221391630），否则只经池的入口（渲染已有素材、
@@ -3677,6 +3691,7 @@ def build_owned(
     before_retry=None,
     run=None,
     on_acquired=None,
+    pinned: EnvironmentDecision | None = None,
 ):
     """`build()` + 所有权：回 `(worker, build 响应, created)`。
 
@@ -3691,9 +3706,15 @@ def build_owned(
     知道「这条是不是我建的」，取消可以当场只关自己建的那条，不必等 build 返回。
     """
     context = {"run": run} if run is not None else {}
+    first = [True]
 
     def take():
-        worker, created = acquire(script_name, figures_dir, entry, **context)
+        # 钉只用于第一次取：缺包后自动接手换了解释器的第二次，要的正是新决策（那条路由 `before_retry` 核计划）
+        use = pinned if first[0] else None
+        first[0] = False
+        worker, created = acquire(
+            script_name, figures_dir, entry, **context, **({"pinned": use} if use else {})
+        )
         if on_acquired is not None:
             on_acquired(worker, created)
         return worker, created
