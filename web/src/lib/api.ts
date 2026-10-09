@@ -4600,21 +4600,80 @@ export interface ScriptArgs {
   sensitive?: boolean
 }
 
+/* ---------------- 引擎能力协商（T10，`src/tavotto/engine/capabilities.py`） ---------------- */
+
+/**
+ * 引擎宣告「会按精确 argv 运行并回 `run_config` 承认」的标记。**同源**：`engine/capabilities.py` 的
+ * `SCRIPT_ARGV`（`tests/test_engine_capabilities.py` 两侧对拍）。
+ */
+export const ENGINE_FEATURE_SCRIPT_ARGV = 'script-argv'
+/** 引擎没宣告所需能力时的稳定码（与后端 / MCP 桥同一个） */
+export const ENGINE_CAPABILITY_MISSING = 'engine_capability_missing'
+
+let engineFeaturesPromise: Promise<ReadonlySet<string>> | null = null
+
+/**
+ * 引擎宣告的能力（`/api/version` 的 `features`；公开端点、不带项目）。一个标签页问一次：引擎升级后旧标签页
+ * 由同一端点的 `build` 发现过期并刷新。网络失败与非 2xx 都不缓存（下次再问）；端点在、却没有 `features` = 旧引擎，一个都没有。
+ */
+export function fetchEngineFeatures(): Promise<ReadonlySet<string>> {
+  engineFeaturesPromise ??= fetch(apiUrl('/api/version'), { cache: 'no-store' })
+    .then(async (res) => {
+      // 404 = 更早的引擎根本没有这个端点（旧引擎，一个特性都没有）；其余非 2xx（启动期代理 502/503 等）是
+      // 暂时失败、不是「没有特性」：reject 走下面的 catch 清掉缓存，允许重试
+      if (!res.ok && res.status !== 404) throw new Error(`/api/version ${res.status}`)
+      const body = res.ok ? ((await res.json()) as { features?: unknown }) : {}
+      const list = Array.isArray(body?.features) ? body.features : []
+      return new Set(list.filter((f): f is string => typeof f === 'string'))
+    })
+    .catch((err: unknown) => {
+      engineFeaturesPromise = null
+      throw err
+    })
+  return engineFeaturesPromise
+}
+
+/** 测试与重连用：忘掉问过的能力。 */
+export function resetEngineFeatures(): void {
+  engineFeaturesPromise = null
+}
+
+/**
+ * **先问再发**：旧端点不认识的字段会被静默忽略——把 `argv` 发给旧引擎，它照样无参数运行，回包看起来一切
+ * 正常。所以发非空 argv 之前确认引擎宣告了 `script-argv`；没有就当场以 `engine_capability_missing` 拒绝，
+ * 一次请求都不发（绝不先「试一次无参数」）。
+ */
+async function requireEngineFeature(feature: string): Promise<void> {
+  if ((await fetchEngineFeatures()).has(feature)) return
+  throw new ApiError('本机 Tavotto 引擎不支持这项功能，请升级后再试', 409, {
+    code: ENGINE_CAPABILITY_MISSING,
+    params: { feature },
+  })
+}
+
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
-export const probeScript = (script: string, cost?: string, args?: ScriptArgs) =>
-  jsonFetch<ProbeResult>('/api/registry/probe', {
+export const probeScript = async (script: string, cost?: string, args?: ScriptArgs) => {
+  // run_config（答案管理对已有配置的复跑）优先于 argv。**任何非 null 的 run_config 与任何非空 argv 都要先过
+  // script-argv 能力协商**：旧引擎会静默忽略 `run_config` 字段、无参数跑脚本，还可能登记一张「看着对、其实错」的图
+  // （Codex #818 r4221289208）。只有 `run_config: null`（明确「不带参数」）与无参数不需要。
+  const argv = args?.run_config === undefined && args?.argv && args.argv.length > 0 ? [...args.argv] : null
+  if (argv || typeof args?.run_config === 'string') await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return jsonFetch<ProbeResult>('/api/registry/probe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       script,
       cost,
-      ...(args?.run_config !== undefined
+      ...(typeof args?.run_config === 'string'
         ? { run_config: args.run_config }
-        : args?.argv && args.argv.length > 0
-          ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
-          : {}),
+        : args?.run_config === null
+          ? { run_config: null }
+          : argv
+            ? { argv, ...(args?.sensitive ? { argv_sensitive: true } : {}) }
+            : {}),
     }),
   })
+}
 
 /**
  * 脚本参数的静态 schema（T07，`engine/scriptargs.py`）：后端只读源码，不执行、不 import、不调 `--help`。
@@ -4782,8 +4841,15 @@ const preparationBody = (target: PreparationTarget) =>
  * 为一个目标创建 / 复用检查会话。**不执行任何用户代码**（201 新建 / 200 复用）。`pj` 是发请求那一刻认领的项目：
  * 回包属于它，换了项目由调用方丢弃。`signal`：只用于网络看门狗（取消的是这一次 HTTP 等待，不是任何后台工作）。
  */
-export const createPreparationSession = (target: PreparationTarget, pj: string | null, signal?: AbortSignal) =>
-  jsonFetch<PreparationReport>(
+export const createPreparationSession = async (
+  target: PreparationTarget,
+  pj: string | null,
+  signal?: AbortSignal,
+) => {
+  if (!('id' in target) && target.argv && target.argv.length > 0) {
+    await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  }
+  return jsonFetch<PreparationReport>(
     '/api/engine/preparation-sessions',
     {
       method: 'POST',
@@ -4793,6 +4859,7 @@ export const createPreparationSession = (target: PreparationTarget, pj: string |
     },
     pj,
   )
+}
 
 /** 读会话报告（断线 / 刷新 / SSE 提示后的补拉；**不会**重新执行任何东西）。404 + `unknown_or_restarted` = 应用重启过 */
 export const fetchPreparationSession = (sessionId: string, pj: string | null, signal?: AbortSignal) =>
@@ -4822,6 +4889,7 @@ export const actOnPreparationSession = (
 
 /** 运行参数（T03）的稳定错误码：界面按它们翻文案（`errors:backend.*`） */
 export const RUN_ARGV_ERROR_CODES = [
+  ENGINE_CAPABILITY_MISSING,
   'invalid_argv',
   'run_config_missing',
   'run_config_secret_missing',
@@ -4902,11 +4970,15 @@ export const stopScriptInput = (id: string) =>
 
 export const fetchScriptAnswers = () => jsonFetch<ScriptAnswersResponse>('/api/script_input/answers')
 
-export const updateScriptAnswer = (script: string, index: number, answer: string, runConfig: string | null = null) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
+export const updateScriptAnswer = async (script: string, index: number, answer: string, runConfig: string | null = null) => {
+  if (runConfig) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
+}
 
-export const forgetScriptAnswer = (script: string, index: number, runConfig: string | null = null) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
+export const forgetScriptAnswer = async (script: string, index: number, runConfig: string | null = null) => {
+  if (runConfig) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
+}
 
 export const cancelProbe = (script: string) =>
   jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {
@@ -4983,15 +5055,18 @@ export interface RuntimeStatus {
  * 查询 runtime 素材的 stale 状态。**只读**：后端绝不因此执行脚本。
  * `source` 是文档里持久化的描述块，注册表条目丢失时作恢复线索。
  */
-export const fetchRuntimeStatus = (
+export const fetchRuntimeStatus = async (
   id: string,
   source?: { script: string; stem: string; run_config?: string },
-) =>
-  jsonFetch<RuntimeStatus>('/api/runtime/status', {
+) => {
+  // 带运行配置引用的判定，旧引擎会忽略 run_config 去比无参数那份：先过能力协商（r4221289208）
+  if (source?.run_config) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return jsonFetch<RuntimeStatus>('/api/runtime/status', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, source }),
   })
+}
 
 /**
  * 素材库「图」区的一条 RuntimeFigureAsset（`runtimeasset.list_assets` 原样）。

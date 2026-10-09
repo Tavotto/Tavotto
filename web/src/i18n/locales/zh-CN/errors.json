@@ -181,6 +181,7 @@
     "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",
     "script_needs_arguments": "脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本自己），参数解析于是退出了。给这些参数写默认值，或在终端里用「tavotto run -- python 脚本.py 参数…」让 Tavotto 跟着你自己的命令跑。展开输出看它要哪些参数。",
     "script_rejected_arguments": "脚本自己的参数解析器拒绝了你给的 {{argv_count}} 个参数。请检查它们是否符合脚本的要求（Tavotto 按你填的内容原样传入，没有改动）。展开输出看它的报错。",
+    "engine_capability_missing": "本机的 Tavotto 引擎版本较旧，不支持按参数运行。请升级 Tavotto 后再试；不会改用空参数运行。",
     "invalid_argv": "运行参数不合法：必须是字符串列表（每个参数一项，不能含空字符，数量和总长度有上限）。",
     "run_config_missing": "这台机器上没有这张图当初用的运行参数（可能来自另一台机器，或记录已清理）。请重新输入参数后再运行。",
     "run_config_secret_missing": "这次运行含敏感参数，Tavotto 没有保存它。请重新输入后再运行。",
@@ -254,6 +255,7 @@
     "environment_changed": "这个环境在你确认之前被重建过，请重新查看再确认",
     "environment_generation_required": "采用候选环境需要带上你确认时看到的环境版本，请重新查看再确认",
     "environment_candidate_gone": "这个环境已经找不到了，请重新检查",
+    "environment_save_failed": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
     "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
     "environment_check_running": "这个项目的环境检查正在进行"
   },

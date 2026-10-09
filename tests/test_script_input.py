@@ -570,3 +570,20 @@ def test_private_channel_directory_is_owner_only(tmp_path):
         pytest.skip("mode bits are POSIX-only")
     ch = _channel(tmp_path, private=True)
     assert ch.dir.stat().st_mode & 0o077 == 0
+
+
+def test_a_no_answer_reply_remembers_how_the_script_read_so_a_first_getpass_is_a_secret(
+    tmp_path, monkeypatch
+):
+    """#818 r4220889705：首问 getpass 的 reason 是 no_interactive_client；读取方式必须随错误带出去（worker 的
+    `script_needs_input` 载荷里的 `input_kind`），否则 MCP 桥分不出口令。"""
+    from tavotto.engine import worker
+
+    for kind in ("getpass", "input"):
+        ch = _channel(tmp_path / kind, private=False)
+        _answer_with(ch, monkeypatch, '{"no_answer": true, "reason": "no_interactive_client"}')
+        with pytest.raises(scriptinput.ScriptNeedsInput) as caught:
+            ch.ask("Password:", kind)
+        err = worker._needs_input_error(caught.value)
+        assert err.extra["input_kind"] == kind
+        assert err.extra["reason"] == "no_interactive_client"
