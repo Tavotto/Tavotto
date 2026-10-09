@@ -217,3 +217,35 @@ def test_canaries_never_reach_any_bundle_file_or_the_copy_text(client, tmp_path,
     for body in texts:
         assert "CANARY" not in body, "金丝雀泄漏"
         assert "canary_func" not in body
+
+
+def test_sensitive_notice_far_before_the_scan_window_still_withholds(tmp_path):
+    """评审 #868 P2：提示行在异常之前超过 400 行（早期一次 stdout 写入 + 大量 stderr）也是敏感运行。"""
+    filler = "".join(f"noise {i}\n" for i in range(diagnostics.WORKER_LOG_SCAN_LINES + 50))
+    log = (
+        "[sensitive run: script output omitted]\n"
+        + filler
+        + '  File "/Users/a/secret_study.py", line 4, in <module>\n'
+        + "ModuleNotFoundError: No module named 'canary_private_mod'\n"
+    )
+    tail = _tail(tmp_path, log)["tail"]
+    assert tail == "[structure] ModuleNotFoundError (sensitive run: details withheld)"
+    for canary in ("canary_private_mod", "mod:", "frames", "user="):
+        assert canary not in tail
+
+
+def test_headless_frames_do_not_leak_across_a_complete_block(tmp_path):
+    """评审 #868 P2：无头帧 + 完整 traceback + 裸 ValueError，ValueError 不继承块前的帧。"""
+    log = (
+        '  File "/x/a.py", line 1, in f\n'
+        '  File "/x/b.py", line 2, in g\n'
+        "Traceback (most recent call last):\n"
+        '  File "/x/c.py", line 3, in h\n'
+        "    boom()\n"
+        "RuntimeError: x\n"
+        "ValueError: bad\n"
+    )
+    lines = _tail(tmp_path, log)["tail"].splitlines()
+    assert "[structure] omitted-exception frames=2" not in "".join(lines)
+    assert "[structure] no-exception-line frames=2 (user=2)" in lines
+    assert lines[-1] == "[structure] ValueError"

@@ -1243,6 +1243,7 @@ def _scan_evidence(tail: list[str]) -> tuple[list[list[str]], int, list[str]]:
                 blocks[-1].extend(block)
             else:
                 blocks.append(block)
+            orphans.append(_ORPHAN_BOUNDARY)  # 完整块是栈的边界：块前的无头帧不跨块累积
             just_closed_tb = True
             continue
         if _FH_HEADER.match(ln):
@@ -1273,6 +1274,7 @@ def _scan_evidence(tail: list[str]) -> tuple[list[list[str]], int, list[str]]:
                 just_closed_tb = False
                 continue
             blocks.append(block)
+            orphans.append(_ORPHAN_BOUNDARY)
             just_closed_tb = False
             continue
         if just_closed_tb and _TB_CHAIN.match(ln):
@@ -1292,6 +1294,9 @@ def _scan_evidence(tail: list[str]) -> tuple[list[list[str]], int, list[str]]:
         dropped += 1
     return blocks, dropped, orphans
 
+
+#: `_scan_evidence` 在 orphan 流里为每个被接受的完整块放的边界标记（带 NUL；日志里伪造它的最坏结果只是多切一段栈）。
+_ORPHAN_BOUNDARY = "\x00block-boundary"
 
 #: 结构摘要行的前缀——明确标出「这是 Tavotto 从被略去的行里提取的结构，不是日志原文」。
 STRUCTURE_PREFIX = "[structure] "
@@ -1373,6 +1378,12 @@ def _structure_summaries(orphans: list[str], *, sensitive: bool) -> list[str]:
     out: list[str] = []
     pending: list[str] = []
     for raw in orphans:
+        if raw == _ORPHAN_BOUNDARY:
+            # 一个被 `blocks` 认走的完整块在这里：它前面的无头帧自成一段，不挂到块后的异常上
+            if pending:
+                out.append(_structure_summary(None, None, pending, sensitive=sensitive))
+            pending = []
+            continue
         fm = _TB_FRAME.match(raw)
         if fm:
             pending.append(_frame_class(fm.group("path")))
@@ -1470,9 +1481,9 @@ def worker_log_tails(
             continue
         all_lines = text.splitlines()
         scanned = all_lines[_scan_start(all_lines) :]
+        sensitive = _generation_is_sensitive(p, pool.log_generation_start(p))
         blocks, omitted, orphans = _scan_evidence(scanned)
         kept = last_blocks_within(blocks, lines)
-        sensitive = any(t.strip() == _SENSITIVE_NOTICE for t in scanned)
         summaries = _structure_summaries(orphans, sensitive=sensitive)
         out.append(
             {
@@ -1488,6 +1499,29 @@ def worker_log_tails(
             }
         )
     return out
+
+
+def _generation_is_sensitive(path: Path, start: int) -> bool:
+    """这一代 worker.log 里**任何位置**出现排空器的提示行 = 敏感运行。
+
+    敏感与否只在 worker 子进程里知道，父进程唯一的载体就是这句提示。它可能出现在诊断扫描窗口
+    （最后 400 行 / 4 MB）之前——一次早期 stdout 写入后大量 stderr——所以不能从窗口里判，
+    要流式扫这一代的全部字节（评审 #868 P2）。读不了就按敏感处理：宁可少出。"""
+    needle = _SENSITIVE_NOTICE.encode("utf-8")
+    try:
+        with path.open("rb") as fh:
+            fh.seek(max(start, 0))
+            carry = b""
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    return False
+                buf = carry + chunk
+                if needle in buf:
+                    return True
+                carry = buf[-(len(needle) - 1) :]
+    except OSError:
+        return True
 
 
 def _read_tail_bytes(path: Path, limit: int, *, start: int = 0) -> bytes:
