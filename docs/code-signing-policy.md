@@ -42,9 +42,14 @@ The hard requirements are unchanged: the minisign key that signs update packages
 and the Apple Developer ID certificate remain hard requirements — a release
 build missing either still fails.
 
-An unsigned installer must never be described as a signed release. `tests/test_runtime_build.py` guards the hard requirements and the fail-closed behavior.
+Manual non-release trial builds may still produce unsigned diagnostic artifacts;
+this does not authorize publishing them as a release. The signing gate is skipped
+only when `IS_RELEASE_BUILD` is not `1`, and the late Windows guard uses the same
+release-only boundary.
 
-
+An unsigned installer must never be described as a signed release.
+`tests/test_runtime_build.py` executes the gate with isolated fixture values to
+guard missing credentials, fail-closed releases and unsigned non-release trials.
 
 ## macOS artifacts (out of scope for this subscription)
 

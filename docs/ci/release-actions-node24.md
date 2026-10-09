@@ -21,7 +21,7 @@ runtime / 输入兼容性，并同步 `tests/test_release_workflow_contract.py` 
 
 初始迁移更新 `release.yml`、`release-publish.yml`、`desktop-tauri.yml` 的 action 版本，
 将它们及 `lab-ci.yml` 的 13 个 Linux hosted job 固定为 `ubuntu-24.04`。
-SignPath 已在此分支升级至 v3：核验的 action.yml commit 为 `f6d04783b4569d051e0c80105fe66e82819d0092`，输入参数与 v2 完全相同，仅默认 connector-url 从 `https://githubactions.connectors.signpath.io` 变为 `https://pipelineconnector.connectors.signpath.io/GitHubActions/GitHubCom`。
+SignPath 已在此分支升级至 v3：核验的 action.yml commit 为 `f6d04783b4569d051e0c80105fe66e82819d0092`，仍使用 Node 24；输入名称、必填属性及其他默认值与 v2 相同，仅默认 connector-url 从 `https://githubactions.connectors.signpath.io` 变为 `https://pipelineconnector.connectors.signpath.io/GitHubActions/GitHubCom`。上游实现另有日志 / 错误文案及 taskVersion（2.2.0 → 3.0.0）更新，见[固定 commit 对比](https://github.com/SignPath/github-action-submit-signing-request/compare/c92b958760219087e01f8d67a1669ed57afe2627...f6d04783b4569d051e0c80105fe66e82819d0092)。
 `lab-ci.yml` 的 checkout、其它 workflow、macOS / Windows 矩阵、项目的 Node 22 / Python 3.13 /
 pnpm 11.27.1 工具链版本均不属于此次迁移。
 后续 alert #217 引出的两个限定加固见下节，不再把最终补丁声称为纯版本替换。
