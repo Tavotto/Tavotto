@@ -613,6 +613,13 @@ class TestCondaSpecific:
         )
         assert "installed_conda_meta_files" in cand["evidence"]
 
+    def test_conda_evidence_file_is_relative_to_the_prefix_not_to_site_packages(self, tmp_path):
+        prefix, _ = self._conda(tmp_path)
+        got = _scan(tmp_path, "import condamod\n", _index(prefix))["condamod"]
+        [cand] = got.distribution_candidates
+        assert cand["evidence_file"] == "conda-meta/condaonly-1.0-h1_0.json"
+        assert str(tmp_path) not in cand["evidence_file"]
+
     def test_conda_meta_defers_to_a_pip_visible_dist_info_for_the_same_module(self, tmp_path):
         prefix, site = self._conda(tmp_path)
         _dist(site, "CondaMod", "1.0", top="condamod\n", installer="conda")

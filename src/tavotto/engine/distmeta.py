@@ -343,7 +343,8 @@ class Index:
         for d in ds:
             if d.provenance != PROV_INDEX:
                 provenance = d.provenance
-        root_rel = self.roots[first.root].rel
+        # conda-meta 记录的 entry 本来就相对环境前缀（`conda-meta/<file>.json`），不再拼 site-packages 根
+        root_rel = "" if first.kind == "conda-meta" else self.roots[first.root].rel
         file_rel = "/".join(p for p in (root_rel, first.entry) if p)
         return Candidate(
             distribution=first.name,
