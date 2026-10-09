@@ -787,6 +787,109 @@ class _Listing:
         return set(self.dirs) | set(self.py) | set(self.ext)
 
 
+_MAX_LINK_HOPS = 40
+
+
+def _under(base: str, cand: str) -> list[str] | None:
+    """`cand` 词法上在 `base` 之下时回相对的各级名字（相等回 []）；否则 None。纯字符串运算。"""
+    nb, nc = os.path.normcase(base), os.path.normcase(cand)
+    if nc == nb:
+        return []
+    if not nc.startswith(nb.rstrip(os.sep) + os.sep):
+        return None
+    return [x for x in cand[len(base.rstrip(os.sep)) :].split(os.sep) if x]
+
+
+def _confined_path(root: Path, p: Path, *, no_follow: bool) -> str | None:
+    """`p` 逐级**只用 `lstat`**（不跟随）走一遍，回一条不含任何链接的项目内路径；回 None = 不能碰。
+
+    这是 importscan 里「在确认不是链接 / 重定向之前，任何会 stat 目标的调用都不许发生」的唯一闸门：
+    `no_follow=True` 时任何一级是符号链接 / junction / 其它路径替身即 None；默认模式只放行目标**词法上**
+    落在项目内的 POSIX 符号链接（逐跳 `readlink` 再继续逐级 `lstat`，链条里任何一跳出了项目、或是
+    junction，即 None）——不 `realpath`、不 `resolve`（Windows 上它们会打开链接目标，UNC / WebDAV 会联网）。
+    返回的路径经过这一遍后没有链接，后面的 `stat` / `is_file` / `scandir` 才可以放心用。不在项目词法
+    之下的路径（机器级候选）原样回，由调用方各自的前缀判据处理。不存在的尾部原样接上（它没有可跟随的东西）。
+    """
+    try:
+        base = os.path.abspath(os.fspath(root))
+        cand = os.path.abspath(os.fspath(p))
+        bases = [base]
+        real_base = os.path.realpath(base)  # 用户自己打开的那一层，不是项目派生路径
+        if os.path.normcase(real_base) != os.path.normcase(base):
+            bases.append(real_base)
+    except (OSError, ValueError):
+        return None
+    rest = _under(base, cand)
+    if rest is None:
+        return cand
+    todo = list(rest)
+    cur = base
+    hops = 0
+    while todo:
+        name = todo.pop(0)
+        if name == ".":
+            continue
+        if name == "..":
+            if os.path.normcase(cur) == os.path.normcase(base):
+                return None
+            cur = os.path.dirname(cur)
+            continue
+        nxt = os.path.join(cur, name)
+        try:
+            st = os.lstat(nxt)
+        except (FileNotFoundError, NotADirectoryError):
+            return os.path.join(nxt, *todo) if todo else nxt
+        except (OSError, ValueError):
+            return None
+        if not scanbudget.is_redirect(st):
+            cur = nxt
+            continue
+        hops += 1
+        if no_follow or not stat.S_ISLNK(st.st_mode) or hops > _MAX_LINK_HOPS:
+            return None
+        try:
+            target = os.readlink(nxt)
+        except (OSError, ValueError):
+            return None
+        if os.path.isabs(target) or PureWindowsPath(target).anchor:
+            inner = None
+            for b in bases:
+                inner = _under(b, os.path.normpath(target))
+                if inner is not None:
+                    break
+            if inner is None:
+                return None
+            cur = base
+            todo[:0] = inner
+        else:
+            todo[:0] = [x for x in re.split(r"[\\/]", target) if x]
+    return cur
+
+
+def _inside(root: Path, p: Path, *, no_follow: bool) -> bool:
+    """`p` 是否在项目内：先 `_confined_path`（只 lstat），确认没有越界链接之后才交给 `projectenv.within`
+    （它 `resolve`——此时路径里已经没有指向项目外的链接，不会触到项目外的目标）。"""
+    q = _confined_path(root, p, no_follow=no_follow)
+    return q is not None and projectenv.within(root, Path(q))
+
+
+def _kind(root: Path, p: Path, *, no_follow: bool) -> str:
+    """`p` 是什么：`file` / `dir` / `other` / `missing` / `blocked`（链接 / 重定向越界或不可读）。
+    先过 `_confined_path`；之后的 `lstat` 作用于已无链接的路径，等价于 `stat`。"""
+    q = _confined_path(root, p, no_follow=no_follow)
+    if q is None:
+        return "blocked"
+    try:
+        st = os.lstat(q)
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except (OSError, ValueError):
+        return "blocked"
+    if stat.S_ISDIR(st.st_mode):
+        return "dir"
+    return "file" if stat.S_ISREG(st.st_mode) else "other"
+
+
 class _Finder:
     """在目录里按 CPython `FileFinder` 的规则找一个名字——只看目录清单，不 import、不 `find_spec`。"""
 
@@ -806,19 +909,25 @@ class _Finder:
             dirs: set[str] = set()
             py: set[str] = set()
             ext: dict[str, str] = {}
+            if _confined_path(self.root, d, no_follow=self.no_follow) is None:
+                # 目录本身（或它上面某一级）是链接 / 路径替身：不 scandir，更不 stat 里面的东西
+                raise PermissionError(d)
             with os.scandir(d) as it:
                 for entry in it:
                     if not self.budget.charge_entry():
                         break
                     name = entry.name
                     try:
-                        is_dir = entry.is_dir()
-                        is_file = entry.is_file()
+                        st = entry.stat(follow_symlinks=False)
                     except OSError:
                         continue
+                    if scanbudget.is_redirect(st):
+                        is_dir, is_file = self._redirect_kind(d / name, name, st)
+                    else:
+                        is_dir, is_file = stat.S_ISDIR(st.st_mode), stat.S_ISREG(st.st_mode)
                     if is_dir:
                         dirs.add(name)
-                    elif is_file:
+                    if is_file:
                         if name.endswith(".py"):
                             py.add(name[:-3])
                         else:
@@ -836,11 +945,22 @@ class _Finder:
         self._lists[key] = out
         return out
 
+    def _redirect_kind(self, p: Path, name: str, st: os.stat_result) -> tuple[bool, bool]:
+        """目录项本身是链接 / 路径替身时的（目录?, 文件?）：**不 stat 目标**。默认模式下目标经 `_kind` 逐级
+        `lstat` 确认落在项目内的 POSIX 符号链接才取真实类型；其余（no_follow、junction、指向项目外）
+        只按名字猜，保守地记成「可能是」——命中后由 `dir_guard` / `guard` 判成 redirect / outside_project。"""
+        if not self.no_follow and stat.S_ISLNK(st.st_mode):
+            kind = _kind(self.root, p, no_follow=False)
+            if kind in ("dir", "file", "other", "missing"):
+                return kind == "dir", kind == "file"
+        file_like = name.endswith(".py") or _EXT_RE.match(name) is not None
+        return (not file_like and name.isidentifier()), file_like
+
     def guard(self, p: Path) -> str:
         """命中的路径能不能碰：no_follow 时任何一级是符号链接 / 路径替身就不碰；跟随模式下实体必须在项目内。"""
         if self.no_follow and scanbudget.redirected_component(self.root, p) is not None:
             return "redirect"
-        if not projectenv.within(self.root, p):
+        if not _inside(self.root, p, no_follow=self.no_follow):
             return "outside_project"
         return ""
 
@@ -885,7 +1005,7 @@ class _Finder:
             return ""
         if self.no_follow or not stat.S_ISLNK(st.st_mode):
             return "redirect"
-        return "" if projectenv.within(self.root, p) else "outside_project"
+        return "" if _inside(self.root, p, no_follow=False) else "outside_project"
 
     def _hit(self, kind: str, path: Path) -> _Hit:
         return _Hit(kind, path, blocked=self.guard(path))
@@ -1034,7 +1154,10 @@ class _Scanner:
         if self.entry.kind == execspec.TARGET_SCRIPT:
             script_dir = self.script_p.parent
             roots = [_Root(script_dir, "script_dir")]
-            if script_dir.resolve(strict=False) != self.root.resolve(strict=False):
+            # 词法比较（不 resolve：链接的真实目标可能在项目外 / 是 UNC）；链接形态的 script_dir 由查找时的闸门挡
+            if os.path.normcase(os.path.abspath(script_dir)) != os.path.normcase(
+                os.path.abspath(self.root)
+            ):
                 # safe worker 把项目根（图库根）放进 sys.path；native 下它不在上面——仍按本地判（宁可
                 # 不误装），但标「未确认」
                 roots.append(
@@ -1075,7 +1198,7 @@ class _Scanner:
             elif part != ".":
                 depth += 1
         pinned = _pinned(self.root, self.root.joinpath(*parts))
-        if pinned is None or not projectenv.within(self.root, Path(pinned)):
+        if pinned is None or not _inside(self.root, Path(pinned), no_follow=self.no_follow):
             return None
         return Path(pinned)
 
@@ -1120,6 +1243,13 @@ class _Scanner:
         if pinned is None:
             return None, {"path": rel, "kind": "outside_project"}
         root = self.root
+        if _confined_path(self.root, Path(pinned), no_follow=self.no_follow) is None:
+            # 任何一级是链接 / 路径替身（no_follow）或越界链接（默认）：连 lstat / realpath 都不发
+            if not self.no_follow:
+                self.outside_hit = True
+                self.budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="import", path=rel)
+                return None, {"path": rel, "kind": "outside_project"}
+            return None, {"path": rel, "kind": "io", "detail": "redirect"}
         if not self.no_follow:
             # 跟随模式：词法前缀过了不等于实体在项目内（入口脚本 / 命中的文件本身可能是指到项目外的链接）。
             # 先 realpath 再按前缀判（`contained_path`），之后 stat / 读都用**净化后**的那条真实路径
@@ -1301,7 +1431,9 @@ class _Scanner:
         unused: frozenset[str] = frozenset()
         if parsed is not None:
             unused = figcapture.unused_imports(parsed.tree)
-            targets = _relative_targets(parsed.tree, self.script_p, self.root)
+            targets = _relative_targets(
+                parsed.tree, self.script_p, self.root, no_follow=self.no_follow
+            )
             if targets is None:
                 self.main_reachable = True
             else:
@@ -1354,14 +1486,14 @@ class _Scanner:
         if parsed is None:
             return
         if job.pkg_dir is not None:
-            files = _package_files(job.pkg_dir, self.budget)
+            files = _package_files(job.pkg_dir, self.budget, self.root, no_follow=self.no_follow)
             if files is None:
                 self.main_reachable = True
             else:
                 self.main_queue += files
         if figcapture.reaches_main(parsed.tree, self.stem):
             self.main_reachable = True
-        targets = _relative_targets(parsed.tree, job.path, self.root)
+        targets = _relative_targets(parsed.tree, job.path, self.root, no_follow=self.no_follow)
         if targets is None:
             self.main_reachable = True
         else:
@@ -1469,7 +1601,9 @@ class _Scanner:
             key = os.path.normcase(str(f))
             if key in main_scanned:
                 continue
-            if len(main_scanned) >= MAX_MAIN_SCAN_FILES or not projectenv.within(self.root, f):
+            if len(main_scanned) >= MAX_MAIN_SCAN_FILES or not _inside(
+                self.root, f, no_follow=self.no_follow
+            ):
                 self.main_reachable = True
                 break
             main_scanned.add(key)
@@ -1480,7 +1614,7 @@ class _Scanner:
             if sub is None:
                 self.problems.append(problem or problem2)
                 break
-            targets = _relative_targets(sub, f, self.root)
+            targets = _relative_targets(sub, f, self.root, no_follow=self.no_follow)
             if targets is None or figcapture.reaches_main(sub, self.stem):
                 self.main_reachable = True
                 break
@@ -1798,42 +1932,88 @@ def scan(
     ).run()
 
 
-def _package_files(pkg_dir: Path, budget: scanbudget.Budget) -> list[Path] | None:
-    """包目录里的全部 .py（有界遍历，不跟随目录链接）；超过 `MAX_MAIN_SCAN_FILES` 或读不了回 None。"""
+def _package_files(
+    pkg_dir: Path, budget: scanbudget.Budget, root: Path, *, no_follow: bool
+) -> list[Path] | None:
+    """包目录里的全部 .py（有界遍历，不下探目录链接）；超过 `MAX_MAIN_SCAN_FILES` 或读不了回 None。
+    自己 `scandir` + `entry.stat(follow_symlinks=False)`——`os.walk` 内部用 `entry.is_dir()`（跟随）分类，
+    会在我们判链接之前就 stat 目标。"""
     out: list[Path] = []
+
+    def walk(cur: Path) -> bool:
+        files: list[str] = []
+        subdirs: list[str] = []
+        with os.scandir(cur) as it:
+            for entry in it:
+                st = entry.stat(follow_symlinks=False)
+                if scanbudget.is_redirect(st):
+                    if entry.name.endswith(".py"):
+                        if _kind(root, cur / entry.name, no_follow=no_follow) != "file":
+                            return False  # 链接形态的源文件：不知道里面是什么，看不全
+                        files.append(entry.name)
+                    continue  # 目录链接不下探
+                if stat.S_ISDIR(st.st_mode):
+                    subdirs.append(entry.name)
+                else:
+                    files.append(entry.name)
+        for name in sorted(files):
+            if not budget.charge_entry():
+                return False
+            if name.endswith(".py"):
+                out.append(cur / name)
+                if len(out) > MAX_MAIN_SCAN_FILES:
+                    return False
+        return all(walk(cur / d) for d in sorted(subdirs))
+
     try:
-        for cur, dirs, files in os.walk(pkg_dir, followlinks=False):
-            dirs.sort()
-            for name in sorted(files):
-                if not budget.charge_entry():
-                    return None
-                if name.endswith(".py"):
-                    out.append(Path(cur) / name)
-                    if len(out) > MAX_MAIN_SCAN_FILES:
-                        return None
+        kind = _kind(root, pkg_dir, no_follow=no_follow)
+        if kind == "blocked":
+            return None
+        if kind == "dir" and not walk(pkg_dir):
+            return None
     except OSError:
         return None
     return out
 
 
-def _as_module(target: Path) -> list[Path] | None:
+def _as_module(target: Path, root: Path, *, no_follow: bool) -> list[Path] | None:
     """一个点分路径在磁盘上对应的源码：`x.py`、`x/__init__.py` 或命名空间目录里的 .py；找不到 / 只有编译
-    扩展（没有源码可扫）回 None。"""
+    扩展（没有源码可扫）/ 被链接挡住回 None。每个存在性判断先过 `_kind`（逐级 lstat 的闸门）。"""
     try:
         py = target.with_name(target.name + ".py")
-        if py.is_file():
+        kind = _kind(root, py, no_follow=no_follow)
+        if kind == "blocked":
+            return None
+        if kind == "file":
             return [py]
         init = target / "__init__.py"
-        if init.is_file():
+        kind = _kind(root, init, no_follow=no_follow)
+        if kind == "blocked":
+            return None
+        if kind == "file":
             return [init]
-        if target.is_dir():
-            return sorted(p for p in target.glob("*.py") if p.is_file())
+        kind = _kind(root, target, no_follow=no_follow)
+        if kind == "blocked":
+            return None
+        if kind == "dir":
+            found: list[Path] = []
+            with os.scandir(target) as it:
+                names = sorted(e.name for e in it if e.name.endswith(".py"))
+            for n in names:
+                k = _kind(root, target / n, no_follow=no_follow)
+                if k == "blocked":
+                    return None
+                if k == "file":
+                    found.append(target / n)
+            return found
     except OSError:
         return None
     return None
 
 
-def _relative_targets(tree: ast.AST, file: Path, root: Path) -> list[Path] | None:
+def _relative_targets(
+    tree: ast.AST, file: Path, root: Path, *, no_follow: bool
+) -> list[Path] | None:
     """`file` 里每条相对导入（`from . import x` / `from .x import y` / `from .. import z`）解析到的源码文件；
     有一条解析不到、越出项目根、或只能落到编译扩展，就回 None（看不全）。`from . import name` 里的
     name 不是子模块时是包 `__init__.py` 里的属性，包本身找得到就算解析到了。"""
@@ -1844,19 +2024,19 @@ def _relative_targets(tree: ast.AST, file: Path, root: Path) -> list[Path] | Non
         base = file.parent
         for _ in range(node.level - 1):
             base = base.parent
-        if not projectenv.within(root, base):
+        if not _inside(root, base, no_follow=no_follow):
             return None
         segs = node.module.split(".") if node.module else []
         if not all(seg.isidentifier() for seg in segs):
             return None
         target = base.joinpath(*segs) if segs else base
-        found = _as_module(target)
+        found = _as_module(target, root, no_follow=no_follow)
         if found is None:
             return None
         out += found
         for alias in node.names:
             if alias.name != "*" and alias.name.isidentifier():
-                out += _as_module(target / alias.name) or []
+                out += _as_module(target / alias.name, root, no_follow=no_follow) or []
     return out
 
 
