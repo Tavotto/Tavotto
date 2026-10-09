@@ -142,7 +142,7 @@ jobs:
       - name: 清掉上一轮的分片产物
         run: rm -f "$RUNNER_TEMP"/pytest-shard-* "$RUNNER_TEMP"/seq-shard-*
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@v5
         with:
           # 显式钉公开仓库：被 ci-infra 跨仓库调用时默认 repository 是调用方。
           repository: Tavotto/Tavotto
@@ -170,7 +170,7 @@ jobs:
       # lab 机器解析不了字体来源的 objects / raw.githubusercontent.com，Actions 产物通道是通的。
       - name: 取回候选产物（发行档）
         if: inputs.use_prebuilt_dist
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v7
         with:
           name: dist
           path: dist
@@ -304,7 +304,7 @@ jobs:
       # 真正跑的机器，hosted 的计时对它只是近似）。
       - name: 常规套件分片证据
         if: always() && steps.regular.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: lab-pytest-shards-${{ inputs.mode }}-${{ github.run_id }}
           path: |
@@ -515,7 +515,7 @@ jobs:
       # 成功的 100+ case 全量上传会让 artifact 直接撑爆，而它们对排查毫无帮助。
       - name: 兼容性失败诊断
         if: failure() && steps.compat.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: compat-diagnostics-${{ inputs.mode }}-${{ github.run_id }}
           path: |
@@ -575,7 +575,7 @@ jobs:
 
       - name: 失败诊断包
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: lab-diagnostics-${{ inputs.mode }}-${{ github.run_id }}
           # 只收报告与 diff，**不收** venv / node_modules / 整个 checkout：
@@ -595,7 +595,7 @@ jobs:
 
       - name: 长期留存的指标
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: lab-metrics-${{ inputs.mode }}-${{ github.run_id }}
           path: |
