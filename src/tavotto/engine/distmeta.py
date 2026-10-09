@@ -136,6 +136,7 @@ COMPAT_CODES = frozenset(
         "path_entries_not_followed",
         "metadata_scan_incomplete",
         "layer_order_unresolved",
+        "layers_disagree_on_same_distribution",
     }
 )
 

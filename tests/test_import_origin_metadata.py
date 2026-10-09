@@ -1818,6 +1818,112 @@ _ALLOWED_ATTRS = {
 class TestStructuralGate:
     TREE = ast.parse(Path(distmeta.__file__).read_text(encoding="utf-8"))
 
+    def test_every_literal_distmeta_emits_is_in_its_closed_set(self):
+        """结构性：AST 扫 distmeta.py，所有发出的 compatibility 码 / 状态 / 结论种类 / 证据码 / issue 码的字面量
+        都在各自的闭集里；无法静态判定的写法直接红（别靠「某次扫描恰好没发出来」的运行时断言）。"""
+        tree = ast.parse(Path(distmeta.__file__).read_text(encoding="utf-8"))
+        closed = {
+            "compat": set(distmeta.COMPAT_CODES),
+            "status": set(distmeta.STATUSES) | {distmeta.ST_NOT_CHECKED},
+            "kind": {v for k, v in vars(distmeta).items() if k.startswith("KIND_")},
+            "evidence": set(distmeta.EVIDENCE_CODES),
+            "issue": set(scanbudget.ISSUE_CODES),
+        }
+        seen: dict[str, list[tuple[int, set[str]]]] = {k: [] for k in closed}
+
+        def scan(fn: ast.AST) -> None:
+            params = {a.arg for a in fn.args.args + fn.args.kwonlyargs}  # type: ignore[attr-defined]
+            # `refused` 来自 `Budget.charge_source`：它只回 scanbudget 的账本码
+            assigned: dict[str, set[str]] = {"refused": set(scanbudget.ISSUE_CODES)}
+
+            def lits(node) -> set[str] | None:
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    return {node.value}
+                if isinstance(node, ast.IfExp):
+                    x, y = lits(node.body), lits(node.orelse)
+                    return None if x is None or y is None else x | y
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                    if node.value.id == "scanbudget" and hasattr(scanbudget, node.attr):
+                        return {getattr(scanbudget, node.attr)}
+                if isinstance(node, ast.Name):
+                    if node.id in assigned:
+                        return assigned[node.id]
+                    v = getattr(distmeta, node.id, None)
+                    if isinstance(v, str) and node.id.isupper():
+                        return {v}
+                return None
+
+            def set_lits(node) -> set[str] | None:
+                if isinstance(node, ast.Set):
+                    out: set[str] = set()
+                    for e in node.elts:
+                        v = lits(e)
+                        if v is None:
+                            return None
+                        out |= v
+                    return out
+                return lits(node)
+
+            def bind(target, value) -> None:
+                if isinstance(target, ast.Name):
+                    v = lits(value)
+                    if v is not None:
+                        assigned.setdefault(target.id, set()).update(v)
+                elif isinstance(target, ast.Tuple) and isinstance(value, ast.Tuple):
+                    for t, e in zip(target.elts, value.elts, strict=True):
+                        bind(t, e)
+
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Assign) and len(n.targets) == 1:
+                    bind(n.targets[0], n.value)
+
+            def record(kind: str, node, line: int) -> None:
+                v = lits(node)
+                assert v is not None, f"line {line}: {kind} code not statically checkable"
+                seen[kind].append((line, v))
+
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.args:
+                    f, recv = n.func.attr, n.func.value
+                    if f == "append" and isinstance(recv, ast.Name) and recv.id == "compat":
+                        record("compat", n.args[0], n.lineno)
+                    elif f == "append" and isinstance(recv, ast.Name) and recv.id == "evidence":
+                        record("evidence", n.args[0], n.lineno)
+                    elif f == "add" and isinstance(recv, ast.Call):
+                        owner = getattr(
+                            recv.func, "value", None
+                        )  # `x.modules.setdefault(m, set()).add(EV)`
+                        if getattr(recv.func, "attr", "") == "setdefault" and (
+                            getattr(owner, "attr", "") == "modules"
+                        ):
+                            record("evidence", n.args[0], n.lineno)
+                    elif f in ("note", "refuse"):
+                        if isinstance(n.args[0], ast.Name) and n.args[0].id in params:
+                            continue  # 转发包装（`_Reader.note/refuse`）：调用方各自被检查
+                        record("issue", n.args[0], n.lineno)
+                if isinstance(n, ast.Assign) and len(n.targets) == 1:
+                    t = n.targets[0]
+                    if (
+                        isinstance(t, ast.Name)
+                        and t.id == "evidence"
+                        and isinstance(n.value, ast.Set)
+                    ):
+                        v = set_lits(n.value)
+                        assert v is not None, f"line {n.lineno}: evidence not checkable"
+                        seen["evidence"].append((n.lineno, v))
+                if isinstance(n, ast.Dict):
+                    for k, val in zip(n.keys, n.values, strict=True):
+                        if isinstance(k, ast.Constant) and k.value in ("status", "kind"):
+                            record(k.value, val, val.lineno)
+
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scan(fn)
+        for kind in closed:
+            assert seen[kind], f"{kind}: the scan found nothing (gate is hollow)"
+            for line, v in seen[kind]:
+                assert v <= closed[kind], (kind, line, sorted(v - closed[kind]))
+
     def test_imports_are_the_allowed_leaf_set(self):
         seen: set[str] = set()
         for node in ast.walk(self.TREE):
