@@ -173,11 +173,34 @@
 
 - 先脱敏再交出、项目清单只留条数
 - 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
-- report.json 换形必升 bundle schema（现 5；5 = 新增 task-diagnostics.json）
+- report.json 换形必升 bundle schema（现 6；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
 - 不写盘不上传不进 telemetry
 - traceback 配收尾异常行、worker.log 只带证据行（#435）
+
+## 脚本运行失败进全局报告（bundle schema 6）
+
+主语：**试运行（`/api/registry/probe`）与准备会话把 `WorkerError` 接在自己里面**——前者以 HTTP 200 + `error` 交出，
+后者落成会话终局——都不经 `app._worker_error`。而 `recent_errors` 只读 `diagnostics.log` 里的 ERROR 行、
+`missing_dependencies` 只由渲染端点写、脚本自己的异常由 worker 协议带回而不写 `worker.log`，所以这些运行失败多次，
+全局报告里三处都是空的（2026-10 Windows 实测）。
+
+- `project.recent_runs`（`taskdiag.run_summary`）：本项目登记表里 `script_run` + `preparation` 两类尝试的**结果分类**——
+  `counts`（ready / error / cancelled / needs_input）、`by_error_code`（稳定码计数：`missing_dependency` /
+  `script_no_figure` / `script_probe_failed`…）、最近 `RUN_SUMMARY_LIMIT` 条的 `kind` / `outcome` / `error_code` /
+  `captured_count` / `elapsed_ms` / `at`。它是**已冻结快照的二次投影**，不另采集、不执行任何东西；值全部来自
+  `diagnostic_projection` 已过形状守卫的字段，**不含**脚本名、路径、argv、图名、traceback、模块名。逐次详情仍在
+  `task-diagnostics.json` 与引导卡的「下载这一次的诊断」。
+- **构建后的 finalizer 失败按失败算。** 准备在 `PreparationService._finish` 就把任务诊断按「执行成功」冻成 `ready`，
+  之后 `prepsession._done` 才跑登记（`register_probed` 撞 stem 等），会话终局是 partial。`_done` 在 finalizer 失败时
+  调 `taskdiag.STORE.amend_post_terminal_failure`：**唯一**允许改写冻结快照的入口，只把 `ready` 改成 `error` 并写
+  `error.code`（稳定码过闸），其余字段与 `recorded_at` 不动；非 ready 的终局不碰，幂等。这样 `recent_runs` 与单次
+  诊断读到同一个结论，不必让 taskdiag 反向依赖会话。准备条目的 `elapsed_ms` 由投影从起止时间算出（与 `script_run` 同名同单位）。
+- 缺依赖现场（`project.missing_dependencies`）现在也覆盖这两条路（`deprepair.note_missing_dependency_of`）。
+  **敏感参数的运行不带模块名**：worker 在源头就把 `module` 清空，`note_missing_dependency_of` 没有模块名就不记——
+  报告里仍有 `recent_runs` 的 `missing_dependency` 计数，但没有包名。
+- 看护：`tests/test_diagnostics_run_failures.py`（失败运行进报告、敏感运行不泄露、金丝雀全文搜索包内每个文件）。
 
 ## 任务绑定诊断（T04，`engine/taskdiag.py`、`GET /api/diagnostics/task`、bundle schema 5）
 
