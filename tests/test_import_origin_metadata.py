@@ -16,6 +16,7 @@ import importlib.metadata
 import importlib.util
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -107,20 +108,43 @@ class TestLayout:
         roots = distmeta.site_packages(prefix)
         assert [r.rel for r in roots] == ["Lib/site-packages"]
 
-    def test_free_threaded_and_several_python_dirs_are_all_listed_preferred_version_first(
-        self, tmp_path
-    ):
+    def test_only_the_python_dir_named_by_pyvenv_cfg_is_a_root(self, tmp_path):
         prefix, _ = _env(tmp_path)
         (prefix / "lib" / "python3.13t" / "site-packages").mkdir(parents=True)
         (prefix / "lib" / "python3.11" / "site-packages").mkdir(parents=True)
         (prefix / "lib" / "notpython" / "site-packages").mkdir(parents=True)
-        rels = [r.rel for r in distmeta.site_packages(prefix)]
-        assert rels[0] == SP_REL  # pyvenv.cfg 的 version = 3.12.1 在前
-        assert set(rels) == {
-            SP_REL,
-            "lib/python3.13t/site-packages",
-            "lib/python3.11/site-packages",
-        }
+        assert [r.rel for r in distmeta.site_packages(prefix)] == [SP_REL]  # version = 3.12.1
+
+    def test_free_threaded_dir_of_the_declared_version_is_accepted(self, tmp_path):
+        prefix, _ = _env(tmp_path)
+        (prefix / "lib" / "python3.12t" / "site-packages").mkdir(parents=True)
+        rels = {r.rel for r in distmeta.site_packages(prefix)}
+        assert rels == {SP_REL, "lib/python3.12t/site-packages"}
+
+    def test_a_leftover_python_dir_of_another_version_is_not_installed_evidence(self, tmp_path):
+        prefix, _ = _env(tmp_path)  # pyvenv.cfg: 3.12.1
+        stale = prefix / "lib" / "python3.11" / "site-packages"
+        _dist(stale, "oldpkg", "1.0", top="oldpkg\n", record=["oldpkg/__init__.py"])
+        got = _scan(tmp_path, "import oldpkg\n", _index(prefix))["oldpkg"]
+        assert got.distribution_status != "installed_confirmed"
+        assert got.distribution_candidates == ()
+
+    def test_unknown_python_version_with_several_candidate_dirs_is_incomplete(self, tmp_path):
+        prefix, _ = _env(tmp_path)
+        _write(prefix / "pyvenv.cfg", "home = /usr/bin\n")  # 没有 version
+        stale = prefix / "lib" / "python3.11" / "site-packages"
+        _dist(stale, "oldpkg", "1.0", top="oldpkg\n", record=["oldpkg/__init__.py"])
+        idx = _index(prefix)
+        assert not idx.complete
+        got = _scan(tmp_path, "import oldpkg\n", idx)["oldpkg"]
+        assert got.distribution_status == "environment_not_checked"
+
+    def test_unknown_python_version_with_one_candidate_dir_is_still_read(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _write(prefix / "pyvenv.cfg", "home = /usr/bin\n")
+        _dist(site, "pkg", "1.0", top="pkg\n", record=["pkg/__init__.py"])
+        got = _scan(tmp_path, "import pkg\n", _index(prefix))["pkg"]
+        assert got.distribution_status == "installed_confirmed"
 
     def test_a_prefix_without_site_packages_was_not_checked_rather_than_empty(self, tmp_path):
         (tmp_path / "bare").mkdir()
@@ -629,7 +653,8 @@ class TestRefusalNeverBecomesAbsence:
         prefix, _ = _env(tmp_path)
         real = tmp_path / "realpy" / "site-packages"
         real.mkdir(parents=True)
-        (prefix / "lib" / "python3.11").symlink_to(tmp_path / "realpy", target_is_directory=True)
+        shutil.rmtree(prefix / "lib" / "python3.12")  # pyvenv.cfg 声明的版本目录换成链接
+        (prefix / "lib" / "python3.12").symlink_to(tmp_path / "realpy", target_is_directory=True)
         self._incomplete(tmp_path, _index(prefix), "anything")
 
     def test_an_unlistable_lib_dir_next_to_a_good_one_is_incomplete(self, tmp_path, monkeypatch):

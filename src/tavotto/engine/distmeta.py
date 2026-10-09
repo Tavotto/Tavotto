@@ -159,6 +159,7 @@ _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$")
 _VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+!_*-]{0,63}$")
 _PYDIR_RE = re.compile(r"^python3\.\d{1,2}t?$")
+_PYVER_RE = re.compile(r"^(\d{1,2})\.(\d{1,3})(?![0-9])")
 _EXT_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z0-9_-]+)*\.(?:so|pyd)$")
 _FINDER_RE = re.compile(r"\b(__editable___[A-Za-z0-9_]+_finder)\b")
 _SKIP_ENTRIES = ("__pycache__",)
@@ -420,8 +421,13 @@ def _layout_dirs(prefix: str, version_hint: str) -> tuple[list[tuple[str, str]],
         except OSError:
             names = []
             refused = True
-        # pyvenv.cfg 的 version 在前
-        names.sort(key=lambda n: (not (version_hint and n.startswith(f"python{version_hint}")), n))
+        # 版本只认 pyvenv.cfg 的 version / version_info：残留的别的版本目录（升级 Python 后没清）不在 sys.path 上，
+        # 其中的元数据不是「已安装」证据。判不出版本且有多个候选 = 不知道哪一个是活的，一个都不认（环境没量到）。
+        if version_hint:
+            names = [n for n in names if n in (f"python{version_hint}", f"python{version_hint}t")]
+        elif len(names) > 1:
+            names = []
+            refused = True
         for n in names:
             if sub(lib, n) != "dir":
                 continue
@@ -483,7 +489,8 @@ def _site_packages_state(
         budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="env", path="pyvenv.cfg")
         incomplete = True
     version = cfg.get("version_info") or cfg.get("version") or ""
-    hint = ".".join(version.split(".")[:2]) if version else ""
+    m = _PYVER_RE.match(version.strip())
+    hint = f"{m.group(1)}.{m.group(2)}" if m else ""
     env_layout, env_refused = _layout_dirs(pre, hint)
     incomplete = incomplete or env_refused
     roots = [
