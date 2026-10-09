@@ -1,0 +1,142 @@
+name: Complete Windows signing (SignPath)
+
+# **SignPath 签名流程的第二段。** 生产证书要求每次在 SignPath UI 手动批准，
+# 不能让构建 job 一直占着 runner 等人点批准，所以拆成两段：
+#
+# 第一段（desktop-tauri.yml，signing-mode='submit-only'）：
+#   构建 Windows 安装包 → 提交签名请求（不等待）→ 输出审批链接 → 成功退出。
+#   人工在 SignPath UI 批准。
+#
+# 第二段（本工作流，手动触发）：
+#   轮询签名请求状态 → 下载已签名产物 → 校验签名 → 重打更新包 → 上传最终产物。
+#
+# 用法：
+#   1. desktop-tauri.yml 跑完后，从其 step summary 拿到 signing-request-id
+#      和 SignPath 审批链接，去 UI 批准。
+#   2. 批准后，在本工作流点 "Run workflow"，填入：
+#      - signing-request-id：上一步的请求 ID
+#      - source-run-id：desktop-tauri 的 run ID（用于追溯）
+#      - app-version：版本号（如 0.18.1）
+#
+# 轮询超时 12 小时（批准通常几分钟内完成，超时是防挂死的上限）。
+# 下载的签名产物必须通过 Get-AuthenticodeSignature Valid 校验（生产证书），
+# 否则直接失败，不产出任何东西。
+
+on:
+  workflow_dispatch:
+    inputs:
+      signing-request-id:
+        description: "SignPath 签名请求 ID（desktop-tauri step summary 里拿）"
+        required: true
+        type: string
+      source-run-id:
+        description: "来源 desktop-tauri workflow 的 run ID（用于追溯）"
+        required: true
+        type: string
+      app-version:
+        description: "版本号（不带 v，如 0.18.1）"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+
+jobs:
+  complete-signing:
+    timeout-minutes: 720  # 12 小时：等人工批准的上限，不是性能预算
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v5
+        with:
+          python-version: "3.13"
+
+      - name: 等待 SignPath 签名完成并下载
+        shell: pwsh
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORG_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          REQUEST_ID: ${{ inputs.signing-request-id }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $headers = @{ Authorization = "Bearer $env:SIGNPATH_API_TOKEN" }
+          $statusUrl = "https://app.signpath.io/api/v1/$env:SIGNPATH_ORG_ID/SigningRequests/$env:REQUEST_ID"
+          $deadline = (Get-Date).AddHours(12)
+          Write-Host "轮询签名请求状态：$statusUrl"
+          while ((Get-Date) -lt $deadline) {
+            $resp = Invoke-RestMethod -Uri $statusUrl -Headers $headers -Method Get
+            $status = $resp.Status
+            Write-Host "当前状态：$status"
+            if ($status -eq "Completed") { break }
+            if ($status -in @("Failed", "Denied", "Canceled")) {
+              throw "SignPath 签名请求未成功完成，状态：$status"
+            }
+            Start-Sleep -Seconds 60
+          }
+          if ($status -ne "Completed") { throw "等待超时：签名请求 12 小时内未完成" }
+          Write-Host "签名完成，下载产物..."
+          $downloadUrl = "$statusUrl/SignedArtifact"
+          New-Item -ItemType Directory -Force -Path "signed-out" | Out-Null
+          Invoke-WebRequest -Uri $downloadUrl -Headers $headers -OutFile "signed-out/signed.zip"
+          Expand-Archive -Path "signed-out/signed.zip" -DestinationPath "signed-out/extracted" -Force
+          Get-ChildItem "signed-out/extracted" -Recurse -File | Format-Table Name, Length
+
+      - name: 校验签名并替换安装包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $signed = @(Get-ChildItem "signed-out/extracted" -Recurse -File -Filter "Tavotto-$env:APP_VERSION-Windows-Setup.exe")
+          if ($signed.Count -ne 1) {
+            throw "SignPath 返回的签名安装包数量异常（$($signed.Count) 个）"
+          }
+          New-Item -ItemType Directory -Force -Path "out" | Out-Null
+          Copy-Item $signed[0].FullName "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe" -Force
+          $signature = Get-AuthenticodeSignature "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe"
+          if ($signature.Status -ne 'Valid') {
+            throw "签名无效：$($signature.Status)（生产证书必须 Valid）"
+          }
+          Write-Host "SignPath 签名有效：$($signature.SignerCertificate.Subject)"
+        env:
+          APP_VERSION: ${{ inputs.app-version }}
+
+      - name: 重打 Windows 更新包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = "out\Tavotto-$env:APP_VERSION-Windows-Setup.exe"
+          if (!(Test-Path $exe)) { throw "找不到最终安装包: $exe" }
+          $zip = "out\Tavotto_${env:APP_VERSION}_x64-setup.nsis.zip"
+          python scripts/make_updater_zip.py --exe $exe --out $zip
+          pnpm dlx @tauri-apps/cli@2.11.4 signer sign $zip
+          if (!(Test-Path "$zip.sig")) { throw "更新包签名没生成" }
+          Get-ChildItem out | Format-Table Name, Length
+        env:
+          APP_VERSION: ${{ inputs.app-version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: 上传最终 Windows 产物
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: desktop-tauri-windows-x86_64-signed
+          path: out/*
+          if-no-files-found: error
+
+      - name: 写入完成摘要
+        shell: pwsh
+        run: |
+          {
+            echo "## Windows 签名完成"
+            echo ""
+            echo "- 签名请求：`${{ inputs.signing-request-id }}`"
+            echo "- 来源 run：`${{ inputs.source-run-id }}`"
+            echo "- 版本：`${{ inputs.app-version }}`"
+            echo "- 产物：`desktop-tauri-windows-x86_64-signed`"
+          } >> $env:GITHUB_STEP_SUMMARY
