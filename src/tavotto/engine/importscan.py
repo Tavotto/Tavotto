@@ -748,6 +748,25 @@ class _Listing:
 _MAX_LINK_HOPS = 40
 
 
+def _is_windows() -> bool:
+    return sys.platform == "win32"
+
+
+def _plain_link_target(target: str) -> str:
+    """Windows 的 `os.readlink` 返回替代路径，常带 `\\\\?\\`（或 `\\\\??\\`）前缀：`\\\\?\\C:\\x` -> `C:\\x`，
+    `\\\\?\\UNC\\srv\\share` -> `\\\\srv\\share`。纯字符串运算；不去前缀就永远对不上项目前缀，项目内的符号链接
+    会被当成越界。UNC 去前缀后仍是网络路径，`_under` 不会认它在项目内。"""
+    if not _is_windows():
+        return target
+    for pre in ("\\\\?\\", "\\\\.\\", "\\??\\"):
+        if target.startswith(pre):
+            rest = target[len(pre) :]
+            if rest[:4].upper() == "UNC\\":
+                return "\\\\" + rest[4:]
+            return rest
+    return target
+
+
 def _under(base: str, cand: str) -> list[str] | None:
     """`cand` 词法上在 `base` 之下时回相对的各级名字（相等回 []）；否则 None。纯字符串运算。"""
     nb, nc = os.path.normcase(base), os.path.normcase(cand)
@@ -824,10 +843,10 @@ def _confined_path(root: Path, p: Path, *, no_follow: bool) -> str | None:
             cur = nxt
             continue
         hops += 1
-        if no_follow or not stat.S_ISLNK(st.st_mode) or hops > _MAX_LINK_HOPS:
+        if no_follow or not scanbudget.is_symlink(st) or hops > _MAX_LINK_HOPS:
             return None
         try:
-            target = os.readlink(nxt)
+            target = _plain_link_target(os.readlink(nxt))
         except (OSError, ValueError):
             return None
         if os.path.isabs(target) or PureWindowsPath(target).anchor:
@@ -928,7 +947,7 @@ class _Finder:
         """目录项本身是链接 / 路径替身时的（目录?, 文件?）：**不 stat 目标**。默认模式下目标经 `_kind` 逐级
         `lstat` 确认落在项目内的 POSIX 符号链接才取真实类型；其余（no_follow、junction、指向项目外）
         只按名字猜，保守地记成「可能是」——命中后由 `dir_guard` / `guard` 判成 redirect / outside_project。"""
-        if not self.no_follow and stat.S_ISLNK(st.st_mode):
+        if not self.no_follow and scanbudget.is_symlink(st):
             kind = _kind(self.root, p, no_follow=False)
             if kind in ("dir", "file", "other", "missing"):
                 return kind == "dir", kind == "file"
@@ -982,7 +1001,7 @@ class _Finder:
             return ""
         if not scanbudget.is_redirect(st):
             return ""
-        if self.no_follow or not stat.S_ISLNK(st.st_mode):
+        if self.no_follow or not scanbudget.is_symlink(st):
             return "redirect"
         return "" if _inside(self.root, p, no_follow=False) else "outside_project"
 
