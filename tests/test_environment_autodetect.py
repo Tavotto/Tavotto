@@ -1542,6 +1542,33 @@ def test_a_finder_pointing_into_the_project_defers_and_one_pointing_out_does_not
     assert not marker.exists()
 
 
+@posix_only
+@needs_worker
+@pytest.mark.parametrize("spec", [False, True], ids=["import-mode", "spec-mode"])
+def test_installing_a_missing_package_into_the_same_env_invalidates_the_cached_negative(
+    tmp_path, spec
+):
+    """Codex #820 r4234882848：缓存里是"缺 X"，用户随后把 X 装进同一个环境（路径、环境代都没变）——重查必须看到。指纹 = 它的
+    site-packages 目录 mtime，不起解释器。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    cand = [{"python": py, "source": userenvs.SOURCE_CONDA, "label": "lab"}]
+    need = [{"import_name": "late_installed_pkg", "distribution": "late-installed-pkg"}]
+    kw = {"root": str(tmp_path / "proj")} if spec else {}
+    userenvs.reset_cache()
+    (first,) = userenvs.evaluate(cand, need, [], **kw)
+    assert first["satisfies"] is False and first["missing"] == ["late-installed-pkg"]
+    (again,) = userenvs.evaluate(cand, need, [], **kw)
+    assert again["satisfies"] is False  # 没变：命中缓存
+    site_dir = next((base / "lab" / "lib").glob("python*")) / "site-packages"
+    time.sleep(0.02)
+    (site_dir / "late_installed_pkg").mkdir()
+    (site_dir / "late_installed_pkg" / "__init__.py").write_text("", "utf-8")
+    (now,) = userenvs.evaluate(cand, need, [], **kw)
+    assert now["satisfies"] is True, "装进同一个环境之后，旧的『缺』仍被缓存命中"
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC

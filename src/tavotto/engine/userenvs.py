@@ -582,6 +582,41 @@ _SOURCE_RANK = {
 _probe_cache: dict[tuple, dict] = {}
 
 
+def _site_fingerprint(python: str) -> tuple:
+    """这个环境 site-packages 目录们的 mtime（ns）——**不起解释器**，只 `glob` + `stat`。装 / 卸一个包会在目录里加 / 减一项，目录
+    mtime 随之变；环境代（`environment_generation`）管"重建"，这个管"装了包"：用户补装了缺的包之后，之前缓存的"缺"（以及卸掉
+    之后缓存的"装齐"）不再命中（Codex #820 r4234882848）。venv 按布局找；有 `home =` 的（include-system 或基础解释器）再加基础
+    前缀下的 site-packages / dist-packages。找不全只会让指纹偏少——最坏是少一次失效，不会错判。"""
+    roots: list[str] = []
+    try:
+        exe = os.path.abspath(python)
+        roots.append(os.path.dirname(os.path.dirname(exe)))
+        roots.append(os.path.dirname(os.path.dirname(os.path.realpath(python))))
+        cfg = os.path.join(roots[0], "pyvenv.cfg")
+        if os.path.isfile(cfg):
+            with open(cfg, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    k, _, v = line.partition("=")
+                    if k.strip().lower() == "home" and v.strip():
+                        roots.append(os.path.dirname(v.strip()))
+    except OSError:
+        pass
+    seen: dict[str, int] = {}
+    for root in dict.fromkeys(roots):
+        for pattern in (
+            "lib/python*/site-packages",
+            "lib/python*/dist-packages",
+            "lib64/python*/site-packages",
+            "Lib/site-packages",
+        ):
+            for d in glob.glob(os.path.join(root, pattern)):
+                try:
+                    seen[d] = os.stat(d).st_mtime_ns
+                except OSError:
+                    continue
+    return tuple(sorted(seen.items()))
+
+
 def _cache_key(
     python: str, modules: tuple[str, ...], bundled: bool, mode: str = "import", root: str = ""
 ) -> tuple:
@@ -593,7 +628,14 @@ def _cache_key(
     from . import projectenv
 
     how: object = ("spec", os.path.normcase(os.path.realpath(root))) if mode == "spec" else "import"
-    return (_key(python), projectenv.environment_generation(python), modules, bundled, how)
+    return (
+        _key(python),
+        projectenv.environment_generation(python),
+        _site_fingerprint(python),
+        modules,
+        bundled,
+        how,
+    )
 
 
 def _probe(
