@@ -887,7 +887,9 @@ def _bindings_unshadowed(tree: ast.AST, names: _Names) -> bool:
         got = sites.get(name, [])
         if len(got) != 1 or not got[0]:
             return False
-    for name in _tracked_parser_names(tree, names):  # 解析器变量：恰好一次（函数内构造的常见写法允许）
+    for name in _tracked_parser_names(
+        tree, names
+    ):  # 解析器变量：恰好一次（函数内构造的常见写法允许）
         if len(sites.get(name, [])) != 1:
             return False
     return True
