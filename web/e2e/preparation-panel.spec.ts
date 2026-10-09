@@ -92,8 +92,9 @@ test('首跑闭环：只有脚本与数据 → 面板里选目录、改参数、
   mkdirSync(path.join(project, 'data'), { recursive: true })
   writeFileSync(path.join(project, 'tools', 'plot.py'), script(log, path.join(root, 'HOLD'), true), 'utf-8')
   writeFileSync(path.join(project, 'data', 'values.txt'), '3 1 4\n', 'utf-8')
+  let a: Awaited<ReturnType<typeof app>> | undefined
   try {
-    const a = await app({ figures: project })
+    a = await app({ figures: project })
     await page.setViewportSize({ width: 1400, height: 900 })
     await page.goto(a.baseURL)
 
@@ -156,7 +157,13 @@ test('首跑闭环：只有脚本与数据 → 面板里选目录、改参数、
     await expect(panel(page).locator('[data-fact="execution_finished"]')).toHaveAttribute('data-value', 'true')
     await expect(panel(page).locator('[data-fact="figure_captured"]')).toHaveAttribute('data-value', 'true')
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    // 先等应用真正退出再删目录：Windows 上 worker 还握着项目目录时 rmSync 会 EBUSY；清理报错不许盖住主失败
+    await a?.stop().catch(() => undefined)
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    } catch (err) {
+      console.warn(`cleanup failed: ${String(err)}`)
+    }
   }
 })
 
