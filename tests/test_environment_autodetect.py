@@ -1671,6 +1671,37 @@ def test_a_user_site_install_invalidates_the_cached_negative(tmp_path, monkeypat
     assert probe() == {"late_user_pkg": True}, "--user 装进用户 site 之后，旧的『缺』仍被缓存命中"
 
 
+@posix_only
+@needs_worker
+def test_import_mode_verdicts_are_fingerprinted_from_the_interpreters_own_site_list(
+    tmp_path, monkeypatch
+):
+    """Codex #820 r4235136068：import 方式也由体检进程自己报 site 目录（正常启动之后，含启用时的用户 site，哪怕目录还不存在）；
+    --user 装包之后旧的"缺"不再命中。"""
+    user_base = tmp_path / "ubase"
+    monkeypatch.setenv("PYTHONUSERBASE", str(user_base))
+    monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+    py = os.path.realpath(getattr(sys, "_base_executable", sys.executable))
+    userenvs.reset_cache()
+    health = projectenv.probe_environment(py, modules=("late_user_pkg2",))
+    user_site = subprocess.run(
+        [py, "-c", "import site;print(site.getusersitepackages())"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert user_site in health["site_dirs"]  # 目录还不存在，也在表里
+
+    def probe():
+        return userenvs._probe(py, ("late_user_pkg2",))["modules_ok"]
+
+    assert probe() == {"late_user_pkg2": False}
+    assert probe() == {"late_user_pkg2": False}
+    os.makedirs(user_site, exist_ok=True)
+    (Path(user_site) / "late_user_pkg2.py").write_text("X = 1\n", "utf-8")
+    assert probe() == {"late_user_pkg2": True}
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC

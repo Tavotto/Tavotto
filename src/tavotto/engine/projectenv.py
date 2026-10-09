@@ -519,6 +519,44 @@ def _prepare_isolated_path():
     return deferred
 
 
+def _startup_site_dirs():
+    # 正常启动之后这个解释器真正用的 site 目录们（缓存指纹的唯一目录表；`site` 已经处理完 .pth）：getsitepackages +
+    # 启用时的用户 site（目录还不存在也算）+ sys.path 里其余落在环境前缀 / 用户 base 下的目录（.pth 加的）
+    import site, sysconfig
+    found = []
+
+    def add(d):
+        if d and d not in found:
+            found.append(d)
+
+    try:
+        for d in site.getsitepackages():
+            add(d)
+    except Exception:
+        pass
+    try:
+        if site.ENABLE_USER_SITE:
+            add(site.getusersitepackages())
+    except Exception:
+        pass
+    try:
+        stdlib = {os.path.normcase(os.path.realpath(p)) for p in (sysconfig.get_paths().get("stdlib"), sysconfig.get_paths().get("platstdlib")) if p}
+        bases = [b for b in (sys.prefix, sys.base_prefix, getattr(site, "USER_BASE", None)) if b]
+        for entry in list(sys.path):
+            if not entry or not os.path.isdir(entry):
+                continue
+            real = os.path.normcase(os.path.realpath(entry))
+            if real in stdlib or real.endswith(("lib-dynload", ".zip")):
+                continue
+            if any(real.startswith(os.path.normcase(os.path.realpath(b))) for b in bases):
+                add(entry)
+    except Exception:
+        pass
+    return found
+
+
+if not isolated:
+    out["site_dirs"] = _startup_site_dirs()
 if isolated:
     if _prepare_isolated_path():
         out["deferred_env"] = True

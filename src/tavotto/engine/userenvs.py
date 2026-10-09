@@ -590,35 +590,6 @@ _SOURCE_RANK = {
 _probe_cache: dict[tuple, dict] = {}
 
 
-def _host_site_dirs(python: str) -> list[str]:
-    """没有体检进程给的目录表时（import 方式）宿主自己按布局猜的 site-packages 目录们——不起解释器，只 `glob`。找不全只会让
-    指纹偏少（少一次失效），不会错判。"""
-    roots: list[str] = []
-    try:
-        exe = os.path.abspath(python)
-        roots.append(os.path.dirname(os.path.dirname(exe)))
-        roots.append(os.path.dirname(os.path.dirname(os.path.realpath(python))))
-        cfg = os.path.join(roots[0], "pyvenv.cfg")
-        if os.path.isfile(cfg):
-            with open(cfg, encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    k, _, v = line.partition("=")
-                    if k.strip().lower() == "home" and v.strip():
-                        roots.append(os.path.dirname(v.strip()))
-    except OSError:
-        pass
-    out: list[str] = []
-    for root in dict.fromkeys(roots):
-        for pattern in (
-            "lib/python*/site-packages",
-            "lib/python*/dist-packages",
-            "lib64/python*/site-packages",
-            "Lib/site-packages",
-        ):
-            out.extend(sorted(glob.glob(os.path.join(root, pattern))))
-    return out
-
-
 def _dirs_fingerprint(dirs: list[str]) -> tuple:
     """这些目录的 mtime（ns；不存在 = None）。装 / 卸一个包会在目录里加 / 减一项，目录 mtime 随之变；目录本来不存在、之后被创建
     （第一次 `pip install --user`）也变。纯 `stat`，不起解释器。"""
@@ -631,11 +602,12 @@ def _dirs_fingerprint(dirs: list[str]) -> tuple:
     return tuple(out)
 
 
-def _health_fingerprint(python: str, health: dict) -> tuple:
-    """一条体检结论的"站点内容"指纹：**体检进程自己报的目录表**（`site_dirs`，隔离体检真正放进 `sys.path` 的那些，含用户 site
-    和 .pth 加的项目外路径——单一出处）；没有（import 方式）就用宿主按布局找的。"""
+def _health_fingerprint(health: dict) -> tuple:
+    """一条体检结论的"站点内容"指纹：**体检进程自己报的目录表**（`site_dirs`——两种方式都报：隔离体检是它真正放进 `sys.path`
+    的那些，import 方式是正常启动之后 site / .pth 给出的，含启用时的用户 site 和还不存在的用户 site 目录）。没有这张表
+    （启动就失败的结论，没有可看的站点）回空指纹：失败结论不因站点变化重测（重测一个起不来的解释器最长 60 秒）。"""
     dirs = health.get("site_dirs")
-    return _dirs_fingerprint(list(dirs) if isinstance(dirs, list) else _host_site_dirs(python))
+    return _dirs_fingerprint(list(dirs)) if isinstance(dirs, list) else ()
 
 
 def _cache_key(
@@ -681,7 +653,7 @@ def _probe(
     if mode == "spec":
         extra.update(import_mode="spec", project_root=root)
     health = projectenv.probe_environment(python, modules=modules, **extra)
-    health["_site_fp"] = _health_fingerprint(python, health)
+    health["_site_fp"] = _health_fingerprint(health)
     with _lock:
         _probe_cache[key] = health
     return health
@@ -690,7 +662,7 @@ def _probe(
 def _fresh(python: str, health: dict) -> bool:
     """缓存的结论还有效吗：打过指纹的，环境的站点内容（装 / 卸包）没变才有效；没打过的（外部塞进来的）照旧信。"""
     fp = health.get("_site_fp")
-    return fp is None or fp == _health_fingerprint(python, health)
+    return fp is None or fp == _health_fingerprint(health)
 
 
 def imports_missing(
