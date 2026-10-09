@@ -29,6 +29,7 @@ spawn 路径都是 `execspec.safe_spec()` 的消费者）：cwd 在沙盒、argv
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from . import (
@@ -613,7 +614,14 @@ def register_probed(
     return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
 
 
-def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
+def was_captured(
+    figures_dir: str | Path,
+    script: str,
+    stem: str,
+    *,
+    configs: list | None = None,
+    charge: Callable[[], bool] | None = None,
+) -> bool:
     """这个图名此前真被某次执行捕获过：runtime cache 里有它的物化记录（无参数或这个脚本登记过的任一份运行配置）。
 
     注册表里的图名不全是执行结果——打开项目时的静态扫描会把字面量 `savefig` 的名字先登记上（T00 deliberate-boundary），
@@ -624,12 +632,23 @@ def was_captured(figures_dir: str | Path, script: str, stem: str) -> bool:
     运行配置登记读不出 / 来自新版本（`RunConfigError`）时，带配置那几份变体当**没有证据**：这是「是否捕获过」的
     证据判断，宁可少说，不能因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
     `run_config_secret_missing`，不是「可直接编辑」（r4221248582；两种情形共用 `runconfig.executable_configs_of`）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
-    `run_config_unreadable` 显式拒绝（那条不在这里）。"""
-    configs = runconfig.executable_configs_of(figures_dir, script)
+    `run_config_unreadable` 显式拒绝（那条不在这里）。
+
+    导入即扫描（`projscan`）传两个可选参数把它纳入扫描预算：`configs` 是调用方按脚本读好的
+    `runconfig.executable_configs_of` 结果（不再每个 stem 重读一次登记）；`charge` 在每次 cache 元数据探测前调用，
+    返回 False（预算用完 / 超时 / 取消）就停止探测并回 False——调用方据预算状态判「没查全」，不是「没捕获」。
+    不传则行为与原来完全一致。"""
+    if configs is None:
+        configs = runconfig.executable_configs_of(figures_dir, script)
     ids = [figcapture.runtime_asset_id(script, stem)] + [
         figcapture.runtime_asset_id(script, stem, cfg.id) for cfg in configs
     ]
-    return any(runtimeasset.load_metadata(figures_dir, asset_id) is not None for asset_id in ids)
+    for asset_id in ids:
+        if charge is not None and not charge():
+            return False
+        if runtimeasset.load_metadata(figures_dir, asset_id) is not None:
+            return True
+    return False
 
 
 def linked_scripts(figures_dir: str | Path, stems_by_script: dict[str, list[str]]) -> set[str]:
@@ -649,18 +668,23 @@ def linked_scan(
     isfile=None,
     stem_ok=None,
     stopped=None,
+    charge=None,
 ) -> tuple[set[str], bool]:
     """`linked_scripts` 的三态版：回 `(已关联的脚本, 是否查全)`。判据只有这一份——导入即扫描（带预算）与素材库脚本清单
     （不带）共用，扫描路径只通过参数注入自己的约束：
     `isfile`（`figcapture.find_original_artifact` 的探测谓词，扫描路径给不跟随链接的版本）、
     `stem_ok`（先于任何路径拼接过滤掉非项目内相对名的 stem，不探也不算连接）、
-    `stopped`（预算 / 取消 / 超时是否已耗尽：耗尽时第二项为 False——没查到 ≠ 没关联，调用方不得据此派生默认目标）。"""
+    `stopped`（预算 / 取消 / 超时是否已耗尽：耗尽时第二项为 False——没查到 ≠ 没关联，调用方不得据此派生默认目标）；
+    `charge`（每次 cache 元数据探测前记一笔预算，返回 False 即停，见 `was_captured`）。运行配置登记按脚本读一次，
+    不是每个 stem 一次（#819 r4232209726）。"""
     root = str(figures_dir)
     find_kwargs = {} if isfile is None else {"isfile": isfile}
     complete = True
 
     def linked(script: str, stems: list[str]) -> bool:
         nonlocal complete
+        # 运行配置登记按脚本读一次（不是每个 stem 一次）；懒读：没有 stem 走到 cache 证据就不读
+        configs: list | None = None
         for stem in stems:
             if stem_ok is not None and not stem_ok(stem):
                 continue
@@ -672,8 +696,13 @@ def linked_scan(
             if stopped is not None and stopped():
                 complete = False  # 预算在 isfile 内耗尽：上面的「没找到」是被截断的，不是真没有
                 return False
-            if was_captured(figures_dir, script, stem):
+            if configs is None:
+                configs = runconfig.executable_configs_of(figures_dir, script)
+            if was_captured(figures_dir, script, stem, configs=configs, charge=charge):
                 return True
+            if stopped is not None and stopped():
+                complete = False  # cache 元数据探测中耗尽预算：没查到 ≠ 没捕获
+                return False
         return False
 
     return {script for script, stems in stems_by_script.items() if linked(script, stems)}, complete

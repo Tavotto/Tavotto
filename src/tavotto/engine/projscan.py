@@ -263,6 +263,7 @@ def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> tupl
         isfile=isfile,
         stem_ok=_project_relative_stem if budget is not None else None,
         stopped=(lambda: budget.stop_reason() is not None) if budget is not None else None,
+        charge=budget.charge_entry if budget is not None else None,
     )
 
 

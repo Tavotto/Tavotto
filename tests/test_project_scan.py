@@ -1454,3 +1454,53 @@ def test_sensitive_run_config_without_its_secret_is_not_linkage_evidence(tmp_pat
     assert report["target_choice"] == "single"
     assert any(a["kind"] == "prepare" for a in report["actions"])
     assert report["outcome"]["kind"] != "already_connected"
+
+
+def _many_stems_project(tmp_path, stems=40):
+    root = _project(tmp_path)
+    _write(root, "fig.py", PLOT.format(stem="s0"))
+    names = [f"s{i}" for i in range(stems)]
+    _write(
+        root,
+        "tavotto_registry.json",
+        json.dumps({"version": 1, "scripts": {"fig.py": {"entry": "__main__", "stems": names}}}),
+    )
+    return root
+
+
+def test_linkage_reads_run_configs_once_per_script_not_per_stem(tmp_path, monkeypatch):
+    """#819 r4232209726：`_linked_scripts` 每个 stem 都重读运行配置登记 = O(stems × configs)。按脚本读一次。"""
+    from tavotto.engine import runconfig
+
+    root = _many_stems_project(tmp_path)
+    reads = []
+    real = runconfig.executable_configs_of
+    monkeypatch.setattr(
+        runconfig, "executable_configs_of", lambda *a, **k: reads.append(a) or real(*a, **k)
+    )
+
+    linked, complete = projscan._linked_scripts(root, scanbudget.Budget())
+
+    assert linked == set() and complete is True
+    assert len(reads) == 1
+
+
+def test_cache_evidence_probes_are_charged_to_the_scan_budget(tmp_path, monkeypatch):
+    """#819 r4232209726：cache 元数据探测计入预算；预算耗尽 → 不再探、扫描报 partial，而不是无界地继续。"""
+    from tavotto.engine import figcapture, runtimeasset
+
+    root = _many_stems_project(tmp_path, stems=200)
+    probes = []
+    real = runtimeasset.load_metadata
+    monkeypatch.setattr(
+        runtimeasset, "load_metadata", lambda *a, **k: probes.append(a) or real(*a, **k)
+    )
+
+    # 原件探测本身不记账，隔离出「只有 cache 元数据探测」这一条路径
+    monkeypatch.setattr(figcapture, "find_original_artifact", lambda *a, **k: None)
+
+    report = projscan.scan(root, limits=scanbudget.Limits(max_entries=30))
+
+    assert report["state"] == projscan.STATE_PARTIAL
+    assert len(probes) <= 30  # 有界：不随 stems 数（200）线性增长
+    assert report["targets"][0]["linked"] is None  # 没查全 ≠ 没连接
