@@ -822,7 +822,105 @@ def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], boo
             exact = False
     if exact and not _whitelist_clean(tree, allowed_kw):
         exact = False
+    if exact and not _parser_never_escapes(tree, names):
+        exact = False
     return frozenset(chars), exact
+
+
+# r4229653195：解析器对象（及其别名）流到看不见的代码（`configure(parser)` 这类 import 来的助手）= 说不准。
+# 解析器 / 子解析器 / 参数组只许作为自己方法调用的接收者，或被赋给一个简单名字；其余任何去向都算逃逸。
+_PARSER_METHODS = frozenset(
+    {
+        "add_argument",
+        "add_argument_group",
+        "add_mutually_exclusive_group",
+        "add_subparsers",
+        "add_parser",
+        "set_defaults",
+        "get_default",
+        "parse_args",
+        "parse_known_args",
+        "parse_intermixed_args",
+        "parse_known_intermixed_args",
+        "print_help",
+        "print_usage",
+        "format_help",
+        "format_usage",
+        "error",
+        "exit",
+    }
+)
+# 只读（或 subparsers 动作上常见的）属性；不含 fromfile_prefix_chars，拿不准的一律按逃逸。
+_PARSER_SAFE_ATTRS = frozenset(
+    {"prog", "description", "epilog", "usage", "required", "dest", "title", "help", "metavar"}
+)
+_PARSER_PRODUCERS = frozenset(
+    {"add_subparsers", "add_parser", "add_argument_group", "add_mutually_exclusive_group"}
+)
+
+
+def _parser_never_escapes(tree: ast.AST, names: _Names) -> bool:
+    parents: dict[int, ast.AST] = {}
+    scope_of: dict[int, ast.AST] = {}
+    scope_kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+    def walk(node: ast.AST, scope: ast.AST) -> None:
+        scope_of[id(node)] = scope
+        inner = node if isinstance(node, scope_kinds) else scope
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+            walk(child, inner)
+
+    walk(tree, tree)
+
+    def producing(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        if names.argparse_name(node.func) == "ArgumentParser":
+            return True
+        return isinstance(node.func, ast.Attribute) and node.func.attr in _PARSER_PRODUCERS
+
+    def is_receiver(node: ast.AST) -> bool:
+        """node 是 `X.method(...)`（白名单方法）的 X，或 `X.<只读属性>`。"""
+        par = parents.get(id(node))
+        if not (isinstance(par, ast.Attribute) and par.value is node):
+            return False
+        if par.attr in _PARSER_SAFE_ATTRS:
+            return True
+        if par.attr not in _PARSER_METHODS:
+            return False
+        call = parents.get(id(par))
+        return isinstance(call, ast.Call) and call.func is par
+
+    tracked: dict[str, set[int]] = {}  # 变量名 → 赋值所在作用域
+    for node in ast.walk(tree):
+        if not producing(node):
+            continue
+        if is_receiver(node):
+            continue
+        par = parents.get(id(node))
+        if isinstance(par, ast.Expr):
+            continue
+        target = None
+        if isinstance(par, ast.Assign) and par.value is node and len(par.targets) == 1:
+            target = par.targets[0]
+        elif isinstance(par, (ast.AnnAssign, ast.NamedExpr)) and par.value is node:
+            target = par.target
+        if isinstance(target, ast.Name):
+            tracked.setdefault(target.id, set()).add(id(scope_of[id(node)]))
+            continue
+        return False  # 作参数 / 返回 / 放进容器 / 存到属性……
+    module = tree
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in tracked and isinstance(node.ctx, ast.Load):
+            if not is_receiver(node):
+                return False
+            scope = scope_of[id(node)]
+            if id(scope) not in tracked[node.id] and not (
+                id(module) in tracked[node.id] and isinstance(scope, ast.FunctionDef)
+            ):
+                return False  # 闭包 / lambda 里用
+    return True
 
 
 # r4221772700：「exact」靠白名单证明，不再逐个堵绕过形状。出现这些名字 = 前缀可能在运行期被改写 / 动态取得。

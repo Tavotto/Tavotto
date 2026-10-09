@@ -858,6 +858,18 @@ def test_declared_response_file_prefixes_are_refused(project, pool, token):
         "import argparse\nd = {'fromfile_prefix_chars': '%'}\np = argparse.ArgumentParser()\np.parse_args()\n",
         "import argparse\np = argparse.ArgumentParser()\np.__dict__.update(x=1)\np.parse_args()\n",
         "import argparse, importlib\np = argparse.ArgumentParser()\np.parse_args()\n",
+        # r4229653195：解析器流到看不见的代码（逃逸）
+        "import argparse\nfrom helper import configure\np = argparse.ArgumentParser()\nconfigure(p)\np.parse_args()\n",
+        "import argparse\nimport helpers\np = argparse.ArgumentParser()\nhelpers.setup(p)\np.parse_args()\n",
+        "import argparse\nfrom helper import f\np = argparse.ArgumentParser()\nq = p\nf(q)\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\nparsers = [p]\np.parse_args()\n",
+        "import argparse\ndef build():\n    p = argparse.ArgumentParser()\n    p.add_argument('--a')\n    return p\nbuild().parse_args()\n",
+        "import argparse\nfrom helper import f\nf(argparse.ArgumentParser())\n",
+        "import argparse\nfrom helper import f\np = argparse.ArgumentParser()\nsub = p.add_subparsers()\nf(sub.add_parser('x'))\np.parse_args()\n",
+        "import argparse\nfrom helper import f\np = argparse.ArgumentParser()\ng = p.add_argument_group('g')\nf(g)\np.parse_args()\n",
+        "import argparse\np = argparse.ArgumentParser()\ndef go():\n    f = lambda: p.parse_args()\n    return f\nq = [p.add_argument]\n",
+        "import argparse\ndef main():\n    p = argparse.ArgumentParser()\n    def inner():\n        return p.parse_args()\n    inner()\n",
+        "import argparse\nclass A:\n    pass\na = A()\na.p = argparse.ArgumentParser()\na.p.parse_args()\n",
     ],
 )
 def test_unprovable_script_refuses_any_argv(project, script, token):
@@ -1054,6 +1066,10 @@ def test_pure_literal_scripts_stay_exact_under_whitelist(project):
         "    g = p.add_mutually_exclusive_group()\n    g.add_argument('--a')\n"
         "    g.add_argument('--b')\n    return p.parse_args()\n\n"
         "if __name__ == '__main__':\n    main()\n",
+        # r4229653195：只用方法（含子解析器变量、模块级解析器被函数读用）仍 exact
+        "import argparse\np = argparse.ArgumentParser()\nsub = p.add_subparsers(dest='cmd')\nsub.required = True\n"
+        "a = sub.add_parser('a')\na.add_argument('--n', type=int)\na.set_defaults(f=1)\n"
+        "def main():\n    return p.parse_args()\nmain()\n",
         "from argparse import ArgumentParser\n"
         "p = ArgumentParser(formatter_class=None)\nsub = p.add_subparsers(dest='cmd')\n"
         "sub.add_parser('run').add_argument('--n', type=int)\np.parse_args()\n",
