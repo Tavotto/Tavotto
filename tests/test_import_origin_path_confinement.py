@@ -215,3 +215,48 @@ class TestEntryScriptThatIsALink:
         assert spy.touched_outside(ops=("stat", "read")) == []
         assert not any(c.module == "secret_pkg" for c in res.classes)
         assert res.problems  # 读不了就留痕，不是静默当空
+
+
+class TestLexicalBarrier:
+    """`_lexically_inside`：请求体 `script` 进入任何文件系统调用之前的词法屏障（CodeQL 第二轮）。"""
+
+    @pytest.mark.parametrize(
+        "cand",
+        [
+            "../x.py",
+            "a/../../x.py",
+            "/etc/passwd",
+            "C:\\Windows\\x.py" if os.name == "nt" else "/outside/x.py",
+            "\\\\server\\share\\x.py" if os.name == "nt" else "//server/share/x.py",
+        ],
+    )
+    def test_escapes_are_refused(self, tmp_path, cand):
+        proj, _ = _project(tmp_path)
+        assert importscan._lexically_inside(proj, cand) is None
+
+    def test_sibling_with_same_prefix_is_refused(self, tmp_path):
+        proj, _ = _project(tmp_path)
+        evil = tmp_path / "proj-evil"
+        evil.mkdir()
+        assert importscan._lexically_inside(proj, str(evil / "x.py")) is None
+        assert importscan._lexically_inside(proj, "../proj-evil/x.py") is None
+
+    def test_inside_is_normalised_and_root_is_itself(self, tmp_path):
+        proj, _ = _project(tmp_path)
+        base = os.path.abspath(proj)
+        assert importscan._lexically_inside(proj, "sub/../s.py") == os.path.join(base, "s.py")
+        assert importscan._lexically_inside(proj, "") == base
+
+    def test_barrier_touches_no_filesystem(self, tmp_path, monkeypatch):
+        proj, outside = _project(tmp_path)
+        spy = _Spy(monkeypatch, outside)
+        importscan._lexically_inside(proj, "../outside/outside_mod.py")
+        assert spy.calls == [] and spy.ops == []
+
+    def test_scan_of_escaping_script_records_problem_and_reads_nothing(self, tmp_path, monkeypatch):
+        proj, outside = _project(tmp_path)
+        spy = _Spy(monkeypatch, outside)
+        res = importscan.scan(proj, "../outside/outside_mod.py")
+        assert spy.touched_outside(ops=("stat", "read")) == []
+        assert any(p.get("kind") == "outside_project" for p in res.problems)
+        assert not any(c.module == "yaml" for c in res.classes)
