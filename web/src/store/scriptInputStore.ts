@@ -21,6 +21,9 @@ import { currentProjectId } from '@/lib/session'
  * - **项目代际**：`clear()` 换代并清空；在途响应、旧项目的事件都不落进新项目。事件那道闸由
  *   `handleServerEvent` 按 `pj` 先挡一次，这里按发请求那一刻的代际再挡一次。
  * - 提示与 stdout 片段是用户脚本的文字，组件里**只当纯文本**渲染。
+ * - **同一问只有一个展示面**（T08）：准备面板挂着时认领展示（`claimPresentation`），原对话框让开；面板关掉就放手
+ *   （`releasePresentation`），对话框接着显示同一问——只换展示，不取消脚本。答案本身不进 store（口令尤其）：
+ *   输入框的值只在组件里，`submit` 拿到就发。
  */
 
 export const AUTOFILL_NOTICE_MS = 12_000
@@ -67,6 +70,8 @@ interface ScriptInputState {
   managing: string | null
   /** 本页那条能答题事件流的 id（`stream.hello`）。**不随项目换代清掉**：事件流跨项目存活 */
   streamId: string | null
+  /** 此刻认领了「展示正在等的那一问」的展示面（如准备面板）；空 = 原对话框展示。挂载状态，不随项目换代清 */
+  presenters: string[]
 
   onRequested: (req: ScriptInputRequest) => void
   onClosed: (id: string) => void
@@ -81,12 +86,28 @@ interface ScriptInputState {
   beginAnswersChange: () => number | null
   /** 放锁；token 已不是持有者（换代清过 / 别人的）就什么都不做 */
   endAnswersChange: (token: number) => void
-  saveAnswer: (token: number, script: string, index: number, answer: string) => Promise<AnswerChange>
-  forgetAnswer: (token: number, script: string, index: number) => Promise<AnswerChange>
+  /** `runConfig`：这条答案属于哪份运行配置（null = 默认配置，ADR 0114 之前的老形状） */
+  saveAnswer: (
+    token: number,
+    script: string,
+    index: number,
+    answer: string,
+    runConfig?: string | null,
+  ) => Promise<AnswerChange>
+  forgetAnswer: (
+    token: number,
+    script: string,
+    index: number,
+    runConfig?: string | null,
+  ) => Promise<AnswerChange>
   /** `stream.hello`：记下流 id 并报一次在看哪个项目 */
   onStreamHello: (streamId: string) => void
   /** 报「这条事件流此刻在看 `pj`」；没有流 / 没有项目时什么都不做 */
   announce: (pj: string | null | undefined) => void
+  /** 某个展示面（准备面板）挂载时认领展示；同名重复认领无效 */
+  claimPresentation: (surface: string) => void
+  /** 展示面卸载 / 关掉时放手：没有别的展示面了，原对话框接着显示同一问 */
+  releasePresentation: (surface: string) => void
   clear: () => void
 }
 
@@ -150,6 +171,7 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
   answersBusy: false,
   managing: null,
   streamId: null,
+  presenters: [],
 
   onRequested: (req) => {
     if (get().queue.some((q) => q.id === req.id)) return
@@ -240,11 +262,11 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     set({ answersBusy: false })
   },
 
-  saveAnswer: (token, script, index, answer) =>
-    changeAnswer(get, set, token, () => updateScriptAnswer(script, index, answer)),
+  saveAnswer: (token, script, index, answer, runConfig = null) =>
+    changeAnswer(get, set, token, () => updateScriptAnswer(script, index, answer, runConfig)),
 
-  forgetAnswer: (token, script, index) =>
-    changeAnswer(get, set, token, () => forgetScriptAnswer(script, index)),
+  forgetAnswer: (token, script, index, runConfig = null) =>
+    changeAnswer(get, set, token, () => forgetScriptAnswer(script, index, runConfig)),
 
   onStreamHello: (streamId) => {
     set({ streamId })
@@ -256,6 +278,15 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     if (!streamId || !pj) return
     if (listenInFlight) listenNext = { streamId, pj }
     else sendListen(streamId, pj)
+  },
+
+  claimPresentation: (surface) => {
+    if (get().presenters.includes(surface)) return
+    set((s) => ({ presenters: [...s.presenters, surface] }))
+  },
+
+  releasePresentation: (surface) => {
+    set((s) => ({ presenters: s.presenters.filter((p) => p !== surface) }))
   },
 
   clear: () => {

@@ -284,6 +284,7 @@ _ALLOWED_ATTRS = {
         "ISSUE_CODES",
         "is_placeholder",
         "is_redirect",
+        "is_symlink",
         "read_regular_text",
         "redirected_component",
     },

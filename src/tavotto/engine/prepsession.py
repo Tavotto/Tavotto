@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import deprepair, preparation, registry, scriptargs
+from . import deprepair, preparation, registry, scriptargs, taskdiag
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -166,6 +166,14 @@ class SessionError(Exception):
 
 
 # ---------------------------------------------------------------- 检查（纯函数，吃计划）
+
+
+def _finalize_failure_code(fin: dict) -> str:
+    """finalizer 失败的稳定码：嵌套 `error.code`（`register_probed` 原样形状）优先，其次顶层 `code`
+    （`_finalize_script_attempt` 展平后的形状），都没有才是 `registration_failed`。"""
+    err = fin.get("error")
+    nested = err.get("code") if isinstance(err, dict) else None
+    return str(nested or fin.get("code") or "registration_failed")
 
 
 def _check(check_id: str, status: str, code: str = "", **detail) -> dict:
@@ -497,7 +505,7 @@ def derive(facts: dict) -> dict:
         return _result(
             PHASE_PARTIAL,
             OUTCOME_FAILED,
-            code=str(finalize.get("code") or "registration_failed"),
+            code=_finalize_failure_code(finalize),
             finished=True,
             captured=True,
         )
@@ -1151,6 +1159,15 @@ class SessionService:
                 except Exception:  # noqa: BLE001 — 线程里不许静默死掉，如实记
                     LOG.exception("登记捕获结果失败 %s", done_plan.script)
                     fin = {"registered": False, "code": "registration_failed"}
+                if isinstance(fin, dict) and fin.get("registered") is False:
+                    # 任务诊断在 `_finish` 时已按「执行成功」冻成 ready；构建后的登记失败是终局之后的事，
+                    # 补记成失败 + 稳定码，否则 recent_runs / 单次诊断都会把它读成 ready
+                    taskdiag.STORE.amend_post_terminal_failure(
+                        done_plan.project_id,
+                        taskdiag.KIND_PREPARATION,
+                        done_plan.plan_id,
+                        _finalize_failure_code(fin),
+                    )
             missing = None
             try:
                 missing = self._observe_missing(sess, done_plan, done_result)
@@ -1182,7 +1199,9 @@ class SessionService:
         return True
 
     # ---- 报告 ----
-    def report(self, sess: Session, *, awaiting_input: bool = False) -> dict:
+    def report(
+        self, sess: Session, *, awaiting_input: bool = False, runtime_input: dict | None = None
+    ) -> dict:
         """会话的投影：目标 / 修订 / 观察序号 / phase / outcome / checks / requirements / actions / provider
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
         with sess.lock:
@@ -1279,6 +1298,14 @@ class SessionService:
                 },
                 # 上一次依赖准备之后按新环境重新算出的差额；None = 没有
                 "dependency_delta": dict(sess.dependency_delta) if sess.dependency_delta else None,
+                # 正在等的那一问（T08）：`inputbroker.Pending.public()`——id / 序号 / 读取方式 / 要不要掩码，
+                # 没有提示与答案。回答走既有 `/api/script_input/answer`，与原对话框是同一个请求
+                "runtime_input": (
+                    dict(runtime_input)
+                    if runtime_input is not None
+                    and derived["phase"] == PHASE_AWAITING_RUNTIME_INPUT
+                    else None
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }

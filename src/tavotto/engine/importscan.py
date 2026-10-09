@@ -790,6 +790,25 @@ class _Listing:
 _MAX_LINK_HOPS = 40
 
 
+def _is_windows() -> bool:
+    return sys.platform == "win32"
+
+
+def _plain_link_target(target: str) -> str:
+    """Windows 的 `os.readlink` 返回替代路径，常带 `\\\\?\\`（或 `\\\\??\\`）前缀：`\\\\?\\C:\\x` -> `C:\\x`，
+    `\\\\?\\UNC\\srv\\share` -> `\\\\srv\\share`。纯字符串运算；不去前缀就永远对不上项目前缀，项目内的符号链接
+    会被当成越界。UNC 去前缀后仍是网络路径，`_under` 不会认它在项目内。"""
+    if not _is_windows():
+        return target
+    for pre in ("\\\\?\\", "\\\\.\\", "\\??\\"):
+        if target.startswith(pre):
+            rest = target[len(pre) :]
+            if rest[:4].upper() == "UNC\\":
+                return "\\\\" + rest[4:]
+            return rest
+    return target
+
+
 def _under(base: str, cand: str) -> list[str] | None:
     """`cand` 词法上在 `base` 之下时回相对的各级名字（相等回 []）；否则 None。纯字符串运算。"""
     nb, nc = os.path.normcase(base), os.path.normcase(cand)
@@ -798,6 +817,27 @@ def _under(base: str, cand: str) -> list[str] | None:
     if not nc.startswith(nb.rstrip(os.sep) + os.sep):
         return None
     return [x for x in cand[len(base.rstrip(os.sep)) :].split(os.sep) if x]
+
+
+def _lexically_inside(root: str | Path, candidate: str) -> str | None:
+    """请求体来的 `candidate`（脚本路径）钉在 `root` 之内——**纯字符串运算**（不 stat、不 realpath、
+    不跟随链接，Windows 上也不会碰 UNC / WebDAV）；越界回 None，通过则回归一化后的那一条。
+
+    写成静态分析认得的 barrier 形状（CodeQL py/path-injection：`normpath` 之后 `startswith`
+    **单独**控制通往返回值的分支；相等那一支回 `base` 自身，同 `projectenv.contained_path`）。
+    候选永远拼在 `base` 之后：绝对路径 / 盘符 / UNC / `..` 越界都会让前缀对不上而被拒；
+    `/proj-evil` 对 `/proj` 靠结尾分隔符挡。绝对候选在 Windows 上大小写与 `base` 不一致也会被拒
+    （脚本本来就要求项目相对，不放宽）。链接检查仍由后面的 `_confined_path` 负责。"""
+    try:
+        base = os.path.normpath(os.path.abspath(os.fspath(root)))
+        cand = os.path.normpath(os.path.join(base, candidate))
+    except (OSError, ValueError):
+        return None
+    if cand == base:
+        return base
+    if not cand.startswith(base.rstrip(os.sep) + os.sep):
+        return None
+    return cand
 
 
 def _confined_path(root: Path, p: Path, *, no_follow: bool) -> str | None:
@@ -845,10 +885,10 @@ def _confined_path(root: Path, p: Path, *, no_follow: bool) -> str | None:
             cur = nxt
             continue
         hops += 1
-        if no_follow or not stat.S_ISLNK(st.st_mode) or hops > _MAX_LINK_HOPS:
+        if no_follow or not scanbudget.is_symlink(st) or hops > _MAX_LINK_HOPS:
             return None
         try:
-            target = os.readlink(nxt)
+            target = _plain_link_target(os.readlink(nxt))
         except (OSError, ValueError):
             return None
         if os.path.isabs(target) or PureWindowsPath(target).anchor:
@@ -949,7 +989,7 @@ class _Finder:
         """目录项本身是链接 / 路径替身时的（目录?, 文件?）：**不 stat 目标**。默认模式下目标经 `_kind` 逐级
         `lstat` 确认落在项目内的 POSIX 符号链接才取真实类型；其余（no_follow、junction、指向项目外）
         只按名字猜，保守地记成「可能是」——命中后由 `dir_guard` / `guard` 判成 redirect / outside_project。"""
-        if not self.no_follow and stat.S_ISLNK(st.st_mode):
+        if not self.no_follow and scanbudget.is_symlink(st):
             kind = _kind(self.root, p, no_follow=False)
             if kind in ("dir", "file", "other", "missing"):
                 return kind == "dir", kind == "file"
@@ -1003,7 +1043,7 @@ class _Finder:
             return ""
         if not scanbudget.is_redirect(st):
             return ""
-        if self.no_follow or not stat.S_ISLNK(st.st_mode):
+        if self.no_follow or not scanbudget.is_symlink(st):
             return "redirect"
         return "" if _inside(self.root, p, no_follow=False) else "outside_project"
 
@@ -1114,7 +1154,15 @@ class _Scanner:
         self.root = root
         self.dists = dists
         self.script = script
-        self.script_p = root / script
+        # `script` 来自请求体：在它进入任何文件系统调用之前先过词法屏障，下游一律用屏障回的那一条；
+        # 越界的换成项目根下的占位名，`run()` 记 outside_project 而不读
+        safe_script = _lexically_inside(root, script)
+        self.script_outside = safe_script is None
+        self.script_p = (
+            Path(safe_script)
+            if safe_script is not None
+            else Path(os.path.abspath(os.fspath(root))) / "<outside>"
+        )
         self.declared = declared
         self.stdlib_names = (
             HOST_STDLIB if stdlib is None else (frozenset(stdlib) | {"__future__", "builtins"})
@@ -1425,6 +1473,8 @@ class _Scanner:
         if self.entry.kind == execspec.TARGET_SCRIPT or entry_pkg is not None:
             if self.tree_given is not None and self.entry.kind == execspec.TARGET_SCRIPT:
                 parsed = self._visit(self.tree_given, "", entry_rel)
+            elif self.script_outside and self.entry.kind == execspec.TARGET_SCRIPT:
+                self.problems.append({"path": entry_rel, "kind": "outside_project"})
             else:
                 parsed = self._load(self.script_p, entry_rel, "")
             self.read_files.append(entry_rel)

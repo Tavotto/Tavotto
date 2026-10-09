@@ -65,6 +65,7 @@ from . import (
     envadvice,
     execspec,
     figcapture,
+    inputbroker,
     inputremap,
     pool,
     projectenv,
@@ -504,6 +505,9 @@ class PreparationResult:
     #: T07：准备会话把它当一项待答的需求（回答走既有的 `/api/engine/input-remap`）。**不进 `to_payload()`**：
     #: 里面是脚本里写的路径串，诊断快照与回执都不带它。
     missing_input: dict | None = None
+    #: 这次执行里每一问 input 的去向（T08，`inputbroker.InputFacts.payload()`）：只有计数与闭集理由，只给
+    #: 诊断快照的白名单投影。**不进 `to_payload()`**。
+    input_facts: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -713,6 +717,23 @@ class PreparationService:
                 )
                 return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
+            # 诊断包的「最近缺依赖现场」：准备路径把 WorkerError 接在这里，不经 `app._worker_error`
+            # 修复 offer 与试运行路径（probe.py）同一个函数、同样的入参：只读判断，不起解释器、不联网，
+            # 复用异常里已体检好的 project_env；算不出来不许盖掉原始错误（线程里不能抛）
+            repair_offer = None
+            if getattr(exc, "code", "") == "missing_dependency" and getattr(exc, "module", ""):
+                try:
+                    repair_offer = deprepair.offer(
+                        plan.project_root,
+                        plan.script or "",
+                        exc.module,
+                        getattr(exc, "project_env", None),
+                    )
+                except Exception:  # noqa: BLE001
+                    repair_offer = None
+            deprepair.note_missing_dependency_of(
+                plan.project_root, exc, script=plan.script or "", offer=repair_offer
+            )
             module = getattr(exc, "module", "")
             if module:
                 error["module"] = module
@@ -722,6 +743,7 @@ class PreparationService:
             missing_input = getattr(exc, "missing_input", None)
             if isinstance(missing_input, dict):
                 result.missing_input = dict(missing_input)
+            result.input_facts = getattr(exc, "input_facts", None)
             result.error = error
             # 脚本自己炸 / 缺依赖是「执行」那一步坏的；起不来（解释器 / 沙盒）是「起会话」坏的
             tr.fail("execute" if getattr(exc, "traceback_text", None) else "spawn", error["code"])
@@ -734,6 +756,7 @@ class PreparationService:
             return
         tr.mark("execute", created=bool(created))
         result.created_runtime = bool(created)
+        result.input_facts = getattr(worker, "last_input_facts", None)
         rcpt = receipt.from_worker(
             worker,
             resp,
@@ -974,6 +997,16 @@ def _record_terminal(plan: PreparationPlan, result: PreparationResult) -> None:
         LOG.debug("准备诊断快照登记失败", exc_info=True)
 
 
+def _elapsed_ms(started_at, finished_at) -> int | None:
+    if (
+        isinstance(started_at, (int, float))
+        and isinstance(finished_at, (int, float))
+        and finished_at >= started_at
+    ):
+        return round((finished_at - started_at) * 1000)
+    return None
+
+
 def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> dict:
     """这一次尝试的**白名单**投影（T04）。逐字段挑，不读 `plan.to_payload()` / `result.to_payload()`。
 
@@ -1017,6 +1050,7 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
                 "error_code": taskdiag.code((env.get("error") or {}).get("code")),
             },
             "stages": taskdiag.stages(result.trace.to_payload(), tracemod.PHASES),
+            "input": inputbroker.facts_projection(result.input_facts),
             "execution": {
                 "created_runtime": taskdiag.flag(result.created_runtime),
                 "reused_runtime": result.existing_runtime is not None,
@@ -1056,6 +1090,8 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
             "timing": {
                 "started_at": taskdiag.number(result.started_at),
                 "finished_at": taskdiag.number(result.finished_at),
+                # 与 script_run 条目同名同单位，`recent_runs` 才能一视同仁地读
+                "elapsed_ms": _elapsed_ms(result.started_at, result.finished_at),
             },
         }
     )

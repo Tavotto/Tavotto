@@ -66,3 +66,31 @@ describe('试运行带参数', () => {
     expect(useScriptArgvStore.getState().drafts).toEqual({})
   })
 })
+
+it.each(['rc_a', null])('answer rerun selects %s without consuming an unrelated argv draft', async (runConfig) => {
+  useScriptArgvStore.getState().setTokens('fig.py', ['--wrong', 'SECRET'])
+  await useScriptRunStore.getState().run('fig.py', runConfig)
+  expect(mockProbe).toHaveBeenCalledWith('fig.py', undefined, { run_config: runConfig })
+  expect(useScriptArgvStore.getState().drafts['fig.py'].tokens).toEqual(['--wrong', 'SECRET'])
+})
+
+it('a gated answer rerun retains its configuration after the draft changes', async () => {
+  mockProbe.mockResolvedValueOnce({ ...ok(), error: {
+    code: 'workdir_confirmation_required', message: 'choose',
+    confirmation: { script: 'fig.py' } as never,
+  } })
+  await useScriptRunStore.getState().run('fig.py', 'rc_a')
+  useScriptArgvStore.getState().setTokens('fig.py', ['--wrong'])
+  useScriptRunStore.getState().rerunGated('needs_workdir', 'fig.py')
+  await Promise.resolve()
+  expect(mockProbe).toHaveBeenLastCalledWith('fig.py', undefined, { run_config: 'rc_a' })
+})
+
+it('an input-remap retry retains the selected answer configuration', async () => {
+  mockProbe.mockResolvedValueOnce({ ...ok(), error: { code: 'input_remap_changed', message: 'retry' } })
+  useScriptArgvStore.getState().setTokens('fig.py', ['--wrong'])
+  await useScriptRunStore.getState().run('fig.py', 'rc_a')
+  await Promise.resolve()
+  expect(mockProbe).toHaveBeenCalledTimes(2)
+  expect(mockProbe).toHaveBeenLastCalledWith('fig.py', undefined, { run_config: 'rc_a' })
+})

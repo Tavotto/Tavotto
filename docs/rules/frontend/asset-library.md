@@ -186,8 +186,11 @@
   一样保留上一份照常显示；来源筛选的选项由 `assetFolders()` 并上它的目录。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
 - **脚本 `input()` 的作答（ADR 0099）**：`scriptInputStore` 有项目代际（`clear()` 换代；后端那一问不取消，切回来经
   `loadAnswers()` 的 `pending` 接回对话框）；`ScriptInputDialog` 是闸（`blockDismiss`，出口只有提交 / 结束输入 / 停止脚本），
-  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`）行内只改值、没有主按钮，「删除」在行尾 ⋯ 里且是**暂存**的（行上标「保存时删除」、可撤销，2026-10-07 设计审计 §10.2），脚部唯一的主动作「保存并重新运行（N）」依次提交所有改过 / 标了删除的答案、只重跑一次（在飞时对话框 `busy`：×、点外面、Esc 都关不掉，半途关掉会只带部分改动重跑——Codex #831 P1）；没提交前什么都没发，换了项目（store 换代）暂存的删除随之作废；改 / 删答案一次只许一件（整批提交算一件、只拿一个 token），锁归 `scriptInputStore`（`answersBusy` + `beginAnswersChange()` / `endAnswersChange(token)`）不归对话框组件——对话框的 `busy` / 禁用都读 `answersBusy`：拿不到锁就一个请求都不发、也不重跑，`saveAnswer` / `forgetAnswer` 只认持锁 token，答案管理被卸载再挂上（`busy` 拦住了 ×/Esc，但 `closeManager()` 等别的路径仍能关）时新挂上的对话框读同一把锁、在飞的那批回来才放开（否则两份同项目整份快照互盖、重跑两次）；`clear()` 换代一并清锁，旧项目那批回来时 token 已不是持有者、放不掉新锁；`ScriptInputDialog` 打开时焦点直接在答案框（`initialFocusRef`），「停止脚本」在 start 槽（危险浅底胶囊）；「记住的输入」入口只在
-  这个脚本真有答案时出现在脚本行上；zustand 选择器的空值用模块级常量（每次新建 `[]` = React #185 无限重渲染）。看护：
+  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`；答案按运行配置 `run_config` 分行，改 / 删只动那一行、重跑只重跑那份配置，整批提交涉及几份配置就各重跑一次）行内只改值、没有主按钮，「删除」在行尾 ⋯ 里且是**暂存**的（行上标「保存时删除」、可撤销，2026-10-07 设计审计 §10.2），脚部唯一的主动作「保存并重新运行（N）」依次提交所有改过 / 标了删除的答案、只重跑一次（在飞时对话框 `busy`：×、点外面、Esc 都关不掉，半途关掉会只带部分改动重跑——Codex #831 P1）；没提交前什么都没发，换了项目（store 换代）暂存的删除随之作废；改 / 删答案一次只许一件（整批提交算一件、只拿一个 token），锁归 `scriptInputStore`（`answersBusy` + `beginAnswersChange()` / `endAnswersChange(token)`）不归对话框组件——对话框的 `busy` / 禁用都读 `answersBusy`：拿不到锁就一个请求都不发、也不重跑，`saveAnswer` / `forgetAnswer` 只认持锁 token，答案管理被卸载再挂上（`busy` 拦住了 ×/Esc，但 `closeManager()` 等别的路径仍能关）时新挂上的对话框读同一把锁、在飞的那批回来才放开（否则两份同项目整份快照互盖、重跑两次）；`clear()` 换代一并清锁，旧项目那批回来时 token 已不是持有者、放不掉新锁；`ScriptInputDialog` 打开时焦点直接在答案框（`initialFocusRef`），「停止脚本」在 start 槽（危险浅底胶囊）；「记住的输入」入口只在
+  这个脚本真有答案时出现在脚本行上；zustand 选择器的空值用模块级常量（每次新建 `[]` = React #185 无限重渲染）。
+  作答内容在 `ScriptInputForm`（`useScriptInputAnswer` + 字段 + 按钮），原对话框与准备面板共用；同一问只有一个展示面：
+  面板挂载时 `claimPresentation`、卸载时 `releasePresentation`，对话框只在没有展示面认领时出现（关面板 = 换展示，不停脚本）。
+  口令（`secret` / getpass）用密码框、交出去就清空、不进 store；`suggestion` 只说给人看，不预填（ADR 0099 §九）。看护：
   `scriptInputStore.test.tsx`、`ScriptInputDialog.test.tsx`、`ScriptAnswersDialog.test.tsx`、`e2e/script-input.spec.ts`。
 - 看护：`scriptRunStore.test.ts` / `ScriptLibrary.test.tsx` /
   `AssetBrowser.runtime.test.tsx` / `runtimeSourceSection.test.tsx` / `projectSwitchDepRepair.test.ts` /
@@ -211,6 +214,17 @@ BooleanOptional 仅在有长名反向选项时提供三态，短名只有「用�
 只接受一条简单 POSIX sh 调用（拒绝管道 / 重定向 / 变量 / 通配符 / 多行 / 前置赋值，失败提示改用逐项填写），被接受的分词与
 `shlex.split` 逐项相同；直接调用别的 `.py` / `.pyw` 脚本也报 `different_script`，不吞成位置参数。两份 golden：`tests/golden/script_args_form_vectors.json`、`argv_paste_vectors.json`。
 看护：`lib/scriptArgsForm.golden.test.ts`、`lib/argvPaste.golden.test.ts`、`components/ScriptArgsForm.test.tsx`。
+
+
+答案管理（T08）：行身份、改 / 删请求与随后重跑都绑定答案的 `run_config`（只显示不透明引用，不取 argv / 上下文）。
+无参数条目显式用 `null` 重跑，避免读取当前草稿；配置引用保留到运行门放行与数据改指后的重试。换项目的迟到响应不重跑。
+
+**门后排队与同脚本重跑串行（`scriptRunStore`，Codex #816 r4221169169 / r4221258366 / r4221258376）**：
+- 批量重跑（`runConfigsInOrder`）中途撞上运行目录 / 依赖门，就把「停在门上的那份 + 后面没跑的」记进 `gatedQueues`（按脚本，带代际），不算失败。**同一脚本的多批排队按配置做并集**：先来先跑，已在队里的配置不重复排（重跑本来就读最新答案，位置保持首次入队），绝不覆盖——关掉门又保存另一批后再解门，A、B、C 各跑一次。门有了答案时 `rerunGated` 取回整份并集按序续跑（不要求队首等于停在门上的那份；停在门上的那份不在队里就追加到队尾，宁多跑不丢）。队列记着自己停在哪道门（`phase`），`rerunGated` 的候选 = 可见行停在这道门上的 ∪ 队列停在这道门上的：**续跑以队列本身为准，与当前可见行解耦**——门后排队期间同脚本别的配置跑完替换了 `byScript` 那一行，解门照样续跑整份队列。换项目 `clear()` 整份作废；`reset()` 只在收起的是停在门上的行时丢该脚本的队列。
+- **运行方式显式判别（Codex #816 r4221496552）**：队列与解门重跑里的每一份是 `RunSpec`——`{kind:'draft'}`（读运行那一刻的参数草稿，行上 `runConfig === undefined`）或 `{kind:'config', id}`（答案管理的固定配置，`id: null` = 显式无参数）。**绝不用 `?? null` / `|| null` 把 undefined 折成 null**：草稿运行撞门后解门必须仍走 `run(script)`（`probeWithDraft`），否则丢参数重跑。
+- **续跑批的失败要说出来（r4221584209）**：门后续跑是 fire-and-forget，发起它的对话框早已返回；续跑批结束时 `reportResumedFailures` 按配置发出与对话框直提交同一条 `manageRerunFailed` 提示——不管此刻可见行是哪一份（A 失败、B 成功时 B 会盖住可见行）。
+- **同脚本的重跑串行**：`runConfigsInOrder` 在同步段里认领脚本（`batchClaims`），一直占到收尾，包括批内两份之间的空档；第一份在认领的同一个同步段起跑（已空闲不 `await`），所以 `rerunGated` 通知门监听者时脚本已是忙的。认领按 (项目代际, 脚本) 记（r4221496560）：切项目后旧代的长批不挡新项目的同名脚本，旧代释放只删自己那一代的键；批内的等待（`whenNotBusy`）换代即放弃。`whenScriptIdle`（接入中心的门后重跑）把认领也算忙，另一批答案先等前一批释放认领再进场。`runConfigsInOrder` 的项目代际在**第一个 `await` 之前**取，等认领期间切了项目醒来即放弃（不在新项目里跑旧项目的配置）。新增任何「同一脚本的重跑入口」都要么走 `runConfigsInOrder`、要么先 `whenScriptIdle`，不要自己写 `whenNotBusy` 之类的并行等待。
+- 看护 `scriptRunStore.test.ts`「门后排队续跑的排队语义」（并集不丢旧批；答案批次与 Registry 同时等门无并发探测）与 `ScriptAnswersDialog.test.tsx` 第一份停在运行目录门上。
 
 ## 2026-10-07 设计刷新（审计 §5 / §10.3）
 

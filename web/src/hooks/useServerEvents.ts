@@ -143,6 +143,9 @@ export function handleServerEvent(ev: ServerEvent) {
         input_kind: ev.input_kind,
         prompt: ev.prompt ?? '',
         stdout_tail: ev.stdout_tail ?? '',
+        secret: ev.secret === true,
+        suggestion: ev.suggestion ?? null,
+        recheck: ev.recheck ?? null,
       })
       break
     case 'stream.hello':
