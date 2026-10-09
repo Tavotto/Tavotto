@@ -590,11 +590,9 @@ _SOURCE_RANK = {
 _probe_cache: dict[tuple, dict] = {}
 
 
-def _site_fingerprint(python: str) -> tuple:
-    """这个环境 site-packages 目录们的 mtime（ns）——**不起解释器**，只 `glob` + `stat`。装 / 卸一个包会在目录里加 / 减一项，目录
-    mtime 随之变；环境代（`environment_generation`）管"重建"，这个管"装了包"：用户补装了缺的包之后，之前缓存的"缺"（以及卸掉
-    之后缓存的"装齐"）不再命中（Codex #820 r4234882848）。venv 按布局找；有 `home =` 的（include-system 或基础解释器）再加基础
-    前缀下的 site-packages / dist-packages。找不全只会让指纹偏少——最坏是少一次失效，不会错判。"""
+def _host_site_dirs(python: str) -> list[str]:
+    """没有体检进程给的目录表时（import 方式）宿主自己按布局猜的 site-packages 目录们——不起解释器，只 `glob`。找不全只会让
+    指纹偏少（少一次失效），不会错判。"""
     roots: list[str] = []
     try:
         exe = os.path.abspath(python)
@@ -609,7 +607,7 @@ def _site_fingerprint(python: str) -> tuple:
                         roots.append(os.path.dirname(v.strip()))
     except OSError:
         pass
-    seen: dict[str, int] = {}
+    out: list[str] = []
     for root in dict.fromkeys(roots):
         for pattern in (
             "lib/python*/site-packages",
@@ -617,12 +615,27 @@ def _site_fingerprint(python: str) -> tuple:
             "lib64/python*/site-packages",
             "Lib/site-packages",
         ):
-            for d in glob.glob(os.path.join(root, pattern)):
-                try:
-                    seen[d] = os.stat(d).st_mtime_ns
-                except OSError:
-                    continue
-    return tuple(sorted(seen.items()))
+            out.extend(sorted(glob.glob(os.path.join(root, pattern))))
+    return out
+
+
+def _dirs_fingerprint(dirs: list[str]) -> tuple:
+    """这些目录的 mtime（ns；不存在 = None）。装 / 卸一个包会在目录里加 / 减一项，目录 mtime 随之变；目录本来不存在、之后被创建
+    （第一次 `pip install --user`）也变。纯 `stat`，不起解释器。"""
+    out = []
+    for d in dict.fromkeys(dirs):
+        try:
+            out.append((d, os.stat(d).st_mtime_ns))
+        except OSError:
+            out.append((d, None))
+    return tuple(out)
+
+
+def _health_fingerprint(python: str, health: dict) -> tuple:
+    """一条体检结论的"站点内容"指纹：**体检进程自己报的目录表**（`site_dirs`，隔离体检真正放进 `sys.path` 的那些，含用户 site
+    和 .pth 加的项目外路径——单一出处）；没有（import 方式）就用宿主按布局找的。"""
+    dirs = health.get("site_dirs")
+    return _dirs_fingerprint(list(dirs) if isinstance(dirs, list) else _host_site_dirs(python))
 
 
 def _cache_key(
@@ -639,7 +652,6 @@ def _cache_key(
     return (
         _key(python),
         projectenv.environment_generation(python),
-        _site_fingerprint(python),
         modules,
         bundled,
         how,
@@ -662,16 +674,23 @@ def _probe(
         if hit is None and mode == "spec":
             # 点过「运行」之后量过的 import 结论更强，运行之前也可以直接信
             hit = _probe_cache.get(_cache_key(python, modules, bundled, "import"))
-    if hit is not None:
+    if hit is not None and _fresh(python, hit):
         return hit
     # 只在内置 runtime 时才带这个参数：用户环境的体检调用形状与以前逐字相同
     extra = {"bundled": True} if bundled else {}
     if mode == "spec":
         extra.update(import_mode="spec", project_root=root)
     health = projectenv.probe_environment(python, modules=modules, **extra)
+    health["_site_fp"] = _health_fingerprint(python, health)
     with _lock:
         _probe_cache[key] = health
     return health
+
+
+def _fresh(python: str, health: dict) -> bool:
+    """缓存的结论还有效吗：打过指纹的，环境的站点内容（装 / 卸包）没变才有效；没打过的（外部塞进来的）照旧信。"""
+    fp = health.get("_site_fp")
+    return fp is None or fp == _health_fingerprint(python, health)
 
 
 def imports_missing(
@@ -705,7 +724,7 @@ def cached_probe(
         hit = _probe_cache.get(_cache_key(python, modules, bundled))
         if hit is None and root:
             hit = _probe_cache.get(_cache_key(python, modules, bundled, "spec", root))
-    return hit
+    return hit if hit is not None and _fresh(python, hit) else None
 
 
 def evaluate(

@@ -1641,6 +1641,36 @@ def test_discovery_never_follows_a_redirect_inside_the_project(tmp_path, monkeyp
     assert followed == [], f"跟随了项目里的重定向: {followed[:3]}"
 
 
+@posix_only
+def test_a_user_site_install_invalidates_the_cached_negative(tmp_path, monkeypatch):
+    """Codex #820 r4235000684：指纹用的是体检进程自己放进 sys.path 的那份目录表——含用户 site（目录原本不存在也算）。"""
+    user_base = tmp_path / "ubase"
+    monkeypatch.setenv("PYTHONUSERBASE", str(user_base))
+    monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+    py = os.path.realpath(
+        getattr(sys, "_base_executable", sys.executable)
+    )  # 非 venv 的解释器：用户 site 会启用
+    userenvs.reset_cache()
+    root = str(tmp_path / "proj")
+
+    def probe():
+        return userenvs._probe(py, ("late_user_pkg",), mode="spec", root=root)["modules_ok"]
+
+    assert probe() == {"late_user_pkg": False}
+    assert probe() == {"late_user_pkg": False}  # 没变：命中缓存
+    import subprocess as _sp
+
+    user_site = _sp.run(
+        [py, "-c", "import site;print(site.getusersitepackages())"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    os.makedirs(user_site, exist_ok=True)  # `pip install --user` 先建目录、再放包
+    (Path(user_site) / "late_user_pkg.py").write_text("X = 1\n", "utf-8")
+    assert probe() == {"late_user_pkg": True}, "--user 装进用户 site 之后，旧的『缺』仍被缓存命中"
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC

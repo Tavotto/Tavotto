@@ -451,10 +451,13 @@ def _prepare_isolated_path():
             user_site_on = False
     except OSError:
         pass
+    pending_user_site = []
     if user_site_on:
         try:
             import site
-            add(site.getusersitepackages())
+            usp = site.getusersitepackages()
+            pending_user_site.append(usp)
+            add(usp)
         except Exception:
             pass
     extra_paths = []
@@ -501,6 +504,8 @@ def _prepare_isolated_path():
     for d in dirs + extra_paths:
         if d not in sys.path:
             sys.path.append(d)
+    # 体检实际用到的目录（含"用户 site 会启用但目录还不存在"的那个）——宿主据此给缓存结论打指纹，装 / 卸包之后旧结论失效
+    out["site_dirs"] = list(dirs) + list(extra_paths) + [d for d in pending_user_site if d not in dirs]
     if not deferred:
         # sitecustomize / usercustomize 本该由 site 在启动期执行：不执行，只问它们会解析到哪（find_spec 不 import）
         import importlib.util
