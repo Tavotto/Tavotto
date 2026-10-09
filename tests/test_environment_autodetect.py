@@ -196,7 +196,8 @@ def rig(tmp_path, monkeypatch):
             return [
                 {**c, "ok": None, "satisfies": None, "checked": False, "missing": []} for c in cands
             ]
-        box["probed"].append([c["python"] for c in cands])
+        if kw.get("use_cache") is not False:  # 采用前的现量复核不算"体检了哪些候选"
+            box["probed"].append([c["python"] for c in cands])
         return [
             {
                 **c,
@@ -717,6 +718,12 @@ def test_detection_derives_imports_without_the_missing_default_interpreter(
 # ===========================================================================
 # 项目自带的解释器在用户点「运行」之前不执行（Codex 安全 #820 r4232804805）
 # ===========================================================================
+def _env_root(python: str) -> str:
+    """解释器所在环境的根（`<root>/bin/python` 的上两级，不跟软链接）：两个 venv 的 `bin/python` 都软链到同一个基础解释器，
+    拿 realpath 比较会把不同环境判成同一个。"""
+    return os.path.realpath(os.path.dirname(os.path.dirname(python)))
+
+
 def _evil_project(tmp_path: Path) -> dict:
     root = tmp_path / "attacker"
     root.mkdir()
@@ -1023,9 +1030,7 @@ def test_clean_machine_with_an_unchecked_project_venv_offers_run_and_run_adopts_
     assert _act(client, report, "run").status_code == 202
     final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
     assert final["phase"] == "completed", final
-    assert os.path.realpath(projectenv.remembered_record(proj)["path"]) == os.path.realpath(
-        venv_python
-    )
+    assert _env_root(projectenv.remembered_record(proj)["path"]) == _env_root(venv_python)
 
 
 @needs_worker
@@ -1052,7 +1057,7 @@ def test_unchecked_project_env_makes_run_primary_and_run_adopts_it_in_one_action
     assert "environment_changed" not in json.dumps(final)
     record = projectenv.remembered_record(proj)
     assert record["trigger"] == projectenv.TRIGGER_AUTO_DETECTED
-    assert os.path.realpath(record["path"]) == os.path.realpath(venv_python)
+    assert _env_root(record["path"]) == _env_root(venv_python)
     # 会话的计划跟上了：再读一次报告，环境是项目的，没有安装待办
     again = _get(client, report["session_id"])
     assert again["environment"]["kind"] == "project" and "prepare_dependencies" not in _kinds(again)
@@ -1114,7 +1119,7 @@ def test_a_pending_project_env_is_probed_on_run_before_a_lower_priority_one_is_a
     final = _wait(client, report["session_id"], lambda r: r["phase"] not in ("running",))
     assert final["phase"] == "completed", final
     record = projectenv.remembered_record(proj)
-    assert os.path.realpath(record["path"]) == os.path.realpath(venv_python)
+    assert _env_root(record["path"]) == _env_root(venv_python)
 
 
 @needs_worker
@@ -1132,7 +1137,7 @@ def test_when_the_pending_project_env_cannot_run_the_next_candidate_is_used(
 
     # 落到下一个候选（项目外的用户环境）：采用了它，同时默认工作目录档变成「在脚本目录里跑」（ADR 0107 §二）——授权档变了
     # 不就地吸收（那是用户没确认过的写入范围），照旧报过期、让用户重新检查看到新档；重新检查之后一次运行就出图
-    assert os.path.realpath(projectenv.remembered_record(proj)["path"]) == os.path.realpath(lab)
+    assert _env_root(projectenv.remembered_record(proj)["path"]) == _env_root(lab)
     assert final["outcome"]["kind"] == "stale" and final["outcome"]["reason"] == "grant_changed", (
         final
     )
@@ -1152,7 +1157,7 @@ def test_an_earlier_lower_priority_choice_does_not_keep_a_new_project_env_unprob
     proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
     lab = _lower_priority_env(tmp_path, monkeypatch, house)
     first = deprepair.decide_environment(proj, "figure.py")
-    assert first is not None and os.path.realpath(first["python"]) == os.path.realpath(lab)
+    assert first is not None and _env_root(first["python"]) == _env_root(lab)
     venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
     _install_into(venv_python, house, ALPHA[0])
     # 检查阶段：不起 .venv，已有的选择不动
@@ -1161,9 +1166,64 @@ def test_an_earlier_lower_priority_choice_does_not_keep_a_new_project_env_unprob
     )
     # 运行：先体检 .venv（排在前面），能跑就换过去
     second = deprepair.decide_environment(proj, "figure.py")
-    assert second is not None and os.path.realpath(second["python"]) == os.path.realpath(
-        venv_python
+    assert second is not None and _env_root(second["python"]) == _env_root(venv_python)
+
+
+def test_the_probe_cache_is_keyed_by_environment_generation(tmp_path, monkeypatch):
+    """Codex #820 r4233884149：同一路径被重建（换代）之后，旧的体检结论不再命中——缓存读（含 cache_only）也一样。"""
+    py = tmp_path / "env" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    py.write_text("#!/bin/sh\n")
+    cfg = tmp_path / "env" / "pyvenv.cfg"
+    cfg.write_text("home = /x\n")
+    calls = []
+
+    def probe(python, modules=(), **kw):
+        calls.append(python)
+        return {"ok": True, "modules_ok": {m: True for m in modules}}
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe)
+    userenvs.reset_cache()
+    assert userenvs._probe(str(py), ("alpha",))["ok"] is True
+    userenvs._probe(str(py), ("alpha",))
+    assert len(calls) == 1 and userenvs.cached_probe(str(py), ("alpha",)) is not None
+    cfg.write_text("home = /x/rebuilt-with-a-longer-line\n")  # 重建：pyvenv.cfg 被重写
+    assert userenvs.cached_probe(str(py), ("alpha",)) is None
+    userenvs._probe(str(py), ("alpha",))
+    assert len(calls) == 2
+
+
+@needs_worker
+def test_a_cached_fit_verdict_is_not_trusted_after_the_env_lost_its_packages(
+    house, opened, tmp_path, monkeypatch
+):
+    """装包被卸掉（不换代）：缓存里还是"装齐"，采用前现量一次，量不过就落到下一个能跑的候选。"""
+    proj = opened([ALPHA], script_body="import tavotto_test_alpha as _a\nY = _a.VALUE\n")
+    base = tmp_path / "conda"
+    base.mkdir()
+    top = envworld.real_venv(base, proj.name, python=WORKER_PY)  # 名字对上项目：排在前面
+    low = envworld.real_venv(base, "lab", python=WORKER_PY)
+    for py in (top, low):
+        _install_into(py, house, ALPHA[0])
+    monkeypatch.setattr(
+        userenvs, "_conda_prefixes", lambda *a, **k: [str(base / proj.name), str(base / "lab")]
     )
+    userenvs.reset_cache()
+    first = deprepair.decide_environment(proj, "figure.py")
+    assert _env_root(first["python"]) == _env_root(top)
+    # 清掉记录，卸掉 top 里的包（路径与代都不变），缓存里仍是"装齐"
+    snapshot = dict(userenvs._probe_cache)  # 采用时留下的体检结论（含 top 的「装齐」）
+    assert snapshot
+    projectenv.forget(proj)
+    subprocess.run(
+        [top, "-m", "pip", "uninstall", "-y", ALPHA[0]],
+        capture_output=True,
+        timeout=120,
+        check=True,
+    )
+    userenvs._probe_cache.update(snapshot)  # 缓存里仍是过期的「装齐」
+    second = deprepair.decide_environment(proj, "figure.py")
+    assert second is not None and _env_root(second["python"]) == _env_root(low)
 
 
 @needs_worker

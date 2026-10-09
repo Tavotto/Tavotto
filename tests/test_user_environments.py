@@ -718,7 +718,9 @@ def test_the_uncached_recheck_never_accepts_a_result_slipped_into_the_cache(monk
         "modules_ok": {"openpyxl": True},
     }
     imports = ("openpyxl",)
-    key = (userenvs._key("/lab/python"), imports, False)  # 第三维：是不是按内置 runtime 的环境量的
+    key = userenvs._cache_key(
+        "/lab/python", imports, False
+    )  # 路径 + 环境代 + 要量的 import + 是不是内置
 
     class Racy(dict):
         def pop(self, k, *default):

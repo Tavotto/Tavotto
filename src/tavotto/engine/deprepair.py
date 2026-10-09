@@ -5357,6 +5357,11 @@ def project_check_pending(project: str | Path, script: str, plan_payload: dict) 
     )
 
 
+def _reprobe_needed(entry: dict, root: str, project_exec: bool) -> bool:
+    """要不要在采用前现量一次：项目说了算的候选只有点了「运行」之后才能量。"""
+    return project_exec or not userenvs.is_project_controlled(entry, root)
+
+
 def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
     """联合计划载荷里「候选环境要 import 得到」的两份：脚本开跑要的第三方包（`missing` + `satisfied`，
     带 distribution）与映射不到包名的。**不只是 `missing`**：`missing` 是相对**此刻的**解释器量的差集——
@@ -5717,10 +5722,18 @@ def _detect_environment_unlocked(
     candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
     entry = None
     if candidates and not _user_env_discovery_off():
-        entry = userenvs.best(
-            _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec),
-            Path(root).name,
-        )
+        entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
+        while True:
+            entry = userenvs.best(entries, Path(root).name)
+            if entry is None or not _reprobe_needed(entry, root, project_exec):
+                break
+            # 缓存里的"装齐"结论来自过去的某一刻（装包被卸掉不换代）：记下之前现量一次，量不过就换下一个
+            # （Codex #820 r4233884149）。项目说了算的候选在运行之前不能现量，只信带环境代的缓存
+            fresh = userenvs.evaluate([entry], needed, unknown, use_cache=False)[0]
+            if fresh.get("satisfies"):
+                entry = {**entry, **fresh}
+                break
+            entries = [e for e in entries if e["python"] != entry["python"]]
     if entry is None:
         if (
             not runs_now

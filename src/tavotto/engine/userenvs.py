@@ -579,13 +579,21 @@ _SOURCE_RANK = {
     SOURCE_SYSTEM: 4,
 }
 
-_probe_cache: dict[tuple[tuple[str, str], tuple[str, ...], bool], dict] = {}
+_probe_cache: dict[tuple, dict] = {}
+
+
+def _cache_key(python: str, modules: tuple[str, ...], bundled: bool) -> tuple:
+    """体检缓存的键：路径 + **环境代**（`projectenv.environment_generation`，与池 / 项目记录同一个"代"的概念）+ 要量的 import
+    + 是否内置。同一路径上被重建的环境换代，旧结论不再命中（Codex #820 r4233884149）。"""
+    from . import projectenv
+
+    return (_key(python), projectenv.environment_generation(python), modules, bundled)
 
 
 def _probe(python: str, modules: tuple[str, ...], *, bundled: bool = False) -> dict:
     from . import projectenv
 
-    key = (_key(python), modules, bundled)
+    key = _cache_key(python, modules, bundled)
     with _lock:
         hit = _probe_cache.get(key)
     if hit is not None:
@@ -615,7 +623,7 @@ def imports_missing(python: str, modules: list[str], *, bundled: bool = False) -
 def cached_probe(python: str, modules: tuple[str, ...], *, bundled: bool = False) -> dict | None:
     """这个候选在这组 import 上**已有**的体检结论（只读缓存，没有回 None；不起任何进程）。"""
     with _lock:
-        hit = _probe_cache.get((_key(python), modules, bundled))
+        hit = _probe_cache.get(_cache_key(python, modules, bundled))
     return hit
 
 
