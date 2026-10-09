@@ -14,7 +14,8 @@
 「没测量」不是「测量结果是零」（`readiness.py` 同一条纪律）：任何 `partial` 都不许被当成「这个目录
 里没有脚本」。
 
-纯标准库、叶子模块（不 import 兄弟模块）：被 `discover` / `project_refresh` / `projscan` 共同依赖，
+纯标准库、叶子模块（不 import 兄弟模块）：被 `discover` / `project_refresh` / `projscan` / `importscan`（本地模块跟进的读文件与
+清单，Import Origin Resolver PR1）共同依赖，
 自己不能再依赖它们。
 """
 
@@ -86,6 +87,27 @@ _DARWIN_DATALESS = 0x40000000
 _WIN_PLACEHOLDER = 0x1000 | 0x40000 | 0x400000
 
 
+#: Windows 重解析 tag：真正的符号链接。junction（MOUNT_POINT 0xA0000003）、云盘占位、AppExecLink 等都不是它。
+_WIN_TAG_SYMLINK = 0xA000000C
+
+
+def is_symlink(st) -> bool:
+    """`st`（lstat 结果）是**符号链接**——POSIX 符号链接，或 Windows 的 `IO_REPARSE_TAG_SYMLINK`。
+
+    junction / mount point / 其它 reparse（云盘占位、AppExecLink）不是：它们要一律拒，不能当符号链接去
+    `readlink`（Windows 上 `os.readlink` 对 junction 也读得出来，所以必须先按 tag 区分）。
+    CPython 在 Windows 上只给 tag 为 SYMLINK 的 reparse point 置 `S_IFLNK`（3.8 起；`os.path.islink`
+    对 junction 为 False，3.12 加的 `isjunction` 才是 junction 的判据）；`st_reparse_tag` 自 3.8 起存在，
+    这里再按 tag 复核一次，不单靠 `st_mode`。非 Windows 的 stat 没有 reparse 位，按 `S_ISLNK` 即可。
+    """
+    if not stat.S_ISLNK(st.st_mode):
+        return False
+    if (getattr(st, "st_file_attributes", 0) or 0) & 0x400:
+        tag = getattr(st, "st_reparse_tag", 0) or 0
+        return tag == _WIN_TAG_SYMLINK
+    return True
+
+
 def is_redirect(st) -> bool:
     """只读不跟随的 stat 结果：符号链接、Windows 路径替身（含 junction）不得探目标。
 
@@ -139,7 +161,7 @@ def redirected_component(root, path, *, allow_final_link: bool = False) -> str |
             return rel
         if is_redirect(st):
             final = i == len(rest) - 1
-            if final and allow_final_link and os.name != "nt" and stat.S_ISLNK(st.st_mode):
+            if final and allow_final_link and os.name != "nt" and is_symlink(st):
                 return None
             return rel
     return None

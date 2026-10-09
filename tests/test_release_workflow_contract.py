@@ -281,7 +281,7 @@ _NODE24_RELEASE_ACTION_PINS = {
     "actions/download-artifact": "37930b1c2abaa49bbe596cd826c3c89aef350131",
     "pnpm/action-setup": "0977fd99725f1db4007ccb2928dbb4e90d06cc86",
     "softprops/action-gh-release": "efb35369e0ad2afab669f228072c1b0d510eae64",
-    "signpath/github-action-submit-signing-request": "c92b958760219087e01f8d67a1669ed57afe2627",
+    "signpath/github-action-submit-signing-request": "f6d04783b4569d051e0c80105fe66e82819d0092",
 }
 
 
