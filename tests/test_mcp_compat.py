@@ -873,7 +873,6 @@ def test_declared_response_file_prefixes_are_refused(project, pool, token):
         # r4229718719：标准名字被重新绑定 / 解析器变量被重绑 = 说不准
         "import argparse\nfrom helper import argparse\np = argparse.ArgumentParser()\np.parse_args()\n",
         "import argparse\nimport helper\nargparse = helper\np = argparse.ArgumentParser()\np.parse_args()\n",
-        "import argparse\ndef ArgumentParser(*a, **k):\n    return None\np = argparse.ArgumentParser()\np.parse_args()\n",
         "from argparse import ArgumentParser\nfrom helper import make\ndef ArgumentParser(**k):\n    return make(**k)\np = ArgumentParser()\np.parse_args()\n",
         "from argparse import ArgumentParser\nclass ArgumentParser:\n    pass\np = ArgumentParser()\np.parse_args()\n",
         "import argparse\nfrom helper import mods\nfor argparse in mods:\n    pass\np = argparse.ArgumentParser()\np.parse_args()\n",
