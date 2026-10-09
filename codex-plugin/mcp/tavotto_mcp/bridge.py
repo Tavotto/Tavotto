@@ -260,20 +260,19 @@ def _is_response_file_ref(value: str, prefixes: tuple[frozenset[str], bool]) -> 
     return lead == "@" or lead in prefixes[0]
 
 
-def _nt_rooted_escape(value: str, roots: list[str], drive: str, resolve=lambda p: p) -> str | None:
+def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str | None:
     """按 Windows 口径判一个带根形状的 token（纯 ntpath，任何平台都能跑）：指到授权根之外返回文字，否则 None。
 
-    设备路径（`\\\\?\\` / `\\\\.\\`）与盘符相对（`C:x`、`C:`）一律拒（无法证明落点）；`/x` `\\x`
-    补上当前盘（`drive`）；UNC 与带盘符绝对路径原样；规范化后（`resolve` 在真 Windows 上解开链接）再对根检查。"""
+    设备路径（`\\\\?\\` / `\\\\.\\`）、盘符相对（`C:x`、`C:`）、有根无盘符（`\\x`、`/x`、单独的 `\\` `/`）一律拒：
+    它们落在哪个盘取决于 worker 的 cwd 盘，而桥自己的 `os.getcwd()` 可能在另一个盘，桥不推断（Codex #818 r4230323352）。
+    只有完整限定的绝对路径（`C:\\x`、UNC）规范化后（`resolve` 在真 Windows 上解开链接）才对根检查。"""
     if value.startswith(_NT_DEVICE_PREFIXES):
         return value
     vdrive, rest = ntpath.splitdrive(value)
     if vdrive and rest[:1] not in ("\\", "/"):
         return value  # `C:` / `C:x`：盘符相对
     if not vdrive:
-        if not drive:
-            return value
-        value = drive + value
+        return value  # `\x` / `/x` / `\` / `/`：有根无盘符，落点取决于 worker 的盘
     real = resolve(ntpath.normpath(value))
     for root in roots:
         try:
@@ -315,9 +314,7 @@ def _argv_path_escapes(
         return value
     if _WIN_ROOTED_RE.match(value):
         if os.name == "nt":
-            return _nt_rooted_escape(
-                value, roots, ntpath.splitdrive(os.getcwd())[0], resolve=canonical_path
-            )
+            return _nt_rooted_escape(value, roots, resolve=canonical_path)
         if not os.path.isabs(value):
             return value  # 非本平台的带根形状（`\x` / `C:x` / `C:\x`）：无法证明它在根里
     if value.startswith("~") or os.path.isabs(value) or _WIN_ABS_RE.match(value):

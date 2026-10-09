@@ -1126,21 +1126,37 @@ _NT_ROOTS = ["C:\\ws", "D:\\data\\proj"]
     ],
 )
 def test_nt_rooted_tokens_outside_the_roots_are_refused(token):
-    assert bridge._nt_rooted_escape(token, _NT_ROOTS, "C:") is not None
+    assert bridge._nt_rooted_escape(token, _NT_ROOTS) is not None
+
+
+@pytest.mark.parametrize("token", ["C:\\ws\\out.csv", "c:/WS/sub/../x", "D:\\data\\proj\\a"])
+def test_nt_rooted_tokens_inside_the_roots_pass(token):
+    assert bridge._nt_rooted_escape(token, _NT_ROOTS) is None
 
 
 @pytest.mark.parametrize(
-    "token", ["C:\\ws\\out.csv", "c:/WS/sub/../x", "D:\\data\\proj\\a", "/ws/out.txt", "\\ws"]
+    "token", ["\\safe\\victim.txt", "/safe/x", "\\", "/", "/ws/out.txt", "\\ws", "C:x"]
 )
-def test_nt_rooted_tokens_inside_the_roots_pass(token):
-    assert bridge._nt_rooted_escape(token, _NT_ROOTS, "C:") is None
+def test_nt_root_without_drive_is_refused_even_inside_a_root_path(token):
+    """r4230323352：桥的 cwd 盘与 worker 的 cwd 盘可以不同，`\\safe\\x` 在 worker 那边是 D:\\safe\\x。
+    有根无盘符一律拒，不推断盘；完整限定的 `C:\\ws\\x` 仍照常按根检查。"""
+    roots = ["C:\\safe", "D:\\project"]
+    assert bridge._nt_rooted_escape(token, roots) is not None
+    assert bridge._nt_rooted_escape("C:\\safe\\x", roots) is None
 
 
-def test_nt_root_relative_token_without_a_known_drive_is_refused():
-    assert bridge._nt_rooted_escape("/ws/a", _NT_ROOTS, "") is not None
-
-
-@pytest.mark.parametrize("token", ["\\x", "C:x", "C:", "\\\\?\\C:\\a", "--out=C:x", "-o\\x"])
+@pytest.mark.parametrize(
+    "token",
+    ["\\x", "/safe/x", "\\", "C:x", "C:", "\\\\?\\C:\\a", "--out=C:x", "--out=\\x", "-o\\x"],
+)
 def test_windows_rooted_shapes_are_refused_on_every_platform(project, token):
     """POSIX 上这些不是绝对路径，但脚本可能在任何平台被当成路径；绝不落进「相对 cwd」分支。"""
     assert _scope_code(project, ["--freq", "1", token]) == "argv_path_out_of_scope"
+
+
+def test_posix_absolute_path_inside_the_root_is_unchanged(project):
+    """r4230323352 的拒绝只属于 Windows 口径：POSIX 的 `/abs` 是普通绝对路径，仍按授权根检查。"""
+    if os.name == "nt":
+        pytest.skip("POSIX 口径")
+    assert _scope_code(project, ["--freq", "1", str(Path(project) / "out.csv")]) is None
+    assert _scope_code(project, ["--freq", "1", "/etc/passwd"]) == "argv_path_out_of_scope"
