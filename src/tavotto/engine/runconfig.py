@@ -408,16 +408,12 @@ def configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
 
 
 def executable_configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
-    """`configs_of` 里**此刻真能运行**的那些：敏感值已不在的占位、整份登记读不出 / 来自新版本，都当没有。
+    """`configs_of` 里**此刻真能运行**的那些：敏感值已不在的占位被滤掉（打开只会得到 `run_config_secret_missing`）。
 
-    给「这个脚本的 cache 算不算可直接编辑的证据」用（`probe.was_captured`）：cache 在但配置不能再运行，
-    打开素材只会得到 `run_config_secret_missing` / `run_config_unreadable`，不算连接。
-    读不出配置的拒绝执行由执行侧负责，这里只做证据判断，不抛。"""
-    try:
-        configs = configs_of(project_root, script)
-    except RunConfigError:
-        return []
-    return [cfg for cfg in configs if cfg.executable]
+    给「这个脚本的 cache 算不算可直接编辑的证据」用（`probe.captured_stems`）。整份登记读不出 / 来自新版本时
+    `RunConfigError` **原样抛出**，不当空列表：素材清单（`configs_of`）此时整个报 `run_config_unreadable`，连无参数变体也打不开，
+    把「读不出」说成「没有配置」会让 cache 被当成可编辑证据（#819 r4232390785）。调用方必须区分这两种情形。"""
+    return [cfg for cfg in configs_of(project_root, script) if cfg.executable]
 
 
 def forget_secrets() -> None:

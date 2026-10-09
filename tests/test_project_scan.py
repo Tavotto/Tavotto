@@ -255,8 +255,9 @@ def test_a_script_whose_figure_was_captured_before_counts_as_connected(tmp_path)
 
 @pytest.mark.parametrize("newer", [False, True])
 def test_unreadable_run_configs_do_not_fail_the_scan(tmp_path, newer):
-    """r4220769153：运行配置登记坏了 / 来自新版本，`_linked_scripts` 的「是否捕获过」证据只当无证据，不炸整次扫描；
-    无参数那一份证据仍算数。（读不出配置时用空 argv 运行由 run_config_unreadable 另行拦住，这里不碰。）"""
+    """r4220769153 + r4232390785：运行配置登记坏了 / 来自新版本，扫描不炸；素材清单此刻整个报 `run_config_unreadable`
+    （连无参数变体也打不开），所以此时有效的无参数 cache 也**不**算连接证据——不报 linked / already_connected，
+    准备入口不被藏起来；与素材清单一致（宁可少说）。"""
     from tavotto.engine import figcapture, runconfig, runtimeasset
 
     root = _project(tmp_path)
@@ -281,6 +282,18 @@ def test_unreadable_run_configs_do_not_fail_the_scan(tmp_path, newer):
     assert runtimeasset.materialize(
         root, {"asset_id": figcapture.runtime_asset_id("fig.py", "fig"), "script": "fig.py"}, svg
     )
+    report = projscan.scan(root)
+    assert report["targets"][0]["linked"] is False
+    assert report["outcome"]["kind"] != "already_connected"
+    assert report["target_choice"] != "connected"
+    # 与素材清单同一事实：这个状态下清单本身报 run_config_unreadable
+    from tavotto.engine import registry as engine_registry
+
+    with pytest.raises(runconfig.RunConfigError) as exc:
+        runtimeasset.list_assets(root, engine_registry.open_registry(root))
+    assert exc.value.code == (runconfig.ERROR_UNSUPPORTED if newer else runconfig.ERROR_UNREADABLE)
+    # 登记恢复读得出后，同一份 cache 重新算证据
+    runconfig.store_path(root).unlink()
     assert projscan.scan(root)["targets"][0]["linked"] is True
 
 

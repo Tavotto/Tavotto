@@ -636,9 +636,10 @@ def captured_stems(
     坏的脚本键（绝对 / 盘符 / 空——`figcapture.normalize_relative_script` 拒的那些，与 `runtime_asset_id` 同一条判据）、
     坏的 stem 都当**没有证据**：手改过的注册表不能让扫描或登记炸掉（r4232302913）。
 
-    运行配置登记读不出 / 来自新版本（`RunConfigError`）时，带配置那几份变体当**没有证据**：这是「是否捕获过」的
-    证据判断，宁可少说，不能因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
-    `run_config_secret_missing`，不是「可直接编辑」（r4221248582；两种情形共用 `runconfig.executable_configs_of`）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
+    运行配置登记读不出 / 来自新版本（`RunConfigError`）时，**整个脚本**当没有证据（连无参数变体也不算）：素材清单
+    （`/api/runtime/assets`）此刻对该脚本报 `run_config_unreadable`，用户打不开任何一张，说「已连接」是假话（r4232390785）；
+    登记（`register_probed`）也因此不声称「已不再关联」——读不出就什么都不说。不因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
+    `run_config_secret_missing`，不是「可直接编辑」（r4221248582）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
     `run_config_unreadable` 显式拒绝（那条不在这里）。
 
     `charge`（导入即扫描传 `budget.charge_entry`）在每次真实的磁盘操作（列目录、读元数据）前调用，返回 False
@@ -652,7 +653,12 @@ def captured_stems(
     if not wanted:
         return set(), True
     if configs is None:
-        configs = runconfig.executable_configs_of(figures_dir, script)
+        try:
+            configs = runconfig.executable_configs_of(figures_dir, script)
+        except runconfig.RunConfigError:
+            # 登记读不出 / 来自新版本：素材清单此刻整个报 `run_config_unreadable`，连无参数变体也打不开——
+            # 没有任何可用的 cache 证据（不是「没有配置」，r4232390785）。调用方据此既不判已连接，也不声称「已不再关联」
+            return set(), True
     if charge is not None and not charge():
         return set(), False
     present = runtimeasset.cached_slugs()
