@@ -31,7 +31,7 @@ import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
-import { missingRequired, readTokens, subcommandMissing, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
+import { missingRequirements, readTokens, subcommandMissing, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
@@ -168,7 +168,7 @@ export function PreparationCard() {
     const missingArgs = !schema
       ? null
       : schema.form_enabled
-        ? missingRequired(schema, readTokens(schema, tokens), tokens).length
+        ? missingRequirements(schema, readTokens(schema, tokens), tokens).count
         : subcommandMissing(schema, tokens)
           ? 1
           : null

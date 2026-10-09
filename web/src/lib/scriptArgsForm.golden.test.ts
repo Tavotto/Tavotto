@@ -10,6 +10,7 @@ import {
   applyEdit,
   groupProblems,
   missingRequired,
+  missingRequirements,
   readTokens,
   type FormEdit,
   type ScriptArgsSchema,
@@ -124,10 +125,12 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
   } as ScriptArgsSchema
 
   it('一个成员都没给 = 缺 1；给了一个 = 0；组不必选 = 0', () => {
-    expect(missingRequired(grp, readTokens(grp, []))).toEqual(['gx'])
-    expect(missingRequired(grp, readTokens(grp, ['--csv', 'a']))).toEqual([])
+    expect(missingRequirements(grp, readTokens(grp, [])).groups).toEqual(['gx'])
+    expect(missingRequirements(grp, readTokens(grp, [])).count).toBe(1)
+    expect(missingRequired(grp, readTokens(grp, []))).toEqual([]) // 组 id 不混进参数 id
+    expect(missingRequirements(grp, readTokens(grp, ['--csv', 'a'])).count).toBe(0)
     const optional = { ...grp, exclusive_groups: [{ id: 'gx', required: false, members: ['csv', 'json'] }] }
-    expect(missingRequired(optional, readTokens(optional, []))).toEqual([])
+    expect(missingRequirements(optional, readTokens(optional, [])).count).toBe(0)
   })
 
   it('必选子命令：没选 = subcommand；选了（或不必选）= 0；不传 tokens 不判', () => {
@@ -137,11 +140,27 @@ describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822
       exclusive_groups: [],
       subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
     } as ScriptArgsSchema
-    expect(missingRequired(sub, readTokens(sub, []), [])).toEqual(['subcommand'])
-    expect(missingRequired(sub, readTokens(sub, []), ['--v'])).toEqual(['subcommand'])
-    expect(missingRequired(sub, readTokens(sub, []), ['-v', 'plot'])).toEqual([])
-    expect(missingRequired(sub, readTokens(sub, []))).toEqual([])
+    expect(missingRequirements(sub, readTokens(sub, []), []).subcommand).toBe(true)
+    expect(missingRequirements(sub, readTokens(sub, []), ['--v']).subcommand).toBe(false) // 不认识的选项：拿不准
+    expect(missingRequirements(sub, readTokens(sub, []), ['-v', 'plot']).count).toBe(0)
+    expect(missingRequirements(sub, readTokens(sub, [])).count).toBe(0)
     const notRequired = { ...sub, subcommands: { ...sub.subcommands!, required: false } }
-    expect(missingRequired(notRequired, readTokens(notRequired, []), [])).toEqual([])
+    expect(missingRequirements(notRequired, readTokens(notRequired, []), []).count).toBe(0)
+  })
+
+  it('选项的值不算子命令：`--output plot` 仍是没选（r4232594148）', () => {
+    const out = { ...base.arguments[0], id: 'output', flags: ['--output'], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: null }
+    const sub = {
+      ...base,
+      arguments: [out],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    } as ScriptArgsSchema
+    const miss = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t).subcommand
+    expect(miss(['--output', 'plot'])).toBe(true)
+    expect(miss(['--output=plot'])).toBe(true)
+    expect(miss(['--output', 'x', 'plot'])).toBe(false)
+    expect(miss(['--', 'plot'])).toBe(false)
+    expect(miss(['--mystery', 'plot'])).toBe(false) // 不认识的选项：拿不准，当选了
   })
 })

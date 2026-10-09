@@ -365,37 +365,62 @@ export const readTokens = (schema: ScriptArgsSchema, tokens: string[]): TokenVie
   return { fields, unattributed, positionalsCertain: mappable, doubleDash: s.doubleDash }
 }
 
-/** 必选子命令（`add_subparsers(required=True)`）token 里没选：`choices` 里任一名字出现过才算选了；
- * 名字不可枚举（动态）时退到「有任何不以 `-` 开头的 token」。拿不准就当选了（不拦用户）。 */
+/**
+ * 必选子命令（`add_subparsers(required=True)`）token 里没选。只在**位置 token**里认（`scan` 已把已知选项的值认走：
+ * `--output plot` 里的 `plot` 是值，不算选了子命令；`--` 之后全是位置）。`choices` 里任一名字出现 = 选了；名字不可枚举（动态）
+ * 时任何位置 token 都算。没认到、但出现过不认识的选项（它吃不吃后面的 token 说不清）= 拿不准，当选了，不拦用户。
+ */
 export const subcommandMissing = (schema: ScriptArgsSchema, tokens: string[]): boolean => {
   const sub = schema.subcommands
   if (!sub || !sub.required) return false
-  const end = tokens.indexOf('--')
-  const head = end >= 0 ? tokens.slice(0, end) : tokens
-  if (!sub.dynamic && sub.choices.length > 0) return !head.some((t) => sub.choices.includes(t))
-  return !head.some((t) => !t.startsWith('-'))
+  const s = scan(schema, tokens)
+  const positional = s.positionalIdx.map((j) => tokens[j])
+  const chosen =
+    !sub.dynamic && sub.choices.length > 0 ? positional.some((t) => sub.choices.includes(t)) : positional.length > 0
+  if (chosen) return false
+  return s.unknown.length === 0
+}
+
+export interface MissingRequirements {
+  /** 必填但没给的参数 id（都在 `schema.arguments` 里） */
+  args: string[]
+  /** 必选互斥组一个成员都没给的组 id（都在 `schema.exclusive_groups` 里） */
+  groups: string[]
+  /** 必选子命令没选（仅在传了 `tokens` 时判） */
+  subcommand: boolean
+  /** 三类合计：准备卡的运行闸只看这个数 */
+  count: number
 }
 
 /**
- * 必填但 token 里没有的项（default 不算答案）：必填参数 id、必选互斥组 id（一个成员都没给）、`'subcommand'`（必选子命令没选，
- * 仅在传了 `tokens` 时判）。位置参数读不准时不算缺（不知道）。**所有「还缺必填」的判断都走这里**（表单高亮与准备卡的运行闸同源）。
+ * 还缺的必填项（default 不算答案），分类型给：消费者各取所需，不会把组 id 当参数 id 去查表。位置参数读不准时不算缺（不知道）。
+ * **所有「还缺必填」的判断都走这里**（表单高亮与准备卡的运行闸同源）。
  */
-export const missingRequired = (schema: ScriptArgsSchema, view: TokenView, tokens?: string[]): string[] => {
-  const out: string[] = []
+export const missingRequirements = (
+  schema: ScriptArgsSchema,
+  view: TokenView,
+  tokens?: string[],
+): MissingRequirements => {
+  const args: string[] = []
   for (const arg of schema.arguments) {
     const f = view.fields[arg.id]
     if (arg.required !== true || !f || f.uncertain) continue
-    if (f.state === 'unset' || f.incomplete) out.push(arg.id)
+    if (f.state === 'unset' || f.incomplete) args.push(arg.id)
   }
+  const groups: string[] = []
   for (const g of schema.exclusive_groups) {
     if (!g.required) continue
     const fs = g.members.map((m) => view.fields[m])
     if (fs.some((f) => !f || f.uncertain)) continue
-    if (fs.every((f) => f.state === 'unset')) out.push(g.id)
+    if (fs.every((f) => f.state === 'unset')) groups.push(g.id)
   }
-  if (tokens && subcommandMissing(schema, tokens)) out.push('subcommand')
-  return out
+  const subcommand = tokens !== undefined && subcommandMissing(schema, tokens)
+  return { args, groups, subcommand, count: args.length + groups.length + (subcommand ? 1 : 0) }
 }
+
+/** 只要参数 id 的消费者（表单的「还缺」一行）用这个；组与子命令另有各自的提示（`groupProblems` 等）。 */
+export const missingRequired = (schema: ScriptArgsSchema, view: TokenView): string[] =>
+  missingRequirements(schema, view).args
 
 /** 互斥组：两个以上成员同时给了（冲突）/ 必选组一个都没给（缺）。只提示，不替用户删 token。 */
 export const groupProblems = (
