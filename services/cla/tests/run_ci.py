@@ -7,7 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-MIN_TESTS = 41
+MIN_TESTS = 47
 
 
 def main():

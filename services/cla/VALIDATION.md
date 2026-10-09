@@ -86,3 +86,39 @@ The test-peer response splitting was reproduced and repaired; the PKCE S256
 password-hashing classification is a documented, protocol-backed false positive.
 Three added HTTP/security regressions raise the enforced suite minimum to 41.
 No scanner suppression or alert dismissal was applied.
+
+## Attempt-scoped jobs compatibility (2026-10-09)
+
+The review's unconditional “always pending” claim was not reproduced: raw GitHub
+attempt-1 responses for CI run `37882269458` (37 jobs) and CodeQL run `37882269493`
+(5 jobs) included `run_attempt` in every job. The official endpoint example omits
+that field; parity under an explicitly selected `2022-11-28` API header was not
+established by the inspection tool. This change is therefore a narrow compatibility
+repair, not evidence of a universal production outage.
+
+`trusted_ci_passed` still selects the latest workflow run/attempt and fetches every
+jobs page from that exact attempt endpoint. Only an absent job `run_attempt` may
+rely on that endpoint provenance. A present value must be an integer equal to the
+selected attempt; null, booleans, floats, strings and mismatches fail closed.
+Job head/run, exact check URL/ID, check head, GitHub Actions App and workflow
+check-suite checks are unchanged. An old attempt's green jobs/checks cannot
+qualify a newer attempt.
+
+Verified against the exact `41aca371` source tree plus this narrow repair:
+
+- Full isolated HTTP/SQLite suite: **47 passed**, no skips or expected failures.
+- Existing source-hygiene, CI baseline, Windows, workflow, aggregate-gate and legal
+  contracts: **435 passed, 5 platform skips, 1 deselected** (the previously documented
+  unavailable audit-history assertion). This is not a full product test claim.
+- Full repository Ruff check and format check passed; diff whitespace check passed.
+- The new absent-field positive test failed against the original predicate.
+- Nine isolated mutation proofs were caught, including the six original probes
+  and three additions: require the optional field again, accept invalid present
+  attempts, and fetch attempt 1 instead of the selected current attempt.
+- Added negative regressions exercise wrong job head/run, fake check ID/origin,
+  wrong check head/App/suite, unfinished/failed results and stale-attempt results.
+  A 102-job HTTP fixture verifies attempt-specific pagination with absent fields.
+
+Native-platform/full-CI results for the published repair remain a separate check.
+No production activation, new credentials, permission changes, signing, scan
+suppression or alert dismissal is part of this repair.

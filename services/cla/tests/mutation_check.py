@@ -9,6 +9,27 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MUTATIONS = [
     (
+        "accept_absent_attempt_from_scoped_endpoint",
+        "services/cla/github.py",
+        'or job.get("run_id") != run["id"]',
+        'or job.get("run_id") != run["id"] or job.get("run_attempt") != run["run_attempt"]',
+        "ServiceTests.test_trusted_ci_accepts_absent_job_attempt_from_selected_endpoint",
+    ),
+    (
+        "reject_present_invalid_attempt",
+        "services/cla/github.py",
+        '"run_attempt" in job',
+        "False",
+        "ServiceTests.test_trusted_ci_rejects_present_invalid_job_attempt",
+    ),
+    (
+        "select_current_attempt_endpoint",
+        "services/cla/github.py",
+        "/attempts/{run['run_attempt']}/jobs",
+        "/attempts/1/jobs",
+        "ServiceTests.test_trusted_ci_absent_attempt_uses_only_current_attempt_jobs",
+    ),
+    (
         "require_both_signatures",
         "services/cla/store.py",
         '                ("holder", self.config.holder_id),\n',

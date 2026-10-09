@@ -173,7 +173,11 @@ class Peer(BaseHTTPRequestHandler):
                     run_id = int(suffix.split("/")[3])
                     attempt = int(suffix.split("/")[5])
                     jobs = state.get("attempt_jobs", {}).get((run_id, attempt), [])
-                    result = {"total_count": len(jobs), "jobs": jobs}
+                    page = int(query["page"][0])
+                    result = {
+                        "total_count": len(jobs),
+                        "jobs": jobs[(page - 1) * 100 : page * 100],
+                    }
                 elif suffix.startswith("/actions/workflows/"):
                     workflow_id = int(suffix.split("/")[3])
                     runs = state.get("workflow_runs", {}).get(workflow_id, [])
@@ -908,6 +912,91 @@ class ServiceTests(unittest.TestCase):
         self.complete_ci()
         self.peer.state["workflow_runs"][401][0]["run_attempt"] = 2
         self.assertEqual(self.worker.final_decision(group), "pending")
+
+    def omit_job_attempts(self):
+        for jobs in self.peer.state["attempt_jobs"].values():
+            for job in jobs:
+                job.pop("run_attempt", None)
+
+    def test_trusted_ci_accepts_absent_job_attempt_from_selected_endpoint(self):
+        self.final_fixture()
+        self.complete_ci()
+        self.omit_job_attempts()
+        self.assertTrue(self.github.trusted_ci_passed("c" * 40))
+
+    def test_trusted_ci_rejects_present_invalid_job_attempt(self):
+        self.final_fixture()
+        for value in (None, 0, 2, "1", True, 1.0, [], {}):
+            with self.subTest(attempt=value):
+                self.complete_ci()
+                self.peer.state["attempt_jobs"][(501, 1)][0]["run_attempt"] = value
+                self.assertFalse(self.github.trusted_ci_passed("c" * 40))
+
+    def test_trusted_ci_absent_attempt_uses_only_current_attempt_jobs(self):
+        self.final_fixture()
+        self.complete_ci()
+        self.omit_job_attempts()
+        self.peer.state["workflow_runs"][401][0]["run_attempt"] = 2
+        # Green checks and absent-attempt jobs from attempt 1 cannot qualify attempt 2.
+        self.assertFalse(self.github.trusted_ci_passed("c" * 40))
+        jobs = self.peer.state["attempt_jobs"][(501, 1)]
+        current_jobs = []
+        for index, job in enumerate(jobs):
+            check = dict(self.peer.state["checks"][800 + index], id=900 + index)
+            self.peer.state["checks"][900 + index] = check
+            current_jobs.append(
+                dict(
+                    job,
+                    check_run_url=self.config.api_base
+                    + f"/repos/Tavotto/Tavotto/check-runs/{900 + index}",
+                )
+            )
+        self.peer.state["attempt_jobs"][(501, 2)] = current_jobs
+        self.assertTrue(self.github.trusted_ci_passed("c" * 40))
+        # The exact current-attempt check IDs remain authoritative even while old checks are green.
+        self.peer.state["checks"][900]["conclusion"] = "failure"
+        self.assertFalse(self.github.trusted_ci_passed("c" * 40))
+
+    def test_trusted_ci_absent_attempt_preserves_job_provenance(self):
+        self.final_fixture()
+        for field, value in (
+            ("head_sha", HEAD),
+            ("run_id", 999),
+            ("check_run_url", self.config.api_base + "/repos/Tavotto/Tavotto/check-runs/999"),
+            ("check_run_url", "https://untrusted.invalid/repos/Tavotto/Tavotto/check-runs/800"),
+            ("status", "in_progress"),
+            ("conclusion", "failure"),
+        ):
+            with self.subTest(field=field, value=value):
+                self.complete_ci()
+                self.omit_job_attempts()
+                self.peer.state["attempt_jobs"][(501, 1)][0][field] = value
+                self.assertFalse(self.github.trusted_ci_passed("c" * 40))
+
+    def test_trusted_ci_absent_attempt_preserves_check_provenance(self):
+        self.final_fixture()
+        for field, value in (
+            ("id", 999),
+            ("head_sha", HEAD),
+            ("app", {"id": 999, "slug": "github-actions"}),
+            ("app", {"id": 15368, "slug": "untrusted"}),
+            ("check_suite", {"id": 999}),
+            ("status", "in_progress"),
+            ("conclusion", "failure"),
+        ):
+            with self.subTest(field=field, value=value):
+                self.complete_ci()
+                self.omit_job_attempts()
+                self.peer.state["checks"][800][field] = value
+                self.assertFalse(self.github.trusted_ci_passed("c" * 40))
+
+    def test_trusted_ci_absent_attempt_jobs_are_paginated(self):
+        self.final_fixture()
+        self.complete_ci()
+        self.omit_job_attempts()
+        jobs = self.peer.state["attempt_jobs"][(501, 1)]
+        jobs[:0] = [{"name": f"unrelated {index}"} for index in range(100)]
+        self.assertTrue(self.github.trusted_ci_passed("c" * 40))
 
     def test_final_success_cleared_before_policy_failure(self):
         self.both_sign()

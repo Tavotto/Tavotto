@@ -431,7 +431,16 @@ class GitHub:
             if (
                 job.get("head_sha") != head
                 or job.get("run_id") != run["id"]
-                or job.get("run_attempt") != run["run_attempt"]
+                # Some API representations omit this field. Its only fallback is
+                # provenance from the exact selected run/attempt jobs endpoint above.
+                # A present null, malformed value or different attempt must fail closed.
+                or (
+                    "run_attempt" in job
+                    and (
+                        type(job["run_attempt"]) is not int
+                        or job["run_attempt"] != run["run_attempt"]
+                    )
+                )
                 or job.get("status") != "completed"
                 or job.get("conclusion") != "success"
             ):
