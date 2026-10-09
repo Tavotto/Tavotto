@@ -54,6 +54,19 @@ on:
         required: false
         default: false
         type: boolean
+      signing-mode:
+        description: >-
+          Windows SignPath 签名模式。'wait'（默认）：提交后等待签名完成，
+          适合测试证书或能及时手动批准的场景。'submit-only'：只提交签名请求
+          不等待，把审批链接输出到 step summary，由人工在 SignPath UI 批准后，
+          再手动触发 complete-windows-signing.yml 完成下载/校验/重打更新包。
+          生产证书要求每次手动批准，长时间等待会占住 runner，用 submit-only 拆开。
+        required: false
+        default: 'wait'
+        type: choice
+        options:
+          - 'wait'
+          - 'submit-only'
     # **每一个 secret 都显式声明。** `secrets: inherit` 只能写在**调用方**
     # （`jobs.<id>.secrets: inherit`），写在被调用方是语法错误——actionlint
     # 当场逮到了。显式列一遍还有第二个好处：这份清单就是「桌面发布链需要
@@ -698,7 +711,9 @@ jobs:
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
           artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
           github-artifact-id: ${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}
-          wait-for-completion: true
+          # submit-only 模式：只提交不等待，人工批准后由 complete-windows-signing.yml 接手。
+          # wait 模式：等待签名完成（默认，适合测试证书）。
+          wait-for-completion: ${{ inputs.signing-mode != 'submit-only' }}
           output-artifact-directory: signed-out
           parameters: |
             version: "${{ env.APP_VERSION }}"
