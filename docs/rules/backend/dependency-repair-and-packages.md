@@ -472,7 +472,10 @@
   site-packages，**`.pth` 只当文本读**——路径行指进项目根、`import` 行带 `__editable__`（finder）且旁边的 finder 文件提到项目根或找不到、
   `sitecustomize` / `usercustomize` 解析进项目，任一成立 = 整个环境 `deferred_env`，不 import 任何东西，`userenvs.evaluate` 回
   `checked=False, deferred=True`，等运行再量。其余 `import` 行不执行（只是少了它们的副作用，运行时的真 import 会补上）。`import` 方式
-  （运行之后）原样不变，运行就是同意。
+  （运行之后）原样不变，运行就是同意。**spec 体检什么都不 import**（Codex 安全 #820 r4235163764）：连 Tavotto 自己要的 matplotlib / worker
+  启动链也不（版本读 dist-info 的 METADATA，`health_deferred`；能不能真 import 等运行再量），子进程回报 `new_imports`（探测前后
+  `sys.modules` 多出的非标准库顶层名）必须为空，由用例钉着。进 `sys.path` 的目录（site 目录、`.pth` 路径行）是项目、项目里的、或项目的
+  **祖先**（`/work` 对 `/work/matplotlib`，祖先能把顶层包名解析成项目）任一成立 = 整个环境延后（`_touches`，两个方向的规范化 commonpath）。
 - **确认模式（`TAVOTTO_ENV_ADOPTION=confirm` 或设置 `worker.environment_adoption=confirm`）下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
   `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
   `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个

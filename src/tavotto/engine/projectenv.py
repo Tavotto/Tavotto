@@ -359,6 +359,7 @@ out = {"executable": sys.executable, "prefix": sys.prefix,
 engine_dir = sys.argv[1]
 module = sys.argv[2] if len(sys.argv) > 2 else ""
 extra = [m for m in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if m]
+_modules_before = set(sys.modules)
 mode = sys.argv[4] if len(sys.argv) > 4 else ""
 project_root = sys.argv[5] if len(sys.argv) > 5 else ""
 isolated = (sys.argv[6] if len(sys.argv) > 6 else "") == "isolated"
@@ -384,6 +385,11 @@ def _inside(path, root):
         return os.path.commonpath([a, b]) == b
     except (ValueError, OSError):
         return False
+
+
+def _touches(path, root):
+    # 进 sys.path 的目录是项目、项目里的、或项目的**祖先**（`/work` 对 `/work/matplotlib`：祖先能把顶层包名解析成项目）都算
+    return _inside(path, root) or _inside(root, path)
 
 
 def _finder_defers(text, root):
@@ -497,10 +503,12 @@ def _prepare_isolated_path():
                             deferred = True
                     continue
                 target = os.path.normpath(os.path.join(d, line))
-                if project_root and _inside(target, project_root):
+                if project_root and _touches(target, project_root):
                     deferred = True
                 elif os.path.isdir(target):
                     extra_paths.append(target)
+    if project_root and any(_touches(d, project_root) for d in dirs + extra_paths):
+        deferred = True  # site 目录本身是项目 / 项目里的 / 项目的祖先
     for d in dirs + extra_paths:
         if d not in sys.path:
             sys.path.append(d)
@@ -560,15 +568,26 @@ if not isolated:
 if isolated:
     if _prepare_isolated_path():
         out["deferred_env"] = True
+        out["new_imports"] = []
         sys.stdout.write(json.dumps(out))
         sys.exit(0)
-try:
+    # 运行之前（Codex 安全 #820 r4235163764）：**什么都不 import**——包括 Tavotto 自己要的 matplotlib / worker 启动链。
+    # 版本从 dist-info 的 METADATA 读（不执行代码）；"能不能真的 import"（坏的二进制 wheel 等）要等运行再量
+    out["health_deferred"] = True
+    try:
+        import importlib.metadata as _md
+        out["matplotlib_version"] = _md.version("matplotlib")
+    except Exception as exc:
+        out["error"] = "matplotlib: %s" % exc
+    out["tavotto_worker_ok"] = True
+else:
+  try:
     import matplotlib
     matplotlib.use("Agg")
     out["matplotlib_version"] = matplotlib.__version__
-except Exception as exc:
+  except Exception as exc:
     out["error"] = "matplotlib: %s" % exc
-if out["matplotlib_version"]:
+if out["matplotlib_version"] and not isolated:
     import importlib.util, os
     sys.path.insert(0, engine_dir)
     dont_write = sys.dont_write_bytecode
@@ -629,6 +648,18 @@ if module:
     out["requested_module_ok"] = _state(module)
 for name in extra:
     out["modules_ok"][name] = _state(name)
+if isolated:
+    if _spec_state("matplotlib") is None:
+        out["deferred_env"] = True  # matplotlib 本身解析进了项目
+    _stdlib = getattr(sys, "stdlib_module_names", None)
+    out["new_imports"] = (
+        sorted(
+            {n.split(".")[0] for n in set(sys.modules) - _modules_before if not n.startswith("_sysconfigdata")}
+            - set(_stdlib)
+        )
+        if _stdlib is not None
+        else []
+    )
 sys.stdout.write(json.dumps(out))
 """
 

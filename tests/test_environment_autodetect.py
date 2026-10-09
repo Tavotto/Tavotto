@@ -1702,6 +1702,60 @@ def test_import_mode_verdicts_are_fingerprinted_from_the_interpreters_own_site_l
     assert probe() == {"late_user_pkg2": True}
 
 
+@posix_only
+@needs_worker
+def test_a_path_entry_that_is_an_ancestor_of_the_project_defers_the_environment(
+    tmp_path, monkeypatch
+):
+    """Codex 安全 #820 r4235163764：外部环境的 .pth 指向项目的**父目录**（/work 对 /work/matplotlib）——祖先能把顶层包名
+    `matplotlib` 解析成项目自己，检查阶段 import 它就是执行项目代码。整个环境延后；点运行才真量。"""
+    work = tmp_path / "work"
+    root = work / "matplotlib"  # 项目目录恰好叫 matplotlib
+    root.mkdir(parents=True)
+    marker = tmp_path / "ancestor-ran"
+    (root / "__init__.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n", "utf-8")
+    (root / "fig.py").write_text(
+        "import zzz_needed_mod\nimport matplotlib.pyplot as plt\n", "utf-8"
+    )
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    site_dir = next((base / "lab" / "lib").glob("python*")) / "site-packages"
+    (site_dir / "0work.pth").write_text(str(work) + "\n", "utf-8")
+    monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
+    userenvs.reset_cache()
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+
+    health = projectenv.probe_environment(
+        py, modules=("zzz_needed_mod",), import_mode="spec", project_root=str(root)
+    )
+    assert health.get("deferred_env") is True and not marker.exists()
+    deprepair.decide_environment_pinned(root, "fig.py", project_exec=False)
+    plan = {"missing": [], "unknown": ["zzz_needed_mod"]}
+    offer = deprepair.user_environment_offer(root, "fig.py", plan, "")
+    assert not marker.exists(), "检查阶段 import 了项目里的 matplotlib"
+    lab = [e for e in offer if _env_root(e["python"]) == _env_root(py)]
+    assert lab and all(e.get("deferred") for e in lab)
+    deprepair.decide_environment(root, "fig.py")  # 点了运行：真量
+    assert marker.exists()
+
+
+@posix_only
+@needs_worker
+def test_the_isolated_probe_imports_nothing_outside_the_stdlib(tmp_path):
+    """结构守卫：运行之前的体检里，子进程在探测前后 `sys.modules` 多出来的非标准库模块必须是空集（matplotlib / numpy / worker
+    启动链都不 import；版本读 dist-info METADATA）。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    health = projectenv.probe_environment(
+        py, modules=("json", "matplotlib"), import_mode="spec", project_root=str(tmp_path / "proj")
+    )
+    assert health.get("deferred_env") is not True
+    assert health["new_imports"] == [], health["new_imports"]
+    assert health["health_deferred"] is True and health["matplotlib_version"]
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC
