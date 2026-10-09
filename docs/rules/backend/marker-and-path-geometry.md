@@ -153,3 +153,18 @@
   新 bucket 待解码、旧请求晚到、同 rev 的 worker 重建都不能混用。MCP 旧引擎缺少此
   能力时保留位图显示并给升级提示，不伪造 PNG 几何。看护 `tests/test_preview_png_geometry.py`
   的实际 PNG 像素、30 组布局 / bucket / frame、位移与还原，以及前端的图片加载用例。
+
+- **被裁剪的 Patch 选中框只罩画出来的那部分（2026-10）**：柱子从 y=0 画起而 `ylim` 下限为正
+  （或负值柱被 `ylim` 截断）时，`get_window_extent` 是未裁剪的整根柱，`bbox`（选中框 / 命中
+  参考框）会伸出子图甚至图幅。`manifest._fold_into_clip` 把 Patch（柱、色块、多边形）与柱形
+  系列成员的 bbox 折进 `_clip_extents`（与 `clip_bbox`、`geometry.clip` 同一个裁剪判据，
+  `clip_on=False` 不裁）。整个元素落在裁剪框外时**不折**，bbox 仍指到数据位置（元素树仍可选，
+  命中由 `geometry.clip` 挡住）。曲线 / 散点 / 集合刻意不折（扁平线垫宽、预检负对照靠未裁剪口径）。
+  **系列并集不并入完全在外的成员**：`_fold_into_clip` 回 `(bb, folded, outside)`，柱形系列
+  的并集 bbox 跳过 `outside` 的成员（子柱自己的 bbox 仍是数据位置）；全部成员都在外才退回
+  数据位置并集。超过 `MAX_MARKERS` 的系列没有 geometry，前端只用这个并集，故同样收窄。
+  看护 `tests/test_manifest_geometry.py` 的 `ClipBarFig` 四条与 `ClipSeriesFig` / `ClipOverCapFig` 三条。
+  **不拆「变换参考框」字段**：Patch 的拖动参考是 `anchor` 增量（`resizable` 只给子图 / 网格 /
+  色条，Patch 无缩放手柄），bbox 只被选中框 / 命中 / 吸附 / 对齐消费，它们要的正是看得见的部分。
+  副作用：把 Patch 拖到子图边上时 bbox 尺寸会随裁剪收窄——`tests/test_geometry_reference.py`
+  GEO-01 对 Patch 改为「bbox = 平移后的框 ∩ 子图框（完全在外则不折）」，其余元素仍要求尺寸不变。
