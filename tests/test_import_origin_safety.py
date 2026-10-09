@@ -307,7 +307,10 @@ class TestStructuralGate:
                 used.setdefault(node.value.id, set()).add(node.attr)
         for mod, attrs in used.items():
             assert attrs <= _ALLOWED_ATTRS[mod], f"{mod}: {sorted(attrs - _ALLOWED_ATTRS[mod])}"
-        assert used["projectenv"] == {"within", "contained_path"}  # 前提：这个门禁真的在看 projectenv
+        assert used["projectenv"] == {
+            "within",
+            "contained_path",
+        }  # 前提：这个门禁真的在看 projectenv
 
 
 class TestCostScalesWithTheImportGraph:

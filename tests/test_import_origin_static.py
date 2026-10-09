@@ -43,7 +43,9 @@ def _by(res: importscan.ScanResult) -> dict[str, importscan.ImportClass]:
     return {c.module: c for c in res.classes}
 
 
-BARE = importscan.Entry(profile=importscan.PROFILE_BARE)  # 裸 `python script.py`（没有 Tavotto wrapper）
+BARE = importscan.Entry(
+    profile=importscan.PROFILE_BARE
+)  # 裸 `python script.py`（没有 Tavotto wrapper）
 
 
 def _scan(root: Path, script: str = SCRIPT, **kw) -> importscan.ScanResult:
@@ -71,6 +73,7 @@ def _real_python(root: Path, script: str, *args: str) -> subprocess.CompletedPro
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
     )
 
@@ -150,7 +153,9 @@ class TestPriority:
             "resolved",
         )
         # 目标解释器明说它不是内建 → 本地文件遮蔽它，也是确定的
-        shadowed = _by(_scan(tmp_path, stdlib=stdlib, builtin=frozenset({"sys"}), entry=BARE))["hostonly"]
+        shadowed = _by(_scan(tmp_path, stdlib=stdlib, builtin=frozenset({"sys"}), entry=BARE))[
+            "hostonly"
+        ]
         assert (shadowed.bucket, shadowed.resolution_status) == ("local", "resolved")
 
     def test_o18_a_package_directory_wins_over_a_same_named_module(self, tmp_path):
@@ -651,6 +656,7 @@ class TestEntryProfiles:
             },
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=60,
         )
         # yaml 在这台机器上装没装不影响对拍：init 先于 leaf 打印（没装 yaml 时停在 init 里的 import 上）

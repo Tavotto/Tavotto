@@ -54,7 +54,12 @@ class TestNamespaceIsAnyDirectory:
         _tree(tmp_path, {"s.py": "import foo\nprint(foo.__file__, list(foo.__path__)[0] != '')\n"})
         env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
         proc = subprocess.run(
-            [sys.executable, "s.py"], cwd=tmp_path, env=env, capture_output=True, text=True
+            [sys.executable, "s.py"],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
         assert proc.returncode == 0 and proc.stdout.split()[0] == "None", proc.stderr
 
@@ -75,6 +80,7 @@ class TestNamespaceIsAnyDirectory:
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
         )
         assert proc.stdout.strip().endswith("foo.py"), proc.stderr
 
