@@ -967,6 +967,7 @@ class _Scanner:
         self.main_reachable = False
         self.main_queue: list[Path] = []
         self.blocked_hit = False
+        self.outside_hit = False
         self.path_modified = False
         self.cwd_rejected = False
         self.roots = self._search_roots()
@@ -1061,6 +1062,17 @@ class _Scanner:
         pinned = _pinned(self.root, path)
         if pinned is None:
             return None, {"path": rel, "kind": "outside_project"}
+        root = self.root
+        if not self.no_follow:
+            # 跟随模式：词法前缀过了不等于实体在项目内（入口脚本 / 命中的文件本身可能是指到项目外的链接）。
+            # 先 realpath 再按前缀判（`contained_path`），之后 stat / 读都用**净化后**的那条真实路径
+            real = projectenv.contained_path(self.root, pinned)
+            if real is None:
+                self.outside_hit = True
+                self.budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="import", path=rel)
+                return None, {"path": rel, "kind": "outside_project"}
+            pinned = real
+            root = Path(os.path.realpath(self.root))
         path = Path(pinned)
         try:
             st = os.lstat(pinned) if self.no_follow else os.stat(pinned)
@@ -1075,7 +1087,7 @@ class _Scanner:
             kind = "too_large" if reason == scanbudget.ISSUE_TOO_LARGE else reason
             return None, {"path": rel, "kind": kind}
         try:
-            base, parts = self._split(path)
+            base, parts = self._split(path, root)
             text = scanbudget.read_regular_text(
                 base, *parts, no_follow=self.no_follow, max_bytes=self.budget.limits.max_file_bytes
             )
@@ -1083,16 +1095,16 @@ class _Scanner:
             return None, {"path": rel, "kind": "io", "detail": type(exc).__name__}
         return text, None
 
-    def _split(self, path: Path) -> tuple[Path, tuple[str, ...]]:
+    def _split(self, path: Path, root: Path | None = None) -> tuple[Path, tuple[str, ...]]:
         """`path` 拆成（读文件的根，其下的各级名字）；在项目根下用项目根，否则只钉在它自己的目录。"""
         try:
-            rel = os.path.relpath(path, self.root)
+            rel = os.path.relpath(path, root if root is not None else self.root)
         except ValueError:
             rel = os.pardir
         parts = tuple(Path(rel).parts)
         if not parts or parts[0] == os.pardir:
             return path.parent, (path.name,)
-        return self.root, parts
+        return (root if root is not None else self.root), parts
 
     # ------------------------------------------------------------ 查找
     def find_top(self, name: str, importer_dir: Path | None) -> _Top:
@@ -1448,6 +1460,7 @@ class _Scanner:
             and not self.cwd_rejected
             and not self.finder.unreadable
             and not self.blocked_hit
+            and not self.outside_hit
             and not self.path_modified
             and self.budget.stopped is None
         )

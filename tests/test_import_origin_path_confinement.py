@@ -160,3 +160,58 @@ def test_relative_import_with_non_identifier_segments_is_not_followed(tmp_path):
     tree = ast.parse("from .a import b\n")
     tree.body[0].module = "../../outside"  # AST 正常不会产生；直接构造
     assert importscan._relative_targets(tree, proj / "s.py", proj) is None
+
+
+# ---------------------------------------------------------------------------
+# 入口脚本本身是链接（Codex 复核 P1 r4222101048 + CodeQL）：词法前缀过了，stat / 读会跟随到项目外
+# ---------------------------------------------------------------------------
+def _link(link: Path, target: Path, *, is_dir: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=is_dir)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+
+
+class TestEntryScriptThatIsALink:
+    def test_script_link_to_outside_is_not_stat_ed_or_read(self, tmp_path, monkeypatch):
+        proj, outside = _project(tmp_path)
+        (outside / "real.py").write_text("import secret_pkg\n", encoding="utf-8")
+        _link(proj / "entry.py", outside / "real.py")
+        spy = _Spy(monkeypatch, outside)
+        res = importscan.scan(proj, "entry.py")
+        assert spy.touched_outside(ops=("stat", "read")) == []
+        assert not any(c.module == "secret_pkg" for c in res.classes)
+        assert any(p.get("kind") == "outside_project" for p in res.problems)
+        assert not res.search_complete
+        assert any(i["code"] == scanbudget.ISSUE_SYMLINK_DIR for i in res.issues)
+
+    def test_script_inside_a_linked_directory_pointing_outside_is_refused(
+        self, tmp_path, monkeypatch
+    ):
+        """目录链接 / junction 一类的重定向：脚本路径在项目内，实体经目录链接落到项目外。"""
+        proj, outside = _project(tmp_path)
+        (outside / "deep.py").write_text("import secret_pkg\n", encoding="utf-8")
+        _link(proj / "jdir", outside, is_dir=True)
+        spy = _Spy(monkeypatch, outside)
+        res = importscan.scan(proj, "jdir/deep.py")
+        assert spy.touched_outside(ops=("stat", "read")) == []
+        assert not any(c.module == "secret_pkg" for c in res.classes)
+        assert not res.search_complete
+
+    def test_script_link_that_stays_inside_the_project_is_still_read(self, tmp_path):
+        proj, _ = _project(tmp_path)
+        (proj / "sub" / "real_entry.py").write_text("import yaml\n", encoding="utf-8")
+        _link(proj / "entry.py", proj / "sub" / "real_entry.py")
+        res = importscan.scan(proj, "entry.py")
+        assert any(c.module == "yaml" for c in res.classes)
+        assert res.problems == () and res.search_complete
+
+    def test_no_follow_keeps_its_own_rule_for_a_script_link(self, tmp_path, monkeypatch):
+        proj, outside = _project(tmp_path)
+        (outside / "real.py").write_text("import secret_pkg\n", encoding="utf-8")
+        _link(proj / "entry.py", outside / "real.py")
+        spy = _Spy(monkeypatch, outside)
+        res = importscan.scan(proj, "entry.py", no_follow=True)
+        assert spy.touched_outside(ops=("stat", "read")) == []
+        assert not any(c.module == "secret_pkg" for c in res.classes)
+        assert res.problems  # 读不了就留痕，不是静默当空
