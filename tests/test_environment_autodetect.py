@@ -54,6 +54,8 @@ from test_preparation_session_dependencies import (  # noqa: F401 — 同一套�
     opened,
 )
 
+_REAL_JOINT_PLAN_FOR = deprepair.joint_plan_for
+
 pytest_plugins = ("support.dependency_repair",)
 
 posix_only = pytest.mark.skipif(not envworld.POSIX, reason="哨兵是 POSIX shell 脚本")
@@ -650,6 +652,28 @@ def test_pool_only_entry_points_detect_the_project_venv_when_the_default_chain_h
     got = getattr(engine_pool, entry_point)("fig.py", root, "__main__")
     w = got[0] if isinstance(got, tuple) else got
     assert w.python == no_default_python["venv"]
+
+
+@pytest.mark.parametrize("entry_point", ["acquire", "get"], ids=["render-acquire", "probe-mcp-get"])
+def test_detection_derives_imports_without_the_missing_default_interpreter(
+    no_default_python, monkeypatch, entry_point
+):
+    """Codex #820 r4232654893：这里**不**替身 `joint_plan_for`——真的联合计划要先解析默认解释器，在默认链条一个
+    都没有时它自己也抛 `no_worker_python`，修复前检测在那里提前返回、候选根本没被体检。修复后：脚本的 import 静态
+    推出，拿去体检项目 venv，能跑就采用。"""
+    monkeypatch.setattr(deprepair, "joint_plan_for", _REAL_JOINT_PLAN_FOR)
+    root = no_default_python["root"]
+    (root / "fig.py").write_text("import alpha\n", "utf-8")
+    with pytest.raises(engine_pool.WorkerError) as caught:
+        _REAL_JOINT_PLAN_FOR(str(root), "fig.py")
+    assert caught.value.code == "no_worker_python"  # 前提：真实解析确实失败，不是被绕过
+    got = getattr(engine_pool, entry_point)("fig.py", str(root), "__main__")
+    w = got[0] if isinstance(got, tuple) else got
+    assert w.python == no_default_python["venv"]
+    # 体检用的是脚本真实的 import
+    assert (
+        no_default_python["probed"] and no_default_python["venv"] in no_default_python["probed"][0]
+    )
 
 
 def test_an_explicit_selection_failure_is_still_raised_untouched(no_default_python, monkeypatch):

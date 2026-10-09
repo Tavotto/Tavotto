@@ -5561,6 +5561,18 @@ def _detect_lock(root: str) -> threading.Lock:
         return _detect_locks.setdefault(key, threading.Lock())
 
 
+def _static_joint_plan(root: str, script: str) -> depplan.JointPlan:
+    """不解析任何解释器的联合计划：目标事实为空（什么都没装），只用来取脚本静态 import 出来的 `needed` / `unknown`
+    给候选体检。状态是 `blocked`（目标不可用），永远不会被当成「默认链条能跑」。"""
+    return depplan.plan(
+        root,
+        script,
+        facts=None,
+        target_kind=TARGET_MANAGED,
+        groups=depplan.selected_groups_setting(root),
+    )
+
+
 def _detect_environment_unlocked(root: str, script: str) -> dict | None:
     """**调用方持 `_detect_lock(root)`**（见 `_detect_environment_pinned`）。检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
     （`userenvs.evaluate` 的形状），不换回 None。
@@ -5590,7 +5602,16 @@ def _detect_environment_unlocked(root: str, script: str) -> dict | None:
     try:
         joint, _kind, python = joint_plan_for(root, script)
     except pool.WorkerError:
-        return None
+        if current:
+            return None
+        # 默认链条一个解释器都没有、也没有私有 Python 可提供：联合计划要先解析那个不存在的解释器，必然再抛一次。
+        # 脚本要哪些 import 是静态的（AST），不需要解释器——按「什么都没装」算一份，拿它去体检候选；
+        # 候选都跑不了才回到「安装缺少的组件」（Codex #820 r4232654893）
+        try:
+            joint = _static_joint_plan(root, script)
+        except Exception:  # noqa: BLE001 — 静态计划算不出来：不检测，原路径去报 no_worker_python
+            return None
+        python = ""
     plan = joint.to_payload()
     clean = private_python_target(root, script) is not None
     runs_now = (
