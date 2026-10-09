@@ -102,7 +102,8 @@ def _corrupt_run_configs(root: Path, *, newer: bool = False) -> None:
 @pytest.mark.parametrize("newer", [False, True])
 def test_unreadable_run_configs_do_not_fail_registration_after_the_registry_moved(tmp_path, newer):
     """r4220769153：无参数运行替换旧图名时，运行配置文件坏了 / 来自新版本——证据判断不得炸在注册表已改写之后。
-    读不出的配置只当「没有这份证据」（宁可少说）：登记照常完成，无参数那一份证据（此前无参数捕获过）仍算数。"""
+    读不出配置时素材清单整个报 run_config_unreadable，所以连无参数那份 cache 也不算证据（r4232390785）：
+    登记照常完成，且不声称「已不再关联」（读不出就什么都不说，宁可少说）。"""
     root = _project(tmp_path, "p")
     _write_registry(root, ["fig", "fig_old", "fig_never"])
     _captured_before(root, "fig_old", tmp_path)
@@ -113,7 +114,7 @@ def test_unreadable_run_configs_do_not_fail_registration_after_the_registry_move
         {"script": "fig.py", "entry": "__main__", "stems": ["fig"], "descriptors": []},
     )
     assert got["registered"] is True and "error" not in got
-    assert got["unlinked_stems"] == ["fig_old"]
+    assert "unlinked_stems" not in got
     assert _registry(root)["scripts"]["fig.py"]["stems"] == ["fig"]
 
 
