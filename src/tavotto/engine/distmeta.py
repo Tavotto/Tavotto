@@ -383,35 +383,54 @@ def _parse_cfg(text: str) -> dict[str, str]:
     return out
 
 
-def _is_real_dir(path: str) -> bool:
+def _dir_state(path: str) -> str:
+    """ "dir" = 真目录；"absent" = 确实没有；"refused" = 在那儿但不是真目录（链接 / junction / 文件）或 lstat 失败。"""
     try:
         st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return "absent"
     except OSError:
-        return False
-    return stat.S_ISDIR(st.st_mode) and not scanbudget.is_redirect(st)
+        return "refused"
+    return "dir" if stat.S_ISDIR(st.st_mode) and not scanbudget.is_redirect(st) else "refused"
 
 
-def _layout_dirs(prefix: str, version_hint: str) -> list[tuple[str, str]]:
-    """`prefix` 之下按已知布局推出的 site-packages：[(绝对路径, 相对前缀的 POSIX 路径)]。"""
+def _is_real_dir(path: str) -> bool:
+    return _dir_state(path) == "dir"
+
+
+def _layout_dirs(prefix: str, version_hint: str) -> tuple[list[tuple[str, str]], bool]:
+    """`prefix` 之下按已知布局推出的 site-packages：([(绝对路径, 相对前缀的 POSIX 路径)], 是否有「在那儿但没看」的层)。
+
+    第二项为真 = 布局里某一级存在却是链接 / 读不了：那里可能有 site-packages，不许当成「没有」。"""
     out: list[tuple[str, str]] = []
-    win = os.path.join(prefix, "Lib", "site-packages")
-    if _is_real_dir(os.path.join(prefix, "Lib")) and _is_real_dir(win):
-        out.append((win, "Lib/site-packages"))
+    refused = False
+
+    def sub(parent: str, name: str) -> str:
+        nonlocal refused
+        state = _dir_state(os.path.join(parent, name))
+        refused = refused or state == "refused"
+        return state
+
+    if sub(prefix, "Lib") == "dir" and sub(os.path.join(prefix, "Lib"), "site-packages") == "dir":
+        out.append((os.path.join(prefix, "Lib", "site-packages"), "Lib/site-packages"))
     lib = os.path.join(prefix, "lib")
-    if _is_real_dir(lib):
+    if sub(prefix, "lib") == "dir":
         try:
             names = sorted(n for n in os.listdir(lib) if _PYDIR_RE.match(n))
         except OSError:
             names = []
+            refused = True
         # pyvenv.cfg 的 version 在前
         names.sort(key=lambda n: (not (version_hint and n.startswith(f"python{version_hint}")), n))
         for n in names:
+            if sub(lib, n) != "dir":
+                continue
             sp = os.path.join(lib, n, "site-packages")
-            if _is_real_dir(os.path.join(lib, n)) and _is_real_dir(sp):
+            if sub(os.path.join(lib, n), "site-packages") == "dir":
                 seen = {os.path.normcase(p) for p, _ in out}
                 if os.path.normcase(sp) not in seen:
                     out.append((sp, f"lib/{n}/site-packages"))
-    return out
+    return out, refused
 
 
 def site_packages(
@@ -428,13 +447,28 @@ def site_packages(
     解释器的 site-packages（层 "base"，排在环境层之后）；默认关——`home` 是 `pyvenv.cfg` 里的字符串，
     来自项目的环境不应该被它牵着去读项目之外的目录。
     """
+    return _site_packages_state(
+        prefix, project_root=project_root, include_base=include_base, budget=budget
+    )[0]
+
+
+def _site_packages_state(
+    prefix: str | os.PathLike,
+    *,
+    project_root: str | os.PathLike | None = None,
+    include_base: bool = False,
+    budget: scanbudget.Budget | None = None,
+) -> tuple[list[SiteRoot], bool]:
+    """`site_packages` 的内部形态：另回「布局这一步有没有读漏」（`pyvenv.cfg` 在那儿但没读成 /
+    布局某一级被拒 / 要求带 base 却没推出 base 的 site-packages）。`index_environment` 据此置 `complete=False`。"""
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
     pre = os.path.normpath(os.fspath(prefix))
+    incomplete = False
     if project_root is not None:
         redirected = scanbudget.redirected_component(project_root, pre)
         if redirected is not None:
             budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="env", path=redirected)
-            return []
+            return [], True
     cfg: dict[str, str] = {}
     try:
         cfg = _parse_cfg(
@@ -445,23 +479,32 @@ def site_packages(
     except FileNotFoundError:
         pass
     except OSError:
+        # 在那儿但没读成（超限 / 占位 / 拒读的链接 / IO）：不知道有没有 base、哪个 Python——不能当「没有配置」
         budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="env", path="pyvenv.cfg")
+        incomplete = True
     version = cfg.get("version_info") or cfg.get("version") or ""
     hint = ".".join(version.split(".")[:2]) if version else ""
+    env_layout, env_refused = _layout_dirs(pre, hint)
+    incomplete = incomplete or env_refused
     roots = [
-        SiteRoot(path=p, rel=rel, layer="env", order=i)
-        for i, (p, rel) in enumerate(_layout_dirs(pre, hint))
+        SiteRoot(path=p, rel=rel, layer="env", order=i) for i, (p, rel) in enumerate(env_layout)
     ]
     if include_base and cfg.get("include-system-site-packages", "").lower() == "true":
         home = cfg.get("home", "")
+        found = False
         if home and os.path.isabs(home):
             for base in (os.path.dirname(os.path.normpath(home)), os.path.normpath(home)):
-                layout = _layout_dirs(base, hint)
+                layout, base_refused = _layout_dirs(base, hint)
+                incomplete = incomplete or base_refused
                 if layout:
                     for p, _rel in layout:
                         roots.append(SiteRoot(path=p, rel="base", layer="base", order=len(roots)))
+                    found = True
                     break
-    return roots
+        if not found:  # 要求带 base 却没找到它的 site-packages：base 里的模块不能报「没装」
+            budget.note(scanbudget.ISSUE_UNREADABLE_DIR, scope="env", path="base")
+            incomplete = True
+    return roots, incomplete
 
 
 # ---------------------------------------------------------------- 读
@@ -484,7 +527,21 @@ class _Reader:
 
     def read_state(self, root: SiteRoot, *parts: str, max_bytes: int) -> tuple[str | None, bool]:
         """同 `read`，另回「是否被拒读」：`(None, False)` = 确实不存在；`(None, True)` = 在那儿但没读成
-        （链接 / 非普通文件 / 占位 / 超限 / 预算 / IO 错误）——后者不许当成「不存在」。"""
+        （链接 / 非普通文件 / 占位 / 超限 / 预算 / IO 错误）——后者不许当成「不存在」。
+
+        **统一入口**：任何拒读都在这里置 `self.complete = False`（调用方不必、也不许各自记）；
+        调用方只决定「没读成」之后的更细处理（如 direct_url 退到 `url` 来源）。"""
+        text, refused = self._read_state(root, *parts, max_bytes=max_bytes)
+        if refused:
+            self.complete = False
+        return text, refused
+
+    def refuse(self, code: str, root: SiteRoot, rel: str, *, scope: str = "file") -> None:
+        """在那儿但没看全 / 没读成（列不了、条目被跳过、链接拒跟、解析失败……）：留痕并把环境记为没读全。"""
+        self.note(code, root, rel, scope=scope)
+        self.complete = False
+
+    def _read_state(self, root: SiteRoot, *parts: str, max_bytes: int) -> tuple[str | None, bool]:
         full = os.path.join(root.path, *parts)
         try:
             st = os.lstat(full)
@@ -567,7 +624,7 @@ def _record_tops(text: str) -> tuple[set[str], set[str]] | None:
     try:
         for i, row in enumerate(csv.reader(io.StringIO(text))):
             if i >= MAX_RECORD_ROWS:
-                break
+                return None  # 行数截断 = 后面的模块没被看到：按「读不懂」处理，由调用方记没读全
             if not row:
                 continue
             path = row[0].replace("\\", "/")
@@ -666,8 +723,7 @@ def _list_root(
     try:
         it = os.scandir(root.path)
     except OSError:
-        rd.note(scanbudget.ISSUE_UNREADABLE_DIR, root, "", scope="dir")
-        rd.complete = False  # 没列出来 ≠ 里面没有东西：不许让查询报 `not_installed`
+        rd.refuse(scanbudget.ISSUE_UNREADABLE_DIR, root, "", scope="dir")  # 没列出来 ≠ 里面没有东西
         return dist_infos, egg_infos, egg_links, pths, names
     with it:
         for e in it:
@@ -678,27 +734,32 @@ def _list_root(
             try:
                 st = e.stat(follow_symlinks=False)
             except OSError:
-                rd.note(scanbudget.ISSUE_UNREADABLE_FILE, root, name)
-                rd.complete = False  # 条目被跳过 = 这个环境没读全
+                rd.refuse(scanbudget.ISSUE_UNREADABLE_FILE, root, name)  # 条目被跳过 = 没读全
                 continue
             redirect = scanbudget.is_redirect(st)
             if name.endswith((".dist-info", ".egg-info")):
                 if redirect:
-                    rd.note(scanbudget.ISSUE_SYMLINK_DIR, root, name)
-                    rd.complete = False  # 拒绝跟进的 dist-info：里面的发行包没被看到
+                    rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)  # 里面的发行包没被看到
                     continue
                 (dist_infos if name.endswith(".dist-info") else egg_infos).append(name)
             elif name.endswith(".egg-link"):
-                if not redirect:
+                if redirect:
+                    rd.refuse(
+                        scanbudget.ISSUE_SYMLINK_DIR, root, name
+                    )  # develop 安装的证据没被看到
+                else:
                     egg_links.append(name)
             elif name.endswith(".pth"):
                 if redirect:
                     # Python 的 site 会跟进链接读它：拒绝跟进 = 它提供的路径条目没被看到，不许当成「没有」
-                    rd.note(scanbudget.ISSUE_SYMLINK_DIR, root, name)
-                    rd.complete = False
+                    rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)
                 else:
                     pths.append(name)
-            elif redirect or name in _SKIP_ENTRIES or name.endswith(".data"):
+            elif name in _SKIP_ENTRIES or name.endswith(".data"):
+                continue
+            elif redirect:
+                # 链接形式的包目录 / 模块文件：Python 会跟进，我们不跟——这个名字没被看到，不许当「没装」
+                rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)
                 continue
             elif stat.S_ISDIR(st.st_mode):
                 if _IDENT_RE.match(name):
@@ -771,18 +832,16 @@ def _read_dist_info(rd: _Reader, root: SiteRoot, entry: str, kind: str) -> _Dist
         entry=entry,
         metadata_ok=ok,
     )
-    top, top_refused = rd.read_state(root, entry, "top_level.txt", max_bytes=MAX_SMALL_BYTES)
-    rd.complete = rd.complete and not top_refused
+    top, _ = rd.read_state(root, entry, "top_level.txt", max_bytes=MAX_SMALL_BYTES)
     if top is not None:
         for m in _top_level_names(top):
             d.modules.setdefault(m, set()).add(EV_TOP_LEVEL)
     if kind == "dist-info":
-        rec, rec_refused = rd.read_state(root, entry, "RECORD", max_bytes=MAX_RECORD_BYTES)
-        rd.complete = rd.complete and not rec_refused
+        rec, _ = rd.read_state(root, entry, "RECORD", max_bytes=MAX_RECORD_BYTES)
         if rec is not None:
             parsed = _record_tops(rec)
             if parsed is None:
-                rd.note(scanbudget.ISSUE_PARSE_FAILED, root, f"{entry}/RECORD")
+                rd.refuse(scanbudget.ISSUE_PARSE_FAILED, root, f"{entry}/RECORD")
             else:
                 for m in parsed[0]:
                     d.modules.setdefault(m, set()).add(EV_RECORD)
@@ -807,15 +866,23 @@ def _read_conda_meta(rd: _Reader, prefix: str, roots: Sequence[SiteRoot]) -> lis
     """Conda 前缀的 `conda-meta/*.json`：只取 name / version / files 里落在 site-packages 之下的顶级名。
     名字是 **Conda 包名**，不是 PyPI 名（`ecosystem=conda`）——永远不转成 requirement。"""
     meta_dir = os.path.join(prefix, "conda-meta")
-    if not _is_real_dir(meta_dir):
+    fake_root = SiteRoot(path=prefix, rel="", layer="env", order=0)
+    state = _dir_state(meta_dir)
+    if state == "absent":
+        return []
+    if state == "refused":  # 在那儿但是链接 / 非目录：Conda 记录没被看到
+        rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, fake_root, "conda-meta", scope="dir")
         return []
     try:
         names = sorted(n for n in os.listdir(meta_dir) if n.endswith(".json"))
     except OSError:
-        rd.budget.note(scanbudget.ISSUE_UNREADABLE_DIR, scope="env", path="conda-meta")
+        rd.refuse(scanbudget.ISSUE_UNREADABLE_DIR, fake_root, "conda-meta", scope="dir")
         return []
     out: list[_Dist] = []
-    fake_root = SiteRoot(path=prefix, rel="", layer="env", order=0)
+    if len(names) > MAX_CONDA_META_FILES:
+        rd.refuse(
+            scanbudget.ISSUE_TOO_LARGE, fake_root, "conda-meta", scope="dir"
+        )  # 后面的记录被截掉
     prefixes = [(r, r.rel + "/") for r in roots if r.layer == "env" and r.rel != "base"]
     for n in names[:MAX_CONDA_META_FILES]:
         if not rd.budget.charge_entry():
@@ -827,13 +894,12 @@ def _read_conda_meta(rd: _Reader, prefix: str, roots: Sequence[SiteRoot]) -> lis
         try:
             data = json.loads(text)
         except ValueError:
-            rd.note(scanbudget.ISSUE_PARSE_FAILED, fake_root, f"conda-meta/{n}")
+            rd.refuse(scanbudget.ISSUE_PARSE_FAILED, fake_root, f"conda-meta/{n}")
             continue
-        if not isinstance(data, dict):
-            continue
-        name = _safe_name(str(data.get("name", "")))
-        files = data.get("files")
+        name = _safe_name(str(data.get("name", ""))) if isinstance(data, dict) else ""
+        files = data.get("files") if isinstance(data, dict) else None
         if not name or not isinstance(files, list):
+            rd.refuse(scanbudget.ISSUE_PARSE_FAILED, fake_root, f"conda-meta/{n}")
             continue
         by_root: dict[int, _Dist] = {}
         for f in files:
@@ -882,11 +948,7 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
         if d.root == root.order and d.ecosystem == ECO_PYPI and d.kind != "pth"
     }
     for pth in pths:
-        text, refused = rd.read_state(root, pth, max_bytes=MAX_SMALL_BYTES)
-        if refused:
-            rd.complete = (
-                False  # 超限 / 占位 / 读不了的 `.pth`：解释器照样处理它的路径条目，不能当「没装」
-            )
+        text, _ = rd.read_state(root, pth, max_bytes=MAX_SMALL_BYTES)  # 拒读 = 路径条目没被看到
         if text is None:
             continue
         finders: list[str] = []
@@ -905,9 +967,7 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
         key = depresolve.normalize_distribution(dist_name)
         mods: set[str] = set()
         for f in dict.fromkeys(finders):
-            src, f_refused = rd.read_state(root, f + ".py", max_bytes=MAX_FINDER_BYTES)
-            if f_refused:
-                rd.complete = False  # editable finder 没读成：它映射的模块没被看到
+            src, _ = rd.read_state(root, f + ".py", max_bytes=MAX_FINDER_BYTES)
             if src is not None:
                 mods |= _finder_mapping(src)
         d = by_key.get(key)
@@ -998,10 +1058,13 @@ def index_environment(
 ) -> Index:
     """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。"""
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
-    roots = site_packages(
+    roots, layout_incomplete = _site_packages_state(
         prefix, project_root=project_root, include_base=include_base, budget=budget
     )
     index = build_index(roots, prefix=prefix, budget=budget) if roots else Index((), [], [])
+    if layout_incomplete:
+        index.complete = False
+        index.issues = tuple(budget.issues())
     if not roots:
         index.checked = False
         index.complete = False
@@ -1114,7 +1177,12 @@ def resolve_module(
             compat.append("declared_matches_installed_candidate")
         if look is not None and look.order_unresolved:
             compat.append("layer_order_unresolved")
-        if len(keys) > 1 or (look is not None and look.order_unresolved):
+        # 同一发行包键在不同层各有一份未遮蔽候选（namespace portion 不互相遮蔽），版本 / 来源 / 生态不同：
+        # 哪一份才是用户要的没法替他挑（上层 index v1 + 下层 editable v2）——保守合并为歧义，不选 solid[0]
+        diverged = len({(c.key, c.version, c.provenance, c.ecosystem) for c in solid}) > len(keys)
+        if diverged:
+            compat.append("layers_disagree_on_same_distribution")
+        if len(keys) > 1 or diverged or (look is not None and look.order_unresolved):
             evidence.append(EV_MULTIPLE)
             return finish(
                 {

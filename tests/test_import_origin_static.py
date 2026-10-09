@@ -68,6 +68,7 @@ def _real_python(root: Path, script: str, *args: str) -> subprocess.CompletedPro
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
     )
 
@@ -650,6 +651,7 @@ class TestEntryProfiles:
             },
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=60,
         )
         # yaml 在这台机器上装没装不影响对拍：init 先于 leaf 打印（没装 yaml 时停在 init 里的 import 上）

@@ -564,6 +564,222 @@ class TestCondaSpecific:
         assert any(i["code"] == "file_too_large" for i in idx.issues)
 
 
+# ---------------------------------------------------------------- 拒读传播（读不了 ≠ 没有）
+
+
+_EDITABLE_URL = {"url": "file:///src/x", "dir_info": {"editable": True}}
+
+
+class TestRefusalNeverBecomesAbsence:
+    """`distmeta` 里每一处「在那儿但没读成」都经 `_Reader.read_state` / `_Reader.refuse` 把环境记为没读全；
+    这里一处一条用例（清单见 PR 正文「拒读传播全量排查」）。"""
+
+    @staticmethod
+    def _incomplete(tmp_path, idx, module):
+        assert not idx.complete
+        got = _scan(tmp_path, f"import {module}\n", idx)[module]
+        assert got.distribution_status == "environment_not_checked"
+
+    def _with_base(self, tmp_path, cfg_how):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        _dist(base_site, "basedist", "1.0", top="basemod\n", record=["basemod/__init__.py"])
+        prefix, _ = _env(tmp_path)
+        text = f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        cfg = prefix / "pyvenv.cfg"
+        cfg.unlink()
+        if cfg_how == "oversize":
+            _write(cfg, text + "#" * (distmeta.MAX_SMALL_BYTES + 10) + "\n")
+        elif cfg_how == "symlink":
+            real = _write(tmp_path / "real.cfg", text)
+            cfg.symlink_to(real)
+        elif cfg_how == "dir":
+            cfg.mkdir()
+        return prefix
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink")
+    @pytest.mark.parametrize("how", ["oversize", "symlink", "dir"])
+    def test_unreadable_pyvenv_cfg_with_include_base_is_not_an_empty_config(self, tmp_path, how):
+        prefix = self._with_base(tmp_path, how)
+        self._incomplete(tmp_path, _index(prefix, include_base=True), "basemod")
+
+    def test_include_base_that_finds_no_base_site_packages_is_incomplete(self, tmp_path):
+        prefix, _ = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg",
+            f"home = {tmp_path / 'gone' / 'bin'}\ninclude-system-site-packages = true\n",
+        )
+        self._incomplete(tmp_path, _index(prefix, include_base=True), "basemod")
+
+    def test_a_readable_cfg_with_a_real_base_stays_complete(self, tmp_path):
+        base = tmp_path / "base"
+        (base / SP_REL).mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, _ = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg",
+            f"home = {base / 'bin'}\ninclude-system-site-packages = true\n",
+        )
+        assert _index(prefix, include_base=True).complete
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink")
+    def test_a_python_dir_that_is_a_symlink_is_not_skipped_silently(self, tmp_path):
+        prefix, _ = _env(tmp_path)
+        real = tmp_path / "realpy" / "site-packages"
+        real.mkdir(parents=True)
+        (prefix / "lib" / "python3.11").symlink_to(tmp_path / "realpy", target_is_directory=True)
+        self._incomplete(tmp_path, _index(prefix), "anything")
+
+    @pytest.mark.parametrize("how", ["oversize", "placeholder", "badjson", "notdict", "nofiles"])
+    def test_a_conda_meta_record_that_was_not_read_makes_the_environment_incomplete(
+        self, tmp_path, monkeypatch, how
+    ):
+        prefix, _ = _env(tmp_path, "conda")
+        meta = prefix / "conda-meta"
+        f = meta / "pkg-1.0-h1_0.json"
+        body = json.dumps({"name": "pkg", "version": "1.0", "files": [f"{SP_REL}/pkgmod/a.py"]})
+        if how == "oversize":
+            _write(f, body + " " * (distmeta.MAX_CONDA_META_BYTES + 10))
+        elif how == "placeholder":
+            _write(f, body)
+            real_is_ph = scanbudget.is_placeholder
+            monkeypatch.setattr(
+                scanbudget, "is_placeholder", lambda st: real_is_ph(st) or st.st_size == len(body)
+            )
+        elif how == "badjson":
+            _write(f, "{not json")
+        elif how == "notdict":
+            _write(f, "[1, 2]")
+        else:
+            _write(f, json.dumps({"name": "pkg", "version": "1.0"}))
+        self._incomplete(tmp_path, _index(prefix), "pkgmod")
+
+    def test_a_good_conda_meta_alone_stays_complete(self, tmp_path):
+        prefix, _ = _env(tmp_path, "conda")
+        _write(
+            prefix / "conda-meta" / "pkg-1.0-h1_0.json",
+            json.dumps({"name": "pkg", "version": "1.0", "files": [f"{SP_REL}/pkgmod/a.py"]}),
+        )
+        assert _index(prefix).complete
+
+    def test_conda_meta_beyond_the_file_cap_is_incomplete(self, tmp_path, monkeypatch):
+        prefix, _ = _env(tmp_path, "conda")
+        for i in range(3):
+            _write(
+                prefix / "conda-meta" / f"p{i}-1.0-h1_0.json",
+                json.dumps({"name": f"p{i}", "version": "1.0", "files": []}),
+            )
+        monkeypatch.setattr(distmeta, "MAX_CONDA_META_FILES", 2)
+        assert not _index(prefix).complete
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink")
+    def test_a_conda_meta_directory_that_is_a_symlink_is_incomplete(self, tmp_path):
+        prefix, _ = _env(tmp_path, "conda")
+        real = tmp_path / "real-meta"
+        real.mkdir()
+        (prefix / "conda-meta").symlink_to(real, target_is_directory=True)
+        assert not _index(prefix).complete
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink")
+    @pytest.mark.parametrize("what", ["egg-link", "package-dir", "module-file"])
+    def test_a_symlinked_entry_python_would_follow_is_not_read_as_absent(self, tmp_path, what):
+        prefix, site = _env(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        _write(elsewhere / "linkedmod" / "__init__.py", "X = 1\n")
+        _write(elsewhere / "linkedmod.py", "X = 1\n")
+        _write(elsewhere / "x.egg-link", "/somewhere\n")
+        if what == "egg-link":
+            (site / "x.egg-link").symlink_to(elsewhere / "x.egg-link")
+        elif what == "package-dir":
+            (site / "linkedmod").symlink_to(elsewhere / "linkedmod", target_is_directory=True)
+        else:
+            (site / "linkedmod.py").symlink_to(elsewhere / "linkedmod.py")
+        self._incomplete(tmp_path, _index(prefix), "linkedmod")
+
+    @pytest.mark.parametrize("which", ["top_level.txt", "RECORD", "INSTALLER", "direct_url.json"])
+    def test_an_oversized_per_dist_file_makes_the_environment_incomplete(self, tmp_path, which):
+        prefix, site = _env(tmp_path)
+        d = _dist(
+            site,
+            "bigdist",
+            "1.0",
+            top="bigmod\n",
+            record=["bigmod/__init__.py"],
+            direct_url={"url": "https://x"},
+            installer="pip",
+        )
+        limit = {
+            "RECORD": distmeta.MAX_RECORD_BYTES,
+            "top_level.txt": distmeta.MAX_SMALL_BYTES,
+            "INSTALLER": 1024,
+            "direct_url.json": distmeta.MAX_SMALL_BYTES,
+        }[which]
+        _write(d / which, "x" * (limit + 10))
+        self._incomplete(tmp_path, _index(prefix), "otherthing")
+
+    def test_a_record_that_hits_the_row_cap_is_incomplete(self, tmp_path, monkeypatch):
+        prefix, site = _env(tmp_path)
+        _dist(site, "rows", "1.0", record=["a/__init__.py", "b/__init__.py", "c/__init__.py"])
+        monkeypatch.setattr(distmeta, "MAX_RECORD_ROWS", 2)
+        assert not _index(prefix).complete
+
+    def test_an_oversized_metadata_file_makes_the_environment_incomplete(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        d = _dist(site, "meta", "1.0", top="metamod\n")
+        _write(d / "METADATA", "Name: meta\n" + "x" * (distmeta.MAX_METADATA_BYTES + 10))
+        assert not _index(prefix).complete
+
+
+class TestSameDistributionInTwoLayers:
+    def test_upper_index_v1_and_lower_editable_v2_is_ambiguous_not_one_confirmed(self, tmp_path):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, site = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg", f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        )
+        _dist(site, "nsdist", "1.0", record=["nsmod/up.py"])
+        _dist(base_site, "nsdist", "2.0", record=["nsmod/low.py"], direct_url=_EDITABLE_URL)
+        idx = _index(prefix, include_base=True)
+        assert [c.shadowed for c in idx.lookup("nsmod").candidates] == [False, False]
+        got = _scan(tmp_path, "import nsmod\n", idx)["nsmod"]
+        assert got.distribution_status == "module_origin_ambiguous"
+        assert got.selected_distribution == ""
+        assert "layers_disagree_on_same_distribution" in got.compatibility
+
+    def test_same_version_but_different_provenance_is_also_ambiguous(self, tmp_path):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, site = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg", f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        )
+        _dist(site, "nsdist", "1.0", record=["nsmod/up.py"])
+        _dist(base_site, "nsdist", "1.0", record=["nsmod/low.py"], direct_url=_EDITABLE_URL)
+        got = _scan(tmp_path, "import nsmod\n", _index(prefix, include_base=True))["nsmod"]
+        assert got.distribution_status == "module_origin_ambiguous"
+
+    def test_identical_versions_and_provenance_across_layers_stay_one_confirmed(self, tmp_path):
+        base = tmp_path / "base"
+        base_site = base / SP_REL
+        base_site.mkdir(parents=True)
+        (base / "bin").mkdir()
+        prefix, site = _env(tmp_path)
+        _write(
+            prefix / "pyvenv.cfg", f"home = {base / 'bin'}\ninclude-system-site-packages = true\n"
+        )
+        _dist(site, "nsdist", "1.0", record=["nsmod/up.py"])
+        _dist(base_site, "nsdist", "1.0", record=["nsmod/low.py"])
+        got = _scan(tmp_path, "import nsmod\n", _index(prefix, include_base=True))["nsmod"]
+        assert got.distribution_status != "module_origin_ambiguous"
+
+
 # ---------------------------------------------------------------- O-11 多发行包 / namespace / 多层
 
 
@@ -684,6 +900,7 @@ class TestSeveralProviders:
             [sys.executable, "-I", "-S", "-c", code, json.dumps([str(x) for x in sites])],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         ).stdout
         got = json.loads(out)

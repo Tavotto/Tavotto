@@ -127,7 +127,11 @@ def test_a_real_interpreter_with_the_wrapper_order_agrees(tmp_path):
         "print(again is json, 'json.py' in (again.__file__ or '').rsplit('/', 1)[-1:])\n"
     )
     proc = subprocess.run(
-        [sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60
+        [sys.executable, "-I", "-c", code],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.split() == ["True", "False"]
