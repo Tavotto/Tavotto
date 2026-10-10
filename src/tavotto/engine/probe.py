@@ -153,7 +153,11 @@ def _error_from_worker(
         # 「能不能一键装上」（ADR 0019）。**素材库这条路必须也带上它**：
         # 用户打开旧项目走的就是这里，只在渲染端点上给恢复引导的话，
         # 「素材库里打不开、面板里能修」又是一次两个入口两个答案。
-        if figures_dir and exc.module:
+        route = getattr(exc, "install_route", "") or ""
+        if route:
+            out["install_route"] = route
+        # 标准库缺了不出安装 offer（与 Flask worker 错误、准备会话同一个判据 `pool.install_offer_blocked`）
+        if figures_dir and exc.module and not pool.install_offer_blocked(route):
             from . import deprepair
 
             out["dependency_repair"] = deprepair.offer(figures_dir, script, exc.module, detail)

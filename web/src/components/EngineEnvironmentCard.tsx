@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useEnvStore } from '@/store/envStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
-import { askConfirm } from '@/store/uiStore'
+import { askConfirm, useUiStore } from '@/store/uiStore'
 import { msg, t as translate } from '@/i18n'
 import type { EngineSource, ProjectEnvFailure } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
@@ -210,7 +210,8 @@ function InstallLog({ log }: { log: string }) {
 function InterpreterRow() {
   useTranslation('errors')
   const { env, setPython } = useEnvStore()
-  const [editing, setEditing] = useState(false)
+  // 缺依赖装不了时从引导卡直达（`openEngineEnvPicker`）：弹窗一开就把「更换…」的路径输入展开，不让用户再找一遍
+  const [editing, setEditing] = useState(() => useUiStore.getState().engineEnvPick)
   const [manual, setManual] = useState('')
   const [error, setError] = useState<string | null>(null)
   if (!env) return null

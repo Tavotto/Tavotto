@@ -16,6 +16,7 @@ import { adoptEnvironmentCandidate, type EngineEnvironment, type EnvRecommendati
 import { EngineEnvironmentCard, MissingDependencyCard } from '@/components/EngineEnvironmentCard'
 import { t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
+import { useUiStore } from '@/store/uiStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -245,5 +246,20 @@ describe('环境建议的错误路径', () => {
     await act(async () => document.querySelector<HTMLButtonElement>('[data-env-candidate="cand-1"]')!.click())
     expect(adoptEnvironmentCandidate).toHaveBeenCalledExactlyOnceWith(
       { id: 'cand-1', generation: 'gen-displayed' }, 'subdir/plot.py', 'adjustText')
+  })
+})
+
+describe('缺依赖装不了时从引导卡直达：「使用其他 Python 环境」直接展开', () => {
+  it('意图在：路径输入一打开就在；意图不在：只有「使用其他 Python 环境…」一颗钮', async () => {
+    useEnvStore.setState({ env: envWith(false) })
+    useUiStore.setState({ engineEnvPick: false })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector(`input[aria-label="${en('pathAria')}"]`)).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    useUiStore.setState({ engineEnvPick: true })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector(`input[aria-label="${en('pathAria')}"]`)).not.toBeNull()
+    useUiStore.setState({ engineEnvPick: false })
   })
 })
