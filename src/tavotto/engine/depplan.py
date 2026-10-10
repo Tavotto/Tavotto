@@ -292,6 +292,9 @@ class TargetFacts:
     #: `sys.path` 上存在、但不是目录的 import 来源（zip / egg）的个数。里面的名字静态读不到：> 0 时索引的名字层不完整，
     #: 本该判缺的改判来源未定，不去装同名包遮蔽它。同上：不进 digest / payload。
     opaque_roots: int = 0
+    #: `layer_digest` 在**量事实的同一刻**算好的值（真探测才有；与静态索引同一刻读，计划与它描述同一个时间点）。空 = 没量到，
+    #: `layer_digest(facts)` 退回现算。不进 `digest()` / `to_payload()`。
+    layers: str = ""
 
     @property
     def python_version(self) -> str:
@@ -310,6 +313,61 @@ class TargetFacts:
             "installed_count": len(self.installed),
             "digest": self.digest(),
         }
+
+
+#: `layer_digest` 读单个 `.pth` 的字节上限 / 每个 site 层最多看几个 `.pth`：超出的只记个数与大小，不无限读。
+_PTH_READ_LIMIT = 256 * 1024
+_PTH_MAX_PER_ROOT = 200
+
+
+def layer_digest(facts: TargetFacts | None) -> str:
+    """目标解释器**import 层**的指纹（#922）：`site_roots` / `extra_roots` / `opaque_roots`（sys.path 顺序）加上 site 层里
+    每个 `.pth` 的内容摘要（`.pth` 会往 `sys.path` 加目录、或执行 `import` 行）。
+
+    只用于**执行期**的过期校验（`deprepair.prepare` 重量事实后与计划形成时的值比）：`TargetFacts.digest()` 只看 marker 与
+    已装集合，`.pth` / 可见 site 层变了而发行包名字版本表没变时它不变，旧计划会被照单接受；而新出现的提供者本会改变
+    missing / requirements。**不进** `digest()` / `to_payload()` / `inputs_digest` / `identity`——无关的重装不会因此发生。
+    没有层信息（替身事实、老缓存、`fresh_venv_facts`）回空串：两侧都空 = 没有可比的东西，不拦。读文件，不起进程。"""
+    if facts is None or not (facts.site_roots or facts.extra_roots or facts.opaque_roots):
+        return ""
+    if facts.layers:
+        return facts.layers
+    return _measure_layers(facts)
+
+
+def _measure_layers(facts: TargetFacts) -> str:
+    pth: dict[str, list] = {}
+    for root in facts.site_roots:
+        rows: list = []
+        try:
+            names = sorted(
+                e.name
+                for e in os.scandir(root)
+                if e.name.lower().endswith(".pth") and e.is_file(follow_symlinks=False)
+            )
+        except OSError:
+            pth[root] = ["unreadable"]
+            continue
+        for name in names[:_PTH_MAX_PER_ROOT]:
+            try:
+                with open(os.path.join(root, name), "rb") as fh:
+                    body = fh.read(_PTH_READ_LIMIT + 1)
+                rows.append([name, len(body), hashlib.sha256(body[:_PTH_READ_LIMIT]).hexdigest()])
+            except OSError:
+                rows.append([name, "unreadable"])
+        if len(names) > _PTH_MAX_PER_ROOT:
+            rows.append(["…", len(names)])
+        pth[root] = rows
+    text = json.dumps(
+        {
+            "site": list(facts.site_roots),
+            "extra": list(facts.extra_roots),
+            "opaque": facts.opaque_roots,
+            "pth": pth,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 _facts_lock = threading.Lock()
@@ -378,6 +436,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         if isinstance(data.get("opaque_roots"), int)
         else 0,
     )
+    facts = dataclasses.replace(facts, layers=_measure_layers(facts))
     with _facts_lock:
         _facts_cache[key] = facts
         _index_cache.pop(key, None)  # 重新量了事实 = 环境可能变了：旧的元数据索引一起作废
@@ -1073,6 +1132,7 @@ def fresh_venv_facts(
         site_roots=(),
         extra_roots=(),
         opaque_roots=0,
+        layers="",
     )
 
 

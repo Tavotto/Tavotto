@@ -3684,6 +3684,10 @@ class JointRepairPlan:
     scope_policy: str = ""
     drops: tuple[str, ...] = ()
     changes: tuple[str, ...] = ()
+    #: 形成计划那一刻两份事实的 import 层指纹（`depplan.layer_digest`，#922）：执行前重量事实后再比。不进 `impact` /
+    #: `to_payload`，也不进 `identity` / `inputs_digest`——只是执行期的一致性校验，层没变时行为不变。
+    layers_digest: str = ""
+    install_layers_digest: str = ""
 
     @property
     def pip_inputs(self) -> PipInputs:
@@ -3983,6 +3987,8 @@ def create_joint_plan(
         facts_digest=facts.digest() if facts is not None else "",
         facts_python=measured,
         install_facts_digest=install_facts.digest() if install_facts is not None else "",
+        layers_digest=depplan.layer_digest(facts),
+        install_layers_digest=depplan.layer_digest(install_facts),
         requirements=tuple(joint.requirements),
         constraints=tuple(joint.constraints),
         hashes={k: tuple(v) for k, v in joint.hashes.items()},
@@ -4365,6 +4371,12 @@ def prepare(
             install.digest() if install is not None else ""
         ) != plan.install_facts_digest:
             raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境里的包发生了变化")
+        # import 层（site 层 / 额外路径 / .pth 内容）不在上面的 digest 里：`.pth` 或可见 site 层变了而包名版本表没变时，
+        # 新出现的提供者本会改变 missing / requirements（#922）。同一条拒绝路径与错误码，不改 inputs_digest / identity
+        if depplan.layer_digest(run) != plan.layers_digest or (
+            depplan.layer_digest(install) != plan.install_layers_digest
+        ):
+            raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境的 import 层发生了变化")
         if cancel_ev.is_set():
             # ack 之后、拿锁之前来的取消：明确终态，什么都没改（Codex #470 P1 的那一刻）
             return _emit(
