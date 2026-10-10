@@ -15,6 +15,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 #: 遮蔽用的替身。真实用户的 venv 里就是**没有** Tavotto，`import tavotto`
@@ -224,8 +225,11 @@ def inherit_host_site(venv: Path, python: str, facts: dict | None = None) -> Pat
         keep = [
             d
             for d in dirs
-            if os.path.basename(d.rstrip("/\\")).lower() != "lib-dynload"
+            if os.path.basename(d.rstrip("/\\")).lower() not in ("lib-dynload", "dlls")
             and not os.path.isfile(os.path.join(d, "os.py"))
+            and not os.path.isfile(os.path.join(d, "python.exe"))  # Windows 的解释器安装根目录
+            and os.path.normcase(os.path.normpath(d))
+            not in {os.path.normcase(os.path.normpath(p)) for p in (sys.base_prefix, sys.prefix)}
         ]
         pth.write_text("".join(f"{d}\n" for d in keep), encoding="ascii")
         return pth

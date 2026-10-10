@@ -1342,6 +1342,7 @@ def index_environment(
     ext_suffixes: tuple[str, ...] | None = None,
     pth_paths: Sequence[str] | None = None,
     layer_order: Sequence[str] | None = None,
+    skipped_paths: Sequence[str] = (),
 ) -> Index:
     """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。
 
@@ -1354,6 +1355,7 @@ def index_environment(
     `ext_suffixes`（#925）：**目标**解释器的 `EXTENSION_SUFFIXES`，给了扩展模块只认这些后缀；没给（空 / None）= 没量到，保持宽松口径。
     `pth_paths`（#925）：`site_paths` 里 Python 的 `site` 真会处理 `.pth` 的那几层（`getsitepackages()` / user site）；给了，别的层的
     `.pth` 行不计入 `uncovered_paths`（它们不会被执行）。没给 = 每一层都当作会处理（旧口径）。
+    `skipped_paths`：目标解释器有意不当包层的 `sys.path` 目录（安装根 / 标准库 / DLLs 等）；指向它们的 `.pth` 路径行算已跟进。
     `layer_order`（#929）：`site_paths` ∪ `extra_paths` 按 `sys.path` **原顺序**排成的一份。给了，各层的先后就是它（`PYTHONPATH` /
     `.pth` 目录可以排在 site-packages 前面），遮蔽沿用跨层规则；没给 = 先 site 层、再额外层（旧排法）。"""
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
@@ -1371,7 +1373,7 @@ def index_environment(
                 roots,
                 prefix=prefix,
                 budget=budget,
-                covered=[*site_paths, *extra_paths],
+                covered=[*site_paths, *extra_paths, *skipped_paths],
                 ext_suffixes=ext_suffixes or None,
             )
             if roots

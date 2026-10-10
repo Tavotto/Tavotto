@@ -547,6 +547,76 @@ class TestSymlinkedPthInLayerDigest:
         assert depplan.layer_digest(facts)  # 不抛、不阻塞
 
 
+class TestPathLinesToExcludedInstallDirectories:
+    """Windows 的 venv 里 `sys.path` 本来就带 DLLs 与基础解释器根目录，conda / 某些发行版的 `.pth` 也会指向标准库目录。探针有意不把它们
+    当包层（`skipped_roots`），指向它们的路径行不算「指向没读过的目录」；指向既不是已读层也不是被排除目录的仍计。"""
+
+    def _dirs(self):
+        import sysconfig
+
+        return [sys.base_prefix, sysconfig.get_path("stdlib"), os.path.dirname(os.__file__)]
+
+    def test_lines_to_install_root_and_standard_library_are_not_uncovered(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        dirs = self._dirs()
+        _write(site, "py.pth", "".join(f"{d}\n" for d in dirs))
+        facts = dataclasses.replace(_site_facts(prefix, site), skipped_roots=tuple(dirs))
+        index = depplan.static_index(facts)
+        assert index.uncovered_paths == 0
+        plan = _plan_in(tmp_path, facts)
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"] and plan.origins == ()
+
+    def test_a_line_to_any_other_unread_directory_is_still_uncovered(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        dirs = self._dirs()
+        _write(site, "py.pth", f"{dirs[0]}\n{other}\n")
+        facts = dataclasses.replace(_site_facts(prefix, site), skipped_roots=tuple(dirs))
+        assert depplan.static_index(facts).uncovered_paths == 1
+
+    def test_without_the_excluded_list_the_lines_count_as_before(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        _write(site, "py.pth", f"{sys.base_prefix}\n")
+        assert depplan.static_index(_site_facts(prefix, site)).uncovered_paths == 1
+
+    def test_the_probe_reports_the_excluded_directories_and_they_stay_out_of_the_layers(
+        self, tmp_path
+    ):
+        import json
+        import subprocess
+
+        cwd = tmp_path / "scratch"
+        cwd.mkdir()
+        code = (
+            "import json, sys\n"
+            "sys.path[:0] = json.loads(sys.argv[1])\n"
+            "exec(compile(sys.argv[2], '<facts>', 'exec'))\n"
+        )
+        entries = ["", str(cwd), sys.prefix, sys.base_prefix, os.path.dirname(os.__file__)]
+        out = subprocess.run(
+            [sys.executable, "-c", code, json.dumps(entries), depplan._FACTS_SRC],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=120,
+            cwd=str(cwd),
+            check=True,
+        ).stdout
+        facts = json.loads(out)
+        skipped = {os.path.normcase(p) for p in facts["skipped_roots"]}
+        layers = {os.path.normcase(p) for p in facts["site_roots"] + facts["extra_roots"]}
+        for d in (sys.prefix, sys.base_prefix, str(cwd), os.path.dirname(os.__file__)):
+            key = os.path.normcase(os.path.abspath(d))
+            assert key in skipped and key not in layers, d
+
+    def test_skipped_roots_are_not_a_plan_input(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        a = _site_facts(prefix, site)
+        b = dataclasses.replace(a, skipped_roots=(sys.base_prefix,))
+        assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
+        assert depplan.layer_digest(a) == depplan.layer_digest(b)
+
+
 # ---------------------------------------------------------------------------
 # setuptools 的老式命名空间包 `*-nspkg.pth`：逐字取自 setuptools 的 `Installer._nspkg_tmpl`
 # （老版 = setuptools 40.8.0 – 68.2.2 的 `setuptools/namespaces.py`；新版 = 69.5.1 – 84.0.0 同文件第 42–57 行），

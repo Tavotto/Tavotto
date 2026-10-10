@@ -220,6 +220,10 @@ for key in ("stdlib", "platstdlib"):
     except Exception:
         pass
 extra_roots = []
+# 被**有意排除**的目录（安装根目录、标准库目录及其子目录、lib-dynload / DLLs、探针 cwd）：不当包层读，但 `.pth` 路径行指向它们
+# 不算「指向没读过的目录」——里面没有第三方提供者（Windows 的 venv 里 sys.path 本来就带 DLLs 与基础解释器根目录，conda / 某些发行版的
+# `.pth` 也会指向标准库目录）。只是路径列表，静态索引据此认「已跟进」
+skipped_roots = []
 for entry in sys.path:
     if not entry or not isinstance(entry, str):
         continue
@@ -230,11 +234,13 @@ for entry in sys.path:
     except Exception:
         continue
     norm = os.path.normcase(path)
-    if norm in install_roots:
-        continue
-    if os.path.basename(path).lower() in ("lib-dynload", "dlls"):
-        continue
-    if any(norm == k or norm.startswith(k + os.sep) for k in skip):
+    if (
+        norm in install_roots
+        or os.path.basename(path).lower() in ("lib-dynload", "dlls")
+        or any(norm == k or norm.startswith(k + os.sep) for k in skip)
+    ):
+        if path not in skipped_roots:
+            skipped_roots.append(path)
         continue
     extra_roots.append(path)
 # sys.path 上**不是目录**却存在的条目（PYTHONPATH 上的 zip / egg 等 zipimport 来源）：静态索引读不了里面有哪些名字，只数个数，
@@ -280,6 +286,7 @@ sys.stdout.write(json.dumps({
     "opaque_roots": opaque_roots,
     "pth_roots": pth_roots,
     "path_order": path_order,
+    "skipped_roots": skipped_roots,
 }))
 """
 
@@ -317,6 +324,10 @@ class TargetFacts:
     #: `site_roots` ∪ `extra_roots` 按 `sys.path` 原顺序排成的一份（#929）。静态索引据此交错给各层定先后（遮蔽语义沿用跨层规则）；
     #: 空 = 没量到，退回「先 site 层、再额外层」的旧排法。不进 `digest()` / `to_payload()`。
     path_order: tuple[str, ...] = ()
+    #: 被有意排除、不当包层的 `sys.path` 目录（安装根目录 / 标准库及其子目录 / lib-dynload / DLLs / 探针 cwd）。静态索引据此把指向它们
+    #: 的 `.pth` 路径行算已跟进（不计 `uncovered_paths`）。不进 `digest()` / `to_payload()`，也不进 `layer_digest`：它们由解释器
+    #: 的安装布局决定，不是会在确认窗口里变的 import 层（要变的话 site / extra / path_order 会先变）。空 = 没量到。
+    skipped_roots: tuple[str, ...] = ()
     #: `layer_digest` 在**量事实的同一刻**算好的值（真探测才有；与静态索引同一刻读，计划与它描述同一个时间点）。空 = 没量到，
     #: `layer_digest(facts)` 退回现算。不进 `digest()` / `to_payload()`。
     layers: str = ""
@@ -473,6 +484,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         else 0,
         pth_roots=tuple(str(x) for x in data.get("pth_roots") or () if isinstance(x, str)),
         path_order=tuple(str(x) for x in data.get("path_order") or () if isinstance(x, str)),
+        skipped_roots=tuple(str(x) for x in data.get("skipped_roots") or () if isinstance(x, str)),
     )
     facts = dataclasses.replace(facts, layers=_measure_layers(facts))
     with _facts_lock:
@@ -529,6 +541,7 @@ def static_index(facts: TargetFacts | None) -> distmeta.Index | None:
         ext_suffixes=facts.ext_suffixes or None,
         pth_paths=facts.pth_roots or None,
         layer_order=facts.path_order or None,
+        skipped_paths=facts.skipped_roots,
     )
     if not index.checked:
         return None
@@ -1210,6 +1223,7 @@ def fresh_venv_facts(
         opaque_roots=0,
         pth_roots=(),
         path_order=(),
+        skipped_roots=(),
         layers="",
     )
 
