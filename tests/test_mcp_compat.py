@@ -1006,6 +1006,14 @@ def test_env_expansion_shapes_in_argv_are_refused(project, pool, token):
         "fi\tle:///etc/passwd",
         "file:///etc/passwd\x01",
         "\x01<URL:file:///x>",
+        "\u00a0file:///etc/passwd",  # NBSP：urllib unwrap 的 str.strip() 会剥（#919 r4237122421）
+        "\u2003file:///etc/passwd",
+        "\u3000file:///etc/passwd",
+        "\ufefffile:///etc/passwd",  # BOM (Cf)
+        "\u200bfile:///etc/passwd",  # ZWSP (Cf)
+        "f\u200bile:///etc/passwd",
+        "\uff46\uff49\uff4c\uff45:///etc/passwd",  # 全角，NFKC
+        "\u00a0<URL:file:///x>",
     ],
 )
 def test_file_uri_argv_is_refused(project, pool, token):
@@ -1029,6 +1037,8 @@ def test_file_uri_argv_is_refused(project, pool, token):
         "myfile:x",
         "data.csv",
         "\x01profile:x",
+        "r\u00e9sum\u00e9.txt",
+        "\u6570\u636e.csv",
     ],
 )
 def test_non_file_uris_and_lookalikes_still_pass(project, token):

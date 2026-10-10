@@ -31,10 +31,11 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unwrap, urlsplit
 
 from tavotto.engine import (
     artifactcheck as engine_artifactcheck,
@@ -288,37 +289,39 @@ def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str 
 
 
 #: 本地文件 URI：`urllib.request.urlopen('file:///etc/passwd')` / `Path.from_uri` 把它读成本机路径，而它在桥眼里
-#: 不是绝对路径、会被拼到 cwd 下当成根内相对值放行。不手写正则去模仿解析器，而是按解析器的规范化口径（WHATWG /
-#: urllib：去首尾 C0 控制符与空格、去 tab/换行/回车、`unwrap` 掉 `<URL:…>` / `URL:`）再交给 `urlsplit` 认 scheme；
-#: 另外再让**当前 Python** 的 `urlsplit` 直接看原文（各版本对首部 C0 的处理不同，桥与脚本也可能不是同一个 Python），
-#: 任一方认作 `file` 即拒（Codex #818 补审 r4236702940 / #919 r4237102130）。
-_URL_UNSAFE_CHARS = "\t\r\n"
-_URL_EDGE_CHARS = "".join(chr(c) for c in range(0x21))  # C0 控制符 + 空格
+#: 不是绝对路径、会被拼到 cwd 下当成根内相对值放行。
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Zs", "Zl", "Zp"})
 
 
-def _normalize_url_candidate(value: str) -> str:
-    for ch in _URL_UNSAFE_CHARS:
-        value = value.replace(ch, "")
+def _file_uri_shape(value: str) -> str:
+    """把 token 压成「任何解析器都可能读成本机文件 URI」的保守形状：NFKC、去掉一切空白与 Cc/Cf/Zs/Zl/Zp
+    字符（不只首尾）、casefold，再反复剥 `<` / `url:` / `>` 直到稳定。"""
+    text = unicodedata.normalize("NFKC", value)
+    text = "".join(
+        c for c in text if not c.isspace() and unicodedata.category(c) not in _INVISIBLE_CATEGORIES
+    )
+    text = text.casefold()
     while True:
-        before = value
-        value = value.strip(_URL_EDGE_CHARS)
-        if value[:1] == "<":
-            value = value[1:].lstrip(_URL_EDGE_CHARS)
-            if value[-1:] == ">":
-                value = value[:-1]
-        if value[:4].lower() == "url:":
-            value = value[4:]
-        if value == before:
-            return value
+        before = text
+        text = text.lstrip("<").removeprefix("url:").rstrip(">")
+        if text == before:
+            return text
 
 
 def _is_file_uri(value: str) -> bool:
-    for candidate in (_normalize_url_candidate(value), value):
+    """argv 里任何一个 Python 的任何解析器可能读成本机文件 URI 的 token 一律拒。
+
+    不手写某个解析器的字符表（urllib 的 `unwrap` 剥 Unicode 空白、`urlsplit` 去 tab/换行、3.13+ 去首部 C0，
+    桥与脚本还可能不是同一个 Python）：先用保守形状判定，再让真实解析器兜底。宁可误拒（去掉不可见字符后碰巧
+    形如 `file:` 的合法值），也不放过——这是范围守卫，失败封闭（Codex #818 r4236702940 / #919 r4237102130 / r4237122421）。"""
+    if _file_uri_shape(value).startswith("file:"):
+        return True
+    for make in (lambda v: v, unwrap, lambda v: unwrap(v.strip())):
         try:
-            if urlsplit(candidate).scheme.lower() == "file":
+            if urlsplit(make(value)).scheme.lower() == "file":
                 return True
         except ValueError:
-            return True  # 解析器都吃不下的形状，失败封闭
+            return True
     return False
 
 
