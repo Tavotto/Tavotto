@@ -1284,7 +1284,7 @@ def test_the_typed_path_adoption_holds_the_environment_through_its_probe_too(
     """手填路径（`PATCH {python}`）是同一条采用：体检 + 提交整段占住目标环境。"""
     root = tmp_path / "typed"
     root.mkdir()
-    py = root / ".venv" / "bin" / "python"
+    py = root / envworld.venv_rel(".venv")  # Windows 是 Scripts/python.exe
     py.parent.mkdir(parents=True)
     py.write_text("", encoding="utf-8")
     envlease.reset_for_tests()
