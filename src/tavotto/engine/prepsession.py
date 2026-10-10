@@ -34,7 +34,17 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import depplan, deprepair, dialogscan, pool, preparation, rasterhint, registry, scriptargs, taskdiag
+from . import (
+    depplan,
+    deprepair,
+    dialogscan,
+    pool,
+    preparation,
+    rasterhint,
+    registry,
+    scriptargs,
+    taskdiag,
+)
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
