@@ -94,6 +94,7 @@ SETTINGS_KEY = "dependency_groups"
 #: 一定有它）、标准库名字表、已装 distribution。输出单行 JSON。**只读**。
 _FACTS_SRC = r"""
 import json, os, platform, sys
+import importlib.machinery
 import importlib.metadata as m
 
 
@@ -129,6 +130,8 @@ for d in m.distributions():
 sys.stdout.write(json.dumps({
     "marker_env": env,
     "stdlib": sorted(getattr(sys, "stdlib_module_names", ())),
+    "builtin": sorted(sys.builtin_module_names),
+    "ext_suffixes": list(importlib.machinery.EXTENSION_SUFFIXES),
     "installed": installed,
     "prefix": sys.prefix,
     "executable": sys.executable,
@@ -146,6 +149,11 @@ class TargetFacts:
     installed: dict
     prefix: str = ""
     executable: str = ""
+    #: 目标解释器的 `sys.builtin_module_names` / `importlib.machinery.EXTENSION_SUFFIXES`（#888）。**空 = 没量到**
+    #: （替身事实、老缓存）——`importscan` 据此退回「不确定」的保守口径，不拿宿主的冒充。不进 `digest()` / `to_payload()`：
+    #: 它们由解释器构建决定，不是计划的输入，也就不改 `inputs_digest` / `identity`。
+    builtin: frozenset[str] = frozenset()
+    ext_suffixes: tuple[str, ...] = ()
 
     @property
     def python_version(self) -> str:
@@ -224,6 +232,8 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         installed={str(k): str(v) for k, v in (data.get("installed") or {}).items()},
         prefix=str(data.get("prefix", "")),
         executable=str(data.get("executable", "")),
+        builtin=frozenset(str(n) for n in data.get("builtin") or ()),
+        ext_suffixes=tuple(str(x) for x in data.get("ext_suffixes") or ()),
     )
     with _facts_lock:
         _facts_cache[key] = facts
@@ -430,7 +440,13 @@ def plan(
     for it in selection.requirements:
         declared.setdefault(it.name, it.specifier)
     scan = importscan.scan(
-        root_p, script, declared=declared, stdlib=target.stdlib if target is not None else None
+        root_p,
+        script,
+        declared=declared,
+        stdlib=target.stdlib if target is not None else None,
+        # 目标解释器的事实（#888）；没量到（替身 / facts=None）就不传，importscan 走保守口径
+        builtin=(target.builtin or None) if target is not None else None,
+        ext_suffixes=(target.ext_suffixes or None) if target is not None else None,
     )
     installed = facts.installed if facts is not None else {}
     target_installed = target.installed if target is not None else {}

@@ -159,6 +159,7 @@ WARNING_CODES = frozenset(
     {
         "local_file_never_imported",
         "may_shadow_builtin",
+        "extension_suffix_not_confirmed",
         "namespace_may_be_overridden",
         "local_namespace_dir_ignored",
         "local_shadows_stdlib_in_wrapper",
@@ -197,6 +198,8 @@ HOST_STDLIB: frozenset[str] = frozenset(getattr(sys, "stdlib_module_names", ()))
 }
 
 #: 每个 CPython 构建上都是内建的模块（导入系统自举要用，`sys.builtin_module_names` 的恒成立子集）。
+#: **不含** `posix` / `nt`：它们按平台二选一（Linux 上项目里的 `nt.py` 是可以 import 的普通文件，Windows 上反之），
+#: 取哪个得看目标解释器的 `sys.builtin_module_names`（#888 / #880 评审 r4225827429）。
 BUILTIN_NAMES: frozenset[str] = frozenset(
     {
         "sys",
@@ -207,8 +210,6 @@ BUILTIN_NAMES: frozenset[str] = frozenset(
         "_weakref",
         "_io",
         "marshal",
-        "posix",
-        "nt",
         "time",
         "_codecs",
         "_abc",
@@ -247,11 +248,13 @@ PROFILE_BARE = "bare"
 _WRAPPER_PROFILES = frozenset({figcapture.PROFILE_SAFE, figcapture.PROFILE_NATIVE})
 #: 宿主上是内建、但不在上面恒成立表里的名字（`itertools` / `gc` / `pwd` …）：别的构建上它们可能是
 #: 文件，所以没拿到目标解释器的内建名单时，本地同名文件对它们的遮蔽是 `ambiguous`。
+#: `posix` / `nt` 恒在其中——不论宿主是哪个平台，没有目标解释器的名单就不知道它们在目标上是不是内建。
+PLATFORM_BUILTIN_NAMES: frozenset[str] = frozenset({"posix", "nt"})
 HOST_BUILTIN_EXTRA: frozenset[str] = (
     frozenset(sys.builtin_module_names) - BUILTIN_NAMES - FROZEN_NAMES - PRELOADED_STDLIB
-)
+) | PLATFORM_BUILTIN_NAMES
 
-#: 编译扩展的文件名：`name` + 可选的平台标签 + `.so` / `.pyd`（CPython 的 `EXTENSION_SUFFIXES`：
+#: 目标解释器没给 `EXTENSION_SUFFIXES` 时的宽松形状（见 `_ext_stem`）。编译扩展的文件名：`name` + 可选的平台标签 + `.so` / `.pyd`（CPython 的 `EXTENSION_SUFFIXES`：
 #: `.cpython-313-darwin.so`、`.abi3.so`、`.cp313-win_amd64.pyd`、`.so`、`.pyd`；`.dylib` / `.dll` 不是
 #: 可 import 的扩展后缀）。目标解释器的 ABI 标签不在这里核——静态扫描不知道目标版本。
 _EXT_RE = re.compile(
@@ -790,6 +793,23 @@ class _Listing:
 _MAX_LINK_HOPS = 40
 
 
+def _ext_stem(name: str, suffixes: tuple[str, ...] | None) -> str | None:
+    """文件名是不是目标解释器能加载的扩展模块，是则回模块名。
+
+    `suffixes`（目标的 `importlib.machinery.EXTENSION_SUFFIXES`，Windows `.cp313-win_amd64.pyd` / `.pyd`、
+    abi3、free-threaded `t` 都在里面）给了就**逐字**按它认——`FileFinder` 只认当前解释器的后缀，别的平台 / 版本
+    留下的 `fast.cpython-313-darwin.so` 在 Linux 3.11 上是个会被忽略的陌生文件（#888 / r4225827435）。
+    没给（`None`）时退回宽松形状 `_EXT_RE`，调用方要把结论标未确认。"""
+    if suffixes is None:
+        m = _EXT_RE.match(name)
+        return m.group("name") if m else None
+    for suffix in sorted(suffixes, key=len, reverse=True):
+        if suffix and name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            return stem if stem.isidentifier() else None
+    return None
+
+
 def _is_windows() -> bool:
     return sys.platform == "win32"
 
@@ -933,8 +953,16 @@ def _kind(root: Path, p: Path, *, no_follow: bool) -> str:
 class _Finder:
     """在目录里按 CPython `FileFinder` 的规则找一个名字——只看目录清单，不 import、不 `find_spec`。"""
 
-    def __init__(self, root: Path, *, no_follow: bool, budget: scanbudget.Budget) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        no_follow: bool,
+        budget: scanbudget.Budget,
+        ext_suffixes: tuple[str, ...] | None = None,
+    ) -> None:
         self.root = root
+        self.ext_suffixes = ext_suffixes
         self.no_follow = no_follow
         self.budget = budget
         self._lists: dict[str, _Listing | None] = {}
@@ -971,9 +999,9 @@ class _Finder:
                         if name.endswith(".py"):
                             py.add(name[:-3])
                         else:
-                            m = _EXT_RE.match(name)
-                            if m:
-                                ext.setdefault(m.group("name"), name)
+                            stem = _ext_stem(name, self.ext_suffixes)
+                            if stem:
+                                ext.setdefault(stem, name)
             out = _Listing(frozenset(dirs), frozenset(py), ext)
         except (FileNotFoundError, NotADirectoryError):
             out = None  # 没有这个目录：不是「读不动」
@@ -993,7 +1021,7 @@ class _Finder:
             kind = _kind(self.root, p, no_follow=False)
             if kind in ("dir", "file", "other", "missing"):
                 return kind == "dir", kind == "file"
-        file_like = name.endswith(".py") or _EXT_RE.match(name) is not None
+        file_like = name.endswith(".py") or _ext_stem(name, self.ext_suffixes) is not None
         return (not file_like and name.isidentifier()), file_like
 
     def guard(self, p: Path) -> str:
@@ -1150,9 +1178,13 @@ class _Scanner:
         no_follow: bool,
         budget: scanbudget.Budget | None,
         dists: distmeta.Index | None = None,
+        ext_suffixes: tuple[str, ...] | None = None,
     ) -> None:
         self.root = root
         self.dists = dists
+        self.ext_suffixes = ext_suffixes
+        #: 命中过扩展模块、却没有目标解释器的后缀表去确认它真的会被加载（`_finish` 据此标搜索不完整）
+        self.ext_unconfirmed = False
         self.script = script
         # `script` 来自请求体：在它进入任何文件系统调用之前先过词法屏障，下游一律用屏障回的那一条；
         # 越界的换成项目根下的占位名，`run()` 记 outside_project 而不读
@@ -1174,7 +1206,9 @@ class _Scanner:
         self.ambiguous_builtin = HOST_BUILTIN_EXTRA if builtin is None else frozenset()
         self.no_follow = no_follow
         self.budget = budget if budget is not None else scanbudget.Budget()
-        self.finder = _Finder(root, no_follow=no_follow, budget=self.budget)
+        self.finder = _Finder(
+            root, no_follow=no_follow, budget=self.budget, ext_suffixes=ext_suffixes
+        )
 
         self.uses: list[ImportUse] = []
         self.dynamic: list[ImportUse] = []
@@ -1704,6 +1738,9 @@ class _Scanner:
             and not self.outside_hit
             and not self.path_modified
             and self.budget.stopped is None
+            # 本地模块跟进碰到深度 / 个数上限：后面的 import 没读，「没有别的第三方依赖」不是定论（#888 / r4225827442）
+            and not self.truncated
+            and not self.ext_unconfirmed
         )
         return ScanResult(
             classes=tuple(classes),
@@ -1759,6 +1796,8 @@ class _Scanner:
 
         # 1b. Tavotto wrapper 下与标准库同名的本地文件：不知道它进不进得来——ambiguous，不跟进、不进 needed
         if top.kind == "wrapper_shadow" and top.found is not None:
+            if top.found.kind == "extension" and self.ext_suffixes is None:
+                self.ext_unconfirmed = True
             return ImportClass(
                 bucket=BUCKET_LOCAL,
                 local_path=_rel(self.root, top.found.hit.path),
@@ -1816,6 +1855,13 @@ class _Scanner:
                 }[found.kind]
             )
             evidence.append("exact_name_match")
+            if found.kind == "extension" and self.ext_suffixes is None:
+                # 没有目标解释器的 EXTENSION_SUFFIXES：这个文件名对目标来说可能根本不是可加载的扩展（别的平台 / 版本的
+                # 残留），其后 `.py` 才是真提供者——不冒充确认（#888）
+                self.ext_unconfirmed = True
+                warns.append("extension_suffix_not_confirmed")
+                if status == STATUS_RESOLVED:
+                    status = STATUS_UNVERIFIED
             shadow = ""
             if in_stdlib:
                 shadow = "stdlib"
@@ -1957,6 +2003,7 @@ def scan(
     no_follow: bool = False,
     budget: scanbudget.Budget | None = None,
     dists: distmeta.Index | None = None,
+    ext_suffixes: tuple[str, ...] | None = None,
 ) -> ScanResult:
     """扫描脚本（及其本地模块）的 import，逐个顶级名分类。
 
@@ -1971,6 +2018,9 @@ def scan(
     累计字节与墙钟有上限，超了留痕而不是悄悄少读。`dists`（PR2）是调用方已经静态读好的某个环境的发行包
     元数据索引（`distmeta.index_environment`，本函数**不**自己去读 site-packages）：给了就把已安装证据
     挂到第三方 / 未知名字的 `distribution_*` 字段上；没给，这些字段保持为空（多发行包候选表除外）。
+    `ext_suffixes`（#888）是**目标**解释器的 `EXTENSION_SUFFIXES`：给了，扩展模块只认这些后缀；没给，退回宽松形状，
+    命中的扩展模块标 `unverified` + `extension_suffix_not_confirmed` 且 `search_complete=False`（不拿宿主的后缀冒充）。
+    被预算 / 文件数 / 深度截断的扫描同样 `search_complete=False`。
     """
     return _Scanner(
         Path(root),
@@ -1983,6 +2033,7 @@ def scan(
         no_follow=no_follow,
         budget=budget,
         dists=dists,
+        ext_suffixes=tuple(ext_suffixes) if ext_suffixes else None,
     ).run()
 
 
