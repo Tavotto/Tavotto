@@ -23,6 +23,13 @@
   .log code { font-family: ui-monospace, Menlo, Consolas, monospace;
               user-select: all; -webkit-user-select: all; }
   .hint { margin-top: 14px; font-size: 11.5px; color: #6E6E68; }
+  /* 暗色外观（宪法第二十八节）：壳自带的页面不读 web/ 的 CSS，值抄 index.css 暗色表 */
+  @media (prefers-color-scheme: dark) {
+    body { background: #161615; color: #ECECEA; }
+    p, .msg { color: #C2C2BC; }
+    .msg { background: #222220; border-color: #3A3A37; }
+    .log, .hint { color: #9B9B94; }
+  }
 </style>
 </head>
 <body>

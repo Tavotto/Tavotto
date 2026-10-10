@@ -169,9 +169,11 @@ describe('PresetsDialog', () => {
     expect(cells.length).toBe(PRESET_IDS.length)
     for (const cell of cells) {
       expect(roleOf(cell), cell.getAttribute('data-preset') ?? '').toBe('button')
-      // 列表语义没有因此丢掉：每格被一个 listitem 包着，外层是 list
-      expect(roleOf(cell.parentElement!)).toBe('listitem')
-      expect(roleOf(cell.parentElement!.parentElement!)).toBe('list')
+      // 列表语义没有因此丢掉：每格被一个 listitem 包着（中间隔一层 Card，只管外观），外层是 list
+      const li = cell.closest('li')!
+      expect(roleOf(li)).toBe('listitem')
+      expect(roleOf(li.parentElement!)).toBe('list')
+      expect(cell.closest('[data-card="subtle"]')).not.toBeNull()
     }
   })
 
@@ -182,5 +184,27 @@ describe('PresetsDialog', () => {
     act(() => cell.click())
     const objs = useDocumentStore.getState().doc.objects
     expect(objs.map(signature)).toEqual(buildPreset('scalebar', { x: 0, y: 0 }).map(signature))
+  })
+
+  it('九格是一个漫游焦点网格：Tab 只停一格，方向键在格间走、上下跨一行（2026-10-07 设计审计 §10.2）', () => {
+    open()
+    const cells = [...document.querySelectorAll<HTMLButtonElement>('[data-preset]')]
+    expect(cells.filter((c) => c.tabIndex === 0)).toHaveLength(1)
+    act(() => cells[0].focus())
+    const key = (k: string) =>
+      act(() => {
+        document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+      })
+    key('ArrowRight')
+    expect(document.activeElement).toBe(cells[1])
+    key('ArrowDown')
+    expect(document.activeElement).toBe(cells[4])
+    key('ArrowLeft')
+    expect(document.activeElement).toBe(cells[3])
+    key('ArrowUp')
+    expect(document.activeElement).toBe(cells[0])
+    key('End')
+    expect(document.activeElement).toBe(cells[cells.length - 1])
+    expect(cells.filter((c) => c.tabIndex === 0)).toEqual([cells[cells.length - 1]])
   })
 })

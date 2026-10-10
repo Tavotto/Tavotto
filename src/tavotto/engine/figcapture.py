@@ -149,8 +149,10 @@ import inspect
 import io
 import json
 import math
+import ntpath
 import os
 import pathlib
+import posixpath
 import re
 import sys
 import weakref
@@ -198,6 +200,7 @@ __all__ = [
     "source_fingerprint",
     "size_mm_of",
     "find_original_artifact",
+    "project_relative_stem",
     "SOURCE_ARTIFACT_VERSION",
     "ORIGIN_EXECUTION",
     "ORIGIN_STATIC",
@@ -397,6 +400,20 @@ def source_fingerprint(
     return "sha256:" + hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
+def project_relative_stem(stem: object) -> bool:
+    """注册表里的 stem 能不能当「项目内相对名」拼进路径：只认字符串，拒绝绝对（POSIX / Windows 两种写法都拒，
+    与当前操作系统无关）、盘符、UNC / 以分隔符开头、含 NUL、任一分量是 `..`。子目录 `sub/plot` 合法。
+    这一关在 `os.path.join` **之前**——拼出来再判太晚：Windows 上 `lstat` 一个 UNC 路径就已经同步连出去了。
+    判据唯一出处；`find_original_artifact` 与导入即扫描、素材库脚本清单都走它（#820 r4232425162）。"""
+    if not isinstance(stem, str) or not stem or "\0" in stem:
+        return False
+    if posixpath.isabs(stem) or ntpath.isabs(stem) or stem[0] in "/\\":
+        return False
+    if ntpath.splitdrive(stem)[0]:
+        return False
+    return ".." not in stem.replace("\\", "/").split("/")
+
+
 def find_original_artifact(project_root: str, stem: str, *, isfile=os.path.isfile) -> str | None:
     """项目根下 stem 的原始产物（相对路径，POSIX）；没有回 None。
 
@@ -404,6 +421,8 @@ def find_original_artifact(project_root: str, stem: str, *, isfile=os.path.isfil
     按 `ARTIFACT_EXTS` 的顺序取第一个存在的。`isfile` 可注入是给测试与
     handoff 的 dry 场景用的。
     """
+    if not project_relative_stem(stem):
+        return None  # 先于任何拼接：UNC / 绝对 / 盘符 / `..` 的 stem 一个字节都不探
     for ext in ARTIFACT_EXTS:
         if isfile(os.path.join(project_root, stem + ext)):
             return stem + ext

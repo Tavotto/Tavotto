@@ -50,18 +50,33 @@ def answers_path(project_root: str | Path) -> Path:
     return config.project_store_dir(project_root) / FILENAME
 
 
-def _read(project_root: str | Path) -> dict[str, list[dict]]:
+class AnswersUnreadable(OSError):
+    """答案文件 / 本机上下文侧表读不出来或损坏。**只给「读-改-写」用**：读不出来就中止写，绝不在一份读失败的
+    基础上写回（会抹掉用户的其它答案）。纯读（recall / load / digest）仍把它当「没有」——没有答案 = 重新问，
+    不会套用任何值（Codex #816 r4224295365）。"""
+
+
+def _read(project_root: str | Path, *, strict: bool = False) -> dict[str, list[dict]]:
+    """`strict=True`（写路径）：文件不存在才是空；读失败 / 损坏 / 形状不对抛 `AnswersUnreadable`。"""
     path = answers_path(project_root)
     try:
         raw = path.read_bytes()
-    except OSError:
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        if strict:
+            raise AnswersUnreadable(f"答案文件读不出来: {exc!r}") from exc
         return {}
     try:
         data = documents.loads_document(raw)
-    except ValueError:
+    except ValueError as exc:
+        if strict:
+            raise AnswersUnreadable(f"答案文件损坏: {exc!r}") from exc
         return {}
     scripts = data.get("scripts") if isinstance(data, dict) else None
     if not isinstance(scripts, dict):
+        if strict:
+            raise AnswersUnreadable("答案文件形状不对")
         return {}
     out: dict[str, list[dict]] = {}
     for script, entries in scripts.items():
@@ -110,7 +125,7 @@ def _write(project_root: str | Path, scripts: dict[str, list[dict]]) -> None:
 
 def contexts_path(project_root: str | Path) -> Path:
     """上下文摘要的本机侧表：Tavotto 数据目录，不写用户项目、不进项目包。"""
-    norm = os.path.normcase(os.path.normpath(os.path.abspath(str(project_root))))
+    norm = config.normalize_path_identity(os.path.normpath(os.path.abspath(str(project_root))))
     digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()[:24]
     return config.data_path("scriptanswer-contexts", f"{digest}.json")
 
@@ -124,13 +139,20 @@ def _answer_tag(answer: str) -> str:
     return hashlib.sha256(answer.encode("utf-8")).hexdigest()[:32]
 
 
-def _read_contexts(project_root: str | Path) -> dict[str, dict]:
+def _read_contexts(project_root: str | Path, *, strict: bool = False) -> dict[str, dict]:
+    """`strict=True`（写路径）：文件不存在才是空；读失败 / 损坏抛 `AnswersUnreadable`（不抹掉别的上下文）。"""
     try:
         data = json.loads(contexts_path(project_root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        if strict:
+            raise AnswersUnreadable(f"上下文侧表读不出来: {exc!r}") from exc
         return {}
     items = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(items, dict):
+        if strict:
+            raise AnswersUnreadable("上下文侧表形状不对")
         return {}
     return {
         k: v
@@ -148,6 +170,28 @@ def _write_contexts(project_root: str | Path, items: dict[str, dict]) -> None:
     path = contexts_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomicio.write_json(path, {"version": CONTEXTS_FORMAT_VERSION, "entries": items})
+
+
+def _commit(
+    project_root: str | Path,
+    scripts: dict[str, list[dict]],
+    old_contexts: dict[str, dict],
+    new_contexts: dict[str, dict],
+) -> None:
+    """两份文件的提交：**先写本机侧表、后写项目文件**。
+
+    侧表里的上下文带答案标签，读的时候要和项目文件里的答案对得上才作数，所以「侧表已新、项目文件还旧」
+    只会让旧答案暂时对不上上下文（退回「建议重新确认」），不会套错。侧表写不动就直接抛，项目文件一个字节都没动
+    （请求报失败 = 确实什么都没改）；项目文件写不动则尽力把侧表还原成旧的，再抛。"""
+    _write_contexts(project_root, new_contexts)
+    try:
+        _write(project_root, scripts)
+    except BaseException:
+        try:
+            _write_contexts(project_root, old_contexts)
+        except OSError:
+            pass  # 还原不动也无妨：标签对不上的上下文不会被采用
+        raise
 
 
 def _local_context(contexts: dict[str, dict], script: str, entry: dict) -> str | None:
@@ -249,7 +293,7 @@ def remember(
     """记下一问的答案：同一 (序号, 运行配置) 的旧条目（不管提示是否相同）被替换。"""
     _check_answer(answer)
     with _LOCK:
-        scripts = _read(project_root)
+        scripts = _read(project_root, strict=True)
         kept = [
             e
             for e in scripts.get(script, [])
@@ -265,17 +309,16 @@ def remember(
             }
         )
         scripts[script] = sorted(kept, key=lambda e: (e["index"], e["run_config"] or ""))
-        _write(project_root, scripts)
-        contexts = _read_contexts(project_root)
+        old_contexts = _read_contexts(project_root, strict=True)
         prefix = _SEP.join((script, run_config or "", str(index))) + _SEP
-        contexts = {k: v for k, v in contexts.items() if not k.startswith(prefix)}
+        contexts = {k: v for k, v in old_contexts.items() if not k.startswith(prefix)}
         if context:
             contexts[_ctx_key(script, run_config, index, kind, prompt)] = {
                 "context": context,
                 "answer": _answer_tag(answer),
                 "t": time.time(),
             }
-        _write_contexts(project_root, contexts)
+        _commit(project_root, scripts, old_contexts, contexts)
 
 
 def update(
@@ -284,9 +327,10 @@ def update(
     """答案管理里改一份配置的一条（提示不变）；缺省只改无参数配置。没有这一条回 False。"""
     _check_answer(answer)
     with _LOCK:
-        scripts = _read(project_root)
+        scripts = _read(project_root, strict=True)
         found = False
-        contexts = _read_contexts(project_root)
+        old_contexts = _read_contexts(project_root, strict=True)
+        contexts = dict(old_contexts)
         for e in scripts.get(script, []):
             if e["index"] == index and e["run_config"] == run_config:
                 local = _local_context(contexts, script, e)
@@ -296,8 +340,7 @@ def update(
                     key = _ctx_key(script, e["run_config"], index, e["kind"], e["prompt"])
                     contexts[key] = {**contexts[key], "answer": _answer_tag(answer)}
         if found:
-            _write(project_root, scripts)
-            _write_contexts(project_root, contexts)
+            _commit(project_root, scripts, old_contexts, contexts)
         return found
 
 
@@ -312,7 +355,7 @@ def forget(
     if index is None and run_config is not None:
         raise ValueError("指定 run_config 时需要 index")
     with _LOCK:
-        scripts = _read(project_root)
+        scripts = _read(project_root, strict=True)
         before = scripts.get(script, [])
         after = (
             []
@@ -322,15 +365,19 @@ def forget(
         if len(after) == len(before):
             return False
         scripts[script] = after
-        _write(project_root, scripts)
+        _write(project_root, scripts)  # 先删答案：这是唯一的提交点，之后的侧表清理失败不影响结果
         prefix = script + _SEP
         mine = (
             (lambda k: k.startswith(prefix))
             if index is None
             else (lambda k: k.startswith(_SEP.join((script, run_config or "", str(index))) + _SEP))
         )
-        contexts = _read_contexts(project_root)
-        _write_contexts(project_root, {k: v for k, v in contexts.items() if not mine(k)})
+        # 上下文最后删：答案已经没了，留下的上下文无人引用（读取总是从答案出发），清不掉也只是一份孤儿
+        try:
+            contexts = _read_contexts(project_root, strict=True)
+            _write_contexts(project_root, {k: v for k, v in contexts.items() if not mine(k)})
+        except OSError:
+            pass
         return True
 
 

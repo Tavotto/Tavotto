@@ -1153,4 +1153,6 @@ def test_verify_replay_answers_script_input_with_the_hot_answers(client, tmp_pat
     monkeypatch.setattr(m.engine_pool, "one_shot", lambda *a, **k: (seen.append(k), fresh)[1])
     resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
-    assert seen == [{"script_inputs": hot.last_build_script_inputs}]
+    assert [k["script_inputs"] for k in seen] == [hot.last_build_script_inputs]
+    # 解释器钉热会话自己的（#820 r4221133372）：形状与 `pool.pin_of_worker` 同一个出处
+    assert [k["pinned"] for k in seen] == [m.engine_pool.pin_of_worker(hot)]

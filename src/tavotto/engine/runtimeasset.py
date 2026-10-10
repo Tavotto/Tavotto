@@ -47,7 +47,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import shutil
 from pathlib import Path
 
@@ -100,6 +99,11 @@ def resolve(asset_id: str, registry) -> dict | None:
     """
     if not is_runtime_id(asset_id):
         return None
+    # 一趟收集所有读法：stem 可以合法地形如 `plot~rc_<12 hex>`，其无参数 id 与 stem `plot` 的带参数 id 逐字
+    # 相同。同一个 id 有不止一种读法（同脚本同时登记了两者）= 有歧义 = 返回 None，显式失败
+    # （调用方回 runtime_asset_unknown），绝不按注册表顺序猜一个——猜错会把无参数面板跑成带参数的图。
+    # 只有一种读法（含单独一个后缀形 stem）时行为不变。
+    found: list[dict] = []
     for script, info in registry.entries().items():
         for stem in info.get("stems", ()):
             try:
@@ -116,18 +120,20 @@ def resolve(asset_id: str, registry) -> dict | None:
                 run_config = asset_id[len(base) + 1 :]
             else:
                 continue
-            return {
-                "script": script,
-                "stem": stem,
-                "entry": info.get("entry", "main"),
-                "cost": info.get("cost", "medium"),
-                # 没给参数的素材，返回形状与 T03 之前逐键相同（键只在有配置时才出现）
-                **({"run_config": run_config} if run_config else {}),
-            }
-    return None
+            found.append(
+                {
+                    "script": script,
+                    "stem": stem,
+                    "entry": info.get("entry", "main"),
+                    "cost": info.get("cost", "medium"),
+                    # 没给参数的素材，返回形状与 T03 之前逐键相同（键只在有配置时才出现）
+                    **({"run_config": run_config} if run_config else {}),
+                }
+            )
+    return found[0] if len(found) == 1 else None
 
 
-_RUN_CONFIG_TAIL = re.compile(re.escape(runconfig.ID_PREFIX) + r"[0-9a-f]{12}")
+_RUN_CONFIG_TAIL = runconfig.ID_RE
 
 
 def run_selection(project_root: str | Path, info: dict):
@@ -145,15 +151,26 @@ def run_selection(project_root: str | Path, info: dict):
 # materialized cache
 # ---------------------------------------------------------------------------
 def _norm_project(project_root: str | Path) -> str:
-    return os.path.normcase(os.path.normpath(os.path.abspath(str(project_root))))
+    return runconfig.project_identity(project_root)
+
+
+def cache_slug(identity: str, asset_id: str) -> str:
+    """(项目身份串, asset) → cache 目录名。纯计算，不碰磁盘；`identity` 是 `_norm_project` 的结果。"""
+    return hashlib.sha256(f"{identity}|{asset_id}".encode("utf-8")).hexdigest()[:24]
 
 
 def cache_dir(project_root: str | Path, asset_id: str) -> Path:
     """该 (项目, asset) 的 cache 目录。slug 只是文件名安全化，不是身份。"""
-    slug = hashlib.sha256(f"{_norm_project(project_root)}|{asset_id}".encode("utf-8")).hexdigest()[
-        :24
-    ]
-    return config.data_path("cache", "runtime", slug)
+    return config.data_path("cache", "runtime", cache_slug(_norm_project(project_root), asset_id))
+
+
+def cached_slugs() -> set[str]:
+    """runtime cache 根目录下现存的目录名（一次 `listdir`）；根不存在 / 读不了 → 空集（没有 cache）。
+    配合 `cache_slug` 做成员判断：按一批候选 id 问「哪些有 cache」不必逐个探磁盘（#819 r4232302927）。"""
+    try:
+        return set(os.listdir(config.data_path("cache", "runtime")))
+    except OSError:
+        return set()
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

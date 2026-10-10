@@ -116,7 +116,7 @@ export function Segmented<T extends string>({
           aria-hidden
           data-segmented-thumb
           className={cn(
-            'pointer-events-none absolute inset-y-0.5 left-0 rounded-full bg-surface shadow-thumb',
+            'pointer-events-none absolute inset-y-0.5 left-0 rounded-full bg-thumb shadow-thumb',
             thumb.animate && 'transition-[transform,width] duration-base ease-pop',
           )}
           style={thumb.style}

@@ -141,7 +141,15 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
       }
       await new Promise((r) => setTimeout(r, 800))
       if (proc.exitCode === null) proc.kill('SIGKILL')
-      rmSync(workdir, { recursive: true, force: true })
+      // 等进程真的退出再删目录（Windows 上子进程握着 sandbox 目录会 EBUSY）；删不掉只重试，不抛出去盖住主失败
+      for (let i = 0; i < 60 && proc.exitCode === null && proc.signalCode === null; i++) {
+        await new Promise((r) => setTimeout(r, 250))
+      }
+      try {
+        rmSync(workdir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+      } catch (e) {
+        console.warn(`清理 ${workdir} 失败（已忽略，避免盖住主失败）：${String(e)}`)
+      }
     },
   }
 }

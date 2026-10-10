@@ -216,3 +216,9 @@
   `gen_canvas_coverage.py --write`、`gen_glyph_plan_vectors.py --write`（差异逐条对着 ADR 0060 §1 / 0073 解释，不盲目 --write）；
   改了 evidence 的输入就重生成 `scripts/dev/u06_evidence.py --out docs/implementation/tavotto-foundation/evidence/u06` /
   `scripts/dev/u07_evidence.py --out …/evidence/u07`（PNG 是 macOS arm64 基线，其它平台看 `foundation-u06-rendercore.yml` 的工件）。
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
+
+- 纯模型只许标准库、整包零 `import pymupdf`；`facade.py` 是契约的唯一实现；离开本机的只有 `inspector.public_projection()`

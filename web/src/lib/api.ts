@@ -196,10 +196,13 @@ export interface UnsupportedAsset {
 export class ApiError extends Error {
   status: number
   body: Record<string, unknown>
-  constructor(message: string, status: number, body: Record<string, unknown>) {
+  /** 响应头 `X-Tavotto-Diagnostic-Ref`：错误体不是对象时后端把诊断引用放在这里（T04）；没有 = null */
+  diagnosticRef: string | null
+  constructor(message: string, status: number, body: Record<string, unknown>, diagnosticRef: string | null = null) {
     super(message)
     this.status = status
     this.body = body
+    this.diagnosticRef = diagnosticRef
   }
 }
 
@@ -362,7 +365,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
       /* 非 JSON 错误体，保留状态码 */
     }
     noteProjectGone(res.status, body)
-    throw new ApiError(detail, res.status, body)
+    throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
   return res.json() as Promise<T>
 }
@@ -478,7 +481,7 @@ export interface ProjectScan {
   scripts?: ProjectScanScript[]
   targets?: ProjectScanTarget[]
   default_target?: string | null
-  target_choice?: 'single' | 'ambiguous' | 'connected' | 'none'
+  target_choice?: 'single' | 'ambiguous' | 'connected' | 'none' | 'incomplete'
   checks: ProjectScanCheck[]
   environment?: {
     verified: boolean
@@ -772,6 +775,16 @@ export const panelSrc = (
 
 export const fetchLayoutNames = () =>
   jsonFetch<{ layouts: string[] }>('/api/layouts').then((r) => r.layouts)
+
+/**
+ * 同一份清单 + 每份的修改时间（epoch 秒；后端加字段，老后端没有 = 空表、界面不写日期）。
+ * 只给「打开」列表的元信息用；顺序仍是 `layouts` 的（新的在前）。
+ */
+export const fetchLayoutList = () =>
+  jsonFetch<{ layouts: string[]; modified?: Record<string, number> }>('/api/layouts').then((r) => ({
+    names: r.layouts,
+    modified: r.modified ?? {},
+  }))
 
 /** 读到的一份画布文件：`revision` 来自响应头，是后续覆盖它的基线 */
 export interface FetchedLayout {
@@ -4000,6 +4013,8 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
   /** 这次授权真正要装的全部包（规范串）：新建第一代时多于用户点的那一个；老后端没有这个字段 */
   requirements?: string[]
   target_kind: 'project_venv' | 'tavotto_managed'
+  /** 这份计划的影响摘要（执行请求必须回显它；老后端没有） */
+  impact_digest?: string
   python: string
   creates_environment: boolean
   modifies_user_environment: boolean
@@ -4059,11 +4074,12 @@ export const createDependencyPlan = (body: {
     body: JSON.stringify(body),
   })
 
-export const installDependencyPlan = (planId: string) =>
+/** 执行单包修复计划：`impactDigest` 必填，是用户看到的那份影响的摘要（对不上后端回 409 dependency_impact_changed） */
+export const installDependencyPlan = (planId: string, impactDigest: string) =>
   jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependency/install', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ plan_id: planId, impact_digest: impactDigest }),
   })
 
 export const cancelDependencyPlan = (planId: string) =>
@@ -4227,6 +4243,8 @@ export interface JointDependencyRepairPlan {
   network_required: boolean
   expires_at: number
   joint: JointDependencyPlan
+  /** 这份计划此刻的实际影响摘要（ADR 0115）；与 offer 里用户看到的那份比对。老后端没有 */
+  impact_digest?: string
   /** 这次授权包含先下载私有 Python（U05）；`replan` = 计划的事实是替身，供应后按真解释器重算 */
   private_python?: PrivatePythonOffer | null
   replan?: boolean
@@ -4248,11 +4266,15 @@ export const createJointDependencyPlan = (body: {
     body: JSON.stringify(body),
   })
 
-export const prepareJointDependencies = (planId: string) =>
+/**
+ * 执行一份联合计划。`impactDigest` 必填：用户**看到并确认**的那份影响摘要（offer.impact_digest）——后端核它与计划此刻的
+ * 实际影响一致（不一致 `dependency_impact_changed`，缺失 `dependency_impact_required`），不能只靠计划 id 或包名。
+ */
+export const prepareJointDependencies = (planId: string, impactDigest: string) =>
   jsonFetch<{ started: boolean } & DependencyProgress>('/api/engine/dependencies/prepare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId }),
+    body: JSON.stringify({ plan_id: planId, impact_digest: impactDigest }),
   })
 
 /** 取消；过了提交点（受管环境已切 active）回 accepted=false, reason=committed */
@@ -4600,11 +4622,14 @@ let engineFeaturesPromise: Promise<ReadonlySet<string>> | null = null
 
 /**
  * 引擎宣告的能力（`/api/version` 的 `features`；公开端点、不带项目）。一个标签页问一次：引擎升级后旧标签页
- * 由同一端点的 `build` 发现过期并刷新。网络失败不缓存（下次再问）；端点在、却没有 `features` = 旧引擎，一个都没有。
+ * 由同一端点的 `build` 发现过期并刷新。网络失败与非 2xx 都不缓存（下次再问）；端点在、却没有 `features` = 旧引擎，一个都没有。
  */
 export function fetchEngineFeatures(): Promise<ReadonlySet<string>> {
   engineFeaturesPromise ??= fetch(apiUrl('/api/version'), { cache: 'no-store' })
     .then(async (res) => {
+      // 404 = 更早的引擎根本没有这个端点（旧引擎，一个特性都没有）；其余非 2xx（启动期代理 502/503 等）是
+      // 暂时失败、不是「没有特性」：reject 走下面的 catch 清掉缓存，允许重试
+      if (!res.ok && res.status !== 404) throw new Error(`/api/version ${res.status}`)
       const body = res.ok ? ((await res.json()) as { features?: unknown }) : {}
       const list = Array.isArray(body?.features) ? body.features : []
       return new Set(list.filter((f): f is string => typeof f === 'string'))
@@ -4636,9 +4661,11 @@ async function requireEngineFeature(feature: string): Promise<void> {
 
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
 export const probeScript = async (script: string, cost?: string, args?: ScriptArgs) => {
-  // run_config（答案管理对已有配置的复跑）优先于 argv，不走能力协商；只有新给的非空 argv 才先确认引擎宣告了 script-argv
+  // run_config（答案管理对已有配置的复跑）优先于 argv。**任何非 null 的 run_config 与任何非空 argv 都要先过
+  // script-argv 能力协商**：旧引擎会静默忽略 `run_config` 字段、无参数跑脚本，还可能登记一张「看着对、其实错」的图
+  // （Codex #818 r4221289208）。只有 `run_config: null`（明确「不带参数」）与无参数不需要。
   const argv = args?.run_config === undefined && args?.argv && args.argv.length > 0 ? [...args.argv] : null
-  if (argv) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  if (argv || typeof args?.run_config === 'string') await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
   return jsonFetch<ProbeResult>('/api/registry/probe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4890,6 +4917,7 @@ export const actOnPreparationSession = (
   sessionId: string,
   body: { action_id: string; expected_config_revision: number; impact_digest?: string },
   pj: string | null,
+  signal?: AbortSignal,
 ) =>
   jsonFetch<{ claimed: boolean; report: PreparationReport }>(
     `/api/engine/preparation-sessions/${encodeURIComponent(sessionId)}/actions`,
@@ -4897,6 +4925,7 @@ export const actOnPreparationSession = (
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal,
     },
     pj,
   )
@@ -4908,6 +4937,7 @@ export const RUN_ARGV_ERROR_CODES = [
   'run_config_missing',
   'run_config_secret_missing',
   'run_config_unsupported',
+  'run_config_unreadable',
 ] as const
 
 /**
@@ -4983,11 +5013,15 @@ export const stopScriptInput = (id: string) =>
 
 export const fetchScriptAnswers = () => jsonFetch<ScriptAnswersResponse>('/api/script_input/answers')
 
-export const updateScriptAnswer = (script: string, index: number, answer: string, runConfig: string | null = null) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
+export const updateScriptAnswer = async (script: string, index: number, answer: string, runConfig: string | null = null) => {
+  if (runConfig) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
+}
 
-export const forgetScriptAnswer = (script: string, index: number, runConfig: string | null = null) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
+export const forgetScriptAnswer = async (script: string, index: number, runConfig: string | null = null) => {
+  if (runConfig) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
+}
 
 export const cancelProbe = (script: string) =>
   jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {
@@ -5064,15 +5098,18 @@ export interface RuntimeStatus {
  * 查询 runtime 素材的 stale 状态。**只读**：后端绝不因此执行脚本。
  * `source` 是文档里持久化的描述块，注册表条目丢失时作恢复线索。
  */
-export const fetchRuntimeStatus = (
+export const fetchRuntimeStatus = async (
   id: string,
   source?: { script: string; stem: string; run_config?: string },
-) =>
-  jsonFetch<RuntimeStatus>('/api/runtime/status', {
+) => {
+  // 带运行配置引用的判定，旧引擎会忽略 run_config 去比无参数那份：先过能力协商（r4221289208）
+  if (source?.run_config) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return jsonFetch<RuntimeStatus>('/api/runtime/status', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, source }),
   })
+}
 
 /**
  * 素材库「图」区的一条 RuntimeFigureAsset（`runtimeasset.list_assets` 原样）。

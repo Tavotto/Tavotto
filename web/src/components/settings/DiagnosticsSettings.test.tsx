@@ -82,7 +82,12 @@ async function mount(checks = CHECKS, response?: Promise<Response>) {
 const text = () => document.body.textContent ?? ''
 const buttons = () => [...document.querySelectorAll('button')] as HTMLButtonElement[]
 const byName = (name: string) =>
-  buttons().find((b) => (b.getAttribute('aria-label') ?? b.textContent ?? '').trim() === name)
+  buttons().find(
+    (b) =>
+      (b.getAttribute('aria-label') ?? b.textContent ?? '').trim() === name ||
+      // 折叠行的按钮里还有行尾的值（「3 项正常」）：认名字那一截
+      (b.hasAttribute('aria-expanded') && b.querySelector('span')?.textContent?.trim() === name),
+  )
 
 beforeEach(() => {
   summaryMock.mockReset()
@@ -95,19 +100,45 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+describe('取数失败', () => {
+  // 拿不到结果不是「零项异常」：不许亮绿胶囊，也不报「本页数据取自 …」（Codex #828 P2）
+  it.each([
+    ['回包不是 2xx', () => Promise.resolve({ ok: false, json: () => Promise.resolve({ error: 'boom' }) } as Response)],
+    ['回包里没有 checks', () => Promise.resolve({ ok: true, json: () => Promise.resolve({ error: 'boom' }) } as Response)],
+    ['网络失败', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ])('%s → 「未能检测」而不是「检查通过」', async (_name, response) => {
+    await mount(CHECKS, response())
+    const summary = document.querySelector('[data-diagnostics-summary]')!
+    expect(summary.getAttribute('data-status-pill')).toBe('warn')
+    expect(summary.textContent).toContain(st('diagnostics.summaryUnavailable'))
+    expect(text()).not.toContain(st('diagnostics.summaryOk'))
+    expect(text()).toContain(st('diagnostics.fetchFailed'))
+  })
+})
+
 describe('首屏', () => {
-  it('健康结果与恢复卡只在操作区之后增长，加载与失败信息照旧可见', async () => {
+  /**
+   * 顺序是「健康 → 报告 → 开发者」（2026-10-07 设计审计 §9.1 P0），同时守住 #797「异步结果不挪动正在按的入口」：
+   * 健康组只有一行结论，取数中与取数后是**同一行**（同一个元素，只换现状那句话、控件列多一枚胶囊）；会随结果
+   * 长高的东西（异常项、各项检查结果、恢复入口）全在开发者组**之后**的「检查结果」组里。
+   */
+  it('健康结论在最前、且取数前后是同一行；随结果长高的都在开发者入口之后', async () => {
     let resolve!: (value: Response) => void
     const pending = new Promise<Response>((done) => { resolve = done })
     await mount(CHECKS, pending)
     const page = document.querySelector('[data-diagnostics-page]')!
     const dev = page.querySelector('[data-diagnostics-dev]')!
     const toggle = dev.querySelector('button')!
-    const health = [...page.querySelectorAll('section')].find((s) =>
-      s.querySelector('h3')?.textContent === st('diagnostics.healthTitle'),
-    )!
-    expect(page.querySelector('[data-diagnostics-loading]')?.textContent).toBe(st('about.detecting'))
-    expect(dev.compareDocumentPosition(health) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const health = page.querySelector('[data-diagnostics-health]')!
+    const report = page.querySelector('[data-settings-anchor="diagnostics.report"]')!
+    const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING
+    // 顺序：健康 → 报告 → 开发者
+    expect(health.compareDocumentPosition(report) & FOLLOWING).toBeTruthy()
+    expect(report.compareDocumentPosition(dev) & FOLLOWING).toBeTruthy()
+    const loading = page.querySelector('[data-diagnostics-loading]')!
+    expect(loading.textContent).toBe(st('about.detecting'))
+    const verdictRow = loading.closest('[data-setting-row]')!
+    expect(health.contains(verdictRow)).toBe(true)
     await act(async () => { toggle.click() })
     const start = page.querySelector('[data-perf-probe-start]')!
     expect(start).not.toBeNull()
@@ -115,18 +146,34 @@ describe('首屏', () => {
       resolve({ json: () => Promise.resolve({ checks: CHECKS }), ok: true } as Response)
     })
     expect(page.querySelector('[data-diagnostics-loading]')).toBeNull()
-    expect(page.querySelector('[data-diagnostics-summary]')?.textContent)
-      .toContain(st('diagnostics.summaryFailing', { count: 1 }))
-    expect(page.querySelector('[data-diagnostics-failures]')?.textContent)
-      .toContain(st('about.check.project_writable'))
+    const summary = page.querySelector('[data-diagnostics-summary]')!
+    expect(summary.textContent).toContain(st('diagnostics.summaryFailing', { count: 1 }))
+    // 结论在原来那一行里落地（同一个元素），健康组里还是只有这一行
+    expect(summary.closest('[data-setting-row]')).toBe(verdictRow)
+    expect(health.querySelectorAll('[data-setting-row]')).toHaveLength(1)
+    const failures = page.querySelector('[data-diagnostics-failures]')!
+    expect(failures.textContent).toContain(st('about.check.project_writable'))
+    expect(dev.compareDocumentPosition(failures) & FOLLOWING).toBeTruthy()
     await act(async () => {
       useEnvStore.setState({ env: { ...useEnvStore.getState().env!, ok: false } })
     })
-    expect(health.querySelector('[data-engine-env-card]')).not.toBeNull()
+    const card = page.querySelector('[data-engine-env-card]')!
+    expect(card).not.toBeNull()
+    expect(dev.compareDocumentPosition(card) & FOLLOWING).toBeTruthy()
     expect(page.querySelector('[data-diagnostics-dev] > div > button')).toBe(toggle)
     expect(page.querySelector('[data-perf-probe-start]')).toBe(start)
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
-    expect(health.closest('[data-diagnostics-dev]')).toBeNull() // 错误与恢复卡不藏进技术详情
+    expect(card.closest('[data-diagnostics-dev]')).toBeNull() // 错误与恢复入口不藏进技术详情
+  })
+
+  it('结论是一枚带字的状态胶囊，不是行标签（2026-10-07 设计审计 §9.1）', async () => {
+    await mount()
+    const summary = document.querySelector('[data-diagnostics-summary]')!
+    expect(summary.getAttribute('data-status-pill')).toBe('danger')
+    await act(async () => root.unmount())
+    host.remove()
+    await mount(CHECKS.filter((c) => c.ok))
+    expect(document.querySelector('[data-diagnostics-summary]')!.getAttribute('data-status-pill')).toBe('ok')
   })
 
   it('异常项在首屏并说原因；正常项默认折叠（审计 T47）', async () => {

@@ -11,6 +11,8 @@ interface ScriptLibraryStore {
   view: RegistryView | null
   loading: boolean
   loaded: boolean
+  /** 最近一次注册表视图落地的时刻（毫秒）；权威的 `linked` 以它为准 */
+  loadedAt: number
   error: string | null
   load: () => Promise<void>
   clear: () => void
@@ -25,6 +27,7 @@ export const useScriptLibraryStore = create<ScriptLibraryStore>((set) => ({
   view: null,
   loading: false,
   loaded: false,
+  loadedAt: 0,
   error: null,
 
   load: () => {
@@ -34,7 +37,7 @@ export const useScriptLibraryStore = create<ScriptLibraryStore>((set) => ({
     inflight = fetchRegistry()
       .then((view) => {
         if (epoch !== started) return // 切过项目：旧清单作废
-        set({ view, error: null, loaded: true })
+        set({ view, error: null, loaded: true, loadedAt: Date.now() })
       })
       .catch((e) => {
         if (epoch !== started) return
@@ -51,6 +54,6 @@ export const useScriptLibraryStore = create<ScriptLibraryStore>((set) => ({
   clear: () => {
     epoch += 1
     inflight = null
-    set({ view: null, loading: false, loaded: false, error: null })
+    set({ view: null, loading: false, loaded: false, loadedAt: 0, error: null })
   },
 }))

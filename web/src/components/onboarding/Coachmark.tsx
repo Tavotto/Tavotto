@@ -1,5 +1,5 @@
 import { forwardRef, type ReactNode } from 'react'
-import { X } from '@/components/ui/icons'
+import { Pause } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -25,8 +25,10 @@ import { Button } from '../ui/Button'
  *                                   [次动作] [主动作]     ← 只在有动作时出现
  * ```
  *
- * 视觉：浮层用唯一的轻投影 `shadow-pop`、10px 圆角；进场 `animate-pop-in`
- * （reduced motion 下 index.css 的全局覆盖把它压到 0.01ms）。
+ * 视觉（2026-10-07 设计审计 §10.2）：多行浮动面板那一档——圆角 12（`rounded-lg`）、宽 320、内边距 16、
+ * 正文 13（阅读面）；进度是一排分段（第几段亮着 = 第几步），字面的「第 n 步，共 N 步」仍在旁边（读屏与测试认它）；
+ * 关闭是一颗写明「暂停教程」的文字按钮，不是一个意思含糊的 ×（关掉 = 暂停，不是退出）。
+ * 浮层用唯一的轻投影 `shadow-pop`；进场 `animate-pop-in`（reduced motion 下 index.css 的全局覆盖把它压到 0.01ms）。
  */
 export interface CoachmarkProps {
   id: string
@@ -35,6 +37,8 @@ export interface CoachmarkProps {
   body: ReactNode
   /** 「第 n 步，共 N 步」；欢迎 / 完成页不显示 */
   progress?: string | null
+  /** 分段进度：第几步（从 1 数）/ 一共几步；不给就不画分段 */
+  step?: { n: number; total: number } | null
   side?: CoachmarkSide | 'center'
   /** 主动作（完成页的两颗、Step 4 的「已解决，继续」） */
   primary?: { label: string; onClick: () => void; autoFocus?: boolean } | null
@@ -58,6 +62,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
     title,
     body,
     progress,
+    step,
     side = 'bottom',
     primary,
     secondary,
@@ -88,7 +93,7 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
       onPointerDown={(e) => e.stopPropagation()}
       style={style}
       className={cn(
-        'pointer-events-auto w-[300px] max-w-[calc(100vw-1rem)] rounded-lg bg-surface p-3 text-ink shadow-pop outline-none',
+        'pointer-events-auto w-80 max-w-[calc(100vw-1rem)] rounded-lg bg-surface p-4 text-ink shadow-pop outline-none',
         'animate-pop-in',
         className,
       )}
@@ -108,19 +113,31 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
           )}
         />
       )}
-      <div className="min-w-0 pr-6">
+      {step && (
+        // 分段进度：一步一段，走过的与这一步是 ink，没走到的是 border 那一档
+        <div aria-hidden data-onboarding-segments className="mb-3 flex gap-1 pr-24">
+          {Array.from({ length: step.total }, (_, i) => (
+            <span
+              key={i}
+              data-done={i < step.n || undefined}
+              className={cn('h-1 flex-1 rounded-full', i < step.n ? 'bg-ink' : 'bg-border')}
+            />
+          ))}
+        </div>
+      )}
+      <div className="min-w-0 pr-20">
         {/* 13px 不在六个角色里（宪法第六节）：标题是 type-title 15（打磨 G1） */}
         <h2 id={titleId} className="type-title">
           {title}
         </h2>
-        <p id={bodyId} className="mt-1 text-xs leading-relaxed text-ink-2">
-          {body}
-        </p>
-        {note && <div className="mt-1.5 text-xs leading-relaxed text-ink-3">{note}</div>}
       </div>
+      <p id={bodyId} className="type-reading mt-1.5 text-ink-2">
+        {body}
+      </p>
+      {note && <div className="type-caption mt-1.5">{note}</div>}
       {(progress || onBack || onSkip) && (
         <div className="mt-3 flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-xs tabular-nums text-ink-3" data-onboarding-progress>
+          <span className="type-meta min-w-0 truncate" data-onboarding-progress>
             {progress}
           </span>
           <span className="flex shrink-0 items-center gap-0.5">
@@ -157,16 +174,18 @@ export const Coachmark = forwardRef<HTMLDivElement, CoachmarkProps>(function Coa
           )}
         </div>
       )}
-      {/* 关闭（暂停）画在右上角，但放在 DOM 末尾：Tab 顺序是返回 → 跳过 → 主动作 → 关闭 */}
-      {/* 20px 行内小钮是原语的一档（`size="icon-xs"`，宪法第十三节）：此前这里手写 24×24 */}
+      {/* 暂停画在右上角，但放在 DOM 末尾：Tab 顺序是返回 → 跳过 → 主动作 → 暂停。
+          写明「暂停教程」（2026-10-07 设计审计 §10.2）：一个 × 读作「退出教程」，而它其实只是暂停、随时能继续 */}
       <Button
-        size="icon-xs"
+        size="sm"
+        variant="ghost"
         onClick={onClose}
         aria-label={ob('pause')}
-        title={ob('pause')}
-        className="absolute right-2 top-2 text-ink-3 hover:text-ink"
+        data-onboarding-pause
+        className="absolute right-2 top-2 gap-1 px-2 text-ink-3 hover:text-ink"
       >
-        <X size={ICON_SIZE.sm} />
+        <Pause size={ICON_SIZE.xs} aria-hidden />
+        {ob('pause')}
       </Button>
     </div>
   )

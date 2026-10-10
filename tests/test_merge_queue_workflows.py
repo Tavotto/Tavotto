@@ -1032,10 +1032,10 @@ class TestGates:
         }, f"backend 覆盖漂了：{sorted(tiers)}"
         assert "python -m pytest" in _code(fast) and "python -m pytest" in _code(platforms)
 
-    #: 各 job 现在定的片数——两个 job **不必相同**（2026-09-30 起 backend-platforms 是
-    #: 3 片、backend-fast 仍是 2 片，理由见 docs/rules/ci/pytest-shards.md）。改一个 job
+    #: 各 job 现在定的片数——两个 job **不必相同**；backend-platforms 2026-09-30、
+    #: backend-fast 2026-10-09 起各为 3 片（docs/rules/ci/pytest-shards.md）。改一个 job
     #: 的片数要同时改这里与文档里的实测。
-    _EXPECTED_SHARD_COUNTS = {"backend-fast": 2, "backend-platforms": 3}
+    _EXPECTED_SHARD_COUNTS = {"backend-fast": 3, "backend-platforms": 3}
 
     @pytest.mark.parametrize("job_id", ["backend-fast", "backend-platforms"])
     def test_pytest_shards_agree_between_the_matrix_and_the_command(self, job_id):
@@ -1665,7 +1665,7 @@ class TestPlaywrightShards:
 
     @pytest.mark.parametrize(
         "job_id, step_minutes, job_minutes",
-        [("windows-exe-smoke", 30, 60), ("posix-e2e", 35, 45)],
+        [("windows-exe-smoke", 45, 60), ("posix-e2e", 35, 45)],
     )
     def test_the_playwright_step_has_a_step_level_timeout(self, job_id, step_minutes, job_minutes):
         """主语是 **step** 的 `timeout-minutes`（缩进 8），不是 job 的（缩进 4）——job 级的不动。"""
@@ -3135,3 +3135,86 @@ class TestApprovedFontArchiveCaches:
             for path in tmp_path.glob(TestBuildReuseAndCaches.FONT_PATH)
         }
         assert cached == {f"build/fonts-cache/{name}" for name in archives}
+
+
+class TestCLAServiceContracts:
+    """The actual private-service HTTP/SQL tests run once on the existing fast lane."""
+
+    def test_service_suite_is_in_required_backend_fast_lane(self):
+        job = _job(CI, "backend-fast")
+        assert "backend-fast" in _needs_of(_job(CI, "ci-fast-gate"))
+        assert "backend-fast" in _required_of(_job(CI, "ci-fast-gate"))
+        assert "github.event_name == 'pull_request' || github.event_name == 'merge_group'" in job
+        assert 'python: ["3.10", "3.13", "3.14"]' in job
+        assert "shard: [1, 2, 3]" in job
+        marker = "      - name: CLA service contract tests (isolated)\n"
+        assert job.count(marker) == 1
+        step = job.split(marker, 1)[1].split("      - ", 1)[0]
+        assert "if: matrix.python == '3.13' && matrix.shard == 1" in step
+        assert "continue-on-error" not in step
+        assert "secrets." not in step
+        assert "permissions:" not in job  # Inherits workflow contents: read only.
+        assert "timeout-minutes: 5" in step
+        assert 'python -m venv "$CLA_TEST_ENV"' in step
+        assert 'CLA_TEST_ENV="$RUNNER_TEMP/cla-service-tests"' in step
+        assert "-m pip --isolated install" in step
+        assert "--index-url https://pypi.org/simple --only-binary=:all:" in step
+        assert "-r services/cla/requirements-core.txt" in step
+        assert '"$CLA_TEST_ENV/bin/python" services/cla/tests/run_ci.py' in step
+
+    def test_service_runner_has_no_empty_or_skipped_success(self):
+        import ast
+
+        runner = ROOT / "services/cla/tests/run_ci.py"
+        tree = ast.parse(runner.read_text())
+        # Execute the same small runner in a subprocess for its negative contracts;
+        # the positive full-suite run is the workflow step above.
+        import subprocess
+
+        program = """
+import importlib.util, unittest
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location('cla_runner', 'services/cla/tests/run_ci.py')
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+versions = {'cryptography': '50.0.0', 'cffi': '2.1.1', 'pycparser': '3.0'}
+with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.object(unittest.defaultTestLoader, 'discover', return_value=unittest.TestSuite()):
+    try:
+        m.main()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('empty suite passed')
+with patch.object(m, 'version', side_effect=RuntimeError('dependency absent')):
+    try:
+        m.main()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('missing dependency passed')
+class Skipped(unittest.TestCase):
+    @unittest.skip('synthetic anti-skip probe')
+    def test_probe(self):
+        pass
+suite = unittest.TestSuite(Skipped('test_probe') for _ in range(m.MIN_TESTS))
+with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.object(unittest.defaultTestLoader, 'discover', return_value=suite):
+    assert m.main() == 1, 'skipped security suite passed'
+class ExpectedFailure(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_probe(self):
+        self.fail('synthetic anti-xfail probe')
+suite = unittest.TestSuite(ExpectedFailure('test_probe') for _ in range(m.MIN_TESTS))
+with patch.object(m, 'version', side_effect=lambda name: versions[name]), patch.object(unittest.defaultTestLoader, 'discover', return_value=suite):
+    assert m.main() == 1, 'expected-failure security suite passed'
+"""
+        assert any(
+            isinstance(node, ast.FunctionDef) and node.name == "main" for node in ast.walk(tree)
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr

@@ -45,7 +45,7 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
         role="img"
         aria-label={label}
         viewBox={lay.viewBox.join(' ')}
-        className="h-auto w-full max-w-[360px] rounded-sm border border-border bg-white"
+        className="h-auto w-full max-w-[360px] rounded-sm border border-border bg-paper"
         style={{ aspectRatio: `${SAMPLE_VIEW.w} / ${SAMPLE_VIEW.h}` }}
       >
         <text x={box.x + box.w / 2} y={lay.titleY} fontSize={g.titlePt} textAnchor="middle" fill="#111" {...faceAttrs(g.faces.title)}>

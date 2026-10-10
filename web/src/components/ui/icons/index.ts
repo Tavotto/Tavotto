@@ -1,5 +1,5 @@
 /**
- * 图标集的公开面：142 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
+ * 图标集的公开面：143 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
  * 表在 `docs/ux/ICONOGRAPHY.md` 第四节）。几何在 `defs.ts`，组件工厂在 `createIcon.tsx`。
  * 写法 `<X size={ICON_SIZE.md} />`，选中态 `<X filled />`。
  */
@@ -147,6 +147,7 @@ export const GitCommitVertical = createIcon('GitCommitVertical', ICON_DEFS.GitCo
 export const WavesHorizontal = createIcon('WavesHorizontal', ICON_DEFS.WavesHorizontal)
 export const Ruler = createIcon('Ruler', ICON_DEFS.Ruler)
 export const LayoutList = createIcon('LayoutList', ICON_DEFS.LayoutList)
+export const ListChecks = createIcon('ListChecks', ICON_DEFS.ListChecks)
 export const Blend = createIcon('Blend', ICON_DEFS.Blend)
 export const Diamond = createIcon('Diamond', ICON_DEFS.Diamond)
 export const Hexagon = createIcon('Hexagon', ICON_DEFS.Hexagon)

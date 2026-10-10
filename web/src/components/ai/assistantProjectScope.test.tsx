@@ -14,7 +14,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiRevert, fetchAiHistory, type AiHistoryEntry } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
-import { t } from '@/i18n'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
 import { useAiStore, type AiSession } from '@/store/aiStore'
@@ -39,7 +38,6 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-const ai = (k: string) => t(k, { ns: 'ai' })
 
 let root: Root | null = null
 let host: HTMLDivElement
@@ -110,14 +108,14 @@ afterEach(async () => {
 
 describe('助手面板随项目代际重挂', () => {
   const typeDraft = async (text: string) => {
-    const box = host.querySelector('textarea')!
+    const box = host.querySelector<HTMLTextAreaElement>('[data-ai-input]')!
     const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
     await act(async () => {
       setter.call(box, text)
       box.dispatchEvent(new Event('input', { bubbles: true }))
     })
   }
-  const draft = () => host.querySelector('textarea')!.value
+  const draft = () => host.querySelector<HTMLTextAreaElement>('[data-ai-input]')!.value
 
   beforeEach(async () => {
     await useDocumentStore.getState().switchDocument(emptyProject(), 'd_ai_scope')
@@ -190,9 +188,7 @@ describe('任务历史钉在打开它的项目上', () => {
     })
   }
   const revertButton = () =>
-    [...host.querySelectorAll<HTMLButtonElement>('button')].find(
-      (b) => b.getAttribute('aria-label') === ai('history.revert'),
-    )!
+    host.querySelector<HTMLButtonElement>('button[data-ai-history-revert]')!
 
   it('列表按打开时的项目查', async () => {
     await mountHistory()

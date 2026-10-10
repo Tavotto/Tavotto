@@ -273,4 +273,40 @@ describe('NativeConfirmDialog', () => {
     render()
     expect(text()).toContain('排队')
   })
+
+  it('载入 → 确认是同一个 lg 对话框换正文，不是两个 Dialog 交接（2026-10-07 设计审计 §10.2）', () => {
+    useNativeSessionStore.setState({
+      pendingQueue: [{ native_id: ID, info: null, loading: true, submitting: false, error: null }],
+    })
+    render()
+    const first = document.querySelector('[data-dialog="native-confirm"]') as HTMLElement
+    expect(first).toBeTruthy()
+    expect(first.style.width).toBe('560px')
+    expect(document.querySelector('[data-native-loading]')).not.toBeNull()
+    act(() => queue())
+    const second = document.querySelector('[data-dialog="native-confirm"]') as HTMLElement
+    expect(second).toBe(first)
+    expect(second.style.width).toBe('560px')
+    expect(document.querySelector('[data-native-approve]')).not.toBeNull()
+  })
+
+  it('已作废那一屏没有待决的选择：Esc = 关闭（安全答案）', async () => {
+    useNativeSessionStore.setState({
+      pendingQueue: [
+        {
+          native_id: ID,
+          info: null,
+          loading: false,
+          submitting: false,
+          error: { code: 'native_handoff_expired', message: 'x' },
+        },
+      ],
+    })
+    render()
+    const content = document.querySelector('[data-dialog="native-confirm"]') as HTMLElement
+    await act(async () => {
+      content.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(useNativeSessionStore.getState().pendingQueue).toHaveLength(0)
+  })
 })

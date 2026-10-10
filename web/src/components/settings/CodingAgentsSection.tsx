@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ExternalLink, RefreshCw } from '@/components/ui/icons'
+import { RefreshCw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
@@ -9,11 +9,12 @@ import {
   patchAiAgent,
   type AiAgentId,
 } from '@/lib/api'
-import { CODEX_GUIDE_URL, PRODUCT_NAME } from '@/lib/brand'
 import { formatDateTime } from '@/i18n/format'
 import { useAiStore } from '@/store/aiStore'
 import { Button } from '../ui/Button'
-import { SettingRow, SettingSection } from './SettingRow'
+import { FieldGroup, FormSection } from '../ui/FormSection'
+import { Select } from '../ui/Select'
+import { GroupNotice, SettingRow } from './SettingRow'
 import { AgentDetailView } from './AgentDetailView'
 import { AgentList } from './AgentList'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
@@ -29,10 +30,10 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
 }
 
 /**
- * 设置 → 编码 Agent。
+ * 设置 → 改图助手（分区 id 仍是 `ai`）。
  *
- * 一级页面只回答一个问题：**这台机器上有哪些编码 Agent、现在能不能用**。
- * 每行只有名称、版本号、状态；路径、命令、检测来源、第三方接口、Base URL、
+ * 一级页面只回答一个问题：**这台机器上有哪些编码 Agent、现在能不能用**。组首一行是「默认助手」（一个 Select），
+ * 下面每行只有名称、状态（带字的 StatusPill）、启用开关、›；路径、命令、检测来源、第三方接口、Base URL、
  * 密钥、wire api 一个都不在这儿——它们全在各自 Agent 的详情里
  * （`AgentDetailView`，可复制）。这一页上也没有解释段：普通用户装好 CLI
  * 之后什么都不用配，页面本身就是那句话的兑现（ADR 0015 / 0038）。
@@ -45,8 +46,8 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
  * 方向由小节里的内容承担：② 里那一行就叫「Tavotto for Codex」。
  * 「本机装了 codex CLI」不等于「装了 Tavotto for Codex」，两个状态绝不合并。
  *
- * **e2e 锚点**（清单见 web/AGENTS.md）：`data-agent-section="in-app" | "external"`
- * 标住这两节，`data-agent-codex-integration` 标住 ② 里那一行，
+ * **e2e 锚点**（清单见 `docs/rules/frontend/settings-shell-and-packages.md`）：`data-agent-section="in-app" | "external"`
+ * 标住这两组（各是一个 `FieldGroup`），`data-agent-codex-integration` 标住 ② 里那一行，
  * `data-agent-rescan` / `data-agent-last-checked` 标住重新检测那对控件。
  * 小标题的**文字**归审计管、随时可以再改一次——用例认的是这几个属性，
  * 不认那句话（T44 改名时它们就是靠认文案红的）。
@@ -119,7 +120,7 @@ export function CodingAgentsSection() {
   const detail = agentById(caps, detailId)
   if (detail && caps) {
     return (
-      <div ref={rootRef}>
+      <div ref={rootRef} className="contents">
         <AgentDetailView
           agent={detail}
           caps={caps}
@@ -135,16 +136,14 @@ export function CodingAgentsSection() {
   const effective = effectiveAgent(preferred, caps)
 
   /**
-   * 检测这件事收进第一个分区的标题行右侧（全面打磨 D10）。此前它是页首一条左对齐的
-   * 裸按钮条，悬在第一个分区标题上方 56px——是全部设置页里唯一不在行语法里的控件。
-   *
-   * 最近检测时间跟着「重新检测」走：它说明的是那个动作上次什么时候发生过，摆在列表
-   * 底下会被读成列表的脚注。
+   * 检测这件事在第一组的标题行右侧（全面打磨 D10）；最近检测时间跟着「重新检测」走：它说明的是那个动作上次
+   * 什么时候发生过，摆在列表底下会被读成列表的脚注。检测失败的原因在组里第一行（Notice），不在页底——
+   * 此前它在整页最下面，离那颗按钮一屏远（2026-10-07 设计审计 §9.1）。
    */
   const rescanAction = (
     <span className="flex items-center gap-2">
       {caps && caps.checked_at_ms > 0 && (
-        <span data-agent-last-checked className="type-meta">
+        <span data-agent-last-checked className="type-caption tabular-nums">
           {ag('lastChecked', { time: formatDateTime(caps.checked_at_ms) })}
         </span>
       )}
@@ -161,8 +160,9 @@ export function CodingAgentsSection() {
     </span>
   )
 
-  // 分区之间的间距由外壳的内容容器统一给（`display: contents` 让两个分区直接成为
-  // 它的子项）；这一页没有页标题——别的分区也没有，导航项已经是它的名字（Session 6）
+  const usable = caps ? caps.agents.filter((a) => a.usable) : []
+
+  // 两组是两件事，标题按**用户想完成什么**命名（审计 T44）；分组之间的间距由外壳给
   return (
     <div ref={rootRef} className="contents">
       {/* 检测结果的播报：完成 / 失败都要说一声，不能只有视觉上的变化 */}
@@ -170,81 +170,69 @@ export function CodingAgentsSection() {
         {announce}
       </p>
 
-      {caps === null ? (
-        <SettingSection title={ag('useInProduct')} action={rescanAction}>
-          <p className="type-meta">{ag('state.detecting')}</p>
-          {/* 骨架屏：**绝不先显示红叉或「未安装」**——那两个都是没有依据的断言。
-              两行是为了让首屏高度接近最终结果，减少布局跳动。 */}
-          <ul aria-hidden className="flex flex-col">
-            {[0, 1].map((i) => (
-              <li
-                key={i}
-                className={`flex min-h-12 items-center gap-3 ${i > 0 ? 'border-t border-border' : ''}`}
+      <FormSection title={ag('useInProduct')} action={rescanAction} data-settings-anchor="ai.agents">
+        <FieldGroup data-agent-section="in-app">
+          {error && (
+            <GroupNotice tone="danger">
+              {ag('refreshFailed')} {error}
+            </GroupNotice>
+          )}
+          {caps === null ? (
+            <>
+              <p className="type-caption">{ag('state.detecting')}</p>
+              {/* 骨架屏：**绝不先显示红叉或「未安装」**——那两个都是没有依据的断言。
+                  两行是为了让首屏高度接近最终结果，减少布局跳动。静态、不呼吸（第七节） */}
+              <ul aria-hidden className="flex flex-col p-0">
+                {[0, 1].map((i) => (
+                  <li key={i} className="flex min-h-13 items-center gap-3 px-4 opacity-65">
+                    <span className="h-9 w-9 shrink-0 rounded-md bg-surface-hover" />
+                    <span className="h-3 w-24 rounded-sm bg-surface-hover" />
+                    <span className="ml-auto h-3 w-16 rounded-sm bg-surface-hover" />
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <>
+              {/* 默认助手是组首**一个 Select**（2026-10-07 设计审计 §9.1）：此前是每行行首一颗单选，一行里
+                  单选 + 开关 + 整行 + chevron 四种操作。选项只有此刻可用的那几个；首选那个暂时不可用时，
+                  显示的是实际会派给的那一个（`effectiveAgent`），**不改用户存着的首选值**（它恢复以后还该是默认项） */}
+              <SettingRow
+                label={ag('defaultLabel')}
+                status={effective === null ? ag('noUsableAgent') : undefined}
+                data-settings-anchor="ai.default"
+                data-agent-default
               >
-                <span className="h-9 w-9 shrink-0 rounded-md bg-surface-2" />
-                <span className="h-3 w-24 rounded-sm bg-surface-2" />
-                <span className="ml-auto h-3 w-16 rounded-sm bg-surface-2" />
-              </li>
-            ))}
-          </ul>
-        </SettingSection>
-      ) : (
-        <>
-          {/* 两个小节是两件事，标题按**用户想完成什么**命名（审计 T44），都是
-              type-section 那一档——与别的分区同一套层级 */}
-          <SettingSection title={ag('useInProduct')} action={rescanAction}>
-            <section data-agent-section="in-app" className="flex flex-col gap-1.5">
-              {/* 默认 Agent 不再单独一行（2026-09-11 用户反馈）：每行自带「默认」按钮。
-                  首选那个暂时不可用时**按下态落在第一个可用的，但不改用户存着的首选值**
-                  （它恢复以后还该是默认项） */}
+                <Select
+                  className="w-full"
+                  ariaLabel={ag('defaultLabel')}
+                  value={effective ?? ''}
+                  disabled={usable.length === 0}
+                  placeholder={ag('defaultNone')}
+                  onChange={(id) => useAiStore.getState().setAgent(id as AiAgentId)}
+                  options={usable.map((a) => ({ value: a.id, label: a.display_name }))}
+                />
+              </SettingRow>
               <AgentList
                 agents={caps.agents}
                 onOpen={openDetail}
                 onToggle={(id, v) => void toggle(id, v)}
                 busyAgent={busyAgent}
-                defaultId={effective}
-                onSetDefault={(id) => useAiStore.getState().setAgent(id)}
               />
-              {effective === null && <p className="type-meta">{ag('noUsableAgent')}</p>}
-            </section>
-          </SettingSection>
+            </>
+          )}
+        </FieldGroup>
+      </FormSection>
 
-          {/* ---------------- 反方向：在编码 Agent 里用 Tavotto ----------------
-              一行：名字 + 外链。没有卡片外框、没有说明段（ADR 0038）——
-              「本机装了 codex CLI」仍然绝不写成「Tavotto for Codex 已安装」。 */}
-          <SettingSection title={ag('useFromAgents')}>
-            <section data-agent-section="external" className="flex flex-col gap-1.5">
-            {/* 这一行走标准设置行（全面打磨 D12）：此前是 28 高的自制行，与同一页上面
-                48 高的 Agent 行、别的设置页的 48 高行各差一档 */}
-            <SettingRow
-              data-agent-codex-integration
-              label={ag('codexIntegrationName', { product: PRODUCT_NAME })}
-            >
-              <a
-                href={CODEX_GUIDE_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex shrink-0 items-center gap-1 text-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline focus-visible:focus-ring"
-              >
-                {ag('viewGuide')}
-                <ExternalLink size={ICON_SIZE.xs} aria-hidden />
-              </a>
-            </SettingRow>
-            {/* 桌面版才有的安装入口：spawn `tavotto-cli codex install --json`。
-                浏览器模式下 CodexIntegrationPanel 自己返回 null——上面那一行
-                （名字 + 指南）在两种形态下一模一样。 */}
-            <CodexIntegrationPanel />
-            </section>
-          </SettingSection>
-        </>
-      )}
-
-      {error && (
-        <p role="alert" className="type-caption text-danger">
-          {ag('refreshFailed')} {error}
-        </p>
-      )}
+      {/* ---------------- 反方向：在编码 Agent 里用 Tavotto ----------------
+          一行：名字 + 安装 + ⋯（浏览器模式是名字 + 指南外链）。没有说明段（ADR 0038）——
+          「本机装了 codex CLI」仍然绝不写成「Tavotto for Codex 已安装」。 */}
+      {/* 这一组不依赖探测结果（名字 + 安装 / 指南），探测还没回来时也在 */}
+      <FormSection title={ag('useFromAgents')}>
+        <FieldGroup data-agent-section="external">
+          <CodexIntegrationPanel />
+        </FieldGroup>
+      </FormSection>
     </div>
   )
 }
-

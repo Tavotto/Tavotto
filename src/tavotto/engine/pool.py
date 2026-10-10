@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import (
@@ -711,6 +712,7 @@ def _log_tail_from(path: Path, offset: int, n: int = 30, *, root: Path | None = 
     return "\n".join(text.splitlines()[-n:])
 
 
+_MODULE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,99}")
 _MISSING_RE = re.compile(r"No module named ['\"]([\w.]+)['\"]")
 
 
@@ -865,6 +867,43 @@ def missing_module(text: str) -> str:
         # 交回原来的脚本错误与 traceback。
         return ""
     return name
+
+
+def structured_missing_module(value) -> str:
+    """worker 随错误带来的结构化缺包名（`error.missing_module`）。敏感运行的自由文本诊断被整段删掉，
+    `missing_module()` 的文本识别无从下手，靠它保住「缺依赖」分类；非法形状一律当没有。"""
+    if isinstance(value, str) and _MODULE_NAME_RE.fullmatch(value):
+        return value
+    return ""
+
+
+def structured_missing_dependency(fields) -> tuple[bool, str]:
+    """worker 错误字段（`error` 对象 / `extra`）里的缺依赖事实 → `(是不是缺依赖, 模块名或空串)`。
+
+    敏感运行里模块名只在能归因到脚本静态 import 时才带；没有名字时只剩分类标志，调用方仍按
+    `missing_dependency` 处理（`module == ""`，界面走通用缺依赖提示）。形状不对一律当没有。"""
+    if not isinstance(fields, dict):
+        return False, ""
+    module = structured_missing_module(fields.get("missing_module"))
+    return bool(module) or fields.get("missing_dependency") is True, module
+
+
+def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":
+    if mod:
+        return WorkerError(
+            f"脚本用到的 {mod} 在当前渲染环境里没有。"
+            f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
+            f"Python / Conda 环境。",
+            traceback_text,
+            code="missing_dependency",
+            module=mod,
+        )
+    return WorkerError(
+        "脚本用到的某个依赖包在当前渲染环境里没有（这次运行含敏感参数，不显示包名）。"
+        "可以在设置 → 诊断 → 技术详情里改用装齐了依赖的 Python / Conda 环境。",
+        traceback_text,
+        code="missing_dependency",
+    )
 
 
 def is_frozen() -> bool:
@@ -1208,6 +1247,15 @@ def invalidated_decision(figures_dir: str | Path) -> dict | None:
         return _invalidated.get(projectenv._key(figures_dir))
 
 
+def consume_invalidated(figures_dir: str | Path) -> dict | None:
+    """取走（并清掉）这个项目上一条「刚被作废」的事实——**只报告一次**（Codex #820 r4221391657）。
+
+    `_invalidated` 只在 `reset_worker_python()` 时清，不消费的话之后每一次检查都会再报一遍「换过了」。
+    准备计划把它写进报告的那一刻就算这次转变已经说出口；下一次检查看不到它，除非又发生了新的作废。"""
+    with _project_python_lock:
+        return _invalidated.pop(projectenv._key(figures_dir), None)
+
+
 def first_open_outcome(figures_dir: str | Path) -> dict | None:
     """这个项目首开发现的结果（只读缓存；没做过回 None）——准备计划写 `environment.discovery`。"""
     return projectenv.cached_first_open(figures_dir)
@@ -1247,6 +1295,11 @@ def resolve_worker_python(
     """
     if figures_dir is None:
         return select_worker_python()
+    scoped = _scoped_pin(figures_dir)
+    if scoped is not None:
+        if not scoped.matches(scoped.python):
+            raise _environment_changed()
+        return scoped.python, scoped.source
     if explicit_worker_python():
         # 显式选择还在：交给老链条（它会挑中这条，用不了就抛 `explicit_python_unusable`），
         # 不做任何自动决策。`explicit_worker_python()` 已把 `bootstrap.install()` 自建的那条
@@ -1435,7 +1488,7 @@ def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerE
 
 
 #: 会话重建的原因（闭集，诊断日志按它放行明文）。
-_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变", "改指表已变")
+_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变", "环境代已变", "改指表已变")
 
 
 def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, record: dict) -> None:
@@ -1566,6 +1619,7 @@ class EngineWorker:
         *,
         artifact_source=None,
         run=None,
+        pinned: EnvironmentDecision | None = None,
     ):
         self.script_name = script_name
         self.figures_dir = figures_dir
@@ -1618,8 +1672,10 @@ class EngineWorker:
         self._log = open(self.log_path, "ab", buffering=0)
         # **项目级**解释器决策：同一台机器上 A 项目可能用内置 runtime，
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
-        python, self.python_source = resolve_worker_python(figures_dir, script=script_name)
+        python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
+        #: 起会话那一刻这条解释器所在环境的「代」：写回重放 / 冷重放据此钉住热会话自己的环境
+        self.python_generation = projectenv.environment_generation(python)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
         # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
@@ -1889,15 +1945,10 @@ class EngineWorker:
         # missing_dependency 优先于协议 code：worker 那边它只是一个普通的
         # script_error，但对用户来说「缺包」是完全不同的一件事（有可执行出口）。
         mod = missing_module(f"{msg}\n{tb}")
-        if mod:
-            exc = WorkerError(
-                f"脚本用到的 {mod} 在当前渲染环境里没有。"
-                f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
-                f"Python / Conda 环境。",
-                tb,
-                code="missing_dependency",
-                module=mod,
-            )
+        structured, structured_mod = structured_missing_dependency(err)
+        mod = mod or structured_mod
+        if mod or structured:
+            exc = _missing_dependency_error(mod, tb)
             # **谁的脚本缺这个包**：依赖修复要按 (项目, 脚本) 记轮次、按脚本
             # 所在目录找依赖声明。异常一路抛到 app 层时那边只剩下 exc。
             exc.script_name = self.script_name
@@ -2018,6 +2069,9 @@ class EngineWorker:
             # 脚本里的 input()（ADR 0099）：build 期间父进程当它的答题方——两条控制面同一个 context manager
             with inputbroker.serving(self):
                 resp = self.request({"cmd": "build"}, BUILD_HARD_TIMEOUT)
+        except inputbroker.TranscriptUnavailable as exc:
+            self.build_failed = True
+            raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True
             raise
@@ -2027,7 +2081,14 @@ class EngineWorker:
         self.last_build_runtime = _runtime_of(resp)
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
-        inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
+        try:
+            inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
+        except BaseException:
+            # 转录没绑上：这份热结果不能被后续渲染 / 导出复用——回到「没 build」，下次走 ensure_built
+            self.built = False
+            self.build_failed = True
+            self.last_build_descriptors = []
+            raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -2289,15 +2350,10 @@ def _worker_error(
     就变成一段没人能用的通用错误。
     """
     mod = missing_module(f"{message}\n{traceback_text}")
-    if mod:
-        return WorkerError(
-            f"脚本用到的 {mod} 在当前渲染环境里没有。"
-            f"可以在这张图的提示里一键装上，或在设置 → 诊断 → 技术详情里改用你自己装了 {mod} 的 "
-            f"Python / Conda 环境。",
-            traceback_text,
-            code="missing_dependency",
-            module=mod,
-        )
+    structured, structured_mod = structured_missing_dependency(extra)
+    mod = mod or structured_mod
+    if mod or structured:
+        return _missing_dependency_error(mod, traceback_text)
     err = WorkerError(message, traceback_text, code=code)
     if extra:
         # worker 多带的字段（unknown_stem 的 `known` 之类）留给上层
@@ -2329,6 +2385,7 @@ class WorkerdWorker:
         extra_env: dict | None = None,
         artifact_source=None,
         run=None,
+        pinned: EnvironmentDecision | None = None,
     ):
         from . import workerd_client
 
@@ -2375,8 +2432,9 @@ class WorkerdWorker:
             raise WorkerdUnavailable("workerd 不可用")
         # 与 EngineWorker 同源：项目级解释器决策的唯一出处是
         # `resolve_worker_python`，换控制面不换答案。
-        python, self.python_source = resolve_worker_python(figures_dir, script=script_name)
+        python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
+        self.python_generation = projectenv.environment_generation(python)
         # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
         self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
@@ -2590,6 +2648,9 @@ class WorkerdWorker:
         try:
             with inputbroker.serving(self):  # 与 EngineWorker 同一个答题方（ADR 0099）
                 resp = self._call("build", BUILD_HARD_TIMEOUT, idle_timeout=BUILD_IDLE_TIMEOUT)
+        except inputbroker.TranscriptUnavailable as exc:
+            self.build_failed = True
+            raise WorkerError(str(exc), code=exc.code) from exc
         except BaseException:
             self.build_failed = True  # 与 EngineWorker 同一个判据
             raise
@@ -2599,7 +2660,14 @@ class WorkerdWorker:
         self.last_build_runtime = _runtime_of(resp)
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
-        inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
+        try:
+            inputbroker.finished(self, self.last_build_script_inputs)  # 执行转录（T08）
+        except BaseException:
+            # 转录没绑上：这份热结果不能被后续渲染 / 导出复用——回到「没 build」，下次走 ensure_built
+            self.built = False
+            self.build_failed = True
+            self.last_build_descriptors = []
+            raise
         self.last_patch_hash = _EMPTY_PATCH_HASH
         self.last_patch_hash_by_stem.clear()  # 每个 stem 都回到脚本原样
         return resp
@@ -2741,6 +2809,115 @@ def register_spawn_gate(gate) -> None:
 #: `_new_worker()` 里，那时 `is_mutating` 已经查过了——在门里换解释器，查的是旧的、起的是新的（Codex #522 P1）。
 ENVIRONMENT_DECIDERS: list = []
 
+#: 起会话时检测出的解释器与记录已不是同一个（别的脚本在两次解析之间换了共享的项目记录）。
+ENVIRONMENT_CHANGED = "environment_changed"
+
+
+@dataclass(frozen=True)
+class EnvironmentDecision:
+    """「换不换解释器」那一次决定的**结果**——不可变值（Codex #820 r4220794171）。
+
+    检测模式的锁只护住检测本身；返回之后消费方（`preparation.plan_for` 的快照、`acquire()` 起会话）若再各自解析
+    共享的项目记录，同一项目的另一个脚本就能在两次解析之间把记录换成它的解释器，前一个脚本于是在一个从未为它验证过的
+    解释器下执行。所以决定在**锁内**把「此刻生效的解释器 + 来源 + 环境代」一并取下，消费方只认这份值：计划快照
+    用它，起会话用它，起出来的会话与它对不上就 `environment_changed`，绝不静默换。
+
+    `python` 为空 = 没有可钉的值（非检测模式 / 解析不出解释器），消费方照旧各自解析。"""
+
+    adopted: dict | None = None
+    python: str = ""
+    source: str = ""
+    generation: str = ""
+
+    @property
+    def pinned(self) -> bool:
+        return bool(self.python)
+
+    def matches(self, python: str) -> bool:
+        """某条解释器（路径 + 此刻的环境代）还是不是这次决定钉下的那一个。"""
+        return (
+            self.pinned
+            and same_python(python, self.python)
+            and (
+                not self.generation or projectenv.environment_generation(python) == self.generation
+            )
+        )
+
+    def matches_worker(self, worker) -> bool:
+        """缓存的会话是不是这次决定钉下的那一个：路径与**起会话那一刻的环境代**都要对得上。
+
+        钉下的有环境代而会话没记（空）= 对不上——同一路径的环境可能已被原地重建，复用旧进程会拿旧 / 混合的包出图
+        （Codex #820 r4232403630）。钉下的没有环境代 = 只比路径。"""
+        if not (self.pinned and same_python(getattr(worker, "python", ""), self.python)):
+            return False
+        born = getattr(worker, "python_generation", "") or ""
+        return not self.generation or born == self.generation
+
+
+def generation_stale(worker) -> bool:
+    """会话起的时候记下的环境代，与它的解释器**此刻**的环境代不是同一代（环境被原地重建了）。
+    会话没记环境代（替身 / 路径不存在）不判陈旧。"""
+    born = getattr(worker, "python_generation", "") or ""
+    if not born:
+        return False
+    return projectenv.environment_generation(getattr(worker, "python", "")) != born
+
+
+def pin_of_worker(worker) -> EnvironmentDecision:
+    """热会话自己的解释器（路径 + 来源 + 起会话那一刻的环境代）——写回重放、冷重放要钉的就是它，不是项目此刻的记录。"""
+    return EnvironmentDecision(
+        python=getattr(worker, "python", "") or "",
+        source=getattr(worker, "python_source", "") or "",
+        generation=getattr(worker, "python_generation", "") or "",
+    )
+
+
+def _environment_changed() -> WorkerError:
+    return WorkerError(
+        "这个项目的解释器在检测之后变了，请重新准备再运行。", code=ENVIRONMENT_CHANGED
+    )
+
+
+#: 本线程当前钉住的解释器（`pinned_interpreter` 的作用域）：(项目键, EnvironmentDecision)。
+_pin_scope = threading.local()
+
+
+@contextlib.contextmanager
+def pinned_interpreter(figures_dir: str | Path, decision: EnvironmentDecision | None):
+    """在这个作用域里，同一项目的 `resolve_worker_python()` 回钉下的解释器，**不再读共享的项目记录**。
+
+    起会话的依赖门（`SPAWN_GATES` → 联合计划 → 目标解释器）解析点多而深；决定已经落地之后它们必须看到同一个
+    解释器，否则第一个脚本会为第二个脚本的解释器弹出依赖授权（Codex #820 r4221133355）。钉下的环境代对不上了
+    （被重建）→ `environment_changed`，不替用户换。"""
+    if decision is None or not decision.pinned:
+        yield
+        return
+    prev = getattr(_pin_scope, "pin", None)
+    _pin_scope.pin = (projectenv._key(figures_dir), decision)
+    try:
+        yield
+    finally:
+        _pin_scope.pin = prev
+
+
+def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
+    cur = getattr(_pin_scope, "pin", None)
+    if cur is not None and figures_dir is not None and cur[0] == projectenv._key(figures_dir):
+        return cur[1]
+    return None
+
+
+def _resolve_for_worker(
+    figures_dir: str, script_name: str, pinned: EnvironmentDecision | None
+) -> tuple[str, str]:
+    """会话构造函数取解释器的唯一入口：给了钉下的值就只认它（环境代对不上 → `environment_changed`），
+    否则才解析项目记录。"""
+    if pinned is not None and pinned.pinned:
+        if not pinned.matches(pinned.python):
+            raise _environment_changed()
+        return pinned.python, pinned.source
+    return resolve_worker_python(figures_dir, script=script_name)
+
 
 def register_environment_decider(decider) -> None:
     if decider not in ENVIRONMENT_DECIDERS:
@@ -2760,7 +2937,15 @@ def _workdir_gate(figures_dir: str, script_name: str) -> None:
         raise err from None
 
 
-def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_source=None, run=None):
+def _new_worker(
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    artifact_source=None,
+    run=None,
+    pinned: EnvironmentDecision | None = None,
+):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。
 
@@ -2775,15 +2960,22 @@ def _new_worker(script_name: str, figures_dir: str, entry: str, *, artifact_sour
     # 第二道门：依赖（U04，ADR 0061 §六）。判据住在 `deprepair`（它 import 本模块，所以这里
     # 不能反过来 import 它——它在 import 时把自己的门登记进 `SPAWN_GATES`）。门要问就抛带
     # `dependency_preparation` 载荷的 WorkerError；放行就什么都不做。
-    for spawn_gate in SPAWN_GATES:
-        spawn_gate(figures_dir, script_name)
+    # 检测钉下的解释器（`pinned`）：门里的一切解析与两个构造函数都只认它，不再读共享的项目记录
+    # （Codex #820 r4221133355：否则会为另一个脚本的解释器弹授权，甚至先起在它上面再被拒）
+    with pinned_interpreter(figures_dir, pinned):
+        for spawn_gate in SPAWN_GATES:
+            spawn_gate(figures_dir, script_name)
     context = {"artifact_source": artifact_source} if artifact_source is not None else {}
     if run is not None:
         context["run"] = run
+    if pinned is not None and pinned.pinned:
+        context["pinned"] = pinned
     if workerd_client.find_workerd():
         try:
             return WorkerdWorker(script_name, figures_dir, entry, **context)
         except (WorkerdUnavailable, WorkerError, OSError) as exc:
+            if getattr(exc, "code", "") == ENVIRONMENT_CHANGED:
+                raise  # 钉下的环境变了：回退到 Python 池也一样，不静默换
             LOG.warning("workerd 会话建立失败，回退到 Python 渲染池: %s", exc)
     return EngineWorker(script_name, figures_dir, entry, **context)
 
@@ -2796,6 +2988,7 @@ def one_shot(
     script_inputs=None,
     artifact_source=None,
     run=None,
+    pinned: EnvironmentDecision | None = None,
 ):
     """一次性 worker：**不进池、目录独立、用完即毁**。写回前的干净重放用。
 
@@ -2833,6 +3026,9 @@ def one_shot(
         if run is not None:
             # T03：冷重放跑的是**原来那条配置**（调用方从热会话 `worker.run` 取），不是项目此刻的任何配置
             context["run"] = run
+        if pinned is not None and pinned.pinned:
+            # 写回重放钉热会话自己的解释器与环境代：项目记录可能已被同项目的另一个脚本换成别的（#820 r4221133372）
+            context["pinned"] = pinned
         worker = None
         if workerd_client.find_workerd():
             try:
@@ -2845,6 +3041,8 @@ def one_shot(
                     **context,
                 )
             except (WorkerdUnavailable, WorkerError, OSError) as exc:
+                if getattr(exc, "code", "") == ENVIRONMENT_CHANGED:
+                    raise
                 LOG.warning("workerd 一次性会话建立失败，回退到 Python 渲染池: %s", exc)
         if worker is None:
             worker = EngineWorker(script_name, figures_dir, entry, base_dir=base, **context)
@@ -3077,7 +3275,13 @@ def get(
 
 
 def acquire(
-    script_name: str, figures_dir: str, entry: str, *, artifact_source=None, run=None
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    artifact_source=None,
+    run=None,
+    pinned: EnvironmentDecision | None = None,
 ) -> tuple[EngineWorker, bool]:
     """`get()` + 「这条会话是不是**这次调用**建的」——所有权在 `_lock` 里一并给出。
 
@@ -3096,15 +3300,39 @@ def acquire(
         # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
-        want_python = resolve_worker_python(figures_dir, script=script_name)[0]
         decided = not ENVIRONMENT_DECIDERS
-        if not decided and (force_decide or not _reusable(key, entry, want_python)):
+        pin: EnvironmentDecision | None = None
+        if pinned is not None and pinned.pinned:
+            # 调用方（准备的一次运行）已经带着自己的不可变决定：只认它——不再让决定者对共享的项目记录重新决定
+            # （另一个脚本在检查之后、取会话之前换了记录，这次运行不能悄悄跑在别的解释器里；Codex #820 r4234067402）
+            decided, pin = True, pinned
+        try:
+            want_python = (
+                pinned.python
+                if pin is not None
+                else resolve_worker_python(figures_dir, script=script_name)[0]
+            )
+        except WorkerError as exc:
+            # 默认链条里没有任何能跑的解释器（`no_worker_python`）时，项目 venv / 别处发现的用户环境也许能跑：
+            # 检测要先于「第一次解析失败」之后的一切（Codex #820 r4221391630），否则只经池的入口（渲染已有素材、
+            # 旧试运行、MCP）永远等不到自动检测。显式选择失效等其它错误照旧原样抛出。
+            if decided or getattr(exc, "explicit", None) or exc.code != "no_worker_python":
+                raise
+            want_python = ""
+        if not decided and (
+            force_decide or not want_python or not _reusable(key, entry, want_python)
+        ):
             # 要起新会话：先让「换不换解释器」的决定落地，再按决定之后的世界解析、查租约——
             # 下面的 `is_mutating` 与 `_new_worker()` 里构造函数解析到的必须是同一个解释器。
             # 也在锁外：决定可能要体检若干个候选解释器（子进程），不能占着整个池的锁。
             for decide in ENVIRONMENT_DECIDERS:
-                decide(figures_dir, script_name)
-            want_python = resolve_worker_python(figures_dir, script=script_name)[0]
+                got = decide(figures_dir, script_name)
+                if isinstance(got, EnvironmentDecision) and got.pinned:
+                    pin = got
+            # 决定带回了「检测出的解释器」就只认它，不再解析共享的项目记录（别的脚本可能刚把它换了）
+            want_python = (
+                pin.python if pin else resolve_worker_python(figures_dir, script=script_name)[0]
+            )
             decided = True
         _refuse_if_mutating(want_python)
         with _lock:
@@ -3120,6 +3348,10 @@ def acquire(
                     # 还复用那条内置 runtime 起的会话，用户看到的就是「明明切了环境，
                     # 还是报缺包」。判据与 `entry` 那条同形，不另起一套 key。
                     why = "渲染解释器已变"
+                elif generation_stale(w) or (pin is not None and not pin.matches_worker(w)):
+                    # 同一路径、环境却被原地重建过（r4232403630）：缓存的进程还握着旧 / 混合的包。拆掉它，
+                    # 重建出来的新会话再过下面「起出来的与钉下的对不上就 environment_changed」那一道
+                    why = "环境代已变"
                 elif not _remap_current(w, figures_dir):
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图
@@ -3153,7 +3385,15 @@ def acquire(
                 )
                 if run is not None:
                     context["run"] = run
-                w = _new_worker(script_name, figures_dir, entry, **context)
+                w = _new_worker(script_name, figures_dir, entry, pinned=pin, **context)
+                if pin is not None and not pin.matches(getattr(w, "python", pin.python)):
+                    # 会话构造时解析到的不是这次检测钉下的那一个（记录在两次解析之间被换了 / 环境被重建）：
+                    # 不替用户悄悄换解释器——收掉这条刚起的会话，按 `environment_changed` 让调用方重新准备
+                    w.shutdown()
+                    raise WorkerError(
+                        "这个项目的解释器在检测之后变了，请重新准备再运行。",
+                        code=ENVIRONMENT_CHANGED,
+                    )
                 _workers[key] = w
                 created = True
             w.last_used = time.time()
@@ -3203,6 +3443,7 @@ def _reusable(key: tuple[str, ...], entry: str, want_python: str) -> bool:
             and w.alive()
             and w.entry == entry
             and same_python(w.python, want_python)
+            and not generation_stale(w)
             and _remap_current(w, key[0])
         )
 
@@ -3450,6 +3691,7 @@ def build_owned(
     before_retry=None,
     run=None,
     on_acquired=None,
+    pinned: EnvironmentDecision | None = None,
 ):
     """`build()` + 所有权：回 `(worker, build 响应, created)`。
 
@@ -3464,9 +3706,15 @@ def build_owned(
     知道「这条是不是我建的」，取消可以当场只关自己建的那条，不必等 build 返回。
     """
     context = {"run": run} if run is not None else {}
+    first = [True]
 
     def take():
-        worker, created = acquire(script_name, figures_dir, entry, **context)
+        # 钉只用于第一次取：缺包后自动接手换了解释器的第二次，要的正是新决策（那条路由 `before_retry` 核计划）
+        use = pinned if first[0] else None
+        first[0] = False
+        worker, created = acquire(
+            script_name, figures_dir, entry, **context, **({"pinned": use} if use else {})
+        )
         if on_acquired is not None:
             on_acquired(worker, created)
         return worker, created

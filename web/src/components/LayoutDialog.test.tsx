@@ -20,12 +20,17 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/api', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/api')>()),
-  fetchLayout: vi.fn(),
-  fetchLayoutNames: vi.fn(),
-  saveLayout: vi.fn(),
-}))
+vi.mock('@/lib/api', async (importOriginal) => {
+  const fetchLayoutNames = vi.fn()
+  return {
+    ...(await importOriginal<typeof import('@/lib/api')>()),
+    fetchLayout: vi.fn(),
+    fetchLayoutNames,
+    // 对话框读的是带修改时间的那一份清单：名字仍由 `fetchLayoutNames` 的桩给（各用例只摆名字）
+    fetchLayoutList: vi.fn(async () => ({ names: await fetchLayoutNames(), modified: {} })),
+    saveLayout: vi.fn(),
+  }
+})
 
 import { ApiError, REVISION_ABSENT, fetchLayout, fetchLayoutNames, saveLayout } from '@/lib/api'
 import { LayoutDialog } from '@/components/LayoutDialog'
@@ -83,6 +88,8 @@ async function open(names: string[] = ['Fig 1'], intent: 'save' | 'saveToProject
 }
 
 const dialog = () => document.querySelector('[role="dialog"]')!
+/** 「打开」那屏的第一行（行是 40px 的列表行，认 `data-layout-row`） */
+const loadRow = () => document.querySelector<HTMLButtonElement>('[data-layout-row]') ?? undefined
 const buttonByText = (text: string) =>
   [...dialog().querySelectorAll('button')].find((b) => b.textContent?.includes(text))
 
@@ -131,7 +138,7 @@ describe('另存为的基线', () => {
     // 「打开」和「另存为」现在是两屏（审计 T04）：先从打开那屏载入
     await open(['Fig 1'], 'load')
     await act(async () => {
-      buttonByText('载入')!.click()
+      loadRow()!.click()
     })
     useUiStore.setState({ layoutOpen: true, layoutIntent: 'save' })
     await act(async () => {
@@ -266,14 +273,14 @@ describe('另存 / 打开是两屏', () => {
     expect(into!.textContent).toBe('tavottofile')
     expect(buttonByText('另存为')).toBeTruthy()
     // 一份都载入不了：那是另一屏的事
-    expect(buttonByText('载入')).toBeUndefined()
+    expect(loadRow()).toBeUndefined()
     expect(d.textContent).not.toContain('Fig 2')
   })
 
   it('打开这屏：只有文档列表，一个能写盘的控件都没有', async () => {
     await open(['Fig 1', 'Fig 2'], 'load')
     const d = dialog()
-    expect(buttonByText('载入')).toBeTruthy()
+    expect(loadRow()).toBeTruthy()
     expect(d.textContent).toContain('Fig 2')
     expect(buttonByText('另存为')).toBeUndefined()
     expect(d.querySelector('#layout-save-name')).toBeNull()
@@ -360,7 +367,7 @@ describe('存进项目与绑定', () => {
     mockFetch.mockResolvedValue({ doc: LAYOUT, revision: 'rev-disk', file: 'tavottofile/Fig 1.json' })
     await open(['Fig 1'], 'load')
     await act(async () => {
-      buttonByText('载入')!.click()
+      loadRow()!.click()
     })
     const s = useDocumentStore.getState()
     expect(s.documentId).not.toBe('d_bind')
@@ -446,7 +453,7 @@ describe('保存 / 打开途中切项目、连按回车', () => {
     mockFetch.mockReturnValueOnce(d.promise)
     await open(['Fig 1'], 'load')
     await act(async () => {
-      buttonByText('载入')!.click()
+      loadRow()!.click()
     })
     setCurrentProjectId('p2')
     await act(async () => {
@@ -572,7 +579,7 @@ describe('对话框里每个 await 之后的界面变更都看保存上下文', 
     else mockFetch.mockReturnValueOnce(d.promise)
     await open(['Fig 1'], intent)
     await act(async () => {
-      buttonByText(intent === 'save' ? '另存为' : '载入')!.click()
+      (intent === 'save' ? buttonByText('另存为') : loadRow())!.click()
     })
     if (switched) {
       await act(async () => {
@@ -617,7 +624,8 @@ describe('对话框里每个 await 之后的界面变更都看保存上下文', 
       }
     }
     // 对话框自己发出的请求结束了：busy 一律复位
-    if (ui.layoutOpen) expect(buttonByText('关闭')!.disabled).toBe(false)
+    // busy 时右上角 × 收起（Dialog 的 busy 锁）：它在 = 不忙
+    if (ui.layoutOpen) expect(dialog().querySelector('[data-dialog-close]')).not.toBeNull()
   })
 })
 
@@ -679,5 +687,27 @@ describe('冲突岔口「仍然覆盖」', () => {
     expect(mockSave.mock.calls[0][0]).toBe('Untitled_layout')
     expect(mockSave.mock.calls[0][2]).toBe('rev-theirs')
     expect(useDocumentStore.getState().projectMeta.name).toBe('Untitled layout')
+  })
+
+  it('岔口在页脚：「改名」(secondary) +「覆盖」(危险浅底胶囊)；Esc = 改名，不写盘（2026-10-07 设计审计 §10.2）', async () => {
+    await open([], 'saveToProject')
+    useUiStore.getState().setLayoutOpen(true, 'saveToProject', {
+      name: 'Untitled_layout',
+      conflict: { name: 'Untitled_layout', revision: 'rev-theirs', summary: null },
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const footer = dialog().querySelector('[data-dialog-footer]')!
+    expect(footer.querySelector('[data-layout-overwrite]')!.getAttribute('data-variant')).toBe('danger-tinted')
+    expect(footer.querySelector('[data-layout-rename]')!.getAttribute('data-variant')).toBe('secondary')
+    expect(footer.querySelector('[data-layout-save]')).toBeNull()
+    await act(async () => {
+      dialog().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(mockSave).not.toHaveBeenCalled()
+    expect(useUiStore.getState().layoutOpen).toBe(true)
+    expect(dialog().querySelector('[data-layout-conflict]')).toBeNull()
+    expect(dialog().querySelector('[data-layout-save]')).not.toBeNull()
   })
 })

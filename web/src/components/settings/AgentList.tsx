@@ -3,53 +3,44 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiAgentCaps } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
-import { Radio } from '../ui/Radio'
 import { Toggle } from '../ui/Toggle'
 import { AgentIcon } from './AgentIcon'
 import { ag, AgentStateBadge, agentSubtitle } from './agentState'
 
 /**
- * 编码 Agent 的分组列表。
+ * 编码 Agent 的清单：坐在「改图助手」那一组（`FieldGroup`）里的若干行。
  *
- * **一个容器、若干行**，不是一堆各自带边框的小卡片——两个 Agent 时卡片还看得
- * 过去，第三个一加就变成一片碎盒子。区域边框一圈、行间一条细分隔线，
- * 层级靠留白与字号，持久表面不上阴影（web/AGENTS.md 的视觉纪律）。
+ * 每行只有 `[图标] 名称 状态 ……… [开关] ›`（ADR 0038）：路径、命令、检测来源、内部包名一个都不在一级页面上，
+ * 全部归详情（那里可以复制）。**一行只有一个开关**（2026-10-07 设计审计 §9.1）：此前每行还有行首一颗「默认」
+ * 单选——单选 + 开关 + 整行 + chevron 四种操作挤在一行；默认助手现在是组首一个 `Select`。
  *
- * 每行默认只有 `[图标] 名称   版本号   状态`（ADR 0038）：路径、命令、检测
- * 来源、内部包名一个都不在一级页面上，全部归详情（那里可以复制）。
+ * 交互上一行有**两个**独立控件：覆盖整行的「打开详情」按钮，和它上面一层的启用开关。开关绝不能嵌在行按钮里
+ * ——嵌套 button 在 HTML 里非法，浏览器会自行拆开 DOM，键盘与读屏的行为随之不可预期。
  *
- * 交互上一行有**两个**独立控件：覆盖整行的「打开详情」按钮，和它上面一层的
- * 启用开关。开关绝不能嵌在行按钮里——嵌套 button 在 HTML 里非法，浏览器会
- * 自行拆开 DOM，键盘与读屏的行为随之不可预期。
+ * 清单本身是组里的一个子项（`ul`，组给的 12 / 16 内边距由它自己收掉——`p-0`），行自己带 16 的左右内边距，
+ * 行间一条左右各内缩 16 的 hairline（与组里别的行同一条线）。
  */
 export function AgentList({
   agents,
   onOpen,
   onToggle,
   busyAgent,
-  defaultId = null,
-  onSetDefault,
 }: {
   agents: AiAgentCaps[]
   onOpen: (id: string) => void
   onToggle: (id: string, enabled: boolean) => void
   /** 正在提交开关的那个 Agent（防重复点击） */
   busyAgent?: string | null
-  /** 此刻实际作为默认的那个（首选不可用时是回退到的那个）；null = 一个都不可用 */
-  defaultId?: string | null
-  /** 「默认」按钮：把这一行设为默认编码 Agent。不给就不画这颗按钮 */
-  onSetDefault?: (id: string) => void
 }) {
-  /* 去外框（全面打磨 D11，用户拍板）：这是全部设置页里唯一带外框的清单，行内容
-     还因为 `px-3` 比别的行缩进 13px。行之间只留 hairline，与 `SettingSection` 里
-     相邻两行同一条竖线、同一条分隔线——「一个页面里所有东西都有框，说明设计失败」 */
   return (
-    <ul className="flex flex-col">
+    <ul className="flex flex-col p-0">
       {agents.map((agent, i) => (
         <li
           key={agent.id}
-          className={cn('relative flex min-h-12 items-center gap-3',
-            i > 0 && 'border-t border-border')}
+          className={cn(
+            'relative flex min-h-13 items-center gap-3 px-4',
+            i > 0 && 'before:absolute before:inset-x-4 before:top-0 before:h-px before:bg-border',
+          )}
         >
           {/*
             覆盖整行的点击区。放在 DOM 最前面 = Tab 先到它、再到开关，
@@ -64,54 +55,25 @@ export function AgentList({
             data-agent-open={agent.id}
             onClick={() => onOpen(agent.id)}
             aria-label={ag('rowAria', { name: agent.display_name })}
-            className="absolute inset-0 rounded-sm outline-none hover:bg-surface-hover focus-visible:focus-ring"
+            className={cn(
+              'absolute inset-0 outline-none hover:bg-surface-hover focus-visible:focus-ring',
+              // 第一行 / 最后一行的 hover 底跟着组的 12 圆角走，不在圆角外露出方角
+              i === 0 && 'rounded-t-lg',
+              i === agents.length - 1 && 'rounded-b-lg',
+            )}
           />
-          {/* 默认助手是一组互斥的取值：行首一颗 `Radio`（2026-09-14 审计 D1，用户拍板）。
-              此前是行尾一颗一会儿写「当前默认」（按下态、不可点）一会儿写「设为默认」（动作）
-              的按钮——同一个控件既当状态又当动作。↑↓ 在同名组里就能换默认；不可用的 Agent
-              那颗禁用 */}
-          {onSetDefault && (
-            <span className="relative z-sticky flex h-7 shrink-0 items-center">
-              <Radio
-                name="default-coding-agent"
-                data-agent-default={agent.id}
-                checked={agent.id === defaultId}
-                disabled={!agent.usable}
-                onChange={() => onSetDefault(agent.id)}
-                // 名字与悬停提示同一份：行首一颗没有文字的单选，指过去得知道它管什么
-                aria-label={
-                  agent.id === defaultId
-                    ? ag('currentDefaultAria', { name: agent.display_name })
-                    : ag('setDefaultAria', { name: agent.display_name })
-                }
-                title={
-                  agent.id === defaultId
-                    ? ag('currentDefaultAria', { name: agent.display_name })
-                    : ag('setDefaultAria', { name: agent.display_name })
-                }
-              />
-            </span>
-          )}
           <AgentIcon iconKey={agent.icon_key} />
-          {/*
-            一行只回答用户此刻的问题：**这个能不能用、去哪儿配**——名称 + 状态
-            + 启用开关 + 进详情（ADR 0038；审计 T44 把版本号也移走了：它在列表
-            与详情上重复了一遍，而列表上的那份没有任何可操作性）。路径、命令、
-            检测来源同样只在详情里。
-          */}
           <div className="pointer-events-none flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-2">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
-                {agent.display_name}
-              </span>
-              <AgentStateBadge state={agent.state} className="shrink-0 whitespace-nowrap" />
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate text-base font-medium text-ink">{agent.display_name}</span>
+              <AgentStateBadge state={agent.state} />
             </div>
             {agentSubtitle(agent) && (
-              <p className="truncate text-xs text-ink-3">{agentSubtitle(agent)}</p>
+              <p className="type-caption truncate">{agentSubtitle(agent)}</p>
             )}
           </div>
           {/* 开关浮在覆盖层之上；未安装 / 装坏了时禁用（开了也用不了） */}
-          <div className="relative z-sticky flex shrink-0 items-center gap-1.5">
+          <div className="relative z-sticky flex shrink-0 items-center">
             <Toggle
               checked={agent.enabled && agent.installed}
               disabled={!agent.installed || busyAgent === agent.id}
@@ -122,7 +84,7 @@ export function AgentList({
           <ChevronRight
             size={ICON_SIZE.xs}
             aria-hidden
-            className="pointer-events-none shrink-0 text-ink-faint"
+            className="pointer-events-none shrink-0 text-ink-3"
           />
         </li>
       ))}

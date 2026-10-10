@@ -45,8 +45,10 @@ pytest_plugins = ("support.dependency_repair",)
 def _clean(clean_state):
     """本文件每条用例前后都清一遍模块级状态。"""
     deprepair._jobs.clear()
+    deprepair._active_jobs.clear()
     yield
     deprepair._jobs.clear()
+    deprepair._active_jobs.clear()
 
 
 # --------------------------------------------------------------- 夹具
@@ -332,6 +334,38 @@ def test_install_without_an_environment_plans_to_create_one(tmp_path, no_pip, mo
     monkeypatch.setattr(deprepair, "base_python", lambda: sys.executable)
     job = deprepair.create_package_job(tmp_path, deprepair.OP_INSTALL, "lmfit")
     assert job.creates_environment is True and job.python == ""
+
+
+def test_package_jobs_and_active_dependency_jobs_are_separate_registries(
+    tmp_path, no_pip, monkeypatch
+):
+    """Codex r4217232866：包管理的 `_jobs`（PackageJob）与在途依赖作业登记（`_active_jobs`，元数据字典）曾共用
+    一个名字——已有 PackageJob 时 `installing()` / `unless_installing()` 对它 `.get` → AttributeError → 500；
+    反过来 `create_package_job` 对字典读 `.expires_at`。两种作业并存时，两边的读写都不能碰对方。"""
+    monkeypatch.setattr(deprepair, "base_python", lambda: sys.executable)
+    project = tmp_path
+    pj = deprepair.create_package_job(project, deprepair.OP_INSTALL, "lmfit")
+    assert deprepair.get_package_job(pj.job_id) is pj
+    # 已有包作业时，「这个项目上有没有安装在跑」只看依赖作业：没有 → False，且不抛
+    assert deprepair.installing(project) is False
+    assert deprepair.unless_installing(project, lambda: "ok") == "ok"
+    # 再认领一个依赖作业：登记在 `_active_jobs`，`installing` 见到它；包作业表不被污染
+    assert deprepair._claim(
+        "jp-coexist", project_id=managedenv.project_fingerprint(str(project)), digest="d"
+    )
+    try:
+        assert deprepair.installing(project) is True
+        with pytest.raises(envlease.EnvironmentBusy):
+            deprepair.unless_installing(project, lambda: None)
+        assert "jp-coexist" not in deprepair._jobs and pj.job_id not in deprepair._active_jobs
+        # 依赖作业在途时再建 / 查包作业：清理过期项读的是 PackageJob，不会撞上字典
+        other = deprepair.create_package_job(project, deprepair.OP_INSTALL, "mylab")
+        assert deprepair.get_package_job(other.job_id) is other
+        assert deprepair.get_package_job(pj.job_id) is pj
+    finally:
+        deprepair._release("jp-coexist")
+    assert deprepair.installing(project) is False
+    assert deprepair.get_package_job(pj.job_id) is pj  # 释放依赖作业不动包作业
 
 
 def test_install_without_a_base_python_is_refused(tmp_path, no_pip, monkeypatch):

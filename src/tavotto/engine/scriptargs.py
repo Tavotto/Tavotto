@@ -24,8 +24,13 @@ Python 这边钉 schema 与「token → 真 argparse 的 Namespace」，TS 那�
 from __future__ import annotations
 
 import ast
+import hashlib
+import io
+import json
 import os
+import re
 import threading
+import tokenize
 from collections import OrderedDict
 from pathlib import Path
 
@@ -230,9 +235,15 @@ class _Parser:
         self.reasons: set[str] = set()
         self.parse_calls: list[str] = []
         self.subcommands: dict | None = None
+        # argparse 默认允许长选项缩写（`--inp` = `--input`）：字面量 False 才关；不是字面量 = None（说不准，前端按宽松认缩写）
+        self.allow_abbrev: bool | None = True
+        self.scope: ast.AST | None = None  # 创建它的作用域（函数 / 类 / None = 模块）
         for kw in node.keywords:
             if kw.arg is None:
                 self.reasons.add("dynamic_value")
+            elif kw.arg == "allow_abbrev":
+                ok, value = _literal(kw.value)
+                self.allow_abbrev = bool(value) if ok and isinstance(value, bool) else None
             elif kw.arg == "parents":
                 self.reasons.add("parents")
             elif kw.arg == "prefix_chars":
@@ -243,6 +254,22 @@ class _Parser:
                 ok, value = _literal(kw.value)
                 if not (ok and value is None):
                     self.reasons.add("fromfile")
+
+
+def _is_main_guard(test: ast.expr) -> bool:
+    """恰好是 `__name__ == "__main__"` 或 `"__main__" == __name__`；`!=` / `is` / `in` / 链式比较都不是。"""
+    if not (
+        isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
+    ):
+        return False
+    pair = (test.left, test.comparators[0])
+    return any(
+        isinstance(name, ast.Name)
+        and name.id == "__name__"
+        and isinstance(lit, ast.Constant)
+        and lit.value == "__main__"
+        for name, lit in (pair, pair[::-1])
+    )
 
 
 class _Scanner(ast.NodeVisitor):
@@ -258,6 +285,7 @@ class _Scanner(ast.NodeVisitor):
         self.unresolved_calls: list[ast.Call] = []
         self.functions: dict[str, ast.FunctionDef] = {}
         self.reads_sys_argv = False
+        self.scopes: list[ast.AST] = []
 
     # ---- 上下文 ----
     def _loop(self, node: ast.AST) -> None:
@@ -275,15 +303,7 @@ class _Scanner(ast.NodeVisitor):
 
     def visit_If(self, node: ast.If) -> None:
         # `if __name__ == "__main__":` 不是条件分支——那就是脚本被 `python x.py` 跑时走的路
-        test = node.test
-        is_main = (
-            isinstance(test, ast.Compare)
-            and isinstance(test.left, ast.Name)
-            and test.left.id == "__name__"
-            and len(test.comparators) == 1
-            and isinstance(test.comparators[0], ast.Constant)
-            and test.comparators[0].value == "__main__"
-        )
+        is_main = _is_main_guard(node.test)
         if is_main:
             for stmt in node.body:
                 self.visit(stmt)
@@ -300,9 +320,25 @@ class _Scanner(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self.functions.setdefault(node.name, node)
+        self.scopes.append(node)
         self.generic_visit(node)
+        self.scopes.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.scopes.append(node)
+        self.generic_visit(node)
+        self.scopes.pop()
+
+    def _scope(self) -> ast.AST | None:
+        return self.scopes[-1] if self.scopes else None
+
+    def _proven(self, parser: "_Parser") -> bool:
+        """这条声明是不是**证明得出**属于会被解析的那个 parser：声明所在的作用域就是创建这个 parser 的作用域（模块级对模块级；
+        `build_parser()` / `main()` 里自己造、自己加、自己解析）。函数 / 类体里往**别处造的** parser 上加参数的
+        辅助函数（没被证明走到）不算——它们不该拦运行。"""
+        return self._scope() is parser.scope
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr == "argv" and isinstance(node.value, ast.Name) and node.value.id == "sys":
@@ -329,6 +365,7 @@ class _Scanner(ast.NodeVisitor):
             if name in self.parsers or self.loop_depth:
                 self.reasons.add("multiple_parsers")
             parser = _Parser(name, line, value, self.names, sub=False)
+            parser.scope = self._scope()
             self.parsers[name] = parser
             self.order.append(parser)
             return
@@ -339,6 +376,7 @@ class _Scanner(ast.NodeVisitor):
             parent = self.subparsers.get(func.value.id)
             if parent is not None:
                 sub = _Parser(name, line, value, self.names, sub=True)
+                sub.scope = self._scope()
                 self.parsers[name] = sub
                 return
         if owner is None:
@@ -405,6 +443,22 @@ class _Scanner(ast.NodeVisitor):
                         names.append(value)
                 else:
                     parent.subcommands["dynamic"] = True
+                # `aliases=[...]` 也是 argparse 认的子命令名：字面量全进 choices；认不全（非字面量 / 不是字符串列表）= 动态
+                for kw in node.keywords:
+                    if kw.arg is None:
+                        parent.subcommands["dynamic"] = True
+                    elif kw.arg == "aliases":
+                        ok_a, alias_list = _literal(kw.value)
+                        if (
+                            ok_a
+                            and isinstance(alias_list, (list, tuple))
+                            and all(isinstance(a, str) for a in alias_list)
+                        ):
+                            for a in alias_list:
+                                if a not in names and len(names) < MAX_CHOICES:
+                                    names.append(a)
+                        else:
+                            parent.subcommands["dynamic"] = True
         elif func.attr in _PARSE_CALLS:
             self._parse_call(node)
 
@@ -424,6 +478,11 @@ class _Scanner(ast.NodeVisitor):
                 "required": required,
                 "choices": [],
                 "dynamic": False,
+                # 声明 `add_subparsers` 时它前面已经声明了几个位置参数：只有这几个会先于子命令吃位置 token
+                # （之后声明的位置参数在子命令之后；前端预留 token 时只数前面这几个）
+                "position": sum(1 for a in parser.arguments if a.get("positional")),
+                # 在 if / try 分支里声明的 add_subparsers 运行时可能根本不存在：前端不拿它当运行闸
+                "conditional": bool(self.branch_depth) or not self._proven(parser),
             }
 
     def _parse_call(self, node: ast.Call) -> None:
@@ -478,7 +537,8 @@ class _Scanner(ast.NodeVisitor):
         if positional and len(flags) > 1:
             parser.reasons.add("dynamic_add_argument")  # argparse 自己会报错；这里不替它猜
             return
-        if self.branch_depth:
+        unproven = not self._proven(parser)
+        if self.branch_depth or unproven:
             parser.reasons.add("conditional_argument")
         key = tuple(flags)
         if any(tuple(a["flags"]) == key for a in parser.arguments):
@@ -487,7 +547,7 @@ class _Scanner(ast.NodeVisitor):
         arg = _argument(flags, positional, kws, self.names, parser.reasons)
         arg["id"] = f"a{len(parser.arguments)}"
         arg["line"] = node.lineno
-        arg["conditional"] = bool(self.branch_depth)
+        arg["conditional"] = bool(self.branch_depth) or unproven
         if group is not None:
             arg["group"] = group["id"]
             group["members"].append(arg["id"])
@@ -729,6 +789,12 @@ def analyze(source: str) -> dict:
         for a in parser.arguments
         for f in a["flags"]
     )
+    negative_like_extended = any(
+        _looks_negative_number_extended(f)
+        for a in parser.arguments
+        for f in a["flags"]
+        if f.startswith("-")
+    )
     partial = bool(reasons)
     return {
         "version": SCHEMA_VERSION,
@@ -739,11 +805,301 @@ def analyze(source: str) -> dict:
         "form_enabled": not (reasons & FORM_BLOCKING),
         "parser_line": parser.line,
         "parse_call": parser.parse_calls[0] if parser.parse_calls else None,
+        "allow_abbrev": parser.allow_abbrev,
         "negative_number_options": negative_like,
+        # 3.14 起 argparse 的负数 token 文法更宽（`-1e3` / `-.5` / `-1.`）：声明了这类选项名的要单独标出
+        "negative_number_options_extended": negative_like_extended,
         "arguments": parser.arguments,
         "exclusive_groups": [g for g in parser.groups if g["members"]],
         "subcommands": parser.subcommands,
     }
+
+
+def response_file_prefixes(path: str | os.PathLike) -> tuple[frozenset[str], bool]:
+    """脚本里 argparse `fromfile_prefix_chars` 的字面量并集：`(前缀字符集, 是否可证明)`。
+
+    **只给 MCP 桥拒绝响应文件用**（Codex #818 r4221289231）：前缀可以是任意字符（`%`、`+`……），argparse 会把以它
+    开头的 token 当文件名读出内容再展开。第二个值为 False = 说不准（读不了 / 语法错 / 没有 argparse 证据——
+    解析器可能在别的模块里造 / `fromfile_prefix_chars` 不是字面量），调用方必须按保守口径处理。
+    不执行任何东西：只 `ast.parse`，沿用 `analyze_file` 的有界读取与缓存。"""
+    schema = analyze_file(path)
+    if schema.get("status") not in (STATUS_COMPLETE, STATUS_PARTIAL):
+        return frozenset(), False
+    try:
+        with open(path, "rb") as fh:
+            tree = ast.parse(fh.read(MAX_SOURCE_BYTES).decode("utf-8", errors="replace"))
+    except (OSError, SyntaxError, ValueError):
+        return frozenset(), False
+    # 与主分析器同一套名字解析（`import argparse as ap` / `from argparse import ArgumentParser as AP`）。
+    # 失败即封闭：每一处 ArgumentParser 构造都必须被完整证明，否则整体“说不准”。
+    names = _Names(tree)
+    chars: set[str] = set()
+    proven_funcs: set[int] = set()
+    allowed_kw: set[int] = set()
+    exact = True
+    if "*" in names.direct:  # `from argparse import *`：名字无从解析
+        exact = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if names.argparse_name(node.func) == "ArgumentParser":
+            proven = not node.args
+            for kw in node.keywords:
+                if kw.arg is None or kw.arg == "parents":
+                    proven = False
+                elif kw.arg == "fromfile_prefix_chars":
+                    ok, value = _literal(kw.value)
+                    if ok and value is None:
+                        continue
+                    if ok and isinstance(value, str):
+                        chars.update(value)
+                    else:
+                        proven = False
+            if proven:
+                proven_funcs.add(id(node.func))
+                allowed_kw.update(
+                    id(kw) for kw in node.keywords if kw.arg == "fromfile_prefix_chars"
+                )
+            else:
+                exact = False
+        elif any(kw.arg == "fromfile_prefix_chars" for kw in node.keywords):
+            exact = False  # 别处（工厂函数 / 子类 / 未知别名）带着这个关键字
+    for node in ast.walk(tree):
+        # 任何不是“被证明的直接构造”的 ArgumentParser 引用：子类、`P = AP`、作参数传递……
+        if id(node) not in proven_funcs and names.argparse_name(node) == "ArgumentParser":
+            exact = False
+    if exact and not _whitelist_clean(tree, allowed_kw):
+        exact = False
+    if exact and not _parser_never_escapes(tree, names):
+        exact = False
+    if exact and not _bindings_unshadowed(tree, names):
+        exact = False
+    return frozenset(chars), exact
+
+
+# r4229718719：名字只在“全文件恰好绑定一次、且那一次就是模块级标准 import”时才算标准 argparse。
+def _binding_sites(tree: ast.AST) -> tuple[dict[str, list[bool]], bool]:
+    """每个名字的全部绑定点（值 = 该绑定是否在模块级）；第二个值 = 出现过 `from x import *`。
+    单趟遍历，与出现顺序无关。覆盖：import / 赋值 / 增强赋值 / 注解赋值 / def / class / 形参 / for 与推导式目标 /
+    with-as / except-as / 海象 / global / nonlocal / del / match 捕获。"""
+    sites: dict[str, list[bool]] = {}
+    star = False
+    scope_kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+    def add(name: str | None, top: bool) -> None:
+        if name:
+            sites.setdefault(name, []).append(top)
+
+    def walk(node: ast.AST, top: bool) -> None:
+        nonlocal star
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            add(node.id, top)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            add(node.name, top)
+        elif isinstance(node, ast.arg):
+            add(node.arg, False)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name == "*":
+                    star = True
+                elif alias.asname:
+                    add(alias.asname, top)
+                else:
+                    add(alias.name.split(".")[0], top)
+        elif isinstance(node, ast.ExceptHandler):
+            add(node.name, top)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for n in node.names:
+                add(n, False)
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+            add(node.name, top)
+        elif isinstance(node, ast.MatchMapping):
+            add(node.rest, top)
+        inner = top and not isinstance(node, scope_kinds)
+        for child in ast.iter_child_nodes(node):
+            walk(child, inner)
+
+    walk(tree, True)
+    return sites, star
+
+
+def _bindings_unshadowed(tree: ast.AST, names: _Names) -> bool:
+    """argparse 模块名 / `from argparse import` 来的名字 / 被跟踪的解析器变量：全文件（所有作用域）
+    只绑定一次（标准 import 还须在模块级；解析器变量不限作用域）。任何第二次绑定（含 `from helper import argparse`、`argparse = helper`、
+    def / class / for / with / except / 海象 / global / del / match 捕获）或函数内绑定 = 说不准。
+    出现 `from x import *` 同样说不准。"""
+    sites, star = _binding_sites(tree)
+    if star:
+        return False
+    for name in (*names.modules, *names.direct):  # 标准 import：恰好一次，且在模块级
+        got = sites.get(name, [])
+        if len(got) != 1 or not got[0]:
+            return False
+    for name in _tracked_parser_names(
+        tree, names
+    ):  # 解析器变量：恰好一次（函数内构造的常见写法允许）
+        if len(sites.get(name, [])) != 1:
+            return False
+    return True
+
+
+def _tracked_parser_names(tree: ast.AST, names: _Names) -> set[str]:
+    """`p = argparse.ArgumentParser()` / `sub = p.add_subparsers()` 一类被赋给简单名字的解析器变量。"""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        value = None
+        targets: list[ast.AST] = []
+        if isinstance(node, ast.Assign):
+            value, targets = node.value, list(node.targets)
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            value, targets = node.value, [node.target]
+        if not isinstance(value, ast.Call):
+            continue
+        func = value.func
+        if names.argparse_name(func) == "ArgumentParser" or (
+            isinstance(func, ast.Attribute) and func.attr in _PARSER_PRODUCERS
+        ):
+            out.update(t.id for t in targets if isinstance(t, ast.Name))
+    return out
+
+
+# r4229653195：解析器对象（及其别名）流到看不见的代码（`configure(parser)` 这类 import 来的助手）= 说不准。
+# 解析器 / 子解析器 / 参数组只许作为自己方法调用的接收者，或被赋给一个简单名字；其余任何去向都算逃逸。
+_PARSER_METHODS = frozenset(
+    {
+        "add_argument",
+        "add_argument_group",
+        "add_mutually_exclusive_group",
+        "add_subparsers",
+        "add_parser",
+        "set_defaults",
+        "get_default",
+        "parse_args",
+        "parse_known_args",
+        "parse_intermixed_args",
+        "parse_known_intermixed_args",
+        "print_help",
+        "print_usage",
+        "format_help",
+        "format_usage",
+        "error",
+        "exit",
+    }
+)
+# 只读（或 subparsers 动作上常见的）属性；不含 fromfile_prefix_chars，拿不准的一律按逃逸。
+_PARSER_SAFE_ATTRS = frozenset(
+    {"prog", "description", "epilog", "usage", "required", "dest", "title", "help", "metavar"}
+)
+_PARSER_PRODUCERS = frozenset(
+    {"add_subparsers", "add_parser", "add_argument_group", "add_mutually_exclusive_group"}
+)
+
+
+def _parser_never_escapes(tree: ast.AST, names: _Names) -> bool:
+    parents: dict[int, ast.AST] = {}
+    scope_of: dict[int, ast.AST] = {}
+    scope_kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+    def walk(node: ast.AST, scope: ast.AST) -> None:
+        scope_of[id(node)] = scope
+        inner = node if isinstance(node, scope_kinds) else scope
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+            walk(child, inner)
+
+    walk(tree, tree)
+
+    def producing(node: ast.AST) -> bool:
+        if not isinstance(node, ast.Call):
+            return False
+        if names.argparse_name(node.func) == "ArgumentParser":
+            return True
+        return isinstance(node.func, ast.Attribute) and node.func.attr in _PARSER_PRODUCERS
+
+    def is_receiver(node: ast.AST) -> bool:
+        """node 是 `X.method(...)`（白名单方法）的 X，或 `X.<只读属性>`。"""
+        par = parents.get(id(node))
+        if not (isinstance(par, ast.Attribute) and par.value is node):
+            return False
+        if par.attr in _PARSER_SAFE_ATTRS:
+            return True
+        if par.attr not in _PARSER_METHODS:
+            return False
+        call = parents.get(id(par))
+        return isinstance(call, ast.Call) and call.func is par
+
+    tracked: dict[str, set[int]] = {}  # 变量名 → 赋值所在作用域
+    for node in ast.walk(tree):
+        if not producing(node):
+            continue
+        if is_receiver(node):
+            continue
+        par = parents.get(id(node))
+        if isinstance(par, ast.Expr):
+            continue
+        target = None
+        if isinstance(par, ast.Assign) and par.value is node and len(par.targets) == 1:
+            target = par.targets[0]
+        elif isinstance(par, (ast.AnnAssign, ast.NamedExpr)) and par.value is node:
+            target = par.target
+        if isinstance(target, ast.Name):
+            tracked.setdefault(target.id, set()).add(id(scope_of[id(node)]))
+            continue
+        return False  # 作参数 / 返回 / 放进容器 / 存到属性……
+    module = tree
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in tracked and isinstance(node.ctx, ast.Load):
+            if not is_receiver(node):
+                return False
+            scope = scope_of[id(node)]
+            if id(scope) not in tracked[node.id] and not (
+                id(module) in tracked[node.id] and isinstance(scope, ast.FunctionDef)
+            ):
+                return False  # 闭包 / lambda 里用
+    return True
+
+
+# r4221772700：「exact」靠白名单证明，不再逐个堵绕过形状。出现这些名字 = 前缀可能在运行期被改写 / 动态取得。
+_DYNAMIC_NAMES = frozenset(
+    {
+        "setattr",
+        "getattr",
+        "delattr",
+        "vars",
+        "__dict__",
+        "__setattr__",
+        "__getattribute__",
+        "__builtins__",
+        "builtins",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+        "globals",
+        "locals",
+        "modules",
+    }
+)
+_PREFIX_IDENT = "fromfile_prefix_chars"
+
+
+def _whitelist_clean(tree: ast.AST, allowed_kw: set[int]) -> bool:
+    """`fromfile_prefix_chars` 只许作为“被证明的 ArgumentParser 构造”的关键字实参出现；源码里没有任何
+    动态取值 / 改写的形式。逐节点扫描所有字符串字段（Name.id / Attribute.attr / keyword.arg / alias /
+    函数名 / 字符串常量 / 字典键……），AST 覆盖不到的一律不通过（调用方按说不准处理）。"""
+    for node in ast.walk(tree):
+        for _field, value in ast.iter_fields(node):
+            if isinstance(value, bytes):
+                value = value.decode("utf-8", "replace")
+            if not isinstance(value, str):
+                continue
+            if _PREFIX_IDENT in value:
+                if isinstance(node, ast.keyword) and id(node) in allowed_kw:
+                    continue
+                return False
+            if value in _DYNAMIC_NAMES or value.split(".")[0] == "importlib":
+                return False
+    return True
 
 
 def _reads_argv_outside_parse(source: str) -> bool:
@@ -774,19 +1130,24 @@ def _reads_argv_outside_parse(source: str) -> bool:
     return False
 
 
+#: argparse 的 `_negative_number_matcher`，按 CPython 源码逐字（`re.compile(...).match(token)`）：
+#: * 3.13.13 / 3.12.12 / 3.11.14（本机实测 `argparse.ArgumentParser()._negative_number_matcher.pattern`）：
+#:   `'^-\\d+$|^-\\d*\\.\\d+$'`
+#: * 3.14.7：`'-\\.?\\d'`（`Lib/argparse.py` `ArgumentParser.__init__`；`-1e3` / `-.5` / `-1.` / `-1_0` / `-1j` 都算
+#:   负数 token；没有结尾锚，`-1abc` 也算）
+#: 前端 `web/src/lib/scriptArgsForm.ts` 的 `NEGATIVE_LEGACY` / `NEGATIVE_EXTENDED` 与这两条同形。
+NEGATIVE_NUMBER_LEGACY = re.compile(r"^-\d+$|^-\d*\.\d+$")
+NEGATIVE_NUMBER_EXTENDED = re.compile(r"-\.?\d")
+
+
 def _looks_negative_number(text: str) -> bool:
-    """argparse 的 `_negative_number_matcher`：`^-\\d+$|^-\\d*\\.\\d+$`。"""
-    body = text[1:]
-    if body.isdigit() and body.isascii():
-        return True
-    if "." in body:
-        head, _, tail = body.partition(".")
-        return (
-            (head == "" or (head.isdigit() and head.isascii()))
-            and tail.isdigit()
-            and tail.isascii()
-        )
-    return False
+    """3.14 之前的规则（`negative_number_options` 的判据；保持原字段语义）。"""
+    return NEGATIVE_NUMBER_LEGACY.match(text) is not None
+
+
+def _looks_negative_number_extended(text: str) -> bool:
+    """3.14 起的规则。"""
+    return NEGATIVE_NUMBER_EXTENDED.match(text) is not None
 
 
 def _empty(status: str, reasons: list[str]) -> dict:
@@ -799,7 +1160,9 @@ def _empty(status: str, reasons: list[str]) -> dict:
         "form_enabled": False,
         "parser_line": None,
         "parse_call": None,
+        "allow_abbrev": True,
         "negative_number_options": False,
+        "negative_number_options_extended": False,
         "arguments": [],
         "exclusive_groups": [],
         "subcommands": None,
@@ -832,12 +1195,56 @@ def analyze_file(path: str | os.PathLike) -> dict:
         return _empty(STATUS_UNKNOWN, ["unreadable"])
     if len(raw) > MAX_SOURCE_BYTES:
         return _empty(STATUS_UNKNOWN, ["too_large"])
-    schema = analyze(raw.decode("utf-8", errors="replace"))
+    source = decode_source(raw)
+    if source is None:
+        # 编码声明坏了 / 声明的编码解不开：说不出话（unknown），不是「没有参数」，更不拿 U+FFFD 去猜 choices
+        return _cache_put(key, _empty(STATUS_UNKNOWN, ["unreadable"]))
+    return _cache_put(key, analyze(source))
+
+
+def decode_source(raw: bytes) -> str | None:
+    """按 Python 自己的源码编码规则解码（PEP 263 / PEP 3120：UTF-8 BOM、`# coding: xxx` 声明，默认 UTF-8）。
+    声明坏了 / 解不开 → None（调用方按「未知」安全回退，不用 replacement 字符糊过去）。"""
+    try:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        return raw.decode(encoding)
+    except (SyntaxError, LookupError, UnicodeDecodeError, ValueError):
+        return None
+
+
+def _cache_put(key: tuple, schema: dict) -> dict:
     with _cache_lock:
         _cache[key] = schema
         while len(_cache) > _CACHE_SIZE:
             _cache.popitem(last=False)
     return schema
+
+
+def source_revision(path: str | os.PathLike) -> str:
+    """脚本的「源码修订」：字节摘要 + 解析出的 schema 摘要。准备计划把它记下来，认领 / 执行前再算一次——
+    脚本在检查之后被改了（哪怕只是把一个普通参数改成 `FileType('w')`），当初披露的影响就不再是真的。
+    不走 mtime 缓存的字节部分：这是安全门，宁可多读一次小文件。读不到 = `unreadable`（与检查时同样读不到则相等）。"""
+    p = Path(path)
+    digest = hashlib.sha256()
+    try:
+        with open(p, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return "unreadable"
+    schema = json.dumps(_without_lines(analyze_file(p)), sort_keys=True, default=str).encode(
+        "utf-8"
+    )
+    return f"{digest.hexdigest()}:{hashlib.sha256(schema).hexdigest()[:16]}"
+
+
+def _without_lines(node):
+    """行号不是披露的内容：在参数声明上方加一行注释不算「声明变了」。"""
+    if isinstance(node, dict):
+        return {k: _without_lines(v) for k, v in node.items() if k not in ("line", "parser_line")}
+    if isinstance(node, list):
+        return [_without_lines(v) for v in node]
+    return node
 
 
 def summary(schema: dict) -> dict:

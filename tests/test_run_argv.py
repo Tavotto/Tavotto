@@ -102,6 +102,25 @@ class TestPublicProjectionsCarryCountsNotValues:
         )
         assert native.stable_payload()["argv"] == ["a", "b"]
 
+    def test_native_long_cjk_token_is_not_bound_by_the_private_wire_budget(self):
+        # r4214909614：native 参数走 bridge_argv、不走私有管道；3000 个 CJK 字符 JSON 转义后远超 16384
+        token = "中" * 3000
+        assert len(execspec.argv_wire((token,))) > execspec.MAX_ARGV_WIRE_CHARS
+        native = execspec.native_spec(
+            "fig.py", interpreter="/usr/bin/python3", cwd="/c", project_root="/c", argv=(token,)
+        )
+        assert native.argv == (token,)
+        with pytest.raises(ValueError, match="NUL"):  # OS 装不下的约束仍在
+            execspec.native_spec(
+                "fig.py",
+                interpreter="/usr/bin/python3",
+                cwd="/c",
+                project_root="/c",
+                argv=("a\x00",),
+            )
+        with pytest.raises(ValueError, match="载荷"):  # safe 档同一输入仍被拒
+            _spec(argv=(token,), run_config="rc_x")
+
     def test_receipt_identity_differs_per_configuration_without_leaking(self):
         a = _spec(argv=(SENTINEL,), run_config="rc_aaaaaaaaaaaa").stable_payload()
         b = _spec(argv=(SENTINEL, "x"), run_config="rc_bbbbbbbbbbbb").stable_payload()
@@ -165,6 +184,31 @@ class TestRunConfigStore:
         with pytest.raises(runconfig.RunConfigMissing):  # 别的项目（另一台机器保存的文档）
             runconfig.get(tmp_path / "elsewhere", cfg.id)
 
+    def test_eviction_never_drops_a_config_a_panel_default_points_at(self, tmp_path, monkeypatch):
+        # Codex r4214001208：淘汰最老配置会连带删掉引用它的磁盘面板默认 -> default_selection() 变 None
+        # -> 面板静默用空 argv 重跑。被默认引用的配置必须留着。
+        monkeypatch.setattr(runconfig, "MAX_CONFIGS", 3)
+        pinned = runconfig.put(tmp_path, "s.py", ["--pinned"])
+        runconfig.set_default(tmp_path, "s.py", pinned.id)
+        for i in range(6):
+            runconfig.put(tmp_path, "s.py", [f"--n{i}"])
+        sel = runconfig.default_selection(tmp_path, "s.py")
+        assert sel is not None and sel.argv == ("--pinned",)
+        assert len(runconfig._load(tmp_path)) <= 3 + 1  # 受上限约束（默认引用的那条可多占一格）
+
+    def test_project_identity_follows_the_volume_not_normcase(self, tmp_path, monkeypatch):
+        # Codex r4214001213：macOS 卷大小写不敏感但 os.path.normcase 是 no-op；同一项目换大小写打开
+        # 必须指向同一份登记。
+        from tavotto.engine import config as engine_config
+
+        monkeypatch.setattr(engine_config, "path_is_case_insensitive", lambda p: True)
+        upper, lower = tmp_path / "Plots", tmp_path / "plots"
+        cfg = runconfig.put(upper, "s.py", ["--k", "1"])
+        runconfig.set_default(upper, "s.py", cfg.id)
+        assert runconfig.store_path(upper) == runconfig.store_path(lower)
+        assert runconfig.get(lower, cfg.id, script="s.py").argv == ("--k", "1")
+        assert runconfig.default_selection(lower, "s.py").config_id == cfg.id
+
     def test_a_newer_format_is_refused_by_this_reader(self, tmp_path):
         cfg = runconfig.put(tmp_path, "s.py", ["a"])
         path = runconfig.store_path(tmp_path)
@@ -175,6 +219,128 @@ class TestRunConfigStore:
             runconfig.get(tmp_path, cfg.id)
         with pytest.raises(runconfig.RunConfigUnsupported):  # 也不许"顺手覆盖"它
             runconfig.put(tmp_path, "s.py", ["b"])
+
+    @pytest.mark.parametrize(
+        "damaged",
+        [
+            '{"version": 1, "configs": {"rc_a": {"script"',  # 截断
+            "not json at all",
+            "[1, 2]",
+            '{"version": 1, "configs": [], "defaults": {}}',
+            '{"version": 1, "configs": {}, "defaults": "x"}',
+            "",
+        ],
+    )
+    def test_a_damaged_store_fails_explicitly_instead_of_reading_as_empty(self, tmp_path, damaged):
+        cfg = runconfig.put(tmp_path, "s.py", ["a"])
+        runconfig.set_default(tmp_path, "s.py", cfg.id)
+        runconfig.store_path(tmp_path).write_text(damaged, encoding="utf-8")
+        with pytest.raises(runconfig.RunConfigUnreadable) as caught:
+            runconfig.default_selection(tmp_path, "s.py")  # 不许回 None（= 静默空 argv 重跑）
+        assert caught.value.code == "run_config_unreadable"
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.get(tmp_path, cfg.id)
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.selection(tmp_path, cfg.id)
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda d, c: d["defaults"].__setitem__("s.py", 123),
+            lambda d, c: d["defaults"].__setitem__("s.py", None),
+            lambda d, c: d["defaults"].__setitem__("s.py", ["rc_x"]),
+            lambda d, c: d["defaults"].__setitem__("s.py", "not_an_rc_id"),
+            # 只有前缀 / 大写 / 位数不对：resolve 只认 rc_ + 12 位小写十六进制，写出去就是死引用
+            lambda d, c: d["defaults"].__setitem__("s.py", "rc_bad"),
+            lambda d, c: d["defaults"].__setitem__("s.py", "rc_0123456789AB"),
+            lambda d, c: d["defaults"].__setitem__("s.py", "rc_0123456789abc"),
+            lambda d, c: d["configs"].__setitem__("rc_bad", d["configs"][c]),
+            lambda d, c: d["configs"].__setitem__("rc_0123456789ag", d["configs"][c]),
+            lambda d, c: d.__setitem__("version", "1"),
+            lambda d, c: d.__setitem__("version", True),
+            lambda d, c: d.__setitem__("version", 0),
+            lambda d, c: d["configs"].__setitem__("bad_key", d["configs"][c]),
+            lambda d, c: d["configs"].__setitem__(c, "not a record"),
+            lambda d, c: d["configs"][c].pop("script"),
+            lambda d, c: d["configs"][c].__setitem__("script", 7),
+            lambda d, c: d["configs"][c].pop("argv"),
+            lambda d, c: d["configs"][c].__setitem__("argv", "--k 1"),
+            lambda d, c: d["configs"][c].__setitem__("argv", ["ok", 3]),
+            lambda d, c: d["configs"][c].__setitem__("sensitive", "yes"),
+            lambda d, c: d["configs"][c].__setitem__("sensitive", True),  # 敏感配置的 argv 不该落盘
+            lambda d, c: d["configs"][c].__setitem__("source", None),
+            lambda d, c: d["configs"][c].__setitem__("created_at", "now"),
+            lambda d, c: d["configs"][c].__setitem__("created_at", True),
+            # put() 写不出的 argv：空数组 / NUL / 超长 / token 太多（与 validate_argv 同一套边界）
+            lambda d, c: d["configs"][c].__setitem__("argv", []),
+            lambda d, c: d["configs"][c].__setitem__("argv", ["a\x00b"]),
+            lambda d, c: d["configs"][c].__setitem__("argv", ["x" * (execspec.MAX_ARGV_CHARS + 1)]),
+            lambda d, c: d["configs"][c].__setitem__(
+                "argv", ["a"] * (execspec.MAX_ARGV_TOKENS + 1)
+            ),
+        ],
+    )
+    def test_a_syntactically_valid_but_malformed_store_is_unreadable_too(self, tmp_path, mutate):
+        cfg = runconfig.put(tmp_path, "s.py", ["a"])
+        runconfig.set_default(tmp_path, "s.py", cfg.id)
+        path = runconfig.store_path(tmp_path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        mutate(data, cfg.id)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.default_selection(tmp_path, "s.py")  # 不许回 None（= 静默空 argv 重跑）
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.get(tmp_path, cfg.id)
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.selection(tmp_path, cfg.id)
+        before = path.read_bytes()
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.put(tmp_path, "s.py", ["b"])  # 写路径同样失败关闭，不隔离重建
+        assert path.read_bytes() == before
+        assert not list(path.parent.glob(path.name + ".corrupt-*"))
+
+    def test_the_id_shape_has_one_source_shared_with_the_asset_resolver(self, tmp_path):
+        from tavotto.engine import runtimeasset
+
+        assert runtimeasset._RUN_CONFIG_TAIL is runconfig.ID_RE
+        assert runconfig.ID_RE.fullmatch(runconfig.put(tmp_path, "s.py", ["a"]).id)
+        assert not runconfig.ID_RE.fullmatch("rc_bad")
+
+    def test_a_default_pointing_at_an_unknown_id_is_missing_not_unreadable(self, tmp_path):
+        runconfig.put(tmp_path, "s.py", ["a"])
+        runconfig.set_default(tmp_path, "s.py", "rc_ffffffffffff")
+        with pytest.raises(runconfig.RunConfigMissing):
+            runconfig.default_selection(tmp_path, "s.py")
+
+    def test_a_non_utf8_store_is_unreadable_not_missing(self, tmp_path):
+        runconfig.put(tmp_path, "s.py", ["a"])
+        runconfig.store_path(tmp_path).write_bytes(b"\xff\xfe\x00bad")
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.default_selection(tmp_path, "s.py")
+
+    def test_no_store_at_all_is_still_just_empty(self, tmp_path):
+        assert runconfig.default_selection(tmp_path, "s.py") is None
+        with pytest.raises(runconfig.RunConfigMissing):
+            runconfig.get(tmp_path, "rc_000000000000")
+
+    def test_writing_over_a_damaged_store_is_refused_and_leaves_the_file_untouched(self, tmp_path):
+        other = runconfig.put(tmp_path, "other.py", ["x"])
+        runconfig.set_default(tmp_path, "other.py", other.id)
+        path = runconfig.store_path(tmp_path)
+        path.write_text('{"version": 1, "configs": {"rc_x"', encoding="utf-8")
+        before = path.read_bytes()
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.put(tmp_path, "s.py", ["b"])
+        with pytest.raises(runconfig.RunConfigUnreadable):
+            runconfig.set_default(tmp_path, "s.py", other.id)
+        assert path.read_bytes() == before  # 文件字节不变
+        assert not list(path.parent.glob(path.name + ".corrupt-*"))  # 没有隔离备份
+        with pytest.raises(runconfig.RunConfigUnreadable):  # 别的脚本的默认仍显式报错，不是 None
+            runconfig.default_selection(tmp_path, "other.py")
+        # 无参数运行不依赖登记：不抛、不碰文件
+        assert runconfig.put(tmp_path, "s.py", []) is None
+        runconfig.set_default(tmp_path, "s.py", None)
+        assert path.read_bytes() == before
 
     def test_the_disk_panel_default_follows_the_last_explicit_run(self, tmp_path):
         a = runconfig.put(tmp_path, "s.py", ["a"])

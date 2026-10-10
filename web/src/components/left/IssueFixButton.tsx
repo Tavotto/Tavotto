@@ -19,6 +19,7 @@ import { toCatalog, useProfileStore } from '@/store/profileStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button } from '../ui/Button'
+import type { Variant } from '../ui/buttonClass'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Tip } from '../ui/Tooltip'
 
@@ -33,7 +34,16 @@ const pr = (key: string, values?: Record<string, unknown>) =>
  * 上的问题就地显示，能修的给同一颗按钮）。各写一遍的后果是两处的成功 / 失败
  * 提示、`user_choice` 的菜单、规范的解析方式各自漂移。
  */
-export function FixButton({ issue, className }: { issue: ValidationIssue; className?: string }) {
+export function FixButton({
+  issue,
+  className,
+  variant,
+}: {
+  issue: ValidationIssue
+  className?: string
+  /** 问题树的尾随格里是 ghost（与「修复 N」同一副）；检查器的就地提示用默认档 */
+  variant?: Variant
+}) {
   // **订阅 `specs`，不订阅 `catalog()`**：后者每次调用都新建一个数组，
   // 拿它当 zustand 选择器的返回值 = 每一帧都"变了" = 无限重渲染
   const specs = useProfileStore((s) => s.specs)
@@ -52,7 +62,7 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
     return (
       <Tip label={pr('fixNativeUnsupported', { product: PRODUCT_NAME })}>
         <span className={cn('shrink-0', className)} tabIndex={0} data-fix-native-unsupported>
-          <Button size="sm" disabled>
+          <Button size="sm" variant={variant} disabled>
             {pr(issue.fixKind === 'safe_auto' ? 'fix' : 'fixChoose')}
           </Button>
         </span>
@@ -63,6 +73,8 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
     return (
       <Button
         size="sm"
+        variant={variant}
+        data-issue-fix="safe"
         className={cn('shrink-0', className)}
         disabled={fixing}
         onClick={() => void runFix(issue)}
@@ -76,7 +88,7 @@ export function FixButton({ issue, className }: { issue: ValidationIssue; classN
     <Menu
       width={180}
       trigger={
-        <Button size="sm" className={cn('shrink-0', className)} disabled={fixing}>
+        <Button size="sm" variant={variant} data-issue-fix="choose" className={cn('shrink-0', className)} disabled={fixing}>
           {pr('fixChoose')}
         </Button>
       }

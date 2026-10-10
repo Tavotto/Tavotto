@@ -570,7 +570,52 @@ def legend_fresh_handle(leg: Legend, orig, box=None):
     if box is None:
         box = DrawingArea(width=width, height=height, xdescent=0.0, ydescent=descent)
         box.set_figure(_owning_figure(leg))
-    return handler.legend_artist(leg, orig, leg._fontsize, box)  # noqa: SLF001
+    fresh = handler.legend_artist(leg, orig, leg._fontsize, box)  # noqa: SLF001
+    if _is_stock_hatch_handler(handler):
+        _carry_hatch_linewidth(fresh, orig)
+    return fresh
+
+
+def _is_stock_hatch_handler(handler) -> bool:
+    """handler 是 matplotlib 自带、且会丢掉 `_hatch_linewidth` 的那几个默认类。
+
+    判据是**类型恰好等于**（`type(h) is C`，子类不算）：脚本注册的自定义 handler（含子类）
+    故意让色块线宽异于源时，输出一律保留，不被源线宽覆盖。丢线宽的三个（3.10 / 3.11 源码
+    `legend_handler.py` 核过）：`HandlerPatch`（经 `Patch.update_from`，柱 / 形状 / `BarContainer`
+    的 `update_from_first_child`）、`HandlerStepPatch`（填充的 `stairs`，同走 `update_from`）、
+    `HandlerPolyCollection`（`fill_between` / `stackplot`，`_update_prop` 只写颜色与
+    线宽等私有属性）。`HandlerPatch(patch_func=…)` / 非默认 `update_func` 是脚本自己造色块，
+    也不算默认。
+    """
+    from matplotlib import legend_handler as lh
+
+    t = type(handler)
+    if t is lh.HandlerPatch:
+        return getattr(handler, "_patch_func", None) is None and getattr(
+            handler, "_update_prop_func", None
+        ) in (None, lh.update_from_first_child)
+    if t is lh.HandlerStepPatch or t is lh.HandlerPolyCollection:
+        return getattr(handler, "_update_prop_func", None) is None
+    return False
+
+
+def _carry_hatch_linewidth(fresh, orig) -> None:
+    """把源 patch 的花纹线宽带到示意线上。
+
+    matplotlib 3.10/3.11 的 `Patch.update_from` 复制花纹图案却**不复制** `_hatch_linewidth`，
+    patch 示意线（柱 / 形状）于是永远画默认线宽，改了源的 `hatch_linewidth` 图例仍是旧粗细
+    （图 ≠ 图例，违反跟随源契约）。≤3.9 没有 per-artist 线宽（绘制时读 rcParams），两头都没
+    这个属性就什么都不做。源取 handler 同样的「第一个子 artist」（`BarContainer` → 首根柱）。
+    """
+    if not hasattr(fresh, "set_hatch_linewidth"):
+        return
+    src = orig
+    if not hasattr(src, "get_hatch_linewidth"):
+        kids = getattr(orig, "get_children", lambda: [])()
+        src = kids[0] if len(kids) else None
+    if src is None or not hasattr(src, "get_hatch_linewidth"):
+        return
+    fresh.set_hatch_linewidth(float(src.get_hatch_linewidth()))
 
 
 def _rgba(c):
@@ -599,6 +644,20 @@ def _dash_key(h: Line2D):
         round(float(offset or 0.0), 3),
         None if seq is None else tuple(round(float(x), 3) for x in seq),
     )
+
+
+def _hatch_lw_key(h) -> tuple:
+    """花纹线宽进指纹（3.10+ 才有 per-artist 属性）；没有该属性的版本不追加，指纹保持旧形状。
+
+    指纹只活在内存里（`orig_fp` 每次建模型从活的图例重算，不入文件、前端也不比对），所以没有
+    「旧文件里不含线宽的指纹」要迁移；旧版本（≤3.9）算出的仍是不含线宽的旧形状，判定不变。
+    只有无花纹时线宽无意义，也记 `None`，避免默认线宽差异把无花纹条目拆开。"""
+    get = getattr(h, "get_hatch_linewidth", None)
+    if get is None:
+        return ()
+    if not h.get_hatch():
+        return (None,)
+    return (round(float(get()), 3),)
 
 
 def legend_handle_fingerprint(h) -> tuple:
@@ -632,6 +691,7 @@ def legend_handle_fingerprint(h) -> tuple:
             h.get_hatch(),
             h.get_alpha(),
             bool(h.get_fill()),
+            *_hatch_lw_key(h),
         )
     if isinstance(h, Collection):
         fc = _first(h.get_facecolor())
@@ -643,6 +703,7 @@ def legend_handle_fingerprint(h) -> tuple:
             round(float(_first(h.get_linewidth(), 0.0) or 0.0), 3),
             h.get_hatch(),
             h.get_alpha(),
+            *_hatch_lw_key(h),
         )
     return (kind, id(h))
 

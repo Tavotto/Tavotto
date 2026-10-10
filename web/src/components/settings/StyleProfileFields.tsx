@@ -6,15 +6,15 @@ import { t as translate } from '@/i18n'
 import type { Manifest } from '@/lib/api'
 import { FIGURE_LINE_ROWS, FIGURE_TEXT_ROWS } from '@/lib/stylePanelModel'
 import { CANVAS_TEXT_FAMILIES, styleIsItalic, weightIsBold, withMachineFamilies } from '@/lib/typography'
-import { cn } from '@/lib/utils'
 import { useRenderStore } from '@/store/renderStore'
 import { optionLabel } from '../inspector/roles/registry'
 import { FontMissingHint, FontMissingTag, StyleToggle } from '../inspector/controls/textRows'
 import { IconButton } from '../ui/Button'
+import { FieldGroup, FormSection } from '../ui/FormSection'
 import { NumberField } from '../ui/Input'
 import { Select } from '../ui/Select'
 import { clearPath, rawValueText, readPath, writePath } from './profilePath'
-import { SettingRow, settingControlStyle, settingRowGrid } from './SettingRow'
+import { SettingRow, SettingValueRow } from './SettingRow'
 
 /**
  * 设置 › 样式页的编辑区：**与左栏「样式」面板同一张行表**（`lib/stylePanelModel` 的
@@ -257,8 +257,9 @@ export function StyleProfileFields({
   const clear = (paths: (string | null)[]) =>
     onChange((d) => paths.reduce<Record<string, unknown>>((acc, p) => (p ? clearPath(acc, p) : acc), d))
 
+  // 两组直接成为页面内容列的子项（分组之间 24 由外壳给），不再自己包一层 gap
   return (
-    <div className="flex flex-col gap-4">
+    <>
       <StyleFieldGroup group="text">
         {STYLE_TEXT_ROWS.map((row) =>
           editable ? (
@@ -271,7 +272,7 @@ export function StyleProfileFields({
               onClear={clear}
             />
           ) : (
-            <SummaryRow key={row.id} id={row.id} value={textSummary(row, draft)} />
+            <SettingValueRow key={row.id} data-style-row={row.id} label={ROW_LABEL[row.id]()} value={textSummary(row, draft)} />
           ),
         )}
       </StyleFieldGroup>
@@ -280,21 +281,23 @@ export function StyleProfileFields({
           editable ? (
             <LineRowEditor key={row.id} row={row} draft={draft} onSet={set} onClear={clear} />
           ) : (
-            <SummaryRow key={row.id} id={row.id} value={lineSummary(row, draft)} />
+            <SettingValueRow key={row.id} data-style-row={row.id} label={ROW_LABEL[row.id]()} value={lineSummary(row, draft)} />
           ),
         )}
       </StyleFieldGroup>
-    </div>
+    </>
   )
 }
 
-/** 一组：一条 type-section 小标题 + 若干行（与规范页同一种分组，`data-field-group` 同名） */
+/**
+ * 一组：`FormSection`（组名）+ `FieldGroup`（12 圆角的组底、行间内缩分隔线）——与规范页同一种分组，
+ * 组名留在 `data-field-group`（2026-10-07 设计审计 §9.1：此前是一条 type-section 小标题 + 裸行）。
+ */
 function StyleFieldGroup({ group, children }: { group: 'text' | 'lines'; children: ReactNode }) {
   return (
-    <div data-field-group={group} className="flex flex-col">
-      <span className="type-section mb-1">{st(`group.${group}`)}</span>
-      {children}
-    </div>
+    <FormSection title={st(`group.${group}`)}>
+      <FieldGroup data-field-group={group}>{children}</FieldGroup>
+    </FormSection>
   )
 }
 
@@ -564,27 +567,4 @@ export function lineSummary(row: (typeof STYLE_LINE_ROWS)[number], draft: Record
   if (raw === undefined) return st('unset')
   if (row.prop === 'direction') return typeof raw === 'string' && raw ? optionLabel('direction', raw) : rawText(raw)
   return ptText(raw) ?? rawText(raw)
-}
-
-/**
- * 只读摘要里的一行：名字 + 值。**刻意不是一排 disabled 的控件**（审计 T41 / T42）；
- * 与 `SettingRow` 同一份网格、同一档行高，「摘要 ↔ 输入框」来回切换时整列不跳。
- */
-function SummaryRow({ id, value }: { id: string; value: string }) {
-  const label = ROW_LABEL[id]()
-  return (
-    <div
-      data-summary-row
-      data-style-row={id}
-      style={settingControlStyle}
-      className={cn('grid min-h-8 items-center gap-x-6 py-0.5 text-sm', settingRowGrid)}
-    >
-      <span className="min-w-0 truncate text-ink" title={label}>
-        {label}
-      </span>
-      <span className="min-w-0 justify-self-end truncate tabular-nums text-ink" title={value}>
-        {value}
-      </span>
-    </div>
-  )
 }

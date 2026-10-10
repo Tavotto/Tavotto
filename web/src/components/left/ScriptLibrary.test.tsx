@@ -60,7 +60,7 @@ import {
   type RegistryView,
   type ScriptInventoryEntry,
 } from '@/lib/api'
-import { i18n } from '@/i18n'
+import { formatMessage, i18n } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
@@ -71,6 +71,8 @@ import { useEnvStore } from '@/store/envStore'
 import { useScriptLibraryStore } from '@/store/scriptLibraryStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
+import { useProjectStore } from '@/store/projectStore'
+import { useAssetStore } from '@/store/assetStore'
 import { visibleBlocks } from '@/test/visibleBlocks'
 
 declare global {
@@ -177,6 +179,7 @@ beforeEach(() => {
   localStorage.clear()
   useScriptLibraryStore.getState().clear()
   useScriptRunStore.getState().clear()
+  useProjectStore.setState({ project: null })
   useUiStore.setState({ engineEnvOpen: false, settingsOpen: false, settingsSection: null, dialogStack: [] })
   mockRegistry.mockReset()
   mockProbe.mockReset()
@@ -353,9 +356,9 @@ describe('运行 / 取消 / 结果', () => {
     expect(ui.settingsOpen).toBe(false)
     const dialog = document.querySelector('[data-dialog="engine-environment"]')
     expect(dialog).not.toBeNull()
-    // 对话框的正文就是那一份渲染环境卡片（含「使用其他 Python 环境…」出口）
+    // 对话框的正文就是那一份渲染环境（一组行）；解释器那一行的「更换…」就是换 Python 环境的出口
     expect(dialog!.querySelector('[data-engine-env-card]')).not.toBeNull()
-    expect(dialog!.textContent).toContain('使用其他 Python 环境')
+    expect(dialog!.querySelector('[data-engine-interpreter] button')?.textContent).toBe('更换…')
     expect(dialog!.textContent).toContain('/usr/bin/python3')
   })
 
@@ -588,7 +591,7 @@ describe('运行 / 取消 / 结果', () => {
     })
     vi.mocked(createDependencyPlan).mockResolvedValue({
       plan: {
-        plan_id: 'plan-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        plan_id: 'plan-row', impact_digest: 'dg-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
         modifies_user_environment: false, network_required: true, expires_at: 0,
         private_python: privatePython, ...offer.requirement!,
       },
@@ -607,7 +610,7 @@ describe('运行 / 取消 / 结果', () => {
     expect(createDependencyPlan).toHaveBeenCalledWith({
       module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
     })
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     // 装好：后端的进度带着计划所属的脚本 → 这一行自动重跑
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
@@ -690,7 +693,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     })
     vi.mocked(createDependencyPlan).mockResolvedValue({
       plan: {
-        plan_id: 'plan-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
+        plan_id: 'plan-row', impact_digest: 'dg-row', target_kind: 'tavotto_managed', python: '', creates_environment: true,
         modifies_user_environment: false, network_required: true, expires_at: 0,
         private_python: privatePython, ...offer.requirement!,
       },
@@ -710,7 +713,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     await flush()
     await act(async () => buttonByText('一键修复').click())
     await flush()
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
     expect(buttonByText('取消'), 'A 上安装中应有「取消」').toBeTruthy()
     await switchTo('pB')
@@ -749,7 +752,7 @@ describe('脚本行发起的修复切项目再切回（#729）', () => {
     expect(createDependencyPlan).toHaveBeenCalledWith({
       module: 'adjustText', script: 'fig_labels.py', target: 'tavotto_managed',
     })
-    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row')
+    expect(installDependencyPlan).toHaveBeenCalledWith('plan-row', 'dg-row')
     expect(card(), '重试之后卡片仍在脚本行上').toBeTruthy()
   })
 
@@ -878,6 +881,7 @@ describe('试运行撞上起会话之前的门', () => {
     ],
     rounds_remaining: 3,
     skipped: false,
+    impact_digest: 'row-digest',
   }
   const gateProbe = (): ProbeResult => ({
     ...ok([]),
@@ -935,7 +939,7 @@ describe('试运行撞上起会话之前的门', () => {
     await act(async () => prepDialog()!.querySelector<HTMLButtonElement>('[data-dependency-prepare-start]')!.click())
     await flush()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: 'fig_labels.py', target: 'tavotto_managed' })
-    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row')
+    expect(prepareJointDependencies).toHaveBeenCalledWith('jp-row', 'row-digest')
     // ④ 准备成功（SSE 带着计划所属的脚本）→ #740 的 `rerunGated`：这一行自动再试运行一次、出图
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
@@ -995,10 +999,139 @@ describe('试运行撞上起会话之前的门', () => {
     mockProbe.mockClear()
     mockProbe.mockResolvedValue({ ...ok([desc('Fig1')]), script: 'fig_labels.py' })
     // 在确认框里选定（推荐项已预选）→ 这一行自动再试运行
-    await act(async () => docButton('用这个目录')!.click())
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-workdir-run]')!.click())
     await flush()
     expect(setProjectWorkdir).toHaveBeenCalledWith('project')
     expect(mockProbe, '选定运行目录后没有重跑试运行').toHaveBeenCalledTimes(1)
     expect(useScriptRunStore.getState().byScript['fig_labels.py']?.phase).toBe('captured_one')
+  })
+})
+
+describe('行与状态的写法（2026-10-07 设计审计 §10.3）', () => {
+  it('组头是 28px 的 type-section + type-meta 计数', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py', reason: 'no_static_output' })]))
+    await mount()
+    const head = host.querySelector<HTMLElement>('[data-script-group]')!
+    expect(head.className).toContain('h-7')
+    expect(head.querySelector('.type-section')).toBeTruthy()
+    expect(head.querySelector('.type-meta')?.textContent).toBe('1')
+  })
+
+  it('运行中：点是静止的，「在动」只由那句话的 shimmer 说（没有转圈 / 呼吸）', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    mockProbe.mockImplementation(() => new Promise(() => {}))
+    await mount()
+    await act(async () => runButton().click())
+    const row = host.querySelector<HTMLElement>('[data-script-row="show.py"]')!
+    expect(row.querySelector('[data-script-dot="running"]')).toBeTruthy()
+    expect(row.querySelector('.animate-spin')).toBeNull()
+    expect(row.querySelector('[data-script-running]')!.className).toContain('text-shimmer')
+  })
+
+  it('筛不到时是 EmptyState，不是一行裸字', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <ScriptLibrary query="nothing-like-this" />
+        </TooltipProvider>,
+      )
+    })
+    await flush()
+    expect(host.querySelector('[data-script-no-match][data-empty-state]')).toBeTruthy()
+  })
+
+  it('行菜单（⋯ / ⇧F10）：运行与复制路径', async () => {
+    useProjectStore.setState({ project: { open: true, figures_dir: '/proj' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    await mount()
+    await openRowMenu('show.py')
+    expect(document.querySelector('[data-script-copy-path]')).toBeTruthy()
+  })
+})
+
+/** ⇧F10 开这一行的菜单 */
+async function openRowMenu(script: string) {
+  const row = host.querySelector<HTMLElement>(`[data-script-row="${script}"] > div`)!
+  await act(async () => {
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+  })
+}
+
+describe('复制路径（Codex #832）', () => {
+  const statusText = () => {
+    const st = useUiStore.getState().status
+    return st ? formatMessage(st) : ''
+  }
+  const realClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  const setClipboard = (value: unknown) =>
+    Object.defineProperty(navigator, 'clipboard', { value, configurable: true, writable: true })
+  const copy = async (script: string) => {
+    await openRowMenu(script)
+    await act(async () => {
+      document.querySelector<HTMLElement>('[data-script-copy-path]')!.click()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+  }
+  afterEach(() => {
+    useProjectStore.setState({ project: null })
+    useAssetStore.setState({ figuresDir: '' })
+    if (realClipboard) Object.defineProperty(navigator, 'clipboard', realClipboard)
+    else delete (navigator as { clipboard?: unknown }).clipboard
+    useUiStore.setState({ status: null })
+  })
+
+  it('素材清单没加载成（figuresDir 为空）：照样按项目根拼出绝对路径，不只复制相对名', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    useAssetStore.setState({ figuresDir: '' })
+    useProjectStore.setState({ project: { open: true, figures_dir: '/proj/' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'sub/show.py' })]))
+    await mount()
+    await copy('sub/show.py')
+    expect(writeText).toHaveBeenCalledWith('/proj/sub/show.py')
+    expect(useUiStore.getState().statusTone).toBe('done')
+    expect(statusText()).toContain('/proj/sub/show.py')
+  })
+
+  it('Windows 写法的项目根：整条按反斜杠拼', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    setClipboard({ writeText })
+    useProjectStore.setState({ project: { open: true, figures_dir: 'C:\\Users\\me\\proj' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'sub/show.py' })]))
+    await mount()
+    await copy('sub/show.py')
+    expect(writeText).toHaveBeenCalledWith('C:\\Users\\me\\proj\\sub\\show.py')
+  })
+
+  it('项目根两边都不知道：不给「复制路径」，而不是复制一个会在别处解析的相对名', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    await mount()
+    await openRowMenu('show.py')
+    expect(document.querySelector('[role="menu"]')).toBeTruthy()
+    expect(document.querySelector('[data-script-copy-path]')).toBeNull()
+  })
+
+  it('没有 navigator.clipboard（非安全上下文 / WebView）：说「没复制成、路径在这」，不静默', async () => {
+    setClipboard(undefined)
+    useProjectStore.setState({ project: { open: true, figures_dir: '/proj' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    await mount()
+    await copy('show.py')
+    expect(useUiStore.getState().statusTone).toBe('error')
+    expect(statusText()).toContain('/proj/show.py')
+    expect(statusText()).toContain('无法写入剪贴板')
+  })
+
+  it('写剪贴板被拒：同样报失败', async () => {
+    setClipboard({ writeText: vi.fn().mockRejectedValue(new Error('denied')) })
+    useProjectStore.setState({ project: { open: true, figures_dir: '/proj' } })
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    await mount()
+    await copy('show.py')
+    expect(useUiStore.getState().statusTone).toBe('error')
   })
 })

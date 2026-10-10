@@ -94,7 +94,8 @@ for (const L of LOCALES) {
       // 帮助气泡也是 role=dialog，按名字取设置那一个
       const dialog = page.getByRole('dialog', { name: L.settings })
       await expect(dialog).toBeVisible()
-      await expect(dialog.getByText(L.language)).toBeVisible()
+      // exact：英文的组名（Language and layout）与页头说明里也有这个词，认的是那一行的标签本身
+      await expect(dialog.getByText(L.language, { exact: true })).toBeVisible()
       // 语言选择器是 ui/Select（Radix）：选项在 portal 里，要先点开才存在。
       // 语言自称永远用目标语言写，两档都在，不跟着界面语言翻译
       await dialog.getByRole('combobox', { name: L.language }).click()
