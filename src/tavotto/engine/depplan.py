@@ -550,6 +550,15 @@ class JointPlan:
     #: `candidates` 是不透明的发行包名（≤ `MAX_ORIGIN_CANDIDATES`），不带路径与文件内容。`unknown` 的名字集合恒等于
     #: 这里的 `import_name` 集合。可选字段：老客户端忽略，不改 `missing` / `requirements` 的含义，所以 `plan_version` 不升。
     origins: tuple[dict, ...] = ()
+    #: 只有**安装目标**要装、当前解释器并不报缺的条目（形状同 `missing`）：当前环境经 editable / 本地 / Conda / 备选发行包 / 已装
+    #: 名字提供了这个 import（所以不在 `missing`），而目标是另一个托管代，那里没有，`requirements` 里照装。账本 / 验证 import
+    #: 要覆盖 `requirements` 里的全部条目，所以 `deprepair` 用 `install_entries`（= missing + 这里）。**不进 `to_payload`**
+    #: （披露与 `missing` 语义不变，`plan_version` 不升）。
+    install_only: tuple[dict, ...] = ()
+
+    @property
+    def install_entries(self) -> tuple[dict, ...]:
+        return (*self.missing, *self.install_only)
 
     @property
     def actionable(self) -> bool:
@@ -654,6 +663,9 @@ def _verdict(
     可能正有别的提供者（editable 的替代包、基础解释器里的同名模块），按名字装 curated 的包会遮蔽它。所以本该判「缺」的改判
     「来源未定」（`ORIGIN_UNVERIFIED`，条目的 `distribution_status` 是 `environment_not_checked`）：宁可不完整当未定，也不漏层后去装。"""
     present = _providers(c, installed)
+    if present and state == "import_error":
+        # 名字级「装着」不等于满足：装了但导入失败（装坏的 PyYAML）——覆盖度缓存的判决先于名字级，装它救不了（Codex #920 P2）
+        return _Verdict(_OPEN, reason=ORIGIN_IMPORT_FAILED)
     if c.distribution and c.distribution in present:
         return _Verdict(_PRESENT, c.distribution)
     if len(present) > 1:
@@ -865,6 +877,21 @@ def plan(
         and (same_target is False or verdicts[c.module].kind != _OPEN)
         and not _providers(c, target_installed)
     }
+    missing_imports = {m["import_name"] for m in missing}
+    install_only = tuple(
+        {
+            "import_name": c.module,
+            "distribution": c.distribution,
+            "resolution_source": c.resolution_source,
+            "declared": bool(by_name.get(c.distribution)),
+            "specifiers": sorted(
+                {it.specifier for it in by_name.get(c.distribution, []) if it.specifier}
+            ),
+            "via": list(c.via),
+        }
+        for c in scan.needed
+        if c.distribution in to_install and c.module not in missing_imports
+    )
     hash_mode = any(it.hashes for it in selection.requirements)
     reqs: list[str] = []
     hashes: dict[str, list[str]] = {}
@@ -971,6 +998,7 @@ def plan(
         possible=possible,
         unused=unused,
         origins=origins,
+        install_only=install_only,
         requirements=tuple(reqs),
         constraints=tuple(cons),
         hashes={k: tuple(v) for k, v in hashes.items()},

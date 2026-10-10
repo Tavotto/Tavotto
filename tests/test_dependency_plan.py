@@ -1826,6 +1826,57 @@ class TestExtraPathLayers:
         assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
 
 
+class TestInstalledButBroken:
+    """评审 P2：目标事实里列着映射到的发行包、但覆盖度缓存说它导入失败（装坏的 PyYAML）——名字级「装着」不能抢在
+    `import_error` 之前，否则依赖检查报 OK。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _plan(self, tmp_path, installed, coverage=None):
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import yaml\n")
+        return depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts(installed),
+            target_kind="project_venv",
+            coverage=coverage,
+        )
+
+    def test_an_installed_distribution_whose_import_fails_is_not_satisfied(self, tmp_path):
+        plan = self._plan(tmp_path, {"pyyaml": "6.0"}, lambda names: _health(yaml="import_error"))
+        assert plan.satisfied == () and plan.missing == () and plan.requirements == ()
+        assert plan.unknown == ("yaml",)
+        (origin,) = plan.origins
+        assert origin["reason"] == "module_import_failed_in_target_environment"
+        assert origin["coverage"] == "import_error"
+
+    @pytest.mark.parametrize(
+        "coverage", [lambda names: _health(yaml="found"), None], ids=["found", "no-cache"]
+    )
+    def test_found_or_unmeasured_stays_satisfied(self, tmp_path, coverage):
+        plan = self._plan(tmp_path, {"pyyaml": "6.0"}, coverage)
+        assert [e["distribution"] for e in plan.satisfied] == ["pyyaml"]
+        assert plan.origins == ()
+
+    def test_the_new_generation_still_installs_it(self, tmp_path):
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts({"pyyaml": "6.0"}),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+            coverage=lambda names: _health(yaml="import_error"),
+        )
+        assert {"pyyaml", "tabulate"} <= set(plan.requirements)
+
+
 class TestInstallTargetIsJudgedSeparately:
     """P1-2：来源判决只抑制**当前环境**的 missing；装到另一个环境时，当前解释器里的 editable / 本地 / Conda 提供者与缓存的
     import_error 在那里都不存在，按目标的已装集合单独判，否则新一代 import 失败、验证失败。"""
@@ -1950,6 +2001,21 @@ class TestInstallTargetIsJudgedSeparately:
         assert plan.missing == ()  # 当前环境读不全：不当缺
         assert plan.requirements == ("tabulate",)  # 新代是全新环境：照常装
 
+    def test_target_only_entries_are_listed_apart_from_missing(self, tmp_path):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=self._running(tmp_path),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert [m["import_name"] for m in plan.missing] == ["tabulate"]  # 当前环境不报缺的语义不变
+        assert [m["import_name"] for m in plan.install_only] == ["yaml"]
+        assert plan.install_only[0]["distribution"] == "pyyaml"
+        assert [m["import_name"] for m in plan.install_entries] == ["tabulate", "yaml"]
+        assert "install_only" not in plan.to_payload()  # 披露不变
+
     def test_installing_into_the_running_interpreter_itself_is_unchanged(self, tmp_path):
         running = self._running(tmp_path)
         proj = self._project(tmp_path, "import yaml\nimport myprivate\nimport tabulate\n")
@@ -1960,6 +2026,7 @@ class TestInstallTargetIsJudgedSeparately:
         assert base.requirements == ("tabulate",)  # editable 的 yaml / myprivate 不装
         for field in ("status", "requirements", "constraints", "identity", "unknown", "origins"):
             assert getattr(base, field) == getattr(same, field), field
+        assert base.install_only == () and same.install_only == ()
 
 
 # ===========================================================================

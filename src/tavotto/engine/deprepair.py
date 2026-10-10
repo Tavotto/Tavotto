@@ -1144,7 +1144,7 @@ def _fold_requested(
     delta = list(joint.requirements)
     if all(depresolve.normalize_distribution(_name_of(r)) != wanted for r in delta):
         delta.append(requirement.requirement())
-    imports = [m["import_name"] for m in joint.missing]
+    imports = [m["import_name"] for m in joint.install_entries]
     if requirement.import_name and requirement.import_name not in imports:
         imports.append(requirement.import_name)
     # 账目里用户点的那个包沿用单包修复原来的写法（distribution / specifier 取自它自己的 requirement），其余取自联合计划
@@ -1161,7 +1161,7 @@ def _fold_requested(
             "distribution": m["distribution"],
             "specifier": ",".join(m["specifiers"]),
         }
-        for m in joint.missing
+        for m in joint.install_entries
         if depresolve.normalize_distribution(m["distribution"]) != wanted
     ]
     return _Widened(
@@ -3959,15 +3959,16 @@ def create_joint_plan(
     )  # adapter 自己会装，不进账（账里钉版本会钉死它）
     installing_entries = (
         (
-            *joint.missing,
+            *joint.install_entries,
             *(
                 e
                 for e in joint.satisfied
                 if depresolve.normalize_distribution(e["distribution"]) not in provided
+                and e["import_name"] not in {m["import_name"] for m in joint.install_only}
             ),
         )
         if scope_policy == SCOPE_POLICY_SWITCH
-        else joint.missing
+        else joint.install_entries
     )
     _selection_unchanged(root, selection0)
     now = time.time()
@@ -4927,14 +4928,14 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         constraints=tuple(plan.constraints),
         hashes={k: tuple(v) for k, v in plan.hashes.items()},
         require_hashes=plan.require_hashes,
-        needed_imports=tuple(m["import_name"] for m in plan.missing),
+        needed_imports=tuple(m["import_name"] for m in plan.install_entries),
         record=tuple(
             {
                 "import_name": m["import_name"],
                 "distribution": m["distribution"],
                 "specifier": ",".join(m["specifiers"]),
             }
-            for m in plan.missing
+            for m in plan.install_entries
         ),
         identity=plan.identity,
         replan=False,
