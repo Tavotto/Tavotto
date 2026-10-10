@@ -601,9 +601,9 @@ def register_probed(
             )
             registry.load(figures_dir)
             # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
-            inputremap.record_registration(figures_dir, script)
-            if result.get("run_config"):
-                inputremap.record_registration(figures_dir, script, result["run_config"])
+            # 带运行配置的执行只对账**这一份**配置：脚本级标记留给真正的无参数试运行，否则无参数登记与没有
+            # 自己标记的别的 argv 变体会被误算成已对账，改指后渲染不再重新登记（Codex 评 #909 补审 P2）
+            inputremap.record_registration(figures_dir, script, str(result.get("run_config") or ""))
     except inputremap.RemapChanged as exc:
         LOG.info("试运行结果作废（%s）: %s", exc, script)
         return {
