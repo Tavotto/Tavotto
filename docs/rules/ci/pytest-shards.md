@@ -15,7 +15,11 @@
   Windows 已经吃到 60 分钟上限（#679 run 36685053740 分片 1 撞点被取消：不是挂死，进度
   一直在走，10%→50% 这一段用了 39 分钟，只是太慢；同日另两组分片分别是 39:41 与
   47:45，余量已经很薄）。上限本身是防挂死的止血阀（2026-08-28 没有上限时堵过合并队列
-  8 小时 20 分），不靠抬数字续命，靠加片给余量，上限继续钉在 60。改任一个 job 的片数
+  8 小时 20 分），2026-10-10 起 `backend-platforms` 的上限是
+  90（与 `backend-fast` #894 同档）：Windows 3 片里单片实测 55 分钟，#919 的 windows-latest 2 在 60:16
+  被取消（run 38044245065），维护者拍板抬到 90；合并队列的等待上限是 180 分钟
+  （`scripts/ci/merge_queue_ruleset.py`，已与线上同步），90 仍在其内且留 ≥30 分钟余量。
+  重平衡权重 / 继续加片（#636）仍是把它收回来的路径。改任一个 job 的片数
   要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
   按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`
   的断言，以及 `.github/workflows/ci.yml` 里那个 job 的实测评论。

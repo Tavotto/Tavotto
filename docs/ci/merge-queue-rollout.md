@@ -80,15 +80,21 @@ main 不再重复完整打包。**验证覆盖面一条没减，改的是验证�
 |---|---|
 | merge_method | SQUASH |
 | grouping_strategy | ALLGREEN（即 UI 的 "Only merge non-failing entries"） |
-| max_entries_to_build | 2 |
+| max_entries_to_build | 4 |
 | max_entries_to_merge | 1 |
 | min_entries_to_merge | 1 |
 | min_entries_to_merge_wait_minutes | 0 |
-| check_response_timeout_minutes | 90 |
+| check_response_timeout_minutes | 180 |
 
 REST API 的 merge_queue rule 参数名与上表逐字对应；GitHub 网页把
 `grouping_strategy: ALLGREEN` 呈现为 "Only merge non-failing entries"，
 两者是同一个开关的两种表达。
+
+2026-10-10：本表与 `scripts/ci/merge_queue_ruleset.py` 的 `MERGE_QUEUE_PARAMS` 已同步到线上
+（等待上限 90 → 180、并发构建 2 → 4；并发 4 早在 2026-09-21 已在线上，见 `parallel-prs.md`）。
+等待上限 180 分钟给最长的必需 job（`backend-platforms` / `backend-fast`，job 上限 90）留出
+排队与 Gate 调度的余量；抬任何必需 job 的 `timeout-minutes` 前先看这里，
+`tests/test_merge_queue_workflows.py` 要求二者相差 ≥30 分钟。
 
 ## 迁移后的最终 ruleset
 

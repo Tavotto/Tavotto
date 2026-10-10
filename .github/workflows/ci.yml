@@ -574,7 +574,8 @@ jobs:
     # job 在 merge_group 上会把队列堵死，而队列堵死时**所有** PR 都落不了地。
     # 2026-10-09 再抬到 90：main 自己的合并组每片已实测 46–59.5 分钟（run 37883555344 /
     # 37886523633），#817 加用例后两次合并组都在 60 分钟被取消、整组踢出。合并队列的
-    # check_response_timeout 是 180 分钟，90 仍在其内；拆片（#636）做完再收回。
+    # check_response_timeout 是 180 分钟（线上值，仓库里 scripts/ci/merge_queue_ruleset.py 已同步，
+    # 测试要求与 job 上限差 ≥30 分钟），90 仍在其内；拆片（#636）做完再收回。
     timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
@@ -687,7 +688,8 @@ jobs:
     # 平衡要等这次 3 片跑完的 junit artifact。
     # 2026-10-10 再抬到 90（与 backend-fast #894 同档）：Windows 3 片里单片已实测 55 分钟，
     # #919 的 windows-latest 2 在 60:16 被取消（run 38044245065），重跑才过。合并队列的
-    # check_response_timeout 是 180 分钟，90 仍在其内；拆片 / 重平衡权重（#636）做完再收回。
+    # check_response_timeout 是 180 分钟（线上值，仓库里 scripts/ci/merge_queue_ruleset.py 已同步，
+    # 测试要求与 job 上限差 ≥30 分钟），90 仍在其内；拆片 / 重平衡权重（#636）做完再收回。
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5

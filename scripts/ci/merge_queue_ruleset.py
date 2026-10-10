@@ -69,10 +69,12 @@ GATE_WORKFLOWS = (".github/workflows/ci.yml", ".github/workflows/codeql.yml")
 
 #: Merge Queue 参数（与 docs/ci/merge-queue-rollout.md 的表一致）。
 #: `grouping_strategy: ALLGREEN` 即 UI 上的「Only merge non-failing entries」。
+#: 2026-10-10 与线上 ruleset 21121430 对齐（等待上限 180、并发构建 4）；等待上限必须比
+#: CI Gate 闭包里最长的 job 上限多出 ≥30 分钟（tests/test_merge_queue_workflows.py 看住）。
 MERGE_QUEUE_PARAMS = {
-    "check_response_timeout_minutes": 90,
+    "check_response_timeout_minutes": 180,
     "grouping_strategy": "ALLGREEN",
-    "max_entries_to_build": 2,
+    "max_entries_to_build": 4,
     "max_entries_to_merge": 1,
     "merge_method": "SQUASH",
     "min_entries_to_merge": 1,
