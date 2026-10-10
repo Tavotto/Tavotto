@@ -530,3 +530,42 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 
 **对 PR5b 的依赖**：装后核验 `observed_*` 要对照的是装后的索引——`target_facts(use_cache=False)` 现在同一刻带 `layers` 与静态索引，装后再读即可；user_specified 预填确认走 `plan` 的 `origins`，本 PR 的 `unverified` / `module_origin_ambiguous` 条目就是它的输入（新增的来源未定情形：未建模钩子、被前面提供者遮蔽）。
 
+
+## 14. PR5b 实施记录（预填 + 用户确认 user_specified、装后核验、#931 #932）
+
+基线 `origin/main` `51d233cdd`（PR1–PR4、PR5a #930 已合入）。`risk:high`（改 `depplan` 判据、`impact_of` 与装后核验）。默认扫描零子进程（`projscan` 没接线，`test_project_scan_zero_exec.py` 未改且全绿）、不执行用户代码、不新增已发布错误码、不新增 `BLOCK_REASONS` / `ORIGIN_REASONS`。
+
+**维护者裁决 C1（#864 关闭）：预填 + 用户确认。**
+
+* `depresolve.suggest_distribution(import_name)`：规范化的 import 名，或 `""`。**唯一出处**，复用现有表（`CURATED` 的 import 名与包名、`SAME_NAME`、`ALTERNATIVE_DISTRIBUTIONS`、标准库名表、`parse_requirement` 的包名语法），**没有新表**。撞表的（`pil` / `Yaml` / `CV2` 这类大小写变体、`pillow` 这类 curated 包名、`scikit_learn`、`opencv_python`）、标准库、`_private` 不给预填。
+* `depplan._specifiable`：只有「纯粹的表外名」才有预填、也才能被用户指定——bucket=unknown、没有可信安装名、`resolution_status=unresolved`、`reason=distribution_unresolved`（没有任何已装发行包声称提供它、模块不是「在而无元数据」）、PR3 覆盖度缓存没说它 `found` / `import_error`、静态索引名字层读全。预填放在 `origins[].suggested_distribution`（可选字段，没有就是不给），**不是**可信来源：不进 `missing` / `requirements` / `INSTALLABLE_SOURCES`，不自动装。
+* 提交：`POST /api/engine/dependencies/plan {user_specified: {import 名: "包名[约束]"}}` → `deprepair.create_joint_plan(user_specified=)` → `depplan.plan(user_specified=)`。包名与约束过 `depresolve.from_user_input` 的严格语法并从解析结构重新序列化（`parse_intent` → `requirement_string`，原文不进 argv）；不是 `_specifiable` 的 import（不在脚本里 / 有 curated 名 / 环境已有提供者 / 本地模块）整份拒绝——语法错 `package_requirement_invalid`、资格不符 `dependency_install_not_allowed`（两个都是既有码），不静默丢弃。收下的那些离开 `unknown` / `origins`，作为 `resolution_source=user_specified` 的条目进 `missing` 与 `requirements`，并列在 `JointPlan.user_specified`（`verified_source=false`）。hash 模式（锁文件语义）下它没有 hash，整份 `dependency_hashes_incomplete`（复用既有理由）。只能装到受管环境或项目 `.venv`（`TARGETS` 闭集不变，bundled 永不是目标，用例钉着）。
+* 披露：`impact["user_specified"] = [{import_name, requirement, trust: "user_specified_unverified"}]`。**`IMPACT_VERSION` 1 → 2**：这是新的一类影响（装的包名不是 Tavotto 解析出来的），旧同意不覆盖它；摘要含该字段（用例：去掉字段 / 版本 1 的形状摘要都对不上；换版本约束摘要就变，旧同意过不了 `dependency_impact_changed`）。没有用户指定包时字段为空表。任务诊断白名单投影只数个数，不出包名（用例钉着）。
+* 私有 Python 替身重算（`_replan_on_base`）把 `user_specified` 再交给 `depplan.plan`，否则重算出的 pip 输入少一条（用例钉着）；重算时该 import 不再是表外名 → `repair_plan_stale`。
+
+**装后「发行包与版本」核验（所有联合安装，不只 user_specified）**
+
+`deprepair._verify_distributions`，紧跟 `_verify_imports`：受管换代（`_run_generation`，联合 / 单包 / 重建 / 包管理首装同走）与用户 venv 原地（`_run_joint_in_place`）两处。`depplan.target_facts(use_cache=False)` + 同一刻读的 `static_index` 重读（`distmeta` 的 `Index.lookup` 与 `facts.installed`，不再写一份解析），核对：①计划里每个要装的发行包（`requirements`）已出现、版本满足自己与 `constraints` 的约束；②`record` 里每个 (import, 发行包) 的发行包确实在 import 的未被遮蔽候选里。不一致 = `dependency_import_still_failed`（既有码，`extra["imports"]` 是 `DIST_*` 原因码闭集：`distribution_not_installed` / `_version_mismatch` / `_does_not_provide_import` / `_unverifiable`）；受管环境这一代标 incomplete、旧代保留，用户 venv 就地安装不可完整回滚照旧披露（`rollback=none_partial_changes_possible`，失败后包仍在，用例钉着）。判不出就别判：非用户指定的 import 没有任何发行包认领 / 读不出事实 = 跳过第②项；用户指定的包读不出它提供什么就不放行。
+
+**#931**：`distmeta._list_root` 对 `.pth` 链接在 `root.pth` 为假（Python 不处理这一层）时不进 refuse。**#932**：①`_probe_shape` 的包初始化文件改 `_is_init_file`，按目标 `EXTENSION_SUFFIXES` 判（没量到后缀才退回宽松正则）；②`depplan.provider_digest`（计划用到的 import 名在静态索引各层的提供状态：`Index.name_state`）进 `JointRepairPlan.names_digest` / `install_names_digest`，`prepare` 重量事实后再比，不一致 `repair_plan_stale`。选择「只记计划用到的名字」而不是把整层名字并入层指纹：无关包的安装不应让计划过期（与 `layer_digest` 的取舍同向）。
+
+**测试**：`tests/test_import_origin_user_specified.py`（预填 / 提交 / 绑定与披露 / 核验单元 / 真安装端到端（本地 wheelhouse，离线，真 `create_joint_plan` → `prepare`）/ #931 / #932 / 前端镜像）。端到端覆盖：预填不自动装；确认后装上并核验通过；用户填错包名（装上的包不提供该 import）→ 失败、旧代保留；包只是把目标 import 作为传递依赖拉进来（导入验证过、发行包核验不过）→ 失败；版本观测不满足 → 失败；项目 venv 原地装与失败披露；非 user_specified 的安装被后出现的遮蔽模块判不一致；bundled 不可作目标。变异反证见 PR 正文。
+
+**同源对**：`TRUST_USER_SPECIFIED_UNVERIFIED` / `impact.user_specified` / `origins[].suggested_distribution` / `JointPlan.user_specified` / 请求字段 `user_specified` ↔ `web/src/lib/api.ts`（`DependencyImpact.user_specified`、`JointUserSpecified`、`JointOrigin.suggested_distribution`、`createJointDependencyPlan` 的 `user_specified`），登记在 `same-origin-pairs.md`，看护 `TestFrontendMirror`。**组件一个没改**（确认界面归 PR6）。
+
+**仍未覆盖 / 取舍**
+
+* `provider_digest` 只覆盖 `distmeta` 读得到的名字（目录清单、dist-info、`.pth` editable finder）；zip / egg 里的名字静态读不到（`opaque_roots>0` 时名字层本就判不完整）。
+* 版本核验的对照是 `facts.installed`（`importlib.metadata`）与 `Candidate.version`；真的「装出不满足约束的版本」pip 自己会拒绝，所以端到端的版本失败用「装后观测读数不满足」模拟，真实版本不满足由单元用例直接钉。
+* 非 user_specified 的 import 没有任何发行包认领它时不判不一致（没有证据 ≠ 不一致，导入验证已过）；只有用户指定的包按严格口径。
+* 预填依赖静态索引读全：`Index.names_complete=False`（层读不全）一律不预填；环境没有索引（替身事实）时可以预填。
+* 本机无法验证真 Windows 的 `sys.path` / 路径形态；用例不写死路径，符号链接用例在 Windows 跳过。
+* `tests/test_dependency_repair_e2e.py::test_golden_path_install_into_the_project_venv` 在 `origin/main` 的干净 worktree 上同样红（导出阶段 `backend_unavailable`，字体环境），与本 PR 无关。
+
+**对 PR6 的后端事实清单**
+
+1. 预填来自联合计划（`GET /api/engine/dependencies` 的 `offer.plan.origins[]`，以及 `POST …/plan` 的 409 `joint`）：条目带 `suggested_distribution` 才给输入框初始值。**只有带这个字段的那类 import 后端才收 `user_specified`**——别的来源未定的 import（editable / 本地 / Conda / 多发行包 / 导入失败 / 已有提供者）提交会被 `dependency_install_not_allowed` 拒绝，界面不要给它们输入框。
+2. 提交：`createJointDependencyPlan({script, target?, user_specified: {import 名: "包名[约束]"}})`；错误码 `package_requirement_invalid`（语法）/ `dependency_install_not_allowed`（资格）。
+3. 返回的 `plan.impact.user_specified[]` 必须在确认页标注「用户指定、未经可信来源核实」（`trust` 恒为 `user_specified_unverified`），`plan.joint.user_specified[]` 有 `requirement`；`impact_digest` 照常回显给 `/prepare`。`IMPACT_VERSION=2`。
+4. 失败：装后核验失败是 `dependency_import_still_failed`，进度终态 `error` 文案带「`名字: 原因码`」（`DIST_*` 闭集）；结构化的 `extra["imports"]` 只在后端异常上、不进进度——PR6 若要按原因码分别说人话，需要后端把它带进终态（不是新错误码），**本 PR 没做**。
+5. 同一个 import 被用户接受后离开 `unknown` / `origins`，出现在 `missing`（`resolution_source=user_specified`）与 `joint.user_specified`；刷新后的 offer 里它又回到 `origins`（预填不是持久状态）。
