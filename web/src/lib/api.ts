@@ -2920,7 +2920,8 @@ export type ServerEvent =
       script: string
       index: number
       prompt: string
-      answer: string
+      /** 敏感运行 / 口令：后端不带答案明文（`null`），界面只说「已自动回填」 */
+      answer: string | null
     } & ProjectScoped)
   /**
    * 注册表变了。**一次刷新一条事件**（后端统一刷新服务批量发布，不为十几个
@@ -3615,7 +3616,7 @@ export interface ProjectEnvFailure {
    * `code === 'environment_confirmation_required'`（ADR 0114）：项目自己的环境体检通过、缺的包也在里面——
    * 这是建议不是决定，用户点一次才采用（候选按钮用 `candidates`）。路径不在公开投影里。
    */
-  recommended?: { venv: string; id?: string; generation?: string }
+  recommended?: { venv: string; id?: string; generation?: string; script?: string }
 }
 
 /** 一个系统解释器的体检结论（只有结论字段，没有体检脚本的原始输出） */

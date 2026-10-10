@@ -203,6 +203,37 @@ class TestMutualExclusion:
         assert back.status == "blocked"
         assert back.blocked[-1]["conflicts"][0]["installed_for"] == "b"
 
+    def test_the_new_ledger_commits_in_the_same_manifest_write_as_the_new_generation(
+        self, two_scopes, monkeypatch
+    ):
+        """补审 #911 r4236706759：换代与换账是同一次 manifest 提交。逐次截下 manifest 的每一次写：只要某次写里
+        `active` 已是新一代，同一份数据里的账就必须已经是 B 的——否则在两次写之间进程终止 / 第二次写失败，
+        下一次重建会把用户明确换走的 A 的包又装回去。"""
+        project = two_scopes
+        old_gen = managedenv.active_generation(project)
+        seen: list[tuple[str, set[str]]] = []
+        real_write = managedenv.write_manifest
+
+        def spy(proj, data, **kw):
+            scopes = {e.get("scope", "") for e in data.get("installed_by_tavotto") or []}
+            seen.append((str(data.get("active")), scopes))
+            return real_write(proj, data, **kw)
+
+        monkeypatch.setattr(managedenv, "write_manifest", spy)
+        offer = deprepair.preparation_offer(project, "b/figure.py")
+        got = deprepair.start_confirmed(
+            project,
+            "b/figure.py",
+            offer["scope_switch"]["impact_digest"],
+            scope_policy=deprepair.SCOPE_POLICY_SWITCH,
+        )
+        assert wait_for(got["plan_id"])["state"] == deprepair.STATE_DONE
+        new_gen = managedenv.active_generation(project)
+        assert new_gen != old_gen
+        on_new = [scopes for active, scopes in seen if active == new_gen]
+        assert on_new, "新一代从未出现在 manifest 的写入里"
+        assert all(scopes == {"b"} for scopes in on_new), on_new  # 没有「新 active + 旧账」的中间态
+
     def test_a_failed_switch_leaves_the_active_generation_and_the_ledger_alone(self, two_scopes):
         project = two_scopes
         active = managedenv.active_generation(project)

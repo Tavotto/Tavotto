@@ -340,6 +340,39 @@ def test_a_probe_registration_remembers_the_table_it_ran_under(tmp_path, monkeyp
     assert inputremap.registration_stale(root, "fig.py")
 
 
+def test_a_parameterized_probe_only_marks_its_own_variant_as_current(tmp_path, monkeypatch):
+    """Codex 评 #909 补审 P2：带 argv 的试运行只跑了这一份配置——不许把无参数登记与没有自己标记的别的变体
+    也标成已对账，否则改指后它们渲染时跳过重新登记，注册表里留着按旧表算出的图名。"""
+    from tavotto.engine import discover, probe as engine_probe
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    inputremap.record_registration(root, "fig.py")  # 无参数登记：空表
+    inputremap.record_registration(root, "fig.py", "rc_b")
+    inputremap.add_rule(root, {"kind": P, "from": "", "to": str(tmp_path)})
+    assert inputremap.registration_stale(root, "fig.py")
+    monkeypatch.setattr(discover, "register", lambda *a, **k: None)
+    monkeypatch.setattr(engine_probe.registry, "load", lambda *a, **k: None)
+    result = {
+        "script": "fig.py",
+        "entry": "__main__",
+        "stems": ["fig"],
+        "run_config": "rc_a",
+        "remap_generation": inputremap.generation(root),
+    }
+    assert engine_probe.register_probed(root, "fig.py", result)["registered"] is True
+    assert not inputremap.registration_stale(root, "fig.py", "rc_a")
+    assert inputremap.registration_stale(root, "fig.py")  # 无参数那一份没被跑过
+    assert inputremap.registration_stale(root, "fig.py", "rc_b")
+    assert inputremap.registration_stale(
+        root, "fig.py", "rc_c"
+    )  # 没有自己标记的变体回落到脚本级：仍过期
+    # 真正的无参数试运行照旧标脚本级
+    result.pop("run_config")
+    assert engine_probe.register_probed(root, "fig.py", result)["registered"] is True
+    assert not inputremap.registration_stale(root, "fig.py")
+
+
 def test_a_pooled_session_from_an_older_table_is_not_reused(tmp_path):
     root = tmp_path / "proj"
     root.mkdir()

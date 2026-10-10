@@ -1983,6 +1983,17 @@ describe('visible export recovery', () => {
     expect(document.querySelector('[data-export-cancel-error]')).toBeNull()
   })
 
+  it('offers the task diagnostic when every requested output failed (failed with nonempty outputs)', async () => {
+    initI18n('en-US')
+    await setup(9)
+    const failedOut = (format: string) => ({ format, name: null, url: null, bytes: null, dimensions: null, vector: false, status: 'failed', replaced: false, error: { code: 'format_failed', params: {}, recoverable: true } })
+    globalThis.fetch = vi.fn(async () => response({ job_id: 'allfail1', status: 'failed', outputs: [failedOut('pdf'), failedOut('png')], warnings: [], conflicts: [], export_dir: '/out', error: { code: 'format_failed', params: {}, recoverable: true } })) as typeof fetch
+    await act(async () => { await runExport(input()) })
+    expect(document.querySelector('[data-export-failed]')).toBeNull() // 走的是逐项结果分支
+    expect(document.querySelectorAll('[data-export-result] p.text-danger-content').length).toBe(2)
+    expect(document.querySelector('[data-task-diagnostic][data-task-diagnostic-kind="export"]')).toBeTruthy()
+  })
+
   it('disables repeated cancellation before and after acknowledgement without claiming completion', async () => {
     initI18n('en-US')
     await setup(9)

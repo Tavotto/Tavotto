@@ -231,7 +231,21 @@ describe('环境建议的错误路径', () => {
     const button = document.querySelector<HTMLButtonElement>('[data-env-candidate="cand-1"]')!
     expect(button).not.toBeNull()
     await act(async () => button.click())
-    expect(adoptEnvironmentCandidate).toHaveBeenCalledExactlyOnceWith({ id: 'cand-1', generation: 'gen-displayed' }, undefined)
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledExactlyOnceWith({ id: 'cand-1', generation: 'gen-displayed' }, undefined, 'adjustText')
+  })
+
+  it('采用建议时回传发现它的脚本与缺的包（脚本在子目录、venv 也在子目录时才找得到候选）', async () => {
+    vi.mocked(adoptEnvironmentCandidate).mockClear()
+    vi.mocked(adoptEnvironmentCandidate).mockResolvedValue({ ok: true, project: { open: true } as never })
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<MissingDependencyCard module="adjustText" projectEnv={{
+      code: 'environment_confirmation_required', module: 'adjustText', venv: 'subdir/.venv',
+      candidates: ['subdir/.venv'], python_version: '3.13',
+      recommended: { venv: 'subdir/.venv', id: 'cand-1', generation: 'gen-displayed', script: 'subdir/plot.py' },
+    }} />)
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-env-candidate="cand-1"]')!.click())
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledExactlyOnceWith(
+      { id: 'cand-1', generation: 'gen-displayed' }, 'subdir/plot.py', 'adjustText')
   })
 })
 

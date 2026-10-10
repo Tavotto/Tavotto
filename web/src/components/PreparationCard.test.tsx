@@ -1158,6 +1158,24 @@ describe('结果对话框记录的是它刚加进画布的那个面板', () => {
   })
 })
 
+describe('进入编辑：清单请求在途时连点', () => {
+  it('两次点击各自等到清单之后，同一张图只加一个面板（补审 #914 r4236701619）', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    let release!: () => void
+    const loading = new Promise<void>((r) => (release = r)) // 两次点击等同一个在途请求
+    useRuntimeAssetStore.setState({ assets: [], loadAssets: () => loading })
+    const button = primary()!
+    await act(async () => {
+      button.click()
+      button.click()
+    })
+    await act(async () => release())
+    expect(vi.mocked(addRuntimePanelToCanvas)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(openFastEdit)).toHaveBeenCalledWith('runtime:plot.py#a')
+  })
+})
+
 describe('进入编辑：挂起期间换了项目，续延整个丢弃', () => {
   it('loadAssets 之后项目已换：不把 A 的面板加进 B 的版面，也不打开编辑、不记录', async () => {
     await mount()

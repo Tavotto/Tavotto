@@ -658,6 +658,7 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
                         "venv": _project_relative(detail.get("venv", "")),
                         "id": (detail.get("recommended") or {}).get("id", ""),
                         "generation": (detail.get("recommended") or {}).get("generation", ""),
+                        "script": (detail.get("recommended") or {}).get("script", ""),
                     }
                 }
                 if detail.get("code") == engine_projectenv.ERROR_CONFIRMATION_REQUIRED
@@ -7800,31 +7801,18 @@ def _set_project_environment(
             ), 409
     health: dict | None = None
     if user_environment:
-        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回，
-        # 并按此刻的计划**重新**量一次装没装齐——「还被发现得到」不等于「还装齐」（弹窗开着期间环境变了，
-        # 或交回的是界面上本就不可选的那种；Codex #522 P2）。这一次复核就是体检，下面不再起第二次
-        try:
-            entry = engine_deprepair.recheck_user_environment(root, script, user_environment)
-        except engine_pool.WorkerError as exc:
-            return jsonify({"error": str(exc), "code": exc.code}), 409
-        if entry is None:
+        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回。
+        # 这里只换路径；按此刻的计划**重新**量一次装没装齐（弹窗开着期间环境变了，或交回的是界面上本就不可选的
+        # 那种；Codex #522 P2）是体检，必须在下面 `envlease.inspecting` 租约**里**做——在租约外量，量到的可能是
+        # 别的项目正在原地安装的半成品，量完到提交之间环境还会再变（Codex #919 r4237134569）
+        raw = engine_deprepair.user_environment_python(root, script, user_environment) or ""
+        if not raw:
             return jsonify(
                 {
                     "error": "这个 Python 环境已经找不到了，请重新检查",
                     "code": "user_environment_gone",
                 }
             ), 400
-        if entry["ok"] and not entry["satisfies"]:
-            packages = ", ".join(entry["missing"])
-            return jsonify(
-                {
-                    "error": f"这个 Python 环境里还缺 {packages}，请重新检查",
-                    "code": "user_environment_incomplete",
-                    "params": {"packages": packages},
-                }
-            ), 400
-        raw = entry["python"]
-        health = entry
     if not raw:
         # 清掉 = 用户明确选回默认链条（U03，FO-013）：记成一条决定，而不是「忘了」——
         # 忘了的话下一次首开又会把项目 venv 发现出来、盖掉这次的选择。
@@ -7861,43 +7849,67 @@ def _set_project_environment(
                 "params": {"path": str(candidate)},
             }
         ), 400
-    if health is None:
-        health = engine_projectenv.probe_environment(str(candidate), module or None)
-    if not health.get("ok"):
-        return jsonify(
-            {
-                "error": _project_env_message(health),
-                "code": health.get("code", ""),
-                "params": {
-                    "path": _project_relative(str(candidate)),
-                    "python_version": health.get("python_version", ""),
-                },
-            }
-        ), 400
     # 采用与依赖安装互斥（T06）：安装结束会把结果记成项目的环境，与这里的写入交错，后写的静默盖掉先写的。
-    # 目标环境本身正被改动（别的项目的原地安装）时它的体检也是瞬时的，一并拒绝
-    if engine_envlease.is_mutating(str(candidate)):
-        return _environment_busy(
-            engine_envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
-        )
+    # 目标环境本身正被改动（别的项目的原地安装）时它的体检也是瞬时的：体检 + 提交整段占住目标环境
+    # （`envlease.inspecting`），与 `envadvice.adopt_candidate` 同一条（Codex 评 #915 补审 P2）
     try:
-        saved = engine_deprepair.unless_installing(
-            root,
-            lambda: engine_projectenv.remember(
+        with engine_envlease.inspecting(str(candidate)):
+            if user_environment:
+                try:
+                    entry = engine_deprepair.recheck_user_environment(
+                        root, script, user_environment
+                    )
+                except engine_pool.WorkerError as exc:
+                    return jsonify({"error": str(exc), "code": exc.code}), 409
+                if entry is None or engine_envlease.env_key_of(
+                    entry["python"]
+                ) != engine_envlease.env_key_of(str(candidate)):
+                    return jsonify(
+                        {
+                            "error": "这个 Python 环境已经找不到了，请重新检查",
+                            "code": "user_environment_gone",
+                        }
+                    ), 400
+                if entry["ok"] and not entry["satisfies"]:
+                    packages = ", ".join(entry["missing"])
+                    return jsonify(
+                        {
+                            "error": f"这个 Python 环境里还缺 {packages}，请重新检查",
+                            "code": "user_environment_incomplete",
+                            "params": {"packages": packages},
+                        }
+                    ), 400
+                health = entry
+            if health is None:
+                health = engine_projectenv.probe_environment(str(candidate), module or None)
+            if not health.get("ok"):
+                return jsonify(
+                    {
+                        "error": _project_env_message(health),
+                        "code": health.get("code", ""),
+                        "params": {
+                            "path": _project_relative(str(candidate)),
+                            "python_version": health.get("python_version", ""),
+                        },
+                    }
+                ), 400
+            saved = engine_deprepair.unless_installing(
                 root,
-                str(candidate),
-                automatic=False,
-                trigger=(
-                    engine_deprepair.TRIGGER_USER_ENVIRONMENT
-                    if user_environment
-                    else "missing_dependency"
-                    if module
-                    else "user_selected"
+                lambda: engine_projectenv.remember(
+                    root,
+                    str(candidate),
+                    automatic=False,
+                    trigger=(
+                        engine_deprepair.TRIGGER_USER_ENVIRONMENT
+                        if user_environment
+                        else "missing_dependency"
+                        if module
+                        else "user_selected"
+                    ),
+                    module=module,
+                    health=health,
                 ),
-                module=module,
-                health=health,
-            ),
-        )
+            )
     except engine_envlease.EnvironmentBusy as exc:
         return _environment_busy(exc)
     if not saved:

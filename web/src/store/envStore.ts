@@ -67,7 +67,11 @@ interface EnvState {
     includeLoginShell?: boolean
   }) => Promise<string | null>
   cancelEnvironmentCheck: () => Promise<void>
-  adoptCandidate: (candidate: Pick<EnvCandidate, 'id' | 'generation'>, script?: string) => Promise<string | null>
+  adoptCandidate: (
+    candidate: Pick<EnvCandidate, 'id' | 'generation'>,
+    script?: string,
+    module?: string,
+  ) => Promise<string | null>
   /**
    * 切当前项目 safe worker 的工作目录模式（ADR 0047）。开到 `project` 要先
    * 确认一次——文案与机制逐条一致：相对路径读得到、相对路径写的文件落进项目、
@@ -535,10 +539,10 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     }
   },
 
-  adoptCandidate: async (candidate, script) => {
+  adoptCandidate: async (candidate, script, module) => {
     const epoch = projectEpoch
     try {
-      const res = await adoptEnvironmentCandidate(candidate, script)
+      const res = await adoptEnvironmentCandidate(candidate, script, module)
       // 采用记在 A 上；B 的环境状态、面板与建议一个都不动
       if (epoch !== projectEpoch) return null
       const env = get().env

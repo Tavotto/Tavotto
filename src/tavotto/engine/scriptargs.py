@@ -429,6 +429,10 @@ class _Scanner(ast.NodeVisitor):
             owner = self._resolve(func.value)
             if owner is not None:
                 self._add_argument(owner[0], owner[1], node)
+            else:
+                # 接收者认不出是哪个 parser（辅助函数里的形参、别名、容器里取出来的……）：这一处声明了什么看不见，
+                # 不能报成「完整、零参数」（Codex 评 #912 补审 P2）
+                self.reasons.add("dynamic_add_argument")
         elif func.attr == "add_subparsers":
             owner = self._resolve(func.value)
             if owner is not None:

@@ -80,7 +80,8 @@ def ident(value) -> str | None:
 
 
 def digest(value) -> str | None:
-    """文档修订这类十六进制摘要（前端按请求结构算的 64 位 FNV，不含任何原文）。"""
+    """安装影响摘要这类十六进制摘要（`deprepair.impact_digest`：对计划影响的 sha256，不含原文）。
+    **不用于**整份画布载荷的摘要——导出的 `document_revision` 是无密钥 FNV，短标题可被离线猜出，不出门。"""
     return value if isinstance(value, str) and _HEX.fullmatch(value) else None
 
 

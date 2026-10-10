@@ -211,3 +211,29 @@ def test_mcp_adoption_runs_the_figure_in_exactly_the_chosen_environment(tmp_path
     assert engine_pool.same_python(worker.python, venv_python)
     ident = envworld.python_identity(venv_python)
     assert Path(ident["prefix"]).resolve() == (root / ".venv").resolve()
+
+
+@needs_worker
+def test_mcp_missing_dependency_error_carries_the_environment_recommendation(tmp_path, monkeypatch):
+    """补审 #911 r4236706754（#818 已修，这里钉住）：脚本的包在内置 runtime 里缺、项目 venv 里有——确认模式下
+    `pool.try_project_env` 只给建议（`WorkerError.project_env`），桥必须把候选 id + 环境代与回答方式
+    （`adopt_environment`）带进 MCP 错误，而不是只剩一个没有出路的 `missing_dependency`。"""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "fig.py").write_text("import matplotlib\n", encoding="utf-8")
+    real_venv(root, ".venv", python=WORKER_PY)
+    monkeypatch.setenv(bridge.ROOTS_ENV, str(tmp_path))
+    outcome = engine_pool.try_project_env(str(root), "fig.py", "matplotlib")
+    assert outcome["code"] == projectenv.ERROR_CONFIRMATION_REQUIRED
+    exc = engine_pool.WorkerError("missing", code="missing_dependency", module="matplotlib")
+    exc.project_env = outcome
+    err = bridge._bridge_error_from_worker(exc, project=str(root), script="fig.py")
+    payload = err.payload()
+    assert payload["code"] == "missing_dependency"
+    row = next(c for c in payload["environment"]["candidates"] if c["generation"])
+    assert row["id"] and row["python_relative"] == envworld.venv_rel(".venv")
+    assert "adopt_environment" in payload["recovery"]
+    assert any(
+        r["kind"] == "environment_choice" and r["answer_with"] == "adopt_environment"
+        for r in payload["requirements"]
+    )

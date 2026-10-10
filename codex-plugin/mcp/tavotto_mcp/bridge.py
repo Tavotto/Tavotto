@@ -31,10 +31,11 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unwrap, urlsplit
 
 from tavotto.engine import (
     artifactcheck as engine_artifactcheck,
@@ -287,6 +288,43 @@ def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str 
     return real
 
 
+#: 本地文件 URI：`urllib.request.urlopen('file:///etc/passwd')` / `Path.from_uri` 把它读成本机路径，而它在桥眼里
+#: 不是绝对路径、会被拼到 cwd 下当成根内相对值放行。
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf", "Zs", "Zl", "Zp"})
+
+
+def _file_uri_shape(value: str) -> str:
+    """把 token 压成「任何解析器都可能读成本机文件 URI」的保守形状：NFKC、去掉一切空白与 Cc/Cf/Zs/Zl/Zp
+    字符（不只首尾）、casefold，再反复剥 `<` / `url:` / `>` 直到稳定。"""
+    text = unicodedata.normalize("NFKC", value)
+    text = "".join(
+        c for c in text if not c.isspace() and unicodedata.category(c) not in _INVISIBLE_CATEGORIES
+    )
+    text = text.casefold()
+    while True:
+        before = text
+        text = text.lstrip("<").removeprefix("url:").rstrip(">")
+        if text == before:
+            return text
+
+
+def _is_file_uri(value: str) -> bool:
+    """argv 里任何一个 Python 的任何解析器可能读成本机文件 URI 的 token 一律拒。
+
+    不手写某个解析器的字符表（urllib 的 `unwrap` 剥 Unicode 空白、`urlsplit` 去 tab/换行、3.13+ 去首部 C0，
+    桥与脚本还可能不是同一个 Python）：先用保守形状判定，再让真实解析器兜底。宁可误拒（去掉不可见字符后碰巧
+    形如 `file:` 的合法值），也不放过——这是范围守卫，失败封闭（Codex #818 r4236702940 / #919 r4237102130 / r4237122421）。"""
+    if _file_uri_shape(value).startswith("file:"):
+        return True
+    for make in (lambda v: v, unwrap, lambda v: unwrap(v.strip())):
+        try:
+            if urlsplit(make(value)).scheme.lower() == "file":
+                return True
+        except ValueError:
+            return True
+    return False
+
+
 _ENV_EXPANSION_RE = re.compile(r"\$[A-Za-z0-9_{]|%[^%\s]+%")
 _TILDE_USER_RE = re.compile(r"~[^/\\]")
 
@@ -304,6 +342,10 @@ def _argv_path_escapes(
     已存在祖先之后）、再用和绝对路径同一个根检查。数字 / 普通单词拼出来是 cwd 下不存在的名字，
     天然在根内、照常放行；只有真的经符号链接或 `..` 走出根的才被拒。cwd 是会话沙盒（`cwds is None`）时
     沙盒是空的新目录，相对值只剩 `..` 能出去，仍按文字拒。"""
+    if value and _is_file_uri(value):
+        # `file:` URI 的落点由脚本的 URL 处理决定（含 `file://host/…`、`file:/…`、`file:rel`），桥不推断：
+        # 失败封闭，MCP 来源的 argv 里一律拒。用户要读项目外的文件请在 Tavotto 窗口里自己输入参数
+        return value
     if not value or "\0" in value:
         return None
     if _is_response_file_ref(value, prefixes):

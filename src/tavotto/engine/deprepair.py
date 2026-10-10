@@ -4726,9 +4726,31 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             code=ERROR_CANCELLED,
             result={"generation": generation, "activated": False},
         )
+    installed = _versions_of(python, [r["distribution"] for r in job.record])
+    scope = scope_of(job.script) if job.script else ""
+
+    def ledger_fields(rec: dict) -> dict:
+        return {
+            "import_name": str(rec.get("import_name") or ""),
+            "distribution": str(rec["distribution"]),
+            "requested_specifier": str(rec.get("specifier") or ""),
+            "resolved_version": installed.get(
+                depresolve.normalize_distribution(str(rec["distribution"])), ""
+            ),
+            "reason": job.reason,
+            # 这笔是为哪个作用域（脚本所在目录）装的：之后别的作用域的声明与它互斥时能认出来（D04）
+            "scope": scope,
+        }
+
     try:
         managedenv.activate(
-            project, generation, python_version=managedenv.python_version_of(python)
+            project,
+            generation,
+            python_version=managedenv.python_version_of(python),
+            # 「换成本作用域」：新账（只含本作用域这一笔集合）与 active 同一次 manifest 提交落盘
+            ledger=[managedenv.ledger_entry(**ledger_fields(r)) for r in job.record]
+            if job.replace_ledger
+            else None,
         )
     except OSError as exc:
         # 清单没落盘 = 没切：撤回「已提交」，这一代按 incomplete 记（尽力而为），如实报失败
@@ -4740,23 +4762,9 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         raise RepairError(ERROR_MANAGED_WRITE_FAILED, f"环境清单写入失败: {exc}") from exc
     # 这一代装完之后的 freeze 快照：修复时的对照（不是回滚，ADR 0038）
     managedenv.record_snapshot(project, f"after-{job.label}", _freeze(python))
-    installed = _versions_of(python, [r["distribution"] for r in job.record])
-    if job.replace_ledger:
-        # 「换成本作用域」：新一代只装了本作用域的集合，账要如实反映（否则重建会把别的作用域的包又装回去）
-        managedenv.replace_ledger(project)
-    for rec in job.record:
-        managedenv.record_install(
-            project,
-            import_name=str(rec.get("import_name") or ""),
-            distribution=str(rec["distribution"]),
-            requested_specifier=str(rec.get("specifier") or ""),
-            resolved_version=installed.get(
-                depresolve.normalize_distribution(str(rec["distribution"])), ""
-            ),
-            reason=job.reason,
-            # 这笔是为哪个作用域（脚本所在目录）装的：之后别的作用域的声明与它互斥时能认出来（D04）
-            scope=scope_of(job.script) if job.script else "",
-        )
+    if not job.replace_ledger:
+        for rec in job.record:
+            managedenv.record_install(project, **ledger_fields(rec))
     health = projectenv.probe_environment(python)
     projectenv.remember(
         project,
@@ -5271,6 +5279,19 @@ def user_environment_candidates(
         seen.add(key)
         uniq.append(c)
     return uniq
+
+
+def user_environment_python(project: str | Path, script: str, env_id: str) -> str | None:
+    """界面交回的 id → 本机发现结果里的解释器路径（只换路径，不体检）；找不到回 None。"""
+    cand = next(
+        (
+            c
+            for c in user_environment_candidates(str(Path(project)), script)
+            if userenvs.env_id(c["python"]) == env_id
+        ),
+        None,
+    )
+    return cand["python"] if cand else None
 
 
 def recheck_user_environment(project: str | Path, script: str, env_id: str) -> dict | None:

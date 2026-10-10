@@ -135,7 +135,7 @@ describe('采用：绑定候选身份与环境代', () => {
     const error = await useEnvStore.getState().adoptCandidate(pick, 'fig.py')
 
     expect(error).toBeNull()
-    expect(adoptEnvironmentCandidate).toHaveBeenCalledWith(pick, 'fig.py')
+    expect(adoptEnvironmentCandidate).toHaveBeenCalledWith(pick, 'fig.py', undefined)
     expect(useEnvStore.getState().env?.project?.consent).toBe('confirmed')
   })
 

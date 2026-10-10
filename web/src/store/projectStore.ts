@@ -239,6 +239,12 @@ async function resetForNewProject() {
   // ——那些进程是他自己在终端里起的，切个项目不该杀掉它们（ADR 0021 §14）。
   // 切回去时 refresh() 会把它们重新对上账。
   useNativeSessionStore.getState().clear()
+  // 准备会话（T09）：报告、订阅、轮询与迟到响应都属于旧项目，换代丢掉；**后端什么都不取消**——用户的执行与已授权的
+  // 安装照常跑完，切回来重新打开时会话复用（同一目标同一份会话）。
+  // **必须排在环境重置之前**：`resetProject()` 清掉 workdir / Python 字段会同步触发准备 store 对环境的订阅
+  // （`recheckIdle`），旧条目还在的话就会对离开的项目发出 recheck 请求，响应再被丢掉——切项目应当零请求
+  // （Codex 评 #914 补审 P2）
+  useProjectPreparationStore.getState().clear()
   // 项目环境 / 工作目录模式是项目级的（ADR 0018 / 0045）：清掉旧项目的，按新
   // 项目重取——否则开关与错误块的建议说的是上一个项目的模式
   useEnvStore.getState().resetProject()
@@ -266,9 +272,6 @@ async function resetForNewProject() {
   // 导入即扫描（T02）：快照与「条被关掉」都属于旧项目；在途的补拉按换代失去落地资格。
   // **后端那一笔账不取消**——它在项目关闭时才收；切回来时 `start()` 会复用或增量重扫
   useProjectScanStore.getState().clear()
-  // 准备会话（T09）：报告、订阅、轮询与迟到响应都属于旧项目，换代丢掉；**后端什么都不取消**——用户的执行与已授权的
-  // 安装照常跑完，切回来重新打开时会话复用（同一目标同一份会话）
-  useProjectPreparationStore.getState().clear()
   // 引导卡（T13b）属于旧项目：收起；新项目要不要自动弹由它自己的扫描与本机标记决定
   useUiStore.getState().setGuideCard('closed')
   // 导出作业的**前端状态**跟着丢：结果里的 `/exports/<name>` 是裸路径，
