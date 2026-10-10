@@ -139,6 +139,9 @@ def _fake_probe(by_rel: dict[str, dict], seen: list | None = None):
         if seen is not None:
             seen.append((python, dict(k)))
         for rel, health in by_rel.items():
+            # 预设按 POSIX 布局写（`.venv/bin/python`）；Windows 上同一个 venv 是 `.venv/Scripts/python.exe`
+            if os.name == "nt":
+                rel = rel.replace("/bin/python", "/Scripts/python.exe")
             if python.replace("\\", "/").endswith(rel):
                 mods = tuple(k.get("modules") or ())
                 h = dict(health)
