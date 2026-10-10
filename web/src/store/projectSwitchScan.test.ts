@@ -76,7 +76,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   useProjectScanStore.getState().clear()
-  useUiStore.setState({ scanPanelOpen: false })
+  useUiStore.setState({ guideCard: 'closed' })
 })
 
 describe('统一认领完成后开始扫描', () => {
@@ -96,11 +96,11 @@ describe('统一认领完成后开始扫描', () => {
   })
 
   it('扫描结果落进 store，展开状态随项目换代复位', async () => {
-    useUiStore.setState({ scanPanelOpen: true })
+    useUiStore.setState({ guideCard: 'card' })
     await adopt('p2')
     await new Promise((r) => setTimeout(r, 0))
     expect(useProjectScanStore.getState().scan?.scan_id).toBe('s-b')
-    expect(useUiStore.getState().scanPanelOpen).toBe(false)
+    expect(useUiStore.getState().guideCard).toBe('closed')
   })
 })
 

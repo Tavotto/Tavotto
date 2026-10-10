@@ -257,14 +257,24 @@ def plan_for(
     `error.explicit` 说明是哪一条、为什么。
     """
     root = str(project_root)
+    decision = pool.EnvironmentDecision()
     remap_generation = inputremap.generation(root)
     if script is not None:
-        # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处）：下面的
-        # 解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
+        # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处；检测模式下就是那次自动检测，
+        # ADR 0114 §六）：下面的解释器、LaunchContext、环境事实都是快照，执行前 `_stale_reason` 拿它们与此刻比——快照在
         # 决定之前拍，第一次准备就以 `preparation_plan_stale` 收场（Codex #522 P1）。
-        deprepair.decide_environment(root, script)
+        # 检查（建会话 / 出报告）在用户点「运行」之前：项目自己带的解释器（项目 venv、`.vscode` 指向的……）不在这里
+        # 起，体检推迟到运行那一下（`_run` 里的 `decide_environment_pinned`；Codex 安全 #820 r4232804805）
+        decision = deprepair.decide_environment_pinned(root, script, project_exec=False)
+    adopted = decision.adopted
     try:
-        python, source = pool.resolve_worker_python(root, script=script)
+        if decision.pinned:
+            # 检测出的解释器是个不可变值（含环境代）：快照只认它，不再解析共享的项目记录——同一项目的另一个脚本
+            # 可能刚在两次解析之间把记录换了（Codex #820 P1）。换了的话执行前 `_stale_reason` 拿它与此刻比，
+            # 对不上就 `environment_changed`，绝不在没为这个脚本验证过的解释器下跑
+            python, source = decision.python, decision.source
+        else:
+            python, source = pool.resolve_worker_python(root, script=script)
         env_error = None
     except pool.WorkerError as exc:
         python, source, env_error = "", "", {"code": exc.code, "message": str(exc)}
@@ -283,6 +293,8 @@ def plan_for(
     # 公开身份：来源标签 + **项目相对**路径（项目外的解释器——bundled / system / 用户在别处
     # 挑的——一律 None：那是安装目录或用户目录，不进投影）+ 项目记住的版本事实。
     discovery = pool.first_open_outcome(root)
+    # 作废的事实只报一次：写进这一份计划就消费掉，后面的检查不再重复说「换过了」
+    invalidated = pool.consume_invalidated(root)
     environment = {
         "python": _project_relative(root, python) if python else None,
         "source": source,
@@ -290,7 +302,11 @@ def plan_for(
         "automatic": bool(state.get("automatic", False)),
         "trigger": state.get("trigger", ""),
         "module": state.get("module", ""),
-        "generation": projectenv.environment_generation(python) if python else "",
+        "generation": (
+            (decision.generation if decision.pinned else projectenv.environment_generation(python))
+            if python
+            else ""
+        ),
         # 项目级决定的授权来源：confirmed（用户明确采用）/ legacy_auto（ADR 0114 之前机器记下的，照用但不当确认）/ none
         "consent": state.get("consent", projectenv.CONSENT_NONE),
         "recommendation": recommendation,
@@ -327,10 +343,14 @@ def plan_for(
                 "reason": inv.get("reason", ""),
                 "trigger": inv.get("trigger", ""),
             }
-            if (inv := pool.invalidated_decision(root))
+            if (inv := invalidated)
             else None
         ),
         "error": env_error,
+        # 给用户看的那一个事实（ADR 0114 §六）：用的是哪一类、谁定的、这次是不是刚自动换了一个——不要求用户动作
+        "adoption": envadvice.adoption_fact(
+            root, source, adopted=adopted, invalidated=invalidated, effective=python
+        ),
     }
     grant = workdir.grant_for(root)
     launch_context = None
@@ -375,6 +395,30 @@ def plan_for(
             required = gate
         else:
             dependency = deprepair.preparation_offer(root, script)
+        if (
+            dependency is not None
+            and python
+            and required is not None
+            and required.get("code") == deprepair.ERROR_PREPARATION_REQUIRED
+            and deprepair.project_check_pending(root, script, dependency.get("plan") or {})
+        ):
+            # 项目自带的环境还没体检（用户点「运行」才体检）：现在不说「需要安装」，主动作是运行；体检跑不了再回到
+            # 安装待办（`_execute` 里点运行时重算计划）。不要求授权，所以也不挂 `required_input`
+            dependency = {**dependency, "project_check_pending": True}
+            required = None
+    if (
+        script is not None
+        and clean_machine
+        and not python
+        and (required is None or required.get("code") == deprepair.ERROR_PREPARATION_REQUIRED)
+    ):
+        # 默认链条一个解释器都没有（干净机器）而项目带了还没体检的环境（如 .venv）：同样等用户点「运行」才体检——主动作是
+        # 运行，不先推去装私有 Python / 受管环境；体检跑不了再回到安装待办（Codex #820 r4233563595）。脚本的 import 静态推出
+        payload = (dependency or {}).get("plan") or deprepair.static_plan_payload(root, script)
+        if payload is not None and deprepair.project_check_pending(root, script, payload):
+            dependency = {**(dependency or {}), "project_check_pending": True}
+            environment["project_check_pending"] = True
+            required = None
     static = None
     if original_artifact and original_path:
         try:
@@ -601,6 +645,38 @@ class PreparationService:
         )
         entry.thread.start()
 
+    @staticmethod
+    def _replan_in_place(entry: _Entry, plan: PreparationPlan) -> PreparationPlan | None:
+        """按此刻（已采用项目环境之后）的世界重算同一份计划，沿用计划 id / 创建时间 / 静态原件；换进条目里。"""
+        fresh = plan_for(
+            project_id=plan.project_id,
+            project_root=plan.project_root,
+            asset_id=plan.asset_id,
+            stem=plan.stem,
+            script=plan.script,
+            entry=plan.entry,
+            original_artifact=None,
+            target=plan.target,
+            **({"run": plan.run} if plan.run is not None else {}),
+        )
+        # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
+        # 换计划（交回 None，由对账给出过期结局）
+        if (
+            fresh.grant != plan.grant
+            or (fresh.binding or {}).get("revision") != (plan.binding or {}).get("revision")
+            or fresh.script_revision != plan.script_revision
+            or fresh.input_remap_generation != plan.input_remap_generation
+        ):
+            return None
+        fresh = dataclasses.replace(
+            fresh,
+            plan_id=plan.plan_id,
+            created_at=plan.created_at,
+            static_source=plan.static_source,
+        )
+        entry.plan = fresh
+        return fresh
+
     def _execute(self, entry: _Entry, runner) -> None:
         plan, result = entry.plan, entry.result
         tr = result.trace
@@ -624,6 +700,16 @@ class PreparationService:
         # 或预检记下的数据绑定变了——计划记下的与此刻的不一致时**不跑**：按旧计划跑等于拿撤销前的许可 /
         # 旧数据的判断执行，按新设置跑等于回执与计划两张嘴。报 `preparation_plan_stale` + `reason`，
         # 让调用方重新准备（用户的 live 编辑在文档里，不在这份计划里，一个字不丢）。
+        if plan.script is not None:
+            # 用户点了「运行」= 同意体检项目自带的候选解释器（Codex 安全 #820）：现在才可以体检、采用。采用了就换了
+            # 解释器——这一步是**本次运行自己**做的，不是别人改了环境：就地按采用后的解释器重算计划再往下走（能跑就跑；
+            # 缺包由起会话那道依赖门收成「需要安装」），不让用户为此重新检查一次。别的过期原因照旧由下面的对账拦下
+            decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
+            if decision.adopted is not None:
+                before = self._stale_reason(plan)
+                if before is None or before[0] == STALE_ENVIRONMENT:
+                    # 只吸收环境变化。工作目录授权档（用户确认过的）变了不吸收：照旧走下面的过期结局，让用户重新检查、看到新档
+                    plan = self._replan_in_place(entry, plan) or plan
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale

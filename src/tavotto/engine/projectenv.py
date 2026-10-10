@@ -289,6 +289,8 @@ def discover(
     不顺软链接跳出去（`within`）。项目根就是 Tavotto 打开的图库目录
     `figures_dir`——用户交给我们的边界只有这一条。
     """
+    # 项目派生的 venv 线索永远不跟随重定向（Codex 安全 #820 r4234904358）：见 `userenvs.discover`
+    no_follow = True
     root = Path(figures_dir)
     start = (root / script).parent if script else root
     if no_follow and scanbudget.redirected_component(root, start) is not None:
@@ -347,7 +349,7 @@ def _same_dir(a: Path, b: Path) -> bool:
 #: 是 `sys.path.insert(0, HERE)` 的平铺 import，Tavotto 自己把 worker 代码
 #: 交给用户的解释器执行，绝不往用户 venv 里 pip install 任何东西。
 _PROBE_SRC = r"""
-import json, platform, sys
+import ast, json, os, platform, re, sys
 out = {"executable": sys.executable, "prefix": sys.prefix,
        "python_version": platform.python_version(),
        "version_info": list(sys.version_info[:3]),
@@ -357,13 +359,270 @@ out = {"executable": sys.executable, "prefix": sys.prefix,
 engine_dir = sys.argv[1]
 module = sys.argv[2] if len(sys.argv) > 2 else ""
 extra = [m for m in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if m]
-try:
+_modules_before = set(sys.modules)
+mode = sys.argv[4] if len(sys.argv) > 4 else ""
+project_root = sys.argv[5] if len(sys.argv) > 5 else ""
+isolated = (sys.argv[6] if len(sys.argv) > 6 else "") == "isolated"
+
+
+def _norm(path):
+    return os.path.normcase(os.path.realpath(path))
+
+
+def _inside(path, root):
+    # 先做纯字符串的判断（规范化 + commonpath）：词法上已在项目里就不 realpath——项目里的路径可能是指向 UNC 的 junction，
+    # realpath 会去探它（Codex 安全 #820 r4234904358）。词法上在项目外的才 realpath（它在项目外，探它不碰项目派生路径）
+    try:
+        la = os.path.normcase(os.path.abspath(path))
+        lb = os.path.normcase(os.path.abspath(root))
+        if os.path.commonpath([la, lb]) == lb:
+            return True
+    except (ValueError, OSError):
+        pass
+    try:
+        a = _norm(path)
+        b = _norm(root)
+        return os.path.commonpath([a, b]) == b
+    except (ValueError, OSError):
+        return False
+
+
+def _touches(path, root):
+    # 进 sys.path 的目录是项目、项目里的、或项目的**祖先**（`/work` 对 `/work/matplotlib`：祖先能把顶层包名解析成项目）都算
+    return _inside(path, root) or _inside(root, path)
+
+
+def _finder_defers(text, root):
+    # 可编辑安装的 finder（PEP 660 `__editable___*_finder.py`）把 MAPPING 写成 Python 字符串字面量（Windows 上反斜杠成双、
+    # 大小写不定）：用 ast 解析（**从不执行**），取所有字符串常量，路径形的逐个规范化后判是否落在项目里。解析不了 / 有无法解析
+    # 成绝对路径的路径形常量 = 证明不了在项目外 -> 延后（Run 再真量），而不是报"没装"（Codex #820 r4234882840）
+    try:
+        tree = ast.parse(text)
+    except Exception:
+        return True
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        v = node.value
+        if len(v) < 2 or not ("/" in v or "\\" in v):
+            continue
+        if not os.path.isabs(v):
+            return True
+        if _inside(v, root):
+            return True
+    return False
+
+
+_skipped_import_pth = []  # 真正不透明的可执行 .pth 行（可能提供模块、又不能执行去看）
+_editable_provided = set()  # 标准可编辑安装 finder 的 MAPPING 里列出的顶层模块名（项目外的）
+
+
+def _mapping_names(text):
+    # PEP 660 finder 的 `MAPPING = {"pkg": "/path", ...}`：ast 取键（从不执行）
+    names = set()
+    try:
+        tree = ast.parse(text)
+    except Exception:
+        return names
+    for node in ast.walk(tree):
+        value = None
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "MAPPING" for t in node.targets
+        ):
+            value = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "MAPPING"
+        ):
+            value = node.value
+        if isinstance(value, ast.Dict):
+            for k in value.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    names.add(k.value.split(".")[0])
+    return names
+
+
+def _prepare_isolated_path():
+    # 运行之前的体检以 `-I -S` 启动（Codex 安全 #820 r4234643135）：没有 `site`，所以没有 .pth 处理、没有 sitecustomize /
+    # usercustomize、没有 PYTHONPATH、没有 cwd。可编辑安装的 .pth 可以把项目里的代码拽进启动期，这里把 site-packages
+    # 手工补回 sys.path，**.pth 只当文本读、一行都不执行**：路径行指进项目 = 这个环境带着项目里的代码 -> 整个候选延后到运行；
+    # `import` 行（可编辑安装的 finder）不执行，只在它旁边的 `__editable__*` 文件里找项目根，找到 / 找不到文件都延后。
+    import sysconfig
+    dirs = []
+
+    def add(d):
+        if d and d not in dirs and os.path.isdir(d):
+            dirs.append(d)
+
+    # `-S` 下 `sys.prefix` 不一定指到 venv（site 才做这件事的构建上，它回基础解释器）：从可执行文件的位置自己认 venv
+    import glob
+    exe_root = os.path.dirname(os.path.dirname(sys.executable or ""))
+    cfg = os.path.join(exe_root, "pyvenv.cfg")
+    include_system = False
+    is_venv = os.path.isfile(cfg)
+    if is_venv:
+        # venv 自己的 site-packages 不靠 sysconfig（`vars` 在某些发行版的 scheme 里不生效）：按布局找
+        for pattern in ("lib/python*/site-packages", "lib64/python*/site-packages", "Lib/site-packages"):
+            for d in sorted(glob.glob(os.path.join(exe_root, pattern))):
+                add(d)
+        try:
+            with open(cfg, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    k, _, v = line.partition("=")
+                    if k.strip().lower() == "include-system-site-packages":
+                        include_system = v.strip().lower() == "true"
+        except OSError:
+            pass
+    if not is_venv or include_system:
+        paths = sysconfig.get_paths()
+        for key in ("purelib", "platlib"):
+            add(paths.get(key))
+    # 用户 site 只在这个解释器**正常启动时会启用**才加（镜像 `site.check_enableusersite` / `site.venv`）：venv 默认关（除非
+    # include-system-site-packages = true）、`PYTHONNOUSERSITE`、uid != euid / gid != egid 都关。否则 `pip install --user`
+    # 装的包会让一个 venv 显得"装齐"，而 worker 起来根本看不见它（Codex #820 r4234766732）。`-s` 不在此列：worker 不带 `-s`
+    user_site_on = not (is_venv and not include_system) and not os.environ.get("PYTHONNOUSERSITE")
+    try:
+        if hasattr(os, "getuid") and (os.getuid() != os.geteuid() or os.getgid() != os.getegid()):
+            user_site_on = False
+    except OSError:
+        pass
+    pending_user_site = []
+    if user_site_on:
+        try:
+            import site
+            usp = site.getusersitepackages()
+            pending_user_site.append(usp)
+            add(usp)
+        except Exception:
+            pass
+    extra_paths = []
+    deferred = False
+    for d in dirs:
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for fname in names:
+            if not fname.endswith(".pth"):
+                continue
+            try:
+                with open(os.path.join(d, fname), encoding="utf-8", errors="replace") as fh:
+                    lines = fh.read().splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith(("import ", "import\t")):
+                    if "__editable__" not in line:
+                        # 已知不提供模块的标准行（setuptools 的 distutils shim、virtualenv 的钩子）不算不透明
+                        if not re.match(r"import\s+(_distutils_hack|_virtualenv)\b", line) and "_distutils_hack" not in line:
+                            _skipped_import_pth.append(fname)
+                        continue  # 不执行
+                    finders = [n for n in names if n.startswith("__editable__") and n.endswith(".py")]
+                    if not finders:
+                        deferred = True
+                        continue
+                    for n in finders:
+                        try:
+                            with open(os.path.join(d, n), encoding="utf-8", errors="replace") as fh:
+                                text = fh.read()
+                        except OSError:
+                            deferred = True
+                            continue
+                        if project_root and _finder_defers(text, project_root):
+                            deferred = True
+                        else:
+                            _editable_provided.update(_mapping_names(text))
+                    continue
+                target = os.path.normpath(os.path.join(d, line))
+                if project_root and _touches(target, project_root):
+                    deferred = True
+                elif os.path.isdir(target):
+                    extra_paths.append(target)
+    if project_root and any(_touches(d, project_root) for d in dirs + extra_paths):
+        deferred = True  # site 目录本身是项目 / 项目里的 / 项目的祖先
+    for d in dirs + extra_paths:
+        if d not in sys.path:
+            sys.path.append(d)
+    # 体检实际用到的目录（含"用户 site 会启用但目录还不存在"的那个）——宿主据此给缓存结论打指纹，装 / 卸包之后旧结论失效
+    out["site_dirs"] = list(dirs) + list(extra_paths) + [d for d in pending_user_site if d not in dirs]
+    if not deferred:
+        # sitecustomize / usercustomize 本该由 site 在启动期执行：不执行，只问它们会解析到哪（find_spec 不 import）
+        import importlib.util
+        for name in ("sitecustomize", "usercustomize"):
+            try:
+                spec = importlib.util.find_spec(name)
+            except Exception:
+                spec = None
+            if spec is not None and spec.origin and project_root and _inside(spec.origin, project_root):
+                deferred = True
+    return deferred
+
+
+def _startup_site_dirs():
+    # 正常启动之后这个解释器真正用的 site 目录们（缓存指纹的唯一目录表；`site` 已经处理完 .pth）：getsitepackages +
+    # 启用时的用户 site（目录还不存在也算）+ sys.path 里其余落在环境前缀 / 用户 base 下的目录（.pth 加的）
+    import site, sysconfig
+    found = []
+
+    def add(d):
+        if d and d not in found:
+            found.append(d)
+
+    try:
+        for d in site.getsitepackages():
+            add(d)
+    except Exception:
+        pass
+    try:
+        if site.ENABLE_USER_SITE:
+            add(site.getusersitepackages())
+    except Exception:
+        pass
+    try:
+        stdlib = {os.path.normcase(os.path.realpath(p)) for p in (sysconfig.get_paths().get("stdlib"), sysconfig.get_paths().get("platstdlib")) if p}
+        # **有效 sys.path 上每一个非标准库目录**（Codex #820 r4235263580）：`.pth` 可以加 `/opt/shared` 这样前缀之外的目录，
+        # 往里装包也要让旧结论失效。排除标准库 / lib-dynload / zip 与空串（= 探测自己的临时 cwd）
+        for entry in list(sys.path):
+            if not entry or not os.path.isdir(entry):
+                continue
+            real = os.path.normcase(os.path.realpath(entry))
+            if real in stdlib or real.endswith(("lib-dynload", ".zip")):
+                continue
+            add(entry)
+    except Exception:
+        pass
+    return found
+
+
+if not isolated:
+    out["site_dirs"] = _startup_site_dirs()
+if isolated:
+    if _prepare_isolated_path():
+        out["deferred_env"] = True
+        out["new_imports"] = []
+        sys.stdout.write(json.dumps(out))
+        sys.exit(0)
+    # 运行之前（Codex 安全 #820 r4235163764）：**什么都不 import**——包括 Tavotto 自己要的 matplotlib / worker 启动链。
+    # 版本从 dist-info 的 METADATA 读（不执行代码）；"能不能真的 import"（坏的二进制 wheel 等）要等运行再量
+    out["health_deferred"] = True
+    try:
+        import importlib.metadata as _md
+        out["matplotlib_version"] = _md.version("matplotlib")
+    except Exception as exc:
+        out["error"] = "matplotlib: %s" % exc
+    out["tavotto_worker_ok"] = True
+else:
+  try:
     import matplotlib
     matplotlib.use("Agg")
     out["matplotlib_version"] = matplotlib.__version__
-except Exception as exc:
+  except Exception as exc:
     out["error"] = "matplotlib: %s" % exc
-if out["matplotlib_version"]:
+if out["matplotlib_version"] and not isolated:
     import importlib.util, os
     sys.path.insert(0, engine_dir)
     dont_write = sys.dont_write_bytecode
@@ -390,19 +649,63 @@ if out["matplotlib_version"]:
         out["error"] = "worker: %s: %s" % (type(exc).__name__, exc)
     finally:
         sys.dont_write_bytecode = dont_write
-if module:
-    out["requested_module"] = module
+def _spec_state(name):
+    # 用户点「运行」之前（Codex 安全 #820 r4234465621）：**绝不 import 脚本要的模块**——可编辑安装的 .pth 可以把项目里的
+    # 包解析成它们，import 就是执行项目代码。只问顶层名的 find_spec（点号名的 find_spec 会 import 父包）：True = 找得到且
+    # 不在项目里；False = 找不到；None = 落在项目里（延后到运行再量，不冒充"装了"也不冒充"没装"）。
+    import importlib.util
+    top = name.split(".")[0]
+    if top in _editable_provided:
+        return True  # 项目外的可编辑安装 finder 的 MAPPING 提供它（finder 不执行，所以 find_spec 看不到）
     try:
-        __import__(module)
-        out["requested_module_ok"] = True
+        spec = importlib.util.find_spec(top)
     except Exception:
-        out["requested_module_ok"] = False
-for name in extra:
+        return False
+    if spec is None:
+        return False
+    places = list(spec.submodule_search_locations or [])
+    if spec.origin and spec.origin not in ("built-in", "frozen"):
+        places.append(spec.origin)
+    if project_root and any(_inside(p, project_root) for p in places):
+        return None
+    return True
+
+
+def _import_state(name):
     try:
         __import__(name)
-        out["modules_ok"][name] = True
+        return True
     except Exception:
-        out["modules_ok"][name] = False
+        return False
+
+
+_state = _spec_state if mode == "spec" else _import_state
+if module:
+    out["requested_module"] = module
+    out["requested_module_ok"] = _state(module)
+for name in extra:
+    out["modules_ok"][name] = _state(name)
+if isolated:
+    if _spec_state("matplotlib") is None:
+        out["deferred_env"] = True  # matplotlib 本身解析进了项目
+    if _skipped_import_pth and (
+        not out["matplotlib_version"]
+        or out.get("requested_module_ok") is False
+        or any(v is False for v in out["modules_ok"].values())
+    ):
+        # 有没执行的可执行 .pth（`import` 行）——它们本来可能把缺的包接进来。没找到只能说"这里看不到"，不能当"没装"：
+        # 整个环境延后到运行再量（宁可多问一次，不拿看不全的证据拒绝一个可能能跑的环境）
+        out["deferred_env"] = True
+        out["skipped_import_pth"] = sorted(set(_skipped_import_pth))
+    _stdlib = getattr(sys, "stdlib_module_names", None)
+    out["new_imports"] = (
+        sorted(
+            {n.split(".")[0] for n in set(sys.modules) - _modules_before if not n.startswith("_sysconfigdata")}
+            - set(_stdlib)
+        )
+        if _stdlib is not None
+        else []
+    )
 sys.stdout.write(json.dumps(out))
 """
 
@@ -428,8 +731,15 @@ def probe_environment(
     modules: tuple[str, ...] = (),
     bundled: bool = False,
     timeout: float | None = None,
+    import_mode: str = "import",
+    project_root: str = "",
 ) -> dict:
     """在候选解释器里跑一次体检，回机器可读结构。
+
+    `import_mode="spec"`（用户点「运行」之前）：脚本要的模块**不 import**，只问顶层名的 `find_spec`，路径落在
+    `project_root` 里的回 `None`（延后到运行）。体检进程本身：cwd 是空的临时目录、`-c` 的 `sys.path[0]` 就是它——项目目录
+    不会隐式进 `sys.path`。第三方环境 `.pth` 里的可执行 `import` 行属于用户自己的环境（除非那个 `.pth` 本身在项目里，
+    那样它在 `site` 启动时就是项目代码，由 `userenvs.is_project_controlled` 的路径判据先拦下这个解释器）。
 
     只 import、不执行用户脚本、不装任何东西。`module` 给了就顺带确认那个包
     在这个环境里真的 import 得到——**「找到了 .venv」不等于「它能解决问题」**，
@@ -462,10 +772,23 @@ def probe_environment(
     # `-B`（`runtime.probe_args`）：体检是我们单方面去看一眼，不许把缺的 .pyc 写回用户解释器的
     # 安装目录（2026-09-28 Windows 实测：体检一次 Python 3.7.6，它的 `Lib\__pycache__` 多了两个）。
     # `-B` 不碰 sys.path / site / env，上面说的「与 worker 对齐」的几个维度一个都不变。
-    argv = [python, *runtime.probe_args(bundled=bundled), "-c", _PROBE_SRC, engine_dir]
+    spec_mode = import_mode == "spec"
+    # 运行之前（spec）：用户的环境以 `-I -S` 启动（见 `_prepare_isolated_path`）；内置 runtime 是 Tavotto 自己的、
+    # 靠 `child_args()` 的启动条件，不加（项目的 .pth 不会在里面）
+    isolate = spec_mode and not bundled
+    argv = [
+        python,
+        *runtime.probe_args(bundled=bundled),
+        *(["-I", "-S"] if isolate else []),
+        "-c",
+        _PROBE_SRC,
+        engine_dir,
+    ]
     argv.append(module or "")
-    if modules:
-        argv.append(",".join(modules))
+    argv.append(",".join(modules))
+    argv.append("spec" if spec_mode else "")
+    argv.append(project_root if spec_mode else "")
+    argv.append("isolated" if isolate else "")
     scratch = ""
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
@@ -509,6 +832,10 @@ def probe_environment(
         }
 
     info["python"] = python
+    if info.get("deferred_env"):
+        # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
+        info.update(ok=True, code="", deferred_env=True)
+        return info
     version = tuple(info.get("version_info") or ())[:2]
     if not version or not (PYTHON_MIN <= version < PYTHON_MAX_EXCLUSIVE):
         info.update(ok=False, code=ERROR_UNSUPPORTED_PYTHON, support=SUPPORT_UNSUPPORTED)
@@ -709,18 +1036,48 @@ def auto_adoption_off() -> bool:
     return os.environ.get("TAVOTTO_USER_ENV_DISCOVERY", "").strip() == "0"
 
 
-#: 恢复 ADR 0057 / 0079 / 0107 静默采用的兼容开关（ADR 0114 §五，保留一版）。默认不设 = **确认模式**：
-#: 首开 / 跑前的门 / 缺包后的接手只给**建议**，采用是用户的明确动作。无头环境（CI、没有界面的脚本调用）在
-#: 还没有可确认的界面之前设成 `auto` 回到旧行为。判据的唯一出处——三个自动采用点都读这里。
+#: 环境采用的模式（ADR 0114 §五 → 用户 2026-10-06 裁决的修订节 §六）。判据的唯一出处——各采用点都读这里。
+#:
+#: * `detect`（**默认**）：用户点了准备 / 运行之后，自动检测候选环境，能跑这个脚本（解释器健康 + 脚本要的 import
+#:   全都 import 得到）的就直接用，多个能跑时按既有排序挑最好的；一个都不能跑才出「安装缺少的组件」。用户不选环境。
+#:   检测的唯一实现是 `deprepair.decide_environment`（经 `pool.acquire` 的 `ENVIRONMENT_DECIDERS` 与 `preparation.plan_for`）；
+#: * `confirm`：T05 的确认模式——候选只作为建议出现，采用是用户的明确动作（给想自己挑的人，设置或环境变量里打开）；
+#: * `legacy`（旧名 `auto`，ADR 0114 §五的兼容开关）：ADR 0057 / 0079 / 0107 原来的三处静默采用，含「首开只看健康就采用
+#:   项目 venv」的第 4 档。退出条件不变（§五）。
 ADOPTION_ENV = "TAVOTTO_ENV_ADOPTION"
+ADOPTION_DETECT = "detect"
+ADOPTION_CONFIRM = "confirm"
+ADOPTION_LEGACY = "legacy"
+ADOPTION_MODES = (ADOPTION_DETECT, ADOPTION_CONFIRM, ADOPTION_LEGACY)
+#: 环境变量里认得的写法 → 模式；`auto` 是 ADR 0114 §五写下的旧名（= 旧三处静默采用），保留同义
+_ADOPTION_ALIASES = {
+    ADOPTION_DETECT: ADOPTION_DETECT,
+    ADOPTION_CONFIRM: ADOPTION_CONFIRM,
+    ADOPTION_LEGACY: ADOPTION_LEGACY,
+    "auto": ADOPTION_LEGACY,
+}
+
+
+def adoption_mode() -> str:
+    """此刻的环境采用模式：环境变量 `TAVOTTO_ENV_ADOPTION` 优先，其次全局设置 `worker.environment_adoption`，
+    都没有（或写的认不出）→ `detect`。"""
+    raw = os.environ.get(ADOPTION_ENV, "").strip().lower()
+    if raw in _ADOPTION_ALIASES:
+        return _ADOPTION_ALIASES[raw]
+    return _ADOPTION_ALIASES.get(config.environment_adoption().strip().lower(), ADOPTION_DETECT)
 
 
 def silent_adoption_enabled() -> bool:
-    """机器是否可以**替用户**把一个候选环境记成本项目的决定（兼容开关 `TAVOTTO_ENV_ADOPTION=auto`）。
+    """机器是否可以**替用户**把一个候选环境记成本项目的决定：`detect`（默认）与 `legacy` 可以，`confirm` 不可以。
 
-    False（默认）= 确认模式：候选只作为建议出现，采用必须是用户的明确动作。注意这与
-    `auto_adoption_off()`（`TAVOTTO_USER_ENV_DISCOVERY=0`，连发现 / 体检都关掉）是两件事。"""
-    return os.environ.get(ADOPTION_ENV, "").strip().lower() == "auto"
+    注意这与 `auto_adoption_off()`（`TAVOTTO_USER_ENV_DISCOVERY=0`，连发现 / 体检都关掉）是两件事。"""
+    return adoption_mode() != ADOPTION_CONFIRM
+
+
+def legacy_adoption_enabled() -> bool:
+    """旧三处静默采用的那几条**旧路径**是否生效（`legacy` / 旧名 `auto`）：首开第 4 档只看健康就采用项目 venv、
+    跑前的门只在用户环境里挑（不含项目 venv）。`detect` 用的是 `deprepair.decide_environment` 的检测分支。"""
+    return adoption_mode() == ADOPTION_LEGACY
 
 
 def environment_generation(python: str) -> str:
@@ -752,6 +1109,8 @@ def environment_generation(python: str) -> str:
 
 CONSENT_CONFIRMED = "confirmed"  # 用户明确采用 / 选回默认链条（`automatic=False`）
 CONSENT_LEGACY_AUTO = "legacy_auto"  # ADR 0114 之前机器替用户记下的：仍照用，但证明不了用户确认过
+#: 自动检测（`detect` 模式）替用户采用的：机器的决定，能跑就一直用；失效 / 不再能跑时由检测重新决定
+CONSENT_AUTO_DETECTED = "auto_detected"
 CONSENT_NONE = "none"  # 没有项目级决定
 
 
@@ -760,7 +1119,11 @@ def consent_of(record: dict | None) -> str:
     授权——继续使用（迁移不重新询问），但不当作用户的显式确认。"""
     if record is None:
         return CONSENT_NONE
-    return CONSENT_LEGACY_AUTO if record.get("automatic", False) else CONSENT_CONFIRMED
+    if not record.get("automatic", False):
+        return CONSENT_CONFIRMED
+    if record.get("trigger") == TRIGGER_AUTO_DETECTED:
+        return CONSENT_AUTO_DETECTED
+    return CONSENT_LEGACY_AUTO
 
 
 def generation_changed(record: dict | None) -> bool:
@@ -1183,6 +1546,9 @@ TRIGGER_FIRST_OPEN = "first_open"
 
 #: 用户在环境建议上点「使用」时记进项目设置的 trigger（ADR 0114）：采用的是 `envadvice.recommend()` 列出的候选
 TRIGGER_RECOMMENDED = "recommended"
+
+#: 自动检测替用户采用时记进项目设置的 trigger（`detect` 模式，ADR 0114 §六）：检测过「能跑这个脚本」才记
+TRIGGER_AUTO_DETECTED = "auto_detected"
 
 
 def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> dict:

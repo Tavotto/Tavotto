@@ -12,7 +12,7 @@
  *
  * ### 三个不同的动作
  *
- * `uiStore.setPreparationOpen(false)`（关面板，只改呈现；订阅照旧，原对话框接着展示 input）·
+ * `uiStore.setGuideCard('pill' | 'closed')`（缩成角标 / 收起引导卡，只改呈现；订阅照旧，收起时原对话框接着展示 input）·
  * `cancel()`（认领后端的 `cancel` 动作：按 owner 退役**本会话**的工作）· 切项目 `clear()`（换代、停轮询、丢订阅与
  * 晚到响应；**后端什么都不取消**，用户的执行 / 已授权的安装照常跑完，切回来重新打开时会话复用）。
  *
@@ -61,6 +61,8 @@ export interface PrepEntry {
   /** 发起时认领的项目 */
   pj: string | null
   report: PreparationReport | null
+  /** 这份报告落地的时刻（毫秒）：脚本库据此判它比最近一次注册表刷新新还是旧 */
+  reportAt?: number
   connection: PrepConnection
   /** 旧会话已不在（应用重启 / 回收）、已经重新检查过——**没有**自动运行 */
   restarted: boolean
@@ -87,7 +89,7 @@ export interface EditRender {
 interface PreparationState {
   epoch: number
   entries: Record<string, PrepEntry>
-  /** 面板此刻展示哪一份（开合在 `uiStore.preparationOpen`） */
+  /** 引导卡此刻展示哪一份（呈现在 `uiStore.guideCard`） */
   focus: string | null
 
   /** 打开（或复用）一个目标的检查会话并聚焦面板。脚本目标的参数草稿在这一刻取一份拷贝 */
@@ -104,6 +106,8 @@ interface PreparationState {
   recheckIdle: () => void
   /** 「进入编辑」：记下加进画布的那张图与它的面板 / 渲染键（呈现层用它观察首次编辑渲染） */
   noteEditing: (key: string, assetId: string, render?: EditRender) => void
+  /** 卡片改看扫描结果：只放下聚焦，会话与它的后端状态原样保留（再点开同一目标会复用） */
+  blur: () => void
   /** 换项目：属于旧项目的一切原地丢掉，在途响应失去落地资格；**后端什么都不取消** */
   clear: () => void
 }
@@ -217,6 +221,11 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     if (e.report && e.report.session_id !== report.session_id && !opts?.session) return
     if (!newer(e.report, report)) return
     const before = e.report
+    const advanced =
+      !before ||
+      before.session_id !== report.session_id ||
+      before.config_revision !== report.config_revision ||
+      before.observation_seq !== report.observation_seq
     // 同一目标的后端状态前进了（更高修订 / 换了会话 / 开了新一轮尝试）：上一轮的「进入编辑」记录属于旧结果，
     // 不许让新一轮跑完的 `completed` 把旧资产当成当前结果、压掉「进入编辑」
     const newRound =
@@ -233,10 +242,16 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
     patch(key, () => ({
       report,
+      // 只有报告真的前进了才换落地时刻：重连后补拉到同一份旧快照（会话 / 修订 / 观察序号都没变）不能因此显得比注册表刷新更新
+      ...(advanced ? { reportAt: Date.now() } : {}),
       connection: 'ok',
-      ...(newRound ? { editing: [], editRenders: {}, ...(before?.session_id === report.session_id ? { restarted: false } : {}) } : {}),
+      ...(newRound
+        ? { editing: [], editRenders: {}, ...(before?.session_id === report.session_id ? { restarted: false } : {}) }
+        : {}),
     }))
-    if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) void onCompleted(report, owner)
+    if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) {
+      void onCompleted(report, owner)
+    }
     // 同一会话里的依赖作业刚装完（T09b）：画布上因「要先准备依赖」停着的渲染与原授权框作答之后一样重排——同一份
     // 需求两个展示面，下游效果只有一种（重排的是渲染请求，不是脚本首跑；首跑仍由用户点报告里的 run）
     const depDone = (r: PreparationReport | null) =>
@@ -292,6 +307,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     entries: {},
     focus: null,
 
+    blur: () => set({ focus: null }),
+
     open: async (target, opts) => {
       const key = keyOfTarget(target)
       const pj = currentProjectId()
@@ -326,7 +343,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
           },
         },
       }))
-      if (opts?.show !== false) useUiStore.getState().setPreparationOpen(true)
+      if (opts?.show !== false) useUiStore.getState().setGuideCard('card')
       await check(key, target, false)
     },
 
@@ -456,6 +473,15 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
  * 动态 import 回来之后，发起这次回调的项目 / 代还是当前的吗（`owner.still()`）？不是就整个丢掉（A 的素材 id 不许去动 B 的 store）。
  */
 async function onCompleted(report: PreparationReport, owner: ProjectEpochGuard): Promise<void> {
+  // 导入即扫描的快照随结果更新（零执行、后端单飞）：这个脚本现在连着可编辑的图了，「显示项目检查结果」不再说它待准备
+  // 素材库脚本行的「已关联」同理（与 registry.changed 事件同一个出口，幂等去重）
+  void Promise.all([import('@/store/projectScanStore'), import('@/store/scriptLibraryStore')])
+    .then(([{ useProjectScanStore }, { useScriptLibraryStore }]) => {
+      if (!owner.still()) return
+      void useProjectScanStore.getState().start({ force: true, reason: 'refresh' })
+      void useScriptLibraryStore.getState().load()
+    })
+    .catch(() => undefined)
   const ids = (report.captured ?? []).map((d) => d.asset_id).filter(Boolean)
   if (!ids.length) return
   try {

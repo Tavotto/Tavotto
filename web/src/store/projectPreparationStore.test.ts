@@ -87,7 +87,7 @@ beforeEach(() => {
   __setPreparationTimingForTests({ requestTimeoutMs: 15_000, pollMs: [10_000] })
   useProjectPreparationStore.getState().clear()
   useScriptArgvStore.getState().clear()
-  useUiStore.setState({ preparationOpen: false })
+  useUiStore.setState({ guideCard: 'closed' })
   setCurrentProjectId('pj-a')
 })
 
@@ -106,7 +106,7 @@ describe('打开：参数在这一刻冻结', () => {
     expect(target).toEqual({ script: 'plot.py', argv: ['--tag', '', '--', '-1'], argv_sensitive: false })
     expect(pj).toBe('pj-a')
     expect(entry().report?.session_id).toBe('psess-1')
-    expect(useUiStore.getState().preparationOpen).toBe(true)
+    expect(useUiStore.getState().guideCard).toBe('card')
     expect(mockAct).not.toHaveBeenCalled() // 打开只检查，不运行
   })
 
@@ -122,6 +122,30 @@ describe('打开：参数在这一刻冻结', () => {
     useScriptArgvStore.getState().setToken('plot.py', 1, '2')
     expect((entry().target as { argv?: string[] }).argv).toEqual(['--n', '1'])
     expect(draftDiffers(entry().target)).toBe(true)
+  })
+})
+
+describe('报告落地时刻（脚本库据此判结局新旧）', () => {
+  it('重连后补拉到同一份快照：不换落地时刻；报告前进了才换（Codex #820 r4234324635）', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(1_000)
+      mockCreate.mockResolvedValueOnce(prepReport({ phase: 'partial', observation_seq: 3 }))
+      await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+      expect(entry().reportAt).toBe(1_000)
+      // 之后注册表刷新、SSE 重连又取到完全相同的快照
+      vi.setSystemTime(5_000)
+      mockGet.mockResolvedValueOnce(prepReport({ phase: 'partial', observation_seq: 3 }))
+      await useProjectPreparationStore.getState().refresh(KEY)
+      expect(entry().reportAt).toBe(1_000)
+      // 报告真的前进了（观察序号加一）
+      vi.setSystemTime(6_000)
+      mockGet.mockResolvedValueOnce(prepReport({ phase: 'partial', observation_seq: 4 }))
+      await useProjectPreparationStore.getState().refresh(KEY)
+      expect(entry().reportAt).toBe(6_000)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -436,7 +460,7 @@ describe('三个不同的动作', () => {
   it('关面板只改呈现：不发取消，订阅照旧', async () => {
     mockCreate.mockResolvedValueOnce(prepReport({ phase: 'running', actions: [action('cancel')] }))
     await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
-    useUiStore.getState().setPreparationOpen(false)
+    useUiStore.getState().setGuideCard('closed')
     expect(mockAct).not.toHaveBeenCalled()
     expect(entry().report?.phase).toBe('running')
   })
@@ -527,7 +551,24 @@ describe('依赖准备装完：画布上停在依赖门上的渲染重排（T09b
   })
 })
 
-describe('同一目标的修订前进：上一轮的编辑记录作废', () => {
+describe('换参数 / 修订前进 / 换尝试：上一轮的编辑记录作废', () => {
+  it('换参数再打开：「进入编辑」的记录不带进新参数的结果；同参数再打开仍保留', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-old' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a', { panelId: 'p1', renderKey: 'k1' })
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-old' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().editing).toEqual(['runtime:plot.py#a'])
+    expect(entry().editRenders).toEqual({ 'runtime:plot.py#a': { panelId: 'p1', renderKey: 'k1' } })
+
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockResolvedValueOnce(prepReport({ session_id: 'psess-new' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().editing).toEqual([])
+    expect(entry().editRenders).toEqual({})
+  })
+
   const done = (over: Partial<PreparationReport> = {}) =>
     prepReport({
       phase: 'completed',
@@ -554,16 +595,17 @@ describe('同一目标的修订前进：上一轮的编辑记录作废', () => {
     expect(entry().editRenders).toEqual({})
   })
 
-  it('补拉到更高修订（同一会话）同样清空；同一修订的补拉保留', async () => {
+  it('补拉到更高修订（同一会话）清空；同一修订的补拉保留', async () => {
     mockCreate.mockResolvedValueOnce(done())
     await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
-    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a')
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a', { panelId: 'p1', renderKey: 'k1' })
     mockGet.mockResolvedValueOnce(done({ observation_seq: 2 }))
     await useProjectPreparationStore.getState().refresh(KEY)
     expect(entry().editing).toEqual(['runtime:plot.py#a'])
     mockGet.mockResolvedValueOnce(done({ config_revision: 2, observation_seq: 1 }))
     await useProjectPreparationStore.getState().refresh(KEY)
     expect(entry().editing).toEqual([])
+    expect(entry().editRenders).toEqual({})
   })
 
   it('同一会话里换了一轮尝试（attempt_id 变了）也清空', async () => {
@@ -575,5 +617,49 @@ describe('同一目标的修订前进：上一轮的编辑记录作废', () => {
     )
     await useProjectPreparationStore.getState().refresh(KEY)
     expect(entry().editing).toEqual([])
+  })
+
+  it('重开后会话 id 换了（重建检查会话）也清空', async () => {
+    mockCreate.mockResolvedValueOnce(done())
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    useProjectPreparationStore.getState().noteEditing(KEY, 'runtime:plot.py#a')
+    mockCreate.mockResolvedValueOnce(done({ session_id: 'psess-2' }))
+    await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+    expect(entry().editing).toEqual([])
+  })
+})
+
+describe('完成回调的项目归属（动态 import 之后复核）', () => {
+  const done = (seq: number) =>
+    prepReport({
+      phase: 'completed',
+      outcome: { kind: 'succeeded' },
+      observation_seq: seq,
+      captured: [{ asset_id: 'runtime:plot.py#a' } as never],
+    })
+
+  it('A 刚完成就切到 B：A 的素材 id 不去动 B 的运行态 / 渲染态 store', async () => {
+    const { useRuntimeAssetStore } = await import('./runtimeAssetStore')
+    const { useRenderStore } = await import('./renderStore')
+    const invalidate = vi.fn()
+    const markStale = vi.fn()
+    const realInv = useRuntimeAssetStore.getState().invalidate
+    const realStale = useRenderStore.getState().markStale
+    useRuntimeAssetStore.setState({ invalidate })
+    useRenderStore.setState({ markStale })
+    try {
+      mockCreate.mockResolvedValueOnce(prepReport({ observation_seq: 1 }))
+      await useProjectPreparationStore.getState().open(scriptTarget('plot.py'))
+      mockGet.mockResolvedValueOnce(done(2))
+      const refreshing = useProjectPreparationStore.getState().refresh(KEY)
+      await refreshing
+      setCurrentProjectId('pj-b') // 动态 import 还没回来就切了项目
+      await flush()
+      expect(invalidate).not.toHaveBeenCalled()
+      expect(markStale).not.toHaveBeenCalled()
+    } finally {
+      useRuntimeAssetStore.setState({ invalidate: realInv })
+      useRenderStore.setState({ markStale: realStale })
+    }
   })
 })

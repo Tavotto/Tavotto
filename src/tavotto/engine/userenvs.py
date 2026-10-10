@@ -41,8 +41,8 @@ SOURCE_PYTHON_VERSION = "python_version_file"
 SOURCE_ENVIRONMENT_YML = "environment_yml"
 SOURCE_SHEBANG = "shebang"
 SOURCE_LOGIN_SHELL = "login_shell"
-#: 项目自带的 venv（`projectenv.discover`）。确认模式（ADR 0114）下它和用户的其它环境一起进「改用这个环境」
-#: 的候选表——静默采用时代由 `pool` 第 4 档单独处理，不在这张表里
+#: 项目自带的 venv（`projectenv.discover`）。检测 / 确认模式（ADR 0114）下它和用户的其它环境一起进候选表——
+#: 旧模式（`legacy`）由 `pool` 第 4 档单独处理，不在这张表里
 SOURCE_PROJECT_VENV = "project_venv"
 SOURCE_CONDA = "conda"
 SOURCE_PYENV = "pyenv"
@@ -57,6 +57,49 @@ SOURCES = (
     SOURCE_CONDA,
     SOURCE_PYENV,
 )
+
+#: 项目自己声明 / 编辑器指向的那几类来源（`rank()` 的第 0 档）：检测模式下默认链条能跑这个脚本时，只有它们还排在
+#: 默认链条前面（ADR 0057 FO11：项目带了自己的环境就用它；ADR 0114 §六）
+PROJECT_SOURCES = frozenset(
+    {
+        SOURCE_PROJECT_VENV,
+        SOURCE_VSCODE,
+        SOURCE_PYTHON_VERSION,
+        SOURCE_ENVIRONMENT_YML,
+        SOURCE_SHEBANG,
+    }
+)
+
+#: 路径由项目文件**直接写出**的来源（`.vscode/settings.json` 的 `python.defaultInterpreterPath`、脚本 shebang、项目里的 venv）。
+#: `.python-version` / `environment.yml` 只给版本名 / 环境名，路径是在用户自己的 pyenv / Conda 里查出来的——不在此列
+PROJECT_PATH_SOURCES = frozenset({SOURCE_PROJECT_VENV, SOURCE_VSCODE, SOURCE_SHEBANG})
+
+
+def is_project_controlled(cand: dict, root: str | Path) -> bool:
+    """候选解释器是不是**项目说了算**的（唯一判据；Codex 安全 #820 r4232804805）：来源是项目文件直接写出路径的
+    （`PROJECT_PATH_SOURCES`：项目 venv、`.vscode`、shebang），或者它的路径（原样 / 解
+    符号链接后）落在项目根里。攻击者提供的项目可以让这样的路径指向一个会执行任意代码的文件，所以用户点「运行」之前不
+    起它（体检就是起它）。"""
+    if cand.get("source") in PROJECT_PATH_SOURCES:
+        return True
+    python = cand.get("python") or ""
+    if not python:
+        return False
+    # 分类不得先 realpath：项目里被重定向的路径（junction / 符号链接）一经 realpath 就会去探目标。逐级 lstat 发现重定向
+    # 直接判"项目说了算"，不碰目标
+    if scanbudget.redirected_component(root, python, allow_final_link=True) is not None:
+        return True
+    base = os.path.abspath(str(root))
+    for path in (os.path.abspath(python), os.path.realpath(python)):
+        try:
+            if os.path.commonpath(
+                [os.path.normcase(base), os.path.normcase(path)]
+            ) == os.path.normcase(base):
+                return True
+        except ValueError:  # 不同盘符
+            continue
+    return False
+
 
 #: 问登录 shell 最多等多久。交互式 shell 要读 rc 文件（Conda init、oh-my-zsh……），冷启动一两秒常见
 LOGIN_SHELL_TIMEOUT_S = 8.0
@@ -501,14 +544,16 @@ def discover(
     for python, source, label in raw:
         if budget is not None and budget.stop_reason() is not None:
             break
-        if no_follow:
-            # 项目派生的候选（vscode / .python-version / environment.yml / shebang 解析出的项目内路径）：
-            # 在任何跟随链接的谓词（is_file / realpath）之前逐级 lstat，被重定向的丢弃并记账，不探目标
-            bad = scanbudget.redirected_component(root_real, python, allow_final_link=True)
-            if bad is not None:
-                if budget is not None:
-                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
-                continue
+        # 项目派生的候选（vscode / .python-version / environment.yml / shebang 解析出的项目内路径）：**永远**——不止导入即扫描，
+        # 准备会话的检查也走这里（Codex 安全 #820 r4234904358：Windows 上项目里的 junction 可以把看着像本地的线索指到攻击者的
+        # SMB / WebDAV，一次 `is_file` 就发出网络认证）——在任何跟随链接的谓词（is_file / realpath）之前逐级 lstat，被重定向的
+        # 丢弃并记账，不探目标。**线索文件本身**（`.vscode/settings.json` 是用户 dotfile 管理的符号链接）仍按 `no_follow` 读：
+        # 老路径保持跟随用户自己的链接（tests/test_user_environment_no_follow.py 钉着）
+        bad = scanbudget.redirected_component(root_real, python, allow_final_link=True)
+        if bad is not None:
+            if budget is not None:
+                budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
+            continue
         if not _is_python_file(python):
             continue
         key = _key(python)
@@ -540,44 +585,116 @@ _SOURCE_RANK = {
     SOURCE_SYSTEM: 4,
 }
 
-_probe_cache: dict[tuple[tuple[str, str], tuple[str, ...], bool], dict] = {}
+_probe_cache: dict[tuple, dict] = {}
 
 
-def _probe(python: str, modules: tuple[str, ...], *, bundled: bool = False) -> dict:
+def _dirs_fingerprint(dirs: list[str]) -> tuple:
+    """这些目录的 mtime（ns；不存在 = None）。装 / 卸一个包会在目录里加 / 减一项，目录 mtime 随之变；目录本来不存在、之后被创建
+    （第一次 `pip install --user`）也变。纯 `stat`，不起解释器。"""
+    out = []
+    for d in dict.fromkeys(dirs):
+        try:
+            out.append((d, os.stat(d).st_mtime_ns))
+        except OSError:
+            out.append((d, None))
+    return tuple(out)
+
+
+def _health_fingerprint(health: dict) -> tuple:
+    """一条体检结论的"站点内容"指纹：**体检进程自己报的目录表**（`site_dirs`——两种方式都报：隔离体检是它真正放进 `sys.path`
+    的那些，import 方式是正常启动之后 site / .pth 给出的，含启用时的用户 site 和还不存在的用户 site 目录）。没有这张表
+    （启动就失败的结论，没有可看的站点）回空指纹：失败结论不因站点变化重测（重测一个起不来的解释器最长 60 秒）。"""
+    dirs = health.get("site_dirs")
+    return _dirs_fingerprint(list(dirs)) if isinstance(dirs, list) else ()
+
+
+def _cache_key(
+    python: str, modules: tuple[str, ...], bundled: bool, mode: str = "import", root: str = ""
+) -> tuple:
+    """体检缓存的键：路径 + **环境代**（`projectenv.environment_generation`，与池 / 项目记录同一个"代"的概念）+ 要量的 import
+    + 是否内置 + 体检方式。同一路径上被重建的环境换代，旧结论不再命中（Codex #820 r4233884149）。
+
+    `spec`（运行之前不 import 的版本）的结论取决于**项目根**——同一个可编辑安装的模块在项目 A 里解析进项目、在项目 B 里不是——
+    所以键里带规范化（realpath）的项目根；`import` 的结论与项目无关，键里没有它（Codex #820 r4234612525）。"""
     from . import projectenv
 
-    key = (_key(python), modules, bundled)
+    how: object = ("spec", os.path.normcase(os.path.realpath(root))) if mode == "spec" else "import"
+    return (
+        _key(python),
+        projectenv.environment_generation(python),
+        modules,
+        bundled,
+        how,
+    )
+
+
+def _probe(
+    python: str,
+    modules: tuple[str, ...],
+    *,
+    bundled: bool = False,
+    mode: str = "import",
+    root: str = "",
+) -> dict:
+    from . import projectenv
+
+    key = _cache_key(python, modules, bundled, mode, root)
     with _lock:
         hit = _probe_cache.get(key)
-    if hit is not None:
+        if hit is None and mode == "spec":
+            # 点过「运行」之后量过的 import 结论更强，运行之前也可以直接信
+            hit = _probe_cache.get(_cache_key(python, modules, bundled, "import"))
+    if hit is not None and _fresh(python, hit):
         return hit
     # 只在内置 runtime 时才带这个参数：用户环境的体检调用形状与以前逐字相同
     extra = {"bundled": True} if bundled else {}
+    if mode == "spec":
+        extra.update(import_mode="spec", project_root=root)
     health = projectenv.probe_environment(python, modules=modules, **extra)
+    health["_site_fp"] = _health_fingerprint(health)
     with _lock:
         _probe_cache[key] = health
     return health
 
 
-def imports_missing(python: str, modules: list[str], *, bundled: bool = False) -> list[str]:
+def _fresh(python: str, health: dict) -> bool:
+    """缓存的结论还有效吗：打过指纹的，环境的站点内容（装 / 卸包）没变才有效；没打过的（外部塞进来的）照旧信。"""
+    fp = health.get("_site_fp")
+    return fp is None or fp == _health_fingerprint(health)
+
+
+def imports_missing(
+    python: str, modules: list[str], *, bundled: bool = False, root: str = ""
+) -> list[str]:
     """`modules` 里此刻这个解释器**确实** import 不到的那几个（ADR 0079 修订 2026-09-25）。
 
     与 `evaluate()` 同一条体检（同一个缓存）。判不出的不算缺：体检起不来、结果里没有这一项
     （`modules_ok` 只有真 import 过的才有 True / False）——拿「没量到」去触发发现，就是在一个
     根本没问过的解释器上替用户换环境。`bundled`：它是内置 runtime，按 worker 的环境与参数量
-    （`projectenv.probe_environment(bundled=True)`）。"""
+    （`projectenv.probe_environment(bundled=True)`）。
+
+    `root` 给了（运行之前）= 不 import、只 `find_spec`，落在项目里的（`None`）不算缺。"""
     mods = tuple(dict.fromkeys(m for m in modules if m))
     if not mods:
         return []
-    ok_map = _probe(python, mods, bundled=bundled).get("modules_ok") or {}
+    probed = (
+        _probe(python, mods, bundled=bundled, mode="spec", root=root)
+        if root
+        else _probe(python, mods, bundled=bundled)
+    )
+    ok_map = probed.get("modules_ok") or {}
     return [m for m in mods if ok_map.get(m) is False]
 
 
-def cached_probe(python: str, modules: tuple[str, ...], *, bundled: bool = False) -> dict | None:
+def cached_probe(
+    python: str, modules: tuple[str, ...], *, bundled: bool = False, root: str = ""
+) -> dict | None:
     """这个候选在这组 import 上**已有**的体检结论（只读缓存，没有回 None；不起任何进程）。"""
     with _lock:
-        hit = _probe_cache.get((_key(python), modules, bundled))
-    return hit
+        hit = _probe_cache.get(_cache_key(python, modules, bundled))
+        if hit is None and root:
+            hit = _probe_cache.get(_cache_key(python, modules, bundled, "spec", root))
+    return hit if hit is not None and _fresh(python, hit) else None
 
 
 def evaluate(
@@ -587,9 +704,13 @@ def evaluate(
     *,
     use_cache: bool = True,
     cache_only: bool = False,
+    root: str = "",
 ) -> list[dict]:
     """逐个体检候选，回同顺序的结果表。`use_cache=False` 真起一次、不读也不写缓存：采用前的
     复核要的是此刻的环境，不是弹窗打开那一刻（或并发的另一次）体检。
+
+    `root` 给了（点「运行」之前）= 脚本要的模块不 import、只 `find_spec`，路径落在项目里的**延后**：该候选回「未检查」
+    （`checked=False`），与项目说了算的候选同一套机器（Codex 安全 #820 r4234465621）。
 
     `cache_only=True`（ADR 0114 §三）：**一个候选也不起**——有缓存结论的照常给，没有的回一条 `checked=False` 的
     「未检查」条目（`ok` / `satisfies` 都是 None，不冒充装齐也不冒充没装齐）；起候选解释器是明确的检查动作的事。
@@ -605,7 +726,7 @@ def evaluate(
 
     def one(cand: dict) -> dict:
         if cache_only:
-            health = cached_probe(cand["python"], imports)
+            health = cached_probe(cand["python"], imports, root=root)
             if health is None:
                 return {
                     **cand,
@@ -619,15 +740,64 @@ def evaluate(
                     "checked": False,
                 }
         elif use_cache:
-            health = _probe(cand["python"], imports)
+            health = (
+                _probe(cand["python"], imports, mode="spec", root=root)
+                if root
+                else _probe(cand["python"], imports)
+            )
         else:
             from . import projectenv
 
             # 不经缓存、也不回写：「先删缓存再走 `_probe`」不是原子的——删完放锁到 `_probe` 再读之间，
             # 并发的一次（更早开始的）体检可以把它的旧结论塞回去，复核于是收下一次过期的「装齐」
             # （Codex #562 P2）。回写同理会让在途的旧体检与这次新结论互相覆盖，所以这里只量、不记。
-            health = projectenv.probe_environment(cand["python"], modules=imports)
+            health = projectenv.probe_environment(
+                cand["python"],
+                modules=imports,
+                **({"import_mode": "spec", "project_root": root} if root else {}),
+            )
         ok_map = health.get("modules_ok") or {}
+        if (
+            health.get("deferred_env")
+            or health.get("ok")
+            and any(v is None for v in ok_map.values())
+            and not any(v is False for v in ok_map.values())
+        ):
+            # 有模块解析到了项目里（可编辑安装指向项目）：运行之前不 import，延后——不冒充装齐也不冒充没装齐
+            return {
+                **cand,
+                "ok": None,
+                "code": "",
+                "support": "",
+                "python_version": health.get("python_version", ""),
+                "matplotlib_version": "",
+                "missing": [],
+                "satisfies": None,
+                "checked": False,
+                "deferred": True,
+            }
+        if (
+            root
+            and health.get("health_deferred")
+            and health.get("ok")
+            and all(v is True for v in ok_map.values())
+        ):
+            # 运行之前只读了 dist-info（没 import matplotlib / worker 启动链）：元数据在不等于能跑（坏的包 / 二进制依赖）。
+            # 不可采用——和延后的候选同一套机器，运行时用 import 方式真量一次，不合格再按排序落到下一个
+            # （Codex #820 r4235263575）。已经确定缺包的（有 False）照旧回"缺"：那个结论不依赖健康检查
+            return {
+                **cand,
+                "ok": None,
+                "code": "",
+                "support": "",
+                "python_version": health.get("python_version", ""),
+                "matplotlib_version": "",
+                "missing": [],
+                "satisfies": None,
+                "checked": False,
+                "deferred": True,
+                "health_deferred": True,
+            }
         missing = sorted(
             {n["distribution"] for n in needed if ok_map.get(n.get("import_name")) is not True}
         )

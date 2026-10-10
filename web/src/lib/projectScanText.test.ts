@@ -1,12 +1,12 @@
 /**
- * 扫描快照 → 人话与「条要不要出现」（T02）。
+ * 扫描快照 → 人话与「引导卡要不要露出来」（T02 / T13b）。
  *
- * 守两件事：**按后端枚举查句子**（不从原始计数里自己推结论）；**没有需要注意的事就不出现**，但
- * 「没看全」「失败」「取消」「有目标」一定出现，且用户主动重新打开时照常显示。
+ * 守两件事：**按后端枚举查句子**（不从原始计数里自己推结论）；**没有需要注意的事就不露**，但
+ * 「没看全」「失败」「取消」「有目标」一定露出来，且用户主动「显示项目检查结果」时照常显示。
  */
 import { describe, expect, it } from 'vitest'
 import type { ProjectScan } from '@/lib/api'
-import { hasPartialIssues, issueLine, scanBarVisible, scanLine, scanNeedsAttention } from './projectScanText'
+import { hasPartialIssues, issueLine, scanCard, scanLine } from './projectScanText'
 
 const scan = (over: Partial<ProjectScan> = {}): ProjectScan => ({
   scan_version: 1,
@@ -24,81 +24,70 @@ const scan = (over: Partial<ProjectScan> = {}): ProjectScan => ({
   actions: [],
   ...over,
 })
-const flags = { dismissedScanId: null, forced: false, slow: false }
+const flags = { forced: false, slow: false }
+const kindOf = (s: ProjectScan | null, f = flags) => scanCard(s, f)?.kind ?? null
 
-describe('条要不要出现', () => {
+describe('引导卡要不要露出来（T13b）', () => {
   it.each([
-    ['static_source', false],
-    ['already_connected', false],
-    ['nothing_found', false],
-    ['target_found', true],
-    ['choose_target', true],
-    ['unchecked', true],
-  ] as const)('完整扫描 outcome=%s → %s', (kind, visible) => {
-    expect(scanBarVisible(scan({ outcome: { kind } }), flags)).toBe(visible)
+    ['static_source', null],
+    ['already_connected', null],
+    ['nothing_found', null],
+    ['target_found', 'discover'],
+    ['choose_target', 'choose'],
+    ['unchecked', 'stuck'],
+  ] as const)('完整扫描 outcome=%s → %s', (kind, card) => {
+    expect(kindOf(scan({ outcome: { kind } }))).toBe(card)
   })
 
-  it('运行中：只有慢扫描才出现（静态小项目不闪一下）', () => {
+  it('运行中：只有慢扫描才出角标（静态小项目不闪一下）', () => {
     const running = scan({ state: 'running', phase: 'scanning', outcome: { kind: 'scanning' } })
-    expect(scanBarVisible(running, flags)).toBe(false)
-    expect(scanBarVisible(running, { ...flags, slow: true })).toBe(true)
+    expect(kindOf(running)).toBe(null)
+    expect(kindOf(running, { ...flags, slow: true })).toBe('scanning')
   })
 
-  it.each(['failed', 'cancelled'] as const)('%s 一定出现', (state) => {
-    expect(scanNeedsAttention(scan({ state }), false)).toBe(true)
+  it.each(['failed', 'cancelled'] as const)('%s 一定露出来', (state) => {
+    expect(kindOf(scan({ state }))).toBe('stuck')
   })
 
-  it('静态项目看不全时必须出现（不能当「没有脚本」）', () => {
+  it('静态项目看不全时必须露出来（不能当「没有脚本」）', () => {
     const partial = scan({
       state: 'partial',
       issues: [{ code: 'unreadable_dir', severity: 'partial', scope: 'dir', path: 'x', count: 1 }],
     })
     expect(hasPartialIssues(partial)).toBe(true)
-    expect(scanBarVisible(partial, flags)).toBe(true)
+    expect(kindOf(partial)).toBe('stuck')
   })
 
   it('设计内的 note（层级太深）本身不触发提示', () => {
     const note = scan({
       issues: [{ code: 'depth_limit', severity: 'note', scope: 'dir', path: 'a/b', count: 1 }],
     })
-    expect(scanBarVisible(note, flags)).toBe(false)
+    expect(kindOf(note)).toBe(null)
   })
 
-  it('关闭只隐藏这一轮；新的一轮（新 scan_id）自然再出现；重新打开强制显示', () => {
-    const s = scan({ outcome: { kind: 'target_found' } })
-    expect(scanBarVisible(s, { ...flags, dismissedScanId: 's1' })).toBe(false)
-    expect(scanBarVisible({ ...s, scan_id: 's2' }, { ...flags, dismissedScanId: 's1' })).toBe(true)
-    expect(scanBarVisible(scan(), { ...flags, forced: true })).toBe(true)
-    expect(scanBarVisible(null, { ...flags, forced: true })).toBe(false)
+  it('用户主动「显示项目检查结果」：没什么要说的也露出那一句', () => {
+    expect(kindOf(scan(), { ...flags, forced: true })).toBe('quiet')
+    expect(kindOf(null, { ...flags, forced: true })).toBe(null)
   })
 })
 
 describe('句子', () => {
-  it('运行中只说已发现的计数，没有百分比', () => {
-    const line = scanLine(
+  it('卡片标题一句话、不带句号：有目标时点名脚本；多个时说个数', () => {
+    const one = scanCard(scan({ outcome: { kind: 'target_found' }, default_target: 'plot.py' }), flags)!
+    expect(scanLine(one)).toBe('发现绘图脚本 plot.py')
+    const many = scanCard(
       scan({
-        state: 'running',
-        phase: 'scanning',
-        outcome: { kind: 'scanning' },
-        found: { scripts: 3, assets: 12 },
+        outcome: { kind: 'choose_target' },
+        targets: [
+          { script: 'a.py', role: 'plot' },
+          { script: 'b.py', role: 'plot' },
+          { script: 'c.py', role: 'auxiliary' },
+        ] as never,
       }),
-    )
-    expect(line).toContain('3')
-    expect(line).toContain('12')
-    expect(line).not.toMatch(/%|％/)
-  })
-
-  it('有目标时点名脚本；看不全时追加一句', () => {
-    const line = scanLine(
-      scan({
-        outcome: { kind: 'target_found' },
-        default_target: 'plot.py',
-        state: 'partial',
-        issues: [{ code: 'symlinked_dir', severity: 'partial', scope: 'dir', path: 'a', count: 1 }],
-      }),
-    )
-    expect(line).toContain('plot.py')
-    expect(line).toContain('没有检查完')
+      flags,
+    )!
+    expect(scanLine(many)).toBe('发现 2 个绘图脚本')
+    expect(scanLine(scanCard(scan({ state: 'running', phase: 'scanning', outcome: { kind: 'scanning' } }), { ...flags, slow: true })!)).not.toMatch(/%|％/)
   })
 
   it('账本每个 code 都有一句话，路径作为插值出现', () => {

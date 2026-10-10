@@ -25,6 +25,7 @@ import pytest
 from tavotto import app as m
 from tavotto.engine import (
     discover as engine_discover,
+    figcapture,
     prepsession,
     probe as engine_probe,
     projectenv as engine_projectenv,
@@ -1365,11 +1366,11 @@ def test_a_registered_stem_that_leaves_the_project_is_never_probed(tmp_path, mon
 
 
 def test_a_subdirectory_stem_is_still_a_valid_project_stem():
-    assert projscan._project_relative_stem("sub/plot")
-    assert projscan._project_relative_stem("fig")
+    assert figcapture.project_relative_stem("sub/plot")
+    assert figcapture.project_relative_stem("fig")
     for bad in ("", "/etc/x", "\\\\h\\s\\x", "C:x", "a/../b", "..", "a\\..\\b", "x\0y"):
-        assert not projscan._project_relative_stem(bad)
-    assert not projscan._project_relative_stem(None)
+        assert not figcapture.project_relative_stem(bad)
+    assert not figcapture.project_relative_stem(None)
 
 
 def test_budget_expiring_inside_isfile_is_scan_incomplete_not_a_single_target(
@@ -1380,13 +1381,13 @@ def test_budget_expiring_inside_isfile_is_scan_incomplete_not_a_single_target(
     _registered_fig(root)
     _asset(root, "fig.pdf")
     budget = scanbudget.Budget()
-    real = projscan.figcapture.find_original_artifact
+    real = figcapture.find_original_artifact
 
     def expiring(project_root, stem, *, isfile=os.path.isfile):
         budget._stopped = scanbudget.ISSUE_TIME  # 查原件的途中预算用尽，谓词报「没找到」
         return None
 
-    monkeypatch.setattr(projscan.figcapture, "find_original_artifact", expiring)
+    monkeypatch.setattr(figcapture, "find_original_artifact", expiring)
 
     report = projscan.scan(root, budget=budget)
 

@@ -108,7 +108,7 @@ export function WorkdirConfirmDialog() {
             disabled={!choice}
             onClick={() => void confirm()}
           >
-            {en('engine.workdirChooseRun')}
+            {en('engine.workdirChooseConfirm')}
           </Button>
         ),
       }}

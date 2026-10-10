@@ -65,6 +65,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -134,7 +135,12 @@ const COMMANDS: Command[] = [
   {
     id: 'project-scan',
     available: () => projectOpen() && useProjectScanStore.getState().scan !== null,
-    run: () => useProjectScanStore.getState().reopen(),
+    run: () => {
+      useProjectScanStore.getState().reopen()
+      // 卡片优先展示聚焦的准备会话：先放下聚焦，才轮得到扫描结果
+      useProjectPreparationStore.getState().blur()
+      useUiStore.getState().setGuideCard('card')
+    },
   },
   // 教程三条：状态判据只有 lib/onboarding/tutorial 一份，这里只挑显示哪条
   {

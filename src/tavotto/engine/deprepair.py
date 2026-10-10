@@ -5241,16 +5241,17 @@ def user_environment_candidates(
     root = str(Path(project))
     out: list[dict] = []
     silent = projectenv.silent_adoption_enabled()
-    if not silent:
-        # 确认模式（ADR 0114）：项目自己的 venv 是第一个候选，用户在这张表里点「改用」才算采用。静默采用时代
-        # 它归 `pool` 第 4 档管、不进这张表（`_auto_adopt_allowed` 不碰项目 venv）
+    if not projectenv.legacy_adoption_enabled():
+        # 检测 / 确认模式（ADR 0114）：项目自己的 venv 是第一个候选——检测时它能跑就直接用，确认模式下用户在这张表里
+        # 点「改用」才算采用。旧模式里它归 `pool` 第 4 档管、不进这张表（`_auto_adopt_allowed` 不碰项目 venv）
         for venv in projectenv.discover(root, script):
             py = projectenv.interpreter_of(venv, root=root)
             if py:
                 out.append(
                     {"python": py, "source": userenvs.SOURCE_PROJECT_VENV, "label": Path(venv).name}
                 )
-    # 登录 shell 只在静默采用的旧行为下现问；确认模式只用明确检查动作已经问出来的答案
+    # 登录 shell 只在机器可以替用户决定时（检测 / 旧模式，都由用户发起的准备 / 运行触发）现问；确认模式只用明确
+    # 检查动作已经问出来的答案
     out += (
         userenvs.discover(root, script)
         if silent
@@ -5301,6 +5302,76 @@ def recheck_user_environment(project: str | Path, script: str, env_id: str) -> d
     return userenvs.evaluate([cand], needed, unknown, use_cache=False)[0]
 
 
+def _evaluate_candidates(
+    root: str,
+    candidates: list[dict],
+    needed: list[dict],
+    unknown: list[str],
+    *,
+    project_exec: bool,
+    **extra,
+) -> list[dict]:
+    """`userenvs.evaluate` 的唯一入口（检测 / 门的候选体检都经它）。**项目说了算的候选**（`userenvs.is_project_controlled`）
+    在用户明确点「运行」之前一个都不起：`project_exec=False` 时它们只读已有的体检缓存（`cache_only`，没有就是
+    `checked=False` 的「未检查」条目，与确认模式同一套机器），其余候选照旧。同顺序回（Codex 安全 #820 r4232804805）。"""
+    if project_exec or extra.get("cache_only"):
+        return userenvs.evaluate(candidates, needed, unknown, **extra)
+    # 体检上限（`userenvs.PROBE_LIMIT`）只在这里、拆分之前用一次：拆成两份各自再被 `evaluate` 截断，合起来就超过上限，
+    # 而且下面按原候选逐个取结果会取空（StopIteration 掐断准备；Codex #820 r4234324630）。超出上限的候选这一轮不看，
+    # 与 `evaluate` 自己的口径一致；结果只按**实际回来的**条目重组
+    candidates = candidates[: userenvs.PROBE_LIMIT]
+    held = [userenvs.is_project_controlled(c, root) for c in candidates]
+    live_in = [c for c, h in zip(candidates, held) if not h]
+    cached_in = [c for c, h in zip(candidates, held) if h]
+    # 运行之前：脚本要的模块不 import（落在项目里的延后），见 `userenvs.evaluate(root=)`
+    live = userenvs.evaluate(live_in, needed, unknown, root=root, **extra)
+    cached = userenvs.evaluate(cached_in, needed, unknown, **{**extra, "cache_only": True})
+    by_id = {id(c): e for c, e in zip(live_in, live)}
+    by_id.update({id(c): e for c, e in zip(cached_in, cached)})
+    return [by_id[id(c)] for c in candidates if id(c) in by_id]
+
+
+def static_plan_payload(project: str | Path, script: str) -> dict | None:
+    """不解析任何解释器的联合计划载荷（`_static_joint_plan`）；算不出来回 None。"""
+    try:
+        return _static_joint_plan(str(Path(project)), script).to_payload()
+    except Exception:  # noqa: BLE001 — 算不出来就当没有
+        return None
+
+
+def project_check_pending(project: str | Path, script: str, plan_payload: dict) -> bool:
+    """检测模式下，项目自带的候选解释器（`userenvs.is_project_controlled`）里有没有**还没体检**、也许能跑这个脚本的：
+    有 = 现在不能说「这个脚本需要安装包」——项目环境要等用户点「运行」才会被体检（Codex 安全 #820 r4232804805），
+    报告于是以「运行」为主，不先推用户去往受管环境装包。体检缓存里已有「跑不了」结论的不算。"""
+    if projectenv.adoption_mode() != projectenv.ADOPTION_DETECT or _user_env_discovery_off():
+        return False
+    root = str(Path(project))
+    needed, unknown = _plan_imports(plan_payload)
+    if not needed and not unknown:
+        return False
+    candidates = [
+        c
+        for c in user_environment_candidates(root, script)
+        if not envlease.is_mutating(c["python"])
+    ]
+    held = [c for c in candidates if userenvs.is_project_controlled(c, root)]
+    free = [c for c in candidates if c not in held]
+    # 项目说了算的候选还没体检；或别的候选已经体检（不 import）过、有模块解析进了项目——都等运行再量
+    if held and any(
+        e.get("checked") is False for e in userenvs.evaluate(held, needed, unknown, cache_only=True)
+    ):
+        return True
+    return bool(free) and any(
+        e.get("deferred")
+        for e in userenvs.evaluate(free, needed, unknown, cache_only=True, root=root)
+    )
+
+
+def _reprobe_needed(entry: dict, root: str, project_exec: bool) -> bool:
+    """要不要在采用前现量一次：项目说了算的候选只有点了「运行」之后才能量。"""
+    return project_exec or not userenvs.is_project_controlled(entry, root)
+
+
 def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
     """联合计划载荷里「候选环境要 import 得到」的两份：脚本开跑要的第三方包（`missing` + `satisfied`，
     带 distribution）与映射不到包名的。**不只是 `missing`**：`missing` 是相对**此刻的**解释器量的差集——
@@ -5318,7 +5389,7 @@ def _user_env_discovery_off() -> bool:
     return projectenv.auto_adoption_off()
 
 
-def unknown_imports_missing(plan: dict, python: str) -> list[str]:
+def unknown_imports_missing(plan: dict, python: str, root: str = "") -> list[str]:
     """计划里映射不到包名的无条件 import，此刻的解释器里**确实** import 不到的那几个（ADR 0079 修订
     2026-09-25，QA ENV-08-B1）。
 
@@ -5333,7 +5404,7 @@ def unknown_imports_missing(plan: dict, python: str) -> list[str]:
         return []
     # 内置 runtime 由 worker 按 `runtime.child_env()` / `child_args()` 起：体检用同一套（Codex #609 P2）
     bundled = pool.same_python(python, runtime.bundled_python())
-    return userenvs.imports_missing(python, unknown, bundled=bundled)
+    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root)
 
 
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
@@ -5349,8 +5420,14 @@ def user_environment_offer(project: str | Path, script: str, plan: dict, python:
     # 确认模式（ADR 0114）：门不为了「显示推荐」去起候选解释器——只给已有的检查结论，没检查过的列成
     # `checked=False`，用户点「检查并使用」时才由采用端点（`recheck_user_environment`）现场体检
     extra = {} if projectenv.silent_adoption_enabled() else {"cache_only": True}
-    entries = userenvs.evaluate(
-        user_environment_candidates(root, script, exclude=python), needed, unknown, **extra
+    # 门 / 准备计划发生在用户点「运行」之前：项目自己的解释器只读缓存，不起（Codex 安全 #820 r4232804805）
+    entries = _evaluate_candidates(
+        root,
+        user_environment_candidates(root, script, exclude=python),
+        needed,
+        unknown,
+        project_exec=False,
+        **extra,
     )
     name = Path(root).name
     return sorted(entries, key=lambda e: (not e["satisfies"], userenvs.rank(e, name)))
@@ -5374,6 +5451,19 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
     # site-packages，记下来就是把一次半成品的观测变成项目的决策。这只是挑选时的过滤；真正挡住
     # 「在被占用的环境上起会话」的是调用方的顺序——决定落地之后才解析解释器、才查租约（`decide_environment`）
     free = [e for e in user_envs if not envlease.is_mutating(e["python"])]
+    # 旧模式（legacy）的采用发生在起会话 / 运行的时刻：运行之前只读了 dist-info 的候选（`health_deferred`）现在用 import 方式真量
+    pending = [e for e in free if e.get("health_deferred")]
+    if pending:
+        needed, unknown = _plan_imports(offer.get("plan") or {})
+        real = {
+            e["python"]: e
+            for e in userenvs.evaluate(
+                [{k: e[k] for k in ("python", "source", "label") if k in e} for e in pending],
+                needed,
+                unknown,
+            )
+        }
+        free = [real.get(e["python"], e) if e.get("health_deferred") else e for e in free]
     entry = userenvs.best(free, Path(project).name)
     if entry is None or not _auto_adopt_allowed(project, offer):
         return None
@@ -5433,7 +5523,7 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
     elif joint.status == depplan.STATUS_NOTHING_NEEDED and not clean:
         # 没有能装的，但有映射不到包名、此刻又确实 import 不到的：同样的三步去找用户环境（只找、只改用，
         # 仍不装）。门不因此弹框——弹窗是「授权安装」，这里没有可装的东西；决定在 `decide_environment`
-        unknown_missing = unknown_imports_missing(plan_payload, python)
+        unknown_missing = unknown_imports_missing(plan_payload, python, root)
         if unknown_missing:
             user_envs = user_environment_offer(root, script, plan_payload, python)
     # 授权的实际影响（T06）：只有真能授权的计划才有——与 `create_joint_plan` 绑定出的计划同一个函数算出，
@@ -5506,8 +5596,16 @@ def _gate_open(root: str, script: str) -> bool:
 
 
 def decide_environment(project: str | Path, script: str) -> dict | None:
+    """`decide_environment_pinned` 的采用那一条（没换回 None）；只关心「换没换」的调用方用它。"""
+    return decide_environment_pinned(project, script).adopted
+
+
+def decide_environment_pinned(
+    project: str | Path, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
     """「换不换解释器」的**唯一一处**决定（ADR 0079 §四）：缺包且有装齐的用户环境、此刻的解释器又是
-    机器替用户挑的，就把它记成本项目的自动决策；回采用的那一条（`userenvs.evaluate` 的形状），不换回 None。
+    机器替用户挑的，就把它记成本项目的自动决策；回 `pool.EnvironmentDecision`：`adopted` 是采用的那一条（`userenvs.evaluate` 的形状，没换 None）；检测模式还带
+    锁内钉下的解释器（见 `_detect_environment_pinned`）。
 
     **必须在「解析解释器」之前调**，它之后的一切都读决定之后的世界：准备计划的快照（`preparation.plan_for`：
     解释器、LaunchContext、环境事实——否则 `_stale_reason` 拿旧快照比新决策，第一次准备就以
@@ -5516,23 +5614,220 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
     `gate()` 里、门又跑在快照与租约检查之后——两条 Codex #522 P1 是同一个顺序错误。
 
     工作目录还要先问时不决定：那道门排在依赖门前面，没答之前不起会话，也就轮不到换环境。"""
-    if not projectenv.silent_adoption_enabled():
+    mode = projectenv.adoption_mode()
+    if mode == projectenv.ADOPTION_CONFIRM:
         # 确认模式（ADR 0114）：「换不换解释器」不再由机器决定。候选环境的体检结果仍随跑前的门 / 修复
         # 卡片的载荷（`user_environments`）交给用户，采用是他点的那一下——这里连门都不必问（不去量一遍
         # 只为了发现自己不该做这个决定）
-        return None
+        return pool.EnvironmentDecision()
+    if mode == projectenv.ADOPTION_DETECT:
+        root = str(Path(project))
+        if workdir.decision_for(root, script)["needs_confirmation"]:
+            # 与旧模式同一个顺序：运行目录那道门先问，没答之前一个进程都不起（检测要量解释器）
+            return pool.EnvironmentDecision()
+        return _detect_environment_pinned(root, script, project_exec=project_exec)
     root = str(Path(project))
     if not _gate_open(root, script):
-        return None
+        return pool.EnvironmentDecision()
     if workdir.decision_for(root, script)["needs_confirmation"]:
-        return None
+        return pool.EnvironmentDecision()
     got = _preparation_offer(root, script)
     if got is None:
-        return None
+        return pool.EnvironmentDecision()
     offer, user_envs = got
     if offer["plan"]["status"] != depplan.STATUS_READY and not offer.get("unknown_missing"):
+        return pool.EnvironmentDecision()
+    return pool.EnvironmentDecision(adopted=_auto_adopt(root, offer, user_envs))
+
+
+#: 检测模式的单飞：同一项目同一时刻只有一次检测在体检候选；后到的等它落地，再按落地之后的项目记录判断（通常直接
+#: 回 None——记录已经是能跑的那一个）
+_detect_locks: dict[str, threading.Lock] = {}
+_detect_guard = threading.Lock()
+
+
+def _detect_lock(root: str) -> threading.Lock:
+    key = projectenv._key(root)
+    with _detect_guard:
+        return _detect_locks.setdefault(key, threading.Lock())
+
+
+def _static_joint_plan(root: str, script: str) -> depplan.JointPlan:
+    """不解析任何解释器的联合计划：目标事实为空（什么都没装），只用来取脚本静态 import 出来的 `needed` / `unknown`
+    给候选体检。状态是 `blocked`（目标不可用），永远不会被当成「默认链条能跑」。"""
+    return depplan.plan(
+        root,
+        script,
+        facts=None,
+        target_kind=TARGET_MANAGED,
+        groups=depplan.selected_groups_setting(root),
+    )
+
+
+def _detect_environment_unlocked(
+    root: str, script: str, *, project_exec: bool = True
+) -> dict | None:
+    """**调用方持 `_detect_lock(root)`**（见 `_detect_environment_pinned`）。检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
+    （`userenvs.evaluate` 的形状），不换回 None。
+
+    「能跑」= 解释器健康 + 联合计划里脚本要的 import（缺的、已有的、映射不到包名的）全都 import 得到——与跑前的门、
+    依赖弹窗「装齐」同一个判据（`userenvs.evaluate` + `_plan_imports`），不另写。候选 = 项目 venv / 编辑器 /
+    `.python-version` / `environment.yml` / shebang / 登录 shell / Conda / pyenv / 系统（`user_environment_candidates`）。
+    挑选顺序：项目自己的线索 → 默认链条（内置，能跑就不换）→ 其余按 `userenvs.rank()`。
+
+    * 不动的：全局显式解释器（环境变量 / 设置里指定的）、用户为本项目选过且仍有效的、明确选回默认链条的——
+      `pool.machine_chosen_interpreter` 判为 False 的一个都不碰；
+    * 失效的记录（不在 / 被重建 / 体检不过）在这之前由 `resolve_worker_python` 作废（检测模式不停下，见
+      `pool._stops_when_unusable`），然后按「没决定过」重新检测；
+    * 机器先前定下的仍能跑 → 不动；不能跑 → 找别的能跑的换过去；都不能跑 → 检测自己记下的那条作废（装进 Tavotto
+      管理的环境，不往用户的环境里装），历史记录（`legacy_auto`）照旧；
+    * 预算：候选上限 `userenvs.PROBE_LIMIT`、每个 `projectenv.PROBE_TIMEOUT_S`；正被安装占着的环境不挑；这个项目
+      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。"""
+    try:
+        current = pool.resolve_worker_python(root, script=script, discover=False)[0]
+    except pool.WorkerError as exc:
+        if getattr(exc, "explicit", None):
+            return None  # 显式选择失效：那是另一条错误，原路径去报
+        current = ""  # 一个 Python 都没有：照样找用户的环境，找不到才是一键私有 Python
+    if not pool.machine_chosen_interpreter(root):
         return None
-    return _auto_adopt(root, offer, user_envs)
+    record = projectenv.remembered_record(root)
+    try:
+        joint, _kind, python = joint_plan_for(root, script)
+    except pool.WorkerError:
+        if current:
+            return None
+        # 默认链条一个解释器都没有、也没有私有 Python 可提供：联合计划要先解析那个不存在的解释器，必然再抛一次。
+        # 脚本要哪些 import 是静态的（AST），不需要解释器——按「什么都没装」算一份，拿它去体检候选；
+        # 候选都跑不了才回到「安装缺少的组件」（Codex #820 r4232654893）
+        try:
+            joint = _static_joint_plan(root, script)
+        except Exception:  # noqa: BLE001 — 静态计划算不出来：不检测，原路径去报 no_worker_python
+            return None
+        python = ""
+    plan = joint.to_payload()
+    clean = private_python_target(root, script) is not None
+    runs_now = (
+        not clean
+        and joint.status == depplan.STATUS_NOTHING_NEEDED
+        and not unknown_imports_missing(plan, python, "" if project_exec else root)
+    )
+    needed, unknown = _plan_imports(plan)
+    candidates = user_environment_candidates(root, script, exclude=current or python)
+    # 两个互不相同的子集（Codex #820 r4233842661）：`declared` = 项目声明 / 指向的（排序里排在默认链条前面的那一档：
+    # 项目 venv / `.vscode` / `.python-version` / `environment.yml` / shebang，加上路径落在项目根里的）；`held` ⊂ 它 = 其中
+    # 项目说了算路径的（`is_project_controlled`），点「运行」之前不能起。`.python-version` / `environment.yml` 指向用户
+    # 自己 pyenv / Conda 里的环境，属于 `declared` 但不是 `held`：检查阶段照旧体检、按排序采用
+    held = [c for c in candidates if userenvs.is_project_controlled(c, root)]
+    declared = [
+        c
+        for c in candidates
+        if c.get("source") in userenvs.PROJECT_SOURCES or userenvs.is_project_controlled(c, root)
+    ]
+    free_declared = [c for c in declared if c not in held]
+    if runs_now and record is not None:
+        # 机器先前定下的那个仍能跑：不动——除非它不是项目自己的环境，而项目带了更靠前的候选还没被体检过（点「运行」
+        # 才体检，Codex #820 r4233340712）：不能让一个排在后面的先前选择把项目环境永远挡在体检之外
+        mine = userenvs.is_project_controlled({"python": current or python, "source": ""}, root)
+        if mine or not declared or (not project_exec and not free_declared):
+            return None
+    if not project_exec and any(
+        e.get("checked") is False for e in userenvs.evaluate(held, needed, unknown, cache_only=True)
+    ):
+        # 项目自带的候选还没体检、检查阶段又不能起它：不在这时采用排在它后面的候选（点「运行」先体检项目的那个，
+        # 跑不了才按既有排序落到下一个；Codex #820 r4233340712）。同档但不归项目说了算的（pyenv / Conda 里的）照旧可体检
+        if not free_declared:
+            return None
+        candidates = free_declared
+    elif runs_now:
+        # 默认链条能跑：只有项目自己声明 / 指向的环境排在它前面（不只是项目说了算路径的那几个）
+        candidates = declared
+    candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
+    entry = None
+    if candidates and not _user_env_discovery_off():
+        entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
+        if not project_exec and any(e.get("deferred") for e in entries):
+            # 有候选的某个模块解析进了项目（可编辑安装指向项目）：运行之前不 import，它的结论延后——这一轮不采用排在后面的
+            return None
+        while True:
+            entry = userenvs.best(entries, Path(root).name)
+            if entry is None or not _reprobe_needed(entry, root, project_exec):
+                break
+            # 缓存里的"装齐"结论来自过去的某一刻（装包被卸掉不换代）：记下之前现量一次，量不过就换下一个
+            # （Codex #820 r4233884149）。项目说了算的候选在运行之前不能现量，只信带环境代的缓存
+            fresh = userenvs.evaluate(
+                [entry],
+                needed,
+                unknown,
+                use_cache=False,
+                **({} if project_exec else {"root": root}),
+            )[0]
+            if fresh.get("satisfies"):
+                entry = {**entry, **fresh}
+                break
+            entries = [e for e in entries if e["python"] != entry["python"]]
+    if entry is None:
+        if (
+            not runs_now
+            and record is not None
+            and record.get("trigger") == projectenv.TRIGGER_AUTO_DETECTED
+        ):
+            # 检测先前挑的环境不再能跑这个脚本、别处也没有能跑的：作废它，「安装缺少的组件」装进 Tavotto
+            # 管理的环境——检测从不把用户的环境当成安装目标
+            try:
+                unless_installing(root, lambda: pool.invalidate_remembered(root, record))
+            except envlease.EnvironmentBusy:
+                pass
+        return None
+    try:
+        adopted = unless_installing(
+            root,
+            lambda: projectenv.remember(
+                root,
+                entry["python"],
+                automatic=True,
+                trigger=projectenv.TRIGGER_AUTO_DETECTED,
+                health=entry,
+                only_if=_record_allows_auto_adopt,
+            ),
+        )
+    except envlease.EnvironmentBusy:
+        return None
+    if not adopted:
+        return None
+    pool.note_project_python_ok(entry["python"])
+    LOG.info("自动检测：改用 %s（%s）", entry["python"], entry.get("source"))
+    for listener in list(_adoption_listeners):
+        try:
+            listener(root, userenvs.public(entry))
+        except Exception:  # noqa: BLE001 — 通知失败不能挡住准备
+            LOG.exception("用户环境改用通知失败")
+    return entry
+
+
+def _detect_environment_pinned(
+    root: str, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
+    """检测 + 在**同一把锁内**把此刻生效的解释器、来源与环境代取下，作为不可变的 `EnvironmentDecision` 交出去。
+
+    锁只护住检测本身；返回之后消费方（`plan_for` 的快照、`pool.acquire` 起会话）若各自再解析共享的项目记录，
+    同一项目另一个脚本就能在两次解析之间把记录换成它的解释器（Codex #820 P1）。钉下的值之后只比对、不重新解析。"""
+    with _detect_lock(root):
+        adopted = _detect_environment_unlocked(root, script, project_exec=project_exec)
+        try:
+            python, source = pool.resolve_worker_python(root, script=script, discover=False)
+        except pool.WorkerError:
+            return pool.EnvironmentDecision(adopted=adopted)  # 解析不出来：原路径去报那条错
+        return pool.EnvironmentDecision(
+            adopted=adopted,
+            python=python,
+            source=source,
+            generation=projectenv.environment_generation(python),
+        )
+
+
+def _detect_environment(root: str, script: str) -> dict | None:
+    return _detect_environment_pinned(root, script).adopted
 
 
 def gate(project: str | Path, script: str) -> dict | None:
@@ -5579,7 +5874,7 @@ def _spawn_gate(figures_dir: str, script_name: str) -> None:
 
 
 pool.register_spawn_gate(_spawn_gate)
-pool.register_environment_decider(decide_environment)
+pool.register_environment_decider(decide_environment_pinned)
 
 
 #: 日志里按闭集明文放行的失败码：本模块全部 `ERROR_*` 的值 + 私有 Python 的（`_log_repair_failure` /

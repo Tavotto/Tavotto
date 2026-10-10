@@ -3474,6 +3474,13 @@ def api_registry():
         candidates.append(
             {"script": script, **info, "new_stems": fresh, "registered": script in reg}
         )
+    inventory = engine_probe.script_inventory(ctx.path, registered=set(reg))
+    # 「已关联」与导入即扫描同一判据（`probe.linked_scripts`）：只在注册表里、一张能编辑的图都没有的不算（T13b）
+    linked = engine_probe.linked_scripts(
+        ctx.path, {script: list(c["stems"]) for script, c in reg.items()}
+    )
+    for item in inventory:
+        item["linked"] = item["script"] in linked
     return jsonify(
         {
             "source": ctx.registry.source(),
@@ -3483,7 +3490,7 @@ def api_registry():
             # 项目内**全部**合理 .py（含 show-only 与基础设施脚本，
             # 各带稳定 reason code）：普通脚本不因静态分析解不出
             # 产物就从产品里消失，任意一条都可试运行。
-            "all_scripts": engine_probe.script_inventory(ctx.path, registered=set(reg)),
+            "all_scripts": inventory,
         }
     )
 
@@ -4343,7 +4350,13 @@ def _materialize_native(session) -> None:
 
 
 def _materialize_runtime(
-    script: str, entry: str, descriptors: list, *, remap_generation: int | None, run=None
+    script: str,
+    entry: str,
+    descriptors: list,
+    *,
+    remap_generation: int | None,
+    run=None,
+    pinned=None,
 ) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
 
@@ -4359,7 +4372,14 @@ def _materialize_runtime(
     # 取会话在锁外：取不到现成的会起一条新的、跑脚本——持锁执行脚本会把改指堵在一次 build 后面
     # `run`（T03）：产出这批图的那份运行配置——取的必须是同一条热会话，否则会为别的参数另起一次执行
     try:
-        worker = _safe_worker(script, entry, run=run)
+        if pinned is not None:
+            # 准备的一次运行：只物化**跑出这批图的那条热会话**。项目记录在运行之后被换了，也不为物化另起一条会话、
+            # 在别的解释器里把脚本再跑一遍（Codex #820 r4234067402）
+            worker = engine_pool.peek(script, root, run=run)
+            if worker is None or not pinned.matches_worker(worker):
+                return
+        else:
+            worker = _safe_worker(script, entry, run=run)
     except engine_pool.WorkerError:
         return
     try:
@@ -5882,6 +5902,8 @@ def _write_source_files(
         worker.figures_dir,
         worker.entry,
         script_inputs=getattr(worker, "last_build_script_inputs", None) or [],
+        # 解释器也钉热会话自己的：同项目另一个脚本可能已把共享的项目记录换成别的（#820 r4221133372）
+        pinned=engine_pool.pin_of_worker(worker),
         # T03：重放跑的是**热会话自己冻结的那份运行配置**（argv），与热态一致才谈得上"重放 == 热态"；
         # 不读项目此刻的默认配置——之后用户换了参数也不能让这次验证拿另一组参数去比
         **({"run": worker.run} if getattr(worker, "run", None) is not None else {}),
@@ -7045,6 +7067,19 @@ def _preparation_target(rel_id: str) -> dict:
     }
 
 
+def _plan_pin(pl):
+    """这份计划自己的解释器（路径 + 来源 + 环境代）作为不可变决定；计划没有解释器回 None。取会话 / 物化都只认它，
+    不对共享的项目记录重新决定（Codex #820 r4234067402）。"""
+    if not getattr(pl, "interpreter", ""):
+        return None
+    env = getattr(pl, "environment", None) or {}
+    return engine_pool.EnvironmentDecision(
+        python=pl.interpreter,
+        source=str(env.get("source") or ""),
+        generation=str(env.get("generation") or ""),
+    )
+
+
 def _preparation_runner(pl, before_retry=None):
     """「真的把 runtime 起起来」只有一份实现：`pool.build_owned`（`pool.build` + 所有权，带一次项目环境
     自动 fallback）。这里不另写 get + ensure_built。
@@ -7061,6 +7096,8 @@ def _preparation_runner(pl, before_retry=None):
         ),
         # T03：计划冻结的运行配置；没有配置时调用形状与以前一致
         **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
+        # 这份计划自己的解释器（路径 + 来源 + 环境代）：取会话只认它，不再对共享的项目记录重新决定
+        **({"pinned": _plan_pin(pl)} if _plan_pin(pl) is not None else {}),
     )
 
 
@@ -7289,6 +7326,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         descriptors,
         remap_generation=captured.get("remap_generation"),
         run=run,
+        pinned=_plan_pin(plan),
     )
     engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
     refresh_project(ctx, reason="probe", allow_static_merge=False)

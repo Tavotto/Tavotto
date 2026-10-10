@@ -438,16 +438,56 @@
 - **环境代 `projectenv.environment_generation`**：解释器路径 `lstat` + `pyvenv.cfg` 各自的 (inode, mtime_ns, size) 摘要（不含 ctime / 权限位）；重建换代，装包 / chmod / 扩展属性不换。
   `pool.resolve_worker_python` 第 3 档：用户选的记录环境代变了 → `project_python_unusable(reason=rebuilt)`（不降级）；机器记的 → 作废。
   `preparation.plan_for` 记 `environment.generation`，`_stale_reason` 起会话前再比。
-- **确认模式下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
+- **检测模式（默认，ADR 0114 §六，2026-10-06）**：`deprepair.decide_environment` → `_detect_environment`：用户发起准备 / 运行之后
+  （`plan_for` 与 `pool.acquire` 的 `ENVIRONMENT_DECIDERS`），候选（`user_environment_candidates`，含项目 venv 来源）里能跑这个脚本的
+  （`userenvs.evaluate` 的 `satisfies`，needed = 联合计划的 missing + satisfied + unknown）按「项目线索 → 默认链条 → `userenvs.rank()`」
+  挑一个，`remember(automatic=True, trigger=auto_detected, only_if=record_allows_auto_adopt)`，写在 `unless_installing` 里；都不能跑
+  不采用（检测自己记下的那条作废，`cannot_run`），会话只有依赖待办 + `prepare_dependencies`（受管目标）。全局锁定 / 用户选过且有效 /
+  选回内置不碰；第 3 档失效的记录在检测模式下一律作废后重新检测（`pool._stops_when_unusable`）。运行后缺包的接手
+  （`try_project_env` / `_adopt_system_interpreter`）在检测模式下与旧模式同样会采用（`silent_adoption_enabled()` 为真）。
+- **项目自带的解释器在「运行」之前不执行（Codex 安全 #820 r4232804805）**：`userenvs.is_project_controlled`（唯一判据）= 来源是项目文件直接
+  写出路径的（项目 venv / `.vscode` / shebang，`PROJECT_PATH_SOURCES`）或路径（原样 / 解符号链接后）在项目根里；`.python-version` /
+  `environment.yml` 只给名字、路径在用户自己的 pyenv / Conda 里查，不算。检查（`plan_for` → `decide_environment_pinned(project_exec=False)`、
+  门 / 准备计划的 `user_environment_offer`）经 `deprepair._evaluate_candidates`：这类候选只读体检缓存（`cache_only`，没有就是
+  `checked=False` 的「未检查」），一个都不起。用户点「运行」那一下（`PreparationService._run` 里的 `decide_environment_pinned`、
+  以及 `pool.acquire`）才体检、采用。**点「运行」就是同意**：运行线程采用了项目环境后，若计划唯一过期的原因是这次采用换了解释器
+  （`_stale_reason` == `environment_changed`），`PreparationService._replan_in_place` 就地按采用后的解释器重算计划再往下跑（会话的计划
+  由 `prepsession._done` 跟上，不加修订）；别的过期原因照旧拦。首查时若有**还没体检、也许能跑**的项目候选
+  （`deprepair.project_check_pending`），依赖门不推「安装缺少的组件」：计划的 `dependency_preparation.project_check_pending=True`、不挂
+  `required_input`（同时**不在检查阶段采用排在项目候选后面的候选**，也不让先前选的较低优先级环境挡住项目候选的首次体检：点「运行」先体检项目的，
+  跑不了才按既有排序落到下一个），`dependencies` 检查项是 `ok` + `detail.deferred="project_environment"`，主动作是 `run`（界面句子
+  `line.readyProject`）；运行时体检跑不了 → 起会话那道依赖门回「需要输入」，`_done` 重新检查一次，报告带上常规的安装待办与影响摘要
+  （受管环境）。其余候选（用户的 Conda / pyenv / 系统 / 登录 shell）行为不变。
+- **运行之前的体检不 import 脚本要的模块（Codex 安全 #820 r4234465621）**：可编辑安装（外部 venv 里 `.pth` 指向 `<项目>/src`）会把脚本的
+  `import payload` 解析进项目里，`__import__` 它就是执行项目代码。所以运行之前（`_evaluate_candidates` 的非项目说了算那一份、
+  `user_environment_offer`、`unknown_imports_missing(root=)`、采用前复核）用 `projectenv.probe_environment(import_mode="spec",
+  project_root=…)`：只问**顶层名**的 `find_spec`（点号名的 `find_spec` 会 import 父包，不用），`modules_ok` 里 `True` = 找得到且不在项目里、
+  `False` = 找不到、`None` = 路径落在项目根里 → `userenvs.evaluate` 回 `checked=False, deferred=True`，同项目说了算的候选一样等运行再量
+  （`project_check_pending` / 检测都看它）。`spec` 与 `import` 是缓存键的一维；`import` 的结论运行之前也可以信，反过来不行。体检进程的
+  cwd 是空的临时目录，项目目录不会隐式进 `sys.path`；第三方环境 `.pth` 里的可执行 `import` 行属于用户自己的环境（除非那个 `.pth` 本身
+  在项目里——那个解释器由 `is_project_controlled` 的路径判据先拦下）。真 `import`（含坏二进制 wheel 的发现）只在用户点「运行」之后。
+- **运行之前的体检以 `-I -S` 启动（Codex 安全 #820 r4234643135）**：解释器启动期的 `site` 会处理 `.pth`（含可执行的 `import` 行）并 import
+  `sitecustomize`，装了本项目的外部环境（可编辑安装，无论是不是 `.python-version` / `environment.yml` 点名的）因此在"检查"里就执行项目代码。
+  `spec` 体检（用户的环境；内置 runtime 不加）因此不带 `site`：`projectenv._prepare_isolated_path` 手工补回 venv / 系统 / 用户的
+  site-packages，**`.pth` 只当文本读**——路径行指进项目根、`import` 行带 `__editable__`（finder）且旁边的 finder 文件提到项目根或找不到、
+  `sitecustomize` / `usercustomize` 解析进项目，任一成立 = 整个环境 `deferred_env`，不 import 任何东西，`userenvs.evaluate` 回
+  `checked=False, deferred=True`，等运行再量。其余 `import` 行不执行（只是少了它们的副作用，运行时的真 import 会补上）。`import` 方式
+  （运行之后）原样不变，运行就是同意。**spec 体检什么都不 import**（Codex 安全 #820 r4235163764）：连 Tavotto 自己要的 matplotlib / worker
+  启动链也不（版本读 dist-info 的 METADATA，`health_deferred`；能不能真 import 等运行再量），子进程回报 `new_imports`（探测前后
+  `sys.modules` 多出的非标准库顶层名）必须为空，由用例钉着。进 `sys.path` 的目录（site 目录、`.pth` 路径行）是项目、项目里的、或项目的
+  **祖先**（`/work` 对 `/work/matplotlib`，祖先能把顶层包名解析成项目）任一成立 = 整个环境延后（`_touches`，两个方向的规范化 commonpath）。
+- **确认模式（`TAVOTTO_ENV_ADOPTION=confirm` 或设置 `worker.environment_adoption=confirm`）下的三个自动采用点只产出建议**：`pool` 第 4 档不发现 / 不体检 / 不记；`deprepair.decide_environment` 直接回 None；
   `pool.try_project_env` 项目 venv 体检通过时回 `environment_confirmation_required` + `recommended`，`deprepair.offer()` 把它列成
   `system_interpreter` 目标（项目相对路径）等用户点；`_adopt_system_interpreter` 不采用。依赖门的候选表在确认模式下多一个
-  `project_venv` 来源（`userenvs.SOURCE_PROJECT_VENV`），登录 shell 只读检查动作已问出的答案。**唯一开关**
-  `projectenv.silent_adoption_enabled()`（`TAVOTTO_ENV_ADOPTION=auto`，保留一版，退出条件见 ADR 0114 §五）。
+  `project_venv` 来源（`userenvs.SOURCE_PROJECT_VENV`），登录 shell 只读检查动作已问出的答案。模式判据唯一出处
+  `projectenv.adoption_mode()`；`silent_adoption_enabled()` = 检测或旧模式，`legacy_adoption_enabled()` = 旧模式（`legacy`，旧名
+  `auto`，保留一版，退出条件见 ADR 0114 §五）。
 - **GET `/api/engine/environment` 不起解释器**：`pool.peek_project_resolution` 只 `stat`；`project.consent`（`confirmed` / `legacy_auto` /
   `none`）与 `project.recommendation` 是后端投影，`envStore` 原样保存。
 - **迁移**：`automatic=False` 记录 = 已确认，不重新询问；`automatic=True` 的历史记录照用但只是 `legacy_auto`，不当显式确认；没有环境代的
   老记录不追溯。
-- **会话**：`prepsession.checks_of` 的 `environment` 检查项在 `needs_decision` 时 `needs_action`（`environment_choice_required`），
+- **会话**：`prepsession.checks_of` 的 `environment` 检查项在 `needs_decision` 时 `needs_action`（`environment_choice_required`；
+  只在确认模式下可能出现——`envadvice.recommend()` 的 `needs_decision` 在检测模式下恒为 False），
   `requirements[].kind = environment_choice`，载荷是 `recommendation`；回答走采用端点 / 选回内置，再 `recheck`。
 
 ## 授权影响摘要 / 认领 / 采用互斥 / 多作用域互斥（T06，ADR 0115，2026-10-05）

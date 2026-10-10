@@ -381,3 +381,27 @@ class Budget:
                 "seconds": self.limits.max_seconds,
             },
         }
+
+
+def no_follow_isfile(root, charge=None):
+    """「项目内的普通文件吗」谓词：只 lstat、不跟随；拼接后的路径必须落在 `root` 之下（词法包含，CodeQL
+    py/path-injection 的 barrier 形状），经过的任一级是链接 / 路径替身同样不探。`charge`（可选）每问一次记一笔
+    预算，返回 False 即答 False。**这是项目派生路径探文件的默认形状**（#820 r4232425162）：目标可能是攻击者的
+    UNC / WebDAV，跟随式 `os.path.isfile` 在 Windows 上会发出 NTLM。"""
+    real_root = os.path.normpath(os.fspath(root))
+
+    def isfile(path) -> bool:
+        if charge is not None and not charge():
+            return False
+        norm = os.path.normpath(os.fspath(path))
+        if not norm.startswith(real_root.rstrip(os.sep) + os.sep):
+            return False
+        if redirected_component(real_root, norm) is not None:
+            return False
+        try:
+            st = os.lstat(norm)
+        except OSError:
+            return False
+        return not is_redirect(st) and stat.S_ISREG(st.st_mode)
+
+    return isfile

@@ -34,9 +34,11 @@
   与 `worker_argv` 的 golden 一个字节不动。四个 `cwd_origin` 各有且只有一个生产者
   （`sandbox` / `project`=脚本目录 / `project_root`=项目根 / native；ADR 0057 §二）；
   grant 只由 `workdir.set_mode / grant_for` 记账，只记时刻不记人，多 `mode` 与 `decided`。
-- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一；**ADR 0114 起默认的确认模式下不再替用户发现 / 体检 / 记住
-  项目 venv**，那一整段只在兼容开关 `TAVOTTO_ENV_ADOPTION=auto` 下发生，默认由 `envadvice.recommend()` 给纯读建议、用户采用后
-  才有项目级记录）：它调 `pool.resolve_worker_python(root,
+- **环境选择前移的落点就是 `plan_for`**（U03，ADR 0057 §一；**ADR 0114 §六（2026-10-06）起默认是检测模式**：`plan_for`
+  先调 `deprepair.decide_environment`——候选里能跑这个脚本的直接采用（`trigger=auto_detected`），都不能跑就不采用、只出依赖待办；
+  确认模式（`TAVOTTO_ENV_ADOPTION=confirm`）下只给 `envadvice.recommend()` 的纯读建议、用户采用后才有项目级记录；第 4 档那段
+  「只看健康就采用项目 venv」只在旧模式 `legacy` / `auto` 下发生。计划的 `environment.adoption` 是报告顶层 `environment` 那一个
+  可展示事实（`envadvice.adoption_fact`））：它调 `pool.resolve_worker_python(root,
   script=…)`——项目 venv 的发现 + 体检 + 记住在这里已经发生（每进程每项目一次），计划里
   `environment.python_version / matplotlib_version / support / discovery / invalidated / error.explicit`
   如实写下选了谁、凭什么（体检量到的事实，ADR 0053 的公开投影：项目外的路径一律 None）、发现了什么
@@ -167,7 +169,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   `_preparation_runner` 接上）；运行中取消 → 本计划新建的会话 `force_cancel(expected_worker=…)` 只关这一条（build 以 WorkerError 回来、
   按取消收场，不等长计算 / input 自己结束）；共享会话的等待者 → 不碰会话，本计划直接以取消收场，执行线程迟到的结局不改写终局
   （`_finish` 对已终局的计划不写）；取消比「取到会话」还早到时，取到那一刻按同一规则处理。取消落地的尝试不再算「活跃」，会话可以马上重新检查。
-  没报所有权的 runner（测试替身）仍走旧的「build 返回之后再收」。看护 `tests/test_preparation_session_lifecycle.py`、e2e `preparation-panel.spec.ts`。
+  没报所有权的 runner（测试替身）仍走旧的「build 返回之后再收」。看护 `tests/test_preparation_session_lifecycle.py`、e2e `preparation-card.spec.ts`。
 - **成功的报告带 `captured`（T09）**：这次尝试捕获到的公开描述符（与 `/api/registry/probe` 响应里同一份：项目相对路径、运行配置只是不透明引用），
   只在 outcome 为 `succeeded` 时非空。界面的「进入编辑」直接用它，不按图名再找一遍、不为换界面再跑一次脚本。
 - **`unlinked_stems`（T09b，T03 已知缺口的可恢复提示）**：无参数的执行按脚本整条替换注册表里的 stems（`discover.register` 的旧语义，
@@ -184,8 +186,8 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 看护：`tests/test_preparation_session.py`（假 pool：合同、并发认领、修订、失效、取消所有权、回收、项目绑定）、
   `tests/test_preparation_session_dependencies.py`（T06：授权 / 认领 / 差额 / 真安装到首图）、
   `tests/test_preparation_session_e2e.py`（真 worker、真服务：只有脚本的项目 → 一次执行 → 进编辑请求不重跑）、
-  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。**T09 / T09b 起它是 GUI 首跑的默认入口**（检查条「准备并运行」、
-  素材库脚本行 ▶、接入中心逐行「试运行并连接」，前端规则在 `docs/rules/frontend/readiness-and-left-shell.md`「准备面板」，ADR 0116）；
+  `tests/test_script_probe.py::TestEntryLoopStopsOnNonEntryFailures`。**T09 / T09b 起它是 GUI 首跑的默认入口**（引导卡「开始准备」（T13b，取代检查条）、
+  素材库脚本行 ▶、接入中心逐行「试运行并连接」，前端规则在 `docs/rules/frontend/readiness-and-left-shell.md`「准备引导卡」，ADR 0116）；
   `/api/registry/probe` 留给本地开关关闭时的旧路径与 MCP / CLI（T10），是暂存的薄兼容 wrapper。它的取消（`/api/registry/probe/cancel`）
   **按 owner（T09b）**：试运行每次取到会话（`pool.build` 的 `before_build`）就把 `(worker, owned)` 记进 `app._PROBE_OWNERS`
   （`owned` = `pool.acquired_here`：本线程最近一次 `acquire()` 取到的就是它时那一次的 `created`），取消端点**先置标志、再读所有权**，
@@ -203,7 +205,8 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 身份三分不混（私有键含路径、公开身份不含、文件 hash 单列）
 - LaunchContext 是派生视图、四个来源各一个生产者
 - 环境选择前移的落点是 `plan_for`（证据 / 作废 / 显式失效如实写）；ADR 0114 起解析解释器不再发现 / 体检 / 采用项目 venv，计划里多
-  `environment.{generation, consent, recommendation}`（纯读建议），`discovery` 只在兼容开关 `TAVOTTO_ENV_ADOPTION=auto` 下有值
+  `environment.{generation, consent, recommendation, adoption}`，`discovery` 只在旧模式（`TAVOTTO_ENV_ADOPTION=legacy|auto`）下有值；
+  默认检测模式下 `plan_for` 先让 `decide_environment` 自动检测（ADR 0114 §六），会话报告的 `environment` 是唯一的环境事实
 - 首开要问的是终局 `needs_input`
 - 过期计划 `preparation_plan_stale` 不执行
 - DependencyIntent 只读不装

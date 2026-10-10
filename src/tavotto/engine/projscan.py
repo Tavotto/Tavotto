@@ -44,9 +44,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import ntpath
-import os
-import posixpath
 import stat
 import threading
 import time
@@ -57,7 +54,6 @@ from pathlib import Path, PurePosixPath
 from . import (
     depresolve,
     discover,
-    figcapture,
     probe,
     project_refresh,
     projectenv,
@@ -200,19 +196,6 @@ def _registered_stems(root: Path) -> dict[str, list[str]]:
     return {script: list(reg.stems_of(script)) for script in reg.all_scripts()}
 
 
-def _project_relative_stem(stem: object) -> bool:
-    """注册表里的 stem 能不能当「项目内相对名」拼进路径：只认字符串，拒绝绝对（POSIX / Windows 两种写法都拒，
-    与当前操作系统无关）、盘符、UNC / 以分隔符开头、含 NUL、任一分量是 `..`。子目录 `sub/plot` 合法。
-    这一关在 `os.path.join` **之前**——拼出来再判太晚：Windows 上 `lstat` 一个 UNC 路径就已经同步连出去了。"""
-    if not isinstance(stem, str) or not stem or "\0" in stem:
-        return False
-    if posixpath.isabs(stem) or ntpath.isabs(stem) or stem[0] in "/\\":
-        return False
-    if ntpath.splitdrive(stem)[0]:
-        return False
-    return ".." not in stem.replace("\\", "/").split("/")
-
-
 def _no_follow_isfile(budget: scanbudget.Budget, root: Path):
     """扫描路径给 `figcapture.find_original_artifact(isfile=…)` 的谓词：只 lstat、不跟随，每问一次记一次预算。
 
@@ -221,23 +204,7 @@ def _no_follow_isfile(budget: scanbudget.Budget, root: Path):
     校验（归一化 + `startswith` 单独控制通往 lstat 的分支，CodeQL py/path-injection 的 barrier 形状）；
     项目内中间目录若是链接 / 路径替身同样不探。预算用完 / 取消 / 超时后一律 False。
     GUI 库路径不传它，仍用默认的跟随式 `os.path.isfile`。"""
-    real_root = os.path.normpath(os.fspath(root))
-
-    def isfile(path) -> bool:
-        if not budget.charge_entry():
-            return False
-        norm = os.path.normpath(os.fspath(path))
-        if not norm.startswith(real_root.rstrip(os.sep) + os.sep):
-            return False
-        if scanbudget.redirected_component(real_root, norm) is not None:
-            return False
-        try:
-            st = os.lstat(norm)
-        except OSError:
-            return False
-        return not scanbudget.is_redirect(st) and stat.S_ISREG(st.st_mode)
-
-    return isfile
+    return scanbudget.no_follow_isfile(root, charge=budget.charge_entry)
 
 
 def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> tuple[set[str], bool]:
@@ -255,42 +222,16 @@ def _linked_scripts(root: Path, budget: scanbudget.Budget | None = None) -> tupl
     打开项目时的静态扫描会先把字面量 savefig 的图名写进注册表（T00 deliberate-boundary）——那只是猜测，脚本一次都没
     跑过、什么都打不开。只按「注册表里有」就报 `already_connected`（「素材已可编辑」）是假话，而且会把只有脚本的项目的
     「准备并运行」入口藏起来（T11 真首跑发现）。只读：文件名比对 + 数据目录里的 cache 元数据，不执行、不起解释器。"""
-    isfile = _no_follow_isfile(budget, root) if budget is not None else os.path.isfile
-    complete = True
-
-    def linked(script: str, stems: list[str]) -> bool:
-        nonlocal complete
-        candidates: list[str] = []
-        for stem in stems:
-            if budget is not None:
-                if not _project_relative_stem(stem):
-                    continue
-                if budget.stop_reason() is not None:
-                    complete = False
-                    return False
-            if figcapture.find_original_artifact(str(root), stem, isfile=isfile) is not None:
-                return True
-            if budget is not None and budget.stop_reason() is not None:
-                complete = False  # 预算在 isfile 内耗尽：上面的「没找到」是被截断的，不是真没有
-                return False
-            candidates.append(stem)
-        # cache 证据按脚本一次判完（运行配置读一次、cache 目录列一次；`probe.captured_stems`），不是每个 stem 探一遍
-        found_any, done = probe.captured_stems(
-            root,
-            script,
-            candidates,
-            charge=budget.charge_entry if budget is not None else None,
-            stop_at_first=True,
-        )
-        if found_any:
-            return True
-        if not done or (budget is not None and budget.stop_reason() is not None):
-            complete = False  # cache 探测中耗尽预算：没查到 ≠ 没捕获
-            return False
-        return False
-
-    found = {script for script, stems in _registered_stems(root).items() if linked(script, stems)}
-    return found, complete
+    isfile = _no_follow_isfile(budget, root) if budget is not None else None  # None = 默认安全谓词
+    # 判据唯一出处 `probe.linked_scan`（素材库脚本清单走同一份）；这里只注入扫描路径的约束：
+    # 不跟随链接的 isfile、项目内相对 stem 校验、预算用尽即停（并标记没查全）
+    return probe.linked_scan(
+        root,
+        _registered_stems(root),
+        isfile=isfile,
+        stopped=(lambda: budget.stop_reason() is not None) if budget is not None else None,
+        charge=budget.charge_entry if budget is not None else None,
+    )
 
 
 def _rel_dir_posix(root: Path, directory: Path) -> str:

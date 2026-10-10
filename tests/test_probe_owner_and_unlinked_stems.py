@@ -674,3 +674,58 @@ def test_was_captured_treats_a_malformed_script_key_as_no_evidence(tmp_path, bad
     root = _project(tmp_path, "p")
     assert engine_probe.was_captured(root, bad_key, "x") is False
     assert engine_probe.captured_stems(root, bad_key, ["x", "y"]) == (set(), True)
+
+
+# ---- #820 r4232425162：注册表 stem 先校验再探文件，默认不跟随且限于项目内 ----
+HOSTILE_STEMS = [
+    "\\\\attacker\\share\\probe",
+    "//attacker/share/x",
+    "/etc/x",
+    "C:\\x",
+    "C:x",
+    "../outside",
+    "a/../../b",
+]
+
+
+def test_linked_scripts_never_touches_a_path_outside_the_project_for_hostile_registry_stems(
+    tmp_path, monkeypatch
+):
+    import os
+
+    from tavotto.engine import probe as engine_probe
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (tmp_path / "outside.pdf").write_bytes(b"x")  # `../outside` 若被拼接会命中它
+    (root / "ok.pdf").write_bytes(b"x")
+    touched: list[str] = []
+    real_isfile, real_lstat = os.path.isfile, os.lstat
+
+    def spy_isfile(p, *a, **k):
+        touched.append(os.fspath(p))
+        return real_isfile(p, *a, **k)
+
+    def spy_lstat(p, *a, **k):
+        touched.append(os.fspath(p))
+        return real_lstat(p, *a, **k)
+
+    monkeypatch.setattr(os.path, "isfile", spy_isfile)
+    monkeypatch.setattr(os, "lstat", spy_lstat)
+    stems = {f"s{i}.py": [stem] for i, stem in enumerate(HOSTILE_STEMS)}
+    stems["good.py"] = ["ok"]
+    linked = engine_probe.linked_scripts(root, stems)
+    assert linked == {"good.py"}  # 恶意 stem 的条目不关联
+    base = os.path.normpath(str(root))
+    assert touched, "好 stem 应当被探过"
+    assert all(os.path.normpath(p).startswith(base + os.sep) for p in touched), touched
+    assert not any("attacker" in p or "outside" in p for p in touched)
+
+
+def test_find_original_artifact_rejects_hostile_stems_before_any_join(tmp_path):
+    from tavotto.engine import figcapture
+
+    seen: list[str] = []
+    for stem in HOSTILE_STEMS:
+        assert figcapture.find_original_artifact(str(tmp_path), stem, isfile=seen.append) is None
+    assert seen == []

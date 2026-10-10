@@ -482,3 +482,90 @@ def test_declared_negative_looking_options_are_flagged_per_grammar():
     schema = scriptargs.analyze(src)
     assert schema["negative_number_options"] is False  # 3.13 的文法下 `-1e3` 不像负数
     assert schema["negative_number_options_extended"] is True
+
+
+def test_subcommands_record_how_many_positionals_precede_them():
+    """r4233340718：前端预留位置 token 只数 `add_subparsers` 之前声明的位置参数；之后声明的在子命令之后。"""
+    before = (
+        "import argparse\np = argparse.ArgumentParser()\np.add_argument('name')\n"
+        "s = p.add_subparsers(required=True, dest='cmd')\ns.add_parser('plot')\np.parse_args()\n"
+    )
+    after = (
+        "import argparse\np = argparse.ArgumentParser()\n"
+        "s = p.add_subparsers(required=True, dest='cmd')\ns.add_parser('plot')\n"
+        "p.add_argument('output')\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(before)["subcommands"]["position"] == 1
+    assert scriptargs.analyze(after)["subcommands"]["position"] == 0
+
+
+def test_subcommand_aliases_are_choices_and_unresolvable_ones_make_it_dynamic():
+    """r4233563613：`add_parser('plot', aliases=['p'])` 的 `p` 也是 argparse 认的子命令名。"""
+    lit = (
+        "import argparse\np = argparse.ArgumentParser()\ns = p.add_subparsers(required=True, dest='c')\n"
+        "s.add_parser('plot', aliases=['p', 'pl'])\ns.add_parser('stats')\np.parse_args()\n"
+    )
+    sub = scriptargs.analyze(lit)["subcommands"]
+    assert sub["choices"] == ["plot", "p", "pl", "stats"] and sub["dynamic"] is False
+    dyn = (
+        "import argparse\nA = ['x']\np = argparse.ArgumentParser()\ns = p.add_subparsers(dest='c')\n"
+        "s.add_parser('plot', aliases=A + ['y'])\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(dyn)["subcommands"]["dynamic"] is True
+
+
+def test_allow_abbrev_is_recorded_literal_false_off_non_literal_unknown():
+    base = "import argparse\n{decl}\np.add_argument('--input')\np.parse_args()\n"
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser()"))["allow_abbrev"]
+        is True
+    )
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser(allow_abbrev=False)"))[
+            "allow_abbrev"
+        ]
+        is False
+    )
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser(allow_abbrev=FLAG)"))[
+            "allow_abbrev"
+        ]
+        is None
+    )
+
+
+def test_subparsers_declared_in_a_branch_are_marked_conditional():
+    plain = (
+        "import argparse\np = argparse.ArgumentParser()\ns = p.add_subparsers(required=True, dest='c')\n"
+        "s.add_parser('a')\np.parse_args()\n"
+    )
+    branch = (
+        "import argparse, sys\np = argparse.ArgumentParser()\nif sys.platform == 'win32':\n"
+        "    s = p.add_subparsers(required=True, dest='c')\n    s.add_parser('a')\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(plain)["subcommands"]["conditional"] is False
+    assert scriptargs.analyze(branch)["subcommands"]["conditional"] is True
+
+
+def test_declarations_in_helpers_are_unproven_but_the_main_path_is_not():
+    """Codex #820 r4234766738：运行闸只数证明得出属于被解析那个 parser 的声明。函数 / 类体里往别处造的 parser 上加参数的
+    辅助函数标 `conditional`（表单仍显示，闸不数）；模块级、或 `build_parser()` 里自己造自己加的不受影响。"""
+    helper = (
+        "import argparse\nparser = argparse.ArgumentParser()\nparser.add_argument('--out')\n"
+        "def unused_helper():\n    parser.add_argument('--input', required=True)\n"
+        "class K:\n    def m(self):\n        parser.add_argument('--k', required=True)\n"
+        "args = parser.parse_args()\n"
+    )
+    got = {a["flags"][0]: a["conditional"] for a in scriptargs.analyze(helper)["arguments"]}
+    assert got == {"--out": False, "--input": True, "--k": True}
+    built = (
+        "import argparse\ndef build_parser():\n    p = argparse.ArgumentParser()\n"
+        "    p.add_argument('--input', required=True)\n    return p\n"
+        "if __name__ == '__main__':\n    build_parser().parse_args()\n"
+    )
+    assert [a["conditional"] for a in scriptargs.analyze(built)["arguments"]] == [False]
+    main = (
+        "import argparse\ndef main():\n    p = argparse.ArgumentParser()\n    p.add_argument('--input', required=True)\n"
+        "    p.parse_args()\nmain()\n"
+    )
+    assert [a["conditional"] for a in scriptargs.analyze(main)["arguments"]] == [False]

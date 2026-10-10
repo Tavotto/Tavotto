@@ -59,6 +59,17 @@ export function useScriptInputAnswer(): ScriptInputAnswer {
 export const isSecret = (req: ScriptInputRequest) => req.secret === true || req.input_kind === 'getpass'
 
 /**
+ * 为什么要重新确认上次的回答（后端 `recheck`，ADR 0099 §十）：两种原因用户要做的判断不同——
+ * 这台电脑上没有当时的记录（换了机器 / 旧版答案文件）只是没法核对；输出或参数变了是真的可能答错。
+ * 键写成字面量（i18n 检查按字面量判活）
+ */
+export function suggestionText(req: ScriptInputRequest, answer: string): string {
+  if (req.recheck === 'legacy_answer') return si('suggestionNoRecord', { answer })
+  if (req.recheck === 'config_changed') return si('suggestionArgs', { answer })
+  return si('suggestion', { answer })
+}
+
+/**
  * @param answerRef 给了就把焦点交给对话框的 `initialFocusRef`（`autoFocus` 会被 Dialog 的「焦点落容器」盖掉，
  *   用户得先点一下才能打字，2026-10-07 设计审计 §10.2）；不给（准备面板等内嵌展示面）仍用 `autoFocus`
  */
@@ -128,7 +139,7 @@ export function ScriptInputFields({
       </label>
       {suggestion !== null && (
         <p data-script-input-suggestion="" className="whitespace-pre-wrap break-words text-sm text-ink-2">
-          {si('suggestion', { answer: suggestion })}
+          {suggestionText(head, suggestion)}
         </p>
       )}
       <p className="text-sm text-ink-3">{secret ? si('getpassNote') : si('rememberNote')}</p>

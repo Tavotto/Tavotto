@@ -188,6 +188,16 @@ describe('ADR 0114 之前自动采用的记录（legacy_auto）：一键确认�
     expect(vi.mocked(adoptEnvironmentCandidate).mock.calls[0][0].id).toBe('cand-1')
   })
 
+  it('检测模式（默认，ADR 0114 §六）：自动定下的就是定下了，不让用户确认环境', async () => {
+    const env = legacyEnv() as unknown as { project: { recommendation: EnvRecommendation } }
+    env.project.recommendation.decision.mode = 'detect'
+    useEnvStore.setState({ env: env as unknown as EngineEnvironment })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector('[data-env-advice-legacy]')).toBeNull()
+    expect(document.querySelector('[data-env-advice]')).toBeNull()
+    expect(text()).not.toContain(en('envAdviceConfirm'))
+  })
+
   it('已经明确确认过（confirmed）：不再问', async () => {
     const env = legacyEnv() as unknown as { project: { recommendation: EnvRecommendation } }
     env.project.recommendation.decision.consent = 'confirmed'

@@ -42,6 +42,7 @@ from . import (
     registry,
     runconfig,
     runtimeasset,
+    scanbudget,
     taskdiag,
 )
 
@@ -700,6 +701,71 @@ def was_captured(
         figures_dir, script, [stem], configs=configs, charge=charge, stop_at_first=True
     )
     return bool(found)
+
+
+def linked_scripts(figures_dir: str | Path, stems_by_script: dict[str, list[str]]) -> set[str]:
+    """登记了、**而且**至少一张登记的图此刻真有东西可编辑的脚本：项目根一层有这个图名的原件
+    （`figcapture.find_original_artifact`——与 handoff / probe 找原件是同一份判据；递归素材清单里的 `archive/fig.pdf`
+    不是这个脚本的原件，不算，#819 P2），或这张图被某次执行捕获过（`was_captured`）。「已关联」只有这一份判据：
+    导入即扫描（`projscan`）与素材库脚本清单（`/api/registry` 的 `all_scripts[].linked`）都用它——打开项目时静态扫描
+    先登记的字面量图名只是猜测，脚本一次没跑过时不算已关联（T11 修了扫描，T13b 发现素材库脚本行是第二个消费者）。
+    只读：文件名比对 + cache 元数据，不执行、不起解释器。"""
+    return linked_scan(figures_dir, stems_by_script)[0]
+
+
+def linked_scan(
+    figures_dir: str | Path,
+    stems_by_script: dict[str, list[str]],
+    *,
+    isfile=None,
+    stem_ok=None,
+    stopped=None,
+    charge=None,
+) -> tuple[set[str], bool]:
+    """`linked_scripts` 的三态版：回 `(已关联的脚本, 是否查全)`。判据只有这一份——导入即扫描（带预算）与素材库脚本清单
+    （不带）共用，扫描路径只通过参数注入自己的约束：
+    `isfile`（`figcapture.find_original_artifact` 的探测谓词，扫描路径给不跟随链接的版本）、
+    `stem_ok`（先于任何路径拼接过滤掉非项目内相对名的 stem，不探也不算连接）、
+    `stopped`（预算 / 取消 / 超时是否已耗尽：耗尽时第二项为 False——没查到 ≠ 没关联，调用方不得据此派生默认目标）；
+    `charge`（每次真实的 cache 磁盘操作前记一笔预算，返回 False 即停，见 `captured_stems`）。cache 证据按脚本一次
+    索引，不是 stems × 配置逐个探（#819 r4232209726 / r4232302927）。"""
+    root = str(figures_dir)
+    # 默认就是安全形状（#820 r4232425162）：stem 先过项目内相对名校验、探文件只 lstat 不跟随且限于项目内；
+    # 扫描路径只是把同一谓词换成「每问一次记一笔预算」的版本
+    if isfile is None:
+        isfile = scanbudget.no_follow_isfile(root)
+    if stem_ok is None:
+        stem_ok = figcapture.project_relative_stem
+    find_kwargs = {"isfile": isfile}
+    complete = True
+
+    def linked(script: str, stems: list[str]) -> bool:
+        nonlocal complete
+        candidates: list[str] = []
+        for stem in stems:
+            if not stem_ok(stem):
+                continue
+            if stopped is not None and stopped():
+                complete = False
+                return False
+            if figcapture.find_original_artifact(root, stem, **find_kwargs) is not None:
+                return True
+            if stopped is not None and stopped():
+                complete = False  # 预算在 isfile 内耗尽：上面的「没找到」是被截断的，不是真没有
+                return False
+            candidates.append(stem)
+        # cache 证据按脚本一次判完（运行配置读一次、cache 目录列一次；`captured_stems`），不是每个 stem 探一遍
+        found_any, done = captured_stems(
+            figures_dir, script, candidates, charge=charge, stop_at_first=True
+        )
+        if found_any:
+            return True
+        if not done or (stopped is not None and stopped()):
+            complete = False  # cache 探测中耗尽预算：没查到 ≠ 没捕获
+            return False
+        return False
+
+    return {script for script, stems in stems_by_script.items() if linked(script, stems)}, complete
 
 
 # ---------------------------------------------------------------------------

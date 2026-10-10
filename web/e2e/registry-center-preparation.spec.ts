@@ -1,8 +1,9 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
-import type { Page } from '@playwright/test'
 import { expect, openWorkspace, test } from './fixtures'
+import { card, openDetails, primary } from './prepCard'
 
 /**
  * 接入中心的逐行试运行（T09b，ADR 0116）——真后端、真 worker、真浏览器。
@@ -18,8 +19,6 @@ import { expect, openWorkspace, test } from './fixtures'
  */
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
-const panel = (page: Page) => page.locator('[data-preparation-panel]')
-const primary = (page: Page) => panel(page).locator('[data-prep-primary]')
 
 interface Run {
   argv: string[]
@@ -108,34 +107,36 @@ test('接入中心「试运行并连接」打开同一个准备面板：点下�
     const row = center.locator('[data-panel-row="Runtime_map.pdf"]')
     await row.getByRole('button', { name: /试运行并连接/ }).click()
 
-    // 接入中心让开，同一个准备面板接手：只读检查，一个执行都没有
+    // 接入中心让开，同一张引导卡接手：只读检查，一个执行都没有
     await expect(center).toHaveCount(0)
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
     expect(runs(log)).toEqual([])
 
-    // 在面板里带上 `--extra`：按新参数检查 → 确认并运行
-    await panel(page).locator('[data-prep-details] > summary').click()
-    await panel(page).locator('[data-testid="argv-render_map.py"] > summary').click()
-    await panel(page).getByRole('button', { name: '添加参数' }).click()
-    await panel(page).getByRole('textbox', { name: 'render_map.py 的第 1 个参数' }).fill('--extra')
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'args_changed')
+    // 在卡里带上 `--extra`（原样参数）：继续 = 按新参数检查 → 运行
+    await card(page).locator('[data-testid="argv-raw-render_map.py"] > summary').click()
+    await card(page).getByRole('button', { name: '添加参数' }).click()
+    await card(page).getByRole('textbox', { name: 'render_map.py 的第 1 个参数' }).fill('--extra')
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'args_changed')
     await primary(page).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
     expect(runs(log)).toEqual([])
     await primary(page).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
     expect(runs(log)).toEqual([{ argv: ['--extra'] }])
     await expect.poll(() => registeredStems(dir), { timeout: 30_000 }).toEqual(['Extra_map', 'Runtime_map'])
 
-    // 去掉参数、不带参数再跑：注册表按脚本整条替换（格式不变），面板同一句里说清 Extra_map 不再关联、怎么恢复
-    await panel(page).getByRole('button', { name: '删除 render_map.py 的第 1 个参数' }).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'args_changed')
+    // 去掉参数、不带参数再跑：注册表按脚本整条替换（格式不变），卡片详情里说清 Extra_map 不再关联、怎么恢复
+    const raw = card(page).locator('[data-testid="argv-raw-render_map.py"]')
+    if ((await raw.getAttribute('open')) === null) await raw.locator('> summary').click()
+    await card(page).getByRole('button', { name: '删除 render_map.py 的第 1 个参数' }).click()
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'args_changed')
     await primary(page).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
     await primary(page).click()
-    await expect(panel(page)).toHaveAttribute('data-prep-state', 'completed_unlinked', { timeout: 120_000 })
-    await expect(panel(page).locator('[data-prep-line]')).toContainText('此前带其他参数生成的 Extra_map 已不再关联')
-    await expect(panel(page).locator('[data-prep-line]')).toContainText('用原参数再运行一次即可恢复')
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed_unlinked', { timeout: 120_000 })
+    const details = await openDetails(page)
+    await expect(details.locator('[data-prep-unlinked]')).toContainText('此前带其他参数生成的 Extra_map 已不再关联')
+    await expect(details.locator('[data-prep-unlinked]')).toContainText('用原参数再运行一次即可恢复')
     expect(runs(log)).toEqual([{ argv: ['--extra'] }, { argv: [] }])
     expect(registeredStems(dir)).toEqual(['Runtime_map'])
 
@@ -169,7 +170,8 @@ test('开关关闭：接入中心委派素材库那台旧状态机——执行�
       timeout: 30_000,
     })
     expect(runs(log)).toEqual([{ argv: [] }])
-    await expect(panel(page)).toHaveCount(0)
+    // 引导卡可能因导入即扫描自动弹出（那只是扫描结果，不建会话）；但不会有任何会话卡
+    await expect(page.locator('[data-prep-card][data-prep-session]')).toHaveCount(0)
     expect(sessions).toEqual([])
   } finally {
     rmSync(root, { recursive: true, force: true })
