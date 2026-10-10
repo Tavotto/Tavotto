@@ -578,6 +578,7 @@ class SendSession:
     sha256: str = ""
     info: BundleInfo | None = None
     created: float = 0.0
+    touched: float = 0.0  # 最近一次被用到（API 调用 / 发送开始 / 终态）：TTL 只针对闲置
     state: str = "prepared"  # prepared | sending | cancelling | done | failed | cancelled | unknown
     stage: str = ""
     failure: str = ""
@@ -627,11 +628,20 @@ _sleep = time.sleep
 _clock = time.monotonic
 
 
+#: 已送达 / 结果未知的会话至少留到用户关闭对话框；闲置超过这个上限才回收（轮询每次都会刷新 `touched`，
+#: 所以只要界面还开着就不会被回收）。
+FINISHED_KEEP_S = 24 * 3600
+
+
 def _expire_locked() -> None:
+    """只回收**闲置**的会话：发送中 / 取消中永不过期；备好 / 失败 / 已取消按 `PREPARED_TTL_S`（从最近一次使用算，
+    不是从备包算）；done / unknown 留 `FINISHED_KEEP_S`——送达的编号不能因为发送跨过 30 分钟就被藏起来（I3）。"""
     cur = _CURRENT
-    if cur and cur.state in ("prepared", "failed", "cancelled", "done", "unknown"):
-        if _clock() - cur.created > PREPARED_TTL_S:
-            _discard_locked(cur)
+    if cur is None or cur.state in ("sending", "cancelling"):
+        return
+    limit = FINISHED_KEEP_S if cur.state in ("done", "unknown") else PREPARED_TTL_S
+    if _clock() - cur.touched > limit:
+        _discard_locked(cur)
 
 
 def _drop_locked(sess: SendSession) -> None:
@@ -653,6 +663,7 @@ def _get(pid: object) -> SendSession:
             or not secrets.compare_digest(cur.id.encode(), pid.encode("utf-8", "replace"))
         ):
             raise SendError("send_not_found", 404)
+        cur.touched = _clock()
         return cur
 
 
@@ -689,6 +700,7 @@ def prepare(bundle: bytes) -> dict:
             sha256=digest,
             info=info,
             created=_clock(),
+            touched=_clock(),
         )
         _CURRENT = sess
         return {**summary, "too_large": False, "id": sess.id}
@@ -762,6 +774,7 @@ def start(pid: str, *, confirmed: object, category: object, note: object) -> dic
         sess.params = params
         sess.state, sess.stage, sess.failure, sess.retry_after = "sending", "init", "", None
         sess.cancel_raced = False
+        sess.touched = _clock()
         sess.sent = sess.total = 0
         sess.cancel = threading.Event()
         sess.thread = threading.Thread(
@@ -779,15 +792,17 @@ def cancel(pid: str) -> dict:
             sess.state = "cancelling"
             sess.cancel.set()
         elif sess.state in ("prepared", "failed"):
-            pending = (
-                sess.complete_sent and sess.server_open
-            )  # 服务端那份可能已 complete：等取消的答复再定论
-            _cancel_remote_async(sess, settle=pending)
-            sess.state, sess.stage, sess.failure = (
-                ("cancelling" if pending else "cancelled"),
-                "",
-                "",
-            )
+            if sess.complete_sent and sess.report_id:
+                # I1：complete 发出过——编号永不清空，结果由取消答复定论；够不着服务端就是 unknown
+                if sess.server_open and sess.token:
+                    _cancel_remote_async(sess, settle=True)
+                    sess.state, sess.stage, sess.failure = "cancelling", "", ""
+                else:
+                    sess.state, sess.stage, sess.failure = "unknown", "", ""
+                    sess.bundle = None
+            else:
+                _cancel_remote_async(sess)
+                sess.state, sess.stage, sess.failure = "cancelled", "", ""
         return sess.public()
 
 
@@ -850,59 +865,78 @@ def _check_cancel(sess: SendSession) -> None:
 
 
 def _run(sess: SendSession, target: Target) -> None:
-    code, retry_after = "", None
+    code, retry_after, cancelled = "", None, False
     try:
         _flow(sess, target)
     except _Cancelled:
-        code = "cancelled"
+        cancelled = True
     except _Failure as fail:
         code, retry_after = fail.code, fail.retry_after
     except Exception as exc:  # noqa: BLE001 — 线程里的任何意外都收成 internal，不让线程静默死掉
         LOG.error("诊断发送: 内部错误 类型=%s", type(exc).__name__)  # 不带异常文本：里面可能有地址
         code = "internal"
-    _finish(sess, target, code, retry_after)
+    _settle(sess, target, code, retry_after, cancelled)
 
 
-def _finish(sess: SendSession, target: Target, code: str, retry_after: int | None) -> None:
+def _settle(
+    sess: SendSession, target: Target, code: str, retry_after: int | None, cancelled: bool
+) -> None:
+    """发送线程的**唯一**收尾点：任何终态（成功、用户取消、请求失败、校验失败、超时、进程内异常）都经这里对账。
+
+    不变量（竞态表见 docs/rules/backend/diagnostics.md）：
+    * I1 `complete` 发出过（`complete_sent`）之后，report_id **永不清空**，最终状态只能是 done / unknown /
+      cancelled（仅在服务端确认取消）/ failed（仅在服务端确认没存，或失败可重试而我们没去取消）——
+      「无法确认」绝不当作「确认没存」；
+    * I2 用户取消一旦置位（`sess.cancel`），优先于请求自己的失败：请求结束后先看取消事件，再对账；
+      服务端有未完成的会话就尽力 cancel 关掉（不管 `complete` 发没发过）；
+    * 成功（flow 正常返回）永远是 done：取消事件在成功之后才到，只是 `cancel_raced`。"""
     with _LOCK:
         stage = sess.stage or "init"
+        user_cancel = cancelled or sess.cancel.is_set()
         open_remote = sess.server_open and bool(sess.token) and bool(sess.report_id)
-    outcome = "cancelled"
-    if code == "cancelled" or (code and not FAILURES.get(code, False)):
-        # 取消，或这一份发不出去（不是用户再点一次能解决的）：通知服务端作废那份未完成的会话。
-        # 取消结果是三态（`_cancel_remote`）：确认已取消 / 确认已送达 / 无法确认——「无法确认」绝不当作「确认取消」
-        if open_remote:
-            outcome = _cancel_remote(sess, target)
-            if code == "cancelled":
-                if outcome == CANCEL_COMPLETE:
-                    # complete 其实已经到了服务端（响应丢了）：这次发送**成功了**，保留报告编号、按成功收尾
-                    code = ""
-                    with _LOCK:
-                        sess.cancel_raced = True
-                elif outcome == CANCEL_UNKNOWN and sess.complete_sent:
-                    code = "unknown"  # complete 发出过而取消结果不明：结果未知，保留报告编号
-            if code != "" and code != "unknown":
-                with _LOCK:
-                    sess.server_open = False
-                    sess.token, sess.spec, sess.uploaded, sess.report_id = "", None, False, ""
-    with _LOCK:
-        if code == "cancelled":
-            sess.state, sess.stage, sess.failure = "cancelled", "", ""
-            sess.token, sess.spec, sess.uploaded, sess.report_id = "", None, False, ""
-            sess.server_open = False
-        elif code == "unknown":
-            sess.state, sess.stage, sess.failure = "unknown", "", ""
-            sess.bundle, sess.token, sess.spec, sess.server_open = None, "", None, False
-        elif code:
-            sess.state, sess.failure, sess.retry_after = "failed", code, retry_after
-            sess.stage = ""
+        complete_sent = sess.complete_sent
+        had_id = bool(sess.report_id)
+    final, raced, clear = "done", False, False
+    if code or cancelled:
+        retryable = bool(code) and FAILURES.get(code, False)
+        must_cancel = user_cancel or (bool(code) and not retryable)
+        outcome = _cancel_remote(sess, target) if (must_cancel and open_remote) else None
+        if outcome == CANCEL_COMPLETE:
+            # 服务端确认已存：用户取消 → 这次发送成功了（`cancel_raced`）；非用户取消的失败（如摘要不符）→
+            # 报告虽在但我们不能确认它是对的 → unknown（保留编号，如实说）
+            final, raced = ("done", True) if user_cancel else ("unknown", False)
+        elif outcome == CANCEL_UNKNOWN and complete_sent:
+            final = "unknown"
+        elif outcome is None and must_cancel and complete_sent and had_id:
+            final = "unknown"  # 想取消但够不着服务端，而 complete 发出过：不能当「没送达」
+        elif not must_cancel:
+            final = "failed"  # 可重试的失败、没去取消：保留一切（含 complete_sent 之后的编号），用户再点会幂等重放
         else:
-            sess.state, sess.stage, sess.failure = "done", "", ""
+            # 服务端确认没存（取消 2xx / 404），或 complete 从未发出（没有什么可能已送达）
+            final, clear = ("cancelled" if user_cancel else "failed"), True
+    else:
+        raced = sess.cancel.is_set()  # 成功收尾，取消事件只是赶在了成功之后
+    with _LOCK:
+        if clear:
+            sess.server_open = False
+            sess.token, sess.spec, sess.uploaded, sess.report_id = "", None, False, ""
+        sess.stage = ""
+        sess.touched = _clock()
+        if final == "cancelled":
+            sess.state, sess.failure = "cancelled", ""
+        elif final == "unknown":
+            sess.state, sess.failure = "unknown", ""
+            sess.bundle, sess.token, sess.spec, sess.server_open = None, "", None, False
+        elif final == "failed":
+            sess.state, sess.failure, sess.retry_after = "failed", code or "internal", retry_after
+        else:
+            sess.state, sess.failure = "done", ""
+            sess.cancel_raced = raced
             sess.bundle = None  # 发完了：释放内存里的包
             sess.token, sess.spec, sess.server_open = "", None, False
         if sess.discard_after:
             _discard_locked(sess)
-    _log(code or "ok", stage)
+    _log({"done": "ok"}.get(final, final if final != "failed" else (code or "internal")), stage)
 
 
 def _flow(sess: SendSession, target: Target) -> None:

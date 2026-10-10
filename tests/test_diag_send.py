@@ -554,7 +554,11 @@ class TestServerErrors:
 
         on._complete_body = staticmethod(lying)  # type: ignore[method-assign]
         prep = send()
-        assert wait_for(prep["id"], {"failed"})["code"] == "digest_mismatch"
+        # 摘要不符：服务端那份已 complete（取消时回 409 already_complete）但内容我们不能确认——
+        # 不是「失败并清掉编号」（I1），而是结果未知：保留编号、如实说、不许再发一份
+        st = wait_for(prep["id"], {"unknown"})
+        assert st["report_id"].startswith("TVD-")
+        assert next(iter(on.reports.values())).state == "complete"
 
 
 # =========================================================================== 网络
@@ -1230,3 +1234,191 @@ class TestContractMirrors:
             "sha256",
             "note",
         }
+
+
+# =========================================================================== 终态不变量（I1 / I2 / I3）
+class TestTerminalInvariants:
+    """`_settle` 是发送线程唯一的收尾点。I1：complete 发出过之后，任何终态都经三态对账，编号不清空；
+    I2：用户取消优先于请求自己的失败；I3：会话只在闲置时过期，已送达 / 结果未知的编号留到用户关窗。"""
+
+    TRIGGERS = {  # 名字 -> (失败码, 是否用户取消)
+        "user_cancel": ("", True),
+        "429": ("rate_limited", False),
+        "503": ("storage_unavailable", False),
+        "transport": ("network", False),
+        "digest_mismatch": ("digest_mismatch", False),
+        "exception": ("internal", False),
+    }
+    ANSWERS = ["2xx", "404", "already_complete", "in_progress", "transport"]
+
+    @staticmethod
+    def _open_remote(on, complete_sent, landed):
+        """真的在模拟服务端开一份会话（拿到有效编号与令牌），并按需让它已 complete。"""
+        target = diagsend.resolve_target()
+        body = {
+            "client_request_id": str(__import__("uuid").uuid4()),
+            "tavotto_version": "0.0.0",
+            "os": "macos",
+            "arch": "arm64",
+            "distribution": "pip",
+            "category": "other",
+            "bundle_schema": 6,
+            "size": 5,
+        }
+        obj = json.loads(diagsend._json_request(target, "/v1/reports/init", body, 5).body)
+        rep = on.reports[obj["report_id"]]
+        if landed:
+            rep.uploaded = b"x" * 5
+            on._do_complete({"report_id": rep.report_id, "complete_token": rep.token})
+        sess = diagsend.SendSession(
+            id="x",
+            bundle=b"x" * 5,
+            size=5,
+            report_id=obj["report_id"],
+            token=obj["complete_token"],
+            server_open=True,
+            complete_sent=complete_sent,
+        )
+        return target, sess, rep
+
+    @staticmethod
+    def _expected(trigger, answer, complete_sent):
+        code, user_cancel = TestTerminalInvariants.TRIGGERS[trigger]
+        retryable = bool(code) and diagsend.FAILURES[code]
+        must_cancel = user_cancel or (bool(code) and not retryable)
+        if not must_cancel:
+            return "failed", True  # 保留一切，没去取消
+        if answer == "already_complete":
+            return ("done" if user_cancel else "unknown"), True
+        if answer in ("in_progress", "transport"):
+            if complete_sent:
+                return "unknown", True
+            return ("cancelled" if user_cancel else "failed"), False
+        return ("cancelled" if user_cancel else "failed"), False  # 2xx / 404：服务端确认没存
+
+    @pytest.mark.parametrize("complete_sent", [True, False], ids=["complete_sent", "no_complete"])
+    @pytest.mark.parametrize("answer", ANSWERS)
+    @pytest.mark.parametrize("trigger", list(TRIGGERS))
+    def test_i1_every_terminal_path_reconciles_through_the_three_way_outcome(
+        self, on, trigger, answer, complete_sent
+    ):
+        code, user_cancel = self.TRIGGERS[trigger]
+        target, sess, rep = self._open_remote(
+            on, complete_sent, landed=(answer == "already_complete")
+        )
+        if answer == "404":
+            on.fail("cancel", 404, "not_found")
+        elif answer == "in_progress":
+            on.fail("cancel", 409, "in_progress", retry_after=1, times=2)
+        elif answer == "transport":
+            on.force("cancel", Forced("drop_before"), times=2)
+        if user_cancel:
+            sess.cancel.set()
+        diagsend._settle(sess, target, code, None, cancelled=user_cancel)
+        final, id_kept = self._expected(trigger, answer, complete_sent)
+        assert sess.state == final, (sess.state, final)
+        if final in ("done", "unknown"):
+            assert sess.public()["report_id"] == rep.report_id  # 编号展示给用户
+        if complete_sent and final != "cancelled" and not (final == "failed" and not id_kept):
+            assert sess.report_id == rep.report_id, "complete 发出过：编号不清空"
+        assert (sess.report_id != "") is id_kept or final in ("done", "unknown")
+        if final == "unknown":
+            assert sess.state != "failed" and sess.state != "cancelled"
+        if final == "cancelled":
+            assert user_cancel, "只有用户取消 + 服务端确认才是 cancelled"
+
+    # ---- I2：请求在途时用户取消，请求随后以错误结束——先看取消事件 ----
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            ("status", 429, "rate_limited"),
+            ("status", 503, "storage_unavailable"),
+            ("hold_status", 0, ""),
+        ],
+        ids=["429", "503", "transport"],
+    )
+    @pytest.mark.parametrize("endpoint", ["init", "upload", "complete"])
+    def test_i2_cancel_set_while_a_request_is_in_flight_beats_its_failure(
+        self, on, endpoint, failure
+    ):
+        kind, status, scode = failure
+        gate = threading.Event()
+        on.force(endpoint, Forced("hold_status", status=status, code=scode, event=gate))
+        prep = diagsend.prepare(make_bundle())
+        diagsend.start(prep["id"], confirmed=True, category=None, note=None)
+        want_stage = endpoint
+        deadline = time.monotonic() + 10
+        while diagsend.status(prep["id"])["stage"] != want_stage and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.2)  # 请求已在途、被服务端挂住
+        diagsend.cancel(prep["id"])
+        gate.set()
+        st = wait_for(prep["id"], {"cancelled", "failed", "unknown", "done"})
+        assert st["state"] in ("cancelled", "unknown"), st  # 绝不是「失败」
+        if endpoint != "complete":
+            assert st["state"] == "cancelled"  # complete 从未发出
+        # 服务端有未完成的会话就尽力关掉（init 失败时没有会话）
+        deadline = time.monotonic() + 5
+        while (
+            endpoint != "init"
+            and on.count("/v1/reports/cancel") == 0
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+        if endpoint != "init":
+            assert on.count("/v1/reports/cancel") >= 1
+            assert all(r.state != "pending" for r in on.reports.values())
+
+    # ---- I3：TTL 只针对闲置 ----
+    def test_i3_a_send_that_crosses_the_ttl_boundary_still_reports_its_result(
+        self, on, monkeypatch
+    ):
+        now = [1000.0]
+        monkeypatch.setattr(diagsend, "_clock", lambda: now[0])
+        gate = threading.Event()
+        on.force("init", Forced("hold", event=gate))
+        prep = diagsend.prepare(make_bundle())
+        diagsend.start(prep["id"], confirmed=True, category=None, note=None)
+        now[0] += diagsend.PREPARED_TTL_S + 60  # 发送跨过 30 分钟边界
+        assert diagsend.status(prep["id"])["state"] == "sending"  # 发送中永不过期
+        gate.set()
+        st = wait_for(prep["id"], {"done"})
+        assert st["report_id"].startswith("TVD-")
+        now[0] += diagsend.PREPARED_TTL_S + 60
+        assert diagsend.status(prep["id"])["report_id"] == st["report_id"], (
+            "已送达的编号不会被 TTL 藏起来"
+        )
+
+    def test_i3_finished_sessions_are_kept_until_the_long_cap(self, on, monkeypatch):
+        now = [1000.0]
+        monkeypatch.setattr(diagsend, "_clock", lambda: now[0])
+        prep = send()
+        wait_for(prep["id"], {"done"})
+        now[0] += diagsend.FINISHED_KEEP_S - 10
+        assert diagsend.status(prep["id"])["state"] == "done"
+        now[0] += diagsend.FINISHED_KEEP_S - 10  # 距上次使用已满上限、且这期间没人问过
+        now[0] += 20
+        with pytest.raises(diagsend.SendError):
+            diagsend.status(prep["id"])
+
+    def test_i3_unknown_is_kept_like_done(self, on, monkeypatch):
+        now = [1000.0]
+        monkeypatch.setattr(diagsend, "_clock", lambda: now[0])
+        _, st = TestCancel._cancel_in_backoff(
+            on, monkeypatch, Forced("drop_after"), [Forced("drop_before")] * 2
+        )
+        assert st["state"] == "unknown"
+        now[0] += diagsend.PREPARED_TTL_S + 60
+        assert diagsend.status(st["id"])["state"] == "unknown"
+
+    def test_i3_idle_ttl_counts_from_last_use_not_from_prepare(self, on, monkeypatch):
+        now = [1000.0]
+        monkeypatch.setattr(diagsend, "_clock", lambda: now[0])
+        prep = diagsend.prepare(make_bundle())
+        now[0] += diagsend.PREPARED_TTL_S - 10
+        diagsend.status(prep["id"])  # 用过一次
+        now[0] += 30
+        assert diagsend.status(prep["id"])["state"] == "prepared"
+        now[0] += diagsend.PREPARED_TTL_S + 10  # 闲置超过上限
+        with pytest.raises(diagsend.SendError):
+            diagsend.status(prep["id"])

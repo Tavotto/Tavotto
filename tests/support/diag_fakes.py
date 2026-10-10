@@ -75,7 +75,7 @@ _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 @dataclass
 class Forced:
-    kind: str  # status | drop_after | drop_before | redirect | sleep | hold | hold_early
+    kind: str  # status | drop_after | drop_before | redirect | sleep | hold | hold_early | hold_status
     status: int = 500
     code: str = "internal"
     retry_after: int | None = None
@@ -273,6 +273,15 @@ class FakeDiagServer:
             if forced.kind == "sleep":
                 time.sleep(forced.seconds)
                 forced = None
+            elif forced.kind == "hold_status":
+                # 先阻塞到事件、再回错误状态：请求在途时用户点了取消，请求随后以错误结束
+                assert forced.event is not None
+                forced.event.wait(30)
+                forced = (
+                    Forced("drop_before")
+                    if forced.status == 0
+                    else Forced("status", forced.status, forced.code, forced.retry_after)
+                )
             elif forced.kind == "hold":
                 assert forced.event is not None
                 forced.event.wait(30)

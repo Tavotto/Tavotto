@@ -300,3 +300,24 @@
 | 已被丢弃 / 被 B 替换 | **忽略**：B 的状态、报告编号、`cancel_raced` 一个字都不变（测试把 B 放在「已取消」——旧实现会被改成 done 的那个状态） |
 
 看护：`tests/test_diag_send.py::TestCancel` 的 `test_race_table_*`（参数化：10 + 4 + 4 + 超时 + 替换各一）；反证：把「无法确认」映射回 cancelled / 传输错误当已取消 / 回调改写 `_CURRENT` 都红。
+
+**不变量（`_settle` 是发送线程唯一的收尾点；`_cancel_remote_async` 是失败态 / 备好态取消的收尾点，同一套三态映射）**
+
+* **I1** `complete` 发出过（`SendSession.complete_sent`，含 init 回 `verifying`）之后，任何终态路径——用户取消、请求失败、校验失败（摘要不符）、超时、进程内异常——都经三态对账决定最终状态；
+  报告编号不清空；最终状态只能是 `done` / `unknown` / `cancelled`（仅服务端确认取消，且是用户取消）/ `failed`（仅服务端确认没存，或可重试的失败而我们没去取消）。
+  「无法确认」绝不当作「确认没存」。非用户取消的失败遇上服务端 `already_complete`（如摘要不符）→ `unknown`：报告在但内容我们不能确认。
+* **I2** 用户取消一旦置位（`sess.cancel`）优先于请求自己的失败（含 429 / 503 / 传输错误等可重试码）：请求结束后先看取消事件再对账；服务端有未完成的会话就尽力 cancel 关掉（不管 complete 发没发过）。成功永远是 `done`（取消事件赶在成功之后只记 `cancel_raced`）。
+* **I3** 会话过期只针对**闲置**：`touched`（API 调用 / 发送开始 / 终态）起算；发送中、取消中永不过期；`done` / `unknown` 留 `FINISHED_KEEP_S`（24 h）——每次读取都刷新，所以界面开着就不会被回收，成功送达的编号不会因跨过 30 分钟被藏成 404。
+
+补充的竞态行：
+
+| 场景 | 期望 |
+|---|---|
+| init / 上传 / complete 在途时用户取消，请求随后以 429 / 503 / 传输错误结束 | `cancelled`（complete 在途且取消答复无法确认时 `unknown`）；服务端有会话就 cancel 关掉；绝不是 `failed` |
+| complete 回了但摘要不符（`digest_mismatch`，非用户取消） | 取消答复 already_complete → `unknown`（保留编号）；2xx/404 → `failed`；无法确认 → `unknown` |
+| 发送跨过 30 分钟边界 | 发送中不过期；结束后 status 返回 `done` 与编号，24 h 内不回收 |
+| 终态路径 × 取消答复 × complete_sent | `tests/test_diag_send.py::TestTerminalInvariants::test_i1_*`：6 种触发 × 5 种答复 × 2 种 complete_sent 穷举 |
+
+状态赋值点清单（每处受哪条不变量约束）：
+`start()` 置 sending（仅在非 sending / unknown / done 时；换 id 才清编号——用户明确的新一次发送）→ I3 刷新 `touched`；`cancel()`：sending→cancelling（I2）、失败 / 备好态按 complete_sent 走 `_cancel_remote_async`（I1）或直接 unknown（够不着服务端）；
+`discard()`：只在无发送线程时直接丢（`_CURRENT is sess` 守卫在回调里）；`_init` 回 complete（幂等重放）：置 done 后由 `_settle` 统一收尾；`_settle`：**所有**线程终态；`_cancel_remote_async` 回调：认会话身份 + 三态映射；`_expire_locked`：I3。
