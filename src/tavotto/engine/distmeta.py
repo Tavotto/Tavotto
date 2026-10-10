@@ -1073,15 +1073,71 @@ def build_index(
     return index
 
 
+#: `site_paths` 最多读几层（目标解释器的 sys.path 上 site 目录的个数上限；超了 = 后面的层没读，索引不完整）
+MAX_SITE_PATHS = 32
+
+
+def _reported_roots(
+    prefix: str, paths: Sequence[str], budget: scanbudget.Budget
+) -> tuple[list[SiteRoot], bool]:
+    """目标解释器**自己报告**的 site 目录（`sys.path` 顺序）→ 层。返回 ([层], 有没有读漏的层)。
+
+    前缀之内的层 `rel` 是相对前缀的 POSIX 路径（`conda-meta` 的 `files` 靠它对上）；前缀之外的（基础解释器 / 用户 site /
+    `include-system-site-packages`）统一记 `base`，**不带绝对路径**。报告了却不是真目录（消失了 / 链接 / 读不了）的层
+    不许当成「没有」：留痕并返回 `incomplete=True`。"""
+    roots: list[SiteRoot] = []
+    incomplete = len(paths) > MAX_SITE_PATHS
+    if incomplete:
+        budget.note(scanbudget.ISSUE_UNREADABLE_DIR, scope="env", path="base")
+    pre = os.path.normcase(os.path.normpath(prefix))
+    for raw in paths[:MAX_SITE_PATHS]:
+        path = os.path.normpath(raw)
+        rel = ""
+        norm = os.path.normcase(path)
+        if norm.startswith(pre + os.sep):
+            rel = path[len(pre) + 1 :].replace("\\", "/")
+        state = _dir_state(path)
+        if state != "dir":
+            code = (
+                scanbudget.ISSUE_UNREADABLE_DIR
+                if state == "absent"
+                else scanbudget.ISSUE_SYMLINK_DIR
+            )
+            budget.note(code, scope="env", path=rel or "base")
+            incomplete = True
+            continue
+        roots.append(
+            SiteRoot(
+                path=path,
+                rel=rel or "base",
+                layer="env" if rel else "base",
+                order=len(roots),
+            )
+        )
+    return roots, incomplete
+
+
 def index_environment(
     prefix: str | os.PathLike,
     *,
     project_root: str | os.PathLike | None = None,
     include_base: bool = False,
     budget: scanbudget.Budget | None = None,
+    site_paths: Sequence[str] | None = None,
 ) -> Index:
-    """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。"""
+    """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。
+
+    `site_paths`：目标解释器**报告**的全部 site 目录（`sys.path` 顺序，`depplan._FACTS_SRC` 在已授权的事实采集子进程里取）。
+    给了就按它建层（前缀内的 + 基础解释器 / 用户 site / `include-system-site-packages` 的全部层），不再按前缀布局推；
+    任何一层没读成 = `complete=False`（不是「没装」）。不给 = 旧口径（前缀布局 + 可选 `include_base`）。"""
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
+    if site_paths:
+        roots, incomplete = _reported_roots(os.path.normpath(os.fspath(prefix)), site_paths, budget)
+        index = build_index(roots, prefix=prefix, budget=budget) if roots else Index((), [], [])
+        if incomplete:
+            index.complete = False
+            index.issues = tuple(budget.issues())
+        return index
     roots, layout_incomplete = _site_packages_state(
         prefix, project_root=project_root, include_base=include_base, budget=budget
     )

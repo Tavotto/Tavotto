@@ -129,7 +129,7 @@ SETTINGS_KEY = "dependency_groups"
 #: 同一套字段、同一套取法——那份实现就是这几行，这里不 import packaging：目标解释器不
 #: 一定有它）、标准库名字表、已装 distribution。输出单行 JSON。**只读**。
 _FACTS_SRC = r"""
-import json, os, platform, sys
+import json, os, platform, site, sys
 import importlib.machinery
 import importlib.metadata as m
 
@@ -163,6 +163,34 @@ for d in m.distributions():
         while "--" in key:
             key = key.replace("--", "-")
         installed[key] = d.version or ""
+# 目标解释器**看得见**的全部 site 目录（sys.path 顺序）：prefix 内的、include-system-site-packages 带进来的基础解释器层、
+# 启用的 user site、sys.path 上其它叫 site-packages / dist-packages 的存在的目录。只是路径列表——静态索引按它读元数据。
+known = set()
+try:
+    known.update(os.path.normcase(os.path.abspath(p)) for p in site.getsitepackages())
+except Exception:
+    pass
+try:
+    if site.ENABLE_USER_SITE:
+        known.add(os.path.normcase(os.path.abspath(site.getusersitepackages())))
+except Exception:
+    pass
+site_roots = []
+for entry in sys.path:
+    if not entry or not isinstance(entry, str):
+        continue
+    try:
+        path = os.path.abspath(entry)
+        if not os.path.isdir(path):
+            continue
+    except Exception:
+        continue
+    if os.path.normcase(path) in known or os.path.basename(path).lower() in (
+        "site-packages",
+        "dist-packages",
+    ):
+        if path not in site_roots:
+            site_roots.append(path)
 sys.stdout.write(json.dumps({
     "marker_env": env,
     "stdlib": sorted(getattr(sys, "stdlib_module_names", ())),
@@ -171,6 +199,7 @@ sys.stdout.write(json.dumps({
     "installed": installed,
     "prefix": sys.prefix,
     "executable": sys.executable,
+    "site_roots": site_roots,
 }))
 """
 
@@ -190,6 +219,11 @@ class TargetFacts:
     #: 它们由解释器构建决定，不是计划的输入，也就不改 `inputs_digest` / `identity`。
     builtin: frozenset[str] = frozenset()
     ext_suffixes: tuple[str, ...] = ()
+    #: 目标解释器**看得见**的全部 site 目录（`sys.path` 顺序：prefix 内的、`include-system-site-packages` 的基础解释器层、
+    #: 启用的 user site、其它 site-packages / dist-packages）。静态索引（`static_index`）按它读元数据，否则别的层里的替代提供者
+    #: 会被漏掉（Codex #920 P1）。**空 = 没量到**（替身事实、老缓存），索引退回只读前缀的旧口径。与 `builtin` 同理不进
+    #: `digest()` / `to_payload()`：它们由解释器与环境决定，不是计划的输入，也就不改 `inputs_digest` / `identity`。
+    site_roots: tuple[str, ...] = ()
 
     @property
     def python_version(self) -> str:
@@ -270,6 +304,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         executable=str(data.get("executable", "")),
         builtin=frozenset(str(n) for n in data.get("builtin") or ()),
         ext_suffixes=tuple(str(x) for x in data.get("ext_suffixes") or ()),
+        site_roots=tuple(str(x) for x in data.get("site_roots") or () if isinstance(x, str)),
     )
     with _facts_lock:
         _facts_cache[key] = facts
@@ -305,6 +340,7 @@ def static_index(facts: TargetFacts | None) -> distmeta.Index | None:
 
     回 None = 没有可读的环境（没有事实 / 没有前缀——私有 Python 的替身与新一代的「装之前」；前缀下找不到
     site-packages）。读不全（预算、读不动的目录）的索引照样回，`Index.complete=False`，下游据此不把「没查到」当「没装」。
+    层 = 目标解释器报告的全部 site 目录（`TargetFacts.site_roots`）；其中任何一层没读成，索引 `complete=False`。
     不带项目根：目标前缀是用户已经授权运行的解释器所在的环境（`target_facts` 刚在里面跑过 Python），读它的元数据
     不增加任何暴露面；默认扫描不走这里（它自己带项目根调 `distmeta`）。"""
     if facts is None or not facts.prefix:
@@ -314,7 +350,9 @@ def static_index(facts: TargetFacts | None) -> distmeta.Index | None:
         hit = _index_cache.get(key)
     if hit is not None:
         return hit
-    index = distmeta.index_environment(facts.prefix)
+    # 读目标解释器报告的**全部**层（含基础解释器 / user site）；没量到层（替身事实）才退回只读前缀的旧口径。任何一层没读成
+    # → `Index.complete=False`，下游据此不把「没查到」当「没装」（见 `plan` 的 `index_incomplete`）。
+    index = distmeta.index_environment(facts.prefix, site_paths=facts.site_roots or None)
     if not index.checked:
         return None
     with _facts_lock:
@@ -543,12 +581,21 @@ def _reason_of(status: str) -> str:
 
 
 def _verdict(
-    c: importscan.ImportClass, installed: dict, state: str, declared: frozenset[str]
+    c: importscan.ImportClass,
+    installed: dict,
+    state: str,
+    declared: frozenset[str],
+    *,
+    index_incomplete: bool = False,
 ) -> _Verdict:
     """一个无条件第三方 import 相对**此刻的解释器**的判决。`state` 是 PR3 覆盖度缓存里它的模块状态（没量过为 ""）。
 
     判据的顺序就是证据的强弱：名字级已装（旧口径，原样）> 多个备选都装着 = 歧义 > 别的已装发行包声称提供它（editable /
-    本地 / VCS / Conda / 未确认）> 包在导入失败 > 缺。多个备选都装着时，项目声明里点了名的那个胜出。后三种之一成立时「装 curated / 声明的名字」都是错的或没把握的。"""
+    本地 / VCS / Conda / 未确认）> 包在导入失败 > 缺。多个备选都装着时，项目声明里点了名的那个胜出。后三种之一成立时「装 curated / 声明的名字」都是错的或没把握的。
+
+    `index_incomplete`：静态索引有某一层没读成（不存在 / 超预算 / 读失败 / 链接被拒）。这时「没查到」不等于「没装」——那一层里
+    可能正有别的提供者（editable 的替代包、基础解释器里的同名模块），按名字装 curated 的包会遮蔽它。所以本该判「缺」的改判
+    「来源未定」（`ORIGIN_UNVERIFIED`，条目的 `distribution_status` 是 `environment_not_checked`）：宁可不完整当未定，也不漏层后去装。"""
     present = _providers(c, installed)
     if c.distribution and c.distribution in present:
         return _Verdict(_PRESENT, c.distribution)
@@ -564,6 +611,8 @@ def _verdict(
         return _Verdict(_OPEN, reason=_reason_of(c.distribution_status))
     if state == "import_error":
         return _Verdict(_OPEN, reason=ORIGIN_IMPORT_FAILED)
+    if index_incomplete:
+        return _Verdict(_OPEN, reason=ORIGIN_UNVERIFIED)
     return _Verdict(_ABSENT)
 
 
@@ -681,8 +730,16 @@ def plan(
     # ---- 每个第三方 import 的来源判决（present / absent / open）-----------------------------
     states = _coverage_states(coverage, scan, plain_unknown)
     declared_names = frozenset(by_name)
+    # 静态索引读不全（有一层没读成）：名字级查不到的不当「缺」（见 `_verdict`）。没给索引（None）= 没量，维持旧口径
+    index_incomplete = isinstance(dists, distmeta.Index) and dists.checked and not dists.complete
     verdicts = {
-        c.module: _verdict(c, installed, states.get(c.module, ""), declared_names)
+        c.module: _verdict(
+            c,
+            installed,
+            states.get(c.module, ""),
+            declared_names,
+            index_incomplete=index_incomplete,
+        )
         for c in scan.needed
     }
 
@@ -734,11 +791,20 @@ def plan(
     unknown = tuple(o["import_name"] for o in origins)
 
     # ---- 交给安装器的集合（按**装到哪**量：目标已有的不装、其余 needed 的全装） --------------
-    # 来源未定的（open）一概不装；其余按**装到哪**的已装集合判（名字级：表 / 声明的名字、已装的备选发行包、确认过的唯一提供者）
+    # 来源判决（`verdicts`）只说**当前解释器**里这个 import 是谁提供的，只能抑制当前环境的 missing。装到当前环境
+    # （`install_facts` 是 None / 就是 `facts`）时它同样决定装不装：来源未定的（open）一概不装，其余按已装集合的名字级判据。
+    # 装到**另一个**环境（新托管代 / active 那一代）时当前环境里的 editable / 本地 / Conda 提供者、缓存的 import_error、
+    # 读不全的索引都不在那里——新代没有那个提供者，不装就会 import 失败、验证失败（Codex #920 P1）。所以按目标的已装集合
+    # 单独判：目标里名字级已有的不装，其余按可信安装名（表 / 声明，`c.distribution`）装；从不拿已装元数据造名字。
+    # 当前环境里是 editable 等、可信解析又给不出安装名的 import（`unknown` 桶）本来就不在 `scan.needed`：它们留在
+    # `unknown` / `origins`（带 editable / 本地 / Conda 的来源状态），如实标出新环境装不出来，不猜 PyPI 名。
+    same_target = install_facts is None or install_facts is facts
     to_install = {
         c.distribution
         for c in scan.needed
-        if verdicts[c.module].kind != _OPEN and not _providers(c, target_installed)
+        if c.distribution
+        and (same_target is False or verdicts[c.module].kind != _OPEN)
+        and not _providers(c, target_installed)
     }
     hash_mode = any(it.hashes for it in selection.requirements)
     reqs: list[str] = []
@@ -892,7 +958,7 @@ def fresh_venv_facts(
     if facts is None:
         return None
     installed = {depresolve.normalize_distribution(name): "" for name in provided}
-    return dataclasses.replace(facts, installed=installed, prefix="", executable="")
+    return dataclasses.replace(facts, installed=installed, prefix="", executable="", site_roots=())
 
 
 def adapter_distributions() -> tuple[str, ...]:

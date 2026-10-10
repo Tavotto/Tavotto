@@ -1378,6 +1378,373 @@ class TestPlanOrigins:
 
 
 # ===========================================================================
+# Codex #920 评审跟进：P1-1 目标解释器看得见的每一层都要读；P1-2 安装目标单独判
+# ===========================================================================
+_EDITABLE = {"url": "file:///src/fork", "dir_info": {"editable": True}}
+#: 候选 (import 名, 表里的发行包名)：测试要用「宿主解释器里没装」的那一个，否则名字级就已经判成「有」，用例是空的
+_CANDIDATES = (("yaml", "pyyaml"), ("docx", "python-docx"), ("tabulate", "tabulate"))
+
+
+def _free_import(installed: dict) -> tuple[str, str]:
+    for module, dist in _CANDIDATES:
+        if dist not in installed:
+            return module, dist
+    pytest.skip("宿主解释器把候选包都装了，无法构造「名字级未装」的前提")
+
+
+def _sys_site_venv(tmp_path: Path, name: str = "sysvenv") -> tuple[Path, Path]:
+    """真 venv，`include-system-site-packages = true`（基础解释器的 site-packages 与 user site 都在 sys.path 上）。"""
+    import subprocess
+
+    venv = tmp_path / name
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(venv)],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=300,
+    )
+    cfg = (venv / "pyvenv.cfg").read_text(encoding="utf-8").lower().replace(" ", "")
+    assert "include-system-site-packages=true" in cfg
+    from support import envworld
+
+    return venv, envworld.venv_python(venv)
+
+
+def _venv_site(python: Path) -> str:
+    import subprocess
+
+    out = subprocess.run(
+        [str(python), "-c", "import site;print(site.getsitepackages()[0])"],
+        check=True,
+        capture_output=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    return out.stdout.strip()
+
+
+class TestEveryVisibleLayer:
+    """P1-1：`static_index` 读目标解释器看得见的**每一层**，不止前缀内的 site-packages。别的层里的替代提供者被漏掉，
+    计划就会往用户现有环境里装 `pyyaml` 去遮蔽它。某一层没读成 = 索引不完整 = 不当「缺」。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _project(self, tmp_path: Path, script: str) -> Path:
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", script)
+        return proj
+
+    def _plan(self, proj, facts, **kw):
+        return depplan.plan(proj, "plot.py", facts=facts, target_kind="project_venv", **kw)
+
+    def _facts(self, python: Path, monkeypatch, *, extra_path: Path | None = None, userbase=None):
+        if extra_path is not None:
+            old = os.environ.get("PYTHONPATH", "")
+            monkeypatch.setenv(
+                "PYTHONPATH", os.pathsep.join(p for p in (str(extra_path), old) if p)
+            )
+        if userbase is not None:
+            monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+            monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert facts is not None
+        return facts
+
+    def test_the_facts_report_the_base_layer_of_an_include_system_site_packages_venv(
+        self, tmp_path, monkeypatch
+    ):
+        venv, python = _sys_site_venv(tmp_path)
+        base = (
+            tmp_path / "base" / "site-packages"
+        )  # 基础解释器那一层的替身：sys.path 上、叫 site-packages
+        base.mkdir(parents=True)
+        facts = self._facts(python, monkeypatch, extra_path=base)
+        own = os.path.normcase(os.path.realpath(_venv_site(python)))
+        reported = [os.path.normcase(os.path.realpath(p)) for p in facts.site_roots]
+        assert own in reported
+        assert os.path.normcase(os.path.realpath(base)) in reported
+        # 沿 sys.path 的先后：PYTHONPATH 在 site 之前
+        assert reported.index(os.path.normcase(os.path.realpath(base))) < reported.index(own)
+
+    def test_an_editable_provider_in_the_base_layer_is_not_missing(self, tmp_path, monkeypatch):
+        venv, python = _sys_site_venv(tmp_path)
+        base = tmp_path / "base" / "site-packages"
+        base.mkdir(parents=True)
+        facts = self._facts(python, monkeypatch, extra_path=base)
+        module, dist = _free_import(facts.installed)
+        _dist(
+            base,
+            "my-fork",
+            "0.1",
+            top=f"{module}\n",
+            record=[f"{module}/__init__.py"],
+            direct_url=_EDITABLE,
+        )
+        facts = self._facts(python, monkeypatch, extra_path=base)  # 元数据放好之后重新量
+        plan = self._plan(self._project(tmp_path, f"import {module}\n"), facts)
+        assert plan.missing == () and plan.requirements == ()  # 不往用户环境里装表里的名字去遮蔽它
+        assert plan.unknown == (module,)
+        (origin,) = plan.origins
+        assert origin["reason"] == "editable_dependency_not_reproducible"
+
+    def test_an_editable_provider_in_the_user_site_is_not_missing(self, tmp_path, monkeypatch):
+        import subprocess
+
+        venv, python = _sys_site_venv(tmp_path)
+        userbase = tmp_path / "userbase"
+        monkeypatch.setenv("PYTHONUSERBASE", str(userbase))
+        monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
+        user_site = subprocess.run(
+            [str(python), "-c", "import site;print(site.getusersitepackages())"],
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=120,
+        ).stdout.strip()
+        Path(user_site).mkdir(parents=True)
+        probe = depplan.target_facts(str(python), use_cache=False)
+        assert probe is not None
+        module, dist = _free_import(probe.installed)
+        _dist(
+            Path(user_site),
+            "my-fork",
+            "0.1",
+            top=f"{module}\n",
+            record=[f"{module}/__init__.py"],
+            direct_url=_EDITABLE,
+        )
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert facts is not None
+        assert os.path.normcase(os.path.realpath(user_site)) in [
+            os.path.normcase(os.path.realpath(p)) for p in facts.site_roots
+        ]
+        plan = self._plan(self._project(tmp_path, f"import {module}\n"), facts)
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["editable_dependency_not_reproducible"]
+
+    def test_a_layer_that_cannot_be_read_is_never_a_reason_to_install(self, tmp_path):
+        """control + 三种读不成：消失了 / 是符号链接 / 目录读不动。读不成的那一层里可能正有提供者。"""
+        prefix, site = _env(tmp_path)
+        proj = self._project(tmp_path, "import tabulate\n")
+        good = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(site),))
+        control = self._plan(proj, good)
+        assert [m["distribution"] for m in control.missing] == ["tabulate"]  # 读全了：照旧缺
+        gone = tmp_path / "vanished" / "site-packages"
+        broken = {"vanished": str(gone)}
+        if hasattr(os, "symlink") and os.name != "nt":
+            real = tmp_path / "real_layer"
+            real.mkdir()
+            link = tmp_path / "linked" / "site-packages"
+            link.parent.mkdir()
+            os.symlink(real, link)
+            broken["symlink"] = str(link)
+        for label, layer in broken.items():
+            facts = dataclasses.replace(good, site_roots=(str(site), layer))
+            depplan.reset_cache()
+            index = depplan.static_index(facts)
+            assert index is not None and index.complete is False, label
+            assert str(tmp_path) not in json.dumps(index.to_payload()), label  # 账里没有绝对路径
+            plan = self._plan(proj, facts)
+            assert plan.missing == () and plan.requirements == (), label
+            assert plan.status == "nothing_needed", label
+            (origin,) = plan.origins
+            assert origin["import_name"] == "tabulate", label
+            assert origin["reason"] == "unverified", label
+            assert origin["distribution_status"] == "environment_not_checked", label
+
+    def test_an_unreadable_directory_is_not_a_missing_package(self, tmp_path):
+        if os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0):
+            pytest.skip("目录权限在 Windows / root 下不起作用")
+        prefix, site = _env(tmp_path)
+        locked = tmp_path / "locked" / "site-packages"
+        locked.mkdir(parents=True)
+        locked.chmod(0o000)
+        try:
+            facts = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(site), str(locked)))
+            plan = self._plan(self._project(tmp_path, "import tabulate\n"), facts)
+        finally:
+            locked.chmod(0o700)
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_the_layers_are_read_in_sys_path_order_and_the_first_regular_provider_wins(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        other = tmp_path / "other" / "site-packages"
+        other.mkdir(parents=True)
+        _dist(
+            other, "my-fork", "0.1", top="yaml\n", record=["yaml/__init__.py"], direct_url=_EDITABLE
+        )
+        facts = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(other), str(site)))
+        index = depplan.static_index(facts)
+        assert index is not None and index.complete
+        (cand,) = [c for c in index.lookup("yaml").candidates if not c.shadowed]
+        assert cand.distribution == "my-fork"
+
+    def test_facts_without_reported_layers_keep_the_prefix_only_reading(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(site, "fork", "1.0", top="yaml\n", record=["yaml/__init__.py"], direct_url=_EDITABLE)
+        facts = _facts_at(prefix, {"fork": "1.0"})  # 替身事实：没有 site_roots
+        assert facts.site_roots == ()
+        plan = self._plan(self._project(tmp_path, "import yaml\n"), facts)
+        assert plan.missing == () and [o["reason"] for o in plan.origins] == [
+            "editable_dependency_not_reproducible"
+        ]
+
+    def test_the_layer_list_is_not_a_plan_input(self, tmp_path):
+        """`site_roots` 与 `builtin` 同理：不进 `digest()` / `to_payload()`，不改 `identity` / `inputs_digest`。"""
+        prefix, site = _env(tmp_path)
+        a = _facts_at(prefix, {"six": "1"})
+        b = dataclasses.replace(a, site_roots=(str(site), str(tmp_path / "x")))
+        assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
+        proj = self._project(tmp_path, "import six\n")
+        pa, pb = self._plan(proj, a, dists=None), self._plan(proj, b, dists=None)
+        assert (pa.identity, pa.inputs_digest) == (pb.identity, pb.inputs_digest)
+
+
+class TestInstallTargetIsJudgedSeparately:
+    """P1-2：来源判决只抑制**当前环境**的 missing；装到另一个环境时，当前解释器里的 editable / 本地 / Conda 提供者与缓存的
+    import_error 在那里都不存在，按目标的已装集合单独判，否则新一代 import 失败、验证失败。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _running(self, tmp_path: Path):
+        prefix, site = _env(tmp_path)
+        _dist(
+            site,
+            "my-yaml-fork",
+            "0.1",
+            top="yaml\n",
+            record=["yaml/__init__.py"],
+            direct_url=_EDITABLE,
+        )
+        _dist(
+            site,
+            "myprivate-pkg",
+            "0.1",
+            top="myprivate\n",
+            record=["myprivate/__init__.py"],
+            direct_url=_EDITABLE,
+        )
+        return _facts_at(prefix, {"my-yaml-fork": "0.1", "myprivate-pkg": "0.1"})
+
+    def _project(self, tmp_path: Path, script: str) -> Path:
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", script)
+        return proj
+
+    def test_a_provider_that_only_exists_in_the_running_interpreter_does_not_spare_the_new_one(
+        self, tmp_path
+    ):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=self._running(tmp_path),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert plan.status == "ready"
+        assert [m["distribution"] for m in plan.missing] == ["tabulate"]  # 当前环境缺的只有它
+        assert {"pyyaml", "tabulate"} <= set(plan.requirements)  # 新代两个都要装
+        assert [o["import_name"] for o in plan.origins] == ["yaml"]  # 对当前环境的来源说明照旧
+
+    def test_a_name_the_trusted_resolution_cannot_give_is_reported_not_guessed(self, tmp_path):
+        proj = self._project(tmp_path, "import myprivate\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=self._running(tmp_path),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert set(plan.requirements) == {"tabulate"}
+        assert "myprivate" not in " ".join(plan.requirements)  # 不从 unknown 猜 PyPI 名
+        assert "my-private" not in " ".join(plan.requirements)
+        assert plan.unknown == ("myprivate",)
+        (origin,) = plan.origins
+        assert (
+            origin["reason"] == "editable_dependency_not_reproducible"
+        )  # 新环境里无法满足，如实标出
+
+    def test_a_cached_import_error_of_the_running_interpreter_does_not_apply_to_the_new_one(
+        self, tmp_path
+    ):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts({}),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+            coverage=lambda names: _health(yaml="import_error"),
+        )
+        assert [m["distribution"] for m in plan.missing] == ["tabulate"]
+        assert {"pyyaml", "tabulate"} <= set(plan.requirements)
+        assert [o["reason"] for o in plan.origins] == ["module_import_failed_in_target_environment"]
+
+    def test_what_the_target_already_has_by_name_is_still_not_installed(self, tmp_path):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=self._running(tmp_path),
+            target_kind="tavotto_managed",
+            install_facts=_facts({"pyyaml": "6.0"}),
+        )
+        assert "pyyaml" not in plan.requirements and "tabulate" in plan.requirements
+
+    def test_ambiguous_cv2_in_the_running_interpreter_installs_the_trusted_name_in_the_new_one(
+        self, tmp_path
+    ):
+        proj = self._project(tmp_path, "import cv2\nimport tabulate\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts({"opencv-python-headless": "4", "opencv-contrib-python": "4"}),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert {"opencv-python", "tabulate"} <= set(plan.requirements)
+
+    def test_an_incomplete_index_of_the_running_interpreter_does_not_spare_the_new_one(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        running = dataclasses.replace(
+            _facts_at(prefix, {}),
+            site_roots=(str(site), str(tmp_path / "vanished" / "site-packages")),
+        )
+        proj = self._project(tmp_path, "import tabulate\n")
+        plan = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="tavotto_managed", install_facts=_facts({})
+        )
+        assert plan.missing == ()  # 当前环境读不全：不当缺
+        assert plan.requirements == ("tabulate",)  # 新代是全新环境：照常装
+
+    def test_installing_into_the_running_interpreter_itself_is_unchanged(self, tmp_path):
+        running = self._running(tmp_path)
+        proj = self._project(tmp_path, "import yaml\nimport myprivate\nimport tabulate\n")
+        base = depplan.plan(proj, "plot.py", facts=running, target_kind="project_venv")
+        same = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="project_venv", install_facts=running
+        )
+        assert base.requirements == ("tabulate",)  # editable 的 yaml / myprivate 不装
+        for field in ("status", "requirements", "constraints", "identity", "unknown", "origins"):
+            assert getattr(base, field) == getattr(same, field), field
+
+
+# ===========================================================================
 # 同源对：depplan 的闭集 ↔ web/src/lib/api.ts ↔ 文案（docs/rules/repo/same-origin-pairs.md）
 # ===========================================================================
 class TestClosedSetsMirrorTheFrontend:
