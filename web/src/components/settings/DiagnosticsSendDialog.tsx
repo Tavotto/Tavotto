@@ -12,6 +12,7 @@ import {
   type DiagSendCapability,
   type DiagSendPrepared,
   type DiagSendStatus,
+  ApiError,
 } from '@/lib/api'
 import { Button } from '../ui/Button'
 import { Dialog } from '../ui/Dialog'
@@ -90,6 +91,8 @@ export function DiagnosticsSendDialog({
   const [note, setNote] = useState('')
   const [saveState, setSaveState] = useState<'idle' | 'saved' | 'failed'>('idle')
   const [cancelledNotice, setCancelledNotice] = useState(false)
+  /** 备好的包在引擎里放太久被清掉了（404）：这一份不能再发，关掉重开。不是引擎失败码，所以单列。 */
+  const [packageGone, setPackageGone] = useState(false)
   /** 引擎里这份包的 id（卸载 / 关窗时丢弃用；用 ref 因为清理函数要读到最新值）。 */
   const idRef = useRef<string | null>(null)
   /** 这一次打开的代号：晚到的 prepare 响应认它，过期的直接丢（并通知引擎释放）。 */
@@ -112,6 +115,7 @@ export function DiagnosticsSendDialog({
     setNote('')
     setSaveState('idle')
     setCancelledNotice(false)
+    setPackageGone(false)
     void prepareDiagSend(buildDiagnosticPayload())
       .then((p) => {
         if (gen.current !== mine) {
@@ -169,7 +173,8 @@ export function DiagnosticsSendDialog({
     setStatus(null)
     startDiagSend(id, { category, note: note.trim() })
       .then(setStatus)
-      .catch(() => {
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 404) setPackageGone(true)
         setStatus({ code: 'internal', retryable: false } as DiagSendStatus)
         setPhase('failed')
       })
@@ -229,9 +234,9 @@ export function DiagnosticsSendDialog({
       {phase === 'failed' && (
         <Notice tone="danger" data-diag-send-failure={status?.code ?? ''}>
           <span className="flex flex-col gap-1">
-            <span>{failureText(status?.code)}</span>
+            <span>{packageGone ? ds('packageGone') : failureText(status?.code)}</span>
             {retryText(status?.retry_after) && <span>{retryText(status?.retry_after)}</span>}
-            <span>{ds('failureHint')}</span>
+            {!packageGone && <span>{ds('failureHint')}</span>}
           </span>
         </Notice>
       )}

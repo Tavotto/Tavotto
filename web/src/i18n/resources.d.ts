@@ -1565,6 +1565,7 @@ export default interface Resources {
           "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
           "noteLabel": "补充说明（可选）",
           "open": "发送…",
+          "packageGone": "这份诊断包放得太久，已经被清掉了。请关闭后重新打开，再发送一次。",
           "prepareFailed": "没能生成诊断包。可以关闭后重试，或改用「导出诊断包」保存到本地。",
           "preparing": "正在生成诊断包…",
           "progress": {

@@ -24,6 +24,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 vi.mock('./diagnosticsSave', () => ({ saveDiagnosticsZip: vi.fn(), stampForFilename: () => '20260101-000000' }))
 
 import {
+  ApiError,
   cancelDiagSend,
   discardDiagSend,
   fetchDiagSendBundle,
@@ -269,6 +270,15 @@ describe('发送', () => {
     await tick()
     expect(q('[data-diag-report-id]')!.textContent).toBe('TVD-ABCD-EFGH-JKMN-PQRS')
     expect(q('[data-diag-send-close]')!.textContent).toBe(ds('done'))
+    expect(q('[data-diag-send-confirm]')).toBeNull()
+  })
+
+  it('备好的包在引擎里已被清掉（404）：说「关闭重开」，不给重试', async () => {
+    startMock.mockRejectedValue(new ApiError('gone', 404, { code: 'diag_send_not_found' }))
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    expect(q('[data-diag-send-status]')!.textContent).toContain(ds('packageGone'))
     expect(q('[data-diag-send-confirm]')).toBeNull()
   })
 

@@ -1218,7 +1218,8 @@
           "digest_mismatch": "What the server verified does not match this machine, so this send does not count. Save the bundle and report it.",
           "unexpected_response": "The diagnostics service returned an unexpected result. Try again later.",
           "internal": "An internal error occurred and nothing was sent. Save the bundle and report it."
-        }
+        },
+        "packageGone": "This bundle was held too long and has been discarded. Close this window, reopen it and send again."
       }
     },
     "export": {

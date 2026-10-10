@@ -9,7 +9,7 @@
   **同一份字节**存成文件。`start()` 发的就是这份字节（SHA-256 与 `prepare` 时一致），不是点发送那一刻重新采的。
 * **本机引擎进程直传**。WebView 不碰网络：上传由本模块在后台线程里做——`POST /v1/reports/init` → 按服务端给的
   `upload{url,fields,file_field}` 把 ZIP 以 multipart 流式 POST 给 COS（不经 Tavotto VPS）→ `POST /v1/reports/complete`。
-  契约出处：`Tavotto/infra` 的 `docs/diagnostics-api/openapi.json`（v1.0.0）与其 README「客户端接入要求」。
+  契约出处：`Tavotto/infra` 仓库 diagnostics-api 文档目录里的 openapi.json（v1.0.0）与同目录说明文档的接入要求一节。
 * **默认关闭**。`enabled()` 要同时满足：`TAVOTTO_DIAG_UPLOAD=1`、没有硬开关 `TAVOTTO_NO_DIAG_UPLOAD=1`、
   `TAVOTTO_DIAG_ENDPOINT` 指向**白名单主机**。生产主机白名单 `ENDPOINT_HOSTS` 在 G-DIAG（真实 COS C1–C16 与
   运维门禁）通过、维护者批准之前是**空集**——发行版里没有任何办法打开它，界面也就不会出现入口。
@@ -502,7 +502,7 @@ def _server_code(resp: _Response) -> str:
 
 
 def classify(status: int, server_code: str) -> str:
-    """服务端错误 (HTTP 状态, code) → 客户端失败码（`FAILURES` 的键）。表见 infra README「错误码」。"""
+    """服务端错误 (HTTP 状态, code) → 客户端失败码（`FAILURES` 的键）。服务端的状态码表见 infra 说明文档的错误码一节。"""
     if status == 429:
         return "daily_quota_exceeded" if server_code == "daily_quota_exceeded" else "rate_limited"
     if status == 503:
