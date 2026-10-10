@@ -1870,6 +1870,36 @@ class TestExtraPathLayers:
             assert os.path.normcase(os.path.abspath(root)) not in extra, root
         assert os.path.normcase(os.path.abspath(vendor)) in extra  # 对照：其它目录照旧报
 
+    def test_install_roots_listed_by_getsitepackages_are_not_site_layers(self, tmp_path):
+        """CI 跟进（Windows）：Windows 的 `site.getsitepackages()` 返回 [sys.prefix, sys.prefix\\Lib\\site-packages]——安装根目录
+        本身被当 site 层读，里面的链接 / junction 让名字层判成没读全，所有缺包改判来源未定（「没有缺的依赖」）。这里在真解释器里
+        把 getsitepackages 换成 Windows 的形态再跑探针：安装根目录不能出现在 site_roots，真的 site-packages 照旧在。"""
+        import subprocess
+
+        cwd = tmp_path / "scratch"
+        cwd.mkdir()
+        code = (
+            "import os, site, sys\n"
+            "_real = site.getsitepackages()\n"
+            "site.getsitepackages = lambda prefixes=None: [sys.prefix, *_real]\n"
+            "sys.path[:0] = [sys.prefix]\n"
+            "exec(compile(sys.argv[1], '<facts>', 'exec'))\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code, depplan._FACTS_SRC],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=120,
+            cwd=str(cwd),
+            check=True,
+        ).stdout
+        facts = json.loads(out)
+        roots = [os.path.normcase(p) for p in facts["site_roots"]]
+        prefix = os.path.normcase(os.path.abspath(sys.prefix))
+        assert prefix not in roots
+        assert prefix not in [os.path.normcase(p) for p in facts["extra_roots"]]
+        assert any(os.path.basename(p) in ("site-packages", "dist-packages") for p in roots)  # 对照
+
     def test_a_venv_root_on_pythonpath_does_not_hide_a_missing_package(self, tmp_path, monkeypatch):
         """Windows 的 sys.path 里本来就有 venv 根目录与基础根目录：这里用 PYTHONPATH 把它们加进真 venv，缺包仍报缺。"""
         venv, python = _sys_site_venv(tmp_path)

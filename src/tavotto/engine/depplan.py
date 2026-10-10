@@ -175,6 +175,22 @@ try:
         known.add(os.path.normcase(os.path.abspath(site.getusersitepackages())))
 except Exception:
     pass
+# **安装根目录本身不是包层**（site 层与额外路径层都不算）：Windows 上 `site.getsitepackages()` 连 sys.prefix 本身也列（[prefix, prefix\\Lib\\site-packages]），
+# Windows 的 venv 里 sys.path 带着基础解释器的根目录和 venv 根目录（里面是 Lib / DLLs / Scripts /
+# tcl / Tools 等安装物，Lib 与 DLLs 是标准库，site-packages 已在 site_roots），目录里的链接 / junction / 读不了的条目会把整个名字层
+# 判成没读全，所有本该判缺的改判来源未定。探针自己的 cwd（`-c` 的 sys.path[0]）同理——worker 的脚本目录由 importscan 本地解析负责
+install_roots = set()
+for attr in ("prefix", "exec_prefix", "base_prefix", "base_exec_prefix", "real_prefix"):
+    value = getattr(sys, attr, None)
+    if isinstance(value, str) and value:
+        install_roots.add(os.path.normcase(os.path.abspath(value)))
+for exe in (sys.executable, getattr(sys, "_base_executable", None)):
+    if isinstance(exe, str) and exe:
+        install_roots.add(os.path.normcase(os.path.dirname(os.path.abspath(exe))))
+try:
+    install_roots.add(os.path.normcase(os.path.abspath(os.getcwd())))
+except Exception:
+    pass
 site_roots = []
 for entry in sys.path:
     if not entry or not isinstance(entry, str):
@@ -184,6 +200,8 @@ for entry in sys.path:
         if not os.path.isdir(path):
             continue
     except Exception:
+        continue
+    if os.path.normcase(path) in install_roots:
         continue
     if os.path.normcase(path) in known or os.path.basename(path).lower() in (
         "site-packages",
@@ -200,21 +218,6 @@ for key in ("stdlib", "platstdlib"):
         skip.add(os.path.normcase(os.path.abspath(sysconfig.get_path(key))))
     except Exception:
         pass
-# **安装根目录本身不是额外路径层**：Windows 的 venv 里 sys.path 带着基础解释器的根目录和 venv 根目录（里面是 Lib / DLLs / Scripts /
-# tcl / Tools 等安装物，Lib 与 DLLs 是标准库，site-packages 已在 site_roots），目录里的链接 / junction / 读不了的条目会把整个名字层
-# 判成没读全，所有本该判缺的改判来源未定。探针自己的 cwd（`-c` 的 sys.path[0]）同理——worker 的脚本目录由 importscan 本地解析负责
-install_roots = set()
-for attr in ("prefix", "exec_prefix", "base_prefix", "base_exec_prefix", "real_prefix"):
-    value = getattr(sys, attr, None)
-    if isinstance(value, str) and value:
-        install_roots.add(os.path.normcase(os.path.abspath(value)))
-for exe in (sys.executable, getattr(sys, "_base_executable", None)):
-    if isinstance(exe, str) and exe:
-        install_roots.add(os.path.normcase(os.path.dirname(os.path.abspath(exe))))
-try:
-    install_roots.add(os.path.normcase(os.path.abspath(os.getcwd())))
-except Exception:
-    pass
 extra_roots = []
 for entry in sys.path:
     if not entry or not isinstance(entry, str):
