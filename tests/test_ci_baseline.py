@@ -204,6 +204,11 @@ def test_every_named_step_in_the_live_workflow_has_an_execution_category(live_wo
     assert CB.classify_step("某个没登记过的步骤") == "other"
 
 
+def test_cla_service_contract_step_is_classified_as_test():
+    assert CB.classify_step("CLA service contract tests (isolated)") == "test"
+    assert CB.classify_step("CLA service contract tests (unregistered)") == "other"
+
+
 #: `cache-seed`（push main 的缓存种子）准备步骤名 → 类别。它们是「让消费者的准备步骤真跑一次」，
 #: 账记在消费者同一类下：pnpm install → install；cargo 编译 / runtime 构建 → build（它们的产出是
 #: target/ 与 build/runtime-cache，不是结论）。**枚举**：种子加一步就要回到这里登记一次。
