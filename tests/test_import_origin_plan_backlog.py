@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import depplan, deprepair, envlease
+from support import envworld
+from tavotto.engine import depplan, deprepair, envadvice, envlease, projectenv, runtime
 
 pytest_plugins = ("support.dependency_repair",)
 
@@ -202,3 +203,104 @@ class TestExecutionTimeLayerCheck:
         with pytest.raises(deprepair.RepairError) as err:
             deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert err.value.code == deprepair.ERROR_PLAN_STALE
+
+
+# ===========================================================================
+# #924 ① 映射发行包与备选同时装着 = 歧义；② 内置候选的覆盖度角色尊重全局解释器锁
+# ===========================================================================
+def _facts(installed: dict) -> depplan.TargetFacts:
+    return depplan.TargetFacts(
+        python="p",
+        marker_env={"python_full_version": "3.12.1", "sys_platform": "linux"},
+        stdlib=frozenset({"os", "sys"}),
+        installed=dict(installed),
+    )
+
+
+def _plan_of(tmp_path, script: str, installed: dict, requirements: str = ""):
+    proj = tmp_path / "proj"
+    _write(proj, "plot.py", script)
+    if requirements:
+        _write(proj, "requirements.txt", requirements)
+    return depplan.plan(proj, "plot.py", facts=_facts(installed), target_kind="project_venv")
+
+
+class TestMappedAndAlternativeBothInstalled:
+    BOTH = {"opencv-python": "4.9.0", "opencv-python-headless": "4.9.0"}
+
+    def test_both_installed_and_undeclared_is_ambiguous_not_satisfied(self, tmp_path):
+        plan = _plan_of(tmp_path, "import cv2\n", self.BOTH)
+        assert plan.satisfied == () and plan.missing == () and plan.requirements == ()
+        assert plan.unknown == ("cv2",)
+        (origin,) = plan.origins
+        assert origin["reason"] == "module_origin_ambiguous"
+
+    def test_the_declared_one_is_satisfied(self, tmp_path):
+        plan = _plan_of(tmp_path, "import cv2\n", self.BOTH, "opencv-python-headless>=4\n")
+        (entry,) = plan.satisfied
+        assert entry["distribution"] == "opencv-python-headless" and plan.origins == ()
+
+    def test_declaring_the_mapped_one_is_satisfied_too(self, tmp_path):
+        plan = _plan_of(tmp_path, "import cv2\n", self.BOTH, "opencv-python>=4\n")
+        (entry,) = plan.satisfied
+        assert entry["distribution"] == "opencv-python" and plan.origins == ()
+
+    def test_only_the_mapped_one_installed_stays_satisfied(self, tmp_path):
+        plan = _plan_of(tmp_path, "import cv2\n", {"opencv-python": "4.9.0"})
+        (entry,) = plan.satisfied
+        assert entry["distribution"] == "opencv-python" and plan.origins == ()
+
+    def test_an_ordinary_single_provider_import_is_unchanged(self, tmp_path):
+        plan = _plan_of(tmp_path, "import yaml\n", {"pyyaml": "6.0"})
+        (entry,) = plan.satisfied
+        assert entry["distribution"] == "pyyaml" and plan.origins == ()
+
+
+class TestBuiltinCoverageRoleFollowsTheGlobalLock:
+    @pytest.fixture
+    def seen(self, tmp_path, monkeypatch):
+        root = tmp_path / "p"
+        _write(root, "p.py", "import covok_a\n")
+        monkeypatch.setattr(runtime, "bundled_python", lambda: sys.executable)
+        projectenv.remember_default(root)  # 项目明确选回默认链条
+        roles: list[str] = []
+
+        def fake(python, mods, *, role, bundled=False):
+            roles.append(role)
+            return {"role": role}
+
+        monkeypatch.setattr(envadvice, "_coverage_for", fake)
+        return root, roles
+
+    def test_without_a_global_lock_the_builtin_candidate_is_the_target(self, seen, monkeypatch):
+        root, roles = seen
+        monkeypatch.delenv("TAVOTTO_WORKER_PYTHON", raising=False)
+        monkeypatch.setattr(envadvice.pool, "explicit_worker_python", lambda: None)
+        out = envadvice.recommend(root, "p.py", modules=("covok_a",))
+        builtin = out["candidates"][-1]
+        assert builtin["id"] == "builtin" and builtin["coverage"]["role"] == envadvice.ROLE_TARGET
+
+    def test_a_global_interpreter_makes_the_builtin_candidate_a_user_environment(
+        self, seen, tmp_path, monkeypatch
+    ):
+        root, roles = seen
+        other = tmp_path / "elsewhere" / envworld.venv_rel("g")
+        other.parent.mkdir(parents=True)
+        other.write_text("", encoding="utf-8")
+        monkeypatch.setattr(
+            envadvice.pool, "explicit_worker_python", lambda: (str(other), "environment")
+        )
+        out = envadvice.recommend(root, "p.py", modules=("covok_a",))
+        builtin = out["candidates"][-1]
+        assert builtin["id"] == "builtin" and builtin["current"] is True  # 记住的决定还在
+        assert builtin["coverage"]["role"] == envadvice.ROLE_USER
+
+    def test_the_global_interpreter_being_the_bundled_one_keeps_it_the_target(
+        self, seen, monkeypatch
+    ):
+        root, roles = seen
+        monkeypatch.setattr(
+            envadvice.pool, "explicit_worker_python", lambda: (sys.executable, "environment")
+        )
+        out = envadvice.recommend(root, "p.py", modules=("covok_a",))
+        assert out["candidates"][-1]["coverage"]["role"] == envadvice.ROLE_TARGET

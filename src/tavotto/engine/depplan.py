@@ -745,14 +745,16 @@ def _verdict(
     if present and state == "import_error":
         # 名字级「装着」不等于满足：装了但导入失败（装坏的 PyYAML）——覆盖度缓存的判决先于名字级，装它救不了（Codex #920 P2）
         return _Verdict(_OPEN, reason=ORIGIN_IMPORT_FAILED)
-    if c.distribution and c.distribution in present:
-        return _Verdict(_PRESENT, c.distribution)
     if len(present) > 1:
-        # 项目点名了其中一个（requirements 里写的就是 `opencv-python-headless`）：用户已经替我们选了
+        # 多个提供者同时装着：歧义 / 声明判定**先于**映射提供者的早返回（#924：`opencv-python` 与 `-headless` 都装着、项目没点名时
+        # 不能因为映射表里的 `opencv-python` 在就报满足）。项目点名了其中一个（requirements 里写的就是 `opencv-python-headless`）：
+        # 用户已经替我们选了
         chosen = [d for d in present if d in declared]
         if len(chosen) == 1:
             return _Verdict(_PRESENT, chosen[0])
         return _Verdict(_OPEN, reason=ORIGIN_AMBIGUOUS)
+    if c.distribution and c.distribution in present:
+        return _Verdict(_PRESENT, c.distribution)
     if present:
         return _Verdict(_PRESENT, present[0])
     if _installed_claims(c):

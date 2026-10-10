@@ -332,9 +332,11 @@ def _public_health(summary: dict | None) -> dict | None:
     }
 
 
-def _builtin_coverage(mods: tuple[str, ...], is_target: bool) -> dict:
+def _builtin_coverage(mods: tuple[str, ...], *, is_current: bool, pinned: str | None) -> dict:
+    """内置 runtime 的覆盖度。角色与普通候选**同一个判据**（`_role_of`）：项目明确选了默认链条之后又启用了全局解释器时，
+    worker 用的是全局那一个，内置只是被压掉的用户候选（#924），不能标成 target 让缺包 detail 说「目标环境里缺」。"""
     python = runtime.bundled_python()
-    role = ROLE_TARGET if is_target else ROLE_USER
+    role = _role_of(python or "", is_current=is_current, pinned=pinned)
     if not python:
         return coverage_of(None, mods, role=role)
     return _coverage_for(python, mods, role=role, bundled=True)
@@ -355,7 +357,7 @@ def _role_of(python: str, *, is_current: bool, pinned: str | None) -> str:
     环境即使 `is_current` 也只是被压掉的用户候选（`user` 码，不能说「目标环境里缺」）。没有全局锁时 target 就是
     项目当前采用的那一个。"""
     if pinned:
-        return ROLE_TARGET if projectenv._same_executable(python, pinned) else ROLE_USER
+        return ROLE_TARGET if python and projectenv._same_executable(python, pinned) else ROLE_USER
     return ROLE_TARGET if is_current else ROLE_USER
 
 
@@ -451,7 +453,11 @@ def recommend(
             "read_only": True,
             # 内置 runtime 的覆盖度只在它正是目标环境时给，且同样只读缓存（依赖门量过才有）
             **(
-                {"coverage": _builtin_coverage(mods, default_chain)}
+                {
+                    "coverage": _builtin_coverage(
+                        mods, is_current=default_chain, pinned=pinned_python
+                    )
+                }
                 if mods and default_chain
                 else {}
             ),
