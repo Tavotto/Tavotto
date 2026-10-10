@@ -4795,6 +4795,7 @@ export default interface Resources {
         "retry": "再试一次",
         "run": "运行",
         "runAgain": "再运行",
+        "runAnyway": "仍然运行",
         "start": "开始准备",
         "stop": "停止",
         "switchScope": "用本项目的版本",
@@ -4842,6 +4843,12 @@ export default interface Resources {
         "usedBy": "用的是",
         "workdir": "运行目录"
       },
+      "dialog": {
+        "howAsk": "把要填的内容直接写进脚本，别用弹窗问。",
+        "howFile": "把文件路径直接写进脚本；数据放在项目里，用相对路径，比如 data/points.csv。",
+        "more": "还有更多处未列出，改完后重新检查。",
+        "where": "第 {{line}} 行"
+      },
       "env": {
         "builtin": "Tavotto 自带的",
         "locked": "设置里指定的",
@@ -4882,6 +4889,9 @@ export default interface Resources {
         "depsStdlib": "Tavotto 自带的环境里没有 {{module}}",
         "depsStdlibOther": "当前用的 Python 里没有 {{module}}",
         "depsUnknown": "Tavotto 装不了 {{module}}，请选一个装了它的 Python 环境",
+        "dialogAsk": "脚本会弹窗询问，这里弹不出来，请把答案写进脚本",
+        "dialogBoth": "脚本会弹窗选文件和询问，这里弹不出来，请把路径和答案写进脚本",
+        "dialogFile": "脚本会弹窗选文件，这里弹不出来，请把文件路径写进脚本",
         "editOpening": "正在打开编辑…",
         "editReady": "已进入编辑",
         "envChoice": "用项目里自带的那套运行？",

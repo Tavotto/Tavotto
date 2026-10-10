@@ -16,6 +16,7 @@
  */
 import type {
   EnvCandidate,
+  GuiDialogPayload,
   MissingInputOffer,
   PreparationActionKind,
   PreparationReport,
@@ -43,7 +44,7 @@ export type PrepPrimary =
   | { kind: 'dismiss' }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
-export type PrepButton = 'run' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
+export type PrepButton = 'run' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
 
 /** 卡片的视觉语气：标题左边那个小图标（`busy` 转圈、`ok` 勾、`bad` 叹号、`mute` 灰） */
 export type PrepTone = 'busy' | 'ok' | 'bad' | 'mute' | null
@@ -117,6 +118,12 @@ const view = (
 })
 
 /** 报告里的目标名（脚本相对路径；已知素材用图名） */
+/** 弹窗有哪几种：优先读后端按全部调用算的 `kinds`；旧载荷没有就从（可能被截断的）calls 推 */
+export function dialogKinds(payload: GuiDialogPayload): { file: boolean; ask: boolean } {
+  const kinds = payload.kinds ?? payload.calls.map((c) => c.kind)
+  return { file: kinds.includes('file'), ask: kinds.includes('prompt') }
+}
+
 export const targetName = (entry: PrepEntry): string => {
   const t = entry.report?.target
   if (t?.script) return t.script
@@ -134,7 +141,7 @@ const RASTER_LIBRARY_NAME: Record<string, string> = {
 
 const BUSY = new Set(['running', 'awaiting_runtime_input', 'preparing_environment'])
 /** 这几种状态下「运行」的前提是参数：必填参数没填齐就换成参数卡（任何卡都不说「可以运行」） */
-const ARGS_GATED = new Set(['ready', 'restarted', 'needs_args', 'args_changed'])
+const ARGS_GATED = new Set(['ready', 'gui_dialog', 'restarted', 'needs_args', 'args_changed'])
 
 export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
   const script = targetName(entry)
@@ -200,10 +207,23 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         tone: 'busy',
         slot: 'progress',
       })
-    case 'ready_to_run':
+    case 'ready_to_run': {
+      // 脚本会弹窗选文件 / 询问（后端静态识别，不阻塞）：先说这件事，主按钮仍是报告里的 run，只是改口成「仍然运行」。
+      // 不另造「让助手改脚本」的入口——叠栈里没有现成的
+      const dialog = find(report, 'gui_dialog')
+      if (dialog) {
+        const { file, ask } = dialogKinds(dialog.payload)
+        // 选文件与询问都有：一句话涵盖两者，不塌成只讲文件
+        const key = file && ask ? 'dialogBoth' : file ? 'dialogFile' : 'dialogAsk'
+        return view('gui_dialog', key, v, has(report, 'run') ? act('run', 'runAnyway') : null, {
+          slot: 'ready',
+          tone: 'bad',
+        })
+      }
       return view('ready', projectEnvDeferred(report) ? 'readyProject' : 'ready', v, has(report, 'run') ? act('run', 'run') : null, {
         slot: 'ready',
       })
+    }
     case 'completed':
       return completed(report, entry, ctx, script)
     case 'partial':
