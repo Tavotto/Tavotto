@@ -1297,6 +1297,227 @@ class TestDeclaredVersusInstalled:
             assert c.distribution_provenance in ("", *distmeta.PROVENANCES)
 
 
+class TestIssue889:
+    """#882 第五轮 P2 三条（接入安装决策前必须修）：看不全不确认、读不出映射不当没有、冲突不分来源都报。"""
+
+    # ① 有未建模的 `.pth` 钩子 = 别的提供者可能被插到 base site-packages 之前
+    @pytest.mark.parametrize(
+        "pth_line",
+        ["/opt/shared-libs", "import os; os.environ.setdefault('X', '1')"],
+        ids=["path_line_outside_site", "unmodelled_import_hook"],
+    )
+    def test_a_hook_that_may_put_another_provider_first_blocks_the_confirmation(
+        self, tmp_path, pth_line
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(site, "numpy", "1.26.4", top="numpy\n")
+        control = _scan(tmp_path, "import numpy\n", _index(prefix))["numpy"]
+        assert control.distribution_status == "installed_confirmed"
+        assert control.selected_distribution == "numpy"
+
+        _write(site / "hook.pth", pth_line + "\n")
+        idx = _index(prefix)
+        assert idx.uncovered_paths == 1
+        got = _scan(tmp_path, "import numpy\n", idx)["numpy"]
+        assert got.distribution_status == "unverified"
+        assert got.resolution_status == "unverified"
+        assert got.selected_distribution == ""  # 不确认唯一提供者，就不给可重现的包名
+        assert (got.observed_distribution, got.observed_version) == ("numpy", "1.26.4")
+        assert "path_entries_not_followed" in got.compatibility
+
+    # ① 的补漏（#906 r4236524004）：provenance 专属分支（editable / 本地 / VCS / URL）的提前返回不许绕过「看不全不确认」
+    @pytest.mark.parametrize(
+        "direct_url",
+        [
+            {"url": "file:///w/lab", "dir_info": {"editable": True}},
+            {
+                "url": "file:///home/me/lab-1.0-py3-none-any.whl",
+                "archive_info": {"hash": "sha256=ab"},
+            },
+            {"url": "file:///home/me/lab", "dir_info": {}},
+            {
+                "url": "https://example.invalid/lab.git",
+                "vcs_info": {"vcs": "git", "commit_id": "abc"},
+            },
+            {"url": "https://example.invalid/lab.zip", "archive_info": {}},
+        ],
+        ids=["editable", "local_archive", "local_path", "vcs", "url"],
+    )
+    @pytest.mark.parametrize("pth_line", ["/opt/shared-libs", "import os; os.environ.get('X')"])
+    def test_an_uncovered_hook_beats_every_provenance_specific_verdict(
+        self, tmp_path, direct_url, pth_line
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(site, "lab", "1.0", top="lab\n", direct_url=direct_url)
+        idx_before = _index(prefix)
+        assert idx_before.uncovered_paths == 0
+        control = _scan(tmp_path, "import lab\n", idx_before)["lab"]
+        assert control.distribution_status in (
+            "editable_dependency_not_reproducible",
+            "installed_source_not_reproducible",
+        )
+
+        _write(site / "hook.pth", pth_line + "\n")
+        idx = _index(prefix)
+        assert idx.uncovered_paths == 1
+        got = _scan(tmp_path, "import lab\n", idx)["lab"]
+        assert got.distribution_status == "unverified"
+        assert got.resolution_status == "unverified"
+        assert got.selected_distribution == ""
+        assert (got.observed_distribution, got.observed_version) == ("lab", "1.0")
+        assert "path_entries_not_followed" in got.compatibility
+
+    @pytest.mark.parametrize("pth_line", ["/opt/shared-libs", "import sitehook"])
+    def test_an_uncovered_hook_also_beats_a_name_only_editable(self, tmp_path, pth_line):
+        prefix, site = _env(tmp_path)
+        (site / "lab").mkdir()
+        _dist(  # 没有 top_level / RECORD / finder 映射：只有名字对得上
+            site, "lab", "1.0", direct_url={"url": "file:///w/lab", "dir_info": {"editable": True}}
+        )
+        control = _scan(tmp_path, "import lab\n", _index(prefix))["lab"]
+        assert control.distribution_status == "editable_dependency_not_reproducible"
+        assert control.distribution_candidates[0]["evidence"] == ["installed_metadata_name_only"]
+
+        _write(site / "hook.pth", pth_line + "\n")
+        idx = _index(prefix)
+        assert idx.uncovered_paths == 1
+        got = _scan(tmp_path, "import lab\n", idx)["lab"]
+        assert got.distribution_status == "unverified"
+        assert got.resolution_status == "unverified"
+        assert got.selected_distribution == ""
+        assert "path_entries_not_followed" in got.compatibility
+
+    def test_the_declared_conflict_is_still_reported_when_an_uncovered_hook_makes_it_unverified(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(
+            site,
+            "lab",
+            "1.0",
+            top="lab\n",
+            direct_url={"url": "file:///w/lab", "dir_info": {"editable": True}},
+        )
+        _write(site / "hook.pth", "/opt/shared-libs\n")
+        got = _scan(tmp_path, "import lab\n", _index(prefix), declared={"lab": ">=2"})["lab"]
+        assert got.distribution_status == "unverified"
+        assert "declared_version_conflict" in got.compatibility
+        assert "path_entries_not_followed" in got.compatibility
+
+    def test_a_modelled_editable_finder_line_does_not_count_as_a_hook(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(site, "numpy", "1.26.4", top="numpy\n")
+        _write(
+            site / "__editable__.mylab-0.1.pth",
+            "import __editable___mylab_0_1_finder; __editable___mylab_0_1_finder.install()\n",
+        )
+        _write(site / "__editable___mylab_0_1_finder.py", "MAPPING = {'mylab': '/w/mylab'}\n")
+        idx = _index(prefix)
+        assert idx.uncovered_paths == 0
+        got = _scan(tmp_path, "import numpy\n", idx)["numpy"]
+        assert got.distribution_status == "installed_confirmed"
+
+    # ② editable finder 读得到、映射读不出 = 没读全
+    @pytest.mark.parametrize(
+        "finder_body",
+        [
+            "MAPPING = dict(mylab='/w/mylab')\n",
+            "MAPPING = {k: '/w' for k in ('mylab',)}\n",
+            "_m = {'mylab': '/w'}\nMAPPING = _m\n",
+            "MAPPING = {'mylab': '/w'\n",  # 语法错误（宿主解析器读不了）
+            "NAMESPACES = {}\n",  # 根本没有 MAPPING
+        ],
+        ids=["dict_call", "comprehension", "name_reference", "syntax_error", "no_mapping"],
+    )
+    def test_an_editable_finder_whose_mapping_cannot_be_read_marks_the_index_incomplete(
+        self, tmp_path, finder_body
+    ):
+        prefix, site = _env(tmp_path)
+        _write(
+            site / "__editable__.mylab-0.1.pth",
+            "import __editable___mylab_0_1_finder; __editable___mylab_0_1_finder.install()\n",
+        )
+        _write(site / "__editable___mylab_0_1_finder.py", finder_body)
+        idx = _index(prefix)
+        assert idx.complete is False
+        assert any(i["path"].endswith("__editable___mylab_0_1_finder.py") for i in idx.issues)
+        got = _scan(tmp_path, "import nothere\n", idx)["nothere"]
+        # finder 可能提供它而我们没读出来：没查到 ≠ 没装，不是 not_installed，而是环境没看全
+        assert got.distribution_status == "environment_not_checked"
+        assert "metadata_scan_incomplete" in got.compatibility
+
+    @pytest.mark.parametrize("body", ["MAPPING = {'mylab': '/w'}\n", "MAPPING = {}\n"])
+    def test_a_literal_mapping_including_an_empty_one_is_a_complete_read(self, tmp_path, body):
+        prefix, site = _env(tmp_path)
+        _write(
+            site / "__editable__.mylab-0.1.pth",
+            "import __editable___mylab_0_1_finder; __editable___mylab_0_1_finder.install()\n",
+        )
+        _write(site / "__editable___mylab_0_1_finder.py", body)
+        idx = _index(prefix)
+        assert idx.complete is True
+        got = _scan(tmp_path, "import nothere\n", idx)["nothere"]
+        assert got.distribution_status == "not_installed"
+
+    # ③ 声明与已装版本的冲突，不分来源都报
+    @pytest.mark.parametrize(
+        "direct_url, status, provenance",
+        [
+            (
+                {"url": "file:///dl/lab-1.0.tar.gz", "archive_info": {}},
+                "installed_source_not_reproducible",
+                "local_archive",
+            ),
+            (
+                {"url": "file:///w/lab", "dir_info": {}},
+                "installed_source_not_reproducible",
+                "local_path",
+            ),
+            (
+                {"url": "https://x.example/lab.git", "vcs_info": {"vcs": "git"}},
+                "installed_source_not_reproducible",
+                "vcs",
+            ),
+            (
+                {"url": "https://x.example/lab-1.0.tar.gz", "archive_info": {}},
+                "installed_source_not_reproducible",
+                "url",
+            ),
+            (
+                {"url": "file:///w/lab", "dir_info": {"editable": True}},
+                "editable_dependency_not_reproducible",
+                "editable",
+            ),
+        ],
+        ids=["local_archive", "local_path", "vcs", "url", "editable"],
+    )
+    def test_a_declared_constraint_the_installed_version_breaks_is_reported_for_every_provenance(
+        self, tmp_path, direct_url, status, provenance
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(site, "lab", "1.0", top="lab\n", direct_url=direct_url)
+        idx = _index(prefix)
+        broken = _scan(tmp_path, "import lab\n", idx, declared={"lab": ">=2"})["lab"]
+        assert broken.distribution_provenance == provenance
+        assert broken.distribution_status == status  # 来源本身的结论不被冲突盖掉
+        assert "declared_version_conflict" in broken.compatibility
+        assert (broken.declared_requirement, broken.declared_constraint) == ("lab", ">=2")
+        assert (broken.observed_distribution, broken.observed_version) == ("lab", "1.0")
+
+        fine = _scan(tmp_path, "import lab\n", idx, declared={"lab": ">=0.5"})["lab"]
+        assert "declared_constraint_satisfied" in fine.compatibility
+        assert "declared_version_conflict" not in fine.compatibility
+        unreadable = _scan(tmp_path, "import lab\n", idx, declared={"lab": "garbage!"})["lab"]
+        assert "declared_constraint_unchecked" in unreadable.compatibility
+
+    def test_a_conda_dist_info_provenance_also_reports_the_conflict(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(site, "numpy", "1.26.4", top="numpy\n", installer="conda")
+        got = _scan(tmp_path, "import numpy\n", _index(prefix), declared={"numpy": ">=2"})["numpy"]
+        assert "declared_version_conflict" in got.compatibility
+        assert got.distribution_status == "distribution_version_conflict"
+
+
 # ---------------------------------------------------------------- 供应链：已安装元数据不是安装授权
 
 
@@ -1505,8 +1726,14 @@ class TestReadingRunsNothing:
             idx = _index(prefix)
             got = _scan(tmp_path, "import evilpkg\nimport evilpkg2\nimport sitecustomize\n", idx)
         assert not [k for k, p in marks.items() if p.exists()]
-        assert got["evilpkg"].distribution_status == "installed_confirmed"
-        assert got["evilpkg2"].distribution_status == "editable_dependency_not_reproducible"
+        # 这个环境里有一行没建模的 `import …` 的 `.pth`（Python 会执行它）：看不全，所以 evilpkg 只是「观测到」而不是
+        # 「确认是唯一提供者」（#889 ①）；零执行的结论不变——痕迹文件一个都没出现
+        assert got["evilpkg"].distribution_status == "unverified"
+        assert got["evilpkg"].observed_distribution == "evilpkg"
+        assert "path_entries_not_followed" in got["evilpkg"].compatibility
+        # editable 的那个也一样：这个环境看不全，来源专属的结论不能抢在「看不全不确认」前面（#906 r4236524004）
+        assert got["evilpkg2"].distribution_status == "unverified"
+        assert got["evilpkg2"].distribution_provenance == "editable"
 
     def test_the_armed_traps_are_real(self, monkeypatch):
         with _armed(monkeypatch):

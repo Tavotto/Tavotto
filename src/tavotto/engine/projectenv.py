@@ -350,12 +350,19 @@ def _same_dir(a: Path, b: Path) -> bool:
 #: 交给用户的解释器执行，绝不往用户 venv 里 pip install 任何东西。
 _PROBE_SRC = r"""
 import ast, json, os, platform, re, sys
+# 结果通道与被 import 的包隔开：包在 import 时往 stdout 打的横幅 / 诊断（Python 层 print 与 C 层写 fd 1 都算）一律改道到
+# stderr，结果 JSON 只从原 stdout 的副本写出——否则一个打横幅的包会让整份结果解析失败、被误判成环境不可用（Codex #906 r4236594926）
+_result_fd = os.dup(1)
+os.dup2(2, 1)
+sys.stdout = sys.stderr
+def _emit(obj):
+    os.write(_result_fd, json.dumps(obj).encode("ascii"))
 out = {"executable": sys.executable, "prefix": sys.prefix,
        "python_version": platform.python_version(),
        "version_info": list(sys.version_info[:3]),
        "arch": platform.machine(), "matplotlib_version": None,
        "tavotto_worker_ok": False, "requested_module": None,
-       "requested_module_ok": None, "modules_ok": {}, "error": None}
+       "requested_module_ok": None, "modules_ok": {}, "modules_detail": {}, "error": None}
 engine_dir = sys.argv[1]
 module = sys.argv[2] if len(sys.argv) > 2 else ""
 extra = [m for m in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if m]
@@ -604,7 +611,7 @@ if isolated:
     if _prepare_isolated_path():
         out["deferred_env"] = True
         out["new_imports"] = []
-        sys.stdout.write(json.dumps(out))
+        _emit(out)
         sys.exit(0)
     # 运行之前（Codex 安全 #820 r4235163764）：**什么都不 import**——包括 Tavotto 自己要的 matplotlib / worker 启动链。
     # 版本从 dist-info 的 METADATA 读（不执行代码）；"能不能真的 import"（坏的二进制 wheel 等）要等运行再量
@@ -679,12 +686,37 @@ def _import_state(name):
         return False
 
 
+def _import_detail(name):
+    # 失败原因细分（Import Origin PR3）：`not_found` = 被要求的这个名字（或它的某一级父包）找不到；`import_error` = 它在、
+    # 但导入时抛了别的（它自己的依赖缺——ModuleNotFoundError 的 name 是另一个名字——、ABI、DLL、SyntaxError、
+    # ImportError……）。两者的出路不同（装包 / 修环境），不再都叫 False
+    try:
+        __import__(name)
+        return "found"
+    except ModuleNotFoundError as exc:
+        missing = getattr(exc, "name", None) or ""
+        if missing and (name == missing or name.startswith(missing + ".")):
+            return "not_found"
+        return "import_error"
+    except Exception:
+        return "import_error"
+
+
+def _spec_detail(name):
+    state = _spec_state(name)
+    return "found" if state is True else ("deferred" if state is None else "not_found")
+
+
 _state = _spec_state if mode == "spec" else _import_state
+_detail = _spec_detail if mode == "spec" else _import_detail
+_STATE_OF_DETAIL = {"found": True, "deferred": None}
 if module:
     out["requested_module"] = module
     out["requested_module_ok"] = _state(module)
 for name in extra:
-    out["modules_ok"][name] = _state(name)
+    detail = _detail(name)
+    out["modules_detail"][name] = detail
+    out["modules_ok"][name] = _STATE_OF_DETAIL.get(detail, False)
 if isolated:
     if _spec_state("matplotlib") is None:
         out["deferred_env"] = True  # matplotlib 本身解析进了项目
@@ -706,7 +738,7 @@ if isolated:
         if _stdlib is not None
         else []
     )
-sys.stdout.write(json.dumps(out))
+_emit(out)
 """
 
 
@@ -722,6 +754,63 @@ def _probe_scratch_dir() -> str:
         return tempfile.mkdtemp(prefix="p-", dir=str(base))
     except OSError:
         return tempfile.mkdtemp(prefix="tavotto-probe-")
+
+
+def execution_note(
+    *,
+    isolated: bool,
+    spec_mode: bool,
+    module: str | None,
+    modules: tuple[str, ...],
+    started: bool = True,
+    info: dict | None = None,
+) -> dict:
+    """这次体检**实际执行了什么**的如实声明（Import Origin PR3：授权的环境检查不得宣称无副作用）。
+
+    按**实际完成情况**填，不按「打算做什么」填：
+
+    * `started=False`（子进程根本没起来：解释器消失 / 不能执行 / spawn 失败 / 起进程之前就异常）→ 什么都没跑：
+      `ran_environment_code=False`、`imported_modules=[]`、`may_run_package_init=False`；
+    * `started=True` 而 `info is None`（起来了却没拿到完整结果：超时 / 崩溃 / 输出读不出）→ **保守地**当作跑过：
+      `ran_environment_code = not isolated`、非运行前方式 `may_run_package_init=True`，`imported_modules=[]`（不知道哪些
+      名字确实走完了）并带 `incomplete=True`——「可能跑过」不许报成「没跑」；
+    * 正常完成 → `imported_modules` 是**宿主请求的名字**与子进程回报的已处理名字的交集（`modules_detail` 的键 +
+      `requested_module`），不信子进程多报；
+    * `ran_environment_code`：非隔离启动 = 解释器按正常方式启动，用户环境的 `.pth` / `sitecustomize` 会跑，之后 import
+      matplotlib 与 worker 启动链——全是用户环境里的代码；`-I -S` 的运行前体检不跑 site、不 import；
+    * `imported_modules`：真 `__import__` 过哪些名字（运行前的 `find_spec` 方式一个都不 import）——导入一个包就是执行它的
+      `__init__`，可能写文件、联网、改全局状态，我们看不见也拦不住；
+    * 没有 `side_effect_free`：我们从不宣称「无副作用」。"""
+    if not started:
+        return {
+            "ran_environment_code": False,
+            "imported_modules": [],
+            "may_run_package_init": False,
+            "incomplete": False,
+        }
+    if info is None:
+        return {
+            "ran_environment_code": not isolated,
+            "imported_modules": [],
+            "may_run_package_init": not spec_mode,
+            "incomplete": True,
+        }
+    requested = [*([module] if module else []), *modules]
+    reported = info.get("modules_detail")
+    done = set(reported) if isinstance(reported, dict) else set()
+    if (
+        module
+        and info.get("requested_module") == module
+        and info.get("requested_module_ok") is not None
+    ):
+        done.add(module)
+    imported = [] if spec_mode else [m for m in dict.fromkeys(requested) if m in done]
+    return {
+        "ran_environment_code": not isolated,
+        "imported_modules": imported,
+        "may_run_package_init": bool(imported),
+        "incomplete": False,
+    }
 
 
 def probe_environment(
@@ -789,12 +878,17 @@ def probe_environment(
     argv.append("spec" if spec_mode else "")
     argv.append(project_root if spec_mode else "")
     argv.append("isolated" if isolate else "")
+    shape = {"isolated": isolate, "spec_mode": spec_mode, "module": module, "modules": modules}
     scratch = ""
+    spawned = False
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
         # 分配也在守卫之内：系统临时目录不可用 / 只读 / 满的时候，这里抛出去
         # 就是一个 500，而 `probe_environment` 承诺的是结构化失败。
         scratch = _probe_scratch_dir()
+        spawned = (
+            True  # 从这里起算「可能已经起了子进程」：spawn 本身失败的 OSError 在下面单独改回 False
+        )
         proc = subprocess.run(
             argv,
             capture_output=True,
@@ -810,7 +904,16 @@ def probe_environment(
     except (OSError, subprocess.SubprocessError) as exc:
         # 起不来：bad executable format（venv 建在另一个架构上）、被杀毒
         # 隔离、动态库缺失、venv 的 home 指向一个已经删掉的解释器……
-        return {"ok": False, "code": ERROR_UNUSABLE, "python": python, "detail": str(exc)[:400]}
+        # 子进程**根本没起来**（OSError，含分配临时目录失败）= 什么都没跑；起来了又超时 / 出错（SubprocessError）
+        # = 可能跑过，不许报成「没跑」
+        started = spawned and isinstance(exc, subprocess.SubprocessError)
+        return {
+            "ok": False,
+            "code": ERROR_UNUSABLE,
+            "python": python,
+            "detail": str(exc)[:400],
+            "execution": execution_note(**shape, started=started),
+        }
     finally:
         if scratch:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -820,6 +923,7 @@ def probe_environment(
             "code": ERROR_UNUSABLE,
             "python": python,
             "detail": (proc.stderr or "").strip()[:400],
+            "execution": execution_note(**shape),
         }
     try:
         info = json.loads(proc.stdout.strip() or "{}")
@@ -829,9 +933,11 @@ def probe_environment(
             "code": ERROR_UNUSABLE,
             "python": python,
             "detail": (proc.stdout or "").strip()[:400],
+            "execution": execution_note(**shape),
         }
 
     info["python"] = python
+    info["execution"] = execution_note(**shape, info=info if isinstance(info, dict) else None)
     if info.get("deferred_env"):
         # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
         info.update(ok=True, code="", deferred_env=True)

@@ -308,6 +308,12 @@
   不按名字相近挑；声明与已装版本冲突只报告，两边都不覆盖。**已安装元数据不是安装授权**：`distmeta` 不 import `deprepair`、
   不产出 `DependencyRequirement`、`depresolve.INSTALLABLE_SOURCES` 仍是 project_declared / curated / user_specified 三个；
   `bucket` / `needed` / `distribution` 不因元数据改变，`depplan` / `deprepair` 不读这些字段（用例钉着）。
+  **看不全不确认**（#889，PR3；#906 r4236524004）：环境里有没跟进的 `.pth` 路径行 / 没建模的 `import` 行（`Index.uncovered_paths > 0`）时，唯一
+  提供者只是「观测到」——**这条判据在所有 provenance 专属返回（Conda / editable / 本地路径·归档 / VCS / URL）之前**，来源专属的结论抢不到它前面——状态 `unverified`、`selected_distribution` 为空、`compatibility` 带 `path_entries_not_followed`；editable
+  finder 读得到却读不出 `MAPPING`（`dict(...)` 构造、推导式、变量、语法宿主解析器不支持、根本没有 `MAPPING`）= 没读全
+  （`Index.complete=False`，留 `parse_budget` 痕迹），「没查到」落 `environment_not_checked` 而不是 `not_installed`；声明约束与已装版本
+  的冲突在**所有** provenance（index / editable / 本地路径 / 本地 wheel / VCS / URL / Conda）下都报 `declared_version_conflict`，
+  来源本身的状态不被冲突盖掉。
 - **import 了却从未用到的不算「需要」（ADR 0061 §二 2026-09-24 修订）**：`importscan` 按 `figcapture.unused_imports`
   （唯一判据，只收 AST 能证明的：起了别名、不带点的 `import X as Y`——裸 `import X` 可能是为了副作用，一律不收；X 还必须在无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS` 里（别名也可能只为副作用，评审 #555 两条 P1）——判据是进程级副作用快照 `tests/support/import_side_effects.py`（matplotlib / 环境变量 / warnings / logging / 导入钩子 / 信号 / excepthook / atexit / builtins / codec 与 locale……任何一项变了就不进），扩名单要用它实测；不在 `try` / `with` 里、绑定名与 X 在别处一次都不出现、
   没有 `globals` / `eval` / `__dict__` 这类读不清的用法）标 `unused`，`needed` / `unknown` 不含它，`JointPlan.unused`
@@ -430,6 +436,24 @@
 - **检查 `envadvice.check()` 是起候选解释器的唯一入口**：`POST /api/engine/environment/check`（范围 `candidates` / `scope`，
   `include_login_shell` 才问登录 shell），候选数 / 总时限 / 每个候选超时都有上限（单个探测超时取 min(单探测上限, 剩余总预算)，剩余不足 `MIN_PROBE_BUDGET_S` 不再起、记 deadline），`DELETE` 取消，同一项目单飞（`CheckBusy`）。
   结论缓存键 = (解释器路径, 环境代)。**不写项目设置**。
+- **环境覆盖度（Import Origin Resolver PR3）**：`check(modules=)` / `POST …/check {modules?, coverage?}`（`coverage: true` 由后端从
+  `script` 静态算出，`deprepair.script_import_names` = 依赖门 / 检测同一份 `_plan_imports`；名字只认合形状的顶级名、最多
+  `MAX_COVERAGE_MODULES`）让每个被检查的候选回答「脚本要的 import 装齐了没有」。**覆盖度只有一份缓存**：写进
+  `userenvs._probe_cache`（`userenvs.remember_probe`；键 = 路径 + 环境代 + import **集合**（排序，顺序无关）+ 是否内置 + `import` 方式），
+  依赖门的 `cache_only`、检测与 `recommend(modules=)` 读的是同一份，`envadvice._verdicts` 只存健康摘要。探测脚本只加字段：
+  `modules_detail`（`found` / `not_found` / `import_error` / `deferred`；`ModuleNotFoundError.name` 不是被要求的名字 = 它自己的依赖缺 =
+  `import_error`，`modules_ok` 的布尔口径不变）与宿主侧的 `execution` 账。`envadvice.coverage_of` 把结论投影成 `covered` /
+  `partial` / `missing` / `unusable`（环境本身跑不了 Tavotto：Python 不支持 / 没 matplotlib / worker 起不来——**与缺包分开，不看模块**）
+  / `not_checked`（没量过 / 换代 / 延后——不冒充装齐也不冒充没装齐），并给**结构化 detail**（不是发布的错误码，不进 `ERROR_CODES`）：
+  `module_not_found_in_user_environment` / `module_import_failed_in_user_environment`（用户的候选环境）、
+  `module_missing_in_target_environment` / `module_import_failed_in_target_environment`（正要跑脚本的那个环境）、
+  `environment_not_checked` / `environment_unusable`。闭集与 `web/src/lib/api.ts` 的 `ENV_*` 镜像（同源对，顺序也比）。
+  覆盖度不改推荐顺序、不改任何决定（显式选择永远排在最前、检查不写项目设置）；`versions_checked` 恒 false——已装版本满不满足声明归
+  `distmeta`。**授权检查不是无副作用的**：它真 import 那些包 = 执行它们的 `__init__`（解释器按正常方式启动，用户环境的 `.pth` /
+  `sitecustomize` 也会跑）；结果的 `executed`（起了几个候选、import 了哪些名字）与每个候选覆盖度的 `executed_user_code` 如实标注——**按实际完成情况**，不按打算：`probe_environment` 的 `execution`（`projectenv.execution_note`）在子进程根本没起来（解释器消失 / 不能执行 / spawn 失败 / 起进程前异常）时是 `ran_environment_code=False`、`imported_modules=[]`、`may_run_package_init=False`；起来了却没拿到完整结果（超时 / 崩溃 / 输出读不出）时保守地 `ran_environment_code=not isolated`、`may_run_package_init=True`（运行前方式除外），`imported_modules=[]` 并带 `incomplete=True`——「可能跑过」不许报成「没跑」；正常完成时 `imported_modules` = 宿主请求的名字 ∩ 子进程回报的已处理名字（不信子进程多报）。`executed` 由各候选的 `execution` 汇总（`ran_user_code` / `candidate_interpreters` 只数真起过的，`incomplete` 任一为真即真），
+  `side_effect_free` 恒 False。默认扫描 / `recommend` / 依赖门 `cache_only` / `distmeta` 静态解析**一个候选子进程都不起、不执行用户
+  代码**（`tests/test_environment_coverage.py`：武装 `Popen`/`exec*`/`spawn*`/`socket.connect` + 恶意包 `SIDE_EFFECT` 文件 + AST 门禁钉
+  「读侧函数不引用探测入口、探测入口只被 `_check` / `adopt_candidate` 引用」）。
 - **采用 = `PATCH /api/engine/environment {scope: project, candidate, expected_generation}`**：id 只换本机自己枚举出来的路径；
   `expected_generation` 必填（缺 → 400 `environment_generation_required`）；环境代对不上 409 `environment_changed`（体检之后、`remember` 之前紧贴再比一次，体检期间被重建同样 409、不落盘）；全局显式选择压着 409 `environment_locked`（是谁锁的在建议里的 `decision.locked_by`）；现场再体检仍是
   `probe_environment`，通过才 `remember(automatic=False, trigger=recommended)` 并存 `generation`。采用不带安装授权：没有 pip，

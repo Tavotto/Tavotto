@@ -6,6 +6,11 @@
 | `check()` | 用户明确点了「检查」（带范围、预算、取消） | **会**，且只会起被点名范围里的候选 | 进程内体检结论缓存 |
 | 采用 | 用户明确点了「使用」→ `PATCH /api/engine/environment`（`candidate` + `expected_generation`） | 现场再体检一次那个候选 | 项目设置里一条 `automatic=False` 的记录（带环境代） |
 
+`check()` 可以带脚本所需的 `modules`（Import Origin PR3）：这时每个被检查的候选还会回答「这个脚本要的 import 它装齐了没有」
+（覆盖度 `coverage`：`not_found` 与 `import_error` 分开）。覆盖度只有**一份**——写进 `userenvs._probe_cache`（路径 + 环境代 +
+import 集合），依赖门 / 检测读的是同一个，不另建第二个缓存。**这样的检查会真 import 那些包**，也就是执行它们的 `__init__`：
+结果里的 `executed` 如实标注，绝不宣称无副作用；`recommend()` 只读缓存里已有的覆盖度，一个进程都不起。
+
 本模块**不是第二套 resolver**：解释器怎么选仍只有 `pool.resolve_worker_python`；这里回答的是「候选有哪些、
 各自凭什么被推荐、检查过没有」。**使用不等于安装**：没有任何一行 pip；采用只写一条项目记录，内置 runtime
 始终只读，缺包时的「装进哪里」仍归 `deprepair` / `managedenv`（由用户在它自己的确认里授权）。
@@ -28,9 +33,9 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
-from . import pool, projectenv, projscan, userenvs
+from . import pool, projectenv, projscan, runtime, userenvs
 
 REC_VERSION = 1
 
@@ -94,6 +99,49 @@ SCOPE_PROJECT = "project"
 SCOPE_MACHINE = "machine"
 SCOPE_ALL = "all"
 CHECK_SCOPES = (SCOPE_PROJECT, SCOPE_MACHINE, SCOPE_ALL)
+#: 一次检查最多量多少个 import（每个是一次 `__import__`）。超出的丢掉并在结果里数出来，不静默截断
+MAX_COVERAGE_MODULES = 64
+
+# ---- 覆盖度（脚本要的 import 在某个候选环境里装齐了没有）：结构化 detail，**不是发布的错误码** ----
+#: 单个模块的状态（`modules_detail` 的值，探测脚本量出来的）：`found` 找到且导入成功；`not_found` 被要求的名字找不到；
+#: `import_error` 在、但导入时抛了别的；`deferred` 运行前的 `find_spec` 落在项目里（不 import，等运行再量）；`unknown` 量不出
+MODULE_FOUND = "found"
+MODULE_NOT_FOUND = "not_found"
+MODULE_IMPORT_ERROR = "import_error"
+MODULE_DEFERRED = "deferred"
+MODULE_UNKNOWN = "unknown"
+MODULE_STATES = (
+    MODULE_FOUND,
+    MODULE_NOT_FOUND,
+    MODULE_IMPORT_ERROR,
+    MODULE_DEFERRED,
+    MODULE_UNKNOWN,
+)
+#: 整个环境对这组 import 的覆盖度
+COV_COVERED = "covered"  # 全部找到
+COV_PARTIAL = "partial"  # 一部分找到、一部分没有
+COV_MISSING = "missing"  # 一个都没找到
+COV_UNUSABLE = "unusable"  # 环境本身跑不了 Tavotto（Python 版本不支持 / 没 matplotlib / worker 起不来）：与「缺包」分开
+COV_NOT_CHECKED = "not_checked"  # 没量过 / 量过但换代了 / 延后到运行：不冒充装齐，也不冒充没装齐
+COVERAGE_STATES = (COV_COVERED, COV_PARTIAL, COV_MISSING, COV_UNUSABLE, COV_NOT_CHECKED)
+#: 结构化 detail 的 code（闭集；`web/src/lib/api.ts` 镜像）。前两个是**用户的**候选环境，第三个是正要跑脚本的那个
+#: （目标环境）；`*_import_failed_*` 是「包在、导入失败」——装它救不了
+DETAIL_NOT_FOUND_USER = "module_not_found_in_user_environment"
+DETAIL_IMPORT_FAILED_USER = "module_import_failed_in_user_environment"
+DETAIL_MISSING_TARGET = "module_missing_in_target_environment"
+DETAIL_IMPORT_FAILED_TARGET = "module_import_failed_in_target_environment"
+DETAIL_NOT_CHECKED = "environment_not_checked"
+DETAIL_UNUSABLE = "environment_unusable"
+DETAIL_CODES = (
+    DETAIL_NOT_FOUND_USER,
+    DETAIL_IMPORT_FAILED_USER,
+    DETAIL_MISSING_TARGET,
+    DETAIL_IMPORT_FAILED_TARGET,
+    DETAIL_NOT_CHECKED,
+    DETAIL_UNUSABLE,
+)
+ROLE_USER = "user"
+ROLE_TARGET = "target"
 
 _lock = threading.Lock()
 #: 检查留下的结论：(解释器路径键, 环境代) → 体检摘要。键里带环境代：同一路径被重建，旧结论自然对不上。
@@ -111,6 +159,124 @@ def _register_reset() -> None:
 
 
 _register_reset()
+
+
+# ---------------------------------------------------------------- 覆盖度（只读缓存，不起进程）
+
+
+def normalize_modules(modules: Iterable[str] | None) -> tuple[tuple[str, ...], int]:
+    """要量的 import 名：只留合形状的顶级名（`projectenv.valid_module_name`），去重保序，最多 `MAX_COVERAGE_MODULES`。
+    回 `(名字, 被丢掉的个数)`——丢掉的数出来，不静默截断。"""
+    seen: dict[str, None] = {}
+    dropped = 0
+    for m in modules or ():
+        if not isinstance(m, str) or not projectenv.valid_module_name(m):
+            dropped += 1
+        elif m not in seen:
+            if len(seen) >= MAX_COVERAGE_MODULES:
+                dropped += 1
+            else:
+                seen[m] = None
+    return tuple(seen), dropped
+
+
+def script_modules(root: str | Path, script: str) -> tuple[str, ...] | None:
+    """这个脚本开跑要 import 得到的第三方名（静态：只读源码，不起解释器）；算不出回 None。
+
+    与依赖门 / 检测「装齐」的判据是同一份（联合计划的 `missing + satisfied` 与映射不到包名的 `unknown`），不另写。"""
+    from . import deprepair  # noqa: PLC0415 — 明确的检查动作才需要；不把安装器拖进每次 import
+
+    names = deprepair.script_import_names(root, script)
+    return None if names is None else tuple(names)
+
+
+def coverage_of(health: dict | None, modules: tuple[str, ...], *, role: str = ROLE_USER) -> dict:
+    """一条体检结论（`userenvs` 缓存里的，或 `None` = 没量过）→ 这组 import 的覆盖度。纯函数，不碰磁盘、不起进程。
+
+    * 环境本身不健康 → `unusable`，**不看**模块（跑不了 Tavotto 的环境谈不上「缺包」；也别把它和缺包混成一句）；
+    * `deferred` / 量不出 → `not_checked`；
+    * 否则按每个模块的 `not_found` / `import_error` 分开说，role=`target` 是正要跑脚本的那个环境。
+    `versions_checked` 恒为 False：覆盖度只回答「导入得到吗」，已装版本满不满足项目声明归 `distmeta`。"""
+    base: dict = {
+        "role": role,
+        "modules": {},
+        "detail": [],
+        "executed_user_code": bool((health or {}).get("execution", {}).get("may_run_package_init")),
+        "versions_checked": False,
+    }
+    if health is None:
+        return {
+            **base,
+            "state": COV_NOT_CHECKED,
+            "detail": [{"code": DETAIL_NOT_CHECKED, "reason": "no_verdict"}],
+        }
+    if health.get("deferred_env") or health.get("health_deferred"):
+        return {
+            **base,
+            "state": COV_NOT_CHECKED,
+            "detail": [{"code": DETAIL_NOT_CHECKED, "reason": "deferred"}],
+        }
+    if not health.get("ok"):
+        return {
+            **base,
+            "state": COV_UNUSABLE,
+            "detail": [
+                {
+                    "code": DETAIL_UNUSABLE,
+                    "reason": _STATUS_OF_CODE.get(str(health.get("code") or ""), STATUS_UNUSABLE),
+                }
+            ],
+        }
+    ok_map = health.get("modules_ok") or {}
+    detail_map = health.get("modules_detail") or {}
+    states: dict[str, str] = {}
+    for name in modules:
+        state = detail_map.get(name)
+        if state not in MODULE_STATES:
+            # 老形状的结论（只有 modules_ok）：True 可信；None 是延后；False 说不出是没装还是导入失败——不猜
+            state = {True: MODULE_FOUND, None: MODULE_DEFERRED}.get(
+                ok_map.get(name), MODULE_UNKNOWN
+            )
+            if name not in ok_map:
+                state = MODULE_UNKNOWN
+        states[name] = state
+    base["modules"] = states
+    failed = {MODULE_NOT_FOUND: [], MODULE_IMPORT_ERROR: []}
+    for name, state in states.items():
+        if state in failed:
+            failed[state].append(name)
+    code_of = {
+        ROLE_USER: {
+            MODULE_NOT_FOUND: DETAIL_NOT_FOUND_USER,
+            MODULE_IMPORT_ERROR: DETAIL_IMPORT_FAILED_USER,
+        },
+        ROLE_TARGET: {
+            MODULE_NOT_FOUND: DETAIL_MISSING_TARGET,
+            MODULE_IMPORT_ERROR: DETAIL_IMPORT_FAILED_TARGET,
+        },
+    }[role if role in (ROLE_USER, ROLE_TARGET) else ROLE_USER]
+    detail = [
+        {"code": code_of[kind], "module": name, "reason": kind}
+        for kind in (MODULE_NOT_FOUND, MODULE_IMPORT_ERROR)
+        for name in failed[kind]
+    ]
+    found = [n for n, st in states.items() if st == MODULE_FOUND]
+    unresolved = [n for n, st in states.items() if st in (MODULE_DEFERRED, MODULE_UNKNOWN)]
+    if detail:
+        state = COV_PARTIAL if found else COV_MISSING
+    elif unresolved:
+        state = COV_NOT_CHECKED
+        detail = [{"code": DETAIL_NOT_CHECKED, "reason": "module_state_unknown"}]
+    else:
+        state = COV_COVERED
+    return {**base, "state": state, "detail": detail}
+
+
+def _coverage_for(
+    python: str, modules: tuple[str, ...], *, role: str, bundled: bool = False
+) -> dict:
+    """某个候选此刻的覆盖度：只读 `userenvs` 的缓存（路径 + 环境代 + import 集合）。没有就是「没量过」。"""
+    return coverage_of(userenvs.cached_probe(python, modules, bundled=bundled), modules, role=role)
 
 
 # ---------------------------------------------------------------- 候选（私有行 → 公开行）
@@ -166,6 +332,14 @@ def _public_health(summary: dict | None) -> dict | None:
     }
 
 
+def _builtin_coverage(mods: tuple[str, ...], is_target: bool) -> dict:
+    python = runtime.bundled_python()
+    role = ROLE_TARGET if is_target else ROLE_USER
+    if not python:
+        return coverage_of(None, mods, role=role)
+    return _coverage_for(python, mods, role=role, bundled=True)
+
+
 def _locked_by() -> dict | None:
     """全局显式解释器（环境变量 / 设置里指定的）压过一切项目级决定：采用不会生效，说清楚是谁锁的。"""
     pinned = pool.explicit_worker_python()
@@ -174,8 +348,13 @@ def _locked_by() -> dict | None:
     return {"source": pinned[1]}
 
 
-def recommend(root: str | Path, script: str | None = None) -> dict:
+def recommend(
+    root: str | Path, script: str | None = None, *, modules: Iterable[str] | None = None
+) -> dict:
     """此刻的环境建议（公开投影）。**纯读：不起任何解释器、不问登录 shell、不写任何东西**。
+
+    `modules`（可选，脚本所需的 import）：每个候选另带 `coverage`——**只读** `userenvs` 缓存里已有的覆盖度（明确的检查
+    或依赖门留下的），没量过如实写 `not_checked`。覆盖度不改推荐顺序、不改任何决定（显式选择永远排在最前）。
 
     候选 = 线索（项目 venv / 编辑器 / `.python-version` / Conda / pyenv 的落盘记录）+ 项目记住的决定 + 用户
     明确检查过留下的结论。没检查过的候选如实写 `unchecked`，不冒充 verified。"""
@@ -186,6 +365,7 @@ def recommend(root: str | Path, script: str | None = None) -> dict:
     locked = _locked_by()
     remembered_python = record["path"] if record and record.get("path") else ""
     rows = _rows(root, script)
+    mods, _dropped = normalize_modules(modules) if modules is not None else ((), 0)
     candidates: list[dict] = []
     current_id: str | None = None
     for index, row in enumerate(rows):
@@ -226,6 +406,15 @@ def recommend(root: str | Path, script: str | None = None) -> dict:
                 "health": _public_health(verdict),
                 "current": is_current,
                 "_order": index,
+                **(
+                    {
+                        "coverage": _coverage_for(
+                            python, mods, role=ROLE_TARGET if is_current else ROLE_USER
+                        )
+                    }
+                    if mods
+                    else {}
+                ),
             }
         )
     candidates.sort(key=lambda c: (LABELS.index(c["label"]), c["_order"]))
@@ -245,6 +434,12 @@ def recommend(root: str | Path, script: str | None = None) -> dict:
             "health": None,
             "current": default_chain,
             "read_only": True,
+            # 内置 runtime 的覆盖度只在它正是目标环境时给，且同样只读缓存（依赖门量过才有）
+            **(
+                {"coverage": _builtin_coverage(mods, default_chain)}
+                if mods and default_chain
+                else {}
+            ),
         }
     )
     recommended = None
@@ -284,6 +479,9 @@ def recommend(root: str | Path, script: str | None = None) -> dict:
             "deadline_s": CHECK_DEADLINE_S,
             "per_candidate_timeout_s": projectenv.PROBE_TIMEOUT_S,
             "scopes": list(CHECK_SCOPES),
+            # 检查会真起候选解释器、真 import 脚本要的包（= 执行它们的 `__init__`）：不是只读观察，不宣称无副作用
+            "executes_user_code": True,
+            "side_effect_free": False,
         },
     }
 
@@ -539,6 +737,7 @@ def check(
     cancel: threading.Event | None = None,
     probe: Callable[..., dict] | None = None,
     clock: Callable[[], float] = time.monotonic,
+    modules: Iterable[str] | None = None,
 ) -> dict:
     """对**被点名范围**里的候选运行健康探测（这是起候选解释器的唯一入口），回更新后的建议 + 这次检查的账。
 
@@ -548,7 +747,11 @@ def check(
     * 预算：整次 `deadline_s`、每个候选 `PROBE_TIMEOUT_S`——**总时限同样约束正在起的那个探测**：单个探测的超时取
       `min(PROBE_TIMEOUT_S, 剩余)`，剩余不足 `MIN_PROBE_BUDGET_S` 就不起，剩余候选记 `deadline`；`cancel` 在两个候选之间生效（已经起的那个探测
       跑完它自己的超时，不留孤儿——探测本身是 `subprocess.run`）；到限 / 取消的剩余候选记入 `skipped`；
-    * 检查 ≠ 采用：这里不写项目设置。结论只进进程内缓存（键带环境代，路径被重建就对不上）。
+    * 检查 ≠ 采用：这里不写项目设置。结论只进进程内缓存（键带环境代，路径被重建就对不上）；
+    * `modules`（脚本所需的 import，见 `script_modules`）：每个被检查的候选另外回答「这些 import 它装齐了没有」，覆盖度写进
+      `userenvs` 的体检缓存（依赖门与检测读同一份），结果里每个候选带 `coverage`。**这会真 import 那些包**——执行它们的
+      `__init__`，所以结果的 `executed` 如实写明、`side_effect_free` 恒为 False；
+    * 返回里的 `executed` 是这次检查**实际做了什么**的账（起了几个候选、import 了哪些名字），不是预估。
     """
     root = Path(root)
     if scope not in CHECK_SCOPES:
@@ -560,18 +763,48 @@ def check(
             raise CheckBusy(key)
         _running[key] = own
     try:
-        return _check(root, script, ids, scope, include_login_shell, deadline_s, own, probe, clock)
+        return _check(
+            root, script, ids, scope, include_login_shell, deadline_s, own, probe, clock, modules
+        )
     finally:
         with _lock:
             _running.pop(key, None)
 
 
+def _execution_of(health: dict | None, mods: tuple[str, ...]) -> dict:
+    """一个候选体检结论里的执行账；自定义探测函数没给 `execution` 时按最保守的口径（跑过、请求的全 import 过）。"""
+    note = (health or {}).get("execution")
+    if not isinstance(note, dict):
+        return {
+            "ran_environment_code": True,
+            "imported_modules": list(mods),
+            "may_run_package_init": True,
+            "incomplete": True,
+        }
+    return {
+        "ran_environment_code": bool(note.get("ran_environment_code")),
+        "imported_modules": list(note.get("imported_modules") or []),
+        "may_run_package_init": bool(note.get("may_run_package_init")),
+        "incomplete": bool(note.get("incomplete")),
+    }
+
+
 def _check(
-    root, script, ids, scope, include_login_shell, deadline_s, cancel, probe, clock=time.monotonic
+    root,
+    script,
+    ids,
+    scope,
+    include_login_shell,
+    deadline_s,
+    cancel,
+    probe,
+    clock=time.monotonic,
+    modules=None,
 ) -> dict:
     if include_login_shell:
         userenvs.login_shell_pythons()  # 明确动作：问一次，答案进缓存，`_rows` 随后读得到
     probe_fn = probe or projectenv.probe_environment
+    mods, dropped = normalize_modules(modules) if modules is not None else ((), 0)
     wanted = [
         r
         for r in _rows(root, script)
@@ -586,6 +819,7 @@ def _check(
     ]
     started = clock()
     checked: list[str] = []
+    notes: list[dict] = []
     skipped: list[dict] = []
     cancelled = False
     for index, row in enumerate(wanted):
@@ -602,12 +836,38 @@ def _check(
         python = row["_python"]
         generation = projectenv.environment_generation(python)
         remaining = deadline_s - (clock() - started)
-        health = probe_fn(python, timeout=min(projectenv.PROBE_TIMEOUT_S, remaining))
+        # 不带 modules 时调用形状与以前逐字相同（自定义探测函数不必认识新参数）
+        health = probe_fn(
+            python,
+            timeout=min(projectenv.PROBE_TIMEOUT_S, remaining),
+            **({"modules": mods} if mods else {}),
+        )
         _store_verdict(python, generation, health)
+        notes.append(_execution_of(health, mods))
+        # 覆盖度的唯一一份缓存在 userenvs（路径 + 环境代 + import 集合）；这里只往里写，不另存
+        userenvs.remember_probe(python, mods, health, generation=generation)
         checked.append(row["id"])
-    return {
+    out = {
         "checked": checked,
         "skipped": skipped,
         "cancelled": cancelled,
-        "recommendation": recommend(root, script),
+        # 如实的账：起了几个候选解释器、真 import 了哪些名字。授权的检查不宣称无副作用——import 一个包就是执行它的
+        # `__init__`（可能写文件、联网、改全局状态），我们看不见也拦不住
+        # 由每个候选**实际完成**的体检账汇总（`projectenv.execution_note`），不按「打算检查」填：没起来的候选不算
+        "executed": {
+            "ran_user_code": any(
+                n["ran_environment_code"] or n["may_run_package_init"] for n in notes
+            ),
+            "candidate_interpreters": sum(
+                1 for n in notes if n["ran_environment_code"] or n["may_run_package_init"]
+            ),
+            "imported_modules": [m for m in mods if any(m in n["imported_modules"] for n in notes)],
+            "may_run_package_init": any(n["may_run_package_init"] for n in notes),
+            "incomplete": any(n["incomplete"] for n in notes),
+            "side_effect_free": False,
+        },
+        "recommendation": recommend(root, script, modules=mods or None),
     }
+    if modules is not None:
+        out["coverage"] = {"modules": list(mods), "dropped": dropped}
+    return out

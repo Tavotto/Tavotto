@@ -5384,6 +5384,18 @@ def _plan_imports(plan: dict) -> tuple[list[dict], list[str]]:
     return needed, list(plan.get("unknown") or [])
 
 
+def script_import_names(project: str | Path, script: str) -> list[str] | None:
+    """这个脚本开跑要 import 得到的第三方名（静态：只读源码，不起解释器；`static_plan_payload` 同一份计划）。
+
+    与依赖门 / 检测「装齐」同一个判据：`_plan_imports` 的 `missing + satisfied` 与映射不到包名的 `unknown`，去重保序——
+    `envadvice.check(modules=)` 量的就是这一组，缓存键因此与 `userenvs.evaluate` 对得上。算不出回 None。"""
+    payload = static_plan_payload(project, script)
+    if payload is None:
+        return None
+    needed, unknown = _plan_imports(payload)
+    return list(dict.fromkeys([n["import_name"] for n in needed if n.get("import_name")] + unknown))
+
+
 def _user_env_discovery_off() -> bool:
     # 判据唯一出处在 projectenv：运行后缺包的接手（`pool.try_project_env`，ADR 0107）读同一个开关
     return projectenv.auto_adoption_off()
