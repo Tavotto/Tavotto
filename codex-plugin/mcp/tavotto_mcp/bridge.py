@@ -287,6 +287,10 @@ def _nt_rooted_escape(value: str, roots: list[str], resolve=lambda p: p) -> str 
     return real
 
 
+#: 本地文件 URI：`urllib.request.urlopen('file:///etc/passwd')` / `Path.from_uri` 把它读成本机路径，而它在桥眼里
+#: 不是绝对路径、会被拼到 cwd 下当成根内相对值放行。urllib 先 `unwrap`（去 `<URL:…>` / `URL:` 包装与首尾空白）再
+#: `urlsplit`（剥掉 `\t\r\n`），scheme 不分大小写——这里按同一套口径认（Codex #818 补审 r4236702940）。
+_FILE_URI_RE = re.compile(r"\s*<?\s*(?:url:)?\s*file:", re.IGNORECASE)
 _ENV_EXPANSION_RE = re.compile(r"\$[A-Za-z0-9_{]|%[^%\s]+%")
 _TILDE_USER_RE = re.compile(r"~[^/\\]")
 
@@ -309,6 +313,10 @@ def _argv_path_escapes(
     if _is_response_file_ref(value, prefixes):
         # argparse `fromfile_prefix_chars`（任意字符，不止 `@`）：以它开头的 token 会被脚本当文件名读出内容再展开，
         # 内容还能再给出越界目标。不递归展开校验，MCP 来源的 argv 里一律拒（Codex #818 r4221135439 / r4221289231）。
+        return value
+    if _FILE_URI_RE.match(re.sub(r"[\t\r\n]", "", value)):
+        # `file:` URI 的落点由脚本的 URL 处理决定（含 `file://host/…`、`file:/…`、`file:rel`），桥不推断：
+        # 失败封闭，MCP 来源的 argv 里一律拒。用户要读项目外的文件请在 Tavotto 窗口里自己输入参数
         return value
     if _ENV_EXPANSION_RE.search(value) or _TILDE_USER_RE.match(value):
         # 环境变量展开形状（`$NAME` / `${NAME}` / `%NAME%`）与 `~user`：脚本若对路径做 `os.path.expandvars` /

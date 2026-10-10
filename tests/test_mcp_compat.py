@@ -983,6 +983,49 @@ def test_env_expansion_shapes_in_argv_are_refused(project, pool, token):
 
 
 @pytest.mark.parametrize(
+    "token",
+    [
+        "file:///etc/passwd",
+        "FILE:///etc/passwd",
+        "file:/etc/passwd",
+        "file://localhost/etc/passwd",
+        "file:relative/in/root.txt",  # 即使指向根内也拒：URI 的落点由脚本的 urllib / Path.from_uri 解，桥不推断
+        "--input=file:///etc/passwd",
+        "-ifile:///etc/passwd",
+        "-abo=file:///etc/passwd",
+        " file:///etc/passwd",
+        "fi\nle:///etc/passwd",  # urllib 会剥掉 \t\r\n
+        "<URL:file:///etc/passwd>",
+        "url:file:///etc/passwd",
+    ],
+)
+def test_file_uri_argv_is_refused(project, pool, token):
+    """补审 #915 r4236702940：脚本若把 argv 当 URI 交给 `urllib.request.urlopen` / `Path.from_uri`，`file:///etc/passwd`
+    不是绝对路径、会被拼到 cwd 下当成根内相对值放行，脚本却读到根外。本地文件 URI 形状一律 argv_path_out_of_scope。"""
+    _set_script(project, PLAIN_ARGPARSE)
+    assert _scope_code(project, [token]) == "argv_path_out_of_scope"
+    body = _open(project, argv=[token])["structuredContent"]
+    assert body["code"] == "argv_path_out_of_scope"
+    assert pool.runs == []
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "https://example.com/a.csv",
+        "http://localhost/x",
+        "profile:x",
+        "filename.txt",
+        "file",
+        "myfile:x",
+    ],
+)
+def test_non_file_uris_and_lookalikes_still_pass(project, token):
+    _set_script(project, PLAIN_ARGPARSE)
+    assert _scope_code(project, [token]) is None
+
+
+@pytest.mark.parametrize(
     "token", ["data.csv", "--freq=3", "-o out.png", "100%", "a%b", "50% off", "~", "~/x"]
 )
 def test_ordinary_values_still_pass_env_shape_check(project, token):
