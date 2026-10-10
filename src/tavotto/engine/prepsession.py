@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import deprepair, dialogscan, pool, preparation, registry, scriptargs, taskdiag
+from . import deprepair, dialogscan, pool, preparation, rasterhint, registry, scriptargs, taskdiag
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -690,6 +690,8 @@ class Session:
     actions: dict[str, _Action] = dataclasses.field(default_factory=dict)
     stale: dict | None = None
     signature: tuple = ()
+    #: 「跑完没出图」的原因提示缓存（`rasterhint.detect`）：按尝试 id 记，一次尝试只读一遍源码
+    no_figure_hint: dict = dataclasses.field(default_factory=dict)
     lock: threading.RLock = dataclasses.field(default_factory=threading.RLock, repr=False)
 
     def public_target(self) -> dict:
@@ -1399,6 +1401,13 @@ class SessionService:
                     if attempt_fact is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
                     else []
                 ),
+                # 跑完没出图时的原因（`rasterhint`）：脚本自己把图片写成了文件（Pillow / OpenCV …），不是 Matplotlib 图。
+                # 只是提示——不改 outcome / facts；None = 不适用或判不出（老后端没有这个键）
+                "no_figure_hint": (
+                    self._no_figure_hint(sess, plan, result)
+                    if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
+                    else None
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
@@ -1418,6 +1427,29 @@ class SessionService:
         if now.partition(":")[2] != plan.script_revision.partition(":")[2]:
             sess.stale = {"reason": preparation.STALE_SOURCE}
             sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+
+    @staticmethod
+    def _no_figure_hint(
+        sess: Session, attempt_plan: preparation.PreparationPlan, result=None
+    ) -> dict | None:
+        """读一次脚本源码（含有界跟进的本地模块）判 `rasterhint`；按尝试 id 缓存，读不了就是 None。"""
+        key = attempt_plan.plan_id
+        if key not in sess.no_figure_hint:
+            script = sess.plan.script
+            cwd_mode = (attempt_plan.workdir_decision or {}).get("mode")
+            sess.no_figure_hint[key] = (
+                rasterhint.detect(
+                    sess.project_root,
+                    script,
+                    cwd_mode,
+                    run_started_at=attempt_plan.created_at,
+                    sandbox_dir=((getattr(result, "captured", None) or {}).get("sandbox") or None),
+                )
+                if script
+                else None
+            )
+        hint = sess.no_figure_hint[key]
+        return dict(hint) if hint else None
 
     def get(self, session_id: str, project_id: str) -> Session | None:
         with self._lock:

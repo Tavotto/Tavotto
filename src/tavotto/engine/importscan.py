@@ -1324,7 +1324,11 @@ class _Scanner:
         try:
             base, parts = self._split(path, root)
             text = scanbudget.read_regular_text(
-                base, *parts, no_follow=self.no_follow, max_bytes=self.budget.limits.max_file_bytes
+                base,
+                *parts,
+                no_follow=self.no_follow,
+                max_bytes=self.budget.limits.max_file_bytes,
+                python_source=True,  # PEP 263 / BOM 的单一读法
             )
         except OSError as exc:
             return None, {"path": rel, "kind": "io", "detail": type(exc).__name__}
