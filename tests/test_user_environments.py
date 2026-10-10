@@ -873,6 +873,18 @@ def conda_layout(tmp_path, home, monkeypatch):
     base = venvfixture.make_project_venv(home, "miniforge3", python=_WORKER_PY)
     (base / "envs").mkdir()
     lab = venvfixture.make_project_venv(base / "envs", "lab", python=_WORKER_PY)
+    # 真实 Conda 环境的包就在它的 site-packages 里；夹具 venv 靠 .pth 里的 `import` 行把宿主接进来——那是可执行 .pth，运行之前的
+    # 隔离体检按设计不执行它。这个用例的意图是 Conda 发现，不是 .pth 语义：换成普通路径行
+    for env in (base, lab):
+        site_dir = (
+            env / "Lib" / "site-packages"
+            if (env / "Lib" / "site-packages").is_dir()
+            else next((env / "lib").glob("python*")) / "site-packages"
+        )  # 只看这个环境自己的（base 的 rglob 会先撞上嵌套的 envs/lab）
+        for pth in site_dir.glob("_tavotto_fixture_host_site*.pth"):
+            pth.unlink()
+        host = [p for p in sys.path if p and "site-packages" in p and os.path.isdir(p)]
+        (site_dir / "zz_host_paths.pth").write_text("\n".join(host) + "\n", encoding="utf-8")
     site = next(p for p in lab.rglob("site-packages") if p.is_dir())
     (site / "qa_probe_pkg").mkdir()
     (site / "qa_probe_pkg" / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")

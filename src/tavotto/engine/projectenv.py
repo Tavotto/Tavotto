@@ -349,7 +349,7 @@ def _same_dir(a: Path, b: Path) -> bool:
 #: 是 `sys.path.insert(0, HERE)` 的平铺 import，Tavotto 自己把 worker 代码
 #: 交给用户的解释器执行，绝不往用户 venv 里 pip install 任何东西。
 _PROBE_SRC = r"""
-import ast, json, os, platform, sys
+import ast, json, os, platform, re, sys
 out = {"executable": sys.executable, "prefix": sys.prefix,
        "python_version": platform.python_version(),
        "version_info": list(sys.version_info[:3]),
@@ -413,7 +413,34 @@ def _finder_defers(text, root):
     return False
 
 
-_skipped_import_pth = []
+_skipped_import_pth = []  # 真正不透明的可执行 .pth 行（可能提供模块、又不能执行去看）
+_editable_provided = set()  # 标准可编辑安装 finder 的 MAPPING 里列出的顶层模块名（项目外的）
+
+
+def _mapping_names(text):
+    # PEP 660 finder 的 `MAPPING = {"pkg": "/path", ...}`：ast 取键（从不执行）
+    names = set()
+    try:
+        tree = ast.parse(text)
+    except Exception:
+        return names
+    for node in ast.walk(tree):
+        value = None
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "MAPPING" for t in node.targets
+        ):
+            value = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "MAPPING"
+        ):
+            value = node.value
+        if isinstance(value, ast.Dict):
+            for k in value.keys:
+                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    names.add(k.value.split(".")[0])
+    return names
 
 
 def _prepare_isolated_path():
@@ -490,8 +517,10 @@ def _prepare_isolated_path():
                     continue
                 if line.startswith(("import ", "import\t")):
                     if "__editable__" not in line:
-                        _skipped_import_pth.append(fname)
-                        continue  # 不执行；别的 import 行不是可编辑安装的 finder
+                        # 已知不提供模块的标准行（setuptools 的 distutils shim、virtualenv 的钩子）不算不透明
+                        if not re.match(r"import\s+(_distutils_hack|_virtualenv)\b", line) and "_distutils_hack" not in line:
+                            _skipped_import_pth.append(fname)
+                        continue  # 不执行
                     finders = [n for n in names if n.startswith("__editable__") and n.endswith(".py")]
                     if not finders:
                         deferred = True
@@ -505,6 +534,8 @@ def _prepare_isolated_path():
                             continue
                         if project_root and _finder_defers(text, project_root):
                             deferred = True
+                        else:
+                            _editable_provided.update(_mapping_names(text))
                     continue
                 target = os.path.normpath(os.path.join(d, line))
                 if project_root and _touches(target, project_root):
@@ -624,6 +655,8 @@ def _spec_state(name):
     # 不在项目里；False = 找不到；None = 落在项目里（延后到运行再量，不冒充"装了"也不冒充"没装"）。
     import importlib.util
     top = name.split(".")[0]
+    if top in _editable_provided:
+        return True  # 项目外的可编辑安装 finder 的 MAPPING 提供它（finder 不执行，所以 find_spec 看不到）
     try:
         spec = importlib.util.find_spec(top)
     except Exception:

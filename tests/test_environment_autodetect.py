@@ -1879,6 +1879,42 @@ def test_missing_evidence_with_skipped_executable_pth_defers_instead_of_rejectin
     assert skipped.get("deferred_env") is True and skipped["skipped_import_pth"] == ["zz_exec.pth"]
 
 
+@posix_only
+@needs_worker
+def test_each_class_of_skipped_pth_import_line_is_judged_on_its_own(tmp_path):
+    """被跳过的可执行 .pth 行分四类：标准可编辑 finder（用 ast 取 MAPPING：项目外提供 = 有；没列 = 照旧缺）、已知不提供模块的行
+    （`_distutils_hack` / `_virtualenv`）= 不影响、真正不透明的 = 整个环境延后。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    _plain_venv(base, "lab")
+    py = projectenv.interpreter_of(base / "lab")
+    site_dir = _venv_site(base / "lab")
+    root = str(tmp_path / "proj")
+
+    def probe(*mods):
+        return projectenv.probe_environment(py, modules=mods, import_mode="spec", project_root=root)
+
+    # 1/2：标准可编辑 finder，MAPPING 在项目外
+    (site_dir / "__editable___demo_finder.py").write_text(
+        "MAPPING = {'provided_by_finder': '/somewhere/else/provided_by_finder'}\n", "utf-8"
+    )
+    (site_dir / "a_demo.pth").write_text(
+        "import __editable___demo_finder; __editable___demo_finder.install()\n", "utf-8"
+    )
+    got = probe("provided_by_finder", "not_in_mapping")
+    assert not got.get("deferred_env")
+    assert got["modules_ok"] == {"provided_by_finder": True, "not_in_mapping": False}
+    # 3：已知不提供模块的行
+    (site_dir / "b_hack.pth").write_text("import _distutils_hack\n", "utf-8")
+    (site_dir / "c_venv.pth").write_text("import _virtualenv\n", "utf-8")
+    got = probe("not_in_mapping")
+    assert not got.get("deferred_env") and got["modules_ok"] == {"not_in_mapping": False}
+    # 4：不透明的行 + 缺 -> 延后
+    (site_dir / "d_opaque.pth").write_text("import some_hook_we_cannot_read\n", "utf-8")
+    got = probe("not_in_mapping")
+    assert got.get("deferred_env") is True and got["skipped_import_pth"] == ["d_opaque.pth"]
+
+
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
     """结构守卫：`spec` 方式的取证函数里不出现 `__import__` / `import_module`（点号名的 find_spec 也只问顶层名）。"""
     src = projectenv._PROBE_SRC
