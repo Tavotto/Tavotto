@@ -466,6 +466,87 @@ class TestExactExtensionSuffixes:
         assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
 
 
+class TestPthDerivedModelsOnlyForProcessedLayers:
+    """Python 不处理的层（`PYTHONPATH` 上的 site-packages）里的 `.pth` 不生效：它的 editable finder 不能把模块记成已提供。"""
+
+    def _editable_layer(self, tmp_path):
+        src = tmp_path / "src"
+        _write(src, "yaml/__init__.py", "")
+        layer = tmp_path / "host" / "site-packages"
+        _write(
+            layer,
+            "__editable__.fork-1.0.pth",
+            "import __editable___fork_1_0_finder; __editable___fork_1_0_finder.install()\n",
+        )
+        _write(layer, "__editable___fork_1_0_finder.py", f"MAPPING = {{'yaml': {str(src)!r}}}\n")
+        return layer
+
+    def test_a_finder_in_a_layer_python_never_processes_does_not_provide_the_module(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        layer = self._editable_layer(tmp_path)
+        facts = dataclasses.replace(
+            _site_facts(prefix, site),
+            site_roots=(str(site), str(layer)),
+            pth_roots=(str(site),),
+        )
+        plan = _plan_in(tmp_path, facts)
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"] and plan.origins == ()
+
+    def test_the_same_layer_that_python_does_process_is_editable(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        layer = self._editable_layer(tmp_path)
+        facts = dataclasses.replace(
+            _site_facts(prefix, site),
+            site_roots=(str(site), str(layer)),
+            pth_roots=(str(site), str(layer)),
+        )
+        plan = _plan_in(tmp_path, facts)
+        assert plan.missing == ()
+        assert [o["reason"] for o in plan.origins] == ["editable_dependency_not_reproducible"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="符号链接在 Windows 上需要特权，CI 的 Windows 腿建不了")
+class TestSymlinkedPthInLayerDigest:
+    def _setup(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        target = tmp_path / "shared" / "real.pth"
+        _write(target.parent, "real.pth", "# first\n")
+        (site / "linked.pth").symlink_to(target)
+        return site, target
+
+    def test_changing_the_content_behind_a_symlinked_pth_changes_the_fingerprint(self, tmp_path):
+        site, target = self._setup(tmp_path)
+        facts = depplan.TargetFacts(
+            python="p", marker_env={}, stdlib=frozenset(), installed={}, site_roots=(str(site),)
+        )
+        before = depplan.layer_digest(facts)
+        target.write_text("/somewhere/else\n", encoding="utf-8")
+        assert depplan.layer_digest(facts) != before
+
+    def test_retargeting_the_link_changes_it_and_an_untouched_link_does_not(self, tmp_path):
+        site, target = self._setup(tmp_path)
+        facts = depplan.TargetFacts(
+            python="p", marker_env={}, stdlib=frozenset(), installed={}, site_roots=(str(site),)
+        )
+        before = depplan.layer_digest(facts)
+        assert depplan.layer_digest(facts) == before
+        other = tmp_path / "shared" / "other.pth"
+        other.write_text("# first\n", encoding="utf-8")  # 同样的内容，只换了链接目标
+        (site / "linked.pth").unlink()
+        (site / "linked.pth").symlink_to(other)
+        assert depplan.layer_digest(facts) != before
+
+    def test_a_link_to_something_that_is_not_a_regular_file_is_marked_unreadable_not_opened(
+        self, tmp_path
+    ):
+        prefix, site = _site(tmp_path)
+        (site / "dir.pth").symlink_to(tmp_path)
+        facts = depplan.TargetFacts(
+            python="p", marker_env={}, stdlib=frozenset(), installed={}, site_roots=(str(site),)
+        )
+        assert depplan.layer_digest(facts)  # 不抛、不阻塞
+
+
 # ---------------------------------------------------------------------------
 # setuptools 的老式命名空间包 `*-nspkg.pth`：逐字取自 setuptools 的 `Installer._nspkg_tmpl`
 # （老版 = setuptools 40.8.0 – 68.2.2 的 `setuptools/namespaces.py`；新版 = 69.5.1 – 84.0.0 同文件第 42–57 行），

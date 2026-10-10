@@ -52,6 +52,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import threading
 from collections.abc import Callable
@@ -364,19 +365,29 @@ def _measure_layers(facts: TargetFacts) -> str:
     for root in facts.site_roots:
         rows: list = []
         try:
+            # 符号链接的 `.pth` 也计入（`site` 会跟随它）：下面记链接本身 + 目标内容摘要
             names = sorted(
                 e.name
                 for e in os.scandir(root)
-                if e.name.lower().endswith(".pth") and e.is_file(follow_symlinks=False)
+                if e.name.lower().endswith(".pth") and (e.is_file() or e.is_symlink())
             )
         except OSError:
             pth[root] = ["unreadable"]
             continue
         for name in names[:_PTH_MAX_PER_ROOT]:
+            full = os.path.join(root, name)
             try:
-                with open(os.path.join(root, name), "rb") as fh:
+                link = os.readlink(full) if os.path.islink(full) else ""
+                if not stat.S_ISREG(
+                    os.stat(full).st_mode
+                ):  # 指向设备 / 管道 / 目录的链接：不打开，记成不可读
+                    rows.append([name, link, "unreadable"])
+                    continue
+                with open(full, "rb") as fh:
                     body = fh.read(_PTH_READ_LIMIT + 1)
-                rows.append([name, len(body), hashlib.sha256(body[:_PTH_READ_LIMIT]).hexdigest()])
+                rows.append(
+                    [name, link, len(body), hashlib.sha256(body[:_PTH_READ_LIMIT]).hexdigest()]
+                )
             except OSError:
                 rows.append([name, "unreadable"])
         if len(names) > _PTH_MAX_PER_ROOT:

@@ -1110,7 +1110,13 @@ def _is_nspkg_line(line: str) -> bool:
 
 def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist]) -> None:
     """`.pth` 当文本：`import` 行不执行（只认 editable finder 的已建模形式，其余计入 uncovered）；`__editable___*_finder` 读同一目录里的 finder 源码取 MAPPING；
-    路径行不跟进（计数）。"""
+    路径行不跟进（计数）。
+
+    Python 不处理的层（`root.pth` 为假：经 `PYTHONPATH` / 别的 `.pth` 路径行进 `sys.path` 的 site-packages）里的 `.pth` 一律不读：
+    它的路径行、`import` 行、editable finder、nspkg 都不会生效，据此建的任何模型（含 finder 的 MAPPING）都会把 Python 根本导入不到的
+    模块记成已提供。只剩普通的目录 / 元数据扫描。"""
+    if not root.pth:
+        return
     by_key = {
         d.key: d
         for d in dists
