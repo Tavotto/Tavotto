@@ -614,6 +614,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt(p.label === 'continue' ? 'btn.continue' : 'btn.retry')
     case 'open_environment':
       return pt('btn.openSettings')
+    case 'pick_environment':
+      return pt('btn.pickPython')
     case 'open_registry':
       return pt('btn.openRegistry')
     case 'open_assets':
@@ -680,6 +682,9 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return null
       case 'open_environment':
         ui.setEngineEnvOpen(true)
+        return null
+      case 'pick_environment':
+        ui.openEngineEnvPicker()
         return null
       case 'open_registry':
         useProjectReadinessStore.getState().openCenter({ source: 'panel' })
