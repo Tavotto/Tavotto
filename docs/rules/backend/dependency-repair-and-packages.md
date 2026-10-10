@@ -307,13 +307,31 @@
   多发行包（`cv2`）全留着（`depresolve.ALTERNATIVE_DISTRIBUTIONS`，**只观测**，`resolve` / `curated_distribution` 不读它），
   不按名字相近挑；声明与已装版本冲突只报告，两边都不覆盖。**已安装元数据不是安装授权**：`distmeta` 不 import `deprepair`、
   不产出 `DependencyRequirement`、`depresolve.INSTALLABLE_SOURCES` 仍是 project_declared / curated / user_specified 三个；
-  `bucket` / `needed` / `distribution` 不因元数据改变，`depplan` / `deprepair` 不读这些字段（用例钉着）。
+  `bucket` / `needed` / `distribution` 不因元数据改变，`deprepair` / `depresolve` 不读这些字段（用例钉着）；`depplan` 自 PR4 起读它们，只用来收紧 `missing`，见下一条。
   **看不全不确认**（#889，PR3；#906 r4236524004）：环境里有没跟进的 `.pth` 路径行 / 没建模的 `import` 行（`Index.uncovered_paths > 0`）时，唯一
   提供者只是「观测到」——**这条判据在所有 provenance 专属返回（Conda / editable / 本地路径·归档 / VCS / URL）之前**，来源专属的结论抢不到它前面——状态 `unverified`、`selected_distribution` 为空、`compatibility` 带 `path_entries_not_followed`；editable
   finder 读得到却读不出 `MAPPING`（`dict(...)` 构造、推导式、变量、语法宿主解析器不支持、根本没有 `MAPPING`）= 没读全
   （`Index.complete=False`，留 `parse_budget` 痕迹），「没查到」落 `environment_not_checked` 而不是 `not_installed`；声明约束与已装版本
   的冲突在**所有** provenance（index / editable / 本地路径 / 本地 wheel / VCS / URL / Conda）下都报 `declared_version_conflict`，
   来源本身的状态不被冲突盖掉。
+- **来源状态进联合计划（Import Origin Resolver PR4，`depplan.JointPlan.origins`；`plan_version` 不升）**：`missing` / `requirements`
+  只留「确实该装、且有可信安装名」的。这些情形**不进 `missing`、不转成 pip 包名、不进 `requirements`**，改进 `unknown`（名字，
+  依赖门 / 检测 / 覆盖度检查对 `unknown` 看 import 得到与否，与以前一致）并在 `origins` 里带来源状态（`reason` ∈
+  `depplan.ORIGIN_REASONS`：`distribution_unresolved` / `module_origin_ambiguous` / `editable_dependency_not_reproducible` /
+  `installed_source_not_reproducible` / `conda_package_not_pypi` / `unverified` / `module_import_failed_in_target_environment`；
+  词汇复用 `distmeta` 状态与 PR3 覆盖度 detail 码）：多个发行包都能提供同一个 import 且已装着不止一个（`cv2`；项目声明里点名了
+  其中一个则它胜出）、别的已装发行包声称提供它但不可重现（editable / 本地路径·归档 / VCS / URL / Conda）或未确认、site-packages 里有
+  这个模块却没有任何发行包认领、PR3 覆盖度缓存里它是 `import_error`（包在、导入失败，装它救不了）。**不新增 `blocked` 理由**
+  （`BLOCK_REASONS` 闭集不动）：这些情形不让计划不完整。判决顺序：名字级已装（表 / 声明的名字，旧口径原样）> 已装的备选发行包
+  （`cv2` 装的是 headless 不再报缺 `opencv-python`，条目带 `mapped_distribution`）> 别的发行包声称提供 / 无元数据的模块 >
+  覆盖度 `import_error` > 缺。**没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（用户在确认摘要里看得见这个名字；
+  条目带 `distribution_status=module_origin_ambiguous` 供展示），不静默改名。已装元数据**只用来判「已经有了 / 来源未定」，从不造安装名**。
+  目标环境的静态发行包索引（`depplan.static_index`）与事实**同一刻读**（`target_facts` 里）、同一个 `reset_cache` 清：装上了但验证没过的
+  包不会 `reset_cache`，事实停在装之前，索引也必须停在装之前；联合计划读覆盖度只走 `userenvs.cached_probe` 的只读缓存（不起进程）。
+  `prepsession.checks_of` 的 `dependencies` 项在有 `origins` 时带 `detail.origins {count, by_reason}`（不出名字与路径，不改状态）。
+  目标解释器自己的 `sys.builtin_module_names` / `EXTENSION_SUFFIXES` 随事实量取（`TargetFacts.builtin` / `ext_suffixes`，不进 digest）并交给
+  `importscan`（#888）：没量到不拿宿主冒充——`posix` / `nt` 恒为 ambiguous，扩展模块标 `unverified` 且 `search_complete=False`；
+  本地模块跟进被深度 / 个数 / 预算截断同样 `search_complete=False`。
 - **import 了却从未用到的不算「需要」（ADR 0061 §二 2026-09-24 修订）**：`importscan` 按 `figcapture.unused_imports`
   （唯一判据，只收 AST 能证明的：起了别名、不带点的 `import X as Y`——裸 `import X` 可能是为了副作用，一律不收；X 还必须在无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS` 里（别名也可能只为副作用，评审 #555 两条 P1）——判据是进程级副作用快照 `tests/support/import_side_effects.py`（matplotlib / 环境变量 / warnings / logging / 导入钩子 / 信号 / excepthook / atexit / builtins / codec 与 locale……任何一项变了就不进），扩名单要用它实测；不在 `try` / `with` 里、绑定名与 X 在别处一次都不出现、
   没有 `globals` / `eval` / `__dict__` 这类读不清的用法）标 `unused`，`needed` / `unknown` 不含它，`JointPlan.unused`

@@ -433,3 +433,44 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 * 目标解释器自己的 `sys.stdlib_module_names` / builtin 名单、`GET /api/engine/dependencies` 会起解释器的口径（C5）。
 * 把 `distmeta.index_environment` 接到默认扫描里（现在只有测试与显式调用方构建 `Index`）；接入前 #889 的三条已修。
 * 前端展示（PR6）：用 `coverage.detail` 的 `code` 给一句人话，不在前端复刻判据。
+
+## 12. PR4 实施记录（依赖计划与准备会话集成）
+
+基线 `origin/main` `b63248303`（叠栈 #814–#820、PR1 #880、PR2 #882、PR3 #906、#859 都已合入）。`risk:high`（改 `depplan` 判据）。维护者裁决（写进 PR 正文）：
+
+* **C3**：多发行包 / editable / 无元数据 / 来源未验证 → **不新增 `blocked` 理由**（`BLOCK_REASONS` 闭集原样，用例钉着），改为在联合计划里加可选的 `origins`（`unknown` 里每个名字的来源状态），状态词汇复用 PR1/PR2 的 `resolution_status` / `distribution_status`，并且**不再算进 `missing`**。
+* **C5**：`GET /api/engine/dependencies` 不承担新的静态来源结果（它会起解释器，没动）。来源事实走两条零执行路径：联合计划里的 `origins`（静态读目标环境 site-packages 元数据，不起进程）与准备会话 `checks_of` 的 `dependencies` 项（`detail.origins`，计数与原因码）。默认扫描（`projscan`）没有接线，候选环境子进程数仍为 0（`test_project_scan_zero_exec.py` 全绿，未改）。
+* 默认采用模式保持 `detect`，自动检测与推荐顺序没动。
+
+**做了什么**（commit 顺序即评审顺序）
+
+1. `#908`（`envadvice._role_of`）：有全局显式解释器（`pool.explicit_worker_python()`）时 `ROLE_TARGET` 只给全局那一个，项目记住的环境即使 `is_current` 也按 `ROLE_USER`；修前见红（`test_J_a_project_candidate_overridden_by_the_global_setting_is_a_user_environment` 得 `target`）。
+2. `#888` 三条（`importscan` + `depplan.TargetFacts`）：
+   * builtin：`BUILTIN_NAMES` 不再含 `posix` / `nt`（按平台二选一），`HOST_BUILTIN_EXTRA` 恒含二者——没有目标名单时本地同名文件是 `ambiguous`；`_FACTS_SRC` 多量 `sys.builtin_module_names` 并经 `plan` 传给 `importscan(builtin=)`。
+   * 扩展后缀：`importscan.scan(ext_suffixes=)` 逐字按目标 `EXTENSION_SUFFIXES` 认（Windows `.cp313t-win_amd64.pyd` / abi3 / free-threaded 都在表里）；没有时退回宽松形状，命中的扩展标 `unverified` + `extension_suffix_not_confirmed` 且 `search_complete=False`。
+   * 截断：本地模块跟进碰到深度 / 个数上限（`truncated`）时 `search_complete=False`。
+   * 目标事实 `builtin` / `ext_suffixes` 不进 `TargetFacts.digest()` / `to_payload()`：不改 `inputs_digest` / `identity`。空 = 没量到（替身事实），不用宿主冒充。
+3. `depplan` 消费来源状态：
+   * `JointPlan.origins`（新增可选字段）：`unknown` 里每个名字的 `{import_name, bucket, distribution, reason, resolution_status, distribution_status, origin_kind, provenance, candidates(≤8,规范化名), coverage}`；`unknown` 名字集合恒等于 `origins` 的 `import_name` 集合（用例钉着）。`reason` 闭集 `ORIGIN_REASONS`。
+   * 判决（`_verdict`，顺序 = 证据强弱）：名字级已装（表 / 声明的名字，旧口径原样）> 已装的备选发行包（`cv2` 装的是 headless → 满足，条目 `distribution` 是装着的那个、`mapped_distribution` 是表里的那个）> 多个备选都装着 = 歧义（项目声明点名的那个胜出）> 别的已装发行包声称提供它（editable / 本地 / VCS / URL / Conda / 未确认）或 site-packages 里有这个模块却没有发行包认领 > PR3 覆盖度缓存里它是 `import_error`（包在、导入失败，装它救不了）> 缺。
+   * `to_install` 按同一套名字级判据对**装到哪**的已装集合算；open 的一律不装；**已装元数据从不造安装名**（用例：运行环境里 headless 提供 `cv2`、新一代装的仍是 `opencv-python`）。
+   * `static_index(facts)`：目标环境静态发行包索引（`distmeta`，只读文件），与 `target_facts` **同一刻读**、同一个 `reset_cache` 清。（先前版本是出计划时才懒读，`test_foundation_dependencies.py::test_fo22_…` 立刻见红：装上了但验证没过的包不会 `reset_cache`，事实停在装之前，索引读到了装之后——同一个包一边说没装一边说装着，门不再问。改成同一刻读之后与基线逐字同行为。）
+   * `deprepair._coverage_reader(facts)`：把 `userenvs.cached_probe` 的只读查询交给 `plan(coverage=)`；三个出计划的入口都接上，私有 Python 重算与 `_static_joint_plan`（`facts=None`）不接。
+   * `plan_version` **不升**：`missing` / `requirements` 的字段含义不变（`origins` 是新增可选字段，老客户端忽略）；被改判的是此前误判的条目（M5 的 `missing=['opencv-python']` 是错的），不是语义重定义。`inputs_digest` 只含声明意图与文件字节，不变；`identity` 只在被改判的脚本上变（`requirements` 变了），回归用例 `test_a_plan_with_nothing_unusual_is_unchanged_by_the_static_index` 钉着没有来源问题的脚本读不读索引需求 / 约束 / 身份 / 指纹逐字相同。`test_dependency_transaction.py::test_second_open_does_not_install_again` 全文件绿。
+4. `prepsession.origin_facts` / `checks_of`：`dependencies` 项有 `origins` 时带 `detail.origins {count, by_reason}`（只有计数与闭集原因码，不出名字 / 路径）；状态与码一律不变。黄金向量 `tests/golden/preparation_session_vectors.json` 新增 3 条（来源事实不改 phase，也不把 unknown 变通过）。`web/src/lib/api.ts`：`JOINT_BLOCK_CODES` / `JOINT_ORIGIN_REASONS` / `JointOrigin` 与 `missing` / `satisfied` 的可选字段；`blocked.code` 收窄成 `JointBlockCode`；不改任何组件。
+5. 同源对：`depplan.BLOCK_REASONS` ↔ `api.ts` `JOINT_BLOCK_CODES` ↔ `DependencyPrepareDialog.tsx` `BLOCKED_TEXT` ↔ 两份 `errors.json`（BASELINE §Q10 里的口头约定）与 `ORIGIN_REASONS` ↔ `JOINT_ORIGIN_REASONS` 登记进 `same-origin-pairs.md`，看护用例 `TestClosedSetsMirrorTheFrontend`（含「镜像删一项必红」）。
+
+**缩小了什么（以及证据）**
+
+* **没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（不进 `origins`）。维护者的 M5 例子是「装了 headless」，已修；而「一个都没装」若也不算缺，干净机器上 `import cv2` 就再也得不到自动准备，只能靠运行后的单包修复。条目带 `distribution_status=module_origin_ambiguous`，展示（PR6）可以据此提示备选。要改成「一律不算缺」只需 `_verdict` 一处，**这是需要维护者确认的取舍**。
+* **覆盖度 `found` 不改判**：缓存里某个模块 `found`（能 import）而它的发行包名没装（Conda 之类），仍按名字级判缺；只有 `import_error` 改判。任务点名的只有 `import_failed`；`found` 改判会让计划变成 `nothing_needed` 却没有版本可核，留给 PR6 的展示与 PR5 的装后核验一起定。
+* **依赖门（`user_environment_offer`）没有展示覆盖度 detail**：PR3 留给 PR4 的第二条。门的载荷里已经有 `plan.origins` 与 `unknown`，展示需要 PR6 的组件，后端没有再加一份。
+* **没有把 `distmeta.index_environment` 接到默认扫描**：默认扫描没有目标环境（候选环境未经授权不读）；静态索引只在已经有目标事实的联合计划里用。这与 C5 一致，默认扫描的子进程数、文件读取面都没变。
+* `GET /api/engine/dependencies` 未改（C5）。
+
+**留给 PR5 / PR6 的事项**
+
+* **PR5 可以缩小，建议不并入 PR4**：BASELINE §7.2 里 PR5 的 13 条现有用例（`test_dependency_impact.py` / `test_dependency_transaction.py` / `test_dependency_scope.py` / `test_dependency_repair.py`）在本 PR 的改动之后全部原样绿（见下面的测试命令），本 PR 没有碰安装方案、`impact_of` 与 `IMPACT_VERSION`（没有新增影响类：被改判为 open 的 import 只是**不进**安装集合，披露字段未变）。真正剩下的只有：①装后「发行包与版本」核验对照 `distmeta` 的 `observed_*`（`deprepair._versions_of` / `installed_version` 已有读数，缺对照）；②用户在确认界面接受包名与版本的 `user_specified` 路径（取决于 §8-C1 / #864）。建议 PR5 缩成这两条的一个小 PR，不为它再走一轮完整 `risk:high` 评审；①可以做成 PR6 之后的独立提交。
+* **PR6**：用 `plan.origins[].reason` / `coverage.detail.code` 各给一句人话（不在前端复刻判据）；`checks_of.dependencies.detail.origins.by_reason` 决定卡片的第二行；`missing[].distribution_status=module_origin_ambiguous` 的备选提示；`DependencyPrepareDialog` 的 `unknown` 区改读 `origins`。
+* `found` 改判、依赖门展示覆盖度 detail（见上）。
+* 目标事实 `builtin` / `ext_suffixes` 只在联合计划路径上有；`rasterhint` 的 `importscan.scan(root, script)` 仍用保守口径（它只看 matplotlib 反面判据，保守即可）。
