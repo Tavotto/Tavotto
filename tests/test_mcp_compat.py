@@ -997,6 +997,15 @@ def test_env_expansion_shapes_in_argv_are_refused(project, pool, token):
         "fi\nle:///etc/passwd",  # urllib 会剥掉 \t\r\n
         "<URL:file:///etc/passwd>",
         "url:file:///etc/passwd",
+        "URL:file:///x",
+        "<URL:file:///x>",
+        "\x01file:///etc/passwd",  # Python 3.13+ 的 Path.from_uri / urlsplit 会剥首部 C0（#919 r4237102130）
+        "\x00file:///etc/passwd",
+        "\x1ffile:///etc/passwd",
+        " \x0bfile:///etc/passwd",
+        "fi\tle:///etc/passwd",
+        "file:///etc/passwd\x01",
+        "\x01<URL:file:///x>",
     ],
 )
 def test_file_uri_argv_is_refused(project, pool, token):
@@ -1018,6 +1027,8 @@ def test_file_uri_argv_is_refused(project, pool, token):
         "filename.txt",
         "file",
         "myfile:x",
+        "data.csv",
+        "\x01profile:x",
     ],
 )
 def test_non_file_uris_and_lookalikes_still_pass(project, token):
