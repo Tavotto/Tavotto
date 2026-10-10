@@ -8284,8 +8284,24 @@ def api_dependencies_plan():
     except _ScriptRejected as exc:
         return exc.response()
     target = str(body.get("target") or "").strip()
+    # `user_specified`（Import Origin PR5b）：{import 名: "包名[版本约束]"}——用户在确认界面接受（可改）预填后提交的、
+    # 未经可信来源核实的需求。形状在这里只判「是不是字符串到字符串的小字典」，包名语法与资格（是不是来源未定的表外名）归 `create_joint_plan`
+    user_specified = body.get("user_specified")
+    if user_specified is not None and not (
+        isinstance(user_specified, dict)
+        and len(user_specified) <= 64
+        and all(isinstance(k, str) and isinstance(v, str) for k, v in user_specified.items())
+    ):
+        return jsonify(
+            {
+                "error": "user_specified 需要是 {import 名: 包名} 的对象",
+                "code": engine_deprepair.ERROR_REQUIREMENT_INVALID,
+            }
+        ), 400
     try:
-        plan = engine_deprepair.create_joint_plan(root, script, target_kind=target)
+        plan = engine_deprepair.create_joint_plan(
+            root, script, target_kind=target, user_specified=user_specified
+        )
     except engine_deprepair.RepairError as exc:
         return _repair_error(exc, 409 if exc.code == engine_deprepair.ERROR_PLAN_BLOCKED else 400)
     return jsonify({"plan": plan.to_payload()})

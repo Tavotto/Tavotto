@@ -45,6 +45,7 @@ import tempfile
 import threading
 import time
 from collections import deque
+from collections.abc import Mapping
 from pathlib import Path
 
 from . import (
@@ -437,8 +438,14 @@ def _prune_plans() -> None:
 # * 安装集合 / 约束 / hash 模式 / 目标类型 / 目标环境与代 / 写入范围 / 私有 Python 下载变了，摘要就变，
 #   旧同意**不覆盖**新的范围（`ERROR_IMPACT_CHANGED`，零副作用）；
 # * 新增一类影响要加 `IMPACT_VERSION`——旧版本摘要永远对不上，未知的新范围不会被旧同意继承。
+#
+# 版本 2（Import Origin PR5b）：多了 `user_specified`——这次安装里有哪些包是**用户指定、未经可信来源核实**的
+# （表外 import 的预填被用户接受后提交；不来自 project_declared / curated）。这是新的一类影响（装的包名不是
+# Tavotto 解析出来的），旧版本（1）摘要里没有它，所以升一次；没有用户指定包时该字段为空表，摘要照常按内容算。
 # ---------------------------------------------------------------------------
-IMPACT_VERSION = 1
+IMPACT_VERSION = 2
+#: `impact["user_specified"][].trust` 的唯一取值：这个包名是用户指定的，没有经过 project_declared / curated 的可信来源核实
+TRUST_USER_SPECIFIED_UNVERIFIED = "user_specified_unverified"
 #: 依赖安装结束时 `projectenv.remember` 的 trigger（两处写入点共用这一个字面量）
 TRIGGER_DEPENDENCY_REPAIR = "dependency_repair"
 SCOPE_MANAGED_GENERATION = "managed_generation"
@@ -488,6 +495,7 @@ def impact_of(
     scope_policy: str = "",
     drops=(),
     changes=(),
+    user_specified=(),
 ) -> dict:
     """一次依赖安装授权的实际影响（公开形态：没有机器路径，环境只给不透明引用）。
 
@@ -513,6 +521,19 @@ def impact_of(
         "scope_policy": scope_policy,
         "drops": sorted(drops),
         "changes": sorted(changes),
+        # 用户指定、**未经可信来源核实**的包（Import Origin PR5b）：包名是用户在确认界面接受 / 改写的，不是 curated / 项目声明解析出来的。
+        # 披露里必须看得见，界面据 `trust` 标注；`installs` 里同一个需求串仍在（安装的就是它）
+        "user_specified": sorted(
+            (
+                {
+                    "import_name": str(u.get("import_name") or ""),
+                    "requirement": str(u.get("requirement") or ""),
+                    "trust": TRUST_USER_SPECIFIED_UNVERIFIED,
+                }
+                for u in user_specified
+            ),
+            key=lambda u: (u["import_name"], u["requirement"]),
+        ),
         # 目标环境与它的代：重建 / 换代 / 换成别的环境都换引用（只由指纹算出，不泄露路径）
         "environment_ref": _opaque(env_fingerprint),
     }
@@ -579,6 +600,7 @@ def offer_impact(root: str, joint, kind: str, python: str, scope_policy: str = "
         private_python=private,
         env_fingerprint=_fingerprint(kind, bound if kind == TARGET_MANAGED else python, root),
         scope_policy=scope_policy,
+        user_specified=getattr(joint, "user_specified", ()),
         **_effects(root, joint.requirements, joint.constraints, scope_policy),
     )
 
@@ -3688,6 +3710,13 @@ class JointRepairPlan:
     #: `to_payload`，也不进 `identity` / `inputs_digest`——只是执行期的一致性校验，层没变时行为不变。
     layers_digest: str = ""
     install_layers_digest: str = ""
+    #: 用户指定、未经可信来源核实的需求（`depplan.JointPlan.user_specified`）：披露（`impact`）与替身重算（`_replan_on_base`）都读它。
+    user_specified: tuple[dict, ...] = ()
+    #: 计划用到的 import 名（needed + unknown）与形成计划那一刻这些名字在两份事实的静态索引里的提供状态指纹
+    #: （`depplan.provider_digest`，#932）：执行前重量事实后再比，变了 = `repair_plan_stale`。同 `layers_digest`，只是执行期的一致性校验。
+    names: tuple[str, ...] = ()
+    names_digest: str = ""
+    install_names_digest: str = ""
 
     @property
     def pip_inputs(self) -> PipInputs:
@@ -3718,6 +3747,7 @@ class JointRepairPlan:
             scope_policy=self.scope_policy,
             drops=self.drops,
             changes=self.changes,
+            user_specified=self.user_specified,
         )
 
     @property
@@ -3884,6 +3914,22 @@ def _facts_for(
     return run, fresh_facts, python
 
 
+def _user_specified_error(exc: "depplan.UserSpecifiedRejected") -> "RepairError":
+    """`depplan.UserSpecifiedRejected` → 已发布的错误码（不新增码）：语法不合 = `package_requirement_invalid`（与单包路径同一句），
+    这个 import 此刻不是「来源未定的表外名」= `dependency_install_not_allowed`。只带 import 名，不回显用户给的原串。"""
+    if exc.kind == depplan.UserSpecifiedRejected.INVALID:
+        return RepairError(
+            ERROR_REQUIREMENT_INVALID,
+            "只接受 `包名` 或 `包名>=版本` 这样的形态",
+            import_name=exc.import_name,
+        )
+    return RepairError(
+        ERROR_NOT_ALLOWED,
+        "这个 import 此刻不是来源未定的表外名，不能指定安装包",
+        import_name=exc.import_name,
+    )
+
+
 def create_joint_plan(
     project: str | Path,
     script: str,
@@ -3891,8 +3937,14 @@ def create_joint_plan(
     target_kind: str = "",
     groups: list[str] | None = None,
     scope_policy: str = "",
+    user_specified: Mapping[str, str] | None = None,
 ) -> JointRepairPlan:
     """把联合计划绑定成可执行的（发 plan_id）。**不装任何东西。**
+
+    `user_specified`（Import Origin PR5b）：`{import 名: "包名[版本约束]"}`——用户在确认界面接受（可改）预填后提交的、**用户指定且
+    未经可信来源核实**的需求；只收来源未定的表外 import，过 `depresolve.from_user_input` 的严格语法，进联合计划并在影响披露里标明
+    （`impact["user_specified"]`）。不合格的整份拒绝：语法不对 `package_requirement_invalid`，这个 import 不是表外名
+    `dependency_install_not_allowed`——不静默丢弃、不降级成别的需求。
 
     计划不是 `ready`（没缺的 / blocked）就拒绝：`dependency_plan_blocked` 带 blocked 理由——
     执行端不会「把认不出的那行剥掉偷偷继续」。`target_kind` 可以由调用方指定（用户在用户
@@ -3928,15 +3980,19 @@ def create_joint_plan(
             kind, python, root, fresh=scope_policy == SCOPE_POLICY_SWITCH
         )
     groups = depplan.selected_groups_setting(root) if groups is None else list(groups)
-    joint = depplan.plan(
-        root,
-        script,
-        facts=facts,
-        target_kind=kind,
-        groups=groups,
-        install_facts=install_facts,
-        coverage=_coverage_reader(facts),
-    )
+    try:
+        joint = depplan.plan(
+            root,
+            script,
+            facts=facts,
+            target_kind=kind,
+            groups=groups,
+            install_facts=install_facts,
+            coverage=_coverage_reader(facts),
+            user_specified=user_specified,
+        )
+    except depplan.UserSpecifiedRejected as exc:
+        raise _user_specified_error(exc) from exc
     joint = _with_scope_check(root, script, joint, kind, scope_policy)
     # 干净机器上「什么都不缺」也得建环境（没有任何解释器可用）：nothing_needed 照样成计划，delta 为空 = 只装 adapter
     if joint.status == depplan.STATUS_BLOCKED or (
@@ -3975,6 +4031,9 @@ def create_joint_plan(
         else joint.install_entries
     )
     _selection_unchanged(root, selection0)
+    plan_names = tuple(
+        sorted({str(n.get("module") or "") for n in joint.needed} | set(joint.unknown))
+    )
     now = time.time()
     plan = JointRepairPlan(
         plan_id=new_plan_id(),
@@ -3989,6 +4048,10 @@ def create_joint_plan(
         install_facts_digest=install_facts.digest() if install_facts is not None else "",
         layers_digest=depplan.layer_digest(facts),
         install_layers_digest=depplan.layer_digest(install_facts),
+        user_specified=tuple(joint.user_specified),
+        names=plan_names,
+        names_digest=depplan.provider_digest(facts, plan_names),
+        install_names_digest=depplan.provider_digest(install_facts, plan_names),
         requirements=tuple(joint.requirements),
         constraints=tuple(joint.constraints),
         hashes={k: tuple(v) for k, v in joint.hashes.items()},
@@ -4377,6 +4440,13 @@ def prepare(
             depplan.layer_digest(install) != plan.install_layers_digest
         ):
             raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境的 import 层发生了变化")
+        # 层的路径与 `.pth` 没变、层**里面**这些 import 名的提供者变了（往更前的 PYTHONPATH 目录新加一个同名 `yaml.py`、
+        # 前面一层多了 / 少了一个认领它的发行包）：层指纹看不见，旧计划本会装一个运行时已经被遮蔽的包（#932）。同一条拒绝路径
+        if plan.names and (
+            depplan.provider_digest(run, plan.names) != plan.names_digest
+            or depplan.provider_digest(install, plan.names) != plan.install_names_digest
+        ):
+            raise RepairError(ERROR_PLAN_STALE, "确认期间目标环境里这些 import 的提供者发生了变化")
         if cancel_ev.is_set():
             # ack 之后、拿锁之前来的取消：明确终态，什么都没改（Codex #470 P1 的那一刻）
             return _emit(
@@ -4413,6 +4483,7 @@ def prepare(
                 inputs_digest=plan.inputs_digest,
                 replace_ledger=plan.scope_policy == SCOPE_POLICY_SWITCH,
                 refuse_pinned=True,
+                user_specified=plan.user_specified,
             )
             return _run_generation(job, cancel_ev)
         key = _env_key(TARGET_PROJECT_VENV, plan.python, plan.project)
@@ -4467,6 +4538,13 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         raise RepairError(code, _sanitize(out)[-800:])
     _emit(plan.plan_id, STATE_VERIFYING, on_event, joint=plan)
     _verify_imports(python, plan.needed_imports)
+    _verify_distributions(
+        python,
+        plan.record,
+        plan.requirements,
+        plan.constraints,
+        user_specified=plan.user_specified,
+    )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
@@ -4545,6 +4623,9 @@ class _GenerationJob:
     #: 租约在手之后复查全局显式解释器（E05）：装进去也不会被用的环境，一个字节都不装（联合准备用；重建 / 包管理
     #: 首装是用户对受管环境本身的明确动作，不查）。
     refuse_pinned: bool = False
+    #: 用户指定、未经可信来源核实的需求（`JointRepairPlan.user_specified`）：替身重算（`_replan_on_base`）要把它们再交给
+    #: `depplan.plan`，装后核验（`_verify_distributions`）对这些 import 更严（读不出 = 失败）。
+    user_specified: tuple[dict, ...] = ()
 
 
 def generation_requirements(
@@ -4723,6 +4804,15 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     except RepairError as exc:
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "关键 import 失败"
+        )
+        raise exc
+    try:
+        _verify_distributions(
+            python, job.record, job.delta, job.constraints, user_specified=job.user_specified
+        )
+    except RepairError as exc:
+        managedenv.mark_generation(
+            project, generation, managedenv.GEN_STATE_INCOMPLETE, "装上的发行包与计划不符"
         )
         raise exc
     if cancel_ev.is_set():
@@ -4908,13 +4998,18 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
     )
     if facts is None:
         raise RepairError(privatepython.ERROR_LAUNCH_FAILED, "私有 Python 量不出目标事实")
-    plan = depplan.plan(
-        job.project,
-        job.script,
-        facts=facts,
-        target_kind=TARGET_MANAGED,
-        groups=list(job.groups) or None,
-    )
+    try:
+        plan = depplan.plan(
+            job.project,
+            job.script,
+            facts=facts,
+            target_kind=TARGET_MANAGED,
+            groups=list(job.groups) or None,
+            user_specified={u["import_name"]: u["requirement"] for u in job.user_specified} or None,
+        )
+    except depplan.UserSpecifiedRejected as exc:
+        # 下载期间脚本 / 声明变了，用户指定的那个 import 不再是来源未定的表外名：用户确认的不是这件事
+        raise RepairError(ERROR_PLAN_STALE, "下载期间脚本或依赖声明发生了变化") from exc
     # 重算读的是**此刻**的脚本与声明：用户确认的是按当时输入算的那份。下载期间脚本多了一个 import、
     # requirements 多了一行，就不能顶着旧 plan_id 装进去——输入指纹不同即 stale，一个字节不装（Codex #475 P1）
     if plan.inputs_digest != job.inputs_digest:
@@ -5162,6 +5257,89 @@ def _verify_imports(python: str, names: tuple[str, ...]) -> None:
             ERROR_IMPORT_STILL_FAILED,
             "; ".join(f"{n}: {e}" for n, e in failed.items())[:800],
             imports=failed,
+        )
+
+
+#: 装后「发行包与版本」核验的失败原因码（`RepairError(ERROR_IMPORT_STILL_FAILED).extra["imports"]` 的值；闭集，不是新错误码）
+DIST_NOT_INSTALLED = "distribution_not_installed"  # 计划要装的发行包在目标环境里没有
+DIST_VERSION_MISMATCH = "distribution_version_mismatch"  # 装上的版本不满足计划里的约束
+DIST_DOES_NOT_PROVIDE = "distribution_does_not_provide_import"  # 装上了，但提供这个 import 的是别人（或没有任何发行包认领）
+DIST_UNVERIFIABLE = "distribution_unverifiable"  # 用户指定的包：读不出它提供什么，不放行
+
+
+def _verify_distributions(
+    python: str,
+    record: tuple[dict, ...] | list[dict],
+    requirements: tuple[str, ...] | list[str],
+    constraints: tuple[str, ...] | list[str] = (),
+    *,
+    user_specified: tuple[dict, ...] | list[dict] = (),
+) -> None:
+    """装后「发行包与版本」核验（Import Origin PR5b）：`pip` 退出码 0、`import X` 成功，都不等于**装上的就是计划要装的那个包**。
+
+    重新量目标环境（`target_facts(use_cache=False)` + 同一刻读的 `static_index`，只读 `distmeta` 的元数据，不 import 用户包），对照：
+
+    1. 计划里每个要装的发行包（`requirements`）已出现在目标环境里，版本满足它自己与 `constraints` 里的约束；
+    2. `record` 里每个 (import 名, 发行包) 的发行包确实是**提供**那个 import 的（`Index.lookup` 里未被遮蔽的候选）——
+       `import foo` 能成功，可能是因为别的包（装上的包的传递依赖、`PYTHONPATH` 里的同名模块）提供了它，而不是用户 / 表指定的这个包。
+
+    不一致 → `RepairError(ERROR_IMPORT_STILL_FAILED)`（与「装成功但 import 失败不 ready」同一条失败路径与错误码；受管环境保持旧代、
+    用户 venv 就地安装的不可完整回滚照旧披露），`extra["imports"]` 是 {名字: 原因码}。
+
+    **判不出就别判**：非用户指定的 import 在读不出 / 没有任何发行包认领它时跳过第 2 项（没有证据 ≠ 不一致；`import` 验证已过）；
+    **用户指定**的包（`user_specified`）是唯一没有可信来源背书的一类，读不出它提供什么就不放行（`DIST_UNVERIFIABLE`）。
+    """
+    strict = {str(u.get("import_name") or "") for u in user_specified}
+    wanted: dict[str, list[str]] = {}
+    for text in requirements:
+        it = depresolve.parse_intent(str(text))
+        if it is not None and it.declared:
+            wanted.setdefault(it.name, []).append(it.specifier)
+    limits: dict[str, list[str]] = {}
+    for text in constraints:
+        it = depresolve.parse_intent(str(text))
+        if it is not None and it.declared:
+            limits.setdefault(it.name, []).append(it.specifier)
+    problems: dict[str, str] = {}
+    try:
+        facts = depplan.target_facts(python, use_cache=False)
+        index = depplan.static_index(facts)
+    finally:
+        # 目标环境刚被改动（或这一代即将丢弃）：别让这次量到的事实留在缓存里冒充「装之前」
+        depplan.reset_cache(python)
+    if facts is None:
+        for imp in sorted(strict):
+            problems[imp] = DIST_UNVERIFIABLE
+    else:
+        for name, specs in sorted(wanted.items()):
+            version = facts.installed.get(name)
+            if version is None:
+                problems[name] = DIST_NOT_INSTALLED
+                continue
+            for spec in (*specs, *limits.get(name, ())):
+                if spec and depresolve.version_satisfies(spec, version) is False:
+                    problems[name] = DIST_VERSION_MISMATCH
+        for rec in record:
+            imp = str(rec.get("import_name") or "").split(".")[0]
+            dist = depresolve.normalize_distribution(str(rec.get("distribution") or ""))
+            if not imp or dist not in wanted:
+                continue  # 没要求 pip 装它（已满足 / 别的来源）：不属于「装上的包」
+            look = index.lookup(imp) if index is not None and index.checked else None
+            if look is None or look.order_unresolved:
+                if imp in strict:
+                    problems[imp] = DIST_UNVERIFIABLE
+                continue
+            live = [c for c in look.candidates if not c.shadowed]
+            if any(c.key == dist for c in live):
+                continue
+            if live or look.candidates or imp in strict:
+                # 别的发行包在提供它 / 计划里的发行包被排在前面的提供者遮蔽了（有候选、没有未被遮蔽的）/ 用户指定的包没有任何证据
+                problems[imp] = DIST_DOES_NOT_PROVIDE
+    if problems:
+        raise RepairError(
+            ERROR_IMPORT_STILL_FAILED,
+            "装上的发行包与计划不符: " + "; ".join(f"{k}: {v}" for k, v in problems.items())[:760],
+            imports=problems,
         )
 
 

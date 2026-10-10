@@ -380,6 +380,17 @@ class Index:
         present = any(module in names for names in self._names)
         return Lookup(tuple(cands), present, self.complete, self.uncovered_paths, unresolved)
 
+    def name_state(self, module: str) -> tuple:
+        """一个顶级名字在各层的**提供状态**（可哈希、稳定）：哪些层的目录清单里有它、没有发行包认领的层的提供形状、
+        未被 / 被遮蔽的发行包候选（键 / 版本 / 层 / 是否遮蔽 / 是否命名空间）、跨层顺序是否推不出。
+        给 `depplan.provider_digest` 用（#932）：层指纹只记层路径与 `.pth` 内容，不记层**里面**的名字——确认后往更前的
+        `PYTHONPATH` 目录新加一个 `yaml.py`，层指纹不变而 import 到的提供者已经换了人。"""
+        look = self.lookup(module)
+        layers = tuple(i for i, names in enumerate(self._names) if module in names)
+        shapes = tuple(sorted((i, s) for (i, m), s in self._shapes.items() if m == module))
+        cands = tuple((c.key, c.version, c.order, c.shadowed, c.namespace) for c in look.candidates)
+        return (layers, shapes, cands, look.order_unresolved)
+
     def _merge(self, ds: list[_Dist], module: str, *, shadowed: bool, order: int) -> Candidate:
         first = ds[0]
         versions = sorted({d.version for d in ds if d.version})
@@ -843,8 +854,12 @@ def _list_root(
                     egg_links.append(name)
             elif name.endswith(".pth"):
                 if redirect:
-                    # Python 的 site 会跟进链接读它：拒绝跟进 = 它提供的路径条目没被看到，不许当成「没有」
-                    rd.refuse_names(scanbudget.ISSUE_SYMLINK_DIR, root, name)
+                    # Python 的 site 会跟进链接读它：拒绝跟进 = 它提供的路径条目没被看到，不许当成「没有」。
+                    # 但 Python **不处理**这一层的 `.pth` 时（`root.pth` 为假：经 `PYTHONPATH` / 别的 `.pth` 路径行进
+                    # `sys.path` 的 site-packages），链接的 `.pth` 同样不会生效——它没有藏任何东西，不进 refuse，
+                    # 否则名字层被判不完整、真缺的 import 改判来源未定（#931）
+                    if root.pth:
+                        rd.refuse_names(scanbudget.ISSUE_SYMLINK_DIR, root, name)
                 else:
                     pths.append(name)
             elif name in _SKIP_ENTRIES or name.endswith(".data"):
@@ -872,6 +887,16 @@ _INIT_RE = re.compile(r"^__init__(?:\.py|\.pyc|(?:\.[A-Za-z0-9_-]+)*\.(?:so|pyd)
 MAX_PROBE_ENTRIES = 4096
 
 
+def _is_init_file(name: str, suffixes: tuple[str, ...] | None) -> bool:
+    """目录里的这个文件是不是目标解释器能加载的包初始化文件（#932）。`__init__.py` / `.pyc` 恒是；扩展形态的
+    `__init__.<tag>.so|pyd` 与普通扩展模块同一判据（`_ext_top`）：给了目标的 `EXTENSION_SUFFIXES` 就逐字按它认——前面一层只有
+    别的平台留下的 `yaml/__init__.cp313-win_amd64.pyd`（Linux 目标）不是会被加载的常规包，不能因它遮蔽后面 site 层里能用的提供者；
+    没给（没量到）才退回宽松形状 `_INIT_RE`（保守口径不变）。"""
+    if suffixes is None:
+        return bool(_INIT_RE.match(name))
+    return name in ("__init__.py", "__init__.pyc") or _ext_top(name, suffixes) == "__init__"
+
+
 def _probe_shape(rd: _Reader, root: SiteRoot, module: str) -> str:
     """没有 RECORD 时，从该层 site-packages 里 `module` 的磁盘形状推它是不是常规提供者（只看目录清单，不执行）。
     FileFinder 的顺序：带 `__init__` 的包 > 单文件 / 扩展 > 无 `__init__` 的目录（namespace portion）。推不出回 "unknown"。"""
@@ -891,7 +916,7 @@ def _probe_shape(rd: _Reader, root: SiteRoot, module: str) -> str:
         for n, e in enumerate(it):
             if n >= MAX_PROBE_ENTRIES or not rd.budget.charge_entry():
                 return "unknown"
-            if _INIT_RE.match(e.name):
+            if _is_init_file(e.name, rd.ext_suffixes):
                 return "regular"
     return "namespace"
 

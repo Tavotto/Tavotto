@@ -55,7 +55,7 @@ import shutil
 import stat
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from . import config, depresolve, distmeta, importscan, projectenv, runtime
@@ -109,6 +109,21 @@ ORIGIN_REASONS = (
 )
 #: 一个 origins 条目最多列几个候选发行包名（不透明的名字，没有路径）
 MAX_ORIGIN_CANDIDATES = 8
+
+
+class UserSpecifiedRejected(ValueError):
+    """`plan(user_specified=)` 里的某一项不被接受（Import Origin PR5b）。`kind`：`NOT_APPLICABLE` = 这个 import 此刻不是
+    「来源未定、表外、没有可信安装名」的那一类（已经有可信解析 / 已经装着 / 是本地模块 / 来源有别的原因……）；
+    `INVALID` = 用户给的包名 / 版本约束过不了 `depresolve.from_user_input` 的严格语法。两者都在形成计划之前拒绝，不静默丢弃。"""
+
+    NOT_APPLICABLE = "not_applicable"
+    INVALID = "invalid_requirement"
+
+    def __init__(self, import_name: str, kind: str) -> None:
+        super().__init__(f"{kind}: {import_name}")
+        self.import_name = import_name
+        self.kind = kind
+
 
 #: worker 侧需要的科学栈（scientific adapter 约束）。**与 `pyproject.toml` 的
 #: `[project.optional-dependencies].worker` 逐字相同**——`tests/test_dependency_plan.py`
@@ -417,6 +432,29 @@ def _measure_layers(facts: TargetFacts) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def provider_digest(facts: TargetFacts | None, names) -> str:
+    """计划相关的这些 import 名在目标环境各层里的**提供状态**指纹（#932）：`Index.name_state`（哪些层的目录清单里有它、没人认领的层的
+    形状、发行包候选与遮蔽）加索引的名字层是否读全。
+
+    补 `layer_digest` 的缺口：层指纹只记层路径、顺序与 `.pth` 内容，不记层**里面**的名字——确认后往更前的 `PYTHONPATH` 目录新加一个
+    `yaml.py`，层指纹不变，旧计划本会被接受并去装 PyYAML，运行时 import 到的却是新出现的遮蔽模块。**只记计划用到的名字**：
+    无关包的安装 / 卸载不会让计划过期。读索引不起进程；没有索引（替身事实、全新代）回空串（两侧都空 = 没有可比的东西，不拦）。"""
+    index = static_index(facts)
+    wanted = sorted({str(n) for n in names or ()})
+    if index is None or not wanted:
+        return ""
+    text = json.dumps(
+        {
+            "names": {n: index.name_state(n) for n in wanted},
+            "names_complete": index.names_complete,
+            "uncovered": index.uncovered_paths,
+        },
+        sort_keys=True,
+        default=list,
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 _facts_lock = threading.Lock()
 _facts_cache: dict[str, TargetFacts] = {}
 
@@ -691,6 +729,11 @@ class JointPlan:
     #: 要覆盖 `requirements` 里的全部条目，所以 `deprepair` 用 `install_entries`（= missing + 这里）。**不进 `to_payload`**
     #: （披露与 `missing` 语义不变，`plan_version` 不升）。
     install_only: tuple[dict, ...] = ()
+    #: 用户在确认界面接受（可改）预填后提交的「用户指定」需求（Import Origin PR5b，维护者裁决 C1）：`{import_name, distribution,
+    #: specifier, requirement, resolution_source=user_specified, verified_source=False}`。它们**不是**可信来源解析出来的——
+    #: 披露里必须标明「用户指定、未经可信来源核实」（`deprepair.impact_of` 的 `user_specified`）。只在有时才进 `to_payload`
+    #: （老客户端忽略，`plan_version` 不升）。
+    user_specified: tuple[dict, ...] = ()
 
     @property
     def install_entries(self) -> tuple[dict, ...]:
@@ -713,6 +756,11 @@ class JointPlan:
             "possible": [dict(p) for p in self.possible],
             "unused": list(self.unused),
             "origins": [dict(o) for o in self.origins],
+            **(
+                {"user_specified": [dict(u) for u in self.user_specified]}
+                if self.user_specified
+                else {}
+            ),
             "requirements": list(self.requirements),
             "constraints": list(self.constraints),
             "hashes": {k: list(v) for k, v in self.hashes.items()},
@@ -869,9 +917,31 @@ def _coverage_states(
     return {n: str(detail[n]) for n in names if isinstance(detail.get(n), str)}
 
 
-def _origin_entry(c: importscan.ImportClass, reason: str, state: str) -> dict:
+def _effective_reason(c: importscan.ImportClass, reason: str) -> str:
     if reason == ORIGIN_UNRESOLVED and _installed_claims(c):
-        reason = _reason_of(c.distribution_status)  # 映射表没有，但已装的某个发行包声称提供它
+        return _reason_of(c.distribution_status)  # 映射表没有，但已装的某个发行包声称提供它
+    return reason
+
+
+def _specifiable(
+    c: importscan.ImportClass, reason: str, state: str, index_incomplete: bool
+) -> bool:
+    """这个 import 能不能接受「用户指定包名」（也是 `suggested_distribution` 预填的前提）：它必须是**纯粹的表外名**——
+    没有可信安装名（既不在 curated 也没被项目声明点名）、没有任何证据说环境里已有别的提供者（已装发行包声称提供 / 模块在而无元数据 /
+    editable / Conda / 本地归档……都是 `reason != ORIGIN_UNRESOLVED`）、覆盖度缓存没说它能 import（`found`）或「包在导入失败」
+    （`import_error`：装它救不了）、而且静态索引把各层的名字读全了（读不全时「没查到」不等于「没装」，宁可不预填）。"""
+    return (
+        c.bucket == importscan.BUCKET_UNKNOWN
+        and not c.distribution
+        and c.resolution_status == importscan.STATUS_UNRESOLVED
+        and reason == ORIGIN_UNRESOLVED
+        and state not in ("found", "import_error")
+        and not index_incomplete
+    )
+
+
+def _origin_entry(c: importscan.ImportClass, reason: str, state: str, *, suggest: str = "") -> dict:
+    reason = _effective_reason(c, reason)
     candidates = sorted(
         {
             depresolve.normalize_distribution(str(x.get("distribution") or ""))
@@ -879,7 +949,7 @@ def _origin_entry(c: importscan.ImportClass, reason: str, state: str) -> dict:
             if x.get("distribution")
         }
     )
-    return {
+    entry = {
         "import_name": c.module,
         "bucket": c.bucket,
         "distribution": c.distribution,
@@ -891,6 +961,11 @@ def _origin_entry(c: importscan.ImportClass, reason: str, state: str) -> dict:
         "candidates": candidates[:MAX_ORIGIN_CANDIDATES],
         "coverage": state,
     }
+    if suggest:
+        # 预填（Import Origin PR5b，C1）：**不是**可信来源、不进 requirements、不自动装——确认界面输入框的初始值，
+        # 用户接受（可改）后经 `plan(user_specified=)` 才进计划
+        entry["suggested_distribution"] = suggest
+    return entry
 
 
 def plan(
@@ -904,6 +979,7 @@ def plan(
     install_facts: TargetFacts | None = None,
     dists: distmeta.Index | None | object = _AUTO,
     coverage: Callable[[tuple[str, ...]], dict | None] | None = None,
+    user_specified: Mapping[str, str] | None = None,
 ) -> JointPlan:
     """拼一份联合计划。`facts` 是**此刻会跑脚本的**解释器的事实（缺什么按它量——门问的是
     「现在起会话会不会缺包」）；`target_kind` 说安装会落到哪种环境（受管环境并入 adapter 约束，
@@ -914,7 +990,13 @@ def plan(
 
     来源状态（PR4）：`dists` 是目标环境的静态发行包索引（默认 `static_index(facts)`，只读文件，不起进程；
     显式传 None = 不读）；`coverage(names)` 是 PR3 覆盖度的**只读缓存**查询（`userenvs.cached_probe`，没量过回 None，
-    不起进程）——只用来认出「包在、导入失败」。两者都没有时判据与以前逐字相同。"""
+    不起进程）——只用来认出「包在、导入失败」。两者都没有时判据与以前逐字相同。
+
+    `user_specified`（Import Origin PR5b，维护者裁决 C1）：`{import 名: "包名[版本约束]"}`，用户在确认界面接受（可改）预填后
+    提交的**用户指定**需求。只收「纯粹的表外名」（`_specifiable`），包名与约束过 `depresolve.from_user_input` 的严格语法；
+    不满足一律抛 `UserSpecifiedRejected`，不静默丢弃。收下的那些离开 `unknown` / `origins`，作为 `resolution_source=user_specified`
+    的条目进 `missing` 与 `requirements`，并列在 `JointPlan.user_specified`（披露：用户指定、未经可信来源核实）。hash 模式（锁文件语义）
+    下它没有 hash，整份计划 `dependency_hashes_incomplete`。"""
     if target_kind not in TARGETS:
         raise ValueError(f"target_kind 非法: {target_kind!r}")
     root_p = Path(root)
@@ -1022,12 +1104,56 @@ def plan(
                     matches = False
         satisfied.append({**entry, "installed_version": version, "matches_declared": matches})
 
+    origin_classes = [
+        c for c in scan.classes if c.module in open_classes or c.module in plain_unknown
+    ]
+    specifiable = {
+        c.module
+        for c in origin_classes
+        if _specifiable(
+            c,
+            _effective_reason(c, open_classes.get(c.module, ORIGIN_UNRESOLVED)),
+            states.get(c.module, ""),
+            index_incomplete,
+        )
+    }
+    chosen: dict[str, tuple[depresolve.DependencyIntent, importscan.ImportClass]] = {}
+    for imp, text in sorted((user_specified or {}).items()):
+        cls = next((c for c in origin_classes if c.module == imp), None)
+        if cls is None or imp not in specifiable:
+            raise UserSpecifiedRejected(str(imp), UserSpecifiedRejected.NOT_APPLICABLE)
+        asked = depresolve.from_user_input(imp, str(text or ""))
+        intent = (
+            depresolve.parse_intent(asked.requirement())
+            if asked is not None and asked.installable
+            else None
+        )
+        if intent is None or not intent.declared:
+            raise UserSpecifiedRejected(str(imp), UserSpecifiedRejected.INVALID)
+        chosen[imp] = (intent, cls)
     origins = tuple(
-        _origin_entry(c, open_classes.get(c.module, ORIGIN_UNRESOLVED), states.get(c.module, ""))
-        for c in scan.classes
-        if c.module in open_classes or c.module in plain_unknown
+        _origin_entry(
+            c,
+            open_classes.get(c.module, ORIGIN_UNRESOLVED),
+            states.get(c.module, ""),
+            suggest=depresolve.suggest_distribution(c.module) if c.module in specifiable else "",
+        )
+        for c in origin_classes
+        if c.module not in chosen
     )
     unknown = tuple(o["import_name"] for o in origins)
+    user_entries = tuple(
+        {
+            "import_name": imp,
+            "distribution": intent.name,
+            "resolution_source": depresolve.SOURCE_USER_SPECIFIED,
+            "declared": False,
+            "specifiers": [intent.specifier] if intent.specifier else [],
+            "via": list(cls.via),
+        }
+        for imp, (intent, cls) in chosen.items()
+    )
+    missing.extend(user_entries)
 
     # ---- 交给安装器的集合（按**装到哪**量：目标已有的不装、其余 needed 的全装） --------------
     # 来源判决（`verdicts`）只说**当前解释器**里这个 import 是谁提供的，只能抑制当前环境的 missing。装到当前环境
@@ -1085,6 +1211,15 @@ def plan(
             for h in it.hashes:
                 if h not in hashes[text]:
                     hashes[text].append(h)
+        if user_entries:
+            # 用户指定的需求没有 hash：锁文件语义下 pip 会整次拒绝——提前说出来（复用既有理由，不新增 `BLOCK_REASONS`）
+            blocked.append(
+                {
+                    "code": BLOCK_HASHES_INCOMPLETE,
+                    "user_specified": [e["import_name"] for e in user_entries],
+                    "count": len(user_entries),
+                }
+            )
     else:
         for name in sorted(to_install):
             for it in by_name.get(name, ()):
@@ -1095,6 +1230,10 @@ def plan(
                 # 没有项目声明、只有 curated 映射：裸名（不钉版本——我们不替项目决定版本）
                 if name not in reqs:
                     reqs.append(name)
+        for intent, _cls in chosen.values():
+            text = depresolve.requirement_string(intent)
+            if text not in reqs:
+                reqs.append(text)
     for it in selection.requirements:
         if hash_mode or it.name in to_install:
             continue  # 要装的不再当约束（hash 模式下全部都是要装的）
@@ -1166,6 +1305,17 @@ def plan(
         possible=possible,
         unused=unused,
         origins=origins,
+        user_specified=tuple(
+            {
+                "import_name": e["import_name"],
+                "distribution": e["distribution"],
+                "specifier": e["specifiers"][0] if e["specifiers"] else "",
+                "requirement": f"{e['distribution']}{e['specifiers'][0] if e['specifiers'] else ''}",
+                "resolution_source": depresolve.SOURCE_USER_SPECIFIED,
+                "verified_source": False,
+            }
+            for e in user_entries
+        ),
         install_only=install_only,
         requirements=tuple(reqs),
         constraints=tuple(cons),

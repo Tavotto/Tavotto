@@ -1499,6 +1499,36 @@ def from_user_input(import_name: str, text: str) -> DependencyRequirement | None
     )
 
 
+def suggest_distribution(import_name: str) -> str:
+    """表外 import 的**预填**包名（Import Origin PR5b，维护者裁决 C1）：规范化的 import 名本身，或 `""`（不给预填）。
+
+    这**不是**解析结果：`resolve` / `INSTALLABLE_SOURCES` / 联合计划的安装名完全不读它——它只是确认界面输入框里的初始值，
+    用户接受（可改）之后才作为 `SOURCE_USER_SPECIFIED` 经 `from_user_input` 的严格语法进计划。**不给预填**的情形，全部复用现有的表，
+    不新建第二张要维护的表：
+
+    * 不是合法的 import 名 / 标准库顶级名；
+    * curated 里这个 import 已有映射（`CURATED` + `SAME_NAME`）——它根本不是表外名；
+    * 规范化后撞上 curated 的某个 **import 名**（`pil`、`Yaml`、`CV2`：大小写变体的包名是另一个 PyPI 项目，正是抢注 / 易混名的形状）、
+      某个 curated **包名**（`pillow`：这个 import 名不是 `import pillow`，该装的是 `PIL` 对应的那个，不是同名猜测）、
+      或登记过的备选发行包（`ALTERNATIVE_DISTRIBUTIONS`）；
+    * 规范化后过不了 `parse_requirement` 的包名语法（`_private` → `-private`）。
+    """
+    name = str(import_name or "")
+    if not valid_import_name(name) or name.split(".")[0] in _STDLIB_NAMES:
+        return ""
+    if curated_distribution(name):
+        return ""
+    key = normalize_distribution(name)
+    reserved = {normalize_distribution(k) for k in CURATED}
+    reserved |= {normalize_distribution(v) for v in CURATED.values()}
+    reserved |= {normalize_distribution(n) for n in SAME_NAME}
+    for alts in ALTERNATIVE_DISTRIBUTIONS.values():
+        reserved |= {normalize_distribution(a) for a in alts}
+    if key in reserved:
+        return ""
+    return key if parse_requirement(key) == (key, "") else ""
+
+
 # ---------------------------------------------------------------------------
 # 多发行包提供同一个 import 名（Import Origin Resolver PR2，O-11）
 #
