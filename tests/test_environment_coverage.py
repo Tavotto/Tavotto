@@ -910,6 +910,86 @@ def test_J_a_global_interpreter_setting_still_allows_coverage_but_recommends_not
     assert row["coverage"]["state"] == "covered"  # 覆盖度照常（只读事实），不因锁定消失
 
 
+def _remember_selected(root: Path, python: Path) -> None:
+    assert projectenv.remember(
+        root,
+        str(python),
+        automatic=False,
+        trigger=projectenv.TRIGGER_RECOMMENDED,
+        health=_health(),
+    )
+
+
+@posix_only
+def test_J_a_project_candidate_overridden_by_the_global_setting_is_a_user_environment(
+    tmp_path, monkeypatch
+):
+    """#908：全局解释器压过项目记住的环境时，worker 用的是全局那个；被压掉的 `.venv` 缺包不能说成「目标环境里缺」。"""
+    root = tmp_path / "p"
+    root.mkdir()
+    chosen = _fake_venv(root, ".venv")
+    _remember_selected(root, chosen)
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", sys.executable)
+    lacking = _health(modules_ok={"covok_a": False}, modules_detail={"covok_a": "not_found"})
+
+    out = envadvice.check(
+        root,
+        "p.py",
+        modules=("covok_a",),
+        probe=_fake_probe({".venv/bin/python": lacking}),
+    )
+
+    row = _row(out, envworld.venv_rel(".venv"))
+    assert row["current"] is True  # 记住的决定还在（只是被压掉）
+    assert row["coverage"]["role"] == envadvice.ROLE_USER
+    assert [d["code"] for d in row["coverage"]["detail"]] == [
+        envadvice.DETAIL_NOT_FOUND_USER
+    ]
+
+
+@posix_only
+def test_J_the_global_interpreter_itself_is_the_target_role_when_it_is_a_candidate(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "p"
+    root.mkdir()
+    remembered = _fake_venv(root, ".venv")
+    pinned = _fake_venv(root, "venv")
+    _remember_selected(root, remembered)
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(pinned))
+    lacking = _health(modules_ok={"covok_a": False}, modules_detail={"covok_a": "not_found"})
+
+    out = envadvice.check(
+        root,
+        "p.py",
+        modules=("covok_a",),
+        probe=_fake_probe({".venv/bin/python": lacking, "venv/bin/python": lacking}),
+    )
+
+    assert _row(out, envworld.venv_rel("venv"))["coverage"]["role"] == envadvice.ROLE_TARGET
+    assert _row(out, envworld.venv_rel(".venv"))["coverage"]["role"] == envadvice.ROLE_USER
+
+
+@posix_only
+def test_without_a_global_setting_the_remembered_environment_stays_the_target(tmp_path):
+    root = tmp_path / "p"
+    root.mkdir()
+    chosen = _fake_venv(root, ".venv")
+    _remember_selected(root, chosen)
+    lacking = _health(modules_ok={"covok_a": False}, modules_detail={"covok_a": "not_found"})
+
+    out = envadvice.check(
+        root,
+        "p.py",
+        modules=("covok_a",),
+        probe=_fake_probe({".venv/bin/python": lacking}),
+    )
+
+    row = _row(out, envworld.venv_rel(".venv"))
+    assert row["coverage"]["role"] == envadvice.ROLE_TARGET
+    assert [d["code"] for d in row["coverage"]["detail"]] == [envadvice.DETAIL_MISSING_TARGET]
+
+
 # ---------------------------------------------------------------------------
 # 显式选择不被覆盖度改写
 # ---------------------------------------------------------------------------
