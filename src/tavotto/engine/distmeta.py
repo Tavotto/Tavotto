@@ -976,6 +976,19 @@ def _read_conda_meta(rd: _Reader, prefix: str, roots: Sequence[SiteRoot]) -> lis
     return out
 
 
+# 已知、只影响 `distutils` 的良性 `.pth` 钩子，**按整行内容**精确匹配（不是按文件名放行：同名文件里换了内容就不匹配，照常计入 uncovered）：
+# * setuptools 的 `distutils-precedence.pth`（venv 自带 setuptools 的 Python 3.10 及以前、或装了 setuptools 的环境都有；
+#   默认值 `local` 是新版、`stdlib` 是 setuptools 60 前后的老版）：只在 `_distutils_hack` 里装 `distutils` 的 import 垫片；
+# * virtualenv 的 `_virtualenv.pth`：`import _virtualenv`，只给 `distutils` 打补丁。
+# 其余任何 `import …` 行都没建模，仍计入 `uncovered_paths`。
+_KNOWN_BENIGN_PTH_RE = re.compile(
+    r"import os; var = 'SETUPTOOLS_USE_DISTUTILS'; "
+    r"enabled = os\.environ\.get\(var, '(?:local|stdlib)'\) == 'local'; "
+    r"enabled and __import__\('_distutils_hack'\)\.add_shim\(\);"
+    r"|import _virtualenv"
+)
+
+
 def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist]) -> None:
     """`.pth` 当文本：`import` 行不执行（只认 editable finder 的已建模形式，其余计入 uncovered）；`__editable___*_finder` 读同一目录里的 finder 源码取 MAPPING；
     路径行不跟进（计数）。"""
@@ -996,6 +1009,8 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
             m = _FINDER_LINE_RE.fullmatch(line) if pth.startswith("__editable__.") else None
             if m is not None:
                 finders.append(m.group(1))  # 已建模形式：setuptools 的 editable finder 安装行
+            elif _KNOWN_BENIGN_PTH_RE.fullmatch(line):
+                continue  # 已建模：只影响 distutils 的良性钩子（见 _KNOWN_BENIGN_PTH_RE），不提供任何模块
             elif not line.startswith(("import ", "import\t")) and (
                 os.path.normcase(os.path.normpath(os.path.join(root.path, line))) in rd.covered
             ):

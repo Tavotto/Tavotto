@@ -1411,6 +1411,14 @@ def _sys_site_venv(tmp_path: Path, name: str = "sysvenv") -> tuple[Path, Path]:
     return venv, envworld.venv_python(venv)
 
 
+def subprocess_output(cmd: list[str]) -> str:
+    import subprocess
+
+    return subprocess.run(
+        cmd, check=True, capture_output=True, encoding="utf-8", timeout=120
+    ).stdout.strip()
+
+
 def _venv_site(python: Path) -> str:
     import subprocess
 
@@ -1818,6 +1826,72 @@ class TestExtraPathLayers:
             assert all(p != stdlib and not p.startswith(stdlib + os.sep) for p in norm), stdlib
         assert all(os.path.basename(p).lower() not in ("lib-dynload", "dlls") for p in norm)
         assert not set(norm) & {os.path.normcase(p) for p in facts.site_roots}
+
+    def _probe_with_sys_path(self, entries, *, cwd):
+        """在真解释器里跑 `_FACTS_SRC`，只是先把给定条目插到 sys.path 最前（标准库留着，解释器才起得来）——造出 Windows 形态的 sys.path（含安装根目录）。"""
+        import subprocess
+
+        code = (
+            "import json, sys\n"
+            "sys.path[:0] = json.loads(sys.argv[1])\n"
+            "exec(compile(sys.argv[2], '<facts>', 'exec'))\n"
+        )
+        out = subprocess.run(
+            [sys.executable, "-c", code, json.dumps(entries), depplan._FACTS_SRC],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=120,
+            cwd=str(cwd),
+            check=True,
+        ).stdout
+        return json.loads(out)
+
+    def test_install_roots_and_the_probe_cwd_are_not_extra_layers(self, tmp_path):
+        """CI 跟进（Windows）：sys.path 上有基础解释器根目录 / venv 根目录 / 探针 cwd 时不当额外路径层扫描（里面的链接 / junction
+        会把整个名字层判成没读全，所有本该判缺的改判来源未定）。真的 `--target` 目录照旧在。"""
+        cwd = tmp_path / "scratch"
+        cwd.mkdir()
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        entries = [
+            "",
+            str(cwd),
+            sys.prefix,
+            sys.exec_prefix,
+            sys.base_prefix,
+            sys.base_exec_prefix,
+            os.path.join(sys.base_prefix, "DLLs"),
+            os.path.join(sys.base_prefix, "Lib"),
+            str(vendor),
+        ]
+        facts = self._probe_with_sys_path(entries, cwd=cwd)
+        extra = [os.path.normcase(p) for p in facts["extra_roots"]]
+        for root in {sys.prefix, sys.exec_prefix, sys.base_prefix, sys.base_exec_prefix, str(cwd)}:
+            assert os.path.normcase(os.path.abspath(root)) not in extra, root
+        assert os.path.normcase(os.path.abspath(vendor)) in extra  # 对照：其它目录照旧报
+
+    def test_a_venv_root_on_pythonpath_does_not_hide_a_missing_package(self, tmp_path, monkeypatch):
+        """Windows 的 sys.path 里本来就有 venv 根目录与基础根目录：这里用 PYTHONPATH 把它们加进真 venv，缺包仍报缺。"""
+        venv, python = _sys_site_venv(tmp_path)
+        probe = depplan.target_facts(str(python), use_cache=False)
+        module, dist = _free_import(probe.installed)
+        base = subprocess_output(
+            [str(python), "-c", "import sys;print(sys.base_prefix)"],
+        )
+        old = os.environ.get("PYTHONPATH", "")
+        monkeypatch.setenv(
+            "PYTHONPATH", os.pathsep.join(p for p in (str(venv), base, old) if p)
+        )
+        depplan.reset_cache()
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert facts is not None
+        norm = {os.path.normcase(os.path.realpath(p)) for p in facts.extra_roots}
+        assert os.path.normcase(os.path.realpath(venv)) not in norm
+        assert os.path.normcase(os.path.realpath(base)) not in norm
+        index = depplan.static_index(facts)
+        assert index is not None and index.names_complete is True
+        plan = self._plan(tmp_path, facts, f"import {module}\n")
+        assert plan.missing != () and plan.status != "nothing_needed"
 
     def test_the_extra_directories_are_not_a_plan_input(self, tmp_path):
         prefix, site = _env(tmp_path)
