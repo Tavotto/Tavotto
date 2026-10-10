@@ -1129,6 +1129,7 @@ def _fresh_generation_joint(project: str, script: str) -> depplan.JointPlan | No
         target_kind=TARGET_MANAGED,
         groups=depplan.selected_groups_setting(project),
         install_facts=install,
+        coverage=_coverage_reader(facts),
     )
 
 
@@ -3803,6 +3804,17 @@ def private_fresh_facts() -> depplan.TargetFacts | None:
     )
 
 
+def _coverage_reader(facts: depplan.TargetFacts | None):
+    """联合计划读 PR3 覆盖度用的只读查询：目标解释器对这组 import 已有的体检结论（`userenvs` 缓存；没量过回 None）。
+    **不起任何进程**——缓存是明确的环境检查 / 依赖门留下的，键 = 路径 + 环境代 + import 集合 + 是否内置，过期（站点目录变了）
+    的不返回。用来认出「包在、导入失败」（装它救不了），见 `depplan.plan(coverage=)`。"""
+    if facts is None or not facts.python:
+        return None
+    python = facts.python
+    bundled = pool.same_python(python, runtime.bundled_python())
+    return lambda names: userenvs.cached_probe(python, names, bundled=bundled)
+
+
 def joint_plan_for(
     project: str | Path,
     script: str,
@@ -3834,6 +3846,7 @@ def joint_plan_for(
         target_kind=target_kind,
         groups=groups,
         install_facts=install_facts,
+        coverage=_coverage_reader(facts),
     )
     return _with_scope_check(root, script, plan, target_kind, scope_policy), target_kind, python
 
@@ -3912,7 +3925,13 @@ def create_joint_plan(
         )
     groups = depplan.selected_groups_setting(root) if groups is None else list(groups)
     joint = depplan.plan(
-        root, script, facts=facts, target_kind=kind, groups=groups, install_facts=install_facts
+        root,
+        script,
+        facts=facts,
+        target_kind=kind,
+        groups=groups,
+        install_facts=install_facts,
+        coverage=_coverage_reader(facts),
     )
     joint = _with_scope_check(root, script, joint, kind, scope_policy)
     # 干净机器上「什么都不缺」也得建环境（没有任何解释器可用）：nothing_needed 照样成计划，delta 为空 = 只装 adapter

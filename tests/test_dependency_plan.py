@@ -9,6 +9,7 @@ unsupported 闭集、3.10 无 tomllib 的分支）、`importscan`（stdlib / 本
 from __future__ import annotations
 
 import builtins
+import dataclasses
 import json
 import os
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import depplan, depresolve, importscan
+from tavotto.engine import depplan, depresolve, distmeta, importscan
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "foundation" / "dependency_declarations"
@@ -951,6 +952,426 @@ class TestPlan:
             str(tmp_path), {depplan.SETTINGS_KEY: ["requirements-dev.txt", 3]}
         )
         assert depplan.selected_groups_setting(tmp_path) == ["requirements-dev.txt"]
+
+
+# ===========================================================================
+# 来源状态（Import Origin Resolver PR4）：多发行包 / editable / 无元数据 / 导入失败 不进 missing
+# ===========================================================================
+SP_REL = "lib/python3.12/site-packages"
+
+
+def _env(tmp_path: Path, name: str = "venv") -> tuple[Path, Path]:
+    prefix = tmp_path / name
+    site = prefix / SP_REL
+    site.mkdir(parents=True)
+    _write(prefix, "pyvenv.cfg", "home = /usr/bin\nversion = 3.12.1\n")
+    return prefix, site
+
+
+def _dist(
+    site: Path,
+    name: str,
+    version: str,
+    *,
+    top: str,
+    record: list[str] | None = None,
+    direct_url: dict | None = None,
+) -> None:
+    d = site / f"{name.replace('-', '_')}-{version}.dist-info"
+    d.mkdir(parents=True)
+    (d / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\nBODY\n", encoding="utf-8"
+    )
+    (d / "top_level.txt").write_text(top, encoding="utf-8")
+    if record is not None:
+        rows = [f"{p},sha256=abc,10" for p in record] + [f"{d.name}/METADATA,,"]
+        (d / "RECORD").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    if direct_url is not None:
+        (d / "direct_url.json").write_text(json.dumps(direct_url), encoding="utf-8")
+
+
+def _facts_at(prefix: Path, installed: dict) -> depplan.TargetFacts:
+    """目标解释器的事实，前缀指向 tmp_path 里造的真环境（静态索引读它；解释器本身一次也不起）。"""
+    base = _facts(installed)
+    return depplan.TargetFacts(
+        python=str(prefix / "bin" / "python"),
+        marker_env=base.marker_env,
+        stdlib=base.stdlib,
+        installed=dict(installed),
+        prefix=str(prefix),
+    )
+
+
+def _health(**detail) -> dict:
+    return {"ok": True, "modules_detail": dict(detail), "modules_ok": {}}
+
+
+class TestPlanOrigins:
+    """`missing` 只剩「确实该装、且有可信安装名」的。来源未定的进 `unknown` + `origins`，不进 `requirements`。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _project(self, tmp_path: Path, script: str, requirements: str = "") -> Path:
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", script)
+        if requirements:
+            _write(proj, "requirements.txt", requirements)
+        return proj
+
+    def _plan(self, proj, facts, **kw):
+        return depplan.plan(proj, "plot.py", facts=facts, target_kind="project_venv", **kw)
+
+    # ---- M5（BASELINE §2-Q3）----------------------------------------------------------------
+    def test_m5_cv2_with_the_headless_build_installed_is_not_missing(self, tmp_path):
+        """审计时的复现：已装 `opencv-python-headless`，计划却报 `missing=['opencv-python']`、要装一个重复的 cv2。"""
+        proj = self._project(tmp_path, "import cv2\n")
+        plan = self._plan(proj, _facts({"opencv-python-headless": "4.9.0"}))
+        assert plan.status == "nothing_needed"
+        assert plan.missing == () and plan.requirements == ()
+        (entry,) = plan.satisfied
+        assert entry["import_name"] == "cv2"
+        assert entry["distribution"] == "opencv-python-headless"  # 装着的那个，不是 curated 的那个
+        assert entry["mapped_distribution"] == "opencv-python"
+        assert entry["installed_version"] == "4.9.0"
+        assert plan.unknown == () and plan.origins == ()
+
+    def test_cv2_with_nothing_installed_keeps_the_curated_default_but_says_it_is_ambiguous(
+        self, tmp_path
+    ):
+        """没有任何备选装着：照旧缺 `opencv-python`（用户确认摘要里看得见），但条目带上「多发行包」的来源状态。"""
+        proj = self._project(tmp_path, "import cv2\n")
+        plan = self._plan(proj, _facts({"numpy": "2.0.0"}))
+        assert plan.status == "ready"
+        assert plan.requirements == ("opencv-python",)
+        (entry,) = plan.missing
+        assert entry["distribution"] == "opencv-python"
+        assert entry["distribution_status"] == "module_origin_ambiguous"
+
+    def test_two_cv2_builds_installed_is_ambiguous_and_nothing_is_installed(self, tmp_path):
+        proj = self._project(tmp_path, "import cv2\n")
+        plan = self._plan(
+            proj, _facts({"opencv-python-headless": "4.9.0", "opencv-contrib-python": "4.9.0"})
+        )
+        assert plan.missing == () and plan.satisfied == () and plan.requirements == ()
+        assert plan.unknown == ("cv2",)
+        (origin,) = plan.origins
+        assert origin["reason"] == "module_origin_ambiguous"
+        assert origin["candidates"] == [
+            "opencv-contrib-python",
+            "opencv-contrib-python-headless",
+            "opencv-python",
+            "opencv-python-headless",
+        ]
+
+    def test_the_declared_name_wins_when_it_is_installed(self, tmp_path):
+        proj = self._project(tmp_path, "import cv2\n", "opencv-python-headless>=4\n")
+        plan = self._plan(
+            proj, _facts({"opencv-python-headless": "4.9.0", "opencv-contrib-python": "4.9.0"})
+        )
+        (entry,) = plan.satisfied
+        assert entry["distribution"] == "opencv-python-headless"
+        assert entry["declared"] is True and entry["matches_declared"] is True
+        assert plan.origins == ()
+
+    # ---- editable / 本地 / Conda / 无元数据：静态索引的来源 --------------------------------------
+    def test_an_editable_provider_is_not_missing_and_never_becomes_a_pip_name(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(
+            site,
+            "my-yaml-fork",
+            "0.1",
+            top="yaml\n",
+            record=["yaml/__init__.py"],
+            direct_url={"url": "file:///src/fork", "dir_info": {"editable": True}},
+        )
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {"my-yaml-fork": "0.1"}))
+        assert plan.status == "nothing_needed"
+        assert plan.missing == () and plan.requirements == ()  # 不装 pyyaml 去盖它
+        assert plan.unknown == ("yaml",)
+        (origin,) = plan.origins
+        assert origin["reason"] == "editable_dependency_not_reproducible"
+        assert origin["distribution_status"] == "editable_dependency_not_reproducible"
+        assert origin["provenance"] == "editable"
+        assert origin["candidates"] == ["my-yaml-fork", "pyyaml"] or origin["candidates"] == [
+            "my-yaml-fork"
+        ]
+
+    @pytest.mark.parametrize(
+        "direct_url,reason",
+        [
+            (
+                {"url": "file:///wheels/fork.whl", "archive_info": {}},
+                "installed_source_not_reproducible",
+            ),
+            (
+                {"url": "https://example.invalid/x.git", "vcs_info": {"vcs": "git"}},
+                "installed_source_not_reproducible",
+            ),
+            ({"url": "file:///src/fork", "dir_info": {}}, "installed_source_not_reproducible"),
+        ],
+        ids=["local-wheel", "vcs", "local-dir"],
+    )
+    def test_local_and_vcs_providers_are_not_missing_either(self, tmp_path, direct_url, reason):
+        prefix, site = _env(tmp_path)
+        _dist(site, "fork", "1.0", top="yaml\n", record=["yaml/__init__.py"], direct_url=direct_url)
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {"fork": "1.0"}))
+        assert plan.missing == () and plan.requirements == ()
+        assert [(o["import_name"], o["reason"]) for o in plan.origins] == [("yaml", reason)]
+
+    def test_a_module_in_site_packages_without_any_metadata_is_not_missing(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _write(site, "yaml/__init__.py", "")
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {}))
+        assert plan.missing == () and plan.requirements == ()
+        (origin,) = plan.origins
+        assert origin["import_name"] == "yaml" and origin["reason"] == "unverified"
+
+    def test_a_package_that_really_is_absent_is_still_missing(self, tmp_path):
+        """静态索引读得到、也读全了，但没有谁声称提供它：照旧缺（负例：来源收紧不能把真缺的也吞掉）。"""
+        prefix, site = _env(tmp_path)
+        _dist(site, "numpy", "2.0.0", top="numpy\n", record=["numpy/__init__.py"])
+        proj = self._project(tmp_path, "import yaml\nimport numpy\n")
+        plan = self._plan(proj, _facts_at(prefix, {"numpy": "2.0.0"}))
+        assert plan.status == "ready"
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"]
+        assert plan.requirements == ("pyyaml",)
+        assert plan.origins == ()
+
+    def test_a_conda_package_without_pip_metadata_is_never_given_a_pip_name(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        conda = prefix / "conda-meta"
+        conda.mkdir()
+        (conda / "pyyaml-6.0-py312.json").write_text(
+            json.dumps(
+                {"name": "pyyaml", "version": "6.0", "files": [f"{SP_REL}/yaml/__init__.py"]}
+            ),
+            encoding="utf-8",
+        )
+        _write(site, "yaml/__init__.py", "")
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {}))
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["conda_package_not_pypi"]
+
+    # ---- 包在、导入失败（PR3 覆盖度缓存）-----------------------------------------------------
+    def test_a_module_that_imports_with_an_error_is_not_fixed_by_installing_its_package(
+        self, tmp_path
+    ):
+        proj = self._project(tmp_path, "import yaml\n")
+        seen: list[tuple] = []
+
+        def cached(names):
+            seen.append(names)
+            return _health(yaml="import_error")
+
+        plan = self._plan(proj, _facts({}), coverage=cached)
+        assert plan.missing == () and plan.requirements == ()
+        assert plan.unknown == ("yaml",)
+        (origin,) = plan.origins
+        assert origin["reason"] == depplan.ORIGIN_IMPORT_FAILED
+        assert origin["coverage"] == "import_error"
+        assert seen == [("yaml",)]  # 只读查询，用的是依赖门 / 检测同一组名字
+
+    @pytest.mark.parametrize(
+        "health",
+        [
+            None,
+            {"ok": False, "modules_detail": {"yaml": "import_error"}},  # 环境本身不健康：不看模块
+            _health(yaml="not_found"),
+            _health(yaml="deferred"),
+            _health(),
+        ],
+        ids=["not-measured", "unusable-env", "not-found", "deferred", "no-detail"],
+    )
+    def test_only_a_measured_import_error_changes_the_verdict(self, tmp_path, health):
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts({}), coverage=lambda names: health)
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"]
+        assert plan.requirements == ("pyyaml",) and plan.origins == ()
+
+    def test_an_import_error_for_one_module_does_not_spare_the_others(self, tmp_path):
+        proj = self._project(tmp_path, "import yaml\nimport tabulate\n")
+        plan = self._plan(proj, _facts({}), coverage=lambda names: _health(yaml="import_error"))
+        assert [m["distribution"] for m in plan.missing] == ["tabulate"]
+        assert plan.requirements == ("tabulate",)
+        assert plan.unknown == ("yaml",)
+
+    # ---- 不变量 ------------------------------------------------------------------------------
+    def test_unknown_names_are_exactly_the_origins_names(self, tmp_path):
+        proj = self._project(tmp_path, "import zzz_private\nimport cv2\nimport yaml\n")
+        plan = self._plan(
+            proj,
+            _facts({"opencv-python-headless": "1", "opencv-contrib-python": "1"}),
+            coverage=lambda names: _health(yaml="import_error"),
+        )
+        assert set(plan.unknown) == {o["import_name"] for o in plan.origins}
+        assert {o["reason"] for o in plan.origins} <= set(depplan.ORIGIN_REASONS)
+        assert dict((o["import_name"], o["reason"]) for o in plan.origins)["zzz_private"] == (
+            "distribution_unresolved"
+        )
+        assert plan.to_payload()["origins"] == [dict(o) for o in plan.origins]
+
+    def test_origin_facts_never_carry_paths_or_file_contents(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _dist(
+            site,
+            "my-yaml-fork",
+            "0.1",
+            top="yaml\n",
+            record=["yaml/__init__.py"],
+            direct_url={"url": "file:///SECRET/fork", "dir_info": {"editable": True}},
+        )
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, _facts_at(prefix, {"my-yaml-fork": "0.1"}))
+        text = json.dumps(plan.to_payload())
+        assert str(tmp_path) not in text and "SECRET" not in text
+
+    def test_a_plan_with_nothing_unusual_is_unchanged_by_the_static_index(self, tmp_path):
+        """回归（BASELINE §6）：没有来源问题的脚本，读不读静态索引，需求 / 约束 / 身份 / 输入指纹逐字相同——
+        受管环境的代目录名与「第二次打开不重装」不受影响。"""
+        prefix, site = _env(tmp_path)
+        _dist(site, "six", "1.17.0", top="six\n", record=["six.py"])
+        proj = self._project(tmp_path, "import six\nimport yaml\n", "six==1.17.0\n")
+        facts = _facts_at(prefix, {"six": "1.17.0"})
+        with_index = self._plan(proj, facts)
+        without = self._plan(proj, facts, dists=None)
+        for field in ("status", "requirements", "constraints", "identity", "inputs_digest"):
+            assert getattr(with_index, field) == getattr(without, field), field
+        assert [m["distribution"] for m in with_index.missing] == ["pyyaml"]
+        assert [m["distribution"] for m in without.missing] == ["pyyaml"]
+
+    def test_reading_the_static_index_for_a_plan_executes_nothing(self, tmp_path, monkeypatch):
+        """零执行：目标环境里放一个 `__init__` / `.pth` / `sitecustomize`，出计划之后没有哨兵文件；起进程 / 联网 /
+        `importlib.metadata` / `find_spec` 全换成调用即失败的桩。"""
+        import importlib.metadata
+        import importlib.util
+        import socket
+        import subprocess
+
+        sentinel = tmp_path / "SIDE_EFFECT"
+        body = f"open({str(sentinel)!r}, 'w').write('ran')\n"
+        prefix, site = _env(tmp_path)
+        _write(site, "dangerous_package/__init__.py", body)
+        _write(site, "evil.pth", f"import os; open({str(sentinel)!r}, 'w').write('pth')\n")
+        _write(site, "sitecustomize.py", body)
+        _dist(
+            site,
+            "dangerous-package",
+            "1.0",
+            top="dangerous_package\n",
+            record=["dangerous_package/__init__.py"],
+            direct_url={"url": "file:///src/d", "dir_info": {"editable": True}},
+        )
+
+        def boom(name):
+            def _boom(*a, **k):
+                raise AssertionError(f"{name} 不许在出计划时被调用")
+
+            return _boom
+
+        for target, attr in (
+            (subprocess, "Popen"),
+            (subprocess, "run"),
+            (os, "system"),
+            (socket, "socket"),
+            (importlib.metadata, "distributions"),
+            (importlib.util, "find_spec"),
+        ):
+            monkeypatch.setattr(target, attr, boom(f"{target.__name__}.{attr}"))
+        proj = self._project(tmp_path, "import dangerous_package\n")
+        facts = _facts_at(prefix, {"dangerous-package": "1.0"})
+        plan = self._plan(proj, facts)
+        assert plan.missing == () and plan.requirements == ()
+        assert not sentinel.exists()
+
+    def test_the_observed_provider_never_becomes_an_install_name(self, tmp_path):
+        """已装元数据是证据不是授权：运行环境里 `cv2` 由 headless 提供，要新建一代时装的仍是表 / 声明里的名字，
+        不是观测到的那个（`selected_distribution` / `observed_distribution` 只用来判「已经有了」）。"""
+        proj = self._project(tmp_path, "import cv2\n")
+        running = _facts({"opencv-python-headless": "4.9.0"})
+        fresh = _facts({})  # 新一代装之前：什么都没有
+        plan = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="tavotto_managed", install_facts=fresh
+        )
+        assert plan.missing == ()  # 此刻的环境里有，不缺
+        assert plan.requirements == ("opencv-python",)
+        assert "opencv-python-headless" not in " ".join(plan.requirements)
+
+    def test_the_index_lives_and_dies_with_the_facts(self, tmp_path, monkeypatch):
+        """索引与事实同一刻读、同一个 `reset_cache` 清：装上了但验证没过的包不会 `reset_cache`，事实停在装之前，
+        索引也必须停在装之前（否则同一个包一边说没装、一边说装着，FO22 的门就不再问了）。"""
+        prefix, site = _env(tmp_path)
+        facts = _facts_at(prefix, {})
+        first = depplan.static_index(facts)
+        assert first is not None and depplan.static_index(facts) is first  # 缓存着
+        _dist(
+            site, "late", "1.0", top="late\n", record=["late/__init__.py"]
+        )  # 事实之后才出现在磁盘上
+        assert depplan.static_index(facts) is first  # 不偷偷换成更新的一份
+        depplan.reset_cache(facts.python)
+        fresh = depplan.static_index(facts)
+        assert fresh is not first and fresh.lookup("late").candidates
+
+    def test_measuring_the_facts_reads_the_index_at_the_same_moment(self, monkeypatch):
+        calls: list[str] = []
+        real = distmeta.index_environment
+
+        def counting(prefix, **kw):
+            calls.append(str(prefix))
+            return real(prefix, **kw)
+
+        monkeypatch.setattr(distmeta, "index_environment", counting)
+        facts = depplan.target_facts(sys.executable, use_cache=False)
+        assert facts is not None and facts.prefix
+        assert calls == [facts.prefix]  # 量事实的同时读了索引
+        depplan.static_index(facts)
+        assert calls == [facts.prefix]  # 出计划时不再读第二遍
+
+    def test_a_plan_without_a_prefix_reads_no_index(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            distmeta,
+            "index_environment",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该读")),
+        )
+        proj = self._project(tmp_path, "import yaml\n")
+        plan = self._plan(proj, dataclasses.replace(_facts({}), prefix=""))  # 替身事实：没有前缀
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"]
+
+    def test_the_closed_sets_do_not_grow_blocked(self):
+        """C3：来源未定不是新的 `blocked` 理由——`BLOCK_REASONS` 闭集原样。"""
+        assert depplan.BLOCK_REASONS == (
+            "dependency_declaration_unsupported",
+            "dependency_conflict",
+            "dependency_hashes_incomplete",
+            "dependency_target_unavailable",
+            "dependency_scope_conflict",
+        )
+        assert not set(depplan.ORIGIN_REASONS) & set(depplan.BLOCK_REASONS)
+
+    def test_the_import_failed_reason_is_the_coverage_detail_code(self):
+        from tavotto.engine import envadvice
+
+        assert depplan.ORIGIN_IMPORT_FAILED == envadvice.DETAIL_IMPORT_FAILED_TARGET
+        known = set(distmeta.STATUSES) | {
+            depplan.ORIGIN_UNRESOLVED,
+            depplan.ORIGIN_IMPORT_FAILED,
+        }
+        assert set(depplan.ORIGIN_REASONS) <= known
+
+    def test_a_scan_cut_short_says_so_in_the_plan_payload(self, tmp_path):
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import m0\n")
+        for i in range(importscan.MAX_DEPTH + 2):
+            _write(proj, f"m{i}.py", f"import m{i + 1}\n")
+        plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="project_venv")
+        assert plan.scan["truncated"] is True and plan.scan["search_complete"] is False
 
 
 class TestInputsDigest:

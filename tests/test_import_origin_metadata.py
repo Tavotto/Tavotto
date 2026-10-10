@@ -1575,9 +1575,12 @@ class TestInstalledMetadataIsNotAnInstallAuthorization:
             assert c.selected_distribution == ""
             assert not any(row["reproducible"] for row in c.distribution_candidates)
 
-    def test_the_planner_and_repair_modules_do_not_read_the_new_observation(self):
+    def test_the_installer_and_the_resolver_do_not_read_the_new_observation(self):
+        """安装器（`deprepair`）与可信解析（`depresolve`）从不读已装元数据的观测字段。PR4 起 `depplan` 读它们——只用来
+        认出「已经有提供者 / 来源未定」（收紧 `missing`），**不**拿它们造安装名：见
+        `test_dependency_plan.py::TestPlanOrigins::test_the_observed_provider_never_becomes_an_install_name`。"""
         root = Path(importscan.__file__).parent
-        for mod in ("depplan.py", "deprepair.py", "depresolve.py"):
+        for mod in ("deprepair.py", "depresolve.py"):
             names = {
                 n.id if isinstance(n, ast.Name) else n.attr
                 for n in ast.walk(ast.parse((root / mod).read_text(encoding="utf-8")))
