@@ -227,6 +227,10 @@ the option is disabled and no screen offers it. When it is enabled:
   receiving service keeps no access log and uses the address only, transiently and
   salted-and-hashed, to rate-limit requests; the storage provider's own handling
   follows its terms.
+* **Remote instances.** If you are connected to a remote Tavotto instance, the
+  engine that builds and uploads the bundle is the one on the remote machine, so
+  the upload leaves that machine, not yours (the dialog on your screen only
+  controls it). The bundle then describes the remote machine.
 * **Report ID.** When the send succeeds you get a report ID (`TVD-…`) to quote in a
   GitHub issue or chat so the maintainers can find your report. It is the only
   handle to the report; the bundle is not tied to any account or to your telemetry
