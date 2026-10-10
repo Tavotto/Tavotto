@@ -519,7 +519,9 @@ export function MissingDependencyCard({
   const applyVenv = async (rel: string) => {
     setBusy(true)
     setError(await (confirmation && boundCandidate
-      ? adoptCandidate(boundCandidate)
+      // 带上发现这个建议时的脚本与缺的包：后端照同一个脚本枚举候选（脚本在子目录、venv 也在子目录时才找得到），
+      // 并连缺的包一起重新体检
+      ? adoptCandidate(boundCandidate, recommendation?.script || undefined, module || undefined)
       : setProjectPython(rel)))
     setBusy(false)
   }

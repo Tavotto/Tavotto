@@ -3555,7 +3555,7 @@ export interface ProjectEnvFailure {
    * `code === 'environment_confirmation_required'`（ADR 0114）：项目自己的环境体检通过、缺的包也在里面——
    * 这是建议不是决定，用户点一次才采用（候选按钮用 `candidates`）。路径不在公开投影里。
    */
-  recommended?: { venv: string; id?: string; generation?: string }
+  recommended?: { venv: string; id?: string; generation?: string; script?: string }
 }
 
 /** 一个系统解释器的体检结论（只有结论字段，没有体检脚本的原始输出） */

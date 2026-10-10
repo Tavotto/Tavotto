@@ -18,6 +18,7 @@ from support import envworld
 from support.envworld import World, real_venv, rebuild_venv
 from tavotto.engine import (
     deprepair,
+    envadvice,
     pool as engine_pool,
     projectenv,
     userenvs,
@@ -882,6 +883,7 @@ def test_missing_dependency_recommendation_keeps_its_generation_through_http_pro
         "venv": ".venv",
         "id": userenvs.env_id(python),
         "generation": projectenv.environment_generation(python),
+        "script": "figure.py",
     }
     rebuild_venv(root, ".venv", python=WORKER_PY)
     response = client.patch(
@@ -896,6 +898,50 @@ def test_missing_dependency_recommendation_keeps_its_generation_through_http_pro
     assert response.status_code == 409
     assert response.get_json()["code"] == "environment_changed"
     assert projectenv.remembered_record(root) is None
+
+
+@needs_worker
+def test_a_recommendation_for_a_nested_script_remembers_the_script_it_was_found_for(
+    client, tmp_path, monkeypatch
+):
+    """补审 #911 r4236706760：脚本在子目录、venv 也在子目录时，建议是照**那个脚本**发现的；采用端点若从项目根枚举
+    就找不到它（`environment_candidate_gone`），用户点了「使用」却用不上刚被问到的环境。所以建议要带出脚本，
+    界面点「使用」时原样回传。"""
+    from tavotto import app as m
+
+    root = tmp_path / "nested"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "plot.py").write_text("import matplotlib\n", encoding="utf-8")
+    python = real_venv(root / "sub", ".venv", python=WORKER_PY)
+    pj = _open(client, root)
+    outcome = engine_pool.try_project_env(str(root), "sub/plot.py", "matplotlib")
+    assert outcome["code"] == projectenv.ERROR_CONFIRMATION_REQUIRED
+    error = engine_pool.WorkerError("missing", code="missing_dependency", module="matplotlib")
+    error.project_env = outcome
+    monkeypatch.setattr(m, "_dependency_repair_offer", lambda *args: None)
+    with m.app.test_request_context(query_string={"pj": pj}):
+        shown = m._worker_error_payload(error)["project_env"]["recommended"]
+    assert shown["script"] == "sub/plot.py"
+    assert shown["id"] == userenvs.env_id(python)
+    # 不带脚本从项目根枚举：找不到这个候选（这正是前端必须回传 script 的原因）
+    with pytest.raises(envadvice.AdoptionRefused) as gone:
+        envadvice.adopt_candidate(
+            root, None, shown["id"], expected_generation=shown["generation"], module="matplotlib"
+        )
+    assert gone.value.code == envadvice.ERROR_CANDIDATE_GONE
+    response = client.patch(
+        "/api/engine/environment",
+        json={
+            "scope": "project",
+            "candidate": shown["id"],
+            "expected_generation": shown["generation"],
+            "script": shown["script"],
+            "module": "matplotlib",
+        },
+        query_string={"pj": pj},
+    )
+    assert response.status_code == 200, response.get_json()
+    assert projectenv.remembered_record(root) is not None
 
 
 @needs_worker

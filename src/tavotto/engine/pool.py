@@ -3531,6 +3531,9 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
             "recommended": {
                 "python": python,
                 "venv": outcome.get("venv", ""),
+                # 是为哪个脚本发现的：脚本在子目录时 venv 也许在子目录里，采用端点要照同一个脚本重新枚举候选，
+                # 不带它就从项目根找、报 `environment_candidate_gone`（Codex 评 #911 补审 P1）
+                "script": script_name,
                 "id": userenvs.env_id(python),
                 "generation": projectenv.environment_generation(python),
                 "health": outcome.get("health"),

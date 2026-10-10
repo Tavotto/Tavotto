@@ -658,6 +658,7 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
                         "venv": _project_relative(detail.get("venv", "")),
                         "id": (detail.get("recommended") or {}).get("id", ""),
                         "generation": (detail.get("recommended") or {}).get("generation", ""),
+                        "script": (detail.get("recommended") or {}).get("script", ""),
                     }
                 }
                 if detail.get("code") == engine_projectenv.ERROR_CONFIRMATION_REQUIRED
