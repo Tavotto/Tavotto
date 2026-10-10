@@ -1681,6 +1681,30 @@ class TestExtraPathLayers:
         assert plan.missing == () and plan.requirements == ()
         assert [o["reason"] for o in plan.origins] == ["unverified"]
 
+    def test_a_zip_on_pythonpath_makes_the_names_incomplete_not_missing(
+        self, tmp_path, monkeypatch
+    ):
+        # zipimport 来源（Codex #920 r4237324191）：静态读不到 zip 里有哪些名字——不判缺、不去装同名包遮蔽它
+        import zipfile
+
+        venv, python = _sys_site_venv(tmp_path)
+        probe = depplan.target_facts(str(python), use_cache=False)
+        module, dist = _free_import(probe.installed)
+        control = self._plan(tmp_path, probe, f"import {module}\n")
+        assert control.missing != ()  # 对照：没有 zip 时真缺照样报缺
+        archive = tmp_path / "vendor.zip"
+        with zipfile.ZipFile(archive, "w") as z:
+            z.writestr(f"{module}/__init__.py", "")
+        old = os.environ.get("PYTHONPATH", "")
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(archive), old) if p))
+        depplan.reset_cache()
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert facts.opaque_roots == 1
+        assert str(archive) not in facts.extra_roots + facts.site_roots
+        plan = self._plan(tmp_path, facts, f"import {module}\n")
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
     def test_a_pth_path_line_to_a_source_directory_hides_nothing(self, tmp_path):
         venv, python = _sys_site_venv(tmp_path)
         probe = depplan.target_facts(str(python), use_cache=False)

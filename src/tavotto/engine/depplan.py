@@ -129,7 +129,7 @@ SETTINGS_KEY = "dependency_groups"
 #: 同一套字段、同一套取法——那份实现就是这几行，这里不 import packaging：目标解释器不
 #: 一定有它）、标准库名字表、已装 distribution。输出单行 JSON。**只读**。
 _FACTS_SRC = r"""
-import json, os, platform, site, sys
+import json, os, platform, re, site, sys
 import importlib.machinery
 import importlib.metadata as m
 
@@ -216,6 +216,21 @@ for entry in sys.path:
     if any(norm == k or norm.startswith(k + os.sep) for k in skip):
         continue
     extra_roots.append(path)
+# sys.path 上**不是目录**却存在的条目（PYTHONPATH 上的 zip / egg 等 zipimport 来源）：静态索引读不了里面有哪些名字，只数个数，
+# 由宿主据此把名字层标成没读全（Codex #920 r4237324191）。标准库自己的 `pythonXY.zip`（嵌入式发行版）不算
+opaque_roots = 0
+for entry in sys.path:
+    if not entry or not isinstance(entry, str):
+        continue
+    try:
+        path = os.path.abspath(entry)
+        if not os.path.exists(path) or os.path.isdir(path):
+            continue
+    except Exception:
+        continue
+    if re.fullmatch(r"python\d+t?\.zip", os.path.basename(path).lower()):
+        continue
+    opaque_roots += 1
 sys.stdout.write(json.dumps({
     "marker_env": env,
     "stdlib": sorted(getattr(sys, "stdlib_module_names", ())),
@@ -226,6 +241,7 @@ sys.stdout.write(json.dumps({
     "executable": sys.executable,
     "site_roots": site_roots,
     "extra_roots": extra_roots,
+    "opaque_roots": opaque_roots,
 }))
 """
 
@@ -253,6 +269,9 @@ class TargetFacts:
     #: `sys.path` 上其余存在的目录（`PYTHONPATH` / `.pth` 路径行加进来的；不含标准库与 `site_roots`）。静态索引只做名字级扫描：
     #: 模块名出现在那里 = 别处已有提供者，不判缺。同 `site_roots`：空 = 没量到，不进 digest / payload。
     extra_roots: tuple[str, ...] = ()
+    #: `sys.path` 上存在、但不是目录的 import 来源（zip / egg）的个数。里面的名字静态读不到：> 0 时索引的名字层不完整，
+    #: 本该判缺的改判来源未定，不去装同名包遮蔽它。同上：不进 digest / payload。
+    opaque_roots: int = 0
 
     @property
     def python_version(self) -> str:
@@ -335,6 +354,9 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         ext_suffixes=tuple(str(x) for x in data.get("ext_suffixes") or ()),
         site_roots=tuple(str(x) for x in data.get("site_roots") or () if isinstance(x, str)),
         extra_roots=tuple(str(x) for x in data.get("extra_roots") or () if isinstance(x, str)),
+        opaque_roots=int(data.get("opaque_roots") or 0)
+        if isinstance(data.get("opaque_roots"), int)
+        else 0,
     )
     with _facts_lock:
         _facts_cache[key] = facts
@@ -387,6 +409,8 @@ def static_index(facts: TargetFacts | None) -> distmeta.Index | None:
     )
     if not index.checked:
         return None
+    if facts.opaque_roots > 0:  # zip / egg 里的名字读不到：名字层不完整
+        index.names_complete = False
     with _facts_lock:
         _index_cache[key] = index
     return index
@@ -994,7 +1018,13 @@ def fresh_venv_facts(
         return None
     installed = {depresolve.normalize_distribution(name): "" for name in provided}
     return dataclasses.replace(
-        facts, installed=installed, prefix="", executable="", site_roots=(), extra_roots=()
+        facts,
+        installed=installed,
+        prefix="",
+        executable="",
+        site_roots=(),
+        extra_roots=(),
+        opaque_roots=0,
     )
 
 
