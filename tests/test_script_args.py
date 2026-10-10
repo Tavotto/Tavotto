@@ -173,6 +173,21 @@ def test_names_never_decide_a_role_or_unit():
             True,
         ),
         (
+            # 声明在辅助函数里（形参不是已知 parser）：不能报成 complete + 零参数
+            "helper_declares",
+            "import argparse\ndef add_args(p):\n    p.add_argument('--out', type=argparse.FileType('w'))\n"
+            "parser = argparse.ArgumentParser()\nadd_args(parser)\nparser.parse_args()\n",
+            "dynamic_add_argument",
+            True,
+        ),
+        (
+            "alias_declares",
+            "import argparse\nparser = argparse.ArgumentParser()\nq = parser\n"
+            "q.add_argument('--out')\nparser.parse_args()\n",
+            "dynamic_add_argument",
+            True,
+        ),
+        (
             "custom_action",
             "import argparse\nclass A(argparse.Action):\n    pass\n"
             "p = argparse.ArgumentParser()\np.add_argument('--a', action=A)\np.parse_args()\n",
