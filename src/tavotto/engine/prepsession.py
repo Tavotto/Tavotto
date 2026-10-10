@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import deprepair, preparation, registry, scriptargs, taskdiag
+from . import deprepair, pool, preparation, registry, scriptargs, taskdiag
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -1100,6 +1100,11 @@ class SessionService:
         info: dict = {"module": module, "installable": False}
         if not module:
             return info
+        if pool.install_offer_blocked(str(err.get("install_route") or "")):
+            # 标准库缺了：不查可信解析（不许把 tkinter 之类映射成某个同名 PyPI 包去装），只剩换环境
+            info["code"] = "stdlib_module_missing"
+            info["route"] = pool.INSTALL_ROUTE_STDLIB
+            return info
         try:
             offer = deprepair.offer(sess.project_root, plan.script, module)
             managed = next(
@@ -1112,6 +1117,7 @@ class SessionService:
             )
             if offer.get("code") or managed is None or not offer.get("requirement"):
                 info["code"] = str(offer.get("code") or "dependency_unresolved")
+                info["route"] = pool.INSTALL_ROUTE_UNRESOLVABLE
                 return info
             preview = deprepair.preview_impact(
                 sess.project_root, plan.script, module, target_kind=deprepair.TARGET_MANAGED
@@ -1494,6 +1500,9 @@ class SessionService:
             return {
                 "module": missing["module"],
                 "installable": False,
+                # 装不了的两种去向（前端按它选一句话，不按 code 文案判断）：unresolvable = 映射不到 PyPI；
+                # stdlib_missing = 标准库缺了。预览失败等拿不准的情形回落 unresolvable：同样只剩换环境这条路
+                "route": missing.get("route") or pool.INSTALL_ROUTE_UNRESOLVABLE,
                 "code": missing.get("code", ""),
                 "options": ["specify_package", "choose_environment"],
                 "rerun_required": True,
