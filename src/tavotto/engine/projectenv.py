@@ -355,7 +355,7 @@ out = {"executable": sys.executable, "prefix": sys.prefix,
        "version_info": list(sys.version_info[:3]),
        "arch": platform.machine(), "matplotlib_version": None,
        "tavotto_worker_ok": False, "requested_module": None,
-       "requested_module_ok": None, "modules_ok": {}, "error": None}
+       "requested_module_ok": None, "modules_ok": {}, "modules_detail": {}, "error": None}
 engine_dir = sys.argv[1]
 module = sys.argv[2] if len(sys.argv) > 2 else ""
 extra = [m for m in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if m]
@@ -679,12 +679,37 @@ def _import_state(name):
         return False
 
 
+def _import_detail(name):
+    # 失败原因细分（Import Origin PR3）：`not_found` = 被要求的这个名字（或它的某一级父包）找不到；`import_error` = 它在、
+    # 但导入时抛了别的（它自己的依赖缺——ModuleNotFoundError 的 name 是另一个名字——、ABI、DLL、SyntaxError、
+    # ImportError……）。两者的出路不同（装包 / 修环境），不再都叫 False
+    try:
+        __import__(name)
+        return "found"
+    except ModuleNotFoundError as exc:
+        missing = getattr(exc, "name", None) or ""
+        if missing and (name == missing or name.startswith(missing + ".")):
+            return "not_found"
+        return "import_error"
+    except Exception:
+        return "import_error"
+
+
+def _spec_detail(name):
+    state = _spec_state(name)
+    return "found" if state is True else ("deferred" if state is None else "not_found")
+
+
 _state = _spec_state if mode == "spec" else _import_state
+_detail = _spec_detail if mode == "spec" else _import_detail
+_STATE_OF_DETAIL = {"found": True, "deferred": None}
 if module:
     out["requested_module"] = module
     out["requested_module_ok"] = _state(module)
 for name in extra:
-    out["modules_ok"][name] = _state(name)
+    detail = _detail(name)
+    out["modules_detail"][name] = detail
+    out["modules_ok"][name] = _STATE_OF_DETAIL.get(detail, False)
 if isolated:
     if _spec_state("matplotlib") is None:
         out["deferred_env"] = True  # matplotlib 本身解析进了项目
@@ -722,6 +747,24 @@ def _probe_scratch_dir() -> str:
         return tempfile.mkdtemp(prefix="p-", dir=str(base))
     except OSError:
         return tempfile.mkdtemp(prefix="tavotto-probe-")
+
+
+def execution_note(
+    *, isolated: bool, spec_mode: bool, module: str | None, modules: tuple[str, ...]
+) -> dict:
+    """这次体检**执行了什么**的如实声明（Import Origin PR3：授权的环境检查不得宣称无副作用）。
+
+    * `ran_environment_code`：非隔离启动 = 解释器按正常方式启动，用户环境的 `.pth` / `sitecustomize` 会跑，之后 import
+      matplotlib 与 worker 启动链——全是用户环境里的代码；`-I -S` 的运行前体检不跑 site、不 import；
+    * `imported_modules`：这次真 `__import__` 过哪些名字（运行前的 `find_spec` 方式一个都不 import）——导入一个包就是执行它的
+      `__init__`，可能写文件、联网、改全局状态，我们看不见也拦不住；
+    * 没有 `side_effect_free`：我们从不宣称「无副作用」。"""
+    imported = [] if spec_mode else [*([module] if module else []), *modules]
+    return {
+        "ran_environment_code": not isolated,
+        "imported_modules": imported,
+        "may_run_package_init": bool(imported),
+    }
 
 
 def probe_environment(
@@ -789,6 +832,7 @@ def probe_environment(
     argv.append("spec" if spec_mode else "")
     argv.append(project_root if spec_mode else "")
     argv.append("isolated" if isolate else "")
+    note = execution_note(isolated=isolate, spec_mode=spec_mode, module=module, modules=modules)
     scratch = ""
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
@@ -810,7 +854,13 @@ def probe_environment(
     except (OSError, subprocess.SubprocessError) as exc:
         # 起不来：bad executable format（venv 建在另一个架构上）、被杀毒
         # 隔离、动态库缺失、venv 的 home 指向一个已经删掉的解释器……
-        return {"ok": False, "code": ERROR_UNUSABLE, "python": python, "detail": str(exc)[:400]}
+        return {
+            "ok": False,
+            "code": ERROR_UNUSABLE,
+            "python": python,
+            "detail": str(exc)[:400],
+            "execution": note,
+        }
     finally:
         if scratch:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -820,6 +870,7 @@ def probe_environment(
             "code": ERROR_UNUSABLE,
             "python": python,
             "detail": (proc.stderr or "").strip()[:400],
+            "execution": note,
         }
     try:
         info = json.loads(proc.stdout.strip() or "{}")
@@ -829,9 +880,11 @@ def probe_environment(
             "code": ERROR_UNUSABLE,
             "python": python,
             "detail": (proc.stdout or "").strip()[:400],
+            "execution": note,
         }
 
     info["python"] = python
+    info["execution"] = note
     if info.get("deferred_env"):
         # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
         info.update(ok=True, code="", deferred_env=True)

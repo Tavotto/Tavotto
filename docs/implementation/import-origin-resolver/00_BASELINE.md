@@ -397,3 +397,34 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 * `depresolve` 只加两样东西，且安装路径一概不读：`ALTERNATIVE_DISTRIBUTIONS`（`cv2` 的四个发行包，仅观测）与 `version_satisfies`（已装版本是否满足声明约束，读不懂回 None）。`INSTALLABLE_SOURCES` 不变。
 * 审计 §ResolvedImport 的 `installed_version` / `version_constraints` 在实现里叫 `observed_version` / `declared_constraint`（计划 P2.3 的输出名）；不再另设别名，避免两处漂移。
 * 留给后续阶段：默认扫描里的接线与「哪个环境」的选择（PR3 环境覆盖度）、`depplan` 对 `distribution_status` 的消费与目标解释器 builtin 名单（PR4）、`user_specified` 作为最低一档（PR4/PR5）。
+
+## 11. PR3 实施记录（环境覆盖度）
+
+基线 `origin/main` `4ef6360b0`（叠栈 #814–#820、PR1 #880、PR2 #882 都已合入）。维护者裁决：默认采用模式保持 `detect`（ADR 0114 §六），PR3 **不重做**自动检测，只让检测与 `envadvice.check` 读同一份覆盖度；默认扫描候选环境子进程恒为 0。
+
+**做了什么**
+
+* `projectenv._PROBE_SRC` 只加字段：`modules_detail`（`found` / `not_found` / `import_error` / `deferred`）；`ModuleNotFoundError.name` 不是被要求的名字（或它的某一级父包）= 包在、它自己的依赖缺 = `import_error`。`modules_ok` 的布尔口径与 `ok` / `code` 语义一个字没动（`modules` 仍不影响健康结论）。宿主侧 `probe_environment` 的每个返回都带 `execution`（`ran_environment_code` / `imported_modules` / `may_run_package_init`），由宿主按自己发出的参数算，不信子进程自报。
+* `envadvice.check(modules=)` / `POST /api/engine/environment/check {modules?, coverage?}`：被点名的候选另答「脚本要的 import 装齐了没有」。`coverage: true` 由 `deprepair.script_import_names`（静态计划的 `_plan_imports`，与依赖门 / 检测同一份）算出；名字只认合形状的顶级名、最多 64 个，被丢掉的数进 `coverage.dropped`。不带 `modules` 时对探测函数的调用形状与以前逐字相同。
+* **只有一份覆盖度缓存**：`userenvs.remember_probe` 把检查结论写进 `userenvs._probe_cache`；依赖门 `cache_only`、检测、`recommend(modules=)` 读的都是它。`envadvice._verdicts` 仍只存健康摘要（测试钉着里面没有 `modules_*`）。`_cache_key` 的 import 集合改为排序（顺序无关）——依赖门与检查各自拼出的顺序不同，不许因此各存一份。
+* 结构化 detail（`envadvice.DETAIL_CODES`，**不是发布的错误码**，不进 `ERROR_CODES`）：`module_not_found_in_user_environment`、`module_missing_in_target_environment`、`environment_not_checked`、`environment_unusable`，另加两个必要的补充 `module_import_failed_in_user_environment` / `module_import_failed_in_target_environment`（包在、导入失败——任务只点名了前四个，但 `not_found` vs `import_error` 的细分需要有地方落；维护者若想合并进前两个，改 `coverage_of` 一处即可）。状态 `covered` / `partial` / `missing` / `unusable`（环境本身跑不了 Tavotto，与缺包分开，且不看模块）/ `not_checked`（没量过、换代、延后、模块状态未知——不冒充装齐也不冒充没装齐）。闭集与 `web/src/lib/api.ts` 镜像，登记同源对。
+* `userenvs.evaluate` 的条目加 `import_failed`（装了但导入失败的 import 名，不进 `PUBLIC_FIELDS`，不改协议）。
+* 授权检查如实标注：结果的 `executed`（起了几个候选、import 了哪些名字、`side_effect_free: false`）与每个候选覆盖度的 `executed_user_code`；`recommend()["check"]` 加 `executes_user_code: true` / `side_effect_free: false`。
+* #889 三条（单独一个提交 `6627b05d5`）：①有 `uncovered_paths` 不确认唯一提供者（`unverified` + `path_entries_not_followed`，`selected_distribution` 空）；②editable finder 读得到却读不出 `MAPPING`（`dict(...)`、推导式、变量、语法错误、根本没有 `MAPPING`）= `Index.complete=False`；③`declared_version_conflict` 在所有 provenance（含 Conda 的 dist-info）下都报，来源本身的状态不被冲突盖掉。①改变了 `test_reading_and_scanning_execute_no_pth_sitecustomize_package_or_finder` 的预期（那个环境里有一行没建模的 `import` `.pth`，`evilpkg` 现在是 `unverified`），这是预期内的行为变化，已在测试里写明。
+
+**缩小了什么（以及证据）**
+
+* 「覆盖度缓存键与环境代对齐」：**已满足，没有再改键里的环境代**。BASELINE §1.2 写 `userenvs._probe_cache` 不含环境代，那是审计时 main 的状态；#820 合入后 `userenvs._cache_key` 已含 `projectenv.environment_generation`（`tests/test_environment_autodetect.py::test_the_probe_cache_is_keyed_by_environment_generation` 钉着）。PR3 在这个键上只做了 import 集合排序，并用 fixture G 钉「同一路径被重建 → 旧覆盖度对不上」。
+* 「不重做自动检测」：没有动 `deprepair._detect_environment_*` 的挑选逻辑、`rank()`、`best()`；覆盖度不改推荐顺序、不改任何决定，显式选择永远排在最前（测试钉着）。
+* `deprepair.py` 只加了一个只读小函数 `script_import_names`，`_plan_imports` 及其下游未改。
+* 内置 runtime 的覆盖度没有新增起进程的入口：`check` 仍不把内置当候选；`recommend(modules=)` 只在它正是目标环境（项目选了默认链条）时读依赖门留下的 `bundled=True` 缓存，没有就是 `not_checked`。
+* 运行前（`import_mode="spec"`，`-I -S`）的探测只补了 `modules_detail` 的映射（`find_spec` 为 True/None/False → `found`/`deferred`/`not_found`），行为不变；没有为它新增真 venv 用例（其 `.pth` 处理在 `test_environment_autodetect.py` 里已有大量覆盖）。
+* 没有改前端任何组件：PR3 只在 `api.ts` 加类型与请求参数，展示归 PR6。`app.py` 的改动在第 7566 行之后，facade 清单里 `app.py` 的行号最大为 6051，不需要平移。
+
+**留给 PR4 的事项**
+
+* `depplan` / 联合计划消费 `ImportClass` 的来源字段与覆盖度：`import_failed` 的候选不该被当作「装上这个包就好」（装它救不了），`module_origin_ambiguous` / `unverified` 不再算 `missing`。
+* 依赖门（`user_environment_offer`）展示覆盖度 detail（现在只有 `missing` 的发行包名）。
+* 目标解释器自己的 `sys.stdlib_module_names` / builtin 名单、`GET /api/engine/dependencies` 会起解释器的口径（C5）。
+* 把 `distmeta.index_environment` 接到默认扫描里（现在只有测试与显式调用方构建 `Index`）；接入前 #889 的三条已修。
+* 前端展示（PR6）：用 `coverage.detail` 的 `code` 给一句人话，不在前端复刻判据。

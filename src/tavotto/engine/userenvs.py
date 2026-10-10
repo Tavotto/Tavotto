@@ -622,7 +622,8 @@ def _cache_key(
     return (
         _key(python),
         projectenv.environment_generation(python),
-        modules,
+        # 要量的 import 是一个**集合**：调用方（依赖门 / 明确的环境检查）各自拼出来的顺序不同，不许因此各存一份
+        tuple(sorted(set(modules))),
         bundled,
         how,
     )
@@ -655,6 +656,22 @@ def _probe(
     with _lock:
         _probe_cache[key] = health
     return health
+
+
+def remember_probe(
+    python: str, modules: tuple[str, ...], health: dict, *, bundled: bool = False
+) -> None:
+    """把一次**明确的环境检查**（`envadvice.check`）量到的结论写进这张缓存——覆盖度只有这一份。
+
+    键与依赖门 / 检测读的是同一个（路径 + 环境代 + 要量的 import 集合 + 是否内置 + `import` 方式），所以检查之后门与检测
+    读到的就是用户刚点的那次检查，不会各自再起一遍；环境被重建（换代）后旧结论自然对不上。不带 `modules` 的结论不存
+    （健康体检另有 `envadvice` 的结论表；这里只管覆盖度）。"""
+    mods = tuple(dict.fromkeys(m for m in modules if m))
+    if not mods or not isinstance(health, dict):
+        return
+    stored = {**health, "_site_fp": _health_fingerprint(health)}
+    with _lock:
+        _probe_cache[_cache_key(python, mods, bundled)] = stored
 
 
 def _fresh(python: str, health: dict) -> bool:
@@ -798,6 +815,7 @@ def evaluate(
                 "deferred": True,
                 "health_deferred": True,
             }
+        detail_map = health.get("modules_detail") or {}
         missing = sorted(
             {n["distribution"] for n in needed if ok_map.get(n.get("import_name")) is not True}
         )
@@ -811,6 +829,10 @@ def evaluate(
             "python_version": health.get("python_version", ""),
             "matplotlib_version": health.get("matplotlib_version") or "",
             "missing": missing if healthy else [],
+            # 在、但导入时抛了错（依赖缺 / ABI / DLL）：和「没装」分开——装它救不了（Import Origin PR3）
+            "import_failed": sorted(m for m, d in detail_map.items() if d == "import_error")
+            if healthy
+            else [],
             "satisfies": healthy and not missing,
             "checked": True,
         }

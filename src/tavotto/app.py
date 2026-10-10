@@ -7566,8 +7566,11 @@ def api_engine_environment_install():
 def api_engine_environment_check():
     """明确的环境检查（T05，ADR 0114 §三）：对**被点名范围**里的候选运行健康探测——这是起候选解释器的唯一入口。
 
-    体：`{candidates?: [id…], scope?: "project"|"machine"|"all", include_login_shell?: bool, script?: str}`。
-    不点名候选时按 `scope`（默认只查项目自己的线索）。有预算（候选数、总时限）、可取消
+    体：`{candidates?: [id…], scope?: "project"|"machine"|"all", include_login_shell?: bool, script?: str,
+    modules?: [str…], coverage?: bool}`。不点名候选时按 `scope`（默认只查项目自己的线索）。
+    `modules` / `coverage`（Import Origin PR3）：顺带量「这个脚本要的 import 这个候选装齐了没有」——`coverage: true` 由后端
+    从 `script` 静态算出要量哪些（不接受调用方给路径，只认合形状的顶级名）；**这会真 import 那些包 = 执行它们的
+    `__init__`**，回应里的 `executed` 如实写明，不宣称无副作用。有预算（候选数、总时限）、可取消
     （`DELETE` 同一路径）、同一项目同一时刻只有一次。**检查 ≠ 采用**：这里不写项目设置，回更新后的建议；
     采用是另一个动作（`PATCH /api/engine/environment`，`candidate` + `expected_generation`）。
     """
@@ -7584,6 +7587,17 @@ def api_engine_environment_check():
     if scope not in engine_envadvice.CHECK_SCOPES:
         return jsonify({"error": "scope 不认识", "code": "bad_request"}), 400
     script = str(body.get("script") or "").strip() or None
+    modules = body.get("modules")
+    if modules is not None and (
+        not isinstance(modules, list)
+        or len(modules) > engine_envadvice.MAX_COVERAGE_MODULES
+        or not all(isinstance(m, str) for m in modules)
+    ):
+        return jsonify({"error": "modules 必须是 import 名的列表", "code": "bad_request"}), 400
+    if modules is None and body.get("coverage"):
+        if script is None:
+            return jsonify({"error": "coverage 需要 script", "code": "bad_request"}), 400
+        modules = engine_envadvice.script_modules(root, script)
     try:
         out = engine_envadvice.check(
             root,
@@ -7591,6 +7605,7 @@ def api_engine_environment_check():
             ids=ids,
             scope=scope,
             include_login_shell=bool(body.get("include_login_shell")),
+            modules=modules,
         )
     except engine_envadvice.CheckBusy:
         return jsonify(
