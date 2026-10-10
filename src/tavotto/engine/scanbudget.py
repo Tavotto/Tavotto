@@ -21,10 +21,12 @@
 
 from __future__ import annotations
 
+import io
 import os
 import stat
 import threading
 import time
+import tokenize
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -189,7 +191,11 @@ def _contained_lexical(base, parts: tuple[str, ...]) -> str:
 
 
 def read_regular_text(
-    base, *parts: str, no_follow: bool = False, max_bytes: int | None = MAX_FILE_BYTES
+    base,
+    *parts: str,
+    no_follow: bool = False,
+    max_bytes: int | None = MAX_FILE_BYTES,
+    python_source: bool = False,
 ) -> str:
     """读一个文件的文本：只认**普通文件**、有字节上限、绝不阻塞在 FIFO 上；读不了一律 `OSError`。
 
@@ -234,7 +240,15 @@ def read_regular_text(
             chunks.append(chunk)
     finally:
         os.close(fd)
-    return b"".join(chunks).decode("utf-8", errors="replace")
+    data = b"".join(chunks)
+    if python_source:
+        # Python 源码按 PEP 263 声明 / BOM 解码（带 BOM、`# coding: gbk` 的脚本不能被当 UTF-8 读坏）；解不出读不了
+        try:
+            encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
+            return data.decode(encoding)
+        except (SyntaxError, UnicodeDecodeError, LookupError) as exc:
+            raise OSError(f"source decode failed: {type(exc).__name__}") from exc
+    return data.decode("utf-8", errors="replace")
 
 
 def is_placeholder(st) -> bool:
