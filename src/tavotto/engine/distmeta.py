@@ -1043,6 +1043,71 @@ _KNOWN_BENIGN_PTH_RE = re.compile(
 )
 
 
+# setuptools 生成的老式命名空间包 `*-nspkg.pth`（`google-*` / `zope.*` / `sphinxcontrib-*` / `jaraco.*` 等）：每个命名空间一行，是
+# `setuptools/namespaces.py` 的 `Installer._nspkg_tmpl` 用 `';'.join(...)` 拼出来的**固定模板**。两代形态（逐字取自 setuptools 40.8.0 – 68.2.2 与
+# 69.5.1 – 84.0.0 的源码，`tests/test_import_origin_plan_backlog.py` 里有同一份模板的生成器，按真实生成结果核对）：
+# 老版多一句 `has_mfs = sys.version_info > (3, 5)` 并把它织进三处；新版去掉了。`@PTH@` 是命名空间各段的元组 repr（`('a',)` /
+# `('a', 'b')`），`@PKG@` 是点分全名的 repr（出现四次，必须是同一个）；点分名另有一句 `_nspkg_tmpl_multi` 的收尾。
+# 它只给**指定名字**建一个命名空间包对象，不提供别的模块，所以不改变「别的 import 有没有提供者」。
+# 按**整行内容**精确匹配（不看文件名）；附加别的语句 / 换模块 / 名字段不是标识符 / 元组与全名对不上，都不匹配、照常计入 uncovered。
+_NS_IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
+_NSPKG_TEMPLATES = (
+    # 老版（has_mfs）
+    "import sys, types, os;has_mfs = sys.version_info > (3, 5);"
+    "p = os.path.join(sys._getframe(1).f_locals['sitedir'], *@PTH@);"
+    "importlib = has_mfs and __import__('importlib.util');"
+    "has_mfs and __import__('importlib.machinery');"
+    "m = has_mfs and sys.modules.setdefault(@PKG@, importlib.util.module_from_spec("
+    "importlib.machinery.PathFinder.find_spec(@PKG@, [os.path.dirname(p)])));"
+    "m = m or sys.modules.setdefault(@PKG@, types.ModuleType(@PKG@));"
+    "mp = (m or []) and m.__dict__.setdefault('__path__',[]);"
+    "(p not in mp) and mp.append(p)",
+    # 新版
+    "import sys, types, os;"
+    "p = os.path.join(sys._getframe(1).f_locals['sitedir'], *@PTH@);"
+    "importlib = __import__('importlib.util');"
+    "__import__('importlib.machinery');"
+    "m = sys.modules.setdefault(@PKG@, importlib.util.module_from_spec("
+    "importlib.machinery.PathFinder.find_spec(@PKG@, [os.path.dirname(p)])));"
+    "m = m or sys.modules.setdefault(@PKG@, types.ModuleType(@PKG@));"
+    "mp = (m or []) and m.__dict__.setdefault('__path__',[]);"
+    "(p not in mp) and mp.append(p)",
+)
+
+
+def _compile_nspkg(template: str) -> re.Pattern:
+    pth = rf"(?P<pth>\('{_NS_IDENT}'(?:, '{_NS_IDENT}')*,?\))"
+    pkg_first = rf"'(?P<pkg>{_NS_IDENT}(?:\.{_NS_IDENT})*)'"
+    text = re.escape(template).replace("@PTH@", pth)
+    first, *rest = text.split("@PKG@")
+    body = first + pkg_first + "'(?P=pkg)'".join(rest)
+    multi = (
+        rf"(?:;m and setattr\(sys\.modules\['(?P<parent>{_NS_IDENT}(?:\.{_NS_IDENT})*)'\], "
+        rf"'(?P<child>{_NS_IDENT})', m\))?"
+    )
+    return re.compile(body + multi)
+
+
+_NSPKG_RES = tuple(_compile_nspkg(t) for t in _NSPKG_TEMPLATES)
+
+
+def _is_nspkg_line(line: str) -> bool:
+    """`line` 是不是 setuptools 生成的命名空间包 `.pth` 行（见 `_NSPKG_TEMPLATES`）。"""
+    for rx in _NSPKG_RES:
+        m = rx.fullmatch(line)
+        if m is None:
+            continue
+        parts = re.findall(rf"'({_NS_IDENT})'", m.group("pth"))
+        pkg = m.group("pkg")
+        if ".".join(parts) != pkg:
+            return False
+        parent, _, child = pkg.rpartition(".")
+        if parent:
+            return m.group("parent") == parent and m.group("child") == child
+        return m.group("parent") is None
+    return False
+
+
 def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist]) -> None:
     """`.pth` 当文本：`import` 行不执行（只认 editable finder 的已建模形式，其余计入 uncovered）；`__editable___*_finder` 读同一目录里的 finder 源码取 MAPPING；
     路径行不跟进（计数）。"""
@@ -1063,6 +1128,8 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
             m = _FINDER_LINE_RE.fullmatch(line) if pth.startswith("__editable__.") else None
             if m is not None:
                 finders.append(m.group(1))  # 已建模形式：setuptools 的 editable finder 安装行
+            elif _is_nspkg_line(line):
+                continue  # 已建模：setuptools 的命名空间包行（见 _NSPKG_TEMPLATES），只给指定名字建命名空间包对象
             elif _KNOWN_BENIGN_PTH_RE.fullmatch(line):
                 continue  # 已建模：只影响 distutils 的良性钩子（见 _KNOWN_BENIGN_PTH_RE），不提供任何模块
             elif not line.startswith(("import ", "import\t")) and (

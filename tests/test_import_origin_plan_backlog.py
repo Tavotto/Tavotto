@@ -466,6 +466,122 @@ class TestExactExtensionSuffixes:
         assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
 
 
+# ---------------------------------------------------------------------------
+# setuptools 的老式命名空间包 `*-nspkg.pth`：逐字取自 setuptools 的 `Installer._nspkg_tmpl`
+# （老版 = setuptools 40.8.0 – 68.2.2 的 `setuptools/namespaces.py`；新版 = 69.5.1 – 84.0.0 同文件第 42–57 行），
+# 生成方式同 `Installer._gen_nspkg_line`：`';'.join(模板) % locals() + '\n'`
+# ---------------------------------------------------------------------------
+_NSPKG_OLD = (
+    "import sys, types, os",
+    "has_mfs = sys.version_info > (3, 5)",
+    "p = os.path.join(%(root)s, *%(pth)r)",
+    "importlib = has_mfs and __import__('importlib.util')",
+    "has_mfs and __import__('importlib.machinery')",
+    "m = has_mfs and sys.modules.setdefault(%(pkg)r, importlib.util.module_from_spec("
+    "importlib.machinery.PathFinder.find_spec(%(pkg)r, [os.path.dirname(p)])))",
+    "m = m or sys.modules.setdefault(%(pkg)r, types.ModuleType(%(pkg)r))",
+    "mp = (m or []) and m.__dict__.setdefault('__path__',[])",
+    "(p not in mp) and mp.append(p)",
+)
+_NSPKG_NEW = (
+    "import sys, types, os",
+    "p = os.path.join(%(root)s, *%(pth)r)",
+    "importlib = __import__('importlib.util')",
+    "__import__('importlib.machinery')",
+    "m = sys.modules.setdefault(%(pkg)r, importlib.util.module_from_spec("
+    "importlib.machinery.PathFinder.find_spec(%(pkg)r, [os.path.dirname(p)])))",
+    "m = m or sys.modules.setdefault(%(pkg)r, types.ModuleType(%(pkg)r))",
+    "mp = (m or []) and m.__dict__.setdefault('__path__',[])",
+    "(p not in mp) and mp.append(p)",
+)
+_NSPKG_MULTI = ("m and setattr(sys.modules[%(parent)r], %(child)r, m)",)
+
+
+def _nspkg_line(pkg: str, template=_NSPKG_NEW) -> str:
+    pth = tuple(pkg.split("."))
+    root = "sys._getframe(1).f_locals['sitedir']"
+    parent, _sep, child = pkg.rpartition(".")
+    lines = template + (_NSPKG_MULTI if parent else ())
+    return (
+        ";".join(lines)
+        % {
+            "root": root,
+            "pth": pth,
+            "pkg": pkg,
+            "parent": parent,
+            "child": child,
+        }
+        + "\n"
+    )
+
+
+def _nspkg_file(pkgs, template=_NSPKG_NEW) -> str:
+    return "".join(_nspkg_line(p, template) for p in sorted(pkgs))
+
+
+class TestNspkgPthHooks:
+    @pytest.mark.parametrize("template", [_NSPKG_OLD, _NSPKG_NEW], ids=["has_mfs", "current"])
+    @pytest.mark.parametrize("pkgs", [["google"], ["zope", "zope.interface", "zope.interface.x"]])
+    def test_generated_namespace_lines_are_modelled_and_a_missing_package_is_still_missing(
+        self, tmp_path, template, pkgs
+    ):
+        prefix, site = _site(tmp_path)
+        _write(site, "any-name.pth", _nspkg_file(pkgs, template))
+        facts = _site_facts(prefix, site)
+        index = depplan.static_index(facts)
+        assert index.uncovered_paths == 0
+        plan = _plan_in(tmp_path, facts)
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"] and plan.origins == ()
+
+    def test_the_file_name_is_not_evidence(self, tmp_path):
+        for name in ("zope.interface-nspkg.pth", "totally_unrelated.pth"):
+            prefix, site = _site(tmp_path, name.replace(".", "_"))
+            _write(site, name, _nspkg_line("jaraco"))
+            assert depplan.static_index(_site_facts(prefix, site)).uncovered_paths == 0
+
+    @pytest.mark.parametrize(
+        "tamper",
+        [
+            lambda line: line.strip() + ";import os\n",
+            lambda line: line.replace("sys.modules", "sys.modulez", 1),
+            lambda line: line.replace("sys._getframe(1)", "sys._getframe(2)", 1),
+            lambda line: line.replace("types.ModuleType", "types.FunctionType", 1),
+            lambda line: "import evil;" + line,
+            lambda line: line.replace("('google',)", "('goo gle',)", 1).replace(
+                "'google'", "'goo gle'"
+            ),
+            lambda line: line.replace("*('google',)", "*('other',)", 1),  # 元组与全名对不上
+            lambda line: line.replace("find_spec('google'", "find_spec('other'", 1),
+        ],
+        ids=[
+            "append",
+            "module",
+            "frame",
+            "type",
+            "prefix",
+            "ident",
+            "tuple-mismatch",
+            "pkg-mismatch",
+        ],
+    )
+    def test_any_tampering_is_still_uncovered(self, tmp_path, tamper):
+        prefix, site = _site(tmp_path)
+        line = _nspkg_line("google")
+        assert tamper(line) != line
+        _write(site, "google-nspkg.pth", tamper(line))
+        assert depplan.static_index(_site_facts(prefix, site)).uncovered_paths == 1
+
+    def test_a_nested_line_without_its_parent_suffix_or_with_the_wrong_parent_is_uncovered(
+        self, tmp_path
+    ):
+        prefix, site = _site(tmp_path)
+        good = _nspkg_line("a.b")
+        no_suffix = good.split(";m and setattr")[0] + "\n"
+        wrong = good.replace("sys.modules['a']", "sys.modules['z']")
+        _write(site, "x.pth", no_suffix + wrong)
+        assert depplan.static_index(_site_facts(prefix, site)).uncovered_paths == 2
+
+
 # ===========================================================================
 # #929 静态索引保留 sys.path 的交错顺序
 # ===========================================================================
