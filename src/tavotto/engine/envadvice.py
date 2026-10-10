@@ -458,36 +458,37 @@ def adopt_candidate(
         raise AdoptionRefused(
             "找不到这个环境的解释器", code=ERROR_INTERPRETER_NOT_FOUND, python=found
         )
-    health = projectenv.probe_environment(found, module or None)
-    if not health.get("ok"):
-        raise AdoptionRefused(
-            "这个环境没有通过体检",
-            code=str(health.get("code") or ""),
-            health=health,
-            python=found,
-        )
-    # 采用与依赖安装互斥（T06）：目标环境本身正被改动时它的体检也是瞬时的，一并拒绝
-    if envlease.is_mutating(found):
-        raise envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
-    stale = False
+    # 采用与依赖安装互斥（T06）：**体检 + 提交决定整段**占住目标环境（`envlease.inspecting`）。只在体检之后问一次
+    # `is_mutating` 的话，别的项目已经在往这个解释器里装包时体检量到的是装到一半的环境，装包在那一问之后才开始则
+    # 完全看不见（Codex 评 #915 补审 P2）。装包在跑 -> 不体检直接 `EnvironmentBusy`；先拿到这里 -> 装包被拒、等采用结束
+    with envlease.inspecting(found):
+        health = projectenv.probe_environment(found, module or None)
+        if not health.get("ok"):
+            raise AdoptionRefused(
+                "这个环境没有通过体检",
+                code=str(health.get("code") or ""),
+                health=health,
+                python=found,
+            )
+        stale = False
 
-    def _commit():
-        nonlocal stale
-        # 最后一道：体检（可能数十秒）期间环境可能被重建，health 量的就不是用户确认的那一代。
-        # 紧贴写入再比一次，不符就什么都不记
-        if projectenv.environment_generation(found) != expected_generation:
-            stale = True
-            return None
-        return projectenv.remember(
-            root,
-            found,
-            automatic=False,
-            trigger=projectenv.TRIGGER_RECOMMENDED,
-            module=module,
-            health=health,
-        )
+        def _commit():
+            nonlocal stale
+            # 最后一道：体检（可能数十秒）期间环境可能被重建，health 量的就不是用户确认的那一代。
+            # 紧贴写入再比一次，不符就什么都不记
+            if projectenv.environment_generation(found) != expected_generation:
+                stale = True
+                return None
+            return projectenv.remember(
+                root,
+                found,
+                automatic=False,
+                trigger=projectenv.TRIGGER_RECOMMENDED,
+                module=module,
+                health=health,
+            )
 
-    saved = deprepair.unless_installing(root, _commit)
+        saved = deprepair.unless_installing(root, _commit)
     if stale:
         raise AdoptionRefused(
             "这个环境在你确认之前被重建过，请重新查看再确认",

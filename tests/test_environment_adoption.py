@@ -19,6 +19,7 @@ from support.envworld import World, real_venv, rebuild_venv
 from tavotto.engine import (
     deprepair,
     envadvice,
+    envlease,
     pool as engine_pool,
     projectenv,
     userenvs,
@@ -1193,3 +1194,133 @@ def test_an_mcp_adoption_whose_settings_cannot_be_saved_fails_and_never_runs_the
     assert res["isError"] is True
     assert res["structuredContent"]["code"] == "environment_save_failed"
     assert ran == [] and resets == []
+
+
+# ---------------------------------------------------------------------------
+# #915 补审 r4236702943：采用 = 体检 + 提交决定整段占住目标环境，与别的项目的安装互斥
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def lease_world(tmp_path, monkeypatch):
+    """假候选（不起真解释器）：只留下「谁在什么时候占着这个解释器」这一个维度。"""
+    root = tmp_path / "proj"
+    root.mkdir()
+    py = tmp_path / "shared-venv" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    envlease.reset_for_tests()
+    monkeypatch.setattr(envadvice, "candidate_python", lambda *a, **k: str(py))
+    monkeypatch.setattr(projectenv, "environment_generation", lambda p: "g1")
+    monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: None)
+    monkeypatch.setattr(engine_pool, "reset_worker_python", lambda: None)
+    monkeypatch.setattr(engine_pool, "shutdown_all", lambda *a, **k: None)
+    monkeypatch.setattr(projectenv, "remember", lambda *a, **k: True)
+    yield root, py
+    envlease.reset_for_tests()
+
+
+def test_an_install_cannot_start_into_a_candidate_while_it_is_being_adopted(
+    lease_world, monkeypatch
+):
+    root, py = lease_world
+    seen: dict = {}
+
+    def probe(python, module=None):
+        # 别的项目此刻想往同一个解释器里装包：必须被拒，否则体检量到的是装到一半的环境
+        with pytest.raises(envlease.EnvironmentBusy) as busy:
+            with envlease.mutating("other-project-install", python):
+                pass
+        seen["code"] = busy.value.code
+        return {"ok": True}
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe)
+    envadvice.adopt_candidate(root, None, "cand", expected_generation="g1")
+    assert seen["code"] == envlease.ENVIRONMENT_MUTATING
+    with envlease.mutating("later-install", str(py)):  # 采用结束，租约放掉
+        pass
+
+
+def test_a_candidate_being_installed_into_is_refused_before_it_is_probed(lease_world, monkeypatch):
+    root, py = lease_world
+    probed: list[str] = []
+    monkeypatch.setattr(
+        projectenv, "probe_environment", lambda p, module=None: probed.append(p) or {"ok": True}
+    )
+    with envlease.mutating("other-project-install", str(py)):
+        with pytest.raises(envlease.EnvironmentBusy):
+            envadvice.adopt_candidate(root, None, "cand", expected_generation="g1")
+    assert probed == []  # 装包期间不体检：量到的会是半截环境
+
+
+def test_a_refused_adoption_releases_the_environment(lease_world, monkeypatch):
+    root, py = lease_world
+    monkeypatch.setattr(
+        projectenv, "probe_environment", lambda p, module=None: {"ok": False, "code": "broken"}
+    )
+    with pytest.raises(envadvice.AdoptionRefused):
+        envadvice.adopt_candidate(root, None, "cand", expected_generation="g1")
+    with envlease.mutating("later-install", str(py)):
+        pass
+
+
+def test_adopting_does_not_block_a_native_session_or_another_adoption(lease_world, monkeypatch):
+    """采用不改环境：不挡 native 会话（那是用户在终端里的脚本），也不挡别的采用——只挡安装。"""
+    root, py = lease_world
+    inner: list[bool] = []
+
+    def probe(python, module=None):
+        with envlease.native_lease(python, "sess-1"):
+            with envlease.inspecting(python):
+                inner.append(True)
+        return {"ok": True}
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe)
+    envadvice.adopt_candidate(root, None, "cand", expected_generation="g1")
+    assert inner == [True]
+
+
+def test_the_typed_path_adoption_holds_the_environment_through_its_probe_too(
+    client, tmp_path, monkeypatch
+):
+    """手填路径（`PATCH {python}`）是同一条采用：体检 + 提交整段占住目标环境。"""
+    root = tmp_path / "typed"
+    root.mkdir()
+    py = root / ".venv" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    envlease.reset_for_tests()
+    pj = _open(client, root)
+    seen: dict = {}
+
+    def probe(python, module=None):
+        with pytest.raises(envlease.EnvironmentBusy) as busy:
+            with envlease.mutating("other-project-install", python):
+                pass
+        seen["code"] = busy.value.code
+        return {"ok": True}
+
+    monkeypatch.setattr(projectenv, "probe_environment", probe)
+    monkeypatch.setattr(projectenv, "remember", lambda *a, **k: True)
+    monkeypatch.setattr(engine_pool, "reset_worker_python", lambda: None)
+    monkeypatch.setattr(engine_pool, "shutdown_all", lambda *a, **k: None)
+    try:
+        response = client.patch(
+            "/api/engine/environment",
+            json={"scope": "project", "python": envworld.venv_rel(".venv")},
+            query_string={"pj": pj},
+        )
+        assert response.status_code == 200, response.get_json()
+        assert seen["code"] == envlease.ENVIRONMENT_MUTATING
+        with envlease.mutating("later-install", str(py)):
+            pass
+        # 反过来：装包在跑 -> 409 environment_mutating，体检根本没起
+        seen.clear()
+        with envlease.mutating("other-project-install", str(py)):
+            busy = client.patch(
+                "/api/engine/environment",
+                json={"scope": "project", "python": envworld.venv_rel(".venv")},
+                query_string={"pj": pj},
+            )
+        assert busy.status_code == 409 and busy.get_json()["code"] == "environment_mutating"
+        assert seen == {}
+    finally:
+        envlease.reset_for_tests()

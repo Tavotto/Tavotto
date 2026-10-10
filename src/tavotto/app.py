@@ -7830,43 +7830,41 @@ def _set_project_environment(
                 "params": {"path": str(candidate)},
             }
         ), 400
-    if health is None:
-        health = engine_projectenv.probe_environment(str(candidate), module or None)
-    if not health.get("ok"):
-        return jsonify(
-            {
-                "error": _project_env_message(health),
-                "code": health.get("code", ""),
-                "params": {
-                    "path": _project_relative(str(candidate)),
-                    "python_version": health.get("python_version", ""),
-                },
-            }
-        ), 400
     # 采用与依赖安装互斥（T06）：安装结束会把结果记成项目的环境，与这里的写入交错，后写的静默盖掉先写的。
-    # 目标环境本身正被改动（别的项目的原地安装）时它的体检也是瞬时的，一并拒绝
-    if engine_envlease.is_mutating(str(candidate)):
-        return _environment_busy(
-            engine_envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
-        )
+    # 目标环境本身正被改动（别的项目的原地安装）时它的体检也是瞬时的：体检 + 提交整段占住目标环境
+    # （`envlease.inspecting`），与 `envadvice.adopt_candidate` 同一条（Codex 评 #915 补审 P2）
     try:
-        saved = engine_deprepair.unless_installing(
-            root,
-            lambda: engine_projectenv.remember(
+        with engine_envlease.inspecting(str(candidate)):
+            if health is None:
+                health = engine_projectenv.probe_environment(str(candidate), module or None)
+            if not health.get("ok"):
+                return jsonify(
+                    {
+                        "error": _project_env_message(health),
+                        "code": health.get("code", ""),
+                        "params": {
+                            "path": _project_relative(str(candidate)),
+                            "python_version": health.get("python_version", ""),
+                        },
+                    }
+                ), 400
+            saved = engine_deprepair.unless_installing(
                 root,
-                str(candidate),
-                automatic=False,
-                trigger=(
-                    engine_deprepair.TRIGGER_USER_ENVIRONMENT
-                    if user_environment
-                    else "missing_dependency"
-                    if module
-                    else "user_selected"
+                lambda: engine_projectenv.remember(
+                    root,
+                    str(candidate),
+                    automatic=False,
+                    trigger=(
+                        engine_deprepair.TRIGGER_USER_ENVIRONMENT
+                        if user_environment
+                        else "missing_dependency"
+                        if module
+                        else "user_selected"
+                    ),
+                    module=module,
+                    health=health,
                 ),
-                module=module,
-                health=health,
-            ),
-        )
+            )
     except engine_envlease.EnvironmentBusy as exc:
         return _environment_busy(exc)
     if not saved:
