@@ -1423,7 +1423,13 @@ def _venv_site(python: Path) -> str:
     import subprocess
 
     out = subprocess.run(
-        [str(python), "-c", "import site;print(site.getsitepackages()[0])"],
+        # Windows 的 getsitepackages() 第一项是 sys.prefix 本身，真的 site 目录是叫 site-packages 的那一项
+        [
+            str(python),
+            "-c",
+            "import os, site;print(next(p for p in site.getsitepackages()"
+            " if os.path.basename(p).lower() in ('site-packages', 'dist-packages')))",
+        ],
         check=True,
         capture_output=True,
         encoding="utf-8",
