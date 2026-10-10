@@ -780,6 +780,30 @@ def test_G_a_rebuilt_environment_never_serves_the_old_coverage(tmp_path):
     assert _row(fresh, envworld.venv_rel(".venv"))["coverage"]["state"] == "missing"
 
 
+@needs_worker
+def test_G_a_venv_rebuilt_while_its_check_runs_does_not_get_the_old_coverage(tmp_path):
+    root = _project(tmp_path)
+    py = real_venv(root, ".venv", python=WORKER_PY)
+    _package(py, "covok_a")
+    _package(py, "covok_b")
+    mods = ("covok_a", "covok_b")
+    real_probe = projectenv.probe_environment
+
+    def probe_then_rebuild(python, **kw):
+        health = real_probe(python, **kw)  # 量的是旧环境（两个包都在）
+        rebuild_venv(
+            root, ".venv", python=WORKER_PY
+        )  # 结果回来之前，同一路径被换成没有那两个包的新环境
+        return health
+
+    envadvice.check(root, "plot.py", modules=mods, probe=probe_then_rebuild)
+    # 旧环境的覆盖度不许记在新代名下：读侧不能说新环境 covered
+    assert userenvs.cached_probe(py, mods) is None
+    stale = envadvice.recommend(root, "plot.py", modules=mods)
+    row = next(c for c in stale["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
+    assert row["coverage"]["state"] == "not_checked"
+
+
 # ---------------------------------------------------------------------------
 # H / I 环境本身跑不了：与缺包分开
 # ---------------------------------------------------------------------------

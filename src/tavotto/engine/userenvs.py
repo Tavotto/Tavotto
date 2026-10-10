@@ -659,7 +659,12 @@ def _probe(
 
 
 def remember_probe(
-    python: str, modules: tuple[str, ...], health: dict, *, bundled: bool = False
+    python: str,
+    modules: tuple[str, ...],
+    health: dict,
+    *,
+    bundled: bool = False,
+    generation: object = None,
 ) -> None:
     """把一次**明确的环境检查**（`envadvice.check`）量到的结论写进这张缓存——覆盖度只有这一份。
 
@@ -669,9 +674,14 @@ def remember_probe(
     mods = tuple(dict.fromkeys(m for m in modules if m))
     if not mods or not isinstance(health, dict):
         return
+    key = _cache_key(python, mods, bundled)
+    # `generation`：探测**之前**取的环境代。探测期间环境被重建 / 替换（换代）时，量到的是旧解释器，不许记到新代名下——
+    # 键里的代是写入时现算的，站点指纹也是重建后的，新鲜度检查拦不住（Codex #906 r4236570685）；丢掉，下次重量
+    if generation is not None and key[1] != generation:
+        return
     stored = {**health, "_site_fp": _health_fingerprint(health)}
     with _lock:
-        _probe_cache[_cache_key(python, mods, bundled)] = stored
+        _probe_cache[key] = stored
 
 
 def _fresh(python: str, health: dict) -> bool:
