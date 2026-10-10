@@ -647,6 +647,22 @@ def cmd_verify_live(api, repo: str, workflows: dict[str, str]) -> int:
         want, got = MERGE_QUEUE_PARAMS.get(key), params.get(key)
         if want != got:
             problems.append(f"参数漂移 {key}: 仓库副本 {want!r} / 线上 {got!r}")
+    # 必需 context 集合：所有生效的 required_status_checks 规则之并必须**恰好**等于
+    # GATE_CONTEXTS（多一个 = 可能更慢或永不上报；少一个 = Gate 没被要求）；
+    # strict 与 switch-to-gates 的目标一致（False，队列对最终组合负责）。
+    live_ctx: set[str] = set()
+    for r in rules:
+        if r.get("type") == "required_status_checks":
+            rp = r.get("parameters", {})
+            live_ctx |= {c.get("context") for c in rp.get("required_status_checks", [])}
+            if rp.get("strict_required_status_checks_policy", True):
+                problems.append("线上 required_status_checks 的 strict 开着（期望 false）")
+    want_ctx = set(GATE_CONTEXTS)
+    if live_ctx != want_ctx:
+        problems.append(
+            f"必需 context 漂移：线上缺少 {sorted(want_ctx - live_ctx)}，"
+            f"线上多出 {sorted(live_ctx - want_ctx)}（仓库 GATE_CONTEXTS = {sorted(want_ctx)}）"
+        )
     deadline = params.get("check_response_timeout_minutes")
     paths = gate_critical_paths(workflows)
     if not isinstance(deadline, int):

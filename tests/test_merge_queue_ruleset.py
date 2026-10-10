@@ -718,19 +718,45 @@ class TestVerifyLive:
     WFS = _fake_workflows()
 
     @staticmethod
-    def _api(params):
+    def _api(params, contexts=None, strict=False):
         calls = []
+        ctxs = MQ.GATE_CONTEXTS if contexts is None else contexts
 
         def api(path, *, method="GET", body=None):
             calls.append((method, path))
             if path == f"repos/{REPO}":
                 return {"default_branch": "main"}
             if path == f"repos/{REPO}/rules/branches/main":
-                return [{"type": "merge_queue", "parameters": params}, {"type": "deletion"}]
+                return [
+                    {"type": "merge_queue", "parameters": params},
+                    {
+                        "type": "required_status_checks",
+                        "parameters": {
+                            "required_status_checks": [{"context": c} for c in ctxs],
+                            "strict_required_status_checks_policy": strict,
+                        },
+                    },
+                    {"type": "deletion"},
+                ]
             raise AssertionError(path)
 
         api.calls = calls
         return api
+
+    def test_extra_live_context_fails(self, capsys):
+        api = self._api(dict(MQ.MERGE_QUEUE_PARAMS), [*MQ.GATE_CONTEXTS, "Slow extra"])
+        assert MQ.cmd_verify_live(api, REPO, self.WFS) == 1
+        assert "Slow extra" in capsys.readouterr().err
+
+    def test_missing_live_context_fails(self, capsys):
+        api = self._api(dict(MQ.MERGE_QUEUE_PARAMS), MQ.GATE_CONTEXTS[:2])
+        assert MQ.cmd_verify_live(api, REPO, self.WFS) == 1
+        assert "CodeQL gate" in capsys.readouterr().err
+
+    def test_live_strict_on_fails(self, capsys):
+        api = self._api(dict(MQ.MERGE_QUEUE_PARAMS), strict=True)
+        assert MQ.cmd_verify_live(api, REPO, self.WFS) == 1
+        assert "strict" in capsys.readouterr().err
 
     def test_ok(self, capsys):
         api = self._api(dict(MQ.MERGE_QUEUE_PARAMS))
