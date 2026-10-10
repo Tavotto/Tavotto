@@ -94,11 +94,11 @@ REST API 的 merge_queue rule 参数名与上表逐字对应；GitHub 网页把
 （等待上限 90 → 180、并发构建 2 → 4；并发 4 早在 2026-09-21 已在线上，见 `parallel-prs.md`）。
 等待上限 180 分钟给最长的必需 job（`backend-platforms` / `backend-fast`，job 上限 90）留出
 排队与 Gate 调度的余量；抬任何必需 job 的 `timeout-minutes` 前先看这里，
-`tests/test_merge_queue_workflows.py` 要求二者相差 ≥30 分钟——但那条只证明**仓库副本内部一致**，
+`tests/test_merge_queue_workflows.py` 要求每个必需 Gate 的最长累计路径（上游串行 + Gate 自身）与它相差 ≥30 分钟——但那条只证明**仓库副本内部一致**，
 PR 期读不到线上 ruleset。线上对拍是只读子命令：
 
 ```
-python scripts/ci/merge_queue_ruleset.py verify-live   # 线上参数 == 仓库副本；闭包内 job 上限 ≤ 线上等待上限 - 30
+python scripts/ci/merge_queue_ruleset.py verify-live   # 线上参数 == 仓库副本；三个必需 Gate（含 CodeQL gate）各自沿 needs 的最长累计上限（含 Gate 自身）≤ 线上等待上限 - 30
 ```
 
 它读公开的 `rules/branches/<默认分支>`（不需要管理员令牌），不走任何写路径；`nightly.yml` 的

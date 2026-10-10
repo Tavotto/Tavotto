@@ -43,8 +43,8 @@ jobs:
   # 真的在量**（那批 Windows 更新包就是 deflate 的坏产物）。下一个正式版本
   # 发布后它会转绿。发布前看到红灯，请不要来「修」这个门禁。
   # ────────────────────────────────────────────────────────────────
-  # 合并队列参数的线上对拍（只读）：线上 merge_queue 规则 == 仓库副本，且两个 CI Gate
-  # 闭包里每个 job 的上限 ≤ 线上等待上限 − 30。用公开的 rules/branches 端点，
+  # 合并队列参数的线上对拍（只读）：线上 merge_queue 规则 == 仓库副本，且三个必需 Gate
+  # 各自沿 needs 的最长累计上限（含 Gate 自身）≤ 线上等待上限 − 30。用公开的 rules/branches 端点，
   # `contents: read` 的 GITHUB_TOKEN 就够（不碰 rulesets 管理端点）。
   merge-queue-live-check:
     timeout-minutes: 10

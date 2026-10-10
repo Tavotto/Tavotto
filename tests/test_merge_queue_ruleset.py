@@ -681,22 +681,41 @@ class TestSetBuildConcurrencySource:
         assert MQ.PLUGIN_STABLE_BRANCH == brand.CODEX_PLUGIN_STABLE_BRANCH
 
 
-class TestVerifyLive:
-    """只读对拍：线上 merge_queue 参数 vs 仓库副本，以及 Gate 闭包 job 上限的余量。"""
+def _wf(jobs):
+    """jobs: [(id, name, needs, timeout|None)] -> 最小 workflow 文本。"""
+    out = ["jobs:"]
+    for jid, name, needs, tmo in jobs:
+        out.append(f"  {jid}:")
+        out.append(f"    name: {name}")
+        if needs:
+            out.append(f"    needs: [{', '.join(needs)}]")
+        if tmo is not None:
+            out.append(f"    timeout-minutes: {tmo}")
+    return "\n".join(out) + "\n"
 
-    CI_TEXT = """
-jobs:
-  ci-fast-gate:
-    needs: [a]
-    timeout-minutes: 10
-  ci-integration-gate:
-    needs: [b]
-    timeout-minutes: 10
-  a:
-    timeout-minutes: 90
-  b:
-    timeout-minutes: 60
-"""
+
+def _fake_workflows(*, frontend=20, package=60, codeql=60, integ=10, package_tmo=True):
+    ci = _wf(
+        [
+            ("frontend", "frontend", [], frontend),
+            ("package", "package", ["frontend"], package if package_tmo else None),
+            ("ci-fast-gate", "CI fast gate", ["frontend"], 10),
+            ("ci-integration-gate", "CI integration gate", ["package"], integ),
+        ]
+    )
+    cq = _wf(
+        [
+            ("analyze", "analyze", [], codeql),
+            ("codeql-gate", "CodeQL gate", ["analyze"], 10),
+        ]
+    )
+    return {MQ.GATE_WORKFLOWS[0]: ci, MQ.GATE_WORKFLOWS[1]: cq}
+
+
+class TestVerifyLive:
+    """只读对拍：线上 merge_queue 参数 vs 仓库副本，以及各必需 Gate 的最长累计路径余量。"""
+
+    WFS = _fake_workflows()
 
     @staticmethod
     def _api(params):
@@ -715,21 +734,48 @@ jobs:
 
     def test_ok(self, capsys):
         api = self._api(dict(MQ.MERGE_QUEUE_PARAMS))
-        assert MQ.cmd_verify_live(api, REPO, self.CI_TEXT) == 0
-        assert "verify-live OK" in capsys.readouterr().out
+        assert MQ.cmd_verify_live(api, REPO, self.WFS) == 0
+        out = capsys.readouterr().out
+        assert "verify-live OK" in out and "CodeQL gate: 70" in out
         assert all(m == "GET" for m, _ in api.calls)
 
     def test_param_drift(self, capsys):
         p = dict(MQ.MERGE_QUEUE_PARAMS, max_entries_to_build=2)
-        assert MQ.cmd_verify_live(self._api(p), REPO, self.CI_TEXT) == 1
+        assert MQ.cmd_verify_live(self._api(p), REPO, self.WFS) == 1
         assert "max_entries_to_build" in capsys.readouterr().err
 
-    def test_insufficient_headroom(self, capsys):
-        p = dict(MQ.MERGE_QUEUE_PARAMS, check_response_timeout_minutes=100)
-        assert MQ.cmd_verify_live(self._api(p), REPO, self.CI_TEXT) == 1
-        assert "余量不足 a" in capsys.readouterr().err
+    def test_cumulative_path_too_long_though_each_job_is_fine(self, capsys):
+        # frontend 20 -> package 121 -> gate 10 = 151 > 180 - 30；每个 job 单看都 <= 150
+        wfs = _fake_workflows(package=121)
+        assert MQ.cmd_verify_live(self._api(dict(MQ.MERGE_QUEUE_PARAMS)), REPO, wfs) == 1
+        err = capsys.readouterr().err
+        assert "CI integration gate" in err and "frontend -> package -> ci-integration-gate" in err
+
+    def test_codeql_only_violation(self, capsys):
+        wfs = _fake_workflows(codeql=150)
+        assert MQ.cmd_verify_live(self._api(dict(MQ.MERGE_QUEUE_PARAMS)), REPO, wfs) == 1
+        err = capsys.readouterr().err
+        assert "CodeQL gate" in err and "CI integration gate" not in err
+
+    def test_missing_timeout_counts_as_default_and_is_named(self, capsys):
+        wfs = _fake_workflows(package_tmo=False)
+        assert MQ.cmd_verify_live(self._api(dict(MQ.MERGE_QUEUE_PARAMS)), REPO, wfs) == 1
+        assert "缺 job 级 timeout-minutes" in capsys.readouterr().err
+
+    def test_missing_gate_name_is_an_error(self):
+        wfs = _fake_workflows()
+        wfs[MQ.GATE_WORKFLOWS[1]] = wfs[MQ.GATE_WORKFLOWS[1]].replace("CodeQL gate", "Renamed")
+        with pytest.raises(MQ.MigrationError, match="CodeQL gate"):
+            MQ.gate_critical_paths(wfs)
+
+    def test_real_repo_paths(self):
+        root = Path(__file__).resolve().parents[1]
+        paths = MQ.gate_critical_paths(MQ.load_gate_workflows(root))
+        assert set(paths) == set(MQ.GATE_CONTEXTS)
+        assert not any(missing for _, _, missing in paths.values())
 
     def test_main_dispatches_verify_live(self, monkeypatch):
         api = self._api(dict(MQ.MERGE_QUEUE_PARAMS))
         monkeypatch.setattr(MQ, "gh_api", api)
+        monkeypatch.setattr(MQ, "load_gate_workflows", lambda: self.WFS)
         assert MQ.main(["verify-live", "--repo", REPO]) == 0
