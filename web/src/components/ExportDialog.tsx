@@ -2117,8 +2117,8 @@ function ResultBlock({
       {edited && (
         <p className="mt-1 text-sm text-warn-content">{ex("editedDuringExport")}</p>
       )}
-      {/* 部分失败：同一个折叠入口（T04）；全部成功时不出现 */}
-      {job.status === "partial" && job.job_id && (
+      {/* 部分失败 / 每一件产物都失败（此时 outputs 非空，进不了上面的无产物分支）：同一个折叠入口（T04）；全部成功时不出现 */}
+      {(job.status === "partial" || job.status === "failed") && job.job_id && (
         <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />
       )}
       {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
