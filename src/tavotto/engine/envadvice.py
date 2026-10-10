@@ -771,6 +771,24 @@ def check(
             _running.pop(key, None)
 
 
+def _execution_of(health: dict | None, mods: tuple[str, ...]) -> dict:
+    """一个候选体检结论里的执行账；自定义探测函数没给 `execution` 时按最保守的口径（跑过、请求的全 import 过）。"""
+    note = (health or {}).get("execution")
+    if not isinstance(note, dict):
+        return {
+            "ran_environment_code": True,
+            "imported_modules": list(mods),
+            "may_run_package_init": True,
+            "incomplete": True,
+        }
+    return {
+        "ran_environment_code": bool(note.get("ran_environment_code")),
+        "imported_modules": list(note.get("imported_modules") or []),
+        "may_run_package_init": bool(note.get("may_run_package_init")),
+        "incomplete": bool(note.get("incomplete")),
+    }
+
+
 def _check(
     root,
     script,
@@ -801,6 +819,7 @@ def _check(
     ]
     started = clock()
     checked: list[str] = []
+    notes: list[dict] = []
     skipped: list[dict] = []
     cancelled = False
     for index, row in enumerate(wanted):
@@ -824,6 +843,7 @@ def _check(
             **({"modules": mods} if mods else {}),
         )
         _store_verdict(python, generation, health)
+        notes.append(_execution_of(health, mods))
         # 覆盖度的唯一一份缓存在 userenvs（路径 + 环境代 + import 集合）；这里只往里写，不另存
         userenvs.remember_probe(python, mods, health)
         checked.append(row["id"])
@@ -833,11 +853,17 @@ def _check(
         "cancelled": cancelled,
         # 如实的账：起了几个候选解释器、真 import 了哪些名字。授权的检查不宣称无副作用——import 一个包就是执行它的
         # `__init__`（可能写文件、联网、改全局状态），我们看不见也拦不住
+        # 由每个候选**实际完成**的体检账汇总（`projectenv.execution_note`），不按「打算检查」填：没起来的候选不算
         "executed": {
-            "ran_user_code": bool(checked),
-            "candidate_interpreters": len(checked),
-            "imported_modules": list(mods) if checked else [],
-            "may_run_package_init": bool(checked and mods),
+            "ran_user_code": any(
+                n["ran_environment_code"] or n["may_run_package_init"] for n in notes
+            ),
+            "candidate_interpreters": sum(
+                1 for n in notes if n["ran_environment_code"] or n["may_run_package_init"]
+            ),
+            "imported_modules": [m for m in mods if any(m in n["imported_modules"] for n in notes)],
+            "may_run_package_init": any(n["may_run_package_init"] for n in notes),
+            "incomplete": any(n["incomplete"] for n in notes),
             "side_effect_free": False,
         },
         "recommendation": recommend(root, script, modules=mods or None),

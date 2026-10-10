@@ -126,11 +126,6 @@ def _health(**over) -> dict:
         "matplotlib_version": "3.9.0",
         "modules_ok": {},
         "modules_detail": {},
-        "execution": {
-            "ran_environment_code": True,
-            "imported_modules": [],
-            "may_run_package_init": True,
-        },
         "site_dirs": [],
     }
     base.update(over)
@@ -147,6 +142,16 @@ def _fake_probe(by_rel: dict[str, dict], seen: list | None = None):
             if python.replace("\\", "/").endswith(rel):
                 mods = tuple(k.get("modules") or ())
                 h = dict(health)
+                # 真探测的账：请求了几个名字就 import 了几个（预设里没给 execution 才补）
+                h.setdefault(
+                    "execution",
+                    {
+                        "ran_environment_code": True,
+                        "imported_modules": list(mods),
+                        "may_run_package_init": bool(mods),
+                        "incomplete": False,
+                    },
+                )
                 if mods and not h.get("modules_detail"):
                     detail = {m: "found" for m in mods}
                     h["modules_detail"] = detail
@@ -233,6 +238,7 @@ def test_a_probe_that_imports_declares_it_and_one_without_modules_still_declares
         "ran_environment_code": True,
         "imported_modules": ["covok_a"],
         "may_run_package_init": True,
+        "incomplete": False,
     }
     # 不带 modules 也不是只读的：解释器按正常方式启动（.pth / sitecustomize）、import matplotlib 与 worker 启动链
     assert without["execution"]["ran_environment_code"] is True
@@ -243,20 +249,132 @@ def test_a_probe_that_imports_declares_it_and_one_without_modules_still_declares
 
 def test_the_execution_note_of_a_before_run_probe_imports_nothing():
     note = projectenv.execution_note(
-        isolated=True, spec_mode=True, module=None, modules=("numpy", "scipy")
+        isolated=True, spec_mode=True, module=None, modules=("numpy", "scipy"), info={}
     )
     assert note == {
         "ran_environment_code": False,
         "imported_modules": [],
         "may_run_package_init": False,
+        "incomplete": False,
     }
 
 
-def test_a_probe_that_cannot_even_start_still_carries_the_execution_note(tmp_path):
+NOT_RUN = {
+    "ran_environment_code": False,
+    "imported_modules": [],
+    "may_run_package_init": False,
+    "incomplete": False,
+}
+
+
+def test_a_probe_that_cannot_even_start_reports_that_nothing_ran(tmp_path):
+    """#906 r4236524006：解释器不存在 / spawn 失败——什么都没跑，不能报成「跑过、import 过全部」。"""
     missing = tmp_path / "nope" / "python"
     health = projectenv.probe_environment(str(missing), modules=("covok_a",))
     assert health["ok"] is False and health["code"] == projectenv.ERROR_UNUSABLE
-    assert health["execution"]["imported_modules"] == ["covok_a"]
+    assert health["execution"] == NOT_RUN
+
+
+def test_a_failure_before_the_child_exists_reports_that_nothing_ran(monkeypatch, tmp_path):
+    def no_scratch():
+        raise OSError("disk full")
+
+    monkeypatch.setattr(projectenv, "_probe_scratch_dir", no_scratch)
+    health = projectenv.probe_environment(sys.executable, modules=("covok_a",))
+    assert health["code"] == projectenv.ERROR_UNUSABLE
+    assert health["execution"] == NOT_RUN
+
+
+def _fake_run(**kw):
+    import subprocess
+
+    def run(argv, **_kw):
+        if "raise" in kw:
+            raise kw["raise"]
+        return subprocess.CompletedProcess(
+            argv, kw.get("rc", 0), kw.get("out", ""), kw.get("err", "")
+        )
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "fake",
+    [
+        _fake_run(**{"raise": subprocess.TimeoutExpired("python", 1)}),
+        _fake_run(rc=139, err="Segmentation fault"),
+        _fake_run(rc=0, out="not json"),
+    ],
+    ids=["timeout", "crash", "unparsable_output"],
+)
+def test_a_child_that_started_but_gave_no_complete_result_is_not_reported_as_not_run(
+    monkeypatch, fake
+):
+    """子进程起来了却没拿到完整结果：保守地当作跑过，但不知道哪些名字走完了——`imported_modules` 空 + `incomplete`。"""
+    monkeypatch.setattr(projectenv.subprocess, "run", fake)
+    health = projectenv.probe_environment(sys.executable, modules=("covok_a",))
+    assert health["ok"] is False and health["code"] == projectenv.ERROR_UNUSABLE
+    assert health["execution"] == {
+        "ran_environment_code": True,
+        "imported_modules": [],
+        "may_run_package_init": True,
+        "incomplete": True,
+    }
+    # 下游：覆盖度的 executed_user_code 跟着为真，不把「可能跑过」报成「没跑」
+    assert envadvice.coverage_of(health, ("covok_a",))["executed_user_code"] is True
+
+
+def test_the_imported_modules_are_the_intersection_of_requested_and_reported():
+    info = {
+        "modules_detail": {"covok_a": "found", "evil_extra": "found"},
+        "requested_module": None,
+    }
+    note = projectenv.execution_note(
+        isolated=False,
+        spec_mode=False,
+        module=None,
+        modules=("covok_a", "covok_b"),
+        info=info,
+    )
+    # covok_b 子进程没报 = 不算；evil_extra 是子进程多报的 = 不信
+    assert note["imported_modules"] == ["covok_a"]
+    assert note["may_run_package_init"] is True and note["incomplete"] is False
+
+
+def test_the_check_summary_counts_only_candidates_that_really_started(tmp_path):
+    root = tmp_path / "p"
+    root.mkdir()
+    _fake_venv(root, ".venv")
+    dead = _health(ok=False, code="env_unusable", execution=dict(NOT_RUN))
+    out = envadvice.check(
+        root, "p.py", modules=("covok_a",), probe=_fake_probe({".venv/bin/python": dead})
+    )
+    assert out["checked"] != []
+    assert out["executed"] == {
+        "ran_user_code": False,
+        "candidate_interpreters": 0,
+        "imported_modules": [],
+        "may_run_package_init": False,
+        "incomplete": False,
+        "side_effect_free": False,
+    }
+    unsure = _health(
+        ok=False,
+        code="env_unusable",
+        execution={
+            "ran_environment_code": True,
+            "imported_modules": [],
+            "may_run_package_init": True,
+            "incomplete": True,
+        },
+    )
+    out = envadvice.check(
+        root, "p.py", modules=("covok_a",), probe=_fake_probe({".venv/bin/python": unsure})
+    )
+    assert out["executed"]["ran_user_code"] is True
+    assert out["executed"]["may_run_package_init"] is True
+    assert out["executed"]["incomplete"] is True
+    assert out["executed"]["candidate_interpreters"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +387,12 @@ class TestCoverageOf:
         h = _health(
             modules_ok={"covok_a": True, "covok_b": True},
             modules_detail={"covok_a": "found", "covok_b": "found"},
+            execution={
+                "ran_environment_code": True,
+                "imported_modules": ["covok_a", "covok_b"],
+                "may_run_package_init": True,
+                "incomplete": False,
+            },
         )
         cov = envadvice.coverage_of(h, self.MODS)
         assert cov["state"] == "covered" and cov["detail"] == []

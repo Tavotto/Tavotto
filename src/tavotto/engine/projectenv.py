@@ -750,20 +750,59 @@ def _probe_scratch_dir() -> str:
 
 
 def execution_note(
-    *, isolated: bool, spec_mode: bool, module: str | None, modules: tuple[str, ...]
+    *,
+    isolated: bool,
+    spec_mode: bool,
+    module: str | None,
+    modules: tuple[str, ...],
+    started: bool = True,
+    info: dict | None = None,
 ) -> dict:
-    """这次体检**执行了什么**的如实声明（Import Origin PR3：授权的环境检查不得宣称无副作用）。
+    """这次体检**实际执行了什么**的如实声明（Import Origin PR3：授权的环境检查不得宣称无副作用）。
 
+    按**实际完成情况**填，不按「打算做什么」填：
+
+    * `started=False`（子进程根本没起来：解释器消失 / 不能执行 / spawn 失败 / 起进程之前就异常）→ 什么都没跑：
+      `ran_environment_code=False`、`imported_modules=[]`、`may_run_package_init=False`；
+    * `started=True` 而 `info is None`（起来了却没拿到完整结果：超时 / 崩溃 / 输出读不出）→ **保守地**当作跑过：
+      `ran_environment_code = not isolated`、非运行前方式 `may_run_package_init=True`，`imported_modules=[]`（不知道哪些
+      名字确实走完了）并带 `incomplete=True`——「可能跑过」不许报成「没跑」；
+    * 正常完成 → `imported_modules` 是**宿主请求的名字**与子进程回报的已处理名字的交集（`modules_detail` 的键 +
+      `requested_module`），不信子进程多报；
     * `ran_environment_code`：非隔离启动 = 解释器按正常方式启动，用户环境的 `.pth` / `sitecustomize` 会跑，之后 import
       matplotlib 与 worker 启动链——全是用户环境里的代码；`-I -S` 的运行前体检不跑 site、不 import；
-    * `imported_modules`：这次真 `__import__` 过哪些名字（运行前的 `find_spec` 方式一个都不 import）——导入一个包就是执行它的
+    * `imported_modules`：真 `__import__` 过哪些名字（运行前的 `find_spec` 方式一个都不 import）——导入一个包就是执行它的
       `__init__`，可能写文件、联网、改全局状态，我们看不见也拦不住；
     * 没有 `side_effect_free`：我们从不宣称「无副作用」。"""
-    imported = [] if spec_mode else [*([module] if module else []), *modules]
+    if not started:
+        return {
+            "ran_environment_code": False,
+            "imported_modules": [],
+            "may_run_package_init": False,
+            "incomplete": False,
+        }
+    if info is None:
+        return {
+            "ran_environment_code": not isolated,
+            "imported_modules": [],
+            "may_run_package_init": not spec_mode,
+            "incomplete": True,
+        }
+    requested = [*([module] if module else []), *modules]
+    reported = info.get("modules_detail")
+    done = set(reported) if isinstance(reported, dict) else set()
+    if (
+        module
+        and info.get("requested_module") == module
+        and info.get("requested_module_ok") is not None
+    ):
+        done.add(module)
+    imported = [] if spec_mode else [m for m in dict.fromkeys(requested) if m in done]
     return {
         "ran_environment_code": not isolated,
         "imported_modules": imported,
         "may_run_package_init": bool(imported),
+        "incomplete": False,
     }
 
 
@@ -832,13 +871,17 @@ def probe_environment(
     argv.append("spec" if spec_mode else "")
     argv.append(project_root if spec_mode else "")
     argv.append("isolated" if isolate else "")
-    note = execution_note(isolated=isolate, spec_mode=spec_mode, module=module, modules=modules)
+    shape = {"isolated": isolate, "spec_mode": spec_mode, "module": module, "modules": modules}
     scratch = ""
+    spawned = False
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
         # 分配也在守卫之内：系统临时目录不可用 / 只读 / 满的时候，这里抛出去
         # 就是一个 500，而 `probe_environment` 承诺的是结构化失败。
         scratch = _probe_scratch_dir()
+        spawned = (
+            True  # 从这里起算「可能已经起了子进程」：spawn 本身失败的 OSError 在下面单独改回 False
+        )
         proc = subprocess.run(
             argv,
             capture_output=True,
@@ -854,12 +897,15 @@ def probe_environment(
     except (OSError, subprocess.SubprocessError) as exc:
         # 起不来：bad executable format（venv 建在另一个架构上）、被杀毒
         # 隔离、动态库缺失、venv 的 home 指向一个已经删掉的解释器……
+        # 子进程**根本没起来**（OSError，含分配临时目录失败）= 什么都没跑；起来了又超时 / 出错（SubprocessError）
+        # = 可能跑过，不许报成「没跑」
+        started = spawned and isinstance(exc, subprocess.SubprocessError)
         return {
             "ok": False,
             "code": ERROR_UNUSABLE,
             "python": python,
             "detail": str(exc)[:400],
-            "execution": note,
+            "execution": execution_note(**shape, started=started),
         }
     finally:
         if scratch:
@@ -870,7 +916,7 @@ def probe_environment(
             "code": ERROR_UNUSABLE,
             "python": python,
             "detail": (proc.stderr or "").strip()[:400],
-            "execution": note,
+            "execution": execution_note(**shape),
         }
     try:
         info = json.loads(proc.stdout.strip() or "{}")
@@ -880,11 +926,11 @@ def probe_environment(
             "code": ERROR_UNUSABLE,
             "python": python,
             "detail": (proc.stdout or "").strip()[:400],
-            "execution": note,
+            "execution": execution_note(**shape),
         }
 
     info["python"] = python
-    info["execution"] = note
+    info["execution"] = execution_note(**shape, info=info if isinstance(info, dict) else None)
     if info.get("deferred_env"):
         # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
         info.update(ok=True, code="", deferred_env=True)

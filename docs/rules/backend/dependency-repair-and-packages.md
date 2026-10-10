@@ -308,8 +308,8 @@
   不按名字相近挑；声明与已装版本冲突只报告，两边都不覆盖。**已安装元数据不是安装授权**：`distmeta` 不 import `deprepair`、
   不产出 `DependencyRequirement`、`depresolve.INSTALLABLE_SOURCES` 仍是 project_declared / curated / user_specified 三个；
   `bucket` / `needed` / `distribution` 不因元数据改变，`depplan` / `deprepair` 不读这些字段（用例钉着）。
-  **看不全不确认**（#889，PR3）：环境里有没跟进的 `.pth` 路径行 / 没建模的 `import` 行（`Index.uncovered_paths > 0`）时，唯一
-  提供者只是「观测到」——状态 `unverified`、`selected_distribution` 为空、`compatibility` 带 `path_entries_not_followed`；editable
+  **看不全不确认**（#889，PR3；#906 r4236524004）：环境里有没跟进的 `.pth` 路径行 / 没建模的 `import` 行（`Index.uncovered_paths > 0`）时，唯一
+  提供者只是「观测到」——**这条判据在所有 provenance 专属返回（Conda / editable / 本地路径·归档 / VCS / URL）之前**，来源专属的结论抢不到它前面——状态 `unverified`、`selected_distribution` 为空、`compatibility` 带 `path_entries_not_followed`；editable
   finder 读得到却读不出 `MAPPING`（`dict(...)` 构造、推导式、变量、语法宿主解析器不支持、根本没有 `MAPPING`）= 没读全
   （`Index.complete=False`，留 `parse_budget` 痕迹），「没查到」落 `environment_not_checked` 而不是 `not_installed`；声明约束与已装版本
   的冲突在**所有** provenance（index / editable / 本地路径 / 本地 wheel / VCS / URL / Conda）下都报 `declared_version_conflict`，
@@ -450,7 +450,7 @@
   `environment_not_checked` / `environment_unusable`。闭集与 `web/src/lib/api.ts` 的 `ENV_*` 镜像（同源对，顺序也比）。
   覆盖度不改推荐顺序、不改任何决定（显式选择永远排在最前、检查不写项目设置）；`versions_checked` 恒 false——已装版本满不满足声明归
   `distmeta`。**授权检查不是无副作用的**：它真 import 那些包 = 执行它们的 `__init__`（解释器按正常方式启动，用户环境的 `.pth` /
-  `sitecustomize` 也会跑）；结果的 `executed`（起了几个候选、import 了哪些名字）与每个候选覆盖度的 `executed_user_code` 如实标注，
+  `sitecustomize` 也会跑）；结果的 `executed`（起了几个候选、import 了哪些名字）与每个候选覆盖度的 `executed_user_code` 如实标注——**按实际完成情况**，不按打算：`probe_environment` 的 `execution`（`projectenv.execution_note`）在子进程根本没起来（解释器消失 / 不能执行 / spawn 失败 / 起进程前异常）时是 `ran_environment_code=False`、`imported_modules=[]`、`may_run_package_init=False`；起来了却没拿到完整结果（超时 / 崩溃 / 输出读不出）时保守地 `ran_environment_code=not isolated`、`may_run_package_init=True`（运行前方式除外），`imported_modules=[]` 并带 `incomplete=True`——「可能跑过」不许报成「没跑」；正常完成时 `imported_modules` = 宿主请求的名字 ∩ 子进程回报的已处理名字（不信子进程多报）。`executed` 由各候选的 `execution` 汇总（`ran_user_code` / `candidate_interpreters` 只数真起过的，`incomplete` 任一为真即真），
   `side_effect_free` 恒 False。默认扫描 / `recommend` / 依赖门 `cache_only` / `distmeta` 静态解析**一个候选子进程都不起、不执行用户
   代码**（`tests/test_environment_coverage.py`：武装 `Popen`/`exec*`/`spawn*`/`socket.connect` + 恶意包 `SIDE_EFFECT` 文件 + AST 门禁钉
   「读侧函数不引用探测入口、探测入口只被 `_check` / `adopt_candidate` 引用」）。

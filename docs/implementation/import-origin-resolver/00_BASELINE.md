@@ -412,6 +412,11 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 * 授权检查如实标注：结果的 `executed`（起了几个候选、import 了哪些名字、`side_effect_free: false`）与每个候选覆盖度的 `executed_user_code`；`recommend()["check"]` 加 `executes_user_code: true` / `side_effect_free: false`。
 * #889 三条（单独一个提交 `6627b05d5`）：①有 `uncovered_paths` 不确认唯一提供者（`unverified` + `path_entries_not_followed`，`selected_distribution` 空）；②editable finder 读得到却读不出 `MAPPING`（`dict(...)`、推导式、变量、语法错误、根本没有 `MAPPING`）= `Index.complete=False`；③`declared_version_conflict` 在所有 provenance（含 Conda 的 dist-info）下都报，来源本身的状态不被冲突盖掉。①改变了 `test_reading_and_scanning_execute_no_pth_sitecustomize_package_or_finder` 的预期（那个环境里有一行没建模的 `import` `.pth`，`evilpkg` 现在是 `unverified`），这是预期内的行为变化，已在测试里写明。
 
+**评审跟进（#906 Codex 两条 P2）**
+
+* r4236524004：#889① 的 `uncovered_paths` 检查原先排在 Conda / editable / 本地 / VCS / URL 的专属返回**之后**，有未建模 `.pth` 同时装了这些来源时被定论为 editable / non-reproducible 而不是 `unverified`。判据移到所有 provenance 专属返回之前（声明冲突的 `declared_version_conflict` 在它之前就已追加，所有路径下照旧报告，用例钉着两者不打架）。`test_reading_and_scanning_execute_no_pth_…` 里 `evilpkg2` 的预期随之变为 `unverified`（环境看不全，editable 来源不能抢先下结论）。
+* r4236524006：`execution` 账原先由「打算做什么」在探测前一次算好，spawn 失败也写 `ran_environment_code=True` / 全部请求名 / `may_run_package_init=True`。现按实际完成情况填（`projectenv.execution_note`）：没起来 → 全空；起来了没拿到完整结果 → 保守 `ran_environment_code=not isolated` / `may_run_package_init=True`、`imported_modules=[]` + `incomplete=True`；正常完成 → 请求 ∩ 子进程回报。新字段 `incomplete` 同步进 `execution`、`check` 结果的 `executed`（`candidate_interpreters` 与 `ran_user_code` 只数真起过的候选）与 `web/src/lib/api.ts`。
+
 **缩小了什么（以及证据）**
 
 * 「覆盖度缓存键与环境代对齐」：**已满足，没有再改键里的环境代**。BASELINE §1.2 写 `userenvs._probe_cache` 不含环境代，那是审计时 main 的状态；#820 合入后 `userenvs._cache_key` 已含 `projectenv.environment_generation`（`tests/test_environment_autodetect.py::test_the_probe_cache_is_keyed_by_environment_generation` 钉着）。PR3 在这个键上只做了 import 集合排序，并用 fixture G 钉「同一路径被重建 → 旧覆盖度对不上」。

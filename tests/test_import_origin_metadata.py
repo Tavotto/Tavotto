@@ -1325,6 +1325,65 @@ class TestIssue889:
         assert (got.observed_distribution, got.observed_version) == ("numpy", "1.26.4")
         assert "path_entries_not_followed" in got.compatibility
 
+    # ① 的补漏（#906 r4236524004）：provenance 专属分支（editable / 本地 / VCS / URL）的提前返回不许绕过「看不全不确认」
+    @pytest.mark.parametrize(
+        "direct_url",
+        [
+            {"url": "file:///w/lab", "dir_info": {"editable": True}},
+            {
+                "url": "file:///home/me/lab-1.0-py3-none-any.whl",
+                "archive_info": {"hash": "sha256=ab"},
+            },
+            {"url": "file:///home/me/lab", "dir_info": {}},
+            {
+                "url": "https://example.invalid/lab.git",
+                "vcs_info": {"vcs": "git", "commit_id": "abc"},
+            },
+            {"url": "https://example.invalid/lab.zip", "archive_info": {}},
+        ],
+        ids=["editable", "local_archive", "local_path", "vcs", "url"],
+    )
+    @pytest.mark.parametrize("pth_line", ["/opt/shared-libs", "import os; os.environ.get('X')"])
+    def test_an_uncovered_hook_beats_every_provenance_specific_verdict(
+        self, tmp_path, direct_url, pth_line
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(site, "lab", "1.0", top="lab\n", direct_url=direct_url)
+        idx_before = _index(prefix)
+        assert idx_before.uncovered_paths == 0
+        control = _scan(tmp_path, "import lab\n", idx_before)["lab"]
+        assert control.distribution_status in (
+            "editable_dependency_not_reproducible",
+            "installed_source_not_reproducible",
+        )
+
+        _write(site / "hook.pth", pth_line + "\n")
+        idx = _index(prefix)
+        assert idx.uncovered_paths == 1
+        got = _scan(tmp_path, "import lab\n", idx)["lab"]
+        assert got.distribution_status == "unverified"
+        assert got.resolution_status == "unverified"
+        assert got.selected_distribution == ""
+        assert (got.observed_distribution, got.observed_version) == ("lab", "1.0")
+        assert "path_entries_not_followed" in got.compatibility
+
+    def test_the_declared_conflict_is_still_reported_when_an_uncovered_hook_makes_it_unverified(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(
+            site,
+            "lab",
+            "1.0",
+            top="lab\n",
+            direct_url={"url": "file:///w/lab", "dir_info": {"editable": True}},
+        )
+        _write(site / "hook.pth", "/opt/shared-libs\n")
+        got = _scan(tmp_path, "import lab\n", _index(prefix), declared={"lab": ">=2"})["lab"]
+        assert got.distribution_status == "unverified"
+        assert "declared_version_conflict" in got.compatibility
+        assert "path_entries_not_followed" in got.compatibility
+
     def test_a_modelled_editable_finder_line_does_not_count_as_a_hook(self, tmp_path):
         prefix, site = _env(tmp_path)
         _dist(site, "numpy", "1.26.4", top="numpy\n")
@@ -1652,7 +1711,9 @@ class TestReadingRunsNothing:
         assert got["evilpkg"].distribution_status == "unverified"
         assert got["evilpkg"].observed_distribution == "evilpkg"
         assert "path_entries_not_followed" in got["evilpkg"].compatibility
-        assert got["evilpkg2"].distribution_status == "editable_dependency_not_reproducible"
+        # editable 的那个也一样：这个环境看不全，来源专属的结论不能抢在「看不全不确认」前面（#906 r4236524004）
+        assert got["evilpkg2"].distribution_status == "unverified"
+        assert got["evilpkg2"].distribution_provenance == "editable"
 
     def test_the_armed_traps_are_real(self, monkeypatch):
         with _armed(monkeypatch):

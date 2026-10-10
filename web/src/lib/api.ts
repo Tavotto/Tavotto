@@ -3717,6 +3717,8 @@ export const checkProjectEnvironment = (opts?: {
       candidate_interpreters: number
       imported_modules: string[]
       may_run_package_init: boolean
+      /** 有候选的体检起了子进程却没拿到完整结果（超时 / 崩溃 / 输出读不出）：`imported_modules` 因此可能少报，别当「没跑」 */
+      incomplete: boolean
       side_effect_free: false
     }
     coverage?: { modules: string[]; dropped: number }

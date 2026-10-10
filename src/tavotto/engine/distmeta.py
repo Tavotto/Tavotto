@@ -1240,9 +1240,22 @@ def resolve_module(
             "provenance": c.provenance,
             "evidence": tuple(_dedupe(evidence)),
         }
+        observed = {"observed_distribution": c.distribution, "observed_version": c.version}
+        # 「唯一提供者」只在**看全了**的时候成立（#889 ①）：有没跟进的 `.pth` 路径行 / 没建模的 `import` 行时，
+        # 别的提供者可能被它插到这个 site-packages 之前——观测到的候选照实报，但不确认它就是用户 import 到的那个。
+        # 这条判据在所有 provenance 专属返回（Conda / editable / 本地 / VCS / URL）**之前**，声明冲突的报告（上面）不受影响
+        if look is not None and look.uncovered_paths > 0:
+            compat.append("path_entries_not_followed")
+            return finish(
+                {
+                    **common,
+                    **observed,
+                    "kind": KIND_UNVERIFIED,
+                    "status": ST_UNVERIFIED,
+                }
+            )
         if c.ecosystem == ECO_CONDA:
             return finish({**common, "kind": KIND_UNSUPPORTED, "status": ST_CONDA})
-        observed = {"observed_distribution": c.distribution, "observed_version": c.version}
         if c.provenance == PROV_EDITABLE:
             return finish(
                 {
@@ -1256,18 +1269,6 @@ def resolve_module(
         if c.provenance in (PROV_LOCAL_PATH, PROV_LOCAL_ARCHIVE, PROV_VCS, PROV_URL):
             return finish(
                 {**common, **observed, "kind": KIND_UNSUPPORTED, "status": ST_NOT_REPRODUCIBLE}
-            )
-        # 「唯一提供者」只在**看全了**的时候成立（#889 ①）：有没跟进的 `.pth` 路径行 / 没建模的 `import` 行时，
-        # 别的提供者可能被它插到这个 site-packages 之前——观测到的候选照实报，但不确认它就是用户 import 到的那个
-        if look is not None and look.uncovered_paths > 0:
-            compat.append("path_entries_not_followed")
-            return finish(
-                {
-                    **common,
-                    **observed,
-                    "kind": KIND_UNVERIFIED,
-                    "status": ST_UNVERIFIED,
-                }
             )
         if c.provenance == PROV_CONDA:
             compat.append("installed_by_conda_not_pip")
