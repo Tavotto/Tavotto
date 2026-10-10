@@ -4224,6 +4224,26 @@ export interface JointOrigin {
   candidates: string[]
   /** PR3 覆盖度缓存里目标解释器对它的模块状态（found / not_found / import_error / … / 空 = 没量过） */
   coverage: string
+  /**
+   * 预填（Import Origin PR5b，维护者裁决 C1）：只有「纯粹的表外名」才有——规范化的 import 名。**不是可信来源**、不进
+   * requirements、不自动装：确认界面输入框里的初始值，用户接受（可改）后作为 `user_specified` 提交（`createJointDependencyPlan`）。
+   * 没有这个字段 = 不给预填（curated 已有映射 / 撞上 curated 名或易混名 / 有别的来源证据 / 环境没读全）
+   */
+  suggested_distribution?: string
+}
+
+/**
+ * `JointDependencyPlan.user_specified[]`：用户指定、**未经可信来源核实**的需求（后端 `depplan.JointPlan.user_specified`；
+ * 只在有时出现）。`missing` / `requirements` 里同一条的 `resolution_source` 是 `user_specified`。
+ */
+export interface JointUserSpecified {
+  import_name: string
+  distribution: string
+  specifier: string
+  requirement: string
+  resolution_source: 'user_specified'
+  /** 恒为 false：包名是用户给的，没有经 project_declared / curated 核实 */
+  verified_source: false
 }
 
 /** `depplan.JointPlan.to_payload()`：只读的联合计划（后端算的，不含机器路径） */
@@ -4258,8 +4278,10 @@ export interface JointDependencyPlan {
   }[]
   /** 无条件 import 却没有可信安装名的（映射不到 / 多发行包 / editable / 本地 / Conda / 无元数据 / 导入失败）：永远不装、不猜，原因见 `origins` */
   unknown: string[]
-  /** `unknown` 里每个名字的来源状态（PR4）；名字集合与 `unknown` 恒等 */
+  /** `unknown` 里每个名字的来源状态（PR4）；名字集合与 `unknown` 恒等。被用户指定接受的名字离开这里（进 `user_specified` / `missing`） */
   origins?: JointOrigin[]
+  /** 用户指定、未经可信来源核实的需求（PR5b）；没有时不出现 */
+  user_specified?: JointUserSpecified[]
   /** 条件 / 延后 / 可选 / 动态的第三方 import：不在跑前装 */
   possible: { module: string; context: string; distribution: string }[]
   /** 交给安装器的需求（规范串） */
@@ -4328,6 +4350,8 @@ export interface DependencyImpact {
   scope_policy: '' | 'switch'
   drops: string[]
   changes: string[]
+  /** 用户指定、未经可信来源核实的包（`impact_version` ≥ 2；老后端没有）：披露必须看得见，`trust` 恒为 `user_specified_unverified` */
+  user_specified?: { import_name: string; requirement: string; trust: 'user_specified_unverified' }[]
   environment_ref: string
 }
 
@@ -4400,6 +4424,12 @@ export const fetchDependencyOffer = (script: string) =>
 export const createJointDependencyPlan = (body: {
   script: string
   target?: 'project_venv' | 'tavotto_managed'
+  /**
+   * 用户在确认界面接受（可改）预填后提交的 `{ import 名: '包名[版本约束]' }`（PR5b）。只收 `origins[]` 里带
+   * `suggested_distribution` 的那类 import；语法不合 `package_requirement_invalid`，不是来源未定的表外名
+   * `dependency_install_not_allowed`。出来的计划与 `impact.user_specified` 标明「用户指定、未经可信来源核实」
+   */
+  user_specified?: Record<string, string>
 }) =>
   jsonFetch<{ plan: JointDependencyRepairPlan }>('/api/engine/dependencies/plan', {
     method: 'POST',

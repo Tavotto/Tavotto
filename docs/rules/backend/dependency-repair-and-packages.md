@@ -109,6 +109,22 @@
   外加用户手填的 `user_specified`。**没有「同名试试看」这一档**——那是抢注
   攻击的入口。依赖声明只读：不改 requirements.txt / pyproject.toml，不
   `pip install -r`。
+- **表外 import：预填 + 用户确认（Import Origin PR5b，维护者裁决 C1，#864 关闭）**：`depplan` 对「纯粹的表外名」（`origins[].reason ==
+  distribution_unresolved`、没有可信安装名、覆盖度没说能 import / 导入失败、静态索引名字层读全）给 `origins[].suggested_distribution`
+  （`depresolve.suggest_distribution`：规范化的 import 名；撞 curated 的 import 名 / 包名 / `SAME_NAME` / 备选发行包、标准库、过不了包名语法的不给——
+  复用现有的表，没有新表）。**预填不是来源**：不进 requirements / `INSTALLABLE_SOURCES`、不自动装。用户接受（可改）后经
+  `POST /api/engine/dependencies/plan {user_specified: {import 名: "包名[约束]"}}` → `create_joint_plan(user_specified=)` →
+  `depplan.plan(user_specified=)`：只收 `_specifiable` 的 import，包名与约束过 `from_user_input` 的严格语法（语法错
+  `package_requirement_invalid`，不是表外名 `dependency_install_not_allowed`，不静默丢弃），进 `missing` / `requirements`
+  （`resolution_source=user_specified`）并列在 `JointPlan.user_specified`；hash 模式下整份 `dependency_hashes_incomplete`。影响披露
+  `impact["user_specified"]` 标明「用户指定、未经可信来源核实」。目标只有受管环境 / 项目 `.venv`，bundled runtime 永不是目标。
+- **装后核验「发行包与版本」（PR5b）**：每一次联合安装（受管换代 / 用户 venv 原地 / 单包 / 重建同走 `_run_generation` 或 `_run_joint_in_place`）在
+  `_verify_imports` 之后跑 `_verify_distributions`：`target_facts(use_cache=False)` + 同一刻读的 `static_index` 重读，计划里每个要装的发行包
+  已出现且版本满足自己与 constraints 的约束，`record` 里每个 (import, 发行包) 的发行包确实在 `Index.lookup` 的未遮蔽候选里。不一致 =
+  `dependency_import_still_failed`（既有码，`extra["imports"]` 是 `DIST_*` 原因码；受管环境旧代保留，用户 venv 原地装不可完整回滚照旧披露）。
+  判不出就别判：非用户指定的 import 没有任何发行包认领它 / 读不出 = 跳过；**用户指定**的包读不出它提供什么就不放行（`DIST_UNVERIFIABLE`）。
+- **执行期过期检查还要覆盖层里的名字（#932）**：`JointRepairPlan.names_digest` / `install_names_digest`（`depplan.provider_digest`：计划用到的 import 名在
+  静态索引各层的提供状态）在 `prepare` 重量事实后与形成计划时比，不一致 `repair_plan_stale`；只记计划用到的名字，无关包的安装不让计划过期。
 - **包名语法是安全边界不是输入校验**：`shell=False` 挡不住 pip 自己把 `-r` /
   `--index-url` / `--target` 解析成选项。白名单语法在
   `depresolve.parse_requirement`，安装前在 `_pip_install` 里**再验一次**。
@@ -553,6 +569,8 @@
   写入范围、回滚性质、目标环境与代〔不透明引用〕、`IMPACT_VERSION`）；`impact_digest` 是它的摘要。**不在里面**：进度 / 文案 / 计划 id / 有效期 /
   事实 digest / 规划输入指纹。门显示的（`offer_impact`）与绑定出的计划（`JointRepairPlan.impact` / `RepairPlan.impact`）共用 `_managed_scope`，逐字相同。
   新增一类影响要升 `IMPACT_VERSION`。
+  **版本 2（Import Origin PR5b）**：多了 `user_specified`（用户指定、未经可信来源核实的包：`{import_name, requirement, trust}`，`trust` 恒为
+  `TRUST_USER_SPECIFIED_UNVERIFIED`）。没有用户指定包时为空表；摘要含它，版本 1 的形状永远对不上。
 - **对不上就是 `dependency_impact_changed`，认领之前、零副作用**：`prepare_async(confirmed_impact=)` / `start_confirmed(digest)`；响应带此刻的实际影响。
   会改用户自己环境的动作必须回显摘要（会话 400 `preparation_impact_unconfirmed`）；使用（采用）环境不含修改权限。
   **`POST …/prepare` 一律必填 `impact_digest`**（缺 → 400 `dependency_impact_required`）：前端回显的是 offer 里**用户看到的**那份，不是刚绑回来的计划自己的；
