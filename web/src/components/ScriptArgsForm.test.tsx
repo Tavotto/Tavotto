@@ -142,6 +142,38 @@ describe('ScriptArgsForm', () => {
     expect(field('src').querySelector('[data-testid="argv-field-error"]')).not.toBeNull()
   })
 
+  it('被拒的草稿只活到权威 token 变化：外部换了列表后输入框显示新值、旧错误消失（补审 #912 r4236702481）', async () => {
+    await open(schemas.mixed)
+    typeInto(textOf('src'), '-weird')
+    expect(field('src').querySelector('[data-testid="argv-field-error"]')).not.toBeNull()
+    expect(tokens()).toEqual([])
+    // 粘贴命令 / 原始 token 编辑 / 别处的成功编辑：列表被外部换掉
+    act(() => useScriptArgvStore.getState().setTokens('plot.py', ['good.csv']))
+    expect(textOf('src').value).toBe('good.csv')
+    expect(field('src').querySelector('[data-testid="argv-field-error"]')).toBeNull()
+  })
+
+  it('运行中（disabled）BooleanOptional 的分段控件也锁住，草稿不会在试运行期间被改（补审 #912 r4236702484）', async () => {
+    fetchScriptArguments.mockResolvedValue({ ok: true, script: 'plot.py', arguments: schemas.short_options })
+    act(() => {
+      root.render(
+        <TooltipProvider>
+          <ScriptArgvEditor script="plot.py" disabled />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => {
+      const details = host.querySelector('details')!
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    })
+    const buttons = [...field('f').querySelectorAll<HTMLButtonElement>('[data-value]')]
+    expect(buttons.length).toBeGreaterThan(0)
+    expect(buttons.every((b) => b.disabled)).toBe(true)
+    act(() => buttons.find((b) => b.dataset.value === 'on')!.click())
+    expect(tokens()).toEqual([])
+  })
+
   it('子命令脚本：表单只读，参数只在列表里填', async () => {
     await open(schemas.subcmd)
     expect(host.querySelector('[data-testid="argv-form-readonly"]')).not.toBeNull()

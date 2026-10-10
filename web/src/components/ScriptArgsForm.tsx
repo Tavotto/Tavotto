@@ -90,6 +90,16 @@ export function ScriptArgsForm({
   const sensitive = draft?.sensitive ?? false
   const [pending, setPending] = useState<Record<string, string[]>>({})
   const [errors, setErrors] = useState<Record<string, EditError>>({})
+  // 草稿只活到「权威 token 列表」下一次变化：被拒的输入留在框里是为了让你改，但原始 token 编辑 / 粘贴命令 /
+  // 别处的成功编辑把列表换了之后，框里再显示那个被拒的值，运行时发出去的就和表单显示的对不上
+  // （Codex 评 #912 补审 P2）。被拒的编辑不改列表，所以不会把自己的草稿清掉
+  const tokensKey = JSON.stringify(tokens)
+  const [seenTokens, setSeenTokens] = useState(tokensKey)
+  if (seenTokens !== tokensKey) {
+    setSeenTokens(tokensKey)
+    setPending({})
+    setErrors({})
+  }
   const view = readTokens(schema, tokens)
   const missing = new Set(missingRequired(schema, view))
   const problems = groupProblems(schema, view)
@@ -169,9 +179,11 @@ export function ScriptArgsForm({
                   value={field?.state === 'on' ? 'on' : field?.state === 'off' ? 'off' : 'default'}
                   onChange={(v) => edit(arg, { op: 'flag', arg: arg.id, value: v })}
                   items={[
-                    { value: 'default', label: rf('useDefault') },
-                    { value: 'on', label: rf('on') },
-                    ...(negatedFlags(arg).length > 0 ? [{ value: 'off' as const, label: rf('off') }] : []),
+                    { value: 'default', label: rf('useDefault'), disabled },
+                    { value: 'on', label: rf('on'), disabled },
+                    ...(negatedFlags(arg).length > 0
+                      ? [{ value: 'off' as const, label: rf('off'), disabled }]
+                      : []),
                   ]}
                 />
               ) : arg.arity === 0 ? (
