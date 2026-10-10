@@ -415,7 +415,7 @@ describe('主按钮就是后端给的那件事', () => {
       expect(details()?.querySelector('[data-prep-row="dialog-call"]')?.textContent).toContain('tkinter.filedialog.askopenfilename')
       mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
       await act(async () => primary()!.click())
-      expect(mockAct).toHaveBeenCalledWith('psess-1', { action_id: 'act-run', expected_config_revision: 1 }, 'pj-a')
+      expect(mockAct).toHaveBeenCalledWith('psess-1', { action_id: 'act-run', expected_config_revision: 1 }, 'pj-a', expect.anything())
     })
 
     it('英文同样；询问类弹窗换一句话', async () => {
