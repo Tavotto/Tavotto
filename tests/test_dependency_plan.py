@@ -1557,6 +1557,42 @@ class TestEveryVisibleLayer:
             assert origin["reason"] == "unverified", label
             assert origin["distribution_status"] == "environment_not_checked", label
 
+    def test_an_unreadable_metadata_file_of_one_distribution_does_not_hide_the_layer(
+        self, tmp_path
+    ):
+        """Homebrew 的 site-packages 里 pip / wheel 的 METADATA 是符号链接：那只让这一个发行包的元数据读不全（`complete=False`），
+        这一层里有哪些名字是看全了的（`names_complete`），不能因此把整个环境的「没查到」都改判成来源未定。"""
+        if os.name == "nt":
+            pytest.skip("符号链接在 Windows 上需要特权")
+        prefix, site = _env(tmp_path)
+        _dist(site, "pip", "25.3", top="pip\n", record=["pip/__init__.py"])
+        real = tmp_path / "elsewhere.txt"
+        real.write_text("Metadata-Version: 2.1\nName: pip\nVersion: 25.3\n", encoding="utf-8")
+        meta = site / "pip-25.3.dist-info" / "METADATA"
+        meta.unlink()
+        os.symlink(real, meta)
+        facts = dataclasses.replace(_facts_at(prefix, {"pip": "25.3"}), site_roots=(str(site),))
+        index = depplan.static_index(facts)
+        assert index is not None and index.complete is False and index.names_complete is True
+        plan = self._plan(self._project(tmp_path, "import tabulate\n"), facts)
+        assert [m["distribution"] for m in plan.missing] == ["tabulate"]  # 照旧缺
+
+    def test_a_symlinked_package_directory_is_a_name_nobody_saw(self, tmp_path):
+        """层里有个符号链接的包目录 `yaml/`：Python 会跟进它、我们不跟——这个名字没被看到，不许当「没装」。"""
+        if os.name == "nt":
+            pytest.skip("符号链接在 Windows 上需要特权")
+        prefix, site = _env(tmp_path)
+        target = tmp_path / "elsewhere" / "yaml"
+        target.mkdir(parents=True)
+        (target / "__init__.py").write_text("", encoding="utf-8")
+        os.symlink(target, site / "yaml")
+        facts = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(site),))
+        index = depplan.static_index(facts)
+        assert index is not None and index.names_complete is False
+        plan = self._plan(self._project(tmp_path, "import yaml\n"), facts)
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
     def test_an_unreadable_directory_is_not_a_missing_package(self, tmp_path):
         if os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0):
             pytest.skip("目录权限在 Windows / root 下不起作用")
@@ -1584,8 +1620,15 @@ class TestEveryVisibleLayer:
         facts = dataclasses.replace(_facts_at(prefix, {}), site_roots=(str(other), str(site)))
         index = depplan.static_index(facts)
         assert index is not None and index.complete
-        (cand,) = [c for c in index.lookup("yaml").candidates if not c.shadowed]
-        assert cand.distribution == "my-fork"
+        _dist(
+            site, "pyyaml", "6.0", top="yaml\n", record=["yaml/__init__.py"]
+        )  # 后一层的同名提供者
+        facts = dataclasses.replace(facts, site_roots=(str(other), str(site)))
+        depplan.reset_cache()
+        index = depplan.static_index(facts)
+        assert index is not None and index.complete
+        live = {c.distribution: not c.shadowed for c in index.lookup("yaml").candidates}
+        assert live == {"my-fork": True, "pyyaml": False}  # 前一层胜出，后一层被遮蔽
 
     def test_facts_without_reported_layers_keep_the_prefix_only_reading(self, tmp_path):
         prefix, site = _env(tmp_path)

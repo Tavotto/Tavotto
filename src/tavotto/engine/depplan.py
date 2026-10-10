@@ -593,7 +593,8 @@ def _verdict(
     判据的顺序就是证据的强弱：名字级已装（旧口径，原样）> 多个备选都装着 = 歧义 > 别的已装发行包声称提供它（editable /
     本地 / VCS / Conda / 未确认）> 包在导入失败 > 缺。多个备选都装着时，项目声明里点了名的那个胜出。后三种之一成立时「装 curated / 声明的名字」都是错的或没把握的。
 
-    `index_incomplete`：静态索引有某一层没读成（不存在 / 超预算 / 读失败 / 链接被拒）。这时「没查到」不等于「没装」——那一层里
+    `index_incomplete`：静态索引有某一层的名字没读全（层不存在 / 是链接 / 列不出来 / 条目被跳过·链接拒跟 / 超预算 / 层数超限，`Index.names_complete=False`；
+    个别发行包的元数据文件读不成只让 `complete=False`，不在此列——Homebrew 的 site-packages 里 pip 的 METADATA 就是符号链接）。这时「没查到」不等于「没装」——那一层里
     可能正有别的提供者（editable 的替代包、基础解释器里的同名模块），按名字装 curated 的包会遮蔽它。所以本该判「缺」的改判
     「来源未定」（`ORIGIN_UNVERIFIED`，条目的 `distribution_status` 是 `environment_not_checked`）：宁可不完整当未定，也不漏层后去装。"""
     present = _providers(c, installed)
@@ -731,7 +732,9 @@ def plan(
     states = _coverage_states(coverage, scan, plain_unknown)
     declared_names = frozenset(by_name)
     # 静态索引读不全（有一层没读成）：名字级查不到的不当「缺」（见 `_verdict`）。没给索引（None）= 没量，维持旧口径
-    index_incomplete = isinstance(dists, distmeta.Index) and dists.checked and not dists.complete
+    index_incomplete = (
+        isinstance(dists, distmeta.Index) and dists.checked and not dists.names_complete
+    )
     verdicts = {
         c.module: _verdict(
             c,

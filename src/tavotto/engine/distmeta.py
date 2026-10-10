@@ -16,6 +16,8 @@
 * 读的范围：环境前缀下的 `pyvenv.cfg`、`lib/pythonX.Y/site-packages`（Windows `Lib/site-packages`）、`conda-meta/*.json`
   （Conda 环境，只读 `name` / `version` / `files`）。可选的基础解释器 site-packages（`include_base`，默认关）
   只在调用方明确要求且 `pyvenv.cfg` 声明 `include-system-site-packages = true` 时才列；
+* 目标解释器**自己报告**的 site 目录（`index_environment(site_paths=)`，`depplan` 在已授权的事实采集子进程里取 `sys.path` 上的那些）：
+  前缀之外的层（基础解释器 / user site）也读，同样只读文本；报告了却读不成的层 = `complete=False`；
 * 环境前缀在项目内时，调用方传 `project_root`：前缀的任何一级是符号链接 / junction 就整个拒绝（先 `lstat`，不碰目标）；
 * 预算走 `scanbudget`（目录项数、累计字节、墙钟、占位文件、符号链接）；超了留痕在 `Index.issues`，
   `Index.complete=False`——**「没读全」不许被当成「没装」**（`environment_not_checked`）。
@@ -263,6 +265,9 @@ class Index:
         self._names = names  # 每个 root 的目录清单里的顶级名
         self.issues: tuple[dict, ...] = ()
         self.complete = True
+        #: 「每一层里有哪些名字」读全了没有（`complete` 的子集条件：层列不出来 / 不是真目录 / 条目被跳过·链接拒跟 / 预算用完 / 层数超限
+        #: 才为 False；个别发行包的元数据文件读不成只让 `complete=False`）。`depplan` 据此决定「没查到」能不能当「没装」。
+        self.names_complete = True
         self.uncovered_paths = 0  # 没跟进的 `.pth` 路径行（指向 site-packages 之外）
         self.checked = True
         self._by_module: dict[str, list[_Dist]] = {}
@@ -526,6 +531,9 @@ class _Reader:
         self.roots = list(roots)
         self.budget = budget
         self.complete = True
+        # 「看见了哪些名字」是否完整：层列不出来 / 条目被跳过·链接拒跟 / 目录项预算用完。与 `complete` 的区别：`complete`
+        # 还含「看见的发行包里某个元数据文件读不成」（`read_state`）——那只影响这一个发行包的细节，不影响「这一层里有没有这个名字」
+        self.names_complete = True
         self.uncovered = 0
         self.kinds: dict[int, dict[str, set[str]]] = {}  # root.order → 顶级名 → {"dir"|"py"|"ext"}
 
@@ -551,6 +559,11 @@ class _Reader:
         """在那儿但没看全 / 没读成（列不了、条目被跳过、链接拒跟、解析失败……）：留痕并把环境记为没读全。"""
         self.note(code, root, rel, scope=scope)
         self.complete = False
+
+    def refuse_names(self, code: str, root: SiteRoot, rel: str, *, scope: str = "file") -> None:
+        """`refuse`，另记「有名字没被看到」（层列不出来 / 条目被跳过 / 链接拒跟）：不许把「没查到」当「没装」。"""
+        self.refuse(code, root, rel, scope=scope)
+        self.names_complete = False
 
     def _read_state(self, root: SiteRoot, *parts: str, max_bytes: int) -> tuple[str | None, bool]:
         full = os.path.join(root.path, *parts)
@@ -739,28 +752,33 @@ def _list_root(
     try:
         it = os.scandir(root.path)
     except OSError:
-        rd.refuse(scanbudget.ISSUE_UNREADABLE_DIR, root, "", scope="dir")  # 没列出来 ≠ 里面没有东西
+        rd.refuse_names(
+            scanbudget.ISSUE_UNREADABLE_DIR, root, "", scope="dir"
+        )  # 没列出来 ≠ 里面没有东西
         return dist_infos, egg_infos, egg_links, pths, names
     with it:
         for e in it:
             if not rd.budget.charge_entry():
                 rd.complete = False
+                rd.names_complete = False
                 break
             name = e.name
             try:
                 st = e.stat(follow_symlinks=False)
             except OSError:
-                rd.refuse(scanbudget.ISSUE_UNREADABLE_FILE, root, name)  # 条目被跳过 = 没读全
+                rd.refuse_names(scanbudget.ISSUE_UNREADABLE_FILE, root, name)  # 条目被跳过 = 没读全
                 continue
             redirect = scanbudget.is_redirect(st)
             if name.endswith((".dist-info", ".egg-info")):
                 if redirect:
-                    rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)  # 里面的发行包没被看到
+                    rd.refuse_names(
+                        scanbudget.ISSUE_SYMLINK_DIR, root, name
+                    )  # 里面的发行包没被看到
                     continue
                 (dist_infos if name.endswith(".dist-info") else egg_infos).append(name)
             elif name.endswith(".egg-link"):
                 if redirect:
-                    rd.refuse(
+                    rd.refuse_names(
                         scanbudget.ISSUE_SYMLINK_DIR, root, name
                     )  # develop 安装的证据没被看到
                 else:
@@ -768,14 +786,14 @@ def _list_root(
             elif name.endswith(".pth"):
                 if redirect:
                     # Python 的 site 会跟进链接读它：拒绝跟进 = 它提供的路径条目没被看到，不许当成「没有」
-                    rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)
+                    rd.refuse_names(scanbudget.ISSUE_SYMLINK_DIR, root, name)
                 else:
                     pths.append(name)
             elif name in _SKIP_ENTRIES or name.endswith(".data"):
                 continue
             elif redirect:
                 # 链接形式的包目录 / 模块文件：Python 会跟进，我们不跟——这个名字没被看到，不许当「没装」
-                rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)
+                rd.refuse_names(scanbudget.ISSUE_SYMLINK_DIR, root, name)
                 continue
             elif stat.S_ISDIR(st.st_mode):
                 if _IDENT_RE.match(name):
@@ -1068,6 +1086,7 @@ def build_index(
         dists += _read_conda_meta(rd, os.path.normpath(os.fspath(prefix)), roots)
     index = Index(roots, dists, names)
     index.complete = rd.complete and budget.stopped is None
+    index.names_complete = rd.names_complete and budget.stopped is None
     index.uncovered_paths = rd.uncovered
     index.issues = tuple(budget.issues())
     return index
@@ -1136,6 +1155,7 @@ def index_environment(
         index = build_index(roots, prefix=prefix, budget=budget) if roots else Index((), [], [])
         if incomplete:
             index.complete = False
+            index.names_complete = False
             index.issues = tuple(budget.issues())
         return index
     roots, layout_incomplete = _site_packages_state(
@@ -1144,10 +1164,12 @@ def index_environment(
     index = build_index(roots, prefix=prefix, budget=budget) if roots else Index((), [], [])
     if layout_incomplete:
         index.complete = False
+        index.names_complete = False
         index.issues = tuple(budget.issues())
     if not roots:
         index.checked = False
         index.complete = False
+        index.names_complete = False
         index.issues = tuple(budget.issues())
     return index
 

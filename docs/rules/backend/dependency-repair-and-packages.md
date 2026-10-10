@@ -328,6 +328,15 @@
   条目带 `distribution_status=module_origin_ambiguous` 供展示），不静默改名。已装元数据**只用来判「已经有了 / 来源未定」，从不造安装名**。
   目标环境的静态发行包索引（`depplan.static_index`）与事实**同一刻读**（`target_facts` 里）、同一个 `reset_cache` 清：装上了但验证没过的
   包不会 `reset_cache`，事实停在装之前，索引也必须停在装之前；联合计划读覆盖度只走 `userenvs.cached_probe` 的只读缓存（不起进程）。
+  **索引读目标解释器看得见的每一层**（Codex #920 P1）：`_FACTS_SRC` 在事实采集子进程里顺带报出 `sys.path` 上的 site 目录
+  （`getsitepackages()` / 启用的 user site / 其它叫 `site-packages`·`dist-packages` 的存在目录，`TargetFacts.site_roots`，不进 digest），
+  `static_index` 按它们建层（`distmeta.index_environment(site_paths=)`，层顺序 = sys.path 顺序；前缀之外的层 `rel` 记 `base`，账里无绝对路径）。
+  某一层的名字没读全（消失 / 链接 / 列不出来 / 条目被跳过·链接拒跟 / 超预算 / 层数超上限）= `Index.names_complete=False`（个别发行包元数据文件读不成只让 `complete=False`，不触发），此时**名字级查不到的 import 不判「缺」而判来源未定**
+  （`reason=unverified`，条目 `distribution_status=environment_not_checked`），不往用户环境里装可能遮蔽那一层提供者的包。没量到层的替身事实退回只读前缀的旧口径。
+  **来源判决只抑制当前环境的 missing**：`install_facts` 不是当前环境（新托管代 / active 代）时，`requirements` 的排除按目标的已装集合单独判——
+  当前解释器里的 editable / 本地 / Conda 提供者、缓存的 `import_error`、读不全的索引在新代里都不存在，不再把该 import 从安装集合剔除；
+  装到当前环境（`install_facts` 为 None / 就是 `facts`）时不变。当前环境里是 editable 等、可信解析又给不出安装名的 import
+  （`unknown` 桶）仍只列在 `unknown` / `origins`，不猜 PyPI 名。
   `prepsession.checks_of` 的 `dependencies` 项在有 `origins` 时带 `detail.origins {count, by_reason}`（不出名字与路径，不改状态）。
   目标解释器自己的 `sys.builtin_module_names` / `EXTENSION_SUFFIXES` 随事实量取（`TargetFacts.builtin` / `ext_suffixes`，不进 digest）并交给
   `importscan`（#888）：没量到不拿宿主冒充——`posix` / `nt` 恒为 ambiguous，扩展模块标 `unverified` 且 `search_complete=False`；

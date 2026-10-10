@@ -474,3 +474,11 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 * **PR6**：用 `plan.origins[].reason` / `coverage.detail.code` 各给一句人话（不在前端复刻判据）；`checks_of.dependencies.detail.origins.by_reason` 决定卡片的第二行；`missing[].distribution_status=module_origin_ambiguous` 的备选提示；`DependencyPrepareDialog` 的 `unknown` 区改读 `origins`。
 * `found` 改判、依赖门展示覆盖度 detail（见上）。
 * 目标事实 `builtin` / `ext_suffixes` 只在联合计划路径上有；`rasterhint` 的 `importscan.scan(root, script)` 仍用保守口径（它只看 matplotlib 反面判据，保守即可）。
+
+**评审跟进（Codex 完整评审 #920，两条 P1，`risk:high`）**
+
+* **P1-1 `r4237204162`（索引漏层）**：`_FACTS_SRC` 多报 `site_roots`（`sys.path` 上的 `getsitepackages()` / 启用的 user site / 其它 `site-packages`·`dist-packages` 目录；路径列表，在已授权的事实采集子进程里取，不新增进程），`TargetFacts.site_roots` 不进 `digest()` / `to_payload()`（`identity` / `inputs_digest` 不变）。`static_index` 经 `distmeta.index_environment(site_paths=)` 按这些层建索引（层顺序 = sys.path 顺序，复用 distmeta 已有的多层遮蔽语义）。任一层的名字没读全（层消失 / 是链接被 no-follow 拒 / 列不出来 / 条目被跳过·链接拒跟 / 层数超 `MAX_SITE_PATHS` / 预算）→ `Index.names_complete=False`（同时 `complete=False`）；个别发行包的元数据文件读不成（Homebrew 的 pip METADATA 是符号链接，实测会让 venvfixture 的真 venv 里五个既有用例变红）只让 `complete=False`、不触发改判；此时 `_verdict` 把本该判「缺」的改判来源未定（`reason=unverified`，条目 `distribution_status=environment_not_checked`）——不进 `missing`、不进 `requirements`。没量到层的替身事实（`site_roots=()`）维持只读前缀的旧口径；全新代（`prefix=""`）不读索引，不受影响。
+* **P1-2 `r4237204165`（open 判决剔掉新代的安装）**：来源判决只抑制当前环境的 `missing`。`install_facts` 不是当前环境时，`to_install` 的排除按目标的已装集合（名字级）单独判，当前解释器里的 editable / 本地 / Conda / `import_error` / 读不全的索引都不再把该 import 从新代的安装集合里剔除；仍只用可信安装名（表 / 声明），不从 `unknown` 猜。当前环境 editable、可信解析给不出安装名的 import 本来就在 `unknown` 桶（不在 `needed`），继续列在 `unknown` / `origins`（`editable_dependency_not_reproducible` 等既有词汇），如实标出新环境装不出来；未新增 `BLOCK_REASONS` / `ORIGIN_REASONS`。`install_facts` 为 None 或就是 `facts` 时行为不变（用例钉着）。
+* 用例：`tests/test_dependency_plan.py` 的 `TestEveryVisibleLayer` / `TestInstallTargetIsJudgedSeparately`（真 `--system-site-packages` venv + 基础层替身 / `PYTHONUSERBASE` 的 user site / 三种读不成的层 / 层顺序遮蔽 / 新代单独判的 6 个形状）。
+* **仍未覆盖**：①sys.path 上不叫 `site-packages`·`dist-packages` 的目录（`PYTHONPATH` 指向的 `pip install --target` 目录、`.pth` 路径行加进来的目录）里的发行包不读（`distmeta` 对 `.pth` 路径行只计数 `uncovered_paths`，该口径原样）；②`install_facts` 是 active 代时它自己的来源（没有该代的索引）只有名字级判据；③基础层用 `PYTHONPATH` 里的 `site-packages` 目录做替身（测试不能改宿主的真基础解释器），读取路径与真基础层相同；④`index.complete` 在超大环境（预算用尽）下也会让「缺」改判来源未定——这是「宁可不完整当未定」的代价。
+
