@@ -60,6 +60,7 @@ import { useProjectReadinessStore } from '@/store/projectReadinessStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useEnvStore } from '@/store/envStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { checkUpdateOnStartup } from '@/store/updateStore'
 import { restoreSession, startAutosave, useDocumentStore } from '@/store/documentStore'
 import { useViewportStore } from '@/store/viewportStore'
@@ -92,6 +93,8 @@ export function App() {
     // 连 install_id 都不会生成；同意态还是 unset 时由 TelemetryConsentDialog
     // 问一次（问之前同样什么都没发）。
     void useTelemetryStore.getState().load()
+    // 「发送问题反馈」默认关闭；只问本机引擎开没开（不联网），设置页与隐私摘要读这一份
+    void useDiagSendStore.getState().load()
     // 导出默认值以后端为准（#715 PR-B）：换了 origin 的本机缓存是空的，先从数据目录取回来。
     // 导出对话框 / 设置页同步读本机缓存，这一步在它们打开之前就落地了
     void hydrateExportDefaults()

@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-02
+Last updated: 2026-10-10
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -11,15 +11,19 @@ export destinations are used when the user chooses them.
 
 Network activity includes update checks and user-approved update downloads,
 package lookups and downloads for environment preparation or dependency
-installation, the optional AI assistant the user invokes, and — only after
-an explicit opt-in — usage statistics. The sections below distinguish these
-operations; local rendering does not mean that every feature is offline.
+installation, the optional AI assistant the user invokes, — only after
+an explicit opt-in — usage statistics, and — only where the maintainers have
+enabled it, and only when the user confirms each send — a redacted diagnostics
+bundle. The sections below distinguish these operations; local rendering does
+not mean that every feature is offline.
 
 ## Data Tavotto does not upload
 
 Tavotto does not upload figure files, source scripts, project files, layouts,
 exports, or the contents of a user's scientific data to the Tavotto project or to
-any service operated by the maintainers.
+any service operated by the maintainers. The one thing a user can choose to send
+is a redacted diagnostics bundle, which contains none of those and is never sent
+automatically — see [Diagnostics bundle](#diagnostics-bundle).
 
 This holds for the anonymous usage statistics too. The event schema physically
 cannot carry any of the following, on the client and again at the server:
@@ -185,12 +189,58 @@ missing. Computing it never leaves the machine and never runs the user's code:
 
 ## Diagnostics bundle
 
-The diagnostics bundle (*Settings → Privacy, diagnostics & About → Export
-diagnostics*) is created locally and shared only if the user chooses to send it.
-Secrets and the user's home directory are redacted, and the anonymous telemetry
-identifier is redacted as well, so pasting a bundle into a public issue does not
-link that issue to the anonymous analytics records. Whether telemetry is on or
-off is included — that is useful for troubleshooting and is not sensitive.
+**Export (always available).** The diagnostics bundle (*Settings → Privacy,
+diagnostics & About → Export diagnostics*) is created locally and shared only if
+the user chooses to send it. Secrets and the user's home directory are redacted,
+and the anonymous telemetry identifier is redacted as well, so pasting a bundle
+into a public issue does not link that issue to the anonymous analytics records.
+Whether telemetry is on or off is included — that is useful for troubleshooting
+and is not sensitive. Redaction is automatic and is not a guarantee that nothing
+identifying remains; inspect the file before sharing it publicly.
+
+**Send problem report (off by default).** Where the maintainers have enabled it,
+the same page offers *Send problem report*, which uploads a diagnostics bundle to
+a service operated by the Tavotto maintainers in mainland China. In this release
+the option is disabled and no screen offers it. When it is enabled:
+
+* **Only on your confirmation, every time.** Nothing is uploaded until you open the
+  dialog, read what will be sent, and press *Send*. The choice is not remembered:
+  there is no automatic, background, crash-triggered or scheduled sending, and a
+  cancelled, closed or failed send is never resumed on its own — after a restart
+  nothing is retried. Telemetry consent is a separate decision and does not imply
+  this one (nor the reverse).
+* **You see what you send.** The dialog lists the kinds of content in the bundle and
+  lets you save the exact file that would be uploaded and read it first. Figures,
+  scripts, project files and data files are not part of the bundle.
+* **What is transmitted.** The bundle itself, plus: the problem type you choose,
+  an optional free-text note you may type (up to 1000 characters; please do not
+  put names, email addresses, paths or data in it — it is sent as typed), the
+  Tavotto version, operating-system family, CPU architecture, install method,
+  bundle format version, and the file's size and SHA-256. A random request ID is
+  generated for each send; it is not the telemetry identifier and is not derived
+  from any machine information. The telemetry identifier is never sent.
+* **Where it goes.** Your computer's Tavotto process sends the bundle directly to a
+  private storage bucket (Tencent Cloud COS, mainland China) using a short-lived
+  permission that the receiving service issues for that single file; the file does
+  not pass through the Tavotto server. Like any network request, the receiving
+  service and the storage provider see your IP address in the connection. The
+  receiving service keeps no access log and uses the address only, transiently and
+  salted-and-hashed, to rate-limit requests; the storage provider's own handling
+  follows its terms.
+* **Report ID.** When the send succeeds you get a report ID (`TVD-…`) to quote in a
+  GitHub issue or chat so the maintainers can find your report. It is the only
+  handle to the report; the bundle is not tied to any account or to your telemetry
+  identifier.
+* **Retention and access.** The current server design keeps a report for 30 days
+  and then deletes it; the retention period is a server setting and this document
+  is updated if it changes. Reports are not publicly readable; only maintainers
+  with administrative access to the service can read or download them.
+* **Deletion.** To have a report removed earlier, open an issue on the public issue
+  tracker quoting the report ID (without attaching anything else) and a
+  maintainer will delete it.
+* **Failure.** If you are offline, the service is unavailable or the bundle is
+  larger than the limit (10 MiB by default), nothing is cut down or retried behind
+  your back: you can export the bundle and keep or send it yourself.
 
 ## Local service
 

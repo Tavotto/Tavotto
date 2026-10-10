@@ -254,6 +254,11 @@ the building. It makes exactly two requests on its own:
   Turn it off under **Settings → Privacy, diagnostics & About** (or set
   `TAVOTTO_NO_TELEMETRY=1`).
 
+A diagnostics bundle is never sent on its own either: **Download diagnostics bundle** saves a
+redacted file locally, and where the maintainers have switched on **Send problem report**
+(disabled in this release) it uploads that bundle only after you confirm, each time — see
+[`docs/privacy.md`](docs/privacy.md#diagnostics-bundle).
+
 Project analysis is local too: the project watcher only reads file metadata and Python
 sources for static analysis, readiness is computed on your machine, tutorial progress is
 stored in your browser's local storage, and a script is only ever executed when you ask

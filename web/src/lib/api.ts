@@ -4521,6 +4521,85 @@ export const fetchPackageJob = (jobId: string) =>
 export const fetchDiagnosticsSummary = () =>
   jsonFetch<{ text: string; report: Record<string, unknown> }>('/api/diagnostics/summary')
 
+/* ------------------- 发送问题反馈（诊断包上传，ADR 0118） -------------------
+ * 上传由**本机引擎进程**做（WebView 不碰远程）：这里只是它的本机遥控器。除 `startDiagSend` 外都不会引出
+ * 远程请求；`startDiagSend` 只在用户点「发送」的那一下调，且请求体必带 `confirm: true`。
+ * 引擎侧的状态机、重试、目的地白名单见 `engine/diagsend.py`。*/
+
+/** 此刻能不能用（本机判断，不联网）。`enabled:false` = 不画入口。 */
+export interface DiagSendCapability {
+  enabled: boolean
+  max_bytes?: number
+  note_max_chars?: number
+  retention_days?: number
+  categories?: string[]
+}
+
+/** 备好的包：`entries` 是包里的文件与内容类别（闭集 id，界面按 id 翻译）。`id: null` = 超过上限，不保管。 */
+export interface DiagSendPrepared {
+  id: string | null
+  size: number
+  sha256: string
+  schema: number
+  max_bytes: number
+  too_large: boolean
+  entries: { name: string; kind: string }[]
+}
+
+export type DiagSendState = 'prepared' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled'
+export type DiagSendStage = 'init' | 'upload' | 'complete' | 'cancel'
+
+export interface DiagSendStatus {
+  id: string
+  state: DiagSendState
+  stage: DiagSendStage | null
+  size: number
+  sha256: string
+  sent: number
+  total: number
+  /** 成功后的报告编号（TVD-XXXX-XXXX-XXXX-XXXX），给用户复制 */
+  report_id?: string
+  /** 失败码（引擎 `diagsend.FAILURES` 的键） */
+  code?: string
+  retryable?: boolean
+  retry_after?: number | null
+}
+
+export const fetchDiagSendCapability = () => jsonFetch<DiagSendCapability>('/api/diagnostics/send')
+
+/** 在本机备好一份包（零网络）。载荷与导出诊断包相同。 */
+export const prepareDiagSend = (payload: unknown) =>
+  jsonFetch<DiagSendPrepared>('/api/diagnostics/send/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+/** 用户要保存的**同一份字节**（就是点发送时会上传的那份）。 */
+export async function fetchDiagSendBundle(id: string): Promise<Blob> {
+  const res = await fetch(apiUrl(`/api/diagnostics/send/${encodeURIComponent(id)}/bundle`), withProject())
+  if (!res.ok) throw new ApiError(`diag_send_bundle_${res.status}`, res.status, {})
+  return res.blob()
+}
+
+/** **用户点了「发送」**：唯一会让引擎去连诊断服务的调用。 */
+export const startDiagSend = (id: string, body: { category: string; note: string }) =>
+  jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm: true, ...body }),
+  })
+
+export const fetchDiagSendStatus = (id: string) =>
+  jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}`)
+
+export const cancelDiagSend = (id: string) =>
+  jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+
+/** 对话框关了：释放引擎内存里的包（发送中等于取消）。幂等。 */
+export const discardDiagSend = (id: string) =>
+  jsonFetch<{ ok: boolean }>(`/api/diagnostics/send/${encodeURIComponent(id)}/discard`, { method: 'POST' })
+
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
 /**
  * 「面板上没有 ⚡」几乎总是注册表的问题，以前只能手改 tavotto_registry.json。

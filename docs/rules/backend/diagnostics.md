@@ -103,7 +103,7 @@
     `SUPER_SECRET_PAPER_TITLE_12345` 那种全大写下划线串。
   * 坏载荷（超限 / 畸形 JSON / 类型不对）**一律退化成不带前端那两个文件的包**，
     并在 manifest 记 `trace_truncated`。用户是来排障的，不该拿到一个 400。
-  * **不写磁盘、不自动上传、不进 telemetry**。trace 只在用户点导出那一刻进 zip。
+  * **不写磁盘、不自动上传、不进 telemetry**。trace 只在用户点导出那一刻进 zip。（「不自动上传」的唯一例外通道是下面「发送问题反馈」：用户逐次确认才上传。）
 - **报告要答得出「渲染进程死在哪一句」（#435）**：`recent_errors` 把每段 traceback 与
   它收尾的异常行配成一条（帧行不进——读的人要的是那一句，脱敏面也更小）；
   `render.worker_logs` 带**当前项目**最近 `WORKER_LOG_FILES` 份 `worker.log` 尾巴里的
@@ -248,3 +248,25 @@
   `<TaskDiagnostic kind="preparation" refId={report.provider.attempt_id} />`。
 
 字段隐私审查表与调用链见 T04 交接。
+
+## 发送问题反馈（`engine/diagsend.py`，`/api/diagnostics/send*`，ADR 0118，默认关闭）
+
+「诊断包不自动上传」不变；用户**当次确认**后把包发给维护者的国内接收服务（`Tavotto/infra` 的 `diagnostics-api` v1）是它的**唯一**例外通道。
+契约出处是 infra 仓库 diagnostics-api 文档目录里的 openapi.json（v1.0.0）（客户端严格按它写，字段名 / 顺序 / 枚举逐字；改契约先走 infra 的向后兼容版本与协同 PR）。
+
+- **两步，只有第二步出网。** `prepare`（`POST /api/diagnostics/send/prepare`，载荷同导出）在本机生成并保管**一份**包（`app._build_diagnostics_bundle`——
+  与导出共用，包的内容与脱敏只此一份），回「会发送哪几类内容」（`ENTRY_KINDS` 闭集 id）；`GET .../<id>/bundle` 给用户同一字节去保存。
+  `POST .../<id>/send` 的请求体 `confirm` 必须是字面 `true`，才起发送线程（init → 直传 COS → complete）。备包 / 看包 / 状态 / 取消 / 丢弃都不出网。
+  包超过 10 MiB（以 `upload.max_bytes` 为准）**不保管不裁剪**，回 `too_large`。同一时刻一个会话；重复点发送回当前状态，不开第二条线程。
+- **逐次授权，什么都不自己继续。** 没有记住的选择、没有启动补发、状态只在内存；取消 / 关窗（`discard`）/ 失败 / 进程退出后不会有请求。一次发送内的有界重试只有
+  `complete` 丢响应（网络 / 超时）与 `in_progress` / `upload_missing`（≤ `COMPLETE_ATTEMPTS`）；429 / 503 与其余失败交还用户去点。用户再点：内容没变且服务端会话还开着
+  复用 `client_request_id`，否则换新的 UUIDv4（`REOPEN_ON`、取消后、内容变了）。`client_request_id` 绝不取遥测 `install_id`。
+- **目的地由代码钉死。** 开关 = `TAVOTTO_DIAG_UPLOAD=1` 且无 `TAVOTTO_NO_DIAG_UPLOAD=1` 且 `TAVOTTO_DIAG_ENDPOINT` 主机 ∈ `ENDPOINT_HOSTS`（G-DIAG 通过前**空集**，
+  发行版打不开）；回环开发另设 `TAVOTTO_DIAG_DEV_LOOPBACK=1`。`upload.url` 只认 COS 桶域名（回环模式只认本端点 `/v1/local-upload`）；**不跟随任何重定向**
+  （`_NoRedirect` 必须**抛**，返回 None 会让默认处理器把 301/302/303 的 POST 改成 GET 跟过去）；证书只经 `tlstrust`（出站 HTTPS 第五处，清单同步）。
+- **秘密不落地。** 令牌 / 上传 URL 与表单 / 说明文字只在 `SendSession` 私有字段；`public()`、日志（模板字面量 + `logsafe.known` 闭集参数，不带异常文本）、诊断包、遥测里都没有。
+  不调 `telemetry.capture`（用户文本不进 PostHog）；元数据只用 `os` / `arch` / `distribution` / 版本串 / `bundle_schema` / `size` / 本机 `sha256` 白名单。
+- **失败码**是客户端的闭集（`FAILURES`，25 个，值 = 用户能不能再点）；`web` 的 `settings.diagnostics.send.failure.*` 与它严格同源（前端用例读这个文件对拍键集）。
+- 看护：`tests/test_diag_send.py`（对端是 `tests/support/diag_fakes.py` 的本地模拟：零请求、主路径、幂等重试、每个状态码、SSRF / 重定向 / 字段注入、取消、超限与坏包、
+  金丝雀不泄漏、契约对账）、`tests/test_diag_send_api.py`（Flask 层）、`tests/test_outbound_https_trust.py`（第五处出站）。真实 COS C1–C16 与真机 WebView 联调**未做（NOT_RUN）**，
+  模拟契约通过不等于真 COS 通过。

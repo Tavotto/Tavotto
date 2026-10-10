@@ -53,3 +53,17 @@
   准备 = 会话报告的 `provider.attempt_id`（T09 的面板直接挂）。
 - 文案在 `dialogs:taskDiagnostic.*`，看护 `components/taskDiagnostic.test.tsx`（两个语种 × 默认可见块数 / 主按钮数、项目绑定、
   过期 / 不存在 / 服务端错误三种结局）、`store/scriptRunStore.test.ts`。
+
+## 发送问题反馈（设置 → 帮助与诊断，ADR 0118，默认关闭）
+
+- **前端不碰远程。** 上传由本机引擎做；`lib/api.ts` 的 `*DiagSend*` 只是本机遥控器，其中**只有 `startDiagSend` 会让引擎去连诊断服务**，且请求体恒带 `confirm: true`
+  （`lib/diagSendApi.test.ts`）。入口是否存在只看 `store/diagSendStore`（`GET /api/diagnostics/send` 的镜像，App 启动取一次；没取到 / 关着 / 回了别的 = `null` = **不画入口**，
+  隐私摘要也不多说那一句）。
+- **打开 = 备包，发送 = 确认。** `components/settings/DiagnosticsSendDialog.tsx`：打开时只 `prepareDiagSend`（载荷现采，同导出），列「将发送的内容」类别、大小、保留期，
+  「保存这份诊断包」取的是备好的**同一份**字节（按 id，不重新生成）；点「发送」才 `startDiagSend`。关窗 / 卸载 = `discardDiagSend`（发送中等于取消）；备包响应晚于关窗到达也要丢弃。
+  未确认 / 关窗 / 取消时 `startDiagSend` 调用次数为 0（`DiagnosticsSendDialog.test.tsx`）。**不许**把说明文字、报告编号以外的任何东西放进遥测。
+- **布局不跳（#797）。** 入口行是「诊断报告」组的最后一行；对话框页脚两颗按钮始终在原位只换字 / disabled；状态区（Dialog `status` 槽）常驻 `min-h-11`，结果在里面换内容。
+  发送中 `blockDismiss`，Esc = 取消发送；取消回到可编辑表单并说明「没有发送」。
+- **失败文案与引擎同源。** `settings.diagnostics.send.failure.*` 的键集 = `engine/diagsend.py` 的 `FAILURES`；问题类型 `category.*` = `CATEGORIES`（服务端契约闭集）；
+  `kind.*` ⊇ `ENTRY_KINDS` 的值。三条都由 `DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍；码不认识时按 `unexpected_response` 说，不空白。
+
