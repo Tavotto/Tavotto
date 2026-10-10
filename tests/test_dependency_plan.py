@@ -1377,6 +1377,62 @@ class TestPlanOrigins:
         assert plan.scan["truncated"] is True and plan.scan["search_complete"] is False
 
 
+# ===========================================================================
+# 同源对：depplan 的闭集 ↔ web/src/lib/api.ts ↔ 文案（docs/rules/repo/same-origin-pairs.md）
+# ===========================================================================
+class TestClosedSetsMirrorTheFrontend:
+    API = ROOT / "web" / "src" / "lib" / "api.ts"
+    DIALOG = ROOT / "web" / "src" / "components" / "DependencyPrepareDialog.tsx"
+
+    def _api(self) -> str:
+        return self.API.read_text(encoding="utf-8")
+
+    def test_block_reasons_are_the_same_on_both_sides_in_the_same_order(self):
+        from support.tsconst import exported_string_array
+
+        assert exported_string_array(self._api(), "JOINT_BLOCK_CODES") == list(
+            depplan.BLOCK_REASONS
+        )
+
+    def test_origin_reasons_are_the_same_on_both_sides_in_the_same_order(self):
+        from support.tsconst import exported_string_array
+
+        assert exported_string_array(self._api(), "JOINT_ORIGIN_REASONS") == list(
+            depplan.ORIGIN_REASONS
+        )
+
+    def test_every_block_reason_has_text_in_both_languages_and_a_dialog_entry(self):
+        dialog = self.DIALOG.read_text(encoding="utf-8")
+        for lang in ("zh-CN", "en-US"):
+            errors = json.loads(
+                (ROOT / "web" / "src" / "i18n" / "locales" / lang / "errors.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            for code in depplan.BLOCK_REASONS:
+                assert errors["engine"][f"dependencyBlocked_{code}"].strip(), (lang, code)
+        for code in depplan.BLOCK_REASONS:
+            assert f"{code}: 'engine.dependencyBlocked_{code}'" in dialog, code
+
+    def test_origin_reasons_are_not_published_error_codes(self):
+        from tavotto.engine import deprepair
+
+        published = {
+            v for k, v in vars(deprepair).items() if k.startswith("ERROR_") and isinstance(v, str)
+        }
+        assert not set(depplan.ORIGIN_REASONS) & published
+        assert not set(depplan.ORIGIN_REASONS) & set(depplan.BLOCK_REASONS)
+
+    def test_the_guard_notices_a_drifted_mirror(self):
+        """看护自己要能红：删掉镜像里的一项，比较必须不相等（不是永真断言）。"""
+        from support.tsconst import exported_string_array
+
+        drifted = self._api().replace("  'conda_package_not_pypi',\n", "", 1)
+        assert exported_string_array(drifted, "JOINT_ORIGIN_REASONS") != list(
+            depplan.ORIGIN_REASONS
+        )
+
+
 class TestInputsDigest:
     """`JointPlan.inputs_digest`：规划输入的指纹——与事实无关，只随声明与脚本（及跟进的本地模块）变（Codex #475 P1）。"""
 
