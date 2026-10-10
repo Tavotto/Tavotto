@@ -226,6 +226,27 @@ def _same_distribution(a: str, b: str) -> bool:
     return norm(a) == norm(b)
 
 
+def ledger_entry(
+    *,
+    import_name: str,
+    distribution: str,
+    requested_specifier: str,
+    resolved_version: str,
+    reason: str,
+    scope: str = "",
+) -> dict:
+    """账上的一笔（`record_install` 与「换成本作用域」随激活一起落的整本新账共用这一个形状）。"""
+    return {
+        "import_name": import_name,
+        "distribution": distribution,
+        "requested_specifier": requested_specifier,
+        "resolved_version": resolved_version,
+        "reason": reason,
+        "at": int(time.time()),
+        **({"scope": scope} if scope else {}),
+    }
+
+
 def record_install(
     project: str | Path,
     *,
@@ -255,15 +276,14 @@ def record_install(
             if isinstance(e, dict) and not _same_distribution(e.get("distribution"), distribution)
         ]
         entries.append(
-            {
-                "import_name": import_name,
-                "distribution": distribution,
-                "requested_specifier": requested_specifier,
-                "resolved_version": resolved_version,
-                "reason": reason,
-                "at": int(time.time()),
-                **({"scope": scope} if scope else {}),
-            }
+            ledger_entry(
+                import_name=import_name,
+                distribution=distribution,
+                requested_specifier=requested_specifier,
+                resolved_version=resolved_version,
+                reason=reason,
+                scope=scope,
+            )
         )
         data["installed_by_tavotto"] = entries[-64:]
         write_manifest(project, data)
@@ -273,17 +293,6 @@ def ledger_entries(project: str | Path) -> list[dict]:
     """账上的条目（只读副本）：`distribution` / `resolved_version` / `requested_specifier` / `scope`（可能没有）。"""
     data = read_manifest(project) or {}
     return [dict(e) for e in data.get("installed_by_tavotto") or [] if isinstance(e, dict)]
-
-
-def replace_ledger(project: str | Path) -> None:
-    """清空账（「换成这个作用域」的新一代 active 之后调用）：新一代只装了本作用域的集合，账要如实反映——
-    否则重建会把别的作用域的包又装回去、重新撞上互斥。只清账，不碰任何环境目录。"""
-    with _lock:
-        data = read_manifest(project)
-        if not data:
-            return
-        data["installed_by_tavotto"] = []
-        write_manifest(project, data)
 
 
 def forget_install(project: str | Path, distribution: str) -> bool:
@@ -747,9 +756,20 @@ def mark_generation(project: str | Path, generation: str, state: str, reason: st
         write_manifest(project, data)
 
 
-def activate(project: str | Path, generation: str, *, python_version: str = "") -> None:
+def activate(
+    project: str | Path,
+    generation: str,
+    *,
+    python_version: str = "",
+    ledger: list[dict] | None = None,
+) -> None:
     """**提交点**：把 `active` 指向这一代（manifest 原子写）。之前它一直是 `incomplete`。
-    写不下去抛 `OSError`（磁盘上 `active` 仍指旧的一代，内存里也不能说切了）。"""
+    写不下去抛 `OSError`（磁盘上 `active` 仍指旧的一代，内存里也不能说切了）。
+
+    `ledger` 给了（「换成本作用域」，`scope_policy=switch`）= 整本新账随同这一次写一起落：新一代只装了本作用域的
+    集合，账要如实反映，否则重建会把别的作用域的包又装回去、重新撞上互斥。**换代与换账是同一次 manifest 提交**——
+    分两次写的话，在两次之间进程终止 / 第二次写失败，active 已是新一代而账还是旧的（Codex 评 #911 补审 P1）。
+    `None` = 不动账（普通安装由 `record_install` 追加）。"""
     with _lock:
         data = read_manifest(project) or {}
         gens = data.get("generations")
@@ -766,6 +786,8 @@ def activate(project: str | Path, generation: str, *, python_version: str = "") 
         if python_version:
             data["python_version"] = python_version
         data["last_used"] = int(time.time())
+        if ledger is not None:
+            data["installed_by_tavotto"] = [dict(e) for e in ledger][-64:]
         # 提交点必须真的落盘：写失败照抛 `OSError`，调用方据此不宣称 committed（Codex #470 P1）
         write_manifest(project, data, strict=True)
 
