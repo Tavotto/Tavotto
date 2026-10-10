@@ -304,3 +304,162 @@ class TestBuiltinCoverageRoleFollowsTheGlobalLock:
         )
         out = envadvice.recommend(root, "p.py", modules=("covok_a",))
         assert out["candidates"][-1]["coverage"]["role"] == envadvice.ROLE_TARGET
+
+
+# ===========================================================================
+# #925 ① 未建模的 .pth 钩子让名字层判不完整；② 环境静态索引用目标解释器的精确扩展后缀
+# ===========================================================================
+LINUX_SUFFIXES = (".cpython-313-x86_64-linux-gnu.so", ".abi3.so", ".so")
+WINDOWS_SUFFIXES = (".cp313-win_amd64.pyd", ".pyd")
+
+
+def _site(tmp_path: Path, name: str = "venv") -> tuple[Path, Path]:
+    """造一个只有 site-packages 的假环境前缀（解释器一次也不起）。site-packages 的目录名用平台里真的那种，不写死 `lib/pythonX`。"""
+    prefix = tmp_path / name
+    site = prefix / "lib" / "python3.13" / "site-packages"
+    site.mkdir(parents=True)
+    _write(prefix, "pyvenv.cfg", "home = /usr/bin\nversion = 3.13.0\n")
+    return prefix, site
+
+
+def _site_facts(prefix: Path, site: Path, installed=None, **kw) -> depplan.TargetFacts:
+    base = _facts(installed or {})
+    return dataclasses.replace(
+        base,
+        python=str(prefix / "bin" / "python"),
+        prefix=str(prefix),
+        site_roots=(str(site),),
+        **kw,
+    )
+
+
+def _plan_in(tmp_path, facts, script="import yaml\n"):
+    proj = tmp_path / "proj"
+    _write(proj, "plot.py", script)
+    return depplan.plan(proj, "plot.py", facts=facts, target_kind="project_venv")
+
+
+class TestUnmodelledPthHooks:
+    def test_an_unmodelled_import_hook_keeps_the_package_out_of_missing(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        _write(site, "hook.pth", "import some_custom_finder; some_custom_finder.install()\n")
+        plan = _plan_in(tmp_path, _site_facts(prefix, site))
+        assert plan.missing == () and plan.requirements == ()
+        assert plan.status == "nothing_needed"
+        (origin,) = plan.origins
+        assert origin["import_name"] == "yaml" and origin["reason"] == "unverified"
+        assert origin["distribution_status"] == "environment_not_checked"
+
+    def test_a_path_line_that_is_not_followed_is_the_same(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        _write(site, "extra.pth", str(tmp_path / "somewhere-else") + "\n")
+        plan = _plan_in(tmp_path, _site_facts(prefix, site))
+        assert plan.missing == () and [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_only_the_known_benign_hooks_still_report_missing(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        _write(site, "_virtualenv.pth", "import _virtualenv\n")
+        _write(
+            site,
+            "distutils-precedence.pth",
+            "import os; var = 'SETUPTOOLS_USE_DISTUTILS'; enabled = os.environ.get(var, 'local')"
+            " == 'local'; enabled and __import__('_distutils_hack').add_shim();\n",
+        )
+        plan = _plan_in(tmp_path, _site_facts(prefix, site))
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"]
+        assert plan.requirements == ("pyyaml",) and plan.origins == ()
+
+    def test_a_hook_in_a_layer_python_never_runs_is_not_counted(self, tmp_path):
+        """经 `PYTHONPATH` / `.pth` 路径行进 `sys.path` 的 site-packages 不处理它的 `.pth`：那里的 `import` 行不会执行，
+        不让名字层判不完整（否则任何「挂了宿主 site-packages」的环境都被当成看不全）。"""
+        prefix, site = _site(tmp_path)
+        other = tmp_path / "host" / "site-packages"
+        other.mkdir(parents=True)
+        _write(other, "hook.pth", "import some_custom_finder\n")
+        base = _site_facts(prefix, site)
+        both = dataclasses.replace(base, site_roots=(str(site), str(other)))
+        processed_only_own = dataclasses.replace(both, pth_roots=(str(site),))
+        plan = _plan_in(tmp_path, processed_only_own)
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"] and plan.origins == ()
+        # 对照：那一层也是 Python 会处理的 site 目录 → 钩子照常让名字层看不全；没量到 `pth_roots` 也按旧口径
+        for facts in (dataclasses.replace(both, pth_roots=(str(site), str(other))), both):
+            depplan.reset_cache()
+            plan = _plan_in(tmp_path, facts)
+            assert plan.missing == () and [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_a_path_line_to_another_reported_site_layer_is_followed(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        other = tmp_path / "host" / "site-packages"
+        other.mkdir(parents=True)
+        _write(site, "host.pth", f"{other}\n")
+        facts = dataclasses.replace(_site_facts(prefix, site), site_roots=(str(site), str(other)))
+        plan = _plan_in(tmp_path, facts)
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"] and plan.origins == ()
+
+    def test_the_new_generation_is_still_installed_for(self, tmp_path):
+        """钩子在**当前**环境里：新建的一代没有它，装进新一代不会遮蔽任何东西。"""
+        prefix, site = _site(tmp_path)
+        _write(site, "hook.pth", "import some_custom_finder\n")
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import yaml\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=_site_facts(prefix, site),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert "pyyaml" in plan.requirements
+
+
+class TestExactExtensionSuffixes:
+    def _layer(self, tmp_path, file_name):
+        prefix, site = _site(tmp_path)
+        (site / file_name).write_bytes(b"")
+        return prefix, site
+
+    def test_a_win_pyd_on_a_linux_target_is_not_yaml_being_there(self, tmp_path):
+        prefix, site = self._layer(tmp_path, "yaml.cp313-win_amd64.pyd")
+        plan = _plan_in(tmp_path, _site_facts(prefix, site, ext_suffixes=LINUX_SUFFIXES))
+        assert [m["distribution"] for m in plan.missing] == ["pyyaml"]
+        assert plan.requirements == ("pyyaml",) and plan.origins == ()
+
+    def test_the_targets_own_extension_is_a_provider(self, tmp_path):
+        prefix, site = self._layer(tmp_path, "yaml.cpython-313-x86_64-linux-gnu.so")
+        plan = _plan_in(tmp_path, _site_facts(prefix, site, ext_suffixes=LINUX_SUFFIXES))
+        assert plan.missing == () and [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_a_windows_target_takes_the_pyd(self, tmp_path):
+        prefix, site = self._layer(tmp_path, "yaml.cp313-win_amd64.pyd")
+        plan = _plan_in(tmp_path, _site_facts(prefix, site, ext_suffixes=WINDOWS_SUFFIXES))
+        assert plan.missing == () and [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_without_measured_suffixes_the_loose_shape_stays(self, tmp_path):
+        prefix, site = self._layer(tmp_path, "yaml.cp313-win_amd64.pyd")
+        facts = _site_facts(prefix, site)
+        assert facts.ext_suffixes == ()
+        plan = _plan_in(tmp_path, facts)
+        assert plan.missing == () and [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_the_record_of_an_installed_distribution_is_read_with_the_same_suffixes(self, tmp_path):
+        from tavotto.engine import distmeta
+
+        prefix, site = _site(tmp_path)
+        info = site / "foo-1.0.dist-info"
+        info.mkdir()
+        _write(info, "METADATA", "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n")
+        _write(info, "RECORD", "fastlib.cp313-win_amd64.pyd,,\nfoo-1.0.dist-info/METADATA,,\n")
+        linux = distmeta.index_environment(
+            prefix, site_paths=[str(site)], ext_suffixes=LINUX_SUFFIXES
+        )
+        win = distmeta.index_environment(
+            prefix, site_paths=[str(site)], ext_suffixes=WINDOWS_SUFFIXES
+        )
+        assert linux.lookup("fastlib").candidates == ()
+        assert [c.distribution for c in win.lookup("fastlib").candidates] == ["foo"]
+
+    def test_suffixes_are_not_a_plan_input(self, tmp_path):
+        prefix, site = _site(tmp_path)
+        a = _site_facts(prefix, site)
+        b = dataclasses.replace(a, ext_suffixes=LINUX_SUFFIXES, pth_roots=(str(site),))
+        assert a.digest() == b.digest() and a.to_payload() == b.to_payload()

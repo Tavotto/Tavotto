@@ -251,6 +251,9 @@ for entry in sys.path:
     if re.fullmatch(r"python\d+t?\.zip", os.path.basename(path).lower()):
         continue
     opaque_roots += 1
+# site_roots 里 Python 的 `site` 真会处理 `.pth` 的那几层（getsitepackages / 启用的 user site）；经 PYTHONPATH 或 `.pth` 路径行进来的
+# 目录不处理它的 `.pth`，那里的行不会被执行。只是路径列表
+pth_roots = [p for p in site_roots if os.path.normcase(p) in known]
 sys.stdout.write(json.dumps({
     "marker_env": env,
     "stdlib": sorted(getattr(sys, "stdlib_module_names", ())),
@@ -262,6 +265,7 @@ sys.stdout.write(json.dumps({
     "site_roots": site_roots,
     "extra_roots": extra_roots,
     "opaque_roots": opaque_roots,
+    "pth_roots": pth_roots,
 }))
 """
 
@@ -292,6 +296,10 @@ class TargetFacts:
     #: `sys.path` 上存在、但不是目录的 import 来源（zip / egg）的个数。里面的名字静态读不到：> 0 时索引的名字层不完整，
     #: 本该判缺的改判来源未定，不去装同名包遮蔽它。同上：不进 digest / payload。
     opaque_roots: int = 0
+    #: `site_roots` 里 Python 真会处理 `.pth` 的那几层（`site.getsitepackages()` / 启用的 user site）。静态索引据此只对这几层
+    #: 的 `.pth` 行计 `uncovered_paths`：经 `PYTHONPATH` 或 `.pth` 路径行进 `sys.path` 的 site-packages 不处理它的 `.pth`（#925）。
+    #: 空 = 没量到，每一层都当作会处理（旧口径）。不进 `digest()` / `to_payload()`。
+    pth_roots: tuple[str, ...] = ()
     #: `layer_digest` 在**量事实的同一刻**算好的值（真探测才有；与静态索引同一刻读，计划与它描述同一个时间点）。空 = 没量到，
     #: `layer_digest(facts)` 退回现算。不进 `digest()` / `to_payload()`。
     layers: str = ""
@@ -435,6 +443,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         opaque_roots=int(data.get("opaque_roots") or 0)
         if isinstance(data.get("opaque_roots"), int)
         else 0,
+        pth_roots=tuple(str(x) for x in data.get("pth_roots") or () if isinstance(x, str)),
     )
     facts = dataclasses.replace(facts, layers=_measure_layers(facts))
     with _facts_lock:
@@ -484,7 +493,12 @@ def static_index(facts: TargetFacts | None) -> distmeta.Index | None:
     # 读目标解释器报告的**全部**层（含基础解释器 / user site）；没量到层（替身事实）才退回只读前缀的旧口径。任何一层没读成
     # → `Index.complete=False`，下游据此不把「没查到」当「没装」（见 `plan` 的 `index_incomplete`）。
     index = distmeta.index_environment(
-        facts.prefix, site_paths=facts.site_roots or None, extra_paths=facts.extra_roots
+        facts.prefix,
+        site_paths=facts.site_roots or None,
+        extra_paths=facts.extra_roots,
+        ext_suffixes=facts.ext_suffixes
+        or None,  # 目标解释器的精确后缀集（#925）；没量到保持宽松口径
+        pth_paths=facts.pth_roots or None,
     )
     if not index.checked:
         return None
@@ -881,8 +895,12 @@ def plan(
     states = _coverage_states(coverage, scan, plain_unknown)
     declared_names = frozenset(by_name)
     # 静态索引读不全（有一层没读成）：名字级查不到的不当「缺」（见 `_verdict`）。没给索引（None）= 没量，维持旧口径
+    # 同样当「看不全」：site 层里有**未建模**的可执行 `.pth` 钩子 / 没跟进的路径行（`uncovered_paths > 0`，已知良性钩子已在
+    # distmeta 建模、不计入）——钩子可能装了自定义 finder，名字层里没有的 import 不等于没装（#925）
     index_incomplete = (
-        isinstance(dists, distmeta.Index) and dists.checked and not dists.names_complete
+        isinstance(dists, distmeta.Index)
+        and dists.checked
+        and (not dists.names_complete or dists.uncovered_paths > 0)
     )
     verdicts = {
         c.module: _verdict(
@@ -1134,6 +1152,7 @@ def fresh_venv_facts(
         site_roots=(),
         extra_roots=(),
         opaque_roots=0,
+        pth_roots=(),
         layers="",
     )
 

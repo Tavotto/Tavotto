@@ -170,6 +170,22 @@ _FINDER_LINE_RE = re.compile(
 _SKIP_ENTRIES = ("__pycache__",)
 
 
+def _ext_top(name: str, suffixes: tuple[str, ...] | None) -> str | None:
+    """文件名是不是扩展模块，是则回顶级模块名。
+
+    `suffixes`（**目标**解释器的 `importlib.machinery.EXTENSION_SUFFIXES`，#925）给了就逐字按它认：`FileFinder` 只认当前
+    解释器的后缀，别的平台 / ABI 留下的 `yaml.cp313-win_amd64.pyd` 在 Linux 目标上是个会被忽略的陌生文件，不能当成 `yaml`
+    已经在。没给（`None`，没量到）时退回宽松形状 `_EXT_RE`（保守口径不变）。与 `importscan._ext_stem` 同一判据。"""
+    if suffixes is None:
+        m = _EXT_RE.match(name)
+        return m.group(1) if m else None
+    for suffix in sorted(suffixes, key=len, reverse=True):
+        if suffix and name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            return stem if _IDENT_RE.match(stem) else None
+    return None
+
+
 # ---------------------------------------------------------------- 数据
 
 
@@ -181,6 +197,9 @@ class SiteRoot:
     rel: str
     layer: str  # "env" | "base"
     order: int  # sys.path 上的先后（小的先）
+    #: Python 的 `site` 会处理这一层里的 `.pth`（`site.getsitepackages()` / 启用的 user site）。经 `PYTHONPATH` 或 `.pth` 路径行
+    #: 进 `sys.path` 的目录**不**处理它的 `.pth`：那里的 `import` 行 / 路径行永远不会执行，不该计入 `uncovered_paths`（#925）。
+    pth: bool = True
 
 
 @dataclass(eq=False)
@@ -527,9 +546,15 @@ def _site_packages_state(
 
 
 class _Reader:
-    def __init__(self, roots: Sequence[SiteRoot], budget: scanbudget.Budget) -> None:
+    def __init__(
+        self,
+        roots: Sequence[SiteRoot],
+        budget: scanbudget.Budget,
+        ext_suffixes: tuple[str, ...] | None = None,
+    ) -> None:
         self.roots = list(roots)
         self.budget = budget
+        self.ext_suffixes = ext_suffixes
         self.complete = True
         # 「看见了哪些名字」是否完整：层列不出来 / 条目被跳过·链接拒跟 / 目录项预算用完。与 `complete` 的区别：`complete`
         # 还含「看见的发行包里某个元数据文件读不成」（`read_state`）——那只影响这一个发行包的细节，不影响「这一层里有没有这个名字」
@@ -644,7 +669,9 @@ def _top_level_names(text: str) -> set[str]:
     return out
 
 
-def _record_tops(text: str) -> tuple[set[str], set[str]] | None:
+def _record_tops(
+    text: str, ext_suffixes: tuple[str, ...] | None = None
+) -> tuple[set[str], set[str]] | None:
     """RECORD → (顶级模块名, 其中是常规提供者的：有 `__init__.py` 的包 / 单文件模块 / 扩展)。读不懂回 None。"""
     tops: set[str] = set()
     regular: set[str] = set()
@@ -673,10 +700,10 @@ def _record_tops(text: str) -> tuple[set[str], set[str]] | None:
                 tops.add(first[:-3])
                 regular.add(first[:-3])  # 单文件模块是「常规」提供者，不是 namespace portion
                 continue
-            m = _EXT_RE.match(first)
-            if m:
-                tops.add(m.group(1))
-                regular.add(m.group(1))
+            stem = _ext_top(first, ext_suffixes)
+            if stem:
+                tops.add(stem)
+                regular.add(stem)
     except csv.Error:
         return None
     return tops, regular
@@ -806,10 +833,10 @@ def _list_root(
                 names.add(name[:-3])
                 kinds.setdefault(name[:-3], set()).add("py")
             else:
-                m = _EXT_RE.match(name)
-                if m:
-                    names.add(m.group(1))
-                    kinds.setdefault(m.group(1), set()).add("ext")
+                stem = _ext_top(name, rd.ext_suffixes)
+                if stem:
+                    names.add(stem)
+                    kinds.setdefault(stem, set()).add("ext")
     return sorted(dist_infos), sorted(egg_infos), sorted(egg_links), sorted(pths), names
 
 
@@ -876,7 +903,7 @@ def _read_dist_info(rd: _Reader, root: SiteRoot, entry: str, kind: str) -> _Dist
     if kind == "dist-info":
         rec, _ = rd.read_state(root, entry, "RECORD", max_bytes=MAX_RECORD_BYTES)
         if rec is not None:
-            parsed = _record_tops(rec)
+            parsed = _record_tops(rec, rd.ext_suffixes)
             if parsed is None:
                 rd.refuse(scanbudget.ISSUE_PARSE_FAILED, root, f"{entry}/RECORD")
             else:
@@ -954,8 +981,7 @@ def _read_conda_meta(rd: _Reader, prefix: str, roots: Sequence[SiteRoot]) -> lis
                 elif first.endswith(".py") and _IDENT_RE.match(first[:-3]):
                     top = first[:-3]
                 else:
-                    m = _EXT_RE.match(first)
-                    top = m.group(1) if m else ""
+                    top = _ext_top(first, rd.ext_suffixes) or ""
                 if not top:
                     break
                 d = by_root.get(root.order)
@@ -1018,7 +1044,8 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
             else:
                 # 路径行（指向 site-packages 之外）和任何没建模的 `import …` 行（Python 会执行它：
                 # 改 sys.path、装自定义 finder……）都可能让目录外的模块可导入：计数，「没查到」不再等于「没装」
-                rd.uncovered += 1
+                if root.pth:  # 这一层的 `.pth` 不会被 Python 处理时，它的行不会改变 import 搜索
+                    rd.uncovered += 1
         if not pth.startswith("__editable__."):
             continue
         stem = pth[len("__editable__.") : -len(".pth")]
@@ -1063,13 +1090,14 @@ def build_index(
     prefix: str | os.PathLike | None = None,
     budget: scanbudget.Budget | None = None,
     covered: Sequence[str] = (),
+    ext_suffixes: tuple[str, ...] | None = None,
 ) -> Index:
     """读一组 site-packages 的元数据，建 import 名 → 发行包的反查。`prefix` 给了且有 `conda-meta/` 就再读它。
 
     预算用完 / 读不动的目录 / 没跟进的 `.pth` 路径行都会让 `Index.complete` 或 `uncovered_paths` 说实话。
     """
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
-    rd = _Reader(roots, budget)
+    rd = _Reader(roots, budget, ext_suffixes)
     rd.covered = frozenset(os.path.normcase(os.path.normpath(c)) for c in covered)
     dists: list[_Dist] = []
     names: list[set[str]] = []
@@ -1121,7 +1149,11 @@ MAX_SITE_PATHS = 32
 
 
 def _reported_roots(
-    prefix: str, site: Sequence[str], extra: Sequence[str], budget: scanbudget.Budget
+    prefix: str,
+    site: Sequence[str],
+    extra: Sequence[str],
+    budget: scanbudget.Budget,
+    pth_paths: Sequence[str] | None = None,
 ) -> tuple[list[SiteRoot], bool]:
     """目标解释器**自己报告**的目录（`sys.path` 上的 site 目录，再加其余存在的目录）→ 层。返回 ([层], 有没有读漏的层)。
 
@@ -1131,6 +1163,9 @@ def _reported_roots(
     roots: list[SiteRoot] = []
     incomplete = False
     pre = os.path.normcase(os.path.normpath(prefix))
+    processed = (
+        None if pth_paths is None else {os.path.normcase(os.path.normpath(p)) for p in pth_paths}
+    )
     for paths in (site, extra):
         if len(paths) > MAX_SITE_PATHS:
             incomplete = True
@@ -1156,6 +1191,7 @@ def _reported_roots(
                     rel=rel or "base",
                     layer="env" if rel else "base",
                     order=len(roots),
+                    pth=processed is None or os.path.normcase(path) in processed,
                 )
             )
     return roots, incomplete
@@ -1169,6 +1205,8 @@ def index_environment(
     budget: scanbudget.Budget | None = None,
     site_paths: Sequence[str] | None = None,
     extra_paths: Sequence[str] = (),
+    ext_suffixes: tuple[str, ...] | None = None,
+    pth_paths: Sequence[str] | None = None,
 ) -> Index:
     """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。
 
@@ -1177,14 +1215,23 @@ def index_environment(
     任何一层没读成 = `complete=False`（不是「没装」）。
     `extra_paths`：`sys.path` 上其余存在的目录（`PYTHONPATH` 的 `pip install --target` 目录、`.pth` 路径行加进来的目录）：按**名字级**读
     （目录清单里的 `name/` / `name.py` / 扩展；有 dist-info 顺带读），模块名在那里出现却没有发行包认领 = 别处已有它；这些目录也让
-    指向它们的 `.pth` 路径行算「已跟进」（不再计入 `uncovered_paths`）。不给 = 旧口径（前缀布局 + 可选 `include_base`）。"""
+    指向它们、或指向 `site_paths` 里别的已读层的 `.pth` 路径行算「已跟进」（不再计入 `uncovered_paths`）。不给 = 旧口径（前缀布局 + 可选 `include_base`）。
+    `ext_suffixes`（#925）：**目标**解释器的 `EXTENSION_SUFFIXES`，给了扩展模块只认这些后缀；没给（空 / None）= 没量到，保持宽松口径。
+    `pth_paths`（#925）：`site_paths` 里 Python 的 `site` 真会处理 `.pth` 的那几层（`getsitepackages()` / user site）；给了，别的层的
+    `.pth` 行不计入 `uncovered_paths`（它们不会被执行）。没给 = 每一层都当作会处理（旧口径）。"""
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
     if site_paths:
         roots, incomplete = _reported_roots(
-            os.path.normpath(os.fspath(prefix)), site_paths, extra_paths, budget
+            os.path.normpath(os.fspath(prefix)), site_paths, extra_paths, budget, pth_paths
         )
         index = (
-            build_index(roots, prefix=prefix, budget=budget, covered=extra_paths)
+            build_index(
+                roots,
+                prefix=prefix,
+                budget=budget,
+                covered=[*site_paths, *extra_paths],
+                ext_suffixes=ext_suffixes or None,
+            )
             if roots
             else Index((), [], [])
         )
@@ -1196,7 +1243,11 @@ def index_environment(
     roots, layout_incomplete = _site_packages_state(
         prefix, project_root=project_root, include_base=include_base, budget=budget
     )
-    index = build_index(roots, prefix=prefix, budget=budget) if roots else Index((), [], [])
+    index = (
+        build_index(roots, prefix=prefix, budget=budget, ext_suffixes=ext_suffixes or None)
+        if roots
+        else Index((), [], [])
+    )
     if layout_incomplete:
         index.complete = False
         index.names_complete = False
