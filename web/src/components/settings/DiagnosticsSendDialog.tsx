@@ -15,12 +15,12 @@ import {
   ApiError,
 } from '@/lib/api'
 import { PRIVACY_DOC_URL } from '@/lib/brand'
+import { cn } from '@/lib/utils'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { Button } from '../ui/Button'
 import { Details, Summary } from '../ui/Details'
 import { Dialog } from '../ui/Dialog'
 import { TextArea } from '../ui/Input'
-import { Notice } from '../ui/Notice'
 import { Select } from '../ui/Select'
 import { FormRow } from '../FormRow'
 import { CopyButton } from './CopyButton'
@@ -235,50 +235,52 @@ export function DiagnosticsSendDialog({
       ? ds('progress.upload', { percent: Math.min(100, Math.floor((status.sent / status.total) * 100)) })
       : ds(`progress.${status?.stage === 'complete' ? 'complete' : 'init'}`)
 
+  // 状态文字住在页脚左侧、与按钮同一行：固定行高（两行 12px），超出截断（完整文字在 title 与 textContent 里）。
+  // 收起态对话框因此紧凑，异步结果只换这一格里的字，「发送」按钮不动。
+  const line = (tone: 'plain' | 'danger' | 'ok' | 'warn', text: string, extra?: Record<string, string>) => (
+    <p
+      className={cn(
+        'line-clamp-2 min-w-0 text-xs leading-4',
+        tone === 'plain' && 'text-ink-3',
+        tone === 'danger' && 'text-danger-content',
+        tone === 'ok' && 'text-ok-content',
+        tone === 'warn' && 'text-warn-content',
+      )}
+      title={text}
+      role={tone === 'danger' ? 'alert' : 'status'}
+      {...extra}
+    >
+      {text}
+    </p>
+  )
+  const failureLine = [
+    packageGone ? ds('packageGone') : failureText(status?.code),
+    retryText(status?.retry_after),
+    packageGone ? null : ds('failureHint'),
+  ]
+    .filter(Boolean)
+    .join(' ')
   const statusNode = (
-    <div className="min-h-24" data-diag-send-status={phase}>
-      {phase === 'preparing' && <p className="type-caption">{ds('preparing')}</p>}
-      {phase === 'prepareFailed' && (
-        <Notice tone="danger">{ds('prepareFailed')}</Notice>
-      )}
-      {phase === 'tooLarge' && prepared && (
-        <Notice tone="warn">
-          {ds('tooLarge', { size: formatBytes(prepared.size), max: formatBytes(prepared.max_bytes) })}
-        </Notice>
-      )}
-      {phase === 'ready' && cancelledNotice && <p className="type-caption">{ds('cancelled')}</p>}
-      {phase === 'sending' && (
-        <p className="type-caption" role="status">
-          {progress}
-        </p>
-      )}
-      {phase === 'cancelling' && (
-        <p className="type-caption" role="status">
-          {ds('progress.cancelling')}
-        </p>
-      )}
-      {phase === 'failed' && (
-        <Notice tone="danger" data-diag-send-failure={status?.code ?? ''}>
-          <span className="flex flex-col gap-1">
-            <span>{packageGone ? ds('packageGone') : failureText(status?.code)}</span>
-            {retryText(status?.retry_after) && <span>{retryText(status?.retry_after)}</span>}
-            {!packageGone && <span>{ds('failureHint')}</span>}
-          </span>
-        </Notice>
-      )}
+    <div className="flex h-8 min-w-0 grow-[100] items-center gap-1" data-diag-send-status={phase}>
+      {phase === 'preparing' && line('plain', ds('preparing'))}
+      {phase === 'prepareFailed' && line('danger', ds('prepareFailed'))}
+      {phase === 'tooLarge' &&
+        prepared &&
+        line('warn', ds('tooLarge', { size: formatBytes(prepared.size), max: formatBytes(prepared.max_bytes) }))}
+      {phase === 'ready' && cancelledNotice && line('plain', ds('cancelled'))}
+      {phase === 'sending' && line('plain', progress)}
+      {phase === 'cancelling' && line('plain', ds('progress.cancelling'))}
+      {phase === 'failed' && line('danger', failureLine, { 'data-diag-send-failure': status?.code ?? '' })}
       {phase === 'done' && status?.report_id && (
-        <Notice tone="ok" title={ds('doneTitle')}>
-          <span className="flex flex-col gap-1">
-            <span className="flex flex-wrap items-center gap-2">
-              <span>{ds('reportId')}</span>
-              <code data-diag-report-id className="font-mono text-ink">
-                {status.report_id}
-              </code>
-              <CopyButton text={status.report_id} label={ds('copyId')} variant="ghost" appearance="icon" />
-            </span>
-            <span>{ds('doneBody')}</span>
-          </span>
-        </Notice>
+        <>
+          <p className="min-w-0 text-xs leading-4 text-ok-content" role="status" title={ds('doneBody')}>
+            <span>{ds('doneTitle')} · {ds('reportId')} </span>
+            <code data-diag-report-id className="font-mono text-ink">
+              {status.report_id}
+            </code>
+          </p>
+          <CopyButton text={status.report_id} label={ds('copyId')} variant="ghost" appearance="icon" />
+        </>
       )}
     </div>
   )
@@ -295,8 +297,8 @@ export function DiagnosticsSendDialog({
       anchor="diagnostics-send"
       blockDismiss={sending}
       onEscape={sending ? (phase === 'sending' ? cancelSending : undefined) : undefined}
-      status={statusNode}
       footer={{
+        start: statusNode,
         secondary: sending ? (
           <Button variant="ghost" size="lg" onClick={cancelSending} disabled={phase === 'cancelling'} data-diag-send-cancel>
             {ds('cancelSending')}

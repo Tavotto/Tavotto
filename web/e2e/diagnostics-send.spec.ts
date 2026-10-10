@@ -160,6 +160,9 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     await expect(dialog.locator('[data-diag-send-sentence]')).toBeVisible()
     await expect(dialog.locator('[data-diag-send-details]')).not.toHaveAttribute('open', '')
     expect(connections).toBe(0)
+    // 收起态紧凑：标题 + 一句话 + 「查看详情」 + 按钮行，中间没有预留的大块空白
+    const compact = await dialog.boundingBox()
+    expect(compact!.height).toBeLessThan(230)
     if (SHOTS) {
       await page.screenshot({ path: `${SHOTS}/send-dialog-collapsed.png` })
       await dialog.locator('[data-diag-send-details] summary').click()

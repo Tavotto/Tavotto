@@ -62,7 +62,7 @@
 - **打开 = 备包，发送 = 确认。** `components/settings/DiagnosticsSendDialog.tsx`：打开时只 `prepareDiagSend`（载荷现采，同导出），列「将发送的内容」类别、大小、保留期，
   「保存这份诊断包」取的是备好的**同一份**字节（按 id，不重新生成）；点「发送」才 `startDiagSend`。关窗 / 卸载 = `discardDiagSend`（发送中等于取消）；备包响应晚于关窗到达也要丢弃。
   未确认 / 关窗 / 取消时 `startDiagSend` 调用次数为 0（`DiagnosticsSendDialog.test.tsx`）。**不许**把说明文字、报告编号以外的任何东西放进遥测。
-- **布局不跳（#797）。** 入口行是「诊断报告」组的最后一行；对话框页脚两颗按钮始终在原位只换字 / disabled；状态区（Dialog `status` 槽）常驻 `min-h-24`（够装下最长的失败说明，异步结果换内容不长高，e2e 量发送前后按钮坐标不变），结果在里面换内容。
+- **布局不跳（#797）。** 入口行是「诊断报告」组的最后一行；对话框页脚两颗按钮始终在原位只换字 / disabled；状态文字住在页脚左侧、与按钮同一行（Dialog `footer.start` 槽，固定 `h-8`、最多两行、超出截断，完整文字在 `title`），不为它预留大块空白——收起态对话框紧凑（e2e 量高度 < 230px），异步结果只换这一格里的字，e2e 量发送前后「发送」按钮坐标不变。
   发送中 `blockDismiss`，Esc = 取消发送；取消回到可编辑表单并说明「没有发送」。
 - **失败文案与引擎同源。** `settings.diagnostics.send.failure.*` 的键集 = `engine/diagsend.py` 的 `FAILURES`；问题类型 `category.*` = `CATEGORIES`（服务端契约闭集）；
   `kind.*` ⊇ `ENTRY_KINDS` 的值。三条都由 `DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍；码不认识时按 `unexpected_response` 说，不空白。
