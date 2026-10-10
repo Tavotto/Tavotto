@@ -685,7 +685,10 @@ jobs:
     # 堵住——2026-08-28 就发生过一次，8 小时 20 分，其间没有任何 PR 能落地。改到 3 片的
     # 理由见上面 2026-09-30 那段；权重表现在是本机 macOS 的样本，Windows 与 macOS 的真实
     # 平衡要等这次 3 片跑完的 junit artifact。
-    timeout-minutes: 60
+    # 2026-10-10 再抬到 90（与 backend-fast #894 同档）：Windows 3 片里单片已实测 55 分钟，
+    # #919 的 windows-latest 2 在 60:16 被取消（run 38044245065），重跑才过。合并队列的
+    # check_response_timeout 是 180 分钟，90 仍在其内；拆片 / 重平衡权重（#636）做完再收回。
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
