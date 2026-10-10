@@ -289,7 +289,8 @@ def test_a_failed_export_keeps_its_own_facts_after_a_successful_retry(env, tmp_p
         by_format["eps"]["status"] == "failed"
         and by_format["eps"]["error_code"] == "eps_not_for_canvas"
     )
-    assert snap["request"]["document_revision"] == REV1
+    assert "document_revision" not in snap["request"]  # 无密钥 FNV 可被离线猜解：不出门
+    assert REV1 not in json.dumps(doc) and REV2 not in json.dumps(doc)
     assert doc["retry_of"] is None
     assert doc["later_attempts"] == [
         {
@@ -303,7 +304,7 @@ def test_a_failed_export_keeps_its_own_facts_after_a_successful_retry(env, tmp_p
     assert (
         two["snapshot"]["request"]["scope"] == "original" and two["snapshot"]["outcome"] == "done"
     )
-    assert two["snapshot"]["request"]["document_revision"] == REV2
+    assert "document_revision" not in two["snapshot"]["request"]
     assert "error" not in two["snapshot"]
     assert two["retry_of"] == first["job_id"]
     # 现场声明：这是冻结的快照，不是此刻采集

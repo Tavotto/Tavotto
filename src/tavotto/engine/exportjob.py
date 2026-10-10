@@ -958,7 +958,8 @@ def diagnostic_projection(job: ExportJob) -> dict:
                 "inspection_mode": taskdiag.closed(
                     req.inspection.mode, exportreq.INSPECTION_POLICIES
                 ),
-                "document_revision": taskdiag.digest(req.document_revision),
+                # 不带 `document_revision`：它是整份画布载荷的无密钥 FNV，短标题 / 标识符能被离线猜出来比对
+                # （Codex 评 #910 补审 P2）；重试关系靠登记表里私下连的 document_id，不需要它出门
             },
             "stages": taskdiag.stages(job.trace.to_payload(), tracemod.PHASES),
             "progress": {

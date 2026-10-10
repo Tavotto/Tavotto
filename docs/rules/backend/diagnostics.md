@@ -226,7 +226,7 @@
   取快照只读这张表：没有解释器体检、没有安装、没有联网、不重跑脚本，也不拿此刻的环境冒充当时的
   （准备快照里的 `environment_at_plan` 是**计划那一刻**的事实）。看护 `test_collecting_a_task_diagnostic_executes_nothing`。
 - **白名单是结构，不是过滤。** 投影逐字段挑：闭集枚举（`taskdiag.closed`）、稳定码（`code`，小写标识符）、
-  不透明 id（`ident`）、计数、数字、文档修订的十六进制摘要。形状不对的值**丢掉**，不哈希（低熵值的哈希可猜）。
+  不透明 id（`ident`）、计数、数字、安装影响摘要的十六进制摘要（`digest`）。形状不对的值**丢掉**，不哈希（低熵值的哈希可猜）；`document_revision`（整份载荷的无密钥 FNV，可离线猜解）同理不出门。
   trace 的 `facts` 不读（那里可放任意短串）；`error.params` / `message` / traceback、文件名、导出目录、脚本与入口名、
   argv（只有个数与本机不透明引用 `rc_…`）、`document_id` / `figure_id`（只在登记表里私下连重试关系，不出门）一律不进。
   新来源加字段 = 在它的 `diagnostic_projection` 里加一行并过一个形状守卫；**不许**递归复制 `to_payload()`。
