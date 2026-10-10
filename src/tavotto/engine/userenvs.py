@@ -511,10 +511,6 @@ def discover(
 
     `budget`（导入即扫描传）：Conda `environments.txt` / `envs` 与 pyenv `versions` 的枚举拿得到墙钟预算与取消回调，
     到期 / 取消就停在已枚举到的部分（账本记 time_budget / cancelled → 报告 partial）。不传 = 老行为。"""
-    # 项目派生的线索 / 候选**永远**不跟随符号链接 / junction（Codex 安全 #820 r4234904358）：不止导入即扫描——准备会话的
-    # 检查也走这里，Windows 上项目里的 junction 可以把"看着像本地"的 `.vscode` 线索指到攻击者的 SMB / WebDAV 共享，
-    # 一次 `is_file` 就会发出网络认证。先逐级 lstat、再谈别的
-    no_follow = True
     # `script` 可能来自请求体：先钉在项目内，下游一律用净化器回的那一条；越界就当没给脚本
     root_real = os.path.realpath(os.fspath(figures_dir))
     script_path = projectenv.contained_path(root_real, script) if script else None
@@ -548,14 +544,16 @@ def discover(
     for python, source, label in raw:
         if budget is not None and budget.stop_reason() is not None:
             break
-        if no_follow:
-            # 项目派生的候选（vscode / .python-version / environment.yml / shebang 解析出的项目内路径）：
-            # 在任何跟随链接的谓词（is_file / realpath）之前逐级 lstat，被重定向的丢弃并记账，不探目标
-            bad = scanbudget.redirected_component(root_real, python, allow_final_link=True)
-            if bad is not None:
-                if budget is not None:
-                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
-                continue
+        # 项目派生的候选（vscode / .python-version / environment.yml / shebang 解析出的项目内路径）：**永远**——不止导入即扫描，
+        # 准备会话的检查也走这里（Codex 安全 #820 r4234904358：Windows 上项目里的 junction 可以把看着像本地的线索指到攻击者的
+        # SMB / WebDAV，一次 `is_file` 就发出网络认证）——在任何跟随链接的谓词（is_file / realpath）之前逐级 lstat，被重定向的
+        # 丢弃并记账，不探目标。**线索文件本身**（`.vscode/settings.json` 是用户 dotfile 管理的符号链接）仍按 `no_follow` 读：
+        # 老路径保持跟随用户自己的链接（tests/test_user_environment_no_follow.py 钉着）
+        bad = scanbudget.redirected_component(root_real, python, allow_final_link=True)
+        if bad is not None:
+            if budget is not None:
+                budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
+            continue
         if not _is_python_file(python):
             continue
         key = _key(python)

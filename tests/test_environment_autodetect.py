@@ -1133,6 +1133,35 @@ def test_run_probe_that_finds_the_project_env_unfit_falls_back_to_the_install_ou
     assert "prepare_dependencies" in _kinds(_get(client, report["session_id"]))
 
 
+def _venv_site(venv: Path) -> Path:
+    """venv 的 site-packages（POSIX `lib/pythonX.Y/site-packages`，Windows `Lib/site-packages`）。"""
+    win = venv / "Lib" / "site-packages"
+    return win if win.is_dir() else next((venv / "lib").glob("python*")) / "site-packages"
+
+
+def _plain_venv(base: Path, name: str) -> str:
+    """像真实用户的 venv：包都在它的 site-packages / 普通 `.pth` 路径行里。夹具 venv 用 `.pth` 里的 `import` 行把宿主接进来——
+    那是可执行 .pth，运行之前的隔离体检按设计不执行它（见 `projectenv._prepare_isolated_path`），所以换成纯路径行。"""
+    py = envworld.real_venv(base, name, python=WORKER_PY)
+    site_dir = _venv_site(base / name)
+    for pth in site_dir.glob("_tavotto_fixture_host_site*.pth"):
+        pth.unlink()
+    host = [p for p in sys.path if p and "site-packages" in p and os.path.isdir(p)]
+    (site_dir / "zz_host_paths.pth").write_text("\n".join(host) + "\n", "utf-8")
+    return py
+
+
+def _conda_like(monkeypatch, prefixes: list) -> None:
+    """把这些 venv 当 Conda 环境前缀登记；Windows 的 venv 解释器在 `Scripts\\python.exe`（Conda 在前缀根），一并认。"""
+    monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(p) for p in prefixes])
+    real = userenvs._prefix_python
+
+    def prefix_python(prefix):
+        return real(prefix) or projectenv.interpreter_of(prefix)
+
+    monkeypatch.setattr(userenvs, "_prefix_python", prefix_python)
+
+
 def _lower_priority_env(tmp_path, monkeypatch, house, *, with_alpha: bool = True) -> str:
     """项目外的一个 Conda 环境（排在项目自己的环境后面）；`with_alpha` = 装了脚本要的包。"""
     base = tmp_path / "conda"
@@ -1140,7 +1169,7 @@ def _lower_priority_env(tmp_path, monkeypatch, house, *, with_alpha: bool = True
     python = envworld.real_venv(base, "lab", python=WORKER_PY)
     if with_alpha:
         _install_into(python, house, ALPHA[0])
-    monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
+    _conda_like(monkeypatch, [base / "lab"])
     userenvs.reset_cache()
     return python
 
@@ -1249,9 +1278,7 @@ def test_a_cached_fit_verdict_is_not_trusted_after_the_env_lost_its_packages(
     low = envworld.real_venv(base, "lab", python=WORKER_PY)
     for py in (top, low):
         _install_into(py, house, ALPHA[0])
-    monkeypatch.setattr(
-        userenvs, "_conda_prefixes", lambda *a, **k: [str(base / proj.name), str(base / "lab")]
-    )
+    _conda_like(monkeypatch, [base / proj.name, base / "lab"])
     userenvs.reset_cache()
     first = deprepair.decide_environment(proj, "figure.py")
     assert _env_root(first["python"]) == _env_root(top)
@@ -1329,7 +1356,7 @@ def _editable_world(tmp_path: Path, *, sitecustomize: bool = False):
     )
     base = tmp_path / "ext"
     base.mkdir()
-    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    py = _plain_venv(base, "lab")
     site_dir = next((base / "lab" / "lib").glob("python*")) / "site-packages"
     (site_dir / "proj.pth").write_text(str(root / "src") + "\n", "utf-8")
     if sitecustomize:
@@ -1462,7 +1489,7 @@ def test_the_isolated_probe_only_sees_the_user_site_when_the_interpreter_would(
 
     base = tmp_path / "ext"
     base.mkdir()
-    venv_py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    venv_py = _plain_venv(base, "lab")
     cfg = base / "lab" / "pyvenv.cfg"
     cfg.write_text(
         cfg.read_text("utf-8").replace(
@@ -1555,7 +1582,7 @@ def test_installing_a_missing_package_into_the_same_env_invalidates_the_cached_n
     site-packages 目录 mtime，不起解释器。"""
     base = tmp_path / "ext"
     base.mkdir()
-    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    py = _plain_venv(base, "lab")
     cand = [{"python": py, "source": userenvs.SOURCE_CONDA, "label": "lab"}]
     need = [{"import_name": "late_installed_pkg", "distribution": "late-installed-pkg"}]
     kw = {"root": str(tmp_path / "proj")} if spec else {}
@@ -1669,6 +1696,8 @@ def test_a_user_site_install_invalidates_the_cached_negative(tmp_path, monkeypat
         [py, "-c", "import site;print(site.getusersitepackages())"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
     ).stdout.strip()
     os.makedirs(user_site, exist_ok=True)  # `pip install --user` 先建目录、再放包
@@ -1693,6 +1722,8 @@ def test_import_mode_verdicts_are_fingerprinted_from_the_interpreters_own_site_l
         [py, "-c", "import site;print(site.getusersitepackages())"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=True,
     ).stdout.strip()
     assert user_site in health["site_dirs"]  # 目录还不存在，也在表里
@@ -1724,7 +1755,7 @@ def test_a_path_entry_that_is_an_ancestor_of_the_project_defers_the_environment(
     )
     base = tmp_path / "ext"
     base.mkdir()
-    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    py = _plain_venv(base, "lab")
     site_dir = next((base / "lab" / "lib").glob("python*")) / "site-packages"
     (site_dir / "0work.pth").write_text(str(work) + "\n", "utf-8")
     monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
@@ -1752,7 +1783,7 @@ def test_the_isolated_probe_imports_nothing_outside_the_stdlib(tmp_path):
     启动链都不 import；版本读 dist-info METADATA）。"""
     base = tmp_path / "ext"
     base.mkdir()
-    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    py = _plain_venv(base, "lab")
     health = projectenv.probe_environment(
         py, modules=("json", "matplotlib"), import_mode="spec", project_root=str(tmp_path / "proj")
     )
@@ -1774,7 +1805,7 @@ def test_a_metadata_only_candidate_is_not_adopted_at_check_and_run_probes_it_for
     (root / ".python-version").write_text("3.11\n", "utf-8")
     base = tmp_path / "pyenv"
     base.mkdir()
-    py = envworld.real_venv(base, "3.11", python=WORKER_PY)
+    py = _plain_venv(base, "3.11")
     site_dir = next((base / "3.11" / "lib").glob("python*")) / "site-packages"
     (site_dir / "matplotlib").mkdir()
     (site_dir / "matplotlib" / "__init__.py").write_text(
@@ -1803,7 +1834,7 @@ def test_installs_into_a_pth_added_external_dir_invalidate_the_cached_negative(t
     """Codex #820 r4235263580：`.pth` 加的 /opt/shared 这类前缀之外的目录也在指纹里。"""
     base = tmp_path / "ext"
     base.mkdir()
-    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    py = _plain_venv(base, "lab")
     shared = tmp_path / "shared"
     shared.mkdir()
     site_dir = next((base / "lab" / "lib").glob("python*")) / "site-packages"
@@ -1821,6 +1852,31 @@ def test_installs_into_a_pth_added_external_dir_invalidate_the_cached_negative(t
     time.sleep(0.02)
     (shared / "shared_late_pkg.py").write_text("X = 1\n", "utf-8")
     assert probe() == {"shared_late_pkg": True}, ".pth 加的外部目录里装了包，旧的『缺』仍被缓存命中"
+
+
+@posix_only
+@needs_worker
+def test_missing_evidence_with_skipped_executable_pth_defers_instead_of_rejecting(tmp_path):
+    """隔离体检不执行 .pth 里的 `import` 行：它们本来可能把 matplotlib / 缺的包接进来。看不到只能说"这里看不到"，不能当"没装"
+    把一个可能能跑的环境拒掉（CI 夹具 venv 就是这个形状）——延后到运行再量；没有这种 .pth 时才是真的缺。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = envworld.real_venv(base, "lab", python=WORKER_PY)
+    cfg = base / "lab" / "pyvenv.cfg"
+    cfg.write_text(
+        cfg.read_text("utf-8").replace(
+            "include-system-site-packages = true", "include-system-site-packages = false"
+        ),
+        "utf-8",
+    )
+    site_dir = _venv_site(base / "lab")
+    for pth in site_dir.glob("_tavotto_fixture_host_site*.pth"):
+        pth.unlink()
+    plain = projectenv.probe_environment(py, import_mode="spec", project_root=str(tmp_path / "p"))
+    assert not plain.get("deferred_env") and plain["code"] == projectenv.ERROR_NO_MATPLOTLIB
+    (site_dir / "zz_exec.pth").write_text("import os\n", "utf-8")
+    skipped = projectenv.probe_environment(py, import_mode="spec", project_root=str(tmp_path / "p"))
+    assert skipped.get("deferred_env") is True and skipped["skipped_import_pth"] == ["zz_exec.pth"]
 
 
 def test_the_spec_probe_source_has_no_import_of_requested_modules():
@@ -1925,7 +1981,7 @@ def test_the_confirmation_mode_still_asks_and_detection_does_not(tmp_path, monke
     root = tmp_path / "p"
     root.mkdir()
     (root / "fig.py").write_text("import matplotlib\n", "utf-8")
-    _touch(root / ".venv" / "bin" / "python")
+    _touch(root / envworld.venv_rel(".venv"))
     (root / ".venv" / "pyvenv.cfg").write_text("home = /x\n", "utf-8")
 
     assert envadvice.recommend(root, "fig.py")["decision"]["needs_decision"] is False

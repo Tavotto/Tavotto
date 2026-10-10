@@ -413,6 +413,9 @@ def _finder_defers(text, root):
     return False
 
 
+_skipped_import_pth = []
+
+
 def _prepare_isolated_path():
     # 运行之前的体检以 `-I -S` 启动（Codex 安全 #820 r4234643135）：没有 `site`，所以没有 .pth 处理、没有 sitecustomize /
     # usercustomize、没有 PYTHONPATH、没有 cwd。可编辑安装的 .pth 可以把项目里的代码拽进启动期，这里把 site-packages
@@ -487,6 +490,7 @@ def _prepare_isolated_path():
                     continue
                 if line.startswith(("import ", "import\t")):
                     if "__editable__" not in line:
+                        _skipped_import_pth.append(fname)
                         continue  # 不执行；别的 import 行不是可编辑安装的 finder
                     finders = [n for n in names if n.startswith("__editable__") and n.endswith(".py")]
                     if not finders:
@@ -651,6 +655,15 @@ for name in extra:
 if isolated:
     if _spec_state("matplotlib") is None:
         out["deferred_env"] = True  # matplotlib 本身解析进了项目
+    if _skipped_import_pth and (
+        not out["matplotlib_version"]
+        or out.get("requested_module_ok") is False
+        or any(v is False for v in out["modules_ok"].values())
+    ):
+        # 有没执行的可执行 .pth（`import` 行）——它们本来可能把缺的包接进来。没找到只能说"这里看不到"，不能当"没装"：
+        # 整个环境延后到运行再量（宁可多问一次，不拿看不全的证据拒绝一个可能能跑的环境）
+        out["deferred_env"] = True
+        out["skipped_import_pth"] = sorted(set(_skipped_import_pth))
     _stdlib = getattr(sys, "stdlib_module_names", None)
     out["new_imports"] = (
         sorted(
