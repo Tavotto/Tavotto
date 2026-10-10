@@ -1879,9 +1879,7 @@ class TestExtraPathLayers:
             [str(python), "-c", "import sys;print(sys.base_prefix)"],
         )
         old = os.environ.get("PYTHONPATH", "")
-        monkeypatch.setenv(
-            "PYTHONPATH", os.pathsep.join(p for p in (str(venv), base, old) if p)
-        )
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(venv), base, old) if p))
         depplan.reset_cache()
         facts = depplan.target_facts(str(python), use_cache=False)
         assert facts is not None
