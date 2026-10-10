@@ -107,6 +107,21 @@ describe('快速编辑这一屏', () => {
     await mount()
     expect(objectIds()).toHaveLength(2)
     expect(container.querySelector('[data-page-sheet]')).not.toBeNull()
+    // 排版里图坐在页面纸上，不另垫一张
+    expect(container.querySelector('[data-fast-edit-paper]')).toBeNull()
+  })
+
+  it('没有页面纸，但当前那张图底下垫一张与它同框的纸（图是印刷品：暗色主题里透明底的图也不落在深色画布上）', async () => {
+    act(() => openFastEdit('a.pdf'))
+    await mount()
+    const active = useWorkspaceStore.getState().activePanelId
+    const obj = container.querySelector<HTMLElement>(`[data-object-id="${active}"]`)!
+    const paper = container.querySelector<HTMLElement>('[data-fast-edit-paper]')
+    expect(paper, '纸').not.toBeNull()
+    expect(paper!.className).toContain('bg-paper')
+    for (const k of ['left', 'top', 'width', 'height'] as const) expect(paper!.style[k], k).toBe(obj.style[k])
+    // 纸在图的下面：同一个世界层里排在前面
+    expect(paper!.compareDocumentPosition(obj) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('两个出口都在：添加到画布 / 返回画布', async () => {

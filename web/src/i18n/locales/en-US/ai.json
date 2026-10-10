@@ -21,10 +21,22 @@
     "unifyLineWidth": "Unify line widths",
     "unifyTickFormat": "Unify tick formatting"
   },
+  "code": {
+    "copied": "Copied",
+    "copy": "Copy code",
+    "plain": "code"
+  },
   "diff": {
+    "copyPatch": "Copy patch",
+    "edited": "Edited",
     "title": "Script changes",
-    "zoomAria": "Open full diff",
+    "unchanged_one": "⋯ {{count}} unchanged line",
+    "unchanged_other": "⋯ {{count}} unchanged lines",
     "zoomTip": "Open full diff"
+  },
+  "duration": {
+    "minutes": "{{m}}m {{s}}s",
+    "seconds": "{{value}}s"
   },
   "effortLabel": {
     "high": "High",
@@ -64,16 +76,24 @@
     "image": "[image: {{alt}}]",
     "untitled": "untitled"
   },
+  "message": {
+    "collapse": "Show less",
+    "copy": "Copy message",
+    "expand": "Show more",
+    "resend": "Send again"
+  },
   "panel": {
     "abort": "Stop",
-    "actsOn": "Acts on: {{scope}}",
     "agentModel": "Agent and model",
     "agentNote": "Edits the script directly; a snapshot is taken before each run, so changes can be reverted.",
     "cli": "CLI: {{version}}",
     "cliPath": "Path: {{path}}",
     "effort": "Reasoning effort",
+    "effortPill": "Reasoning {{effort}}",
     "effortRaw": "Raw effort: {{value}}",
     "emptyHint": "The assistant edits the script directly; every change can be reverted.",
+    "emptyTitle": "How should this figure change?",
+    "inputAria": "Describe how to change this figure",
     "noCli": "No figure assistant available.",
     "noPanelTitle": "Select an editable figure",
     "none": "—",
@@ -83,19 +103,23 @@
     "probing": "Detecting local CLIs…",
     "processSteps_one": "{{count}} step",
     "processSteps_other": "{{count}} steps",
-    "processTail": " · {{text}}",
+    "retry": "Retry",
     "revert": "Revert this change",
     "runningHere": "A task for this script is already running",
-    "scopeAndAgent": "Scope and agent",
     "scopeTitle": "Scope",
     "scriptLabel": "Script",
     "scrollToBottom": "Scroll to bottom",
     "send": "Send ({{key}})",
     "sendAria": "Send",
+    "sendFailed": "Couldn’t send",
     "stepRan": "Ran",
     "targetAria": "Target: {{target}}",
     "taskHistory": "Task history",
     "techDetails": "Technical details"
+  },
+  "process": {
+    "thought": "Thought for {{duration}}",
+    "thoughtNoTime": "Thought"
   },
   "scope": {
     "axes": "These axes",

@@ -45,13 +45,15 @@ _JOIN_TIMEOUT = 2.0
 REASON_NO_CLIENT = "no_interactive_client"
 REASON_REPLAY_MISSING = "replay_missing"
 #: 重放到口令那一问：口令从不留存，要重新提供，而没有能答题的界面（T08）
-REASON_SECRET_REQUIRED = "secret_required"
+#: 线上取值仍是 secret_required（ADR 0099 协议，不能改）；常量名刻意不含 secret：CodeQL 按名字把它当敏感数据，
+#: 随回复 JSON 写盘就报 py/clear-text-storage-sensitive-data（#816 alert 229），而它只是个理由码。
+REASON_MASKED_INPUT_REQUIRED = "secret_required"
 #: 冷重放按执行转录作答，这一问的上下文 / 提示对不上，而没有能答题的界面（T08）
 REASON_TRANSCRIPT_MISMATCH = "transcript_mismatch"
 REASONS = (
     REASON_NO_CLIENT,
     REASON_REPLAY_MISSING,
-    REASON_SECRET_REQUIRED,
+    REASON_MASKED_INPUT_REQUIRED,
     REASON_TRANSCRIPT_MISMATCH,
 )
 
@@ -219,8 +221,15 @@ def _emit(event: str, project_root: str, data: dict) -> None:
         LOG.exception("脚本输入事件发送失败: %s", event)
 
 
-def _reply(directory: Path, index: int, payload: dict) -> None:
-    atomicio.write_json(directory / scriptinput.reply_name(index), payload)
+def _reply(directory: Path, index: int, payload: dict, *, private: bool = False) -> None:
+    """写回复。敏感会话的答案是明文：临时文件权限收成 0600（POSIX），读它的 worker 读完即删（Codex #812 P1）；
+    写失败由 `atomicio` 清掉临时文件，异常照常上抛。"""
+    path = directory / scriptinput.reply_name(index)
+    data = atomicio.dumps_json(payload)
+    if private:
+        atomicio.write_bytes(path, data, mode=0o600)
+    else:
+        atomicio.write_bytes(path, data)
 
 
 def _count(facts: InputFacts | None, name: str) -> None:
@@ -291,7 +300,7 @@ def answer(pending_id: str, text: str | None, *, eof: bool = False) -> Pending |
         _reply(p.directory, p.index, {"eof": True})
         _count(p.facts, "eof")
     else:
-        _reply(p.directory, p.index, {"answer": text})
+        _reply(p.directory, p.index, {"answer": text}, private=p.private or p.kind == "getpass")
         _count(p.facts, "answered")
     LOG.info("脚本输入：第 %d 问已作答", p.index)
     p.done.set()
@@ -366,7 +375,7 @@ def _decide(
                 )
             return
         if verdict == MATCH_SECRET:
-            reason = REASON_SECRET_REQUIRED  # 口令从不留存：重新问，没人能答就明确失败
+            reason = REASON_MASKED_INPUT_REQUIRED  # 口令从不留存：重新问，没人能答就明确失败
         elif not policy.ask_on_mismatch:
             _no_answer(directory, index, REASON_REPLAY_MISSING, facts)
             return
@@ -461,6 +470,20 @@ def _retire_timed_out(directory: Path) -> None:
             discard(p.id, "timed_out")
 
 
+TRANSCRIPT_FAILED_CODE = "script_input_transcript_failed"
+
+
+class TranscriptUnavailable(RuntimeError):
+    """转录存储读不出来：这次 build 不能开始。本模块在导入分层里低于 `pool`，不能反向依赖 `WorkerError`；
+    `pool.ensure_built` 把它换成带同一个 code 的 `WorkerError`。"""
+
+    code = TRANSCRIPT_FAILED_CODE
+
+
+def _transcript_failure(exc: BaseException) -> TranscriptUnavailable:
+    return TranscriptUnavailable(f"脚本输入的执行记录读不出来，这次运行没有开始：{exc}")
+
+
 def _frozen_policy(worker) -> "ReplayAnswers | None":
     """这一次 build 的答案策略，进门时冻结：显式给的（写回 verify）原样；池会话有执行转录就按转录重放（T08）。"""
     policy = getattr(worker, "script_input_policy", None)
@@ -474,7 +497,9 @@ def _frozen_policy(worker) -> "ReplayAnswers | None":
         found = inputtranscript.lookup(
             str(worker.figures_dir), str(worker.script_name), _run_config_of(worker)
         )
-    except (OSError, AttributeError, TypeError):
+    except OSError as exc:
+        raise _transcript_failure(exc) from exc
+    except (AttributeError, TypeError):
         return None
     return ReplayAnswers.transcript(found) if found is not None else None
 
@@ -489,9 +514,20 @@ def finished(worker, records) -> None:
         return
     try:
         t = inputtranscript.bind(
-            str(worker.figures_dir), str(worker.script_name), _run_config_of(worker), records
+            str(worker.figures_dir),
+            str(worker.script_name),
+            _run_config_of(worker),
+            records,
+            # 没有 serving() 取的基线（替身 worker 以外不该出现）= 取不到：None 让 bind 拒绝绑定
+            basis=getattr(worker, "transcript_basis", None),
         )
+    except inputtranscript.StaleTranscriptError:
+        # 旧绑定没能作废：这次执行不算已绑定，明确失败（冷重放不会拿到旧值）
+        with contextlib.suppress(AttributeError):
+            worker.build_failed = True
+        raise
     except (OSError, AttributeError, TypeError) as exc:
+        # 新转录没落盘，但 `bind` 已保证旧绑定作废：冷重放回到上下文匹配
         LOG.warning("脚本输入转录写入失败: %r", exc)
         return
     with contextlib.suppress(AttributeError):
@@ -502,6 +538,19 @@ def finished(worker, records) -> None:
 def serving(worker):
     """在 `worker` 这一次 build 期间当它的答题方。退出时关掉还在等的问、删掉会合目录；这一次的问答去向
     （`InputFacts.payload()`）挂在 `worker.last_input_facts` 上，build 失败时也挂在异常的 `input_facts` 上。"""
+    # 答案状态基线在 build 开始时取（读者校验，见 inputtranscript）：build 期间被改的答案，这次的转录不认
+    # 取不到（读失败 / 存储损坏）= **这次 build 直接失败**（`script_input_transcript_failed`）：不存在「没有基线还在
+    # 跑」的 build，之后也就不会有人在没有基线的情况下绑定 / 重放（Codex #816 r4224357981）
+    try:
+        worker.transcript_basis = inputtranscript.basis(
+            str(worker.figures_dir), str(worker.script_name), _run_config_of(worker)
+        )
+    except (OSError, ValueError) as exc:
+        raise _transcript_failure(exc) from exc
+    except (AttributeError, TypeError):
+        # 没有 figures_dir / script_name 的替身 worker：本来就没有转录可言；基线置空，bind 收到空基线会作废旧绑定
+        with contextlib.suppress(AttributeError):
+            worker.transcript_basis = None
     out_dir = getattr(worker, "out_dir", None)
     if out_dir is None:
         # 没有会话缓存目录的就没有会合目录可轮询（只有测试里的替身会这样）：脚本要输入时照样由 worker 自己到点回 EOF

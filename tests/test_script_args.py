@@ -282,6 +282,51 @@ def test_ordinary_shapes_are_complete(source):
     assert _by_dest(schema)["n"]["required"] is True
 
 
+_MAIN_GUARD_PRELUDE = (
+    "import argparse\np = argparse.ArgumentParser()\np.add_argument('--n', required=True)\n"
+)
+
+
+@pytest.mark.parametrize("guard", ["__name__ == '__main__'", "'__main__' == __name__"])
+def test_both_operand_orders_of_the_main_guard_count_as_the_entry_path(guard):
+    # Codex r4221224241：`"__main__" == __name__` 与 `__name__ == "__main__"` 同样是脚本被直接运行时走的路。
+    schema = scriptargs.analyze(
+        f"{_MAIN_GUARD_PRELUDE}if {guard}:\n    p.add_argument('--m')\n    p.parse_args()\n"
+    )
+    assert schema["status"] == "complete", schema["reasons"]
+    assert {"n", "m"} <= set(_by_dest(schema))
+    assert _by_dest(schema)["m"]["conditional"] is False
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "__name__ != '__main__'",
+        "'__main__' != __name__",
+        "__name__ is '__main__'",
+        "__name__ in ('__main__',)",
+        "__name__ == '__main__' and sys.argv",
+        "__name__ == 'other'",
+        "__name__ == '__main__' == __name__",
+    ],
+)
+def test_a_comparison_that_is_not_the_main_guard_is_conditional(guard):
+    # `!=`（以及 is / in / 别的字面量）不是主守卫：里面的 add_argument 不能当「一定注册」，不得拿到完整 schema。
+    schema = scriptargs.analyze(
+        f"import sys\n{_MAIN_GUARD_PRELUDE}if {guard}:\n    p.add_argument('--m')\np.parse_args()\n"
+    )
+    by = _by_dest(schema)
+    assert "m" not in by or by["m"]["conditional"] is True
+    assert not (schema["status"] == "complete" and schema["form_enabled"] and "m" not in by)
+
+
+def test_the_else_of_the_main_guard_stays_conditional():
+    schema = scriptargs.analyze(
+        f"{_MAIN_GUARD_PRELUDE}if __name__ == '__main__':\n    p.parse_args()\nelse:\n    p.add_argument('--m')\n"
+    )
+    assert "m" not in _by_dest(schema) or _by_dest(schema)["m"]["conditional"] is True
+
+
 @pytest.mark.parametrize(
     ("source", "status", "reasons"),
     [
@@ -350,3 +395,177 @@ def test_rejected_paste_vectors_use_the_closed_error_set():
         "unrecognized_launcher",
     }
     assert {v["error"] for v in PASTE["rejected"]} <= codes
+
+
+# ---------------------------------------------------------------- 源码编码（Codex r4220829659）
+
+_CHOICES = "import argparse\np = argparse.ArgumentParser()\np.add_argument('--city', choices=['café'])\np.parse_args()\n"
+
+
+def _choices_of(schema: dict) -> list:
+    return _by_dest(schema)["city"]["choices"]
+
+
+def test_a_cp1252_coding_declaration_is_honoured(tmp_path):
+    path = tmp_path / "s.py"
+    path.write_bytes(("# coding: cp1252\n" + _CHOICES).encode("cp1252"))
+    schema = scriptargs.analyze_file(path)
+    assert schema["status"] == "complete", schema
+    assert _choices_of(schema) == ["café"]  # 不是 'caf�'
+
+
+def test_a_utf8_bom_does_not_break_the_parse(tmp_path):
+    path = tmp_path / "s.py"
+    path.write_bytes(b"\xef\xbb\xbf" + _CHOICES.encode("utf-8"))
+    schema = scriptargs.analyze_file(path)
+    assert schema["status"] == "complete", schema
+    assert _choices_of(schema) == ["café"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"# coding: no-such-codec\n" + _CHOICES.encode("utf-8"),  # 声明了不存在的编码
+        b"# coding: ascii\n" + _CHOICES.encode("utf-8"),  # 声明的编码解不开内容
+        b"\xef\xbb\xbf# coding: latin-1\n" + _CHOICES.encode("utf-8"),  # BOM 与声明冲突
+        b"import argparse\n# \xff\xfe not utf-8\n",  # 默认 UTF-8 却不是 UTF-8
+    ],
+)
+def test_an_undecodable_source_falls_back_to_unknown(tmp_path, raw):
+    path = tmp_path / "s.py"
+    path.write_bytes(raw)
+    schema = scriptargs.analyze_file(path)
+    assert schema["status"] == "unknown" and not schema["arguments"], schema
+    assert schema["form_enabled"] is False
+
+
+# ---------------------------------------------------------------- 负数 token 文法（Codex r4220829672）
+
+
+@pytest.mark.parametrize(
+    ("token", "legacy", "extended"),
+    [
+        ("-1", True, True),
+        ("-1.5", True, True),
+        ("-.5", True, True),
+        ("-1.", False, True),
+        ("-1e3", False, True),
+        ("-1.5E-3", False, True),
+        ("-1_0", False, True),
+        ("-1j", False, True),
+        ("-1abc", False, True),  # 3.14 的 match 没有结尾锚
+        ("-inf", False, False),
+        ("-x", False, False),
+        ("-", False, False),
+    ],
+)
+def test_the_two_negative_number_grammars_match_cpython(token, legacy, extended):
+    assert scriptargs._looks_negative_number(token) is legacy
+    assert scriptargs._looks_negative_number_extended(token) is extended
+
+
+def test_the_grammars_equal_the_running_interpreters_argparse():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    pattern = parser._negative_number_matcher.pattern
+    expected = (
+        scriptargs.NEGATIVE_NUMBER_EXTENDED
+        if sys.version_info >= (3, 14)
+        else scriptargs.NEGATIVE_NUMBER_LEGACY
+    )
+    assert pattern == expected.pattern
+
+
+def test_declared_negative_looking_options_are_flagged_per_grammar():
+    src = "import argparse\np = argparse.ArgumentParser()\np.add_argument('-1e3', dest='x')\np.parse_args()\n"
+    schema = scriptargs.analyze(src)
+    assert schema["negative_number_options"] is False  # 3.13 的文法下 `-1e3` 不像负数
+    assert schema["negative_number_options_extended"] is True
+
+
+def test_subcommands_record_how_many_positionals_precede_them():
+    """r4233340718：前端预留位置 token 只数 `add_subparsers` 之前声明的位置参数；之后声明的在子命令之后。"""
+    before = (
+        "import argparse\np = argparse.ArgumentParser()\np.add_argument('name')\n"
+        "s = p.add_subparsers(required=True, dest='cmd')\ns.add_parser('plot')\np.parse_args()\n"
+    )
+    after = (
+        "import argparse\np = argparse.ArgumentParser()\n"
+        "s = p.add_subparsers(required=True, dest='cmd')\ns.add_parser('plot')\n"
+        "p.add_argument('output')\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(before)["subcommands"]["position"] == 1
+    assert scriptargs.analyze(after)["subcommands"]["position"] == 0
+
+
+def test_subcommand_aliases_are_choices_and_unresolvable_ones_make_it_dynamic():
+    """r4233563613：`add_parser('plot', aliases=['p'])` 的 `p` 也是 argparse 认的子命令名。"""
+    lit = (
+        "import argparse\np = argparse.ArgumentParser()\ns = p.add_subparsers(required=True, dest='c')\n"
+        "s.add_parser('plot', aliases=['p', 'pl'])\ns.add_parser('stats')\np.parse_args()\n"
+    )
+    sub = scriptargs.analyze(lit)["subcommands"]
+    assert sub["choices"] == ["plot", "p", "pl", "stats"] and sub["dynamic"] is False
+    dyn = (
+        "import argparse\nA = ['x']\np = argparse.ArgumentParser()\ns = p.add_subparsers(dest='c')\n"
+        "s.add_parser('plot', aliases=A + ['y'])\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(dyn)["subcommands"]["dynamic"] is True
+
+
+def test_allow_abbrev_is_recorded_literal_false_off_non_literal_unknown():
+    base = "import argparse\n{decl}\np.add_argument('--input')\np.parse_args()\n"
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser()"))["allow_abbrev"]
+        is True
+    )
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser(allow_abbrev=False)"))[
+            "allow_abbrev"
+        ]
+        is False
+    )
+    assert (
+        scriptargs.analyze(base.format(decl="p = argparse.ArgumentParser(allow_abbrev=FLAG)"))[
+            "allow_abbrev"
+        ]
+        is None
+    )
+
+
+def test_subparsers_declared_in_a_branch_are_marked_conditional():
+    plain = (
+        "import argparse\np = argparse.ArgumentParser()\ns = p.add_subparsers(required=True, dest='c')\n"
+        "s.add_parser('a')\np.parse_args()\n"
+    )
+    branch = (
+        "import argparse, sys\np = argparse.ArgumentParser()\nif sys.platform == 'win32':\n"
+        "    s = p.add_subparsers(required=True, dest='c')\n    s.add_parser('a')\np.parse_args()\n"
+    )
+    assert scriptargs.analyze(plain)["subcommands"]["conditional"] is False
+    assert scriptargs.analyze(branch)["subcommands"]["conditional"] is True
+
+
+def test_declarations_in_helpers_are_unproven_but_the_main_path_is_not():
+    """Codex #820 r4234766738：运行闸只数证明得出属于被解析那个 parser 的声明。函数 / 类体里往别处造的 parser 上加参数的
+    辅助函数标 `conditional`（表单仍显示，闸不数）；模块级、或 `build_parser()` 里自己造自己加的不受影响。"""
+    helper = (
+        "import argparse\nparser = argparse.ArgumentParser()\nparser.add_argument('--out')\n"
+        "def unused_helper():\n    parser.add_argument('--input', required=True)\n"
+        "class K:\n    def m(self):\n        parser.add_argument('--k', required=True)\n"
+        "args = parser.parse_args()\n"
+    )
+    got = {a["flags"][0]: a["conditional"] for a in scriptargs.analyze(helper)["arguments"]}
+    assert got == {"--out": False, "--input": True, "--k": True}
+    built = (
+        "import argparse\ndef build_parser():\n    p = argparse.ArgumentParser()\n"
+        "    p.add_argument('--input', required=True)\n    return p\n"
+        "if __name__ == '__main__':\n    build_parser().parse_args()\n"
+    )
+    assert [a["conditional"] for a in scriptargs.analyze(built)["arguments"]] == [False]
+    main = (
+        "import argparse\ndef main():\n    p = argparse.ArgumentParser()\n    p.add_argument('--input', required=True)\n"
+        "    p.parse_args()\nmain()\n"
+    )
+    assert [a["conditional"] for a in scriptargs.analyze(main)["arguments"]] == [False]

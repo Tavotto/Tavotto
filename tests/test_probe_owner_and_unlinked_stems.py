@@ -85,6 +85,58 @@ def test_a_registered_name_that_was_never_captured_is_not_reported(tmp_path):
     assert _registry(root)["scripts"]["fig.py"]["stems"] == ["fig"]  # 替换语义不变
 
 
+def _corrupt_run_configs(root: Path, *, newer: bool = False) -> None:
+    """让这个项目的运行配置登记文件读不出（截断）或来自新版本——`configs_of` 会抛 RunConfigError。"""
+    from tavotto.engine import runconfig
+
+    path = runconfig.store_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": 999, "configs": {}, "defaults": {}})
+        if newer
+        else '{"version": 1, "conf',
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("newer", [False, True])
+def test_unreadable_run_configs_do_not_fail_registration_after_the_registry_moved(tmp_path, newer):
+    """r4220769153：无参数运行替换旧图名时，运行配置文件坏了 / 来自新版本——证据判断不得炸在注册表已改写之后。
+    读不出配置时素材清单整个报 run_config_unreadable，所以连无参数那份 cache 也不算证据（r4232390785）：
+    登记照常完成，且不声称「已不再关联」（读不出就什么都不说，宁可少说）。"""
+    root = _project(tmp_path, "p")
+    _write_registry(root, ["fig", "fig_old", "fig_never"])
+    _captured_before(root, "fig_old", tmp_path)
+    _corrupt_run_configs(root, newer=newer)
+    got = engine_probe.register_probed(
+        root,
+        "fig.py",
+        {"script": "fig.py", "entry": "__main__", "stems": ["fig"], "descriptors": []},
+    )
+    assert got["registered"] is True and "error" not in got
+    assert "unlinked_stems" not in got
+    assert _registry(root)["scripts"]["fig.py"]["stems"] == ["fig"]
+
+
+def test_a_failing_evidence_check_leaves_the_registry_bytes_untouched(tmp_path, monkeypatch):
+    """r4220769153：证据在注册表提交之前算完——它无论怎么失败，注册表文件字节都不变。"""
+    root = _project(tmp_path, "p")
+    _write_registry(root, ["fig", "fig_old"])
+    before = (root / "tavotto_registry.json").read_bytes()
+
+    def boom(*_a, **_k):
+        raise RuntimeError("evidence failed")
+
+    monkeypatch.setattr(engine_probe, "captured_stems", boom)
+    with pytest.raises(RuntimeError):
+        engine_probe.register_probed(
+            root,
+            "fig.py",
+            {"script": "fig.py", "entry": "__main__", "stems": ["fig"], "descriptors": []},
+        )
+    assert (root / "tavotto_registry.json").read_bytes() == before
+
+
 def test_a_run_with_a_configuration_merges_and_replaces_nothing(tmp_path):
     root = _project(tmp_path, "p")
     _write_registry(root, ["fig", "fig_scaled"])
@@ -157,6 +209,7 @@ def probe_pool(monkeypatch):
         "pool_worker": None,
         "force_cancel": [],
         "taking": threading.Event(),  # 清掉 = 卡在「取会话之前」
+        "at_take": threading.Event(),  # build 已进入、正站在「取会话」门口（早于它的取消不会有会话可关）
         "gate": threading.Event(),  # 清掉 = 卡在 build 里
         "entered": threading.Event(),  # 取到会话、过了 before_build、正卡在 build 里
     }
@@ -164,6 +217,7 @@ def probe_pool(monkeypatch):
     box["taking"].set()
 
     def build(script, root, entry, *, before_build=None, **kw):
+        box["at_take"].set()
         box["taking"].wait(timeout=30)
         worker = box["mine"]
         if before_build is not None:
@@ -212,6 +266,18 @@ def _start_probe(client) -> tuple[threading.Thread, dict]:
 def _wait_entered(box: dict, timeout: float = 5.0) -> None:
     """等到试运行已经取到会话、正卡在 build 里（「运行中」那条路，不是「取到会话之前」）。"""
     assert box["entered"].wait(timeout), "试运行一直没有取到会话"
+
+
+def _wait_at_take(box: dict, pj: str, timeout: float = 5.0) -> None:
+    """等到试运行已登记、且 build 正站在「取会话」门口。
+
+    只等 `_PROBES` 登记不够：取消若赶在探测线程走到 entry 循环首句 `cancelled()` 之前，探测直接返回取消、
+    根本没取过会话——没有会话可关，`force_cancel` 为空是对的（高负载下偶发红的根因）。"""
+    deadline = time.time() + timeout
+    while (pj, "fig.py") not in m._PROBES:
+        assert time.time() < deadline
+        time.sleep(0.01)
+    assert box["at_take"].wait(timeout), "试运行一直没有走到取会话"
 
 
 def _cancel(client) -> dict:
@@ -280,10 +346,7 @@ def test_a_cancel_before_the_session_is_taken_spares_a_shared_session(client, tm
     probe_pool["owned"] = False
     probe_pool["taking"].clear()  # 还在取会话（解析解释器 / 等池锁）
     th, done = _start_probe(client)
-    deadline = time.time() + 5
-    while (pj, "fig.py") not in m._PROBES:
-        assert time.time() < deadline
-        time.sleep(0.01)
+    _wait_at_take(probe_pool, pj)
     assert _cancel(client)["cancelling"] is True
     assert probe_pool["force_cancel"] == []  # 还没取到会话：只立标志
     probe_pool["taking"].set()
@@ -300,16 +363,39 @@ def test_a_cancel_before_the_session_is_taken_closes_a_session_it_creates(
     pj = _open(client, root)
     probe_pool["taking"].clear()
     th, done = _start_probe(client)
-    deadline = time.time() + 5
-    while (pj, "fig.py") not in m._PROBES:
-        assert time.time() < deadline
-        time.sleep(0.01)
+    _wait_at_take(probe_pool, pj)
     assert _cancel(client)["cancelling"] is True
     probe_pool["taking"].set()
     th.join(timeout=5)
     assert not th.is_alive()
     assert done["json"]["error"]["code"] == "execution_cancelled"
     assert probe_pool["force_cancel"] == [probe_pool["mine"]]
+
+
+def test_a_cancel_before_the_probe_reaches_the_entry_loop_never_takes_a_session(
+    client, tmp_path, probe_pool, monkeypatch
+):
+    """取消赶在探测线程走到 entry 循环之前：直接返回取消，没取过会话，也就没有 `force_cancel`（确定性复现原先的偶发红）。"""
+    root = _project(tmp_path, "p")
+    pj = _open(client, root)
+    parked, release = threading.Event(), threading.Event()
+
+    def parked_candidates(*a, **kw):
+        parked.set()
+        release.wait(timeout=30)
+        return ["fig.py"]
+
+    monkeypatch.setattr(engine_probe, "entry_candidates", parked_candidates)
+    th, done = _start_probe(client)
+    assert parked.wait(5)
+    assert (pj, "fig.py") in m._PROBES
+    assert _cancel(client)["cancelling"] is True
+    release.set()
+    th.join(timeout=5)
+    assert not th.is_alive()
+    assert done["json"]["error"]["code"] == "execution_cancelled"
+    assert not probe_pool["at_take"].is_set()
+    assert probe_pool["force_cancel"] == [] and not probe_pool["mine"].killed.is_set()
 
 
 def test_acquired_here_answers_only_for_this_threads_last_acquisition(monkeypatch, tmp_path):
@@ -541,3 +627,105 @@ def test_a_probe_that_looks_at_the_flag_before_recording_its_owner_is_still_canc
     # 取消丢了的样子：试运行 3 s 后「成功」登记（error 为空）、会话没被杀
     assert (done["json"].get("error") or {}).get("code") == "execution_cancelled", done["json"]
     assert jittery_pool["workers"][-1].killed.is_set()
+
+
+def test_registration_probes_cache_once_per_script_not_per_replaced_stem(tmp_path, monkeypatch):
+    """#819 r4232302927：无参数重跑替换 N 个旧图名、项目里有 M 份运行配置——运行配置登记读一次、cache 目录列一次，
+    元数据只读真存在的 cache；不是 N × (1+M) 次逐个探。"""
+    from tavotto.engine import runconfig, runtimeasset
+
+    root = _project(tmp_path, "p")
+    old = [f"old{i}" for i in range(120)]
+    _write_registry(root, ["fig", *old])
+    cfgs = [runconfig.put(root, "fig.py", ["--n", str(i)]) for i in range(8)]
+    _captured_before(root, "old7", tmp_path, cfgs[5].id)
+    _captured_before(root, "old9", tmp_path)
+    reads, metas, lists = [], [], []
+    real_cfg, real_meta, real_list = (
+        runconfig.executable_configs_of,
+        runtimeasset.load_metadata,
+        runtimeasset.cached_slugs,
+    )
+    monkeypatch.setattr(
+        runconfig, "executable_configs_of", lambda *a, **k: reads.append(a) or real_cfg(*a, **k)
+    )
+    monkeypatch.setattr(
+        runtimeasset, "load_metadata", lambda *a, **k: metas.append(a) or real_meta(*a, **k)
+    )
+    monkeypatch.setattr(
+        runtimeasset, "cached_slugs", lambda *a, **k: lists.append(a) or real_list(*a, **k)
+    )
+
+    got = engine_probe.register_probed(
+        root,
+        "fig.py",
+        {"script": "fig.py", "entry": "__main__", "stems": ["fig"], "descriptors": []},
+    )
+
+    assert got["registered"] is True
+    assert got["unlinked_stems"] == ["old7", "old9"]
+    assert len(reads) == 1 and len(lists) == 1
+    assert len(metas) == 2  # 只读真存在的两份，与 120 × 9 无关
+
+
+@pytest.mark.parametrize("bad_key", ["/abs/fig.py", "C:/x.py"])
+def test_was_captured_treats_a_malformed_script_key_as_no_evidence(tmp_path, bad_key):
+    """#819 r4232302913：`was_captured` / `captured_stems` 不让 `runtime_asset_id` 的 ValueError 漏出去。"""
+    root = _project(tmp_path, "p")
+    assert engine_probe.was_captured(root, bad_key, "x") is False
+    assert engine_probe.captured_stems(root, bad_key, ["x", "y"]) == (set(), True)
+
+
+# ---- #820 r4232425162：注册表 stem 先校验再探文件，默认不跟随且限于项目内 ----
+HOSTILE_STEMS = [
+    "\\\\attacker\\share\\probe",
+    "//attacker/share/x",
+    "/etc/x",
+    "C:\\x",
+    "C:x",
+    "../outside",
+    "a/../../b",
+]
+
+
+def test_linked_scripts_never_touches_a_path_outside_the_project_for_hostile_registry_stems(
+    tmp_path, monkeypatch
+):
+    import os
+
+    from tavotto.engine import probe as engine_probe
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (tmp_path / "outside.pdf").write_bytes(b"x")  # `../outside` 若被拼接会命中它
+    (root / "ok.pdf").write_bytes(b"x")
+    touched: list[str] = []
+    real_isfile, real_lstat = os.path.isfile, os.lstat
+
+    def spy_isfile(p, *a, **k):
+        touched.append(os.fspath(p))
+        return real_isfile(p, *a, **k)
+
+    def spy_lstat(p, *a, **k):
+        touched.append(os.fspath(p))
+        return real_lstat(p, *a, **k)
+
+    monkeypatch.setattr(os.path, "isfile", spy_isfile)
+    monkeypatch.setattr(os, "lstat", spy_lstat)
+    stems = {f"s{i}.py": [stem] for i, stem in enumerate(HOSTILE_STEMS)}
+    stems["good.py"] = ["ok"]
+    linked = engine_probe.linked_scripts(root, stems)
+    assert linked == {"good.py"}  # 恶意 stem 的条目不关联
+    base = os.path.normpath(str(root))
+    assert touched, "好 stem 应当被探过"
+    assert all(os.path.normpath(p).startswith(base + os.sep) for p in touched), touched
+    assert not any("attacker" in p or "outside" in p for p in touched)
+
+
+def test_find_original_artifact_rejects_hostile_stems_before_any_join(tmp_path):
+    from tavotto.engine import figcapture
+
+    seen: list[str] = []
+    for stem in HOSTILE_STEMS:
+        assert figcapture.find_original_artifact(str(tmp_path), stem, isfile=seen.append) is None
+    assert seen == []

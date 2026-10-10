@@ -114,7 +114,7 @@ export function OptionGrid<T extends string>({
               'relative flex h-8 items-center justify-center rounded-md outline-none transition-colors',
               'focus-visible:focus-ring',
               active
-                ? 'bg-surface font-semibold text-ink shadow-thumb'
+                ? 'bg-thumb font-semibold text-ink shadow-thumb'
                 : 'text-ink-2 hover:bg-surface-active hover:text-ink',
               cellClassName,
             )}

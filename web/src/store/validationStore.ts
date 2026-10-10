@@ -47,6 +47,13 @@ interface ValidationState {
   running: boolean
   /** 上一次跑用了多久（ms）——性能预算的看护点 */
   lastDurationMs: number | null
+  /** 上一次**成功**跑完的时刻（`Date.now()`）：问题面板空态的证据「… · 刚刚」 */
+  checkedAt: number | null
+  /**
+   * 排了一轮、防抖还没走完（`schedule()` 置上，跑完 / 取消 / 换项目放下）。`running` 是同步的一瞬，
+   * 界面上看不见；「正在重新检查」要看的是这个（2026-10-07 设计审计 §9.4）
+   */
+  queued: boolean
   generation: number
 }
 
@@ -57,6 +64,8 @@ export const useValidationStore = create<ValidationState>(() => ({
   failed: false,
   running: false,
   lastDurationMs: null,
+  checkedAt: null,
+  queued: false,
   generation: 0,
 }))
 
@@ -116,7 +125,7 @@ export function runValidation(only?: Set<string>): void {
       })
     })
     if (useValidationStore.getState().generation !== gen) {
-      useValidationStore.setState({ running: false })
+      useValidationStore.setState({ running: false, queued: timer != null })
       return
     }
     const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now()
@@ -127,11 +136,13 @@ export function runValidation(only?: Set<string>): void {
       failed: false,
       running: false,
       lastDurationMs: t1 - t0,
+      checkedAt: Date.now(),
+      queued: timer != null,
     })
   } catch {
     // **不清空**：上一次的结果仍然是当时的真话，把它换成空清单等于宣布"没问题"
     if (useValidationStore.getState().generation === gen) {
-      useValidationStore.setState({ running: false, failed: true })
+      useValidationStore.setState({ running: false, failed: true, queued: timer != null })
     }
   }
 }
@@ -150,7 +161,7 @@ let pendingAll = false
 export function schedule(canvasId?: string): void {
   if (canvasId == null) pendingAll = true
   else (pending ??= new Set()).add(canvasId)
-  useValidationStore.setState((s) => ({ generation: s.generation + 1 }))
+  useValidationStore.setState((s) => ({ generation: s.generation + 1, queued: true }))
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => {
     timer = null
@@ -167,6 +178,7 @@ export function cancelScheduled(): void {
   timer = null
   pending = null
   pendingAll = false
+  if (useValidationStore.getState().queued) useValidationStore.setState({ queued: false })
 }
 
 /** 换项目：清空结果，等新文档到齐再算。**清空是有意的**——上一份项目的问题
@@ -179,6 +191,8 @@ export function resetValidation(): void {
     ready: false,
     failed: false,
     running: false,
+    checkedAt: null,
+    queued: false,
     generation: s.generation + 1,
   }))
 }

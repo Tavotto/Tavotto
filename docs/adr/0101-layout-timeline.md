@@ -269,3 +269,18 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
   小框：⌥⌘S 不开抽屉、出现并聚焦、回车保存后关闭、失败名字不丢、Esc / 点外面关闭、换排版不挂旧错误）、
   `timelineShortcuts.test.tsx`、`CommandPalette.test.tsx`、`e2e/layout-timeline.spec.ts`（⌥⌘S 小框居中不出屏）、
   `e2e/topbar-narrow.spec.ts`（顶栏只剩时钟钮）。
+
+### 修订（2026-10-07，设计审计 §10.2）：预览页脚只有「恢复到这里」，抽屉一行一颗 ⋯
+
+- 预览对话框页脚的「关闭」删掉：右上角 × 与 Esc 就是关闭，页脚再摆一颗是两个关闭。默认焦点因此
+  落在**对话框容器**上（`ui/Dialog` 的默认）——回车什么都不触发，「回车不会误触恢复」这条照旧成立；
+  `initialFocusRef` 仍留在原语里给别的「默认动作必须安全」的对话框用。宽度改成 CSS 的 `min(1200px, 80vw)`
+  （窗口缩放时跟着变），`ui/Dialog` 的 `width` 为此接受 CSS 长度。
+- 抽屉的行：「预览」「改名」两颗图标与 ⋯ 合成**一颗 ⋯**（预览 / 改名或命名 / 取消命名 / 复制 / 删除，
+  右键与 ⇧F10 是同一份菜单，`ui/RowMenu`）；选中的那一行（以及悬停 / 键盘焦点在的那一行）下面露出一条
+  「预览 · 恢复到这里」。行上的「恢复到这里」取那一版正文后走同一个 `restoreNode()`，恢复入口仍只有那一处。
+- 抽屉打开时焦点交进抽屉本身，关上还给打开前的控件；读列表 / 操作 / 取预览的错误放在筛选器下面（`Notice`），
+  不在列表末尾。
+
+看护：`VersionDialog.test.tsx`（默认焦点在容器、没有页脚「关闭」、一颗 ⋯ 与内联条、抽屉焦点）、
+`e2e/layout-timeline.spec.ts`、`e2e/timeline-row-actions.spec.ts`。

@@ -230,12 +230,13 @@
   传入（两条控制面同源）。Windows 的命令行引号膨胀因此不受参数值影响。每条可执行请求带冻结配置，workerd 透明重开后仍能
   用原配置冷重建；worker 校验引用、类型与不可变性，缺失 / 错配就拒绝执行，绝不回落空 argv。
   worker 在 `sys.argv` 处设 `[script, *argv]`，仍在 `paper_style` / `runpy` / 导入期 `parse_args()` 之前。
-  `MAX_ARGV_TOKENS` / `MAX_ARGV_CHARS` / `MAX_ARGV_WIRE_CHARS` 仍是输入预算，超限与含 NUL 在边界上拒绝，不截断。
+  `MAX_ARGV_TOKENS` / `MAX_ARGV_CHARS` / `MAX_ARGV_WIRE_CHARS` 仍是 **safe 档**（私有请求管道）的输入预算，超限在边界上拒绝，不截断；native 的 argv 是用户自己的命令行（走 bridge_argv，不进私有管道），不受这三个预算约束，只拒绝含 NUL（操作系统装不下）。
 - **敏感配置的诊断**：`RunSelection.sensitive` 随冻结配置传入。该 worker 整个生命周期的 fd 1/2（含 native 与继承标准句柄的
   子进程）进独立解释器的有界丢弃管道（不抢 worker 的 GIL），只在有新输出时最多每秒四次写固定进度标记，保留两条控制面的静默看门狗；
   协议用独立不可继承 fd，辅助进程随 worker 正常关停被回收、异常死亡后自行退出。
   错误的自由文字 / traceback、成功响应里的 warning 文字、输入问答的 prompt / stdout tail 不转录，保留 warning 个数与 code / 参数个数 / 有证据的 parse_kind 等结构性事实。
   敏感会话不自动填入或持久化交互答案；冻结重放以进程密钥派生的 HMAC prompt 身份核对原问题，不能拿同一占位文案当成相同问题。
+  敏感运行的缺依赖：worker 只带分类标志 `missing_dependency`；模块名（`missing_module`）仅当 `ModuleNotFoundError.name` 的顶层包出现在入口脚本的静态 `import` / `from … import`（ast 解析，只读、有大小上限、解析失败即不可归因）里、且与任一敏感 token 无 casefold 子串关系时才带——动态 import 可由敏感 argv 变形（`pkg.sub`、`--plugin=pkg`），整串比较认不出。无名字时父进程（Python 池与 workerd 两条路径）仍走 `missing_dependency`（`module` 为空，通用缺依赖提示，不出依赖修复 offer、不记诊断现场）。
   非敏感运行的诊断原样。这里保护的是 Tavotto 自动记录的诊断，**不是**限制用户脚本主动写文件或将参数画进图的安全沙盒。
 - **身份**：池键 = `(项目, 脚本[, selected-artifact][, run:<RunSelection.key>])`，key 是带**进程随机密钥**的 HMAC（不是裸 hash，
   不出进程）；`invalidate(script)` 按 `k[:2]` 前缀作废全部变体，`invalidate(script, run=…)` / `only_run=True` 只动那一份。
@@ -247,7 +248,7 @@
 - **登记**（`engine/runconfig.py`）：本机 Tavotto 数据目录 `runconfigs/<项目摘要>.json`，不写用户项目（只读项目照样能用）。
   同 (脚本, argv, 敏感标记) 复用引用，改任一 token = 新引用（"编辑 = 新修订"，在途 spec 与旧产物不变）。`sensitive=True` 只活在进程内存，
   文件里只有占位；格式版本高于本读者 → `run_config_unsupported`。错误码：`invalid_argv`(400) / `run_config_missing` /
-  `run_config_secret_missing` / `run_config_unsupported`(409)。
+  `run_config_secret_missing` / `run_config_unsupported` / `run_config_unreadable`(409)。登记文件**不存在**才算空；存在却读不出 / 格式坏（含语法合法但内容不符 `put` 写出的结构：version、configs 每条的字段类型、defaults 的键值，整份校验，`runconfig._schema_ok`）= `run_config_unreadable`（不当空、不回落空 argv）；读写都失败关闭：写路径（`put` / `set_default`）遇坏文件同样抛 `run_config_unreadable`，文件字节不动（不隔离、不备份、不从空重建——重建会让别的脚本的默认配置凭空消失），由用户显式修复或删除登记文件（界面入口由 issue #847 补）。登记 id 形状严格：configs 键与 defaults 值须整串匹配 `runconfig.ID_RE`（`rc_` + 12 位小写十六进制，与 `runtimeasset._RUN_CONFIG_TAIL` 同源），`rc_bad` 这类只有前缀的算 unreadable。
 - **谁读哪份配置**：`runtime:` 素材读资产 id 里冻结的引用（`runtimeasset.run_selection`）；热会话 / 写回重放读 `worker.run`
   （`pool.one_shot(run=)`）；磁盘面板（用户脚本自己写出的 `fig.pdf`）没有 Tavotto 的执行产物可绑，读脚本最近一次**明确运行**的配置
   （`runconfig.set_default`，无参数运行会清掉它）。**不存在**"项目最新配置"这个读取点。
@@ -336,3 +337,11 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 旧坐标兼容采用。`/api/export/validate` 在已验证的选中源请求上附 `artifact_sources`；
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
+
+## 速查表原要点（#815 精简时迁入，原文照搬）
+
+速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
+
+- 捕获与显式 cax 宿主三条入口同源；selected 队列替换不退役共享 worker；`safe_spec()` / `worker_argv()` 唯一出处；argv 非空只经 `safe_spec(argv,run_config)`、公开投影只带个数与引用、缺引用显式拒绝不回落空 argv（T03）；argparse 表单 schema 只读源码、是建议不是门槛（T07）；首开问不问由 `workdir.resolve_mode` 定，不猜不就近；数据改指只在原路径打不开之后、只读、用户亲手指认（ADR 0106）
+
+速查表看护列精简时挪出的用例（仍是本主题的看护）：`tests/test_workerd_pool.py`、`test_first_open_workdir.py`、`test_zero_capture.py`、`test_savefig_capture_params.py`、`test_colorbar_capture.py`。

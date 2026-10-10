@@ -31,7 +31,7 @@ import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
-import { missingRequired, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
+import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
@@ -47,9 +47,14 @@ import {
   draftDiffers,
   scriptTarget,
   useProjectPreparationStore,
+  type EditRender,
   type PrepEntry,
 } from '@/store/projectPreparationStore'
-import { useRenderStore } from '@/store/renderStore'
+import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { findFigurePanel } from '@/store/documentStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import type { PanelObject } from '@/types/document'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -71,10 +76,43 @@ const pt = (key: string, values?: Record<string, unknown>) =>
 /** 展示面的名字（`scriptInputStore.claimPresentation`）：卡片展开且正展示那一问时，原对话框让开 */
 const SURFACE = 'prep-card'
 
-/** 加进画布的图首次编辑渲染好了没有：渲染态里那张图有了精确 manifest（这是前端自己观察到的事实，不是后端判据） */
-function useEditReady(ids: string[]): boolean {
+/**
+ * 入口动作为这张图创建 / 复用的面板与渲染键（动作做完、面板已在文档里的那一刻记下）。
+ * 文档里找不到面板就没有可观察的渲染——不猜。
+ */
+function editRenderOf(assetId: string): EditRender | undefined {
+  const found = findFigurePanel(assetId)
+  return found ? { panelId: found.panel.id, renderKey: renderKeyOf(found.panel) } : undefined
+}
+
+/** 记入编辑记录：资产 id + 它在画布上那个面板的渲染键 */
+function noteEditingFor(entryKey: string, assetId: string): void {
+  useProjectPreparationStore.getState().noteEditing(entryKey, assetId, editRenderOf(assetId))
+}
+
+/**
+ * 结果对话框刚加进画布的那个面板：**直接**记它的 id 与渲染键，不按 assetId 去文档里找——同一素材文档里可能已经有
+ * 别的实例，按 assetId 找会选中旧实例、它已有的就绪渲染会让「首次编辑渲染」立刻成立。
+ * 取文档里的现值（加图之后取景等动作可能改过对象），找不到才用返回的那个对象。
+ */
+function noteAddedPanelFor(entryKey: string, assetId: string, added: PanelObject): void {
+  const live = findFigurePanel(assetId, added.id)?.panel ?? added
+  useProjectPreparationStore
+    .getState()
+    .noteEditing(entryKey, assetId, { panelId: live.id, renderKey: renderKeyOf(live) })
+}
+
+/**
+ * 加进画布的图首次编辑渲染好了没有（这是前端自己观察到的事实，不是后端判据）：只认入口动作记下的那个面板、
+ * 那把渲染键上的**非 stale 精确 manifest**（`exactPanelRender`）。按文件 id 扫会把 `markStale()` 留下的旧渲染、
+ * 或同一文件别的 override 变体当成这一次。
+ */
+function useEditReady(renders: Record<string, EditRender>): boolean {
   return useRenderStore((s) =>
-    ids.some((id) => Object.values(s.byKey).some((r) => r.fileId === id && r.status === 'ready' && r.manifest !== null)),
+    Object.entries(renders).some(([assetId, r]) => {
+      const found = findFigurePanel(assetId, r.panelId)
+      return !!found && renderKeyOf(found.panel) === r.renderKey && exactPanelRender(s, found.panel) !== null
+    }),
   )
 }
 
@@ -119,7 +157,7 @@ export function PreparationCard() {
   const toolbarUp = useCanvasToolbarVisible()
   // 草稿变了要重新渲染（参数改了 → 「继续」）
   const drafts = useScriptArgvStore((s) => s.drafts)
-  const editReady = useEditReady(entry?.editing ?? [])
+  const editReady = useEditReady(entry?.editRenders ?? {})
   const hidden = tutorialProject || onboardingActive
   const scanned = !entry && !hidden ? scanCard(scan, { slow, forced }) : null
 
@@ -128,8 +166,8 @@ export function PreparationCard() {
     const script = 'id' in entry.target ? null : entry.target.script
     const schema = argsSchemaOf(entry.report)
     const tokens = script ? (drafts[script]?.tokens ?? []) : []
-    const missingArgs =
-      schema && schema.form_enabled ? missingRequired(schema, readTokens(schema, tokens)).length : null
+    // 单一入口：表单关着时 missingRequirements 自己只认读得准的必填项，并照旧拦必选子命令
+    const missingArgs = !schema ? null : missingRequirements(schema, readTokens(schema, tokens), tokens).count
     view = prepView(entry, { argsChanged: draftDiffers(entry.target), editReady, missingArgs })
   }
 
@@ -170,13 +208,14 @@ export function PreparationCard() {
         mode === 'pill' ? (
           <SessionPill entry={entry} view={view} />
         ) : (
-          <SessionCard entry={entry} view={view} />
+          // 以条目为 key：切换聚焦条目时整张卡体卸载重建，条目局部状态（本地失败、结果对话框、运行目录选择…）不带到另一个脚本
+          <SessionCard key={entry.key} entry={entry} view={view} />
         )
       ) : scan && scanned ? (
         mode === 'pill' ? (
           <ScanPill scan={scan} card={scanned} />
         ) : (
-          <ScanCard scan={scan} card={scanned} />
+          <ScanCard key={scan.scan_id} scan={scan} card={scanned} />
         )
       ) : null}
     </div>
@@ -383,7 +422,12 @@ const Row = ({ k, v, attr }: { k: string; v: ReactNode; attr?: string }) => (
 function ScanCard({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKind; key: string; values: Record<string, unknown> } }) {
   useTranslation('workspace')
   const plots = (scan.targets ?? []).filter((x) => x.role !== 'auxiliary')
-  const [pick, setPick] = useState<string | null>(scan.default_target ?? plots[0]?.script ?? null)
+  const [picked, setPick] = useState<string | null>(null)
+  // 重新检查之后目标清单可能变了：用户点过的那个仍在清单里才算数，否则回到推荐 / 第一个（不拿旧文件名去开始准备）
+  const pick =
+    picked !== null && plots.some((x) => x.script === picked)
+      ? picked
+      : (scan.default_target ?? plots[0]?.script ?? null)
   const store = useProjectScanStore.getState()
   const title = scanLine(card)
   const attrs = { 'data-prep-state': card.kind, 'data-scan-state': scan.state, 'data-scan-phase': scan.phase }
@@ -591,9 +635,13 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
       case 'action':
         await store.act(entry.key, p.action)
         return null
-      case 'adopt':
+      case 'adopt': {
         // 成功：envStore 的环境变了 → 会话只读地重新检查（store 订阅），下一步仍由报告给出
-        return useEnvStore.getState().adoptCandidate(p.candidate, targetName(entry))
+        // 挂起期间可能切了项目：A 的采用失败文案不许落到 B 的卡片上
+        const guard = captureProjectEpoch()
+        const err = await useEnvStore.getState().adoptCandidate(p.candidate, targetName(entry))
+        return guard.still() ? err : null
+      }
       case 'workdir':
         // 卡里选的就是答案：同一次 PATCH（项目级、记住），答完会话只读地重新检查（store 订阅 envStore），**不运行**
         if (!workdir) return null
@@ -610,12 +658,19 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         const d = figures[0]
         // 进入编辑 = 稳定动作 `openFastEdit`（加进文档并说出口 → 进入图内编辑 → 引擎按热会话渲染，脚本不再跑）。
         // 素材清单还没取到这张新图时先用这次捕获的描述符把它加进画布，再进入编辑
+        // 挂起期间可能切了项目：续延带着 A 的描述符，绝不能把 A 的面板加进 B 的版面
+        const guard = captureProjectEpoch(() => useProjectPreparationStore.getState().epoch)
         await useRuntimeAssetStore.getState().loadAssets()
+        if (!guard.still()) return null
         if (!(useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)) {
           addRuntimePanelToCanvas(d)
         }
         openFastEdit(d.asset_id)
-        store.noteEditing(entry.key, d.asset_id)
+        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个
+        const opened = useWorkspaceStore.getState().activePanelId
+        const found = opened ? findFigurePanel(d.asset_id, opened) : null
+        if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
+        else noteEditingFor(entry.key, d.asset_id)
         // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
         ui.setGuideCard('closed')
         return null
@@ -765,6 +820,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           descriptors={report.captured ?? []}
           dropped={0}
           open={resultsOpen}
+          onAdded={(d, added) => noteAddedPanelFor(entry.key, d.asset_id, added)}
           onOpenChange={(v) => {
             setResultsOpen(v)
             if (!v) useUiStore.getState().setGuideCard('closed')

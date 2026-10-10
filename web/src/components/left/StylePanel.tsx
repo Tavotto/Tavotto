@@ -1,8 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bold, Italic, Paintbrush, RotateCcw } from '@/components/ui/icons'
+import { Bold, ChevronRight, Italic, Paintbrush, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
+import { cn } from '@/lib/utils'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
 import { profileName } from '@/lib/profileText'
 import {
@@ -137,6 +138,7 @@ function StylePanelBody() {
       <p className="shrink-0 truncate px-3 text-sm text-ink" data-style-figure title={figure.name ?? ''}>
         {figure.name}
       </p>
+      {/* 「跟随样式」是滚动区里最后一节（可折叠），不再是钉在底部的约 150px 页脚（2026-10-07 设计审计 §10.3） */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {manifest ? (
           <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} />
@@ -158,8 +160,8 @@ function StylePanelBody() {
           /* 不是脚本生成的图：没有图内元素可读，不摆一排读不到值的空控件 */
           <p className="px-3 py-4 text-xs leading-relaxed text-ink-2">{sp('noManifest')}</p>
         )}
+        <ApplyStyle />
       </div>
-      <ApplyStyle />
     </div>
   )
 }
@@ -226,7 +228,7 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
 function StyleRow({ id, children }: { id: string; children: ReactNode }) {
   const label = ROW_LABEL[id]()
   return (
-    <div data-style-row={id} className="grid grid-cols-[4rem_minmax(0,1fr)] items-start gap-x-1.5 py-0.5">
+    <div data-style-row={id} className={cn(STYLE_ROW_GRID, 'items-start py-0.5')}>
       <span className="h-7 truncate text-xs leading-7 text-ink-2" title={label}>
         {label}
       </span>
@@ -234,6 +236,13 @@ function StyleRow({ id, children }: { id: string; children: ReactNode }) {
     </div>
   )
 }
+
+/**
+ * 行网格与属性栏**同一副**（2026-10-07 设计审计 §9.2 / §10.3：此前标签列是自己的 4rem）：标签列
+ * `--insp-label`（属性栏那一期在 `index.css` 定义；还没定义时退回审计给的同一个 clamp），列间 8。
+ * 本地常量，等属性栏的变量落地后两边读的是同一个数。
+ */
+const STYLE_ROW_GRID = 'grid grid-cols-[var(--insp-label,clamp(88px,28%,112px))_minmax(0,1fr)] gap-x-2'
 
 /** 控件列里的一行：高 28，控件从左缘起排 */
 function ControlLine({ line, children }: { line: string; children: ReactNode }) {
@@ -743,55 +752,105 @@ function ApplyStyle() {
       : []),
   ]
 
+  const [open, setOpen] = useApplyOpen()
+  const summary = detached
+    ? sp('detached', { name: binding ? bindingName(binding) : '' })
+    : binding
+      ? bindingName(binding)
+      : sp('unbound')
+
   return (
-    <section data-style-apply className="shrink-0 border-t border-border px-3 pb-3 pt-2">
-      {/* 与上面各行同一副两列网格：「跟随样式」的下拉与各行控件左右缘都对齐 */}
-      <div className="grid h-7 grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-1.5">
-        <span className="truncate text-xs text-ink-2" title={sp('bindLabel')}>
-          {sp('bindLabel')}
-        </span>
-        <Select
-          className="min-w-0"
-          ariaLabel={sp('bindLabel')}
-          value={detached ? DETACHED : (binding?.id ?? UNBOUND)}
-          onChange={(id) => id !== DETACHED && bindCanvasStyle(id === UNBOUND ? null : id)}
-          options={options}
-        />
-      </div>
-      <p data-style-bind-hint className="mt-1.5 text-xs leading-relaxed text-ink-2">
-        {detached ? sp('detachedHint') : binding ? sp('boundHint') : sp('unboundHint')}
-      </p>
-      {mismatches > 0 && (
-        <div data-style-mismatch className="mt-1.5 flex h-7 items-center gap-1.5">
-          <span className="min-w-0 flex-1 truncate text-xs text-ink-2">{sp('mismatch', { count: mismatches })}</span>
-          <Button data-style-align variant="ghost" onClick={() => void alignCanvasToStyle()}>
-            {sp('align')}
-          </Button>
-        </div>
-      )}
-      <div className="mt-2 flex items-center gap-1.5">
-        {(restoreCount > 0 || binding) && (
-          <Button
-            data-style-restore
-            variant="ghost"
-            // 有图还没渲染出来时认不出它身上哪些 override 是样式写的：先等，并说为什么
-            disabled={!ready}
-            title={ready ? undefined : sp('restoreWaiting')}
-            onClick={() => void restoreCanvasStyle()}
-          >
-            <RotateCcw size={ICON_SIZE.sm} aria-hidden />
-            {sp('restore', { count: restoreCount })}
-          </Button>
-        )}
+    <section data-style-apply className="border-t border-border px-3 pb-3 pt-1">
+      {/* 节头：名字 + 此刻跟着哪一套（收起时也看得见）；有「不一致」时节头上说出来，不必展开才知道 */}
+      <h3>
         <button
           type="button"
-          data-style-manage
-          onClick={() => useUiStore.getState().setSettingsOpen(true, 'style')}
-          className="ml-auto rounded-sm text-xs text-ink-3 underline-offset-2 outline-none hover:text-ink-2 hover:underline focus-visible:focus-ring"
+          data-style-apply-toggle
+          aria-expanded={open}
+          aria-controls="style-apply-body"
+          onClick={() => setOpen(!open)}
+          className={cn(
+            'flex h-7 w-full min-w-0 items-center gap-1 rounded-md px-1 text-left outline-none -mx-1',
+            'transition-colors duration-fast hover:bg-surface-hover focus-visible:focus-ring',
+          )}
         >
-          {sp('manage')}
+          <ChevronRight
+            size={ICON_SIZE.xs}
+            aria-hidden
+            className={cn('shrink-0 text-ink-3 transition-transform duration-fast', open && 'rotate-90')}
+          />
+          <span className="type-section shrink-0">{sp('bindLabel')}</span>
+          <span className="type-meta ml-auto min-w-0 truncate pl-2" data-style-apply-summary>
+            {!open && mismatches > 0 ? sp('mismatch', { count: mismatches }) : summary}
+          </span>
         </button>
-      </div>
+      </h3>
+      {open && (
+        <div id="style-apply-body" className="pt-1">
+          <Select
+            className="w-full min-w-0"
+            ariaLabel={sp('bindLabel')}
+            value={detached ? DETACHED : (binding?.id ?? UNBOUND)}
+            onChange={(id) => id !== DETACHED && bindCanvasStyle(id === UNBOUND ? null : id)}
+            options={options}
+          />
+          <p data-style-bind-hint className="mt-1.5 type-caption">
+            {detached ? sp('detachedHint') : binding ? sp('boundHint') : sp('unboundHint')}
+          </p>
+          {mismatches > 0 && (
+            <div data-style-mismatch className="mt-1.5 flex h-7 items-center gap-1.5">
+              <span className="min-w-0 flex-1 truncate text-xs text-ink-2">{sp('mismatch', { count: mismatches })}</span>
+              <Button data-style-align variant="ghost" onClick={() => void alignCanvasToStyle()}>
+                {sp('align')}
+              </Button>
+            </div>
+          )}
+          <div className="mt-2 flex items-center gap-1.5">
+            {(restoreCount > 0 || binding) && (
+              <Button
+                data-style-restore
+                variant="ghost"
+                // 有图还没渲染出来时认不出它身上哪些 override 是样式写的：先等，并说为什么
+                disabled={!ready}
+                title={ready ? undefined : sp('restoreWaiting')}
+                onClick={() => void restoreCanvasStyle()}
+              >
+                <RotateCcw size={ICON_SIZE.sm} aria-hidden />
+                {sp('restore', { count: restoreCount })}
+              </Button>
+            )}
+            <button
+              type="button"
+              data-style-manage
+              onClick={() => useUiStore.getState().setSettingsOpen(true, 'style')}
+              className="ml-auto rounded-sm text-xs text-ink-3 underline-offset-2 outline-none hover:text-ink-2 hover:underline focus-visible:focus-ring"
+            >
+              {sp('manage')}
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   )
+}
+
+/** 「跟随样式」节开着没开：本机记一份（一个人的习惯，不进文档、不跨设备；读写失败就按默认开着） */
+const APPLY_OPEN_KEY = 'tavotto.stylePanel.applyOpen'
+function useApplyOpen(): [boolean, (v: boolean) => void] {
+  const [open, setOpenState] = useState(() => {
+    try {
+      return localStorage.getItem(APPLY_OPEN_KEY) !== '0'
+    } catch {
+      return true
+    }
+  })
+  const setOpen = (v: boolean) => {
+    setOpenState(v)
+    try {
+      localStorage.setItem(APPLY_OPEN_KEY, v ? '1' : '0')
+    } catch {
+      /* 存不下就只在这次会话里记着 */
+    }
+  }
+  return [open, setOpen]
 }

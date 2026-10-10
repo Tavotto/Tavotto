@@ -201,6 +201,8 @@ export function DependencyRepairCard({
               ...(requirementList.length > 1 ? { requirements: requirementList } : {}),
               target_kind: 'tavotto_managed',
               private_python: disclosed,
+              // 卡片说过的那份计划（预读）的摘要：新形成的计划影响变了就不一键执行
+              ...(preview?.plan?.impact_digest ? { impact_digest: preview.plan.impact_digest } : {}),
             },
             origin,
           )

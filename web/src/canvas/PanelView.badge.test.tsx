@@ -174,3 +174,18 @@ describe('面板角标的优先级', () => {
     expect(text()).toContain('脚本已更新')
   })
 })
+
+/**
+ * 角标的语气分色（2026-10-07 设计审计 §10.1）：此前「过期」与「构建中」同为 ink 底。主语：`data-panel-badge`
+ * 的取值与它的底色类。
+ */
+describe('面板角标的语气', () => {
+  it('过期（render.stale）是 warn 锚点，不是墨底', () => {
+    useNativeSessionStore.setState({ sessions: { 'native-1': session('barrier', true) } })
+    render()
+    const b = host.querySelector<HTMLElement>('[data-panel-badge]')!
+    expect(b.dataset.panelBadge).toBe('stale')
+    expect(b.className).toContain('bg-warn-surface')
+    expect(b.className).not.toMatch(/\bbg-ink\b/)
+  })
+})

@@ -9,7 +9,7 @@
 
 ## 一、结论先行
 
-- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 142 个。名字与 lucide 时代
+- 全产品只有**一套**图标：`components/ui/icons` 里自己画的 143 个（2026-10-07 补画 `ListChecks`）。名字与 lucide 时代
   一一相同，同一语义只用一个名字（第四节的表不动）。**任何第三方图标库都不许再
   import**（门禁按 import 路径判）。
 - 画法：24 网格；所有线条 2 单位描边、圆头圆角，按比例缩放；闭合外形外角 ≥ 2.5、
@@ -18,7 +18,7 @@
 - 尺寸只有四档 `ICON_SIZE = { xs: 12, sm: 14, md: 16, lg: 20 }`，默认 **sm**；描边
   `ICON_STROKE.regular = 2`，`emphasis = 2.5` 只给复选框的勾；三个 React 根都套
   `IconProvider`，图标集自己的默认就是阶梯，Provider 只是「默认档在哪改」的唯一答案。
-- 选中 / 激活态用实心孪生：`<Layers filled />`。只有 30 个真正用作开关的图标有孪生，
+- 选中 / 激活态用实心孪生：`<Layers filled />`。只有 31 个真正用作开关的图标有孪生，
   其余忽略 `filled`（第五节）。
 
 ## 二、精致感从哪来——量出来的六条
@@ -119,6 +119,8 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 调整参数 / 更多属性 | `SlidersHorizontal` | `Settings2` |
 | 警告 | `TriangleAlert` | 别名 `AlertTriangle`；`ShieldAlert` 只留给「来源已分叉」 |
 | 阻断（问题等级 error） | `OctagonAlert`（停车牌的形状） | 此前与警告共用 `TriangleAlert`、只靠红 / 琥珀色区分（2026-09-14 二审 C1）；表在 `lib/validationText.SEVERITY_ICON`，问题面板与导出清单同一份 |
+| 无法核验（问题等级 not_verifiable） | `CircleDashed`（没画完的一圈） | 此前问题面板的组头是 `ShieldQuestionMark`、卡片层入口是 `CircleDashed`——同一个等级两种形状（2026-10-07 设计审计 §9.4）；四个等级一张表：`OctagonAlert` / `TriangleAlert` / `Lightbulb` / `CircleDashed`，颜色在 `SEVERITY_INK` |
+| 问题清单入口（左轨「问题」） | `ListChecks`（左列两枚对勾 + 右列两道，与 `LayoutList` 同骨架；有实心孪生） | 此前是 `TriangleAlert`——入口与「警告」同形，轨上一枚警告三角一直在余光里报警（2026-10-07 设计审计 §9.4） |
 | 折叠 / 展开 | `ChevronRight` 转 90° | 手绘 svg、浏览器 `<details>` 三角 |
 | 下拉 | `ChevronDown` | — |
 | 加载中 | `LoaderCircle` | 别名 `Loader2` |
@@ -133,9 +135,9 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 三个在第二版换了隐喻的（其余 138 个都是同一隐喻的重画）：设置（8 齿齿轮 → 六角 + 环）、
 图层（三层菱 → 一层实心 + 两道）、项目接入状态（六段剪贴板 → 剪贴板 + 勾）。
 
-## 五、有实心孪生的 30 个（`filled`）
+## 五、有实心孪生的 31 个（`filled`）
 
-左轨：`Folder`（工作区，2026-09-24 补）`LayoutGrid` `Images` `Layers` `SquareMousePointer` `Paintbrush` `TriangleAlert` `Settings`
+左轨：`Folder`（项目，2026-09-24 补）`LayoutGrid` `Images` `Layers` `SquareMousePointer` `Paintbrush` `ListChecks`（问题，2026-10-07 补）`TriangleAlert` `Settings`
 `ClipboardList`；状态：`CircleAlert` `Info` `CircleCheck` `CircleX` `CircleQuestionMark`
 `CircleMinus` `ShieldAlert` `ShieldCheck` `ShieldQuestionMark` `Lightbulb` `Zap`；开关：
 `Sparkles` `Pin` `Eye` `Lock` `Bookmark` `Square` `Circle` `Tags` `Diamond` `Bot`。

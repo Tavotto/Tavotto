@@ -13,6 +13,7 @@ import { askConfirm } from '@/store/uiStore'
 import { sortSessions, useNativeSessionStore } from '@/store/nativeSessionStore'
 import { InlineWarning } from './settings/SettingRow'
 import { Button } from './ui/Button'
+import { cn } from '@/lib/utils'
 
 const ns = (key: string, values?: Record<string, unknown>) =>
   translate(`nativeSession.${key}`, { ns: 'workspace', ...(values ?? {}) })
@@ -38,8 +39,10 @@ export function NativeSessionCards() {
   const sessions = useNativeSessionStore((s) => s.sessions)
   const list = sortSessions(Object.values(sessions))
   if (!list.length) return null
+  // 位置不在这里定：画布右上角的堆叠容器（App 的 `data-canvas-corner="top-right"`，缩放 → 会话卡 → 探针）
+  // 给 12px 内距与宽度；此前这里自己 absolute 在 right-2 top-2，与快速编辑的缩放、探针互相压（2026-10-07 设计审计 §10.1）
   return (
-    <div className="pointer-events-none absolute right-2 top-2 z-sticky flex w-72 flex-col gap-1.5">
+    <div data-native-session-cards className="flex w-full min-h-0 flex-col gap-1.5 overflow-y-auto">
       {list.map((s) => (
         <SessionCard key={s.session_id} session={s} />
       ))}
@@ -70,6 +73,9 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
   const conflicts = store.conflicts[session.session_id] ?? []
   const terminal = isNativeTerminal(session.state)
   const atBarrier = session.state === 'barrier'
+  // 正常结束 / 已放手的会话收成一行（2026-10-07 设计审计 §10.1）：它们只剩「发生过」这一件事，不该与一条
+  // 还停在屏障上、等人点「继续」的会话占同样大的地方。失败的照旧整张：那是要读的错误
+  const collapsed = terminal && TONE[session.state] === 'done' && !error && conflicts.length === 0
 
   const act = (fn: (id: string) => Promise<void>) => () => fn(session.session_id)
 
@@ -91,18 +97,26 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
     <section
       aria-label={ns('cardAria', { target: session.target_display })}
       data-state={session.state}
+      data-collapsed={collapsed || undefined}
       // 浮层是**环 + 阴影**，不画 border（2026-09-15 打磨批次 A，T3；全面打磨 D31）：
       // 此前 `shadow-pop` 之外还按状态描一圈实色边，两层描边叠在一起；状态由行首那颗
-      // 图标说，那是它本来的活
-      className="pointer-events-auto rounded-sm bg-surface px-2 py-1.5 shadow-pop"
+      // 图标说，那是它本来的活。多行浮动面板 = 圆角 12（浮动外观三档，2026-10-07 设计审计 §10.1）；
+      // 收成一行的那种是单行浮动条 = 胶囊
+      className={cn(
+        'pointer-events-auto bg-surface shadow-pop',
+        collapsed ? 'rounded-full py-1 pl-2.5 pr-1' : 'rounded-lg px-3 py-2',
+      )}
     >
-      <header className="flex items-start gap-1.5">
+      <header className={cn('flex gap-1.5', collapsed ? 'items-center' : 'items-start')}>
         <StateIcon state={session.state} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium text-ink" title={session.target_display}>
+        <div className={cn('min-w-0 flex-1', collapsed && 'flex items-baseline gap-1.5')}>
+          {/* 标题 12 / 500（此前 11：卡片标题比正文还小一号） */}
+          <p className="min-w-0 truncate text-sm font-medium text-ink" title={session.target_display}>
             {session.target_display}
           </p>
-          <p className="text-xs leading-relaxed text-ink-3">{stateLine(session)}</p>
+          <p className={cn('text-xs text-ink-3', collapsed ? 'shrink-0 truncate' : 'leading-relaxed')}>
+            {stateLine(session)}
+          </p>
         </div>
         {terminal && (
           <Button

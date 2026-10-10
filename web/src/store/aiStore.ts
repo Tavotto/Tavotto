@@ -25,6 +25,11 @@ export interface AiEntry {
   text: string
   /** 仍在逐字流入，渲染时带闪烁光标 */
   streaming?: boolean
+  /**
+   * 这一条到达的时刻（ms，前端时钟）。助手面板拿相邻两条的差算每步耗时与「已思考 Ns」
+   * （2026-10-07 设计审计 §6.2）；缺省（旧夹具）时不显示耗时，绝不编一个数。
+   */
+  at?: number
 }
 
 export interface AiSession {
@@ -52,6 +57,8 @@ export interface AiSession {
   diff: string
   error?: string
   startedAt: number
+  /** 会话结束（done / failed / timeout / cancelled）的时刻：状态行的总耗时与最后一步的耗时以它收尾 */
+  finishedAt?: number
 }
 
 interface AiState {
@@ -274,15 +281,15 @@ export const useAiStore = create<AiState>((set, get) => ({
         if (kind === 'delta') {
           // 逐字流入当前气泡；没有在流的就新开一个
           if (streamingLast) entries[entries.length - 1] = { ...streamingLast, text: streamingLast.text + text }
-          else entries.push({ kind: 'message', text, streaming: true })
+          else entries.push({ kind: 'message', text, streaming: true, at: Date.now() })
         } else if (kind === 'message') {
           // 终稿替换流式内容（后端给的是完整段落）
-          if (streamingLast) entries[entries.length - 1] = { kind: 'message', text }
-          else entries.push({ kind: 'message', text })
+          if (streamingLast) entries[entries.length - 1] = { kind: 'message', text, at: streamingLast.at }
+          else entries.push({ kind: 'message', text, at: Date.now() })
         } else {
           // 过程事件先给流式气泡定稿，免得插到半截文字后面
-          if (streamingLast) entries[entries.length - 1] = { kind: 'message', text: streamingLast.text }
-          entries.push({ kind, text })
+          if (streamingLast) entries[entries.length - 1] = { kind: 'message', text: streamingLast.text, at: streamingLast.at }
+          entries.push({ kind, text, at: Date.now() })
         }
         return { ...x, entries: entries.slice(-MAX_LINES) }
       }),
@@ -299,6 +306,7 @@ export const useAiStore = create<AiState>((set, get) => ({
               changed,
               diff,
               error,
+              finishedAt: x.finishedAt ?? Date.now(),
               // 会话结束，光标不该继续闪
               entries: x.entries.map((e) => (e.streaming ? { ...e, streaming: false } : e)),
             }
@@ -330,7 +338,9 @@ export const useAiStore = create<AiState>((set, get) => ({
     // 换代之后会话列表已清空、sid 不复用，下面这次按 sid 写本来就落空——这一判是防御，量不出来
     if (born !== get().generation) return
     set((s) => ({
-      sessions: s.sessions.map((x) => (x.id === sid ? { ...x, status: 'cancelled' } : x)),
+      sessions: s.sessions.map((x) =>
+        x.id === sid ? { ...x, status: 'cancelled', finishedAt: x.finishedAt ?? Date.now() } : x,
+      ),
     }))
   },
 

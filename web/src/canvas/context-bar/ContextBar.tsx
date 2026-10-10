@@ -430,7 +430,8 @@ export function ContextBar() {
       className={cn(
         // w-max：fixed 盒子的 width:auto 会被「left 到视口右沿」的可用宽度压扁，
         // 量出来的就不是它的自然宽度；落位与宽窄档都靠这个量
-        'fixed z-overlay flex w-max items-center gap-1 rounded-lg bg-surface p-1',
+        // 单行浮动条 = 胶囊（浮动外观三档，2026-10-07 设计审计 §10.1）：p-1 + 28 的控件 = 36 高
+        'fixed z-overlay flex w-max items-center gap-1 rounded-full bg-surface p-1',
         // 12px：栏里的 NumberField 一直是 12，旁边的「线型」「已选 2 个」却是 11（打磨 F2）
         'text-sm text-ink shadow-pop',
         pos ? 'animate-pop-in' : 'invisible',

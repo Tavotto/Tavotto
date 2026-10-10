@@ -200,7 +200,7 @@ class TestImpactDigest:
         """装完一代之后，同一份"还缺的"意图装到的是**另一个环境代**：摘要的环境引用变了（旧同意不继承）。"""
         project = _project(tmp_path, ALPHA, BETA)
         first = deprepair.create_joint_plan(project, "figure.py")
-        deprepair.prepare_async(first.plan_id)
+        deprepair.prepare_async(first.plan_id, confirmed_impact=first.impact_digest)
         assert wait_for(first.plan_id)["state"] == deprepair.STATE_DONE
         _declare(project, ALPHA, BETA, GAMMA)
         second = deprepair.create_joint_plan(project, "figure.py")
@@ -384,7 +384,10 @@ class TestClaim:
             plan = real_create(*a, **kw)
             # 我们刚算完计划、还没认领：另一个标签页先认领了同一份摘要
             holder["other"] = deprepair._claim(
-                "someone-else", project_id=plan.project_id, digest=plan.impact_digest
+                "someone-else",
+                project_id=plan.project_id,
+                digest=plan.impact_digest,
+                scope=deprepair.scope_of("figure.py"),
             )
             return plan
 
@@ -417,11 +420,13 @@ class TestClaim:
             return {"ok": True}
 
         monkeypatch.setattr(deprepair, "_run_install", held)
-        assert deprepair.install_async(plan.plan_id) is True
+        assert deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
         _wait_until(lambda: calls)
-        assert deprepair.install_async(plan.plan_id) is False  # 同一份计划只认领一次
+        assert (
+            deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest) is False
+        )  # 同一份计划只认领一次
         with pytest.raises(deprepair.RepairError) as err:
-            deprepair.install(plan.plan_id)
+            deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert err.value.code == deprepair.ERROR_NOT_ALLOWED
         gate.set()
         _wait_until(lambda: not deprepair.is_running(plan.plan_id))
@@ -443,7 +448,7 @@ class TestClaim:
         )
         with engine_pool.mutating_environment(key, "", shutdown=False):
             with pytest.raises(deprepair.RepairError) as err:
-                deprepair.prepare(plan.plan_id)
+                deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
             assert err.value.code == deprepair.ERROR_BUSY
             assert envlease.is_mutating_key(key)  # 占用方还占着
         assert built == [] and managedenv.python_of(project) is None
@@ -459,7 +464,7 @@ class TestAdoptionFence:
         gate, calls = held_generation
         project = _project(tmp_path, ALPHA)
         plan = deprepair.create_joint_plan(project, "figure.py")
-        assert deprepair.prepare_async(plan.plan_id) is True
+        assert deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
         _wait_until(lambda: calls)
         wrote: list[str] = []
         with pytest.raises(envlease.EnvironmentBusy) as err:
@@ -483,7 +488,7 @@ class TestAdoptionFence:
         plan = deprepair.create_joint_plan(project, "figure.py")  # 此刻项目没有任何环境决定
         venv = real_venv(project)
         _adopt(project, venv)  # 确认期间用户采用了自己的 .venv
-        assert deprepair.prepare_async(plan.plan_id) is True
+        assert deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
         _wait_until(lambda: not deprepair.is_running(plan.plan_id))
         rec = deprepair.progress(plan.plan_id)
         assert rec["state"] == deprepair.STATE_FAILED and rec["code"] == deprepair.ERROR_PLAN_STALE
@@ -491,6 +496,61 @@ class TestAdoptionFence:
         assert engine_pool.same_python(
             projectenv.remembered(project), projectenv.interpreter_of(venv)
         )
+
+    def test_adopting_another_environment_while_the_plan_is_being_made_rejects_the_plan(
+        self, tmp_path, house, offline_managed_env, held_generation, monkeypatch
+    ):
+        """Codex r4217232862：`create_joint_plan` 的长事实探测期间用户（另一个标签页）采用了别的环境——目标 / 影响是按
+        旧决定算的，不能让晚到的 `selection_signature` 把新决定记在这份计划上而通过执行前的比对。"""
+        _gate, calls = held_generation
+        project = _project(tmp_path, ALPHA)
+        venv = real_venv(project)
+        real_plan = deprepair.depplan.plan
+
+        def _plan_then_adopt(*args, **kwargs):
+            joint = real_plan(*args, **kwargs)
+            _adopt(project, venv)  # 探测 / 解析进行中，别处完成了采用
+            return joint
+
+        monkeypatch.setattr(deprepair.depplan, "plan", _plan_then_adopt)
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_joint_plan(project, "figure.py")
+        assert err.value.code == deprepair.ERROR_PLAN_STALE
+        assert not deprepair._joint_plans  # 没有发出任何可执行的计划
+        assert calls == []
+        # 重新开始（决定已经稳定）就能得到按新决定算的计划，且它记的是新签名
+        monkeypatch.setattr(deprepair.depplan, "plan", real_plan)
+        fresh = deprepair.create_joint_plan(project, "figure.py")
+        assert fresh.selection == deprepair.selection_signature(project) != ()
+
+    def test_adopting_another_environment_while_a_single_package_plan_is_made_rejects_it(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """同形状的单包计划（`create_plan`）：目标解析期间决定变了 → `repair_plan_stale`，不发计划。"""
+        project = _project(tmp_path, ALPHA)
+        venv = real_venv(project)
+        real_offer = deprepair._private_python_offer
+
+        def _offer_then_adopt():
+            out = real_offer()
+            _adopt(project, venv)
+            return out
+
+        monkeypatch.setattr(deprepair, "_private_python_offer", _offer_then_adopt)
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_plan(
+                project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+            )
+        assert err.value.code == deprepair.ERROR_PLAN_STALE
+        assert not deprepair._plans
+
+    def test_a_joint_plan_records_the_selection_it_was_computed_under(
+        self, tmp_path, house, offline_managed_env
+    ):
+        project = _project(tmp_path, ALPHA)
+        before = deprepair.selection_signature(project)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.selection == before == ()
 
     def test_the_install_s_own_record_does_not_make_a_sibling_plan_stale(self, tmp_path):
         """依赖安装自己写下的项目环境记录不算"用户的决定"（否则同时形成的第二份计划得到的是含糊的
@@ -517,7 +577,9 @@ class TestAdoptionFence:
         m.open_project(str(project))
         try:
             plan = deprepair.create_joint_plan(project, "figure.py")
-            assert deprepair.prepare_async(plan.plan_id) is True
+            assert (
+                deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
+            )
             _wait_until(lambda: calls)
             python = projectenv.interpreter_of(venv)
             resp = client.patch(
@@ -583,7 +645,7 @@ class TestBoundaries:
             lambda *a, **k: (built.append("x"), real_create(*a, **k))[1],
         )
         monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", WORKER_PY)  # 确认窗口里被钉上
-        deprepair.prepare_async(plan.plan_id)
+        deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_FAILED
         assert rec["code"] == deprepair.ERROR_INTERPRETER_PINNED
@@ -599,7 +661,7 @@ class TestBoundaries:
         project = _project(tmp_path, ALPHA)
         m.open_project(str(project))
         plan = deprepair.create_joint_plan(project, "figure.py")
-        assert deprepair.prepare_async(plan.plan_id) is True
+        assert deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest) is True
         _wait_until(lambda: calls)
         for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
             m.close_project(pid, wait=True)
@@ -685,9 +747,11 @@ class TestTaskDiagnostic:
         plan = client.post("/api/engine/dependencies/plan", json={"script": "figure.py"})
         assert plan.status_code == 200, plan.get_json()
         payload = plan.get_json()["plan"]
-        body = {"plan_id": payload["plan_id"]}
-        if impact_digest is not None:
-            body["impact_digest"] = impact_digest
+        # `impact_digest` 必填（Codex r4217232854）：默认回显用户看到的（计划自己的）那份
+        body = {
+            "plan_id": payload["plan_id"],
+            "impact_digest": payload["impact_digest"] if impact_digest is None else impact_digest,
+        }
         resp = client.post("/api/engine/dependencies/prepare", json=body)
         assert resp.status_code == 200, resp.get_json()
         return payload["plan_id"]
@@ -764,6 +828,37 @@ class TestTaskDiagnostic:
             for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
                 m.close_project(pid, wait=True)
 
+    def test_the_prepare_endpoint_requires_the_displayed_digest(
+        self, client, tmp_path, house, offline_managed_env
+    ):
+        """Codex r4217232854：只带 plan_id 不行——缺 impact_digest → 400 `dependency_impact_required`，
+        什么都没认领、没装；对不上仍是 409 `dependency_impact_changed`。"""
+        project = _project(tmp_path, ALPHA)
+        m = self._open(client, project)
+        try:
+            plan = client.post("/api/engine/dependencies/plan", json={"script": "figure.py"})
+            payload = plan.get_json()["plan"]
+            for body in (
+                {"plan_id": payload["plan_id"]},
+                {"plan_id": payload["plan_id"], "impact_digest": ""},
+                {"plan_id": payload["plan_id"], "impact_digest": None},
+                {"plan_id": payload["plan_id"], "impact_digest": 7},
+            ):
+                resp = client.post("/api/engine/dependencies/prepare", json=body)
+                assert resp.status_code == 400, body
+                assert resp.get_json()["code"] == "dependency_impact_required"
+                assert not deprepair.is_running(payload["plan_id"])
+            assert managedenv.python_of(project) is None
+            wrong = client.post(
+                "/api/engine/dependencies/prepare",
+                json={"plan_id": payload["plan_id"], "impact_digest": "e" * 32},
+            )
+            assert wrong.status_code == 409
+            assert wrong.get_json()["code"] == "dependency_impact_changed"
+        finally:
+            for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
+                m.close_project(pid, wait=True)
+
     def test_the_prepare_endpoint_checks_an_echoed_digest_before_claiming(
         self, client, tmp_path, house, offline_managed_env
     ):
@@ -783,7 +878,7 @@ class TestTaskDiagnostic:
             assert body["impact_digest"] == payload["impact_digest"]
             assert not deprepair.is_running(payload["plan_id"])
             assert managedenv.python_of(project) is None
-            # 对的摘要（或旧客户端不带摘要）照常
+            # 对的摘要照常（不带摘要见 test_the_prepare_endpoint_requires_the_displayed_digest）
             good = client.post(
                 "/api/engine/dependencies/prepare",
                 json={"plan_id": payload["plan_id"], "impact_digest": payload["impact_digest"]},
@@ -793,3 +888,318 @@ class TestTaskDiagnostic:
         finally:
             for pid in [p for p, c in list(m.PROJECTS.items()) if str(c.path) == str(project)]:
                 m.close_project(pid, wait=True)
+
+
+# ===========================================================================
+# 执行依赖变更的入口：一律要求并校验用户看到的影响摘要（Codex r4217232854 / r4217992305）
+# ===========================================================================
+class TestEveryExecutionEntryRequiresTheDigest:
+    """同一类缺口抓到第二次：联合准备端点补了摘要，单包端点 `/dependency/install` 仍只认 plan_id——
+    点之前次要依赖的约束变了，包名不变，装进用户没看过的约束。入口清单与逐个用例见 `reports/814-r4.md`。"""
+
+    def _single_plan(self, client, project):
+        from tavotto import app as m
+
+        real_venv(project)
+        (project / "requirements.txt").write_text("tavotto-test-missing-dep\n", encoding="utf-8")
+        m.open_project(str(project))
+        resp = client.post(
+            "/api/engine/dependency/plan",
+            json={
+                "module": "tavotto_test_missing_dep",
+                "script": "figure.py",
+                "target": "project_venv",
+            },
+        )
+        assert resp.status_code == 200, resp.get_json()
+        return m, resp.get_json()["plan"]
+
+    def test_the_single_package_endpoint_requires_the_displayed_digest(
+        self, client, project, monkeypatch
+    ):
+        ran: list[str] = []
+        monkeypatch.setattr(
+            deprepair, "_run_install", lambda p, *a, **k: ran.append(p.plan_id) or {"ok": True}
+        )
+        m, plan = self._single_plan(client, project)
+        pid = plan["plan_id"]
+        assert plan["impact_digest"]
+        # 缺 / 空 / null / 非字符串：400，什么都没认领、没执行
+        for body in (
+            {"plan_id": pid},
+            {"plan_id": pid, "impact_digest": ""},
+            {"plan_id": pid, "impact_digest": None},
+            {"plan_id": pid, "impact_digest": 7},
+        ):
+            resp = client.post("/api/engine/dependency/install", json=body)
+            assert resp.status_code == 400, body
+            assert resp.get_json()["code"] == deprepair.ERROR_IMPACT_REQUIRED
+            assert not deprepair.is_running(pid)
+        # 用户看到的是另一份（例如次要依赖约束 beta<2 → beta>=2 之前的摘要）：409，仍然什么都没执行
+        resp = client.post(
+            "/api/engine/dependency/install", json={"plan_id": pid, "impact_digest": "d" * 32}
+        )
+        assert resp.status_code == 409
+        body = resp.get_json()
+        assert body["code"] == deprepair.ERROR_IMPACT_CHANGED
+        assert (
+            body["impact_digest"] == plan["impact_digest"]
+        )  # 把此刻的实际影响交回去，界面据此重新确认
+        assert not deprepair.is_running(pid)
+        assert ran == []
+        # 对的摘要才执行
+        ok = client.post(
+            "/api/engine/dependency/install",
+            json={"plan_id": pid, "impact_digest": plan["impact_digest"]},
+        )
+        assert ok.status_code == 200 and ok.get_json()["started"] is True
+        _wait_until(lambda: ran)
+        _wait_until(lambda: not deprepair.is_running(pid))
+
+    def test_every_dependency_executing_call_in_the_entry_layers_binds_the_digest(self):
+        """结构性不变量：app.py 与 MCP 桥里每一处调用 `install_async` / `prepare_async` / `prepare(` 的地方都必须
+        传 `confirmed_impact=`；起依赖作业的 `start_confirmed` 本身以摘要为必填位置参数。新增入口忘了摘要 → 红。"""
+        import ast
+
+        root = Path(deprepair.__file__).resolve().parents[3]
+        files = [
+            root / "src" / "tavotto" / "app.py",
+            root / "codex-plugin" / "mcp" / "tavotto_mcp" / "bridge.py",
+        ]
+        guarded = {"install_async", "prepare_async", "prepare", "install", "run_prepare"}
+        found: list[str] = []
+        bad: list[str] = []
+        for path in files:
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                recv = node.func.value
+                if not (isinstance(recv, ast.Name) and recv.id == "engine_deprepair"):
+                    continue
+                if node.func.attr not in guarded:
+                    continue
+                found.append(f"{path.name}:{node.func.attr}")
+                if "confirmed_impact" not in {k.arg for k in node.keywords}:
+                    bad.append(f"{path.name}:{node.lineno} {node.func.attr}")
+        # 钉住扫描没有落空：三个已知调用点都被看到了
+        assert sorted(found) == sorted(
+            ["app.py:install_async", "app.py:prepare_async", "bridge.py:prepare"]
+        ), found
+        assert not bad, f"这些入口执行依赖变更却没绑定摘要: {bad}"
+
+
+# ===========================================================================
+# 结构性守卫：披露所用的输入 == 交给 pip 的输入（Codex #814 r4218254708，同一主题第四次）
+# ===========================================================================
+def _assert_impact_covers(impact: dict, *, requirements, constraints, require_hashes, adapter=()):
+    """执行端实际收到的需求 / 约束 / hash 模式 / adapter，披露里一条不少、一条不多（约束与 hash 模式严格相等）。"""
+    assert set(requirements) <= set(impact["installs"]), (requirements, impact["installs"])
+    assert sorted(constraints) == impact["constraints"], (constraints, impact["constraints"])
+    assert bool(require_hashes) is impact["require_hashes"]
+    assert set(adapter) <= set(impact["adapter"]), (adapter, impact["adapter"])
+
+
+class TestDisclosureIsDerivedFromWhatPipReceives:
+    """每种计划类型各一条：把执行端**真正交给** `_GenerationJob` / `write_plan_files` / `_pip_install` 的东西截下来，
+    与该计划 `impact` 逐项对。约束放进计划里（不只是空集），否则"漏了约束"这种漂移测不出来。"""
+
+    CONSTRAINT = "tavotto-test-beta>=1"
+
+    @staticmethod
+    def _generation_inputs(project, job):
+        final = deprepair.generation_requirements(
+            project, job.delta, hash_mode=job.require_hashes, replace=job.replace_ledger
+        )
+        return final
+
+    def _capture_generation(self, monkeypatch, attr):
+        seen = {}
+
+        def fake(job, *a, **kw):
+            seen["job"] = job
+            raise deprepair.RepairError("captured")
+
+        monkeypatch.setattr(deprepair, attr, fake)
+        return seen
+
+    def test_joint_plan_into_a_managed_generation(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        import dataclasses
+
+        project = _project(tmp_path, ALPHA, BETA)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        plan = dataclasses.replace(plan, constraints=(self.CONSTRAINT,))
+        deprepair._joint_plans[plan.plan_id] = plan
+        seen = self._capture_generation(monkeypatch, "_run_generation")
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
+        job = seen["job"]
+        final = self._generation_inputs(str(project), job)
+        _assert_impact_covers(
+            plan.impact,
+            requirements=final,
+            constraints=job.constraints,
+            require_hashes=job.require_hashes,
+            adapter=deprepair.depplan.ADAPTER_REQUIREMENTS,
+        )
+        assert plan.impact["constraints"] == [self.CONSTRAINT]
+
+    def test_single_package_plan_into_a_managed_generation(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        import dataclasses
+
+        project = _project(tmp_path, ALPHA, BETA)
+        plan = deprepair.create_plan(
+            str(project), "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
+        )
+        assert plan.widened is not None
+        plan = dataclasses.replace(
+            plan, widened=dataclasses.replace(plan.widened, constraints=(self.CONSTRAINT,))
+        )
+        deprepair._plans[plan.plan_id] = plan
+        seen = self._capture_generation(monkeypatch, "_run_generation_locked")
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair._run_install(plan, "k", None, threading.Event())
+        job = seen["job"]
+        final = self._generation_inputs(str(project), job)
+        _assert_impact_covers(
+            plan.impact,
+            requirements=final,
+            constraints=job.constraints,
+            require_hashes=job.require_hashes,
+            adapter=deprepair.depplan.ADAPTER_REQUIREMENTS,
+        )
+        assert plan.impact["constraints"] == [self.CONSTRAINT]
+
+    def test_joint_plan_in_place_in_the_project_venv(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        import dataclasses
+
+        project = _project(tmp_path, ALPHA, BETA)
+        _adopt(project, real_venv(project))
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
+        plan = dataclasses.replace(plan, constraints=(self.CONSTRAINT,))
+        seen: dict = {}
+
+        def fake(build_argv, python, cancel_ev, *a, **kw):
+            argv = build_argv(None)
+            seen["requirements"] = Path(argv[argv.index("-r") + 1]).read_text().split()
+            seen["constraints"] = Path(argv[argv.index("-c") + 1]).read_text().split()
+            seen["require_hashes"] = "--require-hashes" in argv
+            raise deprepair.RepairError("captured")
+
+        monkeypatch.setattr(deprepair, "_run_pip_install", fake)
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair._run_joint_in_place(plan, None, threading.Event())
+        _assert_impact_covers(
+            plan.impact,
+            requirements=seen["requirements"],
+            constraints=seen["constraints"],
+            require_hashes=seen["require_hashes"],
+        )
+        assert plan.impact["constraints"] == [self.CONSTRAINT]
+
+    def test_single_package_plan_in_place_in_the_project_venv(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        project = _project(tmp_path, ALPHA, BETA)
+        _adopt(project, real_venv(project))
+        plan = deprepair.create_plan(
+            str(project), "figure.py", ALPHA[1], target_kind=deprepair.TARGET_PROJECT_VENV
+        )
+        seen: dict = {}
+
+        def fake(python, requirement, *a, **kw):
+            seen["requirement"] = requirement
+            raise deprepair.RepairError("captured")
+
+        monkeypatch.setattr(deprepair, "_pip_install", fake)
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair._run_install(plan, "k", None, threading.Event())
+        # 原地只传一条需求、没有约束文件：披露同样只说这一条、没有约束
+        _assert_impact_covers(
+            plan.impact, requirements=[seen["requirement"]], constraints=[], require_hashes=False
+        )
+
+    def test_every_plan_type_exposes_one_pip_inputs_and_the_impact_reads_it(self):
+        """结构：`impact` 的 requirements / constraints / hash / adapter 四项只从 `pip_inputs` 读。"""
+        import inspect
+
+        for cls in (deprepair.RepairPlan, deprepair.JointRepairPlan):
+            assert isinstance(getattr(cls, "pip_inputs"), property)
+            src = inspect.getsource(cls.impact.fget)
+            for field in ("requirements", "constraints", "require_hashes", "adapter"):
+                assert f"{field}=pi.{field}" in src, (cls.__name__, field)
+
+
+class TestReplanAfterPrivatePythonMustMatchTheConfirmedInputs:
+    """私有 Python 就位后按真解释器重算：重算出的 pip 输入（同一个 `PipInputs`）必须与用户确认的逐项相同，
+    否则 `dependency_impact_changed`、进度终态带着此刻的实际影响与新摘要、一个字节不装（Codex #814 r4218254708 后续）。"""
+
+    def _run(self, tmp_path, monkeypatch, replanned_constraints):
+        import dataclasses
+
+        project = _project(tmp_path, ALPHA, BETA)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        deprepair._joint_plans[plan.plan_id] = plan
+        seen = {}
+
+        def fake_generation(job, *a, **kw):
+            seen["job"] = job
+            raise deprepair.RepairError("captured")
+
+        monkeypatch.setattr(deprepair, "_run_generation", fake_generation)
+        with pytest.raises(deprepair.RepairError, match="captured"):
+            deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
+        job = dataclasses.replace(seen["job"], provision_private=True, replan=True)
+        assert job.confirmed_inputs == plan.pip_inputs and job.confirmed_impact == plan.impact
+        joint, _k, _p = deprepair.joint_plan_for(project, "figure.py")
+        joint = dataclasses.replace(
+            joint, constraints=replanned_constraints, inputs_digest=job.inputs_digest
+        )
+        effects: list[str] = []
+        monkeypatch.setattr(deprepair, "base_python", lambda: None)
+        monkeypatch.setattr(
+            deprepair, "_provision_private_base", lambda j, ev: {"python": "/x/py", "runtime": "r"}
+        )
+        monkeypatch.setattr(depplan, "fresh_venv_facts", lambda *a, **kw: object())
+        monkeypatch.setattr(depplan, "plan", lambda *a, **kw: joint)
+        for name in ("register_generation", "create_generation_venv", "fresh_generation"):
+            monkeypatch.setattr(
+                managedenv, name, lambda *a, _n=name, **kw: effects.append(_n) or 1 / 0
+            )
+        monkeypatch.setattr(
+            deprepair, "_run_pip_install", lambda *a, **kw: effects.append("pip") or 1 / 0
+        )
+        return plan, job, effects
+
+    def test_inputs_that_differ_from_the_disclosure_are_never_installed(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        plan, job, effects = self._run(tmp_path, monkeypatch, ("tavotto-test-beta>=1",))
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair._run_generation_locked(job, threading.Event(), "k")
+        assert err.value.code == deprepair.ERROR_IMPACT_CHANGED
+        assert effects == []  # 没登记代、没建 venv、没起 pip
+        now = err.value.extra["impact"]
+        assert now["constraints"] == ["tavotto-test-beta>=1"]
+        assert err.value.extra["impact_digest"] == deprepair.impact_digest(now)
+        assert err.value.extra["impact_digest"] != plan.impact_digest
+        # 终态记着此刻的实际影响与新摘要（界面 / MCP 据此重新披露），不是用户确认的那份
+        rec = deprepair.progress(plan.plan_id)
+        assert (
+            rec["state"] == deprepair.STATE_FAILED and rec["code"] == deprepair.ERROR_IMPACT_CHANGED
+        )
+        assert rec["impact_digest"] == err.value.extra["impact_digest"]
+
+    def test_identical_inputs_go_on_to_install(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        plan, job, effects = self._run(tmp_path, monkeypatch, ())
+        with pytest.raises(ZeroDivisionError):  # 走到了「登记代」这一步（被替身截断）
+            deprepair._run_generation_locked(job, threading.Event(), "k")
+        assert effects and effects[0] in ("fresh_generation", "register_generation")

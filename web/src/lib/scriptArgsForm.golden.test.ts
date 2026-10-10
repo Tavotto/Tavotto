@@ -10,6 +10,7 @@ import {
   applyEdit,
   groupProblems,
   missingRequired,
+  missingRequirements,
   readTokens,
   type FormEdit,
   type ScriptArgsSchema,
@@ -110,5 +111,173 @@ describe('只动自己的 token', () => {
     const view = readTokens(fft, ['--freq', '--amp', '2'])
     expect(view.fields.a0).toMatchObject({ state: 'value', incomplete: true })
     expect(missingRequired(fft, view)).toContain('a0')
+  })
+})
+
+describe('missingRequired：必选互斥组与必选子命令（#820 r4232531822）', () => {
+  const base = schemas.fft6
+  const arg = (id: string) => ({ ...base.arguments[0], id, flags: [`--${id}`], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: 'gx' })
+  const grp = {
+    ...base,
+    arguments: [arg('csv'), arg('json')],
+    exclusive_groups: [{ id: 'gx', required: true, members: ['csv', 'json'] }],
+    subcommands: null,
+  } as ScriptArgsSchema
+
+  it('一个成员都没给 = 缺 1；给了一个 = 0；组不必选 = 0', () => {
+    expect(missingRequirements(grp, readTokens(grp, [])).groups).toEqual(['gx'])
+    expect(missingRequirements(grp, readTokens(grp, [])).count).toBe(1)
+    expect(missingRequired(grp, readTokens(grp, []))).toEqual([]) // 组 id 不混进参数 id
+    expect(missingRequirements(grp, readTokens(grp, ['--csv', 'a'])).count).toBe(0)
+    const optional = { ...grp, exclusive_groups: [{ id: 'gx', required: false, members: ['csv', 'json'] }] }
+    expect(missingRequirements(optional, readTokens(optional, [])).count).toBe(0)
+  })
+
+  it('必选子命令：没选 = subcommand；选了（或不必选）= 0；不传 tokens 不判', () => {
+    const sub = {
+      ...base,
+      arguments: [],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    } as ScriptArgsSchema
+    expect(missingRequirements(sub, readTokens(sub, []), []).subcommand).toBe(true)
+    expect(missingRequirements(sub, readTokens(sub, []), ['--v']).subcommand).toBe(false) // 不认识的选项：拿不准
+    expect(missingRequirements(sub, readTokens(sub, []), ['-v', 'plot']).count).toBe(0)
+    expect(missingRequirements(sub, readTokens(sub, [])).count).toBe(0)
+    const notRequired = { ...sub, subcommands: { ...sub.subcommands!, required: false } }
+    expect(missingRequirements(notRequired, readTokens(notRequired, []), []).count).toBe(0)
+  })
+
+  it('选项的值不算子命令：`--output plot` 仍是没选（r4232594148）', () => {
+    const out = { ...base.arguments[0], id: 'output', flags: ['--output'], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: null }
+    const sub = {
+      ...base,
+      arguments: [out],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    } as ScriptArgsSchema
+    const miss = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t).subcommand
+    expect(miss(['--output', 'plot'])).toBe(true)
+    expect(miss(['--output=plot'])).toBe(true)
+    expect(miss(['--output', 'x', 'plot'])).toBe(false)
+    expect(miss(['--', 'plot'])).toBe(false)
+    expect(miss(['--mystery', 'plot'])).toBe(false) // 不认识的选项：拿不准，当选了
+  })
+  it('子命令前的位置参数先吃位置 token：`name plot` 才算选了（r4232654895）', () => {
+    const name = { ...base.arguments[0], id: 'name', flags: [], required: true, positional: true, arity: 1 as const, nargs: null, action: 'store', group: null }
+    const sub = {
+      ...base,
+      arguments: [name],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false, position: 1 },
+    } as ScriptArgsSchema
+    const miss = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t).subcommand
+    expect(miss(['plot'])).toBe(true) // `plot` 是 name，子命令还没选
+    expect(miss(['x'])).toBe(true)
+    expect(miss(['x', 'plot'])).toBe(false)
+    // 位置参数声明在 add_subparsers 之后（position: 0）：不预留，`plot out.pdf` 不能被错拦（r4233340718）
+    const after = { ...sub, subcommands: { ...sub.subcommands!, position: 0 } }
+    expect(missingRequirements(after, readTokens(after, ['plot', 'out.pdf']), ['plot', 'out.pdf']).subcommand).toBe(false)
+    // 前面有变长位置参数：说不清吃几个，拿不准当选了
+    const rest = { ...name, arity: null, nargs: '*' }
+    const loose = { ...sub, arguments: [rest] } as unknown as ScriptArgsSchema
+    expect(missingRequirements(loose, readTokens(loose, ['plot']), ['plot']).subcommand).toBe(false)
+  })
+
+  it('必选互斥组：成员只写了选项名没给值（incomplete）不算满足（r4232654901）', () => {
+    const grp = {
+      ...base,
+      arguments: [
+        { ...base.arguments[0], id: 'output', flags: ['--output'], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: 'gx' },
+        { ...base.arguments[0], id: 'json', flags: ['--json'], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: 'gx' },
+      ],
+      exclusive_groups: [{ id: 'gx', required: true, members: ['output', 'json'] }],
+      subcommands: null,
+    } as ScriptArgsSchema
+    const view = readTokens(grp, ['--output'])
+    expect(view.fields.output).toMatchObject({ state: 'value', incomplete: true })
+    expect(missingRequirements(grp, view).groups).toEqual(['gx'])
+    expect(groupProblems(grp, view).map((p) => p.problem)).toEqual(['missing'])
+    expect(missingRequirements(grp, readTokens(grp, ['--output', 'a'])).groups).toEqual([])
+  })
+  it("前面是 nargs='+' 的位置参数：先预留 1 个 token 再认子命令（r4232790912）", () => {
+    const files = { ...base.arguments[0], id: 'files', flags: [], required: true, positional: true, arity: '+' as const, nargs: '+', action: 'store', group: null }
+    const sub = {
+      ...base,
+      arguments: [files],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false, position: 1 },
+    } as unknown as ScriptArgsSchema
+    const miss = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t).subcommand
+    expect(miss(['plot'])).toBe(true) // 唯一的 token 归 `+`
+    expect(miss(['a.csv', 'plot'])).toBe(false)
+    const star = { ...sub, arguments: [{ ...files, arity: '*' as const, nargs: '*' }] } as unknown as ScriptArgsSchema
+    expect(missingRequirements(star, readTokens(star, ['plot']), ['plot']).subcommand).toBe(false) // `*` 预留 0
+  })
+
+  it('表单关着：只认读得准的必填选项与互斥组，位置 / 条件式参数不拦（r4232790899）', () => {
+    const opt = { ...base.arguments[0], id: 'input', flags: ['--input'], required: true, positional: false, arity: 1 as const, nargs: null, action: 'store', group: null, conditional: false }
+    const pos = { ...opt, id: 'pos', flags: [], positional: true }
+    const cond = { ...opt, id: 'cond', flags: ['--cond'], conditional: true }
+    const sub = {
+      ...base,
+      form_enabled: false,
+      arguments: [opt, pos, cond],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'stats'], dynamic: false },
+    } as unknown as ScriptArgsSchema
+    const r = (t: string[]) => missingRequirements(sub, readTokens(sub, t), t)
+    expect(r(['plot']).args).toEqual(['input'])
+    expect(r(['--input', 'a', 'x', 'plot']).count).toBe(0)
+  })
+  it("子命令别名（aliases）是 choices 的一员：['p'] 算选了（r4233563613）", () => {
+    const sub = {
+      ...base,
+      arguments: [],
+      exclusive_groups: [],
+      subcommands: { dest: 'cmd', required: true, choices: ['plot', 'p', 'stats'], dynamic: false, position: 0 },
+    } as ScriptArgsSchema
+    expect(missingRequirements(sub, readTokens(sub, ['p']), ['p']).subcommand).toBe(false)
+    expect(missingRequirements(sub, readTokens(sub, ['q']), ['q']).subcommand).toBe(true)
+  })
+  it('argparse 长选项缩写：`--inp file` 算给了 `--input`；关了 allow_abbrev 或有歧义才算没给（r4233842668）', () => {
+    const opt = (id: string) => ({ ...base.arguments[0], id, flags: [`--${id}`], required: id === 'input', positional: false, arity: 1 as const, nargs: null, action: 'store', group: null })
+    const sch = { ...base, arguments: [opt('input'), opt('index')], exclusive_groups: [], subcommands: null, allow_abbrev: true } as unknown as ScriptArgsSchema
+    const miss = (s: ScriptArgsSchema, t: string[]) => missingRequirements(s, readTokens(s, t), t).args
+    expect(miss(sch, ['--inp', 'a.csv'])).toEqual([])
+    expect(miss(sch, ['--inp=a.csv'])).toEqual([])
+    expect(miss(sch, ['--in', 'a.csv'])).toEqual(['input']) // 有歧义：argparse 会报错，不当作给了
+    expect(miss({ ...sch, allow_abbrev: false } as ScriptArgsSchema, ['--inp', 'a.csv'])).toEqual(['input'])
+    expect(miss({ ...sch, allow_abbrev: null } as ScriptArgsSchema, ['--inp', 'a.csv'])).toEqual([])
+  })
+  it('响应文件 / 前缀 / 写死 argv 等说不清的表单关闭理由：什么都不拦（r4234219374）', () => {
+    const opt = { ...base.arguments[0], id: 'input', flags: ['--input'], required: true, positional: false, arity: 1 as const, nargs: null, action: 'store', group: null, conditional: false }
+    const mk = (reasons: string[]) =>
+      ({ ...base, form_enabled: false, reasons, arguments: [opt], exclusive_groups: [], subcommands: { dest: 'cmd', required: true, choices: ['plot'], dynamic: false, position: 0 } }) as unknown as ScriptArgsSchema
+    const count = (s: ScriptArgsSchema, t: string[]) => missingRequirements(s, readTokens(s, t), t).count
+    expect(count(mk(['subcommands']), ['x'])).toBeGreaterThan(0) // 只有子命令：照旧拦
+    for (const r of ['fromfile', 'prefix_chars', 'parents', 'explicit_parse_args', 'multiple_parsers', 'unresolved_parse_call', 'no_parse_call', 'remainder']) {
+      expect(count(mk(['subcommands', r]), ['@args.txt'])).toBe(0)
+    }
+  })
+  it('条件式声明不当运行闸：分支里的必填选项 / 互斥组 / 子命令，表单开着也不拦（r4234436263）', () => {
+    const opt = (id: string, over: Record<string, unknown> = {}) => ({ ...base.arguments[0], id, flags: [`--${id}`], required: true, positional: false, arity: 1 as const, nargs: null, action: 'store', group: null, conditional: false, ...over })
+    const sch = (args: unknown[], extra: Record<string, unknown> = {}) =>
+      ({ ...base, form_enabled: true, arguments: args, exclusive_groups: [], subcommands: null, ...extra }) as unknown as ScriptArgsSchema
+    const count = (s: ScriptArgsSchema, t: string[]) => missingRequirements(s, readTokens(s, t), t).count
+    expect(count(sch([opt('plain')]), [])).toBe(1) // 无条件必填：照旧拦
+    expect(count(sch([opt('win_only', { conditional: true })]), [])).toBe(0) // 只在 win32 分支里声明
+    const grp = sch([opt('a', { required: false, conditional: true, group: 'g0' }), opt('b', { required: false, group: 'g0' })], {
+      exclusive_groups: [{ id: 'g0', required: true, members: ['a', 'b'] }],
+    })
+    expect(count(grp, [])).toBe(0) // 组里有条件成员
+    const plainGrp = sch([opt('a', { required: false, group: 'g0' }), opt('b', { required: false, group: 'g0' })], {
+      exclusive_groups: [{ id: 'g0', required: true, members: ['a', 'b'] }],
+    })
+    expect(count(plainGrp, [])).toBe(1)
+    const cond = sch([], { subcommands: { dest: 'c', required: true, choices: ['x'], dynamic: false, position: 0, conditional: true } })
+    expect(count(cond, [])).toBe(0)
+    const sure = sch([], { subcommands: { dest: 'c', required: true, choices: ['x'], dynamic: false, position: 0, conditional: false } })
+    expect(count(sure, [])).toBe(1)
   })
 })

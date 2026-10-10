@@ -368,7 +368,7 @@ def test_offer_excludes_the_interpreter_that_is_missing_things(tmp_path, monkeyp
     monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [(str(good), "system")])
     probed = []
 
-    def fake_eval(cands, needed, unknown):
+    def fake_eval(cands, needed, unknown, **kw):
         probed.extend(c["python"] for c in cands)
         return [_entry(c["python"], c["source"], label=c["label"]) for c in cands]
 
@@ -659,7 +659,7 @@ def adopt_api(project, client, monkeypatch, tmp_path):
     )
     state = {"has_openpyxl": True}
 
-    def probe(python, module=None, *, modules=()):
+    def probe(python, module=None, *, modules=(), **kw):
         return {
             "ok": True,
             "code": "",
@@ -718,7 +718,9 @@ def test_the_uncached_recheck_never_accepts_a_result_slipped_into_the_cache(monk
         "modules_ok": {"openpyxl": True},
     }
     imports = ("openpyxl",)
-    key = (userenvs._key("/lab/python"), imports, False)  # 第三维：是不是按内置 runtime 的环境量的
+    key = userenvs._cache_key(
+        "/lab/python", imports, False
+    )  # 路径 + 环境代 + 要量的 import + 是不是内置
 
     class Racy(dict):
         def pop(self, k, *default):
@@ -788,7 +790,7 @@ def test_the_recheck_measures_everything_the_script_needs_not_only_the_current_g
     )
     probed = []
 
-    def probe(python, module=None, *, modules=()):
+    def probe(python, module=None, *, modules=(), **kw):
         probed.append(tuple(modules))
         return {
             "ok": True,
@@ -871,6 +873,18 @@ def conda_layout(tmp_path, home, monkeypatch):
     base = venvfixture.make_project_venv(home, "miniforge3", python=_WORKER_PY)
     (base / "envs").mkdir()
     lab = venvfixture.make_project_venv(base / "envs", "lab", python=_WORKER_PY)
+    # 真实 Conda 环境的包就在它的 site-packages 里；夹具 venv 靠 .pth 里的 `import` 行把宿主接进来——那是可执行 .pth，运行之前的
+    # 隔离体检按设计不执行它。这个用例的意图是 Conda 发现，不是 .pth 语义：换成普通路径行
+    for env in (base, lab):
+        site_dir = (
+            env / "Lib" / "site-packages"
+            if (env / "Lib" / "site-packages").is_dir()
+            else next((env / "lib").glob("python*")) / "site-packages"
+        )  # 只看这个环境自己的（base 的 rglob 会先撞上嵌套的 envs/lab）
+        for pth in site_dir.glob("_tavotto_fixture_host_site*.pth"):
+            pth.unlink()
+        host = [p for p in sys.path if p and "site-packages" in p and os.path.isdir(p)]
+        (site_dir / "zz_host_paths.pth").write_text("\n".join(host) + "\n", encoding="utf-8")
     site = next(p for p in lab.rglob("site-packages") if p.is_dir())
     (site / "qa_probe_pkg").mkdir()
     (site / "qa_probe_pkg" / "__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
@@ -908,8 +922,9 @@ def test_an_unmapped_import_finds_and_adopts_the_named_conda_env_that_has_it(con
     assert offer["plan"]["status"] == "nothing_needed", offer["plan"]["status"]
     assert offer["plan"]["unknown"] == ["qa_probe_pkg"]
     assert offer["unknown_missing"] == ["qa_probe_pkg"]
-    complete = [e for e in offer["user_environments"] if e["satisfies"]]
-    assert [e["label"] for e in complete] == ["lab"], offer["user_environments"]
+    # 运行之前只读了 dist-info（没 import）：lab 装了它但健康没量过，列成"未检查"，不可采用；起会话（运行）时才真量并采用
+    pending = [e["label"] for e in offer["user_environments"] if e.get("checked") is False]
+    assert pending == ["lab"], offer["user_environments"]
     assert str(conda_layout["lab"]) not in json.dumps(offer), "载荷不带路径（ADR 0053 §二）"
     # 起会话：决定在解析解释器之前（`pool.ENVIRONMENT_DECIDERS`）
     worker, resp = engine_pool.build("figure.py", str(project), "__main__")

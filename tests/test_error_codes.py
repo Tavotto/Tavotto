@@ -157,7 +157,9 @@ USER_VISIBLE_CODES = {
     "user_environment_gone": set(),
     # 环境建议 / 检查 / 采用（T05，ADR 0114）
     "environment_changed": set(),
+    "environment_generation_required": set(),
     "environment_candidate_gone": set(),
+    "environment_save_failed": set(),
     "environment_locked": set(),
     "environment_check_running": set(),
     # 交回的环境按此刻的计划复核仍缺包（Codex #522 P2）
@@ -236,6 +238,7 @@ USER_VISIBLE_CODES = {
     "run_config_missing": set(),
     "run_config_secret_missing": set(),
     "run_config_unsupported": set(),
+    "run_config_unreadable": set(),
     # --- T02：导入即扫描。重启后 GET / 取消一个没开始过的扫描；客户端据此重新 POST 开始 ---
     "project_scan_not_started": set(),
     # --- U04（ADR 0061）：跑前的依赖门 ---
@@ -382,6 +385,7 @@ USER_VISIBLE_CODES = {
     "script_input_not_found": set(),
     "script_input_invalid": set(),
     "script_input_stream_gone": set(),
+    "script_input_transcript_failed": set(),
 }
 
 pytestmark = pytest.mark.skipif(
