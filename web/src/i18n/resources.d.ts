@@ -1165,6 +1165,7 @@ export default interface Resources {
       "answerLabel": "你的回答",
       "autofilled": "已用上次的答案：{{answer}}",
       "autofilledAction": "修改",
+      "autofilledPrivate": "已自动填入上次的答案",
       "eof": "结束输入",
       "eofTip": "告诉脚本输入已结束（相当于 Ctrl-D）",
       "failed": "提交失败：{{error}}",

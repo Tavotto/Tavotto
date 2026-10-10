@@ -2920,7 +2920,8 @@ export type ServerEvent =
       script: string
       index: number
       prompt: string
-      answer: string
+      /** 敏感运行 / 口令：后端不带答案明文（`null`），界面只说「已自动回填」 */
+      answer: string | null
     } & ProjectScoped)
   /**
    * 注册表变了。**一次刷新一条事件**（后端统一刷新服务批量发布，不为十几个

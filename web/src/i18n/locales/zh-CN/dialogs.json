@@ -1764,6 +1764,7 @@
     "stop": "停止脚本",
     "failed": "提交失败：{{error}}",
     "autofilled": "已用上次的答案：{{answer}}",
+    "autofilledPrivate": "已自动填入上次的答案",
     "autofilledAction": "修改",
     "manageAria": "查看和修改 {{script}} 记住的输入",
     "manageTip": "记住的输入",

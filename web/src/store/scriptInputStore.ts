@@ -50,7 +50,8 @@ let answersLockHeld: number | null = null
 
 export interface AutofillNotice {
   script: string
-  answer: string
+  /** `null` = 敏感运行 / 口令：后端不给明文 */
+  answer: string | null
   token: number
 }
 
@@ -75,7 +76,7 @@ interface ScriptInputState {
 
   onRequested: (req: ScriptInputRequest) => void
   onClosed: (id: string) => void
-  onAutofilled: (script: string, answer: string) => void
+  onAutofilled: (script: string, answer: string | null) => void
   dismissAutofilled: () => void
   submit: (answer: string | null) => Promise<void>
   stop: () => Promise<void>

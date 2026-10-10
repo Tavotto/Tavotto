@@ -1778,6 +1778,7 @@
     "stop": "Stop script",
     "failed": "Couldn’t submit: {{error}}",
     "autofilled": "Used your last answer: {{answer}}",
+    "autofilledPrivate": "Filled in your last answer automatically",
     "autofilledAction": "Change",
     "manageAria": "Review and change the remembered input for {{script}}",
     "manageTip": "Remembered input",

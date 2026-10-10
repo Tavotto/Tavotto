@@ -331,7 +331,9 @@ export function NotificationRail() {
   const autofillPresence = usePresence(!!autofilled && autofillHasSlot, DURATION.exit)
   const autofillShown = autofilled ?? lastAutofilled.current
   const autofillText = autofillShown
-    ? translate('scriptInput.autofilled', { ns: 'dialogs', answer: autofillShown.answer })
+    ? autofillShown.answer == null
+      ? translate('scriptInput.autofilledPrivate', { ns: 'dialogs' })
+      : translate('scriptInput.autofilled', { ns: 'dialogs', answer: autofillShown.answer })
     : ''
   const changeAutofilled = () => {
     const script = autofillShown?.script

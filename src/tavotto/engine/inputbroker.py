@@ -234,6 +234,17 @@ def _reply(directory: Path, index: int, payload: dict, *, private: bool = False)
         atomicio.write_bytes(path, data)
 
 
+def _emit_autofilled(
+    project_root: str, script: str, index: int, prompt: str, answer: str, private: bool
+) -> None:
+    """「已自动回填」事件：界面只要知道回填了、回填了什么。敏感运行 / 口令不带答案明文（`answer: None`，界面改说「已自动回填」）。"""
+    _emit(
+        "script.input_autofilled",
+        project_root,
+        {"script": script, "index": index, "prompt": prompt, "answer": None if private else answer},
+    )
+
+
 def _count(facts: InputFacts | None, name: str) -> None:
     if facts is None:
         return
@@ -367,13 +378,17 @@ def _decide(
         verdict, entry = policy.match(index, prompt, kind, context, request.get("prompt_id"))
         if verdict in (MATCH_ANSWER, MATCH_EOF):
             payload = {"answer": entry["answer"]} if verdict == MATCH_ANSWER else {"eof": True}
-            _reply(directory, index, payload)
+            # 回放回的也是明文答案：与界面作答同一条隐私规则（敏感运行 / 口令 = 0600，Codex #909 补审 P2）
+            _reply(directory, index, payload, private=private or kind == "getpass")
             _count(facts, "replayed")
             if verdict == MATCH_ANSWER and policy.ask_on_mismatch:
-                _emit(
-                    "script.input_autofilled",
+                _emit_autofilled(
                     project_root,
-                    {"script": script, "index": index, "prompt": prompt, "answer": entry["answer"]},
+                    script,
+                    index,
+                    prompt,
+                    entry["answer"],
+                    private or kind == "getpass",
                 )
             return
         if verdict == MATCH_SECRET:
@@ -386,6 +401,7 @@ def _decide(
             recheck = scriptanswers.RECHECK_CONTEXT
             if (
                 entry is not None
+                and not private  # 敏感运行：转录里的明文答案不当建议送进界面事件
                 and not entry.get("secret")
                 and entry.get("prompt") == prompt
                 and isinstance(entry.get("answer"), str)
@@ -398,11 +414,7 @@ def _decide(
         if found.answer is not None:
             _reply(directory, index, {"answer": found.answer})
             _count(facts, "autofilled")
-            _emit(
-                "script.input_autofilled",
-                project_root,
-                {"script": script, "index": index, "prompt": prompt, "answer": found.answer},
-            )
+            _emit_autofilled(project_root, script, index, prompt, found.answer, False)
             return
         suggestion, recheck = found.suggestion, found.recheck
     if _has_answerer is None or not _has_answerer(project_root):
