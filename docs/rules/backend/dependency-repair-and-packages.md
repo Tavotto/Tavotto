@@ -333,6 +333,8 @@
   `static_index` 按它们建层（`distmeta.index_environment(site_paths=)`，层顺序 = sys.path 顺序；前缀之外的层 `rel` 记 `base`，账里无绝对路径）。
   某一层的名字没读全（消失 / 链接 / 列不出来 / 条目被跳过·链接拒跟 / 超预算 / 层数超上限）= `Index.names_complete=False`（个别发行包元数据文件读不成只让 `complete=False`，不触发），此时**名字级查不到的 import 不判「缺」而判来源未定**
   （`reason=unverified`，条目 `distribution_status=environment_not_checked`），不往用户环境里装可能遮蔽那一层提供者的包。没量到层的替身事实退回只读前缀的旧口径。
+  `sys.path` 上其余存在的目录（`TargetFacts.extra_roots`：`PYTHONPATH` 的 `--target` 目录、`.pth` 路径行加进来的目录；不含标准库）做**名字级**扫描：模块名出现在那里
+  就不判缺（既有的「模块在、无元数据」分支）；读不了 = 名字没读全；额外路径里没有它时照样报缺。指向这些已读目录的 `.pth` 路径行算已跟进。
   **来源判决只抑制当前环境的 missing**：`install_facts` 不是当前环境（新托管代 / active 代）时，`requirements` 的排除按目标的已装集合单独判——
   当前解释器里的 editable / 本地 / Conda 提供者、缓存的 `import_error`、读不全的索引在新代里都不存在，不再把该 import 从安装集合剔除；
   装到当前环境（`install_facts` 为 None / 就是 `facts`）时不变。当前环境里是 editable 等、可信解析又给不出安装名的 import

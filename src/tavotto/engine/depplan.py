@@ -191,6 +191,31 @@ for entry in sys.path:
     ):
         if path not in site_roots:
             site_roots.append(path)
+# sys.path 上**其余**存在的目录（PYTHONPATH 的 `pip install --target` 目录、`.pth` 路径行加进来的目录，如老式 editable 的 src）：
+# 不含已在 site_roots 里的、标准库目录（及其子目录）、lib-dynload / DLLs、zip 等非目录。静态索引对它们只做名字级扫描。
+import sysconfig
+skip = set()
+for key in ("stdlib", "platstdlib"):
+    try:
+        skip.add(os.path.normcase(os.path.abspath(sysconfig.get_path(key))))
+    except Exception:
+        pass
+extra_roots = []
+for entry in sys.path:
+    if not entry or not isinstance(entry, str):
+        continue
+    try:
+        path = os.path.abspath(entry)
+        if not os.path.isdir(path) or path in site_roots or path in extra_roots:
+            continue
+    except Exception:
+        continue
+    norm = os.path.normcase(path)
+    if os.path.basename(path).lower() in ("lib-dynload", "dlls"):
+        continue
+    if any(norm == k or norm.startswith(k + os.sep) for k in skip):
+        continue
+    extra_roots.append(path)
 sys.stdout.write(json.dumps({
     "marker_env": env,
     "stdlib": sorted(getattr(sys, "stdlib_module_names", ())),
@@ -200,6 +225,7 @@ sys.stdout.write(json.dumps({
     "prefix": sys.prefix,
     "executable": sys.executable,
     "site_roots": site_roots,
+    "extra_roots": extra_roots,
 }))
 """
 
@@ -224,6 +250,9 @@ class TargetFacts:
     #: 会被漏掉（Codex #920 P1）。**空 = 没量到**（替身事实、老缓存），索引退回只读前缀的旧口径。与 `builtin` 同理不进
     #: `digest()` / `to_payload()`：它们由解释器与环境决定，不是计划的输入，也就不改 `inputs_digest` / `identity`。
     site_roots: tuple[str, ...] = ()
+    #: `sys.path` 上其余存在的目录（`PYTHONPATH` / `.pth` 路径行加进来的；不含标准库与 `site_roots`）。静态索引只做名字级扫描：
+    #: 模块名出现在那里 = 别处已有提供者，不判缺。同 `site_roots`：空 = 没量到，不进 digest / payload。
+    extra_roots: tuple[str, ...] = ()
 
     @property
     def python_version(self) -> str:
@@ -305,6 +334,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         builtin=frozenset(str(n) for n in data.get("builtin") or ()),
         ext_suffixes=tuple(str(x) for x in data.get("ext_suffixes") or ()),
         site_roots=tuple(str(x) for x in data.get("site_roots") or () if isinstance(x, str)),
+        extra_roots=tuple(str(x) for x in data.get("extra_roots") or () if isinstance(x, str)),
     )
     with _facts_lock:
         _facts_cache[key] = facts
@@ -352,7 +382,9 @@ def static_index(facts: TargetFacts | None) -> distmeta.Index | None:
         return hit
     # 读目标解释器报告的**全部**层（含基础解释器 / user site）；没量到层（替身事实）才退回只读前缀的旧口径。任何一层没读成
     # → `Index.complete=False`，下游据此不把「没查到」当「没装」（见 `plan` 的 `index_incomplete`）。
-    index = distmeta.index_environment(facts.prefix, site_paths=facts.site_roots or None)
+    index = distmeta.index_environment(
+        facts.prefix, site_paths=facts.site_roots or None, extra_paths=facts.extra_roots
+    )
     if not index.checked:
         return None
     with _facts_lock:
@@ -961,7 +993,9 @@ def fresh_venv_facts(
     if facts is None:
         return None
     installed = {depresolve.normalize_distribution(name): "" for name in provided}
-    return dataclasses.replace(facts, installed=installed, prefix="", executable="", site_roots=())
+    return dataclasses.replace(
+        facts, installed=installed, prefix="", executable="", site_roots=(), extra_roots=()
+    )
 
 
 def adapter_distributions() -> tuple[str, ...]:

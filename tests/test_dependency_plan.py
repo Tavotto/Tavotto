@@ -1651,6 +1651,152 @@ class TestEveryVisibleLayer:
         assert (pa.identity, pa.inputs_digest) == (pb.identity, pb.inputs_digest)
 
 
+class TestExtraPathLayers:
+    """P1-1 的剩余缺口：`sys.path` 上不叫 site-packages 的目录（`PYTHONPATH` 的 `--target` 目录、`.pth` 路径行加进来的 src 目录）
+    里的提供者。名字级扫描：模块名出现在那里 = 别处已有它，不判缺；读不了的目录 = 名字没读全，不判缺；没有它时照样报缺。"""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self):
+        depplan.reset_cache()
+        yield
+        depplan.reset_cache()
+
+    def _plan(self, tmp_path, facts, script, **kw):
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", script)
+        return depplan.plan(proj, "plot.py", facts=facts, target_kind="project_venv", **kw)
+
+    def test_a_pip_target_directory_on_pythonpath_hides_nothing(self, tmp_path, monkeypatch):
+        venv, python = _sys_site_venv(tmp_path)
+        target = tmp_path / "vendor"  # `pip install --target` 式：目录名不是 site-packages
+        target.mkdir()
+        probe = depplan.target_facts(str(python), use_cache=False)
+        module, dist = _free_import(probe.installed)
+        _write(target, f"{module}/__init__.py", "")
+        old = os.environ.get("PYTHONPATH", "")
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(target), old) if p))
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert str(target) in facts.extra_roots
+        plan = self._plan(tmp_path, facts, f"import {module}\n")
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_a_pth_path_line_to_a_source_directory_hides_nothing(self, tmp_path):
+        venv, python = _sys_site_venv(tmp_path)
+        probe = depplan.target_facts(str(python), use_cache=False)
+        module, dist = _free_import(probe.installed)
+        src = tmp_path / "oldstyle" / "src"
+        _write(src, f"{module}.py", "")
+        _write(Path(_venv_site(python)), "legacy-editable.pth", f"{src}\n")
+        depplan.reset_cache()
+        facts = depplan.target_facts(str(python), use_cache=False)
+        assert str(src) in facts.extra_roots
+        index = depplan.static_index(facts)
+        assert index is not None and index.uncovered_paths == 0  # 路径行指向的目录已作为层读过
+        plan = self._plan(tmp_path, facts, f"import {module}\n")
+        assert plan.missing == () and plan.requirements == ()
+
+    def test_extra_directories_without_the_module_still_report_it_missing(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        other = tmp_path / "vendor"
+        _write(other, "unrelated/__init__.py", "")
+        facts = dataclasses.replace(
+            _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=(str(other),)
+        )
+        plan = self._plan(tmp_path, facts, "import tabulate\n")
+        assert [m["distribution"] for m in plan.missing] == [
+            "tabulate"
+        ]  # 老式 editable 的 venv 里真缺的包照样自动准备
+
+    @pytest.mark.parametrize("kind", ["gone", "symlink", "locked"])
+    def test_an_extra_directory_that_cannot_be_read_is_not_a_missing_package(self, tmp_path, kind):
+        if kind != "gone" and os.name == "nt":
+            pytest.skip("Windows 上没有这种权限 / 链接")
+        if kind == "locked" and hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("root 不受目录权限限制")
+        prefix, site = _env(tmp_path)
+        bad = tmp_path / "vendor"
+        if kind == "symlink":
+            (tmp_path / "real").mkdir()
+            os.symlink(tmp_path / "real", bad)
+        elif kind == "locked":
+            bad.mkdir()
+            bad.chmod(0o000)
+        try:
+            facts = dataclasses.replace(
+                _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=(str(bad),)
+            )
+            plan = self._plan(tmp_path, facts, "import tabulate\n")
+        finally:
+            if kind == "locked":
+                bad.chmod(0o700)
+        assert plan.missing == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["unverified"]
+
+    def test_too_many_extra_directories_is_not_complete(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        many = []
+        for i in range(distmeta.MAX_SITE_PATHS + 1):
+            d = tmp_path / f"e{i}"
+            d.mkdir()
+            many.append(str(d))
+        facts = dataclasses.replace(
+            _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=tuple(many)
+        )
+        index = depplan.static_index(facts)
+        assert index is not None and index.names_complete is False
+
+    def test_a_pth_path_line_to_a_directory_the_facts_did_not_report_stays_uncovered(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        known, unknown = tmp_path / "known", tmp_path / "unknown"
+        known.mkdir()
+        unknown.mkdir()
+        _write(site, "a.pth", f"{known}\n")
+        _write(site, "b.pth", f"{unknown}\n")
+        _write(site, "c.pth", "import os\n")
+        facts = dataclasses.replace(
+            _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=(str(known),)
+        )
+        index = depplan.static_index(facts)
+        assert index is not None and index.uncovered_paths == 2  # unknown 的路径行 + import 行
+
+    def test_the_new_generation_is_not_spared_by_an_extra_path_provider_of_the_running_one(
+        self, tmp_path
+    ):
+        prefix, site = _env(tmp_path)
+        other = tmp_path / "vendor"
+        _write(other, "tabulate.py", "")
+        running = dataclasses.replace(
+            _facts_at(prefix, {}), site_roots=(str(site),), extra_roots=(str(other),)
+        )
+        proj = tmp_path / "proj"
+        _write(proj, "plot.py", "import tabulate\n")
+        plan = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="tavotto_managed", install_facts=_facts({})
+        )
+        assert plan.missing == ()  # 当前环境里别处已有
+        assert plan.requirements == ("tabulate",)  # 新代没有那个目录：照常装
+
+    def test_the_probe_leaves_out_the_standard_library_and_the_reported_site_layers(self):
+        import sysconfig
+
+        facts = depplan.target_facts(sys.executable, use_cache=False)
+        assert facts is not None
+        norm = [os.path.normcase(p) for p in facts.extra_roots]
+        stdlib = os.path.normcase(os.path.abspath(sysconfig.get_path("stdlib")))
+        assert all(p != stdlib and not p.startswith(stdlib + os.sep) for p in norm)
+        assert all(os.path.basename(p).lower() not in ("lib-dynload", "dlls") for p in norm)
+        assert not set(norm) & {os.path.normcase(p) for p in facts.site_roots}
+
+    def test_the_extra_directories_are_not_a_plan_input(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        a = _facts_at(prefix, {"six": "1"})
+        b = dataclasses.replace(a, extra_roots=(str(tmp_path / "x"),))
+        assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
+
+
 class TestInstallTargetIsJudgedSeparately:
     """P1-2：来源判决只抑制**当前环境**的 missing；装到另一个环境时，当前解释器里的 editable / 本地 / Conda 提供者与缓存的
     import_error 在那里都不存在，按目标的已装集合单独判，否则新一代 import 失败、验证失败。"""

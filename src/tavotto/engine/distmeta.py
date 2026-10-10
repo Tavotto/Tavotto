@@ -535,6 +535,9 @@ class _Reader:
         # 还含「看见的发行包里某个元数据文件读不成」（`read_state`）——那只影响这一个发行包的细节，不影响「这一层里有没有这个名字」
         self.names_complete = True
         self.uncovered = 0
+        self.covered: frozenset[str] = (
+            frozenset()
+        )  # 已作为层读过的额外目录：指向它们的 `.pth` 路径行算已跟进
         self.kinds: dict[int, dict[str, set[str]]] = {}  # root.order → 顶级名 → {"dir"|"py"|"ext"}
 
     def note(self, code: str, root: SiteRoot, rel: str, *, scope: str = "file") -> None:
@@ -993,6 +996,10 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
             m = _FINDER_LINE_RE.fullmatch(line) if pth.startswith("__editable__.") else None
             if m is not None:
                 finders.append(m.group(1))  # 已建模形式：setuptools 的 editable finder 安装行
+            elif not line.startswith(("import ", "import\t")) and (
+                os.path.normcase(os.path.normpath(os.path.join(root.path, line))) in rd.covered
+            ):
+                continue  # 路径行，且那个目录就是目标解释器报告并读过的一层：已跟进
             else:
                 # 路径行（指向 site-packages 之外）和任何没建模的 `import …` 行（Python 会执行它：
                 # 改 sys.path、装自定义 finder……）都可能让目录外的模块可导入：计数，「没查到」不再等于「没装」
@@ -1040,6 +1047,7 @@ def build_index(
     *,
     prefix: str | os.PathLike | None = None,
     budget: scanbudget.Budget | None = None,
+    covered: Sequence[str] = (),
 ) -> Index:
     """读一组 site-packages 的元数据，建 import 名 → 发行包的反查。`prefix` 给了且有 `conda-meta/` 就再读它。
 
@@ -1047,6 +1055,7 @@ def build_index(
     """
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
     rd = _Reader(roots, budget)
+    rd.covered = frozenset(os.path.normcase(os.path.normpath(c)) for c in covered)
     dists: list[_Dist] = []
     names: list[set[str]] = []
     for root in roots:
@@ -1097,42 +1106,43 @@ MAX_SITE_PATHS = 32
 
 
 def _reported_roots(
-    prefix: str, paths: Sequence[str], budget: scanbudget.Budget
+    prefix: str, site: Sequence[str], extra: Sequence[str], budget: scanbudget.Budget
 ) -> tuple[list[SiteRoot], bool]:
-    """目标解释器**自己报告**的 site 目录（`sys.path` 顺序）→ 层。返回 ([层], 有没有读漏的层)。
+    """目标解释器**自己报告**的目录（`sys.path` 上的 site 目录，再加其余存在的目录）→ 层。返回 ([层], 有没有读漏的层)。
 
     前缀之内的层 `rel` 是相对前缀的 POSIX 路径（`conda-meta` 的 `files` 靠它对上）；前缀之外的（基础解释器 / 用户 site /
-    `include-system-site-packages`）统一记 `base`，**不带绝对路径**。报告了却不是真目录（消失了 / 链接 / 读不了）的层
-    不许当成「没有」：留痕并返回 `incomplete=True`。"""
+    `include-system-site-packages` / `PYTHONPATH`·`.pth` 加进来的目录）统一记 `base`，**不带绝对路径**。报告了却不是真目录
+    （消失了 / 链接 / 读不了）的层不许当成「没有」：留痕并返回 `incomplete=True`。两组各有层数上限，超了 = 后面的层没读。"""
     roots: list[SiteRoot] = []
-    incomplete = len(paths) > MAX_SITE_PATHS
-    if incomplete:
-        budget.note(scanbudget.ISSUE_UNREADABLE_DIR, scope="env", path="base")
+    incomplete = False
     pre = os.path.normcase(os.path.normpath(prefix))
-    for raw in paths[:MAX_SITE_PATHS]:
-        path = os.path.normpath(raw)
-        rel = ""
-        norm = os.path.normcase(path)
-        if norm.startswith(pre + os.sep):
-            rel = path[len(pre) + 1 :].replace("\\", "/")
-        state = _dir_state(path)
-        if state != "dir":
-            code = (
-                scanbudget.ISSUE_UNREADABLE_DIR
-                if state == "absent"
-                else scanbudget.ISSUE_SYMLINK_DIR
-            )
-            budget.note(code, scope="env", path=rel or "base")
+    for paths in (site, extra):
+        if len(paths) > MAX_SITE_PATHS:
             incomplete = True
-            continue
-        roots.append(
-            SiteRoot(
-                path=path,
-                rel=rel or "base",
-                layer="env" if rel else "base",
-                order=len(roots),
+            budget.note(scanbudget.ISSUE_UNREADABLE_DIR, scope="env", path="base")
+        for raw in paths[:MAX_SITE_PATHS]:
+            path = os.path.normpath(raw)
+            rel = ""
+            if os.path.normcase(path).startswith(pre + os.sep):
+                rel = path[len(pre) + 1 :].replace("\\", "/")
+            state = _dir_state(path)
+            if state != "dir":
+                code = (
+                    scanbudget.ISSUE_UNREADABLE_DIR
+                    if state == "absent"
+                    else scanbudget.ISSUE_SYMLINK_DIR
+                )
+                budget.note(code, scope="env", path=rel or "base")
+                incomplete = True
+                continue
+            roots.append(
+                SiteRoot(
+                    path=path,
+                    rel=rel or "base",
+                    layer="env" if rel else "base",
+                    order=len(roots),
+                )
             )
-        )
     return roots, incomplete
 
 
@@ -1143,16 +1153,26 @@ def index_environment(
     include_base: bool = False,
     budget: scanbudget.Budget | None = None,
     site_paths: Sequence[str] | None = None,
+    extra_paths: Sequence[str] = (),
 ) -> Index:
     """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。
 
     `site_paths`：目标解释器**报告**的全部 site 目录（`sys.path` 顺序，`depplan._FACTS_SRC` 在已授权的事实采集子进程里取）。
     给了就按它建层（前缀内的 + 基础解释器 / 用户 site / `include-system-site-packages` 的全部层），不再按前缀布局推；
-    任何一层没读成 = `complete=False`（不是「没装」）。不给 = 旧口径（前缀布局 + 可选 `include_base`）。"""
+    任何一层没读成 = `complete=False`（不是「没装」）。
+    `extra_paths`：`sys.path` 上其余存在的目录（`PYTHONPATH` 的 `pip install --target` 目录、`.pth` 路径行加进来的目录）：按**名字级**读
+    （目录清单里的 `name/` / `name.py` / 扩展；有 dist-info 顺带读），模块名在那里出现却没有发行包认领 = 别处已有它；这些目录也让
+    指向它们的 `.pth` 路径行算「已跟进」（不再计入 `uncovered_paths`）。不给 = 旧口径（前缀布局 + 可选 `include_base`）。"""
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
     if site_paths:
-        roots, incomplete = _reported_roots(os.path.normpath(os.fspath(prefix)), site_paths, budget)
-        index = build_index(roots, prefix=prefix, budget=budget) if roots else Index((), [], [])
+        roots, incomplete = _reported_roots(
+            os.path.normpath(os.fspath(prefix)), site_paths, extra_paths, budget
+        )
+        index = (
+            build_index(roots, prefix=prefix, budget=budget, covered=extra_paths)
+            if roots
+            else Index((), [], [])
+        )
         if incomplete:
             index.complete = False
             index.names_complete = False
