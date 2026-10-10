@@ -7801,31 +7801,18 @@ def _set_project_environment(
             ), 409
     health: dict | None = None
     if user_environment:
-        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回，
-        # 并按此刻的计划**重新**量一次装没装齐——「还被发现得到」不等于「还装齐」（弹窗开着期间环境变了，
-        # 或交回的是界面上本就不可选的那种；Codex #522 P2）。这一次复核就是体检，下面不再起第二次
-        try:
-            entry = engine_deprepair.recheck_user_environment(root, script, user_environment)
-        except engine_pool.WorkerError as exc:
-            return jsonify({"error": str(exc), "code": exc.code}), 409
-        if entry is None:
+        # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回。
+        # 这里只换路径；按此刻的计划**重新**量一次装没装齐（弹窗开着期间环境变了，或交回的是界面上本就不可选的
+        # 那种；Codex #522 P2）是体检，必须在下面 `envlease.inspecting` 租约**里**做——在租约外量，量到的可能是
+        # 别的项目正在原地安装的半成品，量完到提交之间环境还会再变（Codex #919 r4237134569）
+        raw = engine_deprepair.user_environment_python(root, script, user_environment) or ""
+        if not raw:
             return jsonify(
                 {
                     "error": "这个 Python 环境已经找不到了，请重新检查",
                     "code": "user_environment_gone",
                 }
             ), 400
-        if entry["ok"] and not entry["satisfies"]:
-            packages = ", ".join(entry["missing"])
-            return jsonify(
-                {
-                    "error": f"这个 Python 环境里还缺 {packages}，请重新检查",
-                    "code": "user_environment_incomplete",
-                    "params": {"packages": packages},
-                }
-            ), 400
-        raw = entry["python"]
-        health = entry
     if not raw:
         # 清掉 = 用户明确选回默认链条（U03，FO-013）：记成一条决定，而不是「忘了」——
         # 忘了的话下一次首开又会把项目 venv 发现出来、盖掉这次的选择。
@@ -7867,6 +7854,32 @@ def _set_project_environment(
     # （`envlease.inspecting`），与 `envadvice.adopt_candidate` 同一条（Codex 评 #915 补审 P2）
     try:
         with engine_envlease.inspecting(str(candidate)):
+            if user_environment:
+                try:
+                    entry = engine_deprepair.recheck_user_environment(
+                        root, script, user_environment
+                    )
+                except engine_pool.WorkerError as exc:
+                    return jsonify({"error": str(exc), "code": exc.code}), 409
+                if entry is None or engine_envlease.env_key_of(
+                    entry["python"]
+                ) != engine_envlease.env_key_of(str(candidate)):
+                    return jsonify(
+                        {
+                            "error": "这个 Python 环境已经找不到了，请重新检查",
+                            "code": "user_environment_gone",
+                        }
+                    ), 400
+                if entry["ok"] and not entry["satisfies"]:
+                    packages = ", ".join(entry["missing"])
+                    return jsonify(
+                        {
+                            "error": f"这个 Python 环境里还缺 {packages}，请重新检查",
+                            "code": "user_environment_incomplete",
+                            "params": {"packages": packages},
+                        }
+                    ), 400
+                health = entry
             if health is None:
                 health = engine_projectenv.probe_environment(str(candidate), module or None)
             if not health.get("ok"):

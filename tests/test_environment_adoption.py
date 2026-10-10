@@ -1324,3 +1324,45 @@ def test_the_typed_path_adoption_holds_the_environment_through_its_probe_too(
         assert seen == {}
     finally:
         envlease.reset_for_tests()
+
+
+def test_the_user_environment_recheck_runs_inside_the_lease_and_busy_refuses_it(
+    client, tmp_path, monkeypatch
+):
+    """#919 r4237134569：弹窗里点「改用这个环境」的复核（体检）也必须在租约里量、在租约里提交。
+    别的项目正往同一解释器里装包 -> 409，复核根本没起；复核期间别的项目的安装被拒。"""
+    root = tmp_path / "userenv"
+    root.mkdir()
+    py = tmp_path / "shared" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    py.write_text("", encoding="utf-8")
+    envlease.reset_for_tests()
+    pj = _open(client, root)
+    rechecked: list[str] = []
+    seen: dict = {}
+
+    def recheck(project, script, env_id):
+        rechecked.append(env_id)
+        with pytest.raises(envlease.EnvironmentBusy) as busy:
+            with envlease.mutating("other-project-install", str(py)):
+                pass
+        seen["code"] = busy.value.code
+        return {"ok": True, "satisfies": True, "missing": [], "python": str(py)}
+
+    monkeypatch.setattr(deprepair, "user_environment_python", lambda *a, **k: str(py))
+    monkeypatch.setattr(deprepair, "recheck_user_environment", recheck)
+    monkeypatch.setattr(projectenv, "remember", lambda *a, **k: True)
+    monkeypatch.setattr(engine_pool, "reset_worker_python", lambda: None)
+    monkeypatch.setattr(engine_pool, "shutdown_all", lambda *a, **k: None)
+    body = {"scope": "project", "user_environment": "env-1", "script": "plot.py"}
+    try:
+        ok = client.patch("/api/engine/environment", json=body, query_string={"pj": pj})
+        assert ok.status_code == 200, ok.get_json()
+        assert seen["code"] == envlease.ENVIRONMENT_MUTATING
+        rechecked.clear()
+        with envlease.mutating("other-project-install", str(py)):
+            busy = client.patch("/api/engine/environment", json=body, query_string={"pj": pj})
+        assert busy.status_code == 409 and busy.get_json()["code"] == "environment_mutating"
+        assert rechecked == []  # 装包期间不复核：量到的会是半截环境
+    finally:
+        envlease.reset_for_tests()

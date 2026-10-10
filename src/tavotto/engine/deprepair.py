@@ -5281,6 +5281,19 @@ def user_environment_candidates(
     return uniq
 
 
+def user_environment_python(project: str | Path, script: str, env_id: str) -> str | None:
+    """界面交回的 id → 本机发现结果里的解释器路径（只换路径，不体检）；找不到回 None。"""
+    cand = next(
+        (
+            c
+            for c in user_environment_candidates(str(Path(project)), script)
+            if userenvs.env_id(c["python"]) == env_id
+        ),
+        None,
+    )
+    return cand["python"] if cand else None
+
+
 def recheck_user_environment(project: str | Path, script: str, env_id: str) -> dict | None:
     """界面交回的 id → 按**此刻的**联合计划重新体检的那一条（`userenvs.evaluate` 的形状，不读体检缓存）；
     本机的发现结果里找不到回 None；计划算不出来抛 `WorkerError(code=user_environment_unverifiable)`。
