@@ -471,3 +471,13 @@ def test_a_blocked_write_never_deletes_a_store_that_holds_tokens(tmp_path, monke
     )
     monkeypatch.undo()
     assert path.exists() and inputtranscript.basis(tmp_path, "s.py", None) == basis
+
+
+def test_records_without_a_context_digest_never_match():
+    legacy = inputbroker.ReplayAnswers.of([_rec(1, "2", context=None)])
+    assert legacy.match(1, "p: ", "input", "ctx1:a")[0] == inputbroker.MATCH_MISMATCH
+    assert legacy.match(1, "p: ", "input", None)[0] == inputbroker.MATCH_MISMATCH
+    # 当前这一问没带摘要也对不上有摘要的记录
+    full = inputbroker.ReplayAnswers.of([_rec(1, "2")])
+    assert full.match(1, "p: ", "input", None)[0] == inputbroker.MATCH_MISMATCH
+    assert full.match(1, "p: ", "input", "ctx1:a")[0] == inputbroker.MATCH_ANSWER

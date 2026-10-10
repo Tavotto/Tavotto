@@ -86,7 +86,7 @@ class ReplayAnswers:
     ) -> tuple[str, dict | None]:
         """这一问能不能按记录作答：(结论, 记录里同序号的那条)。
 
-        对上 = 同序号、同提示、同读取方式，且两边都有上下文摘要时摘要相同。口令那一问（`secret`）记录里没有值：
+        对上 = 同序号、同提示、同读取方式，且两边都有上下文摘要并且摘要相同（缺摘要的旧记录对不上，重新问）。口令那一问（`secret`）记录里没有值：
         结论是「要重新提供」，绝不当成空串或 EOF。"""
         for r in self.answers:
             if r.get("index") != index:
@@ -95,7 +95,9 @@ class ReplayAnswers:
                 r.get("prompt") == prompt
                 and r.get("prompt_id") == prompt_id
                 and (r.get("kind") in (None, kind))
-                and not (r.get("context") and context and r.get("context") != context)
+                # 两边都得有上下文摘要且相同：旧记录缺摘要 = 认不出是同一份菜单，宁可重新问（Codex #913 补审 P1）
+                and bool(r.get("context"))
+                and r.get("context") == context
             )
             if not same:
                 return MATCH_MISMATCH, r
