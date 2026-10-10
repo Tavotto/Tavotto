@@ -757,6 +757,19 @@ class TestGates:
             assert f"name: {gate}\n" in CI, f"ci.yml 里没有固定名字「{gate}」"
         assert f"name: {GATE_IN_CODEQL}\n" in CODEQL
 
+    def test_repo_copy_of_queue_deadline_is_consistent_with_required_job_timeouts(self):
+        """证明的只是**仓库内一致**：三个必需 Gate（`GATE_CONTEXTS`，含 CodeQL gate）各自沿 needs 的最长累计
+        `timeout-minutes`（含 Gate 自身）+ 30 ≤ 仓库声明的 `MERGE_QUEUE_PARAMS` 等待上限。
+        它**不**证明线上 ruleset 的值——PR 期读不到线上（没有管理员令牌）。线上对拍是
+        `merge_queue_ruleset.py verify-live`（nightly 的 merge-queue-live-check 每晚跑；
+        改 job 超时 / 队列参数前手动跑一次）。解析与 verify-live 共用 `gate_critical_paths`。"""
+        deadline = MQ.MERGE_QUEUE_PARAMS["check_response_timeout_minutes"]
+        paths = MQ.gate_critical_paths(MQ.load_gate_workflows(ROOT))
+        assert set(paths) == set(MQ.GATE_CONTEXTS)
+        assert not MQ.critical_path_problems(paths, deadline), MQ.critical_path_problems(
+            paths, deadline
+        )
+
     def test_gates_run_on_always(self):
         for job_id, text in (
             ("ci-fast-gate", CI),
