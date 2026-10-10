@@ -1333,6 +1333,9 @@ class TestPlanOrigins:
         assert calls == [facts.prefix]  # 量事实的同时读了索引
         depplan.static_index(facts)
         assert calls == [facts.prefix]  # 出计划时不再读第二遍
+        # 重新量事实（环境可能变了）= 索引一起重读，不留着上一份
+        again = depplan.target_facts(sys.executable, use_cache=False)
+        assert again is not None and calls == [facts.prefix, facts.prefix]
 
     def test_a_plan_without_a_prefix_reads_no_index(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
