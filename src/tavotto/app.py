@@ -68,6 +68,7 @@ from .engine import (
     deprepair as engine_deprepair,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
+    diagsend as engine_diagsend,
     discover as engine_discover,
     documents as engine_documents,
     enginesession as engine_enginesession,
@@ -2932,10 +2933,13 @@ def _diagnostics_project_status() -> dict:
     return status
 
 
-def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
+def _build_diagnostics_bundle(
+    frontend: dict | None = None, frontend_dropped: bool = False
+) -> bytes:
+    """诊断包字节（导出到本地与「发送问题反馈」共用这一处，包的内容与脱敏只此一份）。"""
     status = _diagnostics_project_status()
     pid = getattr(_request_ctx(), "id", None)
-    data = engine_diagnostics.build_bundle(
+    return engine_diagnostics.build_bundle(
         project=status,
         port=request.host.rsplit(":", 1)[-1],
         frontend=frontend,
@@ -2943,6 +2947,10 @@ def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped:
         # 本项目最近几次任务的冻结快照（失败在前）；只读登记表，不采集（T04）
         task_snapshots=engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid) if pid else None,
     )
+
+
+def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
+    data = _build_diagnostics_bundle(frontend, frontend_dropped)
     name = f"tavotto-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     return Response(
         data,
@@ -2952,6 +2960,107 @@ def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped:
             "Cache-Control": "no-store",
         },
     )
+
+
+# --------------------- 发送问题反馈（诊断包上传，ADR 0118）---------------------
+# 全部在会话认证之内（ADR 0008）。逻辑与状态机在 `engine/diagsend.py`；这里只做 HTTP 形状。
+# **只有 `.../send` 会引出远程请求**，且要求请求体里 `confirm: true`；备包（prepare）、看包（bundle）、
+# 取消、丢弃、查状态都不出网。功能默认关闭：`GET` 能力说明回 `{"enabled": false}`，其余一律 404。
+
+
+def _diag_send_error(exc: engine_diagsend.SendError):
+    resp = jsonify({"error": exc.code, "code": f"diag_{exc.code}"})
+    resp.status_code = exc.status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _diag_send_json(payload: dict, status: int = 200):
+    resp = jsonify(payload)
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/diagnostics/send")
+def api_diagnostics_send_capability():
+    """「发送问题反馈」此刻可不可用（本机判断，**不联网**）。关闭时界面不画入口。"""
+    return _diag_send_json(engine_diagsend.capability())
+
+
+@app.post("/api/diagnostics/send/prepare")
+def api_diagnostics_send_prepare():
+    """在本机备好一份诊断包并交出「会发送什么」。**零网络**：用户看过、点了发送之前不会有任何远程请求。
+
+    请求体与 `POST /api/diagnostics/bundle` 相同（前端状态与交互轨迹，坏载荷退化成不带它们的包）。
+    包超过上限时不保管、回 `too_large: true`：界面让用户把包导出到本地。"""
+    if not engine_diagsend.enabled():
+        return _diag_send_error(engine_diagsend.SendError("send_disabled", 404))
+    frontend, dropped = _read_frontend_payload()
+    try:
+        data = _build_diagnostics_bundle(frontend, dropped)
+        return _diag_send_json(engine_diagsend.prepare(data))
+    except engine_diagsend.SendError as exc:
+        return _diag_send_error(exc)
+
+
+@app.get("/api/diagnostics/send/<pid>/bundle")
+def api_diagnostics_send_bundle(pid: str):
+    """用户要查看 / 保存的**同一份字节**（就是点发送时会上传的那份）。"""
+    try:
+        data = engine_diagsend.bundle_bytes(pid)
+    except engine_diagsend.SendError as exc:
+        return _diag_send_error(exc)
+    name = f"tavotto-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    return Response(
+        data,
+        mimetype="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.get("/api/diagnostics/send/<pid>")
+def api_diagnostics_send_status(pid: str):
+    try:
+        return _diag_send_json(engine_diagsend.status(pid))
+    except engine_diagsend.SendError as exc:
+        return _diag_send_error(exc)
+
+
+@app.post("/api/diagnostics/send/<pid>/send")
+def api_diagnostics_send_start(pid: str):
+    """用户点了「发送」：这是唯一会连接 Tavotto 诊断服务的入口。请求体 `{confirm: true, category, note}`。
+
+    立即回 202 + 状态，真正的 init / 上传 / complete 在后台线程里做；界面轮询状态。重复点击不开第二次。"""
+    body = request.get_json(silent=True)
+    body = body if isinstance(body, dict) else {}
+    try:
+        state = engine_diagsend.start(
+            pid,
+            confirmed=body.get("confirm"),
+            category=body.get("category"),
+            note=body.get("note"),
+        )
+    except engine_diagsend.SendError as exc:
+        return _diag_send_error(exc)
+    return _diag_send_json(state, 202)
+
+
+@app.post("/api/diagnostics/send/<pid>/cancel")
+def api_diagnostics_send_cancel(pid: str):
+    try:
+        return _diag_send_json(engine_diagsend.cancel(pid))
+    except engine_diagsend.SendError as exc:
+        return _diag_send_error(exc)
+
+
+@app.post("/api/diagnostics/send/<pid>/discard")
+def api_diagnostics_send_discard(pid: str):
+    """对话框关了：释放内存里的包；发送中等于取消。重复调用无害。"""
+    return _diag_send_json(engine_diagsend.discard(pid))
 
 
 @app.get("/api/project")
