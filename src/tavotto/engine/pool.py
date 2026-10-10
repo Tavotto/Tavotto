@@ -374,11 +374,6 @@ _worker_source: str = ""
 _workers: dict[tuple[str, ...], "EngineWorker"] = {}
 
 
-def _run_kwargs(run) -> dict:
-    """`RunSelection` → `safe_spec` 的关键字参数（没有配置 = 空，调用形状与 T03 之前一致）。"""
-    return {} if run is None else {"argv": run.argv, "run_config": run.config_id}
-
-
 def _run_payload(run) -> dict:
     """Exact argv only crosses the private request pipe, never spawn argv/env/logs.
 
@@ -1672,7 +1667,7 @@ class EngineWorker:
             cwd_mode=workdir.mode_for(figures_dir),
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
-            **_run_kwargs(run),
+            **execspec.run_kwargs(run),
         )
         LOG.info(
             "worker 启动: %s（entry=%s，解释器来源=%s）",
@@ -2289,7 +2284,7 @@ def _spawn_spec(
         cwd_mode=workdir.mode_for(figures_dir),
         # 会话自己那份（与它的代次同一刻取）；不给才现取——重开会话不许换成另一代的表
         input_remap=inputremap.rules_for(figures_dir) if input_remap is None else list(input_remap),
-        **_run_kwargs(run),
+        **execspec.run_kwargs(run),
     )
     # 只给**增量**：workerd 继承的本来就是 Flask 自己的环境，整份传过去没有意义
     env = dict(spec.env or {})
@@ -2418,7 +2413,7 @@ class WorkerdWorker:
             cwd_mode=workdir.mode_for(figures_dir),
             # ADR 0106：用户指认过的只读改指表，三条 spawn 路径同一个出处（与代次同一刻取）
             input_remap=remap_rules,
-            **_run_kwargs(run),
+            **execspec.run_kwargs(run),
         )
         self._session_id = ""
         self._open()
@@ -3201,7 +3196,22 @@ def acquire(
         break
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
         _schedule_prune()
+    _last_acquired.result = (w, created)
     return w, created
+
+
+#: 本线程最近一次 `acquire()` 的结果 `(worker, created)`（T09b）。只经 `get()` 取会话的老入口（`build()`、试运行）
+#: 据此在**同一线程**、取到之后立刻问「这条是不是我建的」——不拿 `peek()` 的快照去猜（两个调用方都会以为是自己）。
+_last_acquired = threading.local()
+
+
+def acquired_here(worker) -> bool | None:
+    """本线程最近一次 `acquire()` 取到的若就是 `worker`：回那一次的 `created`；否则（会话不是经池取的——测试替身、
+    别的线程取的）回 None = 说不清。调用方对 None 按旧语义处理，不当成「别人的」。"""
+    last = getattr(_last_acquired, "result", None)
+    if last is None or last[0] is not worker:
+        return None
+    return bool(last[1])
 
 
 def _refuse_if_mutating(python: str) -> None:
@@ -3467,6 +3477,7 @@ def build_owned(
     allow_project_env: bool = True,
     before_retry=None,
     run=None,
+    on_acquired=None,
 ):
     """`build()` + 所有权：回 `(worker, build 响应, created)`。
 
@@ -3476,10 +3487,20 @@ def build_owned(
     不重跑（`test_worker_runtime_report` 用脚本自己的副作用计数钉着）。
 
     `before_retry()`：缺包后自动接手成功、**第二次执行之前**调一次（见 `_build_with`）。
+
+    `on_acquired(worker, created)`：每次取到会话、**执行之前**调一次（T09）——调用方据此在 build 还在跑的时候就
+    知道「这条是不是我建的」，取消可以当场只关自己建的那条，不必等 build 返回。
     """
     context = {"run": run} if run is not None else {}
+
+    def take():
+        worker, created = acquire(script_name, figures_dir, entry, **context)
+        if on_acquired is not None:
+            on_acquired(worker, created)
+        return worker, created
+
     return _build_with(
-        lambda: acquire(script_name, figures_dir, entry, **context),
+        take,
         script_name,
         figures_dir,
         allow_project_env=allow_project_env,

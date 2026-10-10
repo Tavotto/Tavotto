@@ -4,7 +4,7 @@
 状态含义见 [`03_CI_POLICY.md`](03_CI_POLICY.md) §3 与 ADR 0053 §五：**只有 enforced 且结果目录里有有效通过记录的实例才算通过**；
 planned / observing / later 是登记，不是成绩。
 
-能力版本：`u10` · 计数：enforced 17 · later 1 · observing 9 · planned 8
+能力版本：`u10` · 计数：enforced 18 · later 1 · observing 9 · planned 8
 
 | case | 标题 | enrollment | lane | 阶段 | 用例 | fixture | 场景 |
 |---|---|---|---|---|---|---|---|
@@ -43,3 +43,4 @@ planned / observing / later 是登记，不是成绩。
 | U01-S1 | single_file_csv 经真实 HTTP 服务（会话认证）首开 → 准备 → 渲染 → 旧后端导出 PDF/PNG → 独立读回 | enforced | pr | U01 | `tests/test_foundation_harness.py::test_u01_s1_first_open_and_export_through_the_public_entry` | `tests/fixtures/foundation/single_file_csv` | FO01, FO32 |
 | U07-R1 | RenderBench：非对称页盒 / 同名资源 / 透明组 / alpha 位图 / 文字的画布经 RenderPlan → Canonical PDF → render child 栅格 → PNG + TIFF，四把独立读取器 + 三平台 | observing | pr | U07 | — | `docs/implementation/tavotto-foundation/evidence/u07/truth.json` |  |
 | U08-R1 | RenderBench：RenderCore 是默认后端之后的真实入口——/api/render 预览 + 画布导出 PDF / PNG（standard 核验）+ 独立读取器核文件 + manifest backend / identity | enforced | pr | U08 | `tests/test_foundation_cutover.py::test_u08_r1_default_export_through_the_public_entry_is_rendercore` | `tests/fixtures/foundation/pdf_png_assets` |  |
+| T11-S1 | 真实 script-only 首跑：只有脚本 / 数据 / 依赖声明的项目经真实 HTTP 服务扫描 → 准备会话 → 运行目录待办 → 运行中答菜单 → 捕获 → 进编辑 → 改元素 → 保存排版 → 冷重放 → 导出 → 关掉再开 | enforced | pr | T11 | `tests/test_foundation_script_first_run.py::test_t11_s1_script_only_first_run_through_the_public_entry` | `tests/fixtures/foundation/script_only_first_run` |  |

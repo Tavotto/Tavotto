@@ -266,6 +266,48 @@
 - **「需要」按 import 的上下文判**（`importscan`）：四个桶（stdlib / local / third_party / unknown）× 六种上下文；只有
   **模块层无条件**的第三方 import 是 `needed`；本地模块永远不装、unknown 永远不猜；经本地模块的 import 取两处里较弱
   的上下文。stdlib 名字表按**目标解释器**的（`depplan.target_facts`），不按宿主。
+- **来源按真实 Python 的导入优先级判（Import Origin Resolver PR1，`importscan`）**：只用 `ast` + 目录清单（`scandir` /
+  `lstat`），**不执行用户代码、不对用户包 `find_spec`、不起进程、不读 site-packages**（`tests/test_import_origin_safety.py`
+  把入口换成「调用即失败」的桩，并用 AST 钉 `importscan.py` 对 `projectenv` 等只用白名单属性）。优先级：built-in / frozen /
+  启动即在 `sys.modules` 的 stdlib（`BUILTIN_NAMES` / `FROZEN_NAMES` / `PRELOADED_STDLIB`）先于文件系统，本地同名文件到不了；
+  然后沿搜索根（`python script.py` = 脚本目录 + 项目根；`python -m` = cwd，`importscan.Entry`）按 `FileFinder` 的顺序
+  **目录包 > 扩展模块 > .py > 命名空间目录**，名字按目录清单**逐字**匹配（`Utils` 不匹配 `utils.py`）；搜索根在 stdlib 之前，
+  所以本地 `json.py` 遮蔽标准库（`shadowing="stdlib"`，这是对旧口径「stdlib 名字表先判」的**修正**：`bucket` 由 stdlib 变
+  local，被遮蔽文件里的 import 会被跟进，`needed` / `inputs_digest` / 受管环境 `identity` 随之可能变）。**但这只对裸 `python script.py` / `python -m`（`Entry(profile=PROFILE_BARE)`）成立**：Tavotto 的 wrapper（`safe` / `native`）在用户目录进 `sys.path` 之前已装了一批标准库，且它们传递带进别的标准库（`re` → `enum`），精确闭包随解释器版本变、静态量不出——维护者裁决不追闭包：wrapper profile 下**任何**与标准库（目标 `stdlib` 名字表）同名的本地文件 / 包一律 `resolution_status=ambiguous`、`shadowing="stdlib"`、警告 `local_shadows_stdlib_in_wrapper`，**不跟进它的 import**（里面的第三方不进 needed）。内建 / 冻结 / `site` 链预加载（`PRELOADED_STDLIB`）仍是确定的 resolved。没有「wrapper 预加载表」（旧 `WRAPPER_PRELOADED` 已删）；用例 `tests/test_import_origin_wrapper_preloaded.py`。命名空间目录
+  （无 `__init__`）不当唯一提供者：`bucket=local`（不装）+ `resolution_status=ambiguous`。本地包跟进按真实加载语义：
+  `import a.b.c` 加载各级，`from pkg import x` 只在 `pkg/x` 真是子模块时跟进，相对导入按包上下文解析（入口脚本无包：记
+  `relative_import_no_package`，不猜）；先 try 后无条件的同一本地模块以更强的上下文重放。`importlib` 别名调用
+  （`il.import_module("x")`）只是 `dynamic` 候选，不进 `needed`；源码里改 `sys.path` 让 `search_complete=False`。
+- **结论字段只加不改**：`ImportClass.origin_kind` / `resolution_status` / `evidence` / `shadowing` / `warnings`（闭集代码
+  `EVIDENCE_CODES` / `WARNING_CODES`，项目相对路径，不带绝对路径或文件内容）与 `ScanResult.search_roots` /
+  `search_complete` / `warnings` / `issues`；`bucket` / `context` / `needed` / 旧 `to_payload` 键语义不变，**本阶段 `depplan` /
+  `deprepair` 的决策不读新字段**（灰度第一阶段：只观测）。没给 `dists` 时第三方只是映射表候选（`unverified`）；给了才有已安装环境的证据（见下一条，PR2）。
+  读文件走 `scanbudget`（占位文件不读、单文件 / 总字节 / 目录项 / 墙钟预算、`no_follow` 下符号链接不下探、指到项目外的链接
+  永远不读），读不了 / 超限留痕在 `problems` / `issues`，而不是悄悄少读。
+- **发行包映射读已安装元数据，但只是证据（Import Origin Resolver PR2，`engine/distmeta.py`）**：给定环境前缀（venv /
+  Conda），从 `pyvenv.cfg` + 已知布局（`lib/pythonX.Y/site-packages`、Windows `Lib/site-packages`；基础解释器层要调用方
+  明确 `include_base`）**静态**推出 site-packages，读 `*.dist-info/{METADATA, top_level.txt, RECORD, direct_url.json,
+  INSTALLER}`、`*.egg-info`、`.egg-link` 文件名、`__editable__.*.pth` + 同目录 `__editable___*_finder.py` 的 `MAPPING`
+  字面量（`ast.parse` + `literal_eval`，不 exec）、Conda 的 `conda-meta/*.json`，建「顶级 import 名 → 候选发行包」反查。
+  **不起解释器、不 `importlib.metadata`、不 `find_spec`、不 import / exec 站点里任何东西、`.pth` 只当文本、路径行不跟进也不
+  stat（只计数 `uncovered_paths`）**；读文件走 `scanbudget`（占位文件 / `no_follow` / 字节·目录项·墙钟预算 / 取消），
+  `project_root` 内的前缀任何一级是链接就整个拒绝。预算用尽或有没跟进的路径行时，「没查到」报 `environment_not_checked`，
+  **不报 `not_installed`**；site-packages 根列不出来 / 条目 `stat` 失败 / 拒绝跟进的 dist-info 链接 / `top_level.txt`·`RECORD` 在那儿却没读成，同样让 `Index.complete=False`；`direct_url.json` 在那儿却没读成（链接 / 占位 / 超限 / 读不了）≠ 不存在，记 `provenance=url`（不可重现、不选发行包），只有确实没有这个文件才是 `index`。跨 site-packages 层的遮蔽按 Python PathFinder 的语义算：沿路径第一个**常规**提供者（包 / 单文件 / 扩展）胜出，它之前的 namespace portion 不算提供者、之后全部遮蔽；全是 namespace portion 时各层都是提供者（多提供者按 ambiguous 口径）。它是 `depplan._FACTS_SRC` / `deprepair.inventory`（目标解释器里 `importlib.metadata`，会执行，
+  授权路径）的**静态对偶**：两边发行包身份键同为 PEP 503 规范化名（`depresolve.normalize_distribution`），授权检查路径一行不动。
+  `tests/test_import_origin_metadata.py` 用「会留痕的 `.pth` / finder / `sitecustomize` / 包」+ 桩 + 路径间谍 + AST 门禁钉死。
+- **证据优先级与输出（`distmeta.resolve_module`，仍只观测）**：能对应到具体模块位置的已安装证据（`top_level.txt` / `RECORD` /
+  finder `MAPPING` / `conda-meta` 的 `files`）> 项目声明 > curated（`depresolve`）；`user_specified` 是用户在确认界面的显式输入，
+  扫描阶段没有，PR4/PR5 才出现。`importscan.scan(..., dists=Index)` 把结果挂到 `ImportClass` 的
+  `distribution_candidates` / `selected_distribution` / `observed_distribution` / `observed_version` / `declared_requirement` /
+  `declared_constraint` / `distribution_provenance` / `distribution_status` / `compatibility`（没给索引全空；审计里的
+  `installed_version` / `version_constraints` 即 `observed_version` / `declared_constraint`）。`selected_distribution` 只在
+  「唯一提供者且 `provenance=index`」时有值，editable / 本地路径 / 本地 wheel / VCS / URL / Conda、多候选、未确认一律为空，
+  状态说明白（`editable_dependency_not_reproducible` / `installed_source_not_reproducible` / `conda_package_not_pypi` /
+  `module_origin_ambiguous` / `unverified` / `distribution_version_conflict` / `not_installed` / `environment_not_checked`）。
+  多发行包（`cv2`）全留着（`depresolve.ALTERNATIVE_DISTRIBUTIONS`，**只观测**，`resolve` / `curated_distribution` 不读它），
+  不按名字相近挑；声明与已装版本冲突只报告，两边都不覆盖。**已安装元数据不是安装授权**：`distmeta` 不 import `deprepair`、
+  不产出 `DependencyRequirement`、`depresolve.INSTALLABLE_SOURCES` 仍是 project_declared / curated / user_specified 三个；
+  `bucket` / `needed` / `distribution` 不因元数据改变，`depplan` / `deprepair` 不读这些字段（用例钉着）。
 - **import 了却从未用到的不算「需要」（ADR 0061 §二 2026-09-24 修订）**：`importscan` 按 `figcapture.unused_imports`
   （唯一判据，只收 AST 能证明的：起了别名、不带点的 `import X as Y`——裸 `import X` 可能是为了副作用，一律不收；X 还必须在无副作用名单 `figcapture.SIDE_EFFECT_FREE_IMPORTS` 里（别名也可能只为副作用，评审 #555 两条 P1）——判据是进程级副作用快照 `tests/support/import_side_effects.py`（matplotlib / 环境变量 / warnings / logging / 导入钩子 / 信号 / excepthook / atexit / builtins / codec 与 locale……任何一项变了就不进），扩名单要用它实测；不在 `try` / `with` 里、绑定名与 X 在别处一次都不出现、
   没有 `globals` / `eval` / `__dict__` 这类读不清的用法）标 `unused`，`needed` / `unknown` 不含它，`JointPlan.unused`
@@ -391,7 +433,8 @@
 - **采用 = `PATCH /api/engine/environment {scope: project, candidate, expected_generation}`**：id 只换本机自己枚举出来的路径；
   `expected_generation` 必填（缺 → 400 `environment_generation_required`）；环境代对不上 409 `environment_changed`（体检之后、`remember` 之前紧贴再比一次，体检期间被重建同样 409、不落盘）；全局显式选择压着 409 `environment_locked`（是谁锁的在建议里的 `decision.locked_by`）；现场再体检仍是
   `probe_environment`，通过才 `remember(automatic=False, trigger=recommended)` 并存 `generation`。采用不带安装授权：没有 pip，
-  内置 runtime 只读。
+  内置 runtime 只读。判据与写入的**唯一实现**是 `envadvice.adopt_candidate`（T10，ADR 0117 §三）：HTTP 这一路与 MCP 的
+  `adopt_environment=` 都委派它，不各写一份。
 - **环境代 `projectenv.environment_generation`**：解释器路径 `lstat` + `pyvenv.cfg` 各自的 (inode, mtime_ns, size) 摘要（不含 ctime / 权限位）；重建换代，装包 / chmod / 扩展属性不换。
   `pool.resolve_worker_python` 第 3 档：用户选的记录环境代变了 → `project_python_unusable(reason=rebuilt)`（不降级）；机器记的 → 作废。
   `preparation.plan_for` 记 `environment.generation`，`_stale_reason` 起会话前再比。

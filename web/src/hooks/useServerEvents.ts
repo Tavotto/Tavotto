@@ -15,6 +15,7 @@ import { applyExportJob } from '@/store/exportStore'
 import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import {
@@ -265,6 +266,11 @@ export function handleServerEvent(ev: ServerEvent) {
       void useProjectScanStore.getState().refresh()
       break
 
+    case 'preparation.session':
+      // 准备会话可能有新事实：只是「重读」提示，报告以 GET 为准（SSE 丢了，轮询 / 重连也会补上；T09）
+      useProjectPreparationStore.getState().onHint(ev.session_id)
+      break
+
     case 'ai.delta':
       // 按 sid 写进自己的会话；不是本标签页此刻持有的会话就什么都不做
       useAiStore.getState().appendDelta(ev.session, ev.kindOf ?? 'message', ev.text)
@@ -325,6 +331,8 @@ export function useServerEvents() {
         recoverAfterReconnect()
         // 还在等作答的脚本输入（ADR 0099）也要接回来；顺带取记住的答案（脚本行的入口靠它）
         void useScriptInputStore.getState().loadAnswers()
+        // 准备会话（T09）：断线期间的进展以 GET 为准补拉；后端重启过的会话 404 → 重建只读检查，不重跑
+        useProjectPreparationStore.getState().refreshAll()
         // 断线期间可能丢了 `input_remap_changed`：拉一次此刻的代次，落后就补一次作废（ADR 0106 §五）
         catchUpInputRemap()
       }),

@@ -2054,6 +2054,41 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
     return fields
 
 
+def _hatch_style_fields(pt) -> list[dict]:
+    """Patch 族花纹的**线宽**字段（`hatch` 本身另列）。
+
+    `hatch_linewidth` 是 matplotlib 3.10 起的 per-artist 属性（`Patch.set_hatch_linewidth`），
+    **按真实 getter 实况判，不按版本号**：之前只有 `rcParams['hatch.linewidth']`，绘制时全局读取，
+    改不了单个 artist，所以旧版本不发这条字段，而不是发一条改了不生效的。
+
+    没有花纹时照样给值（跟 `facecolor` 之于 `fill` 同一模型：界面 `visibleWhen` 收起，不是引擎隐藏）。
+    花纹**颜色**不在此列（维护者裁决：3.11 的 `set_alpha` 会按当前 rcParams 重解析花纹色，另开 issue 研究）。
+    """
+    out: list[dict] = []
+    if hasattr(pt, "set_hatch_linewidth"):
+        out.append(
+            {
+                "prop": "hatch_linewidth",
+                "type": "number",
+                "value": round(float(pt.get_hatch_linewidth()), 2),
+                "min": 0,
+                "max": 8,
+                "step": 0.1,
+                "unit": "pt",
+            }
+        )
+    return out
+
+
+def _hatch_field(pt) -> dict:
+    return {
+        "prop": "hatch",
+        "type": "enum",
+        "value": str(pt.get_hatch() or ""),
+        "options": _hatch_options(pt.get_hatch()),
+    }
+
+
 def _hatch_options(current) -> list[str]:
     cur = str(current or "")
     return ([cur] if cur and cur not in HATCHES else []) + HATCHES
@@ -2331,6 +2366,8 @@ def _bar_series_fields(grp) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
+        _hatch_field(r0),
+        *_hatch_style_fields(r0),
         {
             "prop": "bar_width",
             "type": "number",
@@ -2374,6 +2411,8 @@ def _bar_fields(rect) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
+        _hatch_field(rect),
+        *_hatch_style_fields(rect),
         {
             "prop": "alpha",
             "type": "number",
@@ -2588,12 +2627,8 @@ def _patch_fields(pt) -> list[dict]:
             "value": _linestyle_name(pt),
             "options": ["-", "--", "-.", ":"],
         },
-        {
-            "prop": "hatch",
-            "type": "enum",
-            "value": str(pt.get_hatch() or ""),
-            "options": _hatch_options(pt.get_hatch()),
-        },
+        _hatch_field(pt),
+        *_hatch_style_fields(pt),
         {
             "prop": "alpha",
             "type": "number",

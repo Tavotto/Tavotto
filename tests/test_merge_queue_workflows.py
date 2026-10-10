@@ -1032,10 +1032,10 @@ class TestGates:
         }, f"backend 覆盖漂了：{sorted(tiers)}"
         assert "python -m pytest" in _code(fast) and "python -m pytest" in _code(platforms)
 
-    #: 各 job 现在定的片数——两个 job **不必相同**（2026-09-30 起 backend-platforms 是
-    #: 3 片、backend-fast 仍是 2 片，理由见 docs/rules/ci/pytest-shards.md）。改一个 job
+    #: 各 job 现在定的片数——两个 job **不必相同**；backend-platforms 2026-09-30、
+    #: backend-fast 2026-10-09 起各为 3 片（docs/rules/ci/pytest-shards.md）。改一个 job
     #: 的片数要同时改这里与文档里的实测。
-    _EXPECTED_SHARD_COUNTS = {"backend-fast": 2, "backend-platforms": 3}
+    _EXPECTED_SHARD_COUNTS = {"backend-fast": 3, "backend-platforms": 3}
 
     @pytest.mark.parametrize("job_id", ["backend-fast", "backend-platforms"])
     def test_pytest_shards_agree_between_the_matrix_and_the_command(self, job_id):
@@ -3146,7 +3146,7 @@ class TestCLAServiceContracts:
         assert "backend-fast" in _required_of(_job(CI, "ci-fast-gate"))
         assert "github.event_name == 'pull_request' || github.event_name == 'merge_group'" in job
         assert 'python: ["3.10", "3.13", "3.14"]' in job
-        assert "shard: [1, 2]" in job
+        assert "shard: [1, 2, 3]" in job
         marker = "      - name: CLA service contract tests (isolated)\n"
         assert job.count(marker) == 1
         step = job.split(marker, 1)[1].split("      - ", 1)[0]

@@ -63,6 +63,9 @@ WORKER_LOG_SCAN_LINES = 400
 #: 读文件时的字节上限（一份 worker.log 可能被脚本刷到几十 MB）。`_scan_start` 会从这一截
 #: 里回溯到最近一个崩溃头，所以它要远大于一段完整的崩溃栈。
 WORKER_LOG_SCAN_BYTES = 4 * 1024 * 1024
+# 敏感判据要扫「这一代」的全部字节（提示行可能在诊断窗口之前），但必须有界：超出这个预算还没扫完
+# 就按敏感处理（fail closed）。比诊断窗口大 4 倍：正常运行的一代远小于它
+WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 
 #: 诊断包整体格式的版本。**读包的人不该靠 Tavotto 版本号去猜 schema**
 #: ——manifest.json 自报这个数。1 = 只有 report/app.log/config 的那一版；
@@ -1013,7 +1016,7 @@ _KNOWN_SITE_PACKAGES = frozenset(
     {
         "matplotlib", "mpl_toolkits", "numpy", "pandas", "scipy", "seaborn", "PIL",
         "contourpy", "cycler", "fontTools", "kiwisolver", "packaging", "pyparsing", "dateutil",
-        "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline",
+        "six", "click", "typer", "docopt", "fire", "IPython", "matplotlib_inline", "lxml",
     }
 )  # fmt: skip
 #: 引擎目录里真实存在的文件名（一次性读，进程内不会变）。
@@ -1178,6 +1181,19 @@ def _closer_for_export(line: str) -> str:
 def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
     """worker.log 尾巴 → (可进诊断包的证据块, 略去的行数)。
 
+    只是 `_scan_evidence` 的前两项；第三项（被略去的行里的结构线索）只给 `worker_log_tails`。
+    """
+    blocks, dropped, _orphans = _scan_evidence(tail)
+    return blocks, dropped
+
+
+def _scan_evidence(tail: list[str]) -> tuple[list[list[str]], int, list[str]]:
+    """`evidence_blocks` 的本体，多交一份 `orphans`：**块外**被略去的行里与结构有关的原行
+    （帧行、不缩进的行），给 `_structure_summaries` 提取「异常类型 / 模块 / 帧分类」用。
+
+    orphans 是**原行**，不会进包：它只经 `_structure_summaries` 的闭集白名单变成摘要。
+    块内的源码行（缩进的非帧行）与帧行之外的缩进行不收——那是用户源码。
+
     只认上面说的两种结构块；留下的行里绝对路径缩成 `…/site-packages/pkg/mod.py` 或
     `…/文件名`。块外的一切（脚本自己 print 的、matplotlib 的噪音、引擎的标记行）
     都略去只计数。按块交出去是为了让调用方**按块截尾**：一个块被拦腰截断之后
@@ -1185,6 +1201,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
     """
     blocks: list[list[str]] = []
     dropped = 0
+    orphans: list[str] = []
     i = 0
     n = len(tail)
     #: 上一个非空行是不是刚收尾的 traceback 块——链接语只在这时才算数
@@ -1196,6 +1213,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             continue
         if _TB_HEADER.match(ln):
             block = [ln]
+            raw_block: list[str] = []  # 凑不齐时交给结构摘要的原行（帧行 / 收尾行）
             frames = 0
             i += 1
             closed = False
@@ -1208,6 +1226,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                 if cur[:1].isspace():
                     if _TB_FRAME.match(cur):
                         block.append(_frame_for_export(cur))
+                        raw_block.append(cur)
                         frames += 1
                     else:
                         dropped += 1
@@ -1215,12 +1234,14 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                     continue
                 if _TB_CLOSER.match(cur):
                     block.append(_closer_for_export(cur))  # 收尾的异常行
+                    raw_block.append(cur)
                     i += 1
                     closed = True
                 break
             if not (closed and frames):
                 # 没凑齐「头 + 帧 + 收尾」的不是 traceback，是长得像的用户输出
                 dropped += len(block)
+                orphans.extend(raw_block)
                 just_closed_tb = False
                 continue
             # 链式异常：上一块以链接语结尾时，这一块并进去（它们本来就是一段）
@@ -1228,6 +1249,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                 blocks[-1].extend(block)
             else:
                 blocks.append(block)
+            orphans.append(_ORPHAN_BOUNDARY)  # 完整块是栈的边界：块前的无头帧不跨块累积
             just_closed_tb = True
             continue
         if _FH_HEADER.match(ln):
@@ -1258,6 +1280,7 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
                 just_closed_tb = False
                 continue
             blocks.append(block)
+            orphans.append(_ORPHAN_BOUNDARY)
             just_closed_tb = False
             continue
         if just_closed_tb and _TB_CHAIN.match(ln):
@@ -1267,13 +1290,128 @@ def evidence_blocks(tail: list[str]) -> tuple[list[list[str]], int]:
             i += 1
             continue
         dropped += 1
+        if _TB_FRAME.match(ln) or not ln[:1].isspace():
+            orphans.append(ln)
         just_closed_tb = False
         i += 1
     # 以链接语收尾却没等到下一段 traceback（尾巴正好截在中间）：链接语本身不是证据
     if blocks and _TB_CHAIN.match(blocks[-1][-1]):
         blocks[-1].pop()
         dropped += 1
-    return blocks, dropped
+    return blocks, dropped, orphans
+
+
+#: `_scan_evidence` 在 orphan 流里为每个被接受的完整块放的边界标记（带 NUL；日志里伪造它的最坏结果只是多切一段栈）。
+_ORPHAN_BOUNDARY = "\x00block-boundary"
+
+#: 结构摘要行的前缀——明确标出「这是 Tavotto 从被略去的行里提取的结构，不是日志原文」。
+STRUCTURE_PREFIX = "[structure] "
+#: 敏感运行里 worker 把脚本输出改道给排空器，排空器往 worker.log 写的就是这句。**与
+#: `worker._PRIVATE_OUTPUT_NOTICE.strip()` 同源对**（worker 只在子进程里，父进程不能 import，
+#: 靠 `tests/test_diagnostics_worker_evidence.py` 钉住两边相等）。日志里出现它 = 这一代是敏感运行。
+_SENSITIVE_NOTICE = "[sensitive run: script output omitted]"
+#: 一次最多留几行摘要（取最后几条——最新的失败）。
+STRUCTURE_MAX_SUMMARIES = 3
+#: 自由行里的「异常行」：整行只能是 `[限定前缀.]类型名[: 文本]`，类型名（最后一段）必须是 builtins
+#: 里的异常类——用户自定义的异常名可能含业务词，一个字不出。Warning 家族不收（那是警告行不是失败）。
+_STRUCT_CLOSER = re.compile(r"^(?:[A-Za-z_][\w]*\.)*(?P<name>[A-Za-z_]\w*)(?::\s*(?P<msg>.*))?$")
+_STRUCT_OMITTED = "omitted-exception"  # 类型名被白名单略去的收尾行：只出这个固定占位
+_STRUCT_MODULE_ERRORS = frozenset({"ModuleNotFoundError", "ImportError"})
+_STRUCT_NO_MODULE = re.compile(
+    r"^No module named '(?P<name>[A-Za-z_][\w.]*)'(?:; '[A-Za-z_][\w.]*' is not a package)?$"
+)
+
+
+def _is_trusted_package(top: str) -> bool:
+    return top in _KNOWN_SITE_PACKAGES or top in depresolve.CURATED or top in depresolve.SAME_NAME
+
+
+def _frame_class(path: str) -> str:
+    """帧行里的文件名 → 只出分类：`user` / `engine`（Tavotto 引擎）/ `runtime`（标准库、冻结模块）/
+    `site:<已知包>` / `site:other`。**路径、文件名一个字都不出**；分类只可能把别的归错，不会多露。"""
+    if path.startswith("<frozen"):
+        return "runtime"
+    parts = [seg for seg in re.split(r"[\\/]+", path) if seg]
+    lowered = [seg.lower() for seg in parts]
+    if "site-packages" in lowered:
+        idx = len(lowered) - 1 - lowered[::-1].index("site-packages")
+        rest = parts[idx + 1 :]
+        if rest:
+            top = rest[0].split(".", 1)[0] if len(rest) == 1 else rest[0]
+            return f"site:{top}" if _is_trusted_package(top) else "site:other"
+        return "site:other"
+    if len(parts) >= 3 and lowered[-3] == "tavotto" and lowered[-2] == "engine":
+        return "engine"
+    for i, seg in enumerate(lowered[:-1]):
+        nxt = parts[i + 1].split(".", 1)[0]
+        if re.fullmatch(r"python3(?:\.\d+)?t?", seg) or (seg == "lib" and nxt in _STDLIB_MODULES):
+            return "runtime"
+    return "user"
+
+
+def _frame_breakdown(classes: list[str]) -> str:
+    order = {"user": 0, "engine": 1, "runtime": 2}
+    counts: dict[str, int] = {}
+    for c in classes:
+        counts[c] = counts.get(c, 0) + 1
+    items = sorted(counts.items(), key=lambda kv: (order.get(kv[0], 3), kv[0]))
+    return ", ".join(f"{k}={v}" for k, v in items)
+
+
+def _structure_summary(
+    exc_name: str | None, message: str | None, frames: list[str], *, sensitive: bool
+) -> str:
+    """一条摘要。每一段要么是闭集成员（builtins 异常名、已知包名、帧分类）、要么是哈希、要么是个数。"""
+    parts = [exc_name or "no-exception-line"]
+    if sensitive:
+        # 敏感运行：只出异常类型名——模块名可能来自敏感参数，帧分类也一并收起
+        return f"{STRUCTURE_PREFIX}{parts[0]} (sensitive run: details withheld)"
+    if exc_name in _STRUCT_MODULE_ERRORS and message is not None:
+        m = _STRUCT_NO_MODULE.match(message.strip())
+        if m:
+            parts.append("module=" + _import_name_for_export(m.group("name")))
+    if frames:
+        parts.append(f"frames={len(frames)} ({_frame_breakdown(frames)})")
+    return STRUCTURE_PREFIX + " ".join(parts)
+
+
+def _structure_summaries(orphans: list[str], *, sensitive: bool) -> list[str]:
+    """被整行略去的行 → 结构摘要（白名单提取，原行不出）。
+
+    按出现顺序走：帧行累计成「待配帧」，遇到异常行就与待配帧合成一条；末尾剩下的帧单独一条
+    （`no-exception-line`）。异常类型只认 builtins 的（最后一段）；`No module named 'X'` 的 X 经
+    `_import_name_for_export`（标准库 / 已知包原样、其余 `mod:<哈希>`）。其余一律不出。"""
+    out: list[str] = []
+    pending: list[str] = []
+    for raw in orphans:
+        if raw == _ORPHAN_BOUNDARY:
+            # 一个被 `blocks` 认走的完整块在这里：它前面的无头帧自成一段，不挂到块后的异常上
+            if pending:
+                out.append(_structure_summary(None, None, pending, sensitive=sensitive))
+            pending = []
+            continue
+        fm = _TB_FRAME.match(raw)
+        if fm:
+            pending.append(_frame_class(fm.group("path")))
+            continue
+        m = _STRUCT_CLOSER.match(raw.strip())
+        if not m:
+            continue
+        name = m.group("name")
+        if name not in _BUILTIN_EXCEPTIONS or issubclass(getattr(builtins, name), Warning):
+            # 收尾形状的行不论类型是否被略去都结束当前这段栈：否则它的帧会留在 pending 里，
+            # 记到后面另一段栈的 builtins 异常头上（评审 #868 P2）。名字不出，帧摘要仍留
+            if pending:
+                out.append(_structure_summary(_STRUCT_OMITTED, None, pending, sensitive=sensitive))
+            pending = []
+            continue
+        out.append(_structure_summary(name, m.group("msg"), pending, sensitive=sensitive))
+        pending = []
+    if pending:
+        out.append(_structure_summary(None, None, pending, sensitive=sensitive))
+    # 相邻重复的合并，取最后几条
+    dedup = [s for i, s in enumerate(out) if i == 0 or s != out[i - 1]]
+    return dedup[-STRUCTURE_MAX_SUMMARIES:]
 
 
 def evidence_lines(tail: list[str]) -> tuple[list[str], int]:
@@ -1340,17 +1478,23 @@ def worker_log_tails(
     out: list[dict] = []
     for mtime, p in stamped[:files]:
         try:
+            # 起点与大小各**只读一次**：tail 扫描与敏感判定共用同一份快照。worker 在导出期间
+            # 重生时，第二次读到的是下一代的偏移，上一代的敏感判定会错位（评审 #868 第三轮）
+            gen_start = pool.log_generation_start(p)
+            gen_end = p.stat().st_size
             # 只看**这一代**：worker.log 是跨代追加的，`pool.start_log_generation` 在 spawn
             # 前把起点落在旁边；不带这个边界会把上一代的 traceback 当成这一代的
-            text = _read_tail_bytes(
-                p, WORKER_LOG_SCAN_BYTES, start=pool.log_generation_start(p)
-            ).decode("utf-8", errors="replace")
+            text = _read_tail_bytes(p, WORKER_LOG_SCAN_BYTES, start=gen_start, end=gen_end).decode(
+                "utf-8", errors="replace"
+            )
         except OSError:
             continue
         all_lines = text.splitlines()
         scanned = all_lines[_scan_start(all_lines) :]
-        blocks, omitted = evidence_blocks(scanned)
+        sensitive = _generation_is_sensitive(p, gen_start, gen_end)
+        blocks, omitted, orphans = _scan_evidence(scanned)
         kept = last_blocks_within(blocks, lines)
+        summaries = _structure_summaries(orphans, sensitive=sensitive)
         out.append(
             {
                 # README 承诺文件名一律换成不可逆的短哈希：目录名里带着脚本名，只出哈希。
@@ -1361,23 +1505,62 @@ def worker_log_tails(
                 "modified": _iso(mtime),
                 "empty": not any(t.strip() for t in scanned),
                 "omitted": omitted,
-                "tail": "\n".join(ln for block in kept for ln in block),
+                "tail": "\n".join([ln for block in kept for ln in block] + summaries),
             }
         )
     return out
 
 
-def _read_tail_bytes(path: Path, limit: int, *, start: int = 0) -> bytes:
+def _generation_is_sensitive(path: Path, start: int, end: int | None = None) -> bool:
+    """这一代 worker.log 里**任何位置**出现排空器的提示行 = 敏感运行。
+
+    敏感与否只在 worker 子进程里知道，父进程唯一的载体就是这句提示。它可能出现在诊断扫描窗口
+    （最后 400 行 / 4 MB）之前——一次早期 stdout 写入后大量 stderr——所以不能从窗口里判，
+    要流式扫这一代的字节（评审 #868 P2）。
+
+    **有界**（第三轮）：只读 `[start, end)`，`end` 是调用方快照的文件大小（缺省取现在的大小），
+    日志在扫描期间继续增长也不会多读；总预算 `WORKER_LOG_SENSITIVE_SCAN_BYTES`，预算内没找到
+    提示行、又还有没扫的区间 → 按敏感处理。读不了同样按敏感处理：宁可少出。"""
+    needle = _SENSITIVE_NOTICE.encode("utf-8")
+    try:
+        with path.open("rb") as fh:
+            if end is None:
+                fh.seek(0, os.SEEK_END)
+                end = fh.tell()
+            pos = max(start, 0)
+            if end - pos > WORKER_LOG_SENSITIVE_SCAN_BYTES:
+                budget_end = pos + WORKER_LOG_SENSITIVE_SCAN_BYTES
+            else:
+                budget_end = end
+            fh.seek(pos)
+            carry = b""
+            while pos < budget_end:
+                chunk = fh.read(min(1 << 20, budget_end - pos))
+                if not chunk:
+                    break
+                pos += len(chunk)
+                buf = carry + chunk
+                if needle in buf:
+                    return True
+                carry = buf[-(len(needle) - 1) :]
+            return budget_end < end
+    except OSError:
+        return True
+
+
+def _read_tail_bytes(path: Path, limit: int, *, start: int = 0, end: int | None = None) -> bytes:
     """`start` 之后、最多最后 `limit` 字节——**seek 过去再读**，不是整个读进来再切（评审
     #443 第十一轮）：一份被脚本刷了几个小时的 worker.log 能有几百 MB，`read_bytes()[-limit:]`
     会先把整个文件装进 Flask 进程的内存，「扫描上限」就成了一句空话。`start` 是这一代的
-    起点（第十四轮）：之前的字节属于上一代，一个都不读。"""
+    起点（第十四轮）：之前的字节属于上一代，一个都不读。`end` 是调用方快照的大小：
+    之后追加的字节不读（缺省取现在的大小）。"""
     with path.open("rb") as fh:
-        fh.seek(0, os.SEEK_END)
-        size = fh.tell()
-        begin = max(start, size - limit, 0)
+        if end is None:
+            fh.seek(0, os.SEEK_END)
+            end = fh.tell()
+        begin = max(start, end - limit, 0)
         fh.seek(begin)
-        return fh.read(max(0, size - begin))
+        return fh.read(max(0, end - begin))
 
 
 def _scan_start(all_lines: list[str]) -> int:
@@ -1710,7 +1893,8 @@ def _readme(
         "  （report.json 的 render.worker_logs 段：渲染进程日志里的 Python 报错块与崩溃栈——\n"
         "  只留 traceback 的帧行（文件名换成哈希 + 行号，函数名不带；第三方库的文件多留一个\n"
         "  包名）与异常类型名；崩溃栈只留故障名与帧行、扩展模块只留计数；报错文字、脚本自己\n"
-        "  打印的内容与源码行已略去）\n"
+        "  打印的内容与源码行已略去；不成块的报错行另给一行 [structure] 摘要：只含内置异常类型名、\n"
+        "  缺的模块名（公开常见包原样、其余哈希）与帧数分类，不含路径、文件名和文字）\n"
         "  （report.json 的 project.missing_dependencies 段：最近几次「缺依赖」的现场——缺的包名\n"
         "  （只有公开的常见科研包原样，其余换成哈希）、脚本文件名哈希、当时用的是哪类 Python、\n"
         "  体检过的其他 Python 的版本与结论、一键修复各选项能否使用；路径按段换成哈希）\n"
@@ -1727,7 +1911,9 @@ def _readme(
         "  function names; files of known third-party libraries also carry the package name)\n"
         "  and the exception type; crash stacks keep the fault name, frames and the\n"
         "  extension-module count; error messages, anything your script printed, and source\n"
-        "  lines are left out)\n"
+        "  lines are left out; error lines that are not a complete block get one [structure]\n"
+        "  summary line: built-in exception type, missing module (hashed unless a well-known\n"
+        "  package) and frame counts by category — never paths, file names or message text)\n"
         "  (report.json, project.missing_dependencies: the last few missing-dependency failures —\n"
         "  the missing package (well-known public packages by name, anything else hashed), the\n"
         "  hashed script name, which kind of Python was rendering, the version and verdict of\n"

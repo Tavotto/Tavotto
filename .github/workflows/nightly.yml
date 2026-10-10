@@ -170,6 +170,7 @@ jobs:
           python -m pytest -q \
             tests/test_invariants_engine.py \
             tests/test_artist_families.py \
+            tests/test_hatch_editing.py \
             tests/test_legend_binding.py
 
       - name: CompatBench

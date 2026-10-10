@@ -481,7 +481,7 @@ export interface ProjectScan {
   scripts?: ProjectScanScript[]
   targets?: ProjectScanTarget[]
   default_target?: string | null
-  target_choice?: 'single' | 'ambiguous' | 'connected' | 'none'
+  target_choice?: 'single' | 'ambiguous' | 'connected' | 'none' | 'incomplete'
   checks: ProjectScanCheck[]
   environment?: {
     verified: boolean
@@ -1122,7 +1122,8 @@ export async function postDiagnosticsBundle(payload: unknown): Promise<Blob> {
  * 调用方必须如实说「当时的诊断已经没有了」，**不许**退而去拿一份当前状态的诊断包冒充。
  * `pj` 默认取调用这一刻的项目；失败提示可能比项目切换活得久，组件应传它出现时的项目。
  */
-export type TaskDiagnosticKind = 'export' | 'preparation' | 'script_run'
+/** `dependency`（T06）：依赖准备作业的终局，`ref` = 作业 `plan_id`（`dp-…`） */
+export type TaskDiagnosticKind = 'export' | 'preparation' | 'script_run' | 'dependency'
 export type TaskDiagnosticResult =
   | { available: true; blob: Blob; filename: string }
   | { available: false; reason: 'not_found' | 'expired' }
@@ -2941,6 +2942,8 @@ export type ServerEvent =
     } & ProjectScoped)
   /** 导入即扫描有进展 / 到终局：只是「重新读一遍快照」的提示，不带 phase、路径与计数（T02） */
   | ({ kind: 'project.scan'; scan_id: string; epoch: number } & ProjectScoped)
+  /** 准备会话可能有新事实：只是「重读报告」的提示，不带 phase 与序号（以 GET 为准，T01 / T09） */
+  | ({ kind: 'preparation.session'; session_id: string; config_revision: number } & ProjectScoped)
   /** 素材（PDF/PNG/JPG）变了：`ids` = 三类的并集，够用时不必再看细分 */
   | ({
       kind: 'assets.changed'
@@ -3022,6 +3025,7 @@ const EVENT_KINDS = [
   'registry.changed',
   'assets.changed',
   'project.scan',
+  'preparation.session',
   'project.error',
   'probe.started',
   'native.session',
@@ -4575,6 +4579,11 @@ export interface ProbeResult {
   stem_conflicts?: Record<string, string>
   /** 给了参数的那次运行：它的运行配置引用（T03；不含参数值） */
   run_config?: string
+  /**
+   * 无参数运行整条替换注册表时，此前登记在这个脚本名下、这次没产出的图名（T09b；T03 已知缺口）。多半是带参数那次
+   * 产出的：用原参数再运行一次即可并回来。没有替换掉任何东西时不出现
+   */
+  unlinked_stems?: string[]
   /** 这一次的诊断引用（T04）：`fetchTaskDiagnostic('script_run', ref)` 取回终局时冻结的快照；老后端没有 */
   diagnostic?: { kind: 'script_run'; ref: string }
 }
@@ -4591,21 +4600,80 @@ export interface ScriptArgs {
   sensitive?: boolean
 }
 
+/* ---------------- 引擎能力协商（T10，`src/tavotto/engine/capabilities.py`） ---------------- */
+
+/**
+ * 引擎宣告「会按精确 argv 运行并回 `run_config` 承认」的标记。**同源**：`engine/capabilities.py` 的
+ * `SCRIPT_ARGV`（`tests/test_engine_capabilities.py` 两侧对拍）。
+ */
+export const ENGINE_FEATURE_SCRIPT_ARGV = 'script-argv'
+/** 引擎没宣告所需能力时的稳定码（与后端 / MCP 桥同一个） */
+export const ENGINE_CAPABILITY_MISSING = 'engine_capability_missing'
+
+let engineFeaturesPromise: Promise<ReadonlySet<string>> | null = null
+
+/**
+ * 引擎宣告的能力（`/api/version` 的 `features`；公开端点、不带项目）。一个标签页问一次：引擎升级后旧标签页
+ * 由同一端点的 `build` 发现过期并刷新。网络失败与非 2xx 都不缓存（下次再问）；端点在、却没有 `features` = 旧引擎，一个都没有。
+ */
+export function fetchEngineFeatures(): Promise<ReadonlySet<string>> {
+  engineFeaturesPromise ??= fetch(apiUrl('/api/version'), { cache: 'no-store' })
+    .then(async (res) => {
+      // 404 = 更早的引擎根本没有这个端点（旧引擎，一个特性都没有）；其余非 2xx（启动期代理 502/503 等）是
+      // 暂时失败、不是「没有特性」：reject 走下面的 catch 清掉缓存，允许重试
+      if (!res.ok && res.status !== 404) throw new Error(`/api/version ${res.status}`)
+      const body = res.ok ? ((await res.json()) as { features?: unknown }) : {}
+      const list = Array.isArray(body?.features) ? body.features : []
+      return new Set(list.filter((f): f is string => typeof f === 'string'))
+    })
+    .catch((err: unknown) => {
+      engineFeaturesPromise = null
+      throw err
+    })
+  return engineFeaturesPromise
+}
+
+/** 测试与重连用：忘掉问过的能力。 */
+export function resetEngineFeatures(): void {
+  engineFeaturesPromise = null
+}
+
+/**
+ * **先问再发**：旧端点不认识的字段会被静默忽略——把 `argv` 发给旧引擎，它照样无参数运行，回包看起来一切
+ * 正常。所以发非空 argv 之前确认引擎宣告了 `script-argv`；没有就当场以 `engine_capability_missing` 拒绝，
+ * 一次请求都不发（绝不先「试一次无参数」）。
+ */
+async function requireEngineFeature(feature: string): Promise<void> {
+  if ((await fetchEngineFeatures()).has(feature)) return
+  throw new ApiError('本机 Tavotto 引擎不支持这项功能，请升级后再试', 409, {
+    code: ENGINE_CAPABILITY_MISSING,
+    params: { feature },
+  })
+}
+
 /** 试运行：真的跑一遍脚本，按它**实际产出**的文件名登记（冷启动可能要几分钟） */
-export const probeScript = (script: string, cost?: string, args?: ScriptArgs) =>
-  jsonFetch<ProbeResult>('/api/registry/probe', {
+export const probeScript = async (script: string, cost?: string, args?: ScriptArgs) => {
+  // run_config（答案管理对已有配置的复跑）优先于 argv。**任何非 null 的 run_config 与任何非空 argv 都要先过
+  // script-argv 能力协商**：旧引擎会静默忽略 `run_config` 字段、无参数跑脚本，还可能登记一张「看着对、其实错」的图
+  // （Codex #818 r4221289208）。只有 `run_config: null`（明确「不带参数」）与无参数不需要。
+  const argv = args?.run_config === undefined && args?.argv && args.argv.length > 0 ? [...args.argv] : null
+  if (argv || typeof args?.run_config === 'string') await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return jsonFetch<ProbeResult>('/api/registry/probe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       script,
       cost,
-      ...(args?.run_config !== undefined
+      ...(typeof args?.run_config === 'string'
         ? { run_config: args.run_config }
-        : args?.argv && args.argv.length > 0
-          ? { argv: [...args.argv], ...(args.sensitive ? { argv_sensitive: true } : {}) }
-          : {}),
+        : args?.run_config === null
+          ? { run_config: null }
+          : argv
+            ? { argv, ...(args?.sensitive ? { argv_sensitive: true } : {}) }
+            : {}),
     }),
   })
+}
 
 /**
  * 脚本参数的静态 schema（T07，`engine/scriptargs.py`）：后端只读源码，不执行、不 import、不调 `--help`。
@@ -4616,8 +4684,212 @@ export const fetchScriptArguments = (script: string) =>
     `/api/engine/script-arguments?script=${encodeURIComponent(script)}`,
   )
 
+/* ------------- 准备会话（T01 合同 / T09 界面默认入口，`engine/prepsession.py`） ------------- */
+
+/** phase 闭集（后端 `prepsession.PHASES`）：「现在该关注什么」。发生了什么在 `outcome` 里单列 */
+export type PreparationPhase =
+  | 'scanning'
+  | 'awaiting_confirmation'
+  | 'preparing_environment'
+  | 'awaiting_configuration'
+  | 'ready_to_run'
+  | 'running'
+  | 'awaiting_runtime_input'
+  | 'completed'
+  | 'partial'
+  | 'action_required'
+  | 'cancelled'
+
+export type PreparationOutcomeKind =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'execution_finished_no_figure'
+  | 'failed'
+  | 'blocked'
+  | 'cancelled'
+  | 'static_source'
+  | 'needs_input'
+  | 'stale'
+  | 'unknown'
+  | 'needs_dependencies'
+
+export interface PreparationCheck {
+  id: string
+  status: 'ok' | 'unknown' | 'needs_action' | 'blocked'
+  code?: string
+  detail?: Record<string, unknown>
+}
+
+/**
+ * 要用户先答的事（`prepsession.requirements_of`）。载荷原样是既有的回答协议的载荷——回答走既有端点
+ * （采用环境 / 运行目录 / 指认数据）或会话动作（依赖授权），答完由会话 `recheck`。`blocking: false` 的不拦运行。
+ */
+export type PreparationRequirement =
+  | { id: 'environment'; kind: 'environment_choice'; code: string; payload: EnvRecommendation }
+  | { id: 'workdir'; kind: 'workdir_choice'; code: string; payload: WorkdirConfirmation | null }
+  | {
+      id: 'dependencies'
+      kind: 'dependency_authorization'
+      code: string
+      origin?: 'runtime_missing'
+      payload: Record<string, unknown> | null
+    }
+  | { id: 'dependencies'; kind: 'dependency_scope_choice'; code: string; payload: Record<string, unknown> }
+  | { id: 'dependencies'; kind: 'dependency_pinned'; code: string; payload: { source?: string; variable?: string } }
+  | { id: 'data'; kind: 'input_location'; code: string; origin: 'last_attempt'; blocking: false; payload: MissingInputOffer }
+  | {
+      id: 'arguments'
+      kind: 'script_arguments'
+      code: string
+      blocking: false
+      payload: { schema: ScriptArgsSchema; argv_count: number; run_config: string | null }
+    }
+
+export type PreparationActionKind = 'run' | 'cancel' | 'recheck' | 'prepare_dependencies'
+
+/** 动作上说清的实际影响（授权绑定的就是它）；依赖准备的动作还带整份 `DependencyImpact` 与摘要 */
+export interface PreparationImpact extends Partial<DependencyImpact> {
+  executes_user_script: boolean
+  installs_packages: boolean
+  changes_environment: boolean
+  writes_to_project: string[]
+  /** 带了几个运行参数（不是参数本身） */
+  script_arguments?: number
+  script_writes?: { declared_output_arguments: number; cwd_mode: string }
+  impact_digest?: string
+}
+
+export interface PreparationAction {
+  id: string
+  kind: PreparationActionKind
+  config_revision: number
+  impact: PreparationImpact
+}
+
+/** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
+export interface PreparationReport {
+  session_version: number
+  session_id: string
+  project_id: string
+  target: {
+    kind: 'script' | 'asset'
+    script: string | null
+    entry: string | null
+    asset_id: string | null
+    stem: string | null
+    run_config?: string
+    argv_count?: number
+  }
+  /** 语义修订：目标 / 参数 / 环境 / 授权 / 数据变了才 +1；认领动作时原样交回 */
+  config_revision: number
+  /** 观察序号：进度变化只动它（同一修订内只许前进，倒退的是迟到的旧响应） */
+  observation_seq: number
+  phase: PreparationPhase
+  outcome: { kind: PreparationOutcomeKind; code?: string; reason?: string }
+  /** 执行结束 / 捕获到图——两件事分开；`null` = 不适用（还没执行 / 静态） */
+  facts: { execution_finished: boolean | null; figure_captured: boolean | null }
+  checks: PreparationCheck[]
+  requirements: PreparationRequirement[]
+  actions: PreparationAction[]
+  provider: {
+    plan_id: string
+    attempt_id: string | null
+    attempts: number
+    dependency: {
+      plan_id: string
+      joined: boolean
+      origin: 'joint' | 'runtime_missing'
+      state: string
+      stage?: string | null
+      code: string
+      committed: boolean
+      impact_digest: string
+    } | null
+  }
+  dependency_delta?: Record<string, unknown> | null
+  /** 正在等的那一问（只有 id / 序号 / 读取方式 / 要不要掩码；提示与答案走 `/api/script_input/*`） */
+  runtime_input?: { id: string; index: number; input_kind: string; secret: boolean } | null
+  /** 这次尝试成功时真正捕获到的图（与试运行响应同一份描述符）；老后端没有 */
+  captured?: CapturedFigureDescriptor[]
+  /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
+  unlinked_stems?: string[]
+  result: {
+    status: string
+    error?: { code?: string; message?: string; reason?: string; module?: string } | null
+    note?: string
+  } | null
+}
+
+/** 会话目标：一份脚本（可带精确 argv，空 = 不带参数、请求体里没有 `argv`）或一张已知的图 */
+export type PreparationTarget =
+  | { script: string; entry?: string; argv?: readonly string[]; argv_sensitive?: boolean }
+  | { id: string }
+
+const preparationBody = (target: PreparationTarget) =>
+  'id' in target
+    ? { id: target.id }
+    : {
+        script: target.script,
+        ...(target.entry ? { entry: target.entry } : {}),
+        ...(target.argv && target.argv.length > 0
+          ? { argv: [...target.argv], ...(target.argv_sensitive ? { argv_sensitive: true } : {}) }
+          : {}),
+      }
+
+/**
+ * 为一个目标创建 / 复用检查会话。**不执行任何用户代码**（201 新建 / 200 复用）。`pj` 是发请求那一刻认领的项目：
+ * 回包属于它，换了项目由调用方丢弃。`signal`：只用于网络看门狗（取消的是这一次 HTTP 等待，不是任何后台工作）。
+ */
+export const createPreparationSession = async (
+  target: PreparationTarget,
+  pj: string | null,
+  signal?: AbortSignal,
+) => {
+  if (!('id' in target) && target.argv && target.argv.length > 0) {
+    await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  }
+  return jsonFetch<PreparationReport>(
+    '/api/engine/preparation-sessions',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(preparationBody(target)),
+      signal,
+    },
+    pj,
+  )
+}
+
+/** 读会话报告（断线 / 刷新 / SSE 提示后的补拉；**不会**重新执行任何东西）。404 + `unknown_or_restarted` = 应用重启过 */
+export const fetchPreparationSession = (sessionId: string, pj: string | null, signal?: AbortSignal) =>
+  jsonFetch<PreparationReport>(
+    `/api/engine/preparation-sessions/${encodeURIComponent(sessionId)}`,
+    { signal, cache: 'no-store' },
+    pj,
+  )
+
+/** 认领一个后端生成的动作：只交不透明 id + 看到的配置修订（+ 依赖授权回显的影响摘要） */
+export const actOnPreparationSession = (
+  sessionId: string,
+  body: { action_id: string; expected_config_revision: number; impact_digest?: string },
+  pj: string | null,
+  signal?: AbortSignal,
+) =>
+  jsonFetch<{ claimed: boolean; report: PreparationReport }>(
+    `/api/engine/preparation-sessions/${encodeURIComponent(sessionId)}/actions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    },
+    pj,
+  )
+
 /** 运行参数（T03）的稳定错误码：界面按它们翻文案（`errors:backend.*`） */
 export const RUN_ARGV_ERROR_CODES = [
+  ENGINE_CAPABILITY_MISSING,
   'invalid_argv',
   'run_config_missing',
   'run_config_secret_missing',
@@ -4698,11 +4970,15 @@ export const stopScriptInput = (id: string) =>
 
 export const fetchScriptAnswers = () => jsonFetch<ScriptAnswersResponse>('/api/script_input/answers')
 
-export const updateScriptAnswer = (script: string, index: number, answer: string, runConfig: string | null = null) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
+export const updateScriptAnswer = async (script: string, index: number, answer: string, runConfig: string | null = null) => {
+  if (runConfig) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, answer, run_config: runConfig })
+}
 
-export const forgetScriptAnswer = (script: string, index: number, runConfig: string | null = null) =>
-  postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
+export const forgetScriptAnswer = async (script: string, index: number, runConfig: string | null = null) => {
+  if (runConfig) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return postJson<ScriptAnswersResponse>('/api/script_input/answers', { script, index, forget: true, run_config: runConfig })
+}
 
 export const cancelProbe = (script: string) =>
   jsonFetch<{ cancelling: boolean }>('/api/registry/probe/cancel', {
@@ -4779,15 +5055,18 @@ export interface RuntimeStatus {
  * 查询 runtime 素材的 stale 状态。**只读**：后端绝不因此执行脚本。
  * `source` 是文档里持久化的描述块，注册表条目丢失时作恢复线索。
  */
-export const fetchRuntimeStatus = (
+export const fetchRuntimeStatus = async (
   id: string,
   source?: { script: string; stem: string; run_config?: string },
-) =>
-  jsonFetch<RuntimeStatus>('/api/runtime/status', {
+) => {
+  // 带运行配置引用的判定，旧引擎会忽略 run_config 去比无参数那份：先过能力协商（r4221289208）
+  if (source?.run_config) await requireEngineFeature(ENGINE_FEATURE_SCRIPT_ARGV)
+  return jsonFetch<RuntimeStatus>('/api/runtime/status', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, source }),
   })
+}
 
 /**
  * 素材库「图」区的一条 RuntimeFigureAsset（`runtimeasset.list_assets` 原样）。

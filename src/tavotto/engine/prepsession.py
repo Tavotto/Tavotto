@@ -515,14 +515,16 @@ def derive(facts: dict) -> dict:
 
 
 def attempt_running(attempt: dict) -> bool:
-    """Wait for recovery finalization, except a cancelled consumer immediately stops waiting."""
-    if attempt["status"] == preparation.STATUS_CANCELLED:
-        # A shared worker can keep building for another consumer. Its cancelled
-        # waiter is already terminal and must not wait for that worker's callback.
-        return False
+    """这次尝试是否还在进行：provider 没到终局，或到了终局但执行线程的收尾（登记 / 缺包差异计划）还没做完。
+
+    与 `SessionService._has_active_attempt` 同一判据（T11）：`error` 在收尾之前也算进行中——
+    `missing_dependency` 要等 `_observe_missing` 算出差异计划才说得清是「补包后重跑」还是「认不出包名」，
+    先投影成 `failed` 会给出一个没有待办、随后又被改写的终局。取消落地即终局（T09：不等执行线程）。"""
     if attempt["status"] in (preparation.STATUS_PENDING, preparation.STATUS_RUNNING):
         return True
-    return attempt["status"] in preparation.TERMINAL and not attempt.get("finalized")
+    if attempt["status"] == preparation.STATUS_CANCELLED:
+        return False
+    return not attempt.get("finalized")
 
 
 def _derive_before_attempt(facts: dict) -> dict:
@@ -1306,6 +1308,25 @@ class SessionService:
                     and derived["phase"] == PHASE_AWAITING_RUNTIME_INPUT
                     else None
                 ),
+                # T09：这次尝试真正捕获到的图（与 `/api/registry/probe` 响应里同一份公开描述符：项目相对路径、
+                # 运行配置只是不透明引用）。「进入编辑」直接用它——不按图名再找一遍、不为换界面再跑一次脚本。
+                # 只在这次尝试成功（捕获到且登记好）时给；跑完但没有图 / 失败 / 登记不上时是空表
+                "captured": (
+                    [
+                        dict(d)
+                        for d in ((result.captured or {}).get("descriptors") or ())
+                        if isinstance(d, dict)
+                    ]
+                    if result is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
+                ),
+                # T09b：这次（无参数）运行把哪些此前登记在这个脚本名下的图名替换掉了（T03 已知缺口：注册表按脚本整条替换）。
+                # 只是图名（与 `captured[].stem` 同一口径，项目相对的公开名字），不含参数；界面据此给「用原参数再运行」的提示
+                "unlinked_stems": (
+                    list((attempt_fact.get("finalize") or {}).get("unlinked_stems") or [])
+                    if attempt_fact is not None and derived["outcome"]["kind"] == OUTCOME_SUCCEEDED
+                    else []
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
@@ -1492,6 +1513,10 @@ class SessionService:
         result = found[1]
         if result.status not in preparation.TERMINAL:
             return True
+        if result.status == preparation.STATUS_CANCELLED:
+            # 取消已经落地（T09：共享会话的等待者被放手时，执行线程可能还卡在别人的会话上）——不等它收尾，
+            # 用户可以马上重新检查 / 再跑一次
+            return False
         return not sess.attempts[-1].finalized
 
     def _active(self, sess: Session) -> bool:

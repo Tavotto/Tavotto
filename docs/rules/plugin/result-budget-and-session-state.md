@@ -35,6 +35,10 @@
   会种出空画布；矢量图必须带 svg 字符串）；只有把手就取件、回来的
   `patches` 原样种进账本；空壳当场报形状（`data-boot-state` / `data-boot-detail`），30 秒没
   结果也说出口但继续收。都不自己发起 open。真宿主验收加大图一条（acceptance 文档 D 节）。
+- **其余工具的失败结果守 `ERROR_RESULT_BUDGET_BYTES`（64 KiB，T10，ADR 0117 §五）**：`call_tool` 的 BridgeError 分支、apply 除外
+  （显式摘要守 16 KiB、省略 summary 的旧 apply 保留完整失败）。量编码后的整个 CallToolResult；预算内逐字段不变；超了按
+  `ERROR_ELISION_ORDER` 逐项截（traceback 先），`ERROR_PROTECTED_KEYS`（`ok` / `code` / `requirements` / `input` / `capability`）不截，
+  `elided` 写明截了哪些、列表原来几条、完整诊断没有保留。看护 `tests/test_mcp_compat.py` 的有界错误两条。
 - 看护：`tests/test_mcp_server.py` 末节、`tests/test_mcp_resolver.py`、`web/src/mcp/boot.test.ts`、
   `web/e2e/mcp-canvas.spec.ts`。**跑变异一律 `-B` 并清 `__pycache__`**：等长改动一秒内还原，
   pyc 头不变，跑的是变异版。

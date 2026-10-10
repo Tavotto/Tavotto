@@ -8,6 +8,11 @@
 （`ScriptLibrary`，项目内每个合理 .py 一行）两个区。普通路径必须在这里
 完成；RegistryDialog 只留冲突裁决 / 手工 stem / 高级诊断。
 
+> **T09（ADR 0116）起**：脚本行 ▶ 默认打开准备面板（后端准备会话：只读检查 → 用户确认 → 运行 → 进入编辑），不再直接试运行；
+> 行上的状态一句话翻译会话 phase。下文的 `scriptRunStore` 状态机、门相位与「答完重跑」协调、修复卡 / 失败恢复 / 「复制诊断」
+> 是本地开关（`lib/preparationFlag.ts`）关闭时的**旧路径**，保留一版，退出条件见 ADR 0116 §七；面板的规则在
+> `readiness-and-left-shell.md`「准备面板」。
+
 - **数据源三件套**：`scriptLibraryStore`（`/api/registry` 全视图，缓存 +
   幂等去重）、`runtimeAssetStore.assets`（`GET /api/runtime/assets`，只读
   清单 + `previewNonce` 预览换代）、`scriptRunStore`（运行状态机）。
@@ -119,10 +124,10 @@
   `WorkdirConfirmDialog` 选定后重跑停在这一相位上的全部（项目级；放在组件里是因为 envStore → scriptRunStore 会扩大既有 import 环；
   作答期间换过项目就不重跑——`setWorkdirMode` 的换代作废与成功同形，按发起时的**代际**判：`scriptRunEpoch()`，每次换项目 +1，
   A → B → A 项目 id 相同但代际已变）。
-  接入中心的试运行走同一个 `handOffProbeGate`，不报「试运行失败」；它不在 `scriptRunStore` 里记账，停在门上的行经
-  `onGateResolved`（`rerunGated` 顺带通知）在答案到来时重跑（同脚本、同一代），行上留着与画布错误块同一颗再打开的按钮
-  （授权框同一时刻只开一份、别的脚本的开着时这一份没弹出来，或「稍后」之后），且先等素材库同一脚本的那次
-  重跑结束（`whenScriptIdle`；后端同一脚本只许一个在跑）。抛出来的错误（门以 409 回来）两边都经 `probeErrorOf` 解析。**新写一个调试运行端点的入口，先认这两个 code。**
+  接入中心的试运行（开关关闭时；T09b）**委派这一台状态机**（`scriptRunStore.run`），那一行读它的状态显示（`RegistryDialog.probeNoteOf`）：
+  门、再打开的按钮、`rerunGated` 重跑都只有这一份，同一脚本天然不并发，换项目时随 `clear()` 整个清空（含 A → B → A）——原先接入中心
+  自己那份记账（`onGateResolved` / `whenScriptIdle` / 门载荷的代际）随之删除。抛出来的错误（门以 409 回来）只经 `run` 里那一处
+  `probeErrorOf` 解析。**新写一个调试运行端点的入口，先认这两个 code。**
   看护 `scriptRunStore.test.ts`「试运行撞上起会话之前的门」、`ScriptLibrary.test.tsx` 同名 describe、
   `RegistryDialog.test.tsx`、`e2e/asset-library.spec.ts`「试运行撞上依赖门」。
   **直接弹一键修复框（用户 2026-10-03，取代 #760 的行内例外）**：素材库脚本行与编辑图的入口撞上依赖门，都交给同一个
@@ -204,6 +209,9 @@
 空串是合法 token，永远不 `split(' ')` / `join(' ')`；勾"敏感"时输入框变密码框，值只在内存里（`scriptArgvStore` 不持久化，换项目
 `scriptRunStore.clear()` 一并清掉）。试运行在**开始那一刻**取草稿拷贝（`probeWithDraft`）交给 `probeScript`，空草稿时请求体里没有
 `argv` 字段、调用形状与此前相同。后端错误码 `invalid_argv` / `run_config_*` 走 `errors:backend.*`。界面不另判"能不能跑"。
+**先问再发**（T10，ADR 0117）：非空 argv 的试运行与准备会话发出之前，`lib/api.ts` 的 `requireEngineFeature` 先读 `/api/version` 的
+`features`（一个标签页一次），引擎没宣告 `script-argv` 就以 `engine_capability_missing` 拒绝、运行请求一次都不发（旧端点会静默丢掉
+argv、无参数运行）；无参数时不问。看护 `lib/engineFeatures.test.ts`。
 看护：`store/scriptArgv.test.ts`、`store/scriptRunArgv.test.ts`、`components/ScriptArgvEditor.test.tsx`。
 
 **参数表单与粘贴命令（T07）**：展开时取一次静态 schema（`fetchScriptArguments`，后端只读源码）；有参数就在列表上方多一个表单

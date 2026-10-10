@@ -29,9 +29,21 @@ spawn 路径都是 `execspec.safe_spec()` 的消费者）：cwd 在沙盒、argv
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from . import discover, inputbroker, inputremap, pool, projectenv, registry, taskdiag
+from . import (
+    discover,
+    figcapture,
+    inputbroker,
+    inputremap,
+    pool,
+    projectenv,
+    registry,
+    runconfig,
+    runtimeasset,
+    taskdiag,
+)
 
 LOG = logging.getLogger("tavotto.probe")
 
@@ -289,11 +301,14 @@ def probe(
     entries: list[str] | None = None,
     should_cancel=None,
     run=None,
+    on_acquired=None,
 ) -> dict:
     """`_probe()` + 这次运行的输入去向（T08）：成功取 worker 的 `last_input_facts`，失败取第一处错误那次
     build 挂在异常上的 `input_facts`——与 `error` 说的是同一次尝试。"""
     box: dict = {}
-    result = _probe(figures_dir, script, entries, should_cancel, run, facts=box)
+    result = _probe(
+        figures_dir, script, entries, should_cancel, run, facts=box, on_acquired=on_acquired
+    )
     if box.get("facts") is not None:
         result[INPUT_FACTS_KEY] = box["facts"]
     return result
@@ -307,6 +322,7 @@ def _probe(
     run=None,
     *,
     facts: dict,
+    on_acquired=None,
 ) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
@@ -337,6 +353,10 @@ def _probe(
     `pool.force_cancel` 硬杀在跑的 worker）：一旦为真，**不再尝试下一个
     entry**，并把本轮的失败（多半是被杀 worker 的「进程崩溃」）如实归类为
     `execution_cancelled`——被用户取消的 probe 报「脚本坏了」是撒谎。
+
+    `on_acquired(worker, owned)`（T09b）：每次取到会话、执行之前报一次——`owned` 是 `pool.acquired_here`：True =
+    这次试运行新建的、False = 别人（渲染路 / 准备会话）正在用的同键会话、None = 说不清。取消端点据此**按 owner**
+    只关自己建的那条；共享会话只停自己的等待意图，一根手指不碰（ADR 0116 §三，与准备会话的取消同一条规则）。
     """
     figures_dir = str(Path(figures_dir))
     cancelled = (lambda: bool(should_cancel())) if callable(should_cancel) else (lambda: False)
@@ -374,9 +394,15 @@ def _probe(
     run_ctx = {"run": run} if run is not None else {}
 
     def before_build(worker):
+        owned = pool.acquired_here(worker)
+        if on_acquired is not None:
+            on_acquired(worker, owned)
         # Cancellation may arrive while get() discovers an interpreter, before the
         # worker exists in the pool. Check again after every acquisition, including fallback.
         if cancelled():
+            if owned is False:
+                # 别人的会话（渲染路正在用的同键会话）：本次试运行只是放弃等待，不杀它
+                raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
             if not pool.force_cancel(script, figures_dir, expected_worker=worker, **run_ctx):
                 worker.force_kill()  # Already detached: never retire its replacement.
             raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
@@ -417,6 +443,12 @@ def _probe(
             if not entry_retry_allowed(exc):
                 break  # 与入口无关的失败：再换入口只会把顶层代码重跑一遍
             continue
+        if cancelled():
+            # 共享会话的等待者被取消：别人的 build 照常跑完（不杀它），但本次试运行不得再当成功返回——
+            # 否则 probe_and_register 会替换注册表 stem，可能摘掉别的参数建出来的图。
+            LOG.info("探测完成但已被取消 %s [entry=%s]", script, entry)
+            facts["facts"] = getattr(_worker, "last_input_facts", None)
+            return {**empty, "tried": tried, "error": _cancel_err()}
         stems = sorted(resp.get("stems") or {})
         facts["facts"] = getattr(_worker, "last_input_facts", None)
         if stems:
@@ -490,7 +522,12 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
 
 
 def probe_and_register(
-    figures_dir: str | Path, script: str, cost: str = "medium", should_cancel=None, run=None
+    figures_dir: str | Path,
+    script: str,
+    cost: str = "medium",
+    should_cancel=None,
+    run=None,
+    on_acquired=None,
 ) -> dict:
     """探测成功就写进 tavotto_registry.json 并重载注册表。
 
@@ -508,6 +545,7 @@ def probe_and_register(
         script,
         should_cancel=should_cancel,
         **({"run": run} if run is not None else {}),
+        **({"on_acquired": on_acquired} if on_acquired is not None else {}),
     )
     if not result["stems"]:
         return {**result, "registered": False}
@@ -538,8 +576,18 @@ def register_probed(
         }
     # 登记在改指表的锁里、核对过代次才落地（ADR 0106 §五）：试运行途中改了指认，产出的图名 / 描述
     # 是按旧位置的数据来的——丢弃、可重试，注册表零改动
+    append = bool(result.get("run_config"))
     try:
         with inputremap.landing(figures_dir, result.get("remap_generation")):
+            # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
+            # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来；不改注册表格式（T09b）
+            before = [] if append else discover.registered_stems(figures_dir, script)
+            # 「替换掉了哪些此前真捕获过的图名」的证据在**注册表提交之前**算完：任何环节在这里失败，整次登记失败、
+            # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
+            # 一次索引：运行配置读一次、cache 目录列一次，不随被替换 stem 数 × 配置数增长（#819 r4232302927）
+            unlinked = sorted(
+                captured_stems(figures_dir, script, set(before) - set(result["stems"]))[0]
+            )
             discover.register(
                 figures_dir,
                 script,
@@ -548,7 +596,7 @@ def register_probed(
                 cost=cost,
                 # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让
                 # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
-                append=bool(result.get("run_config")),
+                append=append,
             )
             registry.load(figures_dir)
             # stems 可能由数据决定：记下是在哪张改指表下登记的，表变了渲染时据此重新登记
@@ -562,7 +610,96 @@ def register_probed(
             "registered": False,
             "error": _err(inputremap.ERROR_CHANGED, str(exc)),
         }
-    return {**result, "registered": True}
+    return {**result, "registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
+
+
+def captured_stems(
+    figures_dir: str | Path,
+    script: str,
+    stems: Iterable[str],
+    *,
+    configs: list | None = None,
+    charge: Callable[[], bool] | None = None,
+    stop_at_first: bool = False,
+) -> tuple[set[str], bool]:
+    """`stems` 里此前真被某次执行捕获过的那些：runtime cache 里有物化记录（无参数或这个脚本登记过的任一份
+    运行配置）。回 `(捕获过的 stem, 是否查全)`。
+
+    注册表里的图名不全是执行结果——打开项目时的静态扫描会把字面量 `savefig` 的名字先登记上（T00 deliberate-boundary），
+    条件分支里的那张从没产出过。对它说「此前带其他参数生成的……已不再关联」是假话（T11：第一次无参数运行就报）。
+    cache 被按体积回收过的旧图会漏报——宁可少说，不说假话。导入即扫描判「这个脚本已经连着可编辑的图」与登记时判
+    「替换掉了哪些图名」都用它（`projscan._linked_scripts` / `register_probed`），一份判据两处用。
+
+    成本是**每个脚本**的，不是 stems × 配置：运行配置登记读一次（`configs` 可由调用方预读）；cache 根目录列一次，
+    候选 id 的目录名纯计算后做成员判断，只有真存在的目录才读元数据（#819 r4232302927）。
+
+    坏的脚本键（绝对 / 盘符 / 空——`figcapture.normalize_relative_script` 拒的那些，与 `runtime_asset_id` 同一条判据）、
+    坏的 stem 都当**没有证据**：手改过的注册表不能让扫描或登记炸掉（r4232302913）。
+
+    运行配置登记读不出 / 来自新版本（`RunConfigError`）时，**整个脚本**当没有证据（连无参数变体也不算）：素材清单
+    （`/api/runtime/assets`）此刻对该脚本报 `run_config_unreadable`，用户打不开任何一张，说「已连接」是假话（r4232390785）；
+    登记（`register_probed`）也因此不声称「已不再关联」——读不出就什么都不说。不因此炸掉扫描或登记。敏感配置的秘密值已不在（重启后只剩 ID 占位）同样当没有证据：cache 在，但打开会得到
+    `run_config_secret_missing`，不是「可直接编辑」（r4221248582）。它**不**放行任何执行——读不出配置却要按空 argv 运行，由执行侧的
+    `run_config_unreadable` 显式拒绝（那条不在这里）。
+
+    `charge`（导入即扫描传 `budget.charge_entry`）在每次真实的磁盘操作（列目录、读元数据）前调用，返回 False
+    （预算用完 / 超时 / 取消）就停止并回 `complete=False`——调用方据此判「没查全」，绝不是「没捕获」。
+    `stop_at_first` 为真时找到第一个就返回（只要「有没有」的调用方用）。"""
+    wanted = [s for s in stems if isinstance(s, str) and s]
+    try:
+        figcapture.normalize_relative_script(script)
+    except ValueError:
+        return set(), True
+    if not wanted:
+        return set(), True
+    if configs is None:
+        try:
+            configs = runconfig.executable_configs_of(figures_dir, script)
+        except runconfig.RunConfigError:
+            # 登记读不出 / 来自新版本：素材清单此刻整个报 `run_config_unreadable`，连无参数变体也打不开——
+            # 没有任何可用的 cache 证据（不是「没有配置」，r4232390785）。调用方据此既不判已连接，也不声称「已不再关联」
+            return set(), True
+    if charge is not None and not charge():
+        return set(), False
+    present = runtimeasset.cached_slugs()
+    if not present:
+        return set(), True
+    identity = runconfig.project_identity(figures_dir)
+    found: set[str] = set()
+    for stem in wanted:
+        if stem in found:
+            continue
+        for run_config in ["", *(cfg.id for cfg in configs)]:
+            try:
+                asset_id = figcapture.runtime_asset_id(script, stem, run_config)
+            except ValueError:
+                break
+            if runtimeasset.cache_slug(identity, asset_id) not in present:
+                continue
+            if charge is not None and not charge():
+                return found, False
+            if runtimeasset.load_metadata(figures_dir, asset_id) is not None:
+                found.add(stem)
+                if stop_at_first:
+                    return found, True
+                break
+    return found, True
+
+
+def was_captured(
+    figures_dir: str | Path,
+    script: str,
+    stem: str,
+    *,
+    configs: list | None = None,
+    charge: Callable[[], bool] | None = None,
+) -> bool:
+    """单个图名版的 `captured_stems`（语义、预算协议见那里）；预算在途中耗尽回 False——要区分「没查全」的
+    调用方直接用 `captured_stems`。"""
+    found, _complete = captured_stems(
+        figures_dir, script, [stem], configs=configs, charge=charge, stop_at_first=True
+    )
+    return bool(found)
 
 
 # ---------------------------------------------------------------------------

@@ -163,6 +163,13 @@ class RunSelection:
         ).hexdigest()
 
 
+def run_kwargs(run: RunSelection | None) -> dict:
+    """`RunSelection` → `safe_spec` 的关键字参数（没有配置 = 空，调用形状与 T03 之前一致）。
+
+    **唯一出处**（T12）：池的三条 spawn 路径与准备计划的启动上下文都经这里，不各自拼 `argv` / `run_config`。"""
+    return {} if run is None else {"argv": run.argv, "run_config": run.config_id}
+
+
 def _normalize_target(target: str, target_kind: str) -> str:
     """script 目标 → 项目相对路径（POSIX）；module 目标原样。
 
@@ -378,6 +385,18 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
     )
 
 
+def run_cwd(figures_dir: str | os.PathLike, script: str, cwd_mode: str) -> str | None:
+    """safe 档脚本的 cwd：`project` = 脚本所在目录、`project_root` = 项目根、`sandbox` = None
+    （由调用方给会话沙盒）。`safe_spec` 与 MCP 桥的 argv 范围检查读这同一个出处（#818）。"""
+    if cwd_mode not in CWD_MODES:
+        raise ValueError(f"cwd_mode 非法: {cwd_mode!r}（可选 {CWD_MODES}）")
+    if cwd_mode == CWD_PROJECT:
+        return str((Path(figures_dir) / figcapture.normalize_relative_script(script)).parent)
+    if cwd_mode == CWD_PROJECT_ROOT:
+        return str(Path(figures_dir))
+    return None
+
+
 def safe_spec(
     script: str,
     figures_dir: str | os.PathLike,
@@ -405,13 +424,8 @@ def safe_spec(
     照旧。脚本用相对路径**写**的中间文件会像终端里一样落进项目目录——
     这是这两个模式的定义，不是漏洞；文案里要如实说。
     """
-    if cwd_mode not in CWD_MODES:
-        raise ValueError(f"cwd_mode 非法: {cwd_mode!r}（可选 {CWD_MODES}）")
-    if cwd_mode == CWD_PROJECT:
-        cwd = str((Path(figures_dir) / figcapture.normalize_relative_script(script)).parent)
-    elif cwd_mode == CWD_PROJECT_ROOT:
-        cwd = str(Path(figures_dir))
-    else:
+    cwd = run_cwd(figures_dir, script, cwd_mode)
+    if cwd is None:
         cwd = sandbox
     return ExecutionSpec(
         profile=PROFILE_SAFE,

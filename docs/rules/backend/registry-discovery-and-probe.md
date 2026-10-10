@@ -59,7 +59,10 @@
     `_PROBES` 按 (项目 id, script) 登记在跑的试运行（第二个请求 409
     `probe_in_progress`）；`POST /api/registry/probe/cancel` 置取消
     Event 并 `pool.force_cancel`（**当场 kill**，不走优雅关停——shutdown
-    要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。
+    要抢被 build 占着的 `w.lock`，等到超时的取消不叫取消）。**按 owner（T09b）**：
+    只杀这次试运行取到、自己建的那条（`expected_worker`，所有权来自
+    `pool.acquired_here`），别人正在用的同键会话 / 同键替换者不碰——全文在
+    `preparation-and-receipts.md`「准备会话」末段。
     `probe(should_cancel=...)` 一旦判取消**不再尝试下一个 entry**，被杀
     worker 的失败如实归类 `execution_cancelled`（不报「脚本坏了」）；
     取消可能先于 worker 入池：共享 build 编排在初次 / 环境 fallback 每次取得会话后、
@@ -127,6 +130,11 @@
 - **目标**：绘图证据（已登记 / 静态产图 / 动态图名）才是 `plot`；工具 / 测试 / 样式模块是 `auxiliary`，不默认当目标、缺包
   缺参不阻塞别的绘图脚本；读不动 / 没核验的是 `unknown`（可手动选）。默认目标只在**恰好一个尚未连接的绘图脚本**时给；
   多个就让用户选（`choose_target`），不同作用域（最近的依赖声明目录）的 requirements 不混装。
+  **「已连接」= 登记了且真有可编辑的图（T11）**：`projscan._linked_scripts`——登记的图名里至少一个在项目里有同名图文件，或被某次执行
+  捕获过（`probe.was_captured`，与 `unlinked_stems` 同一判据）；目标多一个 `linked` 字段。打开项目时静态扫描先写进注册表的字面量图名
+  不算（脚本一次没跑、什么都打不开）——否则只有脚本的项目报 `already_connected`（「图可以直接编辑」）、检查条的首跑入口被藏起来。
+  只读：文件名比对 + 数据目录 cache 元数据；`linked` 集合进 `evidence_revision`。**带运行配置的 cache 只在该配置此刻还能运行时才算证据**（`runconfig.executable_configs_of`）：敏感配置重启后只剩 ID 占位（`argv is None`，打开会得到 `run_config_secret_missing`）、登记读不出 / 来自新版本（`run_config_unreadable` / 新版本 `run_config_unsupported`）时素材清单（`runtimeasset.list_assets`）整个报错、连无参数变体也打不开，该脚本**整个**当没有证据（`executable_configs_of` 原样抛 `RunConfigError`，`probe.captured_stems` 接住回空集；`register_probed` 也因此不声称「已不再关联」），不报 `already_connected`、不藏准备入口。
+  **连接性是三态**：预算 / 取消 / 超时在检查前或检查中耗尽（任何原因、任何未连接个数）时 `linkage_known=False`，每个目标的 `linked` 是 `None`（未知，不是临时的 True/False），`target_choice` 一律 `incomplete`、`phase` 为 `action_required / scan_incomplete`，不得落成 `connected` / `single` / `ambiguous`，也不给 `prepare` 动作（仍可重扫 / 手选）——不要再按未连接个数分支。
 - **报告**：`phase` 是准备会话词汇的子集（`scanning` / `awaiting_confirmation` / `awaiting_configuration` / `completed` /
   `action_required` / `cancelled`，子集关系由测试钉着），`outcome` 单列事实；`checks` 里环境与依赖恒为 `unknown`
   （`environment.verified` 恒 False，不给推荐），依赖只说声明文件与条数（不带原文行）。`evidence_revision` 是内容证据的

@@ -106,6 +106,11 @@ class RunConfig:
     source: str
     created_at: float
 
+    @property
+    def executable(self) -> bool:
+        """此刻还能按它运行：敏感配置的秘密值已不在（重启后）= 不能（`selection()` 会抛 `run_config_secret_missing`）。"""
+        return self.argv is not None
+
     def public(self) -> dict:
         """公开投影：**没有参数值**。给前端 / 计划 / 诊断用。"""
         return {
@@ -374,9 +379,14 @@ def selection(project_root: str | Path, config_id: str, *, script: str | None = 
     return execspec.RunSelection(config_id=cfg.id, argv=cfg.argv or (), sensitive=cfg.sensitive)
 
 
-def selection_for(project_root: str | Path, script: str, argv, *, sensitive: bool = False):
-    """用户这次给的 token → `RunSelection`（空 argv → None，旧行为）。登记 + 校验一次做完。"""
-    cfg = put(project_root, script, argv, sensitive=sensitive)
+def selection_for(
+    project_root: str | Path, script: str, argv, *, sensitive: bool = False, source: str = "user"
+):
+    """用户这次给的 token → `RunSelection`（空 argv → None，旧行为）。登记 + 校验一次做完。
+
+    `source` 只记「这份配置最初从哪个入口来」（`user` = 界面、`mcp` = Agent 经插件提交）：同一 (脚本, argv) 两个入口
+    得到**同一个**引用（T10：GUI 与 MCP 同一份执行意图），它不进身份、不进池键。"""
+    cfg = put(project_root, script, argv, sensitive=sensitive, source=source)
     return (
         None
         if cfg is None
@@ -395,6 +405,15 @@ def configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
         if cfg is not None and cfg.script == script:
             out.append(cfg)
     return sorted(out, key=lambda c: -c.created_at)
+
+
+def executable_configs_of(project_root: str | Path, script: str) -> list[RunConfig]:
+    """`configs_of` 里**此刻真能运行**的那些：敏感值已不在的占位被滤掉（打开只会得到 `run_config_secret_missing`）。
+
+    给「这个脚本的 cache 算不算可直接编辑的证据」用（`probe.captured_stems`）。整份登记读不出 / 来自新版本时
+    `RunConfigError` **原样抛出**，不当空列表：素材清单（`configs_of`）此时整个报 `run_config_unreadable`，连无参数变体也打不开，
+    把「读不出」说成「没有配置」会让 cache 被当成可编辑证据（#819 r4232390785）。调用方必须区分这两种情形。"""
+    return [cfg for cfg in configs_of(project_root, script) if cfg.executable]
 
 
 def forget_secrets() -> None:

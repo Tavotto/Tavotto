@@ -13,8 +13,11 @@ macos-x86_64）。分层的意义只有一条：一个平台的 wheel 绝不能�
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
+from textwrap import dedent
 
 try:
     import tomllib
@@ -936,17 +939,8 @@ def _release_signing_gate() -> str:
     return step
 
 
-def test_release_signing_gate_still_hard_fails_on_everything_but_authenticode():
-    """Windows 的 Authenticode 是这道门禁**唯一**的例外，别顺手再开第二个。
-
-    2026-08-22（v0.9.0）把 SignPath 那条从硬失败降成警告：拿不到开源订阅之前，
-    它挡掉的不是「未签名的安装包」而是**整个 Windows 桌面版**，还连带
-    updater-manifest 的两平台硬要求一起落空，于是 macOS 用户也收不到更新。
-
-    但这条例外**极容易被复制**——下一个被某个 secret 卡住的人会照着把 macOS
-    那几条也改成 warning，而那时门禁就只剩一句好听的话。所以逐条钉死：更新包
-    的 minisign 私钥与 macOS 的证书/身份/公证账号仍必须让发行构建**失败**。
-    """
+def test_release_signing_gate_requires_updater_and_macos_credentials():
+    """Authenticode 改为独立 fail-closed 分支，不放松更新包与 macOS 的硬要求。"""
     step = _release_signing_gate()
     hard = [ln.strip() for ln in step.splitlines() if "missing+=" in ln]
     joined = "\n".join(hard)
@@ -957,27 +951,124 @@ def test_release_signing_gate_still_hard_fails_on_everything_but_authenticode():
         "APPLE_ID",
     ):
         assert cred in joined, f"{cred} 不再让发行构建失败——门禁被掏空了"
-    assert "exit 1" in step, "凑齐 missing 之后必须真的退出非零"
-    # 例外只有这一个，而且不许扩散到别处
-    assert "SIGNPATH" not in joined, (
-        "SignPath 是自觉的例外（见 docs/code-signing-policy.md），不该回到硬失败；"
-        "要恢复的话连同这条用例一起改"
-    )
 
 
-def test_unsigned_windows_release_is_loud_not_silent():
-    """降级成 warning 的那一支必须**看得见**，否则就是 P1-07 原本要挡的东西。
+@pytest.fixture
+def run_release_signing_gate(tmp_path):
+    """在隔离 Bash 进程里执行 workflow 原始门禁；只用假值，不签名、不联网。
 
-    审计 P1-07 的真正指控不是「没签名」，是「没签名而且工作流全绿」。所以
-    例外成立的前提是它自己会喊：运行页顶部一条 annotation + job summary 里
-    一段说明。把这两样删掉，这道门禁就退化成一句注释。
+    判据主语：该步在给定平台 / 发行标记 / 凭据状态下的退出码与实际摘要。
+    只识别本 workflow 的 run: | + env: 缩进形状；形状变化时当场失败。
     """
     step = _release_signing_gate()
-    assert "::warning" in step, "未签名的发行必须在运行页顶部留下 annotation"
-    assert "GITHUB_STEP_SUMMARY" in step, (
-        "还要写进 job summary——日志第 33 步里的一行 warning 没人会翻到"
+    match = re.search(r"(?ms)^        run: \|\n(.*?)^        env:", step)
+    assert match, "签名门禁的 Bash 正文未找到"
+    script = dedent(match.group(1))
+    bash = shutil.which("bash")
+    if os.name == "nt":
+        git_exe = shutil.which("git")
+        assert git_exe, "Windows 签名门禁合同需要 Git for Windows"
+        candidates = [parent / "bin" / "bash.exe" for parent in Path(git_exe).parents]
+        bash = next((str(path) for path in candidates if path.is_file()), bash)
+    assert bash, "签名门禁行为合同需要 Bash（Windows 使用 Git for Windows）"
+
+    def run(**overrides):
+        # 不继承真实签名凭据、BASH_ENV 或 shell 启动配置；PATH 只用于定位系统命令。
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "IS_RELEASE_BUILD": "1",
+            "RUNNER_OS": "Windows",
+            "SIGNPATH_ENABLED_VAR": "true",
+            "TAURI_SIGNING_PRIVATE_KEY": "fixture-updater-key",
+            "MACOS_CERTIFICATE": "fixture-certificate",
+            "MACOS_SIGN_IDENTITY": "fixture-identity",
+            "APPLE_ID": "fixture@example.invalid",
+            "GITHUB_STEP_SUMMARY": "summary.md",
+        }
+        if "SYSTEMROOT" in os.environ:
+            env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+        env.update(overrides)
+        result = subprocess.run(
+            [bash, "--noprofile", "--norc", "-c", script],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=15,
+        )
+        summary = tmp_path / "summary.md"
+        return result, summary.read_text(encoding="utf-8") if summary.exists() else ""
+
+    return run
+
+
+@pytest.mark.parametrize("enabled", ["", "false", "TRUE"])
+def test_unsigned_windows_release_is_fail_closed(run_release_signing_gate, enabled):
+    """更新器密钥齐全时也必须因 SignPath 未使能独立失败，不能借 missing 块的 exit。"""
+    result, summary = run_release_signing_gate(SIGNPATH_ENABLED_VAR=enabled)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "::error" in result.stdout
+    assert "::warning" not in result.stdout
+    assert "已拦停" in summary and "Authenticode" in summary
+
+
+@pytest.mark.parametrize("platform", ["Windows", "macOS"])
+def test_non_release_signing_gate_allows_unsigned_trials(run_release_signing_gate, platform):
+    result, summary = run_release_signing_gate(
+        IS_RELEASE_BUILD="0",
+        RUNNER_OS=platform,
+        SIGNPATH_ENABLED_VAR="",
+        TAURI_SIGNING_PRIVATE_KEY="",
+        MACOS_CERTIFICATE="",
+        MACOS_SIGN_IDENTITY="",
+        APPLE_ID="",
     )
-    assert "minisign" in step, "摘要要说清更新链仍可信，否则读的人会以为自动更新也不安全了"
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "非发行构建" in result.stdout
+    assert not summary
+
+
+@pytest.mark.parametrize("platform", ["Windows", "macOS"])
+def test_release_signing_gate_accepts_complete_credentials(run_release_signing_gate, platform):
+    # macOS 不依赖 SignPath；Windows 的 true 只表示凭据门通过，最终签名仍另验。
+    result, _ = run_release_signing_gate(
+        RUNNER_OS=platform, SIGNPATH_ENABLED_VAR="true" if platform == "Windows" else ""
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("platform", "credential"),
+    [
+        ("Windows", "TAURI_SIGNING_PRIVATE_KEY"),
+        ("macOS", "TAURI_SIGNING_PRIVATE_KEY"),
+        ("macOS", "MACOS_CERTIFICATE"),
+        ("macOS", "MACOS_SIGN_IDENTITY"),
+        ("macOS", "APPLE_ID"),
+    ],
+)
+def test_release_signing_gate_rejects_missing_credentials(
+    run_release_signing_gate, platform, credential
+):
+    result, _ = run_release_signing_gate(RUNNER_OS=platform, **{credential: ""})
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert credential in result.stdout and "::error" in result.stdout
+
+
+def test_late_unsigned_windows_gate_only_blocks_releases():
+    """晚期 PowerShell 防线不能把前面明确允许的手动试构建再拦掉。"""
+    wf = (REPO / ".github" / "workflows" / "desktop-tauri.yml").read_text(encoding="utf-8")
+    steps = wf.split("\n      - name:")
+    matches = [step for step in steps if step.startswith(" 未签名即拦停（fail-closed）\n")]
+    assert len(matches) == 1
+    step = matches[0]
+    condition = re.search(r"(?m)^        if: (.+)$", step)
+    assert condition and condition.group(1) == (
+        "runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1'"
+    )
+    assert re.search(r"(?m)^        shell: pwsh$", step)
+    assert re.search(r"(?m)^        run: throw ", step)
 
 
 # ---------------- 真产物（构建过才跑）------------------------------------------

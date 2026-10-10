@@ -60,6 +60,7 @@ from .engine import (
     bakedbaseline as engine_baked,
     bootstrap as engine_bootstrap,
     brand as engine_brand,
+    capabilities as engine_capabilities,
     cli as engine_cli,
     config as engine_config,
     databinding as engine_databinding,
@@ -906,7 +907,8 @@ DESKTOP_REMOTE_WINDOW_FEATURE = "desktop-remote-window"
 def api_version():
     """当前前端构建 id：旧标签页据此发现自己过期并提示刷新。
 
-    `features` 是给别的程序问的能力标记（目前只有桌面壳连远程实例用）：公开端点，
+    `features` 是给别的程序问的能力标记：桌面壳连远程实例（`desktop-remote-window`）与新客户端发新字段之前的
+    协商（`engine/capabilities.py`，T10：不认识的字段会被旧端点静默忽略，所以先问再发）。公开端点，
     只说「这一版会什么」，不带任何项目或机器信息。"""
     try:
         html = (WEB_DIST / "index.html").read_text(encoding="utf-8")
@@ -918,7 +920,7 @@ def api_version():
         {
             "build": build,
             "version": engine_updater.current_version(),
-            "features": [DESKTOP_REMOTE_WINDOW_FEATURE],
+            "features": [DESKTOP_REMOTE_WINDOW_FEATURE, *engine_capabilities.features()],
         }
     )
     resp.headers["Cache-Control"] = "no-store"
@@ -3514,6 +3516,9 @@ def api_registry_scan():
 _PROBES: dict[tuple[str, str], threading.Event] = {}
 #: 在跑的试运行各自的运行配置（T03；`_PROBES` 同一把锁）：取消要杀的是**这份配置**的会话，不是同脚本别的参数的
 _PROBE_RUNS: dict[tuple[str, str], object] = {}
+#: 在跑的试运行最近一次取到的会话与所有权 `(worker, owned)`（T09b；`_PROBES` 同一把锁）：取消按 owner 只关
+#: 这次试运行自己建的那条——渲染路 / 准备会话此刻在同一个池键上的会话一根手指不碰（ADR 0116 §三）
+_PROBE_OWNERS: dict[tuple[str, str], tuple[object, bool | None]] = {}
 _PROBES_LOCK = threading.Lock()
 
 
@@ -3626,6 +3631,12 @@ def api_registry_probe():
         _PROBE_RUNS[key] = run
     attempt_id = f"run-{uuid.uuid4().hex}"
     started = time.monotonic()
+
+    def note_owner(worker, owned):
+        with _PROBES_LOCK:
+            if _PROBES.get(key) is cancel_ev:
+                _PROBE_OWNERS[key] = (worker, owned)
+
     result = {"registered": False, "stems": []}
     failure_response = None
     try:
@@ -3635,6 +3646,7 @@ def api_registry_probe():
             script,
             cost=str(body.get("cost") or "medium"),
             should_cancel=cancel_ev.is_set,
+            on_acquired=note_owner,
             **({"run": run} if run is not None else {}),
         )
         if result.get("registered"):
@@ -3671,6 +3683,7 @@ def api_registry_probe():
         with _PROBES_LOCK:
             _PROBES.pop(key, None)
             _PROBE_RUNS.pop(key, None)
+            _PROBE_OWNERS.pop(key, None)
     # 这次运行里每一问的去向（T08）：只给任务诊断的白名单投影，不进响应体（响应形状不变）
     input_facts = result.pop(engine_probe.INPUT_FACTS_KEY, None)
     # 失败（和成功）那一次的现场冻结成一份小快照（T04）：界面凭 `diagnostic.ref` 一键取回，之后的重试是新的 attempt
@@ -3704,27 +3717,43 @@ def api_registry_probe():
 
 @app.post("/api/registry/probe/cancel")
 def api_registry_probe_cancel():
-    """取消一个在跑的试运行：置取消标志并**当场硬杀**该脚本的 worker 会话。
+    """取消一个在跑的试运行：置取消标志并**当场硬杀这次试运行自己建的** worker 会话。
 
     「取消」必须真正终止工作（Session 5 反证 #3）：只置标志的话，阻塞在
     build 里的慢脚本会一直跑到超时。`pool.force_cancel` 直接 kill 子进程，
     阻塞中的 probe 请求随即拿到 EOF → execution_cancelled。幂等：没有在跑
     的返回 `{cancelling: false}`——「取消」与「跑完」天然赛跑，输了不是错误
     （跑完的照常登记，probe_and_register 的注释写明了这条语义）。
+
+    **按 owner**（T09b，ADR 0116 §三）：杀的是这次试运行取到的那一条（`expected_worker`），不是此刻池键上的随便哪条——
+    试运行换入口之间渲染路可能已在同一个键上起了自己的会话。那条是别人的（`owned is False`：试运行取到的是渲染路正在用的
+    同键会话）就不碰，只置标志；还没取到会话时同样只置标志，取到那一刻由 `probe` 按同一规则处理。顺序：**先置标志、再读
+    所有权**——与 probe 那一侧「先记所有权、再看标志」配成对，两边至少有一边看得见对方。
     """
     ctx = current_ctx()
     body = request.get_json(force=True)
     script = str(body.get("script") or "").strip()
+    key = (ctx.id, script)
     # 取消标志与运行配置必须在**同一把锁**里一起取：分两次加锁的话，带参数的试运行恰好在两次之间收尾
     # （finally 把两张表都删了），run 会被读成 None，force_cancel 就打到同脚本无参数的 worker 上，
     # 误杀别的面板的活会话。条目已经不在了 = 输了赛跑，按「没有在跑的」返回，什么也不杀。
     with _PROBES_LOCK:
-        ev = _PROBES.get((ctx.id, script))
-        run = _PROBE_RUNS.get((ctx.id, script))
+        ev = _PROBES.get(key)
+        run = _PROBE_RUNS.get(key)
     if ev is None:
         return jsonify({"cancelling": False})
     ev.set()  # 先置标志再杀：probe 醒来时答案已经在了
-    engine_pool.force_cancel(script, str(ctx.path), **({"run": run} if run is not None else {}))
+    with _PROBES_LOCK:
+        owner = _PROBE_OWNERS.get(key) if _PROBES.get(key) is ev else None
+    if owner is not None and owner[1] is not False:
+        worker = owner[0]
+        if not engine_pool.force_cancel(
+            script,
+            str(ctx.path),
+            expected_worker=worker,
+            **({"run": run} if run is not None else {}),
+        ):
+            worker.force_kill()  # 已经不在池里（被换掉 / 摘掉）却仍是这次在等的那条：只杀它，不碰替换者
     return jsonify({"cancelling": True})
 
 
@@ -7018,12 +7047,18 @@ def _preparation_target(rel_id: str) -> dict:
 
 def _preparation_runner(pl, before_retry=None):
     """「真的把 runtime 起起来」只有一份实现：`pool.build_owned`（`pool.build` + 所有权，带一次项目环境
-    自动 fallback）。这里不另写 get + ensure_built。"""
+    自动 fallback）。这里不另写 get + ensure_built。
+
+    取到会话那一刻把所有权报给 `PreparationService.note_owner`（T09）：明确取消据此当场只关本计划新建的会话，
+    共享会话的等待者只停自己的等待。"""
     return engine_pool.build_owned(
         pl.script,
         pl.project_root,
         pl.entry,
         before_retry=before_retry,
+        on_acquired=lambda worker, created: engine_preparation.SERVICE.note_owner(
+            pl.plan_id, worker, created
+        ),
         # T03：计划冻结的运行配置；没有配置时调用形状与以前一致
         **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
     )
@@ -7257,7 +7292,9 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     )
     engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
     refresh_project(ctx, reason="probe", allow_static_merge=False)
-    return {"registered": True}
+    # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
+    unlinked = list(registered.get("unlinked_stems") or [])
+    return {"registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
 
 
 def _publish_preparation_session(payload: dict) -> None:
@@ -7665,7 +7702,22 @@ def _set_project_environment(
     root = str(require_project())
     if module and not engine_projectenv.valid_module_name(module):
         module = ""
-    if raw or user_environment or candidate:
+    if candidate and not user_environment:
+        # 环境建议上的「使用」：判据与写入只在 `envadvice.adopt_candidate`（MCP 的 `adopt_environment=` 同一个，T10）
+        try:
+            health = engine_envadvice.adopt_candidate(
+                root,
+                script or None,
+                candidate,
+                expected_generation=expected_generation,
+                module=module,
+            )
+        except engine_envlease.EnvironmentBusy as exc:
+            return _environment_busy(exc)
+        except engine_envadvice.AdoptionRefused as exc:
+            return _adoption_refused(exc)
+        return jsonify({"ok": True, "health": health, "project": _project_environment_state()})
+    if raw or user_environment:
         pinned = engine_pool.explicit_worker_python()
         if pinned:
             # 全局显式选择压过一切项目级决定（`resolve_worker_python` 第 1、2 档）：这里写下去的记录永远不会被用到，
@@ -7677,33 +7729,6 @@ def _set_project_environment(
                 }
             ), 409
     health: dict | None = None
-    adopted_from = ""
-    if candidate:
-        found = engine_envadvice.candidate_python(root, script or None, candidate)
-        if found is None:
-            return jsonify(
-                {
-                    "error": "这个候选环境已经找不到了，请重新检查",
-                    "code": "environment_candidate_gone",
-                }
-            ), 400
-        if not expected_generation:
-            # 采用必须绑着用户看到那一刻的环境代：不传就等于「采用此刻碰巧在那儿的任何环境」
-            return jsonify(
-                {
-                    "error": "采用候选环境需要带上你确认时看到的环境版本，请重新查看再确认",
-                    "code": "environment_generation_required",
-                }
-            ), 400
-        if engine_projectenv.environment_generation(found) != expected_generation:
-            return jsonify(
-                {
-                    "error": "这个环境在你确认之前被重建过，请重新查看再确认",
-                    "code": "environment_changed",
-                }
-            ), 409
-        raw = found
-        adopted_from = engine_projectenv.TRIGGER_RECOMMENDED
     if user_environment:
         # 依赖弹窗里点的「改用这个环境」（ADR 0079）：界面只拿得到 id，路径由后端自己的发现结果换回，
         # 并按此刻的计划**重新**量一次装没装齐——「还被发现得到」不等于「还装齐」（弹窗开着期间环境变了，
@@ -7785,46 +7810,34 @@ def _set_project_environment(
         return _environment_busy(
             engine_envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
         )
-    adopt_stale = False
-
-    def _commit():
-        nonlocal adopt_stale
-        # 候选采用的最后一道：体检（可能数十秒）期间环境可能被重建，health 量的就不是用户确认的那一代。
-        # 紧贴写入再比一次，不符就什么都不记
-        if adopted_from and engine_projectenv.environment_generation(str(candidate)) != (
-            expected_generation
-        ):
-            adopt_stale = True
-            return None
-        return engine_projectenv.remember(
+    try:
+        saved = engine_deprepair.unless_installing(
             root,
-            str(candidate),
-            automatic=False,
-            trigger=(
-                adopted_from
-                or (
+            lambda: engine_projectenv.remember(
+                root,
+                str(candidate),
+                automatic=False,
+                trigger=(
                     engine_deprepair.TRIGGER_USER_ENVIRONMENT
                     if user_environment
                     else "missing_dependency"
                     if module
                     else "user_selected"
-                )
+                ),
+                module=module,
+                health=health,
             ),
-            module=module,
-            health=health,
         )
-
-    try:
-        engine_deprepair.unless_installing(root, _commit)
     except engine_envlease.EnvironmentBusy as exc:
         return _environment_busy(exc)
-    if adopt_stale:
+    if not saved:
+        # 项目设置写不进去（只读 / 满）：解析器没变，不重置池、不报成功（Codex #818 r4220889695）
         return jsonify(
             {
-                "error": "这个环境在你确认之前被重建过，请重新查看再确认",
-                "code": "environment_changed",
+                "error": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
+                "code": engine_envadvice.ERROR_SAVE_FAILED,
             }
-        ), 409
+        ), 500
     engine_pool.reset_worker_python()
     engine_pool.shutdown_all(root)
     return jsonify({"ok": True, "health": health, "project": _project_environment_state()})
@@ -7833,6 +7846,25 @@ def _set_project_environment(
 def _environment_busy(exc: "engine_envlease.EnvironmentBusy"):
     """环境正被依赖安装占着：采用 / 选回默认被拒（409，稳定 code），让用户等安装结束。"""
     return jsonify({"error": str(exc), "code": exc.code}), 409
+
+
+def _adoption_refused(exc: "engine_envadvice.AdoptionRefused"):
+    """`envadvice.adopt_candidate` 没采用 → 与手填路径同一组 code 与形状（体检不过给项目相对路径与版本）。"""
+    if exc.health is not None:
+        return jsonify(
+            {
+                "error": _project_env_message(exc.health),
+                "code": exc.code,
+                "params": {
+                    "path": _project_relative(exc.python),
+                    "python_version": exc.health.get("python_version", ""),
+                },
+            }
+        ), exc.status
+    body = {"error": str(exc), "code": exc.code}
+    if exc.python:
+        body["params"] = {"path": _project_relative(exc.python)}
+    return jsonify(body), exc.status
 
 
 def _project_env_message(health: dict) -> str:
