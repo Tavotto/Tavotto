@@ -1217,13 +1217,14 @@
           "unexpected_response": "The diagnostics service returned an unexpected result. Try again later.",
           "internal": "An internal error occurred and nothing was sent. Save the bundle and report it."
         },
-        "packageGone": "This bundle was held too long and has been discarded. Close this window, reopen it and send again.",
+        "packageGone": "This bundle is no longer held by the engine (the app may have restarted). Prepare it again before sending, or use Export diagnostics in Settings to save one locally.",
         "sentence": "Sends a diagnostics bundle — no data or script contents.",
         "details": "Show details",
         "bestEffort": "Redaction is best-effort and not guaranteed; you can save and inspect the bundle before sending.",
         "noteAttached": "Anything you write here is sent as typed, together with the bundle.",
         "policy": "Privacy policy",
-        "cardButton": "Send problem report"
+        "cardButton": "Send problem report",
+        "reprepare": "Prepare again"
       }
     },
     "export": {

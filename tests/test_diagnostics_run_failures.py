@@ -153,7 +153,7 @@ def test_run_summary_never_leaks_script_path_argv_or_message(opened, monkeypatch
     assert PRIVATE_MODULE not in texts["report.json"]
     assert "mod:" in texts["report.json"]
     manifest = json.loads(texts["manifest.json"])
-    assert manifest["schema_version"] == engine_diagnostics.BUNDLE_SCHEMA_VERSION == 6
+    assert manifest["schema_version"] == engine_diagnostics.BUNDLE_SCHEMA_VERSION == 7
 
 
 def test_failed_preparation_is_counted_and_records_missing_dependency(

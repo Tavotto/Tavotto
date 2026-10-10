@@ -36,6 +36,7 @@ import {
   type DiagSendStatus,
 } from '@/lib/api'
 import { t } from '@/i18n'
+import { setCurrentProjectId } from '@/lib/session'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
 import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -372,6 +373,113 @@ describe('发送', () => {
     expect(statusMock.mock.calls.length).toBe(calls)
     expect(discardMock).toHaveBeenCalledWith('pid-1')
     root = createRoot(host)
+  })
+})
+
+describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，绝不发旧项目的包', () => {
+  afterEach(() => setCurrentProjectId(null))
+
+  it('备包完成后切项目：旧包被丢弃并重新备包，发送用的是新 id', async () => {
+    setCurrentProjectId('A')
+    prepareMock.mockResolvedValueOnce({ ...PREPARED, id: 'pid-A' }).mockResolvedValueOnce({ ...PREPARED, id: 'pid-B' })
+    startMock.mockResolvedValue(status({ id: 'pid-B' }))
+    statusMock.mockResolvedValue(status({ id: 'pid-B' }))
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(1)
+    await act(async () => setCurrentProjectId('B'))
+    await act(async () => {})
+    expect(discardMock).toHaveBeenCalledWith('pid-A')
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    await click(q('[data-diag-send-confirm]'))
+    expect(startMock).toHaveBeenCalledTimes(1)
+    expect(startMock.mock.calls[0][0]).toBe('pid-B')
+  })
+
+  it('备包还在路上时切项目：晚到的旧响应被丢弃（并通知引擎释放），不会被拿去发送', async () => {
+    setCurrentProjectId('A')
+    let resolveOld!: (p: DiagSendPrepared) => void
+    prepareMock
+      .mockReturnValueOnce(new Promise((r) => (resolveOld = r)))
+      .mockResolvedValueOnce({ ...PREPARED, id: 'pid-new' })
+    startMock.mockResolvedValue(status({ id: 'pid-new' }))
+    statusMock.mockResolvedValue(status({ id: 'pid-new' }))
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => setCurrentProjectId('B'))
+    await act(async () => {})
+    await act(async () => resolveOld({ ...PREPARED, id: 'pid-old' }))
+    expect(discardMock).toHaveBeenCalledWith('pid-old')
+    await click(q('[data-diag-send-confirm]'))
+    expect(startMock.mock.calls.map((c) => c[0])).toEqual(['pid-new'])
+  })
+
+  it('发送中切项目：会话被取消（丢弃）并重新备包', async () => {
+    setCurrentProjectId('A')
+    prepareMock.mockResolvedValueOnce({ ...PREPARED, id: 'pid-A' }).mockResolvedValueOnce({ ...PREPARED, id: 'pid-B' })
+    startMock.mockResolvedValue(status({ id: 'pid-A' }))
+    statusMock.mockResolvedValue(status({ id: 'pid-A', stage: 'upload', sent: 1, total: 10 }))
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => {})
+    await click(q('[data-diag-send-confirm]'))
+    await act(async () => setCurrentProjectId('B'))
+    await act(async () => {})
+    expect(discardMock).toHaveBeenCalledWith('pid-A')
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(q('[data-diag-send-confirm]')).not.toBeNull()
+  })
+})
+
+describe('引擎丢了会话（Codex #923 P2）：状态 404 是终态，不无限轮询、不困住用户', () => {
+  it.each(['sending', 'cancelling'] as const)('%s 时 404：停止轮询、解除封锁、给「重新准备」', async (phase) => {
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockRejectedValue(new ApiError('gone', 404, { code: 'diag_send_not_found' }))
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    if (phase === 'cancelling') await click(q('[data-diag-send-cancel]'))
+    await tick()
+    const calls = statusMock.mock.calls.length
+    expect(calls).toBeGreaterThan(0)
+    expect(q('[data-diag-send-status]')!.textContent).toContain(ds('packageGone'))
+    expect(q('[data-diag-send-reprepare]')).not.toBeNull()
+    expect(q('[data-diag-send-dismiss]')).not.toBeNull()
+    await tick(3000)
+    expect(statusMock.mock.calls.length).toBe(calls)
+    // 不再 blockDismiss：「关闭」真的能关
+    await click(q('[data-diag-send-dismiss]'))
+    expect(closed).toEqual([false])
+    // 重新准备：再备一次包
+    prepareMock.mockResolvedValue({ ...PREPARED, id: 'pid-2' })
+    await click(q('[data-diag-send-reprepare]'))
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(q('[data-diag-send-confirm]')).not.toBeNull()
   })
 })
 

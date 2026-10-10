@@ -151,7 +151,7 @@ def test_get_bundle_still_works_and_keeps_the_old_three_files(client):
 def test_manifest_declares_its_own_schema(client):
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["schema_version"] == 6
+    assert manifest["schema_version"] == 7
     assert manifest["frontend_snapshot_schema"] == 1
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"
@@ -1387,3 +1387,62 @@ def test_both_control_planes_say_which_interpreter_was_missing_the_module():
     err = wd._to_worker_error(_SupervisorError("x"))
     assert err.code == "missing_dependency"
     assert err.python_source == engine_pool.SOURCE_BUNDLED
+
+
+# ---------------------------------------------------------------- 网址只留 origin（schema 7，Codex #923 P2）
+URL_CANARIES = [
+    "https://user:CANARY_PW_1@gw.example.com:8443/v1",
+    "https://gw.example.com/v1?access_token=CANARY_TOK_2",
+    "https://gw.example.com/v1?key=CANARY_KEY_3&x=1",
+    "https://gw.example.com/v1#token=CANARY_FRAG_4",
+    "https://gw.example.com/CANARY_PATHKEY_5/v1/",
+    "http://[::1]:9/CANARY_PATHKEY_6?k=CANARY_KEY_7",
+]
+
+
+@pytest.mark.parametrize("url", URL_CANARIES)
+def test_custom_endpoint_url_keeps_only_its_origin_in_export_and_sent_bundle(client, url):
+    import zipfile as _zf
+    from io import BytesIO as _B
+
+    from tavotto.engine import ai_bridge, ai_providers
+
+    for rec in ai_providers.list_providers():  # 配置目录是共享的：先清空，免得留给后面的用例
+        ai_providers.delete(rec["id"])
+    ai_providers.save({"label": "Gateway", "agent": "claude", "api_key": "sk-x", "base_url": url})
+    ai_bridge.invalidate_capabilities()  # 能力表有进程级缓存：改过第三方接口必须清
+    bundles = [
+        client.get("/api/diagnostics/bundle").data,
+        client.post("/api/diagnostics/bundle", json={}).data,
+    ]
+    # 发送包与导出共用 `_build_diagnostics_bundle`（`test_diag_send_api` 钉同一份字节）；这里直接取它
+    with m.app.test_request_context("/api/diagnostics/send/prepare"):
+        bundles.append(m._build_diagnostics_bundle())
+    for data in bundles:
+        z = _zf.ZipFile(_B(data))
+        blob = "\n".join(z.read(n).decode("utf-8", "replace") for n in z.namelist())
+        assert "CANARY" not in blob, [
+            n for n in z.namelist() if "CANARY" in z.read(n).decode("utf-8", "replace")
+        ]
+        report = json.loads(z.read("report.json"))
+        shown = report["ai_endpoints"][0]["base_url"]
+        assert shown.startswith(("http://", "https://")) and "?" not in shown and "#" not in shown
+        assert shown.count("/") == 2 and "@" not in shown, shown
+        assert (
+            json.loads(z.read("manifest.json"))["schema_version"]
+            == engine_diagnostics.BUNDLE_SCHEMA_VERSION
+            == 7
+        )
+    for rec in ai_providers.list_providers():
+        ai_providers.delete(rec["id"])
+    ai_bridge.invalidate_capabilities()
+
+
+def test_url_fact_and_url_keys_in_generic_objects():
+    f = engine_diagnostics._url_fact
+    assert f("https://a.b:8443/x?y#z") == "https://a.b:8443"
+    assert f("not a url").startswith("url:") and f("ftp://h/CANARY").startswith("url:")
+    out = engine_diagnostics._redact_obj(
+        {"proxy_url": "https://u:p@h/CANARY?k=v", "endpoint": "https://h/CANARY", "name": "x"}
+    )
+    assert out == {"proxy_url": "https://h", "endpoint": "https://h", "name": "x"}

@@ -187,7 +187,7 @@
 
 - 先脱敏再交出、项目清单只留条数
 - 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
-- report.json 换形必升 bundle schema（现 6；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`）
+- report.json 换形必升 bundle schema（现 7；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
 - 不写盘不上传不进 telemetry
@@ -270,3 +270,11 @@
 - 看护：`tests/test_diag_send.py`（对端是 `tests/support/diag_fakes.py` 的本地模拟：零请求、主路径、幂等重试、每个状态码、SSRF / 重定向 / 字段注入、取消、超限与坏包、
   金丝雀不泄漏、契约对账）、`tests/test_diag_send_api.py`（Flask 层）、`tests/test_outbound_https_trust.py`（第五处出站）。真实 COS C1–C16 与真机 WebView 联调**未做（NOT_RUN）**，
   模拟契约通过不等于真 COS 通过。
+
+## 网址只留 origin（bundle schema 7，Codex #923 P2）
+
+自定义 AI 接口的 `base_url` 可能带凭据：userinfo（`user:pass@`）、查询串（`?access_token=` / `?key=`）、片段（`#token=`）、路径段（`/v1/<key>`）——按**键名**认密钥的 `_redact_obj` 认不出。
+按出处放行：`report.json` 的 `ai_endpoints[].base_url` 与 `_redact_obj` 里**任何键名以 `url` / `uri` / `endpoint` 结尾的字符串值**，一律经 `_url_fact`，只留 `scheme://host[:port]`
+（解析不出 / 不是 http(s)/ws(s) 的 `url:<sha1 前 10 位>`）。这是 report 字段值的语义变化，所以 bundle schema 升到 7（`web/src/diagnostics/types.ts` 同步）。
+新加任何网址形字段：键名以 url/uri/endpoint 结尾即自动受益；叫别的名字就在构造处显式过 `_url_fact`。看护：`tests/test_diagnostics_bundle.py` 的网址金丝雀用例（导出包与发送包全文搜）。
+

@@ -80,7 +80,7 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: 稳定错误码计数、逐条的 outcome + error_code；2026-10 Windows 实测脚本跑失败多次，recent_errors / worker_logs /
 #: missing_dependencies 全空）；缺依赖现场也开始覆盖试运行与准备两条路（此前只有渲染端点）。
 #: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
-BUNDLE_SCHEMA_VERSION = 6
+BUNDLE_SCHEMA_VERSION = 7
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -314,6 +314,28 @@ def redact_text(text: str) -> str:
     return _redact_text(text)
 
 
+#: 键名以这些结尾的字符串值是**网址**：只留 `scheme://host[:port]`（`_url_fact`）。按出处放行——网址里
+#: 凭据能藏在 userinfo、查询串（`?access_token=`）、片段（`#token=`）与路径段（`/v1/<key>/…`），
+#: 按键名认密钥的脱敏器认不出它们（Codex #923 P2：自定义 AI 接口的 `base_url`）。
+_URL_KEY_SUFFIXES = ("url", "uri", "endpoint")
+
+
+def _url_fact(value: str) -> str:
+    """网址 → `scheme://host[:port]`；没有 userinfo / 路径 / 查询串 / 片段。解析不出就 `url:<哈希>`。"""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(value.strip())
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        host, port, parts = None, None, None
+    if parts is None or not host or parts.scheme not in ("http", "https", "ws", "wss"):
+        return f"url:{hashlib.sha1(value.encode('utf-8', 'replace')).hexdigest()[:10]}"
+    shown = f"[{host}]" if ":" in host else host
+    return f"{parts.scheme}://{shown}" + (f":{port}" if port else "")
+
+
 def _redact_obj(obj, roots: list[tuple[str, str]] | None = None):
     """结构化数据脱敏：按键名判定的敏感字段整体换掉，其余走文本规则（`roots` 同 `_redact_text`）。"""
     if isinstance(obj, dict):
@@ -322,6 +344,8 @@ def _redact_obj(obj, roots: list[tuple[str, str]] | None = None):
             key = str(k).lower()
             if any(s in key for s in _SECRET_KEYS) or key in _PSEUDONYM_KEYS:
                 out[k] = "***" if v else v
+            elif key.endswith(_URL_KEY_SUFFIXES) and isinstance(v, str) and v:
+                out[k] = _url_fact(v)
             elif key in _USER_INVENTORY_KEYS:
                 # 「用户还有哪些项目」是一份**目录清单**：每条都带项目名与路径，
                 # 而排障一次都用不到它——要看的是**当前**这个项目（report.json
@@ -1698,7 +1722,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
                 "id": e["id"],
                 "label": e["label"],
                 "agent": e["agent"],
-                "base_url": e["base_url"],
+                "base_url": _url_fact(e["base_url"]) if e["base_url"] else "",
                 "has_key": e["has_key"],
             }
             for e in caps.get("endpoints", [])

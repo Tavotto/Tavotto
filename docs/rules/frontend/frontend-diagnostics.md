@@ -72,3 +72,7 @@
   **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。确认框默认只露一句话「将发送诊断包，不含你的数据和脚本内容。」+「发送」+「关闭」，其余
   （内容类别、保存 ZIP、类型、说明、保存期、隐私政策链接、「脱敏尽力而为」）全在默认收起的「查看详情」里；用户在说明框写的字会原样附上，框旁写明。那句承诺由
   `tests/test_diagnostics_bundle.py` / `test_diagnostics_log_privacy.py` 的金丝雀全文搜索撑着（源码行略去、异常 message 不出门、路径哈希化）；这两处任何一处放松，那句话就得先改。
+- **项目代次与引擎丢会话（Codex #923）。** 备包流程绑定当前项目：`DiagnosticsSendDialog` 订阅 `onCurrentProjectChange`，对话框开着时项目一换（外部 `tavotto open`、切项目）就让备包重来——
+  旧包随清理 `discardDiagSend`（发送中等于取消）、在途的旧备包响应按代号丢弃并通知引擎释放；`send()` 还会在发那一刻核对备包时的项目，不一致就不发、重新备包。
+  状态轮询遇到 404（引擎重启 / 会话过期）是**终态**：停止轮询、解除 `blockDismiss`、说「已不在引擎里」并给「重新准备」，绝不把用户困在模态框里（`DiagnosticsSendDialog.test.tsx` 的「项目代次」「引擎丢了会话」两组，sending 与 cancelling 两态都测）。
+

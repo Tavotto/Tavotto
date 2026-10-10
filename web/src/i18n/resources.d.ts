@@ -1567,7 +1567,7 @@ export default interface Resources {
           "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
           "noteLabel": "补充说明（可选）",
           "open": "发送…",
-          "packageGone": "这份诊断包放得太久，已经被清掉了。请关闭后重新打开，再发送一次。",
+          "packageGone": "这份诊断包已经不在引擎里了（应用可能重启过）。请重新准备后再发送；也可以用设置里的「导出诊断包」保存到本地。",
           "policy": "隐私政策",
           "prepareFailed": "没能生成诊断包。可以关闭后重试，或改用「导出诊断包」保存到本地。",
           "preparing": "正在生成诊断包…",
@@ -1578,6 +1578,7 @@ export default interface Resources {
             "upload": "正在上传 {{percent}}%"
           },
           "reportId": "报告编号",
+          "reprepare": "重新准备",
           "retention": "报告保存 {{days}} 天，只有 Tavotto 维护者能读取，与匿名统计的标识没有关联。",
           "retry": "重试",
           "retryInHours_other": "请在约 {{count}} 小时后再试。",

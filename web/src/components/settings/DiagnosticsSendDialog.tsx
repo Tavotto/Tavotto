@@ -15,6 +15,7 @@ import {
   ApiError,
 } from '@/lib/api'
 import { PRIVACY_DOC_URL } from '@/lib/brand'
+import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { Button } from '../ui/Button'
 import { Details, Summary } from '../ui/Details'
 import { Dialog } from '../ui/Dialog'
@@ -99,6 +100,10 @@ export function DiagnosticsSendDialog({
   const idRef = useRef<string | null>(null)
   /** 这一次打开的代号：晚到的 prepare 响应认它，过期的直接丢（并通知引擎释放）。 */
   const gen = useRef(0)
+  /** 备包那一刻属于哪个项目；诊断包带着那个项目的状态，项目一换这份包就不是「现在这个项目」的了。 */
+  const packagePj = useRef<string | null>(null)
+  /** 换代计数：项目切换 / 用户点「重新准备」都让备包流程重来一遍（旧包随清理被丢弃）。 */
+  const [epoch, setEpoch] = useState(0)
 
   const discard = useCallback(() => {
     const id = idRef.current
@@ -118,6 +123,7 @@ export function DiagnosticsSendDialog({
     setSaveState('idle')
     setCancelledNotice(false)
     setPackageGone(false)
+    packagePj.current = currentProjectId()
     void prepareDiagSend(buildDiagnosticPayload())
       .then((p) => {
         if (gen.current !== mine) {
@@ -135,7 +141,14 @@ export function DiagnosticsSendDialog({
       gen.current++
       discard()
     }
-  }, [open, discard])
+  }, [open, epoch, discard])
+
+  // 对话框开着时项目被换掉（外部 `tavotto open`、切项目）：旧项目的包（含在途的备包响应、发送中的会话）
+  // 一律丢弃，并重新备包——绝不拿 A 项目的诊断包在 B 项目的界面上发出去（Codex #923 P1）
+  useEffect(() => {
+    if (!open) return
+    return onCurrentProjectChange(() => setEpoch((e) => e + 1))
+  }, [open])
 
   // 发送中：轮询引擎状态（引擎在后台线程里跑，这里只读）
   useEffect(() => {
@@ -155,8 +168,14 @@ export function DiagnosticsSendDialog({
           setCancelledNotice(true)
           return setPhase('ready')
         }
-      } catch {
-        /* 单次读失败不改变结论，下一拍再读 */
+      } catch (e) {
+        // 404 = 引擎里已经没有这个会话（引擎重启过 / 会话过期）：终态，不是暂时故障——再轮询只会把用户困在模态框里
+        if (!stop && e instanceof ApiError && e.status === 404) {
+          setPackageGone(true)
+          setStatus({ code: 'internal', retryable: false } as DiagSendStatus)
+          return setPhase('failed')
+        }
+        /* 其余单次读失败不改变结论，下一拍再读 */
       }
       if (!stop) timer = window.setTimeout(() => void tick(), POLL_MS)
     }
@@ -170,6 +189,11 @@ export function DiagnosticsSendDialog({
   const send = () => {
     const id = idRef.current
     if (!id || (phase !== 'ready' && phase !== 'failed')) return
+    if (packagePj.current !== currentProjectId()) {
+      // 项目已换而监听还没来得及重渲：不发旧包，重新备包
+      setEpoch((e) => e + 1)
+      return
+    }
     setCancelledNotice(false)
     setPhase('sending')
     setStatus(null)
@@ -277,13 +301,17 @@ export function DiagnosticsSendDialog({
           <Button variant="ghost" size="lg" onClick={cancelSending} disabled={phase === 'cancelling'} data-diag-send-cancel>
             {ds('cancelSending')}
           </Button>
-        ) : phase === 'done' || closeOnly || nonRetryableFailure ? undefined : (
+        ) : phase === 'done' || (!packageGone && (closeOnly || nonRetryableFailure)) ? undefined : (
           <Button variant="ghost" size="lg" onClick={() => onOpenChange(false)} data-diag-send-dismiss>
             {ds('close')}
           </Button>
         ),
         primary:
-          closeOnly || nonRetryableFailure ? (
+          packageGone && phase === 'failed' ? (
+            <Button variant="primary" size="lg" onClick={() => setEpoch((e) => e + 1)} data-diag-send-reprepare>
+              {ds('reprepare')}
+            </Button>
+          ) : closeOnly || nonRetryableFailure ? (
             <Button variant="primary" size="lg" onClick={() => onOpenChange(false)} data-diag-send-close>
               {phase === 'done' ? ds('done') : ds('close')}
             </Button>
