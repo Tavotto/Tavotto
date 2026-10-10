@@ -679,3 +679,57 @@ class TestSetBuildConcurrencySource:
         assert brand.CODEX_PLUGIN_SOURCE_URL in MQ.PLUGIN_STABLE_URLS
         assert MQ.PLUGIN_STABLE_SUBDIR == f"./{brand.CODEX_PLUGIN_SUBDIR}"
         assert MQ.PLUGIN_STABLE_BRANCH == brand.CODEX_PLUGIN_STABLE_BRANCH
+
+
+class TestVerifyLive:
+    """只读对拍：线上 merge_queue 参数 vs 仓库副本，以及 Gate 闭包 job 上限的余量。"""
+
+    CI_TEXT = """
+jobs:
+  ci-fast-gate:
+    needs: [a]
+    timeout-minutes: 10
+  ci-integration-gate:
+    needs: [b]
+    timeout-minutes: 10
+  a:
+    timeout-minutes: 90
+  b:
+    timeout-minutes: 60
+"""
+
+    @staticmethod
+    def _api(params):
+        calls = []
+
+        def api(path, *, method="GET", body=None):
+            calls.append((method, path))
+            if path == f"repos/{REPO}":
+                return {"default_branch": "main"}
+            if path == f"repos/{REPO}/rules/branches/main":
+                return [{"type": "merge_queue", "parameters": params}, {"type": "deletion"}]
+            raise AssertionError(path)
+
+        api.calls = calls
+        return api
+
+    def test_ok(self, capsys):
+        api = self._api(dict(MQ.MERGE_QUEUE_PARAMS))
+        assert MQ.cmd_verify_live(api, REPO, self.CI_TEXT) == 0
+        assert "verify-live OK" in capsys.readouterr().out
+        assert all(m == "GET" for m, _ in api.calls)
+
+    def test_param_drift(self, capsys):
+        p = dict(MQ.MERGE_QUEUE_PARAMS, max_entries_to_build=2)
+        assert MQ.cmd_verify_live(self._api(p), REPO, self.CI_TEXT) == 1
+        assert "max_entries_to_build" in capsys.readouterr().err
+
+    def test_insufficient_headroom(self, capsys):
+        p = dict(MQ.MERGE_QUEUE_PARAMS, check_response_timeout_minutes=100)
+        assert MQ.cmd_verify_live(self._api(p), REPO, self.CI_TEXT) == 1
+        assert "余量不足 a" in capsys.readouterr().err
+
+    def test_main_dispatches_verify_live(self, monkeypatch):
+        api = self._api(dict(MQ.MERGE_QUEUE_PARAMS))
+        monkeypatch.setattr(MQ, "gh_api", api)
+        assert MQ.main(["verify-live", "--repo", REPO]) == 0

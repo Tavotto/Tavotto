@@ -43,6 +43,19 @@ jobs:
   # 真的在量**（那批 Windows 更新包就是 deflate 的坏产物）。下一个正式版本
   # 发布后它会转绿。发布前看到红灯，请不要来「修」这个门禁。
   # ────────────────────────────────────────────────────────────────
+  # 合并队列参数的线上对拍（只读）：线上 merge_queue 规则 == 仓库副本，且两个 CI Gate
+  # 闭包里每个 job 的上限 ≤ 线上等待上限 − 30。用公开的 rules/branches 端点，
+  # `contents: read` 的 GITHUB_TOKEN 就够（不碰 rulesets 管理端点）。
+  merge-queue-live-check:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: verify-live（只读）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/merge_queue_ruleset.py verify-live --repo "${{ github.repository }}"
+
   updater-consumer-fidelity:
     timeout-minutes: 60  # 上限是防挂死、不是性能预算：把损失从「无限」变成「有界」
     runs-on: ubuntu-latest

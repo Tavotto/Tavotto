@@ -44,6 +44,7 @@ import base64
 import copy
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -529,9 +530,89 @@ def cmd_apply(
     return 0
 
 
+# ---------------------------------------------------------------- verify-live（只读）
+
+CI_WORKFLOW = Path(".github/workflows/ci.yml")
+CI_GATE_JOBS = ("ci-fast-gate", "ci-integration-gate")
+#: job 上限与队列等待上限之间至少留多少分钟（排队 + Gate 调度 + 重试）。
+QUEUE_HEADROOM_MINUTES = 30
+
+
+def gate_closure_timeouts(ci_text: str) -> dict[str, int]:
+    """两个 CI Gate 的 `needs` 传递闭包里每个 job 的 job 级 `timeout-minutes`。
+
+    PR 期测试（tests/test_merge_queue_workflows.py）与 `verify-live` 共用这一份解析，
+    是「必需 job 的上限」的唯一读法。读不出来当场抛——空闭包比没有判据更坏。"""
+    code = "\n".join(ln for ln in ci_text.splitlines() if not ln.lstrip().startswith("#"))
+
+    def block(job_id: str) -> str:
+        m = re.search(rf"(?m)^  {re.escape(job_id)}:\n(.*?)(?=^  [\w-]+:|\Z)", code, re.S)
+        if not m:
+            raise MigrationError(f"ci.yml 里切不出 job `{job_id}`")
+        return m.group(0)
+
+    seen: set[str] = set()
+    todo = list(CI_GATE_JOBS)
+    while todo:
+        text = block(todo.pop())
+        m = re.search(r"(?m)^    needs:\s*\[([^\]]+)\]", text)
+        for n in (s.strip() for s in m.group(1).split(",")) if m else ():
+            if n not in seen:
+                seen.add(n)
+                todo.append(n)
+    if not seen:
+        raise MigrationError("两个 CI Gate 的 needs 闭包读空了——ci.yml 形状变了？")
+    out: dict[str, int] = {}
+    for job_id in sorted(seen):
+        m = re.search(r"(?m)^    timeout-minutes: (\d+)", block(job_id))
+        if not m:
+            raise MigrationError(f"{job_id} 没有 job 级 timeout-minutes")
+        out[job_id] = int(m.group(1))
+    return out
+
+
+def cmd_verify_live(api, repo: str, ci_text: str) -> int:
+    """只读：线上 merge_queue 参数 == `MERGE_QUEUE_PARAMS`，且闭包内每个 job 的上限
+    ≤ 线上等待上限 − 30。用公开的 `rules/branches/<默认分支>` 读（不需要管理员令牌）。"""
+    branch = default_branch(api, repo)
+    rules = api(f"repos/{repo}/rules/branches/{branch}")
+    live = [r for r in rules if r.get("type") == "merge_queue"]  # type: ignore[union-attr]
+    if len(live) != 1:
+        raise MigrationError(f"{branch} 上生效的 merge_queue 规则有 {len(live)} 条，期望 1 条")
+    params = live[0].get("parameters", {})
+    problems: list[str] = []
+    for key in sorted(set(MERGE_QUEUE_PARAMS) | set(params)):
+        want, got = MERGE_QUEUE_PARAMS.get(key), params.get(key)
+        if want != got:
+            problems.append(f"参数漂移 {key}: 仓库副本 {want!r} / 线上 {got!r}")
+    deadline = params.get("check_response_timeout_minutes")
+    timeouts = gate_closure_timeouts(ci_text)
+    if not isinstance(deadline, int):
+        problems.append(f"线上没有 check_response_timeout_minutes（{deadline!r}）")
+    else:
+        for job_id, t in timeouts.items():
+            if t > deadline - QUEUE_HEADROOM_MINUTES:
+                problems.append(
+                    f"余量不足 {job_id}: timeout-minutes {t} > 线上等待上限 {deadline} - "
+                    f"{QUEUE_HEADROOM_MINUTES}"
+                )
+    for p in problems:
+        print(f"错误：{p}", file=sys.stderr)
+    if problems:
+        return 1
+    longest = max(timeouts.values())
+    print(
+        f"verify-live OK：{repo}@{branch} merge_queue 参数与仓库副本一致"
+        f"（等待上限 {deadline}、并发构建 {params.get('max_entries_to_build')}）；"
+        f"Gate 闭包 {len(timeouts)} 个 job，最长上限 {longest} 分钟，"
+        f"余量 {deadline - longest} 分钟（要求 ≥{QUEUE_HEADROOM_MINUTES}）"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    ap.add_argument("command", choices=("inspect", "plan", "apply"))
+    ap.add_argument("command", choices=("inspect", "plan", "apply", "verify-live"))
     ap.add_argument("--phase", choices=PHASES, help="plan / apply 必填")
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--ruleset-name", default=DEFAULT_RULESET_NAME)
@@ -553,6 +634,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "inspect":
             return cmd_inspect(gh_api, args.repo, args.ruleset_name)
+        if args.command == "verify-live":
+            return cmd_verify_live(gh_api, args.repo, CI_WORKFLOW.read_text(encoding="utf-8"))
         if not args.phase:
             raise MigrationError(f"{args.command} 需要 --phase {'/'.join(PHASES)}")
         plan_file = args.plan_file or plan_path(args.phase)

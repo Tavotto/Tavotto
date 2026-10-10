@@ -757,26 +757,19 @@ class TestGates:
             assert f"name: {gate}\n" in CI, f"ci.yml 里没有固定名字「{gate}」"
         assert f"name: {GATE_IN_CODEQL}\n" in CODEQL
 
-    def test_required_job_timeouts_leave_headroom_under_the_queue_deadline(self):
-        """主语是**合并队列的等待上限**（`MERGE_QUEUE_PARAMS`），不是某个 job 自己的上限：
-        两个 CI Gate 的 needs 传递闭包里每个 job 的 `timeout-minutes` 都得比
-        `check_response_timeout_minutes` 小至少 30 分钟（排队 + 调度 + Gate 自身）。
-        否则队列先于 job 超时，把候选以 checks_timed_out 踢出（#926 Codex r4237741626：
-        仓库副本写 90、线上 180，抬 job 上限时就这样漂了）。"""
+    def test_repo_copy_of_queue_deadline_is_consistent_with_required_job_timeouts(self):
+        """证明的只是**仓库内一致**：两个 CI Gate 的 needs 闭包里每个 job 的
+        `timeout-minutes` + 30 ≤ 仓库声明的 `MERGE_QUEUE_PARAMS` 等待上限。
+        它**不**证明线上 ruleset 的值——PR 期读不到线上（没有管理员令牌）。线上对拍是
+        `merge_queue_ruleset.py verify-live`（nightly 的 merge-queue-live-check 每晚跑；
+        改 job 超时 / 队列参数前手动跑一次）。解析与 verify-live 共用 `gate_closure_timeouts`。"""
         deadline = MQ.MERGE_QUEUE_PARAMS["check_response_timeout_minutes"]
-        seen: set[str] = set()
-        todo = ["ci-fast-gate", "ci-integration-gate"]
-        while todo:
-            for n in TestHeavyLaneDependencies._optional_needs(_job(CI, todo.pop())):
-                if n not in seen:
-                    seen.add(n)
-                    todo.append(n)
-        assert {"backend-platforms", "backend-fast"} <= seen, f"闭包读空了：{sorted(seen)}"
-        for job_id in sorted(seen):
-            m = re.search(r"(?m)^    timeout-minutes: (\d+)", _code(_job(CI, job_id)))
-            assert m, f"{job_id} 没有 job 级 timeout-minutes"
-            assert int(m.group(1)) + 30 <= deadline, (
-                f"{job_id} 的 timeout-minutes {m.group(1)} 距队列等待上限 {deadline} 不足 30 分钟"
+        timeouts = MQ.gate_closure_timeouts(CI)
+        assert {"backend-platforms", "backend-fast"} <= set(timeouts), sorted(timeouts)
+        for job_id, t in timeouts.items():
+            assert t + MQ.QUEUE_HEADROOM_MINUTES <= deadline, (
+                f"{job_id} 的 timeout-minutes {t} 距仓库声明的队列等待上限 {deadline} "
+                f"不足 {MQ.QUEUE_HEADROOM_MINUTES} 分钟"
             )
 
     def test_gates_run_on_always(self):
