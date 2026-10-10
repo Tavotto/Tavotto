@@ -254,6 +254,18 @@ for entry in sys.path:
 # site_roots 里 Python 的 `site` 真会处理 `.pth` 的那几层（getsitepackages / 启用的 user site）；经 PYTHONPATH 或 `.pth` 路径行进来的
 # 目录不处理它的 `.pth`，那里的行不会被执行。只是路径列表
 pth_roots = [p for p in site_roots if os.path.normcase(p) in known]
+# site_roots 与 extra_roots 合起来**按 sys.path 的原顺序**排成一份（#929）：静态索引按它给各层定先后，谁遮蔽谁才和真实 import 一致
+# （PYTHONPATH / `.pth` 目录排在 site-packages 前面时，前面的同名模块先被 import）。只是路径列表；成员与上面两份一致，不另做筛选
+path_order = []
+for entry in sys.path:
+    if not entry or not isinstance(entry, str):
+        continue
+    try:
+        path = os.path.abspath(entry)
+    except Exception:
+        continue
+    if (path in site_roots or path in extra_roots) and path not in path_order:
+        path_order.append(path)
 sys.stdout.write(json.dumps({
     "marker_env": env,
     "stdlib": sorted(getattr(sys, "stdlib_module_names", ())),
@@ -266,6 +278,7 @@ sys.stdout.write(json.dumps({
     "extra_roots": extra_roots,
     "opaque_roots": opaque_roots,
     "pth_roots": pth_roots,
+    "path_order": path_order,
 }))
 """
 
@@ -300,6 +313,9 @@ class TargetFacts:
     #: 的 `.pth` 行计 `uncovered_paths`：经 `PYTHONPATH` 或 `.pth` 路径行进 `sys.path` 的 site-packages 不处理它的 `.pth`（#925）。
     #: 空 = 没量到，每一层都当作会处理（旧口径）。不进 `digest()` / `to_payload()`。
     pth_roots: tuple[str, ...] = ()
+    #: `site_roots` ∪ `extra_roots` 按 `sys.path` 原顺序排成的一份（#929）。静态索引据此交错给各层定先后（遮蔽语义沿用跨层规则）；
+    #: 空 = 没量到，退回「先 site 层、再额外层」的旧排法。不进 `digest()` / `to_payload()`。
+    path_order: tuple[str, ...] = ()
     #: `layer_digest` 在**量事实的同一刻**算好的值（真探测才有；与静态索引同一刻读，计划与它描述同一个时间点）。空 = 没量到，
     #: `layer_digest(facts)` 退回现算。不进 `digest()` / `to_payload()`。
     layers: str = ""
@@ -371,6 +387,7 @@ def _measure_layers(facts: TargetFacts) -> str:
             "site": list(facts.site_roots),
             "extra": list(facts.extra_roots),
             "opaque": facts.opaque_roots,
+            "order": list(facts.path_order),
             "pth": pth,
         },
         sort_keys=True,
@@ -444,6 +461,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         if isinstance(data.get("opaque_roots"), int)
         else 0,
         pth_roots=tuple(str(x) for x in data.get("pth_roots") or () if isinstance(x, str)),
+        path_order=tuple(str(x) for x in data.get("path_order") or () if isinstance(x, str)),
     )
     facts = dataclasses.replace(facts, layers=_measure_layers(facts))
     with _facts_lock:
@@ -496,9 +514,10 @@ def static_index(facts: TargetFacts | None) -> distmeta.Index | None:
         facts.prefix,
         site_paths=facts.site_roots or None,
         extra_paths=facts.extra_roots,
-        ext_suffixes=facts.ext_suffixes
-        or None,  # 目标解释器的精确后缀集（#925）；没量到保持宽松口径
+        # 目标解释器的精确后缀集（#925）；没量到保持宽松口径
+        ext_suffixes=facts.ext_suffixes or None,
         pth_paths=facts.pth_roots or None,
+        layer_order=facts.path_order or None,
     )
     if not index.checked:
         return None
@@ -738,6 +757,26 @@ def _reason_of(status: str) -> str:
     }.get(status, ORIGIN_UNVERIFIED)
 
 
+def _shadowed_names(c: importscan.ImportClass, present: list[str]) -> bool:
+    """名字级「装着」的那些发行包，在静态索引里是不是**全被排在前面的别的提供者遮蔽了**（#929）：`PYTHONPATH` / `.pth` 目录里自己的
+    同名模块、前面一层的 editable fork 排在 site-packages 前面，真实 import 到的是它们，不是名字级装着的那个。没有索引（候选里
+    没有已装行）或还有未被遮蔽的行时回 False。"""
+    if not present:
+        return False
+    rows = [x for x in c.distribution_candidates if x.get("source") == distmeta.SRC_INSTALLED]
+    live = {
+        depresolve.normalize_distribution(str(x.get("distribution") or ""))
+        for x in rows
+        if not x.get("shadowed")
+    }
+    shadowed = {
+        depresolve.normalize_distribution(str(x.get("distribution") or ""))
+        for x in rows
+        if x.get("shadowed")
+    }
+    return all(d in shadowed and d not in live for d in present) and _installed_claims(c)
+
+
 def _verdict(
     c: importscan.ImportClass,
     installed: dict,
@@ -759,6 +798,12 @@ def _verdict(
     if present and state == "import_error":
         # 名字级「装着」不等于满足：装了但导入失败（装坏的 PyYAML）——覆盖度缓存的判决先于名字级，装它救不了（Codex #920 P2）
         return _Verdict(_OPEN, reason=ORIGIN_IMPORT_FAILED)
+    if present and "layer_order_unresolved" in c.compatibility:
+        # 前面有一层的提供者形状推不出（可能是常规包、也可能不是）：名字级装着的那个是不是胜出者判不出来——不冒充满足（#929）
+        return _Verdict(_OPEN, reason=ORIGIN_AMBIGUOUS)
+    if _shadowed_names(c, present):
+        # 名字级装着的发行包被 sys.path 上排在前面的别的提供者遮蔽（#929）：import 到的是前面那个，不是它——不算满足，也不装
+        return _Verdict(_OPEN, reason=_reason_of(c.distribution_status))
     if len(present) > 1:
         # 多个提供者同时装着：歧义 / 声明判定**先于**映射提供者的早返回（#924：`opencv-python` 与 `-headless` 都装着、项目没点名时
         # 不能因为映射表里的 `opencv-python` 在就报满足）。项目点名了其中一个（requirements 里写的就是 `opencv-python-headless`）：
@@ -1153,6 +1198,7 @@ def fresh_venv_facts(
         extra_roots=(),
         opaque_roots=0,
         pth_roots=(),
+        path_order=(),
         layers="",
     )
 

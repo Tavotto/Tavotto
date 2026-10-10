@@ -277,11 +277,18 @@ class Index:
     """一个环境的 site-packages 元数据索引（构建后只读）。"""
 
     def __init__(
-        self, roots: Sequence[SiteRoot], dists: list[_Dist], names: list[set[str]]
+        self,
+        roots: Sequence[SiteRoot],
+        dists: list[_Dist],
+        names: list[set[str]],
+        shapes: dict[tuple[int, str], str] | None = None,
     ) -> None:
         self.roots = tuple(roots)
         self._dists = dists
         self._names = names  # 每个 root 的目录清单里的顶级名
+        #: (层, 顶级名) → 提供形状（"regular" / "namespace" / "unknown"）：只记「这一层的目录清单里有这个名字、却没有任何发行包认领它、
+        #: 而别的层有发行包认领」的那些（#929）——它们按 Python 的 PathFinder 语义也是提供者，排在前面的常规提供者会遮蔽后面的。
+        self._shapes = shapes or {}
         self.issues: tuple[dict, ...] = ()
         self.complete = True
         #: 「每一层里有哪些名字」读全了没有（`complete` 的子集条件：层列不出来 / 不是真目录 / 条目被跳过·链接拒跟 / 预算用完 / 层数超限
@@ -334,12 +341,33 @@ class Index:
         # portion 都是提供者（跨层也一样，下层 portion 不被上层遮蔽）
         # 形状未知的候选（只有 top_level.txt、磁盘上也推不出）可能是常规提供者也可能是 namespace portion：
         # 最靠前的「可能常规」若是它，谁遮蔽谁就不确定——什么都不标遮蔽，并让解析器按歧义处理
-        first_regular = min((c.order for c in cands if not c.namespace), default=None)
+        # 目录清单里有这个名字、却没有发行包认领它的层（手拷进去的 / `PYTHONPATH` 里自己的同名模块 / 元数据被删的）也是提供者：
+        # 排在前面的常规提供者遮蔽后面发行包认领的那份（#929）。形状没量成的按「可能常规」处理，同下面的 shape_unknown。
+        claimed_orders = {c.order for c in cands}
+        unclaimed = (
+            [
+                (i, self._shapes.get((i, module), "unknown"))
+                for i, names in enumerate(self._names)
+                if module in names and i not in claimed_orders
+            ]
+            if cands
+            else []
+        )
+        first_regular = min(
+            [c.order for c in cands if not c.namespace]
+            + [i for i, shape in unclaimed if shape == "regular"],
+            default=None,
+        )
         unresolved = (
             first_regular is not None
             and any(c.shape_unknown and c.order == first_regular for c in cands)
             and any(c.order != first_regular for c in cands)
         )
+        if any(
+            shape == "unknown" and (first_regular is None or i < first_regular)
+            for i, shape in unclaimed
+        ):
+            unresolved = True  # 前面有一层的提供者形状推不出：谁遮蔽谁不确定
         if unresolved:
             first_regular = None
         if first_regular is not None:
@@ -1084,6 +1112,30 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
             d.modules.setdefault(m, set()).add(EV_FINDER)
 
 
+def _unclaimed_shapes(
+    rd: _Reader, roots: Sequence[SiteRoot], dists: list[_Dist], names: list[set[str]]
+) -> dict[tuple[int, str], str]:
+    """(层, 顶级名) → 形状，只给「这一层有这个名字、没有发行包认领，而别的层有发行包认领」的（#929）。常见情形（名字只在认领它的
+    那一层）一个都不量，不会为每个包目录多一次 scandir。"""
+    claimed: dict[str, set[int]] = {}
+    for d in dists:
+        for m in d.modules:
+            claimed.setdefault(m, set()).add(d.root)
+    name_only = {d.key: d.root for d in dists if not d.modules}
+    if name_only:
+        for i, ns in enumerate(names):
+            for m in ns:
+                if name_only.get(depresolve.normalize_distribution(m)) == i:
+                    claimed.setdefault(m, set()).add(i)
+    shapes: dict[tuple[int, str], str] = {}
+    for i, ns in enumerate(names):
+        for m in ns:
+            owners = claimed.get(m)
+            if owners and i not in owners:
+                shapes[(i, m)] = _probe_shape(rd, roots[i], m)
+    return shapes
+
+
 def build_index(
     roots: Sequence[SiteRoot],
     *,
@@ -1136,7 +1188,7 @@ def build_index(
                 d.disk_shape[m] = _probe_shape(rd, roots[d.root], m)
     if prefix is not None:
         dists += _read_conda_meta(rd, os.path.normpath(os.fspath(prefix)), roots)
-    index = Index(roots, dists, names)
+    index = Index(roots, dists, names, _unclaimed_shapes(rd, roots, dists, names))
     index.complete = rd.complete and budget.stopped is None
     index.names_complete = rd.names_complete and budget.stopped is None
     index.uncovered_paths = rd.uncovered
@@ -1154,6 +1206,7 @@ def _reported_roots(
     extra: Sequence[str],
     budget: scanbudget.Budget,
     pth_paths: Sequence[str] | None = None,
+    layer_order: Sequence[str] | None = None,
 ) -> tuple[list[SiteRoot], bool]:
     """目标解释器**自己报告**的目录（`sys.path` 上的 site 目录，再加其余存在的目录）→ 层。返回 ([层], 有没有读漏的层)。
 
@@ -1166,34 +1219,42 @@ def _reported_roots(
     processed = (
         None if pth_paths is None else {os.path.normcase(os.path.normpath(p)) for p in pth_paths}
     )
+    ordered: list[str] = []
     for paths in (site, extra):
         if len(paths) > MAX_SITE_PATHS:
             incomplete = True
             budget.note(scanbudget.ISSUE_UNREADABLE_DIR, scope="env", path="base")
-        for raw in paths[:MAX_SITE_PATHS]:
-            path = os.path.normpath(raw)
-            rel = ""
-            if os.path.normcase(path).startswith(pre + os.sep):
-                rel = path[len(pre) + 1 :].replace("\\", "/")
-            state = _dir_state(path)
-            if state != "dir":
-                code = (
-                    scanbudget.ISSUE_UNREADABLE_DIR
-                    if state == "absent"
-                    else scanbudget.ISSUE_SYMLINK_DIR
-                )
-                budget.note(code, scope="env", path=rel or "base")
-                incomplete = True
-                continue
-            roots.append(
-                SiteRoot(
-                    path=path,
-                    rel=rel or "base",
-                    layer="env" if rel else "base",
-                    order=len(roots),
-                    pth=processed is None or os.path.normcase(path) in processed,
-                )
+        ordered.extend(paths[:MAX_SITE_PATHS])
+    if layer_order:
+        # 各层的先后 = 它们在 sys.path 上的原顺序（#929）；不在 `layer_order` 里的排在最后，彼此保持原有的相对顺序
+        rank: dict[str, int] = {}
+        for i, p in enumerate(layer_order):
+            rank.setdefault(p, i)
+        ordered.sort(key=lambda p: rank.get(p, len(rank)))
+    for raw in ordered:
+        path = os.path.normpath(raw)
+        rel = ""
+        if os.path.normcase(path).startswith(pre + os.sep):
+            rel = path[len(pre) + 1 :].replace("\\", "/")
+        state = _dir_state(path)
+        if state != "dir":
+            code = (
+                scanbudget.ISSUE_UNREADABLE_DIR
+                if state == "absent"
+                else scanbudget.ISSUE_SYMLINK_DIR
             )
+            budget.note(code, scope="env", path=rel or "base")
+            incomplete = True
+            continue
+        roots.append(
+            SiteRoot(
+                path=path,
+                rel=rel or "base",
+                layer="env" if rel else "base",
+                order=len(roots),
+                pth=processed is None or os.path.normcase(path) in processed,
+            )
+        )
     return roots, incomplete
 
 
@@ -1207,6 +1268,7 @@ def index_environment(
     extra_paths: Sequence[str] = (),
     ext_suffixes: tuple[str, ...] | None = None,
     pth_paths: Sequence[str] | None = None,
+    layer_order: Sequence[str] | None = None,
 ) -> Index:
     """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。
 
@@ -1218,11 +1280,18 @@ def index_environment(
     指向它们、或指向 `site_paths` 里别的已读层的 `.pth` 路径行算「已跟进」（不再计入 `uncovered_paths`）。不给 = 旧口径（前缀布局 + 可选 `include_base`）。
     `ext_suffixes`（#925）：**目标**解释器的 `EXTENSION_SUFFIXES`，给了扩展模块只认这些后缀；没给（空 / None）= 没量到，保持宽松口径。
     `pth_paths`（#925）：`site_paths` 里 Python 的 `site` 真会处理 `.pth` 的那几层（`getsitepackages()` / user site）；给了，别的层的
-    `.pth` 行不计入 `uncovered_paths`（它们不会被执行）。没给 = 每一层都当作会处理（旧口径）。"""
+    `.pth` 行不计入 `uncovered_paths`（它们不会被执行）。没给 = 每一层都当作会处理（旧口径）。
+    `layer_order`（#929）：`site_paths` ∪ `extra_paths` 按 `sys.path` **原顺序**排成的一份。给了，各层的先后就是它（`PYTHONPATH` /
+    `.pth` 目录可以排在 site-packages 前面），遮蔽沿用跨层规则；没给 = 先 site 层、再额外层（旧排法）。"""
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
     if site_paths:
         roots, incomplete = _reported_roots(
-            os.path.normpath(os.fspath(prefix)), site_paths, extra_paths, budget, pth_paths
+            os.path.normpath(os.fspath(prefix)),
+            site_paths,
+            extra_paths,
+            budget,
+            pth_paths,
+            layer_order,
         )
         index = (
             build_index(

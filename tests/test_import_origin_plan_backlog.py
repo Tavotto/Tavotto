@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import sys
 from pathlib import Path
 
@@ -463,3 +464,131 @@ class TestExactExtensionSuffixes:
         a = _site_facts(prefix, site)
         b = dataclasses.replace(a, ext_suffixes=LINUX_SUFFIXES, pth_roots=(str(site),))
         assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
+
+
+# ===========================================================================
+# #929 静态索引保留 sys.path 的交错顺序
+# ===========================================================================
+def _pyyaml(site: Path) -> None:
+    info = site / "PyYAML-6.0.dist-info"
+    info.mkdir(parents=True)
+    _write(info, "METADATA", "Metadata-Version: 2.1\nName: PyYAML\nVersion: 6.0\n")
+    _write(info, "top_level.txt", "yaml\n")
+    _write(info, "RECORD", "yaml/__init__.py,,\nPyYAML-6.0.dist-info/METADATA,,\n")
+    _write(site, "yaml/__init__.py", "")
+
+
+class TestSysPathInterleaving:
+    """`PYTHONPATH` / `.pth` 目录排在 site-packages 前面且遮蔽了已装包时，索引不能把后面的 site 包当权威。"""
+
+    def _layers(self, tmp_path, *, custom_first: bool, custom_pkg: bool = True):
+        prefix, site = _site(tmp_path)
+        _pyyaml(site)
+        custom = tmp_path / "custom"
+        if custom_pkg:
+            _write(custom, "yaml/__init__.py", "")  # 自己的 yaml，没有任何发行包认领
+        else:
+            custom.mkdir()
+        facts = dataclasses.replace(
+            _site_facts(prefix, site, {"pyyaml": "6.0"}),
+            extra_roots=(str(custom),),
+            path_order=(str(custom), str(site)) if custom_first else (str(site), str(custom)),
+        )
+        return facts
+
+    def test_a_custom_yaml_ahead_of_site_packages_is_not_pyyaml_being_satisfied(self, tmp_path):
+        plan = _plan_in(tmp_path, self._layers(tmp_path, custom_first=True))
+        assert plan.satisfied == () and plan.missing == () and plan.requirements == ()
+        (origin,) = plan.origins
+        assert origin["import_name"] == "yaml" and origin["reason"] == "unverified"
+
+    def test_the_reverse_order_is_satisfied(self, tmp_path):
+        plan = _plan_in(tmp_path, self._layers(tmp_path, custom_first=False))
+        assert [e["distribution"] for e in plan.satisfied] == ["pyyaml"] and plan.origins == ()
+
+    @pytest.mark.parametrize("first", [True, False])
+    def test_without_a_competing_module_the_order_does_not_matter(self, tmp_path, first):
+        plan = _plan_in(tmp_path, self._layers(tmp_path, custom_first=first, custom_pkg=False))
+        assert [e["distribution"] for e in plan.satisfied] == ["pyyaml"]
+
+    def test_facts_without_an_order_keep_the_old_site_then_extra_layering(self, tmp_path):
+        facts = dataclasses.replace(self._layers(tmp_path, custom_first=True), path_order=())
+        plan = _plan_in(tmp_path, facts)
+        assert [e["distribution"] for e in plan.satisfied] == ["pyyaml"]
+
+    def test_a_claimed_provider_ahead_shadows_the_installed_name_too(self, tmp_path):
+        """前面那一层的提供者有自己的发行包（editable 的 fork）：同样压过后面 site-packages 里的 PyYAML。"""
+        prefix, site = _site(tmp_path)
+        _pyyaml(site)
+        front = tmp_path / "front" / "site-packages"
+        info = front / "my_fork-0.1.dist-info"
+        info.mkdir(parents=True)
+        _write(info, "METADATA", "Metadata-Version: 2.1\nName: my-fork\nVersion: 0.1\n")
+        _write(info, "top_level.txt", "yaml\n")
+        _write(info, "RECORD", "yaml/__init__.py,,\n")
+        _write(info, "direct_url.json", '{"url": "file:///w", "dir_info": {"editable": true}}')
+        _write(front, "yaml/__init__.py", "")
+        facts = dataclasses.replace(
+            _site_facts(prefix, site, {"pyyaml": "6.0", "my-fork": "0.1"}),
+            site_roots=(str(front), str(site)),
+            path_order=(str(front), str(site)),
+        )
+        plan = _plan_in(tmp_path, facts)
+        assert plan.satisfied == () and plan.requirements == ()
+        assert [o["reason"] for o in plan.origins] == ["editable_dependency_not_reproducible"]
+
+    @pytest.mark.parametrize("first", [True, False])
+    def test_a_provider_ahead_whose_shape_cannot_be_read_is_not_a_verdict(
+        self, tmp_path, monkeypatch, first
+    ):
+        """前面那层的同名目录读不出形状（可能是常规包、也可能是 namespace portion）：谁胜出判不出来，不冒充满足；
+        它排在后面时不影响任何事。"""
+        from tavotto.engine import distmeta
+
+        monkeypatch.setattr(distmeta, "MAX_PROBE_ENTRIES", 0)
+        plan = _plan_in(tmp_path, self._layers(tmp_path, custom_first=first))
+        if first:
+            assert plan.satisfied == () and plan.requirements == ()
+            assert [o["reason"] for o in plan.origins] == ["module_origin_ambiguous"]
+        else:
+            assert [e["distribution"] for e in plan.satisfied] == ["pyyaml"]
+
+    def test_the_order_is_not_a_plan_input(self, tmp_path):
+        a = self._layers(tmp_path, custom_first=True)
+        b = dataclasses.replace(a, path_order=tuple(reversed(a.path_order)))
+        assert a.digest() == b.digest() and a.to_payload() == b.to_payload()
+        assert depplan.layer_digest(a) != depplan.layer_digest(b)  # 但执行期的层指纹认得出顺序变了
+
+    def test_the_probe_reports_the_original_sys_path_order(self, tmp_path):
+        """真解释器：`PYTHONPATH` 目录排在 site-packages 前面，探针按 sys.path 的原顺序报；Windows 的安装根目录不当包层的规则保持。"""
+        import json
+        import subprocess
+
+        cwd = tmp_path / "scratch"
+        cwd.mkdir()
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        code = (
+            "import json, sys\n"
+            "sys.path[:0] = json.loads(sys.argv[1])\n"
+            "exec(compile(sys.argv[2], '<facts>', 'exec'))\n"
+        )
+        entries = ["", str(cwd), sys.prefix, sys.base_prefix, str(vendor)]
+        out = subprocess.run(
+            [sys.executable, "-c", code, json.dumps(entries), depplan._FACTS_SRC],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=120,
+            cwd=str(cwd),
+            check=True,
+        ).stdout
+        facts = json.loads(out)
+        order = facts["path_order"]
+        assert set(order) == set(facts["site_roots"]) | set(facts["extra_roots"])
+        assert len(order) == len(set(order))
+        vendor_at = order.index(os.path.abspath(vendor))
+        assert all(
+            order.index(r) > vendor_at for r in facts["site_roots"]
+        )  # 前面插进来的目录排在 site 层前面
+        for root in {sys.prefix, sys.base_prefix, str(cwd)}:
+            assert root not in order  # 安装根目录与探针 cwd 不是包层
