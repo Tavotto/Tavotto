@@ -1752,6 +1752,160 @@
         "execution_finished": null,
         "figure_captured": null
       }
+    },
+    {
+      "name": "origin facts on dependencies (unresolved + ambiguous imports) do not change the phase: still ready_to_run",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "ok",
+            "detail": {
+              "origins": {
+                "count": 2,
+                "by_reason": {
+                  "distribution_unresolved": 1,
+                  "module_origin_ambiguous": 1
+                }
+              }
+            }
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "ready_to_run",
+        "outcome": {
+          "kind": "pending"
+        },
+        "runnable": true,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "origin facts ride along with a dependency authorization without changing what is asked",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "needs_action",
+            "code": "dependency_preparation_required",
+            "detail": {
+              "impact_digest": "abc123",
+              "origins": {
+                "count": 2,
+                "by_reason": {
+                  "distribution_unresolved": 1,
+                  "module_origin_ambiguous": 1
+                }
+              }
+            }
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "awaiting_confirmation",
+        "outcome": {
+          "kind": "pending",
+          "code": "dependency_preparation_required"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
+    },
+    {
+      "name": "origin facts never turn an unknown dependencies check into a pass",
+      "facts": {
+        "target_kind": "script",
+        "has_script": true,
+        "checks": [
+          {
+            "id": "target",
+            "status": "ok"
+          },
+          {
+            "id": "environment",
+            "status": "ok"
+          },
+          {
+            "id": "workdir",
+            "status": "ok"
+          },
+          {
+            "id": "dependencies",
+            "status": "unknown",
+            "detail": {
+              "origins": {
+                "count": 2,
+                "by_reason": {
+                  "distribution_unresolved": 1,
+                  "module_origin_ambiguous": 1
+                }
+              }
+            }
+          },
+          {
+            "id": "data",
+            "status": "ok"
+          }
+        ],
+        "stale": null,
+        "attempt": null,
+        "awaiting_input": false
+      },
+      "expect": {
+        "phase": "action_required",
+        "outcome": {
+          "kind": "unknown",
+          "code": "dependencies_unknown"
+        },
+        "runnable": false,
+        "execution_finished": null,
+        "figure_captured": null
+      }
     }
   ]
 }
