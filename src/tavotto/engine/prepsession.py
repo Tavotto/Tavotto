@@ -34,7 +34,17 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import deprepair, dialogscan, pool, preparation, rasterhint, registry, scriptargs, taskdiag
+from . import (
+    depplan,
+    deprepair,
+    dialogscan,
+    pool,
+    preparation,
+    rasterhint,
+    registry,
+    scriptargs,
+    taskdiag,
+)
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -187,6 +197,26 @@ def _check(check_id: str, status: str, code: str = "", **detail) -> dict:
     return out
 
 
+def origin_facts(offer: dict | None) -> dict:
+    """依赖检查项带的**来源事实**（Import Origin Resolver PR4）：联合计划里「没有可信安装名」的那些 import（`origins`）
+    的计数与原因——`{"origins": {"count": n, "by_reason": {原因码: 个数}}}`；没有就是空字典（检查项的形状与以前一字不差）。
+
+    只带计数与闭集原因码（`depplan.ORIGIN_REASONS`）：不出包名、不出路径、不出源码——名字在计划载荷里，展示归前端
+    （PR6），诊断白名单另算。来源事实**不改检查项的状态**：它们不让计划不完整（不新增 `blocked` 理由），只说明
+    「这几个 import 装不了 / 不该猜」。"""
+    rows = ((offer or {}).get("plan") or {}).get("origins") or ()
+    by_reason: dict[str, int] = {}
+    for row in rows:
+        reason = str(row.get("reason") or "")
+        if reason in depplan.ORIGIN_REASONS:
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+    if not by_reason:
+        return {}
+    return {
+        "origins": {"count": sum(by_reason.values()), "by_reason": dict(sorted(by_reason.items()))}
+    }
+
+
 def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
     """从一份计划读出 checks。**每一项都只是计划已经记下的事实的投影**：环境来自 `plan.environment`、
     工作目录来自 `plan.workdir_decision`、依赖来自 `plan.dependency_preparation`、数据来自 `plan.binding`。
@@ -219,6 +249,7 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
         checks.append(_check("workdir", CHECK_OK, decided=bool(decision.get("decided"))))
     required_code = str((plan.required_input or {}).get("code") or "")
     offer = plan.dependency_preparation
+    facts = origin_facts(offer)  # 来源事实（PR4）：只加 detail，不改状态
     pinned = (offer or {}).get("pinned")
     if pinned and ((offer.get("plan") or {}).get("status")) == "ready":
         # E05：全局显式解释器压着，缺的包装进别的环境也不会被用——不假装"依赖没问题"，也不提供授权动作；
@@ -229,6 +260,7 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
                 CHECK_BLOCKED,
                 _PINNED_CODE,
                 pinned={"source": pinned.get("source"), "variable": pinned.get("variable")},
+                **facts,
             )
         )
     elif required_code == _DEPENDENCY_CODE:
@@ -240,10 +272,11 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
                 CHECK_NEEDS_ACTION,
                 _DEPENDENCY_CODE,
                 **({"impact_digest": digest} if digest else {}),
+                **facts,
             )
         )
     elif (offer or {}).get("project_check_pending"):
-        checks.append(_check("dependencies", CHECK_OK, deferred="project_environment"))
+        checks.append(_check("dependencies", CHECK_OK, deferred="project_environment", **facts))
     elif offer is None:
         # 工作目录要先答 / 环境走不通时依赖没有被评估——如实 unknown，不虚构已满足
         checks.append(_check("dependencies", CHECK_UNKNOWN))
@@ -251,9 +284,9 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
         reasons = [str(b.get("code") or "") for b in (offer["plan"].get("blocked") or ())]
         # 作用域互斥（D04）单列一个码：它有用户能走的出路（换成本作用域 / 子目录独立成项目），其余 blocked 没有
         code = _SCOPE_CONFLICT_CODE if _SCOPE_CONFLICT_CODE in reasons else "dependency_blocked"
-        checks.append(_check("dependencies", CHECK_BLOCKED, code, reasons=reasons[:8]))
+        checks.append(_check("dependencies", CHECK_BLOCKED, code, reasons=reasons[:8], **facts))
     else:
-        checks.append(_check("dependencies", CHECK_OK))
+        checks.append(_check("dependencies", CHECK_OK, **facts))
     checks.append(
         _check("data", CHECK_OK) if plan.binding is not None else _check("data", CHECK_UNKNOWN)
     )

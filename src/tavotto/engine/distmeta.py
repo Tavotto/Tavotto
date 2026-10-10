@@ -16,6 +16,8 @@
 * 读的范围：环境前缀下的 `pyvenv.cfg`、`lib/pythonX.Y/site-packages`（Windows `Lib/site-packages`）、`conda-meta/*.json`
   （Conda 环境，只读 `name` / `version` / `files`）。可选的基础解释器 site-packages（`include_base`，默认关）
   只在调用方明确要求且 `pyvenv.cfg` 声明 `include-system-site-packages = true` 时才列；
+* 目标解释器**自己报告**的 site 目录（`index_environment(site_paths=)`，`depplan` 在已授权的事实采集子进程里取 `sys.path` 上的那些）：
+  前缀之外的层（基础解释器 / user site）也读，同样只读文本；报告了却读不成的层 = `complete=False`；
 * 环境前缀在项目内时，调用方传 `project_root`：前缀的任何一级是符号链接 / junction 就整个拒绝（先 `lstat`，不碰目标）；
 * 预算走 `scanbudget`（目录项数、累计字节、墙钟、占位文件、符号链接）；超了留痕在 `Index.issues`，
   `Index.complete=False`——**「没读全」不许被当成「没装」**（`environment_not_checked`）。
@@ -263,6 +265,9 @@ class Index:
         self._names = names  # 每个 root 的目录清单里的顶级名
         self.issues: tuple[dict, ...] = ()
         self.complete = True
+        #: 「每一层里有哪些名字」读全了没有（`complete` 的子集条件：层列不出来 / 不是真目录 / 条目被跳过·链接拒跟 / 预算用完 / 层数超限
+        #: 才为 False；个别发行包的元数据文件读不成只让 `complete=False`）。`depplan` 据此决定「没查到」能不能当「没装」。
+        self.names_complete = True
         self.uncovered_paths = 0  # 没跟进的 `.pth` 路径行（指向 site-packages 之外）
         self.checked = True
         self._by_module: dict[str, list[_Dist]] = {}
@@ -526,7 +531,13 @@ class _Reader:
         self.roots = list(roots)
         self.budget = budget
         self.complete = True
+        # 「看见了哪些名字」是否完整：层列不出来 / 条目被跳过·链接拒跟 / 目录项预算用完。与 `complete` 的区别：`complete`
+        # 还含「看见的发行包里某个元数据文件读不成」（`read_state`）——那只影响这一个发行包的细节，不影响「这一层里有没有这个名字」
+        self.names_complete = True
         self.uncovered = 0
+        self.covered: frozenset[str] = (
+            frozenset()
+        )  # 已作为层读过的额外目录：指向它们的 `.pth` 路径行算已跟进
         self.kinds: dict[int, dict[str, set[str]]] = {}  # root.order → 顶级名 → {"dir"|"py"|"ext"}
 
     def note(self, code: str, root: SiteRoot, rel: str, *, scope: str = "file") -> None:
@@ -551,6 +562,11 @@ class _Reader:
         """在那儿但没看全 / 没读成（列不了、条目被跳过、链接拒跟、解析失败……）：留痕并把环境记为没读全。"""
         self.note(code, root, rel, scope=scope)
         self.complete = False
+
+    def refuse_names(self, code: str, root: SiteRoot, rel: str, *, scope: str = "file") -> None:
+        """`refuse`，另记「有名字没被看到」（层列不出来 / 条目被跳过 / 链接拒跟）：不许把「没查到」当「没装」。"""
+        self.refuse(code, root, rel, scope=scope)
+        self.names_complete = False
 
     def _read_state(self, root: SiteRoot, *parts: str, max_bytes: int) -> tuple[str | None, bool]:
         full = os.path.join(root.path, *parts)
@@ -739,28 +755,33 @@ def _list_root(
     try:
         it = os.scandir(root.path)
     except OSError:
-        rd.refuse(scanbudget.ISSUE_UNREADABLE_DIR, root, "", scope="dir")  # 没列出来 ≠ 里面没有东西
+        rd.refuse_names(
+            scanbudget.ISSUE_UNREADABLE_DIR, root, "", scope="dir"
+        )  # 没列出来 ≠ 里面没有东西
         return dist_infos, egg_infos, egg_links, pths, names
     with it:
         for e in it:
             if not rd.budget.charge_entry():
                 rd.complete = False
+                rd.names_complete = False
                 break
             name = e.name
             try:
                 st = e.stat(follow_symlinks=False)
             except OSError:
-                rd.refuse(scanbudget.ISSUE_UNREADABLE_FILE, root, name)  # 条目被跳过 = 没读全
+                rd.refuse_names(scanbudget.ISSUE_UNREADABLE_FILE, root, name)  # 条目被跳过 = 没读全
                 continue
             redirect = scanbudget.is_redirect(st)
             if name.endswith((".dist-info", ".egg-info")):
                 if redirect:
-                    rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)  # 里面的发行包没被看到
+                    rd.refuse_names(
+                        scanbudget.ISSUE_SYMLINK_DIR, root, name
+                    )  # 里面的发行包没被看到
                     continue
                 (dist_infos if name.endswith(".dist-info") else egg_infos).append(name)
             elif name.endswith(".egg-link"):
                 if redirect:
-                    rd.refuse(
+                    rd.refuse_names(
                         scanbudget.ISSUE_SYMLINK_DIR, root, name
                     )  # develop 安装的证据没被看到
                 else:
@@ -768,14 +789,14 @@ def _list_root(
             elif name.endswith(".pth"):
                 if redirect:
                     # Python 的 site 会跟进链接读它：拒绝跟进 = 它提供的路径条目没被看到，不许当成「没有」
-                    rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)
+                    rd.refuse_names(scanbudget.ISSUE_SYMLINK_DIR, root, name)
                 else:
                     pths.append(name)
             elif name in _SKIP_ENTRIES or name.endswith(".data"):
                 continue
             elif redirect:
                 # 链接形式的包目录 / 模块文件：Python 会跟进，我们不跟——这个名字没被看到，不许当「没装」
-                rd.refuse(scanbudget.ISSUE_SYMLINK_DIR, root, name)
+                rd.refuse_names(scanbudget.ISSUE_SYMLINK_DIR, root, name)
                 continue
             elif stat.S_ISDIR(st.st_mode):
                 if _IDENT_RE.match(name):
@@ -955,6 +976,19 @@ def _read_conda_meta(rd: _Reader, prefix: str, roots: Sequence[SiteRoot]) -> lis
     return out
 
 
+# 已知、只影响 `distutils` 的良性 `.pth` 钩子，**按整行内容**精确匹配（不是按文件名放行：同名文件里换了内容就不匹配，照常计入 uncovered）：
+# * setuptools 的 `distutils-precedence.pth`（venv 自带 setuptools 的 Python 3.10 及以前、或装了 setuptools 的环境都有；
+#   默认值 `local` 是新版、`stdlib` 是 setuptools 60 前后的老版）：只在 `_distutils_hack` 里装 `distutils` 的 import 垫片；
+# * virtualenv 的 `_virtualenv.pth`：`import _virtualenv`，只给 `distutils` 打补丁。
+# 其余任何 `import …` 行都没建模，仍计入 `uncovered_paths`。
+_KNOWN_BENIGN_PTH_RE = re.compile(
+    r"import os; var = 'SETUPTOOLS_USE_DISTUTILS'; "
+    r"enabled = os\.environ\.get\(var, '(?:local|stdlib)'\) == 'local'; "
+    r"enabled and __import__\('_distutils_hack'\)\.add_shim\(\);"
+    r"|import _virtualenv"
+)
+
+
 def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist]) -> None:
     """`.pth` 当文本：`import` 行不执行（只认 editable finder 的已建模形式，其余计入 uncovered）；`__editable___*_finder` 读同一目录里的 finder 源码取 MAPPING；
     路径行不跟进（计数）。"""
@@ -975,6 +1009,12 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
             m = _FINDER_LINE_RE.fullmatch(line) if pth.startswith("__editable__.") else None
             if m is not None:
                 finders.append(m.group(1))  # 已建模形式：setuptools 的 editable finder 安装行
+            elif _KNOWN_BENIGN_PTH_RE.fullmatch(line):
+                continue  # 已建模：只影响 distutils 的良性钩子（见 _KNOWN_BENIGN_PTH_RE），不提供任何模块
+            elif not line.startswith(("import ", "import\t")) and (
+                os.path.normcase(os.path.normpath(os.path.join(root.path, line))) in rd.covered
+            ):
+                continue  # 路径行，且那个目录就是目标解释器报告并读过的一层：已跟进
             else:
                 # 路径行（指向 site-packages 之外）和任何没建模的 `import …` 行（Python 会执行它：
                 # 改 sys.path、装自定义 finder……）都可能让目录外的模块可导入：计数，「没查到」不再等于「没装」
@@ -1022,6 +1062,7 @@ def build_index(
     *,
     prefix: str | os.PathLike | None = None,
     budget: scanbudget.Budget | None = None,
+    covered: Sequence[str] = (),
 ) -> Index:
     """读一组 site-packages 的元数据，建 import 名 → 发行包的反查。`prefix` 给了且有 `conda-meta/` 就再读它。
 
@@ -1029,6 +1070,7 @@ def build_index(
     """
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
     rd = _Reader(roots, budget)
+    rd.covered = frozenset(os.path.normcase(os.path.normpath(c)) for c in covered)
     dists: list[_Dist] = []
     names: list[set[str]] = []
     for root in roots:
@@ -1068,9 +1110,55 @@ def build_index(
         dists += _read_conda_meta(rd, os.path.normpath(os.fspath(prefix)), roots)
     index = Index(roots, dists, names)
     index.complete = rd.complete and budget.stopped is None
+    index.names_complete = rd.names_complete and budget.stopped is None
     index.uncovered_paths = rd.uncovered
     index.issues = tuple(budget.issues())
     return index
+
+
+#: `site_paths` 最多读几层（目标解释器的 sys.path 上 site 目录的个数上限；超了 = 后面的层没读，索引不完整）
+MAX_SITE_PATHS = 32
+
+
+def _reported_roots(
+    prefix: str, site: Sequence[str], extra: Sequence[str], budget: scanbudget.Budget
+) -> tuple[list[SiteRoot], bool]:
+    """目标解释器**自己报告**的目录（`sys.path` 上的 site 目录，再加其余存在的目录）→ 层。返回 ([层], 有没有读漏的层)。
+
+    前缀之内的层 `rel` 是相对前缀的 POSIX 路径（`conda-meta` 的 `files` 靠它对上）；前缀之外的（基础解释器 / 用户 site /
+    `include-system-site-packages` / `PYTHONPATH`·`.pth` 加进来的目录）统一记 `base`，**不带绝对路径**。报告了却不是真目录
+    （消失了 / 链接 / 读不了）的层不许当成「没有」：留痕并返回 `incomplete=True`。两组各有层数上限，超了 = 后面的层没读。"""
+    roots: list[SiteRoot] = []
+    incomplete = False
+    pre = os.path.normcase(os.path.normpath(prefix))
+    for paths in (site, extra):
+        if len(paths) > MAX_SITE_PATHS:
+            incomplete = True
+            budget.note(scanbudget.ISSUE_UNREADABLE_DIR, scope="env", path="base")
+        for raw in paths[:MAX_SITE_PATHS]:
+            path = os.path.normpath(raw)
+            rel = ""
+            if os.path.normcase(path).startswith(pre + os.sep):
+                rel = path[len(pre) + 1 :].replace("\\", "/")
+            state = _dir_state(path)
+            if state != "dir":
+                code = (
+                    scanbudget.ISSUE_UNREADABLE_DIR
+                    if state == "absent"
+                    else scanbudget.ISSUE_SYMLINK_DIR
+                )
+                budget.note(code, scope="env", path=rel or "base")
+                incomplete = True
+                continue
+            roots.append(
+                SiteRoot(
+                    path=path,
+                    rel=rel or "base",
+                    layer="env" if rel else "base",
+                    order=len(roots),
+                )
+            )
+    return roots, incomplete
 
 
 def index_environment(
@@ -1079,19 +1167,44 @@ def index_environment(
     project_root: str | os.PathLike | None = None,
     include_base: bool = False,
     budget: scanbudget.Budget | None = None,
+    site_paths: Sequence[str] | None = None,
+    extra_paths: Sequence[str] = (),
 ) -> Index:
-    """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。"""
+    """便捷入口：环境前缀 → 布局 → 索引。前缀不存在 / 没有 site-packages = `checked=False`（没量，不是「没装」）。
+
+    `site_paths`：目标解释器**报告**的全部 site 目录（`sys.path` 顺序，`depplan._FACTS_SRC` 在已授权的事实采集子进程里取）。
+    给了就按它建层（前缀内的 + 基础解释器 / 用户 site / `include-system-site-packages` 的全部层），不再按前缀布局推；
+    任何一层没读成 = `complete=False`（不是「没装」）。
+    `extra_paths`：`sys.path` 上其余存在的目录（`PYTHONPATH` 的 `pip install --target` 目录、`.pth` 路径行加进来的目录）：按**名字级**读
+    （目录清单里的 `name/` / `name.py` / 扩展；有 dist-info 顺带读），模块名在那里出现却没有发行包认领 = 别处已有它；这些目录也让
+    指向它们的 `.pth` 路径行算「已跟进」（不再计入 `uncovered_paths`）。不给 = 旧口径（前缀布局 + 可选 `include_base`）。"""
     budget = budget if budget is not None else scanbudget.Budget(limits=DEFAULT_LIMITS)
+    if site_paths:
+        roots, incomplete = _reported_roots(
+            os.path.normpath(os.fspath(prefix)), site_paths, extra_paths, budget
+        )
+        index = (
+            build_index(roots, prefix=prefix, budget=budget, covered=extra_paths)
+            if roots
+            else Index((), [], [])
+        )
+        if incomplete:
+            index.complete = False
+            index.names_complete = False
+            index.issues = tuple(budget.issues())
+        return index
     roots, layout_incomplete = _site_packages_state(
         prefix, project_root=project_root, include_base=include_base, budget=budget
     )
     index = build_index(roots, prefix=prefix, budget=budget) if roots else Index((), [], [])
     if layout_incomplete:
         index.complete = False
+        index.names_complete = False
         index.issues = tuple(budget.issues())
     if not roots:
         index.checked = False
         index.complete = False
+        index.names_complete = False
         index.issues = tuple(budget.issues())
     return index
 

@@ -433,3 +433,60 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 * 目标解释器自己的 `sys.stdlib_module_names` / builtin 名单、`GET /api/engine/dependencies` 会起解释器的口径（C5）。
 * 把 `distmeta.index_environment` 接到默认扫描里（现在只有测试与显式调用方构建 `Index`）；接入前 #889 的三条已修。
 * 前端展示（PR6）：用 `coverage.detail` 的 `code` 给一句人话，不在前端复刻判据。
+
+## 12. PR4 实施记录（依赖计划与准备会话集成）
+
+基线 `origin/main` `b63248303`（叠栈 #814–#820、PR1 #880、PR2 #882、PR3 #906、#859 都已合入）。`risk:high`（改 `depplan` 判据）。维护者裁决（写进 PR 正文）：
+
+* **C3**：多发行包 / editable / 无元数据 / 来源未验证 → **不新增 `blocked` 理由**（`BLOCK_REASONS` 闭集原样，用例钉着），改为在联合计划里加可选的 `origins`（`unknown` 里每个名字的来源状态），状态词汇复用 PR1/PR2 的 `resolution_status` / `distribution_status`，并且**不再算进 `missing`**。
+* **C5**：`GET /api/engine/dependencies` 不承担新的静态来源结果（它会起解释器，没动）。来源事实走两条零执行路径：联合计划里的 `origins`（静态读目标环境 site-packages 元数据，不起进程）与准备会话 `checks_of` 的 `dependencies` 项（`detail.origins`，计数与原因码）。默认扫描（`projscan`）没有接线，候选环境子进程数仍为 0（`test_project_scan_zero_exec.py` 全绿，未改）。
+* 默认采用模式保持 `detect`，自动检测与推荐顺序没动。
+
+**做了什么**（commit 顺序即评审顺序）
+
+1. `#908`（`envadvice._role_of`）：有全局显式解释器（`pool.explicit_worker_python()`）时 `ROLE_TARGET` 只给全局那一个，项目记住的环境即使 `is_current` 也按 `ROLE_USER`；修前见红（`test_J_a_project_candidate_overridden_by_the_global_setting_is_a_user_environment` 得 `target`）。
+2. `#888` 三条（`importscan` + `depplan.TargetFacts`）：
+   * builtin：`BUILTIN_NAMES` 不再含 `posix` / `nt`（按平台二选一），`HOST_BUILTIN_EXTRA` 恒含二者——没有目标名单时本地同名文件是 `ambiguous`；`_FACTS_SRC` 多量 `sys.builtin_module_names` 并经 `plan` 传给 `importscan(builtin=)`。
+   * 扩展后缀：`importscan.scan(ext_suffixes=)` 逐字按目标 `EXTENSION_SUFFIXES` 认（Windows `.cp313t-win_amd64.pyd` / abi3 / free-threaded 都在表里）；没有时退回宽松形状，命中的扩展标 `unverified` + `extension_suffix_not_confirmed` 且 `search_complete=False`。
+   * 截断：本地模块跟进碰到深度 / 个数上限（`truncated`）时 `search_complete=False`。
+   * 目标事实 `builtin` / `ext_suffixes` 不进 `TargetFacts.digest()` / `to_payload()`：不改 `inputs_digest` / `identity`。空 = 没量到（替身事实），不用宿主冒充。
+3. `depplan` 消费来源状态：
+   * `JointPlan.origins`（新增可选字段）：`unknown` 里每个名字的 `{import_name, bucket, distribution, reason, resolution_status, distribution_status, origin_kind, provenance, candidates(≤8,规范化名), coverage}`；`unknown` 名字集合恒等于 `origins` 的 `import_name` 集合（用例钉着）。`reason` 闭集 `ORIGIN_REASONS`。
+   * 判决（`_verdict`，顺序 = 证据强弱）：名字级已装（表 / 声明的名字，旧口径原样）> 已装的备选发行包（`cv2` 装的是 headless → 满足，条目 `distribution` 是装着的那个、`mapped_distribution` 是表里的那个）> 多个备选都装着 = 歧义（项目声明点名的那个胜出）> 别的已装发行包声称提供它（editable / 本地 / VCS / URL / Conda / 未确认）或 site-packages 里有这个模块却没有发行包认领 > PR3 覆盖度缓存里它是 `import_error`（包在、导入失败，装它救不了）> 缺。
+   * `to_install` 按同一套名字级判据对**装到哪**的已装集合算；open 的一律不装；**已装元数据从不造安装名**（用例：运行环境里 headless 提供 `cv2`、新一代装的仍是 `opencv-python`）。
+   * `static_index(facts)`：目标环境静态发行包索引（`distmeta`，只读文件），与 `target_facts` **同一刻读**、同一个 `reset_cache` 清。（先前版本是出计划时才懒读，`test_foundation_dependencies.py::test_fo22_…` 立刻见红：装上了但验证没过的包不会 `reset_cache`，事实停在装之前，索引读到了装之后——同一个包一边说没装一边说装着，门不再问。改成同一刻读之后与基线逐字同行为。）
+   * `deprepair._coverage_reader(facts)`：把 `userenvs.cached_probe` 的只读查询交给 `plan(coverage=)`；三个出计划的入口都接上，私有 Python 重算与 `_static_joint_plan`（`facts=None`）不接。
+   * `plan_version` **不升**：`missing` / `requirements` 的字段含义不变（`origins` 是新增可选字段，老客户端忽略）；被改判的是此前误判的条目（M5 的 `missing=['opencv-python']` 是错的），不是语义重定义。`inputs_digest` 只含声明意图与文件字节，不变；`identity` 只在被改判的脚本上变（`requirements` 变了），回归用例 `test_a_plan_with_nothing_unusual_is_unchanged_by_the_static_index` 钉着没有来源问题的脚本读不读索引需求 / 约束 / 身份 / 指纹逐字相同。`test_dependency_transaction.py::test_second_open_does_not_install_again` 全文件绿。
+4. `prepsession.origin_facts` / `checks_of`：`dependencies` 项有 `origins` 时带 `detail.origins {count, by_reason}`（只有计数与闭集原因码，不出名字 / 路径）；状态与码一律不变。黄金向量 `tests/golden/preparation_session_vectors.json` 新增 3 条（来源事实不改 phase，也不把 unknown 变通过）。`web/src/lib/api.ts`：`JOINT_BLOCK_CODES` / `JOINT_ORIGIN_REASONS` / `JointOrigin` 与 `missing` / `satisfied` 的可选字段；`blocked.code` 收窄成 `JointBlockCode`；不改任何组件。
+5. 同源对：`depplan.BLOCK_REASONS` ↔ `api.ts` `JOINT_BLOCK_CODES` ↔ `DependencyPrepareDialog.tsx` `BLOCKED_TEXT` ↔ 两份 `errors.json`（BASELINE §Q10 里的口头约定）与 `ORIGIN_REASONS` ↔ `JOINT_ORIGIN_REASONS` 登记进 `same-origin-pairs.md`，看护用例 `TestClosedSetsMirrorTheFrontend`（含「镜像删一项必红」）。
+
+**缩小了什么（以及证据）**
+
+* **没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（不进 `origins`）。维护者的 M5 例子是「装了 headless」，已修；而「一个都没装」若也不算缺，干净机器上 `import cv2` 就再也得不到自动准备，只能靠运行后的单包修复。条目带 `distribution_status=module_origin_ambiguous`，展示（PR6）可以据此提示备选。要改成「一律不算缺」只需 `_verdict` 一处，**这是需要维护者确认的取舍**。
+* **覆盖度 `found` 不改判**：缓存里某个模块 `found`（能 import）而它的发行包名没装（Conda 之类），仍按名字级判缺；只有 `import_error` 改判。任务点名的只有 `import_failed`；`found` 改判会让计划变成 `nothing_needed` 却没有版本可核，留给 PR6 的展示与 PR5 的装后核验一起定。
+* **依赖门（`user_environment_offer`）没有展示覆盖度 detail**：PR3 留给 PR4 的第二条。门的载荷里已经有 `plan.origins` 与 `unknown`，展示需要 PR6 的组件，后端没有再加一份。
+* **没有把 `distmeta.index_environment` 接到默认扫描**：默认扫描没有目标环境（候选环境未经授权不读）；静态索引只在已经有目标事实的联合计划里用。这与 C5 一致，默认扫描的子进程数、文件读取面都没变。
+* `GET /api/engine/dependencies` 未改（C5）。
+
+**留给 PR5 / PR6 的事项**
+
+* **PR5 可以缩小，建议不并入 PR4**：BASELINE §7.2 里 PR5 的 13 条现有用例（`test_dependency_impact.py` / `test_dependency_transaction.py` / `test_dependency_scope.py` / `test_dependency_repair.py`）在本 PR 的改动之后全部原样绿（见下面的测试命令），本 PR 没有碰安装方案、`impact_of` 与 `IMPACT_VERSION`（没有新增影响类：被改判为 open 的 import 只是**不进**安装集合，披露字段未变）。真正剩下的只有：①装后「发行包与版本」核验对照 `distmeta` 的 `observed_*`（`deprepair._versions_of` / `installed_version` 已有读数，缺对照）；②用户在确认界面接受包名与版本的 `user_specified` 路径（取决于 §8-C1 / #864）。建议 PR5 缩成这两条的一个小 PR，不为它再走一轮完整 `risk:high` 评审；①可以做成 PR6 之后的独立提交。
+* **PR6**：用 `plan.origins[].reason` / `coverage.detail.code` 各给一句人话（不在前端复刻判据）；`checks_of.dependencies.detail.origins.by_reason` 决定卡片的第二行；`missing[].distribution_status=module_origin_ambiguous` 的备选提示；`DependencyPrepareDialog` 的 `unknown` 区改读 `origins`。
+* `found` 改判、依赖门展示覆盖度 detail（见上）。
+* 目标事实 `builtin` / `ext_suffixes` 只在联合计划路径上有；`rasterhint` 的 `importscan.scan(root, script)` 仍用保守口径（它只看 matplotlib 反面判据，保守即可）。
+
+**评审跟进（Codex 完整评审 #920，两条 P1，`risk:high`）**
+
+* **P1-1 `r4237204162`（索引漏层）**：`_FACTS_SRC` 多报 `site_roots`（`sys.path` 上的 `getsitepackages()` / 启用的 user site / 其它 `site-packages`·`dist-packages` 目录；路径列表，在已授权的事实采集子进程里取，不新增进程），`TargetFacts.site_roots` 不进 `digest()` / `to_payload()`（`identity` / `inputs_digest` 不变）。`static_index` 经 `distmeta.index_environment(site_paths=)` 按这些层建索引（层顺序 = sys.path 顺序，复用 distmeta 已有的多层遮蔽语义）。任一层的名字没读全（层消失 / 是链接被 no-follow 拒 / 列不出来 / 条目被跳过·链接拒跟 / 层数超 `MAX_SITE_PATHS` / 预算）→ `Index.names_complete=False`（同时 `complete=False`）；个别发行包的元数据文件读不成（Homebrew 的 pip METADATA 是符号链接，实测会让 venvfixture 的真 venv 里五个既有用例变红）只让 `complete=False`、不触发改判；此时 `_verdict` 把本该判「缺」的改判来源未定（`reason=unverified`，条目 `distribution_status=environment_not_checked`）——不进 `missing`、不进 `requirements`。没量到层的替身事实（`site_roots=()`）维持只读前缀的旧口径；全新代（`prefix=""`）不读索引，不受影响。
+* **P1-2 `r4237204165`（open 判决剔掉新代的安装）**：来源判决只抑制当前环境的 `missing`。`install_facts` 不是当前环境时，`to_install` 的排除按目标的已装集合（名字级）单独判，当前解释器里的 editable / 本地 / Conda / `import_error` / 读不全的索引都不再把该 import 从新代的安装集合里剔除；仍只用可信安装名（表 / 声明），不从 `unknown` 猜。当前环境 editable、可信解析给不出安装名的 import 本来就在 `unknown` 桶（不在 `needed`），继续列在 `unknown` / `origins`（`editable_dependency_not_reproducible` 等既有词汇），如实标出新环境装不出来；未新增 `BLOCK_REASONS` / `ORIGIN_REASONS`。`install_facts` 为 None 或就是 `facts` 时行为不变（用例钉着）。
+* **额外路径层（定向复核前补）**：`_FACTS_SRC` 再报 `extra_roots`（`sys.path` 上其余存在的目录：`PYTHONPATH` 的 `--target` 目录、`.pth` 路径行加进来的老式 editable src；不含 `site_roots`、标准库及其子目录、lib-dynload / DLLs、zip），`distmeta.index_environment(extra_paths=)` 对它们做名字级扫描（目录清单里的 `name/` / `name.py` / 扩展，有 dist-info 顺带读）；模块名出现在那里却无发行包认领 → 既有的「模块在、无元数据」分支判 open，不进 missing；读不了 / 层数超限 → `names_complete=False`。指向这些已读目录的 `.pth` 路径行算已跟进，不再计入 `uncovered_paths`（facts 没报到的目录与 `import` 行维持原口径）。没有「一律不完整」：额外路径里没有该模块时照样报缺。用例 `TestExtraPathLayers`。
+* 用例：`tests/test_dependency_plan.py` 的 `TestEveryVisibleLayer` / `TestInstallTargetIsJudgedSeparately`（真 `--system-site-packages` venv + 基础层替身 / `PYTHONUSERBASE` 的 user site / 三种读不成的层 / 层顺序遮蔽 / 新代单独判的 6 个形状）。
+* **仍未覆盖**：①额外路径层与 site 层不按 sys.path 交错排序（额外层排在后面；只影响额外层里带 dist-info 的提供者的遮蔽顺序），脚本 / 项目目录若恰在 sys.path 上也会被扫（项目内模块归 `importscan` 本地解析先于此）；②`install_facts` 是 active 代时它自己的来源（没有该代的索引）只有名字级判据；③基础层用 `PYTHONPATH` 里的 `site-packages` 目录做替身（测试不能改宿主的真基础解释器），读取路径与真基础层相同；④`index.complete` 在超大环境（预算用尽）下也会让「缺」改判来源未定——这是「宁可不完整当未定」的代价。
+* **自动评审 P2 两条**：①`r4237359803`：`_verdict` 先看覆盖度缓存的 `import_error`，再返回名字级 `_PRESENT`——装了但导入失败（装坏的 PyYAML）报 `module_import_failed_in_target_environment`，不再被名字级「装着」判成满足（用例是 `installed` 有该发行包 + 缓存 `import_error` 的真实组合，对照：缓存 `found` / 无缓存仍满足）。②`r4237359814`：`JointPlan` 新增 `install_only`（只有安装目标要装、当前解释器不报缺的条目，形状同 `missing`，不进 `to_payload`，披露与 `plan_version` 不变；`requirements` 与 `_effects` 本就含它），`deprepair` 的账本 `record` / `needed_imports`（`create_joint_plan`、`_fold_requested`、私有 Python 重算）改用 `install_entries`（= `missing` + `install_only`），首代装了的包进托管账本，之后加包 / 重建按账本造代不会丢；用例走真实 `create_joint_plan` → `prepare` → `managedenv.installed_requirements` / `generation_requirements`。
+
+**CI 跟进（#920 `632b5f592` 完整 CI，两处失败，根因已核）**
+
+* **Windows 三个 backend-platforms 分片 70+ 条（「没有缺的依赖」）**：`_FACTS_SRC` 的 `extra_roots` 把 `sys.path` 上其余存在的目录都当额外路径层做名字级扫描。Windows 的 venv 里 `sys.path` 带基础解释器的根目录与 venv 根目录（Linux 没有）；根目录里是 `Lib` / `DLLs` / `Scripts` / `tcl` 等安装物，其中的链接 / junction / 读不了的条目让整个名字层 `names_complete=False`，`_verdict` 把本该判缺的 ALPHA/BETA 全改判来源未定。本机复现（macOS 上 `PYTHONPATH` 加 venv 根与 `base_prefix`）：`base/Headers` 是符号链接，`names_complete=False`，与 Windows 同一机制。修：`extra_roots` 排除 `sys.prefix` / `exec_prefix` / `base_prefix` / `base_exec_prefix` / `real_prefix` 和 `sys.executable`·`_base_executable` 所在目录这些**安装根目录本身**（只排精确相等，子目录照旧），以及探针自己的 cwd。个别条目的失败仍保守地让整层不完整（未放宽）。
+* **backend-fast (3.10) 三条**：基础解释器的 site-packages 里 setuptools 的 `distutils-precedence.pth`（一行 `import os; var = 'SETUPTOOLS_USE_DISTUTILS'; …add_shim();`）被计成未建模的 `import` 钩子，`uncovered_paths=1`，候选降级为 `unverified`。修：`distmeta._KNOWN_BENIGN_PTH_RE` 按**整行内容**精确匹配两类已知只影响 `distutils` 的行——setuptools 的垫片行（默认值 `local` / 老版 `stdlib` 两种形态）、virtualenv 的 `import _virtualenv`——算已建模；同名文件换了内容、附加别的 import、别的模块一律仍计 `uncovered_paths`。
+* 用例：`TestExtraPathLayers`（探针在 Windows 形态的 `sys.path` 下不报安装根目录与 cwd；真 venv 的 `PYTHONPATH` 加 venv 根与基础根后缺包仍报缺、`names_complete` 仍真）、`TestKnownBenignPthHooks`。
+* **本机无法验证**：真 Windows 的 `sys.path` 布局（hostedtoolcache / python.org / embeddable 的 `python3XX.zip` + `._pth`）与 junction 判定（`scanbudget.is_redirect`）；本机只复现了同一机制（符号链接）。

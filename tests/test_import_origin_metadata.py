@@ -1297,6 +1297,56 @@ class TestDeclaredVersusInstalled:
             assert c.distribution_provenance in ("", *distmeta.PROVENANCES)
 
 
+class TestKnownBenignPthHooks:
+    """CI 跟进：venv / 基础解释器自带的、只影响 distutils 的良性 `import` 行 `.pth` 是已建模的，不计入 `uncovered_paths`
+    （否则 Python 3.10 自带 setuptools 的环境里所有候选都降成 unverified）；其它任何 `import` 行照常计入。按整行内容匹配，不按文件名。"""
+
+    _SETUPTOOLS = (
+        "import os; var = 'SETUPTOOLS_USE_DISTUTILS'; enabled = os.environ.get(var, '{default}') == 'local'; "
+        "enabled and __import__('_distutils_hack').add_shim(); \n"
+    )
+
+    @pytest.mark.parametrize(
+        ("name", "text"),
+        [
+            ("distutils-precedence.pth", _SETUPTOOLS.format(default="local")),
+            ("distutils-precedence.pth", _SETUPTOOLS.format(default="stdlib")),
+            ("_virtualenv.pth", "import _virtualenv\n"),
+        ],
+        ids=["setuptools_local", "setuptools_stdlib_old", "virtualenv"],
+    )
+    def test_a_known_distutils_only_hook_is_modelled(self, tmp_path, name, text):
+        prefix, site = _env(tmp_path)
+        _write(site / name, text)
+        assert _index(prefix).uncovered_paths == 0
+
+    @pytest.mark.parametrize(
+        ("name", "text"),
+        [
+            ("evil.pth", "import evil\n"),
+            # 同名文件换了内容：不按文件名放行
+            ("distutils-precedence.pth", "import evil\n"),
+            ("_virtualenv.pth", "import _virtualenv; import evil\n"),
+            (
+                "distutils-precedence.pth",
+                "import os; var = 'SETUPTOOLS_USE_DISTUTILS'; enabled = os.environ.get(var, 'local') == 'local'; "
+                "enabled and __import__('evil').add_shim(); \n",
+            ),
+        ],
+        ids=["arbitrary", "known_filename_other_content", "appended_import", "other_module"],
+    )
+    def test_any_other_import_line_still_counts_as_uncovered(self, tmp_path, name, text):
+        prefix, site = _env(tmp_path)
+        _write(site / name, text)
+        assert _index(prefix).uncovered_paths == 1
+
+    def test_a_known_hook_next_to_an_unknown_one_counts_only_the_unknown(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _write(site / "_virtualenv.pth", "import _virtualenv\n")
+        _write(site / "evil.pth", "import evil\n")
+        assert _index(prefix).uncovered_paths == 1
+
+
 class TestIssue889:
     """#882 第五轮 P2 三条（接入安装决策前必须修）：看不全不确认、读不出映射不当没有、冲突不分来源都报。"""
 
@@ -1575,9 +1625,12 @@ class TestInstalledMetadataIsNotAnInstallAuthorization:
             assert c.selected_distribution == ""
             assert not any(row["reproducible"] for row in c.distribution_candidates)
 
-    def test_the_planner_and_repair_modules_do_not_read_the_new_observation(self):
+    def test_the_installer_and_the_resolver_do_not_read_the_new_observation(self):
+        """安装器（`deprepair`）与可信解析（`depresolve`）从不读已装元数据的观测字段。PR4 起 `depplan` 读它们——只用来
+        认出「已经有提供者 / 来源未定」（收紧 `missing`），**不**拿它们造安装名：见
+        `test_dependency_plan.py::TestPlanOrigins::test_the_observed_provider_never_becomes_an_install_name`。"""
         root = Path(importscan.__file__).parent
-        for mod in ("depplan.py", "deprepair.py", "depresolve.py"):
+        for mod in ("deprepair.py", "depresolve.py"):
             names = {
                 n.id if isinstance(n, ast.Name) else n.attr
                 for n in ast.walk(ast.parse((root / mod).read_text(encoding="utf-8")))

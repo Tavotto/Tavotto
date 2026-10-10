@@ -482,6 +482,59 @@ class TestJointTransaction:
         assert managedenv.active_generation(project) == gen_before
         assert len(managedenv.generations(project)) == 1
 
+    def test_a_package_added_only_for_the_new_generation_is_recorded_in_the_ledger(
+        self, tmp_path, house, offline_managed_env, monkeypatch
+    ):
+        """评审 P2：当前解释器经 editable 提供了 alpha（所以不报缺），目标是新的托管代，那里没有，`requirements` 里照装。
+        账本 / 验证 import 必须覆盖 `requirements` 的全部条目，否则之后加包或重建按账本造代会悄悄丢掉它。"""
+        import dataclasses
+
+        prefix = tmp_path / "running"
+        site = prefix / "site-packages"
+        dist = site / "alpha_fork-0.1.dist-info"
+        dist.mkdir(parents=True)
+        (dist / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: alpha-fork\nVersion: 0.1\n\nBODY\n", encoding="utf-8"
+        )
+        (dist / "top_level.txt").write_text(f"{ALPHA[1]}\n", encoding="utf-8")
+        (dist / "RECORD").write_text(f"{ALPHA[1]}/__init__.py,,\n", encoding="utf-8")
+        (dist / "direct_url.json").write_text(
+            json.dumps({"url": "file:///src/alpha", "dir_info": {"editable": True}}),
+            encoding="utf-8",
+        )
+        real_facts_for = deprepair._facts_for
+
+        def facts_for(kind, python, root, **kw):
+            run, install, measured = real_facts_for(kind, python, root, **kw)
+            running = dataclasses.replace(
+                install if install is not None else run,
+                installed={"alpha-fork": "0.1"},
+                python=str(prefix / "bin" / "python"),  # 索引按解释器路径缓存：别撞上真事实那一份
+                prefix=str(prefix),
+                site_roots=(str(site),),
+            )
+            return running, install, measured
+
+        monkeypatch.setattr(deprepair, "_facts_for", facts_for)
+        project = _project(
+            tmp_path,
+            requirements=f"{ALPHA[0]}\n{BETA[0]}<2\n",
+            script=f"import {ALPHA[1]}\nimport {BETA[1]}\n",
+        )
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.joint["status"] == "ready"
+        assert [m["import_name"] for m in plan.joint["missing"]] == [BETA[1]]  # 当前环境只缺 beta
+        assert set(plan.requirements) == {ALPHA[0], f"{BETA[0]}<2"}  # 新代两个都装
+        assert {r["distribution"] for r in plan.record} == {ALPHA[0], BETA[0]}
+        assert set(plan.needed_imports) == {ALPHA[1], BETA[1]}
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        ledger = {deprepair._name_of(r) for r in managedenv.installed_requirements(project)}
+        assert {ALPHA[0], BETA[0]} <= ledger
+        # 之后再加一个包：按账本造代的集合仍含 alpha
+        rebuilt = deprepair.generation_requirements(project, (GAMMA[0],))
+        assert ALPHA[0] in {deprepair._name_of(r) for r in rebuilt}
+
     def test_marker_false_and_unselected_group_are_not_installed(
         self, tmp_path, house, offline_managed_env
     ):

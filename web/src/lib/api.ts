@@ -4177,6 +4177,55 @@ export const cancelDependencyPlan = (planId: string) =>
 // ---------------------------------------------------------------------------
 export const DEPENDENCY_PREPARATION_CODE = 'dependency_preparation_required'
 
+/**
+ * `depplan.BLOCK_REASONS` 的镜像（顺序也比；`tests/test_dependency_plan.py` 钉两侧相等）。`blocked` 的理由闭集：
+ * 每一条都有用户能做的下一步（ADR 0061 §三），文案在 errors.json 的 `dependencyBlocked_<code>`。
+ * 来源未定（多发行包 / editable / 本地 / Conda / 无元数据 / 导入失败）**不是**新的 blocked 理由，见 `JOINT_ORIGIN_REASONS`。
+ */
+export const JOINT_BLOCK_CODES = [
+  'dependency_declaration_unsupported',
+  'dependency_conflict',
+  'dependency_hashes_incomplete',
+  'dependency_target_unavailable',
+  'dependency_scope_conflict',
+] as const
+export type JointBlockCode = (typeof JOINT_BLOCK_CODES)[number]
+
+/**
+ * `depplan.ORIGIN_REASONS` 的镜像（Import Origin PR4；顺序也比）。`JointDependencyPlan.origins[].reason`：这个 import
+ * 为什么没有可信的安装名。是**结构化 detail**，不是发布的错误码、不是 `blocked` 理由；前端只读它们做展示。
+ */
+export const JOINT_ORIGIN_REASONS = [
+  'distribution_unresolved',
+  'module_origin_ambiguous',
+  'editable_dependency_not_reproducible',
+  'installed_source_not_reproducible',
+  'conda_package_not_pypi',
+  'unverified',
+  'module_import_failed_in_target_environment',
+] as const
+export type JointOriginReason = (typeof JOINT_ORIGIN_REASONS)[number]
+
+/** `JointDependencyPlan.origins[]`：`unknown` 里每个名字的来源状态（后端 `depplan._origin_entry`；不带路径与文件内容） */
+export interface JointOrigin {
+  import_name: string
+  bucket: 'third_party' | 'unknown'
+  /** 表 / 声明里的候选发行包名（可能为空；不是安装授权） */
+  distribution: string
+  reason: JointOriginReason
+  /** `importscan` 的 `resolution_status`（resolved / ambiguous / unverified / unresolved / unsupported） */
+  resolution_status: string
+  /** `distmeta` 的发行包状态（installed_confirmed / module_origin_ambiguous / … / 空 = 没量） */
+  distribution_status: string
+  origin_kind: string
+  /** 已装提供者的来源（index / editable / local_path / local_archive / vcs / url / conda / 空） */
+  provenance: string
+  /** 候选发行包名（规范化、≤ 8 个） */
+  candidates: string[]
+  /** PR3 覆盖度缓存里目标解释器对它的模块状态（found / not_found / import_error / … / 空 = 没量过） */
+  coverage: string
+}
+
 /** `depplan.JointPlan.to_payload()`：只读的联合计划（后端算的，不含机器路径） */
 export interface JointDependencyPlan {
   plan_version: number
@@ -4193,10 +4242,24 @@ export interface JointDependencyPlan {
     declared: boolean
     specifiers: string[]
     via: string[]
+    /** 来源状态（可选，只在有话可说时出现）：多发行包的 `module_origin_ambiguous` 等 */
+    resolution_status?: string
+    distribution_status?: string
   }[]
-  satisfied: { import_name: string; distribution: string; installed_version: string; matches_declared: boolean }[]
-  /** 无条件 import 却映射不到包名的：永远不装、不猜，让用户指定 */
+  satisfied: {
+    import_name: string
+    distribution: string
+    installed_version: string
+    matches_declared: boolean
+    /** 装着的发行包与表 / 声明里的名字不同时（`cv2` 装的是 headless）：表里的那个 */
+    mapped_distribution?: string
+    resolution_status?: string
+    distribution_status?: string
+  }[]
+  /** 无条件 import 却没有可信安装名的（映射不到 / 多发行包 / editable / 本地 / Conda / 无元数据 / 导入失败）：永远不装、不猜，原因见 `origins` */
   unknown: string[]
+  /** `unknown` 里每个名字的来源状态（PR4）；名字集合与 `unknown` 恒等 */
+  origins?: JointOrigin[]
   /** 条件 / 延后 / 可选 / 动态的第三方 import：不在跑前装 */
   possible: { module: string; context: string; distribution: string }[]
   /** 交给安装器的需求（规范串） */
@@ -4205,8 +4268,8 @@ export interface JointDependencyPlan {
   require_hashes: boolean
   /** 受管环境才有：matplotlib / numpy 的支持区间 */
   adapter: string[]
-  /** blocked 的理由闭集（dependency_declaration_unsupported / dependency_conflict / dependency_hashes_incomplete / dependency_target_unavailable / dependency_scope_conflict） */
-  blocked: { code: string; declarations?: { raw: string; reason: string; source: string }[]; conflicts?: ({ name: string; specifiers: string[]; reasons: string[] } | { name: string; installed_version: string; installed_for: string; wanted: string; wanted_for: string; via: string })[]; lines?: string[]; count?: number; options?: string[] }[]
+  /** blocked 的理由闭集（`JOINT_BLOCK_CODES`） */
+  blocked: { code: JointBlockCode; declarations?: { raw: string; reason: string; source: string }[]; conflicts?: ({ name: string; specifiers: string[]; reasons: string[] } | { name: string; installed_version: string; installed_for: string; wanted: string; wanted_for: string; via: string })[]; lines?: string[]; count?: number; options?: string[] }[]
   selection: { selected_groups: string[]; available_groups: string[]; unselected_groups: string[]; skipped_marker: { raw: string; marker: string }[] }
   identity: string
 }

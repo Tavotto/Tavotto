@@ -348,6 +348,17 @@ def _locked_by() -> dict | None:
     return {"source": pinned[1]}
 
 
+def _role_of(python: str, *, is_current: bool, pinned: str | None) -> str:
+    """覆盖度里这个候选的角色（#908）：`target` = worker 真正会用的那个环境。
+
+    全局显式解释器压过一切项目级决定（`_locked_by`），所以有全局锁时 target 只可能是**全局那一个**；项目记住的
+    环境即使 `is_current` 也只是被压掉的用户候选（`user` 码，不能说「目标环境里缺」）。没有全局锁时 target 就是
+    项目当前采用的那一个。"""
+    if pinned:
+        return ROLE_TARGET if projectenv._same_executable(python, pinned) else ROLE_USER
+    return ROLE_TARGET if is_current else ROLE_USER
+
+
 def recommend(
     root: str | Path, script: str | None = None, *, modules: Iterable[str] | None = None
 ) -> dict:
@@ -363,6 +374,8 @@ def recommend(
     consent = projectenv.consent_of(record)
     default_chain = bool(record and record.get("mode") == projectenv.MODE_DEFAULT_CHAIN)
     locked = _locked_by()
+    pin = pool.explicit_worker_python()
+    pinned_python = pin[0] if pin else None
     remembered_python = record["path"] if record and record.get("path") else ""
     rows = _rows(root, script)
     mods, _dropped = normalize_modules(modules) if modules is not None else ((), 0)
@@ -409,7 +422,9 @@ def recommend(
                 **(
                     {
                         "coverage": _coverage_for(
-                            python, mods, role=ROLE_TARGET if is_current else ROLE_USER
+                            python,
+                            mods,
+                            role=_role_of(python, is_current=is_current, pinned=pinned_python),
                         )
                     }
                     if mods

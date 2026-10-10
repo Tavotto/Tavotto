@@ -687,3 +687,119 @@ class TestRealRoundTrip:
         assert done["provider"]["attempts"] == 2
         assert done["provider"]["attempt_id"] != first_attempt  # 新的 attempt，不是从异常点继续
         assert done["dependency_delta"] is None  # 新的一次尝试消费了上次的差额
+
+
+# ---------------------------------------------------------------------------
+# 来源事实（Import Origin PR4）：依赖检查项带计数与原因码，不改状态、不出名字与路径
+# ---------------------------------------------------------------------------
+class TestOriginFactsOnTheDependenciesCheck:
+    def _plan(self, offer, *, required_input=None):
+        import types
+
+        return types.SimpleNamespace(
+            script="fig.py",
+            target="not-a-script",  # 跳过 argparse 的静态分析（不相干）
+            project_root="/unused",
+            environment={},
+            interpreter="py",
+            workdir_decision={"decided": True},
+            required_input=required_input,
+            dependency_preparation=offer,
+            binding=object(),
+        )
+
+    def _deps(self, offer, **kw):
+        checks = prepsession.checks_of(self._plan(offer, **kw))
+        return next(c for c in checks if c["id"] == "dependencies")
+
+    ORIGINS = [
+        {"import_name": "zzz_private", "reason": "distribution_unresolved"},
+        {"import_name": "cv2", "reason": "module_origin_ambiguous"},
+        {"import_name": "yaml", "reason": "module_origin_ambiguous"},
+    ]
+
+    def test_counts_and_reasons_ride_along_without_changing_the_status(self):
+        check = self._deps({"plan": {"status": "nothing_needed", "origins": self.ORIGINS}})
+        assert check["status"] == "ok" and "code" not in check
+        assert check["detail"] == {
+            "origins": {
+                "count": 3,
+                "by_reason": {"distribution_unresolved": 1, "module_origin_ambiguous": 2},
+            }
+        }
+
+    def test_the_check_is_byte_for_byte_what_it_was_when_there_are_no_origins(self):
+        assert self._deps({"plan": {"status": "nothing_needed", "origins": []}}) == {
+            "id": "dependencies",
+            "status": "ok",
+        }
+        assert self._deps({"plan": {"status": "nothing_needed"}}) == {
+            "id": "dependencies",
+            "status": "ok",
+        }
+
+    def test_no_names_and_no_paths_in_the_facts(self):
+        check = self._deps(
+            {
+                "plan": {
+                    "status": "nothing_needed",
+                    "origins": [
+                        {
+                            "import_name": "secret_mod",
+                            "reason": "editable_dependency_not_reproducible",
+                            "candidates": ["/Users/x/src/fork"],
+                        }
+                    ],
+                }
+            }
+        )
+        text = json.dumps(check)
+        assert "secret_mod" not in text and "/Users" not in text
+
+    def test_an_unknown_reason_is_not_counted(self):
+        check = self._deps(
+            {"plan": {"status": "nothing_needed", "origins": [{"reason": "made_up_by_a_client"}]}}
+        )
+        assert check == {"id": "dependencies", "status": "ok"}
+
+    def test_the_authorization_keeps_its_digest_and_gains_the_facts(self):
+        offer = {"plan": {"status": "ready", "origins": self.ORIGINS[:1]}}
+        check = self._deps(
+            offer,
+            required_input={"code": "dependency_preparation_required", "impact_digest": "d1"},
+        )
+        assert check["status"] == "needs_action"
+        assert check["detail"]["impact_digest"] == "d1"
+        assert check["detail"]["origins"]["count"] == 1
+
+    def test_blocked_keeps_its_reasons_and_gains_the_facts(self):
+        offer = {
+            "plan": {
+                "status": "blocked",
+                "blocked": [{"code": "dependency_conflict"}],
+                "origins": self.ORIGINS[:1],
+            }
+        }
+        check = self._deps(offer)
+        assert check["status"] == "blocked" and check["code"] == "dependency_blocked"
+        assert check["detail"]["reasons"] == ["dependency_conflict"]
+        assert check["detail"]["origins"]["count"] == 1
+
+    def test_a_real_plan_flows_into_the_check(self, tmp_path):
+        """从真联合计划（`cv2` 装了两个备选）到检查项：不是手写的载荷。"""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "fig.py").write_text("import cv2\n", encoding="utf-8")
+        facts = depplan.TargetFacts(
+            python="/fake/python",
+            marker_env={"python_version": "3.12", "sys_platform": "linux"},
+            stdlib=frozenset(),
+            installed={"opencv-python-headless": "4.9", "opencv-contrib-python": "4.9"},
+        )
+        plan = depplan.plan(proj, "fig.py", facts=facts, target_kind="project_venv")
+        check = self._deps({"plan": plan.to_payload()})
+        assert check["status"] == "ok"
+        assert check["detail"]["origins"] == {
+            "count": 1,
+            "by_reason": {"module_origin_ambiguous": 1},
+        }

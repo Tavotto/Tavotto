@@ -30,6 +30,7 @@ import pytest
 from support import envworld, venvfixture
 from support.envworld import real_venv, rebuild_venv
 from tavotto.engine import (
+    depplan,
     deprepair,
     distmeta,
     envadvice,
@@ -908,6 +909,143 @@ def test_J_a_global_interpreter_setting_still_allows_coverage_but_recommends_not
     assert rec["recommended_id"] is None  # 全局指定压过项目级决定：不推荐采用
     row = _row(out, envworld.venv_rel(".venv"))
     assert row["coverage"]["state"] == "covered"  # 覆盖度照常（只读事实），不因锁定消失
+
+
+def _remember_selected(root: Path, python: Path) -> None:
+    assert projectenv.remember(
+        root,
+        str(python),
+        automatic=False,
+        trigger=projectenv.TRIGGER_RECOMMENDED,
+        health=_health(),
+    )
+
+
+@posix_only
+def test_J_a_project_candidate_overridden_by_the_global_setting_is_a_user_environment(
+    tmp_path, monkeypatch
+):
+    """#908：全局解释器压过项目记住的环境时，worker 用的是全局那个；被压掉的 `.venv` 缺包不能说成「目标环境里缺」。"""
+    root = tmp_path / "p"
+    root.mkdir()
+    chosen = _fake_venv(root, ".venv")
+    _remember_selected(root, chosen)
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", sys.executable)
+    lacking = _health(modules_ok={"covok_a": False}, modules_detail={"covok_a": "not_found"})
+
+    out = envadvice.check(
+        root,
+        "p.py",
+        modules=("covok_a",),
+        probe=_fake_probe({".venv/bin/python": lacking}),
+    )
+
+    row = _row(out, envworld.venv_rel(".venv"))
+    assert row["current"] is True  # 记住的决定还在（只是被压掉）
+    assert row["coverage"]["role"] == envadvice.ROLE_USER
+    assert [d["code"] for d in row["coverage"]["detail"]] == [envadvice.DETAIL_NOT_FOUND_USER]
+
+
+@posix_only
+def test_J_the_global_interpreter_itself_is_the_target_role_when_it_is_a_candidate(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "p"
+    root.mkdir()
+    remembered = _fake_venv(root, ".venv")
+    pinned = _fake_venv(root, "venv")
+    _remember_selected(root, remembered)
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(pinned))
+    lacking = _health(modules_ok={"covok_a": False}, modules_detail={"covok_a": "not_found"})
+
+    out = envadvice.check(
+        root,
+        "p.py",
+        modules=("covok_a",),
+        probe=_fake_probe({".venv/bin/python": lacking, "venv/bin/python": lacking}),
+    )
+
+    assert _row(out, envworld.venv_rel("venv"))["coverage"]["role"] == envadvice.ROLE_TARGET
+    assert _row(out, envworld.venv_rel(".venv"))["coverage"]["role"] == envadvice.ROLE_USER
+
+
+@posix_only
+def test_without_a_global_setting_the_remembered_environment_stays_the_target(tmp_path):
+    root = tmp_path / "p"
+    root.mkdir()
+    chosen = _fake_venv(root, ".venv")
+    _remember_selected(root, chosen)
+    lacking = _health(modules_ok={"covok_a": False}, modules_detail={"covok_a": "not_found"})
+
+    out = envadvice.check(
+        root,
+        "p.py",
+        modules=("covok_a",),
+        probe=_fake_probe({".venv/bin/python": lacking}),
+    )
+
+    row = _row(out, envworld.venv_rel(".venv"))
+    assert row["coverage"]["role"] == envadvice.ROLE_TARGET
+    assert [d["code"] for d in row["coverage"]["detail"]] == [envadvice.DETAIL_MISSING_TARGET]
+
+
+# ---------------------------------------------------------------------------
+# 联合计划消费覆盖度（PR4）：只读缓存，不起进程
+# ---------------------------------------------------------------------------
+def _facts_of(python: Path) -> "depplan.TargetFacts":
+    return depplan.TargetFacts(
+        python=str(python),
+        marker_env={"python_version": "3.12", "sys_platform": "linux"},
+        stdlib=importscan.HOST_STDLIB,
+        installed={},
+    )
+
+
+@posix_only
+def test_the_joint_plan_reads_an_explicit_checks_import_error_without_starting_anything(
+    tmp_path, monkeypatch
+):
+    """用户点了「检查」，`yaml` 在目标环境里在、但导入失败：联合计划不再把「装 pyyaml」当出路。"""
+    root = tmp_path / "p"
+    root.mkdir()
+    py = _fake_venv(root, ".venv")
+    (root / "p.py").write_text("import yaml\n", encoding="utf-8")
+    broken = _health(modules_ok={"yaml": False}, modules_detail={"yaml": "import_error"})
+    envadvice.check(
+        root, "p.py", modules=("yaml",), probe=_fake_probe({".venv/bin/python": broken})
+    )
+
+    def boom(*a, **k):
+        raise AssertionError("读覆盖度缓存不许起进程")
+
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    monkeypatch.setattr(subprocess, "run", boom)
+    reader = deprepair._coverage_reader(_facts_of(py))
+    plan = depplan.plan(
+        root, "p.py", facts=_facts_of(py), target_kind="project_venv", coverage=reader
+    )
+    assert plan.missing == () and plan.requirements == ()
+    assert [(o["import_name"], o["reason"]) for o in plan.origins] == [
+        ("yaml", depplan.ORIGIN_IMPORT_FAILED)
+    ]
+
+
+@posix_only
+def test_without_a_measured_verdict_the_plan_is_what_it_always_was(tmp_path):
+    root = tmp_path / "p"
+    root.mkdir()
+    py = _fake_venv(root, ".venv")
+    (root / "p.py").write_text("import yaml\n", encoding="utf-8")
+    reader = deprepair._coverage_reader(_facts_of(py))
+    assert reader(("yaml",)) is None  # 没量过：缓存里什么都没有
+    plan = depplan.plan(
+        root, "p.py", facts=_facts_of(py), target_kind="project_venv", coverage=reader
+    )
+    assert [m["distribution"] for m in plan.missing] == ["pyyaml"] and plan.origins == ()
+
+
+def test_there_is_no_reader_without_target_facts():
+    assert deprepair._coverage_reader(None) is None
 
 
 # ---------------------------------------------------------------------------
