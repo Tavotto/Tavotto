@@ -657,7 +657,10 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         const guard = captureProjectEpoch(() => useProjectPreparationStore.getState().epoch)
         await useRuntimeAssetStore.getState().loadAssets()
         if (!guard.still()) return null
-        if (!(useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)) {
+        // 清单里没有、文档里也还没有这张图才加：清单请求在途时连点两下，两个续延都看到「清单里没有」，
+        // 只有文档才是已经加过一次的权威（补审 #914 r4236701619）。这两步之间没有 await，第二个续延必然看到第一个加的面板
+        const known = (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)
+        if (!known && !findFigurePanel(d.asset_id)) {
           addRuntimePanelToCanvas(d)
         }
         openFastEdit(d.asset_id)
