@@ -795,6 +795,9 @@ class TestEndToEndManaged:
             facts = real(python, use_cache=use_cache)
             if facts is not None and not use_cache and LAB[0] in facts.installed:
                 facts = dataclasses.replace(facts, installed={**facts.installed, LAB[0]: "0.1"})
+                for d in depplan.static_index(facts)._dists:  # 元数据读数也一致地说 0.1
+                    if d.key == LAB[0]:
+                        d.version = "0.1"
             return facts
 
         monkeypatch.setattr(depplan, "target_facts", spy)
