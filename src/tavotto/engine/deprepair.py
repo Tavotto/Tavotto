@@ -4031,8 +4031,15 @@ def create_joint_plan(
         else joint.install_entries
     )
     _selection_unchanged(root, selection0)
+    # 计划里每一个将要装 / 要核的 import 名：needed + unknown + 所有安装条目 + 用户指定的（后者已离开 unknown、
+    # 也不在 needed，漏了它提供者指纹就管不到它：前层出现同名提供者时 pip 已经改了环境才由装后核验发现）
     plan_names = tuple(
-        sorted({str(n.get("module") or "") for n in joint.needed} | set(joint.unknown))
+        sorted(
+            {str(n.get("module") or "") for n in joint.needed}
+            | set(joint.unknown)
+            | {str(e["import_name"]) for e in installing_entries}
+            | {str(u["import_name"]) for u in joint.user_specified}
+        )
     )
     now = time.time()
     plan = JointRepairPlan(
@@ -5311,8 +5318,19 @@ def _verify_distributions(
         for imp in sorted(strict):
             problems[imp] = DIST_UNVERIFIABLE
     else:
+        observed: dict[str, str] = {}
+        if index is not None and index.checked:
+            for rec in record:
+                imp = str(rec.get("import_name") or "").split(".")[0]
+                if not imp:
+                    continue
+                for c in index.lookup(imp).candidates:
+                    if not c.shadowed and c.version:
+                        observed.setdefault(c.key, c.version)
         for name, specs in sorted(wanted.items()):
-            version = facts.installed.get(name)
+            # 版本以**未被遮蔽**的那份为准：先看静态索引里提供某个 import 的未遮蔽候选（按层顺序，Python 实际用的那份），
+            # 没有再退回 `facts.installed`（include-system-site-packages 的 venv 里同名发行包在两层各一份时别拿被遮蔽的）
+            version = observed.get(name) or facts.installed.get(name)
             if version is None:
                 problems[name] = DIST_NOT_INSTALLED
                 continue

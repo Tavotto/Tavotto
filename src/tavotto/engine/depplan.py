@@ -178,7 +178,9 @@ for d in m.distributions():
         key = "".join(ch if ch.isalnum() else "-" for ch in name.lower())
         while "--" in key:
             key = key.replace("--", "-")
-        installed[key] = d.version or ""
+        # 同名发行包在 sys.path 上出现多次（venv 与 include-system-site-packages 的基础层各一份）：import 到的是排在前面的那份，
+        # 迭代顺序就是 sys.path 顺序——首次出现即保留，不让后面被遮蔽的覆盖它
+        installed.setdefault(key, d.version or "")
 # 目标解释器**看得见**的全部 site 目录（sys.path 顺序）：prefix 内的、include-system-site-packages 带进来的基础解释器层、
 # 启用的 user site、sys.path 上其它叫 site-packages / dist-packages 的存在的目录。只是路径列表——静态索引按它读元数据。
 known = set()

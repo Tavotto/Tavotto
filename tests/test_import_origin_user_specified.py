@@ -114,6 +114,10 @@ def _dist(site: Path, name: str, version: str, *provides: str) -> None:
         (site / f"{mod}.py").write_text("", encoding="utf-8")
 
 
+def version_of(n: int) -> str:
+    return f"{n}.0"
+
+
 def _plan(tmp_path, script="import lab_tools\n", facts=None, **kw):
     proj = tmp_path / "proj"
     _write(proj, "plot.py", script)
@@ -588,6 +592,39 @@ class TestVerifyDistributions:
             self._verify(py, strict=True)
         assert self._codes(err) == {"lab_tools": deprepair.DIST_UNVERIFIABLE}
 
+    def test_the_version_is_the_unshadowed_layers_not_the_last_metadata_entry(
+        self, tmp_path, monkeypatch
+    ):
+        """include-system-site-packages 的 venv：同名发行包在 venv（v2）与基础层（v1）各一份，`facts.installed` 可能是被遮蔽的 v1。"""
+        prefix, site = _site(tmp_path)
+        base = tmp_path / "base" / "site-packages"
+        base.mkdir(parents=True)
+        _dist(site, "lab-tools", version_of(2), "lab_tools")
+        _dist(base, "lab-tools", version_of(1), "lab_tools")
+        facts = dataclasses.replace(
+            _site_facts(prefix, site, {"lab-tools": "1.0"}), site_roots=(str(site), str(base))
+        )
+        monkeypatch.setattr(depplan, "target_facts", lambda python, use_cache=True: facts)
+        py = str(prefix / "bin" / "python")
+        self._verify(py, requirements=("lab-tools>=2",))  # 修前：误报 distribution_version_mismatch
+        with pytest.raises(deprepair.RepairError) as err:  # 对照：venv 里真是 1
+            self._verify(py, requirements=("lab-tools>=3",))
+        assert self._codes(err) == {"lab-tools": deprepair.DIST_VERSION_MISMATCH}
+
+    def test_control_when_the_venv_really_has_the_old_version_it_fails(self, tmp_path, monkeypatch):
+        prefix, site = _site(tmp_path)
+        base = tmp_path / "base" / "site-packages"
+        base.mkdir(parents=True)
+        _dist(site, "lab-tools", version_of(1), "lab_tools")
+        _dist(base, "lab-tools", version_of(2), "lab_tools")
+        facts = dataclasses.replace(
+            _site_facts(prefix, site, {"lab-tools": "2.0"}), site_roots=(str(site), str(base))
+        )
+        monkeypatch.setattr(depplan, "target_facts", lambda python, use_cache=True: facts)
+        with pytest.raises(deprepair.RepairError) as err:
+            self._verify(str(prefix / "bin" / "python"), requirements=("lab-tools>=2",))
+        assert self._codes(err) == {"lab-tools": deprepair.DIST_VERSION_MISMATCH}
+
     def test_a_distribution_the_plan_did_not_ask_pip_for_is_not_judged(self, tmp_path, monkeypatch):
         """记账条目里的发行包不在这次的需求里（已满足 / 别的来源）：没装它，就不核「装上的它」。"""
         py = self._env(
@@ -1026,6 +1063,37 @@ class TestProviderNamesInTheExecutionTimeCheck:
         deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert len(seen) == 1
 
+    def test_a_confirmed_user_specified_import_is_covered_by_the_digest_before_any_byte_is_installed(
+        self, tmp_path, monkeypatch
+    ):
+        """用户指定的 import 已离开 `unknown`、又不在 `needed`：名字集合漏了它，前层出现同名提供者时 pip 先改了环境才由装后核验发现。"""
+        project, front, seen, _facts_now, _python = self._setup(tmp_path, monkeypatch)
+        _write(project, "figure.py", "import lab_tools\n")
+        pip_calls: list = []
+        monkeypatch.setattr(
+            deprepair, "_run_pip_install", lambda *a, **k: pip_calls.append(a) or (0, "")
+        )
+        plan = deprepair.create_joint_plan(
+            project, "figure.py", user_specified={"lab_tools": "lab-tools"}
+        )
+        assert "lab_tools" in plan.names
+        _write(front, "lab_tools.py", "SHADOW = True\n")
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
+        assert err.value.code == deprepair.ERROR_PLAN_STALE
+        assert seen == [] and pip_calls == []  # 装任何字节之前拒绝
+
+    def test_control_the_same_user_specified_plan_runs_when_nothing_appeared(
+        self, tmp_path, monkeypatch
+    ):
+        project, _front, seen, _facts_now, _python = self._setup(tmp_path, monkeypatch)
+        _write(project, "figure.py", "import lab_tools\n")
+        plan = deprepair.create_joint_plan(
+            project, "figure.py", user_specified={"lab_tools": "lab-tools"}
+        )
+        deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
+        assert len(seen) == 1
+
     def test_nothing_changed_is_accepted(self, tmp_path, monkeypatch):
         project, _front, seen, _facts_now, _python = self._setup(tmp_path, monkeypatch)
         plan = deprepair.create_joint_plan(project, "figure.py")
@@ -1061,3 +1129,18 @@ class TestFrontendMirror:
     def test_the_guard_notices_a_drifted_mirror(self):
         drifted = self._api().replace("user_specified_unverified", "user_specified_checked")
         assert f"'{deprepair.TRUST_USER_SPECIFIED_UNVERIFIED}'" not in drifted
+
+
+class TestFactsProbeKeepsTheFirstOfDuplicateDistributions:
+    """`_FACTS_SRC` 的 `installed`：同名发行包在 `sys.path` 上出现多次，留排在前面（import 到的）那份，不让后面被遮蔽的覆盖。"""
+
+    def test_first_on_sys_path_wins(self, tmp_path, monkeypatch):
+        first, second = tmp_path / "first", tmp_path / "second"
+        for root, ver in ((first, "2.0"), (second, "1.0")):
+            _dist(root, "dup-pkg", ver, "dup_mod")
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join((str(first), str(second))))
+        facts = depplan.target_facts(sys.executable, use_cache=False)
+        assert facts is not None and facts.installed["dup-pkg"] == "2.0"
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join((str(second), str(first))))
+        facts = depplan.target_facts(sys.executable, use_cache=False)
+        assert facts.installed["dup-pkg"] == "1.0"
