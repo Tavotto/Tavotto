@@ -1296,7 +1296,11 @@ def resolve_module(
         evidence.append(EV_NAME_ONLY)
         if not c.metadata_ok:
             compat.append("metadata_incomplete")
-        editable = c.provenance == PROV_EDITABLE
+        # 看不全时同 A：不按来源（editable）下定论——没跟进的 `.pth` 可能把别的提供者插在它之前
+        uncovered = look is not None and look.uncovered_paths > 0
+        if uncovered:
+            compat.append("path_entries_not_followed")
+        editable = c.provenance == PROV_EDITABLE and not uncovered
         return finish(
             {
                 "kind": KIND_EDITABLE if editable else KIND_UNVERIFIED,

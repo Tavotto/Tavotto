@@ -1367,6 +1367,26 @@ class TestIssue889:
         assert (got.observed_distribution, got.observed_version) == ("lab", "1.0")
         assert "path_entries_not_followed" in got.compatibility
 
+    @pytest.mark.parametrize("pth_line", ["/opt/shared-libs", "import sitehook"])
+    def test_an_uncovered_hook_also_beats_a_name_only_editable(self, tmp_path, pth_line):
+        prefix, site = _env(tmp_path)
+        (site / "lab").mkdir()
+        _dist(  # 没有 top_level / RECORD / finder 映射：只有名字对得上
+            site, "lab", "1.0", direct_url={"url": "file:///w/lab", "dir_info": {"editable": True}}
+        )
+        control = _scan(tmp_path, "import lab\n", _index(prefix))["lab"]
+        assert control.distribution_status == "editable_dependency_not_reproducible"
+        assert control.distribution_candidates[0]["evidence"] == ["installed_metadata_name_only"]
+
+        _write(site / "hook.pth", pth_line + "\n")
+        idx = _index(prefix)
+        assert idx.uncovered_paths == 1
+        got = _scan(tmp_path, "import lab\n", idx)["lab"]
+        assert got.distribution_status == "unverified"
+        assert got.resolution_status == "unverified"
+        assert got.selected_distribution == ""
+        assert "path_entries_not_followed" in got.compatibility
+
     def test_the_declared_conflict_is_still_reported_when_an_uncovered_hook_makes_it_unverified(
         self, tmp_path
     ):
