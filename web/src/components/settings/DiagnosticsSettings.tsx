@@ -18,7 +18,6 @@ import { FieldGroup, FormSection } from '../ui/FormSection'
 import { StatusPill } from '../ui/StatusPill'
 import { CopyButton } from './CopyButton'
 import { saveDiagnosticsZip } from './diagnosticsSave'
-import { DiagnosticsSendDialog } from './DiagnosticsSendDialog'
 import { PathValue } from './PathValue'
 import { DiagnosticDisclosure, DiagnosticItem, SettingRow } from './SettingRow'
 
@@ -306,7 +305,6 @@ function DiagnosticsReportSection() {
   useEffect(() => {
     void useDiagSendStore.getState().load()
   }, [])
-  const [sendOpen, setSendOpen] = useState(false)
   const prepare = async () => {
     setPhase('busy')
     try {
@@ -391,13 +389,12 @@ function DiagnosticsReportSection() {
             description={st('diagnostics.send.rowHint')}
             data-diagnostics-send
           >
-            <Button variant="secondary" size="sm" onClick={() => setSendOpen(true)} data-diagnostics-send-open>
+            <Button variant="secondary" size="sm" onClick={() => useDiagSendStore.getState().setOpen(true)} data-diagnostics-send-open>
               {st('diagnostics.send.open')}
             </Button>
           </SettingRow>
         )}
       </FieldGroup>
-      {sendCap && <DiagnosticsSendDialog open={sendOpen} onOpenChange={setSendOpen} capability={sendCap} />}
     </FormSection>
   )
 }

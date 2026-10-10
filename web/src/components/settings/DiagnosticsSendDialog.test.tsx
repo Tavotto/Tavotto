@@ -140,6 +140,7 @@ const tick = async (ms = 400) => {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: false })
   for (const m of [prepareMock, startMock, statusMock, cancelMock, discardMock, bundleMock]) m.mockReset()
+  vi.mocked(saveDiagnosticsZip).mockClear()
   discardMock.mockResolvedValue({ ok: true })
   cancelMock.mockResolvedValue(status({ state: 'cancelling' }))
 })
@@ -203,6 +204,32 @@ describe('未确认 → 零远程请求', () => {
 })
 
 describe('先看再发', () => {
+  it('轻确认框：默认只露一句话 + 「发送」（+ 关闭）；其余全在默认收起的「查看详情」里', async () => {
+    await mount()
+    expect(q('[data-diag-send-sentence]')!.textContent).toBe(ds('sentence'))
+    const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
+    expect(det.open).toBe(false)
+    // 默认可见的交互元素：页脚两颗 + 折叠标题；清单 / 保存 / 说明 / 类型 / 政策链接都在折叠里
+    const folded = ['[data-diag-send-kinds]', '[data-diag-send-save]', '[data-diag-send-note]', '[data-diag-send-policy]']
+    for (const sel of folded) expect(q(sel)?.closest('details')).toBe(det)
+    const footer = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[data-diag-send-confirm],[data-diag-send-dismiss]'))
+    expect(footer.map((b) => b.textContent)).toEqual([ds('close'), ds('send')])
+    expect(det.textContent).toContain(ds('bestEffort'))
+    expect(det.textContent).toContain(ds('noteAttached'))
+  })
+
+  it('展开「查看详情」后可保存同一份 ZIP（展开不触发任何发送）', async () => {
+    bundleMock.mockResolvedValue(new Blob(['zip']))
+    await mount()
+    const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
+    await act(async () => {
+      det.open = true
+    })
+    await click(q('[data-diag-send-save]'))
+    expect(bundleMock).toHaveBeenCalledWith('pid-1')
+    expect(startMock).not.toHaveBeenCalled()
+  })
+
   it('列出将发送的内容类别、大小、保留期，并提示说明里别写隐私', async () => {
     await mount()
     const kinds = Array.from(document.body.querySelectorAll('[data-diag-kind]')).map((e) => e.getAttribute('data-diag-kind'))

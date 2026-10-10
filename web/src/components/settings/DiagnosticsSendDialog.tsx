@@ -14,7 +14,9 @@ import {
   type DiagSendStatus,
   ApiError,
 } from '@/lib/api'
+import { PRIVACY_DOC_URL } from '@/lib/brand'
 import { Button } from '../ui/Button'
+import { Details, Summary } from '../ui/Details'
 import { Dialog } from '../ui/Dialog'
 import { TextArea } from '../ui/Input'
 import { Notice } from '../ui/Notice'
@@ -210,7 +212,7 @@ export function DiagnosticsSendDialog({
       : ds(`progress.${status?.stage === 'complete' ? 'complete' : 'init'}`)
 
   const statusNode = (
-    <div className="min-h-11" data-diag-send-status={phase}>
+    <div className="min-h-24" data-diag-send-status={phase}>
       {phase === 'preparing' && <p className="type-caption">{ds('preparing')}</p>}
       {phase === 'prepareFailed' && (
         <Notice tone="danger">{ds('prepareFailed')}</Notice>
@@ -275,9 +277,9 @@ export function DiagnosticsSendDialog({
           <Button variant="ghost" size="lg" onClick={cancelSending} disabled={phase === 'cancelling'} data-diag-send-cancel>
             {ds('cancelSending')}
           </Button>
-        ) : phase === 'done' ? undefined : (
+        ) : phase === 'done' || closeOnly || nonRetryableFailure ? undefined : (
           <Button variant="ghost" size="lg" onClick={() => onOpenChange(false)} data-diag-send-dismiss>
-            {ds('cancel')}
+            {ds('close')}
           </Button>
         ),
         primary:
@@ -300,77 +302,97 @@ export function DiagnosticsSendDialog({
       }}
     >
       <div className="flex flex-col gap-3" data-diag-send-body>
-        <p className="text-sm text-ink-2">{ds('lead')}</p>
+        {/* 默认只露这一句话 + 页脚的「发送」；其余全在折叠的「查看详情」里（卡片一句话纪律） */}
+        <p className="text-sm text-ink" data-diag-send-sentence>
+          {ds('sentence')}
+        </p>
+        <Details data-diag-send-details className="text-sm">
+          <Summary className="h-6 text-ink-2 hover:text-ink">{ds('details')}</Summary>
+          <div className="mt-2 flex flex-col gap-3">
+            <section aria-label={ds('includedTitle')} className="flex flex-col gap-1">
+              <h3 className="type-section">{ds('includedTitle')}</h3>
+              {prepared ? (
+                <ul className="flex list-disc flex-col gap-0.5 pl-4 text-sm text-ink-2" data-diag-send-kinds>
+                  {kinds.map((k) => (
+                    <li key={k} data-diag-kind={k}>
+                      {translate(`settings.diagnostics.send.kind.${k}`, {
+                        ns: 'dialogs',
+                        defaultValue: translate('settings.diagnostics.send.kind.other', { ns: 'dialogs' }),
+                      })}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="type-caption">{ds('preparing')}</p>
+              )}
+              <p className="type-caption">{ds('notIncluded')}</p>
+              <p className="type-caption">{ds('bestEffort')}</p>
+              <div className="flex items-center gap-2">
+                {prepared && <span className="type-caption">{ds('size', { size: formatBytes(prepared.size) })}</span>}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={save}
+                  disabled={!prepared?.id || phase === 'done'}
+                  data-diag-send-save
+                >
+                  {ds('save')}
+                </Button>
+                {saveState !== 'idle' && (
+                  <span className="type-caption" role="status">
+                    {saveState === 'saved' ? ds('saved') : ds('saveFailed')}
+                  </span>
+                )}
+              </div>
+            </section>
 
-        <section aria-label={ds('includedTitle')} className="flex flex-col gap-1">
-          <h3 className="type-section">{ds('includedTitle')}</h3>
-          {prepared ? (
-            <ul className="flex list-disc flex-col gap-0.5 pl-4 text-sm text-ink-2" data-diag-send-kinds>
-              {kinds.map((k) => (
-                <li key={k} data-diag-kind={k}>
-                  {translate(`settings.diagnostics.send.kind.${k}`, {
-                    ns: 'dialogs',
-                    defaultValue: translate('settings.diagnostics.send.kind.other', { ns: 'dialogs' }),
-                  })}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="type-caption">{ds('preparing')}</p>
-          )}
-          <p className="type-caption">{ds('notIncluded')}</p>
-          <div className="flex items-center gap-2">
-            {prepared && <span className="type-caption">{ds('size', { size: formatBytes(prepared.size) })}</span>}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={save}
-              disabled={!prepared?.id || phase === 'done'}
-              data-diag-send-save
-            >
-              {ds('save')}
-            </Button>
-            {saveState !== 'idle' && (
-              <span className="type-caption" role="status">
-                {saveState === 'saved' ? ds('saved') : ds('saveFailed')}
+            <FormRow label={ds('categoryLabel')}>
+              <Select
+                value={category}
+                onChange={setCategory}
+                options={categories.map((c) => ({
+                  value: c,
+                  label: translate(`settings.diagnostics.send.category.${c}`, { ns: 'dialogs', defaultValue: c }),
+                }))}
+                ariaLabel={ds('categoryLabel')}
+                disabled={!editable}
+                className="w-full"
+              />
+            </FormRow>
+            <FormRow label={ds('noteLabel')} align="start">
+              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                <TextArea
+                  aria-label={ds('noteLabel')}
+                  value={note}
+                  rows={3}
+                  maxRows={5}
+                  maxLength={noteMax}
+                  disabled={!editable}
+                  onChange={(e) => setNote(e.target.value)}
+                  data-diag-send-note
+                />
+                <span className="type-caption">{ds('noteAttached')}</span>
+                <span className="flex justify-between gap-2 type-caption">
+                  <span>{ds('noteHint')}</span>
+                  <span>{ds('noteCount', { count: note.length, max: noteMax })}</span>
+                </span>
               </span>
-            )}
+            </FormRow>
+
+            <p className="type-caption">
+              {ds('retention', { days: capability.retention_days ?? 30 })}{' '}
+              <a
+                href={PRIVACY_DOC_URL}
+                target="_blank"
+                rel="noreferrer"
+                data-diag-send-policy
+                className="underline underline-offset-2 hover:text-ink"
+              >
+                {ds('policy')}
+              </a>
+            </p>
           </div>
-        </section>
-
-        <FormRow label={ds('categoryLabel')}>
-          <Select
-            value={category}
-            onChange={setCategory}
-            options={categories.map((c) => ({
-              value: c,
-              label: translate(`settings.diagnostics.send.category.${c}`, { ns: 'dialogs', defaultValue: c }),
-            }))}
-            ariaLabel={ds('categoryLabel')}
-            disabled={!editable}
-            className="w-full"
-          />
-        </FormRow>
-        <FormRow label={ds('noteLabel')} align="start">
-          <span className="flex min-w-0 flex-1 flex-col gap-1">
-            <TextArea
-              aria-label={ds('noteLabel')}
-              value={note}
-              rows={3}
-              maxRows={5}
-              maxLength={noteMax}
-              disabled={!editable}
-              onChange={(e) => setNote(e.target.value)}
-              data-diag-send-note
-            />
-            <span className="flex justify-between gap-2 type-caption">
-              <span>{ds('noteHint')}</span>
-              <span>{ds('noteCount', { count: note.length, max: noteMax })}</span>
-            </span>
-          </span>
-        </FormRow>
-
-        <p className="type-caption">{ds('retention', { days: capability.retention_days ?? 30 })}</p>
+        </Details>
       </div>
     </Dialog>
   )

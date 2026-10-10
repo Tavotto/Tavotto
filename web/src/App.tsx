@@ -19,6 +19,7 @@ import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
+import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
 import { BannerStack, DocumentBanner } from '@/components/DocumentBanner'
@@ -112,6 +113,7 @@ export function App() {
       <>
         <ProjectPicker />
         <TelemetryConsentDialog />
+        <DiagnosticsSendHost />
         {/* 「有新版本」也在这一层问：还没开项目的人一样该知道 */}
         <UpdateNoticeDialog />
         {/* 还没打开项目也可能收到一条 `tavotto run` 交接：那个终端正阻塞着，
@@ -329,6 +331,7 @@ function Workspace() {
         <ScriptAnswersDialog />
       <RelinkDialog />
         <TelemetryConsentDialog />
+        <DiagnosticsSendHost />
         <UpdateNoticeDialog />
         <CommandPalette />
         <ShortcutHelp />

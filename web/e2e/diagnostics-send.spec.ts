@@ -1,5 +1,8 @@
 import AxeBuilder from '@axe-core/playwright'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
 import { expect, test } from './fixtures'
 import { horizontalOffenders } from './overflow'
 import type { Page } from '@playwright/test'
@@ -59,8 +62,11 @@ test('打开后：确认之前零连接，点发送才连；失败说人话并�
     await page.locator('[data-diagnostics-send-open]').click()
     const dialog = page.locator('[data-dialog="diagnostics-send"]')
     await expect(dialog).toBeVisible()
-    await expect(dialog.locator('[data-diag-kind="environment"]')).toBeVisible({ timeout: 60_000 })
-    await expect(dialog.locator('[data-diag-send-confirm]')).toBeEnabled()
+    await expect(dialog.locator('[data-diag-send-confirm]')).toBeEnabled({ timeout: 60_000 })
+    // 详情默认收起；展开才看得到将发送的内容类别
+    await expect(dialog.locator('[data-diag-kind="environment"]')).toBeHidden()
+    await dialog.locator('[data-diag-send-details] summary').click()
+    await expect(dialog.locator('[data-diag-kind="environment"]')).toBeVisible()
     expect(connections).toBe(0)
 
     // 真布局：窗口内不横向溢出，axe 无 critical / serious
@@ -73,13 +79,14 @@ test('打开后：确认之前零连接，点发送才连；失败说人话并�
     await dialog.locator('[data-diag-send-dismiss]').click()
     await expect(dialog).toHaveCount(0)
     await page.locator('[data-diagnostics-send-open]').click()
-    await expect(page.locator('[data-dialog="diagnostics-send"] [data-diag-kind="environment"]')).toBeVisible({
+    await expect(page.locator('[data-dialog="diagnostics-send"] [data-diag-send-confirm]')).toBeEnabled({
       timeout: 60_000,
     })
     expect(connections).toBe(0)
 
     // 写说明、选类型，点发送：这才出现第一条连接，失败有人话与重试
     const d2 = page.locator('[data-dialog="diagnostics-send"]')
+    await d2.locator('[data-diag-send-details] summary').click()
     await d2.locator('[data-diag-send-note]').fill('e2e: nothing private here')
     await d2.locator('[data-diag-send-confirm]').click()
     await expect(d2.locator('[data-diag-send-failure]')).toBeVisible({ timeout: 60_000 })
@@ -92,6 +99,85 @@ test('打开后：确认之前零连接，点发送才连；失败说人话并�
     await d2.locator('[data-diag-send-dismiss]').click()
     await page.waitForTimeout(1500)
     expect(connections).toBe(seen)
+  } finally {
+    sink.close()
+  }
+})
+
+const SHOTS = process.env.TAVOTTO_E2E_SHOTS
+
+test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠详情（主按钮仍是「再试一次」）；打开只备包，点发送才连', async ({
+  app,
+  page,
+}) => {
+  test.setTimeout(240_000)
+  let connections = 0
+  const sink = net.createServer((sock) => {
+    connections += 1
+    sock.destroy()
+  })
+  await new Promise<void>((r) => sink.listen(0, '127.0.0.1', r))
+  const port = (sink.address() as net.AddressInfo).port
+  const project = mkdtempSync(path.join(os.tmpdir(), 'tavotto-diag-card-'))
+  writeFileSync(
+    path.join(project, 'plot.py'),
+    'import matplotlib\nmatplotlib.use("Agg")\nimport matplotlib.pyplot as plt\n' +
+      'fig, ax = plt.subplots()\nax.plot([1, 2, 3])\nraise RuntimeError("boom")\nfig.savefig("out.png")\n',
+    'utf-8',
+  )
+  try {
+    const a = await app({
+      figures: project,
+      env: {
+        TAVOTTO_DIAG_UPLOAD: '1',
+        TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+        TAVOTTO_DIAG_ENDPOINT: `https://127.0.0.1:${port}`,
+      },
+    })
+    await page.setViewportSize({ width: 1400, height: 900 })
+    await page.goto(a.baseURL)
+    const card = page.locator('[data-prep-card]')
+    await expect(card).toHaveAttribute('data-prep-state', 'discover', { timeout: 60_000 })
+    await card.locator('[data-prep-primary]').click()
+    await expect(card).toHaveAttribute('data-prep-state', 'ready', { timeout: 120_000 })
+    await card.locator('[data-prep-primary]').click() // 运行
+    await expect(card).toHaveAttribute('data-prep-state', /failed|error/, { timeout: 120_000 })
+
+    // 主按钮仍是修复类（再试一次），发送反馈住在折叠详情里
+    const primaryBtn = card.locator('[data-prep-primary]')
+    await expect(primaryBtn).toHaveCount(1)
+    await expect(primaryBtn).not.toHaveAttribute('data-send-report', /.*/)
+    const entry = card.locator('[data-prep-details] [data-send-report]')
+    await card.locator('[data-prep-details-toggle]').click()
+    await expect(entry).toBeVisible()
+    expect(connections).toBe(0)
+
+    await entry.click()
+    const dialog = page.locator('[data-dialog="diagnostics-send"]')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator('[data-diag-send-confirm]')).toBeEnabled({ timeout: 60_000 })
+    // 轻确认框：默认只有一句话，详情收起
+    await expect(dialog.locator('[data-diag-send-sentence]')).toBeVisible()
+    await expect(dialog.locator('[data-diag-send-details]')).not.toHaveAttribute('open', '')
+    expect(connections).toBe(0)
+    if (SHOTS) {
+      await page.screenshot({ path: `${SHOTS}/send-dialog-collapsed.png` })
+      await dialog.locator('[data-diag-send-details] summary').click()
+      await page.waitForTimeout(600)
+      await page.screenshot({ path: `${SHOTS}/send-dialog-expanded.png` })
+      await dialog.locator('[data-diag-send-details] summary').click()
+    }
+    await page.waitForTimeout(600) // 等折叠与对话框重新居中落定再量
+
+    // 按钮不跳位：发送前后「发送」按钮的位置不变
+    const before = await dialog.locator('[data-diag-send-confirm]').boundingBox()
+    await dialog.locator('[data-diag-send-confirm]').click()
+    await expect(dialog.locator('[data-diag-send-failure]')).toBeVisible({ timeout: 60_000 })
+    expect(connections).toBeGreaterThan(0)
+    const after = await dialog.locator('[data-diag-send-confirm]').boundingBox()
+    expect(after!.x).toBeCloseTo(before!.x, 0)
+    expect(after!.y).toBeCloseTo(before!.y, 0)
+    if (SHOTS) await page.screenshot({ path: `${SHOTS}/send-dialog-failed.png` })
   } finally {
     sink.close()
   }

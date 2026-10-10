@@ -8,11 +8,16 @@ import { fetchDiagSendCapability, type DiagSendCapability } from '@/lib/api'
  */
 interface DiagSendState {
   capability: DiagSendCapability | null
+  /** 「发送问题反馈」对话框是否开着（全应用唯一一个，由 `DiagnosticsSendHost` 挂载；入口只是把它打开） */
+  open: boolean
+  setOpen: (open: boolean) => void
   load: () => Promise<void>
 }
 
 export const useDiagSendStore = create<DiagSendState>((set) => ({
   capability: null,
+  open: false,
+  setOpen: (open) => set({ open }),
   load: async () => {
     try {
       const c = await fetchDiagSendCapability()

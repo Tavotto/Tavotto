@@ -1134,7 +1134,6 @@
         "rowHint": "Send the diagnostics bundle to the Tavotto maintainers. Nothing is uploaded until you press Send in the confirmation dialog.",
         "open": "Send…",
         "title": "Send a problem report",
-        "lead": "Send the diagnostics bundle below to the Tavotto maintainers so they can investigate. Nothing is uploaded until you press Send.",
         "includedTitle": "What will be sent",
         "kind": {
           "environment": "Environment and version facts (user name and paths redacted)",
@@ -1147,7 +1146,7 @@
           "readme": "Readme inside the bundle",
           "other": "Other diagnostic files"
         },
-        "notIncluded": "Not included: your scripts, figures and data files, or the identifier used by anonymous usage statistics. Automatic redaction cannot be guaranteed to catch everything, so you can save and inspect the bundle before sending.",
+        "notIncluded": "Not included: your scripts, figures and data files, or the identifier used by anonymous usage statistics.",
         "size": "Size {{size}}",
         "save": "Save this bundle",
         "saved": "Saved",
@@ -1183,7 +1182,6 @@
         "copyId": "Copy report ID",
         "send": "Send",
         "retry": "Try again",
-        "cancel": "Cancel",
         "cancelSending": "Cancel sending",
         "close": "Close",
         "done": "Done",
@@ -1219,7 +1217,13 @@
           "unexpected_response": "The diagnostics service returned an unexpected result. Try again later.",
           "internal": "An internal error occurred and nothing was sent. Save the bundle and report it."
         },
-        "packageGone": "This bundle was held too long and has been discarded. Close this window, reopen it and send again."
+        "packageGone": "This bundle was held too long and has been discarded. Close this window, reopen it and send again.",
+        "sentence": "Sends a diagnostics bundle — no data or script contents.",
+        "details": "Show details",
+        "bestEffort": "Redaction is best-effort and not guaranteed; you can save and inspect the bundle before sending.",
+        "noteAttached": "Anything you write here is sent as typed, together with the bundle.",
+        "policy": "Privacy policy",
+        "cardButton": "Send problem report"
       }
     },
     "export": {

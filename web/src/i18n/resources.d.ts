@@ -1500,9 +1500,10 @@ export default interface Resources {
         "reportTitle": "诊断报告",
         "resultsTitle": "检查结果",
         "send": {
-          "cancel": "取消",
+          "bestEffort": "脱敏是尽力而为，不保证绝对；发送前可以保存并查看这份包。",
           "cancelSending": "取消发送",
           "cancelled": "已取消，没有发送任何内容。",
+          "cardButton": "发送问题反馈",
           "category": {
             "crash": "闪退",
             "editing": "编辑出错",
@@ -1516,6 +1517,7 @@ export default interface Resources {
           "categoryLabel": "问题类型",
           "close": "关闭",
           "copyId": "复制报告编号",
+          "details": "查看详情",
           "done": "完成",
           "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
           "doneTitle": "已发送",
@@ -1559,13 +1561,14 @@ export default interface Resources {
             "ui_state": "界面状态快照（不含图内文字与文件名）",
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
-          "lead": "把下面这份诊断包发给 Tavotto 维护者，帮助他们排查问题。点「发送」之前不会上传任何东西。",
-          "notIncluded": "不包含：你的脚本、图和数据文件，也不含匿名统计用的标识。自动脱敏不能保证万无一失，发送前可以先保存并查看这份包。",
+          "notIncluded": "不包含：你的脚本、图和数据文件，也不含匿名统计用的标识。",
+          "noteAttached": "你在这里写的说明会原样随诊断包一起发送。",
           "noteCount": "{{count}} / {{max}}",
           "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
           "noteLabel": "补充说明（可选）",
           "open": "发送…",
           "packageGone": "这份诊断包放得太久，已经被清掉了。请关闭后重新打开，再发送一次。",
+          "policy": "隐私政策",
           "prepareFailed": "没能生成诊断包。可以关闭后重试，或改用「导出诊断包」保存到本地。",
           "preparing": "正在生成诊断包…",
           "progress": {
@@ -1585,6 +1588,7 @@ export default interface Resources {
           "saveFailed": "没能保存",
           "saved": "已保存",
           "send": "发送",
+          "sentence": "将发送诊断包，不含你的数据和脚本内容。",
           "size": "大小 {{size}}",
           "title": "发送问题反馈",
           "tooLarge": "这份诊断包有 {{size}}，超过在线发送的上限 {{max}}。不会截取内容——请保存到本地，再另行发给维护者。"
