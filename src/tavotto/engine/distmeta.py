@@ -687,12 +687,16 @@ def _direct_url(text: str | None) -> str:
     return PROV_URL
 
 
-def _finder_mapping(text: str) -> set[str]:
-    """setuptools editable finder 源码里 `MAPPING` 字面量的键（顶级模块名）。`ast.parse` + `literal_eval`，不执行。"""
+def _finder_mapping(text: str) -> set[str] | None:
+    """setuptools editable finder 源码里 `MAPPING` 字面量的键（顶级模块名）。`ast.parse` + `literal_eval`，不执行。
+
+    **回 None = 读得到这个 finder、却没法静态读出它的映射**（语法宿主解析器不支持、`MAPPING` 不是字面量——`dict(...)`
+    构造、推导式、变量引用——或根本没有 `MAPPING`）：调用方要把环境记为没读全，不能当成「它不提供任何模块」（#889 ②）。
+    空字面量 `{}` 是读全了的「不提供」，回空集。"""
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
-        return set()
+        return None
     for node in tree.body:
         value = None
         if isinstance(node, ast.Assign) and any(
@@ -709,8 +713,8 @@ def _finder_mapping(text: str) -> set[str]:
             continue
         try:
             mapping = ast.literal_eval(value)
-        except (ValueError, SyntaxError, RecursionError, MemoryError):
-            return set()
+        except (ValueError, SyntaxError, RecursionError, MemoryError, TypeError):
+            return None
         if isinstance(mapping, dict):
             out = set()
             for k in mapping:
@@ -718,7 +722,8 @@ def _finder_mapping(text: str) -> set[str]:
                 if _IDENT_RE.match(first):
                     out.add(first)
             return out
-    return set()
+        return None
+    return None
 
 
 def _list_root(
@@ -983,7 +988,12 @@ def _apply_pth(rd: _Reader, root: SiteRoot, pths: list[str], dists: list[_Dist])
         for f in dict.fromkeys(finders):
             src, _ = rd.read_state(root, f + ".py", max_bytes=MAX_FINDER_BYTES)
             if src is not None:
-                mods |= _finder_mapping(src)
+                names = _finder_mapping(src)
+                if names is None:
+                    # 读得到 finder、读不出它的映射：它提供的模块我们没看到——「没查到」不再等于「没装」（#889 ②）
+                    rd.refuse(scanbudget.ISSUE_PARSE_FAILED, root, f + ".py")
+                else:
+                    mods |= names
         d = by_key.get(key)
         if d is None:
             safe = _safe_name(dist_name)
@@ -1214,6 +1224,18 @@ def resolve_module(
             compat.append("declared_dist_differs_from_observed")
         elif cur_key and cur_key != c.key and not dec_req:
             compat.append("curated_dist_differs_from_observed")
+        # 声明的约束与已装版本的冲突，**在所有来源（provenance）下**都如实报告（#889 ③）：之前本地归档 / 本地路径 / VCS /
+        # URL / editable / Conda 的分支在这一步之前就返回了，`lab>=2` 声明、装的是本地 v1 时漏报冲突
+        conflict = False
+        if dec_req == c.key and dec_con:
+            ok = depresolve.version_satisfies(dec_con, c.version)
+            if ok is None:
+                compat.append("declared_constraint_unchecked")
+            elif ok:
+                compat.append("declared_constraint_satisfied")
+            else:
+                compat.append("declared_version_conflict")
+                conflict = True
         common = {
             "provenance": c.provenance,
             "evidence": tuple(_dedupe(evidence)),
@@ -1235,26 +1257,35 @@ def resolve_module(
             return finish(
                 {**common, **observed, "kind": KIND_UNSUPPORTED, "status": ST_NOT_REPRODUCIBLE}
             )
+        # 「唯一提供者」只在**看全了**的时候成立（#889 ①）：有没跟进的 `.pth` 路径行 / 没建模的 `import` 行时，
+        # 别的提供者可能被它插到这个 site-packages 之前——观测到的候选照实报，但不确认它就是用户 import 到的那个
+        if look is not None and look.uncovered_paths > 0:
+            compat.append("path_entries_not_followed")
+            return finish(
+                {
+                    **common,
+                    **observed,
+                    "kind": KIND_UNVERIFIED,
+                    "status": ST_UNVERIFIED,
+                }
+            )
         if c.provenance == PROV_CONDA:
             compat.append("installed_by_conda_not_pip")
-            return finish({**common, **observed, "kind": KIND_CONFIRMED, "status": ST_CONFIRMED})
-        status = ST_CONFIRMED
-        if dec_req == c.key and dec_con:
-            ok = depresolve.version_satisfies(dec_con, c.version)
-            if ok is None:
-                compat.append("declared_constraint_unchecked")
-            elif ok:
-                compat.append("declared_constraint_satisfied")
-            else:
-                compat.append("declared_version_conflict")
-                status = ST_VERSION_CONFLICT
+            return finish(
+                {
+                    **common,
+                    **observed,
+                    "kind": KIND_CONFIRMED,
+                    "status": ST_VERSION_CONFLICT if conflict else ST_CONFIRMED,
+                }
+            )
         return finish(
             {
                 **common,
                 **observed,
                 "selected": c.distribution,
                 "kind": KIND_CONFIRMED,
-                "status": status,
+                "status": ST_VERSION_CONFLICT if conflict else ST_CONFIRMED,
             }
         )
 
