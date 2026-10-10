@@ -157,6 +157,7 @@ import { FormRow } from "./FormRow";
 import { Dialog } from "./ui/Dialog";
 import { TextInput } from "./ui/Input";
 import { TaskDiagnostic } from "./TaskDiagnostic";
+import { SendReportButton } from "./SendReportButton";
 import { Select } from "./ui/Select";
 import { Toggle } from "./ui/Toggle";
 import { Card } from "./ui/Card";
@@ -2042,7 +2043,7 @@ function ProgressRow({ job }: { job: ExportJob | null }) {
  * 结果。**逐项显示**（§九）：一次请求要 PDF+PNG 而 PNG 挂了，PDF 照常在
  * 这里可点，那一行 PNG 说出自己为什么没出来——不许把部分成功报成全部成功。
  */
-function ResultBlock({
+export function ResultBlock({
   job,
   edited,
   onRetry,
@@ -2082,7 +2083,10 @@ function ResultBlock({
             <Button variant="secondary" size="sm" onClick={onRetry}>
               {ex("retry")}
             </Button>
-          ) : undefined
+          ) : (
+            // 没有可执行的修复动作：发送问题反馈就是这张卡的主按钮（开关关着时不渲染）
+            <SendReportButton variant="primary" />
+          )
         }
       >
         {translate(`backend.${job.error?.code ?? "export_failed"}`, {

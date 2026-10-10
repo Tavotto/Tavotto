@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { fetchTaskDiagnostic, type TaskDiagnosticKind } from '@/lib/api'
 import { t as translate } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
+import { SendReportButton } from './SendReportButton'
 import { Button } from './ui/Button'
 import { Details, Summary } from './ui/Details'
 
@@ -64,6 +65,8 @@ export function TaskDiagnostic({
         <Button variant="secondary" size="sm" onClick={run} disabled={phase === 'busy'}>
           {td(phase === 'busy' ? 'busy' : 'download')}
         </Button>
+        {/* 发送问题反馈（ADR 0118）：住在折叠详情里，不抢卡片的主按钮；开关关着时不渲染 */}
+        <SendReportButton />
         {phase === 'done' && (
           <span className="text-xs text-ink-2" role="status">
             {td('done')}

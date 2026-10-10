@@ -65,6 +65,7 @@ import { ScriptArgsForm } from './ScriptArgsForm'
 import { ArgvTokens, PasteCommand } from './ScriptArgvEditor'
 import { isSecret, suggestionText, useScriptInputAnswer, type ScriptInputAnswer } from './ScriptInputForm'
 import { TaskDiagnostic } from './TaskDiagnostic'
+import { SendReportButton } from './SendReportButton'
 import { Button, IconButton } from './ui/Button'
 import { Details, Summary } from './ui/Details'
 import { TextInput } from './ui/Input'
@@ -773,6 +774,11 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       {primaryLabel(p, workdir)}
     </Button>
   )
+  // 失败了、而且没有任何可执行的修复动作（未知 / 无法自动处理）：发送问题反馈就是这张卡的主按钮
+  // （开关关着时 SendReportButton 不渲染）。有主按钮的失败卡把它放进折叠详情（TaskDiagnostic 里那一枚）。
+  const failedNoAction =
+    !p && report?.outcome.kind === 'failed' && report.outcome.reason !== 'dependency_preparation'
+  const fallbackPrimary = failedNoAction ? <SendReportButton variant="primary" size="md" /> : null
   const ghost =
     view.ghost === 'later' ? (
       <Later />
@@ -822,7 +828,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         detailsLabel={ownsInput ? pt('card.allOutput') : undefined}
         more={ownsInput ? <InputMore answer={answer} /> : undefined}
         ghost={ghost}
-        primary={ownsInput ? <AnswerButton answer={answer} /> : primary}
+        primary={ownsInput ? <AnswerButton answer={answer} /> : (primary ?? fallbackPrimary)}
       />
       {report && (report.captured ?? []).length > 1 && (
         <ProbeResultsDialog

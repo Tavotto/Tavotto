@@ -274,6 +274,7 @@ class TestUpdater:
 #: PR 里的枚举表是同一份事实——多一处少一处这里都红，逼着清单跟着改。
 OUTBOUND = {
     "engine/codexinstall.py": "_fetch",
+    "engine/diagsend.py": "_opener",
     "engine/privatepython.py": "_fetch",
     "engine/telemetry.py": "_post",
     "engine/updater.py": "_fetch_latest_release",

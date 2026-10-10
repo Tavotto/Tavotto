@@ -56,6 +56,7 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useAssetStore } from '@/store/assetStore'
@@ -983,6 +984,33 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(first.textContent).toContain('File "tools/plot.py", line 41')
     expect(details()!.textContent).not.toContain('{{')
     expect(details()!.querySelector('[data-task-diagnostic], button')).not.toBeNull()
+  })
+
+  it('发送问题反馈（ADR 0118）：开关关着不出现；有「再试一次」主按钮的失败卡把它放进折叠详情；没有任何修复动作的失败卡它就是主按钮', async () => {
+    const label = '发送问题反馈'
+    // 关着：两种失败卡都没有
+    useDiagSendStore.setState({ capability: null })
+    await mount()
+    await openWith(report({ ...STATES.failed }))
+    expect(panel().querySelector('[data-send-report]')).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    // 开着 + 有主按钮：主按钮仍是「再试一次」，发送反馈只在折叠详情里
+    useDiagSendStore.setState({ capability: { enabled: true } })
+    await mount()
+    await openWith(report({ ...STATES.failed }))
+    expect(primary()?.textContent).toBe('再试一次')
+    expect(panel().querySelector('[data-send-report]')?.closest('[data-prep-details]')).not.toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    // 开着 + 没有任何可执行动作：它就是主按钮（不在折叠详情里）
+    await mount()
+    await openWith(report({ ...STATES.failed, actions: [] }))
+    const direct = panel().querySelector('[data-send-report]')
+    expect(primary()).toBeNull()
+    expect(direct?.textContent).toBe(label)
+    expect(direct?.closest('[data-prep-details]')).toBeNull()
+    useDiagSendStore.setState({ capability: null })
   })
 
   it('无参数运行替换掉了此前带参数产出的图名（T09b）：标题照旧「画好了」，详情里说清哪些、怎么恢复', async () => {

@@ -9,6 +9,7 @@ import { apiUrl, withProject } from '@/lib/session'
 import { usePerfProbeStore } from '@/perf/probeStore'
 import { useUiStore } from '@/store/uiStore'
 import { useEnvStore } from '@/store/envStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { EngineEnvironmentCard } from '../EngineEnvironmentCard'
 import { RefreshCw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -16,6 +17,7 @@ import { Button } from '../ui/Button'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { StatusPill } from '../ui/StatusPill'
 import { CopyButton } from './CopyButton'
+import { saveDiagnosticsZip } from './diagnosticsSave'
 import { PathValue } from './PathValue'
 import { DiagnosticDisclosure, DiagnosticItem, SettingRow } from './SettingRow'
 
@@ -282,27 +284,7 @@ function PerfProbeRow() {
  * **载荷是现采的**：点这个按钮之前，什么都没有被序列化过。
  */
 async function downloadDiagnostics(): Promise<void> {
-  const blob = await postDiagnosticsBundle(buildDiagnosticPayload())
-  const url = URL.createObjectURL(blob)
-  try {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `tavotto-diagnostics-${stampForFilename()}.zip`
-    a.click()
-  } finally {
-    // 不撤销就是一条挂到刷新为止的引用，而 zip 全在内存里
-    URL.revokeObjectURL(url)
-  }
-}
-
-/** 本地时间的 YYYYMMDD-HHMMSS，与后端给的 Content-Disposition 同一形状 */
-function stampForFilename(): string {
-  const d = new Date()
-  const p = (n: number) => String(n).padStart(2, '0')
-  return (
-    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
-    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
-  )
+  saveDiagnosticsZip(await postDiagnosticsBundle(buildDiagnosticPayload()))
 }
 
 /**
@@ -318,6 +300,11 @@ function DiagnosticsReportSection() {
   const [phase, setPhase] = useState<'idle' | 'busy' | 'ready' | 'error'>('idle')
   const [text, setText] = useState('')
   const [bundle, setBundle] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
+  /** 「发送问题反馈」此刻可不可用（本机判断，不联网；App 启动时取一次）。默认关闭：没有就不画那一行。 */
+  const sendCap = useDiagSendStore((s) => s.capability)
+  useEffect(() => {
+    void useDiagSendStore.getState().load()
+  }, [])
   const prepare = async () => {
     setPhase('busy')
     try {
@@ -395,6 +382,18 @@ function DiagnosticsReportSection() {
             </>
           )}
         </SettingRow>
+        {/* 放在组的最后一行：能力说明是异步取到的，它出现时上面的行一个像素都不动 */}
+        {sendCap && (
+          <SettingRow
+            label={st('diagnostics.send.row')}
+            description={st('diagnostics.send.rowHint')}
+            data-diagnostics-send
+          >
+            <Button variant="secondary" size="sm" onClick={() => useDiagSendStore.getState().setOpen(true)} data-diagnostics-send-open>
+              {st('diagnostics.send.open')}
+            </Button>
+          </SettingRow>
+        )}
       </FieldGroup>
     </FormSection>
   )

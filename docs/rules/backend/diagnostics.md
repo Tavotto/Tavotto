@@ -103,7 +103,7 @@
     `SUPER_SECRET_PAPER_TITLE_12345` 那种全大写下划线串。
   * 坏载荷（超限 / 畸形 JSON / 类型不对）**一律退化成不带前端那两个文件的包**，
     并在 manifest 记 `trace_truncated`。用户是来排障的，不该拿到一个 400。
-  * **不写磁盘、不自动上传、不进 telemetry**。trace 只在用户点导出那一刻进 zip。
+  * **不写磁盘、不自动上传、不进 telemetry**。trace 只在用户点导出那一刻进 zip。（「不自动上传」的唯一例外通道是下面「发送问题反馈」：用户逐次确认才上传。）
 - **报告要答得出「渲染进程死在哪一句」（#435）**：`recent_errors` 把每段 traceback 与
   它收尾的异常行配成一条（帧行不进——读的人要的是那一句，脱敏面也更小）；
   `render.worker_logs` 带**当前项目**最近 `WORKER_LOG_FILES` 份 `worker.log` 尾巴里的
@@ -187,7 +187,7 @@
 
 - 先脱敏再交出、项目清单只留条数
 - 项目根在所有文本里先于主目录换成 `<project:哈希>`、项目名不出门、云盘账号与邮箱兜底抹掉（`project_roots` / `_project_section`）
-- report.json 换形必升 bundle schema（现 6；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`）
+- report.json 换形必升 bundle schema（现 7；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
 - 不写盘不上传不进 telemetry
@@ -248,3 +248,80 @@
   `<TaskDiagnostic kind="preparation" refId={report.provider.attempt_id} />`。
 
 字段隐私审查表与调用链见 T04 交接。
+
+## 发送问题反馈（`engine/diagsend.py`，`/api/diagnostics/send*`，ADR 0118，默认关闭）
+
+「诊断包不自动上传」不变；用户**当次确认**后把包发给维护者的国内接收服务（`Tavotto/infra` 的 `diagnostics-api` v1）是它的**唯一**例外通道。
+契约出处是 infra 仓库 diagnostics-api 文档目录里的 openapi.json（v1.0.0）（客户端严格按它写，字段名 / 顺序 / 枚举逐字；改契约先走 infra 的向后兼容版本与协同 PR）。
+
+- **两步，只有第二步出网。** `prepare`（`POST /api/diagnostics/send/prepare`，载荷同导出）在本机生成并保管**一份**包（`app._build_diagnostics_bundle`——
+  与导出共用，包的内容与脱敏只此一份），回「会发送哪几类内容」（`ENTRY_KINDS` 闭集 id）；`GET .../<id>/bundle` 给用户同一字节去保存。
+  `POST .../<id>/send` 的请求体 `confirm` 必须是字面 `true`，才起发送线程（init → 直传 COS → complete）。备包 / 看包 / 状态 / 取消 / 丢弃都不出网。
+  包超过 10 MiB（以 `upload.max_bytes` 为准）**不保管不裁剪**，回 `too_large`。同一时刻一个会话；重复点发送回当前状态，不开第二条线程。
+- **逐次授权，什么都不自己继续。** 没有记住的选择、没有启动补发、状态只在内存；取消 / 关窗（`discard`）/ 失败 / 进程退出后不会有请求。一次发送内的有界重试只有
+  `complete` 丢响应（网络 / 超时）与 `in_progress` / `upload_missing`（≤ `COMPLETE_ATTEMPTS`）；429 / 503 与其余失败交还用户去点。用户再点：内容没变且服务端会话还开着
+  复用 `client_request_id`，否则换新的 UUIDv4（`REOPEN_ON`、取消后、内容变了）。`client_request_id` 绝不取遥测 `install_id`。
+- **目的地由代码钉死。** 开关 = `TAVOTTO_DIAG_UPLOAD=1` 且无 `TAVOTTO_NO_DIAG_UPLOAD=1` 且 `TAVOTTO_DIAG_ENDPOINT` 主机 ∈ `ENDPOINT_HOSTS`（G-DIAG 通过前**空集**，
+  发行版打不开）；回环开发另设 `TAVOTTO_DIAG_DEV_LOOPBACK=1`。`upload.url` 只认 COS 桶域名（回环模式只认本端点 `/v1/local-upload`）；**不跟随任何重定向**
+  （`_NoRedirect` 必须**抛**，返回 None 会让默认处理器把 301/302/303 的 POST 改成 GET 跟过去）；证书只经 `tlstrust`（出站 HTTPS 第五处，清单同步）。
+- **秘密不落地。** 令牌 / 上传 URL 与表单 / 说明文字只在 `SendSession` 私有字段；`public()`、日志（模板字面量 + `logsafe.known` 闭集参数，不带异常文本）、诊断包、遥测里都没有。
+  不调 `telemetry.capture`（用户文本不进 PostHog）；元数据只用 `os` / `arch` / `distribution` / 版本串 / `bundle_schema` / `size` / 本机 `sha256` 白名单。
+- **失败码**是客户端的闭集（`FAILURES`，25 个，值 = 用户能不能再点）；`web` 的 `settings.diagnostics.send.failure.*` 与它严格同源（前端用例读这个文件对拍键集）。
+- 看护：`tests/test_diag_send.py`（对端是 `tests/support/diag_fakes.py` 的本地模拟：零请求、主路径、幂等重试、每个状态码、SSRF / 重定向 / 字段注入、取消、超限与坏包、
+  金丝雀不泄漏、契约对账）、`tests/test_diag_send_api.py`（Flask 层）、`tests/test_outbound_https_trust.py`（第五处出站）。真实 COS C1–C16 与真机 WebView 联调**未做（NOT_RUN）**，
+  模拟契约通过不等于真 COS 通过。
+
+## 网址只留 origin（bundle schema 7，Codex #923 P2）
+
+自定义 AI 接口的 `base_url` 可能带凭据：userinfo（`user:pass@`）、查询串（`?access_token=` / `?key=`）、片段（`#token=`）、路径段（`/v1/<key>`）——按**键名**认密钥的 `_redact_obj` 认不出。
+按出处放行：`report.json` 的 `ai_endpoints[].base_url` 与 `_redact_obj` 里**任何键名以 `url` / `uri` / `endpoint` 结尾的字符串值**，一律经 `_url_fact`，只留 `scheme://host[:port]`
+（解析不出 / 不是 http(s)/ws(s) 的 `url:<sha1 前 10 位>`）。这是 report 字段值的语义变化，所以 bundle schema 升到 7（`web/src/diagnostics/types.ts` 同步）。
+新加任何网址形字段：键名以 url/uri/endpoint 结尾即自动受益；叫别的名字就在构造处显式过 `_url_fact`。看护：`tests/test_diagnostics_bundle.py` 的网址金丝雀用例（导出包与发送包全文搜）。
+- **取消与「其实已送达」**（Codex #923）：`complete` 响应丢了、用户在退避里取消时，服务端 cancel 回 409 `already_complete`——`_cancel_remote` 回 True，`_finish` 按**成功**收尾（保留报告编号、`cancel_raced`，界面说「取消时报告已经送达」），不发布 cancelled；`in_progress` 再问一次。契约里 cancel 的错误码只有 `already_complete` 带「已完成」语义。失败态里取消走异步路径，同样在回来后把会话改成 done。
+
+### 取消与完成的竞态表（`engine/diagsend.py`，Codex #923）
+
+取消结果是**三态**（`_cancel_remote`）：确认已取消（2xx 含幂等重放；404 = 服务端没有这份）/ 确认已送达（409 `already_complete`）/ **无法确认**（传输错误、超时、5xx、429、其他 4xx、`in_progress` 重问一次后仍不定）。
+「无法确认」**绝不**当「确认取消」：若 `complete` 已发出过（`SendSession.complete_sent`，哪怕响应丢了），会话进入 **`unknown`（结果未知）**——保留报告编号，界面说「无法确认报告是否已送达；如需删除，可在 GitHub Issues 里只附上报告编号」，
+不许再发一份（`start` 回 `result_unknown`）；`complete` 从未发出（还在上传）则如实是 `cancelled`（没有什么可能已送达）。所有异步回调只改**自己捕获的那个会话对象**，且异步取消的回调要求 `_CURRENT is sess`——会话被丢弃 / 替换后迟到的答复不碰现役会话。
+
+| 阶段（取消那一刻） | 2xx | 409 already_complete | 409 in_progress（问两次） | 404 | 传输错误 / 超时 / 5xx / 429 |
+|---|---|---|---|---|---|
+| 上传中（complete 从未发出） | cancelled | （不可能发生；按 done） | cancelled | cancelled | **cancelled**（无物可能已送达） |
+| complete 已发、未落地（响应/请求丢了）退避中 | cancelled | done（`cancel_raced`） | **unknown** | cancelled | **unknown** |
+| complete 已发、已落地（响应丢了）退避中 | （不可能：服务端已 complete） | **done**（`cancel_raced`，保留编号，不发布 cancelled） | **unknown** | cancelled | **unknown**（报告其实存下了，不能说「没有发送」） |
+| 失败态（complete 发出过，异步取消，先停在 `cancelling`） | cancelled | done | unknown | cancelled | unknown |
+| 失败态 / 备好态（complete 从未发出） | cancelled（立即） | 迟到答复若会话仍是当前 → done | cancelled | cancelled | cancelled |
+| 已完成（done） | 不发任何取消请求 | — | — | — | — |
+
+| 会话身份 | 期望 |
+|---|---|
+| 异步取消答复到达时仍是 `_CURRENT` | 按上表定论 |
+| 已被丢弃 / 被 B 替换 | **忽略**：B 的状态、报告编号、`cancel_raced` 一个字都不变（测试把 B 放在「已取消」——旧实现会被改成 done 的那个状态） |
+
+看护：`tests/test_diag_send.py::TestCancel` 的 `test_race_table_*`（参数化：10 + 4 + 4 + 超时 + 替换各一）；反证：把「无法确认」映射回 cancelled / 传输错误当已取消 / 回调改写 `_CURRENT` 都红。
+
+**不变量（`_settle` 是发送线程唯一的收尾点；`_cancel_remote_async` 是失败态 / 备好态取消的收尾点，同一套三态映射）**
+
+* **I1** `complete` 发出过（`SendSession.complete_sent`，含 init 回 `verifying`）之后，任何终态路径——用户取消、请求失败、校验失败（摘要不符）、超时、进程内异常——都经三态对账决定最终状态；
+  报告编号不清空；最终状态只能是 `done` / `unknown` / `cancelled`（仅服务端确认取消，且是用户取消）/ `failed`（仅服务端确认没存，或可重试的失败而我们没去取消）。
+  「无法确认」绝不当作「确认没存」。非用户取消的失败遇上服务端 `already_complete`（如摘要不符）→ `unknown`：报告在但内容我们不能确认。
+* **I2** 用户取消一旦置位（`sess.cancel`）优先于请求自己的失败（含 429 / 503 / 传输错误等可重试码）：请求结束后先看取消事件再对账；服务端有未完成的会话就尽力 cancel 关掉（不管 complete 发没发过）。成功永远是 `done`（取消事件赶在成功之后只记 `cancel_raced`）。
+* **I3** 会话过期只针对**闲置**：`touched`（API 调用 / 发送开始 / 终态）起算；发送中、取消中永不过期；`done` / `unknown` 留 `FINISHED_KEEP_S`（24 h）——每次读取都刷新，所以界面开着就不会被回收，成功送达的编号不会因跨过 30 分钟被藏成 404。
+
+补充的竞态行：
+
+| 场景 | 期望 |
+|---|---|
+| init / 上传 / complete 在途时用户取消，请求随后以 429 / 503 / 传输错误结束 | `cancelled`（complete 在途且取消答复无法确认时 `unknown`）；服务端有会话就 cancel 关掉；绝不是 `failed` |
+| complete 回了但摘要不符（`digest_mismatch`，非用户取消） | 取消答复 already_complete → `unknown`（保留编号）；2xx/404 → `failed`；无法确认 → `unknown` |
+| 发送跨过 30 分钟边界 | 发送中不过期；结束后 status 返回 `done` 与编号，24 h 内不回收 |
+| 终态路径 × 取消答复 × complete_sent | `tests/test_diag_send.py::TestTerminalInvariants::test_i1_*`：6 种触发 × 5 种答复 × 2 种 complete_sent 穷举 |
+
+状态赋值点清单（每处受哪条不变量约束）：
+`start()` 置 sending（仅在非 sending / unknown / done 时；换 id 才清编号——用户明确的新一次发送）→ I3 刷新 `touched`；`cancel()`：sending→cancelling（I2）、失败 / 备好态按 complete_sent 走 `_cancel_remote_async`（I1）或直接 unknown（够不着服务端）；
+`discard()`：只在无发送线程时直接丢（`_CURRENT is sess` 守卫在回调里）；`_init` 回 complete（幂等重放）：置 done 后由 `_settle` 统一收尾；`_settle`：**所有**线程终态；`_cancel_remote_async` 回调：认会话身份 + 三态映射；`_expire_locked`：I3。
+
+* **动作代次（Codex #923，send / cancel 乱序）**：本机的 send 与 cancel 是两个独立 POST，可能在不同服务线程上颠倒顺序。`SendSession.gen` 单调：`cancel` / `discard` 各加一，`prepare` 与状态都回它；`start` 带着调用方看到的代次，
+  对不上 → 409 `stale_action`；**取消过的会话（`cancelled`）不可被 `start` 复活**（409 `session_cancelled`，连没带代次的老客户端也不行），要再发必须重新「准备」得到新会话（新授权、新 `client_request_id`）。
+  前端 send 带上代次，看到 `cancelled` 就自动重新备包。看护：`test_reordered_send_and_cancel_never_uploads`、`test_reordered_across_two_threads`、`test_stale_generation_is_rejected_*`、`test_a_cancelled_session_is_not_revivable_*`（零 init 请求、会话仍 cancelled）。

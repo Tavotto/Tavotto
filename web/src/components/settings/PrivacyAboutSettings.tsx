@@ -4,6 +4,7 @@ import { t as translate } from '@/i18n'
 import { fetchBuildVersion, type TelemetrySettings } from '@/lib/api'
 import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL } from '@/lib/brand'
 import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
@@ -190,6 +191,8 @@ function consentStatus(settings: TelemetrySettings | null): string | undefined {
  * 的匿名身份，而我们确实靠它算留存。
  */
 function TelemetryDataDisclosure() {
+  // 「发送问题反馈」只在维护者打开时才存在；存在时这页的网络摘要要多说一句（ADR 0118）。默认关闭 = 不多说。
+  const diagSend = useDiagSendStore((s) => s.capability !== null)
   useTranslation('dialogs')
   return (
     <DiagnosticDisclosure variant="row" data-privacy-disclosure title={st('about.telemetry.detailsTitle')}>
@@ -214,7 +217,10 @@ function TelemetryDataDisclosure() {
         {st('about.telemetry.never')}
       </p>
       {/* 「本机优先」这条完整承诺 */}
-      <p data-privacy-network-summary className="type-caption">{st('about.privacy')}</p>
+      <p data-privacy-network-summary className="type-caption">
+        {st('about.privacy')}
+        {diagSend && ` ${st('about.privacySend')}`}
+      </p>
     </DiagnosticDisclosure>
   )
 }
