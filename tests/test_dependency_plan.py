@@ -1785,8 +1785,13 @@ class TestExtraPathLayers:
         facts = depplan.target_facts(sys.executable, use_cache=False)
         assert facts is not None
         norm = [os.path.normcase(p) for p in facts.extra_roots]
-        stdlib = os.path.normcase(os.path.abspath(sysconfig.get_path("stdlib")))
-        assert all(p != stdlib and not p.startswith(stdlib + os.sep) for p in norm)
+        for stdlib in (
+            os.path.normcase(
+                os.path.dirname(os.path.abspath(os.__file__))
+            ),  # 真标准库目录（venv 里 sysconfig 不可靠）
+            os.path.normcase(os.path.abspath(sysconfig.get_path("stdlib"))),
+        ):
+            assert all(p != stdlib and not p.startswith(stdlib + os.sep) for p in norm), stdlib
         assert all(os.path.basename(p).lower() not in ("lib-dynload", "dlls") for p in norm)
         assert not set(norm) & {os.path.normcase(p) for p in facts.site_roots}
 

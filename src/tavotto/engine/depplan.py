@@ -194,7 +194,7 @@ for entry in sys.path:
 # sys.path 上**其余**存在的目录（PYTHONPATH 的 `pip install --target` 目录、`.pth` 路径行加进来的目录，如老式 editable 的 src）：
 # 不含已在 site_roots 里的、标准库目录（及其子目录）、lib-dynload / DLLs、zip 等非目录。静态索引对它们只做名字级扫描。
 import sysconfig
-skip = set()
+skip = {os.path.normcase(os.path.dirname(os.path.abspath(os.__file__)))}  # venv 里 sysconfig 给的不是真标准库目录，os 的位置才是
 for key in ("stdlib", "platstdlib"):
     try:
         skip.add(os.path.normcase(os.path.abspath(sysconfig.get_path(key))))
