@@ -718,7 +718,7 @@ class TestVerifyLive:
     WFS = _fake_workflows()
 
     @staticmethod
-    def _api(params, contexts=None, strict=False):
+    def _api(params, contexts=None, strict=False, integration_id=None):
         calls = []
         ctxs = MQ.GATE_CONTEXTS if contexts is None else contexts
 
@@ -732,7 +732,12 @@ class TestVerifyLive:
                     {
                         "type": "required_status_checks",
                         "parameters": {
-                            "required_status_checks": [{"context": c} for c in ctxs],
+                            "required_status_checks": [
+                                {"context": c}
+                                if integration_id is None
+                                else {"context": c, "integration_id": integration_id}
+                                for c in ctxs
+                            ],
                             "strict_required_status_checks_policy": strict,
                         },
                     },
@@ -752,6 +757,12 @@ class TestVerifyLive:
         api = self._api(dict(MQ.MERGE_QUEUE_PARAMS), MQ.GATE_CONTEXTS[:2])
         assert MQ.cmd_verify_live(api, REPO, self.WFS) == 1
         assert "CodeQL gate" in capsys.readouterr().err
+
+    def test_bound_integration_id_fails(self, capsys):
+        api = self._api(dict(MQ.MERGE_QUEUE_PARAMS), integration_id=15368)
+        assert MQ.cmd_verify_live(api, REPO, self.WFS) == 1
+        err = capsys.readouterr().err
+        assert "CodeQL gate" in err and "15368" in err
 
     def test_live_strict_on_fails(self, capsys):
         api = self._api(dict(MQ.MERGE_QUEUE_PARAMS), strict=True)

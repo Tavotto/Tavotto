@@ -654,7 +654,15 @@ def cmd_verify_live(api, repo: str, workflows: dict[str, str]) -> int:
     for r in rules:
         if r.get("type") == "required_status_checks":
             rp = r.get("parameters", {})
-            live_ctx |= {c.get("context") for c in rp.get("required_status_checks", [])}
+            for c in rp.get("required_status_checks", []):
+                live_ctx.add(c.get("context"))
+                # build_switch_to_gates 建的是 {"context": c}（不绑定 integration）；
+                # 非空 integration_id = 有人改绑过，同名检查可能来自别的 App。
+                if c.get("integration_id") is not None:
+                    problems.append(
+                        f"必需 context「{c.get('context')}」被绑定到 integration_id="
+                        f"{c.get('integration_id')}（仓库建的是不绑定的，期望 null）"
+                    )
             if rp.get("strict_required_status_checks_policy", True):
                 problems.append("线上 required_status_checks 的 strict 开着（期望 false）")
     want_ctx = set(GATE_CONTEXTS)
