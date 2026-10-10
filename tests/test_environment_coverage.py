@@ -602,6 +602,23 @@ def test_C_one_missing_and_one_broken_package_are_told_apart(tmp_path):
 # 缓存：只有 userenvs._probe_cache 一份，键带环境代，检查与检测共用
 # ---------------------------------------------------------------------------
 @needs_worker
+def test_a_package_that_prints_a_banner_on_import_does_not_break_the_probe_result(tmp_path):
+    root = _project(tmp_path)
+    py = real_venv(root, ".venv", python=WORKER_PY)
+    # Python 层 print 与 C 层直接写 fd 1 两种横幅（pygame 之类在 import 时就打招呼）
+    _package(py, "covok_a", "print('Hello from covok_a')\n")
+    _package(py, "covok_b", 'import os\nos.write(1, b\'{"not": "the result"}\\n\')\n')
+    mods = envadvice.script_modules(root, "plot.py")
+
+    out = envadvice.check(root, "plot.py", modules=mods)
+
+    row = _row(out, envworld.venv_rel(".venv"))
+    assert row["status"] == "healthy"
+    assert row["coverage"]["state"] == "covered"
+    assert row["coverage"]["modules"]["covok_a"] == row["coverage"]["modules"]["covok_b"] == "found"
+
+
+@needs_worker
 def test_the_check_writes_the_one_cache_the_gate_and_detection_read_and_only_that_one(tmp_path):
     root = _project(tmp_path)
     py = real_venv(root, ".venv", python=WORKER_PY)

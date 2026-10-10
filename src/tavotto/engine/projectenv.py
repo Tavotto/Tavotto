@@ -350,6 +350,13 @@ def _same_dir(a: Path, b: Path) -> bool:
 #: 交给用户的解释器执行，绝不往用户 venv 里 pip install 任何东西。
 _PROBE_SRC = r"""
 import ast, json, os, platform, re, sys
+# 结果通道与被 import 的包隔开：包在 import 时往 stdout 打的横幅 / 诊断（Python 层 print 与 C 层写 fd 1 都算）一律改道到
+# stderr，结果 JSON 只从原 stdout 的副本写出——否则一个打横幅的包会让整份结果解析失败、被误判成环境不可用（Codex #906 r4236594926）
+_result_fd = os.dup(1)
+os.dup2(2, 1)
+sys.stdout = sys.stderr
+def _emit(obj):
+    os.write(_result_fd, json.dumps(obj).encode("ascii"))
 out = {"executable": sys.executable, "prefix": sys.prefix,
        "python_version": platform.python_version(),
        "version_info": list(sys.version_info[:3]),
@@ -604,7 +611,7 @@ if isolated:
     if _prepare_isolated_path():
         out["deferred_env"] = True
         out["new_imports"] = []
-        sys.stdout.write(json.dumps(out))
+        _emit(out)
         sys.exit(0)
     # 运行之前（Codex 安全 #820 r4235163764）：**什么都不 import**——包括 Tavotto 自己要的 matplotlib / worker 启动链。
     # 版本从 dist-info 的 METADATA 读（不执行代码）；"能不能真的 import"（坏的二进制 wheel 等）要等运行再量
@@ -731,7 +738,7 @@ if isolated:
         if _stdlib is not None
         else []
     )
-sys.stdout.write(json.dumps(out))
+_emit(out)
 """
 
 
