@@ -761,7 +761,7 @@ class TestCancel:
         time.sleep(0.3)
         assert len(on.calls) == calls, "取消之后不会自己继续"
 
-    def test_restart_after_cancel_is_a_new_authorization_with_a_new_request_id(self, on):
+    def test_a_cancelled_session_is_not_revivable_a_fresh_prepare_is_needed(self, on):
         gate = threading.Event()
         on.force("upload", Forced("hold_early", event=gate))
         prep = send(make_bundle(pad=9 * 1024 * 1024))
@@ -770,10 +770,71 @@ class TestCancel:
         diagsend.cancel(prep["id"])
         gate.set()
         wait_for(prep["id"], {"cancelled"})
-        diagsend.start(prep["id"], confirmed=True, category="render_failure", note=None)
-        wait_for(prep["id"], {"done"})
+        with pytest.raises(diagsend.SendError) as e:
+            diagsend.start(prep["id"], confirmed=True, category="render_failure", note=None)
+        assert e.value.code == "session_cancelled" and e.value.status == 409
+        # 再发 = 重新准备得到新会话 = 新的授权与新的 client_request_id
+        prep2 = diagsend.prepare(make_bundle())
+        diagsend.start(
+            prep2["id"], confirmed=True, category="render_failure", note=None, gen=prep2["gen"]
+        )
+        wait_for(prep2["id"], {"done"})
         ids = [b["client_request_id"] for b in init_bodies(on)]
         assert len(ids) == 2 and ids[0] != ids[1]
+
+    def test_reordered_send_and_cancel_never_uploads(self, on):
+        """两个本机 POST 乱序：cancel 先被处理，迟到的 send（带着旧代次）必须被拒——零 init 请求，会话仍是 cancelled。"""
+        prep = diagsend.prepare(make_bundle())
+        seen_gen = prep["gen"]  # 界面点发送那一刻看到的代次
+        diagsend.cancel(prep["id"])  # 先处理 cancel
+        for kwargs in (
+            {"gen": seen_gen},
+            {},
+        ):  # 带旧代次、或没带代次的老客户端：都不能复活已取消的会话
+            with pytest.raises(diagsend.SendError) as e:
+                diagsend.start(prep["id"], confirmed=True, category=None, note=None, **kwargs)
+            assert e.value.status == 409 and e.value.code in ("session_cancelled", "stale_action")
+        assert diagsend.status(prep["id"])["state"] == "cancelled"
+        assert on.connections == 0 and on.calls == []
+
+    def test_reordered_across_two_threads(self, on):
+        results: list = []
+        prep = diagsend.prepare(make_bundle())
+        barrier = threading.Barrier(2)
+
+        def do_cancel():
+            barrier.wait()
+            diagsend.cancel(prep["id"])
+
+        def do_send():
+            barrier.wait()
+            time.sleep(0.05)  # 让 cancel 先拿到锁
+            try:
+                diagsend.start(
+                    prep["id"], confirmed=True, category=None, note=None, gen=prep["gen"]
+                )
+                results.append("started")
+            except diagsend.SendError as exc:
+                results.append(exc.code)
+
+        ts = [threading.Thread(target=do_cancel), threading.Thread(target=do_send)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        assert results == ["session_cancelled"] or results == ["stale_action"]
+        assert on.connections == 0
+
+    def test_stale_generation_is_rejected_even_when_the_session_is_not_cancelled(self, on):
+        prep = diagsend.prepare(make_bundle())
+        with pytest.raises(diagsend.SendError) as e:
+            diagsend.start(
+                prep["id"], confirmed=True, category=None, note=None, gen=prep["gen"] + 7
+            )
+        assert e.value.code == "stale_action" and on.connections == 0
+
+    def test_normal_order_is_unaffected(self, on):
+        prep = diagsend.prepare(make_bundle())
+        diagsend.start(prep["id"], confirmed=True, category=None, note=None, gen=prep["gen"])
+        assert wait_for(prep["id"], {"done"})["state"] == "done"
 
     def test_cancel_after_a_failed_attempt_voids_the_open_server_session(self, on):
         on.fail("upload", 500, "x")

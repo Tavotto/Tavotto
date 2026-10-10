@@ -338,6 +338,28 @@ describe('发送', () => {
     expect(q('[data-diag-send-close]')).not.toBeNull()
   })
 
+  it('send 带着引擎给的动作代次；取消后会话作废——自动重新备包，再发用新会话', async () => {
+    prepareMock
+      .mockResolvedValueOnce({ ...PREPARED, id: 'pid-1', gen: 3 })
+      .mockResolvedValueOnce({ ...PREPARED, id: 'pid-2', gen: 0 })
+    startMock.mockResolvedValue(status({ id: 'pid-1' }))
+    statusMock.mockResolvedValueOnce(status({ id: 'pid-1', stage: 'upload', sent: 1, total: 9, gen: 3 }))
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    expect(startMock).toHaveBeenCalledWith('pid-1', expect.objectContaining({ gen: 3 }))
+    await click(q('[data-diag-send-cancel]'))
+    statusMock.mockResolvedValue(status({ id: 'pid-1', state: 'cancelled', stage: null, gen: 4 }))
+    await tick()
+    await tick()
+    expect(prepareMock).toHaveBeenCalledTimes(2) // 重新备包
+    expect(discardMock).toHaveBeenCalledWith('pid-1')
+    expect(q('[data-diag-send-status]')!.textContent).toContain(ds('cancelled'))
+    startMock.mockResolvedValue(status({ id: 'pid-2' }))
+    statusMock.mockResolvedValue(status({ id: 'pid-2' }))
+    await click(q('[data-diag-send-confirm]'))
+    expect(startMock).toHaveBeenLastCalledWith('pid-2', expect.objectContaining({ gen: 0 }))
+  })
+
   it('可重试的失败：说人话 + 退避时间 + 保存退路，主按钮变「重试」且再点会再发一次', async () => {
     startMock.mockResolvedValue(status({}))
     statusMock.mockResolvedValue(

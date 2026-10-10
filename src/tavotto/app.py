@@ -3043,6 +3043,7 @@ def api_diagnostics_send_start(pid: str):
             confirmed=body.get("confirm"),
             category=body.get("category"),
             note=body.get("note"),
+            gen=body.get("gen"),
         )
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)

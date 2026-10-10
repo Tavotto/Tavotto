@@ -321,3 +321,7 @@
 状态赋值点清单（每处受哪条不变量约束）：
 `start()` 置 sending（仅在非 sending / unknown / done 时；换 id 才清编号——用户明确的新一次发送）→ I3 刷新 `touched`；`cancel()`：sending→cancelling（I2）、失败 / 备好态按 complete_sent 走 `_cancel_remote_async`（I1）或直接 unknown（够不着服务端）；
 `discard()`：只在无发送线程时直接丢（`_CURRENT is sess` 守卫在回调里）；`_init` 回 complete（幂等重放）：置 done 后由 `_settle` 统一收尾；`_settle`：**所有**线程终态；`_cancel_remote_async` 回调：认会话身份 + 三态映射；`_expire_locked`：I3。
+
+* **动作代次（Codex #923，send / cancel 乱序）**：本机的 send 与 cancel 是两个独立 POST，可能在不同服务线程上颠倒顺序。`SendSession.gen` 单调：`cancel` / `discard` 各加一，`prepare` 与状态都回它；`start` 带着调用方看到的代次，
+  对不上 → 409 `stale_action`；**取消过的会话（`cancelled`）不可被 `start` 复活**（409 `session_cancelled`，连没带代次的老客户端也不行），要再发必须重新「准备」得到新会话（新授权、新 `client_request_id`）。
+  前端 send 带上代次，看到 `cancelled` 就自动重新备包。看护：`test_reordered_send_and_cancel_never_uploads`、`test_reordered_across_two_threads`、`test_stale_generation_is_rejected_*`、`test_a_cancelled_session_is_not_revivable_*`（零 init 请求、会话仍 cancelled）。

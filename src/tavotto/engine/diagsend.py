@@ -578,6 +578,8 @@ class SendSession:
     sha256: str = ""
     info: BundleInfo | None = None
     created: float = 0.0
+    #: 单调的「动作代次」：cancel / discard 各加一。`start` 带着它看到的代次来，对不上就拒（乱序到达的旧 send）
+    gen: int = 0
     touched: float = 0.0  # 最近一次被用到（API 调用 / 发送开始 / 终态）：TTL 只针对闲置
     state: str = "prepared"  # prepared | sending | cancelling | done | failed | cancelled | unknown
     stage: str = ""
@@ -608,6 +610,7 @@ class SendSession:
             "sha256": self.sha256,
             "sent": self.sent,
             "total": self.total,
+            "gen": self.gen,
         }
         if self.report_id and self.state in ("sending", "done", "unknown"):
             out["report_id"] = self.report_id
@@ -703,7 +706,7 @@ def prepare(bundle: bytes) -> dict:
             touched=_clock(),
         )
         _CURRENT = sess
-        return {**summary, "too_large": False, "id": sess.id}
+        return {**summary, "too_large": False, "id": sess.id, "gen": sess.gen}
 
 
 def bundle_bytes(pid: str) -> bytes:
@@ -732,7 +735,9 @@ def _clean_note(note: object) -> str:
     return text
 
 
-def start(pid: str, *, confirmed: object, category: object, note: object) -> dict:
+def start(
+    pid: str, *, confirmed: object, category: object, note: object, gen: object = None
+) -> dict:
     """**用户点了「发送」**：开始 init → 上传 → complete。这是唯一会产生远程请求的入口。
 
     `confirmed` 必须是字面 `True`（界面的确认动作；缺省 / 其他任何值都不发）。已在发送中 → 回当前状态，
@@ -751,6 +756,12 @@ def start(pid: str, *, confirmed: object, category: object, note: object) -> dic
     with _LOCK:
         if sess.state in ("sending", "cancelling"):
             return sess.public()
+        # 乱序防线：本机的 send 与 cancel 是两个独立的 POST，可能在不同服务线程上颠倒顺序处理。
+        # 取消过的会话不可被 start 复活（要再发必须重新「准备」得到新会话）；带着旧代次的 start 一律拒。
+        if sess.state == "cancelled":
+            raise SendError("session_cancelled", 409)
+        if gen is not None and gen != sess.gen:
+            raise SendError("stale_action", 409)
         if sess.state == "unknown":
             raise SendError("result_unknown", 409)  # 可能已送达：不许在不知道的情况下再发一份
         if sess.state == "done" or sess.bundle is None:
@@ -788,6 +799,7 @@ def cancel(pid: str) -> dict:
     """取消。发送中：打断上传并尽力通知服务端；其余：丢掉服务端那份未完成的会话（若有）。"""
     sess = _get(pid)
     with _LOCK:
+        sess.gen += 1  # 此后任何带旧代次的 start 都被拒
         if sess.state == "sending":
             sess.state = "cancelling"
             sess.cancel.set()
@@ -813,6 +825,7 @@ def discard(pid: str) -> dict:
     except SendError:
         return {"ok": True}
     with _LOCK:
+        sess.gen += 1
         running = sess.thread is not None and sess.thread.is_alive()
         if sess.state in ("sending", "cancelling") and running:
             sess.discard_after = True

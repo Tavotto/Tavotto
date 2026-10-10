@@ -171,3 +171,34 @@ class TestEnabledFlow:
         body = _prepare(client).get_json()
         assert body["too_large"] is True and body["id"] is None
         assert on.connections == 0
+
+
+class TestActionOrdering:
+    def test_a_send_that_arrives_after_its_cancel_is_refused_and_nothing_is_uploaded(
+        self, client, on
+    ):
+        prep = _prepare(client).get_json()
+        assert prep["gen"] == 0
+        assert (
+            client.post(f"/api/diagnostics/send/{prep['id']}/cancel").get_json()["state"]
+            == "cancelled"
+        )
+        r = client.post(
+            f"/api/diagnostics/send/{prep['id']}/send", json={"confirm": True, "gen": prep["gen"]}
+        )
+        assert r.status_code == 409 and r.get_json()["code"] in (
+            "diag_session_cancelled",
+            "diag_stale_action",
+        )
+        r2 = client.post(f"/api/diagnostics/send/{prep['id']}/send", json={"confirm": True})
+        assert r2.status_code == 409 and r2.get_json()["code"] == "diag_session_cancelled"
+        assert on.connections == 0
+
+    def test_status_carries_the_generation_and_send_accepts_it(self, client, on):
+        prep = _prepare(client).get_json()
+        gen = client.get(f"/api/diagnostics/send/{prep['id']}").get_json()["gen"]
+        r = client.post(
+            f"/api/diagnostics/send/{prep['id']}/send", json={"confirm": True, "gen": gen}
+        )
+        assert r.status_code == 202
+        assert _poll(client, prep["id"], {"done", "failed"})["state"] == "done"

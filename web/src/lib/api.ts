@@ -4538,6 +4538,8 @@ export interface DiagSendCapability {
 /** 备好的包：`entries` 是包里的文件与内容类别（闭集 id，界面按 id 翻译）。`id: null` = 超过上限，不保管。 */
 export interface DiagSendPrepared {
   id: string | null
+  /** 动作代次：cancel / discard 各加一；send 带着它，对不上（乱序到达的旧 send）引擎拒 */
+  gen?: number
   size: number
   sha256: string
   schema: number
@@ -4551,6 +4553,7 @@ export type DiagSendStage = 'init' | 'upload' | 'complete' | 'cancel'
 
 export interface DiagSendStatus {
   id: string
+  gen?: number
   state: DiagSendState
   stage: DiagSendStage | null
   size: number
@@ -4585,7 +4588,7 @@ export async function fetchDiagSendBundle(id: string): Promise<Blob> {
 }
 
 /** **用户点了「发送」**：唯一会让引擎去连诊断服务的调用。 */
-export const startDiagSend = (id: string, body: { category: string; note: string }) =>
+export const startDiagSend = (id: string, body: { category: string; note: string; gen?: number }) =>
   jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

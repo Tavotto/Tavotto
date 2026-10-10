@@ -102,6 +102,10 @@ export function DiagnosticsSendDialog({
   const idRef = useRef<string | null>(null)
   /** 这一次打开的代号：晚到的 prepare 响应认它，过期的直接丢（并通知引擎释放）。 */
   const gen = useRef(0)
+  /** 引擎动作代次（取自备包 / 最近一次状态）；send 带上它，cancel 之后迟到的 send 会被引擎拒 */
+  const actionGen = useRef<number | undefined>(undefined)
+  /** 取消之后会话作废（引擎不让它复活）→ 自动重新备包；这个标记让「已取消」那句话在重备之后还在 */
+  const showCancelled = useRef(false)
   /** 备包那一刻属于哪个项目；诊断包带着那个项目的状态，项目一换这份包就不是「现在这个项目」的了。 */
   const packagePj = useRef<string | null>(null)
   /** 换代计数：项目切换 / 用户点「重新准备」都让备包流程重来一遍（旧包随清理被丢弃）。 */
@@ -123,7 +127,8 @@ export function DiagnosticsSendDialog({
     setCategory(DEFAULT_CATEGORY)
     setNote('')
     setSaveState('idle')
-    setCancelledNotice(false)
+    setCancelledNotice(showCancelled.current)
+    showCancelled.current = false
     setPackageGone(false)
     packagePj.current = currentProjectId()
     // 切项目进行中（`projectStore.switching`：从认领新 pj 到文档 / 轨迹 / 各 store 换代完成）：内存里
@@ -137,6 +142,7 @@ export function DiagnosticsSendDialog({
         }
         setPrepared(p)
         idRef.current = p.id
+        actionGen.current = p.gen
         setPhase(p.too_large ? 'tooLarge' : 'ready')
       })
       .catch(() => {
@@ -178,12 +184,14 @@ export function DiagnosticsSendDialog({
         const s = await fetchDiagSendStatus(id)
         if (stop) return
         setStatus(s)
+        if (s.gen !== undefined) actionGen.current = s.gen
         if (s.state === 'done') return setPhase('done')
         if (s.state === 'unknown') return setPhase('unknown')
         if (s.state === 'failed') return setPhase('failed')
         if (s.state === 'cancelled') {
-          setCancelledNotice(true)
-          return setPhase('ready')
+          // 取消过的会话不可复活：重新备包得到新会话，再发就是新的授权
+          showCancelled.current = true
+          return setEpoch((e) => e + 1)
         }
       } catch (e) {
         // 404 = 引擎里已经没有这个会话（引擎重启过 / 会话过期）：终态，不是暂时故障——再轮询只会把用户困在模态框里
@@ -216,7 +224,7 @@ export function DiagnosticsSendDialog({
     setStatus(null)
     // 回调认发起这一刻的代号：A 的 start 挂着时切到 B，B 备包完成后 A 的 start 才回来，不许改 B 的对话框
     const mine = gen.current
-    startDiagSend(id, { category, note: note.trim() })
+    startDiagSend(id, { category, note: note.trim(), gen: actionGen.current })
       .then((st) => {
         if (gen.current === mine) setStatus(st)
       })
