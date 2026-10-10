@@ -3435,6 +3435,62 @@ export type EnvCandidateStatus =
   | 'missing'
   | 'changed'
 
+/**
+ * 覆盖度（脚本要的 import 在某个环境里装齐了没有）的闭集——后端 `envadvice.MODULE_STATES` / `COVERAGE_STATES` /
+ * `DETAIL_CODES` 的镜像（Import Origin PR3；`tests/test_environment_coverage.py` 钉两侧相等，顺序也比）。
+ * 它们是**结构化 detail**，不是发布的错误码；前端只读它们做展示，不据此自算「能不能跑」。
+ */
+export const ENV_MODULE_STATES = [
+  'found',
+  'not_found',
+  'import_error',
+  'deferred',
+  'unknown',
+] as const
+export type EnvModuleState = (typeof ENV_MODULE_STATES)[number]
+
+export const ENV_COVERAGE_STATES = [
+  'covered',
+  'partial',
+  'missing',
+  'unusable',
+  'not_checked',
+] as const
+export type EnvCoverageState = (typeof ENV_COVERAGE_STATES)[number]
+
+export const ENV_COVERAGE_DETAIL_CODES = [
+  'module_not_found_in_user_environment',
+  'module_import_failed_in_user_environment',
+  'module_missing_in_target_environment',
+  'module_import_failed_in_target_environment',
+  'environment_not_checked',
+  'environment_unusable',
+] as const
+export type EnvCoverageDetailCode = (typeof ENV_COVERAGE_DETAIL_CODES)[number]
+
+export interface EnvCoverageDetail {
+  code: EnvCoverageDetailCode
+  /** 模块级 detail 带出问题的 import 名；环境级（`environment_*`）没有 */
+  module?: string
+  /** 模块级：`not_found` / `import_error`；`environment_unusable`：体检状态（`unsupported_python` …）；`environment_not_checked`：为什么没量 */
+  reason: string
+}
+
+/**
+ * 一个候选环境对「这个脚本要的 import」的覆盖度（后端 `envadvice.coverage_of`）。只有请求带了 `modules` / `coverage`
+ * 才出现。`versions_checked` 恒为 false：覆盖度只回答「导入得到吗」，已装版本满不满足项目声明归元数据解析（distmeta）。
+ */
+export interface EnvCoverage {
+  state: EnvCoverageState
+  /** `target` = 正要跑脚本的那个环境；`user` = 用户的候选环境 */
+  role: 'user' | 'target'
+  modules: Record<string, EnvModuleState>
+  detail: EnvCoverageDetail[]
+  /** 这份结论来自真 import（执行过用户包的 `__init__`），不是只读观察 */
+  executed_user_code: boolean
+  versions_checked: false
+}
+
 export interface EnvCandidate {
   /** 不透明身份（`userenvs.env_id`）；内置 / 默认链条固定为 `builtin` */
   id: string
@@ -3458,6 +3514,8 @@ export interface EnvCandidate {
   } | null
   current: boolean
   read_only?: boolean
+  /** 脚本所需 import 的覆盖度（仅在请求带 `modules` / `coverage` 时出现；只读缓存里已有的，没量过 = `not_checked`） */
+  coverage?: EnvCoverage
 }
 
 /** 后端 `envadvice.recommend()` 的公开投影：纯读线索，没被明确检查过的候选一律 `unchecked` */
@@ -3488,6 +3546,9 @@ export interface EnvRecommendation {
     deadline_s: number
     per_candidate_timeout_s: number
     scopes: string[]
+    /** 检查会真起候选、真 import 脚本要的包（执行它们的 `__init__`）：不是只读观察，不宣称无副作用 */
+    executes_user_code?: boolean
+    side_effect_free?: false
   }
 }
 
@@ -3643,11 +3704,25 @@ export const checkProjectEnvironment = (opts?: {
   candidates?: string[]
   scope?: 'project' | 'machine' | 'all'
   includeLoginShell?: boolean
+  /** 顺带量覆盖度：显式给 import 名，或 `coverage: true` 由后端从 `script` 静态算出。**会真 import = 执行包的 `__init__`** */
+  modules?: string[]
+  coverage?: boolean
 }) =>
   jsonFetch<{
     checked: string[]
     skipped: { id: string; reason: 'limit' | 'deadline' | 'cancelled' }[]
     cancelled: boolean
+    /** 这一次实际做了什么的账；`side_effect_free` 恒为 false——授权的检查不宣称无副作用 */
+    executed?: {
+      ran_user_code: boolean
+      candidate_interpreters: number
+      imported_modules: string[]
+      may_run_package_init: boolean
+      /** 有候选的体检起了子进程却没拿到完整结果（超时 / 崩溃 / 输出读不出）：`imported_modules` 因此可能少报，别当「没跑」 */
+      incomplete: boolean
+      side_effect_free: false
+    }
+    coverage?: { modules: string[]; dropped: number }
     recommendation: EnvRecommendation
   }>('/api/engine/environment/check', {
     method: 'POST',
@@ -3657,6 +3732,8 @@ export const checkProjectEnvironment = (opts?: {
       ...(opts?.candidates ? { candidates: opts.candidates } : {}),
       ...(opts?.scope ? { scope: opts.scope } : {}),
       ...(opts?.includeLoginShell ? { include_login_shell: true } : {}),
+      ...(opts?.modules ? { modules: opts.modules } : {}),
+      ...(opts?.coverage ? { coverage: true } : {}),
     }),
   })
 
@@ -4777,6 +4854,9 @@ export interface PreparationAction {
 }
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
+/** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
+export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
+
 export interface PreparationReport {
   session_version: number
   session_id: string
@@ -4825,6 +4905,8 @@ export interface PreparationReport {
   captured?: CapturedFigureDescriptor[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
+  /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
+  no_figure_hint?: { kind: 'raster_script'; library: RasterLibrary; in_project?: boolean } | null
   result: {
     status: string
     error?: { code?: string; message?: string; reason?: string; module?: string } | null

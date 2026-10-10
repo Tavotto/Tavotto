@@ -35,6 +35,8 @@ export type PrepPrimary =
   /** 装不了 / 标准库缺了：直接打开「渲染环境」弹窗并展开「使用其他 Python 环境」（不是只打开设置） */
   | { kind: 'pick_environment' }
   | { kind: 'open_registry' }
+  /** 跑完没出 Matplotlib 图、但脚本自己写了图片：去素材库找（项目里的图片文件素材库本来就列） */
+  | { kind: 'open_assets' }
   /** 运行 / 安装期间：缩成角标，后台照跑（不是取消） */
   | { kind: 'background' }
   /** 跑完没图：知道了，收起卡片 */
@@ -122,6 +124,14 @@ export const targetName = (entry: PrepEntry): string => {
   return 'id' in entry.target ? entry.target.id : entry.target.script
 }
 
+/** 位图库的名字（专有名词，两种语言相同；`rasterhint.LIBRARIES` 的显示名）。未知库（新后端、旧前端）原样显示后端给的名字 */
+const RASTER_LIBRARY_NAME: Record<string, string> = {
+  pillow: 'Pillow',
+  opencv: 'OpenCV',
+  imageio: 'imageio',
+  skimage: 'scikit-image',
+}
+
 const BUSY = new Set(['running', 'awaiting_runtime_input', 'preparing_environment'])
 /** 这几种状态下「运行」的前提是参数：必填参数没填齐就换成参数卡（任何卡都不说「可以运行」） */
 const ARGS_GATED = new Set(['ready', 'restarted', 'needs_args', 'args_changed'])
@@ -198,6 +208,16 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
       return completed(report, entry, ctx, script)
     case 'partial':
       if (report.outcome.kind === 'execution_finished_no_figure') {
+        const raster = report.no_figure_hint?.kind === 'raster_script' ? report.no_figure_hint : null
+        if (raster) {
+          // 脚本自己用位图库画成了图片：说出原因；后端确认那张图落在素材库盘点范围内（in_project）才给「打开素材库」，
+          // 否则（绝对路径 / 沙盒 / 盘点不认的格式 / 判不出）素材库里找不到它，只给「知道了」。其余折叠进详情
+          return view('no_figure_raster', 'noFigureRaster', { ...v, library: RASTER_LIBRARY_NAME[raster.library] ?? raster.library }, raster.in_project === true ? { kind: 'open_assets' } : { kind: 'dismiss' }, {
+            ghost: null,
+            tone: 'mute',
+            step: 1,
+          })
+        }
         return view('no_figure', 'noFigure', v, { kind: 'dismiss' }, { ghost: null, tone: 'mute', step: 1 })
       }
       return view('not_registered', 'notRegistered', v, { kind: 'open_registry' }, { tone: 'bad', step: 1 })

@@ -12,8 +12,10 @@
 # ruff: noqa: F811 — 夹具（client / fake_pool / sessions）从兄弟文件导入复用，参数名与导入名相同
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
+from pathlib import Path
 
 from tavotto import app as m
 from tavotto.engine import pool as engine_pool, preparation
@@ -211,6 +213,133 @@ def test_an_attempt_without_figures_reports_no_captured_figures(
     final = _terminal(client, sid, timeout=10.0)
     assert final["outcome"]["kind"] == "execution_finished_no_figure"
     assert final["captured"] == []  # 执行完成 ≠ 首图成功：没有图就不给「进入编辑」的东西
+
+
+def _no_figure_report(client, root, source: str) -> dict:
+    (root / "fig.py").write_text(source, encoding="utf-8")
+    report = _create(client, {"script": "fig.py"}).get_json()
+    assert report["no_figure_hint"] is None  # 还没有任何执行：没有「没出图」可解释
+    sid = report["session_id"]
+    assert _act(client, sid, _action(report, "run")["id"], 1).status_code == 202
+    return _terminal(client, sid, timeout=10.0)
+
+
+_PILLOW_SRC = "from PIL import Image\nImage.new('RGB', (4, 4)).save('out.png')\n"
+
+
+def _writes_out_png(root):
+    """假池里没有真的跑脚本：build_resp 在「运行」时代它把输出文件写出来。"""
+
+    def build():
+        (root / "out.png").write_bytes(b"x")
+        return {"ok": True, "stems": {}, "descriptors": [], "runtime": {"pid": 1}}
+
+    return build
+
+
+def _sandbox_factory(root, box_dir):
+    def factory():
+        w = _FakeWorker(Path(root))
+        w.spec = dataclasses.replace(w.spec, sandbox=str(box_dir))
+        return w
+
+    return factory
+
+
+def test_a_pillow_script_that_wrote_into_the_default_sandbox_gets_the_reason_but_no_button(
+    client, tmp_path, fake_pool, sessions
+):
+    """用户的原场景：默认沙盒模式，相对路径写进这次尝试的会话沙盒 -> 出原因句，`in_project` 为 false。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    box = tmp_path / "box"
+    box.mkdir()
+    fake_pool["worker_factory"] = _sandbox_factory(root, box)
+
+    def build():
+        (box / "out.png").write_bytes(b"x")
+        return {"ok": True, "stems": {}, "descriptors": [], "runtime": {"pid": 1}}
+
+    fake_pool["build_resp"] = build
+    final = _no_figure_report(client, root, _PILLOW_SRC)
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"] == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": False,
+    }
+    assert final["facts"] == {"execution_finished": True, "figure_captured": False}
+
+
+def test_a_pillow_script_that_wrote_nothing_in_the_sandbox_gets_no_hint(
+    client, tmp_path, fake_pool, sessions
+):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    box = tmp_path / "box"
+    box.mkdir()
+    fake_pool["worker_factory"] = _sandbox_factory(root, box)
+    fake_pool["build_resp"] = _writes_out_png(root)  # 写到了项目里、没写进沙盒：不是沙盒 cwd 的证据
+    final = _no_figure_report(client, root, _PILLOW_SRC)
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"] is None
+
+
+def test_a_pillow_script_run_in_project_mode_that_wrote_the_file_is_in_project(
+    client, tmp_path, fake_pool, sessions
+):
+    from tavotto.engine import workdir
+
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    workdir.set_mode(root, "project")
+    fake_pool["build_resp"] = _writes_out_png(root)
+    final = _no_figure_report(client, root, _PILLOW_SRC)
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"] == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": True,
+    }
+
+
+def test_a_pillow_helper_never_called_gets_no_hint_even_in_project_mode(
+    client, tmp_path, fake_pool, sessions
+):
+    from tavotto.engine import workdir
+
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    workdir.set_mode(root, "project")
+    fake_pool["build_resp"] = lambda: {
+        "ok": True,
+        "stems": {},
+        "descriptors": [],
+        "runtime": {"pid": 1},
+    }  # 没写任何文件
+    final = _no_figure_report(
+        client,
+        root,
+        "from PIL import Image\ndef unused():\n    Image.new('RGB', (4, 4)).save('out.png')\n",
+    )
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"] is None
+
+
+def test_a_matplotlib_script_without_figures_gets_no_hint(client, tmp_path, fake_pool, sessions):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    fake_pool["build_resp"] = lambda: {
+        "ok": True,
+        "stems": {},
+        "descriptors": [],
+        "runtime": {"pid": 1},
+    }
+    final = _no_figure_report(
+        client, root, "import matplotlib.pyplot as plt\nplt.subplots()\nplt.close('all')\n"
+    )
+    assert final["outcome"]["kind"] == "execution_finished_no_figure"
+    assert final["no_figure_hint"] is None
 
 
 class _KillableWorker(_FakeWorker):

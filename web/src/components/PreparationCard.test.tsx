@@ -23,6 +23,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
   fetchScriptArguments: vi.fn().mockResolvedValue({ ok: true, script: 'plot.py', arguments: { status: 'none', arguments: [] } }),
 }))
+vi.mock('@/store/liveSync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/liveSync')>()),
+  refreshProjectNow: vi.fn(async () => {}),
+}))
 vi.mock('@/store/workspace', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/workspace')>()),
   addRuntimePanelToCanvas: vi.fn(),
@@ -53,6 +57,8 @@ import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
+import { refreshProjectNow } from '@/store/liveSync'
+import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
 
@@ -315,6 +321,7 @@ beforeEach(() => {
   mockAct.mockReset()
   vi.mocked(addRuntimePanelToCanvas).mockReset()
   vi.mocked(openFastEdit).mockClear()
+  vi.mocked(refreshProjectNow).mockClear()
   useRuntimeAssetStore.setState({ assets: [], loadAssets: async () => {} })
   vi.mocked(probeScript).mockReset()
   setCurrentProjectId('pj-a')
@@ -739,6 +746,73 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(details()?.querySelector('[data-prep-nofigure-why]')).not.toBeNull()
     await act(async () => primary()!.click())
     expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  it('跑完没图、但脚本自己用位图库写了图片：一句话说原因 + 一个主按钮去素材库，其余折叠在详情', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
+    expect(panel().dataset.prepState).toBe('no_figure_raster')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
+    expect(primary()?.textContent).toBe('打开素材库')
+    // 一句话 + 一个主按钮：详情没展开时说明不在页面上
+    expect(panel().querySelector('[data-prep-nofigure-raster-why]')).toBeNull()
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-nofigure-raster-why]')?.textContent).toContain('改成用 Matplotlib 画')
+    expect(details()?.querySelector('[data-prep-nofigure-why]')).toBeNull()
+    await act(async () => primary()!.click())
+    // 点按钮就主动刷新一次素材（刚写出的图不用等 watcher 轮询），再切标签
+    expect(vi.mocked(refreshProjectNow)).toHaveBeenCalledTimes(1)
+    expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  it('点「打开素材库」：刷新还没结束时 AssetBrowser 读的 loading 已为真，刷新结束后才取清单', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    let finish: () => void = () => {}
+    vi.mocked(refreshProjectNow).mockImplementationOnce(() => new Promise<void>((r) => (finish = r)))
+    const loadAssets = vi.fn(async () => {})
+    useRuntimeAssetStore.setState({ assets: [], loadAssets })
+    // `AssetBrowser` 的忙碌态 / 磁盘素材面板读的是 useAssetStore.loading（不是 runtime 的 assetsLoading）
+    const load = vi.fn(async () => {
+      useAssetStore.setState({ loading: false })
+      return null
+    })
+    useAssetStore.setState({ loading: false, load })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(useAssetStore.getState().loading).toBe(true)
+    expect(load).not.toHaveBeenCalled()
+    expect(loadAssets).not.toHaveBeenCalled()
+    await act(async () => finish())
+    expect(loadAssets).toHaveBeenCalledTimes(1)
+    // 刷新结束后若 loading 还挂着（没人去取清单）就补一次强制取清单，不让素材库一直转圈
+    expect(load).toHaveBeenCalledWith({ force: true })
+    expect(useAssetStore.getState().loading).toBe(false)
+  })
+
+  it.each([
+    ['in_project 为假', { kind: 'raster_script' as const, library: 'pillow' as const, in_project: false }],
+    ['老后端没有 in_project', { kind: 'raster_script' as const, library: 'pillow' as const }],
+  ])('位图提示但后端没确认图落在素材库范围内（%s）：原因句照说，主按钮只有「知道了」', async (_name, hint) => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+    expect(panel().dataset.prepState).toBe('no_figure_raster')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
+    expect(primary()?.textContent).toBe('知道了')
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().leftTab).toBe('layers')
+    expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  it('没有提示（老后端 / 判不出）的跑完没图照旧', async () => {
+    await mount()
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: null }))
+    expect(panel().dataset.prepState).toBe('no_figure')
+    expect(primary()?.textContent).toBe('知道了')
   })
 
   it('运行出错：详情第一行是脚本的错误原文（不是字面量占位符），下面是这一次的诊断', async () => {
