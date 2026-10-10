@@ -782,6 +782,58 @@ class TestCancel:
             time.sleep(0.01)
         assert on.count("/v1/reports/cancel") == 1
 
+    def test_cancel_during_complete_backoff_after_a_lost_response_is_success_not_cancelled(
+        self, on, monkeypatch, caplog
+    ):
+        """complete 到了服务端、响应丢了；客户端在重试退避里被用户取消。服务端 cancel 回 409 already_complete：
+        报告其实已经存下——最终状态是 done 且带编号（标 cancel_raced），不是 cancelled，也不能说「没有发送」。"""
+        caplog.set_level(logging.INFO, logger="tavotto")
+        on.force("complete", Forced("drop_after"))
+        holder: dict = {}
+
+        def sleep_then_cancel(_s):
+            if "done" not in holder:
+                holder["done"] = True
+                diagsend.cancel(holder["id"])
+
+        monkeypatch.setattr(diagsend, "_sleep", sleep_then_cancel)
+        prep = diagsend.prepare(make_bundle())
+        holder["id"] = prep["id"]
+        diagsend.start(prep["id"], confirmed=True, category=None, note=None)
+        st = wait_for(prep["id"], {"done", "cancelled", "failed"})
+        assert st["state"] == "done", st
+        assert st["report_id"].startswith("TVD-") and st["cancel_raced"] is True
+        rep = next(iter(on.reports.values()))
+        assert rep.state == "complete" and rep.complete_runs == 1
+        assert on.count("/v1/reports/cancel") == 1
+        assert not any("结果=cancelled" in r.getMessage() for r in caplog.records)
+
+    def test_cancel_after_a_failed_attempt_whose_complete_actually_landed_becomes_done(self, on):
+        on.force("complete", Forced("drop_after"), times=diagsend.COMPLETE_ATTEMPTS)
+        prep = send()
+        wait_for(prep["id"], {"failed"})
+        diagsend.cancel(prep["id"])
+        deadline = time.monotonic() + 5
+        while diagsend.status(prep["id"])["state"] != "done" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        st = diagsend.status(prep["id"])
+        assert (
+            st["state"] == "done"
+            and st["report_id"].startswith("TVD-")
+            and st["cancel_raced"] is True
+        )
+
+    def test_cancel_in_progress_is_asked_once_more(self, on):
+        on.fail("upload", 500, "x")
+        prep = send()
+        wait_for(prep["id"], {"failed"})
+        on.fail("cancel", 409, "in_progress", retry_after=1)
+        diagsend.cancel(prep["id"])
+        deadline = time.monotonic() + 5
+        while on.count("/v1/reports/cancel") < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert on.count("/v1/reports/cancel") == 2
+
     def test_discard_while_sending_cancels_and_frees_the_bundle(self, on):
         gate = threading.Event()
         on.force("init", Forced("hold", event=gate))

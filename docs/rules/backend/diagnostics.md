@@ -277,4 +277,5 @@
 按出处放行：`report.json` 的 `ai_endpoints[].base_url` 与 `_redact_obj` 里**任何键名以 `url` / `uri` / `endpoint` 结尾的字符串值**，一律经 `_url_fact`，只留 `scheme://host[:port]`
 （解析不出 / 不是 http(s)/ws(s) 的 `url:<sha1 前 10 位>`）。这是 report 字段值的语义变化，所以 bundle schema 升到 7（`web/src/diagnostics/types.ts` 同步）。
 新加任何网址形字段：键名以 url/uri/endpoint 结尾即自动受益；叫别的名字就在构造处显式过 `_url_fact`。看护：`tests/test_diagnostics_bundle.py` 的网址金丝雀用例（导出包与发送包全文搜）。
+- **取消与「其实已送达」**（Codex #923）：`complete` 响应丢了、用户在退避里取消时，服务端 cancel 回 409 `already_complete`——`_cancel_remote` 回 True，`_finish` 按**成功**收尾（保留报告编号、`cancel_raced`，界面说「取消时报告已经送达」），不发布 cancelled；`in_progress` 再问一次。契约里 cancel 的错误码只有 `already_complete` 带「已完成」语义。失败态里取消走异步路径，同样在回来后把会话改成 done。
 

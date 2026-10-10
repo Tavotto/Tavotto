@@ -1519,6 +1519,7 @@ export default interface Resources {
           "copyId": "复制报告编号",
           "details": "查看详情",
           "done": "完成",
+          "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
           "doneBody": "在 GitHub Issues 或群里提到这个编号，维护者就能找到这份诊断。",
           "doneTitle": "已发送",
           "failure": {

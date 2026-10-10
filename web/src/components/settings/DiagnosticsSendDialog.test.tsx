@@ -312,6 +312,19 @@ describe('发送', () => {
     expect(q('[data-diag-send-confirm]')).toBeNull()
   })
 
+  it('取消时报告其实已送达（cancel_raced）：按成功展示报告编号并如实说明', async () => {
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockResolvedValue(
+      status({ state: 'done', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS', cancel_raced: true }),
+    )
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    expect(q('[data-diag-report-id]')!.textContent).toBe('TVD-ABCD-EFGH-JKMN-PQRS')
+    expect(q('[data-diag-send-status]')!.textContent).toContain(ds('doneAfterCancel'))
+    expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('cancelled'))
+  })
+
   it('可重试的失败：说人话 + 退避时间 + 保存退路，主按钮变「重试」且再点会再发一次', async () => {
     startMock.mockResolvedValue(status({}))
     statusMock.mockResolvedValue(
@@ -490,6 +503,40 @@ describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，
     expect(payloads[1]).not.toContain('panel:aaaaaaaaaaaa')
     await click(q('[data-diag-send-confirm]'))
     expect(startMock.mock.calls.map((c) => c[0])).toEqual(['pid-2'])
+  })
+
+  it.each([
+    ['普通失败', new Error('boom')],
+    ['404（引擎已丢会话）', new ApiError('gone', 404, { code: 'diag_send_not_found' })],
+  ])('A 的 start 挂起 → 切到 B → B 备包完成 → A 的 start 才失败（%s）：不改 B 的对话框', async (_n, err) => {
+    setCurrentProjectId('A')
+    prepareMock.mockResolvedValueOnce({ ...PREPARED, id: 'pid-A' }).mockResolvedValueOnce({ ...PREPARED, id: 'pid-B' })
+    let rejectA!: (e: unknown) => void
+    startMock.mockReturnValueOnce(new Promise((_r, rej) => (rejectA = rej)))
+    statusMock.mockResolvedValue(status({ id: 'pid-A' }))
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => {})
+    await click(q('[data-diag-send-confirm]')) // A 的 start 挂着
+    await act(async () => setCurrentProjectId('B'))
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('ready')
+    await act(async () => rejectA(err))
+    await act(async () => {})
+    // B 的对话框不受影响：仍是可发送的 ready，没有失败说明、没有 packageGone
+    expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('ready')
+    expect(q('[data-diag-send-confirm]')).not.toBeNull()
+    expect(q('[data-diag-send-reprepare]')).toBeNull()
+    expect(document.body.textContent).not.toContain(ds('packageGone'))
   })
 
   it('发送中切项目：会话被取消（丢弃）并重新备包', async () => {

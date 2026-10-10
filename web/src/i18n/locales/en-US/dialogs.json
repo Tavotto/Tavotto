@@ -1224,7 +1224,8 @@
         "noteAttached": "Anything you write here is sent as typed, together with the bundle.",
         "policy": "Privacy policy",
         "cardButton": "Send problem report",
-        "reprepare": "Prepare again"
+        "reprepare": "Prepare again",
+        "doneAfterCancel": "Cancelled too late — the report had already arrived"
       }
     },
     "export": {

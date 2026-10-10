@@ -594,6 +594,7 @@ class SendSession:
     server_open: bool = False  # 服务端有一个未完成的会话（取消时要通知它）
     cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     discard_after: bool = False
+    cancel_raced: bool = False  # 用户取消时报告其实已送达（cancel 回 409 already_complete）
     thread: threading.Thread | None = field(default=None, repr=False)
 
     def public(self) -> dict:
@@ -608,6 +609,8 @@ class SendSession:
         }
         if self.report_id and self.state in ("sending", "done"):
             out["report_id"] = self.report_id
+        if self.state == "done" and self.cancel_raced:
+            out["cancel_raced"] = True
         if self.state == "failed":
             out["code"] = self.failure
             out["retryable"] = FAILURES.get(self.failure, False)
@@ -754,6 +757,7 @@ def start(pid: str, *, confirmed: object, category: object, note: object) -> dic
             sess.token, sess.spec = "", None
         sess.params = params
         sess.state, sess.stage, sess.failure, sess.retry_after = "sending", "init", "", None
+        sess.cancel_raced = False
         sess.sent = sess.total = 0
         sess.cancel = threading.Event()
         sess.thread = threading.Thread(
@@ -850,13 +854,21 @@ def _finish(sess: SendSession, target: Target, code: str, retry_after: int | Non
     with _LOCK:
         stage = sess.stage or "init"
         open_remote = sess.server_open and bool(sess.token) and bool(sess.report_id)
+    raced = False
     if code == "cancelled" or (code and not FAILURES.get(code, False)):
         # 取消，或这一份发不出去（不是用户再点一次能解决的）：通知服务端作废那份未完成的会话
         if open_remote:
-            _cancel_remote(sess, target)
-            with _LOCK:
-                sess.server_open = False
-                sess.token, sess.spec, sess.uploaded, sess.report_id = "", None, False, ""
+            raced = _cancel_remote(sess, target)
+            if raced and code == "cancelled":
+                # complete 其实已经到了服务端（响应丢了）：服务端回 409 already_complete——这次发送**成功了**，
+                # 不是取消。保留报告编号、按成功收尾，界面如实说「取消时报告已经送达」
+                code = ""
+                with _LOCK:
+                    sess.cancel_raced = True
+            else:
+                with _LOCK:
+                    sess.server_open = False
+                    sess.token, sess.spec, sess.uploaded, sess.report_id = "", None, False, ""
     with _LOCK:
         if code == "cancelled":
             sess.state, sess.stage, sess.failure = "cancelled", "", ""
@@ -1035,17 +1047,27 @@ def _verify_complete(sess: SendSession, obj: dict) -> None:
 # ---------------------------------------------------------------------------
 # 取消（尽力而为）
 # ---------------------------------------------------------------------------
-def _cancel_remote(sess: SendSession, target: Target) -> None:
-    """通知服务端这份会话作废。失败不重试、不上报——服务端会话 15 分钟后自己过期。"""
-    try:
-        _json_request(
-            target,
-            "/v1/reports/cancel",
-            {"report_id": sess.report_id, "complete_token": sess.token},
-            CANCEL_TIMEOUT_S,
-        )
-    except Exception:  # noqa: BLE001 — 尽力而为
-        pass
+def _cancel_remote(sess: SendSession, target: Target) -> bool:
+    """通知服务端这份会话作废。**回 True = 服务端说它其实已经 complete**（409 `already_complete`：complete 的响应
+    丢了、用户随后取消）——这次发送成功了，调用方不能再说「没有发送」。`in_progress`（对端正在核实）等一等再问一次；
+    其余失败不重试、不上报——服务端会话 15 分钟后自己过期。契约里 cancel 的错误码只有 `already_complete` 带
+    「其实已完成」的语义（`in_progress` 是「可能马上完成」，所以再问一次）。"""
+    payload = {"report_id": sess.report_id, "complete_token": sess.token}
+    for attempt in range(2):
+        try:
+            resp = _json_request(target, "/v1/reports/cancel", payload, CANCEL_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 — 尽力而为
+            return False
+        if resp.status == 200:
+            return False
+        code = _server_code(resp)
+        if resp.status == 409 and code == "already_complete":
+            return True
+        if resp.status == 409 and code == "in_progress" and attempt == 0:
+            _sleep(min(_retry_after(resp) or 3, RETRY_AFTER_CAP_S))
+            continue
+        return False
+    return False
 
 
 def _cancel_remote_async(sess: SendSession) -> None:
@@ -1055,6 +1077,19 @@ def _cancel_remote_async(sess: SendSession) -> None:
     snapshot = SendSession(id="", bundle=None, report_id=sess.report_id, token=sess.token)
     sess.server_open = False
     sess.token, sess.spec, sess.uploaded, sess.report_id = "", None, False, ""
-    threading.Thread(
-        target=_cancel_remote, args=(snapshot, target), name="tavotto-diag-cancel", daemon=True
-    ).start()
+
+    def run() -> None:
+        if _cancel_remote(snapshot, target):
+            # 失败态里取消、而服务端其实早已收下：把会话改成成功（若它还是当前会话）
+            with _LOCK:
+                if (
+                    _CURRENT is not None
+                    and _CURRENT.state in ("cancelled", "failed")
+                    and not _CURRENT.report_id
+                ):
+                    _CURRENT.report_id = snapshot.report_id
+                    _CURRENT.state, _CURRENT.stage, _CURRENT.failure = "done", "", ""
+                    _CURRENT.cancel_raced = True
+                    _CURRENT.bundle = None
+
+    threading.Thread(target=run, name="tavotto-diag-cancel", daemon=True).start()

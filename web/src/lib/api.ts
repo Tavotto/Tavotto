@@ -4559,6 +4559,8 @@ export interface DiagSendStatus {
   total: number
   /** 成功后的报告编号（TVD-XXXX-XXXX-XXXX-XXXX），给用户复制 */
   report_id?: string
+  /** 用户取消时报告其实已送达（引擎收到 409 already_complete）：按成功展示，如实说明 */
+  cancel_raced?: boolean
   /** 失败码（引擎 `diagsend.FAILURES` 的键） */
   code?: string
   retryable?: boolean

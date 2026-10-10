@@ -212,9 +212,14 @@ export function DiagnosticsSendDialog({
     setCancelledNotice(false)
     setPhase('sending')
     setStatus(null)
+    // 回调认发起这一刻的代号：A 的 start 挂着时切到 B，B 备包完成后 A 的 start 才回来，不许改 B 的对话框
+    const mine = gen.current
     startDiagSend(id, { category, note: note.trim() })
-      .then(setStatus)
+      .then((st) => {
+        if (gen.current === mine) setStatus(st)
+      })
       .catch((e) => {
+        if (gen.current !== mine) return
         if (e instanceof ApiError && e.status === 404) setPackageGone(true)
         setStatus({ code: 'internal', retryable: false } as DiagSendStatus)
         setPhase('failed')
@@ -231,12 +236,16 @@ export function DiagnosticsSendDialog({
   const save = () => {
     const id = idRef.current
     if (!id) return
+    const mine = gen.current
     fetchDiagSendBundle(id)
       .then((blob) => {
+        if (gen.current !== mine) return
         saveDiagnosticsZip(blob)
         setSaveState('saved')
       })
-      .catch(() => setSaveState('failed'))
+      .catch(() => {
+        if (gen.current === mine) setSaveState('failed')
+      })
   }
 
   const sending = phase === 'sending' || phase === 'cancelling'
@@ -289,7 +298,7 @@ export function DiagnosticsSendDialog({
       {phase === 'done' && status?.report_id && (
         <>
           <p className="min-w-0 text-xs leading-4 text-ok-content" role="status" title={ds('doneBody')}>
-            <span>{ds('doneTitle')} · {ds('reportId')} </span>
+            <span>{ds(status.cancel_raced ? 'doneAfterCancel' : 'doneTitle')} · {ds('reportId')} </span>
             <code data-diag-report-id className="font-mono text-ink">
               {status.report_id}
             </code>
