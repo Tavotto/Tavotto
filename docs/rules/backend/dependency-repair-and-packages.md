@@ -391,7 +391,9 @@
 - **计划绑定**（`JointRepairPlan`）：项目 / 脚本 / 完整需求 / 约束 / hash / 目标类型 / 环境指纹（含 active 代号）/ 目标事实
   digest（两份：`facts_digest` + `install_facts_digest`）/ 组 / 有效期；执行只认 `plan_id`，执行前重算解释器指纹**与**
   事实 digest（不走缓存；确认期间有人往目标里装 / 卸了包 `pyvenv.cfg` 不变而 digest 变——`repair_plan_stale`，Codex #461
-  P2）；不是 `ready` 的计划拒绝绑定
+  P2）；**import 层另有一份执行期指纹**（`depplan.layer_digest`：`site_roots` / `extra_roots` / `opaque_roots` / `path_order` + site 层
+  每个 `.pth` 的内容摘要，计划里是 `layers_digest` / `install_layers_digest`）：`.pth` 或可见 site 层变了而包名版本表没变时 `facts.digest()`
+  不变，旧计划本会被接受——层指纹不一致走同一条 `repair_plan_stale`；它**不进** `inputs_digest` / `identity` / 披露（#922）；不是 `ready` 的计划拒绝绑定
   （`dependency_plan_blocked` 带 `joint` 载荷——blocked 的理由与 `nothing_needed` 都在里面）；建代前查磁盘
   （`package_disk_low`）。
 - **取消的接受时刻**（D11）：拿锁前 / 建 venv 与 pip 期间（kill）/ 验证期间（含 `worker_self_test` 之后、切 active 之前

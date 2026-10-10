@@ -490,3 +490,43 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 * **backend-fast (3.10) 三条**：基础解释器的 site-packages 里 setuptools 的 `distutils-precedence.pth`（一行 `import os; var = 'SETUPTOOLS_USE_DISTUTILS'; …add_shim();`）被计成未建模的 `import` 钩子，`uncovered_paths=1`，候选降级为 `unverified`。修：`distmeta._KNOWN_BENIGN_PTH_RE` 按**整行内容**精确匹配两类已知只影响 `distutils` 的行——setuptools 的垫片行（默认值 `local` / 老版 `stdlib` 两种形态）、virtualenv 的 `import _virtualenv`——算已建模；同名文件换了内容、附加别的 import、别的模块一律仍计 `uncovered_paths`。
 * 用例：`TestExtraPathLayers`（探针在 Windows 形态的 `sys.path` 下不报安装根目录与 cwd；真 venv 的 `PYTHONPATH` 加 venv 根与基础根后缺包仍报缺、`names_complete` 仍真）、`TestKnownBenignPthHooks`。
 * **本机无法验证**：真 Windows 的 `sys.path` 布局（hostedtoolcache / python.org / embeddable 的 `python3XX.zip` + `._pth`）与 junction 判定（`scanbudget.is_redirect`）；本机只复现了同一机制（符号链接）。
+
+## 13. PR5a 实施记录（PR4 遗留 issue 一次修掉：#922 #924 #925 #929）
+
+基线 `origin/main` `59a90e27e`（PR4 #920 已合入）。`risk:high`（改 `depplan` 判据与执行期过期门）。范围只有这四条 issue；PR5 原计划里的「装后核验 observed_* + user_specified 预填确认」留给 PR5b。默认扫描零子进程、不执行用户代码、不新增 `BLOCK_REASONS` / `ORIGIN_REASONS` / 已发布错误码；新探针字段与新事实字段一律不进 `TargetFacts.digest()` / `to_payload()`，无来源问题的脚本的 `requirements` / `identity` / `inputs_digest` 逐字不变（既有用例钉着）。
+
+**#922 执行期过期检查绑定 import 层**
+
+* `depplan.layer_digest(facts)`：`site_roots` / `extra_roots` / `opaque_roots` / `path_order` 加每个 site 层里 `.pth` 的内容摘要（单文件 ≤ 256 KiB、每层 ≤ 200 个）。量事实的同一刻（`target_facts`）就算好存进 `TargetFacts.layers`（与静态索引同一刻读，计划与它描述同一个时间点）；没有层信息（替身事实 / `fresh_venv_facts`）为空串。
+* `JointRepairPlan.layers_digest` / `install_layers_digest` 在形成计划时记下；`deprepair.prepare` 在重量事实（不走缓存）之后再比，不一致 = 同一条 `repair_plan_stale`（复用「确认期间目标环境里的包发生了变化」的拒绝路径，换了提示语）。不进 `impact` / `to_payload` / `identity` / `inputs_digest`——无关的重装不会因此发生；层没变时行为不变。
+
+**#924**
+
+* ① `_verdict`：多个已装提供者（映射发行包 + 备选）同时装着时，歧义 / 声明判定放在「映射提供者早返回」之前。两者都装且项目未点名 → `module_origin_ambiguous`；声明点名其一（含点名映射那个）→ 满足；只装映射那个 → 满足（对照）。
+* ② `envadvice._builtin_coverage` 的角色改用 `_role_of`（内置 runtime 的路径、`is_current=默认链条`、全局锁）：有全局解释器且不是内置本身 → `user`；全局解释器恰好就是内置 → 仍 `target`。`_role_of` 对空路径安全。
+
+**#925**
+
+* ① `plan` 的 `index_incomplete` 并入 `uncovered_paths > 0`（未建模的可执行 `.pth` 钩子 / 没跟进的路径行；已知良性钩子本来就已建模、不计）：该 import 判「来源未定」（`unverified`，`distribution_status=environment_not_checked`），不进 missing / requirements；装到另一个新一代的集合照旧按目标判（钩子在当前环境里，不遮蔽新一代）。
+* 为了不让它在真实环境里大面积误伤，补了两处**使 uncovered 说实话**的改动：(a) `.pth` 路径行指向 `site_paths` 里任一已读层都算已跟进（原来只认额外路径层）；(b) 探针新报 `pth_roots`（`site_roots` 里 Python 的 `site` 真会处理 `.pth` 的那几层：`getsitepackages()` / 启用的 user site），经 `PYTHONPATH` 或 `.pth` 路径行进来的 site-packages 不处理它的 `.pth`，那里的行不计入 `uncovered_paths`（`SiteRoot.pth`）。
+* ② `distmeta` 的扩展识别（目录清单 / RECORD / conda-meta）改走 `_ext_top(name, suffixes)`：`index_environment(ext_suffixes=)` 给了就逐字按目标解释器的 `EXTENSION_SUFFIXES` 认（与 `importscan._ext_stem` 同一判据）；没量到（空）保持宽松口径。`static_index` 把 `facts.ext_suffixes` 传下去。
+
+**#929**
+
+* 探针新报 `path_order`（`site_roots` ∪ `extra_roots` 按 `sys.path` 原顺序排成的一份；成员与两份原列表一致，Windows 的安装根目录 / 探针 cwd 不当包层的规则不变，有用例）；`index_environment(layer_order=)` 据此交错给各层定先后（不给 = 先 site 层再额外层，旧排法）。
+* 遮蔽语义沿用跨层规则，另补一条：目录清单里有这个名字、却没有任何发行包认领它的层（`PYTHONPATH` 里自己的 `yaml/`）也是提供者，按 PathFinder 语义「第一个常规提供者胜出、之后的被遮蔽」参与（`Index._shapes` 只对「别的层有发行包认领」的名字量形状，常见情形不多一次 scandir）；形状读不出的排在前面 = `layer_order_unresolved`。
+* `depplan._verdict`：名字级（`importlib.metadata`）装着的发行包若在静态索引里**全被前面的别的提供者遮蔽**（`_shadowed_names`）→ 不满足、判来源未定（原因取自 `distribution_status`：自己的模块 → `unverified`，editable fork → `editable_dependency_not_reproducible`）；`layer_order_unresolved` → `module_origin_ambiguous`。顺序反过来（site 在前）→ 满足。
+* `layer_digest` 含 `path_order`：执行期顺序变了也算 import 层变了。
+
+**测试**：新文件 `tests/test_import_origin_plan_backlog.py`（每条 issue 一节：验收用例 + 对照用例 + 变异）；`tests/support/venvfixture.py`：全 ASCII 的宿主目录改写成 `.pth` 路径行（标准库目录不写），否则夹具那一行 `import _tavotto_fixture_host_site` 本身就是「未建模钩子」，凡用 `real_venv` 的端到端用例都走不到「缺什么装什么」；含非 ASCII 的路径保持原来的 import 加载器（编码理由见该文件）。
+
+**仍未覆盖 / 取舍（需要维护者知道）**
+
+* **#925① 的代价**：`*-nspkg.pth`（`google-*`、`zope.*`、`ruamel.yaml` 等老式命名空间包）是未建模的 `import` 行，装了它们的环境里缺的包会判「来源未定」而不是自动装。这是 issue 要求的保守方向；若要缓解，应像 setuptools / virtualenv 那样按**整行内容**精确建模 nspkg 的固定形态（它只给指定名字建命名空间，不提供别的模块），属另一项判据，本 PR 未做。
+* `pth_roots` 只认 `site.getsitepackages()` / user site；`sitecustomize` / `usercustomize` 里调 `site.addsitedir` 的目录当作不处理 `.pth`（不计入 uncovered）。这类环境的名字层也不会因此被判不完整。
+* 非 ASCII 宿主路径下的夹具仍写 import 钩子（Windows 中文用户名的开发机上，用 `real_venv` 的准备类端到端用例会判「来源未定」）；CI 与 ASCII 路径不受影响。
+* 本机无法验证真 Windows 的 `sys.path` 布局：`path_order` 的 Windows 形态只靠与既有 `install_roots` 用例同样的「前插安装根目录」模拟。
+* 内置 runtime 之外的覆盖度角色（#924②）仍只影响 detail 角色标签，前端未展示（归 PR6）。
+
+**对 PR5b 的依赖**：装后核验 `observed_*` 要对照的是装后的索引——`target_facts(use_cache=False)` 现在同一刻带 `layers` 与静态索引，装后再读即可；user_specified 预填确认走 `plan` 的 `origins`，本 PR 的 `unverified` / `module_origin_ambiguous` 条目就是它的输入（新增的来源未定情形：未建模钩子、被前面提供者遮蔽）。
+
