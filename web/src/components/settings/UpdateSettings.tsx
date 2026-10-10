@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatMessage, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
@@ -6,14 +6,14 @@ import type { UpdateStatus } from '@/lib/api'
 import { useUpdateStore } from '@/store/updateStore'
 import { UpdateRestartError } from '../UpdateRestartError'
 import { Button } from '../ui/Button'
+import { FieldGroup, FormSection } from '../ui/FormSection'
 import { ProgressBar } from '../ui/ProgressBar'
 import { Toggle } from '../ui/Toggle'
 import {
   DiagnosticDisclosure,
   DiagnosticItem,
-  InlineWarning,
+  GroupNotice,
   SettingRow,
-  SettingSection,
   settingRowLabelId,
 } from './SettingRow'
 
@@ -58,8 +58,54 @@ function LastCheckStatus({
 }
 
 /**
- * 检查更新。保留：当前版本、自动检查开关、检查按钮、当前状态。
- * 安装方式、签名校验说明、升级命令进「技术详情」；**错误照旧常驻**。
+ * 「有新版本」：组里一条 accent（info）语气的 Notice——标题是「有新版本 x.y.z」，正文一句「当前 a.b.c」，
+ * 右边是**这一页唯一的主动作**（32px 主按钮）；发行说明收在下面一行原地展开（2026-10-07 设计审计 §9.1：此前
+ * 是一段打破行语法的内容 + 原样输出的 `<pre>`）。桌面 / 浏览器两条通道共用这一份壳。
+ */
+function UpdateAvailable({
+  version,
+  current,
+  notes,
+  action,
+  children,
+}: {
+  version: string
+  current: string
+  notes?: string | null
+  /** 主动作（lg primary）；装不了 / 装好了时不给 */
+  action?: ReactNode
+  /** Notice 正文里在「当前 x」之后的那段（重启提示、源码升级命令、下载进度……） */
+  children?: ReactNode
+}) {
+  return (
+    <>
+      <GroupNotice
+        tone="info"
+        data-update-available
+        title={
+          <>
+            {st('update.available')} <span className="font-mono">{version}</span>
+          </>
+        }
+        action={action}
+      >
+        <span className="tabular-nums">{st('update.currentIs', { version: current })}</span>
+        {children}
+      </GroupNotice>
+      {notes && (
+        <DiagnosticDisclosure variant="row" title={st('update.notesTitle')} data-update-notes>
+          <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-ink-2">
+            {notes}
+          </pre>
+        </DiagnosticDisclosure>
+      )}
+    </>
+  )
+}
+
+/**
+ * 检查更新。保留：自动检查开关、检查按钮、当前状态、有新版本时的主动作。
+ * 安装方式、签名校验说明、升级命令进「技术详情」；**错误照旧常驻**（组内 danger Notice）。
  */
 export function UpdateSettings() {
   useTranslation('dialogs')
@@ -85,7 +131,7 @@ export function UpdateSettings() {
   if (status?.desktop) return <DesktopUpdateSettings status={status} />
 
   return (
-    <SettingSection>
+    <UpdatesGroup>
       {/* 标签自己就是那句说明（「每天自动检查」），不在下面再复述一遍（全面打磨 D35）；
           开关的名字用渲染那行可见文字的同一份，不另写一句同义的 */}
       <SettingRow
@@ -104,20 +150,23 @@ export function UpdateSettings() {
       </SettingRow>
 
       {autoCheckFailure && (
-        <div data-update-auto-error className="flex flex-col items-start gap-1.5">
-          <InlineWarning tone="danger">
-            {st('update.autoCheckSaveFailed')} {formatMessage(autoCheckFailure.message)}
-          </InlineWarning>
-          <Button
-            data-update-auto-retry
-            variant="secondary"
-            size="sm"
-            onClick={() => void setAutoCheck(autoCheckFailure.value)}
-            disabled={autoCheckSaving}
-          >
-            {st('update.autoCheckRetry')}
-          </Button>
-        </div>
+        <GroupNotice
+          tone="danger"
+          data-update-auto-error
+          action={
+            <Button
+              data-update-auto-retry
+              variant="secondary"
+              size="sm"
+              onClick={() => void setAutoCheck(autoCheckFailure.value)}
+              disabled={autoCheckSaving}
+            >
+              {st('update.autoCheckRetry')}
+            </Button>
+          }
+        >
+          {st('update.autoCheckSaveFailed')} {formatMessage(autoCheckFailure.message)}
+        </GroupNotice>
       )}
 
       <SettingRow
@@ -135,7 +184,7 @@ export function UpdateSettings() {
       </SettingRow>
 
       {status?.error && (
-        <InlineWarning tone="danger">
+        <GroupNotice tone="danger">
           {/* code 有本地文案时按界面语言渲染；error 中文原文只作回退（issue #30） */}
           {status.code === 'update_check_failed'
             ? translate('update.checkFailed', {
@@ -143,62 +192,59 @@ export function UpdateSettings() {
                 error: String(status.params?.error ?? ''),
               })
             : status.error}
-        </InlineWarning>
+        </GroupNotice>
       )}
-      {checkError && <InlineWarning tone="danger">{checkError}</InlineWarning>}
+      {checkError && <GroupNotice tone="danger">{checkError}</GroupNotice>}
 
       {status?.update_available && (
-        /* 「有新版本」是这一页此刻最重要的事，但它是一段内容不是一张卡（第八节）：
-           小标题一档的「有新版本」+ 版本号 + 发行说明 + 唯一的主动作，不套框 */
-        <div data-update-available className="flex flex-col gap-2 border-t border-border pt-3">
-          <p className="text-sm text-ink">
-            <span className="font-medium">{st('update.available')}</span>{' '}
-            <span className="font-mono">{status.latest}</span>
-            <span className="type-meta ml-2">{st('update.currentIs', { version: status.current })}</span>
-          </p>
-          {status.notes && (
-            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-2">
-              {status.notes}
-            </pre>
-          )}
-          {restartRequired ? (
-            <p className="text-xs text-ink-2">
-              {st('update.restartBefore')}
-              <strong className="font-medium text-ink">{st('update.restartStrong')}</strong>
-              {st('update.restartAfter')}
-            </p>
-          ) : status.can_self_update ? (
-            <div className="flex items-center gap-2">
-              <Button variant="primary" onClick={() => void apply()} disabled={applying}>
+        <UpdateAvailable
+          version={status.latest ?? ''}
+          current={status.current}
+          notes={status.notes}
+          action={
+            !restartRequired && status.can_self_update ? (
+              <Button variant="primary" size="lg" onClick={() => void apply()} disabled={applying}>
                 {st(applying ? 'update.upgrading' : 'update.downloadAndUpgrade')}
               </Button>
-              <a
-                href={status.html_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
-              >
-                {st('update.releaseNotes')}
-              </a>
-            </div>
+            ) : undefined
+          }
+        >
+          {restartRequired ? (
+            <span className="mt-1 block">
+              {st('update.restartBefore')}
+              <strong className="font-medium">{st('update.restartStrong')}</strong>
+              {st('update.restartAfter')}
+            </span>
+          ) : status.can_self_update ? (
+            <a
+              href={status.html_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 block w-fit underline underline-offset-2"
+            >
+              {st('update.releaseNotes')}
+            </a>
           ) : (
-            <p className="text-xs text-ink-2">
-              {st('update.sourceUpgrade')}{' '}
-              <code className="font-mono">{status.upgrade_command}</code>
-            </p>
+            <span className="mt-1 block">
+              {st('update.sourceUpgrade')} <code className="font-mono">{status.upgrade_command}</code>
+            </span>
           )}
-          {/* 失败必须看得出是失败：同一片灰色日志既当成功回执又当错误，
-              用户读不出装没装上，也就不知道该不该再点一次那个按钮 */}
-          {applyFailed && <InlineWarning tone="danger">{st('update.applyFailedRetry')}</InlineWarning>}
-          {applyLog && (
-            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-sm bg-surface-2 p-1.5 font-mono text-xs text-ink-3">
-              {applyLog}
-            </pre>
-          )}
+        </UpdateAvailable>
+      )}
+      {/* 失败必须看得出是失败：同一片灰色日志既当成功回执又当错误，
+          用户读不出装没装上，也就不知道该不该再点一次那个按钮 */}
+      {status?.update_available && applyFailed && (
+        <GroupNotice tone="danger">{st('update.applyFailedRetry')}</GroupNotice>
+      )}
+      {status?.update_available && applyLog && (
+        <div>
+          <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-surface p-2 font-mono text-xs text-ink-3">
+            {applyLog}
+          </pre>
         </div>
       )}
 
-      <DiagnosticDisclosure title={st('techDetails')}>
+      <DiagnosticDisclosure variant="row" title={st('techDetails')}>
         <DiagnosticItem
           name={st('update.installMethod')}
           value={
@@ -211,7 +257,16 @@ export function UpdateSettings() {
         />
         <p className="type-caption">{st('update.channelNote')}</p>
       </DiagnosticDisclosure>
-    </SettingSection>
+    </UpdatesGroup>
+  )
+}
+
+/** 「更新」一组（关于页里版本在上、检查更新紧随其后，再是隐私） */
+function UpdatesGroup({ children }: { children: ReactNode }) {
+  return (
+    <FormSection title={st('update.title')} data-settings-anchor="about.updates">
+      <FieldGroup>{children}</FieldGroup>
+    </FormSection>
   )
 }
 
@@ -223,6 +278,10 @@ export function UpdateSettings() {
  *   * 不静默——每一步都要用户按一下；
  *   * 装完不等于生效，重启才算换版本；
  *   * 失败要说人话并留退路（更新器连不上时仍给 Releases 链接）。
+ *
+ * **自动检查那一行两条通道都有**（2026-10-07 设计审计 §9.1：桌面 / 浏览器同形）：桌面版每次启动都检查一次、
+ * 目前没有应用内关闭开关（后端的 updater 在桌面壳里停用、存不下这个偏好）——所以开关画成开着、停用，原因就在
+ * 行内，而不是这一行在桌面版上整个消失、让人以为桌面版不检查。
  *
  * 安装包的签名由壳里的公钥校验，校验不过当场失败——这里不做「忽略签名」的口子。
  */
@@ -249,7 +308,21 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
   const pct = desktopProgress === null ? null : Math.round(desktopProgress * 100)
 
   return (
-    <SettingSection>
+    <UpdatesGroup>
+      <SettingRow
+        data-update-auto
+        label={st('update.autoCheckDesktop')}
+        controlId="setting-update-auto"
+        status={st('update.autoCheckDesktopReason')}
+      >
+        <Toggle
+          id="setting-update-auto"
+          aria-labelledby={settingRowLabelId('setting-update-auto')}
+          checked
+          disabled
+          onChange={() => {}}
+        />
+      </SettingRow>
 
       <SettingRow
         label={st('update.check')}
@@ -268,76 +341,73 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
       </SettingRow>
 
       {desktopError && !relaunchFailed && (
-        <div className="flex flex-col gap-1">
-          <InlineWarning tone="danger">{desktopError}</InlineWarning>
+        <GroupNotice tone="danger">
+          {desktopError}
           <a
             href={status.releases_url}
             target="_blank"
             rel="noreferrer"
-            className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
+            className="mt-1 block w-fit underline underline-offset-2"
           >
             {st('update.manualDownload')}
           </a>
-        </div>
+        </GroupNotice>
       )}
 
       {desktopUpdate && (
-        <div data-update-available className="flex flex-col gap-2 border-t border-border pt-3">
-          <p className="text-sm text-ink">
-            <span className="font-medium">{st('update.available')}</span>{' '}
-            <span className="font-mono">{desktopUpdate.version}</span>
-            <span className="type-meta ml-2">{st('update.currentIs', { version: status.current })}</span>
-          </p>
-          {desktopUpdate.notes && (
-            <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-ink-2">
-              {desktopUpdate.notes}
-            </pre>
-          )}
-
-          {desktopPhase === 'installed' ? (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <Button
-                  data-update-relaunch
-                  variant="primary"
-                  onClick={() => void relaunch()}
-                  loading={relaunching}
-                >
-                  {st('update.relaunch')}
-                </Button>
-                <span className="text-xs text-ink-2">{st('update.installedHint')}</span>
-              </div>
-              {relaunchFailed && <UpdateRestartError detail={desktopError} />}
-            </div>
-          ) : desktopPhase === 'downloading' ? (
-            <div className="flex flex-col gap-1">
-              {/* 拿不到 Content-Length 就走不确定态，不假装卡在某个百分比 */}
-              <ProgressBar pct={pct} label={st('update.downloadProgressAria')} />
-              <span className="text-xs text-ink-3">
-                {pct === null ? st('update.downloading') : st('update.downloadingPct', { pct })}
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Button variant="primary" onClick={() => void installDesktop()}>
+        <UpdateAvailable
+          version={desktopUpdate.version}
+          current={status.current}
+          notes={desktopUpdate.notes}
+          action={
+            desktopPhase === 'installed' ? (
+              <Button
+                data-update-relaunch
+                variant="primary"
+                size="lg"
+                onClick={() => void relaunch()}
+                loading={relaunching}
+              >
+                {st('update.relaunch')}
+              </Button>
+            ) : desktopPhase === 'downloading' ? undefined : (
+              <Button variant="primary" size="lg" onClick={() => void installDesktop()}>
                 {st('update.downloadAndInstall')}
               </Button>
-              <a
-                href={status.releases_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-ink-2 underline-offset-2 hover:text-ink hover:underline"
-              >
-                {st('update.releaseNotes')}
-              </a>
-            </div>
+            )
+          }
+        >
+          {desktopPhase === 'installed' ? (
+            <span className="mt-1 block">{st('update.installedHint')}</span>
+          ) : desktopPhase === 'downloading' ? (
+            <span className="mt-2 flex flex-col gap-1">
+              {/* 拿不到 Content-Length 就走不确定态，不假装卡在某个百分比 */}
+              <ProgressBar pct={pct} label={st('update.downloadProgressAria')} />
+              <span className="tabular-nums">
+                {pct === null ? st('update.downloading') : st('update.downloadingPct', { pct })}
+              </span>
+            </span>
+          ) : (
+            <a
+              href={status.releases_url}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-1 block w-fit underline underline-offset-2"
+            >
+              {st('update.releaseNotes')}
+            </a>
           )}
+        </UpdateAvailable>
+      )}
+      {desktopUpdate && desktopPhase === 'installed' && relaunchFailed && (
+        <div>
+          <UpdateRestartError detail={desktopError} />
         </div>
       )}
 
-      <DiagnosticDisclosure title={st('techDetails')}>
+      <DiagnosticDisclosure variant="row" title={st('techDetails')}>
         <p className="type-caption">{st('update.signatureNote')}</p>
       </DiagnosticDisclosure>
-    </SettingSection>
+    </UpdatesGroup>
   )
 }

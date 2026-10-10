@@ -144,6 +144,37 @@ class TestIdentityAndResolve:
         assert got is not None
         assert got["script"] == "a#b.py" and got["stem"] == "x"
 
+    def test_an_id_with_two_readings_is_unresolvable_not_guessed(self):
+        """同脚本同时登记 `plot` 与 `plot~rc_…`：后者的无参数 id 与前者带参数的 id 逐字相同。
+        注册表照常装载；这个 id 解析为 None（显式失败），两个方向都不猜。"""
+        long_stem = "plot~rc_0123456789ab"
+        reg = _registry_of({"s.py": _reg_entry(["plot", long_stem])})  # 不再拒绝装载
+        assert runtimeasset.resolve(figcapture.runtime_asset_id("s.py", long_stem), reg) is None
+        assert (
+            runtimeasset.resolve(
+                figcapture.runtime_asset_id("s.py", "plot", "rc_0123456789ab"), reg
+            )
+            is None
+        )
+        # 同一对里没撞的 id 不受影响
+        got = runtimeasset.resolve(figcapture.runtime_asset_id("s.py", "plot"), reg)
+        assert got["stem"] == "plot" and "run_config" not in got
+        got = runtimeasset.resolve(
+            figcapture.runtime_asset_id("s.py", "plot", "rc_ffffffffffff"), reg
+        )
+        assert got["stem"] == "plot" and got["run_config"] == "rc_ffffffffffff"
+
+    def test_a_lone_suffix_shaped_stem_or_other_scripts_are_not_ambiguous(self):
+        reg = _registry_of(
+            {"s.py": _reg_entry(["plot"]), "t.py": _reg_entry(["plot~rc_0123456789ab"])}
+        )
+        got = runtimeasset.resolve(figcapture.runtime_asset_id("t.py", "plot~rc_0123456789ab"), reg)
+        assert got["script"] == "t.py" and "run_config" not in got
+        got = runtimeasset.resolve(
+            figcapture.runtime_asset_id("s.py", "plot", "rc_0123456789ab"), reg
+        )
+        assert got["script"] == "s.py" and got["run_config"] == "rc_0123456789ab"
+
     def test_asset_id_is_project_relative_and_machine_stable(self, tmp_path):
         """同一 (脚本, stem) 在两个不同项目根下 id 完全相同——id 里绝不混入
         绝对路径/机器信息（负向反证 #1 的静态面）。"""

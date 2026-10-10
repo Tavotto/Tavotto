@@ -16,6 +16,7 @@ import type { CapturedFigureDescriptor, RuntimeAssetInfo } from '@/lib/api'
 import { FigurePickerDialog } from '@/components/FigurePickerDialog'
 import { addPanelToCanvas, addRuntimePanelToCanvas } from '@/store/workspace'
 import { useAssetStore } from '@/store/assetStore'
+import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 
@@ -75,6 +76,7 @@ beforeEach(() => {
   useAssetStore.setState({ panels: [], byId: {}, loaded: true } as never)
   useRuntimeAssetStore.setState({ assets: [], previewNonce: {} } as never)
   useFigurePickerStore.setState({ script: null })
+  useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [] } }))
 })
 
 afterEach(() => {
@@ -104,8 +106,32 @@ describe('FigurePickerDialog', () => {
     expect(mockAddRuntime).toHaveBeenCalledTimes(1)
     expect(mockAddRuntime.mock.calls[0][0].asset_id).toBe('runtime:multi.py#FigB')
     expect(mockAddPanel).not.toHaveBeenCalled()
-    // 选完关闭
+    // 加一张不关框（2026-10-07 设计审计 §10.2）：多图脚本不必重开 N 次，「完成」才关
+    expect(useFigurePickerStore.getState().script).toBe('multi.py')
+    act(() => (document.querySelector('[data-figure-picker-done]') as HTMLButtonElement).click())
     expect(useFigurePickerStore.getState().script).toBeNull()
+  })
+
+  it('已在画布上的那张行尾说「已在画布上」；「全部添加（N）」只加还没上画布的', () => {
+    useRuntimeAssetStore.setState({
+      assets: [asset('FigA'), asset('FigB'), asset('FigC', false)],
+      previewNonce: {},
+    } as never)
+    useDocumentStore.setState((s) => ({
+      doc: { ...s.doc, objects: [{ id: 'p1', type: 'panel', fileId: 'runtime:multi.py#FigA' } as never] },
+    }))
+    useFigurePickerStore.setState({ script: 'multi.py' })
+    render()
+    const row = (stem: string) => document.querySelector(`[data-figure-picker-row="${stem}"]`)!
+    expect(row('FigA').querySelector('[data-figure-picker-placed]')).not.toBeNull()
+    expect(row('FigA').querySelector('[data-figure-picker-add]')).toBeNull()
+    const addAll = document.querySelector('[data-figure-picker-add-all]') as HTMLButtonElement
+    // FigA 已在画布上、FigC 没跑出预览：只剩 FigB
+    expect(addAll.textContent).toBe('全部添加（1）')
+    act(() => addAll.click())
+    expect(mockAddRuntime).toHaveBeenCalledTimes(1)
+    expect(mockAddRuntime.mock.calls[0][0].asset_id).toBe('runtime:multi.py#FigB')
+    expect(useFigurePickerStore.getState().script).toBe('multi.py')
   })
 
   it('磁盘原件条目走 addPanelToCanvas；runtime 条目走描述符', () => {

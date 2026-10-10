@@ -7,7 +7,10 @@
   的 matrix 各有一根 `shard` 轴，命令是 `python -m pytest --shard=K/N --shard-manifest=… --junitxml … -rs`（两个
   conftest 选项**必须 `=` 形式**：pytest 预解析会把未知选项的下一个 token 当路径去找 conftest，
   空格形式在路径已存在时 rc 4「unrecognized arguments」）。**片数两个 job 不必相同**：
-  `backend-fast` 是 2 片（`shard: [1, 2]`，命令 `--shard=K/2`）；`backend-platforms`
+  `backend-fast` 2026-10-09 起是 3 片（`shard: [1, 2, 3]`，命令 `--shard=K/3`）；
+  两次 #853 合并组（run 37900187745 / 37906698476）的 Linux 3.10 / 3.14 分片 1 分别在
+  接近完成时撞上 60 分钟；同组 3.13 分片 1 已跑 56:26，现有权重估计总量约 101 分钟。
+  CLA 独立服务测试只用约 37 秒，不是这次容量瓶颈；给常规套件加片、不抬超时。`backend-platforms`
   2026-09-30 起是 3 片（`shard: [1, 2, 3]`，命令 `--shard=K/3`）——套件继续变大，2 片下
   Windows 已经吃到 60 分钟上限（#679 run 36685053740 分片 1 撞点被取消：不是挂死，进度
   一直在走，10%→50% 这一段用了 39 分钟，只是太慢；同日另两组分片分别是 39:41 与
@@ -33,7 +36,7 @@
   `::test_pytest_shards_agree_between_the_matrix_and_the_command`）→ matrix 语义（任一片不
   success，`needs.backend-fast.result` 就不是 success，Gate 闭集没动）。**job id 不变**，显示名
   变成 `backend-fast (3.10, 1)`，required contexts 仍只有三个 Gate，仓库设置不用重登记。
-  权重表 `tests/support/shard_weights.json` 只影响两片平不平衡、不影响覆盖（表坏了是 rc 4 不是
+  权重表 `tests/support/shard_weights.json` 只影响片间平不平衡、不影响覆盖（表坏了是 rc 4 不是
   错分），从 CI 上传的 junit artifact 重算：`python tests/support/shard.py --from-junit …`。
   不许为了并行放宽任何产品断言、不加 `-n auto`。设计、本机实测、负例与已知边界：
   `docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md`。

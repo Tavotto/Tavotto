@@ -20,7 +20,9 @@
    "form_enabled": true,
    "parser_line": 2,
    "parse_call": "parse_args",
+   "allow_abbrev": true,
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -120,7 +122,9 @@
    "form_enabled": true,
    "parser_line": 2,
    "parse_call": "parse_args",
+   "allow_abbrev": true,
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -294,7 +298,9 @@
    "form_enabled": true,
    "parser_line": 2,
    "parse_call": "parse_args",
+   "allow_abbrev": true,
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -595,7 +601,9 @@
    "form_enabled": true,
    "parser_line": 2,
    "parse_call": "parse_args",
+   "allow_abbrev": true,
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -670,7 +678,9 @@
    "form_enabled": true,
    "parser_line": 2,
    "parse_call": "parse_args",
+   "allow_abbrev": true,
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -711,7 +721,9 @@
    "form_enabled": true,
    "parser_line": 2,
    "parse_call": "parse_args",
+   "allow_abbrev": true,
    "negative_number_options": true,
+   "negative_number_options_extended": true,
    "arguments": [
     {
      "flags": [
@@ -780,7 +792,9 @@
    "form_enabled": false,
    "parser_line": 2,
    "parse_call": "parse_args",
+   "allow_abbrev": true,
    "negative_number_options": false,
+   "negative_number_options_extended": false,
    "arguments": [
     {
      "flags": [
@@ -817,7 +831,9 @@
      "train",
      "eval"
     ],
-    "dynamic": false
+    "dynamic": false,
+    "position": 0,
+    "conditional": false
    }
   }
  },

@@ -165,6 +165,7 @@ test(
   const ref = path.join(refRoot, PROJECT_NAME)
   const project = path.join(testRoot, PROJECT_NAME)
   let second: Awaited<ReturnType<typeof startApp>> | null = null
+  let a: Awaited<ReturnType<typeof app>> | undefined
   try {
     // ---- 原生参考：另一个根、同名目录，stdin 答菜单（1 = smooth）
     copyFixture(ref)
@@ -196,7 +197,7 @@ test(
     expect(existsSync(path.join(project, 'tavotto_registry.json'))).toBe(false)
 
     // ---- 起实例，走正式入口
-    const a = await app({ figures: project })
+    a = await app({ figures: project })
     await page.setViewportSize({ width: 1400, height: 900 })
 
     // 记下编辑渲染请求（patches）与响应，供「改标题」一步取证
@@ -235,7 +236,7 @@ test(
     const layoutBefore = await workPanelRect(page)
     await expect(card(page)).toHaveAttribute('data-prep-state', 'discover', { timeout: 30_000 })
     const scanned = async () =>
-      (await (await page.request.get(`${a.baseURL}/api/project/scan`)).json()) as {
+      (await (await page.request.get(`${a!.baseURL}/api/project/scan`)).json()) as {
         state?: string
         outcome?: { kind: string }
         default_target?: string
@@ -475,7 +476,15 @@ test(
     // 起点三个文件逐字节未动
     expect(readFileSync(path.join(project, 'tools', 'spectrum.py')).equals(readFileSync(path.join(FIXTURE, 'tools', 'spectrum.py')))).toBe(true)
   } finally {
-    await second?.stop()
-    for (const d of [refRoot, testRoot, keepRoot]) rmSync(d, { recursive: true, force: true })
+    // 先等应用真正退出再删目录：Windows 上 worker 还握着项目目录时 rmSync 会 EBUSY；清理报错不许盖住主失败
+    await second?.stop().catch(() => undefined)
+    await a?.stop().catch(() => undefined)
+    for (const d of [refRoot, testRoot, keepRoot]) {
+      try {
+        rmSync(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+      } catch (err) {
+        console.warn(`cleanup failed: ${String(err)}`)
+      }
+    }
   }
 })

@@ -34,6 +34,7 @@ import {
   type PreparationTarget,
 } from '@/lib/api'
 import { currentProjectId } from '@/lib/session'
+import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
@@ -60,6 +61,8 @@ export interface PrepEntry {
   /** 发起时认领的项目 */
   pj: string | null
   report: PreparationReport | null
+  /** 这份报告落地的时刻（毫秒）：脚本库据此判它比最近一次注册表刷新新还是旧 */
+  reportAt?: number
   connection: PrepConnection
   /** 旧会话已不在（应用重启 / 回收）、已经重新检查过——**没有**自动运行 */
   restarted: boolean
@@ -71,6 +74,16 @@ export interface PrepEntry {
   pending: PreparationActionKind | 'check' | null
   /** 用户点「进入编辑」加进画布的图（`first_edit_ready` 由渲染态观察，不是后端事实） */
   editing: string[]
+  /**
+   * 入口动作为每张图创建 / 复用的面板与渲染键：「编辑渲染可用」只认这把键的非 stale 精确 manifest
+   * （按文件 id 扫会把 `markStale()` 留下的旧渲染、别的 override 变体当成这一次）。
+   */
+  editRenders: Record<string, EditRender>
+}
+
+export interface EditRender {
+  panelId: string
+  renderKey: string
 }
 
 interface PreparationState {
@@ -91,8 +104,8 @@ interface PreparationState {
   act: (key: string, kind: PreparationActionKind) => Promise<void>
   /** 环境 / 运行目录 / 数据位置答完了：空闲的会话只读地重新检查（不运行） */
   recheckIdle: () => void
-  /** 「进入编辑」：记下加进画布的那张图（呈现层用它观察首次编辑渲染） */
-  noteEditing: (key: string, assetId: string) => void
+  /** 「进入编辑」：记下加进画布的那张图与它的面板 / 渲染键（呈现层用它观察首次编辑渲染） */
+  noteEditing: (key: string, assetId: string, render?: EditRender) => void
   /** 卡片改看扫描结果：只放下聚焦，会话与它的后端状态原样保留（再点开同一目标会复用） */
   blur: () => void
   /** 换项目：属于旧项目的一切原地丢掉，在途响应失去落地资格；**后端什么都不取消** */
@@ -196,9 +209,10 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       return { entries: { ...s.entries, [key]: { ...e, ...fn(e) } } }
     })
 
+  /** 发起时记下：项目代际 + 本 key 的回包戳（换项目 / 同 key 换参数任一变了都失去落地资格） */
+  const guardOf = (key: string) => captureProjectEpoch(() => stampOf(key))
   /** 这次回包还有没有资格落地：同一代、同一项目、条目还在 */
-  const live = (key: string, epoch: number, pj: string | null) =>
-    stampOf(key) === epoch && currentProjectId() === pj && !!entry(key)
+  const live = (key: string, g: ProjectEpochGuard) => g.still() && !!entry(key)
 
   const accept = (key: string, report: PreparationReport, opts?: { session?: boolean }) => {
     const e = entry(key)
@@ -207,15 +221,43 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     if (e.report && e.report.session_id !== report.session_id && !opts?.session) return
     if (!newer(e.report, report)) return
     const before = e.report
+    const advanced =
+      !before ||
+      before.session_id !== report.session_id ||
+      before.config_revision !== report.config_revision ||
+      before.observation_seq !== report.observation_seq
+    // 同一目标的后端状态前进了（更高修订 / 换了会话 / 开了新一轮尝试）：上一轮的「进入编辑」记录属于旧结果，
+    // 不许让新一轮跑完的 `completed` 把旧资产当成当前结果、压掉「进入编辑」
+    const newRound =
+      !!before &&
+      (before.session_id !== report.session_id ||
+        report.config_revision > before.config_revision ||
+        (report.provider.attempt_id ?? null) !== (before.provider.attempt_id ?? null))
+    const attemptChanged =
+      !!before &&
+      before.session_id === report.session_id &&
+      (report.provider.attempt_id ?? null) !== (before.provider.attempt_id ?? null)
+    // 动态 import 之后项目 / 代可能已经换了：回调带着发起时的归属，落地前复核
+    const owner = captureProjectEpoch(() => get().epoch)
     // `rejection` 不在这里清：被拒之后重读到的新修订正是要配着那一句看的；下一次动作 / 重新打开才收起它
-    patch(key, () => ({ report, connection: 'ok' }))
-    if (report.phase === 'completed' && before?.phase !== 'completed') void onCompleted(report)
+    patch(key, () => ({
+      report,
+      // 只有报告真的前进了才换落地时刻：重连后补拉到同一份旧快照（会话 / 修订 / 观察序号都没变）不能因此显得比注册表刷新更新
+      ...(advanced ? { reportAt: Date.now() } : {}),
+      connection: 'ok',
+      ...(newRound
+        ? { editing: [], editRenders: {}, ...(before?.session_id === report.session_id ? { restarted: false } : {}) }
+        : {}),
+    }))
+    if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) {
+      void onCompleted(report, owner)
+    }
     // 同一会话里的依赖作业刚装完（T09b）：画布上因「要先准备依赖」停着的渲染与原授权框作答之后一样重排——同一份
     // 需求两个展示面，下游效果只有一种（重排的是渲染请求，不是脚本首跑；首跑仍由用户点报告里的 run）
     const depDone = (r: PreparationReport | null) =>
       r?.provider.dependency?.state === 'done' ? r.provider.dependency.plan_id : null
     if (before?.session_id === report.session_id && depDone(report) && depDone(report) !== depDone(before)) {
-      void onDependencyPrepared()
+      void onDependencyPrepared(owner)
     }
   }
 
@@ -243,20 +285,20 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
 
   /** 检查会话（新建 / 复用 / 重建）。只读：后端不执行任何用户代码 */
   const check = async (key: string, target: PreparationTarget, restarted: boolean) => {
-    const epoch = stampOf(key)
-    const pj = currentProjectId()
+    const g = guardOf(key)
+    const pj = g.pj
     patch(key, () => ({ pending: 'check' }))
     try {
       const report = await withWatchdog((signal) => createPreparationSession(target, pj, signal))
-      if (!live(key, epoch, pj)) return
+      if (!live(key, g)) return
       patch(key, () => ({ pending: null, failure: null, restarted }))
       accept(key, report, { session: true })
     } catch (e) {
-      if (!live(key, epoch, pj)) return
+      if (!live(key, g)) return
       if (isConnectionFailure(e)) patch(key, () => ({ pending: null, connection: 'lost' }))
       else patch(key, () => ({ pending: null, failure: apiCode(e) }))
     } finally {
-      if (live(key, epoch, pj)) schedule(key)
+      if (live(key, g)) schedule(key)
     }
   }
 
@@ -295,7 +337,9 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             rejection: null,
             failure: null,
             pending: null,
-            editing: prev?.editing ?? [],
+            // 「进入编辑」的记录属于那份目标的结果：换了参数就是另一批图，旧图的编辑不许混进新结果的判断
+            editing: sameTarget ? (prev?.editing ?? []) : [],
+            editRenders: sameTarget ? (prev?.editRenders ?? {}) : {},
           },
         },
       }))
@@ -313,15 +357,15 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         // 还没有任何报告（第一次检查断线了）：重新检查，仍是只读
         return check(key, e.target, false)
       }
-      const epoch = stampOf(key)
+      const g = guardOf(key)
       const pj = e.pj
       const promise = (async () => {
         try {
           const report = await withWatchdog((signal) => fetchPreparationSession(sid, pj, signal))
-          if (!live(key, epoch, pj)) return
+          if (!live(key, g)) return
           accept(key, report)
         } catch (err) {
-          if (!live(key, epoch, pj)) return
+          if (!live(key, g)) return
           if (isRestarted(err)) {
             // 应用重启过 / 会话被回收：重建检查会话（只读），不猜那次执行的结局，不自动重跑
             inflight.delete(key)
@@ -331,7 +375,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
           if (isConnectionFailure(err)) patch(key, () => ({ connection: 'lost' }))
         } finally {
           inflight.delete(key)
-          if (live(key, epoch, pj)) schedule(key)
+          if (live(key, g)) schedule(key)
         }
       })()
       inflight.set(key, promise)
@@ -360,25 +404,29 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       if (!e || !report || e.pending) return
       const action = report.actions.find((a) => a.kind === kind)
       if (!action) return
-      const epoch = stampOf(key)
+      const g = guardOf(key)
       const pj = e.pj
       patch(key, () => ({ pending: kind, rejection: null }))
       try {
-        const res = await actOnPreparationSession(
-          report.session_id,
-          {
-            action_id: action.id,
-            expected_config_revision: report.config_revision,
-            ...(action.impact.impact_digest ? { impact_digest: action.impact.impact_digest } : {}),
-          },
-          pj,
+        // 动作 POST 与创建 / 轮询走同一个看门狗：连接卡住时超时落进下面的「连接失败 → 补拉报告」，不重发
+        const res = await withWatchdog((signal) =>
+          actOnPreparationSession(
+            report.session_id,
+            {
+              action_id: action.id,
+              expected_config_revision: report.config_revision,
+              ...(action.impact.impact_digest ? { impact_digest: action.impact.impact_digest } : {}),
+            },
+            pj,
+            signal,
+          ),
         )
-        if (!live(key, epoch, pj)) return
+        if (!live(key, g)) return
         patch(key, () => ({ pending: null }))
         pollStep.delete(key)
         accept(key, res.report)
       } catch (err) {
-        if (!live(key, epoch, pj)) return
+        if (!live(key, g)) return
         patch(key, () => ({ pending: null }))
         if (isRestarted(err)) {
           await check(key, e.target, true)
@@ -394,7 +442,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         }
         await get().refresh(key)
       } finally {
-        if (live(key, epoch, pj)) schedule(key)
+        if (live(key, g)) schedule(key)
       }
     },
 
@@ -405,8 +453,11 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       }
     },
 
-    noteEditing: (key, assetId) =>
-      patch(key, (e) => ({ editing: e.editing.includes(assetId) ? e.editing : [...e.editing, assetId] })),
+    noteEditing: (key, assetId, render) =>
+      patch(key, (e) => ({
+        editing: e.editing.includes(assetId) ? e.editing : [...e.editing, assetId],
+        editRenders: render ? { ...e.editRenders, [assetId]: render } : e.editRenders,
+      })),
 
     clear: () => {
       stopAllTimers()
@@ -419,12 +470,14 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
 /**
  * 一次尝试成功：素材库与画布上同一脚本的图要看到新结果（与试运行成功后同一串刷新）。只刷新清单与渲染态，
  * **不执行**：已经在画布上的这些图按热会话重画，脚本不再跑。
+ * 动态 import 回来之后，发起这次回调的项目 / 代还是当前的吗（`owner.still()`）？不是就整个丢掉（A 的素材 id 不许去动 B 的 store）。
  */
-async function onCompleted(report: PreparationReport): Promise<void> {
+async function onCompleted(report: PreparationReport, owner: ProjectEpochGuard): Promise<void> {
   // 导入即扫描的快照随结果更新（零执行、后端单飞）：这个脚本现在连着可编辑的图了，「显示项目检查结果」不再说它待准备
   // 素材库脚本行的「已关联」同理（与 registry.changed 事件同一个出口，幂等去重）
   void Promise.all([import('@/store/projectScanStore'), import('@/store/scriptLibraryStore')])
     .then(([{ useProjectScanStore }, { useScriptLibraryStore }]) => {
+      if (!owner.still()) return
       void useProjectScanStore.getState().start({ force: true, reason: 'refresh' })
       void useScriptLibraryStore.getState().load()
     })
@@ -437,6 +490,7 @@ async function onCompleted(report: PreparationReport): Promise<void> {
       import('@/store/assetStore'),
       import('@/store/renderStore'),
     ])
+    if (!owner.still()) return
     const runtime = useRuntimeAssetStore.getState()
     runtime.invalidate(ids)
     runtime.bumpPreview(ids)
@@ -449,9 +503,10 @@ async function onCompleted(report: PreparationReport): Promise<void> {
 }
 
 /** 会话里的依赖准备装完了：画布上停在依赖门上的渲染重排（与 `depRepairStore` 装完之后同一个出口） */
-async function onDependencyPrepared(): Promise<void> {
+async function onDependencyPrepared(owner: ProjectEpochGuard): Promise<void> {
   try {
     const { useRenderStore } = await import('@/store/renderStore')
+    if (!owner.still()) return
     useRenderStore.getState().retryEnvironmentFailures()
   } catch {
     /* 尽力而为：下一次编辑 / 手动重试会补上 */

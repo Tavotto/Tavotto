@@ -561,7 +561,9 @@ def _post_specfix(
         m, "_resolve_engine_worker", engine_worker or (lambda rel_id: (worker, "Kin"))
     )
     monkeypatch.setattr(
-        m.engine_pool, "invalidate", lambda script, root=None: retired.append((script, root))
+        m.engine_pool,
+        "invalidate",
+        lambda script, root=None, run=None, **kw: retired.append((script, root)),
     )
     m.app.config["TESTING"] = True
     resp = m.app.test_client().post(

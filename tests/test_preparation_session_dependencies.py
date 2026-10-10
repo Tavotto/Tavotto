@@ -140,16 +140,14 @@ def _get(client, sid: str) -> dict:
     return resp.get_json()
 
 
-def _act(client, report: dict, kind: str, **extra):
+def _act(client, report: dict, kind: str, *, echo: bool = True, **extra):
+    """认领一个动作。`prepare_dependencies` 默认像真实调用方那样**回显它在这份报告里看到的影响摘要**
+    （r4218802478：服务端不再替调用方填）；`echo=False` = 故意不带，`impact_digest=` 显式给就用给的。"""
     action = next(a for a in report["actions"] if a["kind"] == kind)
-    return client.post(
-        f"{SESSIONS}/{report['session_id']}/actions",
-        json={
-            "action_id": action["id"],
-            "expected_config_revision": report["config_revision"],
-            **extra,
-        },
-    )
+    body = {"action_id": action["id"], "expected_config_revision": report["config_revision"]}
+    if kind == "prepare_dependencies" and echo and "impact_digest" not in extra:
+        body["impact_digest"] = action["impact"]["impact_digest"]
+    return client.post(f"{SESSIONS}/{report['session_id']}/actions", json={**body, **extra})
 
 
 def _kinds(report: dict) -> list[str]:
@@ -228,6 +226,46 @@ class TestAuthorisation:
             ]["impact_digest"],
         )
         assert good.status_code == 202
+
+    def test_a_managed_action_without_the_echoed_digest_is_refused_and_installs_nothing(
+        self, client, house, offline_managed_env, opened, held
+    ):
+        """r4218802478：受管（modifies_user_environment=false）也必须由调用方回显它看到的摘要；缺 -> 400
+        `preparation_impact_unconfirmed`，服务端不得拿自己持有的摘要代填后去装。"""
+        _gate, calls = held
+        proj = opened([ALPHA])
+        report = _create(client, {"script": "figure.py"})
+        action = next(a for a in report["actions"] if a["kind"] == "prepare_dependencies")
+        assert action["impact"]["modifies_user_environment"] is False
+        for extra in ({}, {"impact_digest": ""}, {"impact_digest": None}):
+            resp = _act(client, report, "prepare_dependencies", echo=False, **extra)
+            assert resp.status_code == 400, extra
+            assert resp.get_json()["code"] == "preparation_impact_unconfirmed"
+        assert calls == [] and managedenv.python_of(proj) is None
+        assert not deprepair.installing(proj)
+        # 错摘要：409 changed，同样什么都没装
+        wrong = _act(client, report, "prepare_dependencies", impact_digest="0" * 32)
+        assert wrong.status_code == 409 and calls == []
+        # 动作仍可用：回显对的摘要才执行
+        assert _act(client, report, "prepare_dependencies").status_code == 202
+
+    def test_the_executor_receives_the_digest_the_caller_echoed(
+        self, client, house, offline_managed_env, opened, monkeypatch
+    ):
+        seen: list[str] = []
+
+        def spy(project, script, confirmed_digest, **kw):
+            seen.append(confirmed_digest)
+            raise deprepair.RepairError(deprepair.ERROR_BUSY, "stop here")
+
+        monkeypatch.setattr(deprepair, "start_confirmed", spy)
+        opened([ALPHA])
+        report = _create(client, {"script": "figure.py"})
+        digest = next(a for a in report["actions"] if a["kind"] == "prepare_dependencies")[
+            "impact"
+        ]["impact_digest"]
+        _act(client, report, "prepare_dependencies")
+        assert seen == [digest]
 
     def test_a_world_that_changed_after_the_check_needs_a_fresh_confirmation(
         self, client, house, offline_managed_env, opened, held
@@ -332,7 +370,7 @@ class TestAuthorisation:
         assert action["impact"]["scope"] == "project_venv_in_place"
         assert action["impact"]["rollback"] == "none_partial_changes_possible"
         # 采用（使用）不含修改权限：没回显摘要 → 400，什么都没动
-        bare = _act(client, report, "prepare_dependencies")
+        bare = _act(client, report, "prepare_dependencies", echo=False)
         assert bare.status_code == 400
         assert bare.get_json()["code"] == "preparation_impact_unconfirmed"
         assert calls == [] and not deprepair.installing(proj)

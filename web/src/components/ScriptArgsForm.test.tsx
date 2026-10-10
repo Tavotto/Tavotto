@@ -196,4 +196,20 @@ describe('ScriptArgsForm', () => {
     })
     expect(host.querySelector('[data-testid="argv-form-plot.py"]')).toBeNull()
   })
+
+  // r4232594135：必选互斥组 / 必选子命令不能把非参数 id 混进「还缺」那一行（曾 label(undefined) 崩）
+  it('必选互斥组一个都没给：编辑器照常渲染，显示组的缺项提示，不崩', async () => {
+    const base = schemas.fft6
+    const opt = (id: string) => ({ ...base.arguments[0], id, flags: [`--${id}`], required: false, positional: false, arity: 1 as const, nargs: null, action: 'store', group: 'gx', dest: id })
+    const schema = {
+      ...base,
+      arguments: [opt('csv'), opt('json')],
+      exclusive_groups: [{ id: 'gx', required: true, members: ['csv', 'json'] }],
+      subcommands: null,
+    } as ScriptArgsSchema
+    await open(schema)
+    expect(host.querySelector('[data-testid="argv-form-group-missing"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="argv-form-missing"]')).toBeNull()
+    expect(field('csv')).not.toBeNull()
+  })
 })

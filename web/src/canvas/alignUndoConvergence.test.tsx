@@ -102,8 +102,8 @@ const livePanel = () => doc().objects.find((o) => o.id === 'p1') as PanelObject
 
 let container: HTMLDivElement
 let root: Root
-/** 选择框：ElementBoxes 画的带 fill-opacity 的矩形 */
-const boxes = () => container.querySelectorAll('rect[fill-opacity]')
+/** 选择框：ElementBoxes 画的矩形框（`data-element-box`；2026-10-07 起不再有底色） */
+const boxes = () => container.querySelectorAll('[data-element-box]')
 
 beforeEach(async () => {
   localStorage.clear()

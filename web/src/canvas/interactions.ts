@@ -19,6 +19,7 @@ import {
 } from '@/lib/geometry'
 import type { Manifest, ManifestElement } from '@/lib/api'
 import { flipY, resizeGroup, round4, sameAfterRound4, unionBox, type Rect4 } from '@/lib/axesLayout'
+import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
 import {
   anchorOf,
   arrowEndpointsOf,
@@ -79,6 +80,7 @@ import {
   cancelElementPreview,
   commitElementPreview,
 } from './elementPreview'
+import { pageDirInContent } from './elementGeometry'
 import { settleLegendCorner } from './legendCornerSettle'
 import {
   authorityFields,
@@ -92,14 +94,11 @@ import {
   objectRotation,
   panelAspectLocked,
   panelRotation,
-  rotateVec,
   rotationSwaps,
-  unrotateVec,
   type ArrowObject,
   type CanvasObject,
   type EndPoint,
   type PanelObject,
-  type PanelRotation,
   type ShapeObject,
   type TextObject,
 } from '@/types/document'
@@ -579,6 +578,12 @@ export function startPan(e: ReactPointerEvent) {
 /*  绘制新对象                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * 新画出来的标注的默认颜色：**文档数据**（落进对象的 `color`），不是界面色——所以它不是 token。
+ * 覆盖层的草稿预览（`OverlaySvg.DraftLinePreview`）读同一个常量：预览即成品。
+ */
+export const DRAW_COLOR = '#1B1B18'
+
 const DEFAULT_DRAW: Record<string, { w: number; h: number }> = {
   text: { w: 40, h: 5 },
   arrow: { w: 30, h: 14 },
@@ -702,7 +707,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
                 h,
                 ...ends,
                 strokePt: 1,
-                color: '#1B1B18',
+                color: DRAW_COLOR,
                 head: 'end',
               } satisfies ArrowObject)
             : ({
@@ -715,7 +720,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
                 h,
                 ...ends,
                 strokePt: 1,
-                color: '#1B1B18',
+                color: DRAW_COLOR,
                 fill: null,
               } satisfies ShapeObject)
       } else {
@@ -728,7 +733,7 @@ export function startDraw(e: ReactPointerEvent, tool: Exclude<Tool, 'select'>) {
           w: Math.max(rect.w, 1),
           h: Math.max(rect.h, 1),
           strokePt: 1,
-          color: '#1B1B18',
+          color: DRAW_COLOR,
           fill: null,
         }
         created = shape
@@ -811,26 +816,13 @@ export function startGuideDrag(e: ReactPointerEvent, axis: 'x' | 'y', index: num
 
 export type CropHandle = ResizeDir
 
-const HANDLE_CYCLE = ['n', 'e', 's', 'w'] as const
-
-/** 屏幕方位的手柄 → 内容坐标系方位（旋转的逆）：转 90° 时屏幕右缘是内容顶缘 */
-function unrotateHandle(h: CropHandle, r: PanelRotation): CropHandle {
-  if (!r) return h
-  const steps = (4 - r / 90) % 4
-  const mapped = [...h].map(
-    (ch) => HANDLE_CYCLE[(HANDLE_CYCLE.indexOf(ch as (typeof HANDLE_CYCLE)[number]) + steps) % 4],
-  )
-  // 拼回 'nw'/'se' 这类合法方向名：纵向字母在前
-  const ns = mapped.find((c) => c === 'n' || c === 's') ?? ''
-  const ew = mapped.find((c) => c === 'e' || c === 'w') ?? ''
-  return (ns + ew) as CropHandle
-}
-
 /**
- * 裁剪框以归一化比例存储（内容坐标系，与旋转无关）；拖动时限制在 0–1 内并
- * 保证最小 5% 边长。旋转的面板：屏幕位移/手柄先逆旋转回内容坐标系再套同一套
- * 边缘逻辑；包围盒以「未裁剪整图的画布中心」为锚重算——内容在画布上纹丝不动，
- * 动的只是取景窗（rot=0 时与旧公式逐项等价）。
+ * 裁剪框以归一化比例存储（内容坐标系，与旋转 / 翻转无关）；拖动时限制在 0–1 内并
+ * 保证最小 5% 边长。旋转 / 翻转的面板：屏幕位移与手柄先经画布画这张图的变换的逆
+ * （`pageToContentVec` / `pageDirInContent`：先反转旋转、再反翻转）回到内容坐标系，再套同一套
+ * 边缘逻辑；包围盒以「未裁剪整图的画布中心」为锚重算，偏移经同一个变换（`contentToPageVec`）
+ * 落回页面——内容在画布上纹丝不动，动的只是取景窗（恒等变换时与旧公式逐项等价）。只认旋转的话，
+ * 翻转面板上拖右边缘动的是左边缘、整张图还会跳开（#833）。
  */
 export function startCropDrag(
   e: ReactPointerEvent,
@@ -843,16 +835,17 @@ export function startCropDrag(
   if (!panel || panel.type !== 'panel') return
   const crop = panel.crop ?? { x: 0, y: 0, w: 1, h: 1 }
   const rot = panelRotation(panel)
+  const tf = panelContentTransform(panel)
   const swap = rotationSwaps(rot)
   // 未裁剪整图的显示尺寸（内容坐标系：90/270 时与包围盒长宽互换）
   const fullW = (swap ? panel.h : panel.w) / crop.w
   const fullH = (swap ? panel.w : panel.h) / crop.h
-  const cHandle = handle === 'move' ? handle : unrotateHandle(handle, rot)
-  // 取景窗中心相对整图中心的偏移（内容系）旋转到画布系，得到整图的画布锚点
-  const [anchorDx, anchorDy] = rotateVec(
+  const cHandle = handle === 'move' ? handle : pageDirInContent(panel, handle)
+  // 取景窗中心相对整图中心的偏移（内容系）翻转、旋转到画布系，得到整图的画布锚点
+  const [anchorDx, anchorDy] = contentToPageVec(
+    tf,
     fullW * ((1 - crop.w) / 2 - crop.x),
     fullH * ((1 - crop.h) / 2 - crop.y),
-    rot,
   )
   const anchorX = panel.x + panel.w / 2 + anchorDx
   const anchorY = panel.y + panel.h / 2 + anchorDy
@@ -865,7 +858,7 @@ export function startCropDrag(
   trackPointer(e, {
     onMove: (_ev, dxPx, dyPx) => {
       const t = getTransform()
-      const [dxc, dyc] = unrotateVec(pxToMm(dxPx, t), pxToMm(dyPx, t), rot)
+      const [dxc, dyc] = pageToContentVec(tf, pxToMm(dxPx, t), pxToMm(dyPx, t))
       const du = dxc / fullW
       const dv = dyc / fullH
       let { x, y, w, h } = crop
@@ -898,10 +891,10 @@ export function startCropDrag(
         // 整图锚死在画布上，包围盒围着新取景窗重算
         const cw = fullW * w
         const ch = fullH * h
-        const [offX, offY] = rotateVec(
+        const [offX, offY] = contentToPageVec(
+          tf,
           fullW * ((1 - w) / 2 - x),
           fullH * ((1 - h) / 2 - y),
-          rot,
         )
         o.w = swap ? ch : cw
         o.h = swap ? cw : ch
@@ -1754,9 +1747,10 @@ export function startArrowDrag(
  * 面板带 90° 步进旋转时先把位移反向旋转回内容坐标系。
  */
 function contentDelta(panel: PanelObject, layout: { width: number; height: number }) {
-  const rot = panelRotation(panel)
+  // 屏幕位移折回内容坐标：画布画这张图的变换（先翻转再旋转）的逆——翻转面板上往右拖，元素在画面上也往右走
+  const tf = panelContentTransform(panel)
   const toFrac = (dxPx: number, dyPx: number, zoom: number): [number, number] => {
-    const [dx, dy] = unrotateVec(dxPx, dyPx, rot)
+    const [dx, dy] = pageToContentVec(tf, dxPx, dyPx)
     return [dx / (layout.width * zoom), dy / (layout.height * zoom)]
   }
   // 拖动途中视图倍率变了（⌘= / ⌘− / 捏合）：**以倍率变化那一刻为新基准**。

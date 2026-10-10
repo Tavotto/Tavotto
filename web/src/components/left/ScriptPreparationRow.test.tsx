@@ -106,6 +106,7 @@ const offerOf = (over: Partial<DependencyPreparationOffer> = {}): DependencyPrep
   ],
   rounds_remaining: 3,
   skipped: false,
+  impact_digest: 'shown-digest',
   ...over,
 })
 
@@ -248,10 +249,10 @@ describe('脚本行：开跑前要先准备依赖', () => {
     expect(createJointDependencyPlan).not.toHaveBeenCalled()
   })
 
-  it('点一次绑定计划并只发 plan_id；进度留在弹窗，完成后关框并自动重跑一次', async () => {
+  it('点一次绑定计划并发 plan_id + 用户看到的影响摘要；进度留在弹窗，完成后关框并自动重跑一次', async () => {
     await startRepair()
     expect(createJointDependencyPlan).toHaveBeenCalledWith({ script: SCRIPT, target: 'tavotto_managed' })
-    expect(prepareJointDependencies).toHaveBeenCalledWith('joint-row')
+    expect(prepareJointDependencies).toHaveBeenCalledWith('joint-row', 'shown-digest')
     expect(useDepRepairStore.getState().jointScript).toBe(SCRIPT)
     await act(async () => useDepRepairStore.getState().onProgress(progress('installing')))
     expect(dialog()!.querySelector('[data-repair-line]')!.textContent).toBe('正在安装 pandas 和 openpyxl…（3/4）')
@@ -265,12 +266,13 @@ describe('脚本行：开跑前要先准备依赖', () => {
     expect(host.querySelector('[data-script-preparation]')).toBeNull()
   })
 
-  it('默认折叠的详情里仍能选择「不准备，直接运行」，然后重跑脚本', async () => {
+  it('页脚 start 槽的「不准备，直接运行」，然后重跑脚本', async () => {
     mockProbe.mockResolvedValue(preparationResult(offerOf()))
     vi.mocked(skipDependencyPreparation).mockResolvedValue({ ok: true, script: SCRIPT, skipped: true })
     await mountAndRun()
     const skip = dialog()!.querySelector<HTMLButtonElement>('[data-dependency-skip]')!
-    expect(skip.closest('details')!.hasAttribute('open')).toBe(false)
+    // 2026-10-07 设计审计 §10.2：不再埋在「详情」里，是页脚 start 槽的次要入口
+    expect(skip.closest('[data-dialog-footer]')).not.toBeNull()
     mockProbe.mockClear()
     succeedProbe()
     await act(async () => skip.click())

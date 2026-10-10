@@ -222,7 +222,8 @@ test('流程 C：AI 模型与推理强度——键盘可调、偏好保持、无
   // 2026-09-14 起助手是右栏 tablist 里的第三个页签（ADR 0010 修订），不再是头部按钮
   await page.getByRole('tab', { name: /改图助手/ }).first().click()
   const openPopover = async () => {
-    await page.getByRole('button', { name: '作用范围与执行器' }).click()
+    // 2026-10-07 起作用范围与执行器的详情弹层挂在输入框上方的上下文带 chip 上（宪法第十八节「重做」）
+    await page.locator('[data-ai-target]').click()
     await expect(page.getByText('作用范围')).toBeVisible({ timeout: 15_000 })
   }
   await openPopover()
@@ -376,11 +377,11 @@ test('流程 D：设置页没有文字墙，问号键盘可达、Esc 可关，�
   await dialog.getByRole('navigation').getByRole('button', { name: '帮助与诊断', exact: true }).click()
   const diag = dialog.getByRole('button', { name: '给开发者' })
   await expect(diag).toHaveAttribute('aria-expanded', 'false')
+  // Wait for diagnostic data before testing either collapsed or expanded visibility.
+  await expect(dialog.locator('[data-diagnostics-summary]')).toBeVisible({ timeout: 30_000 })
   const firstScreen = await dialog.innerText()
   expect(firstScreen).not.toMatch(absolutePath)
   await diag.click()
   await expect(diag).toHaveAttribute('aria-expanded', 'true')
-  await page.waitForTimeout(500)
-  const expanded = await dialog.innerText()
-  expect(expanded).toMatch(absolutePath)
+  await expect.poll(() => dialog.innerText(), { timeout: 30_000 }).toMatch(absolutePath)
 })

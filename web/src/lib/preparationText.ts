@@ -157,6 +157,10 @@ export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
   return base
 }
 
+/** 项目自带的环境还没体检（后端 `dependencies` 检查项的 `deferred`）：运行时才检查，跑不了会回到安装。 */
+const projectEnvDeferred = (report: PreparationReport): boolean =>
+  report.checks.some((c) => c.id === 'dependencies' && c.detail?.deferred === 'project_environment')
+
 const offline = (v: Record<string, unknown>) =>
   view('offline', 'offline', v, null, { tone: 'mute', slot: 'progress', step: 1 })
 
@@ -187,7 +191,9 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         slot: 'progress',
       })
     case 'ready_to_run':
-      return view('ready', 'ready', v, has(report, 'run') ? act('run', 'run') : null, { slot: 'ready' })
+      return view('ready', projectEnvDeferred(report) ? 'readyProject' : 'ready', v, has(report, 'run') ? act('run', 'run') : null, {
+        slot: 'ready',
+      })
     case 'completed':
       return completed(report, entry, ctx, script)
     case 'partial':
@@ -315,7 +321,7 @@ export function prepRowKey(entry: PrepEntry | undefined): { key: string; values:
     case 'preparing_environment':
       return { key: 'preparing', values: {} }
     case 'ready_to_run':
-      return { key: 'ready', values: {} }
+      return { key: projectEnvDeferred(report) ? 'readyProject' : 'ready', values: {} }
     case 'completed':
       return report.outcome.kind === 'succeeded'
         ? { key: 'captured', values: { count: (report.captured ?? []).length } }

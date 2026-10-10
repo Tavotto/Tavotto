@@ -54,6 +54,19 @@ on:
         required: false
         default: false
         type: boolean
+      signing-mode:
+        description: >-
+          Windows SignPath 签名模式。'wait'（默认）：提交后等待签名完成，
+          适合测试证书或能及时手动批准的场景。'submit-only'：只提交签名请求
+          不等待，把审批链接输出到 step summary，由人工在 SignPath UI 批准后，
+          再手动触发 complete-windows-signing.yml 完成下载/校验/重打更新包。
+          生产证书要求每次手动批准，长时间等待会占住 runner，用 submit-only 拆开。
+        required: false
+        default: 'wait'
+        type: choice
+        options:
+          - 'wait'
+          - 'submit-only'
     # **每一个 secret 都显式声明。** `secrets: inherit` 只能写在**调用方**
     # （`jobs.<id>.secrets: inherit`），写在被调用方是语法错误——actionlint
     # 当场逮到了。显式列一遍还有第二个好处：这份清单就是「桌面发布链需要
@@ -220,10 +233,9 @@ jobs:
       # 已装用户的更新清单都认它；Intel 带 `-Intel`。
       # （job 级 env 里没有 runner 上下文，按 matrix.artifact 判——只有 Intel 那条腿是 dmg-intel。）
       MAC_SUFFIX: ${{ matrix.artifact == 'dmg-intel' && '-Intel' || '' }}
-      # 发行构建 = 产物会挂上 Release。签名门禁按它分岔：发行构建缺任一
+      # 发行档（包括 publish=false 的发行演练）按 release_build 进入签名门禁：缺任一
       # 签名/公证凭据必须**失败**而不是 warning（1.0 审计 P1-07）；
-      # 非发行的 dispatch 构建（attach=false）保留降级路径，便于试构建。
-      # **Windows 的 Authenticode 是这条纪律里唯一的例外**，理由见下面门禁那一步。
+      # 非发行的手动 dispatch 构建（release_build=false）保留未签名试构建路径。
       IS_RELEASE_BUILD: ${{ inputs.release_build && '1' || '0' }}
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -253,20 +265,11 @@ jobs:
         # 1.0 审计 P1-07：签名与安全更新不能是「可选能力」。发出去的安装包
         # 必须签名（macOS 还要能公证），更新包必须带 minisign 签名——缺任一
         # secret 的「发行」等于把不可信更新链发给全体用户，而且工作流全绿。
-        # 试构建（workflow_dispatch + attach=false）不受影响。
+        # 非发行试构建（workflow_dispatch + release_build=false）不受影响。
         #
-        # **Windows 的 Authenticode 是唯一的例外，而且是自觉的**（2026-08-22，
-        # v0.9.0 第一次真正触发这道门禁时定的）：SignPath Foundation 的开源订阅
-        # 要外部审批，拿不到之前这条硬失败挡掉的不是「未签名的安装包」，而是
-        # **整个 Windows 桌面版**——连带 updater-manifest 的多平台硬要求一起
-        # 落空，于是 macOS 用户也收不到更新（latest.json 根本不合成）。
-        # 「Windows 用户没有安装包、macOS 用户没有更新」比「Windows 安装包未签名」
-        # 坏得多，而后者正是 0.8.0 及更早一直在发的形态，不是本次新增的风险。
-        #
-        # 例外只限 Authenticode 这一项，其余一条没松：`TAURI_SIGNING_PRIVATE_KEY`
-        # 仍是硬要求（更新链的可信度不靠 Authenticode，靠 minisign），macOS 的
-        # 证书与公证仍是硬要求。SignPath 配好之后把 `if` 那支改回 `missing+=`
-        # 即可恢复原纪律——那时它挡的才是真的「本可以签却没签」。
+        # Windows Authenticode 与 macOS / minisign 一样都是发行硬要求。
+        # SignPath 未使能时独立报错、写作业摘要并退出；不再沿用 2026-08-22
+        # 的临时未签名发行例外。非发行试构建仍可产出诊断 artifact。
         # 政策与措辞见 docs/code-signing-policy.md。
         shell: bash
         run: |
@@ -279,26 +282,24 @@ jobs:
             [ -n "${MACOS_SIGN_IDENTITY:-}" ] || missing+=("MACOS_SIGN_IDENTITY")
             [ -n "${APPLE_ID:-}" ]            || missing+=("APPLE_ID（公证）")
           elif [ "${SIGNPATH_ENABLED_VAR:-}" != "true" ]; then
-            # 不进 missing——见上面那段。但要在**运行页顶部**看得见，而不是
-            # 只在第 33 步的日志里躺着：发出去的东西没签名，得有人知道。
-            echo "::warning title=Windows 安装包未签名::vars.SIGNPATH_ENABLED 未开启——本次发行的 Windows 安装包没有 Authenticode 签名，用户首次运行会看到 SmartScreen 警告。更新包仍有 minisign 签名，自动更新链是可信的。"
+            # 独立失败分支：运行页 annotation 与摘要都必须说清拦停原因。
+            echo "::error title=Windows 安装包未签名::vars.SIGNPATH_ENABLED 未开启——本次发行的 Windows 安装包没有 Authenticode 签名。fail-closed：拒绝继续。"
             {
-              echo "### ⚠️ Windows 安装包未签名"
+              echo "### ❌ Windows 安装包未签名——已拦停"
               echo
               echo "\`vars.SIGNPATH_ENABLED\` 未开启，本次发行的 \`Tavotto-*-Windows-Setup.exe\` **没有 Authenticode 签名**。"
               echo
-              echo "- 用户首次运行会看到 SmartScreen 警告；"
-              echo "- 更新包（\`*-setup.nsis.zip\`）仍带 minisign 签名，自动更新链本身可信；"
-              echo "- 安装包仍有 build provenance attestation，可用 \`gh attestation verify\` 核对来源。"
+              echo "fail-closed：未签名的 Windows 安装包不再放行，签名门禁在这里直接失败。"
               echo
               echo "配好 SignPath 之后这条会自动消失，见 \`docs/code-signing-policy.md\`。"
             } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           if [ "${#missing[@]}" -gt 0 ]; then
             printf '::error::发行构建缺少签名凭据：%s\n' "${missing[*]}"
             exit 1
           fi
-          echo "✅ 签名凭据齐全（Windows Authenticode 见上面的例外说明）"
+          echo "✅ 签名门禁通过（产物签名仍须在构建后验证）"
         env:
           SIGNPATH_ENABLED_VAR: ${{ vars.SIGNPATH_ENABLED }}
 
@@ -702,7 +703,7 @@ jobs:
       - name: 提交 Windows 安装包到 SignPath
         if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
         id: signpath-windows
-        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -710,13 +711,51 @@ jobs:
           signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
           artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
           github-artifact-id: ${{ steps.upload-unsigned-windows-artifact.outputs.artifact-id }}
-          wait-for-completion: true
+          # submit-only 模式：只提交不等待，人工批准后由 complete-windows-signing.yml 接手。
+          # wait 模式：等待签名完成（默认，适合测试证书）。
+          wait-for-completion: ${{ inputs.signing-mode != 'submit-only' }}
           output-artifact-directory: signed-out
           parameters: |
             version: "${{ env.APP_VERSION }}"
 
+      - name: 输出签名审批链接（submit-only 模式）
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode == 'submit-only'
+        shell: pwsh
+        run: |
+          $requestId = "${{ steps.signpath-windows.outputs.signing-request-id }}"
+          $webUrl = "${{ steps.signpath-windows.outputs.signing-request-web-url }}"
+          Write-Host "SignPath 签名请求已提交，等待人工批准：$webUrl"
+          @{
+            signing_request_id = $requestId
+            signing_request_web_url = $webUrl
+            app_version = "$env:APP_VERSION"
+            source_run_id = "$env:GITHUB_RUN_ID"
+            submitted_at = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+          } | ConvertTo-Json | Out-File -FilePath "signpath-pending.json" -Encoding utf8
+          Get-Content "signpath-pending.json"
+          {
+            echo "## 等待人工批准 Windows 签名"
+            echo ""
+            echo "签名请求已提交到 SignPath，**请在 SignPath UI 手动批准**（生产证书要求每次手动批准）："
+            echo ""
+            echo "$webUrl"
+            echo ""
+            echo "批准后，手动触发 complete-windows-signing.yml workflow 完成后续步骤，填入："
+            echo "- signing-request-id: $requestId"
+            echo "- source-run-id: $env:GITHUB_RUN_ID"
+            echo "- app-version: $env:APP_VERSION"
+          } >> $env:GITHUB_STEP_SUMMARY
+
+      - name: 上传待签名信息（submit-only 模式）
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode == 'submit-only'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: signpath-pending-${{ github.run_id }}
+          path: signpath-pending.json
+          if-no-files-found: error
+
       - name: 替换为 SignPath 签名结果
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true'
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED == 'true' && inputs.signing-mode != 'submit-only'
         shell: pwsh
         run: |
           $signed = @(Get-ChildItem signed-out -Recurse -File -Filter "Tavotto-$env:APP_VERSION-Windows-Setup.exe")
@@ -730,9 +769,10 @@ jobs:
           }
           Write-Host "SignPath 签名有效：$($signature.SignerCertificate.Subject)"
 
-      - name: 标记未签名产物
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true'
-        run: Write-Warning "SIGNPATH_ENABLED 未开启：本次 Windows 安装包没有 Authenticode 签名（更新包的 minisign 签名不受影响）"
+      - name: 未签名即拦停（fail-closed）
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1'
+        shell: pwsh
+        run: throw "SIGNPATH_ENABLED 未开启：Windows 安装包没有 Authenticode 签名，fail-closed 拒绝继续"
 
       - name: Windows 更新包（必须在 SignPath 签名之后重做）
         # 与 macOS 同一条道理：打包器顺手打的那个 nsis.zip 装的是**还没签名**的
@@ -749,7 +789,7 @@ jobs:
         # 装出去的每一次应用内更新都会在下载完成后报「无法安装更新」——
         # v0.7.0 到 v0.10.0 的 Windows 更新包全是这么坏的，而整条链全绿。
         # 判据与复现记录见 make_updater_zip.py 抬头与 tests/test_updater_zip.py。
-        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: runner.os == 'Windows' && env.TAURI_SIGNING_PRIVATE_KEY != '' && inputs.signing-mode != 'submit-only'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"

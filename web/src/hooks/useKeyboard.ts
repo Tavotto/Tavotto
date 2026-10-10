@@ -30,6 +30,7 @@ import { useTimelineStore } from '@/store/timelineStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { fitStage, zoomToSelection } from '@/store/zoomToSelection'
 
 /**
  * 快速编辑里**只有这一张图**：页面纸、网格、别的对象全部让开。
@@ -88,17 +89,16 @@ export function deleteSelection() {
   deleteSelected()
 }
 
-export type ZoomCommand = 'in' | 'out' | 'actual' | 'fit'
+export type ZoomCommand = 'in' | 'out' | 'actual' | 'fit' | 'selection'
 
-/** ⌘+ / ⌘− / ⌘0 / ⌘1 的视口动作（系统菜单「显示」里的四条也走这里） */
+/** ⌘+ / ⌘− / ⌘0 / ⌘1 / ⇧2 的视口动作（系统菜单「显示」里的四条也走这里） */
 export function runZoomCommand(cmd: ZoomCommand) {
   const vp = useViewportStore.getState()
   if (cmd === 'in' || cmd === 'out') vp.zoomBy(cmd === 'out' ? 1 / 1.25 : 1.25)
   else if (cmd === 'actual') vp.setZoomCentered(1)
-  else {
-    const page = useDocumentStore.getState().doc.page
-    vp.fitAnimated(page.w, page.h)
-  }
+  else if (cmd === 'selection') zoomToSelection()
+  // 快速编辑里适应那张图、排版里适应页面——与舞台双击同一个取景框（`stageFitFrame`）
+  else fitStage()
 }
 
 /**
@@ -131,6 +131,9 @@ export function arrowOwnedByWidget(e: KeyboardEvent): boolean {
   const el = e.target
   return el instanceof Element && el.closest(ARROW_WIDGETS) != null
 }
+
+/** ⌘] 族的 key → 未改写的那颗（`}` / `{` 是美式布局 ⇧ 改写出来的） */
+const Z_ORDER_KEYS: Record<string, ']' | '[' | undefined> = { ']': ']', '}': ']', '[': '[', '{': '[' }
 
 const MODIFIER_KEYS = new Set(['Shift', 'Alt', 'Meta', 'Control', 'CapsLock'])
 
@@ -213,7 +216,9 @@ export function useKeyboard() {
         startNamedNode()
         return
       }
-      if (mod && e.key.toLowerCase() === 's') {
+      // 带 ⌥ 的不认（`lib/keymap` 的 save / saveAs 都登记 `alt: false`）：⌥⇧⌘S 不是「另存为」，Windows 上
+      // Ctrl+Alt+Shift+S 还是 AltGr+⇧S（波兰语 Ś），这一条排在输入框让位之前，认了就是吞掉用户在打的字
+      if (mod && !e.altKey && e.key.toLowerCase() === 's') {
         e.preventDefault()
         // ⇧⌘S = 另存为一份命名的画布文件；⌘S = 真的保存当前文档
         if (e.shiftKey) useUiStore.getState().setLayoutOpen(true, 'save')
@@ -247,8 +252,8 @@ export function useKeyboard() {
       }
       if (mod && e.key.toLowerCase() === 'd') {
         e.preventDefault()
-        // 副本落在版面上、快速编辑这一屏看不见它（与方向键 / 工具字母同一条判据）
-        if (!inFastEdit()) duplicateSelected()
+        // 快速编辑里不加副本（副本落在版面上、这一屏看不见）：判据在 `duplicateSelected` 里
+        duplicateSelected()
         return
       }
       // ⌘C / ⌘V 不在 keydown 层拦：让浏览器派发原生 copy/paste 事件，
@@ -270,9 +275,13 @@ export function useKeyboard() {
         ui.setExportOpen(true)
         return
       }
-      if (mod && (e.key === ']' || e.key === '[')) {
+      // ⌘] / ⌘[ / ⇧⌘] / ⇧⌘[：浏览器给的 key 是 ⇧ 改写**之后**的字（美式布局 ⇧] = `}`、⇧[ = `{`），
+      // 只认 `]` / `[` 的话置顶 / 置底在真浏览器里永远按不出来。不按 code 认：德语等布局上
+      // BracketRight 那颗是 `+`，⌘+ 是放大
+      const zKey = Z_ORDER_KEYS[e.key]
+      if (mod && zKey) {
         e.preventDefault()
-        changeZOrder(e.shiftKey ? (e.key === ']' ? 'top' : 'bottom') : e.key === ']' ? 'up' : 'down')
+        changeZOrder(e.shiftKey ? (zKey === ']' ? 'top' : 'bottom') : zKey === ']' ? 'up' : 'down')
         return
       }
       if (mod && (e.key === '=' || e.key === '+' || e.key === '-')) {
@@ -292,6 +301,14 @@ export function useKeyboard() {
       }
 
       if (mod) return
+
+      // ⇧2 = 缩放到选区（`lib/keymap` 的 zoomSelection）。按 code 认：⇧ 把 key 改成 @ / " 因布局而异；
+      // ⌥ 组合是在打字，不认
+      if (e.shiftKey && !e.altKey && e.code === 'Digit2') {
+        e.preventDefault()
+        runZoomCommand('selection')
+        return
+      }
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()

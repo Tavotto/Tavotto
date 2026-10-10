@@ -270,6 +270,16 @@ def _tools() -> list[dict]:
                             "再传目标进来：tavotto_managed（Tavotto 自己的隔离环境，不改用户环境）/ "
                             "project_venv（项目自己的 venv，会修改它）/ skip（用户明确不准备、直接运行）。"
                             "安装是同步的（要联网、几十秒到几分钟），装完接着开图。不传 = 这道门继续问。"
+                            "tavotto_managed / project_venv 必须同时传 prepare_impact_digest。"
+                        ),
+                    },
+                    "prepare_impact_digest": {
+                        "type": "string",
+                        "description": (
+                            "用户授权时看到的影响摘要：原样回显 dependency_preparation.impact_digest。"
+                            "prepare_dependencies 选 tavotto_managed / project_venv 时必填；缺 → "
+                            "dependency_impact_required，与此刻计划的实际影响对不上 → "
+                            "dependency_impact_changed（一个字节不装，请重新查看再让用户确认）。"
                         ),
                     },
                     "argv": {
@@ -775,6 +785,9 @@ def _call_open(args: dict) -> dict:
             INVALID_PARAMS,
             "adopt_environment 与 expected_environment_generation 必须一起给（候选 id + 它的 generation）",
         )
+    digest = args.get("prepare_impact_digest")
+    if digest is not None and not isinstance(digest, str):
+        raise RpcError(INVALID_PARAMS, "prepare_impact_digest 必须是字符串")
     plan = _batch_request(args)
     if plan is not None:
         if prepare is not None:
@@ -799,6 +812,7 @@ def _call_open(args: dict) -> dict:
         run_config=run_config,
         adopt_environment=adopt,
         expected_environment_generation=generation,
+        prepare_impact_digest=digest,
     )
     # **打开与预检分离**（issue #102）：噪声在**给 agent 读的那段文字**里——
     # 每开一张图糊一屏重复的规范建议，还挤掉了 manifest 摘要那几行真正有用的东西。

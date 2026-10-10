@@ -139,6 +139,10 @@
   进 `invalidated_decision()`，报告的 `environment.replaced.reason` 说出来；会话指纹含解释器与环境代，修订加一、旧动作作废；
   确认之前做的计划由 `_stale_reason` 拒绝（一行用户代码都不跑）。§四对「静默换成 B」的保护于是变成「换可以，但必须是看得见的
   新决定、旧授权全部作废」。
+* **2026-10-10 补充（Codex 安全 #820）**：「用户发起准备之后」不等于「用户点了运行」。项目自己说了算的候选（项目 venv、`.vscode` /
+  shebang 指向的路径、路径落在项目根里的）在检查阶段只读体检缓存、不起；点「运行」才体检与采用（见 `docs/rules/backend/dependency-repair-and-packages.md`）。
+  点「运行」即同意：采用后就地重算计划继续跑，不要求重新检查。首查有还没体检的项目候选时主动作是「运行」（不先推去受管环境装包），
+  体检跑不了才回到常规的安装待办。
 * **预算 / 单飞**：候选上限 `userenvs.PROBE_LIMIT`、并发 `PROBE_WORKERS`、每个候选 `projectenv.PROBE_TIMEOUT_S`；同一项目
   同一时刻一次检测（`deprepair._detect_lock`），后到的等它落地再按落地后的记录判断。检测**不可中途取消**（有界；§三的明确
   检查动作仍可取消）。`TAVOTTO_USER_ENV_DISCOVERY=0` 关掉检测（测试进程默认关）。

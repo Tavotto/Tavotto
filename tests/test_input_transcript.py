@@ -263,3 +263,211 @@ def test_the_input_facts_projection_is_counts_and_closed_codes_only():
     assert inputbroker.facts_projection({**facts, "no_answer": "free text"})["no_answer"] is None
     assert inputbroker.facts_projection(inputbroker.InputFacts().payload()) is None
     assert inputbroker.facts_projection(None) is None
+
+
+def _block_replace(monkeypatch):
+    import os
+
+    real = os.replace
+
+    def blocked(src, dst, *a, **k):
+        if str(dst).endswith(".json") and "inputtranscripts" in str(dst):
+            raise OSError("blocked")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "replace", blocked)
+
+
+def test_a_failed_binding_write_never_leaves_the_old_transcript_usable(tmp_path, monkeypatch):
+    # r4221584222：新转录没落盘 → 旧绑定必须失效，冷重放不能用旧值
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is not None
+    _block_replace(monkeypatch)
+    try:
+        inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "new")])
+    except OSError:
+        pass
+    monkeypatch.undo()
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_a_failed_clear_write_never_leaves_the_old_transcript_usable(tmp_path, monkeypatch):
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    _block_replace(monkeypatch)
+    try:
+        inputtranscript.bind(tmp_path, "s.py", None, [])
+    except OSError:
+        pass
+    monkeypatch.undo()
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_when_the_old_binding_cannot_be_invalidated_the_execution_is_not_bound(
+    tmp_path, monkeypatch
+):
+    class _W:
+        figures_dir = str(tmp_path)
+        script_name = "s.py"
+        build_failed = False
+        transcript_basis = [None, None]  # serving() 取到的基线
+
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    _block_replace(monkeypatch)
+    from pathlib import Path
+
+    def no_unlink(self, *a, **k):
+        raise OSError("blocked")
+
+    monkeypatch.setattr(Path, "unlink", no_unlink)
+    import pytest
+
+    with pytest.raises(inputtranscript.StaleTranscriptError):
+        inputbroker.finished(_W(), [_rec(1, "new")])
+
+
+class _Worker:
+    def __init__(self, root):
+        self.figures_dir = str(root)
+        self.script_name = "s.py"
+        self.out_dir = None
+        self.build_failed = False
+
+
+def test_an_edit_during_a_running_build_makes_its_late_transcript_unusable(tmp_path):
+    # r4221675644：build 在飞 → 改答案（forget）→ 旧 build 事后才绑定 → 冷重放不能用旧值
+    w = _Worker(tmp_path)
+    with inputbroker.serving(w):  # 进门取基线
+        inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)  # 用户改答案
+    inputbroker.finished(w, [_rec(1, "old")])  # 旧 build 事后绑定
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_the_reader_ignores_a_transcript_whose_basis_does_not_match(tmp_path):
+    # r4221675644：不依赖写入顺序——即使旧基线的转录被写进了盘，读者也不认
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is not None
+    path = inputtranscript.store_path(tmp_path)
+    data = json.loads(path.read_text("utf-8"))
+    data["generations"] = {"s.py": "g_changed"}
+    path.write_text(json.dumps(data), "utf-8")
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_a_single_configuration_edit_only_invalidates_that_configuration(tmp_path):
+    inputtranscript.bind(tmp_path, "s.py", "rc_a", [_rec(1, "a")])
+    inputtranscript.bind(tmp_path, "s.py", "rc_b", [_rec(1, "b")])
+    inputtranscript.forget(tmp_path, "s.py", run_config="rc_a", all_configs=False)
+    assert inputtranscript.lookup(tmp_path, "s.py", "rc_a") is None
+    assert inputtranscript.lookup(tmp_path, "s.py", "rc_b") is not None
+
+
+def test_the_secret_reason_code_keeps_its_wire_value_under_a_name_without_secret():
+    # CodeQL alert 229：常量名带 secret 会被当敏感数据，随回复 JSON 写盘就报 clear-text-storage。
+    # 取值是 ADR 0099 的线上协议（worker 按值比），名字不能再含 secret。
+    from tavotto.engine import worker
+
+    assert inputbroker.REASON_MASKED_INPUT_REQUIRED == "secret_required"
+    assert worker._REASON_MASKED_INPUT_REQUIRED == inputbroker.REASON_MASKED_INPUT_REQUIRED
+    assert inputbroker.REASON_MASKED_INPUT_REQUIRED in inputbroker.REASONS
+    assert not [n for n in vars(inputbroker) if n.startswith("REASON_") and "SECRET" in n]
+
+
+def test_a_build_whose_basis_cannot_be_captured_fails(tmp_path, monkeypatch):
+    # r4224357981：build 开始时 basis() 读失败 → build 直接失败（稳定 code），不存在没有基线的 build
+    import pytest
+
+    w = _Worker(tmp_path)
+
+    def boom(*_a, **_k):
+        raise OSError("transient")
+
+    monkeypatch.setattr(inputtranscript, "basis", boom)
+    with pytest.raises(inputbroker.TranscriptUnavailable) as ei:
+        with inputbroker.serving(w):
+            pytest.fail("build must not start")
+    assert ei.value.code == "script_input_transcript_failed"
+
+
+def test_bind_without_a_basis_retires_the_existing_binding(tmp_path, monkeypatch):
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    inputtranscript.bind(tmp_path, "s.py", "rc_b", [_rec(1, "keep")])
+    assert inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")], basis=None) is None
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None  # 旧绑定作废
+    assert inputtranscript.lookup(tmp_path, "s.py", "rc_b") is not None  # 别的配置不动
+    # 作废不了就明确失败
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old2")])
+    _block_replace(monkeypatch)
+    _raises(
+        inputtranscript.StaleTranscriptError,
+        lambda: inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")], basis=None),
+    )
+
+
+def test_bind_refuses_an_explicit_missing_basis_and_basis_read_is_strict(tmp_path):
+    assert inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")], basis=None) is None
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")])
+    inputtranscript.store_path(tmp_path).write_text("{broken", "utf-8")
+    import pytest
+
+    with pytest.raises(ValueError):
+        inputtranscript.basis(tmp_path, "s.py", None)
+
+
+def _raises(exc, fn):
+    import pytest
+
+    with pytest.raises(exc):
+        fn()
+
+
+def test_bind_on_an_unreadable_store_neither_binds_nor_erases_the_tokens(tmp_path):
+    # r4224295365：读失败不能折成「空令牌」——否则会绑上旧答案，或在写回时抹掉刚写的作废令牌
+    inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)  # 令牌已写
+    path = inputtranscript.store_path(tmp_path)
+    good = path.read_text("utf-8")
+    data = json.loads(good)
+    data["bindings"] = "oops"  # 形状坏了：读不出来
+    broken = json.dumps(data)
+    path.write_text(broken, "utf-8")
+    _raises(
+        OSError,
+        lambda: inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "x")], basis=[None, None]),
+    )
+    assert path.read_text("utf-8") == broken  # 没写任何东西，令牌还在
+    assert json.loads(broken)["generations"]
+
+
+def test_lookup_treats_a_corrupt_store_as_absent(tmp_path):
+    inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "old")])
+    path = inputtranscript.store_path(tmp_path)
+    data = json.loads(path.read_text("utf-8"))
+    data["generations"] = "garbled"  # 旧实现把它读成空令牌，基线 [None, None] 对得上 → 旧值被重放
+    path.write_text(json.dumps(data), "utf-8")
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+    path.write_text("{broken", "utf-8")
+    assert inputtranscript.lookup(tmp_path, "s.py", None) is None
+
+
+def test_forget_on_an_unreadable_store_aborts_instead_of_writing_empty_tokens(tmp_path):
+    inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)
+    path = inputtranscript.store_path(tmp_path)
+    path.write_text("{broken", "utf-8")
+    _raises(
+        OSError, lambda: inputtranscript.forget(tmp_path, "t.py", run_config=None, all_configs=True)
+    )
+    assert path.read_text("utf-8") == "{broken"
+
+
+def test_a_blocked_write_never_deletes_a_store_that_holds_tokens(tmp_path, monkeypatch):
+    # 删整份存储会让基线回到「没人改过」：有令牌时只能明确失败
+    inputtranscript.forget(tmp_path, "s.py", run_config=None, all_configs=True)
+    path = inputtranscript.store_path(tmp_path)
+    basis = inputtranscript.basis(tmp_path, "s.py", None)
+    _block_replace(monkeypatch)
+    _raises(
+        OSError,
+        lambda: inputtranscript.bind(tmp_path, "s.py", None, [_rec(1, "new")], basis=basis),
+    )
+    monkeypatch.undo()
+    assert path.exists() and inputtranscript.basis(tmp_path, "s.py", None) == basis

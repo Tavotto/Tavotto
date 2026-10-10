@@ -676,6 +676,8 @@ def test_t11_s2_script_only_first_run_with_a_missing_package_from_a_local_wheel(
             json={
                 "action_id": dep_action["id"],
                 "expected_config_revision": report["config_revision"],
+                # 装包动作必须回显用户看到的影响摘要（#814 r4218802478）
+                "impact_digest": dep_action["impact"]["impact_digest"],
             },
         )
         assert resp.status_code == 202, resp.get_json()

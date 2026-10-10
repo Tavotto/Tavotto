@@ -12,7 +12,7 @@
  * 3. **不存翻译后的字符串**。这里全是现算的读法，问题本身存的是 message key
  *    与结构化参数（`ValidationIssue.message`）。
  */
-import { Lightbulb, OctagonAlert, ShieldQuestionMark, TriangleAlert } from '@/components/ui/icons'
+import { CircleDashed, Lightbulb, OctagonAlert, TriangleAlert } from '@/components/ui/icons'
 import { formatQuantity } from '@/i18n/format'
 import { formatMessage, t as translate } from '@/i18n'
 import { engineLabel, roleName } from '@/components/inspector/roles/registry'
@@ -28,12 +28,24 @@ const pr = (key: string, values?: Record<string, unknown>): string =>
  * 阻断是八角（停车牌的形状），警告是三角：两级此前共用一个三角、只靠红 / 琥珀色
  * 区分，灰度或色弱下只剩「阻断 / 警告」两个字可辨（2026-09-14 二审 C1）。形状与
  * 颜色各说一遍，才不是「状态只靠颜色」。
+ *
+ * 「无法核验」是虚线圆（2026-10-07 设计审计 §9.4）：查不了 ≠ 有问题，它是一圈没画完的线，
+ * 不是第四种警报。此前这里是盾牌问号、卡片层入口又是虚线圆——同一个等级两种形状。
+ * 颜色在 `SEVERITY_INK`：阻断 / 警告取状态锚点（图标 ≥3:1），其余两档 ink-3。
  */
 export const SEVERITY_ICON: Record<Severity, typeof TriangleAlert> = {
   error: OctagonAlert,
   warn: TriangleAlert,
-  not_verifiable: ShieldQuestionMark,
+  not_verifiable: CircleDashed,
   suggestion: Lightbulb,
+}
+
+/** 等级图标的颜色：只有阻断与警告带色（锚点，不是 -content：这是图标不是字） */
+export const SEVERITY_INK: Record<Severity, string> = {
+  error: 'text-danger',
+  warn: 'text-warn',
+  not_verifiable: 'text-ink-3',
+  suggestion: 'text-ink-3',
 }
 
 export const severityLabel = (s: Severity): string =>

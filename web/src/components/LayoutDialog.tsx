@@ -8,7 +8,7 @@ import {
   REVISION_ABSENT,
   backendErrorText,
   fetchLayout,
-  fetchLayoutNames,
+  fetchLayoutList,
   saveLayout,
   type DiskDocumentSummary,
 } from '@/lib/api'
@@ -27,11 +27,13 @@ import { captureSaveContext, ifStillCurrent, stillCurrent } from '@/store/saveCo
 import { useUiStore } from '@/store/uiStore'
 import { dirTail } from '@/lib/pathDisplay'
 import { FormRow } from './FormRow'
-import { InlineWarning } from './settings/SettingRow'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
+import { listRowClass, rowMetaClass } from './ui/listRow'
+import { Notice } from './ui/Notice'
+import { formatRelativeTime } from '@/i18n/format'
 
 /**
  * 「另存为」与「打开」（审计 T04）。
@@ -78,6 +80,10 @@ export function LayoutDialog() {
   const toProject = intent === 'saveToProject'
   const saving = intent === 'save' || toProject
   const [names, setNames] = useState<string[]>([])
+  /** 每份的修改时间（epoch 秒）；老后端没有这个字段 = 空表，行上不写日期 */
+  const [modified, setModified] = useState<Record<string, number>>({})
+  /** 清单取不回来：加载错误放在正文顶部（与保存失败分开，那个放在页脚上方） */
+  const [listError, setListError] = useState<string | null>(null)
   const [name, setName] = useState(docName)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -101,12 +107,16 @@ export function LayoutDialog() {
     if (!open) return
     setName(docName)
     setError(null)
+    setListError(null)
     setConflict(presetConflict)
     // 另存那一屏也要这份清单：撞名的裁决在后端，但「这个名字已经有了」
     // 要在用户按下按钮之前就说
-    fetchLayoutNames()
-      .then(setNames)
-      .catch((e) => setError(backendErrorText(e)))
+    fetchLayoutList()
+      .then((r) => {
+        setNames(r.names)
+        setModified(r.modified)
+      })
+      .catch((e) => setListError(backendErrorText(e)))
   }, [open, docName, presetConflict])
 
   // 从菜单进来时焦点直接落在用户选的那件事上。
@@ -257,10 +267,77 @@ export function LayoutDialog() {
     }
   }
 
+  /** 撞名岔口上的「改名」：回到名字框、全选，让用户换一个名字再存（安全答案，也是 Esc） */
+  const rename = () => {
+    setConflict(null)
+    requestAnimationFrame(() => {
+      nameRef.current?.focus()
+      nameRef.current?.select()
+    })
+  }
+  /** 打开列表的方向键：↑↓ 在行间走（Enter / 空格是按钮自己的「打开」） */
+  const onListKey = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+    const rows = [...(listRef.current?.querySelectorAll<HTMLButtonElement>('[data-layout-row]') ?? [])]
+    const i = rows.indexOf(document.activeElement as HTMLButtonElement)
+    const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))]
+    if (next) {
+      e.preventDefault()
+      next.focus()
+    }
+  }
+
+  // 页脚（2026-10-07 设计审计 §10.2）：撞名时岔口进页脚——「改名」(secondary) + 「覆盖」(危险浅底胶囊)，
+  // 不再是正文里一颗红字小按钮；「打开」那一屏是浏览型，没有页脚（×、Esc 关）
+  const footer = conflict
+    ? {
+        secondary: (
+          <Button variant="secondary" size="lg" disabled={busy} data-layout-rename onClick={rename}>
+            {t('dialogs:layout.rename')}
+          </Button>
+        ),
+        primary: (
+          <Button
+            variant="danger-tinted"
+            size="lg"
+            loading={busy}
+            data-layout-overwrite
+            onClick={() => doSave({ revision: conflict.revision, target: conflict.name })}
+          >
+            {t('dialogs:layout.overwrite')}
+          </Button>
+        ),
+      }
+    : saving
+      ? {
+          secondary: (
+            <Button variant="secondary" size="lg" disabled={busy} onClick={() => setOpen(false)}>
+              {t('common:actions.cancel')}
+            </Button>
+          ),
+          primary: (
+            <Button
+              variant="primary"
+              size="lg"
+              data-layout-save
+              disabled={!name.trim()}
+              loading={busy}
+              loadingLabel={t('dialogs:layout.saving')}
+              onClick={() => doSave()}
+            >
+              <Save size={ICON_SIZE.sm} />
+              {t(toProject ? 'dialogs:layout.saveToProject' : 'dialogs:layout.saveAs')}
+            </Button>
+          ),
+        }
+      : undefined
+
   return (
     <Dialog
       open={open}
       onOpenChange={setOpen}
+      // Esc 的安全答案：撞名岔口上是「改名」（绝不是覆盖），其余是关掉
+      onEscape={busy ? undefined : conflict ? rename : () => setOpen(false)}
       title={t(
         toProject
           ? 'dialogs:layout.saveToProjectTitle'
@@ -270,32 +347,14 @@ export function LayoutDialog() {
       )}
       size="md"
       busy={busy}
-      footer={
-        <>
-          <Button variant="secondary" size="md" disabled={busy} onClick={() => setOpen(false)}>
-            {t('common:actions.close')}
-          </Button>
-          {/* 「打开」那一屏一个能写盘的控件都没有：主按钮只在另存时出现 */}
-          {saving && (
-            <Button
-              variant="primary"
-              size="md"
-              disabled={!name.trim()}
-              loading={busy}
-              loadingLabel={t('dialogs:layout.saving')}
-              onClick={() => doSave()}
-            >
-              <Save size={ICON_SIZE.md} />
-              {t(toProject ? 'dialogs:layout.saveToProject' : 'dialogs:layout.saveAs')}
-            </Button>
-          )}
-        </>
-      }
+      anchor="layout"
+      footer={footer}
     >
       <div className="flex flex-col gap-3">
+        {/* 加载错误放在顶部：清单都没取回来，下面的东西都不可信 */}
+        {listError && <Notice tone="danger">{listError}</Notice>}
         {saving ? (
-          /* 标签在左、控件在右（全面打磨 D29，L1）：全站表单都是这一副，此前这里的标签
-             用的是分区标题的字重、压在输入框上方 */
+          /* 标签在左、控件在右（全面打磨 D29，L1）：全站表单都是这一副 */
           <div className="flex flex-col gap-1.5">
             <FormRow label={t('dialogs:layout.nameLabel')}>
               <TextInput
@@ -312,77 +371,70 @@ export function LayoutDialog() {
               />
             </FormRow>
             {/* 位置：另存要回答的第二件事。后端没给就不编一个出来。
-                只写**末级目录**（全面打磨 D29）：420 宽的框里一条绝对路径末尾必被截掉，
+                只写**末级目录**（全面打磨 D29）：一条绝对路径末尾必被截掉，
                 而末尾正是能认出「这是哪个目录」的那一段（与设置页的 `PathValue` 同一份
                 `dirTail` 判据，完整路径在 title 里） */}
             {documentDir && (
               <FormRow label={t('dialogs:layout.savesIntoLabel')}>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-3" title={documentDir}>
+                <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink-3" title={documentDir}>
                   {dirTail(documentDir)}
                 </span>
               </FormRow>
             )}
-            {names.includes(canonicalLayoutName(name.trim())) && (
-              <p className="text-xs text-ink-2">{t('dialogs:layout.nameTaken')}</p>
+            {!conflict && names.includes(canonicalLayoutName(name.trim())) && (
+              <p className="text-sm text-ink-2">{t('dialogs:layout.nameTaken')}</p>
             )}
-            {toProject && !conflict && (
-              <p className="text-xs text-ink-3">{t('dialogs:layout.saveToProjectHint')}</p>
-            )}
+            {toProject && !conflict && <p className="text-sm text-ink-3">{t('dialogs:layout.saveToProjectHint')}</p>}
           </div>
         ) : names.length === 0 ? (
-          <p className="py-2 text-xs text-ink-3">{t('dialogs:layout.empty')}</p>
+          !listError && <p className="py-2 text-ink-3">{t('dialogs:layout.empty')}</p>
         ) : (
-          /* 清单不套外框（§8）：行之间的 hairline 已经把它分开了 */
-          <ul ref={listRef} className="max-h-72 overflow-y-auto">
-            {names.map((n, i) => (
-              <li key={n}>
+          /* 40px 的列表行（listRowClass）：名字 + 修改时间，hover / 聚焦时行尾浮出「打开」；↑↓ 走行、Enter 打开 */
+          <ul ref={listRef} className="-mx-1 flex max-h-80 flex-col gap-0.5 overflow-y-auto" onKeyDown={onListKey}>
+            {names.map((n) => (
+              <li key={n} className="flex">
                 <button
+                  type="button"
+                  data-layout-row={n}
                   disabled={busy}
                   onClick={() => doLoad(n)}
                   className={cn(
-                    'flex h-7 w-full items-center gap-2 px-2 text-left text-xs text-ink',
-                    'hover:bg-surface-hover disabled:opacity-40',
-                    i > 0 && 'border-t border-border',
+                    listRowClass({ size: 'md' }),
+                    'min-h-10 w-full gap-2.5 px-2 text-left disabled:opacity-40',
                   )}
                 >
                   <FolderOpen size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
                   <span className="min-w-0 flex-1 truncate">{n}</span>
-                  <span className="shrink-0 text-xs text-ink-3">{t('dialogs:layout.load')}</span>
+                  {modified[n] !== undefined && (
+                    <span className={cn(rowMetaClass(), 'shrink-0 group-hover:hidden group-focus-visible:hidden')}>
+                      {formatRelativeTime(modified[n] * 1000)}
+                    </span>
+                  )}
+                  <span className="hidden shrink-0 text-sm text-ink-2 group-hover:inline group-focus-visible:inline">
+                    {t('dialogs:layout.load')}
+                  </span>
                 </button>
               </li>
             ))}
           </ul>
         )}
 
+        {/* 撞名：一条警示放在页脚上方，裁决（改名 / 覆盖）在页脚 */}
         {conflict && (
-          /* 警示只有一副（全面打磨 D30）：`InlineWarning` 的 surface-hover 底，
-             不是黄底加一圈黄边的块——四个对话框此前各画了一版 */
-          <div className="flex flex-col gap-1.5">
-            <InlineWarning>
-              {t('dialogs:layout.conflict', { name: conflict.name })}
-              {conflict.summary && (
-                <span className="block text-ink-3">
-                  {t('dialogs:layout.conflictDisk', {
-                    objects: conflict.summary.objects,
-                    canvases: conflict.summary.canvases,
-                  })}
-                </span>
-              )}
-            </InlineWarning>
-            <div>
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={busy}
-                onClick={() => doSave({ revision: conflict.revision, target: conflict.name })}
-              >
-                {t('dialogs:layout.overwrite')}
-              </Button>
-            </div>
-          </div>
+          <Notice tone="warn" data-layout-conflict>
+            {t('dialogs:layout.conflict', { name: conflict.name })}
+            {conflict.summary && (
+              <span className="block text-ink-2">
+                {t('dialogs:layout.conflictDisk', {
+                  objects: conflict.summary.objects,
+                  canvases: conflict.summary.canvases,
+                })}
+              </span>
+            )}
+          </Notice>
         )}
 
-        {error && <p className="text-xs text-danger">{error}</p>}
+        {error && <Notice tone="danger">{error}</Notice>}
       </div>
     </Dialog>
   )

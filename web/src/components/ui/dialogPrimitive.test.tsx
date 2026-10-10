@@ -173,6 +173,131 @@ describe('Dialog：Esc = 安全答案', () => {
   })
 })
 
+// Codex #833（comment 4211499735）：关闭时的焦点归还只在焦点还在这层里（层卸掉后落在 body）时做；
+// 关的同时焦点已被交给这层之外的元素（命令面板的命令打开了一个就地表面）就不抢回来
+describe('Dialog：关闭时的焦点归还', () => {
+  const settle = () => act(async () => new Promise((r) => setTimeout(r, 20)))
+  function Probe({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange} title={TITLE} anchor="f">
+        <input data-probe-input />
+      </Dialog>
+    )
+  }
+
+  it('Esc 关：焦点还给打开前的元素', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    let open = true
+    const set = (v: boolean) => {
+      open = v
+      void render(<Probe open={open} onOpenChange={set} />)
+    }
+    await render(<Probe open onOpenChange={set} />)
+    expect(dialogEl('f')!.contains(document.activeElement)).toBe(true)
+    await escape()
+    await settle()
+    expect(open).toBe(false)
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
+  })
+
+  // CI 满载时命令面板的归还用例撞见过 body：Radix 的归还排在 Presence 卸载之后的一个 setTimeout 里，
+  // 那之间焦点悬空。这里把定时器整个扣住，证明归还不靠它——关上的那次提交里焦点就已经回到打开者
+  it('关上的那次提交里就还回去，不等 Radix 那个延后的定时器', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    await render(<Probe open onOpenChange={() => {}} />)
+    expect(dialogEl('f')!.contains(document.activeElement)).toBe(true)
+    const held: (() => void)[] = []
+    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void) => {
+      held.push(fn)
+      return 0
+    }) as unknown as typeof setTimeout)
+    try {
+      await render(<Probe open={false} onOpenChange={() => {}} />)
+      expect(document.activeElement).toBe(opener)
+    } finally {
+      spy.mockRestore()
+    }
+    await act(async () => held.forEach((fn) => fn()))
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
+  })
+
+  it('关的同时焦点交给了这层之外的元素：不抢回打开前的元素', async () => {
+    const opener = document.createElement('button')
+    const target = document.createElement('input')
+    document.body.append(opener, target)
+    opener.focus()
+    await render(<Probe open onOpenChange={() => {}} />)
+    await render(<Probe open={false} onOpenChange={() => {}} />)
+    target.focus()
+    await settle()
+    expect(document.activeElement).toBe(target)
+    opener.remove()
+    target.remove()
+  })
+
+  // Codex #833（erwanjun 复核 8a349482）：退场动画没放完又打开，Presence 留着同一个 Content、不重挂载，
+  // 挂载时的初始焦点不再跑。jsdom 没有 CSS 动画：按 data-state 报 animationName，Presence 才会等 animationend
+  describe('退场中被重新打开（同一个 Content）', () => {
+    let spy: { mockRestore: () => void }
+    beforeEach(() => {
+      const real = window.getComputedStyle
+      spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element, pseudo?: string | null) => {
+        const styles = real(el, pseudo)
+        if (!(el instanceof HTMLElement) || !el.hasAttribute('data-dialog')) return styles
+        return new Proxy(styles, {
+          get: (t, p) =>
+            p === 'animationName' ? (el.getAttribute('data-state') === 'closed' ? 'pop-out' : 'pop-in') : Reflect.get(t, p),
+        })
+      })
+    })
+    afterEach(() => spy.mockRestore())
+
+    it('焦点回到层里（初始落点：容器），不留在被模态层 aria-hidden 的打开者上；再关仍还给打开者', async () => {
+      const opener = document.createElement('button')
+      document.body.appendChild(opener)
+      opener.focus()
+      await render(<Probe open onOpenChange={() => {}} />)
+      const content = dialogEl('f')!
+      expect(document.activeElement).toBe(content)
+      await render(<Probe open={false} onOpenChange={() => {}} />)
+      expect(dialogEl('f'), '退场中仍是同一个 Content').toBe(content)
+      expect(document.activeElement).toBe(opener)
+      await render(<Probe open onOpenChange={() => {}} />)
+      expect(dialogEl('f')).toBe(content)
+      expect(opener.closest('[aria-hidden="true"]')).not.toBeNull()
+      expect(document.activeElement).toBe(content)
+      await render(<Probe open={false} onOpenChange={() => {}} />)
+      expect(document.activeElement).toBe(opener)
+      opener.remove()
+    })
+
+    it('重开之前焦点已交给层外一个没被藏起来的元素：不抢', async () => {
+      const opener = document.createElement('button')
+      document.body.appendChild(opener)
+      opener.focus()
+      await render(<Probe open onOpenChange={() => {}} />)
+      const content = dialogEl('f')!
+      await render(<Probe open={false} onOpenChange={() => {}} />)
+      // 模态层挂上之后才出现的表面（hideOthers 只藏挂载那一刻已有的兄弟）
+      const target = document.createElement('input')
+      document.body.appendChild(target)
+      target.focus()
+      await render(<Probe open onOpenChange={() => {}} />)
+      expect(dialogEl('f')).toBe(content)
+      expect(target.closest('[aria-hidden="true"], [inert]')).toBeNull()
+      expect(document.activeElement).toBe(target)
+      opener.remove()
+      target.remove()
+    })
+  })
+})
+
 describe('Dialog：遮罩只由栈底那个画', () => {
   it('两层叠开：只有先开的那层带 data-dialog-scrim；上层关掉后下层仍画', async () => {
     const two = (top: boolean) => (

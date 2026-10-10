@@ -128,7 +128,7 @@ const seedPanels = (panels: PanelInfo[]) =>
   })
 
 const cardOf = (id: string) => host.querySelector<HTMLElement>(`[data-card="${CSS.escape(id)}"]`)!
-const cardIds = () => [...host.querySelectorAll<HTMLElement>('[data-card]')].map((c) => c.dataset.card)
+const cardIds = () => [...host.querySelectorAll<HTMLElement>('li[data-card]')].map((c) => c.dataset.card)
 // 就近入口锚在结构（`data-card-actions`）：文字区的文件名 / 状态也带 title，
 // 光按 `span[title]` 找会把它们数进来
 const chips = (card: HTMLElement) =>

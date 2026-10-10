@@ -37,6 +37,7 @@ from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
 from matplotlib.textpath import text_to_path
+from matplotlib.transforms import Bbox
 
 import pathgeom
 from axestraversal import axis_drawn, frame_drawn, ordered_axes
@@ -2053,6 +2054,41 @@ def _collection_fields(coll, state: FigState, gid: str, *, label: bool) -> list[
     return fields
 
 
+def _hatch_style_fields(pt) -> list[dict]:
+    """Patch 族花纹的**线宽**字段（`hatch` 本身另列）。
+
+    `hatch_linewidth` 是 matplotlib 3.10 起的 per-artist 属性（`Patch.set_hatch_linewidth`），
+    **按真实 getter 实况判，不按版本号**：之前只有 `rcParams['hatch.linewidth']`，绘制时全局读取，
+    改不了单个 artist，所以旧版本不发这条字段，而不是发一条改了不生效的。
+
+    没有花纹时照样给值（跟 `facecolor` 之于 `fill` 同一模型：界面 `visibleWhen` 收起，不是引擎隐藏）。
+    花纹**颜色**不在此列（维护者裁决：3.11 的 `set_alpha` 会按当前 rcParams 重解析花纹色，另开 issue 研究）。
+    """
+    out: list[dict] = []
+    if hasattr(pt, "set_hatch_linewidth"):
+        out.append(
+            {
+                "prop": "hatch_linewidth",
+                "type": "number",
+                "value": round(float(pt.get_hatch_linewidth()), 2),
+                "min": 0,
+                "max": 8,
+                "step": 0.1,
+                "unit": "pt",
+            }
+        )
+    return out
+
+
+def _hatch_field(pt) -> dict:
+    return {
+        "prop": "hatch",
+        "type": "enum",
+        "value": str(pt.get_hatch() or ""),
+        "options": _hatch_options(pt.get_hatch()),
+    }
+
+
 def _hatch_options(current) -> list[str]:
     cur = str(current or "")
     return ([cur] if cur and cur not in HATCHES else []) + HATCHES
@@ -2330,6 +2366,8 @@ def _bar_series_fields(grp) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
+        _hatch_field(r0),
+        *_hatch_style_fields(r0),
         {
             "prop": "bar_width",
             "type": "number",
@@ -2373,6 +2411,8 @@ def _bar_fields(rect) -> list[dict]:
             "step": 0.1,
             "unit": "pt",
         },
+        _hatch_field(rect),
+        *_hatch_style_fields(rect),
         {
             "prop": "alpha",
             "type": "number",
@@ -2587,12 +2627,8 @@ def _patch_fields(pt) -> list[dict]:
             "value": _linestyle_name(pt),
             "options": ["-", "--", "-.", ":"],
         },
-        {
-            "prop": "hatch",
-            "type": "enum",
-            "value": str(pt.get_hatch() or ""),
-            "options": _hatch_options(pt.get_hatch()),
-        },
+        _hatch_field(pt),
+        *_hatch_style_fields(pt),
         {
             "prop": "alpha",
             "type": "number",
@@ -4219,13 +4255,52 @@ def _clip_extents(artist):
     return x0, y0, x1, y1
 
 
+def _fold_into_clip(artist, bb):
+    """display Bbox 折进 artist 真正被裁到的矩形（画出来的那部分）；返回 `(bb, folded, outside)`。
+
+    `folded`：bb 已被收窄到画出来的部分。`outside`：artist 受裁剪、且**整个**落在裁剪框
+    外（画出来的部分为空，bb 原样回）。「不受裁剪」与「完全在外」两种情形 `folded` 都是
+    False，只有 `outside` 能区分——调用方（系列并集）据此排除完全被裁掉的成员，别靠比较
+    bbox 是否相等来猜。
+
+    **选中框 / 命中框 / 对齐吸附的参考框只该罩住看得见的墨迹。** 柱子从 y=0 画起而
+    `set_ylim(bottom=正数)` 时，`Rectangle.get_window_extent` 是**未裁剪**的整根柱，
+    选中框能从柱顶一直伸到图幅之外（2026-10 Windows 用户：分组柱状图的「柱 7」）。
+    裁剪的判据只有 `_clip_extents` 一处（`get_clip_on` 与 `get_clip_box` /
+    `get_clip_path` 两个维度）；`clip_on=False` 的不裁。
+
+    **只有 Patch（柱 / 色块 / 多边形）调它**：它们的框就是墨迹，折进去不丢任何东西。
+    曲线 / 散点 / 集合的 bbox 刻意保持**未裁剪的数据范围**——扁平线垫出来的可点宽度
+    不能被子图框削掉，预检 `test_manifest_clip_bbox` 的负对照也靠这个口径（摘掉
+    `clip_bbox` 后离群点必须重新被报）。离群曲线的选中框仍可能伸出图幅，见 PR 说明
+    「未验证范围」。
+
+    **画出来的部分为空**（整个元素落在裁剪框外，什么都看不见）时**不折**，原样回
+    `(bb, False, True)`：元素仍留在元素树里、仍可从那里选中与改属性，选中框如实指到它
+    数据所在的位置，好过塌成一个零面积的点（或让它从元素表里凭空消失）。命中不受影响
+    ——`geometry.clip` 本来就把裁剪框外的点判为不中。
+    """
+    ext = _clip_extents(artist)
+    if ext is None:
+        return bb, False, False
+    try:
+        x0, y0 = max(float(bb.x0), ext[0]), max(float(bb.y0), ext[1])
+        x1, y1 = min(float(bb.x1), ext[2]), min(float(bb.y1), ext[3])
+    except (AttributeError, TypeError, ValueError):
+        return bb, False, False
+    # 退化（扁平线正好压在裁剪边上）用 `<` 判：零厚度的交仍是「画出来的那条线」
+    if x1 < x0 or y1 < y0:
+        return bb, False, True
+    return Bbox.from_extents(x0, y0, x1, y1), True, False
+
+
 def _clip_bbox(artist, W: float, H: float):
     """元素的裁剪框（figure 分数、top-origin，与 bbox 同一套坐标）；不裁回 None。
 
-    **不改 `bbox`，另发一条事实。** bbox 同时是前端的命中框与选中高亮框，把它
-    换成「裁剪之后真正画出来的那部分」会连带改掉命中几何与写回自检比对的那个
-    框；而这里要回答的只有一个问题：导出时**图幅边界**处会不会静默丢内容。
-    两件事分开，消费者只有 `preflight` 的 `element-outside-figure` 一条。
+    **这是另一条事实，不是 bbox 的替身。** 这里回答的只有一个问题：导出时
+    **图幅边界**处会不会静默丢内容，消费者是 `preflight` 的 `element-outside-figure`
+    与 `interference`。bbox 自己则在登记处经 `_fold_into_clip` 折进同一个裁剪矩形
+    （选中框 / 命中框只罩画出来的那部分），两处共用 `_clip_extents` 一个判据。
 
     裁剪框把整幅图都包住时不发——那等于什么都没裁掉，发出去只是噪音。
     """
@@ -4757,6 +4832,11 @@ def _measure_manifest(
             entry["bbox"] = [x0 / W, 1.0 - y1 / H, (x1 - x0) / W, (y1 - y0) / H]
         elif isinstance(artist, SeriesGroup):
             boxes = []
+            # 完全被裁到框外的 Patch 成员：子元素自己的 bbox 保留数据位置（可选），但
+            # 不并入**系列**的并集——否则系列框又伸出轴外，而超过 MAX_MARKERS 时
+            # geometry 省略，前端正是拿这个并集矩形选中 / 命中。全部成员都在外时才退回
+            # 数据位置的并集（与单元素「全在外不折」同一取舍：框不塌成点、系列仍可选）
+            outside_boxes = []
             members = artist.artists if artist.kind == "bar_series" else artist.members()
             for m in members:
                 try:
@@ -4768,9 +4848,16 @@ def _measure_manifest(
                         else m.get_window_extent(renderer)
                     )
                     if bb is not None and (bb.width > 0 or bb.height > 0):
+                        if isinstance(m, Patch):
+                            bb, _folded, outside = _fold_into_clip(m, bb)
+                            if outside:
+                                outside_boxes.append(bb)
+                                continue
                         boxes.append(bb)
                 except Exception:
                     pass
+            if not boxes:
+                boxes = outside_boxes
             if not boxes:
                 _drop(el, "no_geometry")
                 continue
@@ -4887,6 +4974,9 @@ def _measure_manifest(
                     # 报进 `unsupported`，不许静默消失。
                     _drop(el, "no_geometry")
                     continue
+                if isinstance(artist, Patch):
+                    # 先折进裁剪框再垫（只有 Patch：柱 / 色块 / 多边形，它们的框就是墨迹）
+                    bb = _fold_into_clip(artist, bb)[0]
                 # 水平 / 垂直的扁平线（基线、参考线）单边为 0，垫成可点中的窄条
                 entry["bbox"] = _padded_bbox(bb, W, H, min_hit)
             except Exception:

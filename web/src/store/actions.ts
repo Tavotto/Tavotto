@@ -73,15 +73,16 @@ import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, us
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
+import { fastEditPanelOf, useWorkspaceStore } from './workspaceStore'
 import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
   panelAspectLocked,
   panelContentSize,
   panelRotation,
-  rotateVec,
   rotationSwaps,
 } from '@/types/document'
+import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
@@ -390,7 +391,11 @@ export function updateObjects(ids: string[], label: UiMessage, patch: (o: Canvas
 }
 
 export function deleteSelected() {
-  const ids = useSelectionStore.getState().ids
+  // 快速编辑里只删得到这一屏画着的那张图：选区里可能还挂着看不见的版面对象（进快编之前留下的、
+  // 图层面板点的），删掉它们 = 用户看不见的东西从版上消失（Codex #833）。删那张图本身照旧——
+  // 看得见、可撤销，对象没了快速编辑随之退出（`usePruneSelection` 的 `usable`）
+  const fe = fastEditPanelOf(useWorkspaceStore.getState())
+  const ids = useSelectionStore.getState().ids.filter((id) => fe === null || id === fe)
   if (!ids.length) return
   // 单选时把对象名（用户自己的内容，不翻译）插进去，多选才说数量——这是
   // **两句不同的话**，不是同一句的单复数：中文没有单数档（Intl.PluralRules
@@ -414,6 +419,10 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
+  // 快速编辑这一屏只画正在编辑的那张图：副本落在版面上、换掉选区，用户什么都看不见（Codex #833）。
+  // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里，判据只在这一处（与粘贴的
+  // `clipboard.consumePayload` 同一个 `fastEditPanelOf`）
+  if (fastEditPanelOf(useWorkspaceStore.getState())) return
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   // 克隆**必须**在 commit 的 recipe 外面做：recipe 里的 d 是 Immer 草稿，
@@ -505,8 +514,22 @@ export function revealObjects(ids: string[]) {
   if (bounds) useViewportStore.getState().revealRect(bounds)
 }
 
+/** 「全选」收进来的对象：看得见、没锁。判据只有这一份——`selectAll` 与画布菜单「全选」可不可用都读它 */
+export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
+
+/**
+ * 「全选」此刻收进来的 id：排版里是整版看得见、没锁的对象；**快速编辑里只有正在编辑的那张图**（它也得
+ * 过 `isSelectAllTarget`，否则什么都不选）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`
+ * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
+ */
+export function selectAllIds(objects: readonly CanvasObject[], fastEditPanel: string | null): string[] {
+  return objects
+    .filter((o) => isSelectAllTarget(o) && (fastEditPanel === null || o.id === fastEditPanel))
+    .map((o) => o.id)
+}
+
 export function selectAll() {
-  select(doc().objects.filter((o) => !o.hidden && !o.locked).map((o) => o.id))
+  select(selectAllIds(doc().objects, fastEditPanelOf(useWorkspaceStore.getState())))
 }
 
 /* ------------------------------- 文档切换 --------------------------------- */
@@ -1534,7 +1557,7 @@ function finishElementEntry(panelId: string, leftTab: 'elements' | 'keep'): bool
   const rail = leftTab === 'keep' ? ui.leftTab : 'elements'
   if (seeded) status(note('bakedSeeded', { count: seeded }), 'info')
   // 只说「进了图内编辑」；此刻是快速编辑还是画布排版，订阅方自己问 workspace store
-  // （这里不 import 它：`store/workspace` 已经 import 本模块，别绕成环）
+  // （本模块只许 import 叶子 `store/workspaceStore`，不许 import `store/workspace`：那边已经 import 本模块，别绕成环）
   emitActivity({ kind: 'figure.element_edit_entered' })
   // **焦点救援**：调用方多半是一个自己会被卸载的控件（画布工具条上那个
   // 「编辑图内元素」按钮点完就没了）。焦点掉回 body 之后 WebKit 的 Tab 与
@@ -2209,17 +2232,17 @@ export function rotatePanelDraft(o: PanelObject, next: PanelRotation): void {
  * 与画布上拖裁剪框、以及原来的「重置裁剪」是同一套语义。
  */
 export function applyCropDraft(o: PanelObject, next?: CropRect): void {
-  const rot = panelRotation(o)
   const cur = o.crop ?? { x: 0, y: 0, w: 1, h: 1 }
   const to = next ?? { x: 0, y: 0, w: 1, h: 1 }
   const content = panelContentSize(o)
   const fullW = content.w / cur.w
   const fullH = content.h / cur.h
-  // 可见区中心在完整图里挪了多少（内容空间 → 页面空间）
-  const [pdx, pdy] = rotateVec(
+  // 可见区中心在完整图里挪了多少（内容空间 → 页面空间：与画布画这张图同一个变换，先翻转再旋转——
+  // 只认旋转的话翻转面板上换取景 / 重置裁剪，整张图会跳到镜像那边去，#833）
+  const [pdx, pdy] = contentToPageVec(
+    panelContentTransform(o),
     (to.x + to.w / 2 - (cur.x + cur.w / 2)) * fullW,
     (to.y + to.h / 2 - (cur.y + cur.h / 2)) * fullH,
-    rot,
   )
   const cx = o.x + o.w / 2 + pdx
   const cy = o.y + o.h / 2 + pdy

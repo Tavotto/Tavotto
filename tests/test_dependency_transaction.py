@@ -420,7 +420,7 @@ class TestGenerations:
 # ===========================================================================
 def _prepare(project: Path, script: str = "figure.py", **kw) -> dict:
     plan = deprepair.create_joint_plan(project, script, **kw)
-    deprepair.prepare_async(plan.plan_id)
+    deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
     return wait_for(plan.plan_id)
 
 
@@ -438,7 +438,7 @@ class TestJointTransaction:
         assert plan.constraints == ()
         assert plan.needed_imports == (ALPHA[1], BETA[1], GAMMA[1])
         assert plan.joint["status"] == "ready"
-        deprepair.prepare_async(plan.plan_id)
+        deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
         assert rec["flow"] == "joint" and rec["committed"] is True
@@ -587,7 +587,7 @@ class TestJointTransaction:
 
         monkeypatch.setattr(deprepair, "pip_install_joint_argv", _slow)
         plan = deprepair.create_joint_plan(project, "figure.py")
-        deprepair.prepare_async(plan.plan_id)
+        deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         assert started.wait(60)
         time.sleep(0.3)
         assert deprepair.cancel_status(plan.plan_id) == {"accepted": True, "reason": ""}
@@ -701,8 +701,8 @@ class TestJointTransaction:
         )
         pa = deprepair.create_joint_plan(a, "figure.py")
         pb = deprepair.create_joint_plan(b, "figure.py")
-        deprepair.prepare_async(pa.plan_id)
-        deprepair.prepare_async(pb.plan_id)
+        deprepair.prepare_async(pa.plan_id, confirmed_impact=pa.impact_digest)
+        deprepair.prepare_async(pb.plan_id, confirmed_impact=pb.impact_digest)
         ra, rb = wait_for(pa.plan_id), wait_for(pb.plan_id)
         assert ra["state"] == deprepair.STATE_DONE and rb["state"] == deprepair.STATE_DONE
         assert managedenv.env_dir(a) != managedenv.env_dir(b)
@@ -795,7 +795,7 @@ class TestJointTransaction:
         plan = deprepair.create_plan(
             project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_MANAGED
         )
-        deprepair.install_async(plan.plan_id)
+        deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
         gen = rec["result"]["generation"]
@@ -833,7 +833,7 @@ class TestJointTransaction:
         payload = plan.to_payload()
         assert set(payload["requirements"]) == {ALPHA[0], BETA[0]}
         assert payload["joint"] is True and payload["network_required"] is True
-        deprepair.install_async(plan.plan_id)
+        deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
         # 进度记录带着真正装的全部包：进度行按它说
@@ -893,7 +893,7 @@ class TestJointTransaction:
         assert not plan.creates_environment and plan.widened is None
         assert [deprepair._name_of(r) for r in plan.requirements] == [GAMMA[1]]
         assert plan.to_payload()["joint"] is False
-        deprepair.install_async(plan.plan_id)
+        deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
         mpy = managedenv.python_of(project)
@@ -1092,7 +1092,7 @@ class TestProjectVenvTarget:
         )
         assert plan.requirements == (ALPHA[0],)
         assert plan.adapter == ()
-        deprepair.prepare_async(plan.plan_id)
+        deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
         assert rec["result"]["target_kind"] == deprepair.TARGET_PROJECT_VENV
@@ -1137,7 +1137,7 @@ class TestProjectVenvTarget:
 
 
 def _prepare_with(plan) -> dict:
-    deprepair.prepare_async(plan.plan_id)
+    deprepair.prepare_async(plan.plan_id, confirmed_impact=plan.impact_digest)
     return wait_for(plan.plan_id)
 
 
@@ -1165,7 +1165,7 @@ def test_stale_plan_is_refused_when_the_environment_changed(tmp_path, monkeypatc
     py.write_text("", encoding="utf-8")
     managedenv.activate(project, "gx")
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.prepare(plan.plan_id)
+        deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_PLAN_STALE
     assert deprepair.get_joint_plan(plan.plan_id) is None
 
@@ -1193,7 +1193,7 @@ def test_stale_plan_is_refused_when_the_target_packages_changed(tmp_path, monkey
     plan = deprepair.create_joint_plan(project, "figure.py")
     installed["tabulate"] = "0.9.0"  # 确认期间目标里多了一个包
     with pytest.raises(deprepair.RepairError) as err:
-        deprepair.prepare(plan.plan_id)
+        deprepair.prepare(plan.plan_id, confirmed_impact=plan.impact_digest)
     assert err.value.code == deprepair.ERROR_PLAN_STALE
     assert deprepair.get_joint_plan(plan.plan_id) is None
 
@@ -1397,7 +1397,9 @@ class TestJointMirrorProgress:
         plan = deprepair.create_joint_plan(project, "figure.py")
         assert plan.target_kind == deprepair.TARGET_MANAGED
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         _assert_mirror_surfaced(plan, events, wait_for(plan.plan_id), calls)
 
     def test_in_place_install_surfaces_the_mirror_at_the_top_of_the_joint_progress(
@@ -1410,5 +1412,7 @@ class TestJointMirrorProgress:
         assert plan.target_kind == deprepair.TARGET_PROJECT_VENV
         calls = _first_install_offline(monkeypatch)
         events: list[dict] = []
-        deprepair.prepare_async(plan.plan_id, on_event=events.append)
+        deprepair.prepare_async(
+            plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
+        )
         _assert_mirror_surfaced(plan, events, wait_for(plan.plan_id), calls)

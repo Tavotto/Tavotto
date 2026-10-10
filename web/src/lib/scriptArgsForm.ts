@@ -47,11 +47,27 @@ export interface ScriptArgsSchema {
   status: 'none' | 'complete' | 'partial' | 'unknown'
   reasons: string[]
   form_enabled: boolean
+  /** argparse `allow_abbrev`：false = 关；true / null / 缺 = 认长选项的唯一前缀缩写（说不准时宽松，宁可放过不错拦） */
+  allow_abbrev?: boolean | null
   parse_call: string | null
+  /** 声明了像负数的选项名（3.14 之前的文法：`^-\d+$|^-\d*\.\d+$`） */
   negative_number_options: boolean
+  /** 同上，按 3.14 起的文法（`-\.?\d`）；老后端没有这个键 = 当作与上一项相同 */
+  negative_number_options_extended?: boolean
+  /** worker 的 Python 版本（项目记住的事实，如 `3.14.7`）；不知道 = null / 缺省 → 取较窄的旧文法 */
+  python_version?: string | null
   arguments: ScriptArgument[]
   exclusive_groups: { id: string; required: boolean; members: string[] }[]
-  subcommands: { dest: string | null; required: boolean; choices: string[]; dynamic: boolean } | null
+  subcommands: {
+    dest: string | null
+    required: boolean
+    choices: string[]
+    dynamic: boolean
+    /** `add_subparsers` 之前已声明的位置参数个数；老后端没有 = 不预留（宁可放过不错拦） */
+    position?: number
+    /** 在 if / try 分支里声明（运行时可能不存在）：不拿它当运行闸 */
+    conditional?: boolean
+  } | null
 }
 
 type Style = 'separate' | 'equals' | 'attached' | 'flag'
@@ -108,14 +124,38 @@ export type EditError =
 
 export type EditResult = { ok: true; tokens: string[] } | { ok: false; error: EditError }
 
-const NEGATIVE = /^-\d+$|^-\d*\.\d+$/
+/**
+ * argparse 的 `_negative_number_matcher`，按 CPython 源码逐字（本机实测 `ArgumentParser()._negative_number_matcher.pattern`）：
+ * - Python <= 3.13（3.13.13 / 3.12.12 / 3.11.14）：`^-\d+$|^-\d*\.\d+$`
+ * - Python 3.14（3.14.7）：`-\.?\d`（`.match`，无结尾锚：`-1e3` / `-.5` / `-1.` / `-1_0` / `-1j` / `-1abc` 都算）
+ * Python 的 `\d` 是 Unicode 十进制数字（`\p{Nd}`）；`$` 也匹配结尾换行之前。后端同形：`scriptargs.NEGATIVE_NUMBER_*`。
+ */
+const NEGATIVE_LEGACY = /^-\p{Nd}+(?:\n)?$|^-\p{Nd}*\.\p{Nd}+(?:\n)?$/u
+const NEGATIVE_EXTENDED = /^-\.?\p{Nd}/u
+
+/** 3.14 起的文法？版本不明时取旧文法：旧文法认的负数是新文法的子集，不确定时把更多 token 当选项只会让表单更保守
+ *（拒绝写入、退回原始 token 编辑），反过来则会写出 3.13 的 parser 当选项吃掉的 token（运行时才报错）。 */
+export const usesExtendedNegativeGrammar = (schema: Pick<ScriptArgsSchema, 'python_version'>): boolean => {
+  const m = /^\s*(\d+)\.(\d+)/.exec(schema.python_version ?? '')
+  if (!m) return false
+  const major = Number(m[1])
+  return major > 3 || (major === 3 && Number(m[2]) >= 14)
+}
+
+export const looksLikeNegativeNumber = (schema: ScriptArgsSchema, token: string): boolean =>
+  (usesExtendedNegativeGrammar(schema) ? NEGATIVE_EXTENDED : NEGATIVE_LEGACY).test(token)
+
+const hasNegativeLookingOptions = (schema: ScriptArgsSchema): boolean =>
+  usesExtendedNegativeGrammar(schema)
+    ? (schema.negative_number_options_extended ?? schema.negative_number_options)
+    : schema.negative_number_options
 
 const byId = (schema: ScriptArgsSchema) => new Map(schema.arguments.map((a) => [a.id, a]))
 
 /** argparse 会不会把这个 token 当成选项（`_parse_optional` 的前几条判据）。 */
 export const looksLikeOption = (schema: ScriptArgsSchema, token: string): boolean => {
   if (token.length < 2 || token[0] !== '-') return false
-  if (NEGATIVE.test(token) && !schema.negative_number_options) return false
+  if (looksLikeNegativeNumber(schema, token) && !hasNegativeLookingOptions(schema)) return false
   return true
 }
 
@@ -146,6 +186,25 @@ interface Scan {
   doubleDash: number
 }
 
+/**
+ * argparse 的长选项缩写：`--inp x` 是 `--input x`（唯一前缀才算；有歧义 argparse 自己会报错，这里当不认识）。
+ * `allow_abbrev === false` 不缩写。回展开后的 token（保留 `=值` 部分）；不是缩写原样回。
+ */
+const expandAbbrev = (
+  schema: ScriptArgsSchema,
+  exact: Map<string, { arg: ScriptArgument; negated: boolean }>,
+  token: string,
+): string => {
+  if (schema.allow_abbrev === false || !token.startsWith('--') || token === '--') return token
+  const eq = token.indexOf('=')
+  const name = eq > 0 ? token.slice(0, eq) : token
+  if (exact.has(name)) return token
+  const hits = [...exact.entries()].filter(([flag]) => flag.startsWith('--') && flag.startsWith(name))
+  const keys = new Set(hits.map(([, v]) => `${v.arg.id}|${v.negated}`))
+  if (keys.size !== 1) return token
+  return hits[0][0] + (eq > 0 ? token.slice(eq) : '')
+}
+
 const scan = (schema: ScriptArgsSchema, tokens: string[]): Scan => {
   const { exact } = indexOptions(schema)
   const occurrences = new Map<string, Occurrence[]>()
@@ -160,7 +219,8 @@ const scan = (schema: ScriptArgsSchema, tokens: string[]): Scan => {
 
   let i = 0
   while (i < tokens.length) {
-    const t = tokens[i]
+    const raw = tokens[i]
+    const t = expandAbbrev(schema, exact, raw)
     if (doubleDash >= 0) {
       positionalIdx.push(i)
       i += 1
@@ -336,16 +396,98 @@ export const readTokens = (schema: ScriptArgsSchema, tokens: string[]): TokenVie
   return { fields, unattributed, positionalsCertain: mappable, doubleDash: s.doubleDash }
 }
 
-/** 必填但 token 里没有的参数（default 不算答案）。位置参数读不准时不算缺（不知道）。 */
-export const missingRequired = (schema: ScriptArgsSchema, view: TokenView): string[] => {
-  const out: string[] = []
+/**
+ * 必选子命令（`add_subparsers(required=True)`）token 里没选。只在**位置 token**里认（`scan` 已把已知选项的值认走：
+ * `--output plot` 里的 `plot` 是值，不算选了子命令；`--` 之后全是位置）。`choices` 里任一名字出现 = 选了；名字不可枚举（动态）
+ * 时任何位置 token 都算。没认到、但出现过不认识的选项（它吃不吃后面的 token 说不清）= 拿不准，当选了，不拦用户。
+ */
+export const subcommandMissing = (schema: ScriptArgsSchema, tokens: string[]): boolean => {
+  const sub = schema.subcommands
+  if (!sub || !sub.required) return false
+  const s = scan(schema, tokens)
+  let positional = s.positionalIdx.map((j) => tokens[j])
+  // 子命令前面的位置参数先吃位置 token：先预留各自的最少个数（定长 n、`+` 1），`*` `?` 预留 0；其余 token 才可能是子命令名。
+  // 变长的可能多吃，所以超出最少个数的部分仍按「拿不准就当选了」处理；arity 说不清（自定义 / REMAINDER）= 不预留
+  const reserve = positionalArgs(schema)
+    .slice(0, sub.position ?? 0)
+    .reduce((n, a) => {
+    if (typeof a.arity === 'number') return n + a.arity
+    return n + (a.arity === '+' ? 1 : 0)
+  }, 0)
+  positional = positional.slice(reserve)
+  const chosen =
+    !sub.dynamic && sub.choices.length > 0 ? positional.some((t) => sub.choices.includes(t)) : positional.length > 0
+  if (chosen) return false
+  return s.unknown.length === 0
+}
+
+export interface MissingRequirements {
+  /** 必填但没给的参数 id（都在 `schema.arguments` 里） */
+  args: string[]
+  /** 必选互斥组一个成员都没给的组 id（都在 `schema.exclusive_groups` 里） */
+  groups: string[]
+  /** 必选子命令没选（仅在传了 `tokens` 时判） */
+  subcommand: boolean
+  /** 三类合计：准备卡的运行闸只看这个数 */
+  count: number
+}
+
+/**
+ * 还缺的必填项（default 不算答案），分类型给：消费者各取所需，不会把组 id 当参数 id 去查表。位置参数读不准时不算缺（不知道）。
+ * **所有「还缺必填」的判断都走这里**（表单高亮与准备卡的运行闸同源）。
+ */
+/** 让「token 里没出现 = 没给」不成立的表单关闭理由（和 `subcommands` 不同：子命令只是把后面的 token 交给子 parser）。 */
+const OPAQUE_BLOCKERS = new Set([
+  'fromfile',
+  'prefix_chars',
+  'parents',
+  'explicit_parse_args',
+  'multiple_parsers',
+  'unresolved_parse_call',
+  'no_parse_call',
+  'remainder',
+])
+
+export const missingRequirements = (
+  schema: ScriptArgsSchema,
+  view: TokenView,
+  tokens?: string[],
+): MissingRequirements => {
+  // 表单关着（子命令 / parents 等）时位置参数读不准、条件式参数也说不清：只认**非位置、非条件**的必填选项与
+  // 全由它们组成的必选互斥组；其余当不确定、不拦。这样准备卡的运行闸只有这一个入口
+  // 参数可能走带外通道 / 解析规则说不清（`@文件` 响应文件、非 `-` 选项前缀、写死的 argv、`parents` 继承的选项、多个 / 找不到的
+  // parser、REMAINDER 吞一切）：token 里没出现不代表没给——什么都不拦（宁可放过，不错拦）
+  if (!schema.form_enabled && (schema.reasons ?? []).some((r) => OPAQUE_BLOCKERS.has(r))) {
+    return { args: [], groups: [], subcommand: false, count: 0 }
+  }
+  // 条件式声明（if / try 分支里加的参数、分支里的 add_subparsers）运行时可能根本不存在：无论表单开没开都不当运行闸
+  // （宁可放过，不错拦）。表单仍可以显示这些字段，只是不计入「还缺」
+  const reliable = (id: string): boolean => {
+    const a = schema.arguments.find((x) => x.id === id)
+    if (!a || a.conditional) return false
+    return schema.form_enabled || !a.positional
+  }
+  const args: string[] = []
   for (const arg of schema.arguments) {
     const f = view.fields[arg.id]
-    if (arg.required !== true || !f || f.uncertain) continue
-    if (f.state === 'unset' || f.incomplete) out.push(arg.id)
+    if (arg.required !== true || !f || f.uncertain || !reliable(arg.id)) continue
+    if (f.state === 'unset' || f.incomplete) args.push(arg.id)
   }
-  return out
+  const groups: string[] = []
+  for (const g of schema.exclusive_groups) {
+    if (!g.required) continue
+    const fs = g.members.map((m) => view.fields[m])
+    if (fs.some((f) => !f || f.uncertain) || !g.members.every(reliable)) continue
+    // 成员只写了选项名、值还没给（incomplete）不算答案：运行时 argparse 会报缺值
+    if (fs.every((f) => f.state === 'unset' || f.incomplete)) groups.push(g.id)
+  }
+  const subcommand = tokens !== undefined && !schema.subcommands?.conditional && subcommandMissing(schema, tokens)
+  return { args, groups, subcommand, count: args.length + groups.length + (subcommand ? 1 : 0) }
 }
+
+/** 只要参数 id 的消费者（表单的「还缺」一行）用这个；组与子命令另有各自的提示（`groupProblems` 等）。 */
+export const missingRequired = (schema: ScriptArgsSchema, view: TokenView): string[] =>
+  missingRequirements(schema, view).args
 
 /** 互斥组：两个以上成员同时给了（冲突）/ 必选组一个都没给（缺）。只提示，不替用户删 token。 */
 export const groupProblems = (
@@ -359,7 +501,7 @@ export const groupProblems = (
       return s !== undefined && s !== 'unset'
     })
     if (set.length > 1) out.push({ id: g.id, problem: 'conflict', members: set })
-    else if (g.required && set.length === 0) out.push({ id: g.id, problem: 'missing', members: g.members })
+    else if (g.required && !set.some((m) => !view.fields[m]?.incomplete)) out.push({ id: g.id, problem: 'missing', members: g.members })
   }
   return out
 }

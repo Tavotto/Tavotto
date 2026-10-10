@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
-from . import deprepair, pool, preparation, registry, scriptargs
+from . import deprepair, pool, preparation, registry, scriptargs, taskdiag
 from .preparation import TARGET_SCRIPT
 
 LOG = logging.getLogger("tavotto.prepsession")
@@ -168,6 +168,14 @@ class SessionError(Exception):
 # ---------------------------------------------------------------- 检查（纯函数，吃计划）
 
 
+def _finalize_failure_code(fin: dict) -> str:
+    """finalizer 失败的稳定码：嵌套 `error.code`（`register_probed` 原样形状）优先，其次顶层 `code`
+    （`_finalize_script_attempt` 展平后的形状），都没有才是 `registration_failed`。"""
+    err = fin.get("error")
+    nested = err.get("code") if isinstance(err, dict) else None
+    return str(nested or fin.get("code") or "registration_failed")
+
+
 def _check(check_id: str, status: str, code: str = "", **detail) -> dict:
     out = {"id": check_id, "status": status}
     if code:
@@ -187,7 +195,10 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
     env_error = env.get("error")
     checks: list[dict] = [_check("target", CHECK_OK)]
     decision = ((env.get("recommendation") or {}).get("decision")) or {}
-    if env_error:
+    if env_error and env.get("project_check_pending"):
+        # 没有默认解释器，但项目自带的环境等用户点「运行」才体检（Codex #820 r4233563595）：不先报"没有 Python"
+        checks.append(_check("environment", CHECK_OK, deferred="project_environment"))
+    elif env_error:
         checks.append(_check("environment", CHECK_BLOCKED, str(env_error.get("code") or "")))
     elif decision.get("needs_decision"):
         # T05：项目里有自己的环境线索而用户还没决定用哪个——这不是机器的决定。建议在 requirements 里，
@@ -229,6 +240,8 @@ def checks_of(plan: preparation.PreparationPlan) -> list[dict]:
                 **({"impact_digest": digest} if digest else {}),
             )
         )
+    elif (offer or {}).get("project_check_pending"):
+        checks.append(_check("dependencies", CHECK_OK, deferred="project_environment"))
     elif offer is None:
         # 工作目录要先答 / 环境走不通时依赖没有被评估——如实 unknown，不虚构已满足
         checks.append(_check("dependencies", CHECK_UNKNOWN))
@@ -376,7 +389,12 @@ def requirements_of(
                     "code": _ARGUMENTS_CODE,
                     "blocking": False,
                     "payload": {
-                        "schema": schema,
+                        # 计划那一刻 worker 的 Python 版本（项目记住的事实；没有 = 前端取较窄的负数规则）
+                        "schema": {
+                            **schema,
+                            "python_version": (plan.environment or {}).get("python_version")
+                            or None,
+                        },
                         # 这次检查用的配置：只有个数与本机引用（参数值不进报告）；表单写回的是前端草稿里的 token
                         "argv_count": len(plan.run.argv) if plan.run is not None else 0,
                         "run_config": plan.run.config_id if plan.run is not None else None,
@@ -492,7 +510,7 @@ def derive(facts: dict) -> dict:
         return _result(
             PHASE_PARTIAL,
             OUTCOME_FAILED,
-            code=str(finalize.get("code") or "registration_failed"),
+            code=_finalize_failure_code(finalize),
             finished=True,
             captured=True,
         )
@@ -758,18 +776,7 @@ class SessionService:
             existing = self._by_key.get(key)
             if existing is not None and self._active(existing):
                 return existing, False
-        plan = preparation.plan_for(
-            project_id=project_id,
-            project_root=project_root,
-            asset_id=target.get("asset_id") or "",
-            stem=target.get("stem") or "",
-            script=target.get("script"),
-            entry=target.get("entry"),
-            original_artifact=target.get("original_artifact"),
-            original_path=target.get("original_path"),
-            target=target["kind"],
-            **({"run": target["run"]} if target.get("run") is not None else {}),
-        )
+        plan = self._plan_of(project_id, project_root, target)
         fingerprint = _fingerprint(plan)
         now = self._clock()
         created = False
@@ -807,6 +814,21 @@ class SessionService:
                     }
         self._notify(sess)
         return sess, created
+
+    @staticmethod
+    def _plan_of(project_id: str, project_root: str, target: dict) -> preparation.PreparationPlan:
+        return preparation.plan_for(
+            project_id=project_id,
+            project_root=project_root,
+            asset_id=target.get("asset_id") or "",
+            stem=target.get("stem") or "",
+            script=target.get("script"),
+            entry=target.get("entry"),
+            original_artifact=target.get("original_artifact"),
+            original_path=target.get("original_path"),
+            target=target["kind"],
+            **({"run": target["run"]} if target.get("run") is not None else {}),
+        )
 
     # ---- 动作 ----
     def act(
@@ -901,25 +923,27 @@ class SessionService:
     ) -> tuple[bool, tuple[_DepAttempt, dict] | None]:
         """会话锁内：核对修订（调用方已做）→ 核对回显的影响摘要 → 失效检查 → 认领动作 → 交给 `deprepair`。
         比较—消费—提交副作用之间没有无保护窗口；重复点击 / 另一个标签页走 `act` 里的幂等分支，不会到这里。"""
-        if echoed is not None and echoed != action.impact_digest:
+        # 任何会装包的动作（受管 / 项目 venv / 私有 Python / 用户自己的环境……）都必须由**调用方**回显它看到的
+        # 影响摘要；服务端持有的 `action.impact_digest` 只用来比对，绝不替调用方填进执行器（Codex r4218802478）
+        if not isinstance(echoed, str) or not echoed:
+            raise SessionError(
+                ERROR_IMPACT_UNCONFIRMED,
+                "执行依赖准备需要带上你看到的影响摘要（impact_digest）才能确认",
+                400,
+                {"field": "impact_digest"},
+            )
+        if echoed != action.impact_digest:
             # 调用方看到的不是这个动作现在的影响（读了旧报告）：动作本身仍有效，不标失效；把现在的影响交回去
             raise self._impact_changed(
                 sess,
                 {"impact": action.impact_core, "impact_digest": action.impact_digest},
                 stale=False,
             )
-        if action.impact.get("modifies_user_environment") and echoed is None:
-            raise SessionError(
-                ERROR_IMPACT_UNCONFIRMED,
-                "这会直接修改你自己的 Python 环境，需要带上你看到的影响摘要（impact_digest）才能确认",
-                400,
-                {"field": "impact_digest"},
-            )
         if self._has_active_attempt(sess):
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
         if prepare is None:
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话不能起依赖准备", 409)
-        stale = preparation.stale_reason(sess.plan)
+        stale = preparation.stale_reason(sess.plan, source=False)
         if stale is not None:
             sess.stale = {"reason": stale[0]}
             sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
@@ -942,7 +966,7 @@ class SessionService:
             got = prepare(
                 project_root=sess.project_root,
                 script=sess.plan.script,
-                digest=action.impact_digest,
+                digest=echoed,
                 target_kind=action.target_kind,
                 module=action.module,
                 scope_policy=action.scope_policy,
@@ -1152,15 +1176,52 @@ class SessionService:
                 except Exception:  # noqa: BLE001 — 线程里不许静默死掉，如实记
                     LOG.exception("登记捕获结果失败 %s", done_plan.script)
                     fin = {"registered": False, "code": "registration_failed"}
+                if isinstance(fin, dict) and fin.get("registered") is False:
+                    # 任务诊断在 `_finish` 时已按「执行成功」冻成 ready；构建后的登记失败是终局之后的事，
+                    # 补记成失败 + 稳定码，否则 recent_runs / 单次诊断都会把它读成 ready
+                    taskdiag.STORE.amend_post_terminal_failure(
+                        done_plan.project_id,
+                        taskdiag.KIND_PREPARATION,
+                        done_plan.plan_id,
+                        _finalize_failure_code(fin),
+                    )
             missing = None
             try:
                 missing = self._observe_missing(sess, done_plan, done_result)
             except Exception:  # noqa: BLE001 — 差异计划算不出来不能影响这次尝试的终局
                 LOG.exception("缺包差异计划失败 %s", done_plan.script)
+            # 点「运行」时体检了项目自带的环境，跑不了这个脚本：回到常规的「需要安装」。新计划在锁外先算好，再和"尝试收尾"
+            # 在**同一把锁里**一起落地——读者不会看到"尝试已结束、报告却还是旧的『可运行』"的中间态（否则用户能对着同一个
+            # 跑不了的环境再点一次运行）
+            refresh = None
+            if (
+                (sess.plan.dependency_preparation or {}).get("project_check_pending")
+                and done_result.status == preparation.STATUS_NEEDS_INPUT
+                and (done_result.required_input or {}).get("code") == _DEPENDENCY_CODE
+            ):
+                try:
+                    refresh = self._plan_of(sess.project_id, sess.project_root, sess.target)
+                except Exception:  # noqa: BLE001 — 刷新失败不改这次尝试的终局
+                    LOG.exception("运行后重新检查失败 %s", done_plan.script)
             with sess.lock:
+                if done_plan.interpreter != sess.plan.interpreter:
+                    # 点「运行」时采用了项目环境，执行线程就地重算了计划：会话的计划跟上（不加修订——这次尝试的结局
+                    # 仍属于当前修订），之后的检查 / 再次运行读到的是已采用的环境
+                    sess.plan = done_plan
+                    sess.fingerprint = _fingerprint(done_plan)
                 attempt.finalize = fin
                 attempt.missing = missing
                 attempt.finalized = True
+                if refresh is not None:
+                    sess.plan = refresh
+                    sess.fingerprint = _fingerprint(refresh)
+                    sess.config_revision += 1
+                    sess.stale = None
+                    sess.actions = {
+                        k: v
+                        for k, v in sess.actions.items()
+                        if v.kind in (ACTION_RUN, ACTION_PREPARE) and v.attempt_id
+                    }
             self._notify(sess)
 
         # A new action after a settled attempt is an explicit rerun. The provider
@@ -1190,6 +1251,7 @@ class SessionService:
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
         with sess.lock:
             sess.touched_at = self._clock()
+            self._note_source_change(sess)
             found = self._current_attempt(sess)
             checks = checks_of(sess.plan)
             # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
@@ -1313,6 +1375,22 @@ class SessionService:
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
+
+    def _note_source_change(self, sess: Session) -> None:
+        """脚本在检查之后被改了：披露过的影响（`script_writes` / 参数个数……）不再是真的。没有尝试在进行时，
+        提前把会话标失效、撤掉未认领的动作（等 `recheck` 重新披露）；认领时 `preparation.stale_reason` 仍会
+        再核一次（这里只是不再把过期的 `run` 摆给用户看）。"""
+        plan = sess.plan
+        if sess.stale or plan.script_revision is None or self._has_active_attempt(sess):
+            return
+        if sess.attempts and sess.attempts[-1].config_revision == sess.config_revision:
+            return  # 这一修订已经跑过：之后的源码改动（如写回）不回头改写它的结局；下一次 `run` 认领时仍会核
+        now = preparation._script_revision(plan.project_root, plan.script) or ""
+        # 只在披露得出的东西（schema 摘要）变了时提前撤：与依赖无关的字节改动不撤销已给出的授权（C03/C05），
+        # 但认领 `run` 时字节也核（执行的就是那份字节）
+        if now.partition(":")[2] != plan.script_revision.partition(":")[2]:
+            sess.stale = {"reason": preparation.STALE_SOURCE}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
 
     def get(self, session_id: str, project_id: str) -> Session | None:
         with self._lock:

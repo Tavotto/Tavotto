@@ -172,7 +172,13 @@
   * 几何权威缺席（上一段的渲染还没回来）时不建 `InFigureMove`、不写文档，只记位移，权威挂上画面
     （`displayedExactManifest`）再动；被要求立刻收尾就放弃。
   * 焦点：输入框 / 对话框、控件已 `preventDefault` 的键、ARIA 复合控件（listbox / tree / radiogroup /
-    menu / slider …，`useKeyboard.arrowOwnedByWidget`）归它们；`toolbar` 不在此列。
+    menu / slider …，`useKeyboard.arrowOwnedByWidget`）归它们；`toolbar` 不在此列——画布底部的浮动工具条
+    （2026-10-07）自己按 ARIA toolbar 模式认领方向键（`preventDefault`，于是走的是「控件已处理」那一条），
+    但鼠标点它**不拿焦点**，点完「选择」接着按方向键照样是微调；标注下拉同理——鼠标打开、点「插入形状」后焦点回到打开前
+    那里，不落回触发器（`Menu.pointerKeepsFocus`；键盘打开的照旧回触发器，Codex #833）；选中浮动栏（ContextBar）不做方向键漫游。
+  * 选中框手柄（2026-10-07 设计审计 §10.1）：8px 视觉 + 16px 透明命中层（稳定钩子挂在命中层上）+ 沿边的
+    命中带（`OverlaySvg.EdgeStrips`，整条边除去两端手柄都能改那一边）；图内元素 / 组框的手柄与命中带一样经
+    `guardStale` 包装。看护 `canvas/overlayGrammar.test.tsx`、`canvas/nudgeThenPointer.test.tsx`。
   看护：`canvas/arrowNudge.test.tsx`、`canvas/nudgeThenPointer.test.tsx`、`e2e/arrow-nudge.spec.ts`、`canvas/groupLockDrag.test.ts`。
 
 - **拖不动要说出来（ADR 0100，2026-09-27 拖动全族排查）**：`inFigureMoveOf` 回 null 的元素，
@@ -186,6 +192,22 @@
   带着写同样的位移（SVG 里嵌在宿主 `<g>` 里，不单独预览）；没挪过的由定位器带着走，不多写一条。
   沿 `inset_of` 走完嵌套的插图，连同插图里挪过的后代与插图的随行色条轴。
   看护 `canvas/dragCoverage.test.tsx`、`e2e/drag-coverage.spec.ts`。
+
+- **翻转 / 旋转面板上的图内几何只有一个变换（#832 / #833 评审，2026-10-07）**：PanelView 画这张图是
+  `lib/panelTransform` 的 `panelContentTransform`——先在内容空间翻转、再绕中心旋转。叠在图上、或把屏幕位移
+  折回内容的每一处都从同一份取，不许只认旋转：覆盖层（`ElementBoxes` / `PreviewLines` 的 `<g transform>`）走
+  `canvas/elementGeometry.elementOverlayTransform`（= `panelTransformSvg`）；页面 mm 上的元素框与位移
+  （`MeasureChip`、问题标记该接的也是它）走 `elementRectOnPage` / `elementDeltaOnPage`；点选（PanelView `frac`）、
+  指针拖动（`contentDelta`）、方向键（`nudge.ts` 的 `toFrac`）走 `pageToContentVec`；画布标注吸图内中心线
+  （`elementSnapCandidates`）走 `contentToPageVec`。只认旋转的后果：翻转面板上选中框停在镜像处、点到的是
+  镜像处的元素、往右拖 / 按 → 元素在画面上往左走。图内拖动的吸附与混排对齐仍在旋转 / 翻转时整个关掉（上面 ⑤）。
+  手柄的**方位**同理：图内元素框的手柄按内容方位摆、整组跟着翻转 / 旋转，光标按它在画面上的方位给
+  （`elementGeometry.contentDirOnPage`，翻转面板上内容的东北角画在西北）；裁剪框的手柄按画面方位摆，拖它改的是
+  内容里哪条边走 `pageDirInContent`，位移走 `pageToContentVec`，整图锚点与重算包围盒的偏移走 `contentToPageVec`
+  ——属性页的换取景 / 重置裁剪（`applyCropDraft`）同一个变换，与 `lib/figureFrame` 一致：完整图在画布上纹丝不动。
+  看护 `canvas/flippedElementOverlay.test.tsx`（真 PanelView + OverlaySvg，两份 transform 字符串各自解析比对；含手柄光标、裁剪框）、
+  `store/cropFlip.test.ts`、
+  `lib/panelTransform.test.ts`、`canvas/measureChip.test.tsx`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

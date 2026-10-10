@@ -207,3 +207,92 @@ describe('科学文本解释', () => {
 function mmPxOf(el: HTMLElement): number {
   return parseFloat(el.style.fontSize)
 }
+
+/**
+ * 编辑态的插入点与占位（2026-10-07 设计审计 §10.1）：插入点是界面的 accent，不跟正文颜色；空着时有一句占位，
+ * 只在 ::before 里（`data-placeholder`），不进正文。主语：编辑态那个 div 的内联 style 与 data 属性。
+ */
+describe('TextView 编辑态的插入点与占位', () => {
+  it('编辑时：caret 是 accent、带占位；不编辑时两样都没有', () => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj())
+    })
+    const obj = () => useDocumentStore.getState().doc.objects[0] as TextObject
+    act(() => root.render(<TextView obj={obj()} />))
+    const el = () => container.querySelector<HTMLElement>('div')!
+    expect(el().style.caretColor).toBe('')
+    expect(el().dataset.placeholder).toBeUndefined()
+    act(() => useUiStore.setState({ editingTextId: 't1' }))
+    act(() => root.render(<TextView obj={obj()} />))
+    expect(el().style.caretColor).toBe('var(--color-accent)')
+    expect(el().dataset.placeholder).toBe('输入文字')
+    expect(el().textContent, '占位不进正文').toBe('')
+    expect(el().hasAttribute('data-empty')).toBe(true)
+  })
+
+  it('打字后不算空；全选删掉只剩浏览器留下的 <br> 时又算空（不靠 :empty）', () => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj())
+    })
+    const obj = () => useDocumentStore.getState().doc.objects[0] as TextObject
+    act(() => useUiStore.setState({ editingTextId: 't1' }))
+    act(() => root.render(<TextView obj={obj()} />))
+    const el = () => container.querySelector<HTMLElement>('div')!
+    act(() => {
+      el().textContent = 'a'
+      el().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(el().hasAttribute('data-empty')).toBe(false)
+    act(() => {
+      el().replaceChildren(document.createElement('br'))
+      el().dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(el().matches(':empty'), '留着 <br>，:empty 不命中').toBe(false)
+    expect(el().hasAttribute('data-empty')).toBe(true)
+  })
+})
+
+/**
+ * 改字时的文字选区（Codex P2，PR #834 两轮）：全局 `::selection` 是界面的（半透明 accent tint + 界面 ink）。页面底色（CanvasPage）
+ * 与文字框底色（`obj.bg`）都是用户定的：深底上换 paper-ink 是深字压深底，中灰上 tint 配哪种纸墨都到不了 4.5:1。
+ * 主语：编辑态那个 div 上 `selection:*` 落到的那对 token（不透明的选区底 + 配它的纸墨）——由「这段字实际坐在什么上」
+ * （obj.bg → 页面底色 → 纸）挑。token 合成后的对比度在 tokenContrast.test 量。
+ */
+describe('TextView 纸上的文字选区按实际的底取', () => {
+  const selection = (over: Partial<TextObject>, page?: { bg?: string; transparent?: boolean }) => {
+    useDocumentStore.getState().silent((d) => {
+      if (page) Object.assign(d.page, page)
+      d.objects.push(textObj({ text: 'Fig. 1', ...over }))
+    })
+    useUiStore.setState({ editingTextId: 't1' })
+    act(() => root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />))
+    const cls = container.querySelector<HTMLElement>('div')!.className
+    return [...cls.matchAll(/(?:^|\s)selection:((?:bg|text)-[\w-]+)(?=\s|$)/g)].map((m) => m[1]).sort()
+  }
+  const LIGHT = ['bg-paper-selection', 'text-paper-ink']
+  const DEEP = ['bg-paper-selection-deep', 'text-paper']
+
+  it('文字框自己是深底（#000）、字是浅色：深的选区配纸色的字，不是深字', () => {
+    expect(selection({ color: '#f5f5f5', bg: '#000000' })).toEqual(DEEP)
+  })
+
+  it('文字框没底、页面底色是深色：跟着页面底色走', () => {
+    expect(selection({ color: '#f5f5f5' }, { bg: '#101820' })).toEqual(DEEP)
+  })
+
+  it('中灰（#7d7d7d）上也自己定底：不靠半透明 tint', () => {
+    expect(selection({ bg: '#7d7d7d' })).toEqual(LIGHT)
+  })
+
+  it('文字框的浅底压在深色页面上：以文字框自己的底为准', () => {
+    expect(selection({ bg: '#FFFFFF' }, { bg: '#000000' })).toEqual(LIGHT)
+  })
+
+  it('白纸：浅的选区配纸上的墨', () => {
+    expect(selection({})).toEqual(LIGHT)
+  })
+
+  it('页面设了深色但标成透明：画的是浅棋盘格，按纸算', () => {
+    expect(selection({}, { bg: '#000000', transparent: true })).toEqual(LIGHT)
+  })
+})

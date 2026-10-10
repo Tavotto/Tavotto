@@ -21,7 +21,7 @@ import { card, expectPageNotShifted, openDetails, pill, primary, workPanelRect }
 
 
 interface Run {
-  event: 'start' | 'done'
+  event: 'start' | 'gate' | 'done'
   argv?: string[]
   values?: number[]
   choice?: string
@@ -65,6 +65,7 @@ function script(log: string, hold: string, readsData: boolean): string {
     '    choice = input("order: ").strip()',
     '    if choice == "2":',
     '        values = values[::-1]',
+    '    note("gate")  # input 已答完，接下来停在闸门上：测试以此判「脚本真的停在闸门上」',
     '    deadline = time.time() + 90',
     '    while os.path.exists(HOLD) and time.time() < deadline:',
     '        time.sleep(0.1)',
@@ -90,8 +91,9 @@ test('首跑闭环：只有脚本与数据 → 页面不下移、右下卡自动
   mkdirSync(path.join(project, 'data'), { recursive: true })
   writeFileSync(path.join(project, 'tools', 'plot.py'), script(log, path.join(root, 'HOLD'), true), 'utf-8')
   writeFileSync(path.join(project, 'data', 'values.txt'), '3 1 4\n', 'utf-8')
+  let a: Awaited<ReturnType<typeof app>> | undefined
   try {
-    const a = await app({ figures: project })
+    a = await app({ figures: project })
     await page.setViewportSize({ width: 1400, height: 900 })
     const sessions: string[] = []
     page.on('request', (r) => {
@@ -164,7 +166,13 @@ test('首跑闭环：只有脚本与数据 → 页面不下移、右下卡自动
     ])
     await expectPageNotShifted(page)
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    // 先等应用真正退出再删目录：Windows 上 worker 还握着项目目录时 rmSync 会 EBUSY；清理报错不许盖住主失败
+    await a?.stop().catch(() => undefined)
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    } catch (err) {
+      console.warn(`cleanup failed: ${String(err)}`)
+    }
   }
 })
 
@@ -256,7 +264,27 @@ test('恢复：收起卡片换展示面、HTTP 断开后台照跑、应用重启
     // （以前这里写成「复用或再问一次都行」，再按某一刻读到的 running|input 分支：input 晚于 running 到来时就走错分支，
     // 停在问题上去点「停止」——这条用例在 T12 之后的「本机稳定红」就是这个竞态 + 每次重启换数据目录）
     const state = card(page)
-    await expect.poll(() => starts(log), { timeout: 120_000 }).toBe(2) // 脚本真的开跑了（停在闸门上）
+    // 判据是脚本自己写的 gate 行（input 答完之后才写）：starts==2 只说明脚本开跑，不说明已停在闸门上；
+    // 若回答没被复用、问题晚到，就在这里答一次（只答一次），避免停在没有「停止」之外主按钮的 input 态
+    let answered = false
+    await expect
+      .poll(
+        async () => {
+          if (runs(log).filter((r) => r.event === 'gate').length >= 2) return true
+          if ((await state.getAttribute('data-prep-state')) === 'input' && !answered) {
+            const form = card(page).locator('[data-prep-input]')
+            if (await form.count()) {
+              answered = true
+              await form.locator('[data-script-input-answer]').fill('1')
+              await form.locator('[data-script-input-submit]').click()
+            }
+          }
+          return false
+        },
+        { timeout: 120_000 },
+      )
+      .toBe(true)
+    expect(starts(log)).toBe(2) // 脚本真的开跑了（停在闸门上）
     await expect(state).toHaveAttribute('data-prep-state', 'running', { timeout: 60_000 })
     await page.waitForTimeout(1500) // 若回答没被复用，问题会在脚本开跑后立刻到来：给它时间出现，再断言它没有
     await expect(state).toHaveAttribute('data-prep-state', 'running')
@@ -267,7 +295,9 @@ test('恢复：收起卡片换展示面、HTTP 断开后台照跑、应用重启
     expect(runs(log).filter((r) => r.event === 'done').length).toBe(1)
   } finally {
     if (existsSync(hold)) rmSync(hold)
-    await second?.stop()
-    rmSync(root, { recursive: true, force: true })
+    // 先放掉闸门并等应用真正退出，再删目录：Windows 上 worker 还握着 sandbox 目录时 rmSync 会 EBUSY，
+    // 且清理报错不许盖住主失败
+    await second?.stop().catch(() => undefined)
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }
 })

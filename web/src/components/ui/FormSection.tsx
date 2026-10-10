@@ -44,7 +44,8 @@ export function FormSection({
 export function FieldGroup({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
   return (
     <InFieldGroup.Provider value>
-      <div {...rest} data-ui-field-group className={cn('flex flex-col rounded-lg bg-group', className)}>
+      {/* `@container`：组里的设置行按**组的宽度**决定并排还是叠放（`settings/SettingRow` 的 SETTING_ROW_STACK_BELOW） */}
+      <div {...rest} data-ui-field-group className={cn('@container flex flex-col rounded-lg bg-group', className)}>
         {children}
       </div>
     </InFieldGroup.Provider>

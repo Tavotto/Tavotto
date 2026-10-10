@@ -68,8 +68,14 @@ def _plan(
     return resp.get_json()["plan"]
 
 
-def _install(client, plan_id: str) -> dict:
-    resp = client.post("/api/engine/dependency/install", json={"plan_id": plan_id})
+def _install(client, plan_id: str, digest: str = "") -> dict:
+    resp = client.post(
+        "/api/engine/dependency/install",
+        json={
+            "plan_id": plan_id,
+            "impact_digest": digest or deprepair.get_plan(plan_id).impact_digest,
+        },
+    )
     assert resp.status_code == 200, resp.get_json()
     return wait_for(plan_id)
 
@@ -429,7 +435,10 @@ def test_cancelling_leaves_the_managed_environment_marked_incomplete(
         return deprepair.ERROR_CANCELLED, "已取消"
 
     monkeypatch.setattr(deprepair, "_pip_install", _slow)
-    client.post("/api/engine/dependency/install", json={"plan_id": plan["plan_id"]})
+    client.post(
+        "/api/engine/dependency/install",
+        json={"plan_id": plan["plan_id"], "impact_digest": plan["impact_digest"]},
+    )
     deadline = time.time() + 60
     while (
         deprepair.progress(plan["plan_id"]).get("state") != deprepair.STATE_INSTALLING

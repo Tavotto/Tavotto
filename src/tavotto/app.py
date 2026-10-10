@@ -2925,6 +2925,9 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
+        # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。
+        status["recent_runs"] = engine_taskdiag.run_summary(engine_taskdiag.STORE, ctx.id)
     return status
 
 
@@ -3755,13 +3758,16 @@ def api_registry_probe_cancel():
     body = request.get_json(force=True)
     script = str(body.get("script") or "").strip()
     key = (ctx.id, script)
+    # 取消标志与运行配置必须在**同一把锁**里一起取：分两次加锁的话，带参数的试运行恰好在两次之间收尾
+    # （finally 把两张表都删了），run 会被读成 None，force_cancel 就打到同脚本无参数的 worker 上，
+    # 误杀别的面板的活会话。条目已经不在了 = 输了赛跑，按「没有在跑的」返回，什么也不杀。
     with _PROBES_LOCK:
         ev = _PROBES.get(key)
+        run = _PROBE_RUNS.get(key)
     if ev is None:
         return jsonify({"cancelling": False})
     ev.set()  # 先置标志再杀：probe 醒来时答案已经在了
     with _PROBES_LOCK:
-        run = _PROBE_RUNS.get(key)
         owner = _PROBE_OWNERS.get(key) if _PROBES.get(key) is ev else None
     if owner is not None and owner[1] is not False:
         worker = owner[0]
@@ -3864,12 +3870,9 @@ def api_script_input_answers():
     return jsonify(_script_answers_payload(current_ctx()))
 
 
-def _after_script_answers_changed(
-    ctx: "ProjectCtx", script: str, *, run_config: str | None = None, all_configs: bool = True
-) -> None:
+def _after_script_answers_changed(ctx: "ProjectCtx", script: str) -> None:
     """答案变了必须重跑（ADR 0099 §七）：作废热会话 + `panel.file_changed`（reason=script_input）。
-    改答案是「明确要用新答案重算」：对应配置的执行转录一并作废（T08），否则冷重放仍按旧转录作答。"""
-    engine_inputtranscript.forget(ctx.path, script, run_config=run_config, all_configs=all_configs)
+    执行转录的作废不在这里——它必须**先于**答案提交（见 `api_script_input_answers_update`）。"""
     engine_pool.invalidate(script, str(ctx.path))
     _script_change_handler(ctx, "script_input")([script])
 
@@ -3893,19 +3896,40 @@ def api_script_input_answers_update():
         return jsonify({"error": "指定 run_config 时需要 index", "code": "bad_request"}), 400
     if not script or script not in engine_scriptanswers.load(ctx.path):
         return jsonify({"error": "这个脚本没有记住的答案", "code": "script_input_not_found"}), 404
-    if body.get("forget"):
-        changed = engine_scriptanswers.forget(ctx.path, script, index, run_config=ref)
-    else:
-        answer = body.get("answer")
-        if index is None or not isinstance(answer, str):
-            return jsonify({"error": "需要 index 与 answer", "code": "bad_request"}), 400
-        try:
-            changed = engine_scriptanswers.update(ctx.path, script, index, answer, run_config=ref)
-        except ValueError as exc:
-            return jsonify({"error": str(exc), "code": "script_input_invalid"}), 400
+    answer = body.get("answer")
+    if not body.get("forget") and (index is None or not isinstance(answer, str)):
+        return jsonify({"error": "需要 index 与 answer", "code": "bad_request"}), 400
+    # 改 / 删答案是「明确要用新答案重算」（T08）：旧转录必须**先**失效、再提交答案——转录写不动（Windows 上
+    # 读者 / 杀软挡住 os.replace）就整个操作失败、答案原样不动；反过来会留下「项目是新答案、转录还是旧答案」，
+    # 冷重放静默用旧值。先失效的代价只是冷重放回到「项目答案 + 上下文匹配」，永远不会套错。
+    try:
+        engine_inputtranscript.forget(ctx.path, script, run_config=ref, all_configs=index is None)
+    except OSError as exc:
+        return jsonify(
+            {
+                "error": f"无法作废这个脚本的旧执行记录，答案没有改动：{exc}",
+                "code": "script_input_transcript_failed",
+            }
+        ), 500
+    changed = False
+    invalid: str | None = None
+    try:
+        if body.get("forget"):
+            changed = engine_scriptanswers.forget(ctx.path, script, index, run_config=ref)
+        else:
+            try:
+                changed = engine_scriptanswers.update(
+                    ctx.path, script, index, answer, run_config=ref
+                )
+            except ValueError as exc:
+                invalid = str(exc)
+    finally:
+        # 转录已先作废：答案提交抛错也要作废热池并发事件，热 worker 不能还握着旧答案跑出的会话
+        _after_script_answers_changed(ctx, script)
+    if invalid is not None:
+        return jsonify({"error": invalid, "code": "script_input_invalid"}), 400
     if not changed:
         return jsonify({"error": "没有这一条答案", "code": "script_input_not_found"}), 404
-    _after_script_answers_changed(ctx, script, run_config=ref, all_configs=index is None)
     return jsonify(_script_answers_payload(ctx))
 
 
@@ -4343,7 +4367,13 @@ def _materialize_native(session) -> None:
 
 
 def _materialize_runtime(
-    script: str, entry: str, descriptors: list, *, remap_generation: int | None, run=None
+    script: str,
+    entry: str,
+    descriptors: list,
+    *,
+    remap_generation: int | None,
+    run=None,
+    pinned=None,
 ) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
 
@@ -4359,7 +4389,14 @@ def _materialize_runtime(
     # 取会话在锁外：取不到现成的会起一条新的、跑脚本——持锁执行脚本会把改指堵在一次 build 后面
     # `run`（T03）：产出这批图的那份运行配置——取的必须是同一条热会话，否则会为别的参数另起一次执行
     try:
-        worker = _safe_worker(script, entry, run=run)
+        if pinned is not None:
+            # 准备的一次运行：只物化**跑出这批图的那条热会话**。项目记录在运行之后被换了，也不为物化另起一条会话、
+            # 在别的解释器里把脚本再跑一遍（Codex #820 r4234067402）
+            worker = engine_pool.peek(script, root, run=run)
+            if worker is None or not pinned.matches_worker(worker):
+                return
+        else:
+            worker = _safe_worker(script, entry, run=run)
     except engine_pool.WorkerError:
         return
     try:
@@ -4986,7 +5023,13 @@ def _retire_hot_worker(worker) -> bool:
     if engine_enginesession.is_native(worker):
         LOG.warning("按规范修图后热态不可信，但 native 会话不作废: %s", worker)
         return False
-    engine_pool.invalidate(worker.script_name, worker.figures_dir)
+    # 热态不可信的只是这一条会话（它冻结的那份运行配置）；同脚本别的 argv 变体的会话不动
+    if getattr(worker, "artifact_source", None) is None:
+        engine_pool.invalidate(
+            worker.script_name, worker.figures_dir, getattr(worker, "run", None), only_run=True
+        )
+    else:  # 选定产物的会话键里带产物身份，按脚本整体作废（旧行为）
+        engine_pool.invalidate(worker.script_name, worker.figures_dir)
     LOG.warning("按规范修图后热态不可信，作废会话: %s", worker.script_name)
     return True
 
@@ -5202,8 +5245,10 @@ def api_engine_invalidate():
         if info is None:
             abort(404)
         script = info["script"]
-        run = None
-    engine_pool.invalidate(script, root, **({"run": run} if run is not None else {}))
+        # 磁盘面板重跑用的就是脚本最近一次明确运行的那份配置（与 `_resolve_engine_worker` 同一判据）
+        run = _disk_panel_run(script)
+    # `only_run=True`：只作废**这一份**配置的会话（无参数变体 = run=None 那条），不是同脚本全部变体
+    engine_pool.invalidate(script, root, run, only_run=True)
     LOG.info("引擎会话作废（用户重新构建）: %s", script)
     return jsonify({"invalidated": True})
 
@@ -5874,6 +5919,8 @@ def _write_source_files(
         worker.figures_dir,
         worker.entry,
         script_inputs=getattr(worker, "last_build_script_inputs", None) or [],
+        # 解释器也钉热会话自己的：同项目另一个脚本可能已把共享的项目记录换成别的（#820 r4221133372）
+        pinned=engine_pool.pin_of_worker(worker),
         # T03：重放跑的是**热会话自己冻结的那份运行配置**（argv），与热态一致才谈得上"重放 == 热态"；
         # 不读项目此刻的默认配置——之后用户换了参数也不能让这次验证拿另一组参数去比
         **({"run": worker.run} if getattr(worker, "run", None) is not None else {}),
@@ -6566,13 +6613,11 @@ def api_engine_script_arguments():
     script, rejected = _resolve_project_script(ctx, str(request.args.get("script") or "").strip())
     if rejected is not None:
         return rejected
-    return jsonify(
-        {
-            "ok": True,
-            "script": script,
-            "arguments": engine_scriptargs.analyze_file(ctx.path / script),
-        }
-    )
+    # 负数 token 的文法随 worker 的 Python 版本变（3.14 起更宽）：带上项目记住的版本（只读、不体检；没有就不带，
+    # 前端取较窄的旧规则）
+    version = str(engine_projectenv.state(str(ctx.path)).get("python_version") or "") or None
+    schema = {**engine_scriptargs.analyze_file(ctx.path / script), "python_version": version}
+    return jsonify({"ok": True, "script": script, "arguments": schema})
 
 
 #: 渲染失败里「会话按此刻的表 build 完了、只是图名对不上 / 一张没有」的码：据此重新登记
@@ -6599,7 +6644,11 @@ def _resync_registration(ctx, worker) -> bool:
     # 只对账**已登记**的脚本：没登记过的不在这里替它登记（那是试运行 / 发现的事）
     if not script or not root or registry is None or script not in registry.all_scripts():
         return False
-    if not engine_inputremap.registration_stale(root, script):
+    # 带运行配置的会话只是这个脚本的**另一份配置**：对账与登记都按这一份来（与 `probe.register_probed`
+    # 同一判据），不许把同脚本别的 argv 变体登记的图名换掉、也不许把它们一并标成已对账（Codex 评 #812 P2）
+    run = getattr(worker, "run", None)
+    variant = str(getattr(run, "config_id", "") or "") if run is not None else ""
+    if not engine_inputremap.registration_stale(root, script, variant):
         return False
     stems = sorted(
         {
@@ -6618,8 +6667,10 @@ def _resync_registration(ctx, worker) -> bool:
     try:
         with engine_inputremap.landing(root, getattr(worker, "remap_generation", None)):
             # cost 给空串：`register` 保留磁盘上原来那个值
-            engine_discover.register(root, script, stems, entry=worker.entry, cost="")
-            engine_inputremap.record_registration(root, script)
+            engine_discover.register(
+                root, script, stems, entry=worker.entry, cost="", append=bool(variant)
+            )
+            engine_inputremap.record_registration(root, script, variant)
     except engine_inputremap.RemapChanged:
         return False
     LOG.info("改指表变了，按这次 build 的产出重新登记: %s → %s", script, stems)
@@ -7033,6 +7084,19 @@ def _preparation_target(rel_id: str) -> dict:
     }
 
 
+def _plan_pin(pl):
+    """这份计划自己的解释器（路径 + 来源 + 环境代）作为不可变决定；计划没有解释器回 None。取会话 / 物化都只认它，
+    不对共享的项目记录重新决定（Codex #820 r4234067402）。"""
+    if not getattr(pl, "interpreter", ""):
+        return None
+    env = getattr(pl, "environment", None) or {}
+    return engine_pool.EnvironmentDecision(
+        python=pl.interpreter,
+        source=str(env.get("source") or ""),
+        generation=str(env.get("generation") or ""),
+    )
+
+
 def _preparation_runner(pl, before_retry=None):
     """「真的把 runtime 起起来」只有一份实现：`pool.build_owned`（`pool.build` + 所有权，带一次项目环境
     自动 fallback）。这里不另写 get + ensure_built。
@@ -7049,6 +7113,8 @@ def _preparation_runner(pl, before_retry=None):
         ),
         # T03：计划冻结的运行配置；没有配置时调用形状与以前一致
         **({"run": pl.run} if getattr(pl, "run", None) is not None else {}),
+        # 这份计划自己的解释器（路径 + 来源 + 环境代）：取会话只认它，不再对共享的项目记录重新决定
+        **({"pinned": _plan_pin(pl)} if _plan_pin(pl) is not None else {}),
     )
 
 
@@ -7277,6 +7343,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         descriptors,
         remap_generation=captured.get("remap_generation"),
         run=run,
+        pinned=_plan_pin(plan),
     )
     engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
     refresh_project(ctx, reason="probe", allow_static_merge=False)
@@ -7683,7 +7750,8 @@ def _set_project_environment(
 
     `candidate` + `expected_generation`（T05，ADR 0114）是**环境建议**上点的「使用」：候选 id 来自
     `recommendation.candidates[].id`，路径由后端自己的枚举换回（不接受调用方给）；`expected_generation` 是用户
-    看到建议那一刻的环境代，对不上（环境在这期间被重建）→ 409 `environment_changed`，不采用另一个环境。
+    看到建议那一刻的环境代，**必填**（缺 → 400 `environment_generation_required`）；对不上（环境在这期间被重建）→ 409
+    `environment_changed`，不采用另一个环境——体检之后、写入之前紧贴着再比一次（体检期间被重建同样 409、不落盘）。
     这是用户的明确动作：记 `automatic=False`；全局显式解释器压着时不假装能采用（`environment_locked`）。
     """
     root = str(require_project())
@@ -7798,7 +7866,7 @@ def _set_project_environment(
             engine_envlease.EnvironmentBusy("这个环境正在安装依赖，请等它结束再采用。")
         )
     try:
-        engine_deprepair.unless_installing(
+        saved = engine_deprepair.unless_installing(
             root,
             lambda: engine_projectenv.remember(
                 root,
@@ -7817,6 +7885,14 @@ def _set_project_environment(
         )
     except engine_envlease.EnvironmentBusy as exc:
         return _environment_busy(exc)
+    if not saved:
+        # 项目设置写不进去（只读 / 满）：解析器没变，不重置池、不报成功（Codex #818 r4220889695）
+        return jsonify(
+            {
+                "error": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
+                "code": engine_envadvice.ERROR_SAVE_FAILED,
+            }
+        ), 500
     engine_pool.reset_worker_python()
     engine_pool.shutdown_all(root)
     return jsonify({"ok": True, "health": health, "project": _project_environment_state()})
@@ -7932,7 +8008,8 @@ def api_dependency_plan():
 def api_dependency_install():
     """执行一个已经形成的计划。进度经 SSE `engine.dependency` 推送。
 
-    **请求体里只有 plan_id**：解释器、包名、版本、目标环境全部来自计划本身。
+    **请求体里是 plan_id + impact_digest**：解释器、包名、版本、目标环境全部来自计划本身；摘要是用户
+    看到的那一份影响的回显（必填，对不上就不执行）。
     用户看到的是「把 lmfit 装进 项目 .venv」，点下去执行的就必须是那一件事。
     """
     require_project()
@@ -7951,8 +8028,24 @@ def api_dependency_install():
         return jsonify(
             {"error": "这个修复计划不属于当前项目。", "code": engine_deprepair.ERROR_NOT_ALLOWED}
         ), 409
+    # `impact_digest`（必填，ADR 0115 / Codex r4217992305）：与联合准备同一道门。只带 plan_id 不行——点之前次要依赖的
+    # 约束可能变了（beta<2 → beta>=2），计划 id 照样有效，包名也没变，用户却没看过新的约束。缺 → 400，
+    # 对不上 → 409 `dependency_impact_changed`（认领之前、零副作用）
+    echoed = body.get("impact_digest")
+    if not isinstance(echoed, str) or not echoed:
+        return jsonify(
+            {
+                "error": "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。",
+                "code": engine_deprepair.ERROR_IMPACT_REQUIRED,
+            }
+        ), 400
     # 同一份计划只认领一次：另一个标签页先点了，这里得到的是在途的进度（`started: false`），不起第二个 pip
-    started = engine_deprepair.install_async(plan_id, _dependency_event_sink(current_ctx()))
+    try:
+        started = engine_deprepair.install_async(
+            plan_id, _dependency_event_sink(current_ctx()), confirmed_impact=echoed
+        )
+    except engine_deprepair.RepairError as exc:
+        return _repair_error(exc, 409)
     return jsonify({"started": started, **engine_deprepair.progress(plan_id)})
 
 
@@ -7980,7 +8073,7 @@ def api_dependency_state():
 #
 #   GET   /api/engine/dependencies?script=…   只读：联合计划 + 可选目标 + 轮次（不装）
 #   POST  /api/engine/dependencies/plan        绑定一份计划（不装）；blocked / 没缺的 → 409 + joint
-#   POST  /api/engine/dependencies/prepare     执行那个计划（请求体只有 plan_id）
+#   POST  /api/engine/dependencies/prepare     执行那个计划（请求体 plan_id + impact_digest，后者必填）
 #   POST  /api/engine/dependencies/cancel      取消；过了提交点回 accepted=false, reason=committed
 #   POST  /api/engine/dependencies/skip        「不准备，直接跑」：这个脚本的跑前门从此放行
 #   PATCH /api/engine/dependencies             选组（项目设置 `dependency_groups`）
@@ -8080,13 +8173,22 @@ def api_dependencies_prepare():
         ), 409
     # 认领与取消句柄都在 `prepare_async` 里、起线程**之前**：202 一回去用户就能取消，哪怕线程还在
     # 重算事实、还没拿锁；第一次完成前重复提交不起第二个线程，只把在途的进度交回去（Codex #470 P1）
-    # `impact_digest`（可选，T06）：调用方回显它看到的影响摘要；给了就必须与计划此刻的实际影响一致
+    # `impact_digest`（必填，T06 / ADR 0115）：调用方回显**它给用户看的**那份影响摘要，且必须与计划此刻的实际
+    # 影响一致。只带 plan_id 不行——弹框开着的期间环境代 / 约束 / 私有 Python 需求都可能变，而包名不变的计划
+    # 会照样通过前端的名字比对，执行用户没看过的影响（Codex r4217232854）。缺 → 400，对不上 → 409
     echoed = body.get("impact_digest")
+    if not isinstance(echoed, str) or not echoed:
+        return jsonify(
+            {
+                "error": "执行安装需要带上你确认时看到的影响摘要，请重新查看再确认。",
+                "code": engine_deprepair.ERROR_IMPACT_REQUIRED,
+            }
+        ), 400
     try:
         started = engine_deprepair.prepare_async(
             plan_id,
             _dependency_event_sink(current_ctx()),
-            confirmed_impact=echoed if isinstance(echoed, str) else None,
+            confirmed_impact=echoed,
         )
     except engine_deprepair.RepairError as exc:
         return _repair_error(exc, 409)
@@ -8634,10 +8736,20 @@ def api_layouts():
         for p in d.glob("*.json"):
             if not engine_documents.is_user_document_stem(p.stem):
                 continue
-            if p.stem not in seen:
+            if p.stem in seen:
+                continue
+            # 逐个 stat：断开的符号链接、读不了的、glob 与 stat 之间被删掉的，
+            # 都只跳过这一条（它本来也打不开），不能让整张列表 500。跳过而不是
+            # 记下名字：同名的旧位置文件还能顶上，`GET /api/layouts/<name>` 也是
+            # 按 `exists()` 往下找的。
+            try:
                 seen[p.stem] = p.stat().st_mtime
+            except OSError:
+                continue
     names = sorted(seen, key=lambda n: seen[n], reverse=True)
-    return jsonify({"layouts": names})
+    # `modified`（加字段，老前端不认也无妨）：每份文档的修改时间（epoch 秒），
+    # 「打开」列表在名字旁写「几分钟前」——只是展示，排序仍以 `layouts` 的顺序为准
+    return jsonify({"layouts": names, "modified": {n: seen[n] for n in names}})
 
 
 def serve_document(path: Path):

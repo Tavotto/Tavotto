@@ -93,9 +93,11 @@
   判的是所属项目，不是代际（代际变了、所属项目却开着时停放下去就没人再取）；安装完成（`onProgress`）/ 迟到的失败（`lateFailure`）/ 重建实况都经它。模块级的停放槽（`startedPlans` / `parkedRetry` /
   `pendingReruns`）活得比 zustand reset 长，测试在 `beforeEach` 里调 `__resetDepRepairParkingForTests()`，用例互不串（「恢复自动检测」因此挪进
   store：`clearPinnedInterpreter`）。看护 `projectSwitchDepRepair.test.ts`「环境改动的回调按项目代际判」。跑前授权框
-  （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，标题就是那一句（干净机器上什么包都
-  不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部只有「稍后」「一键修复」，
-  其余（含「不准备，直接运行」）进「详情」；默认目标是项目 venv（会改用户环境）时目标单选留在外面，每个选项的说明压成一句
+  （`DependencyPrepareDialog`）同一套：没有装齐的用户环境、默认目标是受管环境时，**正文**就是那一句（标题固定是「准备环境」，
+  2026-10-07 设计审计 §10.2：标题不是生成句、失败时不被错误句替换；干净机器上什么包都
+  不缺时换成「需要先准备运行环境」那一句；私有 Python 的披露只跟**此刻选中的**目标走，选了项目 venv 就不提），底部是
+  「稍后」「一键修复」与 start 槽里的「不准备，直接运行」（ghost），其余进「详情」（一组平铺的 `FieldGroup`，不再 Details 套 Details）；
+  失败是正文末尾一条危险 `Notice`，进行中页脚原位置灰；默认目标是项目 venv（会改用户环境）时目标单选留在外面，每个选项的说明压成一句
   短语，其余照样进「详情」。同一个包缺在几个脚本上**只挂一张卡**
   （修复进行中的那一行优先），装好后同样缺它的几行一起重跑（`rerunSameModule`；发起时把那几行记进 `scriptOffer.peers` 随作业收放，
   切走期间装好、切回来运行记录已清空时按名单补跑）；有修复 offer 的行不叠 `FailureRecovery`。
@@ -174,7 +176,8 @@
   面板时按 stem 查 `GET /api/runtime/assets`（只读），有描述符就
   经 `openFastEdit` 打开（它在 workspace 里新建，见加图分层链）；没有描述符**不造假面板**，引导去脚本区运行。多
   Figure 交接（`?pick=<脚本>` / `tavotto:open` 事件的 `pick`）打开
-  `FigurePickerDialog`——每张可见、各自可加、**绝不静默选第一张**；条目
+  `FigurePickerDialog`——每张可见、各自可加、**绝不静默选第一张**；加一张**不关框**，已在画布上的那张说「已在画布上」，
+  脚部「全部添加（N）」+「完成」（2026-10-07 设计审计 §10.2）；条目
   从 assetStore + runtimeAssetStore 现算（磁盘图走 `addPanelToCanvas`、runtime 走
   描述符 `addRuntimePanelToCanvas`，已有就只选中），没跑出预览的条目不渲染假按钮。看护
   `openRequest.test.ts` / `FigurePickerDialog.test.tsx`。
@@ -188,7 +191,7 @@
   一样保留上一份照常显示；来源筛选的选项由 `assetFolders()` 并上它的目录。看护 `lib/panelSrc.test.ts`、`AssetBrowser.tiff.test.tsx`。
 - **脚本 `input()` 的作答（ADR 0099）**：`scriptInputStore` 有项目代际（`clear()` 换代；后端那一问不取消，切回来经
   `loadAnswers()` 的 `pending` 接回对话框）；`ScriptInputDialog` 是闸（`blockDismiss`，出口只有提交 / 结束输入 / 停止脚本），
-  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`；答案按运行配置 `run_config` 分行，改 / 删只动那一行、重跑只重跑那份配置）行内只改值、没有主按钮，脚部唯一的主动作「保存并重新运行（N）」依次保存所有改过的答案、只重跑一次；删除先 `askConfirm`（danger），确认框开着时换了项目（store 换代）点头作废；改 / 删答案一次只许一件（批量保存整批算一件、删除一条算一件），锁归 `scriptInputStore`（`answersBusy` + `beginAnswersChange()` / `endAnswersChange(token)`）不归对话框组件：拿不到锁就一个请求都不发，`saveAnswer` / `forgetAnswer` 只认持锁 token，关掉再打开答案管理时新挂上的对话框读同一把锁、在飞的那件回来才放开（否则两份同项目整份快照互盖、重跑两次）；`clear()` 换代一并清锁，旧项目那件回来时 token 已不是持有者、放不掉新锁；「记住的输入」入口只在
+  脚本的提示与输出片段只当纯文本；事件流以 `/api/events?answers=1` 声明「能答题」（同一道会话认证），收到 `stream.hello` 与每次认领新项目时（`onCurrentProjectChange`，与事件过滤同一时刻，不等 `project` 赋值）经 `announce()` 报在看哪个项目（后端按项目认答题方）；改 / 删答案的结果换了项目就是 `stale`，调用方不许接着重跑；答案管理（`ScriptAnswersDialog`；答案按运行配置 `run_config` 分行，改 / 删只动那一行、重跑只重跑那份配置，整批提交涉及几份配置就各重跑一次）行内只改值、没有主按钮，「删除」在行尾 ⋯ 里且是**暂存**的（行上标「保存时删除」、可撤销，2026-10-07 设计审计 §10.2），脚部唯一的主动作「保存并重新运行（N）」依次提交所有改过 / 标了删除的答案、只重跑一次（在飞时对话框 `busy`：×、点外面、Esc 都关不掉，半途关掉会只带部分改动重跑——Codex #831 P1）；没提交前什么都没发，换了项目（store 换代）暂存的删除随之作废；改 / 删答案一次只许一件（整批提交算一件、只拿一个 token），锁归 `scriptInputStore`（`answersBusy` + `beginAnswersChange()` / `endAnswersChange(token)`）不归对话框组件——对话框的 `busy` / 禁用都读 `answersBusy`：拿不到锁就一个请求都不发、也不重跑，`saveAnswer` / `forgetAnswer` 只认持锁 token，答案管理被卸载再挂上（`busy` 拦住了 ×/Esc，但 `closeManager()` 等别的路径仍能关）时新挂上的对话框读同一把锁、在飞的那批回来才放开（否则两份同项目整份快照互盖、重跑两次）；`clear()` 换代一并清锁，旧项目那批回来时 token 已不是持有者、放不掉新锁；`ScriptInputDialog` 打开时焦点直接在答案框（`initialFocusRef`），「停止脚本」在 start 槽（危险浅底胶囊）；「记住的输入」入口只在
   这个脚本真有答案时出现在脚本行上；zustand 选择器的空值用模块级常量（每次新建 `[]` = React #185 无限重渲染）。
   作答内容在 `ScriptInputForm`（`useScriptInputAnswer` + 字段 + 按钮），原对话框与准备面板共用；同一问只有一个展示面：
   面板挂载时 `claimPresentation`、卸载时 `releasePresentation`，对话框只在没有展示面认领时出现（关面板 = 换展示，不停脚本）。
@@ -223,3 +226,39 @@ BooleanOptional 仅在有长名反向选项时提供三态，短名只有「用�
 
 答案管理（T08）：行身份、改 / 删请求与随后重跑都绑定答案的 `run_config`（只显示不透明引用，不取 argv / 上下文）。
 无参数条目显式用 `null` 重跑，避免读取当前草稿；配置引用保留到运行门放行与数据改指后的重试。换项目的迟到响应不重跑。
+
+**门后排队与同脚本重跑串行（`scriptRunStore`，Codex #816 r4221169169 / r4221258366 / r4221258376）**：
+- 批量重跑（`runConfigsInOrder`）中途撞上运行目录 / 依赖门，就把「停在门上的那份 + 后面没跑的」记进 `gatedQueues`（按脚本，带代际），不算失败。**同一脚本的多批排队按配置做并集**：先来先跑，已在队里的配置不重复排（重跑本来就读最新答案，位置保持首次入队），绝不覆盖——关掉门又保存另一批后再解门，A、B、C 各跑一次。门有了答案时 `rerunGated` 取回整份并集按序续跑（不要求队首等于停在门上的那份；停在门上的那份不在队里就追加到队尾，宁多跑不丢）。队列记着自己停在哪道门（`phase`），`rerunGated` 的候选 = 可见行停在这道门上的 ∪ 队列停在这道门上的：**续跑以队列本身为准，与当前可见行解耦**——门后排队期间同脚本别的配置跑完替换了 `byScript` 那一行，解门照样续跑整份队列。换项目 `clear()` 整份作废；`reset()` 只在收起的是停在门上的行时丢该脚本的队列。
+- **运行方式显式判别（Codex #816 r4221496552）**：队列与解门重跑里的每一份是 `RunSpec`——`{kind:'draft'}`（读运行那一刻的参数草稿，行上 `runConfig === undefined`）或 `{kind:'config', id}`（答案管理的固定配置，`id: null` = 显式无参数）。**绝不用 `?? null` / `|| null` 把 undefined 折成 null**：草稿运行撞门后解门必须仍走 `run(script)`（`probeWithDraft`），否则丢参数重跑。
+- **续跑批的失败要说出来（r4221584209）**：门后续跑是 fire-and-forget，发起它的对话框早已返回；续跑批结束时 `reportResumedFailures` 按配置发出与对话框直提交同一条 `manageRerunFailed` 提示——不管此刻可见行是哪一份（A 失败、B 成功时 B 会盖住可见行）。
+- **同脚本的重跑串行**：`runConfigsInOrder` 在同步段里认领脚本（`batchClaims`），一直占到收尾，包括批内两份之间的空档；第一份在认领的同一个同步段起跑（已空闲不 `await`），所以 `rerunGated` 通知门监听者时脚本已是忙的。认领按 (项目代际, 脚本) 记（r4221496560）：切项目后旧代的长批不挡新项目的同名脚本，旧代释放只删自己那一代的键；批内的等待（`whenNotBusy`）换代即放弃。`whenScriptIdle`（接入中心的门后重跑）把认领也算忙，另一批答案先等前一批释放认领再进场。`runConfigsInOrder` 的项目代际在**第一个 `await` 之前**取，等认领期间切了项目醒来即放弃（不在新项目里跑旧项目的配置）。新增任何「同一脚本的重跑入口」都要么走 `runConfigsInOrder`、要么先 `whenScriptIdle`，不要自己写 `whenNotBusy` 之类的并行等待。
+- 看护 `scriptRunStore.test.ts`「门后排队续跑的排队语义」（并集不丢旧批；答案批次与 Registry 同时等门无并发探测）与 `ScriptAnswersDialog.test.tsx` 第一份停在运行目录门上。
+
+## 2026-10-07 设计刷新（审计 §5 / §10.3）
+
+- **素材卡经 `ui/Card`**（raised + interactive + selected）：`li[role=option][data-card=<素材 id>]` 是焦点 / 键盘 / 拖拽的那个
+  option，里面一层 `Card`（它自己的 `data-card` 是外观名 `raised`——按素材找卡片一律带值 `[data-card="<id>"]` 或 `li[data-card]`）。
+  就近入口（`data-card-actions`）是箭头光标，卡片本身才是抓手。
+- **选中之后只有一条页脚**（`data-asset-footer`）：上一行名字 + 动作（`data-selected-asset-actions`，真按钮、在 listbox 外），
+  需要说话时下面跟接入说明（`data-capability-notice`，同一个容器）。
+- 「只看可编辑的图」「筛选」「刷新」在抽屉标题行的动作槽里（`left/DrawerHeader`），搜索行只有搜索；筛选 chip 是胶囊；
+  刷新失败是图区里的一条 danger `Notice`，挂在「图」区头下面、**不在可折叠的网格里**（首次读不出的 `EmptyState` 同此）——
+  图区收着时 `/api/panels` 失败不弹提示（`load()` 吞错返回 null），藏进 `hidden` 就是静默失败（Codex #832，`AssetBrowser.refresh.test.tsx`）。刷新中那行「正在刷新…」（`data-asset-refreshing`）**暂留**：`e2e/tutorial.spec.ts`
+  拿它挤动卡片来量 coachmark 的同步重测（Codex #731），换掉那根杠杆之前不删（审计「刷新只留旋转图标」那一条待办）。
+- **脚本区**：组头 28px `type-section` + `type-meta` 计数；运行中 = 一颗静止的 accent 点 + 状态句的 `text-shimmer`（不转圈）；
+  所有恢复入口（一键修复卡、跑前准备、运行目录、缺数据、失败详情）是同一种「第二行」（`SecondRow`）；读清单 = 静态骨架、
+  筛不到 = `EmptyState`、读不出 = danger `Notice`；每行一份 `ui/RowMenu`（运行 / 取消、记住的输入、复制路径）。复制路径按**项目根**（`projectStore.project.figures_dir`，退一步才用 `assetStore.figuresDir`）拼绝对路径——不等素材清单；两边都不知道就不给这一项，不复制会在别处解析的相对名；没有 `navigator.clipboard` / 写入被拒一律报 `pathCopyFailed`（带路径），不静默（Codex #832）。
+
+## 速查表原要点（2026-10-08 迁入，Windows CRLF 下的 32 KiB 硬线）
+
+`web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限按 Windows
+检出的 CRLF 字节量，#608）。下面是当时写在那一格的要点，原文照搬、一字未改（按「；」分条）；
+它们与上文同等有效，改规则时一并改这里。
+
+- 七个 store 都有项目代际
+- 同脚本防并发、取消等原请求以 `execution_cancelled` 落地
+- 多 Figure 结果绝不只显示第一张
+- runtime 卡没有假值
+- 「编辑原图」必然加进文档并说出口、素材卡的「添加到画布」走 `addFigureToLayout`（哪个入口走加图分层链哪一层以 `canvas-objects-and-workspace.md` 为准）
+- `role="option"` 里不嵌可 Tab 控件
+- TIFF 经 `panelSrc` 走 `/api/render`
