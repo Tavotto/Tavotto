@@ -522,7 +522,7 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 
 **仍未覆盖 / 取舍（需要维护者知道）**
 
-* **#925① 的代价**：`*-nspkg.pth`（`google-*`、`zope.*`、`ruamel.yaml` 等老式命名空间包）是未建模的 `import` 行，装了它们的环境里缺的包会判「来源未定」而不是自动装。这是 issue 要求的保守方向；若要缓解，应像 setuptools / virtualenv 那样按**整行内容**精确建模 nspkg 的固定形态（它只给指定名字建命名空间，不提供别的模块），属另一项判据，本 PR 未做。
+* **#925① 与 nspkg**：`*-nspkg.pth`（`google-*`、`zope.*`、`sphinxcontrib-*`、`jaraco.*` 等老式命名空间包）是未建模的 `import` 行，不建模会让这些环境里所有真缺的包失去自动准备。已按 setuptools `namespaces.py` 的 `Installer._nspkg_tmpl` 固定模板建模（`distmeta._NSPKG_TEMPLATES` / `_is_nspkg_line`）：两代形态（含 `has_mfs`：setuptools 40.8.0–68.2.2；新版：69.5.1–84.0.0，本机核对到 84.0.0 `setuptools/namespaces.py` 第 42–57 行），按**整行内容**精确匹配、不看文件名；名字段必须是标识符、元组与全名一致、点分名的 `_nspkg_tmpl_multi` 收尾的父/子要对得上；同名文件换内容 / 附加语句 / 换模块仍计 `uncovered_paths`。不提取命名空间名（只是不计 uncovered）。其余未建模钩子仍按 issue 要求保守。
 * `pth_roots` 只认 `site.getsitepackages()` / user site；`sitecustomize` / `usercustomize` 里调 `site.addsitedir` 的目录当作不处理 `.pth`（不计入 uncovered）。这类环境的名字层也不会因此被判不完整。
 * 非 ASCII 宿主路径下的夹具仍写 import 钩子（Windows 中文用户名的开发机上，用 `real_venv` 的准备类端到端用例会判「来源未定」）；CI 与 ASCII 路径不受影响。
 * 本机无法验证真 Windows 的 `sys.path` 布局：`path_order` 的 Windows 形态只靠与既有 `install_roots` 用例同样的「前插安装根目录」模拟。
