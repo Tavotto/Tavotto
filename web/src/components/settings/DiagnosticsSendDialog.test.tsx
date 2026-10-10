@@ -37,6 +37,8 @@ import {
 } from '@/lib/api'
 import { t } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
+import { useProjectStore } from '@/store/projectStore'
+import { clearDiagnosticTrace, recordDiagnosticEvent, type DiagnosticEvent } from '@/diagnostics'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
 import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -377,7 +379,11 @@ describe('发送', () => {
 })
 
 describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，绝不发旧项目的包', () => {
-  afterEach(() => setCurrentProjectId(null))
+  afterEach(() => {
+    setCurrentProjectId(null)
+    useProjectStore.setState({ switching: false })
+    clearDiagnosticTrace()
+  })
 
   it('备包完成后切项目：旧包被丢弃并重新备包，发送用的是新 id', async () => {
     setCurrentProjectId('A')
@@ -429,6 +435,61 @@ describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，
     expect(discardMock).toHaveBeenCalledWith('pid-old')
     await click(q('[data-diag-send-confirm]'))
     expect(startMock.mock.calls.map((c) => c[0])).toEqual(['pid-new'])
+  })
+
+  it('真实的切换顺序：先认领新 pj、之后才换代（switching 期间）——这期间不备包，换代完成后备的包只含 B 的轨迹', async () => {
+    // 与 projectStore.adoptSteps 同一个顺序：switching 亮 → setCurrentProjectId(B) → （await 加载）→ 清轨迹等换代 → switching 灭
+    setCurrentProjectId('A')
+    clearDiagnosticTrace()
+    const aEvent = {
+      type: 'align.blocked',
+      mode: 'left',
+      panel: 'panel:aaaaaaaaaaaa',
+      reason: 'x',
+      document_variant: 'var:111111111111',
+      display_variant: null,
+      authority_variant: null,
+    } as unknown as DiagnosticEvent
+    recordDiagnosticEvent(aEvent)
+    const payloads: string[] = []
+    prepareMock.mockImplementation(async (payload: unknown) => {
+      payloads.push(JSON.stringify(payload))
+      return { ...PREPARED, id: `pid-${payloads.length}` }
+    })
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockResolvedValue(status({}))
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => {})
+    expect(payloads).toHaveLength(1)
+    expect(payloads[0]).toContain('panel:aaaaaaaaaaaa') // A 的包带着 A 的轨迹（判据的前提）
+
+    // 切换开始 + 认领新 pj：内存里还是 A 的状态
+    await act(async () => useProjectStore.setState({ switching: true }))
+    await act(async () => setCurrentProjectId('B'))
+    await act(async () => {})
+    expect(discardMock).toHaveBeenCalledWith('pid-1')
+    expect(payloads, '切换进行中不许备包（会是 A/B 混合包）').toHaveLength(1)
+    expect(q('[data-diag-send-confirm]')!.hasAttribute('disabled')).toBe(true)
+    await click(q('[data-diag-send-confirm]'))
+    expect(startMock).not.toHaveBeenCalled()
+
+    // 换代落地（轨迹清掉）→ switching 灭：这时才备包
+    clearDiagnosticTrace()
+    await act(async () => useProjectStore.setState({ switching: false }))
+    await act(async () => {})
+    expect(payloads).toHaveLength(2)
+    expect(payloads[1]).not.toContain('panel:aaaaaaaaaaaa')
+    await click(q('[data-diag-send-confirm]'))
+    expect(startMock.mock.calls.map((c) => c[0])).toEqual(['pid-2'])
   })
 
   it('发送中切项目：会话被取消（丢弃）并重新备包', async () => {

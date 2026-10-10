@@ -17,6 +17,7 @@ import {
 import { PRIVACY_DOC_URL } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
+import { useProjectStore } from '@/store/projectStore'
 import { Button } from '../ui/Button'
 import { Details, Summary } from '../ui/Details'
 import { Dialog } from '../ui/Dialog'
@@ -124,6 +125,9 @@ export function DiagnosticsSendDialog({
     setCancelledNotice(false)
     setPackageGone(false)
     packagePj.current = currentProjectId()
+    // 切项目进行中（`projectStore.switching`：从认领新 pj 到文档 / 轨迹 / 各 store 换代完成）：内存里
+    // 还是旧项目的文档与轨迹，此刻备的包会是 A/B 混合包——不备，等 `switching` 落下去再来（下面的订阅）
+    if (useProjectStore.getState().switching) return () => void (gen.current++)
     void prepareDiagSend(buildDiagnosticPayload())
       .then((p) => {
         if (gen.current !== mine) {
@@ -147,7 +151,18 @@ export function DiagnosticsSendDialog({
   // 一律丢弃，并重新备包——绝不拿 A 项目的诊断包在 B 项目的界面上发出去（Codex #923 P1）
   useEffect(() => {
     if (!open) return
-    return onCurrentProjectChange(() => setEpoch((e) => e + 1))
+    const bump = () => setEpoch((e) => e + 1)
+    const offId = onCurrentProjectChange(bump)
+    // 切换开始：旧包立刻作废（重跑备包流程，它见 `switching` 就只置「正在准备」）；
+    // 切换完成：在换代全部落地之后才备新包——只认这一个「项目已完全加载」的信号
+    // （`projectStore.switching`，`runSwitch` 排队到执行完一直亮着；不另造一套代次）
+    const offSwitch = useProjectStore.subscribe((st, prev) => {
+      if (st.switching !== prev.switching) bump()
+    })
+    return () => {
+      offId()
+      offSwitch()
+    }
   }, [open])
 
   // 发送中：轮询引擎状态（引擎在后台线程里跑，这里只读）
@@ -189,7 +204,7 @@ export function DiagnosticsSendDialog({
   const send = () => {
     const id = idRef.current
     if (!id || (phase !== 'ready' && phase !== 'failed')) return
-    if (packagePj.current !== currentProjectId()) {
+    if (useProjectStore.getState().switching || packagePj.current !== currentProjectId()) {
       // 项目已换而监听还没来得及重渲：不发旧包，重新备包
       setEpoch((e) => e + 1)
       return
