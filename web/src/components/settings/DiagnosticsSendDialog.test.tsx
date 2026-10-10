@@ -325,6 +325,19 @@ describe('发送', () => {
     expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('cancelled'))
   })
 
+  it('取消结果无法确认（complete 已发出）：结果未知——如实说、保留编号、只剩「关闭」，不说「没有发送」', async () => {
+    startMock.mockResolvedValue(status({}))
+    statusMock.mockResolvedValue(status({ state: 'unknown', stage: null, report_id: 'TVD-ABCD-EFGH-JKMN-PQRS' }))
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    expect(q('[data-diag-report-id]')!.textContent).toBe('TVD-ABCD-EFGH-JKMN-PQRS')
+    expect(q('[data-diag-send-status]')!.textContent).toContain(ds('unknownOutcome'))
+    expect(q('[data-diag-send-status]')!.textContent).not.toContain(ds('cancelled'))
+    expect(q('[data-diag-send-confirm]')).toBeNull()
+    expect(q('[data-diag-send-close]')).not.toBeNull()
+  })
+
   it('可重试的失败：说人话 + 退避时间 + 保存退路，主按钮变「重试」且再点会再发一次', async () => {
     startMock.mockResolvedValue(status({}))
     statusMock.mockResolvedValue(

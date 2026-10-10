@@ -1593,7 +1593,8 @@ export default interface Resources {
           "sentence": "将发送诊断包，不含你的数据和脚本内容。",
           "size": "大小 {{size}}",
           "title": "发送问题反馈",
-          "tooLarge": "这份诊断包有 {{size}}，超过在线发送的上限 {{max}}。不会截取内容——请保存到本地，再另行发给维护者。"
+          "tooLarge": "这份诊断包有 {{size}}，超过在线发送的上限 {{max}}。不会截取内容——请保存到本地，再另行发给维护者。",
+          "unknownOutcome": "无法确认报告是否已送达；如需删除，可在 GitHub Issues 里只附上报告编号"
         },
         "summaryFailing": "{{count}} 项异常",
         "summaryLabel": "诊断摘要",

@@ -62,6 +62,7 @@ type Phase =
   | 'sending'
   | 'cancelling'
   | 'done'
+  | 'unknown'
   | 'failed'
 
 /**
@@ -178,6 +179,7 @@ export function DiagnosticsSendDialog({
         if (stop) return
         setStatus(s)
         if (s.state === 'done') return setPhase('done')
+        if (s.state === 'unknown') return setPhase('unknown')
         if (s.state === 'failed') return setPhase('failed')
         if (s.state === 'cancelled') {
           setCancelledNotice(true)
@@ -295,6 +297,17 @@ export function DiagnosticsSendDialog({
       {phase === 'sending' && line('plain', progress)}
       {phase === 'cancelling' && line('plain', ds('progress.cancelling'))}
       {phase === 'failed' && line('danger', failureLine, { 'data-diag-send-failure': status?.code ?? '' })}
+      {phase === 'unknown' && status?.report_id && (
+        <>
+          <p className="min-w-0 text-xs leading-4 text-warn-content" role="alert" title={ds('unknownOutcome')} data-diag-send-unknown>
+            <span>{ds('unknownOutcome')} </span>
+            <code data-diag-report-id className="font-mono text-ink">
+              {status.report_id}
+            </code>
+          </p>
+          <CopyButton text={status.report_id} label={ds('copyId')} variant="ghost" appearance="icon" />
+        </>
+      )}
       {phase === 'done' && status?.report_id && (
         <>
           <p className="min-w-0 text-xs leading-4 text-ok-content" role="status" title={ds('doneBody')}>
@@ -309,7 +322,7 @@ export function DiagnosticsSendDialog({
     </div>
   )
 
-  const closeOnly = phase === 'done' || phase === 'prepareFailed' || phase === 'tooLarge'
+  const closeOnly = phase === 'done' || phase === 'unknown' || phase === 'prepareFailed' || phase === 'tooLarge'
   const nonRetryableFailure = phase === 'failed' && !retryable
 
   return (

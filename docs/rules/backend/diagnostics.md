@@ -279,3 +279,24 @@
 新加任何网址形字段：键名以 url/uri/endpoint 结尾即自动受益；叫别的名字就在构造处显式过 `_url_fact`。看护：`tests/test_diagnostics_bundle.py` 的网址金丝雀用例（导出包与发送包全文搜）。
 - **取消与「其实已送达」**（Codex #923）：`complete` 响应丢了、用户在退避里取消时，服务端 cancel 回 409 `already_complete`——`_cancel_remote` 回 True，`_finish` 按**成功**收尾（保留报告编号、`cancel_raced`，界面说「取消时报告已经送达」），不发布 cancelled；`in_progress` 再问一次。契约里 cancel 的错误码只有 `already_complete` 带「已完成」语义。失败态里取消走异步路径，同样在回来后把会话改成 done。
 
+### 取消与完成的竞态表（`engine/diagsend.py`，Codex #923）
+
+取消结果是**三态**（`_cancel_remote`）：确认已取消（2xx 含幂等重放；404 = 服务端没有这份）/ 确认已送达（409 `already_complete`）/ **无法确认**（传输错误、超时、5xx、429、其他 4xx、`in_progress` 重问一次后仍不定）。
+「无法确认」**绝不**当「确认取消」：若 `complete` 已发出过（`SendSession.complete_sent`，哪怕响应丢了），会话进入 **`unknown`（结果未知）**——保留报告编号，界面说「无法确认报告是否已送达；如需删除，可在 GitHub Issues 里只附上报告编号」，
+不许再发一份（`start` 回 `result_unknown`）；`complete` 从未发出（还在上传）则如实是 `cancelled`（没有什么可能已送达）。所有异步回调只改**自己捕获的那个会话对象**，且异步取消的回调要求 `_CURRENT is sess`——会话被丢弃 / 替换后迟到的答复不碰现役会话。
+
+| 阶段（取消那一刻） | 2xx | 409 already_complete | 409 in_progress（问两次） | 404 | 传输错误 / 超时 / 5xx / 429 |
+|---|---|---|---|---|---|
+| 上传中（complete 从未发出） | cancelled | （不可能发生；按 done） | cancelled | cancelled | **cancelled**（无物可能已送达） |
+| complete 已发、未落地（响应/请求丢了）退避中 | cancelled | done（`cancel_raced`） | **unknown** | cancelled | **unknown** |
+| complete 已发、已落地（响应丢了）退避中 | （不可能：服务端已 complete） | **done**（`cancel_raced`，保留编号，不发布 cancelled） | **unknown** | cancelled | **unknown**（报告其实存下了，不能说「没有发送」） |
+| 失败态（complete 发出过，异步取消，先停在 `cancelling`） | cancelled | done | unknown | cancelled | unknown |
+| 失败态 / 备好态（complete 从未发出） | cancelled（立即） | 迟到答复若会话仍是当前 → done | cancelled | cancelled | cancelled |
+| 已完成（done） | 不发任何取消请求 | — | — | — | — |
+
+| 会话身份 | 期望 |
+|---|---|
+| 异步取消答复到达时仍是 `_CURRENT` | 按上表定论 |
+| 已被丢弃 / 被 B 替换 | **忽略**：B 的状态、报告编号、`cancel_raced` 一个字都不变（测试把 B 放在「已取消」——旧实现会被改成 done 的那个状态） |
+
+看护：`tests/test_diag_send.py::TestCancel` 的 `test_race_table_*`（参数化：10 + 4 + 4 + 超时 + 替换各一）；反证：把「无法确认」映射回 cancelled / 传输错误当已取消 / 回调改写 `_CURRENT` 都红。

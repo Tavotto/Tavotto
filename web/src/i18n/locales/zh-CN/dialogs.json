@@ -1214,7 +1214,8 @@
         "policy": "隐私政策",
         "cardButton": "发送问题反馈",
         "reprepare": "重新准备",
-        "doneAfterCancel": "取消时报告已经送达，这次发送算成功"
+        "doneAfterCancel": "取消时报告已经送达，这次发送算成功",
+        "unknownOutcome": "无法确认报告是否已送达；如需删除，可在 GitHub Issues 里只附上报告编号"
       }
     },
     "export": {

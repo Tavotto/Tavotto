@@ -4546,7 +4546,7 @@ export interface DiagSendPrepared {
   entries: { name: string; kind: string }[]
 }
 
-export type DiagSendState = 'prepared' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled'
+export type DiagSendState = 'prepared' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled' | 'unknown'
 export type DiagSendStage = 'init' | 'upload' | 'complete' | 'cancel'
 
 export interface DiagSendStatus {

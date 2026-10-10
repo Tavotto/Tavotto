@@ -834,6 +834,169 @@ class TestCancel:
             time.sleep(0.01)
         assert on.count("/v1/reports/cancel") == 2
 
+    # ---- 取消 × 服务端答复 × 阶段 的竞态表（docs/rules/backend/diagnostics.md「取消与完成的竞态表」）----
+    @staticmethod
+    def _cancel_in_backoff(on, monkeypatch, complete_force, cancel_force):
+        """complete 已发出（响应丢了）→ 在重试退避里取消 → 返回最终状态。"""
+        on.force("complete", complete_force)
+        if cancel_force is not None:
+            on.force("cancel", *cancel_force)
+        holder: dict = {}
+
+        def sleep_then_cancel(_s):
+            if "x" not in holder:
+                holder["x"] = 1
+                diagsend.cancel(holder["id"])
+
+        monkeypatch.setattr(diagsend, "_sleep", sleep_then_cancel)
+        prep = diagsend.prepare(make_bundle())
+        holder["id"] = prep["id"]
+        diagsend.start(prep["id"], confirmed=True, category=None, note=None)
+        return prep["id"], wait_for(prep["id"], {"done", "cancelled", "failed", "unknown"})
+
+    @pytest.mark.parametrize(
+        ("landed", "cancel_force", "expect_state", "expect_report"),
+        [
+            # complete 请求没到服务端（drop_before）：服务端会话还是 pending
+            (False, None, "cancelled", False),  # 2xx：确认已取消
+            (
+                False,
+                [Forced("status", 404, "not_found")],
+                "cancelled",
+                False,
+            ),  # 服务端没有这份 = 没送达
+            (False, [Forced("status", 409, "in_progress", 1)] * 2, "unknown", True),
+            (False, [Forced("status", 500, "x")], "unknown", True),
+            (False, [Forced("status", 429, "rate_limited", 5)], "unknown", True),
+            (False, [Forced("drop_before")], "unknown", True),  # 传输错误：无法确认
+            # complete 到了服务端而响应丢了（drop_after）：报告其实存下了
+            (True, None, "done", True),  # 409 already_complete：确认已送达
+            (
+                True,
+                [Forced("drop_before")],
+                "unknown",
+                True,
+            ),  # Codex：cancel 的响应也丢了——不能说「没有发送」
+            (True, [Forced("status", 503, "storage_unavailable", 1)], "unknown", True),
+            (True, [Forced("status", 409, "in_progress", 1)] * 2, "unknown", True),
+        ],
+        ids=[
+            "unlanded-2xx",
+            "unlanded-404",
+            "unlanded-in_progress",
+            "unlanded-500",
+            "unlanded-429",
+            "unlanded-transport",
+            "landed-already_complete",
+            "landed-transport",
+            "landed-503",
+            "landed-in_progress",
+        ],
+    )
+    def test_race_table_complete_sent_then_cancel_in_backoff(
+        self, on, monkeypatch, landed, cancel_force, expect_state, expect_report, caplog
+    ):
+        caplog.set_level(logging.INFO, logger="tavotto")
+        pid, st = self._cancel_in_backoff(
+            on, monkeypatch, Forced("drop_after" if landed else "drop_before"), cancel_force
+        )
+        assert st["state"] == expect_state, st
+        assert ("report_id" in st) is expect_report
+        if expect_state == "unknown":
+            assert not any("结果=cancelled" in r.getMessage() for r in caplog.records)
+            with pytest.raises(diagsend.SendError) as e:  # 可能已送达：不许在不知道的情况下再发一份
+                diagsend.start(pid, confirmed=True, category=None, note=None)
+            assert e.value.code == "result_unknown"
+        if expect_state == "done":
+            assert st["cancel_raced"] is True
+
+    def test_race_table_cancel_timeout_is_unknown_when_complete_was_sent(self, on, monkeypatch):
+        monkeypatch.setattr(diagsend, "CANCEL_TIMEOUT_S", 0.3)
+        _, st = self._cancel_in_backoff(
+            on, monkeypatch, Forced("drop_after"), [Forced("sleep", seconds=1.0)]
+        )
+        assert st["state"] == "unknown" and st["report_id"].startswith("TVD-")
+
+    @pytest.mark.parametrize(
+        "cancel_force",
+        [
+            None,
+            [Forced("drop_before")],
+            [Forced("status", 500, "x")],
+            [Forced("status", 409, "in_progress", 1)] * 2,
+        ],
+        ids=["2xx", "transport", "500", "in_progress"],
+    )
+    def test_race_table_cancel_during_upload_never_sent_complete_is_always_cancelled(
+        self, on, cancel_force
+    ):
+        """complete 从未发出：不管取消结果能不能确认，都如实是「已停止、未完成发送」——没有什么可能已送达。"""
+        gate = threading.Event()
+        on.force("upload", Forced("hold_early", event=gate))
+        if cancel_force:
+            on.force("cancel", *cancel_force)
+        prep = send(make_bundle(pad=9 * 1024 * 1024))
+        while diagsend.status(prep["id"])["stage"] != "upload":
+            time.sleep(0.01)
+        diagsend.cancel(prep["id"])
+        gate.set()
+        st = wait_for(prep["id"], {"cancelled", "unknown", "done"})
+        assert st["state"] == "cancelled" and "report_id" not in st
+        assert on.count("/v1/reports/complete") == 0
+
+    @pytest.mark.parametrize(
+        ("landed", "cancel_force", "expect_state"),
+        [
+            (False, None, "cancelled"),
+            (False, [Forced("drop_before")], "unknown"),
+            (True, None, "done"),
+            (True, [Forced("status", 500, "x")], "unknown"),
+        ],
+        ids=["unlanded-2xx", "unlanded-transport", "landed-already_complete", "landed-500"],
+    )
+    def test_race_table_cancel_a_failed_session_after_complete_was_sent(
+        self, on, landed, cancel_force, expect_state
+    ):
+        on.force(
+            "complete",
+            Forced("drop_after" if landed else "drop_before"),
+            times=diagsend.COMPLETE_ATTEMPTS,
+        )
+        prep = send()
+        wait_for(prep["id"], {"failed"})
+        if cancel_force:
+            on.force("cancel", *cancel_force)
+        diagsend.cancel(prep["id"])
+        deadline = time.monotonic() + 5
+        while diagsend.status(prep["id"])["state"] == "cancelling" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        st = diagsend.status(prep["id"])
+        assert st["state"] == expect_state, st
+
+    def test_race_table_a_late_cancel_answer_never_touches_a_replaced_session(self, on):
+        """A 会话（complete 已落地）在失败态里被取消，答复被拖住；这期间 A 被丢弃、B 成了当前会话。
+        答复（already_complete）迟到后：B 不受影响，A 的编号不会出现在 B 上。"""
+        gate = threading.Event()
+        on.force("complete", Forced("drop_after"), times=diagsend.COMPLETE_ATTEMPTS)
+        prep_a = send()
+        wait_for(prep_a["id"], {"failed"})
+        on.force("cancel", Forced("hold", event=gate))
+        diagsend.cancel(prep_a["id"])
+        deadline = time.monotonic() + 5
+        while on.count("/v1/reports/cancel") == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        diagsend.discard(prep_a["id"])
+        prep_b = diagsend.prepare(make_bundle(pad=10))
+        diagsend.cancel(prep_b["id"])  # B 处在「已取消」——正是旧实现会被迟到答复改成 done 的状态
+        gate.set()
+        time.sleep(0.5)
+        st_b = diagsend.status(prep_b["id"])
+        assert (
+            st_b["state"] == "cancelled" and "report_id" not in st_b and "cancel_raced" not in st_b
+        )
+        with pytest.raises(diagsend.SendError):
+            diagsend.status(prep_a["id"])
+
     def test_discard_while_sending_cancels_and_frees_the_bundle(self, on):
         gate = threading.Event()
         on.force("init", Forced("hold", event=gate))
