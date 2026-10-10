@@ -345,7 +345,7 @@ class TestCoverageOf:
         for flag in ("deferred_env", "health_deferred"):
             cov = envadvice.coverage_of(_health(**{flag: True}), self.MODS)
             assert cov["state"] == "not_checked"
-            assert cov["detail"][0]["code"] == "environment_not_checked"
+            assert cov["detail"] == [{"code": "environment_not_checked", "reason": "deferred"}]
 
     def test_a_module_the_probe_did_not_report_is_unknown_not_found(self):
         h = _health(modules_ok={"covok_a": True}, modules_detail={"covok_a": "found"})
@@ -639,9 +639,12 @@ def test_G_a_rebuilt_environment_never_serves_the_old_coverage(tmp_path):
     first = envadvice.check(root, "plot.py", modules=mods)
     assert _row(first, envworld.venv_rel(".venv"))["coverage"]["state"] == "covered"
     old_generation = projectenv.environment_generation(py)
+    old_key = userenvs._cache_key(py, mods, False)
 
     rebuilt = rebuild_venv(root, ".venv", python=WORKER_PY)  # 同一路径，没有那两个包
     assert rebuilt == py and projectenv.environment_generation(py) != old_generation
+    # 环境代是键的一部分：同一路径换了环境，旧结论的键根本不会再被命中（不只靠站点目录指纹兜底）
+    assert userenvs._cache_key(py, mods, False) != old_key
 
     stale = envadvice.recommend(root, "plot.py", modules=mods)  # 纯读：不能还说 covered
     row = next(c for c in stale["candidates"] if c["python_relative"] == envworld.venv_rel(".venv"))
