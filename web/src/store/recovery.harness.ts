@@ -68,6 +68,8 @@ class FakeBackend {
   failures: Failure[] = []
   lastMode: 'legacy' | 'durable' = 'legacy'
   sessionEndpoints = true
+  /** true = 模拟旧后端：指针不带 `revision` 键 */
+  omitPointerRevision = false
   ownerEndpoint = true
   /** 为 false 时 /candidates 回 404（旧后端） */
   candidatesEndpoint = true
@@ -96,6 +98,7 @@ class FakeBackend {
     this.failures.length = 0
     this.lastMode = 'legacy'
     this.sessionEndpoints = true
+    this.omitPointerRevision = false
     this.ownerEndpoint = true
     this.candidatesEndpoint = true
     this.panels = [FIG1_PANEL_INFO]
@@ -244,10 +247,16 @@ class FakeBackend {
       if (!this.sessionEndpoints) response = () => json({ error: 'not found' }, 404)
       else if (u.pathname === '/api/layout-session' && method === 'GET') {
         const last = this.lastByPj.get(pj) ?? null
+        const strip = <T extends LastRef | null>(r: T): T => {
+          if (!r || !this.omitPointerRevision) return r
+          const { revision: _omitted, ...rest } = r
+          void _omitted
+          return rest as T
+        }
         const out = {
-          last: last && !this.ownerConflict(last.doc_id, pj) ? { ...last } : null,
-          prev: this.filtered(this.prevByPj.get(pj), pj),
-          pending: this.pendingByPj.get(pj) ?? null,
+          last: strip(last && !this.ownerConflict(last.doc_id, pj) ? { ...last } : null),
+          prev: strip(this.filtered(this.prevByPj.get(pj), pj)),
+          pending: strip(this.pendingByPj.get(pj) ? { ...this.pendingByPj.get(pj)! } : null),
           index: 'ok',
         }
         response = () => json(out)
@@ -261,7 +270,7 @@ class FakeBackend {
             const ref = this.promote(pj, b.doc_id, b.name)
             return json({ ok: true, last: ref, state: 'durable' })
           }
-          const ref = { doc_id: b.doc_id, name: b.name, at: ++this.clock }
+          const ref = { doc_id: b.doc_id, name: b.name, at: ++this.clock, revision: this.revs.get(b.doc_id) ?? null }
           this.pendingByPj.set(pj, ref)
           return json({
             ok: true,

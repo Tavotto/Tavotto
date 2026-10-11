@@ -1345,3 +1345,64 @@ describe('发现被后端截断（truncated）', () => {
     expect(await app.doc.restoreSession()).toBe(true)
   })
 })
+
+describe('Codex P1：指针是在槽位还没有正文时验过的（expectedAbsent）', () => {
+  async function bootAbsent() {
+    vi.resetModules()
+    vi.doMock('@/lib/projectDocs', async (importOriginal) => {
+      const orig = await importOriginal<typeof import('@/lib/projectDocs')>()
+      return {
+        ...orig,
+        planRestore: async (...a: Parameters<typeof orig.planRestore>) => {
+          const plan = await orig.planRestore(...a)
+          if (plan.preferred) (plan.preferred as { expectedAbsent?: true }).expectedAbsent = true
+          return plan
+        },
+      }
+    })
+    return boot()
+  }
+  afterEach(() => vi.doUnmock('@/lib/projectDocs'))
+
+  it.each([
+    ['other', 'missing'],
+    ['unknown', 'unavailable'],
+  ] as const)('指针 pending、读正文时冒出了别的项目存的正文（复核 %s）→ needs_user{%s}，不装', async (answer, kind) => {
+    be.putSlot('d_c', savedProject('G 的', [panel({ id: 'panel_g' })]), 'p_other')
+    be.setLast('p_a', 'd_c', '指针说的')
+    be.state.ownerAnswers.set('p_a|d_c', { owner: answer, evidence: answer === 'unknown' ? null : 'owners', verified: false })
+    const app = await bootAbsent()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(objectIds(app)).toEqual([])
+    expect(ds(app).restoreIssue).toMatchObject({ kind, ref: { id: 'd_c' } })
+  })
+
+  it('冒出的正文经复核就是自己的（this+verified，修订号对得上）→ 装', async () => {
+    be.putSlot('d_c', savedProject('自己的'), 'p_a')
+    be.setLast('p_a', 'd_c', '自己的')
+    const app = await bootAbsent()
+    expect(await app.doc.restoreSession()).toBe(true)
+  })
+
+  it('只有本机副本（磁盘 404）的路径不受影响（A32）', async () => {
+    be.setLast('p_a', 'd_c', '本机的')
+    localStorage.setItem('tavotto.autosave.d_c', JSON.stringify(savedProject('本机的', [panel({ id: 'panel_l' })])))
+    const app = await bootAbsent()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(objectIds(app)).toEqual(['panel_l'])
+  })
+})
+
+describe('Codex P2：owner_unknown 与 failed 一样点亮「恢复信息没更新」', () => {
+  it('metadata=owner_unknown → restoreMetaIssue 亮起；下次 ok 清掉', async () => {
+    const app = await boot()
+    be.state.metadata = 'owner_unknown'
+    await ds(app).switchDocument(savedProject('M'), 'd_m')
+    await app.doc.saveNow()
+    expect(ds(app).restoreMetaIssue).toEqual({ docId: 'd_m', pj: 'p_a' })
+    expect(ds(app).saveState).toBe('saved')
+    be.state.metadata = 'ok'
+    await app.doc.saveNow()
+    expect(ds(app).restoreMetaIssue).toBeNull()
+  })
+})

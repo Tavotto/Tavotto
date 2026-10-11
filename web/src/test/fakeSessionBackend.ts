@@ -11,7 +11,8 @@ export interface Ref {
   doc_id: string
   name: string
   at: number
-  revision?: string
+  /** 缺省 = 回包里没有这个键（旧后端）；null = 键在、值为 null（新后端：校验时槽位不存在） */
+  revision?: string | null
 }
 
 export interface Slot {
@@ -242,15 +243,15 @@ export function createFakeBackend() {
       return slot
     },
     /** 摆一条 durable last */
-    setLast(pj: string, id: string, name = id, revision?: string): Ref {
+    setLast(pj: string, id: string, name = id, revision?: string | null): Ref {
       b.clock += 1
-      const ref: Ref = { doc_id: id, name, at: b.clock, ...(revision ? { revision } : {}) }
+      const ref: Ref = { doc_id: id, name, at: b.clock, ...(revision !== undefined ? { revision } : {}) }
       session(pj).last = ref
       return ref
     },
-    setPending(pj: string, id: string, name = id): Ref {
+    setPending(pj: string, id: string, name = id, revision?: string | null): Ref {
       b.clock += 1
-      const ref = { doc_id: id, name, at: b.clock }
+      const ref: Ref = { doc_id: id, name, at: b.clock, ...(revision !== undefined ? { revision } : {}) }
       session(pj).pending = ref
       return ref
     },

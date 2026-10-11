@@ -277,6 +277,13 @@ export interface RestoreCandidate {
    */
   expectedRevision?: string
   /**
+   * 后端指针明说 `revision: null`（`backend_last` / `backend_prev` / `backend_pending` 任一，且没有别的来源带 revision）：
+   * 指针校验那一刻槽位上没有有效正文，没有 revision 可对。字段缺席（旧后端）不算。
+   * 之后别的项目可能用同一个 doc id 存了正文——所以调用方探测时若正文已经在，不能直接装，要 `/owner`
+   * 给出 `this` 且 `verified` 且 revision 等于探测到的正文 revision 才行。没有这个字段 = 不是「预期不存在」。
+   */
+  expectedAbsent?: true
+  /**
    * 本机索引陈旧地记着别的项目，而后端有 `owners` 证据（已核对 revision）证明它属于当前项目：
    * `confirmRestored` 在候选被接受之后才把本机索引纠正过来。
    */
@@ -320,6 +327,8 @@ interface Entry {
   sources: CandidateSource[]
   pendingIntent: boolean
   expectedRevision?: string
+  /** 有后端指针明说 `revision: null`（校验时槽位不存在 / 读不出）；字段缺席（旧后端）不算 */
+  pointerNull?: boolean
 }
 
 type Verdict =
@@ -394,14 +403,24 @@ export async function planRestore(
     const hit = entries.get(id)
     if (hit) {
       if (revision && !hit.expectedRevision) hit.expectedRevision = revision
+      if (revision === null) hit.pointerNull = true
       if (!hit.sources.includes(source)) hit.sources.push(source)
       if (!hit.name && name) hit.name = name
       hit.pendingIntent ||= pendingIntent
-    } else entries.set(id, { id, name, sources: [source], pendingIntent, ...(revision ? { expectedRevision: revision } : {}) })
+    } else {
+      entries.set(id, {
+        id,
+        name,
+        sources: [source],
+        pendingIntent,
+        ...(revision ? { expectedRevision: revision } : {}),
+        ...(revision === null ? { pointerNull: true } : {}),
+      })
+    }
   }
   if (last) add(last.doc_id, last.name, 'backend_last', false, last.revision)
   if (prev) add(prev.doc_id, prev.name, 'backend_prev', false, prev.revision)
-  if (bpending) add(bpending.doc_id, bpending.name, 'backend_pending', true)
+  if (bpending) add(bpending.doc_id, bpending.name, 'backend_pending', true, bpending.revision)
   if (cache) add(cache.id, cache.name, 'local_cache', marker !== null)
   if (clues.globalCurrent) add(clues.globalCurrent, '', 'global_current')
 
@@ -440,6 +459,9 @@ export async function planRestore(
       ownership: v.ok ? 'this' : v.reason === 'foreign' ? 'other' : 'unknown',
       ...(intentOnly ? { pendingIntent: true } : {}),
       ...(e.expectedRevision ? { expectedRevision: e.expectedRevision } : {}),
+      // 有指针明说 revision:null（校验时槽位不存在 / 读不出）且没有别的来源带 revision：预期不存在。
+      // 字段缺席（旧后端）不算
+      ...(!e.expectedRevision && e.pointerNull ? { expectedAbsent: true as const } : {}),
     }
     if (v.ok) {
       claimable.push({

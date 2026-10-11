@@ -1024,10 +1024,11 @@ export interface LayoutSessionLast {
 /**
  * 读回来的指针（last / prev / pending）：多带一个 `revision`——后端记下这条指针时槽位正文的内容 hash。
  * 恢复时拿它对照探测到的正文：对不上说明指针之后正文又被改过（或换成了别的文件），不当成同一份。
- * 旧后端不发 = null（不知道，不拿来比）。
+ * 三种取值**不许合并**：字符串 = 那一版正文的 hash；`null` = 新后端明说「校验那一刻槽位不存在 / 读不出」；
+ * `undefined`（字段缺席）= 旧后端不发，不知道，不拿来比也不当「预期不存在」。
  */
 export interface SessionPointer extends LayoutSessionLast {
-  revision: string | null
+  revision?: string | null
 }
 
 /** 后端会话文件的读取状况：`ok` 正常、`missing` 首次空状态、`degraded` 读不了 / 坏了 / 未来格式、`recovered` 从备份回退 */
@@ -1058,7 +1059,8 @@ function parseSessionRef(v: unknown): SessionPointer | null {
     doc_id: r.doc_id,
     name: typeof r.name === 'string' ? r.name : '',
     at: Number(r.at) || 0,
-    revision: typeof r.revision === 'string' && r.revision ? r.revision : null,
+    // 键在 = 新后端：字符串是 hash，其它（null / 空 / 非字符串）一律是「没有」；键不在 = 旧后端，保持缺席
+    ...('revision' in r ? { revision: typeof r.revision === 'string' && r.revision ? r.revision : null } : {}),
   }
 }
 

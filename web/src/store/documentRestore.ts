@@ -220,10 +220,13 @@ async function guardRevision(
   cand: RestoreCandidate,
   probe: ProbeResult,
 ): Promise<RestoreOutcome | null> {
+  // `expectedAbsent`：指针（backend_pending）是在槽位**还没有正文**时验过的。我们自己的首次保存落地会让后端把
+  // pending 晋升成 durable；指针还是 pending 而磁盘上冒出了正文 = 别的项目存的，同样要证明归属，按「对不上」处理
+  const expectedAbsent = (cand as RestoreCandidate & { expectedAbsent?: boolean }).expectedAbsent === true
   const expected = cand.expectedRevision
-  if (!expected || probe.from !== 'disk' || probe.disk.kind !== 'found') return null
+  if ((!expected && !expectedAbsent) || probe.from !== 'disk' || probe.disk.kind !== 'found') return null
   const actual = probe.disk.revision
-  if (actual === expected) return null
+  if (expected && actual === expected) return null
   // 读到的修订号是空的（代理吃了 X-Tavotto-Revision）：绑定不上，无从证明这份还是指针说的那份——不装，给重试
   if (!actual) return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
   const ev = await fetchLayoutOwnerEvidence(cand.id, token.pj)

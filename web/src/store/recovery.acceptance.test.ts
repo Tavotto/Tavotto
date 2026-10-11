@@ -1097,6 +1097,58 @@ describe('指针带 revision：读正文时它已被别的项目覆盖', () => {
   })
 })
 
+describe('pending 指针带 revision:null（槽位当时不存在），读正文之前被别的项目建出来', () => {
+  const firstSave = async (pj: string, body: ProjectDocument) => {
+    const res = await fetch('/api/autosave/d_p', {
+      method: 'PUT',
+      headers: { 'X-Tavotto-Project': pj, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    expect(res.status).toBe(200)
+  }
+  const arm = () => {
+    be.pendingByPj.set('p_a', { doc_id: 'd_p', name: 'Draft P', at: ++be.clock, revision: null })
+  }
+
+  it('F 只有 pending d_p、没有 durable last；session GET 与正文 GET 之间 G 首次保存了 d_p → F 不得安装，needs_user，零写入', async () => {
+    arm()
+    const g = savedProject('G 的排版')
+    g.canvases[0].objects = [text('t_g', 'G only', 1, 1)]
+    const app = await boot()
+    const gate = be.hold((r) => r.method === 'GET' && r.docId === 'd_p')
+    const restoring = app.doc.restoreSession()
+    await gate.reached
+    await firstSave('p_b', g)
+    expect(be.owners.get('d_p')).toBe('p_b')
+    gate.release()
+    await restoring
+    await settle()
+    const ids = currentShape(app).canvases.flatMap((c) => c.objects.map((o) => o.id))
+    expect(ids, 'F 安装了 G 的正文').not.toContain('t_g')
+    expect(app.doc.useDocumentStore.getState().documentId).not.toBe('d_p')
+    expect(failureSignal(app), '静默空白').not.toBeNull()
+    expect(be.requests.filter((r) => isAutosavePut(r) && r.pj === 'p_a')).toHaveLength(0)
+    expect(be.owners.get('d_p')).toBe('p_b')
+  })
+
+  it('对照：F 自己的首次保存在这之间落盘（owner=F，/owner this+verified，revision 一致）→ 照常安装', async () => {
+    arm()
+    const mine = savedProject('F 的排版')
+    mine.canvases[0].objects = [text('t_f', 'F first save', 2, 2)]
+    const app = await boot()
+    const gate = be.hold((r) => r.method === 'GET' && r.docId === 'd_p')
+    const restoring = app.doc.restoreSession()
+    await gate.reached
+    await firstSave('p_a', mine)
+    gate.release()
+    expect(await restoring).toBe(true)
+    await settle()
+    const shape = currentShape(app)
+    expect(shape.documentId).toBe('d_p')
+    expect(shape.canvases[0].objects.map((o) => o.id)).toEqual(['t_f'])
+  })
+})
+
 /* ============================ 修复后新增状态（不计红证据） ============================ */
 
 describe('修复后新增状态', () => {

@@ -222,6 +222,47 @@ describe('待确认意图与 durable last（A09 / A32）', () => {
     expect(backend.writes()).toEqual([])
   })
 
+  it('任一后端指针明说 revision:null 且没有别的来源带 revision → expectedAbsent；字段缺席（旧后端）/ 有 hash 的不标', async () => {
+    const docs = await fresh()
+    const find = async (id: string) => {
+      const plan = await docs.planRestore(PJ, { globalCurrent: null })
+      return [plan.preferred!, ...plan.fallbacks].find((c) => c.id === id)!
+    }
+    // pending 明说 null
+    backend.setLast(PJ, 'd_a', 'A', 'rev-a')
+    backend.setPending(PJ, 'd_b', 'B', null)
+    expect(await find('d_b')).toMatchObject({ sources: ['backend_pending'], expectedAbsent: true })
+    expect((await find('d_b')).expectedRevision).toBeUndefined()
+    expect((await find('d_a')).expectedAbsent).toBeUndefined()
+    expect((await find('d_a')).expectedRevision).toBe('rev-a')
+    // last / prev 明说 null 同样
+    backend.setLast(PJ, 'd_n', 'N', null)
+    expect(await find('d_n')).toMatchObject({ sources: ['backend_last'], expectedAbsent: true })
+    backend.session(PJ).prev = backend.setLast(PJ, 'd_p', 'P', null)
+    backend.setLast(PJ, 'd_q', 'Q', 'rev-q')
+    expect(await find('d_p')).toMatchObject({ sources: ['backend_prev'], expectedAbsent: true })
+    // 键缺席（旧后端）：不知道，不当「预期不存在」，也没有 expectedRevision
+    backend.state.sessions.clear()
+    backend.setLast(PJ, 'd_old', 'old')
+    backend.setPending(PJ, 'd_oldp', 'oldp')
+    const oldLast = await find('d_old')
+    const oldPending = await find('d_oldp')
+    expect(oldLast.expectedAbsent).toBeUndefined()
+    expect(oldLast.expectedRevision).toBeUndefined()
+    expect(oldPending.expectedAbsent).toBeUndefined()
+    // 同一份：别的来源带 hash 就不是「预期不存在」
+    backend.state.sessions.clear()
+    backend.setLast(PJ, 'd_m', 'M', 'rev-m')
+    backend.setPending(PJ, 'd_m', 'M', null)
+    const merged = await find('d_m')
+    expect(merged.expectedAbsent).toBeUndefined()
+    expect(merged.expectedRevision).toBe('rev-m')
+    // 本机缓存的待确认意图不是后端指针：不标
+    backend.state.sessions.clear()
+    setCache({ id: 'd_c', name: 'C', pendingBase: 0, pendingGen: 'g' })
+    expect((await find('d_c')).expectedAbsent).toBeUndefined()
+  })
+
   it('备份 prev 进后备（保留来源）', async () => {
     const docs = await fresh()
     backend.setLast(PJ, 'd_a', 'A')

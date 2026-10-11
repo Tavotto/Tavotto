@@ -1464,7 +1464,8 @@ function afterWriteOk(
   // （与排队时取 pj 的是同一个表达式）；不一致就既不挂也不清
   if (pj === (projectOfDoc().id ?? currentProjectId())) {
     const prevMeta = useDocumentStore.getState().restoreMetaIssue
-    if (meta?.metadata === 'failed') {
+    // `owner_unknown`（正文写下了、归属 / 晋升没记：项目在后端已经没了）与 `failed` 一样是「下次自动恢复信息没更新」
+    if (meta?.metadata === 'failed' || meta?.metadata === 'owner_unknown') {
       useDocumentStore.setState({ restoreMetaIssue: { docId: id, pj } })
     } else if (prevMeta && prevMeta.docId === id && meta?.metadata !== undefined) {
       useDocumentStore.setState({ restoreMetaIssue: null })
