@@ -111,8 +111,9 @@ describe('W/H 精确输入与恢复', () => {
     expect(input('width').value).toBe('40')
     expect(input('height').value).toBe('12.5')
     await type(input('width'), '50')
-    expect(livePanel().overrides[0].value).toEqual([0.5, 0.25])
-    expect(livePanel().overrides[1].value).toEqual([0.2, 0.5])
+    expect(livePanel().overrides).toEqual([
+      { gid: PATCH_GID, prop: 'size_frac', value: [0.5, 0.25] },
+    ])
   })
 
   it('裁剪 / 旋转 / 翻转不把可见窗的宽度错当整图宽度', async () => {
@@ -139,6 +140,19 @@ describe('W/H 精确输入与恢复', () => {
     expect(livePanel().overrides).toEqual(overrides)
   })
 
+  it('只改宽度保留用户原有的位置覆盖，撤销不删除那次移动', async () => {
+    const position = { gid: PATCH_GID, prop: 'pos_frac', value: [0.80001, 0.90001] }
+    await act(async () => setup({ overrides: [position] }, resizeElement([0.80001, 0.65001, 0.4, 0.25])))
+    await type(input('width'), '100')
+    expect(livePanel().overrides).toHaveLength(2)
+    expect(livePanel().overrides.find((o) => o.prop === 'pos_frac')).toEqual(position)
+    expect(livePanel().overrides.find((o) => o.prop === 'size_frac')?.value).toEqual([0.5, 0.25])
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+    expect(engineRender).toHaveBeenCalledTimes(1)
+    await act(async () => runUndoRedo(false))
+    expect(livePanel().overrides).toEqual([position])
+  })
+
   it('没改数的 Tab 与无效输入不提交', async () => {
     await act(async () => { input('width').focus(); input('width').blur() })
     await type(input('width'), 'not a number')
@@ -150,7 +164,6 @@ describe('W/H 精确输入与恢复', () => {
   it('后端拒绝的旧尺寸覆盖不能盖过权威外框，控件从实际画出的框继续编辑', async () => {
     await act(async () => setup({ overrides: [
       { gid: PATCH_GID, prop: 'size_frac', value: [0.001, 0.001] },
-      { gid: PATCH_GID, prop: 'pos_frac', value: [0.8, 0.9] },
     ] }))
     // 模拟原始形状仍被画在 0.2/0.25，尺寸0.4/0.25；被拒绝的请求留在文档中。
     expect(input('width').value).toBe('80')
@@ -158,7 +171,6 @@ describe('W/H 精确输入与恢复', () => {
     await type(input('width'), '100')
     expect(livePanel().overrides).toEqual([
       { gid: PATCH_GID, prop: 'size_frac', value: [0.5, 0.25] },
-      { gid: PATCH_GID, prop: 'pos_frac', value: [0.2, 0.5] },
     ])
   })
 })
@@ -182,7 +194,9 @@ describe('尺寸控件的几何权威与连续编辑', () => {
     expect(engineRender).not.toHaveBeenCalled()
     expect(useInteractionStore.getState().elementPreview?.boxes[PATCH_GID]).toEqual([0.2, 0.25, 0.41, 0.25])
     await fire('pointerup', 20)
-    expect(livePanel().overrides[0].value).toEqual([0.41, 0.25])
+    expect(livePanel().overrides).toEqual([
+      { gid: PATCH_GID, prop: 'size_frac', value: [0.41, 0.25] },
+    ])
     expect(useDocumentStore.getState().past).toHaveLength(1)
     expect(engineRender).toHaveBeenCalledTimes(1)
   })
@@ -225,7 +239,9 @@ describe('尺寸控件的几何权威与连续编辑', () => {
     await startScrub()
     await fire('pointermove', 20)
     await act(async () => finishActiveGesture())
-    expect(livePanel().overrides[0].value).toEqual([0.41, 0.25])
+    expect(livePanel().overrides).toEqual([
+      { gid: PATCH_GID, prop: 'size_frac', value: [0.41, 0.25] },
+    ])
     expect(useDocumentStore.getState().past).toHaveLength(1)
     await act(async () => runUndoRedo(false))
     expect(livePanel().overrides).toEqual([])
@@ -273,7 +289,7 @@ describe.each(['raster', 'evicted'] as const)('%s：尺寸编辑跟随配对位�
     }
     expect(livePanel().overrides).toEqual([
       { gid: PATCH_GID, prop: 'size_frac', value: method === 'input' ? [0.6, 0.5] : [0.61, 0.4] },
-      { gid: PATCH_GID, prop: 'pos_frac', value: method === 'input' ? [0.1, 0.7] : [0.1, 0.6] },
+      ...(method === 'input' ? [{ gid: PATCH_GID, prop: 'pos_frac', value: [0.1, 0.7] }] : []),
     ])
     expect(useDocumentStore.getState().past).toHaveLength(1)
     expect(engineRender).toHaveBeenCalledTimes(1)
@@ -389,7 +405,6 @@ describe('SVG 解码交接：尺寸编辑只认已挂载的权威版本', () => 
     await type(input('width'), '140')
     expect(livePanel().overrides).toEqual([
       { gid: PATCH_GID, prop: 'size_frac', value: [0.7, 0.4] },
-      { gid: PATCH_GID, prop: 'pos_frac', value: [0.1, 0.6] },
     ])
     expect(useDocumentStore.getState().past).toHaveLength(1)
   })
