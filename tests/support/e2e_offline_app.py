@@ -11,6 +11,12 @@ pip 只从 `PIP_FIND_LINKS` 指的本地 wheelhouse 取包）。放宽了什么�
 import sys
 from pathlib import Path
 
+# Windows 上 stdout/stderr 被重定向成管道时会退回系统区域编码（cp1252/cp936），
+# 第一句中文输出就 UnicodeEncodeError。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from support import offline_world  # noqa: E402

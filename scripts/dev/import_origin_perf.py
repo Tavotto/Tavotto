@@ -33,6 +33,12 @@ import time
 import tracemalloc
 from pathlib import Path
 
+# Windows 上 stdout/stderr 被重定向成管道时会退回系统区域编码（cp1252/cp936），
+# 第一句中文输出就 UnicodeEncodeError。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
