@@ -222,6 +222,8 @@ interface NumberFieldProps {
   /** 拖动改数时把连续修改合并成一条撤销记录 */
   onScrubStart?: () => void
   onScrubEnd?: () => void
+  /** 只预览的几何控件在系统取消 / Esc / 卸载时丢弃本轮；缺省仍正常收尾已有事务。 */
+  onScrubCancel?: () => void
   /** 中性的稳定定位属性（data-inspector-prop）——测试与引导用，不进业务逻辑 */
   dataProp?: string
 }
@@ -251,6 +253,7 @@ export function NumberField({
   ariaLabel,
   onScrubStart,
   onScrubEnd,
+  onScrubCancel,
   dataProp,
 }: NumberFieldProps) {
   const unitText = typeof unit === 'string' && unit ? unit : ''
@@ -267,6 +270,8 @@ export function NumberField({
   // Enter / Esc 自己决定提交与否，随后的 blur 不能再提交一次：
   // 重复提交会让每次输入多压一条撤销记录，Esc 也会变成「还原后又写回去」
   const skipBlurSubmit = useRef(false)
+  const cancelScrub = useRef<(() => void) | null>(null)
+  useEffect(() => () => cancelScrub.current?.(), [])
 
   const display = mixed
     ? ''
@@ -315,11 +320,13 @@ export function NumberField({
   const startScrub = (e: React.PointerEvent) => {
     if (disabled) return
     e.preventDefault()
+    cancelScrub.current?.()
     const startX = e.clientX
     const startVal = value
     const target = e.currentTarget as HTMLElement
     target.setPointerCapture(e.pointerId)
     let moved = false
+    let done = false
 
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
@@ -329,15 +336,36 @@ export function NumberField({
       const mult = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1
       onChange(clampVal(startVal + dx * step * mult))
     }
-    const up = () => {
-      target.releasePointerCapture(e.pointerId)
+    const finish = (cancelled: boolean) => {
+      if (done) return
+      done = true
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      if (moved) onScrubEnd?.()
-      else inputRef.current?.select()
+      window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('lostpointercapture', cancel)
+      window.removeEventListener('keydown', keydown, true)
+      cancelScrub.current = null
+      // lostpointercapture 在调用前可能已经释放了捕获；不让它把取消出口变成异常。
+      if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId)
+      if (moved) {
+        if (cancelled && onScrubCancel) onScrubCancel()
+        else onScrubEnd?.()
+      } else if (!cancelled) inputRef.current?.select()
     }
+    const up = () => finish(false)
+    const cancel = () => finish(true)
+    const keydown = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape' || !onScrubCancel) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      cancel()
+    }
+    cancelScrub.current = cancel
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', cancel)
+    window.addEventListener('lostpointercapture', cancel)
+    window.addEventListener('keydown', keydown, true)
   }
 
   return (
@@ -361,6 +389,7 @@ export function NumberField({
         // `min-w-5` 保留单字符标记（X / Y / W）的 20px 对齐宽度；
         // `whitespace-nowrap` 保证两字及以上的标签横排、不被折成上下两行。
         <span
+          data-number-scrub
           onPointerDown={startScrub}
           className="flex h-full min-w-5 shrink-0 cursor-ew-resize items-center justify-center whitespace-nowrap text-xs text-ink-3 select-none"
         >
@@ -385,6 +414,7 @@ export function NumberField({
       >
         {prefix != null && prefixInside && (
           <span
+            data-number-scrub
             onPointerDown={startScrub}
             className="type-number flex h-full min-w-5 shrink-0 cursor-ew-resize select-none items-center justify-center whitespace-nowrap pl-1.5 text-ink-3"
           >

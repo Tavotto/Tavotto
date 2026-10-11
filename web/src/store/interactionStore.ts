@@ -13,6 +13,13 @@ export type DraftPreview = Rect & {
   end?: { x: number; y: number }
 }
 
+export interface ElementPreview {
+  boxes: Record<string, Rect4>
+  group?: Rect4
+  /** 只改图框尺寸时用矩形表达目标，暂不描画引擎的旧圆角路径。 */
+  resizingGid?: string
+}
+
 interface InteractionState {
   kind: DragKind
   /** 框选矩形（mm） */
@@ -37,7 +44,7 @@ interface InteractionState {
    * 子图拖动 / 缩放的预览框（figure 分数、top-origin），按 gid 索引。
    * 成组缩放时同时给出组框，单个子图拖动时只有 boxes 里的一项。
    */
-  elementPreview: { boxes: Record<string, Rect4>; group?: Rect4 } | null
+  elementPreview: ElementPreview | null
   /** 光标位置（mm），状态栏显示 */
   cursor: { x: number; y: number } | null
   /**
@@ -58,7 +65,7 @@ interface InteractionState {
   setHoverGid: (gid: string | null) => void
   setGidDrag: (d: { gid: string; dfx: number; dfy: number } | null) => void
   setArrowPreview: (p: { gid: string; a: [number, number]; b: [number, number] } | null) => void
-  setElementPreview: (p: { boxes: Record<string, Rect4>; group?: Rect4 } | null) => void
+  setElementPreview: (p: ElementPreview | null) => void
   setCursor: (c: { x: number; y: number } | null) => void
   setNudge: (n: { dx: number; dy: number } | null) => void
   setPendingGuide: (g: { axis: 'x' | 'y'; pos: number } | null) => void

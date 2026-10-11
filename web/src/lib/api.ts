@@ -2210,6 +2210,13 @@ export interface ManifestElement {
   /** axes：可在画布上直接拖动/缩放子图占比（写 position override） */
   resizable?: boolean
   /**
+   * 可编辑矩形形状的未裁剪外框（figure 分数、y 向下，含圆角框 padding）。
+   * editable 中的 size_frac 才是改宽高的能力声明；不借用 axes 的 resizable。
+   */
+  shape_bounds?: [number, number, number, number]
+  /** 保留 padding / 圆角形状所需的最小外框宽高（figure 分数）。 */
+  shape_min_size?: [number, number]
+  /**
    * 引擎明确不宣称、且**说得出为什么**的属性。渲染出口在
    * `inspector/UnsupportedProps.tsx`；没有它这个字段就只到 manifest、没到眼睛。
    */

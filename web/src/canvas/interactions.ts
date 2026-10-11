@@ -43,6 +43,7 @@ import {
   type GroupBlockReason,
 } from '@/lib/elementGeom'
 import { newId } from '@/lib/id'
+import { patchBoundsOf, patchMinSize, resizePatchBox } from '@/lib/patchResize'
 import {
   boxAfterScale,
   clampLegendScale,
@@ -74,6 +75,7 @@ import {
   useViewportStore,
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
+import { resizePatch } from '@/store/patchResizeAction'
 import { previewLine, previewScale, previewTransform } from '@/store/svgPreviewStore'
 import {
   beginElementPreview,
@@ -1996,6 +1998,46 @@ export function startAxesDrag(
       setOverride(panel.id, element.gid, 'position', last.map(round4), true)
       commitElementPreview(panel.id)
       noteDragCommit('resize.commit', panel.id, element.gid, 'position', 1)
+    },
+  })
+}
+
+/**
+ * 独立矩形 / 圆角框的八方向改尺寸。只预览目标线框，线宽、圆角、文字与箭头都
+ * 不做线性缩放；松手由引擎原生重建形状。取消或终点回到原框时不写任何 override。
+ */
+export function startPatchResize(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  element: ManifestElement,
+  layout: { width: number; height: number },
+  dir: ResizeDir,
+) {
+  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  if (manifest?.elements.find((el) => el.gid === element.gid) !== element) return
+  const start = patchBoundsOf(element)
+  if (!start) return
+  e.stopPropagation()
+  interaction().begin('element')
+  beginElementPreview(panel)
+  noteDragBegin('resize.begin', panel, element.gid, 'size_frac', hasOverride(panel, element.gid, 'size_frac'))
+  const toContent = contentDelta(panel, layout)
+  const min = patchMinSize(element)
+  let last: Rect4 | null = null
+  trackPointer(e, {
+    onMove: (_ev, dx, dy) => {
+      const [dfx, dfy] = toContent(dx, dy)
+      last = resizePatchBox(start, dir, dfx, dfy, min)
+      interaction().setElementPreview({ boxes: { [element.gid]: last }, resizingGid: element.gid })
+    },
+    onEnd: (moved, _ev, end) => {
+      interaction().end()
+      if (!moved || !last || end.cancelled || !resizePatch(panel, element, last)) {
+        cancelElementPreview()
+        return
+      }
+      commitElementPreview(panel.id)
+      noteDragCommit('resize.commit', panel.id, element.gid, 'size_frac', 2)
     },
   })
 }

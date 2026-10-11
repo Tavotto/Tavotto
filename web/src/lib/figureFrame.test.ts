@@ -184,6 +184,23 @@ describe('切换：内容在页面上不动、外框变', () => {
     const p = panel({ overrides: [{ gid: 'figure', prop: 'size_mm', value: [80, 57.6] }, { ...LEGACY_FRAME_OVERRIDE }] })
     expect(frameSwitchPatch(p, FRAME)!.overrides[0].value).toEqual([76, 58])
   })
+
+  it('图框尺寸只换比例、位置单独换原点，切到 savefig 后四角在页面上不动', () => {
+    const p = panel({ overrides: [
+      { gid: 'axes_0.patches_0', prop: 'size_frac', value: [0.3, 0.2] },
+      { gid: 'axes_0.patches_0', prop: 'pos_frac', value: [0.2, 0.6] },
+      { ...LEGACY_FRAME_OVERRIDE },
+    ] })
+    const out = frameSwitchPatch(p, FRAME)!
+    const size = out.overrides[0].value as number[]
+    const anchor = out.overrides[1].value as number[]
+    const [sx, sy, fw, fh] = FRAME.savefig_mm
+    expect(size[0] * fw).toBeCloseTo(0.3 * 80, 9)
+    expect(size[1] * fh).toBeCloseTo(0.2 * 57.6, 9)
+    expect(anchor[0] * fw + sx).toBeCloseTo(0.2 * 80, 9)
+    expect(anchor[1] * fh + sy).toBeCloseTo(0.6 * 57.6, 9)
+    expect((anchor[1] - size[1]) * fh + sy).toBeCloseTo(0.4 * 57.6, 9)
+  })
 })
 
 describe('旧裁剪与新图幅不相交：不采用（#688）', () => {

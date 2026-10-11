@@ -127,3 +127,74 @@ describe('NumberField onClear：清空框 = 回到「没设置」（设置 › �
     expect(input.value).toBe('9')
   })
 })
+
+describe('NumberField 拖数字的提交与作废', () => {
+  const start = async () => {
+    const prefix = host.querySelector('[data-number-scrub]') as HTMLElement
+    Object.assign(prefix, {
+      setPointerCapture: vi.fn(), hasPointerCapture: () => true, releasePointerCapture: vi.fn(),
+    })
+    await act(async () => prefix.dispatchEvent(new MouseEvent('pointerdown', { clientX: 0, button: 0, bubbles: true })))
+  }
+  const fire = (type: string, clientX = 10) => act(async () => {
+    window.dispatchEvent(new MouseEvent(type, { clientX, bubbles: true }))
+  })
+  const mount = async (cancel = true) => {
+    const callbacks = { onChange: vi.fn(), onScrubStart: vi.fn(), onScrubEnd: vi.fn(), onScrubCancel: vi.fn() }
+    await act(async () => root.render(<NumberField value={10} prefix="W" prefixInside {...callbacks} onScrubCancel={cancel ? callbacks.onScrubCancel : undefined} />))
+    await start()
+    return callbacks
+  }
+
+  it('正常松手保留既有行为，一次 begin / end，结束后没有残留监听', async () => {
+    const c = await mount()
+    await fire('pointermove', 10)
+    await fire('pointermove', 20)
+    await fire('pointerup')
+    await fire('lostpointercapture')
+    await fire('pointermove', 30)
+    expect(c.onScrubStart).toHaveBeenCalledTimes(1)
+    expect(c.onChange.mock.calls).toEqual([[20], [30]])
+    expect(c.onScrubEnd).toHaveBeenCalledTimes(1)
+    expect(c.onScrubCancel).not.toHaveBeenCalled()
+  })
+
+  it.each(['pointercancel', 'lostpointercapture'])('%s 只调用取消出口，随后松手不提交', async (event) => {
+    const c = await mount()
+    await fire('pointermove')
+    await fire(event)
+    await fire('pointerup')
+    await fire('pointermove', 50)
+    expect(c.onScrubCancel).toHaveBeenCalledTimes(1)
+    expect(c.onScrubEnd).not.toHaveBeenCalled()
+    expect(c.onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('Esc 由有取消能力的控件接住，松手不再补提交', async () => {
+    const c = await mount()
+    await fire('pointermove')
+    await key(window.document.body, { key: 'Escape' })
+    await fire('pointerup')
+    expect(c.onScrubCancel).toHaveBeenCalledTimes(1)
+    expect(c.onScrubEnd).not.toHaveBeenCalled()
+  })
+
+  it('卸载会作废正在预览的数字手势并清监听', async () => {
+    const c = await mount()
+    await fire('pointermove')
+    await act(async () => root.render(null))
+    await fire('pointerup')
+    await fire('pointermove', 50)
+    expect(c.onScrubCancel).toHaveBeenCalledTimes(1)
+    expect(c.onScrubEnd).not.toHaveBeenCalled()
+    expect(c.onChange).toHaveBeenCalledTimes(1)
+  })
+
+  it('既有即时写入控件未给取消回调时仍收尾其事务', async () => {
+    const c = await mount(false)
+    await fire('pointermove')
+    await fire('pointercancel')
+    expect(c.onScrubEnd).toHaveBeenCalledTimes(1)
+    expect(c.onScrubCancel).not.toHaveBeenCalled()
+  })
+})
