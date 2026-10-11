@@ -6,7 +6,7 @@ import type { PanelObject } from '@/types/document'
 import { setOverrides } from './actions'
 import { useDocumentStore } from './documentStore'
 import { finishActiveGesture } from './gestureCoordinator'
-import { exactPanelManifest, useRenderStore } from './renderStore'
+import { displayedExactManifest } from './mountedSvgStore'
 
 /** 手柄与数值输入共用的校验：起手时的几何仍有效才提交。 */
 export function resizePatch(
@@ -17,7 +17,8 @@ export function resizePatch(
   finishActiveGesture()
   const panel = useDocumentStore.getState().doc.objects.find((o) => o.id === basis.id)
   if (panel?.type !== 'panel' || panel.overrides !== basis.overrides) return false
-  const manifest = exactPanelManifest(useRenderStore.getState(), panel)
+  // 事件可能早于 React 重绘到达，提交时也要核对真正挂上画面的版本。
+  const manifest = displayedExactManifest(panel)
   const current = manifest?.elements.find((e) => e.gid === element.gid)
   if (!current || current !== element) return false
   const start = patchBoundsOf(current)
