@@ -295,6 +295,7 @@
     "switchKind": "Change to {{name}}",
     "switchKindCount": "Change {{count}} objects to {{name}}",
     "resizeAxes": "Resize {{count}} axes",
+    "resizePatch": "Resize box",
     "scaleLegend": "Scale legend",
     "resizeObjects": "Resize objects",
     "restoreAspect": "Restore original ratio",

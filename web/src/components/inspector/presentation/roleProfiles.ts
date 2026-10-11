@@ -159,6 +159,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
   },
   patch: {
     primary: [
+      'size_frac',
       'facecolor', 'fill', 'hatch', 'hatch_linewidth',
       'edgecolor', 'linewidth', 'linestyle', 'alpha',
     ],
