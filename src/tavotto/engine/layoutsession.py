@@ -360,8 +360,9 @@ def _parse_bytes(raw: bytes) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _preserve_corrupt(raw: bytes) -> None:
-    """把读不懂的原字节存成 `state/layout-sessions.corrupt-<ms>.json`（同样的字节只存一份，最多 3 份）。"""
+def _preserve_corrupt(raw: bytes) -> bool:
+    """把读不懂的原字节存成 `state/layout-sessions.corrupt-<ms>.json`（同样的字节只存一份，最多 3 份）。
+    回这份字节**此刻确实有副本**（新存的或早就存过相同的）；存不下回 False——调用方据此拒写。"""
     directory = state_path().parent
     try:
         existing = sorted(
@@ -372,7 +373,7 @@ def _preserve_corrupt(raw: bytes) -> None:
         for p in existing:
             try:
                 if p.read_bytes() == raw:
-                    return
+                    return True
             except OSError:
                 continue
         atomicio.write_bytes(
@@ -385,8 +386,10 @@ def _preserve_corrupt(raw: bytes) -> None:
                 stale.unlink()
             except OSError:
                 pass
+        return True
     except OSError as exc:
         LOG.warning("会话状态的损坏副本存不下（%s）", exc)
+        return False
 
 
 class _Loaded(NamedTuple):
@@ -418,16 +421,21 @@ def _load(*, preserve: bool = True) -> _Loaded:
             return _Loaded(state, STATUS_DEGRADED)
         return _Loaded(state, STATUS_OK)
     # 字节坏：先留原字节，再看 bak
-    LOG.warning("会话状态文件损坏，已保留原字节")
-    if preserve:
-        _preserve_corrupt(raw)
+    LOG.warning("会话状态文件损坏")
+    preserved = _preserve_corrupt(raw) if preserve else True
     try:
         bak = _parse_bytes(backup_path().read_bytes())
     except OSError:
         bak = None
     if bak is not None and not _is_future(bak):
-        return _Loaded(_parse_state(bak), STATUS_RECOVERED)
-    return _Loaded(_empty(), STATUS_DEGRADED)
+        state, status = _parse_state(bak), STATUS_RECOVERED
+    else:
+        state, status = _empty(), STATUS_DEGRADED
+    if not preserved:
+        # 原字节没能留下副本：下一次写入会把它整份替换掉，那就是唯一一份字节的丢失。
+        # 关门直到某次读取真的把它保存下来（保存成功后这一条自然消失）
+        state["_readonly"] = "corrupt_not_preserved"
+    return _Loaded(state, status)
 
 
 def _read() -> tuple[dict, str]:

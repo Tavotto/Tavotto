@@ -1286,3 +1286,34 @@ def test_session_lock_unsupported_keeps_the_body_save_and_reports_metadata_faile
     assert r.get_json()["revision"] == _rev("d_1")
     assert _put_last(client, "d_1", pj=a).status_code == 503
     assert not layoutsession.state_path().exists()
+
+
+def test_corrupt_bytes_that_cannot_be_preserved_close_the_door_until_they_can(
+    client, tmp_path, monkeypatch
+):
+    """损坏的会话文件、没有可用 bak，而损坏副本又存不下：下一次写入会把唯一一份原字节替换掉——所以拒写，
+    直到某次读取真的把它存下来。"""
+    a = _project(client, tmp_path, "a", default=True)
+    path = layoutsession.state_path()
+    path.parent.mkdir(parents=True)
+    raw = b'{"projects": {"/a": '
+    path.write_bytes(raw)
+    real = atomicio.write_bytes
+
+    def refuse_copy(p, data, **kw):
+        if Path(p).name.startswith(layoutsession.CORRUPT_PREFIX):
+            raise atomicio.AtomicWriteError("write_failed", "disk full", Path(p))
+        return real(p, data, **kw)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(atomicio, "write_bytes", refuse_copy)
+        r = _put(client, "d_1", _doc(), a)
+        assert r.status_code == 200 and r.get_json()["metadata"] == "failed"
+        assert _put_last(client, "d_1", pj=a).status_code == 503
+        with pytest.raises(layoutsession.SessionStateUnavailable):
+            layoutsession.commit_slot("d_2", "/a", "rev")
+        assert path.read_bytes() == raw, "副本没存下就把原字节替换了"
+    # 副本存得下了：这次读取保存原字节，门重新打开，写入放行
+    r = _put(client, "d_2", _doc(), a)
+    assert r.get_json()["metadata"] == "ok"
+    assert [c.read_bytes() for c in path.parent.glob("layout-sessions.corrupt-*.json")] == [raw]

@@ -60,8 +60,16 @@ const row = (id: string) => ({
 const page = (items: string[], next: string | null) =>
   new Response(JSON.stringify({ items: items.map(row), next_cursor: next, index: 'ok' }), { status: 200 })
 
+/** 非空 = autosave 的 PUT 卡在这里（模拟「排队的保存在切项目之后才完成」） */
+let putHold: Promise<void> | null = null
+let putsHeld = 0
+
 const fetchImpl = (async (url: unknown, init?: RequestInit) => {
   const u = new URL(String(url), 'http://127.0.0.1')
+  if (putHold && init?.method === 'PUT' && u.pathname.startsWith('/api/autosave/')) {
+    putsHeld += 1
+    await putHold
+  }
   if (candidatePages && u.pathname === '/api/layout-session/candidates') {
     candidateCalls += 1
     return candidatePages(u.searchParams.get('cursor'), candidateCalls)
@@ -110,6 +118,8 @@ function seedSavedLast(id = 'd_saved', name = 'Saved Fig') {
 }
 
 beforeEach(() => {
+  putHold = null
+  putsHeld = 0
   candidatePages = null
   candidateCalls = 0
   localStorage.clear()
@@ -1168,5 +1178,34 @@ describe('Codex P1：磁盘读失败不被本机副本掩盖 / 会话不可用�
     const app = await boot()
     expect(await app.doc.restoreSession()).toBe(true)
     expect(ds(app).documentId).toBe('d_c')
+  })
+})
+
+describe('Codex P2：restoreMetaIssue 绑定保存载荷的 pj', () => {
+  it('A 项目的保存（元数据失败）在界面切到 B 并恢复出同一个 documentId 之后才完成——A 的失败不会挂到 B 头上', async () => {
+    const app = await boot()
+    // B 项目的 last 指着同一个 documentId（比如两个项目里都有的固定 id 的示例排版）
+    be.state.metadata = 'failed'
+    const hold = gate()
+    putHold = hold.promise
+    await ds(app).switchDocument(savedProject('A 的'), 'd_shared') // A 的保存排队（pj = p_a），卡住
+    await reached(() => putsHeld >= 1)
+    be.putSlot('d_shared', savedProject('B 的'), 'p_b')
+    be.setLast('p_b', 'd_shared', 'B 的')
+    await app.proj.useProjectStore.getState().adoptOpenedProject({ open: true, id: 'p_b', figures_dir: '/figs/b' })
+    expect(ds(app).documentId).toBe('d_shared')
+    expect(app.doc.getRestoreGate()).toMatchObject({ pj: 'p_b', reason: 'restored' })
+    const seen: (string | null)[] = []
+    const persisted: (string | null)[] = []
+    app.doc.useDocumentStore.subscribe((st) => {
+      if (st.restoreMetaIssue) seen.push(st.restoreMetaIssue.pj)
+    })
+    app.doc.onDocumentPersisted((_id, pj) => persisted.push(pj))
+    putHold = null
+    hold.release()
+    await reached(() => persisted.includes('p_a'))
+    // A 的迟到回包到过（监听器收到，pj=p_a），但界面轴上没有 A 的失败
+    expect(seen).not.toContain('p_a')
+    expect(ds(app).restoreMetaIssue).toBeNull()
   })
 })

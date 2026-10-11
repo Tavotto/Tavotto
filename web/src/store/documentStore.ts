@@ -1459,11 +1459,16 @@ function afterWriteOk(
   }
   if (!isCurrentDoc(id)) return
   // 元数据没落成 ≠ 正文没存下：另开一根轴，不碰 saveState；下次这份保存成功时清掉
-  const prevMeta = useDocumentStore.getState().restoreMetaIssue
-  if (meta?.metadata === 'failed') {
-    useDocumentStore.setState({ restoreMetaIssue: { docId: id, pj } })
-  } else if (prevMeta && prevMeta.docId === id && meta?.metadata !== undefined) {
-    useDocumentStore.setState({ restoreMetaIssue: null })
+  // 回包的 pj 是排队那一刻的：A 项目的排队保存在界面切到 B（恰好同一个 documentId）之后才完成时，
+  // 它的元数据结局不属于现在开着的这份——只按 id 判会把 A 的失败挂到 B 头上。比的是这份排版**现在**的归属项目
+  // （与排队时取 pj 的是同一个表达式）；不一致就既不挂也不清
+  if (pj === (projectOfDoc().id ?? currentProjectId())) {
+    const prevMeta = useDocumentStore.getState().restoreMetaIssue
+    if (meta?.metadata === 'failed') {
+      useDocumentStore.setState({ restoreMetaIssue: { docId: id, pj } })
+    } else if (prevMeta && prevMeta.docId === id && meta?.metadata !== undefined) {
+      useDocumentStore.setState({ restoreMetaIssue: null })
+    }
   }
   useDocumentStore.setState({ lastPersisted: savedAt })
   setSaveState(useDocumentStore.getState().dirty ? 'dirty' : 'saved')
