@@ -3366,26 +3366,34 @@ def _clear_tutorial_local_state(
     """
     removed: list[str] = []
     slot = _autosave_path(str(meta["document_id"]))
+
     # 会话状态（#715 PR-B）：教程项目「上次开着的排版」与教程画布槽位的归属一并清掉——
     # 槽位删了，指向它的记录留着的话下次打开教程会报一份不存在的「找不到上次排版」。
     # 锁顺序：槽位的文档锁 → 会话锁（与自动保存 / DELETE / 清理同序，见 `_document_lock`）：
     # 记录与槽位在同一把文档锁里一起消失，并发的自动保存不会在两者之间把归属记回来
-    with _document_lock(slot):
-        if project_path is not None:
-            try:
-                engine_layoutsession.forget_project(
-                    engine_layoutsession.project_key(project_path), [str(meta["document_id"])]
-                )
-            except OSError as exc:
-                LOG.warning("重置教程：会话状态清不掉（%s）", exc)
+    def _unlink_slot() -> bool:
         try:
             slot.unlink()
         except FileNotFoundError:
-            pass
+            return True
         except OSError as exc:
             LOG.warning("重置教程：清不掉 %s（%s）", slot, exc)
-        else:
-            removed.append(slot.name)
+            return False
+        removed.append(slot.name)
+        return True
+
+    with _document_lock(slot):
+        # 删槽位在跨进程会话锁里（`delete_slot`），和别的进程的 `set_last` 发布串行
+        try:
+            engine_layoutsession.delete_slot(slot.stem, _unlink_slot)
+            if project_path is not None:
+                engine_layoutsession.forget_project(
+                    engine_layoutsession.project_key(project_path), [str(meta["document_id"])]
+                )
+        except OSError as exc:
+            LOG.warning("重置教程：会话状态清不掉（%s）", exc)
+            if slot.exists():  # 教程重置不能因为会话状态不可用就留着旧画布
+                _unlink_slot()
     target = _baked_store().path_for(pid)
     try:
         target.unlink()
@@ -9450,19 +9458,23 @@ def api_autosave_summary(doc_id):
 @app.delete("/api/autosave/<doc_id>")
 def api_autosave_delete(doc_id):
     p = _autosave_path(doc_id)
+
     # 锁顺序：文档锁 → 会话锁。删文件与忘记录在同一把文档锁里，并发的自动保存不会在两者之间
-    # 把归属记在一个已经删掉的槽位上
-    with _document_lock(p):
+    # 把归属记在一个已经删掉的槽位上；unlink 本身在**跨进程会话锁**里（`delete_slot`），和别的进程
+    # 的 `set_last` 发布串行
+    def _unlink() -> bool:
         if p.is_file():
             try:
                 p.unlink()
             except OSError:
                 pass
-        if not p.exists():
-            try:
-                engine_layoutsession.forget_documents([p.stem])
-            except OSError as exc:
-                LOG.warning("删除槽位后会话状态没跟上（%s）", exc)
+        return not p.exists()
+
+    try:
+        with _document_lock(p):
+            engine_layoutsession.delete_slot(p.stem, _unlink)
+    except OSError:
+        return _session_unavailable()
     return jsonify({"ok": True})
 
 
@@ -9497,6 +9509,15 @@ def _slot_recoverable(path: Path) -> tuple[bool, str | None]:
     except (ValueError, RecursionError):
         return False, revision
     return True, revision
+
+
+def _slot_signature(path: Path) -> tuple[int, int] | None:
+    """槽位文件的 `(mtime_ns, size)`；不在 / 读不出回 None。只 stat，会话锁里也能用。"""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
 
 
 def _session_unavailable():
@@ -9540,9 +9561,19 @@ def api_layout_session_put_last():
     try:
         # 验槽位与记 last 在槽位的文档锁里（锁顺序：文档锁 → 会话锁）：验完到记完之间清理删不掉它
         with _document_lock(slot):
+            before = _slot_signature(slot)
             slot_ok, revision = _slot_recoverable(slot)
+            sig = _slot_signature(slot)
+            slot_ok = slot_ok and sig is not None and sig == before
+            # 文档锁只在本进程内；别的进程（共用数据目录）可能在验证之后、发布之前删掉槽位。
+            # 发布时在跨进程会话锁里再 stat 一眼（删除同样在会话锁里），变了就只记 pending
             result = engine_layoutsession.set_last(
-                key, doc_id, name, slot_ok=slot_ok, current_revision=revision
+                key,
+                doc_id,
+                name,
+                slot_ok=slot_ok,
+                current_revision=revision,
+                slot_check=(lambda: _slot_signature(slot) == sig) if slot_ok else None,
             )
     except engine_layoutsession.ForeignLayoutError:
         # 这份排版的槽位记在别的项目名下（#715 验收 P1）：不记成这个项目「上次开着的」。

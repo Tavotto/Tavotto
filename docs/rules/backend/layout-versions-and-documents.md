@@ -136,6 +136,13 @@
     `{ok, last, state:"durable"}`；不通过 → 只写 pending，回 `{ok, last:<durable 或 null>, pending, state:"pending"}`。
     **pending 只是「最新的、还没 durable 的意图」**：任何更晚的 durable `set_last(X)` 都清掉本组 pending（不管它指着谁），
     否则 A→B(pending)→A(durable) 之后 B 迟到的首次保存会晋升过期的 pending、把 last 顶回 B。
+    **验证到发布到底串行了什么**：验槽位 + `set_last` 在槽位的 `_document_lock` 里（**只在本进程内**互斥），所以本进程的清理 /
+    DELETE 删不掉验证与发布之间的槽位；**别的进程**（共用数据目录）不持这把锁，所以发布时 `set_last` 在**跨进程会话锁**里
+    再调一次 `slot_check`（app 传的只 stat 回调：文件还在、`(mtime_ns, size)` 与验证时一致），不是 → 只记 pending。
+    所有槽位删除（`DELETE`、清理的 `remove_slot_unless_protected`、教程重置的 `delete_slot`）都把 unlink 放在跨进程会话锁里，
+    于是「删」与「发布」被同一把跨进程锁串行：要么发布先到（删除方在锁里重判保护，删不掉），要么删除先到（发布看到槽位没了，记 pending）。
+    没有新增锁；`slot_check` 不解析正文、不取文档锁。验证（读整份正文）本身仍在会话锁之外，所以内容被别的进程**改成另一份有效正文**
+    不在这里拦（签名变了会降级为 pending）。
     旧前端的正常顺序是「先 PUT last、再首次自动保存」：early PUT 只记 pending，**首次正文落盘成功的那个提交**
     （`commit_slot`）把匹配的 pending 晋升为 last——不留悬空 last，也不靠前端记得补一次。`last` 对旧前端仍是 `{doc_id,name,at}`。
     **不要**只在 `set_last` 里「文件不存在就拒绝」：那会让旧前端的 early PUT 永远失败又不补记。

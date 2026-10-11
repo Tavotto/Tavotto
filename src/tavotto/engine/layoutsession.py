@@ -605,6 +605,7 @@ def set_last(
     *,
     slot_ok: bool = True,
     current_revision: str | None = None,
+    slot_check: Callable[[], bool] | None = None,
 ) -> dict:
     """记「这个项目现在想打开这份排版」。
 
@@ -618,6 +619,11 @@ def set_last(
       `{"last": <durable 或 None>, "pending": ..., "state": "pending"}`。
 
     `current_revision`：保留的参数，不再影响冲突判据（待核对的归属照样算冲突）。
+    `slot_check`：在**持着跨进程会话锁、发布 durable last 之前**再看一眼槽位还是不是验证过的那一份
+    （app 传一个只 stat 的回调：文件在、`(mtime_ns, size)` 没变）；不是 → 按 pending 记，不发布 durable。
+    它和槽位删除（`delete_slot` / `remove_slot_unless_protected` 在会话锁里 unlink）被同一把跨进程锁串行：
+    另一个进程在「验证」与「发布」之间删掉槽位，这里要么看到它已没了（记 pending），要么它在我们之后才删
+    （此时 last 已发布、删除方在锁里重判保护，删不掉）。回调里不许解析正文、不许取文档锁。
     `ValueError`：doc_id 形状不对 / name 不是字符串。`ForeignLayoutError`：槽位确知属于别的项目
     （`owner_conflict`），一个字节都不写。`SessionStateUnavailable` / `atomicio.AtomicWriteError`：写不进去。
     """
@@ -634,6 +640,8 @@ def set_last(
         group = _group(state, key)
         cur = group.get("last")
         pend = group.get("pending")
+        if slot_ok and slot_check is not None and not slot_check():
+            slot_ok = False
         if slot_ok:
             changed = False
             if cur and cur["doc_id"] == doc_id:
@@ -811,6 +819,25 @@ def remove_slot_unless_protected(doc_id: str, remove: Callable[[], bool]) -> boo
             except OSError as exc:
                 LOG.warning("清理后会话状态没跟上（%s）", exc)
         return True
+
+
+def delete_slot(doc_id: str, remove: Callable[[], bool]) -> bool:
+    """用户明确删一个槽位（`DELETE /api/autosave/<id>`）：**在跨进程会话锁里** unlink、忘掉它的记录。
+
+    与 `remove_slot_unless_protected` 的区别：显式删除不受保护（用户要它没了），但同样把「删」放进
+    会话锁，和别的进程的 `set_last` 发布串行。`remove()` 真删文件，回是否已不在；会话状态写不进去
+    只记日志（文件已删是事实）。锁拿不到抛 `SessionStateUnavailable`，此时文件没动。"""
+    with _LOCK:
+        state, _status = _read()
+        gone = remove()
+        if gone:
+            _removed, changed = _forget_locked(state, {doc_id})
+            if changed:
+                try:
+                    _write(state)
+                except OSError as exc:
+                    LOG.warning("删除槽位后会话状态没跟上（%s）", exc)
+        return gone
 
 
 def drop_owners_not_in(existing: set[str], still_exists: Callable[[str], bool]) -> int:

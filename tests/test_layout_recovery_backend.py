@@ -1046,3 +1046,53 @@ def test_candidates_a_transient_stat_failure_yields_an_invalid_item_not_a_missin
     assert flaky["status"] == "invalid" and flaky["revision"] is None
     assert flaky["canvases"] is None and flaky["objects"] is None
     assert items["d_ok"]["status"] == "ok"
+
+
+def test_cross_process_removal_between_validate_and_publish_leaves_pending_not_a_dangling_last(
+    client, monkeypatch
+):
+    """另一个进程（只持跨进程会话锁、不持本进程的文档锁）在「验槽位」之后、「发布 last」之前删掉槽位：
+    发布时在会话锁里再看一眼，槽位没了就只记 pending。"""
+    _put(client, "d_keep", _doc())
+    _put_last(client, "d_keep", "K")
+    _put(client, "d_t", _doc(2))
+    real = m._slot_signature
+    calls = []
+
+    def signature_then_other_process_removes(path):
+        sig = real(path)
+        calls.append(sig)
+        if len(calls) == 2:  # 验证已通过、签名已取好，马上要发布
+            layoutsession.delete_slot("d_t", lambda: (_slot("d_t").unlink(), True)[1])
+        return sig
+
+    monkeypatch.setattr(m, "_slot_signature", signature_then_other_process_removes)
+    body = _put_last(client, "d_t", "T").get_json()
+    assert body["state"] == "pending" and body["last"]["doc_id"] == "d_keep"
+    assert not _slot("d_t").exists()
+    assert _get_session(client)["last"]["doc_id"] == "d_keep", "last 指着一个被删掉的槽位"
+
+
+def test_slot_removal_and_publish_are_serialized_by_the_session_lock(client, tmp_path, monkeypatch):
+    """DELETE / 教程重置 / 清理的 unlink 都发生在会话锁里（否则另一个进程的发布与删除会交错）。"""
+    held: list[bool] = []
+    real_unlink = Path.unlink
+
+    def watching(self, *a, **k):
+        if self.name.endswith(".json") and self.parent == m.AUTOSAVE_DIR:
+            held.append(layoutsession._LOCK._thread.locked())
+        return real_unlink(self, *a, **k)
+
+    # DELETE
+    _put(client, "d_del", _doc())
+    # 清理（上限在槽位都建好之后才收紧，免得建的时候就被裁了）
+    for i, d in enumerate(["d_old", "d_mid"]):
+        _put(client, d, _doc(i))
+        os.utime(_slot(d), ns=(0, (i + 1) * 10**9))
+    monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 1)
+    monkeypatch.setattr(Path, "unlink", watching)
+    assert client.delete("/api/autosave/d_del").status_code == 200
+    _put(client, "d_new", _doc(9))
+    assert not _slot("d_old").exists()
+    assert held and all(held), f"有槽位在会话锁之外被删：{held}"
+    assert len(held) >= 2

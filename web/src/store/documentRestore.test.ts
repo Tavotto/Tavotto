@@ -952,3 +952,63 @@ describe('Codex P1：指针修订号与读到的正文对不上（共用 docId �
     expect(be.state.calls.some((c) => c.startsWith('GET owner'))).toBe(false)
   })
 })
+
+describe('Codex P1/P2：发现的自动采用', () => {
+  const rowWith = (id: string, evidence: 'owners' | 'versions' | 'assets', index = 'ok') =>
+    new Response(JSON.stringify({ items: [{ ...row(id), evidence }], next_cursor: null, index }), { status: 200 })
+
+  it('P1：索引 degraded 时发现的单独一行不自动采用 → choose（也不当空）', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = () => rowWith('d_only', 'owners', 'degraded')
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_only')
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'choose' })
+    expect(ds(app).restoreIssue!.alternatives.map((a) => a.id)).toEqual(['d_only'])
+  })
+
+  it('P1：会话索引 degraded（session.index）同样不自动采用', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    be.session('p_a').index = 'degraded'
+    candidatePages = () => rowWith('d_only', 'owners')
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'choose' })
+  })
+
+  it.each(['versions', 'assets'] as const)('P1：单独一行只有 %s 弱证据 → choose，不自动采用', async (ev) => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = () => rowWith('d_only', ev)
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_only')
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'choose' })
+  })
+
+  it('P1 对照：owners 证据 + 索引正常 → 照旧自动采用', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = () => rowWith('d_only', 'owners')
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+  })
+
+  it('P1：degraded 且 0 行 → 照旧非阻塞转空白', async () => {
+    candidatePages = () => new Response(JSON.stringify({ items: [], next_cursor: null, index: 'degraded' }), { status: 200 })
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'empty' })
+  })
+
+  it.each([
+    ['槽位 404（missing）', undefined, 'missing'],
+    ['正文版本过新（too_new）', { ...savedProject('未来'), schema: 99 }, 'too_new'],
+  ] as const)('P2：唯一候选探测 %s → needs_user，不是空', async (_n, body, kind) => {
+    if (body) be.putSlot('d_only', body, 'p_a')
+    candidatePages = () => rowWith('d_only', 'owners')
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue).toMatchObject({ kind, ref: { id: 'd_only' } })
+    expect(app.doc.getRestoreGate().state).toBe('needs_user')
+    if (kind === 'too_new') expect(ds(app).docNotice).toMatchObject({ kind: 'schema_too_new', docId: 'd_only' })
+  })
+})

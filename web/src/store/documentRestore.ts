@@ -407,6 +407,12 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       ? needsUser(token, 'choose', null, asCandidates)
       : needsUser(token, 'index_degraded', null)
   }
+  // 索引读不全 / 坏过（degraded）时归属表是空的，发现的行只能按较弱的 versions / assets 证据归类；
+  // 单独一行只有这种弱证据也一样——自动采用只给最强的 `owners` 证据。这两种情况都交给用户选，不替他认领
+  const indexDegraded = plan.session.index === 'degraded' || scan.index === 'degraded'
+  if (items.length >= 1 && (indexDegraded || (items.length === 1 && items[0].evidence !== 'owners'))) {
+    return needsUser(token, 'choose', null, asCandidates)
+  }
   if (items.length === 1) {
     const item = items[0]
     const probe = await probeWithRetry(token, item.doc_id)
@@ -421,14 +427,18 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       }
       return out
     }
-    if (probe.kind === 'unavailable') {
-      return needsUser(token, 'unavailable', { id: item.doc_id, name: item.name })
-    }
-    return finishEmpty(token)
+    // 唯一的候选读不出来也不能说成「没有历史」：带着原因和这一行给出口（版本过新同时挂旧的提示）
+    return needsUser(
+      token,
+      issueKindOf(probe),
+      { id: item.doc_id, name: item.name },
+      [],
+      probe.kind === 'too_new' ? { docId: item.doc_id, schema: probe.schema ?? 0 } : undefined,
+    )
   }
   if (items.length >= 2) return needsUser(token, 'choose', null, asCandidates)
   // 0 份：新项目 / 没有历史。恢复记录读不了（索引损坏）时说一句，但不阻塞——旧排版还在，打开排版对话框里找
-  if (plan.session.index === 'degraded' || scan.index === 'degraded') {
+  if (indexDegraded) {
     useUiStore.getState().setStatus(msg('restore.indexDegraded', undefined, 'workspace'), 'info')
   }
   return finishEmpty(token)
