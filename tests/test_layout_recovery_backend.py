@@ -1230,3 +1230,59 @@ def test_document_lock_held_by_another_process_times_out_with_503_and_writes_not
     finally:
         os.close(fd)
     assert _put(client, "d_held", _doc()).status_code == 200
+
+
+def _enolcks(monkeypatch, only_session: bool = False):
+    import errno
+
+    real_try = layoutsession._try_file_lock
+    if only_session:
+        layoutsession.lock_path().parent.mkdir(parents=True, exist_ok=True)
+        layoutsession.lock_path().touch()
+
+    def refuse(fd):
+        if only_session:
+            same = os.fstat(fd).st_ino == os.stat(layoutsession.lock_path()).st_ino
+            if not same:
+                return real_try(fd)
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(layoutsession, "_try_file_lock", refuse)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX 的 errno / inode 判断；Windows 腿留给 CI"
+)
+def test_filesystem_without_advisory_locks_fails_closed_not_to_thread_only_locking(
+    client, monkeypatch
+):
+    """文件系统拒绝咨询锁（网络盘 ENOLCK）：槽位文档锁拿不到 → 保存 503、一个字节没写；绝不退回只有进程内的锁。"""
+    _put(client, "d_ok", _doc(1))
+    before = _slot("d_ok").read_bytes()
+    _enolcks(monkeypatch)
+    r = _put(client, "d_ok", _doc(2, "changed"), base=_rev("d_ok"))
+    assert r.status_code == 503 and r.get_json()["code"] == "session_unavailable"
+    assert _slot("d_ok").read_bytes() == before
+    r = _put(client, "d_new", _doc())
+    assert r.status_code == 503 and not _slot("d_new").exists()
+    assert client.delete("/api/autosave/d_ok").status_code == 503 and _slot("d_ok").exists()
+    assert _put_last(client, "d_ok").status_code == 503
+    with pytest.raises(layoutsession.SessionStateUnavailable):
+        layoutsession.record_owner("d_x", None)
+    view = _get_session(client)  # 读不到可信状态 = degraded，不是首次空
+    assert view["index"] == "degraded"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX 的 errno / inode 判断；Windows 腿留给 CI"
+)
+def test_session_lock_unsupported_keeps_the_body_save_and_reports_metadata_failed(
+    client, tmp_path, monkeypatch
+):
+    a = _project(client, tmp_path, "a", default=True)
+    _enolcks(monkeypatch, only_session=True)  # 槽位锁文件能锁，会话锁文件被拒
+    r = _put(client, "d_1", _doc(1), a)
+    assert r.status_code == 200 and r.get_json()["metadata"] == "failed"
+    assert r.get_json()["revision"] == _rev("d_1")
+    assert _put_last(client, "d_1", pj=a).status_code == 503
+    assert not layoutsession.state_path().exists()

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { msg } from '@/i18n'
 import { FolderOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import type { RecoveryCandidateItem } from '@/lib/api'
+import { fetchLayoutOwnerEvidence, type RecoveryCandidateItem } from '@/lib/api'
 import {
   CANDIDATE_CAP,
   loadCandidates,
@@ -110,7 +110,12 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
    * 按原 id 打开一份自动保存：**入口取一次上下文**（`saveContext.ts`），读完回来先核对项目 / 排版还是同一个，
    * 不是就不装、状态条说一句——否则读的途中切了项目，A 的排版会被装进 B 并按 B 的名义自动保存。
    */
-  const openSafely = async (id: string, name: string): Promise<boolean> => {
+  const openSafely = async (
+    id: string,
+    name: string,
+    expectedRevision: string | null,
+    scope: 'project' | 'unknown',
+  ): Promise<boolean> => {
     const ctx = captureSaveContext()
     const probe = await probeDocument(id, ctx.pj)
     if (!stillCurrent(ctx)) {
@@ -122,6 +127,23 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
         .getState()
         .setStatus(msg(probe.kind === 'too_new' ? 'status.recentTooNew' : 'status.recentMissing', undefined, 'workspace'), 'error')
       return false
+    }
+    // 扫描之后这个槽位的正文被改过（同一个 doc id，别的项目存了新的一版）：只有后端证明它现在仍属于本项目
+    // （owners=this 且已核对）才装；否则不装、说一句、刷新列表
+    const diskRevision = probe.disk.kind === 'found' ? probe.disk.revision : null
+    if (expectedRevision !== null && diskRevision !== null && diskRevision !== expectedRevision) {
+      const ev = await fetchLayoutOwnerEvidence(id, ctx.pj)
+      const mine = ev !== 'unsupported' && ev !== 'unavailable' && ev.owner === 'this' && ev.verified
+      if (!stillCurrent(ctx)) {
+        useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
+        return false
+      }
+      if (!mine) {
+        useUiStore.getState().setStatus(msg('layout.recoverChanged', { name }, 'dialogs'), 'error')
+        seq.current += 1
+        void load(scope)
+        return false
+      }
     }
     const notice = acceptProbe(probe, ctx.pj)
     if (!(await openDocumentAs(probe.doc, id, { stillCurrent: () => stillCurrent(ctx) }))) return false
@@ -146,7 +168,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     inFlight.current = true
     setBusy(true)
     try {
-      if (await openSafely(it.doc_id, it.name)) onClose()
+      if (await openSafely(it.doc_id, it.name, it.revision, 'project')) onClose()
     } finally {
       inFlight.current = false
       setBusy(false)
@@ -184,7 +206,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       const r = await recoverCopy(it, {
         pj: ctx.pj,
         stillCurrent: () => stillCurrent(ctx),
-        openExisting: (id) => openSafely(id, it.name),
+        openExisting: (id, revision) => openSafely(id, it.name, revision, 'unknown'),
         install: (pd, id) => openDocumentAs(pd, id, { stillCurrent: () => stillCurrent(ctx) }),
       })
       if (r.kind === 'opened') {

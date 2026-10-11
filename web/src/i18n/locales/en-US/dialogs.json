@@ -179,6 +179,7 @@
     "overwrite": "Overwrite anyway",
     "projectSwitched": "You switched layouts or projects while saving: the layout with this name was changed elsewhere, so nothing was written. Go back to that layout and save again.",
     "recoverCapped": "Showing the most recent {{n}}.",
+    "recoverChanged": "This layout was changed elsewhere after you looked at it, so it wasn’t opened. The list was refreshed.",
     "recoverCopy": "Restore a copy",
     "recoverCopyHint": "This creates a copy in this project. The original layout stays untouched.",
     "recoverCounts": "{{canvases}} canvases · {{objects}} objects",

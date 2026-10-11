@@ -149,8 +149,8 @@ export type RecoverCopyResult =
 export interface RecoverCopyDeps {
   /** 当前项目（目标槽位与源槽位都在它的数据目录里读） */
   pj: string | null
-  /** 目标已存在：按原 id 打开它。返回是否真的打开了 */
-  openExisting: (id: string) => Promise<boolean>
+  /** 目标已存在：按原 id 打开它（`revision` 是刚才探测到的目标正文 revision，打开时再核对一次）。返回是否真的打开了 */
+  openExisting: (id: string, revision: string | null) => Promise<boolean>
   /** 把副本正文以 `id` 装进文档（之后走正常自动保存链）。false = 用户取消 / 没装上 */
   install: (pd: ProjectDocument, id: string) => Promise<boolean>
   /** 确认开始之后项目 / 排版是否还是同一个；不是就什么都不装 */
@@ -185,7 +185,7 @@ async function doRecover(
     // 已存在的目标必须是这个项目的：不重开别人的副本
     if (!(await ownsTarget(target, deps.pj))) return { kind: 'issue', reason: 'foreign' }
     if (stale()) return { kind: 'issue', reason: 'cancelled' }
-    return (await deps.openExisting(target))
+    return (await deps.openExisting(target, there.revision))
       ? { kind: 'opened', id: target, existed: true }
       : { kind: 'issue', reason: 'cancelled' }
   }

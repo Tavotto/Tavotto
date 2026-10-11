@@ -163,4 +163,50 @@ describe('restore 芯片', () => {
     await act(async () => useDocumentStore.setState({ restoreMetaIssue: { docId: 'd_other', pj: 'p_a' } }))
     expect(chip()!.dataset.docIssue).toBeUndefined()
   })
+
+  const menuItems = async () => {
+    const more = document.querySelector<HTMLElement>('[data-restore-more]')!
+    await act(async () => {
+      more.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
+      more.click()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+  }
+
+  it.each(['unavailable', 'session_unavailable', 'index_degraded'] as const)(
+    '%s：主按钮仍是重试，备选（含「打开本机副本」）折在 ⋯ 里，点它走 openAlternative',
+    async (kind) => {
+      await setIssue(
+        issue({
+          kind,
+          alternatives: [
+            { id: 'd_x', name: 'Fig X', sources: ['local_cache'], ownership: 'this', localCopy: true },
+            { id: 'd_y', name: 'Fig Y', sources: ['global_current'], ownership: 'this' },
+          ],
+        }),
+      )
+      const pop = (await openPill())!
+      expect(actions(pop).map((a) => a.dataset.restoreAction)).toEqual(['retry'])
+      const items = await menuItems()
+      expect(items.map((i) => i.dataset.restoreAction)).toEqual(['open-alt', 'open-alt', 'continue-new'])
+      expect(items[0].textContent).toContain('本机副本')
+      expect(items[1].textContent).not.toContain('本机副本')
+      await act(async () => items[0].click())
+      expect(openAlternative).toHaveBeenCalledWith('d_x')
+    },
+  )
+
+  it('prepare_failed 带备选时也不丢：主按钮继续新建，备选折起', async () => {
+    await setIssue(
+      issue({
+        kind: 'prepare_failed',
+        ref: null,
+        alternatives: [{ id: 'd_y', name: 'Fig Y', sources: ['discovered'], ownership: 'this' }],
+      }),
+    )
+    const pop = (await openPill())!
+    expect(actions(pop).map((a) => a.dataset.restoreAction)).toEqual(['continue-new'])
+    expect((await menuItems()).map((i) => i.dataset.restoreAction)).toEqual(['open-alt'])
+  })
 })

@@ -385,6 +385,7 @@ export default interface Resources {
       "overwrite": "仍然覆盖",
       "projectSwitched": "保存途中切换了排版或项目：原来那份的同名排版已在别处改过，这次没有写入。回到那份排版再保存一次。",
       "recoverCapped": "只显示最近的 {{n}} 份。",
+      "recoverChanged": "这份排版在你查看之后被别处改过，没有打开。列表已刷新。",
       "recoverCopy": "恢复副本",
       "recoverCopyHint": "会在这个项目里新建一份副本，原排版保持不动。",
       "recoverCounts": "{{canvases}} 张画布 · {{objects}} 个对象",

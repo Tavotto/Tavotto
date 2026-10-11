@@ -81,7 +81,8 @@ export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close:
         {t('restore.retry')}
       </Button>
     )
-    folded = [newItem]
+    // 备选（含「打开本机副本」）折在 ⋯ 里：服务暂时不可用的这段时间里它们是仅有的出路
+    folded = [...alts.map((a) => openAlt(a.id, a)), newItem]
   } else if (issue.kind === 'choose') {
     primary = (
       <Menu
@@ -102,7 +103,7 @@ export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close:
         {t('restore.continueNew')}
       </Button>
     )
-    folded = []
+    folded = alts.map((a) => openAlt(a.id, a))
   } else {
     const [first, ...others] = alts
     primary = (

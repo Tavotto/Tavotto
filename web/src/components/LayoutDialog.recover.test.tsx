@@ -479,6 +479,34 @@ describe('读的途中切了项目：不把 A 的排版装进 B（Codex P1）', 
   })
 })
 
+describe('扫描之后正文被别的项目改了：不把别人的正文装进来（Codex P1）', () => {
+  it('行扫描时是 R1，G 在点击之前存了 R2（owner=G）：不装、不读不写，状态条说被改过，列表刷新', async () => {
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    await mount()
+    const row = rows('project')[0]
+    backend.putSlot('d_mine', runtimeDoc('G 的排版', { updatedAt: 99 }), 'p_g') // 同一个 doc id，G 存了新的一版
+    backend.state.calls.length = 0
+    await act(async () => row.click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(backend.puts()).toEqual([])
+    expect(useUiStore.getState().status).toMatchObject({ key: 'layout.recoverChanged' })
+    expect(backend.state.calls).toContain('GET candidates project') // 列表刷新了
+  })
+
+  it('扫描之后是本项目自己又存了一版（owners=this 且已核对）：照常打开', async () => {
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    await mount()
+    const row = rows('project')[0]
+    backend.putSlot('d_mine', runtimeDoc('我的排版', { updatedAt: 99 }), PJ)
+    await act(async () => row.click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_mine')
+  })
+})
+
 describe('本项目的本机排版：原 id 打开', () => {
   it('点一行 = 按原 id 打开（与最近文档同一条路），对话框关闭', async () => {
     backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)

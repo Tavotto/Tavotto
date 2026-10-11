@@ -46,7 +46,8 @@
 
 并发：模块锁 `_LOCK` = 进程内线程锁 + 跨进程文件锁（`state/layout-sessions.lock`，POSIX `fcntl.flock`、
 Windows `msvcrt.locking`，纯标准库），多个进程共用一个数据目录时读改写不丢更新；拿不到锁（5 s）
-抛 `SessionStateUnavailable`。锁文件打不开（只读卷等）时退回只有线程锁并记日志。
+抛 `SessionStateUnavailable`。**失败即关门**：锁文件打不开 / 文件系统拒绝咨询锁（ENOLCK、EOPNOTSUPP…）
+同样抛它，绝不退回只有进程内的锁（会静默丢更新）；每个进程只记一次日志。
 **锁顺序全局固定：槽位的 `_document_lock`（app）→ 会话锁**。会话锁内不读任何正文、不调需要文档锁的函数；
 要槽位 revision 的判据一律由调用方在锁外算好传进来。
 
@@ -159,20 +160,29 @@ def release_file_lock(fd: int) -> None:
         os.close(fd)
 
 
+def _warn_lock_unsupported(why: str) -> None:
+    """每个进程只记一次日志（不是每个请求一次）。"""
+    global _LOCK_WARNED
+    if not _LOCK_WARNED:
+        _LOCK_WARNED = True
+        LOG.warning("跨进程文件锁不可用，相关保存会失败而不是退回进程内锁（%s）", why)
+
+
 def acquire_file_lock(path: Path, deadline: float) -> int | None:
-    """拿 `path` 上的跨进程文件锁，回 fd；锁文件根本打不开 / 平台不支持时回 `None`（只剩线程锁）。
+    """拿 `path` 上的跨进程文件锁，回 fd。**失败即关门（fail closed）**。
 
     会话锁与 app 的槽位文档锁（`app._document_lock`，按条带分文件）共用这一份实现。
-    超过 `deadline`（`time.monotonic()` 刻度）抛 `SessionStateUnavailable`。"""
-    global _LOCK_WARNED
+    只有「被别人占着」（EAGAIN / EACCES / EDEADLK）才重试，超过 `deadline`（`time.monotonic()` 刻度）
+    抛 `SessionStateUnavailable`；锁文件打不开、文件系统不支持咨询锁（ENOLCK / EOPNOTSUPP / EINVAL…）、
+    平台没有文件锁一律同样抛 `SessionStateUnavailable`——**绝不退回只有进程内的锁**：那样两个进程共用一个
+    数据目录时会静默丢更新、互相覆盖。数据目录所在的文件系统不支持咨询锁 = 不支持的部署，保存会可见地失败。
+    """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     except OSError as exc:
-        if not _LOCK_WARNED:
-            _LOCK_WARNED = True
-            LOG.warning("会话状态锁文件打不开，退回只有进程内的锁（%s）", exc)
-        return None
+        _warn_lock_unsupported(f"锁文件打不开：{exc}")
+        raise SessionStateUnavailable(f"锁文件打不开：{exc}") from exc
     while True:
         try:
             _try_file_lock(fd)
@@ -183,10 +193,8 @@ def acquire_file_lock(path: Path, deadline: float) -> int | None:
             )
             if not busy:
                 os.close(fd)
-                if not _LOCK_WARNED:
-                    _LOCK_WARNED = True
-                    LOG.warning("这个文件系统不支持文件锁，退回只有进程内的锁（%s）", exc)
-                return None
+                _warn_lock_unsupported(f"这个文件系统 / 平台拒绝文件锁：{exc}")
+                raise SessionStateUnavailable(f"文件锁不可用：{exc}") from exc
             if time.monotonic() >= deadline:
                 os.close(fd)
                 raise SessionStateUnavailable("文件锁被别的 Tavotto 进程占着，等待超时") from exc

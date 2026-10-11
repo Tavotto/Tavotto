@@ -214,7 +214,7 @@ describe('recoverCopy：恢复副本', () => {
     const res = await recoverCopy(item, again.d)
     expect(res).toMatchObject({ kind: 'opened', existed: true })
     expect(again.d.install).not.toHaveBeenCalled()
-    expect(again.d.openExisting).toHaveBeenCalledWith(recoveryCopyId('d_old', item.revision, PJ))
+    expect(again.d.openExisting).toHaveBeenCalledWith(recoveryCopyId('d_old', item.revision, PJ), expect.any(String))
     const t = recoveryCopyId('d_old', item.revision, PJ)
     expect(backend.state.calls).toEqual([`GET autosave ${t}`, `GET owner ${t}`]) // 重开前核对它确实是这个项目的
     expect(backend.writes()).toEqual([])

@@ -171,10 +171,13 @@
     教程重置共用这套条带；**没有任何一条路同时持两个文档锁**（不可重入；清理一次只处理一个槽位），
     顺序全局是 文档锁 → 会话锁。等不到（30 s，要大于持锁方的合理停顿）抛 `SessionStateUnavailable`，
     `@app.errorhandler` 回 503 `session_unavailable`，此时一个字节没写；清理里等不到只是这次不清它。锁文件打不开
-    （只读卷）时退回只有线程锁。真两进程回归 `tests/test_layout_recovery_backend.py`（POSIX）；Windows 的 `msvcrt` 腿只有 CI 验证。
+    **失败即关门**：锁文件打不开、文件系统拒绝咨询锁（ENOLCK / EOPNOTSUPP / EINVAL）也抛 `SessionStateUnavailable`，不退回只有线程锁。
+    真两进程回归 `tests/test_layout_recovery_backend.py`（POSIX）；Windows 的 `msvcrt` 腿只有 CI 验证。
   - **跨进程文件锁**（C2）：模块锁 `_LOCK` = 进程内线程锁 + `state/layout-sessions.lock` 的文件锁（POSIX `fcntl.flock`、
     Windows `msvcrt.locking`，纯标准库，非阻塞 + 10 ms 重试），多个进程共用一个数据目录时读改写不丢更新；拿不到（5 s）抛
-    `SessionStateUnavailable`。锁文件打不开（只读卷、不支持文件锁的文件系统）时退回只有线程锁并记一次日志。导出默认值
+    `SessionStateUnavailable`。**锁文件打不开 / 文件系统不支持咨询锁（网络盘等）时同样抛它，绝不退回只有线程锁**（会静默丢更新、互相覆盖）；
+    每个进程只记一次日志。**数据目录所在文件系统不支持咨询锁 = 不支持的部署**：保存会可见地 503 失败（前端显示保存失败并保留本机崩溃副本），
+    清理跳过、会话读回 `index:"degraded"`，而不是冒静默覆盖的险。导出默认值
     （`export-defaults.json`）不在这次范围，仍只有线程锁。`tests/test_layout_recovery_backend.py` 有真两进程交错回归（POSIX 跑过；
     Windows 的 `msvcrt` 那条腿留给 CI，本机未验证）。
   - 端点：`GET /api/layout-session`、`PUT /api/layout-session/last` 按 `_request_ctx()` 认项目（指名不存在的
