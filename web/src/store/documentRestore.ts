@@ -223,7 +223,9 @@ async function guardRevision(
   const expected = cand.expectedRevision
   if (!expected || probe.from !== 'disk' || probe.disk.kind !== 'found') return null
   const actual = probe.disk.revision
-  if (!actual || actual === expected) return null
+  if (actual === expected) return null
+  // 读到的修订号是空的（代理吃了 X-Tavotto-Revision）：绑定不上，无从证明这份还是指针说的那份——不装，给重试
+  if (!actual) return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
   const ev = await fetchLayoutOwnerEvidence(cand.id, token.pj)
   if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
   if (ev !== 'unsupported' && ev !== 'unavailable') {
@@ -569,6 +571,24 @@ export async function settlePrepared(
 
 /* ------------------------------ 冷启动 ------------------------------ */
 
+/**
+ * 启动时由 `projectStore.init()` 在**发布 phase:'open' 之前**先关上的那一轮恢复。
+ *
+ * 项目 ready 与工作台挂载之间有一段空档：`phase:'open'` 一发布，桌面的 `tavotto:open` 事件、URL 交接就可能先于
+ * `Workspace` 的 `restoreSession()` 到达——那时门还是初值 `ready`，`whenDocumentReady` 立刻放行，图落进马上要被恢复
+ * 换掉的空白文档（交接丢了）。所以 init 先 `beginStartupRestore`（门 restoring），`restoreSession` 接过这一轮
+ * （用它的令牌，不开第二代）。只有门还是「从没发生过任何恢复」的初值时才关；playground / 嵌入 / 不经 init 的用例保持 ready。
+ */
+let pendingStartup: RestoreToken | null = null
+
+export function beginStartupRestore(pj: string | null): void {
+  const g = getRestoreGate()
+  if (g.state !== 'ready' || g.reason !== 'initial') return
+  const token = beginRestore(pj)
+  armRestoreToken(token)
+  pendingStartup = token
+}
+
 /** 本次页面生命周期里记住的线索（重试复用同一份：捕获发生在任何 reset 之前） */
 let lifecycleClues: RestoreClues | null = null
 /** 同一项目上在路上的冷启动恢复（StrictMode 第二轮 / 重复挂载加入它，不开第二轮） */
@@ -598,6 +618,18 @@ export async function restoreSession(): Promise<boolean> {
   if (settledFor(g, pj)) return false
   const running = inflight.get(pj)
   if (running) return (await running).kind === 'restored'
+  // init 已经替这个项目关上了门：接过那一轮（同一个令牌）
+  const begun = pendingStartup
+  pendingStartup = null
+  if (begun && begun.pj === pj && isRestoreTokenCurrent(begun)) {
+    lifecycleClues = captureClues(pj)
+    const clues = lifecycleClues
+    const p = resolveProjectDocument(begun, clues).finally(() => {
+      if (inflight.get(pj) === p) inflight.delete(pj)
+    })
+    inflight.set(pj, p)
+    return (await p).kind === 'restored'
+  }
   // 别处（Picker 的认领）正在为这个项目恢复：等它落定，不开第二轮
   if (g.state === 'restoring' && g.pj === pj) {
     await whenDocumentReady(pj)
@@ -680,6 +712,7 @@ export function resetRestoreStateForTests(): void {
   inflight.clear()
   lifecycleClues = null
   lastBlockedNote = 0
+  pendingStartup = null
   resetRestoreGateForTests()
 }
 

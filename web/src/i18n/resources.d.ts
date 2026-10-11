@@ -410,6 +410,7 @@ export default interface Resources {
       "recoverStale": "这份排版在你查看之后又变了，列表已刷新。请再看一眼再恢复。",
       "recoverUnavailable": "本机排版暂时读不出来。",
       "recoverUnnamed": "未命名排版",
+      "recoverUnverified": "现在没法确认这份排版有没有被改过，没有打开。请稍后重试，列表已刷新。",
       "rename": "改名",
       "saveAs": "另存为",
       "saveTitle": "另存为新排版",

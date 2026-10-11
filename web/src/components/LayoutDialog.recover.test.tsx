@@ -510,6 +510,21 @@ describe('扫描之后正文被别的项目改了：不把别人的正文装进�
     expect(useUiStore.getState().status).toMatchObject({ key: 'layout.recoverChanged' })
   })
 
+  it('响应头被吃了（读不到 revision）而行扫描时有 revision：无法核对就不装，不写，状态条说现在没法确认，列表刷新', async () => {
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    await mount()
+    const row = rows('project')[0]
+    backend.state.stripRevisionHeader = true
+    backend.state.calls.length = 0
+    await act(async () => row.click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(backend.puts()).toEqual([])
+    expect(useUiStore.getState().status).toMatchObject({ key: 'layout.recoverUnverified' })
+    expect(backend.state.calls).toContain('GET candidates project')
+  })
+
   it('扫描之后是本项目自己又存了一版（owners=this 且已核对）：照常打开', async () => {
     backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
     backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })

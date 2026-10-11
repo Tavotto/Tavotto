@@ -71,6 +71,8 @@ export function createFakeBackend() {
     /** autosave PUT 回包带的 metadata（`undefined` = 旧后端不带） */
     metadata: 'ok' as 'ok' | 'failed' | 'owner_unknown' | undefined,
     pageSize: 50,
+    /** true = autosave GET 不带 X-Tavotto-Revision（代理吃了响应头） */
+    stripRevisionHeader: false,
   }
 
   const session = (pj: string): Session => {
@@ -150,7 +152,7 @@ export function createFakeBackend() {
       if (f !== undefined) return failed(f)
       const slot = b.slots.get(id)
       return slot
-        ? new Response(slot.body, { status: 200, headers: { 'X-Tavotto-Revision': slot.revision } })
+        ? new Response(slot.body, { status: 200, headers: b.stripRevisionHeader ? {} : { 'X-Tavotto-Revision': slot.revision } })
         : json({ error: 'nf' }, 404)
     }
     if (u.pathname === '/api/layout-session' && method === 'GET') {
@@ -269,6 +271,7 @@ export function createFakeBackend() {
       b.hold.candidates = null
       b.metadata = 'ok'
       b.pageSize = 50
+      b.stripRevisionHeader = false
     },
   }
 }

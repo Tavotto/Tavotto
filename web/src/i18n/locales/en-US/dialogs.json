@@ -203,6 +203,7 @@
     "recoverRuntime": "Script {{script}} · {{figure}}",
     "recoverStale": "This layout changed after you looked at it, so the list was refreshed. Take another look before restoring.",
     "recoverUnavailable": "Can’t read the layouts on this computer right now.",
+    "recoverUnverified": "Can’t confirm right now that this layout hasn’t changed, so it wasn’t opened. Try again in a moment. The list was refreshed.",
     "recoverUnnamed": "Untitled layout",
     "saveAs": "Save as",
     "saveTitle": "Save layout as",

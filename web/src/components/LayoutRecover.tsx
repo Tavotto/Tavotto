@@ -131,6 +131,13 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     // 扫描之后这个槽位的正文被改过（同一个 doc id，别的项目存了新的一版）：只有后端证明它现在仍属于本项目
     // （owners=this 且已核对）才装；否则不装、说一句、刷新列表
     const diskRevision = probe.disk.kind === 'found' ? probe.disk.revision : null
+    // 扫描时有 revision 而此刻读不到（代理吃了响应头 / 槽位读不到）：没法核对，按「可能被改过」处理，不装
+    if (expectedRevision !== null && diskRevision === null) {
+      useUiStore.getState().setStatus(msg('layout.recoverUnverified', { name }, 'dialogs'), 'error')
+      seq.current += 1
+      void load(scope)
+      return false
+    }
     if (expectedRevision !== null && diskRevision !== null && diskRevision !== expectedRevision) {
       const ev = await fetchLayoutOwnerEvidence(id, ctx.pj)
       // 结论还要绑在刚探测到的这一版正文上：revision 对不上（下结论之后又被存了新的一版）就不算

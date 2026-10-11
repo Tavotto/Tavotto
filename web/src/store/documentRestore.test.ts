@@ -63,6 +63,8 @@ const page = (items: string[], next: string | null) =>
 /** 非空 = autosave 的 PUT 卡在这里（模拟「排队的保存在切项目之后才完成」） */
 let putHold: Promise<void> | null = null
 let putsHeld = 0
+/** true = autosave GET 的回包被剥掉 X-Tavotto-Revision（模拟代理吃头） */
+let stripRevisionHeader = false
 /** 非 undefined = /owner 回的 revision 强制成这个值（模拟「复核之后正文又被换了」） */
 let ownerRevisionOverride: string | null | undefined
 
@@ -82,6 +84,10 @@ const fetchImpl = (async (url: unknown, init?: RequestInit) => {
   if (u.pathname === '/api/runtime/assets') return new Response(JSON.stringify({ assets: [] }), { status: 200 })
   if (u.pathname.startsWith('/api/projects')) {
     return new Response(JSON.stringify({ recent: [], pinned: [], projects: [] }), { status: 200 })
+  }
+  if (stripRevisionHeader && (init?.method ?? 'GET') === 'GET' && /^\/api\/autosave\/[^/]+$/.test(u.pathname)) {
+    const res = await be.fetch(url as RequestInfo, init)
+    return new Response(await res.text(), { status: res.status })
   }
   // 真后端的 /owner 回「它算结论时槽位的修订号」；假后端不回，这里按此刻槽位补上（用例可用 ownerRevisionOverride 改写）
   if (u.pathname === '/api/layout-session/owner') {
@@ -131,6 +137,7 @@ function seedSavedLast(id = 'd_saved', name = 'Saved Fig') {
 beforeEach(() => {
   putHold = null
   putsHeld = 0
+  stripRevisionHeader = false
   ownerRevisionOverride = undefined
   candidatePages = null
   candidateCalls = 0
@@ -1260,6 +1267,44 @@ describe('复核归属绑定到要装的那个修订号', () => {
   it('复核的修订号就是读到的 → 装', async () => {
     seedSavedLast()
     const app = await bootExpected()
+    expect(await app.doc.restoreSession()).toBe(true)
+  })
+})
+
+describe('Codex P1：期望修订号在、读到的修订号是空', () => {
+  it('代理吃了 X-Tavotto-Revision → 绑定不上，不装；needs_user{unavailable}，可重试', async () => {
+    seedSavedLast()
+    stripRevisionHeader = true
+    vi.resetModules()
+    vi.doMock('@/lib/projectDocs', async (importOriginal) => {
+      const orig = await importOriginal<typeof import('@/lib/projectDocs')>()
+      return {
+        ...orig,
+        planRestore: async (...a: Parameters<typeof orig.planRestore>) => {
+          const plan = await orig.planRestore(...a)
+          if (plan.preferred) plan.preferred.expectedRevision = 'rev-at-pointer'
+          return plan
+        },
+      }
+    })
+    try {
+      const app = await boot()
+      expect(await app.doc.restoreSession()).toBe(false)
+      expect(ds(app).documentId).not.toBe('d_saved')
+      expect(ds(app).restoreIssue).toMatchObject({ kind: 'unavailable', ref: { id: 'd_saved' } })
+      // 头回来了、修订号对上了 → 重试可装
+      stripRevisionHeader = false
+      // 修订号读得到了，与期望不同 → 复核归属（/owner 针对的就是读到的这份）→ this+verified 才装
+      expect(await app.restore.retryRestore()).toMatchObject({ kind: 'restored', id: 'd_saved' })
+    } finally {
+      vi.doUnmock('@/lib/projectDocs')
+    }
+  })
+
+  it('没有期望修订号（旧后端）：读到空修订号也照旧装', async () => {
+    seedSavedLast()
+    stripRevisionHeader = true
+    const app = await boot()
     expect(await app.doc.restoreSession()).toBe(true)
   })
 })

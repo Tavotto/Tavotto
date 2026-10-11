@@ -31,6 +31,7 @@ import { useTimelineStore } from '@/store/timelineStore'
 import { openRecentDocument } from '@/store/actions'
 import {
   captureClues,
+  beginStartupRestore,
   continueNew,
   resolveProjectDocument,
   retryRestore,
@@ -485,6 +486,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       if (project.open && project.id) {
         setCurrentProjectId(project.id)
         armNoProjectRecovery()
+        // 先关上恢复门、再发布 phase:'open'：否则 open 与工作台挂载之间到达的交接看到的是初值的 ready，落进马上被恢复换掉的空白
+        beginStartupRestore(project.id)
       }
       setCurrentProjectLabel(project.open ? project.name : null)
       const rev = pinnedRev

@@ -139,7 +139,8 @@ async function ownsTarget(id: string, pj: string | null, probedRevision: string 
   if (ev === 'unsupported' || ev === 'unavailable') return false
   if (!(ev.owner === 'this' && ev.evidence === 'owners' && ev.verified)) return false
   // 结论只对下结论时的那一版正文成立：与刚探测到的正文对不上（期间被别处存了新的一版）就不算
-  return probedRevision === null || ev.revision === null || ev.revision === probedRevision
+  // 有结论的 revision 而读不到正文的 revision（响应头被吃了）时 `ev.revision === probedRevision` 自然不成立：没法核对，不算
+  return ev.revision === null || ev.revision === probedRevision
 }
 
 export type RecoverCopyResult =

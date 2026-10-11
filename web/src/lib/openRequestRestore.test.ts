@@ -23,6 +23,9 @@ const fig1Info = {
 
 const fetchImpl = (async (url: unknown, init?: RequestInit) => {
   const u = new URL(String(url), 'http://127.0.0.1')
+  if (u.pathname === '/api/project') {
+    return new Response(JSON.stringify({ open: true, id: 'p_a', figures_dir: '/figs/a', name: 'a' }), { status: 200 })
+  }
   if (u.pathname === '/api/panels') {
     return new Response(JSON.stringify({ panels: [fig1Info], figures_dir: '/figs/a' }), { status: 200 })
   }
@@ -66,7 +69,7 @@ const gate = () => {
   const promise = new Promise<void>((r) => (release = r))
   return { promise, release }
 }
-const panelsOf = (app: App) =>
+const panelsOf = (app: Pick<App, 'doc'>) =>
   app.doc.useDocumentStore.getState().doc.objects.filter((o): o is PanelObject => o.type === 'panel')
 const statusKey = (app: App) => (app.ui.useUiStore.getState().status as { key?: string } | null)?.key
 
@@ -350,5 +353,53 @@ describe('排队的入口只在**同一代**恢复落定时执行', () => {
     hold.release()
     await restoring
     expect(panelsOf(app)).toEqual([])
+  })
+})
+
+describe('init 先关门再发布 phase:open（Codex P1）', () => {
+  async function bootCold() {
+    vi.resetModules()
+    const session = await import('@/lib/session')
+    session.setCurrentProjectId('p_a')
+    const doc = await import('@/store/documentStore')
+    const restore = await import('@/store/documentRestore')
+    const proj = await import('@/store/projectStore')
+    const handoff = await import('@/lib/openRequest')
+    const assets = await import('@/store/assetStore')
+    restore.setRestoreRetryDelays([0, 0])
+    assets.useAssetStore.setState({ panels: [fig1Info as never], byId: { 'Fig1.pdf': fig1Info as never }, loaded: true })
+    return { doc, restore, proj, handoff }
+  }
+
+  it('init() 一发布 phase:open 门就已经关着；restoreSession 前到的交接等着，落进恢复出来的文档，不落进空白', async () => {
+    seedSaved()
+    const app = await bootCold()
+    await app.proj.useProjectStore.getState().init()
+    expect(app.proj.useProjectStore.getState().phase).toBe('open')
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'restoring', pj: 'p_a' })
+    const gen = app.doc.getRestoreGate().gen
+    // 桌面 tavotto:open 在 Workspace 挂载（restoreSession）之前到达
+    const handoff = app.handoff.applyOpenRequest({ stem: 'Fig1' })
+    await Promise.resolve()
+    expect(panelsOf(app)).toEqual([])
+    // Workspace 挂载：接过 init 已经开始的那一轮，不开第二代
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(app.doc.getRestoreGate().gen).toBe(gen)
+    expect(await handoff).toBe('selected')
+    expect(app.doc.useDocumentStore.getState().documentId).toBe('d_saved')
+    expect(panelsOf(app)).toHaveLength(1)
+    expect(panelsOf(app)[0]).toMatchObject({ id: 'panel_saved', overrides: [{ gid: 'figure', prop: 'facecolor', value: '#f00' }] })
+  })
+
+  it('不经 init 的（playground / 嵌入 / 单测）门保持初值 ready', async () => {
+    const app = await bootCold()
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'initial' })
+    app.restore.beginStartupRestore(null)
+    expect(app.doc.getRestoreGate().state).toBe('restoring')
+    // 已经发生过恢复后不再重复关门
+    await app.restore.restoreSession()
+    const g = app.doc.getRestoreGate()
+    app.restore.beginStartupRestore(null)
+    expect(app.doc.getRestoreGate()).toEqual(g)
   })
 })
