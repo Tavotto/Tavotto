@@ -108,6 +108,7 @@ from overrides import (
     offsetbox_draggable,
     offsetbox_frame,
     open_font_face,
+    patch_resize_geometry,
     register_font_name_aliases,
     remember_axis_directions,
     scale_options,
@@ -2597,8 +2598,8 @@ def _patch_fields(pt) -> list[dict]:
     Wedge、axhspan 的 Rectangle、Circle / Ellipse / Arc / FancyBboxPatch /
     StepPatch，以及用户自己继承出来的子类——这些 getter 全在 `Patch` 基类上。
 
-    几何不给编辑字段——它由脚本的数据决定，改它等于改数据。选中 / 命中 /
-    框选靠 manifest 的 `geometry`（沿真实闭合路径），样式在这里。
+    独立矩形 / 圆角框按能力出 size_frac，柱不走这里。其它形状只给样式；选中 /
+    命中仍靠 manifest 的 geometry，缩放另外用未裁剪的 shape_bounds。
     """
     alpha = pt.get_alpha()
     fields: list[dict] = [
@@ -2660,6 +2661,12 @@ def _patch_fields(pt) -> list[dict]:
             "group": "排列",
         },
     ]
+    resize = patch_resize_geometry(pt)
+    if resize is not None:
+        # 控件取值消掉仅由平移引入的浮点减法尾差；手柄的 shape_bounds 保留完整几何精度。
+        fields.append(
+            {"prop": "size_frac", "type": "pair", "value": [round(v, 12) for v in resize[0][2:]]}
+        )
     return fields
 
 
@@ -4042,7 +4049,15 @@ _MIN_HIT_PX = 4.0  # 扁平元素最小命中厚度（display 像素）
 
 def _finite_geometry(entry: dict) -> bool:
     """entry 里的几何字段全是有限值。见 `build_manifest` 里那道总闸的说明。"""
-    for field in ("bbox", "anchor", "arrow_endpoints", "geometry", "clip_bbox"):
+    for field in (
+        "bbox",
+        "anchor",
+        "arrow_endpoints",
+        "geometry",
+        "clip_bbox",
+        "shape_bounds",
+        "shape_min_size",
+    ):
         v = entry.get(field)
         if v is None:
             continue
@@ -4987,6 +5002,10 @@ def _measure_manifest(
                     _drop(el, "no_geometry")
                     continue
                 if isinstance(artist, Patch):
+                    if el["role"] == "patch":
+                        resize = patch_resize_geometry(artist)
+                        if resize is not None:
+                            entry["shape_bounds"], entry["shape_min_size"] = resize
                     # 先折进裁剪框再垫（只有 Patch：柱 / 色块 / 多边形，它们的框就是墨迹）
                     bb = _fold_into_clip(artist, bb)[0]
                 # 水平 / 垂直的扁平线（基线、参考线）单边为 0，垫成可点中的窄条

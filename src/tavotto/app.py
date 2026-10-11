@@ -6386,7 +6386,7 @@ def _write_back_error_response(exc):
 
 
 # ---- 组图 ↔ 子图 override 同步 ----------------------------------------------
-_SYNC_SKIP = {"position", "size_mm"}  # 版面几何不跨图搬
+_SYNC_SKIP = {"position", "size_mm", "size_frac"}  # 版面几何不跨图搬
 _SYNC_POINT = {"pos_frac", "loc_frac"}  # 点位经 axes 框换算后可搬
 
 
