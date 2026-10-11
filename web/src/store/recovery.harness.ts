@@ -274,8 +274,8 @@ class FakeBackend {
         if (!this.ownerEndpoint) response = () => json({ error: 'nf' }, 404)
         else {
           const id = u.searchParams.get('doc_id') ?? ''
-          const out = this.ownerVerdict(id, pj)
-          response = () => json(out)
+          // 与真后端一致：revision = 回答这一刻槽位正文的 revision（没有槽位是 null），在 gate 放行之后才取
+          response = () => json({ ...this.ownerVerdict(id, pj), revision: this.revs.get(id) ?? null })
         }
       } else if (u.pathname === '/api/layout-session/candidates') {
         if (!this.candidatesEndpoint) response = () => json({ error: 'nf' }, 404)

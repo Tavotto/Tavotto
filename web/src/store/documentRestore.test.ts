@@ -63,6 +63,8 @@ const page = (items: string[], next: string | null) =>
 /** 非空 = autosave 的 PUT 卡在这里（模拟「排队的保存在切项目之后才完成」） */
 let putHold: Promise<void> | null = null
 let putsHeld = 0
+/** 非 undefined = /owner 回的 revision 强制成这个值（模拟「复核之后正文又被换了」） */
+let ownerRevisionOverride: string | null | undefined
 
 const fetchImpl = (async (url: unknown, init?: RequestInit) => {
   const u = new URL(String(url), 'http://127.0.0.1')
@@ -80,6 +82,15 @@ const fetchImpl = (async (url: unknown, init?: RequestInit) => {
   if (u.pathname === '/api/runtime/assets') return new Response(JSON.stringify({ assets: [] }), { status: 200 })
   if (u.pathname.startsWith('/api/projects')) {
     return new Response(JSON.stringify({ recent: [], pinned: [], projects: [] }), { status: 200 })
+  }
+  // 真后端的 /owner 回「它算结论时槽位的修订号」；假后端不回，这里按此刻槽位补上（用例可用 ownerRevisionOverride 改写）
+  if (u.pathname === '/api/layout-session/owner') {
+    const res = await be.fetch(url as RequestInfo, init)
+    if (!res.ok) return res
+    const body = (await res.json()) as Record<string, unknown>
+    const id = u.searchParams.get('doc_id') ?? ''
+    const revision = ownerRevisionOverride !== undefined ? ownerRevisionOverride : (be.state.slots.get(id)?.revision ?? null)
+    return new Response(JSON.stringify({ ...body, revision }), { status: 200 })
   }
   return be.fetch(url as RequestInfo, init)
 }) as typeof fetch
@@ -120,6 +131,7 @@ function seedSavedLast(id = 'd_saved', name = 'Saved Fig') {
 beforeEach(() => {
   putHold = null
   putsHeld = 0
+  ownerRevisionOverride = undefined
   candidatePages = null
   candidateCalls = 0
   localStorage.clear()
@@ -1207,5 +1219,47 @@ describe('Codex P2：restoreMetaIssue 绑定保存载荷的 pj', () => {
     // A 的迟到回包到过（监听器收到，pj=p_a），但界面轴上没有 A 的失败
     expect(seen).not.toContain('p_a')
     expect(ds(app).restoreMetaIssue).toBeNull()
+  })
+})
+
+describe('复核归属绑定到要装的那个修订号', () => {
+  async function bootExpected() {
+    vi.resetModules()
+    vi.doMock('@/lib/projectDocs', async (importOriginal) => {
+      const orig = await importOriginal<typeof import('@/lib/projectDocs')>()
+      return {
+        ...orig,
+        planRestore: async (...args: Parameters<typeof orig.planRestore>) => {
+          const plan = await orig.planRestore(...args)
+          if (plan.preferred) plan.preferred.expectedRevision = 'rev-at-pointer'
+          return plan
+        },
+      }
+    })
+    return boot()
+  }
+  afterEach(() => vi.doUnmock('@/lib/projectDocs'))
+
+  it('复核说 this+verified，但它针对的是 R2、我们读到的是 R3 → 不装，needs_user{unavailable}', async () => {
+    seedSavedLast()
+    ownerRevisionOverride = 'R2-not-what-we-read'
+    const app = await bootExpected()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_saved')
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'unavailable', ref: { id: 'd_saved' } })
+  })
+
+  it('复核没带 revision（null）同样不装', async () => {
+    seedSavedLast()
+    ownerRevisionOverride = null
+    const app = await bootExpected()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'unavailable' })
+  })
+
+  it('复核的修订号就是读到的 → 装', async () => {
+    seedSavedLast()
+    const app = await bootExpected()
+    expect(await app.doc.restoreSession()).toBe(true)
   })
 })

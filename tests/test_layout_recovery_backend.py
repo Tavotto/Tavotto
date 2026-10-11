@@ -111,7 +111,9 @@ def _put_last(client, doc_id: str, name: str = "x", pj: dict | None = None):
 def _owner(client, pj: dict, doc_id: str) -> dict:
     r = client.get(f"/api/layout-session/owner?doc_id={doc_id}", headers=_pj(pj["id"]))
     assert r.status_code == 200, r.get_json()
-    return r.get_json()
+    body = r.get_json()
+    body.pop("revision")  # revision 另有专门用例（test_layout_recovery_backend）
+    return body
 
 
 def _candidates(client, pj: dict | None, scope: str = "project", **q) -> dict:
@@ -1317,3 +1319,59 @@ def test_corrupt_bytes_that_cannot_be_preserved_close_the_door_until_they_can(
     r = _put(client, "d_2", _doc(), a)
     assert r.get_json()["metadata"] == "ok"
     assert [c.read_bytes() for c in path.parent.glob("layout-sessions.corrupt-*.json")] == [raw]
+
+
+def test_owner_response_carries_the_revision_it_judged(client, tmp_path):
+    """Codex P1:判断之后别的项目可能又保存了这个槽位——`/owner` 交回它判断所依据的那份正文的 revision。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+
+    def raw(pj, doc_id):
+        url = f"/api/layout-session/owner?doc_id={doc_id}"
+        return client.get(url, headers=_pj(pj["id"])).get_json()
+
+    r1 = _put(client, "d_x", _doc(1), f).get_json()["revision"]
+    body = raw(f, "d_x")
+    assert body["owner"] == "this" and body["revision"] == r1 == _rev("d_x")
+    r2 = _put(client, "d_x", _doc(2), g, base=r1).get_json()["revision"]
+    after = raw(f, "d_x")
+    assert after["owner"] == "other" and after["revision"] == r2 != r1
+    assert raw(g, "d_nothing") == {
+        "owner": "unknown",
+        "evidence": None,
+        "verified": False,
+        "revision": None,
+    }
+    root = Path(f["figures_dir"])  # 素材旁证路径的 revision 也是同一份字节的
+    (root / "a.pdf").write_bytes(b"%PDF-1.4")
+    panel = {"id": "p", "type": "panel", "fileId": "a.pdf", "x": 0, "y": 0, "w": 1, "h": 1}
+    _slot("d_assets").write_text(json.dumps(_doc(1, "a", [panel])))
+    got = raw(f, "d_assets")
+    assert got["evidence"] == "assets" and got["revision"] == _rev("d_assets")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="用 fcntl 模拟另一个持锁者；Windows 腿留给 CI")
+def test_tutorial_reset_with_the_slot_document_lock_held_reopens_the_new_copy(client, monkeypatch):
+    """目录已换、项目还关着的时候，槽位文档锁等不到：和会话锁等不到同一档——重新打开新副本，回
+    tutorial_reset_incomplete，不是泛泛的 503 把项目留在关闭状态。"""
+    import fcntl
+
+    monkeypatch.setattr(m.engine_pool, "build", lambda *a, **k: pytest.fail("不许执行脚本"))
+    monkeypatch.setattr(m, "DOCUMENT_LOCK_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(m, "_TUTORIAL_CLEAR_PAUSE_S", 0)
+    tut = client.post("/api/tutorial/open", json={"default": False}).get_json()
+    doc_id = tut["tutorial"]["document_id"]
+    assert _put(client, doc_id, _doc(), {"id": tut["project"]["id"]}).status_code == 200
+    slot_bytes = _slot(doc_id).read_bytes()
+    stripe = m.zlib.crc32(str(m._autosave_path(doc_id)).encode("utf-8")) % len(m._DOCUMENT_LOCKS)
+    lock_file = layoutsession.state_path().parent / m.DOCLOCK_DIRNAME / f"{stripe}.lock"
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_file, os.O_RDWR | os.O_CREAT)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        r = client.post("/api/tutorial/reset", json={})
+        assert r.status_code == 500 and r.get_json()["code"] == "tutorial_reset_incomplete"
+        assert m._tutorial_ctx() is not None, "项目被留在了关闭状态"
+        assert _slot(doc_id).read_bytes() == slot_bytes
+    finally:
+        os.close(fd)

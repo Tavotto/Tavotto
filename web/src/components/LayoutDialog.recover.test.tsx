@@ -495,6 +495,21 @@ describe('扫描之后正文被别的项目改了：不把别人的正文装进�
     expect(backend.state.calls).toContain('GET candidates project') // 列表刷新了
   })
 
+  it('归属结论是对更早一版正文下的（revision ≠ 刚探测到的）：即使 owners=this 且已核对也不装', async () => {
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    await mount()
+    const row = rows('project')[0]
+    backend.putSlot('d_mine', runtimeDoc('G 又存了', { updatedAt: 99 }), PJ)
+    backend.state.ownerAnswers.set(`${PJ}|d_mine`, { owner: 'this', evidence: 'owners', verified: true, revision: 'verdict-on-older' })
+    backend.state.calls.length = 0
+    await act(async () => row.click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(backend.puts()).toEqual([])
+    expect(useUiStore.getState().status).toMatchObject({ key: 'layout.recoverChanged' })
+  })
+
   it('扫描之后是本项目自己又存了一版（owners=this 且已核对）：照常打开', async () => {
     backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
     backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })

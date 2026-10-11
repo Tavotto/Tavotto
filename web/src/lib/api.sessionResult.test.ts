@@ -107,14 +107,14 @@ describe('probeAutosave：纯读，四种结局', () => {
 
 describe('fetchLayoutOwnerEvidence：保留证据等级', () => {
   it('verified 只在 owners 证据且后端说已核对时为真', async () => {
-    stub(() => reply({ owner: 'this', evidence: 'owners', verified: true }))
-    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'owners', verified: true })
+    stub(() => reply({ owner: 'this', evidence: 'owners', verified: true, revision: 'rev-1' }))
+    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'owners', verified: true, revision: 'rev-1' })
     stub(() => reply({ owner: 'this', evidence: 'assets', verified: true })) // 其它证据等级即使带 verified 也不算
-    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'assets', verified: false })
+    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'assets', verified: false, revision: null })
     stub(() => reply({ owner: 'this', evidence: 'owners' })) // 旧后端不发 verified
-    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'owners', verified: false })
+    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'owners', verified: false, revision: null })
     stub(() => reply({ owner: 'weird', evidence: 'nope' }))
-    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'unknown', evidence: null, verified: false })
+    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'unknown', evidence: null, verified: false, revision: null })
   })
 
   it('404 = unsupported；其余失败 = unavailable；旧薄适配 fetchLayoutOwner 仍是 undefined / null / 字符串', async () => {

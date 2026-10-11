@@ -390,7 +390,9 @@ def _slot_with_panels(doc_id: str, *file_ids: str) -> None:
 def _owner(client, pid: str, doc_id: str) -> dict:
     r = client.get(f"/api/layout-session/owner?doc_id={doc_id}", headers=_pj(pid))
     assert r.status_code == 200, r.get_json()
-    return r.get_json()
+    body = r.get_json()
+    body.pop("revision")  # revision 另有专门用例（test_layout_recovery_backend）
+    return body
 
 
 def test_owner_evidence_owners_record_is_decisive(client, tmp_path):

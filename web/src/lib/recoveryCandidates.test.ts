@@ -268,6 +268,10 @@ describe('recoverCopy：恢复副本', () => {
     expect(await recoverCopy(item, deps().d)).toEqual({ kind: 'issue', reason: 'foreign' })
     backend.state.fail.owner = 500
     expect(await recoverCopy(item, deps().d)).toEqual({ kind: 'issue', reason: 'foreign' })
+    backend.state.fail.owner = undefined
+    // 归属证据是对另一版正文下的结论（之后被存了新的一版）：同样不重开
+    backend.state.ownerAnswers.set(`${PJ}|${target}`, { owner: 'this', evidence: 'owners', verified: true, revision: 'older-version' })
+    expect(await recoverCopy(item, deps().d)).toEqual({ kind: 'issue', reason: 'foreign' })
     // 本机索引记着当前项目：认（后端证据缺席也行）
     localStorage.setItem('tavotto.docIndex', JSON.stringify([{ id: target, name: 'x', savedAt: 1, objects: 1, projectId: PJ }]))
     const ok = deps()

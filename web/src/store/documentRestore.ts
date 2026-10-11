@@ -212,7 +212,7 @@ function installProbe(
 /**
  * 指针带着的正文修订号（`expectedRevision`，来自后端 last / prev）与探测读到的磁盘修订号对不上：
  * 读指针和读正文之间，另一个共用同一 docId 的项目可能存过——这份正文不一定还是**我们的**。
- * 不盲装：重新问一次归属，只有 `{owner:'this', verified:true}` 才装；`other` → 找不到（打不开别人的）；
+ * 不盲装：重新问一次归属，只有 `{owner:'this', verified:true}` 且复核针对的修订号就是要装的这份才装；`other` → 找不到（打不开别人的）；
  * 问不到 / 不明 → 暂时没打开（可重试）。没有期望修订号（旧后端 / 本机线索）或读到的修订号为空 → 照旧。
  */
 async function guardRevision(
@@ -227,7 +227,10 @@ async function guardRevision(
   const ev = await fetchLayoutOwnerEvidence(cand.id, token.pj)
   if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
   if (ev !== 'unsupported' && ev !== 'unavailable') {
-    if (ev.owner === 'this' && ev.verified) return null
+    // 复核的结论是针对**它算的那个修订号**的：必须正好是我们马上要装的这份（读到的磁盘修订号），
+    // 否则复核之后正文又被换过——不装，给重试（再探测一次）。后端没回 revision（旧）同样不装
+    const verdictRev = (ev as { revision?: string | null }).revision
+    if (ev.owner === 'this' && ev.verified && verdictRev === actual) return null
     if (ev.owner === 'other') return needsUser(token, 'missing', { id: cand.id, name: cand.name })
   }
   return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })

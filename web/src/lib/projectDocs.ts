@@ -323,7 +323,7 @@ interface Entry {
 }
 
 type Verdict =
-  | { ok: true; ownership: 'this'; evidence?: OwnershipEvidence; correctsIndex?: boolean }
+  | { ok: true; ownership: 'this'; evidence?: OwnershipEvidence; correctsIndex?: boolean; revision?: string }
   | { ok: false; reason: WithheldCandidate['reason'] }
 
 /**
@@ -346,7 +346,7 @@ async function judge(id: string, pj: string | null, e: Entry, backendOk: boolean
     const ev = await fetchLayoutOwnerEvidence(id, pj)
     if (ev === 'unavailable') return { ok: false, reason: 'owner_unavailable' }
     if (ev !== 'unsupported' && ev.owner === 'this' && ev.evidence === 'owners' && ev.verified) {
-      return { ok: true, ownership: 'this', evidence: 'owners', correctsIndex: true }
+      return { ok: true, ownership: 'this', evidence: 'owners', correctsIndex: true, ...(ev.revision ? { revision: ev.revision } : {}) }
     }
     return { ok: false, reason: 'foreign' }
   }
@@ -358,7 +358,9 @@ async function judge(id: string, pj: string | null, e: Entry, backendOk: boolean
   if (ev === 'unsupported') return { ok: true, ownership: 'this' }
   if (ev === 'unavailable') return cached ? { ok: true, ownership: 'this' } : { ok: false, reason: 'owner_unavailable' }
   if (ev.owner === 'other') return { ok: false, reason: 'foreign' }
-  if (ev.owner === 'this') return { ok: true, ownership: 'this', ...(ev.evidence ? { evidence: ev.evidence } : {}) }
+  if (ev.owner === 'this') {
+    return { ok: true, ownership: 'this', ...(ev.evidence ? { evidence: ev.evidence } : {}), ...(ev.revision ? { revision: ev.revision } : {}) }
+  }
   return cached ? { ok: true, ownership: 'this' } : { ok: false, reason: 'owner_unknown' }
 }
 
@@ -444,6 +446,8 @@ export async function planRestore(
         ...base,
         ...(v.evidence ? { ownershipEvidence: v.evidence } : {}),
         ...(v.correctsIndex ? { correctsIndex: true } : {}),
+        // 归属是 /owner 给的结论、而指针没带 revision：结论只对下结论时的那一版正文成立，带上它让探测时对一对
+        ...(!base.expectedRevision && v.revision ? { expectedRevision: v.revision } : {}),
       })
       return
     }

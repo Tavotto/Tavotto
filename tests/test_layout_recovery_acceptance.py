@@ -529,7 +529,17 @@ class TestPostFixContract:
     def test_owner_endpoint_has_verified_flag(self, client, tmp_path):
         p = _project(client, tmp_path, "proj", default=True)
         _save(client, p["id"])
-        assert _owner(client, p["id"]) == {"owner": "this", "evidence": "owners", "verified": True}
+        revision = client.get(f"/api/autosave/{DOC_ID}", headers=_pj(p["id"])).headers[
+            "X-Tavotto-Revision"
+        ]
+        assert _owner(client, p["id"]) == {
+            "owner": "this",
+            "evidence": "owners",
+            "verified": True,
+            "revision": revision,
+        }
+        # 没有槽位：revision 是 null
+        assert _owner(client, p["id"], "d_no_such_slot")["revision"] is None
 
     def test_corrupt_state_falls_back_to_the_last_good_backup(self, client, tmp_path):
         p, _q, _good = _seed_state(client, tmp_path)

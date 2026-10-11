@@ -3402,21 +3402,24 @@ def _clear_tutorial_local_state(
         return True
 
     failure: OSError | None = None
-    with _document_lock(slot):
-        for attempt in range(_TUTORIAL_CLEAR_ATTEMPTS):
-            try:
-                engine_layoutsession.delete_slot(slot.stem, _unlink_slot)
-                if project_path is not None:
-                    engine_layoutsession.forget_project(
-                        engine_layoutsession.project_key(project_path),
-                        [str(meta["document_id"])],
-                    )
-                failure = None
-                break
-            except OSError as exc:  # 会话锁拿不到：文件没动，稍后再试
-                failure = exc
-                if attempt + 1 < _TUTORIAL_CLEAR_ATTEMPTS:
-                    time.sleep(_TUTORIAL_CLEAR_PAUSE_S)
+    try:
+        with _document_lock(slot):
+            for attempt in range(_TUTORIAL_CLEAR_ATTEMPTS):
+                try:
+                    engine_layoutsession.delete_slot(slot.stem, _unlink_slot)
+                    if project_path is not None:
+                        engine_layoutsession.forget_project(
+                            engine_layoutsession.project_key(project_path),
+                            [str(meta["document_id"])],
+                        )
+                    failure = None
+                    break
+                except OSError as exc:  # 会话锁拿不到：文件没动，稍后再试
+                    failure = exc
+                    if attempt + 1 < _TUTORIAL_CLEAR_ATTEMPTS:
+                        time.sleep(_TUTORIAL_CLEAR_PAUSE_S)
+    except engine_layoutsession.SessionStateUnavailable as exc:
+        failure = exc  # 槽位的文档锁等不到：和会话锁等不到同一档，槽位没动
     if failure is not None:
         LOG.warning("重置教程：会话状态被占用，教程旧排版没清掉（%s）", failure)
         if strict:
@@ -3463,7 +3466,13 @@ def api_tutorial_reset():
         return _tutorial_error(exc)
     pid = _project_id(tp.path)
     try:
-        cleared = _clear_tutorial_local_state(pid, meta, tp.path, strict=True)
+        try:
+            cleared = _clear_tutorial_local_state(pid, meta, tp.path, strict=True)
+        except OSError as os_exc:
+            # 目录已换、项目还关着：任何漏出来的 I/O 错误都按「没清完」走恢复分支
+            raise engine_tutorial.TutorialError(
+                "tutorial_reset_incomplete", "旧教程排版没清掉"
+            ) from os_exc
     except engine_tutorial.TutorialError as exc:
         # 副本已换成干净的，但旧排版槽位没清掉：如实报失败（前端按 code 显示 tutorial_reset_incomplete 的那句话，用户可以
         # 再点一次重置），把新副本重新打开还给用户；绝不在会话锁之外硬删槽位
@@ -9741,8 +9750,11 @@ def _project_owner_evidence(doc_id: str, ctx, doc: dict | None) -> tuple[str, st
     return "this", "assets"
 
 
-def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None, bool]:
-    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据, 是否已核对)。
+def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None, bool, str | None]:
+    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据, 是否已核对, revision)。
+
+    `revision` = 这次判断所依据的那份槽位正文的 revision（槽位不在 / 读不出为 `None`）。前端取正文时
+    比对它：判断之后别的项目可能又保存了这个槽位，那份新内容没被这次判断认过。
 
     只给**前端本机索引不知道归属**的那一档用（升级前、T04 之前的 docIndex 条目没有 projectId；
     #715 验收 P1 之后这类排版要正面证据才恢复）。证据按可信度依次看：
@@ -9760,23 +9772,29 @@ def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None, bool]:
     """
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
     state, _status = engine_layoutsession.read_readonly()
-    verdict, verified = engine_layoutsession.owner_status_in(
-        state, doc_id, key, _slot_revision(doc_id)
-    )
-    if verdict == "unverified":
-        return "unknown", None, False
-    if verdict is not None:
-        return verdict, "owners", verified
-    doc = None
+    # 槽位只读一遍：新鲜度判断、素材旁证、交回去的 revision 都来自同一份字节
     slot = _file_named(AUTOSAVE_DIR, doc_id)
+    doc = None
+    revision = None
     if slot is not None:
         try:
-            loaded = engine_documents.loads_document(slot.read_bytes())
-            doc = loaded if isinstance(loaded, dict) else None
-        except (OSError, ValueError):
-            doc = None
+            raw = slot.read_bytes()
+        except OSError:
+            raw = None
+        if raw is not None:
+            revision = engine_atomicio.revision_of(raw)
+            try:
+                loaded = engine_documents.loads_document(raw)
+                doc = loaded if isinstance(loaded, dict) else None
+            except (ValueError, RecursionError):
+                doc = None
+    verdict, verified = engine_layoutsession.owner_status_in(state, doc_id, key, revision)
+    if verdict == "unverified":
+        return "unknown", None, False, revision
+    if verdict is not None:
+        return verdict, "owners", verified, revision
     owner, evidence = _project_owner_evidence(doc_id, ctx, doc)
-    return owner, evidence, False
+    return owner, evidence, False, revision
 
 
 @app.get("/api/layout-session/owner")
@@ -9786,8 +9804,10 @@ def api_layout_session_owner():
     doc_id = request.args.get("doc_id")
     if not engine_layoutsession.valid_doc_id(doc_id):
         return jsonify({"error": "doc_id 不合法", "code": "bad_request"}), 400
-    owner, evidence, verified = _layout_owner_evidence(doc_id, _request_ctx())
-    resp = jsonify({"owner": owner, "evidence": evidence, "verified": verified})
+    owner, evidence, verified, revision = _layout_owner_evidence(doc_id, _request_ctx())
+    resp = jsonify(
+        {"owner": owner, "evidence": evidence, "verified": verified, "revision": revision}
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

@@ -133,7 +133,8 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     const diskRevision = probe.disk.kind === 'found' ? probe.disk.revision : null
     if (expectedRevision !== null && diskRevision !== null && diskRevision !== expectedRevision) {
       const ev = await fetchLayoutOwnerEvidence(id, ctx.pj)
-      const mine = ev !== 'unsupported' && ev !== 'unavailable' && ev.owner === 'this' && ev.verified
+      // 结论还要绑在刚探测到的这一版正文上：revision 对不上（下结论之后又被存了新的一版）就不算
+      const mine = ev !== 'unsupported' && ev !== 'unavailable' && ev.owner === 'this' && ev.verified && ev.revision === diskRevision
       if (!stillCurrent(ctx)) {
         useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
         return false

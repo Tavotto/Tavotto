@@ -450,6 +450,29 @@ describe('归属：本机索引 vs 后端证据（C1 / A16 / A17）', () => {
     expect(backend.writes()).toEqual([])
   })
 
+  it('归属由 /owner 给出时，结论的 revision 带进 expectedRevision（global / 缓存 / C1），指针自己的 revision 优先（Codex P1）', async () => {
+    const docs = await fresh()
+    // global currentDoc：本机不知道归属，/owner 说 this（assets）
+    const slot = backend.putSlot('d_g', docBody('G'))
+    backend.state.ownerAnswers.set(`${PJ}|d_g`, { owner: 'this', evidence: 'assets', verified: false })
+    let plan = await docs.planRestore(PJ, { globalCurrent: 'd_g' })
+    expect(plan.preferred).toMatchObject({ id: 'd_g', ownershipEvidence: 'assets', expectedRevision: slot.revision })
+    // 结论之后别的项目又存了同一个 doc id：下结论时的 revision 才是要对的那一版（不是现在槽位的）
+    backend.state.ownerAnswers.set(`${PJ}|d_g`, { owner: 'this', evidence: 'assets', verified: false, revision: 'rev-at-verdict' })
+    plan = await docs.planRestore(PJ, { globalCurrent: 'd_g' })
+    expect(plan.preferred?.expectedRevision).toBe('rev-at-verdict')
+    // C1 纠正路径同样
+    setIndex([{ id: 'd_x', name: 'x', savedAt: 1, objects: 1, projectId: 'p_other' }])
+    backend.setLast(PJ, 'd_x', 'X') // 指针不带 revision
+    backend.state.ownerAnswers.set(`${PJ}|d_x`, { owner: 'this', evidence: 'owners', verified: true, revision: 'rev-x' })
+    plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred).toMatchObject({ id: 'd_x', correctsIndex: true, expectedRevision: 'rev-x' })
+    // 指针自带 revision：以指针的为准，不被 /owner 的盖掉
+    backend.setLast(PJ, 'd_x', 'X', 'rev-pointer')
+    plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred?.expectedRevision).toBe('rev-pointer')
+  })
+
   it('global currentDoc 在本机索引里确知属于别的项目且后端没有 owners 证据：不认领', async () => {
     const docs = await fresh()
     foreignIndex('d_f')

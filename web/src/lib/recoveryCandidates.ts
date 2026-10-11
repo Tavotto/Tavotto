@@ -133,10 +133,13 @@ export function recoveryCopyId(sourceId: string, revision: string | null, pj: st
 }
 
 /** 已存在的目标槽位确实属于当前项目吗：本机索引记着当前项目，或后端 `owners` 证据说是且已核对 */
-async function ownsTarget(id: string, pj: string | null): Promise<boolean> {
+async function ownsTarget(id: string, pj: string | null, probedRevision: string | null): Promise<boolean> {
   if (pj !== null && recordedProjectOf(id) === pj) return true
   const ev = await fetchLayoutOwnerEvidence(id, pj)
-  return ev !== 'unsupported' && ev !== 'unavailable' && ev.owner === 'this' && ev.evidence === 'owners' && ev.verified
+  if (ev === 'unsupported' || ev === 'unavailable') return false
+  if (!(ev.owner === 'this' && ev.evidence === 'owners' && ev.verified)) return false
+  // 结论只对下结论时的那一版正文成立：与刚探测到的正文对不上（期间被别处存了新的一版）就不算
+  return probedRevision === null || ev.revision === null || ev.revision === probedRevision
 }
 
 export type RecoverCopyResult =
@@ -183,7 +186,7 @@ async function doRecover(
   const there = await probeAutosave(target, deps.pj)
   if (there.kind === 'found') {
     // 已存在的目标必须是这个项目的：不重开别人的副本
-    if (!(await ownsTarget(target, deps.pj))) return { kind: 'issue', reason: 'foreign' }
+    if (!(await ownsTarget(target, deps.pj, there.revision))) return { kind: 'issue', reason: 'foreign' }
     if (stale()) return { kind: 'issue', reason: 'cancelled' }
     return (await deps.openExisting(target, there.revision))
       ? { kind: 'opened', id: target, existed: true }

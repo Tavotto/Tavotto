@@ -31,6 +31,8 @@ export interface OwnerAnswer {
   owner: 'this' | 'other' | 'unknown'
   evidence: 'owners' | 'versions' | 'assets' | null
   verified?: boolean
+  /** 缺省 = 槽位当前正文的 revision（没有槽位 = null）；显式给就原样回（造「结论之后正文又变了」） */
+  revision?: string | null
 }
 
 export interface CandidateRow {
@@ -107,12 +109,13 @@ export function createFakeBackend() {
   }
 
   const ownerFor = (pj: string, id: string): OwnerAnswer => {
+    const rev = b.slots.get(id)?.revision ?? null
     const custom = b.ownerAnswers.get(`${pj}|${id}`)
-    if (custom) return custom
+    if (custom) return { ...custom, revision: custom.revision !== undefined ? custom.revision : rev }
     if (b.owners.has(id)) {
-      return { owner: b.owners.get(id) === pj ? 'this' : 'other', evidence: 'owners', verified: true }
+      return { owner: b.owners.get(id) === pj ? 'this' : 'other', evidence: 'owners', verified: true, revision: rev }
     }
-    return { owner: 'unknown', evidence: null, verified: false }
+    return { owner: 'unknown', evidence: null, verified: false, revision: rev }
   }
 
   const fetchImpl = (async (url: unknown, init?: RequestInit) => {
