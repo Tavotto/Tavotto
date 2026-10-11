@@ -31,6 +31,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
+import zlib
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -593,6 +594,12 @@ def _atomic_write_error(exc):
         exc.message,
     )
     return jsonify(exc.as_payload()), 500
+
+
+@app.errorhandler(engine_layoutsession.SessionStateUnavailable)
+def _session_unavailable_handler(exc):
+    """槽位 / 会话状态的跨进程锁等不到（或会话状态读不到可信状态）：503，请求什么都没写。"""
+    return _session_unavailable()
 
 
 @app.errorhandler(engine_refresh.RefreshError)
@@ -9136,7 +9143,51 @@ def _autosave_path(doc_id: str) -> Path:
 _DOCUMENT_LOCKS = [threading.Lock() for _ in range(64)]
 
 
-def _document_lock(path: Path) -> threading.Lock:
+#: 等槽位文档锁的上限（秒；要大于持锁方最长的合理停顿——有用例会让持锁方停 10 s）。超时抛 `SessionStateUnavailable` → 503 `session_unavailable`，正文一个字节没写
+DOCUMENT_LOCK_TIMEOUT_S = 30.0
+DOCLOCK_DIRNAME = "doclocks"
+
+
+class _DocumentLock:
+    """一个条带的「线程锁 + 跨进程文件锁」。**不可重入**：持锁期间不要再取任何文档锁。"""
+
+    def __init__(self, stripe: int) -> None:
+        self._stripe = stripe
+        self._fd: int | None = None
+
+    def locked(self) -> bool:
+        """这个条带此刻有人持着（本进程内；测试与自检用）。"""
+        return _DOCUMENT_LOCKS[self._stripe].locked()
+
+    def __enter__(self) -> "_DocumentLock":
+        deadline = time.monotonic() + DOCUMENT_LOCK_TIMEOUT_S
+        thread_lock = _DOCUMENT_LOCKS[self._stripe]
+        if not thread_lock.acquire(timeout=DOCUMENT_LOCK_TIMEOUT_S):
+            raise engine_layoutsession.SessionStateUnavailable(
+                "槽位被本进程的另一个请求占着，等待超时"
+            )
+        try:
+            self._fd = engine_layoutsession.acquire_file_lock(
+                engine_config.data_path(
+                    engine_layoutsession.STATE_DIRNAME, DOCLOCK_DIRNAME, f"{self._stripe}.lock"
+                ),
+                deadline,
+            )
+        except BaseException:
+            thread_lock.release()
+            raise
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        fd, self._fd = self._fd, None
+        try:
+            if fd is not None:
+                engine_layoutsession.release_file_lock(fd)
+        finally:
+            _DOCUMENT_LOCKS[self._stripe].release()
+
+
+def _document_lock(path: Path) -> _DocumentLock:
     """按**落盘路径**取锁，不按 doc_id / 画布名：`_autosave_path` 与
     `layout_path` 都会把非法字符归一成 `_`，于是两个不同的名字可能指向同一个
     文件——按名字分锁的话，那两个请求以为自己各写各的。
@@ -9145,12 +9196,18 @@ def _document_lock(path: Path) -> threading.Lock:
     文件被两条路同时动时它们必须互斥。**锁不可重入**——持锁期间不要再去锁
     另一个路径（槽位清理因此放在写入的锁段之外）。
 
+    **锁是跨进程的**（`state/doclocks/<条带>.lock` 上的文件锁 + 进程内线程锁）：两个 Tavotto 进程共用
+    一个数据目录时，「判冲突 → 写正文 → 读 revision → 提交归属」同样是一个原子段，否则 F 的归属会
+    记在 G 的正文 revision 上。条带下标用 `zlib.crc32`，**不能用 `hash()`**（每个进程盐不同，
+    两个进程会选到不同的锁）。不同文档偶尔共用一个条带只是多串行一点点。Windows 的 `msvcrt` 那条腿
+    只有 CI 验证。拿不到（10 s）抛 `SessionStateUnavailable`，由 `_session_unavailable_handler` 回 503。
+
     **与会话状态锁（`engine/layoutsession._LOCK`）的顺序全局固定：文档锁 → 会话锁**。
     自动保存（写正文 + `commit_slot`）、DELETE、清理（`remove_slot_unless_protected`）、
     `PUT /api/layout-session/last`（验槽位 + `set_last`）、教程重置都按这个顺序；
     会话锁内不读任何正文、不调需要文档锁的函数。反过来（持会话锁再取文档锁）会和上面任何一条路死锁。
     """
-    return _DOCUMENT_LOCKS[hash(str(path)) % len(_DOCUMENT_LOCKS)]
+    return _DocumentLock(zlib.crc32(str(path).encode("utf-8")) % len(_DOCUMENT_LOCKS))
 
 
 @app.get("/api/autosave/<doc_id>")
@@ -9467,8 +9524,11 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
 
         # 上面的 `protected` 只是快照：删之前在会话状态锁里重判一次（并发的「记成上次开着的」
         # 插不进判与删之间），删了当场忘掉它的归属——见 `remove_slot_unless_protected`
-        with _document_lock(path):
-            gone = engine_layoutsession.remove_slot_unless_protected(path.stem, _unlink)
+        try:
+            with _document_lock(path):
+                gone = engine_layoutsession.remove_slot_unless_protected(path.stem, _unlink)
+        except OSError:  # 锁等不到：这次不清它，下次保存再清；绝不让已成功的保存回 5xx
+            continue
         if gone:
             removed.append(path.name)
     if removed:

@@ -1834,6 +1834,13 @@ export interface ProbeResult {
   /** 待裁决（不在探测里挪动任何键）：本机比磁盘新 / 上一轮没裁决完的恢复副本 */
   pendingRecovery: 'local_newer' | 'recovery_slot' | null
   schema?: number
+  /**
+   * 本机副本（崩溃兜底 / 恢复槽位），**与磁盘探测的结局分开放**：磁盘 `unavailable` / `invalid` 时 `kind` 照实是那个，
+   * `doc` 为 null——不能因为手边有副本就把读失败说成「读到了」（那份副本可能比磁盘旧）。只有确认过 404（`missing`）
+   * 才自动把它当文档本身。恢复协调把它作为用户明确选择的备选（「打开本机副本」）提供；显式打开最近文档
+   * （`readAutosaveDoc`）保持老行为，直接用它。
+   */
+  local: ProjectDocument | null
 }
 
 /**
@@ -1854,7 +1861,9 @@ export async function probeDocument(id: string, pj: string | null): Promise<Prob
   const pending = readRecovery(id)
   if (disk.kind === 'found') {
     const future = futureSchemaOf(disk.doc)
-    if (future !== null) return { id, kind: 'too_new', disk, doc: null, from: null, pendingRecovery: null, schema: future }
+    if (future !== null) {
+      return { id, kind: 'too_new', disk, doc: null, from: null, pendingRecovery: null, schema: future, local: null }
+    }
     let diskDoc: ProjectDocument | null = null
     try {
       diskDoc = migrateToProject(disk.doc)
@@ -1868,15 +1877,18 @@ export async function probeDocument(id: string, pj: string | null): Promise<Prob
         : local && local.updatedAt > diskDoc.updatedAt
           ? 'local_newer'
           : null
-      return { id, kind: 'found', disk, doc: diskDoc, from: 'disk', pendingRecovery }
+      return { id, kind: 'found', disk, doc: diskDoc, from: 'disk', pendingRecovery, local: local ?? pending }
     }
     // 磁盘上有字节但本构建认不出：当成读不了，有本机副本就用它（与旧 `fetchAutosave` 抛错同一条路）
   }
   // 磁盘 missing / unavailable / invalid（或认不出）：本机那份就是文档本身，没有就是没有
   const fallback = local ?? pending
-  if (fallback) return { id, kind: 'found', disk, doc: fallback, from: 'local', pendingRecovery: null }
+  // 只有确认过 404 才自动把本机副本当文档本身；读失败（不可用 / 坏）保持磁盘的结局，副本另放
+  if (fallback && disk.kind === 'missing') {
+    return { id, kind: 'found', disk, doc: fallback, from: 'local', pendingRecovery: null, local: fallback }
+  }
   const kind = disk.kind === 'found' ? 'invalid' : disk.kind
-  return { id, kind, disk, doc: null, from: null, pendingRecovery: null }
+  return { id, kind, disk, doc: null, from: null, pendingRecovery: null, local: fallback }
 }
 
 /**
@@ -1931,7 +1943,11 @@ export function acceptProbe(p: ProbeResult, _pj: string | null, token?: RestoreT
 /** 读文档并落账（`probeDocument` + `acceptProbe`）：显式打开最近文档 / 教程装文档用，现有调用方不变 */
 export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
   const pj = currentProjectId()
-  const probe = await probeDocument(id, pj)
+  let probe = await probeDocument(id, pj)
+  // 显式打开最近文档：读盘失败时本机副本就是能给用户的那份（老行为）；恢复协调不走这里
+  if (!probe.doc && probe.local && (probe.kind === 'unavailable' || probe.kind === 'invalid')) {
+    probe = { ...probe, kind: 'found', doc: probe.local, from: 'local' }
+  }
   const notice = acceptProbe(probe, pj)
   return { doc: probe.doc, notice }
 }

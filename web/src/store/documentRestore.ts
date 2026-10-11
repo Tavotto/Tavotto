@@ -22,6 +22,18 @@
  * 判决规则（4.3）：首选可信且有效 → 恢复；暂态失败先有界重试原目标；首选明确缺失 / 损坏 / 不支持 →
  * 保留失败原因，列出**已只读验证过**的其他候选让用户选，**绝不悄悄换旧稿**；没有首选目标时，后端发现
  * 恰好 1 份属于本项目的有效候选 → 自动采用并说一句来源（产品决定，不适用于「最后稿件失败、仅剩旧稿」）。
+ *
+ * 判决表（探测结局 → 结果）：
+ *   正文 found                          → 恢复（指针修订号对不上先复核归属，只有 this+verified 才装）
+ *   正文 missing（404，确认过）+ 本机副本 → 副本就是文档本身，恢复并推回磁盘
+ *   正文 unavailable / invalid          → 有界重试；仍失败 → needs_user，本机副本只作为「打开本机副本」备选
+ *                                         （用户的动作才打开——它可能比磁盘旧），绝不自动当成恢复
+ *   正文 missing / too_new（无副本）      → needs_user{missing / too_new}，其余已验证候选作备选
+ *   纯打开意图 missing                   → 只退到第一个 durable（last，没有 last 才 prev）；last 失败 / 被扣下 → needs_user
+ *   会话 last 读不到（重试用尽）          → needs_user{session_unavailable}，本机线索作已验证备选，**不**自动兜底；
+ *                                         只有会话端点 404（unsupported）才按本机线索自动恢复
+ *   发现（无首选）                       → 翻完页再数：1 份且 owners 证据且索引正常 → 自动采用；其余有候选 → choose；
+ *                                         数不清 → choose / index_degraded；发现端点不可用 → session_unavailable；404 → 空
  */
 import { msg } from '@/i18n'
 import { newId } from '@/lib/id'
@@ -78,12 +90,14 @@ export type RestoreIssueKind =
  * 恢复没成、等用户处理的那件事。`ref` 是失败的首选（`session_unavailable` 时还不知道 docId，可为 null）；
  * `alternatives` 是**已只读验证过可打开**的其他候选。界面只露一句话 + 一个主按钮，其余折叠。
  */
+export type AltCandidate = RestoreCandidate & { localCopy?: true }
+
 export interface RestoreIssue {
   pj: string | null
   gen: number
   kind: RestoreIssueKind
   ref: { id: string; name: string } | null
-  alternatives: RestoreCandidate[]
+  alternatives: AltCandidate[]
 }
 
 export type RestoreOutcome =
@@ -232,11 +246,17 @@ async function installChecked(
   return installProbe(token, probe, plan, cand.name, reason)
 }
 
+/** 磁盘读失败（不可用 / 坏）但手边有本机副本：把它作为**用户明确选择**才打开的备选（它可能比磁盘旧） */
+function localCopyAlt(c: RestoreCandidate, probe: ProbeResult): AltCandidate[] {
+  if ((probe.kind !== 'unavailable' && probe.kind !== 'invalid') || !probe.local) return []
+  return [{ ...c, localCopy: true }]
+}
+
 function needsUser(
   token: RestoreToken,
   kind: RestoreIssueKind,
   ref: RestoreIssue['ref'],
-  alternatives: RestoreCandidate[] = [],
+  alternatives: AltCandidate[] = [],
   tooNewNotice?: { docId: string; schema: number },
 ): RestoreOutcome {
   if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
@@ -302,11 +322,16 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   if (!plan) return { kind: 'superseded' }
 
   let failure: { kind: RestoreIssueKind; ref: { id: string; name: string }; probe: ProbeResult } | null = null
-  // 后端 last 读不到（重试之后仍然）：计划不替它挑首选（不知道后端记着什么），本机线索都在 fallbacks。
-  // 重试用尽之后按本机线索走——与旧行为一致（后端不可达时退回本机缓存），只是先有界重试、失败有出口
-  const degraded = plan.session.kind === 'unavailable'
-  const pref = plan.preferred ?? (degraded ? (plan.fallbacks[0] ?? null) : null)
-  const rest = plan.preferred ? plan.fallbacks : degraded ? plan.fallbacks.slice(1) : plan.fallbacks
+  // 后端 last 读不到（重试之后仍然）：不知道后端记着什么——它可能有比本机线索更新的 last。本机线索不自动当成恢复，
+  // 只作为**已验证的备选**交给用户（`session_unavailable`，出口：重试 / 打开某份 / 继续新建）。
+  // 本机线索自动兜底只留给后端根本没有这组端点（`unsupported`，计划里 preferred 就是它）。
+  if (plan.session.kind === 'unavailable') {
+    const alts = await verifiedAlternatives(token, plan.fallbacks, null)
+    if (!alts) return { kind: 'superseded' }
+    return needsUser(token, 'session_unavailable', null, alts)
+  }
+  const pref = plan.preferred
+  const rest = plan.fallbacks
   // 后端的 durable last 在计划里被**扣下**了（归属问不到 / 本机索引说是别人的）：它仍是「上次开着的」，
   // 不能越过它去装更旧的（prev / 本机线索）——那就是悄悄换旧稿。只有首选本身是比它更新的纯打开意图且读得到时才装首选
   const withheldLast = plan.withheld.find((w) => w.candidate.sources.includes('backend_last')) ?? null
@@ -354,7 +379,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
         token,
         issueKindOf(probe),
         { id: pref.id, name: pref.name },
-        alts,
+        [...localCopyAlt(pref, probe), ...alts],
         probe.kind === 'too_new' ? { docId: pref.id, schema: probe.schema ?? 0 } : undefined,
       )
     }
@@ -370,8 +395,6 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   }
 
   // —— 没有可用的目标 ——
-  // 后端 last 读不到（暂态）且没有任何本机线索：不知道有没有历史，不能当首次空状态
-  if (plan.session.kind === 'unavailable') return needsUser(token, 'session_unavailable', null)
   // 有线索但没认领（归属问不到）：不自动认领，也不说成空项目——给重试出口；确知别人的 / 归属不明的不阻塞
   const unreachable = plan.withheld.find((w) => w.reason === 'owner_unavailable')
   if (unreachable) {
@@ -619,11 +642,16 @@ export async function openAlternative(id: string): Promise<RestoreOutcome> {
   const probe = await probeWithRetry(token, id)
   if (!probe) return { kind: 'superseded' }
   if (probe.kind === 'found') return fitIfRestored(await installChecked(token, probe, null, picked, 'explicit'))
+  // 用户明确选了「打开本机副本」：磁盘此刻仍读不了，就用副本（它可能比磁盘旧——所以只在这里、由用户的动作触发）
+  if (picked.localCopy && probe.local) {
+    const asLocal: ProbeResult = { ...probe, kind: 'found', doc: probe.local, from: 'local' }
+    return fitIfRestored(installProbe(token, asLocal, null, picked.name, 'explicit'))
+  }
   return needsUser(
     token,
     issueKindOf(probe),
     { id, name: picked.name },
-    issue.alternatives.filter((a) => a.id !== id),
+    [...localCopyAlt(picked, probe), ...issue.alternatives.filter((a) => a.id !== id)],
     probe.kind === 'too_new' ? { docId: id, schema: probe.schema ?? 0 } : undefined,
   )
 }

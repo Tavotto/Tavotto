@@ -1095,3 +1095,78 @@ describe('needs_user 的备选记着提供时读到的正文修订号', () => {
     expect(be.state.calls.some((c) => c.startsWith('GET owner'))).toBe(false)
   })
 })
+
+describe('Codex P1：磁盘读失败不被本机副本掩盖 / 会话不可用不自动兜底', () => {
+  const localCopyOf = (name: string) => {
+    const pd = savedProject(name, [panel({ id: 'panel_local' })])
+    pd.updatedAt = 50
+    return pd
+  }
+
+  it.each([
+    ['unavailable（5xx）', 500, 'unavailable'],
+    ['invalid（400）', 400, 'invalid'],
+  ] as const)('(a) 正文读失败 %s + 有本机副本：不当成「读到了」自动恢复；needs_user，副本只作「打开本机副本」备选', async (_n, status, kind) => {
+    seedSavedLast()
+    localStorage.setItem('tavotto.autosave.d_saved', JSON.stringify(localCopyOf('本机副本')))
+    be.state.failGetDoc.set('d_saved', status)
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_saved')
+    expect(objectIds(app)).toEqual([])
+    const issue = ds(app).restoreIssue!
+    expect(issue).toMatchObject({ kind, ref: { id: 'd_saved' } })
+    expect(issue.alternatives[0]).toMatchObject({ id: 'd_saved', localCopy: true })
+    expect(be.writes()).toEqual([]) // 读失败时不把副本推回磁盘
+    // 用户明确选「打开本机副本」才装它，仍不推回磁盘（不知道磁盘上有什么）
+    expect(await app.restore.openAlternative('d_saved')).toMatchObject({ kind: 'restored', id: 'd_saved' })
+    expect(objectIds(app)).toEqual(['panel_local'])
+    expect(autosavePuts()).toEqual([])
+  })
+
+  it('(a) probeDocument：磁盘 unavailable 时 kind 照实、doc 为 null，副本单放 local；404 才把副本当文档本身', async () => {
+    const app = await boot()
+    localStorage.setItem('tavotto.autosave.d_x', JSON.stringify(localCopyOf('副本')))
+    be.state.failGetDoc.set('d_x', 500)
+    const bad = await app.doc.probeDocument('d_x', 'p_a')
+    expect(bad).toMatchObject({ kind: 'unavailable', doc: null })
+    expect(bad.local?.project.name).toBe('副本')
+    be.state.failGetDoc.delete('d_x')
+    const miss = await app.doc.probeDocument('d_x', 'p_a')
+    expect(miss).toMatchObject({ kind: 'found', from: 'local' })
+  })
+
+  it('(a) 显式打开最近文档（readAutosaveDoc）保持老行为：读失败时直接用本机副本', async () => {
+    const app = await boot()
+    localStorage.setItem('tavotto.autosave.d_x', JSON.stringify(localCopyOf('副本')))
+    be.state.failGetDoc.set('d_x', 500)
+    const r = await app.doc.readAutosaveDoc('d_x')
+    expect(r.doc?.project.name).toBe('副本')
+  })
+
+  function seedLocalCache() {
+    be.putSlot('d_c', savedProject('本机缓存的'), 'p_a')
+    localStorage.setItem('tavotto.projectDoc.p_a', JSON.stringify({ id: 'd_c', name: '本机缓存的' }))
+  }
+
+  it('(b) 会话 last 一直读不到、有本机缓存线索：不自动装它；needs_user{session_unavailable}，线索作已验证备选', async () => {
+    seedLocalCache()
+    be.state.fail.session = 500
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_c')
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'session_unavailable', ref: null })
+    expect(ds(app).restoreIssue!.alternatives.map((a) => a.id)).toEqual(['d_c'])
+    expect(app.doc.isDocumentPlaceholder()).toBe(true)
+    // 用户选了才打开
+    expect(await app.restore.openAlternative('d_c')).toMatchObject({ kind: 'restored', id: 'd_c' })
+  })
+
+  it('(b) 会话端点 404（unsupported，旧后端）才按本机线索自动恢复', async () => {
+    seedLocalCache()
+    be.state.fail.session = 404
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(ds(app).documentId).toBe('d_c')
+  })
+})

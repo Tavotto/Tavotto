@@ -137,7 +137,7 @@
   - 候选与读取结果见 `lib/projectDocs.planRestore`（只读）与 `documentStore.probeDocument`（零副作用）/ `acceptProbe`（选中且仍有提交权
     才记修订号、基线、挪恢复副本、推回磁盘）。`readAutosaveDoc` = 两者组合，只给显式打开用。读不到（`unavailable`）≠ 没有（`missing`）≠
     坏（`invalid`）≠ 太新；暂态先有界重试原目标，首选明确失败 → `needs_user`，只列只读验证过的其他候选，**不悄悄换旧稿**；
-    纯打开意图（没有后端 durable 记录）没有正文 → 退回 durable 那份，不算故障。判决表全文在 `documentRestore.ts` 文件头与 ADR 0119 §二。
+    纯打开意图（没有后端 durable 记录）没有正文 → 退回 durable 那份，不算故障。**读不到不自动退回本机**：会话端点重试后仍不可用、或正文读失败（非 404）→ `needs_user`，本机线索 / 本机副本只作用户明确选择的候选；只有确认的 404 才自动按本机恢复。每条安装路径都经 `installChecked`：读到的正文 revision 与指针 / 扫描 / 提供候选时记下的不同 → 先问 `/owner`，只有 owners+verified 才装。判决表全文在 `documentRestore.ts` 文件头与 ADR 0119 §二。
   - `needs_user` 的出口在顶栏文档状态芯片（`restore` issue，`components/RestoreIssueBody.tsx`）：一句话 + 一个主按钮（重试 / 打开另一份 /
     继续新建），其余折叠；`lastDocumentIssue` 只是 `restoreIssue.ref` 的薄适配。保存成功（`saved → clean`）不清恢复问题；保存元数据
     失败（autosave 回 `metadata:"failed"`）是另一件事 `restoreMetaIssue`，与 `saveState` 正交。

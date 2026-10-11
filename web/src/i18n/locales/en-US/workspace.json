@@ -1172,6 +1172,7 @@
       "title": "Your layout is saved, but the record used to reopen it next time wasn’t updated."
     },
     "openAlt": "Open “{{name}}”",
+    "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
     "pill": {
       "choose": "Layouts found on this computer",
       "indexDegraded": "Recovery record unreadable",

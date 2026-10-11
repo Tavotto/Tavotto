@@ -146,7 +146,7 @@ def _try_file_lock(fd: int) -> None:
         raise OSError(errno.ENOSYS, "没有文件锁")
 
 
-def _release_file_lock(fd: int) -> None:
+def release_file_lock(fd: int) -> None:
     try:
         if fcntl is not None:
             fcntl.flock(fd, fcntl.LOCK_UN)
@@ -159,10 +159,12 @@ def _release_file_lock(fd: int) -> None:
         os.close(fd)
 
 
-def _acquire_file_lock(deadline: float) -> int | None:
-    """拿跨进程文件锁，回 fd；锁文件根本打不开 / 平台不支持时回 `None`（只剩线程锁）。"""
+def acquire_file_lock(path: Path, deadline: float) -> int | None:
+    """拿 `path` 上的跨进程文件锁，回 fd；锁文件根本打不开 / 平台不支持时回 `None`（只剩线程锁）。
+
+    会话锁与 app 的槽位文档锁（`app._document_lock`，按条带分文件）共用这一份实现。
+    超过 `deadline`（`time.monotonic()` 刻度）抛 `SessionStateUnavailable`。"""
     global _LOCK_WARNED
-    path = lock_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
@@ -187,9 +189,7 @@ def _acquire_file_lock(deadline: float) -> int | None:
                 return None
             if time.monotonic() >= deadline:
                 os.close(fd)
-                raise SessionStateUnavailable(
-                    f"会话状态被别的 Tavotto 进程占着超过 {LOCK_TIMEOUT_S:g} 秒"
-                ) from exc
+                raise SessionStateUnavailable("文件锁被别的 Tavotto 进程占着，等待超时") from exc
             time.sleep(0.01)
 
 
@@ -205,7 +205,7 @@ class _StateLock:
         if not self._thread.acquire(timeout=LOCK_TIMEOUT_S):
             raise SessionStateUnavailable("会话状态被本进程的另一个请求占着超过 5 秒")
         try:
-            self._fd = _acquire_file_lock(deadline)
+            self._fd = acquire_file_lock(lock_path(), deadline)
         except BaseException:
             self._thread.release()
             raise
@@ -215,7 +215,7 @@ class _StateLock:
         fd, self._fd = self._fd, None
         try:
             if fd is not None:
-                _release_file_lock(fd)
+                release_file_lock(fd)
         finally:
             self._thread.release()
 

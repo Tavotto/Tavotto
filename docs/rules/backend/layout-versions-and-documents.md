@@ -163,6 +163,15 @@
     不自动恢复未核对的内容；③ `/owner` 回 `{owner:"unknown", evidence:null, verified:false}`，不再往下翻旁证；
     ④ 候选发现里它对每个项目都只出现在 `scope=unknown`（用户可「恢复副本」）、绝不在 `scope=project`。
     **没有 `owner_revisions` 的旧记录（含 scalar owners）按现状信任**——兼容边界，不是保证。比较 revision 在会话锁外读文件。
+  - **槽位文档锁也是跨进程的**（2026-10-11）：`_document_lock(path)` = 64 个条带，每个条带 = 进程内线程锁 +
+    `state/doclocks/<条带>.lock` 上的文件锁（与会话锁共用 `layoutsession.acquire_file_lock`）。两个后端进程共用一个数据目录、
+    从同一个 `base_revision` 保存同一个 doc id 时，「判冲突 → 写正文 → 读 revision → `commit_slot`」是同一个原子段，
+    恰好一个成功、另一个 409，归属与 `owner_revisions` 对着最终正文（否则 F 会把 G 的正文 revision 记成自己的）。
+    条带下标用 `zlib.crc32`，**不能用 `hash()`**（每个进程盐不同）。自动保存 / 另存为 / ⌘S / 槽位清理 / DELETE / `PUT last` /
+    教程重置共用这套条带；**没有任何一条路同时持两个文档锁**（不可重入；清理一次只处理一个槽位），
+    顺序全局是 文档锁 → 会话锁。等不到（30 s，要大于持锁方的合理停顿）抛 `SessionStateUnavailable`，
+    `@app.errorhandler` 回 503 `session_unavailable`，此时一个字节没写；清理里等不到只是这次不清它。锁文件打不开
+    （只读卷）时退回只有线程锁。真两进程回归 `tests/test_layout_recovery_backend.py`（POSIX）；Windows 的 `msvcrt` 腿只有 CI 验证。
   - **跨进程文件锁**（C2）：模块锁 `_LOCK` = 进程内线程锁 + `state/layout-sessions.lock` 的文件锁（POSIX `fcntl.flock`、
     Windows `msvcrt.locking`，纯标准库，非阻塞 + 10 ms 重试），多个进程共用一个数据目录时读改写不丢更新；拿不到（5 s）抛
     `SessionStateUnavailable`。锁文件打不开（只读卷、不支持文件锁的文件系统）时退回只有线程锁并记一次日志。导出默认值

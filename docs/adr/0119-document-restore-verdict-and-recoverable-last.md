@@ -45,7 +45,7 @@
 ### 二、读取结果不提前折叠
 
 `found / missing / unsupported(404) / unavailable(网络、超时、5xx、401、403) / invalid / schema_too_new / index degraded`
-各自分开。暂态失败先有界重试原目标（250 ms、1000 ms）；首选明确缺失 / 坏 / 太新 → 保留失败原因，只列**只读验证过**
+各自分开。暂态失败先有界重试原目标（250 ms、1000 ms）；**读不到不自动退回本机**：会话端点重试后仍不可用 → `needs_user{session_unavailable}`，本机线索只作已验证候选；正文读失败（5xx / 401 / 403 / 磁盘上坏）→ `needs_user`，本机崩溃副本只作用户明确选择的「打开本机副本」（它可能比磁盘旧）；只有确认的 404（端点不存在 / 槽位不存在）才按本机线索 / 本机副本自动恢复。每条安装路径都核对正文 revision：读到的与指针 / 扫描 / 提供候选时记下的不同 → 先问 `/owner`，只有 owners 证据且 verified 才装；首选明确缺失 / 坏 / 太新 → 保留失败原因，只列**只读验证过**
 的其他候选给用户选，**绝不悄悄打开旧稿后宣布原稿恢复成功**。候选探测（`probeDocument`）零副作用，选中且仍有提交权时才
 `acceptProbe`（记修订号与基线、挪恢复副本、推回磁盘都只在这里）。
 
@@ -83,7 +83,7 @@ revision，变了要求刷新；取消零写入。不为列表运行脚本、不
 ### 七、C2：跨进程互斥
 
 桌面版与浏览器模式（`tavotto` / `run.sh`）用同一个 `data_dir()`，两个后端同时开着是可达状态。会话状态的读改写在线程锁之外再加
-`state/layout-sessions.lock` 文件锁（POSIX `fcntl.flock`、Windows `msvcrt.locking`，5 s 拿不到 → 503 `session_unavailable`）。
+`state/layout-sessions.lock` 文件锁（POSIX `fcntl.flock`、Windows `msvcrt.locking`，5 s 拿不到 → 503 `session_unavailable`）。槽位的文档锁同样跨进程（64 条带，`state/doclocks/<条带>.lock`，条带按 `zlib.crc32`，30 s 拿不到 → 503），覆盖判冲突、写正文、读 revision 与元数据提交；所有槽位删除都在会话锁里，发布 durable last 前在会话锁里再核一次槽位签名。
 
 ## 不做
 

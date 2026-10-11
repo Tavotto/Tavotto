@@ -1123,3 +1123,110 @@ def test_tutorial_reset_never_unlinks_the_slot_outside_the_session_lock(client, 
     r = client.post("/api/tutorial/reset", json={})
     assert r.status_code == 200 and r.get_json()["reset"] is True
     assert not _slot(doc_id).exists()
+
+
+_SAVE_CHILD = r"""
+import json, os, sys, time
+sys.path.insert(0, sys.argv[1])
+tag, proj, base, go, ready, data = sys.argv[2:8]
+from tavotto import app as m
+from tavotto.engine import atomicio
+real = atomicio.write_json
+def slow(path, obj, *, indent=None):  # 撑开「判冲突 → 写」之间的缝：两个进程都先判完才有人落盘
+    if "_autosave" in str(path):
+        time.sleep(0.5)
+    return real(path, obj, indent=indent)
+atomicio.write_json = slow
+m.app.config["TESTING"] = True
+c = m.app.test_client()
+pid = c.post("/api/projects/open", json={"path": proj, "default": True}).get_json()["id"]
+open(ready, "w").write("1")
+while not os.path.exists(go):
+    time.sleep(0.001)
+doc = json.loads(sys.argv[8]); doc["project"]["name"] = "from " + tag
+r = c.put("/api/autosave/d_x?base_revision=" + base, json=doc, headers={"X-Tavotto-Project": pid})
+print(json.dumps({"tag": tag, "status": r.status_code, "revision": (r.get_json() or {}).get("revision")}))
+sys.stdout.flush()
+os._exit(0)
+"""
+
+
+def test_two_real_processes_saving_the_same_slot_from_one_baseline_exactly_one_wins(tmp_path):
+    """两个真后端进程共用一个数据目录、从同一个 base_revision 保存同一个 doc id：槽位文档锁是跨进程的，
+    恰好一个 200、另一个 409，归属与 owner_revisions 对着最终正文。Windows 腿（`msvcrt`）留给 CI。"""
+    data = tmp_path / "data"
+    slot = data / "layouts" / documents.AUTOSAVE_DIRNAME / "d_x.json"
+    atomicio.write_json(slot, _doc(1, "seed"))
+    base = atomicio.content_revision(slot)
+    projects = {}
+    for tag in ("F", "G"):
+        projects[tag] = tmp_path / f"proj{tag}"
+        projects[tag].mkdir()
+    go = tmp_path / "go"
+    env = {**os.environ, "TAVOTTO_DATA_DIR": str(data), "PYTHONDONTWRITEBYTECODE": "1"}
+    procs = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _SAVE_CHILD,
+                str(SRC),
+                tag,
+                str(projects[tag]),
+                base,
+                str(go),
+                str(tmp_path / f"ready{tag}"),
+                str(data),
+                json.dumps(_doc(2)),
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for tag in ("F", "G")
+    ]
+    deadline = time.monotonic() + 120
+    while not all((tmp_path / f"ready{t}").exists() for t in ("F", "G")):
+        assert time.monotonic() < deadline and all(p.poll() is None for p in procs), [
+            p.stderr.read().decode() for p in procs if p.poll() is not None
+        ]
+        time.sleep(0.05)
+    go.write_text("go")
+    results = {}
+    for p in procs:
+        out, err = p.communicate(timeout=120)
+        assert p.returncode == 0, err.decode()
+        row = json.loads(out.decode().strip().splitlines()[-1])
+        results[row["tag"]] = row
+    statuses = sorted(r["status"] for r in results.values())
+    assert statuses == [200, 409], f"跨进程没有互斥：{results}"
+    winner = next(t for t, r in results.items() if r["status"] == 200)
+    final = atomicio.content_revision(slot)
+    assert final == results[winner]["revision"]
+    assert json.loads(slot.read_text(encoding="utf-8"))["project"]["name"] == f"from {winner}"
+    state = json.loads((data / "state" / "layout-sessions.json").read_text(encoding="utf-8"))
+    assert state["owners"]["d_x"] == layoutsession.project_key(projects[winner])
+    assert state["owner_revisions"]["d_x"] == final
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="用 fcntl 模拟另一个持锁者；Windows 腿留给 CI")
+def test_document_lock_held_by_another_process_times_out_with_503_and_writes_nothing(
+    client, monkeypatch
+):
+    import fcntl
+
+    monkeypatch.setattr(m, "DOCUMENT_LOCK_TIMEOUT_S", 0.3)
+    slot = m._autosave_path("d_held")
+    stripe = m.zlib.crc32(str(slot).encode("utf-8")) % len(m._DOCUMENT_LOCKS)
+    lock_file = layoutsession.state_path().parent / m.DOCLOCK_DIRNAME / f"{stripe}.lock"
+    lock_file.parent.mkdir(parents=True)
+    fd = os.open(lock_file, os.O_RDWR | os.O_CREAT)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        r = _put(client, "d_held", _doc())
+        assert r.status_code == 503 and r.get_json()["code"] == "session_unavailable"
+        assert not slot.exists(), "拿不到槽位锁还是写了正文"
+        assert client.delete("/api/autosave/d_held").status_code == 503
+    finally:
+        os.close(fd)
+    assert _put(client, "d_held", _doc()).status_code == 200

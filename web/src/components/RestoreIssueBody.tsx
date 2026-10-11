@@ -44,9 +44,13 @@ export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close:
     }
   })()
   const alts = issue.alternatives
-  const openAlt = (id: string, altName: string) => (
-    <MenuItem key={id} data-restore-action="open-alt" onSelect={done(() => openAlternative(id))}>
-      {t('restore.openAlt', { name: altName || t('docBanner.lastDocUnnamed') })}
+  const altLabel = (a: { name: string; localCopy?: true }) =>
+    a.localCopy
+      ? t('restore.openLocal', { name: a.name || t('docBanner.lastDocUnnamed') })
+      : t('restore.openAlt', { name: a.name || t('docBanner.lastDocUnnamed') })
+  const openAlt = (id: string, a: { name: string; localCopy?: true }) => (
+    <MenuItem key={`${id}${a.localCopy ? ':local' : ''}`} data-restore-action="open-alt" onSelect={done(() => openAlternative(id))}>
+      {altLabel(a)}
     </MenuItem>
   )
   const newItem = (
@@ -88,7 +92,7 @@ export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close:
           </Button>
         }
       >
-        {alts.map((a) => openAlt(a.id, a.name))}
+        {alts.map((a) => openAlt(a.id, a))}
       </Menu>
     )
     folded = [newItem]
@@ -108,10 +112,10 @@ export function RestoreIssueBody({ issue, close }: { issue: RestoreIssue; close:
         data-restore-action="open-alt"
         onClick={done(() => openAlternative(first.id))}
       >
-        {t('restore.openAlt', { name: first.name || t('docBanner.lastDocUnnamed') })}
+        {altLabel(first)}
       </Button>
     )
-    folded = [...others.map((a) => openAlt(a.id, a.name)), newItem]
+    folded = [...others.map((a) => openAlt(a.id, a)), newItem]
   }
 
   return (

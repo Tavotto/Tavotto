@@ -5243,6 +5243,7 @@ export default interface Resources {
         "title": "排版已经存好，但“下次自动恢复”要用的记录没更新成功。"
       },
       "openAlt": "打开“{{name}}”",
+      "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
       "pill": {
         "choose": "找到了几份本机排版",
         "indexDegraded": "恢复记录读不了",
