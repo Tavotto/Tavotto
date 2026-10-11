@@ -593,6 +593,8 @@ export interface SwitchOptions {
   placeholder?: boolean
   restoreToken?: RestoreToken
   reason?: Exclude<RestoreReason, 'initial'>
+  /** 显式找回在取代恢复门、确定新文档归属前核实并纠正本机索引；拒绝时保留旧文档。 */
+  beforeInstall?: () => Promise<boolean>
 }
 
 function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<DocumentState> {
@@ -1095,6 +1097,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // 确认框（上面）是 await：它期间门可能已经换代，所以提交权在这里、同步地判
       if (!isRestoreTokenCurrent(token)) return false
     } else if (!placeholder) {
+      if (opts?.beforeInstall && !(await opts.beforeInstall())) return false
       // 显式意图取代未落定的恢复（门本来就开着时什么都不动）
       supersedeRestore(nextId, opts?.reason ?? 'explicit')
     }

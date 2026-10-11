@@ -15,6 +15,7 @@ import {
   type RowIssue,
 } from '@/lib/recoveryCandidates'
 import { currentProjectId } from '@/lib/session'
+import { correctRecordedProject, isForeignDocument } from '@/lib/docOwnership'
 import { cn } from '@/lib/utils'
 import { openDocumentAs } from '@/store/actions'
 import { acceptProbe, probeDocument, useDocumentStore } from '@/store/documentStore'
@@ -153,8 +154,29 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
         return false
       }
     }
-    const notice = acceptProbe(probe, ctx.pj)
-    if (!(await openDocumentAs(probe.doc, id, { stillCurrent: () => stillCurrent(ctx) }))) return false
+    let notice: ReturnType<typeof acceptProbe> = null
+    const beforeInstall = async () => {
+      if (!stillCurrent(ctx)) return false
+      if (scope !== 'project' || !isForeignDocument(id, ctx.pj)) {
+        notice = acceptProbe(probe, ctx.pj)
+        return true
+      }
+      if (ctx.pj === null) return false
+      // 本机索引还记着旧项目：列表行必须再有针对刚读到的正文的权威 owners 结论。
+      const ev = await fetchLayoutOwnerEvidence(id, ctx.pj)
+      if (!stillCurrent(ctx)) return false
+      if (diskRevision && ev !== 'unsupported' && ev !== 'unavailable' &&
+          ev.owner === 'this' && ev.evidence === 'owners' && ev.verified && ev.revision === diskRevision) {
+        correctRecordedProject(id, ctx.pj)
+        notice = acceptProbe(probe, ctx.pj)
+        return true
+      }
+      useUiStore.getState().setStatus(msg('layout.recoverUnverified', { name }, 'dialogs'), 'error')
+      seq.current += 1
+      void load(scope)
+      return false
+    }
+    if (!(await openDocumentAs(probe.doc, id, { stillCurrent: () => stillCurrent(ctx), beforeInstall }))) return false
     // 未决的恢复副本跟着这份文档走：switchDocument 刚把待裁决事项清空了
     if (notice) useDocumentStore.setState({ docNotice: notice })
     return useDocumentStore.getState().documentId === id

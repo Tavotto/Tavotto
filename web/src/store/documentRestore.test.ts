@@ -933,6 +933,25 @@ describe('Codex P1 复查：被扣下的 durable last 不能被越过', () => {
   })
 })
 
+describe('备选安装的 C1 归属纠正', () => {
+  it('首选缺失后显式选择归属已核实的 prev，安装前纠正旧项目索引', async () => {
+    be.setLast('p_a', 'd_missing', '首选缺失')
+    be.putSlot('d_alt', savedProject('F 的旧稿'), 'p_a')
+    be.session('p_a').prev = { doc_id: 'd_alt', name: 'F 的旧稿', at: 1 }
+    localStorage.setItem('tavotto.docIndex', JSON.stringify([
+      { id: 'd_alt', name: 'F 的旧稿', savedAt: 1, objects: 1, projectId: 'p_other', projectName: 'G' },
+    ]))
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue?.alternatives[0]).toMatchObject({ id: 'd_alt', correctsIndex: true })
+    expect(JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]')[0].projectId).toBe('p_other')
+    expect(await app.restore.openAlternative('d_alt')).toMatchObject({ kind: 'restored', id: 'd_alt' })
+    expect(JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]')[0].projectId).toBe('p_a')
+    expect(be.state.owners.get('d_alt')).toBe('p_a')
+    await reached(() => be.session('p_a').last?.doc_id === 'd_alt')
+  })
+})
+
 describe('Codex P1：指针修订号与读到的正文对不上（共用 docId 的别的项目在两次读之间存过）', () => {
   /** 计划里首选带上读指针那一刻的正文修订号（FE-P 的 `expectedRevision`；这里在计划出口注入，验证 FE-R 这一半） */
   async function bootWithExpected(expected: string | null) {

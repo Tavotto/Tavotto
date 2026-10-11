@@ -560,6 +560,37 @@ describe('扫描之后正文被别的项目改了：不把别人的正文装进�
 })
 
 describe('本项目的本机排版：原 id 打开', () => {
+  it('后端 owners 证明属本项目但本机索引仍记旧项目：打开前纠正，保存仍归本项目', async () => {
+    backend.putSlot('d_mine', runtimeDoc('F 的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: 'F 的排版' })
+    localStorage.setItem('tavotto.docIndex', JSON.stringify([
+      { id: 'd_mine', name: 'F 的排版', savedAt: 1, objects: 1, projectId: 'p_g', projectName: 'G' },
+    ]))
+    await mount()
+    await act(async () => rows('project')[0].click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_mine')
+    expect(JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]').find((e: { id: string }) => e.id === 'd_mine').projectId).toBe(PJ)
+    expect(backend.state.owners.get('d_mine')).toBe(PJ)
+  })
+
+  it('旧项目索引与权威归属冲突且复核暂不可用：不打开、不纠正索引', async () => {
+    backend.putSlot('d_mine', runtimeDoc('F 的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: 'F 的排版' })
+    localStorage.setItem('tavotto.docIndex', JSON.stringify([
+      { id: 'd_mine', name: 'F 的排版', savedAt: 1, objects: 1, projectId: 'p_g', projectName: 'G' },
+    ]))
+    await mount()
+    backend.state.fail.owner = 500
+    expect(JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]').find((e: { id: string }) => e.id === 'd_mine').projectId).toBe('p_g')
+    await act(async () => rows('project')[0].click())
+    await flush()
+    expect(backend.state.calls).toContain('GET owner d_mine')
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]').find((e: { id: string }) => e.id === 'd_mine').projectId).toBe('p_g')
+    expect(backend.writes().filter((c) => c.includes('d_mine'))).toEqual([])
+  })
+
   it('点一行 = 按原 id 打开（与最近文档同一条路），对话框关闭', async () => {
     backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
     backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })

@@ -67,7 +67,7 @@ import {
   type RestoreToken,
 } from '@/store/documentStore'
 import { fetchLayoutOwnerEvidence, fetchRecoveryCandidates, type RecoveryCandidateItem, type SessionIndexStatus } from '@/lib/api'
-import { isForeignDocument } from '@/lib/docOwnership'
+import { correctRecordedProject, isForeignDocument } from '@/lib/docOwnership'
 import { confirmRestored, planRestore, type CandidatePlan, type RestoreCandidate } from '@/lib/projectDocs'
 
 export { whenDocumentReady }
@@ -191,6 +191,7 @@ function installProbe(
   plan: CandidatePlan | null,
   name: string,
   reason: Reason,
+  cand?: RestoreCandidate,
 ): RestoreOutcome {
   if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
   if (!canCommitRestore(token) || !probe.doc) {
@@ -201,6 +202,9 @@ function installProbe(
     // 同步前缀先纠正本机归属：本机副本在 acceptProbe 中安排首次写回时就会读取它。
     // 迁移推送异步完成；此时令牌与提交权已经检查，后续安装仍在同一个同步段。
     void confirmRestored(token.pj, { id: probe.id, name: name || probe.doc.project.name }, plan).catch(() => {})
+  } else if (cand?.correctsIndex && token.pj) {
+    // 备选选择没有保留原计划；已验证的 C1 结论仍须在安装 / 首次保存之前落到本机索引。
+    correctRecordedProject(probe.id, token.pj)
   }
   const notice = acceptProbe(probe, token.pj, token)
   installRestoredDocument(token, probe.doc, probe.id, notice)
@@ -250,7 +254,7 @@ async function installChecked(
 ): Promise<RestoreOutcome> {
   const bad = await guardRevision(token, cand, probe)
   if (bad) return bad
-  return installProbe(token, probe, plan, cand.name, reason)
+  return installProbe(token, probe, plan, cand.name, reason, cand)
 }
 
 /** 磁盘读失败（不可用 / 坏）但手边有本机副本：把它作为**用户明确选择**才打开的备选（它可能比磁盘旧） */
@@ -439,6 +443,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
     ownership: 'this',
     ...(i.evidence ? { ownershipEvidence: i.evidence } : {}),
     ...(i.revision ? { expectedRevision: i.revision } : {}),
+    ...(isForeignDocument(i.doc_id, pj) && i.evidence === 'owners' ? { correctsIndex: true } : {}),
   })
   const asCandidates = items.slice(0, 5).map(asCandidate)
   if (!scan.complete) {
@@ -696,7 +701,7 @@ export async function openAlternative(id: string): Promise<RestoreOutcome> {
   // 用户明确选了「打开本机副本」：磁盘此刻仍读不了，就用副本（它可能比磁盘旧——所以只在这里、由用户的动作触发）
   if (picked.localCopy && probe.local) {
     const asLocal: ProbeResult = { ...probe, kind: 'found', doc: probe.local, from: 'local' }
-    return fitIfRestored(installProbe(token, asLocal, null, picked.name, 'explicit'))
+    return fitIfRestored(installProbe(token, asLocal, null, picked.name, 'explicit', picked))
   }
   return needsUser(
     token,
