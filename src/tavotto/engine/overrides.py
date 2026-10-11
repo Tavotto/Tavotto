@@ -1512,8 +1512,13 @@ def _patch_resize_model(p):
     if not isinstance(p, (Rectangle, FancyBboxPatch)) or getattr(p, "_mm_bar", False):
         return None
     methods = ("draw", "get_path", "get_patch_transform", "set_bounds", "get_window_extent")
+    # Our own temporary draw hook is the sole permitted instance override.
+    # All user-provided geometry/draw overrides remain unsupported.
+    own_hook = vars(p).get("_mm_size_draw_hook")
+    own_draw = own_hook is not None and vars(p).get("draw") is own_hook
     if any(
-        name in vars(p) or _defining_module(type(p), name) != "matplotlib.patches"
+        (name in vars(p) and (name != "draw" or not own_draw))
+        or _defining_module(type(p), name) != "matplotlib.patches"
         for name in methods
     ):
         return None
@@ -1601,6 +1606,34 @@ def _resized_patch_bounds(p, value):
     return (*native[:2], *sizes)
 
 
+def _install_patch_resize_draw_hook(p) -> None:
+    """Re-place only an edited patch *after* Axes.draw applies its aspect/locator.
+
+    On a figure without a layout engine there is no layout pin hook.  Axis limits,
+    locators and export DPI can change transData inside Axes.draw after apply() has
+    calculated native bounds.  Hook this one artist, not Figure/Axes globally;
+    the original class draw still runs exactly once and there is no nested draw.
+    """
+    if p.__dict__.get("_mm_size_draw_hook") is not None:
+        return
+    native_draw = p.draw
+
+    def resized_draw(renderer):
+        if getattr(p, "_mm_size_frac", None) is not None:
+            _place_patch(p, _patch_position(p))
+        return native_draw(renderer)
+
+    p._mm_size_draw_hook = resized_draw  # noqa: SLF001
+    p.draw = resized_draw
+
+
+def _remove_patch_resize_draw_hook(p) -> None:
+    hook = p.__dict__.pop("_mm_size_draw_hook", None)
+    # Do not delete an unrelated draw callback that might have replaced ours.
+    if hook is not None and p.__dict__.get("draw") is hook:
+        p.__dict__.pop("draw")
+
+
 def _patch_position(p):
     """pin 表的位置槽是平移的唯一请求值；只有尺寸时为 None。"""
     return _text_pins(p.get_figure()).get(p, (None, None))[0]
@@ -1617,9 +1650,11 @@ def _set_patch_size_frac(p, value) -> None:
     _place_patch(p, pos)
     _text_pins(p.get_figure())[p] = (pos, None)
     _ensure_text_pin_hook(p.get_figure())
+    _install_patch_resize_draw_hook(p)
 
 
 def _restore_patch_size(p, orig) -> None:
+    _remove_patch_resize_draw_hook(p)
     pos = _patch_position(p)
     p.set_bounds(*orig)
     p.__dict__.pop("_mm_size_frac", None)
