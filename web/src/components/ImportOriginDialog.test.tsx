@@ -342,6 +342,17 @@ describe('提交与确认', () => {
     expect(input('lab_tools')!.value).toBe('lab-tools>=1.2')
   })
 
+  it('两个预填、清空其中一个：确认页详情仍列出被清空的那个（取自绑定的计划，不静默消失）', async () => {
+    await render()
+    const joint = { ...offer([LAB, PEAK]).plan, origins: [PEAK] }
+    planMock.mockResolvedValue({ plan: bound({ joint } as never) })
+    await open(offer([LAB, PEAK]))
+    await typeInto('peak_finder', '')
+    await act(async () => review()!.click())
+    await openDetails()
+    expect(dialog()!.querySelector('[data-origin-entry="peak_finder"]')).not.toBeNull()
+  })
+
   it('改用户项目 venv 时，详情说清「装到你电脑上已有的那套」', async () => {
     await render()
     planMock.mockResolvedValue({ plan: bound({ modifies_user_environment: true, target_kind: 'project_venv' }) })

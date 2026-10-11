@@ -1386,6 +1386,19 @@ describe('Import Origin：来源事实决定准备卡说什么', () => {
     expect(primary()).toBeNull()
   })
 
+  it('弹窗提示与可确认的来源并存：主按钮是「确认包名」（弹窗提示收进详情）；只有弹窗提示时照旧', async () => {
+    await mount()
+    await openWith(report({ ...STATES.dialogFile, ...STATES.originConfirm }))
+    expect(panel().dataset.prepState).toBe('origin_confirm')
+    expect(primary()?.dataset.prepPrimary).toBe('confirm_origins')
+    expect(visiblePrimaryButtons(panel())).toBe(1)
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-dialog]')).not.toBeNull()
+    await openWith(report({ ...STATES.dialogFile, observation_seq: 2 }))
+    expect(panel().dataset.prepState).toBe('gui_dialog')
+    expect(primary()?.textContent).toBe('仍然运行')
+  })
+
   it('英文：复数跟着个数走', async () => {
     await i18n.changeLanguage('en-US')
     await mount()

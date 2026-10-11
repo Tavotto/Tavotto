@@ -2,7 +2,6 @@ import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { isRepairRunning, useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
-import { partitionOrigins } from '@/lib/importOrigin'
 import { t as translate } from '@/i18n'
 import { Button } from './ui/Button'
 import { Details, Summary } from './ui/Details'
@@ -63,7 +62,6 @@ export function ImportOriginDialog() {
   if (!offer) return null
 
   const running = isRepairRunning(progress) && progress?.flow === 'joint' && progress.plan_id === jointPlan?.plan_id
-  const { explainOnly } = partitionOrigins(offer.plan)
   const names = draft?.names ?? []
   const step: 'names' | 'confirm' = plan ? 'confirm' : 'names'
   // 确认页读后端的披露：用户指定的包、`trust` 恒为 `user_specified_unverified`。读不到 = 没法告诉用户他在授权什么，不让继续
@@ -220,7 +218,7 @@ export function ImportOriginDialog() {
                       : translate('prep.install.managedPlace', { ns: 'workspace' })}
                   </p>
                 )}
-                <OriginEntryList origins={step === 'names' ? offer.plan.origins ?? [] : explainOnly} title={ot('detail.listIntro')} />
+                <OriginEntryList origins={step === 'names' ? offer.plan.origins ?? [] : plan?.joint?.origins ?? []} title={ot('detail.listIntro')} />
                 {distReasons.length > 0 && <DistFailureList reasons={distReasons} />}
               </div>
             </FieldGroup>

@@ -211,6 +211,15 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         slot: 'progress',
       })
     case 'ready_to_run': {
+      // 来源事实（Import Origin PR4/PR6，只有计数与闭集原因码）：有 import 没有可信的安装名时不说「可以运行了」——
+      // 带预填的（后端数在 `confirmable` 里）让用户确认包名；其余只说来源还没法确定，主按钮仍是报告里的运行（改口成「仍然运行」）
+      const origins = originFactsOf(report)
+      // 可确认的来源优先于弹窗提示：弹窗提示每次检查都在，排在前面这类脚本就永远进不了确认包名；提示仍在详情里（SessionDetails 读 requirements）
+      if (origins && origins.confirmable) {
+        return view('origin_confirm', 'originConfirm', { ...v, count: origins.confirmable }, { kind: 'confirm_origins' }, {
+          tone: 'mute',
+        })
+      }
       // 脚本会弹窗选文件 / 询问（后端静态识别，不阻塞）：先说这件事，主按钮仍是报告里的 run，只是改口成「仍然运行」。
       // 不另造「让助手改脚本」的入口——叠栈里没有现成的
       const dialog = find(report, 'gui_dialog')
@@ -221,14 +230,6 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         return view('gui_dialog', key, v, has(report, 'run') ? act('run', 'runAnyway') : null, {
           slot: 'ready',
           tone: 'bad',
-        })
-      }
-      // 来源事实（Import Origin PR4/PR6，只有计数与闭集原因码）：有 import 没有可信的安装名时不说「可以运行了」——
-      // 带预填的（后端数在 `confirmable` 里）让用户确认包名；其余只说来源还没法确定，主按钮仍是报告里的运行（改口成「仍然运行」）
-      const origins = originFactsOf(report)
-      if (origins && origins.confirmable) {
-        return view('origin_confirm', 'originConfirm', { ...v, count: origins.confirmable }, { kind: 'confirm_origins' }, {
-          tone: 'mute',
         })
       }
       if (origins) {
