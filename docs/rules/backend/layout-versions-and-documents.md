@@ -174,6 +174,11 @@
     `@app.errorhandler` 回 503 `session_unavailable`，此时一个字节没写；清理里等不到只是这次不清它。锁文件打不开
     **失败即关门**：锁文件打不开、文件系统拒绝咨询锁（ENOLCK / EOPNOTSUPP / EINVAL）也抛 `SessionStateUnavailable`，不退回只有线程锁。
     真两进程回归 `tests/test_layout_recovery_backend.py`（POSIX）；Windows 的 `msvcrt` 腿只有 CI 验证。
+  - **`/owner` 与候选发现读的是一致的快照**：两者都在**槽位的文档锁**里同时读会话状态（owners / owner_revisions / status，只读、不拿会话锁）
+    和槽位正文——别的项目的保存（正文 + `commit_slot` 都在这把锁里）插不进两次读之间，否则会拿 G 的新正文去对还没有 G 归属的旧状态，
+    把别人的槽位报成 this。`/owner` 回的 `revision` 就是这份快照里正文的。候选发现**按条目**各取自己的槽位锁、各读一次状态
+    （页级快照做不到：它在条目被改写之前读的）；一页最多 `limit` 次短暂持锁。`/owner` 锁等不到回 `unknown`（`revision:null`），
+    候选等不到整页回 503 `candidates_unavailable`——都不猜。这两个只读端点因此会建（空的）锁文件，锁文件是互斥基础设施不是状态。
   - **跨进程文件锁**（C2）：模块锁 `_LOCK` = 进程内线程锁 + `state/layout-sessions.lock` 的文件锁（POSIX `fcntl.flock`、
     Windows `msvcrt.locking`，纯标准库，非阻塞 + 10 ms 重试），多个进程共用一个数据目录时读改写不丢更新；拿不到（5 s）抛
     `SessionStateUnavailable`。**锁文件打不开 / 文件系统不支持咨询锁（网络盘等）时同样抛它，绝不退回只有线程锁**（会静默丢更新、互相覆盖）；

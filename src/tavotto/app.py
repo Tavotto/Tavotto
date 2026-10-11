@@ -9754,6 +9754,18 @@ def _project_owner_evidence(doc_id: str, ctx, doc: dict | None) -> tuple[str, st
 
 
 def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None, bool, str | None]:
+    """`_layout_owner_evidence_locked` 在槽位的文档锁里跑：会话状态（owners / owner_revisions）与槽位正文
+    出自同一个一致的快照——别的项目的保存（正文 + 归属提交都在这把锁里）不能插在「读状态」与「读正文」之间，
+    否则会拿新正文去对旧的、还没有它归属的状态，把别人的槽位报成 this。锁顺序：文档锁 → （会话状态只读，
+    不拿会话锁）。锁等不到回 unknown，绝不猜。"""
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            return _layout_owner_evidence_locked(doc_id, ctx)
+    except engine_layoutsession.SessionStateUnavailable:
+        return "unknown", None, False, None
+
+
+def _layout_owner_evidence_locked(doc_id: str, ctx) -> tuple[str, str | None, bool, str | None]:
     """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据, 是否已核对, revision)。
 
     `revision` = 这次判断所依据的那份槽位正文的 revision（槽位不在 / 读不出为 `None`）。前端取正文时
@@ -9890,10 +9902,19 @@ def _decode_cursor(text: str) -> tuple[int, str] | None:
     return None
 
 
-def _candidate_item(
-    row: tuple[int, str, int, Path], state: dict, ctx, key, scope: str, degraded: bool = False
-):
-    """一个槽位的候选摘要；不属于这次 `scope` 的回 `None`。**只读**，任何一步出错只让自己 `invalid`。"""
+def _candidate_item(row: tuple[int, str, int, Path], ctx, key, scope: str):
+    """一个槽位的候选摘要；不属于这次 `scope` 的回 `None`。**只读**，任何一步出错只让自己 `invalid`。
+
+    每个条目在**它自己的槽位文档锁**里读：会话状态（归属）与正文出自同一个一致的快照，别的项目的保存
+    不能插在两次读之间（与 `/owner` 同一条规则）。页级快照做不到这一点——它在这个条目被别人改写之前读的。
+    锁等不到抛 `SessionStateUnavailable`，整页回 503 `candidates_unavailable`，不猜。"""
+    with _document_lock(row[3]):
+        return _candidate_item_locked(row, ctx, key, scope)
+
+
+def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str):
+    state, session_status = engine_layoutsession.read_readonly()
+    degraded = session_status == engine_layoutsession.STATUS_DEGRADED
     mtime_ns, name, size, path = row  # path 来自目录列表，不是请求字符串
     doc_id = name[:-5]
     status = "ok"
@@ -10018,9 +10039,10 @@ def api_layout_session_candidates():
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
     try:
-        state, index = engine_layoutsession.read_readonly()
+        _state, index = (
+            engine_layoutsession.read_readonly()
+        )  # 只取页级 index；归属按条目在各自的锁里读
     except OSError:
-        state = {"projects": {}, "no_project": {}, "owners": {}, "owner_revisions": {}}
         index = "degraded"
     try:
         rows, truncated = _candidate_entries()
@@ -10036,7 +10058,10 @@ def api_layout_session_candidates():
             break
         budget += min(row[2], CANDIDATE_MAX_BYTES)
         consumed += 1
-        item = _candidate_item(row, state, ctx, key, scope, index == "degraded")
+        try:
+            item = _candidate_item(row, ctx, key, scope)
+        except OSError:
+            return jsonify({"error": "本机排版此刻读不出来", "code": "candidates_unavailable"}), 503
         if item is not None:
             items.append(item)
     next_cursor = _encode_cursor(rows[consumed - 1]) if consumed < len(rows) and consumed else None

@@ -127,7 +127,8 @@ def _tree(root: Path) -> dict[str, tuple[int, int]]:
     """目录树快照 {相对路径: (mtime_ns, size)}——证明一次请求什么都没写。"""
     out = {}
     for p in sorted(root.rglob("*")):
-        if p.is_file():
+        # 锁文件是互斥用的基础设施（空文件），不是状态：只读端点为了在槽位锁里读一致快照也会建它们
+        if p.is_file() and p.suffix != ".lock":
             st = p.stat()
             out[str(p.relative_to(root))] = (st.st_mtime_ns, st.st_size)
     return out
@@ -1443,3 +1444,69 @@ def test_candidates_scan_cap_is_reported_as_truncated_not_as_complete(
     assert len(cut["items"]) == 3
     monkeypatch.setattr(m, "CANDIDATE_MAX_ENTRIES", 5)  # 恰好等于上限：没有被截
     assert _candidates(client, a)["truncated"] is False
+
+
+def test_owner_verdict_and_revision_come_from_one_snapshot_under_the_slot_lock(
+    client, tmp_path, monkeypatch
+):
+    """Codex P1:`/owner` 读完会话状态（还没有归属）之后、读正文之前，另一个项目保存了同一个槽位并提交归属。
+    状态与正文必须出自同一个快照：交回的 revision 就是判断所依据的那份正文的，绝不是 G 的新正文配旧状态。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    panel = {"id": "p", "type": "panel", "fileId": "a.pdf", "x": 0, "y": 0, "w": 1, "h": 1}
+    for pj in (f, g):  # 同名素材在两个项目里都有
+        (Path(pj["figures_dir"]) / "a.pdf").write_bytes(b"%PDF-1.4")
+    m.AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+    _slot("d_x").write_text(json.dumps(_doc(1, "旧", [panel])))  # 没有归属记录的升级前槽位
+    r0 = _rev("d_x")
+    real = layoutsession.read_readonly
+    box: dict = {}
+
+    def read_then_other_project_saves(*a, **k):
+        out = real(*a, **k)
+        if "t" not in box:
+            box["t"] = threading.Thread(
+                target=lambda: _put(m.app.test_client(), "d_x", _doc(2, "G 的新", [panel]), g)
+            )
+            box["t"].start()
+            box["t"].join(0.5)  # 修复后 G 在槽位锁上排队；未修复时它此刻已写完正文并提交了归属
+        return out
+
+    monkeypatch.setattr(layoutsession, "read_readonly", read_then_other_project_saves)
+    got = client.get("/api/layout-session/owner?doc_id=d_x", headers=_pj(f["id"])).get_json()
+    box["t"].join(15)
+    assert got["revision"] == r0, "判断用了 G 的新正文（revision 对不上它所依据的快照）"
+    assert got["owner"] in ("this", "unknown") and got["revision"] != _rev("d_x")
+    assert layoutsession.snapshot()["owners"]["d_x"] == layoutsession.project_key(g["figures_dir"])
+
+
+def test_candidate_items_are_classified_from_a_per_item_snapshot(client, tmp_path, monkeypatch):
+    """候选条目的状态与正文在它自己的槽位锁里读：页级快照之后别的项目保存了这个槽位，条目也不能拿新正文配旧状态。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    panel = {"id": "p", "type": "panel", "fileId": "a.pdf", "x": 0, "y": 0, "w": 1, "h": 1}
+    for pj in (f, g):
+        (Path(pj["figures_dir"]) / "a.pdf").write_bytes(b"%PDF-1.4")
+    m.AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+    _slot("d_x").write_text(json.dumps(_doc(1, "旧", [panel])))
+    r0 = _rev("d_x")
+    real = layoutsession.read_readonly
+    calls: list[int] = []
+    box: dict = {}
+
+    def hook(*a, **k):
+        out = real(*a, **k)
+        calls.append(1)
+        if len(calls) == 2:  # 第 1 次是页级快照，第 2 次是条目在自己锁里的那次读
+            box["t"] = threading.Thread(
+                target=lambda: _put(m.app.test_client(), "d_x", _doc(2, "G 的新", [panel]), g)
+            )
+            box["t"].start()
+            box["t"].join(0.5)
+        return out
+
+    monkeypatch.setattr(layoutsession, "read_readonly", hook)
+    items = _candidates(client, f)["items"]
+    box["t"].join(15)
+    assert [i["doc_id"] for i in items] == ["d_x"]
+    assert items[0]["revision"] == r0 and items[0]["name"] == "旧"
