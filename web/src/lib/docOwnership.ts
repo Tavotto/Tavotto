@@ -49,3 +49,49 @@ export function isForeignDocument(docId: string, pj: string | null): boolean {
   const owner = recordedProjectOf(docId)
   return typeof owner === 'string' && owner !== pj
 }
+
+/**
+ * 本机槽位键的前缀——**与 `store/documentStore.ts` 的 `SLOT_PREFIX` / `RECOVERY_PREFIX` 是同一对**
+ * （严格同源，`docOwnership.test.ts` 对拍）。恢复前只需要问「本机有没有这份文档的正文副本」，
+ * 不需要读它，所以键名在这里、解析仍归 documentStore。
+ */
+export const LOCAL_SLOT_PREFIX = 'tavotto.autosave.'
+export const LOCAL_RECOVERY_PREFIX = 'tavotto.recovery.'
+
+/** 本机有这份文档的正文副本吗（崩溃兜底副本或未决的恢复副本）。只看键在不在、非空，**不解析**。 */
+export function hasLocalBody(docId: string): boolean {
+  try {
+    return (
+      !!localStorage.getItem(LOCAL_SLOT_PREFIX + docId) ||
+      !!localStorage.getItem(LOCAL_RECOVERY_PREFIX + docId)
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 把本机索引里这份排版的归属**纠正**成 `pj`（后端有 `owners` 证据证明这份确实属于它，而本机索引陈旧地
+ * 记着别的项目，C1）。只改已有的条目、只改归属两个字段（`projectId`，并去掉陈旧的 `projectName`）；
+ * 没有这条就什么都不做（补一条新条目是 `documentStore.backfillIndexOwner` 的事）。返回有没有改。
+ * **只在候选已被接受之后调**（`projectDocs.confirmRestored`）：未选中的候选不许改本机记录。
+ */
+export function correctRecordedProject(docId: string, pj: string): boolean {
+  try {
+    const raw = localStorage.getItem(DOC_INDEX_KEY)
+    const arr = raw ? (JSON.parse(raw) as unknown) : null
+    if (!Array.isArray(arr)) return false
+    let changed = false
+    const next = arr.map((e) => {
+      if (!e || typeof e !== 'object' || (e as { id?: unknown }).id !== docId) return e
+      if ((e as { projectId?: unknown }).projectId === pj) return e
+      changed = true
+      const { projectName: _stale, ...rest } = e as Record<string, unknown>
+      return { ...rest, projectId: pj }
+    })
+    if (changed) localStorage.setItem(DOC_INDEX_KEY, JSON.stringify(next))
+    return changed
+  } catch {
+    return false
+  }
+}

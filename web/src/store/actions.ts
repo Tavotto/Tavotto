@@ -646,6 +646,17 @@ export async function openLayoutDocument(
   return true
 }
 
+/**
+ * 以给定的 documentId 打开一份已读到的文档（找回副本等用）：带丢失确认的 `switchDocument` + 清选区 / 重新取景 +
+ * 说一句。返回是否真的换过去了。
+ */
+export async function openDocumentAs(pd: ProjectDocument, id: string): Promise<boolean> {
+  if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss))) return false
+  afterSwitch()
+  status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }), 'done')
+  return true
+}
+
 /** 切回本机自动保存过的文档；沿用它原来的身份，槽位因此不会分叉 */
 export async function openRecentDocument(id: string): Promise<void> {
   const { doc: pd, notice } = await readAutosaveDoc(id)

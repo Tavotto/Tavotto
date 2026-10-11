@@ -5,7 +5,7 @@ import type { FigureDocument, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ScriptArgsSchema } from '@/lib/scriptArgsForm'
-import type { ThumbObject } from '@/types/thumb'
+import type { ThumbObject, ThumbPage } from '@/types/thumb'
 
 export interface PanelInfo {
   id: string
@@ -882,6 +882,18 @@ export interface DiskDocumentSummary {
 export const REVISION_ABSENT = 'absent'
 
 /**
+ * 正文落盘的回包。`metadata` 是**正文之外**那份「下次自动恢复信息」（归属 / 上次开着的）的结局：
+ * `ok` = 已记；`failed` = 正文写成了、元数据没记上（`revision` 仍是正文的真实 revision，不要因此重试正文）；
+ * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
+ */
+export interface PutAutosaveResult {
+  ok: boolean
+  saved_at: number
+  revision: string | null
+  metadata?: 'ok' | 'failed' | 'owner_unknown'
+}
+
+/**
  * `base` = 本标签页最后一次成功落盘时的 updatedAt（跨标签页乐观并发基线）。
  * `baseRevision` = 本标签页最后一次**读到或写成功**的那一份的内容 hash
  * （外部修改基线）。两者的区别不是精度而是**能看见什么**：编辑器外的工具
@@ -903,7 +915,7 @@ export const putAutosave = (
   if (base !== undefined) q.set('base', String(base))
   if (baseRevision !== undefined) q.set('base_revision', baseRevision)
   const qs = q.toString()
-  return jsonFetch<{ ok: boolean; saved_at: number; revision: string | null }>(
+  return jsonFetch<PutAutosaveResult>(
     `/api/autosave/${encodeURIComponent(docId)}${qs ? `?${qs}` : ''}`,
     {
       method: 'PUT',
@@ -938,8 +950,54 @@ export async function fetchAutosave(
   return { doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
 }
 
+/**
+ * `probeAutosave` 的结局。**四种互不相同**，调用方不许折成「有 / 没有」：
+ * - `found`：读到了（`revision` 来自响应头，拿不到是 null）；
+ * - `missing`：成功查询后后端明确回 404 = 这个槽位没有这份文件；
+ * - `unavailable`：网络 / 超时 / 5xx / 401 / 403 / 项目已关——**不知道**有没有，不是 `missing`；
+ * - `invalid`：后端读到了文件但认为它不能用（400，如 `non_finite_on_disk`）；`code` 是后端给的稳定码。
+ */
+export type AutosaveProbe =
+  | { kind: 'found'; doc: unknown; revision: string | null }
+  | { kind: 'missing' }
+  | { kind: 'unavailable'; status: number | null }
+  | { kind: 'invalid'; code: string | null }
+
+/**
+ * 纯读：问后端这个槽位里有什么，**不抛、不记 revision、不碰任何本机状态**。恢复流程遍历候选时
+ * 用它（`fetchAutosave` 把 5xx 与「没有」都折成抛 / null，且 400 的原因丢了）。`pj` 见 putAutosave。
+ */
+export async function probeAutosave(docId: string, pj?: string | null): Promise<AutosaveProbe> {
+  const path = `/api/autosave/${encodeURIComponent(docId)}`
+  let res: Response
+  try {
+    res =
+      pj === undefined
+        ? await fetch(apiUrl(path), withProject())
+        : await fetch(apiUrlFor(path, pj), withProjectFor(undefined, pj))
+  } catch {
+    return { kind: 'unavailable', status: null }
+  }
+  if (res.status === 404) return { kind: 'missing' }
+  if (!res.ok) {
+    const body = await errorBody(res)
+    noteProjectGone(res.status, body)
+    if (res.status === 400) {
+      return { kind: 'invalid', code: typeof body.code === 'string' ? body.code : null }
+    }
+    return { kind: 'unavailable', status: res.status }
+  }
+  try {
+    return { kind: 'found', doc: await res.json(), revision: res.headers.get('X-Tavotto-Revision') }
+  } catch {
+    // 200 但读不出 JSON：多半是连接中途断了，重读一次就会好。按「坏文件」算会把好文件说成坏的，
+    // 所以归「不可用」（真坏的文件后端会回 400）
+    return { kind: 'unavailable', status: res.status }
+  }
+}
+
 /** 磁盘那一份的摘要；没有这份文件返回 null */
-export const fetchAutosaveSummary = (docId: string, pj?: string | null) =>
+export const fetchAutosaveSummary =(docId: string, pj?: string | null) =>
   jsonFetch<DiskDocumentSummary>(
     `/api/autosave/${encodeURIComponent(docId)}/summary`,
     undefined,
@@ -963,54 +1021,233 @@ export interface LayoutSessionLast {
   at: number
 }
 
+/** 后端会话文件的读取状况：`ok` 正常、`missing` 首次空状态、`degraded` 读不了 / 坏了 / 未来格式、`recovered` 从备份回退 */
+export type SessionIndexStatus = 'ok' | 'missing' | 'degraded' | 'recovered'
+
 /**
- * 读后端记着的「上次开着的排版」。三种结局要分开：
- * - `{ last }`：后端有这组端点（`last` 为 null = 这个项目还没记过）；
- * - `undefined`：后端**没有**这组端点（404：playground、嵌入画布、旧后端）或此刻不可达——
- *   调用方退回 localStorage 的旧逻辑。「不知道」不能折成「没记过」：后者会让调用方不再看本机缓存。
+ * 读后端「上次开着的排版」的结果。**三种结局不许折叠**（任务书 4.1）：
+ * - `ok`：后端有这组端点。`last` 是**可恢复**的那条（durable），`prev` 是上一条 durable，`pending` 是
+ *   最新的打开意图（槽位还没有有效正文）；`index` 是会话文件自己的读取状况；
+ * - `unsupported`：404 = 没有这组端点（旧后端 / playground / 嵌入画布），沿用受约束的兼容分支；
+ * - `unavailable`：网络 / 超时 / 5xx / 401 / 403——**不是** 404，不许当旧端点放行。
+ */
+export type SessionFetch =
+  | {
+      kind: 'ok'
+      last: LayoutSessionLast | null
+      prev: LayoutSessionLast | null
+      pending: LayoutSessionLast | null
+      index: SessionIndexStatus
+    }
+  | { kind: 'unsupported' }
+  | { kind: 'unavailable'; status: number | null }
+
+function parseSessionRef(v: unknown): LayoutSessionLast | null {
+  const r = v as Partial<LayoutSessionLast> | null | undefined
+  if (!r || typeof r.doc_id !== 'string' || !r.doc_id) return null
+  return { doc_id: r.doc_id, name: typeof r.name === 'string' ? r.name : '', at: Number(r.at) || 0 }
+}
+
+const INDEX_STATUSES: readonly SessionIndexStatus[] = ['ok', 'missing', 'degraded', 'recovered']
+
+export async function fetchLayoutSessionResult(pj?: string | null): Promise<SessionFetch> {
+  try {
+    const body = await jsonFetch<Record<string, unknown>>('/api/layout-session', undefined, pj)
+    const index = INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok'
+    return {
+      kind: 'ok',
+      last: parseSessionRef(body?.last),
+      prev: parseSessionRef(body?.prev),
+      pending: parseSessionRef(body?.pending),
+      index,
+    }
+  } catch (e) {
+    if (e instanceof ApiError) {
+      return e.status === 404 ? { kind: 'unsupported' } : { kind: 'unavailable', status: e.status }
+    }
+    return { kind: 'unavailable', status: null }
+  }
+}
+
+/**
+ * 旧形状的薄适配：`{ last }` = 后端有这组端点；`undefined` = 没有 / 不可达。
+ * **新代码不用**——它把「不可用」与「旧后端」折成了一个值（`fetchLayoutSessionResult` 分开）。
  */
 export async function fetchLayoutSession(
   pj?: string | null,
 ): Promise<{ last: LayoutSessionLast | null } | undefined> {
-  try {
-    const body = await jsonFetch<{ last?: unknown }>('/api/layout-session', undefined, pj)
-    const last = body?.last as Partial<LayoutSessionLast> | null | undefined
-    return {
-      last:
-        last && typeof last.doc_id === 'string' && last.doc_id
-          ? { doc_id: last.doc_id, name: typeof last.name === 'string' ? last.name : '', at: Number(last.at) || 0 }
-          : null,
-    }
-  } catch {
-    return undefined
-  }
+  const r = await fetchLayoutSessionResult(pj)
+  return r.kind === 'ok' ? { last: r.last } : undefined
+}
+
+/**
+ * 回包的 `state`：`durable` = 这条已是可恢复的「上次开着的」；`pending` = 后端只记下了打开意图
+ * （槽位还没有有效正文），`last` 仍是原来那条 durable（可能是 null）。旧后端不发 = `undefined`。
+ */
+export interface PutLayoutSessionLastResult {
+  ok: boolean
+  last: LayoutSessionLast | null
+  state?: 'durable' | 'pending'
+  pending?: LayoutSessionLast | null
 }
 
 export const putLayoutSessionLast = (ref: { doc_id: string; name: string }, pj?: string | null) =>
-  jsonFetch<{ ok: boolean; last: LayoutSessionLast }>(
+  jsonFetch<PutLayoutSessionLastResult>(
     '/api/layout-session/last',
     { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ref) },
     pj,
   )
 
 /**
- * 后端对「这份排版是不是当前项目的」的证据（#715 验收 P1 / #773）：`this` / `other` / `unknown`；
- * `undefined` = 后端没有这个端点（旧后端 / playground，404）；`null` = 此刻问不到（网络 / 5xx）。
+ * 后端对「这份排版是不是当前项目的」的证据（#715 验收 P1 / #773）。
+ * - `owner`：`this` / `other` / `unknown`；
+ * - `evidence`：`owners` = 槽位归属记录（定论）；`versions` = 当前项目有它的时间线节点；`assets` = 它的面板
+ *   素材全在当前项目里（**同名相对路径，不是归属转移的证明**）；`null` = 没有证据；
+ * - `verified`：`owners` 证据且归属记录与槽位正文的 revision 一致（或旧记录）。**只有它为真，
+ *   本机索引的「确知属于别的项目」才可以被纠正**；旧后端不发 = false。
+ */
+export interface OwnerEvidence {
+  owner: 'this' | 'other' | 'unknown'
+  evidence: 'owners' | 'versions' | 'assets' | null
+  verified: boolean
+}
+
+/**
+ * 读归属证据。`'unsupported'` = 后端没有这个端点（404：旧后端 / playground）；`'unavailable'` = 此刻问不到
+ * （网络 / 超时 / 5xx / 401 / 403）。两者不许互相折叠。
+ */
+export async function fetchLayoutOwnerEvidence(
+  docId: string,
+  pj?: string | null,
+): Promise<OwnerEvidence | 'unsupported' | 'unavailable'> {
+  try {
+    const body = await jsonFetch<{ owner?: unknown; evidence?: unknown; verified?: unknown }>(
+      `/api/layout-session/owner?doc_id=${encodeURIComponent(docId)}`,
+      undefined,
+      pj,
+    )
+    const owner = body?.owner === 'this' || body?.owner === 'other' ? body.owner : 'unknown'
+    const evidence =
+      body?.evidence === 'owners' || body?.evidence === 'versions' || body?.evidence === 'assets'
+        ? body.evidence
+        : null
+    return { owner, evidence, verified: body?.verified === true && evidence === 'owners' }
+  } catch (e) {
+    return e instanceof ApiError && e.status === 404 ? 'unsupported' : 'unavailable'
+  }
+}
+
+/**
+ * 旧形状的薄适配：`'this' | 'other' | 'unknown'`；`undefined` = 没有这个端点；`null` = 此刻问不到。
+ * **新代码不用**——它丢了证据等级（owners / versions / assets 不能当同一个布尔值）。
  */
 export async function fetchLayoutOwner(
   docId: string,
   pj?: string | null,
 ): Promise<'this' | 'other' | 'unknown' | null | undefined> {
+  const r = await fetchLayoutOwnerEvidence(docId, pj)
+  if (r === 'unsupported') return undefined
+  if (r === 'unavailable') return null
+  return r.owner
+}
+
+/**
+ * 找回候选（`GET /api/layout-session/candidates`，只读）：一行 = 一份真实存在的自动保存槽位。
+ * 后端不回路径，也不为它运行任何脚本；`sketch` 是结构化草图（页面 + 最多 40 个对象，不带 overrides / 脚本），
+ * 拿不到就没有——前端不编缩略图。
+ */
+export interface RecoveryCandidateItem {
+  doc_id: string
+  name: string
+  updatedAt: number | null
+  mtime: number
+  /** 正文的内容 hash；确认恢复时用它核对「预览之后有没有被改过」 */
+  revision: string | null
+  schema: number | null
+  /** `ok` 可恢复；`invalid` 读不了 / 校验不过；`too_new` 来自更新的 Tavotto；`too_large` 太大没读 */
+  status: 'ok' | 'invalid' | 'too_new' | 'too_large'
+  canvases: number
+  objects: number
+  owner: 'this' | 'unknown'
+  evidence: 'owners' | 'versions' | 'assets' | null
+  sketch?: { page: ThumbPage; objects: ThumbObject[] }
+  /** `runtime:<脚本>#<figure>` 面板拆出来的脚本相对名与 figure 名（最多 5 个）：只用来解释这是哪份 */
+  runtime?: { script: string; figure: string }[]
+  /** 面板素材的相对名（最多 5 个） */
+  panels?: string[]
+}
+
+export interface RecoveryCandidatePage {
+  items: RecoveryCandidateItem[]
+  next_cursor: string | null
+  index: SessionIndexStatus
+}
+
+const CANDIDATE_STATUSES = ['ok', 'invalid', 'too_new', 'too_large'] as const
+
+function parseCandidate(v: unknown): RecoveryCandidateItem | null {
+  const r = v as Record<string, unknown> | null
+  if (!r || typeof r.doc_id !== 'string' || !r.doc_id) return null
+  const num = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0)
+  const status = CANDIDATE_STATUSES.find((s) => s === r.status) ?? 'invalid'
+  const sketch = r.sketch as { page?: ThumbPage; objects?: unknown } | undefined
+  const runtime = Array.isArray(r.runtime)
+    ? r.runtime
+        .map((x) => x as { script?: unknown; figure?: unknown })
+        .filter((x) => typeof x?.script === 'string' && typeof x?.figure === 'string')
+        .map((x) => ({ script: x.script as string, figure: x.figure as string }))
+    : undefined
+  return {
+    doc_id: r.doc_id,
+    name: typeof r.name === 'string' ? r.name : '',
+    updatedAt: typeof r.updatedAt === 'number' && Number.isFinite(r.updatedAt) ? r.updatedAt : null,
+    mtime: num(r.mtime),
+    revision: typeof r.revision === 'string' ? r.revision : null,
+    schema: typeof r.schema === 'number' ? r.schema : null,
+    status,
+    canvases: num(r.canvases),
+    objects: num(r.objects),
+    owner: r.owner === 'this' ? 'this' : 'unknown',
+    evidence:
+      r.evidence === 'owners' || r.evidence === 'versions' || r.evidence === 'assets' ? r.evidence : null,
+    ...(sketch && sketch.page && Array.isArray(sketch.objects)
+      ? { sketch: { page: sketch.page, objects: sketch.objects as ThumbObject[] } }
+      : {}),
+    ...(runtime?.length ? { runtime } : {}),
+    ...(Array.isArray(r.panels)
+      ? { panels: r.panels.filter((x): x is string => typeof x === 'string') }
+      : {}),
+  }
+}
+
+/**
+ * 读一页找回候选。`scope='project'` = 明确属于当前项目的；`'unknown'` = 归属待确认的。
+ * `'unsupported'` = 旧后端没有这个端点；`'unavailable'` = 此刻问不到。分页 `cursor` 不透明，原样回传。
+ */
+export async function fetchRecoveryCandidates(
+  scope: 'project' | 'unknown',
+  pj: string | null,
+  cursor?: string,
+  limit = 50,
+): Promise<RecoveryCandidatePage | 'unsupported' | 'unavailable'> {
+  const q = new URLSearchParams({ scope, limit: String(limit) })
+  if (cursor) q.set('cursor', cursor)
   try {
-    const body = await jsonFetch<{ owner?: unknown }>(
-      `/api/layout-session/owner?doc_id=${encodeURIComponent(docId)}`,
+    const body = await jsonFetch<Record<string, unknown>>(
+      `/api/layout-session/candidates?${q.toString()}`,
       undefined,
       pj,
     )
-    const o = body?.owner
-    return o === 'this' || o === 'other' ? o : 'unknown'
+    const items = Array.isArray(body?.items)
+      ? body.items.map(parseCandidate).filter((x): x is RecoveryCandidateItem => x !== null)
+      : []
+    return {
+      items,
+      next_cursor: typeof body?.next_cursor === 'string' && body.next_cursor ? body.next_cursor : null,
+      index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok',
+    }
   } catch (e) {
-    return e instanceof ApiError && e.status === 404 ? undefined : null
+    return e instanceof ApiError && e.status === 404 ? 'unsupported' : 'unavailable'
   }
 }
 

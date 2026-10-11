@@ -1095,5 +1095,39 @@
     "rulers": "标尺",
     "grid": "网格",
     "safeArea": "安全区"
+  },
+  "restore": {
+    "autoAdopted": "已打开本机找到的排版“{{name}}”",
+    "blockedWrite": "上次的排版还没打开。",
+    "choose": "选一份打开",
+    "continueNew": "继续新建",
+    "entrySuperseded": "项目已切换，这次操作没有执行。",
+    "entryTimeout": "等了很久上次的排版仍没处理，这次操作没有执行。",
+    "indexDegraded": "上次的恢复记录读不了，先开了一份空白排版。旧排版还在，可以在“打开排版”里找。",
+    "meta": {
+      "pill": "下次自动恢复信息没更新",
+      "retry": "再存一次",
+      "title": "排版已经存好，但“下次自动恢复”要用的记录没更新成功。"
+    },
+    "openAlt": "打开“{{name}}”",
+    "pill": {
+      "choose": "找到了几份本机排版",
+      "indexDegraded": "恢复记录读不了",
+      "invalid": "上次的排版读不出来",
+      "missing": "上次的排版找不到了",
+      "prepareFailed": "示例排版没能打开",
+      "tooNew": "上次的排版来自更新版本",
+      "unavailable": "上次的排版暂时没打开"
+    },
+    "retry": "重试",
+    "title": {
+      "choose": "本机找到了几份排版，选一份打开。",
+      "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
+      "invalid": "上次的排版“{{name}}”读不出来。",
+      "missing": "上次的排版“{{name}}”找不到了。",
+      "prepareFailed": "示例排版没能打开。",
+      "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
+      "unavailable": "上次的排版暂时没打开。"
+    }
   }
 }

@@ -65,44 +65,44 @@ beforeEach(async () => {
 
 describe('加图入口避开已有的图', () => {
   it('空页面：第一张仍居中', () => {
-    const a = addPanelToCanvas(info('a.pdf', 40, 30))
+    const a = addPanelToCanvas(info('a.pdf', 40, 30))!
     expect(a.x).toBeCloseTo((doc().page.w - 40) / 2)
     expect(a.y).toBeCloseTo((doc().page.h - 30) / 2)
   })
 
   it('addPanelToCanvas：第二张不压第一张，排在它右边', () => {
-    const a = addPanelToCanvas(info('a.pdf', 40, 30))
-    const b = addPanelToCanvas(info('b.pdf', 40, 30))
+    const a = addPanelToCanvas(info('a.pdf', 40, 30))!
+    const b = addPanelToCanvas(info('b.pdf', 40, 30))!
     expect(overlaps(a, b)).toBe(false)
     expect(b.x).toBeGreaterThan(a.x + a.w)
   })
 
   it('addRuntimePanelToCanvas（脚本库 / 接入状态 / tavotto run）走同一个判据', () => {
-    const a = addPanelToCanvas(info('a.pdf', 40, 30))
-    const r = addRuntimePanelToCanvas(descriptor(40, 30))
+    const a = addPanelToCanvas(info('a.pdf', 40, 30))!
+    const r = addRuntimePanelToCanvas(descriptor(40, 30))!
     expect(overlaps(a, r)).toBe(false)
   })
 
   it('addFigureToLayout（素材栏 / 快编栏 / 教程）走同一个判据', () => {
-    const a = addPanelToCanvas(info('a.pdf', 40, 30))
+    const a = addPanelToCanvas(info('a.pdf', 40, 30))!
     addFigureToLayout('b.pdf')
     const b = doc().objects.find((o) => o.type === 'panel' && o.fileId === 'b.pdf')!
     expect(overlaps(a, b)).toBe(false)
   })
 
   it('拖放有明确落点：尊重落点，哪怕压住已有的图', () => {
-    const a = addPanelToCanvas(info('a.pdf', 40, 30))
-    const b = addPanelToCanvas(info('b.pdf', 40, 30), a.x + 20, a.y + 15)
+    const a = addPanelToCanvas(info('a.pdf', 40, 30))!
+    const b = addPanelToCanvas(info('b.pdf', 40, 30), a.x + 20, a.y + 15)!
     expect(b.x).toBeCloseTo(a.x)
     expect(b.y).toBeCloseTo(a.y)
   })
 
   it('隐藏的对象不算障碍', () => {
-    const a = addPanelToCanvas(info('a.pdf', 40, 30))
+    const a = addPanelToCanvas(info('a.pdf', 40, 30))!
     useDocumentStore.getState().commit(msg('history.addPanel', { name: 'hide' }, 'workspace'), (d) => {
       d.objects.find((o) => o.id === a.id)!.hidden = true
     })
-    const b = addPanelToCanvas(info('b.pdf', 40, 30))
+    const b = addPanelToCanvas(info('b.pdf', 40, 30))!
     expect(b.x).toBeCloseTo(a.x)
   })
 })

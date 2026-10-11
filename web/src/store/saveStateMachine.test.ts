@@ -28,6 +28,7 @@ import {
   suspendAutosaveFor,
   useDocumentStore,
 } from './documentStore'
+import { resetRestoreStateForTests } from './documentRestore'
 
 const text = (id: string, t: string): TextObject => ({
   id, type: 'text', text: t, sizePt: 9, bold: false,
@@ -148,6 +149,8 @@ beforeEach(async () => {
   gatePuts = false
   putMode = 'ok'
   localStorage.clear()
+  // 每个用例都是又一次全新启动：恢复门回初值（真实的全新启动是模块重新求值）
+  resetRestoreStateForTests()
   await s().switchDocument(emptyProject(), 'd_reset')
   await tick()
   disk.clear()

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CanvasStage } from '@/canvas/CanvasStage'
 import { CanvasTabs } from '@/components/CanvasTabs'
@@ -77,7 +77,7 @@ import { startValidation } from '@/store/validationStore'
 import { startWorkspacePersistence, useWorkspaceStore } from '@/store/workspace'
 import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
-import { applyOpenRequest, readOpenRequestFromUrl, type OpenRequest } from '@/lib/openRequest'
+import { applyOpenRequest, claimUrlOpenRequest } from '@/lib/openRequest'
 import { msg } from '@/i18n'
 import { hydrateExportDefaults } from '@/lib/exportDefaults'
 
@@ -367,14 +367,11 @@ function Workspace() {
  */
 function useHandoff() {
   const phase = useProjectStore((s) => s.phase)
-  const fromUrl = useRef<OpenRequest | null | undefined>(undefined)
-  if (fromUrl.current === undefined) fromUrl.current = readOpenRequestFromUrl()
 
   useEffect(() => {
-    if (phase !== 'open' || !fromUrl.current) return
-    const req = fromUrl.current
-    fromUrl.current = null // 只认一次：换项目后不该再被重放
-    void applyOpenRequest(req)
+    if (phase !== 'open') return
+    const req = claimUrlOpenRequest()
+    if (req) void applyOpenRequest(req)
   }, [phase])
 
   useEffect(() => {

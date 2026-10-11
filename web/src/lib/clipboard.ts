@@ -4,6 +4,7 @@ import { newId } from '@/lib/id'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { deferUserEntry } from '@/store/documentRestore'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -297,6 +298,8 @@ export async function pasteObjects(): Promise<boolean> {
  */
 function consumePayload(payload: ClipPayload): boolean {
   if (fastEditPanelOf(useWorkspaceStore.getState())) return false
+  // 上次的排版还在恢复：这次粘贴排队到文档就绪再落（一次）；需要用户先处理恢复问题时拒掉并说一句。都算消费了这次粘贴
+  if (deferUserEntry(() => void consumePayload(payload)) !== 'run') return true
   const assets = useAssetStore.getState().byId
   const missingMap = new Map<string, MissingAsset>()
   for (const o of payload.objects) {

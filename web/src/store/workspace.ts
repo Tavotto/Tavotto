@@ -34,6 +34,7 @@ import { pageUnion } from '@/lib/panelPlacement'
 import { addPanel, addRuntimePanel, enterElementEdit } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { activateCanvas } from '@/store/canvasSession'
+import { deferUserEntry } from '@/store/documentRestore'
 import { findFigurePanel, useDocumentStore } from '@/store/documentStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -124,7 +125,14 @@ function layoutViewOnReturn(parked: ParkedLayoutView): void {
  * （那两个只管文档）——视口怎么动由 `frameAddedPanel` 一处判。`addPanelEntry.test.ts`
  * 钉住没有别的模块直接调那两个 action。
  */
-export function addPanelToCanvas(info: PanelInfo, atX?: number, atY?: number): PanelObject {
+export function addPanelToCanvas(info: PanelInfo, atX?: number, atY?: number): PanelObject | null {
+  // 恢复还在路上：排队到文档就绪再加（一次）；`null` = 这一刻没有加（排队 / 被拒），调用方别当成加成了
+  if (deferUserEntry(() => void addPanelToCanvas(info, atX, atY)) !== 'run') return null
+  return placePanelToCanvas(info, atX, atY)
+}
+
+/** 已过恢复门的内部版本（`createPanel` 在已经放行的入口里用它，不再排第二次队） */
+function placePanelToCanvas(info: PanelInfo, atX?: number, atY?: number): PanelObject {
   const panel = addPanel(info, atX, atY)
   frameAddedPanel(panel, atX != null && atY != null)
   return panel
@@ -134,7 +142,12 @@ export function addRuntimePanelToCanvas(
   desc: CapturedFigureDescriptor,
   atX?: number,
   atY?: number,
-): PanelObject {
+): PanelObject | null {
+  if (deferUserEntry(() => void addRuntimePanelToCanvas(desc, atX, atY)) !== 'run') return null
+  return placeRuntimePanelToCanvas(desc, atX, atY)
+}
+
+function placeRuntimePanelToCanvas(desc: CapturedFigureDescriptor, atX?: number, atY?: number): PanelObject {
   const panel = addRuntimePanel(desc, atX, atY)
   frameAddedPanel(panel, atX != null && atY != null)
   return panel
@@ -174,7 +187,7 @@ function figureSource(figureId: string): FigureSource | null {
  */
 function createPanel(src: FigureSource, layer: 'toCanvas' | 'docOnly'): PanelObject {
   if (layer === 'toCanvas') {
-    return src.kind === 'file' ? addPanelToCanvas(src.info) : addRuntimePanelToCanvas(src.desc)
+    return src.kind === 'file' ? placePanelToCanvas(src.info) : placeRuntimePanelToCanvas(src.desc)
   }
   return src.kind === 'file' ? addPanel(src.info) : addRuntimePanel(src.desc)
 }
@@ -200,7 +213,8 @@ function ensurePanel(
   return src ? { panel: createPanel(src, layer), created: true } : null
 }
 
-export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing'
+/** `deferred` = 上次的排版还在恢复，已排队、就绪后执行一次；`blocked` = 需要用户先处理恢复问题，没执行 */
+export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing' | 'deferred' | 'blocked'
 
 /**
  * 打开一张图 → 进快速编辑工作区。
@@ -215,6 +229,8 @@ export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing'
  * ——状态与措辞归 `lib/readinessText.ts`，两者不是一件事。
  */
 export function openFastEdit(figureId: string): OpenFastEditOutcome {
+  const entry = deferUserEntry(() => void openFastEdit(figureId))
+  if (entry !== 'run') return entry === 'deferred' ? 'deferred' : 'blocked'
   const got = ensurePanel(figureId, 'docOnly')
   if (!got) {
     useUiStore
@@ -256,13 +272,15 @@ export function openFastEdit(figureId: string): OpenFastEditOutcome {
   return 'layout_only'
 }
 
-export type AddToLayoutOutcome = 'added' | 'focused' | 'missing'
+export type AddToLayoutOutcome = 'added' | 'focused' | 'missing' | 'deferred' | 'blocked'
 
 /**
  * 「添加到画布」。**已经在文档里就只是聚焦它**——重复点不会叠出第二个面板，
  * 也不会把 overrides 复制到一个新对象上（那份复制品之后就与原件失联了）。
  */
 export function addFigureToLayout(figureId: string): AddToLayoutOutcome {
+  const entry = deferUserEntry(() => void addFigureToLayout(figureId))
+  if (entry !== 'run') return entry === 'deferred' ? 'deferred' : 'blocked'
   const willCreate = !findFigurePanel(figureId)
   if (willCreate && !figureSource(figureId)) {
     useUiStore

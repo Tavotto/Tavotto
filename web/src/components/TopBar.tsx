@@ -56,6 +56,7 @@ import { Tip } from './ui/Tooltip'
 import { useRenameFocusReturn } from './ui/useRenameFocusReturn'
 import type { StatusTone } from './ui/Notice'
 import { ConflictActions, ConflictDetail } from './DocumentBanner'
+import { RestoreIssueBody, RestoreMetaBody } from './RestoreIssueBody'
 import { MOD, cn } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
@@ -207,26 +208,31 @@ function useHeldFor(on: boolean, ms: number): boolean {
 
 /**
  * 需要用户裁决 / 知道的那几件文档级的事，按急迫排第一个（顶栏状态芯片只说一件）：
- * 冲突、保存失败、本机有未恢复的编辑、上次的排版没打开、来自更新版本的排版。
+ * 冲突、保存失败、上次的排版没能恢复（`restore`，门关着、占位文档不能写）、本机有未恢复的编辑、
+ * 上次的排版没打开、来自更新版本的排版、保存元数据没更新（`restore_meta`，正文已存下）。
  * 冲突 / 保存失败**另外**在工作面板顶上常驻一条（`DocumentBanner`，丢编辑的事不能只藏在一颗胶囊后面）；
  * 其余三件只在这里——它们不打断编辑，此前却各占一整条横幅把应用往下推（2026-10-07 设计审计 §10.1）。
  */
-type DocIssue = 'conflict' | 'save_error' | 'recovery' | 'last_doc' | 'too_new'
+type DocIssue = 'conflict' | 'save_error' | 'restore' | 'recovery' | 'last_doc' | 'too_new' | 'restore_meta'
 
 const ISSUE_TONE: Record<DocIssue, StatusTone> = {
   conflict: 'warn',
   save_error: 'danger',
+  restore: 'warn',
   recovery: 'info',
   last_doc: 'neutral',
   too_new: 'neutral',
+  restore_meta: 'neutral',
 }
 
 const ISSUE_ICON: Record<DocIssue, typeof Info> = {
   conflict: TriangleAlert,
   save_error: CircleAlert,
+  restore: TriangleAlert,
   recovery: RotateCcwClock,
   last_doc: Info,
   too_new: Lock,
+  restore_meta: Info,
 }
 
 /** 锚点色胶囊（24 高）：底 / 字 / 环都从状态锚点派生，与 `ui/StatusPill` 同一份配色，但它是一颗按钮 */
@@ -242,14 +248,19 @@ function useDocIssue(): DocIssue | null {
   const saveState = useDocumentStore((s) => s.saveState)
   const notice = useDocumentStore((s) => s.docNotice?.kind ?? null)
   const lastDoc = useProjectStore((s) => !!s.lastDocumentIssue)
+  // 恢复问题与保存进度是两根轴：`saved → clean` 清不掉它，只有恢复成功 / 用户选了出口才清
+  const restore = useDocumentStore((s) => s.restoreIssue !== null)
+  const metaIssue = useDocumentStore((s) => s.restoreMetaIssue?.docId === s.documentId)
   if (saveState === 'conflict') return 'conflict'
   if (saveState === 'save_error') return 'save_error'
+  if (restore) return 'restore'
   if (notice === 'recovery') return 'recovery'
   // 版本过新排在「上次的排版没打开」之前：启动时那份上次的排版若来自更新的版本，两件会同时在
   // （切项目接回失败记 `lastDocumentIssue`，工作台挂载的 `restoreSession` 读同一份记 `schema_too_new`），
   // 而「打开上次文档」那条重试只会再失败一次——该说的是具体原因
   if (notice === 'schema_too_new') return 'too_new'
   if (lastDoc) return 'last_doc'
+  if (metaIssue) return 'restore_meta'
   return null
 }
 
@@ -275,6 +286,7 @@ export function SaveStateLabel() {
   const bound = useActiveProjectFile()
   const projectOpen = useProjectStore((s) => !!s.project?.open) && currentProjectId() !== null
   const issue = useDocIssue()
+  const restoreKind = useDocumentStore((s) => s.restoreIssue?.kind ?? null)
   const localPending = saveState === 'dirty' || saveState === 'saving'
   const held = useHeldFor(localPending, SAVE_PENDING_REVEAL_MS)
   if (!hasContent && !bound && !issue) return null
@@ -325,7 +337,11 @@ export function SaveStateLabel() {
         data-doc-issue={issue}
         className="flex min-w-0 shrink items-center"
       >
-        <IssuePill issue={issue} text={bad ? text : issueLabel(issue)} title={`${text} · ${title}`} />
+        <IssuePill
+          issue={issue}
+          text={bad ? text : issueLabel(issue, restoreKind)}
+          title={`${text} · ${title}`}
+        />
         {live}
       </span>
     )
@@ -382,8 +398,27 @@ export function SaveStateLabel() {
 }
 
 /** 出事那几件在胶囊上的短名（冲突 / 保存失败用保存状态那两句，见上） */
-function issueLabel(issue: DocIssue): string {
+function issueLabel(issue: DocIssue, restoreKind: string | null): string {
   switch (issue) {
+    case 'restore':
+      switch (restoreKind) {
+        case 'missing':
+          return msgText('restore.pill.missing')
+        case 'invalid':
+          return msgText('restore.pill.invalid')
+        case 'too_new':
+          return msgText('restore.pill.tooNew')
+        case 'choose':
+          return msgText('restore.pill.choose')
+        case 'prepare_failed':
+          return msgText('restore.pill.prepareFailed')
+        case 'index_degraded':
+          return msgText('restore.pill.indexDegraded')
+        default:
+          return msgText('restore.pill.unavailable')
+      }
+    case 'restore_meta':
+      return msgText('restore.meta.pill')
     case 'recovery':
       return msgText('docBanner.recoveryTitle')
     case 'last_doc':
@@ -444,6 +479,7 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
   const notice = useDocumentStore((s) => s.docNotice)
   const saveIssue = useDocumentStore((s) => s.saveIssue)
   const lastDoc = useProjectStore((s) => s.lastDocumentIssue)
+  const restoreIssue = useDocumentStore((s) => s.restoreIssue)
   const done = (fn: () => unknown) => () => {
     close()
     void fn()
@@ -479,6 +515,8 @@ function IssueBody({ issue, close }: { issue: DocIssue; close: () => void }) {
       </>
     )
   }
+  if (issue === 'restore' && restoreIssue) return <RestoreIssueBody issue={restoreIssue} close={close} />
+  if (issue === 'restore_meta') return <RestoreMetaBody close={close} />
   if (issue === 'recovery' && notice?.kind === 'recovery') {
     const s = notice.summary
     return (

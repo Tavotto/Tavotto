@@ -49,7 +49,9 @@
     "openFailed": "Couldn’t open the project: {{error}}",
     "panelMissing": "Figure {{stem}} not found — the script may not have produced it yet, or it belongs to another figure library",
     "projectOpened": "Opened project {{name}}",
-    "runtimeNeedsRun": "{{stem}} is registered as a runtime figure but has no preview yet — run it once from the Scripts section of the asset library"
+    "restoreTimeout": "This handed-off figure wasn’t placed: your last layout isn’t open yet. It’s in the asset library.",
+    "runtimeNeedsRun": "{{stem}} is registered as a runtime figure but has no preview yet — run it once from the Scripts section of the asset library",
+    "superseded": "The project was switched, so this handoff wasn’t placed."
   },
   "picker": {
     "backToCurrent": "Back to current project",

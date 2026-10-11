@@ -1,0 +1,323 @@
+/**
+ * 「找回本机排版」入口（ADR 0108 §四）：打开排版对话框里的两组——本项目的本机排版、折叠的「归属待确认」。
+ * 真组件 + 真 store + 真 api，有状态的假 fetch（`test/fakeSessionBackend`）；断言实际 GET / PUT 序列、
+ * 源槽位字节不变、取消零写入。命名避开 QA 的 `recovery.*.test.ts`。
+ *
+ * 覆盖验收 A15（未知归属的 runtime 旧文档：列表 + 摘要 → 恢复副本 → 原文件与归属保留，取消零写入）、
+ * A28（找回入口可发现、不强迫、分页有界）、A30（坏文件不阻塞别的行、不运行脚本、确认时重验 revision）。
+ */
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createFakeBackend } from '@/test/fakeSessionBackend'
+import { LayoutDialog } from '@/components/LayoutDialog'
+import { setCurrentProjectId } from '@/lib/session'
+import { useDocumentStore } from '@/store/documentStore'
+import { useProjectStore } from '@/store/projectStore'
+import { useUiStore } from '@/store/uiStore'
+import { emptyProject } from '@/types/document'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+const PJ = 'p_a'
+const backend = createFakeBackend()
+const realFetch = globalThis.fetch
+
+/** 一份有内容的 runtime 面板排版：脚本在项目里，owners / last / 时间线都没有 */
+const runtimeDoc = (name: string, extra: Record<string, unknown> = {}) => {
+  const pd = emptyProject()
+  return {
+    ...pd,
+    project: { id: 'x', name },
+    canvases: [
+      {
+        ...pd.canvases[0],
+        objects: [
+          {
+            id: 'o1',
+            type: 'panel',
+            fileId: 'runtime:fig1.py#Fig1_PRISMA_Flowchart',
+            fileKind: 'runtime',
+            x: 5,
+            y: 6,
+            w: 40,
+            h: 30,
+            overrides: [{ gid: 'g1', prop: 'title', value: '改过的标题' }],
+          },
+        ],
+      },
+    ],
+    ...extra,
+  }
+}
+
+let root: Root
+
+async function mount(intent: 'load' | 'save' = 'load') {
+  globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+    if (new URL(String(url), 'http://x').pathname === '/api/layouts') {
+      return new Response(JSON.stringify({ layouts: [], modified: {} }), { status: 200 })
+    }
+    return backend.fetch(url as RequestInfo, init)
+  }) as typeof fetch
+  useUiStore.setState({ layoutOpen: true, layoutIntent: intent })
+  const el = document.createElement('div')
+  document.body.appendChild(el)
+  root = createRoot(el)
+  await act(async () => {
+    root.render(<LayoutDialog />)
+  })
+  await flush()
+}
+
+/** 放干净在途的 fetch / 微任务 */
+async function flush() {
+  for (let i = 0; i < 6; i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 4))
+    })
+  }
+}
+
+const dialog = () => document.querySelector('[role="dialog"]')!
+const rows = (group: 'project' | 'unknown') =>
+  [...dialog().querySelectorAll<HTMLButtonElement>(`[data-recover-group="${group}"] [data-recover-row]`)]
+const byText = (text: string) => [...dialog().querySelectorAll('button')].find((b) => b.textContent?.includes(text))
+
+async function expandOther() {
+  const det = dialog().querySelector<HTMLDetailsElement>('details[data-recover-group="unknown"]')!
+  await act(async () => {
+    det.open = true
+    det.dispatchEvent(new Event('toggle'))
+  })
+  await flush()
+}
+
+beforeEach(() => {
+  backend.reset()
+  localStorage.clear()
+  setCurrentProjectId(PJ)
+  useProjectStore.setState({ project: { open: true, id: PJ, document_dir: '/figs/a/tavottofile' } })
+  useDocumentStore.setState({ documentId: 'd_current' })
+})
+
+afterEach(async () => {
+  if (root) await act(async () => root.unmount())
+  document.body.innerHTML = ''
+  useUiStore.setState({ layoutOpen: false })
+  globalThis.fetch = realFetch
+})
+
+describe('找回入口的可发现性与只读', () => {
+  it('打开那一屏先读本项目的一组；归属待确认的折叠着、展开才读（A28），列表全程零写入', async () => {
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.putSlot('d_unk', runtimeDoc('不知道谁的'))
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' }, { doc_id: 'd_unk', scope: 'unknown', name: '不知道谁的' })
+    await mount()
+    expect(rows('project').map((r) => r.dataset.recoverRow)).toEqual(['d_mine'])
+    expect(backend.state.calls).toContain('GET candidates project')
+    expect(backend.state.calls).not.toContain('GET candidates unknown') // 折叠着：不读
+    expect(dialog().querySelector('details[data-recover-group="unknown"]')?.hasAttribute('open')).toBe(false)
+
+    await expandOther()
+    expect(backend.state.calls).toContain('GET candidates unknown')
+    expect(rows('unknown').map((r) => r.dataset.recoverRow)).toEqual(['d_unk'])
+    expect(backend.writes()).toEqual([])
+  })
+
+  it('行上有名字、画布 / 对象数、脚本·figure 名提示；没有草图就不画缩略图，有就画结构化草图（不编造）', async () => {
+    backend.putSlot('d_a', runtimeDoc('带草图'))
+    backend.putSlot('d_b', runtimeDoc('无草图'))
+    backend.state.candidates.push(
+      {
+        doc_id: 'd_a',
+        scope: 'unknown',
+        name: '带草图',
+        canvases: 2,
+        objects: 7,
+        runtime: [{ script: 'fig1.py', figure: 'Fig1_PRISMA_Flowchart' }],
+        sketch: { page: { w: 100, h: 80 }, objects: [{ type: 'shape', x: 1, y: 2, w: 10, h: 10, shape: 'rect' }] },
+      },
+      { doc_id: 'd_b', scope: 'unknown', name: '无草图' },
+    )
+    await mount()
+    await expandOther()
+    const [a, b] = rows('unknown')
+    expect(a.textContent).toContain('带草图')
+    expect(a.textContent).toContain('2 张画布')
+    expect(a.textContent).toContain('7 个对象')
+    expect(a.textContent).toContain('脚本 fig1.py · Fig1_PRISMA_Flowchart')
+    expect(a.querySelector('[data-canvas-thumb]')).not.toBeNull()
+    expect(b.querySelector('[data-canvas-thumb]')).toBeNull()
+    // 列表不为预览去读任何正文（不读槽位、不渲染）
+    expect(backend.state.calls.filter((c) => c.startsWith('GET autosave'))).toEqual([])
+  })
+
+  it('保存时间按毫秒渲染（相对时间），不是几万年后', async () => {
+    backend.putSlot('d_t', runtimeDoc('t'))
+    backend.state.candidates.push({ doc_id: 'd_t', scope: 'unknown', name: 't', mtime: Date.now() - 3 * 3600 * 1000 })
+    await mount()
+    await expandOther()
+    const text = rows('unknown')[0].textContent ?? ''
+    expect(text).toMatch(/3\s?小时前/)
+  })
+
+  it('坏 / 来自更新版本 / 太大的行置灰并说原因，不阻塞别的行（A30）', async () => {
+    backend.putSlot('d_ok', runtimeDoc('好的'))
+    backend.state.candidates.push(
+      { doc_id: 'd_bad', scope: 'unknown', status: 'invalid', name: '坏的' },
+      { doc_id: 'd_new', scope: 'unknown', status: 'too_new', name: '新的' },
+      { doc_id: 'd_big', scope: 'unknown', status: 'too_large', name: '大的' },
+      { doc_id: 'd_ok', scope: 'unknown', name: '好的' },
+    )
+    await mount()
+    await expandOther()
+    const [bad, tooNew, big, ok] = rows('unknown')
+    expect(bad.disabled).toBe(true)
+    expect(bad.textContent).toContain('读不了')
+    expect(tooNew.disabled).toBe(true)
+    expect(tooNew.textContent).toContain('更新版本')
+    expect(big.disabled).toBe(true)
+    expect(big.textContent).toContain('太大')
+    expect(ok.disabled).toBe(false)
+  })
+
+  it('旧后端没有这组端点（404）：入口整个不出现；读失败：一句话 + 重试，重试读到就出现', async () => {
+    await mount()
+    expect(dialog().querySelector('[data-layout-recover]')).not.toBeNull() // 空列表也有折叠组（可发现）
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+
+    backend.state.fail.candidates = 404
+    await mount()
+    expect(dialog().querySelector('[data-layout-recover]')).toBeNull()
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+
+    backend.state.fail.candidates = undefined
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    backend.state.failOnce.candidates = 500
+    await mount()
+    expect(dialog().textContent).toContain('暂时读不出来')
+    await act(async () => byText('重试')!.click())
+    await flush()
+    expect(rows('project')).toHaveLength(1)
+  })
+
+  it('分页有界：一页 50 行，「加载更多」再读一页', async () => {
+    for (let i = 0; i < 70; i++) {
+      backend.putSlot(`d_${i}`, runtimeDoc(`n${i}`), PJ)
+      backend.state.candidates.push({ doc_id: `d_${i}`, scope: 'project', name: `n${i}` })
+    }
+    await mount()
+    expect(rows('project')).toHaveLength(50)
+    await act(async () => byText('加载更多')!.click())
+    await flush()
+    expect(rows('project')).toHaveLength(70)
+    expect(byText('加载更多')).toBeUndefined()
+  })
+
+  it('「另存为」那一屏没有这个入口', async () => {
+    await mount('save')
+    expect(dialog().querySelector('[data-layout-recover]')).toBeNull()
+    expect(backend.state.calls).not.toContain('GET candidates project')
+  })
+})
+
+describe('恢复副本（A15 / A30）', () => {
+  async function pick(id: string) {
+    await mount()
+    await expandOther()
+    const row = rows('unknown').find((r) => r.dataset.recoverRow === id)!
+    await act(async () => row.click())
+    return row
+  }
+
+  it('点一行只是展开确认：一句话 + 「恢复副本」+ 取消；取消零写入，也不读源正文', async () => {
+    const src = backend.putSlot('d_old', runtimeDoc('旧排版'))
+    backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown', name: '旧排版' })
+    await pick('d_old')
+    const confirm = dialog().querySelector('[data-recover-confirm]')!
+    expect(confirm.textContent).toContain('原排版保持不动')
+    expect(confirm.querySelector('[data-recover-copy]')).not.toBeNull()
+    await act(async () => [...confirm.querySelectorAll('button')].find((b) => b.textContent === '取消')!.click())
+    expect(dialog().querySelector('[data-recover-confirm]')).toBeNull()
+    expect(backend.writes()).toEqual([])
+    expect(backend.state.calls.filter((c) => c.startsWith('GET autosave'))).toEqual([])
+    expect(backend.state.slots.get('d_old')).toEqual(src)
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+  })
+
+  it('确认：以固定目标 id 装进文档并走正常保存链；源槽位与归属不动；对话框关闭；overrides 与对象原样', async () => {
+    const src = backend.putSlot('d_old', runtimeDoc('旧排版'))
+    backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown', name: '旧排版' })
+    await pick('d_old')
+    const item = (await (await backend.fetch('/api/layout-session/candidates?scope=unknown'))).json()
+    const revision = ((await item) as { items: { revision: string }[] }).items[0].revision
+    const target = `d_rc_d_old_${revision.slice(0, 8)}`
+    backend.state.calls.length = 0
+    await act(async () => dialog().querySelector<HTMLButtonElement>('[data-recover-copy]')!.click())
+    await flush()
+
+    expect(useDocumentStore.getState().documentId).toBe(target)
+    expect(useUiStore.getState().layoutOpen).toBe(false)
+    const panel = useDocumentStore.getState().doc.objects[0] as unknown as { fileId: string; overrides: unknown; x: number; w: number }
+    expect(panel).toMatchObject({ id: 'o1', fileId: 'runtime:fig1.py#Fig1_PRISMA_Flowchart', x: 5, w: 40 })
+    expect(panel.overrides).toContainEqual({ gid: 'g1', prop: 'title', value: '改过的标题' })
+    // 序列：目标不存在（404）→ 读源 → 正常保存链对目标的写前确认（GET，404=absent）→ PUT 目标。源从不被写
+    expect(backend.state.calls.filter((c) => c.startsWith('GET autosave')).slice(0, 2)).toEqual([`GET autosave ${target}`, 'GET autosave d_old'])
+    expect(backend.puts().filter((c) => c.startsWith('PUT autosave'))).toEqual([`PUT autosave ${target}`])
+    expect(backend.session(PJ).last?.doc_id).toBe(target) // 重启时副本就是这个项目 durable 的「上次开着的」
+    expect(backend.state.slots.get('d_old')).toEqual(src)
+    expect(backend.state.owners.has('d_old')).toBe(false)
+    expect(backend.state.owners.get(target)).toBe(PJ) // 归属由正常保存链建立
+    expect(useUiStore.getState().status).toMatchObject({ key: 'layout.recoverDone' })
+  })
+
+  it('预览之后源被改了：不恢复，一句话说明，列表刷新，文档不变（A30）', async () => {
+    backend.putSlot('d_old', runtimeDoc('旧排版'))
+    backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown', name: '旧排版' })
+    await pick('d_old')
+    backend.putSlot('d_old', runtimeDoc('旧排版', { updatedAt: 777 })) // 别处又存了一次
+    backend.state.calls.length = 0
+    await act(async () => dialog().querySelector<HTMLButtonElement>('[data-recover-copy]')!.click())
+    await flush()
+    expect(dialog().textContent).toContain('又变了')
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(backend.puts().filter((c) => c.startsWith('PUT autosave'))).toEqual([])
+    expect(backend.state.calls).toContain('GET candidates unknown') // 刷新了列表
+    expect(dialog().querySelector('[data-recover-confirm]')).toBeNull() // 要重新点一次
+  })
+
+  it('双击「恢复副本」只装一份；再点一次（已恢复过）直接打开那份，不生出第二份', async () => {
+    backend.putSlot('d_old', runtimeDoc('旧排版'))
+    backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown', name: '旧排版' })
+    await pick('d_old')
+    const btn = dialog().querySelector<HTMLButtonElement>('[data-recover-copy]')!
+    await act(async () => {
+      btn.click()
+      btn.click()
+    })
+    await flush()
+    const copies = [...backend.state.slots.keys()].filter((k) => k.startsWith('d_rc_'))
+    expect(copies).toHaveLength(1)
+    expect(backend.puts().filter((c) => c.startsWith('PUT autosave d_rc_'))).toHaveLength(1)
+  })
+})
+
+describe('本项目的本机排版：原 id 打开', () => {
+  it('点一行 = 按原 id 打开（与最近文档同一条路），对话框关闭', async () => {
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    await mount()
+    await act(async () => rows('project')[0].click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_mine')
+    expect(useUiStore.getState().layoutOpen).toBe(false)
+  })
+})

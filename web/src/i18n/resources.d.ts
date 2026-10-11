@@ -384,6 +384,29 @@ export default interface Resources {
       "openTitle": "打开排版",
       "overwrite": "仍然覆盖",
       "projectSwitched": "保存途中切换了排版或项目：原来那份的同名排版已在别处改过，这次没有写入。回到那份排版再保存一次。",
+      "recoverCapped": "只显示最近的 {{n}} 份。",
+      "recoverCopy": "恢复副本",
+      "recoverCopyHint": "会在这个项目里新建一份副本，原排版保持不动。",
+      "recoverCounts": "{{canvases}} 张画布 · {{objects}} 个对象",
+      "recoverDone": "已恢复为副本：{{name}}。原排版没有改动。",
+      "recoverEmptyOther": "没有找到其他排版。",
+      "recoverFailInvalid": "「{{name}}」读不了，没有恢复。",
+      "recoverFailMissing": "这份排版已经不在了。",
+      "recoverFailUnavailable": "暂时读不到这份排版，请稍后重试。",
+      "recoverIssueInvalid": "读不了",
+      "recoverIssueTooLarge": "文件太大，没有读取",
+      "recoverIssueTooNew": "来自更新版本的 Tavotto，这个版本读不了",
+      "recoverLoading": "正在查找…",
+      "recoverMore": "加载更多",
+      "recoverOtherHint": "不确定这些属于哪个项目。恢复副本会在这个项目里新建一份，原排版不会改动。",
+      "recoverOtherTitle": "本机上其他排版（归属待确认）",
+      "recoverProjectTitle": "这个项目的本机排版",
+      "recoverReopened": "这份副本之前已经恢复过，已打开：{{name}}",
+      "recoverRetry": "重试",
+      "recoverRuntime": "脚本 {{script}} · {{figure}}",
+      "recoverStale": "这份排版在你查看之后又变了，列表已刷新。请再看一眼再恢复。",
+      "recoverUnavailable": "本机排版暂时读不出来。",
+      "recoverUnnamed": "未命名排版",
       "rename": "改名",
       "saveAs": "另存为",
       "saveTitle": "另存为新排版",
@@ -4279,7 +4302,9 @@ export default interface Resources {
       "openFailed": "打不开项目：{{error}}",
       "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
       "projectOpened": "已打开项目 {{name}}",
-      "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。"
+      "restoreTimeout": "这次交接的图没有放进排版：上次的排版还没打开，图在素材库里。",
+      "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
+      "superseded": "项目已切换，这次交接没有放入。"
     },
     "home": {
       "backHome": "返回主页",
@@ -5200,6 +5225,40 @@ export default interface Resources {
         "source_missing": "源脚本丢失"
       },
       "whyNotEditable": "为什么不能编辑？"
+    },
+    "restore": {
+      "autoAdopted": "已打开本机找到的排版“{{name}}”",
+      "blockedWrite": "上次的排版还没打开。",
+      "choose": "选一份打开",
+      "continueNew": "继续新建",
+      "entrySuperseded": "项目已切换，这次操作没有执行。",
+      "entryTimeout": "等了很久上次的排版仍没处理，这次操作没有执行。",
+      "indexDegraded": "上次的恢复记录读不了，先开了一份空白排版。旧排版还在，可以在“打开排版”里找。",
+      "meta": {
+        "pill": "下次自动恢复信息没更新",
+        "retry": "再存一次",
+        "title": "排版已经存好，但“下次自动恢复”要用的记录没更新成功。"
+      },
+      "openAlt": "打开“{{name}}”",
+      "pill": {
+        "choose": "找到了几份本机排版",
+        "indexDegraded": "恢复记录读不了",
+        "invalid": "上次的排版读不出来",
+        "missing": "上次的排版找不到了",
+        "prepareFailed": "示例排版没能打开",
+        "tooNew": "上次的排版来自更新版本",
+        "unavailable": "上次的排版暂时没打开"
+      },
+      "retry": "重试",
+      "title": {
+        "choose": "本机找到了几份排版，选一份打开。",
+        "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
+        "invalid": "上次的排版“{{name}}”读不出来。",
+        "missing": "上次的排版“{{name}}”找不到了。",
+        "prepareFailed": "示例排版没能打开。",
+        "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
+        "unavailable": "上次的排版暂时没打开。"
+      }
     },
     "runtimePanel": {
       "placeholder": "由脚本生成的图",

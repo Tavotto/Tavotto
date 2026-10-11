@@ -183,9 +183,7 @@ describe('切项目', () => {
     await p().adoptOpenedProject(
       { open: true, id: 'p_a', figures_dir: '/figs/a' },
       {
-        prepareDocument: async () => {
-          await s().switchDocument(emptyProject(), 'd_tutorial')
-        },
+        prepareDocument: async () => s().switchDocument(emptyProject(), 'd_tutorial'),
       },
     )
     expect(s().documentId).toBe('d_tutorial')
