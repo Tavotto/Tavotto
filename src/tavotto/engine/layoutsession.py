@@ -311,6 +311,10 @@ def _clean_group(raw: object) -> dict:
         entry = _clean_last(raw.get(name))
         if entry is not None:
             out[name] = entry
+    # `prev` 是另一份 durable 排版；旧索引或交错请求留下重复指针时，
+    # 不能把同一份正文作为两条恢复候选。保留 last 这个最新意图。
+    if out.get("last") and out.get("prev") and out["last"]["doc_id"] == out["prev"]["doc_id"]:
+        del out["prev"]
     for k, v in raw.items():
         if isinstance(k, str) and k not in POINTERS:
             cleaned = _scrub(v)

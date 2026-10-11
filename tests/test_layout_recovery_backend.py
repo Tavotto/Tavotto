@@ -387,6 +387,20 @@ def test_prev_and_pending_have_capacity_one(data_dir):
     assert path.stat().st_mtime_ns == 10**9
 
 
+def test_duplicate_prev_from_existing_state_is_not_exposed_as_another_recovery_slot(data_dir):
+    """旧状态里同一槽位重复记成 last/prev 时，恢复候选不能把它当成两份。"""
+    layoutsession.set_last(None, "d_1", "first")
+    path = layoutsession.state_path()
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["no_project"]["prev"] = {**state["no_project"]["last"], "at": 1}
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+    group = layoutsession.snapshot()["no_project"]
+    assert group["last"]["doc_id"] == "d_1"
+    assert "prev" not in group
+    assert layoutsession.view_for(None)["prev"] is None
+
+
 def test_commit_slot_return_values(data_dir):
     assert layoutsession.commit_slot("d_a", "/a", "r1") == {"owner": "recorded", "promoted": False}
     assert layoutsession.commit_slot("d_a", "/a", "r1") == {"owner": "unchanged", "promoted": False}
