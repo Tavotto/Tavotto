@@ -127,7 +127,7 @@ census()：既没登记、也不是结构件的 → manifest 的 `unsupported` �
 | --- | --- | --- | --- |
 | Line | `Line2D`（含用户子类） | `axes_i.lines_j` | 颜色/线宽/线型/marker/几何轮廓 |
 | Text | `Text` / `Annotation` | `axes_i.texts_j`、标题、轴标签、图例项 | 可拖、上下标、描边、背景框 |
-| Patch | `Rectangle` `Polygon` `PathPatch` `Wedge` `Circle` `Ellipse` `Arc` `StepPatch` `FancyBboxPatch` `Annulus` `RegularPolygon` + 用户子类 | `axes_i.patches_j` | 填充/描边/花纹/线型；**可整体拖动**（`pos_frac`，平移叠在 artist 级 transform 上，2026-09-21）；形状本身（顶点 / 半径）不给编辑 |
+| Patch | `Rectangle` `Polygon` `PathPatch` `Wedge` `Circle` `Ellipse` `Arc` `StepPatch` `FancyBboxPatch` `Annulus` `RegularPolygon` + 用户子类 | `axes_i.patches_j` | 填充/描边/花纹/线型；**可整体拖动**（`pos_frac`，平移叠在 artist 级 transform 上，2026-09-21）；轴对齐矩形与标准 round / square 框可改宽高（`size_frac`，2026-10-11）；顶点 / 半径不给编辑 |
 | Arrow | `FancyArrowPatch` `ConnectionPatch` | `axes_i.arrows_j` | 独立箭头另有端点拖动；`annotate` 的箭头**不给**端点 |
 | Image | `AxesImage` | `axes_i.images_j` | cmap/clim/插值/单色渐变换基色 |
 | Colorbar | `Colorbar`（代理） | `axes_i.colorbar` + 语义身份 `cbar:<宿主>:<序号>` | 方向/extend 是就地结构改造 |
@@ -171,7 +171,7 @@ census()：既没登记、也不是结构件的 → manifest 的 `unsupported` �
 | setter | 为什么不开放 |
 | --- | --- |
 | `Line2D.set_data` / `PathCollection.set_offsets` / `AxesImage.set_data` | 改的是数据本身 |
-| `PolyCollection.set_verts` / `Patch` 的几何（`set_xy` / `set_width` / `set_radius` …） | 图元几何由数据决定；柱宽是唯一例外（排版语义明确，且保持柱中心不动） |
+| `PolyCollection.set_verts` / 任意 `Patch` 的顶点、半径等几何 | 数据图元不能任意变形；已有柱宽编辑保持柱中心不动。独立矩形 / 圆角框另按可逆变换与原生几何判据开放宽高，保留 padding / 圆角 / 线宽，见[可行性与验证](../audit/2026-10-11-flowchart-resize.md) |
 | `set_norm`（LogNorm / BoundaryNorm …） | 换 norm 改的是「数据怎么被解释成颜色」，属于科学结论。`vmin`/`vmax` 只是同一个 norm 的定义域，等价于脚本里的 `clim=`，仍在展示范畴 |
 | `ContourSet` 的层级（`levels`） | 等值线的层级是分析参数 |
 | `Axes` 的 `spines` 位置、`set_xlim` 之外的数据语义 | 见 `compatibility.md` |

@@ -370,6 +370,30 @@
       ]
     },
     {
+      "id": "figure.patch-resize",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "独立矩形与圆角流程图框的八方向缩放和精确宽高编辑",
+        "en-US": "Resize independent rectangular and rounded flowchart boxes with eight handles or precise dimensions"
+      },
+      "entry": "图内编辑 → 选中图框 → 拖动边角手柄或修改右栏图框宽高",
+      "e2e": [
+        {
+          "spec": "flowchart-resize.spec.ts",
+          "title": "流程图框：八方向手柄和精确宽高改变真图，文字箭头不变，撤销重做恢复"
+        },
+        {
+          "spec": "flowchart-resize.spec.ts",
+          "title": "流程图框：取消和拖回起点不保存尺寸改动"
+        },
+        {
+          "spec": "flowchart-resize.spec.ts",
+          "title": "流程图框：单脚本运行图的尺寸保存到磁盘，冷重开后继续编辑并导出"
+        }
+      ]
+    },
+    {
       "id": "figure.multi-select-drag",
       "status": "active",
       "platform": "both",
