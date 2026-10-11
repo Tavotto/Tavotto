@@ -546,6 +546,23 @@ def test_desktop_is_reachable_only_through_release():
     assert "desktop-tauri.yml" in rel.jobs["desktop"]
 
 
+def test_desktop_signing_mode_is_a_string_input_for_reusable_calls():
+    """choice/options 只属于 dispatch；写进 workflow_call 会让 GitHub 拒绝整个工作流。
+
+    按本模块的缩进读取器约定，只量去注释后的 call 输入块，不拿 dispatch 的类型作证。
+    """
+    head = _strip_comments(DESKTOP.read_text(encoding="utf-8")).split("\njobs:")[0]
+    call = re.search(r"(?ms)^  workflow_call:\s*\n(.*?)(?=^  [\w-]+:|^\S|\Z)", head)
+    assert call, "桌面链切不出 workflow_call 块"
+    mode = re.search(
+        r"(?ms)^      signing-mode:\s*\n(.*?)(?=^      [\w-]+:|^    \S|\Z)",
+        call.group(1),
+    )
+    assert mode, "workflow_call 没有 signing-mode 输入"
+    assert re.search(r"^        type:\s*string\s*$", mode.group(1), re.M), mode.group(1)
+    assert not re.search(r"^        options:", mode.group(1), re.M), mode.group(1)
+
+
 def test_desktop_never_writes_to_a_release_itself():
     """挂 Release 只有一条路：release.yml 的 github_release。
 

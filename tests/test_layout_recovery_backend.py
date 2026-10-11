@@ -185,15 +185,31 @@ def test_a26_corrupt_main_recovers_from_the_bak_without_losing_other_groups(clie
     ]
 
 
-def test_a26_unrelated_nan_field_does_not_void_the_file(client, tmp_path):
-    a = _project(client, tmp_path, "a", default=True)
+@pytest.mark.parametrize("project_name", ["a", r"a\project"])
+def test_a26_unrelated_nan_field_does_not_void_the_file(client, tmp_path, project_name):
+    # POSIX 也用带反斜杠的真实目录，避免 Windows 路径转义的回归只在平台腿才被发现。
+    (tmp_path / project_name).parent.mkdir(parents=True, exist_ok=True)
+    a = _project(client, tmp_path, project_name, default=True)
     key = layoutsession.project_key(a["figures_dir"])
     path = layoutsession.state_path()
     path.parent.mkdir(parents=True)
     path.write_text(
-        '{"version": 1, "projects": {"%s": {"last": {"doc_id": "d_a", "name": "A", "at": 5},'
-        ' "future_flag": {"x": NaN, "keep": 1}}}, "no_project": {},'
-        ' "owners": {"d_a": "%s"}, "x_top": NaN, "y_top": [1, 2]}' % (key, key),
+        # NaN 是本用例的坏值，Windows 项目路径的反斜杠仍须正确转义。
+        json.dumps(
+            {
+                "version": 1,
+                "projects": {
+                    key: {
+                        "last": {"doc_id": "d_a", "name": "A", "at": 5},
+                        "future_flag": {"x": float("nan"), "keep": 1},
+                    }
+                },
+                "no_project": {},
+                "owners": {"d_a": key},
+                "x_top": float("nan"),
+                "y_top": [1, 2],
+            }
+        ),
         encoding="utf-8",
     )
     _put(client, "d_a", _doc(), a)

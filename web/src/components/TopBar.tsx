@@ -694,7 +694,7 @@ export function DocumentMenu() {
       <MenuItem onSelect={() => setEditing(true)} shortcut={keyOf('tabRename')}>
         {t('topbar.renameDocument')}
       </MenuItem>
-      <MenuItem onSelect={newBlankDocument}>{t('topbar.newBlankDocument')}</MenuItem>
+      <MenuItem data-new-document onSelect={newBlankDocument}>{t('topbar.newBlankDocument')}</MenuItem>
 
       <MenuSeparator />
       <MenuLabel>{t('topbar.projectDocuments')}</MenuLabel>

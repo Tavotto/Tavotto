@@ -10,7 +10,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { expect, test, waitForDocumentReady } from './fixtures'
 
 const NAME = '我的排版'
 
@@ -34,7 +34,7 @@ test('⌘S 存进项目 → 之后 ⌘S 写回同一个文件 → 刷新后从�
   const a = await app()
   const file = path.join(a.figures, 'tavottofile', `${NAME}.json`)
   await page.goto(a.baseURL)
-  await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+  await waitForDocumentReady(page)
 
   await addText(page, '第一版', 380, 220)
 
@@ -68,7 +68,7 @@ test('⌘S 存进项目 → 之后 ⌘S 写回同一个文件 → 刷新后从�
 
   // 刷新后从「项目里的排版」打开：内容与磁盘上那份一致
   await page.reload()
-  await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+  await waitForDocumentReady(page)
   await page.getByRole('button', { name: /^(文档|排版)：/ }).click()
   await page.getByRole('menuitem', { name: /^打开(文档|排版)/ }).click()
   const openDialog = page.getByRole('dialog')

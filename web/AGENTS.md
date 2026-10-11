@@ -72,10 +72,7 @@
 
 ## 验证
 
-- `cd web && pnpm test`（vitest + jsdom；`NODE_OPTIONS` 里禁用了 node 内建 webstorage）；
-  `pnpm build` = `tsc -b` + 打包（**别用 `tsc --noEmit`**：恒假绿）；`pnpm i18n:check`。
-- 界面用 agent-browser 实测；黄金路径 `pnpm e2e`（Playwright，先 `python scripts/build_frontend.py`；
-  `e2e/mcp-canvas.spec.ts` 还要 `python scripts/build_mcp_widget.py`）。jsdom 量不到几何、裁剪、
-  对比度、微任务检查点——这几类判据只有真浏览器抓得到。
-- 改了 `web/src`：`python scripts/build_browser_playground.py --check`；跑过 `scripts/build_frontend.py`
-  之后包内 `src/tavotto/web/` 优先于 `web/dist`，改完要么再同步一次要么删掉它。
+- `cd web && pnpm test && pnpm build && pnpm i18n:check`（类型检查用 `tsc -b`）。
+- 真浏览器 `pnpm e2e`：先 `python scripts/build_frontend.py`；MCP 画布还需 `python scripts/build_mcp_widget.py`。
+- 改了 `web/src`：`python scripts/build_browser_playground.py --check`。构建顺序、包内前端优先级与
+  真浏览器判据全文见 `docs/rules/frontend/verification.md`。

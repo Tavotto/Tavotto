@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { expect, test, waitForDocumentReady } from './fixtures'
 import type { Locator } from '@playwright/test'
 
 /**
@@ -91,7 +91,7 @@ test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能�
   await page.setViewportSize({ width: 900, height: 700 })
   const a = await app()
   await page.goto(a.baseURL)
-  await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+  await waitForDocumentReady(page)
   await closeOverlayDrawer(page)
 
   const strip = page.locator('[data-canvas-tabs]')
@@ -174,7 +174,7 @@ test('页签少但放不下时也给「全部画布」菜单，能切到条外�
   await page.setViewportSize({ width: 600, height: 700 })
   const a = await app()
   await page.goto(a.baseURL)
-  await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+  await waitForDocumentReady(page)
   await closeOverlayDrawer(page)
 
   const strip = page.locator('[data-canvas-tabs]')
@@ -253,7 +253,7 @@ test('「条放不下」出现的菜单：窗口拉宽到不带菜单放得下�
   await page.setViewportSize({ width: 600, height: 700 })
   const a = await app()
   await page.goto(a.baseURL)
-  await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+  await waitForDocumentReady(page)
   await closeOverlayDrawer(page)
 
   const strip = page.locator('[data-canvas-tabs]')

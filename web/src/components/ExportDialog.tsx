@@ -2301,6 +2301,7 @@ function FormatCheck({
   return (
     <label
       title={hint}
+      aria-disabled={disabled || undefined}
       className={cn(
         "flex min-h-7 items-center gap-2 font-medium",
         disabled ? "cursor-not-allowed text-ink-faint" : "text-ink",
