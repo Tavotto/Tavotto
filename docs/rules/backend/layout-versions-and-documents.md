@@ -211,7 +211,8 @@
     从 `AUTOSAVE_DIR` 的**真实槽位**里列出能找回的（不要求先知道 docId，owners 只是线索：不存在的文件不列）。
     只枚举 docId 形状的 `*.json` 普通文件（不跟随符号链接、不接受任何路径），按 mtime 新→旧、游标分页（游标是
     `(mtime_ns, 文件名)` 的不透明编码）；每页最多读 `limit`（≤100）个文件、字节有预算（至少读一个），单文件 > 32 MB 不读、
-    `status:"too_large"`；目录条目超过 20000 时只看了目录原序的前一部分，响应带 **`truncated: true`**（`next_cursor` 为 null 也不等于列完了，
+    `status:"too_large"`；目录条目超过 20000 时只看了目录原序的前一部分，响应带 **`truncated: true`**（游标另带第一页的目录指纹，后面的页重算，对不上——翻页期间有槽位被保存 / 新建 / 删除，
+    按 mtime 的顺序变了、某行可能被漏——也标 `truncated: true` 并照常返回这一页，之后每一页都保持）（`next_cursor` 为 null 也不等于列完了，
     调用方不得据此自动采用唯一候选或判定为空）；一页里被 scope 过滤掉的不返回，所以一页可能不满、`next_cursor` 仍非空——调用方循环翻页。
     每项 `{doc_id, name, updatedAt, mtime, revision, schema, status: ok|invalid|too_new|too_large, canvases, objects, owner:
     this|unknown, evidence, runtime:[{script,figure}], panels:[…], sketch?}`（非 ok 的 `canvases`/`objects` 是 `null`，不冒充 0；

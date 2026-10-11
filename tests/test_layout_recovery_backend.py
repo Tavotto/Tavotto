@@ -1521,3 +1521,33 @@ def test_lock_stripe_ignores_unicode_normalization_and_case():
     stripes = {m._lock_stripe(d / n) for n in (nfc, nfd, nfc.upper(), nfd.upper(), "CAFÉ.json")}
     assert len(stripes) == 1
     assert m._lock_stripe(d / "straße.json") == m._lock_stripe(d / "STRASSE.json")
+
+
+def test_candidate_cursor_marks_the_scan_incomplete_when_the_directory_changed_between_pages(
+    client, tmp_path
+):
+    """游标按 (mtime, 名字) 排；翻页期间一个还没翻到的行被自动保存，会跳到游标前面被漏掉。
+    游标带着第一页的目录指纹，后面的页对不上就标 truncated（仍返回这一页）。"""
+    a = _project(client, tmp_path, "a", default=True)
+    ids = [f"d_{i}" for i in range(6)]
+    for i, d in enumerate(ids):
+        _put(client, d, _doc(i), a)
+        os.utime(_slot(d), ns=(0, (i + 1) * 10**9))
+    # 稳定目录：每一页都不截断
+    first = _candidates(client, a, limit=2)
+    assert first["truncated"] is False and first["next_cursor"]
+    second = _candidates(client, a, limit=2, cursor=first["next_cursor"])
+    assert second["truncated"] is False
+    # 第一页之后，最老的（还没翻到的）d_0 被保存 → 它现在是最新的，跳到了游标前面
+    first = _candidates(client, a, limit=2)
+    assert [i["doc_id"] for i in first["items"]] == ["d_5", "d_4"]
+    assert _put(client, "d_0", _doc(9), a, base=_rev("d_0")).status_code == 200
+    rest, cursor = [], first["next_cursor"]
+    flags = []
+    while cursor:
+        page = _candidates(client, a, limit=2, cursor=cursor)
+        rest += [i["doc_id"] for i in page["items"]]
+        flags.append(page["truncated"])
+        cursor = page["next_cursor"]
+    assert "d_0" not in rest  # 确实被漏了——所以必须标记
+    assert flags and all(flags), "目录变了却没标 truncated，前端会以为扫描是完整的"

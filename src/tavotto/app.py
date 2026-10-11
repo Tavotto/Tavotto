@@ -9881,14 +9881,23 @@ def _candidate_entries() -> tuple[list[tuple[int, str, int, Path]], bool]:
     return rows, truncated
 
 
-def _encode_cursor(row: tuple[int, str, int, Path]) -> str:
+def _listing_fingerprint(rows: list[tuple[int, str, int, Path]]) -> str:
+    """目录列表（名字 + mtime + 大小）的指纹。游标带着第一页的指纹，后面的页重算：对不上 = 翻页期间有槽位被保存
+    / 新建 / 删除，按 mtime 排的顺序已经变了，某一行可能从没翻到的位置跳到游标前面被漏掉。"""
+    h = hashlib.sha1()
+    for mtime_ns, name, size, _path in rows:
+        h.update(f"{name}\0{mtime_ns}\0{size}\n".encode())
+    return h.hexdigest()[:16]
+
+
+def _encode_cursor(row: tuple[int, str, int, Path], fingerprint: str) -> str:
     import base64
 
-    raw = json.dumps([row[0], row[1]]).encode("utf-8")
+    raw = json.dumps([row[0], row[1], fingerprint]).encode("utf-8")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _decode_cursor(text: str) -> tuple[int, str] | None:
+def _decode_cursor(text: str) -> tuple[int, str, str] | None:
     import base64
 
     try:
@@ -9897,12 +9906,13 @@ def _decode_cursor(text: str) -> tuple[int, str] | None:
         return None
     if (
         isinstance(data, list)
-        and len(data) == 2
+        and len(data) == 3
         and isinstance(data[0], int)
         and not isinstance(data[0], bool)
         and isinstance(data[1], str)
+        and isinstance(data[2], str)
     ):
-        return data[0], data[1]
+        return data[0], data[1], data[2]
     return None
 
 
@@ -10052,7 +10062,11 @@ def api_layout_session_candidates():
         rows, truncated = _candidate_entries()
     except OSError:
         return jsonify({"error": "本机排版目录此刻读不出来", "code": "candidates_unavailable"}), 503
+    fingerprint = after[2] if after is not None else _listing_fingerprint(rows)
     if after is not None:
+        if _listing_fingerprint(rows) != after[2]:
+            # 翻页期间目录变了：不保证没漏行，调用方按「不完整」处理（仍返回这一页）
+            truncated = True
         rows = [r for r in rows if (-r[0], r[1]) > (-after[0], after[1])]
     items: list[dict] = []
     consumed = 0
@@ -10068,7 +10082,11 @@ def api_layout_session_candidates():
             return jsonify({"error": "本机排版此刻读不出来", "code": "candidates_unavailable"}), 503
         if item is not None:
             items.append(item)
-    next_cursor = _encode_cursor(rows[consumed - 1]) if consumed < len(rows) and consumed else None
+    next_cursor = (
+        _encode_cursor(rows[consumed - 1], fingerprint)
+        if consumed < len(rows) and consumed
+        else None
+    )
     resp = jsonify(
         {"items": items, "next_cursor": next_cursor, "index": index, "truncated": truncated}
     )
