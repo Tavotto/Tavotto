@@ -9561,9 +9561,12 @@ def api_layout_session_put_last():
     try:
         # 验槽位与记 last 在槽位的文档锁里（锁顺序：文档锁 → 会话锁）：验完到记完之间清理删不掉它
         with _document_lock(slot):
-            before = _slot_signature(slot)
-            slot_ok, revision = _slot_recoverable(slot)
-            sig = _slot_signature(slot)
+            # 碰文件系统的路径一律取自目录列表（`_file_named`），不拿请求里的 doc_id 拼（CodeQL
+            # py/path-injection）；`slot` 只当锁的键用
+            found = _file_named(AUTOSAVE_DIR, doc_id)
+            before = _slot_signature(found) if found is not None else None
+            slot_ok, revision = _slot_recoverable(found) if found is not None else (False, None)
+            sig = _slot_signature(found) if found is not None else None
             slot_ok = slot_ok and sig is not None and sig == before
             # 文档锁只在本进程内；别的进程（共用数据目录）可能在验证之后、发布之前删掉槽位。
             # 发布时在跨进程会话锁里再 stat 一眼（删除同样在会话锁里），变了就只记 pending
@@ -9573,7 +9576,9 @@ def api_layout_session_put_last():
                 name,
                 slot_ok=slot_ok,
                 current_revision=revision,
-                slot_check=(lambda: _slot_signature(slot) == sig) if slot_ok else None,
+                slot_check=(lambda: _slot_signature(found) == sig)
+                if slot_ok and found is not None
+                else None,
             )
     except engine_layoutsession.ForeignLayoutError:
         # 这份排版的槽位记在别的项目名下（#715 验收 P1）：不记成这个项目「上次开着的」。
