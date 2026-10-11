@@ -847,3 +847,44 @@ describe('Codex P1：durable 后备 / 发现翻页 / 发现不可用', () => {
     expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'empty' })
   })
 })
+
+describe('Codex P1 复查：被扣下的 durable last 不能被越过', () => {
+  /** last=B 被计划扣下（本机索引说它是别的项目的，/owner 又问不到）；prev=A 可读 */
+  function seedWithheldLast(withPending: boolean) {
+    be.putSlot('d_a', savedProject('Older A'), 'p_a')
+    be.session('p_a').prev = { doc_id: 'd_a', name: 'Older A', at: 3 }
+    be.putSlot('d_b', savedProject('Newest B'), 'p_a')
+    be.setLast('p_a', 'd_b', 'Newest B')
+    if (withPending) be.setPending('p_a', 'd_c', '新打开的') // 纯打开意图，没有正文
+    localStorage.setItem(
+      'tavotto.docIndex',
+      JSON.stringify([{ id: 'd_b', name: 'Newest B', savedAt: 1, objects: 1, projectId: 'p_other' }]),
+    )
+    be.state.fail.owner = 500
+  }
+
+  it.each([
+    ['纯意图正文缺失', true],
+    ['没有意图、计划的首选落到了 prev', false],
+  ])('%s：last 被扣下 → needs_user 指着 last，prev 只作出口，绝不自动装 prev', async (_n, withPending) => {
+    seedWithheldLast(withPending)
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_a')
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'unavailable', ref: { id: 'd_b' } })
+    expect(ds(app).restoreIssue!.alternatives.map((a) => a.id)).toEqual(['d_a'])
+    expect(app.doc.isDocumentPlaceholder()).toBe(true)
+    expect(be.writes()).toEqual([])
+    // 用户明确选 prev 才打开它
+    expect(await app.restore.openAlternative('d_a')).toMatchObject({ kind: 'restored', id: 'd_a' })
+  })
+
+  it('对照：没有被扣下的 last 时，纯意图缺失照常静默退到可读的 durable', async () => {
+    be.putSlot('d_a', savedProject('Older A'), 'p_a')
+    be.setLast('p_a', 'd_a', 'Older A')
+    be.setPending('p_a', 'd_c', '新打开的')
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(ds(app).documentId).toBe('d_a')
+  })
+})

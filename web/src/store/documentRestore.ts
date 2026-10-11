@@ -266,6 +266,11 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   const degraded = plan.session.kind === 'unavailable'
   const pref = plan.preferred ?? (degraded ? (plan.fallbacks[0] ?? null) : null)
   const rest = plan.preferred ? plan.fallbacks : degraded ? plan.fallbacks.slice(1) : plan.fallbacks
+  // 后端的 durable last 在计划里被**扣下**了（归属问不到 / 本机索引说是别人的）：它仍是「上次开着的」，
+  // 不能越过它去装更旧的（prev / 本机线索）——那就是悄悄换旧稿。只有首选本身是比它更新的纯打开意图且读得到时才装首选
+  const withheldLast = plan.withheld.find((w) => w.candidate.sources.includes('backend_last')) ?? null
+  const blockedByLast = (): Promise<RestoreOutcome> => withheldLastIssue(token, withheldLast!, [...(pref ? [pref] : []), ...rest])
+  if (pref && withheldLast && !pref.pendingIntent && !pref.sources.includes('backend_last')) return blockedByLast()
   if (pref) {
     const probe = await probeWithRetry(token, pref.id)
     if (!probe) return { kind: 'superseded' }
@@ -276,6 +281,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       // 带 backend_last / backend_prev 来源的不算意图（计划里 `pendingIntent` 只给纯意图）：那些缺了就是故障
       // 后备**只认第一个 durable**（有 last 用 last，没有 last 才用 prev）。last 存在却读不出来时不能越过它
       // 悄悄装 prev——那才是「换旧稿」；它失败 = 故障：needs_user，ref 指它，其余已验证的候选（含 prev）留作出口
+      if (withheldLast && !rest.some((c) => c.sources.includes('backend_last'))) return blockedByLast()
       const durable =
         rest.find((c) => c.sources.includes('backend_last')) ?? rest.find((c) => c.sources.includes('backend_prev'))
       if (durable) {
@@ -434,6 +440,19 @@ async function discoverAll(
     cursor = res.next_cursor
   }
   return { items, complete: false, index }
+}
+
+/** 被扣下的 durable last 挡住了回退：给出口，不替用户越过它。其余已验证的候选（含 prev）只作为可选项 */
+async function withheldLastIssue(
+  token: RestoreToken,
+  w: { candidate: RestoreCandidate; reason: 'foreign' | 'owner_unknown' | 'owner_unavailable' },
+  others: RestoreCandidate[],
+): Promise<RestoreOutcome> {
+  const alts = await verifiedAlternatives(token, others, w.candidate.id)
+  if (!alts) return { kind: 'superseded' }
+  // 问不到归属 = 暂时的，可重试；确知别人的 / 归属不明 = 这个项目打不开它（按「找不到」说，出口是别的或继续新建）
+  const kind: RestoreIssueKind = w.reason === 'owner_unavailable' ? 'unavailable' : 'missing'
+  return needsUser(token, kind, { id: w.candidate.id, name: w.candidate.name }, alts)
 }
 
 function finishEmpty(token: RestoreToken): RestoreOutcome {
