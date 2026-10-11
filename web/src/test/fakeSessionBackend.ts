@@ -11,6 +11,7 @@ export interface Ref {
   doc_id: string
   name: string
   at: number
+  revision?: string
 }
 
 export interface Slot {
@@ -230,9 +231,9 @@ export function createFakeBackend() {
       return slot
     },
     /** 摆一条 durable last */
-    setLast(pj: string, id: string, name = id): Ref {
+    setLast(pj: string, id: string, name = id, revision?: string): Ref {
       b.clock += 1
-      const ref = { doc_id: id, name, at: b.clock }
+      const ref: Ref = { doc_id: id, name, at: b.clock, ...(revision ? { revision } : {}) }
       session(pj).last = ref
       return ref
     },

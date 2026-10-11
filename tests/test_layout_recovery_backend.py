@@ -966,3 +966,23 @@ def test_f2_stale_owner_never_lets_another_project_claim_the_slot(client, tmp_pa
     for pj in (f, g):
         assert [i["doc_id"] for i in _candidates(client, pj, "unknown")["items"]] == ["d_x"]
         assert _candidates(client, pj, "project")["items"] == []
+
+
+def test_pointers_carry_the_revision_they_were_validated_against(client, tmp_path):
+    """Codex P1:F 读到指针后 G 又保存了同一个槽位——指针必须带校验时的 revision，前端取正文时比对。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    r1 = _put(client, "d_x", _doc(1), f).get_json()["revision"]
+    _put_last(client, "d_x", "X", pj=f)
+    _put_last(client, "d_y", "Y", pj=f)  # pending，槽位还不在
+    view = _get_session(client, f)
+    assert view["last"]["revision"] == r1 == _rev("d_x")
+    assert view["pending"]["revision"] is None and view["prev"] is None
+    # G 带着合法 base_revision 保存同一个槽位：F 再读，要么是新 revision，要么被过滤，绝不是旧 revision 配新正文
+    r2 = _put(client, "d_x", _doc(2, "G 的"), g, base=r1).get_json()["revision"]
+    after = _get_session(client, f)["last"]
+    assert after is None or after["revision"] == r2 == _rev("d_x")
+    assert layoutsession.view_for(layoutsession.project_key(f["figures_dir"]))["last"] is None or (
+        "revision"
+        not in layoutsession.view_for(layoutsession.project_key(f["figures_dir"]))["last"]
+    )

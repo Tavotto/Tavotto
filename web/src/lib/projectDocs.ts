@@ -272,6 +272,11 @@ export interface RestoreCandidate {
   ownership: 'this' | 'unknown' | 'other'
   ownershipEvidence?: OwnershipEvidence
   /**
+   * 后端记下 `backend_last` / `backend_prev` 指针时槽位正文的 revision；调用方拿它对照探测到的正文
+   * （对不上 = 指针之后正文变过）。没有（旧后端 / 其它来源）就缺席。
+   */
+  expectedRevision?: string
+  /**
    * 本机索引陈旧地记着别的项目，而后端有 `owners` 证据（已核对 revision）证明它属于当前项目：
    * `confirmRestored` 在候选被接受之后才把本机索引纠正过来。
    */
@@ -314,6 +319,7 @@ interface Entry {
   name: string
   sources: CandidateSource[]
   pendingIntent: boolean
+  expectedRevision?: string
 }
 
 type Verdict =
@@ -382,16 +388,17 @@ export async function planRestore(
   const bpending = ok?.pending ?? null
 
   const entries = new Map<string, Entry>()
-  const add = (id: string, name: string, source: CandidateSource, pendingIntent = false) => {
+  const add = (id: string, name: string, source: CandidateSource, pendingIntent = false, revision?: string | null) => {
     const hit = entries.get(id)
     if (hit) {
+      if (revision && !hit.expectedRevision) hit.expectedRevision = revision
       if (!hit.sources.includes(source)) hit.sources.push(source)
       if (!hit.name && name) hit.name = name
       hit.pendingIntent ||= pendingIntent
-    } else entries.set(id, { id, name, sources: [source], pendingIntent })
+    } else entries.set(id, { id, name, sources: [source], pendingIntent, ...(revision ? { expectedRevision: revision } : {}) })
   }
-  if (last) add(last.doc_id, last.name, 'backend_last')
-  if (prev) add(prev.doc_id, prev.name, 'backend_prev')
+  if (last) add(last.doc_id, last.name, 'backend_last', false, last.revision)
+  if (prev) add(prev.doc_id, prev.name, 'backend_prev', false, prev.revision)
   if (bpending) add(bpending.doc_id, bpending.name, 'backend_pending', true)
   if (cache) add(cache.id, cache.name, 'local_cache', marker !== null)
   if (clues.globalCurrent) add(clues.globalCurrent, '', 'global_current')
@@ -430,6 +437,7 @@ export async function planRestore(
       sources: e.sources,
       ownership: v.ok ? 'this' : v.reason === 'foreign' ? 'other' : 'unknown',
       ...(intentOnly ? { pendingIntent: true } : {}),
+      ...(e.expectedRevision ? { expectedRevision: e.expectedRevision } : {}),
     }
     if (v.ok) {
       claimable.push({

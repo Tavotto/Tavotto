@@ -1042,6 +1042,61 @@ describe('A32 B 只有有效本机正文，后端保存失败，durable last 仍
   })
 })
 
+/* ================================ 指针 revision（Codex P1 r4240627652） ================================ */
+
+describe('指针带 revision：读正文时它已被别的项目覆盖', () => {
+  const overwrite = async (pj: string, body: ProjectDocument) => {
+    const res = await fetch('/api/autosave/d_x', {
+      method: 'PUT',
+      headers: { 'X-Tavotto-Project': pj, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    expect(res.status).toBe(200)
+  }
+
+  it('F 的 last=d_x(R1)，正文 GET 在路上时 G 保存了 d_x(R2，owner=G)：F 不得安装 G 的正文，needs_user 且零写入', async () => {
+    seedSaved('d_x', 'p_a')
+    expect(be.lastOf('p_a')?.revision).toBeTruthy()
+    const gBody = savedProject('G 的排版')
+    gBody.canvases[0].objects = [text('t_g', 'G only', 1, 1)]
+    const app = await boot()
+    const gate = be.hold(isAutosaveGet('d_x'))
+    const restoring = app.doc.restoreSession()
+    await gate.reached
+    await overwrite('p_b', gBody)
+    expect(be.owners.get('d_x')).toBe('p_b')
+    const gBytes = be.slotBytes('d_x')
+    gate.release()
+    await restoring
+    await settle()
+    const ids = currentShape(app).canvases.flatMap((c) => c.objects.map((o) => o.id))
+    expect(ids, 'F 安装了 G 的正文').not.toContain('t_g')
+    expect(app.doc.useDocumentStore.getState().documentId).not.toBe('d_x')
+    expect(failureSignal(app), '静默空白').not.toBeNull()
+    expect(be.slotBytes('d_x')).toBe(gBytes)
+    expect(be.owners.get('d_x')).toBe('p_b')
+    expect(autosavePuts().filter((r) => r.pj === 'p_a'), 'F 往 d_x 写了东西').toHaveLength(0)
+    expect(be.lastOf('p_a')?.doc_id).toBe('d_x')
+  })
+
+  it('对照：同一个项目的另一个标签页把 d_x 存成 R2，/owner 回 this+verified → 照常安装新正文', async () => {
+    seedSaved('d_x', 'p_a')
+    const newer = savedProject('F 另一个标签页保存的')
+    newer.canvases[0].objects = [text('t_f2', 'F newer', 2, 2)]
+    const app = await boot()
+    const gate = be.hold(isAutosaveGet('d_x'))
+    const restoring = app.doc.restoreSession()
+    await gate.reached
+    await overwrite('p_a', newer)
+    gate.release()
+    expect(await restoring).toBe(true)
+    await settle()
+    const shape = currentShape(app)
+    expect(shape.documentId).toBe('d_x')
+    expect(shape.canvases[0].objects.map((o) => o.id)).toEqual(['t_f2'])
+  })
+})
+
 /* ============================ 修复后新增状态（不计红证据） ============================ */
 
 describe('修复后新增状态', () => {

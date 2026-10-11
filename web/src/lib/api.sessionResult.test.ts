@@ -32,17 +32,18 @@ describe('fetchLayoutSessionResult', () => {
   it('ok：last / prev / pending / index 原样带出，缺的字段是 null / ok（旧后端只发 last）', async () => {
     stub(() =>
       reply({
-        last: { doc_id: 'd_a', name: 'A', at: 5 },
-        prev: { doc_id: 'd_p', name: 'P', at: 3 },
+        last: { doc_id: 'd_a', name: 'A', at: 5, revision: 'rev-a' },
+        prev: { doc_id: 'd_p', name: 'P', at: 3, revision: 7 },
         pending: { doc_id: 'd_n', name: 'N', at: 6 },
         index: 'recovered',
       }),
     )
+    // 指针带 revision（后端记下指针时正文的 hash）；缺的 / 不是字符串的是 null，不编一个
     expect(await fetchLayoutSessionResult('p1')).toEqual({
       kind: 'ok',
-      last: { doc_id: 'd_a', name: 'A', at: 5 },
-      prev: { doc_id: 'd_p', name: 'P', at: 3 },
-      pending: { doc_id: 'd_n', name: 'N', at: 6 },
+      last: { doc_id: 'd_a', name: 'A', at: 5, revision: 'rev-a' },
+      prev: { doc_id: 'd_p', name: 'P', at: 3, revision: null },
+      pending: { doc_id: 'd_n', name: 'N', at: 6, revision: null },
       index: 'recovered',
     })
     stub(() => reply({ last: null }))
@@ -64,7 +65,7 @@ describe('fetchLayoutSessionResult', () => {
 
   it('旧薄适配 fetchLayoutSession：ok → { last }，其余 → undefined', async () => {
     stub(() => reply({ last: { doc_id: 'd_a', name: 'A', at: 5 } }))
-    expect(await fetchLayoutSession('p1')).toEqual({ last: { doc_id: 'd_a', name: 'A', at: 5 } })
+    expect(await fetchLayoutSession('p1')).toEqual({ last: { doc_id: 'd_a', name: 'A', at: 5, revision: null } })
     stub(() => reply({}, 500))
     expect(await fetchLayoutSession('p1')).toBeUndefined()
     stub(() => reply({}, 404))

@@ -888,3 +888,67 @@ describe('Codex P1 复查：被扣下的 durable last 不能被越过', () => {
     expect(ds(app).documentId).toBe('d_a')
   })
 })
+
+describe('Codex P1：指针修订号与读到的正文对不上（共用 docId 的别的项目在两次读之间存过）', () => {
+  /** 计划里首选带上读指针那一刻的正文修订号（FE-P 的 `expectedRevision`；这里在计划出口注入，验证 FE-R 这一半） */
+  async function bootWithExpected(expected: string | null) {
+    vi.resetModules()
+    vi.doMock('@/lib/projectDocs', async (importOriginal) => {
+      const orig = await importOriginal<typeof import('@/lib/projectDocs')>()
+      return {
+        ...orig,
+        planRestore: async (...args: Parameters<typeof orig.planRestore>) => {
+          const plan = await orig.planRestore(...args)
+          if (plan.preferred) (plan.preferred as { expectedRevision?: string | null }).expectedRevision = expected
+          return plan
+        },
+      }
+    })
+    return boot()
+  }
+  afterEach(() => vi.doUnmock('@/lib/projectDocs'))
+
+  /** 读完 session 指针、读正文之前，p_other 把同一个 docId 存成了自己的正文 */
+  async function raceThenRestore(app: App, ownerAnswer: 'other' | 'this' | 'this_unverified' | 'unknown' | 'fail') {
+    const hold = gate()
+    be.state.hold.autosaveGet = hold.promise
+    if (ownerAnswer === 'fail') be.state.fail.owner = 500
+    else if (ownerAnswer === 'this_unverified') be.state.ownerAnswers.set('p_a|d_saved', { owner: 'this', evidence: 'owners', verified: false })
+    else be.state.ownerAnswers.set('p_a|d_saved', { owner: ownerAnswer, evidence: ownerAnswer === 'unknown' ? null : 'owners', verified: ownerAnswer === 'this' })
+    const restoring = app.doc.restoreSession()
+    await reached(() => be.state.calls.includes('GET autosave d_saved'))
+    be.putSlot('d_saved', savedProject('别的项目的正文', [panel({ id: 'panel_other' })]), 'p_other')
+    hold.release()
+    return restoring
+  }
+
+  it.each([
+    ['other', 'missing'],
+    ['unknown', 'unavailable'],
+    ['this_unverified', 'unavailable'],
+    ['fail', 'unavailable'],
+  ] as const)('归属复核 %s → needs_user{%s}，别的项目的正文不装进来', async (answer, kind) => {
+    seedSavedLast()
+    const app = await bootWithExpected('rev-when-pointer-read')
+    expect(await raceThenRestore(app, answer)).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_saved')
+    expect(objectIds(app)).toEqual([])
+    expect(ds(app).restoreIssue).toMatchObject({ kind, ref: { id: 'd_saved' } })
+    expect(be.writes()).toEqual([])
+  })
+
+  it('归属复核 {this, verified} → 照装（修订号变了只是自己又存了一次）', async () => {
+    seedSavedLast()
+    const app = await bootWithExpected('rev-when-pointer-read')
+    expect(await raceThenRestore(app, 'this')).toBe(true)
+    expect(ds(app).documentId).toBe('d_saved')
+  })
+
+  it('没有期望修订号（旧后端 / 本机线索）→ 照旧：不复核、直接装', async () => {
+    seedSavedLast()
+    const app = await bootWithExpected(null)
+    be.state.ownerAnswers.set('p_a|d_saved', { owner: 'other', evidence: 'owners', verified: true })
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(be.state.calls.some((c) => c.startsWith('GET owner'))).toBe(false)
+  })
+})

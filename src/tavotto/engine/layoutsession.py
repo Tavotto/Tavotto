@@ -545,6 +545,7 @@ def view_for(key: str | None, rev_of: Callable[[str], str | None] | None = None)
     每个指针指着的槽位**确知属于别的项目**时回 `None`（修复之前的版本可能已经把别的项目的排版
     记到这个项目名下，#715 验收 P1）；归属待核对的（`owner_is_stale`）不算「确知」，照回。
     `rev_of(doc_id)` 回槽位当前 revision，在会话锁**外**调用（不在锁内读正文）；不给就不核新鲜度。
+    给了 `rev_of` 时每个指针多一个 `revision`：校验用的那份快照的 revision，见上。
     """
     with _LOCK:
         state, status = _read()
@@ -566,7 +567,14 @@ def view_for(key: str | None, rev_of: Callable[[str], str | None] | None = None)
         unusable = owner_conflict(state, entry["doc_id"], key) or owner_is_stale(
             state, entry["doc_id"], current
         )
-        out[name] = None if unusable else dict(entry)
+        if unusable:
+            out[name] = None
+        else:
+            out[name] = dict(entry)
+            if rev_of is not None:
+                # 校验归属时读到的那一份正文的 revision（槽位不在 / 读不出为 None）。前端取正文时
+                # 必须比对它：校验之后别的项目可能又保存了同一个槽位，那份内容没被这次校验认过
+                out[name]["revision"] = current
     out["index"] = status
     return out
 

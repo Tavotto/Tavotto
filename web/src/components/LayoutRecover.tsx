@@ -16,8 +16,8 @@ import {
 } from '@/lib/recoveryCandidates'
 import { currentProjectId } from '@/lib/session'
 import { cn } from '@/lib/utils'
-import { openDocumentAs, openRecentDocument } from '@/store/actions'
-import { useDocumentStore } from '@/store/documentStore'
+import { openDocumentAs } from '@/store/actions'
+import { acceptProbe, probeDocument, useDocumentStore } from '@/store/documentStore'
 import { captureSaveContext, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
 import { formatRelativeTime, listJoin } from '@/i18n/format'
@@ -100,14 +100,37 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     }
   }, [open, load])
 
+  /**
+   * 按原 id 打开一份自动保存：**入口取一次上下文**（`saveContext.ts`），读完回来先核对项目 / 排版还是同一个，
+   * 不是就不装、状态条说一句——否则读的途中切了项目，A 的排版会被装进 B 并按 B 的名义自动保存。
+   */
+  const openSafely = async (id: string, name: string): Promise<boolean> => {
+    const ctx = captureSaveContext()
+    const probe = await probeDocument(id, ctx.pj)
+    if (!stillCurrent(ctx)) {
+      useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
+      return false
+    }
+    if (!probe.doc) {
+      useUiStore
+        .getState()
+        .setStatus(msg(probe.kind === 'too_new' ? 'status.recentTooNew' : 'status.recentMissing', undefined, 'workspace'), 'error')
+      return false
+    }
+    const notice = acceptProbe(probe, ctx.pj)
+    if (!(await openDocumentAs(probe.doc, id))) return false
+    // 未决的恢复副本跟着这份文档走：switchDocument 刚把待裁决事项清空了
+    if (notice) useDocumentStore.setState({ docNotice: notice })
+    return useDocumentStore.getState().documentId === id
+  }
+
   /** 点「这个项目的本机排版」里的一行：按原 id 打开 */
   const openOwn = async (it: RecoveryCandidateItem) => {
     if (inFlight.current) return
     inFlight.current = true
     setBusy(true)
     try {
-      await openRecentDocument(it.doc_id)
-      if (useDocumentStore.getState().documentId === it.doc_id) onClose()
+      if (await openSafely(it.doc_id, it.name)) onClose()
     } finally {
       inFlight.current = false
       setBusy(false)
@@ -142,10 +165,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       const r = await recoverCopy(it, {
         pj: ctx.pj,
         stillCurrent: () => stillCurrent(ctx),
-        openExisting: async (id) => {
-          await openRecentDocument(id)
-          return useDocumentStore.getState().documentId === id
-        },
+        openExisting: (id) => openSafely(id, it.name),
         install: openDocumentAs,
       })
       if (r.kind === 'opened') {

@@ -56,13 +56,20 @@ const runtimeDoc = (name: string, extra: Record<string, unknown> = {}) => {
 }
 
 let root: Root
+/** 在途的 fetch 数：`flush` 靠它知道「请求都落地了」，不靠固定时长的 sleep（负载高时固定时长不够） */
+let inFlight = 0
 
 async function mount(intent: 'load' | 'save' = 'load') {
   globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
-    if (new URL(String(url), 'http://x').pathname === '/api/layouts') {
-      return new Response(JSON.stringify({ layouts: [], modified: {} }), { status: 200 })
+    inFlight += 1
+    try {
+      if (new URL(String(url), 'http://x').pathname === '/api/layouts') {
+        return new Response(JSON.stringify({ layouts: [], modified: {} }), { status: 200 })
+      }
+      return await backend.fetch(url as RequestInfo, init)
+    } finally {
+      inFlight -= 1
     }
-    return backend.fetch(url as RequestInfo, init)
   }) as typeof fetch
   useUiStore.setState({ layoutOpen: true, layoutIntent: intent })
   const el = document.createElement('div')
@@ -74,11 +81,24 @@ async function mount(intent: 'load' | 'save' = 'load') {
   await flush()
 }
 
-/** 放干净在途的 fetch / 微任务 */
+/**
+ * 等到没有在途请求、且连续几轮 React 更新都没有再发起新请求。被 `hold` 扣住的请求算在途，
+ * 所以要先放行再 flush（需要扣住时的断言用 `until` 等具体条件）。
+ */
 async function flush() {
-  for (let i = 0; i < 6; i++) {
+  for (let quiet = 0; quiet < 4; ) {
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 4))
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    quiet = inFlight === 0 ? quiet + 1 : 0
+  }
+}
+
+/** 等某个条件成立（事件驱动轮询，有界；超时就让用例带着当时的状态失败） */
+async function until(pred: () => boolean) {
+  for (let i = 0; i < 400 && !pred(); i++) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 5))
     })
   }
 }
@@ -95,6 +115,7 @@ async function expandOther() {
     det.dispatchEvent(new Event('toggle'))
   })
   await flush()
+  await until(() => !dialog().textContent?.includes('正在查找'))
 }
 
 beforeEach(() => {
@@ -103,6 +124,8 @@ beforeEach(() => {
   setCurrentProjectId(PJ)
   useProjectStore.setState({ project: { open: true, id: PJ, document_dir: '/figs/a/tavottofile' } })
   useDocumentStore.setState({ documentId: 'd_current' })
+  useUiStore.setState({ status: null })
+  inFlight = 0
 })
 
 afterEach(async () => {
@@ -307,6 +330,44 @@ describe('恢复副本（A15 / A30）', () => {
     const copies = [...backend.state.slots.keys()].filter((k) => k.startsWith('d_rc_'))
     expect(copies).toHaveLength(1)
     expect(backend.puts().filter((c) => c.startsWith('PUT autosave d_rc_'))).toHaveLength(1)
+  })
+})
+
+describe('读的途中切了项目：不把 A 的排版装进 B（Codex P1）', () => {
+  it('本项目那组：读正文被扣住时切到 B，放行后什么都不装、没有对 B 的 autosave 写，状态条说没打开', async () => {
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    await mount()
+    let release!: () => void
+    backend.state.hold.autosaveGet = new Promise<void>((r) => (release = r))
+    await act(async () => rows('project')[0].click())
+    setCurrentProjectId('p_b') // 对话框还开着时用户把项目切走了
+    backend.state.calls.length = 0
+    release()
+    await until(() => useUiStore.getState().status !== null)
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(backend.state.calls.filter((c) => c.startsWith('PUT autosave'))).toEqual([])
+    expect(useUiStore.getState().status).toMatchObject({ key: 'layout.openSkipped' })
+  })
+
+  it('恢复副本：重读源正文被扣住时切到 B，放行后不装副本、不写', async () => {
+    backend.putSlot('d_old', runtimeDoc('旧排版'))
+    backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown', name: '旧排版' })
+    await mount()
+    await expandOther()
+    await act(async () => rows('unknown')[0].click())
+    let release!: () => void
+    backend.state.hold.autosaveGet = new Promise<void>((r) => (release = r))
+    await until(() => dialog().querySelector('[data-recover-copy]') !== null)
+    await act(async () => dialog().querySelector<HTMLButtonElement>('[data-recover-copy]')!.click())
+    setCurrentProjectId('p_b')
+    backend.state.calls.length = 0
+    release()
+    await until(() => !rows('unknown')[0]?.disabled) // 确认流程走完（busy 复位）
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(backend.state.calls.filter((c) => c.startsWith('PUT autosave'))).toEqual([])
   })
 })
 

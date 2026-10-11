@@ -47,7 +47,7 @@ interface Failure {
   left: number
 }
 
-type LastRef = { doc_id: string; name: string; at: number }
+type LastRef = { doc_id: string; name: string; at: number; revision?: string | null }
 
 class FakeBackend {
   slots = new Map<string, string>()
@@ -119,7 +119,7 @@ class FakeBackend {
   }
 
   setLast(pj: string, id: string, name: string): LastRef {
-    const ref = { doc_id: id, name, at: ++this.clock }
+    const ref = { doc_id: id, name, at: ++this.clock, revision: this.revs.get(id) ?? null }
     this.lastByPj.set(pj, ref)
     return ref
   }
@@ -232,12 +232,12 @@ class FakeBackend {
           return json({ ok: true })
         }
       } else {
-        const raw = this.slots.get(id)
-        if (raw === undefined) response = () => json({}, 404)
-        else if (this.corrupt.has(id)) response = () => json({ error: 'bad', code: 'invalid_document' }, 400)
-        else {
-          const rev = this.revs.get(id) ?? 'r0'
-          response = () => new Response(raw, { status: 200, headers: { 'X-Tavotto-Revision': rev } })
+        // 正文读取在 gate 放行之后才定（读的是此刻磁盘上的那一份）：截住期间别的项目覆盖了它，这里读到的就是新的
+        response = () => {
+          const raw = this.slots.get(id)
+          if (raw === undefined) return json({}, 404)
+          if (this.corrupt.has(id)) return json({ error: 'bad', code: 'invalid_document' }, 400)
+          return new Response(raw, { status: 200, headers: { 'X-Tavotto-Revision': this.revs.get(id) ?? 'r0' } })
         }
       }
     } else if (!response && u.pathname.startsWith('/api/layout-session')) {
@@ -310,7 +310,7 @@ class FakeBackend {
   private promote(pj: string, id: string, name: string): LastRef {
     const old = this.lastByPj.get(pj)
     if (old && old.doc_id !== id) this.prevByPj.set(pj, old)
-    const ref = { doc_id: id, name, at: ++this.clock }
+    const ref = { doc_id: id, name, at: ++this.clock, revision: this.revs.get(id) ?? null }
     this.lastByPj.set(pj, ref)
     if (this.pendingByPj.get(pj)?.doc_id === id) this.pendingByPj.delete(pj)
     return ref

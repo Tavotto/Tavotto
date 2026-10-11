@@ -1021,6 +1021,15 @@ export interface LayoutSessionLast {
   at: number
 }
 
+/**
+ * 读回来的指针（last / prev / pending）：多带一个 `revision`——后端记下这条指针时槽位正文的内容 hash。
+ * 恢复时拿它对照探测到的正文：对不上说明指针之后正文又被改过（或换成了别的文件），不当成同一份。
+ * 旧后端不发 = null（不知道，不拿来比）。
+ */
+export interface SessionPointer extends LayoutSessionLast {
+  revision: string | null
+}
+
 /** 后端会话文件的读取状况：`ok` 正常、`missing` 首次空状态、`degraded` 读不了 / 坏了 / 未来格式、`recovered` 从备份回退 */
 export type SessionIndexStatus = 'ok' | 'missing' | 'degraded' | 'recovered'
 
@@ -1034,18 +1043,23 @@ export type SessionIndexStatus = 'ok' | 'missing' | 'degraded' | 'recovered'
 export type SessionFetch =
   | {
       kind: 'ok'
-      last: LayoutSessionLast | null
-      prev: LayoutSessionLast | null
-      pending: LayoutSessionLast | null
+      last: SessionPointer | null
+      prev: SessionPointer | null
+      pending: SessionPointer | null
       index: SessionIndexStatus
     }
   | { kind: 'unsupported' }
   | { kind: 'unavailable'; status: number | null }
 
-function parseSessionRef(v: unknown): LayoutSessionLast | null {
-  const r = v as Partial<LayoutSessionLast> | null | undefined
+function parseSessionRef(v: unknown): SessionPointer | null {
+  const r = v as (Partial<LayoutSessionLast> & { revision?: unknown }) | null | undefined
   if (!r || typeof r.doc_id !== 'string' || !r.doc_id) return null
-  return { doc_id: r.doc_id, name: typeof r.name === 'string' ? r.name : '', at: Number(r.at) || 0 }
+  return {
+    doc_id: r.doc_id,
+    name: typeof r.name === 'string' ? r.name : '',
+    at: Number(r.at) || 0,
+    revision: typeof r.revision === 'string' && r.revision ? r.revision : null,
+  }
 }
 
 const INDEX_STATUSES: readonly SessionIndexStatus[] = ['ok', 'missing', 'degraded', 'recovered']

@@ -211,8 +211,8 @@ def test_layout_session_endpoints_group_by_project(client, tmp_path):
     )
     got = client.get(f"/api/layout-session?pj={b['id']}").get_json()["last"]
     assert got["doc_id"] == "d_b" and got["name"] == "B"
-    # 回给前端的只有这三样，不带项目路径
-    assert set(got) == {"doc_id", "name", "at"}
+    # 回给前端的只有这几样（revision = 校验时的槽位正文），不带项目路径
+    assert set(got) == {"doc_id", "name", "at", "revision"}
     # 键是规范化后的项目路径（与 `_project_id` 同一份判断），不是短 id
     snap = layoutsession.snapshot()
     assert set(snap["projects"]) == {

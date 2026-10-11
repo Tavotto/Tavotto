@@ -54,7 +54,7 @@ import {
   type RestoreGate,
   type RestoreToken,
 } from '@/store/documentStore'
-import { fetchRecoveryCandidates, type RecoveryCandidateItem, type SessionIndexStatus } from '@/lib/api'
+import { fetchLayoutOwnerEvidence, fetchRecoveryCandidates, type RecoveryCandidateItem, type SessionIndexStatus } from '@/lib/api'
 import { isForeignDocument } from '@/lib/docOwnership'
 import { confirmRestored, planRestore, type CandidatePlan, type RestoreCandidate } from '@/lib/projectDocs'
 
@@ -195,6 +195,43 @@ function installProbe(
   return { kind: 'restored', id: probe.id }
 }
 
+/**
+ * 指针带着的正文修订号（`expectedRevision`，来自后端 last / prev）与探测读到的磁盘修订号对不上：
+ * 读指针和读正文之间，另一个共用同一 docId 的项目可能存过——这份正文不一定还是**我们的**。
+ * 不盲装：重新问一次归属，只有 `{owner:'this', verified:true}` 才装；`other` → 找不到（打不开别人的）；
+ * 问不到 / 不明 → 暂时没打开（可重试）。没有期望修订号（旧后端 / 本机线索）或读到的修订号为空 → 照旧。
+ */
+async function guardRevision(
+  token: RestoreToken,
+  cand: RestoreCandidate,
+  probe: ProbeResult,
+): Promise<RestoreOutcome | null> {
+  const expected = (cand as RestoreCandidate & { expectedRevision?: string | null }).expectedRevision
+  if (!expected || probe.from !== 'disk' || probe.disk.kind !== 'found') return null
+  const actual = probe.disk.revision
+  if (!actual || actual === expected) return null
+  const ev = await fetchLayoutOwnerEvidence(cand.id, token.pj)
+  if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
+  if (ev !== 'unsupported' && ev !== 'unavailable') {
+    if (ev.owner === 'this' && ev.verified) return null
+    if (ev.owner === 'other') return needsUser(token, 'missing', { id: cand.id, name: cand.name })
+  }
+  return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
+}
+
+/** 读到了就装——除非指针的修订号对不上（`guardRevision`） */
+async function installChecked(
+  token: RestoreToken,
+  probe: ProbeResult,
+  plan: CandidatePlan | null,
+  cand: RestoreCandidate,
+  reason: Reason,
+): Promise<RestoreOutcome> {
+  const bad = await guardRevision(token, cand, probe)
+  if (bad) return bad
+  return installProbe(token, probe, plan, cand.name, reason)
+}
+
 function needsUser(
   token: RestoreToken,
   kind: RestoreIssueKind,
@@ -274,7 +311,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   if (pref) {
     const probe = await probeWithRetry(token, pref.id)
     if (!probe) return { kind: 'superseded' }
-    if (probe.kind === 'found') return installProbe(token, probe, plan, pref.name, 'restored')
+    if (probe.kind === 'found') return installChecked(token, probe, plan, pref, 'restored')
     if (pref.pendingIntent && probe.kind === 'missing') {
       // 打开意图还没有任何正文（新文档在首次保存前就退出了）：没有东西可恢复，退回已持久的那份。
       // 这不是「悄悄换旧稿」——最后一次**可恢复**的就是它（last 只指向可恢复正文）。
@@ -287,7 +324,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       if (durable) {
         const p = await probeWithRetry(token, durable.id)
         if (!p) return { kind: 'superseded' }
-        if (p.kind === 'found') return installProbe(token, p, plan, durable.name, 'restored')
+        if (p.kind === 'found') return installChecked(token, p, plan, durable, 'restored')
         const alts = await verifiedAlternatives(token, rest, durable.id)
         if (!alts) return { kind: 'superseded' }
         return needsUser(
@@ -302,7 +339,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       for (const fb of rest) {
         const p = await probeWithRetry(token, fb.id)
         if (!p) return { kind: 'superseded' }
-        if (p.kind === 'found') return installProbe(token, p, plan, fb.name, 'restored')
+        if (p.kind === 'found') return installChecked(token, p, plan, fb, 'restored')
         failure ??= { kind: issueKindOf(p), ref: { id: fb.id, name: fb.name }, probe: p }
         if (p.kind === 'unavailable') break
       }
@@ -564,7 +601,7 @@ export async function openAlternative(id: string): Promise<RestoreOutcome> {
   armRestoreToken(token)
   const probe = await probeWithRetry(token, id)
   if (!probe) return { kind: 'superseded' }
-  if (probe.kind === 'found') return fitIfRestored(installProbe(token, probe, null, picked.name, 'explicit'))
+  if (probe.kind === 'found') return fitIfRestored(await installChecked(token, probe, null, picked, 'explicit'))
   return needsUser(
     token,
     issueKindOf(probe),

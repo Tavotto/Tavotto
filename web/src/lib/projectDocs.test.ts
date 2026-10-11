@@ -232,6 +232,21 @@ describe('待确认意图与 durable last（A09 / A32）', () => {
     expect(plan.fallbacks).toMatchObject([{ id: 'd_a', sources: ['backend_prev'] }])
   })
 
+  it('指针的 revision 带进候选的 expectedRevision（last / prev），没有就缺席；本机来源不编一个', async () => {
+    const docs = await fresh()
+    backend.setLast(PJ, 'd_p', 'P', 'rev-p')
+    backend.session(PJ).prev = { ...backend.session(PJ).last! }
+    backend.setLast(PJ, 'd_a', 'A', 'rev-a')
+    setCache({ id: 'd_c', name: 'C' })
+    const plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred).toMatchObject({ id: 'd_a', expectedRevision: 'rev-a' })
+    const byId = Object.fromEntries(plan.fallbacks.map((c) => [c.id, c]))
+    expect(byId.d_p.expectedRevision).toBe('rev-p')
+    expect(byId.d_c.expectedRevision).toBeUndefined()
+    backend.setLast(PJ, 'd_old', 'old') // 旧后端 / 没记 revision 的指针
+    expect((await docs.planRestore(PJ, { globalCurrent: null })).preferred?.expectedRevision).toBeUndefined()
+  })
+
   it('同一 docId 的多个来源合并，不重复出现', async () => {
     const docs = await fresh()
     backend.setLast(PJ, 'd_a', 'A')
