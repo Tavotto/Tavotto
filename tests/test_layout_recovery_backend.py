@@ -1212,6 +1212,24 @@ def test_tutorial_cleanup_intent_precedes_publishing_new_copy(client, monkeypatc
     assert not slot.exists() and not marker.exists()
 
 
+def test_tutorial_reset_completes_a_pending_cleanup_without_clearing_future_progress(client):
+    """发布后中断留下的标记由重置清掉，后续正常打开不能再次删除新进度。"""
+    copy = m.engine_tutorial.ensure_tutorial_copy()  # 模拟发布后、端点清理前退出
+    assert copy.created
+    marker = m.engine_tutorial.cleanup_pending_path()
+    doc_id = copy.metadata["document_id"]
+    slot = _slot(doc_id)
+    slot.parent.mkdir(parents=True, exist_ok=True)
+    slot.write_text(json.dumps(_doc(1, "旧教程排版")), encoding="utf-8")
+    assert marker.exists()
+    reset = client.post("/api/tutorial/reset", json={})
+    assert reset.status_code == 200 and not marker.exists() and not slot.exists()
+    slot.write_text(json.dumps(_doc(2, "新教程进度")), encoding="utf-8")
+    again = client.post("/api/tutorial/open", json={})
+    assert again.status_code == 200 and again.get_json()["created"] is False
+    assert slot.exists(), "已完成的清理意图不能在下次打开时再次删除用户进度"
+
+
 _SAVE_CHILD = r"""
 import json, os, sys, time
 sys.path.insert(0, sys.argv[1])

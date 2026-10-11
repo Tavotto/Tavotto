@@ -3481,6 +3481,8 @@ def api_tutorial_reset():
     try:
         try:
             cleared = _clear_tutorial_local_state(pid, meta, tp.path, strict=True)
+            # 先前的首次打开若留了清理意图，本次重置已清掉同一个固定 ID 槽位。
+            engine_tutorial.cleanup_pending_path().unlink(missing_ok=True)
         except OSError as os_exc:
             # 目录已换、项目还关着：任何漏出来的 I/O 错误都按「没清完」走恢复分支
             raise engine_tutorial.TutorialError(
