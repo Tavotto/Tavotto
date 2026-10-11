@@ -20,6 +20,7 @@
 反证见 PR 正文：在投影里加一行 `"origins": rec.get("origins")`，上面三类各自变红。
 """
 
+# ruff: noqa: F811 — 夹具从兄弟测试文件导入复用，参数名与导入名相同
 from __future__ import annotations
 
 import ast
@@ -371,7 +372,7 @@ def test_a_session_whose_plan_carries_origins_exports_no_name_through_the_task_s
     tmp_path,
     run_aware_pool,
     sessions,
-    monkeypatch,  # noqa: F811 — 夹具经 import 引入，参数同名是 pytest 的用法
+    monkeypatch,
 ):
     client = prep_client
     monkeypatch.setattr(deprepair, "preparation_offer", lambda root, script: _rich_offer())
