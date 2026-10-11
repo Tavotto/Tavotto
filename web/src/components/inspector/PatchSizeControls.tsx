@@ -11,6 +11,7 @@ import { clearOverride } from '@/store/actions'
 import { finishActiveGesture, registerGesture } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
 import { resizePatch } from '@/store/patchResizeAction'
+import { useDisplayedExactManifest } from '@/store/mountedSvgStore'
 import { Grid2 } from '../ui/Field'
 import { NumberField } from '../ui/Input'
 import { GroupHead } from './GroupHead'
@@ -21,6 +22,18 @@ import { ResetChip } from './controls/textRows'
  * 输入与拖数字都固定左上角；连续拖数字只改线框预览，结束后一次提交。
  */
 export function PatchSizeControls({ panel, element }: { panel: PanelObject; element: ManifestElement }) {
+  const { t } = useTranslation('inspector')
+  const manifest = useDisplayedExactManifest(panel)
+  // 列表只提供 gid：位图的配对清单可能是另一个实例，尺寸与锚点必须来自实际显示的那份。
+  const current = manifest?.elements.find((e) => e.gid === element.gid)
+  if (!current) {
+    // 换图时卸载输入器，同时取消尚未提交的数字拖动；样式编辑仍由父级保留。
+    return <p data-patch-size-syncing className="text-xs leading-relaxed text-ink-3">{t('element.alignSyncing')}</p>
+  }
+  return <ExactPatchSizeControls panel={panel} element={current} />
+}
+
+function ExactPatchSizeControls({ panel, element }: { panel: PanelObject; element: ManifestElement }) {
   const { t } = useTranslation('inspector')
   const [draft, setDraft] = useState<Rect4 | null>(null)
   const scrub = useRef<{
