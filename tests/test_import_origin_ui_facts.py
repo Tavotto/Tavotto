@@ -29,8 +29,16 @@ class TestConfirmableCount:
     def test_counts_only_origins_that_carry_a_prefill(self):
         facts = prepsession.origin_facts(
             _origins(
-                {"import_name": "lab_tools", "reason": "distribution_unresolved", "suggested_distribution": "lab-tools"},
-                {"import_name": "peaks", "reason": "distribution_unresolved", "suggested_distribution": "peaks"},
+                {
+                    "import_name": "lab_tools",
+                    "reason": "distribution_unresolved",
+                    "suggested_distribution": "lab-tools",
+                },
+                {
+                    "import_name": "peaks",
+                    "reason": "distribution_unresolved",
+                    "suggested_distribution": "peaks",
+                },
                 {"import_name": "cv2", "reason": "module_origin_ambiguous"},
             )
         )
@@ -49,7 +57,9 @@ class TestConfirmableCount:
                 {"import_name": "x", "reason": "unverified", "suggested_distribution": ""},
             )
         )
-        assert facts == {"origins": {"count": 2, "by_reason": {"module_origin_ambiguous": 1, "unverified": 1}}}
+        assert facts == {
+            "origins": {"count": 2, "by_reason": {"module_origin_ambiguous": 1, "unverified": 1}}
+        }
         assert "confirmable" not in facts["origins"]
 
     def test_a_reason_outside_the_closed_set_is_not_counted_even_with_a_prefill(self):
@@ -67,7 +77,13 @@ class TestConfirmableCount:
 
     def test_it_never_carries_names_or_the_prefill_text(self):
         facts = prepsession.origin_facts(
-            _origins({"import_name": "secret_lab_pkg", "reason": "distribution_unresolved", "suggested_distribution": "secret-lab-pkg"})
+            _origins(
+                {
+                    "import_name": "secret_lab_pkg",
+                    "reason": "distribution_unresolved",
+                    "suggested_distribution": "secret-lab-pkg",
+                }
+            )
         )
         assert "secret" not in repr(facts)
 
@@ -82,8 +98,12 @@ class TestConfirmableCount:
             stdlib=frozenset(),
             installed={},
         )
-        payload = depplan.plan(proj, "fig.py", facts=facts_, target_kind="project_venv").to_payload()
-        suggested = [o["import_name"] for o in payload["origins"] if o.get("suggested_distribution")]
+        payload = depplan.plan(
+            proj, "fig.py", facts=facts_, target_kind="project_venv"
+        ).to_payload()
+        suggested = [
+            o["import_name"] for o in payload["origins"] if o.get("suggested_distribution")
+        ]
         got = prepsession.origin_facts({"plan": payload})
         assert got["origins"].get("confirmable", 0) == len(suggested)
         assert "lab_tools_zz" in suggested  # 对照：表外的纯名字确实带预填
@@ -103,11 +123,16 @@ class TestDistReasons:
                 "d": "ModuleNotFoundError: No module named 'secret_name'",
             },
         )
-        assert deprepair.dist_reasons_of(err) == [deprepair.DIST_NOT_INSTALLED, deprepair.DIST_VERSION_MISMATCH]
+        assert deprepair.dist_reasons_of(err) == [
+            deprepair.DIST_NOT_INSTALLED,
+            deprepair.DIST_VERSION_MISMATCH,
+        ]
 
     @pytest.mark.parametrize("reason", deprepair.DIST_REASONS)
     def test_each_closed_set_code_passes(self, reason):
-        assert deprepair.dist_reasons_of(self._err(deprepair.ERROR_IMPORT_STILL_FAILED, {"x": reason})) == [reason]
+        assert deprepair.dist_reasons_of(
+            self._err(deprepair.ERROR_IMPORT_STILL_FAILED, {"x": reason})
+        ) == [reason]
 
     def test_an_ordinary_import_failure_carries_none(self):
         err = self._err(deprepair.ERROR_IMPORT_STILL_FAILED, {"x": "ImportError: boom"})
@@ -118,8 +143,16 @@ class TestDistReasons:
         assert deprepair.dist_reasons_of(err) == []
 
     def test_malformed_extra_is_ignored(self):
-        assert deprepair.dist_reasons_of(deprepair.RepairError(deprepair.ERROR_IMPORT_STILL_FAILED, "x")) == []
-        assert deprepair.dist_reasons_of(self._err(deprepair.ERROR_IMPORT_STILL_FAILED, ["list"])) == []
+        assert (
+            deprepair.dist_reasons_of(
+                deprepair.RepairError(deprepair.ERROR_IMPORT_STILL_FAILED, "x")
+            )
+            == []
+        )
+        assert (
+            deprepair.dist_reasons_of(self._err(deprepair.ERROR_IMPORT_STILL_FAILED, ["list"]))
+            == []
+        )
         assert deprepair.dist_reasons_of(ValueError("not a repair error")) == []
 
 
@@ -154,7 +187,9 @@ class TestProgressTerminalState:
     def test_an_ordinary_import_failure_has_no_such_key(self, monkeypatch):
         rec = self._fail_with(
             monkeypatch,
-            deprepair.RepairError(deprepair.ERROR_IMPORT_STILL_FAILED, "x: boom", imports={"x": "ImportError: boom"}),
+            deprepair.RepairError(
+                deprepair.ERROR_IMPORT_STILL_FAILED, "x: boom", imports={"x": "ImportError: boom"}
+            ),
         )
         assert rec["code"] == deprepair.ERROR_IMPORT_STILL_FAILED
         assert "dist_reasons" not in rec
@@ -168,7 +203,9 @@ class TestProgressTerminalState:
         self._fail_with(
             monkeypatch,
             deprepair.RepairError(
-                deprepair.ERROR_IMPORT_STILL_FAILED, "x", imports={"lab": deprepair.DIST_NOT_INSTALLED}
+                deprepair.ERROR_IMPORT_STILL_FAILED,
+                "x",
+                imports={"lab": deprepair.DIST_NOT_INSTALLED},
             ),
         )
         projected = deprepair.diagnostic_projection(deprepair.progress("plan-ui-1"))
@@ -200,7 +237,9 @@ class TestFrontendMirror:
         assert "confirmable?: number" in api
         src = (ROOT / "src" / "tavotto" / "engine" / "prepsession.py").read_text(encoding="utf-8")
         assert '"confirmable"' in src
-        assert 'rec["dist_reasons"]' in (ROOT / "src" / "tavotto" / "engine" / "deprepair.py").read_text(encoding="utf-8")
+        assert 'rec["dist_reasons"]' in (
+            ROOT / "src" / "tavotto" / "engine" / "deprepair.py"
+        ).read_text(encoding="utf-8")
 
     def test_origin_reasons_mirror_is_unchanged_by_this_pr(self):
         assert len(depplan.ORIGIN_REASONS) == 7
