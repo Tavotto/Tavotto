@@ -569,3 +569,43 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 3. 返回的 `plan.impact.user_specified[]` 必须在确认页标注「用户指定、未经可信来源核实」（`trust` 恒为 `user_specified_unverified`），`plan.joint.user_specified[]` 有 `requirement`；`impact_digest` 照常回显给 `/prepare`。`IMPACT_VERSION=2`。
 4. 失败：装后核验失败是 `dependency_import_still_failed`，进度终态 `error` 文案带「`名字: 原因码`」（`DIST_*` 闭集）；结构化的 `extra["imports"]` 只在后端异常上、不进进度——PR6 若要按原因码分别说人话，需要后端把它带进终态（不是新错误码），**本 PR 没做**。
 5. 同一个 import 被用户接受后离开 `unknown` / `origins`，出现在 `missing`（`resolution_source=user_specified`）与 `joint.user_specified`；刷新后的 offer 里它又回到 `origins`（预填不是持久状态）。
+
+
+## 15. PR6 实施记录（前端展示）
+
+基线 `origin/main` `e090923b4`（PR1–PR5b 后端全部已合入）。`risk:normal`（只加展示与两个后端展示事实，不改判据）。输入契约是 §14 末尾「对 PR6 的后端事实清单」。默认扫描零子进程（`projscan` 没动）、不执行用户代码、不新增已发布错误码、不新增 `BLOCK_REASONS` / `ORIGIN_REASONS`。**前端零解析**：「这个 import 是谁提供的 / 该装哪个包 / 能不能装 / 能不能指定」全是后端字段，前端只读、只译、只给五种状态起名字。
+
+**用户硬性要求（落实方式）**：卡片 / 弹窗默认可见区只有**一句话 + 至多一个主按钮**（可加「稍后」）；解释、列表、包名、诊断、备选做法全部收进默认折叠的「详情」；主句里没有「隔离环境 / site-packages / editable / dist-info」这类词（`prep.origin.*` 每条文案都有测试：至多一句、无术语）。
+
+**五种展示态（`web/src/lib/importOrigin.ts`，`data-origin-view`）**
+
+| 展示态 | 卡片 / 对话框的状态 | 一句话（中 / 英） | 主按钮 |
+| --- | --- | --- | --- |
+| 已就绪 | 卡 `ready`（没有来源事实） | 可以运行了 / Ready to run | 运行 / Run |
+| 发现更合适的环境 | 卡 `env_choice`；授权框里有装齐的用户环境 | 用项目里自带的那套运行？ / Run with the one in this project? | 用它 / Use it（框里「改用这个环境」） |
+| 可以自动修复 | 卡 `deps` / `deps_runtime` / `env_blocked`；授权框有要装的 | 要先安装缺少的组件 / Install missing components first（框里「一键修复」那句不变） | 安装 / Install |
+| 需要确认 | 卡 **`origin_confirm`**（新）；`ImportOriginDialog` | 有 N 个库要你确认包名 / N libraries need a package name from you；框里：请确认下面的库该装哪个包，也可以改成你要的。 / Check which package each library below should install, or change it. | 确认包名 / Confirm packages；框里 核对包名 → 确认并安装 |
+| 尚无法确定 | 卡 **`origin_unknown`**（新）；`deps_unknown` | 有 N 个库的来源还没法确定 / Can't tell where N libraries come from | 仍然运行 / Run anyway（报告里没有 run 动作就没有主按钮） |
+
+**做了什么**
+
+1. **后端最小改动两处**（`tests/test_import_origin_ui_facts.py`）：①`prepsession.origin_facts` 的 `detail.origins` 在有带预填的条目时多一个 `confirmable` 计数（没有就不出这个键，检查项形状 / 既有黄金向量逐字不变）——卡片没有名字（报告里只有计数），不加它就分不出「需要确认」与「尚无法确定」；②联合准备的 `failed` 终态在 `dependency_import_still_failed` 且是装后核验没过时带 `dist_reasons`（`deprepair.DIST_REASONS` 闭集的去重子集，只有码没有名字；普通 import 失败没有）——这样不必让前端去解析给人读的 `error` 文案（那是解析）。不新增错误码。
+2. **`lib/importOrigin.ts`**：`originFactsOf`（读会话报告的计数 / 原因码，读不出当没有）、`partitionOrigins`（只按后端有没有给 `suggested_distribution` 分两堆）、`draftFromOffer`（初始值 = 预填，原样）、`userSpecifiedBody`（只收有输入框且没清空的，只去首尾空白）、三张字面量文案表（来源未定 7 种原因 / 覆盖度 6 个 detail 码 / 核验 4 个原因，各一句 + `unknown` 兜底，中英两语）、`originViewOfCard` / `originViewOfOffer`。
+3. **准备卡**：有来源事实的 `ready_to_run` 不再说「可以运行了」（`origin_confirm` / `origin_unknown`；`origin_unknown` 进 `ARGS_GATED`，必填参数没填齐照样换成参数卡）；详情里按原因码各一行（计数 + 一句人话）；缩成角标时两句（待确认包名 / 来源待定）；主按钮「确认包名」点的时候取一份计划载荷（`fetchDependencyOffer`，名字在载荷里）再开框，取回来时已换项目整个丢弃。
+4. **`ImportOriginDialog`（新）**：两步一个框。①包名：输入框**只给**带 `suggested_distribution` 的条目，别的来源未定的 import 后端会以 `dependency_install_not_allowed` 拒收、所以只在详情里解释；主按钮「核对包名」= `createJointDependencyPlan({ script, user_specified })`（不带 target，后端默认），所有输入框一份计划，**一次授权、不逐包弹窗**。②确认页：那一句说清「这 N 个包是你指定的，未经可信来源核实；确认后才会安装」（读 `plan.impact.user_specified[].trust === 'user_specified_unverified'`，读不到披露就置灰、不让继续），每个包在详情里带「用户指定，未经核实」徽标与装到哪；「确认并安装」把**这份计划自己的** `impact_digest` 原样交给 `/prepare`（用户看到的就是它，不是 offer 的）。`package_requirement_invalid` / `dependency_install_not_allowed` 各一句人话，别的码走修复卡那套短句；失败后回到第一步保留输入。
+5. **`DependencyPrepareDialog`**：unknown 区改读 `plan.origins`（名字 + 原因一句人话，在折叠的「详情」里；老后端没有 `origins` 时照旧列名字）；`missing[].distribution_status = module_origin_ambiguous` 的备选提示（先按表里的装，想换请改用自己的环境）；装后核验失败（`dependency_import_still_failed` + `dist_reasons`）那一句换成「装完后核对发现，装上的包和你确认的计划不一致」，每个原因一句在详情里。`EngineEnvironmentCard` 的建议行：候选带 `coverage.detail` 时多一个默认折叠的「详情」，每个 detail 码一句人话。
+6. **状态与代际**：`depRepairStore` 新增 `originDraft` / `originPlan` 与 `openOrigin / setOriginValue / bindOrigin / backToOriginDraft / confirmOrigin / closeOrigin`，`envStore.originConfirmation` 是载荷的家；沿用 `projectEpoch` + `busy` 单飞，没有第二套判据；`clear()`（换项目）/ 关框 / 新载荷都丢草稿与绑定的计划，绑定回来时已换项目的响应整个丢弃；`onProgress` 的 joint `done` 同时收掉这个框并让空闲会话重新检查。
+7. **同源对**：`DIST_REASONS` ↔ `api.ts` `DIST_FAILURE_REASONS`、`confirmable`、三张文案表 ↔ 两份 `workspace.json` 的 `prep.origin.*`，登记进 `same-origin-pairs.md`，看护 `TestFrontendMirror`（含反证）与 `importOrigin.test.ts`。
+
+**测试**（命令与 rc 见 PR 正文）：`importOrigin.test.ts`（每个闭集码一句、互不相同、不甩代码；每条文案至多一句、无术语；读不出就当没有；换一堆名字分堆结果不变）、`importOrigin.structure.test.ts`（前端文件里没有名单 / 映射 / 对 import 名的切分与正则 / 判据词，没有第二个入口读 `origins`）、`ImportOriginDialog.test.tsx`（32 条：输入框只在带预填的条目、提交形状、确认页标注、digest 回显、错误码、核验失败、切项目、不吓小白）、`PreparationCard.test.tsx`（五态 × 两语种逐块钉死 + 来源事实改口 + 打开框 + 切项目）、`DependencyPrepareDialog.test.tsx`（origins / 备选 / 核验）、`EngineEnvironmentCard.test.tsx`（coverage detail）、`tests/test_import_origin_ui_facts.py`。变异反证见 PR 正文。
+
+**仍未覆盖 / 取舍**
+
+* **没有真浏览器 e2e 与真后端联调**：五态截图用真组件 + 真 CSS + 种好的状态（不起后端）；`web/e2e` 里没有覆盖本 PR 的新状态，已有 e2e 的脚本（`plot.py`，只有 matplotlib / argparse）没有来源事实，`ready` 文案不变，未跑 e2e（chromium-en 只在合并组跑）。
+* 自动修复与需要确认是**两次授权**（先装可信的，装完会话重新检查后再出现「需要确认」）：同一份脚本既缺可信包又有预填项时，授权框不带输入框。合进一次授权要让 `DependencyPrepareDialog` 的 `prepare` 带 `user_specified`，会改它的摘要漂移判定；留给 PR7 决定要不要。
+* 确认包名的框在运行中切走项目再回来**不恢复**（进度仍按 `parked` 收放，终态副作用——重排渲染、会话重新检查——照旧补上，只是框不重开）。
+* `found` 改判 / 依赖门展示覆盖度 detail（§12 留下的）仍未做：覆盖度 detail 只在环境建议行的折叠详情里说。
+* 默认扫描没有接来源事实，卡片只在**准备会话已经评估过依赖**之后才有 `origins`（`checks_of` 的 `dependencies` 项）；第一次检查之前没有这一行。
+* `topBarSaveLabel.test.tsx` 两条在 `origin/main` 的干净 worktree 上同样红（与本 PR 无关，本机复现）。
+
+**对 PR7 的依赖**：E2E 三条里的「来源无法验证→不装→解释→后续选项」现在有前端可走：卡 `origin_unknown` 的详情说明、`ImportOriginDialog` 的两步；真后端下的端到端（含 `dist_reasons` 经 SSE 到框里）要 PR7 的 e2e 跑。FINAL_ACCEPTANCE 的「一次授权」一条要看上面第二条取舍。

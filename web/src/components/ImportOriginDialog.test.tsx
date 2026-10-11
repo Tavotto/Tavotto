@@ -335,7 +335,7 @@ describe('提交与确认', () => {
     const row = dialog()!.querySelector('[data-origin-disclosed="lab_tools"]')!
     expect(row.textContent).toContain('lab-tools>=1.2')
     expect(row.querySelector('[data-origin-trust="user_specified_unverified"]')?.textContent).toBe(ot('detail.userSpecifiedBadge'))
-    expect(dialog()!.querySelector('[data-origin-place]')?.textContent).toBe(t('prep.install.managedPlace', { ns: 'workspace' }))
+    expect(dialog()!.querySelector('[data-origin-place]')?.textContent).toBe(`${t('prep.detail.installTo', { ns: 'workspace' })} · ${t('prep.install.managedPlace', { ns: 'workspace' })}`)
     expect((dialog()!.querySelector('[data-origin-confirmed="lab_tools"]') as HTMLInputElement).readOnly).toBe(true)
     await act(async () => (dialog()!.querySelector('[data-origin-back]') as HTMLButtonElement).click())
     expect(useDepRepairStore.getState().originPlan).toBeNull()
@@ -348,7 +348,7 @@ describe('提交与确认', () => {
     await open(offer([LAB]))
     await act(async () => review()!.click())
     await openDetails()
-    expect(dialog()!.querySelector('[data-origin-place]')?.textContent).toBe(t('prep.install.toUserLong', { ns: 'workspace' }))
+    expect(dialog()!.querySelector('[data-origin-place]')?.textContent).toContain(t('prep.install.toUserLong', { ns: 'workspace' }))
   })
 
   it('读不到披露（计划里没有 impact.user_specified）：不让继续，说一句，确认置灰、不发 prepare', async () => {

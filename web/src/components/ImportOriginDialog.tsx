@@ -214,6 +214,7 @@ export function ImportOriginDialog() {
                   ))}
                 {step === 'confirm' && plan && (
                   <p data-origin-place>
+                    {translate('prep.detail.installTo', { ns: 'workspace' })} ·{' '}
                     {plan.modifies_user_environment
                       ? translate('prep.install.toUserLong', { ns: 'workspace' })
                       : translate('prep.install.managedPlace', { ns: 'workspace' })}
