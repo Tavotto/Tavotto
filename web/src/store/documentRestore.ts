@@ -337,6 +337,10 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
     if (!alts) return { kind: 'superseded' }
     return needsUser(token, 'session_unavailable', null, alts)
   }
+  // 未来版本 / 读不全的会话记录即使带着可解析的旧字段，也不能据此自动安装正文。
+  if (plan.session.kind === 'ok' && plan.session.index === 'degraded') {
+    return needsUser(token, 'index_degraded', null)
+  }
   const pref = plan.preferred
   const rest = plan.fallbacks
   // 后端的 durable last 在计划里被**扣下**了（归属问不到 / 本机索引说是别人的）：它仍是「上次开着的」，

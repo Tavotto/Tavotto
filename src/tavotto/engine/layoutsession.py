@@ -590,6 +590,9 @@ def view_for(
         with _LOCK:
             state, status = _read()
         seen_degraded |= status == STATUS_DEGRADED
+        if seen_degraded:
+            # 未来格式可能有可解析的旧字段，但这些指针的语义/归属未必仍可信。
+            return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
         baseline = _group_view(state, key)
         out: dict[str, Any] = {}
         changed_group = False
@@ -637,7 +640,9 @@ def view_for(
             final_state, final_status = _read()
         seen_degraded |= final_status == STATUS_DEGRADED
         if not unstable and not changed_group and _group_view(final_state, key) == baseline:
-            out["index"] = STATUS_DEGRADED if seen_degraded else final_status
+            if seen_degraded:
+                return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
+            out["index"] = final_status
             return out
     # 状态一直在移动，返回可重试的退化结果，绝不把混代指针当成完整快照。
     return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}

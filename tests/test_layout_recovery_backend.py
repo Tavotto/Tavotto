@@ -268,7 +268,7 @@ def test_a26_future_format_is_read_best_effort_but_never_written(client, tmp_pat
     path.write_bytes(future)
     _put(client, "d_a", _doc(), a)  # 槽位在，owners 不被改
     view = _get_session(client, a)
-    assert view["index"] == "degraded" and view["last"]["doc_id"] == "d_a"
+    assert view == {"last": None, "prev": None, "pending": None, "index": "degraded"}
     r = _put(client, "d_a", _doc(2), a)
     assert r.status_code == 200 and r.get_json()["metadata"] == "failed"
     assert _put_last(client, "d_a", pj=a).status_code == 503

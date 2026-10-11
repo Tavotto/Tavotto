@@ -1002,7 +1002,17 @@ describe('Codex P1/P2：发现的自动采用', () => {
     candidatePages = () => rowWith('d_only', 'owners')
     const app = await boot()
     expect(await app.doc.restoreSession()).toBe(false)
-    expect(ds(app).restoreIssue).toMatchObject({ kind: 'choose' })
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'index_degraded' })
+  })
+
+  it('P1：未来格式会话索引 degraded 即使包含旧 last，也不自动安装该指针', async () => {
+    seedSavedLast()
+    be.session('p_a').index = 'degraded'
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(app.doc.getRestoreGate().state).toBe('needs_user')
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'index_degraded', ref: null })
+    expect(ds(app).documentId).not.toBe('d_saved')
   })
 
   it.each(['versions', 'assets'] as const)('P1：单独一行只有 %s 弱证据 → choose，不自动采用', async (ev) => {
