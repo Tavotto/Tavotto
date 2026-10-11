@@ -609,3 +609,24 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 * `topBarSaveLabel.test.tsx` 两条在 `origin/main` 的干净 worktree 上同样红（与本 PR 无关，本机复现）。
 
 **对 PR7 的依赖**：E2E 三条里的「来源无法验证→不装→解释→后续选项」现在有前端可走：卡 `origin_unknown` 的详情说明、`ImportOriginDialog` 的两步；真后端下的端到端（含 `dist_reasons` 经 SSE 到框里）要 PR7 的 e2e 跑。FINAL_ACCEPTANCE 的「一次授权」一条要看上面第二条取舍。
+
+
+## 16. PR7 实施记录（E2E + 跨平台 + 诊断 + 性能 + 文档 + FINAL_ACCEPTANCE）
+
+基线 `origin/main` `3db9c9cc5`（PR1–PR6 全部已合入）。`risk:normal`（测试 / 文档为主，唯一的 `src/` 改动是 `importscan._is_module_name`）。验收与逐条映射见 `FINAL_ACCEPTANCE.md`，决策与理由见 ADR 0119。
+
+**做了什么**
+
+* **真浏览器 e2e 四条**（`web/e2e/import-origin.spec.ts`，真后端 + 真 worker + 真 Chromium，经准备引导卡）：① 复用已有环境（项目 `.venv`，不装）；② 受管环境安装（离线 wheelhouse，真 pip）；③ 来源无法验证（不装、解释、「仍然运行」）；④ 需要确认（预填 → 确认包名 → 确认页标未核实 → 装 → 装后核验，先填错包名被核验拦下）。夹具 `tests/support/e2e_origin_world.py`（paper/ 项目 + wheelhouse + 可选 `.venv`），被测进程入口 `tests/support/e2e_offline_app.py`（`python -m tavotto` 的同一个入口，多套离线补丁）。离线补丁与造 wheel 从 `support/dependency_repair.py`（`import pytest`）拆到不依赖 pytest 的 `support/offline_world.py`——posix-e2e 腿没装 pytest；`dependency_repair` 原样再导出，其余用例的 import 不变。POSIX 专用，登记在 `tests/test_e2e_leg_topology.py::PLATFORM_SKIPS`。
+* **测试矩阵映射**（FINAL_ACCEPTANCE §4）：O-01…O-20、恶意包副作用、环境 fixture A–J、安装与并发 13 条**全部已有用例，没有缺口**，PR7 只做映射与存在性核对。
+* **性能 fixture**：`scripts/dev/import_origin_perf.py`（审计事件计数，独立于扫描自己的预算账）+ `tests/test_import_origin_perf.py`（子进程里跑它，只断言确定性计数）。
+* **诊断隐私**：`tests/test_import_origin_diagnostics_privacy.py`（四个出口的金丝雀 / 键闭集 / AST）。结论：新字段不进任何诊断出口；`impact.digest` 对含用户指定包名的影响是无密钥 sha256，与 #918 第 1 条同形，仍开着，本 PR 只钉住「它是唯一一个」。
+* **跨平台**：`tests/test_import_origin_cross_platform.py`（路径拼写 / 源码编码 / Windows 文本形状）。
+
+**发现并处理的**
+
+* **缺口（已修）**：中文模块名 `数据.py` 被 `depresolve.valid_import_name`（ASCII 形状）判成 `unknown` / `no_provider_found`——`importscan` 的本地文件查找改用 `str.isidentifier()`（`_is_module_name`；`_Finder.find_in` 本来就是它）。找不到的非 ASCII 名字仍不进映射，不会因此多出安装名。
+* **缺陷（未修，需要维护者决定）**：确认包名并装好之后，卡片仍说「来源待定 / 仍然运行」——`depplan._verdict` 对「表外名 + 已装提供者（`installed_confirmed`、index）」一律判来源未定。真浏览器 ④ 钉着现状；FINAL_ACCEPTANCE §10 写了根因与建议修法。
+* e2e 夹具踩到的两个环境坑：开发机基础解释器的 user site 里若真装着 `python-docx`，`--system-site-packages` 的 venv 里 pip 会说「已满足」而不装 wheelhouse 里的（夹具用 `--ignore-installed`）；新 worktree 没有批准字体时 worker 起不来、卡片一直停在「正在运行」（先 `scripts/fetch_fonts.py`）。
+
+**仍未覆盖**：见 FINAL_ACCEPTANCE §10、§12。

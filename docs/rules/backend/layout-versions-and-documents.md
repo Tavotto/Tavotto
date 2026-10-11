@@ -111,7 +111,7 @@
   结尾，上限永远数不到。判据是**年龄 + pid 已死**——一小时内一律不碰、pid
   还活着的留到一天后（pid 复用 / Windows 量不了存活）；只认 `_next_tmp` 起的
   名字，命名与判据同在 `atomicio`。
-- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§三；2026-10-11 文档恢复可靠性修复重写了读取、last 语义、锁与提交顺序，ADR 0119（`docs/adr/0119-document-restore-verdict-and-recoverable-last.md`），见下）**：`engine/layoutsession.py`（纯标准库）
+- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§三；2026-10-11 文档恢复可靠性修复重写了读取、last 语义、锁与提交顺序，ADR 0120（`docs/adr/0120-document-restore-verdict-and-recoverable-last.md`），见下）**：`engine/layoutsession.py`（纯标准库）
   是 `data_dir()/state/layout-sessions.json` 的唯一读写方（`state_path()` 是位置的唯一出处）。内容：
   `projects{<normalize_path_identity(项目路径)>: {last, prev, pending}}`、`no_project{...}`（没开项目那一组）、
   指针形状都是 `{doc_id, name, at}`；`owners{槽位 doc_id → 项目键 | null}`（`null` = 确认过写它时没开项目；没有这条 = 不知道，两档）；

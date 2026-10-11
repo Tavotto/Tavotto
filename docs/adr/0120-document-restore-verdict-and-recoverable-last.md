@@ -1,10 +1,10 @@
-# ADR 0119：文档恢复判决与「可恢复的 last」
+# ADR 0120：文档恢复判决与「可恢复的 last」
 
 日期：2026-10-11 · 状态：**Accepted**
 相关：[0023 文档落盘的唯一权威](0023-document-persistence-authority.md)、[0024 保存生命周期](0024-save-lifecycle-and-external-change.md)、
 [0039 离线教程项目](0039-offline-tutorial-project.md)、[0101 排版时间线](0101-layout-timeline.md)、
 [0108 桌面 origin 稳定与会话状态的后端权威](0108-desktop-stable-origin-and-backend-session-state.md)（本条修订其 §三，并兑现 §四 PR-C）；
-规则全文 `docs/rules/frontend/project-document-and-autosave.md`「启动恢复判决（ADR 0119）」、
+规则全文 `docs/rules/frontend/project-document-and-autosave.md`「启动恢复判决（ADR 0120）」、
 `docs/rules/backend/layout-versions-and-documents.md`「会话状态以后端为准」。
 
 ## 问题

@@ -69,6 +69,8 @@ PLATFORM_SKIPS = {
     "error-recovery-en.spec.ts": 3,
     # T02：权限位用例 → posix-e2e 的 chromium 腿执行（ci.yml posix-e2e 含本 spec）
     "project-scan.spec.ts": 1,
+    # Import Origin 验收：离线入口 / 夹具世界是 POSIX 的 Python 脚本（tests/ 在 windows-exe-smoke 的产物里不存在）→ posix-e2e 腿执行
+    "import-origin.spec.ts": 1,
 }
 
 

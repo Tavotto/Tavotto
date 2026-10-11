@@ -451,9 +451,18 @@ class Entry:
         if self.cwd_mode not in execspec.CWD_MODES:
             raise ValueError(f"entry.cwd_mode 非法: {self.cwd_mode!r}")
         if self.kind == execspec.TARGET_MODULE and not all(
-            depresolve.valid_import_name(p) for p in self.module.split(".")
+            _is_module_name(p) for p in self.module.split(".")
         ):
             raise ValueError(f"entry.module 不是合法的点分模块名: {self.module!r}")
+
+
+def _is_module_name(name: str) -> bool:
+    """能不能当**本地文件查找**的模块名：Python 自己的标识符规则（`数据.py` 是合法模块，`from 数据 import x` 在中文项目里很常见）。
+
+    与 `depresolve.valid_import_name`（ASCII 形状，PyPI / 候选解释器探针用）**刻意不同**：那一个把名字交给别的进程 / 映射表，
+    这一个只用来在项目目录清单里逐字找文件（`_Finder.find_in` 本来就是 `str.isidentifier()`）。找不到的非 ASCII 名字仍然
+    不进映射（`depresolve` 不认），所以不会因此多出任何安装名。"""
+    return isinstance(name, str) and name.isidentifier()
 
 
 # ---------------------------------------------------------------- AST
@@ -1411,11 +1420,7 @@ class _Scanner:
         if top.kind == "none" and importer_dir is not None and name not in self.stdlib_names:
             key = (name, os.path.normcase(str(importer_dir)))
             if key not in self._implicit:
-                hit = (
-                    self.finder.find_in(importer_dir, name)
-                    if depresolve.valid_import_name(name)
-                    else None
-                )
+                hit = self.finder.find_in(importer_dir, name) if _is_module_name(name) else None
                 self._implicit[key] = (
                     _Found(hit.kind, hit, (hit,), implicit=True) if hit is not None else None
                 )
@@ -1425,7 +1430,7 @@ class _Scanner:
         return top
 
     def _search_roots_for(self, name: str) -> _Top:
-        if not depresolve.valid_import_name(name):
+        if not _is_module_name(name):
             return _Top("none")
         found = self._search([(r.path, r) for r in self.roots], name)
         if found is None:
@@ -1452,7 +1457,7 @@ class _Scanner:
         return None
 
     def child(self, parent: _Found, part: str) -> _Found | None:
-        if not depresolve.valid_import_name(part):
+        if not _is_module_name(part):
             return None
         return self._search(parent.search_dirs, part)
 

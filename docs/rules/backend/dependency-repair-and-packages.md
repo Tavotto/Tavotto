@@ -601,6 +601,32 @@
 - 看护：`tests/test_dependency_impact.py`、`tests/test_dependency_scope.py`、`tests/test_preparation_session_dependencies.py`、黄金向量
   `tests/golden/preparation_session_vectors.json`（新增依赖事实 8 条）。
 
+## Import Origin Resolver 收口（ADR 0119，PR7，2026-10-11）
+
+PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」、PR3 在「环境建议 / 检查 / 采用」、PR5b 在「授权影响摘要」）；这一节只记**收口时钉死的边界**与它们的看护。决策与理由：
+[ADR 0119](../../adr/0119-import-origin-static-evidence.md)；验收与逐条映射：`docs/implementation/import-origin-resolver/FINAL_ACCEPTANCE.md`。
+
+- **两条路径，边界不许模糊**：默认扫描 / 建议 / 依赖门 `cache_only` / 静态索引（`distmeta`）**零执行**——不起候选解释器、不 import 用户包、不调任意 `find_spec`、不读候选环境（没授权）；
+  授权检查（`POST …/environment/check`）才真起候选、真 import，**执行用户包的 `__init__`**，结果如实标 `executes_user_code` / `side_effect_free: false`。
+  看护：`test_import_origin_safety.py`、`test_import_origin_metadata.py`（恶意包 `SIDE_EFFECT` / `.pth` / `sitecustomize` / finder）、`test_environment_coverage.py::test_the_default_scan_never_runs_user_code_and_the_authorized_check_does_and_says_so`、
+  `test_project_scan_zero_exec.py`；真浏览器 `web/e2e/import-origin.spec.ts` ①（检查前后脚本一次都没被执行）。
+- **默认扫描的代价有计数门禁**：`scripts/dev/import_origin_perf.py`（5 / 30 / 100 脚本，审计事件独立于扫描自己的账）与 `tests/test_import_origin_perf.py`（子进程里跑它）：额外子进程 / 网络恒 0、
+  数据文件与 `.venv` 里的文件不被打开、读取随脚本数线性且 ≤ 项目源码字节加常数、同一份 cache 的第二遍零解析。**只断言计数，不断言耗时。**
+- **来源事实不进任何诊断出口的内容**：依赖任务投影（`deprepair.diagnostic_projection`）、准备任务投影（`preparation.diagnostic_projection`，对 `dependency_preparation` 只读 `blocked`）、缺依赖现场
+  （`deprepair.note_missing_dependency`）、全局诊断包都是**逐字段挑**。`origins` / `user_specified` / `suggested_distribution` / `candidates` / `dist_reasons` / `coverage` 一个都不读；
+  会话检查项 `detail.origins` 只有计数与闭集原因码（`prepsession.origin_facts`，闭集外的原因码丢掉、不回显）。想让维护者在诊断里看到核验失败的原因码，只能加**闭集码**（`deprepair.DIST_REASONS`），不能带名字。
+  看护：`tests/test_import_origin_diagnostics_privacy.py`（金丝雀全文搜索 + 键闭集 + AST 只读白名单键）。
+- **本地模块名按 Python 的标识符规则判**（`importscan._is_module_name` = `str.isidentifier()`）：`数据.py` 是本地模块；与 `depresolve.valid_import_name`（ASCII 形状，PyPI 映射 / 候选解释器探针用）**刻意不同**——
+  前者只在项目目录清单里逐字找文件，后者把名字交给别的进程。找不到的非 ASCII 名字仍不进映射，不会多出安装名。看护 `test_import_origin_cross_platform.py::TestPathSpelling`。
+- **跨平台形状**能在任何宿主上模拟的那一半在 `test_import_origin_cross_platform.py`（路径拼写不改变结论、GBK / BOM / latin-1 源码、`RECORD` 反斜杠、`pyvenv.cfg` 盘符 + 中文用户名、`.pth` 盘符行、dist-info 大小写）；
+  真 Windows 才有的（NTFS 大小写不敏感与 8.3 短名、junction 真实判定、`MAX_PATH`、`.pyd` / DLL 真实加载、冻结运行时 `sys.path`）列在 FINAL_ACCEPTANCE，不在这里声称。
+- **真浏览器验收的夹具**：`tests/support/e2e_origin_world.py`（paper/ 项目、本地 wheelhouse、可选 `.venv`）与 `tests/support/e2e_offline_app.py`（`python -m tavotto` 的同一个入口，多套 `offline_world.apply_offline_managed_env`：
+  基础栈换空表、宿主 site-packages 用 `.pth` 挂进新环境、pip 只从 `PIP_FIND_LINKS` 取包）。这两份**不 import pytest**（posix-e2e 腿没装）；放宽了什么由 `offline_world` 与
+  `test_dependency_repair.py::test_managed_venv_creation_is_isolated_and_minimal` 对着钉。POSIX 专用，登记在 `tests/test_e2e_leg_topology.py::PLATFORM_SKIPS`。
+- **两次授权不合并**：可信包（表 / 声明）与用户指定的包是两档信任，先装可信的、会话重新检查后才出现「需要确认」；合成一次需要让 `DependencyPrepareDialog.prepare` 带 `user_specified` 并重做摘要漂移判定（ADR 0119 §十）。
+- **已知差距（修之前别当成设计）**：用户确认包名并装好之后，联合计划对这个表外名仍给 `origins[].reason = unverified`（`distribution_status = installed_confirmed`），卡片仍说「来源待定 / 仍然运行」——
+  `depplan._verdict` 对「表外名 + 已装提供者」一律判来源未定；`web/e2e/import-origin.spec.ts` ④ 钉着现状，修了就把那一处断言改成 `ready`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

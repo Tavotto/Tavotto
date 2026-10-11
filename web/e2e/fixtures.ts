@@ -17,11 +17,15 @@ const REPO = path.resolve(import.meta.dirname, '..', '..')
  * 本地跑之前记得 `python scripts/build_frontend.py`：包内 `src/tavotto/web/`
  * 优先于 `web/dist`，只跑 `pnpm build` 的话测的还是上一次的界面。
  */
-function launchCommand(): { cmd: string; args: string[] } {
+function launchCommand(offline = false): { cmd: string; args: string[] } {
   const exe = process.env.TAVOTTO_EXE
-  if (exe) return { cmd: exe, args: [] }
+  // 离线入口是 Python 脚本：打包产物（.exe）没有它，调用方必须自己 skip（见 import-origin.spec.ts）
+  if (exe && !offline) return { cmd: exe, args: [] }
   const py = process.env.TAVOTTO_PYTHON ?? path.join(REPO, '.venv', 'bin', 'python')
-  return { cmd: py, args: ['-m', 'tavotto'] }
+  return {
+    cmd: py,
+    args: offline ? [path.join(REPO, 'tests', 'support', 'e2e_offline_app.py')] : ['-m', 'tavotto'],
+  }
 }
 
 export async function freePort(): Promise<number> {
@@ -44,6 +48,11 @@ export interface AppOptions {
   env?: Record<string, string>
   /** 指定端口（测端口冲突时用） */
   port?: number
+  /**
+   * 用 `tests/support/e2e_offline_app.py` 起（`python -m tavotto` 的同一个入口，只多套了「受管环境能在离线机器上建出来」
+   * 的补丁，见该文件）。只在源码形态（`python`）下可用，不能与 `TAVOTTO_EXE` 的打包产物一起用。
+   */
+  offline?: boolean
 }
 
 export interface RunningApp {
@@ -75,7 +84,7 @@ export async function startApp(opts: AppOptions = {}): Promise<RunningApp> {
   }
 
   const port = opts.port ?? (await freePort())
-  const { cmd, args } = launchCommand()
+  const { cmd, args } = launchCommand(opts.offline)
   const proc = spawn(
     cmd,
     [...args, '--port', String(port), '--no-browser',
@@ -227,7 +236,7 @@ export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }
 
 export { expect }
 
-/** 舞台先挂载占位文档；只有恢复门 ready 才能开始编辑（ADR 0119）。 */
+/** 舞台先挂载占位文档；只有恢复门 ready 才能开始编辑（ADR 0120）。 */
 export async function waitForDocumentReady(page: Page): Promise<void> {
   const stage = page.locator('[data-canvas-stage]')
   await expect(stage).toHaveCount(1, { timeout: 60_000 })

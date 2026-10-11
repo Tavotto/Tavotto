@@ -123,7 +123,7 @@
   绑定以本会话内存为准（`lib/projectFile.ts` 的会话层），localStorage 只是刷新后还认得的尽力而为副本——
   保存链不许只读持久副本；await 之后的落账（修订号缓存、绑定、冲突岔口）一律记在
   **发请求那一刻**的 pj 名下（`rememberLayoutRevision(name, rev, pj)`），切走之后不开冲突岔口。
-- **启动恢复判决（2026-10-11，ADR 0119，替代下面 2026-09-26 那条的前两道判断）**：「项目 ready」与「文档 ready」分开。
+- **启动恢复判决（2026-10-11，ADR 0120，替代下面 2026-09-26 那条的前两道判断）**：「项目 ready」与「文档 ready」分开。
   documentStore 的恢复门（`restoring` / `needs_user` / `ready`，带 `gen` + `pj` 令牌）是**唯一**的「文档准备好了没有」：
   - 门关着时内存里是**占位文档**：`commit` / 事务 / 撤销重做 / 画布与标签增删改 / `renameProject` / `applyDerivedUpdate` 一律拒（状态条节流说一句），
     `flushAutosave` 回 `'skipped'`，`switchDocument(…, { placeholder: true })` 不写 currentDoc / docIndex / 归属；remember-last 订阅、
@@ -137,19 +137,19 @@
   - 候选与读取结果见 `lib/projectDocs.planRestore`（只读）与 `documentStore.probeDocument`（零副作用）/ `acceptProbe`（选中且仍有提交权
     才记修订号、基线、挪恢复副本、推回磁盘）。`readAutosaveDoc` = 两者组合，只给显式打开用。读不到（`unavailable`）≠ 没有（`missing`）≠
     坏（`invalid`）≠ 太新；暂态先有界重试原目标，首选明确失败 → `needs_user`，只列只读验证过的其他候选，**不悄悄换旧稿**；
-    纯打开意图（没有后端 durable 记录）没有正文 → 退回 durable 那份，不算故障。**读不到不自动退回本机**：会话端点重试后仍不可用、或正文读失败（非 404）→ `needs_user`，本机线索 / 本机副本只作用户明确选择的候选；只有确认的 404 才自动按本机恢复。每条安装路径都经 `installChecked`：读到的正文 revision 与指针 / 扫描 / 提供候选时记下的不同 → 先问 `/owner`，只有 owners+verified 才装。判决表全文在 `documentRestore.ts` 文件头与 ADR 0119 §二。
+    纯打开意图（没有后端 durable 记录）没有正文 → 退回 durable 那份，不算故障。**读不到不自动退回本机**：会话端点重试后仍不可用、或正文读失败（非 404）→ `needs_user`，本机线索 / 本机副本只作用户明确选择的候选；只有确认的 404 才自动按本机恢复。每条安装路径都经 `installChecked`：读到的正文 revision 与指针 / 扫描 / 提供候选时记下的不同 → 先问 `/owner`，只有 owners+verified 才装。判决表全文在 `documentRestore.ts` 文件头与 ADR 0120 §二。
   - `needs_user` 的出口在顶栏文档状态芯片（`restore` issue，`components/RestoreIssueBody.tsx`）：一句话 + 一个主按钮（重试 / 打开另一份 /
     继续新建），其余折叠；`lastDocumentIssue` 只是 `restoreIssue.ref` 的薄适配。保存成功（`saved → clean`）不清恢复问题；保存元数据
     失败（autosave 回 `metadata:"failed"`）是另一件事 `restoreMetaIssue`，与 `saveState` 正交。
   - 外部交接：`queueNative()` 不等文档；落图 / Figure 选择器先 `whenDocumentReady(pj)`，被取代 → 不落、超时 120 s → `deferred`。
   - 看护：`store/documentRestore.test.ts`、`store/restoreGate.test.ts`、`lib/openRequestRestore.test.ts`、`components/topBarRestore.test.tsx`、
     `store/recovery.acceptance.test.ts`（审计夹具转成的正确行为验收，在 `e090923b4` 上必红）。
-- **保存成功驱动 last（2026-10-11，ADR 0119 §三）**：后端 last 只指向有有效正文的槽位，没正文的打开意图只记 `pending`、正文首次落盘时在同一
+- **保存成功驱动 last（2026-10-11，ADR 0120 §三）**：后端 last 只指向有有效正文的槽位，没正文的打开意图只记 `pending`、正文首次落盘时在同一
   文档锁里晋升。前端 `DiskWriterPorts.onWritten(id, savedAt, { pj, metadata })` 的 pj 取**排队那一刻**的值；`afterWriteOk` 的 UI 一半仍按
   `isCurrentDoc` 守，元数据一半无论当前与否都经 `onDocumentPersisted` 交给 `projectDocs.notifyDocumentPersisted`（缓存意图 == 这份且上次推送
   pending / 失败才重推，不被同值去重挡住）。`loadProjectDocument` 不再在验证正文之前把本机引用推成后端 last（迁移在 `confirmRestored` 里、接受之后）。
   C1：本机索引说别的项目、后端 `/owner` 回 `owners` 证据且 `verified` → 可纠正本机索引；只有 assets / versions → 不翻案；问不到 → 不认领。
-- **找回本机排版（2026-10-11，ADR 0119 §六 / ADR 0108 §四）**：「打开排版」对话框的 `components/LayoutRecover.tsx`（逻辑在 `lib/recoveryCandidates.ts`）
+- **找回本机排版（2026-10-11，ADR 0120 §六 / ADR 0108 §四）**：「打开排版」对话框的 `components/LayoutRecover.tsx`（逻辑在 `lib/recoveryCandidates.ts`）
   两组：本项目的（原 id 打开）、折叠的归属待确认（默认**恢复副本**：固定目标 id、确认时重比 revision、经 `actions.openDocumentAs` + 正常保存链建立归属，
   源槽位与源归属不动，取消零写入）。不为列表运行脚本、不编缩略图。看护 `lib/recoveryCandidates.test.ts`、`components/LayoutDialog.recover.test.tsx`。
 - **启动恢复不覆盖已经装好的文档（2026-09-26；前两道判断已被上面「启动恢复判决」替代，保护本身由恢复门兑现）**：工作台挂载时 `restoreSession()` 读

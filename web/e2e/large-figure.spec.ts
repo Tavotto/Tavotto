@@ -210,7 +210,7 @@ test.afterAll(async () => {
   await app?.stop();
 });
 
-// 共用后端时先正常恢复，再通过应用新建空白排版。只删会话索引、留下正文会进入 ADR 0119 的
+// 共用后端时先正常恢复，再通过应用新建空白排版。只删会话索引、留下正文会进入 ADR 0120 的
 // 找回判决，既不是空白起点，也不能证明「撤销这次加图」。不在测试之间制造损坏的恢复状态。
 test.beforeEach(async ({ page }) => {
   await page.goto(app.baseURL);
