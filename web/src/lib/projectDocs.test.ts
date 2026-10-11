@@ -581,6 +581,21 @@ describe('归属：本机索引 vs 后端证据（C1 / A16 / A17）', () => {
     expect(plan.withheld[0].reason).toBe('foreign')
   })
 
+  it('切到空项目：仅全局 currentDoc 确知属于旧项目且 /owner 暂不可用，不阻塞新项目', async () => {
+    const docs = await fresh()
+    foreignIndex('d_a')
+    backend.state.fail.owner = 500
+    const plan = await docs.planRestore(PJ, { globalCurrent: 'd_a' })
+    expect(plan.preferred).toBeNull()
+    expect(plan.withheld).toMatchObject([{ reason: 'foreign', candidate: { sources: ['global_current'] } }])
+    expect(backend.writes()).toEqual([])
+
+    // 真正带后端 last 的同一 docId 仍需复核：短暂问不到不能当作空项目。
+    backend.setLast(PJ, 'd_a', 'B 的上次排版')
+    const withLast = await docs.planRestore(PJ, { globalCurrent: 'd_a' })
+    expect(withLast.withheld).toMatchObject([{ reason: 'owner_unavailable' }])
+  })
+
   it('没开项目：只认没记在任何项目名下的 global currentDoc', async () => {
     const docs = await fresh()
     setIndex([{ id: 'd_f', name: 'f', savedAt: 1, objects: 1, projectId: 'p_other' }])

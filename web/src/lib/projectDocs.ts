@@ -379,7 +379,14 @@ async function judge(id: string, pj: string | null, e: Entry, backendOk: boolean
   }
   if (typeof recorded === 'string') {
     const ev = await fetchLayoutOwnerEvidence(id, pj)
-    if (ev === 'unavailable') return { ok: false, reason: 'owner_unavailable' }
+    if (ev === 'unavailable') {
+      // 切项目时遗留的全局 currentDoc 若已在本机索引明确属于旧项目，问不到后端
+      // 也不能让新项目卡在恢复问题上；带后端指针或本项目缓存的线索仍须等待复核。
+      return {
+        ok: false,
+        reason: e.sources.length === 1 && e.sources[0] === 'global_current' ? 'foreign' : 'owner_unavailable',
+      }
+    }
     if (ev !== 'unsupported' && ev.owner === 'this' && ev.evidence === 'owners' && ev.verified) {
       // revision 与别的 /owner 分支同一套绑定：明说 null（槽位此刻不在）要记成 expectedAbsent，之后冒出来的正文必须再核（Codex #936）
       return { ok: true, ownership: 'this', evidence: 'owners', correctsIndex: true, ...bind(ev) }

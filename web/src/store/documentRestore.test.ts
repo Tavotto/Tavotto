@@ -371,6 +371,21 @@ describe('统一恢复：冷启动 / Picker / 重试同一条（不变量 2、3�
     expect(ds(no).restoreIssue).toBeNull()
   })
 
+  it('切到空项目：旧项目全局 currentDoc 的归属接口暂不可用，仍进入空白', async () => {
+    be.putSlot('d_old', savedProject('旧项目文档'), 'p_a')
+    localStorage.setItem('tavotto.currentDoc', 'd_old')
+    localStorage.setItem('tavotto.docIndex', JSON.stringify([
+      { id: 'd_old', name: '旧项目文档', savedAt: 1, objects: 1, projectId: 'p_a' },
+    ]))
+    be.state.fail.owner = 500
+    const app = await boot('p_b')
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'empty', pj: 'p_b' })
+    expect(ds(app).restoreIssue).toBeNull()
+    expect(ds(app).documentId).not.toBe('d_old')
+    expect(be.writes()).toEqual([])
+  })
+
   it('A07：last=B（B 404），同项目另有已验证的 A（prev）→ 保留 B 的失败原因，提供 A；不静默换旧稿；选 A 才打开 A，B/A 的正文原样', async () => {
     be.putSlot('d_a', savedProject('Older A'), 'p_a')
     const aBytes = be.state.slots.get('d_a')!.body
