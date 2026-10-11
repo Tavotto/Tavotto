@@ -196,9 +196,7 @@ def test_resized_patch_export_matches_measured_frame(kind, frame_kind, pinned, a
         assert output["after"] == pytest.approx(expected, abs=1e-9)
 
 
-@pytest.mark.parametrize(
-    "bounds", [(0.4, 0.3, 4.2, 3.4), (-0.5, -0.2, 6, 4.8), (0, 0, 4.2, 3.4)]
-)
+@pytest.mark.parametrize("bounds", [(0.4, 0.3, 4.2, 3.4), (-0.5, -0.2, 6, 4.8), (0, 0, 4.2, 3.4)])
 def test_frame_helpers_agree_in_savefig_and_measurement_contexts(bounds):
     got = _run(FRAME_PROBE, bounds)
     for key in ("size", "adjusted_size", "measured_size"):
