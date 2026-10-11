@@ -279,6 +279,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <div className="flex flex-col gap-3" data-layout-recover>
       {project.state === 'unavailable' && retry('project')}
+      {project.state === 'ok' && project.list.index === 'degraded' && retry('project')}
       {(ownRows.length > 0 || (project.state === 'ok' && (hasMore(project.list) || project.list.truncated))) && (
         <section className="flex flex-col gap-1" data-recover-group="project">
           <h3 className="type-section px-1">{t('dialogs:layout.recoverProjectTitle')}</h3>
@@ -323,6 +324,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
           <div className="mt-1 flex flex-col gap-2">
             <p className="text-sm text-ink-3">{t('dialogs:layout.recoverOtherHint')}</p>
             {other.state === 'unavailable' && retry('unknown')}
+            {other.state === 'ok' && other.list.index === 'degraded' && retry('unknown')}
             {other.state === 'loading' && otherRows.length === 0 && (
               <p className="text-sm text-ink-3">{t('dialogs:layout.recoverLoading')}</p>
             )}

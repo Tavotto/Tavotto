@@ -16,7 +16,8 @@ import {
   type NativeSessionState,
 } from '@/lib/api'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
-import { useDocumentStore } from '@/store/documentStore'
+import { setCurrentProjectId } from '@/lib/session'
+import { beginRestore, resetRestoreGateForTests, settleRestore, useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { nativePanelState, sortSessions, useNativeSessionStore } from './nativeSessionStore'
 
@@ -115,6 +116,8 @@ const apiError = (code: string, status = 409, params?: Record<string, unknown>) 
 
 beforeEach(() => {
   vi.resetAllMocks()
+  resetRestoreGateForTests()
+  setCurrentProjectId('p_a')
   useNativeSessionStore.setState({
     epoch: 0,
     pendingQueue: [],
@@ -327,6 +330,44 @@ describe('事件按 sequence 落地', () => {
 })
 
 describe('屏障 → build → 图进画布', () => {
+  it('恢复待用户处理时保留原生交接，打开文档之后才放入一次', async () => {
+    const token = beginRestore('p_a')
+    settleRestore(token, {
+      state: 'needs_user',
+      issue: { pj: 'p_a', gen: token.gen, kind: 'index_degraded', ref: null, alternatives: [] },
+    })
+    mockBuild.mockResolvedValue({
+      session: session({ state: 'barrier', sequence: 4 }),
+      stems: {},
+      descriptors: [desc('Fig1')],
+    })
+    seed({ state: 'barrier', sequence: 4 })
+    await store().build(`native-${ID}`)
+    expect(mockAddPanel).not.toHaveBeenCalled()
+    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
+    await vi.waitFor(() => expect(mockAddPanel).toHaveBeenCalledTimes(1))
+  })
+
+  it('等待恢复期间切项目，原生交接不放到另一个项目', async () => {
+    const token = beginRestore('p_a')
+    settleRestore(token, {
+      state: 'needs_user',
+      issue: { pj: 'p_a', gen: token.gen, kind: 'index_degraded', ref: null, alternatives: [] },
+    })
+    mockBuild.mockResolvedValue({
+      session: session({ state: 'barrier', sequence: 4 }),
+      stems: {},
+      descriptors: [desc('Fig1')],
+    })
+    seed({ state: 'barrier', sequence: 4 })
+    await store().build(`native-${ID}`)
+    setCurrentProjectId('p_b')
+    const next = beginRestore('p_b')
+    settleRestore(next, { state: 'ready', reason: 'empty' })
+    await Promise.resolve()
+    expect(mockAddPanel).not.toHaveBeenCalled()
+  })
+
   it('停在屏障上时由界面显式发一次 build', async () => {
     mockBuild.mockResolvedValue({
       session: session({ state: 'barrier', sequence: 4 }),

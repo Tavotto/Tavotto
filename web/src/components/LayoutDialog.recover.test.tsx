@@ -57,6 +57,7 @@ const runtimeDoc = (name: string, extra: Record<string, unknown> = {}) => {
 }
 
 let root: Root
+let degradeProjectCandidates = false
 /** 在途的 fetch 数：`flush` 靠它知道「请求都落地了」，不靠固定时长的 sleep（负载高时固定时长不够） */
 let inFlight = 0
 
@@ -66,6 +67,12 @@ async function mount(intent: 'load' | 'save' = 'load', settle = true) {
     try {
       if (new URL(String(url), 'http://x').pathname === '/api/layouts') {
         return new Response(JSON.stringify({ layouts: [], modified: {} }), { status: 200 })
+      }
+      const u = new URL(String(url), 'http://x')
+      if (degradeProjectCandidates && u.pathname === '/api/layout-session/candidates' && u.searchParams.get('scope') === 'project') {
+        const res = await backend.fetch(url as RequestInfo, init)
+        const payload = await res.json()
+        return new Response(JSON.stringify({ ...payload, items: [], next_cursor: null, index: 'degraded' }), { status: res.status })
       }
       return await backend.fetch(url as RequestInfo, init)
     } finally {
@@ -121,6 +128,7 @@ async function expandOther() {
 
 beforeEach(() => {
   backend.reset()
+  degradeProjectCandidates = false
   localStorage.clear()
   setCurrentProjectId(PJ)
   useProjectStore.setState({ project: { open: true, id: PJ, document_dir: '/figs/a/tavottofile' } })
@@ -137,6 +145,19 @@ afterEach(async () => {
 })
 
 describe('找回入口的可发现性与只读', () => {
+  it('归属索引退化且项目列表为空时显示重试，恢复后不用重开对话框就能找回', async () => {
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    degradeProjectCandidates = true
+    await mount()
+    expect(rows('project')).toHaveLength(0)
+    expect(dialog().textContent).toContain('本机排版暂时读不出来')
+    degradeProjectCandidates = false
+    await act(async () => byText('重试')!.click())
+    await flush()
+    expect(rows('project').map((r) => r.dataset.recoverRow)).toEqual(['d_mine'])
+  })
+
   it('打开那一屏先读本项目的一组；归属待确认的折叠着、展开才读（A28），列表全程零写入', async () => {
     backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
     backend.putSlot('d_unk', runtimeDoc('不知道谁的'))
