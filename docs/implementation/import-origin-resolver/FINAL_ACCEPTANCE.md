@@ -69,7 +69,16 @@
 
 **PR7 提交**（本分支，基于 `origin/main` `3db9c9cc5`）：
 
-{{PR7_COMMITS}}
+* `e10b5e482` test(support): 离线世界零件拆出 pytest 依赖（造本地 wheel、离线建受管环境），供真浏览器 e2e 的被测进程复用
+* `15a197ee5` fix(importscan): 非 ASCII 的本地模块名（数据.py）按真实 Python 当本地模块，并补跨平台形状测试（路径拼写 / 源码编码 / Windows 文本形状）
+* `b94958006` test(diagnostics): 来源 / 覆盖度 / 核验字段不出名字——四个诊断出口的金丝雀、键闭集与 AST 结构钉住
+* `b5e1aa445` test(perf): 5 / 30 / 100 脚本的性能 fixture——默认扫描零子进程、不读数据与 .venv、读取线性有界、增量零解析
+* `bd15396fc` test(e2e): Import Origin 验收四条——复用已有环境 / 受管环境安装 / 来源无法验证 / 需要确认（真后端、真 worker、真浏览器）
+* `45faad47d` style(test): 诊断隐私用例沿用兄弟文件的 F811 文件级豁免写法
+* `fe01f2f51` docs(import-origin): ADR 0119、规则收口、用户文档与 FINAL_ACCEPTANCE（A / B / C 三问、矩阵映射、性能、隐私、已知缺陷与 issue 现状）
+* `90f863580` docs(agents): 依赖速查行加 ADR 0119 / 来源解析默认零执行 / 三个新看护文件；诊断隐私用例钉住 impact.digest 是唯一由包名派生的值（#918）
+
+（列表截至写下它的那一刻；其后只有一个「填入运行结果」的文档提交。作者 `erwanjun`，无 `Co-Authored-By`。）
 
 ## 3. 新旧识别能力比较
 
@@ -168,6 +177,38 @@ BASELINE §7.2 已把 13 条逐条映射到现有用例，**13 条全部已有�
 
 （表里每个 `文件::类::用例` 都由核对脚本验证过它存在。）**缺口**：无新增。
 
+### 4.5 变异反证（每条新判据先提交、再变异；rc 取自真实退出码）
+
+| 判据 | 变异（改的位置） | 变异后 | 还原后 |
+| --- | --- | --- | --- |
+| 中文模块名按标识符规则 | `importscan._is_module_name` 退回 `depresolve.valid_import_name` | `test_import_origin_cross_platform.py` rc 1（`…test_a_chinese_module_name_…`） | rc 0 |
+| 源码编码按 PEP 263 / BOM 读 | `importscan._read` 里 `python_source=True` → `False` | rc 1（`tests/test_import_origin_cross_platform.py::TestSourceEncodings::test_a_utf8_bom_script_is_read`） | rc 0 |
+| `RECORD` 反斜杠路径 | `distmeta` 去掉 `row[0].replace("\\", "/")` | rc 1（`tests/test_import_origin_cross_platform.py::TestWindowsShapesOnAnyHost::test_a_record_with_backslash_paths_still_maps_the_import_name`） | rc 0 |
+| 依赖任务投影不读新字段 | `deprepair.diagnostic_projection` 加 `"origins": rec.get("origins")` | `test_import_origin_diagnostics_privacy.py` rc 1（金丝雀） | rc 0 |
+| 准备任务投影不读新字段 | `preparation.diagnostic_projection` 加 `origin_names`（读 `dep["plan"]["origins"]`） | rc 1（会话 + 全局包金丝雀） | rc 0 |
+| 缺依赖现场不记计划 | `deprepair.note_missing_dependency` 记 `repair.get("plan")` | rc 1 | rc 0 |
+| 检查项只回计数与闭集原因码 | `prepsession.origin_facts` 不再按 `ORIGIN_REASONS` 过滤 | rc 1 | rc 0 |
+| 默认扫描不读数据文件 | `projscan.scan` 里 `read_bytes()` 一次 `data/results.csv` | `test_import_origin_perf.py` rc 1（`test_data_files_and_the_venv_are_listed_but_never_opened`） | rc 0 |
+| 默认扫描零子进程 | `projscan.scan` 里 `subprocess.run(["true"])` | rc 1（fixture 报错：性能脚本在额外子进程 > 0 时退出码非 0） | rc 0 |
+| 增量扫描命中缓存 | `projscan._script_item` 忽略缓存命中 | rc 1（`test_the_second_pass_with_the_same_cache_parses_nothing`） | rc 0 |
+| e2e ④ 装后发行包核验 | `deprepair._verify_distributions` 开头 `return` | `import-origin.spec.ts` ④ 失败（核验错误从不出现） | ④ 通过 |
+| e2e ③ 来源无法验证 | `depplan._installed_claims` 不认「在而无元数据」 | ③ 失败（`distribution_unresolved` ≠ `unverified`） | ③ 通过 |
+| e2e ① 授权检查如实标注 | `envadvice.recommend` 的 `side_effect_free` 改 `True` | ① 失败 | ① 通过 |
+| e2e ② 一句话 + 安装 | `depplan.plan` 里不再把缺的包放进 `missing` | ② 失败（卡片是 `ready` 而不是 `deps`） | ② 通过 |
+
+没有做变异的：`tests/test_import_origin_perf.py` 的「静态解析读到的恰好是导入闭包」（`importscan` 的闭包读取由 PR1 的 `TestCostScalesWithTheImportGraph` 另有变异）；
+一次对 `depplan._verdict` 的无效变异（改了之后 `version` 仍为空、结果等价）被如实丢弃，换成上表第 14 行。
+
+### 4.6 本次运行结果（本机，Darwin arm64，Python 3.13.11）
+
+| 命令（`PYTHONPATH=$PWD/src:$PWD/tests`） | 结果 |
+| --- | --- |
+| `pytest tests/test_import_origin_*.py tests/test_environment_coverage.py tests/test_dependency_plan.py tests/test_preparation_session_dependencies.py tests/test_dependency_impact.py tests/test_dependency_transaction.py tests/test_dependency_scope.py tests/test_dependency_repair.py tests/test_project_scan.py tests/test_project_scan_zero_exec.py tests/test_project_scan_declarations.py tests/test_diagnostics_bundle.py tests/test_diagnostics_log_privacy.py tests/test_task_diagnostics.py tests/test_e2e_leg_topology.py tests/test_import_architecture.py tests/test_environment_autodetect.py tests/test_environment_adoption.py tests/test_environment_session.py tests/test_user_environments.py tests/test_foundation_dependencies.py tests/test_dependency_repair_e2e.py -q` | **rc 0**；1586 passed、3 skipped、0 failed（按进度点计数；其中 2 条 skip 已核实是联网用例，`TAVOTTO_FOUNDATION_ONLINE=1` 才跑，nightly foundation-observing；另 1 条未逐条追查）。这一轮在补写最后一条诊断隐私用例之前跑，该文件随后单独重跑 `12 passed` |
+| `pytest tests/test_agents_rules_index.py tests/test_docs_references.py tests/test_source_hygiene.py` | rc 0，`52 passed` |
+| `ruff check .`；`ruff format --check src tests` | rc 0；rc 0（641 个文件已格式化） |
+| `tsc -b`（web）；`oxlint`；`i18next-cli types --ci && node scripts/i18n-check.mjs && i18next-cli lint` | rc 0；rc 0（既有 warning，非本 PR）；通过。本 PR 没有改 `web/src`，只改了 `web/e2e` |
+| `python scripts/ci/feature_registry.py check` | 54 个 active 功能、65 条 e2e 引用都在且不带跳过；无孤儿标签 |
+
 ## 5. Windows / macOS / Linux 验证
 
 ### 5.1 已有证据
@@ -205,7 +246,9 @@ PYTHONPATH=<worktree>/src TAVOTTO_PYTHON=<repo>/.venv/bin/python \
   npx playwright test e2e/import-origin.spec.ts --project=chromium
 ```
 
-结果：{{E2E_RESULT}}
+结果：命令 `npx playwright test e2e/import-origin.spec.ts --project=chromium` → **rc 0，`4 passed (1.5m)`**：① 22.4 s、② 22.3 s、③ 18.2 s、④ 25.3 s。同一份代码在机器负载均值约 30 时的另一次完整运行 `4 passed (2.8m)`（30.8 / 41.3 / 28.0 / 66 s）。
+同一台机器上相邻既有 e2e `environment-advice.spec.ts` 仍 `2 passed`（`fixtures.ts` 的 `launchCommand` 只加了一个默认关闭的 `offline` 参数）。
+`tsc -p tsconfig.e2e.json --noEmit` rc 0、`oxlint` rc 0。
 
 e2e 只在 POSIX 腿执行：`test.skip(win32)` 的理由点出 `posix-e2e`（`tests/test_e2e_leg_topology.py::TestPlatformSkipsHaveALegThatRunsThem` 钉着）。
 
@@ -254,7 +297,13 @@ e2e 只在 POSIX 腿执行：`test.skip(win32)` 的理由点出 `posix-e2e`（`t
 `scripts/dev/import_origin_perf.py`（可重复跑：`PYTHONPATH=src python scripts/dev/import_origin_perf.py [--json] [--repeats N]`）：5 / 30 / 100 个脚本的项目（脚本 + 共享模块 + 包 + 40 个无关模块 + 1.6 MB 数据文件 + 600 个文件的 `.venv`）。量法用 `sys.addaudithook` 的 `open` / `scandir` / `compile` / `subprocess.Popen` / `os.system` / `os.exec` / `os.posix_spawn` / `os.fork` / `socket.connect` 事件，**独立于扫描自己的预算账**；时间取 5 次中位数。
 `tests/test_import_origin_perf.py` 在子进程里跑它并**只断言确定性计数**（不断言耗时）。
 
-{{PERF_TABLE}}
+2026-10-11 · Python 3.13.11 · Darwin 27.0.0 arm64 · 12 核
+
+| 脚本数 | 默认扫描冷（s） | 打开文件 / 字节 | 解析次数 | 峰值 MiB | 增量（s） | 缓存命中 | 静态解析全部（s） | 读到文件 | 额外子进程 | 误开数据 / .venv |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 5 | 0.0119 | 53 / 18611 | 48 | 0.17 | 0.0028 | 100% | 0.0088 | 8 | 0 | 0 |
+| 30 | 0.0164 | 78 / 24431 | 73 | 0.24 | 0.0041 | 100% | 0.0502 | 33 | 0 | 0 |
+| 100 | 0.0295 | 148 / 40741 | 143 | 0.44 | 0.006 | 100% | 0.1794 | 103 | 0 | 0 |
 
 读法：「打开文件 / 字节」是审计事件里 `open` 的次数与文件当时大小之和（读了多少的上界）；「解析次数」是 `compile` 事件数；缓存命中 = 1 − 增量解析次数 / 冷解析次数。结论：
 默认扫描的**额外子进程恒为 0**；数据文件与 `.venv` 里的文件**一个都没被打开**；打开的文件数随脚本数线性增长（每个多出来的脚本多一次打开）；总字节不超过项目源码字节加一个常数（依赖声明等）；
