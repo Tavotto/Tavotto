@@ -29,7 +29,13 @@ import textwrap
 
 import pytest
 
-from tavotto.engine import deprepair, depplan, prepsession
+from tavotto.engine import depplan, deprepair, prepsession
+from test_preparation_api import (  # noqa: F401
+    _open,
+    _project,
+    client as prep_client,
+    fake_pool,
+)
 
 # 夹具与助手沿用任务诊断那一组（同一套假 pool / 会话 / 导出包；搬进来是 import，不是复制）
 from test_task_diagnostics import (  # noqa: F401
@@ -40,12 +46,6 @@ from test_task_diagnostics import (  # noqa: F401
     run_aware_pool,
     sessions,
 )
-from test_preparation_api import (  # noqa: F401
-    _open,
-    _project,
-    client as prep_client,
-    fake_pool,
-)
 
 #: 带标记的名字：像用户课题里会有的 import 名 / 包名 / 路径片段。不是 curated、不是标准库、不是闭集成员。
 IMPORT = "zq9patient7731lab"
@@ -53,6 +53,7 @@ DIST = "zq9-patient7731-lab-tools"
 PATH = "/Users/zq9patient7731/课题/secret_site"
 SPECIFIED = "zq9-patient7731-lab-tools>=2.1"
 ALL_CANARIES = (IMPORT, DIST, PATH, "zq9patient7731")
+
 
 def _rich_impact() -> dict:
     return deprepair.impact_of(
@@ -98,7 +99,12 @@ def _rich_record(state: str = "failed") -> dict:
             }
         ],
         "user_specified": [{"import_name": IMPORT, "requirement": SPECIFIED}],
-        "result": {"activated": False, "health_ok": False, "python": PATH, "installed": {DIST: "2.1"}},
+        "result": {
+            "activated": False,
+            "health_ok": False,
+            "python": PATH,
+            "installed": {DIST: "2.1"},
+        },
         "pypi_source": "default",
         "pypi_mirror": "",
         "retryable": True,
@@ -259,7 +265,9 @@ class TestMissingDependencyEvidence:
                 "import_name": IMPORT,
             },
             "plan": {
-                "origins": [{"import_name": IMPORT, "suggested_distribution": DIST, "candidates": [DIST]}],
+                "origins": [
+                    {"import_name": IMPORT, "suggested_distribution": DIST, "candidates": [DIST]}
+                ],
                 "user_specified": [{"import_name": IMPORT, "requirement": SPECIFIED}],
             },
             "user_environments": [{"id": "ue-1", "python": PATH + "/bin/python"}],
@@ -275,14 +283,21 @@ class TestMissingDependencyEvidence:
             ],
         }
         deprepair.note_missing_dependency(
-            tmp_path, script="s.py", module="numpy", python_source="bundled", project_env=None, offer=offer
+            tmp_path,
+            script="s.py",
+            module="numpy",
+            python_source="bundled",
+            project_env=None,
+            offer=offer,
         )
         (record,) = deprepair.recent_missing_dependencies(tmp_path)
         text = json.dumps(record, ensure_ascii=False)
         for canary in ALL_CANARIES:
             assert_no_secret(text, canary)
         keys = _walk_keys(record, set())
-        assert not (keys & {"origins", "user_specified", "suggested_distribution", "candidates", "plan"})
+        assert not (
+            keys & {"origins", "user_specified", "suggested_distribution", "candidates", "plan"}
+        )
         # 反证：记录不是空的——不在闭集里的值被哈希而不是丢掉
         assert record["offer"]["resolution_source"].startswith("str:")
         assert record["offer"]["targets"][0]["reason"].startswith("str:")
@@ -338,7 +353,10 @@ def _rich_offer() -> dict:
                     "suggested_distribution": DIST,
                     "reason": reasons[0],
                     "candidates": [DIST],
-                    "coverage": {"detail": [{"code": "module_not_found_in_user_environment"}], "path": PATH},
+                    "coverage": {
+                        "detail": [{"code": "module_not_found_in_user_environment"}],
+                        "path": PATH,
+                    },
                 },
                 {"import_name": IMPORT + "b", "reason": reasons[-1]},
             ],
@@ -349,7 +367,11 @@ def _rich_offer() -> dict:
 
 
 def test_a_session_whose_plan_carries_origins_exports_no_name_through_the_task_snapshot_or_the_bundle(
-    prep_client, tmp_path, run_aware_pool, sessions, monkeypatch
+    prep_client,
+    tmp_path,
+    run_aware_pool,
+    sessions,
+    monkeypatch,  # noqa: F811 — 夹具经 import 引入，参数同名是 pytest 的用法
 ):
     client = prep_client
     monkeypatch.setattr(deprepair, "preparation_offer", lambda root, script: _rich_offer())
@@ -364,7 +386,9 @@ def test_a_session_whose_plan_carries_origins_exports_no_name_through_the_task_s
     dep = next(c for c in report["checks"] if c["id"] == "dependencies")
     assert set(dep["detail"]["origins"]) <= {"count", "by_reason", "confirmable"}
     assert dep["detail"]["origins"]["count"] == 2 and dep["detail"]["origins"]["confirmable"] == 1
-    assert not (_walk_keys(dep["detail"], set()) & {"import_name", "distribution", "candidates", "coverage"})
+    assert not (
+        _walk_keys(dep["detail"], set()) & {"import_name", "distribution", "candidates", "coverage"}
+    )
 
     res = _get(client, "preparation", ref, pj)
     assert res.status_code == 200, res.get_json()
@@ -372,7 +396,10 @@ def test_a_session_whose_plan_carries_origins_exports_no_name_through_the_task_s
     for canary in ALL_CANARIES:
         assert_no_secret(text, canary)
     snap = res.get_json()["snapshot"]
-    assert not (_walk_keys(snap, set()) & {"origins", "user_specified", "suggested_distribution", "candidates"})
+    assert not (
+        _walk_keys(snap, set())
+        & {"origins", "user_specified", "suggested_distribution", "candidates"}
+    )
     # 空转反证：快照不是空壳，依赖那一段确实被投影了（只有布尔与个数）
     assert snap["config"]["dependency_preparation"] is True
 
