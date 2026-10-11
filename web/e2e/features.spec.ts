@@ -691,6 +691,7 @@ test(
     await page.setViewportSize(VIEWPORT)
     await page.goto(a.baseURL)
     await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
     const objs = page.locator('[data-canvas-stage] [data-object-id]')
     const n0 = await objs.count()
 
