@@ -246,12 +246,25 @@ test('恢复：收起卡片换展示面、HTTP 断开后台照跑、应用重启
     const srcConfig = path.join(path.dirname(a.dataDir), 'config')
     if (existsSync(srcConfig)) cpSync(srcConfig, keptConfig, { recursive: true })
     else mkdirSync(keptConfig, { recursive: true })
+    // 后端进程重启，客户端保持打开。受控 shutdown 会先清项目再等 worker 退出；此时的 no_project
+    // 会让旧页退回项目选择，测不到「旧会话 404 → 重建检查」。新服务就绪后再重连。
+    await page.context().setOffline(true)
     await a.stop()
     second = await startApp({
       figures: project,
       port,
       env: { TAVOTTO_DATA_DIR: keptData, TAVOTTO_CONFIG_DIR: keptConfig },
     })
+    const missingSession = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === `/api/engine/preparation-sessions/${sid}`,
+      { timeout: 60_000 },
+    )
+    await page.context().setOffline(false)
+    const missing = await missingSession
+    expect(missing.status()).toBe(404)
+    expect(await missing.json()).toMatchObject({ code: 'preparation_session_not_found' })
     await expect(card(page)).toHaveAttribute('data-prep-state', 'restarted', { timeout: 60_000 })
     await expect(card(page).locator('[data-prep-primary]')).toHaveAttribute('data-prep-primary', 'run')
     await page.waitForTimeout(2000)
