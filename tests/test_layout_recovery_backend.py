@@ -1096,3 +1096,30 @@ def test_slot_removal_and_publish_are_serialized_by_the_session_lock(client, tmp
     assert not _slot("d_old").exists()
     assert held and all(held), f"有槽位在会话锁之外被删：{held}"
     assert len(held) >= 2
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="用 fcntl 模拟另一个持锁者；Windows 腿留给 CI")
+def test_tutorial_reset_never_unlinks_the_slot_outside_the_session_lock(client, monkeypatch):
+    """别的进程占着跨进程会话锁：重置不绕过它硬删槽位（否则已通过 slot_check 的 set_last 会发布悬空 last），
+    如实报失败（tutorial_reset_incomplete），槽位原样留着；锁放开后再重置就成功。"""
+    import fcntl
+
+    monkeypatch.setattr(m.engine_pool, "build", lambda *a, **k: pytest.fail("不许执行脚本"))
+    monkeypatch.setattr(layoutsession, "LOCK_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(m, "_TUTORIAL_CLEAR_PAUSE_S", 0)
+    tut = client.post("/api/tutorial/open", json={"default": False}).get_json()
+    pid, doc_id = tut["project"]["id"], tut["tutorial"]["document_id"]
+    assert _put(client, doc_id, _doc(), {"id": pid}).status_code == 200
+    slot_bytes = _slot(doc_id).read_bytes()
+    layoutsession.lock_path().parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(layoutsession.lock_path(), os.O_RDWR | os.O_CREAT)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        r = client.post("/api/tutorial/reset", json={})
+        assert r.status_code == 500 and r.get_json()["code"] == "tutorial_reset_incomplete"
+        assert _slot(doc_id).read_bytes() == slot_bytes, "槽位在会话锁之外被删了"
+    finally:
+        os.close(fd)
+    r = client.post("/api/tutorial/reset", json={})
+    assert r.status_code == 200 and r.get_json()["reset"] is True
+    assert not _slot(doc_id).exists()

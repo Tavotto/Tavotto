@@ -10,6 +10,7 @@ import {
   be,
   boot,
   currentShape,
+  failureSignal,
   localSnapshot,
   resetAll,
   savedProject,
@@ -386,5 +387,88 @@ describe('用户级加图入口在恢复期间排队（deferUserEntry）', () =>
     await settle()
     await new Promise((r2) => setTimeout(r2, 50))
     expect(figCount(app), '继续新建之后，needs_user 之前排的加图应被丢弃').toBe(0)
+  })
+})
+
+/* ---------------- 预防性审查：家族 1 / 2 / 3 / 5 ---------------- */
+
+describe('家族 1：读与安装之间同一个 docId 被别的项目覆盖', () => {
+  const gBody = () => {
+    const g = savedProject('G 的排版')
+    g.canvases[0].objects = [text('t_g', 'G only', 1, 1)]
+    return g
+  }
+  const putAs = async (pj: string, id: string, body: ProjectDocument) => {
+    const res = await fetch(`/api/autosave/${id}`, {
+      method: 'PUT',
+      headers: { 'X-Tavotto-Project': pj, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    expect(res.status).toBe(200)
+  }
+  const ids = (app: App) => currentShape(app).canvases.flatMap((c) => c.objects.map((o) => o.id))
+
+  it('发现 → 探测：唯一候选的正文 GET 在路上时被 G 覆盖，F 不得自动采用 G 的正文', async () => {
+    seedSaved('d_x', 'p_a', { last: false }) // 只有 owners，没有 last / 缓存 → 走发现
+    const app = await boot()
+    const gate = be.hold((r) => r.method === 'GET' && r.docId === 'd_x')
+    const restoring = app.doc.restoreSession()
+    await gate.reached
+    await putAs('p_b', 'd_x', gBody())
+    gate.release()
+    await restoring
+    await settle()
+    expect(ids(app), 'F 自动采用了 G 的正文').not.toContain('t_g')
+    expect(autosavePutsBy('p_a')).toHaveLength(0)
+  })
+
+  it('needs_user 的备选：用户点选之前同一个 docId 被 G 覆盖，openAlternative 不得装入 G 的正文', async () => {
+    const savedA = seedSaved('d_a', 'p_a', { last: false })
+    be.owners.set('d_b', 'p_a')
+    be.setLast('p_a', 'd_b', 'Draft B') // B 缺失 → needs_user，备选里有 A
+    localStorage.setItem('tavotto.currentDoc', 'd_a')
+    localStorage.setItem(
+      'tavotto.docIndex',
+      JSON.stringify([{ id: 'd_a', name: savedA.project.name, savedAt: 1, objects: 1, canvases: 2, projectId: 'p_a' }]),
+    )
+    const app = await boot()
+    await app.doc.restoreSession()
+    expect(app.doc.useDocumentStore.getState().restoreGate.state).toBe('needs_user')
+    // 用户盯着这个问题看了一会儿：期间项目 G 把 d_a 存成了自己的
+    await putAs('p_b', 'd_a', gBody())
+    expect(be.owners.get('d_a')).toBe('p_b')
+    const r = await restore()
+    await r.openAlternative('d_a')
+    await settle()
+    expect(ids(app), 'F 打开了 G 的正文').not.toContain('t_g')
+    expect(autosavePutsBy('p_a')).toHaveLength(0)
+  })
+})
+
+function autosavePutsBy(pj: string) {
+  return be.requests.filter((r) => isAutosavePut(r) && r.pj === pj)
+}
+
+describe('家族 3：失败被折成「没有」', () => {
+  it('没有 last / 缓存时，候选发现端点 500：不能当成空项目静默放行', async () => {
+    seedSaved('d_one', 'p_a', { last: false })
+    be.fail((r) => r.path === '/api/layout-session/candidates', 500, 99)
+    const app = await boot()
+    await app.doc.restoreSession()
+    await settle()
+    const ui = (await import('@/store/uiStore')).useUiStore.getState()
+    const signalled = failureSignal(app) !== null || ui.status !== null
+    expect(signalled, '发现失败被当成「没有历史」，用户既没看到提示也没有重试出口').toBe(true)
+  })
+})
+
+describe('家族 5：弱证据', () => {
+  it('只有 assets 同名证据（owners / last / 缓存都没有）：不自动采用成本项目的排版', async () => {
+    seedSaved('d_w', 'p_a', { last: false, owner: false })
+    be.assetsEvidence.add('p_a:d_w')
+    const app = await boot()
+    await app.doc.restoreSession()
+    await settle()
+    expect(app.doc.useDocumentStore.getState().documentId, '凭素材同名自动采用并之后会按本项目保存').not.toBe('d_w')
   })
 })

@@ -3279,6 +3279,8 @@ def api_projects_remove():
 
 def _tutorial_error(exc: engine_tutorial.TutorialError):
     status = 409 if exc.code == "tutorial_locked" else 500
+    if exc.code == "tutorial_reset_incomplete":  # 固定文案，没有占位符，不带 reason
+        return jsonify({"error": exc.message, "code": exc.code}), status
     return jsonify(
         {"error": exc.message, "code": exc.code, "params": {"reason": exc.message}}
     ), status
@@ -3351,8 +3353,13 @@ def api_tutorial_open():
     )
 
 
+#: 教程清槽位拿不到会话锁时的有界重试（次数 / 间隔秒）
+_TUTORIAL_CLEAR_ATTEMPTS = 3
+_TUTORIAL_CLEAR_PAUSE_S = 0.3
+
+
 def _clear_tutorial_local_state(
-    pid: str, meta: dict, project_path: Path | None = None
+    pid: str, meta: dict, project_path: Path | None = None, *, strict: bool = False
 ) -> list[str]:
     """重置时清掉数据目录里**只属于教程**的两样东西；别的项目一个字节不碰。
 
@@ -3363,6 +3370,11 @@ def _clear_tutorial_local_state(
     全局 recent 不动（路径没变），遥测同意与 onboarding 状态不属于这里。
     另外（#715 PR-B，给了 `project_path` 时）：数据目录会话状态里教程项目的「上次开着的排版」
     与教程画布槽位的归属（`engine/layoutsession.py`）；不进返回的 `cleared`（那是文件名清单）。
+
+    **槽位只在跨进程会话锁里删**（`delete_slot`）：绕过它删，另一个进程已通过 `slot_check` 的 `set_last`
+    会发布一个指向已删文件的 durable last。拿不到锁就有界重试；仍不行**不删槽位**——`strict`（重置）
+    抛 `TutorialError("tutorial_reset_incomplete")`（新副本已就位、旧排版没清掉，文案见 errors.json）让调用方如实报失败，不静默留着旧进度；非 strict
+    （新副本建出来时的顺手清理）只记日志，槽位留到下次。
     """
     removed: list[str] = []
     slot = _autosave_path(str(meta["document_id"]))
@@ -3382,18 +3394,29 @@ def _clear_tutorial_local_state(
         removed.append(slot.name)
         return True
 
+    failure: OSError | None = None
     with _document_lock(slot):
-        # 删槽位在跨进程会话锁里（`delete_slot`），和别的进程的 `set_last` 发布串行
-        try:
-            engine_layoutsession.delete_slot(slot.stem, _unlink_slot)
-            if project_path is not None:
-                engine_layoutsession.forget_project(
-                    engine_layoutsession.project_key(project_path), [str(meta["document_id"])]
-                )
-        except OSError as exc:
-            LOG.warning("重置教程：会话状态清不掉（%s）", exc)
-            if slot.exists():  # 教程重置不能因为会话状态不可用就留着旧画布
-                _unlink_slot()
+        for attempt in range(_TUTORIAL_CLEAR_ATTEMPTS):
+            try:
+                engine_layoutsession.delete_slot(slot.stem, _unlink_slot)
+                if project_path is not None:
+                    engine_layoutsession.forget_project(
+                        engine_layoutsession.project_key(project_path),
+                        [str(meta["document_id"])],
+                    )
+                failure = None
+                break
+            except OSError as exc:  # 会话锁拿不到：文件没动，稍后再试
+                failure = exc
+                if attempt + 1 < _TUTORIAL_CLEAR_ATTEMPTS:
+                    time.sleep(_TUTORIAL_CLEAR_PAUSE_S)
+    if failure is not None:
+        LOG.warning("重置教程：会话状态被占用，教程旧排版没清掉（%s）", failure)
+        if strict:
+            raise engine_tutorial.TutorialError(
+                "tutorial_reset_incomplete",
+                "旧教程排版没清掉：本机会话状态被另一个进程占用",
+            )
     target = _baked_store().path_for(pid)
     try:
         target.unlink()
@@ -3432,7 +3455,14 @@ def api_tutorial_reset():
                 pass
         return _tutorial_error(exc)
     pid = _project_id(tp.path)
-    cleared = _clear_tutorial_local_state(pid, meta, tp.path)
+    try:
+        cleared = _clear_tutorial_local_state(pid, meta, tp.path, strict=True)
+    except engine_tutorial.TutorialError as exc:
+        # 副本已换成干净的，但旧排版槽位没清掉：如实报失败（前端按 code 显示 tutorial_reset_incomplete 的那句话，用户可以
+        # 再点一次重置），把新副本重新打开还给用户；绝不在会话锁之外硬删槽位
+        with contextlib.suppress(RuntimeError, OSError):
+            open_project(str(tp.path), make_default=was_default or ctx is None)
+        return _tutorial_error(exc)
     try:
         status = open_project(
             str(tp.path), make_default=bool(body.get("default", was_default or ctx is None))

@@ -1012,3 +1012,86 @@ describe('Codex P1/P2：发现的自动采用', () => {
     if (kind === 'too_new') expect(ds(app).docNotice).toMatchObject({ kind: 'schema_too_new', docId: 'd_only' })
   })
 })
+
+describe('Codex P1：发现的行同样核对正文修订号', () => {
+  const oneRow = (id: string, revision: string) =>
+    new Response(JSON.stringify({ items: [{ ...row(id), revision }], next_cursor: null, index: 'ok' }), { status: 200 })
+
+  it.each([
+    ['other', 'missing'],
+    ['unknown', 'unavailable'],
+  ] as const)('扫描之后、读正文之前别的项目存了同一个 docId（复核 %s）→ needs_user{%s}，不装进来', async (answer, kind) => {
+    be.putSlot('d_only', savedProject('F 的'), 'p_a')
+    const hold = gate()
+    candidatePages = () => oneRow('d_only', 'rev-at-scan')
+    const app = await boot()
+    be.state.hold.autosaveGet = hold.promise
+    be.state.ownerAnswers.set('p_a|d_only', { owner: answer, evidence: answer === 'unknown' ? null : 'owners', verified: false })
+    const restoring = app.doc.restoreSession()
+    await reached(() => be.state.calls.includes('GET autosave d_only'))
+    be.putSlot('d_only', savedProject('G 的', [panel({ id: 'panel_g' })]), 'p_other') // G 存了
+    hold.release()
+    expect(await restoring).toBe(false)
+    expect(objectIds(app)).toEqual([])
+    expect(ds(app).documentId).not.toBe('d_only')
+    expect(ds(app).restoreIssue).toMatchObject({ kind, ref: { id: 'd_only' } })
+    expect(be.writes()).toEqual([])
+  })
+
+  it('修订号对不上但复核仍是 {this, verified}（自己又存了一次）→ 照装；一致时不复核', async () => {
+    be.putSlot('d_only', savedProject('F 的'), 'p_a')
+    candidatePages = () => oneRow('d_only', 'stale')
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(be.state.calls.some((c) => c.startsWith('GET owner'))).toBe(true)
+
+    localStorage.clear()
+    be.state.calls.length = 0
+    candidatePages = () => oneRow('d_only', be.state.slots.get('d_only')!.revision)
+    const again = await boot()
+    expect(await again.doc.restoreSession()).toBe(true)
+    expect(be.state.calls.some((c) => c.startsWith('GET owner'))).toBe(false)
+  })
+
+  it('choose 里选的候选（openAlternative）也带着发现时的修订号：被换了就不装', async () => {
+    be.putSlot('d_one', savedProject('一'), 'p_a')
+    be.putSlot('d_two', savedProject('二'), 'p_a')
+    candidatePages = () =>
+      new Response(JSON.stringify({ items: [row('d_one'), row('d_two')].map((r) => ({ ...r, revision: 'scan-rev' })), next_cursor: null, index: 'ok' }), { status: 200 })
+    const app = await boot()
+    await app.doc.restoreSession()
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'choose' })
+    be.putSlot('d_one', savedProject('别人的'), 'p_other')
+    be.state.ownerAnswers.set('p_a|d_one', { owner: 'other', evidence: 'owners', verified: true })
+    expect(await app.restore.openAlternative('d_one')).toMatchObject({ kind: 'needs_user' })
+    expect(ds(app).documentId).not.toBe('d_one')
+  })
+})
+
+describe('needs_user 的备选记着提供时读到的正文修订号', () => {
+  it('用户坐在面板上时同一个 docId 被别的项目覆盖——点选时复核归属，不装别人的正文', async () => {
+    be.putSlot('d_a', savedProject('Older A'), 'p_a')
+    be.setLast('p_a', 'd_b', 'Newest B') // B 缺失
+    be.session('p_a').prev = { doc_id: 'd_a', name: 'Older A', at: 5 }
+    const app = await boot()
+    await app.doc.restoreSession()
+    expect(ds(app).restoreIssue!.alternatives.map((a) => a.id)).toEqual(['d_a'])
+    expect(ds(app).restoreIssue!.alternatives[0].expectedRevision).toBeTruthy()
+    be.putSlot('d_a', savedProject('G 的', [panel({ id: 'panel_g' })]), 'p_other')
+    be.state.ownerAnswers.set('p_a|d_a', { owner: 'other', evidence: 'owners', verified: true })
+    expect(await app.restore.openAlternative('d_a')).toMatchObject({ kind: 'needs_user' })
+    expect(ds(app).documentId).not.toBe('d_a')
+    expect(objectIds(app)).toEqual([])
+  })
+
+  it('没被覆盖：点选照装，不复核', async () => {
+    be.putSlot('d_a', savedProject('Older A'), 'p_a')
+    be.setLast('p_a', 'd_b', 'Newest B')
+    be.session('p_a').prev = { doc_id: 'd_a', name: 'Older A', at: 5 }
+    const app = await boot()
+    await app.doc.restoreSession()
+    be.state.calls.length = 0
+    expect(await app.restore.openAlternative('d_a')).toMatchObject({ kind: 'restored', id: 'd_a' })
+    expect(be.state.calls.some((c) => c.startsWith('GET owner'))).toBe(false)
+  })
+})

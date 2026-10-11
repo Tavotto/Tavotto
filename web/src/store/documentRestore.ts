@@ -206,7 +206,7 @@ async function guardRevision(
   cand: RestoreCandidate,
   probe: ProbeResult,
 ): Promise<RestoreOutcome | null> {
-  const expected = (cand as RestoreCandidate & { expectedRevision?: string | null }).expectedRevision
+  const expected = cand.expectedRevision
   if (!expected || probe.from !== 'disk' || probe.disk.kind !== 'found') return null
   const actual = probe.disk.revision
   if (!actual || actual === expected) return null
@@ -265,7 +265,11 @@ async function verifiedAlternatives(
     if (c.id === excludeId || out.some((o) => o.id === c.id)) continue
     const probe = await probeDocument(c.id, token.pj)
     if (!isRestoreTokenCurrent(token)) return null
-    if (probe.kind === 'found') out.push(c)
+    if (probe.kind !== 'found') continue
+    // 提供给用户之前读到的正文修订号记在候选上（候选自己没有时）：用户坐在面板上的这段时间里同一个 docId 可能被别的项目
+    // 存过，点选时 `installChecked` 据此发现对不上并复核归属，而不是装「此刻磁盘上的任何东西」
+    const seen = probe.from === 'disk' && probe.disk.kind === 'found' ? probe.disk.revision : null
+    out.push(!c.expectedRevision && seen ? { ...c, expectedRevision: seen } : c)
   }
   return out
 }
@@ -393,13 +397,16 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       !withheldIds.has(i.doc_id) &&
       (!isForeignDocument(i.doc_id, pj) || i.evidence === 'owners'),
   )
-  const asCandidates = items.slice(0, 5).map<RestoreCandidate>((i) => ({
+  // 发现的行带着扫描那一刻的正文修订号：之后读正文时对不上（共用 docId 的别的项目在两次读之间存过）就要复核归属
+  const asCandidate = (i: RecoveryCandidateItem): RestoreCandidate => ({
     id: i.doc_id,
     name: i.name,
     sources: ['discovered'],
     ownership: 'this',
     ...(i.evidence ? { ownershipEvidence: i.evidence } : {}),
-  }))
+    ...(i.revision ? { expectedRevision: i.revision } : {}),
+  })
+  const asCandidates = items.slice(0, 5).map(asCandidate)
   if (!scan.complete) {
     // 数不清（翻到上限游标还在，或中途读不到）：不自动采用、也不说没有。已经看到的给用户选；一份都没有就给重试
     //（最接近的现有类别 `index_degraded`：「恢复记录读不全」，出口 = 重试 / 继续新建）
@@ -418,7 +425,7 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
     const probe = await probeWithRetry(token, item.doc_id)
     if (!probe) return { kind: 'superseded' }
     if (probe.kind === 'found') {
-      const out = installProbe(token, probe, null, item.name, 'restored')
+      const out = await installChecked(token, probe, null, asCandidate(item), 'restored')
       // 产品决定（4.3）：没有任何首选目标时，唯一一份明确属于本项目的有效候选自动采用，并说清来源
       if (out.kind === 'restored') {
         useUiStore

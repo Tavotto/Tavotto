@@ -202,6 +202,7 @@
     "tmp_dir_failed": "Couldn't create a temporary file in the export folder: {{error}}.",
     "tutorial_copy_failed": "Couldn’t prepare the tutorial project. Your previous tutorial copy is untouched: {{reason}}",
     "tutorial_locked": "A file in the tutorial project is in use by another program. Close it and try again: {{reason}}",
+    "tutorial_reset_incomplete": "The tutorial now has a clean copy, but your previous tutorial layout couldn’t be cleared yet (another Tavotto is using the session record). Please try Reset again in a moment.",
     "tutorial_resources_invalid": "Tutorial files are incomplete. Reinstall Tavotto: {{reason}}",
     "tutorial_resources_missing": "No tutorial files in this installation. Reinstall Tavotto: {{reason}}",
     "unsafe_project_name": "“{{name}}” isn’t a valid folder name. A project name must be a single folder, with no path separators or “..”.",

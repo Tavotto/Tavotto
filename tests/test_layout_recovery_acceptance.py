@@ -719,3 +719,58 @@ def test_candidate_pages_cover_every_project_slot_exactly_once(client, tmp_path)
     else:
         pytest.fail("分页没有终点")
     assert sorted(seen) == ["d_c0", "d_c2", "d_c4"], seen
+
+
+# ============================== 预防性审查（family 3 / 4） ==============================
+
+
+def test_unreadable_slot_directory_is_not_reported_as_an_empty_candidate_list(
+    client, tmp_path, monkeypatch
+):
+    """候选目录读不出来（权限 / I/O）≠ 没有候选：不能回 200 + 空列表 + index ok。"""
+    p = _project(client, tmp_path, "proj", default=True)
+    _save(client, p["id"], "d_there")
+
+    real = os.scandir
+
+    def denied(path=".", *a, **k):
+        if Path(path) == m.AUTOSAVE_DIR:
+            raise PermissionError(13, "simulated EACCES")
+        return real(path, *a, **k)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(os, "scandir", denied)
+        r = client.get(
+            "/api/layout-session/candidates",
+            query_string={"scope": "project"},
+            headers=_pj(p["id"]),
+        )
+    body = r.get_json()
+    folded = r.status_code == 200 and body["items"] == [] and body.get("index") == "ok"
+    assert not folded, f"目录读失败被折成空候选列表：{r.status_code} {body}"
+
+
+def test_slot_removed_by_another_process_between_validation_and_record_does_not_leave_a_dangling_durable_last(
+    client, tmp_path, monkeypatch
+):
+    """跨进程窗口：`PUT /last` 在文档锁里验槽位，但文档锁只是线程锁。另一进程在验完与记完之间删了槽位
+    （用「验完立刻删文件」模拟），durable last 就指向不存在的槽位。"""
+    p = _project(client, tmp_path, "proj", default=True)
+    _save(client, p["id"], "d_a")
+    _save(client, p["id"], "d_b", doc(name="B"))
+    _put_last(client, p["id"], "d_a", "A")
+    real = m._slot_recoverable
+
+    def validate_then_vanish(path):
+        out = real(path)
+        if path.stem == "d_b":
+            path.unlink()
+        return out
+
+    with monkeypatch.context() as mp:
+        mp.setattr(m, "_slot_recoverable", validate_then_vanish)
+        _put_last(client, p["id"], "d_b", "B")
+    last = _session(client, p["id"])["last"]
+    assert last is None or _readable(client, p["id"], last["doc_id"]), (
+        f"durable last 指向了已不存在的槽位：{last}"
+    )
