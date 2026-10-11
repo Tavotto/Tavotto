@@ -113,6 +113,15 @@ def _rich_record(state: str = "failed") -> dict:
     }
 
 
+def _walk_items(obj, out: dict | None = None) -> dict:
+    out = {} if out is None else out
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            out[k] = v
+            _walk_items(v, out)
+    return out
+
+
 def _walk_keys(obj, out: set[str]) -> set[str]:
     if isinstance(obj, dict):
         for k, v in obj.items():
@@ -192,6 +201,37 @@ class TestDependencyTaskProjection:
                 "imports",
             }
         )
+
+    def test_the_one_value_derived_from_package_names_is_the_impact_digest_and_that_is_issue_918(
+        self,
+    ):
+        """**已知差距，钉着现状**：投影里唯一一个由包名算出来的值是 `impact.digest`（影响摘要的无密钥 sha256；
+        `IMPACT_VERSION` 2 起摘要含用户指定的包名）。名字不以明文出门，但对常见包名集合可以离线复算——与 #918 第 1 条同形，
+        该 issue 仍开着（修法：诊断导出里改成带本机密钥的摘要或不导出）。本用例不声称它安全，只钉住「它是唯一一个」：
+        哪天有人再往投影里加一个由名字派生的值，这里先红；哪天 #918 修了（摘要不再可复算），把这条改成断言新形状。"""
+        a = deprepair.diagnostic_projection(_rich_record())
+        other = _rich_record()
+        other["impact"] = deprepair.impact_of(
+            target_kind="tavotto_managed",
+            requirements=("some-other-package",),
+            constraints=(),
+            require_hashes=False,
+            adapter=(),
+            groups=(),
+            creates_environment=True,
+            private_python=None,
+            env_fingerprint="x",
+            user_specified=({"import_name": IMPORT, "requirement": "some-other-package"},),
+        )
+        other["impact_digest"] = deprepair.impact_digest(other["impact"])
+        b = deprepair.diagnostic_projection(other)
+        assert a["impact"]["digest"] != b["impact"]["digest"]  # 它确实随包名变
+        hexish = {
+            k
+            for k, v in _walk_items(a).items()
+            if isinstance(v, str) and len(v) >= 32 and all(c in "0123456789abcdef" for c in v)
+        }
+        assert hexish == {"digest"}
 
     def test_the_error_code_is_a_published_code_or_absent(self):
         rec = _rich_record()
