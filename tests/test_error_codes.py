@@ -556,6 +556,9 @@ NON_UI_CODES = {
     # #715 验收 P1：「上次开着的排版」记到了别的项目的槽位上。只在后台推送里出现，前端认它作废
     # 本机缓存（`lib/projectDocs.LAYOUT_FOREIGN_CODE`），从不显示给用户
     "layout_foreign",
+    # ADR 0119：会话状态此刻读不到 / 跨进程锁拿不到（503）。同样只在后台「上次开着的」推送里出现，前端当成
+    # 可重试的失败、留着待确认标记下次补推（`lib/projectDocs.pushRemote`），从不显示给用户
+    "session_unavailable",
 }
 
 
