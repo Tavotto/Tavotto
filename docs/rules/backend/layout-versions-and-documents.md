@@ -111,37 +111,92 @@
   结尾，上限永远数不到。判据是**年龄 + pid 已死**——一小时内一律不碰、pid
   还活着的留到一天后（pid 复用 / Windows 量不了存活）；只认 `_next_tmp` 起的
   名字，命名与判据同在 `atomicio`。
-- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§三）**：`engine/layoutsession.py`（纯标准库）
+- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§三；2026-10-11 文档恢复可靠性修复重写了读取、last 语义、锁与提交顺序，ADR 0119（`docs/adr/0119-document-restore-verdict-and-recoverable-last.md`），见下）**：`engine/layoutsession.py`（纯标准库）
   是 `data_dir()/state/layout-sessions.json` 的唯一读写方（`state_path()` 是位置的唯一出处）。内容：
-  `projects{<normalize_path_identity(项目路径)>: {last{doc_id, name, at}}}`、`no_project{last}`（没开项目那一组）、
-  `owners{槽位 doc_id → 项目键 | null}`（`null` = 确认过写它时没开项目；没有这条 = 不知道，两档）。
+  `projects{<normalize_path_identity(项目路径)>: {last, prev, pending}}`、`no_project{...}`（没开项目那一组）、
+  指针形状都是 `{doc_id, name, at}`；`owners{槽位 doc_id → 项目键 | null}`（`null` = 确认过写它时没开项目；没有这条 = 不知道，两档）；
+  `owner_revisions{槽位 doc_id → 记归属那一刻正文的 revision}`。`version` 仍是 1（新字段是增量，不升级、不碰正文 schema）。
   #674 的 `bindings` 未进 main，本文件暂不带。**不能放**在 `_autosave/`（清理按文件名扫）、`layouts/`、
   项目 `tavottofile/`（会随项目拷到别人机器上）。
-  - 写一律 `atomicio`，模块锁管本进程读改写；**同值不写**（`record_owner` 在每次自动保存都会被调）。
-    读坏了（不是 JSON / 形状不对 / 非有限数）当成空的，下一次写整份替换——这是「上次停在哪」的提示，
-    不值得让任何一次保存失败。
+  - **读取结果四档**（`_read()` 回 `(state, status)`，`GET /api/layout-session` 的 `index`）。**这一档替代了旧合同
+    「读坏了（不是 JSON / 形状不对 / 非有限数）当成空的，下一次写整份替换」**——那条把「文件不存在」「读不动」
+    「字节坏」「来自更新版本」「某个无关字段是 NaN」全部当成首次空状态，下一次普通写入就把一份可能完整、
+    可能更新的文件整份抹掉：`missing`（不存在，首次空）；`ok`（逐字段清洗：坏字段丢、其余保留，**未知顶层键与组内
+    未知键原样保留**，非有限数的字段丢弃；NaN 用标准 `json.loads` 接受，不再整份作废）；`recovered`（字节坏，原字节先存
+    `state/layout-sessions.corrupt-<ms>.json`——相同字节只存一份、最多留 3 份——再用 `layout-sessions.json.bak`，
+    那是每次成功写主文件后同 payload 再写的一份）；`degraded`（读失败拿不到字节 / 字节坏且无可用 bak / `version` 比
+    `FORMAT_VERSION` 新）。读失败与未来格式**拒绝一切写回**（`SessionStateUnavailable`，是 `OSError`）：拿空状态覆盖一份
+    可能完整的文件，就是把一次读故障变成永久丢数据；字节坏的那种原字节已备份，写入放行。degraded 时槽位清理一个都不删
+    （不知道谁受保护就当都受保护）。备份都在 `state/`，不在 `_autosave/`。只读路径（`read_status` / `read_readonly`，
+    候选发现与 `/owner` 用）**不写任何东西、不拿锁**（主文件只被整份原子替换，读到的永远是完整的一份）。
+  - **`last` 只指向可恢复的正文**（R3）。每组三个指针：`last`（durable）、`prev`（上一份 durable，容量 1）、
+    `pending`（最新的打开意图但槽位还没有有效正文，容量 1，**不替换** durable last）。`PUT /api/layout-session/last`
+    在槽位的 `_document_lock` 里验「槽位文件在、能读、过 `loads_document` + `validate_document`」（`_slot_recoverable`）再调
+    `set_last(..., slot_ok=)`：通过 → durable（`prev ← 旧 last`、`last ← 新`、同一份的 pending 清掉），回
+    `{ok, last, state:"durable"}`；不通过 → 只写 pending，回 `{ok, last:<durable 或 null>, pending, state:"pending"}`。
+    **pending 只是「最新的、还没 durable 的意图」**：任何更晚的 durable `set_last(X)` 都清掉本组 pending（不管它指着谁），
+    否则 A→B(pending)→A(durable) 之后 B 迟到的首次保存会晋升过期的 pending、把 last 顶回 B。
+    旧前端的正常顺序是「先 PUT last、再首次自动保存」：early PUT 只记 pending，**首次正文落盘成功的那个提交**
+    （`commit_slot`）把匹配的 pending 晋升为 last——不留悬空 last，也不靠前端记得补一次。`last` 对旧前端仍是 `{doc_id,name,at}`。
+    **不要**只在 `set_last` 里「文件不存在就拒绝」：那会让旧前端的 early PUT 永远失败又不补记。
+    `GET` 回 `{last, prev, pending, index}`，三个指针回之前都按 owner 冲突过滤；`prev` / `pending` 指着的槽位不在时照常回。
+    清理保护 = 各组 `last` + `prev` + `pending`。
+  - **owner 与正文按同一个顺序提交**（R6）。`PUT /api/autosave/<id>` 在**同一把 `_document_lock(p)`** 里：判冲突 → 写正文 →
+    读 revision → `commit_slot(doc_id, key, revision)`（记归属、记 `owner_revisions[doc]=revision`、晋升 pending）。
+    以前归属在锁外记，F/G 两个项目同 docId 交错保存时旧请求的归属回调能晚于新正文落地、把归属改回旧项目（A24）。
+    **锁顺序全局固定：槽位文档锁 → 会话锁**——自动保存、DELETE（先文档锁再 `forget_documents`）、清理
+    （`remove_slot_unless_protected`）、`PUT last`（验槽位 + `set_last`）、教程重置（`forget_project` + 删槽位）都按它；会话锁内不读
+    任何正文、不调需要文档锁的函数，要槽位 revision 的判据由调用方在锁外算好传进来。`_document_lock` 不可重入，别在持锁时再取别的路径的锁。
+    响应 `{ok, saved_at, revision, metadata}`：`metadata` = `"ok"` / `"failed"`（会话状态写不进去或读不到可信状态）/
+    `"owner_unknown"`（pj 已失效，按保数据合同照写正文，归属不知道、不记、不晋升）。**元数据失败不让这次保存失败，
+    revision 一律如实回**（客户端据此推进基线，不会误以为正文没写进去）；下一次保存补记。**这不是跨文件崩溃事务**：
+    进程死在「正文已落盘、元数据未提交」之间时，靠 `owner_revisions[doc]` 与槽位当前 revision 对不上来识别——
+    该归属是**待核对**（`owner_is_stale`），处理**不对称，安全优先**：① `set_last` 里待核对**不解除**冲突——记录说是别的项目的，
+    正文被外部动过也不能让另一个项目认领（409 `layout_foreign`）；② `view_for` / `last_for` 对**任何**项目（含老主人）都不回待核对的指针，
+    不自动恢复未核对的内容；③ `/owner` 回 `{owner:"unknown", evidence:null, verified:false}`，不再往下翻旁证；
+    ④ 候选发现里它对每个项目都只出现在 `scope=unknown`（用户可「恢复副本」）、绝不在 `scope=project`。
+    **没有 `owner_revisions` 的旧记录（含 scalar owners）按现状信任**——兼容边界，不是保证。比较 revision 在会话锁外读文件。
+  - **跨进程文件锁**（C2）：模块锁 `_LOCK` = 进程内线程锁 + `state/layout-sessions.lock` 的文件锁（POSIX `fcntl.flock`、
+    Windows `msvcrt.locking`，纯标准库，非阻塞 + 10 ms 重试），多个进程共用一个数据目录时读改写不丢更新；拿不到（5 s）抛
+    `SessionStateUnavailable`。锁文件打不开（只读卷、不支持文件锁的文件系统）时退回只有线程锁并记一次日志。导出默认值
+    （`export-defaults.json`）不在这次范围，仍只有线程锁。`tests/test_layout_recovery_backend.py` 有真两进程交错回归（POSIX 跑过；
+    Windows 的 `msvcrt` 那条腿留给 CI，本机未验证）。
   - 端点：`GET /api/layout-session`、`PUT /api/layout-session/last` 按 `_request_ctx()` 认项目（指名不存在的
-    项目 409、没有项目 = `no_project` 组），回给前端的只有 `{doc_id, name, at}`、不带路径；导出默认值
+    项目 409、没有项目 = `no_project` 组），回给前端的只有 `{doc_id, name, at}`、不带路径；会话状态写不进去 `PUT last` 回
+    503 `session_unavailable`；导出默认值
     `GET/PUT /api/preferences/export-defaults`（`state/export-defaults.json`，只守「不大的 JSON 对象」，
     语义在前端 `lib/exportDefaults.ts`）。都在 ADR 0008 认证之下，错误码复用 `bad_request`。
-  - `PUT /api/autosave/<id>` 写成功后按 pj 记归属（`_record_autosave_owner`）：pj 指名的项目已经不在时**照写不拒**
-    （那是用户的工作），归属记成「不知道」即不记；记不下只打日志。`DELETE` 与槽位清理删掉的槽位，
-    归属与指向它的 last 一并清；清理顺带丢掉磁盘上已不在的槽位的归属。清理删每个槽位走
-    `remove_slot_unless_protected`：**在会话状态锁里**重判「此刻是不是某组的 last」→ 删 → 忘掉记录，
-    `protected_doc_ids()` 只是快照，并发的 `set_last` 能在快照与删除之间把旧槽位记成新 last。
+  - `DELETE` 与槽位清理删掉的槽位，归属（含 `owner_revisions`）与指向它的 last / prev / pending 一并清；清理顺带丢掉磁盘上已不在的槽位的归属。
+    清理删每个槽位走 `remove_slot_unless_protected`：**在会话状态锁里**重判「此刻是不是某组的 last / prev / pending」→ 删 → 忘掉记录，
+    `protected_doc_ids()` 只是快照，并发的 `set_last` 能在快照与删除之间把旧槽位记成新 last（或推成 prev）。
     丢「磁盘上已不在的槽位」的归属同理：扫描快照只挑候选，`drop_owners_not_in` 在锁里当场再看文件
-    （快照之后并发保存刚建出的槽位不丢归属，否则它永远不进配额）。
-  - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last 与教程画布槽位的归属（ADR 0039 §5）。
+    （快照之后并发保存刚建出的槽位不丢归属，否则它永远不进配额）。**没有归属的老槽位仍一个都不删**——候选发现没有放宽这一条。
+  - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last / prev / pending 与教程画布槽位的归属（ADR 0039 §5）。
   - **别的项目的排版不认（2026-10-01，#715 Windows 真机验收 P1）**：判据只有 `owner_conflict(state, doc_id, key)`
-    （owners 里**确知**是别的项目 / 别的组；没有记录 = 不知道，不算）。`set_last` 撞上它抛 `ForeignLayoutError`、
+    （owners 里**确知**是别的项目 / 别的组；没有记录 = 不知道，不算；待核对的归属也不算「确知」）。`set_last` 撞上它抛 `ForeignLayoutError`、
     一个字节不写，端点回 `409 layout_foreign`（不显示给用户，前端据此作废本机缓存那一条、不重推）；`last_for`
     读到指着别的项目槽位的旧记录（修复前写下的）回 `None`。前端的同一条判据是 `web/src/lib/docOwnership.ts`
     （按本机「最近文档」索引），两侧互为纵深。自动保存 PUT 照旧按 pj 改记归属，前端负责只在用户真改过 / ⌘S 之后
     才以当前项目的 pj 写（只打开不算，#773 Codex P2）；失效的 pj 记成「不知道」，不覆盖已有归属。
-    前端本机不知道归属时的证据端点 `GET /api/layout-session/owner?doc_id=`（`_layout_owner_evidence`）：owners 有记录
-    即定论（别的项目 = `other`，素材再像也不翻案）→ 当前项目 `tavottofile/versions/<id>.json` → 槽位里非 runtime 面板的
-    素材**全部**在当前项目目录内且至少一张；都没有回 `unknown`。只读、不改任何记录。
-  - 看护 `tests/test_layout_session.py`。
+    前端本机不知道归属时的证据端点 `GET /api/layout-session/owner?doc_id=`（`_layout_owner_evidence`），回
+    `{owner, evidence, verified}`：owners 有记录即定论（别的项目 = `other`，素材再像也不翻案；`verified` = revision 对得上或旧记录）→
+    当前项目 `tavottofile/versions/<id>.json` → 槽位里非 runtime 面板的素材**全部**在当前项目目录内且至少一张
+    （这两条 `verified:false`）；都没有回 `unknown`。只读、不改任何记录。
+  - **候选发现 `GET /api/layout-session/candidates?scope=project|unknown&limit=50&cursor=`（P03，只读）**：索引丢了 / last 指不到时，
+    从 `AUTOSAVE_DIR` 的**真实槽位**里列出能找回的（不要求先知道 docId，owners 只是线索：不存在的文件不列）。
+    只枚举 docId 形状的 `*.json` 普通文件（不跟随符号链接、不接受任何路径），按 mtime 新→旧、游标分页（游标是
+    `(mtime_ns, 文件名)` 的不透明编码）；每页最多读 `limit`（≤100）个文件、字节有预算（至少读一个），单文件 > 32 MB 不读、
+    `status:"too_large"`；一页里被 scope 过滤掉的不返回，所以一页可能不满、`next_cursor` 仍非空——调用方循环翻页。
+    每项 `{doc_id, name, updatedAt, mtime, revision, schema, status: ok|invalid|too_new|too_large, canvases, objects, owner:
+    this|unknown, evidence, runtime:[{script,figure}], panels:[…], sketch?}`（非 ok 的 `canvases`/`objects` 是 `null`，不冒充 0；
+    `runtime`/`panels` 最多 5 个、绝对路径只留最后一段；`sketch` 复用时间线的 `_version_sketch`，不带 overrides / 脚本）。
+    `scope=project` 只回 `this`（owners 可信记录 / 时间线 / 素材全在项目里），`scope=unknown` 只回 `unknown`（含待核对的归属）；
+    `owner=other` 两个 scope 都不回。**runtime 文档**（`runtime:<脚本>#<图名>`）没有 owners / last / 时间线就只出现在 `unknown`——
+    `/owner` 与这里都不为 runtime 面板作证，也不凭脚本同名 / fingerprint / mtime 自动归项目。一个坏文件只让自己
+    `invalid`；不写任何东西、不回路径、不运行脚本。**恢复副本不加端点**：前端读源正文（带 revision）→ 用户确认时再读一次比对 →
+    固定目标 id 走正常 `switchDocument` + 自动保存，源槽位与源归属不动。
+  - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
+    清理保护、候选发现、跨进程）。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

@@ -1,0 +1,968 @@
+"""文档恢复可靠性（2026-10-11）后端合同：`engine/layoutsession.py` 与 `app.py` 的自动保存 / 会话 / 候选发现。
+
+对应审计验收 A14/A15/A24–A27/A29/C34 与风险 R3/R5/R6/C2。**全部走真实 Flask test client + 隔离数据目录**，
+正文是能过生产 validator、能从 `GET /api/autosave/<id>` 读回的真文档。
+
+* 读取结果四档：缺失 / 读失败 / 坏字节 / 未来格式 与「首次空状态」区分，原字节保留，其他组与 owners 不被抹（A26）；
+* last 只指向可恢复正文：槽位没有有效正文 → 只记 pending，首次保存成功才晋升；prev/pending 受清理保护（R3/A27/A29）；
+* owner 与正文同一把文档锁提交，旧请求的元数据不会晚于新正文把归属改回去（A24）；元数据失败正文照 200（A25）；
+* 候选发现是只读的、认证下的、不回路径、分页有界、坏文件不阻塞（A14/A15）；
+* 跨进程文件锁：两个真进程交错读改写不丢更新（C34；Windows 腿留给 CI——`msvcrt.locking` 本机没跑过）。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from tavotto import app as m
+from tavotto.engine import atomicio, documents, layoutsession, project_watch as engine_watch
+
+SRC = Path(m.__file__).resolve().parent.parent
+
+PD = {
+    "schema": 3,
+    "project": {"id": "p", "name": "n"},
+    "canvases": [
+        {"id": "c1", "name": "Fig 1", "page": {"w": 10, "h": 10}, "objects": [], "guides": []}
+    ],
+    "activeCanvasId": "c1",
+    "createdAt": 0,
+    "updatedAt": 1,
+}
+
+
+def _doc(n: int = 1, name: str = "n", objects: list | None = None) -> dict:
+    d = json.loads(json.dumps(PD))
+    d["updatedAt"] = n
+    d["project"]["name"] = name
+    if objects is not None:
+        d["canvases"][0]["objects"] = objects
+    return d
+
+
+@pytest.fixture
+def data_dir(tmp_path, monkeypatch):
+    d = tmp_path / "data"
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(d))
+    monkeypatch.setattr(m, "LAYOUT_DIR", d / "layouts")
+    monkeypatch.setattr(m, "AUTOSAVE_DIR", d / "layouts" / documents.AUTOSAVE_DIRNAME)
+    monkeypatch.setattr(m, "BAKED_DIR", d / "baked_overrides")
+    return d
+
+
+@pytest.fixture
+def client(data_dir):
+    m.app.config["TESTING"] = True
+    m.reset_projects()
+    yield m.app.test_client()
+    m.reset_projects()
+    engine_watch.stop()
+
+
+def _project(client, tmp_path, name: str, default: bool = False) -> dict:
+    root = tmp_path / name
+    root.mkdir()
+    body = client.post(
+        "/api/projects/open", json={"path": str(root), "default": default}
+    ).get_json()
+    assert body.get("id"), body
+    return body
+
+
+def _pj(pid: str) -> dict:
+    return {"X-Tavotto-Project": pid}
+
+
+def _slot(doc_id: str) -> Path:
+    return m.AUTOSAVE_DIR / f"{doc_id}.json"
+
+
+def _rev(doc_id: str) -> str | None:
+    return atomicio.content_revision(_slot(doc_id))
+
+
+def _put(client, doc_id: str, body: dict, pj: dict | None = None, base: str | None = None):
+    url = f"/api/autosave/{doc_id}" + (f"?base_revision={base}" if base else "")
+    return client.put(url, json=body, headers=_pj(pj["id"]) if pj else None)
+
+
+def _get_session(client, pj: dict | None = None) -> dict:
+    r = client.get("/api/layout-session", headers=_pj(pj["id"]) if pj else None)
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()
+
+
+def _put_last(client, doc_id: str, name: str = "x", pj: dict | None = None):
+    return client.put(
+        "/api/layout-session/last",
+        json={"doc_id": doc_id, "name": name},
+        headers=_pj(pj["id"]) if pj else None,
+    )
+
+
+def _owner(client, pj: dict, doc_id: str) -> dict:
+    r = client.get(f"/api/layout-session/owner?doc_id={doc_id}", headers=_pj(pj["id"]))
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()
+
+
+def _candidates(client, pj: dict | None, scope: str = "project", **q) -> dict:
+    qs = "&".join([f"scope={scope}", *[f"{k}={v}" for k, v in q.items()]])
+    r = client.get(f"/api/layout-session/candidates?{qs}", headers=_pj(pj["id"]) if pj else None)
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()
+
+
+def _tree(root: Path) -> dict[str, tuple[int, int]]:
+    """目录树快照 {相对路径: (mtime_ns, size)}——证明一次请求什么都没写。"""
+    out = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            st = p.stat()
+            out[str(p.relative_to(root))] = (st.st_mtime_ns, st.st_size)
+    return out
+
+
+# ============================ 1.1 读取结果四档（A26） ===========================
+
+
+def test_a26_missing_file_is_the_first_run_state_not_degraded(client):
+    assert layoutsession.read_status() == "missing"
+    view = _get_session(client)
+    assert view == {"last": None, "prev": None, "pending": None, "index": "missing"}
+    # 首次写之后是 ok，且没有任何损坏副本
+    assert _put(client, "d_1", _doc()).status_code == 200
+    assert _get_session(client)["index"] == "ok"
+    assert not list(layoutsession.state_path().parent.glob("layout-sessions.corrupt-*"))
+
+
+def test_a26_corrupt_bytes_without_bak_are_preserved_and_distinguished_from_first_run(client):
+    path = layoutsession.state_path()
+    path.parent.mkdir(parents=True)
+    raw = b'{"projects": {"/a": {"last": '  # 截断的 JSON
+    path.write_bytes(raw)
+    assert _get_session(client)["index"] == "degraded"  # 不是首次空的 "missing"
+    # 保存正文照常 200，元数据写得进去（原字节已留）
+    r = _put(client, "d_1", _doc())
+    assert r.status_code == 200 and r.get_json()["metadata"] == "ok"
+    copies = list(path.parent.glob("layout-sessions.corrupt-*.json"))
+    assert [c.read_bytes() for c in copies] == [raw], "损坏的原字节没有留下"
+    assert _get_session(client)["index"] == "ok"
+    assert layoutsession.owners()["d_1"] is None
+
+
+def test_a26_corrupt_main_recovers_from_the_bak_without_losing_other_groups(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    b = _project(client, tmp_path, "b")
+    for pj, doc_id in ((a, "d_a"), (b, "d_b")):
+        assert _put(client, doc_id, _doc(), pj).status_code == 200
+        assert _put_last(client, doc_id, pj=pj).status_code == 200
+    path = layoutsession.state_path()
+    good = json.loads(path.read_text(encoding="utf-8"))
+    assert json.loads(layoutsession.backup_path().read_text(encoding="utf-8")) == good
+    path.write_bytes(b"\x00\x01 not json")
+    view = _get_session(client, b)
+    assert view["index"] == "recovered" and view["last"]["doc_id"] == "d_b"
+    assert _get_session(client, a)["last"]["doc_id"] == "d_a"
+    # 恢复后的下一次写带着所有组和 owners
+    assert _put(client, "d_c", _doc(), a).status_code == 200
+    after = json.loads(path.read_text(encoding="utf-8"))
+    assert after["projects"].keys() == good["projects"].keys()
+    assert {"d_a", "d_b", "d_c"} <= set(after["owners"])
+    assert [c.read_bytes() for c in path.parent.glob("layout-sessions.corrupt-*.json")] == [
+        b"\x00\x01 not json"
+    ]
+
+
+def test_a26_unrelated_nan_field_does_not_void_the_file(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    key = layoutsession.project_key(a["figures_dir"])
+    path = layoutsession.state_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        '{"version": 1, "projects": {"%s": {"last": {"doc_id": "d_a", "name": "A", "at": 5},'
+        ' "future_flag": {"x": NaN, "keep": 1}}}, "no_project": {},'
+        ' "owners": {"d_a": "%s"}, "x_top": NaN, "y_top": [1, 2]}' % (key, key),
+        encoding="utf-8",
+    )
+    _put(client, "d_a", _doc(), a)
+    view = _get_session(client, a)
+    assert view["index"] == "ok" and view["last"]["doc_id"] == "d_a"
+    assert _put(client, "d_b", _doc(), a).status_code == 200  # 触发一次整份写回
+    after = json.loads(path.read_text(encoding="utf-8"))  # 写回的是严格 JSON（无 NaN）
+    assert after["projects"][key]["last"]["doc_id"] == "d_a"
+    assert after["projects"][key]["future_flag"] == {"keep": 1}  # 未知键保留，只丢非有限数
+    assert after["y_top"] == [1, 2] and "x_top" not in after
+    assert {"d_a", "d_b"} <= set(after["owners"])
+
+
+def test_a26_unreadable_state_refuses_to_overwrite_and_keeps_the_bytes(
+    client, tmp_path, monkeypatch
+):
+    a = _project(client, tmp_path, "a", default=True)
+    _put(client, "d_a", _doc(), a)
+    _put_last(client, "d_a", pj=a)
+    path = layoutsession.state_path()
+    before = path.read_bytes()
+    real = Path.read_bytes
+
+    def flaky(self):
+        if self.name == layoutsession.FILENAME:
+            raise PermissionError(13, "boom")
+        return real(self)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(Path, "read_bytes", flaky)
+        view = _get_session(client, a)
+        assert view["index"] == "degraded" and view["last"] is None  # 读不到 ≠ 没有
+        r = _put(client, "d_b", _doc(2), a)
+        assert r.status_code == 200 and r.get_json()["metadata"] == "failed"
+        assert r.get_json()["revision"] == _rev("d_b")  # 正文 revision 如实回
+        r = _put_last(client, "d_b", pj=a)
+        assert r.status_code == 503 and r.get_json()["code"] == "session_unavailable"
+    assert path.read_bytes() == before, "读失败的那几次把一份可能完整的状态覆盖了"
+    assert _get_session(client, a)["last"]["doc_id"] == "d_a"
+    assert not list(path.parent.glob("layout-sessions.corrupt-*"))
+
+
+def test_a26_future_format_is_read_best_effort_but_never_written(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    key = layoutsession.project_key(a["figures_dir"])
+    path = layoutsession.state_path()
+    path.parent.mkdir(parents=True)
+    future = json.dumps(
+        {
+            "version": 99,
+            "projects": {key: {"last": {"doc_id": "d_a", "name": "A", "at": 1}}},
+            "owners": {"d_a": key},
+            "newer": {"shape": [1]},
+        }
+    ).encode()
+    path.write_bytes(future)
+    _put(client, "d_a", _doc(), a)  # 槽位在，owners 不被改
+    view = _get_session(client, a)
+    assert view["index"] == "degraded" and view["last"]["doc_id"] == "d_a"
+    r = _put(client, "d_a", _doc(2), a)
+    assert r.status_code == 200 and r.get_json()["metadata"] == "failed"
+    assert _put_last(client, "d_a", pj=a).status_code == 503
+    assert client.delete("/api/autosave/d_a").status_code == 200  # 删槽位不致崩
+    assert path.read_bytes() == future
+
+
+def test_a26_corrupt_copies_are_bounded_to_three(data_dir):
+    path = layoutsession.state_path()
+    path.parent.mkdir(parents=True)
+    for i in range(5):
+        path.write_bytes(b"{broken %d" % i)
+        layoutsession.record_owner(f"d_{i}", None)  # 写入替换掉坏文件
+        time.sleep(0.01)
+    copies = sorted(path.parent.glob("layout-sessions.corrupt-*.json"))
+    assert len(copies) == 3
+    assert [c.read_bytes() for c in copies] == [b"{broken 2", b"{broken 3", b"{broken 4"]
+
+
+def test_a26_unknown_keys_are_kept_through_writes(data_dir):
+    path = layoutsession.state_path()
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "projects": {"/a": {"last": {"doc_id": "d_a", "name": "A", "at": 1}, "note": [1]}},
+                "owners": {},
+                "extra_top": {"a": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    layoutsession.record_owner("d_a", "/a")
+    after = json.loads(path.read_text(encoding="utf-8"))
+    assert after["extra_top"] == {"a": 1} and after["projects"]["/a"]["note"] == [1]
+
+
+# ============================ 1.2 last 只指向可恢复正文（R3 / A29） ==============
+
+
+def test_r3_new_document_without_a_body_only_becomes_pending(client):
+    assert _put(client, "d_a", _doc()).status_code == 200
+    assert _put_last(client, "d_a", "A").get_json()["state"] == "durable"
+    r = _put_last(client, "d_b", "B")  # B 还没有任何正文
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["state"] == "pending" and body["last"]["doc_id"] == "d_a"
+    assert body["pending"]["doc_id"] == "d_b"
+    view = _get_session(client)
+    assert view["last"]["doc_id"] == "d_a", "durable last 被一个还没有正文的 B 顶掉了"
+    assert view["pending"]["doc_id"] == "d_b"
+
+
+@pytest.mark.parametrize("junk", [b"{not json", json.dumps({"schema": 99}).encode(), b"[1]"])
+def test_r3_a_slot_without_a_valid_body_does_not_count_as_recoverable(client, junk):
+    m.AUTOSAVE_DIR.mkdir(parents=True)
+    _slot("d_bad").write_bytes(junk)
+    body = _put_last(client, "d_bad").get_json()
+    assert body["state"] == "pending" and body["last"] is None
+    assert _get_session(client)["last"] is None
+
+
+def test_a29_old_frontend_early_last_then_first_autosave_promotes(client):
+    """旧前端的正常顺序：先 PUT last、再首次自动保存。不能留悬空 last，也不能只看 2xx。"""
+    assert _put(client, "d_a", _doc()).status_code == 200
+    _put_last(client, "d_a", "A")
+    early = _put_last(client, "d_b", "B")
+    assert early.status_code == 200 and early.get_json()["state"] == "pending"
+    assert _get_session(client)["last"]["doc_id"] == "d_a"  # 正文还没落盘：不晋升
+    r = _put(client, "d_b", _doc(2, "B"))
+    assert r.status_code == 200 and r.get_json()["metadata"] == "ok"
+    view = _get_session(client)
+    assert view["last"]["doc_id"] == "d_b" and view["pending"] is None
+    assert view["prev"]["doc_id"] == "d_a"
+    assert _get_session(client)["last"]["doc_id"] == "d_b"
+    # 晋升的是 pending 指着的那一份：别的槽位保存不会顺手晋升
+    _put_last(client, "d_c", "C")
+    _put(client, "d_other", _doc(3))
+    assert _get_session(client)["last"]["doc_id"] == "d_b"
+    assert _get_session(client)["pending"]["doc_id"] == "d_c"
+
+
+def test_a29_explicitly_opening_an_existing_slot_is_durable_without_a_new_save(client):
+    _put(client, "d_a", _doc())
+    _put(client, "d_b", _doc())
+    _put_last(client, "d_a")
+    r = _put_last(client, "d_b")
+    assert r.get_json()["state"] == "durable"
+    assert _get_session(client)["prev"]["doc_id"] == "d_a"
+
+
+def test_prev_and_pending_have_capacity_one(data_dir):
+    layoutsession.set_last(None, "d_1", "1")
+    layoutsession.set_last(None, "d_2", "2")
+    layoutsession.set_last(None, "d_3", "3")
+    layoutsession.set_last(None, "d_x", "x", slot_ok=False)
+    layoutsession.set_last(None, "d_y", "y", slot_ok=False)
+    group = layoutsession.snapshot()["no_project"]
+    assert (group["last"]["doc_id"], group["prev"]["doc_id"], group["pending"]["doc_id"]) == (
+        "d_3",
+        "d_2",
+        "d_y",
+    )
+    # A→B→A：prev 是 B，last 是 A（同一份不会既是 last 又是 prev）；更晚的 durable 取代 pending
+    layoutsession.set_last(None, "d_2", "2")
+    group = layoutsession.snapshot()["no_project"]
+    assert (group["last"]["doc_id"], group["prev"]["doc_id"]) == ("d_2", "d_3")
+    assert "pending" not in group
+    layoutsession.set_last(None, "d_y", "y", slot_ok=False)
+    # 同值不重写
+    path = layoutsession.state_path()
+    os.utime(path, ns=(0, 10**9))
+    layoutsession.set_last(None, "d_y", "y", slot_ok=False)
+    layoutsession.set_last(None, "d_y", "y", slot_ok=False)
+    assert path.stat().st_mtime_ns == 10**9
+
+
+def test_commit_slot_return_values(data_dir):
+    assert layoutsession.commit_slot("d_a", "/a", "r1") == {"owner": "recorded", "promoted": False}
+    assert layoutsession.commit_slot("d_a", "/a", "r1") == {"owner": "unchanged", "promoted": False}
+    assert layoutsession.commit_slot("d_a", "/a", "r2")["owner"] == "recorded"  # revision 变了
+    assert layoutsession.commit_slot("d_a", layoutsession.UNKNOWN, "r3") == {
+        "owner": "skipped",
+        "promoted": False,
+    }
+    assert layoutsession.snapshot()["owner_revisions"]["d_a"] == "r2"
+    layoutsession.set_last("/a", "d_a", "A", slot_ok=False)
+    assert layoutsession.commit_slot("d_a", "/a", "r2") == {"owner": "unchanged", "promoted": True}
+    assert layoutsession.last_for("/a")["doc_id"] == "d_a"
+
+
+def test_stale_pj_save_records_nothing_and_does_not_promote(client):
+    _put_last(client, "d_a", "A")  # pending（无项目组）
+    r = client.put("/api/autosave/d_a", json=_doc(), headers=_pj("gone"))
+    assert r.status_code == 200 and r.get_json()["metadata"] == "owner_unknown"
+    assert r.get_json()["revision"] == _rev("d_a")
+    assert "d_a" not in layoutsession.owners()
+    assert _get_session(client)["last"] is None
+
+
+def test_get_session_filters_prev_and_pending_by_owner(client, tmp_path):
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    kg = layoutsession.project_key(g["figures_dir"])
+    layoutsession.set_last(kg, "d_f", "F")  # 模拟修复前污染
+    layoutsession.set_last(kg, "d_f2", "F2", slot_ok=False)
+    layoutsession.set_last(kg, "d_g", "G")
+    layoutsession.set_last(kg, "d_g2", "G2", slot_ok=False)
+    layoutsession.record_owner("d_f", layoutsession.project_key(f["figures_dir"]))
+    layoutsession.record_owner("d_f2", layoutsession.project_key(f["figures_dir"]))
+    view = _get_session(client, g)
+    assert view["last"]["doc_id"] == "d_g" and view["prev"] is None  # prev=d_f 是 F 的
+    assert view["pending"]["doc_id"] == "d_g2"
+
+
+# ============================ 1.3 owner 与正文同序（R6 / A24 / A25） ==============
+
+
+def test_a24_same_docid_two_projects_owner_follows_the_latest_body(client, tmp_path, monkeypatch):
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    kf = layoutsession.project_key(f["figures_dir"])
+    kg = layoutsession.project_key(g["figures_dir"])
+    r0 = _put(client, "d_x", _doc(1), f)
+    rev0 = r0.get_json()["revision"]
+
+    entered, release = threading.Event(), threading.Event()
+    armed = [False]
+    real = layoutsession.commit_slot
+
+    def gated(doc_id, key, revision):
+        if armed[0] and key == kf:
+            entered.set()
+            assert release.wait(15), "测试自己没放行"
+        return real(doc_id, key, revision)
+
+    monkeypatch.setattr(layoutsession, "commit_slot", gated)
+    armed[0] = True
+    out: dict = {}
+
+    def first():  # F 的保存：正文落盘后，元数据提交被卡住
+        out["f"] = _put(m.app.test_client(), "d_x", _doc(2, "from F"), f, base=rev0)
+
+    t1 = threading.Thread(target=first)
+    t1.start()
+    assert entered.wait(15)
+    rev1 = _rev("d_x")  # F 的正文已在盘上；G 带着它读到的合法 revision 来保存
+    assert rev1 != rev0
+
+    def second():
+        out["g"] = _put(m.app.test_client(), "d_x", _doc(3, "from G"), g, base=rev1)
+
+    t2 = threading.Thread(target=second)
+    t2.start()
+    t2.join(0.5)  # 修复后 G 在文档锁上排队；若归属提交在锁外，G 此刻已经完成
+    release.set()
+    t1.join(15)
+    t2.join(15)
+    assert not t1.is_alive() and not t2.is_alive()
+    assert out["f"].status_code == 200 and out["g"].status_code == 200
+    final = out["g"].get_json()["revision"]
+    assert final == _rev("d_x")
+    snap = layoutsession.snapshot()
+    assert snap["owners"]["d_x"] == kg, "晚到的 F 元数据把归属改回了 F"
+    assert snap["owner_revisions"]["d_x"] == final
+    assert _owner(client, g, "d_x") == {"owner": "this", "evidence": "owners", "verified": True}
+    assert _owner(client, f, "d_x")["owner"] == "other"
+
+
+def test_a25_metadata_failure_keeps_the_body_and_the_next_save_repairs_it(
+    client, tmp_path, monkeypatch
+):
+    f = _project(client, tmp_path, "projF", default=True)
+    kf = layoutsession.project_key(f["figures_dir"])
+    real = atomicio.write_json
+
+    def failing(path, obj, *, indent=None):
+        if Path(path).parent == layoutsession.state_path().parent:
+            raise atomicio.AtomicWriteError("write_failed", "disk full", Path(path))
+        return real(path, obj, indent=indent)
+
+    monkeypatch.setattr(atomicio, "write_json", failing)
+    r = _put(client, "d_1", _doc(1, "body"), f)
+    assert r.status_code == 200, r.get_json()
+    body = r.get_json()
+    assert body["metadata"] == "failed" and body["revision"] == _rev("d_1")
+    got = client.get("/api/autosave/d_1")  # 正文真的在、能读回、revision 一致
+    assert got.status_code == 200 and got.headers["X-Tavotto-Revision"] == body["revision"]
+    assert got.get_json()["project"]["name"] == "body"
+    assert "d_1" not in layoutsession.owners()
+    monkeypatch.setattr(atomicio, "write_json", real)
+    r2 = _put(client, "d_1", _doc(2, "body2"), f, base=body["revision"])
+    assert r2.get_json()["metadata"] == "ok"  # 下一次保存补记
+    snap = layoutsession.snapshot()
+    assert (
+        snap["owners"]["d_1"] == kf and snap["owner_revisions"]["d_1"] == r2.get_json()["revision"]
+    )
+
+
+def test_a25_owner_that_no_longer_matches_the_body_is_unverified_not_this_nor_other(
+    client, tmp_path, monkeypatch
+):
+    """进程死在「正文已落盘、元数据未提交」之间的窗口：F 的旧归属记录与新正文对不上。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    kf = layoutsession.project_key(f["figures_dir"])
+    assert _put(client, "d_1", _doc(1), f).status_code == 200
+    _put_last(client, "d_1", pj=f)
+    real = atomicio.write_json
+
+    def failing(path, obj, *, indent=None):
+        if Path(path).parent == layoutsession.state_path().parent:
+            raise atomicio.AtomicWriteError("write_failed", "x", Path(path))
+        return real(path, obj, indent=indent)
+
+    monkeypatch.setattr(atomicio, "write_json", failing)
+    assert _put(client, "d_1", _doc(2), f, base=_rev("d_1")).get_json()["metadata"] == "failed"
+    monkeypatch.setattr(atomicio, "write_json", real)
+    expect = {"owner": "unknown", "evidence": None, "verified": False}
+    assert _owner(client, f, "d_1") == expect
+    assert _owner(client, g, "d_1") == expect  # 不当 other 也不当 this
+    # 待核对的内容不自动恢复：对任何项目都不回（F 自己也不）；G 也不能凭它认领 F 的槽位
+    assert _get_session(client, f)["last"] is None
+    assert _get_session(client, g)["last"] is None
+    assert _put_last(client, "d_1", pj=g).status_code == 409
+    # 旧记录（没有 owner_revisions）按现状信任——兼容边界
+    state = json.loads(layoutsession.state_path().read_text(encoding="utf-8"))
+    state["owner_revisions"].pop("d_1")
+    state["owners"]["d_1"] = kf
+    layoutsession.state_path().write_text(json.dumps(state), encoding="utf-8")
+    assert _owner(client, g, "d_1") == {"owner": "other", "evidence": "owners", "verified": True}
+
+
+def test_autosave_response_always_carries_the_metadata_verdict(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    r = _put(client, "d_1", _doc(), a)
+    assert r.get_json()["metadata"] == "ok"
+    assert set(r.get_json()) == {"ok", "saved_at", "revision", "metadata"}
+
+
+# ============================ 1.2/A27 清理保护 ===================================
+
+
+def _legacy(doc_id: str, mtime_s: int) -> Path:
+    m.AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+    p = _slot(doc_id)
+    p.write_text(json.dumps(PD), encoding="utf-8")
+    os.utime(p, ns=(0, mtime_s * 10**9))
+    return p
+
+
+def test_a27_pruning_protects_last_prev_and_pending_but_still_trims_the_rest(client, monkeypatch):
+    for i, d in enumerate(["d_last", "d_prev", "d_pend", "d_free"]):
+        assert _put(client, d, _doc(i)).status_code == 200
+        os.utime(_slot(d), ns=(0, (i + 1) * 10**9))
+    unknown = _legacy("d_unowned", 1)  # 没有归属的老槽位
+    layoutsession.set_last(None, "d_prev", "P")
+    layoutsession.set_last(None, "d_last", "L")
+    layoutsession.set_last(None, "d_pend", "Q", slot_ok=False)
+    monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 1)
+    assert _put(client, "d_new1", _doc(9)).status_code == 200
+    assert _put(client, "d_new2", _doc(9)).status_code == 200
+    names = {p.stem for p in m.AUTOSAVE_DIR.glob("*.json")}
+    assert {"d_last", "d_prev", "d_pend"} <= names, f"受保护的槽位被删了：{names}"
+    assert unknown.is_file(), "未知 owner 的老槽位被放宽删了"
+    assert "d_free" not in names, "没人保护的槽位该照常被裁"
+    assert "d_free" not in layoutsession.owners()
+
+
+def test_a27_pruning_rechecks_prev_protection_after_a_racing_set_last(client, monkeypatch):
+    """清理拿快照之后，两次 set_last 把最旧的槽位推成了 prev：快照里它不受保护，删之前要重判。"""
+    _put(client, "d_cur", _doc())
+    layoutsession.set_last(None, "d_cur", "cur")
+    for i, d in enumerate(["d_old", "d_mid"]):
+        _put(client, d, _doc(i))
+        os.utime(_slot(d), ns=(0, (i + 1) * 10**9))
+    monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 1)
+    real = layoutsession.protected_doc_ids
+    fired = []
+
+    def snapshot_then_race():
+        ids = real()
+        if not fired:
+            fired.append(1)
+            layoutsession.set_last(None, "d_old", "old")  # d_cur → prev
+            layoutsession.set_last(None, "d_mid", "mid")  # d_old → prev
+        return ids
+
+    monkeypatch.setattr(layoutsession, "protected_doc_ids", snapshot_then_race)
+    _put(client, "d_newest", _doc(9))
+    assert fired
+    group = layoutsession.snapshot()["no_project"]
+    assert group["last"]["doc_id"] == "d_mid" and group["prev"]["doc_id"] == "d_old"
+    assert _slot("d_old").is_file() and _slot("d_mid").is_file(), (
+        "快照之后成了 last/prev 的槽位被删了"
+    )
+
+
+def test_a27_set_last_cannot_point_at_a_slot_that_pruning_deletes_in_between(client, monkeypatch):
+    """验槽位通过之后、记 last 之前，清理想删掉这个（最旧、有归属、当时不受保护的）槽位：
+    验证与记录在槽位的同一把文档锁里，清理只能排在后面，之后又被 last 保护——last 不悬空。"""
+    for i, d in enumerate(["d_target", "d_keep"]):
+        assert _put(client, d, _doc(i)).status_code == 200
+        os.utime(_slot(d), ns=(0, (i + 1) * 10**9))
+    monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 1)
+    real = m._slot_recoverable
+    pruners: list[threading.Thread] = []
+
+    def verify_then_prune(path):
+        verdict = real(path)
+        t = threading.Thread(target=m._prune_autosave_slots, args=(_slot("d_keep"),))
+        t.start()
+        t.join(1.0)  # 修复后它在这个槽位的文档锁上排队，这里等不到它
+        pruners.append(t)
+        return verdict
+
+    monkeypatch.setattr(m, "_slot_recoverable", verify_then_prune)
+    assert _put_last(client, "d_target", "T").get_json()["state"] == "durable"
+    for t in pruners:
+        t.join(15)
+    last = _get_session(client)["last"]
+    assert last and last["doc_id"] == "d_target"
+    assert _slot("d_target").is_file(), "last 指着一个刚被清理删掉的槽位"
+
+
+def test_a27_pruning_never_deletes_when_the_state_cannot_be_read(client, monkeypatch):
+    for i, d in enumerate(["d_a", "d_b", "d_c"]):
+        _put(client, d, _doc(i))
+        os.utime(_slot(d), ns=(0, (i + 1) * 10**9))
+    layoutsession.set_last(None, "d_c", "c")
+    monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 1)
+    real = Path.read_bytes
+
+    def flaky(self):
+        if self.name == layoutsession.FILENAME:
+            raise PermissionError(13, "boom")
+        return real(self)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(Path, "read_bytes", flaky)
+        _put(client, "d_d", _doc(9))
+    assert all(_slot(d).is_file() for d in ["d_a", "d_b", "d_c"]), "不知道谁受保护时删了槽位"
+
+
+def test_delete_forgets_last_prev_pending_and_owner_revision(client):
+    for d in ("d_1", "d_2", "d_3"):
+        _put(client, d, _doc())
+    layoutsession.set_last(None, "d_1", "1")
+    layoutsession.set_last(None, "d_2", "2")  # d_1 → prev
+    layoutsession.set_last(None, "d_3", "3", slot_ok=False)
+    for d in ("d_1", "d_2", "d_3"):
+        client.delete(f"/api/autosave/{d}")
+    snap = layoutsession.snapshot()
+    assert snap["owners"] == {} and snap["owner_revisions"] == {}
+    assert snap["no_project"] == {}
+
+
+# ============================ 1.4 候选发现（P03 / A14 / A15） ====================
+
+
+def _runtime_panel(file_id: str = "runtime:fig1.py#Fig1_PRISMA_Flowchart") -> dict:
+    return {
+        "id": "o1",
+        "type": "panel",
+        "fileId": file_id,
+        "x": 0,
+        "y": 0,
+        "w": 5,
+        "h": 5,
+        "overrides": {"title": {"text": "手改过的标题"}},
+    }
+
+
+def test_a14_owners_this_without_last_is_listed_from_the_real_slot(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    panel = {"id": "p1", "type": "panel", "fileId": "figs/a.pdf", "x": 0, "y": 0, "w": 3, "h": 3}
+    assert _put(client, "d_mine", _doc(7, "我的排版", [panel]), a).status_code == 200
+    layoutsession.state_path().unlink()
+    layoutsession.backup_path().unlink()
+    layoutsession.record_owner("d_mine", layoutsession.project_key(a["figures_dir"]))
+    assert _get_session(client, a)["last"] is None  # last 丢了
+    listing = _candidates(client, a)
+    assert [i["doc_id"] for i in listing["items"]] == ["d_mine"]
+    item = listing["items"][0]
+    assert item["status"] == "ok" and item["owner"] == "this" and item["evidence"] == "owners"
+    assert item["name"] == "我的排版" and item["updatedAt"] == 7
+    assert item["canvases"] == 1 and item["objects"] == 1 and item["schema"] == 3
+    assert item["revision"] == _rev("d_mine") and item["panels"] == ["figs/a.pdf"]
+    assert item["sketch"]["objects"][0]["fileId"] == "figs/a.pdf"
+    assert "overrides" not in json.dumps(item)
+    assert _candidates(client, a, "unknown")["items"] == []
+    # 不回项目路径
+    assert str(tmp_path) not in json.dumps(listing)
+    # owners 说有、但没有真实槽位：不列
+    layoutsession.record_owner("d_ghost", layoutsession.project_key(a["figures_dir"]))
+    assert [i["doc_id"] for i in _candidates(client, a)["items"]] == ["d_mine"]
+
+
+def test_a15_pure_runtime_document_is_discoverable_as_unknown_only(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    (Path(a["figures_dir"]) / "fig1.py").write_text("def Fig1_PRISMA_Flowchart(): ...\n")
+    m.AUTOSAVE_DIR.mkdir(parents=True)
+    _slot("d_rt").write_text(json.dumps(_doc(3, "runtime 排版", [_runtime_panel()])))
+    slot_bytes = _slot("d_rt").read_bytes()
+    before = _tree(tmp_path)
+    unknown = _candidates(client, a, "unknown")
+    after = _tree(tmp_path)
+    assert after == before, "候选发现写了东西"
+    assert [i["doc_id"] for i in unknown["items"]] == ["d_rt"]
+    item = unknown["items"][0]
+    assert item["owner"] == "unknown" and item["evidence"] is None
+    assert item["runtime"] == [{"script": "fig1.py", "figure": "Fig1_PRISMA_Flowchart"}]
+    assert "手改过的标题" not in json.dumps(item) and "overrides" not in json.dumps(item)
+    assert _candidates(client, a, "project")["items"] == []
+    # /owner 照旧不为 runtime 面板作证
+    assert _owner(client, a, "d_rt")["owner"] == "unknown"
+    assert _slot("d_rt").read_bytes() == slot_bytes
+    assert not layoutsession.state_path().exists()
+
+
+def test_candidates_owned_by_another_project_appear_in_neither_scope(client, tmp_path):
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    _put(client, "d_f", _doc(), f)
+    _put(client, "d_g", _doc(), g)
+    for scope in ("project", "unknown"):
+        ids = {i["doc_id"] for i in _candidates(client, g, scope)["items"]}
+        assert "d_f" not in ids
+    assert [i["doc_id"] for i in _candidates(client, g)["items"]] == ["d_g"]
+
+
+def test_candidates_without_any_project_see_the_no_project_group_only(client, tmp_path):
+    _put(client, "d_loose", _doc())
+    layoutsession.record_owner("d_elsewhere", "/some/project")
+    (m.AUTOSAVE_DIR / "d_elsewhere.json").write_text(json.dumps(_doc()))
+    assert [i["doc_id"] for i in _candidates(client, None)["items"]] == ["d_loose"]
+    assert _candidates(client, None, "unknown")["items"] == []
+
+
+def test_candidates_stale_owner_is_unknown_not_hidden(client, tmp_path):
+    """正文被动过但归属元数据没跟上（A25 的窗口）：在 unknown 里能找到，而不是消失。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    _put(client, "d_1", _doc(1), f)
+    _slot("d_1").write_text(json.dumps(_doc(2, "changed")))  # 绕过保存链
+    assert [i["doc_id"] for i in _candidates(client, g, "unknown")["items"]] == ["d_1"]
+    assert _candidates(client, f, "project")["items"] == []
+
+
+def test_a15_bad_files_do_not_block_the_listing(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    _put(client, "d_ok", _doc(5), a)
+    m.AUTOSAVE_DIR.mkdir(parents=True, exist_ok=True)
+    (m.AUTOSAVE_DIR / "d_bad.json").write_bytes(b"{nope")
+    (m.AUTOSAVE_DIR / "d_nan.json").write_bytes(b'{"schema": 3, "x": NaN}')
+    (m.AUTOSAVE_DIR / "d_new.json").write_text(json.dumps({"schema": 99, "project": {"name": "n"}}))
+    (m.AUTOSAVE_DIR / "not a docid.json").write_text("{}")
+    (m.AUTOSAVE_DIR / "readme.txt").write_text("x")
+    link = m.AUTOSAVE_DIR / "d_link.json"
+    link.symlink_to(_slot("d_ok"))
+    listing = _candidates(client, a, "unknown")
+    by_id = {i["doc_id"]: i for i in listing["items"]}
+    assert set(by_id) == {"d_bad", "d_nan", "d_new"}
+    assert by_id["d_bad"]["status"] == "invalid" and by_id["d_nan"]["status"] == "invalid"
+    assert by_id["d_new"]["status"] == "too_new" and by_id["d_new"]["schema"] == 99
+    assert [i["doc_id"] for i in _candidates(client, a, "project")["items"]] == ["d_ok"]
+
+
+def test_candidates_too_large_is_reported_without_reading(client, tmp_path, monkeypatch):
+    a = _project(client, tmp_path, "a", default=True)
+    _put(client, "d_big", _doc(), a)
+    monkeypatch.setattr(m, "CANDIDATE_MAX_BYTES", 10)
+    real = Path.read_bytes
+
+    def no_read(self):
+        if self.name == "d_big.json":
+            raise AssertionError("读了超限的文件")
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", no_read)
+    items = _candidates(client, a)["items"]
+    assert [(i["doc_id"], i["status"], i["revision"]) for i in items] == [
+        ("d_big", "too_large", None)
+    ]
+
+
+def test_candidates_pagination_is_bounded_stable_and_complete(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    ids = [f"d_{i}" for i in range(7)]
+    for i, d in enumerate(ids):
+        _put(client, d, _doc(i), a)
+        os.utime(_slot(d), ns=(0, (i + 1) * 10**9))
+    seen: list[str] = []
+    cursor = None
+    pages = 0
+    while True:
+        q = {"limit": 3}
+        if cursor:
+            q["cursor"] = cursor
+        page = _candidates(client, a, **q)
+        assert len(page["items"]) <= 3
+        seen += [i["doc_id"] for i in page["items"]]
+        pages += 1
+        cursor = page["next_cursor"]
+        if not cursor:
+            break
+    assert seen == list(reversed(ids)) and pages == 3  # 新→旧，无重复无遗漏
+    assert client.get("/api/layout-session/candidates?cursor=@@@").status_code == 400
+    assert client.get("/api/layout-session/candidates?scope=all").status_code == 400
+    assert client.get("/api/layout-session/candidates?limit=zz").status_code == 400
+    # limit 封顶 100
+    assert len(_candidates(client, a, limit=100000)["items"]) == 7
+
+
+def test_candidates_never_write_even_with_a_corrupt_state_file(client, tmp_path):
+    a = _project(client, tmp_path, "a", default=True)
+    _put(client, "d_1", _doc(), a)
+    path = layoutsession.state_path()
+    layoutsession.backup_path().unlink()
+    path.write_bytes(b"{broken")
+    before = _tree(tmp_path)
+    listing = _candidates(client, a, "unknown")
+    assert listing["index"] == "degraded"
+    assert [i["doc_id"] for i in listing["items"]] == ["d_1"]  # 归属丢了：在 unknown 里能找到
+    assert _tree(tmp_path) == before, "只读端点留下了损坏副本或别的写入"
+
+
+def test_candidates_route_is_not_public():
+    from tavotto import security
+
+    assert "/api/layout-session/candidates" not in security._PUBLIC_PATHS
+
+
+# ============================ 1.5 / C34 跨进程与锁顺序 ===========================
+
+_CHILD = r"""
+import os, sys, time
+sys.path.insert(0, sys.argv[1])
+from tavotto.engine import layoutsession as ls
+tag, n, go = sys.argv[2], int(sys.argv[3]), sys.argv[4]
+while not os.path.exists(go):
+    time.sleep(0.001)
+for i in range(n):
+    doc = "d_%s_%d" % (tag, i)
+    ls.commit_slot(doc, "/p/" + tag, "rev%d" % i)
+    ls.set_last("/p/" + tag, doc, "name")
+"""
+
+
+def test_c34_two_real_processes_interleaving_lose_no_update(tmp_path):
+    """两个真进程共用一个数据目录、同时读改写同一份状态：谁的更新都不能丢。
+    Windows 腿（`msvcrt.locking`）本机没跑过，留给 CI。"""
+    data = tmp_path / "data"
+    go = tmp_path / "go"
+    n = 30
+    env = {**os.environ, "TAVOTTO_DATA_DIR": str(data), "PYTHONDONTWRITEBYTECODE": "1"}
+    procs = [
+        subprocess.Popen(
+            [sys.executable, "-c", _CHILD, str(SRC), tag, str(n), str(go)],
+            env=env,
+            stderr=subprocess.PIPE,
+        )
+        for tag in ("a", "b")
+    ]
+    time.sleep(1.0)  # 两个子进程都已 import 完、在等发令
+    go.write_text("go")
+    errs = []
+    for p in procs:
+        _out, err = p.communicate(timeout=120)
+        errs.append(err.decode())
+        assert p.returncode == 0, err.decode()
+    state = json.loads((data / "state" / "layout-sessions.json").read_text(encoding="utf-8"))
+    want = {f"d_{t}_{i}" for t in ("a", "b") for i in range(n)}
+    assert set(state["owners"]) == want, f"丢了 {len(want - set(state['owners']))} 条归属"
+    for t in ("a", "b"):
+        group = state["projects"][f"/p/{t}"]
+        assert group["last"]["doc_id"] == f"d_{t}_{n - 1}"
+        assert group["prev"]["doc_id"] == f"d_{t}_{n - 2}"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="用 fcntl 模拟另一个持锁者；Windows 腿留给 CI")
+def test_c34_a_held_file_lock_times_out_instead_of_hanging(data_dir, monkeypatch):
+    import fcntl
+
+    monkeypatch.setattr(layoutsession, "LOCK_TIMEOUT_S", 0.3)
+    layoutsession.lock_path().parent.mkdir(parents=True)
+    fd = os.open(layoutsession.lock_path(), os.O_RDWR | os.O_CREAT)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(layoutsession.SessionStateUnavailable):
+            layoutsession.record_owner("d_1", None)
+        assert time.monotonic() - t0 < 5
+    finally:
+        os.close(fd)
+    assert layoutsession.record_owner("d_1", None) is True  # 释放后恢复
+
+
+def test_lock_order_has_no_deadlock_under_mixed_load(client, tmp_path, monkeypatch):
+    """自动保存 / DELETE / PUT last / 清理 / GET 同时打同一批槽位：全部在限时内结束（文档锁 → 会话锁）。"""
+    a = _project(client, tmp_path, "a", default=True)
+    monkeypatch.setattr(m, "AUTOSAVE_KEEP_SLOTS", 2)
+    stop = time.monotonic() + 3
+    errors: list[str] = []
+
+    def worker(k: int):
+        c = m.app.test_client()
+        i = 0
+        try:
+            while time.monotonic() < stop:
+                d = f"d_{(i + k) % 5}"
+                for r in (
+                    _put(c, d, _doc(i), a),
+                    _put_last(c, d, pj=a),
+                    c.get("/api/layout-session", headers=_pj(a["id"])),
+                    c.delete(f"/api/autosave/d_{(i + k + 2) % 5}"),
+                    c.get("/api/layout-session/candidates?scope=project", headers=_pj(a["id"])),
+                ):
+                    if r.status_code >= 500:
+                        errors.append(f"{r.status_code} {r.get_json()}")
+                i += 1
+        except Exception as exc:  # noqa: BLE001
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=worker, args=(k,)) for k in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(30)
+    assert not any(t.is_alive() for t in threads), "死锁：线程没有在限时内结束"
+    assert not errors, errors[:3]
+    snap = layoutsession.snapshot()
+    for group in [snap["no_project"], *snap["projects"].values()]:
+        last, prev = group.get("last"), group.get("prev")
+        assert not (last and prev and last["doc_id"] == prev["doc_id"])
+
+
+def test_f1_a_later_durable_open_supersedes_an_older_pending(client):
+    """A durable → 想开 B(pending) → 又回到 A(durable) → B 的首次保存迟到：不能把过期的 pending 晋升。"""
+    _put(client, "d_a", _doc(1))
+    _put_last(client, "d_a", "A")
+    assert _put_last(client, "d_b", "B").get_json()["state"] == "pending"
+    assert _put_last(client, "d_a", "A").get_json()["state"] == "durable"
+    assert _get_session(client)["pending"] is None
+    assert _put(client, "d_b", _doc(2, "B")).get_json()["metadata"] == "ok"
+    view = _get_session(client)
+    assert view["last"]["doc_id"] == "d_a" and view["pending"] is None
+    # 别的 durable 也一样取代（pending 指着谁都清）
+    _put(client, "d_c", _doc(3))
+    _put_last(client, "d_x", "X")  # pending
+    _put_last(client, "d_c", "C")
+    assert _get_session(client)["pending"] is None
+    assert _get_session(client)["prev"]["doc_id"] == "d_a"
+
+
+def test_f2_stale_owner_never_lets_another_project_claim_the_slot(client, tmp_path):
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    kf = layoutsession.project_key(f["figures_dir"])
+    _put(client, "d_x", _doc(1), f)
+    _slot("d_x").write_text(
+        json.dumps(_doc(2, "外部改过"))
+    )  # 正文被外部改了，owner_revisions 对不上
+    assert layoutsession.snapshot()["owners"]["d_x"] == kf
+    r = _put_last(client, "d_x", "X", pj=g)
+    assert r.status_code == 409 and r.get_json()["code"] == "layout_foreign"
+    assert _get_session(client, g)["last"] is None and _get_session(client, g)["pending"] is None
+    # 待核对：F 自己的指针也不自动恢复；/owner 仍是 unknown
+    layoutsession.set_last(kf, "d_x", "X")
+    assert _get_session(client, f)["last"] is None
+    assert _owner(client, g, "d_x") == {"owner": "unknown", "evidence": None, "verified": False}
+    # 候选：对每个项目都在 unknown 里，从不在 project 里
+    for pj in (f, g):
+        assert [i["doc_id"] for i in _candidates(client, pj, "unknown")["items"]] == ["d_x"]
+        assert _candidates(client, pj, "project")["items"] == []

@@ -3365,23 +3365,35 @@ def _clear_tutorial_local_state(
     与教程画布槽位的归属（`engine/layoutsession.py`）；不进返回的 `cleared`（那是文件名清单）。
     """
     removed: list[str] = []
+    slot = _autosave_path(str(meta["document_id"]))
     # 会话状态（#715 PR-B）：教程项目「上次开着的排版」与教程画布槽位的归属一并清掉——
-    # 槽位删了，指向它的记录留着的话下次打开教程会报一份不存在的「找不到上次排版」
-    if project_path is not None:
+    # 槽位删了，指向它的记录留着的话下次打开教程会报一份不存在的「找不到上次排版」。
+    # 锁顺序：槽位的文档锁 → 会话锁（与自动保存 / DELETE / 清理同序，见 `_document_lock`）：
+    # 记录与槽位在同一把文档锁里一起消失，并发的自动保存不会在两者之间把归属记回来
+    with _document_lock(slot):
+        if project_path is not None:
+            try:
+                engine_layoutsession.forget_project(
+                    engine_layoutsession.project_key(project_path), [str(meta["document_id"])]
+                )
+            except OSError as exc:
+                LOG.warning("重置教程：会话状态清不掉（%s）", exc)
         try:
-            engine_layoutsession.forget_project(
-                engine_layoutsession.project_key(project_path), [str(meta["document_id"])]
-            )
-        except OSError as exc:
-            LOG.warning("重置教程：会话状态清不掉（%s）", exc)
-    for target in (_autosave_path(str(meta["document_id"])), _baked_store().path_for(pid)):
-        try:
-            target.unlink()
+            slot.unlink()
         except FileNotFoundError:
-            continue
+            pass
         except OSError as exc:
-            LOG.warning("重置教程：清不掉 %s（%s）", target, exc)
-            continue
+            LOG.warning("重置教程：清不掉 %s（%s）", slot, exc)
+        else:
+            removed.append(slot.name)
+    target = _baked_store().path_for(pid)
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        LOG.warning("重置教程：清不掉 %s（%s）", target, exc)
+    else:
         removed.append(target.name)
     return removed
 
@@ -9094,6 +9106,11 @@ def _document_lock(path: Path) -> threading.Lock:
     自动保存、命名画布文件（「另存为」）、槽位清理三条路共用这一条锁带：同一个
     文件被两条路同时动时它们必须互斥。**锁不可重入**——持锁期间不要再去锁
     另一个路径（槽位清理因此放在写入的锁段之外）。
+
+    **与会话状态锁（`engine/layoutsession._LOCK`）的顺序全局固定：文档锁 → 会话锁**。
+    自动保存（写正文 + `commit_slot`）、DELETE、清理（`remove_slot_unless_protected`）、
+    `PUT /api/layout-session/last`（验槽位 + `set_last`）、教程重置都按这个顺序；
+    会话锁内不读任何正文、不调需要文档锁的函数。反过来（持会话锁再取文档锁）会和上面任何一条路死锁。
     """
     return _DOCUMENT_LOCKS[hash(str(path)) % len(_DOCUMENT_LOCKS)]
 
@@ -9262,12 +9279,23 @@ def api_autosave_put(doc_id):
         # **在锁里读**：放到锁外读的话，返回给 A 的可能是 B 刚写下的那份内容的
         # hash，于是 A 的下一次写会带着一个「不是我写的」基线过来。
         revision = engine_atomicio.content_revision(p)
-    # 槽位归属（#715 PR-B）：这一份属于发请求那一刻的项目（前端按**排队那一刻**的 pj 发，
-    # `session.apiUrlFor`）。记不下只少一条归属，绝不让这次保存失败——内容已经落盘了。
-    _record_autosave_owner(p.stem)
+        # 槽位归属 + 晋升 pending 的 last 与正文在**同一把文档锁**里提交（文档恢复可靠性 R6）：
+        # 以前归属在锁外记，F/G 两个项目同 docId 交错保存时，旧请求的归属回调能晚于新正文落地、把归属
+        # 改回旧项目。锁顺序全局固定：文档锁 → 会话锁。
+        # 元数据失败**不让这次保存失败**（内容已经落盘了，revision 如实回），但要让客户端知道：
+        # `metadata: "failed"`。注意这不是跨文件崩溃事务——进程死在两个文件之间时靠
+        # `owner_revisions` 与槽位 revision 对不上来识别（该归属按「待核对」处理）。
+        metadata = _commit_autosave_metadata(p.stem, revision)
     # 清理放在锁**外**：`_document_lock` 不可重入，而清理要去锁别的路径。
     _prune_autosave_slots(p)
-    return jsonify({"ok": True, "saved_at": int(time.time() * 1000), "revision": revision})
+    return jsonify(
+        {
+            "ok": True,
+            "saved_at": int(time.time() * 1000),
+            "revision": revision,
+            "metadata": metadata,
+        }
+    )
 
 
 _OWNER_UNKNOWN = object()
@@ -9286,14 +9314,23 @@ def _layout_session_owner():
     return engine_layoutsession.project_key(ctx.path) if ctx is not None else None
 
 
-def _record_autosave_owner(doc_id: str) -> None:
+def _commit_autosave_metadata(doc_id: str, revision: str | None) -> str:
+    """正文刚写成功、**仍持着槽位的文档锁**时提交恢复元数据：归属、归属对应的 revision、pending 的晋升。
+
+    回 `"ok"` / `"failed"`（会话状态写不进去 / 读不到可信状态；正文已落盘，下一次保存会补记）/
+    `"owner_unknown"`（pj 已失效，归属不知道，按保数据合同照写正文、什么都不记）。
+    """
     owner = _layout_session_owner()
     if owner is _OWNER_UNKNOWN:
-        return
+        return "owner_unknown"
+    if revision is None:
+        return "failed"
     try:
-        engine_layoutsession.record_owner(doc_id, owner)
+        engine_layoutsession.commit_slot(doc_id, owner, revision)
     except OSError as exc:
-        LOG.warning("自动保存槽位归属记不下（%s）", exc)
+        LOG.warning("自动保存槽位的恢复元数据记不下（%s）", exc)
+        return "failed"
+    return "ok"
 
 
 #: 自动保存槽位的磁盘上限。
@@ -9413,16 +9450,19 @@ def api_autosave_summary(doc_id):
 @app.delete("/api/autosave/<doc_id>")
 def api_autosave_delete(doc_id):
     p = _autosave_path(doc_id)
-    if p.is_file():
-        try:
-            p.unlink()
-        except OSError:
-            pass
-    if not p.exists():
-        try:
-            engine_layoutsession.forget_documents([p.stem])
-        except OSError as exc:
-            LOG.warning("删除槽位后会话状态没跟上（%s）", exc)
+    # 锁顺序：文档锁 → 会话锁。删文件与忘记录在同一把文档锁里，并发的自动保存不会在两者之间
+    # 把归属记在一个已经删掉的槽位上
+    with _document_lock(p):
+        if p.is_file():
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        if not p.exists():
+            try:
+                engine_layoutsession.forget_documents([p.stem])
+            except OSError as exc:
+                LOG.warning("删除槽位后会话状态没跟上（%s）", exc)
     return jsonify({"ok": True})
 
 
@@ -9433,17 +9473,60 @@ def api_autosave_delete(doc_id):
 # 回给前端的只有 doc_id / 名字 / 时间，不带项目路径。
 
 
+def _slot_revision(doc_id: str) -> str | None:
+    """槽位正文**此刻**的 revision（锁外读，只用来核对归属新鲜度）；槽位不在 / 读不出回 `None`。"""
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return None
+    return engine_atomicio.content_revision(AUTOSAVE_DIR / f"{doc_id}.json")
+
+
+def _slot_recoverable(path: Path) -> tuple[bool, str | None]:
+    """槽位 `path` 此刻是不是一份**能恢复**的正文：文件在、读得出、过 `loads_document` + `validate_document`。
+
+    回 `(可恢复, 读到的那份字节的 revision)`。`set_last` 的 `slot_ok` 就是它：last 只指向可恢复的槽位。
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False, None
+    revision = engine_atomicio.revision_of(raw)
+    try:
+        engine_documents.validate_document(engine_documents.loads_document(raw))
+    except (ValueError, RecursionError):
+        return False, revision
+    return True, revision
+
+
+def _session_unavailable():
+    return jsonify(
+        {
+            "error": "会话状态此刻读不到或写不进去，上次打开的排版没有记下",
+            "code": "session_unavailable",
+        }
+    ), 503
+
+
 @app.get("/api/layout-session")
 def api_layout_session_get():
+    """`{last, prev, pending, index}`：`last` 只指向可恢复的槽位（durable）、`prev` 是上一份 durable、
+    `pending` 是还没有有效正文的最新打开意图；`index` 是会话状态的读取结果
+    （`ok` / `missing` / `degraded` / `recovered`）。三个指针回之前都按 owner 冲突过滤。"""
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
-    resp = jsonify({"last": engine_layoutsession.last_for(key)})
+    try:
+        view = engine_layoutsession.view_for(key, _slot_revision)
+    except OSError:  # 连会话锁都拿不到：当「读不到可信状态」说，不假装首次空
+        view = {"last": None, "prev": None, "pending": None, "index": "degraded"}
+    resp = jsonify(view)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 @app.put("/api/layout-session/last")
 def api_layout_session_put_last():
+    """记「这个项目想打开这份排版」。槽位已有可恢复的正文 → durable `last`；还没有 → 只记 `pending`，
+    durable `last` 不动（旧前端「先 PUT last、再首次自动保存」的顺序由此不留悬空 last，首次保存成功时
+    `commit_slot` 把 pending 晋升）。回 `{ok, last, state: "durable"|"pending", pending?}`。"""
     body = request.get_json(silent=True)
     doc_id = body.get("doc_id") if isinstance(body, dict) else None
     name = body.get("name", "") if isinstance(body, dict) else None
@@ -9451,8 +9534,14 @@ def api_layout_session_put_last():
         return jsonify({"error": "doc_id / name 不合法", "code": "bad_request"}), 400
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    slot = _autosave_path(doc_id)
     try:
-        last = engine_layoutsession.set_last(key, doc_id, name)
+        # 验槽位与记 last 在槽位的文档锁里（锁顺序：文档锁 → 会话锁）：验完到记完之间清理删不掉它
+        with _document_lock(slot):
+            slot_ok, revision = _slot_recoverable(slot)
+            result = engine_layoutsession.set_last(
+                key, doc_id, name, slot_ok=slot_ok, current_revision=revision
+            )
     except engine_layoutsession.ForeignLayoutError:
         # 这份排版的槽位记在别的项目名下（#715 验收 P1）：不记成这个项目「上次开着的」。
         # 前端认这个 code，作废本机缓存里的这一条、不重推（`lib/projectDocs.LAYOUT_FOREIGN_CODE`）
@@ -9462,7 +9551,9 @@ def api_layout_session_put_last():
                 "code": "layout_foreign",
             }
         ), 409
-    return jsonify({"ok": True, "last": last})
+    except OSError:
+        return _session_unavailable()
+    return jsonify({"ok": True, **result})
 
 
 def _file_named(directory: Path, doc_id: str) -> Path | None:
@@ -9480,38 +9571,30 @@ def _file_named(directory: Path, doc_id: str) -> Path | None:
         return None
 
 
-def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
-    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据)。
+def _runtime_ref(file_id: str) -> tuple[str, str]:
+    """`runtime:<相对脚本>#<图名>` → (脚本, 图名)。绝对路径只留最后一段——候选列表不回本机路径。"""
+    script, _sep, figure = file_id[len("runtime:") :].partition("#")
+    return _relative_name(script), figure
 
-    只给**前端本机索引不知道归属**的那一档用（升级前、T04 之前的 docIndex 条目没有 projectId；
-    #715 验收 P1 之后这类排版要正面证据才恢复）。证据按可信度依次看：
 
-    1. `owners`（#719 起每次自动保存按 pj 记）：有记录就是定论，别的项目的一律 `other`；
-    2. 当前项目的 `tavottofile/versions/<doc_id>.json`（ADR 0101 起时间线节点按项目写）；
-    3. 槽位里的面板引用的素材**全部**在当前项目里、且至少有一个（升级前的槽位没有任何归属记录，
-       只剩内容本身：它放的就是这个项目的图）。runtime 面板（`runtime:` 前缀）不计。
+def _relative_name(name: str) -> str:
+    norm = name.replace("\\", "/")
+    if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
+        return norm.rstrip("/").rsplit("/", 1)[-1]
+    return norm
 
-    都没有就是 `unknown`——前端据此不恢复。
-    """
-    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
-    verdict = engine_layoutsession.owner_verdict(doc_id, key)
-    if verdict is not None:
-        return verdict, "owners"
+
+def _project_owner_evidence(doc_id: str, ctx, doc: dict | None) -> tuple[str, str | None]:
+    """owners 没有（可信的）记录时的两条旁证：当前项目的时间线、槽位里面板引用的素材。`doc` 是槽位正文
+    （调用方读好的；`None` = 读不到，不看素材那一条）。"""
     if ctx is None:
         return "unknown", None
-    # 两处都按**目录里已有的文件名**去找，不拿请求里的 doc_id 拼路径（它虽然已过 `valid_doc_id`，
+    # 按**目录里已有的文件名**去找，不拿请求里的 doc_id 拼路径（它虽然已过 `valid_doc_id`，
     # 只读端点也不给路径注入留口子）
     store = project_store_dir(ctx)
     if store is not None and _file_named(store / "versions", doc_id) is not None:
         return "this", "versions"
-    slot = _file_named(AUTOSAVE_DIR, doc_id)
-    if slot is None:
-        return "unknown", None
-    try:
-        doc = engine_documents.loads_document(slot.read_bytes())
-    except (OSError, ValueError):
-        return "unknown", None
-    if not isinstance(doc, dict):
+    if doc is None:
         return "unknown", None
     root = Path(ctx.path).resolve()
     files = [
@@ -9530,14 +9613,262 @@ def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
     return "this", "assets"
 
 
+def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None, bool]:
+    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据, 是否已核对)。
+
+    只给**前端本机索引不知道归属**的那一档用（升级前、T04 之前的 docIndex 条目没有 projectId；
+    #715 验收 P1 之后这类排版要正面证据才恢复）。证据按可信度依次看：
+
+    1. `owners`（#719 起每次自动保存按 pj 记）：有记录就是定论，别的项目的一律 `other`；
+       **但**记录里的 `owner_revisions` 与槽位正文此刻的 revision 对不上（进程死在「正文已落盘、
+       元数据未提交」之间）= 待核对：整条按 `unknown` 回，不当 this 也不当 other、不再往下翻旁证
+       （有人记过归属，旁证不能替它翻案）。`verified` = owners 证据且 revision 一致，或旧记录
+       （没有 `owner_revisions`，按现状信任——兼容边界）；
+    2. 当前项目的 `tavottofile/versions/<doc_id>.json`（ADR 0101 起时间线节点按项目写）；
+    3. 槽位里的面板引用的素材**全部**在当前项目里、且至少有一个（升级前的槽位没有任何归属记录，
+       只剩内容本身：它放的就是这个项目的图）。runtime 面板（`runtime:` 前缀）不计。
+
+    都没有就是 `unknown`——前端据此不恢复。
+    """
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    state, _status = engine_layoutsession.read_readonly()
+    verdict, verified = engine_layoutsession.owner_status_in(
+        state, doc_id, key, _slot_revision(doc_id)
+    )
+    if verdict == "unverified":
+        return "unknown", None, False
+    if verdict is not None:
+        return verdict, "owners", verified
+    doc = None
+    slot = _file_named(AUTOSAVE_DIR, doc_id)
+    if slot is not None:
+        try:
+            loaded = engine_documents.loads_document(slot.read_bytes())
+            doc = loaded if isinstance(loaded, dict) else None
+        except (OSError, ValueError):
+            doc = None
+    owner, evidence = _project_owner_evidence(doc_id, ctx, doc)
+    return owner, evidence, False
+
+
 @app.get("/api/layout-session/owner")
 def api_layout_session_owner():
-    """前端不知道归属的那份排版，后端有没有证据说它属于当前项目（#715 验收 P1 / #773）。"""
+    """前端不知道归属的那份排版，后端有没有证据说它属于当前项目（#715 验收 P1 / #773）。
+    回 `{owner, evidence, verified}`，`evidence` ∈ `owners|versions|assets|null`。"""
     doc_id = request.args.get("doc_id")
     if not engine_layoutsession.valid_doc_id(doc_id):
         return jsonify({"error": "doc_id 不合法", "code": "bad_request"}), 400
-    owner, evidence = _layout_owner_evidence(doc_id, _request_ctx())
-    resp = jsonify({"owner": owner, "evidence": evidence})
+    owner, evidence, verified = _layout_owner_evidence(doc_id, _request_ctx())
+    resp = jsonify({"owner": owner, "evidence": evidence, "verified": verified})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ---- 候选发现（文档恢复可靠性 P03）：索引丢了 / last 指不到时，从真实槽位里把能找回的列出来 ----
+CANDIDATE_DEFAULT_LIMIT = 50
+CANDIDATE_MAX_LIMIT = 100
+#: 单个槽位超过它就不读（记 `too_large`）
+CANDIDATE_MAX_BYTES = 32 * 1024 * 1024
+#: 一页读的正文字节预算：`limit` 个大文件不会把一页拖成几个 GB（至少读一个，剩下的留给下一页）
+CANDIDATE_PAGE_BYTES = 256 * 1024 * 1024
+#: 目录里最多认这么多条目（防御：槽位目录被塞进海量文件）
+CANDIDATE_MAX_ENTRIES = 20000
+CANDIDATE_LIST_CAP = 5
+
+
+def _candidate_entries() -> list[tuple[int, str, int]]:
+    """`AUTOSAVE_DIR` 里的槽位文件 `(mtime_ns, 文件名, 字节数)`，新→旧。
+
+    只认 docId 形状的 `*.json` 普通文件，**不跟随符号链接**；不接受任何调用方给的路径。"""
+    rows: list[tuple[int, str, int]] = []
+    try:
+        with os.scandir(AUTOSAVE_DIR) as it:
+            for n, entry in enumerate(it):
+                if n >= CANDIDATE_MAX_ENTRIES:
+                    break
+                name = entry.name
+                if not name.endswith(".json") or not engine_layoutsession.valid_doc_id(name[:-5]):
+                    continue
+                try:
+                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                        continue
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                rows.append((st.st_mtime_ns, name, st.st_size))
+    except OSError:
+        return []
+    rows.sort(key=lambda r: (-r[0], r[1]))
+    return rows
+
+
+def _encode_cursor(row: tuple[int, str, int]) -> str:
+    import base64
+
+    raw = json.dumps([row[0], row[1]]).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(text: str) -> tuple[int, str] | None:
+    import base64
+
+    try:
+        data = json.loads(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
+    except (ValueError, TypeError):
+        return None
+    if (
+        isinstance(data, list)
+        and len(data) == 2
+        and isinstance(data[0], int)
+        and not isinstance(data[0], bool)
+        and isinstance(data[1], str)
+    ):
+        return data[0], data[1]
+    return None
+
+
+def _candidate_item(row: tuple[int, str, int], state: dict, ctx, key, scope: str):
+    """一个槽位的候选摘要；不属于这次 `scope` 的回 `None`。**只读**，任何一步出错只让自己 `invalid`。"""
+    mtime_ns, name, size = row
+    doc_id = name[:-5]
+    path = AUTOSAVE_DIR / name
+    status = "ok"
+    raw_bytes = None
+    revision = None
+    doc: dict | None = None
+    loaded = None
+    schema = None
+    if size > CANDIDATE_MAX_BYTES:
+        status = "too_large"
+    else:
+        try:
+            raw_bytes = path.read_bytes()
+        except OSError:
+            status = "invalid"
+    if raw_bytes is not None:
+        revision = engine_atomicio.revision_of(raw_bytes)
+        try:
+            loaded = engine_documents.loads_document(raw_bytes)
+        except (ValueError, RecursionError):
+            loaded = None
+        if not isinstance(loaded, dict):
+            status = "invalid"
+        else:
+            schema = loaded.get("schema")
+            try:
+                doc = engine_documents.validate_document(loaded)
+            except engine_documents.DocumentError as exc:
+                status = "too_new" if exc.code == "schema_too_new" else "invalid"
+            except (ValueError, RecursionError):
+                status = "invalid"
+    verdict, _verified = engine_layoutsession.owner_status_in(state, doc_id, key, revision)
+    if verdict == "other":
+        return None
+    if verdict == "this":
+        owner, evidence = "this", "owners"
+    elif verdict == "unverified":
+        owner, evidence = "unknown", None
+    else:
+        owner, evidence = _project_owner_evidence(doc_id, ctx, doc)
+        if owner != "this":
+            owner = "unknown"
+    if (scope == "project") != (owner == "this"):
+        return None
+    item: dict = {
+        "doc_id": doc_id,
+        "name": "",
+        "updatedAt": None,
+        "mtime": mtime_ns // 1_000_000,
+        "revision": revision,
+        "schema": schema if isinstance(schema, int) and not isinstance(schema, bool) else None,
+        "status": status,
+        "canvases": None,
+        "objects": None,
+        "owner": owner,
+        "evidence": evidence,
+        "runtime": [],
+        "panels": [],
+    }
+    if status in ("ok", "too_new") and isinstance(loaded, dict):
+        proj = loaded.get("project")
+        if isinstance(proj, dict) and isinstance(proj.get("name"), str):
+            item["name"] = proj["name"][: engine_layoutsession.MAX_NAME_CHARS]
+        upd = loaded.get("updatedAt")
+        if isinstance(upd, (int, float)) and not isinstance(upd, bool) and upd == upd:
+            item["updatedAt"] = int(upd) if abs(upd) < 1e15 else None
+    if status == "ok" and doc is not None:
+        try:
+            canvases = doc.get("canvases")
+            objects = _doc_objects(doc)
+            item["canvases"] = len(canvases) if isinstance(canvases, list) else 1
+            item["objects"] = len(objects)
+            for o in objects:
+                fid = o.get("fileId")
+                if o.get("type") != "panel" or not isinstance(fid, str):
+                    continue
+                if fid.startswith("runtime:"):
+                    if len(item["runtime"]) < CANDIDATE_LIST_CAP:
+                        script, figure = _runtime_ref(fid)
+                        item["runtime"].append({"script": script, "figure": figure})
+                elif len(item["panels"]) < CANDIDATE_LIST_CAP:
+                    item["panels"].append(_relative_name(fid))
+            sketch = _version_sketch({"doc": doc, "canvasId": doc.get("activeCanvasId")}, 40, 0)
+        except (TypeError, AttributeError, ValueError, RecursionError):
+            item["status"] = "invalid"
+            item["canvases"] = item["objects"] = None
+            item["runtime"], item["panels"] = [], []
+        else:
+            if sketch is not None:
+                item["sketch"] = sketch
+    return item
+
+
+@app.get("/api/layout-session/candidates")
+def api_layout_session_candidates():
+    """只读发现：从 `AUTOSAVE_DIR` 的真实槽位里列出能找回的排版（不要求先知道 docId）。
+
+    `scope=project`：只列这个项目**明确归属**的（owners 可信记录 / 时间线 / 素材全在项目里）；
+    `scope=unknown`：只列归属不知道（或待核对）的——runtime 文档在这里（`/owner` 刻意不为 runtime
+    面板作证）。别的项目的（owner=other）两个 scope 都不出现。
+    按 mtime 新→旧分页，每页最多读 `limit`（≤100）个文件、字节有预算；一个坏文件只让自己
+    `status: "invalid"`。不写任何东西、不回路径。"""
+    scope = request.args.get("scope", "project")
+    if scope not in ("project", "unknown"):
+        return jsonify({"error": "scope 不合法", "code": "bad_request"}), 400
+    try:
+        limit = int(request.args.get("limit", CANDIDATE_DEFAULT_LIMIT))
+    except ValueError:
+        return jsonify({"error": "limit 不合法", "code": "bad_request"}), 400
+    limit = max(1, min(limit, CANDIDATE_MAX_LIMIT))
+    cursor = request.args.get("cursor")
+    after = None
+    if cursor:
+        after = _decode_cursor(cursor)
+        if after is None:
+            return jsonify({"error": "cursor 不合法", "code": "bad_request"}), 400
+    ctx = _request_ctx()
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    try:
+        state, index = engine_layoutsession.read_readonly()
+    except OSError:
+        state = {"projects": {}, "no_project": {}, "owners": {}, "owner_revisions": {}}
+        index = "degraded"
+    rows = _candidate_entries()
+    if after is not None:
+        rows = [r for r in rows if (-r[0], r[1]) > (-after[0], after[1])]
+    items: list[dict] = []
+    consumed = 0
+    budget = 0
+    for row in rows[:limit]:
+        if consumed and budget + min(row[2], CANDIDATE_MAX_BYTES) > CANDIDATE_PAGE_BYTES:
+            break
+        budget += min(row[2], CANDIDATE_MAX_BYTES)
+        consumed += 1
+        item = _candidate_item(row, state, ctx, key, scope)
+        if item is not None:
+            items.append(item)
+    next_cursor = _encode_cursor(rows[consumed - 1]) if consumed < len(rows) and consumed else None
+    resp = jsonify({"items": items, "next_cursor": next_cursor, "index": index})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
