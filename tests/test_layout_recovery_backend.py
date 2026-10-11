@@ -1230,6 +1230,55 @@ def test_tutorial_reset_completes_a_pending_cleanup_without_clearing_future_prog
     assert slot.exists(), "已完成的清理意图不能在下次打开时再次删除用户进度"
 
 
+def test_tutorial_reset_publishes_cleanup_intent_before_replacement(client, monkeypatch):
+    """重置副本发布后、端点清理前退出，下一次打开先清旧固定 ID 槽位。"""
+    first = client.post("/api/tutorial/open", json={}).get_json()
+    doc_id = first["tutorial"]["document_id"]
+    slot = _slot(doc_id)
+    slot.parent.mkdir(parents=True, exist_ok=True)
+    slot.write_text(json.dumps(_doc(1, "重置前的排版")), encoding="utf-8")
+    marker = m.engine_tutorial.cleanup_pending_path()
+    real_ensure = m.engine_tutorial.ensure_tutorial_copy
+
+    def replace_then_exit(*args, **kwargs):
+        copy = real_ensure(*args, **kwargs)
+        assert kwargs.get("reset") and copy.reset and marker.is_file()
+        raise RuntimeError("模拟重置发布后进程退出")
+
+    monkeypatch.setattr(m.engine_tutorial, "ensure_tutorial_copy", replace_then_exit)
+    interrupted = client.post("/api/tutorial/reset", json={})
+    assert interrupted.status_code == 500
+    monkeypatch.setattr(m.engine_tutorial, "ensure_tutorial_copy", real_ensure)
+    assert slot.exists() and marker.exists()
+    reopened = client.post("/api/tutorial/open", json={})
+    assert reopened.status_code == 200 and reopened.get_json()["created"] is False
+    assert not slot.exists() and not marker.exists()
+
+
+def test_failed_tutorial_reset_does_not_leave_cleanup_intent_for_old_copy(client, monkeypatch):
+    """新目录放置失败并回滚旧副本：下一次打开保留旧排版进度。"""
+    first = client.post("/api/tutorial/open", json={}).get_json()
+    slot = _slot(first["tutorial"]["document_id"])
+    slot.parent.mkdir(parents=True, exist_ok=True)
+    slot.write_text(json.dumps(_doc(1, "仍属于旧副本")), encoding="utf-8")
+    old_bytes = slot.read_bytes()
+    marker = m.engine_tutorial.cleanup_pending_path()
+    dest = Path(first["project"]["figures_dir"])
+    real_rename = os.rename
+
+    def fail_publish(src, dst, *args, **kwargs):
+        if Path(dst) == dest and Path(src).name.endswith(".tmp"):
+            raise OSError(5, "无法放置新副本")
+        return real_rename(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(m.engine_tutorial.os, "rename", fail_publish)
+    failed = client.post("/api/tutorial/reset", json={})
+    assert failed.status_code != 200 and not marker.exists()
+    monkeypatch.setattr(m.engine_tutorial.os, "rename", real_rename)
+    reopened = client.post("/api/tutorial/open", json={})
+    assert reopened.status_code == 200 and slot.read_bytes() == old_bytes
+
+
 _SAVE_CHILD = r"""
 import json, os, sys, time
 sys.path.insert(0, sys.argv[1])

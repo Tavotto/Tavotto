@@ -41,6 +41,7 @@ Flask 父进程可安全 import。
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import json
 import os
@@ -449,18 +450,27 @@ def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
                     f"关掉之后再试：{exc}",
                 ) from exc
             raise TutorialError("tutorial_copy_failed", f"无法替换旧的教程副本：{exc}") from exc
-    if old is None:
-        # 新版本目录还不存在：先把清理意图持久化，再发布副本。此处崩溃时 dest 仍不存在，
-        # 下一次 ensure 会继续创建；发布之后崩溃时 app 下次仍看得到这枚标记。
-        try:
-            atomicio.write_bytes(cleanup_pending_path(), b"pending\n")
-        except (OSError, atomicio.AtomicWriteError) as exc:
-            shutil.rmtree(tmp, ignore_errors=True)
-            raise TutorialError("tutorial_copy_failed", f"无法记录教程旧排版清理：{exc}") from exc
+    # 新建和重置都先记清理意图再发布副本。重置时旧目录此刻已挪到 .old；
+    # 崩溃后 dest 不在，下次 ensure 会新建，而已发布后崩溃则凭标记清旧槽位。
+    marker = cleanup_pending_path()
+    had_pending = marker.exists()
+    try:
+        atomicio.write_bytes(marker, b"pending\n")
+    except (OSError, atomicio.AtomicWriteError) as exc:
+        shutil.rmtree(tmp, ignore_errors=True)
+        if old is not None:
+            with contextlib.suppress(OSError):
+                os.rename(old, dest)
+        raise TutorialError("tutorial_copy_failed", f"无法记录教程旧排版清理：{exc}") from exc
     try:
         os.rename(tmp, dest)
     except OSError as exc:
         shutil.rmtree(tmp, ignore_errors=True)
+        if not had_pending:
+            # 发布失败时先撤回这次新写的意图，再把旧目录放回；崩溃在两步之间
+            # 只会留下 dest 缺失，不会用重置失败的标记清掉恢复后的旧进度。
+            with contextlib.suppress(OSError):
+                marker.unlink(missing_ok=True)
         if old is not None:
             try:
                 os.rename(old, dest)  # 把旧副本放回去：用户不该因为一次失败失去教程
