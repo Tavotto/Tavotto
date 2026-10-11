@@ -3336,12 +3336,10 @@ def api_tutorial_open():
     # 里的排版——页面尺寸、面板摆放都可能已经不是这份资源的了（2026-09-13 把
     # 教程图幅从 80 mm 改到 65 mm 时抓到：旧槽位把面板按 1.19 倍摆回来，线宽
     # 检查全红）。副本目录都换了，进度本来就随目录走；槽位一并清掉，与重置同一处
-    # 副本已经建好但槽位清理失败时，下一次 ensure 会回 created=False；用持久标记重试，
-    # 否则旧固定 ID 槽位会在下一次启动时盖回新教程。标记只能在清理成功后移除。
-    cleanup_pending = engine_config.data_dir() / "state" / "tutorial-cleanup-pending"
+    # 副本发布前已持久化清理意图；即使进程在发布与这里之间退出，下一次 ensure
+    # 回 created=False 也会凭标记重试。只有清理成功才移除，避免旧槽位盖回新教程。
+    cleanup_pending = engine_tutorial.cleanup_pending_path()
     try:
-        if tp.created:
-            engine_atomicio.write_bytes(cleanup_pending, b"pending\n")
         if tp.created or cleanup_pending.exists():
             cleared = _clear_tutorial_local_state(
                 _project_id(tp.path), tp.metadata, tp.path, strict=True

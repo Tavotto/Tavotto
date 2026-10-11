@@ -1187,6 +1187,31 @@ def test_tutorial_first_open_retries_deferred_slot_cleanup(client, monkeypatch):
     assert not slot.exists() and not marker.exists()
 
 
+def test_tutorial_cleanup_intent_precedes_publishing_new_copy(client, monkeypatch):
+    """副本发布后、端点来得及清槽位前退出：下次 created=False 仍能重试。"""
+    doc_id = m.engine_tutorial.tutorial_metadata()["document_id"]
+    slot = _slot(doc_id)
+    slot.parent.mkdir(parents=True, exist_ok=True)
+    slot.write_text(json.dumps(_doc(1, "旧教程排版")), encoding="utf-8")
+    marker = m.engine_tutorial.cleanup_pending_path()
+    real_ensure = m.engine_tutorial.ensure_tutorial_copy
+
+    def publish_then_exit(*args, **kwargs):
+        copy = real_ensure(*args, **kwargs)
+        assert copy.created and copy.path.is_dir()
+        assert marker.is_file(), "发布副本之前必须持久记录清理意图"
+        raise RuntimeError("模拟副本发布后进程退出")
+
+    monkeypatch.setattr(m.engine_tutorial, "ensure_tutorial_copy", publish_then_exit)
+    interrupted = client.post("/api/tutorial/open", json={})
+    assert interrupted.status_code == 500
+    monkeypatch.setattr(m.engine_tutorial, "ensure_tutorial_copy", real_ensure)
+    assert slot.exists() and marker.exists()
+    again = client.post("/api/tutorial/open", json={})
+    assert again.status_code == 200 and again.get_json()["created"] is False
+    assert not slot.exists() and not marker.exists()
+
+
 _SAVE_CHILD = r"""
 import json, os, sys, time
 sys.path.insert(0, sys.argv[1])

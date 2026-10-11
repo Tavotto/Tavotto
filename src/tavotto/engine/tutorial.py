@@ -273,6 +273,11 @@ def tutorial_destination(meta: dict | None = None, digest: str | None = None) ->
     return tutorial_version_dir(meta, digest) / PROJECT_DIRNAME
 
 
+def cleanup_pending_path() -> Path:
+    """新副本发布前的清理意图：应用清掉旧固定 ID 槽位后才删除。"""
+    return config.data_dir() / "state" / "tutorial-cleanup-pending"
+
+
 def is_tutorial_path(path: str | Path) -> bool:
     """这个路径在教程树（`<data_dir>/tutorial/`）之下吗？
 
@@ -444,6 +449,14 @@ def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
                     f"关掉之后再试：{exc}",
                 ) from exc
             raise TutorialError("tutorial_copy_failed", f"无法替换旧的教程副本：{exc}") from exc
+    if old is None:
+        # 新版本目录还不存在：先把清理意图持久化，再发布副本。此处崩溃时 dest 仍不存在，
+        # 下一次 ensure 会继续创建；发布之后崩溃时 app 下次仍看得到这枚标记。
+        try:
+            atomicio.write_bytes(cleanup_pending_path(), b"pending\n")
+        except (OSError, atomicio.AtomicWriteError) as exc:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise TutorialError("tutorial_copy_failed", f"无法记录教程旧排版清理：{exc}") from exc
     try:
         os.rename(tmp, dest)
     except OSError as exc:
