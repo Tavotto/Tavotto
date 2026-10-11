@@ -355,7 +355,8 @@
   当前解释器里的 editable / 本地 / Conda 提供者、缓存的 `import_error`、读不全的索引在新代里都不存在，不再把该 import 从安装集合剔除；
   装到当前环境（`install_facts` 为 None / 就是 `facts`）时不变。当前环境里是 editable 等、可信解析又给不出安装名的 import
   （`unknown` 桶）仍只列在 `unknown` / `origins`，不猜 PyPI 名。
-  `prepsession.checks_of` 的 `dependencies` 项在有 `origins` 时带 `detail.origins {count, by_reason}`（不出名字与路径，不改状态）。
+  `prepsession.checks_of` 的 `dependencies` 项在有 `origins` 时带 `detail.origins {count, by_reason[, confirmable]}`（不出名字与路径，不改状态；`confirmable` = 其中带预填、能由用户指定包名的个数，没有就不出这个键——界面据此区分「需要确认」与「尚无法确定」，PR6）。
+  装后「发行包与版本」核验没过时，进度终态带 `dist_reasons`（`deprepair.DIST_REASONS` 闭集的去重子集，只有码没有名字；错误码仍是 `dependency_import_still_failed`，普通的 import 失败没有这个键），界面按原因分别说人话、不解析 `error` 文案（PR6）。
   目标解释器自己的 `sys.builtin_module_names` / `EXTENSION_SUFFIXES` 随事实量取（`TargetFacts.builtin` / `ext_suffixes`，不进 digest）并交给
   `importscan`（#888）：没量到不拿宿主冒充——`posix` / `nt` 恒为 ambiguous，扩展模块标 `unverified` 且 `search_complete=False`；
   本地模块跟进被深度 / 个数 / 预算截断同样 `search_complete=False`。

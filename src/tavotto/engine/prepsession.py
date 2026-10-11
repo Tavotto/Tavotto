@@ -199,22 +199,28 @@ def _check(check_id: str, status: str, code: str = "", **detail) -> dict:
 
 def origin_facts(offer: dict | None) -> dict:
     """依赖检查项带的**来源事实**（Import Origin Resolver PR4）：联合计划里「没有可信安装名」的那些 import（`origins`）
-    的计数与原因——`{"origins": {"count": n, "by_reason": {原因码: 个数}}}`；没有就是空字典（检查项的形状与以前一字不差）。
+    的计数与原因——`{"origins": {"count": n, "by_reason": {原因码: 个数}[, "confirmable": m]}}`；没有就是空字典（检查项的形状与以前一字不差）。
 
     只带计数与闭集原因码（`depplan.ORIGIN_REASONS`）：不出包名、不出路径、不出源码——名字在计划载荷里，展示归前端
     （PR6），诊断白名单另算。来源事实**不改检查项的状态**：它们不让计划不完整（不新增 `blocked` 理由），只说明
     「这几个 import 装不了 / 不该猜」。"""
     rows = ((offer or {}).get("plan") or {}).get("origins") or ()
     by_reason: dict[str, int] = {}
+    confirmable = 0
     for row in rows:
         reason = str(row.get("reason") or "")
         if reason in depplan.ORIGIN_REASONS:
             by_reason[reason] = by_reason.get(reason, 0) + 1
+            if row.get("suggested_distribution"):
+                confirmable += 1
     if not by_reason:
         return {}
-    return {
-        "origins": {"count": sum(by_reason.values()), "by_reason": dict(sorted(by_reason.items()))}
-    }
+    origins = {"count": sum(by_reason.values()), "by_reason": dict(sorted(by_reason.items()))}
+    if confirmable:
+        # 其中带预填（`suggested_distribution`）、可以由用户指定包名的个数（PR6）：界面据此区分「需要确认」与「尚无法确定」，
+        # 不必为了一个计数再取一遍整份计划。没有就不出这个键（检查项的形状与以前一字不差）
+        origins["confirmable"] = confirmable
+    return {"origins": origins}
 
 
 def checks_of(plan: preparation.PreparationPlan) -> list[dict]:

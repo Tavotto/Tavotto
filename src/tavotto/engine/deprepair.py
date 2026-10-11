@@ -2445,12 +2445,16 @@ def _emit(
     result: dict | None = None,
     pinned: dict | None = None,
     impact: dict | None = None,
+    dist_reasons: list[str] | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
+        if dist_reasons:
+            # 装后核验没过的原因码（闭集，`DIST_REASONS`）：终态上带着，界面按原因分别说人话
+            rec["dist_reasons"] = list(dist_reasons)
         if pinned is not None:
             # 租约里复查到全局固定而失败：界面要的是那条固定（谁、来源、变量），
             # 只有 code 的话它给不出「恢复自动检测」那一步
@@ -4397,7 +4401,14 @@ def _prepare_guarded(
         return prepare(plan_id, on_event, claimed=claimed, confirmed_impact=confirmed_impact)
     except RepairError as exc:
         _log_repair_failure("联合依赖准备", plan_id, exc.code)
-        return _emit(plan_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
+        return _emit(
+            plan_id,
+            STATE_FAILED,
+            on_event,
+            code=exc.code,
+            error=str(exc),
+            dist_reasons=dist_reasons_of(exc),
+        )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("联合准备线程异常")
         return _emit(plan_id, STATE_FAILED, on_event, code=ERROR_FAILED, error=str(exc))
@@ -5272,6 +5283,20 @@ DIST_NOT_INSTALLED = "distribution_not_installed"  # 计划要装的发行包在
 DIST_VERSION_MISMATCH = "distribution_version_mismatch"  # 装上的版本不满足计划里的约束
 DIST_DOES_NOT_PROVIDE = "distribution_does_not_provide_import"  # 装上了，但提供这个 import 的是别人（或没有任何发行包认领）
 DIST_UNVERIFIABLE = "distribution_unverifiable"  # 用户指定的包：读不出它提供什么，不放行
+#: 上面四个的闭集（顺序与 `web/src/lib/api.ts` 的 `DIST_FAILURE_REASONS` 一对同源）。进度终态的 `dist_reasons` 只带这里的码
+DIST_REASONS = (DIST_NOT_INSTALLED, DIST_VERSION_MISMATCH, DIST_DOES_NOT_PROVIDE, DIST_UNVERIFIABLE)
+
+
+def dist_reasons_of(exc: BaseException) -> list[str]:
+    """`dependency_import_still_failed` 的 `extra["imports"]` 里属于 `DIST_REASONS` 的那些原因码（去重、按闭集顺序）。
+
+    只出码、不出名字：进度记录经 SSE 广播给每个订阅者，界面据此按原因分别说人话，不必去解析 `error` 文案（那是给人读的）。
+    普通的 import 失败（`probe_imports` 的异常原文）不在闭集里，不出——没有闭集就不放进载荷。"""
+    if getattr(exc, "code", "") != ERROR_IMPORT_STILL_FAILED:
+        return []
+    got = (getattr(exc, "extra", None) or {}).get("imports")
+    values = set(got.values()) if isinstance(got, dict) else set()
+    return [r for r in DIST_REASONS if r in values]
 
 
 def _verify_distributions(
