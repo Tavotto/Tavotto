@@ -650,8 +650,15 @@ export async function openLayoutDocument(
  * 以给定的 documentId 打开一份已读到的文档（找回副本等用）：带丢失确认的 `switchDocument` + 清选区 / 重新取景 +
  * 说一句。返回是否真的换过去了。
  */
-export async function openDocumentAs(pd: ProjectDocument, id: string): Promise<boolean> {
-  if (!(await useDocumentStore.getState().switchDocument(pd, id, confirmLoss))) return false
+export async function openDocumentAs(
+  pd: ProjectDocument,
+  id: string,
+  opts: { stillCurrent?: () => boolean } = {},
+): Promise<boolean> {
+  // 「丢失确认」框是这条路上唯一的 await：框开着时用户可能切了项目（桌面交接 / 别的入口），确认之后要再核一次
+  // 调用方入口取的上下文，不再是同一个项目 / 排版就不装（Codex #936：A 的排版装进 B 并按 B 的名义自动保存）
+  const guardedConfirm = async () => (await confirmLoss()) && (opts.stillCurrent?.() ?? true)
+  if (!(await useDocumentStore.getState().switchDocument(pd, id, guardedConfirm))) return false
   afterSwitch()
   status(note('documentReopened', { name: pd.project.name, count: pd.canvases.length }), 'done')
   return true

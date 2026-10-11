@@ -118,7 +118,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       return false
     }
     const notice = acceptProbe(probe, ctx.pj)
-    if (!(await openDocumentAs(probe.doc, id))) return false
+    if (!(await openDocumentAs(probe.doc, id, { stillCurrent: () => stillCurrent(ctx) }))) return false
     // 未决的恢复副本跟着这份文档走：switchDocument 刚把待裁决事项清空了
     if (notice) useDocumentStore.setState({ docNotice: notice })
     return useDocumentStore.getState().documentId === id
@@ -168,7 +168,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
         pj: ctx.pj,
         stillCurrent: () => stillCurrent(ctx),
         openExisting: (id) => openSafely(id, it.name),
-        install: openDocumentAs,
+        install: (pd, id) => openDocumentAs(pd, id, { stillCurrent: () => stillCurrent(ctx) }),
       })
       if (r.kind === 'opened') {
         useUiStore
