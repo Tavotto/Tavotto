@@ -1539,6 +1539,31 @@ def test_session_pointer_owner_and_revision_come_from_one_slot_snapshot(
     assert layoutsession.snapshot()["owners"]["d_x"] == layoutsession.project_key(g["figures_dir"])
 
 
+def test_session_view_retries_when_last_and_prev_change_mid_read(client, tmp_path, monkeypatch):
+    """last=A/prev=B 读了一半时切到 C/A，回包不能拼成 A/A 并遗漏 C。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    for doc_id in ("d_a", "d_b", "d_c"):
+        _put(client, doc_id, _doc(1, doc_id), f)
+    assert _put_last(client, "d_b", pj=f).status_code == 200
+    assert _put_last(client, "d_a", pj=f).status_code == 200
+    real_revision = m._slot_revision
+    rotated = False
+
+    def rotate_after_first_revision(doc_id):
+        nonlocal rotated
+        if doc_id == "d_a" and not rotated:
+            rotated = True
+            assert _put_last(m.app.test_client(), "d_c", pj=f).status_code == 200
+        return real_revision(doc_id)
+
+    monkeypatch.setattr(m, "_slot_revision", rotate_after_first_revision)
+    view = _get_session(client, f)
+    assert rotated
+    assert view["index"] == "ok"
+    assert view["last"]["doc_id"] == "d_c"
+    assert view["prev"]["doc_id"] == "d_a"
+
+
 def test_candidate_items_are_classified_from_a_per_item_snapshot(client, tmp_path, monkeypatch):
     """候选条目的状态与正文在它自己的槽位锁里读：页级快照之后别的项目保存了这个槽位，条目也不能拿新正文配旧状态。"""
     f = _project(client, tmp_path, "projF", default=True)

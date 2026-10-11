@@ -195,6 +195,22 @@ describe('loadCandidates：分页有界、去重、排除当前文档', () => {
     expect(more.list.truncated).toBe(true)
   })
 
+  it('早一页归属索引退化，后页恢复正常：当前批和加载更多仍提示重试', async () => {
+    const pages = [
+      { items: [], next_cursor: 'c1', index: 'degraded' },
+      { items: [{ doc_id: 'd_seen', name: '可见', updatedAt: 1, mtime: 1, revision: 'r', schema: 3, status: 'ok', canvases: 1, objects: 1, owner: 'this', evidence: 'owners' }], next_cursor: null, index: 'ok' },
+    ]
+    let n = 0
+    globalThis.fetch = (async () => new Response(JSON.stringify({ ...pages[Math.min(n++, 1)], truncated: false }))) as typeof fetch
+    const first = await loadCandidates('project', PJ)
+    if (first.kind !== 'ok') throw new Error('list failed')
+    expect(first.list.rows.map((r) => r.doc_id)).toEqual(['d_seen'])
+    expect(first.list.index).toBe('degraded')
+    const more = await loadCandidates('project', PJ, { ...first.list, next: 'c2' })
+    if (more.kind !== 'ok') throw new Error('list failed')
+    expect(more.list.index).toBe('degraded')
+  })
+
   it('排除此刻开着的那份；故障分类原样给出', async () => {
     backend.putSlot('d_cur', doc('cur'))
     backend.putSlot('d_x', doc('x'))

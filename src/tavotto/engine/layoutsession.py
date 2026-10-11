@@ -581,55 +581,66 @@ def view_for(
     每个指针指着的槽位**确知属于别的项目**时回 `None`（修复之前的版本可能已经把别的项目的排版
     记到这个项目名下，#715 验收 P1）；归属待核对的（`owner_is_stale`）不算「确知」，照回。
     `rev_of(doc_id)` 回槽位当前 revision，在会话锁**外**调用（不在锁内读正文）；不给就不核新鲜度。
-    端点给 `lock_of` 时逐指针取槽位文档锁，在锁里重读会话状态与 revision；指针换了槽位就重试，
-    防止旧归属状态与另一个项目刚写入的正文拼成一条可自动恢复的指针。
+    端点给 `lock_of` 时逐指针取槽位文档锁，在锁里重读会话状态与 revision；指针换了槽位就重试。
+    整组指针在收集前后也要相同，否则从头重读；不能把不同代的 last / prev 拼成完整会话。
     给了 `rev_of` 时每个指针多一个 `revision`：校验用的那份快照的 revision，见上。
     """
-    with _LOCK:
-        state, status = _read()
-    out: dict[str, Any] = {}
-    unstable = False
-    seen_degraded = status == STATUS_DEGRADED
-    for name in POINTERS:
-        for attempt in range(3):
-            entry = _group_view(state, key).get(name)
-            if not entry:
-                out[name] = None
+    seen_degraded = False
+    for _group_attempt in range(3):
+        with _LOCK:
+            state, status = _read()
+        seen_degraded |= status == STATUS_DEGRADED
+        baseline = _group_view(state, key)
+        out: dict[str, Any] = {}
+        changed_group = False
+        unstable = False
+        for name in POINTERS:
+            for _pointer_attempt in range(3):
+                entry = _group_view(state, key).get(name)
+                if not entry:
+                    out[name] = None
+                    break
+                with lock_of(entry["doc_id"]) if lock_of is not None else nullcontext():
+                    if lock_of is not None:
+                        with _LOCK:  # 固定顺序：文档锁 → 会话锁
+                            state, status = _read()
+                        seen_degraded |= status == STATUS_DEGRADED
+                        fresh_group = _group_view(state, key)
+                        changed_group |= fresh_group != baseline
+                        fresh = fresh_group.get(name)
+                        if fresh is None:
+                            out[name] = None
+                            break
+                        if fresh["doc_id"] != entry["doc_id"]:
+                            # 本组指针已指向另一槽位；释放旧锁后锁新槽位。
+                            continue
+                        entry = fresh
+                    current = None
+                    if rev_of is not None:
+                        try:
+                            current = rev_of(entry["doc_id"])
+                        except OSError:
+                            current = None
+                    # 确知别人的 / 归属待核对 → 不自动恢复，留给候选发现的 unknown 范围。
+                    unusable = owner_conflict(state, entry["doc_id"], key) or owner_is_stale(
+                        state, entry["doc_id"], current
+                    )
+                    out[name] = None if unusable else dict(entry)
+                    if not unusable and rev_of is not None:
+                        # revision 和归属来自该槽位锁内的同一份状态与正文。
+                        out[name]["revision"] = current
+                    break
+            else:
+                unstable = True
                 break
-            with lock_of(entry["doc_id"]) if lock_of is not None else nullcontext():
-                if lock_of is not None:
-                    with _LOCK:  # 固定顺序：文档锁 → 会话锁
-                        state, status = _read()
-                    seen_degraded |= status == STATUS_DEGRADED
-                    fresh = _group_view(state, key).get(name)
-                    if fresh is None:
-                        out[name] = None
-                        break
-                    if fresh["doc_id"] != entry["doc_id"]:
-                        # 本组指针已指向另一槽位；释放旧槽位锁后锁新槽位，不能用旧锁替新槽位作证。
-                        continue
-                    entry = fresh
-                current = None
-                if rev_of is not None:
-                    try:
-                        current = rev_of(entry["doc_id"])
-                    except OSError:
-                        current = None
-                # 确知别人的 / 归属待核对 → 不自动恢复，留给候选发现的 unknown 范围。
-                unusable = owner_conflict(state, entry["doc_id"], key) or owner_is_stale(
-                    state, entry["doc_id"], current
-                )
-                out[name] = None if unusable else dict(entry)
-                if not unusable and rev_of is not None:
-                    # revision 和归属来自该槽位锁内的同一份状态与正文。
-                    out[name]["revision"] = current
-                break
-        else:
-            # 指针连续移动，不能宣称这是完整空列表；前端会显示可重试的索引问题。
-            out[name] = None
-            unstable = True
-    out["index"] = STATUS_DEGRADED if unstable or seen_degraded else status
-    return out
+        with _LOCK:
+            final_state, final_status = _read()
+        seen_degraded |= final_status == STATUS_DEGRADED
+        if not unstable and not changed_group and _group_view(final_state, key) == baseline:
+            out["index"] = STATUS_DEGRADED if seen_degraded else final_status
+            return out
+    # 状态一直在移动，返回可重试的退化结果，绝不把混代指针当成完整快照。
+    return {**dict.fromkeys(POINTERS), "index": STATUS_DEGRADED}
 
 
 def last_for(key: str | None, rev_of: Callable[[str], str | None] | None = None) -> dict | None:

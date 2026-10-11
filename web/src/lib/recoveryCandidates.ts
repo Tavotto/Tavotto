@@ -106,7 +106,8 @@ export async function loadCandidates(
       break
     }
     fetchedAny = true
-    index = res.index
+    // 任一页曾因会话索引退化而漏掉归属行，这一批就不能在后页恢复正常时宣称完整。
+    index = index === 'degraded' || res.index === 'degraded' ? 'degraded' : res.index
     next = res.next_cursor
     truncated ||= res.truncated
     const before = rows.length
