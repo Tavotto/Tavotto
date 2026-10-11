@@ -381,7 +381,8 @@ async function judge(id: string, pj: string | null, e: Entry, backendOk: boolean
     const ev = await fetchLayoutOwnerEvidence(id, pj)
     if (ev === 'unavailable') return { ok: false, reason: 'owner_unavailable' }
     if (ev !== 'unsupported' && ev.owner === 'this' && ev.evidence === 'owners' && ev.verified) {
-      return { ok: true, ownership: 'this', evidence: 'owners', correctsIndex: true, ...(ev.revision ? { revision: ev.revision } : {}) }
+      // revision 与别的 /owner 分支同一套绑定：明说 null（槽位此刻不在）要记成 expectedAbsent，之后冒出来的正文必须再核（Codex #936）
+      return { ok: true, ownership: 'this', evidence: 'owners', correctsIndex: true, ...bind(ev) }
     }
     return { ok: false, reason: 'foreign' }
   }

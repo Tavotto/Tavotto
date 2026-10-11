@@ -561,6 +561,11 @@ describe('归属：本机索引 vs 后端证据（C1 / A16 / A17）', () => {
     backend.state.ownerAnswers.set(`${PJ}|d_x`, { owner: 'this', evidence: 'owners', verified: true, revision: 'rev-x' })
     plan = await docs.planRestore(PJ, { globalCurrent: null })
     expect(plan.preferred).toMatchObject({ id: 'd_x', correctsIndex: true, expectedRevision: 'rev-x' })
+    // C1 纠正路径上 /owner 明说 revision:null（槽位此刻不在）：记成 expectedAbsent，之后冒出来的正文必须再核（Codex #936 r4241253012）
+    backend.state.ownerAnswers.set(`${PJ}|d_x`, { owner: 'this', evidence: 'owners', verified: true, revision: null })
+    plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred).toMatchObject({ id: 'd_x', correctsIndex: true, expectedAbsent: true })
+    expect(plan.preferred?.expectedRevision).toBeUndefined()
     // 指针自带 revision：以指针的为准，不被 /owner 的盖掉
     backend.setLast(PJ, 'd_x', 'X', 'rev-pointer')
     plan = await docs.planRestore(PJ, { globalCurrent: null })
