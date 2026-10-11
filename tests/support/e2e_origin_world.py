@@ -50,8 +50,17 @@ def load_results(path):
 RESULTS = "x,y\n1,2\n2,3.5\n3,1.25\n4,4\n"
 
 
-def figure1(log: str, extra_imports: str = "") -> str:
-    return f'''\
+def figure1(log: str, scenario: str) -> str:
+    """`existing` / `missing`：验收场景原样（numpy / matplotlib / docx / 本地 utils）；`unknown` / `orphan`：把 docx 换成
+    那个来源有问题的库，其余不变——这两条要看的是「来源不明时 Tavotto 做不做、做什么」，不该再夹一个可信包的安装。"""
+    lib = {"unknown": "mystery_lib", "orphan": "orphan_lib"}.get(scenario)
+    third = f"import {lib}\n" if lib else "import docx\n"
+    probe = (
+        f'"lib": {lib}.__file__, "lib_value": {lib}.answer() if hasattr({lib}, "answer") else {lib}.VALUE,'
+        if lib
+        else '"docx": docx.__file__,'
+    )
+    return f"""\
 import json
 import os
 import sys
@@ -61,8 +70,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import docx
-{extra_imports}from utils import load_results
+{third}from utils import load_results
 
 LOG = {json.dumps(log)}
 
@@ -78,13 +86,13 @@ with open(LOG, "a", encoding="utf-8") as f:
         "executable": sys.executable,
         "prefix": sys.prefix,
         "cwd": os.getcwd(),
-        "docx": docx.__file__,
+        {probe}
         "y": [float(v) for v in y],
     }}) + "\\n")
-'''
+"""
 
 
-FIGURE2 = '''\
+FIGURE2 = """\
 import matplotlib
 
 matplotlib.use("Agg")
@@ -93,7 +101,7 @@ import matplotlib.pyplot as plt
 fig, ax = plt.subplots(figsize=(3, 2))
 ax.plot([0, 1], [1, 0])
 fig.savefig("figure2.pdf")
-'''
+"""
 
 
 def _write(path: Path, text: str) -> None:
@@ -108,13 +116,7 @@ def build(root: Path, scenario: str) -> dict:
     wheelhouse = root / "wheelhouse"
     extra = root / "pythonpath_extra"
 
-    extra_imports = ""
-    if scenario == "unknown":
-        extra_imports = "import mystery_lib\n"
-    elif scenario == "orphan":
-        extra_imports = "import orphan_lib\n"
-
-    _write(project / "scripts" / "figure1.py", figure1(str(log), extra_imports))
+    _write(project / "scripts" / "figure1.py", figure1(str(log), scenario))
     _write(project / "scripts" / "figure2.py", FIGURE2)
     _write(project / "scripts" / "utils.py", UTILS)
     _write(project / "data" / "results.csv", RESULTS)
@@ -127,8 +129,26 @@ def build(root: Path, scenario: str) -> dict:
         version=DOCX_VERSION,
         body="def Document():\n    return object()\n",
     )
+    if scenario == "unknown":
+        # 用户确认包名之后才会装它：wheelhouse 里有，但 Tavotto 在用户确认之前没有任何理由去找它
+        offline_world.build_wheel(
+            wheelhouse,
+            name="mystery-lib",
+            import_name="mystery_lib",
+            version="0.3",
+            body="def answer():\n    return 42\n",
+        )
+        # 用户填错包名的那一档：这个包能装上，脚本要的 `mystery_lib` 也 import 得到（它把 mystery-lib 当传递依赖拉了进来），
+        # 但**用户确认的那个包自己不提供它**——装后「发行包与版本」核验必须拦住，而不是因为 import 成功就放行
+        offline_world.build_wheel(
+            wheelhouse,
+            name="other-lib",
+            import_name="other_lib",
+            version="1.0",
+            requires=("mystery-lib",),
+        )
     if scenario == "orphan":
-        _write(extra / "orphan_lib" / "__init__.py", "VALUE = 1\n")
+        _write(extra / "orphan_lib" / "__init__.py", "VALUE = 7\n")
 
     pip_env = {
         **os.environ,
