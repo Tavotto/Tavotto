@@ -1375,3 +1375,38 @@ def test_tutorial_reset_with_the_slot_document_lock_held_reopens_the_new_copy(cl
         assert _slot(doc_id).read_bytes() == slot_bytes
     finally:
         os.close(fd)
+
+
+@pytest.mark.parametrize("damage", ["corrupt", "future"])
+def test_degraded_session_state_never_infers_ownership_from_assets_or_versions(
+    client, tmp_path, damage
+):
+    """会话状态读不到可信内容时，空的 owners 不是「没人认领」：/owner 与候选发现都不翻 versions / assets 旁证，
+    否则别的项目的槽位会被报成 this。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    root = Path(g["figures_dir"])
+    (root / "a.pdf").write_bytes(b"%PDF-1.4")
+    panel = {"id": "p", "type": "panel", "fileId": "a.pdf", "x": 0, "y": 0, "w": 1, "h": 1}
+    assert (
+        _put(client, "d_f", _doc(1, "F 的", [panel]), f).status_code == 200
+    )  # F 的槽位，素材名恰在 G 里也有
+    versions = root / "tavottofile" / "versions"
+    versions.mkdir(parents=True)
+    (versions / "d_f.json").write_text("{}", encoding="utf-8")
+    # 状态正常时 G 看到的是 owners=other
+    assert _owner(client, g, "d_f")["owner"] == "other"
+    path = layoutsession.state_path()
+    layoutsession.backup_path().unlink()
+    path.write_bytes(b"{broken" if damage == "corrupt" else b'{"version": 99, "owners": {}}')
+    body = client.get("/api/layout-session/owner?doc_id=d_f", headers=_pj(g["id"])).get_json()
+    assert body == {
+        "owner": "unknown",
+        "evidence": None,
+        "verified": False,
+        "revision": _rev("d_f"),
+    }
+    assert _candidates(client, g, "project")["items"] == []
+    unknown = _candidates(client, g, "unknown")
+    assert [i["doc_id"] for i in unknown["items"]] == ["d_f"] and unknown["index"] == "degraded"
+    assert unknown["items"][0]["owner"] == "unknown" and unknown["items"][0]["evidence"] is None

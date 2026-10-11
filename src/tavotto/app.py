@@ -9771,7 +9771,7 @@ def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None, bool, str
     都没有就是 `unknown`——前端据此不恢复。
     """
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
-    state, _status = engine_layoutsession.read_readonly()
+    state, status = engine_layoutsession.read_readonly()
     # 槽位只读一遍：新鲜度判断、素材旁证、交回去的 revision 都来自同一份字节
     slot = _file_named(AUTOSAVE_DIR, doc_id)
     doc = None
@@ -9788,6 +9788,10 @@ def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None, bool, str
                 doc = loaded if isinstance(loaded, dict) else None
             except (ValueError, RecursionError):
                 doc = None
+    if status == engine_layoutsession.STATUS_DEGRADED:
+        # 会话状态读不到可信的内容：空的 owners 不是「没人认领」。不推断任何归属（也不翻 versions / assets 旁证——
+        # 那会把别的项目的槽位报成 this）
+        return "unknown", None, False, revision
     verdict, verified = engine_layoutsession.owner_status_in(state, doc_id, key, revision)
     if verdict == "unverified":
         return "unknown", None, False, revision
@@ -9879,7 +9883,9 @@ def _decode_cursor(text: str) -> tuple[int, str] | None:
     return None
 
 
-def _candidate_item(row: tuple[int, str, int, Path], state: dict, ctx, key, scope: str):
+def _candidate_item(
+    row: tuple[int, str, int, Path], state: dict, ctx, key, scope: str, degraded: bool = False
+):
     """一个槽位的候选摘要；不属于这次 `scope` 的回 `None`。**只读**，任何一步出错只让自己 `invalid`。"""
     mtime_ns, name, size, path = row  # path 来自目录列表，不是请求字符串
     doc_id = name[:-5]
@@ -9915,9 +9921,12 @@ def _candidate_item(row: tuple[int, str, int, Path], state: dict, ctx, key, scop
             except (ValueError, RecursionError):
                 status = "invalid"
     verdict, _verified = engine_layoutsession.owner_status_in(state, doc_id, key, revision)
-    if verdict == "other":
+    if degraded:
+        # 会话状态读不到可信的内容：不推断归属，所有行都进 scope=unknown（与 `/owner` 同一条规则）
+        owner, evidence = "unknown", None
+    elif verdict == "other":
         return None
-    if verdict == "this":
+    elif verdict == "this":
         owner, evidence = "this", "owners"
     elif verdict == "unverified":
         owner, evidence = "unknown", None
@@ -10020,7 +10029,7 @@ def api_layout_session_candidates():
             break
         budget += min(row[2], CANDIDATE_MAX_BYTES)
         consumed += 1
-        item = _candidate_item(row, state, ctx, key, scope)
+        item = _candidate_item(row, state, ctx, key, scope, index == "degraded")
         if item is not None:
             items.append(item)
     next_cursor = _encode_cursor(rows[consumed - 1]) if consumed < len(rows) and consumed else None
