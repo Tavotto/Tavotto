@@ -1510,6 +1510,35 @@ def test_owner_verdict_and_revision_come_from_one_snapshot_under_the_slot_lock(
     assert layoutsession.snapshot()["owners"]["d_x"] == layoutsession.project_key(g["figures_dir"])
 
 
+def test_session_pointer_owner_and_revision_come_from_one_slot_snapshot(
+    client, tmp_path, monkeypatch
+):
+    """旧 owners 无 owner_revisions：F 读状态后 G 覆盖同一槽位，不能把 G 的 revision 当作 F 的指针返回。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    g = _project(client, tmp_path, "projG")
+    _put(client, "d_x", _doc(1, "F 的"), f)
+    assert _put_last(client, "d_x", pj=f).status_code == 200
+    state = layoutsession.snapshot()
+    state["owner_revisions"].pop("d_x")  # 升级前旧记录按现状信任
+    layoutsession._write(state)
+    real_group = layoutsession._group_view
+    crossed = False
+
+    def group_then_other_project_saves(state, key):
+        nonlocal crossed
+        group = real_group(state, key)
+        if not crossed:
+            crossed = True
+            result = _put(m.app.test_client(), "d_x", _doc(2, "G 的"), g, base=_rev("d_x"))
+            assert result.status_code == 200
+        return group
+
+    monkeypatch.setattr(layoutsession, "_group_view", group_then_other_project_saves)
+    view = _get_session(client, f)
+    assert view["last"] is None, "旧 F 归属不能和 G 的新正文 revision 组成可恢复指针"
+    assert layoutsession.snapshot()["owners"]["d_x"] == layoutsession.project_key(g["figures_dir"])
+
+
 def test_candidate_items_are_classified_from_a_per_item_snapshot(client, tmp_path, monkeypatch):
     """候选条目的状态与正文在它自己的槽位锁里读：页级快照之后别的项目保存了这个槽位，条目也不能拿新正文配旧状态。"""
     f = _project(client, tmp_path, "projF", default=True)
@@ -1540,6 +1569,25 @@ def test_candidate_items_are_classified_from_a_per_item_snapshot(client, tmp_pat
     box["t"].join(15)
     assert [i["doc_id"] for i in items] == ["d_x"]
     assert items[0]["revision"] == r0 and items[0]["name"] == "旧"
+
+
+def test_candidate_page_reports_degradation_seen_by_a_row(client, tmp_path, monkeypatch):
+    """页级状态还好、逐行读时索引变坏：project 空页必须带 degraded，恢复入口才会给重试。"""
+    f = _project(client, tmp_path, "projF", default=True)
+    _put(client, "d_x", _doc(1), f)
+    real = layoutsession.read_readonly
+    calls = 0
+
+    def page_ok_row_degraded():
+        nonlocal calls
+        calls += 1
+        state, status = real()
+        return state, layoutsession.STATUS_DEGRADED if calls == 2 else status
+
+    monkeypatch.setattr(layoutsession, "read_readonly", page_ok_row_degraded)
+    page = _candidates(client, f, "project")
+    assert calls >= 2
+    assert page["items"] == [] and page["index"] == "degraded"
 
 
 def test_lock_stripe_ignores_unicode_normalization_and_case():

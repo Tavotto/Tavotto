@@ -147,6 +147,8 @@
     （`commit_slot`）把匹配的 pending 晋升为 last——不留悬空 last，也不靠前端记得补一次。`last` 对旧前端仍是 `{doc_id,name,at}`。
     **不要**只在 `set_last` 里「文件不存在就拒绝」：那会让旧前端的 early PUT 永远失败又不补记。
     `GET` 回 `{last, prev, pending, index}`，三个指针回之前都按 owner 冲突过滤；`prev` / `pending` 指着的槽位不在时照常回。
+    逐指针在槽位文档锁内重读会话状态和正文 revision；指针换槽位就释放旧锁、重试新槽位（连续变动时报
+    `index: degraded`）。旧记录没有 `owner_revisions` 时也不能拿 F 的旧归属快照拼上 G 的新正文 revision。
     清理保护 = 各组 `last` + `prev` + `pending`。
   - **owner 与正文按同一个顺序提交**（R6）。`PUT /api/autosave/<id>` 在**同一把 `_document_lock(p)`** 里：判冲突 → 写正文 →
     读 revision → `commit_slot(doc_id, key, revision)`（记归属、记 `owner_revisions[doc]=revision`、晋升 pending）。

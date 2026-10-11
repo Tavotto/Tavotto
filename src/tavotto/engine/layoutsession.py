@@ -67,8 +67,9 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterable
+from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, ContextManager, NamedTuple
 
 from . import atomicio, config, documents
 
@@ -570,43 +571,64 @@ def owner_verdict(doc_id: str, key: str | None, current_revision: str | None = N
 # ------------------------------- last --------------------------------------
 
 
-def view_for(key: str | None, rev_of: Callable[[str], str | None] | None = None) -> dict:
+def view_for(
+    key: str | None,
+    rev_of: Callable[[str], str | None] | None = None,
+    lock_of: Callable[[str], ContextManager[Any]] | None = None,
+) -> dict:
     """这个项目（`None` = 没开项目）的 `{last, prev, pending, index}`。
 
     每个指针指着的槽位**确知属于别的项目**时回 `None`（修复之前的版本可能已经把别的项目的排版
     记到这个项目名下，#715 验收 P1）；归属待核对的（`owner_is_stale`）不算「确知」，照回。
     `rev_of(doc_id)` 回槽位当前 revision，在会话锁**外**调用（不在锁内读正文）；不给就不核新鲜度。
+    端点给 `lock_of` 时逐指针取槽位文档锁，在锁里重读会话状态与 revision；指针换了槽位就重试，
+    防止旧归属状态与另一个项目刚写入的正文拼成一条可自动恢复的指针。
     给了 `rev_of` 时每个指针多一个 `revision`：校验用的那份快照的 revision，见上。
     """
     with _LOCK:
         state, status = _read()
-    group = _group_view(state, key)
     out: dict[str, Any] = {}
+    unstable = False
+    seen_degraded = status == STATUS_DEGRADED
     for name in POINTERS:
-        entry = group.get(name)
-        if not entry:
-            out[name] = None
-            continue
-        current = None
-        if rev_of is not None:
-            try:
-                current = rev_of(entry["doc_id"])
-            except OSError:
+        for attempt in range(3):
+            entry = _group_view(state, key).get(name)
+            if not entry:
+                out[name] = None
+                break
+            with lock_of(entry["doc_id"]) if lock_of is not None else nullcontext():
+                if lock_of is not None:
+                    with _LOCK:  # 固定顺序：文档锁 → 会话锁
+                        state, status = _read()
+                    seen_degraded |= status == STATUS_DEGRADED
+                    fresh = _group_view(state, key).get(name)
+                    if fresh is None:
+                        out[name] = None
+                        break
+                    if fresh["doc_id"] != entry["doc_id"]:
+                        # 本组指针已指向另一槽位；释放旧槽位锁后锁新槽位，不能用旧锁替新槽位作证。
+                        continue
+                    entry = fresh
                 current = None
-        # 确知别人的 → 不回；归属待核对（正文与记录对不上）→ 对**任何**项目都不回：不自动恢复
-        # 未核对的内容，既不当老主人的也不当别人的（候选发现里 scope=unknown 可找回）
-        unusable = owner_conflict(state, entry["doc_id"], key) or owner_is_stale(
-            state, entry["doc_id"], current
-        )
-        if unusable:
-            out[name] = None
+                if rev_of is not None:
+                    try:
+                        current = rev_of(entry["doc_id"])
+                    except OSError:
+                        current = None
+                # 确知别人的 / 归属待核对 → 不自动恢复，留给候选发现的 unknown 范围。
+                unusable = owner_conflict(state, entry["doc_id"], key) or owner_is_stale(
+                    state, entry["doc_id"], current
+                )
+                out[name] = None if unusable else dict(entry)
+                if not unusable and rev_of is not None:
+                    # revision 和归属来自该槽位锁内的同一份状态与正文。
+                    out[name]["revision"] = current
+                break
         else:
-            out[name] = dict(entry)
-            if rev_of is not None:
-                # 校验归属时读到的那一份正文的 revision（槽位不在 / 读不出为 None）。前端取正文时
-                # 必须比对它：校验之后别的项目可能又保存了同一个槽位，那份内容没被这次校验认过
-                out[name]["revision"] = current
-    out["index"] = status
+            # 指针连续移动，不能宣称这是完整空列表；前端会显示可重试的索引问题。
+            out[name] = None
+            unstable = True
+    out["index"] = STATUS_DEGRADED if unstable or seen_degraded else status
     return out
 
 

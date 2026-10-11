@@ -197,13 +197,12 @@ function installProbe(
     settleRestore(token, { state: 'ready', reason: 'superseded' })
     return { kind: 'kept_explicit' }
   }
-  const notice = acceptProbe(probe, token.pj, token)
   if (plan && token.pj) {
-    // 迁移推送 / 缓存校正：接受之后才做（上面已经判过提交权，下面的安装不会再失败），失败不影响已经装好的文档
-    // （下次读还会重试）。**排在安装之前**：它的同步前缀把项目缓存校正成这份——安装时 remember-last 订阅看到的
-    // 就是「已经记着」，不会为一次恢复再往后端推一遍同样的 last
+    // 同步前缀先纠正本机归属：本机副本在 acceptProbe 中安排首次写回时就会读取它。
+    // 迁移推送异步完成；此时令牌与提交权已经检查，后续安装仍在同一个同步段。
     void confirmRestored(token.pj, { id: probe.id, name: name || probe.doc.project.name }, plan).catch(() => {})
   }
+  const notice = acceptProbe(probe, token.pj, token)
   installRestoredDocument(token, probe.doc, probe.id, notice)
   settleRestore(token, { state: 'ready', reason })
   return { kind: 'restored', id: probe.id }
@@ -226,7 +225,7 @@ async function guardRevision(
   const expected = cand.expectedRevision
   if ((!expected && !expectedAbsent) || probe.from !== 'disk' || probe.disk.kind !== 'found') return null
   const actual = probe.disk.revision
-  if (expected && actual === expected) return null
+  if (expected && actual === expected && !expectedAbsent) return null
   // 读到的修订号是空的（代理吃了 X-Tavotto-Revision）：绑定不上，无从证明这份还是指针说的那份——不装，给重试
   if (!actual) return needsUser(token, 'unavailable', { id: cand.id, name: cand.name })
   const ev = await fetchLayoutOwnerEvidence(cand.id, token.pj)
@@ -297,7 +296,7 @@ async function verifiedAlternatives(
     // 提供给用户之前读到的正文修订号记在候选上（候选自己没有时）：用户坐在面板上的这段时间里同一个 docId 可能被别的项目
     // 存过，点选时 `installChecked` 据此发现对不上并复核归属，而不是装「此刻磁盘上的任何东西」
     const seen = probe.from === 'disk' && probe.disk.kind === 'found' ? probe.disk.revision : null
-    out.push(!c.expectedRevision && seen ? { ...c, expectedRevision: seen } : c)
+    out.push(!c.expectedRevision && !c.expectedAbsent && seen ? { ...c, expectedRevision: seen } : c)
   }
   return out
 }
@@ -586,6 +585,8 @@ export async function settlePrepared(
  * （用它的令牌，不开第二代）。只有门还是「从没发生过任何恢复」的初值时才关；playground / 嵌入 / 不经 init 的用例保持 ready。
  */
 let pendingStartup: RestoreToken | null = null
+/** 同项目连续点击「重试」沿用原恢复的用户动作；显式打开、切项目都不会进入这条代次链。 */
+let retryLineage: { origin: number; latest: number; pj: string | null } | null = null
 
 export function beginStartupRestore(pj: string | null): void {
   const g = getRestoreGate()
@@ -656,7 +657,10 @@ export async function retryRestore(): Promise<RestoreOutcome> {
   const issue = useDocumentStore.getState().restoreIssue
   if (g.state !== 'needs_user' || !issue || issue.pj !== currentProjectId()) return { kind: 'superseded' }
   const clues = { ...(lifecycleClues ?? captureClues(issue.pj)), pj: issue.pj, skip: false }
-  return fitIfRestored(await runLifecycle(issue.pj, clues))
+  const origin = retryLineage?.latest === g.gen && retryLineage.pj === issue.pj ? retryLineage.origin : g.gen
+  const running = runLifecycle(issue.pj, clues) // 同步关门、推进代次；结果稍后才落定
+  retryLineage = { origin, latest: getRestoreGate().gen, pj: issue.pj }
+  return fitIfRestored(await running)
 }
 
 /**
@@ -719,6 +723,7 @@ export function resetRestoreStateForTests(): void {
   lifecycleClues = null
   lastBlockedNote = 0
   pendingStartup = null
+  retryLineage = null
   resetRestoreGateForTests()
 }
 
@@ -732,7 +737,7 @@ export type EntryGate = 'run' | 'deferred' | 'blocked'
  *
  * 在**入口**（不是 `commit`——不做通用的 recipe 队列）这样处理：
  *  - 门开着 → `'run'`，调用方照常执行；
- *  - `restoring` → `'deferred'`：登记一次，等**排队时那一代**恢复自己落定再执行**一次**；
+ *  - `restoring` → `'deferred'`：登记一次，等这轮恢复（含同项目的重试）落定再执行**一次**；
  *    被显式意图取代 / 切项目 / 超时 → 丢掉并说一句；
  *  - `needs_user` → `'blocked'`：用户得先选出口，说一句「上次的排版还没打开」，不排队。
  * `run` 必须是重新调用入口本身（门开了它会走 `'run'` 分支），这样「这个意图此刻还成立吗」由入口自己判。
@@ -745,7 +750,7 @@ export function deferUserEntry(run: () => void): EntryGate {
     noteBlockedWrite()
     return 'blocked'
   }
-  // 排队那一刻的恢复代次：只有**这一代**自己落定（恢复出来 / 确认没有历史 / 开空白启动）才执行。
+  // 排队那一刻的恢复代次，或它的同项目重试链落定，才执行。
   // 被显式意图取代（新建 / 打开排版 / 打开最近 / 教程 / 继续新建 / 打开另一份 / 切项目）的，
   // 较旧的操作不许写进较新意图建出来的文档——丢掉并说一句
   const queuedGen = g.gen
@@ -754,7 +759,7 @@ export function deferUserEntry(run: () => void): EntryGate {
     const sameLifecycle =
       verdict === 'ready' &&
       now.state === 'ready' &&
-      now.gen === queuedGen &&
+      (now.gen === queuedGen || (retryLineage?.origin === queuedGen && retryLineage.latest === now.gen && retryLineage.pj === g.pj)) &&
       (now.reason === 'restored' || now.reason === 'empty' || now.reason === 'blank_requested')
     if (sameLifecycle) run()
     else {

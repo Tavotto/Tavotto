@@ -19,6 +19,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useUiStore } from '@/store/uiStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -86,6 +87,24 @@ afterEach(() => {
 })
 
 describe('FigurePickerDialog', () => {
+  it('恢复问题挡住添加时不报告成功，列表仍可操作', () => {
+    useRuntimeAssetStore.setState({ assets: [asset('FigA')], previewNonce: {} } as never)
+    useFigurePickerStore.setState({ script: 'multi.py' })
+    mockAddRuntime.mockReturnValueOnce(null)
+    const original = useUiStore.getState().setStatus
+    const status = vi.fn()
+    useUiStore.setState({ setStatus: status })
+    try {
+      render()
+      act(() => (document.querySelector('[data-figure-picker-add]') as HTMLButtonElement).click())
+      expect(mockAddRuntime).toHaveBeenCalledTimes(1)
+      expect(status).not.toHaveBeenCalled()
+      expect(useFigurePickerStore.getState().script).toBe('multi.py')
+    } finally {
+      useUiStore.setState({ setStatus: original })
+    }
+  })
+
   it('脚本的每张图都可见，选第二张加的就是第二张', () => {
     useRuntimeAssetStore.setState({
       assets: [asset('FigA'), asset('FigB')],

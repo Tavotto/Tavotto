@@ -1391,6 +1391,45 @@ describe('Codex P1：指针是在槽位还没有正文时验过的（expectedAbs
     expect(await app.doc.restoreSession()).toBe(true)
     expect(objectIds(app)).toEqual(['panel_l'])
   })
+
+  it('缺席证据的备选在展示前冒出别人的正文，点选仍要复核归属', async () => {
+    be.setLast('p_a', 'd_missing', '首选缺失')
+    be.session('p_a').prev = { doc_id: 'd_c', name: '曾经缺席', at: 1, revision: null }
+    vi.resetModules()
+    vi.doMock('@/lib/projectDocs', async (importOriginal) => {
+      const orig = await importOriginal<typeof import('@/lib/projectDocs')>()
+      return {
+        ...orig,
+        planRestore: async (...a: Parameters<typeof orig.planRestore>) => {
+          const plan = await orig.planRestore(...a)
+          be.putSlot('d_c', savedProject('G 的', [panel({ id: 'panel_g' })]), 'p_other')
+          return plan
+        },
+      }
+    })
+    try {
+      const app = await boot()
+      expect(await app.doc.restoreSession()).toBe(false)
+      expect(ds(app).restoreIssue?.alternatives[0]).toMatchObject({ id: 'd_c', expectedAbsent: true })
+      expect(await app.restore.openAlternative('d_c')).toMatchObject({ kind: 'needs_user' })
+      expect(objectIds(app)).toEqual([])
+      expect(be.state.calls).toContain('GET owner d_c')
+    } finally {
+      vi.doUnmock('@/lib/projectDocs')
+    }
+  })
+
+  it('本机索引误记为 G，后端证明缺席槽位归 F：本机副本首次写盘归 F', async () => {
+    localStorage.setItem('tavotto.docIndex', JSON.stringify([{ id: 'd_c', projectId: 'p_other', projectName: 'G' }]))
+    localStorage.setItem('tavotto.autosave.d_c', JSON.stringify(savedProject('F 的本机副本')))
+    be.state.owners.set('d_c', 'p_a')
+    be.setLast('p_a', 'd_c', 'F 的', null)
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    await reached(() => autosavePuts().includes('PUT autosave d_c'))
+    expect(be.state.owners.get('d_c')).toBe('p_a')
+    expect(JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]')[0].projectId).toBe('p_a')
+  })
 })
 
 describe('Codex P2：owner_unknown 与 failed 一样点亮「恢复信息没更新」', () => {

@@ -388,6 +388,30 @@ describe('用户级加图入口在恢复期间排队（deferUserEntry）', () =>
     await new Promise((r2) => setTimeout(r2, 50))
     expect(figCount(app), '继续新建之后，needs_user 之前排的加图应被丢弃').toBe(0)
   })
+
+  it('恢复先到 needs_user、同项目重试成功：此前排队的加图仍执行一次', async () => {
+    be.setLast('p_a', 'd_text', '暂时缺失')
+    const app = await boot()
+    await app.assets.useAssetStore.getState().load()
+    const ws = await import('@/store/workspace')
+    const gate = be.hold(isSessionGet)
+    const restoring = app.doc.restoreSession()
+    await gate.reached
+    expect(ws.addFigureToLayout('Fig1.pdf')).toBe('deferred')
+    gate.release()
+    await restoring
+    expect(app.doc.useDocumentStore.getState().restoreGate.state).toBe('needs_user')
+    expect(figCount(app)).toBe(0)
+    const body = savedProject('找回的文档')
+    body.canvases[0].objects = [text('t_only', 'kept', 3, 4)]
+    be.putSlot('d_text', body)
+    be.owners.set('d_text', 'p_a')
+    expect((await (await restore()).retryRestore()).kind).toBe('restored')
+    await until(() => figCount(app) === 1, 3000)
+    expect(currentShape(app).documentId).toBe('d_text')
+    expect(currentShape(app).canvases[0].objects.map((o) => o.id)).toContain('t_only')
+    expect(figCount(app)).toBe(1)
+  })
 })
 
 /* ---------------- 预防性审查：家族 1 / 2 / 3 / 5 ---------------- */

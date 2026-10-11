@@ -9643,7 +9643,9 @@ def api_layout_session_get():
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
     try:
-        view = engine_layoutsession.view_for(key, _slot_revision)
+        view = engine_layoutsession.view_for(
+            key, _slot_revision, lambda doc_id: _document_lock(_autosave_path(doc_id))
+        )
     except OSError:  # 连会话锁都拿不到：当「读不到可信状态」说，不假装首次空
         view = {"last": None, "prev": None, "pending": None, "index": "degraded"}
     resp = jsonify(view)
@@ -9967,7 +9969,7 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
         # 会话状态读不到可信的内容：不推断归属，所有行都进 scope=unknown（与 `/owner` 同一条规则）
         owner, evidence = "unknown", None
     elif verdict == "other":
-        return None
+        return None, degraded
     elif verdict == "this":
         owner, evidence = "this", "owners"
     elif verdict == "unverified":
@@ -9977,7 +9979,7 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
         if owner != "this":
             owner = "unknown"
     if (scope == "project") != (owner == "this"):
-        return None
+        return None, degraded
     item: dict = {
         "doc_id": doc_id,
         "name": "",
@@ -10024,7 +10026,7 @@ def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str
         else:
             if sketch is not None:
                 item["sketch"] = sketch
-    return item
+    return item, degraded
 
 
 @app.get("/api/layout-session/candidates")
@@ -10077,9 +10079,11 @@ def api_layout_session_candidates():
         budget += min(row[2], CANDIDATE_MAX_BYTES)
         consumed += 1
         try:
-            item = _candidate_item(row, ctx, key, scope)
+            item, row_degraded = _candidate_item(row, ctx, key, scope)
         except OSError:
             return jsonify({"error": "本机排版此刻读不出来", "code": "candidates_unavailable"}), 503
+        if row_degraded:
+            index = "degraded"  # 页级快照之后变坏也不能把空项目页报成完整的成功
         if item is not None:
             items.append(item)
     next_cursor = (
