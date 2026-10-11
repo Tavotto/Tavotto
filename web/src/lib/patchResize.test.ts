@@ -67,3 +67,35 @@ describe('八方向改框只动被拖的边', () => {
     expect(patchResizePatches(element, box, [0.2, 0.3, 0.400001, 0.2])).toEqual([])
   })
 })
+
+describe('没有位移的尺寸编辑不固定脚本定位', () => {
+  const cases: [ResizeDir, number[], number[] | null][] = [
+    ['e', [0.5, 0.2], null], ['w', [0.3, 0.2], [0.3, 0.5]],
+    ['n', [0.4, 0.15], null], ['s', [0.4, 0.25], [0.2, 0.55]],
+    ['ne', [0.5, 0.15], null], ['nw', [0.3, 0.15], [0.3, 0.5]],
+    ['se', [0.5, 0.25], [0.2, 0.55]], ['sw', [0.3, 0.25], [0.3, 0.55]],
+  ]
+  it.each(cases)('%s 只在左下锚点变了时提交 pos_frac', (dir, size, position) => {
+    const next = resizePatchBox(box, dir, 0.1, 0.05, [0.02, 0.03])
+    const expected = [{ gid: element.gid, prop: 'size_frac', value: size }]
+    if (position) expected.push({ gid: element.gid, prop: 'pos_frac', value: position })
+    expect(patchResizePatches(element, box, next)).toEqual(expected)
+  })
+
+  it('宽高确实变了但锚点只差舍入噪声时，不凭噪声写位置', () => {
+    expect(patchResizePatches(element, box, [0.200001, 0.350001, 0.5, 0.15])).toEqual([
+      { gid: element.gid, prop: 'size_frac', value: [0.5, 0.15] },
+    ])
+  })
+
+  it('比较左下锚点的和再舍入，而不是先舍入 top 与 height', () => {
+    const start: Rect4 = [0.2, 0.30004, 0.20004, 0.20004]
+    expect(patchResizePatches(element, start, [0.2, 0.35004, 0.3, 0.15004])).toEqual([
+      { gid: element.gid, prop: 'size_frac', value: [0.3, 0.15] },
+    ])
+    expect(patchResizePatches(element, start, [0.2, 0.35008, 0.3, 0.15008])).toEqual([
+      { gid: element.gid, prop: 'size_frac', value: [0.3, 0.1501] },
+      { gid: element.gid, prop: 'pos_frac', value: [0.2, 0.5002] },
+    ])
+  })
+})

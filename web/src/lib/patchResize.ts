@@ -49,16 +49,19 @@ export function resizePatchBox(
 }
 
 /**
- * 尺寸与左下锚点在同一次提交里写。文字、箭头、内层框没有被缩放的依据，
- * 不给它们写 override；拖框整体移动继续使用 patchContents。
+ * 只在左下锚点移动时一并写位置，未移动则保留脚本的相对定位。
+ * 文字、箭头、内层框不缩放；拖框整体移动继续使用 patchContents。
  */
 export function patchResizePatches(el: ManifestElement, start: Rect4, next: Rect4): PanelOverride[] {
   if (!tuple(next, 4) || sameAfterRound4(start, next)) return []
   const min = patchMinSize(el)
   const size = [round4(next[2]), round4(next[3])]
   if (size[0] < min[0] || size[1] < min[1]) return []
-  return [
-    { gid: el.gid, prop: 'size_frac', value: size },
-    { gid: el.gid, prop: 'pos_frac', value: [round4(next[0]), round4(next[1] + next[3])] },
-  ]
+  const patches: PanelOverride[] = [{ gid: el.gid, prop: 'size_frac', value: size }]
+  const anchor = [next[0], next[1] + next[3]]
+  // 写入未变的位置会把 data / axes 坐标钉到 figure 上，之后改子图布局时框就不再跟随。
+  if (!sameAfterRound4([start[0], start[1] + start[3]], anchor)) {
+    patches.push({ gid: el.gid, prop: 'pos_frac', value: anchor.map(round4) })
+  }
+  return patches
 }

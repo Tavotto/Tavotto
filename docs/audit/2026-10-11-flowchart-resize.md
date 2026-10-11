@@ -39,10 +39,14 @@ Python 源码保持不变。已有 PDF / PNG 原图的「更新原图」事务�
 | `shape_bounds: [x, y, w, h]` | 引擎实际画出的未裁剪外框，左上角、y 向下；供手柄与宽高控件读取 |
 | `shape_min_size: [w, h]` | 保留原有 padding / 圆角所需的最小外框宽高 |
 
-手柄和数值控件在同一次文档提交中写 `size_frac` 与 `pos_frac`，保证固定边不会在下一次渲染漂移。
+手柄和数值控件提交 `size_frac`；只有左下锚点按 override 精度比较后确实移动，才在同一次
+文档提交中附带 `pos_frac`。只改宽度或拖上侧 / 右上角时不新增位置覆盖，保留脚本的 data /
+axes 相对定位，让图框继续跟随子图布局与坐标范围变化。用户原有的位置覆盖不会因此删除。
 图内元素原来的 `bbox`、路径命中与裁剪语义不变；新增框尺寸能力也不设置 axes 专用的 `resizable`。
-几何编辑必须基于当前文档对应的已挂载、精确 manifest。控件读取 `shape_bounds`，
-避免显示已被引擎拒绝的尺寸。取消、回到原点、重复输入当前值都不产生新编辑。
+几何编辑必须基于当前文档对应的已挂载、精确 manifest。控件从 `useDisplayedExactManifest`
+按 gid 解析元素，位图预览使用配对清单，不能用 canonical 清单中同 gid 的另一个对象替代。
+SVG 解码交接期间暂停尺寸输入并取消数字拖动，其他样式与选区保留；提交动作再同步检查挂载版本。
+控件读取 `shape_bounds`，避免显示已被引擎拒绝的尺寸。取消、回到原点、重复输入当前值都不产生新编辑。
 页面 mm 换算使用 `panelFullRect`；旋转 / 翻转后的指针位移复用既有内容坐标换算。
 
 后端通过原生 `set_bounds` 改矩形宽高，保留 boxstyle、mutation scale / aspect、padding、
@@ -75,10 +79,11 @@ rounding size 与 linewidth。
 | 验证层 | 仓库入口 | 主要判据 |
 | --- | --- | --- |
 | 后端原生几何 | `tests/test_patch_resize.py` | 外框尺寸、圆角 / padding / 线宽保持、独立撤销、坏值原子拒绝、负 Rectangle、坐标变换、图幅、布局、DPI、裁剪 |
+| 相对定位 | `tests/test_patch_resize_relative_anchor.py` | 只改尺寸后移动子图 / 改坐标范围仍跟随脚本定位、冷重放一致；额外写位置的反例确实不跟随 |
 | 引擎四路等价 | `tests/test_equivalence_matrix.py` 的 patch-resize 场景 | 热态、清空后重放、冷 worker、真实写回后重开一致 |
 | 运行图持久化 | `tests/test_flowchart_resize_integration.py` | 真实服务运行单脚本、文档 / autosave 落盘、服务冷重开、PDF 路径与 PNG 描边实测、源码字节不变 |
 | 跨图同步 | `tests/test_sync_mapping.py` | 跳过框尺寸，同时正常映射样式与位置 |
-| 前端几何与交互 | `web/src/lib/patchResize.test.ts`、`canvas/patchResize.test.tsx`、图框控件测试 | 八方向固定边、精确 manifest 校验、失效值显示、取消 / 无操作、单次提交、撤销 |
+| 前端几何与交互 | `web/src/lib/patchResize.test.ts`、`canvas/patchResize.test.tsx`、图框控件测试 | 八方向固定边、位图配对与 SVG 挂载校验、按舍入后的锚点决定是否写位置、取消 / 无操作、单次提交、撤销 |
 | 真实浏览器 | `web/e2e/flowchart-resize.spec.ts` | 实际可点手柄、八方向 SVG 几何、mm 输入、文字 / 箭头保持、嵌套框、冷重开与导出文件头 |
 
 测试运行结果、定向变异反证和未验证平台在对应 PR 的验证记录中列出。
