@@ -11,6 +11,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createFakeBackend } from '@/test/fakeSessionBackend'
 import { LayoutDialog } from '@/components/LayoutDialog'
+import { recoveryCopyId } from '@/lib/recoveryCandidates'
 import { setCurrentProjectId } from '@/lib/session'
 import { useDocumentStore } from '@/store/documentStore'
 import { useProjectStore } from '@/store/projectStore'
@@ -245,6 +246,32 @@ describe('找回入口的可发现性与只读', () => {
     expect(byText('加载更多')).toBeUndefined()
   })
 
+  it('自动翻过的几页都没有本项目的行、next_cursor 仍在：本项目那组照样显示，带「加载更多」（Codex P2）', async () => {
+    // 前 6 页被 scope 过滤成空页（自动最多翻 5 页后停下），第 7 页才有本项目的行
+    const realBackendFetch = backend.fetch
+    let n = 0
+    backend.fetch = (async (url: unknown, init?: RequestInit) => {
+      const u = new URL(String(url), 'http://x')
+      if (u.pathname !== '/api/layout-session/candidates' || u.searchParams.get('scope') !== 'project') {
+        return realBackendFetch(url as RequestInfo, init)
+      }
+      n += 1
+      const items = n <= 6 ? [] : [{ doc_id: 'd_late', name: '后面才有', updatedAt: 1, mtime: Date.now(), revision: 'r', schema: 3, status: 'ok', canvases: 1, objects: 1, owner: 'this', evidence: 'owners' }]
+      return new Response(JSON.stringify({ items, next_cursor: n <= 6 ? `c${n}` : null, index: 'ok' }))
+    }) as typeof fetch
+    try {
+      await mount()
+      expect(rows('project')).toHaveLength(0)
+      expect(dialog().querySelector('[data-recover-group="project"]')).not.toBeNull()
+      expect(dialog().textContent).toContain('可以继续往后找')
+      await act(async () => byText('加载更多')!.click())
+      await flush()
+      expect(rows('project').map((r) => r.dataset.recoverRow)).toEqual(['d_late'])
+    } finally {
+      backend.fetch = realBackendFetch
+    }
+  })
+
   it('「另存为」那一屏没有这个入口', async () => {
     await mount('save')
     expect(dialog().querySelector('[data-layout-recover]')).toBeNull()
@@ -282,7 +309,7 @@ describe('恢复副本（A15 / A30）', () => {
     await pick('d_old')
     const item = (await (await backend.fetch('/api/layout-session/candidates?scope=unknown'))).json()
     const revision = ((await item) as { items: { revision: string }[] }).items[0].revision
-    const target = `d_rc_d_old_${revision.slice(0, 8)}`
+    const target = recoveryCopyId('d_old', revision, PJ)
     backend.state.calls.length = 0
     await act(async () => dialog().querySelector<HTMLButtonElement>('[data-recover-copy]')!.click())
     await flush()

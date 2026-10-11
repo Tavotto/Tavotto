@@ -49,14 +49,14 @@ async function listed(id: string, scope: 'project' | 'unknown' = 'unknown'): Pro
 }
 
 /** 模拟 `switchDocument` + 正常保存链：把副本以目标 id PUT 一次（REVISION_ABSENT 之后的首写） */
-function deps(over: Partial<RecoverCopyDeps> = {}) {
+function deps(over: Partial<RecoverCopyDeps> = {}, pj: string = PJ) {
   const installed: string[] = []
   const d: RecoverCopyDeps = {
-    pj: PJ,
+    pj,
     openExisting: vi.fn(async () => true),
     install: vi.fn(async (pd, id) => {
       installed.push(id)
-      await fetch(`/api/autosave/${id}?pj=${PJ}`, { method: 'PUT', body: JSON.stringify(pd) })
+      await fetch(`/api/autosave/${id}?pj=${pj}`, { method: 'PUT', body: JSON.stringify(pd) })
       return true
     }),
     ...over,
@@ -66,12 +66,14 @@ function deps(over: Partial<RecoverCopyDeps> = {}) {
 
 describe('recoveryCopyId', () => {
   it('固定：同源同版本同目标；源改过（revision 变）是另一个目标；符合后端 doc_id 规则', () => {
-    const a = recoveryCopyId('d_abcdef12', 'h12345678aaaa')
-    expect(a).toBe(recoveryCopyId('d_abcdef12', 'h12345678aaaa'))
-    expect(a).toMatch(/^d_rc_d_abcdef12_h1234567$/)
-    expect(recoveryCopyId('d_abcdef12', 'h99999999aaaa')).not.toBe(a)
-    expect(recoveryCopyId('d_other', 'h12345678aaaa')).not.toBe(a)
-    for (const id of [recoveryCopyId('d/../../etc', 'zz'), recoveryCopyId('x'.repeat(200), null), recoveryCopyId('', '')]) {
+    const a = recoveryCopyId('d_abcdef12', 'h12345678aaaa', 'p_a')
+    expect(a).toBe(recoveryCopyId('d_abcdef12', 'h12345678aaaa', 'p_a'))
+    expect(a).toMatch(/^d_rc_d_abcdef12_h1234567_[0-9a-f]{8}$/)
+    expect(recoveryCopyId('d_abcdef12', 'h99999999aaaa', 'p_a')).not.toBe(a)
+    expect(recoveryCopyId('d_other', 'h12345678aaaa', 'p_a')).not.toBe(a)
+    expect(recoveryCopyId('d_abcdef12', 'h12345678aaaa', 'p_b')).not.toBe(a) // 目标项目也是身份的一部分
+    expect(recoveryCopyId('d_abcdef12', 'h12345678aaaa', null)).not.toBe(a)
+    for (const id of [recoveryCopyId('d/../../etc', 'zz', 'p/..'), recoveryCopyId('x'.repeat(200), null, null), recoveryCopyId('', '', 'p_a')]) {
       expect(id).toMatch(/^[\w-]{1,128}$/)
     }
   })
@@ -187,7 +189,7 @@ describe('recoverCopy：恢复副本', () => {
     expect(item.runtime).toEqual([{ script: 'fig1.py', figure: 'Fig1_PRISMA_Flowchart' }])
     backend.state.calls.length = 0
     const { d, installed } = deps()
-    const target = recoveryCopyId('d_old', item.revision)
+    const target = recoveryCopyId('d_old', item.revision, PJ)
 
     const res = await recoverCopy(item, d)
     expect(res).toEqual({ kind: 'opened', id: target, existed: false })
@@ -212,8 +214,9 @@ describe('recoverCopy：恢复副本', () => {
     const res = await recoverCopy(item, again.d)
     expect(res).toMatchObject({ kind: 'opened', existed: true })
     expect(again.d.install).not.toHaveBeenCalled()
-    expect(again.d.openExisting).toHaveBeenCalledWith(recoveryCopyId('d_old', item.revision))
-    expect(backend.state.calls).toEqual([`GET autosave ${recoveryCopyId('d_old', item.revision)}`])
+    expect(again.d.openExisting).toHaveBeenCalledWith(recoveryCopyId('d_old', item.revision, PJ))
+    const t = recoveryCopyId('d_old', item.revision, PJ)
+    expect(backend.state.calls).toEqual([`GET autosave ${t}`, `GET owner ${t}`]) // 重开前核对它确实是这个项目的
     expect(backend.writes()).toEqual([])
   })
 
@@ -226,6 +229,51 @@ describe('recoverCopy：恢复副本', () => {
     expect(a).toEqual(b)
     expect(installed).toHaveLength(1)
     expect(backend.puts()).toHaveLength(1)
+  })
+
+  it('A、B 两个项目恢复同一份源的同一个版本：各得各的副本，B 不会打开 A 的（Codex P1）', async () => {
+    backend.putSlot('d_old', doc('旧'))
+    backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown' })
+    const item = await listed('d_old')
+    const a = deps({}, 'p_a')
+    const ra = await recoverCopy(item, a.d)
+    // A 的副本在 A 里被编辑过
+    const idA = (ra as { id: string }).id
+    const editedA = backend.putSlot(idA, doc('A 改过的副本', { updatedAt: 500 }), 'p_a')
+    const b = deps({}, 'p_b')
+    const rb = await recoverCopy(item, b.d)
+    expect(rb).toMatchObject({ kind: 'opened', existed: false })
+    const idB = (rb as { id: string }).id
+    expect(idB).not.toBe(idA)
+    expect(b.d.openExisting).not.toHaveBeenCalled()
+    expect(JSON.parse(backend.state.slots.get(idB)!.body).project.name).toBe('旧') // B 的是源的内容
+    expect(backend.state.slots.get(idA)).toEqual(editedA) // A 的副本一个字节没动
+    expect(backend.state.owners.get(idB)).toBe('p_b')
+  })
+
+  it('已存在的目标不属于当前项目：不重开，说清楚（owners 证据 / 本机索引都不成立）', async () => {
+    backend.putSlot('d_old', doc('旧'))
+    backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown' })
+    const item = await listed('d_old')
+    const target = recoveryCopyId('d_old', item.revision, PJ)
+    backend.putSlot(target, doc('别人的'), 'p_other') // 目标 id 上躺着别的项目的槽位
+    const { d } = deps()
+    expect(await recoverCopy(item, d)).toEqual({ kind: 'issue', reason: 'foreign' })
+    expect(d.openExisting).not.toHaveBeenCalled()
+    expect(d.install).not.toHaveBeenCalled()
+    // 归属未知 / 证据未核对 / 问不到：同样不重开
+    backend.state.owners.delete(target)
+    expect(await recoverCopy(item, deps().d)).toEqual({ kind: 'issue', reason: 'foreign' })
+    backend.state.ownerAnswers.set(`${PJ}|${target}`, { owner: 'this', evidence: 'owners', verified: false })
+    expect(await recoverCopy(item, deps().d)).toEqual({ kind: 'issue', reason: 'foreign' })
+    backend.state.fail.owner = 500
+    expect(await recoverCopy(item, deps().d)).toEqual({ kind: 'issue', reason: 'foreign' })
+    // 本机索引记着当前项目：认（后端证据缺席也行）
+    localStorage.setItem('tavotto.docIndex', JSON.stringify([{ id: target, name: 'x', savedAt: 1, objects: 1, projectId: PJ }]))
+    const ok = deps()
+    expect(await recoverCopy(item, ok.d)).toMatchObject({ kind: 'opened', existed: true })
+    localStorage.clear()
+    expect(backend.writes()).toEqual([])
   })
 
   it('预览之后源被改了（revision 变）：stale，什么都不装、不写（A30）', async () => {
@@ -244,14 +292,14 @@ describe('recoverCopy：恢复副本', () => {
     const second = deps()
     const res = await recoverCopy(fresh, second.d)
     expect(res).toMatchObject({ kind: 'opened', existed: false })
-    expect((res as { id: string }).id).toBe(recoveryCopyId('d_old', fresh.revision))
+    expect((res as { id: string }).id).toBe(recoveryCopyId('d_old', fresh.revision, PJ))
   })
 
   it('读不到目标（5xx / 网络）不往下走：不知道它在不在，装下去可能生出第二份', async () => {
     backend.putSlot('d_old', doc('旧'))
     backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown' })
     const item = await listed('d_old')
-    backend.state.failGetDoc.set(recoveryCopyId('d_old', item.revision), 500)
+    backend.state.failGetDoc.set(recoveryCopyId('d_old', item.revision, PJ), 500)
     const { d } = deps()
     expect(await recoverCopy(item, d)).toEqual({ kind: 'issue', reason: 'unavailable' })
     expect(d.install).not.toHaveBeenCalled()

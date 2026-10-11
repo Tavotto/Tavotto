@@ -149,6 +149,8 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
         return t('dialogs:layout.recoverIssueTooNew')
       case 'unavailable':
         return t('dialogs:layout.recoverFailUnavailable')
+      case 'foreign':
+        return t('dialogs:layout.recoverFailForeign')
       default:
         return null
     }
@@ -227,9 +229,10 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <div className="flex flex-col gap-3" data-layout-recover>
       {project.state === 'unavailable' && retry('project')}
-      {ownRows.length > 0 && (
+      {(ownRows.length > 0 || (project.state === 'ok' && project.list.next)) && (
         <section className="flex flex-col gap-1" data-recover-group="project">
           <h3 className="type-section px-1">{t('dialogs:layout.recoverProjectTitle')}</h3>
+          {ownRows.length === 0 && <p className="px-1 text-sm text-ink-3">{t('dialogs:layout.recoverKeepLooking')}</p>}
           <ul className="-mx-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto">
             {ownRows.map((it) => (
               <li key={it.doc_id} className="flex">
@@ -267,7 +270,11 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
               <p className="text-sm text-ink-3">{t('dialogs:layout.recoverLoading')}</p>
             )}
             {(other.state === 'ok' || other.state === 'unsupported') && otherRows.length === 0 && (
-              <p className="text-sm text-ink-3">{t('dialogs:layout.recoverEmptyOther')}</p>
+              <p className="text-sm text-ink-3">
+                {other.state === 'ok' && other.list.next
+                  ? t('dialogs:layout.recoverKeepLooking')
+                  : t('dialogs:layout.recoverEmptyOther')}
+              </p>
             )}
             {otherRows.length > 0 && (
               <ul className="-mx-1 flex max-h-72 flex-col gap-0.5 overflow-y-auto">

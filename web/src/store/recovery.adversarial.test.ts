@@ -186,7 +186,7 @@ describe('找回副本（无任何前端线索的 runtime 文档）', () => {
     })
     expect(res.kind).toBe('opened')
     await settle()
-    const target = rc.recoveryCopyId('d_old_rt', item.revision)
+    const target = rc.recoveryCopyId('d_old_rt', item.revision, 'p_a')
     const shape = currentShape(app)
     expect(shape.documentId).toBe(target)
     expect(shape.canvases.map((c) => c.objects)).toEqual(shapeOf(pd).canvases.map((c) => c.objects))

@@ -12,7 +12,9 @@
  *
  * 不依赖 store / window：打开文档的动作经 `RecoverCopyDeps` 递进来，所以能用有状态的假 fetch 直接量序列。
  */
+import { recordedProjectOf } from '@/lib/docOwnership'
 import {
+  fetchLayoutOwnerEvidence,
   fetchRecoveryCandidates,
   probeAutosave,
   type RecoveryCandidateItem,
@@ -112,14 +114,29 @@ export async function discoverProjectCandidates(
   }
 }
 
+/** 目标项目的短标记（FNV-1a，8 位十六进制）：同一份源在不同项目里恢复得到不同的副本 id */
+function projectTag(pj: string | null): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < (pj ?? '').length; i++) h = Math.imul(h ^ (pj as string).charCodeAt(i), 0x01000193) >>> 0
+  return h.toString(16).padStart(8, '0')
+}
+
 /**
- * 恢复副本的固定目标 id：`d_rc_<源 id 前缀>_<revision 前 8>`。同一份源的同一个版本永远得到同一个目标，
- * 所以双击 / 重试落在同一个槽位上；源改过（revision 变）就是另一个目标。符合后端 doc_id 规则（`[\w-]{1,128}`）。
+ * 恢复副本的固定目标 id：`d_rc_<源 id 前缀>_<revision 前 8>_<目标项目标记>`。同一份源的同一个版本在**同一个项目**里
+ * 永远得到同一个目标，所以双击 / 重试落在同一个槽位上；源改过（revision 变）或换了目标项目就是另一个目标——
+ * 否则 A、B 两个项目恢复同一份源会撞同一个槽位，B 会"打开已有的"A 的副本。符合后端 doc_id 规则（`[\w-]{1,128}`）。
  */
-export function recoveryCopyId(sourceId: string, revision: string | null): string {
+export function recoveryCopyId(sourceId: string, revision: string | null, pj: string | null): string {
   const src = sourceId.replace(/[^\w-]/g, '').slice(0, 24) || 'x'
   const rev = (revision ?? '').replace(/[^\w]/g, '').slice(0, 8).padEnd(8, '0') || '00000000'
-  return `d_rc_${src}_${rev}`
+  return `d_rc_${src}_${rev}_${projectTag(pj)}`
+}
+
+/** 已存在的目标槽位确实属于当前项目吗：本机索引记着当前项目，或后端 `owners` 证据说是且已核对 */
+async function ownsTarget(id: string, pj: string | null): Promise<boolean> {
+  if (pj !== null && recordedProjectOf(id) === pj) return true
+  const ev = await fetchLayoutOwnerEvidence(id, pj)
+  return ev !== 'unsupported' && ev !== 'unavailable' && ev.owner === 'this' && ev.evidence === 'owners' && ev.verified
 }
 
 export type RecoverCopyResult =
@@ -127,7 +144,7 @@ export type RecoverCopyResult =
   | { kind: 'opened'; id: string; existed: boolean }
   /** 预览之后源正文变了：没有恢复，调用方刷新列表让用户重新确认 */
   | { kind: 'stale' }
-  | { kind: 'issue'; reason: 'missing' | 'invalid' | 'too_new' | 'unavailable' | 'cancelled' }
+  | { kind: 'issue'; reason: 'missing' | 'invalid' | 'too_new' | 'unavailable' | 'foreign' | 'cancelled' }
 
 export interface RecoverCopyDeps {
   /** 当前项目（目标槽位与源槽位都在它的数据目录里读） */
@@ -148,7 +165,7 @@ const inflight = new Map<string, Promise<RecoverCopyResult>>()
  * 全程只读源；唯一的写是装进文档之后正常自动保存链写**目标**槽位。
  */
 export function recoverCopy(item: RecoveryCandidateItem, deps: RecoverCopyDeps): Promise<RecoverCopyResult> {
-  const target = recoveryCopyId(item.doc_id, item.revision)
+  const target = recoveryCopyId(item.doc_id, item.revision, deps.pj)
   const key = `${deps.pj ?? ''}|${target}`
   const running = inflight.get(key)
   if (running) return running
@@ -165,6 +182,8 @@ async function doRecover(
   const stale = () => deps.stillCurrent?.() === false
   const there = await probeAutosave(target, deps.pj)
   if (there.kind === 'found') {
+    // 已存在的目标必须是这个项目的：不重开别人的副本
+    if (!(await ownsTarget(target, deps.pj))) return { kind: 'issue', reason: 'foreign' }
     if (stale()) return { kind: 'issue', reason: 'cancelled' }
     return (await deps.openExisting(target))
       ? { kind: 'opened', id: target, existed: true }
