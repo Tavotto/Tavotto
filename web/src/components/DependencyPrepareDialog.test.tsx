@@ -34,7 +34,7 @@ import {
 } from '@/lib/api'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { DependencyPrepareButton } from '@/components/WorkdirRow'
-import { i18n, t } from '@/i18n'
+import { i18n, resources, t } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import {
   mentionCount,
@@ -870,4 +870,152 @@ describe('DependencyPrepareDialog：用户自己的环境', () => {
     expect(useEnvStore.getState().dependencyPreparation).not.toBeNull()
     expect(text()).toContain('这个 Python 环境已经找不到了')
   })
+})
+
+// ------------------------------------------------------------------ Import Origin（PR6）
+
+const ot = (key: string, values?: Record<string, unknown>) => t(`prep.origin.${key}`, { ns: 'workspace', ...values })
+const originEntry = (name: string, over: Record<string, unknown> = {}) => ({
+  import_name: name,
+  bucket: 'unknown' as const,
+  distribution: '',
+  reason: 'distribution_unresolved' as const,
+  resolution_status: 'unresolved',
+  distribution_status: '',
+  origin_kind: 'unresolved',
+  provenance: '',
+  candidates: [],
+  coverage: '',
+  ...over,
+})
+const openDetails = () =>
+  act(async () => {
+    ;(document.querySelector('[data-repair-advanced]') as HTMLDetailsElement).open = true
+  })
+
+describe('DependencyPrepareDialog：来源未定的 import（Import Origin PR6）', () => {
+  it('认不出的区域改读 origins：每个名字一行 + 为什么不装（一句人话），在折叠的「详情」里；不再甩一串名字', async () => {
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({
+          plan: joint({
+            unknown: ['zzz_private', 'cv2'],
+            origins: [
+              originEntry('zzz_private', { suggested_distribution: 'zzz-private' }),
+              originEntry('cv2', { reason: 'module_origin_ambiguous', resolution_status: 'ambiguous' }),
+            ],
+          }),
+        }),
+      ),
+    )
+    const advanced = document.querySelector('[data-repair-advanced]')!
+    const unknown = advanced.querySelector('[data-dependency-unknown]')!
+    expect(unknown.querySelector('[data-origin-entry="zzz_private"]')?.textContent).toContain('不认识它')
+    expect(unknown.querySelector('[data-origin-entry="cv2"]')?.textContent).toContain('好几个包都能提供它')
+    expect(text()).not.toContain(en('dependencyPrepareUnknown', { modules: 'zzz_private, cv2' }))
+    // 默认可见区不变：固定标题 + 那一句 + 「详情」+ 三颗按钮
+    expect(visibleSentenceCount(dialog()!)).toBe(1)
+    expect(visiblePrimaryButtons(dialog()!)).toBe(1)
+    expect(dialog()!.querySelector('[data-origin-entry]')!.closest('details')).toBe(advanced)
+  })
+
+  it('老后端没有 origins：照旧只列名字', async () => {
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    expect(text()).toContain(en('dependencyPrepareUnknown', { modules: 'zzz_private' }))
+    expect(document.querySelector('[data-origin-entry]')).toBeNull()
+  })
+
+  it('missing 里 distribution_status = module_origin_ambiguous：详情里提示有备选的包（先按表里的装）', async () => {
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({
+          plan: joint({
+            unknown: [],
+            missing: [
+              { import_name: 'cv2', distribution: 'opencv-python', resolution_source: 'curated', declared: false, specifiers: [], via: [], resolution_status: 'ambiguous', distribution_status: 'module_origin_ambiguous' },
+              { import_name: 'six', distribution: 'six', resolution_source: 'curated', declared: false, specifiers: [], via: [] },
+            ],
+            requirements: ['opencv-python', 'six'],
+          }),
+        }),
+      ),
+    )
+    const alt = document.querySelector('[data-dependency-alternatives]')!
+    expect(alt.closest('[data-repair-advanced]')).not.toBeNull()
+    expect(alt.querySelectorAll('li')).toHaveLength(1)
+    expect(alt.textContent).toContain('cv2')
+    expect(alt.textContent).toContain(ot('detail.alternatives', { distribution: 'opencv-python' }))
+    expect(alt.textContent).not.toContain('six')
+  })
+
+  it('装后核验没过（进度终态 dist_reasons）：那一句换成「核对发现不一致」，每个原因一句人话在「详情」里', async () => {
+    planMock.mockResolvedValue({
+      plan: {
+        plan_id: 'jp-d', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0'],
+        constraints: [], require_hashes: false, adapter: [], identity: 'x', needed_imports: ['six'], groups: [],
+        modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint(),
+      },
+    })
+    prepareMock.mockResolvedValue({ started: true, plan_id: 'jp-d', state: 'preparing', log: '', error: null, code: '' })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () =>
+      useDepRepairStore.getState().onProgress({
+        plan_id: 'jp-d', state: 'failed', log: '', error: 'six: distribution_not_installed', code: 'dependency_import_still_failed',
+        flow: 'joint', dist_reasons: ['distribution_not_installed'],
+      }),
+    )
+    expect(dialog()!.querySelector('[data-dependency-error]')?.textContent).toBe(ot('distFailed'))
+    // 默认可见区：一句话（危险提示）+ 一个主按钮；原因列表在折叠里
+    expect(visibleSentenceCount(dialog()!)).toBeLessThanOrEqual(1)
+    expect(visiblePrimaryButtons(dialog()!)).toBe(1)
+    expect(dialog()!.querySelector('[data-origin-dist-reason]')!.closest('details')).not.toBeNull()
+    await openDetails()
+    expect(dialog()!.querySelector('[data-origin-dist-reason="distribution_not_installed"]')?.textContent).toBe(
+      ot('dist.distribution_not_installed'),
+    )
+  })
+
+  it('没有 dist_reasons 的导入失败：照旧一句短句，没有原因列表', async () => {
+    planMock.mockResolvedValue({
+      plan: {
+        plan_id: 'jp-e', script: 'figure.py', target_kind: 'tavotto_managed', python: '', requirements: ['six==1.17.0'],
+        constraints: [], require_hashes: false, adapter: [], identity: 'x', needed_imports: ['six'], groups: [],
+        modifies_user_environment: false, creates_environment: true, network_required: true, expires_at: 0, joint: joint(),
+      },
+    })
+    prepareMock.mockResolvedValue({ started: true, plan_id: 'jp-e', state: 'preparing', log: '', error: null, code: '' })
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => button(en('oneClickRepair'))!.click())
+    await act(async () =>
+      useDepRepairStore.getState().onProgress({ plan_id: 'jp-e', state: 'failed', log: '', error: 'x', code: 'dependency_import_still_failed', flow: 'joint' }),
+    )
+    expect(dialog()!.querySelector('[data-dependency-error]')?.textContent).toBe(
+      t('engine.repairErrorShort.dependency_import_still_failed', { ns: 'errors' }),
+    )
+    expect(document.querySelector('[data-origin-dist-reasons]')).toBeNull()
+  })
+
+  for (const lng of Object.keys(resources)) {
+    it(`${lng} · 展示态的名字跟着载荷走：装齐的用户环境 = 发现更合适的环境；有要装的 = 可以自动修复；一句话 + 至多一个主按钮`, async () => {
+      await i18n.changeLanguage(lng)
+      await render(<DependencyPrepareDialog />)
+      await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+      expect(dialog()!.querySelector('[data-origin-view]')?.getAttribute('data-origin-view')).toBe('auto_fix')
+      expect(visibleSentenceCount(dialog()!, lng)).toBe(1)
+      expect(visiblePrimaryButtons(dialog()!)).toBe(1)
+      await act(async () => useEnvStore.getState().dismissDependencyPreparation())
+      await act(async () =>
+        useEnvStore.getState().requestDependencyPreparation(offer({ user_environments: [userEnv()] })),
+      )
+      expect(dialog()!.querySelector('[data-origin-view]')?.getAttribute('data-origin-view')).toBe('better_env')
+      expect(visibleSentenceCount(dialog()!, lng)).toBeLessThanOrEqual(2)
+      expect(visiblePrimaryButtons(dialog()!)).toBe(1)
+    })
+  }
 })

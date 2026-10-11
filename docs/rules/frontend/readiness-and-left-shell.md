@@ -94,6 +94,21 @@
   的环境代 `expected_generation`），**不自写「能不能跑」的判据**；`EngineEnvironmentCard` 的 `EnvironmentAdviceRow` 只在
   `decision.needs_decision` 时问一句 + 一个主按钮，全局解释器压着（`locked_by`）时只说原因不给按钮。看护
   `store/envAdvice.test.ts`、`components/EngineEnvironmentCard.test.tsx`、`e2e/environment-advice.spec.ts`。
+- **来源未定的 import（Import Origin PR6，ADR 0114 / 0115）**：联合计划里没有可信安装名的 import 在界面上有五种展示态——已就绪 / 发现更合适的环境 /
+  可以自动修复 / 需要确认 / 尚无法确定——**全部由后端事实派生**（`plan.origins[]`、`checks_of.dependencies.detail.origins`、覆盖度 `detail`、
+  进度终态 `dist_reasons`），前端没有一行解析逻辑（`lib/importOrigin.structure.test.ts` 钉着：没有名单 / 映射 / 对 import 名的切分与正则）。
+  五种名字只是已有状态的命名（`originViewOfCard` / `originViewOfOffer`，落在 `data-origin-view`）：准备卡新增 `origin_confirm`（`checks_of` 的
+  `confirmable > 0`，主按钮「确认包名」）与 `origin_unknown`（有来源事实、没有预填，主按钮是报告里的运行，改口「仍然运行」）两态，**有来源事实的
+  `ready_to_run` 不再说「可以运行了」**；每个态默认只露**一句话 + 至多一个主按钮**，每个原因码 / 覆盖度码 / 核验原因码的人话（`prep.origin.*`，闭集三张字面量表）
+  只进默认折叠的「详情」。
+  **确认包名**（`ImportOriginDialog`，`depRepairStore.openOrigin / bindOrigin / confirmOrigin`）：输入框**只给**后端带了 `suggested_distribution` 的条目
+  （初始值 = 预填，原样；别的来源未定的 import 后端会以 `dependency_install_not_allowed` 拒收，所以只在详情里解释）；主按钮「核对包名」=
+  `createJointDependencyPlan({ script, user_specified })`，一次授权（所有输入框一份计划一个摘要），不逐包弹窗；**确认页那一句必须说清「用户指定、
+  未经可信来源核实」**（读 `plan.impact.user_specified[].trust`，读不到披露就置灰不让继续），「确认并安装」把**这份计划自己的** `impact_digest`
+  原样交给 `/prepare`；`package_requirement_invalid` / `dependency_install_not_allowed` 各一句人话。草稿 / 绑定的计划 / 载荷都是项目代际内的状态：
+  `clear()`（换项目）、关框、新载荷都丢；绑定回来时已换项目的响应整个丢弃（`projectEpoch` + `busy` 单飞，没有第二套判据）。
+  看护 `lib/importOrigin.test.ts`、`lib/importOrigin.structure.test.ts`、`components/ImportOriginDialog.test.tsx`、`components/PreparationCard.test.tsx`（五态矩阵）、
+  `components/DependencyPrepareDialog.test.tsx`（unknown 区读 `origins`、备选提示、核验失败）、`tests/test_import_origin_ui_facts.py`。
 - **元素树的行只在自己显示的东西变了时重画（2026-09-24，松手卡顿剖析）**：
   `ElementTree` 的 `ElementRow` / `ClusterRow` 是 `React.memo`，props 全是这一行显示与
   交互实际用到的值（`gid` / `label` / `role` / 行名 `name` / `canHide` / `readonly` /

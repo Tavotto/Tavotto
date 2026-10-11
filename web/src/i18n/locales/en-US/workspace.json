@@ -952,7 +952,11 @@
       "depsFailed": "Install failed, nothing was changed",
       "failed": "The run failed",
       "depsCancelled": "Install stopped",
-      "attention": "One more thing to handle"
+      "attention": "One more thing to handle",
+      "originConfirm_one": "{{count}} library needs a package name from you",
+      "originConfirm_other": "{{count}} libraries need a package name from you",
+      "originUnknown_one": "Can't tell where {{count}} library comes from",
+      "originUnknown_other": "Can't tell where {{count}} libraries come from"
     },
     "btn": {
       "start": "Get ready",
@@ -984,7 +988,8 @@
       "dismiss": "Got it",
       "answer": "Answer",
       "openAssets": "Open library",
-      "cancelScan": "Cancel check"
+      "cancelScan": "Cancel check",
+      "confirmOrigins": "Confirm packages"
     },
     "card": {
       "steps": "Progress",
@@ -1086,7 +1091,63 @@
       "static": "No script",
       "noFigure": "Finished, no figure",
       "cancelled": "Stopped",
-      "attention": "Needs attention"
+      "attention": "Needs attention",
+      "originConfirm": "Packages to confirm",
+      "originUnknown": "Origin unclear"
+    },
+    "origin": {
+      "unavailable": "Couldn't load the package names right now; try again in a moment.",
+      "distFailed": "After installing, the packages didn't match what you confirmed.",
+      "detail": {
+        "listIntro": "Tavotto can't tell where these come from, so it won't install them for you:",
+        "userSpecifiedBadge": "Named by you, not verified",
+        "trustNote": "A name you type isn't a trusted source: Tavotto can't verify it, so it asks you once more before installing.",
+        "alternatives": "Several packages can provide it; {{distribution}} is installed first, and to use another, switch to your own Python environment."
+      },
+      "dialog": {
+        "heading": "Confirm packages",
+        "names": "Check which package each library below should install, or change it.",
+        "nothing": "There are no package names to confirm right now.",
+        "confirmUnverified_one": "This package was named by you and isn't verified by a trusted source; it's installed only after you confirm.",
+        "confirmUnverified_other": "These {{count}} packages were named by you and aren't verified by a trusted source; they're installed only after you confirm.",
+        "noDisclosure": "Couldn't show where these packages come from, so nothing is installed.",
+        "placeholder": "package, optionally a version, e.g. name>=1.0"
+      },
+      "btn": {
+        "review": "Review packages",
+        "confirmInstall": "Confirm and install",
+        "back": "Back to edit"
+      },
+      "error": {
+        "package_requirement_invalid": "Write just the package name, or “name>=version”.",
+        "dependency_install_not_allowed": "This library can't be installed with that name right now; go back and review."
+      },
+      "reason": {
+        "distribution_unresolved": "Tavotto doesn't recognise it, so it can't tell which package to install.",
+        "module_origin_ambiguous": "Several packages could provide it, and Tavotto won't pick one for you.",
+        "editable_dependency_not_reproducible": "It's a library you're developing on this computer; Tavotto can't reproduce it in a new environment.",
+        "installed_source_not_reproducible": "It was installed from a local file or a web address, so Tavotto can't install the same thing again.",
+        "conda_package_not_pypi": "It came from Conda, and pip may not give you the same thing.",
+        "unverified": "Where it comes from can't be verified yet, so it's left alone.",
+        "module_import_failed_in_target_environment": "It's installed but fails to import, so installing it again won't help.",
+        "unknown": "Where it comes from can't be determined yet."
+      },
+      "coverage": {
+        "module_not_found_in_user_environment": "Not found in your Python.",
+        "module_import_failed_in_user_environment": "In your Python, but it fails to import.",
+        "module_missing_in_target_environment": "Not in the environment Tavotto prepares yet.",
+        "module_import_failed_in_target_environment": "In the prepared environment, but it fails to import.",
+        "environment_not_checked": "This Python hasn't been checked yet.",
+        "environment_unusable": "This Python can't run on its own.",
+        "unknown": "The state of this Python can't be determined yet."
+      },
+      "dist": {
+        "distribution_not_installed": "The package you confirmed wasn't installed.",
+        "distribution_version_mismatch": "The installed version doesn't meet the requirement.",
+        "distribution_does_not_provide_import": "The installed package doesn't contain the library the script uses; the name may be wrong.",
+        "distribution_unverifiable": "Can't read what's in this package, so it can't be confirmed.",
+        "unknown": "What was installed doesn't match the plan."
+      }
     }
   },
   "canvasMenu": {

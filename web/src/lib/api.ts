@@ -4103,6 +4103,18 @@ export interface DependencyRepairPlan extends DependencyRequirementInfo {
 }
 
 /** 安装进度。前端**按 state 换文案，不解析日志**。 */
+/**
+ * `deprepair.DIST_REASONS` 的镜像（Import Origin PR6；顺序也比，`tests/test_import_origin_ui_facts.py` 钉两侧相等）：
+ * 装后「发行包与版本」核验没过的原因。是进度终态上的**结构化 detail**，不是发布的错误码（错误码仍是 `dependency_import_still_failed`）。
+ */
+export const DIST_FAILURE_REASONS = [
+  'distribution_not_installed',
+  'distribution_version_mismatch',
+  'distribution_does_not_provide_import',
+  'distribution_unverifiable',
+] as const
+export type DistFailureReason = (typeof DIST_FAILURE_REASONS)[number]
+
 export interface DependencyProgress {
   plan_id: string
   state: 'idle' | 'preparing' | 'downloading_python' | 'creating_env' | 'installing' | 'verifying' | 'done' | 'failed' | 'cancelled'
@@ -4138,6 +4150,11 @@ export interface DependencyProgress {
   retryable?: boolean
   /** 连不上默认包源、这次改用了 PyPI 镜像：镜像地址（此后每个快照都带；没用镜像时没有这个键） */
   pypi_mirror?: string
+  /**
+   * 终态 failed 且 `code = dependency_import_still_failed`、是装后「发行包与版本」核验没过时：原因码（`DIST_FAILURE_REASONS` 的子集，
+   * 去重）。只有码、没有名字；普通 import 失败没有这个键。界面据此按原因分别说人话，不解析 `error` 文案
+   */
+  dist_reasons?: DistFailureReason[]
 }
 
 export const createDependencyPlan = (body: {
@@ -4410,6 +4427,11 @@ export interface JointDependencyRepairPlan {
   joint: JointDependencyPlan
   /** 这份计划此刻的实际影响摘要（ADR 0115）；与 offer 里用户看到的那份比对。老后端没有 */
   impact_digest?: string
+  /**
+   * 这份计划的实际影响（PR5b：`impact.user_specified` 披露用户指定、未经可信来源核实的包）。确认页只读它标注、不据此裁决；
+   * 摘要是 `impact_digest`，原样回显给 `/prepare`
+   */
+  impact?: DependencyImpact | null
   /** 这次授权包含先下载私有 Python（U05）；`replan` = 计划的事实是替身，供应后按真解释器重算 */
   private_python?: PrivatePythonOffer | null
   replan?: boolean
@@ -4982,6 +5004,17 @@ export interface PreparationCheck {
   status: 'ok' | 'unknown' | 'needs_action' | 'blocked'
   code?: string
   detail?: Record<string, unknown>
+}
+
+/**
+ * `dependencies` 检查项的 `detail.origins`（后端 `prepsession.origin_facts`，Import Origin PR4 / PR6）：联合计划里没有可信安装名的
+ * import 的**计数**与闭集原因码（`JOINT_ORIGIN_REASONS`），不带名字 / 路径。`confirmable` = 其中带预填、能由用户指定包名的个数
+ * （没有就不出这个键）。来源事实**不改检查项的状态**：它们不让计划不完整，只说明「这几个 import 装不了 / 不该猜」。
+ */
+export interface PreparationOriginFacts {
+  count: number
+  by_reason: Record<string, number>
+  confirmable?: number
 }
 
 /**

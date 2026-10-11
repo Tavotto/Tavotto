@@ -13,6 +13,9 @@ import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import type { DependencyPreparationOffer, PrivatePythonOffer } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { listJoin } from '@/i18n/format'
+import { t as translate } from '@/i18n'
+import { originViewOfOffer } from '@/lib/importOrigin'
+import { DistFailureList, OriginEntryList } from './OriginDetails'
 import { RepairProgressLine, RepairStageList } from './RepairProgressLine'
 import {
   downloadFact,
@@ -65,6 +68,9 @@ export const STATE_TEXT: Record<string, string> = {
   installing: 'engine.dependencyPrepareState_installing',
   verifying: 'engine.dependencyPrepareState_verifying',
 }
+//: 文案键写成字面量（前缀 `prep.origin.`）：来源未定的 import、装后核验没过的原因，一句一句人话，只进折叠的「详情」
+const og = (key: string, v?: Record<string, unknown>) => translate(`prep.origin.${key}`, { ns: 'workspace', ...v })
+
 const BLOCKED_TEXT: Record<string, string> = {
   dependency_declaration_unsupported: 'engine.dependencyBlocked_dependency_declaration_unsupported',
   dependency_conflict: 'engine.dependencyBlocked_dependency_conflict',
@@ -133,6 +139,11 @@ export function DependencyPrepareDialog() {
   // 故障同样只露一句（原因 + 下一步，`repairShortMessage`）：一条危险 Notice，顶掉正文那一句（标题固定是「准备环境」，
   // 不被错误句替换——2026-10-07 设计审计 §10.2）；完整的说明、错误码、blocked 的逐条理由都在「详情」里
   const failing = !running && !!errorLine
+  // 装后「发行包与版本」核验没过（进度终态的 `dist_reasons`，闭集码）：那一句换成「核对发现和计划不一致」，每个原因一句在「详情」里
+  const distReasons =
+    failing && code === 'dependency_import_still_failed' && progress?.state === 'failed' && progress.dist_reasons
+      ? progress.dist_reasons
+      : []
   const targets = offer.targets.filter((o) => o.kind !== 'system_interpreter')
   const chosen = targets.find((o) => o.kind === target)
   // 一键修复的形态按**载荷**定（不按此刻的单选）：在「高级」里换了目标，版面不跳
@@ -287,11 +298,30 @@ export function DependencyPrepareDialog() {
             {en('engine.dependencyPrepareConstraints', { count: plan.constraints.length })}
           </p>
         )}
-        {plan.unknown.length > 0 && (
-          <p className="text-sm text-ink-2" data-dependency-unknown>
-            {en('engine.dependencyPrepareUnknown', { modules: plan.unknown.join(', ') })}
-          </p>
+        {plan.unknown.length > 0 &&
+          // 认不出的 import 改读后端的 `origins`（每个名字 + 为什么不装）；老后端没有 `origins` 时照旧只列名字
+          (plan.origins && plan.origins.length > 0 ? (
+            <div className="text-sm text-ink-2" data-dependency-unknown>
+              <OriginEntryList origins={plan.origins} title={og('detail.listIntro')} />
+            </div>
+          ) : (
+            <p className="text-sm text-ink-2" data-dependency-unknown>
+              {en('engine.dependencyPrepareUnknown', { modules: plan.unknown.join(', ') })}
+            </p>
+          ))}
+        {plan.missing.some((m) => m.distribution_status === 'module_origin_ambiguous') && (
+          // 有几个包都能提供它、但一个都没装：先按表里的那个装，想换别的请改用自己的环境
+          <ul className="flex flex-col gap-0.5 text-sm text-ink-2" data-dependency-alternatives>
+            {plan.missing
+              .filter((m) => m.distribution_status === 'module_origin_ambiguous')
+              .map((m) => (
+                <li key={m.import_name}>
+                  <span className="font-mono">{m.import_name}</span> · {og('detail.alternatives', { distribution: m.distribution })}
+                </li>
+              ))}
+          </ul>
         )}
+        {distReasons.length > 0 && <DistFailureList reasons={distReasons} />}
       </div>
       {((offer.user_environments && complete.length === 0 && unchecked.length === 0) || partial.length > 0) && (
         <div className="flex flex-col gap-1 text-sm text-ink-3">
@@ -413,7 +443,7 @@ export function DependencyPrepareDialog() {
     >
       {/* 默认可见：正文一句（失败时换成一条危险 Notice）+ 非一键修复时的目标单选（每个选项一句短语）+ 折叠的「详情」；
           下载大小、要装的完整需求串都在「详情」里。进行中只剩一行进度 */}
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3" data-origin-view={originViewOfOffer(offer)}>
         {!running && !(simple && failing) && (
           <div className="flex flex-col gap-1">
             <p className="text-ink" data-dependency-sentence>
@@ -458,7 +488,7 @@ export function DependencyPrepareDialog() {
         {/* 失败：一条危险 Notice，放在页脚上方 */}
         {failing && (
           <Notice tone="danger" data-dependency-error={code}>
-            {repairShortMessage(code)}
+            {distReasons.length > 0 ? og('distFailed') : repairShortMessage(code)}
           </Notice>
         )}
       </div>

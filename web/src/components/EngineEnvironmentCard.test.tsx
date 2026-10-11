@@ -12,11 +12,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   adoptEnvironmentCandidate: vi.fn(),
 }))
 
-import { adoptEnvironmentCandidate, type EngineEnvironment, type EnvRecommendation } from '@/lib/api'
+import { adoptEnvironmentCandidate, type EngineEnvironment, type EnvCoverageDetail, type EnvRecommendation } from '@/lib/api'
 import { EngineEnvironmentCard, MissingDependencyCard } from '@/components/EngineEnvironmentCard'
 import { t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
+import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -205,6 +206,62 @@ describe('ADR 0114 之前自动采用的记录（legacy_auto）：一键确认�
     useEnvStore.setState({ env: env as unknown as EngineEnvironment })
     await render(<EngineEnvironmentCard />)
     expect(document.querySelector('[data-env-advice-legacy]')).toBeNull()
+  })
+})
+
+describe('环境建议：覆盖度 detail 的人话（Import Origin PR6）', () => {
+  const withCoverage = (detail: EnvCoverageDetail[]) => {
+    const env = adviceEnv({})
+    env.project!.recommendation!.candidates[0].coverage = {
+      state: 'missing',
+      role: 'user',
+      modules: { lab_tools: 'not_found' },
+      detail,
+      executed_user_code: false,
+      versions_checked: false,
+    }
+    return env
+  }
+
+  it('候选带 coverage.detail：每个 detail 码一句人话，收在默认折叠的「详情」里；一句话 + 一个主按钮不变', async () => {
+    useEnvStore.setState({
+      env: withCoverage([
+        { code: 'module_not_found_in_user_environment', module: 'lab_tools', reason: 'not_found' },
+        { code: 'environment_unusable', reason: 'unsupported_python' },
+      ]),
+    })
+    await render(<EngineEnvironmentCard />)
+    const details = document.querySelector('[data-env-advice-coverage]') as HTMLDetailsElement
+    expect(details.open).toBe(false)
+    const rows = [...details.querySelectorAll('[data-origin-coverage-code]')]
+    expect(rows.map((r) => r.getAttribute('data-origin-coverage-code'))).toEqual(['module_not_found_in_user_environment', 'environment_unusable'])
+    expect(rows[0].textContent).toBe('lab_tools · 你的这套 Python 里找不到它。')
+    expect(rows[1].textContent).toBe('这套 Python 本身跑不起来。')
+    // 默认可见区：问的那句 + 「使用它」「用 Tavotto 内置环境」+ 折叠标题；detail 的句子不外露，句子数与按钮数和没有 coverage 时一样
+    const advice = document.querySelector('[data-env-advice]') as HTMLElement
+    const sentences = visibleSentenceCount(advice)
+    const blocks = visibleBlocks(advice).map((b) => b.text)
+    expect(visiblePrimaryButtons(advice)).toBe(1)
+    expect(blocks).not.toContain('这套 Python 本身跑不起来。')
+    expect(blocks).toContain(en('repairDetails'))
+    await act(async () => root.unmount())
+    host.remove()
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<EngineEnvironmentCard />)
+    const plain = document.querySelector('[data-env-advice]') as HTMLElement
+    expect(visibleSentenceCount(plain)).toBe(sentences)
+    expect(visiblePrimaryButtons(plain)).toBe(1)
+  })
+
+  it('没有 coverage / detail 为空：不多出「详情」', async () => {
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector('[data-env-advice-coverage]')).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    useEnvStore.setState({ env: withCoverage([]) })
+    await render(<EngineEnvironmentCard />)
+    expect(document.querySelector('[data-env-advice-coverage]')).toBeNull()
   })
 })
 

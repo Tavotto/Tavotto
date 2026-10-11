@@ -21,6 +21,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   actOnPreparationSession: vi.fn(),
   probeScript: vi.fn(),
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
+  fetchDependencyOffer: vi.fn(),
   fetchScriptArguments: vi.fn().mockResolvedValue({ ok: true, script: 'plot.py', arguments: { status: 'none', arguments: [] } }),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
@@ -36,10 +37,12 @@ vi.mock('@/store/workspace', async (importOriginal) => ({
 import {
   actOnPreparationSession,
   createPreparationSession,
+  fetchDependencyOffer,
   fetchPreparationSession,
   probeScript,
   type CapturedFigureDescriptor,
   type PreparationAction,
+  type PreparationOriginFacts,
   type PreparationReport,
 } from '@/lib/api'
 import { i18n, resources } from '@/i18n'
@@ -61,7 +64,10 @@ import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
-import { visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
+import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
+import { ORIGIN_VIEWS } from '@/lib/importOrigin'
+import { useDepRepairStore } from '@/store/depRepairStore'
+import type { DependencyPreparationOffer } from '@/lib/api'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -122,6 +128,13 @@ const report = (over: Partial<PreparationReport> = {}): PreparationReport => ({
   result: null,
   ...over,
 })
+
+/** `dependencies` 检查项带来源事实（`prepsession.origin_facts`）：状态仍是 ok，只有 detail 多了计数与原因码 */
+const originChecks = (origins: PreparationOriginFacts): PreparationReport['checks'] => [
+  { id: 'target', status: 'ok' },
+  { id: 'environment', status: 'ok' },
+  { id: 'dependencies', status: 'ok', detail: { origins } },
+]
 
 /** 面板要面对的每一种状态（报告形状来自后端合同 `prepsession.report`） */
 const STATES: Record<string, Partial<PreparationReport>> = {
@@ -244,6 +257,13 @@ const STATES: Record<string, Partial<PreparationReport>> = {
       { id: 'dependencies', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'tkinter', installable: false, route: 'stdlib_missing' } },
     ],
     actions: [action('recheck')],
+  },
+  // Import Origin（PR6）：计划里有 import 没有可信的安装名——检查项不变状态，只在 detail 里带计数与闭集原因码
+  originConfirm: {
+    checks: originChecks({ count: 2, by_reason: { distribution_unresolved: 1, module_origin_ambiguous: 1 }, confirmable: 1 }),
+  },
+  originUnknown: {
+    checks: originChecks({ count: 3, by_reason: { editable_dependency_not_reproducible: 1, module_origin_ambiguous: 2 } }),
   },
   needsArgs: {
     phase: 'action_required',
@@ -824,6 +844,15 @@ describe('必填参数没填齐时任何卡都不说「可以运行」', () => {
     await act(async () => useScriptArgvStore.getState().setTokens('plot.py', ['--scale', '2', 'plot']))
     expect(panel().dataset.prepState).not.toBe('args')
   })
+
+  it('来源待定的卡也一样（Import Origin）：必填参数没填齐时换成参数卡，不给「仍然运行」', async () => {
+    await mount()
+    await openWith({ ...withSchema, checks: originChecks({ count: 1, by_reason: { unverified: 1 } }) })
+    expect(panel().dataset.prepState).toBe('args')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('还差 2 个参数')
+    expect(primary()?.textContent).toBe('继续')
+    expect(primary()?.disabled).toBe(true)
+  })
 })
 
 describe('运行目录在卡里选', () => {
@@ -1296,5 +1325,197 @@ describe('运行时 input：同一请求只有一个展示面', () => {
     expect(panel().querySelector('[data-prep-more]')).toBeNull()
     expect(primary()?.textContent).not.toBe('回答')
     expect(panel().textContent).not.toContain('OTHER-OUTPUT')
+  })
+})
+
+/* ------------------------------------------------------------------ Import Origin（PR6） */
+
+describe('Import Origin：五种展示态，每种 × 每个语种都是「一句话 + 至多一个主按钮」', () => {
+  // 状态名 → 展示态的名字；卡片的状态由后端报告选（`prepView`），`data-origin-view` 只是它的名字
+  const FIVE: [string, keyof typeof STATES, (typeof ORIGIN_VIEWS)[number]][] = [
+    ['已就绪', 'ready', 'ready'],
+    ['发现更合适的环境', 'env', 'better_env'],
+    ['可以自动修复', 'deps', 'auto_fix'],
+    ['需要确认', 'originConfirm', 'needs_confirm'],
+    ['尚无法确定', 'originUnknown', 'undetermined'],
+  ]
+  it('五种名字一个不少', () => {
+    expect(new Set(FIVE.map((f) => f[2]))).toEqual(new Set(ORIGIN_VIEWS))
+  })
+  for (const lng of LOCALES) {
+    for (const [name, key, view] of FIVE) {
+      it(`${lng} · ${name}`, async () => {
+        await i18n.changeLanguage(lng)
+        await mount()
+        await openWith(report(STATES[key]))
+        expect(panel().dataset.originView).toBe(view)
+        // 逐块钉死：看得见的文字块只有「标题那一句」「详情」「稍后 / 主按钮」，多一块说明就红
+        const blocks = visibleBlocks(panel()).map((b) => b.text)
+        const line = panel().querySelector('[data-prep-line]')!.textContent!
+        expect(blocks.filter((b) => b === line)).toHaveLength(1)
+        expect(visibleSentenceCount(panel(), lng)).toBeLessThanOrEqual(1)
+        expect(visiblePrimaryButtons(panel())).toBeLessThanOrEqual(1)
+        expect(panel().querySelector('[data-prep-details]')).toBeNull()
+        // 解释、计数、原因全收在详情里：默认可见区里没有原因句 / 计数行
+        expect(panel().querySelector('[data-origin-reasons]')).toBeNull()
+        expect(panel().querySelector('[data-origin-reason]')).toBeNull()
+      })
+    }
+  }
+})
+
+describe('Import Origin：来源事实决定准备卡说什么', () => {
+  it('需要确认：不说「可以运行了」；一句话数的是带预填的个数；主按钮「确认包名」，没有运行按钮', async () => {
+    await mount()
+    await openWith(report(STATES.originConfirm))
+    expect(panel().dataset.prepState).toBe('origin_confirm')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('有 1 个库要你确认包名')
+    expect(primary()?.dataset.prepPrimary).toBe('confirm_origins')
+    expect(primary()?.textContent).toBe('确认包名')
+    expect(panel().querySelector('[data-prep-primary="run"]')).toBeNull()
+  })
+
+  it('尚无法确定：不说「可以运行了」；主按钮是报告里的运行（改口「仍然运行」）；没有 run 动作就没有主按钮', async () => {
+    await mount()
+    await openWith(report(STATES.originUnknown))
+    expect(panel().dataset.prepState).toBe('origin_unknown')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('有 3 个库的来源还没法确定')
+    expect(primary()?.dataset.prepPrimary).toBe('run')
+    expect(primary()?.textContent).toBe('仍然运行')
+    await openWith(report({ ...STATES.originUnknown, actions: [action('recheck')], observation_seq: 2 }))
+    expect(primary()).toBeNull()
+  })
+
+  it('英文：复数跟着个数走', async () => {
+    await i18n.changeLanguage('en-US')
+    await mount()
+    await openWith(report(STATES.originConfirm))
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('1 library needs a package name from you')
+    await openWith(
+      report({
+        checks: originChecks({ count: 4, by_reason: { unverified: 4 }, confirmable: 3 }),
+        observation_seq: 2,
+      }),
+    )
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('3 libraries need a package name from you')
+  })
+
+  it('没有来源事实 / 计数为 0 / 形状不对：和以前一字不差（可以运行了）', async () => {
+    await mount()
+    for (const [i, checks] of [
+      [{ id: 'target', status: 'ok' }, { id: 'dependencies', status: 'ok' }],
+      originChecks({ count: 0, by_reason: {} }),
+      [{ id: 'dependencies', status: 'ok', detail: { origins: 'oops' } }],
+    ].entries()) {
+      await openWith(report({ checks: checks as never, observation_seq: i + 1 }))
+      expect(panel().dataset.prepState).toBe('ready')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('可以运行了')
+    }
+  })
+
+  it('来源事实不改变别的状态：缺组件的卡仍是「安装」，来源只多一行详情', async () => {
+    await mount()
+    await openWith(
+      report({
+        ...STATES.deps,
+        checks: originChecks({ count: 1, by_reason: { module_origin_ambiguous: 1 } }),
+      }),
+    )
+    expect(panel().dataset.prepState).toBe('deps')
+    expect(primary()?.dataset.prepPrimary).toBe('prepare_dependencies')
+    await toggleDetails()
+    expect(details()?.querySelector('[data-origin-reason="module_origin_ambiguous"]')).not.toBeNull()
+  })
+
+  it('详情：每个原因码一句人话 + 个数；不出 import 名、不出术语；codes 不原样甩给用户', async () => {
+    await mount()
+    await openWith(report(STATES.originUnknown))
+    await toggleDetails()
+    const reasons = [...details()!.querySelectorAll('[data-origin-reason]')].map((el) => el.getAttribute('data-origin-reason'))
+    expect(reasons).toEqual(['editable_dependency_not_reproducible', 'module_origin_ambiguous'])
+    const text = details()!.querySelector('[data-origin-reasons]')!.textContent!
+    expect(text).toContain('2')
+    expect(text).toContain('好几个包都能提供它')
+    expect(text).not.toMatch(/editable|site-packages|dist-info|隔离环境|module_origin_ambiguous/)
+  })
+
+  it('准备卡的角标（素材库行 / 缩成角标）也不说「待运行」', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card' })
+    await openWith(report(STATES.originConfirm))
+    await act(async () => (panel().querySelector('[data-prep-later]') as HTMLButtonElement).click())
+    expect(host.querySelector('[data-prep-pill]')?.textContent).toContain('待确认包名')
+  })
+
+  it('准备卡的角标：来源待定', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card' })
+    await openWith(report(STATES.originUnknown))
+    await act(async () => (panel().querySelector('[data-prep-later]') as HTMLButtonElement).click())
+    expect(host.querySelector('[data-prep-pill]')?.textContent).toContain('来源待定')
+  })
+})
+
+describe('Import Origin：「确认包名」打开框', () => {
+  const planOffer = (): DependencyPreparationOffer =>
+    ({
+      code: 'dependency_preparation_required',
+      script: 'plot.py',
+      plan: {
+        status: 'nothing_needed',
+        script: 'plot.py',
+        requirements: [],
+        unknown: ['lab_tools'],
+        origins: [
+          { import_name: 'lab_tools', bucket: 'unknown', distribution: '', reason: 'distribution_unresolved', resolution_status: 'unresolved', distribution_status: '', origin_kind: 'unresolved', provenance: '', candidates: [], coverage: '', suggested_distribution: 'lab-tools' },
+        ],
+      },
+      target_kind: 'tavotto_managed',
+      targets: [],
+      rounds_remaining: 3,
+      skipped: false,
+    }) as never
+
+  beforeEach(() => {
+    vi.mocked(fetchDependencyOffer).mockReset()
+    useDepRepairStore.setState({ originDraft: null, originPlan: null, busy: false })
+    useEnvStore.setState({ originConfirmation: null })
+  })
+
+  it('点主按钮：取一份计划载荷（名字在载荷里），设草稿 = 后端预填，把载荷交给框；卡片本身没有任何输入框', async () => {
+    await mount()
+    await openWith(report(STATES.originConfirm))
+    vi.mocked(fetchDependencyOffer).mockResolvedValueOnce({ offer: planOffer(), groups: [], rounds_remaining: 3 })
+    await act(async () => primary()!.click())
+    expect(fetchDependencyOffer).toHaveBeenCalledWith('plot.py')
+    expect(useEnvStore.getState().originConfirmation?.script).toBe('plot.py')
+    expect(useDepRepairStore.getState().originDraft).toEqual({
+      script: 'plot.py',
+      names: ['lab_tools'],
+      values: { lab_tools: 'lab-tools' },
+    })
+    expect(panel().querySelector('[data-origin-input], input[type="text"]')).toBeNull()
+  })
+
+  it('取不到载荷：卡片上说一句人话，不开框', async () => {
+    await mount()
+    await openWith(report(STATES.originConfirm))
+    vi.mocked(fetchDependencyOffer).mockResolvedValueOnce({ offer: null, groups: [], rounds_remaining: 3 })
+    await act(async () => primary()!.click())
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('暂时读不到包名信息，请稍后再试。')
+    expect(useEnvStore.getState().originConfirmation).toBeNull()
+  })
+
+  it('取载荷挂起期间换了项目：整个丢弃，不把 A 的预填落进 B', async () => {
+    await mount()
+    await openWith(report(STATES.originConfirm))
+    let resolve!: (v: Awaited<ReturnType<typeof fetchDependencyOffer>>) => void
+    vi.mocked(fetchDependencyOffer).mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    const click = act(async () => primary()!.click())
+    setCurrentProjectId('pj-b')
+    await act(async () => resolve({ offer: planOffer(), groups: [], rounds_remaining: 3 }))
+    await click
+    expect(useEnvStore.getState().originConfirmation).toBeNull()
+    expect(useDepRepairStore.getState().originDraft).toBeNull()
   })
 })

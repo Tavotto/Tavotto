@@ -20,6 +20,7 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
+  fetchDependencyOffer,
   type GuiDialogPayload,
   type PreparationReport,
   type ProjectScan,
@@ -30,6 +31,7 @@ import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
+import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
 import { dialogKinds, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
@@ -39,6 +41,7 @@ import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
@@ -61,6 +64,7 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { ProbeResultsDialog } from './left/ScriptLibrary'
+import { OriginReasonCounts } from './OriginDetails'
 import { ScriptArgsForm } from './ScriptArgsForm'
 import { ArgvTokens, PasteCommand } from './ScriptArgvEditor'
 import { isSecret, suggestionText, useScriptInputAnswer, type ScriptInputAnswer } from './ScriptInputForm'
@@ -588,6 +592,8 @@ function ScanPill({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKin
  */
 const ARGS_FOLDED = new Set([
   'ready',
+  'origin_confirm',
+  'origin_unknown',
   'gui_dialog',
   'restarted',
   'rejected',
@@ -615,6 +621,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return p.count > 1 ? pt('btn.viewFigures', { count: p.count }) : pt('btn.enterEdit')
     case 'reopen':
       return pt(p.label === 'continue' ? 'btn.continue' : 'btn.retry')
+    case 'confirm_origins':
+      return pt('btn.confirmOrigins')
     case 'open_environment':
       return pt('btn.openSettings')
     case 'pick_environment':
@@ -686,6 +694,20 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
       case 'reopen':
         await store.open('id' in entry.target ? entry.target : scriptTarget(entry.target.script))
         return null
+      case 'confirm_origins': {
+        // 名字不在会话报告里（只有计数与原因码）：点的时候取一份联合计划载荷，框里读 `origins[]`。取回来时已换了项目就整个丢弃
+        const guard = captureProjectEpoch()
+        try {
+          const { offer } = await fetchDependencyOffer(report?.target.script ?? targetName(entry))
+          if (!guard.still()) return null
+          if (!offer) return pt('origin.unavailable')
+          useDepRepairStore.getState().openOrigin(offer)
+          return null
+        } catch (e) {
+          if (!guard.still()) return null
+          return e instanceof Error && e.message ? e.message : pt('origin.unavailable')
+        }
+      }
       case 'open_environment':
         ui.setEngineEnvOpen(true)
         return null
@@ -750,8 +772,10 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
     (view.state === 'no_figure_raster'
       ? pt('rasterHint.line', view.sentence.values)
       : pt(`line.${view.sentence.key}`, view.sentence.values))
+  const originView = localError ? null : originViewOfCard(view.state)
   const attrs = {
     'data-prep-state': localError ? 'action_failed' : view.state,
+    ...(originView ? { 'data-origin-view': originView } : {}),
     'data-prep-phase': report?.phase ?? '',
     'data-prep-session': report?.session_id ?? '',
     'data-prep-connection': entry.connection,
@@ -1092,6 +1116,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
     | undefined
   const attempt = report?.provider.attempt_id
   const dep = report?.provider.dependency
+  const originFacts = originFactsOf(report)
   const env = report?.environment
   const primaryAction = view.primary?.kind === 'action' ? view.primary.action : null
   const recheck = primaryAction !== 'recheck' && report?.actions.some((a) => a.kind === 'recheck')
@@ -1143,6 +1168,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       {wdReq?.kind === 'workdir_choice' && (wdReq.payload?.conflicts.length ?? 0) > 0 && (
         <p>{pt('workdir.conflicts', { files: (wdReq.payload?.conflicts ?? []).join(', ') })}</p>
       )}
+      {originFacts && <OriginReasonCounts facts={originFacts} />}
       {prepare && (prepare.impact.installs?.length ?? 0) > 0 && (
         <Row k={pt('detail.installs')} v={(prepare.impact.installs ?? []).join(', ')} attr="installs" />
       )}

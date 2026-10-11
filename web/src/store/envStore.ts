@@ -102,6 +102,13 @@ interface EnvState {
   requestDependencyPreparation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
   dismissDependencyPreparation: () => void
   /**
+   * 「确认包名」（Import Origin PR6）：计划里有 import 后端给了预填、要用户确认包名才能装。载荷同样住这里（与上面的授权同一个家），
+   * `ImportOriginDialog` 渲染它；输入与绑定的计划归 `depRepairStore`（`openOrigin` 一起设）。与授权框互不挤占；换项目 `resetProject` 清掉。
+   */
+  originConfirmation: DependencyPreparationOffer | null
+  requestOriginConfirmation: (offer: DependencyPreparationOffer, projectId?: string | null) => void
+  dismissOriginConfirmation: () => void
+  /**
    * 数据找不到（ADR 0106）：渲染以 `missing_input`（或带 `missing_input` 载荷的「没出图」）回来时，
    * 请用户指认那个文件或它所在的文件夹。载荷放这里（与运行目录的确认同一个家），
    * `MissingInputDialog` 渲染它；同一时刻只开一份，换了项目的旧载荷不弹。
@@ -249,6 +256,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   installing: false,
   workdirConfirmation: null,
   dependencyPreparation: null,
+  originConfirmation: null,
   missingInput: null,
   inputRemapGeneration: 0,
   probeResultsGeneration: 0,
@@ -411,6 +419,12 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     set({ dependencyPreparation: offer })
   },
   dismissDependencyPreparation: () => set({ dependencyPreparation: null }),
+  requestOriginConfirmation: (offer, projectId) => {
+    if (projectId !== undefined && projectId !== currentProjectId()) return
+    if (get().originConfirmation) return
+    set({ originConfirmation: offer })
+  },
+  dismissOriginConfirmation: () => set({ originConfirmation: null }),
   noteEnvironmentAdopted: (env) => {
     set((s) => ({ adoptedEnvironment: { ...env, token: (s.adoptedEnvironment?.token ?? 0) + 1 } }))
     adoptedDismissTimer.start(ADOPTED_NOTICE_MS, () => get().dismissAdoptedEnvironment())
@@ -623,6 +637,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         inputRemapSeen: null,
         workdirConfirmation: null,
         dependencyPreparation: null,
+        originConfirmation: null,
         missingInput: null,
         rewritePreview: null,
         rewriteSkipped: [],
@@ -635,6 +650,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         inputRemapSeen: null,
         workdirConfirmation: null,
         dependencyPreparation: null,
+        originConfirmation: null,
         missingInput: null,
         rewritePreview: null,
         rewriteSkipped: [],

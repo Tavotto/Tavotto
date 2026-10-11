@@ -4880,6 +4880,7 @@ export default interface Resources {
         "answer": "回答",
         "background": "放到后台",
         "cancelScan": "取消检查",
+        "confirmOrigins": "确认包名",
         "continue": "继续",
         "dismiss": "知道了",
         "enterEdit": "进入编辑",
@@ -5006,6 +5007,8 @@ export default interface Resources {
         "noFigure": "跑完了，没有出图",
         "notRegistered": "图没能登记",
         "offline": "连接断了，正在重连…",
+        "originConfirm_other": "有 {{count}} 个库要你确认包名",
+        "originUnknown_other": "有 {{count}} 个库的来源还没法确定",
         "preparing": "正在安装…",
         "ready": "可以运行了",
         "readyProject": "可以运行了，项目自带的环境会在运行时检查",
@@ -5017,6 +5020,59 @@ export default interface Resources {
         "stopping": "正在停止…",
         "unknown": "有一项没查清",
         "workdir": "在哪个目录运行？"
+      },
+      "origin": {
+        "btn": {
+          "back": "返回修改",
+          "confirmInstall": "确认并安装",
+          "review": "核对包名"
+        },
+        "coverage": {
+          "environment_not_checked": "这套 Python 还没检查过。",
+          "environment_unusable": "这套 Python 本身跑不起来。",
+          "module_import_failed_in_target_environment": "准备好的环境里装了它，但导入时出错。",
+          "module_import_failed_in_user_environment": "你的这套 Python 里装了它，但导入时出错。",
+          "module_missing_in_target_environment": "Tavotto 准备好的环境里还没有它。",
+          "module_not_found_in_user_environment": "你的这套 Python 里找不到它。",
+          "unknown": "暂时说不清这套 Python 的情况。"
+        },
+        "detail": {
+          "alternatives": "有几个包都能提供它，先按 {{distribution}} 装；想换别的，请改用你自己的 Python 环境。",
+          "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
+          "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
+          "userSpecifiedBadge": "用户指定，未经核实"
+        },
+        "dialog": {
+          "confirmUnverified_other": "这 {{count}} 个包是你指定的，未经可信来源核实；确认后才会安装。",
+          "heading": "确认包名",
+          "names": "请确认下面的库该装哪个包，也可以改成你要的。",
+          "noDisclosure": "没能读到这些包的来源说明，所以先不安装。",
+          "nothing": "现在没有需要你确认的包名。",
+          "placeholder": "包名，可加版本，如 name>=1.0"
+        },
+        "dist": {
+          "distribution_does_not_provide_import": "装上的包里没有脚本要用的库，包名可能填错了。",
+          "distribution_not_installed": "你确认的包没有装上。",
+          "distribution_unverifiable": "读不出这个包里有什么，没法确认它是对的。",
+          "distribution_version_mismatch": "装上的版本不符合要求。",
+          "unknown": "装上的东西和计划对不上。"
+        },
+        "distFailed": "装完后核对发现，装上的包和你确认的计划不一致。",
+        "error": {
+          "dependency_install_not_allowed": "这个库现在不能按你填的包名安装，请返回重新核对。",
+          "package_requirement_invalid": "包名格式不对，只写包名，或「包名>=版本」。"
+        },
+        "reason": {
+          "conda_package_not_pypi": "它是用 Conda 装的，用 pip 不一定能装到同样的东西。",
+          "distribution_unresolved": "Tavotto 不认识它，不知道该装哪个包。",
+          "editable_dependency_not_reproducible": "它是你本机上正在开发的库，Tavotto 没法在新环境里照样装一份。",
+          "installed_source_not_reproducible": "它是从本地文件或网址装的，Tavotto 没法照原样再装。",
+          "module_import_failed_in_target_environment": "它已经装了，但导入时出错，再装一遍也没用。",
+          "module_origin_ambiguous": "好几个包都能提供它，Tavotto 不替你挑。",
+          "unknown": "暂时无法确定它的来源。",
+          "unverified": "暂时查不清它是从哪来的，所以不动它。"
+        },
+        "unavailable": "暂时读不到包名信息，请稍后再试。"
       },
       "pill": {
         "pending": "待准备",
@@ -5034,6 +5090,8 @@ export default interface Resources {
         "input": "等你回答",
         "noFigure": "运行完成，没有图",
         "offline": "连接中断",
+        "originConfirm": "待确认包名",
+        "originUnknown": "来源待定",
         "preparing": "准备依赖中",
         "ready": "待运行",
         "running": "运行中",

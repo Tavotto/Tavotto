@@ -23,6 +23,7 @@ import type {
   PreparationRequirement,
   WorkdirConfirmation,
 } from '@/lib/api'
+import { originFactsOf } from '@/lib/importOrigin'
 import type { PrepEntry } from '@/store/projectPreparationStore'
 
 export type PrepPrimary =
@@ -33,6 +34,8 @@ export type PrepPrimary =
   | { kind: 'enter_edit'; count: number }
   | { kind: 'reopen'; label: 'retry' | 'continue' }
   | { kind: 'open_environment' }
+  /** 有 import 后端给了预填、要用户确认包名（Import Origin PR6）：打开「确认包名」框（先取一份计划载荷，要到名字） */
+  | { kind: 'confirm_origins' }
   /** 装不了 / 标准库缺了：直接打开「渲染环境」弹窗并展开「使用其他 Python 环境」（不是只打开设置） */
   | { kind: 'pick_environment' }
   | { kind: 'open_registry' }
@@ -141,7 +144,7 @@ const RASTER_LIBRARY_NAME: Record<string, string> = {
 
 const BUSY = new Set(['running', 'awaiting_runtime_input', 'preparing_environment'])
 /** 这几种状态下「运行」的前提是参数：必填参数没填齐就换成参数卡（任何卡都不说「可以运行」） */
-const ARGS_GATED = new Set(['ready', 'gui_dialog', 'restarted', 'needs_args', 'args_changed'])
+const ARGS_GATED = new Set(['ready', 'gui_dialog', 'restarted', 'needs_args', 'args_changed', 'origin_unknown'])
 
 export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
   const script = targetName(entry)
@@ -218,6 +221,19 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         return view('gui_dialog', key, v, has(report, 'run') ? act('run', 'runAnyway') : null, {
           slot: 'ready',
           tone: 'bad',
+        })
+      }
+      // 来源事实（Import Origin PR4/PR6，只有计数与闭集原因码）：有 import 没有可信的安装名时不说「可以运行了」——
+      // 带预填的（后端数在 `confirmable` 里）让用户确认包名；其余只说来源还没法确定，主按钮仍是报告里的运行（改口成「仍然运行」）
+      const origins = originFactsOf(report)
+      if (origins && origins.confirmable) {
+        return view('origin_confirm', 'originConfirm', { ...v, count: origins.confirmable }, { kind: 'confirm_origins' }, {
+          tone: 'mute',
+        })
+      }
+      if (origins) {
+        return view('origin_unknown', 'originUnknown', { ...v, count: origins.count }, has(report, 'run') ? act('run', 'runAnyway') : null, {
+          tone: 'mute',
         })
       }
       return view('ready', projectEnvDeferred(report) ? 'readyProject' : 'ready', v, has(report, 'run') ? act('run', 'run') : null, {
@@ -360,8 +376,11 @@ export function prepRowKey(entry: PrepEntry | undefined): { key: string; values:
       return { key: 'input', values: {} }
     case 'preparing_environment':
       return { key: 'preparing', values: {} }
-    case 'ready_to_run':
+    case 'ready_to_run': {
+      const origins = originFactsOf(report)
+      if (origins) return { key: origins.confirmable ? 'originConfirm' : 'originUnknown', values: {} }
       return { key: projectEnvDeferred(report) ? 'readyProject' : 'ready', values: {} }
+    }
     case 'completed':
       return report.outcome.kind === 'succeeded'
         ? { key: 'captured', values: { count: (report.captured ?? []).length } }

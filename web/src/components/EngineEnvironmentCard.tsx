@@ -15,6 +15,8 @@ import { Button, IconButton } from './ui/Button'
 import { FieldGroup } from './ui/FormSection'
 import { TextInput } from './ui/Input'
 import { Card } from './ui/Card'
+import { Details, Summary } from './ui/Details'
+import { CoverageDetailList } from './OriginDetails'
 import { Menu, MenuItem } from './ui/Menu'
 import { Notice } from './ui/Notice'
 
@@ -344,6 +346,15 @@ function EnvironmentAdviceRow() {
           {en('envAdviceBuiltIn')}
         </Button>
       </div>
+      {/* 这个环境对脚本要的库的覆盖度（后端 `candidate.coverage.detail`，只有检查过才有）：每个 detail 码一句人话，默认收起 */}
+      {(pick.coverage?.detail?.length ?? 0) > 0 && (
+        <Details className="text-xs text-ink-3" data-env-advice-coverage>
+          <Summary className="text-ink-2">{en('repairDetails')}</Summary>
+          <div className="mt-1">
+            <CoverageDetailList detail={pick.coverage?.detail} />
+          </div>
+        </Details>
+      )}
       {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
