@@ -3336,11 +3336,25 @@ def api_tutorial_open():
     # 里的排版——页面尺寸、面板摆放都可能已经不是这份资源的了（2026-09-13 把
     # 教程图幅从 80 mm 改到 65 mm 时抓到：旧槽位把面板按 1.19 倍摆回来，线宽
     # 检查全红）。副本目录都换了，进度本来就随目录走；槽位一并清掉，与重置同一处
-    cleared = (
-        _clear_tutorial_local_state(_project_id(tp.path), tp.metadata, tp.path)
-        if tp.created
-        else []
-    )
+    # 副本已经建好但槽位清理失败时，下一次 ensure 会回 created=False；用持久标记重试，
+    # 否则旧固定 ID 槽位会在下一次启动时盖回新教程。标记只能在清理成功后移除。
+    cleanup_pending = engine_config.data_dir() / "state" / "tutorial-cleanup-pending"
+    try:
+        if tp.created:
+            engine_atomicio.write_bytes(cleanup_pending, b"pending\n")
+        if tp.created or cleanup_pending.exists():
+            cleared = _clear_tutorial_local_state(
+                _project_id(tp.path), tp.metadata, tp.path, strict=True
+            )
+            cleanup_pending.unlink()
+        else:
+            cleared = []
+    except (OSError, engine_atomicio.AtomicWriteError):
+        return _tutorial_error(
+            engine_tutorial.TutorialError("tutorial_reset_incomplete", "旧教程排版没清掉")
+        )
+    except engine_tutorial.TutorialError as exc:
+        return _tutorial_error(exc)
     try:
         status = open_project(str(tp.path), make_default=bool(body.get("default", True)))
     except engine_tutorial.TutorialError as exc:
@@ -3381,8 +3395,7 @@ def _clear_tutorial_local_state(
 
     **槽位只在跨进程会话锁里删**（`delete_slot`）：绕过它删，另一个进程已通过 `slot_check` 的 `set_last`
     会发布一个指向已删文件的 durable last。拿不到锁就有界重试；仍不行**不删槽位**——`strict`（重置）
-    抛 `TutorialError("tutorial_reset_incomplete")`（新副本已就位、旧排版没清掉，文案见 errors.json）让调用方如实报失败，不静默留着旧进度；非 strict
-    （新副本建出来时的顺手清理）只记日志，槽位留到下次。
+    抛 `TutorialError("tutorial_reset_incomplete")`（新副本已就位、旧排版没清掉，文案见 errors.json）让调用方如实报失败。
     """
     removed: list[str] = []
     slot = _autosave_path(str(meta["document_id"]))
@@ -3407,7 +3420,8 @@ def _clear_tutorial_local_state(
         with _document_lock(slot):
             for attempt in range(_TUTORIAL_CLEAR_ATTEMPTS):
                 try:
-                    engine_layoutsession.delete_slot(slot.stem, _unlink_slot)
+                    if not engine_layoutsession.delete_slot(slot.stem, _unlink_slot):
+                        raise OSError("教程旧排版槽位未能删除")
                     if project_path is not None:
                         engine_layoutsession.forget_project(
                             engine_layoutsession.project_key(project_path),

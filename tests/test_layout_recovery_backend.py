@@ -1158,6 +1158,35 @@ def test_tutorial_reset_never_unlinks_the_slot_outside_the_session_lock(client, 
     assert not _slot(doc_id).exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="用 fcntl 模拟另一个持锁者；Windows 腿留给 CI")
+def test_tutorial_first_open_retries_deferred_slot_cleanup(client, monkeypatch):
+    """首次副本建好但文档锁被占：报未完成，下一次 created=False 仍清掉旧槽位才打开。"""
+    import fcntl
+
+    monkeypatch.setattr(m, "DOCUMENT_LOCK_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(m, "_TUTORIAL_CLEAR_PAUSE_S", 0)
+    doc_id = m.engine_tutorial.tutorial_metadata()["document_id"]
+    slot = _slot(doc_id)
+    slot.parent.mkdir(parents=True, exist_ok=True)
+    slot.write_text(json.dumps(_doc(1, "旧教程排版")), encoding="utf-8")
+    old_bytes = slot.read_bytes()
+    lock_file = layoutsession.doclock_path(m._lock_stripe(slot))
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_file, os.O_RDWR | os.O_CREAT)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    marker = m.engine_config.data_dir() / "state" / "tutorial-cleanup-pending"
+    try:
+        first = client.post("/api/tutorial/open", json={})
+        assert first.status_code == 500 and first.get_json()["code"] == "tutorial_reset_incomplete"
+        assert slot.read_bytes() == old_bytes
+        assert marker.is_file()
+    finally:
+        os.close(fd)
+    second = client.post("/api/tutorial/open", json={})
+    assert second.status_code == 200 and second.get_json()["created"] is False
+    assert not slot.exists() and not marker.exists()
+
+
 _SAVE_CHILD = r"""
 import json, os, sys, time
 sys.path.insert(0, sys.argv[1])
