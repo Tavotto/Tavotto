@@ -1,0 +1,29 @@
+name: PR940 isolated frame validation
+on:
+  push:
+    branches: [codex/pr940-frame-validation-20261011]
+permissions:
+  contents: read
+env:
+  TAVOTTO_NO_TELEMETRY: '1'
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ac034d555cfc04544e0aef93f931d44dcf879d67
+          persist-credentials: false
+      - name: Archive the exact PR source, without credentials or runtime data
+        run: |
+          git archive --format=zip --output="${RUNNER_TEMP}/pr940-source.zip" HEAD
+          git rev-parse HEAD > "${RUNNER_TEMP}/source-sha.txt"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: pr940-source-ac034d55
+          path: |
+            ${{ runner.temp }}/pr940-source.zip
+            ${{ runner.temp }}/source-sha.txt
+          retention-days: 1
+          if-no-files-found: error
