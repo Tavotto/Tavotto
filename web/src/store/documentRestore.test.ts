@@ -50,8 +50,22 @@ const fig1Info = {
   id: 'Fig1.pdf', name: 'Fig1', folder: '.', kind: 'pdf',
   native_w_mm: 80, native_h_mm: 60, mtime: 1, script: 'fig1.py',
 }
+/** 非空 = 接管 /candidates：按游标出页（后端是先翻页、后过滤归属，所以一页可以是空的而 next_cursor 仍在） */
+let candidatePages: ((cursor: string | null, n: number) => Response) | null = null
+let candidateCalls = 0
+const row = (id: string) => ({
+  doc_id: id, name: id, updatedAt: 1, mtime: 1, revision: 'r', schema: 3, status: 'ok',
+  canvases: 1, objects: 1, owner: 'this', evidence: 'owners',
+})
+const page = (items: string[], next: string | null) =>
+  new Response(JSON.stringify({ items: items.map(row), next_cursor: next, index: 'ok' }), { status: 200 })
+
 const fetchImpl = (async (url: unknown, init?: RequestInit) => {
   const u = new URL(String(url), 'http://127.0.0.1')
+  if (candidatePages && u.pathname === '/api/layout-session/candidates') {
+    candidateCalls += 1
+    return candidatePages(u.searchParams.get('cursor'), candidateCalls)
+  }
   if (u.pathname === '/api/panels') {
     return new Response(JSON.stringify({ panels: [fig1Info], figures_dir: '/figs/a' }), { status: 200 })
   }
@@ -96,6 +110,8 @@ function seedSavedLast(id = 'd_saved', name = 'Saved Fig') {
 }
 
 beforeEach(() => {
+  candidatePages = null
+  candidateCalls = 0
   localStorage.clear()
   sessionStorage.clear()
   be.reset()
@@ -739,5 +755,95 @@ describe('保存成功 → 元数据（CONTRACT 2.6）', () => {
     expect(ds(app).documentId).toBe('d_b')
     expect(ds(app).restoreMetaIssue).toBeNull()
     expect(lastPersistedB === null || typeof lastPersistedB === 'number').toBe(true)
+  })
+})
+
+describe('Codex P1：durable 后备 / 发现翻页 / 发现不可用', () => {
+  it('P1-a：纯意图正文缺失，durable last 也读不出来——不越过它悄悄装 prev；needs_user 指着 last，prev 留作出口', async () => {
+    be.putSlot('d_prev', savedProject('Prev'), 'p_a')
+    be.session('p_a').prev = { doc_id: 'd_prev', name: 'Prev', at: 3 }
+    be.setLast('p_a', 'd_last', 'Durable last') // 槽位不在
+    be.setPending('p_a', 'd_intent', '新打开的')   // 更晚的打开意图，也没有正文
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_prev')
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'missing', ref: { id: 'd_last' } })
+    expect(ds(app).restoreIssue!.alternatives.map((a) => a.id)).toEqual(['d_prev'])
+    expect(be.writes()).toEqual([])
+  })
+
+  it('P1-a 对照：last 能读就装 last（不是 prev）', async () => {
+    be.putSlot('d_prev', savedProject('Prev'), 'p_a')
+    be.session('p_a').prev = { doc_id: 'd_prev', name: 'Prev', at: 3 }
+    seedSavedLast('d_last', 'Durable last')
+    be.setPending('p_a', 'd_intent', '新打开的')
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(ds(app).documentId).toBe('d_last')
+  })
+
+  it('P1-b：第一页是空的但 next_cursor 还在，后面才有唯一一份 → 翻页后自动采用（不是 empty）', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = (cursor) => (cursor === null ? page([], 'c1') : cursor === 'c1' ? page([], 'c2') : page(['d_only'], null))
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(ds(app).documentId).toBe('d_only')
+    expect(candidateCalls).toBe(3)
+  })
+
+  it('P1-b：第一页看到一份、后面还有一份 → 是 choose，不是自动采用', async () => {
+    be.putSlot('d_one', savedProject('一'), 'p_a')
+    be.putSlot('d_two', savedProject('二'), 'p_a')
+    candidatePages = (cursor) => (cursor === null ? page(['d_one'], 'c1') : page(['d_two'], null))
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'choose' })
+    expect(ds(app).restoreIssue!.alternatives.map((a) => a.id).sort()).toEqual(['d_one', 'd_two'])
+    expect(ds(app).documentId).not.toBe('d_one')
+  })
+
+  it('P1-b：翻到上限游标还在 → 数不清：不自动采用、不当空；看到 ≥1 份给 choose，一份都没看到给重试出口', async () => {
+    be.putSlot('d_seen', savedProject('见到的'), 'p_a')
+    candidatePages = (_cursor, n) => page(n === 3 ? ['d_seen'] : [], `c${n}`) // 永远有下一页
+    const some = await boot()
+    expect(await some.doc.restoreSession()).toBe(false)
+    expect(candidateCalls).toBe(10)
+    expect(ds(some).restoreIssue).toMatchObject({ kind: 'choose' })
+    expect(ds(some).documentId).not.toBe('d_seen')
+
+    candidatePages = (_c, n) => page([], `c${n}`)
+    candidateCalls = 0
+    localStorage.clear()
+    const none = await boot()
+    expect(await none.doc.restoreSession()).toBe(false)
+    expect(ds(none).restoreIssue).toMatchObject({ kind: 'index_degraded', ref: null })
+    expect(none.doc.getRestoreGate().state).toBe('needs_user')
+  })
+
+  it('P1-c：发现端点 5xx 重试用尽 → needs_user（可重试），不是 empty；好了点重试 → 恢复', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = () => new Response('{}', { status: 503 })
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(candidateCalls).toBe(3) // 1 次 + 2 次重试
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'session_unavailable', ref: null })
+    expect(app.doc.getRestoreGate().state).toBe('needs_user')
+    candidatePages = (_c) => page(['d_only'], null)
+    expect(await app.restore.retryRestore()).toMatchObject({ kind: 'restored', id: 'd_only' })
+  })
+
+  it('P1-c：发现端点第一次 5xx、重试 200 → 照常采用', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = (_c, n) => (n === 1 ? new Response('{}', { status: 500 }) : page(['d_only'], null))
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+    expect(ds(app).documentId).toBe('d_only')
+  })
+
+  it('P1-c 对照：发现端点 404（旧后端）才可以是 empty', async () => {
+    candidatePages = () => new Response('{}', { status: 404 })
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'empty' })
   })
 })

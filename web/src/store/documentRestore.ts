@@ -54,7 +54,7 @@ import {
   type RestoreGate,
   type RestoreToken,
 } from '@/store/documentStore'
-import { fetchRecoveryCandidates } from '@/lib/api'
+import { fetchRecoveryCandidates, type RecoveryCandidateItem, type SessionIndexStatus } from '@/lib/api'
 import { isForeignDocument } from '@/lib/docOwnership'
 import { confirmRestored, planRestore, type CandidatePlan, type RestoreCandidate } from '@/lib/projectDocs'
 
@@ -274,6 +274,25 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
       // 打开意图还没有任何正文（新文档在首次保存前就退出了）：没有东西可恢复，退回已持久的那份。
       // 这不是「悄悄换旧稿」——最后一次**可恢复**的就是它（last 只指向可恢复正文）。
       // 带 backend_last / backend_prev 来源的不算意图（计划里 `pendingIntent` 只给纯意图）：那些缺了就是故障
+      // 后备**只认第一个 durable**（有 last 用 last，没有 last 才用 prev）。last 存在却读不出来时不能越过它
+      // 悄悄装 prev——那才是「换旧稿」；它失败 = 故障：needs_user，ref 指它，其余已验证的候选（含 prev）留作出口
+      const durable =
+        rest.find((c) => c.sources.includes('backend_last')) ?? rest.find((c) => c.sources.includes('backend_prev'))
+      if (durable) {
+        const p = await probeWithRetry(token, durable.id)
+        if (!p) return { kind: 'superseded' }
+        if (p.kind === 'found') return installProbe(token, p, plan, durable.name, 'restored')
+        const alts = await verifiedAlternatives(token, rest, durable.id)
+        if (!alts) return { kind: 'superseded' }
+        return needsUser(
+          token,
+          issueKindOf(p),
+          { id: durable.id, name: durable.name },
+          alts,
+          p.kind === 'too_new' ? { docId: durable.id, schema: p.schema ?? 0 } : undefined,
+        )
+      }
+      // 没有 durable 记录（只有本机线索）：按线索依次试，第一个能读的装
       for (const fb of rest) {
         const p = await probeWithRetry(token, fb.id)
         if (!p) return { kind: 'superseded' }
@@ -314,22 +333,37 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
   // 没有这组端点（playground / 嵌入画布 / 旧后端）：没有可发现的东西
   if (plan.session.kind === 'unsupported') return finishEmpty(token)
 
-  // 发现（只读）：后端按真实槽位枚举本项目明确归属的有效候选
-  const found = await fetchRecoveryCandidates('project', pj)
-  if (!isRestoreTokenCurrent(token)) return { kind: 'superseded' }
+  // 发现（只读）：后端按真实槽位枚举本项目明确归属的有效候选。**翻页在归属过滤之前**，所以空的一页不等于没有、
+  // 一页里看到一份也不等于只有一份：一直翻到头（有界）再判数量
+  const scan = await discoverAll(token)
+  if (!scan) return { kind: 'superseded' }
+  // 只有「没有这个端点」才是空；暂态不可用（网络 / 5xx）重试用尽后给出口，不当没有历史
+  if (scan === 'unsupported') return finishEmpty(token)
+  if (scan === 'unavailable') return needsUser(token, 'session_unavailable', null)
   // 发现不能翻案：计划已经因归属拒绝 / 问不到的线索（withheld）不会从发现里再被捡回来；本机索引确知属于别的项目的，
   // 只有后端 `owners` 证据才算数（仅 assets / versions 的同名证据不是归属转移，A17）
   const withheldIds = new Set(plan.withheld.map((w) => w.candidate.id))
-  const items =
-    typeof found === 'string'
-      ? []
-      : found.items.filter(
-          (i) =>
-            i.status === 'ok' &&
-            i.owner === 'this' &&
-            !withheldIds.has(i.doc_id) &&
-            (!isForeignDocument(i.doc_id, pj) || i.evidence === 'owners'),
-        )
+  const items = scan.items.filter(
+    (i) =>
+      i.status === 'ok' &&
+      i.owner === 'this' &&
+      !withheldIds.has(i.doc_id) &&
+      (!isForeignDocument(i.doc_id, pj) || i.evidence === 'owners'),
+  )
+  const asCandidates = items.slice(0, 5).map<RestoreCandidate>((i) => ({
+    id: i.doc_id,
+    name: i.name,
+    sources: ['discovered'],
+    ownership: 'this',
+    ...(i.evidence ? { ownershipEvidence: i.evidence } : {}),
+  }))
+  if (!scan.complete) {
+    // 数不清（翻到上限游标还在，或中途读不到）：不自动采用、也不说没有。已经看到的给用户选；一份都没有就给重试
+    //（最接近的现有类别 `index_degraded`：「恢复记录读不全」，出口 = 重试 / 继续新建）
+    return items.length > 0
+      ? needsUser(token, 'choose', null, asCandidates)
+      : needsUser(token, 'index_degraded', null)
+  }
   if (items.length === 1) {
     const item = items[0]
     const probe = await probeWithRetry(token, item.doc_id)
@@ -349,21 +383,57 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
     }
     return finishEmpty(token)
   }
-  if (items.length >= 2) {
-    const alternatives = items.slice(0, 5).map<RestoreCandidate>((i) => ({
-      id: i.doc_id,
-      name: i.name,
-      sources: ['discovered'],
-      ownership: 'this',
-      ...(i.evidence ? { ownershipEvidence: i.evidence } : {}),
-    }))
-    return needsUser(token, 'choose', null, alternatives)
-  }
+  if (items.length >= 2) return needsUser(token, 'choose', null, asCandidates)
   // 0 份：新项目 / 没有历史。恢复记录读不了（索引损坏）时说一句，但不阻塞——旧排版还在，打开排版对话框里找
-  if (plan.session.index === 'degraded' || (typeof found !== 'string' && found.index === 'degraded')) {
+  if (plan.session.index === 'degraded' || scan.index === 'degraded') {
     useUiStore.getState().setStatus(msg('restore.indexDegraded', undefined, 'workspace'), 'info')
   }
   return finishEmpty(token)
+}
+
+/** 发现翻页的上界：最多 10 页、扫 500 行 */
+const DISCOVER_MAX_PAGES = 10
+const DISCOVER_MAX_ROWS = 500
+
+/**
+ * 翻完本项目的找回候选（只读）。首页 `unavailable` 按有界重试（同 session 读取），仍失败 → `'unavailable'`；
+ * `unsupported` → `'unsupported'`。`complete=false`：到上界游标还在，或中途某页读不到。令牌过期回 null。
+ */
+async function discoverAll(
+  token: RestoreToken,
+): Promise<
+  | { items: RecoveryCandidateItem[]; complete: boolean; index: SessionIndexStatus }
+  | 'unsupported'
+  | 'unavailable'
+  | null
+> {
+  const items: RecoveryCandidateItem[] = []
+  const seen = new Set<string>()
+  let cursor: string | undefined
+  let index: SessionIndexStatus = 'ok'
+  let scanned = 0
+  for (let page = 0; page < DISCOVER_MAX_PAGES && scanned < DISCOVER_MAX_ROWS; page++) {
+    let res = await fetchRecoveryCandidates('project', token.pj, cursor)
+    for (let attempt = 0; res === 'unavailable' && attempt < retryDelays.length; attempt++) {
+      if (!isRestoreTokenCurrent(token)) return null
+      await pause(retryDelays[attempt], token)
+      if (!isRestoreTokenCurrent(token)) return null
+      res = await fetchRecoveryCandidates('project', token.pj, cursor)
+    }
+    if (!isRestoreTokenCurrent(token)) return null
+    if (res === 'unsupported') return page === 0 ? 'unsupported' : { items, complete: false, index }
+    if (res === 'unavailable') return page === 0 ? 'unavailable' : { items, complete: false, index }
+    if (res.index === 'degraded') index = 'degraded'
+    scanned += res.items.length
+    for (const it of res.items) {
+      if (seen.has(it.doc_id)) continue
+      seen.add(it.doc_id)
+      items.push(it)
+    }
+    if (res.next_cursor === null) return { items, complete: true, index }
+    cursor = res.next_cursor
+  }
+  return { items, complete: false, index }
 }
 
 function finishEmpty(token: RestoreToken): RestoreOutcome {

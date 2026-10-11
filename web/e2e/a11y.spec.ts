@@ -389,6 +389,10 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  // 与本文件其余几条同一个等法：等面板真的落进画布再开导出。启动恢复在路上时双击是排队的（ADR 0119），
+  // 慢机器上不等就会在图还没落地时打开导出——那时导出范围是空画布、EPS 置灰，量的就不是这张图的对话框
+  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
+    .toBeVisible({ timeout: 60_000 })
 
   const exportButton = page.getByRole('button', { name: /导出|Export/ }).first()
   await exportButton.focus()

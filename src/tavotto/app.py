@@ -9477,7 +9477,9 @@ def _slot_revision(doc_id: str) -> str | None:
     """槽位正文**此刻**的 revision（锁外读，只用来核对归属新鲜度）；槽位不在 / 读不出回 `None`。"""
     if not engine_layoutsession.valid_doc_id(doc_id):
         return None
-    return engine_atomicio.content_revision(AUTOSAVE_DIR / f"{doc_id}.json")
+    # 按目录列表匹配文件名，不拿请求里的 doc_id 拼路径（与 `_layout_owner_evidence` 同一做法）
+    slot = _file_named(AUTOSAVE_DIR, doc_id)
+    return engine_atomicio.content_revision(slot) if slot is not None else None
 
 
 def _slot_recoverable(path: Path) -> tuple[bool, str | None]:
@@ -9676,11 +9678,11 @@ CANDIDATE_MAX_ENTRIES = 20000
 CANDIDATE_LIST_CAP = 5
 
 
-def _candidate_entries() -> list[tuple[int, str, int]]:
-    """`AUTOSAVE_DIR` 里的槽位文件 `(mtime_ns, 文件名, 字节数)`，新→旧。
+def _candidate_entries() -> list[tuple[int, str, int, Path]]:
+    """`AUTOSAVE_DIR` 里的槽位文件 `(mtime_ns, 文件名, 字节数, 目录列表给出的路径)`，新→旧。
 
     只认 docId 形状的 `*.json` 普通文件，**不跟随符号链接**；不接受任何调用方给的路径。"""
-    rows: list[tuple[int, str, int]] = []
+    rows: list[tuple[int, str, int, Path]] = []
     try:
         with os.scandir(AUTOSAVE_DIR) as it:
             for n, entry in enumerate(it):
@@ -9695,14 +9697,14 @@ def _candidate_entries() -> list[tuple[int, str, int]]:
                     st = entry.stat(follow_symlinks=False)
                 except OSError:
                     continue
-                rows.append((st.st_mtime_ns, name, st.st_size))
+                rows.append((st.st_mtime_ns, name, st.st_size, Path(entry.path)))
     except OSError:
         return []
     rows.sort(key=lambda r: (-r[0], r[1]))
     return rows
 
 
-def _encode_cursor(row: tuple[int, str, int]) -> str:
+def _encode_cursor(row: tuple[int, str, int, Path]) -> str:
     import base64
 
     raw = json.dumps([row[0], row[1]]).encode("utf-8")
@@ -9727,11 +9729,10 @@ def _decode_cursor(text: str) -> tuple[int, str] | None:
     return None
 
 
-def _candidate_item(row: tuple[int, str, int], state: dict, ctx, key, scope: str):
+def _candidate_item(row: tuple[int, str, int, Path], state: dict, ctx, key, scope: str):
     """一个槽位的候选摘要；不属于这次 `scope` 的回 `None`。**只读**，任何一步出错只让自己 `invalid`。"""
-    mtime_ns, name, size = row
+    mtime_ns, name, size, path = row  # path 来自目录列表，不是请求字符串
     doc_id = name[:-5]
-    path = AUTOSAVE_DIR / name
     status = "ok"
     raw_bytes = None
     revision = None
