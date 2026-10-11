@@ -9154,7 +9154,6 @@ _DOCUMENT_LOCKS = [threading.Lock() for _ in range(64)]
 
 #: 等槽位文档锁的上限（秒；要大于持锁方最长的合理停顿——有用例会让持锁方停 10 s）。超时抛 `SessionStateUnavailable` → 503 `session_unavailable`，正文一个字节没写
 DOCUMENT_LOCK_TIMEOUT_S = 30.0
-DOCLOCK_DIRNAME = "doclocks"
 
 
 class _DocumentLock:
@@ -9177,10 +9176,7 @@ class _DocumentLock:
             )
         try:
             self._fd = engine_layoutsession.acquire_file_lock(
-                engine_config.data_path(
-                    engine_layoutsession.STATE_DIRNAME, DOCLOCK_DIRNAME, f"{self._stripe}.lock"
-                ),
-                deadline,
+                engine_layoutsession.doclock_path(self._stripe), deadline
             )
         except BaseException:
             thread_lock.release()
@@ -9196,6 +9192,12 @@ class _DocumentLock:
             _DOCUMENT_LOCKS[self._stripe].release()
 
 
+def _lock_stripe(path: Path) -> int:
+    """条带下标只取决于**文件名**（小写），不取决于路径怎么拼：两个进程经符号链接别名 / 大小写不同的写法
+    走到同一个槽位时必须选到同一把锁。不同目录里的同名文件共用一个条带，只是多串行一点。"""
+    return zlib.crc32(Path(path).name.lower().encode("utf-8")) % len(_DOCUMENT_LOCKS)
+
+
 def _document_lock(path: Path) -> _DocumentLock:
     """按**落盘路径**取锁，不按 doc_id / 画布名：`_autosave_path` 与
     `layout_path` 都会把非法字符归一成 `_`，于是两个不同的名字可能指向同一个
@@ -9207,16 +9209,17 @@ def _document_lock(path: Path) -> _DocumentLock:
 
     **锁是跨进程的**（`state/doclocks/<条带>.lock` 上的文件锁 + 进程内线程锁）：两个 Tavotto 进程共用
     一个数据目录时，「判冲突 → 写正文 → 读 revision → 提交归属」同样是一个原子段，否则 F 的归属会
-    记在 G 的正文 revision 上。条带下标用 `zlib.crc32`，**不能用 `hash()`**（每个进程盐不同，
-    两个进程会选到不同的锁）。不同文档偶尔共用一个条带只是多串行一点点。Windows 的 `msvcrt` 那条腿
-    只有 CI 验证。拿不到（10 s）抛 `SessionStateUnavailable`，由 `_session_unavailable_handler` 回 503。
+    记在 G 的正文 revision 上。条带下标用 `zlib.crc32(小写文件名)`：**不能用 `hash()`**（每个进程盐不同），
+    也不能用整条路径字符串（符号链接别名 / 大小写不同的写法会让两个进程选到不同的锁；锁文件在数据目录 realpath 下）。
+    不同文档偶尔共用一个条带只是多串行一点点。Windows 的 `msvcrt` 那条腿
+    只有 CI 验证。拿不到（30 s）抛 `SessionStateUnavailable`，由 `_session_unavailable_handler` 回 503。
 
     **与会话状态锁（`engine/layoutsession._LOCK`）的顺序全局固定：文档锁 → 会话锁**。
     自动保存（写正文 + `commit_slot`）、DELETE、清理（`remove_slot_unless_protected`）、
     `PUT /api/layout-session/last`（验槽位 + `set_last`）、教程重置都按这个顺序；
     会话锁内不读任何正文、不调需要文档锁的函数。反过来（持会话锁再取文档锁）会和上面任何一条路死锁。
     """
-    return _DocumentLock(zlib.crc32(str(path).encode("utf-8")) % len(_DOCUMENT_LOCKS))
+    return _DocumentLock(_lock_stripe(path))
 
 
 @app.get("/api/autosave/<doc_id>")
@@ -9828,15 +9831,19 @@ CANDIDATE_MAX_ENTRIES = 20000
 CANDIDATE_LIST_CAP = 5
 
 
-def _candidate_entries() -> list[tuple[int, str, int, Path]]:
+def _candidate_entries() -> tuple[list[tuple[int, str, int, Path]], bool]:
     """`AUTOSAVE_DIR` 里的槽位文件 `(mtime_ns, 文件名, 字节数, 目录列表给出的路径)`，新→旧。
 
-    只认 docId 形状的 `*.json` 普通文件，**不跟随符号链接**；不接受任何调用方给的路径。"""
+    只认 docId 形状的 `*.json` 普通文件，**不跟随符号链接**；不接受任何调用方给的路径。
+    回 `(行, truncated)`：目录里的条目超过 `CANDIDATE_MAX_ENTRIES` 时只看了前面一部分（扫描顺序是
+    目录原序，不是 mtime），`truncated=True`——调用方不能把这当成「列完了」。"""
     rows: list[tuple[int, str, int, Path]] = []
+    truncated = False
     try:
         with os.scandir(AUTOSAVE_DIR) as it:
             for n, entry in enumerate(it):
                 if n >= CANDIDATE_MAX_ENTRIES:
+                    truncated = True
                     break
                 name = entry.name
                 if not name.endswith(".json") or not engine_layoutsession.valid_doc_id(name[:-5]):
@@ -9851,11 +9858,11 @@ def _candidate_entries() -> list[tuple[int, str, int, Path]]:
                     continue
                 rows.append((st.st_mtime_ns, name, st.st_size, Path(entry.path)))
     except FileNotFoundError:
-        return []  # 槽位目录还不存在 = 没有任何槽位
+        return [], False  # 槽位目录还不存在 = 没有任何槽位
     # 其余 OSError（权限、网络盘）**往上抛**：目录在、只是列不出来，不是「没有」——折成空页的话
     # 前端会把项目当成空的、直接开一份空白排版
     rows.sort(key=lambda r: (-r[0], r[1]))
-    return rows
+    return rows, truncated
 
 
 def _encode_cursor(row: tuple[int, str, int, Path]) -> str:
@@ -10016,7 +10023,7 @@ def api_layout_session_candidates():
         state = {"projects": {}, "no_project": {}, "owners": {}, "owner_revisions": {}}
         index = "degraded"
     try:
-        rows = _candidate_entries()
+        rows, truncated = _candidate_entries()
     except OSError:
         return jsonify({"error": "本机排版目录此刻读不出来", "code": "candidates_unavailable"}), 503
     if after is not None:
@@ -10033,7 +10040,9 @@ def api_layout_session_candidates():
         if item is not None:
             items.append(item)
     next_cursor = _encode_cursor(rows[consumed - 1]) if consumed < len(rows) and consumed else None
-    resp = jsonify({"items": items, "next_cursor": next_cursor, "index": index})
+    resp = jsonify(
+        {"items": items, "next_cursor": next_cursor, "index": index, "truncated": truncated}
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

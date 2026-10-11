@@ -1219,8 +1219,7 @@ def test_document_lock_held_by_another_process_times_out_with_503_and_writes_not
 
     monkeypatch.setattr(m, "DOCUMENT_LOCK_TIMEOUT_S", 0.3)
     slot = m._autosave_path("d_held")
-    stripe = m.zlib.crc32(str(slot).encode("utf-8")) % len(m._DOCUMENT_LOCKS)
-    lock_file = layoutsession.state_path().parent / m.DOCLOCK_DIRNAME / f"{stripe}.lock"
+    lock_file = layoutsession.doclock_path(m._lock_stripe(slot))
     lock_file.parent.mkdir(parents=True)
     fd = os.open(lock_file, os.O_RDWR | os.O_CREAT)
     fcntl.flock(fd, fcntl.LOCK_EX)
@@ -1363,8 +1362,7 @@ def test_tutorial_reset_with_the_slot_document_lock_held_reopens_the_new_copy(cl
     doc_id = tut["tutorial"]["document_id"]
     assert _put(client, doc_id, _doc(), {"id": tut["project"]["id"]}).status_code == 200
     slot_bytes = _slot(doc_id).read_bytes()
-    stripe = m.zlib.crc32(str(m._autosave_path(doc_id)).encode("utf-8")) % len(m._DOCUMENT_LOCKS)
-    lock_file = layoutsession.state_path().parent / m.DOCLOCK_DIRNAME / f"{stripe}.lock"
+    lock_file = layoutsession.doclock_path(m._lock_stripe(m._autosave_path(doc_id)))
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lock_file, os.O_RDWR | os.O_CREAT)
     fcntl.flock(fd, fcntl.LOCK_EX)
@@ -1410,3 +1408,38 @@ def test_degraded_session_state_never_infers_ownership_from_assets_or_versions(
     unknown = _candidates(client, g, "unknown")
     assert [i["doc_id"] for i in unknown["items"]] == ["d_f"] and unknown["index"] == "degraded"
     assert unknown["items"][0]["owner"] == "unknown" and unknown["items"][0]["evidence"] is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="符号链接别名需要特权；Windows 腿留给 CI")
+def test_lock_identity_does_not_depend_on_how_the_data_dir_or_slot_is_spelled(
+    data_dir, tmp_path, monkeypatch
+):
+    """两个进程经符号链接别名 / 大小写不同的写法走到同一个槽位：同一个条带、同一个锁文件。"""
+    data_dir.mkdir(parents=True, exist_ok=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(data_dir, target_is_directory=True)
+    real_slot = data_dir / "layouts" / "_autosave" / "d_x.json"
+    alias_slot = alias / "layouts" / "_autosave" / "D_X.json"  # 别名 + 大小写不同
+    assert m._document_lock(real_slot)._stripe == m._document_lock(alias_slot)._stripe
+    stripe = m._document_lock(real_slot)._stripe
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(data_dir))
+    via_real = layoutsession.doclock_path(stripe), layoutsession.lock_path()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(alias))
+    via_alias = layoutsession.doclock_path(stripe), layoutsession.lock_path()
+    assert via_real == via_alias, "别名写法打开了另一个锁文件"
+
+
+def test_candidates_scan_cap_is_reported_as_truncated_not_as_complete(
+    client, tmp_path, monkeypatch
+):
+    a = _project(client, tmp_path, "a", default=True)
+    for i in range(5):
+        _put(client, f"d_{i}", _doc(i), a)
+    full = _candidates(client, a)
+    assert full["truncated"] is False and len(full["items"]) == 5
+    monkeypatch.setattr(m, "CANDIDATE_MAX_ENTRIES", 3)
+    cut = _candidates(client, a)
+    assert cut["truncated"] is True and cut["next_cursor"] is None  # 最后一页也不等于「列完了」
+    assert len(cut["items"]) == 3
+    monkeypatch.setattr(m, "CANDIDATE_MAX_ENTRIES", 5)  # 恰好等于上限：没有被截
+    assert _candidates(client, a)["truncated"] is False

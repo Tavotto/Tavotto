@@ -500,6 +500,8 @@ async function discoverAll(
   let cursor: string | undefined
   let index: SessionIndexStatus = 'ok'
   let scanned = 0
+  // 任何一页回包说「被截断」（后端自己的扫描上限到了）→ 数不清，粘性：之后的页再干净也不翻案
+  let truncated = false
   for (let page = 0; page < DISCOVER_MAX_PAGES && scanned < DISCOVER_MAX_ROWS; page++) {
     let res = await fetchRecoveryCandidates('project', token.pj, cursor)
     for (let attempt = 0; res === 'unavailable' && attempt < retryDelays.length; attempt++) {
@@ -512,13 +514,14 @@ async function discoverAll(
     if (res === 'unsupported') return page === 0 ? 'unsupported' : { items, complete: false, index }
     if (res === 'unavailable') return page === 0 ? 'unavailable' : { items, complete: false, index }
     if (res.index === 'degraded') index = 'degraded'
+    if (res.truncated) truncated = true
     scanned += res.items.length
     for (const it of res.items) {
       if (seen.has(it.doc_id)) continue
       seen.add(it.doc_id)
       items.push(it)
     }
-    if (res.next_cursor === null) return { items, complete: true, index }
+    if (res.next_cursor === null) return { items, complete: !truncated, index }
     cursor = res.next_cursor
   }
   return { items, complete: false, index }

@@ -129,8 +129,19 @@ class SessionStateUnavailable(OSError):
 # ------------------------------- 锁 -----------------------------------------
 
 
+def _canonical_state_dir() -> Path:
+    """锁文件所在目录：**数据目录的 realpath**。两个进程用不同写法（符号链接别名、大小写、相对路径）
+    指向同一个数据目录时，必须打开同一个锁文件，否则互不排斥。"""
+    return config.data_dir().resolve() / STATE_DIRNAME
+
+
 def lock_path() -> Path:
-    return config.data_path(STATE_DIRNAME, LOCK_FILENAME)
+    return _canonical_state_dir() / LOCK_FILENAME
+
+
+def doclock_path(stripe: int) -> Path:
+    """槽位文档锁条带 `stripe` 的锁文件（`app._document_lock`）；与 `lock_path` 同一个规范目录。"""
+    return _canonical_state_dir() / "doclocks" / f"{stripe}.lock"
 
 
 _LOCK_WARNED = False

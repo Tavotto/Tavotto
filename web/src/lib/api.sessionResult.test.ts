@@ -150,10 +150,18 @@ describe('fetchRecoveryCandidates', () => {
     expect(calls[0]).toContain('cursor=c1')
     if (typeof res === 'string') throw new Error('unexpected')
     expect(res.next_cursor).toBe('c2')
+    expect(res.truncated).toBe(false) // 旧后端不发 = false
     expect(res.index).toBe('degraded')
     expect(res.items).toHaveLength(2)
     expect(res.items[0]).toMatchObject({ doc_id: 'd_a', canvases: 2, objects: 7, owner: 'unknown', runtime: [{ script: 'fig1.py', figure: 'Fig1' }], panels: ['a.png'] })
     expect(res.items[1].status).toBe('invalid')
+  })
+
+  it('truncated：后端扫描碰到上限的标记原样带出（next_cursor 为 null 也不代表列全）', async () => {
+    stub(() => reply({ items: [], next_cursor: null, truncated: true, index: 'ok' }))
+    expect(await fetchRecoveryCandidates('project', 'p1')).toMatchObject({ next_cursor: null, truncated: true })
+    stub(() => reply({ items: [], next_cursor: null, truncated: 'yes' }))
+    expect(await fetchRecoveryCandidates('project', 'p1')).toMatchObject({ truncated: false })
   })
 
   it('404 = unsupported；其它失败 = unavailable', async () => {

@@ -167,7 +167,8 @@
     `state/doclocks/<条带>.lock` 上的文件锁（与会话锁共用 `layoutsession.acquire_file_lock`）。两个后端进程共用一个数据目录、
     从同一个 `base_revision` 保存同一个 doc id 时，「判冲突 → 写正文 → 读 revision → `commit_slot`」是同一个原子段，
     恰好一个成功、另一个 409，归属与 `owner_revisions` 对着最终正文（否则 F 会把 G 的正文 revision 记成自己的）。
-    条带下标用 `zlib.crc32`，**不能用 `hash()`**（每个进程盐不同）。自动保存 / 另存为 / ⌘S / 槽位清理 / DELETE / `PUT last` /
+    条带下标 = `zlib.crc32(小写文件名)`：**不能用 `hash()`**（每个进程盐不同），也**不能用整条路径字符串**（符号链接别名 / 大小写不同的写法
+    会让两个进程选到不同的锁）；锁文件（会话锁与条带锁）都在**数据目录 realpath** 下的 `state/`，别名写法打开同一个文件。自动保存 / 另存为 / ⌘S / 槽位清理 / DELETE / `PUT last` /
     教程重置共用这套条带；**没有任何一条路同时持两个文档锁**（不可重入；清理一次只处理一个槽位），
     顺序全局是 文档锁 → 会话锁。等不到（30 s，要大于持锁方的合理停顿）抛 `SessionStateUnavailable`，
     `@app.errorhandler` 回 503 `session_unavailable`，此时一个字节没写；清理里等不到只是这次不清它。锁文件打不开
@@ -205,7 +206,8 @@
     从 `AUTOSAVE_DIR` 的**真实槽位**里列出能找回的（不要求先知道 docId，owners 只是线索：不存在的文件不列）。
     只枚举 docId 形状的 `*.json` 普通文件（不跟随符号链接、不接受任何路径），按 mtime 新→旧、游标分页（游标是
     `(mtime_ns, 文件名)` 的不透明编码）；每页最多读 `limit`（≤100）个文件、字节有预算（至少读一个），单文件 > 32 MB 不读、
-    `status:"too_large"`；一页里被 scope 过滤掉的不返回，所以一页可能不满、`next_cursor` 仍非空——调用方循环翻页。
+    `status:"too_large"`；目录条目超过 20000 时只看了目录原序的前一部分，响应带 **`truncated: true`**（`next_cursor` 为 null 也不等于列完了，
+    调用方不得据此自动采用唯一候选或判定为空）；一页里被 scope 过滤掉的不返回，所以一页可能不满、`next_cursor` 仍非空——调用方循环翻页。
     每项 `{doc_id, name, updatedAt, mtime, revision, schema, status: ok|invalid|too_new|too_large, canvases, objects, owner:
     this|unknown, evidence, runtime:[{script,figure}], panels:[…], sketch?}`（非 ok 的 `canvases`/`objects` 是 `null`，不冒充 0；
     `runtime`/`panels` 最多 5 个、绝对路径只留最后一段；`sketch` 复用时间线的 `_version_sketch`，不带 overrides / 脚本）。

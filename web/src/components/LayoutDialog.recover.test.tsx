@@ -272,6 +272,30 @@ describe('找回入口的可发现性与只读', () => {
     }
   })
 
+  it('扫描碰到后端上限（truncated）：没有行也不说「没有」，说只扫描了一部分；有行时行下面也提示', async () => {
+    backend.state.truncated = true
+    await mount()
+    expect(dialog().querySelector('[data-recover-group="project"] [data-recover-truncated]')).not.toBeNull()
+    await expandOther()
+    expect(dialog().textContent).toContain('只扫描了一部分')
+    expect(dialog().textContent).not.toContain('没有找到其他排版')
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+
+    backend.putSlot('d_mine', runtimeDoc('我的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_mine', scope: 'project', name: '我的排版' })
+    await mount()
+    expect(rows('project')).toHaveLength(1)
+    expect(dialog().querySelector('[data-recover-truncated]')).not.toBeNull()
+  })
+
+  it('没截断时 0 行仍说「没有找到其他排版」', async () => {
+    await mount()
+    await expandOther()
+    expect(dialog().textContent).toContain('没有找到其他排版')
+    expect(dialog().querySelector('[data-recover-truncated]')).toBeNull()
+  })
+
   it('「另存为」那一屏没有这个入口', async () => {
     await mount('save')
     expect(dialog().querySelector('[data-layout-recover]')).toBeNull()

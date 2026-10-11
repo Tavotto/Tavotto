@@ -154,6 +154,38 @@ describe('loadCandidates：分页有界、去重、排除当前文档', () => {
     expect(bounded.list.next).toBe('c5')
   })
 
+  it('truncated 带进列表结果与发现结果（没有下一页也不代表列全）', async () => {
+    backend.putSlot('d_x', doc('x'))
+    backend.state.candidates.push({ doc_id: 'd_x', scope: 'project' })
+    backend.state.truncated = true
+    const res = await loadCandidates('project', PJ)
+    if (res.kind !== 'ok') throw new Error('x')
+    expect(res.list).toMatchObject({ next: null, truncated: true })
+    const found = await discoverProjectCandidates(PJ)
+    expect(found).toMatchObject({ kind: 'ok', more: false, truncated: true })
+    backend.state.truncated = false
+    expect(await discoverProjectCandidates(PJ)).toMatchObject({ truncated: false })
+  })
+
+  it('truncated 是粘性的：中间一页截断、最后一页没截断，结果仍是 true；加载更多也继承', async () => {
+    const item = { doc_id: 'd_late', name: 'x', updatedAt: 1, mtime: 1, revision: 'r', schema: 3, status: 'ok', canvases: 1, objects: 1, owner: 'this', evidence: 'owners' }
+    const pages = [
+      { items: [], next_cursor: 'c1', truncated: true },
+      { items: [item], next_cursor: null, truncated: false },
+    ]
+    let n = 0
+    globalThis.fetch = (async () => new Response(JSON.stringify({ ...pages[Math.min(n++, 1)], index: 'ok' }))) as typeof fetch
+    const res = await loadCandidates('project', PJ)
+    if (res.kind !== 'ok') throw new Error('x')
+    expect(res.list.rows).toHaveLength(1)
+    expect(res.list.truncated).toBe(true)
+    // 加载更多：上一次已截断，这一页没截断，仍是 true
+    globalThis.fetch = (async () => new Response(JSON.stringify({ items: [], next_cursor: null, truncated: false, index: 'ok' }))) as typeof fetch
+    const more = await loadCandidates('project', PJ, { ...res.list, next: 'c9' })
+    if (more.kind !== 'ok') throw new Error('x')
+    expect(more.list.truncated).toBe(true)
+  })
+
   it('排除此刻开着的那份；故障分类原样给出', async () => {
     backend.putSlot('d_cur', doc('cur'))
     backend.putSlot('d_x', doc('x'))

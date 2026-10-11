@@ -276,10 +276,17 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <div className="flex flex-col gap-3" data-layout-recover>
       {project.state === 'unavailable' && retry('project')}
-      {(ownRows.length > 0 || (project.state === 'ok' && project.list.next)) && (
+      {(ownRows.length > 0 || (project.state === 'ok' && (project.list.next || project.list.truncated))) && (
         <section className="flex flex-col gap-1" data-recover-group="project">
           <h3 className="type-section px-1">{t('dialogs:layout.recoverProjectTitle')}</h3>
-          {ownRows.length === 0 && <p className="px-1 text-sm text-ink-3">{t('dialogs:layout.recoverKeepLooking')}</p>}
+          {ownRows.length === 0 && project.state === 'ok' && project.list.next && (
+            <p className="px-1 text-sm text-ink-3">{t('dialogs:layout.recoverKeepLooking')}</p>
+          )}
+          {project.state === 'ok' && project.list.truncated && (
+            <p className="px-1 text-sm text-ink-3" data-recover-truncated>
+              {t('dialogs:layout.recoverTruncated')}
+            </p>
+          )}
           <ul className="-mx-1 flex max-h-60 flex-col gap-0.5 overflow-y-auto">
             {ownRows.map((it) => (
               <li key={it.doc_id} className="flex">
@@ -320,7 +327,9 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
               <p className="text-sm text-ink-3">
                 {other.state === 'ok' && other.list.next
                   ? t('dialogs:layout.recoverKeepLooking')
-                  : t('dialogs:layout.recoverEmptyOther')}
+                  : other.state === 'ok' && other.list.truncated
+                    ? t('dialogs:layout.recoverTruncated')
+                    : t('dialogs:layout.recoverEmptyOther')}
               </p>
             )}
             {otherRows.length > 0 && (
@@ -360,6 +369,11 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
                   )
                 })}
               </ul>
+            )}
+            {other.state === 'ok' && other.list.truncated && otherRows.length > 0 && (
+              <p className="text-sm text-ink-3" data-recover-truncated>
+                {t('dialogs:layout.recoverTruncated')}
+              </p>
             )}
             {moreButton('unknown', other)}
           </div>

@@ -45,6 +45,8 @@ export interface CandidateList {
   next: string | null
   /** 到了 `CANDIDATE_CAP`，后面还有但不再给 */
   capped: boolean
+  /** 后端扫描碰到上限：`next` 为 null 也不代表已列全（界面说"可能还有更多"，不说"没有"） */
+  truncated: boolean
   index: SessionIndexStatus
 }
 
@@ -68,6 +70,8 @@ export async function loadCandidates(
   let cursor = prev?.next ?? undefined
   let next: string | null = null
   let index: SessionIndexStatus = prev?.index ?? 'ok'
+  // 粘性：读过的任何一页截断过，结果就是截断的（后面不截断的页不能把它冲掉）；「加载更多」也继承上一次的
+  let truncated = prev?.truncated ?? false
   // 后端按 scope 过滤之后一页可能很短甚至为空，而 next_cursor 仍在：没读到新行就接着翻，翻页数有界
   for (let hops = 0; hops < MAX_EMPTY_HOPS; hops++) {
     const res = await fetchRecoveryCandidates(scope, pj, cursor, CANDIDATE_PAGE)
@@ -77,6 +81,7 @@ export async function loadCandidates(
     }
     index = res.index
     next = res.next_cursor
+    truncated ||= res.truncated
     let added = 0
     for (const it of res.items) {
       if (seen.has(it.doc_id) || exclude?.has(it.doc_id)) continue
@@ -89,7 +94,7 @@ export async function loadCandidates(
     cursor = next
   }
   const capped = rows.length >= CANDIDATE_CAP && next !== null
-  return { kind: 'ok', list: { rows, next: capped ? null : next, capped, index } }
+  return { kind: 'ok', list: { rows, next: capped ? null : next, capped, truncated, index } }
 }
 
 /**
@@ -100,7 +105,7 @@ export async function loadCandidates(
 export async function discoverProjectCandidates(
   pj: string | null,
 ): Promise<
-  | { kind: 'ok'; items: RecoveryCandidateItem[]; more: boolean; index: SessionIndexStatus }
+  | { kind: 'ok'; items: RecoveryCandidateItem[]; more: boolean; truncated: boolean; index: SessionIndexStatus }
   | { kind: 'unsupported' }
   | { kind: 'unavailable' }
 > {
@@ -110,6 +115,7 @@ export async function discoverProjectCandidates(
     kind: 'ok',
     items: res.items.filter((it) => it.owner === 'this' && rowIssue(it) === null),
     more: res.next_cursor !== null,
+    truncated: res.truncated,
     index: res.index,
   }
 }

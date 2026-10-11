@@ -73,6 +73,8 @@ export function createFakeBackend() {
     pageSize: 50,
     /** true = autosave GET 不带 X-Tavotto-Revision（代理吃了响应头） */
     stripRevisionHeader: false,
+    /** 候选扫描碰到后端上限（回包 truncated:true） */
+    truncated: false,
   }
 
   const session = (pj: string): Session => {
@@ -220,7 +222,7 @@ export function createFakeBackend() {
         }
       })
       const next = cursor + limit < all.length ? String(cursor + limit) : null
-      return json({ items, next_cursor: next, index: 'ok' })
+      return json({ items, next_cursor: next, truncated: b.truncated, index: 'ok' })
     }
     return json({ error: 'nf' }, 404)
   }) as typeof fetch
@@ -272,6 +274,7 @@ export function createFakeBackend() {
       b.metadata = 'ok'
       b.pageSize = 50
       b.stripRevisionHeader = false
+      b.truncated = false
     },
   }
 }

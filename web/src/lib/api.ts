@@ -1202,6 +1202,8 @@ export interface RecoveryCandidateItem {
 export interface RecoveryCandidatePage {
   items: RecoveryCandidateItem[]
   next_cursor: string | null
+  /** 后端这次扫描碰到了自己的上限：`next_cursor` 为 null **不代表**已经列全。旧后端不发 = false */
+  truncated: boolean
   index: SessionIndexStatus
 }
 
@@ -1266,6 +1268,7 @@ export async function fetchRecoveryCandidates(
     return {
       items,
       next_cursor: typeof body?.next_cursor === 'string' && body.next_cursor ? body.next_cursor : null,
+      truncated: body?.truncated === true,
       index: INDEX_STATUSES.find((s) => s === body?.index) ?? 'ok',
     }
   } catch (e) {

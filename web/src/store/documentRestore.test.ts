@@ -1308,3 +1308,40 @@ describe('Codex P1：期望修订号在、读到的修订号是空', () => {
     expect(await app.doc.restoreSession()).toBe(true)
   })
 })
+
+describe('发现被后端截断（truncated）', () => {
+  const truncatedPage = (items: string[], next: string | null, truncated: boolean) =>
+    new Response(JSON.stringify({ items: items.map(row), next_cursor: next, index: 'ok', truncated }), { status: 200 })
+
+  it('唯一一行可见 + truncated → 不自动采用，给 choose', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = () => truncatedPage(['d_only'], null, true)
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).documentId).not.toBe('d_only')
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'choose' })
+    expect(ds(app).restoreIssue!.alternatives.map((a) => a.id)).toEqual(['d_only'])
+  })
+
+  it('truncated 是粘性的：第一页截断、后面的页再干净也不翻案', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = (cursor) => (cursor === null ? truncatedPage([], 'c1', true) : truncatedPage(['d_only'], null, false))
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'choose' })
+  })
+
+  it('0 行 + truncated → 重试出口（index_degraded），不是空', async () => {
+    candidatePages = () => truncatedPage([], null, true)
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(false)
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'index_degraded', ref: null })
+  })
+
+  it('对照：没截断的唯一一行照旧自动采用', async () => {
+    be.putSlot('d_only', savedProject('唯一'), 'p_a')
+    candidatePages = () => truncatedPage(['d_only'], null, false)
+    const app = await boot()
+    expect(await app.doc.restoreSession()).toBe(true)
+  })
+})
