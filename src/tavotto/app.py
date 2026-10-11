@@ -9696,10 +9696,14 @@ def _candidate_entries() -> list[tuple[int, str, int, Path]]:
                         continue
                     st = entry.stat(follow_symlinks=False)
                 except OSError:
+                    # 瞬时的 stat 失败不能让候选消失：留一行 size=-1，`_candidate_item` 把它报成 invalid
+                    rows.append((0, name, -1, Path(entry.path)))
                     continue
                 rows.append((st.st_mtime_ns, name, st.st_size, Path(entry.path)))
-    except OSError:
-        return []
+    except FileNotFoundError:
+        return []  # 槽位目录还不存在 = 没有任何槽位
+    # 其余 OSError（权限、网络盘）**往上抛**：目录在、只是列不出来，不是「没有」——折成空页的话
+    # 前端会把项目当成空的、直接开一份空白排版
     rows.sort(key=lambda r: (-r[0], r[1]))
     return rows
 
@@ -9739,7 +9743,9 @@ def _candidate_item(row: tuple[int, str, int, Path], state: dict, ctx, key, scop
     doc: dict | None = None
     loaded = None
     schema = None
-    if size > CANDIDATE_MAX_BYTES:
+    if size < 0:
+        status = "invalid"  # 列目录时 stat 不了：不读，如实报 invalid
+    elif size > CANDIDATE_MAX_BYTES:
         status = "too_large"
     else:
         try:
@@ -9854,7 +9860,10 @@ def api_layout_session_candidates():
     except OSError:
         state = {"projects": {}, "no_project": {}, "owners": {}, "owner_revisions": {}}
         index = "degraded"
-    rows = _candidate_entries()
+    try:
+        rows = _candidate_entries()
+    except OSError:
+        return jsonify({"error": "本机排版目录此刻读不出来", "code": "candidates_unavailable"}), 503
     if after is not None:
         rows = [r for r in rows if (-r[0], r[1]) > (-after[0], after[1])]
     items: list[dict] = []

@@ -559,6 +559,9 @@ NON_UI_CODES = {
     # ADR 0119：会话状态此刻读不到 / 跨进程锁拿不到（503）。同样只在后台「上次开着的」推送里出现，前端当成
     # 可重试的失败、留着待确认标记下次补推（`lib/projectDocs.pushRemote`），从不显示给用户
     "session_unavailable",
+    # 候选发现（只读）：槽位目录在、却列不出来（权限 / 网络盘）→ 503。前端当成 unavailable 走重试，不折成空项目，
+    # 从不把这个 code 显示给用户
+    "candidates_unavailable",
 }
 
 

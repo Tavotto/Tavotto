@@ -18,6 +18,7 @@ import { currentProjectId } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { openDocumentAs } from '@/store/actions'
 import { acceptProbe, probeDocument, useDocumentStore } from '@/store/documentStore'
+import { useProjectStore } from '@/store/projectStore'
 import { captureSaveContext, stillCurrent } from '@/store/saveContext'
 import { useUiStore } from '@/store/uiStore'
 import { formatRelativeTime, listJoin } from '@/i18n/format'
@@ -63,6 +64,8 @@ function savedAt(it: RecoveryCandidateItem): number | null {
 export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation(['dialogs', 'common'])
   const currentId = useDocumentStore((s) => s.documentId)
+  /** 项目换了（对话框开着时桌面交接等）：两组列表都是上一个项目的，丢掉重读 */
+  const projectKey = useProjectStore((s) => s.project?.id ?? null)
   const [project, setProject] = useState<Group>({ state: 'idle' })
   const [other, setOther] = useState<Group>({ state: 'idle' })
   const [otherOpen, setOtherOpen] = useState(false)
@@ -72,6 +75,8 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   /** 代次：重开 / 换项目 / 刷新之后，旧请求的结果不许落进新的列表 */
   const seq = useRef(0)
   const inFlight = useRef(false)
+  /** 每组列表是替哪个项目读的：点击时对不上此刻的项目就拒绝（界面还没来得及换也不放行） */
+  const listPj = useRef<{ project: string | null; unknown: string | null }>({ project: null, unknown: null })
 
   const load = useCallback(
     async (scope: 'project' | 'unknown', prev?: CandidateList) => {
@@ -79,6 +84,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       const mine = seq.current
       set(prev ? { state: 'loading', list: prev } : { state: 'loading' })
       const pj = currentProjectId()
+      listPj.current[scope] = pj
       const res = await loadCandidates(scope, pj, prev, new Set([useDocumentStore.getState().documentId]))
       if (mine !== seq.current) return
       set(asGroup(res))
@@ -98,7 +104,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     return () => {
       seq.current += 1
     }
-  }, [open, load])
+  }, [open, load, projectKey])
 
   /**
    * 按原 id 打开一份自动保存：**入口取一次上下文**（`saveContext.ts`），读完回来先核对项目 / 排版还是同一个，
@@ -124,9 +130,19 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     return useDocumentStore.getState().documentId === id
   }
 
+  /** 这一行是替别的项目读的（项目换了而界面还没换）：不动，状态条说没打开，并按新项目重读 */
+  const rowsStale = (scope: 'project' | 'unknown', name: string): boolean => {
+    if (listPj.current[scope] === currentProjectId()) return false
+    useUiStore.getState().setStatus(msg('layout.openSkipped', { name }, 'dialogs'), 'error')
+    seq.current += 1
+    void load(scope)
+    return true
+  }
+
   /** 点「这个项目的本机排版」里的一行：按原 id 打开 */
   const openOwn = async (it: RecoveryCandidateItem) => {
     if (inFlight.current) return
+    if (rowsStale('project', it.name)) return
     inFlight.current = true
     setBusy(true)
     try {
@@ -159,6 +175,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   /** 「恢复副本」的确认：此刻才读源正文核对 revision；副本以固定目标 id 装进文档、走正常保存链 */
   const confirmCopy = async (it: RecoveryCandidateItem) => {
     if (inFlight.current) return
+    if (rowsStale('unknown', it.name)) return
     inFlight.current = true
     setBusy(true)
     setNotice(null)

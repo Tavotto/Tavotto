@@ -161,5 +161,8 @@ describe('fetchRecoveryCandidates', () => {
     expect(await fetchRecoveryCandidates('project', 'p1')).toBe('unsupported')
     stub(() => reply({}, 500))
     expect(await fetchRecoveryCandidates('project', 'p1')).toBe('unavailable')
+    // 后端的可重试失败（503 candidates_unavailable）= unavailable，不是 unsupported
+    stub(() => reply({ error: 'x', code: 'candidates_unavailable' }, 503))
+    expect(await fetchRecoveryCandidates('unknown', 'p1')).toBe('unavailable')
   })
 })

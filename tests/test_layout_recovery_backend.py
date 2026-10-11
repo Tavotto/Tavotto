@@ -986,3 +986,63 @@ def test_pointers_carry_the_revision_they_were_validated_against(client, tmp_pat
         "revision"
         not in layoutsession.view_for(layoutsession.project_key(f["figures_dir"]))["last"]
     )
+
+
+def test_candidates_listing_failure_is_unavailable_not_an_empty_page(client, tmp_path, monkeypatch):
+    """槽位目录存在但列不出来（权限 / 网络盘）：不能回一页空的成功——前端会当成空项目。目录不存在才是空页。"""
+    a = _project(client, tmp_path, "a", default=True)
+    assert _candidates(client, a)["items"] == []  # 目录还不存在：空页（首次）
+    _put(client, "d_1", _doc(), a)
+
+    def boom(path):
+        raise PermissionError(13, "denied")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(m.os, "scandir", boom)
+        r = client.get("/api/layout-session/candidates?scope=project", headers=_pj(a["id"]))
+    assert r.status_code == 503 and r.get_json()["code"] == "candidates_unavailable"
+    assert [i["doc_id"] for i in _candidates(client, a)["items"]] == ["d_1"]
+
+
+def test_candidates_a_transient_stat_failure_yields_an_invalid_item_not_a_missing_one(
+    client, tmp_path, monkeypatch
+):
+    a = _project(client, tmp_path, "a", default=True)
+    _put(client, "d_ok", _doc(), a)
+    _put(client, "d_flaky", _doc(), a)
+    real = os.scandir
+
+    class Entry:
+        def __init__(self, e):
+            self._e = e
+            self.name, self.path = e.name, e.path
+
+        def is_symlink(self):
+            return self._e.is_symlink()
+
+        def is_file(self, **kw):
+            return self._e.is_file(**kw)
+
+        def stat(self, **kw):
+            if self.name == "d_flaky.json":
+                raise PermissionError(13, "transient")
+            return self._e.stat(**kw)
+
+    class Scan:
+        def __init__(self, path):
+            self._it = real(path)
+
+        def __enter__(self):
+            return (Entry(e) for e in self._it.__enter__())
+
+        def __exit__(self, *exc):
+            return self._it.__exit__(*exc)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(m.os, "scandir", Scan)
+        items = {i["doc_id"]: i for i in _candidates(client, a)["items"]}
+    assert set(items) == {"d_ok", "d_flaky"}
+    flaky = items["d_flaky"]
+    assert flaky["status"] == "invalid" and flaky["revision"] is None
+    assert flaky["canvases"] is None and flaky["objects"] is None
+    assert items["d_ok"]["status"] == "ok"

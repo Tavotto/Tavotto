@@ -60,7 +60,7 @@ let root: Root
 /** 在途的 fetch 数：`flush` 靠它知道「请求都落地了」，不靠固定时长的 sleep（负载高时固定时长不够） */
 let inFlight = 0
 
-async function mount(intent: 'load' | 'save' = 'load') {
+async function mount(intent: 'load' | 'save' = 'load', settle = true) {
   globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     inFlight += 1
     try {
@@ -79,7 +79,7 @@ async function mount(intent: 'load' | 'save' = 'load') {
   await act(async () => {
     root.render(<LayoutDialog />)
   })
-  await flush()
+  if (settle) await flush()
 }
 
 /**
@@ -357,6 +357,87 @@ describe('恢复副本（A15 / A30）', () => {
     const copies = [...backend.state.slots.keys()].filter((k) => k.startsWith('d_rc_'))
     expect(copies).toHaveLength(1)
     expect(backend.puts().filter((c) => c.startsWith('PUT autosave d_rc_'))).toHaveLength(1)
+  })
+})
+
+/** 对话框开着时项目 A → B（桌面交接等）：会话里的 pj 和项目 store 一起换 */
+async function switchToB() {
+  await act(async () => {
+    setCurrentProjectId('p_b')
+    useProjectStore.setState({ project: { open: true, id: 'p_b', document_dir: '/figs/b/tavottofile' } })
+  })
+}
+
+describe('对话框开着时切了项目：A 的行不留在 B 里（Codex P1）', () => {
+  it('A 的行已加载：切到 B 后 A 的行消失，按 B 重新读；B 没有行就不显示本项目那组', async () => {
+    backend.putSlot('d_a', runtimeDoc('A 的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_a', scope: 'project', name: 'A 的排版' })
+    await mount()
+    expect(rows('project').map((r) => r.dataset.recoverRow)).toEqual(['d_a'])
+    backend.state.candidates.length = 0 // B 里什么都没有
+    await switchToB()
+    await flush()
+    expect(rows('project')).toEqual([])
+    expect(backend.state.candidatePjs).toEqual([PJ, 'p_b'])
+  })
+
+  it('A 的读取还在路上时切到 B：A 的结果回来也不显示', async () => {
+    backend.putSlot('d_a', runtimeDoc('A 的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_a', scope: 'project', name: 'A 的排版' })
+    let release!: () => void
+    backend.state.hold.candidates = new Promise<void>((r) => (release = r))
+    await mount('load', false) // 请求被扣住：不等它落地
+    await until(() => backend.state.candidatePjs.length === 1)
+    await switchToB()
+    backend.state.candidates.length = 0
+    release()
+    await flush()
+    expect(rows('project')).toEqual([])
+    expect(backend.state.candidatePjs).toEqual([PJ, 'p_b'])
+  })
+
+  it('点击时再核对：行属于别的项目（界面还没来得及换）就拒绝，不装、不写，状态条说没打开', async () => {
+    backend.putSlot('d_a', runtimeDoc('A 的排版'), PJ)
+    backend.state.candidates.push({ doc_id: 'd_a', scope: 'project', name: 'A 的排版' })
+    await mount()
+    const row = rows('project')[0]
+    setCurrentProjectId('p_b') // 只换会话里的项目：行还留在界面上
+    backend.state.calls.length = 0
+    await act(async () => row.click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(backend.state.calls.filter((c) => c.startsWith('GET autosave') || c.startsWith('PUT'))).toEqual([])
+    expect(useUiStore.getState().status).toMatchObject({ key: 'layout.openSkipped' })
+  })
+
+  it('列表是在 B 下读的、会话切回 A 而 B 的行还在界面上：点击被拒，不装、不读不写，随后按 A 重读', async () => {
+    setCurrentProjectId('p_b')
+    useProjectStore.setState({ project: { open: true, id: 'p_b', document_dir: '/figs/b/tavottofile' } })
+    backend.putSlot('d_b', runtimeDoc('B 的排版'), 'p_b')
+    backend.state.candidates.push({ doc_id: 'd_b', scope: 'project', name: 'B 的排版' })
+    await mount()
+    const row = rows('project')[0]
+    expect(backend.state.candidatePjs).toEqual(['p_b'])
+    setCurrentProjectId(PJ) // 只换会话里的项目：B 的行还留在界面上
+    backend.state.calls.length = 0
+    await act(async () => row.click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe('d_current')
+    expect(backend.state.calls.filter((c) => c.startsWith('GET autosave') || c.startsWith('PUT'))).toEqual([])
+    expect(useUiStore.getState().status).toMatchObject({ key: 'layout.openSkipped' })
+    expect(backend.state.candidatePjs).toEqual(['p_b', PJ])
+  })
+
+  it('归属待确认那组同样：切到 B 之后 A 的行不在', async () => {
+    backend.putSlot('d_u', runtimeDoc('谁的'))
+    backend.state.candidates.push({ doc_id: 'd_u', scope: 'unknown', name: '谁的' })
+    await mount()
+    await expandOther()
+    expect(rows('unknown')).toHaveLength(1)
+    backend.state.candidates.length = 0
+    await switchToB()
+    await flush()
+    expect(rows('unknown')).toEqual([])
   })
 })
 

@@ -58,12 +58,14 @@ export function createFakeBackend() {
     candidates: [] as CandidateRow[],
     clock: 1,
     calls: [] as string[],
+    /** 每次 /candidates 请求属于哪个项目（pj）；不进 `calls`，免得改动既有的序列断言 */
+    candidatePjs: [] as string[],
     /** 端点 → 故障（状态码或网络错误）；一次性故障用 `failOnce` */
     fail: {} as Partial<Record<'session' | 'putLast' | 'owner' | 'autosaveGet' | 'autosavePut' | 'candidates', Failure>>,
     failOnce: {} as Partial<Record<'session' | 'putLast' | 'owner' | 'autosaveGet' | 'autosavePut' | 'candidates', Failure>>,
     /** 每个 doc 的 autosave GET 单独故障 */
     failGetDoc: new Map<string, Failure>(),
-    hold: { session: null as Promise<void> | null, autosaveGet: null as Promise<void> | null },
+    hold: { session: null as Promise<void> | null, autosaveGet: null as Promise<void> | null, candidates: null as Promise<void> | null },
     /** autosave PUT 回包带的 metadata（`undefined` = 旧后端不带） */
     metadata: 'ok' as 'ok' | 'failed' | 'owner_unknown' | undefined,
     pageSize: 50,
@@ -187,6 +189,8 @@ export function createFakeBackend() {
       const scope = u.searchParams.get('scope') as 'project' | 'unknown'
       const cursor = Number(u.searchParams.get('cursor') ?? 0)
       b.calls.push(`GET candidates ${scope}${cursor ? ` @${cursor}` : ''}`)
+      b.candidatePjs.push(pj)
+      if (b.hold.candidates) await b.hold.candidates
       const f = pick('candidates')
       if (f !== undefined) return failed(f)
       const all = b.candidates.filter((c) => c.scope === scope)
@@ -253,11 +257,13 @@ export function createFakeBackend() {
       b.candidates = []
       b.clock = 1
       b.calls.length = 0
+      b.candidatePjs.length = 0
       b.fail = {}
       b.failOnce = {}
       b.failGetDoc.clear()
       b.hold.session = null
       b.hold.autosaveGet = null
+      b.hold.candidates = null
       b.metadata = 'ok'
       b.pageSize = 50
     },
