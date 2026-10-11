@@ -1021,11 +1021,12 @@ describe('Codex P1/P2：发现的自动采用', () => {
     expect(await app.doc.restoreSession()).toBe(true)
   })
 
-  it('P1：degraded 且 0 行 → 照旧非阻塞转空白', async () => {
+  it('P2：degraded 且 0 行 → 保持恢复门关闭，等待重试或用户明确继续新建', async () => {
     candidatePages = () => new Response(JSON.stringify({ items: [], next_cursor: null, index: 'degraded' }), { status: 200 })
     const app = await boot()
     expect(await app.doc.restoreSession()).toBe(false)
-    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'ready', reason: 'empty' })
+    expect(app.doc.getRestoreGate()).toMatchObject({ state: 'needs_user' })
+    expect(ds(app).restoreIssue).toMatchObject({ kind: 'index_degraded', ref: null })
   })
 
   it.each([

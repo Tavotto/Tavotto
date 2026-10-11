@@ -474,10 +474,9 @@ async function resolve(token: RestoreToken, clues: RestoreClues): Promise<Restor
     )
   }
   if (items.length >= 2) return needsUser(token, 'choose', null, asCandidates)
-  // 0 份：新项目 / 没有历史。恢复记录读不了（索引损坏）时说一句，但不阻塞——旧排版还在，打开排版对话框里找
-  if (indexDegraded) {
-    useUiStore.getState().setStatus(msg('restore.indexDegraded', undefined, 'workspace'), 'info')
-  }
+  // 索引退化时项目归属可能读不全，零行并不证明没有历史。
+  if (indexDegraded) return needsUser(token, 'index_degraded', null)
+  // 0 份且索引完整：新项目 / 没有历史。
   return finishEmpty(token)
 }
 
@@ -586,7 +585,7 @@ export async function settlePrepared(
  */
 let pendingStartup: RestoreToken | null = null
 /** 同项目连续点击「重试」沿用原恢复的用户动作；显式打开、切项目都不会进入这条代次链。 */
-let retryLineage: { origin: number; latest: number; pj: string | null } | null = null
+let retryLineage: { generations: Set<number>; latest: number; pj: string | null } | null = null
 
 export function beginStartupRestore(pj: string | null): void {
   const g = getRestoreGate()
@@ -657,9 +656,12 @@ export async function retryRestore(): Promise<RestoreOutcome> {
   const issue = useDocumentStore.getState().restoreIssue
   if (g.state !== 'needs_user' || !issue || issue.pj !== currentProjectId()) return { kind: 'superseded' }
   const clues = { ...(lifecycleClues ?? captureClues(issue.pj)), pj: issue.pj, skip: false }
-  const origin = retryLineage?.latest === g.gen && retryLineage.pj === issue.pj ? retryLineage.origin : g.gen
+  const generations = retryLineage?.latest === g.gen && retryLineage.pj === issue.pj
+    ? retryLineage.generations
+    : new Set<number>()
+  generations.add(g.gen)
   const running = runLifecycle(issue.pj, clues) // 同步关门、推进代次；结果稍后才落定
-  retryLineage = { origin, latest: getRestoreGate().gen, pj: issue.pj }
+  retryLineage = { generations, latest: getRestoreGate().gen, pj: issue.pj }
   return fitIfRestored(await running)
 }
 
@@ -759,7 +761,7 @@ export function deferUserEntry(run: () => void): EntryGate {
     const sameLifecycle =
       verdict === 'ready' &&
       now.state === 'ready' &&
-      (now.gen === queuedGen || (retryLineage?.origin === queuedGen && retryLineage.latest === now.gen && retryLineage.pj === g.pj)) &&
+      (now.gen === queuedGen || (retryLineage?.generations.has(queuedGen) && retryLineage.latest === now.gen && retryLineage.pj === g.pj)) &&
       (now.reason === 'restored' || now.reason === 'empty' || now.reason === 'blank_requested')
     if (sameLifecycle) run()
     else {
