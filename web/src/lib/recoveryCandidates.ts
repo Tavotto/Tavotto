@@ -12,7 +12,6 @@
  *
  * 不依赖 store / window：打开文档的动作经 `RecoverCopyDeps` 递进来，所以能用有状态的假 fetch 直接量序列。
  */
-import { recordedProjectOf } from '@/lib/docOwnership'
 import {
   fetchLayoutOwnerEvidence,
   fetchRecoveryCandidates,
@@ -138,15 +137,17 @@ export function recoveryCopyId(sourceId: string, revision: string | null, pj: st
   return `d_rc_${src}_${rev}_${projectTag(pj)}`
 }
 
-/** 已存在的目标槽位确实属于当前项目吗：本机索引记着当前项目，或后端 `owners` 证据说是且已核对 */
+/**
+ * 已存在的目标槽位确实属于当前项目吗：**必须有绑定正文 revision 的后端证据**——`/owner` 回 `this`、`owners`、
+ * 已核对，且它的 revision 等于刚探测到的正文 revision。本机索引**从不够**：跨 origin / profile 时它可能陈旧，
+ * 而另一个 profile 已经把同一个槽位认领给了别的项目。旧后端（404）/ 问不到 / 读不到 revision 都拒绝
+ * （恢复副本这套流程本来就要新后端）。
+ */
 async function ownsTarget(id: string, pj: string | null, probedRevision: string | null): Promise<boolean> {
-  if (pj !== null && recordedProjectOf(id) === pj) return true
   const ev = await fetchLayoutOwnerEvidence(id, pj)
   if (ev === 'unsupported' || ev === 'unavailable') return false
   if (!(ev.owner === 'this' && ev.evidence === 'owners' && ev.verified)) return false
-  // 结论只对下结论时的那一版正文成立：与刚探测到的正文对不上（期间被别处存了新的一版）就不算
-  // 有结论的 revision 而读不到正文的 revision（响应头被吃了）时 `ev.revision === probedRevision` 自然不成立：没法核对，不算
-  return ev.revision === null || ev.revision === probedRevision
+  return ev.revision !== null && ev.revision === probedRevision
 }
 
 export type RecoverCopyResult =

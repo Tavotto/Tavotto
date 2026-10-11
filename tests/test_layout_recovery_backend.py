@@ -1510,3 +1510,14 @@ def test_candidate_items_are_classified_from_a_per_item_snapshot(client, tmp_pat
     box["t"].join(15)
     assert [i["doc_id"] for i in items] == ["d_x"]
     assert items[0]["revision"] == r0 and items[0]["name"] == "旧"
+
+
+def test_lock_stripe_ignores_unicode_normalization_and_case():
+    """macOS 上组合 / 分解写法是同一个文件，大小写不敏感卷上大小写写法也是：它们必须落在同一个条带。"""
+    nfc = "café.json"
+    nfd = "café.json"
+    assert nfc != nfd
+    d = Path("/data/layouts")
+    stripes = {m._lock_stripe(d / n) for n in (nfc, nfd, nfc.upper(), nfd.upper(), "CAFÉ.json")}
+    assert len(stripes) == 1
+    assert m._lock_stripe(d / "straße.json") == m._lock_stripe(d / "STRASSE.json")

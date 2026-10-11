@@ -26,6 +26,7 @@ import socket
 import sys
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -9193,9 +9194,12 @@ class _DocumentLock:
 
 
 def _lock_stripe(path: Path) -> int:
-    """条带下标只取决于**文件名**（小写），不取决于路径怎么拼：两个进程经符号链接别名 / 大小写不同的写法
+    """条带下标只取决于**文件名**（Unicode NFC + casefold），不取决于路径怎么拼：两个进程经符号链接别名 / 大小写不同的写法
     走到同一个槽位时必须选到同一把锁。不同目录里的同名文件共用一个条带，只是多串行一点。"""
-    return zlib.crc32(Path(path).name.lower().encode("utf-8")) % len(_DOCUMENT_LOCKS)
+    # NFC + casefold + NFC：组合 / 分解写法（macOS 上同一个文件）与大小写写法都落到同一个条带
+    name = unicodedata.normalize("NFC", Path(path).name)
+    name = unicodedata.normalize("NFC", name.casefold())
+    return zlib.crc32(name.encode("utf-8")) % len(_DOCUMENT_LOCKS)
 
 
 def _document_lock(path: Path) -> _DocumentLock:
@@ -9209,7 +9213,7 @@ def _document_lock(path: Path) -> _DocumentLock:
 
     **锁是跨进程的**（`state/doclocks/<条带>.lock` 上的文件锁 + 进程内线程锁）：两个 Tavotto 进程共用
     一个数据目录时，「判冲突 → 写正文 → 读 revision → 提交归属」同样是一个原子段，否则 F 的归属会
-    记在 G 的正文 revision 上。条带下标用 `zlib.crc32(小写文件名)`：**不能用 `hash()`**（每个进程盐不同），
+    记在 G 的正文 revision 上。条带下标用 `zlib.crc32(NFC+casefold 后的文件名)`：**不能用 `hash()`**（每个进程盐不同），
     也不能用整条路径字符串（符号链接别名 / 大小写不同的写法会让两个进程选到不同的锁；锁文件在数据目录 realpath 下）。
     不同文档偶尔共用一个条带只是多串行一点点。Windows 的 `msvcrt` 那条腿
     只有 CI 验证。拿不到（30 s）抛 `SessionStateUnavailable`，由 `_session_unavailable_handler` 回 503。

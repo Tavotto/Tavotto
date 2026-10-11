@@ -310,8 +310,20 @@ describe('recoverCopy：恢复副本', () => {
     backend.state.stripRevisionHeader = true
     expect(await recoverCopy(item, deps().d)).toEqual({ kind: 'issue', reason: 'foreign' })
     backend.state.stripRevisionHeader = false
-    // 本机索引记着当前项目：认（后端证据缺席也行）
+    // 本机索引记着当前项目也不够：它可能是别的 origin / profile 留下的陈旧记录，而后端 owners 已是别的项目
+    backend.state.ownerAnswers.delete(`${PJ}|${target}`)
+    backend.state.owners.set(target, 'p_b')
     localStorage.setItem('tavotto.docIndex', JSON.stringify([{ id: target, name: 'x', savedAt: 1, objects: 1, projectId: PJ }]))
+    const stalePath = deps()
+    expect(await recoverCopy(item, stalePath.d)).toEqual({ kind: 'issue', reason: 'foreign' })
+    expect(stalePath.d.openExisting).not.toHaveBeenCalled()
+    expect(stalePath.d.install).not.toHaveBeenCalled()
+    // 旧后端（/owner 404）：拒绝，不退回本机索引
+    backend.state.owners.set(target, PJ)
+    backend.state.fail.owner = 404
+    expect(await recoverCopy(item, deps().d)).toEqual({ kind: 'issue', reason: 'foreign' })
+    backend.state.fail.owner = undefined
+    // 后端证据成立（owners=this、已核对、revision 对得上）：打开
     const ok = deps()
     expect(await recoverCopy(item, ok.d)).toMatchObject({ kind: 'opened', existed: true })
     localStorage.clear()
