@@ -1121,14 +1121,15 @@ export const putLayoutSessionLast = (ref: { doc_id: string; name: string }, pj?:
  *   素材全在当前项目里（**同名相对路径，不是归属转移的证明**）；`null` = 没有证据；
  * - `verified`：`owners` 证据且归属记录与槽位正文的 revision 一致（或旧记录）。**只有它为真，
  *   本机索引的「确知属于别的项目」才可以被纠正**；旧后端不发 = false；
- * - `revision`：后端下这个结论时槽位正文的内容 hash（没有槽位 / 旧后端 = null）。结论只对**那一版**正文成立：
- *   别的项目随后可能用同一个 doc id 存了新的一版，所以接受它的人要把 `revision` 与自己读到的正文对上。
+ * - `revision`：后端下这个结论时槽位正文的内容 hash。字符串 = 那一版；`null` = 新后端明说「下结论时没有槽位 / 读不出」；
+ *   `undefined`（键缺席）= 旧后端不发，不知道。结论只对**那一版**正文成立：别的项目随后可能用同一个 doc id
+ *   存了新的一版，所以接受它的人要把 `revision` 与自己读到的正文对上；键缺席时没有东西可绑。
  */
 export interface OwnerEvidence {
   owner: 'this' | 'other' | 'unknown'
   evidence: 'owners' | 'versions' | 'assets' | null
   verified: boolean
-  revision: string | null
+  revision?: string | null
 }
 
 /**
@@ -1154,7 +1155,9 @@ export async function fetchLayoutOwnerEvidence(
       owner,
       evidence,
       verified: body?.verified === true && evidence === 'owners',
-      revision: typeof body?.revision === 'string' && body.revision ? body.revision : null,
+      ...(body && 'revision' in body
+        ? { revision: typeof body.revision === 'string' && body.revision ? body.revision : null }
+        : {}),
     }
   } catch (e) {
     return e instanceof ApiError && e.status === 404 ? 'unsupported' : 'unavailable'

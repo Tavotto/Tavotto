@@ -257,9 +257,10 @@ describe('待确认意图与 durable last（A09 / A32）', () => {
     const merged = await find('d_m')
     expect(merged.expectedAbsent).toBeUndefined()
     expect(merged.expectedRevision).toBe('rev-m')
-    // 本机缓存的待确认意图不是后端指针：不标
+    // 本机缓存的待确认意图不是后端指针：这里不因指针标；它的 expectedAbsent 来自 /owner（见归属那组用例）
     backend.state.sessions.clear()
     setCache({ id: 'd_c', name: 'C', pendingBase: 0, pendingGen: 'g' })
+    backend.putSlot('d_c', docBody('C')) // 槽位在：/owner 的结论绑到它的 revision，不是「预期不存在」
     expect((await find('d_c')).expectedAbsent).toBeUndefined()
   })
 
@@ -463,12 +464,13 @@ describe('归属：本机索引 vs 后端证据（C1 / A16 / A17）', () => {
     expect(backend.writes()).toEqual([])
   })
 
-  it('仅 global currentDoc：本机索引 own 不问后端；未知时按后端证据（this 任何等级可；unknown / 问不到不自动认领）', async () => {
+  it('仅 global currentDoc：本机索引 own 也向后端核对（可达时）；未知时按后端证据（this 任何等级可；unknown / 问不到不自动认领）', async () => {
     const docs = await fresh()
     setIndex([{ id: 'd_own', name: 'own', savedAt: 1, objects: 1, projectId: PJ }])
+    const own = backend.putSlot('d_own', docBody('own'))
     let plan = await docs.planRestore(PJ, { globalCurrent: 'd_own' })
-    expect(plan.preferred).toMatchObject({ id: 'd_own', sources: ['global_current'], ownershipEvidence: 'local_index' })
-    expect(backend.state.calls.filter((c) => c.startsWith('GET owner'))).toEqual([])
+    expect(plan.preferred).toMatchObject({ id: 'd_own', sources: ['global_current'], ownershipEvidence: 'local_index', expectedRevision: own.revision })
+    expect(backend.state.calls.filter((c) => c.startsWith('GET owner'))).toEqual(['GET owner d_own'])
 
     setIndex([])
     backend.state.ownerAnswers.set(`${PJ}|d_g`, { owner: 'this', evidence: 'assets', verified: false })
@@ -489,6 +491,57 @@ describe('归属：本机索引 vs 后端证据（C1 / A16 / A17）', () => {
     plan = await docs.planRestore(PJ, { globalCurrent: 'd_g' })
     expect(plan.preferred?.id).toBe('d_g')
     expect(backend.writes()).toEqual([])
+  })
+
+  it('本机记着「是这个项目的」却被别的 profile 认领给了 G（后端 owners=G）：扣下，不写本机记录，不安装（Codex P1）', async () => {
+    const docs = await fresh()
+    setIndex([{ id: 'd_x', name: 'x', savedAt: 1, objects: 1, projectId: PJ }])
+    setCache({ id: 'd_x', name: 'X' })
+    backend.putSlot('d_x', docBody('G 的正文'), 'p_g')
+    const before = cacheOf()
+    const plan = await docs.planRestore(PJ, { globalCurrent: 'd_x' })
+    expect(plan.preferred).toBeNull()
+    expect(plan.withheld).toMatchObject([{ reason: 'foreign', candidate: { id: 'd_x', ownership: 'other' } }])
+    expect(cacheOf()).toBe(before) // 规划只读：本机缓存、索引都不动
+    expect(indexOwnerOf('d_x')).toBe(PJ)
+    expect(backend.writes()).toEqual([])
+  })
+
+  it('本机记录 + /owner 问不到：扣下（owner_unavailable）；/owner 回 this / 没有归属记录（旧数据）：认，并绑定结论的 revision', async () => {
+    const docs = await fresh()
+    setIndex([{ id: 'd_x', name: 'x', savedAt: 1, objects: 1, projectId: PJ }])
+    setCache({ id: 'd_x', name: 'X' })
+    backend.state.fail.owner = 500
+    let plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred).toBeNull()
+    expect(plan.withheld[0].reason).toBe('owner_unavailable')
+    expect(cacheJson()?.id).toBe('d_x')
+    backend.state.fail.owner = undefined
+    // 旧数据：后端没有这份的归属记录（unknown），按迁移规则仍认——结论绑到当时的正文 revision
+    const slot = backend.putSlot('d_x', docBody('X'))
+    plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred).toMatchObject({ id: 'd_x', ownership: 'this', expectedRevision: slot.revision })
+    expect(plan.preferred?.expectedAbsent).toBeUndefined()
+    // 当时槽位上没有正文：预期不存在，之后正文出现要走严格复核
+    backend.state.slots.delete('d_x')
+    plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred).toMatchObject({ id: 'd_x', expectedAbsent: true })
+    expect(plan.preferred?.expectedRevision).toBeUndefined()
+    // owners=this：同样绑定
+    backend.putSlot('d_x', docBody('X'), PJ)
+    plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred?.expectedRevision).toBe(backend.state.slots.get('d_x')!.revision)
+    expect(backend.writes()).toEqual([])
+  })
+
+  it('会话端点不支持（旧后端）：本机记录照旧认，不问 /owner', async () => {
+    const docs = await fresh()
+    backend.state.fail.session = 404
+    setIndex([{ id: 'd_x', name: 'x', savedAt: 1, objects: 1, projectId: PJ }])
+    setCache({ id: 'd_x', name: 'X' })
+    const plan = await docs.planRestore(PJ, { globalCurrent: null })
+    expect(plan.preferred).toMatchObject({ id: 'd_x', ownershipEvidence: 'local_index' })
+    expect(backend.state.calls.filter((c) => c.startsWith('GET owner'))).toEqual([])
   })
 
   it('归属由 /owner 给出时，结论的 revision 带进 expectedRevision（global / 缓存 / C1），指针自己的 revision 优先（Codex P1）', async () => {

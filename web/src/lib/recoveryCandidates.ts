@@ -40,23 +40,32 @@ export function rowIssue(item: RecoveryCandidateItem): RowIssue | null {
 
 export interface CandidateList {
   rows: RecoveryCandidateItem[]
-  /** 还有下一页（不透明游标）；到顶或到头是 null */
+  /** 还有下一页（不透明游标）；到头是 null */
   next: string | null
-  /** 到了 `CANDIDATE_CAP`，后面还有但不再给 */
+  /** 上一批读到的最后一页里还没放进来的行（批量上限截掉的）；下一次「加载更多」先吃它们，再读 `next` */
+  leftover: RecoveryCandidateItem[]
+  /** 这一批读满了 `CANDIDATE_CAP` 行而后面还有：界面说"已显示 N 份，还有更多" */
   capped: boolean
   /** 后端扫描碰到上限：`next` 为 null 也不代表已列全（界面说"可能还有更多"，不说"没有"） */
   truncated: boolean
   index: SessionIndexStatus
 }
 
+/** 还有可以继续读的（下一页，或上一批被截掉的行）：「加载更多」是否可点 */
+export const hasMore = (l: CandidateList): boolean => l.next !== null || l.leftover.length > 0
+
 export type CandidateLoad =
   | { kind: 'ok'; list: CandidateList }
   | { kind: 'unsupported' }
   | { kind: 'unavailable' }
 
+/** 一次调用最多翻多少页（页数有界；每页非空时 ≈ CAP / PAGE 页，其余留给空页续翻） */
+const MAX_HOPS = 40
+
 /**
- * 读第一页，或接着 `prev` 读下一页。按 doc_id 去重（翻页之间槽位被改动，同一份可能出现两次），
- * 总行数封顶 `CANDIDATE_CAP`。`exclude` 是不该出现的 id（比如此刻开着的那份）。
+ * 读一批：第一批，或接着 `prev` 继续（上一批被截掉的行先放进来，再读 `next`）。每批最多 `CANDIDATE_CAP` 行、
+ * 页数有界；用户每点一次「加载更多」就是新的一批，**总数不封顶**但每次读取有界，行不会不可达。
+ * 按 doc_id 去重（翻页之间槽位被改动，同一份可能出现两次）；`exclude` 是不该出现的 id（比如此刻开着的那份）。
  */
 export async function loadCandidates(
   scope: 'project' | 'unknown',
@@ -66,34 +75,50 @@ export async function loadCandidates(
 ): Promise<CandidateLoad> {
   const seen = new Set(prev?.rows.map((r) => r.doc_id) ?? [])
   const rows = [...(prev?.rows ?? [])]
-  let cursor = prev?.next ?? undefined
-  let next: string | null = null
+  const startLen = rows.length
+  const room = () => CANDIDATE_CAP - (rows.length - startLen)
+  const leftover: RecoveryCandidateItem[] = []
+  const take = (items: readonly RecoveryCandidateItem[]) => {
+    for (const it of items) {
+      if (seen.has(it.doc_id) || exclude?.has(it.doc_id)) continue
+      if (room() <= 0) {
+        leftover.push(it)
+        continue
+      }
+      seen.add(it.doc_id)
+      rows.push(it)
+    }
+  }
+  take(prev?.leftover ?? [])
+  let next: string | null = prev?.next ?? null
   let index: SessionIndexStatus = prev?.index ?? 'ok'
   // 粘性：读过的任何一页截断过，结果就是截断的（后面不截断的页不能把它冲掉）；「加载更多」也继承上一次的
   let truncated = prev?.truncated ?? false
-  // 后端按 scope 过滤之后一页可能很短甚至为空，而 next_cursor 仍在：没读到新行就接着翻，翻页数有界
-  for (let hops = 0; hops < MAX_EMPTY_HOPS; hops++) {
-    const res = await fetchRecoveryCandidates(scope, pj, cursor, CANDIDATE_PAGE)
+  let emptyStreak = 0
+  let fetchedAny = !!prev // 接着上一批时只在还有下一页时才读；全新的第一批无条件读第一页
+  // 这一批还有余量、上一批没有留下被截掉的行、后面还有页：接着读。后端按 scope 过滤之后一页可能为空而
+  // next_cursor 仍在——连续空页最多再翻 MAX_EMPTY_HOPS 页
+  for (let hops = 0; hops < MAX_HOPS && room() > 0 && leftover.length === 0 && (!fetchedAny || next !== null); hops++) {
+    const res = await fetchRecoveryCandidates(scope, pj, next ?? undefined, CANDIDATE_PAGE)
     if (res === 'unsupported' || res === 'unavailable') {
-      if (hops === 0) return { kind: res }
+      // 这一批一行都没读到就把故障原样交出去；读到一部分后失败则保留已读到的，`next` 仍是要重试的那页
+      if (rows.length === startLen) return { kind: res }
       break
     }
+    fetchedAny = true
     index = res.index
     next = res.next_cursor
     truncated ||= res.truncated
-    let added = 0
-    for (const it of res.items) {
-      if (seen.has(it.doc_id) || exclude?.has(it.doc_id)) continue
-      if (rows.length >= CANDIDATE_CAP) break
-      seen.add(it.doc_id)
-      rows.push(it)
-      added++
-    }
-    if (added > 0 || next === null || rows.length >= CANDIDATE_CAP) break
-    cursor = next
+    const before = rows.length
+    take(res.items)
+    emptyStreak = rows.length === before ? emptyStreak + 1 : 0
+    if (emptyStreak >= MAX_EMPTY_HOPS) break
   }
-  const capped = rows.length >= CANDIDATE_CAP && next !== null
-  return { kind: 'ok', list: { rows, next: capped ? null : next, capped, truncated, index } }
+  const more = next !== null || leftover.length > 0
+  return {
+    kind: 'ok',
+    list: { rows, next, leftover, capped: room() <= 0 && more, truncated, index },
+  }
 }
 
 /**

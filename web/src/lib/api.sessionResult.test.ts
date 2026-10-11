@@ -115,10 +115,13 @@ describe('fetchLayoutOwnerEvidence：保留证据等级', () => {
     stub(() => reply({ owner: 'this', evidence: 'owners', verified: true, revision: 'rev-1' }))
     expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'owners', verified: true, revision: 'rev-1' })
     stub(() => reply({ owner: 'this', evidence: 'assets', verified: true })) // 其它证据等级即使带 verified 也不算
-    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'assets', verified: false, revision: null })
+    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'assets', verified: false })
     stub(() => reply({ owner: 'this', evidence: 'owners' })) // 旧后端不发 verified
-    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'owners', verified: false, revision: null })
+    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'this', evidence: 'owners', verified: false })
     stub(() => reply({ owner: 'weird', evidence: 'nope' }))
+    expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'unknown', evidence: null, verified: false })
+    // 键在而值是 null（新后端：下结论时没有槽位）与键缺席（旧后端）不同
+    stub(() => reply({ owner: 'unknown', evidence: null, verified: false, revision: null }))
     expect(await fetchLayoutOwnerEvidence('d_a', 'p1')).toEqual({ owner: 'unknown', evidence: null, verified: false, revision: null })
   })
 

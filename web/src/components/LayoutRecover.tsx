@@ -5,7 +5,7 @@ import { FolderOpen } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { fetchLayoutOwnerEvidence, type RecoveryCandidateItem } from '@/lib/api'
 import {
-  CANDIDATE_CAP,
+  hasMore,
   loadCandidates,
   recoverCopy,
   rowIssue,
@@ -246,16 +246,19 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
 
   const moreButton = (scope: 'project' | 'unknown', g: Group) => {
     if (g.state !== 'ok') return null
-    if (g.list.next) {
+    if (hasMore(g.list)) {
       return (
-        <Button variant="secondary" size="sm" disabled={busy} onClick={() => void load(scope, g.list)}>
-          {t('dialogs:layout.recoverMore')}
-        </Button>
+        <div className="flex flex-col items-start gap-1">
+          {g.list.capped && (
+            <p className="text-sm text-ink-3">{t('dialogs:layout.recoverCapped', { n: g.list.rows.length })}</p>
+          )}
+          <Button variant="secondary" size="sm" disabled={busy} onClick={() => void load(scope, g.list)}>
+            {t('dialogs:layout.recoverMore')}
+          </Button>
+        </div>
       )
     }
-    return g.list.capped ? (
-      <p className="text-sm text-ink-3">{t('dialogs:layout.recoverCapped', { n: CANDIDATE_CAP })}</p>
-    ) : null
+    return null
   }
 
   const retry = (scope: 'project' | 'unknown') => (
@@ -276,10 +279,10 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <div className="flex flex-col gap-3" data-layout-recover>
       {project.state === 'unavailable' && retry('project')}
-      {(ownRows.length > 0 || (project.state === 'ok' && (project.list.next || project.list.truncated))) && (
+      {(ownRows.length > 0 || (project.state === 'ok' && (hasMore(project.list) || project.list.truncated))) && (
         <section className="flex flex-col gap-1" data-recover-group="project">
           <h3 className="type-section px-1">{t('dialogs:layout.recoverProjectTitle')}</h3>
-          {ownRows.length === 0 && project.state === 'ok' && project.list.next && (
+          {ownRows.length === 0 && project.state === 'ok' && hasMore(project.list) && (
             <p className="px-1 text-sm text-ink-3">{t('dialogs:layout.recoverKeepLooking')}</p>
           )}
           {project.state === 'ok' && project.list.truncated && (
@@ -325,7 +328,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
             )}
             {(other.state === 'ok' || other.state === 'unsupported') && otherRows.length === 0 && (
               <p className="text-sm text-ink-3">
-                {other.state === 'ok' && other.list.next
+                {other.state === 'ok' && hasMore(other.list)
                   ? t('dialogs:layout.recoverKeepLooking')
                   : other.state === 'ok' && other.list.truncated
                     ? t('dialogs:layout.recoverTruncated')

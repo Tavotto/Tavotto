@@ -8,8 +8,8 @@ import { createFakeBackend } from '@/test/fakeSessionBackend'
 import type { RecoveryCandidateItem } from '@/lib/api'
 import {
   CANDIDATE_CAP,
-  CANDIDATE_PAGE,
   discoverProjectCandidates,
+  hasMore,
   loadCandidates,
   recoverCopy,
   recoveryCopyId,
@@ -91,67 +91,76 @@ describe('rowIssue', () => {
 })
 
 describe('loadCandidates：分页有界、去重、排除当前文档', () => {
-  it('第一页只读一页；「加载更多」接着读；翻页之间重复出现的同一份只算一次', async () => {
-    for (let i = 0; i < 120; i++) {
+  it('450 行分页：首批 200 并标 capped；点「加载更多」400；再点 450，没有更多；全程无重复（可达性）', async () => {
+    for (let i = 0; i < 450; i++) {
       backend.putSlot(`d_${i}`, doc(`n${i}`))
       backend.state.candidates.push({ doc_id: `d_${i}`, scope: 'unknown' })
     }
     const first = await loadCandidates('unknown', PJ)
     if (first.kind !== 'ok') throw new Error('x')
-    expect(first.list.rows).toHaveLength(CANDIDATE_PAGE)
-    expect(first.list.next).not.toBeNull()
-    expect(backend.state.calls.filter((c) => c.startsWith('GET candidates'))).toHaveLength(1)
-    // 翻页期间第一页最后一份被后端再次排进第二页
-    backend.state.candidates.splice(CANDIDATE_PAGE, 0, { doc_id: `d_${CANDIDATE_PAGE - 1}`, scope: 'unknown' })
+    expect(first.list.rows).toHaveLength(CANDIDATE_CAP)
+    expect(first.list).toMatchObject({ capped: true })
+    expect(hasMore(first.list)).toBe(true)
     const second = await loadCandidates('unknown', PJ, first.list)
     if (second.kind !== 'ok') throw new Error('x')
-    const ids = second.list.rows.map((r) => r.doc_id)
-    expect(new Set(ids).size).toBe(ids.length)
-    expect(ids.length).toBeGreaterThan(CANDIDATE_PAGE)
+    expect(second.list.rows).toHaveLength(2 * CANDIDATE_CAP)
+    expect(second.list.capped).toBe(true)
+    const third = await loadCandidates('unknown', PJ, second.list)
+    if (third.kind !== 'ok') throw new Error('x')
+    expect(third.list.rows).toHaveLength(450)
+    expect(third.list.capped).toBe(false)
+    expect(hasMore(third.list)).toBe(false)
+    const ids = third.list.rows.map((r) => r.doc_id)
+    expect(new Set(ids).size).toBe(450)
+    expect(ids).toEqual(Array.from({ length: 450 }, (_, i) => `d_${i}`)) // 顺序也原样
     expect(backend.writes()).toEqual([]) // 全程只读
   })
 
-  it('总行数封顶，到顶后不再给下一页（capped）', async () => {
-    for (let i = 0; i < CANDIDATE_CAP + 80; i++) {
-      backend.putSlot(`d_${i}`, doc('n'))
-      backend.state.candidates.push({ doc_id: `d_${i}`, scope: 'unknown' })
-    }
-    let list = (await loadCandidates('unknown', PJ)) as Extract<Awaited<ReturnType<typeof loadCandidates>>, { kind: 'ok' }>
-    let pages = 1
-    while (list.list.next && pages < 20) {
-      list = (await loadCandidates('unknown', PJ, list.list)) as typeof list
-      pages++
-    }
-    expect(list.list.rows).toHaveLength(CANDIDATE_CAP)
-    expect(list.list.capped).toBe(true)
-    expect(list.list.next).toBeNull()
-    expect(pages).toBe(Math.ceil(CANDIDATE_CAP / CANDIDATE_PAGE))
+  it('一批被截在页中间：被截掉的行先放进下一批，再读 next；最后一页被截一半也不丢（Codex P2）', async () => {
+    const mk = (n: number, from: number) =>
+      Array.from({ length: n }, (_, i) => ({ doc_id: `d_${from + i}`, name: 'x', updatedAt: 1, mtime: 1, revision: 'r', schema: 3, status: 'ok', canvases: 1, objects: 1, owner: 'this', evidence: 'owners' }))
+    const pages = [
+      { items: mk(150, 0), next_cursor: 'c1' },
+      { items: mk(150, 150), next_cursor: 'c2' },
+      { items: mk(150, 300), next_cursor: null },
+    ]
+    const asked: string[] = []
+    globalThis.fetch = (async (url: unknown) => {
+      const c = new URL(String(url), 'http://x').searchParams.get('cursor') ?? ''
+      asked.push(c)
+      return new Response(JSON.stringify({ ...pages[c === '' ? 0 : Number(c.slice(1))], truncated: false, index: 'ok' }))
+    }) as typeof fetch
+    const one = await loadCandidates('project', PJ)
+    if (one.kind !== 'ok') throw new Error('x')
+    expect(one.list.rows).toHaveLength(200)
+    expect(one.list.leftover).toHaveLength(100) // 第二页被截掉的 100 行
+    expect(one.list).toMatchObject({ next: 'c2', capped: true })
+    const two = await loadCandidates('project', PJ, one.list)
+    if (two.kind !== 'ok') throw new Error('x')
+    expect(asked).toEqual(['', 'c1', 'c2']) // 没有重读已经读过的页
+    expect(two.list.rows).toHaveLength(400)
+    expect(two.list).toMatchObject({ next: null, capped: true }) // 最后一页被截一半：next 为 null 也还有
+    expect(two.list.leftover).toHaveLength(50)
+    expect(hasMore(two.list)).toBe(true)
+    const three = await loadCandidates('project', PJ, two.list)
+    if (three.kind !== 'ok') throw new Error('x')
+    expect(asked).toEqual(['', 'c1', 'c2']) // 只吃 leftover，不再请求
+    expect(three.list.rows).toHaveLength(450)
+    expect(hasMore(three.list)).toBe(false)
+    expect(new Set(three.list.rows.map((r) => r.doc_id)).size).toBe(450)
   })
 
-  it('后端过滤之后一页为空而 next_cursor 仍在：接着翻，翻页有界（最多再 5 页）', async () => {
-    const item = (id: string) => ({ doc_id: id, name: id, updatedAt: 1, mtime: 1, revision: 'r', schema: 3, status: 'ok', canvases: 1, objects: 1, owner: 'unknown', evidence: null })
-    const asked: string[] = []
-    const serve = (emptyBefore: number) => {
-      let n = 0
-      globalThis.fetch = (async (url: unknown) => {
-        asked.push(new URL(String(url), 'http://x').searchParams.get('cursor') ?? '')
-        n += 1
-        const body = n <= emptyBefore ? { items: [], next_cursor: `c${n}`, index: 'ok' } : { items: [item('d_late')], next_cursor: null, index: 'ok' }
-        return new Response(JSON.stringify(body))
-      }) as typeof fetch
+  it('翻页之间重复出现的同一份只算一次', async () => {
+    for (let i = 0; i < 80; i++) {
+      backend.putSlot(`d_${i}`, doc(`n${i}`))
+      backend.state.candidates.push({ doc_id: `d_${i}`, scope: 'unknown' })
     }
-    serve(3)
-    const ok = await loadCandidates('unknown', PJ)
-    if (ok.kind !== 'ok') throw new Error('x')
-    expect(ok.list.rows.map((r) => r.doc_id)).toEqual(['d_late'])
-    expect(asked).toEqual(['', 'c1', 'c2', 'c3'])
-    asked.length = 0
-    serve(100) // 一直是空页：到界为止，不无限翻；游标留着让用户再点「加载更多」
-    const bounded = await loadCandidates('unknown', PJ)
-    if (bounded.kind !== 'ok') throw new Error('x')
-    expect(bounded.list.rows).toEqual([])
-    expect(asked).toHaveLength(5)
-    expect(bounded.list.next).toBe('c5')
+    backend.state.candidates.splice(50, 0, { doc_id: 'd_49', scope: 'unknown' })
+    const res = await loadCandidates('unknown', PJ)
+    if (res.kind !== 'ok') throw new Error('x')
+    const ids = res.list.rows.map((r) => r.doc_id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).toHaveLength(80)
   })
 
   it('truncated 带进列表结果与发现结果（没有下一页也不代表列全）', async () => {

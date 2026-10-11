@@ -233,43 +233,20 @@ describe('找回入口的可发现性与只读', () => {
     expect(rows('project')).toHaveLength(1)
   })
 
-  it('分页有界：一页 50 行，「加载更多」再读一页', async () => {
-    for (let i = 0; i < 70; i++) {
+  it('分页：一批最多 200 行并说「已显示 200 份，还有更多」，「加载更多」再读下一批，读完按钮消失', async () => {
+    for (let i = 0; i < 250; i++) {
       backend.putSlot(`d_${i}`, runtimeDoc(`n${i}`), PJ)
       backend.state.candidates.push({ doc_id: `d_${i}`, scope: 'project', name: `n${i}` })
     }
     await mount()
-    expect(rows('project')).toHaveLength(50)
+    expect(rows('project')).toHaveLength(200)
+    expect(dialog().textContent).toContain('已显示 200 份')
     await act(async () => byText('加载更多')!.click())
+    await until(() => rows('project').length === 250)
     await flush()
-    expect(rows('project')).toHaveLength(70)
+    expect(rows('project')).toHaveLength(250)
     expect(byText('加载更多')).toBeUndefined()
-  })
-
-  it('自动翻过的几页都没有本项目的行、next_cursor 仍在：本项目那组照样显示，带「加载更多」（Codex P2）', async () => {
-    // 前 6 页被 scope 过滤成空页（自动最多翻 5 页后停下），第 7 页才有本项目的行
-    const realBackendFetch = backend.fetch
-    let n = 0
-    backend.fetch = (async (url: unknown, init?: RequestInit) => {
-      const u = new URL(String(url), 'http://x')
-      if (u.pathname !== '/api/layout-session/candidates' || u.searchParams.get('scope') !== 'project') {
-        return realBackendFetch(url as RequestInfo, init)
-      }
-      n += 1
-      const items = n <= 6 ? [] : [{ doc_id: 'd_late', name: '后面才有', updatedAt: 1, mtime: Date.now(), revision: 'r', schema: 3, status: 'ok', canvases: 1, objects: 1, owner: 'this', evidence: 'owners' }]
-      return new Response(JSON.stringify({ items, next_cursor: n <= 6 ? `c${n}` : null, index: 'ok' }))
-    }) as typeof fetch
-    try {
-      await mount()
-      expect(rows('project')).toHaveLength(0)
-      expect(dialog().querySelector('[data-recover-group="project"]')).not.toBeNull()
-      expect(dialog().textContent).toContain('可以继续往后找')
-      await act(async () => byText('加载更多')!.click())
-      await flush()
-      expect(rows('project').map((r) => r.dataset.recoverRow)).toEqual(['d_late'])
-    } finally {
-      backend.fetch = realBackendFetch
-    }
+    expect(dialog().textContent).not.toContain('已显示')
   })
 
   it('扫描碰到后端上限（truncated）：没有行也不说「没有」，说只扫描了一部分；有行时行下面也提示', async () => {

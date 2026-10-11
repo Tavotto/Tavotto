@@ -32,6 +32,7 @@
 import {
   ApiError,
   fetchLayoutOwnerEvidence,
+  type OwnerEvidence,
   fetchLayoutSessionResult,
   probeAutosave,
   putLayoutSessionLast,
@@ -332,8 +333,17 @@ interface Entry {
 }
 
 type Verdict =
-  | { ok: true; ownership: 'this'; evidence?: OwnershipEvidence; correctsIndex?: boolean; revision?: string }
-  | { ok: false; reason: WithheldCandidate['reason'] }
+  | {
+      ok: true
+      ownership: 'this'
+      evidence?: OwnershipEvidence
+      correctsIndex?: boolean
+      /** `/owner` 下结论时槽位正文的 revision：结论只对那一版成立，带去让探测时对一对 */
+      revision?: string
+      /** `/owner` 说下结论时槽位上没有正文（revision:null）：预期不存在，之后正文出现要走严格复核 */
+      absent?: true
+    }
+  | { ok: false; reason: WithheldCandidate['reason']; keepCache?: true }
 
 /**
  * 这份文档能不能认领给 `pj`。**判据的主语：本机索引（写下那一刻记的项目）→ 否则后端证据**：
@@ -350,7 +360,23 @@ async function judge(id: string, pj: string | null, e: Entry, backendOk: boolean
       ? { ok: false, reason: 'foreign' }
       : { ok: true, ownership: 'this', evidence: 'local_index' }
   }
-  if (recorded === pj) return { ok: true, ownership: 'this', evidence: 'local_index' }
+  const backendSourced = e.sources.some((s) => s === 'backend_last' || s === 'backend_prev' || s === 'backend_pending')
+  const cached = e.sources.includes('local_cache')
+  /** 把 `/owner` 的结论绑到下结论时的那一版正文上 */
+  const bind = (ev: OwnerEvidence): { revision: string } | { absent: true } | Record<string, never> =>
+    ev.revision ? { revision: ev.revision } : ev.revision === null ? { absent: true } : {} // 键缺席（旧后端）：没有东西可绑
+  if (recorded === pj) {
+    // 本机索引说是这个项目——但它可能是别的 origin / profile 留下的陈旧记录（那边已把这个 doc id 认领给了别的项目）。
+    // 后端可达且这条没有后端指针背书时，一律向后端核对；旧后端（不支持）退回本机记录
+    if (backendSourced || !backendOk) return { ok: true, ownership: 'this', evidence: 'local_index' }
+    const ev = await fetchLayoutOwnerEvidence(id, pj)
+    if (ev === 'unavailable') return { ok: false, reason: 'owner_unavailable' }
+    if (ev === 'unsupported') return { ok: true, ownership: 'this', evidence: 'local_index' }
+    // 后端明确说是别的项目：扣下，但**不**在规划里改本机记录（规划只读）
+    if (ev.owner === 'other') return { ok: false, reason: 'foreign', keepCache: true }
+    // this / 后端没有归属记录（旧数据，按「本机记着是它」的迁移规则认）：都绑上结论的 revision
+    return { ok: true, ownership: 'this', evidence: 'local_index', ...bind(ev) }
+  }
   if (typeof recorded === 'string') {
     const ev = await fetchLayoutOwnerEvidence(id, pj)
     if (ev === 'unavailable') return { ok: false, reason: 'owner_unavailable' }
@@ -359,18 +385,16 @@ async function judge(id: string, pj: string | null, e: Entry, backendOk: boolean
     }
     return { ok: false, reason: 'foreign' }
   }
-  const backendSourced = e.sources.some((s) => s === 'backend_last' || s === 'backend_prev' || s === 'backend_pending')
   if (backendSourced) return { ok: true, ownership: 'this' }
-  const cached = e.sources.includes('local_cache')
   if (cached && !backendOk) return { ok: true, ownership: 'this' }
   const ev = await fetchLayoutOwnerEvidence(id, pj)
   if (ev === 'unsupported') return { ok: true, ownership: 'this' }
-  if (ev === 'unavailable') return cached ? { ok: true, ownership: 'this' } : { ok: false, reason: 'owner_unavailable' }
+  if (ev === 'unavailable') return { ok: false, reason: 'owner_unavailable' }
   if (ev.owner === 'other') return { ok: false, reason: 'foreign' }
   if (ev.owner === 'this') {
-    return { ok: true, ownership: 'this', ...(ev.evidence ? { evidence: ev.evidence } : {}), ...(ev.revision ? { revision: ev.revision } : {}) }
+    return { ok: true, ownership: 'this', ...(ev.evidence ? { evidence: ev.evidence } : {}), ...bind(ev) }
   }
-  return cached ? { ok: true, ownership: 'this' } : { ok: false, reason: 'owner_unknown' }
+  return cached ? { ok: true, ownership: 'this', ...bind(ev) } : { ok: false, reason: 'owner_unknown' }
 }
 
 /**
@@ -470,12 +494,13 @@ export async function planRestore(
         ...(v.correctsIndex ? { correctsIndex: true } : {}),
         // 归属是 /owner 给的结论、而指针没带 revision：结论只对下结论时的那一版正文成立，带上它让探测时对一对
         ...(!base.expectedRevision && v.revision ? { expectedRevision: v.revision } : {}),
+        ...(!base.expectedRevision && !v.revision && v.absent ? { expectedAbsent: true as const } : {}),
       })
       return
     }
     withheld.push({ candidate: base, reason: v.reason })
     // 确知属于别的项目的缓存条目作废（原有行为）；问不到归属时不作废——那只是此刻不知道
-    if (v.reason === 'foreign' && pj && cache?.id === id) forgetProjectDocument(pj)
+    if (v.reason === 'foreign' && !v.keepCache && pj && cache?.id === id) forgetProjectDocument(pj)
   })
 
   const preferred = session.kind === 'unavailable' ? null : (claimable[0] ?? null)
