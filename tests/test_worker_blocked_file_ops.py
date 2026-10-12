@@ -276,7 +276,9 @@ fig, ax = plt.subplots()
 ax.plot([0, n])
 """
 
-MOVE_INTO_DIR_READ_MOVED = MOVE_INTO_DIR_READ_UNRELATED.replace("archive/summary.csv", "archive/seed.txt")
+MOVE_INTO_DIR_READ_MOVED = MOVE_INTO_DIR_READ_UNRELATED.replace(
+    "archive/summary.csv", "archive/seed.txt"
+)
 MOVE_INTO_DIR_READ_SOURCE = MOVE_INTO_DIR_READ_UNRELATED.replace("archive/summary.csv", "seed.txt")
 
 

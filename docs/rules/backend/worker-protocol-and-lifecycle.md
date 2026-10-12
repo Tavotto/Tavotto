@@ -82,7 +82,7 @@
   （`worker.BLOCKED_OPS`）：守卫每拦一次记「操作类别 + 影响的路径」，**最外层**（晚于输入观察器与相对读回退，看到的是脚本交出的原始路径，不是回退改写后的；沙盒档项目里有旧 `stage.png` 时
   装在回退之下会永远对不上，#952 第三轮 P1）的 open / `os.stat` 包装在
   **拦下之后**看到脚本打开（读，含 `r+`/`a+`）或 stat 了受影响路径，才算 material；脚本自己以 `w`/`x` 重写
-  该路径则清掉嫌疑，被拦截的 `savefig` 目标记**有效目标名**（`figcapture.savefig_effective_names`：无后缀且无 `format=` 时补 `rcParams["savefig.format"]`/`png`，`format=` 显式则字面名）、只认读内容、不认 `exists`（校验打印不判失败），先于拦截的读、读别的路径、从没回读（`test_workdir_mode` 那种顺手删过期输出）都不算。
+  该路径则清掉嫌疑（**只在底层 open 成功返回之后清**；`x` 撞上被我们拦删而留下的旧文件抛 `FileExistsError` 时不清，且这次失败本身就是一次观察——直接运行里删除生效、`x` 会成功，不等回读），`shutil.move` 进已存在目录只记 `dst/basename(src)` 与源，不把整个目录记成受影响，被拦截的 `savefig` 目标记**有效目标名**（`figcapture.savefig_effective_names`：无后缀且无 `format=` 时补 `rcParams["savefig.format"]`/`png`，`format=` 显式则字面名）、只认读内容、不认 `exists`（校验打印不判失败），先于拦截的读、读别的路径、从没回读（`test_workdir_mode` 那种顺手删过期输出）都不算。
   material 非空时 build 以该 code 结束——脚本跑到末尾、`except Exception` 吞掉了异常、或因读不到而崩
   （原因是守卫不是 `missing_input`）、或随后 `sys.exit` 非零，一律如此。载荷只有类别（`operations`）、
   `required_execution="preserve_file_semantics"` 与 `adapter_available=false`，没有路径（message 会进
