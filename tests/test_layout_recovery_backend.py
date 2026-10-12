@@ -1858,3 +1858,59 @@ def test_other_fallbacks_past_an_uninterpretable_file_also_refuse_to_write(clien
     exp.write_text(json.dumps({"version": 99, "defaults": {"dpi": "2400"}}), encoding="utf-8")
     assert client.put("/api/preferences/export-defaults", json={"dpi": "1200"}).status_code == 503
     assert json.loads(exp.read_text(encoding="utf-8"))["version"] == 99
+
+
+def test_primary_and_bak_both_corrupt_in_the_same_millisecond_keep_two_distinct_snapshots(
+    data_dir, monkeypatch
+):
+    """Codex P1:同一毫秒里主文件和 bak 都读不懂、字节不同：两份副本各自存在，字节都等于各自的来源。"""
+    path, bak = layoutsession.state_path(), layoutsession.backup_path()
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'{"primary": broken')
+    bak.write_bytes(b'{"bak": also broken')
+    monkeypatch.setattr(layoutsession.time, "time", lambda: 1_700_000_000.123)
+    layoutsession.record_owner("d_1", None)  # 触发一次加载（保存副本）再写入替换
+    copies = sorted(path.parent.glob("layout-sessions.corrupt-*.json"))
+    assert len(copies) == 2, [c.name for c in copies]
+    assert sorted(c.read_bytes() for c in copies) == sorted(
+        [b'{"primary": broken', b'{"bak": also broken']
+    )
+    assert any(c.name.endswith("-primary.json") for c in copies)
+    assert any(c.name.endswith("-bak.json") for c in copies)
+
+
+def test_corrupt_snapshot_is_not_reported_saved_unless_it_reads_back_identical(
+    data_dir, monkeypatch
+):
+    path = layoutsession.state_path()
+    path.parent.mkdir(parents=True)
+    raw = b"{broken"
+    path.write_bytes(raw)
+    real = atomicio.write_bytes
+
+    def lossy(p, data, **kw):
+        if Path(p).name.startswith(layoutsession.CORRUPT_PREFIX):
+            data = data[:-1]  # 写进去的和来源不一样
+        return real(p, data, **kw)
+
+    monkeypatch.setattr(atomicio, "write_bytes", lossy)
+    with pytest.raises(layoutsession.SessionStateUnavailable):
+        layoutsession.record_owner("d_1", None)
+    assert path.read_bytes() == raw
+
+
+def test_snapshots_made_in_this_load_are_never_pruned_even_if_the_clock_went_backwards(
+    data_dir, monkeypatch
+):
+    path, bak = layoutsession.state_path(), layoutsession.backup_path()
+    path.parent.mkdir(parents=True)
+    for i in range(3):  # 名字排在新副本之后的老副本（时钟回拨）
+        (
+            path.parent / f"layout-sessions.corrupt-99999999999{i}-aaaaaaaaaaaa-primary.json"
+        ).write_bytes(b"old %d" % i)
+    path.write_bytes(b"{primary broken")
+    bak.write_bytes(b"{bak broken")
+    monkeypatch.setattr(layoutsession.time, "time", lambda: 1_700_000_000.0)
+    layoutsession.record_owner("d_1", None)
+    contents = {c.read_bytes() for c in path.parent.glob("layout-sessions.corrupt-*.json")}
+    assert {b"{primary broken", b"{bak broken"} <= contents, "本次加载存下的副本被裁掉了"

@@ -123,7 +123,8 @@
     「字节坏」「来自更新版本」「某个无关字段是 NaN」全部当成首次空状态，下一次普通写入就把一份可能完整、
     可能更新的文件整份抹掉：`missing`（不存在，首次空）；`ok`（逐字段清洗：坏字段丢、其余保留，**未知顶层键与组内
     未知键原样保留**，非有限数的字段丢弃；NaN 用标准 `json.loads` 接受，不再整份作废）；`recovered`（字节坏，原字节先存
-    `state/layout-sessions.corrupt-<ms>.json`——相同字节只存一份、最多留 3 份——再用 `layout-sessions.json.bak`，
+    `state/layout-sessions.corrupt-<ms>-<sha256 前 12 位>-<primary|bak>.json`——**按内容命名**，主文件与 bak 同一毫秒里字节不同也不会互相替换；
+    相同字节只存一份、写完读回核对相等才算保存成功、最多留 3 份且不裁本次加载存下的——再用 `layout-sessions.json.bak`，
     那是每次成功写主文件后同 payload 再写的一份）；`degraded`（读失败拿不到字节 / 字节坏且无可用 bak / `version` 比
     `FORMAT_VERSION` 新）。读失败与未来格式**拒绝一切写回**——**未知 `version` 永远不用 v1 覆盖**，这条对 `.bak` 同样成立：主文件坏而 bak 是更新版本写的、主文件不在而 bak 是未来格式或读不动、
     bak 存在却读不动，都按只读处理（正文照存，`metadata:"failed"`）；坏 bak 的字节同样先留副本、留不下就拒写；导出默认值文件来自未来 / 读不动时也不整份替换（503）（`SessionStateUnavailable`，是 `OSError`）：拿空状态覆盖一份

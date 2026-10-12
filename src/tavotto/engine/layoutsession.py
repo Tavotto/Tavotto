@@ -59,6 +59,7 @@ Windows `msvcrt.locking`，纯标准库），多个进程共用一个数据目�
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import logging
 import math
@@ -376,28 +377,36 @@ def _parse_bytes(raw: bytes) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _preserve_corrupt(raw: bytes) -> bool:
-    """把读不懂的原字节存成 `state/layout-sessions.corrupt-<ms>.json`（同样的字节只存一份，最多 3 份）。
-    回这份字节**此刻确实有副本**（新存的或早就存过相同的）；存不下回 False——调用方据此拒写。"""
+def _preserve_corrupt(raw: bytes, label: str = "primary", fresh: set[str] | None = None) -> bool:
+    """把读不懂的原字节存成 `state/layout-sessions.corrupt-<ms>-<sha256 前 12 位>-<label>.json`。
+
+    **按内容命名**：主文件与 bak 同一毫秒里先后损坏、字节不同时不会撞同一个文件名互相替换（旧的
+    `corrupt-<ms>.json` 会，第二份原子替换掉第一份、两边都报成功，原字节永远丢了）。同样的字节只存一份
+    （目录里已有内容相同的副本就算已保存）；**写完读回核对字节相等才报成功**，存不下 / 读回对不上回 False——
+    调用方据此拒写。最多留 `MAX_CORRUPT_COPIES` 份，裁最旧的，但**本次加载里存下 / 命中的（`fresh`）一份都不裁**。
+    """
+    fresh = fresh if fresh is not None else set()
     directory = state_path().parent
+    digest = hashlib.sha256(raw).hexdigest()[:12]
     try:
-        existing = sorted(
-            p
-            for p in directory.glob(CORRUPT_PREFIX + "*.json")
-            if p.is_file() and not p.is_symlink()
-        )
-        for p in existing:
-            try:
-                if p.read_bytes() == raw:
-                    return True
-            except OSError:
-                continue
-        atomicio.write_bytes(
-            directory / f"{CORRUPT_PREFIX}{int(time.time() * 1000)}.json",
-            raw,
-        )
+        for p in directory.glob(CORRUPT_PREFIX + "*.json"):
+            if digest in p.name and p.is_file() and not p.is_symlink():
+                try:
+                    if p.read_bytes() == raw:
+                        fresh.add(p.name)
+                        return True
+                except OSError:
+                    continue
+        target = directory / f"{CORRUPT_PREFIX}{int(time.time() * 1000)}-{digest}-{label}.json"
+        atomicio.write_bytes(target, raw)
+        if target.read_bytes() != raw:
+            LOG.warning("会话状态的损坏副本读回对不上，不算保存成功")
+            return False
+        fresh.add(target.name)
         existing = sorted(directory.glob(CORRUPT_PREFIX + "*.json"))
         for stale in existing[:-MAX_CORRUPT_COPIES]:
+            if stale.name in fresh:
+                continue
             try:
                 stale.unlink()
             except OSError:
@@ -443,12 +452,13 @@ def _load(*, preserve: bool = True) -> _Loaded:
         return _Loaded(state, STATUS_OK)
     # 字节坏：先留原字节，再看 bak
     LOG.warning("会话状态文件损坏")
-    preserved = _preserve_corrupt(raw) if preserve else True
-    bak_state, bak_readonly = _load_backup(preserve)
+    fresh: set[str] = set()  # 本次加载存下的副本：同一次加载里的第二份不许把第一份裁掉
+    preserved = _preserve_corrupt(raw, "primary", fresh) if preserve else True
+    bak_state, bak_readonly = _load_backup(preserve, fresh)
     return _from_backup(bak_state, bak_readonly, preserved=preserved)
 
 
-def _load_backup(preserve: bool) -> tuple[dict | None, str | None]:
+def _load_backup(preserve: bool, fresh: set[str] | None = None) -> tuple[dict | None, str | None]:
     """读 `.bak`，回 `(状态或 None, 只读原因或 None)`。
 
     * 不存在 → `(None, None)`；
@@ -465,7 +475,7 @@ def _load_backup(preserve: bool) -> tuple[dict | None, str | None]:
         return None, "backup_unreadable"
     data = _parse_bytes(raw)
     if data is None:
-        if preserve and not _preserve_corrupt(raw):
+        if preserve and not _preserve_corrupt(raw, "bak", fresh):
             return None, "backup_corrupt_not_preserved"
         return None, None
     if _is_future(data):
