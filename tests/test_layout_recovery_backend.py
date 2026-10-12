@@ -1942,3 +1942,52 @@ def test_durable_set_last_always_advances_at_even_for_the_same_id_and_name(data_
     pend_c = layoutsession.snapshot()["no_project"]["pending"]["at"]
     layoutsession.commit_slot("d_c", None, "rev")
     assert layoutsession.snapshot()["no_project"]["last"]["at"] > pend_c
+
+
+def test_tutorial_copy_publication_is_serialized_so_a_competitor_cannot_drop_our_marker(
+    client, monkeypatch
+):
+    """Codex P2:两个后端进程同时首次打开教程。我们写完共享清理标记、还没 rename 时，竞争者发布了副本——
+    没有锁时我们的 rename 失败分支会把共享标记删掉。锁让竞争者排在我们后面（复用我们发布的副本），标记保留。"""
+    marker = m.engine_tutorial.cleanup_pending_path()
+    real_write = atomicio.write_bytes
+    state: dict = {"hooked": False}
+    other: dict = {}
+
+    def write_then_compete(path, data, **kw):
+        out = real_write(path, data, **kw)
+        if Path(path) == marker and not state["hooked"]:
+            state["hooked"] = True
+
+            def competitor():
+                other["copy"] = m.engine_tutorial.ensure_tutorial_copy()
+
+            state["t"] = threading.Thread(target=competitor)
+            state["t"].start()
+            state["t"].join(0.8)  # 有锁:竞争者在这里排队;没有锁:它已经把副本发布了
+        return out
+
+    monkeypatch.setattr(atomicio, "write_bytes", write_then_compete)
+    mine = m.engine_tutorial.ensure_tutorial_copy()
+    state["t"].join(30)
+    assert mine.created and mine.path.is_dir()
+    assert other["copy"].created is False, "竞争者没有排在后面复用我们发布的副本"
+    assert marker.is_file(), "共享的清理意图标记被竞争者的回滚删掉了"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="用 fcntl 模拟另一个持锁者；Windows 腿留给 CI")
+def test_tutorial_copy_never_proceeds_without_the_cross_process_lock(client, monkeypatch):
+    import fcntl
+
+    monkeypatch.setattr(m.engine_tutorial, "TUTORIAL_LOCK_TIMEOUT_S", 0.2)
+    path = m.engine_tutorial.tutorial_lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        r = client.post("/api/tutorial/open", json={})
+        assert r.status_code == 409 and r.get_json()["code"] == "tutorial_locked"
+        assert not m.engine_tutorial.cleanup_pending_path().exists()
+    finally:
+        os.close(fd)
+    assert client.post("/api/tutorial/open", json={}).status_code == 200

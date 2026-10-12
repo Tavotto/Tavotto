@@ -137,6 +137,11 @@ def _canonical_state_dir() -> Path:
     return config.data_dir().resolve() / STATE_DIRNAME
 
 
+def canonical_state_dir() -> Path:
+    """`state/` 的规范位置（数据目录 realpath 下）：各种跨进程锁文件都放这里。"""
+    return _canonical_state_dir()
+
+
 def lock_path() -> Path:
     return _canonical_state_dir() / LOCK_FILENAME
 

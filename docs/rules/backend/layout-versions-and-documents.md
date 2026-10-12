@@ -187,6 +187,10 @@
     把别人的槽位报成 this。`/owner` 回的 `revision` 就是这份快照里正文的。候选发现**按条目**各取自己的槽位锁、各读一次状态
     （页级快照做不到：它在条目被改写之前读的）；一页最多 `limit` 次短暂持锁。`/owner` 锁等不到回 `unknown`（`revision:null`），
     候选等不到整页回 503 `candidates_unavailable`——都不猜。这两个只读端点因此会建（空的）锁文件，锁文件是互斥基础设施不是状态。
+  - **教程副本的发布与清理意图标记也是跨进程串行的**：`engine/tutorial.ensure_tutorial_copy` 在 `state/tutorial.lock`
+    （`layoutsession.acquire_file_lock`，30 s）里跑。两个进程同时首次打开 / 重置教程时，副本 rename 与共享标记
+    `state/tutorial-cleanup-pending` 的写入 / 失败回滚必须串行，否则一个进程发布后退出、另一个进程 rename 失败的回滚分支会把对方
+    留下的共享标记删掉，下次打开就漏掉旧固定 ID 槽位的清理。拿不到锁回 409 `tutorial_locked`，绝不在无锁时继续。
   - **跨进程文件锁**（C2）：模块锁 `_LOCK` = 进程内线程锁 + `state/layout-sessions.lock` 的文件锁（POSIX `fcntl.flock`、
     Windows `msvcrt.locking`，纯标准库，非阻塞 + 10 ms 重试），多个进程共用一个数据目录时读改写不丢更新；拿不到（5 s）抛
     `SessionStateUnavailable`。**锁文件打不开 / 文件系统不支持咨询锁（网络盘等）时同样抛它，绝不退回只有线程锁**（会静默丢更新、互相覆盖）；

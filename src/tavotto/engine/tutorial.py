@@ -52,7 +52,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import atomicio, config, documents, registry
+from . import atomicio, config, documents, layoutsession, registry
 
 #: 包内资源目录（相对 `tavotto` 包根）。
 RESOURCE_PARTS = ("resources", "tutorial_project")
@@ -391,7 +391,38 @@ def _sweep_leftovers(version_dir: Path) -> None:
             shutil.rmtree(p, ignore_errors=True)
 
 
+#: 等别的 Tavotto 进程做完教程副本发布 / 清理意图标记的上限（秒）
+TUTORIAL_LOCK_TIMEOUT_S = 30.0
+
+
+def tutorial_lock_path() -> Path:
+    return layoutsession.canonical_state_dir() / "tutorial.lock"
+
+
 def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
+    """`_ensure_tutorial_copy_locked`，在**跨进程**教程锁里跑。
+
+    共用一个数据目录的两个后端进程同时首次打开 / 重置教程时，副本发布（rename）与清理意图标记
+    （`cleanup_pending_path`，两个进程共享）必须串行：否则一个进程发布后退出、另一个进程 rename 失败的
+    回滚分支会把对方留下的共享标记删掉，下次打开就漏掉旧固定 ID 槽位的清理。拿不到锁一律失败
+    （`tutorial_locked`），绝不在没有锁的情况下继续。
+    """
+    try:
+        fd = layoutsession.acquire_file_lock(
+            tutorial_lock_path(), time.monotonic() + TUTORIAL_LOCK_TIMEOUT_S
+        )
+    except layoutsession.SessionStateUnavailable as exc:
+        raise TutorialError(
+            "tutorial_locked", f"另一个 Tavotto 正在准备教程副本，稍后再试：{exc}"
+        ) from exc
+    try:
+        return _ensure_tutorial_copy_locked(reset=reset)
+    finally:
+        if fd is not None:
+            layoutsession.release_file_lock(fd)
+
+
+def _ensure_tutorial_copy_locked(*, reset: bool = False) -> TutorialProject:
     """确保数据目录里有一份可用的教程副本，返回它的位置。
 
     * 没有 → 复制一份（`created=True`）；
