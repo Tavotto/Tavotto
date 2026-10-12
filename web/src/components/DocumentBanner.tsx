@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Ellipsis, TriangleAlert } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatTime } from '@/i18n/format'
-import { overwriteDisk, reloadFromDisk, saveNow, useDocumentStore } from '@/store/documentStore'
+import { overwriteDisk, reloadFromDisk, useDocumentStore } from '@/store/documentStore'
 import { msg } from '@/i18n'
 import { askConfirm, useUiStore } from '@/store/uiStore'
 import { Button } from './ui/Button'
@@ -11,52 +11,12 @@ import { Notice, type StatusTone } from './ui/Notice'
 import type { DiskDocumentSummary } from '@/lib/api'
 
 /**
- * 文档级的常驻提示条 —— 保存状态机里**会丢编辑、需要用户裁决**的那两种：外部冲突、保存失败。
- *
- * 为什么是常驻条而不是 toast：两件事都"刷新一次就还在"（磁盘上那份确实被改过、编辑确实还没落盘）。
- * 用一个 4.5 秒后自己消失的状态条报告它们，等于把一个持续存在的事实说成一次事件。
- *
- * 形态（2026-10-07 设计审计 §10.1）：**工作面板里**、画布标签行上方的一条内嵌说明条（`Notice`，锚点色分轻重：
- * 冲突 warn、保存失败 danger），`role="alert"`。此前是横贯整个窗口、贴在顶栏下面的灰条，把整个应用往下推 32px。
- * 不打断编辑的那几件（未恢复的编辑、上次的排版没打开、版本过新）不再有横幅，住在顶栏的文档状态芯片里。
+ * 文档级的事此前在这里有一条常驻提示条（冲突 / 保存失败）；2026-10 设计审计第二轮起它们只在顶栏的文档状态芯片里
+ * （`TopBar.SaveStateLabel`：进入时说明块自动展开一次、读屏 assertive 播报）。这个文件留下的是芯片说明块与
+ * 「构建版本不一致」那条提示条共用的几块：冲突摘要 / 冲突三出口 / `Banner` 外壳 / `BannerStack`。
  */
-export function DocumentBanner() {
-  const { t } = useTranslation('workspace')
-  const saveState = useDocumentStore((s) => s.saveState)
-  const saveIssue = useDocumentStore((s) => s.saveIssue)
 
-  // 冲突最急：磁盘上那份不是我以为的那份，编辑正堆在本机等裁决
-  if (saveState === 'conflict') {
-    return (
-      <Banner
-        urgent
-        tone="warn"
-        title={t(saveIssue?.kind === 'stale' ? 'docBanner.conflictStale' : 'docBanner.conflictExternal')}
-        detail={<ConflictDetail disk={saveIssue?.disk} />}
-        action={<ConflictActions />}
-      />
-    )
-  }
-
-  if (saveState === 'save_error') {
-    return (
-      <Banner
-        urgent
-        tone="danger"
-        title={t('docBanner.saveErrorBody')}
-        // 唯一出口，给实心黑：这条上只有它是要按的
-        action={
-          <Button variant="primary" size="sm" className="shrink-0" onClick={() => void saveNow()}>
-            {t('docBanner.retry')}
-          </Button>
-        }
-      />
-    )
-  }
-  return null
-}
-
-/** 磁盘上那份的一句摘要（冲突条与顶栏芯片的说明块共用） */
+/** 磁盘上那份的一句摘要（顶栏芯片的说明块用） */
 export function ConflictDetail({ disk }: { disk: DiskDocumentSummary | null | undefined }) {
   const { t } = useTranslation('workspace')
   return (

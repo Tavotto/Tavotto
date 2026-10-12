@@ -5172,6 +5172,10 @@ export default interface Resources {
     "readiness": {
       "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅版面。",
       "openCenter": "查看接入状态",
+      "pillAria": "项目接入状态：{{status}}",
+      "pillDismiss": "不再提示",
+      "pillLayoutOnly_other": "{{count}} 张仅版面",
+      "pillPending_other": "{{count}} 张待连接",
       "reason": {
         "multiple_source_candidates": "多个脚本都声称生成这张图，选择用哪一个。",
         "no_source_candidate": "没有找到生成它的脚本。它仍然可以摆放、裁剪、标注和导出。",

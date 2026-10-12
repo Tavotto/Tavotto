@@ -22,8 +22,7 @@ import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
-import { BannerStack, DocumentBanner } from '@/components/DocumentBanner'
-import { ProjectReadinessBanner } from '@/components/ProjectReadinessBanner'
+import { BannerStack } from '@/components/DocumentBanner'
 import { PreparationCard } from '@/components/PreparationCard'
 import { VersionDrawer } from '@/components/VersionDialog'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
@@ -262,13 +261,9 @@ function Workspace() {
             className="relative mb-2 mr-2 flex min-w-0 flex-1 overflow-hidden rounded-panel bg-surface shadow-card"
           >
             <div className="relative flex min-w-0 flex-1 flex-col">
-              {/* 文档 / 项目级的提示条（2026-10-07 设计审计 §10.1）：内嵌在工作面板里、画布标签行上方，锚点色分轻重。
-                  此前横贯整个窗口、把整个应用往下推 32 / 64px */}
-              <BannerStack>
-                {outdated && <BuildMismatchNotice />}
-                <DocumentBanner />
-                <ProjectReadinessBanner />
-              </BannerStack>
+              {/* 工作面板里只剩「构建版本不一致」这一条提示条（2026-10 设计审计第二轮）：文档的事（冲突 / 保存失败……）
+                  在顶栏的文档状态芯片里，项目接入状态在项目名后面的胶囊里——它们不再把画布往下推 */}
+              <BannerStack>{outdated && <BuildMismatchNotice />}</BannerStack>
               {!fastEdit && <CanvasTabs />}
               <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <CanvasStage />
