@@ -493,11 +493,44 @@ def test_app_side_poisoned_code_kills_the_session_and_blinds_every_reader(tmp_pa
     resp = m.app.test_client().get("/api/engine/svg?id=fig.py")
     assert resp.status_code == 404
 
-    # 新一代会话 build 成功之后解除，读得到新发布的文件
-    figcapture.clear_preview_poison(out)
+    # 新一代 build 成功但**没有**重新发布这个 stem（条件脚本这次没出图）：错配文件仍在磁盘上，不得解除（Codex #958）
+    assert figcapture.clear_preview_poison(out) is False
     resp = m.app.test_client().get("/api/engine/svg?id=fig.py")
-    assert resp.status_code == 200 and b"data-new" in resp.data
+    assert resp.status_code == 404
     resp.close()
+
+    # 新一代把它完整重新发布之后（作废之后的账本序号、字节数对得上）才解除，读得到新发布的文件
+    fresh = b"<svg data-new='2'/>"
+    (out / "fig.svg").write_bytes(fresh)
+    (out / "fig.json").write_text('{"stem": "fig"}', encoding="utf-8")
+    figcapture.record_preview_published(out, "fig", len(fresh))
+    assert figcapture.clear_preview_poison(out) is True
+    resp = m.app.test_client().get("/api/engine/svg?id=fig.py")
+    assert resp.status_code == 200 and b"data-new='2'" in resp.data
+    resp.close()
+
+
+def test_poison_survives_a_build_that_republishes_only_other_stems(tmp_path):
+    """作废后新一代只发布了别的 stem：旧 stem 的错配文件还在，整目录继续「无预览」。"""
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "old.svg").write_text("<svg/>", encoding="utf-8")
+    (out / "old.json").write_text("{}", encoding="utf-8")
+    figcapture.poison_preview_dir(out)
+    try:
+        svg = b"<svg id='other'/>"
+        (out / "other.svg").write_bytes(svg)
+        (out / "other.json").write_text("{}", encoding="utf-8")
+        figcapture.record_preview_published(out, "other", len(svg))
+        assert figcapture.clear_preview_poison(out) is False
+        assert not Path(figcapture.usable_preview_path(out, "old", ".svg")).exists()
+        (out / "old.svg").unlink()
+        (out / "old.json").unlink()  # 旧文件真的没了（或被重新发布）才解除
+        assert figcapture.clear_preview_poison(out) is True
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
 
 
 def test_workerd_side_poisoned_code_is_fatal_and_blinds_readers(tmp_path):
@@ -515,7 +548,7 @@ def test_workerd_side_poisoned_code_is_fatal_and_blinds_readers(tmp_path):
     exc = workerd_client.WorkerdError("poisoned", code="preview_poisoned")
     w._to_worker_error(exc)
     assert w._dead is True and w.svg_path("fig").exists() is False
-    figcapture.clear_preview_poison(out)
+    figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
 
 
 def test_native_session_poisoned_code_poisons_transport_and_readers(tmp_path):
@@ -540,4 +573,4 @@ def test_native_session_poisoned_code_poisons_transport_and_readers(tmp_path):
         s._request({"cmd": "render"}, 1.0)
     assert s.transport.poison is not None, "既有的 poison 机制：之后每条请求都被拒"
     assert s.svg_path("fig").exists() is False
-    figcapture.clear_preview_poison(out)
+    figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)

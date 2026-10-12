@@ -366,7 +366,8 @@ def preview_invalid(out_dir, stem: str) -> bool:
 #: 内存标记读方都看不见。所以这一级由 **读方进程**自己记：app 侧收到该错误码（会话同时被判死）
 #: 就把整个 `out_dir` 记进这张表，`usable_preview_path` 对它回「无预览」，直到下一代会话 build 成功。
 PREVIEW_POISONED_CODE = "preview_poisoned"
-_poisoned_dirs: set[str] = set()
+#: 目录键 → 作废那一刻账本的发布序号。解除时要求磁盘上每个还有预览文件的 stem 都在此之后重新完整发布过。
+_poisoned_dirs: dict[str, int] = {}
 
 
 def _dir_key(out_dir) -> str:
@@ -374,13 +375,40 @@ def _dir_key(out_dir) -> str:
 
 
 def poison_preview_dir(out_dir) -> None:
-    """读方进程：`out_dir` 下所有预览产物都不可信（见 `PREVIEW_POISONED_CODE`）。"""
-    _poisoned_dirs.add(_dir_key(out_dir))
+    """读方进程：`out_dir` 下所有预览产物都不可信（见 `PREVIEW_POISONED_CODE`）。记下此刻的账本序号。"""
+    key = _dir_key(out_dir)
+    seq = _read_preview_ledger(out_dir)["seq"]
+    _poisoned_dirs[key] = max(seq, _poisoned_dirs.get(key, seq))
 
 
-def clear_preview_poison(out_dir) -> None:
-    """新一代会话 build 成功（全部 stem 重新发布）之后解除。"""
-    _poisoned_dirs.discard(_dir_key(out_dir))
+def clear_preview_poison(out_dir) -> bool:
+    """新一代会话 build 成功后**尝试**解除，返回是否已解除。
+
+    `out_dir` 跨会话代复用、build 不会清掉旧文件：新一代可能一张图都没出、或出的是另一组 stem，被作废时
+    藏起来的错配文件仍在磁盘上（Codex #958）。所以只有当磁盘上**每一个**还有 `<stem>.svg` / `<stem>.json`
+    的 stem 都在作废之后重新完整发布过（账本序号大于作废时的序号、字节数对得上），才解除；否则继续「无预览」。
+    """
+    key = _dir_key(out_dir)
+    if key not in _poisoned_dirs:
+        return True
+    floor = _poisoned_dirs[key]
+    try:
+        names = os.listdir(os.fspath(out_dir))
+    except OSError:
+        return False
+    on_disk = {
+        n.rsplit(".", 1)[0]
+        for n in names
+        if not n.startswith(".") and (n.endswith(".svg") or n.endswith(".json"))
+    }
+    ledger = _read_preview_ledger(out_dir)["stems"]
+    fresh = set(published_preview_stems(out_dir))
+    for stem in on_disk:
+        rec = ledger.get(stem)
+        if stem not in fresh or not isinstance(rec, dict) or int(rec.get("seq") or 0) <= floor:
+            return False
+    del _poisoned_dirs[key]
+    return True
 
 
 def preview_dir_poisoned(out_dir) -> bool:
