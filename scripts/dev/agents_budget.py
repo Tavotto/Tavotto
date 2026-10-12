@@ -76,6 +76,22 @@ def size(rel: str) -> int:
     return p.stat().st_size if p.is_file() else 0
 
 
+def crlf_bytes(data: bytes) -> int:
+    """按 CRLF 口径量字节：先把 CRLF / 孤立 CR 统一成 LF，再给每个 LF 补 1 字节。
+
+    Windows 检出是 CRLF、macOS/Linux 是 LF，同一份内容原始字节不同（#935）；统一按 CRLF
+    量，各平台算出同一个数，且已是 CRLF 的输入不会被重复计数。
+    """
+    lf = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return len(lf) + lf.count(b"\n")
+
+
+def codex_size(rel: str) -> int:
+    """Codex 拼接用的体积：CRLF 口径（见 `crlf_bytes`）。"""
+    p = ROOT / rel
+    return crlf_bytes(p.read_bytes()) if p.is_file() else 0
+
+
 def verdict(n: int, budget: tuple[int, int]) -> str:
     lo, hi = budget
     if n <= hi:
@@ -151,7 +167,7 @@ def report() -> dict:
     codex = []
     for cwd in codex_cwds():
         files = codex_chain(cwd)
-        total = sum(size(f) for f in files)
+        total = sum(codex_size(f) for f in files)
         codex.append(
             {
                 "cwd": cwd,
@@ -203,7 +219,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             for f in c["files"]:
                 print(f"           {size(f):>7,}  {f}")
-        print(f"== Codex 自动拼接（默认 project_doc_max_bytes = {CODEX_DEFAULT_CAP:,}）")
+        print(
+            f"== Codex 自动拼接（默认 project_doc_max_bytes = {CODEX_DEFAULT_CAP:,}；按 CRLF 口径）"
+        )
         for c in r["codex"]:
             flag = "ok" if c["within_default_cap"] else "OVER（后面的文件会被截掉）"
             print(f"  {c['bytes']:>7,} B  {flag:<28} cwd={c['cwd']}  ← {' + '.join(c['files'])}")
