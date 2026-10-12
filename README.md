@@ -241,7 +241,12 @@ figures, scripts, project files or data anywhere, and unpublished results do not
 the building. It makes exactly two requests on its own:
 
 - **A once-a-day check** of GitHub Releases for a new version. Turn it off under
-  **Settings → Check for updates** (or set `TAVOTTO_NO_UPDATE_CHECK=1`).
+  **Settings → Check for updates** (or set `TAVOTTO_NO_UPDATE_CHECK=1`). The desktop
+  app checks at startup and, depending on your time zone and language, asks either
+  GitHub or the project's China mirror (`dl.tavotto.cn`) first, falling back to the
+  other; installers are downloaded only after you press the button and are always
+  verified against the signature key built into the app
+  ([privacy details](docs/privacy.md#update-checks)).
 - **Anonymous usage statistics — off until you say yes.** You are asked once, on first
   run. If you opt in, Tavotto sends broad feature events (app started, figure opened,
   edit committed, export succeeded, project refreshed, readiness view opened, a

@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-10
+Last updated: 2026-10-12
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -62,6 +62,19 @@ The desktop application uses a separate updater, checks at startup, and currentl
 has no in-app switch to disable those checks. The browser preference and Python
 backend environment variable do not control this desktop channel. The desktop
 updater downloads the signed installer when the user accepts an update.
+
+The desktop updater has two sources: GitHub Releases and a mirror operated by the
+Tavotto maintainers at `dl.tavotto.cn` (mainland China). If the system time zone is
+in mainland China or the system or interface language is Simplified Chinese
+(mainland), it asks the mirror first and GitHub second; otherwise GitHub first and the
+mirror second. The first source that answers decides: it is asked once per check, and
+the other one is contacted only when the first cannot answer, or when a download from
+it fails after you pressed *Download and install* (then the installer is fetched again
+from the other source). Either source sees what any HTTPS request reveals (IP address,
+time, the updater's user agent) and nothing else: no identifier, no telemetry, no
+project content. Which source the installer came from does not affect trust — the
+installer's signature is always verified with the public key built into the app, and
+an installer that fails verification is not installed.
 
 ## Package lookup and environment preparation
 
