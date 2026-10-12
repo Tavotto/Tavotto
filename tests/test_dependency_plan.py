@@ -1367,6 +1367,80 @@ class TestPlanOrigins:
         assert plan.origins[0]["coverage"] == "import_error"
         assert plan.requirements == ()
 
+    @staticmethod
+    def _satisfiable_class(**over):
+        row = {
+            "distribution": "lab-tools",
+            "version": "1.0",
+            "source": "installed",
+            "ecosystem": "pypi",
+            "provenance": "index",
+            "evidence": ["installed_record_files"],
+            "evidence_file": "",
+            "reproducible": True,
+            "shadowed": False,
+        }
+        row.update(over.pop("row", {}))
+        fields = {
+            "module": "lab_tools",
+            "bucket": "unknown",
+            "context": "unconditional",
+            "resolution_status": "resolved",
+            "evidence": ("installed_record_files",),
+            "distribution_candidates": (row,),
+            "distribution_provenance": "index",
+            "distribution_status": "installed_confirmed",
+            "compatibility": (),
+        }
+        fields.update(over)
+        return importscan.ImportClass(**fields)
+
+    def test_938_the_judgement_one_condition_at_a_time(self):
+        """每个条件单独翻转都必须推翻「判满足」（端到端的反例会被相邻条件掩盖，这里逐条隔离）。"""
+        installed = {"lab-tools": "1.0"}
+
+        def ok(c, **kw):
+            return depplan._installed_index_satisfies(
+                c, kw.get("installed", installed), kw.get("state", ""), kw.get("incomplete", False)
+            )
+
+        assert ok(self._satisfiable_class()) is True
+        assert ok(self._satisfiable_class(), incomplete=True) is False
+        assert ok(self._satisfiable_class(), state="import_error") is False
+        assert ok(self._satisfiable_class(), installed={}) is False
+        assert ok(self._satisfiable_class(bucket="third_party")) is False
+        for over in (
+            {"distribution_status": "module_origin_ambiguous"},
+            {"distribution_status": "distribution_version_conflict"},
+            {"resolution_status": "ambiguous"},
+            {"distribution_provenance": "editable"},
+            {"compatibility": ("layer_order_unresolved",)},
+            {"evidence": ("module_present_no_metadata",)},
+        ):
+            assert ok(self._satisfiable_class(**over)) is False, over
+        for row in (
+            {"provenance": "editable"},
+            {"reproducible": False},
+            {"ecosystem": "conda"},
+            {"shadowed": True},  # 唯一的候选被遮蔽 = 没有未被遮蔽的提供者
+        ):
+            assert ok(self._satisfiable_class(row=row)) is False, row
+        two = self._satisfiable_class()
+        extra = dict(two.distribution_candidates[0], distribution="other-lab")
+        two = dataclasses.replace(
+            two, distribution_candidates=(*two.distribution_candidates, extra)
+        )
+        assert ok(two, installed={"lab-tools": "1.0", "other-lab": "1"}) is False
+        # 一个未被遮蔽、一个被遮蔽：判的是那个未被遮蔽的
+        shadowed = dataclasses.replace(
+            two,
+            distribution_candidates=(
+                two.distribution_candidates[0],
+                dict(extra, shadowed=True),
+            ),
+        )
+        assert ok(shadowed) is True
+
     # ---- 不变量 ------------------------------------------------------------------------------
     def test_unknown_names_are_exactly_the_origins_names(self, tmp_path):
         proj = self._project(tmp_path, "import zzz_private\nimport cv2\nimport yaml\n")
