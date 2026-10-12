@@ -274,7 +274,11 @@ class ImportUse:
     """一处 import：顶级名、写的全名、上下文、行号、经由哪个本地模块（空 = 脚本本身）。
 
     `names` 是 `from X import a, b` 的名字（`a` 可能是 `X` 的子模块也可能是属性——是哪个由磁盘定，
-    不假定）；不进 `to_payload`（协议形状不变）。"""
+    不假定）；不进 `to_payload`（协议形状不变）。
+
+    `enclosing` 只给非字面量的动态导入（`ScanResult.dynamic`）用：它所在位置的外围上下文（`optional` /
+    `conditional` / `type_checking` / `deferred` / `unconditional`）——`context` 对它恒为 `dynamic`，丢了外围；
+    依赖计划靠它区分「跑到这行才知道装什么」与「try/except ImportError 里、缺了脚本照样跑」。同样不进 `to_payload`。"""
 
     module: str
     full: str
@@ -282,6 +286,7 @@ class ImportUse:
     lineno: int
     via: str = ""
     names: tuple[str, ...] = ()
+    enclosing: str = ""
 
     def to_payload(self) -> dict:
         return {
@@ -636,7 +641,11 @@ class _Visitor(ast.NodeVisitor):
                     ImportUse(literal.split(".", 1)[0], literal, ctx, node.lineno, self.via)
                 )
             else:
-                self.dynamic.append(ImportUse("", arg, CONTEXT_DYNAMIC, node.lineno, self.via))
+                self.dynamic.append(
+                    ImportUse(
+                        "", arg, CONTEXT_DYNAMIC, node.lineno, self.via, enclosing=self._context()
+                    )
+                )
         fn = node.func
         if isinstance(fn, ast.Attribute) and (
             (fn.attr in _PATH_MUTATORS and _is_sys_path(fn.value, self.al))
@@ -1592,7 +1601,9 @@ class _Scanner:
         else:
             self.main_queue += targets
         for d in parsed.dynamic:
-            self.dynamic.append(ImportUse("", d.full, CONTEXT_DYNAMIC, d.lineno, job.via))
+            self.dynamic.append(
+                ImportUse("", d.full, CONTEXT_DYNAMIC, d.lineno, job.via, enclosing=d.enclosing)
+            )
         self.process(job, parsed)
 
     # ---- 一条 import 指向哪些本地文件 ----

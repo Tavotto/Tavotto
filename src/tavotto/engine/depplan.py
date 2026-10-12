@@ -1075,6 +1075,24 @@ _BINDING_CONTEXTS = (
 )
 
 
+def _is_binding(c) -> bool:
+    """这条 import 分类算不算「指到发行包」：第三方 / 未知桶、绑定上下文、没被弃用。声明相关性与互斥 provider 的冲突触发
+    共用这一处（`_relevant_declarations` / `_arbitrate_providers`）——可选 / 条件 / `TYPE_CHECKING` / 未使用的 import 两处都不算。"""
+    return (
+        c.bucket in (importscan.BUCKET_THIRD_PARTY, importscan.BUCKET_UNKNOWN)
+        and c.context in _BINDING_CONTEXTS
+        and not c.unused
+    )
+
+
+def _binding_dynamic(scan: importscan.ScanResult) -> bool:
+    """有没有落在绑定上下文里的非字面量动态导入（外围是 `optional` / `conditional` / `type_checking` 的不算——
+    缺了脚本照样跑，不需要跑前装什么）。外围没记（旧构造的 `ImportUse`）按保守的「算」。"""
+    return any(
+        (u.enclosing or importscan.CONTEXT_UNCONDITIONAL) in _BINDING_CONTEXTS for u in scan.dynamic
+    )
+
+
 def _relevant_declarations(
     names,
     scan: importscan.ScanResult,
@@ -1084,14 +1102,7 @@ def _relevant_declarations(
     """选中的声明里，哪些与这个脚本有可见的关联（P02）：脚本里有 import 能指到这个发行包，或脚本有无法归给任何发行包的 import
     （表外名、函数体内 / 别名的未知名字）、有非字面量的动态导入——后一种里没法逐条对应，声明就是权威（AST 不否决已选声明）。
     其余的声明（requirements 里躺着、这个脚本从没碰过的包）不因此装进来，也不让计划 `ready`：不污染不相干的脚本。"""
-    bound = [
-        c
-        for c in scan.classes
-        if c.distribution
-        and c.bucket in (importscan.BUCKET_THIRD_PARTY, importscan.BUCKET_UNKNOWN)
-        and c.context in _BINDING_CONTEXTS
-        and not c.unused
-    ]
+    bound = [c for c in scan.classes if c.distribution and _is_binding(c)]
     # 仲裁出的 provider 只对确实 import 了它那个模块的脚本相关（Codex #960 P2）：模块名已知，没 import 就不相关——
     # 共享 requirements 里点名 headless，只 `import numpy` 的脚本不因此装 OpenCV
     attached = {
@@ -1104,13 +1115,8 @@ def _relevant_declarations(
     } - attached
     unexplained = (
         bool(plain_unknown)
-        or bool(scan.dynamic)
-        or any(
-            c.bucket == importscan.BUCKET_UNKNOWN
-            and c.context in _BINDING_CONTEXTS
-            and not c.unused
-            for c in scan.classes
-        )
+        or _binding_dynamic(scan)
+        or any(c.bucket == importscan.BUCKET_UNKNOWN and _is_binding(c) for c in scan.classes)
     )
     return (set(names) - unimported) if unexplained else set(names) & attached
 
@@ -1161,7 +1167,7 @@ def _arbitrate_providers(
     不是「都装」。声明里一个都没点名 = 不仲裁，维持 curated 行为。冲突只在脚本确实 import 那个名字、或点名的 provider **真的在这次计划的
     安装集合里**（`installing`：受管环境按声明装 roots 的那些、hash 模式整份锁）时报；`None` = 还没算出安装集合，只判前一种（取 `chosen` 用）。
     不看「是不是 roots 模式」这种全局开关：无关脚本的计划不装那两个 provider，不该被拦；hash 锁整份都装，同锁里的两个 provider 必须拦。"""
-    scanned = {c.module for c in classes}
+    scanned = {c.module for c in classes if _is_binding(c)}
     chosen: dict[str, str] = {}
     conflicts: list[dict] = []
     for module, alts in depresolve.ALTERNATIVE_DISTRIBUTIONS.items():
