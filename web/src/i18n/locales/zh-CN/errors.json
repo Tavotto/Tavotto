@@ -890,6 +890,7 @@
   },
   "update": {
     "applyFailed": "升级失败",
+    "busy": "当前正在更新或操作中，请稍候再试",
     "checkFailed": "检查失败：{{error}}",
     "checkFailedOffline": "检查失败：无法连接本地服务",
     "desktopCheckFailed": "检查更新失败",

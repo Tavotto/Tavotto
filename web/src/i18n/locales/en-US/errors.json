@@ -909,6 +909,7 @@
   },
   "update": {
     "applyFailed": "Upgrade failed",
+    "busy": "An update operation is already in progress. Try again in a moment.",
     "checkFailed": "Check failed: {{error}}",
     "checkFailedOffline": "Check failed: couldn’t reach the local service",
     "desktopCheckFailed": "Update check failed",

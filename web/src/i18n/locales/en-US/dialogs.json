@@ -1476,6 +1476,29 @@
       "restartBefore": "Upgrade complete. ",
       "restartStrong": "Restart Tavotto",
       "signatureNote": "Update packages are officially signed, and the signature is checked before installing; if it fails, nothing is installed. Your projects, layouts and settings live outside the app’s install folder, so upgrades don’t touch them.",
+      "sourceUsed": "Update source: {{source}}",
+      "sourceName": {
+        "mirror": "China mirror",
+        "github": "GitHub"
+      },
+      "attemptsTitle": "Failures per source",
+      "attemptLine": "{{source}} · {{stage}} · {{kind}}",
+      "stageName": {
+        "check": "check",
+        "download": "download",
+        "install": "install"
+      },
+      "kindName": {
+        "not_on_mirror": "mirror manifest points outside the mirror",
+        "network": "network unreachable",
+        "timeout": "timed out",
+        "stalled": "download stalled",
+        "http": "server returned an error",
+        "bad_manifest": "invalid manifest",
+        "signature": "signature check failed",
+        "version_mismatch": "version differs from the one found",
+        "other": "other error"
+      },
       "sourceUpgrade": "For a source checkout, run",
       "upgrading": "Upgrading…",
       "lastCheckedNoUpdate": "{{time}} · No new version",

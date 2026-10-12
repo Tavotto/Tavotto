@@ -3,6 +3,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_update;
+#[cfg(test)]
+mod app_update_flow_tests;
 // 分派只有 macOS 的 native_drop 在用；别的平台上它只剩单测（分派规则各平台一样，照样跑）
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod drop_paths;
@@ -1253,9 +1256,11 @@ fn show_error(win: &tauri::WebviewWindow, msg: &str, log_path: &str, locale: i18
 /// 里的更新按钮。与 `--insecure-no-auth` 同一套纪律：默认关死、触发时打
 /// 警告、有专门用例看护。
 ///
-/// **endpoint / 公钥 / 插件一个字节不改**：走的就是用户按按钮那条链路
-/// （`tauri.conf.json` 的 `plugins.updater`），所以它验的是真链路，不是
-/// 一条为测试另开的旁门。Windows 上 NSIS passive 装完由插件重启应用，
+/// **endpoint / 公钥 / 插件一个字节不改，来源编排也是同一份代码**：走的就是用户按按钮那条链路
+/// （`app_update::check` / `install`，ADR 0121），所以它验的是真链路，不是一条为测试另开的旁门。
+/// `TAVOTTO_E2E_UPDATE_SOURCE=mirror|github` 把来源**钉死成单个**（不回退——否则坏掉的镜像
+/// 会被 GitHub 悄悄兜住、CI 假绿），让 CI 能分别验两条来源；不设 / 其它值 = 与用户同样的自动顺序。
+/// Windows 上 NSIS passive 装完由插件重启应用，
 /// 旧进程 `std::process::exit(0)` 不走 `RunEvent::Exit`（sidecar 靠
 /// stdin EOF 自杀链收摊）——验收方要等**新进程出现**，别等旧进程优雅退出。
 ///
@@ -1271,25 +1276,41 @@ fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
     );
     tauri::async_runtime::spawn(async move {
         use tauri_plugin_updater::UpdaterExt;
-        let updater = match handle.updater() {
-            Ok(u) => u,
+        let endpoints = match app_update::endpoints(&handle) {
+            Ok(e) => e,
             Err(e) => {
-                eprintln!("[e2e-update] updater 不可用: {e}");
+                eprintln!("[e2e-update] updater 不可用: {}", e.code);
                 std::process::exit(40);
             }
         };
-        match updater.check().await {
-            Ok(Some(update)) => {
-                eprintln!("[e2e-update] 发现新版本 {}，开始下载安装", update.version);
-                match update.download_and_install(|_, _| {}, || {}).await {
-                    Ok(()) => {
+        let order = match std::env::var("TAVOTTO_E2E_UPDATE_SOURCE")
+            .ok()
+            .and_then(|v| app_update::Source::parse(&v))
+        {
+            Some(only) => {
+                eprintln!("[e2e-update] 来源钉死为 {only:?}（不回退）");
+                vec![only]
+            }
+            None => app_update::detect_order(None),
+        };
+        let limits = app_update::Limits::default();
+        let make = || handle.updater_builder();
+        let state = app_update::UpdateState::default();
+        match app_update::run_check(&make, &endpoints, &state, &order, &limits).await {
+            Ok(Some(found)) => {
+                eprintln!(
+                    "[e2e-update] 发现新版本 {}（来源 {:?}），开始下载安装",
+                    found.version, found.source
+                );
+                match app_update::run_install(&make, &endpoints, &state, &limits, &|_| {}).await {
+                    Ok(used) => {
                         // Windows 上装到这里进程通常已被插件替换/退出；
                         // 其余平台显式重启到新版本。
-                        eprintln!("[e2e-update] 安装完成，重启到新版本");
+                        eprintln!("[e2e-update] 安装完成（来源 {used:?}），重启到新版本");
                         handle.restart();
                     }
                     Err(e) => {
-                        eprintln!("[e2e-update] 下载/安装失败: {e}");
+                        eprintln!("[e2e-update] 下载/安装失败: {} {:?}", e.code, e.attempts);
                         std::process::exit(42);
                     }
                 }
@@ -1298,11 +1319,54 @@ fn spawn_e2e_update_if_requested(handle: tauri::AppHandle) {
                 eprintln!("[e2e-update] 已是最新版本，照常启动");
             }
             Err(e) => {
-                eprintln!("[e2e-update] 检查更新失败: {e}");
+                eprintln!("[e2e-update] 检查更新失败: {} {:?}", e.code, e.attempts);
                 std::process::exit(41);
             }
         }
     });
+}
+
+/// 应用内更新·查（前端 `checkDesktopUpdate` 的唯一入口，ADR 0121）。来源顺序由本机时区 / 系统语言 /
+/// 界面语言决定（`app_update::source_order`）；第一个答上来的来源说了算。绝不静默下载。
+#[tauri::command]
+async fn desktop_update_check(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, app_update::UpdateState>,
+    ui_lang: Option<String>,
+) -> Result<Option<app_update::CheckedUpdate>, app_update::Failure> {
+    use tauri_plugin_updater::UpdaterExt;
+    let endpoints = app_update::endpoints(&app)?;
+    let order = app_update::detect_order(ui_lang.as_deref());
+    app_update::run_check(
+        &|| app.updater_builder(),
+        &endpoints,
+        &state,
+        &order,
+        &app_update::Limits::default(),
+    )
+    .await
+}
+
+/// 应用内更新·下载并安装上一次查到的那一版（用户按下按钮的结果）。当前来源下载失败就换另一个
+/// 来源重新查 + 下，回退来源必须报同一个版本；验签始终用内置公钥。返回实际用的来源。
+#[tauri::command]
+async fn desktop_update_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, app_update::UpdateState>,
+    on_event: tauri::ipc::Channel<app_update::DownloadEvent>,
+) -> Result<app_update::Source, app_update::Failure> {
+    use tauri_plugin_updater::UpdaterExt;
+    let endpoints = app_update::endpoints(&app)?;
+    app_update::run_install(
+        &|| app.updater_builder(),
+        &endpoints,
+        &state,
+        &app_update::Limits::default(),
+        &|ev| {
+            let _ = on_event.send(ev);
+        },
+    )
+    .await
 }
 
 fn main() {
@@ -1336,12 +1400,14 @@ fn main() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        // 应用内更新：前端经 @tauri-apps/plugin-updater 检查/下载/安装，
-        // 装完用 process 的 restart 重启。升级永不静默进行——什么时候换版本
-        // 是用户按下按钮的结果（与 Python updater 同一条纪律）。
+        // 应用内更新：前端经自有命令 desktop_update_check / desktop_update_install（来源编排见
+        // app_update.rs，ADR 0121）检查/下载/安装，装完用 process 的 restart 重启。升级永不静默
+        // 进行——什么时候换版本是用户按下按钮的结果（与 Python updater 同一条纪律）。
+        // 插件本身只提供 UpdaterBuilder / 验签；前端不再直接调它（capabilities 里没有 updater:*）。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(state)
+        .manage(app_update::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             reveal_export,
             reveal_project_dir,
@@ -1350,7 +1416,9 @@ fn main() {
             arm_close_guard,
             resolve_close_request,
             native_file_drop,
-            connect_remote
+            connect_remote,
+            desktop_update_check,
+            desktop_update_install
         ])
         .on_window_event(|window, event| {
             // 事件回调是全局的：只看有关窗询问闸的那两个窗口。

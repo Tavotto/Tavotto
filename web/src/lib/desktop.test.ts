@@ -4,6 +4,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  DesktopUpdateError,
   __resetDesktopUpdate,
   bootstrapDesktopSession,
   canRevealInFileManager,
@@ -28,11 +29,21 @@ import {
 // 远程实例窗口那一组用：壳在，但本机文件类能力一条都不许碰
 const tauri = vi.hoisted(() => ({
   listen: vi.fn(async () => () => {}),
-  invoke: vi.fn(async () => undefined),
+  invoke: vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined),
   open: vi.fn(async () => '/local/path'),
 }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: tauri.listen }))
-vi.mock('@tauri-apps/api/core', () => ({ invoke: tauri.invoke }))
+// Channel：测试里把壳往它身上发的事件直接塞给 onmessage
+const channels = vi.hoisted(() => ({ last: null as null | { onmessage?: (e: unknown) => void } }))
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: tauri.invoke,
+  Channel: class {
+    onmessage?: (e: unknown) => void
+    constructor() {
+      channels.last = this
+    }
+  },
+}))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: tauri.open }))
 
 afterEach(() => {
@@ -219,6 +230,121 @@ describe('应用内更新的浏览器回退', () => {
     vi.stubGlobal('location', { ...window.location, reload })
     await relaunchDesktop()
     expect(reload).toHaveBeenCalled()
+  })
+})
+
+describe('应用内更新·经壳的自有命令（ADR 0121）', () => {
+  const w = window as unknown as Record<string, unknown>
+  const found = { version: '9.9.9', notes: 'n', date: '2026-10-12T00:00:00Z', source: 'mirror' as const }
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    tauri.invoke.mockReset()
+    tauri.invoke.mockImplementation(async () => undefined)
+    __resetDesktopUpdate()
+    channels.last = null
+  })
+
+  it('检查：调 desktop_update_check，带上界面语言，原样交出版本与来源', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(found)
+    const info = await checkDesktopUpdate()
+    expect(tauri.invoke).toHaveBeenCalledWith('desktop_update_check', { uiLang: expect.any(String) })
+    expect(info).toMatchObject({ version: '9.9.9', source: 'mirror', date: '2026-10-12T00:00:00Z' })
+  })
+
+  it('检查：没有新版 → null，且之后装会被拒（句柄不残留）', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(found)
+    await checkDesktopUpdate()
+    tauri.invoke.mockResolvedValueOnce(null)
+    expect(await checkDesktopUpdate()).toBeNull()
+    await expect(installDesktopUpdate()).rejects.toThrow('请先检查更新')
+  })
+
+  it('检查失败：抛 DesktopUpdateError，句子是通用的，code/attempts 单独留着，不把壳回的原文当句子', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    const attempts = [
+      { source: 'mirror', stage: 'check', kind: 'timeout' },
+      { source: 'github', stage: 'check', kind: 'http' },
+    ]
+    tauri.invoke.mockRejectedValueOnce({ code: 'all_sources_failed', attempts })
+    const err = await checkDesktopUpdate().catch((e) => e)
+    expect(err).toBeInstanceOf(DesktopUpdateError)
+    expect(err.code).toBe('all_sources_failed')
+    expect(err.attempts).toEqual(attempts)
+    expect(err.message).toBe('检查更新失败')
+    // ACL 拒绝 / 老壳没有这个命令：回的是裸字符串
+    tauri.invoke.mockRejectedValueOnce('command desktop_update_check not allowed by ACL')
+    const err2 = await checkDesktopUpdate().catch((e) => e)
+    expect(err2.message).toBe('检查更新失败')
+    expect(err2.message).not.toContain('ACL')
+  })
+
+  it('安装：进度随 Started/Progress/Finished 走；换来源重下时 Started 让进度归零；返回实际来源', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(found)
+    await checkDesktopUpdate()
+    const seen: Array<number | null> = []
+    tauri.invoke.mockImplementationOnce(async (cmd: unknown, args: unknown) => {
+      expect(cmd).toBe('desktop_update_install')
+      expect((args as { onEvent: unknown }).onEvent).toBe(channels.last)
+      const emit = channels.last!.onmessage!
+      emit({ event: 'Started', data: { contentLength: 100 } })
+      emit({ event: 'Progress', data: { chunkLength: 40 } })
+      // 镜像下到一半断了，壳换 GitHub 重下
+      emit({ event: 'Started', data: { contentLength: 100 } })
+      emit({ event: 'Progress', data: { chunkLength: 100 } })
+      emit({ event: 'Finished' })
+      return 'github'
+    })
+    const used = await installDesktopUpdate((f) => seen.push(f))
+    expect(seen).toEqual([0, 0.4, 0, 1, 1])
+    expect(used).toBe('github')
+  })
+
+  it('安装：没给 contentLength → 进度是 null（不确定态）', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(found)
+    await checkDesktopUpdate()
+    const seen: Array<number | null> = []
+    tauri.invoke.mockImplementationOnce(async () => {
+      channels.last!.onmessage!({ event: 'Started', data: { contentLength: null } })
+      channels.last!.onmessage!({ event: 'Progress', data: { chunkLength: 10 } })
+      return 'mirror'
+    })
+    await installDesktopUpdate((f) => seen.push(f))
+    expect(seen).toEqual([null, null])
+  })
+
+  it('安装失败：逐来源记录带出来，句子是「下载或安装失败」；失败后句柄还在，可以再按一次', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(found)
+    await checkDesktopUpdate()
+    const attempts = [
+      { source: 'mirror', stage: 'download', kind: 'signature' },
+      { source: 'github', stage: 'download', kind: 'stalled' },
+    ]
+    tauri.invoke.mockRejectedValueOnce({ code: 'all_sources_failed', attempts })
+    const err = await installDesktopUpdate().catch((e) => e)
+    expect(err).toBeInstanceOf(DesktopUpdateError)
+    expect(err.attempts).toEqual(attempts)
+    expect(err.message).toBe('下载或安装失败')
+    tauri.invoke.mockImplementationOnce(async () => 'mirror')
+    await expect(installDesktopUpdate()).resolves.toBe('mirror')
+  })
+
+  it('壳说 busy / no_pending_update：各有自己的一句话', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    tauri.invoke.mockResolvedValueOnce(found)
+    await checkDesktopUpdate()
+    tauri.invoke.mockRejectedValueOnce({ code: 'busy', attempts: [] })
+    expect((await installDesktopUpdate().catch((e) => e)).message).toBe(
+      '当前正在更新或操作中，请稍候再试',
+    )
+    tauri.invoke.mockRejectedValueOnce({ code: 'no_pending_update', attempts: [] })
+    expect((await installDesktopUpdate().catch((e) => e)).message).toBe(
+      '没有待安装的更新，请先检查更新',
+    )
   })
 })
 

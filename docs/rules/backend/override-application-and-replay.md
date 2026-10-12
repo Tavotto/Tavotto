@@ -142,6 +142,25 @@
   同族先例：
   `_AUTOSCALE`（自动缩放）、`_NO_BBOX`（没有框）、`_get_coll_edgecolor`（映射通道）。
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
+- **会读环境重解析的 setter，调用期间把「未设」花纹色钉成创建时的值、跑完还原模式（#874）**：matplotlib ≥3.11 的
+  `Patch.set_alpha` / `Patch.set_fill` / `Collection.set_alpha` 把 `_original_hatchcolor is None` 的花纹色
+  按**此刻**的 `rcParams['hatch.color']` 重解析。脚本在 `rc_context` / `style.context` 里改过 `hatch.color`
+  时，创建时的 red / `'edge'` / 半透明 RGBA 被环境值盖掉，撤销回不去——编辑那一刻热态与重放一致，分叉只在
+  撤销之后（像素不同、manifest 相同、warnings 为空，写回 verify 报 409 `replay_divergence`）。
+  `overrides._with_hatch_pinned` 包住 alpha / fill setter：动手**之前**`set_hatchcolor(创建时已解析的值)`，
+  跑完 setter **立刻把 `_original_hatchcolor` 还原成 None**（只还原模式，`_hatch_color` 留着按当前 alpha 合成的值，
+  不重解析 rc）。所以钉只活在 setter 调用期间：native 屏障释放 `apply([])`、safe worker 撤空、编辑进行中，
+  任何时刻这个 artist 的模式都与没被 Tavotto 编辑过的一样，用户恢复运行的 Python 再改 rc 并 `set_alpha` 照常跟随
+  新 rc（Codex #950 r4245786615；还原挂在 setter 里而不是某条 restore 上，因为 restore 本来就走同一个 setter）。
+  还原只在跑完后模式**仍是我们钉进去的那个对象**时才做（钉的是独有副本、身份比较）：用户子类若重写
+  `set_alpha` / `set_fill` 并自己调 `set_hatchcolor`，那是它有意装的模式，保留；setter 抛异常时同样（Codex #950
+  r4246080546；`tests/test_hatch_mode_restored.py` 子类用例）。
+  创建时的值另记在 artist 的 `_mm_hatch_base = (创建时的值, 我们上次写完的样子)`：撤销要找回 rc 里的内在 alpha，
+  当下的值已被 alpha 编辑合成过；第二项对不上说明屏障之间用户代码动过，按实况重记。脚本显式给过 hatchcolor 的
+  artist 原样跑。≤3.10 没有重解析，但 `set_fill(False)` 把 `_hatch_color` 改成边色而
+  `set_fill(True)` 不写回：`_set_patch_fill` 用记在 artist 上的创建时值（`_ORIG_HATCH`，边色 getter 也采）
+  在 `_original_edgecolor is None` 时写回。看护 `tests/test_override_sequences.py::test_rc_context_hatch_*`、
+  `tests/test_hatch_rc_context_writeback.py` 与 `tests/test_hatch_mode_restored.py`。
 - **`value_original`：override 之前脚本的值，与 `value` 同一口径（ADR 0081 §十三，2026-09-25）**。
   前端拿它判「脚本重跑后改没改这一项」：样式写的 override 在脚本改过的那一项上让位（用户裁决：
   重跑后脚本赢）。`originals` 存的是 getter 的原始对象（元组 / Colormap / 哨兵），前端没法拿它与

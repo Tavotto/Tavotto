@@ -166,7 +166,7 @@ describe('未确认 → 零远程请求', () => {
     await click(q('[data-diag-send-dismiss]'))
     expect(closed).toEqual([false])
     await act(async () => root.unmount())
-    expect(discardMock).toHaveBeenCalledWith('pid-1')
+    expect(discardMock).toHaveBeenCalledWith('pid-1', null)
     expect(startMock).not.toHaveBeenCalled()
     root = createRoot(host) // afterEach 再 unmount 一次也无害
   })
@@ -200,7 +200,7 @@ describe('未确认 → 零远程请求', () => {
     })
     await act(async () => root.unmount())
     await act(async () => resolve(PREPARED))
-    expect(discardMock).toHaveBeenCalledWith('pid-1')
+    expect(discardMock).toHaveBeenCalledWith('pid-1', null)
     expect(startMock).not.toHaveBeenCalled()
     root = createRoot(host)
   })
@@ -352,7 +352,7 @@ describe('发送', () => {
     await tick()
     await tick()
     expect(prepareMock).toHaveBeenCalledTimes(2) // 重新备包
-    expect(discardMock).toHaveBeenCalledWith('pid-1')
+    expect(discardMock).toHaveBeenCalledWith('pid-1', null)
     expect(q('[data-diag-send-status]')!.textContent).toContain(ds('cancelled'))
     startMock.mockResolvedValue(status({ id: 'pid-2' }))
     statusMock.mockResolvedValue(status({ id: 'pid-2' }))
@@ -397,6 +397,44 @@ describe('发送', () => {
     expect(q('[data-diag-send-status]')!.textContent).toContain(ds('failure.unexpected_response'))
   })
 
+  it.each(['diag_stale_action', 'diag_session_cancelled'])(
+    '迟到的 start 被引擎拒（409 %s）：属于取消流程，不是失败——继续轮询到 cancelled 并重新备包（#928）',
+    async (code) => {
+      prepareMock
+        .mockResolvedValueOnce({ ...PREPARED, id: 'pid-1', gen: 0 })
+        .mockResolvedValueOnce({ ...PREPARED, id: 'pid-2', gen: 0 })
+      let rejectStart: (e: unknown) => void = () => {}
+      startMock.mockReturnValue(new Promise((_, rej) => (rejectStart = rej)))
+      statusMock.mockResolvedValue(status({ id: 'pid-1', state: 'cancelling', stage: null, gen: 1 }))
+      await mount()
+      await click(q('[data-diag-send-confirm]'))
+      await click(q('[data-diag-send-cancel]'))
+      // 取消先被引擎处理，迟到的 start 才回来 409
+      await act(async () => rejectStart(new ApiError(code, 409, { code })))
+      await tick()
+      expect(q('[data-diag-send-status]')!.dataset.diagSendStatus).toBe('cancelling')
+      expect(q('[data-diag-send-failure]')).toBeNull()
+      statusMock.mockResolvedValue(status({ id: 'pid-1', state: 'cancelled', stage: null, gen: 1 }))
+      await tick()
+      await tick()
+      expect(prepareMock).toHaveBeenCalledTimes(2)
+      expect(q('[data-diag-send-status]')!.textContent).toContain(ds('cancelled'))
+      expect(q('[data-diag-send-confirm]')).not.toBeNull()
+    },
+  )
+
+  it('迟到的 start 被拒时用户还没点取消（别处取消了会话）：也进入取消流程，不显示失败', async () => {
+    prepareMock.mockResolvedValueOnce({ ...PREPARED, id: 'pid-1' }).mockResolvedValueOnce({ ...PREPARED, id: 'pid-2' })
+    startMock.mockRejectedValue(new ApiError('diag_stale_action', 409, { code: 'diag_stale_action' }))
+    statusMock.mockResolvedValue(status({ id: 'pid-1', state: 'cancelled', stage: null, gen: 1 }))
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    await tick()
+    expect(q('[data-diag-send-failure]')).toBeNull()
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+  })
+
   it('发送中取消：调 cancelDiagSend，回到可编辑的表单，并说明什么都没发', async () => {
     startMock.mockResolvedValue(status({}))
     statusMock.mockResolvedValueOnce(status({ stage: 'upload', sent: 1, total: 100 }))
@@ -421,7 +459,7 @@ describe('发送', () => {
     const calls = statusMock.mock.calls.length
     await tick(2000)
     expect(statusMock.mock.calls.length).toBe(calls)
-    expect(discardMock).toHaveBeenCalledWith('pid-1')
+    expect(discardMock).toHaveBeenCalledWith('pid-1', null)
     root = createRoot(host)
   })
 })
@@ -452,7 +490,8 @@ describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，
     expect(prepareMock).toHaveBeenCalledTimes(1)
     await act(async () => setCurrentProjectId('B'))
     await act(async () => {})
-    expect(discardMock).toHaveBeenCalledWith('pid-A')
+    // 端点按项目分键：丢弃必须带备包时的项目 A，而不是此刻（已是 B）的当前项目（Codex #955）
+    expect(discardMock).toHaveBeenCalledWith('pid-A', 'A')
     expect(prepareMock).toHaveBeenCalledTimes(2)
     await click(q('[data-diag-send-confirm]'))
     expect(startMock).toHaveBeenCalledTimes(1)
@@ -480,7 +519,7 @@ describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，
     await act(async () => setCurrentProjectId('B'))
     await act(async () => {})
     await act(async () => resolveOld({ ...PREPARED, id: 'pid-old' }))
-    expect(discardMock).toHaveBeenCalledWith('pid-old')
+    expect(discardMock).toHaveBeenCalledWith('pid-old', 'A')
     await click(q('[data-diag-send-confirm]'))
     expect(startMock.mock.calls.map((c) => c[0])).toEqual(['pid-new'])
   })
@@ -524,7 +563,7 @@ describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，
     await act(async () => useProjectStore.setState({ switching: true }))
     await act(async () => setCurrentProjectId('B'))
     await act(async () => {})
-    expect(discardMock).toHaveBeenCalledWith('pid-1')
+    expect(discardMock).toHaveBeenCalledWith('pid-1', 'A')
     expect(payloads, '切换进行中不许备包（会是 A/B 混合包）').toHaveLength(1)
     expect(q('[data-diag-send-confirm]')!.hasAttribute('disabled')).toBe(true)
     await click(q('[data-diag-send-confirm]'))
@@ -593,7 +632,7 @@ describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，
     await click(q('[data-diag-send-confirm]'))
     await act(async () => setCurrentProjectId('B'))
     await act(async () => {})
-    expect(discardMock).toHaveBeenCalledWith('pid-A')
+    expect(discardMock).toHaveBeenCalledWith('pid-A', 'A')
     expect(prepareMock).toHaveBeenCalledTimes(2)
     expect(q('[data-diag-send-confirm]')).not.toBeNull()
   })

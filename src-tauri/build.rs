@@ -47,6 +47,8 @@ fn main() {
             "resolve_close_request",
             "native_file_drop",
             "connect_remote",
+            "desktop_update_check",
+            "desktop_update_install",
         ]),
     ))
     .expect("failed to run tauri-build");

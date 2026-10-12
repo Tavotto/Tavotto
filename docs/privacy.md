@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-10
+Last updated: 2026-10-12
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -62,6 +62,19 @@ The desktop application uses a separate updater, checks at startup, and currentl
 has no in-app switch to disable those checks. The browser preference and Python
 backend environment variable do not control this desktop channel. The desktop
 updater downloads the signed installer when the user accepts an update.
+
+The desktop updater has two sources: GitHub Releases and a mirror operated by the
+Tavotto maintainers at `dl.tavotto.cn` (mainland China). If the system time zone is
+in mainland China or the system or interface language is Simplified Chinese
+(mainland), it asks the mirror first and GitHub second; otherwise GitHub first and the
+mirror second. The first source that answers decides: it is asked once per check, and
+the other one is contacted only when the first cannot answer, or when a download from
+it fails after you pressed *Download and install* (then the installer is fetched again
+from the other source). Either source sees what any HTTPS request reveals (IP address,
+time, the updater's user agent) and nothing else: no identifier, no telemetry, no
+project content. Which source the installer came from does not affect trust — the
+installer's signature is always verified with the public key built into the app, and
+an installer that fails verification is not installed.
 
 ## Package lookup and environment preparation
 
@@ -251,6 +264,33 @@ the option is disabled and no screen offers it. When it is enabled:
 The desktop application uses a local service bound to `127.0.0.1` for the user
 interface and rendering bridge. It is not intended to expose the user's projects
 to other computers.
+
+## The tavotto.cn website
+
+The Chinese-language website <https://tavotto.cn/> (also reached through
+`www.tavotto.cn`) is a static site run by the project maintainer. Its pages load
+no analytics or tracking scripts and set or read no cookies.
+
+To see how many people visit and where they come from, the website's server keeps
+an access log. Each entry keeps only: the time; the visitor's IP address with the
+last part removed (IPv4 keeps the first three octets, IPv6 keeps the first 48
+bits); the request method; the host name; the page path without anything after
+`?`; the HTTP status code; the number of bytes sent; the referring page, also
+without anything after `?`; and the browser's User-Agent string. Full IP
+addresses, cookies, `Authorization`, query strings, TLS details and any request
+headers other than the referring page and User-Agent listed above are not
+recorded.
+
+The log stays on the website's server, is readable only by the maintainer, is
+deleted after 30 days and is not included in backups or shared with third
+parties. A daily report built from it contains only aggregate figures (page
+views, approximate unique visitors, popular pages, referrers, browsers and
+operating systems, status codes, daily trends and, when enabled, country or
+region) and covers at most the last 30 days.
+
+This section covers the website only. The Tavotto application does not contact
+the website; the download mirror `dl.tavotto.cn` used for update checks is a
+separate host and is described under "Update checks" above.
 
 ## Changes and contact
 

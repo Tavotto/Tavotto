@@ -14,7 +14,7 @@
   哈希。看护：`tests/test_outbound_https_trust.py`。
 - 默认每天一次、可在设置里关（关了**一个包都不发**）；升级永不静默进行，
   且升级后 `restart_required`（进程内存里还是旧代码）。
-- **桌面版走另一条通道**（tauri-plugin-updater）：后端在桌面模式把
+- **桌面版走另一条通道**（tauri-plugin-updater，来源编排见 ADR 0121：国内镜像 + GitHub）：后端在桌面模式把
   `/api/update/*` 整个关掉。细节见 `src-tauri/AGENTS.md`。
 - 安装方式探测：包上两级有 `pyproject.toml` = source（只提示 `git pull`，
   绝不在源码树里跑 pip 覆盖用户工作副本）；`sys.prefix` 含 pipx = pipx；否则 pip。
