@@ -1155,7 +1155,12 @@ class Worker(wireproto.V1Handler):
                     f"{exc}",
                     retryable=False,
                     traceback_text=traceback.format_exc(),
-                    extra={"prompt": timed_out[-1].get("prompt", ""), "minutes": minutes},
+                    # 读取方式随错误带出：等到超时的若是 getpass，界面要按口令说明（Codex #973）
+                    extra={
+                        "prompt": timed_out[-1].get("prompt", ""),
+                        "minutes": minutes,
+                        "input_kind": timed_out[-1].get("kind", ""),
+                    },
                 ) from exc
             missing = figcapture.missing_input_of(exc, self._input_misses)
             if missing is not None:

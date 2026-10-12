@@ -420,6 +420,24 @@ def test_uncaught_timeout_reports_script_input_timeout(plane, figs, frontend, mo
         pool.build("one.py", str(figs), "__main__")
     assert ei.value.code == "script_input_timeout"
     assert ei.value.extra.get("prompt") == "which: "
+    assert ei.value.extra.get("input_kind") == "input"
+
+
+@needs_worker
+def test_a_timed_out_getpass_reports_its_input_kind(plane, figs, frontend, monkeypatch):
+    """getpass 等到超时、EOF 让脚本失败：错误要带出读取方式，界面才会按口令说明不会被记住（Codex #973）。"""
+    monkeypatch.setenv(scriptinput.TIMEOUT_ENV, "1.5")
+    (figs / "pw.py").write_text(
+        "import getpass\nimport matplotlib.pyplot as plt\n"
+        "secret = getpass.getpass('password: ')\nplt.plot([0, len(secret)])\n",
+        encoding="utf-8",
+    )
+    frontend({})
+    with pytest.raises(pool.WorkerError) as ei:
+        pool.build("pw.py", str(figs), "__main__")
+    assert ei.value.code == "script_input_timeout"
+    assert ei.value.extra.get("input_kind") == "getpass"
+    assert pool.recovery_params(ei.value)["input_kind"] == "getpass"
 
 
 @needs_worker

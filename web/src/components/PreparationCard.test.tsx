@@ -1671,6 +1671,18 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
     expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('口令不会被记住')
   })
 
+  it('getpass 等到超时：仍按口令说明不会被记住', async () => {
+    await mount()
+    const g = fromBackend('unanswered_input')
+    const err = {
+      ...errorReports.unanswered_input.result.error,
+      code: 'script_input_timeout',
+      params: { prompt: 'Password: ', input_kind: 'getpass' },
+    }
+    await openWith(report({ ...g, result: { status: 'error', error: err } as never }))
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('口令不会被记住')
+  })
+
   it('读不到数据：主按钮仍是已有的"指认数据"（回答走原路径选择），原文 traceback 在折叠里', async () => {
     await mount()
     await openWith(report(fromBackend('missing_input_file')))
