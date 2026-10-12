@@ -98,7 +98,8 @@
 | `engine.workdirOptionHint_project_root` | 缩 | en-US | cwd is the project root: relative paths like data/x.csv resolve from there. | Relative paths (like data/x.csv) resolve from the project root. | 删 cwd 术语 |
 | `engine.workdirOptionHint_sandbox` | 缩 | zh-CN | cwd 是 Tavotto 的沙盒：只读的相对路径回退到脚本目录，写出的文件不碰项目。 | 在沙盒里运行：用 open 读相对路径的数据时回退到脚本目录（exists、glob 之类的检查不回退），写出的文件不会碰项目。 | 删 cwd 术语 |；回退只覆盖受支持的只读 open，exists / glob / listdir / C++ 读取器不回退（ADR 0047 / 0084 / 0106）。Codex #949 P2
 | `engine.workdirOptionHint_sandbox` | 缩 | en-US | cwd is Tavotto's sandbox: read-only relative paths fall back to the script's directory; written files never touch the project. | Runs in the sandbox: data read with open falls back to the script’s directory (checks like exists or glob do not), and files it writes never touch the project. | 删 cwd 术语 |；回退只覆盖受支持的只读 open，exists / glob / listdir / C++ 读取器不回退（ADR 0047 / 0084 / 0106）。Codex #949 P2
-| `engine.workdirSuggest` | 缩 | en-US | Does the script find its data by relative path (os.path.exists, glob, ovito…)? It runs in Tavotto's sandbox, where those paths don't reach your project files. | The script runs in the sandbox, so relative paths can’t reach your project data. | 英文与中文对齐，删 os.path.exists / glob / ovito 括号清单 |
+| `engine.workdirSuggest` | 缩 | zh-CN | 脚本在沙盒目录里运行，相对路径找不到项目数据。 | 如果脚本先检查文件在不在，或用专门的读取库读数据，这些在沙盒里找不到项目数据；可以改在脚本所在的目录运行。 | 按 Codex #949 P2 收窄成条件句，与英文同一句 |
+| `engine.workdirSuggest` | 缩 | en-US | Does the script find its data by relative path (os.path.exists, glob, ovito…)? It runs in Tavotto's sandbox, where those paths don't reach your project files. | If the script first checks whether files exist, or reads data with a dedicated reader library, those can’t find your project data in the sandbox; you can run it in the script’s directory instead. | 英文与中文对齐，删 os.path.exists / glob / ovito 括号清单 |；按 Codex #949 P2 收窄成条件句（只读 open / Path.open / NumPy 读取在沙盒里本就回退，不能断言“相对路径找不到”），中英同一句
 | `engine.missingInputWhyRelative` | 缩 | zh-CN | 这是相对路径，从脚本所在的文件夹算起。脚本可能是单独复制出来的，数据还留在原来的地方。请告诉 Tavotto 数据现在在哪。 | 这是相对路径，从脚本所在的文件夹算起。脚本可能是单独复制出来的，数据还留在原来的地方。 | 删与上方一句重复的“请告诉 Tavotto” |
 | `engine.missingInputWhyRelative` | 缩 | en-US | This is a relative path, counted from the script's folder. The script may have been copied on its own, leaving the data behind. Show Tavotto where the data is now. | This is a relative path, counted from the script’s folder. The script may have been copied on its own, leaving the data behind. | 删与上方一句重复的“请告诉 Tavotto” |
 | `engine.missingInputWhyAbsolute` | 缩 | zh-CN | 这是写死的完整路径。数据可能被移动了，或者换了一台电脑。请告诉 Tavotto 数据现在在哪。 | 这是写死的完整路径。数据可能被移动了，或者换了一台电脑。 | 同上 |
@@ -150,7 +151,7 @@
 
 - ADR 0106 §四 / ADR 0110 §八 的正文里原样引用了 `missingInputProbe`、`missingInputRewriteHint` 的旧文案；ADR 是决策记录，没跟着改。
 - `docs/qa/2026-09-24/flagship/evidence/report.json` 是当时的截屏取证，含旧的 `workdirOptionHint_*`，不改。
-- `workdirSuggest`：英文原文是个反问（“Does the script find its data by relative path (os.path.exists, glob, ovito…)?”），中文是陈述，两边语义不一致；本轮把英文对齐到中文的陈述（见清单）。（用户已拍板：维持。）
+- `workdirSuggest`：原英文是反问、中文是陈述，两边不一致；用户拍板中英对齐，随后按 Codex #949 P2 收窄成同一个条件句（见清单）。
 - **用户已拍板（2026-10-12）**：“Tavotto 不会替它保存图片”保留并改成人话——脚本里的 `savefig` 被接管、不会写出图片文件，其他相对路径写出的文件照常落盘（ADR 0047「savefig 捕获不落盘」）；运行目录三处统一。
 
 - 带手写 `Tavotto` 的存量句子（`repairError.pip_unavailable`、`private_python_not_offered`、`missingInputSentence` 等）：用户拍板本 PR 不动，#949 合入后另开小 PR 改成品牌插值（连调用点）。

@@ -473,7 +473,7 @@
     "workdirRootConfirmBody": "The script runs in the project root and finds data by relative path from there; files it writes by relative path land in the project directory and overwrite same-name files. Calls to savefig in the script do not write image files; deleting, renaming and moving are blocked. Applies to this project only.",
     "workdirRootConfirmOk": "Run in the project root",
     "workdirRootConfirmTitle": "Run in the project root?",
-    "workdirSuggest": "The script runs in the sandbox, so relative paths can’t reach your project data.",
+    "workdirSuggest": "If the script first checks whether files exist, or reads data with a dedicated reader library, those can’t find your project data in the sandbox; you can run it in the script’s directory instead.",
     "workdirSuggestButton": "Run in the script's directory",
     "userEnvSource_vscode": "the Python VS Code uses for this project",
     "userEnvSource_python_version_file": "pyenv {{label}} (from .python-version)",

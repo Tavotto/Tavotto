@@ -2765,7 +2765,7 @@ export default interface Resources {
       "workdirRootConfirmBody": "脚本会在项目根目录里运行，从项目根找相对路径的数据；它用相对路径写出的文件会落进项目目录，并改写同名文件。脚本里的 savefig 不会写出图片文件，删除、改名和移动会被拦下。只对这个项目生效。",
       "workdirRootConfirmOk": "在项目根目录里运行",
       "workdirRootConfirmTitle": "改为在项目根目录里运行？",
-      "workdirSuggest": "脚本在沙盒目录里运行，相对路径找不到项目数据。",
+      "workdirSuggest": "如果脚本先检查文件在不在，或用专门的读取库读数据，这些在沙盒里找不到项目数据；可以改在脚本所在的目录运行。",
       "workdirSuggestButton": "改为在脚本目录里运行"
     },
     "preflight": {
