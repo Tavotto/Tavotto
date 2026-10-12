@@ -204,3 +204,34 @@ describe('桌面更新的来源只进详情状态（ADR 0121）', () => {
     expect(useUpdateStore.getState().desktopAttempts).toEqual([])
   })
 })
+
+describe('重查失败不留着作废的更新（Codex #948 P2）', () => {
+  it('查到过一版，再查失败：版本与来源一并撤掉，不留一个只会失败的安装按钮', async () => {
+    vi.mocked(checkDesktopUpdate).mockResolvedValueOnce({ version: '9.9.9', source: 'mirror' })
+    await useUpdateStore.getState().checkDesktop()
+    expect(useUpdateStore.getState().desktopUpdate?.version).toBe('9.9.9')
+    vi.mocked(checkDesktopUpdate).mockRejectedValueOnce(new Error('检查更新失败'))
+    await useUpdateStore.getState().checkDesktop()
+    const s = useUpdateStore.getState()
+    expect(s.desktopError).toBe('检查更新失败')
+    expect(s.desktopUpdate).toBeNull()
+    expect(s.desktopSource).toBeNull()
+  })
+})
+
+describe('不相干的文案键不被碰（Codex #948 P2）', () => {
+  it('problems.fixFailed.busy 在两种语言里都在，update.busy 是另一句', async () => {
+    const [zhE, enE] = await Promise.all([
+      import('@/i18n/locales/zh-CN/errors.json'),
+      import('@/i18n/locales/en-US/errors.json'),
+    ])
+    for (const e of [zhE.default, enE.default] as unknown as Array<{
+      problems: { fixFailed: Record<string, string> }
+      update: Record<string, string>
+    }>) {
+      expect(e.problems.fixFailed.busy).toBeTruthy()
+      expect(e.update.busy).toBeTruthy()
+      expect(e.update.busy).not.toBe(e.problems.fixFailed.busy)
+    }
+  })
+})

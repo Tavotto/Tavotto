@@ -40,6 +40,12 @@ enum Route {
         prefix: Vec<u8>,
         declared: usize,
     },
+    /// 分 `chunks` 段、每段间隔 `gap` 发完 `body`（持续有字节，但总时长远超 check 超时）
+    Drip {
+        body: Vec<u8>,
+        chunks: usize,
+        gap: Duration,
+    },
     /// 立刻关连接
     Reset,
     /// 302 到别处
@@ -120,6 +126,19 @@ async fn serve(build: impl FnOnce(&str) -> Vec<(&'static str, Route)>) -> Fake {
                         let _ = sock.write_all(&prefix).await;
                         let _ = sock.flush().await;
                         tokio::time::sleep(Duration::from_secs(3600)).await;
+                    }
+                    Route::Drip { body, chunks, gap } => {
+                        let h = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = sock.write_all(h.as_bytes()).await;
+                        let step = body.len().div_ceil(chunks);
+                        for part in body.chunks(step) {
+                            let _ = sock.write_all(part).await;
+                            let _ = sock.flush().await;
+                            tokio::time::sleep(gap).await;
+                        }
                     }
                     Route::Reset => drop(sock),
                     Route::Redirect(to) => {
@@ -749,4 +768,42 @@ async fn after_the_mirror_fails_the_cooldown_demotes_it_and_the_same_update_neve
         vec![Source::Mirror],
         "钉死的单来源不动"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_download_longer_than_the_check_timeout_still_succeeds_while_bytes_keep_flowing() {
+    // check 超时 600 ms、停滞超时 500 ms；包分 6 段、每段隔 250 ms 发完（≈1.5 s）：总时长是 check 超时的 2.5 倍，
+    // 但任意两段之间都没有停滞。下载不得被 check 的总超时掐断（Codex #948 P1）。
+    let rig = Rig::new(
+        Keys::new(),
+        |b, k| {
+            vec![
+                (
+                    "/latest.json",
+                    manifest("9.9.9", &format!("{b}{PKG_PATH}"), &k.sign_b64(PKG)),
+                ),
+                (
+                    PKG_PATH,
+                    Route::Drip {
+                        body: PKG.to_vec(),
+                        chunks: 6,
+                        gap: Duration::from_millis(250),
+                    },
+                ),
+            ]
+        },
+        |_, _| vec![("/latest.json", Route::Status(500))],
+    )
+    .await;
+    let p = rig.check(&CN).await.unwrap().unwrap();
+    let t = Instant::now();
+    let (r, _) = rig.fetch(&p).await;
+    let f = r.unwrap_or_else(|e| panic!("持续有字节的慢下载不该失败：{e:?}"));
+    assert_eq!((f.source, f.bytes.as_slice()), (Source::Mirror, PKG));
+    assert!(
+        t.elapsed() > limits().check,
+        "用例本身要比 check 超时长才有意义：{:?}",
+        t.elapsed()
+    );
+    assert_eq!(rig.github.hits("/latest.json"), 0);
 }

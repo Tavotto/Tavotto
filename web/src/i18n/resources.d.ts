@@ -2883,6 +2883,7 @@ export default interface Resources {
       "fixCount_other": "修复 {{count}}",
       "fixFailed": {
         "artifact_unsupported": "所选源图暂不支持自动修复；现有修改保持原样，可手动编辑并导出新文件。",
+        "busy": "上一次修复还在进行，稍后再试。",
         "canvas_missing": "找不到这条问题所在的画布，请刷新问题列表。",
         "engine_failed": "修复时渲染出错，图没有改动。",
         "font_unavailable": "规范要求的字体「{{font}}」在这台电脑上没有安装，字体没有改。",

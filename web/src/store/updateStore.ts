@@ -225,6 +225,10 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
     } catch (e) {
       // 离线是常态，但用户按下的按钮必须有下文——无声无息的按钮和坏掉没区别
       set({
+        // 重查失败时壳里的旧句柄已经作废（desktop.ts / run_check 都先清它），界面就不能还挂着
+        // 旧版本和一个只会回 no_pending_update 的「下载并安装」——一起撤掉
+        desktopUpdate: null,
+        desktopSource: null,
         desktopError: e instanceof Error ? e.message : t('update.desktopCheckFailed', { ns: 'errors' }),
         desktopAttempts: attemptsOf(e),
       })

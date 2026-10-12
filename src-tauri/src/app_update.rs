@@ -587,7 +587,7 @@ where
         if i > 0 && source == Source::Mirror && cool.active() {
             continue;
         }
-        let update = if i == 0 {
+        let mut update = if i == 0 {
             pending.update.clone()
         } else {
             match check_one(make, endpoints, source, limits).await {
@@ -616,6 +616,9 @@ where
                 }
             }
         };
+        // check 的 10 s 总超时（`UpdaterBuilder::timeout`）不许带进下载：大包持续在传也会被掐断。
+        // 下载只受连接超时与停滞看门狗约束；插件现版本不会把它带进 `Update`，这里显式清掉防升级后回归。
+        update.timeout = None;
         match download_one(&update, limits, emit).await {
             Ok(bytes) => {
                 return Ok(Fetched {
