@@ -125,10 +125,6 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def run_stale(gid):
     """屏障之间用户的 Python 改了 rc 并 `set_alpha`：记着的「创建时的值」过期了，必须按实况重记。"""
     plt.rcParams["hatch.color"] = "magenta"
@@ -149,3 +145,7 @@ def run_stale(gid):
         == [_val(m) for m in _members(art_b)],
         "follows_new_rc_like_pristine": True,
     }
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
