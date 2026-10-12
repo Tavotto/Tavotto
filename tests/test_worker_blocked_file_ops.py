@@ -231,6 +231,55 @@ fig.savefig("stage.png")
 """
 
 
+#: P1（#952 第四轮）：被拦删除之后 `x` 独占创建——直接运行时删除生效、`x` 成功；这里撞上还在的旧文件。
+DELETE_THEN_EXCLUSIVE_CREATE_SWALLOWED = """\
+import os
+import matplotlib.pyplot as plt
+
+n = 0
+os.remove("cache.csv")
+try:
+    with open("cache.csv", "x") as f:
+        f.write("2")
+except FileExistsError:
+    pass
+with open("cache.csv") as f:
+    n = int(f.read())
+fig, ax = plt.subplots()
+ax.plot([0, n])
+"""
+
+#: 同上但脚本捕获失败后**不再读**：失败本身就是与直接运行不同的结果（x 本该成功），仍判失败。
+DELETE_THEN_EXCLUSIVE_CREATE_NO_READ = """\
+import os
+import matplotlib.pyplot as plt
+
+os.remove("cache.csv")
+try:
+    open("cache.csv", "x").close()
+    created = True
+except FileExistsError:
+    created = False
+fig, ax = plt.subplots()
+ax.plot([0, 1 if created else 2])
+"""
+
+#: P2（#952 第四轮）：移进已存在目录，只有 `archive/seed.txt` 受影响；目录里无关的文件读了照常成功。
+MOVE_INTO_DIR_READ_UNRELATED = """\
+import shutil
+import matplotlib.pyplot as plt
+
+shutil.move("seed.txt", "archive")
+with open("archive/summary.csv") as f:
+    n = len(f.read())
+fig, ax = plt.subplots()
+ax.plot([0, n])
+"""
+
+MOVE_INTO_DIR_READ_MOVED = MOVE_INTO_DIR_READ_UNRELATED.replace("archive/summary.csv", "archive/seed.txt")
+MOVE_INTO_DIR_READ_SOURCE = MOVE_INTO_DIR_READ_UNRELATED.replace("archive/summary.csv", "seed.txt")
+
+
 @pytest.fixture
 def figs(tmp_path):
     root = tmp_path / "figs"
@@ -238,6 +287,8 @@ def figs(tmp_path):
     (root / "cache.csv").write_text("1", encoding="utf-8")
     (root / "seed.txt").write_text("abc", encoding="utf-8")
     (root / "stale.csv").write_text("9", encoding="utf-8")
+    (root / "archive").mkdir()
+    (root / "archive" / "summary.csv").write_text("12345", encoding="utf-8")
     (root / "old_dir").mkdir()
     (root / "old_dir" / "x.txt").write_text("x", encoding="utf-8")
     (root / "stage.png").write_bytes(b"stale-old-image")
@@ -413,7 +464,8 @@ def test_ledger_write_open_clears_the_taint_but_append_does_not(tmp_path):
     ledger = _ledger(tmp_path)
     ledger.blocked("os.remove", "delete", str(f))
     ledger.observe(str(f), "a")
-    ledger.observe(str(f), "w")  # 脚本自己重写了：此后读到的是它写的
+    ledger.observe(str(f), "w")
+    ledger.opened(str(f), "w")  # 脚本自己重写（打开成功）了：此后读到的是它写的
     ledger.observe(str(f), "r")
     assert ledger.material() == []
     ledger.blocked("os.remove", "delete", str(f))
@@ -478,7 +530,7 @@ def test_ledger_overflow_rewrite_clears_and_savefig_stat_stays_exempt(tmp_path):
     ledger = _ledger(tmp_path)
     for i in range(cap + 5):
         ledger.blocked("os.remove", "delete", str(tmp_path / f"{i}.txt"))
-    ledger.observe(str(tmp_path / f"{cap + 1}.txt"), "w")  # 脚本自己重写
+    ledger.opened(str(tmp_path / f"{cap + 1}.txt"), "w")  # 脚本自己重写（打开成功）
     ledger.observe(str(tmp_path / f"{cap + 1}.txt"), "r")
     assert ledger.material() == []
     sv = _ledger(tmp_path)
@@ -760,3 +812,75 @@ def test_savefig_effective_names_ignore_file_objects_and_keep_bytes_literal():
 
     assert figcapture.savefig_effective_names(io.BytesIO(), {}) == []
     assert figcapture.savefig_effective_names(b"stage", {}) == [b"stage"]
+
+
+# ====================================================== #952 第四轮
+@needs_worker
+def test_p1_failed_exclusive_create_after_a_blocked_delete_is_a_divergence(figs):
+    """`x` 撞上被我们留下的旧文件而失败（直接运行里删除生效、`x` 成功）：清嫌疑要等 open 成功，所以回读被报告。"""
+    e = _blocked(figs, "x_swallowed.py", DELETE_THEN_EXCLUSIVE_CREATE_SWALLOWED)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["os.remove"]
+
+
+@needs_worker
+def test_p1_failed_exclusive_create_is_itself_an_observation_even_without_readback(figs):
+    e = _blocked(figs, "x_noread.py", DELETE_THEN_EXCLUSIVE_CREATE_NO_READ)
+    assert e.code == CODE, (e.code, str(e))
+
+
+@needs_worker
+def test_p1_successful_rewrite_after_a_blocked_delete_still_clears_the_taint(figs):
+    worker, resp = _build(figs, "rewritten_ok.py", BLOCKED_THEN_REWRITTEN, project_mode=True)
+    assert resp["stems"], resp
+
+
+@needs_worker
+def test_p2_move_into_existing_directory_only_taints_the_moved_child(figs):
+    worker, resp = _build(figs, "mv_dir_ok.py", MOVE_INTO_DIR_READ_UNRELATED, project_mode=True)
+    assert resp["stems"], resp
+    assert worker._log_tail().count("[guard]") >= 1  # 守卫照旧在拦
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [("mv_dir_moved.py", MOVE_INTO_DIR_READ_MOVED), ("mv_dir_src.py", MOVE_INTO_DIR_READ_SOURCE)],
+)
+def test_p2_reading_the_moved_child_or_the_source_still_fails(figs, name, source):
+    e = _blocked(figs, name, source)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["shutil.move"]
+
+
+def test_ledger_failed_write_open_keeps_the_taint_and_x_failure_observes(tmp_path):
+    f = tmp_path / "a.txt"
+    ledger = _ledger(tmp_path)
+    ledger.blocked("os.remove", "delete", str(f))
+    ledger.observe(str(f), "w")  # 只是准备打开：不清
+    ledger.observe(str(f), "r")
+    assert ledger.material() != []
+    x = _ledger(tmp_path)
+    x.blocked("os.remove", "delete", str(f))
+    x.exclusive_create_failed(str(f))
+    assert [o["op"] for o in x.material()] == ["os.remove"]
+    unrelated = _ledger(tmp_path)
+    unrelated.blocked("os.remove", "delete", str(f))
+    unrelated.exclusive_create_failed(str(tmp_path / "b.txt"))
+    assert unrelated.material() == []
+
+
+def test_ledger_move_destination_resolves_like_shutil_move(tmp_path):
+    ledger = _ledger(tmp_path)
+    d = tmp_path / "archive"
+    d.mkdir()
+    assert ledger.move_destination(str(tmp_path / "seed.txt"), str(d)) == str(d / "seed.txt")
+    assert ledger.move_destination(str(tmp_path / "seed.txt") + "/", str(d)) == str(d / "seed.txt")
+    assert ledger.move_destination(str(tmp_path / "seed.txt"), str(tmp_path / "new.txt")) == str(
+        tmp_path / "new.txt"
+    )
+    ledger.blocked("shutil.move", "rename", str(tmp_path / "seed.txt"), str(d / "seed.txt"))
+    ledger.observe(str(d / "summary.csv"), "r")
+    assert ledger.material() == []
+    ledger.observe(str(d / "seed.txt"), "r")
+    assert [o["op"] for o in ledger.material()] == ["shutil.move"]

@@ -1596,13 +1596,7 @@ class BlockedFileOps:
             if real is None:
                 return
             if "w" in mode or "x" in mode:
-                # 脚本自己重写了这条路径：此后读到的是它写的（与直接运行一致）
-                for ev in self._events:
-                    ev["paths"] = [p for p in ev["paths"] if p != real]
-                for ev in self._spill.values():
-                    if not ev["coarse"]:  # 粗化后存的是目录，清不掉其中某个文件的嫌疑
-                        ev["paths"].discard(real)
-                return
+                return  # 写模式：打开**成功**之后才清嫌疑（`opened`），这里什么都不动
             if "a" in mode and "+" not in mode:
                 return  # 纯追加：不读
             self._mark(real)
@@ -1610,6 +1604,57 @@ class BlockedFileOps:
             return
         finally:
             self._busy = False
+
+    @staticmethod
+    def is_write_mode(mode) -> bool:
+        return isinstance(mode, str) and ("w" in mode or "x" in mode)
+
+    def opened(self, path, mode) -> None:
+        """写模式（`w` / `x`）的底层 open **成功返回**了：脚本自己重写了这条路径，此后读到的是它写的
+        （与直接运行一致），清掉它的嫌疑。open 抛异常（如被拦删除后 `x` 撞上还在的旧文件）时不调用，记录保留。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is None:
+                return
+            for ev in self._events:
+                ev["paths"] = [p for p in ev["paths"] if p != real]
+            for ev in self._spill.values():
+                if not ev["coarse"]:  # 粗化后存的是目录，清不掉其中某个文件的嫌疑
+                    ev["paths"].discard(real)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def exclusive_create_failed(self, path) -> None:
+        """`x` 打开撞上了已存在的文件（`FileExistsError`）。若这条路径被守卫拦下的操作影响过，直接运行时
+        那次删除 / 改名已经生效、`x` 会成功——脚本这里看到的结果（异常、随后读到的旧文件）与直接运行不同，
+        本身就是一次观察，不必等它回读。永不抛。"""
+        self.observe_stat(path)
+
+    def move_destination(self, src, dst):
+        """`shutil.move(src, dst)` 真正影响的目的路径：`dst` 是已存在的目录时是 `dst/basename(src)`，
+        否则就是 `dst`——不能把整个目录记成受影响（目录里无关的文件不受这次移动影响）。永不抛。"""
+        try:
+            self._busy, was = True, self._busy  # 判断目录不算脚本的观察
+            try:
+                dst_s = os.fspath(dst)
+                src_s = os.fspath(src)
+                if os.path.isdir(dst_s):
+                    if isinstance(src_s, bytes):
+                        src_s = os.fsdecode(src_s)
+                    if isinstance(dst_s, bytes):
+                        dst_s = os.fsdecode(dst_s)
+                    base = os.path.basename(src_s.rstrip("/" + (os.sep or "/")))
+                    return os.path.join(dst_s, base) if base else dst_s
+                return dst_s
+            finally:
+                self._busy = was
+        except Exception:  # noqa: BLE001
+            return dst
 
     def observe_stat(self, path) -> None:
         """脚本查了 `path` 的状态（`exists` / `isfile` / `stat`）。永不抛。"""
@@ -1665,16 +1710,29 @@ class BlockedFileOps:
         real_open, real_io_open = builtins.open, io.open
         real_path_open, real_stat = pathlib.Path.open, os.stat
 
+        def _open_through(original, file, mode, args, kwargs):
+            ledger.observe(file, mode)
+            if not ledger.is_write_mode(mode):
+                return original(file, mode, *args, **kwargs)
+            try:
+                result = original(file, mode, *args, **kwargs)
+            except FileExistsError:
+                if "x" in mode:
+                    ledger.exclusive_create_failed(file)
+                raise
+            ledger.opened(file, mode)  # 写模式成功之后才清嫌疑
+            return result
+
         def _wrap(original):
             def watched_open(file, mode="r", *args, **kwargs):
-                ledger.observe(file, mode)
-                return original(file, mode, *args, **kwargs)
+                return _open_through(original, file, mode, args, kwargs)
 
             return watched_open
 
         def watched_path_open(self_path, mode="r", *args, **kwargs):
-            ledger.observe(self_path, mode)
-            return real_path_open(self_path, mode, *args, **kwargs)
+            return _open_through(
+                lambda f, m, *a, **k: real_path_open(f, m, *a, **k), self_path, mode, args, kwargs
+            )
 
         def watched_stat(path, *args, **kwargs):
             ledger.observe_stat(path)

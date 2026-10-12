@@ -880,7 +880,11 @@ class Worker(wireproto.V1Handler):
             def guarded(path, *a, **kw):
                 if "dir_fd" not in kw and _inside_real(path):
                     print(f"[guard] 跳过 {name} 真实图库文件: {path}", file=sys.stderr)
-                    ledger.blocked(op, kind, path, *(a[:1] if moves else ()))
+                    dst = a[:1]
+                    if moves and dst and op == "shutil.move":
+                        # shutil.move 进已存在目录：受影响的是 dst/basename(src)，不是整个目录
+                        dst = (ledger.move_destination(path, dst[0]),)
+                    ledger.blocked(op, kind, path, *(dst if moves else ()))
                     return None
                 return real_fn(path, *a, **kw)
 
