@@ -16,9 +16,9 @@ runtime 不 GC）、FO-024（HOME / PATH 前后无差）。经 HTTP 入口的同
 from __future__ import annotations
 
 import json
-import re
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
