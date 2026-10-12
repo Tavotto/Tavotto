@@ -1926,7 +1926,8 @@ class BlockedFileOps:
                 raise
             finally:
                 mk_ctx.pop()
-            ledger.recreating_directory(self_path, parents=parents)  # 正常返回：目录此刻在（新建或 exist_ok 撞上）
+            # 正常返回：目录此刻在（新建或 exist_ok 撞上）
+            ledger.recreating_directory(self_path, parents=parents)
             return result
 
         os.mkdir = watched_mkdir
