@@ -236,3 +236,104 @@ class TestProviderSwitchAcrossScopes:
         assert managedenv.ledger_entries(project) == ledger_before
         assert _opencv_installed(python) == {"opencv-python"}
         assert _run(python, project / "a") == "opencv-python"
+
+
+# ---------------------------------------------------------------------------
+# 回执的 source 永不为空：单包修复 / 首代扩宽修复 / 包作业构造的装入记录都带着 resolution_source
+# ---------------------------------------------------------------------------
+def _captured_record(monkeypatch, plan, *, widened: bool) -> tuple[dict, ...]:
+    import dataclasses
+    import threading
+
+    seen: dict = {}
+
+    def fake(job, *a, **kw):
+        seen["job"] = job
+        raise deprepair.RepairError("captured")
+
+    monkeypatch.setattr(deprepair, "_run_generation_locked", fake)
+    plan = plan if widened else dataclasses.replace(plan, widened=None)
+    deprepair._plans[plan.plan_id] = plan
+    with pytest.raises(deprepair.RepairError, match="captured"):
+        deprepair._run_install(plan, "k", None, threading.Event())
+    return seen["job"].record
+
+
+@pytest.mark.parametrize(
+    "widened", (False, True), ids=("single_package", "first_generation_widened")
+)
+@pytest.mark.parametrize(
+    ("user_distribution", "source"),
+    (("", "curated"), ("opencv-python-headless", "user_specified")),
+)
+def test_install_records_carry_the_resolution_source_into_the_receipt(
+    tmp_path, cv2_house, offline_managed_env, monkeypatch, widened, user_distribution, source
+):
+    project = tmp_path / "paper"
+    _scope(project, ".", "")
+    plan = deprepair.create_plan(
+        str(project),
+        "figure.py",
+        "cv2",
+        target_kind=deprepair.TARGET_MANAGED,
+        user_distribution=user_distribution,
+    )
+    assert (
+        plan.widened is not None
+    ) is True  # 无 active 代 = 首代扩宽；单包路径靠 `_captured_record` 去掉扩宽
+    record = _captured_record(monkeypatch, plan, widened=widened)
+    wanted = user_distribution or "opencv-python"
+    (rec,) = [r for r in record if r["distribution"] == wanted]
+    assert rec["resolution_source"] == source
+    receipt = deprepair._provider_receipt(record, [], {}, "g1")
+    assert [p["source"] for p in receipt if p["distribution"] == wanted] == [source]
+    assert all(p["source"] for p in receipt)
+
+
+def test_the_receipt_refuses_a_record_without_a_source():
+    with pytest.raises(ValueError, match="resolution_source"):
+        deprepair._provider_receipt(
+            [{"import_name": "cv2", "distribution": "opencv-python"}], [], {}, "g1"
+        )
+
+
+def test_satisfied_provider_is_read_from_the_install_target_not_the_run_interpreter(tmp_path):
+    """运行解释器里是 headless 在提供 cv2、受管目标里已经是 opencv-python：`satisfied` 要指目标里的那个，
+    即使另一个缺的依赖让计划可动手（披露不能把目标写成 headless）。"""
+    from tavotto.engine import importscan
+
+    def facts(installed):
+        return depplan.TargetFacts(
+            python="/fake/bin/python",
+            marker_env={
+                "implementation_name": "cpython",
+                "implementation_version": "3.12.4",
+                "os_name": "posix",
+                "platform_machine": "arm64",
+                "platform_release": "",
+                "platform_system": "Darwin",
+                "platform_version": "",
+                "python_full_version": "3.12.4",
+                "platform_python_implementation": "CPython",
+                "python_version": "3.12",
+                "sys_platform": "darwin",
+            },
+            stdlib=importscan.HOST_STDLIB,
+            installed={"matplotlib": "3.10.0", "numpy": "2.1.0", **installed},
+            prefix="/fake",
+        )
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "figure.py").write_text("import cv2\nimport yaml\n", encoding="utf-8")
+    plan = depplan.plan(
+        project,
+        "figure.py",
+        facts=facts({"opencv-python-headless": "4.10.0.84"}),
+        install_facts=facts({"opencv-python": "4.10.0.84"}),
+        target_kind=depplan.TARGET_MANAGED,
+        dists=None,
+    )
+    assert any(r.lower().startswith("pyyaml") for r in plan.requirements)  # 另一个缺口让计划可动手
+    (cv2,) = [d for d in plan.provider_decisions if d["import_name"] == "cv2"]
+    assert (cv2["action"], cv2["distribution"]) == ("satisfied", "opencv-python")

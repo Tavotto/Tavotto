@@ -1196,6 +1196,7 @@ def _fold_requested(
             "import_name": requirement.import_name,
             "distribution": requirement.distribution,
             "specifier": requirement.specifier,
+            "resolution_source": requirement.resolution_source,
         }
     ]
     record += [
@@ -1203,6 +1204,7 @@ def _fold_requested(
             "import_name": m["import_name"],
             "distribution": m["distribution"],
             "specifier": ",".join(m["specifiers"]),
+            "resolution_source": str(m.get("resolution_source") or depresolve.SOURCE_CURATED),
         }
         for m in joint.install_entries
         if depresolve.normalize_distribution(m["distribution"]) != wanted
@@ -1442,6 +1444,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
                     "import_name": req.import_name,
                     "distribution": req.distribution,
                     "specifier": req.specifier,
+                    "resolution_source": req.resolution_source,
                 },
             ),
             reason=managedenv.REASON_MISSING_DEPENDENCY,
@@ -3473,6 +3476,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
                     "import_name": "",
                     "distribution": job.distribution,
                     "specifier": job.requirement[len(job.distribution) :],
+                    "resolution_source": depresolve.SOURCE_USER_SPECIFIED,
                 },
             ),
             reason=managedenv.REASON_USER_REQUESTED,
@@ -5022,13 +5026,17 @@ def _provider_receipt(
         if not dist:
             continue
         imp = str(rec.get("import_name") or "")
+        source = str(rec.get("resolution_source") or "")
+        if source not in depresolve.INSTALLABLE_SOURCES:
+            # 回执的 source 只能是「凭什么装它」的三种之一；record 漏带就是构造处的缺陷，不静默写空串
+            raise ValueError(f"装入记录缺 resolution_source: {dist}")
         got = seen.get((imp.split(".")[0], dist))
         out.append(
             {
                 "import_name": imp,
                 "distribution": dist,
                 "version": str(installed.get(dist) or (got or {}).get("version") or ""),
-                "source": str(rec.get("resolution_source") or ""),
+                "source": source,
                 "provenance": str((got or {}).get("provenance") or ""),
                 "generation": generation,
             }

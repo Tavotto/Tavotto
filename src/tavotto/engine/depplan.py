@@ -1215,11 +1215,15 @@ def _provider_decisions(
     by_name: Mapping[str, list],
     to_install: set[str],
     user_entries,
+    target_installed: Mapping[str, str] | None = None,
 ) -> tuple[dict, ...]:
     """每个第三方 import 最终装 / 认哪个发行包、凭什么，以及环境里观察到的提供者（P03）。**只披露，不决定**：
     这里读观察（`distribution_candidates`），但结果不流回 `requirements` / `missing` / `identity`——观察到的提供者是证据，不是授权
     （`test_the_observed_provider_never_becomes_an_install_name`；看护用例：有无索引时 `requirements` / `identity` 逐字相同）。
-    只有「有观察」或「该 import 有互斥的备选发行包」的条目才列出。"""
+    只有「有观察」或「该 import 有互斥的备选发行包」的条目才列出。
+
+    `target_installed`：安装目标与运行解释器不是同一个环境时给（目标的已装集合）。`satisfied` 说的是**目标里**谁在满足它——
+    判决（`verdicts`）按运行解释器量，换了目标就不能沿用；目标里认不出唯一提供者（没有 / 多个且声明没点名）如实标 `undecided`。"""
     out: list[dict] = []
     for c in scan.needed:
         verdict = verdicts[c.module]
@@ -1232,8 +1236,17 @@ def _provider_decisions(
             action, chosen = "install", install_name
         elif verdict.kind == _OPEN:
             action, chosen = "undecided", install_name
-        else:
+        elif target_installed is None:
             action, chosen = "satisfied", verdict.dist or install_name
+        else:
+            present = _providers(c, dict(target_installed))
+            named = [d for d in present if d in by_name]
+            if len(present) == 1:
+                action, chosen = "satisfied", present[0]
+            elif len(named) == 1:
+                action, chosen = "satisfied", named[0]
+            else:
+                action, chosen = "undecided", install_name
         if not chosen:
             continue
         basis = (
@@ -1713,7 +1726,13 @@ def plan(
         install_only=install_only,
         declared_gaps=gaps,
         provider_decisions=_provider_decisions(
-            scan, verdicts, arbitrated, by_name, to_install, user_entries
+            scan,
+            verdicts,
+            arbitrated,
+            by_name,
+            to_install,
+            user_entries,
+            None if same_target else target_installed,
         ),
         declared_gaps_total=gaps_total,
         requirements=tuple(reqs),
