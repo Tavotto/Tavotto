@@ -3317,9 +3317,9 @@ def _restore_hatch_unset(p, base) -> None:
     if getattr(p, "_original_hatchcolor", 0) is None:
         return
     if base is not None:
+        # `set_hatchcolor` 自己按**当前** alpha 合成（`to_rgba(color, self._alpha)`），不用再 `set_alpha` 一遍
+        # （试过加：变异后全部用例照绿，是等价变异）
         p.set_hatchcolor(_fresh_copy(base))
-        # 重解析 face / edge / 花纹色：与 `_with_hatch_pinned` 同一条合成路径
-        p.set_alpha(p.get_alpha())
     p._original_hatchcolor = None  # noqa: SLF001
     if base is not None:
         setattr(p, _HATCH_BASE, (base, _hatch_resolved(p)))
