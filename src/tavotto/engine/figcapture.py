@@ -1915,11 +1915,19 @@ class BlockedFileOps:
                 mk_ctx.pop()
 
         def watched_path_mkdir(self_path, mode=0o777, parents=False, exist_ok=False):
+            # 3.10 的 `Path.mkdir` 走导入时绑定的 `self._accessor.mkdir`，看不到上面的 `os.mkdir` 包装——
+            # 这里自己按结果记账（3.11+ 内层 `os.mkdir` 包装也会记一次，重复记账无害）
             mk_ctx.append((bool(exist_ok), bool(parents)))
             try:
-                return real_path_mkdir(self_path, mode, parents, exist_ok)
+                result = real_path_mkdir(self_path, mode, parents, exist_ok)
+            except FileExistsError:
+                if not exist_ok:
+                    ledger.mkdir_collided(self_path)
+                raise
             finally:
                 mk_ctx.pop()
+            ledger.recreating_directory(self_path, parents=parents)  # 正常返回：目录此刻在（新建或 exist_ok 撞上）
+            return result
 
         os.mkdir = watched_mkdir
         os.makedirs = watched_makedirs
