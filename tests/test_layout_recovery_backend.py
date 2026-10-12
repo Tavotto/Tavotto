@@ -1914,3 +1914,31 @@ def test_snapshots_made_in_this_load_are_never_pruned_even_if_the_clock_went_bac
     layoutsession.record_owner("d_1", None)
     contents = {c.read_bytes() for c in path.parent.glob("layout-sessions.corrupt-*.json")}
     assert {b"{primary broken", b"{bak broken"} <= contents, "本次加载存下的副本被裁掉了"
+
+
+def test_durable_set_last_always_advances_at_even_for_the_same_id_and_name(data_dir, monkeypatch):
+    """再次明确打开同一份排版：`at`（前端的排序令牌）必须严格前进并写盘，哪怕同一毫秒、时钟回拨。
+    否则别的 profile 里还悬着的 pending 会被当成更新的而翻案。prev 不动，pending 清掉。"""
+    clock = [1_700_000_000.0]
+    monkeypatch.setattr(layoutsession.time, "time", lambda: clock[0])
+    layoutsession.set_last(None, "d_prev", "P")
+    first = layoutsession.set_last(None, "d_a", "A")["last"]["at"]
+    path = layoutsession.state_path()
+    ats = [first]
+    for step in (0.0, 0.0, -5.0):  # 同一毫秒两次，再回拨
+        clock[0] += step
+        os.utime(path, ns=(0, 10**9))
+        ats.append(layoutsession.set_last(None, "d_a", "A")["last"]["at"])
+        assert path.stat().st_mtime_ns != 10**9, "同值的 durable 打开没有写盘"
+    assert all(b > a for a, b in zip(ats, ats[1:])), ats
+    group = layoutsession.snapshot()["no_project"]
+    assert group["prev"]["doc_id"] == "d_prev" and "pending" not in group
+    # pending 之后的 durable 重开：令牌比 pending 的更大，pending 被取代
+    pend_at = layoutsession.set_last(None, "d_b", "B", slot_ok=False)["pending"]["at"]
+    again = layoutsession.set_last(None, "d_a", "A")["last"]["at"]
+    assert again > pend_at and "pending" not in layoutsession.snapshot()["no_project"]
+    # 晋升（commit_slot）同样严格前进
+    layoutsession.set_last(None, "d_c", "C", slot_ok=False)
+    pend_c = layoutsession.snapshot()["no_project"]["pending"]["at"]
+    layoutsession.commit_slot("d_c", None, "rev")
+    assert layoutsession.snapshot()["no_project"]["last"]["at"] > pend_c

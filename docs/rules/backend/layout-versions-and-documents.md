@@ -138,6 +138,10 @@
     `{ok, last, state:"durable"}`；不通过 → 只写 pending，回 `{ok, last:<durable 或 null>, pending, state:"pending"}`。
     **pending 只是「最新的、还没 durable 的意图」**：任何更晚的 durable `set_last(X)` 都清掉本组 pending（不管它指着谁），
     否则 A→B(pending)→A(durable) 之后 B 迟到的首次保存会晋升过期的 pending、把 last 顶回 B。
+    **durable `set_last` 总是前进 `at` 并写盘，哪怕 (doc_id, name) 没变**：`at` 是前端判「谁的打开更晚」的排序令牌，再次明确打开
+    同一份排版必须让它严格前进（`max(now_ms, 本组 last/pending 的 at + 1)`，同一毫秒、时钟回拨也一样），否则别的 profile 里还悬着的
+    pending 会被当成更新的而翻案；`prev` 不动、pending 清掉。晋升（`commit_slot`）同样严格前进。「同值不写」只留给每次保存都调的
+    `record_owner` / `commit_slot` 的归属部分（以及同值的 pending 意图）；前端自己对每帧推送去重。
     **验证到发布到底串行了什么**：验槽位 + `set_last` 在槽位的 `_document_lock` 里（**只在本进程内**互斥），所以本进程的清理 /
     DELETE 删不掉验证与发布之间的槽位；**别的进程**（共用数据目录）不持这把锁，所以发布时 `set_last` 在**跨进程会话锁**里
     再调一次 `slot_check`（app 传的只 stat 回调：文件还在、`(mtime_ns, size)` 与验证时一致），不是 → 只记 pending。

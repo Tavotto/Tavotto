@@ -96,7 +96,7 @@ def test_same_value_does_not_rewrite_the_file(data_dir):
     layoutsession.record_owner("d_a", "/a")
     path = layoutsession.state_path()
     os.utime(path, ns=(0, 10**9))
-    layoutsession.set_last("/a", "d_a", "Fig A")
+    # 只有每次保存都会调的 record_owner 是「同值不写」；durable set_last 的语义见 test_layout_recovery_backend
     assert layoutsession.record_owner("d_a", "/a") is False
     assert path.stat().st_mtime_ns == 10**9, "同值又写了一遍——每次自动保存都会多 fsync 一个文件"
     assert layoutsession.record_owner("d_a", "/b") is True

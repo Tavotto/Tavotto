@@ -699,7 +699,7 @@ def last_for(key: str | None, rev_of: Callable[[str], str | None] | None = None)
     return view_for(key, rev_of)["last"]
 
 
-def _promote(group: dict, entry: dict) -> None:
+def _promote(group: dict, entry: dict) -> None:  # entry["at"] 由调用方用 `_next_at` 取
     """`entry` 成为 durable last：旧 last（若是另一份）退成 prev；pending 清掉（它要么就是 `entry`，
     要么已被这次更晚的 durable 取代）。"""
     cur = group.get("last")
@@ -711,6 +711,13 @@ def _promote(group: dict, entry: dict) -> None:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _next_at(group: dict) -> int:
+    """本组下一个 durable 打开的 `at`：**严格大于**本组已有的 last / pending 的 `at`（时钟回拨、同一毫秒也一样）。
+    `at` 是前端判「谁更晚」的排序令牌，明确再次打开同一份排版也必须让它前进。"""
+    floor = max((group[n]["at"] for n in ("last", "pending") if group.get(n)), default=-1)
+    return max(_now_ms(), floor + 1)
 
 
 def set_last(
@@ -758,21 +765,18 @@ def set_last(
         if slot_ok and slot_check is not None and not slot_check():
             slot_ok = False
         if slot_ok:
-            changed = False
+            # durable 打开**总是**前进 `at` 并写盘，哪怕 (doc_id, name) 没变：再次明确打开同一份排版
+            # 是比别的 profile 里还悬着的 pending 更晚的意图，令牌不前进的话那个 pending 会被当成更新的而翻案。
+            # （「同值不写」只留给 `record_owner` / `commit_slot` 这类每次保存都调的路径；前端自己对每帧推送去重）
+            entry = {"doc_id": doc_id, "name": name, "at": _next_at(group)}
             if cur and cur["doc_id"] == doc_id:
-                if cur["name"] != name:
-                    group["last"] = {"doc_id": doc_id, "name": name, "at": _now_ms()}
-                    changed = True
+                group["last"] = entry  # prev 不动
             else:
-                _promote(group, {"doc_id": doc_id, "name": name, "at": _now_ms()})
-                changed = True
+                _promote(group, entry)
             # pending 只是「最新的、还没 durable 的意图」：更晚的 durable 打开取代它，不管它指着谁
             # （否则 A→B(pending)→A(durable) 之后 B 的首次保存会把过期的 pending 晋升、顶掉 A）
-            if pend:
-                group.pop("pending", None)
-                changed = True
-            if changed:
-                _write(state)
+            group.pop("pending", None)
+            _write(state)
             return {"last": dict(group["last"]), "state": "durable"}
         if not (pend and pend["doc_id"] == doc_id and pend["name"] == name):
             group["pending"] = {"doc_id": doc_id, "name": name, "at": _now_ms()}
@@ -816,7 +820,7 @@ def commit_slot(doc_id: str, key: str | None | Any, revision: str) -> dict:
         group = _group_view(state, key)
         pend = group.get("pending")
         if pend and pend["doc_id"] == doc_id:
-            _promote(group, {**pend, "at": _now_ms()})
+            _promote(group, {**pend, "at": _next_at(group)})
             changed = True
             promoted = True
         if changed:
