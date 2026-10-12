@@ -13,8 +13,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from support import rc_hatch_figure as rc
 
+from support import rc_hatch_figure as rc
 from tavotto.engine import pool, project_watch
 
 try:
