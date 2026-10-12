@@ -77,8 +77,6 @@ const BUDGETS: Budget[] = [
   // Button 是 whitespace-nowrap + shrink-0 的，超出预算就直接把整栏撑破
   // ——所以这几条的预算是硬边界，不是审美偏好。
   ['errors', 'engine.repairUseProjectEnv', 32, '缺依赖卡片：装进项目环境'],
-  ['errors', 'engine.repairCreateManaged', 32, '缺依赖卡片：建一个 Tavotto 环境'],
-  ['errors', 'engine.repairUseManaged', 32, '缺依赖卡片：装进 Tavotto 环境'],
   ['errors', 'engine.repairInstallToProject', 32, '缺依赖卡片：确认装进项目环境'],
   ['errors', 'engine.repairPrepareAndContinue', 32, '缺依赖卡片：确认建环境并继续'],
   ['errors', 'engine.repairCancel', 12, '安装进度里的取消'],
