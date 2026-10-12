@@ -3207,7 +3207,8 @@ def _with_hatch_pinned(a, fn) -> None:
     「我们上次写完的样子」对不上，说明中间有别人动过，按实况重记。判据是真实 setter 在不在，不是
     版本号；脚本显式给过 hatchcolor（`_original_hatchcolor` 不是 None）的 artist 原样跑 `fn`。
 
-    还原只在 `fn` 跑完后模式**仍是我们钉进去的那个对象**时才做（身份比较，钉的是独有副本）：用户子类若
+    还原只在 `fn` 跑完后模式**仍是我们钉完那一刻实际存进去的那个对象**时才做（身份比较，钉的是独有副本；
+    比钉完后读回的对象而不是传入的参数，子类 `set_hatchcolor` 可能复制后再存，Codex #950 r4246402299）：用户子类若
     重写 `set_alpha` / `set_fill` 并在里面调 `set_hatchcolor`，那是它有意装的模式，保留（Codex #950
     r4246080546）；`fn` 抛异常时规则相同。
     """
@@ -3221,8 +3222,10 @@ def _with_hatch_pinned(a, fn) -> None:
     if base is None:
         fn()
         return
-    token = _fresh_copy(base)  # 钉进去的是一个独有的对象：身份比较才分得出「仍是我们钉的」
-    pin(token)
+    pin(_fresh_copy(base))  # 钉进去的是一个独有的对象：身份比较才分得出「仍是我们钉的」
+    # 比的是钉完后**实际存进去**的那个对象：子类的 `set_hatchcolor` 可能先复制 / 规范化再存
+    # （Codex #950 r4246402299），那时存进去的与传进去的相等但不是同一个
+    token = getattr(a, "_original_hatchcolor", 0)  # noqa: SLF001
     try:
         fn()
     finally:
