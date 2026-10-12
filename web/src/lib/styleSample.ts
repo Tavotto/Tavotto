@@ -293,22 +293,31 @@ export function sampleLayout(g: StyleSampleGeometry): SampleLayout {
   const yTickW = Math.max(...SAMPLE_TEXT.yTicks.map((s) => textWidth(s, g.tickPt, g.faces.tick)))
   const yLabelX = yTickLabelX - yTickW - 2.5 - DESCENT * g.axisPt
   // 图例在右下角（2026-10 设计审计第二轮）：两条曲线都从左下升到右上，右上角正是快的那条曲线经过的地方——
-  // 此前图例放在那里，图例线压在曲线上。右下角在两条曲线下方。文字右对齐到框内（字号变大时往左长、不出框），
-  // 横向跨过朝里刻度时才往上让刻度长；让完会碰曲线（Codex #946：14 pt 图例 + 朝里 20 pt 刻度）就不让——
-  // 刻度只是框边一小截，压曲线才读不出数据
+  // 此前图例放在那里，图例线压在曲线上。候选按序取第一个不碰曲线的（按画出来的折线段与线宽算）：
+  //   1. 框内右下、文字右对齐，横向跨过朝里刻度时往上让刻度长；
+  //   2. 同一处不让刻度（Codex #946：14 pt 图例 + 朝里 20 pt 刻度）——刻度只是框边一小截，压曲线才读不出数据；
+  //   3. 框外右侧、底边对齐（Codex #946：粗体 14 pt 图例 + 7…10 pt 数据线，框内右下哪处都放不下）——
+  //      曲线横向不出框，这一处总是干净的；`viewBox` 按外框并集照常撑大
   const w2 = g.tickWidthPt / 2
   const lw2 = g.lineWidthPt / 2
   const legendW = textWidth(SAMPLE_TEXT.legend, g.legendPt, g.faces.legend)
-  const textX = box.x + box.w - w2 - 4 - legendW
-  const lineX2 = textX - 4
-  const lineX1 = lineX2 - 12
-  const crossesTick = [0, 0.5].some((f) => lineX1 < box.x + f * box.w + w2 + 1)
-  const legendAt = (textY: number) => ({ lineX1, lineX2, lineY: textY - g.legendPt * 0.35, textX, textY })
-  const legendTop = (l: SampleLayout['legend']) => Math.min(l.lineY - lw2, l.textY - ASCENT * g.legendPt)
-  const curveFloor = lowestCurveY(box, bottom, lineX1, textX + legendW) + lw2
+  const legendAt = (lineX1: number, textY: number) => ({
+    lineX1,
+    lineX2: lineX1 + 12,
+    lineY: textY - g.legendPt * 0.35,
+    textX: lineX1 + 16,
+    textY,
+  })
+  const curveSafe = (l: SampleLayout['legend']) =>
+    Math.min(l.lineY - lw2, l.textY - ASCENT * g.legendPt) > lowestCurveY(box, bottom, l.lineX1, l.textX + legendW) + lw2
+  const insideX = box.x + box.w - w2 - 4 - legendW - 16
+  const crossesTick = [0, 0.5].some((f) => insideX < box.x + f * box.w + w2 + 1)
   const resting = bottom - 6 - DESCENT * g.legendPt
-  const clearOfTicks = legendAt(resting - (crossesTick ? tickIn : 0))
-  const legend = legendTop(clearOfTicks) > curveFloor ? clearOfTicks : legendAt(resting)
+  const outsideX = box.x + box.w + Math.max(lw2, w2, g.spinePt / 2) + 4
+  const legend = [
+    legendAt(insideX, resting - (crossesTick ? tickIn : 0)),
+    legendAt(insideX, resting),
+  ].find(curveSafe) ?? legendAt(outsideX, bottom - DESCENT * g.legendPt)
   const legendLineY = legend.lineY
 
   const extents: Extent[] = []
