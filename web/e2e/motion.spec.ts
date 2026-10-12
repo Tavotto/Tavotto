@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { expect, test, waitForDocumentReady } from './fixtures'
 
 /**
  * 动效：**真浏览器里**确认它们真的在播。
@@ -19,7 +19,8 @@ import { expect, test } from './fixtures'
 test('弹窗 / 菜单 / toast 的进出场都在播，且弹窗播放期间保持居中', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.waitForTimeout(1500)
+  // 启动恢复判决前占位文档拒写（ADR 0120）：等文档就绪再动手，不靠固定睡眠
+  await waitForDocumentReady(page)
 
   // ---- 弹窗：播放期间必须始终居中（关键帧里没带 translate(-50%,-50%) 就会偏半个身位）
   const dlg = await page.evaluate(async () => {
@@ -125,7 +126,8 @@ test('prefers-reduced-motion：动画一帧都不播，浮层立刻消失', asyn
   const a = await app()
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.goto(a.baseURL)
-  await page.waitForTimeout(1500)
+  // 启动恢复判决前占位文档拒写（ADR 0120）：等文档就绪再动手，不靠固定睡眠
+  await waitForDocumentReady(page)
 
   const r = await page.evaluate(async () => {
     const dialog = () => document.querySelector('[data-dialog="export"]') as HTMLElement | null
@@ -251,7 +253,8 @@ test('抽屉开合：先播完再卸载、内容不挤、把手仍可拖', async
   // 同文件里有一条会开 reduced-motion，显式复位，免得受用例顺序影响
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.goto(a.baseURL)
-  await page.waitForTimeout(1500)
+  // 启动恢复判决前占位文档拒写（ADR 0120）：等文档就绪再动手，不靠固定睡眠
+  await waitForDocumentReady(page)
 
   const rail = page.getByRole('button', { name: '素材', exact: true })
   if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
@@ -376,7 +379,8 @@ test('画布标签重排：每个标签从原位滑到新位', async ({ app, pag
   const a = await app()
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.goto(a.baseURL)
-  await page.waitForTimeout(1500)
+  // 启动恢复判决前占位文档拒写（ADR 0120）：等文档就绪再动手，不靠固定睡眠
+  await waitForDocumentReady(page)
 
   await page.getByRole('button', { name: '新建画布' }).click()
   await page.waitForTimeout(400)
