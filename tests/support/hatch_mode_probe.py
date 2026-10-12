@@ -176,6 +176,18 @@ class AlphaColl(PolyCollection):
         super().set_alpha(alpha)
 
 
+class CopyHatchRect(Rectangle):
+    """重写 `set_hatchcolor`、先复制 / 规范化颜色再交给父类：存进去的是相等但不同的对象
+    （Codex #950 r4246402299）。它的 set_alpha / set_fill 没装任何模式——钉住必须照常还原。"""
+
+    def set_hatchcolor(self, color):
+        if isinstance(color, str):
+            color = "".join(list(color))
+        elif color is not None:
+            color = tuple(float(x) for x in color)
+        super().set_hatchcolor(color)
+
+
 def build_sub():
     fig, ax = plt.subplots(figsize=(4.2, 3.0))
     with plt.rc_context({"hatch.color": "red"}):
@@ -183,7 +195,8 @@ def build_sub():
         ax.add_patch(FillRect((2, 0), 1, 2, facecolor="#cccccc", hatch="//"))
         ax.add_patch(RaisingRect((6, 0), 1, 2, facecolor="#cccccc", hatch="//"))
         ax.add_collection(AlphaColl([[(4, 0), (5, 0), (5, 2)]], facecolor="#cccccc", hatch="++"))
-    ax.set_xlim(-1, 8)
+        ax.add_patch(CopyHatchRect((8, 0), 1, 2, facecolor="#cccccc", hatch="//"))
+    ax.set_xlim(-1, 10)
     ax.set_ylim(0, 3)
     state = O.FigState(fig)
     M.instrument(state)
@@ -235,8 +248,29 @@ def run_raising():
     return {"warnings": warns, "mode_after_edit": _mode(art)}
 
 
+def run_copy():
+    """子类的 `set_hatchcolor` 存的是复制品：模式仍要回到「未设」，改 rc 后与从未编辑过的同构图一致。"""
+    plt.rcParams["hatch.color"] = "magenta"
+    _fa, sa, ga = build_sub()
+    _fb, sb, _gb = build_sub()
+    gid = ga["CopyHatchRect"]
+    art_a, art_b = sa.resolve(gid), sb.resolve(gid)
+    warns = O.apply(sa, [{"gid": gid, "prop": "alpha", "value": 0.4}])
+    warns += O.apply(sa, [])
+    after = _mode(art_a)
+    plt.rcParams["hatch.color"] = "cyan"
+    art_a.set_alpha(0.6)
+    art_b.set_alpha(0.6)
+    return {
+        "warnings": warns,
+        "mode_after_clear": after,
+        "hatch_follows_like_pristine": _val(art_a) == _val(art_b),
+    }
+
+
 def sub_cases():
     return {
+        "CopyHatchRect:alpha": run_copy(),
         "RaisingRect:alpha": run_raising(),
         "AlphaRect:alpha": run_sub("AlphaRect", "alpha", 0.4, lambda a: a.set_fill(True)),
         "FillRect:fill": run_sub("FillRect", "fill", False, lambda a: a.set_alpha(None)),

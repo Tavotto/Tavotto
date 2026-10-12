@@ -86,3 +86,14 @@ def test_a_subclass_setter_that_installs_a_mode_then_raises_keeps_it(report):
     c = report["subclass_cases"]["RaisingRect:alpha"]
     assert c["warnings"], "子类 set_alpha 抛了，apply 应当报 warning"
     assert c["mode_after_edit"] == "blue", f"异常路径抹掉了子类装的模式：{c['mode_after_edit']!r}"
+
+
+def test_a_subclass_set_hatchcolor_that_copies_the_color_still_gets_the_mode_restored(report):
+    """子类重写 `set_hatchcolor` 先复制颜色再存：存进去的对象与钉入的不是同一个，但 alpha 没装模式，
+    钉住仍要还原成「未设」（Codex #950 r4246402299：比较的是钉完后实际存进去的那个对象）。"""
+    c = report["subclass_cases"]["CopyHatchRect:alpha"]
+    assert not c["warnings"], c["warnings"]
+    assert c["mode_after_clear"] is None, (
+        f"apply([]) 后模式没回到未设：{c['mode_after_clear']!r}——钉住被永久留下"
+    )
+    assert c["hatch_follows_like_pristine"], "改 rc 后花纹色与从未编辑过的同构图不同"
