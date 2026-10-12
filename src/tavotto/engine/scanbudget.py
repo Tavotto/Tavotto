@@ -85,6 +85,17 @@ ISSUE_CODES = (
 SEVERITY_PARTIAL = "partial"
 SEVERITY_NOTE = "note"
 
+#: 机器级「系统解释器」候选枚举（PATH 逐项、逐级 lstat、`C:\\Python*` scandir……）的**独立子预算**。
+#: 它是补充来源，不能拿项目扫描的账：真 Windows runner 上 PATH 很长、hostedtoolcache 多版本、盘根条目多，
+#: 曾把整次扫描的预算吃光、降成 partial（#957 windows-exe-smoke）。
+#: 条目数 2000：典型机器 PATH ~40 项 × 候选 2~3 个 × 祖先层级（walker 按目录缓存）合计几百次 lstat，
+#: 盘根通配枚举几十到一两百项，2000 留约 10 倍余量，又只有总预算（100k）的 2%。
+SYSTEM_MAX_ENTRIES = 2_000
+#: 时间 3 秒：冷盘 + 杀毒软件下单次 lstat 可到毫秒级，2000 次内的正常量远低于此；超了宁可少列系统候选。
+SYSTEM_MAX_SECONDS = 3.0
+#: 子预算用尽的账本行用这个 scope：无路径、note 级，且**不参与**「没找到脚本就升级 partial」（见 `projscan.scan`）。
+SCOPE_SYSTEM = "system"
+
 #: macOS `SF_DATALESS`（`st_flags`）：文件内容不在本机，读它会触发下载。
 _DARWIN_DATALESS = 0x40000000
 #: Windows `st_file_attributes`：OFFLINE / RECALL_ON_OPEN / RECALL_ON_DATA_ACCESS。
@@ -506,6 +517,26 @@ class Budget:
                 "seconds": self.limits.max_seconds,
             },
         }
+
+
+def system_sub_budget(parent: Budget) -> Budget:
+    """系统候选枚举用的子预算：自己的条目数与时间上限，取消回调与时钟沿用父预算。
+    枚举里所有 `charge_entry` / walker 的 lstat 都记在它名下，不动父预算的 `entries`。"""
+    return Budget(
+        limits=Limits(max_entries=SYSTEM_MAX_ENTRIES, max_seconds=SYSTEM_MAX_SECONDS),
+        cancel=parent.cancel,
+        clock=parent.clock,
+    )
+
+
+def fold_system_issues(parent: Budget, sub: Budget) -> None:
+    """把子预算的账本折回父预算：一律降成 note 级、scope=system、不带路径（报告是公开的）。
+    取消不折（父预算自己会观察到取消并记账）。子预算用完 = 只少列了系统候选，不是项目没扫完。"""
+    for row in sub.issues():
+        if row["code"] == ISSUE_CANCELLED:
+            continue
+        code = ISSUE_ENTRIES if row["code"] == "more_issues" else row["code"]
+        parent.note(code, severity=SEVERITY_NOTE, scope=SCOPE_SYSTEM)
 
 
 def no_follow_isfile(root, charge=None):

@@ -457,13 +457,16 @@ def test_scan_never_touches_a_unc_path_entry_and_still_finds_the_local_python(
     touched: list[str] = []
     _forbid_network(monkeypatch, touched)
 
-    found = pool.system_python_candidates(budget=scanbudget.Budget())
+    budget = scanbudget.Budget()
+    found = pool.system_python_candidates(budget=budget)
 
     assert touched == []
-    assert (
-        str(local),
-        "system",
-    ) in found  # 本地条目在列表里；不假设唯一或排序（真实机器还有别的 Python）
+    # 本地条目在列表里；不假设唯一或排序（真实机器还有别的 Python）。Windows 的 PATHEXT 查找返回 `python.EXE`
+    # （扩展名取 PATHEXT 的写法，文件系统不分大小写）：按 normcase 比身份，失败时打印候选与账本便于看 CI 日志
+    got = [(os.path.normcase(py), src) for py, src in found]
+    assert (os.path.normcase(str(local)), "system") in got, (
+        f"found={found!r} issues={budget.issues()!r} PATH={os.environ.get('PATH')!r}"
+    )
 
 
 def test_scan_skips_unc_roots_of_the_windows_list_too(tmp_path, home, monkeypatch, no_process):
@@ -1075,3 +1078,109 @@ def test_scan_glob_nt_charges_every_entry_while_enumerating(tmp_path):
     tight = Counting(5)
     pool._scan_glob_nt(str(base) + "/Python*/python.exe", tight, walker)
     assert tight.used == 6  # 第 6 次扣账失败即停，没有继续枚举
+
+
+# ---- 系统候选的独立子预算（#957 windows-exe-smoke：真 Windows runner 的 PATH 很长、盘根条目多）--------------
+
+
+def _static_project(tmp_path: Path) -> Path:
+    root = tmp_path / "static"
+    root.mkdir()
+    (root / "Only_Static.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    return root
+
+
+def _fake_windows_machine(monkeypatch, *, path_dirs: int, drive_entries: int) -> list[int]:
+    """在任意平台上造一台「PATH 很长 + `C:\\` 条目很多」的 Windows 机器（nt=True 注入）。
+    `C:` 下的 lstat 全部记数并答「不存在」，`os.scandir("C:\\")` 吐 `drive_entries` 个假条目。"""
+    calls = [0]
+    real_lstat, real_scandir = os.lstat, os.scandir
+
+    def lstat(path, *a, **k):
+        if os.fspath(path)[:2].upper() == "C:":
+            calls[0] += 1
+            raise FileNotFoundError(path)
+        return real_lstat(path, *a, **k)
+
+    class _Entry:
+        def __init__(self, name):
+            self.name = name
+
+    class _Scan:
+        def __init__(self, n):
+            self._n = n
+
+        def __enter__(self):
+            return (_Entry(f"Dir{i}") for i in range(self._n))
+
+        def __exit__(self, *exc):
+            return False
+
+    def scandir(path="."):
+        if os.fspath(path)[:2].upper() == "C:":
+            return _Scan(drive_entries)
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    monkeypatch.setattr(os, "scandir", scandir)
+    monkeypatch.setattr(scanbudget, "_windows_drive_type", lambda root: 3)
+    monkeypatch.setenv("PATH", os.pathsep.join(f"C:\\tools\\d{i}" for i in range(path_dirs)))
+    monkeypatch.setenv("PATHEXT", ".EXE;.BAT;.CMD")
+    monkeypatch.setenv("LOCALAPPDATA", "C:\\Users\\x\\AppData\\Local")
+    return calls
+
+
+def test_exhausted_system_subbudget_leaves_the_project_scan_complete(
+    tmp_path, home, monkeypatch, no_process
+):
+    root = _static_project(tmp_path)
+    _fake_windows_machine(monkeypatch, path_dirs=3000, drive_entries=5000)
+    monkeypatch.setattr(
+        pool,
+        "system_python_candidates",
+        lambda budget=None, **_: _REAL_SYSTEM_CANDIDATES(budget=budget, nt=True),
+    )
+
+    # 总预算故意收得很紧（300 项）：旧行为下系统枚举会把它吃光、整次扫描降成 partial
+    report = projscan.scan(root, limits=scanbudget.Limits(max_entries=300))
+
+    assert report["state"] == projscan.STATE_COMPLETE, report["issues"]
+    system_rows = [i for i in report["issues"] if i["scope"] == scanbudget.SCOPE_SYSTEM]
+    assert system_rows, report["issues"]
+    assert all(i["severity"] == scanbudget.SEVERITY_NOTE and "path" not in i for i in system_rows)
+    assert not [i for i in report["issues"] if i["severity"] == scanbudget.SEVERITY_PARTIAL]
+    assert report["budget"]["entries"] < 300  # 系统枚举的 lstat / 条目没记在项目账上
+
+
+def test_system_subbudget_is_bounded_in_entries_and_time(tmp_path, monkeypatch):
+    calls = _fake_windows_machine(monkeypatch, path_dirs=3000, drive_entries=5000)
+    parent = scanbudget.Budget()
+    sub = scanbudget.system_sub_budget(parent)
+
+    _REAL_SYSTEM_CANDIDATES(budget=sub, nt=True)
+
+    assert sub.entries <= scanbudget.SYSTEM_MAX_ENTRIES + 1
+    assert calls[0] <= scanbudget.SYSTEM_MAX_ENTRIES
+    assert parent.entries == 0
+    clock = [0.0]
+    timed = scanbudget.Budget(
+        limits=scanbudget.Limits(max_seconds=scanbudget.SYSTEM_MAX_SECONDS), clock=lambda: clock[0]
+    )
+    clock[0] = scanbudget.SYSTEM_MAX_SECONDS + 1
+    assert timed.stop_reason() == scanbudget.ISSUE_TIME
+
+
+def test_system_subbudget_still_lists_a_local_system_python(
+    tmp_path, home, monkeypatch, no_process
+):
+    root = _static_project(tmp_path)
+    local = tmp_path / "local" / "python3"
+    local.parent.mkdir()
+    local.write_text("", encoding="utf-8")
+    monkeypatch.setattr(pool, "system_python_candidates", lambda **_: [(str(local), "system")])
+
+    report = projscan.scan(root)
+
+    assert report["state"] == projscan.STATE_COMPLETE
+    assert any(c["source"] == "system" for c in report["environment"]["candidates"])
+    assert not [i for i in report["issues"] if i["scope"] == scanbudget.SCOPE_SYSTEM]

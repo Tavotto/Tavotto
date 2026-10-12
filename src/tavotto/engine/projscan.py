@@ -560,7 +560,16 @@ def environment_evidence(
         add(entry["python"], entry["source"], entry.get("label") or "")
     # 系统解释器与执行路径是同一个来源（`userenvs.system_candidates`）：只 `is_file`，不起进程
     # 扫描里用只读版：PATH 过预算与取消、UNC / 网络路径不碰（清单与执行路径同一份）
-    for entry in userenvs.system_candidates(budget):
+    # 系统候选是补充来源：用独立子预算（条目数 + 时间），用尽只少列、记一条无路径 note，不拖垮项目扫描
+    if budget is None:
+        system = userenvs.system_candidates(None)
+    elif budget.stop_reason() is None:
+        sub = scanbudget.system_sub_budget(budget)
+        system = userenvs.system_candidates(sub)
+        scanbudget.fold_system_issues(budget, sub)
+    else:
+        system = []
+    for entry in system:
         add(entry["python"], entry["source"], "")
 
     candidates = [by_key[k] for k in order]
@@ -737,8 +746,10 @@ def scan(
     else:
         has_partial = any(i["severity"] == scanbudget.SEVERITY_PARTIAL for i in issues)
         # 设计内的静默剪枝（层级太深）只有在「一个脚本都没找到」时才升级成 partial
+        # 系统候选子预算的 note（scope=system）不算：它只说明少列了机器上的解释器，与项目脚本找没找全无关
         notes_matter = (not items) and any(
-            i["severity"] == scanbudget.SEVERITY_NOTE for i in issues
+            i["severity"] == scanbudget.SEVERITY_NOTE and i["scope"] != scanbudget.SCOPE_SYSTEM
+            for i in issues
         )
         state = STATE_PARTIAL if (has_partial or notes_matter) else STATE_COMPLETE
     partial = state in (STATE_PARTIAL, STATE_CANCELLED)
