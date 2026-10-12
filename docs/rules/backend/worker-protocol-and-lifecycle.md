@@ -75,7 +75,20 @@
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
-  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。`SystemExit`
+  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。
+  **守卫拦下的关键文件操作不洗成完整成功（P01a，`safe_file_operation_blocked`，AC-02）**：safe 的删除 /
+  改名 / `write_text` 守卫与 savefig 拦截靠「悄悄跳过」工作，脚本看不到异常——脚本 `os.replace` 缓存后读它，
+  拿到旧值 1（直接 Python 是 2）却 `ok`。守卫一字不动，另有一本带外账本 `figcapture.BlockedFileOps`
+  （`worker.BLOCKED_OPS`）：守卫每拦一次记「操作类别 + 影响的路径」，最内层的 open / `os.stat` 包装在
+  **拦下之后**看到脚本打开（读，含 `r+`/`a+`）或 stat 了受影响路径，才算 material；脚本自己以 `w`/`x` 重写
+  该路径则清掉嫌疑，被拦截的 `savefig` 目标只认读内容、不认 `exists`（校验打印不判失败），先于拦截的读、读别的路径、从没回读（`test_workdir_mode` 那种顺手删过期输出）都不算。
+  material 非空时 build 以该 code 结束——脚本跑到末尾、`except Exception` 吞掉了异常、或因读不到而崩
+  （原因是守卫不是 `missing_input`）、或随后 `sys.exit` 非零，一律如此。载荷只有类别（`operations`）、
+  `required_execution="preserve_file_semantics"` 与 `adapter_available=false`，没有路径（message 会进
+  app.log）。盲区写在明处：C 扩展直接 `fopen`、`os.open`、`listdir`/`glob`/`scandir`、Windows 3.12+ 的
+  `os.path.exists` 观察不到，账本不宣称它们干净。pool 的镜像常量 `FILE_OPERATION_BLOCKED_CODE` 与
+  `file_operation_blocked_params`、HTTP `_worker_error_payload`、probe 透传同一份载荷。看护
+  `tests/test_worker_blocked_file_ops.py`。`SystemExit`
   的载荷若不是整数（`sys.exit("…")`）不进 message——那是用户的文字，message 会进 app.log
   再随诊断包出门；退出状态按 CPython 的规则记 1，文字只在 traceback 区的 `SystemExit: …`。**协议管道上的
   一行先判 UTF-8、再解析 JSON，两条控制面同一口径**：非 UTF-8 字节是「管道上有垃圾」

@@ -252,6 +252,9 @@ _SAVEFIG_METADATA = figcapture.savefig_metadata_reader(mfigure)
 #: 正在用户的 `paper_style.save(fig, stem)` 里：其间的 savefig 一律记到这个 stem 名下
 #: （`save` 里存成 `f"{stem}_final.pdf"` 的图库，按文件名取 stem 会让已有 override 挂空）
 _SAVE_AS: "str | None" = None
+#: 守卫拦下的关键文件操作的账本（P01a）。同样要被模块级的 `_patched_savefig` 够到，所以走模块级引用；
+#: build 开始时换成新的一本，脚本跑完 `stop()`。
+BLOCKED_OPS: "figcapture.BlockedFileOps | None" = None
 
 #: 协议常量的唯一出处在 `wireproto`；这里 re-export 是为了「手工 echo 一条
 #: 请求进来调试」时不必知道模块拆分（`worker.PROTOCOL_VERSION` 是老口径）。
@@ -284,6 +287,9 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if not _intercept:
         return _REAL_SAVEFIG(self, fname, *args, **kwargs)
     to_path = figcapture.savefig_targets_path(fname)
+    if to_path and BLOCKED_OPS is not None:
+        # 拦截不落盘：脚本若随后读这个路径（`Image.open('stage.png')`），读到的不是它刚存的（P01a，EX02）
+        BLOCKED_OPS.blocked("savefig", figcapture.BlockedFileOps.KIND_SAVEFIG, fname)
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
     if SESSION is not None:
         call = figcapture.savefig_call(fname, kwargs) if stem else None
@@ -359,6 +365,12 @@ SCRIPT_INPUT_TIMEOUT = "script_input_timeout"
 #: 脚本要读的文件不存在，且说得出是哪个（ADR 0106）：界面据此请用户指认，不是笼统的 script_error。
 MISSING_INPUT = "missing_input"
 SCRIPT_EXITED = "script_exited"
+#: safe 档的守卫拦下了脚本的关键文件操作（删除 / 改名 / 写入真实图库，或被拦截不落盘的 savefig），
+#: 脚本随后又观察了受影响的路径（P01a，ADR 0003）。结果可能与直接 Python 不同：不是完整成功。
+FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
+#: 载荷里的「该走哪条执行路径」：保留文件语义（native bridge / `tavotto run`）。字符串是后续
+#: 桌面 adapter（P06/P07）的接入依据；`adapter_available` 如实说当前桌面界面里还没有它。
+REQUIRED_EXECUTION_FILE_SEMANTICS = "preserve_file_semantics"
 
 
 def _raised_by_cli_parser(exc: BaseException) -> bool:
@@ -450,6 +462,28 @@ def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError
         retryable=False,
         traceback_text=traceback.format_exc(),
         extra={"exit_code": status},
+    )
+
+
+def _blocked_operations_error(
+    ops: list[dict], *, cause: BaseException | None = None
+) -> ProtocolError:
+    """守卫拦下的关键操作 + 脚本随后的观察 → 结构化错误。message 与载荷只有操作类别，没有路径
+    （message 会进 app.log 与诊断包）。不自动换环境重跑、不改脚本、不原地放行。"""
+    names = ", ".join(o["op"] for o in ops)
+    return ProtocolError(
+        FILE_OPERATION_BLOCKED,
+        f"脚本做了 Tavotto 安全模式不会真正执行的文件操作（{names}），随后又读取了受影响的路径，"
+        "得到的结果可能与直接用 Python 运行不同，所以这次不算成功。"
+        "Tavotto 没有改你的脚本，也没有换环境重跑；需要保留真实文件操作的运行方式——"
+        "终端里的 `tavotto run -- python 脚本.py` 可以，桌面界面里的一键方式尚未接入。",
+        retryable=False,
+        traceback_text=traceback.format_exc() if cause is not None else "",
+        extra={
+            "operations": ops,
+            "required_execution": REQUIRED_EXECUTION_FILE_SEMANTICS,
+            "adapter_available": False,
+        },
     )
 
 
@@ -663,6 +697,8 @@ class Worker(wireproto.V1Handler):
         self._private_output = None
         self._run_loaded = False
         self._input_misses = figcapture.InputMisses()
+        #: 守卫拦下的关键文件操作账本（P01a）：`build()` 里换成这一轮的那本，模块级 `BLOCKED_OPS` 指向同一本。
+        self._blocked_ops: "figcapture.BlockedFileOps | None" = None
         SESSION = SafeSession(self.out_dir, self.preview_dpi)
         SESSION.frame_project_root = str(self.figures_dir)
         SESSION.savefig_observations = figcapture.SavefigObservations(
@@ -776,6 +812,7 @@ class Worker(wireproto.V1Handler):
         自己那一段。两者分开是因为它们的改法完全不同——前者大头在用户的
         计算里（我们无能为力），差额才是引擎自己的开销。
         """
+        global BLOCKED_OPS
         t_build = time.perf_counter()
         if self.built:
             return self._stems_summary()
@@ -800,10 +837,17 @@ class Worker(wireproto.V1Handler):
         real_figs = self.figures_dir
         real_unlink = Path.unlink
 
+        # 守卫拦下的关键操作记一本账（P01a）：守卫本身一字不动，账只多回答一件事——
+        # 脚本随后有没有去观察被拦下的路径。open / os.stat 的观察包装装在最内层。
+        ledger = figcapture.BlockedFileOps()
+        BLOCKED_OPS = self._blocked_ops = ledger
+        ledger.install()
+
         def _guarded_unlink(p, missing_ok=False):
             try:
                 if p.resolve().is_relative_to(real_figs):
                     print(f"[guard] 跳过删除真实图库文件: {p}", file=sys.stderr)
+                    ledger.blocked("Path.unlink", ledger.KIND_DELETE, p)
                     return None
             except OSError:
                 pass
@@ -826,22 +870,28 @@ class Worker(wireproto.V1Handler):
             except (OSError, TypeError, ValueError):
                 return False
 
-        def _guard_delete(name, real_fn):
+        def _guard_delete(name, real_fn, op, kind):
+            # 改名 / 移动影响源与目的两条路径（目的地读到的是旧内容或没有），删除只影响自己
+            moves = kind == ledger.KIND_RENAME
+
             def guarded(path, *a, **kw):
                 if "dir_fd" not in kw and _inside_real(path):
                     print(f"[guard] 跳过 {name} 真实图库文件: {path}", file=sys.stderr)
+                    ledger.blocked(op, kind, path, *(a[:1] if moves else ()))
                     return None
                 return real_fn(path, *a, **kw)
 
             return guarded
 
-        os.remove = _guard_delete("删除", os.remove)
-        os.unlink = _guard_delete("删除", os.unlink)
-        os.rmdir = _guard_delete("删除目录", os.rmdir)
-        os.rename = _guard_delete("改名", os.rename)
-        os.replace = _guard_delete("改名", os.replace)
-        shutil.rmtree = _guard_delete("删除目录树", shutil.rmtree)
-        shutil.move = _guard_delete("移动", shutil.move)
+        os.remove = _guard_delete("删除", os.remove, "os.remove", ledger.KIND_DELETE)
+        os.unlink = _guard_delete("删除", os.unlink, "os.unlink", ledger.KIND_DELETE)
+        os.rmdir = _guard_delete("删除目录", os.rmdir, "os.rmdir", ledger.KIND_DELETE_DIR)
+        os.rename = _guard_delete("改名", os.rename, "os.rename", ledger.KIND_RENAME)
+        os.replace = _guard_delete("改名", os.replace, "os.replace", ledger.KIND_RENAME)
+        shutil.rmtree = _guard_delete(
+            "删除目录树", shutil.rmtree, "shutil.rmtree", ledger.KIND_DELETE_DIR
+        )
+        shutil.move = _guard_delete("移动", shutil.move, "shutil.move", ledger.KIND_RENAME)
 
         # 写入守卫：脚本的 write_caption 等用绝对路径 write_text 写真实图库
         # （fig9 的 *_caption.txt），沙盒 cwd 拦不住；导出走 savefig 不受影响
@@ -851,6 +901,7 @@ class Worker(wireproto.V1Handler):
             try:
                 if p.resolve().is_relative_to(real_figs):
                     print(f"[guard] 跳过写入真实图库文件: {p}", file=sys.stderr)
+                    ledger.blocked("Path.write_text", ledger.KIND_WRITE, p)
                     return 0
             except OSError:
                 pass
@@ -960,13 +1011,27 @@ class Worker(wireproto.V1Handler):
                     getattr(module, self.entry)()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
+                    # 被拦下的操作之后观察到不同的世界而退出：原因是守卫，不是脚本自己想退（P01a）
+                    if ledger.material():
+                        raise _blocked_operations_error(ledger.material(), cause=exc) from exc
                     raise _script_exit_error(exc, argv_count=len(self.script_argv)) from exc
             except scriptinput.ScriptNeedsInput as exc:
                 raise _needs_input_error(exc) from None
+            except Exception as exc:
+                # 脚本在被拦下的操作之后读不到东西而崩了（`FileNotFoundError`…）：根因是守卫，
+                # 不是「数据找不到」（那会请用户去指认一个其实被我们拦下的路径）
+                if ledger.material():
+                    raise _blocked_operations_error(ledger.material(), cause=exc) from exc
+                raise
             finally:
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
                 channel.closed = True
+                ledger.stop()
         script_ms = _ms(t_script)
+        # 脚本跑到了末尾，但被守卫拦下的关键操作之后它观察过受影响的路径（用户 `except Exception`
+        # 吞掉什么都不影响这条带外事实）：结果可能与直接 Python 不同，不记成完整成功（P01a，AC-02）
+        if ledger.material():
+            raise _blocked_operations_error(ledger.material())
 
         # pyplot 兜底：从不 savefig 的脚本（`plt.plot(...); plt.show()` 这种
         # AI 最常写的形态）也要能用。**与浏览器 playground 同一份策略**——

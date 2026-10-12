@@ -288,6 +288,14 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
     result: { status: 'error', error: { code: 'script_error', message: 'boom' } },
   },
+  // P01a：safe 守卫拦下了脚本的改名/删除/写入、脚本随后又读了它——失败，不是「再试一次」能解决的
+  fileOpsBlocked: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'safe_file_operation_blocked' },
+    actions: [action('run'), action('recheck')],
+    provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+    result: { status: 'error', error: { code: 'safe_file_operation_blocked', message: 'blocked' } },
+  },
   stale: { phase: 'action_required', outcome: { kind: 'stale', code: 'preparation_plan_stale' }, actions: [action('recheck')] },
   expired: { phase: 'action_required', outcome: { kind: 'unknown', code: 'attempt_expired' }, actions: [action('recheck')] },
   noFigure: {
@@ -415,6 +423,27 @@ describe('一句话 + 至多一个主按钮（每一种状态 × 每一种语种
 const toggleDetails = () =>
   act(async () => (panel().querySelector('[data-prep-details-toggle]') as HTMLButtonElement).click())
 const details = () => panel().querySelector('[data-prep-details]') as HTMLElement | null
+
+describe('safe 守卫拦下文件操作之后的失败（P01a）', () => {
+  it('说清是失败、没有出图，且没有「再试一次」「运行」这类会得到同一结果的主按钮', async () => {
+    await mount()
+    await openWith(report(STATES.fileOpsBlocked))
+    const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+    expect(line).toContain('没有出图')
+    expect(line).not.toBe('可以运行了')
+    expect(primary()?.dataset.prepPrimary).not.toBe('run')
+    expect(primary()?.textContent).not.toBe('再试一次')
+  })
+
+  it('英文界面同样是一句话，且没有泄漏中文', async () => {
+    await i18n.changeLanguage('en-US')
+    await mount()
+    await openWith(report(STATES.fileOpsBlocked))
+    const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+    expect(line).toContain('no figure was made')
+    expect(line).not.toMatch(/[一-鿿]/)
+  })
+})
 
 describe('主按钮就是后端给的那件事', () => {
   it('ready：运行 = 认领报告里的 run 动作；旁边是「稍后」', async () => {

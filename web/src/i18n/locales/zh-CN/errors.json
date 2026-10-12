@@ -179,6 +179,7 @@
     "script_changed": "写回被阻止：脚本在会话期间被修改过，请重新渲染后再试",
     "script_error": "脚本执行失败：{{error}}",
     "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",
+    "safe_file_operation_blocked": "脚本改了项目里的文件又去读它；安全运行不会真改文件，读到的会和直接运行不同，所以这次没有出图，桌面版暂时没有按真实文件运行的方式（终端里可用「tavotto run」）。",
     "script_needs_arguments": "脚本要求命令行参数，而 Tavotto 运行脚本时不带任何参数（sys.argv 只有脚本自己），参数解析于是退出了。给这些参数写默认值，或在终端里用「tavotto run -- python 脚本.py 参数…」让 Tavotto 跟着你自己的命令跑。展开输出看它要哪些参数。",
     "script_rejected_arguments": "脚本自己的参数解析器拒绝了你给的 {{argv_count}} 个参数。请检查它们是否符合脚本的要求（Tavotto 按你填的内容原样传入，没有改动）。展开输出看它的报错。",
     "engine_capability_missing": "本机的 Tavotto 引擎版本较旧，不支持按参数运行。请升级 Tavotto 后再试；不会改用空参数运行。",

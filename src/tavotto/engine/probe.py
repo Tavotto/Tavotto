@@ -74,6 +74,9 @@ ERROR_STEM_CONFLICT = "multiple_stem_conflict"
 #: `script_probe_failed` 会把出路（给默认值或 `tavotto run` / 去掉那句 exit）说丢。
 ERROR_NEEDS_ARGUMENTS = "script_needs_arguments"
 ERROR_SCRIPT_EXITED = "script_exited"
+#: safe 守卫拦下了脚本的关键文件操作、脚本随后又观察了它（P01a）：原样透传——换入口只是把同一段顶层代码
+#: 再跑一遍；出路（保留文件语义的执行路径）归成通用的 `script_probe_failed` 会被说丢。
+ERROR_FILE_OPERATION_BLOCKED = pool.FILE_OPERATION_BLOCKED_CODE
 #: 脚本 `input()`（ADR 0099）：没人能答 / 等到超时脚本没接住 EOF。worker 原样透传。
 ERROR_NEEDS_INPUT = "script_needs_input"
 ERROR_INPUT_TIMEOUT = "script_input_timeout"
@@ -86,6 +89,7 @@ ERROR_MISSING_INPUT = pool.MISSING_INPUT_CODE
 _ENTRY_INDEPENDENT_CODES = frozenset(
     {
         ERROR_NEEDS_ARGUMENTS,
+        ERROR_FILE_OPERATION_BLOCKED,
         ERROR_NEEDS_INPUT,
         ERROR_INPUT_TIMEOUT,
         ERROR_MISSING_INPUT,
@@ -177,6 +181,13 @@ def _error_from_worker(
             exc.code,
             str(exc),
             params={"prompt": str(extra.get("prompt") or "")},
+            traceback_text=exc.traceback_text,
+        )
+    if exc.code == ERROR_FILE_OPERATION_BLOCKED:
+        return _err(
+            exc.code,
+            str(exc),
+            params=pool.file_operation_blocked_params(getattr(exc, "extra", None)),
             traceback_text=exc.traceback_text,
         )
     if exc.code in (ERROR_NEEDS_ARGUMENTS, ERROR_SCRIPT_EXITED):

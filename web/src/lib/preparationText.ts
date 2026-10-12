@@ -337,6 +337,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   if (report.outcome.kind === 'failed' && code === 'script_needs_arguments') {
     return view('needs_args', 'needsArgs', v, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
   }
+  // safe 守卫拦下了脚本的文件操作、脚本随后又读了它（P01a）：重试得到同样的结果，没有「再试一次」；
+  // 当前桌面没有保留文件语义的执行路径，所以也没有主按钮——如实说，不替用户换环境重跑
+  if (report.outcome.kind === 'failed' && code === 'safe_file_operation_blocked') {
+    return view('file_ops_blocked', 'fileOpsBlocked', v, null, { tone: 'bad', step: 1 })
+  }
   if (missing) return view('missing_data', 'missingData', v, { kind: 'missing_input', payload: missing.payload }, { step: 1 })
   const fallback = has(report, 'recheck') ? act('recheck', 'recheck') : null
   switch (report.outcome.kind) {

@@ -756,6 +756,26 @@ MISSING_INPUT_CODE = "missing_input"
 #: worker 侧 `worker.SCRIPT_EXITED` 的镜像：脚本自己 `sys.exit(...)`——最常见的是先 `exists()` 判空
 #: 再退出（「找不到数据」），与「跑完没出图」一样只挂静态那部分（ADR 0106 §一.3）。
 SCRIPT_EXITED_CODE = "script_exited"
+#: worker 侧 `worker.FILE_OPERATION_BLOCKED` 的镜像（P01a）：safe 的守卫拦下了脚本的关键文件操作、
+#: 脚本随后又观察了受影响的路径——结果可能与直接 Python 不同，不是完整成功。
+FILE_OPERATION_BLOCKED_CODE = "safe_file_operation_blocked"
+
+
+def file_operation_blocked_params(extra: dict | None) -> dict[str, str]:
+    """`safe_file_operation_blocked` 给界面 / HTTP / 探测的 params（全是字符串、没有路径）。
+
+    `operations` 是被拦下操作的名字（`os.replace, shutil.move`），`required_execution` 是后续「保留文件
+    语义」执行路径的接入依据，`adapter_available` 如实说桌面界面里当前有没有它（P01a 时恒为 false）。
+    """
+    extra = extra or {}
+    ops = [str(o.get("op") or "") for o in extra.get("operations") or [] if isinstance(o, dict)]
+    return {
+        "operations": ", ".join(o for o in ops if o),
+        "required_execution": str(extra.get("required_execution") or ""),
+        "adapter_available": "true" if extra.get("adapter_available") is True else "false",
+    }
+
+
 #: worker 的通用失败码；带着 `extra.enoent` 时可能是 C++ 读取器找不到数据（ADR 0110 §一）。
 SCRIPT_ERROR_CODE = "script_error"
 

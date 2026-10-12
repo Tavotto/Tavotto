@@ -638,6 +638,9 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
         # 为什么没人能答（闭集，T08）：口令要重新提供 / 冷重放的上下文对不上——界面据此说清下一步
         if extra.get("reason") in engine_inputbroker.REASONS:
             body["params"]["reason"] = extra["reason"]
+    if exc.code == engine_pool.FILE_OPERATION_BLOCKED_CODE:
+        # safe 守卫拦下了脚本的关键文件操作、脚本随后又观察了它（P01a）：只带操作类别与接入依据，没有路径
+        body["params"] = engine_pool.file_operation_blocked_params(getattr(exc, "extra", None))
     if exc.code == "script_needs_arguments":
         extra = getattr(exc, "extra", None) or {}
         params = {}

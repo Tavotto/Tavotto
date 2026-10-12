@@ -892,6 +892,7 @@
       "depsRuntime": "运行时缺 {{module}}",
       "install": "要先安装缺少的组件",
       "needsArgs": "脚本要运行参数",
+      "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
       "missingData": "找不到要读的数据",
       "stale": "设置变了，要重新检查",
       "expired": "上次的记录没了",

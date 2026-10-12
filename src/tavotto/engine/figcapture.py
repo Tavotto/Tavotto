@@ -1433,6 +1433,191 @@ def _readonly_mode(mode) -> bool:
     return "r" in mode and not any(c in mode for c in "+wxa")
 
 
+class BlockedFileOps:
+    """safe worker 的守卫**确实拦下**了哪些关键文件操作，以及脚本随后有没有去看被它们影响的路径（P01a）。
+
+    守卫（删除 / 改名 / `write_text` 对真实图库、以及被拦截不落盘的 `savefig` 路径目标）是 safe 档的
+    保护，原样保留；它们靠「悄悄跳过」工作，脚本看不到异常。这本账补上缺的那半句终局事实：
+    **跳过之后脚本读到了什么**。判据一条：被拦下的操作影响了路径 P，此后脚本打开（读，含 `r+`/`a+`）
+    或 `os.stat`（`exists` / `isfile` / `Path.exists`）P，就是「这个脚本随后观察到的世界与直接用 Python
+    运行不同」——`material()` 非空，build 以 `safe_file_operation_blocked` 结束，不记成完整成功。
+
+    * **只算拦下之后的观察**：先于阻断的读、读不相干的路径、拦下了但从没回读（脚本只是顺手删个过期
+      输出），都不算——这些脚本照旧成功。
+    * **脚本自己重写（`w` / `x` 打开）会清掉那条路径的嫌疑**：此后读到的是它自己写的，与直接运行一致。
+    * **事实在带外账本里，不在异常里**：脚本 `except Exception: pass` 吞掉什么都洗不掉它。
+    * **盲区写在明处（判不出就别判）**：C 扩展直接 `fopen`、`os.open`、`os.scandir` / `listdir` / `glob`、
+      Windows 3.12+ 的 `os.path.exists`（C 实现、不经 `os.stat`）观察不到——这些不会产生 `material()`，
+      也就**不宣称**它们干净；账本只回答「观察到了」，不回答「没观察到所以没事」。被拦截的 `savefig`
+      目标只认**读内容**（open），不认 `exists` / `getsize` 这类 stat：`savefig(p); print(os.path.exists(p))`
+      是常见的校验打印，据此判失败会把原本能出图的脚本变成失败。
+    * 记账只存**操作类别与次数**，路径只在进程内用来比对，不出进程、不进 message / 诊断。
+
+    `install()` 装的 open / `os.stat` 包装在没有任何阻断记录时是一次属性读取就返回；`stop()`
+    （脚本跑完）之后整本账变成惰性——引擎自己后续写预览、读字体不会被误算。
+    """
+
+    MAX_EVENTS = 200
+
+    #: 操作类别（`kind`）的闭集：message 与载荷只出现这些，不出现路径。
+    KIND_RENAME = "rename"
+    KIND_DELETE = "delete"
+    KIND_DELETE_DIR = "delete_dir"
+    KIND_WRITE = "write"
+    KIND_SAVEFIG = "savefig"
+
+    def __init__(self) -> None:
+        self._events: list[dict] = []
+        self._active = True
+        self._busy = False
+        self._uninstall = None
+
+    # ---- 记账 ----
+    @staticmethod
+    def _norm(path) -> str | None:
+        if isinstance(path, bytes):
+            try:
+                path = os.fsdecode(path)
+            except ValueError:
+                return None
+        elif isinstance(path, os.PathLike):
+            try:
+                path = os.fspath(path)
+            except TypeError:
+                return None
+            if isinstance(path, bytes):
+                path = os.fsdecode(path)
+        if not isinstance(path, str) or not path:
+            return None
+        try:
+            return os.path.normcase(os.path.realpath(path))
+        except (OSError, ValueError):
+            return None
+
+    def blocked(self, op: str, kind: str, *paths) -> None:
+        """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。"""
+        try:
+            if not self._active or len(self._events) >= self.MAX_EVENTS:
+                return
+            affected = [p for p in (self._norm(x) for x in paths) if p]
+            if not affected:
+                return
+            self._events.append({"op": op, "kind": kind, "paths": affected, "observed": False})
+        except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
+            return
+
+    @staticmethod
+    def _covers(taint: str, path: str) -> bool:
+        return path == taint or path.startswith(taint.rstrip(os.sep) + os.sep)
+
+    def observe(self, path, mode="r") -> None:
+        """脚本打开了 `path`（`mode` 是 `open` 的模式串）。永不抛。"""
+        if not self._events or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            if not isinstance(mode, str):
+                return
+            real = self._norm(path)
+            if real is None:
+                return
+            if "w" in mode or "x" in mode:
+                # 脚本自己重写了这条路径：此后读到的是它写的（与直接运行一致）
+                for ev in self._events:
+                    ev["paths"] = [p for p in ev["paths"] if p != real]
+                return
+            if "a" in mode and "+" not in mode:
+                return  # 纯追加：不读
+            self._mark(real)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def observe_stat(self, path) -> None:
+        """脚本查了 `path` 的状态（`exists` / `isfile` / `stat`）。永不抛。"""
+        if not self._events or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is not None:
+                self._mark(real, via_stat=True)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def _mark(self, real: str, *, via_stat: bool = False) -> None:
+        for ev in self._events:
+            # 被拦截的 savefig 目标：`exists` / `getsize` 多是「存好了」的校验打印，不据此判分叉；
+            # 读内容（open）才算——`Image.open` / `imread` / `open('rb')` 读到的才是错的数据
+            if via_stat and ev["kind"] == self.KIND_SAVEFIG:
+                continue
+            if not ev["observed"] and any(self._covers(p, real) for p in ev["paths"]):
+                ev["observed"] = True
+
+    # ---- 终局 ----
+    def material(self) -> list[dict]:
+        """被拦下、且脚本随后观察过受影响路径的操作，按 (op, kind) 聚合：`[{op, kind, count}]`。"""
+        counts: dict[tuple[str, str], int] = {}
+        for ev in self._events:
+            if ev["observed"]:
+                key = (ev["op"], ev["kind"])
+                counts[key] = counts.get(key, 0) + 1
+        return [{"op": op, "kind": kind, "count": n} for (op, kind), n in sorted(counts.items())]
+
+    def stop(self) -> None:
+        """脚本跑完：之后一切观察都不算（引擎自己的读写不是脚本的）。"""
+        self._active = False
+
+    # ---- 钩子 ----
+    def install(self):
+        """装 open（`builtins.open` / `io.open` / `Path.open`）与 `os.stat` 的观察包装；返回卸载函数。
+
+        装在**最内层**（先于输入观察器与相对路径回退）：看到的是脚本交出的那条路径，
+        与守卫记账时用的是同一个 cwd 下的同一种解析。`os.stat` 一并包——`os.path.exists` /
+        `isfile` / `Path.exists` 都经它（POSIX；Windows 3.12+ 的 `exists` 是 C 实现，见类说明的盲区）。
+        """
+        ledger = self
+        real_open, real_io_open = builtins.open, io.open
+        real_path_open, real_stat = pathlib.Path.open, os.stat
+
+        def _wrap(original):
+            def watched_open(file, mode="r", *args, **kwargs):
+                ledger.observe(file, mode)
+                return original(file, mode, *args, **kwargs)
+
+            return watched_open
+
+        def watched_path_open(self_path, mode="r", *args, **kwargs):
+            ledger.observe(self_path, mode)
+            return real_path_open(self_path, mode, *args, **kwargs)
+
+        def watched_stat(path, *args, **kwargs):
+            ledger.observe_stat(path)
+            return real_stat(path, *args, **kwargs)
+
+        builtins.open = _wrap(real_open)
+        io.open = _wrap(real_io_open)
+        pathlib.Path.open = watched_path_open
+        os.stat = watched_stat
+
+        def uninstall() -> None:
+            builtins.open = real_open
+            io.open = real_io_open
+            pathlib.Path.open = real_path_open
+            os.stat = real_stat
+
+        self._uninstall = uninstall
+        return uninstall
+
+    def uninstall(self) -> None:
+        if self._uninstall is not None:
+            self._uninstall()
+            self._uninstall = None
+
+
 def observed_local_modules(
     project_root: str, modules: dict, *, exclude_dir: str = ""
 ) -> list[dict]:

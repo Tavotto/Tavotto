@@ -944,6 +944,7 @@
       "depsRuntime": "{{module}} is missing",
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",
+      "fileOpsBlocked": "The script changes project files, then reads them; safe mode doesn't change them, so the result would differ and no figure was made",
       "missingData": "Can't find the data it reads",
       "stale": "Settings changed, check again",
       "expired": "The last run's record is gone",
