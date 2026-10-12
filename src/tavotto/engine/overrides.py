@@ -3166,8 +3166,19 @@ def _get_coll_facecolor(coll):
 # ---------------------------------------------------------------------------
 #: Collection / Patch 通用的「安全 setter」——都是 Artist 基类或 family 基类
 #: 上的公开 API，子类没有一个重定义成别的语义。
-def _pin_hatchcolor(a) -> None:
-    """首次触碰前把「未设」模式的花纹色钉成**创建时已解析的值**（#874，matplotlib ≥3.11）。
+#: 记在 artist 上的 (创建时已解析的花纹色, 我们上次写完之后它的样子)。第二项用来识别「中间被别人
+#: 动过」：native 会话里用户的 Python 在屏障之间可以改 rcParams、再 `set_alpha`，那之后记着的
+#: 创建时的值就过期了，必须按此刻的实况重新记。
+_HATCH_BASE = "_mm_hatch_base"
+
+
+def _hatch_resolved(a):
+    resolved = getattr(a, "_hatchcolors", None)  # Collection：'edge' 或 RGBA 数组
+    return getattr(a, "_hatch_color", None) if resolved is None else resolved
+
+
+def _with_hatch_pinned(a, fn) -> None:
+    """跑 `fn()`（会让 matplotlib ≥3.11 重解析花纹色的 setter），期间把花纹色钉在创建时的值（#874）。
 
     3.11 起 `Patch` / `Collection` 的 `set_alpha`（Patch 还有 `set_fill`）会把
     `_original_hatchcolor is None` 的花纹色按**此刻**的 `rcParams['hatch.color']` 重新解析；
@@ -3175,26 +3186,37 @@ def _pin_hatchcolor(a) -> None:
     `'edge'` / 半透明 RGBA 就被环境值（3.11 默认 `'edge'`）盖掉，撤销也回不去，而只见最终列表
     的全新 worker 没经历过这一步——热态 ≠ 重放（manifest 相同、像素不同）。
 
-    钉法：`set_hatchcolor(已解析值)`。`'edge'` 哨兵、RGBA（含自带 alpha）原样成为显式设定，之后
-    重解析读的是它而不是环境；`to_rgba(c, alpha)` 在同一 alpha 下幂等，所以钉住本身不动画面。
-    判据是真实 setter 在不在，不是版本号；`_original_hatchcolor` 已不是 None（脚本显式给过 /
-    已钉过）就什么都不做，幂等。必须在**任何**会重解析的 setter 之前调用。
+    钉法：`set_hatchcolor(创建时已解析的值)` → 跑 `fn` → **把模式还原成 None**。`'edge'` 哨兵、RGBA
+    （含自带 alpha）在 `fn` 期间是显式设定，重解析读的是它而不是环境；`fn` 之后模式回到「未设」，
+    `_hatch_color` 是按当前 alpha 合成出来的值，不再带着我们的钉。所以**任何时刻**（含 native 屏障
+    释放 `apply([])` 之后、用户恢复运行的 Python 再改 rc 并 `set_alpha`）这个 artist 的模式都与没被
+    Tavotto 编辑过的一样，用户后续脚本照常跟随新的 rc（Codex #950 r4245786615）。
+
+    创建时的值另记在 artist 上（`_HATCH_BASE`）而不是读当下的 `_hatch_color`：撤销要把内在 alpha
+    （`rc_context` 里的 `(1,0,0,.25)`）找回来，当下的值已经被 alpha 编辑合成过了。记的值若与
+    「我们上次写完的样子」对不上，说明中间有别人动过，按实况重记。判据是真实 setter 在不在，不是
+    版本号；脚本显式给过 hatchcolor（`_original_hatchcolor` 不是 None）的 artist 原样跑 `fn`。
     """
-    if getattr(a, "_original_hatchcolor", 0) is not None:
-        return
     pin = getattr(a, "set_hatchcolor", None)
-    if pin is None:
+    if pin is None or getattr(a, "_original_hatchcolor", 0) is not None:
+        fn()
         return
-    resolved = getattr(a, "_hatchcolors", None)
-    if resolved is None:
-        resolved = getattr(a, "_hatch_color", None)
-    if resolved is not None:
-        pin(resolved)
+    cur = _hatch_resolved(a)
+    rec = getattr(a, _HATCH_BASE, None)
+    base = rec[0] if rec is not None and _same_value(rec[1], cur) else cur
+    if base is None:
+        fn()
+        return
+    pin(base)
+    try:
+        fn()
+    finally:
+        a._original_hatchcolor = None  # noqa: SLF001 — 还原模式本身，不重解析
+        setattr(a, _HATCH_BASE, (base, _hatch_resolved(a)))
 
 
 def _set_alpha_pinned(a, v) -> None:
-    _pin_hatchcolor(a)
-    a.set_alpha(None if v is None else float(v))
+    _with_hatch_pinned(a, lambda: a.set_alpha(None if v is None else float(v)))
 
 
 _CAP_ALPHA = (lambda a: a.get_alpha(), _set_alpha_pinned)
@@ -3213,9 +3235,8 @@ def _remember_hatch_color(p) -> None:
 
 
 def _set_patch_fill(p, v) -> None:
-    _pin_hatchcolor(p)
     _remember_hatch_color(p)
-    p.set_fill(bool(v))
+    _with_hatch_pinned(p, lambda: p.set_fill(bool(v)))
     if (
         bool(v)
         and not hasattr(p, "set_hatchcolor")

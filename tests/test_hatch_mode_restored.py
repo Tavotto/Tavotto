@@ -1,0 +1,66 @@
+"""#874 / Codex #950 r4245786615：alpha / fill 编辑与撤空之后，花纹色的**模式**回到「未设」。
+
+钉住（`overrides._with_hatch_pinned`）若把 `_original_hatchcolor` 永久改成显式值，native 会话释放屏障后
+用户的 Python 改了 `rcParams['hatch.color']` 再 `set_alpha`，这个 patch 会保留 Tavotto 钉的颜色而不跟随
+新的 rc，悄悄改变后续脚本的输出。判据的主语：**用户拿回手的那个 artist**（`apply([])` 之后）的模式与花纹色，
+对照一张从没被 Tavotto 碰过的同构图。
+
+探针 `tests/support/hatch_mode_probe.py` 在 worker 解释器里直接驱动 `overrides.apply`（native 与 safe
+共用的那一个入口）；≤3.10 没有 `set_hatchcolor`，不适用，用例 skip。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+
+import pytest
+
+from tavotto.engine import pool
+
+try:
+    WORKER_PY = pool.find_worker_python()
+except pool.WorkerError:
+    WORKER_PY = None
+
+pytestmark = pytest.mark.skipif(
+    WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
+)
+PROBE = os.path.join(os.path.dirname(__file__), "support", "hatch_mode_probe.py")
+
+
+@pytest.fixture(scope="module")
+def report():
+    out = subprocess.run(  # noqa: S603 — 测试里起 worker 解释器跑探针
+        [WORKER_PY, PROBE], capture_output=True, text=True, encoding="utf-8", check=True
+    ).stdout
+    rep = json.loads(out.strip().splitlines()[-1])
+    if not rep["has_set_hatchcolor"]:
+        pytest.skip(f"matplotlib {rep['matplotlib']} 没有 set_hatchcolor：不存在钉住")
+    return rep
+
+
+CASES = [
+    "bar:alpha",
+    "series:alpha",
+    "rect:alpha",
+    "rect:fill",
+    "rect:fill+alpha",
+    "fill_between:alpha",
+    "scatter:alpha",
+    "bar:stale-base",
+    "scatter:stale-base",
+]
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_edit_then_clear_leaves_the_hatch_mode_unset_and_following_the_rc(report, case):
+    c = report["cases"][case]
+    assert not c["warnings"], c["warnings"]
+    assert c.get("mode_none_during_edit", True), f"{case}：编辑期间模式就不是「未设」了"
+    assert c["mode_none_after_clear"], f"{case}：apply([]) 之后 _original_hatchcolor 没回到 None"
+    assert c["hatch_after_clear_equals_pristine"], f"{case}：撤空后花纹色不是创建时的值"
+    assert c["follows_new_rc_like_pristine"], (
+        f"{case}：改 rc 再 set_alpha 没有像从未编辑过那样跟随新 rc"
+    )
