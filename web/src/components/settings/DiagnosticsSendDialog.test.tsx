@@ -397,6 +397,44 @@ describe('发送', () => {
     expect(q('[data-diag-send-status]')!.textContent).toContain(ds('failure.unexpected_response'))
   })
 
+  it.each(['diag_stale_action', 'diag_session_cancelled'])(
+    '迟到的 start 被引擎拒（409 %s）：属于取消流程，不是失败——继续轮询到 cancelled 并重新备包（#928）',
+    async (code) => {
+      prepareMock
+        .mockResolvedValueOnce({ ...PREPARED, id: 'pid-1', gen: 0 })
+        .mockResolvedValueOnce({ ...PREPARED, id: 'pid-2', gen: 0 })
+      let rejectStart: (e: unknown) => void = () => {}
+      startMock.mockReturnValue(new Promise((_, rej) => (rejectStart = rej)))
+      statusMock.mockResolvedValue(status({ id: 'pid-1', state: 'cancelling', stage: null, gen: 1 }))
+      await mount()
+      await click(q('[data-diag-send-confirm]'))
+      await click(q('[data-diag-send-cancel]'))
+      // 取消先被引擎处理，迟到的 start 才回来 409
+      await act(async () => rejectStart(new ApiError(code, 409, { code })))
+      await tick()
+      expect(q('[data-diag-send-status]')!.dataset.diagSendStatus).toBe('cancelling')
+      expect(q('[data-diag-send-failure]')).toBeNull()
+      statusMock.mockResolvedValue(status({ id: 'pid-1', state: 'cancelled', stage: null, gen: 1 }))
+      await tick()
+      await tick()
+      expect(prepareMock).toHaveBeenCalledTimes(2)
+      expect(q('[data-diag-send-status]')!.textContent).toContain(ds('cancelled'))
+      expect(q('[data-diag-send-confirm]')).not.toBeNull()
+    },
+  )
+
+  it('迟到的 start 被拒时用户还没点取消（别处取消了会话）：也进入取消流程，不显示失败', async () => {
+    prepareMock.mockResolvedValueOnce({ ...PREPARED, id: 'pid-1' }).mockResolvedValueOnce({ ...PREPARED, id: 'pid-2' })
+    startMock.mockRejectedValue(new ApiError('diag_stale_action', 409, { code: 'diag_stale_action' }))
+    statusMock.mockResolvedValue(status({ id: 'pid-1', state: 'cancelled', stage: null, gen: 1 }))
+    await mount()
+    await click(q('[data-diag-send-confirm]'))
+    await tick()
+    await tick()
+    expect(q('[data-diag-send-failure]')).toBeNull()
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+  })
+
   it('发送中取消：调 cancelDiagSend，回到可编辑的表单，并说明什么都没发', async () => {
     startMock.mockResolvedValue(status({}))
     statusMock.mockResolvedValueOnce(status({ stage: 'upload', sent: 1, total: 100 }))

@@ -257,7 +257,9 @@
 - **两步，只有第二步出网。** `prepare`（`POST /api/diagnostics/send/prepare`，载荷同导出）在本机生成并保管**一份**包（`app._build_diagnostics_bundle`——
   与导出共用，包的内容与脱敏只此一份），回「会发送哪几类内容」（`ENTRY_KINDS` 闭集 id）；`GET .../<id>/bundle` 给用户同一字节去保存。
   `POST .../<id>/send` 的请求体 `confirm` 必须是字面 `true`，才起发送线程（init → 直传 COS → complete）。备包 / 看包 / 状态 / 取消 / 丢弃都不出网。
-  包超过 10 MiB（以 `upload.max_bytes` 为准）**不保管不裁剪**，回 `too_large`。同一时刻一个会话；重复点发送回当前状态，不开第二条线程。
+  包超过 10 MiB（以 `upload.max_bytes` 为准）**不保管不裁剪**，回 `too_large`。**同一项目同一时刻一个会话**；重复点发送回当前状态，不开第二条线程。
+  会话注册表按请求的项目上下文分键（`_SESSIONS[scope]`，#927；`scope` = `app._diag_send_scope()`：`?pj=` / `X-Tavotto-Project` 指名的项目 id，不带则默认项目）：
+  备包 / 状态 / 看包 / 发送 / 取消 / 丢弃都只认**本项目**的会话——B 项目备包不丢弃 A 的包，A 在发送中 B 照常备包；别的项目拿着 A 的 id 查 / 取消 / 丢弃一律 404。发送线程与异步取消回调捕获的是会话对象本身（身份判据 `SendSession.dropped`，不再是全局单例比较）。
 - **逐次授权，什么都不自己继续。** 没有记住的选择、没有启动补发、状态只在内存；取消 / 关窗（`discard`）/ 失败 / 进程退出后不会有请求。一次发送内的有界重试只有
   `complete` 丢响应（网络 / 超时）与 `in_progress` / `upload_missing`（≤ `COMPLETE_ATTEMPTS`）；429 / 503 与其余失败交还用户去点。用户再点：内容没变且服务端会话还开着
   复用 `client_request_id`，否则换新的 UUIDv4（`REOPEN_ON`、取消后、内容变了）。`client_request_id` 绝不取遥测 `install_id`。
@@ -283,7 +285,7 @@
 
 取消结果是**三态**（`_cancel_remote`）：确认已取消（2xx 含幂等重放；404 = 服务端没有这份）/ 确认已送达（409 `already_complete`）/ **无法确认**（传输错误、超时、5xx、429、其他 4xx、`in_progress` 重问一次后仍不定）。
 「无法确认」**绝不**当「确认取消」：若 `complete` 已发出过（`SendSession.complete_sent`，哪怕响应丢了），会话进入 **`unknown`（结果未知）**——保留报告编号，界面说「无法确认报告是否已送达；如需删除，可在 GitHub Issues 里只附上报告编号」，
-不许再发一份（`start` 回 `result_unknown`）；`complete` 从未发出（还在上传）则如实是 `cancelled`（没有什么可能已送达）。所有异步回调只改**自己捕获的那个会话对象**，且异步取消的回调要求 `_CURRENT is sess`——会话被丢弃 / 替换后迟到的答复不碰现役会话。
+不许再发一份（`start` 回 `result_unknown`）；`complete` 从未发出（还在上传）则如实是 `cancelled`（没有什么可能已送达）。所有异步回调只改**自己捕获的那个会话对象**，且异步取消的回调要求会话尚未被丢弃（`not sess.dropped`）——会话被丢弃 / 替换后迟到的答复不碰现役会话。
 
 | 阶段（取消那一刻） | 2xx | 409 already_complete | 409 in_progress（问两次） | 404 | 传输错误 / 超时 / 5xx / 429 |
 |---|---|---|---|---|---|
@@ -320,8 +322,20 @@
 
 状态赋值点清单（每处受哪条不变量约束）：
 `start()` 置 sending（仅在非 sending / unknown / done 时；换 id 才清编号——用户明确的新一次发送）→ I3 刷新 `touched`；`cancel()`：sending→cancelling（I2）、失败 / 备好态按 complete_sent 走 `_cancel_remote_async`（I1）或直接 unknown（够不着服务端）；
-`discard()`：只在无发送线程时直接丢（`_CURRENT is sess` 守卫在回调里）；`_init` 回 complete（幂等重放）：置 done 后由 `_settle` 统一收尾；`_settle`：**所有**线程终态；`_cancel_remote_async` 回调：认会话身份 + 三态映射；`_expire_locked`：I3。
+`discard()`：`cancelling` / 发送线程在跑 → 标 `discard_after` 等收尾；否则 `_discard_locked`（complete 发出过的走 settle 再丢，见 #928 一节）；`_init` 回 complete（幂等重放）：置 done 后由 `_settle` 统一收尾；`_settle`：**所有**线程终态；`_cancel_remote_async` 回调：认会话身份 + 三态映射；`_expire_locked`：I3。
 
 * **动作代次（Codex #923，send / cancel 乱序）**：本机的 send 与 cancel 是两个独立 POST，可能在不同服务线程上颠倒顺序。`SendSession.gen` 单调：`cancel` / `discard` 各加一，`prepare` 与状态都回它；`start` 带着调用方看到的代次，
   对不上 → 409 `stale_action`；**取消过的会话（`cancelled`）不可被 `start` 复活**（409 `session_cancelled`，连没带代次的老客户端也不行），要再发必须重新「准备」得到新会话（新授权、新 `client_request_id`）。
   前端 send 带上代次，看到 `cancelled` 就自动重新备包。看护：`test_reordered_send_and_cancel_never_uploads`、`test_reordered_across_two_threads`、`test_stale_generation_is_rejected_*`、`test_a_cancelled_session_is_not_revivable_*`（零 init 请求、会话仍 cancelled）。
+
+### 失败后重试 / 丢弃 / 迟到 start 的对账（#928，Codex #923 三条 P2）
+
+| 场景 | 期望 |
+|---|---|
+| 可重试 failed（`complete_sent`、编号仍在）后**改类别 / 附言**再发 | 发送线程先 `_reconcile_previous` 按 I1 对账上一次尝试（cancel 三态）：服务端确认已存 → `done`，报告编号是首份的，**不上传第二份**（改的参数没发出去，界面如实显示已送达的那份）；确认没存（2xx / 404）→ 才换新 `client_request_id` 重传；无法确认 → `unknown`（保留首份编号，不发第二份）。令牌已不在而 `complete_sent` → 直接 `result_unknown`。失败码属 `REOPEN_ON`（服务端会话已关）不对账。参数没变的重试仍复用同一个 id（幂等重放，不对账）。 |
+| complete 发出过的 `prepared` / `failed` 会话被**丢弃**（关对话框、切项目、TTL 回收） | `_discard_locked` 不再「cancel + 立刻移出 + 清编号」：会话先停在 `cancelling` 并标 `discard_after`，等取消答复定论（done / unknown / cancelled）再丢弃；丢弃时 `_archive_locked` 把「done / unknown 且有编号」（或 complete 发出过的）留成**结果快照** `_OUTCOMES[scope]`（只有状态与编号，没有包与令牌，每项目一份），`status(pid)` 在会话没了之后仍回这份快照——用户凭编号才能要求删除。发送线程 / 取消回调在 `discard_after` 下收尾时同理。`done` / `unknown` 闲置满 `FINISHED_KEEP_S` 的回收**不**留快照（I3 原样）。 |
+| 对话框已关（`discard_after`）、会话还在 `sending` / `cancelling` 时同项目再备包 | 不再 409：旧会话脱离注册表自己收尾并留快照，新会话立即可用；对话框还开着（无 `discard_after`）的发送 / 取消中仍 409 `send_in_progress`。 |
+| 迟到的 start（取消先被处理）被引擎拒 409 `stale_action` / `session_cancelled` | 前端（`DiagnosticsSendDialog`）把这两个 code 视为**取消流程的一部分**，不是失败：进入 `cancelling`，继续轮询到 `cancelled` 后自动重新备包（新会话、新授权）；绝不显示「内部错误」、不停轮询。 |
+
+不变量未改：I1–I3 与「取消优先」(I2) 原样；新增的只是 I1 在两个入口（改参数重试、丢弃）上的落实。看护：`tests/test_diag_send.py::TestReconcileAfterFailure` / `TestDiscardKeepsDeliveryOutcome`、
+`tests/test_diag_send_api.py::TestPerProjectSessions`（两个项目并行准备 / 一个发送中另一个准备 / 跨项目 404）、`DiagnosticsSendDialog.test.tsx` 的「迟到的 start」两条。

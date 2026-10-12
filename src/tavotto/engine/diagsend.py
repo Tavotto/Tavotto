@@ -183,6 +183,10 @@ class _Failure(Exception):
         self.retry_after = retry_after
 
 
+class _Unknown(Exception):
+    """上一次尝试的下落无法确认（它的 complete 发出过）：收尾为 `unknown`，保留编号，不许再发一份。"""
+
+
 class _Cancelled(Exception):
     """用户取消：从上传的读回调里抛出，打断正在进行的 POST。"""
 
@@ -600,6 +604,12 @@ class SendSession:
     complete_sent: bool = False  # `complete` 至少发出过一次（哪怕响应丢了）：服务端那份可能已经收下
     cancel_raced: bool = False  # 用户取消时报告其实已送达（cancel 回 409 already_complete）
     thread: threading.Thread | None = field(default=None, repr=False)
+    #: 属于哪个项目上下文（#927）：注册表按它分键，发送线程 / 异步取消回调捕获的就是这个会话对象
+    scope: str = field(default="", repr=False)
+    #: 已被丢弃出注册表：迟到的异步答复据此忽略（取代旧的 `_CURRENT is sess` 身份判断）
+    dropped: bool = field(default=False, repr=False)
+    #: 改参数重试时，上一次尝试（complete 已发出）还没对账：发送线程先问服务端它的下落（I1），(report_id, token)
+    reconcile: tuple[str, str] | None = field(default=None, repr=False)
 
     def public(self) -> dict:
         out: dict = {
@@ -624,7 +634,11 @@ class SendSession:
 
 
 _LOCK = threading.RLock()
-_CURRENT: SendSession | None = None
+#: 会话注册表，按项目上下文分键（#927）：两个窗口、两个项目各有各的备好 / 发送中的会话，互不丢弃、互不 409。
+_SESSIONS: dict[str, SendSession] = {}
+#: 每个项目最近一次「已送达 / 结果未知」的会话在被丢弃时留下的状态快照（只有状态与报告编号，没有包与令牌）：
+#: 关对话框 / 切项目不能吞掉送达结果，用户凭编号才能要求删除（#928）。每个项目最多一份，后来的覆盖。
+_OUTCOMES: dict[str, dict] = {}
 
 #: 测试可换的时钟/睡眠（重试退避不该让用例真等）。
 _sleep = time.sleep
@@ -639,32 +653,54 @@ FINISHED_KEEP_S = 24 * 3600
 def _expire_locked() -> None:
     """只回收**闲置**的会话：发送中 / 取消中永不过期；备好 / 失败 / 已取消按 `PREPARED_TTL_S`（从最近一次使用算，
     不是从备包算）；done / unknown 留 `FINISHED_KEEP_S`——送达的编号不能因为发送跨过 30 分钟就被藏起来（I3）。"""
-    cur = _CURRENT
-    if cur is None or cur.state in ("sending", "cancelling"):
+    for cur in list(_SESSIONS.values()):
+        if cur.state in ("sending", "cancelling"):
+            continue
+        finished = cur.state in ("done", "unknown")
+        if _clock() - cur.touched > (FINISHED_KEEP_S if finished else PREPARED_TTL_S):
+            if finished:  # 已送达的结果留满 24 h 没人问过才回收（I3）——回收就是回收，不再留快照
+                _drop_locked(cur, archive=False)
+            else:
+                _discard_locked(cur)
+
+
+def _archive_locked(sess: SendSession) -> None:
+    """被丢弃的会话若有「已送达 / 可能已送达」的报告编号，留一份状态快照（#928）：complete 发出过而结果没定论的
+    一律记 unknown——不能因为用户关了窗就把一份可能已存下的报告藏起来。"""
+    if not sess.report_id:
         return
-    limit = FINISHED_KEEP_S if cur.state in ("done", "unknown") else PREPARED_TTL_S
-    if _clock() - cur.touched > limit:
-        _discard_locked(cur)
+    if sess.state in ("done", "unknown"):
+        snap = sess.public()
+    elif sess.complete_sent and sess.state in ("prepared", "failed", "cancelling"):
+        snap = {**sess.public(), "state": "unknown", "report_id": sess.report_id}
+    else:
+        return
+    snap.pop("code", None)
+    snap.pop("retryable", None)
+    snap.pop("retry_after", None)
+    _OUTCOMES[sess.scope] = snap
 
 
-def _drop_locked(sess: SendSession) -> None:
-    global _CURRENT
+def _drop_locked(sess: SendSession, *, archive: bool = True) -> None:
+    if archive:
+        _archive_locked(sess)
     sess.bundle = None
     sess.token = ""
     sess.spec = None
-    if _CURRENT is sess:
-        _CURRENT = None
+    sess.dropped = True
+    if _SESSIONS.get(sess.scope) is sess:
+        del _SESSIONS[sess.scope]
 
 
-def _get(pid: object) -> SendSession:
+def _same_id(a: str, b: object) -> bool:
+    return isinstance(b, str) and secrets.compare_digest(a.encode(), b.encode("utf-8", "replace"))
+
+
+def _get(pid: object, scope: str) -> SendSession:
     with _LOCK:
         _expire_locked()
-        cur = _CURRENT
-        if (
-            cur is None
-            or not isinstance(pid, str)
-            or not secrets.compare_digest(cur.id.encode(), pid.encode("utf-8", "replace"))
-        ):
+        cur = _SESSIONS.get(scope)
+        if cur is None or not _same_id(cur.id, pid):
             raise SendError("send_not_found", 404)
         cur.touched = _clock()
         return cur
@@ -673,18 +709,21 @@ def _get(pid: object) -> SendSession:
 # ---------------------------------------------------------------------------
 # 对 Flask 层的接口
 # ---------------------------------------------------------------------------
-def prepare(bundle: bytes) -> dict:
-    """备好一份包（**零网络**）。包超限不保管、不发送：回 `too_large` 让界面去导出到本地。"""
-    global _CURRENT
+def prepare(bundle: bytes, *, scope: str = "") -> dict:
+    """备好一份包（**零网络**）。包超限不保管、不发送：回 `too_large` 让界面去导出到本地。
+    `scope` = 请求的项目上下文：只替换**本项目**的旧会话，别的项目的会话（含发送中的）不受影响。"""
     if resolve_target() is None:
         raise SendError("send_disabled", 404)
     info = inspect_bundle(bundle)
     with _LOCK:
         _expire_locked()
-        cur = _CURRENT
+        cur = _SESSIONS.get(scope)
         if cur is not None and cur.state in ("sending", "cancelling"):
-            raise SendError("send_in_progress", 409)
-        if cur is not None:
+            if not cur.discard_after:
+                raise SendError("send_in_progress", 409)
+            # 对话框已关、只等发送线程 / 取消答复收尾的会话：让位给新会话（它自己收尾并留下结果快照）
+            del _SESSIONS[scope]
+        elif cur is not None:
             _discard_locked(cur)
         digest = hashlib.sha256(bundle).hexdigest()
         summary = {
@@ -704,22 +743,31 @@ def prepare(bundle: bytes) -> dict:
             info=info,
             created=_clock(),
             touched=_clock(),
+            scope=scope,
         )
-        _CURRENT = sess
+        _SESSIONS[scope] = sess
         return {**summary, "too_large": False, "id": sess.id, "gen": sess.gen}
 
 
-def bundle_bytes(pid: str) -> bytes:
+def bundle_bytes(pid: str, *, scope: str = "") -> bytes:
     """用户要存/看的**同一份字节**。发完（done）后已释放。"""
-    sess = _get(pid)
+    sess = _get(pid, scope)
     with _LOCK:
         if sess.bundle is None:
             raise SendError("send_not_found", 404)
         return sess.bundle
 
 
-def status(pid: str) -> dict:
-    sess = _get(pid)
+def status(pid: str, *, scope: str = "") -> dict:
+    """会话状态。会话已被丢弃但留有送达结果快照（#928）时回那份快照——送达结果可被后续查询取回。"""
+    try:
+        sess = _get(pid, scope)
+    except SendError:
+        with _LOCK:
+            snap = _OUTCOMES.get(scope)
+            if snap is not None and _same_id(snap["id"], pid):
+                return dict(snap)
+        raise
     with _LOCK:
         return sess.public()
 
@@ -736,7 +784,13 @@ def _clean_note(note: object) -> str:
 
 
 def start(
-    pid: str, *, confirmed: object, category: object, note: object, gen: object = None
+    pid: str,
+    *,
+    confirmed: object,
+    category: object,
+    note: object,
+    gen: object = None,
+    scope: str = "",
 ) -> dict:
     """**用户点了「发送」**：开始 init → 上传 → complete。这是唯一会产生远程请求的入口。
 
@@ -752,7 +806,7 @@ def start(
     if cat not in CATEGORIES:
         raise SendError("category_invalid", 422)
     text = _clean_note(note)
-    sess = _get(pid)
+    sess = _get(pid, scope)
     with _LOCK:
         if sess.state in ("sending", "cancelling"):
             return sess.public()
@@ -773,7 +827,17 @@ def start(
             and sess.failure not in REOPEN_ON
             and sess.state != "cancelled"
         )
+        sess.reconcile = None
         if not reuse:
+            if sess.complete_sent and sess.report_id and sess.failure not in REOPEN_ON:
+                # I1（Codex #923 P2）：上一次尝试 complete 发出过、编号还在——改参数重试不许静默孤立它。
+                # 先问服务端它的下落（发送线程里做，不在锁里联网）：已存 → done；确认没存 → 才换新 id 重传；不确定 → unknown。
+                if sess.server_open and sess.token:
+                    sess.reconcile = (sess.report_id, sess.token)
+                else:  # 够不着服务端（令牌已不在），而 complete 发出过：不能当「没送达」
+                    sess.state, sess.stage, sess.failure = "unknown", "", ""
+                    sess.bundle = None
+                    raise SendError("result_unknown", 409)
             sess.client_request_id = str(uuid.uuid4())
             sess.uploaded = False
             sess.report_id = ""
@@ -795,9 +859,9 @@ def start(
         return sess.public()
 
 
-def cancel(pid: str) -> dict:
+def cancel(pid: str, *, scope: str = "") -> dict:
     """取消。发送中：打断上传并尽力通知服务端；其余：丢掉服务端那份未完成的会话（若有）。"""
-    sess = _get(pid)
+    sess = _get(pid, scope)
     with _LOCK:
         sess.gen += 1  # 此后任何带旧代次的 start 都被拒
         if sess.state == "sending":
@@ -818,16 +882,17 @@ def cancel(pid: str) -> dict:
         return sess.public()
 
 
-def discard(pid: str) -> dict:
+def discard(pid: str, *, scope: str = "") -> dict:
     """界面关了（对话框关闭 / 卸载）：不发了，释放内存里的包。发送中等价于取消。"""
     try:
-        sess = _get(pid)
+        sess = _get(pid, scope)
     except SendError:
         return {"ok": True}
     with _LOCK:
         sess.gen += 1
         running = sess.thread is not None and sess.thread.is_alive()
-        if sess.state in ("sending", "cancelling") and running:
+        if sess.state == "cancelling" or (sess.state == "sending" and running):
+            # 有人（发送线程 / 异步取消回调）会收尾：等它定论后再丢弃，结果快照才是真结果而不是猜的 unknown
             sess.discard_after = True
             if sess.state == "sending":
                 sess.state = "cancelling"
@@ -839,20 +904,31 @@ def discard(pid: str) -> dict:
 
 def _discard_locked(sess: SendSession) -> None:
     if sess.state in ("prepared", "failed"):
-        _cancel_remote_async(sess)
+        if sess.complete_sent and sess.report_id and sess.server_open and sess.token:
+            # I1（Codex #923 P2）：complete 发出过——丢弃前先走 settle 路径，答复回来才定论并留下结果快照，
+            # 绝不「取消 + 立刻移出 + 清编号」把可能已送达的报告吞掉。会话先停在 cancelling，答复到了再收尾丢弃。
+            sess.discard_after = True
+            sess.state, sess.stage, sess.failure = "cancelling", "", ""
+            _cancel_remote_async(sess, settle=True)
+            if sess.state == "cancelling":
+                return  # 答复回来由回调收尾并丢弃
+        else:
+            _cancel_remote_async(sess)
     _drop_locked(sess)
 
 
 def reset_for_tests() -> None:
-    global _CURRENT, _sleep, _clock
+    global _sleep, _clock
     with _LOCK:
-        cur = _CURRENT
-        if cur is not None:
+        curs = list(_SESSIONS.values())
+        for cur in curs:
             cur.cancel.set()
-        _CURRENT = None
-    th = cur.thread if cur is not None else None
-    if th is not None and th.is_alive():
-        th.join(5)
+        _SESSIONS.clear()
+        _OUTCOMES.clear()
+    for cur in curs:
+        th = cur.thread
+        if th is not None and th.is_alive():
+            th.join(5)
     _sleep, _clock = time.sleep, time.monotonic
 
 
@@ -878,21 +954,28 @@ def _check_cancel(sess: SendSession) -> None:
 
 
 def _run(sess: SendSession, target: Target) -> None:
-    code, retry_after, cancelled = "", None, False
+    code, retry_after, cancelled, unknown = "", None, False, False
     try:
         _flow(sess, target)
     except _Cancelled:
         cancelled = True
+    except _Unknown:
+        unknown = True
     except _Failure as fail:
         code, retry_after = fail.code, fail.retry_after
     except Exception as exc:  # noqa: BLE001 — 线程里的任何意外都收成 internal，不让线程静默死掉
         LOG.error("诊断发送: 内部错误 类型=%s", type(exc).__name__)  # 不带异常文本：里面可能有地址
         code = "internal"
-    _settle(sess, target, code, retry_after, cancelled)
+    _settle(sess, target, code, retry_after, cancelled, unknown)
 
 
 def _settle(
-    sess: SendSession, target: Target, code: str, retry_after: int | None, cancelled: bool
+    sess: SendSession,
+    target: Target,
+    code: str,
+    retry_after: int | None,
+    cancelled: bool,
+    unknown: bool = False,
 ) -> None:
     """发送线程的**唯一**收尾点：任何终态（成功、用户取消、请求失败、校验失败、超时、进程内异常）都经这里对账。
 
@@ -910,7 +993,9 @@ def _settle(
         complete_sent = sess.complete_sent
         had_id = bool(sess.report_id)
     final, raced, clear = "done", False, False
-    if code or cancelled:
+    if unknown:  # 改参数重试时对账不出上一次尝试的下落（见 `_reconcile_previous`）
+        final = "unknown"
+    elif code or cancelled:
         retryable = bool(code) and FAILURES.get(code, False)
         must_cancel = user_cancel or (bool(code) and not retryable)
         outcome = _cancel_remote(sess, target) if (must_cancel and open_remote) else None
@@ -958,6 +1043,11 @@ def _flow(sess: SendSession, target: Target) -> None:
     if data is None:
         raise _Failure("internal")
     _check_cancel(sess)
+    if sess.reconcile is not None:
+        _reconcile_previous(sess, target)
+        if sess.state == "done":
+            return
+        _check_cancel(sess)
     if not sess.token:
         _init(sess, target, category, note, len(data))
         if sess.state == "done":
@@ -971,6 +1061,28 @@ def _flow(sess: SendSession, target: Target) -> None:
     _check_cancel(sess)
     _set_stage(sess, "complete")
     _complete(sess, target)
+
+
+def _reconcile_previous(sess: SendSession, target: Target) -> None:
+    """改参数重试之前，先按 I1 对账上一次尝试（它的 `complete` 发出过，响应却丢了）——不对账就换新 id 重传，
+    首份报告会被静默孤立（Codex #923 P2）。三态：服务端确认已存 → 这次发送其实早已成功（`done`，首份编号，
+    不再上传第二份）；确认没存（cancel 2xx / 404）→ 才放行换新 id 重传；无法确认 → `unknown`（保留首份编号）。"""
+    with _LOCK:
+        old = sess.reconcile
+        sess.reconcile = None
+    if old is None:
+        return
+    snapshot = SendSession(id="", bundle=None, report_id=old[0], token=old[1])
+    outcome = _cancel_remote(snapshot, target)
+    if outcome == CANCEL_CANCELLED:
+        return
+    with _LOCK:
+        sess.report_id = old[0]
+        sess.complete_sent = True
+        if outcome == CANCEL_COMPLETE:
+            sess.state, sess.server_open = "done", False
+            return
+    raise _Unknown
 
 
 def _version() -> str:
@@ -1152,8 +1264,8 @@ def _cancel_remote(sess: SendSession, target: Target) -> str:
 
 
 def _cancel_remote_async(sess: SendSession, *, settle: bool = False) -> None:
-    """失败态 / 备好态里的取消（没有发送线程）。回调**认会话身份**：只有 `_CURRENT is sess` 才改它的状态——
-    会话被丢弃 / 换成别的之后迟到的答复一律忽略。`settle=True`（complete 发出过）时会话停在 `cancelling`，
+    """失败态 / 备好态里的取消（没有发送线程）。回调**认会话身份**：会话已被丢弃（`dropped`）就不改它的状态——
+    被丢弃 / 换成别的之后迟到的答复一律忽略。`settle=True`（complete 发出过）时会话停在 `cancelling`，
     由答复定论：确认取消 → cancelled；确认已送达 → done；无法确认 → unknown（保留报告编号）。"""
     target = resolve_target()
     if target is None or not (sess.server_open and sess.token and sess.report_id):
@@ -1171,7 +1283,7 @@ def _cancel_remote_async(sess: SendSession, *, settle: bool = False) -> None:
     def run() -> None:
         outcome = _cancel_remote(snapshot, target)
         with _LOCK:
-            if _CURRENT is not sess:
+            if sess.dropped:
                 return  # 会话已被丢弃 / 替换：迟到的答复不碰任何现役会话
             if outcome == CANCEL_COMPLETE:
                 if sess.state in ("cancelled", "cancelling", "failed"):

@@ -33,6 +33,8 @@ const ds = (key: string, values?: Record<string, unknown>) =>
 const POLL_MS = 350
 const DEFAULT_NOTE_MAX = 1000
 const DEFAULT_CATEGORY = 'other'
+/** 引擎拒绝「迟到的 start」的两个码（`diagsend.start`）：取消已先被处理，不是发送失败 */
+const LATE_START_CODES = new Set(['diag_stale_action', 'diag_session_cancelled'])
 
 /** 失败码里没登记过的（引擎比界面新）一律按「意外结果」说。 */
 const failureText = (code: string | undefined): string =>
@@ -230,6 +232,12 @@ export function DiagnosticsSendDialog({
       })
       .catch((e) => {
         if (gen.current !== mine) return
+        // 取消先于 start 被引擎处理：引擎正确拒了迟到的 start（409 stale_action / session_cancelled）。这是取消流程的
+        // 一部分，不是失败——进入 cancelling，让轮询看到 cancelled 后重新备包（覆盖成失败会停掉轮询、把用户困在错误里）
+        if (e instanceof ApiError && e.status === 409 && LATE_START_CODES.has(String(e.body?.code ?? ''))) {
+          setPhase('cancelling')
+          return
+        }
         if (e instanceof ApiError && e.status === 404) setPackageGone(true)
         setStatus({ code: 'internal', retryable: false } as DiagSendStatus)
         setPhase('failed')
