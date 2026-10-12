@@ -289,11 +289,12 @@ SEQUENCES = {
         [_hc(BAR_B1, "#ff00ff")],
         [],
     ],
-    # 单柱在前、系列在后：到「只剩系列」为止；再全撤是 `ALIAS_GROUPS` 既有的缺口（见下面的 xfail）
+    # 单柱在前、系列在后，再全撤（#968，已修）
     "single-then-series": [
         [_hc(BAR_B1, "#ff00ff")],
         [_hc(BAR_B1, "#ff00ff"), _hc(SERIES_B, "edge")],
         [_hc(SERIES_B, "edge")],
+        [],
     ],
     "series-then-single-with-alpha": [
         [_hc(SERIES_A), _alpha(SERIES_A)],
@@ -302,10 +303,6 @@ SEQUENCES = {
         [],
     ],
 }
-
-
-#: 不以「全撤」收尾的序列（原因见上）
-OPEN_ENDED = {"single-then-series"}
 
 
 @needs_hatchcolor
@@ -318,33 +315,36 @@ def test_hot_session_equals_a_fresh_replay_at_every_step(worker, library, name):
         fresh_man, fresh_png = _fresh(library, patches, f"{name}-{i}-fresh")
         assert hot_man == fresh_man, f"{name} 第 {i} 步：热态 manifest ≠ 全量重放"
         assert hot_png == fresh_png, f"{name} 第 {i} 步：manifest 一样但画出来不一样"
-    if name in OPEN_ENDED:
-        return
     assert _png(worker, [], f"{name}-end") == base_png, f"{name}：撤空后没有回到脚本原样"
 
 
 @needs_hatchcolor
 @pytest.mark.parametrize(
     "prop,v1,v2",
+    [("hatch_linewidth", 3.0, 2.0), ("hatchcolor", "#ff00ff", "edge"), ("hatch", "///", "|")],
+)
+@pytest.mark.parametrize(
+    "order",
     [
-        (
-            "hatch_linewidth",
-            3.0,
-            2.0,
-        ),  # 对照：既有 prop 在 main 上同样回不到原样，根因不在 hatchcolor
-        ("hatchcolor", "#ff00ff", "edge"),
+        "single,both,series,empty",  # 单柱先改、系列后改，撤单柱再撤系列（#968）
+        "series,both,single,empty",  # 系列先、单柱后，撤系列再撤单柱
+        "single,both,empty",  # 一次全撤
+        "series,both,empty",
     ],
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason="`ALIAS_GROUPS` 既有缺口：单柱先改、系列后改，系列代采的「原样」里已经带着单柱的编辑，"
-    "全撤时系列的还原把它写回（bar_series 的 hatch_linewidth 在 main 上同样；另开 issue）",
-)
-def test_single_then_series_then_full_undo_known_alias_gap(worker, prop, v1, v2):
+def test_single_and_series_undo_orders_match_replay_and_return_to_the_script(
+    worker, library, prop, v1, v2, order
+):
     base_png = _png(worker, [], "base")
     bar, series = _p(BAR_B1, prop, v1), _p(SERIES_B, prop, v2)
-    for patches in ([bar], [bar, series], [series], []):
-        _apply(worker, patches)
+    table = {"single": [bar], "series": [series], "both": [bar, series], "empty": []}
+    for i, step in enumerate(order.split(",")):
+        patches = table[step]
+        hot_man = _apply(worker, patches)
+        hot_png = _png(worker, patches, f"{prop}-{order}-{i}")
+        fresh_man, fresh_png = _fresh(library, patches, f"{prop}-{order}-{i}-f")
+        assert hot_man == fresh_man, f"{order} 第 {i} 步：热态 manifest ≠ 重放"
+        assert hot_png == fresh_png, f"{order} 第 {i} 步：像素 ≠ 重放"
     assert _png(worker, [], "end") == base_png
 
 

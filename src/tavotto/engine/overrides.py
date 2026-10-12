@@ -4559,6 +4559,7 @@ for _bprop in (
     "visible",
 ):
     ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(lambda g: list(g.artists), _bprop)
+    ALIAS_GROUPS[("bar_series", _bprop)]._member_aligned = True  # 见 apply() 里代采原样那段
 # stem 系列 → 被它消费掉的成员。这里的「窄端」不是界面上的另一个条目，而是
 # 那些成员的**旧 gid 别名**（`manifest._alias_consumed_member`）：容器化之前
 # markerline 是一条普通曲线（`axes_i.lines_k`）、stemlines 是一条线组
@@ -5051,6 +5052,18 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     if _seeded is _NOTHING:
                         _capture_original_value(key)
                         state.originals[key] = getter(artist)
+                        # 柱系列：getter 读的是**此刻**每根柱的值，单柱若已先被改过（originals 里有它的脚本
+                        # 原样），系列代采的那一份必须用单柱的原样，否则全撤时系列的还原把单柱的编辑写回
+                        # （#968，Codex #972 r4250928441）。成员序与 getter 的列表序一致（同取 `grp.artists`）
+                        if getattr(
+                            ALIAS_GROUPS.get((_cls_key(artist), key[1])), "_member_aligned", False
+                        ) and isinstance(state.originals[key], list):
+                            _mem = _alias_members(key, artist)
+                            if len(_mem) == len(state.originals[key]):
+                                state.originals[key] = [
+                                    state.originals.get(m, cur)
+                                    for m, cur in zip(_mem, state.originals[key])
+                                ]
                     else:
                         # 借来的原样（对等广播端 / 组员采的，同名 prop、指着同一个值）：`value_original`
                         # 也借它那一份——此刻自己的实况已经被对方改过，读不得。不借的话热会话（先改了对方）
