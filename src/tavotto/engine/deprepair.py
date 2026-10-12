@@ -4768,8 +4768,18 @@ def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
         raise _busy_error(exc) from exc
 
 
+def _require_record_sources(record) -> None:
+    """装入记录每条都要带「凭什么装它」（P03 回执合同）。在任何副作用之前查：回执是在新一代**激活之后**才生成的，
+    到那时再因缺来源抛错，会留下「已切到新一代、任务却报失败」的错位状态。"""
+    for rec in record or ():
+        dist = depresolve.normalize_distribution(str(rec.get("distribution") or ""))
+        if dist and str(rec.get("resolution_source") or "") not in depresolve.INSTALLABLE_SOURCES:
+            raise RepairError(ERROR_FAILED, f"装入记录缺 resolution_source: {dist}")
+
+
 def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key: str) -> dict:
     project = job.project
+    _require_record_sources(job.record)
     job.emit(STATE_PREPARING)
     managedenv.retire_unused(project, in_use=_generation_in_use)
     base = base_python()

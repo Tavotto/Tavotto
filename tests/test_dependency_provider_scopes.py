@@ -297,6 +297,27 @@ def test_the_receipt_refuses_a_record_without_a_source():
         )
 
 
+def test_a_record_without_a_source_is_refused_before_any_side_effect(monkeypatch):
+    """缺来源的装入记录必须在换代**之前**被拒：回执在激活之后才生成，那时再抛就是「已换代、任务报错」的错位。"""
+    touched = []
+    monkeypatch.setattr(
+        deprepair.managedenv, "retire_unused", lambda *a, **k: touched.append("retire")
+    )
+    monkeypatch.setattr(deprepair, "base_python", lambda: touched.append("base") or "")
+
+    class Job:
+        project = "p"
+        record = [{"import_name": "cv2", "distribution": "opencv-python"}]
+
+        def emit(self, *a, **k):
+            touched.append("emit")
+
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair._run_generation_locked(Job(), None, "k")
+    assert err.value.code == deprepair.ERROR_FAILED
+    assert touched == []
+
+
 def test_satisfied_provider_is_read_from_the_install_target_not_the_run_interpreter(tmp_path):
     """运行解释器里是 headless 在提供 cv2、受管目标里已经是 opencv-python：`satisfied` 要指目标里的那个，
     即使另一个缺的依赖让计划可动手（披露不能把目标写成 headless）。"""
