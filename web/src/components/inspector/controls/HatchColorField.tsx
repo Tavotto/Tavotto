@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { ColorField, NO_COLOR } from '@/components/ui/Input'
 import { t as translate } from '@/i18n'
@@ -42,7 +43,9 @@ export function HatchColorField({
   onGestureEnd,
 }: {
   hex: string
-  follows: boolean
+  /** `'mixed'`：多选时有的跟随、有的不跟随（勾选框画成不确定态）；与「颜色值不一致」（`mixed`）是两件事 */
+  follows: boolean | 'mixed'
+  /** 多选且色号不一致：只管色块 */
   mixed?: boolean
   ariaLabel: string
   onColor: (hex: string) => void
@@ -50,6 +53,10 @@ export function HatchColorField({
   onFollow: (follow: boolean) => void
   onGestureEnd?: () => void
 }) {
+  const boxRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (boxRef.current) boxRef.current.indeterminate = follows === 'mixed'
+  }, [follows])
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
       <ColorField
@@ -61,7 +68,9 @@ export function HatchColorField({
       />
       <label className="flex shrink-0 items-center gap-1.5 text-ink-2">
         <Checkbox
-          checked={follows && !mixed}
+          ref={boxRef}
+          checked={follows === true}
+          aria-checked={follows === 'mixed' ? 'mixed' : follows}
           data-hatch-follow-edge
           onChange={(e) => onFollow(e.target.checked)}
         />

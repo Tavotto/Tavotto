@@ -1844,9 +1844,21 @@ function BatchFieldRow({
               ariaLabel={label}
               mixed={mixed}
               hex={reads[0].hex}
-              follows={reads.every((r) => r.follows)}
+              follows={
+                reads.every((r) => r.follows) ? true : reads.some((r) => r.follows) ? 'mixed' : false
+              }
               onColor={(v) => write(v, true)}
-              onFollow={(follow) => writeOnce(follow ? FOLLOW_EDGE : reads[0].hex)}
+              onFollow={(follow) => {
+                if (follow) return writeOnce(FOLLOW_EDGE)
+                // 固定成**各自**此刻显示的色号（边色不同的成员不被压成同一个色）
+                setOverrides(
+                  panel.id,
+                  elMsg('batchEdit', { label }),
+                  elements.map((item, i) => ({ gid: item.gid, prop: field.prop, value: reads[i].hex })),
+                  true,
+                )
+                gesture.end()
+              }}
               onGestureEnd={gesture.end}
             />
           )

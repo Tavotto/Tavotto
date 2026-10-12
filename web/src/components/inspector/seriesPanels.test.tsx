@@ -707,7 +707,7 @@ describe('填充区域：填充一组、描边一组，纹理有名字（T21）'
 
 /* ------------------------------ 纹理颜色（#874） ------------------------------ */
 
-const followBox = () => row('hatchcolor')?.querySelector<HTMLInputElement>('input[data-hatch-follow-edge]') ?? null
+const followBox = () => host.querySelector<HTMLInputElement>('input[data-hatch-follow-edge]')
 
 describe('纹理颜色：色块 + 「跟随边框」，只在有花纹时出现', () => {
   it('三种对象同口径：图案 · 颜色 · 线宽依次排在首屏', async () => {
@@ -784,6 +784,37 @@ describe('纹理颜色：色块 + 「跟随边框」，只在有花纹时出现'
     })
     expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('#ff0000')
     expect(followBox()!.checked).toBe(false)
+  })
+})
+
+describe('纹理颜色多选：色号混合与跟随模式混合分开算（Codex #972 r4250928450）', () => {
+  const two = (a: { value: string; follows: boolean }, b: { value: string; follows: boolean }) =>
+    makeManifest([
+      elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields({ hatch: 'xx', color: a })),
+      elementOf('axes_0.patches_1', 'patch', '形状 2', patchFields({ hatch: 'xx', color: b })),
+    ])
+
+  it('都跟随边框、边色不同：勾选框是勾上的；点一下各自固定成自己的色号，不写 edge', async () => {
+    seedRender(two({ value: '#222222', follows: true }, { value: '#008000', follows: true }))
+    await mount(['axes_0.patches_0', 'axes_0.patches_1'])
+    expect(followBox()!.checked).toBe(true)
+    expect(followBox()!.indeterminate).toBe(false)
+    await act(async () => {
+      followBox()!.click()
+    })
+    expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('#222222')
+    expect(overrideOf('axes_0.patches_1', 'hatchcolor')).toBe('#008000')
+  })
+
+  it('有的跟随、有的不跟随：不确定态；点一下全部跟随', async () => {
+    seedRender(two({ value: '#222222', follows: true }, { value: '#008000', follows: false }))
+    await mount(['axes_0.patches_0', 'axes_0.patches_1'])
+    expect(followBox()!.indeterminate).toBe(true)
+    await act(async () => {
+      followBox()!.click()
+    })
+    expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('edge')
+    expect(overrideOf('axes_0.patches_1', 'hatchcolor')).toBe('edge')
   })
 })
 
