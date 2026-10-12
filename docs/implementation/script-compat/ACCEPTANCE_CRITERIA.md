@@ -62,6 +62,10 @@
 * **场景与准备**：四个cv2 provider分别作为已声明/已观察来源；另测旧账本provider切换
 * **必须观察到的结果**：选择正确provider与约束，每代只安装所需那一种；旧账本合并不带回已替换provider；作为P02/P03共同启用门
 * **必须有的反证/失败检查**：不静默退回opencv-python，不以roots并集装多provider；其他scope要求冲突不能静默丢弃，失败不改旧active；移除仲裁应变红
+* **仓库注（与现有不变量的关系）**：「已观察来源」**本身不授权安装**。只有已声明，或经现有 `user_specified` 预填 + 用户确认（#933）
+  的 provider 才能成为安装名；仅观察到（未声明、未确认）时计划保持歧义/`unresolved` 并请用户确认，或沿用现有 curated 行为，
+  不得据观测直接安装。须继续成立：`TestPlanOrigins.test_the_observed_provider_never_becomes_an_install_name`、
+  `test_the_installer_and_the_resolver_do_not_read_the_new_observation`。上面「分别作为已声明/已观察来源」应拆成这两类各测。
 
 ## AC-09
 
