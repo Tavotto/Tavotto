@@ -1788,3 +1788,73 @@ def test_candidate_cursor_marks_the_scan_incomplete_when_the_directory_changed_b
         cursor = page["next_cursor"]
     assert "d_0" not in rest  # 确实被漏了——所以必须标记
     assert flags and all(flags), "目录变了却没标 truncated，前端会以为扫描是完整的"
+
+
+def _future_bak(key: str) -> bytes:
+    return json.dumps(
+        {
+            "version": 99,
+            "projects": {key: {"last": {"doc_id": "d_a", "name": "A", "at": 1}}},
+            "owners": {"d_a": key},
+        }
+    ).encode()
+
+
+def test_corrupt_primary_with_a_future_format_backup_is_read_only(client, tmp_path):
+    """主文件坏、bak 是更新版本写的：不能用 v1 的空状态写回，更不能接着覆盖那份唯一完整的 bak。"""
+    a = _project(client, tmp_path, "a", default=True)
+    key = layoutsession.project_key(a["figures_dir"])
+    path, bak = layoutsession.state_path(), layoutsession.backup_path()
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"{broken")
+    bak.write_bytes(_future_bak(key))
+    bak_bytes = bak.read_bytes()
+    r = _put(client, "d_1", _doc(), a)
+    assert r.status_code == 200 and r.get_json()["metadata"] == "failed"
+    assert r.get_json()["revision"] == _rev("d_1")
+    assert _put_last(client, "d_1", pj=a).status_code == 503
+    with pytest.raises(layoutsession.SessionStateUnavailable):
+        layoutsession.commit_slot("d_2", key, "rev")
+    assert _get_session(client, a) == {
+        "last": None,
+        "prev": None,
+        "pending": None,
+        "index": "degraded",
+    }
+    assert bak.read_bytes() == bak_bytes, "未来格式的备份被覆盖了"
+    assert path.read_bytes() == b"{broken"
+
+
+def test_other_fallbacks_past_an_uninterpretable_file_also_refuse_to_write(client, tmp_path):
+    """扫一遍：主文件不在而 bak 来自未来、bak 读不动；；导出默认值来自未来。"""
+    a = _project(client, tmp_path, "a", default=True)
+    key = layoutsession.project_key(a["figures_dir"])
+    path, bak = layoutsession.state_path(), layoutsession.backup_path()
+    path.parent.mkdir(parents=True)
+    # 1) 主文件不在、好的 v1 bak 在：主文件被删就是想重来，按首次处理（写入放行）
+    good = {"version": 1, "owners": {"d_a": key}, "projects": {}}
+    bak.write_text(json.dumps(good), encoding="utf-8")
+    assert layoutsession.read_status() == "missing"
+    # 2) 主文件不在、bak 来自未来：只读
+    bak.write_bytes(_future_bak(key))
+    with pytest.raises(layoutsession.SessionStateUnavailable):
+        layoutsession.record_owner("d_c", key)
+    assert bak.read_bytes() == _future_bak(key)
+    # 3) 主文件坏、bak 存在却读不动：只读，不当没有
+    path.write_bytes(b"{broken")
+    real = Path.read_bytes
+
+    def flaky(self):
+        if self.name == layoutsession.FILENAME + layoutsession.BACKUP_SUFFIX:
+            raise PermissionError(13, "denied")
+        return real(self)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(Path, "read_bytes", flaky)
+        with pytest.raises(layoutsession.SessionStateUnavailable):
+            layoutsession.record_owner("d_c", key)
+    # 4) 导出默认值来自未来 / 读不动：不整份替换
+    exp = layoutsession.export_defaults_path()
+    exp.write_text(json.dumps({"version": 99, "defaults": {"dpi": "2400"}}), encoding="utf-8")
+    assert client.put("/api/preferences/export-defaults", json={"dpi": "1200"}).status_code == 503
+    assert json.loads(exp.read_text(encoding="utf-8"))["version"] == 99

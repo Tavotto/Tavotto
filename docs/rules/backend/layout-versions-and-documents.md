@@ -125,7 +125,8 @@
     未知键原样保留**，非有限数的字段丢弃；NaN 用标准 `json.loads` 接受，不再整份作废）；`recovered`（字节坏，原字节先存
     `state/layout-sessions.corrupt-<ms>.json`——相同字节只存一份、最多留 3 份——再用 `layout-sessions.json.bak`，
     那是每次成功写主文件后同 payload 再写的一份）；`degraded`（读失败拿不到字节 / 字节坏且无可用 bak / `version` 比
-    `FORMAT_VERSION` 新）。读失败与未来格式**拒绝一切写回**（`SessionStateUnavailable`，是 `OSError`）：拿空状态覆盖一份
+    `FORMAT_VERSION` 新）。读失败与未来格式**拒绝一切写回**——**未知 `version` 永远不用 v1 覆盖**，这条对 `.bak` 同样成立：主文件坏而 bak 是更新版本写的、主文件不在而 bak 是未来格式或读不动、
+    bak 存在却读不动，都按只读处理（正文照存，`metadata:"failed"`）；坏 bak 的字节同样先留副本、留不下就拒写；导出默认值文件来自未来 / 读不动时也不整份替换（503）（`SessionStateUnavailable`，是 `OSError`）：拿空状态覆盖一份
     可能完整的文件，就是把一次读故障变成永久丢数据；字节坏的那种原字节已备份，写入放行。degraded 时槽位清理一个都不删
     （不知道谁受保护就当都受保护）。备份都在 `state/`，不在 `_autosave/`。只读路径（`read_status` / `read_readonly`，
     候选发现与 `/owner` 用）**不写任何东西、不拿锁**（主文件只被整份原子替换，读到的永远是完整的一份）。

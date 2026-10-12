@@ -422,7 +422,12 @@ def _load(*, preserve: bool = True) -> _Loaded:
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
-        return _Loaded(_empty(), STATUS_MISSING)
+        # 主文件不在：通常是首次。但 bak 若来自更新的 Tavotto / 读不动，它可能是唯一一份完整状态——
+        # 不能当首次空去覆盖它（只读）。一份好的 v1 bak 不在这里翻案：主文件被删就是想重来
+        bak_state, bak_readonly = _load_backup(preserve)
+        if bak_readonly is None:
+            return _Loaded(_empty(), STATUS_MISSING)
+        return _from_backup(bak_state, bak_readonly, preserved=True)
     except OSError as exc:
         LOG.warning("会话状态读不动，本次拒绝写回（%s）", exc)
         state = _empty()
@@ -439,15 +444,46 @@ def _load(*, preserve: bool = True) -> _Loaded:
     # 字节坏：先留原字节，再看 bak
     LOG.warning("会话状态文件损坏")
     preserved = _preserve_corrupt(raw) if preserve else True
+    bak_state, bak_readonly = _load_backup(preserve)
+    return _from_backup(bak_state, bak_readonly, preserved=preserved)
+
+
+def _load_backup(preserve: bool) -> tuple[dict | None, str | None]:
+    """读 `.bak`，回 `(状态或 None, 只读原因或 None)`。
+
+    * 不存在 → `(None, None)`；
+    * 读不动（存在却读失败）→ `(None, "backup_unreadable")`——它可能是唯一完整的状态，不能当没有；
+    * 字节坏 → 先留原字节（留不下 → `backup_corrupt_not_preserved`），`(None, 该原因或 None)`；
+    * **未来版本** → 尽力解析，但只读 `future_version`：绝不用 v1 的空状态覆盖更新版本留下的备份；
+    * 好的 → `(状态, None)`。"""
     try:
-        bak = _parse_bytes(backup_path().read_bytes())
-    except OSError:
-        bak = None
-    if bak is not None and not _is_future(bak):
-        state, status = _parse_state(bak), STATUS_RECOVERED
+        raw = backup_path().read_bytes()
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        LOG.warning("会话状态备份读不动，本次拒绝写回（%s）", exc)
+        return None, "backup_unreadable"
+    data = _parse_bytes(raw)
+    if data is None:
+        if preserve and not _preserve_corrupt(raw):
+            return None, "backup_corrupt_not_preserved"
+        return None, None
+    if _is_future(data):
+        LOG.warning("会话状态备份来自更新的 Tavotto（version %s），只读不写", data.get("version"))
+        return _parse_state(data), "future_version"
+    return _parse_state(data), None
+
+
+def _from_backup(bak_state: dict | None, bak_readonly: str | None, *, preserved: bool) -> _Loaded:
+    if bak_state is not None and bak_readonly is None:
+        state, status = bak_state, STATUS_RECOVERED
+    elif bak_state is not None:
+        state, status = bak_state, STATUS_DEGRADED
     else:
         state, status = _empty(), STATUS_DEGRADED
-    if not preserved:
+    if bak_readonly:
+        state["_readonly"] = bak_readonly
+    elif not preserved:
         # 原字节没能留下副本：下一次写入会把它整份替换掉，那就是唯一一份字节的丢失。
         # 关门直到某次读取真的把它保存下来（保存成功后这一条自然消失）
         state["_readonly"] = "corrupt_not_preserved"
@@ -985,6 +1021,17 @@ def write_export_defaults(value: object) -> dict:
     if size > MAX_EXPORT_DEFAULTS_BYTES:
         raise ValueError("导出默认值太大")
     with _PREFS_LOCK:
+        # 已有的文件读不动、或来自更新的 Tavotto（未知 version）：不整份替换——那会让降级版本毁掉更新版本的设置
+        try:
+            existing = export_defaults_path().read_bytes()
+        except FileNotFoundError:
+            existing = None
+        except OSError as exc:
+            raise SessionStateUnavailable(f"导出默认值读不动，拒绝覆盖：{exc}") from exc
+        if existing is not None:
+            data = _parse_bytes(existing)
+            if data is not None and _is_future(data):
+                raise SessionStateUnavailable("导出默认值来自更新的 Tavotto，拒绝覆盖")
         atomicio.write_json(
             export_defaults_path(), {"version": FORMAT_VERSION, "defaults": value}, indent=1
         )
