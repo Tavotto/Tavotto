@@ -1117,8 +1117,11 @@ def _fake_windows_machine(monkeypatch, *, path_dirs: int, drive_entries: int) ->
             return False
 
     def scandir(path="."):
-        if os.fspath(path)[:2].upper() == "C:":
-            return _Scan(drive_entries)
+        p = os.fspath(path)
+        if p[:2].upper() == "C:":
+            # 只有盘根吐大量条目（`C:\\Python*` 那支）；其它 `C:` 目录（Conda / pyenv / LOCALAPPDATA 下）为空——
+            # 否则真 Windows 上 `userenvs.discover` 的机器级枚举也会拿到 5000 个假条目、记在项目账上
+            return _Scan(drive_entries if p.rstrip("\\/").upper() == "C:" else 0)
         return real_scandir(path)
 
     monkeypatch.setattr(os, "lstat", lstat)
