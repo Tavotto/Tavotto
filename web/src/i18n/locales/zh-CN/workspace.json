@@ -499,7 +499,7 @@
     "pillPending_other": "{{count}} 张待连接",
     "pillLayoutOnly_other": "{{count}} 张仅版面",
     "pillAria": "项目接入状态：{{status}}",
-    "pillDismiss": "不再提示"
+    "pillDismiss": "关闭"
   },
   "runtimePanel": {
     "placeholder": "由脚本生成的图",

@@ -888,7 +888,7 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
  * 判据只有一份：出不出现、显示哪一份报告都是 `bannerReport`（全部可编辑 / 空项目 / 报告未到 / 这一版已关掉都不出现）；
  * 接入中心开着时不重复说。胶囊只说最要紧的一个数：有待连接的 → warn「N 张待连接」，否则中性「N 张仅版面」——
  * `layout_only` 不是错误（那些图照样能排版、裁剪、标注和导出），不画成警告。点开是与文档芯片同一副 320 宽说明块：
- * 全句 + 「查看接入状态」（打开接入中心）+ 「不再提示」（按报告指纹关掉，事实变了会再出现）。
+ * 全句 + 「查看接入状态」（打开接入中心）+ 「关闭」（按报告指纹关掉，事实变了会再出现——所以文案不许诺「不再」）。
  */
 export function ProjectStatusPill() {
   const { t } = useTranslation(['workspace', 'common'])

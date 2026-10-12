@@ -154,7 +154,9 @@ describe('项目锚点：两个动作', () => {
     expect(useUiStore.getState().registryOpen).toBe(true)
   })
 
-  it('「不再提示」之后这一版不再出现，报告本身原样留着', async () => {
+  it('「关闭」之后这一版不再出现，报告本身原样留着', async () => {
+    // 只关这一版（事实变了会再出现，见下一条），所以按钮文案不许诺永久（Codex #947）
+    expect(action('dismiss').textContent).not.toMatch(/不再|again|never/i)
     await act(async () => action('dismiss').click())
     expect(pill()).toBeNull()
     expect(useProjectReadinessStore.getState().report).not.toBeNull()

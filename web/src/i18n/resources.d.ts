@@ -5173,7 +5173,7 @@ export default interface Resources {
       "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅版面。",
       "openCenter": "查看接入状态",
       "pillAria": "项目接入状态：{{status}}",
-      "pillDismiss": "不再提示",
+      "pillDismiss": "关闭",
       "pillLayoutOnly_other": "{{count}} 张仅版面",
       "pillPending_other": "{{count}} 张待连接",
       "reason": {
