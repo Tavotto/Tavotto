@@ -1048,3 +1048,30 @@ def test_scan_glob_nt_itself_drops_a_redirected_match(tmp_path):
     got = pool._scan_glob_nt(str(base) + "/Python*/python.exe", scanbudget.Budget(), walker)
 
     assert got == [str(base / "Python311" / "python.exe")]
+
+
+def test_scan_glob_nt_charges_every_entry_while_enumerating(tmp_path):
+    """通配段枚举逐条记账：不命中的条目也扣预算，预算用完就停，不先把整个目录读完（Codex #957）。"""
+    base = tmp_path / "Root"
+    base.mkdir()
+    for n in range(40):
+        (base / f"other{n:02d}").mkdir()
+    (base / "Python312").mkdir()
+
+    class Counting:
+        def __init__(self, limit):
+            self.limit, self.used = limit, 0
+
+        def charge_entry(self):
+            self.used += 1
+            return self.used <= self.limit
+
+    walker = scanbudget.PathWalker(nt=True)
+    full = Counting(1000)
+    assert pool._scan_glob_nt(str(base) + "/Python*/python.exe", full, walker) == [
+        str(base / "Python312" / "python.exe")
+    ]
+    assert full.used >= 41  # 每个条目都记了账，不只是命中的那个
+    tight = Counting(5)
+    pool._scan_glob_nt(str(base) + "/Python*/python.exe", tight, walker)
+    assert tight.used == 6  # 第 6 次扣账失败即停，没有继续枚举

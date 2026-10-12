@@ -1096,17 +1096,20 @@ def _scan_glob_nt(pattern: str, budget, walker) -> list[str]:
     if walker.redirected(parent) is not None:
         return []
     out: list[str] = []
+    want = os.path.normcase(segs[i])
+    # 边枚举边记账：每个条目（不论是否命中）都先扣预算、超预算或取消即停——大盘根（`C:\`）不能先整目录读完
+    # 再记账（Codex #957）。只缓冲命中的名字，排序也只排它们。
+    names: list[str] = []
     try:
         with os.scandir(parent) as it:
-            names = sorted((e.name for e in it), reverse=True)
+            for e in it:
+                if not budget.charge_entry():
+                    break
+                if fnmatch.fnmatchcase(os.path.normcase(e.name), want):
+                    names.append(e.name)
     except (OSError, ValueError):
         return []
-    want = os.path.normcase(segs[i])
-    for name in names:
-        if not fnmatch.fnmatchcase(os.path.normcase(name), want):
-            continue
-        if not budget.charge_entry():
-            break
+    for name in sorted(names, reverse=True):
         child = os.path.join(parent, name)
         if walker.redirected(child) is not None:
             continue
