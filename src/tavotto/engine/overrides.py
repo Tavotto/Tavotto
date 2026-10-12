@@ -3177,6 +3177,16 @@ def _hatch_resolved(a):
     return getattr(a, "_hatch_color", None) if resolved is None else resolved
 
 
+def _fresh_copy(v):
+    """与 `v` 相等、但**不是同一个对象**的副本（matplotlib 的 `set_hatchcolor` 原样存引用，不转换）。
+    字符串 / 元组可能被解释器复用同一对象，所以重新拼一个。"""
+    if isinstance(v, str):
+        return "".join(list(v))
+    if isinstance(v, tuple):
+        return tuple(list(v))
+    return v.copy() if hasattr(v, "copy") else v
+
+
 def _with_hatch_pinned(a, fn) -> None:
     """跑 `fn()`（会让 matplotlib ≥3.11 重解析花纹色的 setter），期间把花纹色钉在创建时的值（#874）。
 
@@ -3196,6 +3206,10 @@ def _with_hatch_pinned(a, fn) -> None:
     （`rc_context` 里的 `(1,0,0,.25)`）找回来，当下的值已经被 alpha 编辑合成过了。记的值若与
     「我们上次写完的样子」对不上，说明中间有别人动过，按实况重记。判据是真实 setter 在不在，不是
     版本号；脚本显式给过 hatchcolor（`_original_hatchcolor` 不是 None）的 artist 原样跑 `fn`。
+
+    还原只在 `fn` 跑完后模式**仍是我们钉进去的那个对象**时才做（身份比较，钉的是独有副本）：用户子类若
+    重写 `set_alpha` / `set_fill` 并在里面调 `set_hatchcolor`，那是它有意装的模式，保留（Codex #950
+    r4246080546）；`fn` 抛异常时规则相同。
     """
     pin = getattr(a, "set_hatchcolor", None)
     if pin is None or getattr(a, "_original_hatchcolor", 0) is not None:
@@ -3207,12 +3221,17 @@ def _with_hatch_pinned(a, fn) -> None:
     if base is None:
         fn()
         return
-    pin(base)
+    token = _fresh_copy(base)  # 钉进去的是一个独有的对象：身份比较才分得出「仍是我们钉的」
+    pin(token)
     try:
         fn()
     finally:
-        a._original_hatchcolor = None  # noqa: SLF001 — 还原模式本身，不重解析
-        setattr(a, _HATCH_BASE, (base, _hatch_resolved(a)))
+        if getattr(a, "_original_hatchcolor", 0) is token:  # noqa: SLF001
+            # 仍是我们钉的：还原模式本身，不重解析
+            a._original_hatchcolor = None  # noqa: SLF001
+            setattr(a, _HATCH_BASE, (base, _hatch_resolved(a)))
+        # 否则是用户子类的 set_alpha / set_fill 自己调了 `set_hatchcolor`，那个模式是它有意装的，
+        # 原样留下（setter 抛异常时同样适用；Codex #950 r4246080546）
 
 
 def _set_alpha_pinned(a, v) -> None:

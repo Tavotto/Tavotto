@@ -121,6 +121,7 @@ def main() -> int:
             )
     out["cases"]["bar:stale-base"] = run_stale(TARGETS["bar"])
     out["cases"]["scatter:stale-base"] = run_stale(TARGETS["scatter"])
+    out["subclass_cases"] = sub_cases() if out["has_set_hatchcolor"] else {}
     print(json.dumps(out))
     return 0
 
@@ -144,6 +145,102 @@ def run_stale(gid):
         "hatch_after_clear_equals_pristine": [_val(m) for m in _members(art_a)]
         == [_val(m) for m in _members(art_b)],
         "follows_new_rc_like_pristine": True,
+    }
+
+
+# --- 用户子类：重写 set_alpha / set_fill 并在里面自己调 set_hatchcolor（Codex #950 r4246080546）------
+from matplotlib.collections import PolyCollection  # noqa: E402
+
+
+class AlphaRect(Rectangle):
+    def set_alpha(self, alpha):
+        self.set_hatchcolor("blue")  # 有意装的模式
+        super().set_alpha(alpha)
+
+
+class RaisingRect(Rectangle):
+    def set_alpha(self, alpha):
+        self.set_hatchcolor("blue")
+        raise RuntimeError("子类 set_alpha 装完模式后抛了")
+
+
+class FillRect(Rectangle):
+    def set_fill(self, b):
+        self.set_hatchcolor("blue")
+        super().set_fill(b)
+
+
+class AlphaColl(PolyCollection):
+    def set_alpha(self, alpha):
+        self.set_hatchcolor("blue")
+        super().set_alpha(alpha)
+
+
+def build_sub():
+    fig, ax = plt.subplots(figsize=(4.2, 3.0))
+    with plt.rc_context({"hatch.color": "red"}):
+        ax.add_patch(AlphaRect((0, 0), 1, 2, facecolor="#cccccc", hatch="//"))
+        ax.add_patch(FillRect((2, 0), 1, 2, facecolor="#cccccc", hatch="//"))
+        ax.add_patch(RaisingRect((6, 0), 1, 2, facecolor="#cccccc", hatch="//"))
+        ax.add_collection(AlphaColl([[(4, 0), (5, 0), (5, 2)]], facecolor="#cccccc", hatch="++"))
+    ax.set_xlim(-1, 8)
+    ax.set_ylim(0, 3)
+    state = O.FigState(fig)
+    M.instrument(state)
+    man = M.build_manifest(state, "P")
+    gids = {type(state.resolve(e["gid"])).__name__: e["gid"] for e in man["elements"]}
+    return fig, state, gids
+
+
+def _mode(a):
+    m = getattr(a, "_original_hatchcolor", 0)
+    return m if isinstance(m, str) or m is None else "other"
+
+
+def run_sub(cls_name, prop, value, reresolve):
+    """`reresolve`：clear 之后、改 rc 时在两边各调一次的**继承来的**重解析入口（不经过子类装模式的那个）。"""
+    plt.rcParams["hatch.color"] = "magenta"
+    _fa, sa, ga = build_sub()
+    _fb, sb, _gb = build_sub()
+    gid = ga[cls_name]
+    art_a, art_b = sa.resolve(gid), sb.resolve(gid)
+    warns = O.apply(sa, [{"gid": gid, "prop": prop, "value": value}])
+    mid = _mode(art_a)
+    warns += O.apply(sa, [])
+    after = _mode(art_a)
+    # B：用户自己直接调同一个子类 setter 往返（Tavotto 的编辑 + 撤空对它做的就是这件事）
+    original = {"alpha": None, "fill": True}[prop]
+    getattr(art_b, "set_" + prop)(value)
+    getattr(art_b, "set_" + prop)(original)
+    plt.rcParams["hatch.color"] = "cyan"
+    if reresolve:
+        reresolve(art_a)
+        reresolve(art_b)
+    return {
+        "warnings": warns,
+        "mode_during_edit": mid,
+        "mode_after_clear": after,
+        "mode_after_clear_equals_user_calls": _mode(art_a) == _mode(art_b),
+        "hatch_follows_like_user_calls": _val(art_a) == _val(art_b),
+    }
+
+
+def run_raising():
+    """子类 setter 装完模式后抛异常：模式照留（异常路径与正常路径同一条规则）。"""
+    plt.rcParams["hatch.color"] = "magenta"
+    _f, sa, ga = build_sub()
+    gid = ga["RaisingRect"]
+    art = sa.resolve(gid)
+    warns = O.apply(sa, [{"gid": gid, "prop": "alpha", "value": 0.4}])
+    return {"warnings": warns, "mode_after_edit": _mode(art)}
+
+
+def sub_cases():
+    return {
+        "RaisingRect:alpha": run_raising(),
+        "AlphaRect:alpha": run_sub("AlphaRect", "alpha", 0.4, lambda a: a.set_fill(True)),
+        "FillRect:fill": run_sub("FillRect", "fill", False, lambda a: a.set_alpha(None)),
+        "AlphaColl:alpha": run_sub("AlphaColl", "alpha", 0.4, None),
     }
 
 

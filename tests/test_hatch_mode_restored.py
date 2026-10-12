@@ -64,3 +64,25 @@ def test_edit_then_clear_leaves_the_hatch_mode_unset_and_following_the_rc(report
     assert c["follows_new_rc_like_pristine"], (
         f"{case}：改 rc 再 set_alpha 没有像从未编辑过那样跟随新 rc"
     )
+
+
+@pytest.mark.parametrize("case", ["AlphaRect:alpha", "FillRect:fill", "AlphaColl:alpha"])
+def test_a_user_subclass_that_installs_its_own_hatch_mode_keeps_it(report, case):
+    """子类在 `set_alpha` / `set_fill` 里自己 `set_hatchcolor("blue")`：那是它有意装的模式，
+    钉住的还原不许抹掉（Codex #950 r4246080546）。参照物是用户自己直接调同一个子类 setter 往返。"""
+    c = report["subclass_cases"][case]
+    assert not c["warnings"], c["warnings"]
+    assert c["mode_during_edit"] == "blue", (
+        f"{case}：编辑期间子类装的模式丢了：{c['mode_during_edit']!r}"
+    )
+    assert c["mode_after_clear"] == "blue", (
+        f"{case}：apply([]) 后子类装的模式被抹成 {c['mode_after_clear']!r}"
+    )
+    assert c["mode_after_clear_equals_user_calls"], case
+    assert c["hatch_follows_like_user_calls"], f"{case}：改 rc 后的花纹色与用户自己调用的结果不同"
+
+
+def test_a_subclass_setter_that_installs_a_mode_then_raises_keeps_it(report):
+    c = report["subclass_cases"]["RaisingRect:alpha"]
+    assert c["warnings"], "子类 set_alpha 抛了，apply 应当报 warning"
+    assert c["mode_after_edit"] == "blue", f"异常路径抹掉了子类装的模式：{c['mode_after_edit']!r}"
