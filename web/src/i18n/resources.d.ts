@@ -1871,6 +1871,7 @@ export default interface Resources {
           "bad_manifest": "清单无效",
           "http": "服务端返回错误",
           "network": "网络不通",
+          "not_on_mirror": "镜像清单指向了镜像之外的地址",
           "other": "其他错误",
           "signature": "签名校验未通过",
           "stalled": "下载停滞",

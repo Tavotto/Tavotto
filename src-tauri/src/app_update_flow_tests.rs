@@ -22,6 +22,8 @@ use url::Url;
 use crate::app_update::*;
 
 const TARGET: &str = "test-x86_64";
+/// 镜像契约 §6.2 #5：包必须在 `{镜像根}/releases/<version>/` 下
+const PKG_PATH: &str = "/releases/9.9.9/pkg";
 const PKG: &[u8] = b"the-genuine-installer-bytes-0123456789";
 const CN: [Source; 2] = [Source::Mirror, Source::Github];
 const WORLD: [Source; 2] = [Source::Github, Source::Mirror];
@@ -40,6 +42,8 @@ enum Route {
     },
     /// 立刻关连接
     Reset,
+    /// 302 到别处
+    Redirect(String),
 }
 
 struct Fake {
@@ -118,6 +122,12 @@ async fn serve(build: impl FnOnce(&str) -> Vec<(&'static str, Route)>) -> Fake {
                         tokio::time::sleep(Duration::from_secs(3600)).await;
                     }
                     Route::Reset => drop(sock),
+                    Route::Redirect(to) => {
+                        let h = format!(
+                            "HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        );
+                        let _ = sock.write_all(h.as_bytes()).await;
+                    }
                 }
             });
         }
@@ -171,9 +181,12 @@ fn healthy(base: &str, version: &str, sig: &str, pkg: &[u8]) -> Vec<(&'static st
     vec![
         (
             "/latest.json",
-            manifest(version, &format!("{base}/pkg"), sig),
+            manifest(version, &format!("{base}/releases/{version}/pkg"), sig),
         ),
-        ("/pkg", Route::Ok(pkg.to_vec())),
+        (
+            Box::leak(format!("/releases/{version}/pkg").into_boxed_str()),
+            Route::Ok(pkg.to_vec()),
+        ),
     ]
 }
 
@@ -205,6 +218,7 @@ struct Rig {
     mirror: Fake,
     github: Fake,
     app: tauri::App<MockRuntime>,
+    cool: Cooldown,
 }
 
 impl Rig {
@@ -219,6 +233,7 @@ impl Rig {
             app: app(&keys),
             mirror,
             github,
+            cool: Cooldown::default(),
         }
     }
     /// 两边都健康，版本相同
@@ -233,6 +248,7 @@ impl Rig {
     fn endpoints(&self) -> Endpoints {
         Endpoints {
             mirror: self.mirror.url("/latest.json"),
+            mirror_root: self.mirror.base.clone(),
             github: self.github.url("/latest.json"),
         }
     }
@@ -241,13 +257,28 @@ impl Rig {
         move || h.updater_builder().target(TARGET)
     }
     async fn check(&self, order: &[Source]) -> Result<Option<Pending>, Failure> {
-        check(&self.make(), &self.endpoints(), order, &limits()).await
+        check(
+            &self.make(),
+            &self.endpoints(),
+            order,
+            &limits(),
+            &self.cool,
+        )
+        .await
     }
     async fn fetch(&self, pending: &Pending) -> (Result<Fetched, Failure>, Vec<DownloadEvent>) {
         let log: Arc<Mutex<Vec<DownloadEvent>>> = Default::default();
         let l2 = log.clone();
         let emit = move |e: DownloadEvent| l2.lock().unwrap().push(e);
-        let r = fetch(&self.make(), &self.endpoints(), &limits(), pending, &emit).await;
+        let r = fetch(
+            &self.make(),
+            &self.endpoints(),
+            &limits(),
+            pending,
+            &emit,
+            &self.cool,
+        )
+        .await;
         let events = log.lock().unwrap().clone();
         (r, events)
     }
@@ -385,7 +416,7 @@ async fn a_healthy_download_streams_events_and_returns_the_verified_bytes() {
     assert_eq!(f.source, Source::Mirror);
     assert_eq!(f.bytes, PKG);
     assert_eq!(f.update.version, "9.9.9");
-    assert_eq!(rig.github.hits("/pkg"), 0);
+    assert_eq!(rig.github.hits(PKG_PATH), 0);
     assert!(
         matches!(events.first(), Some(DownloadEvent::Started { content_length: Some(n) }) if *n as usize == PKG.len())
     );
@@ -423,9 +454,9 @@ async fn a_download_that_fails_falls_back_and_re_checks_the_other_source() {
                 vec![
                     (
                         "/latest.json",
-                        manifest("9.9.9", &format!("{b}/pkg"), &k.sign_b64(PKG)),
+                        manifest("9.9.9", &format!("{b}{PKG_PATH}"), &k.sign_b64(PKG)),
                     ),
-                    ("/pkg", bad_pkg),
+                    (PKG_PATH, bad_pkg),
                 ]
             },
             |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
@@ -444,13 +475,13 @@ async fn a_download_that_fails_falls_back_and_re_checks_the_other_source() {
         let f = r.unwrap_or_else(|e| panic!("{name}: 应回退成功，实得 {e:?}"));
         assert_eq!(f.source, Source::Github, "{name}");
         assert_eq!(f.bytes, PKG, "{name}: 拿到的是验过签的真包");
-        assert_eq!(rig.mirror.hits("/pkg"), 1, "{name}");
+        assert_eq!(rig.mirror.hits(PKG_PATH), 1, "{name}");
         assert_eq!(
             rig.github.hits("/latest.json"),
             1,
             "{name}: 回退来源重新 check"
         );
-        assert_eq!(rig.github.hits("/pkg"), 1, "{name}");
+        assert_eq!(rig.github.hits(PKG_PATH), 1, "{name}");
         assert!(
             t.elapsed() < Duration::from_secs(10),
             "{name}: 不得卡在坏来源上"
@@ -492,18 +523,18 @@ async fn download_failure_kinds_are_reported_per_source_when_everything_fails() 
                 vec![
                     (
                         "/latest.json",
-                        manifest("9.9.9", &format!("{b}/pkg"), &k.sign_b64(PKG)),
+                        manifest("9.9.9", &format!("{b}{PKG_PATH}"), &k.sign_b64(PKG)),
                     ),
-                    ("/pkg", bad),
+                    (PKG_PATH, bad),
                 ]
             },
             move |b, k| {
                 vec![
                     (
                         "/latest.json",
-                        manifest("9.9.9", &format!("{b}/pkg"), &k.sign_b64(PKG)),
+                        manifest("9.9.9", &format!("{b}{PKG_PATH}"), &k.sign_b64(PKG)),
                     ),
-                    ("/pkg", bad2),
+                    (PKG_PATH, bad2),
                 ]
             },
         )
@@ -553,9 +584,9 @@ async fn the_fallback_source_must_offer_the_same_version_the_user_saw() {
                 vec![
                     (
                         "/latest.json",
-                        manifest("9.9.9", &format!("{b}/pkg"), &k.sign_b64(PKG)),
+                        manifest("9.9.9", &format!("{b}{PKG_PATH}"), &k.sign_b64(PKG)),
                     ),
-                    ("/pkg", Route::Status(502)),
+                    (PKG_PATH, Route::Status(502)),
                 ]
             },
             move |b, k| healthy(b, gh_version, &k.sign_b64(PKG), PKG),
@@ -572,7 +603,7 @@ async fn the_fallback_source_must_offer_the_same_version_the_user_saw() {
             ],
             "{name}"
         );
-        assert_eq!(rig.github.hits("/pkg"), 0, "{name}: 版本不符就不下载");
+        assert_eq!(rig.github.hits(PKG_PATH), 0, "{name}: 版本不符就不下载");
     }
 }
 
@@ -609,6 +640,7 @@ async fn run_check_and_run_install_guard_their_state() {
     // 再查一次但这次所有来源都挂了：旧句柄不能留着（否则界面说失败、按钮却还能装旧的）
     let dead = Endpoints {
         mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        mirror_root: "http://127.0.0.1:9".into(),
         github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
     };
     assert!(run_check(&make, &dead, &state, &CN, &limits())
@@ -623,4 +655,98 @@ async fn run_check_and_run_install_guard_their_state() {
         .err()
         .unwrap();
     assert_eq!(e.code, "busy");
+}
+
+/* --------------------- infra 契约 §6.2（镜像清单的取舍） ------------------- */
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mirror_package_outside_the_mirror_release_dir_is_not_followed() {
+    // 清单把包放在别的主机 / 别的版本目录：签名能挡住篡改，但不该用镜像清单去访问非镜像地址
+    for (name, url_of) in [
+        (
+            "别的主机",
+            Box::new(|_b: &str| "http://127.0.0.1:9/releases/9.9.9/pkg".to_string())
+                as Box<dyn Fn(&str) -> String>,
+        ),
+        (
+            "别的版本目录",
+            Box::new(|b: &str| format!("{b}/releases/9.9.8/pkg")),
+        ),
+    ] {
+        let rig = Rig::new(
+            Keys::new(),
+            move |b, k| {
+                vec![
+                    (
+                        "/latest.json",
+                        manifest("9.9.9", &url_of(b), &k.sign_b64(PKG)),
+                    ),
+                    ("/releases/9.9.8/pkg", Route::Ok(PKG.to_vec())),
+                ]
+            },
+            |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+        )
+        .await;
+        let p = rig.check(&CN).await.unwrap().unwrap();
+        assert_eq!(p.source, Source::Github, "{name}");
+        assert_eq!(rig.mirror.hits("/releases/9.9.8/pkg"), 0, "{name}");
+        assert!(rig.cool.active(), "{name}: 镜像出过问题 → 进入冷却");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_mirror_redirect_to_another_host_is_not_followed() {
+    let github = serve(|b| healthy(b, "9.9.9", &Keys::new().sign_b64(PKG), PKG)).await;
+    let target = github.url("/latest.json").to_string();
+    let rig = Rig::new(
+        Keys::new(),
+        move |_, _| vec![("/latest.json", Route::Redirect(target))],
+        |b, k| healthy(b, "9.9.9", &k.sign_b64(PKG), PKG),
+    )
+    .await;
+    let f = rig.check(&[Source::Mirror]).await.err().unwrap();
+    assert_eq!(kinds(&f), vec![(Source::Mirror, Stage::Check, Kind::Http)]);
+    assert_eq!(github.hits("/latest.json"), 0, "重定向没有被跟随");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn after_the_mirror_fails_the_cooldown_demotes_it_and_the_same_update_never_retries_it() {
+    // 镜像 check 就挂了 → 冷却；GitHub 查到更新，但 GitHub 的包下不动：不回头再试镜像（契约 §6.3）
+    let rig = Rig::new(
+        Keys::new(),
+        |_, _| vec![("/latest.json", Route::Status(503))],
+        |b, k| {
+            vec![
+                (
+                    "/latest.json",
+                    manifest("9.9.9", &format!("{b}{PKG_PATH}"), &k.sign_b64(PKG)),
+                ),
+                (PKG_PATH, Route::Status(502)),
+            ]
+        },
+    )
+    .await;
+    assert!(!rig.cool.active());
+    let p = rig.check(&CN).await.unwrap().unwrap();
+    assert_eq!(p.source, Source::Github);
+    assert!(rig.cool.active());
+    let hits_before = rig.mirror.hits("/latest.json");
+    let (r, _) = rig.fetch(&p).await;
+    assert_eq!(
+        kinds(&r.err().unwrap()),
+        vec![(Source::Github, Stage::Download, Kind::Http)]
+    );
+    assert_eq!(
+        rig.mirror.hits("/latest.json"),
+        hits_before,
+        "同一次更新不再回头试镜像"
+    );
+    // 冷却中，下一次的顺序里镜像被挪到最后
+    assert_eq!(rig.cool.apply(&CN), vec![Source::Github, Source::Mirror]);
+    assert_eq!(rig.cool.apply(&WORLD), vec![Source::Github, Source::Mirror]);
+    assert_eq!(
+        rig.cool.apply(&[Source::Mirror]),
+        vec![Source::Mirror],
+        "钉死的单来源不动"
+    );
 }

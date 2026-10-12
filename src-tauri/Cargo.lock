@@ -4187,6 +4187,7 @@ dependencies = [
  "objc2",
  "percent-encoding",
  "rand",
+ "reqwest",
  "serde",
  "serde_json",
  "sys-locale",

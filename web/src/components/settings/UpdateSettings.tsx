@@ -20,6 +20,7 @@ import {
 /** `update.kindName.*` 里有的失败类别（壳回报的是闭集；老壳 / 新壳多出来的归到 other） */
 const KIND_NAMES: Record<string, true> = {
   network: true,
+  not_on_mirror: true,
   timeout: true,
   stalled: true,
   http: true,

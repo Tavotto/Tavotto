@@ -1449,6 +1449,7 @@
         "install": "安装"
       },
       "kindName": {
+        "not_on_mirror": "镜像清单指向了镜像之外的地址",
         "network": "网络不通",
         "timeout": "超时",
         "stalled": "下载停滞",

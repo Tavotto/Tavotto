@@ -1461,6 +1461,7 @@
         "install": "install"
       },
       "kindName": {
+        "not_on_mirror": "mirror manifest points outside the mirror",
         "network": "network unreachable",
         "timeout": "timed out",
         "stalled": "download stalled",

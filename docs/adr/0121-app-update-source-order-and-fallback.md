@@ -16,7 +16,17 @@
 
 ### 一、插件的多 endpoints 不够，编排放在 Rust 侧（`src-tauri/src/app_update.rs`）
 
-`tauri-plugin-updater` 的多 `endpoints` 只覆盖 check，下载仍直连 check 拿到的那个 `url`。因此：
+`tauri-plugin-updater` 的多 `endpoints` 只覆盖 check，下载仍直连 check 拿到的那个 `url`。依据（`tauri-plugin-updater` 2.10.1，
+`src/updater.rs`，Cargo.lock 钉的版本）：
+
+* `Updater::check`（第 386 行）里 `for url in &self.endpoints`（412）逐个请求，**第一个解析成功的清单就 `break`**（500–501）；
+  非 2xx 只记日志并继续下一个（510）。也就是「端点轮换」只存在于 check 这一个函数里；
+* check 产出的 `Update` 只带那一个 `download_url` / `signature`（`Update` 结构）；`Update::download`（652）直接
+  `.get(self.download_url.clone())`（684），失败或 `verify_signature`（712）不过就返回错误——**没有任何代码会在下载或验签失败后
+  回到 endpoints 换下一个重来**。
+* 另外：多 endpoints 下「清单合法但缺本机平台」是在循环**之后**的 `get_urls` 里才报 `TargetsNotFound`，不会换端点。
+
+infra 契约 §6.5 的方案 A（多端点）因此不满足 §6.3「下载或验签失败后整体回退」，用方案 B 的变体：自己按来源逐个 check + 下载。
 
 * `tauri.conf.json` 的 `plugins.updater.endpoints` 保持**只有 GitHub 一条**（发布链 `updater_consumer_check.py` 与 `test_update_chain_gates.py` 读它）；
   镜像地址是 `app_update.rs` 里**唯一**的常量 `MIRROR_MANIFEST_URL`（调整只改这里与本文）；
@@ -38,7 +48,7 @@
 但他们的网络环境常常仍受限，镜像优先对他们无害——镜像不通就回退，代价是多一次 ≤10 s 的失败）。规则取并集因为误判的代价不对称：
 大陆用户走了 GitHub 优先 = 每次都卡一个必超时的来源；海外用户走了镜像优先 = 最多多一次快速失败。
 
-### 三、「无更新」是否再问后备？——不问
+### 三、「无更新」是否再问后备？——不问（与 infra 契约 §6.2 一致）
 
 第一个**答上来**的来源说「没有更新」，就是最终答案，**不再问另一个来源**。答不上来（超时 / 非 2xx / 清单坏 / 缺本平台）才换下一个。
 权衡：
@@ -49,6 +59,7 @@
   滞后不是安全问题（用户只是还没看到新版），而「手动下载」入口（Releases 链接）一直在界面上。
 
 镜像报告了更新就用镜像，**不强求与 GitHub 版本一致**（镜像滞后时用户拿到的是稍旧的一版，下次启动再追）。
+infra 契约 §6.2 对此的表述是「镜像 version ≤ 本机 = 已最新，不算回退条件」，与本节同向，无分歧。
 
 ### 四、下载与回退语义（`app_update::fetch`）
 
@@ -62,6 +73,16 @@
 
 **验签始终用 `tauri.conf.json` 里内置的公钥**（`Update::download` 返回前验）。来源只决定「从哪下」，不决定「信谁」：镜像被入侵、
 过期、或清单与包对不上，都只会让验签失败并回退，不会装上未签名的包。清单里的 `url` 不限定域名（镜像改写它是设计的一部分），信任全在签名。
+
+### 四·补、镜像清单的取舍与冷却（infra 契约 §6.2–6.3，参考实现 `consume.py::decide_updater`，向量提交 a7f1000）
+
+* 镜像来源的 check 结果还要过 `app_update::decide_updater`（对插件解析出的 `raw_json` + 本机平台键）：非法 JSON / 缺 `version`
+  （`MAJOR.MINOR.PATCH`）或 `platforms` / 无本机平台键 / 条目缺 `signature` 或 `url` / **包地址不在 `{镜像根}/releases/<version>/` 下**
+  → 本来源视为不可用（前三类归 `bad_manifest`，最后一类归 `not_on_mirror`），换下一个来源；拉取失败或任何非 200（含 404 = 镜像撤下）由插件的
+  check 错误覆盖。向量 `src-tauri/testdata/updater-vectors.json`（复制自 infra a7f1000）11 条全过（`the_infra_contract_vectors_all_pass`）。
+* 镜像来源的 HTTP client **不跟随重定向到别的主机**（`reqwest::redirect::Policy::custom`，check 与下载共用）。
+* 冷却：镜像在本进程里 check 或下载出过问题 → 30 分钟内顺序里镜像挪到最后（钉死的单来源不动），且**同一次更新不再回头试镜像**
+  （契约 §6.3）。状态只在内存里，进程重启即清空。
 
 ### 五、超时
 
