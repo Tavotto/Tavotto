@@ -289,7 +289,11 @@ def _patched_savefig(self, fname, *args, **kwargs):
     to_path = figcapture.savefig_targets_path(fname)
     if to_path and BLOCKED_OPS is not None:
         # 拦截不落盘：脚本若随后读这个路径（`Image.open('stage.png')`），读到的不是它刚存的（P01a，EX02）
-        BLOCKED_OPS.blocked("savefig", figcapture.BlockedFileOps.KIND_SAVEFIG, fname)
+        BLOCKED_OPS.blocked(
+            "savefig",
+            figcapture.BlockedFileOps.KIND_SAVEFIG,
+            *figcapture.savefig_effective_names(fname, kwargs),
+        )
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
     if SESSION is not None:
         call = figcapture.savefig_call(fname, kwargs) if stem else None
@@ -838,10 +842,9 @@ class Worker(wireproto.V1Handler):
         real_unlink = Path.unlink
 
         # 守卫拦下的关键操作记一本账（P01a）：守卫本身一字不动，账只多回答一件事——
-        # 脚本随后有没有去观察被拦下的路径。open / os.stat 的观察包装装在最内层。
+        # 脚本随后有没有去观察被拦下的路径。open / os.stat 的观察包装在输入观察器与读回退之后安装（最外层）。
         ledger = figcapture.BlockedFileOps()
         BLOCKED_OPS = self._blocked_ops = ledger
-        ledger.install()
 
         def _guarded_unlink(p, missing_ok=False):
             try:
@@ -938,6 +941,10 @@ class Worker(wireproto.V1Handler):
             )
         # cwd 已经是脚本目录时不装回退：相对路径本来就指向项目，回退只会在
         # 「沙盒里有同名文件」这种不可能的前提上多一层看不见的改道。
+        # 账本的 open / stat 观察装在**最外层**（回退之外）：看到的必须是脚本交出的那条路径。
+        # 装在回退之下，沙盒里 `savefig("stage.png")` 记下的 `<沙盒>/stage.png` 永远等不到
+        # 被回退改指成 `<项目>/stage.png` 的读，旧图就被静默读走了（#952 Codex P1）。
+        ledger.install()
 
         # 拦截必须发生在 import 脚本之前（多数脚本 from paper_style import save）
         mfigure.Figure.savefig = _patched_savefig

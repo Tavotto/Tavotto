@@ -628,3 +628,135 @@ def test_p1_overflow_operation_201_plus_then_readback_fails(figs):
 @needs_worker
 def test_p1_hundreds_of_blocked_operations_never_read_back_still_succeed(figs):
     _build(figs, "ovn.py", OVERFLOW_NEVER_READ, project_mode=True)
+
+
+# ============================================ 第三轮 Codex P1：账本看到的路径要是「脚本交出的那条」
+def _savefig_then_read(call: str, readback: str, *, pre: str = "") -> str:
+    return f"""\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from pathlib import Path
+from PIL import Image
+{pre}
+fig, ax = plt.subplots()
+ax.plot([0, 1], [1, 2])
+{call}
+try:
+    with Image.open({readback}) as im:
+        size = list(im.size)
+except Exception:
+    size = [0, 0]
+"""
+
+
+@needs_worker
+def test_p1_default_sandbox_ledger_sees_the_requested_path_not_the_fallback_rewrite(figs):
+    """沙盒默认档：项目里已有旧 stage.png，相对读回退会把 `open("stage.png")` 改指到项目里那份——
+    账本若装在回退之下，只看到改写后的路径，与 savefig 记下的沙盒路径永不相等，旧图被静默读走。"""
+    e = _blocked(figs, "ex02_sandbox.py", EX02, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["savefig"]
+    assert (figs / "stage.png").read_bytes() == b"stale-old-image"
+
+
+@needs_worker
+@pytest.mark.parametrize("project_mode", [False, True], ids=["sandbox", "project"])
+@pytest.mark.parametrize(
+    ("call", "readback"),
+    [
+        ('fig.savefig("stage")', '"stage.png"'),
+        ('fig.savefig(Path("stage"))', '"stage.png"'),
+        ('fig.savefig("stage.")', '"stage.png"'),
+        ('fig.savefig(Path("stage.png"))', '"stage.png"'),
+        ('fig.savefig("stage.png")', 'Path("stage.png")'),
+        ('fig.savefig("stage.png")', '"./stage.png"'),
+        ('fig.savefig(str(Path.cwd() / "stage.png"))', '"stage.png"'),
+        ('fig.savefig("stage.png")', 'str(Path.cwd() / "stage.png")'),
+    ],
+)
+def test_p1_savefig_target_forms_all_meet_the_readback(figs, project_mode, call, readback):
+    """无扩展名补默认后缀、pathlib、`./`、绝对路径：写与读指向同一处就必须对上。"""
+    e = _blocked(figs, "forms.py", _savefig_then_read(call, readback), project_mode=project_mode)
+    assert e.code == CODE, (e.code, str(e))
+
+
+@needs_worker
+def test_p1_default_format_comes_from_rcparams(figs):
+    (figs / "stage.svg").write_text("<svg/>", encoding="utf-8")
+    src = _savefig_then_read(
+        'fig.savefig("stage")', '"stage.svg"', pre='plt.rcParams["savefig.format"] = "svg"'
+    ).replace("Image.open(", "open(")
+    e = _blocked(figs, "rcfmt.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
+@needs_worker
+def test_p1_explicit_format_does_not_get_a_suffix_but_the_literal_name_is_tracked(figs):
+    """`format="png"` 配无后缀文件名：matplotlib 写的就是字面名 `stage`（不补后缀）。"""
+    (figs / "stage").write_bytes(b"stale-literal")
+    src = _savefig_then_read('fig.savefig("stage", format="png")', '"stage"').replace(
+        "Image.open(", "open("
+    )
+    e = _blocked(figs, "explicit_fmt.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
+@needs_worker
+def test_p1_bytesio_savefig_is_never_recorded(figs):
+    src = _savefig_then_read(
+        'buf = io.BytesIO(); fig.savefig(buf, format="png"); buf.seek(0)',
+        "buf",
+        pre="import io",
+    )
+    _build(figs, "bio.py", src, project_mode=False)  # 不抛即成功
+    assert (figs / "stage.png").read_bytes() == b"stale-old-image"
+
+
+@needs_worker
+def test_p1_a_readback_of_an_unrelated_name_still_succeeds(figs):
+    src = _savefig_then_read('fig.savefig("stage")', '"seed.txt"').replace("Image.open(", "open(")
+    _build(figs, "unrelated.py", src, project_mode=False)
+
+
+@pytest.mark.parametrize(
+    ("target", "kwargs", "rc_format"),
+    [
+        ("stage", {}, None),
+        ("stage.", {}, None),
+        ("stage.png", {}, None),
+        ("stage", {}, "svg"),
+        ("stage", {"format": "png"}, None),
+        ("stage.dat", {"format": "png"}, None),
+        ("a.b/stage", {}, None),
+    ],
+)
+@pytest.mark.parametrize("kind", [str, Path])
+def test_savefig_effective_names_cover_what_matplotlib_really_writes(
+    tmp_path, monkeypatch, target, kwargs, rc_format, kind
+):
+    """记账用的有效目标名与 matplotlib 真写出的文件逐个对照（不是照着注释猜）。"""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.b").mkdir()
+    fig = plt.figure()
+    try:
+        with matplotlib.rc_context({"savefig.format": rc_format} if rc_format else {}):
+            fig.savefig(kind(target), **kwargs)
+            names = figcapture.savefig_effective_names(kind(target), kwargs)
+    finally:
+        plt.close(fig)
+    written = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
+    assert len(written) == 1
+    assert {Path(n).as_posix() for n in names} >= written, (names, written)
+
+
+def test_savefig_effective_names_ignore_file_objects_and_keep_bytes_literal():
+    import io
+
+    assert figcapture.savefig_effective_names(io.BytesIO(), {}) == []
+    assert figcapture.savefig_effective_names(b"stage", {}) == [b"stage"]

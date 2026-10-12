@@ -825,6 +825,31 @@ def savefig_stem(fname) -> str:
     return os.path.splitext(os.path.basename(os.fsdecode(fname)))[0]
 
 
+def savefig_effective_names(fname, kwargs: dict) -> list:
+    """`savefig(fname, **kwargs)` 真正会写（被拦截时就是没写）的文件名，供 `BlockedFileOps` 记账（P01a）。
+
+    `print_figure` 的规则：显式 `format=` 时文件名**原样**（不补后缀）；否则 `str` / `PathLike`
+    取文件名后缀作格式，**没有后缀**就补默认格式（`stage` → `stage.png`，`stage.` → `stage.png`）。
+    默认格式由 canvas 决定、用户可重载（`savefig_call` 因此不把它当已确定），这里不调用任何用户方法：
+    字面名一定记，另外补 `rcParams["savefig.format"]` 与 `png` 两个候选后缀名——多记一个候选只会让
+    「读了那个名字」多算一次回读，不会漏。`bytes` 目的地 matplotlib 不补后缀，只记字面名。
+    """
+    if not savefig_targets_path(fname):
+        return []
+    name = os.fsdecode(fname)
+    names = [fname]
+    if kwargs.get("format") is not None or isinstance(fname, bytes):
+        return names
+    if os.path.splitext(name)[1][1:]:
+        return names
+    mpl = sys.modules.get("matplotlib")
+    rc = getattr(mpl, "rcParams", None) or {}
+    fmts = (rc.get("savefig.format"), "png")
+    for fmt in dict.fromkeys(f for f in fmts if isinstance(f, str) and f):
+        names.append(name.rstrip(".") + "." + fmt)
+    return names
+
+
 def savefig_call(fname, kwargs: dict) -> dict:
     """一次 `fig.savefig(fname, **kwargs)` 里决定产物长相的参数 → JSON 对象。
 
@@ -1632,7 +1657,7 @@ class BlockedFileOps:
     def install(self):
         """装 open（`builtins.open` / `io.open` / `Path.open`）与 `os.stat` 的观察包装；返回卸载函数。
 
-        装在**最内层**（先于输入观察器与相对路径回退）：看到的是脚本交出的那条路径，
+        worker 把它装在**最外层**（晚于输入观察器、数据改指与相对路径回退）：看到的是脚本交出的那条路径，
         与守卫记账时用的是同一个 cwd 下的同一种解析。`os.stat` 一并包——`os.path.exists` /
         `isfile` / `Path.exists` 都经它（Windows 3.12+ 的 `os.path.exists` 系是 C 实现、不经 `os.stat`，另行逐个包装，见下）。
         """

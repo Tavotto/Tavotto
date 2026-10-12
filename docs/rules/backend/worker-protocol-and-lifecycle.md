@@ -79,9 +79,10 @@
   **守卫拦下的关键文件操作不洗成完整成功（P01a，`safe_file_operation_blocked`，AC-02）**：safe 的删除 /
   改名 / `write_text` 守卫与 savefig 拦截靠「悄悄跳过」工作，脚本看不到异常——脚本 `os.replace` 缓存后读它，
   拿到旧值 1（直接 Python 是 2）却 `ok`。守卫一字不动，另有一本带外账本 `figcapture.BlockedFileOps`
-  （`worker.BLOCKED_OPS`）：守卫每拦一次记「操作类别 + 影响的路径」，最内层的 open / `os.stat` 包装在
+  （`worker.BLOCKED_OPS`）：守卫每拦一次记「操作类别 + 影响的路径」，**最外层**（晚于输入观察器与相对读回退，看到的是脚本交出的原始路径，不是回退改写后的；沙盒档项目里有旧 `stage.png` 时
+  装在回退之下会永远对不上，#952 第三轮 P1）的 open / `os.stat` 包装在
   **拦下之后**看到脚本打开（读，含 `r+`/`a+`）或 stat 了受影响路径，才算 material；脚本自己以 `w`/`x` 重写
-  该路径则清掉嫌疑，被拦截的 `savefig` 目标只认读内容、不认 `exists`（校验打印不判失败），先于拦截的读、读别的路径、从没回读（`test_workdir_mode` 那种顺手删过期输出）都不算。
+  该路径则清掉嫌疑，被拦截的 `savefig` 目标记**有效目标名**（`figcapture.savefig_effective_names`：无后缀且无 `format=` 时补 `rcParams["savefig.format"]`/`png`，`format=` 显式则字面名）、只认读内容、不认 `exists`（校验打印不判失败），先于拦截的读、读别的路径、从没回读（`test_workdir_mode` 那种顺手删过期输出）都不算。
   material 非空时 build 以该 code 结束——脚本跑到末尾、`except Exception` 吞掉了异常、或因读不到而崩
   （原因是守卫不是 `missing_input`）、或随后 `sys.exit` 非零，一律如此。载荷只有类别（`operations`）、
   `required_execution="preserve_file_semantics"` 与 `adapter_available=false`，没有路径（message 会进
