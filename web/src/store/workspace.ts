@@ -126,8 +126,11 @@ function layoutViewOnReturn(parked: ParkedLayoutView): void {
  * 钉住没有别的模块直接调那两个 action。
  */
 export function addPanelToCanvas(info: PanelInfo, atX?: number, atY?: number): PanelObject | null {
-  // 恢复还在路上：排队到文档就绪再加（一次）；`null` = 这一刻没有加（排队 / 被拒），调用方别当成加成了
-  if (deferUserEntry(() => void addPanelToCanvas(info, atX, atY)) !== 'run') return null
+  // 恢复还在路上：排队到文档就绪再加（一次）；`null` = 这一刻没有加（排队 / 被拒），调用方别当成加成了。
+  // **排队时丢掉落点**：舞台是按占位文档的页面 / 视口把落点换算成 mm 的，恢复出来的文档页面尺寸与取景都可能不同
+  // （取景在恢复之后才适配，排队的入口先于它执行，没法保证换算对得上）——按旧页面算的坐标会让面板落在页外或别处。
+  // 落地时按常规摆放规则（避让已有对象、装进页面）放，不带点
+  if (deferUserEntry(() => void addPanelToCanvas(info)) !== 'run') return null
   return placePanelToCanvas(info, atX, atY)
 }
 
@@ -143,7 +146,7 @@ export function addRuntimePanelToCanvas(
   atX?: number,
   atY?: number,
 ): PanelObject | null {
-  if (deferUserEntry(() => void addRuntimePanelToCanvas(desc, atX, atY)) !== 'run') return null
+  if (deferUserEntry(() => void addRuntimePanelToCanvas(desc)) !== 'run') return null
   return placeRuntimePanelToCanvas(desc, atX, atY)
 }
 

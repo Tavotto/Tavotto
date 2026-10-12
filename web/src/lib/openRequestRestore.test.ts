@@ -403,3 +403,38 @@ describe('init 先关门再发布 phase:open（Codex P1）', () => {
     expect(app.doc.getRestoreGate()).toEqual(g)
   })
 })
+
+describe('恢复期间落在画布上的素材：落点按占位页面算的，排队后不沿用', () => {
+  it('占位的大页面上落在 (120, 130) mm；恢复出来的是 100×100 的页——面板按常规规则摆进页内，不落在页外', async () => {
+    const pd: ProjectDocument = emptyProject()
+    pd.project.name = '小页面'
+    pd.canvases[0].page = { ...pd.canvases[0].page, w: 100, h: 100 }
+    pd.canvases[0].objects = [{ id: 't', type: 'text', text: 'x', sizePt: 9, bold: false, color: '#000', align: 'left', x: 0, y: 0, w: 10, h: 5 } as never]
+    pd.updatedAt = 100
+    be.putSlot('d_small', pd, 'p_a')
+    be.setLast('p_a', 'd_small', '小页面')
+    const app = await boot()
+    const { useAssetStore } = await import('@/store/assetStore')
+    useAssetStore.setState({ panels: [fig1Info as never], byId: { 'Fig1.pdf': fig1Info as never }, loaded: true })
+    const ws = await import('@/store/workspace')
+    const hold = gate()
+    be.state.hold.session = hold.promise
+    const restoring = app.doc.restoreSession()
+    await vi.waitFor(() => expect(be.state.calls).toContain('GET session'))
+    expect(app.doc.useDocumentStore.getState().doc.page.w).not.toBe(100) // 占位页比恢复出来的大
+    // 落点按占位（较大的）页面算，对恢复出来的 100×100 页已经在页外
+    expect(ws.addPanelToCanvas(fig1Info as never, 120, 130)).toBeNull()
+    hold.release()
+    await restoring
+    await vi.waitFor(() => expect(panelsOf(app)).toHaveLength(1))
+    const st = app.doc.useDocumentStore.getState()
+    expect(st.doc.page).toMatchObject({ w: 100, h: 100 })
+    const p = panelsOf(app)[0]
+    expect(p.x).toBeGreaterThanOrEqual(0)
+    expect(p.y).toBeGreaterThanOrEqual(0)
+    expect(p.x + p.w).toBeLessThanOrEqual(100.001)
+    expect(p.y + p.h).toBeLessThanOrEqual(100.001)
+    // 没有沿用旧落点：按旧坐标会被夹到页面右下角，常规摆放不会
+    expect(p.x + p.w > 99.9 && p.y + p.h > 99.9).toBe(false)
+  })
+})
