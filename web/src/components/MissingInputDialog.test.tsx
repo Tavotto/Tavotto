@@ -48,6 +48,7 @@ import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { InputRemapRows, MissingInputButton, ScriptBackupRows } from '@/components/WorkdirRow'
 import { i18n, t } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 
@@ -193,7 +194,7 @@ describe('MissingInputDialog', () => {
     const visibleText = [...dialog()!.querySelectorAll(`h2, p, [id="${descId}"]`)]
       .filter(outside)
       .map((e) => e.textContent)
-    expect(visibleText).toEqual([en('missingInputTitle'), en('missingInputSentence', { name: 'values.txt' })])
+    expect(visibleText).toEqual([en('missingInputTitle'), en('missingInputSentence', { name: 'values.txt', product: PRODUCT_NAME })])
     expect(visibleText.join('')).not.toContain('data/values.txt')
     const buttons = [...dialog()!.parentElement!.querySelectorAll('button')]
       .filter(outside)
