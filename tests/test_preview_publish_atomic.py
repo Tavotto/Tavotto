@@ -242,6 +242,40 @@ with tempfile.TemporaryDirectory() as tmp:
         out["after_usable_svg"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".svg"))
         out["after_names"] = sorted(os.listdir(tmp))
         out["after_seq"] = json.loads((p / figcapture.PREVIEW_LEDGER).read_text(encoding="utf-8"))["seq"]
+    elif scenario in ("retry_ledger_fails_keeps_marker", "retry_ledger_and_remark_fail"):
+        sess.add_figure("fig", good("v1"), figcapture.SOURCE_SAVEFIG)
+        sess.instrument_all()
+        p = Path(tmp)
+        figcapture.mark_preview_invalid(tmp, "fig")  # 此前那一代已被作废（错配可能还在磁盘上）
+        sess.states["fig"].fig.axes[0].set_title("retry")
+        real_record = figcapture.record_preview_published
+        import builtins
+        real_open = builtins.open
+        no_remark = scenario == "retry_ledger_and_remark_fail"
+
+        def failing_record(*a, **k):
+            if no_remark:
+                os.remove(p / ".fig.preview-invalid")  # 标记在这一刻被外部撤掉（扫描器 / 清理工具）
+                builtins.open = flaky_open  # 且写不回去
+            raise OSError(28, "No space left on device")
+
+        def flaky_open(file, mode="r", *a, **k):
+            if str(file).endswith(".preview-invalid") and "w" in mode:
+                raise OSError(28, "No space left on device", str(file))
+            return real_open(file, mode, *a, **k)
+
+        figcapture.record_preview_published = failing_record
+        try:
+            try:
+                sess.render("fig")
+            except Exception as exc:
+                out["error"] = type(exc).__name__
+                out["protocol_code"] = getattr(exc, "protocol_code", None)
+        finally:
+            figcapture.record_preview_published = real_record
+            builtins.open = real_open
+        out["marker"] = (p / ".fig.preview-invalid").exists()
+        out["usable_svg_exists"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".svg"))
     elif scenario == "stale_and_truncated":
         p = Path(tmp)
         # 上一次运行残留：有完整 SVG、没有账本
@@ -388,6 +422,20 @@ def test_marker_write_failure_is_fatal_not_swallowed():
     assert r["marker"] is False, "注入确实生效：标记没写成"
     assert r["published"] == [] and r["ledger_stems"] == [], "账本仍要摘掉该 stem"
     assert r["after_published"] == ["fig"] and r["after_usable_svg"] is True, r
+
+
+def test_a_retry_whose_ledger_write_fails_keeps_the_stem_invalid():
+    """已作废的 stem 重试发布，记账那步失败：失效标记必须仍在、读方仍是「无预览」（Codex #958）。
+    账本记成之后才撤标记，所以失败时旧标记原样还在。"""
+    r = _drive("retry_ledger_fails_keeps_marker")
+    assert r["error"] == "OSError", r
+    assert r["marker"] is True and r["usable_svg_exists"] is False, r
+
+
+def test_a_retry_that_cannot_re_establish_the_marker_is_fatal():
+    """重试失败、还原回此前作废的那一代、标记却写不回去：读方失去保证，升级为致命 `preview_poisoned`。"""
+    r = _drive("retry_ledger_and_remark_fail")
+    assert r["error"] == "PreviewPoisoned" and r["protocol_code"] == "preview_poisoned", r
 
 
 # ---- app 侧（读方进程）：致命码判死会话，且读入口不再给出错配文件 -----------------

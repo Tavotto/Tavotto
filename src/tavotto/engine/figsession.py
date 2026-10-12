@@ -924,8 +924,9 @@ class LiveFigureSession:
                 for i, (part, final) in enumerate(zip(parts, finals)):
                     os.replace(part, final)
                     replaced.append(i)
-                figcapture.clear_preview_invalid(self.out_dir, stem)
                 seq = figcapture.record_preview_published(self.out_dir, stem, svg_bytes_on_disk)
+                # 账本记成之后才撤失效标记：之前任何一步失败，旧标记原样还在，读方仍是「无预览」（Codex #958）
+                figcapture.clear_preview_invalid(self.out_dir, stem)
         except BaseException as exc:
             if not self._restore_previous(finals, backups, replaced):
                 # 还原也失败：磁盘上可能是新 SVG 配旧 manifest。备份**不删**，这一对整体作废。
@@ -940,8 +941,16 @@ class LiveFigureSession:
                         else "; neither removal nor an invalid marker could be written"
                     )
                 ) from exc
-            if was_invalid:
-                figcapture.mark_preview_invalid(self.out_dir, stem)
+            if (
+                was_invalid
+                and not figcapture.preview_invalid(self.out_dir, stem)
+                and not figcapture.mark_preview_invalid(self.out_dir, stem)
+            ):
+                # 还原回来的是此前就作废的那一代（可能错配），标记又写不回去：读方失去保证，升级为致命
+                raise PreviewPoisoned(
+                    f"preview of {stem!r} was invalid, publishing failed ({exc}) "
+                    "and the invalid marker could not be re-established"
+                ) from exc
             raise
         # 成功：本 stem 两个文件的备份（含失效那次留下的）都由这里清掉
         self._discard_parts(*[f.with_name(f".{f.name}.prev.part") for f in finals])
