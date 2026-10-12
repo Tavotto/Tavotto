@@ -55,8 +55,8 @@ import {
   type PrepEntry,
 } from '@/store/projectPreparationStore'
 import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
-import { currentProjectId } from '@/lib/session'
-import { findFigurePanel, whenDocumentReady } from '@/store/documentStore'
+import { takeDeferredEntryOutcome } from '@/store/documentRestore'
+import { findFigurePanel } from '@/store/documentStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import type { PanelObject } from '@/types/document'
@@ -698,9 +698,10 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         }
         if (outcome === 'deferred') {
           // 上次的排版还在恢复：入口已排队，**真的落进文档之后**才收卡片；被取代 / 超时（没落）就留着
-          const pj = currentProjectId()
-          void whenDocumentReady(pj).then((verdict) => {
-            if (verdict === 'ready' && guard.still() && findFigurePanel(d.asset_id)) landed()
+          // 以这个入口**自己的结局**为准（`ran`）：恢复被同项目里显式打开的别的排版取代时，入口被丢掉；
+          // 那份排版里恰好有同一张图也不能当成这次进入编辑成了
+          void takeDeferredEntryOutcome()?.then((result) => {
+            if (result === 'ran' && guard.still() && findFigurePanel(d.asset_id)) landed()
           })
           return null
         }

@@ -753,6 +753,21 @@ export type EntryGate = 'run' | 'deferred' | 'blocked'
  *  - `needs_user` → `'blocked'`：用户得先选出口，说一句「上次的排版还没打开」，不排队。
  * `run` 必须是重新调用入口本身（门开了它会走 `'run'` 分支），这样「这个意图此刻还成立吗」由入口自己判。
  */
+/** 最近一次排队的入口自己的结局：`ran` = 真的执行了；`dropped` = 被取代 / 超时 / 换了项目而丢掉 */
+export type DeferredEntryOutcome = 'ran' | 'dropped'
+let lastDeferred: Promise<DeferredEntryOutcome> | null = null
+
+/**
+ * 取走**刚刚**那次 `deferUserEntry` 返回 `'deferred'` 的入口的结局（取走即清，必须在入口返回后同步调——
+ * 中间不能有 await，否则拿到的可能是别的入口的）。调用方要在「入口真的跑了」之后才做收尾（收卡片、记编辑），
+ * 不能只看「文档里恰好有这张图」：恢复被显式打开别的排版取代时，那份排版里也可能有同一张图。
+ */
+export function takeDeferredEntryOutcome(): Promise<DeferredEntryOutcome> | null {
+  const p = lastDeferred
+  lastDeferred = null
+  return p
+}
+
 export function deferUserEntry(run: () => void): EntryGate {
   ensureHooks()
   const g = getRestoreGate()
@@ -765,6 +780,8 @@ export function deferUserEntry(run: () => void): EntryGate {
   // 被显式意图取代（新建 / 打开排版 / 打开最近 / 教程 / 继续新建 / 打开另一份 / 切项目）的，
   // 较旧的操作不许写进较新意图建出来的文档——丢掉并说一句
   const queuedGen = g.gen
+  let settle!: (o: DeferredEntryOutcome) => void
+  lastDeferred = new Promise<DeferredEntryOutcome>((r) => (settle = r))
   void whenDocumentReady(g.pj).then((verdict) => {
     const now = getRestoreGate()
     const sameLifecycle =
@@ -772,8 +789,11 @@ export function deferUserEntry(run: () => void): EntryGate {
       now.state === 'ready' &&
       (now.gen === queuedGen || (retryLineage?.generations.has(queuedGen) && retryLineage.latest === now.gen && retryLineage.pj === g.pj)) &&
       (now.reason === 'restored' || now.reason === 'empty' || now.reason === 'blank_requested')
-    if (sameLifecycle) run()
-    else {
+    if (sameLifecycle) {
+      run()
+      settle('ran')
+    } else {
+      settle('dropped')
       useUiStore
         .getState()
         .setStatus(msg(verdict === 'timeout' ? 'restore.entryTimeout' : 'restore.entrySuperseded', undefined, 'workspace'), 'error')
