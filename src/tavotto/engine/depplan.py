@@ -751,6 +751,8 @@ class JointPlan:
     #: `relevant` = 脚本里有 import 能指到它、或脚本有未解释的 import / 动态导入（这时声明就是权威，不被 AST 否决）；只有相关的差集才让
     #: 托管环境的计划 `ready`，不相关的只记录。`action` 见 `GAP_ACTION_*`。只在有差集时才进 `to_payload`（老客户端忽略，`plan_version` 不升）。
     declared_gaps: tuple[dict, ...] = ()
+    #: 差集总数；超过 `MAX_DECLARED_GAPS` 被截断时 > `len(declared_gaps)`（状态判定用的是完整集合，只有对外载荷截断）。
+    declared_gaps_total: int = 0
 
     @property
     def install_entries(self) -> tuple[dict, ...]:
@@ -781,6 +783,11 @@ class JointPlan:
             **(
                 {"declared_gaps": [dict(g) for g in self.declared_gaps]}
                 if self.declared_gaps
+                else {}
+            ),
+            **(
+                {"declared_gaps_total": self.declared_gaps_total}
+                if self.declared_gaps_total > len(self.declared_gaps)
                 else {}
             ),
             "requirements": list(self.requirements),
@@ -1060,14 +1067,24 @@ def _relevant_declarations(
     """选中的声明里，哪些与这个脚本有可见的关联（P02）：脚本里有 import 能指到这个发行包，或脚本有无法归给任何发行包的 import
     （表外名、函数体内 / 别名的未知名字）、有非字面量的动态导入——后一种里没法逐条对应，声明就是权威（AST 不否决已选声明）。
     其余的声明（requirements 里躺着、这个脚本从没碰过的包）不因此装进来，也不让计划 `ready`：不污染不相干的脚本。"""
-    attached = {
-        depresolve.normalize_distribution(c.distribution)
+    bound = [
+        c
         for c in scan.classes
         if c.distribution
         and c.bucket in (importscan.BUCKET_THIRD_PARTY, importscan.BUCKET_UNKNOWN)
         and c.context in _BINDING_CONTEXTS
         and not c.unused
-    } | {depresolve.normalize_distribution(d) for d in arbitrated.values()}
+    ]
+    # 仲裁出的 provider 只对确实 import 了它那个模块的脚本相关（Codex #960 P2）：模块名已知，没 import 就不相关——
+    # 共享 requirements 里点名 headless，只 `import numpy` 的脚本不因此装 OpenCV
+    attached = {
+        depresolve.normalize_distribution(arbitrated.get(c.module, c.distribution)) for c in bound
+    }
+    unimported = {
+        depresolve.normalize_distribution(d)
+        for m, d in arbitrated.items()
+        if m not in {c.module for c in bound}
+    } - attached
     unexplained = (
         bool(plain_unknown)
         or bool(scan.dynamic)
@@ -1078,7 +1095,7 @@ def _relevant_declarations(
             for c in scan.classes
         )
     )
-    return set(names) if unexplained else set(names) & attached
+    return (set(names) - unimported) if unexplained else set(names) & attached
 
 
 def _declared_gaps(
@@ -1087,7 +1104,7 @@ def _declared_gaps(
     relevant: set[str],
 ) -> tuple[dict, ...]:
     """选中的声明相对**此刻跑脚本的环境**的差集（`JointPlan.declared_gaps`，未带 `action`）；`relevant` 见
-    `_relevant_declarations`。"""
+    `_relevant_declarations`。回**完整**集合：状态判定用它，对外载荷由调用方再截到 `MAX_DECLARED_GAPS`。"""
     if installed is None:
         return ()
     out: list[dict] = []
@@ -1104,7 +1121,7 @@ def _declared_gaps(
                 "relevant": name in relevant,
             }
         )
-    return tuple(out[:MAX_DECLARED_GAPS])
+    return tuple(out)
 
 
 def _arbitrate_providers(
@@ -1526,6 +1543,7 @@ def plan(
         status = STATUS_READY
     else:
         status = STATUS_NOTHING_NEEDED
+    gaps_total = len(gaps)
     gaps = tuple(
         {
             **g,
@@ -1533,7 +1551,7 @@ def plan(
             if status == STATUS_READY and g["distribution"] in to_install
             else GAP_ACTION_RECORDED,
         }
-        for g in gaps
+        for g in gaps[:MAX_DECLARED_GAPS]
     )
     facts_payload = facts.to_payload() if facts is not None else {}
     if install_facts is not None:
@@ -1570,6 +1588,7 @@ def plan(
         ),
         install_only=install_only,
         declared_gaps=gaps,
+        declared_gaps_total=gaps_total,
         requirements=tuple(reqs),
         constraints=tuple(cons),
         hashes={k: tuple(v) for k, v in hashes.items()},

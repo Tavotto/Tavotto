@@ -656,6 +656,8 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 
 - 目标是受管环境时，**选中的声明里与脚本相关、且目标缺 / 版本不满足的**是安装 roots（`depplan.plan` → `requirements`），不再只做 constraint；用户自己的 venv 目标永不并入。
   「相关」只有 `depplan._relevant_declarations` 一处：能指到它的 import（无条件 / 函数体内 / 别名动态）或归不到发行包的 import / 非字面量动态导入；可选 / 条件 / `TYPE_CHECKING` 不算。
+  仲裁出的 provider（`cv2` 的 headless 等）只在脚本确实 import 那个模块时相关——未 import 就不相关，连「有未解释 import」也不让它变相关。
+  `declared_gaps` 对外截到 `MAX_DECLARED_GAPS`（超出时带 `declared_gaps_total`），但 `root_trigger` / 状态一律用完整集合判：先判定、后截断。
 - 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；
   用户的系统 / 本进程解释器只记录偏差（`action=recorded`），不静默升降包。`declared_gaps` 是可选字段，`plan_version` 不升。
 - 没有 import 名的 root 照样进账与装后核验（`install_only` 里 `import_name=""`）；`needed_imports` 一律滤掉空名，别拿空串去 probe。
