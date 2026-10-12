@@ -1077,6 +1077,43 @@ def _is_network_path(path: str) -> bool:
     return path.startswith(("\\\\", "//"))
 
 
+def _scan_glob_nt(pattern: str, budget, walker) -> list[str]:
+    """Windows 语义的只读扫描版 glob：**不**让 `glob` 去跟随通配段匹配到的目录（`C:\\Python312` 本身可能是指向
+    断线共享的 junction，glob 为了找 `python.exe` 会穿过它）。字面父目录逐级过 `walker`；父目录用
+    `os.scandir` 枚举，通配段按 fnmatch 比名字，命中的目录先过 `walker`（`lstat` 不跟随，重定向 / UNC 拒）
+    再拼尾部。只支持「字面前缀 + 一个通配目录段 + 字面尾部」（`_system_python_paths` 的形状）；别的形状回空。"""
+    import fnmatch
+
+    drive, rest = ntpath.splitdrive(pattern)
+    lead = rest[:1] if rest[:1] in ("\\", "/") else ""
+    segs = [x for x in re.split(r"[\\/]+", rest) if x]
+    wild = [i for i, x in enumerate(segs) if re.search(r"[*?\[]", x)]
+    if len(wild) != 1 or wild[0] == len(segs) - 1 or not (drive + lead or wild[0]):
+        return []
+    i = wild[0]
+    parent = os.path.join(drive + lead, *segs[:i])
+    tail = segs[i + 1 :]
+    if walker.redirected(parent) is not None:
+        return []
+    out: list[str] = []
+    try:
+        with os.scandir(parent) as it:
+            names = sorted((e.name for e in it), reverse=True)
+    except (OSError, ValueError):
+        return []
+    want = os.path.normcase(segs[i])
+    for name in names:
+        if not fnmatch.fnmatchcase(os.path.normcase(name), want):
+            continue
+        if not budget.charge_entry():
+            break
+        child = os.path.join(parent, name)
+        if walker.redirected(child) is not None:
+            continue
+        out.append(os.path.join(child, *tail))
+    return out
+
+
 def _scan_which(budget, nt: bool, walker) -> Callable[[str], str | None]:
     """只读扫描版 `shutil.which`：逐项 PATH 过预算，跳过 UNC / 空项，取消或超预算就停。
     Windows 语义下 PATH 目录的**每一级祖先**与候选本身若是重定向条目也跳过（`walker` 逐级不跟随 lstat，
@@ -1134,12 +1171,9 @@ def system_python_candidates(*, budget=None, nt: bool | None = None) -> list[tup
         def scan_glob(pattern: str) -> list[str]:
             if _is_network_path(pattern) or not budget.charge_entry():
                 return []
-            # glob 会先解析字面目录前缀（`C:\Users\u\AppData\Local\Programs\Python\Python3*` 的 `…\Python`）：
-            # 这一串里任何一级祖先是 junction 都先过逐级检查，再让 glob 碰它
-            literal = re.split(r"[*?\[]", pattern, maxsplit=1)[0]
-            if walker.redirected(ntpath.dirname(literal) or literal) is not None:
-                return []
-            return _glob(pattern)
+            if not nt:
+                return _glob(pattern)  # POSIX 语义下链接是常态（walker 空操作），保持原 glob
+            return _scan_glob_nt(pattern, budget, walker)
 
         paths = _system_python_paths(which=_scan_which(budget, nt, walker), glob=scan_glob, nt=nt)
         wanted = [] if is_frozen() else [(sys.executable, SOURCE_CURRENT)]

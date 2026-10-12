@@ -171,6 +171,21 @@ def redirected_component(root, path, *, allow_final_link: bool = False) -> str |
     return None
 
 
+_DRIVE_UNKNOWN = 0
+_DRIVE_NO_ROOT_DIR = 1
+_DRIVE_REMOTE = 4
+
+
+def _windows_drive_type(root: str) -> int:
+    """`GetDriveTypeW(root)`（kernel32，只读、不联系网络共享）。非 Windows 不调用 ctypes.windll，回固定盘。
+    Windows 真机行为未验证（CI 不覆盖）；测试用注入的假函数。"""
+    if os.name != "nt":
+        return 3
+    import ctypes
+
+    return int(ctypes.windll.kernel32.GetDriveTypeW(root))  # type: ignore[attr-defined]
+
+
 class PathWalker:
     """机器级绝对路径的逐级不跟随检查（`redirected_component` 的姊妹：那个只管项目根之下）。
 
@@ -185,16 +200,40 @@ class PathWalker:
     （预算耗尽按拒处理，调用方自会收手），结果按路径缓存，PATH 很长也不重复。命中的记账本（severity=note）。
     """
 
-    def __init__(self, *, nt: bool | None = None, budget: Budget | None = None):
+    def __init__(
+        self,
+        *,
+        nt: bool | None = None,
+        budget: Budget | None = None,
+        drive_type: Callable[[str], int] | None = None,
+    ):
         self.nt = os.name == "nt" if nt is None else nt
         self.budget = budget
+        self._drive_type = drive_type or _windows_drive_type
+        self._drives: dict[str, bool] = {}  # 盘符 -> 是否可碰（GetDriveTypeW 结果按盘符缓存）
         self._seen: dict[str, str | None] = {}  # 前缀 -> 被拒的那一级（None = 干净）
         self._missing: set[str] = set()
 
-    def _note(self, code: str, path: str) -> None:
+    def _note(self, code: str) -> None:
         if self.budget is not None:
-            # 机器上某条 PATH / 前缀按策略不碰，是设计内的剪枝，不是项目扫描没做完：记 note（不把整次扫描降成 partial）
-            self.budget.note(code, severity=SEVERITY_NOTE, scope="file", path=path)
+            # 机器上某条 PATH / 前缀按策略不碰，是设计内的剪枝，不是项目扫描没做完：记 note（不把整次扫描降成 partial）。
+            # 报告是公开的（`/api/project/scan` 原样回），机器级路径（用户目录、UNC 主机名）不进去：
+            # 只记无路径的 walk 级一行（同 code 合并计数）。
+            self.budget.note(code, severity=SEVERITY_NOTE, scope="walk")
+
+    def _drive_ok(self, drive: str) -> bool:
+        """盘符根可不可碰：在**任何**文件系统操作（含 lstat 盘符根）之前先问盘类型。远程盘（含断开的映射盘）、
+        根不存在、类型未知一律拒；本地固定盘 / 可移动盘 / 光驱 / RAM 盘照常。按盘符缓存。"""
+        key = drive.upper()
+        ok = self._drives.get(key)
+        if ok is None:
+            try:
+                kind = self._drive_type(key + "\\")
+                ok = kind not in (_DRIVE_UNKNOWN, _DRIVE_NO_ROOT_DIR, _DRIVE_REMOTE)
+            except Exception:  # noqa: BLE001 - 判不出就当不可碰
+                ok = False
+            self._drives[key] = ok
+        return ok
 
     def redirected(self, path) -> str | None:
         """`path` 经过重定向 / UNC 根 / 读不动的一级：回第一个被拒的前缀（已记账本）；干净或不存在回 None。"""
@@ -203,12 +242,16 @@ class PathWalker:
         text = os.fspath(path)
         drive, rest = ntpath.splitdrive(text)
         if drive.startswith(("\\\\", "//")):
-            self._note(ISSUE_SYMLINK_DIR, text)
+            self._note(ISSUE_SYMLINK_DIR)
+            return drive
+        if len(drive) == 2 and drive[1] == ":" and not self._drive_ok(drive):
+            # 远程 / 断开的映射盘：盘符根的 lstat 也会碰网络，一次都不发
+            self._note(ISSUE_SYMLINK_DIR)
             return drive
         cur = drive + (rest[:1] if rest[:1] in ("\\", "/") else "")
         for part in (x for x in re.split(r"[\\/]+", rest) if x and x != "."):
             if part == "..":  # 名字而非路径：normpath 会悄悄折叠掉中间一级的 lstat
-                self._note(ISSUE_SYMLINK_DIR, text)
+                self._note(ISSUE_SYMLINK_DIR)
                 return os.path.join(cur, part)
             cur = os.path.join(cur, part)
             key = os.path.normcase(cur)
@@ -227,12 +270,12 @@ class PathWalker:
                 return None
             except (OSError, ValueError):
                 self._seen[key] = cur
-                self._note(ISSUE_UNREADABLE_FILE, cur)
+                self._note(ISSUE_UNREADABLE_FILE)
                 return cur
             bad = cur if is_redirect(st) else None
             self._seen[key] = bad
             if bad is not None:
-                self._note(ISSUE_SYMLINK_DIR, bad)
+                self._note(ISSUE_SYMLINK_DIR)
                 return bad
         return None
 

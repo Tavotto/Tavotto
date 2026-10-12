@@ -533,7 +533,7 @@ def test_windows_scan_skips_a_redirected_python_exe_in_a_local_path_dir(
     assert all(not py.startswith(str(pathdir)) for py, _ in found)
     assert (str(good / "python.exe"), "system") in found  # 干净的本地条目照常出现
     assert any(
-        r["code"] == scanbudget.ISSUE_SYMLINK_DIR and r["path"].startswith(str(pathdir))
+        r["code"] == scanbudget.ISSUE_SYMLINK_DIR and "path" not in r  # 机器级路径不进报告（P2-1）
         for r in budget.issues()
     )
 
@@ -880,3 +880,171 @@ def test_posix_scan_keeps_symlinked_ancestors_and_symlinked_python(
 
     assert (str(link / "python3"), "system") in found
     assert scanbudget.PathWalker(nt=False).redirected(str(link / "python3")) is None
+
+
+# ------------------------------------------------------------------ 第四轮：报告隐私 / 映射盘 / 通配段 junction（#957）
+
+
+def _fixed_or(remote: set[str]):
+    """注入的 GetDriveTypeW：`remote` 里的盘符是 DRIVE_REMOTE(4)，Q 盘是 NO_ROOT_DIR(1)，别的是固定盘(3)。"""
+    calls: list[str] = []
+
+    def drive_type(root: str) -> int:
+        calls.append(root)
+        letter = root[0].upper()
+        return 4 if letter in remote else 1 if letter == "Q" else 3
+
+    return drive_type, calls
+
+
+@POSIX
+def test_project_scan_report_has_no_machine_paths_for_rejected_candidates(
+    tmp_path, home, monkeypatch, no_process
+):
+    """P2-1：机器级候选被拒（重定向 PATH 项、UNC、映射盘）后，`projscan.scan` 的公开报告里没有绝对路径 / 用户名 / UNC 主机。"""
+    import json
+
+    user_home = tmp_path / "users" / "alice-secret"
+    share = tmp_path / "share"
+    share.mkdir()
+    redirected = user_home / "tools"
+    redirected.parent.mkdir(parents=True)
+    redirected.symlink_to(share, target_is_directory=True)
+    unc = r"\\corp-fileserver-x\share\bin"
+    _nt_scan_env(monkeypatch, [str(redirected), unc, r"Z:\tools"])
+    drive_type, _calls = _fixed_or({"Z"})
+    real_walker = scanbudget.PathWalker
+    monkeypatch.setattr(
+        scanbudget,
+        "PathWalker",
+        lambda **k: real_walker(drive_type=drive_type, **k),
+    )
+    monkeypatch.setattr(
+        pool,
+        "system_python_candidates",
+        lambda budget=None, nt=None: _REAL_SYSTEM_CANDIDATES(budget=budget, nt=True),
+    )
+    project = _project(tmp_path)
+
+    report = projscan.scan(project)
+
+    text = json.dumps(report, ensure_ascii=False)
+    for secret in ("alice-secret", "corp-fileserver-x", str(tmp_path), "Z:", "tools"):
+        assert secret not in text, secret
+    rows = [i for i in report["issues"] if i["code"] == scanbudget.ISSUE_SYMLINK_DIR]
+    assert rows and all("path" not in r and r["severity"] == scanbudget.SEVERITY_NOTE for r in rows)
+
+
+def test_path_walker_issue_rows_never_carry_a_path(tmp_path, monkeypatch):
+    (tmp_path / "x").mkdir()
+    budget = scanbudget.Budget()
+    walker = scanbudget.PathWalker(nt=True, budget=budget, drive_type=lambda r: 4)
+    assert walker.redirected(r"\\corp-fileserver-x\share")
+    assert walker.redirected(r"Z:\a\b")
+    assert walker.redirected(str(tmp_path / "x" / ".." / "y"))
+    assert all("path" not in r for r in budget.issues())
+
+
+def test_windows_mapped_remote_drive_is_rejected_before_any_lstat(tmp_path, monkeypatch):
+    """P2-2：Z:（远程 / 断开的映射盘）在 GetDriveTypeW 判完之前、之后都零 lstat；Q:（无根）同拒；固定盘 C: 照常查，类型按盘符缓存。"""
+    lstats = _record_lstat(monkeypatch)
+    drive_type, calls = _fixed_or({"Z"})
+    walker = scanbudget.PathWalker(nt=True, drive_type=drive_type)
+
+    assert walker.redirected(r"Z:\tools") is not None
+    assert walker.redirected(r"z:\other\bin") is not None
+    assert walker.redirected(r"Q:\x") is not None
+    assert not any(p[:1].upper() in ("Z", "Q") and p[1:2] == ":" for p in lstats)
+    assert walker.redirected(r"C:\Python312") is None  # 固定盘：照常逐级 lstat（本机不存在 → 干净）
+    assert any(p.upper().startswith("C:") for p in lstats)
+    assert calls.count("Z:\\") == 1  # 同一盘符只问一次
+
+
+def test_windows_path_entry_on_a_mapped_drive_never_reaches_the_filesystem(
+    tmp_path, home, monkeypatch, no_process
+):
+    _nt_scan_env(monkeypatch, [r"Z:\tools", str(tmp_path)])
+    drive_type, _ = _fixed_or({"Z"})
+    real_walker = scanbudget.PathWalker
+    monkeypatch.setattr(
+        scanbudget, "PathWalker", lambda **k: real_walker(drive_type=drive_type, **k)
+    )
+    lstats = _record_lstat(monkeypatch)
+
+    _REAL_SYSTEM_CANDIDATES(budget=scanbudget.Budget(), nt=True)
+
+    assert not any(p.upper().startswith("Z:") for p in lstats)
+
+
+def test_default_drive_type_is_never_the_windows_api_off_windows(monkeypatch):
+    if os.name != "nt":
+        assert scanbudget._windows_drive_type("C:\\") == 3  # 非 Windows 不碰 ctypes.windll
+
+
+@POSIX  # 符号链接模拟 junction；Windows 真机未验证
+def test_windows_scan_glob_does_not_descend_into_a_wildcard_matched_junction(
+    tmp_path, home, monkeypatch, no_process
+):
+    """P2-3：`<LOCALAPPDATA>\\Programs\\Python\\Python312` 自己是 junction：通配展开不再交给 glob，命中的目录先过 walker，之下零访问。"""
+    import glob as glob_mod
+
+    local = tmp_path / "Local"
+    pydir = local / "Programs" / "Python"
+    pydir.mkdir(parents=True)
+    share = tmp_path / "share" / "Python312"
+    share.mkdir(parents=True)
+    (share / "python.exe").write_text("MZ", encoding="utf-8")
+    link = pydir / "Python312"
+    link.symlink_to(share, target_is_directory=True)
+    good = pydir / "Python311"
+    good.mkdir()
+    (good / "python.exe").write_text("MZ", encoding="utf-8")
+    _nt_scan_env(monkeypatch, [])
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    touched: list[str] = []
+    _forbid_following_all(monkeypatch, link, touched)
+
+    def no_glob(*a, **k):
+        raise AssertionError("扫描的通配展开不许走 glob.glob")
+
+    monkeypatch.setattr(glob_mod, "glob", no_glob)
+    lstats = _record_lstat(monkeypatch)
+    scandirs: list[str] = []
+    real_scandir = os.scandir
+    monkeypatch.setattr(
+        os, "scandir", lambda p=".": (scandirs.append(os.fspath(p)), real_scandir(p))[1]
+    )
+    budget = scanbudget.Budget()
+
+    found = _REAL_SYSTEM_CANDIDATES(budget=budget, nt=True)
+
+    assert touched == []
+    assert str(link) in lstats  # junction 自己被 lstat 一次后拒
+    assert not any(p.startswith(str(link) + os.sep) for p in lstats)
+    assert not any(p.startswith(str(link)) for p in scandirs)
+    assert all(not py.startswith(str(link)) for py, _ in found)
+    assert (str(good / "python.exe"), "system") in found  # 干净的同级匹配照常出现
+    assert all("path" not in r for r in budget.issues())
+
+
+def test_execution_glob_keeps_the_plain_glob_behaviour(tmp_path, monkeypatch):
+    """执行路径（budget=None）仍是原 `_glob`：这一轮只改只读扫描。"""
+    (tmp_path / "Python311").mkdir()
+    (tmp_path / "Python312").mkdir()
+    got = pool._glob(str(tmp_path / "Python*"))
+    assert [os.path.basename(x) for x in got] == ["Python312", "Python311"]
+
+
+@POSIX
+def test_scan_glob_nt_itself_drops_a_redirected_match(tmp_path):
+    """`_scan_glob_nt` 自己就拒重定向命中（不靠下游再查叶子）：只回干净的那个。"""
+    base = tmp_path / "Py"
+    base.mkdir()
+    (base / "Python311").mkdir()
+    (tmp_path / "share").mkdir()
+    (base / "Python312").symlink_to(tmp_path / "share", target_is_directory=True)
+    walker = scanbudget.PathWalker(nt=True)
+
+    got = pool._scan_glob_nt(str(base) + "/Python*/python.exe", scanbudget.Budget(), walker)
+
+    assert got == [str(base / "Python311" / "python.exe")]
