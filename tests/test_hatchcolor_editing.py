@@ -18,6 +18,7 @@ import hashlib
 import json
 import re
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -188,6 +189,26 @@ def test_explicit_colour_and_edge_are_reported_after_the_edit(worker):
     assert _fields(man, BAR_A0)["hatchcolor"]["follows_edge"] is True
     assert _fields(man, BAR_A0)["hatchcolor"]["value"].lower() == "#008000"
     assert _fields(man, BAR_A0.replace("bar_0", "bar_1"))["hatchcolor"]["follows_edge"] is False
+
+
+def test_manifest_gate_is_the_real_setter_not_the_version_string():
+    """判据的主语是**这个 artist 有没有 `set_hatchcolor`**：同一个解释器里有 / 没有 setter 的两个替身各给各的答案，
+    与 matplotlib 版本号无关（版本号判据在真实 3.11 上与 hasattr 恒等，只有替身分得开；探针在 worker 解释器里跑）。"""
+    probe = Path(__file__).parent / "support" / "hatchcolor_gate_probe.py"
+    out = subprocess.run(  # noqa: S603 — 测试里起 worker 解释器跑探针
+        [WORKER_PY, str(probe)], capture_output=True, text=True, encoding="utf-8", check=True
+    ).stdout
+    rep = json.loads(out.strip().splitlines()[-1])
+    assert rep["with_setter"] == {
+        "prop": "hatchcolor",
+        "type": "color",
+        "value": "#008000",
+        "follows_edge": True,
+    }
+    assert rep["without_setter"] is None, (
+        "没有 set_hatchcolor 的 artist 不该发字段（按版本号判会错）"
+    )
+    assert rep["explicit_follows_edge"] is False
 
 
 # ---------------------------------------------------------------------------
