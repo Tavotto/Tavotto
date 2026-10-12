@@ -733,6 +733,12 @@ class LiveFigureSession:
                 # （Codex #958）。已在编辑的图不在 `fresh` 里，不受影响。
                 self.states.pop(stem, None)
                 self._manifest_cache.pop(stem, None)
+                # 捕获表与 savefig 记账也一并撤掉：pool 会复用这个 worker 重跑脚本，重跑画出的是**新** Figure；
+                # 留着旧的 `capture[stem]`，`add_figure` 会拒收新图、再把失败那次执行的旧图发布出去（Codex #958）
+                self.capture.pop(stem, None)
+                self.capture_source.pop(stem, None)
+                self.savefig_calls.pop(stem, None)
+                self.savefig_extras.pop(stem, None)
                 raise
 
     def stems_summary(self, dropped_figures: int = 0) -> dict:

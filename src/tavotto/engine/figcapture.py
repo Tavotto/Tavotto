@@ -423,7 +423,11 @@ def clear_preview_poison(out_dir) -> bool:
 
 
 def preview_dir_poisoned(out_dir) -> bool:
-    return _dir_key(out_dir) in _poisoned_dirs
+    """`out_dir` 是否仍在作废中。作废期间每次问都**重试审计**：build 成功那一刻旧产物可能正被锁着删不掉，
+    之后锁放开、worker 却不会再 build——一次性的解除会让目录在这个 worker 的整个生命周期都「无预览」（Codex #958）。"""
+    if _dir_key(out_dir) not in _poisoned_dirs:
+        return False
+    return not clear_preview_poison(out_dir)
 
 
 def usable_preview_path(out_dir, stem: str, suffix: str) -> str:

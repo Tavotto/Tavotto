@@ -294,7 +294,11 @@ with tempfile.TemporaryDirectory() as tmp:
             except Exception as exc:
                 out["first_error"] = type(exc).__name__
             out["registered_after_failure"] = "fig" in sess.states
+            # pool 复用这个 worker 重跑脚本：重跑画出的是新 Figure，必须被收下并发布（不是失败那次的旧图）
+            second = good("v2")
+            out["rerun_accepted"] = sess.add_figure("fig", second, figcapture.SOURCE_SAVEFIG)
             sess.instrument_all()  # 锁已解开：重试要真的重新发布这张图
+            out["published_is_rerun"] = sess.capture.get("fig") is second
             out["summary_stems"] = sorted(sess.stems_summary()["stems"])
             out["published"] = figcapture.published_preview_stems(tmp)
         finally:
@@ -577,6 +581,10 @@ def test_poison_stays_while_a_stale_preview_cannot_be_removed(tmp_path, monkeypa
     try:
         assert figcapture.clear_preview_poison(out) is False
         assert not Path(figcapture.usable_preview_path(out, "old", ".svg")).exists()
+        # 锁放开之后，下一次读就重试审计并解除——不是 worker 一辈子「无预览」（Codex #958）
+        monkeypatch.setattr(os, "remove", real_remove)
+        assert figcapture.preview_dir_poisoned(out) is False
+        assert not (out / "old.svg").exists()
     finally:
         figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
 
@@ -587,6 +595,7 @@ def test_a_transient_first_publish_failure_can_be_retried():
     r = _drive("first_publish_ledger_glitch_then_retry")
     assert r["first_error"] == "PermissionError", r
     assert r["registered_after_failure"] is False, r
+    assert r["rerun_accepted"] is True and r["published_is_rerun"] is True, r
     assert r["summary_stems"] == ["fig"] and r["published"] == ["fig"], r
 
 
