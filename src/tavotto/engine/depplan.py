@@ -1236,15 +1236,21 @@ def _provider_decisions(
             action, chosen = "install", install_name
         elif verdict.kind == _OPEN:
             action, chosen = "undecided", install_name
-        elif target_installed is None:
-            action, chosen = "satisfied", verdict.dist or install_name
         else:
-            present = _providers(c, dict(target_installed))
-            named = [d for d in present if d in by_name]
-            if len(present) == 1:
-                action, chosen = "satisfied", present[0]
-            elif len(named) == 1:
-                action, chosen = "satisfied", named[0]
+            # 「已满足」的提供者必须有独立的授权：被声明点名，或正是表 / 用户确认给出的安装名。
+            # 只是观察到的别家发行包（如 yaml 由 yaml-fork 提供）不能借 curated 的名义披露成已满足（Codex #964）。
+            def _authorized(d: str) -> bool:
+                return bool(by_name.get(d)) or d == install_name
+
+            if target_installed is None:
+                present = [verdict.dist] if verdict.dist else []
+            else:
+                present = _providers(c, dict(target_installed))
+            authorized = [d for d in present if _authorized(d)]
+            if target_installed is None and not present:
+                action, chosen = "satisfied", install_name
+            elif len(authorized) == 1:
+                action, chosen = "satisfied", authorized[0]
             else:
                 action, chosen = "undecided", install_name
         if not chosen:

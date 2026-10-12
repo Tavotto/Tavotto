@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from support.dependency_repair import build_wheel, needs_worker, wait_for
-from tavotto.engine import depplan, deprepair, envlease, managedenv
+from tavotto.engine import depplan, deprepair, depresolve, envlease, managedenv
 
 pytest_plugins = ("support.dependency_repair",)
 
@@ -316,6 +316,74 @@ def test_a_record_without_a_source_is_refused_before_any_side_effect(monkeypatch
         deprepair._run_generation_locked(Job(), None, "k")
     assert err.value.code == deprepair.ERROR_FAILED
     assert touched == []
+
+
+def _scope_facts(installed):
+    from tavotto.engine import importscan
+
+    return depplan.TargetFacts(
+        python="/fake/bin/python",
+        marker_env={
+            "implementation_name": "cpython",
+            "implementation_version": "3.12.4",
+            "os_name": "posix",
+            "platform_machine": "arm64",
+            "platform_release": "",
+            "platform_system": "Darwin",
+            "platform_version": "",
+            "python_full_version": "3.12.4",
+            "platform_python_implementation": "CPython",
+            "python_version": "3.12",
+            "sys_platform": "darwin",
+        },
+        stdlib=importscan.HOST_STDLIB,
+        installed={"matplotlib": "3.10.0", "numpy": "2.1.0", **installed},
+        prefix="/fake",
+    )
+
+
+@pytest.mark.parametrize("separate_target", [False, True])
+def test_an_observed_only_provider_is_not_disclosed_as_curated(tmp_path, separate_target):
+    """只是观察到的别家提供者（这里 contrib 提供 cv2，项目没声明、表给的是 opencv-python）不能披露成
+    「已满足 / curated」——那是借表的名义编授权依据；没有独立授权就如实 `undecided`（Codex #964）。"""
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "figure.py").write_text("import cv2\nimport yaml\n", encoding="utf-8")
+    contrib = _scope_facts({"opencv-contrib-python": "4.10.0.84"})
+    plan = depplan.plan(
+        project,
+        "figure.py",
+        facts=_scope_facts({"opencv-contrib-python": "4.10.0.84"}) if separate_target else contrib,
+        install_facts=contrib if separate_target else None,
+        target_kind=depplan.TARGET_MANAGED,
+        dists=None,
+    )
+    (cv2,) = [d for d in plan.provider_decisions if d["import_name"] == "cv2"]
+    assert not (cv2["action"] == "satisfied" and cv2["distribution"] == "opencv-contrib-python"), (
+        cv2
+    )
+    assert cv2["action"] in ("undecided", "install"), cv2
+
+
+def test_a_declared_provider_found_in_the_target_is_still_satisfied(tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "requirements.txt").write_text("opencv-contrib-python\n", encoding="utf-8")
+    (project / "figure.py").write_text("import cv2\nimport yaml\n", encoding="utf-8")
+    plan = depplan.plan(
+        project,
+        "figure.py",
+        facts=_scope_facts({"opencv-python-headless": "4.10.0.84"}),
+        install_facts=_scope_facts({"opencv-contrib-python": "4.10.0.84"}),
+        target_kind=depplan.TARGET_MANAGED,
+        dists=None,
+    )
+    (cv2,) = [d for d in plan.provider_decisions if d["import_name"] == "cv2"]
+    assert (cv2["action"], cv2["distribution"], cv2["basis"]) == (
+        "satisfied",
+        "opencv-contrib-python",
+        depresolve.SOURCE_PROJECT_DECLARED,
+    ), cv2
 
 
 def test_satisfied_provider_is_read_from_the_install_target_not_the_run_interpreter(tmp_path):
