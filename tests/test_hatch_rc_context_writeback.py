@@ -85,7 +85,5 @@ def test_alpha_edit_then_undo_then_write_back_is_not_a_replay_divergence(project
 
     r = client.post("/api/engine/update_source", json={"id": f"{rc.STEM}.pdf", "patches": []})
     body = r.get_json()
-    assert r.status_code == 200, (
-        f"撤销 alpha 之后写回被拦：{body.get('code')} {body.get('diffs')}"
-    )
+    assert r.status_code == 200, f"撤销 alpha 之后写回被拦：{body.get('code')} {body.get('diffs')}"
     assert (body.get("verification") or {}).get("pixels") == "ok", body

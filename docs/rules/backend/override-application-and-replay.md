@@ -142,6 +142,16 @@
   同族先例：
   `_AUTOSCALE`（自动缩放）、`_NO_BBOX`（没有框）、`_get_coll_edgecolor`（映射通道）。
   哨兵只活在 `originals` 里，不进 patch、不过 JSON。看护 `tests/test_patch_edgecolor_mode.py`。
+- **会读环境重解析的 setter，首次触碰前先把「未设」模式钉成创建时的值（#874）**：matplotlib ≥3.11 的
+  `Patch.set_alpha` / `Patch.set_fill` / `Collection.set_alpha` 把 `_original_hatchcolor is None` 的花纹色
+  按**此刻**的 `rcParams['hatch.color']` 重解析。脚本在 `rc_context` / `style.context` 里改过 `hatch.color`
+  时，创建时的 red / `'edge'` / 半透明 RGBA 被环境值盖掉，撤销回不去——编辑那一刻热态与重放一致，分叉只在
+  撤销之后（像素不同、manifest 相同、warnings 为空，写回 verify 报 409 `replay_divergence`）。
+  `overrides._pin_hatchcolor` 在 alpha / fill setter 动手**之前**调 `set_hatchcolor(已解析值)`（按真实
+  setter 判，不按版本号；幂等）。≤3.10 没有重解析，但 `set_fill(False)` 把 `_hatch_color` 改成边色而
+  `set_fill(True)` 不写回：`_set_patch_fill` 用记在 artist 上的创建时值（`_ORIG_HATCH`，边色 getter 也采）
+  在 `_original_edgecolor is None` 时写回。看护 `tests/test_override_sequences.py::test_rc_context_hatch_*`
+  与 `tests/test_hatch_rc_context_writeback.py`；调研与实测矩阵见 `docs/implementation/hatchcolor-874/RESEARCH.md`。
 - **`value_original`：override 之前脚本的值，与 `value` 同一口径（ADR 0081 §十三，2026-09-25）**。
   前端拿它判「脚本重跑后改没改这一项」：样式写的 override 在脚本改过的那一项上让位（用户裁决：
   重跑后脚本赢）。`originals` 存的是 getter 的原始对象（元组 / Colormap / 哨兵），前端没法拿它与

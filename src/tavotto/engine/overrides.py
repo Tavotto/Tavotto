@@ -3223,6 +3223,8 @@ def _set_patch_fill(p, v) -> None:
         and hasattr(p, _ORIG_HATCH)
     ):
         p._hatch_color = getattr(p, _ORIG_HATCH)  # noqa: SLF001
+
+
 _CAP_VISIBLE = (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))
 _CAP_ZORDER = (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v)))
 _CAP_LABEL = (lambda a: str(a.get_label()), lambda a, v: a.set_label(str(v)))

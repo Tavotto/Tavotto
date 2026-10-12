@@ -597,7 +597,9 @@ def test_rc_context_hatch_alpha_and_fill_round_trips_restore_the_script_look(rc_
     try:
         base_png = _png(hot, rc.STEM, [], f"rc-{name}-base")
         seen = _diverges_hot_vs_replay(hot, replay, rc.STEM, steps, f"rc-{name}")
-        assert seen is None, f"{name}：第 {seen.step} 步热态 ≠ 重放（manifest {seen.manifest} 像素 {seen.pixel}）"
+        assert seen is None, (
+            f"{name}：第 {seen.step} 步热态 ≠ 重放（manifest {seen.manifest} 像素 {seen.pixel}）"
+        )
         # 序列最后一步是 []：热态已撤空
         hot_png = _png(hot, rc.STEM, [], f"rc-{name}-hot-end")
         fresh_png = _png(fresh, rc.STEM, [], f"rc-{name}-fresh")
