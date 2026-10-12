@@ -116,7 +116,8 @@ export function DiagnosticsSendDialog({
   const discard = useCallback(() => {
     const id = idRef.current
     idRef.current = null
-    if (id) void discardDiagSend(id).catch(() => {})
+    // 显式传备包时的项目：清理发生在 `setCurrentProjectId(B)` 之后，全局当前项目已不是这份包的项目
+    if (id) void discardDiagSend(id, packagePj.current).catch(() => {})
   }, [])
 
   // 打开 → 备包（只在打开那一刻采一次载荷）；关闭 / 卸载 → 丢弃
@@ -132,14 +133,15 @@ export function DiagnosticsSendDialog({
     setCancelledNotice(showCancelled.current)
     showCancelled.current = false
     setPackageGone(false)
-    packagePj.current = currentProjectId()
+    const pj = currentProjectId()
+    packagePj.current = pj
     // 切项目进行中（`projectStore.switching`：从认领新 pj 到文档 / 轨迹 / 各 store 换代完成）：内存里
     // 还是旧项目的文档与轨迹，此刻备的包会是 A/B 混合包——不备，等 `switching` 落下去再来（下面的订阅）
     if (useProjectStore.getState().switching) return () => void (gen.current++)
     void prepareDiagSend(buildDiagnosticPayload())
       .then((p) => {
         if (gen.current !== mine) {
-          if (p.id) void discardDiagSend(p.id).catch(() => {})
+          if (p.id) void discardDiagSend(p.id, pj).catch(() => {})
           return
         }
         setPrepared(p)

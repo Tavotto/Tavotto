@@ -285,3 +285,13 @@ class TestPerProjectSessions:
         client.post(f"/api/diagnostics/send/{pa['id']}/discard", headers={"X-Tavotto-Project": b})
         r = client.get(f"/api/diagnostics/send/{pa['id']}", headers={"X-Tavotto-Project": a})
         assert r.status_code == 200, "B 的 discard 不能丢掉 A 的包"
+
+    def test_explicit_pj_query_wins_over_a_conflicting_header(self, client, on, tmp_path):
+        """Codex #955：前端在切项目途中清理 A 的会话，头已是 B、`?pj=` 显式写 A——以显式 pj 为准，A 的会话必须被丢弃。"""
+        a, b = _open_two(client, tmp_path)
+        pa = _prep(client, a)
+        client.post(
+            f"/api/diagnostics/send/{pa['id']}/discard?pj={a}", headers={"X-Tavotto-Project": b}
+        )
+        r = client.get(f"/api/diagnostics/send/{pa['id']}", headers={"X-Tavotto-Project": a})
+        assert r.status_code == 404, "A 的会话应已被丢弃"
