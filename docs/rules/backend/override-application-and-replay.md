@@ -152,6 +152,9 @@
   不重解析 rc）。所以钉只活在 setter 调用期间：native 屏障释放 `apply([])`、safe worker 撤空、编辑进行中，
   任何时刻这个 artist 的模式都与没被 Tavotto 编辑过的一样，用户恢复运行的 Python 再改 rc 并 `set_alpha` 照常跟随
   新 rc（Codex #950 r4245786615；还原挂在 setter 里而不是某条 restore 上，因为 restore 本来就走同一个 setter）。
+  还原只在跑完后模式**仍是我们钉进去的那个对象**时才做（钉的是独有副本、身份比较）：用户子类若重写
+  `set_alpha` / `set_fill` 并自己调 `set_hatchcolor`，那是它有意装的模式，保留；setter 抛异常时同样（Codex #950
+  r4246080546；`tests/test_hatch_mode_restored.py` 子类用例）。
   创建时的值另记在 artist 的 `_mm_hatch_base = (创建时的值, 我们上次写完的样子)`：撤销要找回 rc 里的内在 alpha，
   当下的值已被 alpha 编辑合成过；第二项对不上说明屏障之间用户代码动过，按实况重记。脚本显式给过 hatchcolor 的
   artist 原样跑。≤3.10 没有重解析，但 `set_fill(False)` 把 `_hatch_color` 改成边色而
