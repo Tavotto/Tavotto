@@ -318,7 +318,11 @@ def test_hot_session_equals_a_fresh_replay_at_every_step(worker, library, name):
     assert _png(worker, [], f"{name}-end") == base_png, f"{name}：撤空后没有回到脚本原样"
 
 
+BAR_B0 = "axes_0.barseries_1.bar_0"  # 系列字段的读数取自第一根柱，单柱落在它身上才碰得到 `value_original`
+
+
 @needs_hatchcolor
+@pytest.mark.parametrize("bar_gid", [BAR_B1, BAR_B0])
 @pytest.mark.parametrize(
     "prop,v1,v2",
     [("hatch_linewidth", 3.0, 2.0), ("hatchcolor", "#ff00ff", "edge"), ("hatch", "///", "|")],
@@ -333,10 +337,10 @@ def test_hot_session_equals_a_fresh_replay_at_every_step(worker, library, name):
     ],
 )
 def test_single_and_series_undo_orders_match_replay_and_return_to_the_script(
-    worker, library, prop, v1, v2, order
+    worker, library, bar_gid, prop, v1, v2, order
 ):
     base_png = _png(worker, [], "base")
-    bar, series = _p(BAR_B1, prop, v1), _p(SERIES_B, prop, v2)
+    bar, series = _p(bar_gid, prop, v1), _p(SERIES_B, prop, v2)
     table = {"single": [bar], "series": [series], "both": [bar, series], "empty": []}
     for i, step in enumerate(order.split(",")):
         patches = table[step]
@@ -345,6 +349,14 @@ def test_single_and_series_undo_orders_match_replay_and_return_to_the_script(
         fresh_man, fresh_png = _fresh(library, patches, f"{prop}-{order}-{i}-f")
         assert hot_man == fresh_man, f"{order} 第 {i} 步：热态 manifest ≠ 重放"
         assert hot_png == fresh_png, f"{order} 第 {i} 步：像素 ≠ 重放"
+        for gid in (
+            SERIES_B,
+            bar_gid,
+        ):  # value_original 也要与重放一致（整份 manifest 已比，这里点名两个读数）
+            hot_f, fresh_f = _fields(hot_man, gid)[prop], _fields(fresh_man, gid)[prop]
+            assert hot_f.get("value_original") == fresh_f.get("value_original"), (
+                f"{order} 第 {i} 步 {gid}：value_original 热态 ≠ 重放"
+            )
     assert _png(worker, [], "end") == base_png
 
 

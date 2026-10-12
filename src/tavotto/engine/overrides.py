@@ -5064,6 +5064,11 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                                     state.originals.get(m, cur)
                                     for m, cur in zip(_mem, state.originals[key])
                                 ]
+                                # `value_original` 同理：系列字段的读数取自第一根柱（`_bar_series_fields` 的
+                                # `rects[0]`），它若已被单柱先改过，快照里读到的是编辑后的值，要改借单柱那份
+                                # （Codex #972 r4251097939）
+                                if _mem and _mem[0] in state.original_values:
+                                    state.original_values[key] = state.original_values[_mem[0]]
                     else:
                         # 借来的原样（对等广播端 / 组员采的，同名 prop、指着同一个值）：`value_original`
                         # 也借它那一份——此刻自己的实况已经被对方改过，读不得。不借的话热会话（先改了对方）
