@@ -107,7 +107,13 @@ def _bare_python(tmp_path: Path) -> str:
     d = tmp_path / "bare venv"
     venv.EnvBuilder(with_pip=False, system_site_packages=False).create(d)
     py = d / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    assert subprocess.run([str(py), "-c", "import tavotto"], capture_output=True).returncode != 0
+    # 剥掉 PYTHONPATH 再验：worktree 里照 AGENTS.md 带 `PYTHONPATH=$PWD/src` 跑时子进程会继承它、
+    # import 得到 tavotto，这条前提就假红（CI 不设它所以看不见）
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    assert (
+        subprocess.run([str(py), "-c", "import tavotto"], capture_output=True, env=env).returncode
+        != 0
+    )
     return str(py)
 
 
@@ -379,7 +385,8 @@ def test_engine_found_only_through_the_shell_env_is_pinned(
     且钉住后在最小环境里再验过（来源变成 mcp_env）。"""
     mod = _load(unpacked / "integrations" / "configure.py")
     bare = _bare_python(tmp_path)
-    for name in ("TAVOTTO_MCP_PYTHON", "TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON"):
+    # PYTHONPATH 也剥掉：build 在本进程里探 bare，继承了它 bare 就「有引擎」，来源变 current
+    for name in ("TAVOTTO_MCP_PYTHON", "TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON", "PYTHONPATH"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("PATH", os.pathsep.join(["/usr/bin", "/bin"]))
     monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", sys.executable)  # 只在「shell」里有
