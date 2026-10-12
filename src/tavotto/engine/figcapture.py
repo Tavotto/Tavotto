@@ -1723,8 +1723,10 @@ class BlockedFileOps:
     def mkdir_collided(self, path) -> None:
         """脚本 `os.mkdir`（非 `exist_ok`）一个被拦下的删除所覆盖的目录，撞上了守卫留下的旧目录
         （`FileExistsError`）：直接运行里目录已被删、mkdir 会成功——脚本走进了异常分支，本身就是一次观察。
-        脚本自己重建过的目录不算（两边都会失败；`_mark` 对 `_rewritten` 直接放行）。永不抛。"""
-        self.observe_stat(path)
+        脚本自己重建过的目录不算（两边都会失败；`_mark` 对 `_rewritten` 直接放行）。
+        与 `x` 打开撞名同一判据：只有**破坏性**操作（删除 / 删除目录 / 改名移动的源）影响过的路径才算——
+        写入等保留存在性的操作被拦后，`os.mkdir` 撞名在两边同样失败，不是分叉（Codex #952）。永不抛。"""
+        self.exclusive_create_failed(path)
 
     def exclusive_create_failed(self, path) -> None:
         """`x` 打开撞上了已存在的文件（`FileExistsError`）。若这条路径被守卫拦下的**破坏性**操作

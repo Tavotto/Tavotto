@@ -937,6 +937,20 @@ def test_ledger_failed_write_open_keeps_the_taint_and_x_failure_observes(tmp_pat
     assert unrelated.material() == []
 
 
+def test_ledger_mkdir_collision_only_counts_after_a_destructive_block(tmp_path):
+    """`os.mkdir` 撞名与 `x` 打开同一判据：写入被拦（直跑后路径同样存在）之后的撞名两边一样失败，不是分叉；
+    删除 / 删除目录被拦之后撞名才是（直跑里路径已经没了，Codex #952）。"""
+    f = tmp_path / "cache.csv"
+    write = _ledger(tmp_path)
+    write.blocked("Path.write_text", "write", str(f))
+    write.mkdir_collided(str(f))
+    assert write.material() == []
+    gone = _ledger(tmp_path)
+    gone.blocked("shutil.rmtree", "delete_dir", str(tmp_path / "old_dir"))
+    gone.mkdir_collided(str(tmp_path / "old_dir"))
+    assert [o["op"] for o in gone.material()] == ["shutil.rmtree"]
+
+
 def test_ledger_move_destination_resolves_like_shutil_move(tmp_path):
     ledger = _ledger(tmp_path)
     d = tmp_path / "archive"
