@@ -5087,7 +5087,8 @@ def _provider_receipt(
             {
                 "import_name": imp,
                 "distribution": dist,
-                "version": str(installed.get(dist) or (got or {}).get("version") or ""),
+                # 核验过的提供者版本优先：venv 开了 system site-packages 时 inventory 可能留下被遮蔽的那份（Codex #964）
+                "version": str((got or {}).get("version") or installed.get(dist) or ""),
                 "source": source,
                 "provenance": str((got or {}).get("provenance") or ""),
                 "generation": generation,

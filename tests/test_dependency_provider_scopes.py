@@ -290,6 +290,19 @@ def test_install_records_carry_the_resolution_source_into_the_receipt(
     assert all(p["source"] for p in receipt)
 
 
+def test_the_receipt_prefers_the_verified_provider_version_over_the_inventory():
+    """venv 开了 system site-packages、venv 与 base 各有一份不同版本：核验认出的是未被遮蔽的那份，
+    回执要报它的版本，不能被 inventory 里后写入的那份覆盖（Codex #964）。"""
+    record = [{"import_name": "yaml", "distribution": "PyYAML", "resolution_source": "curated"}]
+    provided = [
+        {"import_name": "yaml", "distribution": "pyyaml", "version": "6.0.2", "provenance": "index"}
+    ]
+    (row,) = deprepair._provider_receipt(record, provided, {"pyyaml": "5.4.1"}, "")
+    assert row["version"] == "6.0.2"
+    (fallback,) = deprepair._provider_receipt(record, [], {"pyyaml": "5.4.1"}, "")
+    assert fallback["version"] == "5.4.1"
+
+
 def test_the_receipt_refuses_a_record_without_a_source():
     with pytest.raises(ValueError, match="resolution_source"):
         deprepair._provider_receipt(
