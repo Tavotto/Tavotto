@@ -95,6 +95,8 @@ SYSTEM_MAX_ENTRIES = 2_000
 SYSTEM_MAX_SECONDS = 3.0
 #: 子预算用尽的账本行用这个 scope：无路径、note 级，且**不参与**「没找到脚本就升级 partial」（见 `projscan.scan`）。
 SCOPE_SYSTEM = "system"
+#: 机器级路径（PATH / Conda / pyenv / IDE 线索）逐级检查的剪枝：与项目扫描完整性无关
+SCOPE_MACHINE = "machine"
 
 #: macOS `SF_DATALESS`（`st_flags`）：文件内容不在本机，读它会触发下载。
 _DARWIN_DATALESS = 0x40000000
@@ -229,8 +231,9 @@ class PathWalker:
         if self.budget is not None:
             # 机器上某条 PATH / 前缀按策略不碰，是设计内的剪枝，不是项目扫描没做完：记 note（不把整次扫描降成 partial）。
             # 报告是公开的（`/api/project/scan` 原样回），机器级路径（用户目录、UNC 主机名）不进去：
-            # 只记无路径的 walk 级一行（同 code 合并计数）。
-            self.budget.note(code, severity=SEVERITY_NOTE, scope="walk")
+            # 只记无路径的一行（同 code 合并计数）。scope 用机器级 `SCOPE_MACHINE`，**不是**项目遍历的 `walk`：
+            # 后者在「一个脚本都没找到」时会把扫描升级成 partial，而机器上的剪枝与项目扫没扫全无关（Codex #957）。
+            self.budget.note(code, severity=SEVERITY_NOTE, scope=SCOPE_MACHINE)
 
     def _drive_ok(self, drive: str) -> bool:
         """盘符根可不可碰：在**任何**文件系统操作（含 lstat 盘符根）之前先问盘类型。远程盘（含断开的映射盘）、

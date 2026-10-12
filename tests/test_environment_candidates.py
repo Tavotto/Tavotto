@@ -1198,3 +1198,39 @@ def test_system_subbudget_never_outlives_the_parent_deadline():
     now[0] = parent.limits.max_seconds + 5
     late = scanbudget.system_sub_budget(parent)
     assert late.limits.max_seconds == 0.0
+
+
+def test_machine_walk_pruning_does_not_make_a_static_project_partial(tmp_path, monkeypatch):
+    """纯静态项目（没有脚本）：机器级路径被逐级检查剪掉（machine 级 note）不能把扫描升级成 partial（Codex #957）。"""
+    from tavotto.engine import projscan
+
+    budget = scanbudget.Budget()
+    scanbudget.PathWalker(nt=False, budget=budget)._note("symlinked_dir")
+    rows = budget.issues()
+    assert rows and all(r["scope"] == scanbudget.SCOPE_MACHINE and "path" not in r for r in rows)
+
+    real = projscan.environment_evidence
+
+    def with_machine_pruning(root, script, budget=None, **kw):
+        if budget is not None:
+            scanbudget.PathWalker(nt=False, budget=budget)._note("symlinked_dir")
+        return real(root, script, budget=budget, **kw)
+
+    monkeypatch.setattr(projscan, "environment_evidence", with_machine_pruning)
+    project = tmp_path / "static"
+    project.mkdir()
+    (project / "only.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    report = projscan.scan(project)
+    assert report["state"] == projscan.STATE_COMPLETE, report.get("issues")
+
+
+def test_environment_evidence_without_a_budget_uses_the_scan_safe_enumerator(tmp_path, monkeypatch):
+    """页面环境建议（无预算）也只走有界、不碰网络的只读枚举：传进 system_candidates 的一定是一份预算（Codex #957）。"""
+    from tavotto.engine import projscan
+
+    seen = []
+    monkeypatch.setattr(
+        projscan.userenvs, "system_candidates", lambda budget=None: seen.append(budget) or []
+    )
+    projscan.environment_evidence(tmp_path, None, budget=None, private=True)
+    assert seen and all(isinstance(b, scanbudget.Budget) for b in seen)
