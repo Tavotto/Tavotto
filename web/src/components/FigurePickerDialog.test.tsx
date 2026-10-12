@@ -105,6 +105,24 @@ describe('FigurePickerDialog', () => {
     }
   })
 
+  it('「全部添加」：入口排队 / 被挡（返回 null）时一张都没加成，不说「已全部添加」', () => {
+    useRuntimeAssetStore.setState({ assets: [asset('FigA'), asset('FigB')], previewNonce: {} } as never)
+    useFigurePickerStore.setState({ script: 'multi.py' })
+    mockAddRuntime.mockReturnValue(null)
+    const original = useUiStore.getState().setStatus
+    const status = vi.fn()
+    useUiStore.setState({ setStatus: status })
+    try {
+      render()
+      act(() => (document.querySelector('[data-figure-picker-add-all]') as HTMLButtonElement).click())
+      expect(mockAddRuntime).toHaveBeenCalledTimes(2)
+      expect(status).not.toHaveBeenCalled()
+    } finally {
+      useUiStore.setState({ setStatus: original })
+      mockAddRuntime.mockReset()
+    }
+  })
+
   it('脚本的每张图都可见，选第二张加的就是第二张', () => {
     useRuntimeAssetStore.setState({
       assets: [asset('FigA'), asset('FigB')],

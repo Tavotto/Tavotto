@@ -52,7 +52,7 @@ import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { beginRestore, settleRestore, resetRestoreGateForTests, useDocumentStore } from '@/store/documentStore'
 import type { PanelObject } from '@/types/document'
 import { seedExactRender } from '@/test/renderFixtures'
 import { useScriptInputStore } from '@/store/scriptInputStore'
@@ -1092,6 +1092,52 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(panel().dataset.prepState).toBe('edit_opening')
     await act(async () => seedExactRender(target, { elements: [] } as never))
     expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
+describe('进入编辑遇到上次的排版还没恢复好', () => {
+  afterEach(() => resetRestoreGateForTests())
+
+  it('blocked（需要用户先处理恢复）：什么都没放进去，卡片留着，不说已进入编辑', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
+    vi.mocked(openFastEdit).mockImplementation((() => 'blocked') as never)
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().guideCard).not.toBe('closed')
+    expect(panel()).not.toBeNull()
+    expect(useDocumentStore.getState().doc.objects).toEqual([])
+  })
+
+  it('deferred（恢复在路上）：入口排队期间卡片留着；真的落进文档之后才收', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const token = beginRestore('pj-a')
+    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
+    vi.mocked(openFastEdit).mockImplementation((() => 'deferred') as never)
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().guideCard).not.toBe('closed')
+    // 恢复落定、排队的入口落地（用例里由「落地」的那一步放面板）
+    await act(async () => {
+      putPanel('runtime:plot.py#a')
+      settleRestore(token, { state: 'ready', reason: 'empty' })
+      await Promise.resolve()
+    })
+    expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  it('deferred 后被取代 / 没落进文档：卡片不收', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const token = beginRestore('pj-a')
+    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
+    vi.mocked(openFastEdit).mockImplementation((() => 'deferred') as never)
+    await act(async () => primary()!.click())
+    await act(async () => {
+      settleRestore(token, { state: 'ready', reason: 'empty' }) // 入口没落（没有面板）
+      await Promise.resolve()
+    })
+    expect(useUiStore.getState().guideCard).not.toBe('closed')
   })
 })
 

@@ -55,7 +55,8 @@ import {
   type PrepEntry,
 } from '@/store/projectPreparationStore'
 import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
-import { findFigurePanel } from '@/store/documentStore'
+import { currentProjectId } from '@/lib/session'
+import { findFigurePanel, whenDocumentReady } from '@/store/documentStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import type { PanelObject } from '@/types/document'
@@ -681,14 +682,29 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         if (!known && !findFigurePanel(d.asset_id)) {
           addRuntimePanelToCanvas(d)
         }
-        openFastEdit(d.asset_id)
-        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个
-        const opened = useWorkspaceStore.getState().activePanelId
-        const found = opened ? findFigurePanel(d.asset_id, opened) : null
-        if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
-        else noteEditingFor(entry.key, d.asset_id)
+        const outcome = openFastEdit(d.asset_id)
+        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个；
         // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
-        ui.setGuideCard('closed')
+        const landed = () => {
+          const opened = useWorkspaceStore.getState().activePanelId
+          const found = opened ? findFigurePanel(d.asset_id, opened) : null
+          if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
+          else noteEditingFor(entry.key, d.asset_id)
+          ui.setGuideCard('closed')
+        }
+        if (outcome === 'blocked') {
+          // 上次的排版还要用户先处理：这次什么都没放进去（门已经说了「上次的排版还没打开」）——卡片留着，处理完再点
+          return null
+        }
+        if (outcome === 'deferred') {
+          // 上次的排版还在恢复：入口已排队，**真的落进文档之后**才收卡片；被取代 / 超时（没落）就留着
+          const pj = currentProjectId()
+          void whenDocumentReady(pj).then((verdict) => {
+            if (verdict === 'ready' && guard.still() && findFigurePanel(d.asset_id)) landed()
+          })
+          return null
+        }
+        landed()
         return null
       }
       case 'reopen':
