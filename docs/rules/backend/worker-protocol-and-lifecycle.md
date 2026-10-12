@@ -85,8 +85,14 @@
   material 非空时 build 以该 code 结束——脚本跑到末尾、`except Exception` 吞掉了异常、或因读不到而崩
   （原因是守卫不是 `missing_input`）、或随后 `sys.exit` 非零，一律如此。载荷只有类别（`operations`）、
   `required_execution="preserve_file_semantics"` 与 `adapter_available=false`，没有路径（message 会进
-  app.log）。盲区写在明处：C 扩展直接 `fopen`、`os.open`、`listdir`/`glob`/`scandir`、Windows 3.12+ 的
-  `os.path.exists` 观察不到，账本不宣称它们干净。pool 的镜像常量 `FILE_OPERATION_BLOCKED_CODE` 与
+  app.log）。**拦下超过 200 次也不丢**：事件账上限 `MAX_EVENTS=200`，超出的操作并入按 (op, kind) 的溢出路径集合
+  （去重；超 `MAX_SPILL_PATHS=2048` 粗化为父目录；目录也超则记「丢失」，此后任何观察都算命中），
+  所以清理几百个缓存再回读第 201+ 个路径照样判失败，拦下几百次但从不回读照旧成功；只有拦下上千个互不相干
+  的目录之后才会退化成「之后任何观察都算」，这是宁可误报不假成功的取舍。**状态查询入口**：除 `os.stat` 外，
+  `os.path.exists`/`lexists`/`isfile`/`isdir`/`islink` 逐个包装——Windows 3.12+ 它们是 C 实现、不经 `os.stat`，
+  不包就观察不到（CI Windows 腿抓到的 `os.remove` 后 `os.path.exists` 假成功）；被拦截的 savefig 目标仍只认读内容。
+  盲区写在明处：C 扩展直接 `fopen`、`os.open`、`listdir`/`glob`/`scandir`、`os.access` 等未包装的状态查询观察不到，
+  账本不宣称它们干净。pool 的镜像常量 `FILE_OPERATION_BLOCKED_CODE` 与
   `file_operation_blocked_params`、HTTP `_worker_error_payload`、probe 透传同一份载荷。看护
   `tests/test_worker_blocked_file_ops.py`。`SystemExit`
   的载荷若不是整数（`sys.exit("…")`）不进 message——那是用户的文字，message 会进 app.log

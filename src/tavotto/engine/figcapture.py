@@ -1445,19 +1445,26 @@ class BlockedFileOps:
     * **只算拦下之后的观察**：先于阻断的读、读不相干的路径、拦下了但从没回读（脚本只是顺手删个过期
       输出），都不算——这些脚本照旧成功。
     * **脚本自己重写（`w` / `x` 打开）会清掉那条路径的嫌疑**：此后读到的是它自己写的，与直接运行一致。
+    * **拦下上百次也不丢**：事件账有上限（`MAX_EVENTS`），超出的操作并入按 (op, kind) 的溢出路径集合
+      （去重、有上限，再超则粗化为父目录，最后记「丢失」＝此后任何观察都算命中）；回读第 201+ 个被拦路径
+      同样判失败，拦下几百次但从不回读照旧成功。
     * **事实在带外账本里，不在异常里**：脚本 `except Exception: pass` 吞掉什么都洗不掉它。
     * **盲区写在明处（判不出就别判）**：C 扩展直接 `fopen`、`os.open`、`os.scandir` / `listdir` / `glob`、
-      Windows 3.12+ 的 `os.path.exists`（C 实现、不经 `os.stat`）观察不到——这些不会产生 `material()`，
+      `os.access`、`os.path.samefile` 等不在包装清单里的状态查询观察不到——这些不会产生 `material()`，
       也就**不宣称**它们干净；账本只回答「观察到了」，不回答「没观察到所以没事」。被拦截的 `savefig`
       目标只认**读内容**（open），不认 `exists` / `getsize` 这类 stat：`savefig(p); print(os.path.exists(p))`
       是常见的校验打印，据此判失败会把原本能出图的脚本变成失败。
     * 记账只存**操作类别与次数**，路径只在进程内用来比对，不出进程、不进 message / 诊断。
 
-    `install()` 装的 open / `os.stat` 包装在没有任何阻断记录时是一次属性读取就返回；`stop()`
+    `install()` 装的 open / `os.stat` / `os.path.exists` 系包装在没有任何阻断记录时是一次属性读取就返回；`stop()`
     （脚本跑完）之后整本账变成惰性——引擎自己后续写预览、读字体不会被误算。
     """
 
     MAX_EVENTS = 200
+    #: 超过 `MAX_EVENTS` 之后的「溢出账」：每个 (op, kind) 一本，只存受影响路径的集合（去重）。
+    #: 路径数超过 `MAX_SPILL_PATHS` 就粗化成它们的父目录；父目录也超过就记「丢失」，
+    #: 此后任何脚本观察都算命中（宁可误报也不假成功；只发生在拦下上千个互不相干的目录之后）。
+    MAX_SPILL_PATHS = 2048
 
     #: 操作类别（`kind`）的闭集：message 与载荷只出现这些，不出现路径。
     KIND_RENAME = "rename"
@@ -1468,6 +1475,7 @@ class BlockedFileOps:
 
     def __init__(self) -> None:
         self._events: list[dict] = []
+        self._spill: dict[tuple[str, str], dict] = {}
         self._active = True
         self._busy = False
         self._uninstall = None
@@ -1497,14 +1505,55 @@ class BlockedFileOps:
     def blocked(self, op: str, kind: str, *paths) -> None:
         """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。"""
         try:
-            if not self._active or len(self._events) >= self.MAX_EVENTS:
+            if not self._active:
                 return
             affected = [p for p in (self._norm(x) for x in paths) if p]
             if not affected:
                 return
+            if len(self._events) >= self.MAX_EVENTS:
+                self._spill_paths(op, kind, affected)
+                return
             self._events.append({"op": op, "kind": kind, "paths": affected, "observed": False})
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
+
+    def _spill_paths(self, op: str, kind: str, affected: list[str]) -> None:
+        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。"""
+        ev = self._spill.get((op, kind))
+        if ev is None:
+            ev = self._spill[(op, kind)] = {
+                "op": op,
+                "kind": kind,
+                "paths": set(),
+                "observed": False,
+                "lost": False,
+                "coarse": False,
+            }
+        if ev["lost"]:
+            return
+        ev["paths"].update(affected)
+        if len(ev["paths"]) > self.MAX_SPILL_PATHS:
+            if ev["coarse"]:
+                ev["lost"], ev["paths"] = True, set()
+            else:
+                ev["coarse"] = True
+                ev["paths"] = {os.path.dirname(p) or p for p in ev["paths"]}
+                if len(ev["paths"]) > self.MAX_SPILL_PATHS:
+                    ev["lost"], ev["paths"] = True, set()
+
+    @staticmethod
+    def _spill_hit(ev: dict, real: str) -> bool:
+        if ev["lost"]:
+            return True
+        paths = ev["paths"]
+        cur = real
+        while True:
+            if cur in paths:
+                return True
+            parent = os.path.dirname(cur)
+            if not parent or parent == cur:
+                return False
+            cur = parent
 
     @staticmethod
     def _covers(taint: str, path: str) -> bool:
@@ -1512,7 +1561,7 @@ class BlockedFileOps:
 
     def observe(self, path, mode="r") -> None:
         """脚本打开了 `path`（`mode` 是 `open` 的模式串）。永不抛。"""
-        if not self._events or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._busy:
             return
         self._busy = True
         try:
@@ -1525,6 +1574,9 @@ class BlockedFileOps:
                 # 脚本自己重写了这条路径：此后读到的是它写的（与直接运行一致）
                 for ev in self._events:
                     ev["paths"] = [p for p in ev["paths"] if p != real]
+                for ev in self._spill.values():
+                    if not ev["coarse"]:  # 粗化后存的是目录，清不掉其中某个文件的嫌疑
+                        ev["paths"].discard(real)
                 return
             if "a" in mode and "+" not in mode:
                 return  # 纯追加：不读
@@ -1536,7 +1588,7 @@ class BlockedFileOps:
 
     def observe_stat(self, path) -> None:
         """脚本查了 `path` 的状态（`exists` / `isfile` / `stat`）。永不抛。"""
-        if not self._events or not self._active or self._busy:
+        if not (self._events or self._spill) or not self._active or self._busy:
             return
         self._busy = True
         try:
@@ -1556,12 +1608,17 @@ class BlockedFileOps:
                 continue
             if not ev["observed"] and any(self._covers(p, real) for p in ev["paths"]):
                 ev["observed"] = True
+        for ev in self._spill.values():
+            if via_stat and ev["kind"] == self.KIND_SAVEFIG:
+                continue
+            if not ev["observed"] and self._spill_hit(ev, real):
+                ev["observed"] = True
 
     # ---- 终局 ----
     def material(self) -> list[dict]:
         """被拦下、且脚本随后观察过受影响路径的操作，按 (op, kind) 聚合：`[{op, kind, count}]`。"""
         counts: dict[tuple[str, str], int] = {}
-        for ev in self._events:
+        for ev in (*self._events, *self._spill.values()):
             if ev["observed"]:
                 key = (ev["op"], ev["kind"])
                 counts[key] = counts.get(key, 0) + 1
@@ -1577,7 +1634,7 @@ class BlockedFileOps:
 
         装在**最内层**（先于输入观察器与相对路径回退）：看到的是脚本交出的那条路径，
         与守卫记账时用的是同一个 cwd 下的同一种解析。`os.stat` 一并包——`os.path.exists` /
-        `isfile` / `Path.exists` 都经它（POSIX；Windows 3.12+ 的 `exists` 是 C 实现，见类说明的盲区）。
+        `isfile` / `Path.exists` 都经它（Windows 3.12+ 的 `os.path.exists` 系是 C 实现、不经 `os.stat`，另行逐个包装，见下）。
         """
         ledger = self
         real_open, real_io_open = builtins.open, io.open
@@ -1598,6 +1655,23 @@ class BlockedFileOps:
             ledger.observe_stat(path)
             return real_stat(path, *args, **kwargs)
 
+        # Windows 3.12+ 的 `os.path.exists` / `isfile` / `isdir` / `islink` / `lexists` 是 C 实现，
+        # 不经 `os.stat`：逐个包上（POSIX 上它们本来经 `os.stat`，重复观察是幂等的）
+        real_path_checks: dict[str, object] = {}
+
+        def _wrap_check(original):
+            def watched_check(path, *args, **kwargs):
+                ledger.observe_stat(path)
+                return original(path, *args, **kwargs)
+
+            return watched_check
+
+        for name in ("exists", "lexists", "isfile", "isdir", "islink"):
+            fn = getattr(os.path, name, None)
+            if fn is not None:
+                real_path_checks[name] = fn
+                setattr(os.path, name, _wrap_check(fn))
+
         builtins.open = _wrap(real_open)
         io.open = _wrap(real_io_open)
         pathlib.Path.open = watched_path_open
@@ -1608,6 +1682,8 @@ class BlockedFileOps:
             io.open = real_io_open
             pathlib.Path.open = real_path_open
             os.stat = real_stat
+            for name, fn in real_path_checks.items():
+                setattr(os.path, name, fn)
 
         self._uninstall = uninstall
         return uninstall

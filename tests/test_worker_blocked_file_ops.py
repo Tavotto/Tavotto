@@ -456,6 +456,110 @@ def test_ledger_is_bounded_and_a_stopped_ledger_is_inert(tmp_path):
     assert ledger.material() == []
 
 
+def test_ledger_overflow_beyond_max_events_still_catches_a_later_readback(tmp_path):
+    """Codex P1：第 201+ 个被拦操作的路径不能被静默丢掉，否则回读它仍记成完整成功。"""
+    cap = figcapture.BlockedFileOps.MAX_EVENTS
+    ledger = _ledger(tmp_path)
+    for i in range(cap + 50):
+        ledger.blocked("os.remove", "delete", str(tmp_path / f"{i}.txt"))
+    ledger.observe(str(tmp_path / "0.txt"), "r")  # 前 200 个之内：原本就判得出
+    assert [o["op"] for o in ledger.material()] == ["os.remove"]
+    late = _ledger(tmp_path)
+    for i in range(cap + 50):
+        late.blocked("os.remove", "delete", str(tmp_path / f"{i}.txt"))
+    late.observe(str(tmp_path / "unrelated.txt"), "r")  # 正对照：读不相干的路径不算
+    assert late.material() == []
+    late.observe(str(tmp_path / f"{cap + 10}.txt"), "r")  # 第 210 个
+    assert [(o["op"], o["count"]) for o in late.material()] == [("os.remove", 1)]
+
+
+def test_ledger_overflow_rewrite_clears_and_savefig_stat_stays_exempt(tmp_path):
+    cap = figcapture.BlockedFileOps.MAX_EVENTS
+    ledger = _ledger(tmp_path)
+    for i in range(cap + 5):
+        ledger.blocked("os.remove", "delete", str(tmp_path / f"{i}.txt"))
+    ledger.observe(str(tmp_path / f"{cap + 1}.txt"), "w")  # 脚本自己重写
+    ledger.observe(str(tmp_path / f"{cap + 1}.txt"), "r")
+    assert ledger.material() == []
+    sv = _ledger(tmp_path)
+    for i in range(cap + 5):
+        sv.blocked("savefig", "savefig", str(tmp_path / f"{i}.png"))
+    sv.observe_stat(str(tmp_path / f"{cap + 1}.png"))  # 溢出的 savefig 同样只认读内容
+    assert sv.material() == []
+    sv.observe(str(tmp_path / f"{cap + 1}.png"), "rb")
+    assert [o["op"] for o in sv.material()] == ["savefig"]
+
+
+def test_ledger_overflow_set_is_bounded_coarsens_to_directories_then_marks_lost(tmp_path):
+    cap = figcapture.BlockedFileOps.MAX_EVENTS
+    spill_cap = figcapture.BlockedFileOps.MAX_SPILL_PATHS
+    ledger = _ledger(tmp_path)
+    for i in range(cap):
+        ledger.blocked("os.remove", "delete", str(tmp_path / "fill" / f"{i}.txt"))
+    d = tmp_path / "bulk"
+    for i in range(spill_cap + 10):
+        ledger.blocked("os.remove", "delete", str(d / f"{i}.txt"))
+    (ev,) = ledger._spill.values()
+    assert ev["coarse"] and len(ev["paths"]) <= spill_cap and not ev["lost"]
+    ledger.observe(str(tmp_path / "elsewhere" / "a.txt"), "r")
+    assert ledger.material() == []
+    ledger.observe(str(d / "never_removed.txt"), "r")  # 粗化：同目录的读也算（宁可误报）
+    assert [o["op"] for o in ledger.material()] == ["os.remove"]
+    # 目录数也超限 -> 丢失：此后任何观察都算命中
+    lost = _ledger(tmp_path)
+    for i in range(cap):
+        lost.blocked("os.remove", "delete", str(tmp_path / "fill" / f"{i}.txt"))
+    for i in range(spill_cap + 10):
+        lost.blocked("os.remove", "delete", str(tmp_path / f"dir{i}" / "x.txt"))
+    (ev,) = lost._spill.values()
+    assert ev["lost"] and len(ev["paths"]) <= spill_cap
+    lost.observe(str(tmp_path / "anything.txt"), "r")
+    assert [o["op"] for o in lost.material()] == ["os.remove"]
+
+
+def test_ledger_sees_os_path_exists_even_when_it_bypasses_os_stat(tmp_path, monkeypatch):
+    """Windows 3.12+：`os.path.exists` 是 C 实现、不经 `os.stat`。这里模拟那个条件（POSIX 上也成立）。"""
+    import os
+
+    real_stat = os.stat
+
+    def exists_without_os_stat(path):  # 不调 `os.stat` 名字，只用装钩之前捕获的原函数
+        try:
+            real_stat(path)
+        except OSError:
+            return False
+        return True
+
+    for name in ("exists", "isfile", "isdir", "lexists", "islink"):
+        monkeypatch.setattr(os.path, name, exists_without_os_stat)
+    f = tmp_path / "stale.csv"
+    f.write_text("9")
+    for name in ("exists", "isfile", "isdir", "lexists", "islink"):
+        ledger = _ledger(tmp_path)
+        uninstall = ledger.install()
+        try:
+            ledger.blocked("os.remove", "delete", str(f))
+            assert ledger.material() == []
+            getattr(os.path, name)(str(f))
+            assert [o["op"] for o in ledger.material()] == ["os.remove"], name
+        finally:
+            uninstall()
+        assert getattr(os.path, name) is exists_without_os_stat  # 卸载还原的是安装前那个
+
+
+def test_ledger_exists_hooks_exempt_savefig_targets_and_restore_originals(tmp_path):
+    import os
+
+    originals = {n: getattr(os.path, n) for n in ("exists", "isfile", "isdir", "lexists", "islink")}
+    ledger = _ledger(tmp_path)
+    uninstall = ledger.install()
+    ledger.blocked("savefig", "savefig", str(tmp_path / "a.png"))
+    os.path.exists(str(tmp_path / "a.png"))
+    assert ledger.material() == []
+    uninstall()
+    assert {n: getattr(os.path, n) for n in originals} == originals
+
+
 # ====================================== 事实经过 pool / 探测 / 准备会话 / HTTP 之后仍是失败
 def _worker_error() -> engine_pool.WorkerError:
     err = engine_pool.WorkerError("blocked", "tb", code=CODE)
@@ -489,3 +593,38 @@ def test_preparation_projection_reports_a_failure_not_a_success():
     result = prepsession.derive(facts)
     assert result["outcome"] == {"kind": "failed", "code": CODE}
     assert result["figure_captured"] is False and result["execution_finished"] is False
+
+
+OVERFLOW_READ_LAST = """\
+import os
+
+for i in range(260):
+    with open(f"c{i}.tmp", "w") as f:
+        f.write(str(i))
+    os.replace(f"c{i}.tmp", f"c{i}.csv")
+with open("c259.csv") as f:
+    value = int(f.read())
+"""
+
+OVERFLOW_NEVER_READ = """\
+import os
+
+for i in range(260):
+    with open(f"o{i}.tmp", "w") as f:
+        f.write(str(i))
+    os.remove(f"o{i}.tmp")
+with open("seed.txt") as f:
+    value = f.read()
+"""
+
+
+@needs_worker
+def test_p1_overflow_operation_201_plus_then_readback_fails(figs):
+    e = _blocked(figs, "ovf.py", OVERFLOW_READ_LAST)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["os.replace"]
+
+
+@needs_worker
+def test_p1_hundreds_of_blocked_operations_never_read_back_still_succeed(figs):
+    _build(figs, "ovn.py", OVERFLOW_NEVER_READ, project_mode=True)
