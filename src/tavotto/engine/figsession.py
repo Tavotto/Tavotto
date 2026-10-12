@@ -826,14 +826,18 @@ class LiveFigureSession:
         # 抓到它的是 `test_v1_render_reports_the_preview_verdict` 在
         # `backend-platforms (windows-latest)` 上——PR 上那一格是 skipping，
         # 所以本机与 PR 全绿都是真的，它只在 merge_group 里发作。
-        svg_path = self.out_dir / f"{stem}.svg"
+        # **先写临时文件，成功了才发布**（P01b，EX12）：直接开正式 `<stem>.svg` 写，
+        # 画到一半抛了就留下半份 XML——既被当成「这张图完成了」，也覆盖了上一版
+        # 有效预览。临时名不以 `.svg` 结尾，任何按后缀找预览的人都看不到它。
+        svg_part = self.out_dir / f".{stem}.svg.part"
+        man_part = self.out_dir / f".{stem}.json.part"
         dpi = preview_dpi or self.preview_dpi
 
         def _save(_plan) -> int:
-            with self.real_output(), open(svg_path, "w", encoding="utf-8", newline="") as fh:
+            with self.real_output(), open(svg_part, "w", encoding="utf-8", newline="") as fh:
                 state.fig.savefig(fh, format="svg", dpi=dpi, **pathgeom.output_kwargs(state.fig))
             try:
-                return svg_path.stat().st_size
+                return svg_part.stat().st_size
             except OSError:
                 # 刚写完它，这里读不到 size 说明磁盘 / 权限出了事。按 0 记会把
                 # 这一版说成「很小的矢量图」，接着 read_text 也一定会抛——不如
@@ -842,11 +846,15 @@ class LiveFigureSession:
 
         # `preview_plan_ms` / `canvas_draw_ms` 由 `save_preview_svg` 自己填——
         # 只有它知道那两段各自从哪到哪（升档时 savefig 跑两遍）。
-        with manifest_mod.capture_preview_manifest(state, stem) as measured:
-            plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
-            # Rasterization has been restored before reading semantic fields.
-            t2 = time.perf_counter()
-            man = measured()
+        try:
+            with manifest_mod.capture_preview_manifest(state, stem) as measured:
+                plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
+                # Rasterization has been restored before reading semantic fields.
+                t2 = time.perf_counter()
+                man = measured()
+        except BaseException:
+            self._discard_parts(svg_part, man_part)
+            raise
         if timings is not None:
             timings["manifest_ms"] = round((t1 - t0 + time.perf_counter() - t2) * 1000.0, 3)
         if preview is not None:
@@ -866,11 +874,39 @@ class LiveFigureSession:
                     estimated_nodes=plan.estimated_nodes,
                 )
             )
-        (self.out_dir / f"{stem}.json").write_text(
-            json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8"
-        )
+        try:
+            man_part.write_text(
+                json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8"
+            )
+            self._publish_preview(
+                stem, svg_part, man_part, svg_bytes_on_disk=svg_part.stat().st_size
+            )
+        except BaseException:
+            self._discard_parts(svg_part, man_part)
+            raise
         self._manifest_cache[stem] = man
         return man
+
+    def _publish_preview(self, stem, svg_part, man_part, *, svg_bytes_on_disk: int) -> int:
+        """把已写完的临时 SVG / manifest 放到正式名下，**最后**记账。
+
+        这是「同代发布」的唯一出口：SVG、manifest、完成记录对着同一个发布序号。
+        任何一步失败，上一版（若有）原封不动——`os.replace` 是单文件原子的，所以
+        顺序是先 SVG 后 manifest 再记账；账本是最后一步，它写出去之前这一版对
+        「完成了几张图」就不存在。
+        """
+        with self.real_output():
+            os.replace(svg_part, self.out_dir / f"{stem}.svg")
+            os.replace(man_part, self.out_dir / f"{stem}.json")
+            return figcapture.record_preview_published(self.out_dir, stem, svg_bytes_on_disk)
+
+    @staticmethod
+    def _discard_parts(*parts: Path) -> None:
+        for part in parts:
+            try:
+                part.unlink()
+            except OSError:
+                pass
 
     def manifest(self, stem: str) -> dict:
         return self._manifest_cache[stem]

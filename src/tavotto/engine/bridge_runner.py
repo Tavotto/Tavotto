@@ -942,14 +942,20 @@ def main(argv: list | None = None) -> int:
     if plt is not None:
         collect_pyplot(plt)
 
-    if args.report:
-        _write_report(run, args, exit_code)
-
     if run.control is not None and _CAPTURE:
         try:
             run.barrier("script_end")
-        except SystemExit:
-            pass
+        except SystemExit as exc:
+            # 最后一道屏障上的 terminate 与 `show` 屏障同一规则：退出码是确定的
+            # `TERMINATE_EXIT`。上面那次判据在屏障**之前**，赶不上这一次，所以在
+            # 这里补（P01b / EX10）。`shutdown`（client）不是终止，码维持脚本自己的。
+            if run.terminated or exc.code == TERMINATE_EXIT:
+                exit_code = TERMINATE_EXIT
+
+    # 报告在最终码定下之后写：它的 `exit_code` 与进程真实退出码是同一个数
+    if args.report:
+        _write_report(run, args, exit_code)
+
     if run.control is not None:
         run.control.event("exit", code=exit_code, figures=len(_CAPTURE))
         run.control.close()

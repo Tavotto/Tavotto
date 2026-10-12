@@ -62,6 +62,7 @@ from . import (
     bridge,
     config,
     execspec,
+    figcapture,
     handoff,
     nativehandoff,
     nativerelay,
@@ -330,14 +331,13 @@ def _exit_code_of(code: int) -> int:
 
 
 def _figures_written(out_dir: str) -> int:
-    """这次跑出了几张图（按会话产物目录里的预览 SVG 数）。
+    """这次跑出了几张图（按会话产物目录里的**预览发布账本**）。
 
     **不问子进程**：它已经退出了，而这个判据要在它退出之后成立。
+    **不数 `.svg` 文件**：半写的、上一次残留的文件都是文件；只有引擎在
+    SVG 与 manifest 都放到位之后记过账的才算完成（P01b，EX12）。
     """
-    try:
-        return sum(1 for n in os.listdir(out_dir) if n.endswith(".svg"))
-    except OSError:
-        return 0
+    return len(figcapture.published_preview_stems(out_dir))
 
 
 def _cancel_watch(native_id: str):

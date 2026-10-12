@@ -501,3 +501,163 @@ def test_the_runner_and_the_cli_agree_on_the_terminate_code():
     from tavotto.engine import bridge_runner
 
     assert bridge_runner.TERMINATE_EXIT == runcodes.EXIT_TERMINATED
+
+
+# --------------------------------------------------------------------------
+# 终局事实：script_end 屏障上的 terminate（P01b，EX10，AC-04）
+#
+# `show` 屏障上的 terminate 早就是 5；脚本跑完那一次（script_end）屏障上的
+# terminate 曾被 `except SystemExit: pass` 吃掉，进程以 0 退出，而 session 与
+# 既有终局通知记的是 5——同一次运行三个口径。
+def _script_end_script(tail: str = "") -> str:
+    """有图、**没有 show()**：第一个（也是唯一一个）屏障就是 `script_end`。"""
+    return nativekit.FIGURE_SCRIPT + "\nprint('SCRIPT-BODY-DONE', flush=True)\n" + tail
+
+
+def _status(path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_terminate_at_the_script_end_barrier_gives_exit_5_everywhere(tmp_path):
+    nativekit.write(tmp_path / "figure.py", _script_end_script())
+    status = tmp_path / "status.json"
+    with nativekit.product_run(
+        nativekit.USER_PYTHON,
+        "figure.py",
+        cwd=tmp_path,
+        tavotto_args=("--status-file", str(status)),
+    ) as (session, proc, _):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        assert session.barrier_reason == "script_end", session.barrier_reason
+        session.ensure_built()
+        session.terminate()
+        out, err = proc.communicate(timeout=120)
+    assert "SCRIPT-BODY-DONE" in out
+    # 四个口径同一个数：session / 既有终局通知（ended + exit_code）/ 真实进程码 / status-file
+    assert session.state == nativesession.ENDED
+    assert session.exit_code == runcodes.EXIT_TERMINATED == 5
+    assert proc.returncode == runcodes.EXIT_TERMINATED, f"{proc.returncode}\n{err}"
+    assert _status(status)["script_exit_code"] == runcodes.EXIT_TERMINATED
+
+
+def test_terminate_at_the_script_end_barrier_beats_the_scripts_own_error(tmp_path):
+    """脚本先抛了 ValueError（退出码本来是 1），随后用户在 script_end 点终止：
+    与 show 屏障同一规则——终止的码确定，不被脚本的码盖掉。"""
+    nativekit.write(tmp_path / "figure.py", _script_end_script("raise ValueError('boom')\n"))
+    status = tmp_path / "status.json"
+    with nativekit.product_run(
+        nativekit.USER_PYTHON,
+        "figure.py",
+        cwd=tmp_path,
+        tavotto_args=("--status-file", str(status)),
+    ) as (session, proc, _):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        assert session.script_error and "ValueError" in session.script_error["message"]
+        session.ensure_built()
+        session.terminate()
+        _, err = proc.communicate(timeout=120)
+    assert proc.returncode == runcodes.EXIT_TERMINATED, f"{proc.returncode}\n{err}"
+    assert _status(status)["script_exit_code"] == runcodes.EXIT_TERMINATED
+
+
+@pytest.mark.parametrize(
+    ("tail", "expected"),
+    [
+        ("", 0),  # 自然结束
+        ("raise ValueError('boom from the script')\n", 1),  # 用户原始异常
+        ("import sys\nsys.exit(3)\n", 3),  # 用户显式退出
+    ],
+    ids=["natural", "user-exception", "user-sys-exit"],
+)
+def test_continue_at_the_script_end_barrier_keeps_the_scripts_own_code(tmp_path, tail, expected):
+    """正对照：同一个 script_end 屏障，放行（continue）后码仍是脚本自己的，
+    **不能**被「屏障处 SystemExit 一律记 5」之类的改法误伤。"""
+    nativekit.write(tmp_path / "figure.py", _script_end_script(tail))
+    status = tmp_path / "status.json"
+    with nativekit.product_run(
+        nativekit.USER_PYTHON,
+        "figure.py",
+        cwd=tmp_path,
+        tavotto_args=("--status-file", str(status)),
+    ) as (session, proc, _):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        code, _, err = nativekit.finish(session, proc)
+    assert code == expected, f"{code}\n{err}"
+    assert _status(status)["script_exit_code"] == expected
+    assert session.exit_code != runcodes.EXIT_TERMINATED
+
+
+def test_client_shutdown_at_the_script_end_barrier_is_not_a_terminate(tmp_path):
+    """负对照：屏障处的 `shutdown`（client）同样以 SystemExit 离开，但**不是**终止——
+    退出码仍是脚本自己的 3，不能被「屏障里的 SystemExit 一律记 5」误伤。"""
+    nativekit.write(tmp_path / "figure.py", _script_end_script("import sys\nsys.exit(3)\n"))
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        session.ensure_built()
+        session.transport.send_oneway(
+            {"cmd": "shutdown"}, generation=session.generation, revision=session.rev
+        )
+        _, err = proc.communicate(timeout=120)
+    assert proc.returncode == 3, f"{proc.returncode}\n{err}"
+
+
+# --------------------------------------------------------------------------
+# 完成计数来自本次已发布的预览，不是 .svg 文件数（P01b，EX12，AC-05 前半）
+_GOOD_FIG = """\
+fig, ax = plt.subplots()
+ax.plot([0, 1], [1, 2])
+ax.set_title("Plain")
+fig.savefig("good.png")
+"""
+_BAD_FIG = """\
+class AggOnly(Artist):
+    def draw(self, renderer):
+        renderer.buffer_rgba()  # SVG renderer 没有它：额外预览画到一半抛错
+bad, ax2 = plt.subplots()
+ax2.plot([0, 1], [3, 4])
+ax2.add_artist(AggOnly())
+bad.savefig("bad.png")
+"""
+_TWO_FIG_HEAD = (
+    "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+    "from matplotlib.artist import Artist\n"
+)
+
+
+@pytest.mark.parametrize("order", ["good_first", "bad_first"])
+def test_a_half_written_preview_is_not_counted_as_a_captured_figure(tmp_path, order):
+    import xml.etree.ElementTree as ET  # noqa: PLC0415
+
+    from tavotto.engine import config, figcapture  # noqa: PLC0415
+
+    body = _GOOD_FIG + _BAD_FIG if order == "good_first" else _BAD_FIG + _GOOD_FIG
+    nativekit.write(tmp_path / "figure.py", _TWO_FIG_HEAD + body)
+    status = tmp_path / "status.json"
+    with nativekit.product_run(
+        nativekit.USER_PYTHON,
+        "figure.py",
+        cwd=tmp_path,
+        tavotto_args=("--status-file", str(status)),
+    ) as (session, proc, native_id):
+        code, _, err = nativekit.finish(session, proc)
+    assert code != 0 and "AttributeError" in err, "探针无效：坏图的预览应当失败\n" + err
+    out_dir = config.data_path("cache", "native", native_id)
+    published = sorted(figcapture.published_preview_stems(out_dir))
+    data = _status(status)
+    # 计数 == 完整发布的图；坏图（半份 XML 或根本没有）一张都不在里面
+    assert data["figures_captured"] == len(published)
+    assert "bad" not in published
+    assert not any(n.endswith(".part") for n in os.listdir(out_dir)), "临时文件没清"
+    for stem in published:
+        ET.parse(out_dir / f"{stem}.svg")  # 记成完成的每一份都是完整 XML
+    if order == "good_first":
+        # 好图先画好：它必须还在、必须被数到（不能靠「全部丢弃」过关）
+        assert published == ["good"] and data["figures_captured"] == 1
+        assert data["session_result"] == "ok"
+    else:
+        # 坏图先抛错、好图没轮到：逐图隔离归 P08a，这里只保证诚实——没有假完成
+        assert "bad.svg" not in os.listdir(out_dir)

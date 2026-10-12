@@ -193,6 +193,9 @@ __all__ = [
     "PROFILE_NATIVE",
     "ARTIFACT_EXTS",
     "DESCRIPTOR_VERSION",
+    "PREVIEW_LEDGER",
+    "record_preview_published",
+    "published_preview_stems",
     "CapturedFigureDescriptor",
     "build_descriptor",
     "descriptor_from_payload",
@@ -291,6 +294,72 @@ ARTIFACT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff
 #: fingerprint 构成……）；它参与 fingerprint，所以升版 = 所有旧 fingerprint
 #: 自然失配 = 「按旧语义捕的图可能已过时」这句 stale hint 如实成立。
 DESCRIPTOR_VERSION = 1
+
+#: 预览发布账本（P01b，EX12）：会话产物目录里的这份文件逐 stem 记着
+#: 「**本次运行**已经完整发布过的预览」。`<stem>.svg` 文件存在**不是**完成事实——
+#: 半写的文件、上一次运行残留的文件都满足「存在」。CLI 的「捕获了几张图」读它，
+#: 不再数 `.svg` 后缀。写入方是 `figsession.render`（发布成功之后才记），读取方是
+#: `runcli`；两边都 import 这一个模块，不各写一份格式。
+PREVIEW_LEDGER = "published.json"
+
+
+def _read_preview_ledger(out_dir) -> dict:
+    try:
+        with open(os.path.join(os.fspath(out_dir), PREVIEW_LEDGER), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {"seq": 0, "stems": {}}
+    stems = data.get("stems") if isinstance(data, dict) else None
+    seq = data.get("seq") if isinstance(data, dict) else None
+    if not isinstance(stems, dict) or not isinstance(seq, int):
+        return {"seq": 0, "stems": {}}
+    return {"seq": seq, "stems": stems}
+
+
+def record_preview_published(out_dir, stem: str, svg_bytes: int) -> int:
+    """把 `stem` 的这一版预览记成「已完整发布」，返回它的发布序号（单调递增）。
+
+    **调用方必须已经把 `<stem>.svg` 与 `<stem>.json` 都原子地放到位**——账本是
+    「完成」的声明，不是「开始写」的声明。账本自己也是临时文件 + `os.replace`：
+    读到它的人要么看到上一版、要么看到这一版，不会看到半份 JSON。
+    序号是同代发布的锚：P08a 逐图隔离时，同一个 stem 的 SVG / manifest / 完成记录
+    以它对齐。
+    """
+    out_dir = os.fspath(out_dir)
+    ledger = _read_preview_ledger(out_dir)
+    ledger["seq"] += 1
+    ledger["stems"][stem] = {"seq": ledger["seq"], "svg_bytes": int(svg_bytes)}
+    path = os.path.join(out_dir, PREVIEW_LEDGER)
+    tmp = path + ".part"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(ledger, fh)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    return ledger["seq"]
+
+
+def published_preview_stems(out_dir) -> list:
+    """本次运行**完整发布过**预览的 stem。
+
+    账本说发布了、磁盘上的 `<stem>.svg` 也还在且字节数对得上才算——被截断或被
+    换掉的文件不计。没有账本（引擎一张都没发布成功）就是空表，不退回去数文件。
+    """
+    out_dir = os.fspath(out_dir)
+    done = []
+    for stem, rec in _read_preview_ledger(out_dir)["stems"].items():
+        try:
+            size = os.stat(os.path.join(out_dir, f"{stem}.svg")).st_size
+        except OSError:
+            continue
+        if isinstance(rec, dict) and rec.get("svg_bytes") == size:
+            done.append(stem)
+    return done
 
 
 def size_mm_of(fig) -> tuple[float, float]:

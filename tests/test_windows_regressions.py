@@ -3249,7 +3249,7 @@ def test_preview_svg_is_written_without_newline_translation():
 
     # 第二侧：确实是用 `newline=""` 打开的（光"传了个文件对象"不够，
     # 传一个默认模式打开的照样翻译）
-    assert 'open(svg_path, "w", encoding="utf-8", newline="")' in src, (
+    assert 'open(svg_part, "w", encoding="utf-8", newline="")' in src, (
         'figsession 写预览 SVG 必须显式 `newline=""`——默认的 universal '
         "newlines 会在 Windows 上把 `\\n` 翻成 `\\r\\n`"
     )
