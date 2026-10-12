@@ -209,6 +209,8 @@
   字重 / 字形照原值画（`light` → 200、`600`、`oblique`，与 `planStyle` 交给引擎的同一个值），归一只给开关与字宽估算。
   字号超出示例预算时几何里**所有**长度（字号、线宽、边框、刻度长度 / 线宽）乘同一个系数（`fitSampleGeometry`），
   版面与画框再按缩后的几何现算（`sampleLayout`），比例与应用后一致。
+  图例在框内右下角（2026-10 设计审计第二轮）：两条曲线（`SAMPLE_SERIES`，组件与用例共用 `sampleSeriesPoints`）都从左下升到右上，
+  此前放在右上角的图例线正好压在快的那条曲线上；`lib/styleSample.test.ts` 按图例外框与折线的竖向关系量它。
   看护：`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`lib/migrate.style.test.ts`、
   `components/settings/profilesSettings.test.tsx`、`lib/styleSample.test.ts`。
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、

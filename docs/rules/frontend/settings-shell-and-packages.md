@@ -124,7 +124,9 @@
   时间戳 `desktopCheckedAtMs` **只在检查成功时**写。下载进度只显示壳真给的数，拿不到就走不确定
   态、绝不编百分比。细进度条只有 `ui/ProgressBar` 一份（更新弹窗 / 更新页 / 修复下载 / 包作业）：
   轨道 `border` 档（放在 `surface-2` 面板里也看得见）、不确定态是 `animate-sweep`，不是呼吸块。
-  包作业（`JobPanel`）是安装组里紧跟安装框的一行、在包表之上——反馈落在用户点的地方（2026-10-07 设计审计 P0）；
+  包作业（`JobPanel`）是安装组里紧跟安装框的一行、在用户包列表之上——反馈落在用户点的地方（2026-10-07 设计审计 P0）；
+  用户包与内置包都是**条目行**、不是表格（2026-10 设计审计第二轮）：「已安装」不出胶囊，只有缺失 / 版本已变化等才出一枚 `StatusPill`，
+  「只读」只在内置包折叠行的摘要里说一次；列表锚点是 `[role="list"][aria-label]` 下的 `data-package-row` / `data-package-name` / `data-package-state`；
   每个用户包一颗 ghost「升级」+ ⋯（卸载是危险项，先确认），「重建环境…」在环境行的 ⋯ 里、先确认。升级失败要看得出是失败（`applyFailed` + danger）且重试入口留着；pip 那条
   失败走 500、原因在响应体的 `log` 里而 `error` 是空的，得自己取出来。五态覆盖在
   `components/settings/updateStates.test.tsx` + `store/updateStore.test.ts`。

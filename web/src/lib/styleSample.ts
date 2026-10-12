@@ -207,6 +207,23 @@ export const SAMPLE_TEXT = {
 /** 画框的最小尺寸与宽高比（示例图外框固定这个比例：换样式、改刻度时设置页不跳） */
 export const SAMPLE_VIEW = { w: 200, h: 128 } as const
 
+/** 示例里的两条数据曲线（归一化的 y = f(t)，t ∈ [0, 1]）：快的实线、慢的虚线 */
+export const SAMPLE_SERIES = [(t: number) => 1 - Math.exp(-4 * t), (t: number) => 1 - Math.exp(-1.5 * t)] as const
+
+/** 一条曲线的折线点：横向 0…1 采样 24 段，纵向按 fn 归一化后占框高的 92% */
+export function sampleSeriesPoints(
+  box: { x: number; y: number; w: number; h: number },
+  bottom: number,
+  fn: (t: number) => number,
+): [number, number][] {
+  const pts: [number, number][] = []
+  for (let i = 0; i <= 24; i += 1) {
+    const t = i / 24
+    pts.push([box.x + t * box.w, bottom - fn(t) * box.h * 0.92])
+  }
+  return pts
+}
+
 /** 估文字外框：字宽按字号的倍数（粗 / 斜体更宽），基线上下各占多少 */
 const GLYPH_W = 0.62
 const GLYPH_W_BOLD = 0.68
@@ -262,13 +279,17 @@ export function sampleLayout(g: StyleSampleGeometry): SampleLayout {
   const yTickLabelX = box.x - clear - 2.5
   const yTickW = Math.max(...SAMPLE_TEXT.yTicks.map((s) => textWidth(s, g.tickPt, g.faces.tick)))
   const yLabelX = yTickLabelX - yTickW - 2.5 - DESCENT * g.axisPt
-  const legendLineY = box.y + 10 + g.legendPt * 0.35
+  // 图例在右下角（2026-10 设计审计第二轮）：两条曲线都从左下升到右上，右上角正是快的那条曲线经过的地方——
+  // 此前图例放在那里，图例线压在曲线上。右下角在两条曲线下方（`SAMPLE_SERIES` 在 t ≥ 0.55 时都高于半框），
+  // 只需让开朝里伸的刻度
+  const legendTextY = bottom - tickIn - 6 - DESCENT * g.legendPt
+  const legendLineY = legendTextY - g.legendPt * 0.35
   const legend = {
     lineX1: box.x + box.w - 62,
     lineX2: box.x + box.w - 50,
     lineY: legendLineY,
     textX: box.x + box.w - 46,
-    textY: box.y + 10 + g.legendPt * 0.7,
+    textY: legendTextY,
   }
 
   const extents: Extent[] = []

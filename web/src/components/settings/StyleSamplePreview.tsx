@@ -1,10 +1,12 @@
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import {
+  SAMPLE_SERIES,
   SAMPLE_TEXT,
   SAMPLE_VIEW,
   fitSampleGeometry,
   sampleLayout,
+  sampleSeriesPoints,
   styleSampleGeometry,
   type SampleFace,
 } from '@/lib/styleSample'
@@ -80,14 +82,14 @@ export function StyleSamplePreview({ data }: { data: Record<string, unknown> | n
           fill="none"
           stroke={c1}
           strokeWidth={g.lineWidthPt}
-          points={series(box, bottom, (t) => 1 - Math.exp(-4 * t))}
+          points={series(box, bottom, SAMPLE_SERIES[0])}
         />
         <polyline
           fill="none"
           stroke={c2}
           strokeWidth={g.lineWidthPt}
           strokeDasharray={`${Math.max(2, g.lineWidthPt * 4)} ${Math.max(1.5, g.lineWidthPt * 2.5)}`}
-          points={series(box, bottom, (t) => 1 - Math.exp(-1.5 * t))}
+          points={series(box, bottom, SAMPLE_SERIES[1])}
         />
         {/* 图例 */}
         <line x1={legend.lineX1} y1={legend.lineY} x2={legend.lineX2} y2={legend.lineY} stroke={c1} strokeWidth={g.lineWidthPt} />
@@ -122,18 +124,7 @@ function faceAttrs(f: SampleFace) {
   }
 }
 
-/** 一条曲线的折线点：横向 0…1 采样，纵向按 fn 归一化 */
-function series(
-  box: { x: number; y: number; w: number; h: number },
-  bottom: number,
-  fn: (t: number) => number,
-): string {
-  const pts: string[] = []
-  for (let i = 0; i <= 24; i += 1) {
-    const t = i / 24
-    const x = box.x + t * box.w
-    const y = bottom - fn(t) * box.h * 0.92
-    pts.push(`${x.toFixed(1)},${y.toFixed(1)}`)
-  }
-  return pts.join(' ')
-}
+const series = (box: { x: number; y: number; w: number; h: number }, bottom: number, fn: (t: number) => number) =>
+  sampleSeriesPoints(box, bottom, fn)
+    .map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`)
+    .join(' ')
