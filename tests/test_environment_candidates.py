@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ntpath
 import os
+import posixpath
 import subprocess
 from pathlib import Path
 
@@ -152,9 +153,9 @@ def test_prefix_python_knows_the_windows_venv_layout(monkeypatch):
     prefix = r"C:\work\custom-env"
     venv_exe = ntpath.join(prefix, "Scripts", "python.exe")
     conda_exe = ntpath.join(prefix, "python.exe")
-    monkeypatch.setattr(userenvs, "_is_python_file", lambda p: p == venv_exe)
+    monkeypatch.setattr(userenvs, "_is_python_file", lambda p, **k: p == venv_exe)
     assert userenvs._prefix_python(prefix, nt=True) == venv_exe
-    monkeypatch.setattr(userenvs, "_is_python_file", lambda p: p == conda_exe)
+    monkeypatch.setattr(userenvs, "_is_python_file", lambda p, **k: p == conda_exe)
     assert userenvs._prefix_python(prefix, nt=True) == conda_exe
 
 
@@ -443,8 +444,14 @@ def _forbid_network(monkeypatch, touched: list[str]) -> None:
 def test_scan_never_touches_a_unc_path_entry_and_still_finds_the_local_python(
     tmp_path, home, monkeypatch, no_process
 ):
-    local = _python(tmp_path / "local")
-    local.chmod(0o755)  # PATH 查找要求可执行位
+    if os.name == "nt":  # Windows 的布局是 `<目录>\\python.exe`，PATH 查找按 PATHEXT
+        local = tmp_path / "local" / "python.exe"
+        local.parent.mkdir()
+        local.write_text("MZ", encoding="utf-8")
+        monkeypatch.setenv("PATHEXT", ".EXE")
+    else:
+        local = _python(tmp_path / "local")
+        local.chmod(0o755)  # PATH 查找要求可执行位
     monkeypatch.setenv("PATH", os.pathsep.join([UNC_DIR, str(local.parent)]))
     monkeypatch.setattr(pool, "system_python_candidates", _REAL_SYSTEM_CANDIDATES)
     touched: list[str] = []
@@ -453,7 +460,10 @@ def test_scan_never_touches_a_unc_path_entry_and_still_finds_the_local_python(
     found = pool.system_python_candidates(budget=scanbudget.Budget())
 
     assert touched == []
-    assert (str(local), "system") in found
+    assert (
+        str(local),
+        "system",
+    ) in found  # 本地条目在列表里；不假设唯一或排序（真实机器还有别的 Python）
 
 
 def test_scan_skips_unc_roots_of_the_windows_list_too(tmp_path, home, monkeypatch, no_process):
@@ -630,3 +640,243 @@ def test_project_scan_evidence_lists_local_system_python_but_skips_unc(
     want = userenvs.env_id(str(local))
     row = next(c for c in evidence if c["id"] == want)
     assert row["source"] == userenvs.SOURCE_SYSTEM
+
+
+# ------------------------------------------------------------------ 机器级候选：祖先重定向（#957 第三轮）
+#
+# 只验叶子不够：对后代路径 lstat 时系统先解析重定向的祖先（断线 UNC / WebDAV 共享会卡住或发 NTLM）。
+# `scanbudget.PathWalker` 从根起每一级只 lstat 该级本身，被拒的那一级之下零 lstat、零跟随型调用。
+
+
+def _forbid_following_all(monkeypatch, root: Path, touched: list[str]) -> None:
+    """`_forbid_following` 之上再封 isdir / realpath / resolve / scandir / glob：这些也会跟随链接。"""
+    import glob as glob_mod
+
+    _forbid_following(monkeypatch, root, touched)
+    prefix = str(root)
+
+    def guard(real):
+        def wrapped(path, *a, **k):
+            text = os.fspath(path)
+            if text.startswith(prefix):
+                touched.append(text)
+                raise AssertionError(f"扫描对重定向条目调用了跟随型谓词：{text}")
+            return real(path, *a, **k)
+
+        return wrapped
+
+    monkeypatch.setattr(os.path, "isdir", guard(os.path.isdir))
+    monkeypatch.setattr(os.path, "realpath", guard(os.path.realpath))
+    monkeypatch.setattr(os, "scandir", guard(os.scandir))
+    monkeypatch.setattr(glob_mod, "glob", guard(glob_mod.glob))
+    monkeypatch.setattr(Path, "resolve", lambda self, **k: guard(os.path.realpath)(self))
+    monkeypatch.setattr(Path, "is_dir", lambda self, **k: guard(os.path.isdir)(self))
+
+
+def _record_lstat(monkeypatch) -> list[str]:
+    seen: list[str] = []
+    real = os.lstat
+
+    def spy(path, *a, **k):
+        seen.append(os.fspath(path))
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(os, "lstat", spy)
+    return seen
+
+
+def _nt_walker(monkeypatch) -> None:
+    """让 `userenvs` 里所有扫描用的 walker 按 Windows 语义求值（本机是 macOS，注入）。"""
+    monkeypatch.setattr(
+        userenvs,
+        "_walker",
+        lambda budget=None, walker=None, nt=None: (
+            walker or scanbudget.PathWalker(nt=True if nt is None else nt, budget=budget)
+        ),
+    )
+
+
+@POSIX  # 用符号链接在 macOS / Linux 上模拟 Windows 语义；Windows 真机不跑（建链需要特权）
+def test_windows_prefix_python_rejects_a_redirected_scripts_dir_before_probing(
+    tmp_path, home, monkeypatch
+):
+    """P2-1：VSCode 指到本地 env 文件夹，但其 `Scripts` 是 junction：不碰 `Scripts\\python.exe`。"""
+    share = tmp_path / "share" / "Scripts"
+    share.mkdir(parents=True)
+    (share / "python.exe").write_text("MZ", encoding="utf-8")
+    env = tmp_path / "envs" / "proj-env"
+    env.mkdir(parents=True)
+    (env / "Scripts").symlink_to(share, target_is_directory=True)
+    monkeypatch.setattr(
+        userenvs, "ntpath", posixpath
+    )  # 本机是 POSIX：让 Scripts 布局拼成真能落盘的路径
+    touched: list[str] = []
+    _forbid_following_all(monkeypatch, env / "Scripts", touched)
+    lstats = _record_lstat(monkeypatch)
+
+    assert userenvs._prefix_python(str(env), nt=True) is None
+
+    assert touched == []
+    assert not any(p.replace("\\", "/").startswith(str(env / "Scripts") + "/") for p in lstats)
+
+
+@POSIX  # 用符号链接在 macOS / Linux 上模拟 Windows 语义；Windows 真机不跑（建链需要特权）
+def test_windows_prefix_python_rejects_a_redirected_python_exe_leaf(tmp_path, home, monkeypatch):
+    target = tmp_path / "share" / "python.exe"
+    target.parent.mkdir()
+    target.write_text("MZ", encoding="utf-8")
+    env = tmp_path / "envs" / "proj-env"
+    (env / "Scripts").mkdir(parents=True)
+    (env / "Scripts" / "python.exe").symlink_to(target)
+    monkeypatch.setattr(userenvs, "ntpath", posixpath)
+    touched: list[str] = []
+    _forbid_following_all(monkeypatch, env / "Scripts" / "python.exe", touched)
+
+    assert userenvs._prefix_python(str(env), nt=True) is None
+    assert touched == []
+    # 正例：普通文件不被 walker 拒
+    (env / "Scripts" / "python.exe").unlink()
+    (env / "Scripts" / "python.exe").write_text("MZ", encoding="utf-8")
+    monkeypatch.undo()
+    monkeypatch.setattr(userenvs, "ntpath", posixpath)
+    assert userenvs._prefix_python(str(env), nt=True) == str(env / "Scripts" / "python.exe")
+
+
+@POSIX
+def test_vscode_folder_hint_with_redirected_bin_yields_no_candidate_and_no_following_call(
+    tmp_path, home, monkeypatch
+):
+    """discover 整条链：机器级（项目之外）的 env 文件夹，`bin` 是重定向 → 无候选、零跟随调用。"""
+    project = _project(tmp_path)
+    share = tmp_path / "share" / "bin"
+    share.mkdir(parents=True)
+    (share / "python3").write_text("#!/bin/sh\n", encoding="utf-8")
+    env = tmp_path / "envs" / "custom-env"
+    env.mkdir(parents=True)
+    (env / "bin").symlink_to(share, target_is_directory=True)
+    _vscode_hint(project, str(env))
+    _nt_walker(monkeypatch)
+    touched: list[str] = []
+    _forbid_following_all(monkeypatch, env / "bin", touched)
+    lstats = _record_lstat(monkeypatch)
+    budget = scanbudget.Budget()
+
+    assert userenvs.discover(project, "fig.py", ask_login_shell=False, budget=budget) == []
+
+    assert touched == []
+    assert not any(p.startswith(str(env / "bin") + "/") for p in lstats)
+    assert any(r["code"] == scanbudget.ISSUE_SYMLINK_DIR for r in budget.issues())
+
+
+@POSIX  # 用符号链接在 macOS / Linux 上模拟 Windows 语义；Windows 真机不跑（建链需要特权）
+def test_windows_scan_never_lstats_below_a_redirected_path_ancestor(
+    tmp_path, home, monkeypatch, no_process
+):
+    """P2-2：PATH 项 `…/local-junction/bin`，只有祖先 `local-junction` 是重定向：祖先之下零 lstat、零跟随。"""
+    share = tmp_path / "share"
+    (share / "bin").mkdir(parents=True)
+    (share / "bin" / "python.exe").write_text("MZ", encoding="utf-8")
+    link = tmp_path / "local-junction"
+    link.symlink_to(share, target_is_directory=True)
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "python.exe").write_text("MZ", encoding="utf-8")
+    _nt_scan_env(monkeypatch, [str(link / "bin"), str(good)])
+    touched: list[str] = []
+    _forbid_following_all(monkeypatch, link, touched)
+    lstats = _record_lstat(monkeypatch)
+    budget = scanbudget.Budget()
+
+    found = _REAL_SYSTEM_CANDIDATES(budget=budget, nt=True)
+
+    assert touched == []
+    assert str(link) in lstats  # 重定向的那一级自己被 lstat（唯一一次）
+    assert not any(p.startswith(str(link) + "/") for p in lstats)
+    assert all(not py.startswith(str(link)) for py, _ in found)
+    assert (str(good / "python.exe"), "system") in found
+    assert any(r["code"] == scanbudget.ISSUE_SYMLINK_DIR for r in budget.issues())
+    # 机器上某条 PATH 按策略不碰是设计内的剪枝：不把整次项目扫描降成 partial
+    assert {r["severity"] for r in budget.issues()} == {scanbudget.SEVERITY_NOTE}
+
+
+@POSIX  # 用符号链接在 macOS / Linux 上模拟 Windows 语义；Windows 真机不跑（建链需要特权）
+def test_windows_scan_does_not_glob_under_a_redirected_localappdata(
+    tmp_path, home, monkeypatch, no_process
+):
+    share = tmp_path / "share" / "Programs" / "Python" / "Python312"
+    share.mkdir(parents=True)
+    (share / "python.exe").write_text("MZ", encoding="utf-8")
+    link = tmp_path / "AppDataLocal"
+    link.symlink_to(tmp_path / "share", target_is_directory=True)
+    _nt_scan_env(monkeypatch, [])
+    monkeypatch.setenv("LOCALAPPDATA", str(link))
+    touched: list[str] = []
+    _forbid_following_all(monkeypatch, link, touched)
+    lstats = _record_lstat(monkeypatch)
+
+    found = _REAL_SYSTEM_CANDIDATES(budget=scanbudget.Budget(), nt=True)
+
+    assert touched == []
+    assert not any(p.startswith(str(link) + "/") for p in lstats)
+    assert all(not py.startswith(str(link)) for py, _ in found)
+
+
+def test_path_walker_checks_each_directory_once_and_charges_the_budget(tmp_path, monkeypatch):
+    base = tmp_path / "a" / "b"
+    base.mkdir(parents=True)
+    for n in ("x", "y", "z"):
+        (base / n).mkdir()
+    lstats = _record_lstat(monkeypatch)
+    budget = scanbudget.Budget()
+    walker = scanbudget.PathWalker(nt=True, budget=budget)
+
+    for n in ("x", "y", "z"):
+        assert walker.redirected(str(base / n)) is None
+
+    assert lstats.count(str(base)) == 1  # 共同祖先按目录缓存，不因 PATH 变长而重复
+    assert budget.entries == len(set(lstats))
+
+
+def test_path_walker_rejects_unc_and_dotdot_without_any_lstat(tmp_path, monkeypatch):
+    (tmp_path / "a").mkdir()
+    lstats = _record_lstat(monkeypatch)
+    walker = scanbudget.PathWalker(nt=True)
+    assert walker.redirected("\\\\corp-fileserver\\share\\bin\\python.exe")
+    assert walker.redirected("//corp-fileserver/share/bin")
+    assert walker.redirected(str(tmp_path / "a" / ".." / "b"))
+    assert not any("corp-fileserver" in p for p in lstats)
+
+
+def test_path_walker_does_not_reject_an_app_exec_link(tmp_path, monkeypatch):
+    """商店版 python 是 AppExecLink（reparse tag 0x8000001B，非 name-surrogate）：不被当作重定向。"""
+    import stat as stat_mod
+    import types
+
+    exe = tmp_path / "WindowsApps" / "python.exe"
+    exe.parent.mkdir()
+    exe.write_text("", encoding="utf-8")
+    fake = types.SimpleNamespace(
+        st_mode=stat_mod.S_IFREG | 0o644, st_file_attributes=0x400, st_reparse_tag=0x8000001B
+    )
+    real = os.lstat
+    monkeypatch.setattr(os, "lstat", lambda p, *a, **k: fake if str(p) == str(exe) else real(p))
+
+    assert scanbudget.PathWalker(nt=True).redirected(str(exe)) is None
+
+
+@POSIX
+def test_posix_scan_keeps_symlinked_ancestors_and_symlinked_python(
+    tmp_path, home, monkeypatch, no_process
+):
+    """POSIX 语义下祖先 / 叶子软链接是常态（Homebrew、pyenv、venv）：扫描照常出现，walker 是空操作。"""
+    real = _python(tmp_path / "real")
+    real.chmod(0o755)
+    link = tmp_path / "linked-dir"
+    link.symlink_to(real.parent, target_is_directory=True)
+    monkeypatch.setenv("PATH", str(link))
+    monkeypatch.setattr(pool, "system_python_candidates", _REAL_SYSTEM_CANDIDATES)
+
+    found = pool.system_python_candidates(budget=scanbudget.Budget())
+
+    assert (str(link / "python3"), "system") in found
+    assert scanbudget.PathWalker(nt=False).redirected(str(link / "python3")) is None

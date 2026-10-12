@@ -22,7 +22,9 @@
 from __future__ import annotations
 
 import io
+import ntpath
 import os
+import re
 import stat
 import threading
 import time
@@ -167,6 +169,72 @@ def redirected_component(root, path, *, allow_final_link: bool = False) -> str |
                 return None
             return rel
     return None
+
+
+class PathWalker:
+    """机器级绝对路径的逐级不跟随检查（`redirected_component` 的姊妹：那个只管项目根之下）。
+
+    Windows 语义（`nt=True`）下，扫描构造出的「本地样子」候选（PATH 目录、IDE 的解释器线索、Conda / pyenv 前缀、
+    glob 的字面目录前缀）可能在**任何一级祖先**上是指向断线 UNC / WebDAV 共享的 junction——只验叶子不够：
+    对后代路径做 `lstat` 时系统会先解析那个祖先、联系共享。所以从盘符根起每一级只 `lstat` 该级本身
+    （祖先已验证非重定向），UNC / 设备命名空间根、重定向（`is_redirect`，含最后一级）、不可读都拒；第一个
+    被拒的那一级之下不再有任何 `lstat`。非路径替身的 AppExecLink（商店版 python）不被 `is_redirect` 命中。
+
+    POSIX 语义（`nt=False`）是空操作：`/tmp`、`/var`、Homebrew、pyenv、venv 的 `bin/python` 软链接是常态，
+    不是网络重定向（项目之下的链接另由 `redirected_component` 管）。每一级 `lstat` 计入 `budget`
+    （预算耗尽按拒处理，调用方自会收手），结果按路径缓存，PATH 很长也不重复。命中的记账本（severity=note）。
+    """
+
+    def __init__(self, *, nt: bool | None = None, budget: Budget | None = None):
+        self.nt = os.name == "nt" if nt is None else nt
+        self.budget = budget
+        self._seen: dict[str, str | None] = {}  # 前缀 -> 被拒的那一级（None = 干净）
+        self._missing: set[str] = set()
+
+    def _note(self, code: str, path: str) -> None:
+        if self.budget is not None:
+            # 机器上某条 PATH / 前缀按策略不碰，是设计内的剪枝，不是项目扫描没做完：记 note（不把整次扫描降成 partial）
+            self.budget.note(code, severity=SEVERITY_NOTE, scope="file", path=path)
+
+    def redirected(self, path) -> str | None:
+        """`path` 经过重定向 / UNC 根 / 读不动的一级：回第一个被拒的前缀（已记账本）；干净或不存在回 None。"""
+        if not self.nt:
+            return None
+        text = os.fspath(path)
+        drive, rest = ntpath.splitdrive(text)
+        if drive.startswith(("\\\\", "//")):
+            self._note(ISSUE_SYMLINK_DIR, text)
+            return drive
+        cur = drive + (rest[:1] if rest[:1] in ("\\", "/") else "")
+        for part in (x for x in re.split(r"[\\/]+", rest) if x and x != "."):
+            if part == "..":  # 名字而非路径：normpath 会悄悄折叠掉中间一级的 lstat
+                self._note(ISSUE_SYMLINK_DIR, text)
+                return os.path.join(cur, part)
+            cur = os.path.join(cur, part)
+            key = os.path.normcase(cur)
+            if key in self._missing:
+                return None
+            if key in self._seen:
+                if self._seen[key] is not None:
+                    return self._seen[key]
+                continue
+            if self.budget is not None and not self.budget.charge_entry():
+                return cur
+            try:
+                st = os.lstat(cur)
+            except (FileNotFoundError, NotADirectoryError):
+                self._missing.add(key)
+                return None
+            except (OSError, ValueError):
+                self._seen[key] = cur
+                self._note(ISSUE_UNREADABLE_FILE, cur)
+                return cur
+            bad = cur if is_redirect(st) else None
+            self._seen[key] = bad
+            if bad is not None:
+                self._note(ISSUE_SYMLINK_DIR, bad)
+                return bad
+        return None
 
 
 def _contained_lexical(base, parts: tuple[str, ...]) -> str:

@@ -1186,6 +1186,27 @@ def legacy_adoption_enabled() -> bool:
     return adoption_mode() == ADOPTION_LEGACY
 
 
+def env_key(python: str) -> tuple[str, str]:
+    """去重键 = (所在目录, 真实文件)：同一目录下 `python3` / `python` 两个别名是同一个环境；
+    **目录不 realpath**——`.venv/bin/python` 指向基础解释器，但它与基础解释器是两个环境
+    （site-packages 不同），目录不同就分得开（ADR 0044 §四）。"""
+    path = os.path.abspath(python)
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        real = path
+    return os.path.normcase(os.path.dirname(path)), os.path.normcase(real)
+
+
+def env_id(python: str) -> str:
+    """对外的不透明身份：HTTP 投影不带机器路径（ADR 0053 §二），界面采用时交回这个 id，后端用自己的
+    发现结果换回路径——路径只来自 `userenvs` 的枚举，不接受调用方给（ADR 0044 的安全口径）。"""
+    import hashlib
+
+    d, real = env_key(python)
+    return hashlib.sha1(f"{d}|{real}".encode()).hexdigest()[:16]
+
+
 def environment_generation(python: str) -> str:
     """这条路径上的环境此刻是**哪一代**：重建（删了再建）换代，装包 / 升级内部文件 / 改权限位 / 贴扩展属性不换。
 

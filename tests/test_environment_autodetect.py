@@ -1156,7 +1156,7 @@ def _conda_like(monkeypatch, prefixes: list) -> None:
     monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(p) for p in prefixes])
     real = userenvs._prefix_python
 
-    def prefix_python(prefix):
+    def prefix_python(prefix, **_k):
         return real(prefix) or projectenv.interpreter_of(prefix)
 
     monkeypatch.setattr(userenvs, "_prefix_python", prefix_python)

@@ -13,6 +13,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import ntpath
 import os
 import re
 import shutil
@@ -1076,30 +1077,10 @@ def _is_network_path(path: str) -> bool:
     return path.startswith(("\\\\", "//"))
 
 
-def _scan_redirected(budget, path: str) -> bool:
-    """Windows 语义下，`path` 本身是符号链接 / junction 等路径替身（或读不动）：扫描一律不跟随。
-
-    只做不跟随的 `lstat`（与项目扫描同一条判据 `scanbudget.is_redirect`），目标可能是断线的 UNC / WebDAV
-    共享——`isfile` / `stat` / 指纹哪怕只是探一下也会联系它、发 NTLM。命中记账本（symlinked_dir，目标未检查）。
-    不存在回 False（后面的存在性检查自会处理）。POSIX 不走这里：venv / Homebrew 的 python 本来就是软链接。"""
-    import os
-
-    try:
-        st = os.lstat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return False
-    except (OSError, ValueError):
-        budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="file", path=path)
-        return True
-    if scanbudget.is_redirect(st):
-        budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=path)
-        return True
-    return False
-
-
-def _scan_which(budget, nt: bool) -> Callable[[str], str | None]:
+def _scan_which(budget, nt: bool, walker) -> Callable[[str], str | None]:
     """只读扫描版 `shutil.which`：逐项 PATH 过预算，跳过 UNC / 空项，取消或超预算就停。
-    Windows 语义下 PATH 目录与候选本身若是重定向条目也跳过（不 `isfile`）。"""
+    Windows 语义下 PATH 目录的**每一级祖先**与候选本身若是重定向条目也跳过（`walker` 逐级不跟随 lstat，
+    不 `isfile`；目录的结果按路径缓存，同一目录下的多个扩展名不重复）。"""
     import os
 
     def which(name: str) -> str | None:
@@ -1109,13 +1090,13 @@ def _scan_which(budget, nt: bool) -> Callable[[str], str | None]:
         for d in os.environ.get("PATH", "").split(os.pathsep):
             if not d or _is_network_path(d):
                 continue
-            if nt and _scan_redirected(budget, d):
+            if walker.redirected(d) is not None:
                 continue
             for ext in exts:
                 if not budget.charge_entry():
                     return None
                 cand = os.path.join(d, name + ext)
-                if nt and _scan_redirected(budget, cand):
+                if walker.redirected(cand) is not None:
                     continue
                 if os.path.isfile(cand) and (nt or os.access(cand, os.X_OK)):
                     return cand
@@ -1148,12 +1129,19 @@ def system_python_candidates(*, budget=None, nt: bool | None = None) -> list[tup
     else:
         nt = os.name == "nt" if nt is None else nt
 
+        walker = scanbudget.PathWalker(nt=nt, budget=budget)
+
         def scan_glob(pattern: str) -> list[str]:
             if _is_network_path(pattern) or not budget.charge_entry():
                 return []
+            # glob 会先解析字面目录前缀（`C:\Users\u\AppData\Local\Programs\Python\Python3*` 的 `…\Python`）：
+            # 这一串里任何一级祖先是 junction 都先过逐级检查，再让 glob 碰它
+            literal = re.split(r"[*?\[]", pattern, maxsplit=1)[0]
+            if walker.redirected(ntpath.dirname(literal) or literal) is not None:
+                return []
             return _glob(pattern)
 
-        paths = _system_python_paths(which=_scan_which(budget, nt), glob=scan_glob, nt=nt)
+        paths = _system_python_paths(which=_scan_which(budget, nt, walker), glob=scan_glob, nt=nt)
         wanted = [] if is_frozen() else [(sys.executable, SOURCE_CURRENT)]
         wanted += [(p, SOURCE_SYSTEM) for p in paths if p]
         guard = budget
@@ -1163,9 +1151,9 @@ def system_python_candidates(*, budget=None, nt: bool | None = None) -> list[tup
             continue
         try:
             if guard is not None and nt:
-                # 构造出的「本地样子」候选可能是指向断线共享的 symlink / junction：先不跟随地查它和所在目录，
-                # 再用同一次 lstat 判常规文件，全程不调用跟随型谓词。
-                if _scan_redirected(guard, cand) or _scan_redirected(guard, os.path.dirname(cand)):
+                # 构造出的「本地样子」候选可能在任何一级（祖先或叶子）是指向断线共享的 symlink / junction：
+                # 从盘符根起逐级不跟随地查（祖先之下零 lstat），再用叶子的 lstat 判常规文件，不调用跟随型谓词。
+                if walker.redirected(cand) is not None:
                     continue
                 if not stat.S_ISREG(os.lstat(cand).st_mode):
                     continue
@@ -3674,8 +3662,6 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
         return outcome
     python = outcome["python"]
     if not projectenv.silent_adoption_enabled():
-        from . import userenvs
-
         # 确认模式（ADR 0114）：项目 venv 体检通过、缺的包也在里面——这是**建议**，不是决定。体检是这次
         # 运行缺包触发的有界检查（上面的 `mark_attempted` 一次一对），采用是用户在修复卡片上点的那一下
         # （`PATCH /api/engine/environment`），之后才进项目设置
@@ -3689,7 +3675,7 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
                 # 是为哪个脚本发现的：脚本在子目录时 venv 也许在子目录里，采用端点要照同一个脚本重新枚举候选，
                 # 不带它就从项目根找、报 `environment_candidate_gone`（Codex 评 #911 补审 P1）
                 "script": script_name,
-                "id": userenvs.env_id(python),
+                "id": projectenv.env_id(python),
                 "generation": projectenv.environment_generation(python),
                 "health": outcome.get("health"),
             },
