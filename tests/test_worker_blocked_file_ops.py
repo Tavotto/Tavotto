@@ -658,7 +658,50 @@ def test_http_error_payload_carries_the_code_and_the_basis():
 def test_probe_passes_the_code_through_instead_of_a_generic_probe_failure():
     out = engine_probe._error_from_worker(_worker_error(), entry="__main__", script="a.py")
     assert out["code"] == CODE
-    assert engine_probe.entry_retry_allowed(_worker_error()) is False
+    # 被拦的操作可能只在某个入口里：换下一个入口照旧要试（都失败时报第一次的这个码）
+    assert engine_probe.entry_retry_allowed(_worker_error()) is True
+
+
+ENTRY_SPECIFIC_BLOCK = """\
+import os
+from pathlib import Path
+import matplotlib.pyplot as plt
+
+HERE = Path(__file__).parent
+
+
+def main():
+    os.replace(HERE / "cache.tmp", HERE / "cache.csv")
+    value = (HERE / "cache.csv").read_text()
+    plt.plot([0, int(value)])
+
+
+def render():
+    plt.plot([0, 1, 2])
+"""
+
+
+@needs_worker
+def test_a_blocked_operation_inside_one_entry_does_not_stop_probing_the_next(figs):
+    """`main()` 里被拦 + 回读（该入口失败），`render()` 是干净的图入口：探测要接着试到 render 并成功，
+    不能因为第一个入口的被拦失败就判整份脚本无法渲染（Codex #952）。"""
+    (figs / "cache.tmp").write_text("2", encoding="utf-8")
+    (figs / "entry_specific.py").write_text(ENTRY_SPECIFIC_BLOCK, encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_PROJECT)
+    result = engine_probe.probe(figs, "entry_specific.py", entries=["main", "render"])
+    assert result["error"] is None, result
+    assert result["entry"] == "render" and result["tried"] == ["main", "render"]
+
+
+@needs_worker
+def test_when_every_entry_fails_the_blocked_code_is_still_reported(figs):
+    (figs / "cache.tmp").write_text("2", encoding="utf-8")
+    (figs / "only_main.py").write_text(
+        ENTRY_SPECIFIC_BLOCK.split("\n\ndef render")[0] + "\n", encoding="utf-8"
+    )
+    workdir.set_mode(figs, workdir.MODE_PROJECT)
+    result = engine_probe.probe(figs, "only_main.py", entries=["main", "render"])
+    assert result["error"]["code"] == CODE, result
 
 
 def test_preparation_projection_reports_a_failure_not_a_success():
