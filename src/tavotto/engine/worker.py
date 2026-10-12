@@ -876,17 +876,23 @@ class Worker(wireproto.V1Handler):
         def _guard_delete(name, real_fn, op, kind):
             # 改名 / 移动影响源与目的两条路径（目的地读到的是旧内容或没有），删除只影响自己
             moves = kind == ledger.KIND_RENAME
+            src_key = "src" if moves else "path"
 
-            def guarded(path, *a, **kw):
-                if "dir_fd" not in kw and _inside_real(path):
+            def guarded(*a, **kw):
+                # 按签名取参：源与目的各自可能是位置参数也可能是关键字（`dst=`、`src=` / `path=`）
+                path = a[0] if a else kw.get(src_key)
+                if path is not None and "dir_fd" not in kw and _inside_real(path):
                     print(f"[guard] 跳过 {name} 真实图库文件: {path}", file=sys.stderr)
-                    dst = a[:1]
-                    if moves and dst and op == "shutil.move":
-                        # shutil.move 进已存在目录：受影响的是 dst/basename(src)，不是整个目录
-                        dst = (ledger.move_destination(path, dst[0]),)
-                    ledger.blocked(op, kind, path, *(dst if moves else ()))
+                    dst = a[1] if len(a) > 1 else kw.get("dst")
+                    affected = ()
+                    if moves and dst is not None:
+                        if op == "shutil.move":
+                            # shutil.move 进已存在目录：受影响的是 dst/basename(src)，不是整个目录
+                            dst = ledger.move_destination(path, dst)
+                        affected = (dst,)
+                    ledger.blocked(op, kind, path, *affected)
                     return None
-                return real_fn(path, *a, **kw)
+                return real_fn(*a, **kw)
 
             return guarded
 
@@ -940,9 +946,9 @@ class Worker(wireproto.V1Handler):
             script_source=script_source,
         )
         if self.workdir is None:
-            figcapture.install_relative_read_fallback(
+            ledger.read_redirect = figcapture.install_relative_read_fallback(
                 str(self.script.parent), str(self.figures_dir)
-            )
+            ).resolve
         # cwd 已经是脚本目录时不装回退：相对路径本来就指向项目，回退只会在
         # 「沙盒里有同名文件」这种不可能的前提上多一层看不见的改道。
         # 账本的 open / stat 观察装在**最外层**（回退之外）：看到的必须是脚本交出的那条路径。

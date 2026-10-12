@@ -886,3 +886,193 @@ def test_ledger_move_destination_resolves_like_shutil_move(tmp_path):
     assert ledger.material() == []
     ledger.observe(str(d / "seed.txt"), "r")
     assert [o["op"] for o in ledger.material()] == ["shutil.move"]
+
+
+# ====================================================== #952 第五轮
+_PLOT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+"""
+
+#: 绝对路径的阻断操作 + 相对路径的回读：沙盒档里读被回退改指到项目里那份，账本得同时认「请求的」与「实际读的」。
+ABS_UNLINK_THEN_RELATIVE_READ = """\
+from pathlib import Path
+import os
+{plot}
+Path(__file__).parent.joinpath("cache.csv").unlink()
+with open("{read}") as f:
+    value = f.read()
+"""
+
+
+@needs_worker
+def test_p1_absolute_block_then_relative_read_is_caught_in_the_default_sandbox(figs):
+    src = ABS_UNLINK_THEN_RELATIVE_READ.format(plot=_PLOT, read="cache.csv")
+    e = _blocked(figs, "abs_rel.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["Path.unlink"]
+
+
+@needs_worker
+def test_p1_absolute_savefig_target_then_relative_read_is_caught_in_the_default_sandbox(figs):
+    """savefig 目标的 stat 不算观察（只认读内容），所以回退内部对有效路径的 `isfile` 探测救不了这条：
+    账本必须自己把相对读解析到回退实际会读的项目路径。"""
+    src = (
+        _PLOT
+        + 'from pathlib import Path\nfig.savefig(str(Path(__file__).resolve().parent / "stage.png"))\n'
+        + 'with open("stage.png", "rb") as f:\n    data = f.read()\n'
+    )
+    e = _blocked(figs, "abs_savefig_rel.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["savefig"]
+
+
+@needs_worker
+def test_p1_absolute_block_then_relative_read_of_something_else_still_succeeds(figs):
+    src = ABS_UNLINK_THEN_RELATIVE_READ.format(plot=_PLOT, read="stale.csv")
+    worker, _ = _build(figs, "abs_rel_ok.py", src, project_mode=False)
+    assert worker._log_tail().count("[guard]") >= 1  # 守卫照旧在拦
+
+
+KW_REPLACE_THEN_READ = """\
+import os
+import shutil
+{plot}
+with open("cache.tmp", "w") as f:
+    f.write("2")
+{call}
+with open("{read}") as f:
+    value = f.read()
+"""
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    ("call", "read", "op"),
+    [
+        ('os.replace("cache.tmp", dst="cache.csv")', "cache.csv", "os.replace"),
+        ('os.replace(src="cache.tmp", dst="cache.csv")', "cache.csv", "os.replace"),
+        ('os.rename("cache.tmp", dst="cache.csv")', "cache.csv", "os.rename"),
+        ('shutil.move("seed.txt", dst="moved.txt")', "moved.txt", "shutil.move"),
+        ('shutil.move(src="seed.txt", dst="moved.txt")', "seed.txt", "shutil.move"),
+    ],
+)
+def test_p1_destination_given_by_keyword_is_recorded_and_read_back(figs, call, read, op):
+    src = KW_REPLACE_THEN_READ.format(plot=_PLOT, call=call, read=read)
+    e = _blocked(figs, "kw_dst.py", src)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == [op]
+
+
+@needs_worker
+def test_p1_keyword_destination_with_an_unrelated_read_still_succeeds(figs):
+    src = KW_REPLACE_THEN_READ.format(
+        plot=_PLOT, call='os.replace("cache.tmp", dst="cache.csv")', read="stale.csv"
+    )
+    _build(figs, "kw_dst_ok.py", src, project_mode=True)
+
+
+@needs_worker
+def test_p2_extensionless_savefig_does_not_taint_an_unrelated_file_of_that_name(figs):
+    (figs / "stage").write_text("unrelated", encoding="utf-8")
+    src = _PLOT + 'fig.savefig("stage")\nwith open("stage") as f:\n    data = f.read()\n'
+    _build(figs, "noext_ok.py", src, project_mode=False)
+    # 补出来的后缀名仍然算：读 stage.png 才是读到了被拦的那份
+    src2 = _PLOT + 'fig.savefig("stage")\nwith open("stage.png", "rb") as f:\n    data = f.read()\n'
+    e = _blocked(figs, "noext_bad.py", src2, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
+def test_savefig_effective_names_skip_the_literal_name_when_matplotlib_appends_a_suffix():
+    assert "stage" not in figcapture.savefig_effective_names("stage", {})
+    assert "stage" not in figcapture.savefig_effective_names("stage.", {})
+    assert "stage" in figcapture.savefig_effective_names("stage", {"format": "png"})
+    assert "stage.png" in figcapture.savefig_effective_names("stage", {})
+
+
+RMTREE_RECREATE = """\
+import os
+import shutil
+from pathlib import Path
+{plot}
+shutil.rmtree("old_dir")
+{mk}
+with open("old_dir/result.csv", "w") as f:
+    f.write("new")
+with open("old_dir/{read}") as f:
+    value = f.read()
+"""
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    "mk",
+    ['os.makedirs("old_dir", exist_ok=True)', 'Path("old_dir").mkdir(exist_ok=True)', "pass"],
+    ids=["makedirs", "path_mkdir", "no_recreate"],
+)
+def test_p2_reading_a_file_the_script_rewrote_under_a_blocked_directory_succeeds(figs, mk):
+    src = RMTREE_RECREATE.format(plot=_PLOT, mk=mk, read="result.csv")
+    _build(figs, "rmtree_ok.py", src, project_mode=True)
+
+
+@needs_worker
+def test_p2_an_unrewritten_file_under_the_blocked_directory_still_fails(figs):
+    src = RMTREE_RECREATE.format(
+        plot=_PLOT, mk='os.makedirs("old_dir", exist_ok=True)', read="x.txt"
+    )
+    e = _blocked(figs, "rmtree_bad.py", src)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["shutil.rmtree"]
+
+
+def test_ledger_rewritten_descendant_is_exempt_from_a_directory_taint(tmp_path):
+    d = tmp_path / "out"
+    ledger = _ledger(tmp_path)
+    ledger.blocked("shutil.rmtree", "delete_dir", str(d))
+    ledger.opened(str(d / "result.csv"), "w")
+    ledger.observe(str(d / "result.csv"), "r")
+    assert ledger.material() == []
+    ledger.observe(str(d / "other.csv"), "r")  # 没重写的后代照旧
+    assert [o["op"] for o in ledger.material()] == ["shutil.rmtree"]
+
+
+def test_ledger_a_later_block_revokes_the_rewrite_exemption(tmp_path):
+    d = tmp_path / "out"
+    ledger = _ledger(tmp_path)
+    ledger.blocked("shutil.rmtree", "delete_dir", str(d))
+    ledger.opened(str(d / "result.csv"), "w")
+    ledger.blocked("os.remove", "delete", str(d / "result.csv"))
+    ledger.observe(str(d / "result.csv"), "r")
+    assert "os.remove" in [o["op"] for o in ledger.material()]
+
+
+def test_ledger_read_redirect_marks_the_effective_path_too(tmp_path):
+    f = tmp_path / "proj" / "cache.csv"
+    ledger = _ledger(tmp_path)
+    ledger.blocked("Path.unlink", "delete", str(f))
+    ledger.read_redirect = lambda p: str(f) if p == "cache.csv" else None
+    ledger.observe("cache.csv", "w")  # 写模式不回退
+    assert ledger.material() == []
+    ledger.observe("cache.csv", "r+")  # 回退只认只读
+    assert ledger.material() == []
+    ledger.observe("cache.csv", "r")
+    assert [o["op"] for o in ledger.material()] == ["Path.unlink"]
+
+
+def test_ledger_recreating_a_blocked_directory_exempts_only_its_own_state_query(tmp_path):
+    d = tmp_path / "out"
+    ledger = _ledger(tmp_path)
+    ledger.blocked("shutil.rmtree", "delete_dir", str(d))
+    ledger.recreating_directory(str(d))
+    ledger.observe_stat(str(d))
+    assert ledger.material() == []
+    ledger.observe(str(d / "old.txt"), "r")
+    assert [o["op"] for o in ledger.material()] == ["shutil.rmtree"]
+    other = _ledger(tmp_path)
+    other.blocked("os.remove", "delete", str(d))  # 被拦的是文件：mkdir 不是重建
+    other.recreating_directory(str(d))
+    other.observe_stat(str(d))
+    assert other.material() != []

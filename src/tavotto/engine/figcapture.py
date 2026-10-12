@@ -831,7 +831,7 @@ def savefig_effective_names(fname, kwargs: dict) -> list:
     `print_figure` 的规则：显式 `format=` 时文件名**原样**（不补后缀）；否则 `str` / `PathLike`
     取文件名后缀作格式，**没有后缀**就补默认格式（`stage` → `stage.png`，`stage.` → `stage.png`）。
     默认格式由 canvas 决定、用户可重载（`savefig_call` 因此不把它当已确定），这里不调用任何用户方法：
-    字面名一定记，另外补 `rcParams["savefig.format"]` 与 `png` 两个候选后缀名——多记一个候选只会让
+    显式 `format=` / 有后缀 / `bytes` 只记字面名；否则字面名**不会**被写出，只记补 `rcParams["savefig.format"]` 与 `png` 两个候选后缀名——多记一个候选只会让
     「读了那个名字」多算一次回读，不会漏。`bytes` 目的地 matplotlib 不补后缀，只记字面名。
     """
     if not savefig_targets_path(fname):
@@ -845,9 +845,12 @@ def savefig_effective_names(fname, kwargs: dict) -> list:
     mpl = sys.modules.get("matplotlib")
     rc = getattr(mpl, "rcParams", None) or {}
     fmts = (rc.get("savefig.format"), "png")
-    for fmt in dict.fromkeys(f for f in fmts if isinstance(f, str) and f):
-        names.append(name.rstrip(".") + "." + fmt)
-    return names
+    # 没有后缀也没有显式 format：matplotlib 写的是补了后缀的名字，字面名不会被写出——不记，
+    # 否则同名的无关旧文件被读时会被误判成回读被拦下的 savefig（#952 Codex P2）
+    return [
+        name.rstrip(".") + "." + fmt
+        for fmt in dict.fromkeys(f for f in fmts if isinstance(f, str) and f)
+    ]
 
 
 def savefig_call(fname, kwargs: dict) -> dict:
@@ -1504,6 +1507,10 @@ class BlockedFileOps:
         self._active = True
         self._busy = False
         self._uninstall = None
+        #: 脚本自己 `w` / `x` 重写成功的路径：目录级污点（`rmtree` 后重建）盖不到它们。后来的阻断会撤销。
+        self._rewritten: set[str] = set()
+        #: 只读相对路径回退的解析函数（worker 装回退后挂上）：脚本交出的路径 → 回退实际会去读的路径。
+        self.read_redirect = None
 
     # ---- 记账 ----
     @staticmethod
@@ -1535,6 +1542,10 @@ class BlockedFileOps:
             affected = [p for p in (self._norm(x) for x in paths) if p]
             if not affected:
                 return
+            if self._rewritten:  # 新的阻断重新盖住这些路径：之前的「已重写」不再作数
+                self._rewritten = {
+                    r for r in self._rewritten if not any(self._covers(p, r) for p in affected)
+                }
             if len(self._events) >= self.MAX_EVENTS:
                 self._spill_paths(op, kind, affected)
                 return
@@ -1600,6 +1611,12 @@ class BlockedFileOps:
             if "a" in mode and "+" not in mode:
                 return  # 纯追加：不读
             self._mark(real)
+            # 只读相对路径回退会把这次读改到项目里的另一条路径：那才是脚本实际读到的文件，也要比对
+            redirect = self.read_redirect
+            if redirect is not None and _readonly_mode(mode):
+                alt = self._norm(redirect(path))
+                if alt is not None and alt != real:
+                    self._mark(alt)
         except Exception:  # noqa: BLE001
             return
         finally:
@@ -1624,6 +1641,31 @@ class BlockedFileOps:
             for ev in self._spill.values():
                 if not ev["coarse"]:  # 粗化后存的是目录，清不掉其中某个文件的嫌疑
                     ev["paths"].discard(real)
+            # 目录级污点（`rmtree` 之后脚本重建目录、写进新文件）盖不到脚本自己写成功的后代
+            if len(self._rewritten) < self.MAX_SPILL_PATHS:
+                self._rewritten.add(real)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def recreating_directory(self, path) -> None:
+        """脚本要 `mkdir` 一个被拦下的 `rmtree` / `rmdir` 影响过的目录（直接运行时它已被删，这里会重建）：
+        守卫让它其实还在，`makedirs(exist_ok=True)` / `Path.mkdir(exist_ok=True)` 随后的 `isdir` 探测
+        两边都得到「是目录」，不算分叉。只豁免这条目录自身的状态查询——里面没被重写的文件仍受污点覆盖。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is None:
+                return
+            kinds = (self.KIND_DELETE_DIR,)
+            if any(
+                ev["kind"] in kinds and real in ev["paths"]
+                for ev in (*self._events, *(e for e in self._spill.values() if not e["coarse"]))
+            ):
+                self._rewritten.add(real)
         except Exception:  # noqa: BLE001
             return
         finally:
@@ -1671,6 +1713,8 @@ class BlockedFileOps:
             self._busy = False
 
     def _mark(self, real: str, *, via_stat: bool = False) -> None:
+        if real in self._rewritten:
+            return  # 读到的是脚本自己写的（阻断在其后会撤销这条）
         for ev in self._events:
             # 被拦截的 savefig 目标：`exists` / `getsize` 多是「存好了」的校验打印，不据此判分叉；
             # 读内容（open）才算——`Image.open` / `imread` / `open('rb')` 读到的才是错的数据
@@ -1709,6 +1753,7 @@ class BlockedFileOps:
         ledger = self
         real_open, real_io_open = builtins.open, io.open
         real_path_open, real_stat = pathlib.Path.open, os.stat
+        real_mkdir = os.mkdir
 
         def _open_through(original, file, mode, args, kwargs):
             ledger.observe(file, mode)
@@ -1760,7 +1805,14 @@ class BlockedFileOps:
         pathlib.Path.open = watched_path_open
         os.stat = watched_stat
 
+        def watched_mkdir(path, *args, **kwargs):
+            ledger.recreating_directory(path)
+            return real_mkdir(path, *args, **kwargs)
+
+        os.mkdir = watched_mkdir
+
         def uninstall() -> None:
+            os.mkdir = real_mkdir
             builtins.open = real_open
             io.open = real_io_open
             pathlib.Path.open = real_path_open
@@ -1978,6 +2030,8 @@ def install_relative_read_fallback(
         if real_ds_open is not None:
             datasource.open = real_ds_open
 
+    #: 账本比对用：这次只读 open 回退会改读哪条路径（None＝不改道）。与回退本身是同一个判据。
+    uninstall.resolve = _fallback_path
     return uninstall
 
 
