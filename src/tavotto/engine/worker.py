@@ -845,8 +845,15 @@ class Worker(wireproto.V1Handler):
         # 脚本随后有没有去观察被拦下的路径。open / os.stat 的观察包装在输入观察器与读回退之后安装（最外层）。
         ledger = figcapture.BlockedFileOps()
         BLOCKED_OPS = self._blocked_ops = ledger
+        # 账本的观察钩子之后才装：这里先留一份原始 lexists，守卫自己判「目标在不在」时不被当成脚本的观察
+        real_lexists = os.path.lexists
 
         def _guarded_unlink(p, missing_ok=False):
+            if missing_ok and not real_lexists(p):
+                # `unlink(missing_ok=True)` 且目标不在：直跑要么删掉它、要么 no-op，随后 exists() 两边都是 False——
+                # 没有可分叉的东西，不记账（Codex #952）。不带 missing_ok 的不在此列：沙盒档里「项目里没有」
+                # 不等于「直跑时没有」（文件可能按相对路径写进了沙盒），那里仍按被拦记账。
+                return None
             try:
                 if p.resolve().is_relative_to(real_figs):
                     print(f"[guard] 跳过删除真实图库文件: {p}", file=sys.stderr)

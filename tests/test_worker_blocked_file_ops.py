@@ -418,6 +418,28 @@ def test_blocked_operations_that_are_never_read_back_still_succeed(figs):
     assert (figs / "stale.csv").is_file() and (figs / "seed.txt").is_file()
 
 
+MISSING_OK_THEN_EXISTS = """\
+from pathlib import Path
+import matplotlib.pyplot as plt
+
+here = Path(__file__).parent
+(here / "never_there.csv").unlink(missing_ok=True)
+gone = not (here / "never_there.csv").exists()
+fig, ax = plt.subplots()
+ax.set_title(f"{gone}")
+ax.plot([0, 1])
+"""
+
+
+@needs_worker
+def test_deleting_a_missing_path_is_not_a_blocked_operation(figs):
+    """`unlink(missing_ok=True)` 对不存在的路径：直跑要么删掉、要么 no-op，随后 exists() 两边都是 False——
+    不记账，不是分叉（Codex #952）。不带 missing_ok 的删除不在此列（沙盒档里项目里没有≠直跑时没有）。"""
+    worker, resp = _build(figs, "missing_ok.py", MISSING_OK_THEN_EXISTS, project_mode=True)
+    assert resp["stems"], resp
+    assert "[guard]" not in worker._log_tail()
+
+
 @needs_worker
 def test_a_blocked_path_the_script_rewrote_itself_is_not_a_divergence(figs):
     worker, resp = _build(figs, "rewritten.py", BLOCKED_THEN_REWRITTEN, project_mode=True)
