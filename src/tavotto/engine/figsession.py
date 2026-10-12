@@ -47,6 +47,7 @@ import json
 import math
 import os
 import platform
+import shutil
 import sys
 import threading
 import time
@@ -895,10 +896,64 @@ class LiveFigureSession:
         顺序是先 SVG 后 manifest 再记账；账本是最后一步，它写出去之前这一版对
         「完成了几张图」就不存在。
         """
-        with self.real_output():
-            os.replace(svg_part, self.out_dir / f"{stem}.svg")
-            os.replace(man_part, self.out_dir / f"{stem}.json")
-            return figcapture.record_preview_published(self.out_dir, stem, svg_bytes_on_disk)
+        finals = [self.out_dir / f"{stem}.svg", self.out_dir / f"{stem}.json"]
+        parts = [svg_part, man_part]
+        backups: list[Path | None] = []
+        replaced: list[int] = []
+        try:
+            with self.real_output():
+                # 先给上一版留一份不会被 replace 动到的备份（硬链接：目标名在整个过程中
+                # 始终指向完整文件，读者不会看到「缺一半」；不支持硬链接就拷一份）。
+                for final in finals:
+                    backups.append(self._backup_of(final))
+                for i, (part, final) in enumerate(zip(parts, finals)):
+                    os.replace(part, final)
+                    replaced.append(i)
+                seq = figcapture.record_preview_published(self.out_dir, stem, svg_bytes_on_disk)
+        except BaseException:
+            self._restore_previous(finals, backups, replaced)
+            raise
+        self._discard_parts(*[b for b in backups if b is not None])
+        return seq
+
+    @staticmethod
+    def _backup_of(final: Path) -> Path | None:
+        """`final` 现存就返回它的备份路径（`.<name>.prev.part`），不存在返回 None。"""
+        if not final.exists():
+            return None
+        backup = final.with_name(f".{final.name}.prev.part")
+        try:
+            backup.unlink()
+        except OSError:
+            pass
+        try:
+            os.link(final, backup)
+        except OSError:
+            shutil.copy2(final, backup)
+        return backup
+
+    @staticmethod
+    def _restore_previous(finals, backups, replaced) -> None:
+        """发布中途失败：把已经换上新版的文件逐个还原成上一版。
+
+        SVG 已换上而 manifest 被（Windows 上的）锁挡住时，不还原就是新像素配旧命中
+        几何——与 `render` 「任何失败都保住上一版预览」的承诺相反。没有上一版的（首次
+        发布）就删掉新文件。还原本身失败**如实记录**（stderr）；账本从不记这次发布，
+        且旧账本的 `svg_bytes` 与残留的新 SVG 对不上，所以不会被算作完成。
+        """
+        for i in replaced:
+            final, backup = finals[i], backups[i] if i < len(backups) else None
+            try:
+                if backup is not None:
+                    os.replace(backup, final)
+                else:
+                    final.unlink()
+            except OSError as exc:
+                print(
+                    f"tavotto: could not restore previous preview file {final.name}: {exc}",
+                    file=sys.stderr,
+                )
+        LiveFigureSession._discard_parts(*[b for b in backups if b is not None and b.exists()])
 
     @staticmethod
     def _discard_parts(*parts: Path) -> None:

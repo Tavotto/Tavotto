@@ -300,7 +300,14 @@ DESCRIPTOR_VERSION = 1
 #: 半写的文件、上一次运行残留的文件都满足「存在」。CLI 的「捕获了几张图」读它，
 #: 不再数 `.svg` 后缀。写入方是 `figsession.render`（发布成功之后才记），读取方是
 #: `runcli`；两边都 import 这一个模块，不各写一份格式。
-PREVIEW_LEDGER = "published.json"
+#:
+#: **文件名不能撞用户 stem**：stem 来自 `savefig("published.png")` 这类脚本自己起的名字
+#: （可以以点开头），引擎写进同一目录的名字只有 `<stem>.svg` / `<stem>.json` /
+#: `.<stem>.svg.part` / `.<stem>.json.part` / `.<stem>.<ext>.prev.part`。账本取一个
+#: **不带任何扩展名**的点名——它不以 `.svg` / `.json` / `.part` 结尾，上面任何一个
+#: 形态都不可能等于它（`published.json` 就曾被 stem=`published` 的 manifest 撞上）。
+#: 它也不是图：任何按 `.svg` / `.json` 后缀枚举目录的人都看不见它。
+PREVIEW_LEDGER = ".preview-ledger"
 
 
 def _read_preview_ledger(out_dir) -> dict:

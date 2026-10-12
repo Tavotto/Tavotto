@@ -121,6 +121,71 @@ with tempfile.TemporaryDirectory() as tmp:
         out["changed"] = (Path(tmp) / "fig.svg").read_bytes() != first
         out["published"] = facts(tmp)["published"]
         out["seq"] = json.loads((Path(tmp) / figcapture.PREVIEW_LEDGER).read_text())["seq"]
+    elif scenario == "stem_collides_with_old_ledger_name":
+        # savefig("published.png") 的 stem 是 published；点开头的 stem 同理
+        names = ["published", "good", ".preview-ledger", ".published"]
+        for n in names:
+            sess.add_figure(n, good(n), figcapture.SOURCE_SAVEFIG)
+        sess.instrument_all()
+        out["published"] = sorted(figcapture.published_preview_stems(tmp))
+        out["manifests_ok"] = {
+            n: json.loads((Path(tmp) / f"{n}.json").read_text()).get("stem") == n
+            for n in names
+        }
+        out["ledger_stems"] = sorted(
+            json.loads((Path(tmp) / figcapture.PREVIEW_LEDGER).read_text())["stems"]
+        )
+        out["ledger_name"] = figcapture.PREVIEW_LEDGER
+        out["ledger_is_figure_like"] = figcapture.PREVIEW_LEDGER.endswith((".svg", ".json", ".part"))
+    elif scenario in ("second_replace_fails", "second_replace_fails_first_publish"):
+        first = scenario.endswith("first_publish")
+        if not first:
+            sess.add_figure("fig", good("v1"), figcapture.SOURCE_SAVEFIG)
+            sess.instrument_all()
+        else:
+            sess.add_figure("fig", good("v1"), figcapture.SOURCE_SAVEFIG)
+        p = Path(tmp)
+        snap = lambda: {  # noqa: E731
+            n: (p / n).read_bytes() for n in ("fig.svg", "fig.json", figcapture.PREVIEW_LEDGER)
+            if (p / n).exists()
+        }
+        old = snap()
+        if not first:
+            sess.states["fig"].fig.axes[0].set_title("a considerably longer second title")
+        real_replace = os.replace
+
+        def flaky(src, dst, *a, **k):  # Windows 上 manifest 被临时锁住
+            if str(dst).endswith("fig.json"):
+                raise PermissionError(13, "locked", str(dst))
+            return real_replace(src, dst, *a, **k)
+
+        os.replace = flaky
+        try:
+            try:
+                if first:
+                    sess.instrument_all()
+                else:
+                    sess.render("fig")
+            except Exception as exc:
+                out["error"] = type(exc).__name__
+        finally:
+            os.replace = real_replace
+        new = snap()
+        out["files_same"] = new == old
+        out["svg_same"] = new.get("fig.svg") == old.get("fig.svg")
+        out["json_same"] = new.get("fig.json") == old.get("fig.json")
+        out["names_after"] = sorted(n for n in os.listdir(tmp))
+        out["published"] = sorted(figcapture.published_preview_stems(tmp))
+        if not first:
+            # 成套且一致：SVG 字节数 = 账本记的数；manifest 仍是旧代
+            led = json.loads(new[figcapture.PREVIEW_LEDGER])
+            out["svg_matches_ledger"] = led["stems"]["fig"]["svg_bytes"] == len(new["fig.svg"])
+            out["seq"] = led["seq"]
+            os.replace(p / "fig.svg", p / "x.svg")  # 清场后重试：现在没有锁了，能发布新一代
+            os.replace(p / "x.svg", p / "fig.svg")
+            sess.render("fig")
+            out["retry_changed"] = (p / "fig.svg").read_bytes() != old["fig.svg"]
+            out["retry_seq"] = json.loads((p / figcapture.PREVIEW_LEDGER).read_text())["seq"]
     elif scenario == "stale_and_truncated":
         p = Path(tmp)
         # 上一次运行残留：有完整 SVG、没有账本
@@ -203,3 +268,33 @@ def test_the_cli_count_comes_from_the_ledger_not_from_svg_files(tmp_path):
     assert runcli._figures_written(str(tmp_path)) == 0
     figcapture.record_preview_published(tmp_path, "a", (tmp_path / "a.svg").stat().st_size)
     assert runcli._figures_written(str(tmp_path)) == 1  # 记过账的算，没记账的 b 不算
+
+
+def test_a_user_stem_cannot_collide_with_the_ledger():
+    """`savefig("published.png")` 曾把 manifest 写在 published.json，再被同名账本覆盖。"""
+    r = _drive("stem_collides_with_old_ledger_name")
+    assert r["ledger_is_figure_like"] is False, r["ledger_name"]
+    assert all(r["manifests_ok"].values()), f"某个 stem 的 <stem>.json 不是 manifest: {r}"
+    assert r["published"] == sorted(["published", "good", ".preview-ledger", ".published"]), r
+    assert r["ledger_stems"] == r["published"], r
+
+
+def test_a_failed_manifest_replace_restores_the_whole_previous_generation():
+    """SVG 已换上而 manifest 被锁住：旧 svg + 旧 manifest + 旧账本仍成套，不留备份文件。"""
+    r = _drive("second_replace_fails")
+    assert r["error"] == "PermissionError", r  # 注入确实生效
+    assert r["svg_same"] is True, "新像素配旧命中几何：SVG 没被还原"
+    assert r["json_same"] is True
+    assert r["files_same"] is True, "账本也必须还是旧的"
+    assert r["svg_matches_ledger"] is True and r["seq"] == 1
+    assert r["published"] == ["fig"]
+    assert not [n for n in r["names_after"] if n.endswith(".part")], r["names_after"]
+    # 正对照：锁一释放，重试能发布新一代，三者同代前进
+    assert r["retry_changed"] is True and r["retry_seq"] == 2
+
+
+def test_a_failed_first_publish_leaves_no_half_generation():
+    r = _drive("second_replace_fails_first_publish")
+    assert r["error"] == "PermissionError", r
+    assert r["names_after"] == [], f"首次发布失败后残留: {r['names_after']}"
+    assert r["published"] == []
