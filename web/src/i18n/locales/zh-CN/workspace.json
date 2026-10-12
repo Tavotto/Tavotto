@@ -892,6 +892,9 @@
       "depsRuntime": "运行时缺 {{module}}",
       "install": "要先安装缺少的组件",
       "needsArgs": "脚本要运行参数",
+      "argsRejected_other": "脚本不认你填的 {{count}} 个参数",
+      "inputUnanswered": "脚本中途要你回答，再运行一次就能答",
+      "inputUnansweredSecret": "脚本要口令，再运行一次时输入（口令不会被记住）",
       "missingData": "找不到要读的数据",
       "stale": "设置变了，要重新检查",
       "expired": "上次的记录没了",
@@ -1001,6 +1004,15 @@
       "installs": "将安装",
       "installTo": "装到",
       "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
+      "prompt": "脚本的提问",
+      "parseKind": "参数问题",
+      "parseKinds": {
+        "missing_required": "缺少必填参数",
+        "invalid_value": "有参数的值不合法",
+        "unknown": "脚本的参数解析器不接受这些参数"
+      },
+      "errorFull": "完整错误信息",
+      "errorTruncated": "太长，只保留了最后一部分。",
       "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。"
     },
     "fact": {

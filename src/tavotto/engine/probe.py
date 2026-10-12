@@ -172,11 +172,10 @@ def _error_from_worker(
         return out
     if exc.code in (ERROR_NEEDS_INPUT, ERROR_INPUT_TIMEOUT):
         # 脚本要输入而没人能答 / 等到超时（ADR 0099）：提示原文走 params，界面按 code 翻
-        extra = getattr(exc, "extra", None) or {}
         return _err(
             exc.code,
             str(exc),
-            params={"prompt": str(extra.get("prompt") or "")},
+            params=pool.recovery_params(exc),
             traceback_text=exc.traceback_text,
         )
     if exc.code in (ERROR_NEEDS_ARGUMENTS, ERROR_SCRIPT_EXITED):
@@ -187,12 +186,8 @@ def _error_from_worker(
         if exc.code == ERROR_NEEDS_ARGUMENTS:
             # T03：用户给了精确 token 时（`argv_count` > 0）脚本自己的解析器仍拒绝；`parse_kind` 只在 worker
             # 有 argparse 的实际证据时才有（missing_required / invalid_value / unknown）。
-            # 只带类别与个数，不带参数值。
-            extra = getattr(exc, "extra", None) or {}
-            if extra.get("argv_count"):
-                params["argv_count"] = str(int(extra["argv_count"]))
-            if extra.get("parse_kind"):
-                params["parse_kind"] = str(extra["parse_kind"])
+            # 只带类别与个数，不带参数值（字段来自错误转换合同 `pool.recovery_params`）。
+            params.update(pool.recovery_params(exc))
         out = _err(
             exc.code,
             str(exc),

@@ -944,6 +944,10 @@
       "depsRuntime": "{{module}} is missing",
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",
+      "argsRejected_one": "The script rejected the argument you gave",
+      "argsRejected_other": "The script rejected the {{count}} arguments you gave",
+      "inputUnanswered": "The script stopped to ask you something; run it again to answer",
+      "inputUnansweredSecret": "The script wants a password; run it again to enter it (it is never remembered)",
       "missingData": "Can't find the data it reads",
       "stale": "Settings changed, check again",
       "expired": "The last run's record is gone",
@@ -1060,6 +1064,15 @@
       "argsHidden_other": "{{count}} (has a password, hidden)",
       "installs": "Installs",
       "installTo": "Into",
+      "prompt": "The script asked",
+      "parseKind": "Argument problem",
+      "parseKinds": {
+        "missing_required": "A required argument is missing",
+        "invalid_value": "An argument has an invalid value",
+        "unknown": "The script’s argument parser did not accept these arguments"
+      },
+      "errorFull": "Full error output",
+      "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It never called savefig and left no Figure open.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it."
     },

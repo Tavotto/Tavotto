@@ -335,7 +335,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   const missing = find(report, 'input_location')
   const code = report.outcome.code ?? ''
   if (report.outcome.kind === 'failed' && code === 'script_needs_arguments') {
-    return view('needs_args', 'needsArgs', v, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
+    // 用户已经给了参数、脚本自己的解析器仍然拒绝（P05a：`params.argv_count` 来自后端本地错误详情）：别再说"要参数"
+    const given = Number(report.result?.error?.params?.argv_count)
+    return given > 0
+      ? view('needs_args', 'argsRejected', { count: given }, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
+      : view('needs_args', 'needsArgs', v, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
   }
   if (missing) return view('missing_data', 'missingData', v, { kind: 'missing_input', payload: missing.payload }, { step: 1 })
   const fallback = has(report, 'recheck') ? act('recheck', 'recheck') : null
@@ -352,6 +356,14 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
       return view('blocked', 'blocked', v, fallback)
     case 'failed':
       if (report.outcome.reason === 'dependency_preparation') return view('deps_failed', 'depsFailed', v, fallback, { tone: 'bad' })
+      if (code === 'script_needs_input' || code === 'script_input_timeout') {
+        // 脚本中途要输入而这一次没有人能答：再运行一次，提问会出现在卡片里（口令类说清不会被记住）
+        const secret = report.result?.error?.params?.reason === 'secret_required'
+        return view('input_unanswered', secret ? 'inputUnansweredSecret' : 'inputUnanswered', v, has(report, 'run') ? act('run', 'retry') : fallback, {
+          tone: 'bad',
+          step: 1,
+        })
+      }
       return view('failed', 'failed', v, has(report, 'run') ? act('run', 'retry') : fallback, { tone: 'bad', step: 1 })
     case 'cancelled':
       return view('cancelled', 'depsCancelled', v, fallback, { tone: 'mute' })

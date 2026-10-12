@@ -631,21 +631,10 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
     if stage:
         body["stage"] = stage
-    if exc.code in ("script_needs_input", "script_input_timeout"):
-        # 脚本要输入（ADR 0099）：界面按 code 翻译，提示原文走 params
-        extra = getattr(exc, "extra", None) or {}
-        body["params"] = {"prompt": str(extra.get("prompt") or "")}
-        # 为什么没人能答（闭集，T08）：口令要重新提供 / 冷重放的上下文对不上——界面据此说清下一步
-        if extra.get("reason") in engine_inputbroker.REASONS:
-            body["params"]["reason"] = extra["reason"]
-    if exc.code == "script_needs_arguments":
-        extra = getattr(exc, "extra", None) or {}
-        params = {}
-        if extra.get("argv_count"):
-            params["argv_count"] = str(int(extra["argv_count"]))
-        if extra.get("parse_kind"):
-            params["parse_kind"] = str(extra["parse_kind"])
-        body["params"] = params
+    if exc.code in (*engine_pool.INPUT_ERROR_CODES, engine_pool.ARGUMENTS_ERROR_CODE):
+        # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
+        # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）
+        body["params"] = engine_pool.recovery_params(exc)
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
