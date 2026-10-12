@@ -454,6 +454,16 @@ class PreviewInvalidated(RuntimeError):
     """发布中途失败且还原上一版也失败：该 stem 的预览已作废（读者看到「无预览」，不是成功）。"""
 
 
+class PreviewPoisoned(PreviewInvalidated):
+    """还原、删除 / 改名、失效标记**三道都落空**：磁盘上的错配对读方无法在磁盘层面隐藏。
+
+    致命：`protocol_code` 让 `wireproto.respond` 回 `preview_poisoned`（非 retryable），
+    app 侧据此判死这条会话并把 `out_dir` 记进读方进程的作废表（`figcapture.poison_preview_dir`）。
+    """
+
+    protocol_code = figcapture.PREVIEW_POISONED_CODE
+
+
 class LiveFigureSession:
     """捕获到的一组 Figure + 它们的可编辑状态。
 
@@ -919,10 +929,16 @@ class LiveFigureSession:
         except BaseException as exc:
             if not self._restore_previous(finals, backups, replaced):
                 # 还原也失败：磁盘上可能是新 SVG 配旧 manifest。备份**不删**，这一对整体作废。
-                self._invalidate_preview(stem, finals)
-                raise PreviewInvalidated(
+                guarded = self._invalidate_preview(stem, finals)
+                cls = PreviewInvalidated if guarded else PreviewPoisoned
+                raise cls(
                     f"preview of {stem!r} is invalidated: publishing failed ({exc}) "
                     "and the previous generation could not be restored"
+                    + (
+                        ""
+                        if guarded
+                        else "; neither removal nor an invalid marker could be written"
+                    )
                 ) from exc
             if was_invalid:
                 figcapture.mark_preview_invalid(self.out_dir, stem)
@@ -931,14 +947,17 @@ class LiveFigureSession:
         self._discard_parts(*[f.with_name(f".{f.name}.prev.part") for f in finals])
         return seq
 
-    def _invalidate_preview(self, stem, finals) -> None:
+    def _invalidate_preview(self, stem, finals) -> bool:
         """把 `stem` 当前（可能错配的）`.svg` / `.json` 撤掉，读者只会看到「无预览」。
 
         先尝试删，删不掉改名到隔离名；两者都失败时靠失效标记兜底——所有消费者经
         `figcapture.usable_preview_path` 取路径，标记存在就读不到。账本同时摘掉该 stem。
+        返回读方是否**有保证**读不到错配：两个文件都撤掉了，或失效标记写成了。都不成立
+        返回 False，调用方升级成致命的 `PreviewPoisoned`（还原 → 删除 / 改名 → 标记 → 会话作废）。
         `.<name>.prev.part` 备份留着：下一次成功发布同一 stem 会重建并清掉它们
         （发布失败时 `_backup_of` 也会覆盖它们），所以清理的责任人是下一次发布。
         """
+        removed = True
         for final in finals:
             try:
                 final.unlink()
@@ -948,8 +967,9 @@ class LiveFigureSession:
                 try:
                     os.replace(final, final.with_name(f".{final.name}.invalid.part"))
                 except OSError:
-                    pass
-        figcapture.mark_preview_invalid(self.out_dir, stem)
+                    removed = False
+        marked = figcapture.mark_preview_invalid(self.out_dir, stem)
+        return removed or marked
 
     @staticmethod
     def _backup_of(final: Path) -> Path | None:

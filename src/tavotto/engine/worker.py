@@ -1140,6 +1140,9 @@ class Worker(wireproto.V1Handler):
             # build 自己已经分好类的（脚本要命令行参数 / 脚本主动 exit）原样上抛
             raise
         except Exception as exc:  # noqa: BLE001 — 转成结构化错误，进程不退出
+            fatal = wireproto.fatal_error_of(exc)
+            if fatal is not None:
+                raise fatal from exc  # 预览产物对读方不可信：不归 script_error
             timed_out = [
                 r
                 for r in (self._input_channel.record if self._input_channel else [])

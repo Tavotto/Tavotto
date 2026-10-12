@@ -313,6 +313,8 @@ class BridgeSession:
             )
         if not frame.get("ok"):
             err = frame.get("error") or {}
+            if err.get("code") == pool.figcapture.PREVIEW_POISONED_CODE:
+                pool.figcapture.poison_preview_dir(self.out_dir)  # 读方进程：回「无预览」
             raise BridgeError(
                 err.get("message") or "native bridge 错误",
                 code=err.get("code", ""),

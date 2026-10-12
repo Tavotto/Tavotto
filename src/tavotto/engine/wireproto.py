@@ -93,6 +93,23 @@ class ProtocolError(Exception):
         self.extra = extra or {}
 
 
+def fatal_error_of(exc: BaseException) -> "ProtocolError | None":
+    """异常自带协议码（`protocol_code`，目前只有 `preview_poisoned`）→ 不重试的 `ProtocolError`。
+
+    这类错误意味着执行侧的磁盘产物对读方不可信：不能被归成 `internal`（会被 supervisor
+    重启后重试）或 `script_error`，父进程要凭这个码判死会话。
+    """
+    code = getattr(exc, "protocol_code", None)
+    if not isinstance(code, str) or not code:
+        return None
+    return ProtocolError(
+        code,
+        str(exc) or exc.__class__.__name__,
+        retryable=False,
+        traceback_text=traceback.format_exc(),
+    )
+
+
 def int_arg(payload: dict, key: str, default: int) -> int:
     """payload 里的整数参数（width / dpi）；写错类型报 bad_request。"""
     raw = payload.get(key, default)
@@ -327,6 +344,9 @@ class V1Handler:
         except figcapture.ArtifactContextError as exc:
             raise ProtocolError(exc.code, str(exc), extra=exc.params) from exc
         except Exception as exc:  # noqa: BLE001
+            fatal = fatal_error_of(exc)
+            if fatal is not None:
+                raise fatal from exc
             # 我们也不知道为什么——supervisor 重启后重试一次是合理的
             raise ProtocolError(
                 "internal",

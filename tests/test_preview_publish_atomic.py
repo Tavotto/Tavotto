@@ -120,7 +120,7 @@ with tempfile.TemporaryDirectory() as tmp:
         sess.render("fig")
         out["changed"] = (Path(tmp) / "fig.svg").read_bytes() != first
         out["published"] = facts(tmp)["published"]
-        out["seq"] = json.loads((Path(tmp) / figcapture.PREVIEW_LEDGER).read_text())["seq"]
+        out["seq"] = json.loads((Path(tmp) / figcapture.PREVIEW_LEDGER).read_text(encoding="utf-8"))["seq"]
     elif scenario == "stem_collides_with_old_ledger_name":
         # savefig("published.png") 的 stem 是 published；点开头的 stem 同理
         names = ["published", "good", ".preview-ledger", ".published"]
@@ -129,11 +129,11 @@ with tempfile.TemporaryDirectory() as tmp:
         sess.instrument_all()
         out["published"] = sorted(figcapture.published_preview_stems(tmp))
         out["manifests_ok"] = {
-            n: json.loads((Path(tmp) / f"{n}.json").read_text()).get("stem") == n
+            n: json.loads((Path(tmp) / f"{n}.json").read_text(encoding="utf-8")).get("stem") == n
             for n in names
         }
         out["ledger_stems"] = sorted(
-            json.loads((Path(tmp) / figcapture.PREVIEW_LEDGER).read_text())["stems"]
+            json.loads((Path(tmp) / figcapture.PREVIEW_LEDGER).read_text(encoding="utf-8"))["stems"]
         )
         out["ledger_name"] = figcapture.PREVIEW_LEDGER
         out["ledger_is_figure_like"] = figcapture.PREVIEW_LEDGER.endswith((".svg", ".json", ".part"))
@@ -185,14 +185,24 @@ with tempfile.TemporaryDirectory() as tmp:
             os.replace(p / "x.svg", p / "fig.svg")
             sess.render("fig")
             out["retry_changed"] = (p / "fig.svg").read_bytes() != old["fig.svg"]
-            out["retry_seq"] = json.loads((p / figcapture.PREVIEW_LEDGER).read_text())["seq"]
-    elif scenario in ("restore_also_fails", "restore_and_removal_fail"):
+            out["retry_seq"] = json.loads((p / figcapture.PREVIEW_LEDGER).read_text(encoding="utf-8"))["seq"]
+    elif scenario in ("restore_also_fails", "restore_and_removal_fail", "marker_also_fails"):
         sess.add_figure("fig", good("v1"), figcapture.SOURCE_SAVEFIG)
         sess.instrument_all()
         p = Path(tmp)
         sess.states["fig"].fig.axes[0].set_title("a considerably longer second title")
-        stuck = scenario == "restore_and_removal_fail"  # 连删除 / 改名隔离都被锁
+        stuck = scenario != "restore_also_fails"  # 连删除 / 改名隔离都被锁
+        no_marker = scenario == "marker_also_fails"  # 连失效标记都写不下去（卷满 / 权限）
         real_replace, real_unlink = os.replace, Path.unlink
+        import builtins
+        real_open = builtins.open
+
+        def flaky_open(file, mode="r", *a, **k):
+            if no_marker and str(file).endswith(".preview-invalid") and "w" in mode:
+                raise OSError(28, "No space left on device", str(file))
+            return real_open(file, mode, *a, **k)
+
+        builtins.open = flaky_open
 
         def deny(*a):
             raise PermissionError(13, "locked", str(a[-1]))
@@ -216,12 +226,14 @@ with tempfile.TemporaryDirectory() as tmp:
             except Exception as exc:
                 out["error"] = type(exc).__name__
                 out["is_invalidated"] = isinstance(exc, __import__("figsession").PreviewInvalidated)
+                out["protocol_code"] = getattr(exc, "protocol_code", None)
         finally:
             os.replace, Path.unlink = real_replace, real_unlink
+            builtins.open = real_open
         out["usable_svg_exists"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".svg"))
         out["usable_json_exists"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".json"))
         out["published"] = figcapture.published_preview_stems(tmp)
-        out["ledger_stems"] = sorted(json.loads((p / figcapture.PREVIEW_LEDGER).read_text())["stems"])
+        out["ledger_stems"] = sorted(json.loads((p / figcapture.PREVIEW_LEDGER).read_text(encoding="utf-8"))["stems"])
         out["backups"] = sorted(n for n in os.listdir(tmp) if n.endswith(".prev.part"))
         out["marker"] = (p / ".fig.preview-invalid").exists()
         # 解锁后重新发布：恢复，标记与备份清干净，序号前进
@@ -229,7 +241,7 @@ with tempfile.TemporaryDirectory() as tmp:
         out["after_published"] = figcapture.published_preview_stems(tmp)
         out["after_usable_svg"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".svg"))
         out["after_names"] = sorted(os.listdir(tmp))
-        out["after_seq"] = json.loads((p / figcapture.PREVIEW_LEDGER).read_text())["seq"]
+        out["after_seq"] = json.loads((p / figcapture.PREVIEW_LEDGER).read_text(encoding="utf-8"))["seq"]
     elif scenario == "stale_and_truncated":
         p = Path(tmp)
         # 上一次运行残留：有完整 SVG、没有账本
@@ -349,6 +361,7 @@ def test_a_failed_restore_invalidates_the_stem_instead_of_serving_a_mismatch(sce
     """发布失败且还原也失败：读者只看到「无预览」，备份留着，账本不含它；下次发布恢复。"""
     r = _drive(scenario)
     assert r["error"] == "PreviewInvalidated" and r["is_invalidated"] is True, r
+    assert r["protocol_code"] is None, "标记写成了：不是致命，会话可继续用"
     assert r["usable_svg_exists"] is False and r["usable_json_exists"] is False, r
     assert r["published"] == [] and r["ledger_stems"] == [], r
     assert r["backups"], f"还原失败不该删备份: {r}"
@@ -360,3 +373,123 @@ def test_a_failed_restore_invalidates_the_stem_instead_of_serving_a_mismatch(sce
         n for n in r["after_names"] if n.endswith(".part") or n.endswith("preview-invalid")
     ], r
     assert r["after_seq"] == 2, r
+
+
+def test_marker_write_failure_is_fatal_not_swallowed():
+    """还原、删除 / 改名、标记写入**全部**失败：不能静默留下错配，抛带协议码的致命错误。
+
+    磁盘上此刻确实是错配的（新 SVG 配旧 manifest）——本层已无法在磁盘层面隐藏，
+    所以必须升级成 `PreviewPoisoned`（`protocol_code == "preview_poisoned"`），由父进程判死会话。
+    解锁后重发布仍恢复（对照：错配只在升级路径上被拦，不是永久瘫痪）。
+    """
+    r = _drive("marker_also_fails")
+    assert r["error"] == "PreviewPoisoned" and r["is_invalidated"] is True, r
+    assert r["protocol_code"] == "preview_poisoned", r
+    assert r["marker"] is False, "注入确实生效：标记没写成"
+    assert r["published"] == [] and r["ledger_stems"] == [], "账本仍要摘掉该 stem"
+    assert r["after_published"] == ["fig"] and r["after_usable_svg"] is True, r
+
+
+# ---- app 侧（读方进程）：致命码判死会话，且读入口不再给出错配文件 -----------------
+def _poisoned_error_resp():
+    return {
+        "ok": False,
+        "error": {"code": "preview_poisoned", "message": "x", "traceback": "", "retryable": False},
+    }
+
+
+def test_app_side_poisoned_code_kills_the_session_and_blinds_every_reader(tmp_path, monkeypatch):
+    """`preview_poisoned` → 会话判死（下次 `get()` 重建）+ `out_dir` 记入读方作废表：
+    `/api/engine/svg`、`svg_path`、`usable_preview_path` 都回「无预览」；新一代 build 成功才解除。
+    """
+    from tavotto import app as m
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "fig.svg").write_text("<svg data-new='1'/>", encoding="utf-8")
+    (out / "fig.json").write_text("{}", encoding="utf-8")  # 旧 manifest（错配的另一半）
+
+    killed = []
+
+    class _Proc:
+        def kill(self):
+            killed.append(1)
+
+        def wait(self, timeout=None):
+            return 0
+
+        def poll(self):
+            return None
+
+    w = object.__new__(pool.EngineWorker)
+    w.script_name = "fit.py"
+    w.out_dir = out
+    w.log_path = tmp_path / "worker.log"
+    w._dead = False
+    w.proc = _Proc()
+    w.built = True
+    assert w.svg_path("fig").exists()  # 对照：作废前读得到
+
+    err = w._error_of(_poisoned_error_resp())
+    assert err.code == "preview_poisoned"
+    assert w._dead is True and not w.alive() and killed == [1]
+
+    assert not w.svg_path("fig").exists()
+    assert not Path(figcapture.usable_preview_path(out, "fig", ".json")).exists()
+
+    # 真实读取入口：Flask /api/engine/svg（worker 假装还在，证明读方自己拦得住）
+    m.app.config["TESTING"] = True
+    monkeypatch.setattr(m, "_engine_worker", lambda rel_id: (w, "fig"))
+    monkeypatch.setattr(m, "_refuse_artifact_policy", lambda *a, **k: None)
+    resp = m.app.test_client().get("/api/engine/svg?id=fig.py")
+    assert resp.status_code == 404
+
+    # 新一代会话 build 成功之后解除，读得到新发布的文件
+    figcapture.clear_preview_poison(out)
+    resp = m.app.test_client().get("/api/engine/svg?id=fig.py")
+    assert resp.status_code == 200 and b"data-new" in resp.data
+    resp.close()
+
+
+def test_workerd_side_poisoned_code_is_fatal_and_blinds_readers(tmp_path):
+    from tavotto.engine import figcapture, workerd_client
+
+    assert figcapture.PREVIEW_POISONED_CODE in pool._FATAL_CODES
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "fig.svg").write_text("<svg/>", encoding="utf-8")
+    w = object.__new__(pool.WorkerdWorker)
+    w.script_name = "fit.py"
+    w.out_dir = out
+    w._dead = False
+    w.log_path = tmp_path / "worker.log"
+    exc = workerd_client.WorkerdError("poisoned", code="preview_poisoned")
+    w._to_worker_error(exc)
+    assert w._dead is True and w.svg_path("fig").exists() is False
+    figcapture.clear_preview_poison(out)
+
+
+def test_native_session_poisoned_code_poisons_transport_and_readers(tmp_path):
+    from tavotto.engine import figcapture, nativesession
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "fig.svg").write_text("<svg/>", encoding="utf-8")
+
+    class _Transport:
+        poison = None
+
+        def request(self, obj, **kw):
+            raise pool.WorkerError("x", code="preview_poisoned")
+
+    s = object.__new__(nativesession.NativeSession)
+    s.out_dir = out
+    s.transport = _Transport()
+    s.state = nativesession.BARRIER
+    s.generation, s.rev = 1, 1
+    with pytest.raises(pool.WorkerError):
+        s._request({"cmd": "render"}, 1.0)
+    assert s.transport.poison is not None, "既有的 poison 机制：之后每条请求都被拒"
+    assert s.svg_path("fig").exists() is False
+    figcapture.clear_preview_poison(out)

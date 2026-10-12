@@ -361,6 +361,32 @@ def preview_invalid(out_dir, stem: str) -> bool:
     return os.path.exists(_invalid_marker(out_dir, stem))
 
 
+#: 失效标记都写不下去时的最后一道（`PREVIEW_POISONED_CODE`，规则 worker-protocol-and-lifecycle §预览失效四级）：
+#: 写预览的是 worker / native 子进程，读的是 app 进程——磁盘标记写不下去，worker 进程内的任何
+#: 内存标记读方都看不见。所以这一级由 **读方进程**自己记：app 侧收到该错误码（会话同时被判死）
+#: 就把整个 `out_dir` 记进这张表，`usable_preview_path` 对它回「无预览」，直到下一代会话 build 成功。
+PREVIEW_POISONED_CODE = "preview_poisoned"
+_poisoned_dirs: set[str] = set()
+
+
+def _dir_key(out_dir) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(out_dir)))
+
+
+def poison_preview_dir(out_dir) -> None:
+    """读方进程：`out_dir` 下所有预览产物都不可信（见 `PREVIEW_POISONED_CODE`）。"""
+    _poisoned_dirs.add(_dir_key(out_dir))
+
+
+def clear_preview_poison(out_dir) -> None:
+    """新一代会话 build 成功（全部 stem 重新发布）之后解除。"""
+    _poisoned_dirs.discard(_dir_key(out_dir))
+
+
+def preview_dir_poisoned(out_dir) -> bool:
+    return _dir_key(out_dir) in _poisoned_dirs
+
+
 def usable_preview_path(out_dir, stem: str, suffix: str) -> str:
     """读 `<stem><suffix>`（`.svg` / `.json`）的**统一入口**：失效的 stem 返回一个必不存在的路径。
 
@@ -368,19 +394,24 @@ def usable_preview_path(out_dir, stem: str, suffix: str) -> str:
     经它拿路径，于是「新像素配旧几何」的错配代只会被读成「无预览」。
     """
     out_dir = os.fspath(out_dir)
-    if preview_invalid(out_dir, stem):
+    if preview_invalid(out_dir, stem) or preview_dir_poisoned(out_dir):
         return os.path.join(out_dir, f".{stem}{suffix}.invalid-absent")
     return os.path.join(out_dir, f"{stem}{suffix}")
 
 
-def mark_preview_invalid(out_dir, stem: str) -> None:
-    """尽力把 `stem` 从账本里摘掉并落失效标记；两步各自失败都不抛（调用方已在失败路径上）。"""
+def mark_preview_invalid(out_dir, stem: str) -> bool:
+    """尽力把 `stem` 从账本里摘掉并落失效标记；返回**标记是否写成**（账本那步失败不抛）。
+
+    标记写不下去（缓存卷满 / 权限变了）不是可以吞掉的小事：它可能是读方唯一的防线，
+    调用方必须据返回值升级（见 `LiveFigureSession._invalidate_preview`）。
+    """
     out_dir = os.fspath(out_dir)
+    marked = True
     try:
         with open(_invalid_marker(out_dir, stem), "w", encoding="utf-8") as fh:
             fh.write("invalid\n")
     except OSError:
-        pass
+        marked = False
     ledger = _read_preview_ledger(out_dir)
     if stem in ledger["stems"]:
         del ledger["stems"][stem]
@@ -391,6 +422,7 @@ def mark_preview_invalid(out_dir, stem: str) -> None:
             os.replace(path + ".part", path)
         except OSError:
             pass
+    return marked
 
 
 def clear_preview_invalid(out_dir, stem: str) -> None:

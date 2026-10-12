@@ -148,3 +148,23 @@
 - `_terminate_and_reap()` / `_kill_and_reap()` 闭环
 - export / preview_png 状态中立
 - 请求之间死掉的 worker（拿锁时已死 / 写管道 BrokenPipe / 读到 EOF）一律同一个带退出状态的 `session_dead`，非 shutdown 的 `session_dead` 丢掉那条解释器的体检结论（`pool.forget_python_verdict`）
+
+## 预览发布失败的降级层级（P01b #958）
+
+写预览的是 worker / native 子进程，读的是 app 进程（`/api/engine/svg`、manifest 读取、
+runtimeasset 物化，全经 `figcapture.usable_preview_path` / 各 worker 的 `svg_path`）——
+**进程内内存标记对读方无效**，每一级都必须是读方能观测到的东西。发布中途失败时依次降级：
+
+1. **还原**（`_restore_previous`）：把已换上的文件换回上一版。成功 = 普通失败，会话继续用。
+2. **删除 / 改名隔离**（`_invalidate_preview`）：还原失败时撤掉该 stem 的 `.svg` / `.json`。
+3. **磁盘失效标记**（`.<stem>.preview-invalid`，`mark_preview_invalid` 返回是否写成，**不许吞**）：
+   删除 / 改名也被锁时的兜底；写成了读方回「无预览」，抛 `PreviewInvalidated`（非致命）。
+4. **会话作废**：第 2、3 级都落空（磁盘上确有错配、读方无法在磁盘层面被拦）——抛
+   `PreviewPoisoned`（`protocol_code = preview_poisoned`，非 retryable，build 里也不归 `script_error`）。
+   父进程在**三条控制面**上同样处理：Python 池 `_error_of` 与 workerd `_to_worker_error`
+   （`preview_poisoned ∈ _FATAL_CODES`）判死会话、下一次 `get()` 重建；native `_request` 把传输标 `poison`
+   （既有的「会话不再可信」机制）；bridge 同。同时 `figcapture.poison_preview_dir(out_dir)` 把
+   `out_dir` 记进**读方进程**的作废表，`usable_preview_path` 对它回「无预览」，直到新一代会话 build 成功
+   （`clear_preview_poison`）。
+
+新增会改预览发布的失败路径时，别在某一级里加 `except OSError: pass`——先问「这一级失败后读方还有没有拦截」。
