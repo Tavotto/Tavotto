@@ -211,6 +211,17 @@ describe('文档锚点：会丢编辑的两件自动展开一次', () => {
     expect(document.activeElement).toBe(before)
   })
 
+  it('播报区是进入出事前就挂着的同一个节点：从已保存到保存失败，节点不换、只是填字', async () => {
+    await act(async () => useDocumentStore.setState({ saveState: 'saved', saveIssue: null }))
+    const before = host.querySelector('[data-save-live]')
+    expect(before, '已保存时播报区已经挂着').not.toBeNull()
+    expect(before!.textContent).toBe('')
+    await act(async () => useDocumentStore.setState({ saveState: 'save_error', saveIssue: null }))
+    const after = host.querySelector('[data-save-live]')
+    expect(after, '同一个节点（新挂的 live region 读屏多半不播）').toBe(before)
+    expect(after!.textContent).not.toBe('')
+  })
+
   it('保存失败：同样自动展开', async () => {
     await act(async () => useDocumentStore.setState({ saveState: 'save_error', saveIssue: null }))
     expect(popover('save_error')).not.toBeNull()

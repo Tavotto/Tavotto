@@ -316,9 +316,11 @@ export function SaveStateLabel() {
     : t(projectOpen ? 'topbar.saveTitleLocalInProject' : 'topbar.saveTitleLocal', { mod: MOD })
   const shownState = bad ? saveState : revealPending ? saveState : 'settled'
   // 读屏只在出事时说：标签本身不 aria-live（每秒一轮的保存不该每秒播一次）。
-  // 不带 role（`role=status` 全产品只留通知轨那一个）
+  // 不带 role（`role=status` 全产品只留通知轨那一个）。两个分支的根都是同一种 span、播报区带同一个 key：
+  // 从「已保存」进入冲突 / 保存失败时它是**早已挂着的那个节点**被填字——和字同一帧新挂上的
+  // live region 读屏多半不播（Codex #947）
   const live = (
-    <span aria-live="assertive" data-save-live className="sr-only">
+    <span key="save-live" aria-live="assertive" data-save-live className="sr-only">
       {bad ? text : ''}
     </span>
   )
