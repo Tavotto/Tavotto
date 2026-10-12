@@ -20,6 +20,11 @@ from pathlib import Path
 
 from tavotto.engine import pool
 
+# Windows 上 stdout/stderr 被重定向成管道时会退回系统区域编码（cp1252/cp936），第一句中文就 UnicodeEncodeError。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 CTX = {
     "rc_red": 'with plt.rc_context({"hatch.color": "red"}):\n        {make}',
     "rc_edge": 'plt.rcParams["hatch.color"] = "red"\n    with plt.rc_context({"hatch.color": "edge"}):\n        {make}',  # 仅 3.11 合法

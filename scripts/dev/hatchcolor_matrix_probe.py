@@ -15,6 +15,11 @@ import sys
 import matplotlib as mpl
 from matplotlib.patches import Rectangle
 
+# Windows 上 stdout/stderr 被重定向成管道时会退回系统区域编码（cp1252/cp936），第一句中文就 UnicodeEncodeError。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 HAS_API = hasattr(Rectangle, "set_hatchcolor")
 
 
