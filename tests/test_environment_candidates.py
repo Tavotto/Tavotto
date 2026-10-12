@@ -1184,3 +1184,17 @@ def test_system_subbudget_still_lists_a_local_system_python(
     assert report["state"] == projscan.STATE_COMPLETE
     assert any(c["source"] == "system" for c in report["environment"]["candidates"])
     assert not [i for i in report["issues"] if i["scope"] == scanbudget.SCOPE_SYSTEM]
+
+
+def test_system_subbudget_never_outlives_the_parent_deadline():
+    """父预算只剩 0.1 秒时开始系统枚举：子预算最多给 0.1 秒，不能再白送整整 3 秒（Codex #957）。"""
+    now = [0.0]
+    parent = scanbudget.Budget(clock=lambda: now[0])
+    now[0] = parent.limits.max_seconds - 0.1
+    sub = scanbudget.system_sub_budget(parent)
+    assert sub.limits.max_seconds == pytest.approx(0.1)
+    now[0] += 0.2
+    assert sub.stop_reason() is not None  # 父预算的截止一过，子预算也停
+    now[0] = parent.limits.max_seconds + 5
+    late = scanbudget.system_sub_budget(parent)
+    assert late.limits.max_seconds == 0.0

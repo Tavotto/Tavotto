@@ -522,8 +522,13 @@ class Budget:
 def system_sub_budget(parent: Budget) -> Budget:
     """系统候选枚举用的子预算：自己的条目数与时间上限，取消回调与时钟沿用父预算。
     枚举里所有 `charge_entry` / walker 的 lstat 都记在它名下，不动父预算的 `entries`。"""
+    # 时间上限不得越过父预算的截止：父预算剩多少就最多给多少（扫描末尾才开始枚举时不能再白送 3 秒，Codex #957）
+    remaining = parent.limits.max_seconds - (parent.clock() - parent._t0)
     return Budget(
-        limits=Limits(max_entries=SYSTEM_MAX_ENTRIES, max_seconds=SYSTEM_MAX_SECONDS),
+        limits=Limits(
+            max_entries=SYSTEM_MAX_ENTRIES,
+            max_seconds=max(0.0, min(SYSTEM_MAX_SECONDS, remaining)),
+        ),
         cancel=parent.cancel,
         clock=parent.clock,
     )
