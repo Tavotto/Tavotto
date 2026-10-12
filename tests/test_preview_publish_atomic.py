@@ -276,6 +276,29 @@ with tempfile.TemporaryDirectory() as tmp:
             builtins.open = real_open
         out["marker"] = (p / ".fig.preview-invalid").exists()
         out["usable_svg_exists"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".svg"))
+    elif scenario == "first_publish_ledger_glitch_then_retry":
+        real_record = figcapture.record_preview_published
+        calls = []
+
+        def glitch_once(*a, **k):
+            calls.append(1)
+            if len(calls) == 1:
+                raise PermissionError(13, "ledger locked")
+            return real_record(*a, **k)
+
+        figcapture.record_preview_published = glitch_once
+        try:
+            sess.add_figure("fig", good("v1"), figcapture.SOURCE_SAVEFIG)
+            try:
+                sess.instrument_all()
+            except Exception as exc:
+                out["first_error"] = type(exc).__name__
+            out["registered_after_failure"] = "fig" in sess.states
+            sess.instrument_all()  # 锁已解开：重试要真的重新发布这张图
+            out["summary_stems"] = sorted(sess.stems_summary()["stems"])
+            out["published"] = figcapture.published_preview_stems(tmp)
+        finally:
+            figcapture.record_preview_published = real_record
     elif scenario == "stale_and_truncated":
         p = Path(tmp)
         # 上一次运行残留：有完整 SVG、没有账本
@@ -556,6 +579,15 @@ def test_poison_stays_while_a_stale_preview_cannot_be_removed(tmp_path, monkeypa
         assert not Path(figcapture.usable_preview_path(out, "old", ".svg")).exists()
     finally:
         figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
+def test_a_transient_first_publish_failure_can_be_retried():
+    """首次发布碰上瞬时账本错误：没出过预览的状态要撤掉，重试时重新 instrument 并发布，
+    `stems_summary` 不得因缺缓存 manifest 永久 KeyError（Codex #958）。"""
+    r = _drive("first_publish_ledger_glitch_then_retry")
+    assert r["first_error"] == "PermissionError", r
+    assert r["registered_after_failure"] is False, r
+    assert r["summary_stems"] == ["fig"] and r["published"] == ["fig"], r
 
 
 def test_poison_audit_includes_dot_leading_stems(tmp_path):

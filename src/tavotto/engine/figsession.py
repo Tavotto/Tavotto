@@ -725,7 +725,15 @@ class LiveFigureSession:
             state = overrides_mod.FigState(fig)
             manifest_mod.instrument(state)
             self.states[stem] = state
-            self.render(stem)
+            try:
+                self.render(stem)
+            except BaseException:
+                # 首次发布失败（例如 Windows 上账本瞬时被锁）：撤掉这份没出过预览的状态，下一次 build 才会重新
+                # instrument 它——否则它被当成「已 instrument」跳过，`stems_summary` 取不到缓存 manifest、永久 KeyError
+                # （Codex #958）。已在编辑的图不在 `fresh` 里，不受影响。
+                self.states.pop(stem, None)
+                self._manifest_cache.pop(stem, None)
+                raise
 
     def stems_summary(self, dropped_figures: int = 0) -> dict:
         """build 响应的 stems 表。
