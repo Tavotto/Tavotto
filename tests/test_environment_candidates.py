@@ -1124,7 +1124,8 @@ def _fake_windows_machine(monkeypatch, *, path_dirs: int, drive_entries: int) ->
     monkeypatch.setattr(os, "lstat", lstat)
     monkeypatch.setattr(os, "scandir", scandir)
     monkeypatch.setattr(scanbudget, "_windows_drive_type", lambda root: 3)
-    monkeypatch.setenv("PATH", os.pathsep.join(f"C:\\tools\\d{i}" for i in range(path_dirs)))
+    # Windows 单个环境变量上限 32767 字符：目录名取短（600 项约 5 KB）；子预算的耗尽主要靠 `C:\\` 的假条目
+    monkeypatch.setenv("PATH", os.pathsep.join(f"C:\\p{i}" for i in range(path_dirs)))
     monkeypatch.setenv("PATHEXT", ".EXE;.BAT;.CMD")
     monkeypatch.setenv("LOCALAPPDATA", "C:\\Users\\x\\AppData\\Local")
     return calls
@@ -1134,7 +1135,7 @@ def test_exhausted_system_subbudget_leaves_the_project_scan_complete(
     tmp_path, home, monkeypatch, no_process
 ):
     root = _static_project(tmp_path)
-    _fake_windows_machine(monkeypatch, path_dirs=3000, drive_entries=5000)
+    _fake_windows_machine(monkeypatch, path_dirs=600, drive_entries=5000)
     monkeypatch.setattr(
         pool,
         "system_python_candidates",
@@ -1153,7 +1154,7 @@ def test_exhausted_system_subbudget_leaves_the_project_scan_complete(
 
 
 def test_system_subbudget_is_bounded_in_entries_and_time(tmp_path, monkeypatch):
-    calls = _fake_windows_machine(monkeypatch, path_dirs=3000, drive_entries=5000)
+    calls = _fake_windows_machine(monkeypatch, path_dirs=600, drive_entries=5000)
     parent = scanbudget.Budget()
     sub = scanbudget.system_sub_budget(parent)
 
