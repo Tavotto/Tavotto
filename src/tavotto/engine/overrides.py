@@ -3318,9 +3318,8 @@ def _restore_hatch_unset(p, base) -> None:
         return
     if base is not None:
         p.set_hatchcolor(_fresh_copy(base))
-        p.set_alpha(
-            p.get_alpha()
-        )  # 重解析 face / edge / 花纹色：与 `_with_hatch_pinned` 同一条合成路径
+        # 重解析 face / edge / 花纹色：与 `_with_hatch_pinned` 同一条合成路径
+        p.set_alpha(p.get_alpha())
     p._original_hatchcolor = None  # noqa: SLF001
     if base is not None:
         setattr(p, _HATCH_BASE, (base, _hatch_resolved(p)))
@@ -3329,15 +3328,17 @@ def _restore_hatch_unset(p, base) -> None:
 def _set_hatchcolor(p, v) -> None:
     """吃 `'#rrggbb'` / `'edge'`（改的），或 getter 回的 RGBA / `_HatchUnset`（还原时喂回来的）。
 
-    走 `_with_hatch_pinned`：与 alpha / fill 的应用顺序无关——先 alpha 后 hatchcolor 时 alpha 已按钉住的
-    规则收尾，再显式设；先 hatchcolor 后 alpha 时 `_original_hatchcolor` 已是显式，alpha 的钉住原样放行。
+    设显式值**不需要**钉住（`set_hatchcolor(颜色)` 不读 rc）：与 alpha / fill 的应用顺序无关靠的是——先 alpha 后
+    hatchcolor 时 alpha 已按钉住的规则收尾（模式回到 None），再显式设；先 hatchcolor 后 alpha 时
+    `_original_hatchcolor` 已是显式，`_with_hatch_pinned` 见到显式模式原样放行，花纹色以显式色配当前 alpha。
+    （试过把它也包进 `_with_hatch_pinned`：变异后全部用例照绿，是等价变异，故不留死分支。）
     """
     if not hasattr(p, "set_hatchcolor") or v is None:
         return
     if isinstance(v, _HatchUnset):
         _restore_hatch_unset(p, v.base)
         return
-    _with_hatch_pinned(p, lambda: p.set_hatchcolor(_fresh_copy(v)))
+    p.set_hatchcolor(_fresh_copy(v))
 
 
 _CAP_HATCHCOLOR = (_get_hatchcolor, _set_hatchcolor)

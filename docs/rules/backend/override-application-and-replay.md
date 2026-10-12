@@ -177,8 +177,8 @@
   吃得回去）；「脚本没设」模式回 `_HatchUnset(base)` 哨兵（`base` = `_hatch_base`，创建时已解析的花纹色，与 `_with_hatch_pinned`
   共用一份判据）。**不能回解析后的当前值**：按值写回会把模式永久换成显式，native 屏障释放后用户的 Python 改 rc 再 `set_alpha`
   就不再跟随（与 `_PatchEdge` 同一个坑，Codex #950 r4245786615）；撤销到哨兵时 `_restore_hatch_unset` 用 `base` 配**当前** alpha
-  重新合成，再把 `_original_hatchcolor` 还原成 None。setter 设显式值走 `_with_hatch_pinned`：与 alpha / fill 的应用顺序无关
-  （先 alpha：钉住 → 收尾还原 None → 再显式设；先 hatchcolor：模式已显式，alpha 的钉住原样放行，花纹色以显式色配当前 alpha）。
+  重新合成，再把 `_original_hatchcolor` 还原成 None。setter 设显式值是直接 `set_hatchcolor(颜色)`（不读 rc，不需要钉住；包进 `_with_hatch_pinned` 做过变异，是等价变异，故不留死分支）。与 alpha / fill 的应用顺序无关
+  （先 alpha：钉住 → 收尾还原 None → 再显式设；先 hatchcolor：模式已显式，alpha 的钉住见显式模式原样放行，花纹色以显式色配当前 alpha）。
   哨兵只活在 `originals` 里，不过 JSON。`bar_series` 照 `hatch` 加进 `for _bprop` 一串。**已知缺口（既有，非本项引入）**：单柱先改、
   系列后改、再全撤，系列代采的「原样」里已带着单柱的编辑，系列的还原把它写回（`bar_series.hatch_linewidth` 在 main 上同样）；
   `tests/test_hatchcolor_editing.py::test_single_then_series_then_full_undo_known_alias_gap` 以 strict xfail 钉住，修好会翻红提醒摘掉标记。
