@@ -204,6 +204,73 @@ class TestNotRoots:
         assert plan.hashes == {"auditlate==1.0": (h,)}
 
 
+_H = " --hash=sha256:" + "a" * 64
+
+
+def _lock(*lines: str) -> str:
+    """完整 hash 锁：adapter 两项钉死（`==`）+ 给定的行。"""
+    return "\n".join(f"{ln}{_H}" for ln in ("matplotlib==3.10.0", "numpy==2.1.0", *lines)) + "\n"
+
+
+class TestInstallSetDecidesNotTheRootsFlag:
+    """Codex #960 round-2 P2：ready 与冲突看**本计划实际安装集合**，不看「是不是 roots 模式」这个全局开关。"""
+
+    def test_a_hash_lock_relevant_only_through_a_dynamic_import_is_ready(self, tmp_path):
+        proj = _project(tmp_path, _VARIABLE, _lock("auditlate==1"))
+        plan = _plan(proj)
+        assert plan.require_hashes is True and plan.requirements
+        (gap,) = [g for g in plan.declared_gaps if g["distribution"] == "auditlate"]
+        assert gap["relevant"] is True and gap["state"] == "absent"
+        assert plan.status == depplan.STATUS_READY
+        assert gap["action"] == "install"
+        assert plan.actionable
+
+    def test_a_hash_lock_gap_that_the_script_never_touches_stays_nothing_needed(self, tmp_path):
+        proj = _project(tmp_path, "import numpy\n", _lock("auditlate==1"))
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+
+    def test_two_cv2_providers_do_not_block_a_script_that_never_installs_them(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            "import numpy\n",
+            "opencv-python-headless==4.10.0.84\nopencv-contrib-python==4.10.0.84\n",
+        )
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+        assert plan.requirements == ()
+        assert not [b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]
+
+    def test_two_cv2_providers_block_a_script_that_imports_cv2(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            "import cv2\n",
+            "opencv-python-headless==4.10.0.84\nopencv-contrib-python==4.10.0.84\n",
+        )
+        assert _plan(proj).status == depplan.STATUS_BLOCKED
+
+    def test_two_cv2_providers_block_when_a_dynamic_import_makes_both_installable(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            _VARIABLE,
+            "opencv-python-headless==4.10.0.84\nopencv-contrib-python==4.10.0.84\n",
+        )
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_BLOCKED
+        assert [b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]
+
+    def test_a_hash_lock_holding_two_exclusive_providers_is_a_conflict(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            "import numpy\n",
+            _lock("opencv-python-headless==4.10.0.84", "opencv-contrib-python==4.10.0.84"),
+        )
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_BLOCKED
+        (block,) = [b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]
+        assert "cv2" in {c["name"] for c in block["conflicts"]}
+
+
 # ---------------------------------------------------------------------------
 # DEP-11 / AC-07：版本差异影响准备状态
 # ---------------------------------------------------------------------------
@@ -263,6 +330,21 @@ class TestVersionGap:
         clean = _plan(proj, _facts({"auditroot": "2.0"})).to_payload()
         assert "declared_gaps" not in clean
 
+    def test_a_relevant_gap_past_the_payload_cap_still_decides_the_status(self, tmp_path):
+        """Codex #960 P2：40 个不相关的缺席声明排在前面，相关的版本差集在第 41 位——状态用完整缺口集合判，只截断对外载荷。"""
+        extra = "".join(f"audit-pkg-{i:02d}\n" for i in range(depplan.MAX_DECLARED_GAPS))
+        proj = _project(tmp_path, "import zstandard\n", extra + "zstandard>=2\n")
+        plan = _plan(proj, _facts({"zstandard": "1.0"}))
+        assert plan.status == depplan.STATUS_READY
+        assert "zstandard>=2" in plan.requirements
+        assert len(plan.declared_gaps) == depplan.MAX_DECLARED_GAPS
+        payload = plan.to_payload()
+        assert payload["declared_gaps_total"] == depplan.MAX_DECLARED_GAPS + 1
+        small = _plan(
+            proj, _facts({"zstandard": "1.0", **{f"audit-pkg-{i:02d}": "1" for i in range(40)}})
+        )
+        assert "declared_gaps_total" not in small.to_payload()
+
 
 # ---------------------------------------------------------------------------
 # AC-08 启用门：roots 与 curated 推断不能并集出两个互斥 provider（cv2）
@@ -318,6 +400,32 @@ class TestProviderGate:
         names = {c["name"] for c in block["conflicts"]}
         assert "cv2" in names
         assert not plan.actionable  # 不是「都装」，是不可执行
+
+    def test_a_declared_provider_whose_module_the_script_never_imports_is_not_relevant(
+        self, tmp_path
+    ):
+        """Codex #960 P2：只 `import numpy`，共享 requirements 点名 headless——不因仲裁结果装 OpenCV、计划不 ready。"""
+        proj = _project(tmp_path, "import numpy\n", "opencv-python-headless==4.10.0.84\n")
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+        assert plan.requirements == ()
+        assert [g for g in plan.declared_gaps if g["relevant"]] == []
+
+    def test_an_unexplained_import_does_not_make_an_unimported_provider_relevant(self, tmp_path):
+        """脚本有归不到发行包的 import（声明成权威）时，已知模块名的 provider 没被 import 仍不相关。"""
+        proj = _project(
+            tmp_path,
+            "import auditclient\n",
+            "audit-driver==1.0\nopencv-python-headless==4.10.0.84\n",
+        )
+        plan = _plan(proj)
+        assert plan.requirements == ("audit-driver==1.0",)
+
+    def test_an_imported_module_still_installs_the_declared_provider(self, tmp_path):
+        proj = _project(tmp_path, "import cv2\n", "opencv-python-headless==4.10.0.84\n")
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_READY
+        assert plan.requirements == ("opencv-python-headless==4.10.0.84",)
 
     def test_the_arbitration_does_not_read_observed_providers(self, tmp_path):
         """观察来源不授权安装：运行环境里是 contrib-headless，声明什么都没点名 = 仍是 curated 名。"""
