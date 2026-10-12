@@ -1221,22 +1221,29 @@ class TestPlanOrigins:
         assert plan.missing == () and plan.requirements == ()  # 判满足，但不产生任何安装名
         assert plan.status == "nothing_needed"
 
-    def test_938_satisfied_by_installed_metadata_never_becomes_an_install_name_in_a_new_generation(
+    def test_938_a_different_install_target_never_inherits_the_running_environments_satisfaction(
         self, tmp_path
     ):
-        """已装元数据是证据不是授权：装到另一个（空的）环境时，也不会因为运行环境里有 lab-tools 就去装它。"""
+        """装到另一个环境（新托管代）时，运行环境里装着的 lab-tools 不会出现在那里：表外名仍是来源未定，
+        不产生安装名；同时缺的已知依赖照常装（Codex #944 P1）。"""
         prefix, _site = self._lab_env(tmp_path)
-        proj = self._project(tmp_path, "import lab_tools\n")
+        proj = self._project(tmp_path, "import lab_tools\nimport yaml\n")
+        running = _facts_at(prefix, {"lab-tools": "1.0"})
         plan = depplan.plan(
             proj,
             "plot.py",
-            facts=_facts_at(prefix, {"lab-tools": "1.0"}),
+            facts=running,
             target_kind="tavotto_managed",
             install_facts=_facts({}),
         )
-        assert plan.unknown == () and plan.origins == ()
-        assert "lab-tools" not in " ".join(plan.requirements)
-        assert plan.missing == ()
+        assert plan.unknown == ("lab_tools",)
+        assert [o["import_name"] for o in plan.origins] == ["lab_tools"]
+        assert plan.requirements == ("pyyaml",)  # 只有已知依赖；从不拿已装元数据造名字
+        # 对照：同一目标（install_facts 就是 facts）仍判满足
+        same = depplan.plan(
+            proj, "plot.py", facts=running, target_kind="tavotto_managed", install_facts=running
+        )
+        assert same.unknown == () and same.origins == ()
 
     def test_938_only_the_satisfied_name_leaves_origins(self, tmp_path):
         prefix, _site = self._lab_env(tmp_path)

@@ -1143,10 +1143,14 @@ def plan(
         satisfied.append({**entry, "installed_version": version, "matches_declared": matches})
 
     # 表外名已被环境里装好的唯一 index 来源发行包满足（#938）：不进 unknown / origins，也不产生安装名
+    # 只在运行目标 == 安装目标时成立：装到另一个环境（新托管代）时，当前解释器里装着的包不会出现在那里，
+    # 表外名既不在 requirements 也无安装名，激活后会 import 不到——维持来源未定（Codex #944 P1）
+    same_target = install_facts is None or install_facts is facts
     index_satisfied = {
         c.module
         for c in scan.classes
-        if c.module in plain_unknown
+        if same_target
+        and c.module in plain_unknown
         and c.module not in open_classes
         and _installed_index_satisfies(c, installed, states.get(c.module, ""), index_incomplete)
     }
@@ -1212,7 +1216,6 @@ def plan(
     # 单独判：目标里名字级已有的不装，其余按可信安装名（表 / 声明，`c.distribution`）装；从不拿已装元数据造名字。
     # 当前环境里是 editable 等、可信解析又给不出安装名的 import（`unknown` 桶）本来就不在 `scan.needed`：它们留在
     # `unknown` / `origins`（带 editable / 本地 / Conda 的来源状态），如实标出新环境装不出来，不猜 PyPI 名。
-    same_target = install_facts is None or install_facts is facts
     to_install = {
         c.distribution
         for c in scan.needed

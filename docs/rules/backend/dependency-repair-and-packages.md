@@ -340,7 +340,7 @@
   这个模块却没有任何发行包认领、PR3 覆盖度缓存里它是 `import_error`（包在、导入失败，装它救不了）。**不新增 `blocked` 理由**
   （`BLOCK_REASONS` 闭集不动）：这些情形不让计划不完整。判决顺序：名字级已装（表 / 声明的名字，旧口径原样）> 已装的备选发行包
   （`cv2` 装的是 headless 不再报缺 `opencv-python`，条目带 `mapped_distribution`）> 别的发行包声称提供 / 无元数据的模块 >
-  覆盖度 `import_error` > 缺。表外名（`bucket=unknown`，不经 `_verdict`）单独一条：静态索引读全、唯一未被遮蔽的已装候选是 `installed_confirmed` + `provenance=index` + 可重现（PyPI）、该发行包在目标已装集合里、覆盖度不是 `import_error` → 判满足（`_installed_index_satisfies`，#938），不进 `origins`、**仍不产生任何安装名**；歧义 / editable·本地·VCS·Conda / 无元数据 / 被遮蔽 / 名字层不完整 / 导入失败维持来源未定。**没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（用户在确认摘要里看得见这个名字；
+  覆盖度 `import_error` > 缺。表外名（`bucket=unknown`，不经 `_verdict`）单独一条：静态索引读全、唯一未被遮蔽的已装候选是 `installed_confirmed` + `provenance=index` + 可重现（PyPI）、该发行包在目标已装集合里、覆盖度不是 `import_error`、且运行目标 == 安装目标（装到另一个环境时维持来源未定）→ 判满足（`_installed_index_satisfies`，#938），不进 `origins`、**仍不产生任何安装名**；歧义 / editable·本地·VCS·Conda / 无元数据 / 被遮蔽 / 名字层不完整 / 导入失败维持来源未定。**没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（用户在确认摘要里看得见这个名字；
   条目带 `distribution_status=module_origin_ambiguous` 供展示），不静默改名。已装元数据**只用来判「已经有了 / 来源未定」，从不造安装名**。
   目标环境的静态发行包索引（`depplan.static_index`）与事实**同一刻读**（`target_facts` 里）、同一个 `reset_cache` 清：装上了但验证没过的
   包不会 `reset_cache`，事实停在装之前，索引也必须停在装之前；联合计划读覆盖度只走 `userenvs.cached_probe` 的只读缓存（不起进程）。
