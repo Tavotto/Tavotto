@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Direction A — The Scientific Manifesto</title>
+<style>
+:root{--desk:#efefed;--paper:#fff;--ink:#1b1b18;--ink-2:#4a4a45;--ink-3:#6c6c66;--hair:rgba(27,27,24,.12);--accent:#2c73de;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --ease-pop:cubic-bezier(.16,1,.3,1);--ease-draw:cubic-bezier(.62,0,.24,1)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--ink-2);text-decoration:none}a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.page{container-type:inline-size;overflow:clip;min-height:100vh;position:relative}
+.wrap{max-width:1440px;margin:0 auto;padding:0 64px;position:relative}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px}
+.run{height:56px;align-items:center;border-bottom:1px solid var(--ink);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.run .l{grid-column:1/span 3;display:flex;align-items:center;gap:12px;text-transform:none;letter-spacing:0}
+.run .l svg{height:16px;width:auto}
+.run .c{grid-column:4/span 6}
+.run .r{grid-column:10/span 3;justify-self:end;font-variant-numeric:tabular-nums}
+.body{padding-top:96px}
+.toc{grid-column:1/span 2;list-style:none;margin:14px 0 0;padding:0;font-size:12px;line-height:22px;color:var(--ink-3)}
+.toc li{display:grid;grid-template-columns:28px 1fr}
+.toc li span{font-family:var(--mono);font-size:11px}
+.toc li.on{color:var(--ink)}
+h1{grid-column:3/span 10;margin:0;font-weight:500;font-size:clamp(64px,10.6cqw,154px);line-height:.93;letter-spacing:-.05em}
+h1 .ln{display:block}
+.resp{grid-column:8/span 5;margin:44px 0 0;font-size:clamp(28px,3.5cqw,52px);line-height:1.04;letter-spacing:-.03em;font-weight:500}
+.resp sup{font-size:.42em;letter-spacing:0;vertical-align:top;position:relative;top:.25em;margin-left:.08em;font-weight:500}
+.line{position:absolute;left:0;right:0;top:600px;height:150px;pointer-events:none}
+.line svg{position:absolute;left:0;top:0;width:100%;height:150px;overflow:visible}
+.line path{fill:none;stroke:var(--ink);stroke-width:1}
+.foot{position:absolute;left:0;right:0;top:770px}
+.note{grid-column:3/span 5;font-size:15px;line-height:1.6;color:var(--ink-2);max-width:34em}
+.note b{font-weight:500;color:var(--ink)}
+.go{grid-column:10/span 3;justify-self:end;display:flex;flex-direction:column;align-items:flex-end;gap:10px;font-size:13px}
+.btn{display:inline-flex;align-items:center;height:36px;padding:0 16px;border-radius:999px;background:var(--ink);color:#fff;font-weight:500}
+.btn:hover{color:#fff;text-decoration:none}
+.js h1 .ln,.js .resp,.js .note,.js .go,.js .toc{opacity:0;transform:translateY(4px)}
+.ready h1 .ln,.ready .resp,.ready .note,.ready .go,.ready .toc{opacity:1;transform:none;transition:opacity 800ms var(--ease-pop) var(--d,0ms),transform 800ms var(--ease-pop) var(--d,0ms)}
+.js .line path{stroke-dasharray:1;stroke-dashoffset:1}
+.ready .line path{stroke-dashoffset:0;transition:stroke-dashoffset 2200ms var(--ease-draw) 700ms}
+@container (max-width:760px){
+  .wrap{padding:0 20px}.run .c{display:none}.run .r{grid-column:7/span 6;white-space:nowrap;font-size:11px}
+  .body{padding-top:48px}.toc{display:none}
+  h1,.resp,.note,.go{grid-column:1/-1}
+  h1{font-size:62px}.resp{font-size:32px;margin-top:28px}
+  .line{position:relative;top:auto;margin-top:36px;height:110px}.line svg{height:110px}
+  .foot{position:relative;top:auto;margin-top:20px;padding-bottom:40px}.go{justify-self:start;align-items:flex-start;margin-top:24px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}.js h1 .ln,.js .resp,.js .note,.js .go,.js .toc{opacity:1;transform:none}.js .line path{stroke-dashoffset:0}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="wrap">
+    <header class="grid run">
+      <span class="l"><svg viewBox="0 0 112 112" aria-hidden="true"><path d="M72 100.5L44.5 100.5C29.036 100.5 16.5 87.964 16.5 72.5L16.5 28.5L12.35 28.5C11.881 28.5 11.5 28.119 11.5 27.65L11.5 17.35C11.5 16.881 11.881 16.5 12.35 16.5L16.5 16.5L16.5 12.35C16.5 11.881 16.881 11.5 17.35 11.5L29.65 11.5C30.119 11.5 30.5 11.881 30.5 12.35L30.5 16.5L72.5 16.5C87.964 16.5 100.5 29.036 100.5 44.5L100.5 72L86.5 62.197L86.5 46.871C86.5 45.691 86.5 44.509 86.409 43.294C86.323 42.143 86.157 40.983 85.842 39.78C85.493 38.444 84.989 37.167 84.344 35.984C83.791 34.97 83.139 34.031 82.4 33.186C81.66 32.342 80.839 31.596 79.952 30.964C78.916 30.227 77.799 29.651 76.63 29.252C75.578 28.892 74.562 28.702 73.555 28.604C72.492 28.5 71.458 28.5 70.425 28.5L31.4 28.5C30.903 28.5 30.5 28.903 30.5 29.4L30.5 70.129C30.5 71.309 30.5 72.491 30.591 73.706C30.677 74.857 30.843 76.017 31.158 77.22C31.507 78.556 32.011 79.833 32.656 81.016C33.209 82.03 33.861 82.969 34.601 83.814C35.34 84.658 36.161 85.404 37.048 86.036C38.084 86.773 39.201 87.349 40.37 87.748C41.422 88.108 42.438 88.298 43.445 88.396C44.508 88.5 45.542 88.5 46.575 88.5L63.598 88.5L72 100.5Z" fill="#1b1b18"/><path d="M100.336 75.548C98.926 88.576 88.577 98.925 75.547 100.337L66.993 88.118C68.027 87.958 69.074 87.73 70.145 87.41C72.082 86.83 73.933 85.995 75.649 84.926C77.119 84.01 78.48 82.93 79.705 81.704C80.93 80.479 82.011 79.119 82.926 77.648C83.995 75.933 84.831 74.081 85.41 72.145C85.932 70.399 86.207 68.717 86.35 67.049C86.385 66.634 86.412 66.223 86.433 65.812L100.336 75.548Z" fill="#a3a39a"/></svg><b style="font-weight:600;font-size:14px;color:var(--ink)">Tavotto</b></span>
+      <span class="c">An open letter on scientific expression</span>
+      <span class="r">Support · No. 01 · Oct 2026</span>
+    </header>
+    <div class="grid body">
+      <ol class="toc" aria-label="Contents" style="--d:500ms">
+        <li class="on"><span>I</span>The promise</li><li><span>II</span>The problem</li><li><span>III</span>The principle</li><li><span>IV</span>The invisible work</li><li><span>V</span>The invitation</li><li><span>VI</span>The continuation</li>
+      </ol>
+      <h1><span class="ln" style="--d:60ms">Discovery is</span><span class="ln" style="--d:160ms">hard enough.</span></h1>
+      <p class="resp" style="--d:420ms">Expressing it<br>shouldn’t be.<sup>1</sup></p>
+    </div>
+  </div>
+  <div class="line" aria-hidden="true">
+    <svg viewBox="0 0 1440 150" preserveAspectRatio="none"><path pathLength="1" vector-effect="non-scaling-stroke" d="M0 132H860C960 132 1010 130 1060 118C1120 103 1150 70 1210 40C1270 12 1340 6 1440 4"/><path vector-effect="non-scaling-stroke" style="stroke-dasharray:none;stroke-dashoffset:0;opacity:.5" d="M64 132v-6M160 132v-4M256 132v-4M352 132v-6M448 132v-4M544 132v-4M640 132v-6M736 132v-4M832 132v-4"/></svg>
+  </div>
+  <div class="foot"><div class="wrap grid">
+    <p class="note" style="--d:700ms"><b>1</b>&ensp;Tavotto is an open-source editor for scientific figures. It keeps your script as the source and lets you shape the figure that script drew — never the data in it. What follows explains why it exists, and asks for your help.</p>
+    <div class="go" style="--d:800ms"><a class="btn" href="#">Support the project</a><a href="#">Read the six sections ↓</a></div>
+  </div></div>
+</div>
+<script>
+document.querySelector('.page').classList.add('js');
+requestAnimationFrame(()=>requestAnimationFrame(()=>document.querySelector('.page').classList.add('ready')));
+</script>
+</body>
+</html>

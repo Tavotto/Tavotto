@@ -1,0 +1,963 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support Tavotto — The Unbroken Line</title>
+<meta name="description" content="Design prototype of the Tavotto support page. Payments are disabled.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&amp;family=Noto+Serif+SC:wght@400;500&amp;display=swap">
+<style>
+/* ───────────────── Tokens — values mirror web/src/index.css @theme (Paper × Instrument) ───────────────── */
+:root{
+  --desk:#efefed; --paper:#ffffff; --field:#f2f2f0; --field-hover:#eeeeec;
+  --ink:#1b1b18; --ink-2:#4a4a45; --ink-3:#6c6c66; --faint:#a3a39a;
+  --hair:rgba(27,27,24,.12); --hair-strong:rgba(27,27,24,.18);
+  --accent:#2c73de; --sel:#4685e2; --accent-subtle:#ebf2fc;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Helvetica,Arial,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --serif:"Times New Roman",Times,"Liberation Serif","Noto Serif SC","Songti SC","Source Han Serif SC",serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --ease-pop:cubic-bezier(.16,1,.3,1);
+  --ease-standard:cubic-bezier(.4,0,.2,1);
+  --ease-draw:cubic-bezier(.62,0,.24,1);
+  --ease-move:cubic-bezier(.5,0,.1,1);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--desk);color:var(--ink);font-family:var(--sans);font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+a{color:var(--ink-2);text-decoration:none}
+a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+p{margin:0}
+.page{container-type:inline-size;overflow-x:clip;min-height:100vh;font-family:var(--sans)}
+/* Chinese: one system alias, then the web CJK face. Measured in Chromium on Linux: "-apple-system, BlinkMacSystemFont"
+   together resolve as system-ui and hand Han glyphs to the OS fallback before Noto is tried; either alias alone does not. */
+.page[data-lang="zh"]{--sans:-apple-system,"Noto Sans SC",sans-serif;--serif:"Noto Serif SC",serif}
+.page[data-lang="en"] .zh,.page[data-lang="zh"] .en{display:none !important}
+.wrap{max-width:1440px;margin-inline:auto;padding-inline:64px}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px}
+.skip{position:absolute;left:16px;top:-60px;background:var(--ink);color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;z-index:20}
+.skip:focus{top:12px;color:#fff}
+
+/* ───────────────── Masthead ───────────────── */
+.mast{display:flex;align-items:center;justify-content:space-between;height:76px;gap:16px}
+.brand{display:flex;align-items:center;gap:14px;color:var(--ink)}
+.brand:hover{text-decoration:none}
+.brand svg{height:19px;width:auto;display:block}
+.brand .rule{width:1px;height:15px;background:var(--hair-strong)}
+.brand .sec{font-size:13px;color:var(--ink-2);letter-spacing:.005em}
+.mast-r{display:flex;align-items:center;gap:10px}
+.lang{display:inline-flex;padding:2px;border-radius:999px;background:rgba(27,27,24,.06)}
+.lang button{appearance:none;border:0;background:transparent;font:500 12px/1 var(--sans);height:30px;min-width:44px;padding:0 12px;border-radius:999px;color:var(--ink-2);cursor:pointer}
+.lang button[aria-pressed="true"]{background:var(--paper);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px rgba(27,27,24,.06)}
+.mast-cta{display:inline-flex;align-items:center;gap:8px;height:34px;padding:0 16px;border-radius:999px;background:var(--ink);color:#fff;font-size:13px;font-weight:500}
+.mast-cta:hover{color:#fff;text-decoration:none;background:#2b2b27}
+.mast-cta svg{width:12px;height:12px}
+
+/* ───────────────── Shared figure language (matplotlib defaults of examples/figures/paper_style.py: serif, ticks in, frameless legend) ───────────────── */
+.fig{display:block;width:100%;height:auto;overflow:visible}
+.fig text{font-family:var(--serif);fill:var(--ink)}
+.spine{fill:none;stroke:var(--ink);stroke-width:1.1}
+.tick{fill:none;stroke:var(--ink);stroke-width:1}
+.eb{fill:none;stroke:var(--ink);stroke-width:1.1}
+.pts circle{fill:var(--ink)}
+.pts.open circle{fill:var(--paper);stroke:var(--ink);stroke-width:1.1}
+.curve{fill:none;stroke:var(--ink);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.curve.dash{stroke-dasharray:5 3.5;stroke-width:1.4}
+.guide{fill:none;stroke:var(--ink-3);stroke-width:1;stroke-dasharray:2 4}
+.sel .box{fill:none;stroke:var(--sel);stroke-width:1}
+.sel .h{fill:var(--paper);stroke:var(--sel);stroke-width:1}
+.sel .tag{fill:var(--sel)}
+.sel text.tagt{font-family:var(--sans);fill:#fff;font-size:11px;font-weight:500}
+
+/* ───────────────── Act I — the promise ───────────────── */
+.hero-sheet{background:var(--paper);border-radius:16px;padding:40px 44px 32px}
+.hero-fig{position:relative;container-type:inline-size}
+.hero-fig .m{display:none}
+.hero-title{position:absolute;left:7.4%;top:4.2%;margin:0;font-weight:500;font-size:7.15cqw;line-height:.99;letter-spacing:-.04em;color:var(--ink)}
+.hero-title .l{display:block}
+.hero-title .dim{color:var(--ink-3)}
+.hero-title.zh{font-size:6.3cqw;line-height:1.22;letter-spacing:.01em;top:6%}
+.hero .tl{font-size:15px}
+.hero .al{font-size:16px}
+.hero .lgt{font-size:15px}
+.hero .ann{font-size:14px;font-style:italic;fill:var(--ink-2)}
+.hero-foot{padding-top:28px;align-items:start}
+.lede{grid-column:1/span 6;font-size:21px;line-height:1.5;color:var(--ink-2);letter-spacing:-.006em;max-width:34em}
+.lede strong{color:var(--ink);font-weight:500}
+.figcap{grid-column:8/span 4;font-size:13px;line-height:1.55;color:var(--ink-3);max-width:34em}
+.figcap b{color:var(--ink);font-weight:600}
+.cue{grid-column:12/span 1;justify-self:end;font-size:13px;color:var(--ink-2);display:inline-flex;gap:6px;align-items:center;white-space:nowrap;min-height:44px;margin-top:-12px}
+.cue svg{width:12px;height:12px}
+
+/* load sequence — data first, model second, editing layer last */
+.js .hero .spine{stroke-dasharray:1;stroke-dashoffset:1}
+.js .hero .tick,.js .hero .tl,.js .hero .al,.js .hero .eb,.js .hero .pts circle,.js .hero .lg,.js .hero .ann,.js .hero .guide,.js .hero .sel{opacity:0}
+.js .hero .curve{stroke-dasharray:1;stroke-dashoffset:1}
+.js .hero .hero-title .l,.js .hero .hero-foot>*{opacity:0;transform:translateY(4px)}
+.is-ready .hero .spine{stroke-dashoffset:0;transition:stroke-dashoffset 800ms var(--ease-draw) 150ms}
+.is-ready .hero .tick,.is-ready .hero .tl,.is-ready .hero .al{opacity:1;transition:opacity 500ms var(--ease-standard) 650ms}
+.is-ready .hero .eb{opacity:1;transition:opacity 700ms var(--ease-standard) 900ms}
+.is-ready .hero .pts circle{opacity:1;transition:opacity 240ms var(--ease-standard) calc(900ms + var(--i) * 70ms)}
+.is-ready .hero .curve{stroke-dashoffset:0;transition:stroke-dashoffset 1500ms var(--ease-draw) 1550ms}
+.is-ready .hero .guide,.is-ready .hero .ann{opacity:1;transition:opacity 500ms var(--ease-standard) 2700ms}
+.is-ready .hero .lg{opacity:1;transition:opacity 500ms var(--ease-standard) 2900ms}
+.is-ready .hero .sel{opacity:1;transition:opacity 240ms var(--ease-standard) 3500ms}
+.is-ready .hero .hero-title .l{opacity:1;transform:none;transition:opacity 700ms var(--ease-pop) calc(80ms + var(--i) * 90ms),transform 700ms var(--ease-pop) calc(80ms + var(--i) * 90ms)}
+.is-ready .hero .hero-foot>*{opacity:1;transform:none;transition:opacity 700ms var(--ease-pop) 600ms,transform 700ms var(--ease-pop) 600ms}
+
+/* ───────────────── Acts ───────────────── */
+.act{padding-top:160px}
+.act-head{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;position:relative;border-top:1px solid var(--ink);padding-top:14px;margin-bottom:64px;font-size:12px;line-height:16px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:500}
+.act-head::before{content:"";position:absolute;left:-3px;top:-3.5px;width:6px;height:6px;border-radius:50%;background:var(--ink)}
+.act-head .no{grid-column:1/span 2;color:var(--ink);font-variant-numeric:tabular-nums}
+.act-head .nm{grid-column:3/span 7}
+.act-head .ct{grid-column:10/span 3;justify-self:end;font-variant-numeric:tabular-nums}
+.page[data-lang="zh"] .act-head{letter-spacing:.04em}
+.act-title{grid-column:3/span 9;margin:0;font-size:clamp(38px,5.05cqw,74px);line-height:1.03;letter-spacing:-.034em;font-weight:500;text-wrap:balance}
+.act-title.zh{letter-spacing:.005em;line-height:1.24;font-size:clamp(30px,4.1cqw,58px)}
+.act-title .dim{color:var(--ink-3)}
+.nw{white-space:nowrap}
+.prose{grid-column:3/span 6;margin-top:48px}
+.prose .lead{font-size:23px;line-height:1.45;letter-spacing:-.01em;color:var(--ink);margin-bottom:22px;font-weight:400;max-width:28em;text-wrap:pretty}
+.prose p+p{margin-top:1em}
+.prose p{color:var(--ink-2);max-width:36em;text-wrap:pretty}
+.prose.zh p{line-height:1.8}
+.aside{grid-column:10/span 3;margin-top:56px;font-size:13px;line-height:1.55;color:var(--ink-3)}
+
+.js .rv{opacity:0;transform:translateY(4px)}
+.js .rv.in{opacity:1;transform:none;transition:opacity 700ms var(--ease-pop) calc(var(--i,0) * 70ms),transform 700ms var(--ease-pop) calc(var(--i,0) * 70ms)}
+
+/* ───────────────── Act II — the night ───────────────── */
+.strip{grid-column:1/-1;display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:0 12px;margin-top:88px}
+.run .card{background:var(--paper);border-radius:8px;padding:6px 6px 2px}
+.run svg{display:block;width:100%;height:auto}
+.run .spine{stroke-width:.7}
+.run .d1{fill:none;stroke:var(--ink);stroke-width:.9}
+.run .d2{fill:none;stroke:var(--ink);stroke-width:.8;stroke-dasharray:2.4 1.6}
+.run .fr{fill:var(--paper);stroke:var(--ink);stroke-width:.4}
+.run .lgd text{font-size:5.6px}
+.run .lgd.sm text{font-size:4.9px}
+.run .lgd.bad .fr{fill-opacity:.92}
+.tk{position:relative;height:1px;margin-top:20px}
+.tk::before{content:"";position:absolute;left:0;right:-12px;top:0;height:1px;background:var(--ink)}
+.run:last-child .tk::before{right:0}
+.tk::after{content:"";position:absolute;left:-2.5px;top:-2.5px;width:6px;height:6px;border-radius:50%;background:var(--ink)}
+.run .t{display:block;margin-top:14px;font:500 12px/1.3 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums}
+.run code{display:block;margin-top:4px;font:11px/1.45 var(--mono);color:var(--ink-3);overflow-wrap:anywhere}
+.js .strip .tk::before{transform:scaleX(0);transform-origin:left}
+.js .strip.in .tk::before{transform:none;transition:transform 520ms linear calc(var(--i) * 140ms + 200ms)}
+.js .strip .run>*:not(.tk){opacity:0;transform:translateY(4px)}
+.js .strip .tk::after{opacity:0}
+.js .strip.in .run>*:not(.tk),.js .strip.in .tk::after{opacity:1;transform:none;transition:opacity 500ms var(--ease-pop) calc(var(--i) * 140ms),transform 500ms var(--ease-pop) calc(var(--i) * 140ms)}
+.strip-cap{grid-column:3/span 7;margin-top:36px;font-size:15px;line-height:1.55;color:var(--ink-2)}
+.strip-cap span.s{color:var(--ink-3)}
+
+/* ───────────────── Act III — the principle ───────────────── */
+.scrolly{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;margin-top:40px}
+.steps{grid-column:1/span 4;grid-row:1}
+.stage-wrap{grid-column:5/span 8;grid-row:1}
+.stage{position:sticky;top:max(24px,calc(50vh - 300px))}
+.step{min-height:76vh;display:flex;flex-direction:column;justify-content:center;padding:6vh 0}
+.step:first-child{min-height:60vh}
+.step .si{font:500 12px/16px var(--mono);color:var(--ink-3);font-variant-numeric:tabular-nums}
+.step h3{margin:10px 0 12px;font-size:25px;line-height:1.25;letter-spacing:-.018em;font-weight:500;color:var(--ink-3);transition:color 300ms var(--ease-standard)}
+.step p{font-size:16px;line-height:1.6;color:var(--ink-2);max-width:26em}
+.step.on h3{color:var(--ink)}
+.step .key{color:var(--ink)}
+.stage-sheet{background:var(--paper);border-radius:16px;padding:22px 26px 18px}
+.fig-stage .tl{font-size:10.5px}
+.fig-stage .axl{font-size:8.6px;transition:font-size 700ms var(--ease-move)}
+.has-type .fig-stage .axl{font-size:11.6px}
+.fig-stage .plabel{font-size:13px;font-weight:700;opacity:0;transition:opacity 400ms var(--ease-standard) 300ms}
+.has-align .fig-stage .plabel{opacity:1}
+.fig-stage .lgt{font-size:10px}
+.panel-a{transform:translate(10px,40px)}
+.panel-b{transform:translate(390px,57px);transition:transform 900ms var(--ease-move)}
+.has-align .panel-b{transform:translate(390px,40px)}
+.lgd-b{transform:translate(262px,52px);transition:transform 1000ms var(--ease-move)}
+.has-legend .lgd-b{transform:translate(64px,30px)}
+.fig-stage .sel{opacity:0;transition:opacity 180ms var(--ease-standard)}
+.stage[data-step="2"] .sel-legend,.stage[data-step="3"] .sel-axl,.stage[data-step="4"] .sel-panel,.stage[data-step="4"] .guide-align{opacity:1}
+.guide-align{fill:none;stroke:var(--sel);stroke-width:1;stroke-dasharray:4 3}
+.fig-stage .nondata{transition:opacity 500ms var(--ease-standard)}
+.emph-data .fig-stage .nondata{opacity:.2}
+.stage-cap{display:flex;align-items:center;gap:10px;min-height:22px;margin-top:10px;padding-top:12px;border-top:1px solid var(--hair);font-size:12.5px;color:var(--ink-2)}
+.stage-cap .dot{width:6px;height:6px;border-radius:50%;background:var(--ink);flex:none}
+.stage-cap [data-s]{display:none}
+.stage[data-step="1"] .stage-cap [data-s="1"],.stage[data-step="2"] .stage-cap [data-s="2"],.stage[data-step="3"] .stage-cap [data-s="3"],.stage[data-step="4"] .stage-cap [data-s="4"],.stage[data-step="5"] .stage-cap [data-s="5"]{display:inline}
+.stage-cards{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px;margin-top:12px}
+.card{background:var(--paper);border-radius:12px;padding:14px 16px 16px}
+.card-h{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink-3);margin-bottom:10px}
+.card-h .f{font-family:var(--mono);color:var(--ink);font-size:12px}
+.ok{display:inline-flex;align-items:center;gap:5px;color:var(--ink-2)}
+.ok svg{width:12px;height:12px}
+.code{margin:0;font:11.5px/1.7 var(--mono);color:var(--ink-2);white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.code .c{color:var(--ink-3)}
+.code .k{color:#8a3350}
+.code .s{color:#7a5a2b}
+.ov{list-style:none;margin:0;padding:0;font:11.5px/1.5 var(--mono)}
+.ov li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:5px 0;border-top:1px solid var(--hair);color:var(--ink-2);opacity:.0;transform:translateY(3px);transition:opacity 400ms var(--ease-pop),transform 400ms var(--ease-pop)}
+.ov li:first-child{border-top:0}
+.ov li b{font-weight:400;color:var(--ink)}
+.ov li span{color:var(--ink-3);text-align:right}
+.has-legend .ov .o2,.has-type .ov .o3,.has-align .ov .o4,.has-align .ov .o5{opacity:1;transform:none}
+.ov .none{opacity:1;transform:none;color:var(--ink-3);display:block}
+.has-legend .ov .none{display:none}
+
+/* ───────────────── Act IV — the invisible work ───────────────── */
+.trace{grid-column:1/-1;margin-top:96px}
+.trace svg{display:block;width:100%;height:56px;overflow:visible}
+.trace .base{fill:none;stroke:var(--ink);stroke-width:1}
+.trace .ev{fill:none;stroke:var(--ink);stroke-width:1}
+.trace text{font:500 11px var(--mono);fill:var(--ink-3)}
+.trace-cap{display:flex;justify-content:space-between;gap:24px;margin-top:10px;font-size:13px;color:var(--ink-3)}
+.js .trace .base{stroke-dasharray:1;stroke-dashoffset:1}
+.js .trace .ev,.js .trace text{opacity:0}
+.js .trace.in .base{stroke-dashoffset:0;transition:stroke-dashoffset 2200ms linear}
+.js .trace.in .ev,.js .trace.in text{opacity:1;transition:opacity 300ms var(--ease-standard) calc(var(--i) * 260ms + 120ms)}
+.specs{grid-column:3/span 10;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:48px;margin-top:72px}
+.spec{border-top:1px solid var(--hair-strong);padding:20px 0 36px;display:grid;align-content:start;grid-template-columns:44px minmax(0,1fr);column-gap:8px}
+.spec .n{font:500 12px/24px var(--mono);color:var(--ink-3)}
+.spec h3{margin:0 0 8px;font-size:18px;line-height:24px;font-weight:600;letter-spacing:-.01em}
+.spec p{font-size:15px;line-height:1.6;color:var(--ink-2);grid-column:2}
+.spec h3{grid-column:2}
+.quote{grid-column:3/span 9;margin:72px 0 0;font-size:clamp(28px,3.3cqw,46px);line-height:1.18;letter-spacing:-.025em;font-weight:500;text-wrap:balance}
+.quote .dim{color:var(--ink-3)}
+.quote.zh{letter-spacing:0;line-height:1.4;font-size:clamp(24px,2.8cqw,40px)}
+
+/* ───────────────── Act V — the invitation ───────────────── */
+.give-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:24px;margin-top:56px;align-items:start}
+.give-text{grid-column:3/span 4}
+.give-text p{color:var(--ink-2)}
+.give-text p+p{margin-top:1em}
+.give-text .lead{font-size:21px;line-height:1.5;color:var(--ink);letter-spacing:-.008em}
+.where{margin-top:36px;padding-top:16px;border-top:1px solid var(--hair-strong);font-size:14px;line-height:1.6;color:var(--ink-2)}
+.where h3,.help h3{margin:0 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:500}
+.page[data-lang="zh"] .where h3,.page[data-lang="zh"] .help h3{letter-spacing:.04em}
+.ph{color:var(--ink-3)}
+.give-form{grid-column:8/span 5;background:var(--paper);border-radius:16px;padding:28px 28px 24px;margin:0}
+.demo{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:24px;font-size:12px;color:var(--ink-3)}
+.demo .badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 10px;border-radius:999px;background:var(--field);color:var(--ink-2);font-weight:500;letter-spacing:.06em;text-transform:uppercase;font-size:11px}
+.demo .badge i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);display:block}
+fieldset{border:0;margin:0;padding:0;min-width:0}
+legend.fl,.fl{display:block;padding:0;margin:0 0 10px;font-size:13px;color:var(--ink-2);font-weight:500}
+.seg{display:grid;grid-template-columns:1fr 1fr;padding:3px;border-radius:999px;background:var(--field)}
+.seg label{position:relative;display:block}
+.seg input,.chips input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer;width:100%;height:100%}
+.seg label>span{display:flex;align-items:center;justify-content:center;height:40px;border-radius:999px;font-size:14px;color:var(--ink-2);transition:background 120ms var(--ease-standard),color 120ms var(--ease-standard)}
+.seg input:checked+span{background:var(--paper);color:var(--ink);font-weight:600;box-shadow:0 0 0 1px rgba(27,27,24,.07),0 1px 2px rgba(27,27,24,.08)}
+.seg input:focus-visible+span,.chips input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.amt{margin-top:22px;position:relative}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.cur-sel{position:absolute;right:-6px;top:-38px;z-index:1;display:flex;align-items:center;color:var(--ink-2)}
+.cur-sel select{appearance:none;-webkit-appearance:none;border:0;background:transparent;font:500 13px var(--sans);color:var(--ink-2);height:36px;padding:0 22px 0 12px;border-radius:999px;cursor:pointer}
+.cur-sel select:hover{background:var(--field)}
+.cur-sel svg{position:absolute;right:9px;width:10px;height:10px;pointer-events:none}
+.chips{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.chips label{position:relative;display:block}
+.chips label>span{display:flex;align-items:center;justify-content:center;height:52px;border-radius:12px;background:var(--field);font-size:18px;color:var(--ink-2);font-variant-numeric:tabular-nums;letter-spacing:-.01em;transition:background 120ms var(--ease-standard),box-shadow 120ms var(--ease-standard)}
+.chips label:hover>span{background:var(--field-hover)}
+.chips input:checked+span{background:var(--paper);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 1.5px var(--ink)}
+.other{margin-top:8px;display:flex;align-items:center;height:52px;border-radius:12px;background:var(--field);padding:0 16px;gap:8px;box-shadow:inset 0 0 0 1px transparent;transition:box-shadow 120ms var(--ease-standard),background 120ms var(--ease-standard)}
+.other.on{background:var(--paper);box-shadow:inset 0 0 0 1.5px var(--ink)}
+.other:focus-within{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.other .cur{font-size:18px;color:var(--ink-3)}
+.other input{flex:1;min-width:0;border:0;background:transparent;font:400 18px var(--sans);color:var(--ink);outline:none;font-variant-numeric:tabular-nums;height:100%}
+.other input::placeholder{color:var(--ink-3)}
+.sum{margin-top:22px;min-height:24px;font-size:15px;color:var(--ink-2)}
+.sum b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.sum.err{color:#a0371f}
+.go{margin-top:14px;width:100%;height:50px;border:0;border-radius:999px;background:var(--ink);color:#fff;font:600 15px var(--sans);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:background 120ms var(--ease-standard),opacity 120ms}
+.go:hover{background:#2b2b27}
+.go:disabled{opacity:.4;cursor:not-allowed}
+.go .tag{font:500 10.5px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;padding:4px 7px;border-radius:999px;background:rgba(255,255,255,.16);color:rgba(255,255,255,.86)}
+.status{min-height:0;font-size:13.5px;line-height:1.5;color:var(--ink);overflow:hidden}
+.status:not(:empty){margin-top:14px;padding:12px 14px;border-radius:12px;background:var(--field)}
+.fine{margin-top:18px;font-size:12.5px;line-height:1.6;color:var(--ink-3)}
+.help{margin-top:40px}
+.help ul{list-style:none;margin:10px 0 0;padding:0}
+.help li{border-top:1px solid var(--hair)}
+.help li:last-child{border-bottom:1px solid var(--hair)}
+.help a,.help button{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:48px;padding:0;font:400 15px var(--sans);color:var(--ink);background:none;border:0;cursor:pointer;text-align:left}
+.help a:hover,.help button:hover{text-decoration:none;color:var(--ink)}
+.help a:hover .lbl,.help button:hover .lbl{text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+.help svg{width:14px;height:14px;flex:none;color:var(--ink-3)}
+.help .copied{font-size:12px;color:var(--ink-3)}
+
+/* ───────────────── Act VI — the continuation ───────────────── */
+.act-6 .act-title{grid-column:3/span 8}
+.finale{grid-column:1/-1;margin-top:96px;position:relative}
+.finale .m{display:none}
+.finale .base{fill:none;stroke:var(--ink);stroke-width:1}
+.finale .tick{stroke-width:1}
+.finale .curve{stroke-width:1.6}
+.finale .last{fill:var(--desk);stroke:var(--ink);stroke-width:1.4}
+.finale text{font-family:var(--serif);font-size:15px;font-style:italic;fill:var(--ink-2)}
+.finale .lead-line{fill:none;stroke:var(--ink-3);stroke-width:1}
+.js .finale .curve{stroke-dasharray:1;stroke-dashoffset:1}
+.js .finale .pts circle,.js .finale .last,.js .finale .ann{opacity:0}
+.js .finale .axis{transform:scaleX(0)}
+.js .finale.in .axis{transform:none;transition:transform 3200ms cubic-bezier(.3,0,.1,1) 200ms}
+.js .finale.in .curve{stroke-dashoffset:0;transition:stroke-dashoffset 1700ms var(--ease-draw) 300ms}
+.js .finale.in .pts circle{opacity:1;transition:opacity 300ms var(--ease-standard) calc(300ms + var(--i) * 105ms)}
+.js .finale.in .last{opacity:1;transition:opacity 400ms var(--ease-standard) 1900ms}
+.js .finale.in .ann{opacity:1;transition:opacity 500ms var(--ease-standard) 2300ms}
+.close{grid-column:3/span 6;margin-top:64px}
+.close p{font-size:21px;line-height:1.5;color:var(--ink-2);letter-spacing:-.006em}
+.close .back{display:inline-flex;align-items:center;gap:8px;margin-top:28px;min-height:44px;font-size:15px;color:var(--ink)}
+.close .back svg{width:12px;height:12px}
+.foot{margin-top:160px;padding-block:28px 40px;border-top:1px solid var(--hair-strong);font-size:13px;line-height:1.6;color:var(--ink-3)}
+.foot .grid{align-items:start;row-gap:16px}
+.foot .fa{grid-column:1/span 4;display:flex;flex-direction:column;gap:12px}
+.foot .fa svg{height:16px;width:auto}
+.foot .fb{grid-column:5/span 4;display:flex;flex-wrap:wrap;gap:4px 20px}
+.foot .fc{grid-column:9/span 4;text-align:right}
+
+/* ───────────────── Narrow (container width — so a 390 px frame and a 390 px phone agree) ───────────────── */
+@container (max-width: 1100px){
+  .wrap{padding-inline:40px}
+  .give-text{grid-column:1/span 6}
+  .give-form{grid-column:7/span 6}
+  .specs{grid-column:1/-1}
+}
+@container (max-width: 760px){
+  body{font-size:16px}
+  .wrap{padding-inline:20px}
+  .mast{height:64px}
+  .brand .rule,.brand .sec,.mast-cta .lbl-long{display:none}
+  .mast-cta{height:40px;padding:0 14px}
+  .lang button{height:36px}
+  .hero-sheet{padding:20px 16px 14px;border-radius:14px}
+  .hero-fig .d{display:none}
+  .hero-fig .m{display:block}
+  .hero-title,.hero-title.zh{position:static;font-size:46px;line-height:1;letter-spacing:-.035em;margin:4px 0 22px}
+  .hero-title.zh{font-size:34px;line-height:1.3;letter-spacing:.01em}
+  .hero .tl{font-size:11px}.hero .al{font-size:11.5px}.hero .lgt{font-size:11px}
+  .hero-foot{padding-top:22px}
+  .lede,.figcap{grid-column:1/-1}
+  .lede{font-size:19px}
+  .figcap{margin-top:16px}
+  .cue{display:none}
+  .act{padding-top:104px}
+  .act-head{margin-bottom:36px}
+  .act-head .no{grid-column:1/span 2}
+  .act-head .nm{grid-column:3/span 7}
+  .act-head .ct{grid-column:10/span 3}
+  .act-title,.act-6 .act-title{grid-column:1/-1;font-size:40px;line-height:1.05}
+  .act-title.zh{font-size:31px;line-height:1.3}
+  .prose,.aside,.strip-cap,.quote,.close{grid-column:1/-1}
+  .prose{margin-top:30px}
+  .prose .lead{font-size:20px}
+  .aside{margin-top:24px}
+  .strip{grid-template-columns:repeat(3,minmax(0,1fr));gap:22px 10px;margin-top:48px}
+  .tk{display:none}
+  .run .t{margin-top:10px}
+  .run code{font-size:10.5px}
+  .scrolly{display:block;position:relative}
+  .stage-wrap{position:absolute;inset:0;pointer-events:none}
+  .stage{top:0;padding:8px 0 12px;background:var(--desk);z-index:3;pointer-events:auto;box-shadow:0 1px 0 var(--hair)}
+  .stage-sheet{padding:12px 12px 10px;border-radius:12px}
+  .stage-cards{display:none}
+  .steps{position:relative;padding-top:280px}
+  .step,.step:first-child{min-height:72vh;justify-content:flex-end;padding:0 0 9vh}
+  .step h3{font-size:22px}
+  .trace{margin-top:56px}
+  .trace-cap{flex-direction:column;gap:4px}
+  .specs{grid-template-columns:1fr;margin-top:40px}
+  .spec{padding-bottom:26px}
+  .quote{margin-top:40px}
+  .give-grid{display:block;margin-top:32px}
+  .give-form{margin-top:36px;padding:22px 18px 20px}
+  .chips{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .finale{margin-top:56px}
+  .finale .d{display:none}
+  .finale .m{display:block}
+  .finale text{font-size:12px}
+  .close{margin-top:40px}
+  .close p{font-size:19px}
+  .foot{margin-top:104px}
+  .foot .fa,.foot .fb,.foot .fc{grid-column:1/-1;text-align:left}
+}
+
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none !important;animation:none !important}
+  .js .rv,.js .hero .hero-title .l,.js .hero .hero-foot>*,.js .strip .run>*:not(.tk){opacity:1;transform:none}
+  .js .hero .tick,.js .hero .tl,.js .hero .al,.js .hero .eb,.js .hero .pts circle,.js .hero .lg,.js .hero .ann,.js .hero .guide,.js .hero .sel,.js .strip .tk::after,.js .trace .ev,.js .trace text,.js .finale .pts circle,.js .finale .last,.js .finale .ann{opacity:1}
+  .js .hero .spine,.js .hero .curve,.js .trace .base,.js .finale .curve{stroke-dashoffset:0}
+  .js .strip .tk::before,.js .finale .axis{transform:none}
+}
+</style>
+</head>
+<body>
+<div class="page" data-lang="en">
+<a class="skip" href="#give"><span class="en">Skip to the support form</span><span class="zh">跳到支持表单</span></a>
+
+<div class="wrap">
+  <header class="mast">
+    <a class="brand" href="#top" aria-label="Tavotto">
+      <svg viewBox="0 0 1337.06 269.857" aria-hidden="true"><g transform="translate(-1.866 15.541) scale(2.24924)"><path d="M72 100.5L44.5 100.5C29.036 100.5 16.5 87.964 16.5 72.5L16.5 28.5L12.35 28.5C11.881 28.5 11.5 28.119 11.5 27.65L11.5 17.35C11.5 16.881 11.881 16.5 12.35 16.5L16.5 16.5L16.5 12.35C16.5 11.881 16.881 11.5 17.35 11.5L29.65 11.5C30.119 11.5 30.5 11.881 30.5 12.35L30.5 16.5L72.5 16.5C87.964 16.5 100.5 29.036 100.5 44.5L100.5 72L86.5 62.197L86.5 46.871C86.5 45.691 86.5 44.509 86.409 43.294C86.323 42.143 86.157 40.983 85.842 39.78C85.493 38.444 84.989 37.167 84.344 35.984C83.791 34.97 83.139 34.031 82.4 33.186C81.66 32.342 80.839 31.596 79.952 30.964C78.916 30.227 77.799 29.651 76.63 29.252C75.578 28.892 74.562 28.702 73.555 28.604C72.492 28.5 71.458 28.5 70.425 28.5L31.4 28.5C30.903 28.5 30.5 28.903 30.5 29.4L30.5 70.129C30.5 71.309 30.5 72.491 30.591 73.706C30.677 74.857 30.843 76.017 31.158 77.22C31.507 78.556 32.011 79.833 32.656 81.016C33.209 82.03 33.861 82.969 34.601 83.814C35.34 84.658 36.161 85.404 37.048 86.036C38.084 86.773 39.201 87.349 40.37 87.748C41.422 88.108 42.438 88.298 43.445 88.396C44.508 88.5 45.542 88.5 46.575 88.5L63.598 88.5L72 100.5Z" fill="#1b1b18" fill-rule="evenodd"/><path d="M100.336 75.548C98.926 88.576 88.577 98.925 75.547 100.337L66.993 88.118C68.027 87.958 69.074 87.73 70.145 87.41C72.082 86.83 73.933 85.995 75.649 84.926C77.119 84.01 78.48 82.93 79.705 81.704C80.93 80.479 82.011 79.119 82.926 77.648C83.995 75.933 84.831 74.081 85.41 72.145C85.932 70.399 86.207 68.717 86.35 67.049C86.385 66.634 86.412 66.223 86.433 65.812L100.336 75.548Z" fill="#a3a39a" fill-rule="evenodd"/></g><path d="M271.182 24L447.325 24L447.325 56.915L378.148 56.915L378.148 241.589L340.055 241.589L340.055 56.915L271.182 56.915L271.182 24Z" fill="#1b1b18"/><path d="M570.168 206.544C570.168 210.812 570.726 213.859 571.845 215.686C572.96 217.514 575.144 218.43 578.397 218.43L582.054 218.43C583.472 218.43 585.102 218.228 586.929 217.82L586.929 241.893C585.71 242.298 584.134 242.756 582.206 243.265C580.273 243.771 578.293 244.226 576.263 244.637C574.23 245.042 572.198 245.345 570.168 245.551C568.135 245.75 566.406 245.857 564.988 245.857C557.874 245.857 551.984 244.432 547.312 241.59C542.637 238.748 539.589 233.772 538.17 226.656C531.261 233.361 522.781 238.239 512.725 241.286C502.667 244.334 492.964 245.857 483.621 245.857C476.507 245.857 469.703 244.89 463.204 242.962C456.698 241.033 450.96 238.191 445.984 234.429C441.004 230.671 437.043 225.894 434.1 220.106C431.152 214.314 429.682 207.562 429.682 199.839C429.682 190.087 431.457 182.164 435.015 176.069C438.567 169.975 443.242 165.204 449.032 161.746C454.823 158.294 461.323 155.803 468.537 154.279C475.745 152.755 483.012 151.589 490.326 150.776C496.62 149.556 502.615 148.696 508.305 148.184C513.991 147.681 519.019 146.815 523.391 145.595C527.757 144.375 531.209 142.5 533.752 139.958C536.289 137.42 537.561 133.611 537.561 128.53C537.561 124.063 536.494 120.406 534.36 117.558C532.228 114.716 529.585 112.531 526.438 111.008C523.285 109.484 519.781 108.469 515.924 107.96C512.063 107.454 508.405 107.198 504.953 107.198C495.202 107.198 487.173 109.231 480.878 113.293C474.578 117.358 471.022 123.653 470.212 132.185L435.472 132.185C436.08 122.031 438.519 113.597 442.785 106.892C447.051 100.187 452.484 94.806 459.089 90.741C465.689 86.679 473.155 83.837 481.488 82.209C489.815 80.584 498.349 79.771 507.087 79.771C514.805 79.771 522.424 80.584 529.943 82.209C537.455 83.837 544.213 86.473 550.208 90.131C556.199 93.788 561.026 98.511 564.683 104.303C568.341 110.091 570.168 117.153 570.168 125.483L570.168 206.544ZM535.427 162.66C530.142 166.118 523.642 168.198 515.924 168.909C508.201 169.623 500.481 170.689 492.763 172.108C489.107 172.718 485.549 173.585 482.097 174.698C478.64 175.817 475.593 177.34 472.955 179.269C470.312 181.203 468.232 183.742 466.708 186.887C465.184 190.039 464.422 193.848 464.422 198.315C464.422 202.178 465.537 205.431 467.775 208.068C470.007 210.71 472.697 212.791 475.85 214.314C478.997 215.838 482.45 216.907 486.211 217.514C489.969 218.124 493.373 218.43 496.421 218.43C500.277 218.43 504.444 217.924 508.915 216.907C513.381 215.892 517.599 214.163 521.562 211.725C525.523 209.288 528.824 206.193 531.466 202.431C534.105 198.672 535.427 194.051 535.427 188.563L535.427 162.66Z" fill="#1b1b18" fill-rule="evenodd"/><path d="M594.882 84.036L632.67 84.036L672.592 205.02L673.202 205.02L711.6 84.036L747.559 84.036L691.182 241.59L652.175 241.59L594.882 84.036Z" fill="#1b1b18"/><path d="M936.182 84.036L962.39 84.036L962.39 36.801L997.131 36.801L997.131 84.036L1028.521 84.036L1028.521 109.939L997.131 109.939L997.131 194.051C997.131 197.705 997.284 200.86 997.589 203.497C997.893 206.139 998.603 208.371 999.722 210.202C1000.836 212.029 1002.512 213.401 1004.75 214.314C1006.983 215.228 1010.031 215.686 1013.892 215.686C1016.331 215.686 1018.768 215.639 1021.207 215.535C1023.644 215.433 1026.082 215.076 1028.521 214.466L1028.521 241.286C1024.659 241.691 1020.902 242.096 1017.244 242.503C1013.588 242.908 1009.827 243.113 1005.97 243.113C996.827 243.113 989.46 242.247 983.876 240.524C978.285 238.798 973.918 236.257 970.771 232.906C967.619 229.552 965.485 225.338 964.371 220.258C963.252 215.181 962.591 209.392 962.39 202.887L962.39 109.939L936.182 109.939L936.182 84.036Z" fill="#1b1b18"/><path d="M1046.582 84.036L1072.79 84.036L1072.79 36.801L1107.531 36.801L1107.531 84.036L1138.921 84.036L1138.921 109.939L1107.531 109.939L1107.531 194.051C1107.531 197.705 1107.684 200.86 1107.989 203.497C1108.293 206.139 1109.003 208.371 1110.122 210.202C1111.236 212.029 1112.912 213.401 1115.15 214.314C1117.383 215.228 1120.431 215.686 1124.292 215.686C1126.731 215.686 1129.168 215.639 1131.607 215.535C1134.044 215.433 1136.482 215.076 1138.921 214.466L1138.921 241.286C1135.059 241.691 1131.302 242.096 1127.644 242.503C1123.988 242.908 1120.227 243.113 1116.37 243.113C1107.227 243.113 1099.86 242.247 1094.276 240.524C1088.685 238.798 1084.318 236.257 1081.171 232.906C1078.019 229.552 1075.885 225.338 1074.771 220.258C1073.652 215.181 1072.991 209.392 1072.79 202.887L1072.79 109.939L1046.582 109.939L1046.582 84.036Z" fill="#1b1b18"/><path d="M812.182 106.271L871.258 106.271C882.304 106.271 891.258 116.792 891.258 129.771L891.258 183.643C891.258 203.367 875.268 219.357 855.544 219.357L812.182 219.357C801.136 219.357 792.182 208.836 792.182 195.857L792.182 129.771C792.182 116.792 801.136 106.271 812.182 106.271ZM812.182 79.771L871.258 79.771C898.872 79.771 921.258 102.157 921.258 129.771L921.258 195.857C921.258 223.471 898.872 245.857 871.258 245.857L812.182 245.857C784.568 245.857 762.182 223.471 762.182 195.857L762.182 129.771C762.182 102.157 784.568 79.771 812.182 79.771Z" fill="#1b1b18" fill-rule="evenodd"/><path d="M1203.982 106.271L1263.058 106.271C1274.104 106.271 1283.058 116.792 1283.058 129.771L1283.058 183.643C1283.058 203.367 1267.068 219.357 1247.344 219.357L1203.982 219.357C1192.936 219.357 1183.982 208.836 1183.982 195.857L1183.982 129.771C1183.982 116.792 1192.936 106.271 1203.982 106.271ZM1203.982 79.771L1263.058 79.771C1290.672 79.771 1313.058 102.157 1313.058 129.771L1313.058 195.857C1313.058 223.471 1290.672 245.857 1263.058 245.857L1203.982 245.857C1176.368 245.857 1153.982 223.471 1153.982 195.857L1153.982 129.771C1153.982 116.792 1176.368 79.771 1203.982 79.771Z" fill="#1b1b18" fill-rule="evenodd"/></svg>
+      <span class="rule" aria-hidden="true"></span>
+      <span class="sec"><span class="en">Support the project</span><span class="zh">支持这个项目</span></span>
+    </a>
+    <div class="mast-r">
+      <div class="lang" role="group" aria-label="Language / 语言">
+        <button type="button" data-set-lang="en" aria-pressed="true" lang="en">EN</button>
+        <button type="button" data-set-lang="zh" aria-pressed="false" lang="zh-Hans">中文</button>
+      </div>
+      <a class="mast-cta" href="#give"><span class="en">Support <span class="lbl-long">Tavotto</span></span><span class="zh">支持 <span class="lbl-long">Tavotto</span></span><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M6 1.5v9M2.5 7 6 10.5 9.5 7"/></svg></a>
+    </div>
+  </header>
+</div>
+
+<main id="top">
+<!-- ═════════════ I · THE PROMISE ═════════════ -->
+<section class="wrap hero" aria-labelledby="t1">
+  <div class="hero-sheet">
+    <div class="hero-fig">
+      <h1 class="hero-title en" id="t1"><span class="l dim" style="--i:0">Discovery is</span><span class="l dim" style="--i:1">hard enough.</span><span class="l" style="--i:2">Expressing it</span><span class="l" style="--i:3">shouldn’t be.</span></h1>
+      <h1 class="hero-title zh" lang="zh-Hans"><span class="l dim" style="--i:0">探索已经足够艰难，</span><span class="l" style="--i:1">表达不该再添阻碍。</span></h1>
+
+      <svg class="fig d" viewBox="0 0 1312 600" role="img" aria-labelledby="f1t">
+        <title id="f1t">Figure 1. A dose–response curve: nine measured points with error bars rise from near zero at low concentration to near one at high concentration, with a fitted curve drawn through them. The legend in the lower right is selected.</title>
+        <path class="spine" pathLength="1" d="M64 24V528H1296"/>
+        <path class="tick" d="M64 528h7M64 276h7M64 24h7M64 528v-7M372 528v-7M680 528v-7M988 528v-7M1296 528v-7M156.7 528v-3.5M211.0 528v-3.5M249.4 528v-3.5M279.3 528v-3.5M303.7 528v-3.5M324.3 528v-3.5M342.2 528v-3.5M357.9 528v-3.5M464.7 528v-3.5M519.0 528v-3.5M557.4 528v-3.5M587.3 528v-3.5M611.7 528v-3.5M632.3 528v-3.5M650.2 528v-3.5M665.9 528v-3.5M772.7 528v-3.5M827.0 528v-3.5M865.4 528v-3.5M895.3 528v-3.5M919.7 528v-3.5M940.3 528v-3.5M958.2 528v-3.5M973.9 528v-3.5M1080.7 528v-3.5M1135.0 528v-3.5M1173.4 528v-3.5M1203.3 528v-3.5M1227.7 528v-3.5M1248.3 528v-3.5M1266.2 528v-3.5M1281.9 528v-3.5"/>
+        <g class="tl"><text x="52" y="533" text-anchor="end">0</text><text x="52" y="281" text-anchor="end">0.5</text><text x="52" y="29" text-anchor="end">1.0</text>
+          <text x="64" y="556" text-anchor="middle">10<tspan dy="-7" font-size="10.5">−2</tspan></text><text x="372" y="556" text-anchor="middle">10<tspan dy="-7" font-size="10.5">−1</tspan></text><text x="680" y="556" text-anchor="middle">10<tspan dy="-7" font-size="10.5">0</tspan></text><text x="988" y="556" text-anchor="middle">10<tspan dy="-7" font-size="10.5">1</tspan></text><text x="1296" y="556" text-anchor="middle">10<tspan dy="-7" font-size="10.5">2</tspan></text></g>
+        <g class="al"><text class="en" x="680" y="590" text-anchor="middle">Concentration (µM)</text><text class="zh" x="680" y="590" text-anchor="middle">浓度 (µM)</text>
+          <text class="en" transform="translate(16 276) rotate(-90)" text-anchor="middle">Response (normalised)</text><text class="zh" transform="translate(16 276) rotate(-90)" text-anchor="middle">响应（归一化）</text></g>
+        <path class="guide" d="M919.6 276V528"/>
+        <text class="ann" x="928" y="516"><tspan class="en">EC₅₀ = 6.0 µM</tspan><tspan class="zh">EC₅₀ = 6.0 µM</tspan></text>
+        <path class="eb" d="M64 496.6V516.8M60 496.6h8M60 516.8h8M218 503.9V529.1M214 503.9h8M214 529.1h8M372 492.3V514.5M368 492.3h8M368 514.5h8M526 499.1V529.3M522 499.1h8M522 529.3h8M680 438.9V484.3M676 438.9h8M676 484.3h8M834 361.3V401.7M830 361.3h8M830 401.7h8M988 177.3V207.5M984 177.3h8M984 207.5h8M1142 78.0V103.2M1138 78.0h8M1138 103.2h8M1296 36.4V56.6M1292 36.4h8M1292 56.6h8"/>
+        <g class="pts"><circle style="--i:0" cx="64" cy="506.7" r="4.2"/><circle style="--i:1" cx="218" cy="516.5" r="4.2"/><circle style="--i:2" cx="372" cy="503.4" r="4.2"/><circle style="--i:3" cx="526" cy="514.2" r="4.2"/><circle style="--i:4" cx="680" cy="461.6" r="4.2"/><circle style="--i:5" cx="834" cy="381.5" r="4.2"/><circle style="--i:6" cx="988" cy="192.4" r="4.2"/><circle style="--i:7" cx="1142" cy="90.6" r="4.2"/><circle style="--i:8" cx="1296" cy="46.5" r="4.2"/></g>
+        <path class="curve" pathLength="1" d="M64.0 512.8L94.8 512.8L125.6 512.7L156.4 512.7L187.2 512.6L218.0 512.5L248.8 512.3L279.6 512.1L310.4 511.9L341.2 511.5L372.0 511.0L402.8 510.3L433.6 509.4L464.4 508.1L495.2 506.4L526.0 504.1L556.8 501.0L587.6 496.8L618.4 491.3L649.2 483.9L680.0 474.2L710.8 461.6L741.6 445.5L772.4 425.5L803.2 401.1L834.0 372.5L864.8 340.0L895.6 304.6L926.4 268.0L957.2 231.7L988.0 197.4L1018.8 166.5L1049.6 139.7L1080.4 117.2L1111.2 99.0L1142.0 84.5L1172.8 73.3L1203.6 64.6L1234.4 58.1L1265.2 53.2L1296.0 49.5"/>
+        <g class="lg" transform="translate(1010 402)">
+          <path class="eb" d="M12 -8V8M8 -8h8M8 8h8"/><circle cx="12" cy="0" r="4.2" fill="#1b1b18"/>
+          <text class="lgt en" x="34" y="5">Measured, mean ± s.d. (n = 3)</text><text class="lgt zh" x="34" y="5">测量值，均值 ± 标准差（n = 3）</text>
+          <path class="curve" d="M0 30H24"/>
+          <text class="lgt en" x="34" y="35">Four-parameter Hill fit</text><text class="lgt zh" x="34" y="35">四参数 Hill 拟合</text>
+        </g>
+        <g class="sel"><rect class="box" x="1000" y="384" width="276" height="66"/>
+          <rect class="h" x="996" y="380" width="8" height="8"/><rect class="h" x="1134" y="380" width="8" height="8"/><rect class="h" x="1272" y="380" width="8" height="8"/><rect class="h" x="996" y="413" width="8" height="8"/><rect class="h" x="1272" y="413" width="8" height="8"/><rect class="h" x="996" y="446" width="8" height="8"/><rect class="h" x="1134" y="446" width="8" height="8"/><rect class="h" x="1272" y="446" width="8" height="8"/>
+          <rect class="tag" x="1000" y="358" width="58" height="20" rx="4"/><text class="tagt en" x="1029" y="372" text-anchor="middle">Legend</text><text class="tagt zh" x="1029" y="372" text-anchor="middle">图例</text></g>
+      </svg>
+
+      <svg class="fig m" viewBox="0 0 358 300" role="img" aria-label="Figure 1. A dose–response curve with nine measured points and a fitted curve. The legend is selected.">
+        <path class="spine" pathLength="1" d="M34 12V250H350"/>
+        <path class="tick" d="M34 250h5M34 131h5M34 12h5M34 250v-5M113 250v-5M192 250v-5M271 250v-5M350 250v-5M57.8 250v-2.5M71.7 250v-2.5M81.6 250v-2.5M89.2 250v-2.5M95.5 250v-2.5M100.8 250v-2.5M105.3 250v-2.5M109.4 250v-2.5M136.8 250v-2.5M150.7 250v-2.5M160.6 250v-2.5M168.2 250v-2.5M174.5 250v-2.5M179.8 250v-2.5M184.3 250v-2.5M188.4 250v-2.5M215.8 250v-2.5M229.7 250v-2.5M239.6 250v-2.5M247.2 250v-2.5M253.5 250v-2.5M258.8 250v-2.5M263.3 250v-2.5M267.4 250v-2.5M294.8 250v-2.5M308.7 250v-2.5M318.6 250v-2.5M326.2 250v-2.5M332.5 250v-2.5M337.8 250v-2.5M342.3 250v-2.5M346.4 250v-2.5"/>
+        <g class="tl"><text x="28" y="254" text-anchor="end">0</text><text x="28" y="135" text-anchor="end">0.5</text><text x="28" y="16" text-anchor="end">1.0</text>
+          <text x="34" y="268" text-anchor="middle">10<tspan dy="-5" font-size="8">−2</tspan></text><text x="113" y="268" text-anchor="middle">10<tspan dy="-5" font-size="8">−1</tspan></text><text x="192" y="268" text-anchor="middle">10<tspan dy="-5" font-size="8">0</tspan></text><text x="271" y="268" text-anchor="middle">10<tspan dy="-5" font-size="8">1</tspan></text><text x="350" y="268" text-anchor="middle">10<tspan dy="-5" font-size="8">2</tspan></text></g>
+        <g class="al"><text class="en" x="192" y="292" text-anchor="middle">Concentration (µM)</text><text class="zh" x="192" y="292" text-anchor="middle">浓度 (µM)</text></g>
+        <path class="eb" d="M34 235.2V244.8M31.5 235.2h5M31.5 244.8h5M73.5 238.7V250.5M71 238.7h5M71 250.5h5M113 233.2V243.6M110.5 233.2h5M110.5 243.6h5M152.5 236.4V250.6M150 236.4h5M150 250.6h5M192 207.9V229.3M189.5 207.9h5M189.5 229.3h5M231.5 171.3V190.3M229 171.3h5M229 190.3h5M271 84.4V98.6M268.5 84.4h5M268.5 98.6h5M310.5 37.4V49.4M308 37.4h5M308 49.4h5M350 17.8V27.4M347.5 17.8h5M347.5 27.4h5"/>
+        <g class="pts"><circle style="--i:0" cx="34" cy="240" r="2.4"/><circle style="--i:1" cx="73.5" cy="244.6" r="2.4"/><circle style="--i:2" cx="113" cy="238.4" r="2.4"/><circle style="--i:3" cx="152.5" cy="243.5" r="2.4"/><circle style="--i:4" cx="192" cy="218.6" r="2.4"/><circle style="--i:5" cx="231.5" cy="180.8" r="2.4"/><circle style="--i:6" cx="271" cy="91.5" r="2.4"/><circle style="--i:7" cx="310.5" cy="43.4" r="2.4"/><circle style="--i:8" cx="350" cy="22.6" r="2.4"/></g>
+        <path class="curve" pathLength="1" style="stroke-width:1.4" d="M34.0 242.8L41.9 242.8L49.8 242.8L57.7 242.8L65.6 242.7L73.5 242.7L81.4 242.6L89.3 242.5L97.2 242.4L105.1 242.2L113.0 242.0L120.9 241.7L128.8 241.2L136.7 240.6L144.6 239.8L152.5 238.7L160.4 237.3L168.3 235.3L176.2 232.7L184.1 229.2L192.0 224.6L199.9 218.6L207.8 211.0L215.7 201.6L223.6 190.1L231.5 176.6L239.4 161.2L247.3 144.5L255.2 127.2L263.1 110.1L271.0 93.9L278.9 79.3L286.8 66.6L294.7 56.0L302.6 47.4L310.5 40.6L318.4 35.3L326.3 31.2L334.2 28.1L342.1 25.8L350.0 24.0"/>
+        <g class="lg" transform="translate(52 34)">
+          <path class="eb" d="M6 -5V5M3.5 -5h5M3.5 5h5"/><circle cx="6" cy="0" r="2.4" fill="#1b1b18"/>
+          <text class="lgt en" x="18" y="4">Measured (n = 3)</text><text class="lgt zh" x="18" y="4">测量值（n = 3）</text>
+          <path class="curve" style="stroke-width:1.4" d="M0 19H12"/>
+          <text class="lgt en" x="18" y="23">Hill fit</text><text class="lgt zh" x="18" y="23">Hill 拟合</text>
+        </g>
+        <g class="sel"><rect class="box" x="45" y="23" width="112" height="39"/><rect class="h" x="42" y="20" width="6" height="6"/><rect class="h" x="154" y="20" width="6" height="6"/><rect class="h" x="42" y="59" width="6" height="6"/><rect class="h" x="154" y="59" width="6" height="6"/></g>
+      </svg>
+    </div>
+  </div>
+  <div class="grid hero-foot">
+    <p class="lede en"><strong>Tavotto is an open-source editor for scientific figures.</strong> It lets you finish the figure your script drew without rewriting the script. This page is about why we build it, and how you can help.</p>
+    <p class="lede zh" lang="zh-Hans"><strong>Tavotto 是一个开源的科研图形编辑器。</strong>它让你直接完成脚本画出的那张图，而不必一次次重写脚本。这一页讲我们为什么做它，以及你可以怎样帮助它继续下去。</p>
+    <p class="figcap en"><b>Fig. 1</b> Dose–response, illustrative data drawn for this page. Points, mean ± s.d. of three replicates; line, four-parameter Hill fit. The legend is selected: in Tavotto, everything around the data can be shaped.</p>
+    <p class="figcap zh" lang="zh-Hans"><b>图 1</b> 剂量–反应关系，为本页绘制的示意数据。点为三次重复的均值 ± 标准差；线为四参数 Hill 拟合。图例处于选中状态：在 Tavotto 里，数据周围的一切都可以被塑造。</p>
+    <a class="cue" href="#act-2"><span class="en">Read on</span><span class="zh">继续阅读</span><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M6 1.5v9M2.5 7 6 10.5 9.5 7"/></svg></a>
+  </div>
+</section>
+
+<!-- ═════════════ II · THE PROBLEM ═════════════ -->
+<section class="wrap act act-2" id="act-2" aria-labelledby="t2">
+  <div class="act-head"><span class="no">II</span><span class="nm"><span class="en">The problem</span><span class="zh">问题</span></span><span class="ct">II / VI</span></div>
+  <div class="grid">
+    <h2 class="act-title en" id="t2">The last millimetre shouldn’t take another night.</h2>
+    <h2 class="act-title zh" lang="zh-Hans">最后一毫米，<br>不该再耗掉一个夜晚。</h2>
+    <div class="prose en">
+      <p class="lead">Every published figure carries hours that nobody sees.</p>
+      <p>A legend that covers the last data point. Tick labels a point too small for the journal. Panel (b) sitting a millimetre lower than panel (a). Each fix means changing a line, running the script again, opening the file and looking. Then doing it again.</p>
+      <p>The science was finished long before the figure was. The distance between a result and a figure that shows it well is where Tavotto works.</p>
+    </div>
+    <div class="prose zh" lang="zh-Hans">
+      <p class="lead">每一张发表出来的图，背后都有无人看见的几个小时。</p>
+      <p>图例压住了最后一个数据点；刻度标签比期刊要求小了一号；(b) 面板比 (a) 低了一毫米。每一处修改，都意味着改一行代码、重新运行脚本、打开文件、再看一眼。然后，再来一遍。</p>
+      <p>科学结论早已完成，图却还没有。结果与一张恰当呈现它的图之间的这段距离，正是 Tavotto 工作的地方。</p>
+    </div>
+    <div class="strip rv" aria-label="Nine runs of the same script, each moving the legend slightly">
+      <div class="run" style="--i:0"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd bad" transform="translate(80 11)"><rect class="fr" width="34" height="17"/><path class="d1" d="M3 5.5h7"/><text x="12.5" y="7.5" class="en">Control</text><text x="12.5" y="7.5" class="zh">对照</text><path class="d2" d="M3 12h7"/><text x="12.5" y="14" class="en">Treated</text><text x="12.5" y="14" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">23:12</span><code>loc="best"</code></div>
+      <div class="run" style="--i:1"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd" transform="translate(17 8)"><rect class="fr" width="34" height="17"/><path class="d1" d="M3 5.5h7"/><text x="12.5" y="7.5" class="en">Control</text><text x="12.5" y="7.5" class="zh">对照</text><path class="d2" d="M3 12h7"/><text x="12.5" y="14" class="en">Treated</text><text x="12.5" y="14" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">23:19</span><code>loc="upper left"</code></div>
+      <div class="run" style="--i:2"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd sm" transform="translate(17 8)"><rect class="fr" width="30" height="15"/><path class="d1" d="M3 5h6"/><text x="11" y="6.8" class="en">Control</text><text x="11" y="6.8" class="zh">对照</text><path class="d2" d="M3 10.6h6"/><text x="11" y="12.4" class="en">Treated</text><text x="11" y="12.4" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">23:26</span><code>fontsize=7</code></div>
+      <div class="run" style="--i:3"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd sm" transform="translate(15.5 6.5)"><rect class="fr" width="30" height="15"/><path class="d1" d="M3 5h6"/><text x="11" y="6.8" class="en">Control</text><text x="11" y="6.8" class="zh">对照</text><path class="d2" d="M3 10.6h6"/><text x="11" y="12.4" class="en">Treated</text><text x="11" y="12.4" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">23:41</span><code>bbox_to_anchor=(0.02, 0.98)</code></div>
+      <div class="run" style="--i:4"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd sm" transform="translate(15.5 6.5)"><path class="d1" d="M3 5h6"/><text x="11" y="6.8" class="en">Control</text><text x="11" y="6.8" class="zh">对照</text><path class="d2" d="M3 10.6h6"/><text x="11" y="12.4" class="en">Treated</text><text x="11" y="12.4" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">23:58</span><code>frameon=False</code></div>
+      <div class="run" style="--i:5"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd sm" transform="translate(18 8)"><path class="d1" d="M3 5h6"/><text x="11" y="6.8" class="en">Control</text><text x="11" y="6.8" class="zh">对照</text><path class="d2" d="M3 10.6h6"/><text x="11" y="12.4" class="en">Treated</text><text x="11" y="12.4" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">00:17</span><code>bbox_to_anchor=(0.04, 0.97)</code></div>
+      <div class="run" style="--i:6"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd sm" transform="translate(20.5 9)"><path class="d1" d="M3 5h6"/><text x="11" y="6.8" class="en">Control</text><text x="11" y="6.8" class="zh">对照</text><path class="d2" d="M3 10.6h6"/><text x="11" y="12.4" class="en">Treated</text><text x="11" y="12.4" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">00:46</span><code>bbox_to_anchor=(0.06, 0.96)</code></div>
+      <div class="run" style="--i:7"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd sm" transform="translate(20.5 9)"><path class="d1" d="M3 5h4.5"/><text x="9.5" y="6.8" class="en">Control</text><text x="9.5" y="6.8" class="zh">对照</text><path class="d2" d="M3 10.6h4.5"/><text x="9.5" y="12.4" class="en">Treated</text><text x="9.5" y="12.4" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">01:20</span><code>handlelength=1.2</code></div>
+      <div class="run" style="--i:8"><div class="card"><svg viewBox="0 0 130 84" aria-hidden="true"><path class="spine" d="M14 6V70H122"/><path class="d1" d="M14 63.6L31 54.6L48 43.8L65 33.5L82 25.2L99 18.8L116 15"/><path class="d2" d="M14 63.6L31 59.8L48 55.9L65 52.7L82 50.2L99 48.2L116 47"/><g class="lgd sm" transform="translate(19.5 9)"><path class="d1" d="M3 5h4.5"/><text x="9.5" y="6.8" class="en">Control</text><text x="9.5" y="6.8" class="zh">对照</text><path class="d2" d="M3 10.6h4.5"/><text x="9.5" y="12.4" class="en">Treated</text><text x="9.5" y="12.4" class="zh">处理</text></g></svg></div><div class="tk"></div><span class="t">01:52</span><code>bbox_to_anchor=(0.05, 0.96)</code></div>
+    </div>
+    <p class="strip-cap en">Nine runs, two hours and forty minutes, for a legend that moved three millimetres. <span class="s">A reconstruction of an ordinary evening.</span></p>
+    <p class="strip-cap zh" lang="zh-Hans">九次运行，两小时四十分钟，只为把图例挪动三毫米。<span class="s">——一个普通夜晚的复原。</span></p>
+  </div>
+</section>
+
+<!-- ═════════════ III · THE PRINCIPLE ═════════════ -->
+<section class="wrap act act-3" id="act-3" aria-labelledby="t3">
+  <div class="act-head"><span class="no">III</span><span class="nm"><span class="en">The principle</span><span class="zh">原则</span></span><span class="ct">III / VI</span></div>
+  <div class="grid">
+    <h2 class="act-title en" id="t3">Keep the source. <span class="dim">Shape the figure.</span></h2>
+    <h2 class="act-title zh" lang="zh-Hans">保留脚本，<span class="dim">雕琢图形。</span></h2>
+    <div class="prose en">
+      <p class="lead">Tavotto opens the figure your script has already drawn, and lets you shape it directly.</p>
+      <p>Legends, axes, type, and the arrangement of panels on a page measured in millimetres. Each change is kept beside the figure rather than written into your code, and replayed whenever the script runs again.</p>
+    </div>
+    <div class="prose zh" lang="zh-Hans">
+      <p class="lead">Tavotto 打开脚本已经画好的图，让你直接塑造它。</p>
+      <p>图例、坐标轴、文字，以及面板在以毫米度量的页面上的排布。每一处修改都保存在图的旁边，而不是写进你的代码；脚本再次运行时，这些修改会被重新应用。</p>
+    </div>
+  </div>
+
+  <div class="scrolly">
+    <div class="steps">
+      <div class="step" data-step="1"><span class="si">01 / 05</span>
+        <h3 class="en">As the script drew it.</h3><h3 class="zh">脚本画出的样子。</h3>
+        <p class="en">A figure the way a script usually leaves it: correct, complete, and not yet ready. The legend covers the last points of panel (b). The axis labels are small. The panels don’t line up.</p>
+        <p class="zh">这是脚本通常留下的一张图：正确、完整，但还没有准备好。图例压住了 (b) 面板最后几个点，坐标轴标签太小，两个面板也没有对齐。</p></div>
+      <div class="step" data-step="2"><span class="si">02 / 05</span>
+        <h3 class="en">Move the legend.</h3><h3 class="zh">移动图例。</h3>
+        <p class="en">Pick it up and put it where it belongs. Its position is kept, in millimetres, beside the figure. <span class="key">Nothing in the script has changed.</span></p>
+        <p class="zh">把它拿起来，放到该在的位置。位置以毫米记录在图的旁边。<span class="key">脚本一个字都没有改。</span></p></div>
+      <div class="step" data-step="3"><span class="si">03 / 05</span>
+        <h3 class="en">Set the type.</h3><h3 class="zh">调整字号。</h3>
+        <p class="en">Axis labels from 7 to 9 pt, as the journal asks. The same words your script wrote, at the size the page needs.</p>
+        <p class="zh">坐标轴标签从 7 pt 调到期刊要求的 9 pt。还是脚本写下的那些字，只是换成了版面需要的大小。</p></div>
+      <div class="step" data-step="4"><span class="si">04 / 05</span>
+        <h3 class="en">Align the panels.</h3><h3 class="zh">对齐面板。</h3>
+        <p class="en">Panel (b) rises to meet panel (a), and both receive their labels. The page is measured in millimetres, so what aligns here aligns in print.</p>
+        <p class="zh">(b) 面板上移，与 (a) 对齐，两者都加上面板标号。页面以毫米度量——在这里对齐的，印出来也对齐。</p></div>
+      <div class="step" data-step="5"><span class="si">05 / 05</span>
+        <h3 class="en">The data stays where it was.</h3><h3 class="zh">数据留在原处。</h3>
+        <p class="en">Curves, points and error bars come from your script, and only from your script. <span class="key">Tavotto makes a figure easier to shape — never its data easier to change.</span></p>
+        <p class="zh">曲线、数据点与误差棒来自你的脚本，也只来自你的脚本。<span class="key">Tavotto 让图更容易被塑造，但绝不让数据更容易被改动。</span></p></div>
+    </div>
+
+    <div class="stage-wrap">
+      <div class="stage has-legend has-type has-align" data-step="5">
+        <div class="stage-sheet">
+          <svg class="fig fig-stage" viewBox="0 0 760 340" role="img" aria-labelledby="f2t">
+            <title id="f2t">Figure 2, two panels. Panel a: the dose–response data from figure 1. Panel b: viability over 72 hours for control and treated samples. As you scroll, the legend of panel b moves out of the data, the axis labels grow, and panel b aligns with panel a. The data never moves.</title>
+            <path class="guide-align sel" d="M0 60H760"/>
+            <g class="panel panel-a">
+              <text class="plabel" x="2" y="12">(a)</text>
+              <g class="nondata">
+                <path class="spine" d="M52 20V236H344"/>
+                <path class="tick" d="M52 236h4M52 128h4M52 20h4M52 236v-4M125 236v-4M198 236v-4M271 236v-4M344 236v-4M74.0 236v-2.5M86.8 236v-2.5M96.0 236v-2.5M103.0 236v-2.5M108.8 236v-2.5M113.7 236v-2.5M117.9 236v-2.5M121.7 236v-2.5M147.0 236v-2.5M159.8 236v-2.5M169.0 236v-2.5M176.0 236v-2.5M181.8 236v-2.5M186.7 236v-2.5M190.9 236v-2.5M194.7 236v-2.5M220.0 236v-2.5M232.8 236v-2.5M242.0 236v-2.5M249.0 236v-2.5M254.8 236v-2.5M259.7 236v-2.5M263.9 236v-2.5M267.7 236v-2.5M293.0 236v-2.5M305.8 236v-2.5M315.0 236v-2.5M322.0 236v-2.5M327.8 236v-2.5M332.7 236v-2.5M336.9 236v-2.5M340.7 236v-2.5"/>
+                <g class="tl"><text x="46" y="239.5" text-anchor="end">0</text><text x="46" y="131.5" text-anchor="end">0.5</text><text x="46" y="23.5" text-anchor="end">1.0</text><text x="52" y="252" text-anchor="middle">10<tspan dy="-4" font-size="7.5">−2</tspan></text><text x="125" y="252" text-anchor="middle">10<tspan dy="-4" font-size="7.5">−1</tspan></text><text x="198" y="252" text-anchor="middle">10<tspan dy="-4" font-size="7.5">0</tspan></text><text x="271" y="252" text-anchor="middle">10<tspan dy="-4" font-size="7.5">1</tspan></text><text x="344" y="252" text-anchor="middle">10<tspan dy="-4" font-size="7.5">2</tspan></text></g>
+                <g class="axl"><text class="en" x="198" y="276" text-anchor="middle">Concentration (µM)</text><text class="zh" x="198" y="276" text-anchor="middle">浓度 (µM)</text><text class="en" transform="translate(14 128) rotate(-90)" text-anchor="middle">Response</text><text class="zh" transform="translate(14 128) rotate(-90)" text-anchor="middle">响应</text></g>
+              </g>
+              <g class="data">
+                <path class="eb" d="M52 222.6V231.2M49.5 222.6h5M49.5 231.2h5M88.5 225.7V236.5M86 225.7h5M86 236.5h5M125 220.7V230.3M122.5 220.7h5M122.5 230.3h5M161.5 223.6V236.6M159 223.6h5M159 236.6h5M198 197.8V217.2M195.5 197.8h5M195.5 217.2h5M234.5 164.6V181.8M232 164.6h5M232 181.8h5M271 85.7V98.7M268.5 85.7h5M268.5 98.7h5M307.5 43.1V53.9M305 43.1h5M305 53.9h5M344 25.3V33.9M341.5 25.3h5M341.5 33.9h5"/>
+                <g class="pts"><circle cx="52" cy="226.9" r="2.6"/><circle cx="88.5" cy="231.1" r="2.6"/><circle cx="125" cy="225.5" r="2.6"/><circle cx="161.5" cy="230.1" r="2.6"/><circle cx="198" cy="207.5" r="2.6"/><circle cx="234.5" cy="173.2" r="2.6"/><circle cx="271" cy="92.2" r="2.6"/><circle cx="307.5" cy="48.5" r="2.6"/><circle cx="344" cy="29.6" r="2.6"/></g>
+                <path class="curve" style="stroke-width:1.3" d="M52.0 229.5L59.3 229.5L66.6 229.5L73.9 229.4L81.2 229.4L88.5 229.3L95.8 229.3L103.1 229.2L110.4 229.1L117.7 228.9L125.0 228.7L132.3 228.4L139.6 228.0L146.9 227.5L154.2 226.8L161.5 225.8L168.8 224.4L176.1 222.6L183.4 220.3L190.7 217.1L198.0 212.9L205.3 207.5L212.6 200.6L219.9 192.1L227.2 181.6L234.5 169.3L241.8 155.4L249.1 140.3L256.4 124.6L263.7 109.0L271.0 94.3L278.3 81.1L285.6 69.6L292.9 60.0L300.2 52.1L307.5 45.9L314.8 41.1L322.1 37.4L329.4 34.6L336.7 32.5L344.0 30.9"/>
+              </g>
+              <g class="sel sel-axl"><rect class="box" x="136" y="265" width="124" height="16"/><rect class="box" x="4" y="98" width="15" height="60"/></g>
+            </g>
+            <g class="panel panel-b">
+              <text class="plabel" x="2" y="12">(b)</text>
+              <g class="nondata">
+                <path class="spine" d="M52 20V236H344"/>
+                <path class="tick" d="M52 236h4M52 128h4M52 20h4M52 236v-4M149.3 236v-4M246.7 236v-4M344 236v-4"/>
+                <g class="tl"><text x="46" y="239.5" text-anchor="end">0</text><text x="46" y="131.5" text-anchor="end">50</text><text x="46" y="23.5" text-anchor="end">100</text><text x="52" y="252" text-anchor="middle">0</text><text x="149.3" y="252" text-anchor="middle">24</text><text x="246.7" y="252" text-anchor="middle">48</text><text x="344" y="252" text-anchor="middle">72</text></g>
+                <g class="axl"><text class="en" x="198" y="276" text-anchor="middle">Time (h)</text><text class="zh" x="198" y="276" text-anchor="middle">时间 (h)</text><text class="en" transform="translate(14 128) rotate(-90)" text-anchor="middle">Viability (%)</text><text class="zh" transform="translate(14 128) rotate(-90)" text-anchor="middle">存活率 (%)</text></g>
+              </g>
+              <g class="data">
+                <path class="curve" style="stroke-width:1.3" d="M52 214.4L100.7 184.2L149.3 147.4L198 112.9L246.7 84.8L295.3 63.2L344 50.2"/>
+                <path class="curve dash" d="M52 214.4L100.7 201.4L149.3 188.5L198 177.7L246.7 169L295.3 162.6L344 158.2"/>
+                <g class="pts"><circle cx="52" cy="214.4" r="2.6"/><circle cx="100.7" cy="184.2" r="2.6"/><circle cx="149.3" cy="147.4" r="2.6"/><circle cx="198" cy="112.9" r="2.6"/><circle cx="246.7" cy="84.8" r="2.6"/><circle cx="295.3" cy="63.2" r="2.6"/><circle cx="344" cy="50.2" r="2.6"/></g>
+                <g class="pts open"><circle cx="100.7" cy="201.4" r="2.6"/><circle cx="149.3" cy="188.5" r="2.6"/><circle cx="198" cy="177.7" r="2.6"/><circle cx="246.7" cy="169" r="2.6"/><circle cx="295.3" cy="162.6" r="2.6"/><circle cx="344" cy="158.2" r="2.6"/></g>
+              </g>
+              <g class="lgd-b">
+                <g class="nondata">
+                  <path class="curve" style="stroke-width:1.3" d="M0 0H16"/><circle cx="8" cy="0" r="2.6" fill="#1b1b18"/>
+                  <text class="lgt en" x="22" y="3.5">Control</text><text class="lgt zh" x="22" y="3.5">对照</text>
+                  <path class="curve dash" d="M0 15H16"/><circle cx="8" cy="15" r="2.6" fill="#fff" stroke="#1b1b18" stroke-width="1.1"/>
+                  <text class="lgt en" x="22" y="18.5">Treated</text><text class="lgt zh" x="22" y="18.5">处理</text>
+                </g>
+                <g class="sel sel-legend"><rect class="box" x="-7" y="-9" width="70" height="33"/><rect class="h" x="-10" y="-12" width="6" height="6"/><rect class="h" x="60" y="-12" width="6" height="6"/><rect class="h" x="-10" y="21" width="6" height="6"/><rect class="h" x="60" y="21" width="6" height="6"/></g>
+              </g>
+              <g class="sel sel-axl"><rect class="box" x="168" y="265" width="60" height="16"/><rect class="box" x="4" y="92" width="15" height="72"/></g>
+              <g class="sel sel-panel"><rect class="box" x="50" y="18" width="296" height="220"/><rect class="h" x="47" y="15" width="6" height="6"/><rect class="h" x="343" y="15" width="6" height="6"/><rect class="h" x="47" y="235" width="6" height="6"/><rect class="h" x="343" y="235" width="6" height="6"/></g>
+            </g>
+          </svg>
+          <p class="stage-cap" aria-live="polite"><span class="dot" aria-hidden="true"></span>
+            <span data-s="1"><span class="en">As drawn by fig_dose.py — no changes yet</span><span class="zh">fig_dose.py 画出的原样——尚无修改</span></span>
+            <span data-s="2"><span class="en">Legend moved to the upper left · data unchanged</span><span class="zh">图例移至左上 · 数据未变</span></span>
+            <span data-s="3"><span class="en">Axis labels 7 → 9 pt · data unchanged</span><span class="zh">坐标轴标签 7 → 9 pt · 数据未变</span></span>
+            <span data-s="4"><span class="en">Panel (b) aligned to (a), labels added · data unchanged</span><span class="zh">(b) 与 (a) 对齐，加上标号 · 数据未变</span></span>
+            <span data-s="5"><span class="en">Four changes kept beside the figure · script and data unchanged</span><span class="zh">四处修改保存在图旁 · 脚本与数据均未改变</span></span>
+          </p>
+        </div>
+        <div class="stage-cards">
+          <div class="card">
+            <div class="card-h"><span class="f">fig_dose.py</span><span class="ok"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 6.2 5 8.6 9.6 3.4"/></svg><span class="en">unchanged</span><span class="zh">未改动</span></span></div>
+<pre class="code">ax_a.errorbar(conc, mean, yerr=sd, fmt=<span class="s">"o"</span>)
+ax_a.plot(x, hill(x, *popt))
+ax_b.plot(hours, control, <span class="s">"o-"</span>, label=<span class="s">"Control"</span>)
+ax_b.plot(hours, treated, <span class="s">"o--"</span>, label=<span class="s">"Treated"</span>)
+ax_b.legend()</pre>
+          </div>
+          <div class="card">
+            <div class="card-h"><span class="en">Kept beside the figure</span><span class="zh">保存在图的旁边</span><span class="en">overrides</span><span class="zh">覆盖项</span></div>
+            <ul class="ov">
+              <li class="none"><span class="en">Nothing yet.</span><span class="zh">暂无。</span></li>
+              <li class="o2"><b>(b) legend</b><span class="en">upper left</span><span class="zh">左上</span></li>
+              <li class="o3"><b>axis labels</b><span>7 → 9 pt</span></li>
+              <li class="o4"><b>(b) panel top</b><span class="en">= (a)</span><span class="zh">= (a)</span></li>
+              <li class="o5"><b>panel labels</b><span>(a) (b)</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════ IV · THE INVISIBLE WORK ═════════════ -->
+<section class="wrap act act-4" id="act-4" aria-labelledby="t4">
+  <div class="act-head"><span class="no">IV</span><span class="nm"><span class="en">The invisible work</span><span class="zh">看不见的工作</span></span><span class="ct">IV / VI</span></div>
+  <div class="grid">
+    <h2 class="act-title en" id="t4">Good tools take work you may never see.</h2>
+    <h2 class="act-title zh" lang="zh-Hans">好的工具，<br>背后有许多<span class="nw">你看不见的工作。</span></h2>
+    <div class="prose en">
+      <p class="lead">A figure editor is mostly made of things that should never be noticed.</p>
+      <p>They are noticed only when they fail: a font that turns into boxes, an export that quietly rasterises the text, a change that is lost on the next run. Here is some of that work, as it stands in October 2026.</p>
+    </div>
+    <div class="prose zh" lang="zh-Hans">
+      <p class="lead">一个图形编辑器，大部分由本不该被注意到的东西构成。</p>
+      <p>只有出错时它们才会被注意到：字体变成方框，导出时文字被悄悄栅格化，一处修改在下一次运行时丢失。下面是其中一部分工作，截至 2026 年 10 月。</p>
+    </div>
+
+    <div class="trace rv">
+      <svg viewBox="0 0 1312 56" preserveAspectRatio="none" aria-hidden="true">
+        <path class="base" pathLength="1" vector-effect="non-scaling-stroke" d="M0 40H1312"/>
+        <path class="ev" style="--i:0" vector-effect="non-scaling-stroke" d="M82 40v-7"/><path class="ev" style="--i:1" vector-effect="non-scaling-stroke" d="M246 40v-7"/><path class="ev" style="--i:2" vector-effect="non-scaling-stroke" d="M410 40v-7"/><path class="ev" style="--i:3" vector-effect="non-scaling-stroke" d="M574 40v-7"/><path class="ev" style="--i:4" vector-effect="non-scaling-stroke" d="M738 40v-7"/><path class="ev" style="--i:5" vector-effect="non-scaling-stroke" d="M902 40v-7"/><path class="ev" style="--i:6" vector-effect="non-scaling-stroke" d="M1066 40v-7"/><path class="ev" style="--i:7" vector-effect="non-scaling-stroke" d="M1230 40v-7"/>
+      </svg>
+      <div class="trace-cap"><span class="en">A good day, recorded. Eight things happen; nothing appears to.</span><span class="zh">记录下来的顺利的一天：发生了八件事，看起来却什么都没发生。</span><span class="en">01–08 below</span><span class="zh">见下方 01–08</span></div>
+    </div>
+
+    <div class="specs">
+      <div class="spec rv" style="--i:0"><span class="n">01</span>
+        <h3 class="en">Your Python, as it is.</h3><h3 class="zh">就用你现有的 Python。</h3>
+        <p class="en">Python 3.10 to 3.14 and matplotlib 3.8 to 3.11 — in the runtime Tavotto carries, or in your project’s own environment, which is in beta.</p>
+        <p class="zh">Python 3.10 至 3.14，matplotlib 3.8 至 3.11——可以用 Tavotto 自带的运行环境，也可以用你项目自己的环境（Beta）。</p></div>
+      <div class="spec rv" style="--i:1"><span class="n">02</span>
+        <h3 class="en">Tested where you work.</h3><h3 class="zh">在你工作的地方测试。</h3>
+        <p class="en">macOS on Apple silicon and Intel, and Windows x64: each with an installer, CI checks and a smoke test of the real build. Linux runs from PyPI in a browser tab, in beta.</p>
+        <p class="zh">macOS（Apple 芯片与 Intel）与 Windows x64：都有安装包、CI 检查，并对真实构建产物做冒烟测试。Linux 通过 PyPI 在浏览器标签页中运行，目前为 Beta。</p></div>
+      <div class="spec rv" style="--i:2"><span class="n">03</span>
+        <h3 class="en">Nothing written until it is proven.</h3><h3 class="zh">未经证明，一字不写。</h3>
+        <p class="en">Before a change is written back into a figure file, the script runs again from scratch and the result is compared with what you saw — geometry and pixels. If anything differs, the file is left exactly as it was.</p>
+        <p class="zh">在把修改写回图形文件之前，脚本会从头再运行一次，结果与你所见逐一比对——几何与像素。只要有任何不同，原文件就保持原样，一字不动。</p></div>
+      <div class="spec rv" style="--i:3"><span class="n">04</span>
+        <h3 class="en">Text that stays text.</h3><h3 class="zh">文字始终是文字。</h3>
+        <p class="en">PDF export embeds each vector panel as it was drawn, so text remains real, selectable, searchable text. PNG and TIFF are rasterised from that same PDF.</p>
+        <p class="zh">PDF 导出按原样嵌入每个矢量面板，文字始终是真实的、可选中、可搜索的文字。PNG 与 TIFF 从同一份 PDF 栅格化而来。</p></div>
+      <div class="spec rv" style="--i:4"><span class="n">05</span>
+        <h3 class="en">Checked before it leaves.</h3><h3 class="zh">离开之前，先做检查。</h3>
+        <p class="en">Before export, the figure is checked against a versioned publication profile: one set of rules, read by both the engine and the interface.</p>
+        <p class="zh">导出前，图会依据一份带版本的出版规范接受检查：同一套规则，引擎与界面共读。</p></div>
+      <div class="spec rv" style="--i:5"><span class="n">06</span>
+        <h3 class="en">Failure, said plainly.</h3><h3 class="zh">失败就说失败。</h3>
+        <p class="en">When a refresh fails, the status says so. Approximate previews are marked as approximate. Properties Tavotto cannot edit are listed, not hidden.</p>
+        <p class="zh">刷新失败时，状态如实说明。近似预览会标明是近似。Tavotto 无法编辑的属性会被列出来，而不是藏起来。</p></div>
+      <div class="spec rv" style="--i:6"><span class="n">07</span>
+        <h3 class="en">Your figures stay on your machine.</h3><h3 class="zh">你的图留在你的电脑上。</h3>
+        <p class="en">Everything runs locally. Telemetry is off until you say yes, and your scripts, paths and the text inside your figures are structurally unable to leave.</p>
+        <p class="zh">一切都在本机运行。在你同意之前，遥测保持关闭；你的脚本、路径与图中的文字，在结构上就无法被发送出去。</p></div>
+      <div class="spec rv" style="--i:7"><span class="n">08</span>
+        <h3 class="en">Decisions, written down.</h3><h3 class="zh">每个决定，都有记录。</h3>
+        <p class="en">More than a hundred architecture decision records, kept in public beside the code — including the ones that say what Tavotto will not do.</p>
+        <p class="zh">一百多份架构决策记录，与代码一起公开存放——也包括那些写明 Tavotto 不做什么的决定。</p></div>
+    </div>
+    <p class="quote en rv"><span class="dim">Much of this work is invisible when everything goes right.</span> All of it matters.</p>
+    <p class="quote zh rv" lang="zh-Hans"><span class="dim">一切顺利时，这些工作大多不为人见。</span>但每一项都很重要。</p>
+  </div>
+</section>
+
+<!-- ═════════════ V · THE INVITATION ═════════════ -->
+<section class="wrap act act-5" id="act-5" aria-labelledby="t5">
+  <div class="act-head"><span class="no">V</span><span class="nm"><span class="en">The invitation</span><span class="zh">邀请</span></span><span class="ct">V / VI</span></div>
+  <div class="grid">
+    <h2 class="act-title en" id="t5">Help us keep building.</h2>
+    <h2 class="act-title zh" lang="zh-Hans">帮助我们继续做下去。</h2>
+    <div class="give-grid">
+      <div class="give-text">
+        <div class="en">
+          <p class="lead">Tavotto is free and open source, under the AGPL. It will stay that way.</p>
+          <p>What it needs to keep going is time: time to follow Python and matplotlib as they change, to test on the machines researchers actually use, and to do the slow, careful work described above.</p>
+          <p>If Tavotto has given you back an evening — or if you believe researchers deserve tools made with this much care — you can help pay for that time.</p>
+        </div>
+        <div class="zh" lang="zh-Hans">
+          <p class="lead">Tavotto 是免费的开源软件，采用 AGPL 许可证，并将一直如此。</p>
+          <p>让它继续走下去，需要的是时间：跟上 Python 与 matplotlib 的变化，在科研人员真正使用的电脑上测试，以及完成上面那些缓慢而细致的工作。</p>
+          <p>如果 Tavotto 曾为你省下一个夜晚——或者你相信，科研人员值得拥有被如此认真对待的工具——你可以帮我们支付这些时间。</p>
+        </div>
+        <div class="where">
+          <h3><span class="en">Where it goes</span><span class="zh">资金去向</span></h3>
+          <p class="en">Before this page goes live, we will publish how contributions are used, and report on it as we go. <span class="ph">[Link to the funding statement — to be written]</span></p>
+          <p class="zh">本页正式上线之前，我们会公开说明捐赠资金的用途，并持续报告。<span class="ph">［资金用途说明的链接——待撰写］</span></p>
+        </div>
+      </div>
+
+      <form class="give-form" id="give" novalidate aria-labelledby="give-l">
+        <div class="demo"><span class="badge"><i aria-hidden="true"></i><span class="en">Demo</span><span class="zh">演示</span></span><span id="give-l"><span class="en">Payments are disabled in this prototype.</span><span class="zh">本原型不进行任何真实付款。</span></span></div>
+        <fieldset>
+          <legend class="fl"><span class="en">How often</span><span class="zh">支持方式</span></legend>
+          <div class="seg">
+            <label><input type="radio" name="freq" value="once" checked><span><span class="en">Once</span><span class="zh">单次</span></span></label>
+            <label><input type="radio" name="freq" value="monthly"><span><span class="en">Monthly</span><span class="zh">每月</span></span></label>
+          </div>
+        </fieldset>
+        <fieldset class="amt">
+          <legend class="fl"><span class="en">Amount</span><span class="zh">金额</span></legend>
+          <label class="cur-sel"><span class="vh"><span class="en">Currency</span><span class="zh">币种</span></span><select id="cur" name="cur"><option value="USD">USD $</option><option value="EUR">EUR €</option><option value="CNY">CNY ¥</option></select><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2.5 4 5 6.5 7.5 4"/></svg></label>
+          <div class="chips">
+            <label><input type="radio" name="amt" value="0"><span class="v">$10</span></label>
+            <label><input type="radio" name="amt" value="1" checked><span class="v">$25</span></label>
+            <label><input type="radio" name="amt" value="2"><span class="v">$50</span></label>
+            <label><input type="radio" name="amt" value="3"><span class="v">$100</span></label>
+          </div>
+          <div class="other">
+            <span class="cur" aria-hidden="true">$</span>
+            <label class="vh" for="amt-other"><span class="en">Other amount</span><span class="zh">其他金额</span></label>
+            <input id="amt-other" name="other" inputmode="decimal" autocomplete="off" placeholder="Other amount" data-ph-en="Other amount" data-ph-zh="其他金额">
+          </div>
+        </fieldset>
+        <p class="sum" id="sum" aria-live="polite"><span class="s-pre">You are giving </span><b class="s-amt">$25</b><span class="s-post">, once.</span></p>
+        <button class="go" type="submit"><span class="en">Continue to payment</span><span class="zh">继续付款</span><span class="tag"><span class="en">Demo</span><span class="zh">演示</span></span></button>
+        <p class="status" id="status" role="status"></p>
+        <p class="fine en">A voluntary contribution to Tavotto’s development. It is not a purchase: it does not buy a licence, a future paid edition, or any feature. We make no claim that it is tax-deductible. Monthly support can be stopped at any time.</p>
+        <p class="fine zh" lang="zh-Hans">这是对 Tavotto 开发的自愿支持，而不是购买：它不对应任何授权、未来的付费版本或功能。我们不声称它可以抵税。每月支持可随时停止。</p>
+      </form>
+
+      <div class="give-text help">
+        <h3><span class="en">Other ways to help</span><span class="zh">其他帮助方式</span></h3>
+        <ul>
+          <li><a href="https://github.com/Tavotto/Tavotto"><span class="lbl"><span class="en">Star the repository</span><span class="zh">在 GitHub 上标星</span></span><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M4.5 9.5 9.5 4.5M5 4.5h4.5V9"/></svg></a></li>
+          <li><a href="https://github.com/Tavotto/Tavotto/issues"><span class="lbl"><span class="en">Tell us about a figure Tavotto gets wrong</span><span class="zh">告诉我们 Tavotto 处理错的图</span></span><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M4.5 9.5 9.5 4.5M5 4.5h4.5V9"/></svg></a></li>
+          <li><button type="button" id="copy"><span class="lbl"><span class="en">Send this page to a colleague</span><span class="zh">把这一页发给同行</span></span><span class="copied" id="copied" aria-live="polite"></span><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="4.5" y="4.5" width="7" height="7" rx="1.5"/><path d="M9.5 4.5V3a.5.5 0 0 0-.5-.5H3a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5h1.5"/></svg></button></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════ VI · THE CONTINUATION ═════════════ -->
+<section class="wrap act act-6" id="act-6" aria-labelledby="t6">
+  <div class="act-head"><span class="no">VI</span><span class="nm"><span class="en">The continuation</span><span class="zh">延续</span></span><span class="ct">VI / VI</span></div>
+  <div class="grid">
+    <h2 class="act-title en" id="t6">The next discovery is still unwritten.</h2>
+    <h2 class="act-title zh" lang="zh-Hans">下一个发现，<br>尚未写下。</h2>
+    <div class="finale rv">
+      <svg class="fig d" viewBox="0 0 1312 240" role="img" aria-label="A measured series rises gently and ends at its most recent measurement. The axis continues, empty, to the edge of the screen.">
+        <g class="axis"><path class="base" d="M0 220H4200"/><path class="tick" d="M0 220v-6M109.3 220v-6M218.7 220v-6M328 220v-6M437.3 220v-6M546.7 220v-6M656 220v-6M765.3 220v-6M874.7 220v-6M984 220v-6M1093.3 220v-6M1202.7 220v-6M1312 220v-6M1421.3 220v-6M1530.7 220v-6M1640 220v-6M1749.3 220v-6M1858.7 220v-6M1968 220v-6M2077.3 220v-6M2186.7 220v-6M2296 220v-6M2405.3 220v-6M2514.7 220v-6M2624 220v-6M2733.3 220v-6M2842.7 220v-6M2952 220v-6M3061.3 220v-6M3170.7 220v-6M3280 220v-6"/></g>
+        <path class="curve" pathLength="1" d="M0 179.8L54.7 172.4L109.3 168.3L164 161L218.7 173.6L273.3 171.2L328 160.3L382.7 156.7L437.3 136.8L492 131.6L546.7 138.6L601.3 133.6L656 140.4L710.7 134.5L765.3 114.6"/>
+        <g class="pts"><circle style="--i:0" cx="0" cy="179.8" r="3.2"/><circle style="--i:1" cx="54.7" cy="172.4" r="3.2"/><circle style="--i:2" cx="109.3" cy="168.3" r="3.2"/><circle style="--i:3" cx="164" cy="161" r="3.2"/><circle style="--i:4" cx="218.7" cy="173.6" r="3.2"/><circle style="--i:5" cx="273.3" cy="171.2" r="3.2"/><circle style="--i:6" cx="328" cy="160.3" r="3.2"/><circle style="--i:7" cx="382.7" cy="156.7" r="3.2"/><circle style="--i:8" cx="437.3" cy="136.8" r="3.2"/><circle style="--i:9" cx="492" cy="131.6" r="3.2"/><circle style="--i:10" cx="546.7" cy="138.6" r="3.2"/><circle style="--i:11" cx="601.3" cy="133.6" r="3.2"/><circle style="--i:12" cx="656" cy="140.4" r="3.2"/><circle style="--i:13" cx="710.7" cy="134.5" r="3.2"/></g>
+        <circle class="last" cx="765.3" cy="114.6" r="5.5"/>
+        <g class="ann"><path class="lead-line" d="M765.3 106V66"/><text class="en" x="775" y="64">most recent measurement</text><text class="zh" x="775" y="64">最近一次测量</text></g>
+      </svg>
+      <svg class="fig m" viewBox="0 0 358 180" role="img" aria-label="A measured series ends at its most recent measurement; the axis continues to the edge of the screen.">
+        <g class="axis"><path class="base" d="M0 170H1200"/><path class="tick" d="M0 170v-5M29.8 170v-5M59.7 170v-5M89.5 170v-5M119.3 170v-5M149.2 170v-5M179 170v-5M208.8 170v-5M238.7 170v-5M268.5 170v-5M298.3 170v-5M328.2 170v-5M358 170v-5M387.8 170v-5M417.7 170v-5"/></g>
+        <path class="curve" pathLength="1" style="stroke-width:1.3" d="M0 131.1L14.9 125.7L29.8 122.7L44.8 117.5L59.7 126.6L74.6 124.9L89.5 117L104.4 114.4L119.3 100.1L134.2 96.4L149.2 101.4L164.1 97.8L179 102.7L193.9 98.4L208.8 84.1"/>
+        <g class="pts"><circle style="--i:0" cx="0" cy="131.1" r="2.2"/><circle style="--i:1" cx="14.9" cy="125.7" r="2.2"/><circle style="--i:2" cx="29.8" cy="122.7" r="2.2"/><circle style="--i:3" cx="44.8" cy="117.5" r="2.2"/><circle style="--i:4" cx="59.7" cy="126.6" r="2.2"/><circle style="--i:5" cx="74.6" cy="124.9" r="2.2"/><circle style="--i:6" cx="89.5" cy="117" r="2.2"/><circle style="--i:7" cx="104.4" cy="114.4" r="2.2"/><circle style="--i:8" cx="119.3" cy="100.1" r="2.2"/><circle style="--i:9" cx="134.2" cy="96.4" r="2.2"/><circle style="--i:10" cx="149.2" cy="101.4" r="2.2"/><circle style="--i:11" cx="164.1" cy="97.8" r="2.2"/><circle style="--i:12" cx="179" cy="102.7" r="2.2"/><circle style="--i:13" cx="193.9" cy="98.4" r="2.2"/></g>
+        <circle class="last" cx="208.8" cy="84.1" r="4"/>
+        <g class="ann"><path class="lead-line" d="M208.8 78V50"/><text class="en" x="215" y="48">most recent measurement</text><text class="zh" x="215" y="48">最近一次测量</text></g>
+      </svg>
+    </div>
+    <div class="close">
+      <p class="en">Tavotto exists so that whatever is found next can be shown as clearly as it was found. Thank you for reading this far — and, if you can, for helping.</p>
+      <p class="zh" lang="zh-Hans">Tavotto 的存在，是为了让下一次的发现，能像它被发现时那样清晰地呈现出来。感谢你读到这里——如果可以，也感谢你的支持。</p>
+      <a class="back" href="#give"><span class="en">Support Tavotto</span><span class="zh">支持 Tavotto</span><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M6 10.5v-9M2.5 5 6 1.5 9.5 5"/></svg></a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="wrap foot">
+  <div class="grid">
+    <div class="fa">
+      <span class="en">Tavotto™ is an open-source editor for scientific figures, released under AGPL-3.0-only.</span>
+      <span class="zh">Tavotto™ 是一个开源的科研图形编辑器，以 AGPL-3.0-only 许可证发布。</span>
+    </div>
+    <div class="fb">
+      <a href="https://github.com/Tavotto/Tavotto"><span class="en">Source code</span><span class="zh">源代码</span></a>
+      <a href="https://github.com/Tavotto/Tavotto/releases/latest"><span class="en">Releases</span><span class="zh">下载</span></a>
+      <a href="https://github.com/Tavotto/Tavotto/blob/main/docs/privacy.md"><span class="en">Privacy</span><span class="zh">隐私</span></a>
+    </div>
+    <div class="fc"><span class="en">Design prototype · October 2026 · Payments are disabled.</span><span class="zh">设计原型 · 2026 年 10 月 · 不进行任何真实付款。</span></div>
+  </div>
+</footer>
+</div>
+
+<script>
+/* One boot function, shared verbatim with the canvas artboard (Main.dc.html calls it from componentDidMount). */
+function tavottoSupportBoot(forcedLang) {
+  var page = document.querySelector('.page');
+  if (!page || page.dataset.booted) return;
+  page.dataset.booted = '1';
+  page.classList.add('js');
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  /* ── language ── */
+  var lang = 'en';
+  try {
+    var q = new URLSearchParams(location.search).get('lang');
+    var saved = localStorage.getItem('tavotto-support-lang');
+    lang = forcedLang || q || saved || ((navigator.language || '').toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en');
+  } catch (e) {}
+  var otherInput = document.getElementById('amt-other');
+  function setLang(l) {
+    lang = l === 'zh' ? 'zh' : 'en';
+    page.dataset.lang = lang;
+    document.documentElement.lang = lang === 'zh' ? 'zh-Hans' : 'en';
+    document.title = lang === 'zh' ? '支持 Tavotto — 不曾中断的线' : 'Support Tavotto — The Unbroken Line';
+    document.querySelectorAll('[data-set-lang]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.setLang === lang)); });
+    otherInput.placeholder = otherInput.dataset['ph' + (lang === 'zh' ? 'Zh' : 'En')];
+    try { localStorage.setItem('tavotto-support-lang', lang); } catch (e) {}
+    updateGive();
+  }
+  document.querySelectorAll('[data-set-lang]').forEach(function (b) {
+    b.addEventListener('click', function () { setLang(b.dataset.setLang); });
+  });
+
+  /* ── Act I: draw once the first frame is painted ── */
+  requestAnimationFrame(function () { requestAnimationFrame(function () { page.classList.add('is-ready'); }); });
+
+
+  /* ── Act III: the figure follows the reading position ── */
+  var stage = document.querySelector('.stage');
+  var steps = Array.prototype.slice.call(document.querySelectorAll('.step'));
+  function setStep(n) {
+    stage.dataset.step = String(n);
+    stage.classList.toggle('has-legend', n >= 2);
+    stage.classList.toggle('has-type', n >= 3);
+    stage.classList.toggle('has-align', n >= 4);
+    stage.classList.toggle('emph-data', n === 5);
+    steps.forEach(function (s) { s.classList.toggle('on', Number(s.dataset.step) === n); });
+  }
+  /* The page may live in the window or inside a scrolling frame (a phone mock-up); observe whichever scrolls. */
+  var scroller = null;
+  for (var el = page.parentElement; el && el !== document.body; el = el.parentElement) {
+    var oy = getComputedStyle(el).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 40) { scroller = el; break; }
+  }
+  var viewH = scroller ? scroller.clientHeight : window.innerHeight;
+  var scrollable = scroller || document.documentElement.scrollHeight > window.innerHeight + 40;
+  if (scrollable) {
+    var r = stage.getBoundingClientRect();
+    var top0 = scroller ? scroller.getBoundingClientRect().top : 0;
+    setStep(r.top - top0 > viewH * 0.5 ? 1 : 5);
+    var narrow = page.clientWidth <= 760;
+    var so = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) setStep(Number(e.target.dataset.step)); });
+    }, { root: scroller, rootMargin: narrow ? '-70% 0px -29% 0px' : '-49% 0px -50% 0px' });
+    steps.forEach(function (s) { so.observe(s); });
+  } else {
+    setStep(5); stage.classList.remove('emph-data');
+  }
+  /* reveals: one-shot, never re-hide; a frame that cannot scroll shows everything at once */
+  if (scrollable) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { root: scroller, rootMargin: '0px 0px -14% 0px' });
+    page.querySelectorAll('.rv').forEach(function (el) { io.observe(el); });
+  } else {
+    page.querySelectorAll('.rv').forEach(function (el) { el.classList.add('in'); });
+  }
+
+  /* ── Act V: demo support form ── */
+  var form = document.getElementById('give');
+  var sum = document.getElementById('sum');
+  var status = document.getElementById('status');
+  var other = form.querySelector('.other');
+  var go = form.querySelector('.go');
+  /* Currency is its own choice: switching the page language must never turn $42 into ¥42. */
+  var CURS = { USD: { s: '$', a: [10, 25, 50, 100] }, EUR: { s: '€', a: [10, 25, 50, 100] }, CNY: { s: '¥', a: [50, 100, 200, 500] } };
+  var curSel = document.getElementById('cur');
+  curSel.value = lang === 'zh' ? 'CNY' : 'USD';
+  function cur() { return CURS[curSel.value]; }
+  function money(n) { return cur().s + (Math.round(n * 100) % 100 === 0 ? String(Math.round(n)) : n.toFixed(2)); }
+  function paintChips() {
+    form.querySelectorAll('.chips .v').forEach(function (v, i) { v.textContent = money(cur().a[i]); });
+    form.querySelector('.other .cur').textContent = cur().s;
+  }
+  function currentAmount() {
+    var picked = form.querySelector('input[name="amt"]:checked');
+    if (!picked) {
+      var raw = otherInput.value.replace(/[,，\s]/g, '').replace('。', '.');
+      var n = parseFloat(raw);
+      return isFinite(n) ? n : NaN;
+    }
+    return cur().a[Number(picked.value)];
+  }
+  function updateGive() {
+    var monthly = form.querySelector('input[name="freq"]:checked').value === 'monthly';
+    var n = currentAmount();
+    var usingOther = !form.querySelector('input[name="amt"]:checked');
+    other.classList.toggle('on', usingOther && otherInput.value !== '');
+    var ok = n >= 1 && n <= 100000;
+    go.disabled = !ok;
+    sum.classList.toggle('err', !ok && usingOther && otherInput.value !== '');
+    var parts;
+    if (!ok) {
+      parts = [usingOther && otherInput.value !== ''
+        ? (lang === 'zh' ? '请输入不少于 ' + cur().s + '1 的金额。' : 'Enter an amount of at least ' + cur().s + '1.')
+        : (lang === 'zh' ? '请选择或输入一个金额。' : 'Choose or enter an amount.'), '', ''];
+    } else if (lang === 'zh') {
+      parts = monthly ? ['每月支持 ', money(n), '，可随时停止。'] : ['一次性支持 ', money(n), '。'];
+    } else {
+      parts = monthly ? ['You are giving ', money(n), ' each month, until you stop it.'] : ['You are giving ', money(n), ', once.'];
+    }
+    sum.querySelector('.s-pre').textContent = parts[0];
+    sum.querySelector('.s-amt').textContent = parts[1];
+    sum.querySelector('.s-post').textContent = parts[2];
+  }
+  form.addEventListener('change', function (e) {
+    if (e.target.name === 'amt') otherInput.value = '';
+    if (e.target.name === 'cur') paintChips();
+    status.textContent = '';
+    updateGive();
+  });
+  otherInput.addEventListener('input', function () {
+    if (otherInput.value !== '') form.querySelectorAll('input[name="amt"]').forEach(function (r) { r.checked = false; });
+    status.textContent = '';
+    updateGive();
+  });
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (go.disabled) return;
+    status.textContent = lang === 'zh'
+      ? '这只是演示：没有发生任何付款，也没有任何数据离开这个页面。正式上线时，这一步会进入支付服务商的页面。'
+      : 'This is a demo. No payment was taken and nothing left this page. In the live version, this step would continue to the payment provider.';
+  });
+
+  /* ── share ── */
+  var copied = document.getElementById('copied');
+  document.getElementById('copy').addEventListener('click', function () {
+    var url = location.href.split('#')[0];
+    var done = function () { copied.textContent = lang === 'zh' ? '链接已复制' : 'Link copied'; setTimeout(function () { copied.textContent = ''; }, 2400); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, done); else done();
+  });
+
+  if (!form.querySelector('input[name="freq"]:checked')) form.querySelector('input[name="freq"]').checked = true;
+  if (!form.querySelector('input[name="amt"]:checked') && !otherInput.value) form.querySelectorAll('input[name="amt"]')[1].checked = true;
+  paintChips();
+  setLang(lang);
+}
+tavottoSupportBoot(null);
+</script>
+</body>
+</html>
