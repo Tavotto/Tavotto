@@ -5962,7 +5962,7 @@ def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
     # 同一条会话（见 `pool.stem_patch_hash` 的说明）。
     if engine_pool.stem_patch_hash(worker, stem) != want:
         return None
-    path = Path(worker.out_dir) / f"{stem}.json"
+    path = Path(engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json"))
     if not path.exists():
         try:
             worker.override(stem, patches)  # 同一组 patches，幂等
@@ -6124,7 +6124,11 @@ def _write_source_files(
         for w in resp.get("warnings") or []:
             if w not in warnings:
                 warnings.append(str(w))
-        man_fresh = json.loads((Path(fresh.out_dir) / f"{stem}.json").read_text(encoding="utf-8"))
+        man_fresh = json.loads(
+            Path(engine_figcapture.usable_preview_path(fresh.out_dir, stem, ".json")).read_text(
+                encoding="utf-8"
+            )
+        )
         pixel_state = None
         if man_hot is None:
             diffs, compared = [], 0
@@ -6382,7 +6386,11 @@ _SYNC_POINT = {"pos_frac", "loc_frac"}  # 点位经 axes 框换算后可搬
 def _manifest_of(worker, stem: str) -> dict:
     if not worker.built:
         worker.ensure_built()
-    return json.loads((worker.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    return json.loads(
+        Path(engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json")).read_text(
+            encoding="utf-8"
+        )
+    )
 
 
 def _axes_info(man: dict) -> list[dict]:

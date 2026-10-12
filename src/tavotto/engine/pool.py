@@ -2173,7 +2173,7 @@ class EngineWorker:
         return _fold_build_timings(resp, build)
 
     def svg_path(self, stem: str) -> Path:
-        return self.out_dir / f"{stem}.svg"
+        return Path(figcapture.usable_preview_path(self.out_dir, stem, ".svg"))
 
     def render_png(self, stem: str, width_px: int) -> Path:
         if not self.built:
@@ -2746,7 +2746,7 @@ class WorkerdWorker:
         return _fold_build_timings(resp, build)
 
     def svg_path(self, stem: str) -> Path:
-        return self.out_dir / f"{stem}.svg"
+        return Path(figcapture.usable_preview_path(self.out_dir, stem, ".svg"))
 
     def render_png(self, stem: str, width_px: int) -> Path:
         if not self.built:

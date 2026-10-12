@@ -358,7 +358,7 @@ class BridgeSession:
         self.close()
 
     def svg_path(self, stem: str) -> Path:
-        return self.out_dir / f"{stem}.svg"
+        return Path(pool.figcapture.usable_preview_path(self.out_dir, stem, ".svg"))
 
 
 class _suppress_os:

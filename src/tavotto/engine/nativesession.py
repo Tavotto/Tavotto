@@ -587,7 +587,7 @@ class NativeSession:
             return resp
 
     def svg_path(self, stem: str) -> Path:
-        return self.out_dir / f"{stem}.svg"
+        return Path(pool.figcapture.usable_preview_path(self.out_dir, stem, ".svg"))
 
     def resume(self) -> dict:
         """放开屏障，让用户脚本接着往下跑。

@@ -351,6 +351,55 @@ def record_preview_published(out_dir, stem: str, svg_bytes: int) -> int:
     return ledger["seq"]
 
 
+def _invalid_marker(out_dir, stem: str) -> str:
+    # 无扩展名（不以 .svg / .json / .part 结尾），与账本同理不会撞用户 stem 的任何产物名
+    return os.path.join(os.fspath(out_dir), f".{stem}.preview-invalid")
+
+
+def preview_invalid(out_dir, stem: str) -> bool:
+    """`stem` 的预览是否被标成失效（发布中途失败且还原也失败，磁盘上可能新旧错配）。"""
+    return os.path.exists(_invalid_marker(out_dir, stem))
+
+
+def usable_preview_path(out_dir, stem: str, suffix: str) -> str:
+    """读 `<stem><suffix>`（`.svg` / `.json`）的**统一入口**：失效的 stem 返回一个必不存在的路径。
+
+    所有按路径读预览产物的消费者（`/api/engine/svg`、manifest 读取、runtimeasset 物化……）
+    经它拿路径，于是「新像素配旧几何」的错配代只会被读成「无预览」。
+    """
+    out_dir = os.fspath(out_dir)
+    if preview_invalid(out_dir, stem):
+        return os.path.join(out_dir, f".{stem}{suffix}.invalid-absent")
+    return os.path.join(out_dir, f"{stem}{suffix}")
+
+
+def mark_preview_invalid(out_dir, stem: str) -> None:
+    """尽力把 `stem` 从账本里摘掉并落失效标记；两步各自失败都不抛（调用方已在失败路径上）。"""
+    out_dir = os.fspath(out_dir)
+    try:
+        with open(_invalid_marker(out_dir, stem), "w", encoding="utf-8") as fh:
+            fh.write("invalid\n")
+    except OSError:
+        pass
+    ledger = _read_preview_ledger(out_dir)
+    if stem in ledger["stems"]:
+        del ledger["stems"][stem]
+        path = os.path.join(out_dir, PREVIEW_LEDGER)
+        try:
+            with open(path + ".part", "w", encoding="utf-8") as fh:
+                json.dump(ledger, fh)
+            os.replace(path + ".part", path)
+        except OSError:
+            pass
+
+
+def clear_preview_invalid(out_dir, stem: str) -> None:
+    try:
+        os.remove(_invalid_marker(out_dir, stem))
+    except FileNotFoundError:
+        pass
+
+
 def published_preview_stems(out_dir) -> list:
     """本次运行**完整发布过**预览的 stem。
 
@@ -360,6 +409,8 @@ def published_preview_stems(out_dir) -> list:
     out_dir = os.fspath(out_dir)
     done = []
     for stem, rec in _read_preview_ledger(out_dir)["stems"].items():
+        if preview_invalid(out_dir, stem):
+            continue
         try:
             size = os.stat(os.path.join(out_dir, f"{stem}.svg")).st_size
         except OSError:

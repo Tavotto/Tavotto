@@ -186,6 +186,50 @@ with tempfile.TemporaryDirectory() as tmp:
             sess.render("fig")
             out["retry_changed"] = (p / "fig.svg").read_bytes() != old["fig.svg"]
             out["retry_seq"] = json.loads((p / figcapture.PREVIEW_LEDGER).read_text())["seq"]
+    elif scenario in ("restore_also_fails", "restore_and_removal_fail"):
+        sess.add_figure("fig", good("v1"), figcapture.SOURCE_SAVEFIG)
+        sess.instrument_all()
+        p = Path(tmp)
+        sess.states["fig"].fig.axes[0].set_title("a considerably longer second title")
+        stuck = scenario == "restore_and_removal_fail"  # 连删除 / 改名隔离都被锁
+        real_replace, real_unlink = os.replace, Path.unlink
+
+        def deny(*a):
+            raise PermissionError(13, "locked", str(a[-1]))
+
+        def flaky(src, dst, *a, **k):
+            if str(dst).endswith("fig.json") and str(src).endswith(".part") and ".prev" not in str(src):
+                deny(src, dst)  # 发布 manifest 失败
+            if str(src).endswith(".prev.part") or (stuck and str(src).endswith("fig.svg")):
+                deny(src, dst)  # 还原（以及 stuck 时的隔离改名）也失败
+            return real_replace(src, dst, *a, **k)
+
+        def flaky_unlink(self, *a, **k):
+            if stuck and self.name == "fig.svg":
+                deny(self)
+            return real_unlink(self, *a, **k)
+
+        os.replace, Path.unlink = flaky, flaky_unlink
+        try:
+            try:
+                sess.render("fig")
+            except Exception as exc:
+                out["error"] = type(exc).__name__
+                out["is_invalidated"] = isinstance(exc, __import__("figsession").PreviewInvalidated)
+        finally:
+            os.replace, Path.unlink = real_replace, real_unlink
+        out["usable_svg_exists"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".svg"))
+        out["usable_json_exists"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".json"))
+        out["published"] = figcapture.published_preview_stems(tmp)
+        out["ledger_stems"] = sorted(json.loads((p / figcapture.PREVIEW_LEDGER).read_text())["stems"])
+        out["backups"] = sorted(n for n in os.listdir(tmp) if n.endswith(".prev.part"))
+        out["marker"] = (p / ".fig.preview-invalid").exists()
+        # 解锁后重新发布：恢复，标记与备份清干净，序号前进
+        sess.render("fig")
+        out["after_published"] = figcapture.published_preview_stems(tmp)
+        out["after_usable_svg"] = os.path.exists(figcapture.usable_preview_path(tmp, "fig", ".svg"))
+        out["after_names"] = sorted(os.listdir(tmp))
+        out["after_seq"] = json.loads((p / figcapture.PREVIEW_LEDGER).read_text())["seq"]
     elif scenario == "stale_and_truncated":
         p = Path(tmp)
         # 上一次运行残留：有完整 SVG、没有账本
@@ -298,3 +342,21 @@ def test_a_failed_first_publish_leaves_no_half_generation():
     assert r["error"] == "PermissionError", r
     assert r["names_after"] == [], f"首次发布失败后残留: {r['names_after']}"
     assert r["published"] == []
+
+
+@pytest.mark.parametrize("scenario", ["restore_also_fails", "restore_and_removal_fail"])
+def test_a_failed_restore_invalidates_the_stem_instead_of_serving_a_mismatch(scenario):
+    """发布失败且还原也失败：读者只看到「无预览」，备份留着，账本不含它；下次发布恢复。"""
+    r = _drive(scenario)
+    assert r["error"] == "PreviewInvalidated" and r["is_invalidated"] is True, r
+    assert r["usable_svg_exists"] is False and r["usable_json_exists"] is False, r
+    assert r["published"] == [] and r["ledger_stems"] == [], r
+    assert r["backups"], f"还原失败不该删备份: {r}"
+    if scenario == "restore_and_removal_fail":
+        assert r["marker"] is True, "删不掉也隔离不了时必须靠标记兜底"
+    # 恢复
+    assert r["after_published"] == ["fig"] and r["after_usable_svg"] is True, r
+    assert not [
+        n for n in r["after_names"] if n.endswith(".part") or n.endswith("preview-invalid")
+    ], r
+    assert r["after_seq"] == 2, r
