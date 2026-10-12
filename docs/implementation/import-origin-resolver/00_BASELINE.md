@@ -452,7 +452,7 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
    * 目标事实 `builtin` / `ext_suffixes` 不进 `TargetFacts.digest()` / `to_payload()`：不改 `inputs_digest` / `identity`。空 = 没量到（替身事实），不用宿主冒充。
 3. `depplan` 消费来源状态：
    * `JointPlan.origins`（新增可选字段）：`unknown` 里每个名字的 `{import_name, bucket, distribution, reason, resolution_status, distribution_status, origin_kind, provenance, candidates(≤8,规范化名), coverage}`；`unknown` 名字集合恒等于 `origins` 的 `import_name` 集合（用例钉着）。`reason` 闭集 `ORIGIN_REASONS`。
-   * 判决（`_verdict`，顺序 = 证据强弱）：名字级已装（表 / 声明的名字，旧口径原样）> 已装的备选发行包（`cv2` 装的是 headless → 满足，条目 `distribution` 是装着的那个、`mapped_distribution` 是表里的那个）> 多个备选都装着 = 歧义（项目声明点名的那个胜出）> 别的已装发行包声称提供它（editable / 本地 / VCS / URL / Conda / 未确认）或 site-packages 里有这个模块却没有发行包认领 > PR3 覆盖度缓存里它是 `import_error`（包在、导入失败，装它救不了）> 缺。
+   * 判决（`_verdict`，顺序 = 证据强弱）：名字级已装（表 / 声明的名字，旧口径原样）> 已装的备选发行包（`cv2` 装的是 headless → 满足，条目 `distribution` 是装着的那个、`mapped_distribution` 是表里的那个）> 多个备选都装着 = 歧义（项目声明点名的那个胜出）> 别的已装发行包声称提供它（editable / 本地 / VCS / URL / Conda / 未确认）或 site-packages 里有这个模块却没有发行包认领 > PR3 覆盖度缓存里它是 `import_error`（包在、导入失败，装它救不了）> 缺。（表外名另见 `_installed_index_satisfies`，#938：唯一未被遮蔽的已装 index 来源可重现发行包 → 满足。）
    * `to_install` 按同一套名字级判据对**装到哪**的已装集合算；open 的一律不装；**已装元数据从不造安装名**（用例：运行环境里 headless 提供 `cv2`、新一代装的仍是 `opencv-python`）。
    * `static_index(facts)`：目标环境静态发行包索引（`distmeta`，只读文件），与 `target_facts` **同一刻读**、同一个 `reset_cache` 清。（先前版本是出计划时才懒读，`test_foundation_dependencies.py::test_fo22_…` 立刻见红：装上了但验证没过的包不会 `reset_cache`，事实停在装之前，索引读到了装之后——同一个包一边说没装一边说装着，门不再问。改成同一刻读之后与基线逐字同行为。）
    * `deprepair._coverage_reader(facts)`：把 `userenvs.cached_probe` 的只读查询交给 `plan(coverage=)`；三个出计划的入口都接上，私有 Python 重算与 `_static_joint_plan`（`facts=None`）不接。
@@ -626,7 +626,7 @@ pool.resolve_worker_python (pool.py:1259)  项目级决定的唯一出处；SPAW
 **发现并处理的**
 
 * **缺口（已修）**：中文模块名 `数据.py` 被 `depresolve.valid_import_name`（ASCII 形状）判成 `unknown` / `no_provider_found`——`importscan` 的本地文件查找改用 `str.isidentifier()`（`_is_module_name`；`_Finder.find_in` 本来就是它）。找不到的非 ASCII 名字仍不进映射，不会因此多出安装名。
-* **缺陷（未修，需要维护者决定）**：确认包名并装好之后，卡片仍说「来源待定 / 仍然运行」——`depplan._verdict` 对「表外名 + 已装提供者（`installed_confirmed`、index）」一律判来源未定。真浏览器 ④ 钉着现状；FINAL_ACCEPTANCE §10 写了根因与建议修法。
+* **缺陷（已修，#938）**：确认包名并装好之后，卡片曾仍说「来源待定 / 仍然运行」。现在表外名被唯一的已装 `installed_confirmed` + index + 可重现候选满足时判满足（`depplan._installed_index_satisfies`，不进 `origins`、不产生安装名），真浏览器 ④ 断言 `ready`；见 FINAL_ACCEPTANCE §10。
 * e2e 夹具踩到的两个环境坑：开发机基础解释器的 user site 里若真装着 `python-docx`，`--system-site-packages` 的 venv 里 pip 会说「已满足」而不装 wheelhouse 里的（夹具用 `--ignore-installed`）；新 worktree 没有批准字体时 worker 起不来、卡片一直停在「正在运行」（先 `scripts/fetch_fonts.py`）。
 
 **仍未覆盖**：见 FINAL_ACCEPTANCE §10、§12。

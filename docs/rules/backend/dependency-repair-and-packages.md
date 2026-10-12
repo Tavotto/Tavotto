@@ -340,7 +340,7 @@
   这个模块却没有任何发行包认领、PR3 覆盖度缓存里它是 `import_error`（包在、导入失败，装它救不了）。**不新增 `blocked` 理由**
   （`BLOCK_REASONS` 闭集不动）：这些情形不让计划不完整。判决顺序：名字级已装（表 / 声明的名字，旧口径原样）> 已装的备选发行包
   （`cv2` 装的是 headless 不再报缺 `opencv-python`，条目带 `mapped_distribution`）> 别的发行包声称提供 / 无元数据的模块 >
-  覆盖度 `import_error` > 缺。**没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（用户在确认摘要里看得见这个名字；
+  覆盖度 `import_error` > 缺。表外名（`bucket=unknown`，不经 `_verdict`）单独一条：静态索引读全、唯一未被遮蔽的已装候选是 `installed_confirmed` + `provenance=index` + 可重现（PyPI）、该发行包在目标已装集合里、覆盖度不是 `import_error` → 判满足（`_installed_index_satisfies`，#938），不进 `origins`、**仍不产生任何安装名**；歧义 / editable·本地·VCS·Conda / 无元数据 / 被遮蔽 / 名字层不完整 / 导入失败维持来源未定。**没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（用户在确认摘要里看得见这个名字；
   条目带 `distribution_status=module_origin_ambiguous` 供展示），不静默改名。已装元数据**只用来判「已经有了 / 来源未定」，从不造安装名**。
   目标环境的静态发行包索引（`depplan.static_index`）与事实**同一刻读**（`target_facts` 里）、同一个 `reset_cache` 清：装上了但验证没过的
   包不会 `reset_cache`，事实停在装之前，索引也必须停在装之前；联合计划读覆盖度只走 `userenvs.cached_probe` 的只读缓存（不起进程）。
@@ -624,8 +624,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   基础栈换空表、宿主 site-packages 用 `.pth` 挂进新环境、pip 只从 `PIP_FIND_LINKS` 取包）。这两份**不 import pytest**（posix-e2e 腿没装）；放宽了什么由 `offline_world` 与
   `test_dependency_repair.py::test_managed_venv_creation_is_isolated_and_minimal` 对着钉。POSIX 专用，登记在 `tests/test_e2e_leg_topology.py::PLATFORM_SKIPS`。
 - **两次授权不合并**：可信包（表 / 声明）与用户指定的包是两档信任，先装可信的、会话重新检查后才出现「需要确认」；合成一次需要让 `DependencyPrepareDialog.prepare` 带 `user_specified` 并重做摘要漂移判定（ADR 0119 §十）。
-- **已知差距（修之前别当成设计）**：用户确认包名并装好之后，联合计划对这个表外名仍给 `origins[].reason = unverified`（`distribution_status = installed_confirmed`），卡片仍说「来源待定 / 仍然运行」——
-  `depplan._verdict` 对「表外名 + 已装提供者」一律判来源未定；`web/e2e/import-origin.spec.ts` ④ 钉着现状，修了就把那一处断言改成 `ready`。
+- **（已修，#938）** 用户确认包名并装好之后，表外名被已装的唯一 index 来源发行包满足，卡片回到 `ready`；`web/e2e/import-origin.spec.ts` ④ 断言这一点。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

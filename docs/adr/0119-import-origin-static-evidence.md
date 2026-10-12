@@ -65,7 +65,7 @@
 * **联合计划只加可选的 `origins`，不新增 `BLOCK_REASONS`**（裁决 C3）：来源未定的 import（多发行包都装着 / editable / 本地 / VCS / Conda / 未确认 / 导入失败 / 表外名）
   离开 `missing`、不进安装集合，落在 `origins[]`，`reason` 是闭集 `depplan.ORIGIN_REASONS`（7 个）。`plan_version` 不升，老客户端忽略它。
   `BLOCK_REASONS` 仍是 5 个（用例钉着闭集，`tests/test_dependency_plan.py::TestClosedSetsMirrorTheFrontend`）。
-* 判决顺序就是证据强弱（`depplan._verdict`）：名字级已装 > 已装的备选发行包 > 多个备选都装着（歧义，项目声明点名的胜出）> 别的已装发行包声称提供它 > 包在导入失败 > 缺。
+* 判决顺序就是证据强弱（`depplan._verdict`）：名字级已装 > 已装的备选发行包 > 多个备选都装着（歧义，项目声明点名的胜出）> 别的已装发行包声称提供它 > 包在导入失败 > 缺。表外名（不在 `_verdict` 里）另有一条：被唯一的已装 `index` 来源可重现发行包满足 = 满足（`_installed_index_satisfies`，#938），只影响「判满足」。
 * 前端的**五种展示态**（已就绪 / 发现更合适的环境 / 可以自动修复 / 需要确认 / 尚无法确定）只是**已有后端状态的命名**（`web/src/lib/importOrigin.ts`），
   前端没有解析、名单或映射（`importOrigin.structure.test.ts`）。
 
@@ -133,8 +133,7 @@ zip / egg 里的名字（`opaque_roots > 0` 时名字层判不完整）；未建
 ## 后果 / 已知差距
 
 * 默认扫描没有接来源事实：卡片上的「需要确认 / 尚无法确定」只在**准备会话已经评估过依赖**之后出现（第一次检查之前没有这一行）。
-* **确认包名并装好之后，卡片仍说「来源还没法确定」**（`origins[].reason = unverified`，而 `distribution_status = installed_confirmed`）：`depplan._verdict` 对「表外名 + 已装提供者」一律判来源未定。
-  运行没有问题；真浏览器用例 `web/e2e/import-origin.spec.ts` ④ 钉着现状。修法与取舍见 FINAL_ACCEPTANCE.md「已知缺陷」#1，需要维护者决定。
+* （已修，#938）确认包名并装好之后卡片曾仍说「来源还没法确定」：表外名被环境里装好的**唯一**、未被遮蔽的 `index` 来源可重现发行包满足时，`depplan._installed_index_satisfies` 判满足（不进 `origins`、不产生安装名；歧义 / editable / 本地 / VCS / Conda / 无元数据 / 被遮蔽 / 名字层不完整 / 未装 / 导入失败仍维持来源未定）。见 FINAL_ACCEPTANCE.md §10。
 * `found` 改判（覆盖度说它能 import、发行包名却没装）与「依赖门展示覆盖度 detail」未做（BASELINE §12、§15）。
 * 真 Windows 的路径 / 文件系统 / 冻结运行时形状没有真机证据（FINAL_ACCEPTANCE 的「需 Windows 真机 / CI 验证」）。
 
