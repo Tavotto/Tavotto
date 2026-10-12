@@ -116,6 +116,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     name: string,
     expectedRevision: string | null,
     scope: 'project' | 'unknown',
+    verifiedTarget = false,
   ): Promise<boolean> => {
     const ctx = captureSaveContext()
     const probe = await probeDocument(id, ctx.pj)
@@ -157,7 +158,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
     let notice: ReturnType<typeof acceptProbe> = null
     const beforeInstall = async () => {
       if (!stillCurrent(ctx)) return false
-      if (scope !== 'project' || !isForeignDocument(id, ctx.pj)) {
+      if ((scope !== 'project' && !verifiedTarget) || !isForeignDocument(id, ctx.pj)) {
         notice = acceptProbe(probe, ctx.pj)
         return true
       }
@@ -236,7 +237,7 @@ export function LayoutRecover({ open, onClose }: { open: boolean; onClose: () =>
       const r = await recoverCopy(it, {
         pj: ctx.pj,
         stillCurrent: () => stillCurrent(ctx),
-        openExisting: (id, revision) => openSafely(id, it.name, revision, 'unknown'),
+        openExisting: (id, revision) => openSafely(id, it.name, revision, 'unknown', true),
         install: (pd, id) => openDocumentAs(pd, id, { stillCurrent: () => stillCurrent(ctx) }),
       })
       if (r.kind === 'opened') {

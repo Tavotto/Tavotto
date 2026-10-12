@@ -655,8 +655,8 @@ export async function openDocumentAs(
   id: string,
   opts: { stillCurrent?: () => boolean; beforeInstall?: () => Promise<boolean> } = {},
 ): Promise<boolean> {
-  // 「丢失确认」框是这条路上唯一的 await：框开着时用户可能切了项目（桌面交接 / 别的入口），确认之后要再核一次
-  // 调用方入口取的上下文，不再是同一个项目 / 排版就不装（Codex #936：A 的排版装进 B 并按 B 的名义自动保存）
+  // 丢失确认与安装前归属复核都可能等待：调用方入口取的上下文要在等待之后再核，
+  // 不再是同一个项目 / 排版就不装（Codex #936：A 的排版装进 B 并按 B 的名义自动保存）。
   const guardedConfirm = async () => (await confirmLoss()) && (opts.stillCurrent?.() ?? true)
   if (!(await useDocumentStore.getState().switchDocument(pd, id, guardedConfirm, { beforeInstall: opts.beforeInstall }))) return false
   afterSwitch()

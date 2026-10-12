@@ -9381,6 +9381,18 @@ def api_autosave_put(doc_id):
     # 然后一前一后落盘，后写的把先写的整份盖掉。锁按落盘路径取（见
     # `_document_lock`），不同文档互不阻塞。
     with _document_lock(p):
+        # 新教程副本已发布而旧固定 ID 槽位尚未清掉时，reset 的错误回包可能让
+        # 前端继续编辑。此时拒绝向该槽位写新进度：否则下次 /tutorial/open 会把
+        # 它当旧槽位删除。清理与这次检查持同一把文档锁，跨进程也不会插入。
+        if engine_tutorial.cleanup_pending_path().exists():
+            try:
+                tutorial_doc_id = engine_tutorial.tutorial_metadata()["document_id"]
+            except engine_tutorial.TutorialError:
+                tutorial_doc_id = doc_id  # 清理意图在、资源读不到时关门
+            if doc_id == tutorial_doc_id:
+                return _tutorial_error(
+                    engine_tutorial.TutorialError("tutorial_reset_incomplete", "旧教程排版没清掉")
+                )
         if base_revision:
             try:
                 current = engine_atomicio.existing_revision(p)

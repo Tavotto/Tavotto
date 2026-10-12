@@ -351,6 +351,24 @@ describe('恢复副本（A15 / A30）', () => {
     expect(useUiStore.getState().status).toMatchObject({ key: 'layout.recoverDone' })
   })
 
+  it('已有恢复副本目标的本机索引误记旧项目：重开前按目标 owners 纠正归属', async () => {
+    backend.putSlot('d_old', runtimeDoc('源排版'))
+    backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown', name: '源排版' })
+    await pick('d_old')
+    const page = await (await backend.fetch('/api/layout-session/candidates?scope=unknown')).json() as { items: { revision: string }[] }
+    const target = recoveryCopyId('d_old', page.items[0].revision, PJ)
+    backend.putSlot(target, runtimeDoc('已有的副本'), PJ)
+    localStorage.setItem('tavotto.docIndex', JSON.stringify([
+      { id: target, name: '已有的副本', savedAt: 1, objects: 1, projectId: 'p_g', projectName: 'G' },
+    ]))
+    await act(async () => dialog().querySelector<HTMLButtonElement>('[data-recover-copy]')!.click())
+    await flush()
+    expect(useDocumentStore.getState().documentId).toBe(target)
+    expect(JSON.parse(localStorage.getItem('tavotto.docIndex') ?? '[]').find((e: { id: string }) => e.id === target).projectId).toBe(PJ)
+    expect(backend.state.owners.get(target)).toBe(PJ)
+    expect(backend.session(PJ).last?.doc_id).toBe(target)
+  })
+
   it('预览之后源被改了：不恢复，一句话说明，列表刷新，文档不变（A30）', async () => {
     backend.putSlot('d_old', runtimeDoc('旧排版'))
     backend.state.candidates.push({ doc_id: 'd_old', scope: 'unknown', name: '旧排版' })

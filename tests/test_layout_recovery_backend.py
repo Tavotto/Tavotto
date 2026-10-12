@@ -1525,6 +1525,19 @@ def test_tutorial_reset_with_the_slot_document_lock_held_reopens_the_new_copy(cl
         assert _slot(doc_id).read_bytes() == slot_bytes
     finally:
         os.close(fd)
+    # 新副本虽然已重新打开，清理标记仍在：前端不能把之后的新进度写进
+    # 同一个固定 ID 槽位，再被下一次 /tutorial/open 当旧排版删掉。
+    attempted = _put(client, doc_id, _doc(2, "重置后的新进度"), {"id": tut["project"]["id"]})
+    assert attempted.status_code == 500
+    assert attempted.get_json()["code"] == "tutorial_reset_incomplete"
+    assert _slot(doc_id).read_bytes() == slot_bytes
+    reopened = client.post("/api/tutorial/open", json={})
+    assert reopened.status_code == 200
+    assert not _slot(doc_id).exists()
+    assert (
+        _put(client, doc_id, _doc(3, "已清理后可保存"), {"id": tut["project"]["id"]}).status_code
+        == 200
+    )
 
 
 @pytest.mark.parametrize("damage", ["corrupt", "future"])
