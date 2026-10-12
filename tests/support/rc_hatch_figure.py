@@ -49,6 +49,7 @@ TARGETS = {
     "series": (SERIES, ("alpha",)),
     "bar": (BAR, ("alpha",)),
     "rect": (RECT, ("alpha", "fill")),
+    "rect_fill_first": (RECT, ("fill",)),  # 第一次触碰是 fill：钉住不能只靠 alpha 那一路
     "fill_between": (FILL, ("alpha",)),
     "scatter": (SCATTER, ("alpha",)),
 }

@@ -583,7 +583,7 @@ def _rc_worker(figs):
 def _rc_steps(gid: str, props: tuple[str, ...]) -> list[list[dict]]:
     a = lambda v: _p(gid, "alpha", v)  # noqa: E731
     f = lambda v: _p(gid, "fill", v)  # noqa: E731
-    steps = [[a(0.4)], [a(0.7)], []]
+    steps = [[a(0.4)], [a(0.7)], []] if "alpha" in props else []
     if "fill" in props:
         steps += [[f(False)], [f(False), a(0.5)], [a(0.5)], [f(False)], []]
     return steps
