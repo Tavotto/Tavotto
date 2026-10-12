@@ -1481,6 +1481,8 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             "import_name": req.import_name,
             "target_kind": plan.target_kind,
             "generation": outcome["generation"],
+            # 代事务生成的回执原样带到对外终态（它自己的 `done` 被 `_emit_repair_step` 吞了）
+            "providers": outcome.get("providers", []),
         }
         _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
         LOG.info(
@@ -1492,6 +1494,10 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         return result
     if cancel_ev.is_set():
         return _finish_cancelled(plan, on_event, python)
+    # 回执要「凭什么装它」：缺了在任何副作用（pip）之前拒绝，不留下「装上了、任务却报失败」
+    _require_record_sources(
+        ({"distribution": req.distribution, "resolution_source": req.resolution_source},)
+    )
 
     # ---- pip 在不在 -------------------------------------------------------
     rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
@@ -1577,6 +1583,19 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         "distribution": req.distribution,
         "import_name": req.import_name,
         "target_kind": plan.target_kind,
+        # 用户 venv 原地装：没有代；装后没有重新读元数据，`provenance` 如实留空
+        "providers": _provider_receipt(
+            (
+                {
+                    "import_name": req.import_name,
+                    "distribution": req.distribution,
+                    "resolution_source": req.resolution_source,
+                },
+            ),
+            [],
+            {depresolve.normalize_distribution(req.distribution): version},
+            "",
+        ),
     }
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
     LOG.info(
@@ -3500,6 +3519,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             "version": version,
             "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
             "generation": outcome["generation"],
+            "providers": outcome.get("providers", []),
         }
         _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
         LOG.info(
@@ -3598,6 +3618,25 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         "version": version,
         "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
     }
+    if job.op != OP_UNINSTALL:
+        # 受管环境原地装 / 升：没有新代，`provenance` 留空（没有重新读元数据）
+        result["providers"] = _provider_receipt(
+            (
+                {
+                    "import_name": str(
+                        (managedenv.installed_entry(project, job.distribution) or {}).get(
+                            "import_name"
+                        )
+                        or ""
+                    ),
+                    "distribution": job.distribution,
+                    "resolution_source": depresolve.SOURCE_USER_SPECIFIED,
+                },
+            ),
+            [],
+            {key_name: version},
+            "",
+        )
     _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
     LOG.info(
         "包操作完成: %s %s %s",
@@ -4577,6 +4616,7 @@ def prepare(
 def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Event) -> dict:
     """用户 venv：原地装这次缺的（ADR 0019 §八 的纪律不变）。"""
     python = plan.python
+    _require_record_sources(plan.record)  # 回执的来源字段：缺了在 pip 之前拒绝
     _emit(plan.plan_id, STATE_PREPARING, on_event, joint=plan)
     rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
     if rc != 0:
@@ -4612,7 +4652,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         raise RepairError(code, _sanitize(out)[-800:])
     _emit(plan.plan_id, STATE_VERIFYING, on_event, joint=plan)
     _verify_imports(python, plan.needed_imports)
-    _verify_distributions(
+    provided = _verify_distributions(
         python,
         plan.record,
         plan.requirements,
@@ -4643,11 +4683,13 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     _note_round(plan.project, plan.script)
     with _lock:
         _gate_skipped.discard((plan.project_id, plan.script))
+    installed = _versions_of(python, [r["distribution"] for r in plan.record])
     result = {
         "ok": True,
         "python": python,
         "target_kind": TARGET_PROJECT_VENV,
-        "installed": _versions_of(python, [r["distribution"] for r in plan.record]),
+        "installed": installed,
+        "providers": _provider_receipt(plan.record, provided, installed, ""),
     }
     _emit(plan.plan_id, STATE_DONE, on_event, joint=plan, result=result)
     return result
