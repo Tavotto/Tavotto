@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from support import rc_hatch_figure as rc
+from support import rc_hatch_figure as rc, rc_hatch_text_legend_figure as rctl
 from tavotto.engine import pool, project_watch
 
 try:
@@ -26,14 +26,23 @@ pytestmark = pytest.mark.skipif(
     WORKER_PY is None, reason="找不到装有 matplotlib 的解释器（TAVOTTO_WORKER_PYTHON）"
 )
 
-REGISTRY = json.dumps(
-    {
-        "version": 1,
-        "scripts": {
-            rc.SCRIPT_NAME: {"entry": rc.ENTRY, "cost": "light", "notes": "", "stems": [rc.STEM]}
-        },
-    }
-)
+
+def _registry(fig):
+    return json.dumps(
+        {
+            "version": 1,
+            "scripts": {
+                fig.SCRIPT_NAME: {
+                    "entry": fig.ENTRY,
+                    "cost": "light",
+                    "notes": "",
+                    "stems": [fig.STEM],
+                }
+            },
+        }
+    )
+
+
 _PNG_1X1 = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
     "1f15c4890000000d49444154789c6360f8cfc0f01f0005000201"
@@ -42,8 +51,10 @@ _PNG_1X1 = bytes.fromhex(
 
 
 @pytest.fixture
-def project(tmp_path, monkeypatch):
+def project(tmp_path, monkeypatch, request):
     import pikepdf
+
+    fig = getattr(request, "param", rc)  # 默认 #874 那张图；#956 的用例间接参数化成另一张
 
     from tavotto import app as m
 
@@ -54,12 +65,12 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "CACHE_DIR", tmp_path / "_cache")
     figs = tmp_path / "figures"
     figs.mkdir()
-    (figs / rc.SCRIPT_NAME).write_text(rc.LIBRARY, encoding="utf-8")
-    (figs / "tavotto_registry.json").write_text(REGISTRY, encoding="utf-8")
+    (figs / fig.SCRIPT_NAME).write_text(fig.LIBRARY, encoding="utf-8")
+    (figs / "tavotto_registry.json").write_text(_registry(fig), encoding="utf-8")
     pdf = pikepdf.new()
     pdf.add_blank_page(page_size=(200, 100))
-    pdf.save(figs / f"{rc.STEM}.pdf")
-    (figs / f"{rc.STEM}.png").write_bytes(_PNG_1X1)
+    pdf.save(figs / f"{fig.STEM}.pdf")
+    (figs / f"{fig.STEM}.png").write_bytes(_PNG_1X1)
     m.open_project(str(figs))
     try:
         yield m, m.app.test_client(), figs
@@ -69,8 +80,8 @@ def project(tmp_path, monkeypatch):
         project_watch.stop()
 
 
-def _render(client, patches):
-    r = client.post("/api/engine/render", json={"id": f"{rc.STEM}.pdf", "patches": patches})
+def _render(client, patches, stem=rc.STEM):
+    r = client.post("/api/engine/render", json={"id": f"{stem}.pdf", "patches": patches})
     assert r.status_code == 200, r.get_json()
     return r.get_json()["manifest"]
 
@@ -86,4 +97,22 @@ def test_alpha_edit_then_undo_then_write_back_is_not_a_replay_divergence(project
     r = client.post("/api/engine/update_source", json={"id": f"{rc.STEM}.pdf", "patches": []})
     body = r.get_json()
     assert r.status_code == 200, f"撤销 alpha 之后写回被拦：{body.get('code')} {body.get('diffs')}"
+    assert (body.get("verification") or {}).get("pixels") == "ok", body
+
+
+@pytest.mark.parametrize("project", [rctl], indirect=True)
+@pytest.mark.parametrize("name", list(rctl.TARGETS))
+def test_text_legend_alpha_edit_then_undo_then_write_back_is_not_a_replay_divergence(project, name):
+    """#956：文本背景框 / 图例框 / 线集合——修复前 409 `replay_divergence`，修复后 200。"""
+    m, client, figs = project
+    gid, prop = rctl.TARGETS[name]
+    _render(client, [], rctl.STEM)
+    _render(client, [{"gid": gid, "prop": prop, "value": 0.5}], rctl.STEM)
+    _render(client, [], rctl.STEM)  # 撤销：热会话账本上是 []
+
+    r = client.post("/api/engine/update_source", json={"id": f"{rctl.STEM}.pdf", "patches": []})
+    body = r.get_json()
+    assert r.status_code == 200, (
+        f"{name}：撤销 alpha 之后写回被拦：{body.get('code')} {body.get('diffs')}"
+    )
     assert (body.get("verification") or {}).get("pixels") == "ok", body

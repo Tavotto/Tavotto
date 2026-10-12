@@ -16,6 +16,7 @@ import sys
 
 _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(_REPO, "src", "tavotto", "engine"))
+sys.path.insert(0, os.path.join(_REPO, "tests"))
 
 import matplotlib  # noqa: E402
 
@@ -37,6 +38,19 @@ TARGETS = {
     "fill_between": "axes_0.fill_0",
     "scatter": "axes_0.scatter_1",
 }
+
+
+def build_tl():
+    """#956：文本框 / 图例框 / 线集合 / 误差线 / 茎线那张图（脚本文本与 worker 用例共用一份）。"""
+    from support import rc_hatch_text_legend_figure as tl  # noqa: PLC0415
+
+    ns: dict = {}
+    exec(tl.LIBRARY, ns)  # noqa: S102 — 夹具脚本文本，仓库自带
+    fig = ns["build"]()
+    state = O.FigState(fig)
+    M.instrument(state)
+    M.build_manifest(state, "P")
+    return fig, state
 
 
 def build():
@@ -65,17 +79,29 @@ def _val(a):
 
 
 def _members(a):
-    return list(a.artists) if hasattr(a, "artists") else [a]
+    """带花纹色模式的成员（误差线 / 茎线的数据线、端帽是 Line2D，没有这个模式，不在内）。"""
+    if hasattr(a, "members"):
+        ms = a.members()
+    elif hasattr(a, "artists"):
+        ms = list(a.artists)
+    elif hasattr(a, "get_bbox_patch"):  # 文本：背景框那个 FancyBboxPatch
+        ms = [a.get_bbox_patch()]
+    elif hasattr(a, "get_frame"):  # 图例：框
+        ms = [a.get_frame()]
+    else:
+        ms = [a]
+    return [m for m in ms if m is not None and hasattr(m, "_hatch_color")]
 
 
 def _mode_none(a) -> bool:
     return all(getattr(m, "_original_hatchcolor", 0) is None for m in _members(a))
 
 
-def run_one(name, gid, edits):
+def run_one(name, gid, edits, builder=None):
+    builder = builder or build
     plt.rcParams["hatch.color"] = "magenta"
-    _fa, sa = build()
-    _fb, sb = build()
+    _fa, sa = builder()
+    _fb, sb = builder()
     art_a, art_b = sa.resolve(gid), sb.resolve(gid)
     warns = O.apply(sa, edits)
     mid = _mode_none(art_a)
@@ -119,6 +145,12 @@ def main() -> int:
                     {"gid": gid, "prop": "alpha", "value": 0.4},
                 ],
             )
+    from support import rc_hatch_text_legend_figure as tl  # noqa: PLC0415
+
+    for name, (gid, prop) in tl.TARGETS.items():
+        out["cases"][f"{name}:alpha"] = run_one(
+            name, gid, [{"gid": gid, "prop": prop, "value": 0.4}], builder=build_tl
+        )
     out["cases"]["bar:stale-base"] = run_stale(TARGETS["bar"])
     out["cases"]["scatter:stale-base"] = run_stale(TARGETS["scatter"])
     out["subclass_cases"] = sub_cases() if out["has_set_hatchcolor"] else {}

@@ -49,6 +49,10 @@ CASES = [
     "rect:fill+alpha",
     "fill_between:alpha",
     "scatter:alpha",
+    # #956：文本背景框 / 图例框 / 线集合
+    "text_bbox:alpha",
+    "legend_frame:alpha",
+    "linecoll:alpha",
     "bar:stale-base",
     "scatter:stale-base",
 ]
