@@ -957,7 +957,10 @@ def main(argv: list | None = None) -> int:
         _write_report(run, args, exit_code)
 
     if run.control is not None:
-        run.control.event("exit", code=exit_code, figures=len(_CAPTURE))
+        # 与 `tavotto run` 的 status-file 同一判据：按预览发布账本数，不按捕获到的 Figure 数——
+        # 预览没发布成的图不算「完成」，桌面卡片与终端不得一个说 2、一个说 1（P01b，EX12，Codex #958）
+        figures = len(figcapture.published_preview_stems(args.out_dir)) if args.out_dir else 0
+        run.control.event("exit", code=exit_code, figures=figures)
         run.control.close()
     return exit_code
 
