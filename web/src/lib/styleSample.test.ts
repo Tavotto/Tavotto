@@ -252,6 +252,9 @@ describe('sampleLayout：图例不压曲线（2026-10 设计审计第二轮）',
     ['图例大字号', { element: { legend: { fontsize: 14 } } }],
     ['刻度朝里且长', { element: { ticks: { direction: 'in', length: 8 } } }],
     ['粗线', { element: { line: { linewidth: 3 } } }],
+    // Codex #946：两个上限同时取到——14 pt 图例 + 朝里 20 pt 刻度
+    ['图例大字号且刻度朝里最长', { element: { legend: { fontsize: 14 }, ticks: { direction: 'in', length: 20 } } }],
+    ['图例大字号且刻度朝里最长、粗线', { element: { legend: { fontsize: 14 }, ticks: { direction: 'in', length: 20, width: 3 }, line: { linewidth: 3 } } }],
   ]
   for (const [name, data] of cases) {
     it(name, () => {
