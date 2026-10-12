@@ -147,6 +147,7 @@ import dataclasses
 import hashlib
 import inspect
 import io
+import itertools
 import json
 import math
 import ntpath
@@ -367,8 +368,10 @@ def preview_invalid(out_dir, stem: str) -> bool:
 #: 内存标记读方都看不见。所以这一级由 **读方进程**自己记：app 侧收到该错误码（会话同时被判死）
 #: 就把整个 `out_dir` 记进这张表，`usable_preview_path` 对它回「无预览」，直到下一代会话 build 成功。
 PREVIEW_POISONED_CODE = "preview_poisoned"
-#: 目录键 → 作废那一刻账本的发布序号。解除时要求磁盘上每个还有预览文件的 stem 都在此之后重新完整发布过。
-_poisoned_dirs: dict[str, int] = {}
+#: 目录键 → (作废那一刻账本的发布序号, 作废代号)。解除时要求磁盘上每个还有预览文件的 stem 都在该序号之后重新
+#: 完整发布过；代号每次作废单调递增（与账本无关），审计结束时按它 compare-and-delete（Codex #958）。
+_poisoned_dirs: dict[str, tuple[int, int]] = {}
+_poison_generations = itertools.count(1)
 #: 作废 / 解除的状态转换互斥：读方审计与新的 `preview_poisoned` 可能并发（Codex #958）
 _poison_lock = threading.Lock()
 
@@ -382,7 +385,9 @@ def poison_preview_dir(out_dir) -> None:
     key = _dir_key(out_dir)
     seq = _read_preview_ledger(out_dir)["seq"]
     with _poison_lock:
-        _poisoned_dirs[key] = max(seq, _poisoned_dirs.get(key, seq))
+        prev = _poisoned_dirs.get(key)
+        floor = max(seq, prev[0]) if prev else seq
+        _poisoned_dirs[key] = (floor, next(_poison_generations))
 
 
 def clear_preview_poison(out_dir) -> bool:
@@ -396,7 +401,7 @@ def clear_preview_poison(out_dir) -> bool:
     with _poison_lock:
         if key not in _poisoned_dirs:
             return True
-        floor = _poisoned_dirs[key]
+        floor, generation = _poisoned_dirs[key]
     try:
         names = os.listdir(os.fspath(out_dir))
     except OSError:
@@ -424,8 +429,8 @@ def clear_preview_poison(out_dir) -> bool:
     if stale:
         return False
     with _poison_lock:
-        # compare-and-delete：审计期间若又来了一次更新的作废（序号变了），这次审计没覆盖它，不得一并抹掉
-        if _poisoned_dirs.get(key) != floor:
+        # compare-and-delete：审计期间若又来了一次作废（代号变了——哪怕账本序号没动），这次审计没覆盖它，不得一并抹掉
+        if (_poisoned_dirs.get(key) or (None, None))[1] != generation:
             return False
         del _poisoned_dirs[key]
     return True

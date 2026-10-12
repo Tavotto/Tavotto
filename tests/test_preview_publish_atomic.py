@@ -303,6 +303,35 @@ with tempfile.TemporaryDirectory() as tmp:
             out["published"] = figcapture.published_preview_stems(tmp)
         finally:
             figcapture.record_preview_published = real_record
+    elif scenario == "batch_glitch_rolls_back_every_fresh_capture":
+        real_record = figcapture.record_preview_published
+        calls = []
+
+        def glitch_second(*a, **k):
+            calls.append(1)
+            if len(calls) == 2:  # 第一张发布成功、第二张记账失败
+                raise PermissionError(13, "ledger locked")
+            return real_record(*a, **k)
+
+        figcapture.record_preview_published = glitch_second
+        try:
+            sess.add_figure("a", good("a1"), figcapture.SOURCE_SAVEFIG)
+            sess.add_figure("b", good("b1"), figcapture.SOURCE_SAVEFIG)
+            try:
+                sess.instrument_all()
+            except Exception as exc:
+                out["first_error"] = type(exc).__name__
+            out["left_states"] = sorted(sess.states)
+            out["left_captures"] = sorted(sess.capture)
+            a2, b2 = good("a2"), good("b2")
+            out["rerun_accepted"] = [
+                sess.add_figure("a", a2, figcapture.SOURCE_SAVEFIG),
+                sess.add_figure("b", b2, figcapture.SOURCE_SAVEFIG),
+            ]
+            sess.instrument_all()
+            out["published_are_rerun"] = sess.capture.get("a") is a2 and sess.capture.get("b") is b2
+        finally:
+            figcapture.record_preview_published = real_record
     elif scenario == "stale_and_truncated":
         p = Path(tmp)
         # 上一次运行残留：有完整 SVG、没有账本
@@ -620,6 +649,41 @@ def test_an_audit_does_not_erase_a_newer_poison_that_arrived_meanwhile(tmp_path,
         return names
 
     monkeypatch.setattr(os, "listdir", listdir_then_new_poison)
+    try:
+        assert figcapture.clear_preview_poison(out) is False
+        assert figcapture._dir_key(out) in figcapture._poisoned_dirs
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
+def test_a_failed_batch_rolls_back_every_fresh_capture():
+    """同一批新图里第二张首次发布失败：整批撤掉（含已发布的第一张），重跑的新 Figure 全部被收下并发布（Codex #958）。"""
+    r = _drive("batch_glitch_rolls_back_every_fresh_capture")
+    assert r["first_error"] == "PermissionError", r
+    assert r["left_states"] == [] and r["left_captures"] == [], r
+    assert r["rerun_accepted"] == [True, True] and r["published_are_rerun"] is True, r
+
+
+def test_a_second_poison_with_an_unchanged_ledger_survives_a_concurrent_audit(
+    tmp_path, monkeypatch
+):
+    """两次作废之间账本序号没动：审计按作废代号 compare-and-delete，后来的作废不被抹掉（Codex #958）。"""
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    figcapture.poison_preview_dir(out)
+    real_listdir = os.listdir
+    once = []
+
+    def listdir_then_repoison(path):
+        names = real_listdir(path)
+        if not once:
+            once.append(1)
+            figcapture.poison_preview_dir(out)  # 账本没前进的又一次作废
+        return names
+
+    monkeypatch.setattr(os, "listdir", listdir_then_repoison)
     try:
         assert figcapture.clear_preview_poison(out) is False
         assert figcapture._dir_key(out) in figcapture._poisoned_dirs

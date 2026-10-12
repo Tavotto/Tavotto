@@ -720,26 +720,26 @@ class LiveFigureSession:
         # 裁成什么样」——原件是在它们之前存下的
         for stem, fig in fresh:
             self.establish_frame(stem, fig)
-        for stem, fig in fresh:
-            overrides_mod.ensure_figure_fallback(fig)
-            state = overrides_mod.FigState(fig)
-            manifest_mod.instrument(state)
-            self.states[stem] = state
-            try:
+        try:
+            for stem, fig in fresh:
+                overrides_mod.ensure_figure_fallback(fig)
+                state = overrides_mod.FigState(fig)
+                manifest_mod.instrument(state)
+                self.states[stem] = state
                 self.render(stem)
-            except BaseException:
-                # 首次发布失败（例如 Windows 上账本瞬时被锁）：撤掉这份没出过预览的状态，下一次 build 才会重新
-                # instrument 它——否则它被当成「已 instrument」跳过，`stems_summary` 取不到缓存 manifest、永久 KeyError
-                # （Codex #958）。已在编辑的图不在 `fresh` 里，不受影响。
+        except BaseException:
+            # 这一批新图里任何一张首次发布失败（例如 Windows 上账本瞬时被锁）：**整批**撤掉——pool 会复用这个 worker
+            # 重跑脚本，重跑画出的是新 Figure；留着同批里已发布的旧图，`add_figure` 会拒收它们的新图，再把失败那次执行
+            # 的旧图当成功结果；没出过预览的那张还会让 `stems_summary` 缺缓存 manifest、永久 KeyError（Codex #958）。
+            # 已在编辑的图不在 `fresh` 里，不受影响；同批已发布的磁盘产物会在重试时被新发布覆盖。
+            for stem, _fig in fresh:
                 self.states.pop(stem, None)
                 self._manifest_cache.pop(stem, None)
-                # 捕获表与 savefig 记账也一并撤掉：pool 会复用这个 worker 重跑脚本，重跑画出的是**新** Figure；
-                # 留着旧的 `capture[stem]`，`add_figure` 会拒收新图、再把失败那次执行的旧图发布出去（Codex #958）
                 self.capture.pop(stem, None)
                 self.capture_source.pop(stem, None)
                 self.savefig_calls.pop(stem, None)
                 self.savefig_extras.pop(stem, None)
-                raise
+            raise
 
     def stems_summary(self, dropped_figures: int = 0) -> dict:
         """build 响应的 stems 表。
