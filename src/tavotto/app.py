@@ -5968,6 +5968,8 @@ def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
             worker.override(stem, patches)  # 同一组 patches，幂等
         except engine_pool.WorkerError:
             return None
+        # 重渲染可能刚把失效 stem 修好（清掉标记）：路径要重取，否则读的还是失效哨兵、热重放校验被跳过
+        path = Path(engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json"))
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):

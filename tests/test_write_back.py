@@ -1140,6 +1140,36 @@ def test_hot_manifest_is_matched_per_stem_not_per_worker(tmp_path):
     assert m._hot_manifest(hot, "Fig2_correlation", patches) is None  # 另一个不可比
 
 
+def test_hot_manifest_rereads_the_path_after_the_rerender_repairs_an_invalid_stem(tmp_path):
+    """发布失败且还原也失败后 stem 被作废（`usable_preview_path` 返回哨兵）。同一组 patches 的写回
+    触发 `override` 重渲染，把标记清掉、manifest 重新发布——此时必须按**修好之后**的路径重读，
+    否则读的仍是哨兵、回 None，写回自检降成 `fresh_only`，热态与重放的比对和像素门被跳过。"""
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    stem = "Fig1"
+    patches = [{"gid": "axes_0.title", "prop": "fontsize", "value": 7}]
+    figcapture.mark_preview_invalid(out, stem)
+    assert figcapture.preview_invalid(out, stem)
+
+    class Hot:
+        built = True
+        out_dir = out
+        last_patch_hash = patchspec.patch_hash(patches)
+        last_patch_hash_by_stem = {stem: patchspec.patch_hash(patches)}
+        calls = 0
+
+        def override(self, s, p):
+            Hot.calls += 1
+            (out / f"{s}.json").write_text(json.dumps({**_manifest(), "stem": s}), encoding="utf-8")
+            figcapture.clear_preview_invalid(out, s)
+
+    got = m._hot_manifest(Hot(), stem, patches)
+    assert Hot.calls == 1
+    assert got is not None and got["stem"] == stem
+
+
 def test_verify_replay_answers_script_input_with_the_hot_answers(client, tmp_path, monkeypatch):
     """脚本 `input()` 的答案（ADR 0099 §五）：一次性重放拿的是热会话 build 时**实际用到**的那一组——
     不是此刻记住的、也不是空的。热态 == 重放靠它成立。"""
