@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import hashlib
 import ssl
+import threading
 import time
 
 import pytest
 
-from support.diag_fakes import FakeDiagServer
+from support.diag_fakes import FakeDiagServer, Forced
 from support.tls_certs import make_pki
 from tavotto import app as m
 from tavotto.engine import diagsend, tlstrust
@@ -202,3 +203,95 @@ class TestActionOrdering:
         )
         assert r.status_code == 202
         assert _poll(client, prep["id"], {"done", "failed"})["state"] == "done"
+
+
+def _open_two(client, tmp_path):
+    ids = []
+    for name in ("a", "b"):
+        root = tmp_path / name
+        root.mkdir()
+        body = client.post("/api/projects/open", json={"path": str(root), "default": name == "a"})
+        ids.append(body.get_json()["id"])
+    return ids
+
+
+def _prep(client, pj):
+    return client.post(
+        "/api/diagnostics/send/prepare",
+        json={"frontend_state": None, "interaction_trace": []},
+        headers={"X-Tavotto-Project": pj},
+    ).get_json()
+
+
+class TestPerProjectSessions:
+    """#927：会话注册表按项目分键——两个窗口、两个项目互不使对方的对话框失效。"""
+
+    def test_preparing_in_b_does_not_discard_a(self, client, on, tmp_path):
+        a, b = _open_two(client, tmp_path)
+        pa, pb = _prep(client, a), _prep(client, b)
+        assert pa["id"] != pb["id"]
+        ra = client.get(f"/api/diagnostics/send/{pa['id']}", headers={"X-Tavotto-Project": a})
+        assert ra.status_code == 200 and ra.get_json()["state"] == "prepared"
+        rb = client.get(f"/api/diagnostics/send/{pb['id']}", headers={"X-Tavotto-Project": b})
+        assert rb.status_code == 200
+        # 各自再发，互不影响
+        for pj, prep in ((a, pa), (b, pb)):
+            r = client.post(
+                f"/api/diagnostics/send/{prep['id']}/send",
+                json={"confirm": True},
+                headers={"X-Tavotto-Project": pj},
+            )
+            assert r.status_code == 202, r.get_json()
+        for pj, prep in ((a, pa), (b, pb)):
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                st = client.get(
+                    f"/api/diagnostics/send/{prep['id']}", headers={"X-Tavotto-Project": pj}
+                ).get_json()
+                if st["state"] == "done":
+                    break
+                time.sleep(0.02)
+            assert st["state"] == "done"
+        assert len(on.reports) == 2
+
+    def test_a_sending_in_a_does_not_block_preparing_in_b(self, client, on, tmp_path):
+        a, b = _open_two(client, tmp_path)
+        gate = threading.Event()
+        on.force("init", Forced("hold", event=gate))
+        pa = _prep(client, a)
+        client.post(
+            f"/api/diagnostics/send/{pa['id']}/send",
+            json={"confirm": True},
+            headers={"X-Tavotto-Project": a},
+        )
+        r = client.post(
+            "/api/diagnostics/send/prepare",
+            json={"frontend_state": None, "interaction_trace": []},
+            headers={"X-Tavotto-Project": b},
+        )
+        try:
+            assert r.status_code == 200, r.get_json()
+        finally:
+            gate.set()
+
+    def test_a_session_id_is_not_reachable_from_another_project(self, client, on, tmp_path):
+        a, b = _open_two(client, tmp_path)
+        pa = _prep(client, a)
+        for method, suffix in (("get", ""), ("get", "/bundle"), ("post", "/cancel")):
+            r = getattr(client, method)(
+                f"/api/diagnostics/send/{pa['id']}{suffix}", headers={"X-Tavotto-Project": b}
+            )
+            assert r.status_code == 404, (suffix, r.status_code)
+        client.post(f"/api/diagnostics/send/{pa['id']}/discard", headers={"X-Tavotto-Project": b})
+        r = client.get(f"/api/diagnostics/send/{pa['id']}", headers={"X-Tavotto-Project": a})
+        assert r.status_code == 200, "B 的 discard 不能丢掉 A 的包"
+
+    def test_explicit_pj_query_wins_over_a_conflicting_header(self, client, on, tmp_path):
+        """Codex #955：前端在切项目途中清理 A 的会话，头已是 B、`?pj=` 显式写 A——以显式 pj 为准，A 的会话必须被丢弃。"""
+        a, b = _open_two(client, tmp_path)
+        pa = _prep(client, a)
+        client.post(
+            f"/api/diagnostics/send/{pa['id']}/discard?pj={a}", headers={"X-Tavotto-Project": b}
+        )
+        r = client.get(f"/api/diagnostics/send/{pa['id']}", headers={"X-Tavotto-Project": a})
+        assert r.status_code == 404, "A 的会话应已被丢弃"

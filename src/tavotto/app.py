@@ -2990,6 +2990,18 @@ def _diag_send_json(payload: dict, status: int = 200):
     return resp
 
 
+def _diag_send_scope() -> str:
+    """本次请求属于哪个项目（#927）：诊断发送会话按它分键，状态 / 发送 / 取消 / 丢弃都只认本项目的会话。
+
+    项目已关闭（指名的 pj 不再存在）时 `_request_ctx` 抛 `NoProjectError`——discard 仍要能丢掉它名下的会话，
+    所以退回到请求里写的原始 pj（仍是该项目自己的键，不会落到别的项目上）。"""
+    try:
+        ctx = _request_ctx()
+    except NoProjectError:
+        return (request.args.get("pj") or request.headers.get("X-Tavotto-Project") or "").strip()
+    return ctx.id if ctx is not None else ""
+
+
 @app.get("/api/diagnostics/send")
 def api_diagnostics_send_capability():
     """「发送问题反馈」此刻可不可用（本机判断，**不联网**）。关闭时界面不画入口。"""
@@ -3007,7 +3019,7 @@ def api_diagnostics_send_prepare():
     frontend, dropped = _read_frontend_payload()
     try:
         data = _build_diagnostics_bundle(frontend, dropped)
-        return _diag_send_json(engine_diagsend.prepare(data))
+        return _diag_send_json(engine_diagsend.prepare(data, scope=_diag_send_scope()))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 
@@ -3016,7 +3028,7 @@ def api_diagnostics_send_prepare():
 def api_diagnostics_send_bundle(pid: str):
     """用户要查看 / 保存的**同一份字节**（就是点发送时会上传的那份）。"""
     try:
-        data = engine_diagsend.bundle_bytes(pid)
+        data = engine_diagsend.bundle_bytes(pid, scope=_diag_send_scope())
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
     name = f"tavotto-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
@@ -3033,7 +3045,7 @@ def api_diagnostics_send_bundle(pid: str):
 @app.get("/api/diagnostics/send/<pid>")
 def api_diagnostics_send_status(pid: str):
     try:
-        return _diag_send_json(engine_diagsend.status(pid))
+        return _diag_send_json(engine_diagsend.status(pid, scope=_diag_send_scope()))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 
@@ -3052,6 +3064,7 @@ def api_diagnostics_send_start(pid: str):
             category=body.get("category"),
             note=body.get("note"),
             gen=body.get("gen"),
+            scope=_diag_send_scope(),
         )
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
@@ -3061,7 +3074,7 @@ def api_diagnostics_send_start(pid: str):
 @app.post("/api/diagnostics/send/<pid>/cancel")
 def api_diagnostics_send_cancel(pid: str):
     try:
-        return _diag_send_json(engine_diagsend.cancel(pid))
+        return _diag_send_json(engine_diagsend.cancel(pid, scope=_diag_send_scope()))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 
@@ -3069,7 +3082,7 @@ def api_diagnostics_send_cancel(pid: str):
 @app.post("/api/diagnostics/send/<pid>/discard")
 def api_diagnostics_send_discard(pid: str):
     """对话框关了：释放内存里的包；发送中等于取消。重复调用无害。"""
-    return _diag_send_json(engine_diagsend.discard(pid))
+    return _diag_send_json(engine_diagsend.discard(pid, scope=_diag_send_scope()))
 
 
 @app.get("/api/project")

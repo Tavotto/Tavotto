@@ -15,6 +15,8 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import { adoptEnvironmentCandidate, type EngineEnvironment, type EnvCoverageDetail, type EnvRecommendation } from '@/lib/api'
 import { EngineEnvironmentCard, MissingDependencyCard } from '@/components/EngineEnvironmentCard'
 import { t } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
@@ -74,7 +76,7 @@ describe('项目改用的系统 Python：缘由按 automatic 分', () => {
     expect(text()).toContain(en('projectEnvUsingSystem', { path: 'C:\\Python312\\python.exe' }))
     expect(text()).toContain(en('projectEnvWhySystemAuto', { module: 'adjustText' }))
     expect(text()).not.toContain(en('projectEnvWhySystem', { module: 'adjustText' }))
-    expect(text()).toContain(en('projectEnvUseBuiltIn'))
+    expect(text()).toContain(en('projectEnvUseBuiltIn', { product: PRODUCT_NAME }))
   })
 
   it('用户挑的：仍说「已改用你为项目选择的现有环境」', async () => {
@@ -82,7 +84,7 @@ describe('项目改用的系统 Python：缘由按 automatic 分', () => {
     await render(<EngineEnvironmentCard />)
     expect(text()).toContain(en('projectEnvWhySystem', { module: 'adjustText' }))
     expect(text()).not.toContain(en('projectEnvWhySystemAuto', { module: 'adjustText' }))
-    expect(text()).toContain(en('projectEnvUseBuiltIn'))
+    expect(text()).toContain(en('projectEnvUseBuiltIn', { product: PRODUCT_NAME }))
   })
 })
 
@@ -318,5 +320,47 @@ describe('缺依赖装不了时从引导卡直达：「使用其他 Python 环�
     await render(<EngineEnvironmentCard />)
     expect(document.querySelector(`input[aria-label="${en('pathAria')}"]`)).not.toBeNull()
     useUiStore.setState({ engineEnvPick: false })
+  })
+})
+
+// ---------------------------------------------------------------- 品牌名走插值（engine 文案不手写）
+describe('品牌名：生成点把 PRODUCT_NAME 传进插值', () => {
+  const click = async (el: Element) => act(async () => (el as HTMLElement).click())
+  const btn = (name: string) => Array.from(document.querySelectorAll('button')).find((b) => b.textContent === name)
+
+  it('环境建议里「改用内置环境」带品牌名', async () => {
+    useEnvStore.setState({ env: adviceEnv({}) })
+    await render(<EngineEnvironmentCard />)
+    const label = en('envAdviceBuiltIn', { product: PRODUCT_NAME })
+    expect(label).toContain(PRODUCT_NAME)
+    expect(btn(label)).toBeTruthy()
+    expect(text()).not.toContain('{{')
+  })
+
+  it('「更换…」展开的说明末尾带品牌名', async () => {
+    useEnvStore.setState({ env: { ...envWith(false), project: { open: true } } as never })
+    await render(<EngineEnvironmentCard />)
+    await click(btn(en('changeInterpreter'))!)
+    expect(text()).toContain(en('useOtherHintBefore', { product: PRODUCT_NAME }))
+    expect(text()).toContain(`${PRODUCT_NAME}不会改动你选中的环境`)
+    expect(text()).not.toContain('{{')
+  })
+
+  it('受管环境行尾菜单里「重建」带品牌名', async () => {
+    useEnvStore.setState({
+      env: { ...envWith(false), project: { open: true, source: 'managed_project_env', managed: { exists: true, installed: [], python_version: '3.12' } } } as never,
+    })
+    await render(
+      <TooltipProvider>
+        <EngineEnvironmentCard />
+      </TooltipProvider>,
+    )
+    const trigger = document.querySelector(`[aria-label="${en('envActions')}"]`)!
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerType: 'mouse' }))
+    })
+    expect(document.body.textContent).toContain(en('managedEnvRebuild', { product: PRODUCT_NAME }))
+    expect(document.body.textContent).toContain(`重建 ${PRODUCT_NAME} 环境`)
+    expect(document.body.textContent).not.toContain('{{')
   })
 })

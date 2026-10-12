@@ -141,7 +141,7 @@ describe('点击只是打开对话框', () => {
     expect(prepareDiagSend).toHaveBeenCalledTimes(1)
     expect(startDiagSend).not.toHaveBeenCalled()
     await act(async () => useDiagSendStore.getState().setOpen(false))
-    expect(discardDiagSend).toHaveBeenCalledWith('pid-1')
+    expect(discardDiagSend).toHaveBeenCalledWith('pid-1', null)
     expect(startDiagSend).not.toHaveBeenCalled()
   })
 })

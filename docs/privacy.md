@@ -265,6 +265,33 @@ The desktop application uses a local service bound to `127.0.0.1` for the user
 interface and rendering bridge. It is not intended to expose the user's projects
 to other computers.
 
+## The tavotto.cn website
+
+The Chinese-language website <https://tavotto.cn/> (also reached through
+`www.tavotto.cn`) is a static site run by the project maintainer. Its pages load
+no analytics or tracking scripts and set or read no cookies.
+
+To see how many people visit and where they come from, the website's server keeps
+an access log. Each entry keeps only: the time; the visitor's IP address with the
+last part removed (IPv4 keeps the first three octets, IPv6 keeps the first 48
+bits); the request method; the host name; the page path without anything after
+`?`; the HTTP status code; the number of bytes sent; the referring page, also
+without anything after `?`; and the browser's User-Agent string. Full IP
+addresses, cookies, `Authorization`, query strings, TLS details and any request
+headers other than the referring page and User-Agent listed above are not
+recorded.
+
+The log stays on the website's server, is readable only by the maintainer, is
+deleted after 30 days and is not included in backups or shared with third
+parties. A daily report built from it contains only aggregate figures (page
+views, approximate unique visitors, popular pages, referrers, browsers and
+operating systems, status codes, daily trends and, when enabled, country or
+region) and covers at most the last 30 days.
+
+This section covers the website only. The Tavotto application does not contact
+the website; the download mirror `dl.tavotto.cn` used for update checks is a
+separate host and is described under "Update checks" above.
+
 ## Changes and contact
 
 Changes to this policy will be recorded in the repository history. Privacy or

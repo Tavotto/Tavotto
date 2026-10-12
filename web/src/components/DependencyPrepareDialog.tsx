@@ -134,7 +134,7 @@ export function DependencyPrepareDialog() {
   const code = errorCode || (failed ? progress?.code || '' : '')
   const codeKey = code ? `engine.repairError.${code}` : ''
   const errorLine = code
-    ? t(codeKey, { defaultValue: errorText || progress?.error || code })
+    ? t(codeKey, { defaultValue: errorText || progress?.error || code, product: PRODUCT_NAME })
     : errorText || progress?.error || ''
   // 故障同样只露一句（原因 + 下一步，`repairShortMessage`）：一条危险 Notice，顶掉正文那一句（标题固定是「准备环境」，
   // 不被错误句替换——2026-10-07 设计审计 §10.2）；完整的说明、错误码、blocked 的逐条理由都在「详情」里
@@ -253,7 +253,7 @@ export function DependencyPrepareDialog() {
                 </span>
                 {opt.available === false && (
                   <span className="mt-0.5 block text-sm text-danger-content">
-                    {t(`engine.repairError.${opt.reason}`, { defaultValue: opt.reason })}
+                    {t(`engine.repairError.${opt.reason}`, { defaultValue: opt.reason, product: PRODUCT_NAME })}
                   </span>
                 )}
               </span>

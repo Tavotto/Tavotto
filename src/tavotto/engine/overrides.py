@@ -1961,6 +1961,7 @@ def _set_patch_facecolor(p, v) -> None:
 
 
 def _get_patch_edgecolor(p):
+    _remember_hatch_color(p)  # ≤3.10：边色 setter 会改写 `_hatch_color`，先采创建时的值（#874）
     if not hasattr(p, "_original_edgecolor"):
         return p.get_edgecolor()  # 认不出的实现：退回按值（老行为）
     hatch = None if hasattr(p, "set_hatchcolor") else getattr(p, "_hatch_color", None)
@@ -3165,7 +3166,108 @@ def _get_coll_facecolor(coll):
 # ---------------------------------------------------------------------------
 #: Collection / Patch 通用的「安全 setter」——都是 Artist 基类或 family 基类
 #: 上的公开 API，子类没有一个重定义成别的语义。
-_CAP_ALPHA = (lambda a: a.get_alpha(), lambda a, v: a.set_alpha(None if v is None else float(v)))
+#: 记在 artist 上的 (创建时已解析的花纹色, 我们上次写完之后它的样子)。第二项用来识别「中间被别人
+#: 动过」：native 会话里用户的 Python 在屏障之间可以改 rcParams、再 `set_alpha`，那之后记着的
+#: 创建时的值就过期了，必须按此刻的实况重新记。
+_HATCH_BASE = "_mm_hatch_base"
+
+
+def _hatch_resolved(a):
+    resolved = getattr(a, "_hatchcolors", None)  # Collection：'edge' 或 RGBA 数组
+    return getattr(a, "_hatch_color", None) if resolved is None else resolved
+
+
+def _fresh_copy(v):
+    """与 `v` 相等、但**不是同一个对象**的副本（matplotlib 的 `set_hatchcolor` 原样存引用，不转换）。
+    字符串 / 元组可能被解释器复用同一对象，所以重新拼一个。"""
+    if isinstance(v, str):
+        return "".join(list(v))
+    if isinstance(v, tuple):
+        return tuple(list(v))
+    return v.copy() if hasattr(v, "copy") else v
+
+
+def _with_hatch_pinned(a, fn) -> None:
+    """跑 `fn()`（会让 matplotlib ≥3.11 重解析花纹色的 setter），期间把花纹色钉在创建时的值（#874）。
+
+    3.11 起 `Patch` / `Collection` 的 `set_alpha`（Patch 还有 `set_fill`）会把
+    `_original_hatchcolor is None` 的花纹色按**此刻**的 `rcParams['hatch.color']` 重新解析；
+    脚本若在 `rc_context` / `style.context` 里临时改过 `hatch.color`，创建时解析出来的 red /
+    `'edge'` / 半透明 RGBA 就被环境值（3.11 默认 `'edge'`）盖掉，撤销也回不去，而只见最终列表
+    的全新 worker 没经历过这一步——热态 ≠ 重放（manifest 相同、像素不同）。
+
+    钉法：`set_hatchcolor(创建时已解析的值)` → 跑 `fn` → **把模式还原成 None**。`'edge'` 哨兵、RGBA
+    （含自带 alpha）在 `fn` 期间是显式设定，重解析读的是它而不是环境；`fn` 之后模式回到「未设」，
+    `_hatch_color` 是按当前 alpha 合成出来的值，不再带着我们的钉。所以**任何时刻**（含 native 屏障
+    释放 `apply([])` 之后、用户恢复运行的 Python 再改 rc 并 `set_alpha`）这个 artist 的模式都与没被
+    Tavotto 编辑过的一样，用户后续脚本照常跟随新的 rc（Codex #950 r4245786615）。
+
+    创建时的值另记在 artist 上（`_HATCH_BASE`）而不是读当下的 `_hatch_color`：撤销要把内在 alpha
+    （`rc_context` 里的 `(1,0,0,.25)`）找回来，当下的值已经被 alpha 编辑合成过了。记的值若与
+    「我们上次写完的样子」对不上，说明中间有别人动过，按实况重记。判据是真实 setter 在不在，不是
+    版本号；脚本显式给过 hatchcolor（`_original_hatchcolor` 不是 None）的 artist 原样跑 `fn`。
+
+    还原只在 `fn` 跑完后模式**仍是我们钉完那一刻实际存进去的那个对象**时才做（身份比较，钉的是独有副本；
+    比钉完后读回的对象而不是传入的参数，子类 `set_hatchcolor` 可能复制后再存，Codex #950 r4246402299）：用户子类若
+    重写 `set_alpha` / `set_fill` 并在里面调 `set_hatchcolor`，那是它有意装的模式，保留（Codex #950
+    r4246080546）；`fn` 抛异常时规则相同。
+    """
+    pin = getattr(a, "set_hatchcolor", None)
+    if pin is None or getattr(a, "_original_hatchcolor", 0) is not None:
+        fn()
+        return
+    cur = _hatch_resolved(a)
+    rec = getattr(a, _HATCH_BASE, None)
+    base = rec[0] if rec is not None and _same_value(rec[1], cur) else cur
+    if base is None:
+        fn()
+        return
+    pin(_fresh_copy(base))  # 钉进去的是一个独有的对象：身份比较才分得出「仍是我们钉的」
+    # 比的是钉完后**实际存进去**的那个对象：子类的 `set_hatchcolor` 可能先复制 / 规范化再存
+    # （Codex #950 r4246402299），那时存进去的与传进去的相等但不是同一个
+    token = getattr(a, "_original_hatchcolor", 0)  # noqa: SLF001
+    try:
+        fn()
+    finally:
+        if getattr(a, "_original_hatchcolor", 0) is token:  # noqa: SLF001
+            # 仍是我们钉的：还原模式本身，不重解析
+            a._original_hatchcolor = None  # noqa: SLF001
+            setattr(a, _HATCH_BASE, (base, _hatch_resolved(a)))
+        # 否则是用户子类的 set_alpha / set_fill 自己调了 `set_hatchcolor`，那个模式是它有意装的，
+        # 原样留下（setter 抛异常时同样适用；Codex #950 r4246080546）
+
+
+def _set_alpha_pinned(a, v) -> None:
+    _with_hatch_pinned(a, lambda: a.set_alpha(None if v is None else float(v)))
+
+
+_CAP_ALPHA = (lambda a: a.get_alpha(), _set_alpha_pinned)
+
+#: ≤3.10 的 `Patch.set_fill`：无边色时 `set_fill(False)` 把 `_hatch_color` 改成 `patch.edgecolor`，
+#: `set_fill(True)` 因边色回到 'none' 不再写它——花纹色停在改过的值，撤销回不去（#874）。
+#: 创建时的花纹色记在 artist 上（首次触碰前采；边色 getter 也会采，见 `_get_patch_edgecolor`）。
+_ORIG_HATCH = "_mm_orig_hatch_color"
+
+
+def _remember_hatch_color(p) -> None:
+    if hasattr(p, "set_hatchcolor") or not hasattr(p, "_hatch_color"):
+        return
+    if not hasattr(p, _ORIG_HATCH):
+        setattr(p, _ORIG_HATCH, p._hatch_color)  # noqa: SLF001
+
+
+def _set_patch_fill(p, v) -> None:
+    _remember_hatch_color(p)
+    _with_hatch_pinned(p, lambda: p.set_fill(bool(v)))
+    if (
+        bool(v)
+        and not hasattr(p, "set_hatchcolor")
+        and getattr(p, "_original_edgecolor", 0) is None
+        and hasattr(p, _ORIG_HATCH)
+    ):
+        p._hatch_color = getattr(p, _ORIG_HATCH)  # noqa: SLF001
+
+
 _CAP_VISIBLE = (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))
 _CAP_ZORDER = (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v)))
 _CAP_LABEL = (lambda a: str(a.get_label()), lambda a, v: a.set_label(str(v)))
@@ -3249,7 +3351,7 @@ _PATCH_CAPS: dict[str, tuple] = {
     "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
     "hatch": _CAP_HATCH,
     "hatch_linewidth": (_get_hatch_linewidth, _set_hatch_linewidth),
-    "fill": (lambda a: bool(a.get_fill()), lambda a, v: a.set_fill(bool(v))),
+    "fill": (lambda a: bool(a.get_fill()), _set_patch_fill),
     "alpha": _CAP_ALPHA,
     "visible": _CAP_VISIBLE,
     "zorder": _CAP_ZORDER,
@@ -3688,10 +3790,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a: a.get_mutation_scale(),
         lambda a, v: a.set_mutation_scale(float(v)),
     ),
-    ("arrowpatch", "alpha"): (
-        lambda a: a.get_alpha(),
-        lambda a, v: a.set_alpha(None if v is None else float(v)),
-    ),
+    ("arrowpatch", "alpha"): (lambda a: a.get_alpha(), _set_alpha_pinned),
     ("arrowpatch", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     ("arrowpatch", "zorder"): (
         lambda a: float(a.get_zorder()),
@@ -3905,7 +4004,7 @@ for _prop, _g1, _s1 in [
     ("linewidth", lambda r: float(r.get_linewidth()), lambda r, v: r.set_linewidth(float(v))),
     ("hatch", _CAP_HATCH[0], _CAP_HATCH[1]),
     ("hatch_linewidth", _get_hatch_linewidth, _set_hatch_linewidth),
-    ("alpha", lambda r: r.get_alpha(), lambda r, v: r.set_alpha(None if v is None else float(v))),
+    ("alpha", _CAP_ALPHA[0], _CAP_ALPHA[1]),  # 柱是 Patch：同样要在重解析前钉住花纹色
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),
     ("zorder", lambda r: float(r.get_zorder()), lambda r, v: r.set_zorder(float(v))),
     ("bar_width", _bar_width_get, _bar_width_set),

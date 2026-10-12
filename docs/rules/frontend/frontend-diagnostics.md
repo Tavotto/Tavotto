@@ -76,5 +76,7 @@
   旧包随清理 `discardDiagSend`（发送中等于取消）、在途的旧备包响应按代号丢弃并通知引擎释放；`send()` 还会在发那一刻核对备包时的项目，不一致就不发、重新备包。
   状态轮询遇到 404（引擎重启 / 会话过期）是**终态**：停止轮询、解除 `blockDismiss`、说「已不在引擎里」并给「重新准备」，绝不把用户困在模态框里（`DiagnosticsSendDialog.test.tsx` 的「项目代次」「引擎丢了会话」两组，sending 与 cancelling 两态都测）。
   **备包只在切换完成之后做**（Codex #923 复核 P1）：`projectStore.adoptSteps` 先 `setCurrentProjectId(B)`、之后才 await 加载并 `resetForNewProject`，认领那一刻内存里仍是 A 的文档与轨迹。所以对话框以 `projectStore.switching`（`runSwitch` 排队到执行完一直亮着，既有机制，不另造代次）为「项目已完全加载」的信号：switching 亮起 → 旧包作废、置「正在准备」、发送禁用、不备包；落下 → 才备新包（`DiagnosticsSendDialog.test.tsx`「真实的切换顺序」，反证：去掉等待则红）。
+- **迟到 start 的 409 不是失败（#928，Codex #923）。** 取消先被引擎处理时，引擎正确拒绝迟到的 start（409 `diag_stale_action` / `diag_session_cancelled`）。`DiagnosticsSendDialog` 的 `send()` catch 把这两个 code 当作取消流程的一部分：置 `cancelling`（不覆盖成不可重试的 `failed`），轮询继续到 `cancelled` 后自动重新备包（`DiagnosticsSendDialog.test.tsx`「迟到的 start」两组）。
+- **清理显式带备包时的项目（Codex #955）。** 引擎会话按项目分键，而切项目时全局当前项目先于 effect 清理变成 B；`discardDiagSend(id, pj)` 因此由对话框传 `packagePj`（备包那一刻的项目；迟到的 prepare 响应用闭包里捕获的 `pj`），请求以 `?pj=` + 头显式指向 A。不传则按 B 找不到 A 的 id、静默 `{ok:true}`，A 的上传继续。后端 `?pj=` 本就先于请求头（`app._request_ctx` / `_diag_send_scope`），`test_diag_send_api.py::test_explicit_pj_query_wins_over_a_conflicting_header` 钉住。
 - **异步回调一律认代号**：`DiagnosticsSendDialog` 里 prepare / startDiagSend / 保存 / 状态轮询的 then·catch 都捕获发起时的 `gen`（轮询用 `stop`），代号变了（项目切换、重新备包、关窗）就忽略——A 的迟到失败不许改 B 的对话框（`DiagnosticsSendDialog.test.tsx`「A 的 start 挂起 → 切到 B」，含 404）。
 

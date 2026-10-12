@@ -33,6 +33,8 @@ const ds = (key: string, values?: Record<string, unknown>) =>
 const POLL_MS = 350
 const DEFAULT_NOTE_MAX = 1000
 const DEFAULT_CATEGORY = 'other'
+/** 引擎拒绝「迟到的 start」的两个码（`diagsend.start`）：取消已先被处理，不是发送失败 */
+const LATE_START_CODES = new Set(['diag_stale_action', 'diag_session_cancelled'])
 
 /** 失败码里没登记过的（引擎比界面新）一律按「意外结果」说。 */
 const failureText = (code: string | undefined): string =>
@@ -114,7 +116,8 @@ export function DiagnosticsSendDialog({
   const discard = useCallback(() => {
     const id = idRef.current
     idRef.current = null
-    if (id) void discardDiagSend(id).catch(() => {})
+    // 显式传备包时的项目：清理发生在 `setCurrentProjectId(B)` 之后，全局当前项目已不是这份包的项目
+    if (id) void discardDiagSend(id, packagePj.current).catch(() => {})
   }, [])
 
   // 打开 → 备包（只在打开那一刻采一次载荷）；关闭 / 卸载 → 丢弃
@@ -130,14 +133,15 @@ export function DiagnosticsSendDialog({
     setCancelledNotice(showCancelled.current)
     showCancelled.current = false
     setPackageGone(false)
-    packagePj.current = currentProjectId()
+    const pj = currentProjectId()
+    packagePj.current = pj
     // 切项目进行中（`projectStore.switching`：从认领新 pj 到文档 / 轨迹 / 各 store 换代完成）：内存里
     // 还是旧项目的文档与轨迹，此刻备的包会是 A/B 混合包——不备，等 `switching` 落下去再来（下面的订阅）
     if (useProjectStore.getState().switching) return () => void (gen.current++)
     void prepareDiagSend(buildDiagnosticPayload())
       .then((p) => {
         if (gen.current !== mine) {
-          if (p.id) void discardDiagSend(p.id).catch(() => {})
+          if (p.id) void discardDiagSend(p.id, pj).catch(() => {})
           return
         }
         setPrepared(p)
@@ -230,6 +234,12 @@ export function DiagnosticsSendDialog({
       })
       .catch((e) => {
         if (gen.current !== mine) return
+        // 取消先于 start 被引擎处理：引擎正确拒了迟到的 start（409 stale_action / session_cancelled）。这是取消流程的
+        // 一部分，不是失败——进入 cancelling，让轮询看到 cancelled 后重新备包（覆盖成失败会停掉轮询、把用户困在错误里）
+        if (e instanceof ApiError && e.status === 409 && LATE_START_CODES.has(String(e.body?.code ?? ''))) {
+          setPhase('cancelling')
+          return
+        }
         if (e instanceof ApiError && e.status === 404) setPackageGone(true)
         setStatus({ code: 'internal', retryable: false } as DiagSendStatus)
         setPhase('failed')

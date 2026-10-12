@@ -4983,9 +4983,13 @@ export const fetchDiagSendStatus = (id: string) =>
 export const cancelDiagSend = (id: string) =>
   jsonFetch<DiagSendStatus>(`/api/diagnostics/send/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
 
-/** 对话框关了：释放引擎内存里的包（发送中等于取消）。幂等。 */
-export const discardDiagSend = (id: string) =>
-  jsonFetch<{ ok: boolean }>(`/api/diagnostics/send/${encodeURIComponent(id)}/discard`, { method: 'POST' })
+/**
+ * 对话框关了：释放引擎内存里的包（发送中等于取消）。幂等。
+ * 引擎的会话按项目分键，所以 `pj` 要传**备包那一刻的项目**：切项目时全局当前项目先于清理变成 B，
+ * 不显式传的话请求按 B 找不到 A 的 id、静默 `{ok:true}`，A 的上传还在继续（Codex #955）。
+ */
+export const discardDiagSend = (id: string, pj?: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/diagnostics/send/${encodeURIComponent(id)}/discard`, { method: 'POST' }, pj)
 
 /* --------------------------- 脚本注册表（stem ↔ 脚本） ----------------------- */
 /**
