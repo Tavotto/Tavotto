@@ -2131,7 +2131,8 @@ class EngineWorker:
             raise
         self.build_failed = False
         self.built = True
-        figcapture.clear_preview_poison(self.out_dir)
+        if getattr(self, "out_dir", None) is not None:  # 只造了一半的 worker（测试替身）没有产物目录
+            figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
         self.last_build_artifact_probe = resp.get("artifact_probe")
@@ -2714,7 +2715,8 @@ class WorkerdWorker:
             raise
         self.build_failed = False
         self.built = True
-        figcapture.clear_preview_poison(self.out_dir)
+        if getattr(self, "out_dir", None) is not None:  # 只造了一半的 worker（测试替身）没有产物目录
+            figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
         self.last_build_artifact_probe = resp.get("artifact_probe")
