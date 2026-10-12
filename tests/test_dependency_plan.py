@@ -1203,6 +1203,170 @@ class TestPlanOrigins:
         assert plan.requirements == ("tabulate",)
         assert plan.unknown == ("yaml",)
 
+    # ---- 表外名 + 环境里装好的唯一 index 来源发行包（#938）---------------------------------------
+    def _lab_env(
+        self, tmp_path, *, direct_url=None, record=("lab_tools/__init__.py",), name="lab-tools"
+    ):
+        prefix, site = _env(tmp_path)
+        _dist(site, name, "1.0", top="lab_tools\n", record=list(record), direct_url=direct_url)
+        return prefix, site
+
+    def test_938_an_off_table_name_satisfied_by_one_installed_index_dist_is_neither_missing_nor_unknown(
+        self, tmp_path
+    ):
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {"lab-tools": "1.0"}))
+        assert plan.unknown == () and plan.origins == ()
+        assert plan.missing == () and plan.requirements == ()  # 判满足，但不产生任何安装名
+        assert plan.status == "nothing_needed"
+
+    def test_938_satisfied_by_installed_metadata_never_becomes_an_install_name_in_a_new_generation(
+        self, tmp_path
+    ):
+        """已装元数据是证据不是授权：装到另一个（空的）环境时，也不会因为运行环境里有 lab-tools 就去装它。"""
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = depplan.plan(
+            proj,
+            "plot.py",
+            facts=_facts_at(prefix, {"lab-tools": "1.0"}),
+            target_kind="tavotto_managed",
+            install_facts=_facts({}),
+        )
+        assert plan.unknown == () and plan.origins == ()
+        assert "lab-tools" not in " ".join(plan.requirements)
+        assert plan.missing == ()
+
+    def test_938_only_the_satisfied_name_leaves_origins(self, tmp_path):
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\nimport zzz_private\n")
+        plan = self._plan(proj, _facts_at(prefix, {"lab-tools": "1.0"}))
+        assert plan.unknown == ("zzz_private",)
+        assert [o["import_name"] for o in plan.origins] == ["zzz_private"]
+
+    @pytest.mark.parametrize(
+        "direct_url",
+        [
+            {"url": "file:///src/fork", "dir_info": {"editable": True}},
+            {"url": "file:///wheels/fork.whl", "archive_info": {}},
+            {"url": "https://example.invalid/x.git", "vcs_info": {"vcs": "git"}},
+            {"url": "file:///src/fork", "dir_info": {}},
+        ],
+        ids=["editable", "local-wheel", "vcs", "local-dir"],
+    )
+    def test_938_non_reproducible_provenance_stays_unknown(self, tmp_path, direct_url):
+        prefix, _site = self._lab_env(tmp_path, direct_url=direct_url)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {"lab-tools": "1.0"}))
+        assert plan.unknown == ("lab_tools",)
+        assert plan.requirements == () and plan.missing == ()
+
+    def test_938_two_providers_are_still_ambiguous(self, tmp_path):
+        prefix, site = self._lab_env(tmp_path)
+        _dist(site, "lab-tools-extra", "1.0", top="lab_tools\n", record=["lab_tools/__init__.py"])
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {"lab-tools": "1.0", "lab-tools-extra": "1.0"}))
+        assert plan.unknown == ("lab_tools",)
+        assert plan.origins[0]["reason"] == "module_origin_ambiguous"
+
+    def test_938_a_module_without_any_metadata_stays_unknown(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        _write(site, "lab_tools/__init__.py", "")
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {}))
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_a_conda_provider_stays_unknown(self, tmp_path):
+        prefix, site = _env(tmp_path)
+        conda = prefix / "conda-meta"
+        conda.mkdir()
+        (conda / "lab-tools-1.0-py312.json").write_text(
+            json.dumps(
+                {
+                    "name": "lab-tools",
+                    "version": "1.0",
+                    "files": [f"{SP_REL}/lab_tools/__init__.py"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        _write(site, "lab_tools/__init__.py", "")
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(proj, _facts_at(prefix, {}))
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_the_live_provider_is_a_higher_layer_editable_fork_over_a_shadowed_index_dist(
+        self, tmp_path
+    ):
+        """排在前面的 editable fork 遮蔽了 site-packages 里的 index 发行包：真实 import 到的是 fork，不是被遮蔽的那个。"""
+        prefix, site = _env(tmp_path)
+        low = tmp_path / "low" / "site-packages"
+        low.mkdir(parents=True)
+        _dist(
+            site,
+            "lab-tools-fork",
+            "1.0",
+            top="lab_tools\n",
+            record=["lab_tools/__init__.py"],
+            direct_url={"url": "file:///s", "dir_info": {"editable": True}},
+        )
+        _dist(low, "lab-tools", "1.0", top="lab_tools\n", record=["lab_tools/__init__.py"])
+        facts = dataclasses.replace(
+            _facts_at(prefix, {"lab-tools": "1.0", "lab-tools-fork": "1.0"}),
+            site_roots=(str(site), str(low)),
+        )
+        plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_an_incomplete_name_layer_stays_unknown(self, tmp_path):
+        if os.name == "nt":
+            pytest.skip("符号链接在 Windows 上需要特权")
+        prefix, site = self._lab_env(tmp_path)
+        target = tmp_path / "elsewhere" / "other_pkg"
+        target.mkdir(parents=True)
+        (target / "__init__.py").write_text("", encoding="utf-8")
+        os.symlink(target, site / "other_pkg")  # 一个我们不跟的链接目录：这一层的名字没读全
+        facts = dataclasses.replace(
+            _facts_at(prefix, {"lab-tools": "1.0"}), site_roots=(str(site),)
+        )
+        index = depplan.static_index(facts)
+        assert index is not None and index.names_complete is False
+        plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_an_unmodelled_pth_hook_stays_unknown(self, tmp_path):
+        prefix, site = self._lab_env(tmp_path)
+        _write(site, "hook.pth", "import os\n")
+        facts = dataclasses.replace(
+            _facts_at(prefix, {"lab-tools": "1.0"}), site_roots=(str(site),)
+        )
+        index = depplan.static_index(facts)
+        assert index is not None and index.uncovered_paths > 0
+        plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_found_but_the_distribution_is_not_installed_stays_unknown(self, tmp_path):
+        """覆盖度说它能 import，目标解释器的已装集合里却没有那个发行包：不冒充满足。"""
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(
+            proj, _facts_at(prefix, {}), coverage=lambda names: _health(lab_tools="found")
+        )
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+
+    def test_938_an_import_error_stays_unknown(self, tmp_path):
+        prefix, _site = self._lab_env(tmp_path)
+        proj = self._project(tmp_path, "import lab_tools\n")
+        plan = self._plan(
+            proj,
+            _facts_at(prefix, {"lab-tools": "1.0"}),
+            coverage=lambda names: _health(lab_tools="import_error"),
+        )
+        assert plan.unknown == ("lab_tools",)
+        assert plan.origins[0]["coverage"] == "import_error"
+        assert plan.requirements == ()
+
     # ---- 不变量 ------------------------------------------------------------------------------
     def test_unknown_names_are_exactly_the_origins_names(self, tmp_path):
         proj = self._project(tmp_path, "import zzz_private\nimport cv2\nimport yaml\n")

@@ -899,6 +899,42 @@ def _verdict(
     return _Verdict(_ABSENT)
 
 
+def _installed_index_satisfies(
+    c: importscan.ImportClass, installed: dict, state: str, index_incomplete: bool
+) -> bool:
+    """表外名（`bucket=unknown`，没有可信安装名）是不是已经被**环境里装好的、可由包索引重现的唯一发行包**满足（#938）。
+
+    成立要同时满足（任何一条不成立都维持原判——来源未定）：静态索引读全（`index_incomplete` 为 False）；候选里恰有一个已装行、
+    未被遮蔽，且是 `index` 来源 + 可重现 + PyPI 生态，状态为 `installed_confirmed` / `resolved`（唯一、已确认；多个提供者的
+    歧义、editable / 本地 / VCS / URL / Conda、无元数据、`layer_order_unresolved` 都到不了这里）；该发行包确在目标解释器的
+    已装集合里；覆盖度缓存没说它导入失败（`import_error`）。
+
+    只回答「判满足」：调用方据此不把它放进 `unknown` / `origins`，**不产生任何安装名**——已装元数据是证据，不是安装授权。"""
+    if c.bucket != importscan.BUCKET_UNKNOWN or index_incomplete or state == "import_error":
+        return False
+    if (
+        c.distribution_status != distmeta.ST_CONFIRMED
+        or c.resolution_status != importscan.STATUS_RESOLVED
+        or c.distribution_provenance != distmeta.PROV_INDEX
+        or "layer_order_unresolved" in c.compatibility
+        or distmeta.EV_ORPHAN in c.evidence
+    ):
+        return False
+    rows = [x for x in c.distribution_candidates if x.get("source") == distmeta.SRC_INSTALLED]
+    live = [x for x in rows if not x.get("shadowed")]
+    if len(live) != 1:
+        return False
+    (row,) = live
+    if (
+        row.get("provenance") != distmeta.PROV_INDEX
+        or row.get("reproducible") is not True
+        or row.get("ecosystem") != distmeta.ECO_PYPI
+    ):
+        return False
+    key = depresolve.normalize_distribution(str(row.get("distribution") or ""))
+    return bool(key) and installed.get(key) is not None
+
+
 def _coverage_states(
     coverage: Callable[[tuple[str, ...]], dict | None] | None,
     scan: importscan.ScanResult,
@@ -1106,8 +1142,19 @@ def plan(
                     matches = False
         satisfied.append({**entry, "installed_version": version, "matches_declared": matches})
 
+    # 表外名已被环境里装好的唯一 index 来源发行包满足（#938）：不进 unknown / origins，也不产生安装名
+    index_satisfied = {
+        c.module
+        for c in scan.classes
+        if c.module in plain_unknown
+        and c.module not in open_classes
+        and _installed_index_satisfies(c, installed, states.get(c.module, ""), index_incomplete)
+    }
     origin_classes = [
-        c for c in scan.classes if c.module in open_classes or c.module in plain_unknown
+        c
+        for c in scan.classes
+        if c.module in open_classes
+        or (c.module in plain_unknown and c.module not in index_satisfied)
     ]
     specifiable = {
         c.module
