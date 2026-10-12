@@ -861,8 +861,10 @@ class TestPlan:
         # 门：此刻缺 matplotlib 与 tabulate（选中的解释器没有）
         assert [m["distribution"] for m in plan.missing] == ["matplotlib", "tabulate"]
         # 装：新的一代 six / tabulate 都要；matplotlib 由 adapter 带上，不进集合
-        assert plan.requirements == ("six==1.17.0", "tabulate==0.9.0")
-        assert plan.constraints == ("sortedcontainers==2.4.0",)  # marker 按目标的 3.10 求值：选中
+        # marker 按目标的 3.10 求值：sortedcontainers 选中。脚本里有一个归不到任何发行包的 import（目标表里没有 tomllib），
+        # 选中的声明就是权威（P02）：它与 six / tabulate 一起进新一代，而不是只做约束
+        assert plan.requirements == ("six==1.17.0", "sortedcontainers==2.4.0", "tabulate==0.9.0")
+        assert plan.constraints == ()
         assert plan.unknown == ("tomllib",)  # stdlib 按目标的名字表
         assert plan.facts["install"]["installed_count"] == 1  # 只有 adapter 带上的那一样
         assert (
@@ -894,16 +896,24 @@ class TestPlan:
         assert plan.status == "blocked"
         assert plan.blocked[0]["code"] == "dependency_target_unavailable"
 
-    def test_possible_imports_are_listed_but_never_installed(self, tmp_path):
+    def test_possible_imports_are_listed_and_only_declared_deferred_ones_are_installed(
+        self, tmp_path
+    ):
+        """P02 改了这条旧合同的一半：函数体内（延后）的 import 且项目声明了它 = 声明 root，要装（DEP-03）；
+        `try … except ImportError` 的可选 import 脚本自己处理缺席，仍只列出、不装。两者都留在 `possible` 里。"""
         proj = self._project(
             tmp_path,
             "try:\n    import seaborn\nexcept ImportError:\n    seaborn = None\ndef f():\n    import pandas\n",
             "seaborn\npandas\n",
         )
         plan = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="tavotto_managed")
-        assert plan.status == "nothing_needed"
         assert sorted(p["module"] for p in plan.possible) == ["pandas", "seaborn"]
-        assert plan.requirements == ()
+        assert plan.status == "ready"
+        assert plan.requirements == ("pandas",)
+        assert plan.constraints == ()  # seaborn：没有版本约束，也没有被装
+        # 用户自己的环境不受影响：只进不退的原地安装仍不为「可能」的 import 动手
+        venv = depplan.plan(proj, "plot.py", facts=_facts(), target_kind="project_venv")
+        assert venv.status == "nothing_needed" and venv.requirements == ()
 
     def test_identity_depends_on_intent_not_on_paths(self, tmp_path):
         a = self._project(tmp_path / "a", "import six\n", "six==1.17.0\n")

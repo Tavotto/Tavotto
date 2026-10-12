@@ -651,3 +651,14 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
 
 - 内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境一个都不碰；环境建议纯读、检查是唯一起候选的入口、采用要用户点（ADR 0114）；镜像只在网络失败或官方源太慢 / 超时、且无自配源时重试一次，两次共用预算
+
+## 声明 roots（兼容性改造 P02，ADR 0122）
+
+- 目标是受管环境时，**选中的声明里与脚本相关、且目标缺 / 版本不满足的**是安装 roots（`depplan.plan` → `requirements`），不再只做 constraint；用户自己的 venv 目标永不并入。
+  「相关」只有 `depplan._relevant_declarations` 一处：能指到它的 import（无条件 / 函数体内 / 别名动态）或归不到发行包的 import / 非字面量动态导入；可选 / 条件 / `TYPE_CHECKING` 不算。
+- 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；
+  用户的系统 / 本进程解释器只记录偏差（`action=recorded`），不静默升降包。`declared_gaps` 是可选字段，`plan_version` 不升。
+- 没有 import 名的 root 照样进账与装后核验（`install_only` 里 `import_name=""`）；`needed_imports` 一律滤掉空名，别拿空串去 probe。
+- 互斥 provider 只有一张表 `depresolve.ALTERNATIVE_DISTRIBUTIONS`：声明点名一个 = 它胜出；点名两个 = `dependency_conflict`；没点名 = curated（观察到的不是授权）。
+  账本合并（`generation_requirements`）与记账（`forget_install`）同源，不把被替掉的 provider 带回。
+- 看护：`tests/test_dependency_declared_roots.py`（计划层、账本）、`tests/test_dependency_transaction.py::TestDeclaredRootsTransaction` / `TestRunEnvOwnership`（真 generation + 离线 pip）。
