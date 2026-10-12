@@ -559,7 +559,8 @@ def environment_evidence(
     ):
         add(entry["python"], entry["source"], entry.get("label") or "")
     # 系统解释器与执行路径是同一个来源（`userenvs.system_candidates`）：只 `is_file`，不起进程
-    for entry in userenvs.system_candidates():
+    # 扫描里用只读版：PATH 过预算与取消、UNC / 网络路径不碰（清单与执行路径同一份）
+    for entry in userenvs.system_candidates(budget):
         add(entry["python"], entry["source"], "")
 
     candidates = [by_key[k] for k in order]

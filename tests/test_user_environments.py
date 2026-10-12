@@ -365,7 +365,9 @@ def test_offer_excludes_the_interpreter_that_is_missing_things(tmp_path, monkeyp
             {"python": str(good), "source": userenvs.SOURCE_CONDA, "label": "good"},
         ],
     )
-    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [(str(good), "system")])
+    monkeypatch.setattr(
+        engine_pool, "system_python_candidates", lambda **_: [(str(good), "system")]
+    )
     probed = []
 
     def fake_eval(cands, needed, unknown, **kw):
@@ -894,7 +896,7 @@ def conda_layout(tmp_path, home, monkeypatch):
     project.mkdir()
     (project / "environment.yml").write_text("name: lab\ndependencies:\n  - matplotlib\n")
     # 这台机器上真实的系统 Python 不进候选：结果不许随机器变
-    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda **_: [])
     discovered = []
     real_discover = userenvs.discover
     monkeypatch.setattr(userenvs, "discover", lambda *a: discovered.append(a) or real_discover(*a))

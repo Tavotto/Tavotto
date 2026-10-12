@@ -21,9 +21,20 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import deprepair, envadvice, pool, projectenv, projscan, userenvs
+from tavotto.engine import (
+    deprepair,
+    envadvice,
+    pool,
+    projectenv,
+    projscan,
+    scanbudget,
+    userenvs,
+)
 
 pytest_plugins = ("support.dependency_repair",)
+
+# conftest 的 autouse 夹具会把 `pool.system_python_candidates` 置空；这里要测真函数，导入期先留一份
+_REAL_SYSTEM_CANDIDATES = pool.system_python_candidates
 
 POSIX = pytest.mark.skipif(os.name == "nt", reason="bin/python 布局只在 POSIX 上")
 
@@ -57,7 +68,7 @@ def home(tmp_path, monkeypatch) -> Path:
     monkeypatch.setattr(
         userenvs, "_conda_roots", lambda: [r for r in real_roots() if r.startswith(str(h))]
     )
-    monkeypatch.setattr(pool, "system_python_candidates", lambda: [])
+    monkeypatch.setattr(pool, "system_python_candidates", lambda **_: [])
     return h
 
 
@@ -155,7 +166,7 @@ def test_system_only_candidates_are_the_same_in_execution_evidence_and_advice(
     tmp_path, home, monkeypatch, no_process
 ):
     system = _python(tmp_path / "usr-local")
-    monkeypatch.setattr(pool, "system_python_candidates", lambda: [(str(system), "system")])
+    monkeypatch.setattr(pool, "system_python_candidates", lambda **_: [(str(system), "system")])
     project = _project(tmp_path)
 
     execution = deprepair.user_environment_candidates(project, "fig.py")
@@ -177,7 +188,7 @@ def test_system_only_candidates_are_the_same_in_execution_evidence_and_advice(
 def test_unchecked_system_python_is_listed_but_not_recommended(tmp_path, home, monkeypatch):
     """system 候选进入建议是为了「看得见」；它没被检查过，不抢推荐位（推荐仍要有项目 / 机器线索或检查结论）。"""
     system = _python(tmp_path / "usr-local")
-    monkeypatch.setattr(pool, "system_python_candidates", lambda: [(str(system), "system")])
+    monkeypatch.setattr(pool, "system_python_candidates", lambda **_: [(str(system), "system")])
     project = _project(tmp_path)
     rec = envadvice.recommend(project, "fig.py")
     assert userenvs.env_id(str(system)) in [c["id"] for c in rec["candidates"]]
@@ -395,3 +406,136 @@ def test_import_failed_is_classified_apart_from_missing_and_stays_a_candidate(mo
     assert "script" not in pub["probe_status"]
     assert userenvs.best([out]) is None  # 不自动采用，但……
     assert out["python"] == "/x/bin/python3"  # ……仍是一条可见、可由用户选择的候选
+
+
+# ------------------------------------------------------------------ 自动扫描的 system 枚举：预算、取消、UNC
+
+UNC_DIR = "\\\\corp-fileserver\\share\\python"
+
+
+def _forbid_network(monkeypatch, touched: list[str]) -> None:
+    """文件系统入口一碰到 UNC / 网络路径就失败（Windows 上这一步会联系共享，断线时卡住）。"""
+    import glob as glob_mod
+    import shutil
+
+    def guard(real):
+        def wrapped(path, *a, **k):
+            text = os.fspath(path)
+            if text.startswith(("\\\\", "//")) or "corp-fileserver" in text:
+                touched.append(text)
+                raise AssertionError(f"自动扫描碰了网络路径：{text}")
+            return real(path, *a, **k)
+
+        return wrapped
+
+    monkeypatch.setattr(os.path, "isfile", guard(os.path.isfile))
+    monkeypatch.setattr(os, "access", guard(os.access))
+    monkeypatch.setattr(os.path, "exists", guard(os.path.exists))
+    monkeypatch.setattr(glob_mod, "glob", guard(glob_mod.glob))
+    monkeypatch.setattr(Path, "is_file", lambda self: guard(os.path.isfile)(str(self)))
+
+    def no_which(*a, **k):
+        raise AssertionError("自动扫描不许走 shutil.which（它不看预算、不跳 UNC）")
+
+    monkeypatch.setattr(shutil, "which", no_which)
+
+
+def test_scan_never_touches_a_unc_path_entry_and_still_finds_the_local_python(
+    tmp_path, home, monkeypatch, no_process
+):
+    local = _python(tmp_path / "local")
+    local.chmod(0o755)  # PATH 查找要求可执行位
+    monkeypatch.setenv("PATH", os.pathsep.join([UNC_DIR, str(local.parent)]))
+    monkeypatch.setattr(pool, "system_python_candidates", _REAL_SYSTEM_CANDIDATES)
+    touched: list[str] = []
+    _forbid_network(monkeypatch, touched)
+
+    found = pool.system_python_candidates(budget=scanbudget.Budget())
+
+    assert touched == []
+    assert (str(local), "system") in found
+
+
+def test_scan_skips_unc_roots_of_the_windows_list_too(tmp_path, home, monkeypatch, no_process):
+    """Windows 语义（`nt=True`，在 macOS 上注入）：UNC 的 PATH 项、重定向到共享的 LOCALAPPDATA / HOME 都不碰。"""
+    monkeypatch.setenv("PATH", UNC_DIR)
+    monkeypatch.setenv("PATHEXT", ".EXE")
+    monkeypatch.setenv("LOCALAPPDATA", "\\\\corp-fileserver\\profiles\\me\\AppData")
+    monkeypatch.setenv("HOME", "\\\\corp-fileserver\\home\\me")
+    touched: list[str] = []
+    _forbid_network(monkeypatch, touched)
+
+    found = _REAL_SYSTEM_CANDIDATES(budget=scanbudget.Budget(), nt=True)
+
+    assert touched == []
+    assert all(not py.startswith("\\\\") for py, _ in found)
+
+
+def test_scan_stops_on_cancel_and_on_budget_instead_of_walking_the_whole_path(
+    tmp_path, home, monkeypatch, no_process
+):
+    dirs = []
+    for i in range(300):
+        d = tmp_path / f"p{i}"
+        d.mkdir()
+        dirs.append(str(d))
+    monkeypatch.setenv("PATH", os.pathsep.join(dirs))
+    calls: list[str] = []
+    real_isfile = os.path.isfile
+
+    def counting(path):
+        calls.append(os.fspath(path))
+        return real_isfile(path)
+
+    monkeypatch.setattr(os.path, "isfile", counting)
+
+    cancelled = scanbudget.Budget(cancel=lambda: True)
+    _REAL_SYSTEM_CANDIDATES(budget=cancelled)
+    assert cancelled.stopped == scanbudget.ISSUE_CANCELLED
+    assert len(calls) < 100  # 300 个 PATH 项里只走了第一批
+
+    calls.clear()
+    tight = scanbudget.Budget(limits=scanbudget.Limits(max_entries=5))
+    _REAL_SYSTEM_CANDIDATES(budget=tight)
+    assert tight.stopped == scanbudget.ISSUE_ENTRIES
+    assert len(calls) <= 6
+
+
+@POSIX
+def test_scan_and_execution_system_candidates_share_the_same_identities(
+    tmp_path, home, monkeypatch, no_process
+):
+    local = _python(tmp_path / "local")
+    local.chmod(0o755)  # PATH 查找要求可执行位
+    monkeypatch.setenv("PATH", str(local.parent))
+    monkeypatch.setattr(pool, "system_python_candidates", _REAL_SYSTEM_CANDIDATES)
+
+    scan = {
+        userenvs.env_id(py) for py, _ in pool.system_python_candidates(budget=scanbudget.Budget())
+    }
+    execution = {userenvs.env_id(py) for py, _ in pool.system_python_candidates()}
+
+    assert scan == execution
+    assert userenvs.env_id(str(local)) in scan
+
+
+@POSIX
+def test_project_scan_evidence_lists_local_system_python_but_skips_unc(
+    tmp_path, home, monkeypatch, no_process
+):
+    local = _python(tmp_path / "local")
+    local.chmod(0o755)  # PATH 查找要求可执行位
+    monkeypatch.setenv("PATH", os.pathsep.join([UNC_DIR, str(local.parent)]))
+    monkeypatch.setattr(pool, "system_python_candidates", _REAL_SYSTEM_CANDIDATES)
+    project = _project(tmp_path)
+    touched: list[str] = []
+    _forbid_network(monkeypatch, touched)
+
+    evidence = projscan.environment_evidence(project, "fig.py", scanbudget.Budget(), private=True)[
+        "candidates"
+    ]
+
+    assert touched == []
+    want = userenvs.env_id(str(local))
+    row = next(c for c in evidence if c["id"] == want)
+    assert row["source"] == userenvs.SOURCE_SYSTEM

@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -997,7 +998,6 @@ def _prioritized_candidates() -> list[tuple[str, str]]:
     第 5 条留着不是摆设：用户的论文脚本可能要 import 内置 runtime 里没有的包
     （rdkit、astropy、自家实验室的库），那时他自己那套环境才是对的。
     """
-    import os
     import sys
 
     cands: list[tuple[str | None, str]] = [
@@ -1023,34 +1023,81 @@ def _prioritized_candidates() -> list[tuple[str, str]]:
         # 与 config 那条同路径时靠 `select_worker_python` 的去重，标签不变。
         cands.append((_bootstrap_venv_python(), SOURCE_MANAGED))
 
+    system = _system_python_paths()
+    cands += [(p, SOURCE_SYSTEM) for p in system]
+    return [(p, src) for p, src in cands if p]
+
+
+def _system_python_paths(
+    *,
+    which: Callable[[str], str | None] | None = None,
+    glob: Callable[[str], list[str]] | None = None,
+    nt: bool | None = None,
+) -> list[str | None]:
+    """系统 Python / Conda 的常见落点（第 5 档）——**执行路径与只读扫描共用这一份清单**。
+
+    `which` / `glob` 可注入：自动扫描（`system_python_candidates(budget=)`）换成跳过 UNC、遵守预算与取消的版本，
+    清单本身不分叉，两边看到的是同一批身份。"""
+    import os
+
+    which = which or shutil.which
+    glob = glob or _glob
+    nt = os.name == "nt" if nt is None else nt
     # 一律用字符串拼路径：pathlib.Path 会按 os.name 分派 Posix/Windows 实现，
     # 在非目标平台上构造另一半会直接抛 UnsupportedOperation。
     home = os.path.expanduser("~")
     system: list[str | None] = []
-    if os.name == "nt":
-        system += [shutil.which("python"), shutil.which("python3")]
+    if nt:
+        system += [which("python"), which("python3")]
         # python.org 与 conda 的常见落点。内置 runtime 缺失/损坏时全靠这里
         # 把用户已有的环境翻出来，值得多找几个地方。
         local = os.environ.get("LOCALAPPDATA")
         roots = ([local + r"\Programs\Python"] if local else []) + ["C:\\"]
         for root in roots:
-            system += _glob(root + r"\Python*\python.exe")
+            system += glob(root + r"\Python*\python.exe")
         system += [f"{home}\\{n}\\python.exe" for n in ("anaconda3", "miniconda3")]
     else:
         system += [
             "/opt/homebrew/opt/python@3.13/libexec/bin/python3",  # macOS Homebrew
             "/opt/homebrew/bin/python3",
-            shutil.which("python3"),
+            which("python3"),
             "/usr/bin/python3",
         ]
         # python.org 的 framework 安装（新版优先）与 conda
-        system += _glob("/Library/Frameworks/Python.framework/Versions/*/bin/python3")
+        system += glob("/Library/Frameworks/Python.framework/Versions/*/bin/python3")
         system += [f"{home}/{n}/bin/python3" for n in ("anaconda3", "miniconda3", "mambaforge")]
-    cands += [(p, SOURCE_SYSTEM) for p in system]
-    return [(p, src) for p, src in cands if p]
+    return system
 
 
-def system_python_candidates() -> list[tuple[str, str]]:
+def _is_network_path(path: str) -> bool:
+    """UNC / 网络共享路径（`\\\\host\\share`、`//host/share`）。碰它（`which` / `is_file` / `glob`）会联系共享、
+    断线时卡住，Windows 上还会发 NTLM——自动扫描一律不碰（与 `scanbudget` 对项目内 UNC 的立场同一条）。"""
+    return path.startswith(("\\\\", "//"))
+
+
+def _scan_which(budget, nt: bool) -> Callable[[str], str | None]:
+    """只读扫描版 `shutil.which`：逐项 PATH 过预算，跳过 UNC / 空项，取消或超预算就停。"""
+    import os
+
+    def which(name: str) -> str | None:
+        exts = [""]
+        if nt:
+            exts = [e for e in os.environ.get("PATHEXT", ".EXE").split(os.pathsep) if e] or [".EXE"]
+        for d in os.environ.get("PATH", "").split(os.pathsep):
+            if not d or _is_network_path(d):
+                continue
+            for ext in exts:
+                if not budget.charge_entry():
+                    return None
+                cand = os.path.join(d, name + ext)
+                if os.path.isfile(cand) and (nt or os.access(cand, os.X_OK)):
+                    return cand
+        return None
+
+    return which
+
+
+def system_python_candidates(*, budget=None, nt: bool | None = None) -> list[tuple[str, str]]:
     """这台机器上已有的解释器——老链条第四、五级（自身 / 系统 Python / Conda）。
 
     给项目环境接手的第二层用（ADR 0044）：内置 runtime 缺包、项目里又没有
@@ -1058,10 +1105,33 @@ def system_python_candidates() -> list[tuple[str, str]]:
     `_prioritized_candidates()` 已经枚举的那些位置，只是丢掉前三级——环境变量
     与设置里指定的那个若存在就是当前渲染环境（正是报缺包的那个），内置
     runtime 永远不缺 matplotlib 却正因缺别的包才走到这里。
+
+    `budget`（`scanbudget.Budget`，导入即扫描传）：只读扫描版——同一份清单，但 PATH 逐项过预算、UNC / 网络路径
+    一律不碰（不 `which`、不 `is_file`、不 `glob`），到期 / 取消停在已枚举的部分（账本记 time_budget /
+    cancelled → 报告 partial）。不传 = 执行路径的老行为。
     """
+    import os
+    import sys
+
+    if budget is None:
+        pairs = _prioritized_candidates()
+        wanted = [(c, s) for c, s in pairs if s in (SOURCE_CURRENT, SOURCE_SYSTEM)]
+        guard = None
+    else:
+        nt = os.name == "nt" if nt is None else nt
+
+        def scan_glob(pattern: str) -> list[str]:
+            if _is_network_path(pattern) or not budget.charge_entry():
+                return []
+            return _glob(pattern)
+
+        paths = _system_python_paths(which=_scan_which(budget, nt), glob=scan_glob, nt=nt)
+        wanted = [] if is_frozen() else [(sys.executable, SOURCE_CURRENT)]
+        wanted += [(p, SOURCE_SYSTEM) for p in paths if p]
+        guard = budget
     out: list[tuple[str, str]] = []
-    for cand, source in _prioritized_candidates():
-        if source not in (SOURCE_CURRENT, SOURCE_SYSTEM):
+    for cand, source in wanted:
+        if guard is not None and (_is_network_path(cand) or not guard.charge_entry()):
             continue
         try:
             if not Path(cand).is_file():
@@ -1069,6 +1139,8 @@ def system_python_candidates() -> list[tuple[str, str]]:
         except OSError:
             continue
         out.append((cand, source))
+    if guard is not None:
+        guard.stop_reason()  # 到期 / 取消要进账本（不足 64 项时 charge_entry 不查时钟）
     return out
 
 

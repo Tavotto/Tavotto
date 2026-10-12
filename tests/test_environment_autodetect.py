@@ -75,7 +75,7 @@ def _detect(clean_state, monkeypatch):
     monkeypatch.setattr(userenvs, "_pyenv_pythons", lambda *a, **k: [])
     monkeypatch.setattr(userenvs, "login_shell_pythons", lambda: [])
     monkeypatch.setattr(userenvs, "cached_login_shell_pythons", lambda: [])
-    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda **_: [])
     userenvs.reset_cache()
     envadvice.reset_cache()
     envlease.reset_for_tests()
@@ -1443,7 +1443,7 @@ def test_an_external_env_with_the_project_installed_editable_is_not_started_befo
     else:
         monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
     userenvs.reset_cache()
-    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda **_: [])
     cands = deprepair.user_environment_candidates(str(root), "fig.py")
     assert any(
         os.path.realpath(c["python"]) and _env_root(c["python"]) == _env_root(py) for c in cands
@@ -1760,7 +1760,7 @@ def test_a_path_entry_that_is_an_ancestor_of_the_project_defers_the_environment(
     (site_dir / "0work.pth").write_text(str(work) + "\n", "utf-8")
     monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
     userenvs.reset_cache()
-    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda **_: [])
 
     health = projectenv.probe_environment(
         py, modules=("zzz_needed_mod",), import_mode="spec", project_root=str(root)
@@ -1932,7 +1932,7 @@ def test_check_defers_imports_that_resolve_into_the_project_and_run_is_the_conse
     root, marker, py, base = _editable_world(tmp_path)
     monkeypatch.setattr(userenvs, "_conda_prefixes", lambda *a, **k: [str(base / "lab")])
     userenvs.reset_cache()
-    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda: [])
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda **_: [])
     plan = preparation.plan_for(
         project_id="pj",
         project_root=str(root),

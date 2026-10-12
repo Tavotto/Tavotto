@@ -163,7 +163,7 @@ def _isolated_system_pythons(monkeypatch):
     单跑绿、换台机器红。"""
     from tavotto.engine import pool
 
-    monkeypatch.setattr(pool, "system_python_candidates", lambda: [])
+    monkeypatch.setattr(pool, "system_python_candidates", lambda **_: [])
 
 
 _WATCH_THREAD_PREFIX = "tavotto-project-watch-"

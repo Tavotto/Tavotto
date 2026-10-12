@@ -933,15 +933,19 @@ def evaluate(
         return list(pool.map(one, todo))
 
 
-def system_candidates() -> list[dict]:
+def system_candidates(budget: scanbudget.Budget | None = None) -> list[dict]:
     """老链条里的系统解释器（`pool.system_python_candidates`，只 `is_file`，不起进程）的候选形状。
-    执行路径（`deprepair`）与证据 / 建议（`projscan` / `envadvice`）共用这一个入口。"""
+    执行路径（`deprepair`）与证据 / 建议（`projscan` / `envadvice`）共用这一个入口。
+
+    `budget`（导入即扫描传）：同一份清单的只读扫描版——PATH 过预算与取消、UNC / 网络路径不碰。"""
     from . import pool  # noqa: PLC0415 — pool 重，且只有要系统候选时才需要
 
-    return [
-        {"python": py, "source": SOURCE_SYSTEM, "label": ""}
-        for py, _src in pool.system_python_candidates()
-    ]
+    found = (
+        pool.system_python_candidates()
+        if budget is None
+        else pool.system_python_candidates(budget=budget)
+    )
+    return [{"python": py, "source": SOURCE_SYSTEM, "label": ""} for py, _src in found]
 
 
 def _version_tuple(text: str) -> tuple[int, ...]:
