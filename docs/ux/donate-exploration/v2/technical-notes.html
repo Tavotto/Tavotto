@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Technical notes — Tavotto support page</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&amp;display=swap">
+<link rel="stylesheet" href="styles.css">
+<style>
+.tn{max-width:1440px;margin:0 auto;padding:40px 64px 120px}
+.tn .back{display:inline-flex;align-items:center;min-height:44px;font-size:14px;color:var(--ink)}
+.tn h1{margin:48px 0 0;font-size:clamp(34px,4.4cqw,60px);line-height:1.05;letter-spacing:-.03em;font-weight:500;max-width:16em}
+.tn h1.zh{letter-spacing:0;line-height:1.3}
+.tn .intro{margin-top:22px;max-width:40em;font-size:17px;color:var(--ink-2)}
+.tn .specs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:48px;margin-top:56px;max-width:1100px}
+.tn .spec{border-top:1px solid var(--hair-strong);padding:20px 0 34px;display:grid;grid-template-columns:44px minmax(0,1fr);column-gap:8px;align-content:start}
+.tn .spec .n{font:500 12px/24px var(--mono);color:var(--ink-3)}
+.tn .spec h2{grid-column:2;margin:0 0 8px;font-size:18px;line-height:24px;font-weight:600}
+.tn .spec p{grid-column:2;font-size:15px;line-height:1.6;color:var(--ink-2)}
+.tn .spec .src{grid-column:2;margin-top:8px;font:11.5px/1.5 var(--mono);color:var(--ink-3)}
+.tn .lang{margin-left:auto}
+.tn .top{display:flex;align-items:center;gap:12px}
+@container (max-width:760px){.tn{padding:24px 20px 80px}.tn .specs{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="page" data-lang="en">
+<main class="tn">
+  <div class="top"><a class="back" href="index.html"><span class="en">← Support Tavotto</span><span class="zh">← 支持 Tavotto</span></a>
+    <div class="lang" role="group" aria-label="Language / 语言"><button type="button" data-set-lang="en" aria-pressed="true" lang="en">EN</button><button type="button" data-set-lang="zh" aria-pressed="false" lang="zh-Hans">中文</button></div></div>
+  <h1 class="en">Technical notes: the details behind the three missions.</h1>
+  <h1 class="zh" lang="zh-Hans">技术说明：三项使命背后的细节。</h1>
+  <p class="intro en">As of version 0.18, October 2026. Each line points to where the repository states it; anything still in beta says so.</p>
+  <p class="intro zh" lang="zh-Hans">截至 2026 年 10 月的 0.18 版。每一条都注明了仓库中的出处；仍处于 Beta 的部分如实标出。</p>
+  <div class="specs">
+    <section class="spec"><span class="n">01</span><h2 class="en">Your Python, as it is.</h2><h2 class="zh">就用你现有的 Python。</h2>
+      <p class="en">Python 3.10 to 3.14 and matplotlib 3.8 to 3.11 — in the runtime Tavotto carries, or in your project’s own environment, which is in beta.</p>
+      <p class="zh">Python 3.10 至 3.14，matplotlib 3.8 至 3.11——可以用 Tavotto 自带的运行环境，也可以用你项目自己的环境（Beta）。</p>
+      <span class="src">docs/support-matrix.json · pyproject.toml [worker]</span></section>
+    <section class="spec"><span class="n">02</span><h2 class="en">Tested where you work.</h2><h2 class="zh">在你工作的地方测试。</h2>
+      <p class="en">Desktop apps for macOS 14 or later on Apple silicon, macOS 15 or later on Intel, and Windows x64 — each with an installer, CI checks and a smoke test of the real build. Linux runs from PyPI in a browser tab, in beta.</p>
+      <p class="zh">桌面版支持 Apple 芯片上的 macOS 14 及以上、Intel 上的 macOS 15 及以上，以及 Windows x64——都有安装包、CI 检查，并对真实构建产物做冒烟测试。Linux 通过 PyPI 在浏览器标签页中运行，目前为 Beta。</p>
+      <span class="src">docs/support-matrix.json · release notes 0.17 / 0.18</span></section>
+    <section class="spec"><span class="n">03</span><h2 class="en">Nothing written until it is proven.</h2><h2 class="zh">未经证明，一字不写。</h2>
+      <p class="en">Before a change is written back into a figure file, the script runs again from scratch and the result is compared with what you saw — geometry and pixels. If anything differs, the file is left exactly as it was.</p>
+      <p class="zh">在把修改写回图形文件之前，脚本会从头再运行一次，结果与你所见逐一比对——几何与像素。只要有任何不同，原文件保持原样。</p>
+      <span class="src">AGENTS.md · write-back invariant</span></section>
+    <section class="spec"><span class="n">04</span><h2 class="en">Text that stays text.</h2><h2 class="zh">文字始终是文字。</h2>
+      <p class="en">PDF export embeds each vector panel as it was drawn, so text remains real, selectable, searchable text. PNG and TIFF are rasterised from that same PDF, and every exported file is reopened and checked.</p>
+      <p class="zh">PDF 导出按原样嵌入每个矢量面板，文字始终可选中、可搜索。PNG 与 TIFF 从同一份 PDF 栅格化而来；每个导出文件都会被重新打开并检查。</p>
+      <span class="src">README · Export for publication · release notes 0.16</span></section>
+    <section class="spec"><span class="n">05</span><h2 class="en">Checked before it leaves.</h2><h2 class="zh">离开之前，先做检查。</h2>
+      <p class="en">Before export, the figure is checked against a versioned publication profile: one set of rules, read by both the engine and the interface.</p>
+      <p class="zh">导出前，图会依据一份带版本的出版规范接受检查：同一套规则，引擎与界面共读。</p>
+      <span class="src">PRODUCT.md · src/tavotto/profiles/publication.json</span></section>
+    <section class="spec"><span class="n">06</span><h2 class="en">Failure, said plainly.</h2><h2 class="zh">失败就说失败。</h2>
+      <p class="en">When a refresh fails, the status says so. Approximate previews are marked as approximate. Properties Tavotto cannot edit are listed, not hidden.</p>
+      <p class="zh">刷新失败时，状态如实说明。近似预览会标明是近似。Tavotto 无法编辑的属性会被列出来，而不是藏起来。</p>
+      <span class="src">PRODUCT.md · Product principle 4</span></section>
+    <section class="spec"><span class="n">07</span><h2 class="en">Your figures stay on your machine.</h2><h2 class="zh">你的图留在你的电脑上。</h2>
+      <p class="en">Everything runs locally. Telemetry is off until you say yes, and your scripts, paths and the text inside your figures are structurally unable to leave.</p>
+      <p class="zh">一切都在本机运行。在你同意之前，遥测保持关闭；你的脚本、路径与图中的文字，在结构上就无法被发送出去。</p>
+      <span class="src">AGENTS.md · privacy · docs/privacy.md</span></section>
+    <section class="spec"><span class="n">08</span><h2 class="en">Decisions, written down.</h2><h2 class="zh">每个决定，都有记录。</h2>
+      <p class="en">More than a hundred architecture decision records, kept in public beside the code — including the ones that say what Tavotto will not do.</p>
+      <p class="zh">一百多份架构决策记录，与代码一起公开存放——也包括那些写明 Tavotto 不做什么的决定。</p>
+      <span class="src">docs/adr/</span></section>
+  </div>
+</main>
+</div>
+<script>
+(function () {
+  var page = document.querySelector('.page'), lang = 'en';
+  try { lang = new URLSearchParams(location.search).get('lang') || localStorage.getItem('tavotto-support-lang') || 'en'; } catch (e) {}
+  function set(l) {
+    lang = l === 'zh' ? 'zh' : 'en'; page.dataset.lang = lang; document.documentElement.lang = lang === 'zh' ? 'zh-Hans' : 'en';
+    document.querySelectorAll('[data-set-lang]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.setLang === lang)); });
+    try { localStorage.setItem('tavotto-support-lang', lang); } catch (e) {}
+  }
+  document.querySelectorAll('[data-set-lang]').forEach(function (b) { b.addEventListener('click', function () { set(b.dataset.setLang); }); });
+  set(lang);
+})();
+</script>
+</body>
+</html>
