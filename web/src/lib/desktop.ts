@@ -9,7 +9,7 @@
  * 换成 HttpOnly 会话 cookie，再进界面。
  */
 
-import { t } from '@/i18n'
+import { currentLocale, t } from '@/i18n'
 import { CodexShellError } from '@/lib/codexInstall'
 
 /**
@@ -424,23 +424,64 @@ export async function runCodexIntegration(action: 'install' | 'doctor'): Promise
  * 这里是它在前端的唯一入口：检查 → 下载安装 → 重启，三步各自可见、可失败，
  * **绝不静默进行**——什么时候换版本必须是用户按下按钮的结果。
  *
+ * 检查与下载都走壳自己的命令（`desktop_update_check` / `desktop_update_install`，ADR 0121）：
+ * 国内镜像与 GitHub 按顺序尝试，下载失败也会换来源重来——这些发生在 Rust 侧，前端只看到
+ * 「查到了 / 装上了 / 失败了」和实际用的来源。**不再直接用 `@tauri-apps/plugin-updater`**
+ * （它的多 endpoints 只覆盖 check）。
+ *
  * 更新包的签名由壳里的公钥校验（tauri.conf.json 的 plugins.updater.pubkey），
- * 私钥只在 CI 里；校验不过 downloadAndInstall 当场抛错，装不上去。
+ * 私钥只在 CI 里；来源不影响信任，校验不过当场失败，装不上去。
  */
+export type UpdateSource = 'mirror' | 'github'
+
 export interface DesktopUpdateInfo {
   version: string
   notes?: string
   /** Release 里写的发布时间，原样透出，不在前端解析格式 */
   date?: string
+  /** 这一版是从哪个来源查到的（只放折叠详情里，不进主文案） */
+  source?: UpdateSource
 }
 
-interface UpdateHandle {
-  version: string
-  downloadAndInstall: (cb?: (e: unknown) => void) => Promise<void>
+/** 壳回报的单个来源失败记录（只有闭集枚举，不带原始错误文本） */
+export interface UpdateAttempt {
+  source: UpdateSource
+  stage: 'check' | 'download' | 'install'
+  kind: string
 }
 
-/** check() 拿到的句柄——下载安装要用同一个，不能到时候重新查一次 */
-let pendingUpdate: UpdateHandle | null = null
+/**
+ * 更新失败。`message` 是给人看的一句话（已翻译）；`code` 与 `attempts` 是稳定的机器可读部分，
+ * 进「技术详情」，不当句子显示。
+ */
+export class DesktopUpdateError extends Error {
+  readonly code: string
+  readonly attempts: UpdateAttempt[]
+  constructor(code: string, message: string, attempts: UpdateAttempt[] = []) {
+    super(message)
+    this.name = 'DesktopUpdateError'
+    this.code = code
+    this.attempts = attempts
+  }
+}
+
+function toUpdateError(e: unknown, fallbackKey: 'update.desktopCheckFailed' | 'update.desktopInstallFailed') {
+  const raw = (e && typeof e === 'object' ? e : {}) as { code?: unknown; attempts?: unknown }
+  const code = typeof raw.code === 'string' ? raw.code : typeof e === 'string' ? e : 'unknown'
+  const attempts = Array.isArray(raw.attempts) ? (raw.attempts as UpdateAttempt[]) : []
+  // 壳回的是稳定 code；ACL 拒绝 / 老壳没有这个命令时回的是别的字符串——一律走通用句子，
+  // **不把它当句子显示给用户**
+  const message =
+    code === 'no_pending_update'
+      ? t('update.noPendingUpdate', { ns: 'errors' })
+      : code === 'busy'
+        ? t('update.busy', { ns: 'errors' })
+        : t(fallbackKey, { ns: 'errors' })
+  return new DesktopUpdateError(code, message, attempts)
+}
+
+/** check() 拿到的版本——下载安装要的是壳里留着的同一个句柄，不能到时候重新查一次 */
+let pendingUpdate: DesktopUpdateInfo | null = null
 
 /**
  * 查有没有新版。没有新版返回 null；**浏览器模式也返回 null**——那条路由
@@ -448,34 +489,43 @@ let pendingUpdate: UpdateHandle | null = null
  */
 export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
   if (!isDesktop()) return null
-  const { check } = await import('@tauri-apps/plugin-updater')
-  const update = await check()
-  pendingUpdate = update ? (update as unknown as UpdateHandle) : null
-  if (!update) return null
-  return {
-    version: update.version,
-    notes: update.body ?? undefined,
-    date: update.date ?? undefined,
+  pendingUpdate = null
+  const { invoke } = await import('@tauri-apps/api/core')
+  let found: DesktopUpdateInfo | null
+  try {
+    // 界面语言交给壳参与来源顺序（简体中文界面 → 镜像优先）
+    found = await invoke<DesktopUpdateInfo | null>('desktop_update_check', { uiLang: currentLocale() })
+  } catch (e) {
+    throw toUpdateError(e, 'update.desktopCheckFailed')
   }
+  if (!found) return null
+  pendingUpdate = {
+    version: found.version,
+    notes: found.notes ?? undefined,
+    date: found.date ?? undefined,
+    source: found.source,
+  }
+  return pendingUpdate
 }
 
 /**
  * 下载并安装上一次查到的那一版。onProgress 收到 0–1 的进度；服务端没给
  * Content-Length 时收到 null——进度条该显示成不确定态，而不是假装卡在
- * 某个百分比上。
+ * 某个百分比上。**换来源重下时壳会再发一次 Started，进度随之归零。**
+ * 返回实际用的来源。
  *
  * 没有句柄就抛，不在这里偷偷补一次 check：用户看到的版本号与真正装上去的
  * 那一版必须是同一个。
  */
 export async function installDesktopUpdate(
   onProgress?: (fraction: number | null) => void,
-): Promise<void> {
-  const update = pendingUpdate
-  if (!update) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
+): Promise<UpdateSource> {
+  if (!pendingUpdate) throw new Error(t('update.noPendingUpdate', { ns: 'errors' }))
+  const { invoke, Channel } = await import('@tauri-apps/api/core')
   let total = 0
   let got = 0
-  await update.downloadAndInstall((event) => {
-    const e = event as { event: string; data?: { contentLength?: number; chunkLength?: number } }
+  const channel = new Channel<{ event: string; data?: { contentLength?: number | null; chunkLength?: number } }>()
+  channel.onmessage = (e) => {
     if (e.event === 'Started') {
       total = e.data?.contentLength ?? 0
       got = 0
@@ -486,8 +536,15 @@ export async function installDesktopUpdate(
     } else if (e.event === 'Finished') {
       onProgress?.(1)
     }
-  })
+  }
+  let source: UpdateSource
+  try {
+    source = await invoke<UpdateSource>('desktop_update_install', { onEvent: channel })
+  } catch (e) {
+    throw toUpdateError(e, 'update.desktopInstallFailed')
+  }
   pendingUpdate = null
+  return source
 }
 
 /** 装完重启到新版本。浏览器模式退化成刷新页面。 */

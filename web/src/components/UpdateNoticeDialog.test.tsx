@@ -222,7 +222,7 @@ describe('桌面通道', () => {
   })
 
   it('「立即更新」落到 installDesktopUpdate；装完给「立即重启」，按下去 relaunch', async () => {
-    vi.mocked(installDesktopUpdate).mockResolvedValue(undefined)
+    vi.mocked(installDesktopUpdate).mockResolvedValue('mirror')
     vi.mocked(relaunchDesktop).mockResolvedValue(undefined)
     useUpdateStore.setState({ desktopUpdate: { version: '0.15.0' } })
     await mount()

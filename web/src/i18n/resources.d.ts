@@ -1846,6 +1846,8 @@ export default interface Resources {
       },
       "update": {
         "applyFailedRetry": "升级未完成，当前版本未变。可以再点一次「下载并升级」，或查看下方日志排查。",
+        "attemptLine": "{{source}} · {{stage}} · {{kind}}",
+        "attemptsTitle": "各来源的失败记录",
         "autoCheck": "每天自动检查",
         "autoCheckDesktop": "启动时自动检查",
         "autoCheckDesktopReason": "桌面版每次启动都会检查，暂时不能关闭",
@@ -1865,6 +1867,16 @@ export default interface Resources {
         "downloadingPct": "下载中 {{pct}}%",
         "installMethod": "安装方式",
         "installedHint": "已安装。当前窗口仍是旧版本，重启后生效。",
+        "kindName": {
+          "bad_manifest": "清单无效",
+          "http": "服务端返回错误",
+          "network": "网络不通",
+          "other": "其他错误",
+          "signature": "签名校验未通过",
+          "stalled": "下载停滞",
+          "timeout": "超时",
+          "version_mismatch": "版本与已查到的不一致"
+        },
         "lastChecked": "上次检查：{{time}}",
         "lastCheckedNoUpdate": "{{time}} · 没有新版本",
         "lastCheckedUnknown": "尚未检查，无法判断是不是最新",
@@ -1877,7 +1889,17 @@ export default interface Resources {
         "restartBefore": "升级完成。",
         "restartStrong": "请重启 Tavotto",
         "signatureNote": "更新包由官方签名，安装前会校验；校验不过不会安装。你的项目、排版与设置都不在应用的安装目录里，升级不受影响。",
+        "sourceName": {
+          "github": "GitHub",
+          "mirror": "国内镜像"
+        },
         "sourceUpgrade": "源码检出，请执行",
+        "sourceUsed": "更新来源：{{source}}",
+        "stageName": {
+          "check": "检查",
+          "download": "下载",
+          "install": "安装"
+        },
         "title": "更新",
         "upgrading": "升级中…"
       }
@@ -2860,7 +2882,6 @@ export default interface Resources {
       "fixCount_other": "修复 {{count}}",
       "fixFailed": {
         "artifact_unsupported": "所选源图暂不支持自动修复；现有修改保持原样，可手动编辑并导出新文件。",
-        "busy": "上一次修复还在进行，稍后再试。",
         "canvas_missing": "找不到这条问题所在的画布，请刷新问题列表。",
         "engine_failed": "修复时渲染出错，图没有改动。",
         "font_unavailable": "规范要求的字体「{{font}}」在这台电脑上没有安装，字体没有改。",
@@ -2996,6 +3017,7 @@ export default interface Resources {
     },
     "update": {
       "applyFailed": "升级失败",
+      "busy": "当前正在更新或操作中，请稍候再试",
       "checkFailed": "检查失败：{{error}}",
       "checkFailedOffline": "检查失败：无法连接本地服务",
       "desktopCheckFailed": "检查更新失败",

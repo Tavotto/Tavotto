@@ -741,8 +741,7 @@
     "fixChoose": "Fix…",
     "fixFailed": {
       "artifact_unsupported": "Automatic fixes are not yet supported for this selected source. Existing edits are unchanged; edit manually and export a new file.",
-      "busy": "The previous fix is still running. Try again in a moment.",
-      "canvas_missing": "The canvas this problem lives on couldn’t be found — refresh the list",
+        "canvas_missing": "The canvas this problem lives on couldn’t be found — refresh the list",
       "engine_failed": "Rendering failed while fixing. The figure was not changed.",
       "font_unavailable": "The required font \"{{font}}\" isn't installed on this computer, so the font was not changed.",
       "native_unsupported": "Figures opened with {{product}} Run can’t be fixed automatically yet. The figure wasn’t changed.",
@@ -909,11 +908,13 @@
   },
   "update": {
     "applyFailed": "Upgrade failed",
+    "busy": "The previous fix is still running. Try again in a moment.",
     "checkFailed": "Check failed: {{error}}",
     "checkFailedOffline": "Check failed: couldn’t reach the local service",
     "desktopCheckFailed": "Update check failed",
     "desktopInstallFailed": "Couldn’t download or install",
     "noPendingUpdate": "No update is ready to install. Check for updates first.",
+    "busy": "An update operation is already in progress. Try again in a moment.",
     "relaunchFailed": "Restart failed. Quit and reopen the app."
   },
   "writeBackAnnotations": {

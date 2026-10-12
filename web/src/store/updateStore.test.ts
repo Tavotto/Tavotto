@@ -20,7 +20,7 @@ vi.mock('@/lib/desktop', () => ({
   relaunchDesktop: vi.fn(),
 }))
 
-import { checkDesktopUpdate } from '@/lib/desktop'
+import { checkDesktopUpdate, installDesktopUpdate } from '@/lib/desktop'
 import { useUpdateStore } from './updateStore'
 
 const reset = () =>
@@ -33,6 +33,8 @@ const reset = () =>
     desktopPhase: 'idle',
     desktopUpdate: null,
     desktopError: null,
+    desktopSource: null,
+    desktopAttempts: [],
     desktopChecked: false,
     desktopCheckedAtMs: null,
   })
@@ -41,6 +43,7 @@ beforeEach(() => {
   reset()
   vi.unstubAllGlobals()
   vi.mocked(checkDesktopUpdate).mockReset()
+  vi.mocked(installDesktopUpdate).mockReset()
 })
 
 describe('apply() 的结局', () => {
@@ -159,5 +162,45 @@ describe('桌面检查的时刻', () => {
     expect(s.desktopError).toBeTruthy()
     expect(s.desktopCheckedAtMs).toBeNull()
     expect(s.desktopChecked).toBe(false)
+  })
+})
+
+describe('桌面更新的来源只进详情状态（ADR 0121）', () => {
+  it('查到：记下查到它的来源', async () => {
+    vi.mocked(checkDesktopUpdate).mockResolvedValue({ version: '9.9.9', source: 'mirror' })
+    await useUpdateStore.getState().checkDesktop()
+    expect(useUpdateStore.getState().desktopSource).toBe('mirror')
+  })
+
+  it('装成功：来源换成真正下载成功的那个（下载失败会换来源）', async () => {
+    vi.mocked(checkDesktopUpdate).mockResolvedValue({ version: '9.9.9', source: 'mirror' })
+    await useUpdateStore.getState().checkDesktop()
+    vi.mocked(installDesktopUpdate).mockResolvedValue('github')
+    await useUpdateStore.getState().installDesktop()
+    const s = useUpdateStore.getState()
+    expect(s.desktopPhase).toBe('installed')
+    expect(s.desktopSource).toBe('github')
+    expect(s.desktopAttempts).toEqual([])
+  })
+
+  it('装失败：一句话进 desktopError，逐来源记录进 desktopAttempts，阶段回到 idle 可重试', async () => {
+    vi.mocked(checkDesktopUpdate).mockResolvedValue({ version: '9.9.9', source: 'mirror' })
+    await useUpdateStore.getState().checkDesktop()
+    const attempts = [
+      { source: 'mirror', stage: 'download', kind: 'signature' },
+      { source: 'github', stage: 'download', kind: 'timeout' },
+    ]
+    vi.mocked(installDesktopUpdate).mockRejectedValue(
+      Object.assign(new Error('下载或安装失败'), { code: 'all_sources_failed', attempts }),
+    )
+    await useUpdateStore.getState().installDesktop()
+    const s = useUpdateStore.getState()
+    expect(s.desktopPhase).toBe('idle')
+    expect(s.desktopError).toBe('下载或安装失败')
+    expect(s.desktopAttempts).toEqual(attempts)
+    // 再来一轮：旧的失败记录不残留
+    vi.mocked(installDesktopUpdate).mockResolvedValue('mirror')
+    await useUpdateStore.getState().installDesktop()
+    expect(useUpdateStore.getState().desktopAttempts).toEqual([])
   })
 })
