@@ -402,10 +402,22 @@ def clear_preview_poison(out_dir) -> bool:
     on_disk = {n.rsplit(".", 1)[0] for n in names if n.endswith(".svg") or n.endswith(".json")}
     ledger = _read_preview_ledger(out_dir)["stems"]
     fresh = set(published_preview_stems(out_dir))
+    stale = False
     for stem in on_disk:
         rec = ledger.get(stem)
-        if stem not in fresh or not isinstance(rec, dict) or int(rec.get("seq") or 0) <= floor:
-            return False
+        if stem in fresh and isinstance(rec, dict) and int(rec.get("seq") or 0) > floor:
+            continue
+        # 作废之后没被重新完整发布的旧产物：新一代不再出这张图时它永远不会被覆盖——留着会让整个目录永远「无预览」
+        # （Codex #958）。读方进程这里尽力删掉它；删不掉（仍被锁着）就继续作废，宁可无预览也不放出错配。
+        for suffix in (".svg", ".json"):
+            try:
+                os.remove(os.path.join(os.fspath(out_dir), stem + suffix))
+            except FileNotFoundError:
+                pass
+            except OSError:
+                stale = True
+    if stale:
+        return False
     del _poisoned_dirs[key]
     return True
 

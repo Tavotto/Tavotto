@@ -493,11 +493,14 @@ def test_app_side_poisoned_code_kills_the_session_and_blinds_every_reader(tmp_pa
     resp = m.app.test_client().get("/api/engine/svg?id=fig.py")
     assert resp.status_code == 404
 
-    # 新一代 build 成功但**没有**重新发布这个 stem（条件脚本这次没出图）：错配文件仍在磁盘上，不得解除（Codex #958）
-    assert figcapture.clear_preview_poison(out) is False
+    # 新一代 build 成功但**没有**重新发布这个 stem（条件脚本这次没出图）：错配文件不能被放出来（Codex #958）——
+    # 读方把作废后没重新发布的旧产物删掉再解除，读入口看到的是「没有这张图」而不是错配
+    assert figcapture.clear_preview_poison(out) is True
+    assert not (out / "fig.svg").exists() and not (out / "fig.json").exists()
     resp = m.app.test_client().get("/api/engine/svg?id=fig.py")
     assert resp.status_code == 404
     resp.close()
+    figcapture.poison_preview_dir(out)  # 接下来那段：再作废一次，验证重新发布后解除
 
     # 新一代把它完整重新发布之后（作废之后的账本序号、字节数对得上）才解除，读得到新发布的文件
     fresh = b"<svg data-new='2'/>"
@@ -524,11 +527,33 @@ def test_poison_survives_a_build_that_republishes_only_other_stems(tmp_path):
         (out / "other.svg").write_bytes(svg)
         (out / "other.json").write_text("{}", encoding="utf-8")
         figcapture.record_preview_published(out, "other", len(svg))
+        # 新一代不再出 old：读方把作废后没重新发布的旧产物删掉，目录随即解除（不能因一张已不存在的图永远「无预览」）
+        assert figcapture.clear_preview_poison(out) is True
+        assert not (out / "old.svg").exists() and not (out / "old.json").exists()
+        assert (out / "other.svg").exists()  # 新一代刚发布的不动
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
+def test_poison_stays_while_a_stale_preview_cannot_be_removed(tmp_path, monkeypatch):
+    """旧产物删不掉（仍被锁着）：继续作废，宁可「无预览」也不放出错配（Codex #958）。"""
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "old.svg").write_text("<svg/>", encoding="utf-8")
+    figcapture.poison_preview_dir(out)
+    real_remove = os.remove
+
+    def locked(path, *a, **k):
+        if str(path).endswith("old.svg"):
+            raise PermissionError(13, "locked", str(path))
+        return real_remove(path, *a, **k)
+
+    monkeypatch.setattr(os, "remove", locked)
+    try:
         assert figcapture.clear_preview_poison(out) is False
         assert not Path(figcapture.usable_preview_path(out, "old", ".svg")).exists()
-        (out / "old.svg").unlink()
-        (out / "old.json").unlink()  # 旧文件真的没了（或被重新发布）才解除
-        assert figcapture.clear_preview_poison(out) is True
     finally:
         figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
 
@@ -543,7 +568,9 @@ def test_poison_audit_includes_dot_leading_stems(tmp_path):
     (out / ".published.json").write_text("{}", encoding="utf-8")
     figcapture.poison_preview_dir(out)
     try:
-        assert figcapture.clear_preview_poison(out) is False
+        # 被当成用户 stem 审计：没重新发布 → 被当作旧产物删掉（若被当成内部文件跳过，它会留着并被放出来）
+        assert figcapture.clear_preview_poison(out) is True
+        assert not (out / ".published.svg").exists() and not (out / ".published.json").exists()
     finally:
         figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
 
