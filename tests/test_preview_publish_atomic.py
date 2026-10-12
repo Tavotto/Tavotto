@@ -599,6 +599,34 @@ def test_a_transient_first_publish_failure_can_be_retried():
     assert r["summary_stems"] == ["fig"] and r["published"] == ["fig"], r
 
 
+def test_an_audit_does_not_erase_a_newer_poison_that_arrived_meanwhile(tmp_path, monkeypatch):
+    """读方审计期间又来了一次更新的 `preview_poisoned`：这次审计没覆盖新那一代，不得把它一并解除（Codex #958）。"""
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    figcapture.poison_preview_dir(out)
+    real_listdir = os.listdir
+    bumped = []
+
+    def listdir_then_new_poison(path):
+        names = real_listdir(path)
+        if not bumped:  # 审计已取走旧 floor、扫完目录之后，新的作废到达（账本序号前进）
+            bumped.append(1)
+            svg = b"<svg id='x'/>"
+            (out / "x.svg").write_bytes(svg)
+            figcapture.record_preview_published(out, "x", len(svg))
+            figcapture.poison_preview_dir(out)
+        return names
+
+    monkeypatch.setattr(os, "listdir", listdir_then_new_poison)
+    try:
+        assert figcapture.clear_preview_poison(out) is False
+        assert figcapture._dir_key(out) in figcapture._poisoned_dirs
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
 def test_poison_audit_includes_dot_leading_stems(tmp_path):
     """用户 stem 可以以点开头：`.published.svg` 是合法预览，作废审计不能把它当内部文件跳过（Codex #958）。"""
     from tavotto.engine import figcapture

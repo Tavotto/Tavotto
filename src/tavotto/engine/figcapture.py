@@ -155,6 +155,7 @@ import pathlib
 import posixpath
 import re
 import sys
+import threading
 import weakref
 
 if __package__:
@@ -368,6 +369,8 @@ def preview_invalid(out_dir, stem: str) -> bool:
 PREVIEW_POISONED_CODE = "preview_poisoned"
 #: 目录键 → 作废那一刻账本的发布序号。解除时要求磁盘上每个还有预览文件的 stem 都在此之后重新完整发布过。
 _poisoned_dirs: dict[str, int] = {}
+#: 作废 / 解除的状态转换互斥：读方审计与新的 `preview_poisoned` 可能并发（Codex #958）
+_poison_lock = threading.Lock()
 
 
 def _dir_key(out_dir) -> str:
@@ -378,7 +381,8 @@ def poison_preview_dir(out_dir) -> None:
     """读方进程：`out_dir` 下所有预览产物都不可信（见 `PREVIEW_POISONED_CODE`）。记下此刻的账本序号。"""
     key = _dir_key(out_dir)
     seq = _read_preview_ledger(out_dir)["seq"]
-    _poisoned_dirs[key] = max(seq, _poisoned_dirs.get(key, seq))
+    with _poison_lock:
+        _poisoned_dirs[key] = max(seq, _poisoned_dirs.get(key, seq))
 
 
 def clear_preview_poison(out_dir) -> bool:
@@ -389,9 +393,10 @@ def clear_preview_poison(out_dir) -> bool:
     的 stem 都在作废之后重新完整发布过（账本序号大于作废时的序号、字节数对得上），才解除；否则继续「无预览」。
     """
     key = _dir_key(out_dir)
-    if key not in _poisoned_dirs:
-        return True
-    floor = _poisoned_dirs[key]
+    with _poison_lock:
+        if key not in _poisoned_dirs:
+            return True
+        floor = _poisoned_dirs[key]
     try:
         names = os.listdir(os.fspath(out_dir))
     except OSError:
@@ -418,7 +423,11 @@ def clear_preview_poison(out_dir) -> bool:
                 stale = True
     if stale:
         return False
-    del _poisoned_dirs[key]
+    with _poison_lock:
+        # compare-and-delete：审计期间若又来了一次更新的作废（序号变了），这次审计没覆盖它，不得一并抹掉
+        if _poisoned_dirs.get(key) != floor:
+            return False
+        del _poisoned_dirs[key]
     return True
 
 
