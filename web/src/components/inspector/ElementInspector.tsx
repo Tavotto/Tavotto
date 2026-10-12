@@ -1842,7 +1842,8 @@ function BatchFieldRow({
           return (
             <HatchColorField
               ariaLabel={label}
-              mixed={mixed}
+              // 色号混不混按**显示的**色号算：都写着 `edge` 的成员边色不同，原始值相同却显示不同色（Codex #972 r4251281733）
+              mixed={reads.some((r) => r.hex !== reads[0].hex)}
               hex={reads[0].hex}
               follows={
                 reads.every((r) => r.follows) ? true : reads.some((r) => r.follows) ? 'mixed' : false

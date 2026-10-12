@@ -816,6 +816,18 @@ describe('纹理颜色多选：色号混合与跟随模式混合分开算（Code
     expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('edge')
     expect(overrideOf('axes_0.patches_1', 'hatchcolor')).toBe('edge')
   })
+
+  it('都写着 edge、边色不同：色块说「多个值」，不谎报第一个的色号（Codex #972 r4251281733）', async () => {
+    seedRender(two({ value: '#222222', follows: false }, { value: '#008000', follows: false }))
+    await mount(['axes_0.patches_0', 'axes_0.patches_1'])
+    await act(async () => {
+      followBox()!.click()
+    })
+    expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('edge')
+    expect(overrideOf('axes_0.patches_1', 'hatchcolor')).toBe('edge')
+    expect(followBox()!.checked).toBe(true)
+    expect(host.querySelector('[data-color-field] [data-mixed]')).toBeTruthy()
+  })
 })
 
 /* --------------------------------- 散点 ---------------------------------- */
