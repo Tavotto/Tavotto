@@ -897,7 +897,7 @@ class Worker(wireproto.V1Handler):
                             # shutil.move 进已存在目录：受影响的是 dst/basename(src)，不是整个目录
                             dst = ledger.move_destination(path, dst)
                         affected = (dst,)
-                    ledger.blocked(op, kind, path, *affected)
+                    ledger.blocked(op, kind, path, *affected, dests=affected)
                     return None
                 return real_fn(*a, **kw)
 

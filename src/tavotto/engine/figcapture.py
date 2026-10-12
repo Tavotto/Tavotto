@@ -1534,26 +1534,33 @@ class BlockedFileOps:
         except (OSError, ValueError):
             return None
 
-    def blocked(self, op: str, kind: str, *paths) -> None:
-        """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。"""
+    def blocked(self, op: str, kind: str, *paths, dests=()) -> None:
+        """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。
+
+        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。"""
         try:
             if not self._active:
                 return
             affected = [p for p in (self._norm(x) for x in paths) if p]
             if not affected:
                 return
+            dest_set = {p for p in (self._norm(x) for x in dests) if p}
             if self._rewritten:  # 新的阻断重新盖住这些路径：之前的「已重写」不再作数
                 self._rewritten = {
                     r for r in self._rewritten if not any(self._covers(p, r) for p in affected)
                 }
             if len(self._events) >= self.MAX_EVENTS:
-                self._spill_paths(op, kind, affected)
+                self._spill_paths(op, kind, affected, dest_set)
                 return
-            self._events.append({"op": op, "kind": kind, "paths": affected, "observed": False})
+            self._events.append(
+                {"op": op, "kind": kind, "paths": affected, "dests": dest_set, "observed": False}
+            )
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
 
-    def _spill_paths(self, op: str, kind: str, affected: list[str]) -> None:
+    def _spill_paths(
+        self, op: str, kind: str, affected: list[str], dest_set: frozenset | set = frozenset()
+    ) -> None:
         """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。"""
         ev = self._spill.get((op, kind))
         if ev is None:
@@ -1561,6 +1568,7 @@ class BlockedFileOps:
                 "op": op,
                 "kind": kind,
                 "paths": set(),
+                "dests": set(),
                 "observed": False,
                 "lost": False,
                 "coarse": False,
@@ -1568,6 +1576,8 @@ class BlockedFileOps:
         if ev["lost"]:
             return
         ev["paths"].update(affected)
+        if len(ev["dests"]) + len(dest_set) <= self.MAX_SPILL_PATHS:
+            ev["dests"].update(dest_set)
         if len(ev["paths"]) > self.MAX_SPILL_PATHS:
             if ev["coarse"]:
                 ev["lost"], ev["paths"] = True, set()
@@ -1636,23 +1646,59 @@ class BlockedFileOps:
             real = self._norm(path)
             if real is None:
                 return
+            # 写进一个被拦下的目录删除所覆盖、且脚本没（成功）重建过的目录：直接运行里父目录已被删，
+            # 这次 open 会 FileNotFoundError，这里却因目录还在而成功——写入本身就是分叉，记为观察，不给豁免
+            unrecreated = self._under_unrecreated_deleted_dir(real)
+            if unrecreated:
+                self._mark(real)
             for ev in self._events:
                 ev["paths"] = [p for p in ev["paths"] if p != real]
             for ev in self._spill.values():
                 if not ev["coarse"]:  # 粗化后存的是目录，清不掉其中某个文件的嫌疑
                     ev["paths"].discard(real)
             # 目录级污点（`rmtree` 之后脚本重建目录、写进新文件）盖不到脚本自己写成功的后代
-            if len(self._rewritten) < self.MAX_SPILL_PATHS:
+            if not unrecreated and len(self._rewritten) < self.MAX_SPILL_PATHS:
                 self._rewritten.add(real)
         except Exception:  # noqa: BLE001
             return
         finally:
             self._busy = False
 
-    def recreating_directory(self, path) -> None:
-        """脚本要 `mkdir` 一个被拦下的 `rmtree` / `rmdir` 影响过的目录（直接运行时它已被删，这里会重建）：
-        守卫让它其实还在，`makedirs(exist_ok=True)` / `Path.mkdir(exist_ok=True)` 随后的 `isdir` 探测
-        两边都得到「是目录」，不算分叉。只豁免这条目录自身的状态查询——里面没被重写的文件仍受污点覆盖。永不抛。"""
+    def _deleted_dirs_covering(self, real: str) -> list[str]:
+        """被拦下的目录删除里，覆盖 `real`（自身或祖先）的那些目录。粗化 / 丢失的溢出账认不出具体目录，不在此列。"""
+        found: list[str] = []
+        for ev in (*self._events, *self._spill.values()):
+            if ev["kind"] != self.KIND_DELETE_DIR or ev.get("lost") or ev.get("coarse"):
+                continue
+            found.extend(p for p in ev["paths"] if self._covers(p, real))
+        return found
+
+    def _under_unrecreated_deleted_dir(self, real: str) -> bool:
+        """`real` 落在某个被拦下的目录删除之下，且那个被删的目录没被脚本成功重建过。
+        溢出账粗化 / 丢失后认不出具体目录：命中就宁可当作没重建。"""
+        for ev in (*self._events, *self._spill.values()):
+            if ev["kind"] != self.KIND_DELETE_DIR:
+                continue
+            if ev.get("lost"):
+                return True
+            if ev.get("coarse"):
+                if self._spill_hit(ev, real):
+                    return True
+                continue
+            if any(
+                d != real and self._covers(d, real) and d not in self._rewritten
+                for d in ev["paths"]
+            ):
+                return True
+        return False
+
+    def recreating_directory(self, path, *, parents: bool = False) -> None:
+        """脚本 `mkdir` 一个被拦下的 `rmtree` / `rmdir` 影响过的目录，且直接运行也会得到同样的成功结果
+        （mkdir 成功，或 `makedirs(exist_ok=True)` / `Path.mkdir(exist_ok=True)` 撞上还在的目录）：
+        记这条目录已被脚本重建，随后的 `isdir` 探测与写进去的新文件都不算分叉。只豁免这条目录自身的状态
+        与脚本写成功的后代——里面没被重写的文件仍受污点覆盖。
+        `path` 是被删目录**之内**的子目录时：`parents`（`makedirs` / `mkdir(parents=True)`）会连父目录一起重建；
+        否则直接运行里父目录不在、会 FileNotFoundError，这里的成功是分叉，记为观察。永不抛。"""
         if not (self._events or self._spill) or not self._active or self._busy:
             return
         self._busy = True
@@ -1660,22 +1706,58 @@ class BlockedFileOps:
             real = self._norm(path)
             if real is None:
                 return
-            kinds = (self.KIND_DELETE_DIR,)
-            if any(
-                ev["kind"] in kinds and real in ev["paths"]
-                for ev in (*self._events, *(e for e in self._spill.values() if not e["coarse"]))
-            ):
+            covering = self._deleted_dirs_covering(real)
+            if not covering:
+                return
+            if real in covering:
                 self._rewritten.add(real)
+            elif parents:
+                self._rewritten.update(covering)
+            else:
+                self._mark(real)
         except Exception:  # noqa: BLE001
             return
         finally:
             self._busy = False
 
-    def exclusive_create_failed(self, path) -> None:
-        """`x` 打开撞上了已存在的文件（`FileExistsError`）。若这条路径被守卫拦下的操作影响过，直接运行时
-        那次删除 / 改名已经生效、`x` 会成功——脚本这里看到的结果（异常、随后读到的旧文件）与直接运行不同，
-        本身就是一次观察，不必等它回读。永不抛。"""
+    def mkdir_collided(self, path) -> None:
+        """脚本 `os.mkdir`（非 `exist_ok`）一个被拦下的删除所覆盖的目录，撞上了守卫留下的旧目录
+        （`FileExistsError`）：直接运行里目录已被删、mkdir 会成功——脚本走进了异常分支，本身就是一次观察。
+        脚本自己重建过的目录不算（两边都会失败；`_mark` 对 `_rewritten` 直接放行）。永不抛。"""
         self.observe_stat(path)
+
+    def exclusive_create_failed(self, path) -> None:
+        """`x` 打开撞上了已存在的文件（`FileExistsError`）。若这条路径被守卫拦下的**破坏性**操作
+        （删除 / 删除目录 / 改名移动的源）影响过，直接运行时那次操作已经生效、`x` 会成功——脚本这里看到的
+        结果（异常、随后读到的旧文件）与直接运行不同，本身就是一次观察，不必等它回读。
+        写入（直跑后同样存在）、改名移动的**目的**、被拦截的 savefig 目标（直跑后也存在）不走这条捷径：
+        `x` 在两边都会失败。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is None or real in self._rewritten:
+                return
+            destructive = (self.KIND_DELETE, self.KIND_DELETE_DIR, self.KIND_RENAME)
+            for ev in (*self._events, *self._spill.values()):
+                if ev["observed"] or ev["kind"] not in destructive:
+                    continue
+                if isinstance(ev["paths"], list):
+                    hit = any(self._covers(p, real) for p in ev["paths"])
+                else:
+                    hit = self._spill_hit(ev, real)
+                if not hit:
+                    continue
+                if ev["kind"] == self.KIND_RENAME and any(
+                    self._covers(d, real) for d in ev["dests"]
+                ):
+                    continue  # 改名 / 移动的目的：直跑后它存在，`x` 同样失败
+                ev["observed"] = True
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
 
     def move_destination(self, src, dst):
         """`shutil.move(src, dst)` 真正影响的目的路径：`dst` 是已存在的目录时是 `dst/basename(src)`，
@@ -1754,6 +1836,11 @@ class BlockedFileOps:
         real_open, real_io_open = builtins.open, io.open
         real_path_open, real_stat = pathlib.Path.open, os.stat
         real_mkdir = os.mkdir
+        real_makedirs = os.makedirs
+        real_path_mkdir = pathlib.Path.mkdir
+        #: 正在进行的 `makedirs` / `Path.mkdir` 的 (exist_ok, parents)：内部的 `os.mkdir` 撞上还在的目录时
+        #: 由外层自己吞掉（`exist_ok`），不是脚本看到的异常
+        mk_ctx: list[tuple[bool, bool]] = []
 
         def _open_through(original, file, mode, args, kwargs):
             ledger.observe(file, mode)
@@ -1806,13 +1893,40 @@ class BlockedFileOps:
         os.stat = watched_stat
 
         def watched_mkdir(path, *args, **kwargs):
-            ledger.recreating_directory(path)
-            return real_mkdir(path, *args, **kwargs)
+            tolerant, parents = mk_ctx[-1] if mk_ctx else (False, False)
+            try:
+                result = real_mkdir(path, *args, **kwargs)
+            except FileExistsError:
+                if tolerant:
+                    ledger.recreating_directory(path, parents=parents)  # 直跑也成功：等价结果
+                else:
+                    ledger.mkdir_collided(path)
+                raise
+            ledger.recreating_directory(path, parents=parents)  # 成功之后才给豁免
+            return result
+
+        def watched_makedirs(name, mode=0o777, exist_ok=False):
+            mk_ctx.append((bool(exist_ok), True))
+            try:
+                return real_makedirs(name, mode, exist_ok)
+            finally:
+                mk_ctx.pop()
+
+        def watched_path_mkdir(self_path, mode=0o777, parents=False, exist_ok=False):
+            mk_ctx.append((bool(exist_ok), bool(parents)))
+            try:
+                return real_path_mkdir(self_path, mode, parents, exist_ok)
+            finally:
+                mk_ctx.pop()
 
         os.mkdir = watched_mkdir
+        os.makedirs = watched_makedirs
+        pathlib.Path.mkdir = watched_path_mkdir
 
         def uninstall() -> None:
             os.mkdir = real_mkdir
+            os.makedirs = real_makedirs
+            pathlib.Path.mkdir = real_path_mkdir
             builtins.open = real_open
             io.open = real_io_open
             pathlib.Path.open = real_path_open

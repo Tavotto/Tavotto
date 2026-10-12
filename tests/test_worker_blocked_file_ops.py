@@ -1075,8 +1075,8 @@ with open("old_dir/{read}") as f:
 @needs_worker
 @pytest.mark.parametrize(
     "mk",
-    ['os.makedirs("old_dir", exist_ok=True)', 'Path("old_dir").mkdir(exist_ok=True)', "pass"],
-    ids=["makedirs", "path_mkdir", "no_recreate"],
+    ['os.makedirs("old_dir", exist_ok=True)', 'Path("old_dir").mkdir(exist_ok=True)'],
+    ids=["makedirs", "path_mkdir"],
 )
 def test_p2_reading_a_file_the_script_rewrote_under_a_blocked_directory_succeeds(figs, mk):
     src = RMTREE_RECREATE.format(plot=_PLOT, mk=mk, read="result.csv")
@@ -1097,6 +1097,7 @@ def test_ledger_rewritten_descendant_is_exempt_from_a_directory_taint(tmp_path):
     d = tmp_path / "out"
     ledger = _ledger(tmp_path)
     ledger.blocked("shutil.rmtree", "delete_dir", str(d))
+    ledger.recreating_directory(str(d))
     ledger.opened(str(d / "result.csv"), "w")
     ledger.observe(str(d / "result.csv"), "r")
     assert ledger.material() == []
@@ -1108,6 +1109,7 @@ def test_ledger_a_later_block_revokes_the_rewrite_exemption(tmp_path):
     d = tmp_path / "out"
     ledger = _ledger(tmp_path)
     ledger.blocked("shutil.rmtree", "delete_dir", str(d))
+    ledger.recreating_directory(str(d))
     ledger.opened(str(d / "result.csv"), "w")
     ledger.blocked("os.remove", "delete", str(d / "result.csv"))
     ledger.observe(str(d / "result.csv"), "r")
@@ -1141,3 +1143,128 @@ def test_ledger_recreating_a_blocked_directory_exempts_only_its_own_state_query(
     other.recreating_directory(str(d))
     other.observe_stat(str(d))
     assert other.material() != []
+
+
+# ====================================================== #952 第八轮
+RMTREE_WRITE_CHILD = """\
+import os
+import shutil
+from pathlib import Path
+{plot}
+shutil.rmtree("old_dir")
+{mk}
+with open("old_dir/result.csv", "w") as f:
+    f.write("new")
+with open("old_dir/result.csv") as f:
+    value = f.read()
+"""
+
+
+@needs_worker
+def test_r8_writing_a_child_of_a_blocked_directory_without_recreating_it_fails(figs):
+    """直跑里父目录已被删、这次 open 会 FileNotFoundError；safe 因目录还在而成功——写入本身就是分叉。"""
+    src = RMTREE_WRITE_CHILD.format(plot=_PLOT, mk="pass")
+    e = _blocked(figs, "r8_nomk.py", src)
+    assert e.code == CODE, (e.code, str(e))
+    assert [o["op"] for o in e.extra["operations"]] == ["shutil.rmtree"]
+
+
+@needs_worker
+@pytest.mark.parametrize(
+    "mk",
+    ['os.makedirs("old_dir", exist_ok=True)', 'Path("old_dir").mkdir(parents=True, exist_ok=True)'],
+    ids=["makedirs", "path_mkdir"],
+)
+def test_r8_recreating_the_directory_first_keeps_the_rewrite_exemption(figs, mk):
+    _build(figs, "r8_mk_ok.py", RMTREE_WRITE_CHILD.format(plot=_PLOT, mk=mk), project_mode=True)
+
+
+MKDIR_CAUGHT = """\
+import os
+import shutil
+import matplotlib.pyplot as plt
+{plot}
+shutil.rmtree("old_dir")
+try:
+    os.mkdir("old_dir")
+    ok = True
+except FileExistsError:
+    ok = False
+fig, ax = plt.subplots()
+ax.plot([0, 1 if ok else 2])
+"""
+
+
+@needs_worker
+def test_r8_plain_mkdir_that_hits_the_retained_directory_is_a_divergence(figs):
+    e = _blocked(figs, "r8_mkdir_bad.py", MKDIR_CAUGHT.format(plot=_PLOT))
+    assert e.code == CODE, (e.code, str(e))
+
+
+@needs_worker
+def test_r8_makedirs_exist_ok_after_a_blocked_rmtree_still_succeeds(figs):
+    src = MKDIR_CAUGHT.replace("os.mkdir(", "os.makedirs(").replace(
+        'os.makedirs("old_dir")', 'os.makedirs("old_dir", exist_ok=True)'
+    )
+    _build(figs, "r8_makedirs_ok.py", src.format(plot=_PLOT), project_mode=True)
+
+
+EXCLUSIVE_AFTER_WRITE = """\
+import os
+from pathlib import Path
+import matplotlib.pyplot as plt
+{plot}
+Path("cache.csv").write_text("2")
+try:
+    open("cache.csv", "x").close()
+except FileExistsError:
+    pass
+"""
+
+
+@needs_worker
+def test_r8_exclusive_create_failing_after_a_blocked_write_is_not_a_divergence(figs):
+    """直跑里 write_text 写成功后文件也存在，`x` 两边都失败。"""
+    _build(figs, "r8_x_write.py", EXCLUSIVE_AFTER_WRITE.format(plot=_PLOT), project_mode=True)
+
+
+@needs_worker
+def test_r8_exclusive_create_failing_after_a_blocked_delete_still_fails(figs):
+    e = _blocked(figs, "r8_x_delete.py", DELETE_THEN_EXCLUSIVE_CREATE_NO_READ)
+    assert e.code == CODE, (e.code, str(e))
+
+
+def test_r8_ledger_exclusive_failure_shortcut_is_only_for_destructive_sources(tmp_path):
+    f, g = tmp_path / "a.txt", tmp_path / "b.txt"
+    w = _ledger(tmp_path)
+    w.blocked("Path.write_text", "write", str(f))
+    w.exclusive_create_failed(str(f))
+    assert w.material() == []
+    s = _ledger(tmp_path)
+    s.blocked("os.rename", "rename", str(f), str(g), dests=[str(g)])
+    s.exclusive_create_failed(str(g))  # 目的：直跑后存在，x 同样失败
+    assert s.material() == []
+    s.exclusive_create_failed(str(f))  # 源：直跑后不在，x 本该成功
+    assert [o["op"] for o in s.material()] == ["os.rename"]
+    v = _ledger(tmp_path)
+    v.blocked("savefig", "savefig", str(f))
+    v.exclusive_create_failed(str(f))
+    assert v.material() == []
+
+
+def test_r8_ledger_child_write_needs_a_recreated_directory(tmp_path):
+    d = tmp_path / "out"
+    bad = _ledger(tmp_path)
+    bad.blocked("shutil.rmtree", "delete_dir", str(d))
+    bad.opened(str(d / "r.csv"), "w")
+    assert [o["op"] for o in bad.material()] == ["shutil.rmtree"]
+    sub = _ledger(tmp_path)
+    sub.blocked("shutil.rmtree", "delete_dir", str(d))
+    sub.recreating_directory(str(d / "sub"))  # 非 parents：直跑里父目录不在
+    assert [o["op"] for o in sub.material()] == ["shutil.rmtree"]
+    deep = _ledger(tmp_path)
+    deep.blocked("shutil.rmtree", "delete_dir", str(d))
+    deep.recreating_directory(str(d / "sub"), parents=True)
+    deep.opened(str(d / "sub" / "r.csv"), "w")
+    deep.observe(str(d / "sub" / "r.csv"), "r")
+    assert deep.material() == []
