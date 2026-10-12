@@ -224,6 +224,22 @@ describe('文档锚点：会丢编辑的两件自动展开一次', () => {
     expect(after!.textContent).not.toBe('')
   })
 
+  it('空排版（不显示标签）也先挂着空的播报区：保存失败时填进的是同一个节点', async () => {
+    await act(async () => {
+      useDocumentStore.getState().silent((d) => {
+        d.objects.length = 0
+      })
+      useDocumentStore.setState({ saveState: 'saved', saveIssue: null })
+    })
+    expect(host.querySelector('[data-save-state]'), '空排版不显示保存标签').toBeNull()
+    const before = host.querySelector('[data-save-live]')
+    expect(before, '播报区已经挂着').not.toBeNull()
+    expect(before!.textContent).toBe('')
+    await act(async () => useDocumentStore.setState({ saveState: 'save_error', saveIssue: null }))
+    expect(host.querySelector('[data-save-live]')).toBe(before)
+    expect(before!.textContent).not.toBe('')
+  })
+
   it('保存失败：同样自动展开', async () => {
     await act(async () => useDocumentStore.setState({ saveState: 'save_error', saveIssue: null }))
     expect(popover('save_error')).not.toBeNull()

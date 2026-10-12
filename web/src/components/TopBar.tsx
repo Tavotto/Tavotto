@@ -284,7 +284,14 @@ export function SaveStateLabel() {
   const issue = useDocIssue()
   const localPending = saveState === 'dirty' || saveState === 'saving'
   const held = useHeldFor(localPending, SAVE_PENDING_REVEAL_MS)
-  if (!hasContent && !bound && !issue) return null
+  // 空排版不显示标签，但播报区照样挂着（空的）：空排版改名 / 改版面也会自动保存，失败时要填进一个早已挂着的节点
+  // （Codex #947）。三个分支的根都是 span、播报区同一个 key
+  if (!hasContent && !bound && !issue)
+    return (
+      <span data-save-idle className="contents">
+        <span key="save-live" aria-live="assertive" data-save-live className="sr-only" />
+      </span>
+    )
   // 还从没落过盘（新排版的第一次改动）：没有「上一句落定的话」可以继续显示，
   // 不等 600ms 直接说进行中——否则会在第一轮自动保存完成前就声称「已存在本机」
   const neverPersisted = !bound && !lastPersisted && saveState !== 'saved'
