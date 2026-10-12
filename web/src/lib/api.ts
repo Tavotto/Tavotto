@@ -2091,6 +2091,13 @@ export interface EditableField {
    * 「脚本改过这一项没有」。严格同源：`engine/manifest.VALUE_ORIGINAL_KEY`。
    */
   value_original?: unknown
+  /**
+   * 颜色字段专有（现在只有纹理颜色 `hatchcolor`）：这条颜色此刻是不是「跟随边框」（matplotlib 的
+   * `'edge'`）。`value` 说的是**画出来的**色号（跟随时就是边色的实况），这一条说它为什么是这个色；
+   * 写回仍是同一个 prop：`'#rrggbb'` 或字面量 `'edge'`（`controls/HatchColorField.FOLLOW_EDGE`）。
+   * 缺席 = 这条颜色没有「跟随」这个选项。严格同源：`engine/manifest._hatch_style_fields`。
+   */
+  follows_edge?: boolean
   /** 归到哪个可折叠小节（排版 / 背景 / 描边）；无值 = 基本属性，平铺在前 */
   group?: string
 }

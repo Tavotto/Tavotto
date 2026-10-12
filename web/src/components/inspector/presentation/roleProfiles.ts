@@ -144,22 +144,24 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
     primary: ['facecolor', 'hatch', 'edgecolor', 'linewidth', 'linestyle', 'alpha'],
     more: ['label', 'visible'],
   },
-  // 纹理两项（图案 · 线宽）挨在一起；线宽只在有花纹时出现。
-  // 线宽（matplotlib 3.10+）是引擎按版本发的字段：旧版本没有这一行，
-  // 版面里点名而没有字段的 prop 本来就不画。纹理颜色未纳入（维护者裁决，见 PR 说明）
+  // 纹理三项（图案 · 颜色 · 线宽）挨在一起；颜色与线宽只在有花纹时出现。
+  // 线宽（matplotlib 3.10+）、颜色（3.11+）是引擎按真实 setter 发的字段：旧版本没有这一行，
+  // 版面里点名而没有字段的 prop 本来就不画（#874）
   bar_series: {
-    primary: ['label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatch_linewidth', 'alpha'],
+    primary: [
+      'label', 'facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatchcolor', 'hatch_linewidth', 'alpha',
+    ],
     more: ['bar_width', 'visible'],
-    visibleWhen: { hatch_linewidth: HAS_HATCH },
+    visibleWhen: { hatchcolor: HAS_HATCH, hatch_linewidth: HAS_HATCH },
   },
   bar: {
-    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatch_linewidth', 'alpha'],
+    primary: ['facecolor', 'edgecolor', 'linewidth', 'hatch', 'hatchcolor', 'hatch_linewidth', 'alpha'],
     more: ['visible'],
-    visibleWhen: { hatch_linewidth: HAS_HATCH },
+    visibleWhen: { hatchcolor: HAS_HATCH, hatch_linewidth: HAS_HATCH },
   },
   patch: {
     primary: [
-      'facecolor', 'fill', 'hatch', 'hatch_linewidth',
+      'facecolor', 'fill', 'hatch', 'hatchcolor', 'hatch_linewidth',
       'edgecolor', 'linewidth', 'linestyle', 'alpha',
     ],
     more: ['visible'],
@@ -170,6 +172,7 @@ export const ROLE_PROFILES: Record<string, RoleProfile> = {
       // （无边框 5638 个非背景像素，对照无纹理 0）。所以 hatch 不按 FILLED 门控，
       // 否则用户没法给未填充的形状加纹理；线宽只看有没有花纹。
       facecolor: FILLED,
+      hatchcolor: HAS_HATCH,
       hatch_linewidth: HAS_HATCH,
     },
   },

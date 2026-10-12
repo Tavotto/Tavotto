@@ -97,14 +97,14 @@ def _mode_none(a) -> bool:
     return all(getattr(m, "_original_hatchcolor", 0) is None for m in _members(a))
 
 
-def run_one(name, gid, edits, builder=None):
+def run_one(name, gid, edits, builder=None, hatch_explicit=False):
     builder = builder or build
     plt.rcParams["hatch.color"] = "magenta"
     _fa, sa = builder()
     _fb, sb = builder()
     art_a, art_b = sa.resolve(gid), sb.resolve(gid)
     warns = O.apply(sa, edits)
-    mid = _mode_none(art_a)
+    mid = _mode_none(art_a) is not hatch_explicit  # hatchcolor 编辑期间模式本来就是显式的
     warns += O.apply(sa, [])
     after = _mode_none(art_a)
     hatch_a = [_val(m) for m in _members(art_a)]
@@ -145,6 +145,24 @@ def main() -> int:
                     {"gid": gid, "prop": "alpha", "value": 0.4},
                 ],
             )
+    if out["has_set_hatchcolor"]:
+        # hatchcolor 编辑（第二步）：显式模式只活在编辑期间，撤空回到「未设」并继续跟随 rc
+        for name in ("bar", "series", "rect"):
+            gid = TARGETS[name]
+            hc = {"gid": gid, "prop": "hatchcolor", "value": "#0000ff"}
+            out["cases"][f"{name}:hatchcolor"] = run_one(name, gid, [hc], hatch_explicit=True)
+            out["cases"][f"{name}:hatchcolor+alpha"] = run_one(
+                name,
+                gid,
+                [hc, {"gid": gid, "prop": "alpha", "value": 0.4}],
+                hatch_explicit=True,
+            )
+        out["cases"]["bar:hatchcolor-edge"] = run_one(
+            "bar",
+            TARGETS["bar"],
+            [{"gid": TARGETS["bar"], "prop": "hatchcolor", "value": "edge"}],
+            hatch_explicit=True,
+        )
     from support import rc_hatch_text_legend_figure as tl  # noqa: PLC0415
 
     for name, (gid, prop) in tl.TARGETS.items():

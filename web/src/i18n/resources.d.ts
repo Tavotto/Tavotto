@@ -3352,6 +3352,7 @@ export default interface Resources {
       "groupMarker": "数据点",
       "groupRangeTransform": "范围与变换",
       "groupTicksGrid": "刻度与网格",
+      "hatchFollowEdge": "跟随边框",
       "hiddenElements_other": "已隐藏元素（{{count}}）",
       "hint": {
         "scatterSize": "pt² 为面积而非直径。数值翻倍时，点径约为原来的 1.4 倍。"
@@ -3893,6 +3894,7 @@ export default interface Resources {
       "handletextpad": "线与文字间距",
       "hatch": "纹理",
       "hatch_linewidth": "纹理线宽",
+      "hatchcolor": "纹理颜色",
       "interpolation": "插值",
       "invert_x": "反转 X 轴",
       "invert_y": "反转 Y 轴",

@@ -55,6 +55,14 @@ CASES = [
     "linecoll:alpha",
     "bar:stale-base",
     "scatter:stale-base",
+    # #874 第二步：花纹色可编辑——显式模式只活在编辑期间
+    "bar:hatchcolor",
+    "series:hatchcolor",
+    "rect:hatchcolor",
+    "bar:hatchcolor+alpha",
+    "series:hatchcolor+alpha",
+    "rect:hatchcolor+alpha",
+    "bar:hatchcolor-edge",
 ]
 
 

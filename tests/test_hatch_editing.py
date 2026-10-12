@@ -1,7 +1,6 @@
 """柱形 / 形状的**纹理两项**可编辑：图案 `hatch`、线宽 `hatch_linewidth`。
 
-纹理颜色 `hatchcolor` 不在范围内（维护者裁决 2026-10-08：3.11 的 `set_alpha` 会按当前 rcParams 重解析
-花纹色，与 `rc_context` 临时 `hatch.color` 叠加的热态一致性另开 issue 研究）。
+纹理颜色 `hatchcolor` 另见 `tests/test_hatchcolor_editing.py`（#874 第二步；钉住修复 #950 / #956 之后才纳入）。
 
 背景：真实 Windows beta 用户的分组柱状图——柱子带斜线纹理，选中「柱 7」后填充色 / 描边色 / 线宽 /
 不透明度都能改，唯独「纹理」一栏写着「此元素由脚本生成」。`_bar_fields` / `_bar_series_fields`

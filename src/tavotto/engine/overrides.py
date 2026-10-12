@@ -3177,6 +3177,16 @@ def _hatch_resolved(a):
     return getattr(a, "_hatch_color", None) if resolved is None else resolved
 
 
+def _hatch_base(a):
+    """这个 artist「脚本创建时」解析出来的花纹色（`'edge'` 或 RGBA）。
+
+    记着的创建时的值（`_HATCH_BASE`）若与「我们上次写完的样子」对不上，说明中间有别人动过，按实况。
+    """
+    cur = _hatch_resolved(a)
+    rec = getattr(a, _HATCH_BASE, None)
+    return rec[0] if rec is not None and _same_value(rec[1], cur) else cur
+
+
 def _fresh_copy(v):
     """与 `v` 相等、但**不是同一个对象**的副本（matplotlib 的 `set_hatchcolor` 原样存引用，不转换）。
     字符串 / 元组可能被解释器复用同一对象，所以重新拼一个。"""
@@ -3216,9 +3226,7 @@ def _with_hatch_pinned(a, fn) -> None:
     if pin is None or getattr(a, "_original_hatchcolor", 0) is not None:
         fn()
         return
-    cur = _hatch_resolved(a)
-    rec = getattr(a, _HATCH_BASE, None)
-    base = rec[0] if rec is not None and _same_value(rec[1], cur) else cur
+    base = _hatch_base(a)
     if base is None:
         fn()
         return
@@ -3272,6 +3280,67 @@ def _set_patch_fill(p, v) -> None:
     ):
         p._hatch_color = getattr(p, _ORIG_HATCH)  # noqa: SLF001
 
+
+class _HatchUnset:
+    """`hatchcolor` 的脚本原样 = 「脚本没设」（`_original_hatchcolor is None`，跟随 rc / 边框），不是某个值（#874）。
+
+    与 `_PatchEdge` 同一个坑：按值写回创建时解析出的 RGBA 会把模式换成「显式」，之后 native 屏障里
+    用户的 Python 改 rc 再 `set_alpha` 就不再跟随（Codex #950 r4245786615）。所以 getter 在「未设」
+    模式下回这个哨兵，带着创建时的解析值 `base`（还原时重算当前 alpha 用）；它只活在 `originals` 里，不过 JSON。
+    """
+
+    __slots__ = ("base",)
+
+    def __init__(self, base) -> None:
+        self.base = base
+
+    def __repr__(self) -> str:
+        return f"<hatchcolor unset base={self.base!r}>"
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, _HatchUnset) and _same_value(self.base, other.base)
+
+    __hash__ = None
+
+
+def _get_hatchcolor(p):
+    """显式模式回 `_original_hatchcolor` 的副本（RGBA / 颜色名 / `'edge'`，setter 吃得回去）；
+    「未设」模式回 `_HatchUnset`。没有 `set_hatchcolor` 的版本（≤3.10）不发这条 prop，这里回 None。"""
+    if not hasattr(p, "set_hatchcolor"):
+        return None
+    mode = getattr(p, "_original_hatchcolor", None)
+    return _HatchUnset(_fresh_copy(_hatch_base(p))) if mode is None else _fresh_copy(mode)
+
+
+def _restore_hatch_unset(p, base) -> None:
+    """显式模式 → 回到「未设」：花纹色按创建时的 `base` 与**当前** alpha 重新合成，再把模式还原成 None。"""
+    if getattr(p, "_original_hatchcolor", 0) is None:
+        return
+    if base is not None:
+        p.set_hatchcolor(_fresh_copy(base))
+        p.set_alpha(
+            p.get_alpha()
+        )  # 重解析 face / edge / 花纹色：与 `_with_hatch_pinned` 同一条合成路径
+    p._original_hatchcolor = None  # noqa: SLF001
+    if base is not None:
+        setattr(p, _HATCH_BASE, (base, _hatch_resolved(p)))
+
+
+def _set_hatchcolor(p, v) -> None:
+    """吃 `'#rrggbb'` / `'edge'`（改的），或 getter 回的 RGBA / `_HatchUnset`（还原时喂回来的）。
+
+    走 `_with_hatch_pinned`：与 alpha / fill 的应用顺序无关——先 alpha 后 hatchcolor 时 alpha 已按钉住的
+    规则收尾，再显式设；先 hatchcolor 后 alpha 时 `_original_hatchcolor` 已是显式，alpha 的钉住原样放行。
+    """
+    if not hasattr(p, "set_hatchcolor") or v is None:
+        return
+    if isinstance(v, _HatchUnset):
+        _restore_hatch_unset(p, v.base)
+        return
+    _with_hatch_pinned(p, lambda: p.set_hatchcolor(_fresh_copy(v)))
+
+
+_CAP_HATCHCOLOR = (_get_hatchcolor, _set_hatchcolor)
 
 _CAP_VISIBLE = (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))
 _CAP_ZORDER = (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v)))
@@ -3356,6 +3425,7 @@ _PATCH_CAPS: dict[str, tuple] = {
     "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
     "hatch": _CAP_HATCH,
     "hatch_linewidth": (_get_hatch_linewidth, _set_hatch_linewidth),
+    "hatchcolor": _CAP_HATCHCOLOR,
     "fill": (lambda a: bool(a.get_fill()), _set_patch_fill),
     "alpha": _CAP_ALPHA,
     "visible": _CAP_VISIBLE,
@@ -4007,6 +4077,7 @@ for _prop, _g1, _s1 in [
     ("linewidth", lambda r: float(r.get_linewidth()), lambda r, v: r.set_linewidth(float(v))),
     ("hatch", _CAP_HATCH[0], _CAP_HATCH[1]),
     ("hatch_linewidth", _get_hatch_linewidth, _set_hatch_linewidth),
+    ("hatchcolor", _get_hatchcolor, _set_hatchcolor),
     ("alpha", _CAP_ALPHA[0], _CAP_ALPHA[1]),  # 柱是 Patch：同样要在重解析前钉住花纹色
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),
     ("zorder", lambda r: float(r.get_zorder()), lambda r, v: r.set_zorder(float(v))),
@@ -4482,6 +4553,7 @@ for _bprop in (
     "linewidth",
     "hatch",
     "hatch_linewidth",
+    "hatchcolor",
     "alpha",
     "visible",
 ):
