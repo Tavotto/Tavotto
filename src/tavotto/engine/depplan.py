@@ -55,7 +55,7 @@ import shutil
 import stat
 import subprocess
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
 from . import config, depresolve, distmeta, importscan, projectenv, runtime
@@ -1125,13 +1125,17 @@ def _declared_gaps(
 
 
 def _arbitrate_providers(
-    classes, by_name: dict[str, list[depresolve.DependencyIntent]], roots_active: bool
+    classes,
+    by_name: dict[str, list[depresolve.DependencyIntent]],
+    installing: Collection[str] | None,
 ) -> tuple[dict[str, str], list[dict]]:
     """同一个 import 名有多个互斥发行包（`depresolve.ALTERNATIVE_DISTRIBUTIONS`，`cv2` 的四个）时的最小仲裁（AC-08 启用门）。
 
     回 `(import 名 → 项目声明点名的那个发行包, 冲突)`。只认**声明**：观察到的 provider 不是授权（装哪个不由已装元数据决定）；
     点名了恰好一个 = 它胜出，替掉 curated 的名字；点名了两个及以上 = 冲突（互斥发行包同装一代是已知会互相覆盖的坏环境），
-    不是「都装」。声明里一个都没点名 = 不仲裁，维持 curated 行为。冲突只在脚本确实 import 那个名字、或这次会按声明装 roots 时报。"""
+    不是「都装」。声明里一个都没点名 = 不仲裁，维持 curated 行为。冲突只在脚本确实 import 那个名字、或点名的 provider **真的在这次计划的
+    安装集合里**（`installing`：受管环境按声明装 roots 的那些、hash 模式整份锁）时报；`None` = 还没算出安装集合，只判前一种（取 `chosen` 用）。
+    不看「是不是 roots 模式」这种全局开关：无关脚本的计划不装那两个 provider，不该被拦；hash 锁整份都装，同锁里的两个 provider 必须拦。"""
     scanned = {c.module for c in classes}
     chosen: dict[str, str] = {}
     conflicts: list[dict] = []
@@ -1139,7 +1143,9 @@ def _arbitrate_providers(
         named = sorted({depresolve.normalize_distribution(a) for a in alts} & set(by_name))
         if len(named) == 1:
             chosen[module] = named[0]
-        elif len(named) > 1 and (module in scanned or roots_active):
+        elif len(named) > 1 and (
+            module in scanned or (installing is not None and any(n in installing for n in named))
+        ):
             items = [it for n in named for it in by_name[n]]
             conflicts.append(
                 {
@@ -1236,10 +1242,11 @@ def plan(
     hash_mode = any(it.hashes for it in selection.requirements)
     # 声明 roots 只服务受管环境（用户自己的 venv 是只进不退的原地安装，不为声明多几项去改它）；hash 模式下整份选中集合本来就都装
     roots_active = target_kind == TARGET_MANAGED and not hash_mode
-    replaceable = roots_active and (
+    # 「计划能不能因声明而 ready」只看目标是不是受管环境：hash 模式整份锁本来就都装，相关缺口同样值得启动一次安装
+    replaceable = target_kind == TARGET_MANAGED and (
         True if run_env_replaceable is None else bool(run_env_replaceable)
     )
-    arbitrated, provider_conflicts = _arbitrate_providers(scan.classes, by_name, roots_active)
+    arbitrated, _ = _arbitrate_providers(scan.classes, by_name, None)
 
     # ---- 每个第三方 import 的来源判决（present / absent / open）-----------------------------
     states = _coverage_states(coverage, scan, plain_unknown)
@@ -1390,12 +1397,18 @@ def plan(
     }
     # ---- 声明 roots（P02）：选中的声明本身是新托管环境的安装根；扫描结果只补充与解释，不否决 -------------------------
     relevant = _relevant_declarations(by_name, scan, arbitrated, plain_unknown)
-    if roots_active:
-        to_install |= {
+    declared_install: set[str] = set()
+    if target_kind == TARGET_MANAGED:
+        declared_install = {
             name
             for name, items in by_name.items()
             if name in relevant and _root_state(items, target_installed)[0]
         }
+    if roots_active:
+        to_install |= declared_install
+    # 本计划实际会装的名字：hash 模式 = 整份选中集合；否则 = 上面算出的 to_install（含按声明装的 roots）
+    installing = set(by_name) if hash_mode else set(to_install)
+    _, provider_conflicts = _arbitrate_providers(scan.classes, by_name, installing)
     missing_imports = {m["import_name"] for m in missing}
     install_only = tuple(
         {
@@ -1535,7 +1548,7 @@ def plan(
     gaps = _declared_gaps(by_name, installed if facts is not None else None, relevant)
     # 相关的差集 + 此刻跑脚本的是我们自己的环境 + 目标里确实没有 → 值得启动一次真实的安装任务（不只是改 requirements 数组）
     root_trigger = replaceable and any(
-        g["relevant"] and g["distribution"] in to_install for g in gaps
+        g["relevant"] and g["distribution"] in declared_install for g in gaps
     )
     if blocked:
         status = STATUS_BLOCKED
@@ -1548,7 +1561,8 @@ def plan(
         {
             **g,
             "action": GAP_ACTION_INSTALL
-            if status == STATUS_READY and g["distribution"] in to_install
+            if status == STATUS_READY
+            and (g["distribution"] in to_install or g["distribution"] in declared_install)
             else GAP_ACTION_RECORDED,
         }
         for g in gaps[:MAX_DECLARED_GAPS]

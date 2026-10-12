@@ -204,6 +204,73 @@ class TestNotRoots:
         assert plan.hashes == {"auditlate==1.0": (h,)}
 
 
+_H = " --hash=sha256:" + "a" * 64
+
+
+def _lock(*lines: str) -> str:
+    """完整 hash 锁：adapter 两项钉死（`==`）+ 给定的行。"""
+    return "\n".join(f"{ln}{_H}" for ln in ("matplotlib==3.10.0", "numpy==2.1.0", *lines)) + "\n"
+
+
+class TestInstallSetDecidesNotTheRootsFlag:
+    """Codex #960 round-2 P2：ready 与冲突看**本计划实际安装集合**，不看「是不是 roots 模式」这个全局开关。"""
+
+    def test_a_hash_lock_relevant_only_through_a_dynamic_import_is_ready(self, tmp_path):
+        proj = _project(tmp_path, _VARIABLE, _lock("auditlate==1"))
+        plan = _plan(proj)
+        assert plan.require_hashes is True and plan.requirements
+        (gap,) = [g for g in plan.declared_gaps if g["distribution"] == "auditlate"]
+        assert gap["relevant"] is True and gap["state"] == "absent"
+        assert plan.status == depplan.STATUS_READY
+        assert gap["action"] == "install"
+        assert plan.actionable
+
+    def test_a_hash_lock_gap_that_the_script_never_touches_stays_nothing_needed(self, tmp_path):
+        proj = _project(tmp_path, "import numpy\n", _lock("auditlate==1"))
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+
+    def test_two_cv2_providers_do_not_block_a_script_that_never_installs_them(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            "import numpy\n",
+            "opencv-python-headless==4.10.0.84\nopencv-contrib-python==4.10.0.84\n",
+        )
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+        assert plan.requirements == ()
+        assert not [b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]
+
+    def test_two_cv2_providers_block_a_script_that_imports_cv2(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            "import cv2\n",
+            "opencv-python-headless==4.10.0.84\nopencv-contrib-python==4.10.0.84\n",
+        )
+        assert _plan(proj).status == depplan.STATUS_BLOCKED
+
+    def test_two_cv2_providers_block_when_a_dynamic_import_makes_both_installable(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            _VARIABLE,
+            "opencv-python-headless==4.10.0.84\nopencv-contrib-python==4.10.0.84\n",
+        )
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_BLOCKED
+        assert [b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]
+
+    def test_a_hash_lock_holding_two_exclusive_providers_is_a_conflict(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            "import numpy\n",
+            _lock("opencv-python-headless==4.10.0.84", "opencv-contrib-python==4.10.0.84"),
+        )
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_BLOCKED
+        (block,) = [b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]
+        assert "cv2" in {c["name"] for c in block["conflicts"]}
+
+
 # ---------------------------------------------------------------------------
 # DEP-11 / AC-07：版本差异影响准备状态
 # ---------------------------------------------------------------------------

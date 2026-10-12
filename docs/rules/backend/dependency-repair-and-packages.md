@@ -662,5 +662,6 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   用户的系统 / 本进程解释器只记录偏差（`action=recorded`），不静默升降包。`declared_gaps` 是可选字段，`plan_version` 不升。
 - 没有 import 名的 root 照样进账与装后核验（`install_only` 里 `import_name=""`）；`needed_imports` 一律滤掉空名，别拿空串去 probe。
 - 互斥 provider 只有一张表 `depresolve.ALTERNATIVE_DISTRIBUTIONS`：声明点名一个 = 它胜出；点名两个 = `dependency_conflict`；没点名 = curated（观察到的不是授权）。
+  冲突与「能否 ready」都按**本计划实际安装集合**判，不看「是否 roots 模式」这个全局开关：点名的两个 provider 只在脚本 import 了那个模块、或它们真会被装（受管环境按声明装的 roots；hash 模式整份锁）时才冲突，无关脚本不被拦；hash 模式下相关缺口同样让计划 `ready`（`_arbitrate_providers(installing)` / `declared_install`）。
   账本合并（`generation_requirements`）与记账（`forget_install`）同源，不把被替掉的 provider 带回。
 - 看护：`tests/test_dependency_declared_roots.py`（计划层、账本）、`tests/test_dependency_transaction.py::TestDeclaredRootsTransaction` / `TestRunEnvOwnership`（真 generation + 离线 pip）。
