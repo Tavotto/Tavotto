@@ -3238,8 +3238,13 @@ def _with_hatch_pinned(a, fn) -> None:
 
 
 def _set_alpha_pinned(a, v) -> None:
+    """所有 Patch / Collection 的 alpha 编辑唯一入口（#874 / #956）：新增 alpha handler 若作用于
+    可能带花纹的 artist，必须走这里，不得直接 `set_alpha`（`tests/test_hatch_alpha_consumers.py` 扫源码）。"""
     _with_hatch_pinned(a, lambda: a.set_alpha(None if v is None else float(v)))
 
+
+# 图例族模块是叶子、不能 import 本模块：把钉住入口交给它（#956）
+legendmodel.install_alpha_setter(_set_alpha_pinned)
 
 _CAP_ALPHA = (lambda a: a.get_alpha(), _set_alpha_pinned)
 
@@ -3981,10 +3986,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("linecoll", "color"): (lambda a: a.get_color().copy(), lambda a, v: a.set_color(v)),
     ("linecoll", "linewidth"): (lambda a: a.get_linewidths().copy(), _set_collection_lw),
     ("linecoll", "linestyle"): (_get_linecoll_ls, _set_linecoll_ls),
-    ("linecoll", "alpha"): (
-        lambda a: a.get_alpha(),
-        lambda a, v: a.set_alpha(None if v is None else float(v)),
-    ),
+    # LineCollection 是 Collection：`set_alpha` 同样重解析花纹色（#956）
+    ("linecoll", "alpha"): (lambda a: a.get_alpha(), _set_alpha_pinned),
     ("linecoll", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
     ("linecoll", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     # ---- legend: 预设位置 / 外侧锚点 / 标题 / 边框样式（模型在 legendmodel）----
@@ -4200,10 +4203,8 @@ _BBOX_PROPS = {
     "bbox_facecolor": (lambda p: p.get_facecolor(), lambda p, v: p.set_facecolor(v)),
     "bbox_edgecolor": (lambda p: p.get_edgecolor(), lambda p, v: p.set_edgecolor(v)),
     "bbox_linewidth": (lambda p: float(p.get_linewidth()), lambda p, v: p.set_linewidth(float(v))),
-    "bbox_alpha": (
-        lambda p: p.get_alpha(),
-        lambda p, v: p.set_alpha(None if v is None else float(v)),
-    ),
+    # 背景框是 FancyBboxPatch：3.11 的 `Patch.set_alpha` 会按此刻的 rc 重解析花纹色（#956）
+    "bbox_alpha": (lambda p: p.get_alpha(), _set_alpha_pinned),
     "bbox_pad": (lambda p: _boxstyle_info(p)[0], lambda p, v: _boxstyle_set(p, pad=v)),
     "bbox_rounded": (lambda p: _boxstyle_info(p)[1], lambda p, v: _boxstyle_set(p, rounded=v)),
 }

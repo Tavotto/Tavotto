@@ -1479,6 +1479,24 @@ def _reindex_legend_children(leg: Legend, state: RebuildState) -> None:
             state.reapply(remap[gid], prop, value)
 
 
+#: 图例框（`FancyBboxPatch`）的 alpha 写入口。matplotlib ≥3.11 的 `Patch.set_alpha` 会按此刻的 rc 重解析
+#: 花纹色（#874 / #956），钉住逻辑 `overrides._set_alpha_pinned` 在 overrides 里，而本族模块是叶子、
+#: 不能 import 它：overrides 导入时 `install_alpha_setter` 把它交进来。没装就写会让框的花纹色悄悄
+#: 漂移，所以宁可当场抛，也不退回裸 `set_alpha`。
+_ALPHA_SETTER = None
+
+
+def install_alpha_setter(fn) -> None:
+    global _ALPHA_SETTER  # noqa: PLW0603
+    _ALPHA_SETTER = fn
+
+
+def _set_frame_alpha(leg, v) -> None:
+    if _ALPHA_SETTER is None:
+        raise RuntimeError("legendmodel.install_alpha_setter 未被 overrides 接线")
+    _ALPHA_SETTER(leg.get_frame(), v)
+
+
 #: `overrides.HANDLERS` 里图例的第一段（显隐 / 边框 / 字号 / 图幅分数位置），按原位置 `**` 展开。
 HANDLERS_BASIC: dict[tuple[str, str], tuple] = {
     ("legend", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
@@ -1516,10 +1534,7 @@ HANDLERS_LAYOUT: dict[tuple[str, str], tuple] = {
         lambda a: a.get_frame().get_facecolor(),
         lambda a, v: a.get_frame().set_facecolor(v),
     ),
-    ("legend", "framealpha"): (
-        lambda a: a.get_frame().get_alpha(),
-        lambda a, v: a.get_frame().set_alpha(None if v is None else float(v)),
-    ),
+    ("legend", "framealpha"): (lambda a: a.get_frame().get_alpha(), _set_frame_alpha),
     ("legend", "edgecolor"): (
         lambda a: a.get_frame().get_edgecolor(),
         lambda a, v: a.get_frame().set_edgecolor(v),

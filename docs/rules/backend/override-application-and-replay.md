@@ -161,6 +161,17 @@
   `set_fill(True)` 不写回：`_set_patch_fill` 用记在 artist 上的创建时值（`_ORIG_HATCH`，边色 getter 也采）
   在 `_original_edgecolor is None` 时写回。看护 `tests/test_override_sequences.py::test_rc_context_hatch_*`、
   `tests/test_hatch_rc_context_writeback.py` 与 `tests/test_hatch_mode_restored.py`。
+  **消费方清单（#956，共享判据修一处不算修完）**：凡作用于可能带花纹的 Patch / Collection 的 alpha / fill 入口，
+  一律经 `_set_alpha_pinned` / `_set_patch_fill`，不得直接 `set_alpha` / `set_fill`——柱 / 矩形 / fill_between /
+  scatter（`_CAP_ALPHA`，#950）、箭头 patch（`arrowpatch.alpha`）、**文本背景框 `text.bbox_alpha`**、**图例框
+  `legend.framealpha`**（legendmodel 是叶子、不 import overrides，由 overrides 导入时 `install_alpha_setter` 接线，
+  没接线就抛而不是退回裸调用）、**线集合 `linecoll.alpha`**。不钉的直接调用：Text（`text.alpha`、图例文字 / 标题）、AxesImage、Line2D 没有花纹色；
+  误差线 / 茎线系列 alpha 的 LineCollection 成员会重解析，但它们是两点线段、没有可填充面积，花纹画不出来
+  （3.11.2 / 3.10.9 实测前后像素逐字节相同），无可观测分叉，故不钉（将来若支持多点线集合的系列，要回头补）。
+  登记清单在 `tests/test_hatch_alpha_consumers.py`（AST 扫 overrides /
+  legendmodel 的每一处 `set_alpha(` / `set_fill(`，新增一处会红）；行为看护在 `tests/support/rc_hatch_text_legend_figure.py`
+  那张图上的 `test_override_sequences.py::test_rc_context_hatch_text_legend_*`、写回 `test_hatch_rc_context_writeback.py`
+  与 `test_hatch_mode_restored.py`。
 - **`value_original`：override 之前脚本的值，与 `value` 同一口径（ADR 0081 §十三，2026-09-25）**。
   前端拿它判「脚本重跑后改没改这一项」：样式写的 override 在脚本改过的那一项上让位（用户裁决：
   重跑后脚本赢）。`originals` 存的是 getter 的原始对象（元组 / Colormap / 哨兵），前端没法拿它与

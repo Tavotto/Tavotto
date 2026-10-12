@@ -1152,6 +1152,7 @@ def _fresh_generation_joint(project: str, script: str) -> depplan.JointPlan | No
         groups=depplan.selected_groups_setting(project),
         install_facts=install,
         coverage=_coverage_reader(facts),
+        run_env_replaceable=_run_env_ours(project, facts),
     )
 
 
@@ -1166,7 +1167,7 @@ def _fold_requested(
     delta = list(joint.requirements)
     if all(depresolve.normalize_distribution(_name_of(r)) != wanted for r in delta):
         delta.append(requirement.requirement())
-    imports = [m["import_name"] for m in joint.install_entries]
+    imports = [m["import_name"] for m in joint.install_entries if m["import_name"]]
     if requirement.import_name and requirement.import_name not in imports:
         imports.append(requirement.import_name)
     # 账目里用户点的那个包沿用单包修复原来的写法（distribution / specifier 取自它自己的 requirement），其余取自联合计划
@@ -3842,6 +3843,34 @@ def private_fresh_facts() -> depplan.TargetFacts | None:
     )
 
 
+def _is_managed_generation_path(project: str | Path, python: str) -> bool:
+    """这条解释器路径是不是登记过的某一代的 `bin/python`——**按路径身份、不 realpath**（`pool.same_python`）：
+    托管 venv 的 `bin/python` 通常是指向基础解释器的软链接，`managedenv.is_managed_python` 的 realpath 会把用户项目
+    正在用的系统 python（或基于它的别的 venv）判成「我们的」，相关差集就会被当成可换一代去修。"""
+    gens = managedenv.generations(project) or {managedenv.LEGACY_GENERATION: {}}
+    return any(
+        pool.same_python(python, str(managedenv.generation_python(project, g))) for g in gens
+    )
+
+
+def _run_env_ours(project: str | Path, facts: depplan.TargetFacts | None) -> bool:
+    """此刻跑脚本的环境是不是 Tavotto 自己的、坏了只能换一代而不是原地修（`depplan.plan(run_env_replaceable=)`）：受管环境的某一代、
+    内置 runtime、还没落盘（替身事实）或刚由私有 Python 新建的一代。用户交给我们的系统解释器 / 本进程的解释器 / 任何别的路径都不是——
+    项目声明里多出来的差集在那里只记录，不为它去换环境（能原样跑就不动，ADR 0114 §六）。"""
+    if facts is None or not facts.python:
+        return True
+    python = facts.python
+    if _is_managed_generation_path(project, python):
+        return True
+    # Tavotto 自己供应的：内置 runtime、源码模式自建的 worker-env、私有完整 Python（`pool.SOURCE_BUNDLED` / `SOURCE_MANAGED`）
+    ours = (
+        runtime.bundled_python(),
+        pool._bootstrap_venv_python(),
+        privatepython.python_of(privatepython.source_for()),
+    )
+    return any(c and pool.same_python(python, c) for c in ours)
+
+
 def _coverage_reader(facts: depplan.TargetFacts | None):
     """联合计划读 PR3 覆盖度用的只读查询：目标解释器对这组 import 已有的体检结论（`userenvs` 缓存；没量过回 None）。
     **不起任何进程**——缓存是明确的环境检查 / 依赖门留下的，键 = 路径 + 环境代 + import 集合 + 是否内置，过期（站点目录变了）
@@ -3885,6 +3914,7 @@ def joint_plan_for(
         groups=groups,
         install_facts=install_facts,
         coverage=_coverage_reader(facts),
+        run_env_replaceable=_run_env_ours(root, facts),
     )
     return _with_scope_check(root, script, plan, target_kind, scope_policy), target_kind, python
 
@@ -3994,6 +4024,7 @@ def create_joint_plan(
             install_facts=install_facts,
             coverage=_coverage_reader(facts),
             user_specified=user_specified,
+            run_env_replaceable=_run_env_ours(root, facts),
         )
     except depplan.UserSpecifiedRejected as exc:
         raise _user_specified_error(exc) from exc
@@ -4041,7 +4072,7 @@ def create_joint_plan(
         sorted(
             {str(n.get("module") or "") for n in joint.needed}
             | set(joint.unknown)
-            | {str(e["import_name"]) for e in installing_entries}
+            | {str(e["import_name"]) for e in installing_entries if e["import_name"]}
             | {str(u["import_name"]) for u in joint.user_specified}
         )
     )
@@ -4069,7 +4100,7 @@ def create_joint_plan(
         require_hashes=joint.require_hashes,
         adapter=tuple(joint.adapter),
         identity=joint.identity,
-        needed_imports=tuple(m["import_name"] for m in installing_entries),
+        needed_imports=tuple(m["import_name"] for m in installing_entries if m["import_name"]),
         record=tuple(
             {
                 "import_name": m["import_name"],
@@ -4666,8 +4697,19 @@ def generation_requirements(
         return tuple(dict.fromkeys(delta))
     out: list[str] = list(depplan.ADAPTER_REQUIREMENTS)
     delta_names = {depresolve.normalize_distribution(_name_of(r)) for r in delta}
-    for req in () if replace else managedenv.installed_requirements(project):
-        if depresolve.normalize_distribution(_name_of(req)) in delta_names:
+    # 互斥的 provider（`cv2` 的四个）：这次点名了其中一个，账上记过的另一个就是被替掉的，不能合并带回来（P02，AC-08）
+    replaced = (
+        set().union(*(depresolve.provider_peers(n) for n in delta_names)) if delta_names else set()
+    )
+    ledger = [] if replace else managedenv.installed_requirements(project)
+    # 账上已经同时有两个互斥 provider（上一次换代的账没来得及清）：只留最后记的那一个
+    for i, req in enumerate(ledger):
+        later = {depresolve.normalize_distribution(_name_of(r)) for r in ledger[i + 1 :]}
+        if depresolve.provider_peers(_name_of(req)) & later:
+            replaced.add(depresolve.normalize_distribution(_name_of(req)))
+    for req in ledger:
+        key = depresolve.normalize_distribution(_name_of(req))
+        if key in delta_names or key in replaced:
             continue
         if req not in out:
             out.append(req)
@@ -4904,6 +4946,9 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     managedenv.record_snapshot(project, f"after-{job.label}", _freeze(python))
     if not job.replace_ledger:
         for rec in job.record:
+            # 新记的 provider 替掉了账上互斥的那个（`cv2`）：旧的划掉，否则之后按账重建会两个一起装回来
+            for peer in depresolve.provider_peers(str(rec["distribution"])):
+                managedenv.forget_install(project, peer)
             managedenv.record_install(project, **ledger_fields(rec))
     health = projectenv.probe_environment(python)
     projectenv.remember(
@@ -5061,7 +5106,7 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
         constraints=tuple(plan.constraints),
         hashes={k: tuple(v) for k, v in plan.hashes.items()},
         require_hashes=plan.require_hashes,
-        needed_imports=tuple(m["import_name"] for m in plan.install_entries),
+        needed_imports=tuple(m["import_name"] for m in plan.install_entries if m["import_name"]),
         record=tuple(
             {
                 "import_name": m["import_name"],

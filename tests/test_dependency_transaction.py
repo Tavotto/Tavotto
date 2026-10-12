@@ -1469,3 +1469,365 @@ class TestJointMirrorProgress:
             plan.plan_id, on_event=events.append, confirmed_impact=plan.impact_digest
         )
         _assert_mirror_surfaced(plan, events, wait_for(plan.plan_id), calls)
+
+
+# ===========================================================================
+# 兼容性改造 P02：声明成为真实安装根——高层安装任务 → 新 generation → 联合 pip → pip check → 关键 import → 自检 → 激活
+# ===========================================================================
+AUDIT_ROOT = ("auditroot", "auditroot")
+AUDIT_LEAF = ("auditleaf", "auditleaf")
+AUDIT_DRIVER = ("audit-driver", "auditclient")  # 异名：安装名 audit-driver，import auditclient
+AUDIT_NEVER = ("auditnever", "auditnever")
+AUDIT_TRAIN = ("audittrain", "audittrain")
+AUDIT_CONSTRAINED = ("auditconstrained", "auditconstrained")
+OPENCV = ("opencv-python", "cv2")
+OPENCV_HEADLESS = ("opencv-python-headless", "cv2")
+
+_ROOT_SCRIPT = (
+    'import importlib\nname = "auditroot"\nmod = importlib.import_module(name)\nprint(mod.VALUE)\n'
+)
+
+
+@pytest.fixture
+def audit_house(tmp_path, monkeypatch) -> Path:
+    """离线受控 wheelhouse：`auditroot` 经 `Requires-Dist` 拉 `auditleaf`；`audit-driver` 提供 `auditclient`；
+    `auditroot` 2.0 多一个固定 API；两个互斥的 cv2 provider。"""
+    dest = tmp_path / "audit-house"
+    build_wheel(dest, name=AUDIT_LEAF[0], import_name=AUDIT_LEAF[1], version="1.0")
+    build_wheel(
+        dest,
+        name=AUDIT_ROOT[0],
+        import_name=AUDIT_ROOT[1],
+        version="1.0",
+        requires=(AUDIT_LEAF[0],),
+        body="import auditleaf\n",
+    )
+    build_wheel(
+        dest,
+        name=AUDIT_ROOT[0],
+        import_name=AUDIT_ROOT[1],
+        version="2.0",
+        requires=(AUDIT_LEAF[0],),
+        body='import auditleaf\n\n\ndef new_api():\n    return "v2"\n',
+    )
+    build_wheel(dest, name=AUDIT_DRIVER[0], import_name=AUDIT_DRIVER[1], version="1.0")
+    for name, mod in (AUDIT_NEVER, AUDIT_TRAIN, AUDIT_CONSTRAINED):
+        build_wheel(dest, name=name, import_name=mod, version="1.0")
+    build_wheel(dest, name=OPENCV[0], import_name="cv2", version="4.9.0.80")
+    build_wheel(dest, name=OPENCV_HEADLESS[0], import_name="cv2", version="4.10.0.84")
+    monkeypatch.setenv("PIP_FIND_LINKS", str(dest))
+    monkeypatch.setenv("PIP_NO_INDEX", "1")
+    return dest
+
+
+def _run_script(python: str, project: Path, script: str = "figure.py") -> str:
+    out = subprocess.run(
+        [python, str(project / script)],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    assert out.returncode == 0, out.stderr[-1500:]
+    return out.stdout.strip()
+
+
+def _pip_names(python: str) -> set[str]:
+    out = subprocess.run(
+        [python, "-m", "pip", "list", "--format=json", "--disable-pip-version-check"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    assert out.returncode == 0, out.stderr[-800:]
+    return {e["name"].lower().replace("_", "-") for e in json.loads(out.stdout)}
+
+
+@pytest.fixture
+def tavotto_owned_run_env(monkeypatch):
+    """跑测试的宿主解释器是「本进程的解释器」（`pool.SOURCE_CURRENT`，用户的 Python），不是 Tavotto 供应的内置 runtime；
+    这组用例要的是「此刻跑脚本的环境归 Tavotto 管」的那条产品路径（桌面包的内置 runtime / 受管代），所以显式声明它。
+    判据本身由 `TestRunEnvOwnership` 单独钉住。"""
+    monkeypatch.setattr(deprepair, "_run_env_ours", lambda project, facts: True)
+
+
+@needs_worker
+class TestRunEnvOwnership:
+    def test_only_what_tavotto_supplied_is_ours_to_replace(self, tmp_path, monkeypatch):
+        project = tmp_path / "paper"
+        project.mkdir()
+
+        def facts(python: str) -> depplan.TargetFacts:
+            return depplan.TargetFacts(
+                python=python, marker_env={}, stdlib=frozenset(), installed={}
+            )
+
+        assert deprepair._run_env_ours(project, None)  # 没有事实 = 替身（尚未落盘的新一代）
+        assert deprepair._run_env_ours(project, facts(""))
+        assert not deprepair._run_env_ours(
+            project, facts(sys.executable)
+        )  # 本进程的解释器：用户的 Python
+        assert not deprepair._run_env_ours(project, facts("/usr/bin/python3"))  # 系统解释器
+        monkeypatch.setattr(deprepair.runtime, "bundled_python", lambda: "/app/runtime/python")
+        assert deprepair._run_env_ours(project, facts("/app/runtime/python"))  # 内置 runtime
+        managedenv.register_generation(
+            project, "gone", requirements=[], constraints=[], identity="1", base_python="/x/py"
+        )
+        gen_python = managedenv.generation_python(project, "gone")
+        gen_python.parent.mkdir(parents=True, exist_ok=True)
+        gen_python.write_text("", encoding="utf-8")
+        assert deprepair._run_env_ours(project, facts(str(gen_python)))  # 受管代
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX 的 venv 解释器是指向基础解释器的软链接")
+    def test_a_system_python_a_managed_venv_links_to_is_not_ours(self, tmp_path):
+        """Codex #960 round-3 P2：托管代的 `bin/python` 软链到系统 python 时，按路径身份比（不 realpath）——
+        项目当前用的就是那条系统 python 时不能被判成 Tavotto 的；真正的托管代路径仍是。"""
+        project = tmp_path / "paper"
+        project.mkdir()
+        system = tmp_path / "usr" / "bin" / "python3"
+        system.parent.mkdir(parents=True)
+        system.write_text("", encoding="utf-8")
+        managedenv.register_generation(
+            project,
+            "linked",
+            requirements=[],
+            constraints=[],
+            identity="1",
+            base_python=str(system),
+        )
+        gen_python = managedenv.generation_python(project, "linked")
+        gen_python.parent.mkdir(parents=True, exist_ok=True)
+        gen_python.symlink_to(system)
+
+        def facts(python: str) -> depplan.TargetFacts:
+            return depplan.TargetFacts(
+                python=python, marker_env={}, stdlib=frozenset(), installed={}
+            )
+
+        assert not deprepair._run_env_ours(project, facts(str(system)))
+        assert deprepair._run_env_ours(project, facts(str(gen_python)))
+
+    def test_a_users_system_interpreter_is_only_recorded_never_replaced(
+        self, tmp_path, audit_house, offline_managed_env
+    ):
+        """跑脚本的是用户的 Python（这里是测试宿主），项目声明了 auditroot、脚本动态 import 它：门不弹、不建代，
+        偏差如实记录；缺了模块由运行后的有界修复接手（既有路径）。"""
+        project = _project(tmp_path, requirements=f"{AUDIT_ROOT[0]}==1.0\n", script=_ROOT_SCRIPT)
+        plan, _kind, _py = deprepair.joint_plan_for(project, "figure.py")
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+        (gap,) = plan.declared_gaps
+        assert gap["distribution"] == AUDIT_ROOT[0] and gap["action"] == "recorded"
+        assert deprepair.gate(project, "figure.py") is None
+        assert managedenv.generations(project) == {}
+
+
+@needs_worker
+@pytest.mark.usefixtures("tavotto_owned_run_env")
+class TestDeclaredRootsTransaction:
+    def test_a_declared_root_reached_only_by_a_dynamic_import_is_installed_with_its_dependency(
+        self, tmp_path, audit_house, offline_managed_env
+    ):
+        """DEP-10 / AC-06：声明了 auditroot，脚本用变量名动态 import（AST 指不到它）。修复前计划 `nothing_needed`、
+        没有安装任务；现在 ready，真实 generation 里 pip 一并装上传递依赖 auditleaf，脚本输出 42。"""
+        project = _project(tmp_path, requirements=f"{AUDIT_ROOT[0]}==1.0\n", script=_ROOT_SCRIPT)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.joint["status"] == "ready"
+        assert plan.requirements == (f"{AUDIT_ROOT[0]}==1.0",)
+        assert [r["distribution"] for r in plan.record] == [AUDIT_ROOT[0]]
+        assert plan.needed_imports == ()  # 没有一条 import 名可核——不拿空串去 probe
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        python = managedenv.python_of(project)
+        assert managedenv.active_generation(project) == rec["result"]["generation"]
+        assert _importable(python, AUDIT_ROOT[1]) and _importable(python, AUDIT_LEAF[1])
+        assert _run_script(python, project) == "42"
+        ledger = {e["distribution"]: e for e in managedenv.state(project)["installed"]}
+        assert set(ledger) == {AUDIT_ROOT[0]} and ledger[AUDIT_ROOT[0]]["resolved_version"] == "1.0"
+        # 二次打开：此刻跑脚本的就是新一代，什么都不缺，不再装
+        gens_before = len(managedenv.generations(project))
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_joint_plan(project, "figure.py")
+        assert err.value.code == deprepair.ERROR_PLAN_BLOCKED
+        assert err.value.extra["joint"]["status"] == "nothing_needed"
+        assert len(managedenv.generations(project)) == gens_before
+
+    def test_a_renamed_provider_is_installed_from_the_declaration(
+        self, tmp_path, audit_house, offline_managed_env
+    ):
+        """DEP-02：`import auditclient` 映射不到任何发行包，项目声明了 `audit-driver`——它是 root，装完 import 得到。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{AUDIT_DRIVER[0]}==1.0\n",
+            script=f"import {AUDIT_DRIVER[1]} as c\nprint(c.VALUE)\n",
+        )
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.joint["status"] == "ready" and plan.requirements == (f"{AUDIT_DRIVER[0]}==1.0",)
+        assert plan.joint["unknown"] == [AUDIT_DRIVER[1]]  # 来源仍然不猜
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        python = managedenv.python_of(project)
+        assert _importable(python, AUDIT_DRIVER[1]) and _run_script(python, project) == "42"
+
+    def test_unselected_groups_false_markers_and_pure_constraints_stay_out_of_the_generation(
+        self, tmp_path, audit_house, offline_managed_env
+    ):
+        project = _project(
+            tmp_path,
+            requirements=(f'{AUDIT_ROOT[0]}==1.0\n{AUDIT_NEVER[0]}; sys_platform == "never_os"\n'),
+            script=_ROOT_SCRIPT,
+            **{
+                "requirements-train.txt": f"{AUDIT_TRAIN[0]}\n",
+                "constraints.txt": f"{AUDIT_CONSTRAINED[0]}<2\n",
+            },
+        )
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.requirements == (f"{AUDIT_ROOT[0]}==1.0",)
+        assert _prepare_with(plan)["state"] == deprepair.STATE_DONE
+        names = _pip_names(managedenv.python_of(project))
+        assert {AUDIT_ROOT[0], AUDIT_LEAF[0]} <= names
+        assert not {AUDIT_NEVER[0], AUDIT_TRAIN[0], AUDIT_CONSTRAINED[0]} & names
+
+    def test_an_installed_version_below_the_declared_floor_is_replaced_in_a_new_generation(
+        self, tmp_path, audit_house, offline_managed_env
+    ):
+        """DEP-11 / AC-07：已装 1.0、声明 >=2.0。状态 → 安装集合 → 真实新 generation → 重跑闭环，固定 API 真调用。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{AUDIT_ROOT[0]}==1.0\n",
+            script=f"import {AUDIT_ROOT[1]}\nprint({AUDIT_ROOT[1]}.VALUE)\n",
+        )
+        assert _prepare(project)["state"] == deprepair.STATE_DONE
+        first = managedenv.active_generation(project)
+        first_python = managedenv.python_of(project)
+        (project / "requirements.txt").write_text(f"{AUDIT_ROOT[0]}>=2.0\n", encoding="utf-8")
+        (project / "figure.py").write_text(
+            f"import {AUDIT_ROOT[1]}\nprint({AUDIT_ROOT[1]}.new_api())\n", encoding="utf-8"
+        )
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.joint["status"] == "ready"  # 修复前：nothing_needed（装着、能 import）
+        assert plan.requirements == (f"{AUDIT_ROOT[0]}>=2.0",)
+        (gap,) = plan.joint["declared_gaps"]
+        assert (gap["state"], gap["installed_version"], gap["action"]) == (
+            "version_unsatisfied",
+            "1.0",
+            "install",
+        )
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        second = managedenv.active_generation(project)
+        assert second != first
+        python = managedenv.python_of(project)
+        assert (
+            _in(python, f"import importlib.metadata as m; print(m.version('{AUDIT_ROOT[0]}'))")
+            == "2.0"
+        )
+        assert _run_script(python, project) == "v2"
+        ledger = {e["distribution"]: e for e in managedenv.state(project)["installed"]}
+        assert ledger[AUDIT_ROOT[0]]["resolved_version"] == "2.0"
+        # 旧代没被原地改：它的 auditroot 仍是 1.0（旧代留到没人用才退役）
+        if Path(first_python).exists():
+            assert (
+                _in(
+                    first_python,
+                    f"import importlib.metadata as m; print(m.version('{AUDIT_ROOT[0]}'))",
+                )
+                == "1.0"
+            )
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_joint_plan(project, "figure.py")
+        assert err.value.extra["joint"]["status"] == "nothing_needed"
+
+    def test_a_failed_version_upgrade_keeps_the_previous_generation_active(
+        self, tmp_path, audit_house, offline_managed_env
+    ):
+        project = _project(
+            tmp_path,
+            requirements=f"{AUDIT_ROOT[0]}==1.0\n",
+            script=f"import {AUDIT_ROOT[1]}\nprint({AUDIT_ROOT[1]}.VALUE)\n",
+        )
+        assert _prepare(project)["state"] == deprepair.STATE_DONE
+        first = managedenv.active_generation(project)
+        python = managedenv.python_of(project)
+        (project / "requirements.txt").write_text(
+            f"{AUDIT_ROOT[0]}>=3.0\n", encoding="utf-8"
+        )  # 没有 3.x
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.joint["status"] == "ready"
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_FAILED
+        assert managedenv.active_generation(project) == first
+        assert managedenv.python_of(project) == python
+        assert _run_script(python, project) == "42"  # 旧代原样可用
+
+    def test_the_users_own_venv_records_a_version_deviation_and_is_never_upgraded(
+        self, tmp_path, audit_house
+    ):
+        """AC-07 的反面：能原样跑的用户 venv，声明 >=2.0 而装着 1.0——记录偏差，不自动升降包，门放行。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{AUDIT_ROOT[0]}>=2.0\n",
+            script=f"import {AUDIT_ROOT[1]}\nprint({AUDIT_ROOT[1]}.VALUE)\n",
+        )
+        venv = real_venv(project)
+        _adopt(project)
+        vpy = str(venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+        subprocess.run(
+            [vpy, "-m", "pip", "install", "-q", f"{AUDIT_ROOT[0]}==1.0"],
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+        plan, kind, _py = deprepair.joint_plan_for(project, "figure.py")
+        assert kind == deprepair.TARGET_PROJECT_VENV
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED and plan.requirements == ()
+        (gap,) = plan.declared_gaps
+        assert (gap["state"], gap["action"]) == ("version_unsatisfied", "recorded")
+        assert deprepair.gate(project, "figure.py") is None
+        assert (
+            _in(vpy, f"import importlib.metadata as m; print(m.version('{AUDIT_ROOT[0]}'))")
+            == "1.0"
+        )
+
+    def test_switching_the_declared_cv2_provider_installs_only_that_one_and_drops_the_old_ledger_row(
+        self, tmp_path, audit_house, offline_managed_env
+    ):
+        """AC-08 启用门（真事务）：账上是 opencv-python，项目改声明 headless。新代只有 headless，旧 provider 不被合并带回，
+        账里也划掉；之后按账重建仍只有一个 provider。"""
+        project = _project(
+            tmp_path,
+            requirements=f"{OPENCV[0]}==4.9.0.80\n",
+            script="import cv2\nprint(cv2.VALUE)\n",
+        )
+        assert _prepare(project)["state"] == deprepair.STATE_DONE
+        assert OPENCV[0] in _pip_names(managedenv.python_of(project))
+        (project / "requirements.txt").write_text(
+            f"{OPENCV_HEADLESS[0]}==4.10.0.84\n", encoding="utf-8"
+        )
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        assert plan.joint["status"] == "ready"
+        assert plan.requirements == (f"{OPENCV_HEADLESS[0]}==4.10.0.84",)
+        rec = _prepare_with(plan)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        names = _pip_names(managedenv.python_of(project))
+        assert OPENCV_HEADLESS[0] in names and OPENCV[0] not in names
+        ledger = {e["distribution"] for e in managedenv.state(project)["installed"]}
+        assert ledger == {OPENCV_HEADLESS[0]}
+        rebuilt = {deprepair._name_of(r) for r in deprepair.generation_requirements(project, ())}
+        assert OPENCV_HEADLESS[0] in rebuilt and OPENCV[0] not in rebuilt
+
+    def test_two_exclusive_declared_providers_stop_before_any_generation_is_built(
+        self, tmp_path, audit_house, offline_managed_env
+    ):
+        project = _project(
+            tmp_path,
+            requirements=f"{OPENCV[0]}==4.9.0.80\n{OPENCV_HEADLESS[0]}==4.10.0.84\n",
+            script="import cv2\n",
+        )
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_joint_plan(project, "figure.py")
+        assert err.value.code == deprepair.ERROR_PLAN_BLOCKED
+        blocked = err.value.extra["joint"]["blocked"]
+        assert [b["code"] for b in blocked] == [depplan.BLOCK_CONFLICT]
+        assert managedenv.generations(project) == {}

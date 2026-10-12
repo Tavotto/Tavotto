@@ -608,3 +608,41 @@ def test_rc_context_hatch_alpha_and_fill_round_trips_restore_the_script_look(rc_
     finally:
         for w in (hot, replay, fresh):
             pool.discard(w)
+
+
+# ---------------------------------------------------------------------------
+# #956：同一缺陷的另三个消费方——文本背景框 / 图例框 / 线集合的 alpha 往返
+# ---------------------------------------------------------------------------
+# 与上面同一把尺，夹具是 `rc_hatch_text_legend_figure`（一张图里五类各在不同的 `hatch.color` 下创建）。
+from support import rc_hatch_text_legend_figure as rctl  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def rctl_library(tmp_path_factory):
+    figs = tmp_path_factory.mktemp("rc-hatch-tl-figures")
+    (figs / rctl.SCRIPT_NAME).write_text(rctl.LIBRARY, encoding="utf-8")
+    return figs
+
+
+@pytest.mark.parametrize("name", list(rctl.TARGETS))
+def test_rc_context_hatch_text_legend_alpha_round_trip_restores_the_script_look(rctl_library, name):
+    gid, prop = rctl.TARGETS[name]
+    steps = [[_p(gid, prop, 0.4)], [_p(gid, prop, 0.7)], []]
+    hot, replay, fresh = (
+        pool.one_shot(rctl.SCRIPT_NAME, str(rctl_library), rctl.ENTRY) for _ in range(3)
+    )
+    for w in (hot, replay, fresh):
+        w.ensure_built()
+    try:
+        base_png = _png(hot, rctl.STEM, [], f"rctl-{name}-base")
+        seen = _diverges_hot_vs_replay(hot, replay, rctl.STEM, steps, f"rctl-{name}")
+        assert seen is None, (
+            f"{name}：第 {seen.step} 步热态 ≠ 重放（manifest {seen.manifest} 像素 {seen.pixel}）"
+        )
+        hot_png = _png(hot, rctl.STEM, [], f"rctl-{name}-hot-end")
+        fresh_png = _png(fresh, rctl.STEM, [], f"rctl-{name}-fresh")
+        assert hot_png == fresh_png, f"{name}：撤空后热态 ≠ 只见 [] 的全新 worker"
+        assert hot_png == base_png, f"{name}：撤空后没有回到脚本原样（花纹色被环境值重解析）"
+    finally:
+        for w in (hot, replay, fresh):
+            pool.discard(w)
