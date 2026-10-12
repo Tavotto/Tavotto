@@ -656,9 +656,12 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 
 - 目标是受管环境时，**选中的声明里与脚本相关、且目标缺 / 版本不满足的**是安装 roots（`depplan.plan` → `requirements`），不再只做 constraint；用户自己的 venv 目标永不并入。
   「相关」只有 `depplan._relevant_declarations` 一处：能指到它的 import（无条件 / 函数体内 / 别名动态）或归不到发行包的 import / 非字面量动态导入；可选 / 条件 / `TYPE_CHECKING` 不算。
+  「算不算」的绑定上下文只有 `depplan._is_binding`（import 分类）与 `_binding_dynamic`（非字面量动态导入）两个入口，互斥 provider 的冲突触发（`_arbitrate_providers`）同用它们：
+  `try: import cv2 / except ImportError`、`TYPE_CHECKING` 或条件下的 `import cv2` 不触发冲突；`try` / 条件 / `TYPE_CHECKING` 里的 `importlib.import_module(name)` 不让声明变相关。
+  扫描器为此在 `ImportUse.enclosing` 里保留非字面量动态导入的外围上下文（只加字段，不进 `to_payload`，`context` 仍恒为 `dynamic`）。
   仲裁出的 provider（`cv2` 的 headless 等）只在脚本确实 import 那个模块时相关——未 import 就不相关，连「有未解释 import」也不让它变相关。
   `declared_gaps` 对外截到 `MAX_DECLARED_GAPS`（超出时带 `declared_gaps_total`），但 `root_trigger` / 状态一律用完整集合判：先判定、后截断。
-- 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；
+- 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；归属按**路径身份、不 realpath**（`pool.same_python` 比登记的各代 `bin/python`）——托管 venv 的 `bin/python` 常是指向基础解释器的软链接，realpath 会把用户当前用的系统 python 判成「我们的」；
   用户的系统 / 本进程解释器只记录偏差（`action=recorded`），不静默升降包。`declared_gaps` 是可选字段，`plan_version` 不升。
 - 没有 import 名的 root 照样进账与装后核验（`install_only` 里 `import_name=""`）；`needed_imports` 一律滤掉空名，别拿空串去 probe。
 - 互斥 provider 只有一张表 `depresolve.ALTERNATIVE_DISTRIBUTIONS`：声明点名一个 = 它胜出；点名两个 = `dependency_conflict`；没点名 = curated（观察到的不是授权）。

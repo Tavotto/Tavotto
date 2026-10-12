@@ -274,6 +274,78 @@ class TestInstallSetDecidesNotTheRootsFlag:
 # ---------------------------------------------------------------------------
 # DEP-11 / AC-07：版本差异影响准备状态
 # ---------------------------------------------------------------------------
+_TWO_CV2 = "opencv-python-headless==4.10.0.84\nopencv-contrib-python==4.10.0.84\n"
+_NONBINDING = {
+    "optional": "try:\n    import cv2\nexcept ImportError:\n    cv2 = None\n",
+    "type_checking": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import cv2\n",
+    "conditional": "import sys\nif sys.argv[1:]:\n    import cv2\n",
+}
+
+
+class TestBindingContextsAreOneDefinition:
+    """Codex #960 round-3 P2：互斥 provider 的冲突触发与声明相关性共用「绑定上下文」一处定义；非字面量动态导入也带外围上下文。"""
+
+    @pytest.mark.parametrize("shape", sorted(_NONBINDING))
+    def test_a_non_binding_cv2_import_neither_blocks_nor_installs_either_provider(
+        self, tmp_path, shape
+    ):
+        proj = _project(tmp_path, _NONBINDING[shape], _TWO_CV2)
+        plan = _plan(proj)
+        assert plan.status != depplan.STATUS_BLOCKED
+        assert not [b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]
+        assert plan.requirements == ()
+        assert {g["distribution"] for g in plan.declared_gaps} == {
+            "opencv-python-headless",
+            "opencv-contrib-python",
+        }
+        assert not any(g["relevant"] for g in plan.declared_gaps)
+
+    def test_an_unconditional_cv2_import_still_blocks(self, tmp_path):
+        proj = _project(tmp_path, "import cv2\n", _TWO_CV2)
+        # 无条件 import 仍是冲突（正例对照）
+        assert _plan(proj).status == depplan.STATUS_BLOCKED
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "try:\n    mod = importlib.import_module(name)\nexcept ImportError:\n    mod = None\n",
+            "if name:\n    mod = importlib.import_module(name)\n",
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    mod = importlib.import_module(name)\n",
+        ],
+    )
+    def test_a_dynamic_import_in_a_non_binding_context_makes_nothing_relevant(self, tmp_path, body):
+        script = 'import importlib\nname = "auditlate"\n' + body
+        proj = _project(tmp_path, script, "auditlate>=1\n")
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+        assert plan.requirements == ()
+        (gap,) = plan.declared_gaps
+        assert gap["relevant"] is False
+
+    def test_an_unconditional_or_deferred_dynamic_import_still_makes_the_declaration_relevant(
+        self, tmp_path
+    ):
+        proj = _project(tmp_path, _VARIABLE, "auditlate>=1\n")
+        assert _plan(proj).status == depplan.STATUS_READY
+        deferred = "import importlib\ndef run(name):\n    return importlib.import_module(name)\n"
+        proj2 = _project(tmp_path / "b", deferred, "auditlate>=1\n")
+        assert _plan(proj2).status == depplan.STATUS_READY
+
+    def test_the_scanner_keeps_the_enclosing_context_without_changing_the_payload(self, tmp_path):
+        script = (
+            "import importlib\n"
+            "try:\n    importlib.import_module(a)\nexcept ImportError:\n    pass\n"
+            "importlib.import_module(b)\n"
+        )
+        proj = _project(tmp_path, script)
+        scan = importscan.scan(proj, "plot.py")
+        assert [(u.context, u.enclosing) for u in scan.dynamic] == [
+            ("dynamic", "optional"),
+            ("dynamic", "unconditional"),
+        ]
+        assert all("enclosing" not in d for d in scan.to_payload()["dynamic"])
+
+
 class TestVersionGap:
     SCRIPT = "import auditroot\nprint(auditroot.VALUE)\n"
 

@@ -3843,6 +3843,16 @@ def private_fresh_facts() -> depplan.TargetFacts | None:
     )
 
 
+def _is_managed_generation_path(project: str | Path, python: str) -> bool:
+    """这条解释器路径是不是登记过的某一代的 `bin/python`——**按路径身份、不 realpath**（`pool.same_python`）：
+    托管 venv 的 `bin/python` 通常是指向基础解释器的软链接，`managedenv.is_managed_python` 的 realpath 会把用户项目
+    正在用的系统 python（或基于它的别的 venv）判成「我们的」，相关差集就会被当成可换一代去修。"""
+    gens = managedenv.generations(project) or {managedenv.LEGACY_GENERATION: {}}
+    return any(
+        pool.same_python(python, str(managedenv.generation_python(project, g))) for g in gens
+    )
+
+
 def _run_env_ours(project: str | Path, facts: depplan.TargetFacts | None) -> bool:
     """此刻跑脚本的环境是不是 Tavotto 自己的、坏了只能换一代而不是原地修（`depplan.plan(run_env_replaceable=)`）：受管环境的某一代、
     内置 runtime、还没落盘（替身事实）或刚由私有 Python 新建的一代。用户交给我们的系统解释器 / 本进程的解释器 / 任何别的路径都不是——
@@ -3850,7 +3860,7 @@ def _run_env_ours(project: str | Path, facts: depplan.TargetFacts | None) -> boo
     if facts is None or not facts.python:
         return True
     python = facts.python
-    if managedenv.is_managed_python(project, python):
+    if _is_managed_generation_path(project, python):
         return True
     # Tavotto 自己供应的：内置 runtime、源码模式自建的 worker-env、私有完整 Python（`pool.SOURCE_BUNDLED` / `SOURCE_MANAGED`）
     ours = (

@@ -1580,6 +1580,35 @@ class TestRunEnvOwnership:
         gen_python.write_text("", encoding="utf-8")
         assert deprepair._run_env_ours(project, facts(str(gen_python)))  # 受管代
 
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX 的 venv 解释器是指向基础解释器的软链接")
+    def test_a_system_python_a_managed_venv_links_to_is_not_ours(self, tmp_path):
+        """Codex #960 round-3 P2：托管代的 `bin/python` 软链到系统 python 时，按路径身份比（不 realpath）——
+        项目当前用的就是那条系统 python 时不能被判成 Tavotto 的；真正的托管代路径仍是。"""
+        project = tmp_path / "paper"
+        project.mkdir()
+        system = tmp_path / "usr" / "bin" / "python3"
+        system.parent.mkdir(parents=True)
+        system.write_text("", encoding="utf-8")
+        managedenv.register_generation(
+            project,
+            "linked",
+            requirements=[],
+            constraints=[],
+            identity="1",
+            base_python=str(system),
+        )
+        gen_python = managedenv.generation_python(project, "linked")
+        gen_python.parent.mkdir(parents=True, exist_ok=True)
+        gen_python.symlink_to(system)
+
+        def facts(python: str) -> depplan.TargetFacts:
+            return depplan.TargetFacts(
+                python=python, marker_env={}, stdlib=frozenset(), installed={}
+            )
+
+        assert not deprepair._run_env_ours(project, facts(str(system)))
+        assert deprepair._run_env_ours(project, facts(str(gen_python)))
+
     def test_a_users_system_interpreter_is_only_recorded_never_replaced(
         self, tmp_path, audit_house, offline_managed_env
     ):
