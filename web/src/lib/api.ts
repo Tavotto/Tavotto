@@ -5424,6 +5424,8 @@ export interface PreparationResultError {
     parse_kind?: 'missing_required' | 'invalid_value' | 'unknown' | string
     prompt?: string
     reason?: 'no_interactive_client' | 'replay_missing' | 'secret_required' | 'transcript_mismatch' | string
+    /** 输入类的读取方式（闭集）：getpass = 口令——首问无人应答时口令性质只在这里 */
+    input_kind?: 'input' | 'readline' | 'read' | 'getpass' | string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string

@@ -305,6 +305,22 @@ def test_a_sensitive_run_does_not_restore_what_the_worker_hid(
     assert SECRET not in shared
 
 
+def test_the_input_kind_survives_so_an_unanswered_getpass_is_still_a_secret():
+    """getpass 首问没人能答：理由是 no_interactive_client，口令性质只在 input_kind 里——转换不能丢（Codex #973）。"""
+    err = _error(
+        "x",
+        "script_needs_input",
+        extra={"prompt": "Password: ", "reason": "no_interactive_client", "input_kind": "getpass"},
+    )
+    assert engine_pool.recovery_params(err) == {
+        "prompt": "Password: ",
+        "reason": "no_interactive_client",
+        "input_kind": "getpass",
+    }
+    bogus = _error("x", "script_input_timeout", extra={"input_kind": "../etc"})
+    assert "input_kind" not in engine_pool.recovery_params(bogus)  # 闭集外的值不带出去
+
+
 def test_the_getpass_secret_is_not_in_the_report_when_the_worker_hid_it(
     client, tmp_path, fake_pool, sessions
 ):

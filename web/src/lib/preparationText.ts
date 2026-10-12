@@ -358,7 +358,9 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
       if (report.outcome.reason === 'dependency_preparation') return view('deps_failed', 'depsFailed', v, fallback, { tone: 'bad' })
       if (code === 'script_needs_input' || code === 'script_input_timeout') {
         // 脚本中途要输入而这一次没有人能答：再运行一次，提问会出现在卡片里（口令类说清不会被记住）
-        const secret = report.result?.error?.params?.reason === 'secret_required'
+        // 口令：理由是 secret_required，或读取方式本身是 getpass（首问无人应答 / 超时时理由是别的）
+        const params = report.result?.error?.params
+        const secret = params?.reason === 'secret_required' || params?.input_kind === 'getpass'
         return view('input_unanswered', secret ? 'inputUnansweredSecret' : 'inputUnanswered', v, has(report, 'run') ? act('run', 'retry') : fallback, {
           tone: 'bad',
           step: 1,

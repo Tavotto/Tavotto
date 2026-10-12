@@ -643,6 +643,11 @@ def recovery_params(exc: "WorkerError") -> dict:
         params = {"prompt": str(extra.get("prompt") or "")}
         if extra.get("reason") in inputbroker.REASONS:
             params["reason"] = extra["reason"]
+        # 读取方式（闭集）：getpass 的首问没人能答时 reason 是 no_interactive_client，口令性质只在这里（Codex #973）
+        from .scriptinput import KINDS as _INPUT_KINDS
+
+        if extra.get("input_kind") in _INPUT_KINDS:
+            params["input_kind"] = extra["input_kind"]
         return params
     if exc.code == ARGUMENTS_ERROR_CODE:
         params = {}
