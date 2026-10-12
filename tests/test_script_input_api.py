@@ -166,7 +166,12 @@ def test_no_answerer_reports_script_needs_input_with_the_prompt(client, figs, ev
     resp = client.post("/api/registry/probe", json={"script": "pick.py"})
     body = resp.get_json()
     assert body["error"]["code"] == "script_needs_input"
-    assert body["error"]["params"] == {"prompt": "numbers: "}
+    # 三个出口共用一份恢复合同（P05a）：提示原文 + 为什么没人能答 + 读取方式，都是闭集 / 脚本自己的文字
+    assert body["error"]["params"] == {
+        "prompt": "numbers: ",
+        "reason": "no_interactive_client",
+        "input_kind": "input",
+    }
     assert time.time() - t0 < 60  # 绝不卡死
     assert events.of("script.input_requested") == []
 

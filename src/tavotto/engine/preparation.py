@@ -824,6 +824,9 @@ class PreparationService:
                 )
                 return
             error = {"code": getattr(exc, "code", "") or "worker_error", "message": str(exc)}
+            _attach_local_detail(
+                error, exc, sensitive=bool(plan.run is not None and plan.run.sensitive)
+            )
             # 诊断包的「最近缺依赖现场」：准备路径把 WorkerError 接在这里，不经 `app._worker_error`
             # 修复 offer 与试运行路径（probe.py）同一个函数、同样的入参：只读判断，不起解释器、不联网，
             # 复用异常里已体检好的 project_env；算不出来不许盖掉原始错误（线程里不能抛）
@@ -1182,6 +1185,26 @@ def _elapsed_ms(started_at, finished_at) -> int | None:
     ):
         return round((finished_at - started_at) * 1000)
     return None
+
+
+def _attach_local_detail(error: dict, exc: BaseException, *, sensitive: bool) -> None:
+    """把旧试运行出口（`probe._error_from_worker`）早就保留的**本地**恢复信息接到准备错误上：`params`（参数解析类别 /
+    个数、input 的提示与理由）与 `traceback`（保尾部，过长标 `traceback_truncated`）。字段由错误转换合同
+    `pool.recovery_params` / `traceback_tail` 给出，与渲染端点、探测同一份。
+
+    只走本地报告（`result.error` → `/api/engine/preparation*`）：`diagnostic_projection` 逐字段挑，不读这两项，
+    共享诊断与遥测不会带出。敏感运行（argv 含口令 / token）worker 已把脚本输出换成一句占位——这里**再**不带
+    traceback，防止上游任何一环漏了也不会落进报告；个数与类别不含值，照常保留。"""
+    params = pool.recovery_params(exc)
+    if params:
+        error["params"] = params
+    if sensitive:
+        return
+    tb, truncated = pool.traceback_tail(getattr(exc, "traceback_text", ""))
+    if tb:
+        error["traceback"] = tb
+        if truncated:
+            error["traceback_truncated"] = True
 
 
 def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> dict:

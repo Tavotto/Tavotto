@@ -668,3 +668,16 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   冲突与「能否 ready」都按**本计划实际安装集合**判，不看「是否 roots 模式」这个全局开关：点名的两个 provider 只在脚本 import 了那个模块、或它们真会被装（受管环境按声明装的 roots；hash 模式整份锁）时才冲突，无关脚本不被拦；hash 模式下相关缺口同样让计划 `ready`（`_arbitrate_providers(installing)` / `declared_install`）。
   账本合并（`generation_requirements`）与记账（`forget_install`）同源，不把被替掉的 provider 带回。
 - 看护：`tests/test_dependency_declared_roots.py`（计划层、账本）、`tests/test_dependency_transaction.py::TestDeclaredRootsTransaction` / `TestRunEnvOwnership`（真 generation + 离线 pip）。
+
+## Import 来源进安装决策（兼容性改造 P03，ADR 0123）
+
+- **观察不授权**：安装名只有三条通道（项目声明 / 表 / `user_specified`，`INSTALLABLE_SOURCES`）。`depplan` 读观察（`distribution_candidates`）只喂披露字段 `JointPlan.provider_decisions`，
+  不得流进 `requirements` / `constraints` / `missing` / `identity` / 影响摘要；`deprepair` / `depresolve` 不读观察字段。行为看护：有无索引（`dists=None`）`requirements` / `identity` 逐字相同。
+- `provider_decisions`（可选字段，`plan_version` 不升）：`basis` ∈ 三档、`action` ∈ `depplan.DECISION_ACTIONS`、`observed` 含 editable / 本地 / VCS 并标 `reproducible=false`、`replaces_observed`。
+  editable / VCS / 本地 wheel 的观察**从不**折成 PyPI `name==version`；披露不带路径与文件内容。
+- 互斥 provider 的 `resolution_source`：声明仲裁替掉表里的名字时是 `project_declared`（`depplan._source_of`）。
+- 切换 provider 的作用域：`deprepair._scope_conflicts` 的 `via: "provider"`——别的作用域仍记着互斥 provider 时 `dependency_scope_conflict`（出路同 D04），同一作用域改声明是正常换，无归属老账不参与。
+- 成功回执 `result.providers`：`{import_name, distribution, version, source, provenance, generation}`，`provenance` 来自装后重读的静态索引（`_verify_distributions` 的返回值），读不出留空。
+  **每条成功安装的对外终态都带它**（托管联合 / 托管单包修复 / 首次装包 / 项目 venv 联合 / 项目 venv 单包 / 包管理原地装·升；卸载不带）：代事务路径原样转交其 `providers`；原地装没有「代」故 `generation` 为空，单包与包管理原地装没有重读元数据故 `provenance` 为空。`source` 缺失一律在 pip / 换代之前拒（`_require_record_sources`）。
+- 看护：`tests/test_dependency_origin_install.py`（计划层，四 provider × 声明 / 观察、editable / 本地 wheel / VCS、本地 helper / namespace、显式选择）、
+  `tests/test_dependency_provider_scopes.py`（真 generation + 离线 pip：安装集合 = 脚本实际 provider = 回执；跨作用域切换；失败不动旧 active）。

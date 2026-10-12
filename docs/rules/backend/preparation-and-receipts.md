@@ -109,10 +109,18 @@
   + 一条 guided 合同经真实入口 `tests/test_foundation_join.py::test_fo30_*`）；FO32 → observing（两个出口
   `existing_env_join` / `managed_env_join` 各挂一条具名任务：`foundation-u06-rendercore.yml` 的「U09 联调」步、
   `private-python-targets.yml` 的「U09 联调：managed_env_join」步；候选后端未切默认，所以不进 required）。
+- **准备出错保留本地恢复信息（P05a，AC-26）**：`result.error` 除 `code` / `message` 外带 `params`（`script_needs_arguments` 的
+  `argv_count` / `parse_kind`；输入类的 `prompt` / `reason`）与 `traceback`（保尾部，`pool.LOCAL_TRACEBACK_LIMIT`，截断标
+  `traceback_truncated`）。字段由错误转换合同 `pool.recovery_params` / `pool.traceback_tail` 给出，**渲染端点
+  （`app._worker_error_payload`）、试运行探测（`probe._error_from_worker`）与准备会话同一份**；`missing_input` 载荷照旧走
+  `requirements[input_location]`。这是**本地**详情：`diagnostic_projection` 逐字段挑、不读 `params` / `traceback`，共享诊断与
+  遥测不带；敏感运行（`plan.run.sensitive`）不带 `traceback`（worker 已隐藏的内容不在这里恢复），个数与类别不含值照留。前端契约
+  fixture `tests/golden/preparation_error_reports.json` 是这几类错误经准备会话的真实序列化结果
+  （`TAVOTTO_WRITE_GOLDEN=1 pytest tests/test_preparation_error_detail.py` 重生成），`PreparationCard.test.tsx` 读它。
 - 看护：`tests/test_execution_receipt.py`、`tests/test_preparation_api.py`、
   `tests/test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、
   `tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、
-  `tests/test_foundation_join.py`、`tests/test_export_identity.py`。
+  `tests/test_foundation_join.py`、`tests/test_export_identity.py`、`tests/test_preparation_error_detail.py`。
 
 ## 准备会话：script-first 的共同生命周期（T01，onboarding 收敛）
 

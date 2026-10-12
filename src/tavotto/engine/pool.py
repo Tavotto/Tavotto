@@ -618,6 +618,55 @@ class WorkerError(RuntimeError):
         self.install_route = ""
 
 
+#: 「用户能据此做点什么」的两类 worker 错误码：脚本要输入而没人能答 / 等到超时（ADR 0099）；
+#: 脚本自己的参数解析器退出了（T03）。
+INPUT_ERROR_CODES = ("script_needs_input", "script_input_timeout")
+ARGUMENTS_ERROR_CODE = "script_needs_arguments"
+
+#: 本地错误详情里 traceback 保留的字符数上限（保尾部：最后几帧才是脚本自己出错的地方）。
+#: 完整日志仍在 worker.log；这个上限只防报告体积失控。
+LOCAL_TRACEBACK_LIMIT = 20000
+
+
+def recovery_params(exc: "WorkerError") -> dict:
+    """worker 错误里**用户据以恢复**的稳定字段（错误转换合同的一份；渲染端点、试运行探测、准备会话共用）。
+
+    只带类别、个数与脚本自己的提示文字，**从不带参数值**：
+
+    * 输入类：`prompt`（脚本 `input()` 的提示原文）+ `reason`（为什么没人能答，闭集 `inputbroker.REASONS`）。
+    * `script_needs_arguments`：`argv_count`（用户给了精确 token 才有）+ `parse_kind`（worker 有 argparse 的
+      实际证据才有）。数值一律是字符串——那是已发布的线格式。
+    * 其余码：空（不为凑形状捏造字段）。
+    """
+    extra = getattr(exc, "extra", None) or {}
+    if exc.code in INPUT_ERROR_CODES:
+        params = {"prompt": str(extra.get("prompt") or "")}
+        if extra.get("reason") in inputbroker.REASONS:
+            params["reason"] = extra["reason"]
+        # 读取方式（闭集）：getpass 的首问没人能答时 reason 是 no_interactive_client，口令性质只在这里（Codex #973）
+        from .scriptinput import KINDS as _INPUT_KINDS
+
+        if extra.get("input_kind") in _INPUT_KINDS:
+            params["input_kind"] = extra["input_kind"]
+        return params
+    if exc.code == ARGUMENTS_ERROR_CODE:
+        params = {}
+        if extra.get("argv_count"):
+            params["argv_count"] = str(int(extra["argv_count"]))
+        if extra.get("parse_kind"):
+            params["parse_kind"] = str(extra["parse_kind"])
+        return params
+    return {}
+
+
+def traceback_tail(text: str | None, limit: int = LOCAL_TRACEBACK_LIMIT) -> tuple[str, bool]:
+    """`(traceback 尾部, 是否被截断)`。空白 traceback 回 `("", False)`。"""
+    tb = (text or "").strip()
+    if len(tb) <= limit:
+        return tb, False
+    return tb[-limit:], True
+
+
 #: 脚本跑完了、一张图都没捕获到，而调用方要的 stem 在注册表里登记过。worker
 #: 那边它只是一个普通 `unknown_stem`（`known == []`），但对用户是完全不同的
 #: 一件事：脚本自己多半已经说了为什么（「文件未找到」「没有数据，无法绘图」），

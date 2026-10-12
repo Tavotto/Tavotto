@@ -1,0 +1,132 @@
+{
+  "invalid_argv": {
+    "action_kinds": [
+      "recheck",
+      "run"
+    ],
+    "outcome": {
+      "code": "script_needs_arguments",
+      "kind": "failed"
+    },
+    "phase": "action_required",
+    "requirements": [],
+    "result": {
+      "error": {
+        "code": "script_needs_arguments",
+        "message": "脚本要求命令行参数",
+        "params": {
+          "argv_count": "2",
+          "parse_kind": "invalid_value"
+        },
+        "traceback": "Traceback (most recent call last):\n  File \"/work/proj/fig.py\", line 12, in <module>\n    main()\n  File \"/work/proj/fig.py\", line 7, in main\n    args = parser.parse_args()\nSystemExit: 2"
+      },
+      "status": "error"
+    }
+  },
+  "missing_argv": {
+    "action_kinds": [
+      "recheck",
+      "run"
+    ],
+    "outcome": {
+      "code": "script_needs_arguments",
+      "kind": "failed"
+    },
+    "phase": "action_required",
+    "requirements": [],
+    "result": {
+      "error": {
+        "code": "script_needs_arguments",
+        "message": "脚本要求命令行参数",
+        "params": {
+          "parse_kind": "missing_required"
+        },
+        "traceback": "Traceback (most recent call last):\n  File \"/work/proj/fig.py\", line 12, in <module>\n    main()\n  File \"/work/proj/fig.py\", line 7, in main\n    args = parser.parse_args()\nSystemExit: 2"
+      },
+      "status": "error"
+    }
+  },
+  "missing_input_file": {
+    "action_kinds": [
+      "recheck",
+      "run"
+    ],
+    "outcome": {
+      "code": "missing_input",
+      "kind": "failed"
+    },
+    "phase": "action_required",
+    "requirements": [
+      {
+        "blocking": false,
+        "code": "missing_input",
+        "id": "data",
+        "kind": "input_location",
+        "origin": "last_attempt",
+        "payload": {
+          "calls": [
+            {
+              "api": "np.loadtxt",
+              "line": 7,
+              "name": "points.csv"
+            }
+          ],
+          "candidates": [],
+          "code": "missing_input"
+        }
+      }
+    ],
+    "result": {
+      "error": {
+        "code": "missing_input",
+        "message": "FileNotFoundError: [Errno 2] No such file or directory: 'points.csv'",
+        "traceback": "Traceback (most recent call last):\n  File \"/work/proj/fig.py\", line 12, in <module>\n    main()\n  File \"/work/proj/fig.py\", line 7, in main\n    args = parser.parse_args()\nFileNotFoundError: [Errno 2] No such file or directory: 'points.csv'"
+      },
+      "status": "error"
+    }
+  },
+  "plain_exception": {
+    "action_kinds": [
+      "recheck",
+      "run"
+    ],
+    "outcome": {
+      "code": "script_error",
+      "kind": "failed"
+    },
+    "phase": "action_required",
+    "requirements": [],
+    "result": {
+      "error": {
+        "code": "script_error",
+        "message": "ZeroDivisionError: division by zero",
+        "traceback": "Traceback (most recent call last):\n  File \"/work/proj/fig.py\", line 12, in <module>\n    main()\n  File \"/work/proj/fig.py\", line 7, in main\n    args = parser.parse_args()\nZeroDivisionError: division by zero"
+      },
+      "status": "error"
+    }
+  },
+  "unanswered_input": {
+    "action_kinds": [
+      "recheck",
+      "run"
+    ],
+    "outcome": {
+      "code": "script_needs_input",
+      "kind": "failed"
+    },
+    "phase": "action_required",
+    "requirements": [],
+    "result": {
+      "error": {
+        "code": "script_needs_input",
+        "message": "脚本需要输入：Enter output directory: ",
+        "params": {
+          "prompt": "Enter output directory: ",
+          "reason": "no_interactive_client"
+        },
+        "traceback": "Traceback (most recent call last):\n  File \"/work/proj/fig.py\", line 12, in <module>\n    main()\n  File \"/work/proj/fig.py\", line 7, in main\n    args = parser.parse_args()\nEOFError: EOF when reading a line"
+      },
+      "status": "error"
+    }
+  }
+}

@@ -5407,9 +5407,33 @@ export interface PreparationReport {
   no_figure_hint?: { kind: 'raster_script'; library: RasterLibrary; in_project?: boolean } | null
   result: {
     status: string
-    error?: { code?: string; message?: string; reason?: string; module?: string } | null
+    error?: PreparationResultError | null
     note?: string
   } | null
+}
+
+/**
+ * 准备尝试的错误（后端 `preparation.PreparationService` 的 `result.error`，P05a）。`params` / `traceback` 是**本地**恢复信息，
+ * 与渲染端点、试运行探测同一份合同（`pool.recovery_params`）：只有类别、个数与脚本自己的提示，从不带参数值；
+ * 敏感运行不带 `traceback`。共享诊断（任务快照 / 诊断包）不读这两项。契约 fixture：`tests/golden/preparation_error_reports.json`。
+ */
+export interface PreparationResultError {
+  code?: string
+  message?: string
+  reason?: string
+  module?: string
+  /** `script_needs_arguments`：`argv_count`（用户给了精确参数才有）+ `parse_kind`；输入类：`prompt` + `reason` */
+  params?: {
+    argv_count?: string
+    parse_kind?: 'missing_required' | 'invalid_value' | 'unknown' | string
+    prompt?: string
+    reason?: 'no_interactive_client' | 'replay_missing' | 'secret_required' | 'transcript_mismatch' | string
+    /** 输入类的读取方式（闭集）：getpass = 口令——首问无人应答时口令性质只在这里 */
+    input_kind?: 'input' | 'readline' | 'read' | 'getpass' | string
+  }
+  /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
+  traceback?: string
+  traceback_truncated?: boolean
 }
 
 /**

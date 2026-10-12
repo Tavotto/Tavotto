@@ -694,6 +694,26 @@ def _scope_conflicts(root: str, script: str, joint: depplan.JointPlan) -> list[d
                         "via": via,
                     }
                 )
+    # 互斥 provider（`cv2` 的四个，P03 / AC-08）：本次要装的 provider 会替掉账上**别的作用域**装进去的那个——
+    # `generation_requirements` 合并时账上互斥的那条会让位，不拦就等于悄悄把另一个目录的脚本换了 provider
+    # （opencv-python 变 headless，GUI 后端没了）。同一作用域里用户改了自己的声明是正常换 provider，不算；老账没有归属不参与
+    named = {depresolve.normalize_distribution(_name_of(t)) for t in joint.requirements}
+    for new in sorted(named):
+        for peer in sorted(depresolve.provider_peers(new) - named):
+            entry = ledger.get(peer)
+            if entry is None or entry["scope"] == mine:
+                continue
+            out.append(
+                {
+                    "name": peer,
+                    "installed_version": str(entry["resolved_version"]),
+                    "installed_for": str(entry["scope"]),
+                    "wanted": "",
+                    "wanted_for": mine,
+                    "via": "provider",
+                    "replaced_by": new,
+                }
+            )
     return out[:20]
 
 
@@ -1176,6 +1196,7 @@ def _fold_requested(
             "import_name": requirement.import_name,
             "distribution": requirement.distribution,
             "specifier": requirement.specifier,
+            "resolution_source": requirement.resolution_source,
         }
     ]
     record += [
@@ -1183,6 +1204,7 @@ def _fold_requested(
             "import_name": m["import_name"],
             "distribution": m["distribution"],
             "specifier": ",".join(m["specifiers"]),
+            "resolution_source": str(m.get("resolution_source") or depresolve.SOURCE_CURATED),
         }
         for m in joint.install_entries
         if depresolve.normalize_distribution(m["distribution"]) != wanted
@@ -1422,6 +1444,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
                     "import_name": req.import_name,
                     "distribution": req.distribution,
                     "specifier": req.specifier,
+                    "resolution_source": req.resolution_source,
                 },
             ),
             reason=managedenv.REASON_MISSING_DEPENDENCY,
@@ -1458,6 +1481,8 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             "import_name": req.import_name,
             "target_kind": plan.target_kind,
             "generation": outcome["generation"],
+            # 代事务生成的回执原样带到对外终态（它自己的 `done` 被 `_emit_repair_step` 吞了）
+            "providers": outcome.get("providers", []),
         }
         _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
         LOG.info(
@@ -1469,6 +1494,10 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         return result
     if cancel_ev.is_set():
         return _finish_cancelled(plan, on_event, python)
+    # 回执要「凭什么装它」：缺了在任何副作用（pip）之前拒绝，不留下「装上了、任务却报失败」
+    _require_record_sources(
+        ({"distribution": req.distribution, "resolution_source": req.resolution_source},)
+    )
 
     # ---- pip 在不在 -------------------------------------------------------
     rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
@@ -1554,6 +1583,19 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         "distribution": req.distribution,
         "import_name": req.import_name,
         "target_kind": plan.target_kind,
+        # 用户 venv 原地装：没有代；装后没有重新读元数据，`provenance` 如实留空
+        "providers": _provider_receipt(
+            (
+                {
+                    "import_name": req.import_name,
+                    "distribution": req.distribution,
+                    "resolution_source": req.resolution_source,
+                },
+            ),
+            [],
+            {depresolve.normalize_distribution(req.distribution): version},
+            "",
+        ),
     }
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
     LOG.info(
@@ -3453,6 +3495,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
                     "import_name": "",
                     "distribution": job.distribution,
                     "specifier": job.requirement[len(job.distribution) :],
+                    "resolution_source": depresolve.SOURCE_USER_SPECIFIED,
                 },
             ),
             reason=managedenv.REASON_USER_REQUESTED,
@@ -3476,6 +3519,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             "version": version,
             "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
             "generation": outcome["generation"],
+            "providers": outcome.get("providers", []),
         }
         _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
         LOG.info(
@@ -3574,6 +3618,25 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         "version": version,
         "python_version": (managedenv.read_manifest(project) or {}).get("python_version", ""),
     }
+    if job.op != OP_UNINSTALL:
+        # 受管环境原地装 / 升：没有新代，`provenance` 留空（没有重新读元数据）
+        result["providers"] = _provider_receipt(
+            (
+                {
+                    "import_name": str(
+                        (managedenv.installed_entry(project, job.distribution) or {}).get(
+                            "import_name"
+                        )
+                        or ""
+                    ),
+                    "distribution": job.distribution,
+                    "resolution_source": depresolve.SOURCE_USER_SPECIFIED,
+                },
+            ),
+            [],
+            {key_name: version},
+            "",
+        )
     _emit_job(job.job_id, STATE_DONE, on_event, job=job, result=result)
     LOG.info(
         "包操作完成: %s %s %s",
@@ -4106,6 +4169,7 @@ def create_joint_plan(
                 "import_name": m["import_name"],
                 "distribution": m["distribution"],
                 "specifier": ",".join(m["specifiers"]),
+                "resolution_source": str(m.get("resolution_source") or ""),
             }
             for m in installing_entries
         ),
@@ -4552,6 +4616,7 @@ def prepare(
 def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Event) -> dict:
     """用户 venv：原地装这次缺的（ADR 0019 §八 的纪律不变）。"""
     python = plan.python
+    _require_record_sources(plan.record)  # 回执的来源字段：缺了在 pip 之前拒绝
     _emit(plan.plan_id, STATE_PREPARING, on_event, joint=plan)
     rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
     if rc != 0:
@@ -4587,7 +4652,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         raise RepairError(code, _sanitize(out)[-800:])
     _emit(plan.plan_id, STATE_VERIFYING, on_event, joint=plan)
     _verify_imports(python, plan.needed_imports)
-    _verify_distributions(
+    provided = _verify_distributions(
         python,
         plan.record,
         plan.requirements,
@@ -4618,11 +4683,13 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     _note_round(plan.project, plan.script)
     with _lock:
         _gate_skipped.discard((plan.project_id, plan.script))
+    installed = _versions_of(python, [r["distribution"] for r in plan.record])
     result = {
         "ok": True,
         "python": python,
         "target_kind": TARGET_PROJECT_VENV,
-        "installed": _versions_of(python, [r["distribution"] for r in plan.record]),
+        "installed": installed,
+        "providers": _provider_receipt(plan.record, provided, installed, ""),
     }
     _emit(plan.plan_id, STATE_DONE, on_event, joint=plan, result=result)
     return result
@@ -4743,8 +4810,18 @@ def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
         raise _busy_error(exc) from exc
 
 
+def _require_record_sources(record) -> None:
+    """装入记录每条都要带「凭什么装它」（P03 回执合同）。在任何副作用之前查：回执是在新一代**激活之后**才生成的，
+    到那时再因缺来源抛错，会留下「已切到新一代、任务却报失败」的错位状态。"""
+    for rec in record or ():
+        dist = depresolve.normalize_distribution(str(rec.get("distribution") or ""))
+        if dist and str(rec.get("resolution_source") or "") not in depresolve.INSTALLABLE_SOURCES:
+            raise RepairError(ERROR_FAILED, f"装入记录缺 resolution_source: {dist}")
+
+
 def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key: str) -> dict:
     project = job.project
+    _require_record_sources(job.record)
     job.emit(STATE_PREPARING)
     managedenv.retire_unused(project, in_use=_generation_in_use)
     base = base_python()
@@ -4867,7 +4944,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         )
         raise exc
     try:
-        _verify_distributions(
+        provided = _verify_distributions(
             python, job.record, job.delta, job.constraints, user_specified=job.user_specified
         )
     except RepairError as exc:
@@ -4980,11 +5057,44 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         "generation": generation,
         "activated": True,
         "installed": installed,
+        "providers": _provider_receipt(job.record, provided, installed, generation),
         "retired": retired,
     }
     job.emit(STATE_DONE, result=result)
     LOG.info("受管环境换代: %s → %s（装 %d 条）", project, generation, len(requirements))
     return result
+
+
+def _provider_receipt(
+    record, provided: list[dict], installed: Mapping[str, str], generation: str
+) -> list[dict]:
+    """成功回执里「这一代真正用的 provider」（P03，AC-08 / AC-09）：每个装进来的 (import 名, 发行包) 的实际版本、凭什么装它
+    （`resolution_source`：project_declared / curated / user_specified）、装后重新读元数据看到的来源种类（`provenance`，`index` 才是可由包索引重现），
+    以及落在哪一代。只含发行包名 / 版本 / 来源种类，不带路径；装后读不出来源的条目 `provenance` 留空，不编造。"""
+    seen = {(p["import_name"], p["distribution"]): p for p in provided}
+    out: list[dict] = []
+    for rec in record:
+        dist = depresolve.normalize_distribution(str(rec.get("distribution") or ""))
+        if not dist:
+            continue
+        imp = str(rec.get("import_name") or "")
+        source = str(rec.get("resolution_source") or "")
+        if source not in depresolve.INSTALLABLE_SOURCES:
+            # 回执的 source 只能是「凭什么装它」的三种之一；record 漏带就是构造处的缺陷，不静默写空串
+            raise ValueError(f"装入记录缺 resolution_source: {dist}")
+        got = seen.get((imp.split(".")[0], dist))
+        out.append(
+            {
+                "import_name": imp,
+                "distribution": dist,
+                # 核验过的提供者版本优先：venv 开了 system site-packages 时 inventory 可能留下被遮蔽的那份（Codex #964）
+                "version": str((got or {}).get("version") or installed.get(dist) or ""),
+                "source": source,
+                "provenance": str((got or {}).get("provenance") or ""),
+                "generation": generation,
+            }
+        )
+    return out
 
 
 def _generation_in_use(python: str) -> bool:
@@ -5112,6 +5222,7 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
                 "import_name": m["import_name"],
                 "distribution": m["distribution"],
                 "specifier": ",".join(m["specifiers"]),
+                "resolution_source": str(m.get("resolution_source") or ""),
             }
             for m in plan.install_entries
         ),
@@ -5351,7 +5462,7 @@ def _verify_distributions(
     constraints: tuple[str, ...] | list[str] = (),
     *,
     user_specified: tuple[dict, ...] | list[dict] = (),
-) -> None:
+) -> list[dict]:
     """装后「发行包与版本」核验（Import Origin PR5b）：`pip` 退出码 0、`import X` 成功，都不等于**装上的就是计划要装的那个包**。
 
     重新量目标环境（`target_facts(use_cache=False)` + 同一刻读的 `static_index`，只读 `distmeta` 的元数据，不 import 用户包），对照：
@@ -5365,6 +5476,9 @@ def _verify_distributions(
 
     **判不出就别判**：非用户指定的 import 在读不出 / 没有任何发行包认领它时跳过第 2 项（没有证据 ≠ 不一致；`import` 验证已过）；
     **用户指定**的包（`user_specified`）是唯一没有可信来源背书的一类，读不出它提供什么就不放行（`DIST_UNVERIFIABLE`）。
+
+    通过时返回「这一代里实际提供这些 import 的发行包」`[{import_name, distribution, version, provenance}]`（P03，回执用）：来自装后
+    重新读的静态索引里**未被遮蔽**、且正是计划里那个发行包的候选；读不出的不列（不编造）。
     """
     strict = {str(u.get("import_name") or "") for u in user_specified}
     wanted: dict[str, list[str]] = {}
@@ -5378,6 +5492,7 @@ def _verify_distributions(
         if it is not None and it.declared:
             limits.setdefault(it.name, []).append(it.specifier)
     problems: dict[str, str] = {}
+    provided: list[dict] = []
     try:
         facts = depplan.target_facts(python, use_cache=False)
         index = depplan.static_index(facts)
@@ -5418,7 +5533,16 @@ def _verify_distributions(
                     problems[imp] = DIST_UNVERIFIABLE
                 continue
             live = [c for c in look.candidates if not c.shadowed]
-            if any(c.key == dist for c in live):
+            hit = next((c for c in live if c.key == dist), None)
+            if hit is not None:
+                provided.append(
+                    {
+                        "import_name": imp,
+                        "distribution": dist,
+                        "version": hit.version,
+                        "provenance": hit.provenance,
+                    }
+                )
                 continue
             if live or look.candidates or imp in strict:
                 # 别的发行包在提供它 / 计划里的发行包被排在前面的提供者遮蔽了（有候选、没有未被遮蔽的）/ 用户指定的包没有任何证据
@@ -5429,6 +5553,7 @@ def _verify_distributions(
             "装上的发行包与计划不符: " + "; ".join(f"{k}: {v}" for k, v in problems.items())[:760],
             imports=problems,
         )
+    return provided
 
 
 def cancel_status(plan_id: str) -> dict:

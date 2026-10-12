@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shutil
@@ -24,6 +25,7 @@ from support.dependency_repair import build_wheel, needs_worker, real_venv, wait
 from tavotto.engine import (
     depplan,
     deprepair,
+    depresolve,
     envlease,
     managedenv,
     pool as engine_pool,
@@ -855,6 +857,13 @@ class TestJointTransaction:
         assert managedenv.active_generation(project) == gen
         assert _importable(managedenv.python_of(project), ALPHA[1])
         assert deprepair.cancel_status(plan.plan_id)["reason"] == "committed"
+        # 对外终态带回执（代事务自己的 done 被吞，包装层要原样带上）
+        (receipt,) = rec["result"]["providers"]
+        assert (receipt["distribution"], receipt["generation"]) == (
+            depresolve.normalize_distribution(ALPHA[0]),
+            gen,
+        )
+        assert receipt["source"] in depresolve.INSTALLABLE_SOURCES and receipt["version"]
 
     def test_single_package_repair_on_a_fresh_generation_installs_everything_the_script_needs(
         self, tmp_path, house, offline_managed_env
@@ -1149,9 +1158,58 @@ class TestProjectVenvTarget:
         rec = wait_for(plan.plan_id)
         assert rec["state"] == deprepair.STATE_DONE, rec
         assert rec["result"]["target_kind"] == deprepair.TARGET_PROJECT_VENV
+        # 项目 venv 联合路径：回执来自 `_verify_distributions`；原地装没有「代」，generation 如实为空
+        (receipt,) = rec["result"]["providers"]
+        assert receipt["distribution"] == depresolve.normalize_distribution(ALPHA[0])
+        assert receipt["import_name"] == ALPHA[1]
+        assert receipt["source"] in depresolve.INSTALLABLE_SOURCES and receipt["version"]
+        assert receipt["generation"] == ""
         assert _importable(python, ALPHA[1]) and not _importable(python, GAMMA[1])
         assert engine_pool.same_python(projectenv.remembered(project), python)
         assert managedenv.read_manifest(project) is None  # 没建受管环境
+
+    def test_a_record_without_a_source_is_refused_before_pip_in_the_users_venv(
+        self, tmp_path, house, monkeypatch
+    ):
+        """回执的来源字段缺了，要在 pip 动手**之前**拒：用户 venv 原地装不可回滚，装完再报错就是「装上了、任务报失败」。"""
+        project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
+        real_venv(project)
+        _adopt(project)
+        plan = deprepair.create_joint_plan(project, "figure.py")
+        bad = dataclasses.replace(
+            plan, record=tuple({**r, "resolution_source": ""} for r in plan.record)
+        )
+        ran: list = []
+        monkeypatch.setattr(deprepair, "_run", lambda argv, *a, **k: ran.append(argv) or (0, ""))
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair._run_joint_in_place(bad, None, threading.Event())
+        assert err.value.code == deprepair.ERROR_FAILED and ran == []
+
+    def test_single_package_in_place_carries_the_receipt_and_checks_source_before_pip(
+        self, tmp_path, house, monkeypatch
+    ):
+        project = _project(tmp_path, requirements=f"{ALPHA[0]}\n", script=f"import {ALPHA[1]}\n")
+        real_venv(project)
+        _adopt(project)
+        plan = deprepair.create_plan(
+            project, "figure.py", ALPHA[1], target_kind=deprepair.TARGET_PROJECT_VENV
+        )
+        bad = dataclasses.replace(
+            plan, requirement=dataclasses.replace(plan.requirement, resolution_source="")
+        )
+        ran: list = []
+        with monkeypatch.context() as m:
+            m.setattr(deprepair, "_run", lambda argv, *a, **k: ran.append(argv) or (0, ""))
+            with pytest.raises(deprepair.RepairError) as err:
+                deprepair._run_install(bad, "k", None, threading.Event())
+        assert err.value.code == deprepair.ERROR_FAILED and ran == []
+        deprepair.install_async(plan.plan_id, confirmed_impact=plan.impact_digest)
+        rec = wait_for(plan.plan_id)
+        assert rec["state"] == deprepair.STATE_DONE, rec
+        (receipt,) = rec["result"]["providers"]
+        assert receipt["distribution"] == depresolve.normalize_distribution(ALPHA[0])
+        assert receipt["source"] == plan.requirement.resolution_source
+        assert receipt["version"] == rec["result"]["version"] and receipt["generation"] == ""
 
     def test_project_venv_target_is_refused_when_it_is_not_the_chosen_interpreter(
         self, tmp_path, house, offline_managed_env
