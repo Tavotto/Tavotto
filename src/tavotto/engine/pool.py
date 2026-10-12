@@ -35,6 +35,7 @@ from . import (
     patchspec,
     projectenv,
     runtime,
+    scanbudget,
     workdir,
 )
 
@@ -1075,8 +1076,30 @@ def _is_network_path(path: str) -> bool:
     return path.startswith(("\\\\", "//"))
 
 
+def _scan_redirected(budget, path: str) -> bool:
+    """Windows 语义下，`path` 本身是符号链接 / junction 等路径替身（或读不动）：扫描一律不跟随。
+
+    只做不跟随的 `lstat`（与项目扫描同一条判据 `scanbudget.is_redirect`），目标可能是断线的 UNC / WebDAV
+    共享——`isfile` / `stat` / 指纹哪怕只是探一下也会联系它、发 NTLM。命中记账本（symlinked_dir，目标未检查）。
+    不存在回 False（后面的存在性检查自会处理）。POSIX 不走这里：venv / Homebrew 的 python 本来就是软链接。"""
+    import os
+
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except (OSError, ValueError):
+        budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="file", path=path)
+        return True
+    if scanbudget.is_redirect(st):
+        budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=path)
+        return True
+    return False
+
+
 def _scan_which(budget, nt: bool) -> Callable[[str], str | None]:
-    """只读扫描版 `shutil.which`：逐项 PATH 过预算，跳过 UNC / 空项，取消或超预算就停。"""
+    """只读扫描版 `shutil.which`：逐项 PATH 过预算，跳过 UNC / 空项，取消或超预算就停。
+    Windows 语义下 PATH 目录与候选本身若是重定向条目也跳过（不 `isfile`）。"""
     import os
 
     def which(name: str) -> str | None:
@@ -1086,10 +1109,14 @@ def _scan_which(budget, nt: bool) -> Callable[[str], str | None]:
         for d in os.environ.get("PATH", "").split(os.pathsep):
             if not d or _is_network_path(d):
                 continue
+            if nt and _scan_redirected(budget, d):
+                continue
             for ext in exts:
                 if not budget.charge_entry():
                     return None
                 cand = os.path.join(d, name + ext)
+                if nt and _scan_redirected(budget, cand):
+                    continue
                 if os.path.isfile(cand) and (nt or os.access(cand, os.X_OK)):
                     return cand
         return None
@@ -1111,6 +1138,7 @@ def system_python_candidates(*, budget=None, nt: bool | None = None) -> list[tup
     cancelled → 报告 partial）。不传 = 执行路径的老行为。
     """
     import os
+    import stat
     import sys
 
     if budget is None:
@@ -1134,9 +1162,16 @@ def system_python_candidates(*, budget=None, nt: bool | None = None) -> list[tup
         if guard is not None and (_is_network_path(cand) or not guard.charge_entry()):
             continue
         try:
-            if not Path(cand).is_file():
+            if guard is not None and nt:
+                # 构造出的「本地样子」候选可能是指向断线共享的 symlink / junction：先不跟随地查它和所在目录，
+                # 再用同一次 lstat 判常规文件，全程不调用跟随型谓词。
+                if _scan_redirected(guard, cand) or _scan_redirected(guard, os.path.dirname(cand)):
+                    continue
+                if not stat.S_ISREG(os.lstat(cand).st_mode):
+                    continue
+            elif not Path(cand).is_file():
                 continue
-        except OSError:
+        except (OSError, ValueError):
             continue
         out.append((cand, source))
     if guard is not None:

@@ -471,6 +471,97 @@ def test_scan_skips_unc_roots_of_the_windows_list_too(tmp_path, home, monkeypatc
     assert all(not py.startswith("\\\\") for py, _ in found)
 
 
+def _forbid_following(monkeypatch, root: Path, touched: list[str]) -> None:
+    """`root` 之下（含它自己）的路径一旦进入跟随型谓词（isfile / exists / stat / access / is_file）就记下并失败。"""
+    prefix = str(root)
+
+    def guard(real):
+        def wrapped(path, *a, **k):
+            text = os.fspath(path)
+            if text.startswith(prefix):
+                touched.append(text)
+                raise AssertionError(f"扫描对重定向条目调用了跟随型谓词：{text}")
+            return real(path, *a, **k)
+
+        return wrapped
+
+    monkeypatch.setattr(os.path, "isfile", guard(os.path.isfile))
+    monkeypatch.setattr(os.path, "exists", guard(os.path.exists))
+    monkeypatch.setattr(os, "stat", guard(os.stat))
+    monkeypatch.setattr(os, "access", guard(os.access))
+    monkeypatch.setattr(Path, "is_file", lambda self, **k: guard(os.path.isfile)(self))
+    monkeypatch.setattr(Path, "exists", lambda self, **k: guard(os.path.exists)(self))
+
+
+def _nt_scan_env(monkeypatch, path_dirs: list[str]) -> None:
+    monkeypatch.setenv("PATH", os.pathsep.join(path_dirs))
+    monkeypatch.setenv("PATHEXT", ".exe")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+
+def test_windows_scan_skips_a_redirected_python_exe_in_a_local_path_dir(
+    tmp_path, home, monkeypatch, no_process
+):
+    """PATH 里本地样子的目录放着指向（可能断线的）共享的 python.exe 重定向条目：不 isfile、不进候选。"""
+    target = tmp_path / "share" / "python.exe"
+    target.parent.mkdir()
+    target.write_text("MZ", encoding="utf-8")
+    pathdir = tmp_path / "bin"
+    pathdir.mkdir()
+    (pathdir / "python.exe").symlink_to(target)
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "python.exe").write_text("MZ", encoding="utf-8")
+    _nt_scan_env(monkeypatch, [str(pathdir), str(good)])
+    touched: list[str] = []
+    _forbid_following(monkeypatch, pathdir / "python.exe", touched)
+    budget = scanbudget.Budget()
+
+    found = _REAL_SYSTEM_CANDIDATES(budget=budget, nt=True)
+
+    assert touched == []
+    assert all(not py.startswith(str(pathdir)) for py, _ in found)
+    assert (str(good / "python.exe"), "system") in found  # 干净的本地条目照常出现
+    assert any(
+        r["code"] == scanbudget.ISSUE_SYMLINK_DIR and r["path"].startswith(str(pathdir))
+        for r in budget.issues()
+    )
+
+
+def test_windows_scan_skips_a_path_dir_that_is_itself_a_junction(
+    tmp_path, home, monkeypatch, no_process
+):
+    real = tmp_path / "share"
+    real.mkdir()
+    (real / "python.exe").write_text("MZ", encoding="utf-8")
+    link = tmp_path / "linkdir"
+    link.symlink_to(real, target_is_directory=True)
+    _nt_scan_env(monkeypatch, [str(link)])
+    touched: list[str] = []
+    _forbid_following(monkeypatch, link, touched)
+
+    found = _REAL_SYSTEM_CANDIDATES(budget=scanbudget.Budget(), nt=True)
+
+    assert touched == []
+    assert all(not py.startswith(str(link)) for py, _ in found)
+
+
+@POSIX
+def test_posix_scan_keeps_a_symlinked_local_system_python(tmp_path, home, monkeypatch, no_process):
+    """POSIX 的 venv / Homebrew python 本来就是软链接：只在 Windows 语义下拒重定向，本地系统 Python 不能从扫描里消失。"""
+    real = _python(tmp_path / "real")
+    real.chmod(0o755)
+    link = tmp_path / "linked" / "python3"
+    link.parent.mkdir()
+    link.symlink_to(real)
+    monkeypatch.setenv("PATH", str(link.parent))
+    monkeypatch.setattr(pool, "system_python_candidates", _REAL_SYSTEM_CANDIDATES)
+
+    found = pool.system_python_candidates(budget=scanbudget.Budget())
+
+    assert (str(link), "system") in found
+
+
 def test_scan_stops_on_cancel_and_on_budget_instead_of_walking_the_whole_path(
     tmp_path, home, monkeypatch, no_process
 ):
