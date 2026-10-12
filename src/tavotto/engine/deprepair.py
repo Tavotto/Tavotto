@@ -5518,10 +5518,7 @@ def user_environment_candidates(
         if silent
         else userenvs.discover(root, script, ask_login_shell=None)
     )
-    out += [
-        {"python": py, "source": userenvs.SOURCE_SYSTEM, "label": ""}
-        for py, _src in pool.system_python_candidates()
-    ]
+    out += userenvs.system_candidates()
     seen: set = set()
     uniq: list[dict] = []
     skip = userenvs._key(exclude) if exclude else None
@@ -5531,7 +5528,8 @@ def user_environment_candidates(
             continue
         seen.add(key)
         uniq.append(c)
-    return uniq
+    # 体检有上限：先按静态相关性排好再交出去，截断才不会饿死靠后的项目匹配者（`userenvs.static_order`）
+    return userenvs.static_order(uniq, Path(root).name)
 
 
 def user_environment_python(project: str | Path, script: str, env_id: str) -> str | None:
@@ -5588,6 +5586,8 @@ def _evaluate_candidates(
     """`userenvs.evaluate` 的唯一入口（检测 / 门的候选体检都经它）。**项目说了算的候选**（`userenvs.is_project_controlled`）
     在用户明确点「运行」之前一个都不起：`project_exec=False` 时它们只读已有的体检缓存（`cache_only`，没有就是
     `checked=False` 的「未检查」条目，与确认模式同一套机器），其余候选照旧。同顺序回（Codex 安全 #820 r4232804805）。"""
+    # 超出体检上限时按静态相关性入选（`userenvs.static_order`）
+    extra.setdefault("project_name", Path(root).name)
     if project_exec or extra.get("cache_only"):
         return userenvs.evaluate(candidates, needed, unknown, **extra)
     # 体检上限（`userenvs.PROBE_LIMIT`）只在这里、拆分之前用一次：拆成两份各自再被 `evaluate` 截断，合起来就超过上限，

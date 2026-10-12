@@ -558,6 +558,9 @@ def environment_evidence(
         root, script, ask_login_shell=None, no_follow=True, budget=budget
     ):
         add(entry["python"], entry["source"], entry.get("label") or "")
+    # 系统解释器与执行路径是同一个来源（`userenvs.system_candidates`）：只 `is_file`，不起进程
+    for entry in userenvs.system_candidates():
+        add(entry["python"], entry["source"], "")
 
     candidates = [by_key[k] for k in order]
     truncated = len(candidates) > MAX_ENV_CANDIDATES
