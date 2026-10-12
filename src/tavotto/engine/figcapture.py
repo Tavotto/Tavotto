@@ -396,11 +396,10 @@ def clear_preview_poison(out_dir) -> bool:
         names = os.listdir(os.fspath(out_dir))
     except OSError:
         return False
-    on_disk = {
-        n.rsplit(".", 1)[0]
-        for n in names
-        if not n.startswith(".") and (n.endswith(".svg") or n.endswith(".json"))
-    }
+    # 不按「点开头」排除：用户 stem 可以以点开头（`savefig(".published.png")`，Codex #958）。引擎自己的
+    # 内部文件（账本 `.preview-ledger`、失效标记 `.<stem>.preview-invalid`、`.part` 临时件）都不以
+    # `.svg` / `.json` 结尾，天然不在这里。
+    on_disk = {n.rsplit(".", 1)[0] for n in names if n.endswith(".svg") or n.endswith(".json")}
     ledger = _read_preview_ledger(out_dir)["stems"]
     fresh = set(published_preview_stems(out_dir))
     for stem in on_disk:

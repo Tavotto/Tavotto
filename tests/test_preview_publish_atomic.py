@@ -533,6 +533,21 @@ def test_poison_survives_a_build_that_republishes_only_other_stems(tmp_path):
         figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
 
 
+def test_poison_audit_includes_dot_leading_stems(tmp_path):
+    """用户 stem 可以以点开头：`.published.svg` 是合法预览，作废审计不能把它当内部文件跳过（Codex #958）。"""
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".published.svg").write_text("<svg/>", encoding="utf-8")
+    (out / ".published.json").write_text("{}", encoding="utf-8")
+    figcapture.poison_preview_dir(out)
+    try:
+        assert figcapture.clear_preview_poison(out) is False
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
 def test_workerd_side_poisoned_code_is_fatal_and_blinds_readers(tmp_path):
     from tavotto.engine import figcapture, workerd_client
 
