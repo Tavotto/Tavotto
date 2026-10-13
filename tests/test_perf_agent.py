@@ -98,7 +98,6 @@ def test_dialog_sample_multiplier_is_four_per_iteration():
     assert A.summarize(r)["status"] == "incomplete"
 
 
-
 def test_environment_missing_does_not_compare_as_equal():
     """两份报告都缺浏览器版本/CPU 不等于环境真实一致。"""
     a = report()

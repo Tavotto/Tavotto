@@ -36,9 +36,19 @@ ALLOWED_SCENARIOS = {
 MIN_SAMPLES = 10
 # 不同 SHA 可以比较，但机器与浏览器完整版本必须匹配。
 ENV_FIELDS = (
-    "platform", "arch", "browser", "browser_major", "browser_version",
-    "viewport_w", "viewport_h", "dpr", "headless", "os_release",
-    "cpu_model", "cpu_count", "total_mem_gib",
+    "platform",
+    "arch",
+    "browser",
+    "browser_major",
+    "browser_version",
+    "viewport_w",
+    "viewport_h",
+    "dpr",
+    "headless",
+    "os_release",
+    "cpu_model",
+    "cpu_count",
+    "total_mem_gib",
 )
 DEFAULT_REGRESSION_PCT = 25.0
 DEFAULT_ABSOLUTE_DELTA_MS = 15.0
