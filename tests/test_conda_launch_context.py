@@ -143,16 +143,11 @@ def test_wrap_is_an_argv_array_with_documented_conda_run_shape():
     assert all(isinstance(t, str) for t in out)
 
 
-def test_public_reference_has_no_environment_and_round_trips(tmp_path):
+def test_public_reference_has_no_environment(tmp_path):
     prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
     lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
     assert set(lau.public()) == {"kind", "conda_exe", "prefix"}
-    assert launcher.from_public(lau.public()) == lau
-    assert (
-        launcher.from_public({"kind": "conda", "conda_exe": "/gone", "prefix": str(prefix)}) is None
-    )
-    assert launcher.from_public({"kind": "direct"}) is None
-    assert launcher.from_public("x") is None
+    assert not hasattr(launcher, "from_public")  # 引用只对账，不提供「读回来就执行」的入口
 
 
 @posix_only
@@ -691,3 +686,52 @@ def test_real_conda_cancel_mid_computation_leaves_no_user_python(tmp_path, monke
         _pool.reset_worker_python()
     assert wait_dead(user_pid) and wait_dead(wrapper)
     assert box, "被取消的 build 应当报错而不是成功"
+
+
+@posix_only
+def test_a_planted_conda_exe_in_the_record_is_never_executed(tmp_path, monkeypatch):
+    """登记里的 `conda_exe` 是不可信数据（可被克隆来的 / 同步来的文件写入）：沿用记录时不得执行它，
+    实际包装用的是从解释器现场检测出的 conda。"""
+    import hashlib
+
+    prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    marker = tmp_path / "PWNED"
+    evil = proj / "evil-conda"
+    evil.write_text(f"#!/bin/sh\necho x > {marker}\nexit 0\n", encoding="utf-8")
+    evil.chmod(0o755)
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    py = str(prefix / "bin" / "python")
+    rcpt = _Rcpt(
+        py,
+        hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest(),
+        [],
+        {"kind": "conda", "conda_exe": str(evil), "prefix": str(prefix)},  # 被篡改的引用
+        databinding.binding_for(proj / "fig.py", proj, "sandbox")["revision"],
+    )
+    assert launchctx.record_success(proj, "fig.py", rcpt) is True
+    got = launchctx.launcher_for(proj, "fig.py", py, "env_override", bundled="bundled")
+    assert got is not None and got.conda_exe == str(conda)
+    log = tmp_path / "plant.log"
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    subprocess.run(got.wrap([sys.executable, "-c", "pass"]), check=True, timeout=30)
+    assert not marker.exists(), "登记里的 conda_exe 被执行了"
+    assert len(conda_calls(log)) == 1
+    # 记录里的 prefix 与解释器所在环境对不上：记录整体不可信，不沿用
+    forged = {"kind": "conda", "conda_exe": str(conda), "prefix": str(tmp_path / "elsewhere")}
+    record = runconfig.launch_record(proj, "fig.py")
+    record["launcher"] = forged
+    assert (
+        launchctx.verify(
+            record,
+            project_root=proj,
+            script="fig.py",
+            python=py,
+            python_source="env_override",
+            facets=launchctx.FACETS_LAUNCHER,
+        )
+        == launchctx.REASON_LAUNCHER
+    )

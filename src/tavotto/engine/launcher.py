@@ -144,23 +144,9 @@ class CondaLauncher:
         return out
 
     def public(self) -> dict:
-        """可持久化的结构化引用（**没有**激活后的环境变量）。"""
+        """可持久化的结构化引用（**没有**激活后的环境变量）。只用来对账，**不得**读回后当可执行路径：
+        要执行的 conda 永远由 `detect()` 从解释器现场找。"""
         return {"kind": self.kind, "conda_exe": self.conda_exe, "prefix": self.prefix}
-
-    def still_valid(self) -> bool:
-        """引用指着的东西此刻还在：conda 可执行文件仍可执行、prefix 仍有 `conda-meta`。"""
-        return _is_executable(self.conda_exe) and (Path(self.prefix) / "conda-meta").is_dir()
-
-
-def from_public(data) -> CondaLauncher | None:
-    """`public()` 的逆；形状不对 / 种类不认识 / 引用已失效 → None（调用方重新检测，不信陈旧引用）。"""
-    if not isinstance(data, dict) or data.get("kind") != KIND_CONDA:
-        return None
-    exe, prefix = data.get("conda_exe"), data.get("prefix")
-    if not isinstance(exe, str) or not isinstance(prefix, str) or not exe or not prefix:
-        return None
-    launcher = CondaLauncher(conda_exe=exe, prefix=prefix)
-    return launcher if launcher.still_valid() else None
 
 
 def detect(python: str | os.PathLike) -> CondaLauncher | None:

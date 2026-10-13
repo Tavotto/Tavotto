@@ -185,10 +185,11 @@ def verify(
             return REASON_ENVIRONMENT
         lau = record.get("launcher") or {}
         if lau.get("kind") == launcher.KIND_CONDA:
-            ref = launcher.from_public(lau)
-            if ref is None:
+            # prefix 从解释器现场推，记录里的只用来对账；记录里的路径不当可执行 / 探测对象
+            prefix = launcher.conda_prefix_of(env_python)
+            if prefix is None or _norm(prefix) != _norm(str(lau.get("prefix") or "")):
                 return REASON_LAUNCHER
-            if launcher.prefix_state(ref.prefix) != record.get("env_state"):
+            if launcher.prefix_state(prefix) != record.get("env_state"):
                 return REASON_ENVIRONMENT
     if FACET_SOURCE in facets:
         src = record.get("source") or {}
@@ -258,12 +259,10 @@ def launcher_for(
         is None
     ):
         lau = record.get("launcher") or {}
-        if lau.get("kind") == launcher.KIND_CONDA:
-            ref = launcher.from_public(lau)
-            if ref is not None:
-                return ref
-        elif lau.get("kind") == launcher.KIND_DIRECT:
+        if lau.get("kind") == launcher.KIND_DIRECT:
             return None
+    # 记录里的 `conda_exe` 来自项目目录里的登记文件，**不拿它当可执行路径**（克隆来的项目
+    # 可以写任意路径）：要执行的 conda 永远从这条解释器现场检测出来。
     return launcher.detect(python)
 
 
