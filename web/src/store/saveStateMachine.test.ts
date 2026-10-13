@@ -170,6 +170,49 @@ afterEach(async () => {
 })
 
 describe('保存状态机', () => {
+  it.each([10001, 10000, 9999])(
+    '旧 PUT 完成时保留更新内容的本机副本（新副本时间戳 %s，#646）',
+    async (nextTimestamp) => {
+      await s().switchDocument(seeded(1), 'd_copy_race')
+      await tick()
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(10000)
+      try {
+        gatePuts = true
+        s().commit(literal('第一笔'), (d) => {
+          d.objects.push(text('n1', 'A'))
+        })
+        flushAutosave()
+        await tick()
+        expect(gates).toHaveLength(1)
+        const firstCopy = localStorage.getItem(slotKey('d_copy_race'))!
+
+        clock.mockReturnValue(nextTimestamp)
+        s().commit(literal('第二笔'), (d) => {
+          d.objects.push(text('n2', 'B'))
+        })
+        flushAutosave()
+        const nextCopy = localStorage.getItem(slotKey('d_copy_race'))!
+        expect(nextCopy).not.toBe(firstCopy)
+
+        // 只放行旧 PUT：更新的一版仍由第二道 gate 扣住，不依赖计时器。
+        gates.shift()!()
+        await tick()
+        expect(disk.get('d_copy_race')).toBe(firstCopy)
+        expect(gates).toHaveLength(1)
+        expect(localStorage.getItem(slotKey('d_copy_race'))).toBe(nextCopy)
+        expect(puts.at(-1)?.base).toBe('10000')
+        expect(puts.at(-1)?.rev).toBe(revOf(firstCopy))
+
+        gates.shift()!()
+        await tick()
+        expect(disk.get('d_copy_race')).toBe(nextCopy)
+        expect(localStorage.getItem(slotKey('d_copy_race'))).toBeNull()
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+
   it('编辑 → dirty → saving → saved → clean（saved 是短暂反馈态）', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     await s().switchDocument(seeded(1), 'd_sm')

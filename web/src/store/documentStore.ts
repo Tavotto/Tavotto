@@ -1506,9 +1506,12 @@ const disk = createDiskWriter({
     )
   },
   writeBlocked: () => blocksDiskWrite(useDocumentStore.getState().saveState),
-  dropLocalCopy: (id) => {
+  dropLocalCopy: (id, written) => {
     try {
-      localStorage.removeItem(slotKey(id))
+      const key = slotKey(id)
+      // 比的是刚落盘的整份快照，不只比 Date.now()：同毫秒编辑或时钟回拨
+      // 仍可能产生内容更新、updatedAt 却相同或更小的恢复副本（#646）。
+      if (localStorage.getItem(key) === JSON.stringify(written)) localStorage.removeItem(key)
     } catch {
       /* 副本删不掉不影响正确性（读取时按 updatedAt 取新） */
     }
