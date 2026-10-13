@@ -2556,6 +2556,43 @@ class EngineWorker:
             except (OSError, ValueError):  # 已经关过 / 管道早断了
                 pass
 
+    #: 包装启动的 worker 优雅关停时，等 wrapper 自己退出（读到 EOF）的上限（秒）：`deactivate.d` 钩子在 worker 退出之后
+    #: 才跑，要给它们时间做完清理；超时才按既有的方式收组。
+    POST_EXIT_DRAIN_TIMEOUT = 10.0
+
+    def _shutdown_wrapped(self) -> None:
+        """包装启动（`conda run`）的 worker 的优雅关停：发出退出请求后，**之后的 stdout 一律当日志**读到 EOF（wrapper 退出）
+        为止，有界超时。worker 退出之后 conda 的 `deactivate.d` 钩子还会往 stdout 打印；此时协议已经结束，这些行不是协议
+        违规，不能交给 `_parse_line`（那会 `protocol_mismatch` 并把整组杀掉，钩子剩下的清理就没跑完）。"""
+        obj = {"cmd": "shutdown", **_run_payload(getattr(self, "run", None))}
+        if getattr(self, "artifact_source", None) is not None:
+            obj["artifact_source"] = self.artifact_source
+        try:
+            env = self._envelope(obj)
+            with self.lock:
+                self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
+                self.proc.stdin.flush()
+        except (OSError, ValueError):
+            return  # 管道已断：worker 已经没了，交给后面的收尸路径
+
+        def drain() -> None:
+            try:
+                for raw in iter(self.proc.stdout.readline, ""):
+                    try:
+                        self._log.write(
+                            b"[post-exit stdout] "
+                            + raw.encode("utf-8", "surrogateescape").rstrip(b"\r\n")
+                            + b"\n"
+                        )
+                    except (OSError, ValueError):
+                        pass
+            except (OSError, ValueError):  # 超时后被收尸路径关掉管道
+                pass
+
+        t = threading.Thread(target=drain, daemon=True, name="mm-worker-post-exit-drain")
+        t.start()
+        t.join(self.POST_EXIT_DRAIN_TIMEOUT)
+
     def _terminate_and_reap(self, *, graceful: bool) -> None:
         """把这条会话关到底，并**确认进程已经消失**，最后关掉父进程的句柄。
 
@@ -2568,7 +2605,9 @@ class EngineWorker:
         全程**不碰模块级 `_lock`**——等子进程退出时把全局锁攥在手里，
         等于让一个卡住的脚本冻结整个池。
         """
-        if graceful and self.alive():
+        if graceful and self.alive() and getattr(self, "launcher", None) is not None:
+            self._shutdown_wrapped()
+        elif graceful and self.alive():
             try:
                 self.request({"cmd": "shutdown"}, SHUTDOWN_TIMEOUT)
             except (WorkerError, OSError, ValueError):

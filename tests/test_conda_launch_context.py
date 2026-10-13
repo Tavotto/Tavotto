@@ -100,6 +100,14 @@ after = os.environ.get("FAKE_CONDA_AFTER_BANNER")
 if after:  # deactivate.d 钩子在命令结束之后往 stdout 打印的内容
     sys.stdout.write(after + "\n")
     sys.stdout.flush()
+marker = os.environ.get("FAKE_CONDA_CLEANUP_MARKER")
+if marker:  # deactivate.d 的清理：先打印一行，做一会儿事，再留下「清理完成」的记号
+    sys.stdout.write("deactivate: cleaning up\n")
+    sys.stdout.flush()
+    import time
+
+    time.sleep(0.7)
+    open(marker, "w").write("done")
 sys.exit(code)
 """
 
@@ -1714,3 +1722,24 @@ def test_per_interpreter_caches_are_partitioned_by_launch_context(activation_onl
             assert bad.value.code == "explicit_python_unusable"
     finally:
         _pool.reset_worker_python()
+
+
+@needs_worker
+def test_graceful_shutdown_lets_deactivate_hooks_finish_and_is_not_a_protocol_error(
+    conda_world, tmp_path, monkeypatch
+):
+    """worker 退出之后 `deactivate.d` 钩子还会往 stdout 打印并做清理：优雅关停读到 EOF 为止，一律当日志——不是协议违规，
+    不杀整组，清理做完（标记文件存在）。"""
+    proj, prefix, log, counter = conda_world
+    marker = tmp_path / "cleanup.done"
+    monkeypatch.setenv("FAKE_CONDA_CLEANUP_MARKER", str(marker))
+    worker, resp = _pool.build("fig.py", str(proj), "__main__")
+    assert worker.launcher is not None
+    started = time.time()
+    worker.shutdown()
+    assert marker.exists(), "deactivate 钩子的清理被中途杀掉了"
+    assert time.time() - started < 15
+    text = worker.log_path.read_text(encoding="utf-8", errors="replace")
+    assert "[post-exit stdout] deactivate: cleaning up" in text
+    assert "protocol_mismatch" not in text and "协议" not in text
+    assert worker.proc.poll() is not None
