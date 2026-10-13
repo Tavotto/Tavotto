@@ -201,6 +201,7 @@ __all__ = [
     "PREVIEW_LEDGER",
     "publish_preview",
     "usable_preview_generation",
+    "open_preview_pair",
     "PreviewLedgerUnreadable",
     "published_preview_stems",
     "CapturedFigureDescriptor",
@@ -538,6 +539,31 @@ def usable_preview_generation(out_dir, stem: str) -> tuple[int, str, str] | None
         return None
     gen = preview_generation_dir(out_dir, rec["seq"])
     return rec["seq"], os.path.join(gen, f"{stem}.svg"), os.path.join(gen, f"{stem}.json")
+
+
+def open_preview_pair(out_dir, stem: str, attempts: int = 3):
+    """解出当前一代并**立刻**以二进制打开 SVG 与 manifest，返回 `(序号, svg 文件对象, manifest 文件对象)`；无预览返回 None。
+
+    要读一对产物又会读得久的消费者用它：打开的句柄把这一代的内容钉住（POSIX 上删目录不影响已打开的句柄；
+    Windows 上删不掉的目录留到下次清理），读多久都是同一代。只持有**路径**的读方没有这个保证——
+    清理是有界的（序号 + 秒数双宽限），拖过宽限再去开就会 FileNotFoundError；这里在
+    解出 → 打开之间撞上清理时重新解出（新指针指向的一代必在），所以拿到的永远是完整的一对（Codex #978）。
+    """
+    for _ in range(max(1, attempts)):
+        gen = usable_preview_generation(out_dir, stem)
+        if gen is None:
+            return None
+        seq, svg, man = gen
+        opened = []
+        try:
+            for path in (svg, man):
+                opened.append(open(path, "rb"))
+        except FileNotFoundError:
+            for fh in opened:
+                fh.close()
+            continue
+        return seq, opened[0], opened[1]
+    return None
 
 
 def usable_preview_path(out_dir, stem: str, suffix: str) -> str:

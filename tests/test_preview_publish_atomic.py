@@ -182,6 +182,18 @@ with tempfile.TemporaryDirectory() as tmp:
         out["live_after"] = sorted(sess.states)
         out["failed_after"] = sorted(sess.failures)
         out["published"] = figcapture.published_preview_stems(tmp)
+    elif scenario == "strict_failure_retires_the_capture":
+        sess.add_figure("fig", bad(), figcapture.SOURCE_SAVEFIG)
+        try:
+            sess.instrument_all(raise_if_none_live=True)
+        except Exception as exc:
+            out["first_error"] = type(exc).__name__
+        out["left"] = [sorted(sess.capture), sorted(sess.failures), sorted(sess.states)]
+        # worker 被复用、脚本重跑：新 Figure 必须被收下并真的发布，而不是"零活图的成功"
+        out["rerun_accepted"] = sess.add_figure("fig", good("v2"), figcapture.SOURCE_SAVEFIG)
+        sess.instrument_all(raise_if_none_live=True)
+        out["live_after_rerun"] = sorted(sess.states)
+        out["published"] = figcapture.published_preview_stems(tmp)
     elif scenario == "failed_figure_that_cannot_be_restored":
         sess.add_figure("bad", bad(), figcapture.SOURCE_SAVEFIG)
         import overrides
@@ -457,6 +469,17 @@ def test_when_nothing_is_live_isolation_is_reported_not_swallowed():
 
 
 @needs_mpl
+def test_a_strict_build_failure_retires_the_isolated_capture():
+    """Codex #978：safe worker 只剩坏图而 build 失败后，worker 被复用重跑脚本——失败的 stem 不能还占着捕获表，
+    否则新 Figure 被拒收、第二次 build 变成零活图的"成功"。"""
+    r = _drive("strict_failure_retires_the_capture")
+    assert r["first_error"] == "AttributeError", r
+    assert r["left"] == [[], [], []], r
+    assert r["rerun_accepted"] is True and r["live_after_rerun"] == ["fig"], r
+    assert r["published"] == ["fig"], r
+
+
+@needs_mpl
 def test_a_failed_figure_is_retried_only_after_the_barrier_is_left():
     r = _drive("retry_only_after_leaving_the_barrier")
     assert r["failed_first"] == ["fig"]
@@ -652,6 +675,27 @@ def test_a_superseded_generation_survives_the_time_grace_for_an_in_flight_reader
     for n in range(1, 3 * figcapture.GENERATION_GRACE):
         _publish(tmp_path, "fig", svg=f"svg-{n}".encode(), manifest={"gen": n})
     assert Path(stale[1]).read_bytes() == b"svg-0", "窗口内旧代文件被删了"
+
+
+def test_a_reader_that_opens_late_still_gets_one_complete_current_pair(tmp_path, monkeypatch):
+    """Codex #978：持有旧路径、拖过宽限才去开的读方会撞上清理。`open_preview_pair` 在解出 → 打开之间撞上清理时
+    重新解出，拿到的永远是完整的当前一对；已打开的句柄则把那一代钉住（POSIX）。"""
+    monkeypatch.setattr(figcapture, "GENERATION_GRACE_SECONDS", 0.0)
+    _publish(tmp_path, "fig", svg=b"svg-0", manifest={"gen": 0})
+    _, svg_path, _ = figcapture.usable_preview_generation(tmp_path, "fig")
+    seq0, svg_fh, man_fh = figcapture.open_preview_pair(tmp_path, "fig")
+    for n in range(1, 4 * figcapture.GENERATION_GRACE):
+        _publish(tmp_path, "fig", svg=f"svg-{n}".encode(), manifest={"gen": n})
+    assert not Path(svg_path).exists(), "探针无效：旧代应当已被清理"
+    if os.name != "nt":  # Windows 上删不掉被打开的目录；POSIX 上句柄钉住内容
+        assert svg_fh.read() == b"svg-0" and json.loads(man_fh.read())["gen"] == 0
+    svg_fh.close()
+    man_fh.close()
+    seq, svg, man = figcapture.open_preview_pair(tmp_path, "fig")
+    with svg, man:
+        assert svg.read().decode() == f"svg-{json.loads(man.read())['gen']}"
+    assert seq > seq0
+    assert figcapture.open_preview_pair(tmp_path, "nothing") is None
 
 
 def test_the_cli_count_comes_from_the_ledger_not_from_svg_files(tmp_path):

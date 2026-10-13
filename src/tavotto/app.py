@@ -6609,9 +6609,12 @@ def api_engine_svg():
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     svg = worker.svg_path(stem)
-    if not svg.exists():
+    try:
+        # 解出路径后立刻打开：句柄把这一代钉住，响应发多久都不会被发布后的清理抽掉文件（Codex #978）
+        handle = open(svg, "rb")
+    except OSError:
         abort(404)
-    resp = send_file(svg, mimetype="image/svg+xml")
+    resp = send_file(handle, mimetype="image/svg+xml")
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

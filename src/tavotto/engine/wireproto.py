@@ -290,6 +290,14 @@ class V1Handler:
         if cmd in STEM_COMMANDS:
             if not isinstance(stem, str) or not stem:
                 raise ProtocolError("bad_request", "stem 必须是非空字符串")
+            failure = fig.failures.get(stem)
+            if stem not in fig.states and failure is not None:
+                # 这张图被逐图隔离了：说原因，不要说"stem 不存在"（Codex #978）
+                raise ProtocolError(
+                    failure["code"],
+                    f"stem {stem} 的预览没能捕获: {failure['message']}",
+                    extra={"known": sorted(fig.states), "failed": True},
+                )
             if stem not in fig.states:
                 raise ProtocolError(
                     "unknown_stem", f"stem 不存在: {stem}", extra={"known": sorted(fig.states)}

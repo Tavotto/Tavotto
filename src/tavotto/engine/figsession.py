@@ -800,7 +800,26 @@ class LiveFigureSession:
                 self.live_captured_at.pop(stem, None)
             raise
         if raise_if_none_live and first_error is not None and not self.states:
+            # 抛之前把这次隔离的捕获全部退役：worker 会被复用，留着失败 stem 的话重跑脚本画出的新 Figure 会被
+            # `add_figure` 拒收、`instrument_all` 又跳过旧失败，第二次 build 就成了「零活图的成功」（Codex #978）
+            for stem in list(self.failures):
+                self.retire_capture(stem)
             raise first_error
+
+    def retire_capture(self, stem: str) -> None:
+        """把 `stem` 从捕获表与失败记录里整个撤掉（不留任何残余）。"""
+        for table in (
+            self.states,
+            self._manifest_cache,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+            self.failures,
+            self._failed_states,
+            self.live_captured_at,
+        ):
+            table.pop(stem, None)
 
     def _isolate(self, stem: str, state, exc: Exception) -> None:
         """记下 `stem` 这张图的失败，并把它已经动过的 Figure 状态核对恢复。

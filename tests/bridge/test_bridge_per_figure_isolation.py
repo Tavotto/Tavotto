@@ -111,6 +111,28 @@ def test_one_bad_figure_leaves_exactly_one_live_healthy_figure(
         assert exit_event["figures"] == 1, "完成计数 = 完整发布的图，坏图不计"
 
 
+def test_requesting_an_isolated_stem_returns_the_stored_failure(
+    user_python, tmp_path, bridge_session
+):
+    """Codex #978：被隔离的 stem 不是"不存在"——render/export 请求回的是当时记下的失败原因。"""
+    from tavotto.engine.bridge import BridgeError  # noqa: PLC0415
+
+    proj = tmp_path / "proj"
+    write(proj / "fig.py", HEAD + GOOD + BAD)
+    with bridge_session(proj / "fig.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        sess.ensure_built()
+        with pytest.raises(BridgeError) as err:
+            sess.override("bad", [])
+        assert err.value.code == "preview_capture_failed", err.value.code
+        assert "AttributeError" in str(err.value)
+        with pytest.raises(BridgeError) as unknown:
+            sess.override("never-existed", [])
+        assert unknown.value.code == "unknown_stem"
+        sess.resume()
+        sess.wait_event("exit")
+
+
 def test_the_users_own_exception_is_never_swallowed_by_isolation(
     user_python, tmp_path, bridge_session
 ):
