@@ -3,6 +3,16 @@ name: Performance Agent
 # 不改变现有 CI 必需 Gate。定期在独立 runner 真跑浏览器/后端；
 # 不将 Linux 浏览器结果误称 macOS 原生窗口性能。
 on:
+  # 只在改动性能 Runner 的 PR 上做真实浏览器资格，不改仓库既有必需 Gate。
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'scripts/perf_agent.py'
+      - 'tests/test_perf_agent.py'
+      - 'web/playwright.perf.config.ts'
+      - 'web/e2e/perf-agent.spec.ts'
+      - '.github/workflows/performance-agent.yml'
   workflow_dispatch:
     inputs:
       browser:
