@@ -1174,6 +1174,12 @@ class TestReadFailureIsNotOverBudget:
             "_read_head",
             lambda path, limit: None if Path(path).name in names else real(path, limit),
         )
+        real_stable = diagdetail._read_stable
+        monkeypatch.setattr(
+            diagdetail,
+            "_read_stable",
+            lambda path: (None, "read_failed") if Path(path).name in names else real_stable(path),
+        )
 
     def test_state_file_that_cannot_be_read_is_read_failed_not_skipped(self, world, monkeypatch):
         self._fail_reads(monkeypatch, {"export-defaults.json"})
@@ -1240,6 +1246,150 @@ class TestSourceDedupe:
         )
         files = [i.path for i in items if i.path != "index.json"]
         assert len(files) == 2 and sum("a.py" in f for f in files) == 1
+
+
+class TestDumpChangedWhileReading:
+    def test_a_file_that_grows_during_the_read_is_marked_and_not_attached(self, world, monkeypatch):
+        dmp = world["crash"] / "Tavotto.exe.5.dmp"
+        dmp.write_bytes(b"A" * 1000)
+        real_open = Path.open
+
+        def growing_open(self, *a, **k):
+            fh = real_open(self, *a, **k)
+            if self.name == dmp.name and a and a[0] == "rb":
+                with real_open(self, "ab") as extra:  # 读之前它又长了一截（转储还在写）
+                    extra.write(b"B" * 500)
+            return fh
+
+        monkeypatch.setattr(Path, "open", growing_open)
+        items = diagdetail.collect_crash_reports(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(crash_reports=True),
+            diagdetail.Scrubber(),
+        )
+        assert dmp.name not in [i.path for i in items]
+        rows = {r["name"]: r for r in json.loads(items[0].data)["reports"]}
+        assert rows[dmp.name]["content"] == "changed_while_reading"
+        assert not any(r.get("content") == "skipped_over_budget" for r in rows.values())
+        assert items[0].dropped_bytes == 0
+
+    def test_a_stable_file_is_attached_whole(self, world):
+        (world["crash"] / "Tavotto.exe.6.dmp").write_bytes(b"C" * 1000)
+        items = diagdetail.collect_crash_reports(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(crash_reports=True),
+            diagdetail.Scrubber(),
+        )
+        assert {i.path: i.data for i in items}["Tavotto.exe.6.dmp"] == b"C" * 1000
+
+
+class TestSourceStatRaces:
+    def test_an_unrelated_script_vanishing_does_not_break_the_category(self, world, monkeypatch):
+        proj = world["tmp"] / "proj6"
+        proj.mkdir()
+        for n in ("focus.py", "gone.py", "other.py"):
+            (proj / n).write_text(f"# {n}\n", encoding="utf-8")
+        real_stat = Path.stat
+
+        def flaky(self, *a, **k):
+            if self.name == "gone.py":
+                raise FileNotFoundError(self.name)
+            return real_stat(self, *a, **k)
+
+        monkeypatch.setattr(Path, "stat", flaky)
+        src = diagdetail.Sources(
+            project={"figures_dir": str(proj)},
+            scripts=["focus.py", "gone.py", "other.py"],
+            frontend={"overrides": [{"script": "focus.py"}]},
+        )
+        items = diagdetail.collect_source(
+            src, diagdetail.DetailOptions(source=True), diagdetail.Scrubber()
+        )
+        files = [i.path for i in items if i.path != "index.json"]
+        assert any("focus.py" in f for f in files) and any("other.py" in f for f in files)
+        assert not any("gone.py" in f for f in files)
+        index = json.loads(next(i for i in items if i.path == "index.json").data)
+        gone = [r for r in index["scripts"] if "gone.py" in r["script"]]
+        assert gone and gone[0].get("read_failed") is True and "skipped_over_budget" not in gone[0]
+        assert not any(i.path == "error.json" for i in items)
+
+
+class TestNativePanelRenderEnv:
+    def _src(self, registry=None):
+        return diagdetail.Sources(
+            project={"figures_dir": "/p"},
+            registry=registry,
+            frontend={
+                "overrides": [{"panel": "runtime:abc#1", "kind": "runtime", "script": "s.py"}]
+            },
+        )
+
+    class FakeSession:
+        interpreter = "/conda/bin/python"
+        interpreter_fingerprint = "fp123"
+        python_version = "3.11.9"
+
+        def last_build_runtime(self):
+            return {"prefix": "/conda", "cwd": "/p"}
+
+        def diagnostics(self):
+            return {"state": "ready", "execution_profile": "native"}
+
+    def _patch(self, monkeypatch, *, profile, session):
+        from tavotto.engine import enginesession, nativesession, runtimeasset
+
+        monkeypatch.setattr(runtimeasset, "is_runtime_id", lambda f: str(f).startswith("runtime:"))
+        monkeypatch.setattr(enginesession, "profile_of", lambda root, fid: profile)
+        monkeypatch.setattr(
+            runtimeasset, "resolve", lambda fid, reg: {"script": "s.py", "stem": "fig"}
+        )
+        monkeypatch.setattr(nativesession.REGISTRY, "route_for", lambda root, script, stem: session)
+        seen = {}
+        monkeypatch.setattr(
+            diagdetail, "_probe_subprocess", lambda py, b: seen.update(py=py) or {"status": "ok"}
+        )
+        return seen
+
+    def test_native_panel_reports_the_native_session_and_probes_its_interpreter(self, monkeypatch):
+        seen = self._patch(monkeypatch, profile="native", session=self.FakeSession())
+        doc = json.loads(
+            diagdetail.collect_render_env(
+                self._src(object()), diagdetail.DetailOptions(), diagdetail.Scrubber()
+            )[0].data
+        )
+        assert doc["execution_profile"] == "native" and doc["inspected"] == "native_session"
+        assert seen["py"] == "/conda/bin/python"
+        assert doc["interpreter"]["source"] == "native_session"
+        assert (
+            doc["native_receipt"]["prefix"] == "/conda"
+            and doc["native_session"]["state"] == "ready"
+        )
+
+    def test_native_panel_without_a_live_session_is_honest_about_it(self, monkeypatch):
+        seen = self._patch(monkeypatch, profile="native", session=None)
+        monkeypatch.setattr(
+            pool, "resolve_worker_python", lambda d, **k: ("/safe/python", "bundled")
+        )
+        doc = json.loads(
+            diagdetail.collect_render_env(
+                self._src(object()), diagdetail.DetailOptions(), diagdetail.Scrubber()
+            )[0].data
+        )
+        assert doc["execution_profile"] == "native" and doc["inspected"] == "safe_pool"
+        assert doc["native_interpreter"] == "unknown" and seen["py"] == "/safe/python"
+
+    def test_safe_panel_is_inspected_in_the_safe_pool(self, monkeypatch):
+        self._patch(monkeypatch, profile="safe", session=None)
+        monkeypatch.setattr(
+            pool, "resolve_worker_python", lambda d, **k: ("/safe/python", "bundled")
+        )
+        doc = json.loads(
+            diagdetail.collect_render_env(
+                self._src(object()), diagdetail.DetailOptions(), diagdetail.Scrubber()
+            )[0].data
+        )
+        assert doc["execution_profile"] == "safe" and doc["inspected"] == "safe_pool"
+        assert "native_interpreter" not in doc
 
 
 class TestRenderEnvIsProjectAware:

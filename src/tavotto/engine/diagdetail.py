@@ -164,6 +164,9 @@ class Sources:
     baked: dict | None = None  # `load_baked(ctx)`：{stem: {"versions": [...]}}
     task_section: dict | None = None  # `taskdiag.bundle_section(..., limit=24)`
     frontend: dict | None = None  # 经 `diagnostics_frontend.sanitize_detail` 的前端 detail 子对象
+    registry: object | None = (
+        None  # 项目的脚本注册表（把焦点面板的 runtime 素材 id 解析成 script / stem）
+    )
 
 
 @dataclasses.dataclass
@@ -1134,14 +1137,60 @@ def _probe_subprocess(python: str, bundled: bool) -> dict:
     )
 
 
+def _native_session_for(src: Sources, panel: dict) -> tuple[str, object | None]:
+    """焦点面板这一刻由谁渲染：`(execution_profile, 活着的 native 会话或 None)`。判据与渲染路由同一个出处
+    （`enginesession.profile_of` + `nativesession.REGISTRY.route_for`），只读已有登记，不起会话、不执行任何东西。"""
+    from . import enginesession, nativesession, runtimeasset
+
+    figures_dir = (src.project or {}).get("figures_dir")
+    fid = panel.get("panel")
+    if not figures_dir or not runtimeasset.is_runtime_id(fid):
+        return enginesession.PROFILE_SAFE, None  # 磁盘面板永远是 safe
+    profile = enginesession.profile_of(figures_dir, fid)
+    if profile != enginesession.PROFILE_NATIVE:
+        return profile, None
+    info = runtimeasset.resolve(fid, src.registry) if src.registry is not None else None
+    if not info:
+        return profile, None
+    return profile, nativesession.REGISTRY.route_for(str(figures_dir), info["script"], info["stem"])
+
+
 def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     from .. import __version__
 
     doc: dict = {"schema": DETAIL_SCHEMA, "tavotto_version": __version__}
+    figures_dir = (src.project or {}).get("figures_dir")
+    panels = (src.frontend or {}).get("overrides") or []
+    profile, session = "safe", None
+    try:
+        if panels:
+            profile, session = _native_session_for(src, panels[0])
+    except Exception as exc:  # noqa: BLE001 — 取不到焦点面板的路由就按 safe 池如实标注
+        doc["execution_profile_error"] = f"{type(exc).__name__}"
+    doc["execution_profile"] = profile
+    interpreter = getattr(session, "interpreter", "") if session is not None else ""
+    if session is not None and interpreter:
+        # native 面板实际在用户自己的解释器里跑：优先报那条会话已有的事实（回执 + 脱敏诊断），再对**那个**解释器
+        # 跑同一个只读探针（与安全池探针同一份代码）
+        doc["inspected"] = "native_session"
+        doc["interpreter"] = {
+            "found": True,
+            "path": interpreter,
+            "source": "native_session",
+            "scope": "project",
+            "fingerprint": getattr(session, "interpreter_fingerprint", None),
+            "python_version": getattr(session, "python_version", None),
+        }
+        doc["native_receipt"] = session.last_build_runtime()
+        doc["native_session"] = session.diagnostics()
+        doc["probe"] = _probe_subprocess(interpreter, False)
+        return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
+    doc["inspected"] = "safe_pool"
+    if profile == "native":  # native 面板但拿不到它的会话 / 解释器：如实说，下面探的是安全池
+        doc["native_interpreter"] = "unknown"
     # 探的必须是**渲染这个项目时实际用的**解释器：项目采用了自己的 venv / 记住的解释器时，全局选择链
     # （`find_worker_python`）探的是另一个对象。`resolve_worker_python` 是项目级决策的唯一出处，`discover=False`
     # 不起发现子进程（读「此刻的决策」）；没打开项目时它退化成全局链。
-    figures_dir = (src.project or {}).get("figures_dir")
     try:
         python, source = pool.resolve_worker_python(figures_dir, discover=False)
     except pool.WorkerError as exc:
@@ -1456,9 +1505,11 @@ def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
 # ---------------------------------------------------------------------------
 # A 脚本源码（勾选）
 # ---------------------------------------------------------------------------
-def source_candidates(src: Sources) -> list[tuple[str, Path]]:
+def source_candidates(src: Sources, failed: list[str] | None = None) -> list[tuple[str, Path]]:
     """要收的脚本：判据 = 当前项目**登记的脚本**（项目相对路径），正在编辑 / 选中的面板的脚本排最前，
-    其余按修改时间新的在前。只收解析后仍在项目目录内的文件（登记表是用户文件，不信它）。"""
+    其余按修改时间新的在前。只收解析后仍在项目目录内的文件（登记表是用户文件，不信它）。
+    **每个候选单独 stat**：一个无关脚本在枚举与排序之间被删 / 不可读，只让它自己进 `failed`（调用方标 read_failed），
+    不拖垮整个源码类别。"""
     fig = (src.project or {}).get("figures_dir")
     if not fig:
         return []
@@ -1469,19 +1520,29 @@ def source_candidates(src: Sources) -> list[tuple[str, Path]]:
         if p.get("script")
     ]
     seen: dict[str, Path] = {}
+    mtimes: dict[str, float] = {}
+    tried: set[str] = set()
     for rel in [*focus, *src.scripts]:
-        if rel in seen:
+        if rel in tried:
             continue
+        tried.add(rel)
         try:
             path = (root / rel).resolve()
             path.relative_to(root)
         except (OSError, ValueError):
             continue
-        if path.is_file():
-            seen[rel] = path
+        try:
+            if not path.is_file():
+                continue
+            mtimes[rel] = path.stat().st_mtime
+        except OSError:
+            if failed is not None:
+                failed.append(rel)
+            continue
+        seen[rel] = path
     ordered = list(dict.fromkeys(r for r in focus if r in seen))  # 多张面板同一脚本：按首次出现去重
     rest = [r for r in seen if r not in ordered]
-    rest.sort(key=lambda r: -seen[r].stat().st_mtime)
+    rest.sort(key=lambda r: -mtimes[r])  # 用先前各自 stat 到的 mtime 排，排序期间不再碰文件系统
     return [(r, seen[r]) for r in [*ordered, *rest]][:SOURCE_FILES]
 
 
@@ -1698,7 +1759,10 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
     code_scrub = Scrubber(source_mode=True)
     full_scrub = Scrubber()
     index = []
-    for n, (rel, path) in enumerate(source_candidates(src)):
+    stat_failed: list[str] = []
+    candidates = source_candidates(src, stat_failed)
+    index.extend({"script": scrub.text(rel), "read_failed": True} for rel in stat_failed)
+    for n, (rel, path) in enumerate(candidates):
         got = _read_head(path, SOURCE_FILE_CAP)
         if got is None:
             index.append({"script": scrub.text(rel), "read_failed": True})
@@ -1780,6 +1844,23 @@ def _mentions_tavotto(path: Path) -> bool:
         return False
     low = got[0].lower()
     return b"tavotto" in low or "tavotto".encode("utf-16-le") in low
+
+
+def _read_stable(path: Path) -> tuple[bytes | None, str]:
+    """读一个可能还在写的文件：读前后各 stat 一次（大小 + mtime_ns + 文件 id），并核对实际读到的字节数等于前后一致的
+    大小；任何不一致（读取期间增长 / 被改 / 被替换）回 `(None, "changed_while_reading")`——不把前缀当完整原件收；
+    读不到回 `(None, "read_failed")`。"""
+    try:
+        before = path.stat()
+        with path.open("rb") as fh:
+            raw = fh.read(before.st_size + 1)
+        after = path.stat()
+    except OSError:
+        return None, "read_failed"
+    key = lambda st: (st.st_size, st.st_mtime_ns, st.st_ino)  # noqa: E731
+    if key(before) != key(after) or len(raw) != before.st_size:
+        return None, "changed_while_reading"
+    return raw, ""
 
 
 def _crash_candidates(now: float) -> list[dict]:
@@ -1873,12 +1954,12 @@ def collect_crash_reports(
             omitted += c["size"]
             index.append(row)
             continue
-        got = _read_head(c["path"], c["size"] + 1)
-        if got is None:
-            row["content"] = "read_failed"
+        raw, why = _read_stable(c["path"])
+        if raw is None:
+            # 读失败（读不到）与读取期间文件在变（只拿到前缀）是两回事，都不收内容，也都不是超预算
+            row["content"] = why
             index.append(row)
             continue
-        raw = got[0]
         if c["binary"]:
             data = raw
         else:

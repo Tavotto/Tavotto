@@ -2998,6 +2998,7 @@ def _build_diagnostics_bundle(
             engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid, limit=24) if pid else None
         ),
         frontend=detail.frontend,
+        registry=ctx.registry if ctx is not None else None,
     )
     items = engine_diagdetail.collect(src, detail.options)
     # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
