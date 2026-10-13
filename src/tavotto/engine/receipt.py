@@ -110,6 +110,9 @@ class ExecutionReceipt:
     pid_check: str | None = None
     #: 控制面在预检那一刻记下的数据绑定（`databinding.binding_for()` 的载荷）；None = 没给。
     binding: dict | None = None
+    #: 这一次启动实例的唯一键（桌面拥有的会话 id）。空 = 不参与（safe / terminal native 的回执逐字节不变）。
+    #: 私有：两次参数完全相同的桌面启动是两次执行，不能得到同一个 `receipt_id`。
+    instance: str = ""
 
     def __post_init__(self) -> None:
         if self.profile not in execspec.PROFILES:
@@ -233,13 +236,14 @@ class ExecutionReceipt:
     @property
     def receipt_id(self) -> str:
         """这一次执行实例的不透明 id（公开身份 + 私有键 + generation）。"""
-        return _sha(
-            {
-                "public": self.public_identity(),
-                "private": self.private_invalidation_key(),
-                "generation": self.generation,
-            }
-        )
+        payload = {
+            "public": self.public_identity(),
+            "private": self.private_invalidation_key(),
+            "generation": self.generation,
+        }
+        if self.instance:
+            payload["instance"] = self.instance
+        return _sha(payload)
 
     def public_facts(self) -> dict:
         """给 ArtifactManifest 的那一小段（U09）：可公开的事实，**没有路径、没有 argv、没有 stem**——
@@ -309,6 +313,8 @@ class ExecutionReceipt:
             out["private_invalidation_key"] = self.private_invalidation_key()
             out["interpreter"] = self.interpreter
             out["project_root"] = self.project_root
+            if self.instance:
+                out["instance"] = self.instance
         return out
 
 
@@ -443,6 +449,7 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
         descriptors=descriptors,
         runtime_rejected=rejected,
         pid_check=pid_check,
+        instance=(str(getattr(session, "session_id", "") or "") if spec is owned_spec else ""),
     )
 
 

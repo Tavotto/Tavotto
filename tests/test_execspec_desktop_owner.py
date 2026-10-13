@@ -152,7 +152,16 @@ def test_bridge_argv_is_shared_by_both_owners():
     )
     owned = desktop(argv=("--x",), run_config="rc_1", env=None)
     kw = {"runner_py": "/r.py", "out_dir": "/o", "control_host": "127.0.0.1", "control_port": 5}
-    assert execspec.bridge_argv(owned, **kw) == execspec.bridge_argv(terminal, **kw)
+    t_argv, o_argv = execspec.bridge_argv(terminal, **kw), execspec.bridge_argv(owned, **kw)
+    assert "--run-config" not in t_argv  # terminal 的命令行逐字节不变
+    # 桌面拥有的只多一个不透明引用，其余同一份
+    i = o_argv.index("--run-config")
+    assert o_argv[i : i + 2] == ["--run-config", "rc_1"]
+    assert o_argv[:i] + o_argv[i + 2 :] == t_argv
+    # 不带配置的桌面启动与 terminal 相同
+    plain = desktop(argv=(), run_config="", env=None)
+    plain_t = execspec.native_spec(SCRIPT, interpreter=PY, cwd=CWD, project_root=ROOT)
+    assert execspec.bridge_argv(plain, **kw) == execspec.bridge_argv(plain_t, **kw)
 
 
 # ---------------------------------------------------------------------------
@@ -423,3 +432,36 @@ def test_the_execution_dimension_is_injective_even_for_ids_that_end_in_the_old_s
     )
     assert created and s1 is not s2
     assert s1.plan.execution == "safe" and s2.plan.execution == "native"
+
+
+def test_receipt_id_is_per_launch_instance_and_unchanged_without_one():
+    from tavotto.engine import receipt
+
+    def make(instance=""):
+        return receipt.ExecutionReceipt(
+            profile="native",
+            control_plane=receipt.CONTROL_PLANE_NATIVE,
+            python_source="",
+            generation=1,
+            source_revision="",
+            spec_stable=desktop().stable_payload(),
+            launch_context=execspec.launch_context(desktop()),
+            interpreter=PY,
+            project_root=ROOT,
+            runtime=None,
+            **({"instance": instance} if instance else {}),
+        )
+
+    a, b, c = make("native-owned-x-1"), make("native-owned-x-2"), make()
+    assert a.receipt_id != b.receipt_id, "两次参数相同的启动得到了同一个 receipt_id"
+    assert a.to_payload(include_private=True)["instance"] == "native-owned-x-1"
+    assert "instance" not in a.to_payload() and "instance" not in c.to_payload(include_private=True)
+    # 没有实例键的回执（safe / terminal native）与此前的算法逐字节相同
+    legacy = receipt._sha(  # noqa: SLF001
+        {
+            "public": c.public_identity(),
+            "private": c.private_invalidation_key(),
+            "generation": c.generation,
+        }
+    )
+    assert c.receipt_id == legacy

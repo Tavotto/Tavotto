@@ -1262,3 +1262,42 @@ def test_a_failed_start_keeps_its_ticket_until_the_owner_finished(tmp_path, monk
         timeout=30,
         what="所有者完成后撤票据",
     )
+
+
+def test_run_config_reaches_the_bridge_so_asset_ids_carry_it(tmp_path):
+    from tavotto.engine import figcapture
+
+    script = (
+        dk.FIGURE_HEADER
+        + 'fig, ax = plt.subplots()\nax.plot([0, 1])\nfig.savefig("A.png")\nplt.show()\n'
+    )
+    with_cfg = dk.start(tmp_path / "a", script, argv=("--k", "v"))
+    plain = dk.start(tmp_path / "b", script)
+    try:
+        nativekit.wait_state(with_cfg, [nativesession.BARRIER])
+        nativekit.wait_state(plain, [nativesession.BARRIER])
+        d1 = with_cfg.ensure_built()["descriptors"][0]
+        d2 = plain.ensure_built()["descriptors"][0]
+        assert d1["asset_id"].endswith(f"{figcapture.RUN_CONFIG_SEP}rc_p06test"), d1["asset_id"]
+        assert d1["run_config"] == "rc_p06test"
+        assert d2["asset_id"] == figcapture.runtime_asset_id(d2["script"], d2["stem"])
+        assert "run_config" not in d2 and d1["asset_id"] != d2["asset_id"]
+    finally:
+        with_cfg.cancel_owned()
+        plain.cancel_owned()
+
+
+def test_two_identical_desktop_launches_have_different_receipt_ids(tmp_path):
+    from tavotto.engine import receipt
+
+    a = dk.start(tmp_path, "import time; time.sleep(600)\n", launch_id="same")
+    a.cancel_owned()
+    b = dk.start(tmp_path, "import time; time.sleep(600)\n", launch_id="same")
+    try:
+        ra, rb = (
+            receipt.from_native_session(a, "figure.py"),
+            receipt.from_native_session(b, "figure.py"),
+        )
+        assert ra.receipt_id != rb.receipt_id
+    finally:
+        b.cancel_owned()

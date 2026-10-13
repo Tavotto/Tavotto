@@ -729,6 +729,10 @@ def bridge_argv(
         out += ["--control-host", control_host or "127.0.0.1", "--control-port", str(control_port)]
     if report:
         out += ["--report", report]
+    if spec.run_config:
+        # 桌面拥有的、带运行配置的启动：不透明引用（不是 argv 值）交给 runner，描述符 / 资产 id 才带 `~rc_…`，
+        # 不会和不带配置的那次互相覆盖。terminal 拥有的恒空，命令行逐字节不变
+        out += ["--run-config", spec.run_config]
     out.append("--")
     out.extend(spec.argv)
     return out
