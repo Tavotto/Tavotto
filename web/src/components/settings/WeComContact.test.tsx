@@ -113,44 +113,49 @@ describe('发送问题反馈确认框', () => {
   it.each(['done', 'unknown', 'failed'] as const)('zh-CN %s：出现联系行，链接是常量地址的外链', async (state) => {
     await dialogAt(state)
     expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe(state)
-    expect(q('[data-wecom-contact]')).not.toBeNull()
+    expect(q('[data-wecom-contact="active"]')).not.toBeNull()
+    expect(q('[data-wecom-contact="reserved"]')).toBeNull()
     const a = q<HTMLAnchorElement>('[data-wecom-link]')!
     expect(a.getAttribute('href')).toBe(WECOM_CONTACT_URL)
     expect(a.target).toBe('_blank')
     expect(a.rel).toContain('noreferrer')
   })
 
-  it('zh-CN ready / preparing：不出现', async () => {
+  it('zh-CN preparing：只占位（不可见、inert、无可聚焦链接内容对外）', async () => {
     vi.mocked(prepareDiagSend).mockReturnValue(new Promise(() => {}))
     await render(<DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />)
     expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('preparing')
-    expect(q('[data-wecom-contact]')).toBeNull()
+    expect(q('[data-wecom-contact="active"]')).toBeNull()
+    expect(q('[data-wecom-contact="reserved"]')).not.toBeNull()
   })
 
   it('zh-CN ready：不出现', async () => {
     await dialogAt('ready')
     expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('ready')
-    expect(q('[data-wecom-contact]')).toBeNull()
+    expect(q('[data-wecom-contact="active"]')).toBeNull()
+    const r = q('[data-wecom-contact="reserved"]')!
+    expect(r.getAttribute('aria-hidden')).toBe('true')
+    expect(r.hasAttribute('inert')).toBe(true)
+    expect(r.className).toContain('invisible')
   })
 
   it.each(['done', 'unknown', 'failed'] as const)('en-US %s：元素根本不存在', async (state) => {
     await i18n.changeLanguage('en-US')
     await dialogAt(state)
     expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe(state)
-    expect(q('[data-wecom-contact]')).toBeNull()
+    expect(q('[data-wecom-contact]')).toBeNull() // 含占位：英文界面不渲染任何元素
     expect(q('[data-wecom-link]')).toBeNull()
-    expect(q('[data-wecom-qr]')).toBeNull()
+    expect(q('[data-wecom-qr-toggle]')).toBeNull()
   })
 
   it('二维码默认折叠（无 img），展开后出现 img 且 alt 有意义', async () => {
     await dialogAt('done')
-    expect(q('[data-wecom-qr]')).not.toBeNull()
+    expect(q('[data-wecom-qr-toggle]')).not.toBeNull()
     expect(q('[data-wecom-qr-img]')).toBeNull()
-    const d = q<HTMLDetailsElement>('[data-wecom-qr]')!
-    await act(async () => {
-      d.open = true
-      d.dispatchEvent(new Event('toggle'))
-    })
+    const b = q<HTMLButtonElement>('[data-wecom-qr-toggle]')!
+    expect(b.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => b.click())
+    expect(b.getAttribute('aria-expanded')).toBe('true')
     const img = q<HTMLImageElement>('[data-wecom-qr-img]')!
     expect(img).not.toBeNull()
     expect(img.alt.length).toBeGreaterThan(8)
