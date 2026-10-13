@@ -1501,11 +1501,8 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     )
 
     # ---- pip 在不在 -------------------------------------------------------
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        # **不静默 ensurepip**：那是往用户环境里再加一样东西，而用户确认的是
-        # 「装 lmfit」。
-        raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
+    # **不静默 ensurepip**：那是往用户环境里再加一样东西，而用户确认的是「装 lmfit」。
+    _require_pip(python, ERROR_PIP_UNAVAILABLE)
 
     # ---- 安装 -------------------------------------------------------------
     # 租约在手、解释器已知之后再查一次「这一轮装成功过没有」（Codex 评审 #469 P2）：
@@ -2281,9 +2278,26 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
         )
     except subprocess.TimeoutExpired:
         return 1, f"超时（{timeout}s）"
-    except (OSError, launcher.LauncherUnavailable) as exc:
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：不是 pip / 环境本身的结论。返回专用码，需要报错的调用方（`_require_pip`）透传稳定码
+        return RC_ACTIVATION_UNAVAILABLE, str(exc)
+    except OSError as exc:
         return 1, str(exc)
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+#: `_run` 的返回码：Conda 激活取环境失败（什么都没起）。负数，不会与真实进程退出码混淆
+RC_ACTIVATION_UNAVAILABLE = -10_975
+
+
+def _require_pip(python: str, missing_code: str) -> None:
+    """装 / 卸之前确认目标环境的 pip 在。pip 不在 → `missing_code`；激活取环境失败 → `conda_launcher_unavailable`
+    （瞬时，恢复动作不同：不是“这个环境没有 pip”）。"""
+    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc == RC_ACTIVATION_UNAVAILABLE:
+        raise RepairError(launcher.UNAVAILABLE_CODE, out[:400])
+    if rc != 0:
+        raise RepairError(missing_code, _sanitize(out)[-800:])
 
 
 def installed_version(python: str, distribution: str) -> str:
@@ -3557,9 +3571,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         managedenv.mark_incomplete(project, f"{job.op} 被取消")
         return _emit_job(job.job_id, STATE_CANCELLED, on_event, job=job, code=ERROR_CANCELLED)
 
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])
+    _require_pip(python, ERROR_MANAGED_BROKEN)
 
     # 改动前的快照：不是回滚（pip 没有事务），是修复时的对照
     before = _freeze(python)
@@ -4642,9 +4654,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     python = plan.python
     _require_record_sources(plan.record)  # 回执的来源字段：缺了在 pip 之前拒绝
     _emit(plan.plan_id, STATE_PREPARING, on_event, joint=plan)
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
+    _require_pip(python, ERROR_PIP_UNAVAILABLE)
     _emit(plan.plan_id, STATE_INSTALLING, on_event, joint=plan)
     pi = plan.pip_inputs
     with tempfile.TemporaryDirectory(prefix="tavotto-joint-") as tmp:
@@ -4914,6 +4924,8 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             result={"generation": generation, "activated": False},
         )
     rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc == RC_ACTIVATION_UNAVAILABLE:
+        raise RepairError(launcher.UNAVAILABLE_CODE, out[:400])
     if rc != 0:
         managedenv.mark_generation(project, generation, managedenv.GEN_STATE_INCOMPLETE, "没有 pip")
         raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])

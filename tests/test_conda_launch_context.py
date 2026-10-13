@@ -2103,3 +2103,81 @@ def test_a_failed_activation_is_reported_as_environment_code_that_may_have_run(
     res = projectenv.probe_environment(py, "vendor_sdk", import_mode="spec")
     assert res["code"] == "conda_launcher_unavailable"
     assert res["execution"]["ran_environment_code"] is True and res["execution"]["incomplete"] is True
+
+
+# ---------------------------------------------------------------------------
+# Codex #975 第七轮：依赖操作透传激活失败码；部分捕获不记成功；超时收尾一个总期限
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("failed", [True, False])
+def test_a_partial_capture_never_records_a_successful_launch(tmp_path, monkeypatch, failed):
+    """有图失败（partial）不是完整成功：启动上下文记录按依据不全处理（rcpt=None → 清掉旧记录、不写新的），默认配置照常。"""
+    import types
+
+    from tavotto import app as m
+    from tavotto.engine import discover
+
+    figs = tmp_path / "figs"
+    figs.mkdir()
+    (figs / "s.py").write_text("print()\n", encoding="utf-8")
+    discover.register(figs, "s.py", ["good", "bad"], entry="main")
+    captured = {"stems": ["good"], "descriptors": [], "remap_generation": None}
+    if failed:
+        captured.update(
+            partial=True,
+            failed_figures=[{"stem": "bad", "code": "preview_capture_failed", "message": "m"}],
+        )
+    receipt_obj = object()
+    seen = []
+    monkeypatch.setattr(m, "_materialize_runtime", lambda *a, **k: None)
+    monkeypatch.setattr(m, "refresh_project", lambda *a, **k: None)
+    monkeypatch.setattr(m, "_plan_pin", lambda plan: None)
+    monkeypatch.setattr(
+        m.engine_launchctx, "record_success", lambda root, script, rcpt, **k: seen.append((rcpt, k))
+    )
+    ctx = types.SimpleNamespace(path=str(figs))
+    plan = types.SimpleNamespace(script="s.py", entry="main", run=None)
+    m._finalize_script_attempt(ctx, plan, types.SimpleNamespace(captured=captured, receipt=receipt_obj))
+    ((rcpt, kw),) = seen
+    assert rcpt is (None if failed else receipt_obj)
+    assert kw["update_default"] is True
+
+
+def test_a_failed_activation_before_a_dependency_operation_keeps_its_stable_code(monkeypatch):
+    """装 / 卸之前的 `pip --version`：激活取环境失败报 conda_launcher_unavailable，不报成“这个环境没有 pip”。"""
+    from tavotto.engine import deprepair
+
+    def boom(python, base=None, **k):
+        raise launcher.LauncherUnavailable("x")
+
+    with monkeypatch.context() as m:
+        m.setattr(deprepair.launcher, "activate_env", boom)
+        rc, out = deprepair._run([sys.executable, "-m", "pip", "--version"], 30)
+        assert rc == deprepair.RC_ACTIVATION_UNAVAILABLE
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair._require_pip(sys.executable, deprepair.ERROR_PIP_UNAVAILABLE)
+        assert err.value.code == "conda_launcher_unavailable"
+    deprepair._require_pip(sys.executable, deprepair.ERROR_PIP_UNAVAILABLE)  # 正常环境：不抛
+
+
+@posix_only
+def test_timeout_cleanup_has_one_overall_deadline_however_deep_the_tree(monkeypatch):
+    """再深的进程链，叶子先死的收尾也只在一个总期限内（不是每层 0.1s 累加）；余下的由整组兜底杀掉。"""
+    deep = [[100000 + i] for i in range(200)]  # 200 层
+    monkeypatch.setattr(launcher, "_descendant_levels", lambda pid, **k: deep)
+    monkeypatch.setattr(launcher.os, "kill", lambda pid, sig: None)
+    killed_group = []
+    monkeypatch.setattr(launcher.os, "killpg", lambda pid, sig: killed_group.append(pid))
+
+    class P:
+        pid = 4242
+
+        def kill(self):
+            pass
+
+        def wait(self):
+            return -9
+
+    t0 = time.monotonic()
+    launcher._kill_tree(P())
+    assert time.monotonic() - t0 < launcher._KILL_TREE_BUDGET_S + 1.0
+    assert killed_group == [4242]

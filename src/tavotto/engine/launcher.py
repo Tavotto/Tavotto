@@ -396,7 +396,11 @@ def startup() -> None:
     atexit.register(_cleanup_inflight)
 
 
-def _descendant_levels(root_pid: int) -> list[list[int]]:
+#: 超时收尾（叶子先死）的总期限：不随进程树深度增长
+_KILL_TREE_BUDGET_S = 1.0
+
+
+def _descendant_levels(root_pid: int, *, timeout: float = 5.0) -> list[list[int]]:
     """`root_pid` 的后代，按深度分层（第 0 层 = 直接子进程）。读不到进程表回空（调用方退回按组杀）。"""
     try:
         out = subprocess.run(
@@ -405,7 +409,7 @@ def _descendant_levels(root_pid: int) -> list[list[int]]:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=5,
+            timeout=timeout,
             stdin=subprocess.DEVNULL,
             creationflags=runtime.CREATE_NO_WINDOW,
         ).stdout
@@ -430,13 +434,18 @@ def _kill_tree(proc: subprocess.Popen) -> None:
     """超时收尾：**叶子先死**。conda 还活着时它的子进程先被杀，由 conda（它在 wait 它们）收尸，不留僵尸；
     最后才杀 conda 本身并 wait。整组一起 SIGKILL 会让子进程在父进程来不及收尸时变成孤儿（PID 1 不收尸的容器里就是僵尸）。"""
     if os.name != "nt":
-        for level in reversed(_descendant_levels(proc.pid)):
+        # 整个收尾一个总期限：再深的进程链也只多花 `_KILL_TREE_BUDGET_S`，到点余下的整组一起杀（下面的 killpg 兜底）
+        deadline = time.monotonic() + _KILL_TREE_BUDGET_S
+        for level in reversed(_descendant_levels(proc.pid, timeout=_KILL_TREE_BUDGET_S)):
             for pid in level:
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except OSError:
                     pass
-            time.sleep(0.1)  # 让还活着的父进程（conda / 它起的 shell）收掉这一层
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            time.sleep(min(0.1, left))  # 让还活着的父进程（conda / 它起的 shell）收掉这一层
     proc.kill()
     proc.wait()
     if os.name != "nt":
