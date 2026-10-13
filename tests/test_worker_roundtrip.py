@@ -2649,7 +2649,7 @@ def workerd_figs(tmp_path, monkeypatch):
 
 
 def _title_gid(worker, stem="TestFig_a"):
-    man = json.loads((worker.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(worker.out_dir, stem, ".json").read_text(encoding="utf-8"))
     return next(
         el["gid"]
         for el in man["elements"]

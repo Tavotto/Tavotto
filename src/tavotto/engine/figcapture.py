@@ -370,13 +370,29 @@ def preview_generation_dir(out_dir, seq: int) -> str:
     return os.path.join(os.fspath(out_dir), f"{GENERATION_DIR_PREFIX}{int(seq)}")
 
 
+def _replace_with_retry(src: str, dst: str, attempts: int = 12) -> None:
+    """`os.replace`，Windows 上目标正被读方短时打开时会被拒（`PermissionError`，共享冲突）：有界退避重试，
+    总时长不超过约 1 秒，仍失败就把最后的错误抛出去（发布失败，不无限等）。读方（`_load_preview_ledger`）
+    读完立刻关，所以冲突是瞬时的。"""
+    delay = 0.005
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if os.name != "nt" or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 1.6, 0.15)
+
+
 def _write_preview_ledger(out_dir: str, ledger: dict) -> None:
     path = os.path.join(out_dir, PREVIEW_LEDGER)
     tmp = path + ".part"
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(ledger, fh)
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except BaseException:
         try:
             os.remove(tmp)

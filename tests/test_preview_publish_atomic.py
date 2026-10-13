@@ -762,9 +762,14 @@ def test_a_reader_that_opens_late_still_gets_one_complete_current_pair(tmp_path,
     seq0, svg_fh, man_fh = figcapture.open_preview_pair(tmp_path, "fig")
     for n in range(1, 4 * figcapture.GENERATION_GRACE):
         _publish(tmp_path, "fig", svg=f"svg-{n}".encode(), manifest={"gen": n})
-    assert not Path(svg_path).exists(), "探针无效：旧代应当已被清理"
-    if os.name != "nt":  # Windows 上删不掉被打开的目录；POSIX 上句柄钉住内容
+    current = figcapture.usable_preview_generation(tmp_path, "fig")
+    assert Path(svg_path) != Path(current[1]), "探针无效：旧路径应当已不是当前一代"
+    if os.name != "nt":
+        # POSIX：旧代已被清理，已打开的句柄钉住内容
+        assert not Path(svg_path).exists(), "探针无效：旧代应当已被清理"
         assert svg_fh.read() == b"svg-0" and json.loads(man_fh.read())["gen"] == 0
+    # Windows：被打开的目录删不掉，旧代可以留存——合同是它不可见（当前指针不指向它）也不计数
+    assert figcapture.published_preview_stems(tmp_path) == ["fig"]
     svg_fh.close()
     man_fh.close()
     seq, svg, man = figcapture.open_preview_pair(tmp_path, "fig")
@@ -1199,6 +1204,8 @@ def _spawn_holder(out_dir):
         [sys.executable, "-c", _HOLDER, str(out_dir)],
         stdout=sp.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
     )
     assert proc.stdout.readline().strip() == "locked", "持锁子进程没拿到锁"
