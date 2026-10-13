@@ -142,6 +142,20 @@ class DetailOptions:
         return {k: bool(getattr(self, k)) for k in OPTION_KEYS}
 
 
+#: 勾选项 → 它对应的附件类别
+OPTION_KINDS = {
+    "source": "source",
+    "crash_reports": "crash_reports",
+    "corrupt_sessions": "corrupt_sessions",
+}
+
+
+def options_of(kept: list) -> dict[str, bool]:
+    """最终包里**实际带着**哪些勾选附件（按保留下来的条目推导，不是按请求）。"""
+    kinds = {i.kind for i in kept}
+    return {k: OPTION_KINDS[k] in kinds for k in OPTION_KEYS}
+
+
 def options_from_query(raw: str | None) -> dict[str, bool]:
     """`?options=source,crash_reports` → `{"source": True, "crash_reports": True}`；只认 `OPTION_KEYS` 里的名字。"""
     names = {n.strip() for n in (raw or "").split(",")}
@@ -799,6 +813,11 @@ def _worker_logs(project: dict | None) -> list[tuple[float, Path]]:
     return diagnostics.owned_worker_logs((project or {}).get("figures_dir"))[:WORKER_LOG_FILES]
 
 
+def _worker_logs_over_cap(project: dict | None) -> list[tuple[float, Path]]:
+    """超过份数上限（`WORKER_LOG_FILES`）而没收的 worker.log：要在声明面上记账。"""
+    return diagnostics.owned_worker_logs((project or {}).get("figures_dir"))[WORKER_LOG_FILES:]
+
+
 def collect_errors(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     text = _app_log_text()
     engine = [r for r in parse_log_records(text) if r["level"] in ("ERROR", "CRITICAL")][
@@ -910,6 +929,12 @@ def collect_logs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
         text = raw.decode("utf-8", errors="replace")
         text = text if opts.source else strip_source_lines(text)
         parts.append(f"===== worker.log (modified {_iso(_mtime)}) =====\n{text}")
+    over = _worker_logs_over_cap(src.project)
+    over_bytes = sum((_file_id(p) or FileId(0, 0, 0)).size for _m, p in over)
+    if over:  # 份数上限之外的更早的 worker.log：文件头里如实写，字节数计入 manifest 的 truncated
+        parts.append(
+            f"===== {len(over)} older worker.log file(s) omitted (over the count cap of {WORKER_LOG_FILES}) ====="
+        )
     if parts:
         data = scrub.text("\n".join(parts)).encode("utf-8")
         items.append(
@@ -919,6 +944,7 @@ def collect_logs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
                 data,
                 shrink=lambda cap, d=data: _tail_bytes(d, cap),
                 original_bytes=sizes if cut else None,
+                dropped_bytes=over_bytes,
             )
         )
     return items
@@ -1004,6 +1030,9 @@ def collect_corrupt_sessions(src: Sources, opts: DetailOptions, scrub: Scrubber)
     cands, bad = _stable_candidates(corrupt)  # 逐个 stat 缓存；排序只用登记到的 mtime
     index.extend({"name": p.name, "read_failed": True} for p in bad)
     cands.sort(key=lambda pf: -pf[1].mtime_ns)
+    over_cap = sum(fid.size for _p, fid in cands[CORRUPT_FILES:])
+    for p, fid in cands[CORRUPT_FILES:]:  # 份数上限之外：index 里列出来，字节计入 truncated
+        index.append({"name": p.name, "bytes": fid.size, "skipped_over_count_cap": True})
     for p, fid in cands[:CORRUPT_FILES]:
         raw, why = _read_capped(p, fid, CORRUPT_FILE_CAP)
         if raw is None:
@@ -1022,7 +1051,13 @@ def collect_corrupt_sessions(src: Sources, opts: DetailOptions, scrub: Scrubber)
             )
         )
     items.insert(
-        0, Item("corrupt_sessions", "index.json", _dumps({"schema": DETAIL_SCHEMA, "files": index}))
+        0,
+        Item(
+            "corrupt_sessions",
+            "index.json",
+            _dumps({"schema": DETAIL_SCHEMA, "files": index}),
+            dropped_bytes=over_cap,
+        ),
     )
     return items
 
@@ -1091,14 +1126,26 @@ def collect_overrides(src: Sources, opts: DetailOptions, scrub: Scrubber) -> lis
             }
         )
         items.append(Item("overrides", f"baked-{_safe_name(stem)}.json", _dumps(doc)))
-    if not items:
-        items.append(
-            Item(
-                "overrides",
-                "index.json",
-                _dumps({"schema": DETAIL_SCHEMA, "note": "no panel was being edited or selected"}),
-            )
-        )
+    omitted = max(0, len(panels) - MAX_OVERRIDE_PANELS) + int(
+        (src.frontend or {}).get("overrides_omitted") or 0
+    )
+    items.insert(
+        0,
+        Item(
+            "overrides",
+            "index.json",
+            _dumps(
+                {
+                    "schema": DETAIL_SCHEMA,
+                    "panels": [
+                        str(p.get("panel") or "")[:200] for p in panels[:MAX_OVERRIDE_PANELS]
+                    ],
+                    "skipped_over_count_cap": omitted,  # 数量上限（每次至多 3 张面板）之外没收的面板数
+                    **({} if panels else {"note": "no panel was being edited or selected"}),
+                }
+            ),
+        ),
+    )
     return items
 
 
@@ -1582,7 +1629,10 @@ def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
 # A 脚本源码（勾选）
 # ---------------------------------------------------------------------------
 def source_candidates(
-    src: Sources, failed: list[str] | None = None, ids: dict[str, FileId] | None = None
+    src: Sources,
+    failed: list[str] | None = None,
+    ids: dict[str, FileId] | None = None,
+    over_cap: list[str] | None = None,
 ) -> list[tuple[str, Path]]:
     """要收的脚本：判据 = 当前项目**登记的脚本**（项目相对路径），正在编辑 / 选中的面板的脚本排最前，
     其余按修改时间新的在前。只收解析后仍在项目目录内的文件（登记表是用户文件，不信它）。
@@ -1625,7 +1675,10 @@ def source_candidates(
     )  # 用先前各自 stat 到的 mtime 排，排序期间不再碰文件系统
     if ids is not None:
         ids.update(fids)
-    return [(r, seen[r]) for r in [*ordered, *rest]][:SOURCE_FILES]
+    chosen = [*ordered, *rest]
+    if over_cap is not None:  # 数量上限之外的：调用方在 index 与 truncated 里记账
+        over_cap.extend(chosen[SOURCE_FILES:])
+    return [(r, seen[r]) for r in chosen][:SOURCE_FILES]
 
 
 def _prose_spans(text: str) -> list[tuple[int, int]] | None:
@@ -1843,7 +1896,12 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
     index = []
     stat_failed: list[str] = []
     ids: dict[str, FileId] = {}
-    candidates = source_candidates(src, stat_failed, ids)
+    over_cap: list[str] = []
+    candidates = source_candidates(src, stat_failed, ids, over_cap)
+    index.extend(
+        {"script": scrub.text(r), "bytes": ids[r].size, "skipped_over_count_cap": True}
+        for r in over_cap
+    )
     index.extend({"script": scrub.text(rel), "read_failed": True} for rel in stat_failed)
     for n, (rel, path) in enumerate(candidates):
         raw, why = _read_capped(path, ids[rel], SOURCE_FILE_CAP)
@@ -1879,6 +1937,7 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
                     "scripts": index,
                 }
             ),
+            dropped_bytes=sum(ids[r].size for r in over_cap),
         ),
     )
     return items
@@ -2024,7 +2083,10 @@ def collect_crash_reports(
             "content": "raw_binary" if c["binary"] else "redacted_text",
         }
         if len(items) >= CRASH_FILES or used + c["size"] > budget:
-            row["content"] = "skipped_over_budget"
+            # 数量上限与字节份额是两种原因，index 里分开写（都计入 truncated 的 original_bytes）
+            row["content"] = (
+                "skipped_over_count_cap" if len(items) >= CRASH_FILES else "skipped_over_budget"
+            )
             omitted += c["size"]
             index.append(row)
             continue

@@ -188,6 +188,11 @@ describe('两条路径的载荷', () => {
     expect(Object.keys(p).sort()).toEqual(['frontend_state', 'interaction_trace'])
   })
 
+  it('detail 带 overrides_omitted（数量上限之外没发的面板数）', async () => {
+    const p = await buildSendPayload(NO_DETAIL_OPTIONS)
+    expect(p.detail.overrides_omitted).toBe(0)
+  })
+
   it('发送路径 = 老载荷 + detail_options（默认全 false）+ detail', async () => {
     uninstall = installConsoleCapture()
     console.error('for the maintainers')

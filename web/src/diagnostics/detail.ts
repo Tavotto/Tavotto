@@ -326,6 +326,19 @@ export async function collectShellInfo(): Promise<Record<string, unknown>> {
   return out
 }
 
+export const MAX_OVERRIDE_PANELS = 3
+
+/** 焦点面板总数里超出数量上限（3）而没发的张数：引擎记进 overrides 的 index */
+export function overridesOmitted(): number {
+  const objects = useDocumentStore.getState().doc.objects
+  const panels = objects.filter((o): o is PanelObject => o.type === 'panel')
+  const editing = useUiStore.getState().elementPanelId
+  const picked = editing
+    ? panels.filter((p) => p.id === editing)
+    : panels.filter((p) => useSelectionStore.getState().ids.includes(p.id))
+  return Math.max(0, picked.length - MAX_OVERRIDE_PANELS)
+}
+
 /** 正在编辑的面板（没有就取选中的面板）的样式改动——「这张图现在被改成了什么样」的热态，至多 3 张。 */
 export function collectFocusedOverrides(): Record<string, unknown>[] {
   const objects = useDocumentStore.getState().doc.objects
@@ -334,7 +347,7 @@ export function collectFocusedOverrides(): Record<string, unknown>[] {
   const picked = editing
     ? panels.filter((p) => p.id === editing)
     : panels.filter((p) => useSelectionStore.getState().ids.includes(p.id))
-  return picked.slice(0, 3).map((p) => ({
+  return picked.slice(0, MAX_OVERRIDE_PANELS).map((p) => ({
     panel: p.fileId,
     kind: p.fileKind,
     script: p.script ?? null,
@@ -439,6 +452,7 @@ export async function buildSendPayload(options: DetailOptions): Promise<SendPayl
       display: guard(collectDisplayEnv, {}),
       shell,
       overrides: guard(collectFocusedOverrides, []),
+      overrides_omitted: guard(overridesOmitted, 0),
     },
   })
 }

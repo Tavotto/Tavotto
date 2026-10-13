@@ -1466,6 +1466,126 @@ class TestFilesChangingDuringCollection:
         assert sizes == [] or max(sizes) <= reg.size + 1  # 没读，或者最多读 登记大小 + 1
 
 
+class TestDeclarationsMatchTheFinalContents:
+    """manifest / 内层 index / prepare 响应 / 确认框：每一处声明都从最终保留下来的条目推导。"""
+
+    def test_more_than_the_source_cap_are_all_listed_and_counted(self, world, monkeypatch):
+        proj = world["tmp"] / "projcap"
+        proj.mkdir()
+        names = []
+        for i in range(diagdetail.SOURCE_FILES + 3):
+            (proj / f"s{i:03d}.py").write_text(f"# {i}\n" + "x = 1\n" * 10, encoding="utf-8")
+            names.append(f"s{i:03d}.py")
+        total = sum((proj / n).stat().st_size for n in names)
+        src = diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=names)
+        items = diagdetail.collect_source(
+            src, diagdetail.DetailOptions(source=True), diagdetail.Scrubber()
+        )
+        index = json.loads(next(i for i in items if i.path == "index.json").data)
+        rows = index["scripts"]
+        assert len(rows) == len(names)  # index 列全
+        capped = [r for r in rows if r.get("skipped_over_count_cap")]
+        assert len(capped) == 3 and all("file" not in r for r in capped)
+        flat = dict(diagdetail.entries(items))
+        with zipfile.ZipFile(io.BytesIO(flat["optional-source.zip"])) as z:
+            members = set(z.namelist()) - {"index.json"}
+        assert (
+            members == {r["file"] for r in rows if "file" in r}
+            and len(members) == diagdetail.SOURCE_FILES
+        )
+        _d, _k, trunc = diagdetail.fit(items, lambda its, t: b"x", 10**9)
+        row = next(t for t in trunc if t["kind"] == "source")
+        assert (
+            total <= row["original_bytes"] <= total + 8192
+            and row["kept_bytes"] < row["original_bytes"]
+        )
+
+    def test_other_count_caps_are_recorded_the_same_way(self, world, monkeypatch):
+        state = world["state"]
+        for i in range(5):
+            (state / f"{layoutsession.CORRUPT_PREFIX}c{i}.json").write_text(
+                "c" * 50, encoding="utf-8"
+            )
+        items = diagdetail.collect_corrupt_sessions(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(corrupt_sessions=True),
+            diagdetail.Scrubber(),
+        )
+        rows = json.loads(items[0].data)["files"]
+        assert (
+            sum(1 for r in rows if r.get("skipped_over_count_cap")) >= 3
+            and items[0].dropped_bytes > 0
+        )
+        # 崩溃报告的数量上限（与字节份额分开写）
+        monkeypatch.setattr(diagdetail, "CRASH_FILES", 2)
+        for i in range(4):
+            (world["crash"] / f"Tavotto.exe.{i}.dmp").write_bytes(bytes([65 + i]) * 100)
+        citems = diagdetail.collect_crash_reports(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(crash_reports=True),
+            diagdetail.Scrubber(),
+        )
+        crows = json.loads(citems[0].data)["reports"]
+        assert sum(1 for r in crows if r["content"] == "skipped_over_count_cap") >= 2
+        assert citems[0].dropped_bytes >= 200
+        # 面板数量上限
+        panels = [{"panel": f"p{i}.pdf", "overrides": []} for i in range(3)]
+        oitems = diagdetail.collect_overrides(
+            diagdetail.Sources(frontend={"overrides": panels, "overrides_omitted": 2}),
+            diagdetail.DetailOptions(),
+            diagdetail.Scrubber(),
+        )
+        assert json.loads(oitems[0].data)["skipped_over_count_cap"] == 2
+        # worker 日志份数上限
+        logs = []
+        for i in range(3):
+            w = world["tmp"] / f"w{i}.log"
+            w.write_text(f"worker {i}\n" * 20, encoding="utf-8")
+            logs.append((time.time() - i, w))
+        monkeypatch.setattr(diagnostics, "owned_worker_logs", lambda project_dir, root=None: logs)
+        monkeypatch.setattr(diagdetail, "WORKER_LOG_FILES", 1)
+        litems = diagdetail.collect_logs(
+            diagdetail.Sources(project={"figures_dir": "/p"}),
+            diagdetail.DetailOptions(),
+            diagdetail.Scrubber(),
+        )
+        wl = next(i for i in litems if i.path == "detail-worker-log.txt")
+        assert b"2 older worker.log file(s) omitted" in wl.data and wl.dropped_bytes > 0
+
+    def test_options_follow_the_final_contents_when_fit_drops_an_attachment(
+        self, client, world, monkeypatch
+    ):
+        proj = _project(client, world["tmp"])
+        (proj / "fig_one.py").write_text(
+            "# " + base64.b64encode(os.urandom(300_000)).decode(), encoding="utf-8"
+        )
+        monkeypatch.setattr(diagdetail, "FIT_SLACK", 1000)
+        base, _z = _prepare(client)
+        # 上限只够默认内容：勾选的源码一定被 fit 整类丢掉
+        monkeypatch.setattr(diagsend, "MAX_BYTES", base["size"] + 1000 + 600)
+        prep, z = _prepare(client, source=True)
+        manifest = json.loads(z.read("manifest.json"))
+        assert "optional-source.zip" not in z.namelist()
+        assert manifest["detail_options"]["source"] is False and prep["options"]["source"] is False
+        row = next(t for t in manifest["truncated"] if t["kind"] == "source")
+        assert row["kept_bytes"] == 0 and row["original_bytes"] > 100_000
+        assert prep["truncated"] == manifest["truncated"]
+        assert (
+            "script source"
+            not in z.read("README.txt").decode().split("Extras you ticked:")[1].split(".")[0]
+        )
+
+    def test_options_are_true_only_for_attachments_actually_present(self, client, world):
+        _prep, z = _prepare(client, source=True, crash_reports=True)
+        m = json.loads(z.read("manifest.json"))["detail_options"]
+        assert m == {"source": True, "crash_reports": True, "corrupt_sessions": False}
+        assert diagdetail.options_of([]) == {
+            "source": False,
+            "crash_reports": False,
+            "corrupt_sessions": False,
+        }
+
+
 class TestSourceStatRaces:
     def test_an_unrelated_script_vanishing_does_not_break_the_category(self, world, monkeypatch):
         proj = world["tmp"] / "proj6"

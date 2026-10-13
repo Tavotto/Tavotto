@@ -783,6 +783,12 @@ def sanitize_detail(raw) -> dict:
             }
         )
     out["overrides"] = panels
+    # 面板数量上限之外被前端 / 这里砍掉的张数（记进 overrides 的 index.json）
+    sent = raw.get("overrides") if isinstance(raw.get("overrides"), list) else []
+    client_omitted = raw.get("overrides_omitted")
+    out["overrides_omitted"] = max(0, len(sent) - DETAIL_MAX_OVERRIDE_PANELS) + (
+        min(client_omitted, 1000) if isinstance(client_omitted, int) and client_omitted > 0 else 0
+    )
     # 前端为了塞进请求体上限而自己截短过哪些环（短标识，最多 8 个）：原样带进包里，读包的人知道缺了什么
     cut = raw.get("client_truncated")
     out["client_truncated"] = (

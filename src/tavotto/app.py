@@ -3005,8 +3005,9 @@ def _build_diagnostics_bundle(
     report = engine_diagnostics.build_report(status, common["port"])
 
     def build(kept: list, truncated: list) -> bytes:
+        # 声明从**最终保留下来的条目**推导：附件被 `fit` 整类丢掉了，就是没附上（options 为 false，`truncated` 里有它）
         payload = engine_diagnostics.DetailPayload(
-            engine_diagdetail.entries(kept), detail.options.as_dict(), truncated
+            engine_diagdetail.entries(kept), engine_diagdetail.options_of(kept), truncated
         )
         built = engine_diagnostics.build_bundle(**common, detail=payload, report=report)
         # 服务端拒收压缩比 > 200 的条目：改存的增量也要算进 `fit` 的体积里
