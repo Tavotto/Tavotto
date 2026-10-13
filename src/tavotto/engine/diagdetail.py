@@ -266,7 +266,7 @@ _KV_SECRET = re.compile(
     rf"""(?ix)
     (?P<key>(?<![\w.\-])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))\\*["']?)
     (?P<sep>\s*[:=]\s*)
-    (?P<val>(?P<bs>\\+)"(?:[^\n]{{0,4096}}?(?P=bs)"|[^\n]*)|"[^"\n]*"|'[^'\n]*'|"[^\n]*|'[^\n]*|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
+    (?P<val>(?P<bs>\\+)"(?:[^\n]{{0,4096}}?(?P=bs)"|[^\n]*)|"[^"\n]*"|'[^'\n]*'|[bBrRuUfF]{{1,2}}"[^"\n]*"|[bBrRuUfF]{{1,2}}'[^'\n]*'|"[^\n]*|'[^\n]*|[bBrRuUfF]{{1,2}}"[^\n]*|[bBrRuUfF]{{1,2}}'[^\n]*|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
     """
 )
 #: 头行（`Authorization: Digest username="x", response="…"` 这类值里有逗号和引号）：不确定值到哪结束，就抹到行尾
@@ -278,6 +278,10 @@ _URL_USERINFO = re.compile(
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 _REDACTED = "<redacted>"
+_STR_PREFIXED = re.compile(r"([bBrRuUfF]{1,2})([\"'])")  # b'x' / rb\"x\" / u'x' / f'x'
+_CALL_VALUE = re.compile(
+    r"[A-Za-z_][\w.]*\("
+)  # SecretStr('x') / bytearray(b'x') / Token(value='x')
 #: 没有键名可依的形状：PEM 私钥块、常见服务商的令牌前缀（AWS 访问密钥 id、GitHub 细粒度、Slack、Google API key）
 _PEM_BEGIN = re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----")
 
@@ -346,9 +350,9 @@ def _container_end(text: str, start: int) -> tuple[int, bool]:
                 quote = ""
         elif ch in "\"'":
             quote = ch
-        elif ch in "[{":
+        elif ch in "[{(":
             depth += 1
-        elif ch in "]}":
+        elif ch in "]})":
             depth -= 1
             if depth == 0:
                 return i + 1, True
@@ -455,14 +459,15 @@ class Scrubber:
             return m.group(0)
         if self.source_mode:
             # 源码：只换带引号的字面量 / Bearer 形状；`token = self._next()` 这类取值表达式原样留着
-            if not (val[:1] in "\"'\\" and len(val) >= 8) and not re.match(
-                r"(?i)^(Bearer|Basic|Token)\s", val
-            ):
+            if not (
+                (val[:1] in "\"'\\" or _STR_PREFIXED.match(val)) and len(val) >= 8
+            ) and not re.match(r"(?i)^(Bearer|Basic|Token)\s", val):
                 return m.group(0)
         bs = m.group("bs")
         if bs:  # 转义过的 JSON 字符串（日志 / JSON 值里嵌着 JSON）：`\"S\"` → `\"<redacted>\"`
             return f'{m.group("key")}{m.group("sep")}{bs}"{_REDACTED}{bs}"'
-        quote = val[0] if val[:1] in "\"'" else ""
+        pre = _STR_PREFIXED.match(val)
+        quote = pre.group(2) if pre else (val[0] if val[:1] in "\"'" else "")
         return f"{m.group('key')}{m.group('sep')}{quote}{_REDACTED}{quote}"
 
     def _kv_all(self, text: str) -> str:
@@ -474,15 +479,28 @@ class Scrubber:
             if m.start() < pos:
                 continue  # 落在前一个已换掉的括号段里
             val = m.group("val")
-            if val[:1] not in "[{":
+            vs = m.start("val")
+            if val[:1] == "<" and not _BORING_VALUE.match(val):
+                # `<SecretStr '**********'>` 这类 repr：抹到配对的 `>`，找不到就到行尾
+                nl = text.find("\n", vs)
+                eol = len(text) if nl < 0 else nl
+                gt = text.find(">", vs, eol)
+                out.append(text[pos:vs])
+                out.append(_REDACTED)
+                pos = gt + 1 if gt >= 0 else eol
+                continue
+            # 源码模式的代码区：调用表达式不是明文值（字符串实参归 tokenize 的结构判定）；日志 / 注释 / 字符串里才是 repr
+            is_call = not self.source_mode and _CALL_VALUE.match(text, vs) is not None
+            if val[:1] not in "[{" and not is_call:
                 out.append(text[pos : m.start()])
                 out.append(self._kv(m))
                 pos = m.end()
                 continue
-            vs = m.start("val")
             end, balanced = _container_end(text, vs)
             segment = text[vs:end]
-            keep = _containers_are_boring(segment) or (self.source_mode and not _has_quote(segment))
+            keep = (not is_call and _containers_are_boring(segment)) or (
+                self.source_mode and not _has_quote(segment)
+            )
             out.append(text[pos:vs])
             out.append(segment if keep and balanced else _REDACTED)
             pos = end

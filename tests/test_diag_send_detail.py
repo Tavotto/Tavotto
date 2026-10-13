@@ -920,6 +920,44 @@ class TestSecretShapeMatrix:
         out = diagdetail.Scrubber().text(text)
         assert "REAL_SECRET" not in out and keep in out
 
+    REPR_VALUES = [
+        "b'VAL'", 'rb"VAL"', "u'VAL'", "f'VAL'", "BR'VAL'", "SecretStr('VAL')", "bytearray(b'VAL')",
+        "Token(value='VAL')", "mod.sub.Secret(\"VAL\", n=(1, 2))", "<SecretStr 'VAL'>",
+        "{'a': b'VAL'}", "[b'VAL', 2]", "Decimal('VAL')",
+    ]  # fmt: skip
+
+    @pytest.mark.parametrize("key", MATRIX_KEYS)
+    def test_python_repr_values_in_logs(self, key, world):
+        """日志 / console 里的 Python repr：字符串前缀（b / rb / u / f）、包装调用（SecretStr('…')、bytearray(b'…')）、
+        `<Name '…'>` 形状的 repr、嵌套 dict 里的 b''——整个值换掉，不剩引号串。"""
+        full = diagdetail.Scrubber()
+        for v in self.REPR_VALUES:
+            v = v.replace("VAL", SECRET)
+            for line in (
+                "{'%s': %s, 'n': 1}" % (key, v),
+                "%s=%s tail" % (key, v),
+                '{"%s": %s}' % (key, v),
+                "%s: %s tail" % (key, v),
+            ):
+                out = full.text(line)
+                assert SECRET not in out, (key, v, line, out)
+                assert not out.endswith("'REAL"), out
+        # 括号段 / 引号串之外的内容保留
+        assert full.text("{'%s': SecretStr('%s'), 'n': 1} tail" % (key, SECRET)).endswith(
+            ", 'n': 1} tail"
+        )
+
+    def test_prefixed_quote_is_replaced_whole_and_calls_in_code_are_left_alone(self):
+        full, code = diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        assert full.text("api_key=b'S1 x'").startswith("api_key='<redacted>'")
+        assert "S1" not in full.text("{'api_key': b'S1'}") and "'S1'" not in full.text(
+            "{'api_key': b'S1'}"
+        )
+        assert (
+            code.text('token = getpass.getpass("Password: ")')
+            == 'token = getpass.getpass("Password: ")'
+        )
+
     def test_innocent_neighbours_survive(self, world):
         full = diagdetail.Scrubber()
         assert (
@@ -937,6 +975,11 @@ class TestSecretShapeMatrix:
         for key in MATRIX_KEYS:
             for v in MATRIX_VALUES.values():
                 cells += [f"{key}={v}", f'"{key}": {_json_form(v)}']
+        cells += [
+            "{'%s': %s}" % (key, v.replace("VAL", SECRET))
+            for key in MATRIX_KEYS
+            for v in self.REPR_VALUES
+        ]
         cells += list(MATRIX_STANDALONE.values())
         blob = "\n".join(cells)
         log = world["tmp"] / "matrix.log"
