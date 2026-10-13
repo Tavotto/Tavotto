@@ -852,21 +852,25 @@ class NativeSessionRegistry:
             self._sessions[session_id] = session
         return session
 
-    def reserve(self, session_id: str) -> None:
-        """原子占住一个桌面拥有的会话 id（取租约 / spawn 之前）；已被占、或上一任会话还没被所有者确认结束就抛冲突。
+    def reserve(self, launch_id: str) -> None:
+        """原子占住一个桌面拥有的 launch_id（取租约 / spawn 之前）；已被占、或同 id 的上一任还没被所有者确认
+        结束（`owned.finished`）就抛冲突。检查与占位在同一把锁里。
 
-        会话 id 同时是 `envlease` 的租约键：上一任落了终态但所有者还在清组 / 持租约时复用它，
-        后者的租约会被前者的回调放掉。所以保留到上一任 `owned.finished`，且检查与占位在同一把锁里。"""
+        占位由所有者的完成回调释放（`desktopproc.start`）——握手 / 登记失败后清组超时（取消未确认）也不例外。
+        租约键另有一层保险：每次启动的会话 id 都带唯一后缀，不同所有者互相删不掉对方的租约。"""
         with self._lock:
-            s = self._sessions.get(session_id)
-            busy = s is not None and (s.alive() or (s.owned is not None and not s.owned.finished))
-            if busy or session_id in self._reserved:
+            busy = any(
+                s.launch_id == launch_id
+                and (s.alive() or (s.owned is not None and not s.owned.finished))
+                for s in self._sessions.values()
+            )
+            if busy or launch_id in self._reserved:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
-            self._reserved.add(session_id)
+            self._reserved.add(launch_id)
 
-    def unreserve(self, session_id: str) -> None:
+    def unreserve(self, launch_id: str) -> None:
         with self._lock:
-            self._reserved.discard(session_id)
+            self._reserved.discard(launch_id)
 
     def adopt(self, session: NativeSession) -> None:
         """登记一条**桌面拥有**的会话（`desktopproc.start` 在握手成功、传输起好之后调）。
@@ -882,7 +886,6 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
             self._sessions[session.session_id] = session
-            self._reserved.discard(session.session_id)
 
     def _changed(self, session: NativeSession, entry: dict) -> None:
         if session.state in TERMINAL_STATES:

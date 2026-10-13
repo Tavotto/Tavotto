@@ -576,7 +576,8 @@ def start(
     if not os.path.isfile(spec.interpreter):
         raise RunError(runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter=spec.interpreter)
 
-    session_id = f"native-owned-{launch.launch_id}"
+    # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
+    session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex[:8]}"
     out_dir = launch.out_dir or str(config.data_path("cache", "native", launch.launch_id))
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
@@ -600,11 +601,11 @@ def start(
         },
     )
     # launch_id 复用：会话 id 也是租约键，后者会被前者的回调放掉。原子占位，先于租约与 spawn 拒绝
-    registry.reserve(session_id)
+    registry.reserve(launch.launch_id)
     try:
         envlease.acquire_native(spec.interpreter, session_id)  # 先于一切：拿不到就一行都不跑
     except BaseException:
-        registry.unreserve(session_id)
+        registry.unreserve(launch.launch_id)
         raise
     relay = None
     owner: DesktopProcess | None = None
@@ -646,7 +647,7 @@ def start(
             scope,
             pol,
             on_output=on_output,
-            on_exit=session._on_owner_exit,  # noqa: SLF001 — 会话是所有者的回调对象
+            on_exit=_exit_callback(session, registry, launch.launch_id),
         )
         session.owned = owner
         session.spec = spec
@@ -679,12 +680,25 @@ def start(
             # spawn 之后的任何失败（含登记被拒）：关传输、收进程；租约由所有者确认结束后放
             if session.transport is not None:
                 session.transport.close()
-            owner.cancel()
-        registry.unreserve(session_id)  # 所有者已确认结束（或根本没起来）：id 才放回去
+            owner.cancel()  # 清组超时则返回未确认：占位仍由所有者的完成回调释放，不在这里放
+        if owner is None:
+            registry.unreserve(launch.launch_id)  # 没有所有者就没有回调
         raise
     finally:
         if relay is not None:
             relay.close()
+
+
+def _exit_callback(session, registry, launch_id: str):
+    """所有者的完成回调：先让会话落终态 / 放租约，**最后**才放 launch_id 的占位。"""
+
+    def _on_exit(code, *, cancelled):
+        try:
+            session._on_owner_exit(code, cancelled=cancelled)  # noqa: SLF001
+        finally:
+            registry.unreserve(launch_id)
+
+    return _on_exit
 
 
 def _child_watch(proc: subprocess.Popen):

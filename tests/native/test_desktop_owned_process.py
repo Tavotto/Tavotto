@@ -786,3 +786,61 @@ def test_owner_exit_waits_for_the_buffered_exit_frame_before_judging_failure(tmp
     session._on_owner_exit(0, cancelled=False)
     assert session.state == nativesession.ENDED, f"误报失败: {session.terminal_error}"
     assert session.terminal_error is None and session.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254641150：取消未确认时占位不放；租约键每次启动唯一
+# ---------------------------------------------------------------------------
+def test_an_unconfirmed_cleanup_keeps_the_launch_id_reserved_until_the_owner_finished(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    gate = threading.Event()
+    real = desktopproc.DesktopProcess._settle_group
+
+    def stuck(self):
+        gate.wait(60)
+        real(self)
+
+    monkeypatch.setattr(desktopproc.DesktopProcess, "_settle_group", stuck)
+    monkeypatch.setattr(
+        nativesession.REGISTRY,
+        "adopt",
+        lambda s: (_ for _ in ()).throw(RunError(runcodes.NATIVE_SESSION_CONFLICT)),
+    )
+    policy = desktopproc.OwnedPolicy(term_grace=0.3, kill_timeout=0.3, linger_grace=0.0)
+    launch = dk.launch_for(tmp_path / "a", RUNNING_SCRIPT, launch_id="stuck", policy=policy)
+    try:
+        with pytest.raises(RunError):
+            desktopproc.start(launch)  # 登记失败 -> cancel 清组超时（未确认）
+        monkeypatch.undo()
+        with pytest.raises(RunError) as err:  # 同 id 重试必须被拒
+            dk.start(tmp_path / "b", 'open("ran", "w").write("1")\n', launch_id="stuck")
+        assert err.value.code == runcodes.NATIVE_SESSION_CONFLICT
+        assert not (tmp_path / "b" / "work" / "ran").exists()
+    finally:
+        gate.set()
+    # 第一任确认结束之后占位才放：同 id 可以再启动
+    dk.wait_until(
+        lambda: "stuck" not in nativesession.REGISTRY._reserved,  # noqa: SLF001
+        timeout=30,
+        what="所有者完成后释放占位",
+    )
+    again = dk.start(tmp_path / "c", RUNNING_SCRIPT, launch_id="stuck")
+    again.cancel_owned()
+
+
+def test_each_launch_has_its_own_lease_key_so_owners_cannot_delete_each_others_lease(tmp_path):
+    a = dk.start(tmp_path / "a", RUNNING_SCRIPT, launch_id="same")
+    a.cancel_owned()
+    b = dk.start(tmp_path / "b", RUNNING_SCRIPT, launch_id="same")
+    try:
+        assert a.session_id != b.session_id
+        assert a.launch_id == b.launch_id == "same"
+        # 第一任迟到的释放（回调晚于第二任拿租约）不能删掉第二任的租约
+        envlease.release_native(a.interpreter, a.session_id)
+        assert dk.holds_lease(b), "第一任的释放删掉了第二任的租约"
+        assert dk.install_is_refused(b.interpreter) == runcodes.ENVIRONMENT_IN_USE_BY_NATIVE_SESSION
+    finally:
+        b.cancel_owned()
