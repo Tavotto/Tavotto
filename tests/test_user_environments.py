@@ -459,6 +459,70 @@ def test_auto_adopt_refuses_an_environment_an_install_took_after_the_filter(adop
     assert heard == []
 
 
+def _deferred_world(adopt_env, monkeypatch, verdicts):
+    """两个只读过 dist-info 的候选（`health_deferred`）；`userenvs.evaluate` 的替身按调用次序给结论：
+    第 n 次调用对每个候选回 `verdicts[n]` 里它的 satisfies（缺省 True），并记下 `use_cache`。"""
+    project, env, heard = adopt_env
+    other = _python(env.parent.parent / "lab2")
+    envs = [
+        {
+            **_entry(str(env), userenvs.SOURCE_LOGIN_SHELL),
+            "health_deferred": True,
+            "satisfies": None,
+        },
+        {**_entry(str(other), userenvs.SOURCE_CONDA), "health_deferred": True, "satisfies": None},
+    ]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    calls: list = []
+
+    def evaluate(cands, needed, unknown, **kw):
+        n = len(calls)
+        calls.append(([c["python"] for c in cands], kw.get("use_cache", True)))
+        said = verdicts[min(n, len(verdicts) - 1)]
+        return [
+            _entry(
+                c["python"],
+                c["source"],
+                missing=() if said.get(c["python"], said.get("*", True)) else ("x",),
+            )
+            for c in cands
+        ]
+
+    monkeypatch.setattr(userenvs, "evaluate", evaluate)
+    return project, str(env), str(other), calls
+
+
+def test_auto_adopt_reprobes_a_deferred_candidate_inside_the_lease(adopt_env, monkeypatch):
+    """挑选时的真量（租约外）只用来排序：它之后、拿租约之前另一个项目的卸载已经做完，租约内的复核量不过 → 不采用
+    这一个，退到复核仍满足的下一个（Codex r4254448384）。"""
+    env_path = str(adopt_env[1])
+    verdicts = [{}, {env_path: False}]  # 第一次（挑选）都满足；第二次（租约内复核）第一个已被卸掉
+    project, first, second, calls = _deferred_world(adopt_env, monkeypatch, verdicts)
+    got = deprepair.decide_environment(project, "fig.py")
+    assert got is not None and got["python"] == second
+    assert projectenv.remembered_record(project)["path"] == second
+    assert [use_cache for _py, use_cache in calls] == [True, False, False]
+
+
+def test_auto_adopt_adopts_a_deferred_candidate_that_still_fits_after_the_reprobe(
+    adopt_env, monkeypatch
+):
+    """对照：环境没被改动，租约内复核照样满足 → 照常采用排名第一的。"""
+    project, first, second, calls = _deferred_world(adopt_env, monkeypatch, [{}])
+    got = deprepair.decide_environment(project, "fig.py")
+    assert got is not None and got["python"] == first
+    assert [use_cache for _py, use_cache in calls] == [True, False]
+
+
+def test_auto_adopt_adopts_nothing_when_every_deferred_candidate_fails_the_reprobe(
+    adopt_env, monkeypatch
+):
+    verdicts = [{}, {"*": False}]
+    project, first, second, calls = _deferred_world(adopt_env, monkeypatch, verdicts)
+    assert deprepair.decide_environment(project, "fig.py") is None
+    assert projectenv.remembered_record(project) is None
+
+
 def test_decide_adopts_without_deadlocking_under_the_pool_lock(adopt_env, monkeypatch):
     """改用时不许去拿 `pool._lock`（例如 `pool.reset_worker_python()`）：2026-09-23 真机端到端抓到过一次
     死锁，那时决定还跑在持锁的 `_new_worker()` 里。今天 `pool.acquire()` 在锁外调它（见下面的

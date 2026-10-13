@@ -5909,8 +5909,8 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
     free = [e for e in user_envs if not envlease.is_mutating(e["python"])]
     # 旧模式（legacy）的采用发生在起会话 / 运行的时刻：运行之前只读了 dist-info 的候选（`health_deferred`）现在用 import 方式真量
     pending = [e for e in free if e.get("health_deferred")]
+    needed, unknown = _plan_imports(offer.get("plan") or {})
     if pending:
-        needed, unknown = _plan_imports(offer.get("plan") or {})
         real = {
             e["python"]: e
             for e in userenvs.evaluate(
@@ -5920,27 +5920,44 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
             )
         }
         free = [real.get(e["python"], e) if e.get("health_deferred") else e for e in free]
-    entry = userenvs.best(free, Path(project).name)
-    if entry is None or not _auto_adopt_allowed(project, offer):
+    deferred = {e["python"] for e in pending}
+    if not _auto_adopt_allowed(project, offer):
         return None
-    # 上面判过的「项目记录允许自动换」在写入锁里再判一次：判完到写之间用户的显式选择（设置里挑了一个 /
-    # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
-    # 提交整段占住目标环境（`envlease.inspecting`，与手动采用同一条）：上面的 `is_mutating` 只是挑选时的过滤，
-    # 过滤之后、写入之前别的项目开始往这个环境装包的话，决定落地后会话就起在装包中的环境上。装包在跑 / 随后开始
-    # 都只有一个结局：不采用（`inspecting` 抛 `EnvironmentBusy` 或装包被拒）。持租约期间只调写项目设置的 `remember`，
-    # 不会回头要安装租约
-    try:
-        with envlease.inspecting(entry["python"]):
-            saved = projectenv.remember(
-                project,
-                entry["python"],
-                automatic=True,
-                trigger=TRIGGER_USER_ENVIRONMENT,
-                health=entry,
-                only_if=_record_allows_auto_adopt,
-            )
-    except envlease.EnvironmentBusy:
-        return None
+    while True:
+        entry = userenvs.best(free, Path(project).name)
+        if entry is None:
+            return None
+        # 上面判过的「项目记录允许自动换」在写入锁里再判一次：判完到写之间用户的显式选择（设置里挑了一个 /
+        # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
+        # 现量 + 提交整段占住目标环境（`envlease.inspecting`，与手动采用、检测路径同一条）：上面的 `is_mutating` 只是
+        # 挑选时的过滤，租约外那次真量只用来排序——真量期间另一个项目的卸载 / 升级可能已经做完，等拿到租约时环境
+        # 已空闲，过时的结论会被写进记录。所以原本延迟的候选在租约内再现量一次，最终决定只认这一次；量不过 / 占不到
+        # （装包在跑）就换下一个。持租约期间只调体检与写项目设置，不会回头要安装租约
+        try:
+            with envlease.inspecting(entry["python"]):
+                if entry["python"] in deferred:
+                    fresh = userenvs.evaluate(
+                        [{k: entry[k] for k in ("python", "source", "label") if k in entry}],
+                        needed,
+                        unknown,
+                        use_cache=False,
+                    )[0]
+                    if not fresh.get("satisfies"):
+                        free = [e for e in free if e["python"] != entry["python"]]
+                        continue
+                    entry = fresh
+                saved = projectenv.remember(
+                    project,
+                    entry["python"],
+                    automatic=True,
+                    trigger=TRIGGER_USER_ENVIRONMENT,
+                    health=entry,
+                    only_if=_record_allows_auto_adopt,
+                )
+        except envlease.EnvironmentBusy:
+            free = [e for e in free if e["python"] != entry["python"]]
+            continue
+        break
     if not saved:
         return None
     # 不调 `pool.reset_worker_python()`：`remember()` 已经更新了项目级解析缓存，全局链条的缓存与项目
