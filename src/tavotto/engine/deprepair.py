@@ -2266,15 +2266,21 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     问一句不许把 .pyc 写回它的安装目录。装 / 卸走 `_run_pip`，不走这里。"""
     argv = [argv[0], *runtime.probe_args(), *argv[1:]]
     try:
+        # 激活捕获与命令本身共用一个预算：慢的激活不能让 `pip --version` 这类短探测远超它自己的超时
+        deadline = time.monotonic() + timeout
+        env = launcher.activate_env(argv[0], runtime.owned_env(argv[0]), timeout=timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise launcher.LauncherUnavailable("经 Conda 激活取环境用完了这次探测的时间预算；请稍后再试")
         proc = subprocess.run(
             argv,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
-            env=launcher.activate_env(argv[0], runtime.owned_env(argv[0])),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:

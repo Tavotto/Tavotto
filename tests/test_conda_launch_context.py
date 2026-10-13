@@ -2416,3 +2416,53 @@ def test_the_final_reap_in_timeout_cleanup_is_bounded(monkeypatch):
     launcher._kill_tree(Stuck())  # noqa: SLF001
     assert time.monotonic() - t0 < 5
     assert waits and all(w is not None for w in waits)
+
+
+@posix_only
+def test_a_result_file_that_cannot_be_deleted_stays_registered_for_exit_cleanup(tmp_path, monkeypatch):
+    """捕获成功后结果文件删不掉（瞬时文件系统错误）：不能被遗忘——留在在途登记里，退出清理再删；下一次捕获前也会扫过期的。"""
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "bin" / "python")
+    lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    real_unlink = os.unlink
+    failed: list[str] = []
+
+    def flaky_unlink(path, *a, **k):
+        if str(path).endswith(".json") and "probe-results" in str(path) and not failed:
+            failed.append(str(path))
+            raise PermissionError("busy")
+        return real_unlink(path, *a, **k)
+
+    monkeypatch.setattr(launcher.os, "unlink", flaky_unlink)
+    assert launcher.activated_delta(py, lau)["FAKE_SDK_LICENSE"] == LICENSE
+    (left,) = failed
+    assert os.path.exists(left) and left in launcher._inflight  # noqa: SLF001
+    launcher._cleanup_inflight()  # noqa: SLF001
+    assert not os.path.exists(left)
+
+
+def test_a_short_probe_shares_its_budget_with_the_activation(monkeypatch):
+    """`pip --version` 之类的短探测：激活捕获用掉的时间从命令自己的超时里扣；用完了 = 瞬时的激活不可用。"""
+    from tavotto.engine import deprepair
+
+    seen: dict = {}
+    real_run = deprepair.subprocess.run
+
+    def slow_activate(python, base=None, *, timeout=None):
+        seen["activate_timeout"] = timeout
+        time.sleep(0.6)
+        return base
+
+    def spy_run(*a, **k):
+        seen["run_timeout"] = k.get("timeout")
+        return real_run(*a, **k)
+
+    monkeypatch.setattr(deprepair.launcher, "activate_env", slow_activate)
+    monkeypatch.setattr(deprepair.subprocess, "run", spy_run)
+    rc, _ = deprepair._run([sys.executable, "-c", "pass"], 5)  # noqa: SLF001
+    assert rc == 0 and seen["activate_timeout"] == 5 and seen["run_timeout"] <= 5 - 0.6
+    seen.clear()
+    rc, _ = deprepair._run([sys.executable, "-c", "pass"], 0.5)  # noqa: SLF001
+    assert rc == deprepair.RC_ACTIVATION_UNAVAILABLE and "run_timeout" not in seen

@@ -488,6 +488,7 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str | None]:
     """跑一次 `conda run … python -c <写 os.environ 到结果文件>`；任何失败 / 超时 → `LauncherUnavailable`。"""
     result_path = ""
+    sweep_results()  # 顺手清过期残留（上次删不掉的、启动之后才过期的）：只删过了过期线的，在途的都还新
     try:
         results = _results_dir()
         results.mkdir(parents=True, exist_ok=True)
@@ -537,12 +538,19 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str |
         raise LauncherUnavailable(f"无法经 Conda 激活取环境：{exc.__class__.__name__}") from exc
     finally:
         if result_path:
-            with _inflight_lock:
-                _inflight.discard(result_path)
             try:
                 os.unlink(result_path)
+            except FileNotFoundError:
+                gone = True
             except OSError:
-                pass
+                # 删不掉（瞬时的文件系统错误）：留在在途登记里，退出时 `_cleanup_inflight` 再删一次；
+                # 下一次捕获前的 `sweep_results` 也会扫到过期的
+                gone = False
+            else:
+                gone = True
+            if gone:
+                with _inflight_lock:
+                    _inflight.discard(result_path)
     delta: dict[str, str | None] = {
         str(k): str(v) for k, v in data.items() if k not in _VOLATILE_ENV and os.environ.get(k) != v
     }
