@@ -7566,10 +7566,10 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         run=run,
         pinned=_plan_pin(plan),
     )
-    engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
-    # P09：同一个成功收口里补齐可验证的启动上下文（再次打开时复用；失败 / 部分结果走不到这里）
+    # 磁盘面板默认配置与 P09 的可验证启动上下文在同一个登记事务里一起落地（再次打开时复用；
+    # 失败 / 部分结果走不到这里；依据不全则清掉旧记录，见 `runconfig.commit_success`）
     engine_launchctx.record_success(
-        ctx.path, plan.script, getattr(result, "receipt", None), run=run
+        ctx.path, plan.script, getattr(result, "receipt", None), run=run, update_default=True
     )
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示

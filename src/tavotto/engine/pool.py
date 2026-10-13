@@ -2059,7 +2059,12 @@ class EngineWorker:
 
         def read() -> None:
             try:
-                box.append(self.proc.stdout.readline())
+                line = self.proc.stdout.readline()
+                if getattr(self, "launcher", None) is not None and not self._proto_started:
+                    line = self._skip_activation_banner(line)
+                    if line:
+                        self._proto_started = True
+                box.append(line)
             except (OSError, ValueError):  # 进程被杀后管道关闭
                 box.append("")
 
@@ -2167,6 +2172,48 @@ class EngineWorker:
             self._log_tail(),
             code="protocol_mismatch",
         )
+
+    #: Conda 激活包装下，第一条协议信封之前的非协议行（`activate.d` 钩子往 stdout 打印的横幅）转进 worker.log。
+    #: 上限：条数与字节数——超限后不再吞，那一行原样交给 `_parse_line`（`protocol_mismatch`）。
+    ACTIVATION_BANNER_MAX_LINES = 200
+    ACTIVATION_BANNER_MAX_BYTES = 64 * 1024
+    _proto_started = False
+    _banner_lines = 0
+    _banner_bytes = 0
+
+    @staticmethod
+    def _is_envelope(line: str) -> bool:
+        text = line.strip()
+        if not (text.startswith("{") and text.endswith("}")):
+            return False
+        try:
+            return isinstance(json.loads(text), dict)
+        except ValueError:
+            return False
+
+    def _skip_activation_banner(self, line: str) -> str:
+        """只在**包装启动**且**还没收到第一条协议信封**时用：`conda run --no-capture-output` 让 `activate.d` 钩子的
+        stdout 直通进了协议管道，而它们总是在 Python 启动**之前**打印。把这些行（不是 JSON 对象）转进 worker.log
+        （保留排障线索）并继续读，直到第一条合法信封。
+
+        为什么不会吞掉真协议错误：① 只作用于第一条信封之前——之后的每一行照旧走 `_parse_line`；② 只跳过「不是 JSON 对象」
+        的行，形似信封的行一律交给 `_parse_line` / 请求 id 校验；③ 条数 / 字节有上限，超限那一行原样返回
+        （`protocol_mismatch`，日志里已有前面的内容）；④ 读不到信封（Python 没起来）仍由原来的超时 / EOF 路径收场。"""
+        while line and not self._is_envelope(line):
+            raw = line.encode("utf-8", "surrogateescape")
+            if (
+                self._banner_lines >= self.ACTIVATION_BANNER_MAX_LINES
+                or self._banner_bytes + len(raw) > self.ACTIVATION_BANNER_MAX_BYTES
+            ):
+                return line
+            self._banner_lines += 1
+            self._banner_bytes += len(raw)
+            try:
+                self._log.write(b"[activation stdout] " + raw.rstrip(b"\r\n") + b"\n")
+            except (OSError, ValueError):
+                pass
+            line = self.proc.stdout.readline()
+        return line
 
     def _parse_line(self, line: str) -> dict:
         """协议管道上的一行 → 响应对象；不是合法 UTF-8 / 不是 JSON 都是 `protocol_mismatch`。

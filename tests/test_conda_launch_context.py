@@ -24,7 +24,14 @@ from pathlib import Path
 import pytest
 
 from support import foundation_app as fa
-from tavotto.engine import databinding, launchctx, launcher, pool as _pool, runconfig
+from tavotto.engine import (
+    databinding,
+    launchctx,
+    launcher,
+    pool as _pool,
+    receipt,
+    runconfig,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 posix_only = pytest.mark.skipif(
@@ -70,7 +77,12 @@ with open(os.environ["FAKE_CONDA_LOG"], "a", encoding="utf-8") as fh:
 env = dict(os.environ, CONDA_PREFIX=prefix, FAKE_SDK_LICENSE="{license}")
 if cwd:
     os.chdir(cwd)
-sys.exit(subprocess.Popen(cmd, env=env).wait())
+banner = os.environ.get("FAKE_CONDA_BANNER")
+if banner:  # activate.d 钩子往 stdout 打印的横幅：在用户 Python 启动之前、直通进协议管道
+    sys.stdout.write(banner + "\n")
+    sys.stdout.flush()
+# 真 conda（POSIX）：先起一个临时 shell，再由 shell 起用户 Python——Python 的父进程是 shell，不是 conda
+sys.exit(subprocess.Popen(["/bin/sh", "-c", '"$@"; exit $?', "sh", *cmd], env=env).wait())
 """
 
 
@@ -317,6 +329,11 @@ def test_activation_dependent_script_runs_only_through_the_launcher_and_shutdown
         assert alive(user_pid)
         rcpt_launcher = worker.launcher.public()
         assert rcpt_launcher["kind"] == "conda"
+        # 用户 Python 的父进程是 conda 起的临时 shell（不是 child_pid）：回执仍要完整，pid 经进程组核
+        rcpt = receipt.from_worker(worker, resp, control_plane="python_pool", grant=None)
+        assert rcpt.completeness == receipt.COMPLETENESS_COMPLETE, rcpt.runtime_rejected
+        assert rcpt.pid_check == receipt.PID_CHECK_PROCESS_GROUP
+        assert resp["runtime"]["ppid"] not in (worker.child_pid, user_pid)
     finally:
         worker.force_kill()
     assert wait_dead(user_pid), "worker 关停后用户 Python 仍在运行"
@@ -638,6 +655,13 @@ def test_real_conda_worker_roundtrip_and_cancel_leaves_no_user_python(tmp_path, 
         user_pid = resp["runtime"]["pid"]
         assert user_pid != worker.child_pid and alive(user_pid)
         assert worker.render_png  # 热会话还能服务
+        # 真 conda 的 `bash 临时脚本` 夹在中间：回执完整，成功记录能写入（此前 pid_mismatch → partial → 不记录）
+        rcpt = receipt.from_worker(worker, resp, control_plane="python_pool", grant=None)
+        assert rcpt.completeness == receipt.COMPLETENESS_COMPLETE, rcpt.runtime_rejected
+        assert rcpt.pid_check == receipt.PID_CHECK_PROCESS_GROUP
+        monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+        assert launchctx.record_success(proj, "fig.py", rcpt) is True
+        assert runconfig.launch_record(proj, "fig.py")["launcher"]["kind"] == "conda"
     finally:
         worker.force_kill()
         _pool.shutdown_all(wait=True)
@@ -823,3 +847,151 @@ def test_changing_the_global_interpreter_override_stops_reusing_old_argv(
     with fa.running_app(proj, work, env_overrides=env_for(other)) as app:
         assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
         assert [r["argv"] for r in runs(counter)][-1] == []  # 覆盖换了：不沿用旧参数
+
+
+@posix_only
+def test_process_group_check_is_not_a_blanket_pid_allowance():
+    """经包装放行的只有「本进程组」：随便一个别的 pid 仍是 pid_mismatch；没有 launcher 时不放行。"""
+    rt = {"report_origin": "build", "pid": os.getpid(), "ppid": 1}
+    # 本进程的组长不是 12345：拒
+    assert receipt.accept_runtime(rt, expected_pid=12345, via_group=True)[1] == "pid_mismatch"
+    # 组长对得上但没有 launcher：不走这条
+    assert receipt.accept_runtime(rt, expected_pid=os.getpgid(os.getpid()), via_group=False)[1] == (
+        "pid_mismatch"
+    )
+    ok = receipt.accept_runtime(rt, expected_pid=os.getpgid(os.getpid()), via_group=True)
+    assert ok[1] is None and ok[2] == receipt.PID_CHECK_PROCESS_GROUP
+
+
+@needs_worker
+def test_activation_banner_before_the_protocol_is_diverted_to_the_log(conda_world, monkeypatch):
+    """`activate.d` 钩子往 stdout 打印的内容在协议之前直通进管道：转进 worker.log 并继续，会话照常工作。"""
+    proj, prefix, log, counter = conda_world
+    monkeypatch.setenv("FAKE_CONDA_BANNER", "Welcome to the vendor SDK (license ok)")
+    worker, resp = _pool.build("fig.py", str(proj), "__main__")
+    try:
+        assert "[activation stdout] Welcome to the vendor SDK" in worker.log_path.read_text(
+            encoding="utf-8", errors="replace"
+        )
+        assert worker.render_png  # 之后的协议往返不受影响
+    finally:
+        worker.force_kill()
+
+
+@needs_worker
+def test_activation_banner_cap_does_not_swallow_a_flood(conda_world, monkeypatch):
+    """上限：横幅刷屏超限后不再吞，按 protocol_mismatch 如实失败（不是无限跳过）。"""
+    proj, prefix, log, counter = conda_world
+    monkeypatch.setattr(_pool.EngineWorker, "ACTIVATION_BANNER_MAX_LINES", 3)
+    monkeypatch.setenv("FAKE_CONDA_BANNER", "\n".join(f"noise {i}" for i in range(20)))
+    with pytest.raises(_pool.WorkerError) as exc:
+        _pool.build("fig.py", str(proj), "__main__")
+    assert exc.value.code == "protocol_mismatch"
+
+
+@needs_real_conda
+def test_real_conda_activate_d_hook_stdout_does_not_break_the_protocol(tmp_path, monkeypatch):
+    """真 conda：env 的 `activate.d` 钩子往 stdout 打印，会话照常建立、出图，横幅在 worker.log 里。"""
+    hook_dir = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    hook = hook_dir / "p09_banner_test.sh"
+    hook.write_text('echo "P09 vendor banner: license server ready"\n', encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(Path(REAL_PREFIX) / "bin" / "python"))
+    _pool.reset_worker_python()
+    worker = None
+    try:
+        worker, resp = _pool.build("fig.py", str(proj), "__main__")
+        assert resp["runtime"]["prefix"] == REAL_PREFIX
+        assert "P09 vendor banner" in worker.log_path.read_text(encoding="utf-8", errors="replace")
+        assert worker.render_png
+    finally:
+        hook.unlink(missing_ok=True)
+        if worker is not None:
+            worker.force_kill()
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+
+
+# ---------------------------------------------------------------------------
+# 登记事务：最近成功才是记录
+# ---------------------------------------------------------------------------
+def _good_rcpt(proj, py, *, mods=0):
+    import hashlib
+
+    return _Rcpt(
+        py,
+        hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest(),
+        [{"name": f"m{i}", "path": f"m{i}.py", "sha256": "a" * 64} for i in range(mods)],
+        None,
+        databinding.binding_for(proj / "fig.py", proj, "sandbox")["revision"],
+    )
+
+
+@posix_only
+def test_a_later_success_without_sufficient_basis_clears_the_older_record(tmp_path, monkeypatch):
+    """B 成功但依据存不全：旧记录 A 必须清掉，不能让下次不带 argv 的打开悄悄跑 A。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    py = sys.executable
+    run_a = runconfig.selection_for(proj, "fig.py", ["--scale", "2"])
+    assert launchctx.record_success(proj, "fig.py", _good_rcpt(proj, py), run=run_a) is True
+    kw = {"python": py, "python_source": "env_override"}
+    assert launchctx.reusable_run(proj, "fig.py", **kw).config_id == run_a.config_id
+    run_b = runconfig.selection_for(proj, "fig.py", ["--scale", "3"])
+    over = _good_rcpt(proj, py, mods=launchctx.MAX_BASIS + 1)
+    assert launchctx.record_success(proj, "fig.py", over, run=run_b) is False
+    assert runconfig.launch_record(proj, "fig.py") is None
+    assert launchctx.reusable_run(proj, "fig.py", **kw) is None  # 不是 A，也不是 B：让用户重新给
+
+
+@posix_only
+def test_default_and_launch_record_commit_in_one_transaction(tmp_path, monkeypatch):
+    """两个 argv 的会话并发收尾：默认配置与启动记录永远指向同一个（同一次写入）。"""
+    import threading
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    py = sys.executable
+    real_write = runconfig._write
+
+    def slow_write(*a, **k):  # 放大两次写入之间的窗口
+        time.sleep(0.01)
+        return real_write(*a, **k)
+
+    monkeypatch.setattr(runconfig, "_write", slow_write)
+    runs_ = [runconfig.selection_for(proj, "fig.py", ["--n", str(i)]) for i in range(2)]
+    rcpt = _good_rcpt(proj, py)
+
+    def fresh_state(fn):
+        mismatches = 0
+        for _ in range(15):
+            ts = [threading.Thread(target=fn, args=(r,)) for r in runs_]
+            [t.start() for t in ts]
+            [t.join() for t in ts]
+            data = runconfig._read(proj)
+            if data["defaults"].get("fig.py") != data["launches"]["fig.py"]["run_config"]:
+                mismatches += 1
+        return mismatches
+
+    def legacy(run):  # 旧写法：两次各自加锁的写入
+        runconfig.set_default(proj, "fig.py", run.config_id)
+        runconfig.set_launch_record(
+            proj, "fig.py", launchctx.build_record(proj, "fig.py", rcpt, run=run)
+        )
+
+    def txn(run):
+        launchctx.record_success(proj, "fig.py", rcpt, run=run, update_default=True)
+
+    assert fresh_state(legacy) > 0, "夹具没有放大出旧写法的交错：并发用例没有牙齿"
+    assert fresh_state(txn) == 0

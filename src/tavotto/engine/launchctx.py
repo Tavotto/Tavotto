@@ -149,16 +149,27 @@ def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> di
     }
 
 
-def record_success(project_root: str | Path, script: str, rcpt, *, run=None) -> bool:
-    """`build_record` + 落到登记。成功收口调；登记坏了不让成功路径失败（返回 False，如实）。"""
+def record_success(
+    project_root: str | Path, script: str, rcpt, *, run=None, update_default: bool = False
+) -> bool:
+    """成功收口调：算记录（哈希在事务外）→ `runconfig.commit_success` 一次落地。回「记录是否写入」。
+
+    依据不全（`build_record` 回 None）也要提交：它**清掉**旧记录，不让上一次成功的 A 在这次成功的 B 之后继续冒充
+    「最近成功」。`update_default=True` 时磁盘面板默认配置同一事务里一起更新（`run` 的引用；无参数 = 清掉）。"""
     record = build_record(project_root, script, rcpt, run=run)
-    if record is None:
-        return False
     try:
-        runconfig.set_launch_record(project_root, script, record)
+        runconfig.commit_success(
+            project_root,
+            script,
+            record,
+            default_config_id=run.config_id if run is not None else None,
+            update_default=update_default,
+        )
     except runconfig.RunConfigError:
+        if update_default and run is not None:
+            raise  # 与此前 `set_default` 一致：带配置的成功遇到坏登记失败关闭
         return False
-    return True
+    return record is not None
 
 
 def verify(

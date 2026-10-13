@@ -78,6 +78,9 @@ PID_CHECK_OK = "ok"
 #: 控制面起的那个进程是个 launcher（Windows 上 venv 的 `python.exe` 就是：它 CreateProcess 出真正的解释器再等它），
 #: 自报的 `ppid` 等于控制面的 `child_pid`——仍是这一条会话跑脚本的进程，但要如实写是经 launcher 核的
 PID_CHECK_LAUNCHER = "ok_via_launcher"
+#: 控制面起的是 Conda 激活包装（`conda run` → 临时 shell → 用户 Python，P09）：自报的 pid 不是控制面子进程、ppid 也不是
+#: （中间隔着 shell），但它的进程组就是控制面起的那个 `GroupPopen` 的组——组 id 由内核给出，worker 自报不了
+PID_CHECK_PROCESS_GROUP = "ok_via_process_group"
 PID_CHECK_UNAVAILABLE = "unavailable"
 
 
@@ -318,7 +321,7 @@ class ExecutionReceipt:
 
 
 def accept_runtime(
-    runtime, *, expected_pid: int | None
+    runtime, *, expected_pid: int | None, via_group: bool = False
 ) -> tuple[dict | None, str | None, str | None]:
     """自报收不收：`(runtime, rejected, pid_check)`。
 
@@ -337,7 +340,20 @@ def accept_runtime(
         return dict(runtime), None, PID_CHECK_OK
     if _is_pid(runtime.get("ppid")) and runtime["ppid"] == expected_pid:
         return dict(runtime), None, PID_CHECK_LAUNCHER
+    if via_group and _in_process_group(runtime.get("pid"), expected_pid):
+        return dict(runtime), None, PID_CHECK_PROCESS_GROUP
     return None, RUNTIME_REJECTED_PID, None
+
+
+def _in_process_group(pid, leader: int) -> bool:
+    """`pid` 此刻在以 `leader` 为组长的进程组里（POSIX）。组 id 是内核的事实，不是自报：不是「任意 pid 都放行」，
+    只放行控制面自己起的那棵（`GroupPopen` 自成一组）进程树里的进程。Windows 没有这个概念：恒 False（保持 partial）。"""
+    if os.name == "nt" or not _is_pid(pid):
+        return False
+    try:
+        return os.getpgid(pid) == leader
+    except (OSError, ValueError):
+        return False
 
 
 def _is_pid(value) -> bool:
@@ -362,7 +378,11 @@ def from_worker(
     """
     spec = worker.spec
     raw = build_resp.get("runtime") if isinstance(build_resp, dict) else None
-    runtime, rejected, pid_check = accept_runtime(raw, expected_pid=worker_pid(worker))
+    runtime, rejected, pid_check = accept_runtime(
+        raw,
+        expected_pid=worker_pid(worker),
+        via_group=getattr(worker, "launcher", None) is not None,
+    )
     descriptors = (
         tuple(d for d in (build_resp.get("descriptors") or []) if isinstance(d, dict))
         if isinstance(build_resp, dict)

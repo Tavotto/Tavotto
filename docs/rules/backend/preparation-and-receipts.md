@@ -65,7 +65,7 @@
   `receipt.from_worker` 核 origin，并把 pid 与控制面自己起的那个子进程对（`EngineWorker.child_pid` /
   `WorkerdWorker.child_pid` / `NativeSession.child_pid`）。体检 / 探针 / 手拼的字典**一律拒收**：`runtime=None`、
   `runtime_rejected ∈ {not_a_build_report, pid_mismatch}`、`completeness=partial`；控制面起的是 launcher（Windows 上 venv 的
-  `python.exe`）而解释器是它的子进程时按自报的 `ppid` 认、`pid_check=ok_via_launcher`；不知道 pid 就 `pid_check=unavailable`，
+  `python.exe`）而解释器是它的子进程时按自报的 `ppid` 认、`pid_check=ok_via_launcher`（P09 Conda 包装：自报 pid 在 `GroupPopen` 进程组里 → `ok_via_process_group`）；不知道 pid 就 `pid_check=unavailable`，
   不冒充核过。拿预检结果冒充回执是 must_fail。
 - **输入观察永远是 partial（D13 / FO-061）**：`figcapture.InputObserver` 只包 Python 的三处 `open` 与 numpy 的 `DataSource.open`（2026-09-24，#545：
   `np.loadtxt` / `np.genfromtxt` 的打开器在 numpy 载入时就绑了原来的 `io.open`，前三处看不见；按返回文件对象的 `.name` 记；

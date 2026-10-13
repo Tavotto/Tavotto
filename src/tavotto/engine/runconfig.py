@@ -492,6 +492,47 @@ def set_launch_record(project_root: str | Path, script: str, record: dict | None
         _write(project_root, data)
 
 
+def commit_success(
+    project_root: str | Path,
+    script: str,
+    record: dict | None,
+    *,
+    default_config_id: str | None = None,
+    update_default: bool = False,
+) -> None:
+    """一次成功执行的登记**事务**：磁盘面板默认配置（`set_default` 的语义）与启动上下文记录在**同一把锁、同一次写入**里落地。
+
+    分两次各自加锁会让两个不同 argv 的会话并发收尾时交错——默认指向 B、启动记录却是 A，下次不带 argv 打开就会按
+    A 的记录核验、按 B 的配置运行（或反过来）。`record=None` = 这次成功没有可核验的启动依据：**清掉**该脚本旧的启动记录
+    （旧记录 A 留着会让下次不带 argv 的打开悄悄跑 A，而不是最近成功的 B）。耗时的依据哈希由调用方在进事务之前算好。
+
+    坏登记的纪律同 `set_default`：无参数运行（`default_config_id is None`）不被坏登记阻断、也不动文件；带配置的运行
+    失败关闭（抛 `RunConfigError`，文件不改）。"""
+    with _LOCK:
+        try:
+            data = _read(project_root)
+        except RunConfigError:
+            if default_config_id is None:
+                return
+            raise
+        changed = False
+        if update_default:
+            defaults = data["defaults"]
+            if default_config_id is None:
+                changed |= defaults.pop(script, None) is not None
+            elif defaults.get(script) != default_config_id:
+                defaults[script] = default_config_id
+                changed = True
+        launches = data["launches"]
+        if record is None:
+            changed |= launches.pop(script, None) is not None
+        elif launches.get(script) != record:
+            launches[script] = record
+            changed = True
+        if changed:
+            _write(project_root, data)
+
+
 def launch_record(project_root: str | Path, script: str) -> dict | None:
     """`set_launch_record` 记下的那份；没有 = None。登记读不出 / 来自新版本 → `RunConfigError` 原样抛
     （调用方按「没有证据、重新核验」处理，但不改动文件）。"""
