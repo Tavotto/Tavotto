@@ -13,6 +13,8 @@
   <a href="https://github.com/Tavotto/Tavotto/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Tavotto/Tavotto/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
   <a href="https://github.com/Tavotto/Tavotto/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-1b1b18?style=flat-square&labelColor=1b1b18"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%20–%203.14-1b1b18?style=flat-square&labelColor=1b1b18">
+  <a href="https://ko-fi.com/tavotto"><img alt="Support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?style=flat-square&logo=kofi&logoColor=white&labelColor=1b1b18"></a>
+  <a href="https://afdian.com/a/Tavotto"><img alt="在爱发电支持" src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E6%94%AF%E6%8C%81-946CE6?style=flat-square&labelColor=1b1b18"></a>
 </p>
 
 <p align="center">
@@ -651,6 +653,17 @@ Windows 安装包由本仓库的 GitHub Actions 构建，并在被称为已签�
 cd web && pnpm test               # 前端
 cd web && pnpm build              # 类型检查（tsc -b）+ 打包
 ```
+
+## 支持项目
+
+Tavotto 免费开源，由一个人维护。如果它帮你省了时间，可以支持它的持续开发：
+在 **爱发电** 用支付宝或微信支付，或在 **Ko-fi** 一次性或按月支持。支持完全自愿，
+不解锁任何功能；钱用在哪里、支持者墙，见 [tavotto.com/zh/support](https://www.tavotto.com/zh/support/)。
+
+<p>
+  <a href="https://afdian.com/a/Tavotto"><img alt="在爱发电支持 Tavotto" src="https://img.shields.io/badge/%E5%9C%A8%E7%88%B1%E5%8F%91%E7%94%B5%E6%94%AF%E6%8C%81-946CE6?style=for-the-badge"></a>
+  <a href="https://ko-fi.com/tavotto"><img alt="Support Tavotto on Ko-fi" src="https://img.shields.io/badge/Support%20on%20Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white"></a>
+</p>
 
 ## 许可证
 
