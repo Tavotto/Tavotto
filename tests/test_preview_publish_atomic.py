@@ -194,6 +194,22 @@ with tempfile.TemporaryDirectory() as tmp:
         sess.instrument_all(raise_if_none_live=True)
         out["live_after_rerun"] = sorted(sess.states)
         out["published"] = figcapture.published_preview_stems(tmp)
+    elif scenario == "failure_hides_the_previous_runs_preview":
+        # 上一轮运行同一个 out_dir 里发布过 fig 与 keep；本轮 fig 捕获失败、keep 正常
+        prev = LiveFigureSession(tmp, preview_dpi=72)
+        prev.add_figure("fig", good("last-run"), figcapture.SOURCE_SAVEFIG)
+        prev.add_figure("keep", good("K"), figcapture.SOURCE_SAVEFIG)
+        prev.instrument_all()
+        out["before"] = sorted(figcapture.published_preview_stems(tmp))
+        sess.add_figure("fig", bad(), figcapture.SOURCE_SAVEFIG)
+        sess.add_figure("keep2", good("K2"), figcapture.SOURCE_SAVEFIG)
+        sess.instrument_all()
+        out["failed"] = sorted(sess.failures)
+        out["fig_svg_visible"] = usable(tmp, "fig", ".svg").exists()
+        out["fig_json_visible"] = usable(tmp, "fig", ".json").exists()
+        out["generation"] = figcapture.usable_preview_generation(tmp, "fig")
+        out["published"] = sorted(figcapture.published_preview_stems(tmp))
+        out["keep_wellformed"] = wellformed(usable(tmp, "keep", ".svg"))
     elif scenario == "failed_figure_that_cannot_be_restored":
         sess.add_figure("bad", bad(), figcapture.SOURCE_SAVEFIG)
         import overrides
@@ -486,6 +502,20 @@ def test_a_failed_figure_is_retried_only_after_the_barrier_is_left():
     assert r["failed_same_barrier"] == ["fig"], "同一个屏障里重复调用不该重画必败的图"
     assert r["live_after"] == ["fig"] and r["failed_after"] == [], r
     assert r["published"] == ["fig"]
+
+
+@needs_mpl
+def test_a_figure_that_fails_this_run_does_not_show_last_runs_preview():
+    """Codex #978 P1：本次运行捕获失败的图，读方不能再把上次发布的旧 SVG 当本次结果。
+    与"发布写失败时旧预览保持完整"不同——那是本次没产出新版而旧版仍是同一次运行的有效版；
+    这里是这张图本次已确认失败，对外就是"失败 + 无预览"。其它 stem 不受影响。"""
+    r = _drive("failure_hides_the_previous_runs_preview")
+    assert r["before"] == ["fig", "keep"], r
+    assert r["failed"] == ["fig"], r
+    assert r["fig_svg_visible"] is False and r["fig_json_visible"] is False, r
+    assert r["generation"] is None
+    assert r["published"] == ["keep", "keep2"], r
+    assert r["keep_wellformed"] is True
 
 
 @needs_mpl

@@ -835,6 +835,7 @@ class LiveFigureSession:
             message = message[:397] + "..."
         self.failures[stem] = {"code": PREVIEW_CAPTURE_FAILED, "message": message}
         self._manifest_cache.pop(stem, None)
+        self._hide_previous_preview(stem)
         if state is not None:
             self._failed_states[stem] = state
             self._restore_failed(stem, state)
@@ -842,6 +843,23 @@ class LiveFigureSession:
             f"[tavotto] 图 {stem!r} 没能进入可编辑会话，已隔离（其它图不受影响）: {message}",
             file=sys.stderr,
         )
+
+    def _hide_previous_preview(self, stem: str) -> None:
+        """这张图本次捕获已确认失败：读方不能再把它此前发布的那一版当成本次结果（Codex #978）。
+
+        与"发布写失败，旧预览保持完整"不同：那是没产出新版、旧版仍是同一份有效结果；这里对外就是
+        「失败 + 无预览」，与 `usable_preview_path` 的语义一致。摘掉账本指针；摘不掉退到失效标记
+        （下一次成功发布会撤掉它）；两者都落空读方失去保证，升级为致命。
+        """
+        rec = figcapture.published_preview_record(self.out_dir, stem)
+        if rec is None:
+            return
+        if figcapture._drop_ledger_stem(self.out_dir, stem):
+            return
+        if not figcapture.mark_preview_invalid(self.out_dir, stem):
+            raise PreviewPoisoned(
+                f"preview of {stem!r} failed this run and its previous preview could not be hidden"
+            )
 
     @staticmethod
     def _restore_failed(stem: str, state) -> bool:

@@ -619,6 +619,12 @@ def mark_preview_invalid(out_dir, stem: str) -> bool:
     return marked
 
 
+def published_preview_record(out_dir, stem: str):
+    """账本里 `stem` 的指针记录（没有 / 读不出来 → None）。"""
+    rec = _read_preview_ledger(out_dir)["stems"].get(stem)
+    return rec if isinstance(rec, dict) else None
+
+
 def _drop_ledger_stem(out_dir, stem: str) -> bool:
     """把 `stem` 的指针从账本摘掉（读方从此看不到它）；返回是否成功。"""
     out_dir = os.fspath(out_dir)
