@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from support.bridgekit import run_runner, write
+from support.previewkit import preview_file
 from tavotto.engine import bridge
 
 ENGINE_DIR = Path(bridge.RUNNER_PY).parent
@@ -324,7 +325,7 @@ def test_the_late_manifest_import_resolves_inside_the_private_package(
         sess.wait_event("barrier")
         build = sess.ensure_built()
         stem = next(iter(build["stems"]))
-        man = json.loads((sess.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+        man = json.loads(preview_file(sess.out_dir, stem, ".json").read_text(encoding="utf-8"))
         ticks = next(e for e in man["elements"] if e["gid"] == "axes_0.xticks")
         instrumented = {
             e["gid"] for e in man["elements"] if e["gid"].startswith("axes_0.xticklabels_")
@@ -350,7 +351,7 @@ def test_the_late_manifest_import_resolves_inside_the_private_package(
             ],
         )
         assert resp["warnings"] == [], f"现解刻度文字失败（late import 打偏了）: {resp['warnings']}"
-        assert "LATE" in (sess.out_dir / f"{stem}.svg").read_text(encoding="utf-8")
+        assert "LATE" in preview_file(sess.out_dir, stem, ".svg").read_text(encoding="utf-8")
         sess.resume()
 
 

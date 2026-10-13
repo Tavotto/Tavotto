@@ -1088,7 +1088,7 @@ class Worker(wireproto.V1Handler):
             ):
                 raise figsession.ArtifactSourceUnavailable("unsupported_render_state")
             self.session.prepare_artifact()
-            self.session.instrument_all(suppressed_savefig=True)
+            self.session.instrument_all(suppressed_savefig=True, raise_if_none_live=True)
             self.session.finish_artifact()
         except figsession.ArtifactSourceUnavailable as exc:
             raise ProtocolError(

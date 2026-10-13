@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from support.previewkit import preview_file
 from tavotto.engine import pool
 
 try:
@@ -161,7 +162,7 @@ def test_worker_png_snapshot_is_variant_local_and_preserves_vector_artifacts(tmp
         b = [{"gid": "axes_0.title", "prop": "text", "value": "Variant B"}]
         w.override("F", a)
         svg = w.svg_path("F").read_bytes()
-        canonical = (Path(w.out_dir) / "F.json").read_bytes()
+        canonical = preview_file(w.out_dir, "F", ".json").read_bytes()
         revision = w.rev
         patch_hash = pool.stem_patch_hash(w, "F")
         first = w.preview_png_snapshot("F", b, 400)
@@ -174,7 +175,7 @@ def test_worker_png_snapshot_is_variant_local_and_preserves_vector_artifacts(tmp
         assert w.rev == revision
         assert pool.stem_patch_hash(w, "F") == patch_hash
         assert w.svg_path("F").read_bytes() == svg
-        assert (Path(w.out_dir) / "F.json").read_bytes() == canonical
+        assert preview_file(w.out_dir, "F", ".json").read_bytes() == canonical
         # A temporary preview did not become the editable session's variant.
         restored = w.override("F", a)["manifest"]
         assert restored == json.loads(canonical)

@@ -625,6 +625,9 @@ class BridgeRun:
                 raise wireproto.ProtocolError("unknown_cmd", f"未知指令: {cmd}")
 
         self.session = _NativeSession(self.args.out_dir, self.args.preview_dpi)
+        # 保存观察账本在 runner 里是模块级的（钩子拿不到实例）；会话要靠它按 Figure 身份认领「这次运行
+        # 成功 save 的原产物」（P08a 只读降级），所以把同一份挂过去
+        self.session.savefig_observations = _SAVEFIG_OBSERVATIONS
         self._sync_captures()
         self.session.instrument_all()
         self.handler = _NativeHandler(self.session)
@@ -636,6 +639,13 @@ class BridgeRun:
         _resolve_module_source(self.args)
         out = self.session.stems_summary(_DROPPED)
         out["savefig_observations"] = _SAVEFIG_OBSERVATIONS.report()
+        # 逐图的实际完成事实（P08a）：活图 / 失败图 / 只读原件各自声明，不由一个总成功数代替
+        facts = self.session.figure_facts(_SAVEFIG_OBSERVATIONS)
+        out["figure_facts"] = facts
+        out["capture_summary"] = {
+            "live": sum(1 for f in facts if f["state"] == "live"),
+            "failed": sum(1 for f in facts if f["state"] == "failed"),
+        }
         out["descriptors"] = self.session.descriptors(
             script=self.args.rel_target,
             entry=self.args.entry,
@@ -733,6 +743,9 @@ class BridgeRun:
             return []
         overrides = _PKG.overrides
         owed: list = []
+        # 失败图（P08a）：它的预览没出来，但 Figure 可能已经被 instrument 动过——同样要核对恢复，
+        # 恢复不了就和健康图一样不许放行
+        owed.extend(self.session.failed_restore_owed())
         for stem, state in self.session.states.items():
             snapshot = self.session.snapshot(stem)
             if snapshot:
@@ -752,6 +765,8 @@ class BridgeRun:
                 owed.append(stem)
         self._known_stems = set(self.session.states)
         self._had_barrier = True
+        # 脚本接着跑：失败过的图下一个屏障再试一次（可能已被脚本改好）
+        self.session.allow_retry_failed()
         return owed
 
     def resume_editing(self) -> None:
@@ -785,6 +800,7 @@ class BridgeRun:
             "barrier",
             reason=reason,
             stems=list(self.session.states),
+            failed_stems=list(self.session.failures) or None,
             script_error=self.script_error,
             rebase_warnings=self.rebase_warnings or None,
         )

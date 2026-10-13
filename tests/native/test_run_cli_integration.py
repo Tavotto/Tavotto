@@ -606,7 +606,7 @@ def test_client_shutdown_at_the_script_end_barrier_is_not_a_terminate(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 完成计数来自本次已发布的预览，不是 .svg 文件数（P01b，EX12，AC-05 前半）
+# 完成计数来自本次已发布的预览，不是 .svg 文件数；一张图失败不拖垮其它图（P01b → P08a，EX12，AC-05）
 _GOOD_FIG = """\
 fig, ax = plt.subplots()
 ax.plot([0, 1], [1, 2])
@@ -629,7 +629,9 @@ _TWO_FIG_HEAD = (
 
 
 @pytest.mark.parametrize("order", ["good_first", "bad_first"])
-def test_a_half_written_preview_is_not_counted_as_a_captured_figure(tmp_path, order):
+def test_a_bad_figure_is_isolated_and_only_complete_figures_are_counted(tmp_path, order):
+    """两图一坏，坏图先 / 后两种顺序：脚本照常跑完（退出 0，不再被首个 barrier 前的预览失败拖垮），
+    计数 == 完整发布的图 == 恰好 1 张；坏图没有半份 XML；记成完成的每一份都是完整 XML。"""
     import xml.etree.ElementTree as ET  # noqa: PLC0415
 
     from tavotto.engine import config, figcapture  # noqa: PLC0415
@@ -643,21 +645,17 @@ def test_a_half_written_preview_is_not_counted_as_a_captured_figure(tmp_path, or
         cwd=tmp_path,
         tavotto_args=("--status-file", str(status)),
     ) as (session, proc, native_id):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        build = session.ensure_built()
+        assert list(build["stems"]) == ["good"], "恰好 1 张健康图进入可编辑会话"
+        assert [f["stem"] for f in build["failed_figures"]] == ["bad"]
         code, _, err = nativekit.finish(session, proc)
-    assert code != 0 and "AttributeError" in err, "探针无效：坏图的预览应当失败\n" + err
+    assert code == 0, f"一张图的预览失败不该改变脚本的退出码: {code}\n{err}"
     out_dir = config.data_path("cache", "native", native_id)
     published = sorted(figcapture.published_preview_stems(out_dir))
     data = _status(status)
-    # 计数 == 完整发布的图；坏图（半份 XML 或根本没有）一张都不在里面
-    assert data["figures_captured"] == len(published)
-    assert "bad" not in published
+    assert published == ["good"] and data["figures_captured"] == 1
+    assert data["session_result"] == "ok"
+    assert not figcapture.usable_preview_generation(out_dir, "bad"), "坏图不该有预览"
     assert not any(n.endswith(".part") for n in os.listdir(out_dir)), "临时文件没清"
-    for stem in published:
-        ET.parse(out_dir / f"{stem}.svg")  # 记成完成的每一份都是完整 XML
-    if order == "good_first":
-        # 好图先画好：它必须还在、必须被数到（不能靠「全部丢弃」过关）
-        assert published == ["good"] and data["figures_captured"] == 1
-        assert data["session_result"] == "ok"
-    else:
-        # 坏图先抛错、好图没轮到：逐图隔离归 P08a，这里只保证诚实——没有假完成
-        assert "bad.svg" not in os.listdir(out_dir)
+    ET.parse(figcapture.usable_preview_path(out_dir, "good", ".svg"))  # 记成完成的是完整 XML
