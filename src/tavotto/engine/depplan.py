@@ -514,9 +514,10 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except launcher.LauncherUnavailable as exc:
-        # 激活取环境失败：瞬时结论，不缓存；稳定码由入口（`deprepair.decide_environment_pinned` / pool）交给用户
+        # 激活取环境失败：瞬时、不缓存，**原样抛出**——不能折成 None（那会被当成“目标不可用”给出错误的恢复动作）；
+        # 稳定码由入口（`deprepair._facts_for` / `decide_environment_pinned` / pool）交给用户
         LOG.warning("目标环境事实探测失败（%s）: %s", exc.code, python)
-        return None
+        raise
     except (OSError, subprocess.SubprocessError) as exc:
         LOG.warning("目标环境事实探测失败: %s: %s", python, exc)
         return None

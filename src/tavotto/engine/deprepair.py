@@ -4029,6 +4029,16 @@ def _facts_for(
     （选中的是项目 venv / 系统解释器，目标是受管环境）计划的集合按目标量，否则新的一代会漏装
     选中环境里碰巧有的包、marker 会按另一个 minor 求值（Codex #461 P1）。
     """
+    try:
+        return _facts_for_inner(kind, python, root, use_cache=use_cache, fresh=fresh)
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：瞬时、不缓存；稳定码交给用户（不是“目标不可用”）
+        raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
+
+
+def _facts_for_inner(
+    kind: str, python: str, root: str, *, use_cache: bool = True, fresh: bool = False
+) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None, str]:
     run = depplan.target_facts(python, use_cache=use_cache) if python else None
     if kind != TARGET_MANAGED:
         return run, None, python
@@ -5448,8 +5458,9 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
             env=launcher.activate_env(python, runtime.owned_env(python)),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
-    except (OSError, subprocess.SubprocessError, launcher.LauncherUnavailable) as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return {n: str(exc)[:200] for n in names}
+    # `launcher.LauncherUnavailable` 不在这里折成逐个模块的错误：调用方（`_verify_imports`）报稳定码
     finally:
         if scratch:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -5461,7 +5472,12 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
 
 
 def _verify_imports(python: str, names: tuple[str, ...]) -> None:
-    failed = {n: e for n, e in probe_imports(python, names).items() if e}
+    try:
+        results = probe_imports(python, names)
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：瞬时，不是“装了还 import 不了”——不许标记这一代不完整、不许叫用户去查包
+        raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
+    failed = {n: e for n, e in results.items() if e}
     if failed:
         raise RepairError(
             ERROR_IMPORT_STILL_FAILED,
@@ -5530,7 +5546,11 @@ def _verify_distributions(
     problems: dict[str, str] = {}
     provided: list[dict] = []
     try:
-        facts = depplan.target_facts(python, use_cache=False)
+        try:
+            facts = depplan.target_facts(python, use_cache=False)
+        except launcher.LauncherUnavailable as exc:
+            # 装后核验时取不到激活环境：瞬时的 conda_launcher_unavailable，不是“装上的东西不对”
+            raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
         index = depplan.static_index(facts)
     finally:
         # 目标环境刚被改动（或这一代即将丢弃）：别让这次量到的事实留在缓存里冒充「装之前」
@@ -6124,6 +6144,10 @@ def decide_environment_pinned(
     try:
         return _decide_environment_pinned(project, script, project_exec=project_exec)
     except launcher.LauncherUnavailable as exc:
+        raise pool.WorkerError(str(exc), code=exc.code) from exc
+    except RepairError as exc:
+        if exc.code != launcher.UNAVAILABLE_CODE:
+            raise
         raise pool.WorkerError(str(exc), code=exc.code) from exc
 
 

@@ -1365,7 +1365,8 @@ def test_a_failed_activation_is_a_transient_verdict_that_no_cache_keeps(
     assert projectenv.probe_system_candidates([(py, "system")], "vendor_sdk")[0]["code"] == (
         "conda_launcher_unavailable"
     )
-    assert depplan.target_facts(py) is None
+    with pytest.raises(launcher.LauncherUnavailable):  # 不折成 None（那是“目标不可用”）
+        depplan.target_facts(py)
     userenvs._probe(py, ("vendor_sdk",))
     userenvs.remember_probe(py, ("vendor_sdk",), health)
     assert not projectenv._system_probe_cache and not depplan._facts_cache
@@ -2210,3 +2211,25 @@ def test_the_interpreter_preflight_shares_its_budget_with_the_activation(activat
     with pytest.raises(launcher.LauncherUnavailable):
         _pool._has_matplotlib(py)  # noqa: SLF001
     assert run_timeouts == []
+
+
+@needs_worker
+def test_target_facts_and_import_verification_keep_the_activation_code(activation_only_env, monkeypatch):
+    """依赖计划的目标事实、装后的 import 核验：激活取环境失败报 conda_launcher_unavailable，
+    不报成“目标不可用”或“装了还 import 不了”（后者会把这一代标成不完整、叫用户去查包）。"""
+    from tavotto.engine import deprepair, depplan
+
+    py, prefix, log = activation_only_env
+    depplan.reset_cache()
+    _fail_capture(monkeypatch)
+    with pytest.raises(launcher.LauncherUnavailable):
+        depplan.target_facts(py, use_cache=False)
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair._facts_for(deprepair.TARGET_PROJECT_VENV, py, str(prefix), use_cache=False)
+    assert err.value.code == "conda_launcher_unavailable"
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair._verify_imports(py, ("vendor_sdk",))
+    assert err.value.code == "conda_launcher_unavailable"
+    assert not depplan._facts_cache  # noqa: SLF001
+    monkeypatch.delenv("FAKE_CONDA_SKIP_CMD")
+    deprepair._verify_imports(py, ("vendor_sdk",))  # 条件恢复：同一入口立刻正常
