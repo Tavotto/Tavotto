@@ -2015,3 +2015,91 @@ def test_capture_timeout_kills_the_descendants_before_conda_itself(tmp_path, mon
     # 叶子先死：对 conda 本身的 os.kill（Popen.kill 走 os.kill）排在子进程之后（或根本只靠 wait 收尾）
     assert conda_pid not in kills or kills.index(child) < kills.index(conda_pid)
     assert wait_gone(child) and wait_gone(conda_pid)
+
+
+# ---------------------------------------------------------------------------
+# Codex #975 第六轮：热会话随 Conda 环境版本重建；体检与捕获共用预算；激活钩子算执行过环境代码
+# ---------------------------------------------------------------------------
+@needs_worker
+def test_a_hot_worker_is_rebuilt_when_the_conda_environment_changes_in_place(
+    activation_only_env, tmp_path, monkeypatch
+):
+    """外部 `conda install` / 改 activate.d 原地改了 prefix：热会话的 import 与激活变量都是旧的，不能复用，要重建。"""
+    py, prefix, log = activation_only_env
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
+    _pool.reset_worker_python()
+    try:
+        w1, _ = _pool.build("fig.py", str(proj), "__main__")
+        w2, _ = _pool.build("fig.py", str(proj), "__main__")
+        assert w2 is w1  # 环境没变：热会话复用
+        with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+            fh.write("# cmd: conda install vendor-sdk\n")
+        assert _pool.generation_stale(w1)
+        w3, _ = _pool.build("fig.py", str(proj), "__main__")
+        assert w3 is not w1 and w3.env_state == launcher.env_state_of(py)
+    finally:
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+
+
+@needs_worker
+def test_the_probe_shares_one_deadline_with_the_activation_capture(activation_only_env, monkeypatch):
+    """捕获用掉的时间从体检子进程的预算里扣；捕获用完了预算 = 瞬时的 conda_launcher_unavailable，不是对环境的结论。"""
+    from tavotto.engine import projectenv
+
+    py, prefix, log = activation_only_env
+    real_capture = launcher._capture  # noqa: SLF001
+    real_run = projectenv.subprocess.run
+    run_timeouts: list[float] = []
+
+    def slow_capture(python, lau, timeout):
+        time.sleep(1.5)
+        return real_capture(python, lau, timeout)
+
+    def spy_run(*a, **k):
+        run_timeouts.append(k.get("timeout"))
+        return real_run(*a, **k)
+
+    monkeypatch.setattr(launcher, "_capture", slow_capture)
+    monkeypatch.setattr(projectenv.subprocess, "run", spy_run)
+    projectenv.reset_cache()
+    launcher.reset_captures()
+    projectenv.probe_environment(py, timeout=20.0)
+    assert run_timeouts and run_timeouts[-1] <= 20.0 - 1.5
+    # 捕获把预算用光：瞬时码、不缓存，激活钩子算执行过环境代码
+    run_timeouts.clear()
+    launcher.reset_captures()
+    projectenv.reset_cache()
+
+    def eats_the_budget(python, lau, timeout):
+        out = real_capture(python, lau, timeout)
+        time.sleep(1.2)
+        return out
+
+    monkeypatch.setattr(launcher, "_capture", eats_the_budget)
+    res = projectenv.probe_environment(py, timeout=1.0)
+    assert res["ok"] is False and res["code"] == "conda_launcher_unavailable"
+    assert res["execution"]["ran_environment_code"] is True
+    assert run_timeouts == []  # 体检子进程没起
+
+
+@needs_worker
+def test_a_failed_activation_is_reported_as_environment_code_that_may_have_run(
+    activation_only_env, monkeypatch
+):
+    """`conda run` 跑 activate.d 钩子之后才失败 / 超时：体检的执行声明不许说「什么都没跑」。"""
+    from tavotto.engine import projectenv
+
+    py, prefix, log = activation_only_env
+    _fail_capture(monkeypatch)
+    res = projectenv.probe_environment(py, "vendor_sdk", import_mode="spec")
+    assert res["code"] == "conda_launcher_unavailable"
+    assert res["execution"]["ran_environment_code"] is True and res["execution"]["incomplete"] is True

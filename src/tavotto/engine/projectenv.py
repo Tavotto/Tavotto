@@ -72,6 +72,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import config, launcher, runtime, scanbudget
@@ -765,6 +766,7 @@ def execution_note(
     modules: tuple[str, ...],
     started: bool = True,
     info: dict | None = None,
+    activation: bool = False,
 ) -> dict:
     """这次体检**实际执行了什么**的如实声明（Import Origin PR3：授权的环境检查不得宣称无副作用）。
 
@@ -781,17 +783,19 @@ def execution_note(
       matplotlib 与 worker 启动链——全是用户环境里的代码；`-I -S` 的运行前体检不跑 site、不 import；
     * `imported_modules`：真 `__import__` 过哪些名字（运行前的 `find_spec` 方式一个都不 import）——导入一个包就是执行它的
       `__init__`，可能写文件、联网、改全局状态，我们看不见也拦不住；
+    * `activation=True`（Conda 环境：体检前经 `conda run` 取激活环境，跑过 activate.d 钩子）→ 不管体检本身是否隔离，
+      `ran_environment_code=True`——钩子就是环境里的代码；
     * 没有 `side_effect_free`：我们从不宣称「无副作用」。"""
     if not started:
         return {
-            "ran_environment_code": False,
+            "ran_environment_code": activation,  # 体检进程没起来，但激活钩子可能已经跑过
             "imported_modules": [],
             "may_run_package_init": False,
             "incomplete": False,
         }
     if info is None:
         return {
-            "ran_environment_code": not isolated,
+            "ran_environment_code": activation or not isolated,
             "imported_modules": [],
             "may_run_package_init": not spec_mode,
             "incomplete": True,
@@ -807,7 +811,7 @@ def execution_note(
         done.add(module)
     imported = [] if spec_mode else [m for m in dict.fromkeys(requested) if m in done]
     return {
-        "ran_environment_code": not isolated,
+        "ran_environment_code": activation or not isolated,
         "imported_modules": imported,
         "may_run_package_init": bool(imported),
         "incomplete": False,
@@ -882,17 +886,26 @@ def _probe_environment(
     shape = {"isolated": isolate, "spec_mode": spec_mode, "module": module, "modules": modules}
     scratch = ""
     spawned = False
+    activating = False
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
         # 分配也在守卫之内：系统临时目录不可用 / 只读 / 满的时候，这里抛出去
         # 就是一个 500，而 `probe_environment` 承诺的是结构化失败。
         scratch = _probe_scratch_dir()
         probe_timeout = PROBE_TIMEOUT_S if timeout is None else min(PROBE_TIMEOUT_S, timeout)
-        # Conda 环境：体检也用激活后的环境（解释器路径的纯函数决策，与 worker 一致）。取环境失败 = 什么都没起，
-        # 返回“不可用：conda_launcher_unavailable”——瞬时结论，调用方不得缓存
+        deadline = time.monotonic() + probe_timeout  # 激活捕获与体检子进程共用一个预算
+        # Conda 环境：体检也用激活后的环境（解释器路径的纯函数决策，与 worker 一致）。取环境失败 = 返回
+        # “不可用：conda_launcher_unavailable”——瞬时结论，调用方不得缓存
+        activating = launcher.launcher_for_interpreter(python) is not None
+        shape["activation"] = activating
         probe_env = launcher.activate_env(
             python, runtime.probe_env(python, bundled=bundled), timeout=probe_timeout
         )
+        spawned = activating  # 激活跑过 conda 与 activate.d：之后的任何失败都不许报成「什么都没跑」
+        probe_timeout = deadline - time.monotonic()
+        if probe_timeout <= 0:
+            # 预算被激活捕获用完：不是对这个环境的结论（瞬时、不缓存），与捕获失败同一个码
+            raise launcher.LauncherUnavailable("经 Conda 激活取环境用完了体检的时间预算；请稍后再试")
         spawned = (
             True  # 从这里起算「可能已经起了子进程」：spawn 本身失败的 OSError 在下面单独改回 False
         )
@@ -914,7 +927,8 @@ def _probe_environment(
             "code": launcher.UNAVAILABLE_CODE,
             "python": python,
             "detail": str(exc)[:400],
-            "execution": execution_note(**shape, started=False),
+            # 取激活环境要跑 conda 与 activate.d 钩子：失败 / 超时也可能已经执行过环境里的代码，不许报成「没跑」
+            "execution": execution_note(**shape, started=activating),
         }
     except (OSError, subprocess.SubprocessError) as exc:
         # 起不来：bad executable format（venv 建在另一个架构上）、被杀毒

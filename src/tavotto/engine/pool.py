@@ -3170,12 +3170,18 @@ class EnvironmentDecision:
 
 
 def generation_stale(worker) -> bool:
-    """会话起的时候记下的环境代，与它的解释器**此刻**的环境代不是同一代（环境被原地重建了）。
-    会话没记环境代（替身 / 路径不存在）不判陈旧。"""
+    """会话起的时候记下的环境代，与它的解释器**此刻**的环境代不是同一代（环境被原地重建了），或 Conda 环境版本
+    （`launcher.env_state_of`）变了。会话没记环境代 / 环境版本（替身 / 路径不存在 / 不是 Conda 环境）不判陈旧。"""
+    python = getattr(worker, "python", "")
+    # Conda 环境原地变了（conda install / 改 activate.d / env config vars）：`environment_generation` 故意不看包与钩子，
+    # 但热会话的 import 与激活环境变量都还是旧的——同样判陈旧，重建（P09）
+    state = getattr(worker, "env_state", "") or ""
+    if state and launcher_mod.env_state_of(python) != state:
+        return True
     born = getattr(worker, "python_generation", "") or ""
     if not born:
         return False
-    return projectenv.environment_generation(getattr(worker, "python", "")) != born
+    return projectenv.environment_generation(python) != born
 
 
 def pin_of_worker(worker) -> EnvironmentDecision:
