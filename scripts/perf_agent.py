@@ -140,6 +140,26 @@ def summarize(data: dict) -> dict:
     }
 
 
+def compose_run_summary(symbol: dict, drag_status: str) -> dict:
+    """Agent 所读的 summary.json 必须反映整次任务，不能因第一段绿掩盖第二段失败。"""
+    if drag_status not in ("not_requested", "pending", "ok", "failed"):
+        raise ValueError("invalid_drag_status")
+    symbol_status = symbol.get("status")
+    if symbol_status != "ok":
+        whole = "incomplete"
+    elif drag_status == "failed":
+        whole = "failed"
+    elif drag_status == "pending":
+        whole = "pending"
+    else:
+        whole = "ok"
+    return {
+        **symbol,
+        "status": whole,
+        "suites": {"symbol_ui": symbol_status, "canvas_drag": drag_status},
+    }
+
+
 def compare(current: dict, baseline: dict, regression_pct: float = DEFAULT_REGRESSION_PCT) -> dict:
     now, old = summarize(current), summarize(baseline)
     if now["status"] != "ok" or old["status"] != "ok":
@@ -275,8 +295,13 @@ def main(argv: list[str] | None = None) -> int:
             result = summarize(load(output))
             _print_summary(result)
             _append_gha_summary(result)
-            if args.summary:
-                _write(args.summary, result)
+            drag_status = "pending" if args.include_drag else "not_requested"
+
+            def save_suite_summary() -> None:
+                if args.summary:
+                    _write(args.summary, compose_run_summary(result, drag_status))
+
+            save_suite_summary()
             if result["status"] != "ok":
                 return 2
             if args.include_drag:
@@ -309,6 +334,8 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=900,
                 )
                 if drag_run.returncode != 0 or not drag_path.is_file():
+                    drag_status = "failed"
+                    save_suite_summary()
                     print("error: perf_agent_drag_probe_failed", file=sys.stderr)
                     return 2
                 analysis = subprocess.run(
@@ -325,8 +352,12 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=120,
                 )
                 if analysis.returncode != 0 or not findings_path.is_file():
+                    drag_status = "failed"
+                    save_suite_summary()
                     print("error: perf_agent_drag_analysis_failed", file=sys.stderr)
                     return 2
+                drag_status = "ok"
+                save_suite_summary()
                 print(f"Drag probe: recorded and analyzed (browser={args.browser})")
             if args.baseline:
                 assessment = compare(load(output), load(args.baseline), args.regression_pct)

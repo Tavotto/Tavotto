@@ -139,3 +139,17 @@ def test_two_playwright_runs_do_not_share_cleanup_directory():
     """普通 UI 产物落在 test-results/perf-agent，拖动测量必须另用输出目录。"""
     assert A.DRAG_E2E_OUTPUT != "test-results"
     assert not A.DRAG_E2E_OUTPUT.startswith("test-results/")
+
+
+
+def test_composed_summary_does_not_hide_later_drag_failure():
+    """符号先绿不等于完整任务绿：这是 Agent 自动接收报告的闸。"""
+    symbols = A.summarize(report())
+    assert A.compose_run_summary(symbols, "pending")["status"] == "pending"
+    result = A.compose_run_summary(symbols, "failed")
+    assert result["status"] == "failed"
+    assert result["suites"] == {"symbol_ui": "ok", "canvas_drag": "failed"}
+    assert A.compose_run_summary(symbols, "ok")["status"] == "ok"
+    assert A.compose_run_summary(symbols, "not_requested")["status"] == "ok"
+    bad = {**symbols, "status": "incomplete"}
+    assert A.compose_run_summary(bad, "pending")["status"] == "incomplete"

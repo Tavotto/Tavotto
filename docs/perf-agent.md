@@ -63,3 +63,9 @@ GitHub Actions `Performance Agent` 在成功跑完测试后，使用只读的 Ac
 ## 自动触发的热点文件
 
 `performance-agent.yml` 使用精确 PR 路径列表：包括预设面板/缩略图、`TextView`、`ObjectView`、`MeasureChip`、`PanelView`、画布拖动交互和相关 Zustand store。改这些代码的 PR 会自动触发 Agent 的符号与画布拖动 E2E；与性能无关的文档/依赖调整不会因本工作流承担额外的浏览器测试。此为独立的非必需工作流，保留 merge queue 的原有门禁结构。
+
+## Agent 读取整个测试的结果
+
+使用 `run --include-drag --summary summary.json` 时，`summary.json` 除了各场景 P95，还包含顶层 `status` 与 `suites.symbol_ui`、`suites.canvas_drag`。拖动开始前整体状态为 `pending`，拖动和分析器都成功才是 `ok`；任一失败后为 `failed` / `incomplete`。**Agent 不能仅因为 `run.json` 的符号测量存在或 `symbol_ui=ok` 就认为整条流水线已通过。**
+
+如果没有 `--include-drag`，`canvas_drag=not_requested`，该状态只说明符号套件成功；不得据此宣称拖动已经测试。
