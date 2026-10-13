@@ -230,7 +230,13 @@ def _append_gha_summary(result: dict) -> None:
         return
     with Path(target).open("a", encoding="utf-8") as f:
         f.write("\n## Tavotto Performance Agent · 浏览器交互\n\n")
-        f.write(f"结果：**{result['status']}**；原生窗口合成未覆盖。\n\n")
+        f.write(f"整体测试结果：**{result['status']}**；原生窗口合成未覆盖。\n\n")
+        suites = result.get("suites") or {}
+        if suites:
+            f.write(
+                f"子测试：符号 **{suites.get('symbol_ui')}**；"
+                f"画布拖动 **{suites.get('canvas_drag')}**。\n\n"
+            )
         f.write("| 场景 | 样本数 | P50 ms | P95 ms | 最大 ms |\n|---|---:|---:|---:|---:|\n")
         for k, v in sorted(result["scenarios"].items()):
             f.write(f"| {k} | {v['count']} | {v['p50_ms']} | {v['p95_ms']} | {v['max_ms']} |\n")
@@ -294,12 +300,15 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             result = summarize(load(output))
             _print_summary(result)
-            _append_gha_summary(result)
             drag_status = "pending" if args.include_drag else "not_requested"
 
             def save_suite_summary() -> None:
+                whole = compose_run_summary(result, drag_status)
                 if args.summary:
-                    _write(args.summary, compose_run_summary(result, drag_status))
+                    _write(args.summary, whole)
+                # 只在全部子测试已有明确结论时显示整体通过/失败。
+                if whole["status"] != "pending":
+                    _append_gha_summary(whole)
 
             save_suite_summary()
             if result["status"] != "ok":
