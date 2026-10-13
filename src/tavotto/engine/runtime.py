@@ -470,6 +470,13 @@ def repair_hint() -> str:
 # ---------------------------------------------------------------------------
 # 实测
 # ---------------------------------------------------------------------------
+class ActivationUnavailable(RuntimeError):
+    """激活取环境失败（瞬时，不是对环境的结论）的基类。`launcher.LauncherUnavailable` 继承它——本模块被 launcher
+    依赖，不能反过来 import 它，又要在注入的激活用完预算时抛同一类错误。"""
+
+    code = "conda_launcher_unavailable"
+
+
 def probe_packages(
     python: str, names: list[str] | None = None, *, bundled: bool = False, env_for=None
 ) -> dict[str, str | None]:
@@ -501,11 +508,7 @@ def probe_packages(
         env = env_for(python, probe_env(python, bundled=bundled), timeout=PROBE_TIMEOUT_S)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            from . import launcher  # noqa: PLC0415 — 见上：只在注入了激活时才会走到
-
-            raise launcher.LauncherUnavailable(
-                "经 Conda 激活取环境用完了版本盘点的时间预算；请稍后再试"
-            )
+            raise ActivationUnavailable("经 Conda 激活取环境用完了版本盘点的时间预算；请稍后再试")
     else:
         env, remaining = probe_env(python, bundled=bundled), PROBE_TIMEOUT_S
     try:

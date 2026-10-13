@@ -67,7 +67,7 @@ def is_unavailable(health: dict | None) -> bool:
     return isinstance(health, dict) and health.get("code") == UNAVAILABLE_CODE
 
 
-class LauncherUnavailable(RuntimeError):
+class LauncherUnavailable(runtime.ActivationUnavailable):
     """这条解释器在 Conda 环境里、也找得到 conda，但激活取环境失败（超时 / 退出码非 0 / 起不来）。`code` 是稳定码；
     入口（pool / 准备流程）把它转成 `WorkerError`。**不退回裸起**，失败也不缓存。"""
 

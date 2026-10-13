@@ -6721,7 +6721,7 @@ def api_engine_environment():
                 if py
                 else {}
             )
-        except engine_launcher.LauncherUnavailable as exc:
+        except engine_runtime.ActivationUnavailable as exc:  # 含 `launcher.LauncherUnavailable`
             # Conda 激活取环境失败：瞬时，不是“包都 import 不到”——不给 `imports`，给稳定码
             st["imports_error"] = {"code": exc.code, "detail": str(exc)[:400]}
     st["project"] = _project_environment_state()

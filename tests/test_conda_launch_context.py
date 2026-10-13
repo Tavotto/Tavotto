@@ -2552,6 +2552,7 @@ def test_the_package_inventory_shares_its_budget_with_the_activation(monkeypatch
     assert seen["run_timeout"] <= runtime.PROBE_TIMEOUT_S - 0.6
     seen.clear()
     monkeypatch.setattr(runtime, "PROBE_TIMEOUT_S", 0.5)
-    with pytest.raises(launcher.LauncherUnavailable):
+    with pytest.raises(runtime.ActivationUnavailable) as exc:
         runtime.probe_packages(sys.executable, ["json"], env_for=slow_env)
-    assert "run_timeout" not in seen
+    assert exc.value.code == "conda_launcher_unavailable" and "run_timeout" not in seen
+    assert issubclass(launcher.LauncherUnavailable, runtime.ActivationUnavailable)
