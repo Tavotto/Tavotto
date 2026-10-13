@@ -45,7 +45,12 @@ import time
 from pathlib import Path
 
 from . import localserver, security
-from .engine import ai_bridge as engine_ai, pool as engine_pool, project_watch as engine_watch
+from .engine import (
+    ai_bridge as engine_ai,
+    nativesession as engine_nativesession,
+    pool as engine_pool,
+    project_watch as engine_watch,
+)
 
 LOG = logging.getLogger("tavotto.desktop")
 
@@ -299,6 +304,13 @@ class SidecarServer:
         """
         try:
             engine_watch.stop()  # None = 停掉全部项目的 watcher
+            # native 会话：终端拥有的只放手（脚本是用户的，ADR 0021 §8.1）；桌面拥有的是 sidecar 自己
+            # 起的进程组，不收就会在 Tavotto 关闭后成孤儿继续跑（ADR 0125 §五）。放在 worker 之前：
+            # 各自失败互不影响，下面 worker 清理抛错也不该让这一步被跳过
+            try:
+                engine_nativesession.REGISTRY.shutdown_all()
+            except Exception:  # noqa: BLE001
+                LOG.exception("native 会话收尾异常（继续退出）")
             engine_pool.shutdown_all(wait=True)  # 同步等 worker 真的退了再走
             engine_ai.interrupt_all()
         except Exception:  # noqa: BLE001 — 清理路径绝不能把退出堵死

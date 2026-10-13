@@ -14,6 +14,7 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import time
 import zlib
 from pathlib import Path
@@ -938,3 +939,44 @@ def test_the_default_session_dir_stays_directly_under_the_cache_root(tmp_path):
         assert session.out_dir.resolve().parent == root
     finally:
         session.owned.wait(30)
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254777860：sidecar 真实清理路径收掉桌面拥有的进程，终端会话不受影响
+# ---------------------------------------------------------------------------
+def test_sidecar_cleanup_ends_desktop_owned_processes_but_leaves_terminal_native_alone(tmp_path):
+    from tavotto import app as appmod, desktop
+
+    term_dir = tmp_path / "term"
+    term_dir.mkdir()
+    nativekit.write(term_dir / "figure.py", TERMINAL_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=term_dir) as (
+        term_session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(term_session, [nativesession.BARRIER])
+        owned = dk.start(tmp_path / "own", RUNNING_SCRIPT)
+        work = tmp_path / "own" / "work"
+        dk.wait_until(lambda: (work / "ready").exists(), what="桌面脚本就绪")
+        child_pid = int((work / "child.pid").read_text())
+
+        srv = desktop.SidecarServer(
+            appmod.app, desktop.DesktopState("n"), tmp_path / "hs" / "handshake.json"
+        )
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        srv.announce_ready()
+        srv.shutdown()
+        assert srv.wait_stopped(timeout=60)
+        t.join(10)
+
+        assert owned.owned.finished and not dk.pid_alive(owned.owned.pid)
+        assert not dk.pid_alive(child_pid), "sidecar 关闭后孙进程成了孤儿"
+        assert not dk.holds_lease(owned)
+        # 终端拥有的：只放手，脚本继续跑
+        assert proc.poll() is None, "sidecar 清理误杀了终端里的脚本"
+        assert term_session.state == nativesession.DETACHED
+        (term_dir / "release-marker").write_text("1")
+        out, _err = proc.communicate(timeout=60)
+    assert proc.returncode == 0 and "TERMINAL-SCRIPT-FINISHED" in out
