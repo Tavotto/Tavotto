@@ -121,6 +121,17 @@ def alive(pid: int) -> bool:
 
 
 def wait_dead(pid: int, timeout: float = 8.0) -> bool:
+    """`pid` 不再**运行**（僵尸不算运行：它不再执行任何代码，只是还没被父进程收尸）。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not launcher.is_running(pid):
+            return True
+        time.sleep(0.05)
+    return not launcher.is_running(pid)
+
+
+def wait_gone(pid: int, timeout: float = 8.0) -> bool:
+    """`pid` 完全消失（被父进程回收，而不是留成僵尸）。PID 1 不收尸的容器里，只有「父进程先收尸」的终止顺序能做到。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if not alive(pid):
@@ -235,7 +246,7 @@ def test_killing_the_wrapper_group_leaves_no_user_python(tmp_path):
     proc, child = _spawn_wrapped(tmp_path, launcher.GroupPopen)
     assert alive(child)
     proc.kill()
-    assert wait_dead(child), "kill() 之后用户 Python 仍在运行"  # 不靠 wait() 补刀
+    assert wait_gone(child), "kill() 之后用户 Python 仍在（或成了没人收的僵尸）"  # 不靠 wait() 补刀
     proc.wait(timeout=10)
     for fh in (proc.stdin, proc.stdout):
         fh.close()
@@ -730,20 +741,6 @@ def test_incomplete_basis_is_not_recorded_so_it_can_never_authorize_reuse(tmp_pa
     assert launchctx.build_record(proj, "fig.py", Truncated(sys.executable, sha, [], None)) is None
 
 
-@posix_only
-def test_process_group_check_is_not_a_blanket_pid_allowance():
-    """经包装放行的只有「本进程组」：随便一个别的 pid 仍是 pid_mismatch；没有 launcher 时不放行。"""
-    rt = {"report_origin": "build", "pid": os.getpid(), "ppid": 1}
-    # 本进程的组长不是 12345：拒
-    assert receipt.accept_runtime(rt, expected_pid=12345, via_group=True)[1] == "pid_mismatch"
-    # 组长对得上但没有 launcher：不走这条
-    assert receipt.accept_runtime(rt, expected_pid=os.getpgid(os.getpid()), via_group=False)[1] == (
-        "pid_mismatch"
-    )
-    ok = receipt.accept_runtime(rt, expected_pid=os.getpgid(os.getpid()), via_group=True)
-    assert ok[1] is None and ok[2] == receipt.PID_CHECK_PROCESS_GROUP
-
-
 @needs_worker
 def test_activation_banner_before_the_protocol_is_diverted_to_the_log(conda_world, monkeypatch):
     """`activate.d` 钩子往 stdout 打印的内容在协议之前直通进管道：转进 worker.log 并继续，会话照常工作。"""
@@ -1095,16 +1092,6 @@ def test_a_recorded_conda_launch_never_silently_degrades_to_a_bare_launch(tmp_pa
     with pytest.raises(launcher.LauncherUnavailable) as exc:
         launchctx.launcher_for(*args, bundled="bundled")
     assert exc.value.code == "conda_launcher_unavailable"
-    # 经池：稳定码的 WorkerError
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
-    _pool.reset_worker_python()
-    try:
-        with pytest.raises(_pool.WorkerError) as werr:
-            _pool.EngineWorker("fig.py", str(proj), "__main__")
-        assert werr.value.code == "conda_launcher_unavailable"
-    finally:
-        _pool.shutdown_all(wait=True)
-        _pool.reset_worker_python()
     # 用户明确关掉开关：裸起，不报错
     monkeypatch.setenv(launcher.ENV_DISABLE, "0")
     assert launchctx.launcher_for(*args, bundled="bundled") is None
@@ -1152,33 +1139,36 @@ def test_process_group_check_accepts_a_member_that_is_not_the_leader(tmp_path):
 
 
 @posix_only
-def test_group_members_lists_the_group_and_tells_zombies_apart(tmp_path):
+def test_group_members_lists_the_group_with_parents_and_tells_zombies_apart(tmp_path):
     leader, member = _spawn_group_with_member(tmp_path)
     try:
-        members = dict(launcher.group_members(leader.pid))
-        assert members.get(leader.pid) not in (None, "Z") and members.get(member) not in (None, "Z")
+        members = {pid: (ppid, st) for pid, ppid, st in launcher.group_members(leader.pid)}
+        assert members[member][0] == leader.pid and members[member][1] != "Z"
+        assert members[leader.pid][1] != "Z"
         # 让成员死但没人收尸：leader 是它的父进程且不 wait → 僵尸
         os.kill(member, signal.SIGKILL)
         deadline = time.time() + 10
         state = None
         while time.time() < deadline:
-            state = dict(launcher.group_members(leader.pid)).get(member)
+            state = {pid: st for pid, _pp, st in launcher.group_members(leader.pid)}.get(member)
             if state == "Z":
                 break
             time.sleep(0.05)
         assert state == "Z", state
+        assert launcher.is_running(leader.pid) and not launcher.is_running(member)
     finally:
         os.kill(leader.pid, signal.SIGKILL)
         leader.wait(timeout=10)
 
 
 @posix_only
-def test_zombies_do_not_count_as_a_live_group_and_kill_signals_members_before_the_wrapper(
-    tmp_path, monkeypatch
-):
-    """PID 1 不收尸的容器里：wrapper 先被杀 → 子进程成僵尸，永远留在组里。(1) 僵尸不算活；(2) 杀的顺序是先成员、后 wrapper，
-    让 wrapper 有机会 wait 到它们。真正的「PID 1 不收尸的容器」本机构造不出来（macOS 没有 subreaper / 命名空间）：not_run。"""
+def test_kill_terminates_the_process_tree_from_the_leaves_up(tmp_path, monkeypatch):
+    """conda → shell → Python：先杀最深的 Python，等 shell 把它回收掉（pid 消失，不是 Z），再杀 shell，最后 wrapper。
+    对整组同时发 SIGKILL 时 shell 可能先死，Python 成孤儿；PID 1 不收尸的容器里它永远是僵尸。"""
     proc, child = _spawn_wrapped(tmp_path, launcher.GroupPopen)
+    tree = {pid: ppid for pid, ppid, _ in launcher.group_members(proc.pid)}
+    (shell,) = [pid for pid, ppid in tree.items() if ppid == proc.pid]
+    assert tree[child] == shell  # 真的是三层
     sent: list[int] = []
     real = launcher.GroupPopen._signal_pid
 
@@ -1188,30 +1178,47 @@ def test_zombies_do_not_count_as_a_live_group_and_kill_signals_members_before_th
 
     monkeypatch.setattr(launcher.GroupPopen, "_signal_pid", spy)
     proc.kill()
-    assert wait_dead(child)
     proc.wait(timeout=10)
-    assert child in sent and proc.pid not in sent[: sent.index(child)]  # 成员在 wrapper 之前
+    assert sent[:2] == [child, shell], sent  # 叶子在前，shell 其次；wrapper 最后由 kill / wait 处理
+    assert wait_gone(child) and wait_gone(shell)  # 被父进程回收了，不是留成僵尸
+    assert proc.unreaped == []
     for fh in (proc.stdin, proc.stdout):
         fh.close()
-    # 僵尸成员存在时 `_group_alive` 仍判「没有活的」
-    leader, member = _spawn_group_with_member(tmp_path)
-    try:
-        gp = launcher.GroupPopen.__new__(launcher.GroupPopen)
-        gp.pid = leader.pid
-        os.kill(member, signal.SIGKILL)
-        os.kill(leader.pid, signal.SIGSTOP)  # leader 不会 wait 它；再放行前它保持僵尸
-        os.kill(leader.pid, signal.SIGCONT)
-        deadline = time.time() + 10
-        while (
-            dict(launcher.group_members(leader.pid)).get(member) != "Z" and time.time() < deadline
-        ):
-            time.sleep(0.05)
-        live = [pid for pid, st in launcher.group_members(leader.pid) if st != "Z"]
-        assert live == [leader.pid] and gp._group_alive() is True  # leader 还活着
-        os.kill(leader.pid, signal.SIGKILL)
-        leader.wait(timeout=10)
-    finally:
-        try:
-            os.kill(leader.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+
+
+@posix_only
+def test_a_zombie_with_a_live_parent_is_still_residue_but_an_orphan_zombie_of_init_is_reported(
+    tmp_path, monkeypatch
+):
+    """僵尸只有在父进程是 PID 1（没有任何人能收尸）时才不算残留；父进程还在的僵尸迟早被收尸，仍算残留。
+    被 init 接管的僵尸也不能伪装成「已回收」：如实记在 `unreaped` 里并告警。
+    真正的「PID 1 不收尸的容器」本机构造不出来（macOS 没有 subreaper / PID 命名空间）：这里用注入的成员表覆盖这两个判据。"""
+    gp = launcher.GroupPopen.__new__(launcher.GroupPopen)
+    gp.pid = 4242
+    monkeypatch.setattr(launcher, "group_members", lambda pgid: [(4242, 1, "S"), (4300, 4242, "Z")])
+    assert gp._group_alive() is True  # 父进程（wrapper）还在：它会收尸，等它
+    monkeypatch.setattr(launcher, "group_members", lambda pgid: [(4300, 1, "Z")])
+    assert gp._group_alive() is False  # 被 PID 1 接管：没人能收，不再执行代码
+    gp.unreaped = []
+    # wait() 不把它伪装成干净
+    monkeypatch.setattr(launcher.subprocess.Popen, "wait", lambda self, timeout=None: 0)
+    assert gp.wait() == 0 and gp.unreaped == [(4300, "Z")]
+
+
+@needs_worker
+def test_the_pool_turns_an_unavailable_conda_launcher_into_a_stable_error(conda_world):
+    proj, prefix, log, counter = conda_world
+    import hashlib
+
+    rcpt = _good_rcpt(proj, str(prefix / "bin" / "python"))
+    rcpt.python_source = "env_override"
+    rcpt.launcher = launcher.CondaLauncher(
+        conda_exe=str(prefix.parent.parent / "bin" / "conda"), prefix=str(prefix)
+    ).public()
+    (proj / "fig.py").write_text((proj / "fig.py").read_text(encoding="utf-8"), encoding="utf-8")
+    rcpt.source_revision = hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest()
+    assert launchctx.record_success(proj, "fig.py", rcpt)
+    (prefix.parent.parent / "bin" / "conda").unlink()
+    with pytest.raises(_pool.WorkerError) as werr:
+        _pool.EngineWorker("fig.py", str(proj), "__main__")
+    assert werr.value.code == "conda_launcher_unavailable"

@@ -26,12 +26,15 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import logging
 import os
 import shutil
 import signal
 import subprocess
 import time
 from pathlib import Path
+
+LOG = logging.getLogger("tavotto.engine")
 
 KIND_DIRECT = "direct"
 KIND_CONDA = "conda"
@@ -180,14 +183,14 @@ def detect(python: str | os.PathLike) -> CondaLauncher | None:
 # ---------------------------------------------------------------------------
 # 进程树
 # ---------------------------------------------------------------------------
-def group_members(pgid: int) -> list[tuple[int, str]]:
-    """进程组 `pgid` 里此刻的成员 `[(pid, 状态首字母)]`（POSIX；读不出回 `[]`）。
+def group_members(pgid: int) -> list[tuple[int, int, str]]:
+    """进程组 `pgid` 里此刻的成员 `[(pid, ppid, 状态首字母)]`（POSIX；读不出回 `[]`）。
 
-    Linux 读 `/proc/<pid>/stat`（字段 3 状态、字段 5 组 id；`comm` 里可能有空格 / 括号，从最后一个 `)` 之后切）；
-    macOS / BSD 用 `ps -axo pid=,pgid=,stat=`。僵尸（状态 `Z`）也在列表里——调用方要自己区分「还活着」和「只是没被收尸」。"""
+    Linux 读 `/proc/<pid>/stat`（字段 3 状态、4 ppid、5 组 id；`comm` 里可能有空格 / 括号，从最后一个 `)` 之后切）；
+    macOS / BSD 用 `ps -axo pid=,ppid=,pgid=,stat=`。僵尸（状态 `Z`）也在列表里——调用方要自己区分「还活着」和「只是没被收尸」。"""
     if os.name == "nt":
         return []
-    out: list[tuple[int, str]] = []
+    out: list[tuple[int, int, str]] = []
     proc = Path("/proc")
     if (proc / "self" / "stat").exists():
         try:
@@ -198,15 +201,15 @@ def group_members(pgid: int) -> list[tuple[int, str]]:
             try:
                 text = (p / "stat").read_text(encoding="utf-8", errors="replace")
                 rest = text[text.rindex(")") + 2 :].split()
-                state, group = rest[0], int(rest[2])
+                state, ppid, group = rest[0], int(rest[1]), int(rest[2])
             except (OSError, ValueError, IndexError):
                 continue
             if group == pgid:
-                out.append((int(p.name), state[:1]))
+                out.append((int(p.name), ppid, state[:1]))
         return out
     try:
         done = subprocess.run(
-            ["ps", "-axo", "pid=,pgid=,stat="],
+            ["ps", "-axo", "pid=,ppid=,pgid=,stat="],
             capture_output=True,
             text=True,
             timeout=10,
@@ -216,20 +219,54 @@ def group_members(pgid: int) -> list[tuple[int, str]]:
         return []
     for line in done.stdout.splitlines():
         parts = line.split()
-        if len(parts) >= 3 and parts[1].isdigit() and int(parts[1]) == pgid and parts[0].isdigit():
-            out.append((int(parts[0]), parts[2][:1]))
+        if len(parts) >= 4 and all(x.isdigit() for x in parts[:3]) and int(parts[2]) == pgid:
+            out.append((int(parts[0]), int(parts[1]), parts[3][:1]))
     return out
 
 
+def _state_of(pid: int) -> str:
+    """进程状态首字母（Linux 读 `/proc/<pid>/stat`，其余用 `ps`）；读不出回空串。"""
+    stat = Path("/proc") / str(pid) / "stat"
+    try:
+        text = stat.read_text(encoding="utf-8", errors="replace")
+        return text[text.rindex(")") + 2 :].split()[0][:1]
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        done = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return done.stdout.strip()[:1]
+
+
+def is_running(pid: int) -> bool:
+    """`pid` 此刻在**运行**吗：存在且不是僵尸。僵尸不再执行任何代码，只是还没被它的父进程收尸。"""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True
+    if os.name == "nt":
+        return True
+    return _state_of(pid) != "Z"
+
+
 class GroupPopen(subprocess.Popen):
-    """自成进程组的 Popen；`kill()` 杀整组，`wait()` 确认组里无**活着的**残留。仅在包装 worker 时用。
+    """自成进程组的 Popen；`kill()` 按进程树**从叶子往上**终止，`wait()` 确认组内没有残留。仅在包装 worker 时用。
 
-    杀的顺序：**先杀组里除 wrapper 以外的成员**，给 wrapper 一小段时间自己 `wait` 到它们并退出（真正的父进程收尸，
-    PID 1 不收尸的容器里也不留僵尸），超时再杀整组、最后 `super().kill()`。确认「残留」时僵尸（状态 `Z`）算已死：
-    它们已经不运行用户代码，只是还没人 `wait`；把它们当活的会让 `wait()` 白等到超时。"""
+    包装 worker 的进程树是「conda → 临时 shell → 用户 Python」。对整组一起发 SIGKILL 时 shell 可能先死、来不及回收
+    Python，Python 就成了孤儿，交给 init；PID 1 不收尸的容器里它会永远留成僵尸。所以顺序是：由 ppid 建出树，**先杀最深的
+    一层，等它的父进程把它回收掉（pid 消失，而不是变成 `Z`），再往上一层**，最后杀 wrapper 并由我们自己 `wait` 收尸。
+    每一层都有等待上限；超时的层继续往上走，残留如实记在 `unreaped` 里并告警，不伪装成已死。
 
-    #: wrapper 在成员被杀之后自己退出的等待上限（秒）
-    WRAPPER_GRACE = 2.0
+    确认「残留」时：僵尸只有在它的父进程是 PID 1（已经被 init 接管，我们和任何别的进程都收不了尸）时才算已死；
+    父进程还在（不是 init）的僵尸仍算残留——那个父进程会收尸，等它。"""
+
+    #: 每一层等「父进程把它回收掉」的上限（秒）
+    LEVEL_GRACE = 2.0
 
     def __init__(self, *args, **kwargs):
         if os.name == "nt":
@@ -239,6 +276,8 @@ class GroupPopen(subprocess.Popen):
         else:
             kwargs["start_new_session"] = True
         super().__init__(*args, **kwargs)
+        #: 终止后仍留在组里、没能回收的 `[(pid, 状态)]`（空 = 干净）
+        self.unreaped: list[tuple[int, str]] = []
 
     def _taskkill(self) -> None:
         try:
@@ -258,7 +297,7 @@ class GroupPopen(subprocess.Popen):
             pass
 
     def _kill_group(self) -> None:
-        """整组一起杀（兜底）。"""
+        """整组一起杀（兜底，只在叶子往上走完之后补刀用）。"""
         if os.name == "nt":
             self._taskkill()
             return
@@ -267,34 +306,60 @@ class GroupPopen(subprocess.Popen):
         except (ProcessLookupError, PermissionError, OSError):
             pass
 
-    def _kill_members_first(self) -> None:
-        """先杀 wrapper 以外的成员，让 wrapper（它是它们的父进程之一）有机会 `wait` 到并自己退出。"""
-        for pid, state in group_members(self.pid):
-            if pid != self.pid and state != "Z":
+    def _levels(self) -> list[list[int]]:
+        """组内除 wrapper 以外的成员，按到 wrapper 的深度分层，**最深的一层在前**。父进程不在组里的（被 init 接管的孤儿）
+        算最浅一层——它们没有我们能等的父进程。"""
+        members = {pid: ppid for pid, ppid, state in group_members(self.pid) if state != "Z"}
+        members.pop(self.pid, None)
+        depth: dict[int, int] = {}
+
+        def of(pid: int, trail: tuple = ()) -> int:
+            if pid not in depth:
+                parent = members.get(pid)
+                inside = parent in members and parent not in trail and parent != pid
+                depth[pid] = 1 + (of(parent, (*trail, pid)) if inside else 0)
+            return depth[pid]
+
+        by_depth: dict[int, list[int]] = {}
+        for pid in members:
+            by_depth.setdefault(of(pid), []).append(pid)
+        return [by_depth[d] for d in sorted(by_depth, reverse=True)]
+
+    def _kill_tree_leaves_first(self) -> None:
+        for level in self._levels():
+            for pid in level:
                 self._signal_pid(pid)
-        deadline = time.monotonic() + self.WRAPPER_GRACE
-        while time.monotonic() < deadline:
-            if self.poll() is not None:
-                return
-            time.sleep(0.02)
+            deadline = time.monotonic() + self.LEVEL_GRACE
+            while time.monotonic() < deadline:
+                if not any(pid in {m[0] for m in group_members(self.pid)} for pid in level):
+                    break  # 它们的父进程已经把它们回收掉了（pid 消失）
+                time.sleep(0.02)
 
     def kill(self) -> None:
         if os.name == "nt":
             self._taskkill()
             super().kill()
             return
-        self._kill_members_first()
-        self._kill_group()
+        self._kill_tree_leaves_first()
+        self._kill_group()  # 补刀：叶子往上杀的过程中新冒出来的 / 超时没回收的
         super().kill()
 
+    def _residue(self) -> list[tuple[int, str]]:
+        """组里还算「残留」的成员：活着的，或虽是僵尸但父进程还在（不是 PID 1）、迟早会收尸的。
+        被 PID 1 接管的僵尸没有任何人能回收：不算活（它不再执行代码），但留在 `unreaped` 里如实报。"""
+        out = []
+        for pid, ppid, state in group_members(self.pid):
+            if state == "Z" and ppid == 1:
+                continue
+            out.append((pid, state))
+        return out
+
     def _group_alive(self) -> bool:
-        """组里还有**活着的**成员吗（僵尸不算）。"""
         if os.name == "nt":
             return False  # taskkill /T 已按树杀；Windows 没有可探测的组
-        members = group_members(self.pid)
-        if members:
-            return any(state != "Z" for _, state in members)
-        # 读不出成员（没有 /proc 也没有 ps）：退回 killpg 探测（僵尸会被算作活的，只会多等到上限，不会漏杀）
+        if group_members(self.pid):
+            return bool(self._residue())
+        # 列表是空的：要么真没人了，要么读不出成员（没有 /proc 也没有 ps）——用 killpg 探测分辨
         try:
             os.killpg(self.pid, 0)
         except ProcessLookupError:
@@ -305,11 +370,19 @@ class GroupPopen(subprocess.Popen):
 
     def wait(self, timeout=None):
         code = super().wait(timeout=timeout)
-        # wrapper 走了不代表用户 Python 走了（conda 先死、孙进程成孤儿）：组里还有活的就补杀并确认
+        # wrapper 走了不代表用户 Python 走了（conda 先死、孙进程成孤儿）：先叶子往上杀，再确认
         deadline = time.monotonic() + GROUP_REAP_TIMEOUT
         while self._group_alive():
+            self._kill_tree_leaves_first()
             self._kill_group()
             if time.monotonic() >= deadline:
                 break
             time.sleep(0.02)
+        self.unreaped = [(pid, state) for pid, _ppid, state in group_members(self.pid)]
+        if self.unreaped:
+            LOG.warning(
+                "包装 worker 进程组终止后仍有 %d 个成员没被回收（pid=%s）",
+                len(self.unreaped),
+                [pid for pid, _ in self.unreaped],
+            )
         return code

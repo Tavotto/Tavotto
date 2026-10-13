@@ -358,7 +358,7 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。**Windows 本期不做 Conda 包装**（`detect()` 在 nt 上返回 None、裸起，与 P09 之前一致）：没有真机验证，
   conda.exe 经中间 shell 起 Python 时回执的 pid 核验也没有可靠依据；留待 Windows 真机验证后再开。成功记录的依据必须完整可核验
   （条数超限 / 观察被截断 / 有输入没算出摘要都不记录，并清掉旧记录）；登记里 `launches` 逐条深校验，坏的丢弃。
-- **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 先杀 wrapper 以外的成员、给 wrapper 自己 wait 收尸的机会，再杀整组；`wait()` 确认组内无**活着的**残留，僵尸 `Z` 不算活），所以取消 / 关停 / 看门狗超时
+- **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 按 ppid 建出的进程树**从叶子往上**终止：先杀最深一层、等它的父进程把它回收掉（pid 消失，不是变成僵尸），再往上，最后杀 wrapper 由我们 `wait`——对整组同时 SIGKILL 会让 shell 先死、Python 成孤儿，PID 1 不收尸的容器里永远是僵尸；`wait()` 确认组内无残留，僵尸只有父进程是 PID 1（无人能收）时才不算残留，且如实记进 `unreaped` 并告警，不伪装成干净），所以取消 / 关停 / 看门狗超时
   留不下仍在跑的用户 Python；环境占用租约仍是池里的会话，`kill→reap` 之后才释放。包装 worker 只走 Python 池（`WorkerdWorker` 抛
   `WorkerdUnavailable` 回退）——workerd 的杀进程语义不认进程组。`nativesession` 的终止语义未改。
 
