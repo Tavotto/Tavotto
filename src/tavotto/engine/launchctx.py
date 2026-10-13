@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import time
@@ -197,7 +198,9 @@ def verify(
             # 项目没有定过解释器（默认链条）：只对得上当时同样没定过的记录
             if interp.get("project_decided", True):
                 return REASON_INTERPRETER
-        elif _norm(interp["path"]) != _norm(python) or interp.get("source") != python_source:
+        elif _norm(interp["path"]) != _norm(python) or (
+            python_source is not None and interp.get("source") != python_source
+        ):  # python_source=None：预检探针不知道来源标签，只比路径
             return REASON_INTERPRETER
     if FACET_ENVIRONMENT in facets:
         env_python = python if python is not None else interp.get("path")
@@ -258,8 +261,26 @@ def _record_of(project_root: str | Path, script: str) -> dict | None:
         return None
 
 
+def probe_launcher(
+    project_root: str | Path, script: str, python: str
+) -> launcher.CondaLauncher | None:
+    """预检探针用的启动决策：与 worker 同一个 `launcher_for`（记录说裸起成功过的，预检也裸起），只是探针不知道来源标签
+    （`python_source=None`，只比解释器路径）。记录说要 Conda 而 conda 不见了：探针不抛（worker 起会话时会报稳定码），按裸起探。"""
+    try:
+        return launcher_for(project_root, script, python, None, bundled="")
+    except launcher.LauncherUnavailable:
+        return None
+
+
+@contextlib.contextmanager
+def probe_scope(project_root: str | Path, script: str):
+    """在这个范围里，所有预检探针（`launcher.run_probe`）用这个项目 / 脚本的启动决策。"""
+    with launcher.probe_scope(lambda py: probe_launcher(project_root, script, py)):
+        yield
+
+
 def launcher_for(
-    project_root: str | Path, script: str, python: str, python_source: str, *, bundled: str
+    project_root: str | Path, script: str, python: str, python_source: str | None, *, bundled: str
 ) -> launcher.CondaLauncher | None:
     """`pool.EngineWorker` 起会话时用的启动方式：None = 裸起。
 

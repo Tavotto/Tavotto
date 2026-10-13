@@ -24,18 +24,20 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import dataclasses
 import hashlib
-import json
 import logging
 import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
-from . import runtime
+from . import config, runtime
 
 LOG = logging.getLogger("tavotto.engine")
 
@@ -186,64 +188,100 @@ def detect(python: str | os.PathLike) -> CondaLauncher | None:
 # ---------------------------------------------------------------------------
 # 预检探针：与 worker 同一个启动上下文
 # ---------------------------------------------------------------------------
-def json_tail(text: str) -> str:
-    """包装启动的探针 stdout 里，`activate.d` 钩子的横幅（可能没有换行、和结果粘成一行）后面跟着探针的 JSON 对象：
-    从左到右试每个 `{`，第一个能让后缀整体解析成 JSON 对象的位置就是起点，返回这段后缀。找不到 / 本来就是整段 JSON → 原样返回。
-    探针只在最后写一个 JSON 对象，所以不会误吞结果；最多试 16 个 `{`。"""
-    stripped = text.strip()
+#: 本次探针该用的启动决策（`(python) -> CondaLauncher | None`）。由知道「这是哪个项目的哪个脚本」的调用方设置
+#: （`pool._resolve_for_worker`、`deprepair.decide_environment_pinned`），探针与 worker 才用同一个「每脚本启动决策」
+#: （记录说裸起成功过的，预检也裸起）。没设置 = 只按解释器现场检测（`detect`）。
+_PROBE_DECIDER: contextvars.ContextVar = contextvars.ContextVar(
+    "tavotto_probe_launcher", default=None
+)
+
+
+@contextlib.contextmanager
+def probe_scope(decider):
+    token = _PROBE_DECIDER.set(decider)
     try:
-        if isinstance(json.loads(stripped), dict):
-            return text
-    except ValueError:
-        pass
-    tried = 0
-    start = text.find("{")
-    while start >= 0 and tried < 16:
-        try:
-            if isinstance(json.loads(text[start:].strip()), dict):
-                return text[start:]
-        except ValueError:
-            pass
-        tried += 1
-        start = text.find("{", start + 1)
-    return text
+        yield
+    finally:
+        _PROBE_DECIDER.reset(token)
+
+
+#: 被包装的探针的引导：把 fd 1 指到结果文件、再原样执行探针源码。探针（`-c` 片段）本来就把结果写在 stdout（有的 dup
+#: 出一份 fd 再 `os.write`），重定向之后它们写进文件；`conda run` 的 activate.d / deactivate.d 钩子打印的横幅留在真正的
+#: stdout 上，不会混进结果。`sys.argv` 与 `__main__` 全局同原来的 `-c` 一致。
+_PROBE_BOOT = (
+    "import os, sys\n"
+    "_rf, _src = sys.argv[1], sys.argv[2]\n"
+    "sys.argv = ['-c'] + sys.argv[3:]\n"
+    "_fd = os.open(_rf, os.O_WRONLY | os.O_TRUNC)\n"
+    "os.dup2(_fd, 1)\n"
+    "os.close(_fd)\n"
+    "exec(compile(_src, '<string>', 'exec'), {'__name__': '__main__', '__builtins__': __builtins__})\n"
+)
 
 
 def run_probe(argv, python, *, timeout=None, **kwargs):
     """`subprocess.run` 的替身，给「要在 worker 将要使用的那个解释器里跑一小段探针」的预检用（`_has_matplotlib`、
     `projectenv.probe_environment`、依赖计划的目标事实、导入核验、版本盘点……）。
 
-    需要 Conda 激活的解释器（`detect(python)` 判定，与 worker 同一个判据）：经 `conda run --no-capture-output --prefix …`
-    包装起，自成进程组——超时 / 异常整棵树收掉；stdout 里钩子的横幅用 `json_tail` 剥掉（探针的结果是一个 JSON 对象）。
-    其余（内置 runtime、受管 venv、Windows、没找到 conda、开关关掉）：原样 `subprocess.run`，行为一字不变。
-    只改「怎么起」，不改探针的内容、超时、env、cwd。"""
-    lau = detect(python)
+    启动决策与 worker 同一个：调用方在 `probe_scope` 里（知道项目 / 脚本）就用它给的决策，否则按解释器现场 `detect`。
+    需要 Conda 激活的：经 `conda run --no-capture-output --prefix …` 包装起，自成进程组（超时整棵树收掉）。
+    **结果不走 stdout**：`activate.d` 钩子在命令之前打印、`deactivate.d` 钩子在命令之后打印，都会直通进 stdout，尾部横幅会让
+    任何「从 stdout 里找 JSON」的办法失效。所以由我们建一个 0600 的临时结果文件，探针的 fd 1 被引导代码指进去，父进程
+    只读这个文件；真正的 stdout / stderr 一律当日志。其余（内置 runtime、受管 venv、Windows、没找到 conda、开关关掉）：
+    原样 `subprocess.run`，行为一字不变。只改「怎么起」，不改探针的内容、超时、env、cwd。"""
+    decider = _PROBE_DECIDER.get()
+    lau = decider(python) if decider is not None else detect(python)
     if lau is None:
         kwargs.pop("creationflags", None)  # 探针一律是 GUI 拥有的隐藏子进程
         return subprocess.run(
             argv, timeout=timeout, creationflags=runtime.CREATE_NO_WINDOW, **kwargs
         )
     kw = dict(kwargs)
+    kw.pop("creationflags", None)
     if kw.pop("capture_output", False):
         kw["stdout"] = subprocess.PIPE
         kw["stderr"] = subprocess.PIPE
-    cmd = lau.wrap(list(argv))
-    proc = GroupPopen(cmd, **kw)
+    cmd = list(argv)
+    result_path = ""
+    if "-c" in cmd and cmd.index("-c") + 1 < len(cmd):
+        i = cmd.index("-c")
+        src, rest = cmd[i + 1], cmd[i + 2 :]
+        results = config.data_dir() / "probe-results"
+        results.mkdir(parents=True, exist_ok=True)
+        fd, result_path = tempfile.mkstemp(prefix="probe-", suffix=".json", dir=results)
+        os.close(fd)  # mkstemp 建出来就是 0600
+        cmd = [*cmd[:i], "-c", _PROBE_BOOT, result_path, src, *rest]
+    wrapped = lau.wrap(cmd)
     try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
-        proc.wait()
-        raise subprocess.TimeoutExpired(cmd, timeout) from None
-    except BaseException:
-        proc.kill()
-        proc.wait()
-        raise
-    proc.wait()  # 确认组内没有残留
-    if isinstance(out, str):
-        out = json_tail(out)
-    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+        proc = GroupPopen(wrapped, creationflags=runtime.CREATE_NO_WINDOW, **kw)
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            proc.wait()
+            raise subprocess.TimeoutExpired(wrapped, timeout) from None
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            raise
+        proc.wait()  # 确认组内没有残留
+        if result_path:
+            try:
+                data = Path(result_path).read_bytes()
+            except OSError:
+                data = b""
+            if isinstance(out, str):
+                out = data.decode(kw.get("encoding") or "utf-8", kw.get("errors") or "strict")
+            else:
+                out = data
+        return subprocess.CompletedProcess(wrapped, proc.returncode, out, err)
+    finally:
+        if result_path:
+            try:
+                os.unlink(result_path)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -383,33 +421,38 @@ class GroupPopen(subprocess.Popen):
         except (ProcessLookupError, PermissionError, OSError):
             pass
 
-    def _levels(self) -> list[list[int]]:
-        """组内除 wrapper 以外的成员，按到 wrapper 的深度分层，**最深的一层在前**。父进程不在组里的（被 init 接管的孤儿）
-        算最浅一层——它们没有我们能等的父进程。"""
-        members = {pid: ppid for pid, ppid, state in group_members(self.pid) if state != "Z"}
+    def _levels(self) -> list[list[tuple[int, str]]]:
+        """组内除 wrapper 以外的成员 `[(pid, 状态)]`，按到 wrapper 的深度分层，**最深的一层在前**。父进程不在组里的
+        （被 init 接管的孤儿）算最浅一层——它们没有我们能等的父进程。
+
+        已经是僵尸（`Z`）的成员**留在树里**：它不能再被 signal，但它是「它的父进程还没收尸」的证据，父进程必须等它被回收
+        （或超过上限）才能被杀——否则父 shell 被当叶子先杀，这个僵尸就成了永久孤儿。"""
+        members = {pid: (ppid, state) for pid, ppid, state in group_members(self.pid)}
         members.pop(self.pid, None)
         depth: dict[int, int] = {}
 
         def of(pid: int, trail: tuple = ()) -> int:
             if pid not in depth:
-                parent = members.get(pid)
+                parent = members[pid][0]
                 inside = parent in members and parent not in trail and parent != pid
                 depth[pid] = 1 + (of(parent, (*trail, pid)) if inside else 0)
             return depth[pid]
 
-        by_depth: dict[int, list[int]] = {}
-        for pid in members:
-            by_depth.setdefault(of(pid), []).append(pid)
+        by_depth: dict[int, list[tuple[int, str]]] = {}
+        for pid, (_ppid, state) in members.items():
+            by_depth.setdefault(of(pid), []).append((pid, state))
         return [by_depth[d] for d in sorted(by_depth, reverse=True)]
 
     def _kill_tree_leaves_first(self) -> None:
         for level in self._levels():
-            for pid in level:
-                self._signal_pid(pid)
+            for pid, state in level:
+                if state != "Z":
+                    self._signal_pid(pid)
+            pids = {pid for pid, _ in level}
             deadline = time.monotonic() + self.LEVEL_GRACE
             while time.monotonic() < deadline:
-                if not any(pid in {m[0] for m in group_members(self.pid)} for pid in level):
-                    break  # 它们的父进程已经把它们回收掉了（pid 消失）
+                if not pids & {m[0] for m in group_members(self.pid)}:
+                    break  # 它们（含僵尸）的父进程已经把它们回收掉了（pid 消失）
                 time.sleep(0.02)
 
     def kill(self) -> None:

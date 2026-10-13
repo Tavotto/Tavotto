@@ -24,6 +24,7 @@ import pytest
 
 from support import foundation_app as fa
 from tavotto.engine import (
+    config,
     databinding,
     launchctx,
     launcher,
@@ -84,7 +85,12 @@ if banner:  # activate.d 钩子往 stdout 打印的横幅：在用户 Python 启
     sys.stdout.write(banner + ("" if os.environ.get("FAKE_CONDA_BANNER_NO_NEWLINE") else "\n"))
     sys.stdout.flush()
 # 真 conda（POSIX）：先起一个临时 shell，再由 shell 起用户 Python——Python 的父进程是 shell，不是 conda
-sys.exit(subprocess.Popen(["/bin/sh", "-c", '"$@"; exit $?', "sh", *cmd], env=env).wait())
+code = subprocess.Popen(["/bin/sh", "-c", '"$@"; exit $?', "sh", *cmd], env=env).wait()
+after = os.environ.get("FAKE_CONDA_AFTER_BANNER")
+if after:  # deactivate.d 钩子在命令结束之后往 stdout 打印的内容
+    sys.stdout.write(after + "\n")
+    sys.stdout.flush()
+sys.exit(code)
 """
 
 
@@ -1407,10 +1413,13 @@ def test_probe_banner_and_timeout_are_handled_for_wrapped_probes(activation_only
     py, prefix, log = activation_only_env
     monkeypatch.setenv("FAKE_CONDA_BANNER", "initializing vendor SDK...")
     monkeypatch.setenv("FAKE_CONDA_BANNER_NO_NEWLINE", "1")
+    # deactivate.d 的横幅在命令结束之后打印，而且长得像探针的结果（JSON 对象）——结果不走 stdout，所以不受影响
+    monkeypatch.setenv("FAKE_CONDA_AFTER_BANNER", '{"vendor_sdk": "FAKE-RESULT-FROM-A-HOOK"}')
     from tavotto.engine import deprepair
 
-    # 横幅（没有换行结尾）粘在探针的 JSON 前面：照样解析出结果
+    # 横幅（没有换行结尾）粘在前面、JSON 形状的横幅跟在后面：结果仍是探针自己写进结果文件的那份
     assert deprepair.probe_imports(py, ("vendor_sdk",)) == {"vendor_sdk": ""}
+    assert not list((config.data_dir() / "probe-results").glob("*"))  # 结果文件用完即删
     # 超时：整组收掉，不留探针里的 Python
     pidfile = prefix.parent / "probe.pid"
     started = time.time()
@@ -1424,13 +1433,6 @@ def test_probe_banner_and_timeout_are_handled_for_wrapped_probes(activation_only
         )
     assert time.time() - started < 30
     assert wait_dead(int(pidfile.read_text()))
-
-
-def test_json_tail_strips_only_what_precedes_the_result_object():
-    assert launcher.json_tail('{"a": 1}') == '{"a": 1}'
-    assert launcher.json_tail('banner {"a": {"b": 2}}') == '{"a": {"b": 2}}'
-    assert launcher.json_tail("banner only") == "banner only"
-    assert launcher.json_tail('x {oops {"a": 1}') == '{"a": 1}'
 
 
 @needs_real_conda
@@ -1455,3 +1457,96 @@ def test_real_conda_preflight_sees_variables_set_by_activate_d(tmp_path, monkeyp
             assert deprepair.probe_imports(real_py, ("vendor_sdk_p09",))["vendor_sdk_p09"]
     finally:
         hook.unlink(missing_ok=True)
+
+
+@needs_worker
+def test_probes_follow_the_per_script_launch_decision_not_a_bare_detect(
+    activation_only_env, tmp_path, monkeypatch
+):
+    """记录说这份脚本上次是裸起成功的：预检（在 `probe_scope` 里）和 worker 一样裸起；不在范围里才按解释器现场检测。"""
+    py, prefix, log = activation_only_env
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    rcpt = _good_rcpt(proj, py)
+    rcpt.python_source = "env_override"
+    assert launchctx.record_success(proj, "fig.py", rcpt)  # 启动方式：direct
+    with launchctx.probe_scope(proj, "fig.py"):
+        assert _pool._has_matplotlib(py) is False  # 裸起：shim 的 matplotlib 要激活才 import 得到
+    assert conda_calls(log) == []
+    assert _pool._has_matplotlib(py) is True  # 没有范围：现场检测 → 经 conda 激活
+    assert len(conda_calls(log)) == 1
+    # 记录说 Conda：范围里也走 conda
+    rcpt.launcher = launcher.CondaLauncher(
+        conda_exe=str(prefix.parent.parent / "bin" / "conda"), prefix=str(prefix)
+    ).public()
+    assert launchctx.record_success(proj, "fig.py", rcpt)
+    with launchctx.probe_scope(proj, "fig.py"):
+        assert _pool._has_matplotlib(py) is True
+    assert len(conda_calls(log)) == 2
+
+
+@posix_only
+def test_a_zombie_child_is_a_barrier_before_its_parent_is_killed(monkeypatch):
+    """已经是 Z 的子进程不能被 signal，但它的父进程必须等它被回收（或超过上限）才能被杀；否则父 shell 被当叶子先杀，
+    这个僵尸就成了永久孤儿。成员表用注入的（真正的「PID 1 不收尸」本机构造不出来）。"""
+    gp = launcher.GroupPopen.__new__(launcher.GroupPopen)
+    gp.pid = 100
+    gp.LEVEL_GRACE = 0.3
+    sent: list[int] = []
+    state = {"reaped": False, "dead": set()}
+
+    def signal_(pid):
+        sent.append(pid)
+        state["dead"].add(pid)  # 被杀的 shell 由 wrapper 收尸，从成员表里消失
+
+    gp._signal_pid = signal_
+
+    def table(pgid):
+        rows = [(100, 1, "S")] + (
+            [] if 101 in state["dead"] else [(101, 100, "S")]
+        )  # wrapper、shell
+        if not state["reaped"]:
+            rows.append((102, 101, "Z"))  # shell 的子进程已经是僵尸，shell 还没来得及收
+        return rows
+
+    monkeypatch.setattr(launcher, "group_members", table)
+    # shell 在僵尸被回收之后才该被杀：第一层只有僵尸（不 signal，等它消失）
+    import threading
+
+    threading.Timer(0.1, lambda: state.update(reaped=True)).start()
+    gp.LEVEL_GRACE = 2.0
+    started = time.monotonic()
+    gp._kill_tree_leaves_first()
+    assert sent == [101]  # 僵尸 102 从未被 signal；回收之后才轮到 shell
+    assert 0.08 <= time.monotonic() - started < 1.5  # 等的是「被回收」，不是等满上限
+    # 僵尸一直不被回收：等到上限后继续往上，不会卡死
+    state.update(reaped=False, dead=set())
+    sent.clear()
+    gp.LEVEL_GRACE = 0.2
+    started = time.monotonic()
+    gp._kill_tree_leaves_first()
+    assert sent == [101] and time.monotonic() - started >= 0.2
+
+
+@needs_real_conda
+def test_real_conda_json_shaped_hook_banners_never_become_the_probe_result(tmp_path, monkeypatch):
+    """真 conda：activate.d / deactivate.d 钩子打印 JSON 形状的横幅，预检结果仍是探针自己写进结果文件的那份。"""
+    from tavotto.engine import deprepair
+
+    act = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
+    deact = Path(REAL_PREFIX) / "etc" / "conda" / "deactivate.d"
+    for d in (act, deact):
+        d.mkdir(parents=True, exist_ok=True)
+        for stale in d.glob("p09_*.sh"):
+            stale.unlink()
+    hooks = [act / "p09_json_act.sh", deact / "p09_json_deact.sh"]
+    hooks[0].write_text('echo \'{"os": "FAKE-FROM-ACTIVATE"}\'\n', encoding="utf-8")
+    hooks[1].write_text('echo \'{"os": "FAKE-FROM-DEACTIVATE"}\'\n', encoding="utf-8")
+    real_py = str(Path(REAL_PREFIX) / "bin" / "python")
+    try:
+        assert deprepair.probe_imports(real_py, ("os", "json")) == {"os": "", "json": ""}
+    finally:
+        for h in hooks:
+            h.unlink(missing_ok=True)

@@ -3289,7 +3289,10 @@ def _resolve_for_worker(
         if not pinned.matches(pinned.python):
             raise _environment_changed()
         return pinned.python, pinned.source
-    return resolve_worker_python(figures_dir, script=script_name)
+    with launchctx.probe_scope(
+        figures_dir, script_name
+    ):  # 选择解释器时的预检与 worker 用同一个启动决策
+        return resolve_worker_python(figures_dir, script=script_name)
 
 
 def register_environment_decider(decider) -> None:

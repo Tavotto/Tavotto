@@ -360,7 +360,7 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   （条数超限 / 观察被截断 / 有输入没算出摘要都不记录，并清掉旧记录）；登记里 `launches` 逐条深校验，坏的丢弃。
 - **预检探针与 worker 同一个启动上下文**（AC-11）：需要激活才 import 得到东西的解释器，裸起预检会误报缺依赖 / `explicit_python_unusable`。
   `launcher.run_probe(argv, python, …)` 是 `subprocess.run` 的替身：`detect(python)` 判定需要就经 `conda run --no-capture-output` 起、
-  自成进程组（超时整棵树收掉）、stdout 用 `json_tail` 剥掉钩子横幅；其余情况原样 `subprocess.run`。已改的预检点：`pool._has_matplotlib`、
+  自成进程组（超时整棵树收掉）。**结果不走 stdout**：`activate.d` 在命令前、`deactivate.d` 在命令后往 stdout 打印，尾部横幅会让任何「从 stdout 找 JSON」失效；所以建一个 0600 的临时结果文件（`data_dir()/probe-results/`，用完即删），引导代码把探针的 fd 1 指进去，父进程只读它，stdout / stderr 当日志。启动决策与 worker 同一个：调用方在 `launchctx.probe_scope(项目, 脚本)` 里（`pool._resolve_for_worker`、`deprepair.decide_environment_pinned`）用每脚本的 `launcher_for`（记录说裸起成功过的，预检也裸起），否则按解释器现场 `detect`。其余情况原样 `subprocess.run`。worker 协议不受 `deactivate.d` 影响：deactivate 只在 conda 包装脚本里命令（worker）退出之后才打印，那时协议管道已经结束。已改的预检点：`pool._has_matplotlib`、
   `projectenv.probe_environment`、`depplan` 目标事实、`deprepair.probe_imports`（装后导入核验）、`deprepair._run`（只读 pip / 盘点）、
   `runtime.probe_packages` 的模块版本盘点（由 app 注入 `runner=launcher.run_probe`，因为 launcher 依赖 runtime、不能反过来 import）。**不改的**及理由：`discover.analyze_in_interpreter`（纯 AST 静态分析，不 import 用户包，只需要解释器版本）、
   `deprepair._run_pip` / 包查找 / `managedenv._run`（只作用于 Tavotto 自己的受管环境，不是用户 Conda 环境）、`bootstrap._probe`（问系统 Python

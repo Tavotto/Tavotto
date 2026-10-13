@@ -54,6 +54,7 @@ from . import (
     envlease,
     execspec,
     importscan,
+    launchctx,
     launcher,
     logsafe,
     managedenv,
@@ -6060,6 +6061,15 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
 
 
 def decide_environment_pinned(
+    project: str | Path, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
+    """（启动决策范围包装：体检候选解释器的预检探针与 worker 用同一个每脚本启动决策，见 `launchctx.probe_scope`。）
+    真正的判据在 `_decide_environment_pinned`。"""
+    with launchctx.probe_scope(str(project), script):
+        return _decide_environment_pinned(project, script, project_exec=project_exec)
+
+
+def _decide_environment_pinned(
     project: str | Path, script: str, *, project_exec: bool = True
 ) -> pool.EnvironmentDecision:
     """「换不换解释器」的**唯一一处**决定（ADR 0079 §四）：缺包且有装齐的用户环境、此刻的解释器又是
