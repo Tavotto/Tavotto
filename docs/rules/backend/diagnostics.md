@@ -358,6 +358,9 @@
   **正则必须线性**：键名前后通配有上界 40、起点锚在标识符开头、URL scheme 有上界（`test_scrubber_is_linear_on_long_tokens`——无界版本在 80 万字符的十六进制串上跑了数十秒）。**不做**邮箱 / 云盘账号替换（会把装饰器 `@app.route` 之类整词吞掉；维护者要看原文）。源码文件用 `source_mode`：只换带引号的字面量，`token = self._next()` 这类表达式原样。
 - **没勾 A = 零源码字节**：除不放脚本文件外，日志 / 报错 / 运行记录里 traceback 的源码行与 `^^^` 指示符一律剥掉（`strip_source_lines`，保留 `File …, line N` 帧行与异常行）。看护 `test_source_is_zero_bytes_when_unticked_everywhere`（金丝雀在 worker.log traceback 里，勾了才出现）。
 - **体积（`fit`）**：每类一个原始字节份额（`SHARE`）；总 ZIP 超 `MAX_BYTES - FIT_SLACK`（64 - 1 = 63 MiB）时按 `PRIORITY` 从大到小截（能缩的按比例缩，不能缩的从末尾整份丢，缩到 <2 KiB 整类去掉），记 `truncated: [{kind, original_bytes, kept_bytes}]`；核心文件不在 `fit` 里；全截光仍超限走 `diagsend.too_large`。`report.json` 只算一次（`build_bundle(report=…)`）。
+- **源码脱敏分区（`scrub_script`）**：`.py` 用 `tokenize` 找注释与字符串字面量，那些区间走完整 KV 替换（`# api_key=REAL` 不带引号，源码模式会放过它），可执行代码走源码模式（`token = self._next()` 原样）；tokenize 失败的 `.py` 里带 `#` 的行整行按完整模式；非 `.py` 一律完整模式。
+- **渲染环境探的是项目实际用的解释器**：`pool.resolve_worker_python(figures_dir, discover=False)`（项目级决策唯一出处，不起发现子进程），`detail-render-env.json` 记 `source`（项目 venv / 记住的 / 全局 / 内置）与 `scope`。
+- **整份丢弃要记账**：份额阶段丢掉的 item 计入 `dropped_bytes`（manifest `truncated.original_bytes` 因此是全部原始字节）；内层 zip 的 `index.json` 在装箱时核对（`_reconcile_index`），对应文件不在 zip 里的条目标 `skipped_over_budget: true`，index 与 zip 实际内容一致。
 - **采集失败不让备包失败**：每类包在 try 里，失败变成该类的一份 `{"collection_error": …}`。测试进程里渲染环境子进程与 DNS 默认被 `tests/conftest.py` 的 autouse 桩换掉（真探测的用例自己取回原函数）。
 - **ZIP 形状由 infra 诊断服务的 ZIP 检查决定**（文字出处，不写跨仓库路径）：条目名匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`（**无目录 / 斜杠**）、整包 ≤ 32 条、单条目 `file_size > 1024 且 > 200 × compress_size` 被拒、单条目解压后 ≤ 128 MiB、总解压后 ≤ 256 MiB、`manifest.json` ≤ 64 KiB（所以 manifest 里只列顶层条目，内层清单放内层 zip 的 `index.json`）。
   常量在 `diagsend.ZIP_RULES`，出包后 `diagdetail.ratio_safe`（压缩比超限的条目改存 STORED）+ `diagsend.zip_problem`（同判据自检，`inspect_bundle` 里不合规 = `bundle_invalid` 内部错误，不发送）。`diagsend.ENTRY_KINDS` 只收精确的扁平名；`MAX_BUNDLE_ENTRIES` = 32。

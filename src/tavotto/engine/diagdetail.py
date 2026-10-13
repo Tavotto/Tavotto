@@ -744,9 +744,12 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
         except OSError:
             continue
         kind = _state_kind(p.name)
-        index.append(
-            {"name": p.name, "kind": kind, "bytes": st.st_size, "mtime": _iso(st.st_mtime)}
-        )
+        entry = {"name": p.name, "kind": kind, "bytes": st.st_size, "mtime": _iso(st.st_mtime)}
+        if kind != "corrupt":
+            entry["file"] = _safe_name(
+                p.name
+            )  # 内容在内层 zip 里的名字（`_reconcile_index` 据此核对）
+        index.append(entry)
         if kind == "corrupt":
             continue  # 默认只有清单；内容归勾选项 C
         got = _read_head(p, STATE_FILE_CAP)
@@ -987,17 +990,25 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
     from .. import __version__
 
     doc: dict = {"schema": DETAIL_SCHEMA, "tavotto_version": __version__}
+    # 探的必须是**渲染这个项目时实际用的**解释器：项目采用了自己的 venv / 记住的解释器时，全局选择链
+    # （`find_worker_python`）探的是另一个对象。`resolve_worker_python` 是项目级决策的唯一出处，`discover=False`
+    # 不起发现子进程（读「此刻的决策」）；没打开项目时它退化成全局链。
+    figures_dir = (src.project or {}).get("figures_dir")
     try:
-        python = pool.find_worker_python()
+        python, source = pool.resolve_worker_python(figures_dir, discover=False)
     except pool.WorkerError as exc:
-        doc["interpreter"] = {"found": False, "error": str(exc)}
-        python = None
+        doc["interpreter"] = {
+            "found": False,
+            "error": str(exc),
+            "scope": "project" if figures_dir else "global",
+        }
+        python, source = None, None
     if python:
-        source = pool.source_of(python)
         doc["interpreter"] = {
             "found": True,
             "path": python,
-            "source": source,
+            "source": source,  # 项目 venv / 记住的 / 全局显式 / 内置 / 当前进程 …（pool.SOURCE_LABELS）
+            "scope": "project" if figures_dir else "global",
             "env_override": pool.worker_python_env(),
         }
         doc["probe"] = _probe_subprocess(python, source == pool.SOURCE_BUNDLED)
@@ -1325,16 +1336,68 @@ def source_candidates(src: Sources) -> list[tuple[str, Path]]:
     return [(r, seen[r]) for r in [*ordered, *rest]][:SOURCE_FILES]
 
 
+def _prose_spans(text: str) -> list[tuple[int, int]] | None:
+    """Python 源码里的**注释与字符串字面量**区间 `[(起, 止)]`（字符偏移）；tokenize 失败（语法坏的脚本）回 None。"""
+    import io
+    import tokenize
+
+    starts = [0]
+    for line in text.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    kinds = {tokenize.COMMENT, tokenize.STRING}
+    kinds |= {
+        getattr(tokenize, n)
+        for n in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
+        if hasattr(tokenize, n)
+    }
+    spans: list[tuple[int, int]] = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type in kinds:
+                a = starts[tok.start[0] - 1] + tok.start[1]
+                b = starts[tok.end[0] - 1] + tok.end[1]
+                spans.append((a, b))
+    except (tokenize.TokenError, IndentationError, SyntaxError, IndexError):
+        return None
+    return spans
+
+
+def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
+    """脚本源码的脱敏。可执行代码用 `code`（源码模式：`token = self._next()` 原样）；**注释和字符串字面量里**
+    的 `key=value` 是明文，必须用 `full`（完整 KV 替换）——`# api_key=REAL_SECRET` 不带引号，源码模式会放过它。
+    非 .py 一律 `full`；tokenize 失败（语法坏的 .py）时，带 `#` 的行整行按 `full` 处理，其余仍走 `code`。"""
+    if not rel.lower().endswith(".py"):
+        return full.text(text)
+    spans = _prose_spans(text)
+    if spans is None:
+        lines = [full.text(ln) if "#" in ln else ln for ln in text.split("\n")]
+        return code.text("\n".join(lines))
+    out: list[str] = []
+    pos = 0
+    for a, b in spans:
+        if a < pos:
+            continue
+        out.append(text[pos:a])
+        out.append(full.text(text[a:b]))
+        pos = b
+    out.append(text[pos:])
+    # 先把注释 / 字符串里的明文换掉，再整体过一遍源码模式（带引号的 `api_key = "…"` 字面量归它）
+    return code.text("".join(out))
+
+
 def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     items: list[Item] = []
     code_scrub = Scrubber(source_mode=True)
+    full_scrub = Scrubber()
     index = []
     for n, (rel, path) in enumerate(source_candidates(src)):
         got = _read_head(path, SOURCE_FILE_CAP)
         if got is None:
             continue
         raw, size = got
-        data = code_scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
+        data = scrub_script(
+            raw.decode("utf-8", errors="replace"), rel, full_scrub, code_scrub
+        ).encode("utf-8")
         if size > SOURCE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
         zip_name = f"{n + 1:02d}-{_safe_name(rel.replace('/', '__'))}"
@@ -1581,6 +1644,7 @@ def collect(src: Sources, opts: DetailOptions) -> list[Item]:
 
 def _apply_shares(items: list[Item]) -> list[Item]:
     used: dict[str, int] = {}
+    dropped: dict[str, int] = {}
     out: list[Item] = []
     for it in items:
         cap = SHARE.get(it.kind, 64 * 1024)
@@ -1591,9 +1655,48 @@ def _apply_shares(items: list[Item]) -> list[Item]:
                     it, data=it.shrink(left), original_bytes=it.original_bytes or it.size
                 )
             else:
+                dropped[it.kind] = (
+                    dropped.get(it.kind, 0) + it.size
+                )  # 整份没收：记账（manifest 的 original_bytes）
                 continue
         used[it.kind] = used.get(it.kind, 0) + it.size
         out.append(it)
+    for kind, n in dropped.items():  # 记在该类的第一份上（fit 汇总 `dropped_bytes`）
+        for idx, it in enumerate(out):
+            if it.kind == kind:
+                out[idx] = dataclasses.replace(it, dropped_bytes=it.dropped_bytes + n)
+                break
+    return out
+
+
+def _reconcile_index(group: list[Item]) -> list[Item]:
+    """内层 zip 的 `index.json` 必须与 zip 实际内容一致：index 里写着 `file` 的条目，对应文件不在这个 zip 里
+    （份额阶段或 `fit` 整份丢掉了）就标 `skipped_over_budget: true`。"""
+    members = {it.path for it in group}
+    out: list[Item] = []
+    for it in group:
+        if it.path != "index.json":
+            out.append(it)
+            continue
+        try:
+            doc = json.loads(it.data)
+        except ValueError:
+            out.append(it)
+            continue
+
+        def walk(o):
+            if isinstance(o, dict):
+                f = o.get("file")
+                if isinstance(f, str) and f not in members:
+                    o["skipped_over_budget"] = True
+                for v in o.values():
+                    walk(v)
+            elif isinstance(o, list):
+                for v in o:
+                    walk(v)
+
+        walk(doc)
+        out.append(dataclasses.replace(it, data=_dumps(doc)))
     return out
 
 
@@ -1610,6 +1713,7 @@ def entries(items: list[Item]) -> list[tuple[str, bytes]]:
         else:
             flat.append((it.path, it.data))
     for kind, group in inner.items():
+        group = _reconcile_index(group)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             for it in group:

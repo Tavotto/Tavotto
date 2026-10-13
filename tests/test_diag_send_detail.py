@@ -577,6 +577,154 @@ class TestOptionalContent:
 
 
 # ---------------------------------------------------------------------------
+# 源码脱敏（注释 / 字符串里的明文）、渲染环境的项目感知、整份丢弃的记账
+# ---------------------------------------------------------------------------
+class TestScriptScrub:
+    FULL = staticmethod(lambda: diagdetail.Scrubber())
+    CODE = staticmethod(lambda: diagdetail.Scrubber(source_mode=True))
+
+    def scrub(self, text, rel="fig.py"):
+        return diagdetail.scrub_script(text, rel, self.FULL(), self.CODE())
+
+    def test_secrets_in_comments_and_strings_are_gone_but_code_is_untouched(self):
+        src = (
+            "import os\n"
+            "# api_key=REAL_SECRET_1\n"
+            "# password: hunter2hunter2\n"
+            "x = 1  # token=abc123def456ghi789\n"
+            'DOC = """connect to https://h.example/p?access_token=REAL_SECRET_2&x=1"""\n'
+            "token = self._next()\n"
+            'api_key = os.environ["K"]\n'
+            'secret = "REAL_SECRET_QUOTED_3"\n'
+            "f = f'{x} key=REAL_SECRET_4'\n"
+        )
+        out = self.scrub(src)
+        for leaked in (
+            "REAL_SECRET_1",
+            "hunter2",
+            "abc123def456",
+            "REAL_SECRET_2",
+            "REAL_SECRET_QUOTED_3",
+        ):
+            assert leaked not in out, leaked
+        assert "token = self._next()" in out
+        assert 'api_key = os.environ["K"]' in out
+        assert "import os" in out and "x = 1" in out
+
+    def test_broken_syntax_falls_back_to_scrubbing_every_hash_line(self):
+        src = "def broken(:\n    # api_key=REAL_SECRET_5\n    token = self._next()\n    x = (\n"
+        out = self.scrub(src)
+        assert "REAL_SECRET_5" not in out and "token = self._next()" in out
+
+    def test_non_python_script_files_use_the_full_mode(self):
+        out = self.scrub("api_key=REAL_SECRET_6\ntoken = self._next()\n", rel="run.R")
+        assert "REAL_SECRET_6" not in out and "self._next()" not in out  # 完整模式：这类取值也换
+
+    def test_end_to_end_unticked_never_ticked_commented_secret(self, client, world):
+        proj = world["tmp"] / "proj2"
+        proj.mkdir()
+        (proj / "fig_c.py").write_text(
+            "# api_key=REAL_SECRET_E2E\ndef main():\n    return None\n", encoding="utf-8"
+        )
+        items = diagdetail.collect_source(
+            diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=["fig_c.py"]),
+            diagdetail.DetailOptions(source=True),
+            diagdetail.Scrubber(),
+        )
+        assert b"REAL_SECRET_E2E" not in b"".join(i.data for i in items)
+
+
+class TestRenderEnvIsProjectAware:
+    def test_the_probe_runs_in_the_projects_own_interpreter(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            pool, "resolve_worker_python", lambda d, **k: ("/p/.venv/bin/python", "project_venv")
+        )
+        monkeypatch.setattr(
+            diagdetail,
+            "_probe_subprocess",
+            lambda python, bundled: seen.update(python=python, bundled=bundled) or {"status": "ok"},
+        )
+        items = diagdetail.collect_render_env(
+            diagdetail.Sources(project={"figures_dir": "/p"}),
+            diagdetail.DetailOptions(),
+            diagdetail.Scrubber(),
+        )
+        doc = json.loads(items[0].data)
+        assert seen["python"] == "/p/.venv/bin/python" and seen["bundled"] is False
+        assert (
+            doc["interpreter"]["source"] == "project_venv"
+            and doc["interpreter"]["scope"] == "project"
+        )
+
+    def test_without_a_project_it_is_the_global_choice(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            pool,
+            "resolve_worker_python",
+            lambda d, **k: calls.append(d) or ("/g/python", "bundled"),
+        )
+        monkeypatch.setattr(
+            diagdetail, "_probe_subprocess", lambda python, bundled: {"bundled": bundled}
+        )
+        items = diagdetail.collect_render_env(
+            diagdetail.Sources(), diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        doc = json.loads(items[0].data)
+        assert (
+            calls == [None]
+            and doc["interpreter"]["scope"] == "global"
+            and doc["probe"] == {"bundled": True}
+        )
+
+
+class TestShareDropsAreAccounted:
+    def test_over_budget_sources_are_listed_as_skipped_and_counted(self, world, monkeypatch):
+        proj = world["tmp"] / "proj3"
+        proj.mkdir()
+        names = []
+        for i in range(4):
+            (proj / f"s{i}.py").write_text(f"# script {i}\n" + "x = 1\n" * 300, encoding="utf-8")
+            names.append(f"s{i}.py")
+        monkeypatch.setitem(diagdetail.SHARE, "source", 4000)  # 放得下约两份
+        opts = diagdetail.DetailOptions(source=True)
+        src = diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=names)
+        items = diagdetail.collect(src, opts)
+        mine = [i for i in items if i.kind == "source"]
+        total_raw = sum((proj / n).stat().st_size for n in names)
+        assert sum(i.dropped_bytes for i in mine) > 0
+        flat = dict(diagdetail.entries(items))
+        with zipfile.ZipFile(io.BytesIO(flat["optional-source.zip"])) as z:
+            members = set(z.namelist()) - {"index.json"}
+            index = json.loads(z.read("index.json"))
+        listed = {r["file"]: r for r in index["scripts"]}
+        assert set(listed) >= members and len(members) < 4
+        for f, r in listed.items():  # index 与 zip 逐一对得上
+            assert bool(r.get("skipped_over_budget")) == (f not in members)
+        # manifest 的 original_bytes = 全部原始字节（脚本）+ index
+        _data, _kept, trunc = diagdetail.fit(items, lambda its, t: b"x", 10**9)
+        row = next(t for t in trunc if t["kind"] == "source")
+        assert total_raw <= row["original_bytes"] <= total_raw + 4096
+        assert row["kept_bytes"] < row["original_bytes"]
+
+    def test_state_index_marks_files_dropped_by_fit(self):
+        group = [
+            diagdetail.Item(
+                "state",
+                "index.json",
+                b'{"files": [{"name": "a", "file": "a"}, {"name": "b", "file": "b"}, {"name": "c", "kind": "corrupt"}]}',
+            ),
+            diagdetail.Item("state", "a", b"1"),
+        ]
+        doc = json.loads(diagdetail._reconcile_index(group)[0].data)
+        assert "skipped_over_budget" not in doc["files"][0]
+        assert doc["files"][1]["skipped_over_budget"] is True
+        assert (
+            "skipped_over_budget" not in doc["files"][2]
+        )  # 没有 file 键的（损坏副本只列清单）不动
+
+
+# ---------------------------------------------------------------------------
 # 请求记录环
 # ---------------------------------------------------------------------------
 class TestRequestRing:
