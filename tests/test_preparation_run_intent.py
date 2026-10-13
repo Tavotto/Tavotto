@@ -477,10 +477,23 @@ def _service_claim(report: dict, kind: str, launches: list, **kw):
 
 
 def test_concurrent_arming_of_two_run_configurations_leaves_exactly_one_intent(
-    client, tmp_path, fake_pool, argv_pool, sessions
+    client, tmp_path, fake_pool, argv_pool, sessions, monkeypatch
 ):
     """两个标签页对同一脚本、不同运行配置并发武装：冲突检查与意图赋值在同一临界区，只有一边成功（Codex r4254020393）。"""
-    for i in range(30):
+    real_check = prepsession.SESSIONS._reject_conflict
+    meet = threading.Barrier(2)
+
+    def check_then_meet(sess):
+        # 把「检查通过 → 建意图」之间的窗口撑开：两个线程都过了检查再往下走。临界区原子时，另一个线程被锁挡在检查之外，
+        # 栅栏超时放行，它随后的检查会撞上已建好的意图
+        real_check(sess)
+        try:
+            meet.wait(0.3)
+        except threading.BrokenBarrierError:
+            meet.reset()
+
+    monkeypatch.setattr(prepsession.SESSIONS, "_reject_conflict", check_then_meet)
+    for i in range(6):
         prepsession.SESSIONS.reset_for_tests()
         _open(client, _workdir_project(tmp_path, f"c{i}"))
         one, two, _three = _three_sessions(client, "scripts/fig2.py")
