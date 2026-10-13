@@ -1094,3 +1094,76 @@ def test_malformed_launch_records_are_dropped_not_raised(tmp_path, monkeypatch, 
     )
     # 坏的只是这一条：配置本身与别的脚本的记录不受影响
     assert runconfig.get(proj, run.config_id, script="fig.py").argv == ("--n", "1")
+
+
+# ---------------------------------------------------------------------------
+# #975 第四轮评审
+# ---------------------------------------------------------------------------
+@needs_worker
+def test_the_legacy_probe_success_clears_an_older_launch_record(conda_world, tmp_path):
+    """A 经准备会话成功、B 再经旧 `/api/registry/probe` 成功：之后不带 argv 的打开不得悄悄沿用 A。"""
+    proj, prefix, log, counter = conda_world
+    work = tmp_path / "work"
+    env = {
+        "TAVOTTO_USER_ENV_DISCOVERY": "0",
+        "PYTHONPATH": str(ROOT / "src"),
+        "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
+        "FAKE_CONDA_LOG": str(log),
+        "TAVOTTO_WORKERD": "0",
+    }
+    with fa.running_app(proj, work, env_overrides=env) as app:
+        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
+            "completed"
+        )
+        assert "fig.py" in json.loads(store_text(work))["launches"]  # A 的记录在
+        status, probed = app.call(
+            "/api/registry/probe", {"script": "fig.py", "argv": ["--scale", "3"]}, timeout=300
+        )
+        assert status == 200 and probed["registered"] is True
+        stored = json.loads(store_text(work))
+        assert "fig.py" not in stored.get("launches", {})  # 旧路径与 default 同事务清掉 A
+        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert [r["argv"] for r in runs(counter)][-1] == []  # 不是 A，也不是 B：让用户重新给
+
+
+@needs_worker
+def test_a_run_that_adopts_a_new_project_venv_does_not_carry_the_old_argv(tmp_path):
+    """先在默认解释器上成功；再给项目加一个健康的 `.venv`；不带 argv 重开：检查时旧 argv 按默认解释器核验通过，
+    但点「运行」时环境检测采用了项目 venv——复用依据作废，旧 argv 不得在新解释器上执行。"""
+    from support import envworld
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    counter = tmp_path / "runs.jsonl"
+    (proj / "fig.py").write_text(
+        "import json, sys\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        f"open({str(counter)!r}, 'a').write(json.dumps({{'argv': sys.argv[1:], 'exe': sys.prefix}}) + '\\n')\n"
+        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    work = tmp_path / "work"
+    env = {
+        "TAVOTTO_USER_ENV_DISCOVERY": "1",
+        "PYTHONPATH": str(ROOT / "src"),
+        "TAVOTTO_WORKERD": "0",
+    }
+    with fa.running_app(proj, work, env_overrides=env) as app:
+        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
+            "completed"
+        )
+    first = runs(counter)
+    assert [r["argv"] for r in first] == [["--scale", "2"]]
+    venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
+    with fa.running_app(proj, work, env_overrides=env) as app:
+        rep = _run_session(app, {"script": "fig.py"})
+        after = runs(counter)[len(first) :]
+        assert all(r["argv"] != ["--scale", "2"] for r in after), (
+            after
+        )  # 旧 argv 没在新解释器上执行
+        if rep["phase"] != "completed":
+            # 依据作废的收场：什么都没执行；重新检查（按项目 venv 重核）后无旧 argv
+            assert after == []
+            rep = _run_session(app, {"script": "fig.py"})
+        assert rep["phase"] == "completed", rep
+        last = runs(counter)[-1]
+        assert last["argv"] == [] and Path(last["exe"]) == Path(venv_python).parent.parent

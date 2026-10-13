@@ -896,6 +896,7 @@ class SessionService:
             original_path=target.get("original_path"),
             target=target["kind"],
             **({"run": target["run"]} if target.get("run") is not None else {}),
+            **({"run_reused": True} if target.get("run_reused") else {}),
         )
 
     # ---- 动作 ----

@@ -3884,8 +3884,14 @@ def api_registry_probe():
                 run=run,
             )
             # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
-            engine_runconfig.set_default(
-                ctx.path, script, run.config_id if run is not None else None
+            # 同一事务里清掉该脚本旧的启动记录（这条旧路径没有回执，不产生新记录）：否则 A 先经准备会话成功、
+            # B 再经这里成功，之后不带 argv 的打开会悄悄沿用 A
+            engine_runconfig.commit_success(
+                ctx.path,
+                script,
+                None,
+                default_config_id=run.config_id if run is not None else None,
+                update_default=True,
             )
             # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
             # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
@@ -7477,9 +7483,11 @@ def _session_target(ctx: "ProjectCtx", body: dict):
     run = engine_runconfig.selection_for(
         ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
     )
+    reused = False
     if run is None and "argv" not in body:
         # P09 再次打开：请求没提 argv（不是明确的空数组），上次成功的启动上下文全部核验通过才带回它的运行配置
         run = _reusable_success_run(ctx, script)
+        reused = run is not None
     return {
         "kind": engine_preparation.TARGET_SCRIPT,
         "script": script,
@@ -7489,6 +7497,8 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         "original_artifact": None,
         "original_path": None,
         **({"run": run} if run is not None else {}),
+        # 这份运行配置是复用来的（不是用户这次给的）：执行前若解释器因本次运行而换了，复用依据作废（见 preparation）
+        **({"run_reused": True} if reused else {}),
     }, None
 
 

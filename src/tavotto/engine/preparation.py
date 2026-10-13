@@ -188,6 +188,9 @@ class PreparationPlan:
     #: 用户给的精确 argv 的运行配置（T03，`execspec.RunSelection`）。**私有**：argv 原文只在这里和 worker
     #: 命令行里，`to_payload()` / 回执 / LaunchContext 只带数量与本机不透明引用 `run_config`。None = 没给参数。
     run: object | None = None
+    #: `run` 是再次打开时由「上次成功的启动上下文」带回来的（P09，`launchctx.reusable_run`），不是用户这次给的。
+    #: 它是按**检查时**的解释器核验的；执行时若因本次运行的环境检测采用了另一个解释器，这份依据就不再成立（私有）。
+    run_reused: bool = False
     #: 数据改指也是计划的输入快照。私有字段；动作认领与执行线程都经 `_stale_reason` 对账。
     input_remap_generation: int | None = None
     #: 脚本目标的源码修订（`scriptargs.source_revision`：字节摘要 + 解析出的 schema 摘要，私有）。披露给用户的影响
@@ -240,6 +243,7 @@ def plan_for(
     original_path: str | None = None,
     target: str = TARGET_ASSET,
     run=None,
+    run_reused: bool = False,
 ) -> PreparationPlan:
     """按产品**自己的**决定拼一份计划——这里不做任何选择，只读。
 
@@ -457,6 +461,7 @@ def plan_for(
         binding=binding,
         target=target,
         run=run,
+        run_reused=bool(run_reused and run is not None),
         input_remap_generation=remap_generation,
         script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
     )
@@ -660,6 +665,7 @@ class PreparationService:
             original_artifact=None,
             target=plan.target,
             **({"run": plan.run} if plan.run is not None else {}),
+            run_reused=plan.run_reused,
         )
         # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
         # 换计划（交回 None，由对账给出过期结局）
@@ -707,6 +713,24 @@ class PreparationService:
             # 解释器——这一步是**本次运行自己**做的，不是别人改了环境：就地按采用后的解释器重算计划再往下走（能跑就跑；
             # 缺包由起会话那道依赖门收成「需要安装」），不让用户为此重新检查一次。别的过期原因照旧由下面的对账拦下
             decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
+            if decision.adopted is not None and plan.run_reused:
+                # 复用来的运行配置是按检查时的解释器核验的；这次运行自己采用了另一个解释器 = 依据作废。不带着旧 argv
+                # 在新解释器上跑，也不静默改成无参数：按「环境变了」收场，请用户重新检查（重新检查会按新解释器重核）
+                plan = dataclasses.replace(plan, run_reused=False)
+                entry.plan = plan
+                tr.fail("check", ERROR_PLAN_STALE, reason=STALE_ENVIRONMENT)
+                result.error = {
+                    "code": ERROR_PLAN_STALE,
+                    "reason": STALE_ENVIRONMENT,
+                    "executed": False,
+                    "message": _STALE_MESSAGES[STALE_ENVIRONMENT],
+                }
+                self._finish(
+                    entry,
+                    STATUS_ERROR,
+                    note="复用的运行配置依据作废（解释器换了），没有执行任何脚本",
+                )
+                return
             if decision.adopted is not None:
                 before = self._stale_reason(plan)
                 if before is None or before[0] == STALE_ENVIRONMENT:
