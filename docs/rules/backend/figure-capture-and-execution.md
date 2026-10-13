@@ -364,6 +364,9 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
   不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的
   （`pool.select_worker_python`）。`plan_for` 写进环境错误，`_execute` 零执行收场（`deprepair.decide_environment_pinned` 把它转成 `WorkerError`）。
+  **prefix 旁边的 conda**（`<root>/envs/<name>` 的 `<root>/bin/conda`、prefix 自己的 `bin/conda`）只在这个 prefix 登记在用户的
+  `~/.conda/environments.txt` 里时才信：克隆来的项目可以自带 `.venv/conda-meta/` + 可执行的 `.venv/bin/conda`，体检不能执行它；
+  `CONDA_EXE` / `PATH` 上的 conda 是用户自己的，照常。
   找得到 Conda 环境却找不到 conda 可执行文件：先从用户自己的 `~/.conda/environments.txt` 推安装根（**不**读 `conda-meta/history`：那是项目目录里
   可写的文件，克隆来的项目能自造 `evil/bin/conda` + `evil/conda-meta`，打开项目就会执行它；推出的位置也不许落在项目目录或正在探测的 prefix 里），
   仍找不到则维持裸起（不需要激活的环境照常工作，与 main

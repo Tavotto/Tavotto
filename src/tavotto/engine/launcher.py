@@ -105,9 +105,14 @@ def conda_prefix_of(python: str | os.PathLike) -> str | None:
 def _conda_candidates(prefix: str) -> list[str]:
     """prefix 对应的 conda 可执行文件候选（按可信度排序）。"""
     pre = Path(prefix)
-    # `<root>/envs/<name>` → root；否则 prefix 自己可能就是 base
-    roots = [pre.parent.parent] if pre.parent.name == "envs" else []
-    roots.append(pre)
+    # `<root>/envs/<name>` → root；否则 prefix 自己可能就是 base。
+    # **只在这个 prefix 是用户自己的 conda 登记过的环境时**才信 prefix 旁边的 conda：克隆来的项目可以自带一个
+    # `conda-meta/` + 可执行的 `bin/conda`，“检查环境”不能变成“执行项目里的文件”。conda 每建一个环境（含 `-p`）都会
+    # 写进 `~/.conda/environments.txt`——那是用户自己的文件，项目改不了它
+    roots = []
+    if _registered_prefix(pre):
+        roots = [pre.parent.parent] if pre.parent.name == "envs" else []
+        roots.append(pre)
     out: list[str] = []
     for root in roots:
         if os.name == "nt":
@@ -165,13 +170,33 @@ def _untrusted_zones(prefix: Path) -> list[Path]:
     return zones
 
 
-def _environments_txt_conda(prefix: Path) -> list[str]:
-    """`~/.conda/environments.txt`（conda 登记过的环境前缀，用户自己的文件）→ 各自所属安装根的 `bin/conda`。"""
+def _environments_txt_lines() -> list[str]:
     try:
         with open(_environments_txt_path(), encoding="utf-8", errors="replace") as fh:
-            lines = [ln.strip() for ln in fh.read(65536).splitlines()][:100]
+            return [ln.strip() for ln in fh.read(65536).splitlines()][:100]
     except OSError:
         return []
+
+
+def _registered_prefix(prefix: Path) -> bool:
+    """这个 prefix 是不是用户自己的 conda 登记过的环境（`~/.conda/environments.txt` 里有它）。"""
+    try:
+        want = os.path.realpath(prefix)
+    except (OSError, ValueError):
+        return False
+    for ln in _environments_txt_lines():
+        if ln and os.path.isabs(ln):
+            try:
+                if os.path.realpath(ln) == want:
+                    return True
+            except (OSError, ValueError):
+                continue
+    return False
+
+
+def _environments_txt_conda(prefix: Path) -> list[str]:
+    """`~/.conda/environments.txt`（conda 登记过的环境前缀，用户自己的文件）→ 各自所属安装根的 `bin/conda`。"""
+    lines = _environments_txt_lines()
     zones = _untrusted_zones(prefix)
     out: list[str] = []
     for ln in lines:

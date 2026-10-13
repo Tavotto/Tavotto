@@ -176,6 +176,10 @@ def make_fake_conda(
     )
     for p in (py, conda):
         os.chmod(p, 0o755)
+    # 真 conda 建环境时会登记进用户的 `~/.conda/environments.txt`（这里是被 autouse 夹具改到 tmp 的那份）：
+    # 只有登记过的 prefix，旁边的 conda 才被信任
+    with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
+        fh.write(f"{prefix}\n")
     return prefix, conda, tmp_path / "conda.log"
 
 
@@ -366,6 +370,8 @@ def test_failed_run_leaves_no_success_memory(conda_world, tmp_path):
         "PYTHONPATH": str(ROOT / "src"),
         "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
         "FAKE_CONDA_LOG": str(log),
+        # 应用子进程读的是真实的 ~/.conda/environments.txt（不是夹具改过的那份）：像用户的终端一样给 CONDA_EXE
+        "CONDA_EXE": str(prefix.parent.parent / "bin" / "conda"),
         "TAVOTTO_WORKERD": "0",
     }
     with fa.running_app(proj, work, env_overrides=env) as app:
@@ -677,6 +683,8 @@ def test_the_legacy_probe_success_clears_an_older_launch_record(conda_world, tmp
         "PYTHONPATH": str(ROOT / "src"),
         "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
         "FAKE_CONDA_LOG": str(log),
+        # 应用子进程读的是真实的 ~/.conda/environments.txt（不是夹具改过的那份）：像用户的终端一样给 CONDA_EXE
+        "CONDA_EXE": str(prefix.parent.parent / "bin" / "conda"),
         "TAVOTTO_WORKERD": "0",
     }
     with fa.running_app(proj, work, env_overrides=env) as app:
@@ -707,6 +715,8 @@ def test_success_is_recorded_and_argv_behaviour_is_unchanged(conda_world, tmp_pa
         "PYTHONPATH": str(ROOT / "src"),
         "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
         "FAKE_CONDA_LOG": str(log),
+        # 应用子进程读的是真实的 ~/.conda/environments.txt（不是夹具改过的那份）：像用户的终端一样给 CONDA_EXE
+        "CONDA_EXE": str(prefix.parent.parent / "bin" / "conda"),
         "TAVOTTO_WORKERD": "0",
     }
     with fa.running_app(proj, work, env_overrides=env) as app:
@@ -2290,3 +2300,27 @@ def test_the_first_open_outcome_is_invalidated_when_the_conda_environment_change
     with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
         fh.write("# cmd: conda install vendor-sdk\n")
     assert projectenv._outcome_fingerprint(outcome) != before  # noqa: SLF001
+
+
+@posix_only
+def test_a_cloned_project_cannot_plant_its_own_conda_next_to_an_unregistered_prefix(tmp_path, monkeypatch):
+    """克隆来的项目自带 `.venv/conda-meta/` + 可执行的 `.venv/bin/conda`：这个 prefix 没在用户的 environments.txt 里登记，
+    旁边的 conda 一律不信（否则“打开项目做体检”就执行了项目里的文件）；登记过的 prefix 照常找得到。"""
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setenv("PATH", "/nonexistent")
+    proj = tmp_path / "cloned"
+    venv = proj / ".venv"
+    (venv / "conda-meta").mkdir(parents=True)
+    (venv / "bin").mkdir()
+    planted = venv / "bin" / "conda"
+    marker = tmp_path / "planted-ran"
+    planted.write_text(f"#!/bin/sh\ntouch {marker}\nexit 0\n", encoding="utf-8")
+    os.chmod(planted, 0o755)
+    (proj / "pyproject.toml").write_text("", encoding="utf-8")
+    assert launcher.find_conda_exe(str(venv)) is None
+    assert launcher.launcher_for_interpreter(str(venv / "bin" / "python")) is None
+    assert not marker.exists()
+    # 用户自己用 conda 建的（登记过）：旁边的 conda 照常
+    with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
+        fh.write(f"{venv}\n")
+    assert launcher.find_conda_exe(str(venv)) == str(planted)
