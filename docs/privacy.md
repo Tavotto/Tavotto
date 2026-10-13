@@ -237,9 +237,11 @@ Offering the option uploads nothing; sending does:
   permission that the receiving service issues for that single file; the file does
   not pass through the Tavotto server. Like any network request, the receiving
   service and the storage provider see your IP address in the connection. The
-  receiving service keeps no access log and uses the address only, transiently and
-  salted-and-hashed, to rate-limit requests; the storage provider's own handling
-  follows its terms.
+  receiving service itself uses the address only, transiently and salted-and-hashed,
+  to rate-limit requests. Its requests arrive through the `tavotto.cn` web server,
+  which writes the same access log as for the website (address shortened as
+  described in *The tavotto.cn website* below, no query string, no request body,
+  kept 30 days). The storage provider's own handling follows its terms.
 * **How to turn it off.** Set the environment variable `TAVOTTO_NO_DIAG_UPLOAD=1`
   (or `TAVOTTO_DIAG_UPLOAD=0`) for the Tavotto process; the option then disappears
   from every screen and the local endpoints that serve it do not exist. Exporting
@@ -277,7 +279,9 @@ to other computers.
 
 The Chinese-language website <https://tavotto.cn/> (also reached through
 `www.tavotto.cn`) is a static site run by the project maintainer. Its pages load
-no analytics or tracking scripts and set or read no cookies.
+no analytics or tracking scripts and set or read no cookies. The same server also
+receives *Send problem report* uploads from the desktop app (three API paths under
+`/v1/reports/`); those requests are logged the same way.
 
 To see how many people visit and where they come from, the website's server keeps
 an access log. Each entry keeps only: the time; the visitor's IP address with the
