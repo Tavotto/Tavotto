@@ -273,7 +273,7 @@
 - **失败码**是客户端的闭集（`FAILURES`，25 个，值 = 用户能不能再点）；`web` 的 `settings.diagnostics.send.failure.*` 与它严格同源（前端用例读这个文件对拍键集）。
 - 看护：`tests/test_diag_send.py`（对端是 `tests/support/diag_fakes.py` 的本地模拟：零请求、主路径、幂等重试、每个状态码、SSRF / 重定向 / 字段注入、取消、超限与坏包、
   金丝雀不泄漏、契约对账）、`tests/test_diag_send_api.py`（Flask 层）、`tests/test_outbound_https_trust.py`（第五处出站）。真实 COS C1–C16 已于 2026-10-13 全部 PASS
-  （证据在 Tavotto/infra `docs/diagnostics-api/acceptance-cos.md`，infra#19）；模拟契约通过不等于真 COS 通过，改上传路径后要按那份清单重验。真机 WebView 逐次确认联调**未做（NOT_RUN）**。
+  （证据在 infra 仓库 diagnostics-api 文档目录里的真实 COS 验收清单，infra#19）；模拟契约通过不等于真 COS 通过，改上传路径后要按那份清单重验。真机 WebView 逐次确认联调**未做（NOT_RUN）**。
 
 ## 网址只留 origin（bundle schema 7，Codex #923 P2）
 
