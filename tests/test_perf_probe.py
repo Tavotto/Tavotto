@@ -748,8 +748,13 @@ def test_action_summary_filters_untrusted_names_and_values():
     report["actions"] = [
         {"kind": "secret_file.py", "sync_ms": 999, "ok": True},
         {"kind": "symbol.insert", "sync_ms": -4, "ok": True},
-        {"kind": "symbol.insert", "sync_ms": 12, "two_raf_ms": None,
-         "phases": {"path": 20, "document.commit": 9}, "ok": False},
+        {
+            "kind": "symbol.insert",
+            "sync_ms": 12,
+            "two_raf_ms": None,
+            "phases": {"path": 20, "document.commit": 9},
+            "ok": False,
+        },
     ]
     a = PR.analyze_report(report)
     assert a["actions"][0]["count"] == 1
