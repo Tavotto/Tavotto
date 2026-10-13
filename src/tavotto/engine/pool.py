@@ -1305,6 +1305,10 @@ def worker_env(python: str, source: str, *, base: dict | None = None) -> dict | 
     return runtime.owned_env(python, base)
 
 
+#: 选解释器预检（`_has_matplotlib`）的总预算：Conda 激活捕获 + import 探针共用
+_HAS_MPL_BUDGET_S = 30.0
+
+
 def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     """真去 import 一次。manifest 说装了不算数——DLL 缺失、被杀毒软件隔离了
     某个 .pyd，都是「文件在但 import 不了」。
@@ -1323,10 +1327,15 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     """
     args = runtime.probe_args(bundled=bundled)
     # 需要 Conda 激活的解释器：预检也用激活后的环境（与 worker 同一个启动决策）
-    # 激活取环境失败 → `LauncherUnavailable` 原样抛出（不是“没有 matplotlib”，不进体检缓存）；预算 = 下面探针的 30s
+    # 激活取环境失败 → `LauncherUnavailable` 原样抛出（不是“没有 matplotlib”，不进体检缓存）。
+    # 激活与探针共用一个 30s 预算；激活把它用完同样是瞬时的不可用，不是“没有 matplotlib”
+    deadline = time.monotonic() + _HAS_MPL_BUDGET_S
     env = launcher_mod.activate_env(
-        python, runtime.probe_env(python, bundled=bundled), timeout=30.0
+        python, runtime.probe_env(python, bundled=bundled), timeout=_HAS_MPL_BUDGET_S
     )
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise launcher_mod.LauncherUnavailable("经 Conda 激活取环境用完了预检的时间预算；请稍后再试")
     try:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
@@ -1334,7 +1343,7 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
         probe = subprocess.run(
             [python, *args, "-c", "import matplotlib"],
             capture_output=True,
-            timeout=30,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
             env=env,
             creationflags=runtime.CREATE_NO_WINDOW,

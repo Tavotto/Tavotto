@@ -2181,3 +2181,32 @@ def test_timeout_cleanup_has_one_overall_deadline_however_deep_the_tree(monkeypa
     launcher._kill_tree(P())
     assert time.monotonic() - t0 < launcher._KILL_TREE_BUDGET_S + 1.0
     assert killed_group == [4242]
+
+
+@needs_worker
+def test_the_interpreter_preflight_shares_its_budget_with_the_activation(activation_only_env, monkeypatch):
+    """选解释器预检：激活捕获用掉的时间从 import 探针的 30s 里扣；用完了 = 瞬时不可用，不是“没有 matplotlib”。"""
+    py, prefix, log = activation_only_env
+    real_capture = launcher._capture  # noqa: SLF001
+    real_run = _pool.subprocess.run
+    run_timeouts: list[float] = []
+
+    def slow_capture(python, lau, timeout):
+        time.sleep(1.5)
+        return real_capture(python, lau, timeout)
+
+    def spy_run(*a, **k):
+        run_timeouts.append(k.get("timeout"))
+        return real_run(*a, **k)
+
+    monkeypatch.setattr(launcher, "_capture", slow_capture)
+    monkeypatch.setattr(_pool.subprocess, "run", spy_run)
+    launcher.reset_captures()
+    assert _pool._has_matplotlib(py) is True  # noqa: SLF001
+    assert run_timeouts and run_timeouts[-1] <= _pool._HAS_MPL_BUDGET_S - 1.5  # noqa: SLF001
+    run_timeouts.clear()
+    launcher.reset_captures()
+    monkeypatch.setattr(_pool, "_HAS_MPL_BUDGET_S", 1.0)
+    with pytest.raises(launcher.LauncherUnavailable):
+        _pool._has_matplotlib(py)  # noqa: SLF001
+    assert run_timeouts == []
