@@ -800,18 +800,24 @@ class NativeSession:
         }
 
 
+#: `shutdown_all` 等在途启动线程收尾的总上限（秒）。
+_START_WAIT_S = 30.0
+
+
 class StartTicket:
     """一次桌面拥有的启动在注册表里的「在途」登记：**spawn 之前**就领，Popen 之后才挂上所有者。
 
     `shutdown_all` 的快照里要么看得到它（并标 `cancelled`，之后挂所有者的一步会被拒），要么注册表已 closing
     根本领不到——两者之间没有「进程已起、谁也看不见」的窗口。"""
 
-    __slots__ = ("launch_id", "owner", "cancelled")
+    __slots__ = ("launch_id", "owner", "cancelled", "done")
 
     def __init__(self, launch_id: str):
         self.launch_id = launch_id
         self.owner = None
         self.cancelled = False
+        #: 启动线程走完（成功或失败收尾都做完）时置位：关停据此等「在途的启动线程」，哪怕它还没 Popen
+        self.done = threading.Event()
 
 
 class NativeSessionRegistry:
@@ -907,11 +913,18 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
             ticket.owner = owner
 
+    def check_start(self, ticket: StartTicket) -> None:
+        """Popen 之前的检查点：关停已开始就拒绝，**不再 spawn**。"""
+        with self._lock:
+            if self._closing or ticket.cancelled:
+                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+
     def end_start(self, ticket: StartTicket) -> None:
         """按登记**身份**移除：同 id 重试（ABA）时先前那次的收尾删不掉后来者的。"""
         with self._lock:
             if self._starting.get(ticket.launch_id) is ticket:
                 del self._starting[ticket.launch_id]
+        ticket.done.set()
 
     def reopen(self) -> None:
         """清 closing（仅测试隔离 / 同进程重启用）。"""
@@ -1064,6 +1077,11 @@ class NativeSessionRegistry:
             th.start()
         for th in threads:
             th.join(60)
+        # 每张在途票据都等到它的启动线程收尾（含还没 Popen / 还没挂所有者的）：否则这里先返回、sidecar 先退出，
+        # 启动线程随后才 Popen，子进程就成了孤儿。有界（spawn 预算 + 失败收尾）
+        deadline = time.monotonic() + _START_WAIT_S
+        for t in tickets:
+            t.done.wait(max(0.0, deadline - time.monotonic()))
         return len(sessions) + len(tickets)
 
 

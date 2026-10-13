@@ -122,8 +122,8 @@ terminal 的 `stable_payload()` / `launch_context()` 逐字节不变（golden）
 | 窗口 | 处理 |
 |---|---|
 | 关停先于 `reserve` / `begin_start` | closing 拒绝，一行用户代码没跑 |
-| `begin_start` 之后、Popen 之前关停 | 票据已 `cancelled`；Popen 后 `attach_owner` 被拒，启动线程收子进程 |
-| Popen 之后、`attach_owner` 之前（含 `_scope_for` 慢） | 同上（有用例撑开此窗口） |
+| `begin_start` 之后、Popen 之前关停 | Popen 前有检查点（`check_start`）看到 cancelled 就不再 spawn；`shutdown_all` 还会等每张票据的启动线程收尾（`StartTicket.done`，上限 30 s），所以返回时不会再有子进程冒出来 |
+| Popen 之后、`attach_owner` 之前关停 | `attach_owner` 被拒，启动线程自己收子进程（`shutdown_all` 同样等它收尾） |
 | `attach_owner` 之后、握手 / reader / 登记之前 | 快照里有所有者，`terminate_sync` 同步收；启动线程看到子进程退出走失败收尾 |
 | `adopt` 之前 closing | `adopt` 拒绝，失败收尾收进程 |
 | 已登记、`arm()` 之前 | `cancel_owned()` 等闸门（微秒级） |
@@ -132,3 +132,5 @@ terminal 的 `stable_payload()` / `launch_context()` 逐字节不变（golden）
 | **残余**：sidecar 被 SIGKILL / 崩溃 | POSIX 无 `KILL_ON_JOB_CLOSE` 等价物，子进程成孤儿（Windows 靠 Job） |
 | **残余**：`terminate_sync` / `cancel_owned` 的并发上限 60 s | 超时仍在则不阻止退出（租约随进程消失） |
 | **残余**：`owner.start()` 自己抛错（线程创建失败） | 不处理更深的资源耗尽 |
+
+会话产物目录默认用每次启动唯一的会话 id（`native-owned-<launch_id>-<后缀>`），同一 `launch_id` 重试不继承上一次的 `.preview-ledger` 与产物。

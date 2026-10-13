@@ -92,7 +92,7 @@ class OwnedLaunch:
     * `spec`：解释器 / 入口（脚本或 `-m`）/ argv（经运行配置引用）/ 显式 cwd / env 增量及来源 /
       stdin 通道——全在 `execspec.desktop_native_spec` 的产物里；
     * `launch_id`：回执与会话的关联键（公开，不含任何参数值）；
-    * `out_dir`：会话产物目录（空 = `data_dir()/cache/native/<launch_id>`）。
+    * `out_dir`：会话产物目录（空 = `data_dir()/cache/native/<会话 id>`（会话 id 含每次启动唯一的后缀））。
     """
 
     spec: execspec.ExecutionSpec
@@ -639,7 +639,8 @@ def start(
         out_dir = launch.out_dir
     else:
         cache_root = Path(config.data_path("cache", "native")).resolve()
-        out_dir = str((cache_root / launch.launch_id).resolve())
+        # 目录名用**每次启动唯一**的会话 id：同一个 launch_id 重试不会继承上一次的 .preview-ledger 与产物
+        out_dir = str((cache_root / session_id).resolve())
         if (
             Path(out_dir).parent != cache_root
         ):  # 白名单之外的最后一道：拼出来的目录必须就在缓存根下一层
@@ -689,6 +690,7 @@ def start(
             control_port=relay.child_port,
         )
         env = {**os.environ, **(spec.env or {}), bridge.TOKEN_ENV: relay.child_token}
+        registry.check_start(ticket)  # Popen 之前的最后检查点：关停已开始就不再 spawn
         try:
             proc = subprocess.Popen(  # noqa: S603 — argv 是列表，shell=False
                 argv,

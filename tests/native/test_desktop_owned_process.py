@@ -1158,3 +1158,67 @@ def test_shutdown_all_returns_only_after_a_sigterm_ignoring_starting_child_is_go
     finally:
         gate.set()
         t.join(60)
+
+
+def test_shutdown_waits_for_a_start_that_has_not_popen_yet_and_it_never_spawns(
+    tmp_path, monkeypatch
+):
+    """begin_start 之后、Popen 之前撑开窗口并发关停：shutdown_all 等那条启动线程收尾，之后也不会出现子进程。"""
+    from tavotto.engine import nativerelay
+
+    gate, in_window = threading.Event(), threading.Event()
+    spawns = []
+    real_init = nativerelay.NativeRelay.__init__
+    real_popen = subprocess.Popen
+
+    def slow_init(self, *a, **kw):
+        real_init(self, *a, **kw)
+        in_window.set()
+        gate.wait(60)  # 已领在途登记、还没 Popen
+
+    def counting_popen(*a, **kw):
+        spawns.append(1)
+        return real_popen(*a, **kw)
+
+    monkeypatch.setattr(nativerelay.NativeRelay, "__init__", slow_init)
+    monkeypatch.setattr(desktopproc.subprocess, "Popen", counting_popen)
+    box = {}
+
+    def go():
+        try:
+            box["session"] = dk.start(tmp_path, RUNNING_SCRIPT)
+        except BaseException as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    starter = threading.Thread(target=go, daemon=True)
+    starter.start()
+    assert in_window.wait(30)
+    stopper = threading.Thread(target=nativesession.REGISTRY.shutdown_all, daemon=True)
+    stopper.start()
+    time.sleep(0.6)
+    assert stopper.is_alive(), "shutdown_all 没等在途的启动线程就返回了"
+    gate.set()
+    stopper.join(60)
+    starter.join(60)
+    assert not stopper.is_alive()
+    assert spawns == [], "关停之后启动线程仍然 Popen 了"
+    assert isinstance(box.get("error"), RunError)
+    assert box["error"].code == runcodes.NATIVE_REGISTRY_CLOSING
+    assert envlease.snapshot()["native"] == {}
+
+
+def test_a_reused_launch_id_does_not_inherit_the_previous_runs_artifacts(tmp_path):
+    from tavotto.engine import figcapture
+
+    fig_script = (
+        dk.FIGURE_HEADER + 'fig, ax = plt.subplots()\nax.plot([0, 1])\nfig.savefig("A.png")\n'
+    )
+    first_launch = dk.launch_for(tmp_path / "a", fig_script, launch_id="reuse")
+    first = desktopproc.start(desktopproc.OwnedLaunch(first_launch.spec, launch_id="reuse"))
+    dk.finish(first)
+    assert figcapture.published_preview_stems(str(first.out_dir)) != []
+    second_launch = dk.launch_for(tmp_path / "b", "print('no figure')\n", launch_id="reuse")
+    second = desktopproc.start(desktopproc.OwnedLaunch(second_launch.spec, launch_id="reuse"))
+    assert second.owned.wait(30)
+    assert second.out_dir != first.out_dir
+    assert figcapture.published_preview_stems(str(second.out_dir)) == [], "继承了上一次的产物"
