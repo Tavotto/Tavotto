@@ -7,7 +7,10 @@
 * `CondaLauncher` 是不可变的结构化描述（conda 可执行文件 + prefix），`wrap()` 产出 **argv 数组**，
   绝不拼 shell 字符串。语义按官方 `conda run`（<https://docs.conda.io/projects/conda/en/stable/commands/run.html>，
   2026-10-13 核对）：`-p/--prefix PATH` 指环境、`-s/--no-capture-output/--live-stream` 不捕获 stdout/stderr
-  （worker 的 v1 协议跑在 stdout 上，必须直通）、`--cwd CWD` 设工作目录、`--` 分隔 conda 选项与被执行命令。
+  （worker 的 v1 协议跑在 stdout 上，必须直通）、`--cwd CWD` 设工作目录。**不带 `--` 分隔符**：`conda run` 的命令部分是
+  argparse 的 REMAINDER，从第一个非选项的位置参数（可执行文件）起，后面的参数——含 `-u`、`-X`、`-c`、`--flag` 这类以 `-` 开头的——
+  都原样透传；而较老的 conda（实测 24.5.0，conda/conda#13639）不认 `--`，会把它当成可执行文件报 `--: command not found`。
+  所以可执行文件必须是绝对路径、不以 `-` 开头（`wrap()` 强制）。
 * 持久化的只有**结构化引用**（`public()`：种类 + conda 路径 + prefix），**激活后的环境变量一个都不存**——那是秘密面
   （SDK 的许可证串 / 令牌常在里面）；激活由 conda 在每次启动时重新做。
 * `GroupPopen`：包装后的进程树是「conda → 激活包装脚本 → 用户 Python」。只杀 conda 会留下仍在跑的用户 Python，
@@ -149,15 +152,18 @@ class CondaLauncher:
             raise ValueError("CondaLauncher 需要 conda_exe 与 prefix")
 
     def wrap(self, argv: list[str] | tuple[str, ...], *, cwd: str | None = None) -> list[str]:
-        """被执行命令 `argv` → 经 `conda run` 的完整 argv 数组（每个 token 一项，`--` 之后原样）。
+        """被执行命令 `argv` → 经 `conda run` 的完整 argv 数组（每个 token 一项；可执行文件之后原样透传）。
 
-        `--no-capture-output` 恒带：worker 的协议在 stdout 上，被 conda 捕获 = 协议死锁。"""
+        `--no-capture-output` 恒带：worker 的协议在 stdout 上，被 conda 捕获 = 协议死锁。不带 `--`（见模块头）；
+        `argv[0]` 必须是绝对路径——它是 REMAINDER 的起点，以 `-` 开头会被 conda 当成它自己的选项。"""
         if not argv:
             raise ValueError("wrap 需要非空 argv")
+        exe = str(argv[0])
+        if not os.path.isabs(exe) or exe.startswith("-"):
+            raise ValueError(f"wrap 需要绝对路径的可执行文件（不能以 - 开头）: {exe!r}")
         out = [self.conda_exe, "run", "--no-capture-output", "--prefix", self.prefix]
         if cwd:
             out += ["--cwd", str(cwd)]
-        out.append("--")
         out.extend(str(a) for a in argv)
         return out
 
@@ -231,6 +237,11 @@ def run_probe(argv, python, *, timeout=None, **kwargs):
     原样 `subprocess.run`，行为一字不变。只改「怎么起」，不改探针的内容、超时、env、cwd。"""
     decider = _PROBE_DECIDER.get()
     lau = decider(python) if decider is not None else detect(python)
+    if lau is not None:
+        try:
+            lau.wrap(list(argv))  # 先校验：可执行文件不是绝对路径就没法安全包装，按裸起探
+        except ValueError:
+            lau = None
     if lau is None:
         kwargs.pop("creationflags", None)  # 探针一律是 GUI 拥有的隐藏子进程
         return subprocess.run(

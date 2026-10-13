@@ -353,7 +353,7 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   **不当可执行路径**（要执行的 conda 永远由 `launcher.detect(python)` 现场找）。`launchctx.verify` 是全依据核验，供「再次打开时沿用
   上次成功配置」用——**这个消费端不在本期**（#982，P07 结合界面做）：界面无参数时本来就不带 `argv`，不能靠省略推断；
   P09 之前的 argv 行为逐字节不变。
-- **Conda launcher**（`launcher.py`）：`conda run --no-capture-output --prefix <prefix> [--cwd <dir>] -- <argv…>` 的结构化 argv，
+- **Conda launcher**（`launcher.py`）：`conda run --no-capture-output --prefix <prefix> [--cwd <dir>] <绝对路径的可执行文件> <argv…>` 的结构化 argv，**不带 `--`**：`conda run` 的命令部分是 argparse REMAINDER，从第一个非选项的位置参数（可执行文件）起后面全部原样透传（含 `-u` / `-X` / `-c` / `--flag`）；较老的 conda（实测 24.5.0，conda/conda#13639）不认 `--`、把它当成可执行文件报 `--: command not found`。所以可执行文件必须是绝对路径且不以 `-` 开头（`wrap()` 强制），
   按官方文档语义（`--no-capture-output` 恒带：worker 协议在 stdout 上）；不拼 shell；不认 `conda.bat`；mamba / micromamba、
   IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。钩子输出没有换行结尾时会和 worker 第一条信封粘成一行：读线程从左到右找能让后缀整体通过信封判据（`protocol_version` + 字符串 `request_id`，键序不固定）的 `{`，前缀转日志、后缀交回（最多试 16 个 `{`）；只做解析侧、不改 worker：粘连发生在 Python 启动之前，解析侧一处覆盖所有包装启动，worker 无需知道自己被包装。**Windows 本期不做 Conda 包装**（`detect()` 在 nt 上返回 None、裸起，与 P09 之前一致）：没有真机验证，
   conda.exe 经中间 shell 起 Python 时回执的 pid 核验也没有可靠依据；留待 Windows 真机验证后再开。成功记录的依据必须完整可核验

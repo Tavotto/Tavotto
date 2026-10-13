@@ -3,7 +3,7 @@
 **这里没有真实 Conda。** 本机（和 CI 的 Linux 腿）没有 conda / mamba / micromamba，所以「真实受支持 Conda 启动」那一档
 是 `not_run`（见 `test_real_conda_launch`，无 conda 时 skip）。其余用例用一个**模拟 conda**：一个按官方 `conda run` 文档
 （<https://docs.conda.io/projects/conda/en/stable/commands/run.html>）语义写的小脚本——认 `run` / `--prefix|-p` /
-`--no-capture-output|-s|--live-stream` / `--cwd` / `--`，**没带 `--no-capture-output` 就拒绝**（真 conda 会捕获 stdout，
+`--no-capture-output|-s|--live-stream` / `--cwd` / 命令部分是 REMAINDER（**没有** `--` 分隔符：老 conda 24.5.0 会把它当可执行文件），**没带 `--no-capture-output` 就拒绝**（真 conda 会捕获 stdout，
 worker 协议死锁），激活 = 往子进程环境里放 `CONDA_PREFIX` 和一个只有激活后才有的「SDK 许可串」，然后以继承的 stdio
 运行命令。它证明的是 Tavotto 的 argv / 进程树 / 持久化行为，**不证明**真 conda 的行为。
 
@@ -52,10 +52,20 @@ FAKE_CONDA = r"""#!{python}
 import json, os, subprocess, sys
 
 args = sys.argv[1:]
-if not args or args[0] != "run" or "--" not in args:
+if not args or args[0] != "run":
     sys.exit(2)
-sep = args.index("--")
-opts, cmd = args[1:sep], args[sep + 1 :]
+# conda run 的命令部分是 argparse REMAINDER：选项只认到第一个非选项的位置参数（可执行文件）为止，之后原样透传。
+# 较老的 conda（24.5.0）不认 `--`：它也算「位置参数」，于是被当成可执行文件（`--: command not found`，退出码 127）。
+rest = args[1:]
+n = 0
+while n < len(rest) and rest[n].startswith("-") and rest[n] != "--":
+    n += 2 if rest[n] in ("--prefix", "-p", "--cwd", "-n", "--name") else 1
+opts, cmd = rest[:n], rest[n:]
+if cmd and cmd[0] == "--":
+    sys.stderr.write("--: command not found\n")
+    sys.exit(127)
+if not cmd:
+    sys.exit(2)
 live, prefix, cwd, i = False, None, None, 0
 while i < len(opts):
     o = opts[i]
@@ -168,14 +178,23 @@ def test_wrap_is_an_argv_array_with_documented_conda_run_shape():
         "--prefix",
         "/opt/c onda/envs/my env",
     ]
-    sep = out.index("--")
-    assert (
-        out[sep + 1 :] == cmd
-    )  # `--` 之后原样：空格 / 引号 / 命令替换 / 空串 / 内嵌 `--` 都不被解释
-    assert out[5:sep] == []  # 没有 cwd 时 conda 选项只有这几个
+    # 不带 `--` 分隔符（较老的 conda 会把它当可执行文件）：可执行文件紧跟在 conda 选项后面，其后原样透传
+    assert out[5:] == cmd
+    assert out.count("--") == cmd.count("--")  # wrap 自己没加；cmd 里自带的内嵌 `--` 原样保留
+    assert out[5] == cmd[0]
     with_cwd = lau.wrap(cmd, cwd="/tmp/work dir")
-    assert with_cwd[5:7] == ["--cwd", "/tmp/work dir"] and with_cwd.index("--") == 7
+    assert with_cwd[5:7] == ["--cwd", "/tmp/work dir"] and with_cwd[7:] == cmd
     assert all(isinstance(t, str) for t in out)
+
+
+def test_wrap_rejects_a_relative_or_dash_leading_executable():
+    """可执行文件是 REMAINDER 的起点：相对路径 / 以 `-` 开头会被 conda 当成自己的选项或在别处解析，一律拒绝。"""
+    lau = launcher.CondaLauncher(conda_exe="/c/bin/conda", prefix="/c/envs/e")
+    for bad in ("python", "./python", "-u", "--prefix"):
+        with pytest.raises(ValueError):
+            lau.wrap([bad, "x.py"])
+    with pytest.raises(ValueError):
+        lau.wrap([])
 
 
 def test_public_reference_has_no_environment(tmp_path):
@@ -1550,3 +1569,79 @@ def test_real_conda_json_shaped_hook_banners_never_become_the_probe_result(tmp_p
     finally:
         for h in hooks:
             h.unlink(missing_ok=True)
+
+
+PROBE_ARGV = (
+    "import sys, json\n"
+    "print(json.dumps({'argv': sys.argv, 'utf8': sys.flags.utf8_mode, "
+    "'nobyte': sys.flags.dont_write_bytecode, 'x': sys._xoptions.get('tavotto_x')}))\n"
+)
+
+
+@needs_real_conda
+@pytest.mark.parametrize("which", ["current", "old"])
+def test_real_conda_passes_dash_leading_args_through_verbatim_without_a_separator(tmp_path, which):
+    """真 conda：不带 `--`，解释器参数（`-u -B -X utf8`）与脚本参数（`--flag -x`、`--`、空串、含空格）原样到达用户 Python。
+    `old` 是 `TAVOTTO_TEST_OLD_CONDA_EXE` 指的老版 conda（24.5.0）；未设则 skip（not_run）。"""
+    exe = _real_conda() if which == "current" else os.environ.get("TAVOTTO_TEST_OLD_CONDA_EXE", "")
+    if not exe or not Path(exe).is_file():
+        pytest.skip("没有老版 conda（TAVOTTO_TEST_OLD_CONDA_EXE）：not_run")
+    py = str(Path(REAL_PREFIX) / "bin" / "python")
+    script = tmp_path / "argvprobe.py"
+    script.write_text(PROBE_ARGV, encoding="utf-8")
+    lau = launcher.CondaLauncher(conda_exe=exe, prefix=REAL_PREFIX)
+    cmd = [
+        py,
+        "-u",
+        "-B",
+        "-X",
+        "utf8",
+        "-X",
+        "tavotto_x",
+        str(script),
+        "--flag",
+        "-x",
+        "a b",
+        "--",
+        "--ver",
+        "",
+    ]
+    done = subprocess.run(
+        lau.wrap(cmd),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    got = json.loads(done.stdout.strip().splitlines()[-1])
+    assert got["argv"] == [str(script), "--flag", "-x", "a b", "--", "--ver", ""]
+    assert got["utf8"] == 1 and got["nobyte"] == 1 and got["x"] is True
+
+
+def test_the_fake_conda_models_the_old_separator_bug():
+    """夹具自己的反证：模拟 conda 遇到 `--` 当可执行文件（退出码 127），所以任何把 `--` 加回去的改动都会被抓到。"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        prefix, conda, log = make_fake_conda(Path(d), sys.executable)
+        done = subprocess.run(
+            [
+                str(conda),
+                "run",
+                "--no-capture-output",
+                "--prefix",
+                str(prefix),
+                "--",
+                sys.executable,
+                "-c",
+                "pass",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env={**os.environ, "FAKE_CONDA_LOG": str(log)},
+        )
+        assert done.returncode == 127 and "command not found" in done.stderr
