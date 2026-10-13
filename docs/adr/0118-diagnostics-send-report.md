@@ -94,7 +94,7 @@
 
 - **两种包。** 导出到文件（`GET/POST /api/diagnostics/bundle`、「复制诊断」）保持严格脱敏，一个字节不变——那份可能被贴进公开 issue。发送包（`POST /api/diagnostics/send/prepare`）在其上多一批扁平条目 `detail-…` / `optional-…`（`engine/diagdetail.py` 组装，`app._build_diagnostics_bundle(detail=…)` 才传），老三件的名字与语义不动。bundle schema 升到 **8**（manifest 加 `contains_detail` / `detail_files` / `detail_options` / `truncated`）。
 - **默认收十二类**（优先级即编号）：报错原文与完整调用栈、app / sidecar / worker 日志尾巴原文、会话状态文件、最近后端请求环（方法 / 路由规则 / 状态码 / 耗时 / 错误码）、样式改动、渲染环境（一次 ≤10 s 的只读子进程）、运行记录、桌面壳与安装信息、存储坑、前端 console 环、显示环境、网络概况。
-- **三个勾选项**（默认不勾、不记忆，变化即重新备包）：A 脚本源码、B 系统崩溃报告、C 会话损坏副本内容。没勾 A 时包里一个字节源码都没有（连日志里 traceback 的源码行也剥掉）。
+- **三个勾选项**（默认不勾、不记忆，变化即重新备包）：A 脚本源码、B 系统崩溃报告、C 会话损坏副本内容。B 勾选时 **Windows 崩溃转储（.dmp，CrashDumps 与 WER ReportArchive / ReportQueue，属于 Tavotto / sidecar / 渲染 python 进程、7 天内）原样收**（用户裁决）：那是程序内存快照，可能含正在打开的文件内容与路径，**无法脱敏**，确认框与隐私声明都写明；按文件整份取舍、新的优先、不截半个文件，放不下的记进索引与 manifest `truncated`；没勾时零字节。没勾 A 时包里一个字节源码都没有（连日志里 traceback 的源码行也剥掉）。
 - **始终处理**：家目录 → `~`、用户名 → `<user>`、秘密去掉；项目文件夹名、文件名、图里的文字保留。
 - **体积**：上限由 10 MiB 改为 **64 MiB**（2026-10-13 起单份 64 MiB、每日 8 GiB，服务端已部署，infra#25；`MAX_BYTES` 与各类份额相应放大，截断预算总额 63 MiB）；按优先级从低往高截断（C < B < A，之后默认项从末尾几类），写进 manifest `truncated`，核心文件不截，截后仍超限走 `too_large`。
 - **名字解析。** 网络概况对 `tavotto.cn` / `github.com` 各做一次系统名字解析（不建立连接，线程里做、≤2 s，超时记 unknown），这是 prepare「零网络」里唯一的 DNS 查询；用来判断 TUN 把域名改写进 `198.18.0.0/15`。

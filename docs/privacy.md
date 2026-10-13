@@ -251,8 +251,11 @@ Offering the option uploads nothing; sending does:
   checkboxes that start unticked every time it opens: *script source* (the scripts
   registered in the open project — without it the bundle contains no script source at
   all, including the source lines normally printed inside tracebacks), *system crash
-  reports* (Tavotto crash reports from the last 7 days; binary dumps are only listed,
-  never attached) and *contents of corrupted session copies* (otherwise only their
+  reports* (Tavotto, sidecar and render-Python crash reports from the last 7 days:
+  macOS reports and Windows WER reports are redacted text, but Windows crash dumps
+  (`.dmp`) are snapshots of the program's memory that may contain the contents and
+  paths of files that were open and **cannot be redacted** — they are attached as they
+  are, whole files only, newest first, within a size share) and *contents of corrupted session copies* (otherwise only their
   names and sizes). Changing a checkbox rebuilds the bundle.
 * **Size limit.** The upload limit is 64 MiB (it was 10 MiB before 2026-10-13). When the bundle is larger, content is
   cut in a fixed order — the three extras first, then the default categories from the

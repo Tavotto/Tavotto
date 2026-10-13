@@ -118,8 +118,7 @@ CORRUPT_FILE_CAP = 512 * 1024
 CORRUPT_FILES = 3
 SOURCE_FILE_CAP = 1 * MiB
 SOURCE_FILES = 100
-CRASH_FILE_CAP = 2 * MiB
-CRASH_FILES = 8
+CRASH_FILES = 40
 CRASH_WINDOW_S = 7 * 24 * 3600
 PROBE_TIMEOUT_S = 10
 DNS_TIMEOUT_S = 2.0
@@ -183,6 +182,8 @@ class Item:
     shrink: Callable[[int], bytes] | None = None
     #: 内容被份额 / 单文件上限截过时的原始字节数（None = 没截）
     original_bytes: int | None = None
+    #: 采集阶段整份放不下而没收的字节数（崩溃报告按文件整份取舍）：fit 把它算进 manifest 的 `truncated`
+    dropped_bytes: int = 0
 
     @property
     def size(self) -> int:
@@ -1367,7 +1368,7 @@ _OWN_PROCESS = re.compile(r"^(tavotto|workerd)", re.I)
 
 
 def crash_dirs() -> list[tuple[str, Path]]:
-    """(来源标签, 目录)。macOS DiagnosticReports；Windows CrashDumps 与两处 WER ReportArchive。"""
+    """(来源标签, 目录)。macOS DiagnosticReports；Windows CrashDumps 与 WER 的 ReportArchive / ReportQueue（用户级与机器级）。"""
     home = Path.home()
     out: list[tuple[str, Path]] = []
     if sys.platform == "darwin":
@@ -1376,20 +1377,14 @@ def crash_dirs() -> list[tuple[str, Path]]:
         local = os.environ.get("LOCALAPPDATA")
         if local:
             out.append(("windows_crashdumps", Path(local) / "CrashDumps"))
-            out.append(
-                (
-                    "windows_wer_user",
-                    Path(local) / "Microsoft" / "Windows" / "WER" / "ReportArchive",
-                )
-            )
+            wer = Path(local) / "Microsoft" / "Windows" / "WER"
+            out.append(("windows_wer_user_archive", wer / "ReportArchive"))
+            out.append(("windows_wer_user_queue", wer / "ReportQueue"))
         pdata = os.environ.get("PROGRAMDATA")
         if pdata:
-            out.append(
-                (
-                    "windows_wer_machine",
-                    Path(pdata) / "Microsoft" / "Windows" / "WER" / "ReportArchive",
-                )
-            )
+            wer = Path(pdata) / "Microsoft" / "Windows" / "WER"
+            out.append(("windows_wer_machine_archive", wer / "ReportArchive"))
+            out.append(("windows_wer_machine_queue", wer / "ReportQueue"))
     return out
 
 
@@ -1399,94 +1394,124 @@ def _process_name(file_name: str) -> str:
     return m.group(1) if m else stem
 
 
-def collect_crash_reports(
-    src: Sources, opts: DetailOptions, scrub: Scrubber, now: float | None = None
-) -> list[Item]:
-    now = time.time() if now is None else now
-    index: list[dict] = []
-    items: list[Item] = []
+DUMP_SCAN_BYTES = 16 * MiB
+
+
+def _mentions_tavotto(path: Path) -> bool:
+    """二进制转储里有没有点名 Tavotto（UTF-8 或 UTF-16LE，大小写不敏感）：python.exe 的转储靠它认归属。"""
+    got = _read_head(path, DUMP_SCAN_BYTES)
+    if got is None:
+        return False
+    low = got[0].lower()
+    return b"tavotto" in low or "tavotto".encode("utf-16-le") in low
+
+
+def _crash_candidates(now: float) -> list[dict]:
+    """7 天内、属于 Tavotto / sidecar / 渲染 python 进程的崩溃文件：文本报告（脱敏后收）与二进制转储（原样收）。"""
+    found: list[dict] = []
     for label, base in crash_dirs():
         if not base.is_dir():
             continue
         try:
-            entries = sorted(base.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+            entries = list(base.iterdir())
         except OSError:
             continue
         for p in entries:
-            if len(items) >= CRASH_FILES:
-                break
             try:
                 st = p.stat()
             except OSError:
                 continue
             if now - st.st_mtime > CRASH_WINDOW_S:
                 continue
-            is_dir = p.is_dir()
-            name = p.name
-            low = name.lower()
-            if label.startswith("windows_wer"):
-                if not is_dir or not (
-                    _OWN_PROCESS.match(name.split("_", 1)[-1]) or "tavotto" in low
-                ):
+            name, low = p.name, p.name.lower()
+            members: list[tuple[Path, str]] = []  # (文件, 条目名)
+            if p.is_dir():  # WER：一个目录一份报告，里头有 Report.wer 和可能的 .dmp
+                if not label.startswith("windows_wer"):
                     continue
-                report = p / "Report.wer"
-                if not report.is_file():
-                    continue
-                target, zip_stem = report, f"{name}-Report.wer"
-            else:
-                if is_dir or low.rsplit(".", 1)[-1] not in ("ips", "crash", "dmp"):
-                    continue
-                proc = _process_name(name)
-                own = bool(_OWN_PROCESS.match(proc))
-                if low.endswith(".dmp"):
-                    # 二进制转储没法脱敏（内存里什么都可能有）：只列清单，不收内容
-                    if own or proc.lower().startswith("python"):
-                        index.append(
-                            {
-                                "source": label,
-                                "name": name,
-                                "bytes": st.st_size,
-                                "mtime": _iso(st.st_mtime),
-                                "content": "not_included_binary_dump",
-                            }
-                        )
-                    continue
+                inside = [q for q in p.iterdir() if q.is_file()] if os.access(p, os.R_OK) else []
+                own = bool(_OWN_PROCESS.match(name.split("_", 1)[-1])) or "tavotto" in low
+                if not own and "python" in low:
+                    wer = p / "Report.wer"
+                    own = wer.is_file() and _mentions_tavotto(wer)
                 if not own:
-                    if not proc.lower().startswith(("python", "sidecar")):
-                        continue
-                    head = _read_head(p, 256 * 1024)
-                    if head is None or b"tavotto" not in head[0].lower():
-                        continue  # python 进程只在报告里点名 Tavotto 时才算我们的
-                target, zip_stem = p, name
-            got = _read_head(target, CRASH_FILE_CAP)
-            if got is None:
-                continue
-            raw, size = got
+                    continue
+                members = [
+                    (q, f"{name}-{q.name}")
+                    for q in inside
+                    if q.suffix.lower() in (".wer", ".dmp", ".mdmp", ".hdmp", ".txt")
+                ]
+            else:
+                ext = low.rsplit(".", 1)[-1]
+                if ext not in ("ips", "crash", "dmp", "mdmp"):
+                    continue
+                proc = _process_name(name) if ext in ("ips", "crash") else name.split(".", 1)[0]
+                own = bool(_OWN_PROCESS.match(proc))
+                if not own and proc.lower().startswith(("python", "sidecar")):
+                    own = _mentions_tavotto(p)  # 报告 / 转储里点名 Tavotto 才算我们的
+                if not own:
+                    continue
+                members = [(p, name)]
+            for q, entry in members:
+                try:
+                    qs = q.stat()
+                except OSError:
+                    continue
+                binary = q.suffix.lower() in (".dmp", ".mdmp", ".hdmp")
+                found.append(
+                    {
+                        "label": label,
+                        "name": q.name,
+                        "path": q,
+                        "entry": _safe_name(entry),
+                        "mtime": qs.st_mtime,
+                        "size": qs.st_size,
+                        "binary": binary,
+                    }
+                )
+    found.sort(key=lambda c: -c["mtime"])
+    return found
+
+
+def collect_crash_reports(
+    src: Sources, opts: DetailOptions, scrub: Scrubber, now: float | None = None
+) -> list[Item]:
+    """崩溃报告（勾选 B）。文本报告（.ips / .crash / Report.wer）过脱敏；**Windows 崩溃转储（.dmp）是程序内存快照，
+    可能含正在打开的文件内容与路径，没法脱敏——按维护者裁决原样收**（确认框与隐私声明都写明）。
+    份额按**文件整份**取舍、新的优先，不截半个文件；放不下的记进索引与 manifest 的 `truncated`。"""
+    now = time.time() if now is None else now
+    budget = SHARE["crash_reports"]
+    used = 0
+    index: list[dict] = []
+    items: list[Item] = []
+    omitted = 0
+    for c in _crash_candidates(now):
+        row = {
+            "source": c["label"],
+            "name": c["name"],
+            "bytes": c["size"],
+            "mtime": _iso(c["mtime"]),
+            "content": "raw_binary" if c["binary"] else "redacted_text",
+        }
+        if len(items) >= CRASH_FILES or used + c["size"] > budget:
+            row["content"] = "omitted_for_size"
+            omitted += c["size"]
+            index.append(row)
+            continue
+        got = _read_head(c["path"], c["size"] + 1)
+        if got is None:
+            continue
+        raw = got[0]
+        if c["binary"]:
+            data = raw
+        else:
             text = raw.decode(
                 "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8", errors="replace"
             )
             data = scrub.text(text).encode("utf-8")
-            if size > CRASH_FILE_CAP:
-                data += b"\n" + _marker(len(raw), size, "first")
-            zip_name = _safe_name(zip_stem)
-            index.append(
-                {
-                    "source": label,
-                    "name": name,
-                    "bytes": size,
-                    "mtime": _iso(st.st_mtime),
-                    "file": zip_name,
-                }
-            )
-            items.append(
-                Item(
-                    "crash_reports",
-                    zip_name,
-                    data,
-                    shrink=lambda cap, d=data: _head_bytes(d, cap),
-                    original_bytes=size if size > CRASH_FILE_CAP else None,
-                )
-            )
+        used += len(data)
+        row["file"] = c["entry"]
+        index.append(row)
+        items.append(Item("crash_reports", c["entry"], data))
     items.insert(
         0,
         Item(
@@ -1496,10 +1521,12 @@ def collect_crash_reports(
                 {
                     "schema": DETAIL_SCHEMA,
                     "window_days": CRASH_WINDOW_S // 86400,
+                    "note": "Windows crash dumps (.dmp) are raw memory snapshots and cannot be redacted",
                     "dirs": [scrub.text(str(b)) for _l, b in crash_dirs()],
                     "reports": scrub.obj(index),
                 }
             ),
+            dropped_bytes=omitted,
         ),
     )
     return items
@@ -1640,6 +1667,10 @@ def fit(
     original = _kind_bytes(items)
     current = list(items)
     truncated: dict[str, dict] = {}
+    for it in items:  # 采集阶段整份放不下的文件（崩溃报告按文件整份取舍）也是被截掉的内容
+        if it.dropped_bytes:
+            original[it.kind] = original.get(it.kind, 0) + it.dropped_bytes
+            truncated.setdefault(it.kind, {"original_bytes": 0})
 
     def record() -> list[dict]:
         kept = _kind_bytes(current)

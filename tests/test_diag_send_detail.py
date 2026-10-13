@@ -513,21 +513,67 @@ class TestOptionalContent:
             "python /Apps/Tavotto/x", encoding="utf-8"
         )
         (crash / "tavotto-sidecar-2026-10-13-000003.crash").write_text("SIDECAR", encoding="utf-8")
-        (crash / "Tavotto.exe.1234.dmp").write_bytes(b"\x00DMPCANARY")
+        (crash / "Tavotto.exe.1234.dmp").write_bytes(b"\x00DMPCANARY\x01")
+        (crash / "python.exe.77.dmp").write_bytes(b"x" + "C:\\Tavotto\\x".encode("utf-16-le"))
+        (crash / "python.exe.78.dmp").write_bytes(b"unrelated python dump DMP_OTHER")
+        (crash / "chrome.exe.9.dmp").write_bytes(b"DMP_CHROME")
         items = diagdetail.collect_crash_reports(
             diagdetail.Sources(),
             diagdetail.DetailOptions(crash_reports=True),
             diagdetail.Scrubber(),
         )
-        body = "\n".join(i.data.decode("utf-8", "replace") for i in items)
+        body = b"\n".join(i.data for i in items).decode("utf-8", "replace")
         assert (
             "CRASH_CANARY_BODY" in body and "SIDECAR" in body and "python /Apps/Tavotto/x" in body
         )
-        for absent in ("OLD", "SAFARI", "someone else", "DMPCANARY"):
+        assert "DMPCANARY" in body  # .dmp 原样收（无法脱敏，确认框与隐私声明已写明）
+        assert b"x" + "C:\\Tavotto\\x".encode("utf-16-le") in [
+            i.data for i in items
+        ]  # 点名 Tavotto 的 python 转储
+        for absent in ("OLD", "SAFARI", "someone else", "DMP_OTHER", "DMP_CHROME"):
             assert absent not in body, absent
         index = json.loads(next(i for i in items if i.path.endswith("index.json")).data)
-        dmp = [r for r in index["reports"] if r["name"].endswith(".dmp")]
-        assert dmp and dmp[0]["content"] == "not_included_binary_dump"  # 二进制转储只列清单
+        dmp = {r["name"]: r for r in index["reports"] if r["name"].endswith(".dmp")}
+        assert dmp["Tavotto.exe.1234.dmp"]["content"] == "raw_binary"
+
+    def test_dumps_are_taken_whole_newest_first_and_the_rest_is_recorded(self, world, monkeypatch):
+        crash = world["crash"]
+        now = time.time()
+        for i, age in enumerate((10, 20, 30)):  # 越小越新
+            f = crash / f"Tavotto.exe.{i}.dmp"
+            f.write_bytes(bytes([65 + i]) * 400)
+            os.utime(f, (now - age, now - age))
+        monkeypatch.setitem(diagdetail.SHARE, "crash_reports", 900)  # 放得下两份整的，放不下第三份
+        items = diagdetail.collect_crash_reports(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(crash_reports=True),
+            diagdetail.Scrubber(),
+        )
+        dumps = {i.path: i.data for i in items if i.path.endswith(".dmp")}
+        assert set(dumps) == {"Tavotto.exe.0.dmp", "Tavotto.exe.1.dmp"}  # 新的优先，整份，不截半个
+        assert all(len(d) == 400 for d in dumps.values())
+        index = items[0]
+        assert index.dropped_bytes == 400
+        rows = {r["name"]: r["content"] for r in json.loads(index.data)["reports"]}
+        assert rows["Tavotto.exe.2.dmp"] == "omitted_for_size"
+        _data, _kept, trunc = diagdetail.fit(
+            items, lambda its, t: b"x" * 10 + json.dumps(t).encode(), 10**9
+        )
+        crash_row = next(t for t in trunc if t["kind"] == "crash_reports")
+        assert crash_row["original_bytes"] > crash_row["kept_bytes"]
+
+    def test_dumps_are_zero_bytes_when_unticked_and_present_when_ticked(self, client, world):
+        (world["crash"] / "Tavotto.exe.1.dmp").write_bytes(b"\x00DMP_BIN_CANARY_5\x00")
+        _prep, z = _prepare(client)
+        assert "optional-crash-reports.zip" not in z.namelist()
+        assert b"DMP_BIN_CANARY_5" not in b"".join(z.read(n) for n in z.namelist())
+        _prep, z = _prepare(client, crash_reports=True)
+        inner = _inner(z, "optional-crash-reports.zip")
+        assert inner.read("Tavotto.exe.1.dmp") == b"\x00DMP_BIN_CANARY_5\x00"
+        assert (
+            diagsend.zip_problem(client.get(f"/api/diagnostics/send/{_prep['id']}/bundle").data)
+            is None
+        )
 
 
 # ---------------------------------------------------------------------------

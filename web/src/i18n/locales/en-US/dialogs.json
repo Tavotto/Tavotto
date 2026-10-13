@@ -1278,7 +1278,7 @@
         },
         "extraHint": {
           "source": "The scripts registered in the open project. Unticked, the bundle contains no script source at all.",
-          "crash_reports": "Tavotto system crash reports from the last 7 days.",
+          "crash_reports": "Tavotto system crash reports from the last 7 days. Windows crash dumps are snapshots of the program's memory and may contain the contents and paths of files that were open; they cannot be redacted.",
           "corrupt_sessions": "By default only the names and sizes of corrupted copies; tick to attach their contents."
         },
         "filesTitle": "Files in the bundle ({{count}})",
