@@ -403,9 +403,12 @@ def frac_to_display(fig, fx: float, fy_top: float) -> tuple[float, float]:
     if frame is None or fig.__dict__.get(_IN_FRAME_ATTR):
         return fx * fig.bbox.width, (1.0 - fy_top) * fig.bbox.height
     dpi = float(fig.dpi)
+    # savefig's adjust_bbox shifts the display origin without setting our in_frame
+    # marker. The original G->display origin is retained by transFigure.
+    origin = fig.transFigure.transform((0.0, 0.0))
     return (
-        (frame.x0 + fx * frame.width) * dpi,
-        (frame.y0 + (1.0 - fy_top) * frame.height) * dpi,
+        (frame.x0 + fx * frame.width) * dpi + float(origin[0]),
+        (frame.y0 + (1.0 - fy_top) * frame.height) * dpi + float(origin[1]),
     )
 
 
@@ -426,10 +429,16 @@ _IN_FRAME_ATTR = "_mm_in_frame"
 
 
 def _figsize(fig) -> tuple[float, float]:
-    """G（英寸）：在 `in_frame()` 里也是进来之前那个 figsize。"""
+    """G（英寸）：in_frame / savefig 的暂时裁剪期间仍认原 figsize。"""
     saved = fig.__dict__.get(_IN_FRAME_ATTR)
     if saved:
         return saved
+    if frame_outsets(fig) is not None:
+        # savefig adjust_bbox changes fig.get_size_inches() to the cropped F.
+        # transFigure keeps G's scale, so do not add frame outsets to F again.
+        matrix = fig.transFigure.get_matrix()
+        dpi = float(fig.dpi)
+        return float(matrix[0, 0] / dpi), float(matrix[1, 1] / dpi)
     w, h = fig.get_size_inches()
     return float(w), float(h)
 

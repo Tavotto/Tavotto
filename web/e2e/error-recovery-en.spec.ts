@@ -23,7 +23,7 @@ import { copyFileSync, chmodSync, mkdirSync, readdirSync, writeFileSync } from '
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { expect, showAllProjects, test, waitForFigureEdit } from './fixtures'
+import { expect, openElementsTab, showAllProjects, test, waitForFigureEdit } from './fixtures'
 import { withWindowsFileLock } from './file-lock'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
@@ -265,8 +265,7 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
 
 /** 打开左侧「图内元素」树并展开全部分组（en-US 名字）。 */
 async function openElementTree(page: Page): Promise<void> {
-  const nav = page.getByRole('navigation').getByRole('button', { name: 'Figure elements' })
-  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
+  await openElementsTab(page)
   await page.locator('[role="treeitem"]').first().waitFor({ timeout: 30_000 })
   for (let i = 0; i < 8; i++) {
     const g = page.locator('[role="treeitem"][aria-expanded="false"]').first()

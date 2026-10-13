@@ -147,6 +147,23 @@ describe('空画布的起步提示', () => {
   })
 })
 
+describe('空画布提示坐在什么底上（宪法第二十八节）', () => {
+  const hintBox = () => document.querySelector<HTMLElement>('[data-canvas-empty-hint] > div')!
+
+  it('默认白纸：字直接落在纸上，用纸上的墨（data-on-paper），不垫底', async () => {
+    await mount(<CanvasStage />)
+    expect(hintBox().hasAttribute('data-on-paper')).toBe(true)
+    expect(hintBox().className).not.toContain('bg-surface')
+  })
+
+  it('用户把页面背景设成深色：纸上的墨压不住，退回主题面板底 + 界面墨', async () => {
+    act(() => useDocumentStore.setState((st) => ({ doc: { ...st.doc, page: { ...st.doc.page, bg: '#1f2430' } } })))
+    await mount(<CanvasStage />)
+    expect(hintBox().hasAttribute('data-on-paper')).toBe(false)
+    expect(hintBox().className).toContain('bg-surface')
+  })
+})
+
 describe('侧栏的空态', () => {
   it('图层树只留轻量占位：起步的那颗按钮只在画布中央出现一次', async () => {
     await mount(<LayerTree />)

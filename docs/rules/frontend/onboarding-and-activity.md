@@ -90,7 +90,7 @@
   onboarding 层…… 十几处都在产出，所以 `[role="status"]` / `getByRole('status')` 拿到的是
   「文档里排在最前的那个」，不是播报区。T06 给上下文条加的那行 `fastEdit.addedForEdit`
   排在播报区**前面**，就是这么把 twin-axes-pick 的判据主语从「刚播报了什么」换成「那行说明写着
-  什么」的——产品行为完好，红的是判据。scope 在自己渲染根里的单测（`ProjectReadinessBanner.test.tsx`
+  什么」的——产品行为完好，红的是判据。scope 在自己渲染根里的单测（如 `RegistryDialog.test.tsx`
   的 `host.querySelector`）可以继续用 role：那里主语唯一。
   看护：`lib/liveRegionSelector.test.ts` 用 AST 扫 `e2e/` 的字符串字面量，任何
   `[role=status|alert|log|marquee|timer]` 当选择器都点名——**活动区天生是复数且与 DOM

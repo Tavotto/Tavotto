@@ -300,7 +300,7 @@ function DiagnosticsReportSection() {
   const [phase, setPhase] = useState<'idle' | 'busy' | 'ready' | 'error'>('idle')
   const [text, setText] = useState('')
   const [bundle, setBundle] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
-  /** 「发送问题反馈」此刻可不可用（本机判断，不联网；App 启动时取一次）。默认关闭：没有就不画那一行。 */
+  /** 「发送问题反馈」此刻可不可用（本机判断，不联网；App 启动时取一次）。前端侧失败即关（没取到 / 关着）：没有就不画那一行。 */
   const sendCap = useDiagSendStore((s) => s.capability)
   useEffect(() => {
     void useDiagSendStore.getState().load()

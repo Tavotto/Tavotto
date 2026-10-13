@@ -1,6 +1,6 @@
-# ADR 0118：发送问题反馈——诊断包只在用户逐次确认后，由本机引擎直传给维护者（默认关闭）
+# ADR 0118：发送问题反馈——诊断包只在用户逐次确认后，由本机引擎直传给维护者
 
-日期：2026-10-10 · 状态：**Accepted（功能默认关闭，开放要过 G-DIAG）**
+日期：2026-10-10 · 状态：**Accepted；2026-10-13 起发行版默认开启入口（G-DIAG 已过，见文末「修订（2026-10-13）」），每次发送仍须用户确认**
 相关：[0016 诊断 V2](0016-diagnostics-v2-frontend-state-tracing.md)、[0008 会话认证](0008-unified-local-session-auth.md)；规则全文 `docs/rules/backend/diagnostics.md`
 「发送问题反馈」一节、`docs/rules/frontend/frontend-diagnostics.md`；隐私声明 `docs/privacy.md`「Diagnostics bundle」；
 服务端契约（`Tavotto/infra`，v1.0.0）：`docs/diagnostics-api/{README.md,openapi.json,versioning.md,acceptance-cos.md,threat-model.md}`
@@ -75,3 +75,15 @@
 
 功能开关默认关闭、`ENDPOINT_HOSTS` 仍为空集；真实 COS 验收 C1–C16 仍未做（NOT_RUN）。
 
+## 修订（2026-10-13，G-DIAG 开放）
+
+维护者批准：发行版里「发送问题反馈」**默认开启入口**，每次发送仍须用户在确认框点「发送」。上文各节里「默认关闭 / `ENDPOINT_HOSTS` 空集 / `TAVOTTO_DIAG_UPLOAD=1` 才开」是历史决定，被本节取代；其余（两步、逐次授权、目的地钉死、秘密不落地、失败码）不变。
+
+- **出处。** 真实 COS 验收 C1–C16 全过（`Tavotto/infra#19`，2026-10-13）；#927 / #928 已由 #955 修复；服务端公网路由 `https://tavotto.cn/v1/reports/{init,complete,cancel}` 由 infra 另一 PR 上线（客户端先于它合入时，发送会以网络类失败收场并留保存退路，不影响本机功能）。
+- **白名单与内置端点。** `ENDPOINT_HOSTS = {"tavotto.cn"}`；`PRODUCTION_ENDPOINT = "https://tavotto.cn"`，其主机 ∈ `ENDPOINT_HOSTS`（`test_diag_send.py` 钉）。`upload.url` 仍只认 COS 桶域名，存储为腾讯云 COS 上海桶 `tavotto-diag-1399072425`。
+- **判据（`resolve_target()`）。** `TAVOTTO_NO_DIAG_UPLOAD=1` → 关；`TAVOTTO_DIAG_UPLOAD=0` → 关；未设 / 空 `TAVOTTO_DIAG_ENDPOINT` → 内置端点；设了就只认它（白名单主机，或另设 `TAVOTTO_DIAG_DEV_LOOPBACK=1` 的 `127.0.0.1`），不合规 → 关，**绝不回退内置端点**（误配不会悄悄发到生产）。
+  `TAVOTTO_DIAG_UPLOAD=1` 不再需要，也没有效果；只有 `=0` 起作用。
+- **默认开启不等于自动发送。** 开启的含义只是界面出现入口（`GET /api/diagnostics/send` 回 `enabled:true`）；备包 / 看包不出网，`POST .../send` 仍要字面 `confirm: true`；没有记住的选择、没有后台补发。遥测同意与诊断发送互不蕴含。
+- **测试不连生产。** 测试进程默认 `TAVOTTO_NO_DIAG_UPLOAD=1`（`tests/conftest.py`；e2e `fixtures.ts` 同），诊断发送用例在 fixture 里摘掉它并指向回环模拟端；`conftest` 的会话级探针拦下任何发往生产主机的 `OpenerDirector.open` 并判红。
+- **服务端限制（`Tavotto/infra`）。** 每 IP 每小时 6 次 `init`、每日最多 500 份 / 2 GiB；报告保留 30 天后删除。客户端不复述数字，只把 429 / 503 交还用户去点。
+- **隐私声明。** `docs/privacy.md` 的「Diagnostics bundle」一节已按本行为改写（去向、30 天、关闭方式、删除方式）。

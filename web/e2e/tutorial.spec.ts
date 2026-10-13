@@ -217,10 +217,18 @@ test('重置教程项目：画布恢复原样、onboarding 从头；最近列表
   await openTutorialFromPicker(page, a.baseURL)
   // 先动一下画布：把第一张图拖走。判据是**图在页面上的相对位置**（与缩放 / 平移无关），
   // 不是屏幕像素：重置前后视口会重新适配
+  // `boundingBox()` 不自动等待，元素不在 DOM 就返回 null。重置时应用先退回项目选择页、再重开
+  // 教程（#991：Windows 冒烟里 6.6 s 就死在重置后的 poll 上），这段空档里 sheet / p1 都不在：
+  // 量不到 = null，由调用方决定是继续等（poll）还是明确失败（`fracX`）
+  const fracXOrNull = async () => {
+    const sheet = await page.locator('[data-page-sheet]').boundingBox()
+    const box = await page.locator('[data-object-id="p1"]').boundingBox()
+    return sheet && box ? (box.x - sheet.x) / sheet.width : null
+  }
   const fracX = async () => {
-    const sheet = (await page.locator('[data-page-sheet]').boundingBox())!
-    const box = (await page.locator('[data-object-id="p1"]').boundingBox())!
-    return (box.x - sheet.x) / sheet.width
+    const v = await fracXOrNull()
+    expect(v, '图与页面应当在屏上').not.toBeNull()
+    return v!
   }
   // 先「适应画布」：两张图都完整进工作区，拖动才落在图上而不是抽屉的拖拽把手上
   await page.getByRole('button', { name: '适应画布' }).click()
@@ -244,7 +252,14 @@ test('重置教程项目：画布恢复原样、onboarding 从头；最近列表
   // 重置前后第一步都是「双击这张图」，coachmark 的文字不再能当「重置做完了」的信号；
   // 拖走的那张图回到原位才是（判据本身：位置与重置前一致）
   await expect
-    .poll(async () => Math.abs((await fracX()) - frac0), { timeout: 60_000 })
+    .poll(
+      async () => {
+        const v = await fracXOrNull()
+        // 过渡期（项目选择页）图不在屏上：继续轮询，不是失败
+        return v === null ? Infinity : Math.abs(v - frac0)
+      },
+      { timeout: 60_000 },
+    )
     .toBeLessThan(0.01)
   await expect(coachmark(page)).toContainText('双击这张图')
 

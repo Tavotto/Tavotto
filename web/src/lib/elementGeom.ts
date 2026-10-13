@@ -451,8 +451,9 @@ export function alignEntries(
 }
 
 /**
- * figure 锚定的位置类 override —— 值是 figure 分数、**y 向下**。
- * 与后端 overrides.py 的 `_FRAC_ANCHORED` 同一批；改一边要同步另一边。
+ * figure 锚定的**位置** override —— 值是 figure 分数、y 向下。
+ * 这是后端 `_FRAC_ANCHORED` 的位置子集：后端也重放 size_frac，但宽高不是坐标，
+ * 随行平移不能把位移加进尺寸。
  */
 const FRAC_ANCHORED_PROPS = new Set(['pos_frac', 'loc_frac', 'endpoints_frac'])
 
@@ -467,6 +468,7 @@ const FRAC_ANCHORED_PROPS = new Set(['pos_frac', 'loc_frac', 'endpoints_frac'])
 export const GEOMETRY_WRITE_PROPS: ReadonlySet<string> = new Set([
   'position',
   'size_mm',
+  'size_frac',
   ...FRAC_ANCHORED_PROPS,
 ])
 

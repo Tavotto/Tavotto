@@ -10,7 +10,7 @@
  * 头部三颗图标钮以前用 4px 的负外边距贴右缘，负外边距让 scrollWidth 恒多 4px
  * ——不是真溢出，但这把尺子指过来就红；本轮把 header 改成左 12 / 右 8 的不对称内边距，几何不变。
  */
-import { expect, test } from './fixtures'
+import { expect, openElementsTab, test } from './fixtures'
 import { horizontalOffenders } from './overflow'
 
 const PANEL = '[data-inspector-panel]'
@@ -23,9 +23,7 @@ test('标题 / 刻度 / 子图三屏在 360 与 320 两档宽度下都不横向�
   await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
     .toBeVisible({ timeout: 60_000 })
 
-  const nav = page.getByRole('navigation').getByRole('button', { name: /图内元素|Figure elements/ })
-  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
-  await expect(nav).toHaveAttribute('aria-expanded', 'true')
+  await openElementsTab(page)
   const items = page.getByRole('treeitem')
   await expect(items.first()).toBeVisible({ timeout: 60_000 })
   // 不按 Escape 关气泡：这个应用里 Escape 会把选区往上退

@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-12
+Last updated: 2026-10-13
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -12,9 +12,8 @@ export destinations are used when the user chooses them.
 Network activity includes update checks and user-approved update downloads,
 package lookups and downloads for environment preparation or dependency
 installation, the optional AI assistant the user invokes, — only after
-an explicit opt-in — usage statistics, and — only where the maintainers have
-enabled it, and only when the user confirms each send — a redacted diagnostics
-bundle. The sections below distinguish these operations; local rendering does
+an explicit opt-in — usage statistics, and — only when the user confirms each
+send — a redacted diagnostics bundle. The sections below distinguish these operations; local rendering does
 not mean that every feature is offline.
 
 ## Data Tavotto does not upload
@@ -211,10 +210,11 @@ Whether telemetry is on or off is included — that is useful for troubleshootin
 and is not sensitive. Redaction is automatic and is not a guarantee that nothing
 identifying remains; inspect the file before sharing it publicly.
 
-**Send problem report (off by default).** Where the maintainers have enabled it,
-the same page offers *Send problem report*, which uploads a diagnostics bundle to
-a service operated by the Tavotto maintainers in mainland China. In this release
-the option is disabled and no screen offers it. When it is enabled:
+**Send problem report (offered by default, sends only when you confirm).** The
+same page, and the failure cards that suggest it, offer *Send problem report*,
+which uploads a diagnostics bundle to a service operated by the Tavotto
+maintainers (`tavotto.cn`) and stores it on Tencent Cloud COS (Shanghai).
+Offering the option uploads nothing; sending does:
 
 * **Only on your confirmation, every time.** Nothing is uploaded until you open the
   dialog, read what will be sent, and press *Send*. The choice is not remembered:
@@ -237,9 +237,19 @@ the option is disabled and no screen offers it. When it is enabled:
   permission that the receiving service issues for that single file; the file does
   not pass through the Tavotto server. Like any network request, the receiving
   service and the storage provider see your IP address in the connection. The
-  receiving service keeps no access log and uses the address only, transiently and
-  salted-and-hashed, to rate-limit requests; the storage provider's own handling
-  follows its terms.
+  receiving service itself uses the address only, transiently and salted-and-hashed,
+  to rate-limit requests. Its requests arrive through the `tavotto.cn` web server,
+  which writes the same access log as for the website (address shortened as
+  described in *The tavotto.cn website* below, no query string, no request body,
+  kept 30 days). The storage provider's own handling follows its terms.
+* **How to turn it off.** Set the environment variable `TAVOTTO_NO_DIAG_UPLOAD=1`
+  (or `TAVOTTO_DIAG_UPLOAD=0`) for the Tavotto process; the option then disappears
+  from every screen and the local endpoints that serve it do not exist. Exporting
+  a bundle to a file stays available. The destination is built in; a misconfigured
+  `TAVOTTO_DIAG_ENDPOINT` turns the feature off rather than falling back to it.
+* **Rate limits.** The receiving service limits each address to a few reports per
+  hour and caps the total accepted per day; a send that hits a limit fails with a
+  message and can be retried later.
 * **Remote instances.** If you are connected to a remote Tavotto instance, the
   engine that builds and uploads the bundle is the one on the remote machine, so
   the upload leaves that machine, not yours (the dialog on your screen only
@@ -252,9 +262,9 @@ the option is disabled and no screen offers it. When it is enabled:
   and then deletes it; the retention period is a server setting and this document
   is updated if it changes. Reports are not publicly readable; only maintainers
   with administrative access to the service can read or download them.
-* **Deletion.** To have a report removed earlier, open an issue on the public issue
-  tracker quoting the report ID (without attaching anything else) and a
-  maintainer will delete it.
+* **Deletion.** Reports are deleted automatically after 30 days. To have a report
+  removed earlier, open an issue on the public issue tracker quoting the report ID
+  (without attaching anything else) and a maintainer will delete it.
 * **Failure.** If you are offline, the service is unavailable or the bundle is
   larger than the limit (10 MiB by default), nothing is cut down or retried behind
   your back: you can export the bundle and keep or send it yourself.
@@ -269,7 +279,9 @@ to other computers.
 
 The Chinese-language website <https://tavotto.cn/> (also reached through
 `www.tavotto.cn`) is a static site run by the project maintainer. Its pages load
-no analytics or tracking scripts and set or read no cookies.
+no analytics or tracking scripts and set or read no cookies. The same server also
+receives *Send problem report* uploads from the desktop app (three API paths under
+`/v1/reports/`); those requests are logged the same way.
 
 To see how many people visit and where they come from, the website's server keeps
 an access log. Each entry keeps only: the time; the visitor's IP address with the
@@ -291,6 +303,42 @@ region) and covers at most the last 30 days.
 This section covers the website only. The Tavotto application does not contact
 the website; the download mirror `dl.tavotto.cn` used for update checks is a
 separate host and is described under "Update checks" above.
+
+## Supporting the project on tavotto.com
+
+Payments made through the support page <https://www.tavotto.com/support/> are
+made on Ko-fi or 爱发电 (afdian.com), under their own privacy policies; the
+website never sees card or account details. A Ko-fi payment is paid out directly
+to the maintainer's PayPal or Stripe account, so PayPal (the payer's name and
+email address) or Stripe (name, email address and part of the billing address)
+shows those details to the maintainer as the payment recipient, under PayPal's
+or Stripe's own policies. 爱发电 likewise shows the maintainer the supporter's
+爱发电 account and order. What follows is what the website itself receives and
+keeps.
+
+When a Ko-fi payment completes, Ko-fi notifies the website. The supporter's email
+address in that notification is used **once**, to send a single thank-you mail
+(through the website's mail provider) with a link for choosing how to appear on
+the supporters wall. The notification also carries the supporter's Ko-fi display
+name; it is only checked to recognise Ko-fi's own test notification and is then
+discarded. The address and that name are not stored, and neither are the amount
+or the message. What is kept is the Ko-fi transaction id, the month, whether it was
+a one-off payment or a membership (and the tier name), and, only if the
+supporter fills in the form, the display name and optional avatar they chose. A
+name or avatar appears on the page only after the supporter submitted it and the
+maintainer approved it; a supporter who stays anonymous is counted but never
+named.
+
+爱发电 sends no email address. When it reports an order, the website looks the
+order up through 爱发电's API to confirm it was paid, and keeps the order number,
+the month and whether the amount allows an avatar; the supporter's 爱发电 user id
+is kept only as a keyed hash, so that one person is counted once. To appear on
+the wall, the supporter enters the order number on the support page and gets the
+same form; the rest is as for Ko-fi above. Next to the order number the supporter
+may type an email address; it is used **once**, to send a single thank-you mail
+carrying the same form link (at most one per order), and is not stored.
+
+To change or remove an entry, write to <hello@tavotto.com>.
 
 ## Changes and contact
 

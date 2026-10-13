@@ -30,6 +30,8 @@ import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import { startDraw, startMarquee, startPan } from './interactions'
+import { groundInkFor } from '@/lib/canvasSelection'
+import { cn } from '@/lib/utils'
 
 export function CanvasStage() {
   perfCount('render.CanvasStage')
@@ -472,6 +474,7 @@ function EmptyHint() {
   const hasAssets = useAssetStore((s) => s.panels.length > 0)
   const inTutorial = useProjectStore((s) => s.project?.tutorial === true)
   if (!selectionEmpty) return null
+  const onLightPaper = groundInkFor(null, page) === 'paper-ink'
   // 锚在纸面**可见部分**的中心：侧栏一开、画布被挤到一边时提示跟着纸面走，
   // 而不是飘在灰色工作区中央；纸面比视野大时（放大 / 首次适配还没算对）落在
   // 看得到的那一块上，永远不出屏（审计 B01）。落点算法在 `lib/emptyStateAnchor`
@@ -489,9 +492,14 @@ function EmptyHint() {
       className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >
-      {/* 提示坐在页面（纸）上：纸两套主题都是白，暗色里给它一块面板色的底（`paper-chrome`，浅色里透明——
-          字照旧直接落在纸上），浅色的字才不会落在白纸上（2026-10-07 暗色主题，宪法第二十八节） */}
-      <div data-on-paper className="pointer-events-auto rounded-lg bg-paper-chrome p-4">
+      {/* 提示坐在页面（纸）上。纸是浅的（默认白纸、浅色背景）：`data-on-paper` 把这一块的界面墨与按钮底换成
+          纸上的墨（index.css 末尾），两套主题都是字直接落在纸上、不垫底（2026-10-13 审计：此前暗色里垫一块深色
+          卡片，白纸正中一块黑，很突兀）。用户把页面背景设成深色时纸上的墨压不住，退回一块主题面板底、字用界面墨
+          （Codex #995）。深浅按页面的实际底色判，与纸上文字 / 选区同一个判据 `groundInkFor`（宪法第二十八节） */}
+      <div
+        {...(onLightPaper ? { 'data-on-paper': '' } : {})}
+        className={cn('pointer-events-auto p-4', !onLightPaper && 'rounded-lg bg-surface')}
+      >
         <EmptyState
           icon={Images}
           title={sg('emptyTitle')}

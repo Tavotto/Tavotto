@@ -10,8 +10,8 @@
 - **句子与「待连接」只有一份实现**：`lib/readinessText.ts` 的 `statusLabel()`
   （读 `status`）、`reasonText()`（读 **`reason_code`**，不读 `status`），
   以及 `PENDING_STATUSES` / `pendingCount(summary)` / `allEditable(summary)`
-  ——横幅与接入中心顶部说的是同一个数，各展开写一遍的话，多一个状态时总有
-  一处会漏掉。`allEditable` 那一档两处表现不同但**判据同一个**：横幅整条不说话
+  ——顶栏的项目锚点（`TopBar.ProjectStatusPill`，2026-10 设计审计第二轮起取代工作面板里的那条横幅）与接入中心顶部说的是同一个数，
+  各展开写一遍的话，多一个状态时总有一处会漏掉。`allEditable` 那一档两处表现不同但**判据同一个**：项目锚点不出现
   （`bannerReport` 回 null），接入中心把四个计数换成一句「N 张图都可以编辑」
   （审计 T10：正常项目不该长得像故障排查页）。这一档里**可编辑的图不再逐张
   重复同一句解释**（那句话对每一张一模一样），第一层也只留「添加到画布」——
@@ -219,7 +219,7 @@
 - 看护：`store/projectReadinessStore.test.ts`、`components/RegistryDialog.test.tsx`、
   `components/WorkdirConfirmDialog.test.tsx`、`components/WorkdirRow.test.tsx`、
   `components/DependencyPrepareDialog.test.tsx`、`components/notificationRail.test.tsx`（「已改用你的环境」）、
-  `components/ProjectReadinessBanner.test.tsx`、
+  `components/topBarAnchors.test.tsx`、
   `components/left/AssetBrowser.readiness.test.tsx`、
   `canvas/panelReadinessEntry.test.tsx`、`components/inspector/panelCapabilityNote.test.tsx`、
   `canvas/drawerViewportResize.test.tsx`、`store/uiStore.test.ts` 的两个左栏

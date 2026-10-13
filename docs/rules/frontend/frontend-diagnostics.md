@@ -54,10 +54,10 @@
 - 文案在 `dialogs:taskDiagnostic.*`，看护 `components/taskDiagnostic.test.tsx`（两个语种 × 默认可见块数 / 主按钮数、项目绑定、
   过期 / 不存在 / 服务端错误三种结局）、`store/scriptRunStore.test.ts`。
 
-## 发送问题反馈（设置 → 帮助与诊断，ADR 0118，默认关闭）
+## 发送问题反馈（设置 → 帮助与诊断，ADR 0118；入口由引擎能力说明决定，发行版默认开启）
 
 - **前端不碰远程。** 上传由本机引擎做；`lib/api.ts` 的 `*DiagSend*` 只是本机遥控器，其中**只有 `startDiagSend` 会让引擎去连诊断服务**，且请求体恒带 `confirm: true`
-  （`lib/diagSendApi.test.ts`）。入口是否存在只看 `store/diagSendStore`（`GET /api/diagnostics/send` 的镜像，App 启动取一次；没取到 / 关着 / 回了别的 = `null` = **不画入口**，
+  （`lib/diagSendApi.test.ts`）。入口是否存在只看 `store/diagSendStore`（`GET /api/diagnostics/send` 的镜像，App 启动取一次；没取到 / 关着（`TAVOTTO_NO_DIAG_UPLOAD=1`）/ 回了别的 = `null` = **不画入口**（前端侧失败即关；引擎侧默认开启），
   隐私摘要也不多说那一句）。
 - **打开 = 备包，发送 = 确认。** `components/settings/DiagnosticsSendDialog.tsx`：打开时只 `prepareDiagSend`（载荷现采，同导出），列「将发送的内容」类别、大小、保留期，
   「保存这份诊断包」取的是备好的**同一份**字节（按 id，不重新生成）；点「发送」才 `startDiagSend`。关窗 / 卸载 = `discardDiagSend`（发送中等于取消）；备包响应晚于关窗到达也要丢弃。

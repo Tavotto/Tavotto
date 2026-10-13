@@ -34,7 +34,7 @@ from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
 from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
-from matplotlib.patches import BoxStyle, FancyArrowPatch, Patch, Rectangle
+from matplotlib.patches import BoxStyle, FancyArrowPatch, FancyBboxPatch, Patch, Rectangle
 from matplotlib.text import Annotation, Text
 from matplotlib.transforms import ScaledTranslation
 from mpl_toolkits.mplot3d import proj3d
@@ -479,6 +479,9 @@ def _pin_put_native(a, native) -> None:
             a.set_positions(native[0], native[1])
     elif isinstance(a, Patch):
         a.set_transform(_patch_base_transform(a))
+        native = getattr(a, "_mm_size_native", None)
+        if native is not None:
+            a.set_bounds(*native)
     elif isinstance(a, _AxesBase):
         # 子图的「原样」：参与排版，色条轴还有被解开的长宽比。constrained 按网格算位置、
         # 按装饰物的大小算边距，与它此刻摆在哪无关——两样放回去，排出来的就与「没拖过」
@@ -1491,6 +1494,180 @@ def _patch_base_transform(p):
     return base
 
 
+def _get_patch_size(p):
+    """可回灌的脚本原样；尺寸与平移共用的 transform 不属于尺寸这一项。"""
+    native = getattr(p, "_mm_size_native", None)
+    if native is not None:
+        return native
+    return tuple(float(v) for v in (p.get_x(), p.get_y(), p.get_width(), p.get_height()))
+
+
+def _patch_resize_model(p):
+    """原生矩形能否按外框改宽高。manifest 与 setter 只认这一份能力判据。
+
+    先收窄到有稳定原生 bounds 的矩形、标准 round / square 框；柱子仍是数据。
+    旋转、剪切、非仿射或固定像素坐标不宣称支持。最后一段变换必须归图幅 / 子图 /
+    英寸管，导出换 dpi 才能保持尺寸。用户子类继承原生实现可用，改了 draw / 几何的不可用。
+    """
+    if not isinstance(p, (Rectangle, FancyBboxPatch)) or getattr(p, "_mm_bar", False):
+        return None
+    methods = ("draw", "get_path", "get_patch_transform", "set_bounds", "get_window_extent")
+    # Our own temporary draw hook is the sole permitted instance override.
+    # All user-provided geometry/draw overrides remain unsupported.
+    own_hook = vars(p).get("_mm_size_draw_hook")
+    own_draw = own_hook is not None and vars(p).get("draw") is own_hook
+    if any(
+        (name in vars(p) and (name != "draw" or not own_draw))
+        or _defining_module(type(p), name) != "matplotlib.patches"
+        for name in methods
+    ):
+        return None
+    try:
+        native = _get_patch_size(p)
+        if not all(math.isfinite(v) for v in native) or not native[2] or not native[3]:
+            return None
+        pad_x = pad_y = radius_x = radius_y = 0.0
+        if isinstance(p, FancyBboxPatch):
+            style = p.get_boxstyle()
+            if type(style) not in (BoxStyle.Round, BoxStyle.Square):
+                return None
+            scale, aspect = float(p.get_mutation_scale()), float(p.get_mutation_aspect())
+            pad = float(style.pad)
+            rounding = float(getattr(style, "rounding_size", None) or pad)
+            if (
+                not all(math.isfinite(v) for v in (scale, aspect, pad, rounding))
+                or scale <= 0
+                or aspect <= 0
+                or min(pad, rounding, native[2], native[3]) < 0
+            ):
+                return None
+            pad_x, pad_y = pad * scale, pad * scale * aspect
+            if type(style) is BoxStyle.Round:
+                radius_x, radius_y = rounding * scale, rounding * scale * aspect
+        elif p.get_angle() != 0:
+            return None
+        base = getattr(p, "_mm_pos_base", None)
+        base = Artist.get_transform(p) if base is None else base
+        if not base.is_affine:
+            return None
+        matrix = base.get_matrix()
+        sx, sy = float(matrix[0, 0]), float(matrix[1, 1])
+        if (
+            not np.isfinite(matrix).all()
+            or matrix[0, 1] != 0
+            or matrix[1, 0] != 0
+            or sx == 0
+            or sy == 0
+        ):
+            return None
+        fig = pathgeom.root_figure(p.get_figure())
+        bases = [fig.transFigure, fig.dpi_scale_trans]
+        ax = getattr(p, "axes", None)
+        if ax is not None:
+            bases.extend((ax.transData, ax.transAxes))
+        if not any(base.contains_branch(b) for b in bases):
+            return None
+        # 正内框 + 圆角不得相交。保留脚本的 pad / radius，不为缩小而改写样式。
+        minimum = (max(2 * pad_x, 2 * radius_x) + 1e-9, max(2 * pad_y, 2 * radius_y) + 1e-9)
+        return native, (abs(sx), abs(sy)), (pad_x, pad_y), minimum
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return None
+
+
+def patch_resize_geometry(p):
+    """只读未裁剪外框与最小尺寸（根图幅分数）；不改变用于命中 / 描边的 bbox。"""
+    model = _patch_resize_model(p)
+    if model is None:
+        return None
+    _, scales, _, minimum = model
+    fig = pathgeom.root_figure(p.get_figure())
+    width, height = (v * float(fig.dpi) for v in pathgeom.frame_size_inches(fig))
+    bb = p.get_window_extent()
+    # 此函数也被未进入 in_frame 的 original-value 读取使用；统一经已有换算找原点。
+    ox, oy = pathgeom.frac_to_display(fig, 0, 1)
+    bounds = [(bb.x0 - ox) / width, 1 - (bb.y1 - oy) / height, bb.width / width, bb.height / height]
+    limits = [minimum[0] * scales[0] / width, minimum[1] * scales[1] / height]
+    if not all(math.isfinite(v) for v in (*bounds, *limits)) or min(bounds[2:]) <= 0:
+        return None
+    return bounds, limits
+
+
+def _resized_patch_bounds(p, value):
+    model = _patch_resize_model(p)
+    if model is None:
+        raise ValueError("当前形状的变换或框样式不支持调整宽高")
+    native, scales, padding, minimum = model
+    fig = pathgeom.root_figure(p.get_figure())
+    frame = pathgeom.frame_size_inches(fig)
+    outer = [value[i] * frame[i] * float(fig.dpi) / scales[i] for i in range(2)]
+    if not all(math.isfinite(v) for v in outer) or any(outer[i] < minimum[i] for i in range(2)):
+        raise ValueError("图框宽高必须大于零，且不能小于原有内边距和圆角")
+    sizes = [math.copysign(outer[i] - 2 * padding[i], native[i + 2]) for i in range(2)]
+    return (*native[:2], *sizes)
+
+
+def _install_patch_resize_draw_hook(p) -> None:
+    """Re-place only an edited patch *after* Axes.draw applies its aspect/locator.
+
+    On a figure without a layout engine there is no layout pin hook.  Axis limits,
+    locators and export DPI can change transData inside Axes.draw after apply() has
+    calculated native bounds.  Hook this one artist, not Figure/Axes globally;
+    the original class draw still runs exactly once and there is no nested draw.
+    """
+    if p.__dict__.get("_mm_size_draw_hook") is not None:
+        return
+    native_draw = p.draw
+
+    def resized_draw(renderer):
+        if getattr(p, "_mm_size_frac", None) is not None:
+            _place_patch(p, _patch_position(p))
+        return native_draw(renderer)
+
+    p._mm_size_draw_hook = resized_draw  # noqa: SLF001
+    p.draw = resized_draw
+
+
+def _remove_patch_resize_draw_hook(p) -> None:
+    hook = p.__dict__.pop("_mm_size_draw_hook", None)
+    # Do not delete an unrelated draw callback that might have replaced ours.
+    if hook is not None and p.__dict__.get("draw") is hook:
+        p.__dict__.pop("draw")
+
+
+def _patch_position(p):
+    """pin 表的位置槽是平移的唯一请求值；只有尺寸时为 None。"""
+    return _text_pins(p.get_figure()).get(p, (None, None))[0]
+
+
+def _set_patch_size_frac(p, value) -> None:
+    value = _drag_value(value, 2)
+    # 校验完才碰原生 bounds / transform / pin。坏尺寸不能撤掉用户已有的尺寸或位置。
+    _resized_patch_bounds(p, value)
+    native = _get_patch_size(p)
+    pos = _patch_position(p)
+    p._mm_size_native = native  # noqa: SLF001
+    p._mm_size_frac = tuple(value)  # noqa: SLF001
+    _place_patch(p, pos)
+    _text_pins(p.get_figure())[p] = (pos, None)
+    _ensure_text_pin_hook(p.get_figure())
+    _install_patch_resize_draw_hook(p)
+
+
+def _restore_patch_size(p, orig) -> None:
+    _remove_patch_resize_draw_hook(p)
+    pos = _patch_position(p)
+    p.set_bounds(*orig)
+    p.__dict__.pop("_mm_size_frac", None)
+    p.__dict__.pop("_mm_size_native", None)
+    p.__dict__.pop("_mm_size_error", None)
+    if pos is not None:
+        _place_patch(p, pos)
+    else:
+        _text_pins(p.get_figure()).pop(p, None)
+        p.set_transform(_patch_base_transform(p))
+        p.__dict__.pop("_mm_pos_base", None)
+
+
 def _set_patch_pos_frac(p, value) -> None:
     """拖动独立形状（Rectangle / FancyBboxPatch / Circle / Polygon / Wedge …）。
 
@@ -1519,9 +1696,25 @@ def _place_patch(p, value) -> None:
     fig = pathgeom.root_figure(p.get_figure())  # SubFigure 里也按根 Figure 的分数算
     base = _patch_base_transform(p)
     p.set_transform(base)  # 先回到基准再量：这一段要幂等（重放 / 二次拖动）
+    native = getattr(p, "_mm_size_native", None)
+    if native is not None:
+        p.set_bounds(*native)
     bb = p.get_window_extent()
+    tx, ty = bb.x0, bb.y0  # 只有尺寸时，固定脚本原始外框的左下角
+    size = getattr(p, "_mm_size_frac", None)
+    if size is not None:
+        try:
+            p.set_bounds(*_resized_patch_bounds(p, size))
+            bb = p.get_window_extent()
+            p.__dict__.pop("_mm_size_error", None)
+        except ValueError as exc:
+            # 原来可改宽高，后来切成 log / 改了子图尺寸使圆角装不下：只让尺寸失效，
+            # 原生 bounds 已放回；平移照常应用。否则热态留着上次的原生宽高，冷重放
+            # 却从脚本原样起步，两者静默不同。apply 收尾如实报告，不把失败藏成成功。
+            p._mm_size_error = str(exc)  # noqa: SLF001
     # 值已由调用方校验过（`_set_patch_pos_frac` 第一步、pin 表只收校验过的值）
-    tx, ty = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
+    if value is not None:
+        tx, ty = pathgeom.frac_to_display(fig, float(value[0]), float(value[1]))
     dpi = float(fig.dpi)
     shift = ScaledTranslation((tx - bb.x0) / dpi, (ty - bb.y0) / dpi, fig.dpi_scale_trans)
     p.set_transform(base + shift)
@@ -1534,6 +1727,11 @@ def _get_patch_pos(p):
 
 def _restore_patch_pos(p, orig) -> None:
     fig = p.get_figure()
+    if getattr(p, "_mm_size_frac", None) is not None:
+        # 只撤平移时，尺寸仍生效，回脚本原点；两条 property 不互相撤销。
+        _place_patch(p, None)
+        _text_pins(fig)[p] = (None, None)
+        return
     if fig is not None:
         _text_pins(fig).pop(p, None)
     p.set_transform(orig)
@@ -3881,6 +4079,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     # transform 上（一份实现盖住整个 Patch family），原样是基准 transform。
     # **不给 `bar`**：柱是数据，位置由 x 与宽度决定，挪一根柱等于改数据。
     ("patch", "pos_frac"): (_get_patch_pos, _set_patch_pos_frac),
+    ("patch", "size_frac"): (_get_patch_size, _set_patch_size_frac),
     # 锚定框 / 插框（ADR 0100）：cls_key 仍是 `artist`，setter 自己认类型，认不出来就抛
     ("artist", "pos_frac"): (_get_offsetbox_pos, _set_offsetbox_pos_frac),
     ("arrowpatch", "arrowstyle"): (lambda a: a.get_arrowstyle(), _set_arrowstyle),
@@ -4220,6 +4419,7 @@ _RESTORE: dict[tuple[str, str], object] = {
     ("collection", "marker"): _restore_scatter_marker,
     ("arrowpatch", "endpoints_frac"): _restore_arrow_endpoints,
     ("patch", "pos_frac"): _restore_patch_pos,
+    ("patch", "size_frac"): _restore_patch_size,
     ("artist", "pos_frac"): _restore_offsetbox_pos,
     ("arrowpatch", "arrowstyle"): lambda a, orig: a.set_arrowstyle(orig),
     ("arrowpatch", "linestyle"): lambda a, orig: a.set_linestyle(orig),
@@ -4335,7 +4535,7 @@ def to_hex(color) -> str:
 # 再变，artist 会跟着几何一起漂走，声明的 figure 位置就不再成立——所以几何
 # 一变必须重放它们，否则「写回时看到的」与「重开后重放出来的」不是同一张图
 # （FigS3 文字全体错位就是这么来的）。
-_FRAC_ANCHORED = {"pos_frac", "loc_frac", "endpoints_frac"}
+_FRAC_ANCHORED = {"pos_frac", "loc_frac", "endpoints_frac", "size_frac"}
 #: 值以图幅为基准的 prop（ADR 0098）：`figure.frame` 这一轮换了，它们的值没变也要重放——
 #: 同一个数在另一个图幅里是另一个位置 / 尺寸，跳过它们热态就与全量重放分岔
 _FRAME_RELATIVE = _FRAC_ANCHORED | {"size_mm", "position"}
@@ -5113,5 +5313,17 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
     # 图例项跟随源对象（派生显示，不进 applied）。放在整轮之后：源对象的
     # 改动与还原都已落定，此刻派生出来的才是「这一次改完之后」的样子。
     legendmodel.sync_legends(state)
+
+    # 矩形尺寸和位置是同一个几何模型。xlim / invert 与它们同档、顺序可能在后：
+    # 在整轮落定后按当前轴重算一次，避免热态留着上一轮的宽高。布局引擎每次 draw
+    # 仍走同一个 _place_patch，排版输入先放回脚本原样。
+    for artist, (pos, _native) in list(_text_pins(state.fig).items()):
+        if getattr(artist, "_mm_size_frac", None) is None:
+            continue
+        _place_patch(artist, pos)
+        error = getattr(artist, "_mm_size_error", None)
+        if error:
+            gid = next((g for g, a in state.index.items() if a is artist), "patch")
+            warnings.append(f"应用失败 {gid}.size_frac: {error}")
 
     return warnings

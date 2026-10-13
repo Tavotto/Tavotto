@@ -1,4 +1,7 @@
-"""组图↔子图 override 同步的纯函数测试（_remap_point / _best_offset / _axes_info）。"""
+"""组图↔子图 override 同步的纯函数与请求边界测试。"""
+
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -71,3 +74,40 @@ def test_axes_info_collects_bbox_texts_and_counts():
     assert info[0]["n"] == 2
     assert info[1]["texts"] == {"Right"}
     assert info[1]["n"] == 1
+
+
+def test_sync_keeps_patch_dimensions_local_but_maps_style_and_position(monkeypatch):
+    """源图的框宽高属于本图版面；同步样式不应顺手改掉另一张图的框尺寸。"""
+    gid = "axes_0.patches_0"
+    manifest = {
+        "elements": [
+            {"gid": "axes_0", "bbox": [0.1, 0.1, 0.8, 0.8]},
+            {"gid": gid, "editable": []},
+        ]
+    }
+    registry = SimpleNamespace(for_stem=lambda stem: {"script": "flow.py", "entry": "main"})
+    monkeypatch.setattr(m, "safe_resolve", Path)
+    monkeypatch.setattr(m, "current_registry", lambda: registry)
+    monkeypatch.setattr(m, "_safe_worker", lambda *args: object())
+    monkeypatch.setattr(m, "_manifest_of", lambda worker, stem: manifest)
+    size = {"gid": gid, "prop": "size_frac", "value": [0.3, 0.2]}
+    color = {"gid": gid, "prop": "edgecolor", "value": "#123456"}
+    position = {"gid": gid, "prop": "pos_frac", "value": [0.2, 0.5]}
+    with m.app.test_request_context(
+        "/api/engine/sync_overrides",
+        method="POST",
+        json={
+            "from_id": "Flow.pdf",
+            "to_id": "Flow_detail.pdf",
+            "patches": [size, color, position],
+        },
+    ):
+        response = m.api_engine_sync_overrides()
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result["skipped"] == [size]
+    assert result["unmatched"] == []
+    assert result["mapped"][0] == color
+    assert result["mapped"][1]["gid"] == gid
+    assert result["mapped"][1]["prop"] == "pos_frac"
+    assert result["mapped"][1]["value"] == pytest.approx(position["value"])

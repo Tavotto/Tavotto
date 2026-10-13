@@ -18,7 +18,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
+import { expect, openElementsTab, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
 import { lowContrastNodes } from './contrast'
 import { resolveScanned, type ScannedNode } from './scannedNodes'
 
@@ -326,11 +326,10 @@ test('图内编辑的属性栏（属性页签，选中标题）：正文框有�
   await waitForFigureEdit(page)
 
   // 元素树 → 展开「文字」组 → 点标题。按 role 与双语正则走（本 spec 三条腿里有
-  // 一条是 en-US；这里量的正是无障碍名本身，所以不走 fixtures 的 `openElementsTab`）。
-  // 按 aria-expanded 判态、不在才点：盲点击会在收起动画里把刚打开的面板关掉。
+  // 一条是 en-US；这里量的正是无障碍名本身，所以给 fixtures 的 `openElementsTab` 传自己的定位器；
+  // 它按 aria-expanded 判态、不在才点，被自动切换关掉时重读重点，#991）。
   const nav = page.getByRole('navigation').getByRole('button', { name: /图内元素|Figure elements/ })
-  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
-  await expect(nav).toHaveAttribute('aria-expanded', 'true')
+  await openElementsTab(page, nav)
   // 树在引擎首次渲染完之前是空的，先等它有内容
   const items = page.getByRole('treeitem')
   await expect(items.first()).toBeVisible({ timeout: 60_000 })

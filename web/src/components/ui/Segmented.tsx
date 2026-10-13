@@ -45,7 +45,7 @@ const KEY_DELTA: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLe
 /**
  * 分段选择器（segmented control）：一组**互斥的取值**排成 28px 的一行，灰容器
  * （surface-active）里一枚白色 thumb 滑到选中项下面（shadow-thumb，批次 A T6），
- * 选中项 600 + ink、未选中 ink-3。整组默认撑满容器宽度，各档等分；`value` 为 null
+ * 选中项 600 + ink、未选中 ink-3。整组默认撑满容器宽度，各档按字宽起步再平分多出的空间（字一样宽时就是等分）；`value` 为 null
  * （多选取值不一）时没有一档被标成选中。
  *
  * 它与 `Tabs` 的分工（2026-09-13 审计 §6「控件语法」）：**页签负责切换视图，
@@ -106,7 +106,8 @@ export function Segmented<T extends string>({
       onKeyDown={onKeyDown}
       className={cn(
         // 胶囊槽 + 白色胶囊 thumb（2026-09-30 重设计，与带字按钮同形）
-        'relative flex h-7 w-full items-stretch rounded-full bg-surface-hover p-0.5',
+        // min-w-fit：整组至少与各档文字一样宽——放进按内容收缩的格子里（设置行的控件格）也不把字挤出去
+        'relative flex h-7 w-full min-w-fit items-stretch rounded-full bg-surface-hover p-0.5',
         className,
       )}
       {...rest}
@@ -141,7 +142,9 @@ export function Segmented<T extends string>({
             aria-label={item.label == null ? (item.ariaLabel ?? item.tip) : undefined}
             className={cn(
               // relative：压在滑动的选中底之上；每格不再自己画 bg-selected
-              'relative flex min-w-7 flex-1 items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
+              // flex-auto（起点 = 自己的字宽，再分多出的空间），不用 flex-1（起点 0、硬等分）：等分时最长的一档
+              // 被压到与最短的一样窄，「跟随系统」加粗后溢出格子（2026-10-13 用户截图）。图标档同宽，照旧等分
+              'relative flex min-w-7 flex-auto items-center justify-center gap-1 whitespace-nowrap px-2 text-sm outline-none',
               // 每格同形（rounded-full，与 thumb 同）：此前 first:/last: 落在 thumb 上失效，只剩键盘焦点环末格圆角、其余方角
               'rounded-full',
               'transition-colors duration-fast focus-visible:z-sticky focus-visible:focus-ring',

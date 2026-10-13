@@ -58,6 +58,11 @@ os.environ.setdefault("TAVOTTO_USER_ENV_DISCOVERY", "0")
 # 遥测自己的用例把它摘掉并替换掉传输层（tests/test_telemetry.py）。
 os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 
+# 「发送问题反馈」（ADR 0118）发行版默认开启入口、内置生产端点 `https://tavotto.cn`（G-DIAG 开放，2026-10-13）。
+# 测试进程同样**硬关**：没设任何开关的 pytest 进程里 `diagsend.enabled()` 为 False，不可能误连生产。
+# 诊断发送自己的用例（tests/test_diag_send*.py）在 fixture 里摘掉它，再用下面的会话级探针兜底。
+os.environ["TAVOTTO_NO_DIAG_UPLOAD"] = "1"
+
 # ---------------------------------------------------------------------------
 # 会话级零网络断言：遥测 endpoint 一次都不许被真的请求（#440）
 # ---------------------------------------------------------------------------
@@ -80,12 +85,22 @@ os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 _REAL_OPENER_OPEN = urllib.request.OpenerDirector.open
 #: 命中记录：`线程名 | 当时的用例 | URL`。为空 = 本会话一次都没请求过遥测 endpoint。
 _TELEMETRY_LEAKS: list[str] = []
+#: 同一探针对**生产诊断接收端**（`diagsend.PRODUCTION_ENDPOINT` 的主机）的命中记录；为空 = 一次都没请求过。
+_DIAG_LEAKS: list[str] = []
 
 
 def _refuse_telemetry_open(self, fullurl, *args, **kwargs):
+    from tavotto.engine.diagsend import PRODUCTION_ENDPOINT  # 地址唯一出处；调用时才 import
     from tavotto.engine.telemetry import DEFAULT_ENDPOINT  # 地址唯一出处；调用时才 import
 
     target = fullurl.full_url if isinstance(fullurl, urllib.request.Request) else str(fullurl)
+    if (
+        urllib.parse.urlsplit(target).hostname
+        == urllib.parse.urlsplit(PRODUCTION_ENDPOINT).hostname
+    ):
+        current = os.environ.get("PYTEST_CURRENT_TEST", "（不在任何用例里）")
+        _DIAG_LEAKS.append(f"{threading.current_thread().name} | {current} | {target}")
+        raise urllib.error.URLError("测试进程不许请求生产诊断接收端（tests/conftest.py，ADR 0118）")
     if urllib.parse.urlsplit(target).hostname == urllib.parse.urlsplit(DEFAULT_ENDPOINT).hostname:
         current = os.environ.get("PYTEST_CURRENT_TEST", "（不在任何用例里）")
         _TELEMETRY_LEAKS.append(f"{threading.current_thread().name} | {current} | {target}")
@@ -106,6 +121,14 @@ def _fail_session_on_telemetry_leaks(session) -> None:
     telemetry = sys.modules.get("tavotto.engine.telemetry")
     if telemetry is not None:
         telemetry.reset_for_tests()
+    if _DIAG_LEAKS:
+        _write_report_to_stderr(
+            f"\n本会话请求了 {len(_DIAG_LEAKS)} 次生产诊断接收端（已拦下，未发出；线程 | 当时的用例 | URL）：\n"
+            + "\n".join(f"  - {line}" for line in _DIAG_LEAKS)
+            + "\n\n测试进程绝不上传真实诊断包：诊断发送用例必须指向回环模拟端（tests/support/diag_fakes.py）。\n"
+        )
+        if session.exitstatus == pytest.ExitCode.OK:
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if not _TELEMETRY_LEAKS:
         return
     _write_report_to_stderr(

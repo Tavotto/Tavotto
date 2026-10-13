@@ -7,6 +7,7 @@ import {
   Download,
   Ellipsis,
   HardDrive,
+  Images,
   Info,
   Lock,
   Redo2,
@@ -36,7 +37,8 @@ import { useWriteBackMenuEntry } from './inspector/UpdateSourceButton'
 import { usePalette } from '@/components/CommandPalette'
 import { runTutorialEntry, tutorialEntry } from '@/lib/onboarding/tutorial'
 import { refreshProjectNow } from '@/store/liveSync'
-import { useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { bannerReport, useProjectReadinessStore } from '@/store/projectReadinessStore'
+import { pendingCount } from '@/lib/readinessText'
 import {
   discardLocalCopy,
   dismissDocNotice,
@@ -83,6 +85,8 @@ export function TopBar() {
         </HomeButton>
         {/* 项目（图库目录）→ 文档（画布）：从大到小，与对象层级一致 */}
         <ProjectSwitcher />
+        {/* 项目锚点（2026-10 设计审计第二轮）：项目的事实贴在项目名后面——此前是工作面板里的一条提示条 */}
+        <ProjectStatusPill />
         {/* 项目 / 文档是一条面包屑（2026-09-15 打磨批次 F）：一个斜杠，不是竖线加两个 chip */}
         <span aria-hidden className="type-meta shrink-0 select-none">
           /
@@ -210,10 +214,13 @@ function useHeldFor(on: boolean, ms: number): boolean {
  * 需要用户裁决 / 知道的那几件文档级的事，按急迫排第一个（顶栏状态芯片只说一件）：
  * 冲突、保存失败、上次的排版没能恢复（`restore`，门关着、占位文档不能写）、本机有未恢复的编辑、
  * 上次的排版没打开、来自更新版本的排版、保存元数据没更新（`restore_meta`，正文已存下）。
- * 冲突 / 保存失败**另外**在工作面板顶上常驻一条（`DocumentBanner`，丢编辑的事不能只藏在一颗胶囊后面）；
- * 其余三件只在这里——它们不打断编辑，此前却各占一整条横幅把应用往下推（2026-10-07 设计审计 §10.1）。
+ * 全都只在这里（2026-10 设计审计第二轮）：冲突 / 保存失败此前**另外**在工作面板顶上常驻一条，把画布往下推；
+ * 现在它们进入时说明块自动展开一次（`URGENT_ISSUES`）、读屏 assertive 播报，胶囊一直留到事情解决。
  */
 type DocIssue = 'conflict' | 'save_error' | 'restore' | 'recovery' | 'last_doc' | 'too_new' | 'restore_meta'
+
+/** 会丢编辑、要用户裁决的两件：进入时说明块自动展开一次，读屏按 assertive 播报 */
+const URGENT_ISSUES: ReadonlySet<DocIssue> = new Set(['conflict', 'save_error'])
 
 const ISSUE_TONE: Record<DocIssue, StatusTone> = {
   conflict: 'warn',
@@ -289,7 +296,14 @@ export function SaveStateLabel() {
   const restoreKind = useDocumentStore((s) => s.restoreIssue?.kind ?? null)
   const localPending = saveState === 'dirty' || saveState === 'saving'
   const held = useHeldFor(localPending, SAVE_PENDING_REVEAL_MS)
-  if (!hasContent && !bound && !issue) return null
+  // 空排版不显示标签，但播报区照样挂着（空的）：空排版改名 / 改版面也会自动保存，失败时要填进一个早已挂着的节点
+  // （Codex #947）。三个分支的根都是 span、播报区同一个 key
+  if (!hasContent && !bound && !issue)
+    return (
+      <span data-save-idle className="contents">
+        <span key="save-live" aria-live="assertive" data-save-live className="sr-only" />
+      </span>
+    )
   // 还从没落过盘（新排版的第一次改动）：没有「上一句落定的话」可以继续显示，
   // 不等 600ms 直接说进行中——否则会在第一轮自动保存完成前就声称「已存在本机」
   const neverPersisted = !bound && !lastPersisted && saveState !== 'saved'
@@ -321,9 +335,11 @@ export function SaveStateLabel() {
     : t(projectOpen ? 'topbar.saveTitleLocalInProject' : 'topbar.saveTitleLocal', { mod: MOD })
   const shownState = bad ? saveState : revealPending ? saveState : 'settled'
   // 读屏只在出事时说：标签本身不 aria-live（每秒一轮的保存不该每秒播一次）。
-  // 不带 role（`role=status` 全产品只留通知轨那一个）
+  // 不带 role（`role=status` 全产品只留通知轨那一个）。两个分支的根都是同一种 span、播报区带同一个 key：
+  // 从「已保存」进入冲突 / 保存失败时它是**早已挂着的那个节点**被填字——和字同一帧新挂上的
+  // live region 读屏多半不播（Codex #947）
   const live = (
-    <span aria-live="polite" data-save-live className="sr-only">
+    <span key="save-live" aria-live="assertive" data-save-live className="sr-only">
       {bad ? text : ''}
     </span>
   )
@@ -438,12 +454,31 @@ const msgText = (key: string) => translate(key, { ns: 'workspace' })
 function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; title: string }) {
   const { t } = useTranslation('workspace')
   const [open, setOpen] = useState(false)
+  // 自动展开的那一次不搬焦点：用户可能正在画布上打字，说明块只是摆出来，Esc / 点外面就收
+  const [autoOpened, setAutoOpened] = useState(false)
+  const shownFor = useRef<DocIssue | null>(null)
+  useEffect(() => {
+    // 会丢编辑、要用户裁决的两件（冲突 / 保存失败）进入时自动展开一次（2026-10 设计审计第二轮）：
+    // 工作面板里那条常驻提示条已删，事情不能只藏在一颗胶囊后面
+    if (URGENT_ISSUES.has(issue) && shownFor.current !== issue) {
+      setAutoOpened(true)
+      setOpen(true)
+    }
+    shownFor.current = issue
+  }, [issue])
+  // 关掉的路有两条（Esc / 点外面走 onOpenChange，说明块里的出口走 close），都要清「自动展开」：
+  // 否则手动再点开时仍当成自动展开、不把焦点搬进说明块（Codex #947）
+  const changeOpen = (v: boolean) => {
+    setOpen(v)
+    if (!v) setAutoOpened(false)
+  }
   const tone = ISSUE_TONE[issue]
   const Icon = ISSUE_ICON[issue]
   return (
     <Popover
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={changeOpen}
+      keepFocus={autoOpened}
       width={320}
       align="start"
       ariaLabel={text}
@@ -468,7 +503,7 @@ function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; titl
       }
     >
       <div data-doc-status-popover={issue} className="flex flex-col gap-2 p-1">
-        <IssueBody issue={issue} close={() => setOpen(false)} />
+        <IssueBody issue={issue} close={() => changeOpen(false)} />
       </div>
     </Popover>
   )
@@ -891,5 +926,83 @@ function MoreMenu({ writeBackItem }: { writeBackItem: ReactNode }) {
         {t(`topbar.tutorial.${tutorialKind}`)}
       </MenuItem>
     </Menu>
+  )
+}
+
+/**
+ * 顶栏的**项目锚点**（2026-10 设计审计第二轮）：项目接入状态贴在项目名后面——此前是工作面板里的一条提示条
+ * 「已找到 N 张图：……」，把画布往下推。
+ *
+ * 判据只有一份：出不出现、显示哪一份报告都是 `bannerReport`（全部可编辑 / 空项目 / 报告未到 / 这一版已关掉都不出现）；
+ * 接入中心开着时不重复说。胶囊只说最要紧的一个数：有待连接的 → warn「N 张待连接」，否则中性「N 张仅版面」——
+ * `layout_only` 不是错误（那些图照样能排版、裁剪、标注和导出），不画成警告。点开是与文档芯片同一副 320 宽说明块：
+ * 全句 + 「查看接入状态」（打开接入中心）+ 「关闭」（按报告指纹关掉，事实变了会再出现——所以文案不许诺「不再」）。
+ */
+export function ProjectStatusPill() {
+  const { t } = useTranslation(['workspace', 'common'])
+  const report = useProjectReadinessStore(bannerReport)
+  const centerOpen = useUiStore((s) => s.registryOpen)
+  const [open, setOpen] = useState(false)
+  if (!report || centerOpen) return null
+  const { total, editable, layout_only: layoutOnly } = report.summary
+  const pending = pendingCount(report.summary)
+  const tone: StatusTone = pending > 0 ? 'warn' : 'neutral'
+  const text =
+    pending > 0
+      ? t('workspace:readiness.pillPending', { count: pending })
+      : t('workspace:readiness.pillLayoutOnly', { count: layoutOnly })
+  const summary = t('workspace:readiness.bannerSummary', { total, editable, pending, layoutOnly })
+  return (
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      width={320}
+      align="start"
+      ariaLabel={summary}
+      trigger={
+        <button
+          type="button"
+          data-project-status-pill={tone}
+          aria-label={t('workspace:readiness.pillAria', { status: text })}
+          title={summary}
+          className={cn(
+            'inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs font-medium outline-none',
+            'focus-visible:focus-ring',
+            PILL_TONE[tone],
+          )}
+        >
+          <Images size={ICON_SIZE.xs} className="shrink-0" aria-hidden />
+          <span className="truncate max-[899px]:sr-only">{text}</span>
+        </button>
+      }
+    >
+      <div data-project-status-popover className="flex flex-col gap-2 p-1">
+        <p className="type-title text-ink">{summary}</p>
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          <Button
+            variant="primary"
+            size="sm"
+            data-project-status-action="open-center"
+            onClick={() => {
+              setOpen(false)
+              // 遥测的入口值沿用 'banner'：后端白名单是闭集，它说的是「项目接入状态的那句提示」，换了位置不换语义
+              useProjectReadinessStore.getState().openCenter({ source: 'banner' })
+            }}
+          >
+            {t('workspace:readiness.openCenter')}
+          </Button>
+          <Button
+            size="sm"
+            data-project-status-action="dismiss"
+            onClick={() => {
+              setOpen(false)
+              useProjectReadinessStore.getState().dismissBanner()
+            }}
+          >
+            {t('workspace:readiness.pillDismiss')}
+          </Button>
+        </div>
+      </div>
+    </Popover>
   )
 }

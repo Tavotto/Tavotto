@@ -436,6 +436,8 @@ export function ContextBar() {
         'text-sm text-ink shadow-pop',
         pos ? 'animate-pop-in' : 'invisible',
       )}
+      // 胶囊里的数字框 / 下拉也是胶囊（内外圆角相配，fieldBox 的 in-data-capsule）
+      data-capsule
       onContextMenu={(e) => e.preventDefault()}
     >
       {mode === 'crop' && cropping ? (

@@ -62,6 +62,11 @@ function rebaseOverride(o: PanelOverride, f: Frac, frame: ManifestFrame): PanelO
     const [x, y] = v as number[]
     return { ...o, value: pt(x, y) }
   }
+  if (o.prop === 'size_frac' && nums(2)) {
+    // 形状尺寸只有长度，没有位置；不可套 pt()，否则裁掉的边距会被减进宽高。
+    const [w, h] = v as number[]
+    return { ...o, value: [w / f.w, h / f.h] }
+  }
   if (o.prop === 'endpoints_frac' && nums(4)) {
     const [x0, y0, x1, y1] = v as number[]
     return { ...o, value: [...pt(x0, y0), ...pt(x1, y1)] }

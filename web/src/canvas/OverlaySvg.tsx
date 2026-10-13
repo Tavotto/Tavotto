@@ -6,6 +6,7 @@ import { geomPathD, translateGeom } from '@/lib/pathGeom'
 import { PATH_HIT_SHAPES, shapeOutline } from '@/lib/shapeGeometry'
 import { MM_PER_PT } from '@/lib/units'
 import { arrowEndpointsOf, geomTarget, panelFullRect, resolveGroup } from '@/lib/elementGeom'
+import { patchBoundsOf } from '@/lib/patchResize'
 import { ALL_DIRS, boundsOf, dirsFor, type ResizeDir } from '@/lib/geometry'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -36,6 +37,7 @@ import {
   startEndpointDrag,
   startGroupResize,
   startLegendScale,
+  startPatchResize,
   startGuideDrag,
   startResizeDrag,
   DRAW_COLOR,
@@ -791,6 +793,11 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const full = panelFullRect(panel)
   const toBox = (r: Rect4) =>
     toScreen({ x: full.x + r[0] * full.w, y: full.y + r[1] * full.h, w: r[2] * full.w, h: r[3] * full.h }, t)
+  const toDraggedBox = (gid: string, r: Rect4) => toBox([
+    r[0] + (gidDrag?.gid === gid ? gidDrag.dfx : 0),
+    r[1] + (gidDrag?.gid === gid ? gidDrag.dfy : 0),
+    r[2], r[3],
+  ])
   /**
    * 元素的框一律画在它的几何落点上：位图没有自己的几何属性，
    * 拖它动的是宿主子图，框也就该是宿主子图的 bbox（与单选时一致）。
@@ -799,13 +806,15 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
     const el = manifest.elements.find((e) => e.gid === gid)
     if (!el || el.gid === 'figure') return null
     const target = geomTarget(manifest, el)
-    const [bx, by, bw, bh] = preview?.boxes[target.gid] ?? target.bbox
+    const box = preview?.boxes[target.gid] ?? target.bbox
     const dx = gidDrag?.gid === target.gid ? gidDrag.dfx : 0
     const dy = gidDrag?.gid === target.gid ? gidDrag.dfy : 0
     // 真实路径跟着同一个乐观位移走——只挪框不挪路径的话，拖动中框与轮廓
     // 会分家（松手权威渲染回来才对上，中间那一段全是错的）
-    const geom = target.geometry ? translateGeom(target.geometry, dx, dy) : null
-    return { key: target.gid, target, geom, box: toBox([bx + dx, by + dy, bw, bh]) }
+    // 改框大小时真实圆角仍由引擎重建：目标矩形接管描示，不把旧路径留在新手柄里面。
+    const resizingPatch = preview?.resizingGid === target.gid
+    const geom = target.geometry && !resizingPatch ? translateGeom(target.geometry, dx, dy) : null
+    return { key: target.gid, target, geom, box: toDraggedBox(target.gid, box) }
   }
 
   // 所有选中元素画同一种框；位图与宿主子图落在同一个几何目标上，只画一次
@@ -845,6 +854,12 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
       : null
   // 单选子图仍是它自己的八个手柄
   const axesBox = !groupBox && primary?.target.resizable ? primary.box : null
+  const patchBounds = !groupBox && selectedGids.length === 1 && primary
+    ? patchBoundsOf(primary.target)
+    : null
+  const patchBox = patchBounds && primary
+    ? toDraggedBox(primary.key, preview?.boxes[primary.key] ?? patchBounds)
+    : null
   // 单选图例 → 四个角手柄，整体缩放（对角不动，见 startLegendScale）
   const legendBox =
     !groupBox &&
@@ -1007,6 +1022,25 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
             />
           ))}
 
+        {patchBox && primary && (
+          <EdgeStrips
+            box={patchBox}
+            dirs={ALL_DIRS}
+            cursor={handleCursor}
+            onPointerDown={(e, dir) => guarded((ev) => startPatchResize(ev, panel, primary.target, layout, dir))(e)}
+          />
+        )}
+        {patchBox && primary && ALL_DIRS.map((dir) => (
+          <Handle
+            key={dir}
+            box={patchBox}
+            dir={dir}
+            cursor={handleCursor(dir)}
+            data-patch-resize={dir}
+            onPointerDown={guarded((e) => startPatchResize(e, panel, primary.target, layout, dir))}
+          />
+        ))}
+
         {legendBox &&
           primary &&
           LEGEND_CORNERS.map((dir) => (
@@ -1086,6 +1120,7 @@ function Handle({
   onPointerDown,
   cursor,
   'data-legend-scale': legendScale,
+  'data-patch-resize': patchResize,
 }: {
   box: Box
   dir: ResizeDir
@@ -1093,11 +1128,12 @@ function Handle({
   /** 画面上的光标（翻转 / 旋转面板上与 `dir` 不同，见 ElementBoxes 的 `handleCursor`） */
   cursor: string
   'data-legend-scale'?: string
+  'data-patch-resize'?: string
 }) {
   return (
     <HandleMark
       at={handlePos(box, dir)}
-      hook={{ 'data-element-handle': dir, 'data-legend-scale': legendScale }}
+      hook={{ 'data-element-handle': dir, 'data-legend-scale': legendScale, 'data-patch-resize': patchResize }}
       cursor={cursor}
       onPointerDown={onPointerDown}
     />

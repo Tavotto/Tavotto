@@ -10,7 +10,8 @@ import type { Page } from '@playwright/test'
 /**
  * 「发送问题反馈」（ADR 0118）——真浏览器 + 真引擎，量 jsdom 与模拟服务端量不到的两件事：
  *
- *   1. **默认关闭**：没有开关环境变量的引擎上，「帮助与诊断」里一个入口都没有，本机端点也不存在；
+ *   1. **硬开关**：`TAVOTTO_NO_DIAG_UPLOAD=1`（fixtures 的默认）的引擎上，「帮助与诊断」里一个入口都没有，本机端点也不存在；
+ *      发行版默认开启（ADR 0118 修订），所以 e2e 默认硬关、绝不连生产；
  *   2. **打开后，确认之前零连接**：引擎指向一个只数 TCP 连接的回环端口；打开对话框（备包）、查看内容、
  *      关窗、再打开，连接数始终是 0；点「发送」才出现第一条连接。服务端是否被「说服」做别的事由
  *      `tests/test_diag_send.py` 钉，这里只证明真实界面的触发点。
@@ -25,7 +26,7 @@ async function openDiagnostics(page: Page, baseURL: string) {
   await expect(page.locator('[data-diagnostics-bundle]')).toBeVisible({ timeout: 30_000 })
 }
 
-test('默认关闭：没有入口，本机端点也不存在', async ({ app, page }) => {
+test('硬开关：没有入口，本机端点也不存在', async ({ app, page }) => {
   const a = await app()
   await openDiagnostics(page, a.baseURL)
   await expect(page.locator('[data-diagnostics-send]')).toHaveCount(0)
@@ -50,7 +51,7 @@ test('打开后：确认之前零连接，点发送才连；失败说人话并�
   try {
     const a = await app({
       env: {
-        TAVOTTO_DIAG_UPLOAD: '1',
+        TAVOTTO_NO_DIAG_UPLOAD: '0', // 摘掉 fixtures 的硬关；目的地只能是下面的回环端点（误配不回退生产）
         TAVOTTO_DIAG_DEV_LOOPBACK: '1',
         TAVOTTO_DIAG_ENDPOINT: `https://127.0.0.1:${port}`,
       },
@@ -129,7 +130,7 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     const a = await app({
       figures: project,
       env: {
-        TAVOTTO_DIAG_UPLOAD: '1',
+        TAVOTTO_NO_DIAG_UPLOAD: '0', // 摘掉 fixtures 的硬关；目的地只能是下面的回环端点（误配不回退生产）
         TAVOTTO_DIAG_DEV_LOOPBACK: '1',
         TAVOTTO_DIAG_ENDPOINT: `https://127.0.0.1:${port}`,
       },

@@ -281,6 +281,7 @@
     "switchKind": "改为{{name}}",
     "switchKindCount": "把 {{count}} 个对象改为{{name}}",
     "resizeAxes": "缩放 {{count}} 个子图",
+    "resizePatch": "调整图框大小",
     "scaleLegend": "缩放图例",
     "resizeObjects": "缩放对象",
     "restoreAspect": "恢复原始比例",
@@ -495,7 +496,11 @@
       "needs_probe": "需试运行",
       "source_missing": "源脚本丢失"
     },
-    "whyNotEditable": "为什么不能编辑？"
+    "whyNotEditable": "为什么不能编辑？",
+    "pillPending_other": "{{count}} 张待连接",
+    "pillLayoutOnly_other": "{{count}} 张仅版面",
+    "pillAria": "项目接入状态：{{status}}",
+    "pillDismiss": "关闭"
   },
   "runtimePanel": {
     "placeholder": "由脚本生成的图",

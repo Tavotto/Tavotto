@@ -1295,7 +1295,11 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       )}
       style={{ transform: `scale(${scale})` }}
     >
+      {/* 中性两档（构建中 / 提示）挂 `data-on-paper`：角标画在图（纸）上，ink / surface 换成纸上的墨与纸
+          （index.css 末尾）——界面的 ink 在暗色里反成浅灰，浅灰底压在白图上几乎看不见（2026-10-13 UI 审计）。
+          过期 / 出错两档不挂：它们的锚点色底与 -content 字是按界面 surface 配好的一对，换了 surface 就拆散了（Codex #995） */}
       <span
+        {...(shown.tone === 'busy' || shown.tone === 'info' ? { 'data-on-paper': '' } : {})}
         data-panel-badge={shown.tone}
         className={cn(
           // 角标是 chip：胶囊（圆角族 full）。三种语气三种颜色（2026-10-07 设计审计 §10.1：此前「过期」与

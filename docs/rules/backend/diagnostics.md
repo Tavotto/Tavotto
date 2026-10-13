@@ -249,7 +249,7 @@
 
 字段隐私审查表与调用链见 T04 交接。
 
-## 发送问题反馈（`engine/diagsend.py`，`/api/diagnostics/send*`，ADR 0118，默认关闭）
+## 发送问题反馈（`engine/diagsend.py`，`/api/diagnostics/send*`，ADR 0118；发行版默认开启入口，每次发送仍逐次确认）
 
 「诊断包不自动上传」不变；用户**当次确认**后把包发给维护者的国内接收服务（`Tavotto/infra` 的 `diagnostics-api` v1）是它的**唯一**例外通道。
 契约出处是 infra 仓库 diagnostics-api 文档目录里的 openapi.json（v1.0.0）（客户端严格按它写，字段名 / 顺序 / 枚举逐字；改契约先走 infra 的向后兼容版本与协同 PR）。
@@ -263,15 +263,17 @@
 - **逐次授权，什么都不自己继续。** 没有记住的选择、没有启动补发、状态只在内存；取消 / 关窗（`discard`）/ 失败 / 进程退出后不会有请求。一次发送内的有界重试只有
   `complete` 丢响应（网络 / 超时）与 `in_progress` / `upload_missing`（≤ `COMPLETE_ATTEMPTS`）；429 / 503 与其余失败交还用户去点。用户再点：内容没变且服务端会话还开着
   复用 `client_request_id`，否则换新的 UUIDv4（`REOPEN_ON`、取消后、内容变了）。`client_request_id` 绝不取遥测 `install_id`。
-- **目的地由代码钉死。** 开关 = `TAVOTTO_DIAG_UPLOAD=1` 且无 `TAVOTTO_NO_DIAG_UPLOAD=1` 且 `TAVOTTO_DIAG_ENDPOINT` 主机 ∈ `ENDPOINT_HOSTS`（G-DIAG 通过前**空集**，
-  发行版打不开）；回环开发另设 `TAVOTTO_DIAG_DEV_LOOPBACK=1`。`upload.url` 只认 COS 桶域名（回环模式只认本端点 `/v1/local-upload`）；**不跟随任何重定向**
+- **目的地由代码钉死。** 默认开启（G-DIAG 开放，2026-10-13，ADR 0118 修订）：`resolve_target()` 在 `TAVOTTO_NO_DIAG_UPLOAD=1` 或 `TAVOTTO_DIAG_UPLOAD=0` 时关；
+  未设 / 空 `TAVOTTO_DIAG_ENDPOINT` 用内置 `PRODUCTION_ENDPOINT`（`https://tavotto.cn`）；设了就只认它——主机 ∈ `ENDPOINT_HOSTS`（`{tavotto.cn}`）或回环开发模式
+  （另设 `TAVOTTO_DIAG_DEV_LOOPBACK=1`），不合规**关闭且不回退内置端点**。`TAVOTTO_DIAG_UPLOAD=1` 不再是开启条件（无效果）。
+  **测试进程默认硬关**：`tests/conftest.py` 设 `TAVOTTO_NO_DIAG_UPLOAD=1` 并让会话级探针拦下任何发往生产主机的请求（命中判红）；诊断发送用例在 fixture 里摘掉它并指向回环模拟端，e2e `fixtures.ts` 同样默认硬关。`upload.url` 只认 COS 桶域名（回环模式只认本端点 `/v1/local-upload`）；**不跟随任何重定向**
   （`_NoRedirect` 必须**抛**，返回 None 会让默认处理器把 301/302/303 的 POST 改成 GET 跟过去）；证书只经 `tlstrust`（出站 HTTPS 第五处，清单同步）。
 - **秘密不落地。** 令牌 / 上传 URL 与表单 / 说明文字只在 `SendSession` 私有字段；`public()`、日志（模板字面量 + `logsafe.known` 闭集参数，不带异常文本）、诊断包、遥测里都没有。
   不调 `telemetry.capture`（用户文本不进 PostHog）；元数据只用 `os` / `arch` / `distribution` / 版本串 / `bundle_schema` / `size` / 本机 `sha256` 白名单。
 - **失败码**是客户端的闭集（`FAILURES`，25 个，值 = 用户能不能再点）；`web` 的 `settings.diagnostics.send.failure.*` 与它严格同源（前端用例读这个文件对拍键集）。
 - 看护：`tests/test_diag_send.py`（对端是 `tests/support/diag_fakes.py` 的本地模拟：零请求、主路径、幂等重试、每个状态码、SSRF / 重定向 / 字段注入、取消、超限与坏包、
-  金丝雀不泄漏、契约对账）、`tests/test_diag_send_api.py`（Flask 层）、`tests/test_outbound_https_trust.py`（第五处出站）。真实 COS C1–C16 与真机 WebView 联调**未做（NOT_RUN）**，
-  模拟契约通过不等于真 COS 通过。
+  金丝雀不泄漏、契约对账）、`tests/test_diag_send_api.py`（Flask 层）、`tests/test_outbound_https_trust.py`（第五处出站）。真实 COS C1–C16 已于 2026-10-13 全部 PASS
+  （证据在 infra 仓库 diagnostics-api 文档目录里的真实 COS 验收清单，infra#19）；模拟契约通过不等于真 COS 通过，改上传路径后要按那份清单重验。真机 WebView 逐次确认联调**未做（NOT_RUN）**。
 
 ## 网址只留 origin（bundle schema 7，Codex #923 P2）
 

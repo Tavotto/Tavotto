@@ -187,6 +187,8 @@ import {
 } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { patchBoundsOf } from '@/lib/patchResize'
+import { PatchSizeControls } from './PatchSizeControls'
 
 /** 本文件的文案都在 inspector:element.* 下 */
 const el = (key: string, values?: Record<string, unknown>) =>
@@ -242,7 +244,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
    * 那份要是上一版的，改尺寸/居中/填数就是把旧几何写成新的。
    * 这条与多选那条分开写：多选走对齐工具条，单选走普通表单，两边的收法不同。
    */
-  const singleGeomSyncing = !exactManifest && !!picked?.resizable
+  const patchSizeAvailable = !!element && !!patchBoundsOf(element)
+  const singleGeomSyncing = !exactManifest && (!!picked?.resizable || patchSizeAvailable)
   // 多选 → 出对齐工具条，替代单元素表单。位图会归并到宿主子图，
   // 归并后只剩一个几何目标时就没什么可对齐的，仍走单元素表单。
   // 画布标注加进来后与元素同框排版（元素写 override，标注改画布位置）。
@@ -319,6 +322,8 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             ]
           : [],
   )
+  // 形状尺寸由 W/H mm 控件承接，原始 figure 分数不再重复出现在通用列表里。
+  if (patchSizeAvailable) consumedBySideDiagram.add('size_frac')
   const buckets =
     element && element.editable.length
       ? presentFields(
@@ -452,7 +457,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             warnings={render?.warnings ?? []}
             buckets={buckets}
             primaryExtra={
-              element?.role === 'axes' && sideHost ? (
+              patchSizeAvailable && exactManifest ? (
+                <PatchSizeControls key={element.gid} panel={panel} element={element} />
+              ) : element?.role === 'axes' && sideHost ? (
                 /* 子图页四段：几何（子图尺寸 / 居中）→ 范围与坐标变换 → 刻度与网格 → 边框
                    （审计 T12：范围、比例、边框三类任务互不混杂；2026-09-13 审计 B53：
                    改尺寸是最常用的几何操作，放首屏，不再排在整页刻度设置之后） */
@@ -1563,7 +1570,7 @@ const FOLD_LABEL: Record<string, string> = {
  * 逐个填才有意义的属性不进批量表单：文字内容、系列名称，以及位置尺寸
  * （几何走上面的对齐工具条，批量写同一个 bbox 会把元素叠在一起）。
  */
-const BATCH_SKIP = new Set(['text', 'label', 'position', 'pos_frac', 'size_mm'])
+const BATCH_SKIP = new Set(['text', 'label', 'position', 'pos_frac', 'size_mm', 'size_frac'])
 const BATCH_TYPES = new Set(['number', 'color', 'bool', 'enum'])
 
 /** 选中元素都有、且类型与选项一致的字段——以第一个元素的顺序和分组为准 */

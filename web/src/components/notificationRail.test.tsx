@@ -234,21 +234,27 @@ describe('「已改用你的环境」', () => {
 })
 
 /**
- * 通知轨的外形与顺序（2026-10-07 设计审计 §10.1）：普通的一条是胶囊；错误是圆角 12 的面板——左侧 danger
- * 竖条 + 标题 + 至多两行原文 + 「复制详情」；**最新的一条最靠近底边**（CSS order，DOM 顺序不动）。
- * 主语：`data-toast-layout` / `data-toast-bar` / `data-copy-details`；顺序认 style.order 的大小。
+ * 通知轨的外形与顺序（2026-10-07 设计审计 §10.1；2026-10-13 错误也改成胶囊）：每一条都是单行胶囊；错误 =
+ * danger 图标 + 「这一步没有完成」+ 原因一行（截断，全文在 title）+「复制详情」图标钮；**最新的一条最靠近底边**
+ * （CSS order，DOM 顺序不动）。主语：`data-toast-layout` / `data-toast-tone` / `data-copy-details`；顺序认 style.order 的大小。
  */
 describe('通知轨：外形与先后', () => {
-  it('普通状态是胶囊；错误是面板：竖条 + 标题 + 原文 + 复制详情', async () => {
+  it('普通状态与错误都是单行胶囊；错误的原因截断成一行、全文在 title，复制详情复制全文', async () => {
     say('已导出')
     expect(statusToast()!.dataset.toastLayout).toBe('pill')
     expect(statusToast()!.className).toContain('rounded-full')
     act(() => useUiStore.getState().setStatus(literal('写盘失败：/very/long/path/that/goes/on'), 'error'))
     const box = statusToast()!
-    expect(box.dataset.toastLayout).toBe('panel')
-    expect(box.className).toContain('rounded-lg')
-    expect(box.querySelector('[data-toast-bar]')).not.toBeNull()
+    expect(box.dataset.toastLayout).toBe('pill')
+    expect(box.dataset.toastTone).toBe('error')
+    expect(box.className).toContain('rounded-full')
+    expect(box.querySelector('[data-toast-bar]')).toBeNull()
     expect(box.textContent).toContain('写盘失败：/very/long/path/that/goes/on')
+    expect(box.querySelector('[title="写盘失败：/very/long/path/that/goes/on"]')).not.toBeNull()
+    // 截断要落在块级盒子上：行内 span 的 overflow / text-overflow 不生效（Codex #995）
+    const clipped = box.querySelector<HTMLElement>('.truncate')!
+    expect(clipped.classList.contains('block')).toBe(true)
+    expect(clipped.parentElement!.className).toContain('min-w-0')
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     await act(async () => box.querySelector<HTMLButtonElement>('[data-copy-details]')!.click())
