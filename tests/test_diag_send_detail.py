@@ -2090,9 +2090,7 @@ class TestProbeNeverExecutesUserDirectories:
         sess.cwd = str(evil)  # 连 cwd 也是恶意目录
         sess.spec = Spec()
         assert diagdetail._native_launch_env(sess) == {"MPLBACKEND": "agg"}
-        out = diagdetail._probe_subprocess(
-            py, False, str(evil), diagdetail._native_launch_env(sess)
-        )
+        out = REAL_PROBE(py, False, str(evil), diagdetail._native_launch_env(sess))
         assert out["status"] == "ok" and not marker.exists()
 
     def test_the_probe_is_launched_from_a_trusted_script_not_dash_c(self, monkeypatch, tmp_path):
