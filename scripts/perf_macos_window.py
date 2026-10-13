@@ -28,6 +28,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 SCHEMA = "tavotto-macos-window-probe/1"
+COMPARE_SCHEMA = "tavotto-macos-window-comparison/1"
 STAGES = ("idle", "drag", "resize", "complex")
 
 
@@ -103,7 +104,11 @@ def quantile(xs: list[float], q: float) -> float | None:
 
 
 def summarize(report: dict) -> dict:
-    if report.get("schema") != SCHEMA or not isinstance(report.get("samples"), list):
+    if (
+        report.get("schema") != SCHEMA
+        or report.get("stage") not in STAGES
+        or not isinstance(report.get("samples"), list)
+    ):
         raise ValueError("invalid Tavotto macOS window probe report")
     out = {"stage": report.get("stage"), "count": len(report["samples"])}
     for field in ("family_cpu_pct", "family_rss_sum_mib", "windowserver_global_cpu_pct"):
@@ -116,6 +121,38 @@ def summarize(report: dict) -> dict:
         ]
         out[field] = {"p50": quantile(vals, 0.5), "p95": quantile(vals, 0.95)}
     return out
+
+
+def compare_reports(idle: dict, drag: dict) -> dict:
+    """Agent 机器可读诊断：仅资源代理，无 GPU/frame 呈现证据，绝不返回 pass。"""
+    a, b = summarize(idle), summarize(drag)
+    comparable = (
+        a["stage"] == "idle"
+        and b["stage"] in ("drag", "resize", "complex")
+        and idle.get("arch") == drag.get("arch")
+        and idle.get("macos_version") == drag.get("macos_version")
+        and isinstance(idle.get("arch"), str)
+        and bool(idle["arch"])
+        and isinstance(idle.get("macos_version"), str)
+        and bool(idle["macos_version"])
+        and a["count"] >= 5
+        and b["count"] >= 5
+    )
+    deltas: dict[str, float | None] = {}
+    if comparable:
+        for key in ("family_cpu_pct", "family_rss_sum_mib", "windowserver_global_cpu_pct"):
+            x = a[key]["p95"]
+            y = b[key]["p95"]
+            deltas[key] = round(y - x, 2) if x is not None and y is not None else None
+    return {
+        "schema": COMPARE_SCHEMA,
+        "status": "diagnostic_only" if comparable else "incomparable",
+        "evidence": "process_resource_proxies_not_frame_or_gpu_presentation",
+        "idle": a,
+        "active": b,
+        "delta_p95": deltas,
+        "not_covered": ["actual_window_drag_latency", "gpu_compositor", "display_ghosting"],
+    }
 
 
 def record(stage: str, seconds: float, interval: float) -> dict:
@@ -159,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     capture.add_argument("--output", type=Path, required=True)
     compare = subs.add_parser("compare")
     compare.add_argument("reports", type=Path, nargs="+")
+    compare.add_argument("--json", type=Path, help="numeric-only machine-readable diagnostic result")
     args = parser.parse_args(argv)
     try:
         if args.command == "record":
@@ -167,9 +205,18 @@ def main(argv: list[str] | None = None) -> int:
             args.output.write_text(json.dumps(output, indent=2), encoding="utf-8")
             print(f"Saved {args.output.name}: {len(output['samples'])} numeric-only samples")
         else:
-            for path in args.reports:
-                summary = summarize(json.loads(path.read_text(encoding="utf-8")))
-                print(json.dumps(summary, ensure_ascii=False))
+            reports = [json.loads(path.read_text(encoding="utf-8")) for path in args.reports]
+            for source in reports:
+                print(json.dumps(summarize(source), ensure_ascii=False))
+            if args.json:
+                if len(reports) != 2:
+                    raise ValueError("--json needs exactly two reports: idle then active")
+                result = compare_reports(*reports)
+                args.json.parent.mkdir(parents=True, exist_ok=True)
+                tmp = args.json.with_suffix(args.json.suffix + ".tmp")
+                tmp.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+                tmp.replace(args.json)
+                print(f"Machine-readable status: {result['status']} (never pass)")
             print(
                 "WindowServer CPU is system-wide; a delta cannot prove Tavotto caused dragging ghosts."
             )

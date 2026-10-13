@@ -37,3 +37,16 @@ python scripts/perf_macos_window.py compare idle.json drag.json
 
 - 本 PR 只新增 macOS 现场采集工具、测试与清晰的归因边界，**不声称已定位拖影原因、不修改 Tauri 窗口构建**，避免与正在改原生标题栏的 PR 冲突。
 - 下一轮必须有真实 `.app` + 至少两种复杂度 + Instruments trace 才能决定是哪层出错；若 WindowServer 与其他应用同时异常，先确认显示器/系统因素。
+
+
+## Agent 可解析的 macOS 资源差异
+
+新增可选机器可读输出：
+
+```bash
+python scripts/perf_macos_window.py compare idle.json drag.json --json window-diagnostic.json
+```
+
+`window-diagnostic.json` 的 `status` 只可能是 `diagnostic_only` 或 `incomparable`，**绝无 `pass`**。相同 macOS 版本、架构、每组至少 5 个资源样本时，附上家族 CPU、RSS 求和与系统全局 WindowServer CPU 的 P95 差额；否则拒绝对照。该数据仅帮助 Agent 分流是否应获取 Instruments / Web Inspector 证据，不代表屏幕呈现延迟或 GPU 拖影测量。
+
+原生完整自动点击/移动窗口需要具备 Accessibility 权限、实际图形会话和可验证的显示输出，当前采样器没有伪造这项能力。

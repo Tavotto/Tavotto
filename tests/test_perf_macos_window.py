@@ -64,3 +64,43 @@ def test_invalid_schema_rejected():
         pass
     else:
         raise AssertionError("foreign reports must fail")
+
+
+def test_native_resource_delta_is_not_mislabeled_as_presentation_pass():
+    idle = {
+        "schema": P.SCHEMA,
+        "stage": "idle",
+        "macos_version": "26.1",
+        "arch": "arm64",
+        "samples": [
+            {"family_cpu_pct": 2.0, "family_rss_sum_mib": 120.0,
+             "windowserver_global_cpu_pct": 8.0}
+            for _ in range(8)
+        ],
+    }
+    drag = {
+        **idle,
+        "stage": "drag",
+        "samples": [
+            {"family_cpu_pct": 8.0, "family_rss_sum_mib": 128.0,
+             "windowserver_global_cpu_pct": 21.0}
+            for _ in range(8)
+        ],
+    }
+    report = P.compare_reports(idle, drag)
+    assert report["status"] == "diagnostic_only"
+    assert report["delta_p95"]["family_cpu_pct"] == 6.0
+    assert report["delta_p95"]["windowserver_global_cpu_pct"] == 13.0
+    assert "display_ghosting" in report["not_covered"]
+
+
+def test_native_resource_delta_rejects_cross_os_samples():
+    report = {
+        "schema": P.SCHEMA,
+        "stage": "idle",
+        "macos_version": "26.1",
+        "arch": "arm64",
+        "samples": [{"family_cpu_pct": 1.0, "family_rss_sum_mib": 100.0} for _ in range(8)],
+    }
+    active = {**report, "stage": "drag", "macos_version": "25.4"}
+    assert P.compare_reports(report, active)["status"] == "incomparable"
