@@ -341,6 +341,9 @@ def test_changing_argv_transfers_an_unclaimed_intent_and_retires_the_old_target(
     one, two = _two_sessions(client, "scripts/fig2.py")
     old_run_arm = _action(one, "run_when_ready")["id"]
     assert _arm(client, one).status_code == 202
+    waiting = _get(client, one["session_id"]).get_json()
+    old_cancel = _action(waiting, "cancel")  # 旧页面手里捏着的、还没认领的动作
+    old_recheck = _action(waiting, "recheck")
     # 不转移就再武装另一份运行配置：并存会让合计多跑一次 → 拒绝，零副作用
     conflict = _arm(client, two)
     assert conflict.status_code == 409
@@ -352,6 +355,13 @@ def test_changing_argv_transfers_an_unclaimed_intent_and_retires_the_old_target(
     assert old["intent"]["status"] == "transferred"
     assert not [a for a in old["actions"] if a["kind"] in ("run", "prepare_dependencies")]
     assert old["provider"]["attempts"] == 0 and old["config_revision"] == one["config_revision"]
+    for gone in (old_cancel, old_recheck):  # 转移当场退役：不用等谁再读一次报告
+        refused = client.post(
+            f"{SESSIONS}/{one['session_id']}/actions",
+            json={"action_id": gone["id"], "expected_config_revision": one["config_revision"]},
+        )
+        assert refused.status_code == 404
+        assert refused.get_json()["code"] == "preparation_action_unknown"
     replay = client.post(  # 旧页面重放当初的认领：幂等回当初那个（已转移的）意图，没有新副作用
         f"{SESSIONS}/{one['session_id']}/actions",
         json={"action_id": old_run_arm, "expected_config_revision": one["config_revision"]},
