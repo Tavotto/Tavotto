@@ -214,8 +214,8 @@ function panelStateFor(
     lines: new Map(),
     sizeMm,
   }
-  if (cur?.lines.size) bumpLines()
   panels.set(panelId, next)
+  if (cur && (cur.lines.size || linesDirty)) bumpLines()
   return next
 }
 
@@ -288,16 +288,20 @@ export function previewTransformOf(panelId: string, gid: string): [number, numbe
 
 /* ---- 覆盖层预览线（订阅式：OverlaySvg 要跟着重画）---- */
 let linesVersion = 0
+let linesDirty = false
 const lineListeners = new Set<() => void>()
 
 function bumpLines(): void {
+  // 收尾即时发布时，也已涵盖这一帧尚未发布的线变更。
+  linesDirty = false
   linesVersion++
   for (const fn of lineListeners) fn()
 }
 
 /** 面板的预览账本整份作废（还原 / 权威换上来 / 版本换了）：连同预览线一起 */
 function dropPanel(panelId: string): void {
-  const had = !!panels.get(panelId)?.lines.size
+  // 最后一根线可能已排队删除，当前表虽空，上一帧覆盖层仍需立即撤下。
+  const had = !!panels.get(panelId)?.lines.size || linesDirty
   panels.delete(panelId)
   if (had) bumpLines()
 }
@@ -318,7 +322,7 @@ const subscribeLines = (fn: () => void) => {
   }
 }
 
-/** 覆盖层订阅：预览线一变（含整份作废）就重画 */
+/** 覆盖层订阅：线变更每帧发布一次，整份作废即时发布 */
 export function usePreviewLines(
   panelId: string,
 ): ReadonlyMap<string, { a: [number, number]; b: [number, number] }> {
@@ -350,7 +354,8 @@ export function previewLine(
   if (!p) return
   if (ends) p.lines.set(gid, ends)
   else if (!p.lines.delete(gid)) return
-  bumpLines()
+  linesDirty = true
+  requestPreviewFrame()
 }
 
 /** 此刻有预览账本的面板（快照，不订阅） */
@@ -386,7 +391,7 @@ export function resetPreview(): void {
   session = null
   const hadLines = [...panels.values()].some((p) => p.lines.size)
   panels.clear()
-  if (hadLines) bumpLines()
+  if (hadLines || linesDirty) bumpLines()
   pending.clear()
   if (rafId != null) cancelRaf(rafId)
   rafId = null
@@ -445,6 +450,11 @@ const cancelRaf = (id: number): void => {
 function schedule(key: string, op: PendingOp): void {
   pending.set(key, op)
   if (session) session.timing.preview_move_count++
+  requestPreviewFrame()
+}
+
+/** DOM 预览与覆盖层预览线共用一条 rAF 队列。 */
+function requestPreviewFrame(): void {
   if (rafId != null) return
   rafId = scheduleRaf(() => {
     rafId = null
@@ -457,7 +467,7 @@ function schedule(key: string, op: PendingOp): void {
  * 只落一次 DOM 写入。测试里直接调它，不必等真实的动画帧。
  */
 export function flushPreviewFrame(): void {
-  if (!pending.size) return
+  if (!pending.size && !linesDirty) return
   const ops = [...pending.values()]
   pending.clear()
   perfSpan('raf.preview_write', () => {
@@ -466,6 +476,8 @@ export function flushPreviewFrame(): void {
       else writeStyle(op)
     }
   })
+  // 在同帧 DOM 位移写好后，再让覆盖层一次读到所有箭头的最新端点。
+  if (linesDirty) bumpLines()
   if (session) traceFrame(session.timing)
 }
 
