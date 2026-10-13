@@ -1553,6 +1553,93 @@ def test_system_adoption_refuses_an_environment_an_install_took_after_the_filter
     assert projectenv.remembered_record(project) is None
 
 
+def _fake_project_venv(tmp_path, monkeypatch, health):
+    """项目里有一个 `.venv`（假的，体检由替身给结论）；回它的解释器路径。"""
+    project = tmp_path / "p"
+    project.mkdir()
+    py = _touch(tmp_path / "p" / ".venv" / "bin" / "python")
+    venv = str(tmp_path / "p" / ".venv")
+    monkeypatch.setattr(projectenv, "discover", lambda *a, **k: [venv])
+    monkeypatch.setattr(projectenv, "interpreter_of", lambda *a, **k: py)
+    monkeypatch.setattr(
+        projectenv,
+        "probe_environment",
+        lambda python, module=None, **kw: dict(health, python=python),
+    )
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda *a, **k: ("/builtin/py", "bundled")
+    )
+    monkeypatch.setattr(engine_pool, "system_python_candidates", lambda **_: [])
+    return project, py
+
+
+def test_project_venv_adoption_holds_the_environment_through_probe_and_commit(
+    tmp_path, monkeypatch
+):
+    """项目 `.venv` 接手的现场再体检 + 提交整段占住这个 venv（`envlease.inspecting`，#979，与系统解释器那一支
+    同一条）：写入决定的那一刻，另一个项目要往这个 venv 装包会被拒；持租约期间 `remember` 不回头要安装租约。"""
+    _auto_on(monkeypatch)
+    project, py = _fake_project_venv(tmp_path, monkeypatch, _health())
+    real = projectenv.remember
+    install: list = []
+
+    def remember_while_another_project_installs(*a, **k):
+        try:
+            with envlease.mutating("other-project-install", py):
+                install.append("started")
+        except envlease.EnvironmentBusy as busy:
+            install.append(busy.code)
+        return real(*a, **k)
+
+    monkeypatch.setattr(projectenv, "remember", remember_while_another_project_installs)
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert install == [envlease.ENVIRONMENT_MUTATING]
+    assert outcome["ok"] is True and projectenv.remembered_record(project)["path"] == py
+    with envlease.mutating("later-install", py):  # 接手结束，租约放掉
+        pass
+
+
+def test_project_venv_adoption_refuses_a_venv_an_install_took_after_the_filter(
+    tmp_path, monkeypatch
+):
+    """`is_mutating` 过滤放行之后装包才开始：决定不能落在装包中的 venv 上（#979）。"""
+    _auto_on(monkeypatch)
+    project, py = _fake_project_venv(tmp_path, monkeypatch, _health())
+    monkeypatch.setattr(engine_pool, "is_mutating", lambda p: False)  # 过滤时还没人在装
+    with envlease.mutating("other-project-install", py):
+        outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is False
+    assert outcome["code"] == envlease.ENVIRONMENT_MUTATING
+    assert projectenv.remembered_record(project) is None
+
+
+def test_project_venv_adoption_refuses_a_venv_being_installed_into_at_the_filter(
+    tmp_path, monkeypatch
+):
+    """对照：过滤时装包已在跑，同样不接手、也不体检。"""
+    _auto_on(monkeypatch)
+    project, py = _fake_project_venv(tmp_path, monkeypatch, _health())
+    with envlease.mutating("other-project-install", py):
+        outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is False
+    assert projectenv.remembered_record(project) is None
+
+
+def test_project_venv_adoption_reprobes_inside_the_lease(tmp_path, monkeypatch):
+    """租约外的体检只用来挑 venv：之后、拿租约之前包被卸掉，租约内的现量不过 → 不接手（#979）。"""
+    _auto_on(monkeypatch)
+    project, py = _fake_project_venv(tmp_path, monkeypatch, _health())
+    verdicts = iter([_health(), _health(ok=False, code=projectenv.ERROR_UNUSABLE)])
+    monkeypatch.setattr(
+        projectenv,
+        "probe_environment",
+        lambda python, module=None, **kw: dict(next(verdicts), python=python),
+    )
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is False
+    assert projectenv.remembered_record(project) is None
+
+
 def test_auto_adoption_happens_once_per_build(tmp_path, monkeypatch):
     """防循环沿用 venv 那一层的 `mark_attempted`：同一 (项目, 脚本) 一次 build 最多自动切一次。"""
     _auto_on(monkeypatch)

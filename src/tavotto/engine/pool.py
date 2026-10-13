@@ -3803,14 +3803,32 @@ def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:
                 "health": outcome.get("health"),
             },
         }
-    projectenv.remember(
-        figures_dir,
-        python,
-        automatic=True,
-        trigger=projectenv.TRIGGER_MISSING_DEPENDENCY,
-        module=module,
-        health=outcome.get("health"),
-    )
+    if is_mutating(python):
+        return {**outcome, "ok": False, "code": ENVIRONMENT_MUTATING}
+    # 现场再体检 + 提交整段占住这个 venv（`envlease.inspecting`，与系统解释器那一支、手动采用同一条）：
+    # 上面的 `is_mutating` 只是过滤，体检之后别的项目开始往这个 venv 装包的话，决定落地后会话就起在装包中的
+    # 环境上。装包在跑 = 不接手；占到之后装包被拒。租约内只调体检与写项目设置，不会回头要安装租约
+    try:
+        with envlease.inspecting(python):
+            health = projectenv.probe_environment(python, module)
+            if not health.get("ok"):
+                return {
+                    **outcome,
+                    "ok": False,
+                    "code": health.get("code", projectenv.ERROR_UNUSABLE),
+                    "health": health,
+                }
+            outcome = {**outcome, "health": {**health, "venv": outcome.get("venv", "")}}
+            projectenv.remember(
+                figures_dir,
+                python,
+                automatic=True,
+                trigger=projectenv.TRIGGER_MISSING_DEPENDENCY,
+                module=module,
+                health=outcome["health"],
+            )
+    except envlease.EnvironmentBusy as busy:
+        return {**outcome, "ok": False, "code": busy.code}
     # 刚刚整套体检过（比 `_has_matplotlib` 严得多），不必再验一遍。
     note_project_python_ok(python)
     invalidate(script_name, figures_dir)
