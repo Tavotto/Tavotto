@@ -1368,6 +1368,33 @@ class TestFilesChangingDuringCollection:
         others = [i for i in items if i.path != "index.json"]
         assert others, "bystander 文件也应被收录"
 
+    def test_a_corrupt_copy_vanishing_between_listing_and_sorting_does_not_break_the_category(
+        self, world, monkeypatch
+    ):
+        self._setup(world)
+        gone = f"{layoutsession.CORRUPT_PREFIX}victim.json"
+        real_stat = Path.stat
+        n = {"c": 0}
+
+        def flaky(self, *a, **k):
+            if self.name == gone:
+                n["c"] += 1
+                if n["c"] > 1:  # 登记（第一次 stat）时还在，之后没了
+                    raise FileNotFoundError(self.name)
+            return real_stat(self, *a, **k)
+
+        monkeypatch.setattr(Path, "stat", flaky)
+        items = diagdetail.collect_corrupt_sessions(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(corrupt_sessions=True),
+            diagdetail.Scrubber(),
+        )
+        assert not any(i.path == "error.json" for i in items)
+        index = json.loads(next(i for i in items if i.path == "index.json").data)
+        by = {r["name"]: r for r in index["files"]}
+        assert by[gone].get("read_failed") is True
+        assert any(i.path.endswith("bystander.json") for i in items)
+
     def test_the_read_limit_comes_from_the_registered_size_not_the_current_one(
         self, world, monkeypatch
     ):
