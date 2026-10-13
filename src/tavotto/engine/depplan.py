@@ -501,9 +501,8 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
-        proc = launcher.run_probe(
+        proc = subprocess.run(
             [str(python), *runtime.probe_args(), "-c", _FACTS_SRC],
-            python,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -511,7 +510,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
             timeout=FACTS_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=runtime.owned_env(python),
+            env=launcher.activate_env(python, runtime.owned_env(python)),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:

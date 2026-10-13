@@ -6715,7 +6715,7 @@ def api_engine_environment():
         py = st.get("python")
         st["imports"] = (
             engine_runtime.probe_packages(
-                py, names, bundled=bool(st.get("bundled")), runner=engine_launcher.run_probe
+                py, names, bundled=bool(st.get("bundled")), env_for=engine_launcher.activate_env
             )
             if py
             else {}

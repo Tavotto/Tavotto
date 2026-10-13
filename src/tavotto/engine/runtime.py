@@ -470,7 +470,7 @@ def repair_hint() -> str:
 # 实测
 # ---------------------------------------------------------------------------
 def probe_packages(
-    python: str, names: list[str] | None = None, *, bundled: bool = False, runner=None
+    python: str, names: list[str] | None = None, *, bundled: bool = False, env_for=None
 ) -> dict[str, str | None]:
     """在指定解释器里 import 一遍并报版本；import 不到的回 None。
 
@@ -494,9 +494,7 @@ def probe_packages(
         "sys.stdout.write(json.dumps(out))\n"
     )
     try:
-        # `runner`（`launcher.run_probe`）由调用方注入：launcher 依赖本模块，本模块不能反过来 import 它
-        call = (lambda argv, **kw: runner(argv, python, **kw)) if runner else subprocess.run
-        proc = call(
+        proc = subprocess.run(
             [python, *probe_args(bundled=bundled), "-c", expr],
             capture_output=True,
             text=True,
@@ -504,7 +502,10 @@ def probe_packages(
             errors="replace",
             timeout=PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
-            env=probe_env(python, bundled=bundled),
+            # `env_for`（`launcher.activate_env`）由调用方注入：launcher 依赖本模块，本模块不能反过来 import 它
+            env=env_for(python, probe_env(python, bundled=bundled))
+            if env_for
+            else probe_env(python, bundled=bundled),
             creationflags=CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):

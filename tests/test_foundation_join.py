@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "tests" / "fixtures" / "foundation"
 PROJECT_PYTHON_ENV = "TAVOTTO_FOUNDATION_PROJECT_PYTHON"
 #: 回执里 pid 核过的两种写法：直核 `ok`；Windows 上 venv 的 python.exe 是 launcher、解释器是它的子进程 → `ok_via_launcher`
-PID_CHECKED = ("ok", "ok_via_launcher", "ok_via_process_group")
+PID_CHECKED = ("ok", "ok_via_launcher")
 PROJECT_PYTHON = os.environ.get(PROJECT_PYTHON_ENV) or ""
 HAS_CANDIDATE = all(
     __import__("importlib.util").util.find_spec(mod) is not None

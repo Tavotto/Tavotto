@@ -1323,14 +1323,14 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     `.pyc`；它不改 import 的结果，「同一套」要对齐的那几个维度不变。
     """
     args = runtime.probe_args(bundled=bundled)
-    env = runtime.probe_env(python, bundled=bundled)
+    # 需要 Conda 激活的解释器：预检也用激活后的环境（与 worker 同一个启动决策）
+    env = launcher_mod.activate_env(python, runtime.probe_env(python, bundled=bundled))
     try:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
         # 症状是桌面版「渲染环境不可用」而同一解释器在终端里探测秒过）
-        probe = launcher_mod.run_probe(
+        probe = subprocess.run(
             [python, *args, "-c", "import matplotlib"],
-            python,
             capture_output=True,
             timeout=30,
             stdin=subprocess.DEVNULL,
@@ -1407,7 +1407,7 @@ def select_worker_python() -> tuple[str, str]:
         if still_there and _worker_ctx == launcher_mod.context_key(_worker_python):
             return _worker_python, _worker_source
         if still_there:
-            # 选定时的 `import matplotlib` 体检是在另一个启动上下文里做的（裸起 ↔ Conda 激活）：结论不跨上下文复用，重新选
+            # 选定时的 `import matplotlib` 体检是在另一个启动上下文里做的（直接 ↔ Conda 激活）：结论不跨上下文复用，重新选
             _worker_python, _worker_source = None, ""
         else:
             # 选定之后那条解释器被删了（用户删掉了设置里指定的环境、外置盘拔了）：缓存不许替它作答，
@@ -1936,7 +1936,7 @@ class EngineWorker:
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
-        #: 启动方式（P09）：None = 裸起；`CondaLauncher` = 经 `conda run` 激活后起（整棵进程树自成一组）
+        #: 启动方式（P09）：None = 直接启动；`CondaLauncher` = 用 Conda 激活后的环境变量启动（仍是直接子进程）
         self.launcher = _launcher_or_error(figures_dir, script_name, python)
         #: 起会话那一刻这条解释器所在环境的「代」：写回重放 / 冷重放据此钉住热会话自己的环境
         self.python_generation = projectenv.environment_generation(python)
@@ -1977,19 +1977,19 @@ class EngineWorker:
             entry,
             logsafe.known(self.python_source, SOURCE_LABELS),
         )
-        worker_cmd = execspec.worker_argv(
-            self.spec, worker_py=WORKER_PY, out_dir=self.out_dir, runtime_args=args
-        )
-        if self.launcher is not None:
-            LOG.info("worker 经 Conda 激活启动: %s", self.script_name)
-        # `execspec` 的语义不变（回执 / 身份仍是用户 Python 的）；只在起子进程这一层按 `launcher.popen` 包 `conda run`
-        self.proc = launcher_mod.popen(
-            worker_cmd,
-            self.launcher,
+        try:
+            popen_env = launcher_mod.merge_env(self.launcher, python, env)
+        except launcher_mod.LauncherUnavailable as exc:  # 激活取环境失败：稳定码，什么都没起
+            raise WorkerError(str(exc), code=exc.code) from exc
+        self.proc = subprocess.Popen(
+            execspec.worker_argv(
+                self.spec, worker_py=WORKER_PY, out_dir=self.out_dir, runtime_args=args
+            ),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self._log,
-            env=env,
+            # Conda 激活增量只进这一次 Popen 的 env，不进 `self.spec`（spec 会进回执 / 调试载荷）
+            env=popen_env,
             text=True,
             bufsize=1,
             # 显式 UTF-8：text=True 默认跟随系统区域编码，Windows 上是 cp1252/
@@ -2068,12 +2068,7 @@ class EngineWorker:
 
         def read() -> None:
             try:
-                line = self.proc.stdout.readline()
-                if getattr(self, "launcher", None) is not None and not self._proto_started:
-                    line = self._skip_activation_banner(line)
-                    if line:
-                        self._proto_started = True
-                box.append(line)
+                box.append(self.proc.stdout.readline())
             except (OSError, ValueError):  # 进程被杀后管道关闭
                 box.append("")
 
@@ -2181,83 +2176,6 @@ class EngineWorker:
             self._log_tail(),
             code="protocol_mismatch",
         )
-
-    #: Conda 激活包装下，第一条协议信封之前的非协议行（`activate.d` 钩子往 stdout 打印的横幅）转进 worker.log。
-    #: 上限：条数与字节数——超限后不再吞，那一行原样交给 `_parse_line`（`protocol_mismatch`）。
-    ACTIVATION_BANNER_MAX_LINES = 200
-    ACTIVATION_BANNER_MAX_BYTES = 64 * 1024
-    _proto_started = False
-    _banner_lines = 0
-    _banner_bytes = 0
-
-    @staticmethod
-    def _is_envelope(line: str) -> bool:
-        """真实的 v1 协议信封：JSON 对象且带 `protocol_version == PROTOCOL_VERSION` 与字符串 `request_id`
-        （worker 的每条响应都有，`wireproto` 一处产出）。钩子打印的任意 JSON（`{"status": "ok"}`）不算。"""
-        text = line.strip()
-        if not (text.startswith("{") and text.endswith("}")):
-            return False
-        try:
-            obj = json.loads(text)
-        except ValueError:
-            return False
-        return (
-            isinstance(obj, dict)
-            and obj.get("protocol_version") == PROTOCOL_VERSION
-            and isinstance(obj.get("request_id"), str)
-        )
-
-    def _skip_activation_banner(self, line: str) -> str:
-        """只在**包装启动**且**还没收到第一条协议信封**时用：`conda run --no-capture-output` 让 `activate.d` 钩子的
-        stdout 直通进了协议管道，而它们总是在 Python 启动**之前**打印。把这些行（不是 JSON 对象）转进 worker.log
-        （保留排障线索）并继续读，直到第一条合法信封。
-
-        为什么不会吞掉真协议错误：① 只作用于第一条信封之前——之后的每一行照旧走 `_parse_line`；② 只跳过「不是 JSON 对象」
-        的行，形似信封的行一律交给 `_parse_line` / 请求 id 校验；③ 条数 / 字节有上限，超限那一行原样返回
-        （`protocol_mismatch`，日志里已有前面的内容）；④ 读不到信封（Python 没起来）仍由原来的超时 / EOF 路径收场。"""
-        while line and not self._is_envelope(line):
-            tail = self._envelope_suffix(line)
-            if tail is not None:
-                # 钩子打印没有以换行结尾（`printf 'initializing…'`），和 worker 的第一条信封粘成了一行：
-                # 前缀当横幅转日志，后缀（一条完整的合法信封）交回去
-                prefix = line[: len(line) - len(tail)]
-                self._divert_banner(prefix.encode("utf-8", "surrogateescape"))
-                return tail
-            raw = line.encode("utf-8", "surrogateescape")
-            if (
-                self._banner_lines >= self.ACTIVATION_BANNER_MAX_LINES
-                or self._banner_bytes + len(raw) > self.ACTIVATION_BANNER_MAX_BYTES
-            ):
-                return line
-            self._divert_banner(raw)
-            line = self.proc.stdout.readline()
-        return line
-
-    #: 在一行里找信封起点时最多试多少个 `{`（一条信封里 `{` 很多，别对每一个都整行解析一遍）
-    _ENVELOPE_SEARCH_LIMIT = 16
-
-    @classmethod
-    def _envelope_suffix(cls, line: str) -> str | None:
-        """`line` 里**结尾的**那条合法信封（前面粘着未换行的钩子输出）；没有 / 前缀为空（本来就整行是信封）→ None。
-        从左到右试每个 `{`：第一个能让后缀整体通过 `_is_envelope`（JSON 对象、`protocol_version` 与字符串 `request_id`
-        都对）的位置就是起点——信封里键的顺序不固定，不能假设 `protocol_version` 在最前。形似但不合法的一律不拆，原样交给
-        横幅 / `_parse_line` 的既有路径。"""
-        tried = 0
-        start = line.find("{")
-        while start > 0 and tried < cls._ENVELOPE_SEARCH_LIMIT:
-            if cls._is_envelope(line[start:]):
-                return line[start:]
-            tried += 1
-            start = line.find("{", start + 1)
-        return None
-
-    def _divert_banner(self, raw: bytes) -> None:
-        self._banner_lines += 1
-        self._banner_bytes += len(raw)
-        try:
-            self._log.write(b"[activation stdout] " + raw.rstrip(b"\r\n") + b"\n")
-        except (OSError, ValueError):
-            pass
 
     def _parse_line(self, line: str) -> dict:
         """协议管道上的一行 → 响应对象；不是合法 UTF-8 / 不是 JSON 都是 `protocol_mismatch`。
@@ -2556,43 +2474,6 @@ class EngineWorker:
             except (OSError, ValueError):  # 已经关过 / 管道早断了
                 pass
 
-    #: 包装启动的 worker 优雅关停时，等 wrapper 自己退出（读到 EOF）的上限（秒）：`deactivate.d` 钩子在 worker 退出之后
-    #: 才跑，要给它们时间做完清理；超时才按既有的方式收组。
-    POST_EXIT_DRAIN_TIMEOUT = 10.0
-
-    def _shutdown_wrapped(self) -> None:
-        """包装启动（`conda run`）的 worker 的优雅关停：发出退出请求后，**之后的 stdout 一律当日志**读到 EOF（wrapper 退出）
-        为止，有界超时。worker 退出之后 conda 的 `deactivate.d` 钩子还会往 stdout 打印；此时协议已经结束，这些行不是协议
-        违规，不能交给 `_parse_line`（那会 `protocol_mismatch` 并把整组杀掉，钩子剩下的清理就没跑完）。"""
-        obj = {"cmd": "shutdown", **_run_payload(getattr(self, "run", None))}
-        if getattr(self, "artifact_source", None) is not None:
-            obj["artifact_source"] = self.artifact_source
-        try:
-            env = self._envelope(obj)
-            with self.lock:
-                self.proc.stdin.write(json.dumps(env, ensure_ascii=False) + "\n")
-                self.proc.stdin.flush()
-        except (OSError, ValueError):
-            return  # 管道已断：worker 已经没了，交给后面的收尸路径
-
-        def drain() -> None:
-            try:
-                for raw in iter(self.proc.stdout.readline, ""):
-                    try:
-                        self._log.write(
-                            b"[post-exit stdout] "
-                            + raw.encode("utf-8", "surrogateescape").rstrip(b"\r\n")
-                            + b"\n"
-                        )
-                    except (OSError, ValueError):
-                        pass
-            except (OSError, ValueError):  # 超时后被收尸路径关掉管道
-                pass
-
-        t = threading.Thread(target=drain, daemon=True, name="mm-worker-post-exit-drain")
-        t.start()
-        t.join(self.POST_EXIT_DRAIN_TIMEOUT)
-
     def _terminate_and_reap(self, *, graceful: bool) -> None:
         """把这条会话关到底，并**确认进程已经消失**，最后关掉父进程的句柄。
 
@@ -2605,9 +2486,7 @@ class EngineWorker:
         全程**不碰模块级 `_lock`**——等子进程退出时把全局锁攥在手里，
         等于让一个卡住的脚本冻结整个池。
         """
-        if graceful and self.alive() and getattr(self, "launcher", None) is not None:
-            self._shutdown_wrapped()
-        elif graceful and self.alive():
+        if graceful and self.alive():
             try:
                 self.request({"cmd": "shutdown"}, SHUTDOWN_TIMEOUT)
             except (WorkerError, OSError, ValueError):
@@ -2837,7 +2716,7 @@ class WorkerdWorker:
         self.python = python
         self.launcher = None
         if _launcher_or_error(figures_dir, script_name, python) is not None:
-            # workerd 的杀进程语义不认进程组：包装启动的 worker 只走 Python 池（调用方回退）
+            # workerd 的 spawn 规格里没有激活增量：需要 Conda 激活的解释器只走 Python 池（调用方回退）
             raise WorkerdUnavailable("该解释器需要 Conda 激活启动，workerd 不接")
         self.python_generation = projectenv.environment_generation(python)
         # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
@@ -3320,9 +3199,8 @@ def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
 
 @contextlib.contextmanager
 def launch_scope(figures_dir, script_name: str):
-    """每脚本启动决策的范围（`launchctx.probe_scope`）+ 把「记录说要 Conda、现在找不到 conda」转成带稳定码的 `WorkerError`
-    （`conda_launcher_unavailable`）。预检、依赖门、自检、worker 构造都在这个范围里拿同一个决策、抛同一个错——
-    不会有「预检降级成裸起、报缺依赖，worker 才报 Conda 不可用」的分叉。"""
+    """每脚本启动决策的范围（`launchctx.probe_scope`）+ 把「记录说要 Conda、现在找不到 conda / 激活取环境失败」转成带稳定码的
+    `WorkerError`（`conda_launcher_unavailable`）。预检、依赖门、自检、worker 构造都在这个范围里拿同一个决策、抛同一个错。"""
     try:
         with launchctx.probe_scope(figures_dir, script_name):
             yield
@@ -3331,8 +3209,8 @@ def launch_scope(figures_dir, script_name: str):
 
 
 def _launcher_or_error(figures_dir, script_name: str, python: str):
-    """启动方式（P09）：`launchctx.decide`（唯一启动决策），其「记录说要 Conda、现在找不到 conda」转成带稳定码的
-    `WorkerError`（`conda_launcher_unavailable`），不悄悄改成裸起。"""
+    """启动方式（P09）：`launchctx.decide`（唯一启动决策），其不可用转成带稳定码的 `WorkerError`
+    （`conda_launcher_unavailable`），不悄悄改成直接启动。"""
     try:
         return launchctx.decide(figures_dir, script_name, python)
     except launcher_mod.LauncherUnavailable as exc:
@@ -3379,8 +3257,8 @@ def _new_worker(
     run=None,
     pinned: EnvironmentDecision | None = None,
 ):
-    """起会话的唯一入口：整个流程（依赖门 `SPAWN_GATES` 与两个构造函数里的解释器解析）都在
-    `launchctx.probe_scope` 里——预检探针与 worker 用同一个每脚本启动决策（见 `_new_worker_unscoped`）。"""
+    """起会话的唯一入口：整个流程（依赖门 `SPAWN_GATES` 与两个构造函数里的解释器解析）都在 `launch_scope` 里——
+    预检探针与 worker 用同一个每脚本启动决策（见 `_new_worker_unscoped`）。"""
     with launch_scope(figures_dir, script_name):
         return _new_worker_unscoped(
             script_name,

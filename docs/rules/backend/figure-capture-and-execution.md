@@ -341,40 +341,32 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
 
-## 成功启动上下文与 Conda 激活 launcher（P09，EX07 / EX11，AC-11 / AC-19）
+## 成功启动上下文与 Conda 激活（P09，EX07 / EX11，AC-11 / AC-19）
 
 - **成功事实只有一份登记**：`runconfig` 的 `launches[脚本]`，由 `app._finalize_script_attempt`（已有的成功收口）经
-  `launchctx.record_success` 写；失败 / 部分结果 / 回执 `partial` 不写。记录只含引用与摘要：解释器身份（路径 + 来源 + 环境代）、
-  启动方式引用（`direct` 或 `conda`：conda 路径 + prefix，及 `conda-meta/history` 派生的环境版本）、cwd 模式、运行配置**引用**、
-  脚本 sha1 + 回执自报的本地 helper / 数据文件 sha256、数据绑定修订。**不存**激活后的环境变量、argv 值、敏感输入、答案原文
-  （非敏感答案仍只在 `scriptanswers`）。
-- **消费者**：`launchctx.launcher_for`（`EngineWorker` 起会话）只核解释器 / 环境 / 源码——裸起成功过的不被自动改成 Conda 包装；
-  记录是 Conda 启动、现在找不到 conda（没关开关）→ `conda_launcher_unavailable`，不悄悄改成裸起。记录里的 `conda_exe` 只用来对账、
-  **不当可执行路径**（要执行的 conda 永远由 `launcher.detect(python)` 现场找）。`launchctx.verify` 是全依据核验，供「再次打开时沿用
-  上次成功配置」用——**这个消费端不在本期**（#982，P07 结合界面做）：界面无参数时本来就不带 `argv`，不能靠省略推断；
-  P09 之前的 argv 行为逐字节不变。
-- **Conda launcher**（`launcher.py`）：`conda run --no-capture-output --prefix <prefix> [--cwd <dir>] <绝对路径的可执行文件> <argv…>` 的结构化 argv，**不带 `--`**：`conda run` 的命令部分是 argparse REMAINDER，从第一个非选项的位置参数（可执行文件）起后面全部原样透传（含 `-u` / `-X` / `-c` / `--flag`）；较老的 conda（实测 24.5.0，conda/conda#13639）不认 `--`、把它当成可执行文件报 `--: command not found`。所以可执行文件必须是绝对路径且不以 `-` 开头（`wrap()` 强制），
-  按官方文档语义（`--no-capture-output` 恒带：worker 协议在 stdout 上）；不拼 shell；不认 `conda.bat`；mamba / micromamba、
-  IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。钩子输出没有换行结尾时会和 worker 第一条信封粘成一行：读线程从左到右找能让后缀整体通过信封判据（`protocol_version` + 字符串 `request_id`，键序不固定）的 `{`，前缀转日志、后缀交回（最多试 16 个 `{`）；只做解析侧、不改 worker：粘连发生在 Python 启动之前，解析侧一处覆盖所有包装启动，worker 无需知道自己被包装。**Windows 本期不做 Conda 包装**（`detect()` 在 nt 上返回 None、裸起，与 P09 之前一致）：没有真机验证，
-  conda.exe 经中间 shell 起 Python 时回执的 pid 核验也没有可靠依据；留待 Windows 真机验证后再开。成功记录的依据必须完整可核验
-  （条数超限 / 观察被截断 / 有输入没算出摘要都不记录，并清掉旧记录）；登记里 `launches` 逐条深校验，坏的丢弃。
-- **预检探针与 worker 同一个启动上下文**（AC-11）：需要激活才 import 得到东西的解释器，裸起预检会误报缺依赖 / `explicit_python_unusable`。
-  `launcher.run_probe(argv, python, …)` 是 `subprocess.run` 的替身：`detect(python)` 判定需要就经 `conda run --no-capture-output` 起、
-  自成进程组（超时整棵树收掉）。**结果不走 stdout**：`activate.d` 在命令前、`deactivate.d` 在命令后往 stdout 打印，尾部横幅会让任何「从 stdout 找 JSON」失效；所以建一个 0600 的临时结果文件（`data_dir()/probe-results/`，用完即删），引导代码把探针的 fd 1 指进去，父进程只读它，stdout / stderr 当日志。启动决策与 worker 同一个：调用方在 `launchctx.probe_scope(项目, 脚本)` 里（`pool._resolve_for_worker`、`deprepair.decide_environment_pinned`）用每脚本的 `launcher_for`（记录说裸起成功过的，预检也裸起），否则按解释器现场 `detect`。按解释器缓存的探针结论（`depplan` 目标事实 / 静态索引、`projectenv` 系统候选体检、`userenvs` 体检、`pool` 的 `import matplotlib` 结论与选定的渲染解释器）都按 `launcher.context_key(python)`（`direct` 或 `conda|exe|prefix`）分区，裸起量到的不在激活下复用、反之亦然。其余情况原样 `subprocess.run`。worker 协议不受 `deactivate.d` 影响：deactivate 只在 conda 包装脚本里命令（worker）退出之后才打印，那时协议管道已经结束。已改的预检点：`pool._has_matplotlib`、
-  `projectenv.probe_environment`、`depplan` 目标事实、`deprepair.probe_imports`（装后导入核验）、`deprepair._run`（只读 pip / 盘点）、
-  `runtime.probe_packages` 的模块版本盘点（由 app 注入 `runner=launcher.run_probe`，因为 launcher 依赖 runtime、不能反过来 import）。**不改的**及理由：`discover.analyze_in_interpreter`（纯 AST 静态分析，不 import 用户包，只需要解释器版本）、
-  `deprepair._run_pip` / 包查找 / `managedenv._run`（只作用于 Tavotto 自己的受管环境，不是用户 Conda 环境）、`bootstrap._probe`（问系统 Python
-  有没有 `import venv`，不是 worker 的解释器）、`runspec.probe_interpreter` 与 native 会话（`tavotto run` 由用户自己的终端 / 桌面拥有进程的
-  native 适配器负责，不在本期）、`privatepython*`（Tavotto 自己的私有 runtime）。
-- **启动决策只有一处**：`launchctx.decide(项目, 脚本, 解释器路径)`（**不含来源标签**：标签是路径的派生元数据，探针在解析解释器的
-  过程中还拿不到它，让决策依赖它三方就会分叉）。worker（`EngineWorker` / `WorkerdWorker` 经 `pool._launcher_or_error`）、预检探针与依赖门
-  （`launchctx.probe_scope` → `launcher.run_probe`）、`deprepair.worker_self_test`（`launcher.popen`）都只经它拿 launcher；起子进程的唯一入口
-  `launcher.popen` / `run_probe`。direct 记录在 Conda 环境里同样记并核验环境版本（`env_state`）。
-- **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 按 ppid 建出的进程树**从叶子往上**终止：先杀最深一层、等它的父进程把它回收掉（pid 消失，不是变成僵尸），再往上，最后杀 wrapper 由我们 `wait`——对整组同时 SIGKILL 会让 shell 先死、Python 成孤儿，PID 1 不收尸的容器里永远是僵尸；`wait()` 确认组内无残留，僵尸只有父进程是 PID 1（无人能收）时才不算残留，且如实记进 `unreaped` 并告警，不伪装成干净），所以取消 / 关停 / 看门狗超时
-  留不下仍在跑的用户 Python；环境占用租约仍是池里的会话，`kill→reap` 之后才释放。包装 worker 只走 Python 池（`WorkerdWorker` 抛
-  `WorkerdUnavailable` 回退）——workerd 的杀进程语义不认进程组。`nativesession` 的终止语义未改。
+  `launchctx.record_success`（`runconfig.commit_success` 事务，与磁盘面板默认配置同一次写入）写；失败 / 部分结果 / 回执 `partial` /
+  依据不全都不写，依据不全还清掉旧记录。记录只含引用与摘要：解释器身份、启动方式引用（`direct` 或 `conda`：conda 路径 + prefix）、
+  Conda 环境版本 `env_state`（direct 记录在 Conda 环境里同样记）、cwd 模式、运行配置**引用**、脚本 sha1 + 回执自报的 helper /
+  数据文件 sha256、数据绑定修订。**不存**激活后的环境变量、argv 值、敏感输入、答案原文。记录里的路径只用来对账，**永不当可执行路径**。
+  记录的消费端（再次打开时沿用上次成功配置，`launchctx.verify`）**不在本期**，见 #982。
+- **激活一次、捕获环境、直接启动**：对 Conda 环境，`launcher.activated_delta` 只跑一次
+  `conda run --no-capture-output --prefix <p> <python 绝对路径> -c <把 os.environ 写进 0600 结果文件>`（不带 `--`：conda run 的命令部分是
+  argparse REMAINDER，老 conda 24.5.0 不认 `--`；`activate.d` / `deactivate.d` 往 stdout 打印什么都不影响，结果走文件），取相对当前环境的
+  **增量**，缓存在**进程内存**里（键 `(prefix, env_state, conda_exe)`，环境一变重新捕获，**绝不持久化**：不进登记、记录、回执、日志、
+  诊断，日志只记变量个数）。所有「用目标解释器起子进程」的地方都**直接**起目标解释器（我们的直接子进程，取消 / 超时 / 协议 / 回执 pid
+  与没有 Conda 时一样），只把 env 换成「调用方原来的 env + 激活增量」：worker（`pool.EngineWorker`）、预检探针（`launcher.activate_env`）、
+  依赖门、`deprepair.worker_self_test`、`runtime.probe_packages`（app 注入 `env_for`）。
+- **启动决策只有一处**：`launchctx.decide(项目, 脚本, 解释器路径)`（不含来源标签）。预检 / 门 / 自检 / worker 构造都在 `pool.launch_scope`
+  （`launchctx.probe_scope` + 把 `LauncherUnavailable` 转成稳定码 `conda_launcher_unavailable` 的 `WorkerError`）里拿同一个决策、抛同一个错。
+  记录说 Conda、现在找不到 conda / 激活取环境失败 → 稳定码，不悄悄改成直接启动（`plan_for` 写进环境错误，`_execute` 零执行收场）。
+  `TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 本期不启用**（没有真机验证；捕获方案本身可直接扩到 Windows）。
+- **按解释器缓存的探针结论**（`depplan` 目标事实 / 静态索引、`projectenv` 系统候选体检、`userenvs` 体检、`pool` 的 `import matplotlib` 结论与选定的
+  渲染解释器）都按 `launcher.context_key(python)`（`direct` 或 `conda|exe|prefix|env_state`）分区。
+- **限制**：只捕获环境变量。激活脚本里环境变量以外的副作用（启动 license 服务、`ulimit`、shell 函数）不会在每次启动时重放，
+  `deactivate.d` 不再执行——与 IDE 的通行做法一致。需要激活的解释器只走 Python 池（`WorkerdWorker` 抛 `WorkerdUnavailable` 回退）。
 
-看护：`tests/test_conda_launch_context.py`（模拟 conda + `TAVOTTO_TEST_CONDA_PREFIX` 指向真 conda 环境时的真 conda 用例，未设则 skip）。
+看护：`tests/test_conda_launch_context.py`（模拟 conda + `TAVOTTO_TEST_CONDA_PREFIX` / `TAVOTTO_TEST_OLD_CONDA_EXE` 指向真 conda 环境时的真 conda 用例，
+未设则 skip）。
 
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 

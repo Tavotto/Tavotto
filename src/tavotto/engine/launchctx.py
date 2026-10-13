@@ -273,16 +273,25 @@ def probe_launcher(
     return decide(project_root, script, python)
 
 
+def env_for(
+    project_root: str | Path, script: str, python: str, base: dict | None = None
+) -> dict | None:
+    """起目标解释器的子进程该用的 env：`decide` 判 direct / conda；conda 就是 `base`（或当前环境）叠上激活增量
+    （`launcher.merge_env`，增量只在内存里，见 `launcher` 模块头）。worker（`pool.EngineWorker`）、预检探针与自检
+    （`launcher.activate_env`，同一个 `probe_scope` 决策）拿到的 env 完全相同。"""
+    return launcher.merge_env(decide(project_root, script, python), python, base)
+
+
 @contextlib.contextmanager
 def probe_scope(project_root: str | Path, script: str):
-    """在这个范围里，所有预检探针（`launcher.run_probe`）用这个项目 / 脚本的启动决策。"""
+    """在这个范围里，所有预检探针（`launcher.activate_env`）用这个项目 / 脚本的启动决策。"""
     with launcher.probe_scope(lambda py: probe_launcher(project_root, script, py)):
         yield
 
 
 def decide(project_root: str | Path, script: str, python: str) -> launcher.CondaLauncher | None:
     """**「用目标解释器起子进程」的唯一启动决策**（None = 裸起）。worker（`EngineWorker` / `WorkerdWorker`）、预检探针
-    （`launcher.run_probe`，经 `probe_scope`）、依赖门（`SPAWN_GATES`）、`deprepair.worker_self_test` 都只经这一处拿 launcher，
+    （`launcher.activate_env`，经 `probe_scope`）、依赖门（`SPAWN_GATES`）、`deprepair.worker_self_test` 都只经这一处拿 launcher，
     输入只有 `(项目, 脚本, 解释器路径)`——**没有来源标签**：标签（`env_override` / `project_venv` …）是解释器路径的派生元数据，
     探针在解析解释器的过程中还不知道它；让决策依赖它，三方就会因为「谁拿到了标签、谁没拿到」而分叉。内置 runtime 没有
     `conda-meta`，`detect` 自然回 None，不需要靠标签特判。

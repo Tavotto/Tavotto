@@ -889,9 +889,8 @@ def probe_environment(
         spawned = (
             True  # 从这里起算「可能已经起了子进程」：spawn 本身失败的 OSError 在下面单独改回 False
         )
-        proc = launcher.run_probe(
+        proc = subprocess.run(
             argv,
-            python,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -899,7 +898,8 @@ def probe_environment(
             timeout=PROBE_TIMEOUT_S if timeout is None else min(PROBE_TIMEOUT_S, timeout),
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=runtime.probe_env(python, bundled=bundled),
+            # 需要 Conda 激活的解释器：体检也用激活后的环境（与 worker 同一个启动决策）
+            env=launcher.activate_env(python, runtime.probe_env(python, bundled=bundled)),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:

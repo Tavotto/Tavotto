@@ -2265,16 +2265,15 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     问一句不许把 .pyc 写回它的安装目录。装 / 卸走 `_run_pip`，不走这里。"""
     argv = [argv[0], *runtime.probe_args(), *argv[1:]]
     try:
-        proc = launcher.run_probe(
+        proc = subprocess.run(
             argv,
-            argv[0],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
             stdin=subprocess.DEVNULL,
-            env=runtime.owned_env(argv[0]),
+            env=launcher.activate_env(argv[0], runtime.owned_env(argv[0])),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
@@ -2332,9 +2331,6 @@ def worker_self_test(python: str) -> dict:
     子进程里才崩，都只有真跑一次才看得见）。
 
     argv 走 `execspec.worker_argv`——worker 命令行的唯一出处，这里不另拼一份。
-    启动方式走 `launcher.effective_launcher(python)`——调用方在 `launchctx.probe_scope(项目, 脚本)` 里（`_scoped_self_test`）
-    就是与 worker / 预检探针 / 依赖门同一个启动决策（唯一出处 `launchctx.decide`），否则按解释器现场判。需要 Conda 激活的解释器自检也经 `conda run`，
-    否则会拿裸起的失败去否决一个激活后才能跑的环境。
     """
     tmp = tempfile.mkdtemp(prefix="tavotto-selftest-")
     try:
@@ -2354,12 +2350,8 @@ def worker_self_test(python: str) -> dict:
                 bundled=pool.same_python(python, runtime.bundled_python())
             ),
         )
-        lau = launcher.effective_launcher(python)
-        env_build = pool.build_envelope({"cmd": "build"})
-        env_stop = pool.build_envelope({"cmd": "shutdown"})
-        proc = launcher.popen(
+        proc = subprocess.Popen(
             argv,
-            lau,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2367,16 +2359,15 @@ def worker_self_test(python: str) -> dict:
             encoding="utf-8",
             errors="replace",
             # 与池里起 worker 同一份 env 判据（受管环境的 matplotlib 缓存落回数据目录）
-            env=runtime.owned_env(python),
+            # Conda 环境：自检也用激活后的环境（与 worker 同一个启动决策；调用方在 `launch_scope` 里）
+            env=launcher.activate_env(python, runtime.owned_env(python)),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
         try:
-            # v1 信封（`pool.build_envelope`，调用侧的唯一出处）：一条 build 一条 shutdown，读到 EOF 即结束，
-            # 不必在这里重建一套超时读线程。回复只认带 `protocol_version` 且 `request_id` 回显对得上的信封——
-            # 钩子打印的 `{"ok": true}` 之类不是 worker 的回复，一律当日志。
+            # legacy 信封（worker 明确支持，手工调试用的就是它）：一条 build
+            # 一条 shutdown，读到 EOF 即结束，不必在这里重建一套超时读线程。
             stdout, stderr = proc.communicate(
-                json.dumps(env_build) + "\n" + json.dumps(env_stop) + "\n",
-                timeout=SELFTEST_TIMEOUT_S,
+                '{"cmd": "build"}\n{"cmd": "shutdown"}\n', timeout=SELFTEST_TIMEOUT_S
             )
         except subprocess.TimeoutExpired:
             _kill(proc)
@@ -2385,17 +2376,8 @@ def worker_self_test(python: str) -> dict:
             try:
                 resp = json.loads(line)
             except ValueError:
-                # 包装启动时钩子的横幅可能（没有换行）粘在回复前面：取能解析成 JSON 对象的后缀
-                suffix = launcher.json_suffix(line) if lau is not None else None
-                if suffix is None:
-                    continue
-                resp = suffix
-            if (
-                isinstance(resp, dict)
-                and resp.get("protocol_version") == pool.PROTOCOL_VERSION
-                and resp.get("request_id") == env_build["request_id"]
-                and "ok" in resp
-            ):
+                continue
+            if isinstance(resp, dict) and "ok" in resp:
                 if resp.get("ok"):
                     # `stems` 才是「捕获到几张图」——调用方据此断言 worker
                     # 是真跑通了，而不是「函数返回了 True」。
@@ -5427,9 +5409,8 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
-        proc = launcher.run_probe(
+        proc = subprocess.run(
             [str(python), *runtime.probe_args(), "-c", _IMPORTS_PROBE_SRC, *names],
-            python,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -5437,7 +5418,7 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
             timeout=projectenv.PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=runtime.owned_env(python),
+            env=launcher.activate_env(python, runtime.owned_env(python)),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -24,7 +23,6 @@ import pytest
 
 from support import foundation_app as fa
 from tavotto.engine import (
-    config,
     databinding,
     launchctx,
     launcher,
@@ -47,6 +45,14 @@ needs_worker = pytest.mark.skipif(
 )
 
 LICENSE = "activated-secret-xyz"
+
+
+@pytest.fixture(autouse=True)
+def _fresh_captures():
+    launcher.reset_captures()  # 激活增量只缓存在进程内存里；用例之间不串
+    yield
+    launcher.reset_captures()
+
 
 FAKE_CONDA = r"""#!{python}
 import json, os, subprocess, sys
@@ -84,7 +90,7 @@ if not live:
     sys.exit(97)  # 真 conda 会捕获 stdout：worker 协议在 stdout 上，必须直通
 with open(os.environ["FAKE_CONDA_LOG"], "a", encoding="utf-8") as fh:
     fh.write(json.dumps({{"opts": opts, "cmd": cmd}}) + "\n")
-env = dict(os.environ, CONDA_PREFIX=prefix, FAKE_SDK_LICENSE="{license}")
+env = dict(os.environ, CONDA_PREFIX=prefix, FAKE_SDK_LICENSE="{license}", SECRET_TOKEN="xyz-secret-token-123")
 site = os.path.join(prefix, "activated_site")  # 激活才会加进 PYTHONPATH 的目录（activate.d 设置变量的效果）
 if os.path.isdir(site):
     env["PYTHONPATH"] = site + os.pathsep + env.get("PYTHONPATH", "")
@@ -176,36 +182,6 @@ def wait_gone(pid: int, timeout: float = 8.0) -> bool:
 # ---------------------------------------------------------------------------
 # launcher：结构化 argv，不拼 shell
 # ---------------------------------------------------------------------------
-def test_wrap_is_an_argv_array_with_documented_conda_run_shape():
-    lau = launcher.CondaLauncher(
-        conda_exe="/opt/c onda/bin/conda", prefix="/opt/c onda/envs/my env"
-    )
-    cmd = ["/opt/c onda/envs/my env/bin/python", "w.py", "--arg", "a b", "--", "$(rm -rf ~)", ""]
-    out = lau.wrap(cmd)
-    assert out[:5] == [
-        "/opt/c onda/bin/conda",
-        "run",
-        "--no-capture-output",
-        "--prefix",
-        "/opt/c onda/envs/my env",
-    ]
-    # 不带 `--` 分隔符（较老的 conda 会把它当可执行文件）：可执行文件紧跟在 conda 选项后面，其后原样透传
-    assert out[5:] == cmd
-    assert out.count("--") == cmd.count("--")  # wrap 自己没加；cmd 里自带的内嵌 `--` 原样保留
-    assert out[5] == cmd[0]
-    with_cwd = lau.wrap(cmd, cwd="/tmp/work dir")
-    assert with_cwd[5:7] == ["--cwd", "/tmp/work dir"] and with_cwd[7:] == cmd
-    assert all(isinstance(t, str) for t in out)
-
-
-def test_wrap_rejects_a_relative_or_dash_leading_executable():
-    """可执行文件是 REMAINDER 的起点：相对路径 / 以 `-` 开头会被 conda 当成自己的选项或在别处解析，一律拒绝。"""
-    lau = launcher.CondaLauncher(conda_exe="/c/bin/conda", prefix="/c/envs/e")
-    for bad in ("python", "./python", "-u", "--prefix"):
-        with pytest.raises(ValueError):
-            lau.wrap([bad, "x.py"])
-    with pytest.raises(ValueError):
-        lau.wrap([])
 
 
 def test_public_reference_has_no_environment(tmp_path):
@@ -283,43 +259,6 @@ def _spawn_wrapped(tmp_path, popen_cls):
     return proc, int(pidfile.read_text())
 
 
-@posix_only
-def test_killing_the_wrapper_group_leaves_no_user_python(tmp_path):
-    proc, child = _spawn_wrapped(tmp_path, launcher.GroupPopen)
-    assert alive(child)
-    proc.kill()
-    assert wait_gone(child), "kill() 之后用户 Python 仍在（或成了没人收的僵尸）"  # 不靠 wait() 补刀
-    proc.wait(timeout=10)
-    for fh in (proc.stdin, proc.stdout):
-        fh.close()
-
-
-@posix_only
-def test_negative_control_plain_popen_kill_orphans_the_user_python(tmp_path):
-    """移除修复的对照：普通 Popen 只杀 conda，用户 Python 成孤儿继续跑——这正是 GroupPopen 要消除的。"""
-    proc, child = _spawn_wrapped(tmp_path, subprocess.Popen)
-    try:
-        proc.kill()
-        proc.wait(timeout=10)
-        time.sleep(0.5)
-        assert alive(child)
-    finally:
-        os.kill(child, signal.SIGKILL)
-        for fh in (proc.stdin, proc.stdout):
-            fh.close()
-
-
-@posix_only
-def test_wait_after_wrapper_exit_reaps_a_surviving_group_member(tmp_path):
-    """conda 先死、孙进程活着（kill 之外的退出路径）：wait() 也要确认组里没有残留。"""
-    proc, child = _spawn_wrapped(tmp_path, launcher.GroupPopen)
-    os.kill(proc.pid, signal.SIGKILL)  # 只杀 wrapper
-    proc.wait(timeout=10)
-    assert wait_dead(child)
-    for fh in (proc.stdin, proc.stdout):
-        fh.close()
-
-
 # ---------------------------------------------------------------------------
 # 池：真 worker 经模拟 conda 激活启动；取消 / 关停不留进程
 # ---------------------------------------------------------------------------
@@ -363,35 +302,6 @@ def runs(counter: Path) -> list[dict]:
     if not counter.exists():
         return []
     return [json.loads(x) for x in counter.read_text(encoding="utf-8").splitlines() if x]
-
-
-@needs_worker
-def test_activation_dependent_script_runs_only_through_the_launcher_and_shutdown_leaves_nothing(
-    conda_world, monkeypatch
-):
-    proj, prefix, log, counter = conda_world
-    worker, resp = _pool.build("fig.py", str(proj), "__main__")
-    try:
-        assert worker.launcher is not None and worker.launcher.prefix == str(prefix)
-        # 预检（`_has_matplotlib`）也经 conda run 起；worker 自己那一次是命令里带 worker.py 的
-        (call,) = [c for c in conda_calls(log) if any(a.endswith("worker.py") for a in c["cmd"])]
-        assert call["opts"] == ["--no-capture-output", "--prefix", str(prefix)]
-        assert call["cmd"][0] == str(prefix / "bin" / "python")  # wrapper 之后仍是用户的解释器路径
-        assert runs(counter)[0]["conda_prefix"] == str(prefix)
-        user_pid = resp["runtime"]["pid"]  # worker 自报：真正跑脚本的用户 Python
-        assert user_pid != worker.child_pid  # child_pid 是 conda wrapper
-        assert alive(user_pid)
-        rcpt_launcher = worker.launcher.public()
-        assert rcpt_launcher["kind"] == "conda"
-        # 用户 Python 的父进程是 conda 起的临时 shell（不是 child_pid）：回执仍要完整，pid 经进程组核
-        rcpt = receipt.from_worker(worker, resp, control_plane="python_pool", grant=None)
-        assert rcpt.completeness == receipt.COMPLETENESS_COMPLETE, rcpt.runtime_rejected
-        assert rcpt.pid_check == receipt.PID_CHECK_PROCESS_GROUP
-        assert resp["runtime"]["ppid"] not in (worker.child_pid, user_pid)
-    finally:
-        worker.force_kill()
-    assert wait_dead(user_pid), "worker 关停后用户 Python 仍在运行"
-    assert not alive(worker.child_pid) or wait_dead(worker.child_pid)
 
 
 @needs_worker
@@ -578,167 +488,6 @@ def _real_conda() -> str:
     return found.conda_exe
 
 
-@needs_real_conda
-def test_real_conda_launch():
-    """真 conda：`conda run --no-capture-output` 把 stdin / stdout 直通并返回子进程退出码。"""
-    lau = launcher.detect(Path(REAL_PREFIX) / "bin" / "python")
-    code = (
-        "import sys\nfor l in sys.stdin:\n print('echo',l.strip(),flush=True)\n"
-        " if l.strip()=='q': sys.exit(3)"
-    )
-    proc = subprocess.Popen(
-        lau.wrap([str(Path(REAL_PREFIX) / "bin" / "python"), "-u", "-c", code]),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    got = []
-    for msg in ("a", "b", "q"):  # 逐行双向往返：缓冲或 stdin 不通会在这里卡住（readline 无限等）
-        proc.stdin.write(msg + "\n")
-        proc.stdin.flush()
-        got.append(proc.stdout.readline().strip())
-    assert got == ["echo a", "echo b", "echo q"]
-    assert proc.wait(timeout=30) == 3
-    proc.stdin.close()
-    proc.stdout.close()
-
-
-@needs_real_conda
-def test_real_conda_worker_roundtrip_and_cancel_leaves_no_user_python(tmp_path, monkeypatch):
-    """真 conda：完整 worker 协议往返（build → 出图 → 渲染），再强杀 wrapper，用户 Python 不得残留。"""
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text(
-        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt, os\n"
-        "assert os.environ.get('CONDA_PREFIX')\n"
-        "fig, ax = plt.subplots(figsize=(3, 2)); ax.plot([0, 1, 2], [1, 4, 2])\n"
-        "fig.savefig('result.pdf')\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(Path(REAL_PREFIX) / "bin" / "python"))
-    _pool.reset_worker_python()
-    worker, resp = _pool.build("fig.py", str(proj), "__main__")
-    try:
-        assert worker.launcher is not None and worker.launcher.prefix == REAL_PREFIX
-        assert resp["runtime"]["prefix"] == REAL_PREFIX  # 脚本真的跑在这个 conda 环境里
-        user_pid = resp["runtime"]["pid"]
-        assert user_pid != worker.child_pid and alive(user_pid)
-        assert worker.render_png  # 热会话还能服务
-        # 真 conda 的 `bash 临时脚本` 夹在中间：回执完整，成功记录能写入（此前 pid_mismatch → partial → 不记录）
-        rcpt = receipt.from_worker(worker, resp, control_plane="python_pool", grant=None)
-        assert rcpt.completeness == receipt.COMPLETENESS_COMPLETE, rcpt.runtime_rejected
-        assert rcpt.pid_check == receipt.PID_CHECK_PROCESS_GROUP
-        monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
-        assert launchctx.record_success(proj, "fig.py", rcpt) is True
-        assert runconfig.launch_record(proj, "fig.py")["launcher"]["kind"] == "conda"
-    finally:
-        worker.force_kill()
-        _pool.shutdown_all(wait=True)
-        _pool.reset_worker_python()
-    assert wait_dead(user_pid), "取消 wrapper 后用户 Python 仍在运行"
-    ps = subprocess.run(
-        ["ps", "-axo", "pid=,command="],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    ).stdout
-    assert not [ln for ln in ps.splitlines() if str(tmp_path) in ln and "worker.py" in ln], ps
-
-
-@needs_real_conda
-def test_real_conda_cancel_mid_computation_leaves_no_user_python(tmp_path, monkeypatch):
-    """真 conda：脚本正在长计算时硬取消（force_kill），wrapper 和用户 Python 都不得残留。"""
-    import threading
-
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    pidfile = tmp_path / "user.pid"
-    (proj / "slow.py").write_text(
-        f"import os, time\nopen({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(300)\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(Path(REAL_PREFIX) / "bin" / "python"))
-    _pool.reset_worker_python()
-    worker = _pool.get("slow.py", str(proj), "__main__")
-    box: list = []
-
-    def run() -> None:
-        try:
-            worker.ensure_built()
-        except Exception as exc:  # noqa: BLE001 — 被取消的 build 本来就会失败
-            box.append(exc)
-
-    t = threading.Thread(target=run, daemon=True)
-    t.start()
-    deadline = time.time() + 120
-    while not pidfile.exists() and time.time() < deadline:
-        time.sleep(0.1)
-    user_pid = int(pidfile.read_text())
-    wrapper = worker.child_pid
-    assert alive(user_pid) and alive(wrapper)
-    try:
-        worker.force_kill()
-        t.join(timeout=30)
-    finally:
-        _pool.shutdown_all(wait=True)
-        _pool.reset_worker_python()
-    assert wait_dead(user_pid) and wait_dead(wrapper)
-    assert box, "被取消的 build 应当报错而不是成功"
-
-
-@posix_only
-def test_a_planted_conda_exe_in_the_record_is_never_executed(tmp_path, monkeypatch):
-    """登记里的 `conda_exe` 是不可信数据（可被克隆来的 / 同步来的文件写入）：沿用记录时不得执行它，
-    实际包装用的是从解释器现场检测出的 conda。"""
-    import hashlib
-
-    prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
-    marker = tmp_path / "PWNED"
-    evil = proj / "evil-conda"
-    evil.write_text(f"#!/bin/sh\necho x > {marker}\nexit 0\n", encoding="utf-8")
-    evil.chmod(0o755)
-    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
-    monkeypatch.delenv("CONDA_EXE", raising=False)
-    py = str(prefix / "bin" / "python")
-    rcpt = _Rcpt(
-        py,
-        hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest(),
-        [],
-        {"kind": "conda", "conda_exe": str(evil), "prefix": str(prefix)},  # 被篡改的引用
-        databinding.binding_for(proj / "fig.py", proj, "sandbox")["revision"],
-    )
-    assert launchctx.record_success(proj, "fig.py", rcpt) is True
-    got = launchctx.decide(proj, "fig.py", py)
-    assert got is not None and got.conda_exe == str(conda)
-    log = tmp_path / "plant.log"
-    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
-    subprocess.run(got.wrap([sys.executable, "-c", "pass"]), check=True, timeout=30)
-    assert not marker.exists(), "登记里的 conda_exe 被执行了"
-    assert len(conda_calls(log)) == 1
-    # 记录里的 prefix 与解释器所在环境对不上：记录整体不可信，不沿用
-    forged = {"kind": "conda", "conda_exe": str(conda), "prefix": str(tmp_path / "elsewhere")}
-    record = runconfig.launch_record(proj, "fig.py")
-    record["launcher"] = forged
-    assert (
-        launchctx.verify(
-            record,
-            project_root=proj,
-            script="fig.py",
-            python=py,
-            python_source="env_override",
-            facets=launchctx.FACETS_LAUNCHER,
-        )
-        == launchctx.REASON_LAUNCHER
-    )
-
-
 @posix_only
 def test_kill_switch_beats_a_recorded_conda_launcher(tmp_path, monkeypatch):
     """`TAVOTTO_CONDA_ACTIVATION=0` 对沿用的记录同样生效：即使记录说上次是 Conda 启动也裸起。"""
@@ -790,64 +539,6 @@ def test_incomplete_basis_is_not_recorded_so_it_can_never_authorize_reuse(tmp_pa
             return {"local_modules": [], "files": [], "truncated": True}
 
     assert launchctx.build_record(proj, "fig.py", Truncated(sys.executable, sha, [], None)) is None
-
-
-@needs_worker
-def test_activation_banner_before_the_protocol_is_diverted_to_the_log(conda_world, monkeypatch):
-    """`activate.d` 钩子往 stdout 打印的内容在协议之前直通进管道：转进 worker.log 并继续，会话照常工作。"""
-    proj, prefix, log, counter = conda_world
-    monkeypatch.setenv("FAKE_CONDA_BANNER", "Welcome to the vendor SDK (license ok)")
-    worker, resp = _pool.build("fig.py", str(proj), "__main__")
-    try:
-        assert "[activation stdout] Welcome to the vendor SDK" in worker.log_path.read_text(
-            encoding="utf-8", errors="replace"
-        )
-        assert worker.render_png  # 之后的协议往返不受影响
-    finally:
-        worker.force_kill()
-
-
-@needs_worker
-def test_activation_banner_cap_does_not_swallow_a_flood(conda_world, monkeypatch):
-    """上限：横幅刷屏超限后不再吞，按 protocol_mismatch 如实失败（不是无限跳过）。"""
-    proj, prefix, log, counter = conda_world
-    monkeypatch.setattr(_pool.EngineWorker, "ACTIVATION_BANNER_MAX_LINES", 3)
-    monkeypatch.setenv("FAKE_CONDA_BANNER", "\n".join(f"noise {i}" for i in range(20)))
-    with pytest.raises(_pool.WorkerError) as exc:
-        _pool.build("fig.py", str(proj), "__main__")
-    assert exc.value.code == "protocol_mismatch"
-
-
-@needs_real_conda
-def test_real_conda_activate_d_hook_stdout_does_not_break_the_protocol(tmp_path, monkeypatch):
-    """真 conda：env 的 `activate.d` 钩子往 stdout 打印，会话照常建立、出图，横幅在 worker.log 里。"""
-    hook_dir = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
-    hook_dir.mkdir(parents=True, exist_ok=True)
-    for stale in hook_dir.glob("p09_*.sh"):  # 上次被打断的运行可能留下钩子，会污染别的真 conda 用例
-        stale.unlink()
-    hook = hook_dir / "p09_banner_test.sh"
-    hook.write_text('echo "P09 vendor banner: license server ready"\n', encoding="utf-8")
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text(
-        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
-        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(Path(REAL_PREFIX) / "bin" / "python"))
-    _pool.reset_worker_python()
-    worker = None
-    try:
-        worker, resp = _pool.build("fig.py", str(proj), "__main__")
-        assert resp["runtime"]["prefix"] == REAL_PREFIX
-        assert "P09 vendor banner" in worker.log_path.read_text(encoding="utf-8", errors="replace")
-        assert worker.render_png
-    finally:
-        hook.unlink(missing_ok=True)
-        if worker is not None:
-            worker.force_kill()
-        _pool.shutdown_all(wait=True)
-        _pool.reset_worker_python()
 
 
 # ---------------------------------------------------------------------------
@@ -943,31 +634,6 @@ def test_an_input_without_a_digest_makes_the_record_unverifiable(tmp_path, monke
         "python_source": "env_override",
     }
     assert launchctx.verify(good, **kw) == launchctx.REASON_HELPER
-
-
-def test_a_json_object_printed_by_a_hook_is_not_a_protocol_envelope():
-    is_env = _pool.EngineWorker._is_envelope
-    pv = _pool.PROTOCOL_VERSION
-    assert is_env(json.dumps({"protocol_version": pv, "request_id": "r1", "ok": True}))
-    assert not is_env('{"status": "license ready"}')
-    assert not is_env(json.dumps({"request_id": "r1"}))  # 缺 protocol_version
-    assert not is_env(json.dumps({"protocol_version": pv}))  # 缺 request_id
-    assert not is_env(json.dumps({"protocol_version": pv + 1, "request_id": "r1"}))
-    assert not is_env(json.dumps({"protocol_version": pv, "request_id": 7}))
-    assert not is_env("[1, 2]") and not is_env("plain text")
-
-
-@needs_worker
-def test_a_json_banner_from_a_hook_is_diverted_not_mistaken_for_a_reply(conda_world, monkeypatch):
-    proj, prefix, log, counter = conda_world
-    monkeypatch.setenv("FAKE_CONDA_BANNER", '{"status": "license ready"}')
-    worker, resp = _pool.build("fig.py", str(proj), "__main__")
-    try:
-        text = worker.log_path.read_text(encoding="utf-8", errors="replace")
-        assert '[activation stdout] {"status": "license ready"}' in text
-        assert worker.render_png
-    finally:
-        worker.force_kill()
 
 
 BAD_LAUNCH_SHAPES = {
@@ -1165,98 +831,6 @@ def _spawn_group_with_member(tmp_path):
     return leader, int(pidfile.read_text())
 
 
-@posix_only
-def test_process_group_check_accepts_a_member_that_is_not_the_leader(tmp_path):
-    """`via_group` 分支必须用「pid 不同于组长的同组成员」单独测到（用测试进程自己会走到 pid==expected 的直核分支）。"""
-    leader, member = _spawn_group_with_member(tmp_path)
-    try:
-        assert member != leader.pid and os.getpgid(member) == leader.pid
-        rt = {"report_origin": "build", "pid": member, "ppid": leader.pid + 99999}
-        ok = receipt.accept_runtime(rt, expected_pid=leader.pid, via_group=True)
-        assert ok[1] is None and ok[2] == receipt.PID_CHECK_PROCESS_GROUP
-        # 没有 launcher 时同一份自报不放行；组长对不上也不放行
-        assert receipt.accept_runtime(rt, expected_pid=leader.pid, via_group=False)[1] == (
-            "pid_mismatch"
-        )
-        assert receipt.accept_runtime(rt, expected_pid=os.getpid(), via_group=True)[1] == (
-            "pid_mismatch"
-        )
-    finally:
-        for pid in (member, leader.pid):
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        leader.wait(timeout=10)
-
-
-@posix_only
-def test_group_members_lists_the_group_with_parents_and_tells_zombies_apart(tmp_path):
-    leader, member = _spawn_group_with_member(tmp_path)
-    try:
-        members = {pid: (ppid, st) for pid, ppid, st in launcher.group_members(leader.pid)}
-        assert members[member][0] == leader.pid and members[member][1] != "Z"
-        assert members[leader.pid][1] != "Z"
-        # 让成员死但没人收尸：leader 是它的父进程且不 wait → 僵尸
-        os.kill(member, signal.SIGKILL)
-        deadline = time.time() + 10
-        state = None
-        while time.time() < deadline:
-            state = {pid: st for pid, _pp, st in launcher.group_members(leader.pid)}.get(member)
-            if state == "Z":
-                break
-            time.sleep(0.05)
-        assert state == "Z", state
-        assert launcher.is_running(leader.pid) and not launcher.is_running(member)
-    finally:
-        os.kill(leader.pid, signal.SIGKILL)
-        leader.wait(timeout=10)
-
-
-@posix_only
-def test_kill_terminates_the_process_tree_from_the_leaves_up(tmp_path, monkeypatch):
-    """conda → shell → Python：先杀最深的 Python，等 shell 把它回收掉（pid 消失，不是 Z），再杀 shell，最后 wrapper。
-    对整组同时发 SIGKILL 时 shell 可能先死，Python 成孤儿；PID 1 不收尸的容器里它永远是僵尸。"""
-    proc, child = _spawn_wrapped(tmp_path, launcher.GroupPopen)
-    tree = {pid: ppid for pid, ppid, _ in launcher.group_members(proc.pid)}
-    (shell,) = [pid for pid, ppid in tree.items() if ppid == proc.pid]
-    assert tree[child] == shell  # 真的是三层
-    sent: list[int] = []
-    real = launcher.GroupPopen._signal_pid
-
-    def spy(self, pid):
-        sent.append(pid)
-        real(self, pid)
-
-    monkeypatch.setattr(launcher.GroupPopen, "_signal_pid", spy)
-    proc.kill()
-    proc.wait(timeout=10)
-    assert sent[:2] == [child, shell], sent  # 叶子在前，shell 其次；wrapper 最后由 kill / wait 处理
-    assert wait_gone(child) and wait_gone(shell)  # 被父进程回收了，不是留成僵尸
-    assert proc.unreaped == []
-    for fh in (proc.stdin, proc.stdout):
-        fh.close()
-
-
-@posix_only
-def test_a_zombie_with_a_live_parent_is_still_residue_but_an_orphan_zombie_of_init_is_reported(
-    tmp_path, monkeypatch
-):
-    """僵尸只有在父进程是 PID 1（没有任何人能收尸）时才不算残留；父进程还在的僵尸迟早被收尸，仍算残留。
-    被 init 接管的僵尸也不能伪装成「已回收」：如实记在 `unreaped` 里并告警。
-    真正的「PID 1 不收尸的容器」本机构造不出来（macOS 没有 subreaper / PID 命名空间）：这里用注入的成员表覆盖这两个判据。"""
-    gp = launcher.GroupPopen.__new__(launcher.GroupPopen)
-    gp.pid = 4242
-    monkeypatch.setattr(launcher, "group_members", lambda pgid: [(4242, 1, "S"), (4300, 4242, "Z")])
-    assert gp._group_alive() is True  # 父进程（wrapper）还在：它会收尸，等它
-    monkeypatch.setattr(launcher, "group_members", lambda pgid: [(4300, 1, "Z")])
-    assert gp._group_alive() is False  # 被 PID 1 接管：没人能收，不再执行代码
-    gp.unreaped = []
-    # wait() 不把它伪装成干净
-    monkeypatch.setattr(launcher.subprocess.Popen, "wait", lambda self, timeout=None: 0)
-    assert gp.wait() == 0 and gp.unreaped == [(4300, "Z")]
-
-
 @needs_worker
 def test_the_pool_turns_an_unavailable_conda_launcher_into_a_stable_error(conda_world, monkeypatch):
     proj, prefix, log, counter = conda_world
@@ -1278,71 +852,6 @@ def test_the_pool_turns_an_unavailable_conda_launcher_into_a_stable_error(conda_
     with pytest.raises(_pool.WorkerError) as werr:
         _pool.EngineWorker("fig.py", str(proj), "__main__")
     assert werr.value.code == "conda_launcher_unavailable"
-
-
-def test_envelope_suffix_splits_an_unterminated_banner_from_the_first_envelope():
-    pv = _pool.PROTOCOL_VERSION
-    env = json.dumps({"protocol_version": pv, "request_id": "r1", "ok": True})
-    suffix = _pool.EngineWorker._envelope_suffix
-    assert suffix("initializing…" + env + "\n") == env + "\n"
-    # 键序不固定：真实的 build 回复是 {"ok": true, "protocol_version": 1, "request_id": ...}
-    real = json.dumps({"ok": True, "protocol_version": pv, "request_id": "r2", "stems": {"a": 1}})
-    assert suffix("init {x" + real + "\n") == real + "\n"  # 钩子输出里自带 `{` 也能找到真起点
-    assert suffix(real + "\n") is None
-    assert suffix(env + "\n") is None  # 本来就整行是信封：不拆
-    assert suffix("plain banner\n") is None
-    assert suffix('x {"protocol_version": 1, broken\n') is None  # 形似不合法：不拆
-    assert suffix("a" + json.dumps({"request_id": "r"}) + "\n") is None  # 不带 protocol_version
-
-
-@needs_worker
-def test_an_unterminated_hook_banner_does_not_swallow_the_first_reply(conda_world, monkeypatch):
-    """钩子 `printf 'initializing…'` 没有换行：它和 worker 的第一条信封粘成一行，不能整行被当横幅吞掉（会话随后超时）。"""
-    proj, prefix, log, counter = conda_world
-    monkeypatch.setenv("FAKE_CONDA_BANNER", "initializing vendor SDK...")
-    monkeypatch.setenv("FAKE_CONDA_BANNER_NO_NEWLINE", "1")
-    worker, resp = _pool.build("fig.py", str(proj), "__main__")
-    try:
-        assert "[activation stdout] initializing vendor SDK..." in worker.log_path.read_text(
-            encoding="utf-8", errors="replace"
-        )
-        assert worker.render_png
-    finally:
-        worker.force_kill()
-
-
-@needs_real_conda
-def test_real_conda_unterminated_activate_d_printf_does_not_break_the_protocol(
-    tmp_path, monkeypatch
-):
-    hook_dir = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
-    hook_dir.mkdir(parents=True, exist_ok=True)
-    for stale in hook_dir.glob("p09_*.sh"):  # 上次被打断的运行可能留下钩子，会污染别的真 conda 用例
-        stale.unlink()
-    hook = hook_dir / "p09_printf_test.sh"
-    hook.write_text("printf 'initializing vendor SDK...'\n", encoding="utf-8")
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text(
-        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
-        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(Path(REAL_PREFIX) / "bin" / "python"))
-    _pool.reset_worker_python()
-    worker = None
-    try:
-        worker, resp = _pool.build("fig.py", str(proj), "__main__")
-        assert resp["runtime"]["prefix"] == REAL_PREFIX
-        assert "initializing vendor SDK..." in worker.log_path.read_text(
-            encoding="utf-8", errors="replace"
-        )
-    finally:
-        hook.unlink(missing_ok=True)
-        if worker is not None:
-            worker.force_kill()
-        _pool.shutdown_all(wait=True)
-        _pool.reset_worker_python()
 
 
 # ---------------------------------------------------------------------------
@@ -1382,279 +891,11 @@ def activation_only_env(tmp_path, monkeypatch):
     return str(py), prefix, log
 
 
-@needs_worker
-def test_preflight_probes_run_in_the_same_activation_context_as_the_worker(
-    activation_only_env, tmp_path, monkeypatch
-):
-    from tavotto.engine import deprepair, projectenv
-
-    py, prefix, log = activation_only_env
-    # 负对照：关掉 Conda 激活，同一个解释器裸起——预检全部失败（这正是 AC-11 要消除的假阴性）
-    with monkeypatch.context() as m:
-        m.setenv(launcher.ENV_DISABLE, "0")
-        assert _pool._has_matplotlib(py) is False
-        bare = projectenv.probe_environment(py)
-        assert bare["ok"] is False
-        assert deprepair.probe_imports(py, ("vendor_sdk",))["vendor_sdk"]  # 非空 = 错误文本
-    assert conda_calls(log) == []
-    # 经 conda 激活：同一个解释器的预检全部通过
-    assert _pool._has_matplotlib(py) is True
-    probed = projectenv.probe_environment(py)
-    assert probed["ok"] is True and probed["matplotlib_version"], probed
-    assert deprepair.probe_imports(py, ("vendor_sdk",)) == {"vendor_sdk": ""}
-    assert len(conda_calls(log)) >= 3  # 三个预检都是经 conda run 起的
-
-
-@needs_worker
-def test_selecting_an_activation_only_interpreter_and_drawing_end_to_end(
-    activation_only_env, tmp_path, monkeypatch
-):
-    """显式选中这个解释器：选择（`_has_matplotlib`）不再误报 `explicit_python_unusable`，一路到 worker 出图。"""
-    py, prefix, log = activation_only_env
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text(
-        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
-        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
-    _pool.reset_worker_python()
-    worker = None
-    try:
-        with monkeypatch.context() as m:  # 负对照：不激活 → 选择阶段就报显式解释器不可用
-            m.setenv(launcher.ENV_DISABLE, "0")
-            with pytest.raises(_pool.WorkerError) as bad:
-                _pool.select_worker_python()
-            assert bad.value.code == "explicit_python_unusable"
-        _pool.reset_worker_python()
-        worker, resp = _pool.build("fig.py", str(proj), "__main__")
-        assert worker.launcher is not None and resp["runtime"]["prefix"]
-    finally:
-        if worker is not None:
-            worker.force_kill()
-        _pool.shutdown_all(wait=True)
-        _pool.reset_worker_python()
-
-
-@needs_worker
-def test_probe_banner_and_timeout_are_handled_for_wrapped_probes(activation_only_env, monkeypatch):
-    py, prefix, log = activation_only_env
-    monkeypatch.setenv("FAKE_CONDA_BANNER", "initializing vendor SDK...")
-    monkeypatch.setenv("FAKE_CONDA_BANNER_NO_NEWLINE", "1")
-    # deactivate.d 的横幅在命令结束之后打印，而且长得像探针的结果（JSON 对象）——结果不走 stdout，所以不受影响
-    monkeypatch.setenv("FAKE_CONDA_AFTER_BANNER", '{"vendor_sdk": "FAKE-RESULT-FROM-A-HOOK"}')
-    from tavotto.engine import deprepair
-
-    # 横幅（没有换行结尾）粘在前面、JSON 形状的横幅跟在后面：结果仍是探针自己写进结果文件的那份
-    assert deprepair.probe_imports(py, ("vendor_sdk",)) == {"vendor_sdk": ""}
-    assert not list((config.data_dir() / "probe-results").glob("*"))  # 结果文件用完即删
-    # 超时：整组收掉，不留探针里的 Python
-    pidfile = prefix.parent / "probe.pid"
-    started = time.time()
-    with pytest.raises(subprocess.TimeoutExpired):
-        launcher.run_probe(
-            [py, "-c", CHILD, str(pidfile)],
-            py,
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-    assert time.time() - started < 30
-    assert wait_dead(int(pidfile.read_text()))
-
-
-@needs_real_conda
-def test_real_conda_preflight_sees_variables_set_by_activate_d(tmp_path, monkeypatch):
-    """真 conda：activate.d 设置 PYTHONPATH 之后才 import 得到的模块——预检（经 conda run）能看见，裸起看不见。"""
-    from tavotto.engine import deprepair
-
-    hook_dir = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
-    hook_dir.mkdir(parents=True, exist_ok=True)
-    for stale in hook_dir.glob("p09_*.sh"):
-        stale.unlink()
-    site = tmp_path / "vendor_site"
-    site.mkdir()
-    (site / "vendor_sdk_p09.py").write_text("VALUE = 7\n", encoding="utf-8")
-    hook = hook_dir / "p09_pythonpath_test.sh"
-    hook.write_text(f'export PYTHONPATH="{site}${{PYTHONPATH:+:$PYTHONPATH}}"\n', encoding="utf-8")
-    real_py = str(Path(REAL_PREFIX) / "bin" / "python")
-    try:
-        assert deprepair.probe_imports(real_py, ("vendor_sdk_p09",)) == {"vendor_sdk_p09": ""}
-        with monkeypatch.context() as m:
-            m.setenv(launcher.ENV_DISABLE, "0")
-            assert deprepair.probe_imports(real_py, ("vendor_sdk_p09",))["vendor_sdk_p09"]
-    finally:
-        hook.unlink(missing_ok=True)
-
-
-@needs_worker
-def test_probes_follow_the_per_script_launch_decision_not_a_bare_detect(
-    activation_only_env, tmp_path, monkeypatch
-):
-    """记录说这份脚本上次是裸起成功的：预检（在 `probe_scope` 里）和 worker 一样裸起；不在范围里才按解释器现场检测。"""
-    py, prefix, log = activation_only_env
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
-    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
-    rcpt = _good_rcpt(proj, py)
-    rcpt.python_source = "env_override"
-    assert launchctx.record_success(proj, "fig.py", rcpt)  # 启动方式：direct
-    with launchctx.probe_scope(proj, "fig.py"):
-        assert _pool._has_matplotlib(py) is False  # 裸起：shim 的 matplotlib 要激活才 import 得到
-    assert conda_calls(log) == []
-    assert _pool._has_matplotlib(py) is True  # 没有范围：现场检测 → 经 conda 激活
-    assert len(conda_calls(log)) == 1
-    # 记录说 Conda：范围里也走 conda
-    rcpt.launcher = launcher.CondaLauncher(
-        conda_exe=str(prefix.parent.parent / "bin" / "conda"), prefix=str(prefix)
-    ).public()
-    assert launchctx.record_success(proj, "fig.py", rcpt)
-    with launchctx.probe_scope(proj, "fig.py"):
-        assert _pool._has_matplotlib(py) is True
-    assert len(conda_calls(log)) == 2
-
-
-@posix_only
-def test_a_zombie_child_is_a_barrier_before_its_parent_is_killed(monkeypatch):
-    """已经是 Z 的子进程不能被 signal，但它的父进程必须等它被回收（或超过上限）才能被杀；否则父 shell 被当叶子先杀，
-    这个僵尸就成了永久孤儿。成员表用注入的（真正的「PID 1 不收尸」本机构造不出来）。"""
-    gp = launcher.GroupPopen.__new__(launcher.GroupPopen)
-    gp.pid = 100
-    gp.LEVEL_GRACE = 0.3
-    sent: list[int] = []
-    state = {"reaped": False, "dead": set()}
-
-    def signal_(pid):
-        sent.append(pid)
-        state["dead"].add(pid)  # 被杀的 shell 由 wrapper 收尸，从成员表里消失
-
-    gp._signal_pid = signal_
-
-    def table(pgid):
-        rows = [(100, 1, "S")] + (
-            [] if 101 in state["dead"] else [(101, 100, "S")]
-        )  # wrapper、shell
-        if not state["reaped"]:
-            rows.append((102, 101, "Z"))  # shell 的子进程已经是僵尸，shell 还没来得及收
-        return rows
-
-    monkeypatch.setattr(launcher, "group_members", table)
-    # shell 在僵尸被回收之后才该被杀：第一层只有僵尸（不 signal，等它消失）
-    import threading
-
-    threading.Timer(0.1, lambda: state.update(reaped=True)).start()
-    gp.LEVEL_GRACE = 2.0
-    started = time.monotonic()
-    gp._kill_tree_leaves_first()
-    assert sent == [101]  # 僵尸 102 从未被 signal；回收之后才轮到 shell
-    assert 0.08 <= time.monotonic() - started < 1.5  # 等的是「被回收」，不是等满上限
-    # 僵尸一直不被回收：等到上限后继续往上，不会卡死
-    state.update(reaped=False, dead=set())
-    sent.clear()
-    gp.LEVEL_GRACE = 0.2
-    started = time.monotonic()
-    gp._kill_tree_leaves_first()
-    assert sent == [101] and time.monotonic() - started >= 0.2
-
-
-@needs_real_conda
-def test_real_conda_json_shaped_hook_banners_never_become_the_probe_result(tmp_path, monkeypatch):
-    """真 conda：activate.d / deactivate.d 钩子打印 JSON 形状的横幅，预检结果仍是探针自己写进结果文件的那份。"""
-    from tavotto.engine import deprepair
-
-    act = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
-    deact = Path(REAL_PREFIX) / "etc" / "conda" / "deactivate.d"
-    for d in (act, deact):
-        d.mkdir(parents=True, exist_ok=True)
-        for stale in d.glob("p09_*.sh"):
-            stale.unlink()
-    hooks = [act / "p09_json_act.sh", deact / "p09_json_deact.sh"]
-    hooks[0].write_text('echo \'{"os": "FAKE-FROM-ACTIVATE"}\'\n', encoding="utf-8")
-    hooks[1].write_text('echo \'{"os": "FAKE-FROM-DEACTIVATE"}\'\n', encoding="utf-8")
-    real_py = str(Path(REAL_PREFIX) / "bin" / "python")
-    try:
-        assert deprepair.probe_imports(real_py, ("os", "json")) == {"os": "", "json": ""}
-    finally:
-        for h in hooks:
-            h.unlink(missing_ok=True)
-
-
 PROBE_ARGV = (
     "import sys, json\n"
     "print(json.dumps({'argv': sys.argv, 'utf8': sys.flags.utf8_mode, "
     "'nobyte': sys.flags.dont_write_bytecode, 'x': sys._xoptions.get('tavotto_x')}))\n"
 )
-
-
-@needs_real_conda
-@pytest.mark.parametrize("which", ["current", "old"])
-def test_real_conda_passes_dash_leading_args_through_verbatim_without_a_separator(tmp_path, which):
-    """真 conda：不带 `--`，解释器参数（`-u -B -X utf8`）与脚本参数（`--flag -x`、`--`、空串、含空格）原样到达用户 Python。
-    `old` 是 `TAVOTTO_TEST_OLD_CONDA_EXE` 指的老版 conda（24.5.0）；未设则 skip（not_run）。"""
-    exe = _real_conda() if which == "current" else os.environ.get("TAVOTTO_TEST_OLD_CONDA_EXE", "")
-    if not exe or not Path(exe).is_file():
-        pytest.skip("没有老版 conda（TAVOTTO_TEST_OLD_CONDA_EXE）：not_run")
-    py = str(Path(REAL_PREFIX) / "bin" / "python")
-    script = tmp_path / "argvprobe.py"
-    script.write_text(PROBE_ARGV, encoding="utf-8")
-    lau = launcher.CondaLauncher(conda_exe=exe, prefix=REAL_PREFIX)
-    cmd = [
-        py,
-        "-u",
-        "-B",
-        "-X",
-        "utf8",
-        "-X",
-        "tavotto_x",
-        str(script),
-        "--flag",
-        "-x",
-        "a b",
-        "--",
-        "--ver",
-        "",
-    ]
-    done = subprocess.run(
-        lau.wrap(cmd),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=120,
-    )
-    assert done.returncode == 0, done.stderr
-    got = json.loads(done.stdout.strip().splitlines()[-1])
-    assert got["argv"] == [str(script), "--flag", "-x", "a b", "--", "--ver", ""]
-    assert got["utf8"] == 1 and got["nobyte"] == 1 and got["x"] is True
-
-
-def test_the_fake_conda_models_the_old_separator_bug():
-    """夹具自己的反证：模拟 conda 遇到 `--` 当可执行文件（退出码 127），所以任何把 `--` 加回去的改动都会被抓到。"""
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as d:
-        prefix, conda, log = make_fake_conda(Path(d), sys.executable)
-        done = subprocess.run(
-            [
-                str(conda),
-                "run",
-                "--no-capture-output",
-                "--prefix",
-                str(prefix),
-                "--",
-                sys.executable,
-                "-c",
-                "pass",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env={**os.environ, "FAKE_CONDA_LOG": str(log)},
-        )
-        assert done.returncode == 127 and "command not found" in done.stderr
 
 
 @needs_worker
@@ -1724,46 +965,6 @@ def test_per_interpreter_caches_are_partitioned_by_launch_context(activation_onl
             assert bad.value.code == "explicit_python_unusable"
     finally:
         _pool.reset_worker_python()
-
-
-@needs_worker
-def test_graceful_shutdown_lets_deactivate_hooks_finish_and_is_not_a_protocol_error(
-    conda_world, tmp_path, monkeypatch
-):
-    """worker 退出之后 `deactivate.d` 钩子还会往 stdout 打印并做清理：优雅关停读到 EOF 为止，一律当日志——不是协议违规，
-    不杀整组，清理做完（标记文件存在）。"""
-    proj, prefix, log, counter = conda_world
-    marker = tmp_path / "cleanup.done"
-    monkeypatch.setenv("FAKE_CONDA_CLEANUP_MARKER", str(marker))
-    worker, resp = _pool.build("fig.py", str(proj), "__main__")
-    assert worker.launcher is not None
-    started = time.time()
-    worker.shutdown()
-    assert marker.exists(), "deactivate 钩子的清理被中途杀掉了"
-    assert time.time() - started < 15
-    text = worker.log_path.read_text(encoding="utf-8", errors="replace")
-    assert "[post-exit stdout] deactivate: cleaning up" in text
-    assert "protocol_mismatch" not in text and "协议" not in text
-    assert worker.proc.poll() is not None
-
-
-@posix_only
-def test_deep_tree_termination_has_one_overall_deadline(monkeypatch):
-    """叶子往上遍历共用一个总期限：深 20 层、父进程都不收尸（被杀的成员一直留在表里）时，总时长不随深度线性增长。"""
-    gp = launcher.GroupPopen.__new__(launcher.GroupPopen)
-    gp.pid = 100
-    gp.LEVEL_GRACE = 0.3
-    gp.TREE_BUDGET = 0.8
-    chain = [(100, 1, "S")] + [(100 + i, 100 + i - 1, "S") for i in range(1, 21)]  # wrapper + 20 层
-    sent: list[int] = []
-    gp._signal_pid = lambda pid: sent.append(pid)
-    monkeypatch.setattr(launcher, "group_members", lambda pgid: list(chain))
-    started = time.monotonic()
-    gp._kill_tree_leaves_first()
-    elapsed = time.monotonic() - started
-    assert elapsed < 0.8 + 0.4, elapsed  # 旧写法：20 层 × 0.3 秒 = 6 秒
-    assert sent and sent == sorted(sent, reverse=True)  # 已经走过的层仍是叶子在前
-    assert len(sent) < 20  # 期限用完就停，剩下的交给整组收尸
 
 
 @needs_worker
@@ -1837,82 +1038,6 @@ def test_a_direct_record_in_a_conda_env_is_invalidated_when_the_environment_chan
 
 
 @needs_worker
-def test_worker_self_test_follows_the_same_launch_decision(activation_only_env, monkeypatch):
-    """`deprepair.worker_self_test` 以前裸 Popen：激活后才能 import matplotlib 的解释器自检必然失败。"""
-    from tavotto.engine import deprepair
-
-    py, prefix, log = activation_only_env
-    with monkeypatch.context() as m:
-        m.setenv(launcher.ENV_DISABLE, "0")
-        bare = deprepair.worker_self_test(py)
-        assert bare["ok"] is False  # 负对照：裸起 import 不了 matplotlib
-    assert conda_calls(log) == []
-    done = deprepair.worker_self_test(py)
-    assert done == {"ok": True, "figures": 1}, done
-    assert len(conda_calls(log)) == 1  # 经 conda run 起的
-
-
-@needs_worker
-@pytest.mark.parametrize("state", ["no_record", "direct_record", "conda_record"])
-def test_every_spawn_site_gets_the_same_launcher_for_the_same_project_script_python(
-    activation_only_env, tmp_path, monkeypatch, state
-):
-    """总不变量：同一个 (项目, 脚本, 解释器) 下，worker 构造、预检探针、依赖门（同一个 probe_scope）、worker 自检拿到的
-    launcher 完全相同——它们都只经 `launchctx.decide`，且决策不依赖来源标签（调用方有的拿得到、有的拿不到）。"""
-    from tavotto.engine import deprepair
-
-    py, prefix, log = activation_only_env
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
-    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
-    if state != "no_record":
-        rcpt = _good_rcpt(proj, py)
-        if state == "conda_record":
-            rcpt.launcher = launcher.CondaLauncher(
-                conda_exe=str(prefix.parent.parent / "bin" / "conda"), prefix=str(prefix)
-            ).public()
-        assert launchctx.record_success(proj, "fig.py", rcpt)
-
-    def pub(lau):
-        return None if lau is None else lau.public()
-
-    expected = pub(launchctx.decide(proj, "fig.py", py))
-    assert (expected is None) == (state == "direct_record")
-    # worker 构造用的（EngineWorker / WorkerdWorker 同一个入口）
-    assert pub(_pool._launcher_or_error(str(proj), "fig.py", py)) == expected
-    # 预检探针与依赖门：同一个 probe_scope
-    with launchctx.probe_scope(proj, "fig.py"):
-        assert pub(launcher.effective_launcher(py)) == expected
-        assert (launcher.context_key(py) == "direct") == (expected is None)
-    # worker 自检：记录它实际拿到的 launcher
-    seen = []
-    real_popen = launcher.popen
-    monkeypatch.setattr(
-        launcher,
-        "popen",
-        lambda argv, lau, **kw: (seen.append(pub(lau)), real_popen(argv, lau, **kw))[1],
-    )
-    deprepair._scoped_self_test(py, str(proj), "fig.py")
-    assert seen == [expected]
-
-
-@needs_worker
-def test_a_hook_printing_ok_true_cannot_fake_a_passing_self_test(activation_only_env, monkeypatch):
-    """自检只认协议信封（`protocol_version` + 回显的 `request_id`）：钩子打印的 `{"ok": true}` 不是 worker 的回复。"""
-    from tavotto.engine import deprepair
-
-    py, prefix, log = activation_only_env
-    monkeypatch.setenv("FAKE_CONDA_BANNER", '{"ok": true, "stems": {"x": 1}}')
-    monkeypatch.setenv("FAKE_CONDA_SKIP_CMD", "1")  # worker 实际没跑成
-    done = deprepair.worker_self_test(py)
-    assert done["ok"] is False, done
-    monkeypatch.delenv("FAKE_CONDA_SKIP_CMD")
-    # 正对照：worker 真跑成了，钩子横幅照样存在——自检通过且图数来自 worker 的回复
-    assert deprepair.worker_self_test(py) == {"ok": True, "figures": 1}
-
-
-@needs_worker
 def test_a_vanished_conda_surfaces_the_stable_error_before_any_preflight_can_misreport(
     conda_world, tmp_path, monkeypatch
 ):
@@ -1951,3 +1076,294 @@ def test_a_vanished_conda_surfaces_the_stable_error_before_any_preflight_can_mis
         target="script",
     )
     assert (plan.environment.get("error") or {}).get("code") == "conda_launcher_unavailable"
+
+
+# ---------------------------------------------------------------------------
+# 激活一次、捕获环境、直接启动（#975 重构后的合同）
+# ---------------------------------------------------------------------------
+def _spy_popen(monkeypatch):
+    """记录所有子进程（`subprocess.Popen`，`subprocess.run` 也经它）的 argv 与 env。"""
+    seen: list[tuple[list, dict | None]] = []
+    real = subprocess.Popen
+
+    class Spy(real):
+        def __init__(self, args, *a, **k):
+            seen.append((list(args) if not isinstance(args, str) else [args], k.get("env")))
+            super().__init__(args, *a, **k)
+
+    monkeypatch.setattr(subprocess, "Popen", Spy)
+    return seen
+
+
+@posix_only
+def test_activation_is_captured_once_cached_in_memory_and_recaptured_when_the_env_changes(
+    tmp_path, monkeypatch
+):
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "bin" / "python")
+    lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    delta = launcher.activated_delta(py, lau)
+    assert delta["FAKE_SDK_LICENSE"] == LICENSE and delta["CONDA_PREFIX"] == str(prefix)
+    assert delta["SECRET_TOKEN"] == "xyz-secret-token-123"
+    assert "SHLVL" not in delta and "_" not in delta  # 每个进程自己都会变的不算激活增量
+    (call,) = conda_calls(log)
+    # 捕获命令：conda run --no-capture-output --prefix <p> <python 绝对路径> -c <代码> <结果文件>；没有 `--`
+    assert call["opts"] == ["--no-capture-output", "--prefix", str(prefix)]
+    assert call["cmd"][0] == py and call["cmd"][1] == "-c" and "--" not in call["cmd"]
+    assert (
+        launcher.activated_delta(py, lau) is delta and len(conda_calls(log)) == 1
+    )  # 命中进程内缓存
+    with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+        fh.write("# cmd: conda install vendor-sdk\n")  # 环境版本变了
+    assert launcher.activated_delta(py, lau) is not delta and len(conda_calls(log)) == 2
+    # 结果文件用完即删，而且缓存不落盘
+    assert not list((tmp_path / "data" / "probe-results").glob("*"))
+
+
+@posix_only
+def test_capture_failure_is_the_stable_error_and_hook_output_never_matters(tmp_path, monkeypatch):
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "bin" / "python")
+    lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    # activate.d / deactivate.d 往 stdout 打印什么（含 JSON 形状、没有换行）都不影响结果：结果走结果文件
+    monkeypatch.setenv("FAKE_CONDA_BANNER", '{"FAKE_SDK_LICENSE": "from-a-hook"}')
+    monkeypatch.setenv("FAKE_CONDA_BANNER_NO_NEWLINE", "1")
+    monkeypatch.setenv("FAKE_CONDA_AFTER_BANNER", '{"CONDA_PREFIX": "also-a-hook"}')
+    delta = launcher.activated_delta(py, lau)
+    assert delta["FAKE_SDK_LICENSE"] == LICENSE and delta["CONDA_PREFIX"] == str(prefix)
+    # conda 起不来 / 退出非 0：LauncherUnavailable（pool 转成 conda_launcher_unavailable）
+    launcher.reset_captures()
+    monkeypatch.setenv("FAKE_CONDA_SKIP_CMD", "1")
+    with pytest.raises(launcher.LauncherUnavailable) as exc:
+        launcher.activated_delta(py, lau)
+    assert exc.value.code == "conda_launcher_unavailable"
+    monkeypatch.delenv("FAKE_CONDA_SKIP_CMD")
+    ghost = launcher.CondaLauncher(conda_exe=str(tmp_path / "no-such-conda"), prefix=str(prefix))
+    with pytest.raises(launcher.LauncherUnavailable):
+        launcher.activated_delta(py, ghost)
+
+
+@posix_only
+def test_merge_env_keeps_tavottos_own_increment_and_adds_the_activation(tmp_path, monkeypatch):
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "bin" / "python")
+    lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    base = {"MPLCONFIGDIR": "/tavotto/mpl", "PATH": "/usr/bin"}
+    env = launcher.merge_env(lau, py, base)
+    assert env["MPLCONFIGDIR"] == "/tavotto/mpl" and env["FAKE_SDK_LICENSE"] == LICENSE
+    assert base == {"MPLCONFIGDIR": "/tavotto/mpl", "PATH": "/usr/bin"}  # 不改调用方的 dict
+    assert launcher.merge_env(None, py, base) is base  # 直接启动：原样
+
+
+@needs_worker
+def test_every_spawn_site_starts_the_target_directly_with_the_same_activated_env(
+    activation_only_env, tmp_path, monkeypatch
+):
+    """worker / 预检（选解释器、体检、目标事实、导入核验）/ 依赖门 / 自检 / 模块盘点：都直接起目标解释器（我们的直接子进程，
+    不套 conda run），env 里都有同一份激活增量；conda 只在捕获那一次被调用。"""
+    from tavotto.engine import depplan, deprepair, projectenv, runtime
+
+    py, prefix, log = activation_only_env
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    seen = _spy_popen(monkeypatch)
+    expected = launchctx.env_for(proj, "fig.py", py, {})
+    assert expected["FAKE_SDK_LICENSE"] == LICENSE
+
+    def mine(argv):
+        return argv and str(argv[0]) == py
+
+    worker = None
+    try:
+        with _pool.launch_scope(str(proj), "fig.py"):
+            assert _pool._has_matplotlib(py) is True  # 选解释器的预检
+            assert projectenv.probe_environment(py)["ok"] is True
+            assert depplan.target_facts(py) is not None
+            assert deprepair.probe_imports(py, ("vendor_sdk",)) == {"vendor_sdk": ""}
+            assert deprepair.worker_self_test(py) == {"ok": True, "figures": 1}
+        monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
+        _pool.reset_worker_python()
+        worker, resp = _pool.build("fig.py", str(proj), "__main__")
+        assert (
+            resp["runtime"]["pid"] == worker.child_pid
+        )  # 直接子进程：回执的 pid 判据与没有 Conda 时一样
+        rcpt = receipt.from_worker(worker, resp, control_plane="python_pool", grant=None)
+        assert rcpt.completeness == receipt.COMPLETENESS_COMPLETE and rcpt.pid_check == "ok"
+        # 版本盘点（环境状态 API，app 注入 env_for）：激活环境里 import 得到 vendor_sdk，不注入则看不到
+        assert runtime.probe_packages(py, ["vendor_sdk"], env_for=launcher.activate_env) == {
+            "vendor_sdk": "unknown"
+        }
+    finally:
+        if worker is not None:
+            worker.force_kill()
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+    # `bootstrap._probe`（问系统 Python 能不能 `import venv`）问的不是 worker 的解释器环境，PR 表里列为「不改」
+    ours = [(a, e) for a, e in seen if mine(a) and not any("import venv" in str(x) for x in a)]
+    assert runtime.probe_packages(py, ["vendor_sdk"]) == {
+        "vendor_sdk": None
+    }  # 对照：不注入激活就看不到
+    assert len(ours) >= 6, [a[:3] for a, _ in ours]
+    # 目标解释器从来不是 conda 的子进程：每个 `ours` 的 argv[0] 就是解释器本身（`mine` 的判据），conda 只出现在捕获那一次
+    assert len(conda_calls(log)) == 1  # conda 只在捕获那一次被调用
+    for argv, env in ours:
+        assert env is not None and env.get("FAKE_SDK_LICENSE") == LICENSE, [
+            str(a)[:60] for a in argv[:5]
+        ]
+        assert any(
+            x.endswith("activated_site") for x in env.get("PYTHONPATH", "").split(os.pathsep)
+        ), argv[:3]
+
+
+@needs_worker
+def test_kill_switch_makes_every_site_fail_the_way_a_bare_start_does(
+    activation_only_env, monkeypatch
+):
+    from tavotto.engine import deprepair, projectenv
+
+    py, prefix, log = activation_only_env
+    monkeypatch.setenv(launcher.ENV_DISABLE, "0")
+    assert _pool._has_matplotlib(py) is False
+    assert projectenv.probe_environment(py)["ok"] is False
+    assert deprepair.worker_self_test(py)["ok"] is False
+    assert conda_calls(log) == []
+
+
+@needs_worker
+def test_the_activation_secret_never_reaches_any_persisted_or_logged_place(
+    conda_world, tmp_path, monkeypatch, caplog
+):
+    """激活环境里放了 SECRET_TOKEN：runconfig 登记、回执（含私有投影）、worker.log、数据目录里的任何文件、日志都找不到它。"""
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    proj, prefix, log, counter = conda_world
+    secret = "xyz-secret-token-123"
+    worker, resp = _pool.build("fig.py", str(proj), "__main__")
+    try:
+        rcpt = receipt.from_worker(worker, resp, control_plane="python_pool", grant=None)
+        assert launchctx.record_success(proj, "fig.py", rcpt)
+        blob = json.dumps(rcpt.to_payload(include_private=True), ensure_ascii=False)
+        assert secret not in blob
+        assert secret not in worker.log_path.read_text(encoding="utf-8", errors="replace")
+    finally:
+        worker.force_kill()
+        _pool.shutdown_all(wait=True)
+    assert secret not in caplog.text
+    from tavotto.engine import config as _config
+
+    for f in Path(_config.data_dir()).rglob("*"):
+        if f.is_file():
+            assert secret.encode() not in f.read_bytes(), f
+    assert "SECRET_TOKEN" not in json.dumps(runconfig.launch_record(proj, "fig.py"))
+
+
+@needs_worker
+def test_a_worker_started_with_the_captured_env_is_a_plain_child_and_cancel_leaves_nothing(
+    conda_world,
+):
+    proj, prefix, log, counter = conda_world
+    worker, resp = _pool.build("fig.py", str(proj), "__main__")
+    pid = resp["runtime"]["pid"]
+    assert pid == worker.child_pid and alive(pid)
+    assert runs(counter)[0]["conda_prefix"] == str(prefix)  # 脚本里看得到激活变量
+    worker.force_kill()
+    _pool.shutdown_all(wait=True)
+    assert wait_gone(pid)
+
+
+@pytest.fixture
+def real_hooks():
+    """真 conda 环境里放 activate.d / deactivate.d 钩子（设变量、打印横幅，含 JSON 形状的），用完清掉。"""
+    created: list[Path] = []
+    for d in ("activate.d", "deactivate.d"):
+        folder = Path(REAL_PREFIX) / "etc" / "conda" / d
+        folder.mkdir(parents=True, exist_ok=True)
+        for stale in folder.glob("p09_*.sh"):
+            stale.unlink()
+
+    def add(kind: str, name: str, text: str) -> None:
+        f = Path(REAL_PREFIX) / "etc" / "conda" / kind / f"p09_{name}.sh"
+        f.write_text(text, encoding="utf-8")
+        created.append(f)
+
+    yield add
+    for f in created:
+        f.unlink(missing_ok=True)
+
+
+@needs_real_conda
+@pytest.mark.parametrize("which", ["current", "old"])
+def test_real_conda_capture_sees_activate_d_variables_whatever_the_hooks_print(
+    real_hooks, tmp_path, monkeypatch, which
+):
+    """真 conda（26.7.2 与 24.5.0）：activate.d 设的变量被捕获；hook 往 stdout 打印什么（没有换行的、JSON 形状的）都不影响。"""
+    exe = _real_conda() if which == "current" else os.environ.get("TAVOTTO_TEST_OLD_CONDA_EXE", "")
+    if not exe or not Path(exe).is_file():
+        pytest.skip("没有老版 conda（TAVOTTO_TEST_OLD_CONDA_EXE）：not_run")
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    real_hooks("activate.d", "vars", "export P09_VENDOR_VAR=activated-ok\n")
+    real_hooks("activate.d", "json", 'printf \'{"P09_VENDOR_VAR": "from-a-hook"}\'\n')
+    real_hooks("deactivate.d", "json", 'echo \'{"P09_VENDOR_VAR": "from-deactivate"}\'\n')
+    lau = launcher.CondaLauncher(conda_exe=exe, prefix=REAL_PREFIX)
+    delta = launcher.activated_delta(str(Path(REAL_PREFIX) / "bin" / "python"), lau)
+    assert delta["P09_VENDOR_VAR"] == "activated-ok"
+    assert delta["CONDA_PREFIX"] == REAL_PREFIX
+
+
+@needs_real_conda
+def test_real_conda_four_sites_see_activate_d_changes_and_kill_switch_is_the_negative_control(
+    real_hooks, tmp_path, monkeypatch
+):
+    """真 conda：activate.d 把一个目录加进 PYTHONPATH，目录里的 vendor_sdk_p09 只有激活后才 import 得到——预检（体检、
+    导入核验、目标事实）、自检、worker 四处都能用；关开关作负对照。"""
+    from tavotto.engine import depplan, deprepair, projectenv
+
+    site = tmp_path / "vendor_site"
+    site.mkdir()
+    (site / "vendor_sdk_p09.py").write_text("VALUE = 7\n", encoding="utf-8")
+    real_hooks(
+        "activate.d", "pythonpath", f'export PYTHONPATH="{site}${{PYTHONPATH:+:$PYTHONPATH}}"\n'
+    )
+    real_hooks("activate.d", "banner", "printf 'initializing vendor SDK...'\n")
+    py = str(Path(REAL_PREFIX) / "bin" / "python")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(
+        "import vendor_sdk_p09, matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(); ax.plot([1, vendor_sdk_p09.VALUE]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
+    _pool.reset_worker_python()
+    worker = None
+    try:
+        with monkeypatch.context() as m:
+            m.setenv(launcher.ENV_DISABLE, "0")  # 负对照：直接启动全部看不到
+            assert deprepair.probe_imports(py, ("vendor_sdk_p09",))["vendor_sdk_p09"]
+            assert projectenv.probe_environment(py, "vendor_sdk_p09")["ok"] is False
+        with _pool.launch_scope(str(proj), "fig.py"):
+            assert deprepair.probe_imports(py, ("vendor_sdk_p09",)) == {"vendor_sdk_p09": ""}
+            assert projectenv.probe_environment(py, "vendor_sdk_p09")["ok"] is True
+            assert depplan.target_facts(py) is not None
+            assert deprepair.worker_self_test(py) == {"ok": True, "figures": 1}
+        worker, resp = _pool.build("fig.py", str(proj), "__main__")
+        assert resp["runtime"]["pid"] == worker.child_pid  # 直接子进程
+    finally:
+        if worker is not None:
+            worker.force_kill()
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
