@@ -926,3 +926,78 @@ def test_native_session_poisoned_code_poisons_transport_and_readers(tmp_path):
     assert s.transport.poison is not None, "既有的 poison 机制：之后每条请求都被拒"
     assert s.svg_path("fig").exists() is False
     figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
+def test_a_poisoned_dir_stays_poisoned_while_the_ledger_cannot_be_audited(tmp_path):
+    """Codex #978 P1：账本读不出来时审计不了，作废必须保持有效；当空账本处理会解除作废，
+    账本恢复可读后被标为不可信的旧一代又被放出来。"""
+    out = tmp_path / "out"
+    _publish(out, "old", svg=b"<svg data-old/>")
+    figcapture.poison_preview_dir(out)
+    ledger = out / figcapture.PREVIEW_LEDGER
+    good = ledger.read_bytes()
+    try:
+        ledger.write_bytes(b"{garbled")  # 扫描器改写 / 半写：存在但读不出来
+        assert figcapture.clear_preview_poison(out) is False
+        assert figcapture.preview_dir_poisoned(out) is True
+        ledger.write_bytes(
+            good
+        )  # 恢复可读：仍要审计，旧一代（作废之前发布的）被摘掉，而不是被放出来
+        assert figcapture.clear_preview_poison(out) is True
+        assert figcapture.usable_preview_generation(out, "old") is None
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
+def test_a_stale_invalid_marker_that_cannot_be_removed_is_not_a_successful_publish(
+    tmp_path, monkeypatch
+):
+    """Codex #978 P2：旧失效标记撤不掉时读方仍判无预览，发布不能报成功（否则画布 404、CLI 少计一张）。"""
+    figcapture.mark_preview_invalid(tmp_path, "fig")
+
+    def locked(out_dir, stem):
+        raise PermissionError(13, "locked")
+
+    monkeypatch.setattr(figcapture, "clear_preview_invalid", locked)
+    with pytest.raises(OSError, match="invalid marker"):
+        _publish(tmp_path, "fig")
+    monkeypatch.undo()
+    # 重试（锁已放开）：撤掉标记，预览可见，计数正确
+    _publish(tmp_path, "fig")
+    assert figcapture.usable_preview_generation(tmp_path, "fig") is not None
+    assert figcapture.published_preview_stems(tmp_path) == ["fig"]
+
+
+def _saved_original(tmp_path, content: bytes):
+    class Fig:
+        pass
+
+    fig = Fig()
+    obs = figcapture.SavefigObservations(project_root=str(tmp_path))
+    obs.metadata = lambda f: ((6.4, 4.8), 100.0, 100.0)
+    target = tmp_path / "o.png"
+    idx = obs.record(fig, str(target), "o", {"format": "png"}, explicit_format=True)
+    target.write_bytes(content)
+    obs.complete(idx, "saved")
+    return obs, fig, target
+
+
+def test_a_saved_original_replaced_by_same_size_same_mtime_content_is_not_intact(tmp_path):
+    """Codex #978 P2：字节数 + mtime 一致不等于是同一份内容（copy2 / 粗时间戳）。要核内容摘要。"""
+    obs, fig, target = _saved_original(tmp_path, b"AAAA-original")
+    (orig,) = obs.saved_originals(fig)
+    assert orig["intact"] is True  # 正对照
+    st = target.stat()
+    target.write_bytes(b"BBBB-replaced")  # 同长度
+    os.utime(target, ns=(st.st_atime_ns, st.st_mtime_ns))  # 同 mtime
+    assert target.stat().st_size == st.st_size and target.stat().st_mtime_ns == st.st_mtime_ns
+    (orig,) = obs.saved_originals(fig)
+    assert orig["intact"] is False
+
+
+def test_a_saved_original_too_large_to_digest_is_not_offered(tmp_path, monkeypatch):
+    """无法核验（超过摘要上限）就不提供只读降级。"""
+    monkeypatch.setattr(figcapture, "ORIGINAL_DIGEST_LIMIT_BYTES", 4)
+    obs, fig, _ = _saved_original(tmp_path, b"more than four bytes")
+    (orig,) = obs.saved_originals(fig)
+    assert orig["intact"] is False

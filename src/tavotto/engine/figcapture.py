@@ -410,11 +410,14 @@ def publish_preview(out_dir, stem: str, svg_part, man_part, svg_bytes: int, capa
     finally:
         if not committed:
             shutil.rmtree(gen, ignore_errors=True)
-    # 提交之后的收尾：失败只意味着旧标记 / 旧代目录多留一会儿，不能让一次已提交的发布报失败
+    # 旧的失效标记必须撤掉：撤不掉时读方仍判这个 stem 无预览，此时报发布成功就是谎话（画布 404、CLI 少计一张）。
+    # 新一代已提交但对读方不可见，如实抛出让调用方走失败 / 重试（重试会再发布并再撤标记）（Codex #978）
     try:
         clear_preview_invalid(out_dir, stem)
-    except OSError:
-        pass
+    except OSError as exc:
+        raise OSError(
+            f"preview of {stem!r} was published but the stale invalid marker could not be removed: {exc}"
+        ) from exc
     _prune_generations(out_dir, {"seq": seq, "stems": stems})
     return seq
 
@@ -499,7 +502,11 @@ def clear_preview_poison(out_dir) -> bool:
     # 读方能经指针看到的预览只有账本里登记的 stem；指针之外的文件（代目录里被取代的旧版、`.part` 临时件）
     # 本来就读不到。作废期间没被重新完整发布过的登记项要摘掉指针——新一代不再出这张图时它永远不会被覆盖，
     # 留着会让整个目录永远「无预览」（Codex #958）。摘不掉就继续作废，宁可无预览也不放出错配。
-    ledger = _read_preview_ledger(out_dir)["stems"]
+    try:
+        ledger = (_load_preview_ledger(out_dir) or {"stems": {}})["stems"]
+    except PreviewLedgerUnreadable:
+        # 账本读不出来 = 审计不了：继续作废。当空账本处理会解除作废，账本恢复可读后被标为不可信的旧一代又被放出来（Codex #978）
+        return False
     fresh = set(published_preview_stems(out_dir))
     stale = False
     for stem, rec in list(ledger.items()):
@@ -1428,6 +1435,23 @@ def savefig_metadata_reader(mfigure):
     return read
 
 
+#: 只读原件的内容摘要上限：更大的文件不算摘要，也就核验不了，不提供只读降级。
+ORIGINAL_DIGEST_LIMIT_BYTES = 64 * 1024 * 1024
+
+
+def _content_digest(path, size: int):
+    if size > ORIGINAL_DIGEST_LIMIT_BYTES:
+        return None
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
 class SavefigObservations:
     """按保存发生次序记事实，不参与 stem 捕获、图幅选择或编辑。
 
@@ -1566,7 +1590,7 @@ class SavefigObservations:
         return os.path.join(root, *rel.split("/"))
 
     def _stat_saved(self, record):
-        facts = {"at": time.time(), "bytes": None, "mtime_ns": None}
+        facts = {"at": time.time(), "bytes": None, "mtime_ns": None, "sha256": None}
         path = self._original_path(record)
         if path is not None:
             try:
@@ -1575,6 +1599,7 @@ class SavefigObservations:
                 return facts
             if stat.S_ISREG(st.st_mode):
                 facts["bytes"], facts["mtime_ns"] = st.st_size, st.st_mtime_ns
+                facts["sha256"] = _content_digest(path, st.st_size)
         return facts
 
     def saved_originals(self, fig) -> list[dict]:
@@ -1600,10 +1625,14 @@ class SavefigObservations:
                 continue
             try:
                 st = os.stat(path)
+                # 字节数 + mtime 挡不住 copy2 / 粗时间戳文件系统上"同长度同时间戳"的替换：再对一遍内容摘要。
+                # 保存当时没能算出摘要（超过上限 / 读失败）= 无法核验 = 不提供只读降级（Codex #978）
                 intact = (
                     stat.S_ISREG(st.st_mode)
+                    and facts["sha256"] is not None
                     and facts["bytes"] == st.st_size
                     and facts["mtime_ns"] == st.st_mtime_ns
+                    and _content_digest(path, st.st_size) == facts["sha256"]
                 )
             except OSError:
                 intact = False
