@@ -403,6 +403,7 @@ def _descendant_levels(root_pid: int) -> list[list[int]]:
             errors="replace",
             timeout=5,
             stdin=subprocess.DEVNULL,
+            creationflags=runtime.CREATE_NO_WINDOW,
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return []

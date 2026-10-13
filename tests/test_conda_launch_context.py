@@ -964,6 +964,26 @@ def test_every_spawn_site_starts_the_target_directly_with_the_same_activated_env
     )
     monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
     seen = _spy_popen(monkeypatch)
+    captures: list[dict] = []  # 每次真捕获的键与来源：断言失败时指向第二次捕获的原因
+    real_capture = launcher._capture  # noqa: SLF001
+
+    def recording_capture(python, lau, timeout):
+        import traceback
+
+        captures.append(
+            {
+                "python": python,
+                "prefix": lau.prefix,
+                "state": launcher.prefix_state(lau.prefix),
+                "exe": lau.conda_exe,
+                "timeout": timeout,
+                "thread": threading.current_thread().name,
+                "stack": [f.name for f in traceback.extract_stack()[-8:-1]],
+            }
+        )
+        return real_capture(python, lau, timeout)
+
+    monkeypatch.setattr(launcher, "_capture", recording_capture)
     expected = launcher.activate_env(py, {})
     assert expected["FAKE_SDK_LICENSE"] == LICENSE
 
@@ -1004,7 +1024,9 @@ def test_every_spawn_site_starts_the_target_directly_with_the_same_activated_env
     assert len(ours) >= 8, [a[:3] for a, _ in ours]
     # 目标解释器从来不是 conda 的子进程：每个 `ours` 的 argv[0] 就是解释器本身（`mine` 的判据），conda 只出现在捕获那一次
     calls = conda_calls(log)
-    assert len(calls) == 1, json.dumps(calls, ensure_ascii=False)  # conda 只在捕获那一次被调用
+    assert len(calls) == 1, json.dumps(
+        {"conda_calls": calls, "captures": captures}, ensure_ascii=False, indent=1
+    )  # conda 只在捕获那一次被调用
     for argv, env in ours:
         assert env is not None and env.get("FAKE_SDK_LICENSE") == LICENSE, [
             str(a)[:60] for a in argv[:5]
