@@ -1191,29 +1191,28 @@ def test_a_run_that_adopts_a_new_project_venv_does_not_carry_the_old_argv(tmp_pa
                 assert time.time() < deadline, rep
                 time.sleep(0.2)
 
-        # 点运行：这次运行的环境检测采用了项目 .venv——复用依据作废，旧 argv 不在新解释器上执行（无参数运行）
+        # 点运行：这次运行的环境检测采用了项目 .venv——复用依据作废：按过期收场，零执行（不悄悄换成别的配置再跑）
         claim(report, "run")
         rep = settle()
-        assert rep["phase"] == "completed", rep
-        done = runs(counter)[len(first) :]
-        assert done and all(r["argv"] == [] for r in done), done
-        assert Path(done[-1]["exe"]) == Path(venv_python).parent.parent
-        # recheck 后再点运行（Codex 的路径）：会话目标里即便还躺着复用配置，执行前的复核也不会让它在项目 venv 上执行
+        assert rep["phase"] == "action_required", rep
+        assert rep["outcome"]["code"] == "preparation_plan_stale", rep["outcome"]
+        assert runs(counter)[len(first) :] == [], "依据作废的运行不得执行脚本"
+        # recheck：`_plan_of` 按计划实际选中的解释器重核，复用不通过 → 生成不带复用配置的新目标，用户看得到
         rep = claim(rep, "recheck")
-        time.sleep(1.0)
-        _, rep = app.call(f"{SESSIONS}/{sid}", timeout=30)
-        try:
-            claim(rep, "run")
-            settle()
-        except fa.HttpError as exc:  # 认领时对账发现过期也是「没跑」
-            assert exc.body.get("code") == "preparation_plan_stale", exc.body
+        deadline = time.time() + 60
+        while rep["target"].get("run_config") and time.time() < deadline:
+            time.sleep(0.2)
+            _, rep = app.call(f"{SESSIONS}/{sid}", timeout=30)
+        assert not rep["target"].get("run_config"), rep["target"]
+        assert rep["target"].get("argv_count") in (None, 0)
+        assert rep["phase"] != "completed" and runs(counter)[len(first) :] == []
+        # 用户看过新报告再点运行：无参数、在项目 venv 上；不再 stale，没有死循环
+        claim(rep, "run")
+        rep = settle()
+        assert rep["phase"] == "completed", rep
         after = runs(counter)[len(first) :]
-        assert all(r["argv"] == [] for r in after), after  # 旧 argv 从未在任何解释器上执行
-        # 用户再次打开（新检查、不带 argv）：上一次成功是无参数的，所以不再有可复用的配置
-        status, again = app.call(
-            SESSIONS, {"script": "fig.py", "reuse_last_success": True}, timeout=120
-        )
-        assert status in (200, 201) and not again["target"].get("run_config"), again["target"]
+        assert len(after) == 1 and after[0]["argv"] == [], after  # 旧 argv 从未在任何解释器上执行
+        assert Path(after[0]["exe"]) == Path(venv_python).parent.parent
 
 
 @needs_worker

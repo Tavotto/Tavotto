@@ -351,7 +351,7 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 - **两个消费者，核验范围不同**：`launchctx.launcher_for`（`EngineWorker` 起会话）只核解释器 / 环境 / 源码——裸起成功过的不被自动改成
   Conda 包装；`launchctx.reusable_run`（再次打开：`/api/engine/preparation-sessions` 请求带 `reuse_last_success: true` 且没给 `argv`；
   界面无参数时本来就不带 `argv`，所以**不能**靠省略 argv 推断沿用）全部核验，通过才带回上次成功的运行配置，
-  **核验只有一个判定点**：`prepsession._plan_of`（任何构建 / 重建计划——首次检查、recheck、依赖装好后重算——都经它，按**计划实际选中的解释器**重核，不通过就把目标换成不带复用配置的版本并写回 `sess.target`），执行前 `preparation._execute` 再按此刻生效的解释器 / 源码 / helper 复核（运行自己采用了新环境也在内），不通过计划就地换成无参数版本，旧 argv 不在别的环境上执行；任一依据变了 = 重新核验、不静默沿用；敏感配置永不自动复用；明确的 `argv: []` = 用户要无参数。
+  **核验只有一个判定点**：`prepsession._plan_of`（任何构建 / 重建计划——首次检查、recheck、依赖装好后重算——都经它，按**计划实际选中的解释器**重核，不通过就把目标换成不带复用配置的版本并写回 `sess.target`），执行前 `preparation._execute` 再按此刻生效的解释器 / 源码 / helper 复核（运行自己采用了新环境也在内），不通过就按 `preparation_plan_stale` 收场、零执行（不悄悄换成别的配置再跑——用户批准的报告里写的是旧配置），重新检查（recheck）时 `_plan_of` 生成不带复用配置的目标并**原地**换会话键，用户看到新报告再确认；任一依据变了 = 重新核验、不静默沿用；敏感配置永不自动复用；明确的 `argv: []` = 用户要无参数。
 - **Conda launcher**（`launcher.py`）：`conda run --no-capture-output --prefix <prefix> [--cwd <dir>] -- <argv…>` 的结构化 argv，
   按官方文档语义（`--no-capture-output` 恒带：worker 协议在 stdout 上）；不拼 shell；不认 `conda.bat`；mamba / micromamba、
   IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。**Windows 本期不做 Conda 包装**（`detect()` 在 nt 上返回 None、裸起，与 P09 之前一致）：没有真机验证，

@@ -654,9 +654,7 @@ class PreparationService:
         entry.thread.start()
 
     @staticmethod
-    def _replan_in_place(
-        entry: _Entry, plan: PreparationPlan, *, drop_run: bool = False
-    ) -> PreparationPlan | None:
+    def _replan_in_place(entry: _Entry, plan: PreparationPlan) -> PreparationPlan | None:
         """按此刻（已采用项目环境之后）的世界重算同一份计划，沿用计划 id / 创建时间 / 静态原件；换进条目里。"""
         fresh = plan_for(
             project_id=plan.project_id,
@@ -667,8 +665,8 @@ class PreparationService:
             entry=plan.entry,
             original_artifact=None,
             target=plan.target,
-            **({"run": plan.run} if plan.run is not None and not drop_run else {}),
-            run_reused=plan.run_reused and not drop_run,
+            **({"run": plan.run} if plan.run is not None else {}),
+            run_reused=plan.run_reused,
         )
         # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
         # 换计划（交回 None，由对账给出过期结局）
@@ -723,9 +721,7 @@ class PreparationService:
                     plan = self._replan_in_place(entry, plan) or plan
             if plan.run_reused and plan.run is not None:
                 # 复用来的运行配置在**执行前**再核一次，按此刻计划里生效的解释器（上面刚吸收的采用已经换进来）和此刻的
-                # 源码 / helper / 数据——与 `prepsession._plan_of` 同一个判定函数（`launchctx.reusable_run`）。通不过 =
-                # 依据作废：旧 argv 不在任何别的环境 / 代码上执行，计划就地换成不带它的版本（无参数，与重新检查后得到的
-                # 一样）；换不了（别的计划输入也变了）就按过期收场
+                # 源码 / helper / 数据——与 `prepsession._plan_of` 同一个判定函数（`launchctx.reusable_run`）。
                 still = launchctx.reusable_run(
                     plan.project_root,
                     plan.script,
@@ -733,20 +729,21 @@ class PreparationService:
                     python_source=(plan.environment or {}).get("source") or None,
                 )
                 if still is None or still.config_id != plan.run.config_id:
-                    dropped = self._replan_in_place(entry, plan, drop_run=True)
-                    if dropped is None:
-                        tr.fail("check", ERROR_PLAN_STALE, reason=STALE_SOURCE)
-                        result.error = {
-                            "code": ERROR_PLAN_STALE,
-                            "reason": STALE_SOURCE,
-                            "executed": False,
-                            "message": _STALE_MESSAGES[STALE_SOURCE],
-                        }
-                        self._finish(
-                            entry, STATUS_ERROR, note="复用的运行配置依据作废，没有执行任何脚本"
-                        )
-                        return
-                    plan = dropped
+                    # 依据作废：不执行。用户批准的报告里写的是旧配置，换成别的（哪怕是无参数）再跑，脚本有可选 / 默认参数时
+                    # 会在没有提示的情况下画出另一张图。按过期收场，重新检查会在 `prepsession._plan_of` 里生成不复用的目标
+                    # （同一个判定函数：这里不通过，那里也不会通过，所以不会循环），用户看到新报告再确认
+                    reason = STALE_ENVIRONMENT if decision.adopted is not None else STALE_SOURCE
+                    tr.fail("check", ERROR_PLAN_STALE, reason=reason)
+                    result.error = {
+                        "code": ERROR_PLAN_STALE,
+                        "reason": reason,
+                        "executed": False,
+                        "message": _STALE_MESSAGES[reason],
+                    }
+                    self._finish(
+                        entry, STATUS_ERROR, note="复用的运行配置依据作废，没有执行任何脚本"
+                    )
+                    return
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale

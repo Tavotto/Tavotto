@@ -845,16 +845,22 @@ class SessionService:
             existing = self._by_key.get(key)
             if existing is not None and self._active(existing):
                 return existing, False
+        orig_key = key
         plan, target = self._plan_of(project_id, project_root, target)
-        key = (
-            project_id,
-            target_key(target),
-        )  # 复用被撤销时 target（和会话键）换成不带复用配置的那一份
+        # 复用被撤销时 target 换成不带复用配置的那一份，会话键（含运行配置引用）随之变：已有的那个会话（recheck 就是它）
+        # 要原地跟上、换键，而不是另起一个新会话把旧会话和它的复用目标留在原地
+        key = (project_id, target_key(target))
         fingerprint = _fingerprint(plan)
         now = self._clock()
         created = False
         with self._lock:
             sess = self._by_key.get(key)
+            if sess is None and key != orig_key:
+                moved = self._by_key.get(orig_key)
+                if moved is not None:
+                    self._by_key.pop(orig_key, None)
+                    self._by_key[key] = moved
+                    sess = moved
             if sess is None:
                 self._make_room()
                 sess = Session(
