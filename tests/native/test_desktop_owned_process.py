@@ -699,3 +699,90 @@ def test_a_reused_launch_id_is_refused_before_it_can_touch_the_first_sessions_le
     assert not (tmp_path / "b" / "work" / "ran").exists(), "冲突的启动还是跑了用户代码"
     assert dk.pid_alive(first.owned.pid) and dk.holds_lease(first), "第一条的租约被第二次启动牵连"
     first.cancel_owned()
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254594336：launch_id 保留到上一任所有者真正 finished；原子占位
+# ---------------------------------------------------------------------------
+def test_a_launch_id_stays_reserved_until_the_previous_owner_finished(tmp_path, monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    real = desktopproc.DesktopProcess._settle_group
+
+    def slow(self):
+        gate.wait(30)
+        real(self)
+
+    monkeypatch.setattr(desktopproc.DesktopProcess, "_settle_group", slow)
+    first = dk.start(tmp_path / "a", RUNNING_SCRIPT, launch_id="dup")
+    dk.wait_until(lambda: (tmp_path / "a" / "work" / "ready").exists(), what="脚本就绪")
+    t = threading.Thread(target=first.cancel_owned, daemon=True)
+    t.start()
+    # 控制通道 EOF 先把会话落成终态，而所有者还在清组、仍持租约
+    dk.wait_until(lambda: first.state in nativesession.TERMINAL_STATES, what="会话先落终态")
+    assert not first.owned.finished and dk.holds_lease(first)
+    try:
+        with pytest.raises(RunError) as err:
+            dk.start(tmp_path / "b", 'open("ran", "w").write("1")\n', launch_id="dup")
+        assert err.value.code == runcodes.NATIVE_SESSION_CONFLICT
+        assert not (tmp_path / "b" / "work" / "ran").exists()
+    finally:
+        gate.set()
+        t.join(30)
+    assert first.owned.finished and not dk.holds_lease(first)
+
+
+def test_concurrent_starts_with_the_same_launch_id_admit_exactly_one(tmp_path):
+    import threading
+
+    results = []
+
+    def go(tag):
+        try:
+            results.append(dk.start(tmp_path / tag, RUNNING_SCRIPT, launch_id="race"))
+        except RunError as exc:
+            results.append(exc)
+
+    ts = [threading.Thread(target=go, args=(t,)) for t in ("x", "y", "z")]
+    [t.start() for t in ts]
+    [t.join(60) for t in ts]
+    started = [r for r in results if not isinstance(r, RunError)]
+    refused = [r for r in results if isinstance(r, RunError)]
+    try:
+        assert len(started) == 1 and len(refused) == 2, results
+        assert all(r.code == runcodes.NATIVE_SESSION_CONFLICT for r in refused)
+        assert envlease.native_sessions_on(started[0].interpreter) == [started[0].session_id]
+    finally:
+        for s in started:
+            s.cancel_owned()
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254594346：判失败之前先等传输层的最后一帧
+# ---------------------------------------------------------------------------
+def test_owner_exit_waits_for_the_buffered_exit_frame_before_judging_failure(tmp_path):
+    import json
+    import socket
+    import threading
+
+    a, b = socket.socketpair()
+    session = nativesession.NativeSession(
+        session_id="native-owned-drain",
+        descriptor={"native_id": "drain", "out_dir": str(tmp_path), "metadata": {}},
+    )
+    session.transport = nativesession.NativeTransport(
+        a, on_event=session._on_frame, on_close=session._on_transport_closed
+    )
+    session._set_state(nativesession.WAITING_FOR_FIGURE)
+    session.transport.start()
+
+    def late_exit_frame():
+        time.sleep(0.4)  # 所有者的等待线程先到，读线程的最后一帧还没处理
+        b.sendall((json.dumps({"bridge_event": "exit", "code": 0, "figures": 1}) + "\n").encode())
+        b.close()
+
+    threading.Thread(target=late_exit_frame, daemon=True).start()
+    session._on_owner_exit(0, cancelled=False)
+    assert session.state == nativesession.ENDED, f"误报失败: {session.terminal_error}"
+    assert session.terminal_error is None and session.exit_code == 0

@@ -213,6 +213,12 @@ class NativeTransport:
     def closed(self) -> bool:
         return self._closed
 
+    def join_reader(self, timeout: float) -> None:
+        """等常驻 reader 处理完缓冲里的帧并退出（对端关闭后它会读到 EOF）；超时不抛。"""
+        t = self._reader
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout)
+
     def close(self) -> None:
         with _suppress():
             self.sock.shutdown(socket.SHUT_RDWR)
@@ -452,6 +458,11 @@ class NativeSession:
         `code` 是进程的真实退出码（POSIX 被信号杀 = 128+signo，与 `tavotto run` 同口径）。
         脚本自己的非零退出码原样保留；取消只额外记 `cancelled`，不改写码。
         """
+        transport = self.transport
+        if transport is not None:
+            # 所有者的等待线程与传输 reader 是两条线程：脚本正常退出时 exit 帧可能还在缓冲里。
+            # 先等 reader 把最后一帧处理完（它会落 ENDED），再判「没通知就走了」
+            transport.join_reader(2.0)
         with self._changed:
             self.cancelled = self.cancelled or cancelled
             if code is not None:
@@ -798,6 +809,7 @@ class NativeSessionRegistry:
         #: (project_root, script, stem) → session_id。**live route，不是身份**
         #: （ADR 0021 §9）：会话结束即失效，绝不进文档。
         self._routes: dict[tuple, str] = {}
+        self._reserved: set[str] = set()
         self.on_change = None
 
     # ---------------- attach ----------------
@@ -840,11 +852,21 @@ class NativeSessionRegistry:
             self._sessions[session_id] = session
         return session
 
-    def has_live(self, session_id: str) -> bool:
-        """这个会话 id 上是不是还有活着的会话（桌面拥有的启动在取租约 / spawn 之前先问，免得共用同一个租约 id）。"""
+    def reserve(self, session_id: str) -> None:
+        """原子占住一个桌面拥有的会话 id（取租约 / spawn 之前）；已被占、或上一任会话还没被所有者确认结束就抛冲突。
+
+        会话 id 同时是 `envlease` 的租约键：上一任落了终态但所有者还在清组 / 持租约时复用它，
+        后者的租约会被前者的回调放掉。所以保留到上一任 `owned.finished`，且检查与占位在同一把锁里。"""
         with self._lock:
             s = self._sessions.get(session_id)
-        return s is not None and s.alive()
+            busy = s is not None and (s.alive() or (s.owned is not None and not s.owned.finished))
+            if busy or session_id in self._reserved:
+                raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
+            self._reserved.add(session_id)
+
+    def unreserve(self, session_id: str) -> None:
+        with self._lock:
+            self._reserved.discard(session_id)
 
     def adopt(self, session: NativeSession) -> None:
         """登记一条**桌面拥有**的会话（`desktopproc.start` 在握手成功、传输起好之后调）。
@@ -853,10 +875,14 @@ class NativeSessionRegistry:
         （live route、终态丢路由、`on_change`）是同一套。
         """
         with self._lock:
-            if session.session_id in self._sessions and self._sessions[session.session_id].alive():
+            prev = self._sessions.get(session.session_id)
+            if prev is not None and (
+                prev.alive() or (prev.owned is not None and not prev.owned.finished)
+            ):
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
             self._sessions[session.session_id] = session
+            self._reserved.discard(session.session_id)
 
     def _changed(self, session: NativeSession, entry: dict) -> None:
         if session.state in TERMINAL_STATES:

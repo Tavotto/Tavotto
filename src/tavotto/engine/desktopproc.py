@@ -599,10 +599,13 @@ def start(
             },
         },
     )
-    if registry.has_live(session_id):
-        # launch_id 复用：两次启动会共用同一个租约 id，后者收尾会放掉前者唯一的租约。先于租约与 spawn 拒绝
-        raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
-    envlease.acquire_native(spec.interpreter, session_id)  # 先于一切：拿不到就一行都不跑
+    # launch_id 复用：会话 id 也是租约键，后者会被前者的回调放掉。原子占位，先于租约与 spawn 拒绝
+    registry.reserve(session_id)
+    try:
+        envlease.acquire_native(spec.interpreter, session_id)  # 先于一切：拿不到就一行都不跑
+    except BaseException:
+        registry.unreserve(session_id)
+        raise
     relay = None
     owner: DesktopProcess | None = None
     try:
@@ -677,6 +680,7 @@ def start(
             if session.transport is not None:
                 session.transport.close()
             owner.cancel()
+        registry.unreserve(session_id)  # 所有者已确认结束（或根本没起来）：id 才放回去
         raise
     finally:
         if relay is not None:
