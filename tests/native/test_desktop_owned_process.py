@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from support import desktopkit as dk, nativekit
+from support import desktopkit as dk, nativekit, previewkit
 from tavotto.engine import desktopproc, envlease, execspec, nativesession, runcodes
 from tavotto.engine.runcodes import RunError
 
@@ -149,7 +149,7 @@ def pdf_font_sizes(path: Path) -> set[float]:
 
 
 def _title_gid(session, stem):
-    man = dk.read_json(session.out_dir / f"{stem}.json")
+    man = dk.read_json(previewkit.preview_file(session.out_dir, stem, ".json"))
     return next(e["gid"] for e in man["elements"] if e.get("role") == "title")
 
 
