@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -573,11 +574,15 @@ def activated_delta(
         gate = _capture_gates.setdefault(key, threading.Lock())
     if hit is not None:
         return hit
+    if getattr(_no_capture, "on", False):
+        raise CaptureDeferred("激活缓存在起会话前失效了（环境刚被修改）；出锁重新预热")
     budget = CAPTURE_TIMEOUT if timeout is None else timeout
     deadline = time.monotonic() + budget
     # 单飞：并发的同一把键只捕获一次，其余等它的结果；等也只等自己的预算（排在 60s 预热后面的 7s 体检不能被拖满一分钟）
     if not gate.acquire(timeout=max(budget, 0.0)):
-        raise LauncherUnavailable(f"经 Conda 激活取环境超时（{budget:.0f}s，另一个请求正在捕获同一个环境）")
+        raise LauncherUnavailable(
+            f"经 Conda 激活取环境超时（{budget:.0f}s，另一个请求正在捕获同一个环境）"
+        )
     try:
         with _captured_lock:
             hit = _captured.get(key)
@@ -620,15 +625,33 @@ def activate_env(python, base: dict | None = None, *, timeout: float | None = No
     return merge_env(launcher_for_interpreter(python), python, base, timeout=timeout)
 
 
-def is_warm(python) -> bool:
-    """这条解释器起会话要用的激活增量此刻已在缓存里（不需要激活的解释器恒真）。纯读，不起任何进程——
-    持着池锁的调用方据此决定能不能在锁内起会话（缓存没命中就出锁再预热，不在锁里跑一次最长 60s 的捕获）。"""
-    lau = launcher_for_interpreter(python)
-    if lau is None:
-        return True
-    key = (lau.prefix, prefix_state(lau.prefix), lau.conda_exe)
-    with _captured_lock:
-        return key in _captured
+class CaptureDeferred(LauncherUnavailable):
+    """持着池锁时激活缓存没命中：不在锁里捕获，交回调用方出锁预热再来（不是对环境的结论）。"""
+
+
+def is_capture_deferred(exc: BaseException | None) -> bool:
+    """异常链（`__cause__` / `__context__`）上有没有 `CaptureDeferred`：中间各层可能已把它转成自己的错误码。"""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, CaptureDeferred):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+_no_capture = threading.local()
+
+
+@contextlib.contextmanager
+def no_capture():
+    """这段代码（持着池锁起会话）里只许命中激活缓存；没命中抛 `CaptureDeferred`，绝不在锁里跑一次最长 60s 的捕获。"""
+    prev = getattr(_no_capture, "on", False)
+    _no_capture.on = True
+    try:
+        yield
+    finally:
+        _no_capture.on = prev
 
 
 def prewarm(python, *, timeout: float | None = None) -> None:

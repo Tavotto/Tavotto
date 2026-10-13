@@ -1347,7 +1347,12 @@ def test_a_failed_activation_after_install_is_the_launcher_code_not_import_still
     monkeypatch.setattr(
         deprepair.projectenv,
         "probe_environment",
-        lambda py, mod=None: {"ok": False, "code": "conda_launcher_unavailable", "python": py, "detail": "x"},
+        lambda py, mod=None: {
+            "ok": False,
+            "code": "conda_launcher_unavailable",
+            "python": py,
+            "detail": "x",
+        },
     )
     with pytest.raises(deprepair.RepairError) as err:
         deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)

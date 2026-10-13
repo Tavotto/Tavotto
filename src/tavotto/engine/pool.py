@@ -1335,7 +1335,9 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     )
     remaining = deadline - time.monotonic()
     if remaining <= 0:
-        raise launcher_mod.LauncherUnavailable("经 Conda 激活取环境用完了预检的时间预算；请稍后再试")
+        raise launcher_mod.LauncherUnavailable(
+            "经 Conda 激活取环境用完了预检的时间预算；请稍后再试"
+        )
     try:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
@@ -1447,6 +1449,8 @@ def select_worker_python() -> tuple[str, str]:
         seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
         try:
             has_mpl = _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED)
+        except launcher_mod.CaptureDeferred:
+            raise  # 持锁时缓存没命中：不是“这个候选不行”，不许跳到下一个候选（那会静默换解释器）
         except launcher_mod.LauncherUnavailable as exc:
             # 激活取环境失败：既不是“可用”也不是“缺 matplotlib”，不缓存。显式选择的把稳定码交给用户；
             # 默认链条 / 系统候选只跳过这一个，继续试后面的
@@ -2012,6 +2016,8 @@ class EngineWorker:
         )
         try:
             popen_env = launcher_mod.merge_env(self.launcher, python, env)
+        except launcher_mod.CaptureDeferred:
+            raise  # 持锁起会话时缓存没命中：交回 `acquire` 出锁预热再来
         except launcher_mod.LauncherUnavailable as exc:  # 激活取环境失败：稳定码，什么都没起
             raise _launcher_error(exc) from exc
         self.proc = subprocess.Popen(
@@ -3722,23 +3728,30 @@ def acquire(
                 # 它先拿到 → 这里看得见；这里先登记 → 它的 `shutdown_workers_using()` 要等这把锁，
                 # 然后收掉这条会话，pip 在那之后才开始。锁序 `_lock` → envlease 内部锁，没有反向嵌套。
                 _refuse_if_mutating(want_python)
-                if want_python and not launcher_mod.is_warm(want_python):
-                    # 锁外预热之后、进锁之前 Conda 环境被改了（conda install / 改 activate.d）：缓存没命中。
-                    # 不在池锁里跑捕获（最长 60s，期间所有项目的取会话 / 关停都被挡住）——出锁重新预热再来
+                context = (
+                    {"artifact_source": artifact_source} if artifact_source is not None else {}
+                )
+                if run is not None:
+                    context["run"] = run
+                # 锁外预热之后 Conda 环境被改了（conda install / 改 activate.d）：构造函数里的激活缓存没命中。
+                # 不在池锁里跑捕获（最长 60s，期间所有项目的取会话 / 关停都被挡住）——`no_capture` 让它抛
+                # `CaptureDeferred`，出锁重新预热再来；检查与使用是同一次查找，中间没有窗口
+                try:
+                    with launcher_mod.no_capture():
+                        w = _new_worker(script_name, figures_dir, entry, pinned=pin, **context)
+                except Exception as exc:
+                    # 构造途中的各道门（解释器解析、依赖门）会把激活失败转成各自的错误码；只要根因是“持锁时缓存
+                    # 没命中”（`CaptureDeferred` 在异常链上），就不是结论——出锁重新预热再来
+                    if not launcher_mod.is_capture_deferred(exc):
+                        raise
                     rewarms += 1
                     if rewarms > 3:
                         raise _launcher_error(
                             launcher_mod.LauncherUnavailable(
                                 "这个 Conda 环境在起会话前反复被修改；请等它稳定后再试"
                             )
-                        )
+                        ) from None
                     continue
-                context = (
-                    {"artifact_source": artifact_source} if artifact_source is not None else {}
-                )
-                if run is not None:
-                    context["run"] = run
-                w = _new_worker(script_name, figures_dir, entry, pinned=pin, **context)
                 if pin is not None and not pin.matches(getattr(w, "python", pin.python)):
                     # 会话构造时解析到的不是这次检测钉下的那一个（记录在两次解析之间被换了 / 环境被重建）：
                     # 不替用户悄悄换解释器——收掉这条刚起的会话，按 `environment_changed` 让调用方重新准备

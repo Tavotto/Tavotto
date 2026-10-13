@@ -2192,6 +2192,23 @@ def _run_pip(
     """
     if cancel_ev.is_set():
         return ERROR_CANCELLED, ""
+    if deadline is None:
+        deadline = time.time() + INSTALL_TIMEOUT_S
+    try:
+        # 受管环境里跑的 pip 把缓存放进数据目录（不是 `%LOCALAPPDATA%\pip`）；用户 venv 上的
+        # 安装原样继承——那是用户自己的 pip（`runtime.owned_env`）。
+        # 用户的 Conda 环境里装包：与 worker 同一个启动决策（激活后的环境）。取环境失败 = 什么都没装。
+        # 激活捕获可能要几十秒：用安装的剩余预算，捕获完**再查一次取消与期限**才起 pip——
+        # 用户在激活期间点了取消，pip 一个字节都不许动环境
+        env = launcher.activate_env(
+            argv[0], runtime.owned_env(argv[0]), timeout=max(deadline - time.time(), 0.0)
+        )
+    except launcher.LauncherUnavailable as exc:
+        return exc.code, str(exc)
+    if cancel_ev.is_set():
+        return ERROR_CANCELLED, ""
+    if time.time() >= deadline:
+        return ERROR_TIMEOUT, ""
     try:
         proc = subprocess.Popen(
             argv,
@@ -2201,14 +2218,9 @@ def _run_pip(
             text=True,
             encoding="utf-8",
             errors="replace",
-            # 受管环境里跑的 pip 把缓存放进数据目录（不是 `%LOCALAPPDATA%\pip`）；用户 venv 上的
-            # 安装原样继承——那是用户自己的 pip（`runtime.owned_env`）。
-            # 用户的 Conda 环境里装包：与 worker 同一个启动决策（激活后的环境）。取环境失败 = 什么都没装
-            env=launcher.activate_env(argv[0], runtime.owned_env(argv[0])),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
-    except launcher.LauncherUnavailable as exc:
-        return exc.code, str(exc)
     except OSError as exc:
         return ERROR_FAILED, str(exc)
     if on_started is not None:
@@ -2218,8 +2230,6 @@ def _run_pip(
             LOG.warning("pip 启动回调异常", exc_info=True)
 
     chunks: list[str] = []
-    if deadline is None:
-        deadline = time.time() + INSTALL_TIMEOUT_S
 
     def _pump() -> None:
         for line in proc.stdout or ():
@@ -2271,7 +2281,9 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
         env = launcher.activate_env(argv[0], runtime.owned_env(argv[0]), timeout=timeout)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise launcher.LauncherUnavailable("经 Conda 激活取环境用完了这次探测的时间预算；请稍后再试")
+            raise launcher.LauncherUnavailable(
+                "经 Conda 激活取环境用完了这次探测的时间预算；请稍后再试"
+            )
         proc = subprocess.run(
             argv,
             capture_output=True,
@@ -5483,7 +5495,9 @@ def _raise_if_activation_unavailable(health: dict) -> None:
     """装后体检遇到 Conda 激活取环境失败：报瞬时的 `conda_launcher_unavailable`，不报成“装了还 import 不了”
     （那会叫用户去查包、把受管的一代标成不完整）。"""
     if not health.get("ok") and health.get("code") == launcher.UNAVAILABLE_CODE:
-        raise RepairError(launcher.UNAVAILABLE_CODE, str(health.get("detail") or "")[:400], health=health)
+        raise RepairError(
+            launcher.UNAVAILABLE_CODE, str(health.get("detail") or "")[:400], health=health
+        )
 
 
 def _verify_imports(python: str, names: tuple[str, ...]) -> None:

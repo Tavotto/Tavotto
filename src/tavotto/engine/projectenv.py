@@ -905,7 +905,9 @@ def _probe_environment(
         probe_timeout = deadline - time.monotonic()
         if probe_timeout <= 0:
             # 预算被激活捕获用完：不是对这个环境的结论（瞬时、不缓存），与捕获失败同一个码
-            raise launcher.LauncherUnavailable("经 Conda 激活取环境用完了体检的时间预算；请稍后再试")
+            raise launcher.LauncherUnavailable(
+                "经 Conda 激活取环境用完了体检的时间预算；请稍后再试"
+            )
         spawned = (
             True  # 从这里起算「可能已经起了子进程」：spawn 本身失败的 OSError 在下面单独改回 False
         )

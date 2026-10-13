@@ -28,6 +28,7 @@ import platform
 import subprocess
 import sys
 import threading
+import time
 
 RUNTIME_DIR_NAME = "runtime"
 MANIFEST_NAME = "runtime-manifest.json"
@@ -493,6 +494,20 @@ def probe_packages(
         "        out[n] = None\n"
         "sys.stdout.write(json.dumps(out))\n"
     )
+    # `env_for`（`launcher.activate_env`）由调用方注入：launcher 依赖本模块，本模块不能反过来 import 它。
+    # 激活捕获与探测子进程共用一个预算；捕获把它用完就是瞬时的激活不可用（调用方报稳定码），不是“包都 import 不到”
+    deadline = time.monotonic() + PROBE_TIMEOUT_S
+    if env_for:
+        env = env_for(python, probe_env(python, bundled=bundled), timeout=PROBE_TIMEOUT_S)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            from . import launcher  # noqa: PLC0415 — 见上：只在注入了激活时才会走到
+
+            raise launcher.LauncherUnavailable(
+                "经 Conda 激活取环境用完了版本盘点的时间预算；请稍后再试"
+            )
+    else:
+        env, remaining = probe_env(python, bundled=bundled), PROBE_TIMEOUT_S
     try:
         proc = subprocess.run(
             [python, *probe_args(bundled=bundled), "-c", expr],
@@ -500,12 +515,9 @@ def probe_packages(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=PROBE_TIMEOUT_S,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
-            # `env_for`（`launcher.activate_env`）由调用方注入：launcher 依赖本模块，本模块不能反过来 import 它
-            env=env_for(python, probe_env(python, bundled=bundled))
-            if env_for
-            else probe_env(python, bundled=bundled),
+            env=env,
             creationflags=CREATE_NO_WINDOW,
         )
     # 注入的 `env_for` 激活取环境失败（`launcher.LauncherUnavailable`）**原样抛出**：那是瞬时的启动方式问题，

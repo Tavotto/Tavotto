@@ -1882,7 +1882,9 @@ def test_a_desktop_owned_native_session_uses_the_same_launch_decision(tmp_path, 
 
 
 @posix_only
-def test_a_capture_that_raced_an_environment_change_is_neither_used_nor_cached(tmp_path, monkeypatch):
+def test_a_capture_that_raced_an_environment_change_is_neither_used_nor_cached(
+    tmp_path, monkeypatch
+):
     """捕获期间环境被改了（装 / 卸包追加 history）：这份结果可能取自改到一半的 prefix，fail-closed、不缓存；下一次按新版本重新捕获。"""
     prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
     monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
@@ -2062,7 +2064,9 @@ def test_a_hot_worker_is_rebuilt_when_the_conda_environment_changes_in_place(
 
 
 @needs_worker
-def test_the_probe_shares_one_deadline_with_the_activation_capture(activation_only_env, monkeypatch):
+def test_the_probe_shares_one_deadline_with_the_activation_capture(
+    activation_only_env, monkeypatch
+):
     """捕获用掉的时间从体检子进程的预算里扣；捕获用完了预算 = 瞬时的 conda_launcher_unavailable，不是对环境的结论。"""
     from tavotto.engine import projectenv
 
@@ -2113,7 +2117,9 @@ def test_a_failed_activation_is_reported_as_environment_code_that_may_have_run(
     _fail_capture(monkeypatch)
     res = projectenv.probe_environment(py, "vendor_sdk", import_mode="spec")
     assert res["code"] == "conda_launcher_unavailable"
-    assert res["execution"]["ran_environment_code"] is True and res["execution"]["incomplete"] is True
+    assert (
+        res["execution"]["ran_environment_code"] is True and res["execution"]["incomplete"] is True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2147,7 +2153,9 @@ def test_a_partial_capture_never_records_a_successful_launch(tmp_path, monkeypat
     )
     ctx = types.SimpleNamespace(path=str(figs))
     plan = types.SimpleNamespace(script="s.py", entry="main", run=None)
-    m._finalize_script_attempt(ctx, plan, types.SimpleNamespace(captured=captured, receipt=receipt_obj))
+    m._finalize_script_attempt(
+        ctx, plan, types.SimpleNamespace(captured=captured, receipt=receipt_obj)
+    )
     ((rcpt, kw),) = seen
     assert rcpt is (None if failed else receipt_obj)
     assert kw["update_default"] is True
@@ -2195,7 +2203,9 @@ def test_timeout_cleanup_has_one_overall_deadline_however_deep_the_tree(monkeypa
 
 
 @needs_worker
-def test_the_interpreter_preflight_shares_its_budget_with_the_activation(activation_only_env, monkeypatch):
+def test_the_interpreter_preflight_shares_its_budget_with_the_activation(
+    activation_only_env, monkeypatch
+):
     """选解释器预检：激活捕获用掉的时间从 import 探针的 30s 里扣；用完了 = 瞬时不可用，不是“没有 matplotlib”。"""
     py, prefix, log = activation_only_env
     real_capture = launcher._capture  # noqa: SLF001
@@ -2224,10 +2234,12 @@ def test_the_interpreter_preflight_shares_its_budget_with_the_activation(activat
 
 
 @needs_worker
-def test_target_facts_and_import_verification_keep_the_activation_code(activation_only_env, monkeypatch):
+def test_target_facts_and_import_verification_keep_the_activation_code(
+    activation_only_env, monkeypatch
+):
     """依赖计划的目标事实、装后的 import 核验：激活取环境失败报 conda_launcher_unavailable，
     不报成“目标不可用”或“装了还 import 不了”（后者会把这一代标成不完整、叫用户去查包）。"""
-    from tavotto.engine import deprepair, depplan
+    from tavotto.engine import depplan, deprepair
 
     py, prefix, log = activation_only_env
     depplan.reset_cache()
@@ -2256,7 +2268,9 @@ def test_the_environment_package_probe_reports_the_activation_code(monkeypatch):
     with pytest.raises(launcher.LauncherUnavailable):
         runtime.probe_packages(sys.executable, ["json"], env_for=boom)
     assert runtime.probe_packages(sys.executable, ["json"])["json"]  # 不注入：照常问到版本
-    monkeypatch.setattr(m.engine_bootstrap, "status", lambda: {"python": sys.executable, "bundled": False})
+    monkeypatch.setattr(
+        m.engine_bootstrap, "status", lambda: {"python": sys.executable, "bundled": False}
+    )
     monkeypatch.setattr(m.engine_launcher, "activate_env", boom)
     monkeypatch.setattr(m, "_project_environment_state", lambda: {"open": False})
     body = m.app.test_client().get("/api/engine/environment?probe=json").get_json()
@@ -2287,7 +2301,9 @@ def test_environment_advice_verdicts_are_partitioned_by_launch_context(tmp_path,
 
 
 @posix_only
-def test_the_first_open_outcome_is_invalidated_when_the_conda_environment_changes(tmp_path, monkeypatch):
+def test_the_first_open_outcome_is_invalidated_when_the_conda_environment_changes(
+    tmp_path, monkeypatch
+):
     """首次打开的环境结论：conda install / 改 activate.d 不动解释器文件，结论的指纹照样要变（带启动上下文）。"""
     from tavotto.engine import projectenv
 
@@ -2303,7 +2319,9 @@ def test_the_first_open_outcome_is_invalidated_when_the_conda_environment_change
 
 
 @posix_only
-def test_a_cloned_project_cannot_plant_its_own_conda_next_to_an_unregistered_prefix(tmp_path, monkeypatch):
+def test_a_cloned_project_cannot_plant_its_own_conda_next_to_an_unregistered_prefix(
+    tmp_path, monkeypatch
+):
     """克隆来的项目自带 `.venv/conda-meta/` + 可执行的 `.venv/bin/conda`：这个 prefix 没在用户的 environments.txt 里登记，
     旁边的 conda 一律不信（否则“打开项目做体检”就执行了项目里的文件）；登记过的 prefix 照常找得到。"""
     monkeypatch.delenv("CONDA_EXE", raising=False)
@@ -2419,7 +2437,9 @@ def test_the_final_reap_in_timeout_cleanup_is_bounded(monkeypatch):
 
 
 @posix_only
-def test_a_result_file_that_cannot_be_deleted_stays_registered_for_exit_cleanup(tmp_path, monkeypatch):
+def test_a_result_file_that_cannot_be_deleted_stays_registered_for_exit_cleanup(
+    tmp_path, monkeypatch
+):
     """捕获成功后结果文件删不掉（瞬时文件系统错误）：不能被遗忘——留在在途登记里，退出清理再删；下一次捕获前也会扫过期的。"""
     prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
     monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
@@ -2466,3 +2486,72 @@ def test_a_short_probe_shares_its_budget_with_the_activation(monkeypatch):
     seen.clear()
     rc, _ = deprepair._run([sys.executable, "-c", "pass"], 0.5)  # noqa: SLF001
     assert rc == deprepair.RC_ACTIVATION_UNAVAILABLE and "run_timeout" not in seen
+
+
+def test_a_cancel_during_a_slow_activation_never_starts_pip(monkeypatch):
+    """装包前取激活环境（可能几十秒）期间用户点了取消：激活回来之后再查一次，pip 一次都不起。"""
+    from tavotto.engine import deprepair
+
+    cancel = threading.Event()
+    started: list = []
+
+    def slow_activate(python, base=None, *, timeout=None):
+        cancel.set()  # 激活期间用户取消
+        return base
+
+    monkeypatch.setattr(deprepair.launcher, "activate_env", slow_activate)
+    monkeypatch.setattr(deprepair.subprocess, "Popen", lambda *a, **k: started.append(a))
+    code, _ = deprepair._run_pip([sys.executable, "-m", "pip", "--version"], cancel, None)  # noqa: SLF001
+    assert code == deprepair.ERROR_CANCELLED and started == []
+    # 激活用完了安装期限：同样不起 pip
+    cancel.clear()
+    monkeypatch.setattr(
+        deprepair.launcher, "activate_env", lambda python, base=None, *, timeout=None: base
+    )
+    code, _ = deprepair._run_pip(  # noqa: SLF001
+        [sys.executable, "-m", "pip", "--version"], cancel, None, deadline=time.time() - 1
+    )
+    assert code == deprepair.ERROR_TIMEOUT and started == []
+
+
+@posix_only
+def test_a_cache_miss_while_holding_the_pool_lock_is_deferred_not_captured(tmp_path, monkeypatch):
+    """`no_capture` 里（持着池锁起会话）激活缓存没命中：抛 `CaptureDeferred` 交回调用方，一次捕获都不跑。"""
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "bin" / "python")
+    lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    with launcher.no_capture():
+        with pytest.raises(launcher.CaptureDeferred):
+            launcher.activated_delta(py, lau)
+    assert conda_calls(log) == []
+    launcher.activated_delta(py, lau)  # 出了 no_capture：照常捕获
+    with launcher.no_capture():
+        assert launcher.activated_delta(py, lau)["FAKE_SDK_LICENSE"] == LICENSE  # 命中缓存：照常
+
+
+def test_the_package_inventory_shares_its_budget_with_the_activation(monkeypatch):
+    """`/api/engine/environment?probe=` 的版本盘点：激活用掉的时间从探测子进程的预算里扣；用完了 = 瞬时激活不可用。"""
+    from tavotto.engine import runtime
+
+    seen: dict = {}
+    real_run = runtime.subprocess.run
+
+    def slow_env(python, base=None, *, timeout=None):
+        seen["activate_timeout"] = timeout
+        time.sleep(0.6)
+        return base
+
+    def spy_run(*a, **k):
+        seen["run_timeout"] = k.get("timeout")
+        return real_run(*a, **k)
+
+    monkeypatch.setattr(runtime.subprocess, "run", spy_run)
+    assert runtime.probe_packages(sys.executable, ["json"], env_for=slow_env)["json"]
+    assert seen["run_timeout"] <= runtime.PROBE_TIMEOUT_S - 0.6
+    seen.clear()
+    monkeypatch.setattr(runtime, "PROBE_TIMEOUT_S", 0.5)
+    with pytest.raises(launcher.LauncherUnavailable):
+        runtime.probe_packages(sys.executable, ["json"], env_for=slow_env)
+    assert "run_timeout" not in seen
