@@ -4941,7 +4941,12 @@ export interface DiagSendPrepared {
   schema: number
   max_bytes: number
   too_large: boolean
-  entries: { name: string; kind: string }[]
+  /** 包内文件：名字、内容类别（闭集 id）、解压后的字节数 */
+  entries: { name: string; kind: string; bytes?: number }[]
+  /** 三个勾选项在这份包里的实际取值（引擎白名单校验后的；老引擎没有这个键 = 全 false） */
+  options?: { source: boolean; crash_reports: boolean; corrupt_sessions: boolean }
+  /** 因体积上限被截短的类别（按优先级从低往高截；核心文件不截） */
+  truncated?: { kind: string; original_bytes: number; kept_bytes: number }[]
 }
 
 export type DiagSendState = 'prepared' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled' | 'unknown'

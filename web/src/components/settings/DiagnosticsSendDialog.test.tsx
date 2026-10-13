@@ -665,6 +665,130 @@ describe('引擎丢了会话（Codex #923 P2）：状态 404 是终态，不无�
   })
 })
 
+describe('诊断包扩充（detail/、勾选项）', () => {
+  const lastPayload = () => prepareMock.mock.calls[prepareMock.mock.calls.length - 1][0] as Record<string, any>
+  const box = (key: string) => q<HTMLInputElement>(`[data-diag-send-extra="${key}"]`)!
+  const DETAIL_PREPARED: DiagSendPrepared = {
+    ...PREPARED,
+    entries: [
+      { name: 'report.json', kind: 'environment', bytes: 1700 },
+      { name: 'detail/errors.json', kind: 'detail_errors', bytes: 4096 },
+      { name: 'detail/logs/app.log.tail', kind: 'detail_logs', bytes: 2 * 1024 * 1024 },
+    ],
+    options: { source: false, crash_reports: false, corrupt_sessions: false },
+    truncated: [{ kind: 'source', original_bytes: 900000, kept_bytes: 1000 }],
+  }
+
+  it('三个复选框默认不勾、住在折叠的详情里；首次备包的载荷带 detail_options 全 false 与 detail', async () => {
+    await mount(DETAIL_PREPARED)
+    const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
+    expect(det.open).toBe(false)
+    for (const key of ['source', 'crash_reports', 'corrupt_sessions']) {
+      expect(box(key).checked).toBe(false)
+      expect(box(key).closest('details')).toBe(det)
+    }
+    expect(lastPayload().detail_options).toEqual({ source: false, crash_reports: false, corrupt_sessions: false })
+    expect(lastPayload().detail).toBeTypeOf('object')
+    expect(lastPayload().detail.display.device_pixel_ratio).toBeTypeOf('number')
+    // 默认可见仍只有一句话 + 两颗按钮：复选框不在折叠区之外
+    const visibleBoxes = Array.from(document.body.querySelectorAll('input[type=checkbox]')).filter((el) => !el.closest('details'))
+    expect(visibleBoxes).toHaveLength(0)
+  })
+
+  it('文件清单（路径 + 大小）和截断说明都在折叠区里', async () => {
+    await mount(DETAIL_PREPARED)
+    const det = q<HTMLDetailsElement>('[data-diag-send-details]')!
+    const list = q('[data-diag-send-file-list]')!
+    expect(list.closest('details[data-diag-send-details]')).toBe(det)
+    expect(list.closest('details[data-diag-send-files]')).not.toBeNull()
+    const row = q('[data-diag-file="detail/logs/app.log.tail"]')!
+    expect(row.textContent).toContain('detail/logs/app.log.tail')
+    expect(row.textContent).toContain('2.0 MiB')
+    expect(q('[data-diag-file="detail/errors.json"]')!.textContent).toContain('4 KiB')
+    expect(q('[data-diag-send-truncated]')!.textContent).toBe(ds('truncated', { kinds: ds('short.source') }))
+    expect(q('[data-diag-send-truncated]')!.closest('details[data-diag-send-details]')).toBe(det)
+  })
+
+  it('没有被截断时不出现截断说明', async () => {
+    await mount({ ...DETAIL_PREPARED, truncated: [] })
+    expect(q('[data-diag-send-truncated]')).toBeNull()
+  })
+
+  it('勾选变化 = 重新备包（载荷带新选项、旧包被丢弃），已填的说明与类型不丢', async () => {
+    await mount(DETAIL_PREPARED)
+    const note = q<HTMLTextAreaElement>('[data-diag-send-note]')!
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setter.call(note, 'keep me')
+      note.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', gen: 0 })
+    await click(box('source'))
+    await act(async () => {})
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: false, corrupt_sessions: false })
+    expect(discardMock).toHaveBeenCalledWith('pid-1', null)
+    expect(box('source').checked).toBe(true)
+    expect(q<HTMLTextAreaElement>('[data-diag-send-note]')!.value).toBe('keep me')
+    expect(startMock).not.toHaveBeenCalled()
+    // 再勾第二项：两项都在载荷里
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3' })
+    await click(box('crash_reports'))
+    await act(async () => {})
+    expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: false })
+    // 发送用的是最新那份包
+    startMock.mockResolvedValue(status({ state: 'sending' }))
+    await click(q('[data-diag-send-confirm]'))
+    expect(startMock.mock.calls[0][0]).toBe('pid-3')
+  })
+
+  it('不记忆：关掉对话框再打开，三个框都回到不勾，载荷也回到全 false', async () => {
+    await mount(DETAIL_PREPARED)
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2' })
+    await click(box('corrupt_sessions'))
+    await act(async () => {})
+    expect(box('corrupt_sessions').checked).toBe(true)
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-9' })
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => {})
+    expect(box('corrupt_sessions').checked).toBe(false)
+    expect(lastPayload().detail_options).toEqual({ source: false, crash_reports: false, corrupt_sessions: false })
+  })
+
+  it('备包中 / 发送中复选框不可点（避免发送途中换内容）', async () => {
+    await mount(DETAIL_PREPARED)
+    startMock.mockResolvedValue(status({ state: 'sending' }))
+    statusMock.mockResolvedValue(status({ state: 'sending' }))
+    await click(q('[data-diag-send-confirm]'))
+    for (const key of ['source', 'crash_reports', 'corrupt_sessions']) expect(box(key).disabled).toBe(true)
+  })
+
+  it('文案：PRIORITY 里每一类都有 short 名，三个选项都有名字与说明（中英）', () => {
+    const py = readFileSync(resolve(__dirname, '../../../../src/tavotto/engine/diagdetail.py'), 'utf-8')
+    const block = py.slice(py.indexOf('PRIORITY: dict[str, int] = {'), py.indexOf('#: 每类的原始字节份额'))
+    const kinds = [...block.matchAll(/^\s+"([a-z_]+)": \d+,/gm)].map((m) => m[1])
+    expect(kinds).toHaveLength(15)
+    const opts = [...py.slice(py.indexOf('OPTION_KEYS = ('), py.indexOf('OPTION_KEYS = (') + 120).matchAll(/"([a-z_]+)"/g)].map((m) => m[1])
+    expect(opts).toEqual(['source', 'crash_reports', 'corrupt_sessions'])
+    for (const d of [zhDialogs, enDialogs]) {
+      const send = (d as any).settings.diagnostics.send
+      for (const k of kinds) expect(Object.keys(send.short), k).toContain(k)
+      for (const k of opts) {
+        expect(send.extra[k]).toBeTruthy()
+        expect(send.extraHint[k]).toBeTruthy()
+      }
+    }
+  })
+})
+
 describe('文案与引擎同源', () => {
   const py = readFileSync(resolve(__dirname, '../../../../src/tavotto/engine/diagsend.py'), 'utf-8')
 
