@@ -133,3 +133,9 @@ def test_agent_drag_cannot_be_confused_with_symbol_baseline():
     a = A.summarize(report())
     assert "native_window_drag" in a["not_covered"]
     assert a["coverage"] == "browser_webview_proxy_only"
+
+
+def test_two_playwright_runs_do_not_share_cleanup_directory():
+    """普通 UI 产物落在 test-results/perf-agent，拖动测量必须另用输出目录。"""
+    assert A.DRAG_E2E_OUTPUT != "test-results"
+    assert not A.DRAG_E2E_OUTPUT.startswith("test-results/")

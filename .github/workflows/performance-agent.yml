@@ -147,5 +147,6 @@ jobs:
             web/test-results/perf-agent/**
             web/test-results/**/trace.zip
             web/test-results/**/test-failed-*.png
+            web/test-results-perf-drag/**
           if-no-files-found: warn
           retention-days: 30

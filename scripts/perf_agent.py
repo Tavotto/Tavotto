@@ -34,6 +34,8 @@ ALLOWED_SCENARIOS = {
     "preset.dimension",
 }
 MIN_SAMPLES = 10
+# 第二次 Playwright 执行必须使用独立结果目录，不能清掉第一次的 run.json！
+DRAG_E2E_OUTPUT = "test-results-perf-drag"
 # 不同 SHA 可以比较，但机器与浏览器完整版本必须匹配。
 ENV_FIELDS = (
     "platform",
@@ -295,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
                         "playwright.config.ts",
                         "--project",
                         args.browser,
+                        "--output",
+                        DRAG_E2E_OUTPUT,
                         "--grep",
                         "性能探针：录制真实拖动",
                         "e2e/perf-probe.spec.ts",
