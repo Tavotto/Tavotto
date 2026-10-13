@@ -2313,10 +2313,11 @@ class TestNativeCwdUnavailable:
 
     def test_a_usable_session_cwd_is_used_and_reported(self, monkeypatch, tmp_path):
         cwd, doc = self._doc(monkeypatch, str(tmp_path))
-        assert cwd == str(tmp_path) and doc["probe_cwd"] == {
-            "mode": "native_session",
-            "cwd": str(tmp_path),
-        }
+        shown = diagdetail.Scrubber().text(
+            str(tmp_path)
+        )  # 文档里的路径已过脱敏（用户名换成 <user>）
+        assert cwd == str(tmp_path)
+        assert doc["probe_cwd"] == {"mode": "native_session", "cwd": shown}
         assert doc["probe"]["matplotlib"]["backend"] == "agg"
 
     @pytest.mark.parametrize("which", ["missing", "empty", "file"])
