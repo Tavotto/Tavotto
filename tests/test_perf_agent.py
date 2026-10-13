@@ -141,7 +141,6 @@ def test_two_playwright_runs_do_not_share_cleanup_directory():
     assert not A.DRAG_E2E_OUTPUT.startswith("test-results/")
 
 
-
 def test_composed_summary_does_not_hide_later_drag_failure():
     """符号先绿不等于完整任务绿：这是 Agent 自动接收报告的闸。"""
     symbols = A.summarize(report())
