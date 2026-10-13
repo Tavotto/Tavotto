@@ -278,9 +278,9 @@ _SECRET_WORDS = (
 #: 上，无界的 `[\w.\-]*` 前缀会逐位回溯成 O(n²)（备包卡死）。看护：`test_scrubber_is_linear_on_long_tokens`
 _KV_SECRET = re.compile(
     rf"""(?ix)
-    (?P<key>(?<![\w.\-])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))\\*["']?)
+    (?P<key>(?<![\w.\-\\])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))\\*["']?)
     (?P<sep>\s*[:=]\s*)
-    (?P<val>(?P<bs>\\+)"(?:[^\n]{{0,4096}}?(?P=bs)"|[^\n]*)|"[^"\n]*"|'[^'\n]*'|[bBrRuUfF]{{1,2}}"[^"\n]*"|[bBrRuUfF]{{1,2}}'[^'\n]*'|"[^\n]*|'[^\n]*|[bBrRuUfF]{{1,2}}"[^\n]*|[bBrRuUfF]{{1,2}}'[^\n]*|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
+    (?P<val>(?P<bs>\\+)(?P<bq>["'])|(?P<pre>[bBrRuUfF]{{0,2}})(?P<q>["'])|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
     """
 )
 #: 头行（`Authorization: Digest username="x", response="…"` 这类值里有逗号和引号）：不确定值到哪结束，就抹到行尾
@@ -345,26 +345,65 @@ def _containers_are_boring(segment: str) -> bool:
     return _BORING_TOKENS.sub("", segment) == ""
 
 
+def _quote_end(text: str, i: int, multiline: bool = False) -> tuple[int, bool]:
+    """`text[i]` 是开引号：回 (收尾引号之后的位置, 是否收尾)。**唯一的引号串定界**——`\\` 转义下一个字符（`\\"`、`\\\\`、
+    `\\'`），找到未转义的同种引号才收尾；单行值（`multiline=False`）遇到换行、或扫到输入末尾仍没收尾 → 回
+    (换行 / 末尾位置, False)，调用方按「不确定就抹到边界」处理。容器扫描里的引号串也走它。"""
+    q = text[i]
+    n = len(text)
+    k = i + 1
+    while k < n:
+        ch = text[k]
+        if ch == "\\":
+            k += 2
+            continue
+        if ch == q:
+            return k + 1, True
+        if ch == "\n" and not multiline:
+            return k, False
+        k += 1
+    return n, False
+
+
+def _escaped_quote_end(text: str, k: int, backslashes: int, q: str) -> tuple[int, bool]:
+    """转义过的引号串（日志 / JSON 值里嵌着 JSON：`\\"S\\"`）：`k` 是开引号之后；收尾是**恰好同样多个**反斜杠加引号，
+    更长的反斜杠串（`\\\\\\"` = 转义的反斜杠 + 转义的引号）不收尾。单行；没收尾回 (换行 / 末尾, False)。"""
+    n = len(text)
+    while k < n:
+        ch = text[k]
+        if ch == "\n":
+            return k, False
+        if ch == "\\":
+            r = k
+            while r < n and text[r] == "\\":
+                r += 1
+            if r < n and text[r] == q:
+                if r - k == backslashes:
+                    return r + 1, True
+                k = r + 1  # 别的数量的反斜杠 + 引号：引号是串内容
+            else:
+                k = r
+            continue
+        k += 1
+    return n, False
+
+
 def _container_end(text: str, start: int) -> tuple[int, bool]:
     """`text[start]` 是 `[` / `{`：回 (括号段结束位置（不含）, 是否配平)。线性单趟扫描，考虑嵌套、引号内的括号与转义引号，
     **没有扫描上界**（跨行、超过 8 KiB 的容器照样配平）。一直扫到输入末尾仍不配平 → 不确定边界在哪，就从值起点一路抹到
     **输入末尾**（回 `(len(text), False)`，与 PEM 同一规则）。调用方（`_kv_all`）在抹掉的区间内跳过所有后续命中，
     每个容器起点只扫一次，所以总扫描量不超过输入长度。"""
     depth = 0
-    quote = ""
     i = start
     n = len(text)
     while i < n:
         ch = text[i]
-        if quote:
-            if ch == "\\":
-                i += 2
-                continue
-            if ch == quote:
-                quote = ""
-        elif ch in "\"'":
-            quote = ch
-        elif ch in "[{(":
+        if ch in "\"'":
+            i, closed = _quote_end(text, i, multiline=True)
+            if not closed:
+                return n, False
+            continue
+        if ch in "[{(":
             depth += 1
         elif ch in "]})":
             depth -= 1
@@ -467,22 +506,26 @@ class Scrubber:
         self._install_id = diagnostics._install_id()
 
     # ---- 文本 ----
+    def json_or_text(self, text: str) -> str:
+        """整份文本若是合法 JSON：走结构化 `obj()` 再序列化（结构化路径没有引号边界问题）；解析失败（截断的、
+        损坏的、不是 JSON 的）才退回文本正则。"""
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return self.text(text)
+        if not isinstance(parsed, (dict, list)):
+            return self.text(text)
+        return json.dumps(self.obj(parsed), ensure_ascii=False, indent=1)
+
     def _kv(self, m: re.Match) -> str:
         val = m.group("val")
         if _BORING_VALUE.match(val):
             return m.group(0)
         if self.source_mode:
             # 源码：只换带引号的字面量 / Bearer 形状；`token = self._next()` 这类取值表达式原样留着
-            if not (
-                (val[:1] in "\"'\\" or _STR_PREFIXED.match(val)) and len(val) >= 8
-            ) and not re.match(r"(?i)^(Bearer|Basic|Token)\s", val):
+            if not re.match(r"(?i)^(Bearer|Basic|Token)\s", val):
                 return m.group(0)
-        bs = m.group("bs")
-        if bs:  # 转义过的 JSON 字符串（日志 / JSON 值里嵌着 JSON）：`\"S\"` → `\"<redacted>\"`
-            return f'{m.group("key")}{m.group("sep")}{bs}"{_REDACTED}{bs}"'
-        pre = _STR_PREFIXED.match(val)
-        quote = pre.group(2) if pre else (val[0] if val[:1] in "\"'" else "")
-        return f"{m.group('key')}{m.group('sep')}{quote}{_REDACTED}{quote}"
+        return f"{m.group('key')}{m.group('sep')}{_REDACTED}"
 
     def _kv_all(self, text: str) -> str:
         """`_KV_SECRET` 的逐处替换。值以 `[` / `{` 开头时，换掉的是**整个配平的括号段**（`{"token":["S"]}` 里
@@ -494,6 +537,21 @@ class Scrubber:
                 continue  # 落在前一个已换掉的括号段里
             val = m.group("val")
             vs = m.start("val")
+            quote = m.group("q") or m.group("bq")
+            if quote:
+                bs = m.group("bs") or ""
+                if bs:
+                    end, _closed = _escaped_quote_end(text, m.end("val"), len(bs), quote)
+                else:
+                    end, _closed = _quote_end(text, m.end("val") - 1)
+                literal = text[vs:end]
+                out.append(text[pos : m.start()])
+                if _BORING_VALUE.match(literal) or (self.source_mode and len(literal) < 8):
+                    out.append(text[m.start() : end])  # 源码里的短字面量 / 无信息的值原样
+                else:
+                    out.append(f"{m.group('key')}{m.group('sep')}{bs}{quote}{_REDACTED}{bs}{quote}")
+                pos = end
+                continue
             if val[:1] == "<" and not _BORING_VALUE.match(val):
                 # `<SecretStr '**********'>` 这类 repr：抹到配对的 `>`，找不到就到行尾
                 nl = text.find("\n", vs)
@@ -1001,7 +1059,8 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
             p.name
         )  # 读成功才写：内容在内层 zip 里的名字（`_reconcile_index` 据此核对）
         size = fid.size
-        data = scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
+        # 状态文件多半是 JSON：能解析就走结构化清理（没有引号边界问题），截断 / 损坏的才退回文本
+        data = scrub.json_or_text(raw.decode("utf-8", errors="replace")).encode("utf-8")
         if size > STATE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
         items.append(

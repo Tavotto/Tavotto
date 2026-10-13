@@ -958,6 +958,56 @@ class TestSecretShapeMatrix:
             == 'token = getpass.getpass("Password: ")'
         )
 
+    # 值里含转义引号 / 转义反斜杠 / 另一种引号：定界靠真正的扫描，不靠“到下一个引号为止”的正则
+    QUOTE_TAILS = [
+        'ab\\"S', 'ab\\\\\\"S', 'S\\\\', "ab\\'S", "a'b S", 'a"bS', 'a\\\\\\\\\\"S',
+        'x\\\\\\\\"S"', 'S\\\\\\\\',
+    ]  # fmt: skip
+
+    @pytest.mark.parametrize("key", MATRIX_KEYS)
+    def test_values_with_escaped_quotes_and_backslashes(self, key, world):
+        full = diagdetail.Scrubber()
+        for tail in self.QUOTE_TAILS:
+            body = tail.replace("S", SECRET)
+            for q in ('"', "'"):
+                if (q == '"' and '"' in body.replace('\\"', "")) or (
+                    q == "'" and "'" in body.replace("\\'", "")
+                ):
+                    continue  # 值里有同种的未转义引号：那是另一个值的边界，不在本矩阵里
+                lit = f"{q}{body}{q}"
+                for line in (
+                    "{%s%s%s: %s, 'n': 1} tail" % (q, key, q, lit),
+                    "%s=%s tail" % (key, lit),
+                    "%s: %s tail" % (key, lit),
+                ):
+                    out = full.text(line)
+                    assert SECRET not in out, (key, tail, line, out)
+                # JSON 载体：结构化路径
+                js = json.dumps({key: body.replace('\\"', '"').replace("\\\\", "\\")})
+                assert SECRET not in full.json_or_text(js)
+                assert SECRET not in full.text(js)
+
+    def test_state_json_goes_through_the_structured_path(self):
+        full = diagdetail.Scrubber()
+        raw = json.dumps(
+            {"token": f'abc"{SECRET}', "nested": {"api_key": [f"x{SECRET}"]}, "keep": "me"}
+        )
+        out = full.json_or_text(raw)
+        assert SECRET not in out and json.loads(out)["keep"] == "me"
+        broken = '{"token": "abc\\"' + SECRET + "\", 'cut"  # 不是合法 JSON：退回文本兜底
+        assert SECRET not in full.json_or_text(broken)
+
+    def test_backslash_heavy_input_stays_linear(self):
+        full = diagdetail.Scrubber()
+        for blob in (
+            'token="' + "\\" * 200_000,
+            'token=\\"' + "\\" * 200_000 + '"',
+            '{"token": "' + '\\"' * 100_000,
+        ):
+            t0 = time.monotonic()
+            full.text(blob)
+            assert time.monotonic() - t0 < 5
+
     def test_innocent_neighbours_survive(self, world):
         full = diagdetail.Scrubber()
         assert (
