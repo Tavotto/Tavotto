@@ -128,7 +128,6 @@ def test_run_summary_explicitly_says_no_baseline_was_checked():
     assert A.summarize(report())["regression_status"] == "not_checked_without_baseline"
 
 
-
 def test_agent_drag_cannot_be_confused_with_symbol_baseline():
     """默认基线比较只评估符号场景；不能拿普通 UI 指标宣布拖动通过。"""
     a = A.summarize(report())

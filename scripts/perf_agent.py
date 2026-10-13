@@ -222,7 +222,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--repeat", type=int, default=16)
     run.add_argument("--out", type=Path, default=Path("web/test-results/perf-agent/run.json"))
     run.add_argument("--baseline", type=Path)
-    run.add_argument("--include-drag", action="store_true", help="also capture the existing ADR 0075 drag probe")
+    run.add_argument(
+        "--include-drag", action="store_true", help="also capture the existing ADR 0075 drag probe"
+    )
     run.add_argument("--summary", type=Path)
     run.add_argument("--regression-pct", type=float, default=DEFAULT_REGRESSION_PCT)
     report = commands.add_parser("summarize")
