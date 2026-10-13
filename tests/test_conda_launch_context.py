@@ -1824,7 +1824,12 @@ def test_a_variable_the_activation_removes_is_removed_at_every_launch_site(
             worker.force_kill()
         _pool.shutdown_all(wait=True)
         _pool.reset_worker_python()
-    ours = [(a, e) for a, e in seen if a and str(a[0]) == py]
+    # `bootstrap._probe`（后台问系统 Python 能不能 `import venv`）问的不是 worker 的解释器环境，PR 表里列为“不改”
+    ours = [
+        (a, e)
+        for a, e in seen
+        if a and str(a[0]) == py and not any("import venv" in str(x) for x in a)
+    ]
     assert len(ours) >= 7
     for argv, env in ours:
         assert env is not None and "P09_UNSET_ME" not in env, [str(a)[:50] for a in argv[:4]]
