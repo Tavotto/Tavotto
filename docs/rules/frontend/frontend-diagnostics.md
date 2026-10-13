@@ -91,3 +91,14 @@
 - 文案键 `settings.diagnostics.send.{kind.detail_*, extra.*, extraHint.*, short.*, filesTitle, truncated}`；`short.*` 的键集 = `diagdetail.PRIORITY`，`extra.*` = `OPTION_KEYS`（`DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍）。
 - 看护：`diagnostics/detail.test.ts`、`DiagnosticsSendDialog.test.tsx`「诊断包扩充」一组。
 
+
+## 意外错误入口（PR A，ADR 0118 补充 2026-10-14）
+
+- **唯一汇聚点** `lib/unexpectedErrors.ts` + 纯内存 `store/unexpectedErrorStore.ts`。来源：`diagnostics/detail.ts` 的 `onUncaughtError`（window error / unhandledrejection 全应用只有那一份监听，**不得再装第二个**）、`ErrorBoundary.componentDidCatch`、`lib/api.ts` 的 `setEngine500Handler`（`status >= 500` 且 `code === 'internal_error'`，只认兜底码；回调注册制避免 api ↔ store 成环）。`main.tsx` 调 `installUnexpectedErrorCapture()`。
+- **事件闭集**：`ui.unexpected_error { source, error_name, message_hash }`。`source` ∈ `UNEXPECTED_ERROR_SOURCES`，`error_name` ∈ `UNEXPECTED_ERROR_NAMES`（`types.ts`；后端 `_ENUM_FIELDS["source" / "error_name"]` 严格同源，`test_unexpected_error_enums_match_frontend` 对拍；字段名由 `test_event_fields_match_frontend_schema` 对拍）。**trace 里没有 message / stack 原文**，原文只在未捕获错误环（`recordUncaughtDetail('boundary' | 'engine_500', …)` 或 detail.ts 自己的 window 记录）随发送包走。
+- **顺序固定**：分类（忽略的不记任何东西）→ 先 `recordDiagnosticEvent`（吞异常）→ 补环 → 仅当 `capability !== null` 且非 boundary 来源、发送对话框没开、栈不指回诊断模块，才进去重 / 上界 / 登记卡片。
+- **分类按结构**：`ApiError`、原型不是内建错误原型的业务错误类、AbortError、`ResizeObserver loop…`、`Script error.`、pyodide / worker 来源、非 Error 的拒绝 → 忽略。**不准凭消息关键词判严重度**；要新增一类忽略，加结构判据与一条看护。
+- **上界**：`MAX_FINGERPRINTS`（64，LRU）、`MAX_PROMPTS_PER_SESSION`（5）、轨上同时 1 张；指纹同一会话只提示一次，关掉后不再提示。
+- **卡片**：`NotificationRail` 的 `data-unexpected-error-card` 槽位（`Toast tone="error" plain`），一句话 + 「发送问题反馈」+ ×；主动作只 `setOpen(true)`（并收起这张卡），prepare / start 调用次数为 0（`notificationRail.test.tsx`）。仲裁：低于「刚为编辑加入」、高于全部提示类；提示类的让位判据数的是「更高档在场条数」。**绝不往 `BannerStack` 加条。**
+- **ErrorBoundary 崩溃页**：「重新加载」仍是唯一主按钮；`SendReportButton`（secondary）在折叠「详情」里；崩溃页自己渲染 `DiagnosticsSendHost`（`TooltipProvider` + 内层 `SendHostBoundary`，对话框出错退回空）。**放宽的边界仅限 `diagSendStore` 与发送对话框**；关着时元素序列与改动前一致（`errorBoundary.test.tsx` 锚定）。
+- 看护：`lib/unexpectedErrors.test.ts`、`store/unexpectedErrorStore.test.ts`、`diagnostics/privacy.test.ts`（新事件一组）、`components/notificationRail.test.tsx`、`components/errorBoundary.test.tsx`、`tests/test_diagnostics_bundle.py`。

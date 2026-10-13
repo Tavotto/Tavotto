@@ -33,7 +33,7 @@ const MAX_STACK = 8000
 
 export interface RingRecord {
   t: number
-  level: 'error' | 'warn' | 'unhandledrejection'
+  level: 'error' | 'warn' | 'unhandledrejection' | 'boundary' | 'engine_500'
   message: string
   stack: string | null
 }
@@ -212,6 +212,51 @@ function callSiteStack(): string | null {
   }
 }
 
+/**
+ * 未捕获错误的**旁路订阅点**（PR A：意外错误卡）。window error / unhandledrejection 全应用只在下面装一份监听，
+ * 想知道「刚刚又有一条」的人（`lib/unexpectedErrors.ts`）在这里订阅，**不得**自己再 addEventListener。
+ * 回调拿到的是原始对象（用于分类），回调里的异常一律吞掉；订阅者不得依赖它同步完成。
+ */
+export interface UncaughtNotice {
+  source: 'window_error' | 'unhandled_rejection'
+  /** `ErrorEvent.error` / `PromiseRejectionEvent.reason`，可能不是 Error */
+  error: unknown
+  message: string
+  /** 仅 window error：脚本地址（分类用，不落盘） */
+  filename: string
+}
+const uncaughtListeners = new Set<(n: UncaughtNotice) => void>()
+export function onUncaughtError(cb: (n: UncaughtNotice) => void): () => void {
+  uncaughtListeners.add(cb)
+  return () => void uncaughtListeners.delete(cb)
+}
+function notifyUncaught(n: UncaughtNotice): void {
+  for (const cb of Array.from(uncaughtListeners)) {
+    try {
+      cb(n)
+    } catch {
+      /* 订阅者出错不许伤到别的订阅者与页面 */
+    }
+  }
+}
+
+/**
+ * 往未捕获错误环里补一条**不是 window 事件**的记录：ErrorBoundary 捕获的渲染错误（React 不再把它们冒到 window）、
+ * 引擎 500 `internal_error`。消息与调用栈原文只在这个环里，随发送包走；导出路径与 trace 都不带。
+ */
+export function recordUncaughtDetail(level: 'boundary' | 'engine_500', message: string, stack: string | null): void {
+  try {
+    push(errorRing, ERROR_RING_CAPACITY, {
+      t: Date.now(),
+      level,
+      message: message.slice(0, MAX_MESSAGE),
+      stack: stack ? stack.slice(0, MAX_STACK) : null,
+    })
+  } catch {
+    /* 同上 */
+  }
+}
+
 let installed: (() => void) | null = null
 let recording = false
 
@@ -257,6 +302,12 @@ export function installConsoleCapture(): () => void {
     } catch {
       /* 同上 */
     }
+    notifyUncaught({
+      source: 'window_error',
+      error: e.error as unknown,
+      message: typeof e.message === 'string' ? e.message : '',
+      filename: typeof e.filename === 'string' ? e.filename : '',
+    })
   }
   const onRejection = (e: PromiseRejectionEvent) => {
     try {
@@ -270,6 +321,7 @@ export function installConsoleCapture(): () => void {
     } catch {
       /* 同上 */
     }
+    notifyUncaught({ source: 'unhandled_rejection', error: e.reason as unknown, message: '', filename: '' })
   }
   window.addEventListener('error', onError)
   window.addEventListener('unhandledrejection', onRejection)

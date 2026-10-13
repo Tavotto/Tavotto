@@ -5709,6 +5709,9 @@ export default interface Resources {
       "zoomValue": "缩放 {{percent}}%",
       "zoomValueInput": "缩放比例（%）"
     },
+    "unexpectedError": {
+      "text": "Tavotto 出了点意外，可以把诊断发给我们"
+    },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
       "later": "稍后"

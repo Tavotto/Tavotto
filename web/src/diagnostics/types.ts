@@ -418,6 +418,34 @@ export interface DiagnosticsExportEvent {
   panel_count: number
 }
 
+/**
+ * 意外错误的来源与内建错误名——**闭集**（ADR 0118 补充 2026-10-14）。
+ * trace 里只放这两个枚举与 message 的 hash；message / stack 原文只走发送包的未捕获错误环（`diagnostics/detail.ts`）。
+ */
+export const UNEXPECTED_ERROR_SOURCES = ['boundary', 'window_error', 'unhandled_rejection', 'engine_500'] as const
+export type UnexpectedErrorSource = (typeof UNEXPECTED_ERROR_SOURCES)[number]
+export const UNEXPECTED_ERROR_NAMES = [
+  'TypeError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'EvalError',
+  'URIError',
+  'Error',
+  'DOMException',
+  'AbortError',
+  'other',
+] as const
+export type UnexpectedErrorName = (typeof UNEXPECTED_ERROR_NAMES)[number]
+
+export interface UnexpectedErrorEvent {
+  type: 'ui.unexpected_error'
+  source: UnexpectedErrorSource
+  error_name: UnexpectedErrorName
+  /** `tagged('err', message)`：只回答「是不是同一条错误」，message 原文不进 trace */
+  message_hash: string
+}
+
 /* -------------------------------------------------------------------------- */
 
 export type DiagnosticEvent =
@@ -450,6 +478,7 @@ export type DiagnosticEvent =
   | LayoutVersionRestoreCompleteEvent
   | InvariantViolationEvent
   | DiagnosticsExportEvent
+  | UnexpectedErrorEvent
 
 export type DiagnosticEventType = DiagnosticEvent['type']
 

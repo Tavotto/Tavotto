@@ -342,6 +342,24 @@ function noteProjectGone(status: number, body: Record<string, unknown>): void {
   }
 }
 
+/**
+ * 引擎兜底 500（`code === 'internal_error'`）的汇聚出口——「意外错误卡」的来源之一（PR A）。
+ * **只认这个兜底码**：具体业务码各有各的卡。回调注册制（同上，避免 api ↔ store 成环）；只带方法与路由，
+ * 不带 params / 响应体。回调里的异常吞掉，绝不改变本次请求往上抛的错误。
+ */
+let engine500Handler: ((n: { method: string; url: string }) => void) | null = null
+export function setEngine500Handler(fn: ((n: { method: string; url: string }) => void) | null): void {
+  engine500Handler = fn
+}
+function noteEngine500(status: number, body: Record<string, unknown>, method: string | undefined, url: string): void {
+  if (status < 500 || body?.code !== 'internal_error' || !engine500Handler) return
+  try {
+    engine500Handler({ method: (method ?? 'GET').toUpperCase(), url })
+  } catch {
+    /* 同上 */
+  }
+}
+
 /** 失败响应的 JSON 错误体（非 JSON 时给空对象）；只在 !res.ok 时调用 */
 const errorBody = (res: Response): Promise<Record<string, unknown>> =>
   res
@@ -368,6 +386,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
       /* 非 JSON 错误体，保留状态码 */
     }
     noteProjectGone(res.status, body)
+    noteEngine500(res.status, body, init?.method, url)
     throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
   return res.json() as Promise<T>

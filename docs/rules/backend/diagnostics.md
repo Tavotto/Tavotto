@@ -98,6 +98,9 @@
     值只能是什么形状」+ 一张**扁平的字段名 allowlist**。后端**不复制**前端那种
     逐事件的表（迟早分叉）；两处同源对由
     `tests/test_diagnostics_bundle.py` 的两条 `*_match_frontend_*` 看护。
+    `ui.unexpected_error`（PR A，ADR 0118 补充 2026-10-14）的字段只有 `source` / `error_name`（两个闭集枚举，`_ENUM_FIELDS`，
+    与前端 `UNEXPECTED_ERROR_SOURCES` / `UNEXPECTED_ERROR_NAMES` 严格同源，`test_unexpected_error_enums_match_frontend`）和 `message_hash`；message / stack 原文
+    不进这条通道，只走发送包 `detail-errors.json`（`sanitize_detail`）。
   * 身份字段（`*_hash` / `*_variant` / panel / file / session / version）
     **必须是 `前缀:十六进制` 的 hash**，gid 必须**小写开头**——光靠字符集挡不住
     `SUPER_SECRET_PAPER_TITLE_12345` 那种全大写下划线串。

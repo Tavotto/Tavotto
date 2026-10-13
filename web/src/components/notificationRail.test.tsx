@@ -12,11 +12,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   setProjectEnvironment: vi.fn(),
+  prepareDiagSend: vi.fn(),
+  startDiagSend: vi.fn(),
 }))
 
 import { NotificationRail } from '@/components/StatusBar'
 import { literal, t } from '@/i18n'
-import { setProjectEnvironment } from '@/lib/api'
+import { prepareDiagSend, setProjectEnvironment, startDiagSend } from '@/lib/api'
+import { useDiagSendStore } from '@/store/diagSendStore'
+import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
+import { useWorkspaceStore } from '@/store/workspace'
 import { ADOPTED_NOTICE_MS, useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { HINT_AUTO_DISMISS_MS, showHint, useHintStore } from '@/lib/onboarding/hints'
@@ -270,5 +275,89 @@ describe('通知轨：外形与先后', () => {
     expect(orderOf(hintToast())).toBeGreaterThan(orderOf(statusToast()))
     say('已导出')
     expect(orderOf(statusToast())).toBeGreaterThan(orderOf(hintToast()))
+  })
+})
+
+describe('「出了点意外」卡（PR A）', () => {
+  const unexpectedCard = () => container.querySelector<HTMLElement>('[data-unexpected-error-card]')
+  const toasts = () => container.querySelectorAll('[data-toast-layout]')
+  const showCard = () => act(() => void useUnexpectedErrorStore.getState().show())
+
+  beforeEach(() => {
+    useDiagSendStore.setState({ capability: { enabled: true }, open: false })
+    useUnexpectedErrorStore.getState().dismiss()
+    vi.mocked(prepareDiagSend).mockClear()
+    vi.mocked(startDiagSend).mockClear()
+  })
+  afterEach(() => {
+    act(() => useUnexpectedErrorStore.getState().dismiss())
+    useDiagSendStore.setState({ capability: null, open: false })
+    useWorkspaceStore.setState({ addedForEdit: null })
+  })
+
+  it('一句固定的话 + 一个主动作 + 关闭 ×；error 语气；不带错误原文，也没有「复制详情」', () => {
+    showCard()
+    const el = unexpectedCard()!
+    expect(el.dataset.toastTone).toBe('error')
+    expect(el.textContent).toContain(t('unexpectedError.text', { ns: 'workspace' }))
+    const buttons = el.querySelectorAll('button')
+    expect(buttons).toHaveLength(2) // 主动作 + 关闭
+    expect(buttons[0].textContent).toBe(t('settings.diagnostics.send.cardButton', { ns: 'dialogs' }))
+    expect(el.querySelector('[data-copy-details]')).toBeNull()
+  })
+
+  it('点主动作只 setOpen(true)（并收起这张卡）；prepare / start 的调用次数为 0', () => {
+    showCard()
+    act(() => unexpectedCard()!.querySelectorAll('button')[0].click())
+    expect(useDiagSendStore.getState().open).toBe(true)
+    expect(useUnexpectedErrorStore.getState().card).toBeNull()
+    expect(prepareDiagSend).not.toHaveBeenCalled()
+    expect(startDiagSend).not.toHaveBeenCalled()
+  })
+
+  it('× 关掉：卡片 store 清空', () => {
+    showCard()
+    act(() => unexpectedCard()!.querySelectorAll('button')[1].click())
+    expect(useUnexpectedErrorStore.getState().card).toBeNull()
+  })
+
+  it('发送功能关着：就算 store 里有卡也不渲染（不增加任何新界面）', () => {
+    useDiagSendStore.setState({ capability: null })
+    showCard()
+    expect(unexpectedCard()).toBeNull()
+    expect(toasts()).toHaveLength(0)
+  })
+
+  it('仲裁：高于提示类——状态 + 意外卡占满两条时操作提示让位；状态从不让位', () => {
+    act(() => {
+      showHint('multi_select')
+    })
+    expect(hintToast()).not.toBeNull()
+    showCard()
+    expect(unexpectedCard()).not.toBeNull()
+    expect(hintToast(), '提示 + 卡 = 两条，都在').not.toBeNull()
+    say('已导出')
+    tick(200) // 让位的那条退场保活 90ms
+    expect(toasts()).toHaveLength(2)
+    expect(unexpectedCard(), '卡不让位').not.toBeNull()
+    expect(hintToast(), '三者同在：提示第一个让').toBeNull()
+  })
+
+  it('仲裁：低于「刚为编辑加入」——加入说明 + 状态已占满两条时，意外卡让位；状态走后才出现', () => {
+    useWorkspaceStore.setState({ addedForEdit: 'p1', activePanelId: 'p1', addedForEditDepth: 0 })
+    say('正在构建')
+    showCard()
+    expect(container.querySelector('[data-fast-edit-added-note]')).not.toBeNull()
+    expect(unexpectedCard(), '加入说明 + 状态 = 两条，意外卡让位').toBeNull()
+    act(() => useUiStore.getState().setStatus(null))
+    tick(200)
+    expect(unexpectedCard()).not.toBeNull()
+  })
+
+  it('最新的一条最靠近底边：卡出现在已有状态之后 → 排在状态后面', () => {
+    say('正在构建')
+    showCard()
+    const statusEl = container.querySelector<HTMLElement>('[data-status-tone]')!
+    expect(Number(unexpectedCard()!.style.order)).toBeGreaterThan(Number(statusEl.style.order))
   })
 })

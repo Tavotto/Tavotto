@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { installConsoleCapture } from './diagnostics/detail'
+import { installUnexpectedErrorCapture } from './lib/unexpectedErrors'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { IconProvider } from './components/ui/Icon'
 import { bootstrapDesktopSession, dragRegionProps, setDesktopMenuLocale } from './lib/desktop'
@@ -14,6 +15,8 @@ import './index.css'
 // 根本走不到 React，它也得有翻译。
 // 「发送问题反馈」的 console 环（ADR 0118 修订）：越早装越好，启动期的报错也要进环。只写内存。
 installConsoleCapture()
+// 意外错误卡的来源（订阅上面那一份 window 监听 + 引擎 500 出口）；卡片只在「发送问题反馈」开着时才会出现
+installUnexpectedErrorCapture()
 initI18n()
 document.documentElement.lang = currentLocale()
 
