@@ -790,7 +790,13 @@ class TestExportPathUnchanged:
     def test_report_json_is_identical_between_export_and_send(self, client, world):
         a = self._export(client, "get").read("report.json")
         _prep, z = _prepare(client)
-        assert json.loads(a) == json.loads(z.read("report.json"))
+        b = json.loads(z.read("report.json"))
+        a = json.loads(a)
+        # render 段含进程池的实时会话状态、recent_errors 随日志增长：同一进程里两次采集之间可能变，
+        # 只对拍键集；其余段逐字节相同
+        volatile = {"render", "recent_errors"}
+        assert list(a) == list(b) and list(a["render"]) == list(b["render"])
+        assert {k: (a[k], b[k]) for k in a if k not in volatile and a[k] != b[k]} == {}
 
 
 # ---------------------------------------------------------------------------
