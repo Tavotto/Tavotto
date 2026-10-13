@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import fnmatch
 import hashlib
 import io
 import json
@@ -1105,29 +1106,117 @@ def rel_key(path: Path, root: Path) -> str:
 _rel_key = rel_key  # 旧名（模块内与既有调用方）
 
 
-def _resolve(
-    patterns: set[str], figures_dir: Path, *, glob_disk: bool = True
-) -> tuple[set[str], list[str]]:
-    """模式 → 具体 stem。带 * 的与磁盘产物比对；无匹配进 unresolved。
+# Scoped seam: counting this output listing must not include unrelated watcher/script walks.
+_output_scandir = os.scandir
 
-    `glob_disk=False`：带 * 的**不上磁盘比对**，一律进 unresolved。`rglob` 对整棵项目树无界（含
-    `.venv` / `node_modules`），导入即扫描（T02）不能背这个账；代价是通配的输出名在扫描里不能由磁盘
-    上已有的成图补出 stem（于是归为 `dynamic_names`，仍是绘图候选）。"""
-    stems: set[str] = set()
+
+class _OutputIndex:
+    """One bounded, no-follow output listing shared by host-parsed scripts in a discovery report.
+
+    A partial listing cannot establish all output claims: wildcard patterns stay unresolved while
+    literal output names remain usable. The budget covers directory entries, time and cancellation;
+    existing script pruning keeps virtual environments and tool output out of the search.
+    Target-parser subprocesses use their own bounded listing rather than sharing process memory.
+    """
+
+    def __init__(self, root: Path, budget: scanbudget.Budget | None = None):
+        self.root = root
+        self.budget = budget or scanbudget.Budget()
+        self.names: set[str] | None = None
+        self.reason: str | None = None
+
+    def load(self) -> None:
+        if self.names is not None:
+            return
+        self.names = set()
+        pending = [(self.root, 0)]
+        extensions = {os.path.normcase(ext) for ext in OUT_EXTS}
+        while pending:
+            if reason := self.budget.stop_reason():
+                self.reason = reason
+                return
+            directory, depth = pending.pop()
+            try:
+                # Recheck before opening: a queued directory may have become a link.
+                if directory != self.root and scanbudget.is_redirect(directory.lstat()):
+                    continue
+                with _output_scandir(directory) as entries:
+                    for entry in entries:
+                        if reason := self.budget.stop_reason():
+                            self.reason = reason
+                            return
+                        if not self.budget.charge_entry():
+                            self.reason = self.budget.stopped
+                            return
+                        if entry.name.startswith("."):
+                            continue
+                        metadata = entry.stat(follow_symlinks=False)
+                        if scanbudget.is_redirect(metadata):
+                            continue  # Neither follow project-external targets nor link cycles.
+                        if stat.S_ISDIR(metadata.st_mode):
+                            if entry.name in PRUNE_DIRS:
+                                continue
+                            if depth < self.budget.limits.max_asset_depth:
+                                pending.append((Path(entry.path), depth + 1))
+                            else:
+                                self.reason = scanbudget.ISSUE_DEPTH
+                        elif (
+                            stat.S_ISREG(metadata.st_mode)
+                            and os.path.normcase(Path(entry.name).suffix) in extensions
+                        ):
+                            self.names.add(entry.name)
+            except OSError:
+                self.reason = scanbudget.ISSUE_UNREADABLE_DIR
+
+
+def _resolve(
+    patterns: set[str],
+    figures_dir: Path,
+    *,
+    glob_disk: bool = True,
+    output_index: _OutputIndex | None = None,
+) -> tuple[set[str], list[str], dict[str, str]]:
+    """Resolve output patterns with one bounded listing, retaining incomplete patterns and reasons.
+
+    `glob_disk=False`: wildcard output names stay unresolved without touching disk (T02).
+    A shared `output_index` lets `discover()` list each project directory at most once, regardless
+    of the number of scripts, wildcard patterns or supported output extensions.
+    """
+    stems = {pat for pat in patterns if "*" not in pat}
     unresolved: list[str] = []
-    for pat in sorted(patterns):
-        if "*" not in pat:
-            stems.add(pat)
-            continue
-        if not glob_disk:
-            unresolved.append(pat)
-            continue
-        found = {p.stem for ext in OUT_EXTS for p in figures_dir.rglob(pat + ext)}
+    reasons: dict[str, str] = {}
+    wildcard = sorted(pat for pat in patterns if "*" in pat)
+    if not wildcard:
+        return stems, unresolved, reasons
+    if not glob_disk:
+        return stems, wildcard, reasons
+    index = output_index or _OutputIndex(figures_dir)
+    index.load()
+    found_patterns: dict[str, set[str]] = {}
+    for pat in wildcard:
+        if index.reason:
+            break
+        found: set[str] = set()
+        # Matching a large cached listing also observes time/cancellation without charging the
+        # directory entries twice. Check even when the cached listing is empty.
+        if reason := index.budget.stop_reason():
+            index.reason = reason
+            break
+        for i, name in enumerate(index.names or ()):
+            if i % 64 == 0 and (reason := index.budget.stop_reason()):
+                index.reason = reason
+                break
+            if any(fnmatch.fnmatch(name, pat + ext) for ext in OUT_EXTS):
+                found.add(Path(name).stem)
+        found_patterns[pat] = found
+    if index.reason:
+        return stems, wildcard, dict.fromkeys(wildcard, index.reason)
+    for pat, found in found_patterns.items():
         if found:
             stems |= found
         else:
             unresolved.append(pat)
-    return stems, unresolved
+    return stems, unresolved, reasons
 
 
 def analyze_script(
@@ -1147,6 +1236,7 @@ def inspect_script(
     *,
     target_python: str | None = None,
     glob_disk: bool = True,
+    output_index: _OutputIndex | None = None,
 ) -> dict:
     """单个脚本 → `{"info": 报告条目 | None, "problem": 问题 | None, "parser": …, "entry_candidates": …}`。
 
@@ -1198,7 +1288,9 @@ def inspect_script(
                 }
         return {"info": None, "problem": problem, "parser": None, "entry_candidates": None}
     return {
-        "info": _analyze_tree(tree, path, figures_dir, glob_disk=glob_disk),
+        "info": _analyze_tree(
+            tree, path, figures_dir, glob_disk=glob_disk, output_index=output_index
+        ),
         "problem": None,
         "parser": PARSER_HOST,
         "entry_candidates": entry_candidates_of(tree),
@@ -1206,7 +1298,12 @@ def inspect_script(
 
 
 def _analyze_tree(
-    tree: ast.Module, path: Path, figures_dir: Path, *, glob_disk: bool = True
+    tree: ast.Module,
+    path: Path,
+    figures_dir: Path,
+    *,
+    glob_disk: bool = True,
+    output_index: _OutputIndex | None = None,
 ) -> dict | None:
     """解析好的树 → 报告条目；不是绘图脚本（无入口 / 不存图）返回 None。"""
     entry = _entry_of(tree)
@@ -1226,11 +1323,14 @@ def _analyze_tree(
     an.run(entry)
     if not an.sites:
         return None  # 压根不产图（纯数据/工具模块）
-    stems, unresolved = _resolve(an.patterns, figures_dir, glob_disk=glob_disk)
+    stems, unresolved, reasons = _resolve(
+        an.patterns, figures_dir, glob_disk=glob_disk, output_index=output_index
+    )
     return {
         "entry": entry,
         "stems": sorted(stems),
         "unresolved": unresolved,
+        **({"unresolved_reasons": reasons} if reasons else {}),
         # 在存图却一个 stem 都定位不到：文件名完全来自运行期数据。
         # 这种脚本进不了草稿，必须报出来（可用「试运行探测」登记）。
         "dynamic_names": not stems,
@@ -1263,8 +1363,11 @@ def discover(figures_dir: str | Path, *, target_python: str | None = None) -> di
     figures_dir = Path(figures_dir)
     scripts: dict[str, dict] = {}
     problems: dict[str, dict] = {}
+    output_index = _OutputIndex(figures_dir)
     for p in iter_scripts(figures_dir):
-        seen = inspect_script(p, figures_dir, target_python=target_python)
+        seen = inspect_script(
+            p, figures_dir, target_python=target_python, output_index=output_index
+        )
         rel = _rel_key(p, figures_dir)
         if seen["info"] is not None:
             scripts[rel] = seen["info"]
@@ -1434,7 +1537,9 @@ def _print_report(rep: dict) -> None:
     for script, info in sorted(rep["scripts"].items()):
         print(f"  {script}  [{info['entry']}]  {len(info['stems'])} stems")
         for pat in info["unresolved"]:
-            print(f"    ? 无法与磁盘产物对上: {pat}*")
+            reason = info.get("unresolved_reasons", {}).get(pat)
+            suffix = f" ({reason})" if reason else ""
+            print(f"    ? 无法与磁盘产物对上: {pat}{suffix}")
         if info.get("dynamic_names"):
             print(
                 f"    ! {info['save_calls']} 处 save/savefig 的文件名来自运行期数据，"

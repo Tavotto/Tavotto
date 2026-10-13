@@ -18,6 +18,13 @@
   与常量 for 循环展开。递归扫子目录（剪掉 .venv/__pycache__/node_modules…）。
   手动生成/合并：`python -m tavotto.engine.discover <figures_dir> --write`
   （现有条目永远优先，冲突 stem 只报告不裁决）。
+  * **通配输出名的磁盘比对有界（#684）**：每份 `discover()` 报告共用一份惰性输出索引，
+    每个目录只列一次，宿主解析的所有脚本 / 模式 / 输出格式共用（目标解析器子进程各自受限）；
+    复用 `scanbudget` 的目录项、墙钟与取消预算，
+    剪掉 `PRUNE_DIRS` 与隐藏项、不跟随链接 / Windows 路径替身，层级沿用素材预算。
+    预算耗尽 / 读不全时所有通配模式留在 `unresolved`，`unresolved_reasons` 给出闭集原因，
+    不把局部命中当完整认领；字面量 stem 照常可用。T02 的 `glob_disk=False` 仍然不列磁盘。
+    看护 `tests/test_discover_output_budget.py`（真目录 / 真链接、预算 / 取消 / 超时与报告原因）。
   * **读不动 / 解析不了与「确认非绘图」分开（U03，ADR 0057 §五）**：`read_source` 按 PEP 263
     声明 / BOM 解码（`tokenize.detect_encoding`），`inspect_script` 回 `{info, problem, parser,
     entry_candidates}`，problem ∈ {io_error, decode_error, syntax_error}；报告多 `problems` 表，
