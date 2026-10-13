@@ -266,3 +266,46 @@ def test_a_warm_safe_worker_is_never_reused_for_a_native_plan(tmp_path):
     )
     assert safe_plan.execution == execspec.PROFILE_SAFE
     assert preparation.PreparationService._reusable(warm, safe_plan) is not None
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254738580：冻结的 spec 里不留调用方还拿得到的可变对象
+# ---------------------------------------------------------------------------
+def test_spec_copies_env_so_later_caller_mutation_cannot_change_it_or_the_receipt():
+    env = {"A": "1"}
+    argv = ["--x"]
+    spec = desktop(env=env, argv=tuple(argv))
+    before = (spec.env_keys if hasattr(spec, "env_keys") else None, execspec.launch_context(spec))
+    env["LEAK"] = "2"
+    env["A"] = "changed"
+    assert dict(spec.env) == {"A": "1"}, "调用方事后改 env，冻结的 spec 跟着变了"
+    assert execspec.launch_context(spec)["env_keys"] == ["A"]
+    assert before[1] == execspec.launch_context(spec)
+    with pytest.raises(TypeError):
+        spec.env["B"] = "x"  # spec 自己的映射也不可原地改
+    with pytest.raises(TypeError):
+        spec.env.update(B="x")
+    # 仍然是 dict 的行为：序列化 / 展开 / 往返相等 / deepcopy 都照常
+    import copy
+    import json
+
+    assert json.dumps(spec.env) == '{"A": "1"}' and {**spec.env} == {"A": "1"}
+    assert copy.deepcopy(spec) == spec
+    assert execspec.spec_from_payload(spec.to_payload()) == spec
+
+
+def test_spec_holds_no_mutable_container_the_caller_can_still_reach():
+    rule = {"kind": "prefix", "from": "", "to": os.path.abspath("/data")}
+    rules = [rule]
+    safe = execspec.safe_spec(
+        "fig.py", ROOT, "__main__", interpreter=PY, sandbox="/sb", input_remap=rules
+    )
+    rule["to"] = os.path.abspath("/other")
+    assert safe.input_remap[0]["to"] == os.path.abspath("/data")
+    with pytest.raises(TypeError):
+        safe.input_remap[0]["to"] = "x"
+    assert isinstance(desktop().argv, tuple) and all(isinstance(a, str) for a in desktop().argv)
+    caller_argv = ["--a"]
+    assert desktop(argv=caller_argv).argv == ("--a",)  # 构造函数复制成元组：事后改列表无关
+    caller_argv.append("--b")
+    assert desktop(argv=tuple(caller_argv)).argv == ("--a", "--b")

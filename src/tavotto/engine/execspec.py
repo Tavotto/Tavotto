@@ -168,6 +168,25 @@ STABLE_FIELDS = (
 _PROCESS_KEY = secrets.token_bytes(32)
 
 
+class FrozenDict(dict):
+    """构造后不可改的 dict（spec 里的 `env` / 改指规则用）。
+
+    冻结的 dataclass 只冻结字段绑定，不冻结字段指向的对象：调用方保留着传进来的 dict，事后一改，
+    spec 与据它算出的回执 / `env_keys` 就悄悄跟着变。所以 spec 构造时**复制**并换成它。仍是 `dict`
+    子类（`dict(x)` / `{**x}` / `json.dumps` / `==` 照常），只是所有原地修改都抛 `TypeError`。"""
+
+    __slots__ = ()
+
+    def _ro(self, *a, **k):
+        raise TypeError("ExecutionSpec 里的映射是只读的（构造时已复制）")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _ro
+    __ior__ = _ro
+
+    def __reduce__(self):  # copy / pickle 经构造函数重建，不走被禁掉的 __setitem__
+        return (FrozenDict, (dict(self),))
+
+
 @dataclasses.dataclass(frozen=True)
 class RunSelection:
     """一次执行选中的运行配置：本机引用 + 它冻结的 argv。池 / worker / 一次性重放都吃这一个对象。"""
@@ -323,6 +342,7 @@ class ExecutionSpec:
             raise ValueError("env 必须是 None 或 str→str 的 dict（只放增量）")
         if not isinstance(self.passthrough_savefig, bool):
             raise ValueError("passthrough_savefig 必须是布尔值")
+
         if not isinstance(self.raw_target, str):
             raise ValueError("raw_target 必须是字符串")
         if self.cwd_mode not in CWD_MODES:
@@ -344,6 +364,12 @@ class ExecutionSpec:
                 raise ValueError("native profile 的 savefig 必须透传（ADR 0014 §2）")
             if not self.raw_target:
                 raise ValueError("native profile 必须带 raw_target（sys.argv[0] 的对拍口径）")
+
+        # 校验过之后复制并冻结：spec 里不留调用方还拿得到的可变对象（argv 已是 str 元组）
+        if self.env is not None:
+            object.__setattr__(self, "env", FrozenDict(self.env))
+        if self.input_remap:
+            object.__setattr__(self, "input_remap", tuple(FrozenDict(r) for r in self.input_remap))
 
     # ---------------- 序列化 ----------------
     def to_payload(self) -> dict:
