@@ -466,15 +466,18 @@ function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; titl
     }
     shownFor.current = issue
   }, [issue])
+  // 关掉的路有两条（Esc / 点外面走 onOpenChange，说明块里的出口走 close），都要清「自动展开」：
+  // 否则手动再点开时仍当成自动展开、不把焦点搬进说明块（Codex #947）
+  const changeOpen = (v: boolean) => {
+    setOpen(v)
+    if (!v) setAutoOpened(false)
+  }
   const tone = ISSUE_TONE[issue]
   const Icon = ISSUE_ICON[issue]
   return (
     <Popover
       open={open}
-      onOpenChange={(v) => {
-        setOpen(v)
-        if (!v) setAutoOpened(false)
-      }}
+      onOpenChange={changeOpen}
       keepFocus={autoOpened}
       width={320}
       align="start"
@@ -500,7 +503,7 @@ function IssuePill({ issue, text, title }: { issue: DocIssue; text: string; titl
       }
     >
       <div data-doc-status-popover={issue} className="flex flex-col gap-2 p-1">
-        <IssueBody issue={issue} close={() => setOpen(false)} />
+        <IssueBody issue={issue} close={() => changeOpen(false)} />
       </div>
     </Popover>
   )

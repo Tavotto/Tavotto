@@ -245,6 +245,25 @@ describe('文档锚点：会丢编辑的两件自动展开一次', () => {
     expect(popover('save_error')).not.toBeNull()
   })
 
+  it('自动展开后经说明块里的按钮关掉，再手动点开：照常把焦点搬进说明块', async () => {
+    await act(async () =>
+      useDocumentStore.setState({
+        saveState: 'conflict',
+        saveIssue: { kind: 'stale', docId: useDocumentStore.getState().documentId } as never,
+      }),
+    )
+    // 「另存为…」：关掉说明块、打开另存对话框；用户随后取消对话框，冲突还在
+    await act(async () => popover('conflict')!.querySelector<HTMLButtonElement>('[data-doc-conflict-action="save-as"]')!.click())
+    await act(async () => useUiStore.getState().setLayoutOpen(false))
+    expect(useDocumentStore.getState().saveState).toBe('conflict')
+    expect(popover('conflict'), '按钮已把说明块关掉').toBeNull()
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-doc-status-pill="conflict"]')!.click())
+    const pop = popover('conflict')
+    expect(pop).not.toBeNull()
+    // Codex #947：按钮关闭不走 onOpenChange 时，「自动展开」标记残留，手动打开也被当成不搬焦点
+    expect(pop!.contains(document.activeElement), '手动打开时焦点进说明块').toBe(true)
+  })
+
   it('不打断编辑的事（上次的排版没打开）：只有胶囊，不自动展开', async () => {
     await act(async () => {
       useDocumentStore.setState({ saveState: 'saved', saveIssue: null })
