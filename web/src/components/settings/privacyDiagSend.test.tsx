@@ -1,5 +1,5 @@
 /**
- * 隐私摘要里「发送问题反馈」那一句（ADR 0118）：功能默认关闭，关着就不多说；维护者打开后才补上
+ * 隐私摘要里「发送问题反馈」那一句（ADR 0118）：能力说明没给 / 关着就不多说；引擎说开着才补上
  * 「逐次确认后才上传」。读的是 `diagSendStore` 的镜像——渲染这一页本身不联网（见 privacyNetworkCopy.test）。
  */
 import { act } from 'react'
@@ -51,7 +51,7 @@ async function summary(locale: 'en-US' | 'zh-CN') {
   return host.querySelector('[data-privacy-network-summary]')?.textContent ?? ''
 }
 
-it.each(['en-US', 'zh-CN'] as const)('默认关闭：摘要不提发送问题反馈（%s）', async (locale) => {
+it.each(['en-US', 'zh-CN'] as const)('能力说明缺省：摘要不提发送问题反馈（%s）', async (locale) => {
   const text = await summary(locale)
   expect(text).not.toContain(t('settings.about.privacySend', { ns: 'dialogs' }))
 })

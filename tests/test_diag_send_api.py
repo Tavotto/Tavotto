@@ -31,6 +31,7 @@ def client(monkeypatch):
         monkeypatch.setenv(name, "http://127.0.0.1:9")
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    # conftest 整个进程设了 TAVOTTO_NO_DIAG_UPLOAD=1；摘掉它才能测默认态（生产探针见 conftest）
     for name in (
         diagsend.ENV_ENABLE,
         diagsend.ENV_HARD_OFF,
@@ -57,7 +58,6 @@ def on(client, pki_files, monkeypatch):
             "client_context",
             lambda: ssl.create_default_context(cafile=str(pki_files["ca"])),
         )
-        monkeypatch.setenv(diagsend.ENV_ENABLE, "1")
         monkeypatch.setenv(diagsend.ENV_DEV_LOOPBACK, "1")
         monkeypatch.setenv(diagsend.ENV_ENDPOINT, srv.base)
         yield srv
@@ -78,8 +78,18 @@ def _prepare(client, state_text=CANARY):
     return client.post("/api/diagnostics/send/prepare", json=body)
 
 
-class TestDisabledByDefault:
-    def test_capability_says_disabled_and_everything_else_is_404(self, client):
+class TestDefaultOnAndOffSwitches:
+    def test_default_is_on_and_the_capability_has_no_address(self, client):
+        cap = client.get("/api/diagnostics/send").get_json()
+        assert cap["enabled"] is True and "tavotto.cn" not in str(cap)
+
+    @pytest.mark.parametrize(
+        ("name", "value"), [(diagsend.ENV_HARD_OFF, "1"), (diagsend.ENV_ENABLE, "0")]
+    )
+    def test_off_switch_says_disabled_and_everything_else_is_404(
+        self, client, monkeypatch, name, value
+    ):
+        monkeypatch.setenv(name, value)
         assert client.get("/api/diagnostics/send").get_json() == {"enabled": False}
         r = _prepare(client)
         assert r.status_code == 404 and r.get_json()["code"] == "diag_send_disabled"

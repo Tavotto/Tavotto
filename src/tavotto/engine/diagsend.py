@@ -10,9 +10,11 @@
 * **本机引擎进程直传**。WebView 不碰网络：上传由本模块在后台线程里做——`POST /v1/reports/init` → 按服务端给的
   `upload{url,fields,file_field}` 把 ZIP 以 multipart 流式 POST 给 COS（不经 Tavotto VPS）→ `POST /v1/reports/complete`。
   契约出处：`Tavotto/infra` 仓库 diagnostics-api 文档目录里的 openapi.json（v1.0.0）与同目录说明文档的接入要求一节。
-* **默认关闭**。`enabled()` 要同时满足：`TAVOTTO_DIAG_UPLOAD=1`、没有硬开关 `TAVOTTO_NO_DIAG_UPLOAD=1`、
-  `TAVOTTO_DIAG_ENDPOINT` 指向**白名单主机**。生产主机白名单 `ENDPOINT_HOSTS` 在 G-DIAG（真实 COS C1–C16 与
-  运维门禁）通过、维护者批准之前是**空集**——发行版里没有任何办法打开它，界面也就不会出现入口。
+* **发行版默认开启入口，但每次发送仍要用户确认**（2026-10-13，G-DIAG 开放，ADR 0118 修订）。`enabled()` 的判据：
+  没有硬开关 `TAVOTTO_NO_DIAG_UPLOAD=1`、没有显式关 `TAVOTTO_DIAG_UPLOAD=0`、目的地合规。目的地 = 未设
+  `TAVOTTO_DIAG_ENDPOINT` 时的内置生产端点 `PRODUCTION_ENDPOINT`；设了就**必须**过白名单 `ENDPOINT_HOSTS`
+  （`{tavotto.cn}`）或回环开发模式，不合规就关闭——**不回退到内置端点**，误配不会悄悄发到生产。
+  `TAVOTTO_DIAG_UPLOAD` 不再是开启条件（`=1` 无效果，只有 `=0` 起作用）。
   开发/验收用本机回环：另设 `TAVOTTO_DIAG_DEV_LOOPBACK=1` 才放行 `127.0.0.1`（仍是 HTTPS，证书照样校验）。
 * **目的地由代码钉死，不由响应决定**（SSRF）：端点主机 ∈ 白名单；`upload.url` 必须是 `https://<桶>.cos.<区域>.myqcloud.com/`
   （回环开发模式下才允许本端点的 `/v1/local-upload`），不许带用户信息 / 查询串 / 端口 / IP 字面量；**不跟随任何重定向**
@@ -58,8 +60,10 @@ ENV_HARD_OFF = "TAVOTTO_NO_DIAG_UPLOAD"
 ENV_ENDPOINT = "TAVOTTO_DIAG_ENDPOINT"
 ENV_DEV_LOOPBACK = "TAVOTTO_DIAG_DEV_LOOPBACK"
 
-#: 生产端点的主机白名单。**空集 = 发行版里打不开**；G-DIAG 通过、维护者批准后由专门的 PR 填上真实主机名。
-ENDPOINT_HOSTS: frozenset[str] = frozenset()
+#: 生产端点的主机白名单（G-DIAG 开放，2026-10-13）。`TAVOTTO_DIAG_ENDPOINT` 设了就必须落在这里（或回环开发模式）。
+ENDPOINT_HOSTS: frozenset[str] = frozenset({"tavotto.cn"})
+#: 内置生产端点：未设 `TAVOTTO_DIAG_ENDPOINT` 时用它。主机必须 ∈ `ENDPOINT_HOSTS`（`test_diag_send.py` 钉）。
+PRODUCTION_ENDPOINT = "https://tavotto.cn"
 #: 开发回环模式放行的主机（只有这一个字面量；`localhost` 会解析到 IPv6，证书也没签它）。
 LOOPBACK_HOST = "127.0.0.1"
 LOCAL_UPLOAD_PATH = "/v1/local-upload"
@@ -233,10 +237,13 @@ def parse_endpoint(raw: str, *, dev_loopback: bool) -> Target | None:
 
 
 def resolve_target() -> Target | None:
-    """此刻允许上传的目的地；任何一个条件不满足都是 None（= 功能关闭）。"""
-    if _flag(ENV_HARD_OFF) or not _flag(ENV_ENABLE):
+    """此刻允许上传的目的地；None = 功能关闭（入口不出现）。判据见模块头「发行版默认开启入口」一条。"""
+    if _flag(ENV_HARD_OFF) or os.environ.get(ENV_ENABLE, "").strip() == "0":
         return None
-    return parse_endpoint(os.environ.get(ENV_ENDPOINT, ""), dev_loopback=_flag(ENV_DEV_LOOPBACK))
+    raw = os.environ.get(ENV_ENDPOINT)
+    if raw is None or not raw.strip():
+        raw = PRODUCTION_ENDPOINT
+    return parse_endpoint(raw, dev_loopback=_flag(ENV_DEV_LOOPBACK))
 
 
 def enabled() -> bool:

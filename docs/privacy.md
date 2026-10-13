@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-12
+Last updated: 2026-10-13
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -12,9 +12,8 @@ export destinations are used when the user chooses them.
 Network activity includes update checks and user-approved update downloads,
 package lookups and downloads for environment preparation or dependency
 installation, the optional AI assistant the user invokes, — only after
-an explicit opt-in — usage statistics, and — only where the maintainers have
-enabled it, and only when the user confirms each send — a redacted diagnostics
-bundle. The sections below distinguish these operations; local rendering does
+an explicit opt-in — usage statistics, and — only when the user confirms each
+send — a redacted diagnostics bundle. The sections below distinguish these operations; local rendering does
 not mean that every feature is offline.
 
 ## Data Tavotto does not upload
@@ -211,10 +210,11 @@ Whether telemetry is on or off is included — that is useful for troubleshootin
 and is not sensitive. Redaction is automatic and is not a guarantee that nothing
 identifying remains; inspect the file before sharing it publicly.
 
-**Send problem report (off by default).** Where the maintainers have enabled it,
-the same page offers *Send problem report*, which uploads a diagnostics bundle to
-a service operated by the Tavotto maintainers in mainland China. In this release
-the option is disabled and no screen offers it. When it is enabled:
+**Send problem report (offered by default, sends only when you confirm).** The
+same page, and the failure cards that suggest it, offer *Send problem report*,
+which uploads a diagnostics bundle to a service operated by the Tavotto
+maintainers (`tavotto.cn`) and stores it on Tencent Cloud COS (Shanghai).
+Offering the option uploads nothing; sending does:
 
 * **Only on your confirmation, every time.** Nothing is uploaded until you open the
   dialog, read what will be sent, and press *Send*. The choice is not remembered:
@@ -240,6 +240,14 @@ the option is disabled and no screen offers it. When it is enabled:
   receiving service keeps no access log and uses the address only, transiently and
   salted-and-hashed, to rate-limit requests; the storage provider's own handling
   follows its terms.
+* **How to turn it off.** Set the environment variable `TAVOTTO_NO_DIAG_UPLOAD=1`
+  (or `TAVOTTO_DIAG_UPLOAD=0`) for the Tavotto process; the option then disappears
+  from every screen and the local endpoints that serve it do not exist. Exporting
+  a bundle to a file stays available. The destination is built in; a misconfigured
+  `TAVOTTO_DIAG_ENDPOINT` turns the feature off rather than falling back to it.
+* **Rate limits.** The receiving service limits each address to a few reports per
+  hour and caps the total accepted per day; a send that hits a limit fails with a
+  message and can be retried later.
 * **Remote instances.** If you are connected to a remote Tavotto instance, the
   engine that builds and uploads the bundle is the one on the remote machine, so
   the upload leaves that machine, not yours (the dialog on your screen only
@@ -252,9 +260,9 @@ the option is disabled and no screen offers it. When it is enabled:
   and then deletes it; the retention period is a server setting and this document
   is updated if it changes. Reports are not publicly readable; only maintainers
   with administrative access to the service can read or download them.
-* **Deletion.** To have a report removed earlier, open an issue on the public issue
-  tracker quoting the report ID (without attaching anything else) and a
-  maintainer will delete it.
+* **Deletion.** Reports are deleted automatically after 30 days. To have a report
+  removed earlier, open an issue on the public issue tracker quoting the report ID
+  (without attaching anything else) and a maintainer will delete it.
 * **Failure.** If you are offline, the service is unavailable or the bundle is
   larger than the limit (10 MiB by default), nothing is cut down or retried behind
   your back: you can export the bundle and keep or send it yourself.

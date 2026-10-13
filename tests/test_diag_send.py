@@ -22,6 +22,7 @@ import re
 import ssl
 import threading
 import time
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -57,6 +58,8 @@ def _isolated(monkeypatch):
     monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
     monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+    # conftest 给整个测试进程设了 TAVOTTO_NO_DIAG_UPLOAD=1（默认开启后不许误连生产）；这里摘掉它，
+    # 让「没设任何开关」的默认态可测。真连生产由 conftest 的会话级探针拦下并判红。
     for name in (
         diagsend.ENV_ENABLE,
         diagsend.ENV_HARD_OFF,
@@ -88,7 +91,6 @@ def on(srv, pki_files, monkeypatch):
         return ssl.create_default_context(cafile=str(pki_files["ca"]))
 
     monkeypatch.setattr(tlstrust, "client_context", _ctx)
-    monkeypatch.setenv(diagsend.ENV_ENABLE, "1")
     monkeypatch.setenv(diagsend.ENV_DEV_LOOPBACK, "1")
     monkeypatch.setenv(diagsend.ENV_ENDPOINT, srv.base)
     return srv
@@ -130,18 +132,67 @@ def init_bodies(srv) -> list[dict]:
 
 # =========================================================================== 开关
 class TestFeatureFlag:
-    def test_off_by_default_and_nothing_to_enable_in_a_release(self, monkeypatch):
-        """没有任何环境变量：关。生产白名单是空集：即使 `TAVOTTO_DIAG_UPLOAD=1` 指向任何 https 主机也关
-        （G-DIAG 通过前，发行版里没有办法打开）。"""
-        assert diagsend.ENDPOINT_HOSTS == frozenset()
-        assert diagsend.capability() == {"enabled": False}
-        monkeypatch.setenv(diagsend.ENV_ENABLE, "1")
-        monkeypatch.setenv(diagsend.ENV_ENDPOINT, "https://diag.example.cn")
-        assert not diagsend.enabled()
-        monkeypatch.setenv(diagsend.ENV_ENDPOINT, "https://127.0.0.1:8443")
-        assert not diagsend.enabled(), "回环要另设 DEV_LOOPBACK 才放行"
+    def test_on_by_default_and_targets_the_builtin_production_endpoint(self):
+        """没有任何环境变量：开，目的地 = 内置生产端点（tavotto.cn:443）。每次发送仍要确认（`TestNoRequestWithoutConfirmation`）。"""
+        assert diagsend.ENDPOINT_HOSTS == frozenset({"tavotto.cn"})
+        t = diagsend.resolve_target()
+        assert t is not None and (t.host, t.port, t.loopback) == ("tavotto.cn", 443, False)
+        assert diagsend.enabled()
+        cap = diagsend.capability()
+        assert cap["enabled"] is True and "tavotto.cn" not in json.dumps(cap)
 
-    def test_disabled_means_no_prepare_and_no_start(self):
+    def test_production_endpoint_host_is_whitelisted(self):
+        """内置端点自己必须过自己的白名单——否则默认开启是空话（或哪天改了一边忘了另一边）。"""
+        host = urllib.parse.urlsplit(diagsend.PRODUCTION_ENDPOINT).hostname
+        assert host in diagsend.ENDPOINT_HOSTS
+        assert diagsend.parse_endpoint(diagsend.PRODUCTION_ENDPOINT, dev_loopback=False) is not None
+
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [(diagsend.ENV_HARD_OFF, "1"), (diagsend.ENV_ENABLE, "0")],
+    )
+    def test_the_two_off_switches(self, monkeypatch, name, value):
+        monkeypatch.setenv(name, value)
+        assert diagsend.resolve_target() is None
+        assert not diagsend.enabled()
+        assert diagsend.capability() == {"enabled": False}
+
+    def test_diag_upload_1_is_no_longer_needed_and_adds_nothing(self, monkeypatch):
+        before = diagsend.resolve_target()
+        monkeypatch.setenv(diagsend.ENV_ENABLE, "1")
+        assert diagsend.resolve_target() == before and before is not None
+
+    def test_off_switch_beats_everything_else(self, monkeypatch):
+        monkeypatch.setenv(diagsend.ENV_HARD_OFF, "1")
+        monkeypatch.setenv(diagsend.ENV_ENABLE, "1")
+        monkeypatch.setenv(diagsend.ENV_ENDPOINT, "https://tavotto.cn")
+        assert not diagsend.enabled()
+
+    @pytest.mark.parametrize(
+        "raw", ["https://diag.example.cn", "https://evil.com", "http://tavotto.cn"]
+    )
+    def test_misconfigured_endpoint_closes_and_never_falls_back_to_production(
+        self, monkeypatch, raw
+    ):
+        monkeypatch.setenv(diagsend.ENV_ENDPOINT, raw)
+        assert diagsend.resolve_target() is None
+        assert not diagsend.enabled()
+
+    def test_loopback_endpoint_needs_the_dev_flag(self, monkeypatch):
+        monkeypatch.setenv(diagsend.ENV_ENDPOINT, "https://127.0.0.1:8443")
+        assert not diagsend.enabled(), "回环要另设 DEV_LOOPBACK 才放行，且不回退到生产"
+        monkeypatch.setenv(diagsend.ENV_DEV_LOOPBACK, "1")
+        t = diagsend.resolve_target()
+        assert t is not None and (t.host, t.port, t.loopback) == ("127.0.0.1", 8443, True)
+
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_blank_endpoint_means_the_builtin_one(self, monkeypatch, blank):
+        monkeypatch.setenv(diagsend.ENV_ENDPOINT, blank)
+        t = diagsend.resolve_target()
+        assert t is not None and t.host == "tavotto.cn"
+
+    def test_disabled_means_no_prepare_and_no_start(self, monkeypatch):
+        monkeypatch.setenv(diagsend.ENV_HARD_OFF, "1")
         with pytest.raises(diagsend.SendError) as e:
             diagsend.prepare(make_bundle())
         assert e.value.code == "send_disabled" and e.value.status == 404
@@ -571,7 +622,6 @@ class TestNetwork:
             "client_context",
             lambda: ssl.create_default_context(cafile=str(pki_files["ca"])),
         )
-        monkeypatch.setenv(diagsend.ENV_ENABLE, "1")
         monkeypatch.setenv(diagsend.ENV_DEV_LOOPBACK, "1")
         monkeypatch.setenv(diagsend.ENV_ENDPOINT, "https://127.0.0.1:1")  # 没人听
         prep = send()
@@ -582,7 +632,6 @@ class TestNetwork:
         wait_for(prep["id"], {"done"})
 
     def test_untrusted_certificate_is_tls_and_nothing_is_sent(self, srv, monkeypatch):
-        monkeypatch.setenv(diagsend.ENV_ENABLE, "1")
         monkeypatch.setenv(diagsend.ENV_DEV_LOOPBACK, "1")
         monkeypatch.setenv(diagsend.ENV_ENDPOINT, srv.base)
         # 不注入测试根：走产品默认的 `tlstrust.client_context`
