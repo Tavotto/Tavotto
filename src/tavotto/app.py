@@ -7493,12 +7493,12 @@ def _session_target(ctx: "ProjectCtx", body: dict):
 
 
 def _reusable_success_run(ctx: "ProjectCtx", script: str):
-    """上次成功的运行配置能否带回来（`launchctx.reusable_run`）；解释器此刻的决定只 stat、不体检。"""
+    """上次成功的运行配置能否带回来（`launchctx.reusable_run`）。比较的是**此刻解析器实际会选中的**解释器
+    （全局覆盖 / 设置 / 项目记住 / 默认链都算），不只项目层——任何一层变了结果就变，旧配置不沿用。"""
     try:
-        resolved = engine_pool.peek_project_resolution(ctx.path)
+        python, source = engine_pool.resolve_worker_python(ctx.path, script=script, discover=False)
     except engine_pool.WorkerError:
-        return None  # 用户为项目挑的环境失效：不复用，让正常流程去报
-    python, source = resolved if resolved is not None else (None, None)
+        return None  # 此刻没有可用解释器（或用户挑的环境失效）：不复用，让正常流程去报
     return engine_launchctx.reusable_run(ctx.path, script, python=python, python_source=source)
 
 

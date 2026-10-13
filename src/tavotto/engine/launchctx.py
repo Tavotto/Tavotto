@@ -93,15 +93,21 @@ def _sha1(path: Path) -> str:
     return h.hexdigest()
 
 
-def _basis_of(rcpt) -> dict[str, str | None]:
-    """回执自报里的 helper 依据：本地模块 + 观察到的数据文件 → {项目相对路径: sha256|None}。"""
+def _basis_of(rcpt) -> dict[str, str | None] | None:
+    """回执自报里的 helper 依据：本地模块 + 观察到的数据文件 → {项目相对路径: sha256|None}。
+
+    依据不完整（观察器已截断，或条数超过 `MAX_BASIS`）→ None：存不全的依据不能冒充充分证据，调用方不记录、不复用。"""
     out: dict[str, str | None] = {}
     inputs = rcpt.inputs or {}
+    if inputs.get("truncated"):
+        return None
     for m in inputs.get("local_modules") or []:
         if isinstance(m, dict) and isinstance(m.get("path"), str):
             out[m["path"]] = m.get("sha256") if isinstance(m.get("sha256"), str) else None
     out.update(rcpt.observed_files())
-    return dict(sorted(out.items())[:MAX_BASIS])
+    if len(out) > MAX_BASIS:
+        return None
+    return dict(sorted(out.items()))
 
 
 def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> dict | None:
@@ -119,6 +125,9 @@ def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> di
     if lau_ref.get("kind") == launcher.KIND_CONDA and isinstance(lau_ref.get("prefix"), str):
         env_state = launcher.prefix_state(lau_ref["prefix"])
     binding = rcpt.binding if isinstance(rcpt.binding, dict) else {}
+    basis = _basis_of(rcpt)
+    if basis is None:
+        return None
     return {
         "version": RECORD_VERSION,
         "recorded_at": time.time(),
@@ -135,7 +144,7 @@ def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> di
         "cwd_mode": spec_cwd,
         "run_config": run.config_id if run is not None else None,
         "run_sensitive": bool(run.sensitive) if run is not None else False,
-        "source": {"script_sha1": rcpt.source_revision, "basis": _basis_of(rcpt)},
+        "source": {"script_sha1": rcpt.source_revision, "basis": basis},
         "binding_revision": binding.get("revision") or "",
     }
 

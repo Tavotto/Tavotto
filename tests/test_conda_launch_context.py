@@ -735,3 +735,91 @@ def test_a_planted_conda_exe_in_the_record_is_never_executed(tmp_path, monkeypat
         )
         == launchctx.REASON_LAUNCHER
     )
+
+
+@posix_only
+def test_kill_switch_beats_a_recorded_conda_launcher(tmp_path, monkeypatch):
+    """`TAVOTTO_CONDA_ACTIVATION=0` 对沿用的记录同样生效：即使记录说上次是 Conda 启动也裸起。"""
+    import hashlib
+
+    prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    py = str(prefix / "bin" / "python")
+    rcpt = _Rcpt(
+        py,
+        hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest(),
+        [],
+        launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix)).public(),
+        databinding.binding_for(proj / "fig.py", proj, "sandbox")["revision"],
+    )
+    assert launchctx.record_success(proj, "fig.py", rcpt) is True
+    args = (proj, "fig.py", py, "env_override")
+    assert launchctx.launcher_for(*args, bundled="bundled") is not None  # 正对照
+    monkeypatch.setenv(launcher.ENV_DISABLE, "0")
+    assert launchctx.launcher_for(*args, bundled="bundled") is None
+
+
+@posix_only
+def test_incomplete_basis_is_not_recorded_so_it_can_never_authorize_reuse(tmp_path, monkeypatch):
+    """依据超过上限（或观察器截断）时存不全：整条记录不写，而不是截断后冒充充分证据。"""
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    sha = "0" * 40
+
+    def mods(n):
+        return [{"name": f"m{i}", "path": f"m{i}.py", "sha256": "a" * 64} for i in range(n)]
+
+    ok = _Rcpt(sys.executable, sha, mods(launchctx.MAX_BASIS), None)
+    assert launchctx.build_record(proj, "fig.py", ok) is not None  # 恰好在上限：存得下
+    over = _Rcpt(sys.executable, sha, mods(launchctx.MAX_BASIS + 1), None)
+    assert launchctx.build_record(proj, "fig.py", over) is None
+    assert launchctx.record_success(proj, "fig.py", over) is False
+    assert runconfig.launch_record(proj, "fig.py") is None
+
+    class Truncated(_Rcpt):
+        @property
+        def inputs(self):
+            return {"local_modules": [], "files": [], "truncated": True}
+
+    assert launchctx.build_record(proj, "fig.py", Truncated(sys.executable, sha, [], None)) is None
+
+
+@needs_worker
+def test_changing_the_global_interpreter_override_stops_reusing_old_argv(
+    conda_world, tmp_path, monkeypatch
+):
+    """解释器来自全局覆盖（项目层没有决定）：覆盖换成另一个环境后，旧 argv 不再沿用。"""
+    import shutil
+
+    proj, prefix, log, counter = conda_world
+    other = prefix.parent / "e2"
+    shutil.copytree(prefix, other, symlinks=True)
+    work = tmp_path / "work"
+
+    def env_for(p):
+        return {
+            "TAVOTTO_USER_ENV_DISCOVERY": "0",
+            "PYTHONPATH": str(ROOT / "src"),
+            "TAVOTTO_WORKER_PYTHON": str(p / "bin" / "python"),
+            "FAKE_CONDA_LOG": str(log),
+            "TAVOTTO_WORKERD": "0",
+        }
+
+    with fa.running_app(proj, work, env_overrides=env_for(prefix)) as app:
+        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
+            "completed"
+        )
+    with fa.running_app(
+        proj, work, env_overrides=env_for(prefix)
+    ) as app:  # 正对照：同一覆盖 = 沿用
+        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert [r["argv"] for r in runs(counter)][-1] == ["--scale", "2"]
+    with fa.running_app(proj, work, env_overrides=env_for(other)) as app:
+        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert [r["argv"] for r in runs(counter)][-1] == []  # 覆盖换了：不沿用旧参数
