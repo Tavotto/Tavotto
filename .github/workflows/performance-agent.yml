@@ -89,7 +89,7 @@ jobs:
           PERF_REPEAT: ${{ inputs.repeat || '16' }}
         run: |
           python scripts/perf_agent.py run --browser "$PERF_BROWSER" --repeat "$PERF_REPEAT" \
-            --out web/test-results/perf-agent/run.json \
+            --include-drag --out web/test-results/perf-agent/run.json \
             --summary web/test-results/perf-agent/summary.json
       # GitHub 托管 runner 的瞬时负载不稳定。历史对照只作 advisory，
       # 不把不同 CPU / OS / 浏览器的数字伪装成性能过关。

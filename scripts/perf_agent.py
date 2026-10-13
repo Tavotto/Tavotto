@@ -222,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--repeat", type=int, default=16)
     run.add_argument("--out", type=Path, default=Path("web/test-results/perf-agent/run.json"))
     run.add_argument("--baseline", type=Path)
+    run.add_argument("--include-drag", action="store_true", help="also capture the existing ADR 0075 drag probe")
     run.add_argument("--summary", type=Path)
     run.add_argument("--regression-pct", type=float, default=DEFAULT_REGRESSION_PCT)
     report = commands.add_parser("summarize")
@@ -274,6 +275,53 @@ def main(argv: list[str] | None = None) -> int:
                 _write(args.summary, result)
             if result["status"] != "ok":
                 return 2
+            if args.include_drag:
+                # 使用仓库既有 E2E：真实拖动 + 两轮合成输入，严格收尾且不改原图。
+                # 其报告由原有浏览器测试产生，禁止为了测性能另写一个假的拖动协议。
+                drag_path = output.with_name("drag.json")
+                findings_path = output.with_name("drag-findings.json")
+                drag_path.unlink(missing_ok=True)
+                findings_path.unlink(missing_ok=True)
+                drag_env = {**env, "TAVOTTO_PERF_REPORT_OUT": str(drag_path)}
+                drag_run = subprocess.run(
+                    [
+                        "pnpm",
+                        "exec",
+                        "playwright",
+                        "test",
+                        "--config",
+                        "playwright.config.ts",
+                        "--project",
+                        args.browser,
+                        "--grep",
+                        "性能探针：录制真实拖动",
+                        "e2e/perf-probe.spec.ts",
+                    ],
+                    cwd=REPO / "web",
+                    env=drag_env,
+                    check=False,
+                    timeout=900,
+                )
+                if drag_run.returncode != 0 or not drag_path.is_file():
+                    print("error: perf_agent_drag_probe_failed", file=sys.stderr)
+                    return 2
+                analysis = subprocess.run(
+                    [
+                        sys.executable,
+                        str(REPO / "scripts" / "perf_report.py"),
+                        str(drag_path),
+                        "--json",
+                        str(findings_path),
+                    ],
+                    cwd=REPO,
+                    env=drag_env,
+                    check=False,
+                    timeout=120,
+                )
+                if analysis.returncode != 0 or not findings_path.is_file():
+                    print("error: perf_agent_drag_analysis_failed", file=sys.stderr)
+                    return 2
+                print(f"Drag probe: recorded and analyzed (browser={args.browser})")
             if args.baseline:
                 assessment = compare(load(output), load(args.baseline), args.regression_pct)
                 _write(output.with_suffix(".comparison.json"), assessment)

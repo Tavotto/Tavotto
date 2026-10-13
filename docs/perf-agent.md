@@ -45,3 +45,16 @@ GitHub Actions 独立的 `Performance Agent` workflow 支持手动触发和每�
 GitHub Actions `Performance Agent` 在成功跑完测试后，使用只读的 Actions API 从 **main 分支最近 8 个成功的同名工作流**寻找原始 artifact `perf-agent/run.json`，自动生成 `comparison.json`。首次合入后的第一次运行尚无历史 main artifact，会明确记录 `no baseline`，不会冒充 `PASS`。
 
 与浏览器样本不同，回归对比需要完整环境元数据（OS release、CPU 型号、核数、内存、浏览器精确版本、窗口尺寸、DPR 等）。字段缺失、重复/未知场景、样本不足、不同环境均是 `incomparable`；不可通过调整阈值掩盖。GitHub 共享 Runner 上的差异只发**提示**不阻断 CI；需要在固定原生 runner 上重复验证后才可升格为强门禁。
+
+
+
+## 复用 ADR 0075 的自动拖动分析
+
+`run --include-drag` 会在科学符号自动测试完成后，额外复用 `web/e2e/perf-probe.spec.ts` 内**已有的真实浏览器测试**：选择图内元素、真实拖动、按 `pointercancel` 安全收尾的 m1/m3 输入频率对照，完成报告导出。
+
+输出与符号指标分开，均存于同一目录：
+- `run.json` / `summary.json`：符号和预设交互黑盒耗时；
+- `drag.json`：原有 `tavotto-perf-probe/1` 逐帧报告；
+- `drag-findings.json`：`scripts/perf_report.py` 的机器可读结论和阶段归因。
+
+任何拖动 E2E 失败、漏报、分析器失败都返回非零，不把没有测试到的拖动场景冒充绿灯。不同进程 / 窗口 GPU 呈现问题仍需要真实 Mac 原生验证。历史基线的自动对比当前仅覆盖符号 UI 指标，**拖动报告是诊断证据，不应误称为已通过拖动性能回归门禁**。
