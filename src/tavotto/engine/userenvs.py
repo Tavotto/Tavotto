@@ -765,6 +765,7 @@ def remember_probe(
     *,
     bundled: bool = False,
     generation: object = None,
+    context: str | None = None,
 ) -> None:
     """把一次**明确的环境检查**（`envadvice.check`）量到的结论写进这张缓存——覆盖度只有这一份。
 
@@ -778,6 +779,10 @@ def remember_probe(
     # `generation`：探测**之前**取的环境代。探测期间环境被重建 / 替换（换代）时，量到的是旧解释器，不许记到新代名下——
     # 键里的代是写入时现算的，站点指纹也是重建后的，新鲜度检查拦不住（Codex #906 r4236570685）；丢掉，下次重量
     if generation is not None and key[1] != generation:
+        return
+    # `context`：探测之前取的启动上下文（`launcher.context_key`）。conda install / 改 activate.d 不换代，但上下文变了——
+    # 旧激活下量到的结论不许记到新上下文名下（键里的上下文同样是写入时现算的）
+    if context is not None and key[-1] != context:
         return
     stored = {**health, "_site_fp": _health_fingerprint(health)}
     with _lock:

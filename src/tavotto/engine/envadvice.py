@@ -880,7 +880,7 @@ def _check(
             _store_verdict(python, generation, health, context)
         notes.append(_execution_of(health, mods))
         # 覆盖度的唯一一份缓存在 userenvs（路径 + 环境代 + import 集合）；这里只往里写，不另存
-        userenvs.remember_probe(python, mods, health, generation=generation)
+        userenvs.remember_probe(python, mods, health, generation=generation, context=context)
         checked.append(row["id"])
     out = {
         "checked": checked,

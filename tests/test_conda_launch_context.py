@@ -2324,3 +2324,25 @@ def test_a_cloned_project_cannot_plant_its_own_conda_next_to_an_unregistered_pre
     with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
         fh.write(f"{venv}\n")
     assert launcher.find_conda_exe(str(venv)) == str(planted)
+
+
+@posix_only
+def test_a_coverage_result_measured_before_an_in_place_conda_change_is_not_stored_under_the_new_context(
+    tmp_path, monkeypatch
+):
+    """明确的环境检查与 conda install / 改 activate.d 重叠：探测前取的启动上下文对不上写入时的，覆盖度结论丢掉（下次重量）。"""
+    from tavotto.engine import userenvs
+
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    py = str(prefix / "bin" / "python")
+    userenvs.reset_cache()
+    before = launcher.context_key(py)
+    assert before.startswith("conda|")
+    with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+        fh.write("# cmd: conda install vendor-sdk\n")
+    userenvs.remember_probe(py, ("vendor_sdk",), {"ok": True, "python": py}, context=before)
+    assert userenvs._probe_cache == {}  # noqa: SLF001
+    userenvs.remember_probe(
+        py, ("vendor_sdk",), {"ok": True, "python": py}, context=launcher.context_key(py)
+    )
+    assert len(userenvs._probe_cache) == 1  # noqa: SLF001
