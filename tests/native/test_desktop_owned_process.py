@@ -1,0 +1,665 @@
+"""桌面拥有的 native 脚本进程（P06，ADR 0124）：**真 spawn、真 Figure、真取消**。
+
+链条：`desktopproc.start` 在本进程里 spawn 用户 Python（真 Bridge Runner、真 Matplotlib）→
+认证握手 → `NativeTransport` 单 reader → `NativeSession`。唯一被替掉的是窗口与 Flask。
+
+Linux / macOS 协议级；Windows 的 Job 路径见 `test_desktop_windows_job.py`（替身 kernel32），
+真机与 GUI 归 P07 / P10，本文件不代表它们。
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import stat
+import subprocess
+import sys
+import time
+import zlib
+from pathlib import Path
+
+import pytest
+from PIL import Image
+
+from support import desktopkit as dk, nativekit
+from tavotto.engine import desktopproc, envlease, execspec, nativesession, runcodes
+from tavotto.engine.runcodes import RunError
+
+pytestmark = nativekit.needs_user_python
+
+POSIX_ONLY = pytest.mark.skipif(os.name == "nt", reason="用 shell 桩当解释器")
+
+
+@pytest.fixture(autouse=True)
+def _reap_owned():
+    """用例红了也不许留下活着的脚本进程（先于 conftest 的清理收，因为后注册先拆）。"""
+    yield
+    for s in nativesession.REGISTRY.list():
+        if s.owned is not None and not s.owned.finished:
+            try:
+                s.cancel_owned()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+# ---------------------------------------------------------------------------
+# 启动身份：指定的 argv / cwd / env 真的到了脚本里；savefig / replace 是真文件语义（AC-02/03）
+# ---------------------------------------------------------------------------
+OBSERVE_SCRIPT = (
+    dk.FIGURE_HEADER
+    + """\
+import json, os, sys
+from PIL import Image
+
+with open("cache.json", "w") as f:
+    json.dump({"v": 1}, f)
+with open("cache.json.tmp", "w") as f:
+    json.dump({"v": 2}, f)
+os.replace("cache.json.tmp", "cache.json")          # 桌面保留的普通文件语义：值是 2
+
+fig, ax = plt.subplots(figsize=(4, 3))
+ax.plot([0, 1], [0, 1])
+fig.savefig("stage.png", dpi=100)                   # 真写盘……
+img = Image.open("stage.png")                       # ……脚本自己读回来
+
+with open("observed.json", "w") as f:
+    json.dump({
+        "v": json.load(open("cache.json"))["v"],
+        "size": list(img.size),
+        "argv": sys.argv,
+        "cwd": os.getcwd(),
+        "marker": os.environ.get("TAVOTTO_P06_MARKER"),
+        "exe": sys.executable,
+        "token_visible": "TAVOTTO_BRIDGE_TOKEN" in os.environ,
+    }, f)
+print("OBSERVED-DONE", flush=True)
+plt.show()
+"""
+)
+
+
+def test_spawn_uses_the_launch_identity_and_real_file_semantics(tmp_path):
+    """指定的 argv / cwd / env 原样到脚本里；savefig 真写盘、`os.replace` 值为 2（AC-02/03）。
+
+    cwd 故意不是脚本目录也不是项目根；env 是叠在 sidecar 环境上的增量；token 一起来就被摘掉。
+    """
+    session = dk.start(
+        tmp_path,
+        OBSERVE_SCRIPT,
+        argv=("--seed", "7", "中文 参数"),
+        env={"TAVOTTO_P06_MARKER": "marker-17"},
+    )
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    work = tmp_path / "work"
+    seen = dk.read_json(work / "observed.json")
+
+    assert seen["v"] == 2, "os.replace 的结果脚本没看到（safe 的旧行为是 1）"
+    assert seen["size"] == [400, 300]
+    assert seen["argv"] == [str(tmp_path / "proj" / "figure.py"), "--seed", "7", "中文 参数"]
+    assert os.path.realpath(seen["cwd"]) == os.path.realpath(work)
+    assert seen["marker"] == "marker-17"
+    assert os.path.realpath(seen["exe"]) == os.path.realpath(nativekit.USER_PYTHON)
+    assert seen["token_visible"] is False
+
+    # 脚本自己写出的真文件：测试进程独立读，尺寸与脚本读到的一致，不是捕获缓存冒充
+    with Image.open(work / "stage.png") as img:
+        assert list(img.size) == seen["size"]
+    assert (work / "cache.json").read_text() == '{"v": 2}'
+    assert "OBSERVED-DONE" in dk.tail(session)
+    assert session.process_pid == session.owned.pid
+
+    dk.finish(session)
+    assert session.exit_code == 0 and session.owned.finished
+
+
+# ---------------------------------------------------------------------------
+# 12pt → 22pt → 临时导出 10pt → continue（AC-17）
+# ---------------------------------------------------------------------------
+STATE_SCRIPT = (
+    dk.FIGURE_HEADER
+    + """\
+import os
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+ax.set_title("Stage", fontsize=12)
+ax.tick_params(labelsize=6)
+print("PID1:" + str(os.getpid()), flush=True)
+plt.show()
+print("PID2:" + str(os.getpid()), flush=True)
+print("SAW:" + str(ax.title.get_fontsize()), flush=True)
+"""
+)
+
+_TF = re.compile(rb"/F\d+ (\d+(?:\.\d+)?) Tf")
+
+
+def pdf_font_sizes(path: Path) -> set[float]:
+    """独立读：把 PDF 里每条（解压后的）内容流扫一遍，收 `/Fn <size> Tf`。不经过产品的任何读取器。"""
+    data = Path(path).read_bytes()
+    sizes: set[float] = set()
+    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", data, re.S):
+        blob = m.group(1)
+        try:
+            blob = zlib.decompress(blob)
+        except zlib.error:
+            pass
+        sizes.update(float(x) for x in _TF.findall(blob))
+    return sizes
+
+
+def _title_gid(session, stem):
+    man = dk.read_json(session.out_dir / f"{stem}.json")
+    return next(e["gid"] for e in man["elements"] if e.get("role") == "title")
+
+
+def test_temporary_export_is_state_neutral_and_continue_sees_the_original(tmp_path):
+    session = dk.start(tmp_path, STATE_SCRIPT)
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    stem = list(session.ensure_built()["stems"])[0]
+    gid = _title_gid(session, stem)
+
+    edit22 = [{"gid": gid, "prop": "fontsize", "value": 22}]
+    edit10 = [{"gid": gid, "prop": "fontsize", "value": 10}]
+    session.override(stem, edit22)
+    png_before = session.render_png(stem, 600).read_bytes()
+
+    pdf22, pdf10 = tmp_path / "e22.pdf", tmp_path / "e10.pdf"
+    session.export(stem, edit22, str(pdf22))
+    session.export(stem, edit10, str(pdf10))  # 临时导出：套用别的值，导完还原回会话的 22
+    png_after = session.render_png(stem, 600).read_bytes()
+
+    s22, s10 = pdf_font_sizes(pdf22), pdf_font_sizes(pdf10)
+    assert 22.0 in s22 and 12.0 not in s22 and 10.0 not in s22, s22
+    assert 10.0 in s10 and 22.0 not in s10 and 12.0 not in s10, s10
+    assert png_before == png_after, "临时导出改动了会话里当前（22pt）的画面"
+
+    pid1 = int(re.search(r"PID1:(\d+)", dk.tail(session)).group(1))
+    session.resume()
+    nativekit.wait_state(session, [nativesession.BARRIER])  # script_end 屏障：脚本已经跑过 show
+    out = dk.tail(session)
+    assert f"PID2:{pid1}" in out, "续跑不是同一个进程"
+    assert "SAW:12.0" in out, "脚本在 continue 之后看到的不是原始 12pt"
+    assert pid1 == session.process_pid
+    dk.finish(session)
+    assert session.exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# 脚本自己的退出码保留（源码异常 / sys.exit）
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("tail_code", "want"),
+    [
+        ('raise ValueError("boom-from-script")', 1),
+        ("sys.exit(3)", 3),
+    ],
+)
+def test_the_scripts_own_exit_code_is_preserved(tmp_path, tail_code, want):
+    session = dk.start(
+        tmp_path,
+        dk.FIGURE_HEADER
+        + f"""\
+import sys
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+fig.savefig("Fig1.png")
+{tail_code}
+""",
+    )
+    nativekit.wait_state(session, [nativesession.BARRIER])  # 出错也交出已有的图
+    assert list(session.ensure_built()["stems"]) == ["Fig1"]
+    dk.finish(session)
+    assert session.exit_code == want
+    assert session.owned.exit_code == want
+    assert session.cancelled is False
+    if want == 1:
+        assert session.script_error and "boom-from-script" in session.script_error["message"]
+        assert "boom-from-script" in dk.tail(session, "stderr")
+
+
+# ---------------------------------------------------------------------------
+# 取消：running / barrier；进程组整组结束、租约在确认后才放（AC-16）
+# ---------------------------------------------------------------------------
+RUNNING_SCRIPT = """\
+import subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+open("child.pid", "w").write(str(child.pid))
+open("ready", "w").write("1")
+time.sleep(600)
+"""
+
+
+def test_cancel_while_running_kills_the_group_and_releases_the_lease_after_confirmation(tmp_path):
+    session = dk.start(tmp_path, RUNNING_SCRIPT)
+    work = tmp_path / "work"
+    dk.wait_until(lambda: (work / "ready").exists(), what="脚本就绪")
+    child_pid = int((work / "child.pid").read_text())
+    interpreter = session.interpreter
+
+    assert session.state in (nativesession.WAITING_FOR_FIGURE, nativesession.RUNNING_SCRIPT)
+    assert dk.holds_lease(session)
+    assert dk.install_is_refused(interpreter) == runcodes.ENVIRONMENT_IN_USE_BY_NATIVE_SESSION
+    assert dk.pid_alive(child_pid)
+
+    result = session.cancel_owned()
+
+    assert result.confirmed and result.scope in ("process_group", "job_object")
+    assert session.owned.finished and session.owned.exited
+    assert session.cancelled is True and session.state == nativesession.ENDED
+    assert not dk.pid_alive(session.owned.pid), "直接子进程没被 reap"
+    assert not dk.pid_alive(child_pid), "进程组里的孙进程泄漏了"
+    assert not dk.holds_lease(session), "确认结束后租约没放"
+    assert dk.install_is_refused(interpreter) is None
+    assert session.exit_code == result.exit_code
+
+
+BARRIER_SCRIPT = (
+    dk.FIGURE_HEADER
+    + """\
+import subprocess, sys
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"])
+open("child.pid", "w").write(str(child.pid))
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+plt.show()
+"""
+)
+
+
+def test_cancel_at_a_barrier_also_takes_the_whole_group(tmp_path):
+    session = dk.start(tmp_path, BARRIER_SCRIPT)
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    child_pid = int((tmp_path / "work" / "child.pid").read_text())
+
+    result = session.cancel_owned()
+
+    assert result.confirmed
+    assert not dk.pid_alive(session.owned.pid) and not dk.pid_alive(child_pid)
+    assert not dk.holds_lease(session)
+    assert session.cancelled and session.state == nativesession.ENDED
+
+
+# ---------------------------------------------------------------------------
+# 断开不是结束：控制连接没了，进程与租约还在，直到所有者确认
+# ---------------------------------------------------------------------------
+def test_disconnect_while_running_keeps_the_process_and_the_lease(tmp_path):
+    session = dk.start(tmp_path, RUNNING_SCRIPT)
+    work = tmp_path / "work"
+    dk.wait_until(lambda: (work / "ready").exists(), what="脚本就绪")
+    child_pid = int((work / "child.pid").read_text())
+    interpreter = session.interpreter
+
+    session.shutdown()  # WebView / socket 断开的等价物：只关控制连接
+    session.transport.close()
+    time.sleep(0.5)
+
+    assert session.state == nativesession.DETACHED, "断开后会话应已放手"
+    assert not session.owned.exited and dk.pid_alive(session.owned.pid), "断开把进程弄没了"
+    assert dk.pid_alive(child_pid)
+    assert dk.holds_lease(session), "进程还活着，租约被提前放了"
+    assert dk.install_is_refused(interpreter) == runcodes.ENVIRONMENT_IN_USE_BY_NATIVE_SESSION
+
+    session.cancel_owned()  # 断开后仍可由所有者结束
+    assert session.owned.finished and not dk.pid_alive(child_pid)
+    assert not dk.holds_lease(session)
+    assert dk.install_is_refused(interpreter) is None
+
+
+def test_the_transport_dropping_at_a_barrier_lets_the_script_finish_then_releases(tmp_path):
+    """屏障上控制连接被拔：runner 先恢复 baseline 再放开，脚本跑完；租约等 reap 之后才放。"""
+    session = dk.start(
+        tmp_path,
+        dk.FIGURE_HEADER
+        + """\
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+plt.show()
+open("after-show", "w").write("1")
+""",
+    )
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    session.transport.close()
+    dk.wait_until(lambda: (tmp_path / "work" / "after-show").exists(), what="断开后脚本继续")
+    assert session.owned.wait(30)
+    assert session.owned.exit_code == 0 and not session.cancelled
+    assert not dk.holds_lease(session)
+
+
+# ---------------------------------------------------------------------------
+# 两个会话互不误杀
+# ---------------------------------------------------------------------------
+def test_two_sessions_do_not_kill_each_other(tmp_path):
+    a = dk.start(tmp_path / "a", RUNNING_SCRIPT, launch_id="a")
+    b = dk.start(tmp_path / "b", RUNNING_SCRIPT, launch_id="b")
+    for t in ("a", "b"):
+        dk.wait_until(lambda t=t: (tmp_path / t / "work" / "ready").exists(), what=f"{t} 就绪")
+    child_a = int((tmp_path / "a" / "work" / "child.pid").read_text())
+    child_b = int((tmp_path / "b" / "work" / "child.pid").read_text())
+    assert a.owned.pid != b.owned.pid
+    assert a.interpreter == b.interpreter  # 同一个环境上的两条租约
+    assert set(envlease.native_sessions_on(a.interpreter)) == {a.session_id, b.session_id}
+
+    a.cancel_owned()
+
+    assert not dk.pid_alive(a.owned.pid) and not dk.pid_alive(child_a)
+    assert dk.pid_alive(b.owned.pid) and dk.pid_alive(child_b), "取消 A 误杀了 B"
+    assert not b.owned.exited and b.state != nativesession.ENDED
+    assert envlease.native_sessions_on(b.interpreter) == [b.session_id], "A 的租约没放或 B 的被放了"
+    assert dk.install_is_refused(b.interpreter) == runcodes.ENVIRONMENT_IN_USE_BY_NATIVE_SESSION
+
+    b.cancel_owned()
+    assert not dk.pid_alive(child_b)
+    assert dk.install_is_refused(b.interpreter) is None
+
+
+# ---------------------------------------------------------------------------
+# 终端拥有的 native 仍然是 detach，桌面不替用户杀（EX09）
+# ---------------------------------------------------------------------------
+TERMINAL_SCRIPT = (
+    dk.FIGURE_HEADER
+    + """\
+import os, time
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+plt.show()
+while not os.path.exists("release-marker"):
+    time.sleep(0.05)
+print("TERMINAL-SCRIPT-FINISHED", flush=True)
+"""
+)
+
+
+def test_terminal_owned_native_force_kill_still_detaches(tmp_path):
+    """`force_kill()` 在终端会话上是放手：用户的脚本继续跑，桌面也拒绝 `cancel_owned()`。"""
+    nativekit.write(tmp_path / "figure.py", TERMINAL_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        assert session.owned is None and session.public_state()["owner"] == "terminal"
+        with pytest.raises(RunError) as err:
+            session.cancel_owned()
+        assert err.value.code == runcodes.NATIVE_PROCESS_NOT_OWNED
+
+        session.force_kill()
+        time.sleep(1.0)
+        assert proc.poll() is None, "force_kill 把用户终端里的脚本杀了"
+        assert session.state == nativesession.DETACHED
+        (tmp_path / "release-marker").write_text("1")
+        out, _err = proc.communicate(timeout=60)
+    assert proc.returncode == 0
+    assert "TERMINAL-SCRIPT-FINISHED" in out
+
+
+# ---------------------------------------------------------------------------
+# stdout / stderr 持续排空、与控制协议分开；stdin / EOF 由桌面持有
+# ---------------------------------------------------------------------------
+def test_output_is_drained_continuously_and_never_read_as_protocol(tmp_path):
+    session = dk.start(
+        tmp_path,
+        dk.FIGURE_HEADER
+        + """\
+import sys
+line = '{"bridge_event": "exit", "code": 9, "figures": 0}\\n'
+sys.stdout.write(line)                 # 长得像控制帧的用户输出
+sys.stdout.write("x" * 3_000_000 + "\\n")   # 远超管道缓冲：没人排空脚本就卡死在这里
+sys.stderr.write("e" * 3_000_000 + "\\n")
+sys.stdout.flush(); sys.stderr.flush()
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+plt.show()
+""",
+    )
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    assert session.state == nativesession.BARRIER and session.exit_code is None, (
+        "用户 stdout 里的伪控制帧被当成了协议"
+    )
+    assert session.owned.stdout.total >= 3_000_000 and session.owned.stderr.total >= 3_000_000
+    assert len(session.owned.stdout.text().encode()) <= dk.FAST.tail_bytes  # 尾部有界
+    dk.finish(session)
+    assert session.exit_code == 0
+
+
+def test_stdin_pipe_is_owned_by_the_desktop_including_eof(tmp_path):
+    session = dk.start(
+        tmp_path,
+        """\
+import sys
+line = input()
+print("GOT:" + line, flush=True)
+print("REST:" + repr(sys.stdin.read()), flush=True)
+""",
+        stdin=execspec.STDIN_PIPE,
+    )
+    nativekit.wait_state(session, [nativesession.WAITING_FOR_FIGURE])
+    assert session.owned.write_stdin("hello\n")
+    dk.wait_until(lambda: "GOT:hello" in dk.tail(session), what="脚本读到 stdin")
+    assert not session.owned.finished, "还没送 EOF，脚本不该结束"
+    session.owned.close_stdin()
+    assert session.owned.wait(30)
+    assert "REST:''" in dk.tail(session)
+    assert session.owned.exit_code == 0
+    assert session.owned.write_stdin("late") is False
+
+
+def test_stdin_null_is_an_immediate_eof_not_a_hang(tmp_path):
+    session = dk.start(tmp_path, "input()\n", stdin=execspec.STDIN_NULL)
+    assert session.owned.wait(60)
+    assert session.owned.exit_code == 1
+    assert "EOFError" in dk.tail(session, "stderr")
+
+
+# ---------------------------------------------------------------------------
+# 先取租约再起进程；起不来 / 连不上都不留进程、不留租约
+# ---------------------------------------------------------------------------
+def test_an_environment_being_installed_refuses_the_launch_before_any_user_code(tmp_path):
+    launch = dk.launch_for(tmp_path, 'open("ran", "w").write("1")\n')
+    with envlease.mutating("p06-install", python=launch.spec.interpreter):
+        with pytest.raises(envlease.EnvironmentBusy) as err:
+            desktopproc.start(launch)
+    assert err.value.code == envlease.ENVIRONMENT_MUTATING
+    assert not (tmp_path / "work" / "ran").exists(), "租约没取到却跑了用户代码"
+    assert nativesession.REGISTRY.list() == []
+    assert envlease.native_sessions_on(launch.spec.interpreter) == []
+
+
+def _stub_interpreter(tmp_path: Path, body: str) -> str:
+    stub = tmp_path / "fake-python"
+    stub.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    return str(stub)
+
+
+@POSIX_ONLY
+def test_a_child_that_never_connects_is_killed_and_the_lease_released(tmp_path):
+    stub = _stub_interpreter(tmp_path, f'echo $$ > "{tmp_path}/stub.pid"\nexec sleep 600\n')
+    policy = desktopproc.OwnedPolicy(connect_timeout=1.0, term_grace=1.0, kill_timeout=5.0)
+    launch = dk.launch_for(tmp_path, "pass\n", interpreter=stub, policy=policy)
+    with pytest.raises(RunError) as err:
+        desktopproc.start(launch)
+    assert err.value.code == runcodes.DESKTOP_RUN_CONNECT_TIMEOUT
+    pid = int((tmp_path / "stub.pid").read_text())
+    dk.wait_until(lambda: not dk.pid_alive(pid), timeout=10, what="桩进程被收掉")
+    dk.wait_until(lambda: envlease.native_sessions_on(stub) == [], timeout=10, what="租约释放")
+    assert nativesession.REGISTRY.list() == []
+
+
+@POSIX_ONLY
+def test_a_child_that_dies_before_connecting_reports_it_and_releases_the_lease(tmp_path):
+    stub = _stub_interpreter(tmp_path, "exit 7\n")
+    launch = dk.launch_for(tmp_path, "pass\n", interpreter=stub)
+    with pytest.raises(RunError) as err:
+        desktopproc.start(launch)
+    assert err.value.code == runcodes.BRIDGE_CHILD_EXITED and err.value.fields["code"] == 7
+    dk.wait_until(lambda: envlease.native_sessions_on(stub) == [], timeout=10, what="租约释放")
+
+
+def test_a_missing_interpreter_or_cwd_is_refused_without_a_lease(tmp_path):
+    ok = dk.launch_for(tmp_path, "pass\n")
+    bad_interp = desktopproc.OwnedLaunch(
+        execspec.desktop_native_spec(
+            ok.spec.raw_target,
+            interpreter=str(tmp_path / "no-such-python"),
+            cwd=ok.spec.cwd,
+            project_root=ok.spec.project_root,
+        )
+    )
+    with pytest.raises(RunError) as err:
+        desktopproc.start(bad_interp)
+    assert err.value.code == runcodes.INTERPRETER_NOT_EXECUTABLE
+    bad_cwd = desktopproc.OwnedLaunch(
+        execspec.desktop_native_spec(
+            ok.spec.raw_target,
+            interpreter=ok.spec.interpreter,
+            cwd=str(tmp_path / "no-such-dir"),
+            project_root=ok.spec.project_root,
+        )
+    )
+    with pytest.raises(RunError) as err:
+        desktopproc.start(bad_cwd)
+    assert err.value.code == runcodes.DESKTOP_RUN_LAUNCH_INVALID
+    assert envlease.snapshot()["native"] == {}
+
+
+def test_a_terminal_owned_spec_cannot_start_a_desktop_process():
+    spec = execspec.native_spec(
+        "/p/fig.py", interpreter=sys.executable, cwd="/p", project_root="/p"
+    )
+    with pytest.raises(RunError) as err:
+        desktopproc.OwnedLaunch(spec)
+    assert err.value.code == runcodes.DESKTOP_RUN_LAUNCH_INVALID
+
+
+def test_receipt_and_public_state_never_carry_argv_or_env_values(tmp_path):
+    """回执 / 公开状态 / 诊断只带数量、运行配置引用与 env 键名；值永远不出进程。"""
+    from tavotto.engine import receipt
+
+    session = dk.start(
+        tmp_path,
+        "import time; time.sleep(600)\n",
+        argv=("--token", "s3cret-argv-value"),
+        env={"P06_SECRET_ENV": "s3cret-env-value"},
+    )
+    try:
+        rcpt = receipt.from_native_session(session, "figure.py")
+        blob = repr(session.public_state()) + repr(session.diagnostics()) + repr(rcpt.to_payload())
+        blob += repr(rcpt.public_facts()) + rcpt.public_identity() + repr(rcpt.launch_context)
+        assert "s3cret" not in blob
+        assert session.public_state()["owner"] == "desktop"
+        assert session.public_state()["arg_count"] == 2
+        ctx = rcpt.launch_context
+        assert (ctx["owner"], ctx["argv_count"], ctx["run_config"]) == ("desktop", 2, "rc_p06test")
+        assert ctx["env_keys"] == ["P06_SECRET_ENV"] and ctx["cwd_origin"] == "desktop.cwd"
+        assert rcpt.spec_stable["owner"] == "desktop" and rcpt.spec_stable["argv"] == []
+        assert "s3cret" not in repr(session.spec)  # repr 也不带值
+    finally:
+        session.cancel_owned()
+
+
+# ---------------------------------------------------------------------------
+# 只动自己的组：外部进程不被牵连；组外逃走的子进程不是我们纳管的
+# ---------------------------------------------------------------------------
+@POSIX_ONLY
+def test_cancel_touches_only_the_owned_group_never_an_unrelated_process(tmp_path):
+    """外部进程（同一个父进程 = 本测试进程，另一个进程组）与脚本自己 `setsid` 走的孙进程，取消后都还活着。
+
+    判据的主语是「取消发给了谁」：本进程自己的 pgid。按 PPID / 进程名猜的实现会把这两个一起带走。
+    """
+    bystander = subprocess.Popen(  # noqa: S603 — 外部服务的替身：与 Tavotto 无关的进程
+        [sys.executable, "-c", "import time; time.sleep(600)"], start_new_session=True
+    )
+    session = dk.start(
+        tmp_path,
+        """\
+import subprocess, sys, time
+escaped = subprocess.Popen(
+    [sys.executable, "-c", "import time; time.sleep(600)"], start_new_session=True
+)
+open("escaped.pid", "w").write(str(escaped.pid))
+open("ready", "w").write("1")
+time.sleep(600)
+""",
+    )
+    escaped_pid = 0
+    try:
+        work = tmp_path / "work"
+        dk.wait_until(lambda: (work / "ready").exists(), what="脚本就绪")
+        escaped_pid = int((work / "escaped.pid").read_text())
+
+        assert session.cancel_owned().confirmed
+        assert bystander.poll() is None and dk.pid_alive(bystander.pid), "取消牵连了外部进程"
+        assert dk.pid_alive(escaped_pid), "取消杀了不属于纳管范围的进程（按 PPID 猜了）"
+    finally:
+        bystander.kill()
+        bystander.wait()
+        if escaped_pid:
+            os.kill(escaped_pid, 9)
+
+
+# ---------------------------------------------------------------------------
+# 编辑只在进程活着时；不为进入编辑重跑脚本（AC-17 / EX13）
+# ---------------------------------------------------------------------------
+def test_after_the_process_ends_editing_is_unavailable_and_the_script_never_reruns(tmp_path):
+    session = dk.start(
+        tmp_path,
+        dk.FIGURE_HEADER
+        + """\
+with open("runs.log", "a") as f:
+    f.write("run\\n")
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+ax.set_title("T")
+plt.show()
+""",
+    )
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    stem = list(session.ensure_built()["stems"])[0]
+    gid = _title_gid(session, stem)
+    session.override(stem, [{"gid": gid, "prop": "fontsize", "value": 20}])  # 活着时可编辑
+    dk.finish(session)
+
+    for call in (
+        lambda: session.override(stem, [{"gid": gid, "prop": "fontsize", "value": 9}]),
+        lambda: session.export(stem, [], str(tmp_path / "late.pdf")),
+        session.ensure_built,
+    ):
+        with pytest.raises(RunError) as err:
+            call()
+        assert err.value.code == runcodes.NATIVE_SESSION_ENDED
+    assert (tmp_path / "work" / "runs.log").read_text() == "run\n", "为了编辑把用户脚本又跑了一遍"
+    assert session.public_state()["editable"] is False
+
+
+# ---------------------------------------------------------------------------
+# 对上层仍是 Worker-like：live route + enginesession.resolve，不新建第二个 router
+# ---------------------------------------------------------------------------
+def test_the_owned_session_is_routed_by_the_existing_resolver(tmp_path):
+    from tavotto.engine import enginesession
+
+    session = dk.start(tmp_path, BARRIER_SCRIPT)
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    session.ensure_built()
+    assert nativesession.REGISTRY.bind_assets(session) == []
+    desc = session.descriptors[0]
+    got = enginesession.resolve(
+        project_root=session.project_root,
+        script=desc["script"],
+        entry="__main__",
+        stem=desc["stem"],
+        execution_profile=enginesession.PROFILE_NATIVE,
+    )
+    assert got is session and enginesession.is_native(got)
+    for member in enginesession.WORKER_LIKE:
+        assert hasattr(got, member), f"owned 会话缺 Worker-like 成员 {member}"
+    session.cancel_owned()
+    with pytest.raises(RunError) as err:  # 结束后路由随之失效：不退回 safe
+        enginesession.resolve(
+            project_root=session.project_root,
+            script=desc["script"],
+            entry="__main__",
+            stem=desc["stem"],
+            execution_profile=enginesession.PROFILE_NATIVE,
+        )
+    assert err.value.code == runcodes.NATIVE_SESSION_OFFLINE

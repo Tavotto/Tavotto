@@ -402,17 +402,26 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
     """
     from . import execspec
 
-    kind = str(getattr(session, "target_kind", "") or execspec.TARGET_SCRIPT)
-    root = str(getattr(session, "project_root", "") or "")
-    raw_target = script if kind == execspec.TARGET_MODULE else os.path.join(root, script)
-    spec = execspec.native_spec(
-        raw_target,
-        interpreter=str(getattr(session, "interpreter", "") or ""),
-        cwd=str(getattr(session, "cwd", "") or ""),
-        project_root=root,
-        target_kind=kind,
-        argv=(NATIVE_ARGV_PLACEHOLDER,) * int(getattr(session, "arg_count", 0) or 0),
-    )
+    owned_spec = getattr(session, "spec", None)
+    if (
+        isinstance(owned_spec, execspec.ExecutionSpec)
+        and owned_spec.owner == execspec.OWNER_DESKTOP
+    ):
+        # 桌面拥有的会话（P06，ADR 0124）：启动身份就在会话上（不可变、spawn 时定的），回执直接取它的公开
+        # 投影——owner / 运行配置引用 / env 键名 / stdin 通道进身份，argv 与 env 的值不出进程
+        spec = owned_spec
+    else:
+        kind = str(getattr(session, "target_kind", "") or execspec.TARGET_SCRIPT)
+        root = str(getattr(session, "project_root", "") or "")
+        raw_target = script if kind == execspec.TARGET_MODULE else os.path.join(root, script)
+        spec = execspec.native_spec(
+            raw_target,
+            interpreter=str(getattr(session, "interpreter", "") or ""),
+            cwd=str(getattr(session, "cwd", "") or ""),
+            project_root=root,
+            target_kind=kind,
+            argv=(NATIVE_ARGV_PLACEHOLDER,) * int(getattr(session, "arg_count", 0) or 0),
+        )
     # native 的 pid 是用户进程自己的（bridge 附着时记下的 `pid`，没记就不核）
     runtime, rejected, pid_check = accept_runtime(
         getattr(session, "last_build_runtime", None), expected_pid=worker_pid(session)

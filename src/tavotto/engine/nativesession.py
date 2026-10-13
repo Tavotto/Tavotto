@@ -17,6 +17,16 @@ tavotto run CLI  ──relay──  这里（sidecar）  ──HTTP/SSE──  W
 | key = (figures_dir, script) | native 的身份还含 cwd / argv / env / 解释器 |
 | 进程属主 = sidecar | native 的进程属主是 **CLI** |
 
+## 进程所有权的两类（P06，ADR 0124）
+
+会话的进程归谁，决定「放手」与「结束」是不是同一件事：
+
+* **terminal 拥有**（默认，`tavotto run`）：进程是 CLI 的子进程。`shutdown()` / `force_kill()` /
+  `detach()` 一律只是**放手**，脚本照常跑完；Tavotto 不 kill 它（`cancel_owned()` 拒绝）。
+* **desktop 拥有**（`desktopproc.start`）：进程是 sidecar 自己 spawn 的，`self.owned` 是它的
+  所有者对象。**断开不是结束**：WebView / socket 断开、`shutdown()` 只关控制连接，租约一直
+  持到所有者**确认进程（组 / Job）真的退出**才放；要结束它走 `cancel_owned()`。
+
 所以另起一张表。**但对上层必须是 Worker-like 的**（`ensure_built` /
 `override` / `export` / `render_png` / `preview_png` / `svg_path` /
 `resume` / `detach` / `terminate` / `shutdown`），否则每个端点都要写第二套
@@ -288,6 +298,17 @@ class NativeSession:
         self.permission_key = str(meta.get("permission_key") or "")
         self.python_version = str(meta.get("python_version") or "")
         self.out_dir = Path(str(descriptor.get("out_dir") or ""))
+        #: 桌面拥有的进程所有者（`desktopproc.DesktopProcess`，鸭子类型：`finished` / `cancel()` /
+        #: `pid`）。None = 进程是终端的——本模块绝不去结束它。
+        self.owned = None
+        #: 桌面拥有的会话的**不可变启动身份**（`execspec.ExecutionSpec`，owner=desktop）。含 argv / env 原文，
+        #: 所以是私有的：不进 `public_state()` / `diagnostics()`，回执只取它的公开投影。终端拥有的为 None。
+        self.spec = None
+        #: 桌面拥有的会话：这次运行的运行配置引用 / 回执关联键（公开，不含参数值）
+        self.run_config = str(meta.get("run_config") or "")
+        self.launch_id = str(meta.get("launch_id") or "")
+        #: 这条会话是被所有者取消结束的（与脚本自己退出、崩溃分开记）
+        self.cancelled = False
 
         self.state = PENDING_CONFIRMATION
         self.barrier_reason = ""
@@ -413,11 +434,53 @@ class NativeSession:
         self._set_state(WAITING_FOR_FIGURE, process_pid=_as_int(hello.get("pid")))
 
     def _release_lease(self) -> None:
+        owned = self.owned
+        if owned is not None and not owned.finished:
+            # 桌面拥有的进程还没被所有者确认结束：控制连接断了、状态进了终态都不放租约——
+            # 还活着的脚本正在用这个环境，放了就等于放安装器进来改它（AC-16）。
+            # 所有者确认结束时回调 `_on_owner_exit()`，那里再放。
+            return
         with self._lock:
             if self._lease_released or not self.interpreter:
                 return
             self._lease_released = True
         envlease.release_native(self.interpreter, self.session_id)
+
+    def _on_owner_exit(self, code: int | None, *, cancelled: bool) -> None:
+        """所有者（`desktopproc`）确认进程已退出并 reap 之后调用——**租约在这里才放**。
+
+        `code` 是进程的真实退出码（POSIX 被信号杀 = 128+signo，与 `tavotto run` 同口径）。
+        脚本自己的非零退出码原样保留；取消只额外记 `cancelled`，不改写码。
+        """
+        with self._changed:
+            self.cancelled = self.cancelled or cancelled
+            if code is not None:
+                self.exit_code = code
+        if self.state not in TERMINAL_STATES:
+            if cancelled:
+                self._set_state(ENDED, exit_code=code, terminal_error=None)
+            else:
+                self._set_state(
+                    FAILED,
+                    exit_code=code,
+                    terminal_error={
+                        "code": runcodes.BRIDGE_CHILD_EXITED,
+                        "detail": "进程在没有通知控制通道的情况下退出",
+                    },
+                )
+        self._release_lease()
+
+    def cancel_owned(self) -> dict:
+        """结束**桌面拥有的**脚本进程（含它的进程组 / Job）。终端拥有的会话拒绝（`NATIVE_PROCESS_NOT_OWNED`）。
+
+        这是 `force_kill` / `shutdown`（放手）之外**唯一**会结束进程的入口，所以名字不叫 kill：
+        `force_kill` 对终端会话是 detach 的别名，把它改成 kill 会误杀用户终端里的进程。
+        返回所有者的取消结果（`confirmed` = 进程与进程组都已确认退出）。
+        """
+        owned = self.owned
+        if owned is None:
+            raise RunError(runcodes.NATIVE_PROCESS_NOT_OWNED)
+        return owned.cancel()
 
     # ------------------------------------------------------------------
     # Worker-like 接口
@@ -687,6 +750,7 @@ class NativeSession:
             "cwd": self.cwd,
             "arg_count": self.arg_count,
             "python_version": self.python_version,
+            "owner": "desktop" if self.owned is not None else "terminal",
             "state": self.state,
             "barrier_reason": self.barrier_reason,
             "process_pid": self.process_pid,
@@ -695,6 +759,7 @@ class NativeSession:
             "script_error": self.script_error,
             "terminal_error": self.terminal_error,
             "exit_code": self.exit_code,
+            "cancelled": self.cancelled,
             "figures_captured": self.figures_captured,
             "started_at": self.started_at,
             "last_event_at": self.last_event_at,
@@ -774,6 +839,18 @@ class NativeSessionRegistry:
         with self._lock:
             self._sessions[session_id] = session
         return session
+
+    def adopt(self, session: NativeSession) -> None:
+        """登记一条**桌面拥有**的会话（`desktopproc.start` 在握手成功、传输起好之后调）。
+
+        与 `attach` 的区别只在会话怎么来的（没有 relay / descriptor）；之后的注册表语义
+        （live route、终态丢路由、`on_change`）是同一套。
+        """
+        with self._lock:
+            if session.session_id in self._sessions and self._sessions[session.session_id].alive():
+                raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
+            session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
+            self._sessions[session.session_id] = session
 
     def _changed(self, session: NativeSession, entry: dict) -> None:
         if session.state in TERMINAL_STATES:
@@ -866,12 +943,19 @@ class NativeSessionRegistry:
         return len(victims)
 
     def shutdown_all(self) -> int:
-        """sidecar 退出：**只放手，不杀**（ADR 0021 §8.1 / §10.2）。"""
+        """sidecar 退出：终端拥有的**只放手，不杀**（ADR 0021 §8.1 / §10.2）。
+
+        桌面拥有的进程是 sidecar 自己起的，退出时不能留成没人管的孤儿（还占着环境）：
+        先断开，再按所有者的有界策略结束（ADR 0124 §五）。"""
         with self._lock:
             sessions = list(self._sessions.values())
         for s in sessions:
             with _suppress_all():
                 s.shutdown()
+        for s in sessions:
+            if s.owned is not None:
+                with _suppress_all():
+                    s.cancel_owned()
         return len(sessions)
 
 

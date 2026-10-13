@@ -240,8 +240,16 @@ def plan_for(
     original_path: str | None = None,
     target: str = TARGET_ASSET,
     run=None,
+    execution: str = execspec.PROFILE_SAFE,
 ) -> PreparationPlan:
     """按产品**自己的**决定拼一份计划——这里不做任何选择，只读。
+
+    `execution` 是这份计划打算用哪一种**执行语义**跑（P06，ADR 0124）：默认 `safe`（旧行为，
+    逐字节不变）；`native` = 桌面拥有的 native 进程（保留普通文件 I/O，`LaunchContext` 如实写
+    `write_mode=unrestricted`、`cwd_origin=desktop.cwd`、`owner=desktop`）。**它只改计划里的启动
+    语义，不替调用方起进程**——真正的 runner 仍由调用方注入（`PreparationService.start`），
+    `desktopproc.start` 是 native 这一支的执行侧。换解释器与换执行语义是两个维度：选了用户的
+    Python 并不会让 safe 自动变成 native。
 
     `original_artifact` 是素材的项目相对身份（进计划）；`original_path` 是**调用方已经
     校验过**（`app.safe_resolve`：在项目根内、是文件）的绝对路径，读字节算 hash 只用它。
@@ -368,7 +376,19 @@ def plan_for(
             root,
             decision["mode"] if decision else workdir.mode_for(root),
         )
-    if script is not None and entry is not None and python:
+    if script is not None and python and execution == execspec.PROFILE_NATIVE:
+        mode = decision["mode"] if decision else workdir.mode_for(root)
+        spec = execspec.desktop_native_spec(
+            str(Path(root) / figcapture.normalize_relative_script(script)),
+            interpreter=python,
+            cwd=execspec.desktop_cwd(root, script, mode),
+            project_root=root,
+            **execspec.run_kwargs(run),
+        )
+        launch_context = execspec.launch_context(spec, grant=grant)
+    elif execution not in (execspec.PROFILE_SAFE, execspec.PROFILE_NATIVE):
+        raise ValueError(f"execution 非法: {execution!r}")
+    elif script is not None and entry is not None and python:
         spec = execspec.safe_spec(
             script,
             root,
