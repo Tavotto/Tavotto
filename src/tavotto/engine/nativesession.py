@@ -17,7 +17,7 @@ tavotto run CLI  ──relay──  这里（sidecar）  ──HTTP/SSE──  W
 | key = (figures_dir, script) | native 的身份还含 cwd / argv / env / 解释器 |
 | 进程属主 = sidecar | native 的进程属主是 **CLI** |
 
-## 进程所有权的两类（P06，ADR 0124）
+## 进程所有权的两类（P06，ADR 0125）
 
 会话的进程归谁，决定「放手」与「结束」是不是同一件事：
 
@@ -946,7 +946,7 @@ class NativeSessionRegistry:
         """sidecar 退出：终端拥有的**只放手，不杀**（ADR 0021 §8.1 / §10.2）。
 
         桌面拥有的进程是 sidecar 自己起的，退出时不能留成没人管的孤儿（还占着环境）：
-        先断开，再按所有者的有界策略结束（ADR 0124 §五）。"""
+        先断开，再按所有者的有界策略结束（ADR 0125 §五）。"""
         with self._lock:
             sessions = list(self._sessions.values())
         for s in sessions:

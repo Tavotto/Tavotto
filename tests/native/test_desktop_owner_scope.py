@@ -1,4 +1,4 @@
-"""桌面拥有的进程的「纳管范围」与租约确认（P06，ADR 0124 §五）。
+"""桌面拥有的进程的「纳管范围」与租约确认（P06，ADR 0125 §五）。
 
 * Windows Job Object：CI 上用**替身 kernel32**把调用序列与参数钉死（建 Job → KILL_ON_JOB_CLOSE →
   入 Job → TerminateJobObject → ActiveProcesses 判空 → CloseHandle）。**真机行为 not_run**

@@ -1,4 +1,4 @@
-"""桌面拥有的 native 进程用例的公共助手（P06，ADR 0124）。
+"""桌面拥有的 native 进程用例的公共助手（P06，ADR 0125）。
 
 与 `nativekit` 的分工：那边的「假桌面」只替掉窗口、进程仍归 `tavotto run` CLI；这边没有 CLI——
 进程由 `desktopproc.start` 在本测试进程里真 spawn，用户 Python、Bridge Runner、Matplotlib

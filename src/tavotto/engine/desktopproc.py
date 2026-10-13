@@ -1,4 +1,4 @@
-"""桌面拥有的 native 脚本进程（P06，ADR 0124）。
+"""桌面拥有的 native 脚本进程（P06，ADR 0125）。
 
 `tavotto run` 的进程关系是倒过来的（ADR 0021 §1）：用户的 Python 是 **CLI** 的子进程，
 sidecar 只通过 relay 连上去，所以 sidecar 对那个进程没有任何所有权。桌面里直接打开 `.py`
@@ -84,7 +84,7 @@ class OwnedPolicy:
 
 @dataclasses.dataclass(frozen=True)
 class OwnedLaunch:
-    """一次桌面拥有的运行的**不可变启动身份**（ADR 0124 §二）。
+    """一次桌面拥有的运行的**不可变启动身份**（ADR 0125 §二）。
 
     * `spec`：解释器 / 入口（脚本或 `-m`）/ argv（经运行配置引用）/ 显式 cwd / env 增量及来源 /
       stdin 通道——全在 `execspec.desktop_native_spec` 的产物里；

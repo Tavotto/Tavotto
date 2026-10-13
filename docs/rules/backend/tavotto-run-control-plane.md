@@ -21,7 +21,7 @@
 | `nativesession.py` | sidecar 侧注册表 + **单 reader** 传输 + 状态闭集 + live route |
 | `nativeperm.py` | "记住这个项目和这个 Python"（绑定 项目 × 解释器 × schema） |
 | `envlease.py` | **环境占用的唯一一张表**：safe worker / native 会话 / pip 安装三方共用 |
-| `desktopproc.py` | **桌面拥有的**用户 Python（P06，ADR 0124）：spawn / 进程组·Job / stdio 排空 / 取消 / 确认结束；复用上面的 relay 认证 accept、`NativeTransport`、`NativeSession`、`envlease` |
+| `desktopproc.py` | **桌面拥有的**用户 Python（P06，ADR 0125）：spawn / 进程组·Job / stdio 排空 / 取消 / 确认结束；复用上面的 relay 认证 accept、`NativeTransport`、`NativeSession`、`envlease` |
 | `enginesession.py` | **"谁来渲染"的唯一判据**（按 `execution_profile` 路由） |
 
 改动纪律（每一条都有用例，改之前先看它们）：
@@ -80,7 +80,7 @@
   `/api/runtime/status` 的 `execution_profile` 与渲染路由读的是同一份，
   另立一份迟早在某个边角上分叉，而分叉的那一侧会在界面上显示成"能编辑"。
 
-## 桌面拥有的脚本进程（P06，ADR 0124）
+## 桌面拥有的脚本进程（P06，ADR 0125）
 
 `ExecutionSpec.owner` 区分 native 档的两类进程所有权；`desktop` 的启动身份只由 `execspec.desktop_native_spec()` 构造，
 `owner/env_source/stdin` 给 safe 即 `ValueError`（不是 safe 的开关）。纪律（看护 `tests/native/test_desktop_owned_process.py`、

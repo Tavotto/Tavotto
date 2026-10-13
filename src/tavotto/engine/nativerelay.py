@@ -210,7 +210,7 @@ class NativeRelay:
     def adopt_child(
         self, timeout: float, *, watch=None, timeout_code: str = runcodes.NATIVE_ATTACH_TIMEOUT
     ) -> tuple[socket.socket, dict]:
-        """只要 child 一侧：**桌面自己 spawn 用户进程**时（ADR 0124）没有 CLI、也没有第二条 attach 连接。
+        """只要 child 一侧：**桌面自己 spawn 用户进程**时（ADR 0125）没有 CLI、也没有第二条 attach 连接。
 
         认证 accept 与 `wait_for_child` 是同一份（token 比对、认证失败不收摊、`watch` 盯子进程）；
         不同的只有两点：不开 attach 侧（关掉它的 listener），以及握手之后**把已认证的 socket 交给调用方**

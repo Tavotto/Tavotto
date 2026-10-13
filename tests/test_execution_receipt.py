@@ -81,7 +81,7 @@ class TestLaunchContext:
 
     def test_every_cwd_origin_has_exactly_one_producer(self):
         """U01 时 `project.root` 只是占位（没有 spec 组合派生出它）；U03 加了 `cwd_mode=project_root`
-        这一档之后四个来源各有且只有一个生产者；P06 加了桌面拥有的 native（`desktop.cwd`，ADR 0124）
+        这一档之后四个来源各有且只有一个生产者；P06 加了桌面拥有的 native（`desktop.cwd`，ADR 0125）
         成第五个。`project` 档**没有**被改成项目根（ADR 0047 的语义不变），而是多了第三档——这条钉住这两件事。"""
         by_origin = {
             execspec.launch_context(spec)["cwd_origin"]: spec.cwd_mode

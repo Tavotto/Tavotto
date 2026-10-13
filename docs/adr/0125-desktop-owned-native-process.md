@@ -1,4 +1,4 @@
-# ADR 0124：桌面拥有的 native 脚本进程——第二类进程所有权、不可变启动身份、取消与租约
+# ADR 0125：桌面拥有的 native 脚本进程——第二类进程所有权、不可变启动身份、取消与租约
 
 日期：2026-10-13 · 状态：**Proposed**（兼容性改造 P06，随该 PR 评审）
 相关：[0014 Safe/Native 两档](0014-safe-native-execution-profiles.md)、[0020 Native Matplotlib Bridge](0020-native-matplotlib-bridge.md)、

@@ -1,4 +1,4 @@
-"""桌面拥有的 native 脚本进程（P06，ADR 0124）：**真 spawn、真 Figure、真取消**。
+"""桌面拥有的 native 脚本进程（P06，ADR 0125）：**真 spawn、真 Figure、真取消**。
 
 链条：`desktopproc.start` 在本进程里 spawn 用户 Python（真 Bridge Runner、真 Matplotlib）→
 认证握手 → `NativeTransport` 单 reader → `NativeSession`。唯一被替掉的是窗口与 Flask。

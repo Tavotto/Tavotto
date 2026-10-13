@@ -244,7 +244,7 @@ def plan_for(
 ) -> PreparationPlan:
     """按产品**自己的**决定拼一份计划——这里不做任何选择，只读。
 
-    `execution` 是这份计划打算用哪一种**执行语义**跑（P06，ADR 0124）：默认 `safe`（旧行为，
+    `execution` 是这份计划打算用哪一种**执行语义**跑（P06，ADR 0125）：默认 `safe`（旧行为，
     逐字节不变）；`native` = 桌面拥有的 native 进程（保留普通文件 I/O，`LaunchContext` 如实写
     `write_mode=unrestricted`、`cwd_origin=desktop.cwd`、`owner=desktop`）。**它只改计划里的启动
     语义，不替调用方起进程**——真正的 runner 仍由调用方注入（`PreparationService.start`），

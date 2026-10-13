@@ -59,7 +59,7 @@ NATIVE_SESSION_ENDED = "native_session_ended"
 NATIVE_SESSION_DISCONNECTED = "native_session_disconnected"
 NATIVE_SESSION_UNKNOWN = "native_session_unknown"
 BRIDGE_CHILD_EXITED = "bridge_child_exited"
-#: 桌面拥有的脚本进程（P06，ADR 0124）
+#: 桌面拥有的脚本进程（P06，ADR 0125）
 #: 这条会话的进程不是桌面起的（终端拥有的）：桌面不杀它，只放手。
 NATIVE_PROCESS_NOT_OWNED = "native_process_not_owned"
 #: 桌面自己起的用户 Python 在期限内没连回控制通道（进程已被收掉）。

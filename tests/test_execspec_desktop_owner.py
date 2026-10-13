@@ -1,4 +1,4 @@
-"""桌面拥有的 native 启动身份的合同（P06，ADR 0124）。
+"""桌面拥有的 native 启动身份的合同（P06，ADR 0125）。
 
 有意变更的旧合同：「native 禁 run_config / env 恒 None / 公开投影沿用终端形状」。这里同时钉住
 **没变的**（terminal 拥有的 native 与 safe 的身份逐字节不变），以及**新的**：桌面拥有的身份

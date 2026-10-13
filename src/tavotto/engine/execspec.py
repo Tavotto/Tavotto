@@ -33,7 +33,7 @@ cwd、argv、env——继续散着拼，就是把同一个语义写第 N 份。�
   场合只准用这一档；`target` 是**项目相对路径（POSIX 分隔）**，这是它
   能跨机器稳定的前提。
 
-## 进程所有权（P06，ADR 0124）
+## 进程所有权（P06，ADR 0125）
 
 native 档有**两类**进程所有权，写进 spec 的 `owner`（safe 恒空串——它的进程归 pool）：
 
@@ -76,7 +76,7 @@ OWNER_TERMINAL = "terminal"
 OWNER_DESKTOP = "desktop"
 OWNERS = (OWNER_TERMINAL, OWNER_DESKTOP)
 #: 桌面拥有的进程，env 增量叠在哪一份环境上。**只承认 sidecar 自己的环境**：激活过的 conda / IDE /
-#: 内核环境没有证据就不声称恢复（ADR 0124 §四）；将来要加来源，必须同时给出可核的恢复证据。
+#: 内核环境没有证据就不声称恢复（ADR 0125 §四）；将来要加来源，必须同时给出可核的恢复证据。
 ENV_SOURCE_SIDECAR = "sidecar_inherited"
 ENV_SOURCES = (ENV_SOURCE_SIDECAR,)
 #: 脚本的 stdin 通道：`inherit` = caller 的（terminal 恒是它）；`pipe` = 桌面持有写端，由桌面决定何时送入 /
@@ -120,7 +120,7 @@ CWD_ORIGIN_SANDBOX = "sandbox"
 CWD_ORIGIN_SCRIPT_PARENT = "script.parent"
 CWD_ORIGIN_PROJECT_ROOT = "project.root"
 CWD_ORIGIN_INVOCATION = "invocation.cwd"
-#: 桌面拥有的 native 进程（P06，ADR 0124）：cwd 是桌面启动时**显式**给的那个目录，不是任何 shell 的。
+#: 桌面拥有的 native 进程（P06，ADR 0125）：cwd 是桌面启动时**显式**给的那个目录，不是任何 shell 的。
 CWD_ORIGIN_DESKTOP_LAUNCH = "desktop.cwd"
 CWD_ORIGINS = (
     CWD_ORIGIN_SANDBOX,
@@ -488,7 +488,7 @@ def run_cwd(figures_dir: str | os.PathLike, script: str, cwd_mode: str) -> str |
 
 
 def desktop_cwd(figures_dir: str | os.PathLike, script: str, cwd_mode: str) -> str:
-    """桌面拥有的 native 进程的 cwd（P06，ADR 0124 §三）：**没有沙盒这一档**。
+    """桌面拥有的 native 进程的 cwd（P06，ADR 0125 §三）：**没有沙盒这一档**。
 
     `project_root` = 项目根（用户在工作目录问题里选过的那一档，ADR 0057）；其余——包括 safe 默认的
     `sandbox`——一律是脚本所在目录：用户自己的 Python「像终端里那样跑」的意思表示（ADR 0107），
@@ -594,7 +594,7 @@ def desktop_native_spec(
     env: dict[str, str] | None = None,
     stdin: str = STDIN_NULL,
 ) -> ExecutionSpec:
-    """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0124）。
+    """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
 
     与 `native_spec` 的差别正是「进程归谁」带来的那几条，别的一字不动（savefig 透传、没有守卫、
     `entry=None`、`raw_target` 是 `sys.argv[0]`）：
