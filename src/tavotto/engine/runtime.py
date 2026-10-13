@@ -508,8 +508,9 @@ def probe_packages(
             else probe_env(python, bundled=bundled),
             creationflags=CREATE_NO_WINDOW,
         )
-    # RuntimeError：注入的 `env_for` 激活取环境失败（`launcher.LauncherUnavailable`）
-    except (OSError, subprocess.SubprocessError, RuntimeError):
+    # 注入的 `env_for` 激活取环境失败（`launcher.LauncherUnavailable`）**原样抛出**：那是瞬时的启动方式问题，
+    # 不能折成“这些包都 import 不到”，调用方报稳定码
+    except (OSError, subprocess.SubprocessError):
         return {n: None for n in names}
     if proc.returncode != 0:
         return {n: None for n in names}

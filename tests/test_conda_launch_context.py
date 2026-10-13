@@ -2233,3 +2233,22 @@ def test_target_facts_and_import_verification_keep_the_activation_code(activatio
     assert not depplan._facts_cache  # noqa: SLF001
     monkeypatch.delenv("FAKE_CONDA_SKIP_CMD")
     deprepair._verify_imports(py, ("vendor_sdk",))  # 条件恢复：同一入口立刻正常
+
+
+def test_the_environment_package_probe_reports_the_activation_code(monkeypatch):
+    """`/api/engine/environment?probe=` 遇到激活取环境失败：报 conda_launcher_unavailable，不把每个包报成 import 不到。"""
+    from tavotto import app as m
+    from tavotto.engine import runtime
+
+    def boom(python, base=None, **k):
+        raise launcher.LauncherUnavailable("x")
+
+    with pytest.raises(launcher.LauncherUnavailable):
+        runtime.probe_packages(sys.executable, ["json"], env_for=boom)
+    assert runtime.probe_packages(sys.executable, ["json"])["json"]  # 不注入：照常问到版本
+    monkeypatch.setattr(m.engine_bootstrap, "status", lambda: {"python": sys.executable, "bundled": False})
+    monkeypatch.setattr(m.engine_launcher, "activate_env", boom)
+    monkeypatch.setattr(m, "_project_environment_state", lambda: {"open": False})
+    body = m.app.test_client().get("/api/engine/environment?probe=json").get_json()
+    assert "imports" not in body
+    assert body["imports_error"]["code"] == "conda_launcher_unavailable"

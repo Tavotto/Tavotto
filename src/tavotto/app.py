@@ -6713,13 +6713,17 @@ def api_engine_environment():
             else None
         )
         py = st.get("python")
-        st["imports"] = (
-            engine_runtime.probe_packages(
-                py, names, bundled=bool(st.get("bundled")), env_for=engine_launcher.activate_env
+        try:
+            st["imports"] = (
+                engine_runtime.probe_packages(
+                    py, names, bundled=bool(st.get("bundled")), env_for=engine_launcher.activate_env
+                )
+                if py
+                else {}
             )
-            if py
-            else {}
-        )
+        except engine_launcher.LauncherUnavailable as exc:
+            # Conda 激活取环境失败：瞬时，不是“包都 import 不到”——不给 `imports`，给稳定码
+            st["imports_error"] = {"code": exc.code, "detail": str(exc)[:400]}
     st["project"] = _project_environment_state()
     resp = jsonify(st)
     resp.headers["Cache-Control"] = "no-store"
