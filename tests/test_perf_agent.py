@@ -1,4 +1,5 @@
 """Agent 性能对照工具：不把缺失基线/错机器/少样本误报成 pass。"""
+
 from __future__ import annotations
 
 import json
@@ -14,16 +15,25 @@ def report(n=16, value=20, browser="chromium"):
         "schema": A.SCHEMA,
         "iterations": n,
         "environment": {
-            "platform": "linux", "arch": "x64", "browser": browser,
-            "browser_major": 125, "viewport_w": 1280, "viewport_h": 720,
-            "dpr": 1, "headless": True,
-            "os_release": "test-kernel", "cpu_model": "test-cpu",
-            "cpu_count": 4, "total_mem_gib": 16,
+            "platform": "linux",
+            "arch": "x64",
+            "browser": browser,
+            "browser_major": 125,
+            "viewport_w": 1280,
+            "viewport_h": 720,
+            "dpr": 1,
+            "headless": True,
+            "os_release": "test-kernel",
+            "cpu_model": "test-cpu",
+            "cpu_count": 4,
+            "total_mem_gib": 16,
         },
         "scenarios": [
             {
                 "id": key,
-                "two_raf_ms": [value for _ in range(n * (4 if key == "dialog.presets_open" else 1))],
+                "two_raf_ms": [
+                    value for _ in range(n * (4 if key == "dialog.presets_open" else 1))
+                ],
             }
             for key in sorted(A.ALLOWED_SCENARIOS)
         ],
