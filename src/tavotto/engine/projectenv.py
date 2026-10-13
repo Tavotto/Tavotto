@@ -1706,7 +1706,8 @@ def _outcome_fingerprint(outcome: dict) -> tuple:
     pythons = [e.get("python", "") for e in outcome.get("rejected") or []]
     if outcome.get("ok"):
         pythons.append(outcome.get("python", ""))
-    return tuple((p, interpreter_fingerprint(p)) for p in pythons if p)
+    # 带启动上下文（`launcher.context_key`）：conda install / 改 activate.d 不动解释器文件，但激活后的结论变了（P09）
+    return tuple((p, interpreter_fingerprint(p), launcher.context_key(p)) for p in pythons if p)
 
 
 def cached_first_open(figures_dir: str | Path) -> dict | None:
@@ -1759,12 +1760,12 @@ def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> 
     rejected: list[dict] = []
     chosen: dict | None = None
     # 指纹在体检**之前**量：体检途中被替换的话，下一次比对就对不上、重新体检
-    probed: list[tuple[str, tuple]] = []
+    probed: list[tuple[str, tuple, str]] = []
     for venv in candidates:
         python = interpreter_of(venv, root=figures_dir)
         if not python:
             continue
-        probed.append((python, interpreter_fingerprint(python)))
+        probed.append((python, interpreter_fingerprint(python), launcher.context_key(python)))
         health = probe_environment(python)
         entry = {
             "venv": venv,

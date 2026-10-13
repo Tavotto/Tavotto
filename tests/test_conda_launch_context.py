@@ -2252,3 +2252,41 @@ def test_the_environment_package_probe_reports_the_activation_code(monkeypatch):
     body = m.app.test_client().get("/api/engine/environment?probe=json").get_json()
     assert "imports" not in body
     assert body["imports_error"]["code"] == "conda_launcher_unavailable"
+
+
+@posix_only
+def test_environment_advice_verdicts_are_partitioned_by_launch_context(tmp_path, monkeypatch):
+    """环境建议的检查结论：conda install / 改 activate.d 不改环境代，但激活后看到的东西变了——旧结论不能复用；
+    直接启动与 Conda 激活两种上下文的结论互不冒充。"""
+    from tavotto.engine import envadvice, projectenv
+
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("CONDA_EXE", str(conda))
+    py = str(prefix / "bin" / "python")
+    envadvice.reset_cache()
+    gen = projectenv.environment_generation(py)
+    envadvice._store_verdict(py, gen, {"ok": True})  # noqa: SLF001
+    assert envadvice._verdict(py, gen)["ok"] is True  # noqa: SLF001
+    with monkeypatch.context() as m:
+        m.setenv(launcher.ENV_DISABLE, "0")  # 直接启动的上下文：没验过
+        assert envadvice._verdict(py, gen) is None  # noqa: SLF001
+    with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+        fh.write("# cmd: conda install vendor-sdk\n")
+    assert projectenv.environment_generation(py) == gen  # 环境代没变……
+    assert envadvice._verdict(py, gen) is None  # noqa: SLF001 — ……结论照样不复用
+
+
+@posix_only
+def test_the_first_open_outcome_is_invalidated_when_the_conda_environment_changes(tmp_path, monkeypatch):
+    """首次打开的环境结论：conda install / 改 activate.d 不动解释器文件，结论的指纹照样要变（带启动上下文）。"""
+    from tavotto.engine import projectenv
+
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("CONDA_EXE", str(conda))
+    py = str(prefix / "bin" / "python")
+    outcome = {"ok": True, "python": py, "rejected": []}
+    before = projectenv._outcome_fingerprint(outcome)  # noqa: SLF001
+    assert projectenv._outcome_fingerprint(outcome) == before  # noqa: SLF001
+    with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+        fh.write("# cmd: conda install vendor-sdk\n")
+    assert projectenv._outcome_fingerprint(outcome) != before  # noqa: SLF001
