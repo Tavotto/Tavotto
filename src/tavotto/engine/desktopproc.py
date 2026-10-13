@@ -599,6 +599,9 @@ def start(
             },
         },
     )
+    if registry.has_live(session_id):
+        # launch_id 复用：两次启动会共用同一个租约 id，后者收尾会放掉前者唯一的租约。先于租约与 spawn 拒绝
+        raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
     envlease.acquire_native(spec.interpreter, session_id)  # 先于一切：拿不到就一行都不跑
     relay = None
     owner: DesktopProcess | None = None
@@ -669,6 +672,11 @@ def start(
         if owner is None:
             # 进程根本没起来：没有谁会回调，租约在这里放
             envlease.release_native(spec.interpreter, session_id)
+        else:
+            # spawn 之后的任何失败（含登记被拒）：关传输、收进程；租约由所有者确认结束后放
+            if session.transport is not None:
+                session.transport.close()
+            owner.cancel()
         raise
     finally:
         if relay is not None:

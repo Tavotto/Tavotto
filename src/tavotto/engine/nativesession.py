@@ -840,6 +840,12 @@ class NativeSessionRegistry:
             self._sessions[session_id] = session
         return session
 
+    def has_live(self, session_id: str) -> bool:
+        """这个会话 id 上是不是还有活着的会话（桌面拥有的启动在取租约 / spawn 之前先问，免得共用同一个租约 id）。"""
+        with self._lock:
+            s = self._sessions.get(session_id)
+        return s is not None and s.alive()
+
     def adopt(self, session: NativeSession) -> None:
         """登记一条**桌面拥有**的会话（`desktopproc.start` 在握手成功、传输起好之后调）。
 

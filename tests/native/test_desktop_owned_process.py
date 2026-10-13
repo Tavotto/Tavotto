@@ -663,3 +663,39 @@ def test_the_owned_session_is_routed_by_the_existing_resolver(tmp_path):
             execution_profile=enginesession.PROFILE_NATIVE,
         )
     assert err.value.code == runcodes.NATIVE_SESSION_OFFLINE
+
+
+# ---------------------------------------------------------------------------
+# Codex P2：登记失败时，已 spawn 的子进程必须收掉，租约不泄漏
+# ---------------------------------------------------------------------------
+def test_adoption_failure_cancels_the_spawned_child_and_releases_the_lease(tmp_path, monkeypatch):
+    seen = {}
+
+    def boom(session):
+        seen["session"] = session
+        raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
+
+    monkeypatch.setattr(nativesession.REGISTRY, "adopt", boom)
+    launch = dk.launch_for(
+        tmp_path,
+        'open("pid", "w").write(str(__import__("os").getpid()))\nimport time; time.sleep(600)\n',
+    )
+    with pytest.raises(RunError) as err:
+        desktopproc.start(launch)
+    assert err.value.code == runcodes.NATIVE_SESSION_CONFLICT
+    session = seen["session"]
+    assert session.owned.finished, "登记失败后所有者没有收掉子进程"
+    assert not dk.pid_alive(session.owned.pid)
+    assert session.transport.closed, "传输没关"
+    assert envlease.native_sessions_on(launch.spec.interpreter) == []
+
+
+def test_a_reused_launch_id_is_refused_before_it_can_touch_the_first_sessions_lease(tmp_path):
+    first = dk.start(tmp_path / "a", RUNNING_SCRIPT, launch_id="dup")
+    dk.wait_until(lambda: (tmp_path / "a" / "work" / "ready").exists(), what="脚本就绪")
+    with pytest.raises(RunError) as err:
+        dk.start(tmp_path / "b", 'open("ran", "w").write("1")\n', launch_id="dup")
+    assert err.value.code == runcodes.NATIVE_SESSION_CONFLICT
+    assert not (tmp_path / "b" / "work" / "ran").exists(), "冲突的启动还是跑了用户代码"
+    assert dk.pid_alive(first.owned.pid) and dk.holds_lease(first), "第一条的租约被第二次启动牵连"
+    first.cancel_owned()
