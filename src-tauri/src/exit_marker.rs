@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -87,18 +87,19 @@ pub fn judge(text: Option<&str>) -> Option<Previous> {
     if v.get("v")?.as_u64()? != u64::from(VERSION) {
         return None;
     }
+    let engine = v
+        .get("engine_exit")
+        .and_then(|e| e.as_str())
+        .and_then(EngineExit::parse);
+    // `engine_exit` 粘住直到下次启动被取走：引擎崩了、用户没重启就正常退出 App（clean），
+    // 下次启动照样提示 engine_exited（取走 = 启动时读进内存，随后写 running 覆盖）
     match v.get("state")?.as_str()? {
-        "running" => {
-            let engine = v
-                .get("engine_exit")
-                .and_then(|e| e.as_str())
-                .and_then(EngineExit::parse);
-            Some(if engine.is_some() {
-                Previous::EngineExited
-            } else {
-                Previous::AppUnclean
-            })
-        }
+        "running" => Some(if engine.is_some() {
+            Previous::EngineExited
+        } else {
+            Previous::AppUnclean
+        }),
+        "clean" => engine.map(|_| Previous::EngineExited),
         _ => None,
     }
 }
@@ -124,6 +125,8 @@ pub struct Marker {
     started_at: u64,
     app: String,
     closed: Arc<AtomicBool>,
+    /// 本次会话里引擎意外退出的类型：之后每次落盘（含 clean）都带着它
+    engine: Arc<Mutex<Option<EngineExit>>>,
 }
 
 impl Marker {
@@ -136,6 +139,7 @@ impl Marker {
                 .unwrap_or(0),
             app: app.to_string(),
             closed: Arc::new(AtomicBool::new(false)),
+            engine: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -145,21 +149,23 @@ impl Marker {
     }
 
     pub fn mark_running(&self) {
-        self.write("running", None);
+        self.write("running");
     }
 
     /// 引擎意外退出：状态仍是 `running`（壳还活着），只多一个类型。
     pub fn mark_engine_exit(&self, kind: EngineExit) {
-        self.write("running", Some(kind));
+        *self.engine.lock().unwrap() = Some(kind);
+        self.write("running");
     }
 
-    /// 正常退出——也是所有绕过 `RunEvent::Exit` 的退出路径必须先调的那一句。幂等。
+    /// 正常退出（`engine_exit` 不清，见 [`judge`]）——也是所有绕过 `RunEvent::Exit` 的退出路径必须先调的那一句。幂等。
     pub fn mark_clean(&self) {
-        self.write("clean", None);
+        self.write("clean");
         self.closed.store(true, Ordering::SeqCst);
     }
 
-    fn write(&self, state: &str, engine_exit: Option<EngineExit>) {
+    fn write(&self, state: &str) {
+        let engine_exit = *self.engine.lock().unwrap();
         if self.closed.load(Ordering::SeqCst) {
             return;
         }
@@ -207,8 +213,12 @@ mod tests {
             j(r#"{"v":1,"state":"running","engine_exit":"boom"}"#),
             Some(Previous::AppUnclean)
         );
-        // clean 即使带着 engine_exit 也是正常退出
-        assert_eq!(j(r#"{"v":1,"state":"clean","engine_exit":"zero"}"#), None);
+        // engine_exit 粘住：clean 带着合法 engine_exit 仍提示 engine_exited；非法类型的 clean 是正常退出
+        assert_eq!(
+            j(r#"{"v":1,"state":"clean","engine_exit":"zero"}"#),
+            Some(Previous::EngineExited)
+        );
+        assert_eq!(j(r#"{"v":1,"state":"clean","engine_exit":"boom"}"#), None);
     }
 
     #[test]
@@ -280,17 +290,26 @@ mod tests {
     }
 
     #[test]
-    fn engine_exit_survives_until_the_next_start_and_clean_wins_after() {
+    fn engine_exit_is_sticky_through_clean_and_cleared_by_the_next_session() {
         let dir = tmp_dir("engine");
         let m = Marker::new(Some(&dir), "1.0.0");
         m.mark_running();
         m.mark_engine_exit(EngineExit::Nonzero);
         assert_eq!(m.read_previous(), Some(Previous::EngineExited));
         m.mark_clean();
+        // 用户没重启引擎就正常退出 App：clean 不清 engine_exit，下次启动照样提示
+        assert_eq!(m.read_previous(), Some(Previous::EngineExited));
+        assert!(read(&dir).contains(r#""state":"clean""#));
         // clean 之后监视线程迟到的写入不许把 running 写回去
         m.mark_engine_exit(EngineExit::Zero);
         m.mark_running();
-        assert_eq!(m.read_previous(), None);
+        assert!(read(&dir).contains(r#""state":"clean""#));
+        // 下一次会话启动：读到 engine_exited，随后写 running 覆盖（取走即清）
+        let next = Marker::new(Some(&dir), "1.0.1");
+        assert_eq!(next.read_previous(), Some(Previous::EngineExited));
+        next.mark_running();
+        next.mark_clean();
+        assert_eq!(Marker::new(Some(&dir), "1.0.2").read_previous(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -32,7 +32,7 @@
 {"v":1,"state":"running"|"clean","started_at":<unix 秒>,"app":"<版本>","engine_exit":"signal"|"nonzero"|"zero"}
 ```
 
-（`engine_exit` 仅在引擎意外退出后出现。）不含项目、路径、脚本名、用户标识、错误文本。时序：`setup` 里（单实例插件之后，第二个实例到不了这里）读旧文件 → 纯函数判定 `previous`（无文件 / `clean` / 损坏 / 版本未知 → 无提示并覆盖；`running` → `app_unclean`；`running` + 合法 `engine_exit` → `engine_exited`）存进内存 → 立刻写 `running` → `RunEvent::Exit`（`shutdown_sidecar` 之后）写 `clean`。写入后 `clean` 即封口，监视线程迟到的写入不会把 `running` 写回去。
+（`engine_exit` 仅在引擎意外退出后出现，且**粘住直到下次启动被取走**：`clean` 也带着它。）不含项目、路径、脚本名、用户标识、错误文本。时序：`setup` 里（单实例插件之后，第二个实例到不了这里）读旧文件 → 纯函数判定 `previous`（无文件 / 损坏 / 版本未知 → 无提示并覆盖；`running` → `app_unclean`；`running` + 合法 `engine_exit` → `engine_exited`；`clean` + 合法 `engine_exit` → `engine_exited`，即引擎崩了、用户没重启就正常退出 App 也会提示；`clean` 无 `engine_exit` → 无提示）存进内存 → 立刻写 `running` → `RunEvent::Exit`（`shutdown_sidecar` 之后）写 `clean`。写入后 `clean` 即封口，监视线程迟到的写入不会把 `running` 写回去。
 
 **绕过 `RunEvent::Exit` 的退出路径必须先写 `clean`**，否则每次升级后都会误报。逐一核过的清单：
 
