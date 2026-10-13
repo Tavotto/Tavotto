@@ -295,13 +295,16 @@ _URL_SCHEME = re.compile(r"(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]{0,31}://"
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 _REDACTED = "<redacted>"
 #: 没有键名可依的形状：PEM 私钥块、常见服务商的令牌前缀（AWS 访问密钥 id、GitHub 细粒度、Slack、Google API key）
-_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----")
+_PEM_BEGIN = re.compile(
+    r"-----BEGIN[ \t]+((?:[A-Za-z]+[ \t]+){0,5}PRIVATE[ \t]+KEY)[ \t]*-----", re.I
+)
 
 
 def _redact_pem(text: str) -> str:
-    """PEM 私钥块整段换掉。线性：每个 BEGIN 向后找 END（不设窗口），换掉之后从块尾继续、不回头——所以总扫描量
-    不超过输入长度。**找不到 END（截断 / 不完整的块）就一直抹到输入末尾**，找到的 END 再多走到它的收尾 `-----`。"""
-    if "PRIVATE KEY-----" not in text:
+    """PEM 私钥块整段换掉。线性：每个 BEGIN 向后找**同一标签**的 END（`BEGIN PRIVATE KEY` 只认 `END PRIVATE KEY`，
+    大小写 / 空白变体算同一个；中间夹着别的标签的 END——比如证书——不算收尾），换掉之后从块尾继续、不回头，所以总扫描量
+    不超过输入长度。**找不到配对的 END（截断 / 不完整的块）就一直抹到输入末尾**。"""
+    if _PEM_BEGIN.search(text) is None:
         return text
     out: list[str] = []
     pos = 0
@@ -309,12 +312,12 @@ def _redact_pem(text: str) -> str:
         m = _PEM_BEGIN.search(text, pos)
         if m is None:
             break
-        end = text.find("-----END", m.end())
-        if end < 0:
-            stop = len(text)
-        else:
-            close = text.find("-----", end + 8, end + 8 + 80)
-            stop = close + 5 if close >= 0 else end + 8
+        words = m.group(1).upper().split()
+        end_re = re.compile(
+            r"-----END[ \t]+" + r"[ \t]+".join(map(re.escape, words)) + r"[ \t]*-----", re.I
+        )
+        e = end_re.search(text, m.end())
+        stop = e.end() if e is not None else len(text)
         out.append(text[pos : m.start()])
         out.append(_REDACTED)
         pos = stop
@@ -422,6 +425,44 @@ def _scan_value(text: str, i: int, *, whole_line: bool) -> int:
             return k
         k += 1
     return n
+
+
+_YAML_BLOCK_INDICATOR = re.compile(r"[|>][-+0-9]*[ \t]*(?:#.*)?")
+
+
+def _yaml_block_end(text: str, key_start: int, vs: int) -> int | None:
+    """值从下一行才开始的写法：`token: |` / `token: >-` / `token: |2`（YAML 块标量）、`token:`（行尾空值，下面缩进的
+    是值）、行尾续行符 `\\`。fail-closed：键所在行之后**所有比键行缩进更深的行**（以及续行）都是值，一直抹到遇到缩进不深于
+    键行的非空行或输入末尾；空行不终止块。回块的结束位置（不含）；这一处不是这种写法回 None。"""
+    n = len(text)
+    nl = text.find("\n", vs)
+    eol = n if nl < 0 else nl
+    rest = text[vs:eol]
+    stripped = rest.strip()
+    continued = rest.rstrip().endswith("\\")
+    if not (stripped == "" or _YAML_BLOCK_INDICATOR.fullmatch(stripped) or continued):
+        return None
+    ls = text.rfind("\n", 0, key_start) + 1
+    line = text[ls:key_start]
+    indent = len(line) - len(line.lstrip(" \t"))
+    last = None  # 最后一行被纳入的非空行的末尾
+    j = eol
+    while j < n:  # text[j] 是上一行末尾的换行
+        k = text.find("\n", j + 1)
+        line_end = n if k < 0 else k
+        body = text[j + 1 : line_end]
+        if body.strip() == "":
+            j = line_end
+            continue
+        deeper = len(body) - len(body.lstrip(" \t")) > indent
+        if not (continued or deeper):
+            break
+        last = line_end
+        continued = body.rstrip().endswith("\\")
+        j = line_end
+    if last is None:
+        return None if stripped == "" else eol
+    return last
 
 
 def _redact_userinfo(text: str) -> str:
@@ -580,6 +621,13 @@ class Scrubber:
             vs = m.end()
             if vs >= len(text):
                 continue
+            if not self.source_mode:
+                yaml_end = _yaml_block_end(text, m.start(), vs)
+                if yaml_end is not None:
+                    out.append(text[pos:vs])
+                    out.append(_REDACTED)
+                    pos = max(yaml_end, _scan_value(text, vs, whole_line=True))
+                    continue
             ft = _FIRST_TOKEN.match(text, vs)
             first, after = ft.group(0), ft.end()
             if _BORING_VALUE.match(first) and (
@@ -1418,11 +1466,31 @@ def _probe_subprocess(
     return result
 
 
+#: 探针继承环境时**保留**的 `PYTHON*`：只影响编码 / 字节码，不影响 import 与启动
+_PROBE_KEEP_PYTHON_ENV = frozenset(
+    {"PYTHONIOENCODING", "PYTHONUTF8", "PYTHONSAFEPATH", "PYTHONDONTWRITEBYTECODE"}
+)
+
+
+def _probe_base_env(base: dict[str, str] | None) -> dict[str, str]:
+    """探针子进程的基础环境：从调用方（Flask 进程 / 用户 shell）继承，但**剔除所有能改 import 与启动行为的变量**——
+    `PYTHONPATH` / `PYTHONHOME` / `PYTHONSTARTUP` / `PYTHONUSERBASE` / `PYTHON*` 其余一律 / `__PYVENV_LAUNCHER__`。
+    探针脚本在可信临时目录里，不剔除的话 Flask 继承来的 `PYTHONPATH` 会让探针 import 到项目里的 `json.py`。
+    解释器另加 `-E` 兜底（连将来新增的 `PYTHON*` 变量一起忽略）；`VIRTUAL_ENV` 等无害变量照旧继承。"""
+    src = os.environ if base is None else base
+    return {
+        k: v
+        for k, v in src.items()
+        if k != "__PYVENV_LAUNCHER__"
+        and (not k.upper().startswith("PYTHON") or k in _PROBE_KEEP_PYTHON_ENV)
+    }
+
+
 def _probe_in(
     trusted: str, python: str, bundled: bool, cwd: str | None, env_extra: dict[str, str] | None
 ) -> dict:
-    env = runtime.probe_env(python, bundled=bundled)
-    env = {**(os.environ if env is None else env), **(env_extra or {})}
+    env = _probe_base_env(runtime.probe_env(python, bundled=bundled))
+    env.update(env_extra or {})
     # 3.11+：sys.path 里不放脚本目录 / cwd（PYTHONSAFEPATH）；老版本靠「脚本在可信临时目录里」达到同一效果
     env["PYTHONSAFEPATH"] = "1"
     # **探针不能用 `-c`，也不能让 cwd 进 sys.path**：cwd 是项目 / 脚本目录（matplotlibrc 等相对查找需要它），项目里的
@@ -1433,7 +1501,7 @@ def _probe_in(
     script.write_text(_PROBE_CODE, encoding="utf-8")
     try:
         proc = subprocess.run(
-            [python, *runtime.probe_args(bundled=bundled), "-s", str(script)],
+            [python, "-E", *runtime.probe_args(bundled=bundled), "-s", str(script)],
             capture_output=True,
             text=True,
             encoding="utf-8",

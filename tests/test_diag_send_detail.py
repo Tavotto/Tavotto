@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -2094,6 +2095,49 @@ class TestProbeNeverExecutesUserDirectories:
         out = REAL_PROBE(py, False, str(evil), diagdetail._native_launch_env(sess))
         assert out["status"] == "ok" and not marker.exists()
 
+    @pytest.mark.parametrize("var", ["PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PYTHONUSERBASE"])
+    def test_inherited_python_env_cannot_run_user_code_in_the_probe(
+        self, monkeypatch, tmp_path, var
+    ):
+        """Flask 进程自己的环境（`PYTHONPATH` 指向项目 / `PYTHONSTARTUP` 指向脚本）不能被探针继承。"""
+        py, _b = self._python()  # 先解析解释器：这一步自己也会起子进程，不属于被测的探针
+        evil, marker = self._evil_dir(tmp_path, "inherit")
+        startup = tmp_path / "startup.py"
+        startup.write_text(
+            f"open({str(tmp_path / 'startup-marker')!r}, 'w').write('x')\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("PYTHONPATH", str(evil))
+        monkeypatch.setenv("PYTHONSTARTUP", str(startup))
+        monkeypatch.setenv("__PYVENV_LAUNCHER__", str(evil / "nope"))
+        monkeypatch.setenv(var, str(evil) if var != "PYTHONSTARTUP" else str(startup))
+        seen = {}
+        real_run = subprocess.run
+
+        def spy(cmd, **kw):
+            seen["cmd"], seen["env"] = cmd, kw.get("env")
+            return real_run(cmd, **kw)
+
+        monkeypatch.setattr(subprocess, "run", spy)
+        out = REAL_PROBE(py, False, str(tmp_path))
+        assert out["status"] == "ok"
+        assert not marker.exists() and not (tmp_path / "startup-marker").exists()
+        assert "-E" in seen["cmd"]
+        assert not [
+            k
+            for k in seen["env"]
+            if k.startswith("PYTHON") and k not in diagdetail._PROBE_KEEP_PYTHON_ENV
+        ]
+        assert "__PYVENV_LAUNCHER__" not in seen["env"]
+
+    def test_probe_still_works_with_dash_E_alone(self, monkeypatch, tmp_path):
+        """环境清理是第一道、`-E` 是第二道：只剩 `-E` 时（env 里被塞回 PYTHONPATH）恶意模块也不执行。"""
+        evil, marker = self._evil_dir(tmp_path, "dashE")
+        monkeypatch.setattr(
+            diagdetail, "_probe_base_env", lambda base: {**os.environ, "PYTHONPATH": str(evil)}
+        )
+        py, _b = self._python()
+        assert REAL_PROBE(py, False, str(tmp_path))["status"] == "ok" and not marker.exists()
+
     def test_the_probe_is_launched_from_a_trusted_script_not_dash_c(self, monkeypatch, tmp_path):
         seen = {}
         real_run = subprocess.run
@@ -3155,3 +3199,72 @@ class TestSanitizeDetail:
         assert out["shell"] == {"app_version": "1"}
         assert out["console"][0]["level"] == "error" and out["console"][0]["message"] == ""
         assert len(out["console"]) == 1
+
+
+class TestPemAndYamlBlocks:
+    """PEM 的 END 必须与 BEGIN 同一标签；YAML 块标量 / 空值 / 续行的值从下一行才开始。"""
+
+    PEMS = [
+        # END 标签不匹配：中间夹的证书 END 不算收尾
+        "-----BEGIN PRIVATE KEY-----\nS1\n-----END CERTIFICATE-----\nS2\n-----END PRIVATE KEY-----\nkeep",
+        # 嵌套 BEGIN
+        "-----BEGIN PRIVATE KEY-----\nS1\n-----BEGIN RSA PRIVATE KEY-----\nS2\n-----END RSA PRIVATE KEY-----\nS3\n-----END PRIVATE KEY-----\nkeep",
+        # 标签大小写 / 空白变体
+        "-----begin  rsa  private   key-----\nS1\n-----END RSA PRIVATE KEY-----\nkeep",
+        "-----BEGIN\tENCRYPTED PRIVATE KEY-----\nS1\n-----end encrypted private key-----\nkeep",
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nS1\n-----END OPENSSH PRIVATE KEY-----\nkeep",
+        # END 标签始终不配对：抹到输入末尾
+        "-----BEGIN EC PRIVATE KEY-----\nS1\n-----END PRIVATE KEY-----\nS2",
+    ]
+
+    @pytest.mark.parametrize("text", PEMS)
+    def test_pem_blocks(self, text):
+        out = diagdetail.Scrubber().text(text)
+        assert not re.search(r"S\d", out), out
+        if text.endswith("keep"):
+            assert out.endswith("keep")
+
+    def test_mismatched_end_erases_to_end_of_input(self):
+        out = diagdetail.Scrubber().text(
+            "x\n-----BEGIN EC PRIVATE KEY-----\nS1\n-----END PRIVATE KEY-----\nS2"
+        )
+        assert out == "x\n" + diagdetail._REDACTED
+
+    def test_pem_scan_is_linear(self):
+        import time
+
+        t = time.monotonic()
+        diagdetail.Scrubber().text(
+            "-----BEGIN RSA PRIVATE KEY-----\n" * 4000 + "-----END PRIVATE KEY-----"
+        )
+        assert time.monotonic() - t < 3
+
+    @pytest.mark.parametrize("key", ["token", "api_key", "password", "client_secret"])
+    @pytest.mark.parametrize(
+        "block",
+        [
+            "|\n  S1\n  S2\n",
+            ">-\n  S1\n\n  S2\n",
+            "|2\n   S1\n",
+            "|+ # c\n  S1\n",
+            "\n  - S1\n  - S2\n",
+            "\n    nested: S1\n",
+            "\\\n  S1\n  S2\n",
+        ],
+    )
+    def test_yaml_block_values(self, key, block):
+        for indent in ("", "  "):
+            first, *rest = block.split("\n")
+            body = "\n".join([first, *((indent + ln if ln.strip() else ln) for ln in rest)])
+            text = f"top:\n{indent}{key}: {body}{indent}sibling: keep_me\n"
+            out = diagdetail.Scrubber().text(text)
+            assert not re.search(r"S\d", out), (key, block, out)
+            assert f"{indent}sibling: keep_me" in out, out
+
+    def test_yaml_block_ends_at_dedent_and_blank_lines_do_not_end_it(self):
+        text = "a:\n  token: |\n    S1\n\n    S2\n  other: ok\nb: fine\n"
+        out = diagdetail.Scrubber().text(text)
+        assert "S1" not in out and "S2" not in out and "other: ok" in out and "b: fine" in out
+
+    def test_empty_value_without_indented_children_is_kept(self):
+        assert diagdetail.Scrubber().text("token:\nnext: ok") == "token:\nnext: ok"
