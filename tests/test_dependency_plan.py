@@ -1496,6 +1496,9 @@ class TestPlanOrigins:
     ):
         plan, _order, _site = self._layered(tmp_path, "pkg", filename, ext=ext)
         assert (plan.unknown == ("lab_tools",)) is shadows
+        if shadows:
+            # 真提供者是 vendor 里的扩展模块：site 里的那份是「被遮蔽」（来源未验证），不是形状推不出的「歧义」
+            assert [o["reason"] for o in plan.origins] == ["unverified"]
 
     def test_938_found_but_the_distribution_is_not_installed_stays_unknown(self, tmp_path):
         """覆盖度说它能 import，目标解释器的已装集合里却没有那个发行包：不冒充满足。"""
