@@ -584,6 +584,75 @@ class TestOptionalContent:
 # ---------------------------------------------------------------------------
 # 源码脱敏（注释 / 字符串里的明文）、渲染环境的项目感知、整份丢弃的记账
 # ---------------------------------------------------------------------------
+class TestContainerSecrets:
+    @pytest.mark.parametrize(
+        ("raw", "want"),
+        [
+            ('{"token":["REAL_SECRET"]} ok', '{"token":<redacted>} ok'),
+            ('"password": {"v": "REAL_SECRET"} tail', '"password": <redacted> tail'),
+            ('\'auth\': ["REAL_SECRET", "b"] z', "'auth': <redacted> z"),
+            (
+                'token=[ "a]REAL_SECRET" , ["c"] ] after',
+                "token=<redacted> after",
+            ),  # 引号内的 ]、嵌套
+            ('secret={"a":{"b":"] \\" REAL_SECRET ]"}} end', "secret=<redacted> end"),  # 转义引号
+            ("token=[1,2] keep", "token=[1,2] keep"),  # 纯数字 / 布尔的容器保留
+            ('token={"a": true, "b": null} keep', None),  # 带引号的键 = 含字符串：保守抹
+        ],
+    )
+    def test_the_whole_balanced_bracket_segment_is_replaced(self, raw, want):
+        out = diagdetail.Scrubber().text(raw)
+        assert "REAL_SECRET" not in out
+        if want is not None:
+            assert out == want
+        else:
+            assert "<redacted>" in out
+
+    def test_unbalanced_and_overlong_containers_are_erased_to_end_of_line(self):
+        s = diagdetail.Scrubber()
+        out = s.text('token=[unbalanced "REAL_SECRET" more\nnext line')
+        assert "REAL_SECRET" not in out and out.endswith("\nnext line")
+        big = "token=[" + "x," * (diagdetail.CONTAINER_SCAN_MAX) + "REAL_SECRET]\nkept"
+        out = s.text(big)
+        assert "REAL_SECRET" not in out and out.endswith("\nkept")
+
+    def test_text_around_the_segment_is_preserved(self):
+        out = diagdetail.Scrubber().text('a {"token":["S1"], "ok": "keep-me"} b')
+        assert "S1" not in out and out.startswith('a {"token":') and "b" in out
+
+    def test_source_mode_masks_quoted_containers_only(self):
+        c = diagdetail.Scrubber(source_mode=True)
+        assert c.text("token = [self._next()]") == "token = [self._next()]"
+        assert "REAL_SECRET" not in c.text('secret = ["REAL_SECRET"]')
+        full = diagdetail.Scrubber()
+        src = '# token=["REAL_SECRET_C"]\nx = 1\ntoken = [self._next()]\n'
+        out = diagdetail.scrub_script(src, "a.py", full, c)
+        assert "REAL_SECRET_C" not in out and "token = [self._next()]" in out
+
+    def test_console_record_with_a_container_secret(self, client, world):
+        payload = {
+            "detail": {
+                "console": [
+                    {
+                        "t": 1,
+                        "level": "error",
+                        "message": '{"token":["REAL_SECRET_CON"]}',
+                        "stack": None,
+                    }
+                ]
+            }
+        }
+        _prep, z = _prepare(client, payload)
+        assert "REAL_SECRET_CON" not in z.read("detail-frontend-console.json").decode()
+
+    def test_scanning_stays_linear(self):
+        s = diagdetail.Scrubber()
+        for blob in ("token=[" * 100_000, "token={" * 100_000, 'token=["' * 60_000 + "x"):
+            t0 = time.monotonic()
+            s.text(blob)
+            assert time.monotonic() - t0 < 5, blob[:10]
+
+
 class TestTokenizeErrorToken:
     def test_an_errortoken_means_unparsable_on_every_python_version(self, monkeypatch):
         """Python ≤ 3.11 对未闭合的单引号字符串不抛异常、产出 ERRORTOKEN；3.12+ 抛 TokenError。两种都要走整份完整模式。"""

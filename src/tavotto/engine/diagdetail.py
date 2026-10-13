@@ -254,7 +254,7 @@ _SECRET_WORDS = (
 #: 上，无界的 `[\w.\-]*` 前缀会逐位回溯成 O(n²)（备包卡死）。看护：`test_scrubber_is_linear_on_long_tokens`
 _KV_SECRET = re.compile(
     rf"""(?ix)
-    (?P<key>(?<![\w.\-])["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|key(?![\w.\-]))["']?)
+    (?P<key>(?<![\w.\-])["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))["']?)
     (?P<sep>\s*[:=]\s*)
     (?P<val>"[^"\n]*"|'[^'\n]*'|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
     """
@@ -269,6 +269,49 @@ _REDACTED = "<redacted>"
 _BORING_VALUE = re.compile(
     r"""^["']?(?:|\d{1,6}|true|false|none|null|<redacted>|\*\*\*|<[^>]{1,20}>|\.\.\.)["']?$""", re.I
 )
+
+CONTAINER_SCAN_MAX = 8 * 1024
+_BORING_TOKENS = re.compile(
+    r"[\s\[\]{},:]|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|true|false|null|none", re.I
+)
+
+
+def _has_quote(segment: str) -> bool:
+    return '"' in segment or "'" in segment
+
+
+def _containers_are_boring(segment: str) -> bool:
+    """括号段里只有数字 / 布尔 / null / 分隔符（没有任何字符串）：保留，如 `token=[1,2]`。"""
+    return _BORING_TOKENS.sub("", segment) == ""
+
+
+def _container_end(text: str, start: int) -> tuple[int, bool]:
+    """`text[start]` 是 `[` / `{`：回 (括号段结束位置（不含）, 是否配平)。线性单趟扫描，考虑嵌套、引号内的括号与转义引号；
+    最多扫 `CONTAINER_SCAN_MAX` 字符，不配平 / 超界 / 遇到行尾前没闭合 → 保守地一直抹到行尾（回 False）。"""
+    depth = 0
+    quote = ""
+    limit = min(len(text), start + CONTAINER_SCAN_MAX)
+    i = start
+    while i < limit:
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+            if depth == 0:
+                return i + 1, True
+        i += 1
+    nl = text.find("\n", start, len(text))
+    return (len(text) if nl < 0 else nl), False
+
 
 #: 结构化数据里这些键名（子串）的值整体换掉。`diagnostics._SECRET_KEYS` 的超集
 _SECRET_KEY_PARTS = (
@@ -364,9 +407,33 @@ class Scrubber:
         quote = val[0] if val[:1] in "\"'" else ""
         return f"{m.group('key')}{m.group('sep')}{quote}{_REDACTED}{quote}"
 
+    def _kv_all(self, text: str) -> str:
+        """`_KV_SECRET` 的逐处替换。值以 `[` / `{` 开头时，换掉的是**整个配平的括号段**（`{"token":["S"]}` 里
+        正则只会匹配到 `[`），由 `_container_end` 线性扫描；其余值走 `_kv`。"""
+        out: list[str] = []
+        pos = 0
+        for m in _KV_SECRET.finditer(text):
+            if m.start() < pos:
+                continue  # 落在前一个已换掉的括号段里
+            val = m.group("val")
+            if val[:1] not in "[{":
+                out.append(text[pos : m.start()])
+                out.append(self._kv(m))
+                pos = m.end()
+                continue
+            vs = m.start("val")
+            end, balanced = _container_end(text, vs)
+            segment = text[vs:end]
+            keep = _containers_are_boring(segment) or (self.source_mode and not _has_quote(segment))
+            out.append(text[pos:vs])
+            out.append(segment if keep and balanced else _REDACTED)
+            pos = end
+        out.append(text[pos:])
+        return "".join(out)
+
     def text(self, text: str) -> str:
         text = _COOKIE_LINE.sub(lambda m: m.group(1) + _REDACTED, text)
-        text = _KV_SECRET.sub(self._kv, text)
+        text = self._kv_all(text)
         text = _BEARER.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
         text = _URL_USERINFO.sub(lambda m: m.group("scheme") + _REDACTED + "@", text)
         text = _JWT.sub(_REDACTED, text)
