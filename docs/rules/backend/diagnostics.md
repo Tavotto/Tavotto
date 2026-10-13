@@ -257,7 +257,7 @@
 - **两步，只有第二步出网。** `prepare`（`POST /api/diagnostics/send/prepare`，载荷同导出）在本机生成并保管**一份**包（`app._build_diagnostics_bundle`——
   与导出共用，包的内容与脱敏只此一份），回「会发送哪几类内容」（`ENTRY_KINDS` 闭集 id）；`GET .../<id>/bundle` 给用户同一字节去保存。
   `POST .../<id>/send` 的请求体 `confirm` 必须是字面 `true`，才起发送线程（init → 直传 COS → complete）。备包 / 看包 / 状态 / 取消 / 丢弃都不出网。
-  包超过 10 MiB（以 `upload.max_bytes` 为准）**不保管不裁剪**，回 `too_large`。**同一项目同一时刻一个会话**；重复点发送回当前状态，不开第二条线程。
+  包超过 64 MiB（2026-10-13 起，原 10 MiB；以 `upload.max_bytes` 为准）**不保管不裁剪**，回 `too_large`。**同一项目同一时刻一个会话**；重复点发送回当前状态，不开第二条线程。
   会话注册表按请求的项目上下文分键（`_SESSIONS[scope]`，#927；`scope` = `app._diag_send_scope()`：`?pj=` / `X-Tavotto-Project` 指名的项目 id，不带则默认项目）：
   备包 / 状态 / 看包 / 发送 / 取消 / 丢弃都只认**本项目**的会话——B 项目备包不丢弃 A 的包，A 在发送中 B 照常备包；别的项目拿着 A 的 id 查 / 取消 / 丢弃一律 404。发送线程与异步取消回调捕获的是会话对象本身（身份判据 `SendSession.dropped`，不再是全局单例比较）。
 - **逐次授权，什么都不自己继续。** 没有记住的选择、没有启动补发、状态只在内存；取消 / 关窗（`discard`）/ 失败 / 进程退出后不会有请求。一次发送内的有界重试只有
@@ -342,23 +342,24 @@
 不变量未改：I1–I3 与「取消优先」(I2) 原样；新增的只是 I1 在两个入口（改参数重试、丢弃）上的落实。看护：`tests/test_diag_send.py::TestReconcileAfterFailure` / `TestDiscardKeepsDeliveryOutcome`、
 `tests/test_diag_send_api.py::TestPerProjectSessions`（两个项目并行准备 / 一个发送中另一个准备 / 跨项目 404）、`DiagnosticsSendDialog.test.tsx` 的「迟到的 start」两条。
 
-## 发送包的 `detail/`（bundle schema 8，ADR 0118 修订 2026-10-13，`engine/diagdetail.py`）
+## 发送包的 `detail-…` / `optional-…`（bundle schema 8，ADR 0118 修订 2026-10-13，`engine/diagdetail.py`）
 
-**只有发送路径用。** `app._build_diagnostics_bundle(frontend, dropped, detail)`：`detail=None` 是导出（严格脱敏、`GET/POST /api/diagnostics/bundle`，`manifest.contains_detail=false`、没有任何 `detail/` 文件，且**不读**载荷里的 `detail` / `detail_options`）；只有 `prepare` 传 `DetailRequest`。
+**只有发送路径用。** `app._build_diagnostics_bundle(frontend, dropped, detail)`：`detail=None` 是导出（严格脱敏、`GET/POST /api/diagnostics/bundle`，`manifest.contains_detail=false`、没有任何 `detail-…` / `optional-…` 条目，且**不读**载荷里的 `detail` / `detail_options`）；只有 `prepare` 传 `DetailRequest`。
 `report.json` 在两条路径上是同一份 `build_report`，老文件字节不变；manifest 多 `contains_detail` / `detail_files`（路径 + 字节）/ `detail_options` / `truncated`；发送包的 README 取代「不包含」一节（对它不成立）。
 
-- **十二类默认 + 三个勾选项**（`PRIORITY`，数字大的先被截）：1 `errors.json`（app.log 里 ERROR/CRITICAL 记录 + worker.log traceback 块 + 前端未捕获错误，原文）；2 `logs/{app,sidecar,worker*}.log.tail`（seek 读尾部，sidecar 路径 `handoff.sidecar_log_path`，worker 只取当前项目名下的 `diagnostics.owned_worker_logs`，与出门版 `worker_log_tails` 同一判据）；
-  3 `state/`（`layoutsession.state_path().parent` 下除锁文件外的文件 + `index.json` 清单含损坏副本名 / 大小 / mtime）；4 `requests.json`（`RequestRing`，app.py 的 before/after_request，定长 400、不写盘、不含请求体 / 查询串 / 实参，`/api/diagnostics/send*` 轮询不记，错误码只收 `^[a-z][a-z0-9_]{0,63}$` 的响应 `code`）；
-  5 `overrides/`（前端送来的**正在编辑 / 选中面板**的 overrides 热态 + 该面板 stem 在 `baked_overrides/<项目>.json` 的写回基线）；6 `render-env.json`（`pool.find_worker_python()` 的解释器上跑**一次** ≤10 s 的只读子进程；失败如实记 `reason`，不让备包失败）；
-  7 `runs.json`（`taskdiag.bundle_section(limit=24)` + app.log 里渲染 / 导出 / 试运行相关记录原文）；8 `shell.json`（版本 / 安装方式 / 系统 / 架构 / Rosetta / 渠道（按版本串推断）/ 前端送来的壳版本与**本窗口会话内**最近一次应用内更新结果；取不到的写 `unknown`，**不改 Rust**）；
-  9 `storage.json`（数据目录与项目目录所在盘剩余空间、可写、云同步目录、Windows `LongPathsEnabled`）；10 `frontend-console.json`（console.error/warn 环 40 条，全局不随切项目清）；11 `display.json`；12 `network.json`（代理去 userinfo、两个域名的系统解析是否落在 `198.18.0.0/15`、时区）。
-  勾选：13 A `optional/source/`（判据 = 当前项目**登记的脚本**，当前面板的脚本排最前，其余按 mtime；解析后必须仍在项目目录内）；14 B `optional/crash-reports/`（macOS `DiagnosticReports` / Windows `CrashDumps` 与 WER `ReportArchive`，7 天内，进程名 Tavotto/workerd，python/sidecar 只在报告点名 tavotto 时收；**`.dmp` 二进制没法脱敏，只列清单**）；15 C `optional/corrupt-sessions/`（损坏副本内容）。
+- **十二类默认 + 三个勾选项**（`PRIORITY`，数字大的先被截；`CONTAINERS` 里的类别各打成一个内层 zip，其余一类一个扁平条目）：1 `detail-errors.json`（app.log 里 ERROR/CRITICAL 记录 + worker.log traceback 块 + 前端未捕获错误，原文）；2 `detail-{app,sidecar,worker}-log.txt`（worker 最近几份合成一个条目、每份前一行出处；seek 读尾部，sidecar 路径 `handoff.sidecar_log_path`，worker 只取当前项目名下的 `diagnostics.owned_worker_logs`，与出门版 `worker_log_tails` 同一判据）；
+  3 `detail-state.zip`（内层 zip；`layoutsession.state_path().parent` 下除锁文件外的文件 + `index.json` 清单含损坏副本名 / 大小 / mtime）；4 `detail-requests.json`（`RequestRing`，app.py 的 before/after_request，定长 400、不写盘、不含请求体 / 查询串 / 实参，`/api/diagnostics/send*` 轮询不记，错误码只收 `^[a-z][a-z0-9_]{0,63}$` 的响应 `code`）；
+  5 `detail-overrides.zip`（内层 zip；前端送来的**正在编辑 / 选中面板**的 overrides 热态 + 该面板 stem 在 `baked_overrides/<项目>.json` 的写回基线）；6 `detail-render-env.json`（`pool.find_worker_python()` 的解释器上跑**一次** ≤10 s 的只读子进程；失败如实记 `reason`，不让备包失败）；
+  7 `detail-runs.json`（`taskdiag.bundle_section(limit=24)` + app.log 里渲染 / 导出 / 试运行相关记录原文）；8 `detail-shell.json`（版本 / 安装方式 / 系统 / 架构 / Rosetta / 渠道（按版本串推断）/ 前端送来的壳版本与**本窗口会话内**最近一次应用内更新结果；取不到的写 `unknown`，**不改 Rust**）；
+  9 `detail-storage.json`（数据目录与项目目录所在盘剩余空间、可写、云同步目录、Windows `LongPathsEnabled`）；10 `detail-frontend-console.json`（console.error/warn 环 40 条，全局不随切项目清）；11 `detail-display.json`；12 `detail-network.json`（代理去 userinfo、两个域名的系统解析（线程里做、≤2 s，超时记 unknown）是否落在 `198.18.0.0/15`、时区）。
+  勾选：13 A `optional-source.zip`（内层 zip；判据 = 当前项目**登记的脚本**，当前面板的脚本排最前，其余按 mtime；解析后必须仍在项目目录内）；14 B `optional-crash-reports.zip`（内层 zip；macOS `DiagnosticReports` / Windows `CrashDumps` 与 WER `ReportArchive`，7 天内，进程名 Tavotto/workerd，python/sidecar 只在报告点名 tavotto 时收；**`.dmp` 二进制没法脱敏，只列清单**）；15 C `optional-corrupt-sessions.zip`（内层 zip；损坏副本内容）。
 - **选项只认字面 `true`**（`parse_options`），默认全 false、服务端不记忆；载荷被整份丢弃（超 `MAX_SEND_REQUEST_BYTES` = 1 MiB）时退回全 false。前端 `detail` 子对象由 `diagnostics_frontend.sanitize_detail` 只按类型 / 长度 / 条数限界，**不按形状拒绝文字**（与老字段的判据刻意不同），导出路径根本不读它。
 - **始终处理 `Scrubber`**（发送包每个新文件）：家目录各写法（正反斜杠、JSON 转义）→ `~`、用户名（≥3 且非 user/root/admin 等通用名）→ `<user>`、`key=…` / `token=…` / `Authorization:` / Cookie 行 / URL userinfo / JWT / 复用 `_SECRET_VALUE`；结构化数据按键名（`api_key`、`token`、`secret`、`password`、`auth`、`cookie`、`nonce`、`credential`、`signature`……）整体换。
   **正则必须线性**：键名前后通配有上界 40、起点锚在标识符开头、URL scheme 有上界（`test_scrubber_is_linear_on_long_tokens`——无界版本在 80 万字符的十六进制串上跑了数十秒）。**不做**邮箱 / 云盘账号替换（会把装饰器 `@app.route` 之类整词吞掉；维护者要看原文）。源码文件用 `source_mode`：只换带引号的字面量，`token = self._next()` 这类表达式原样。
 - **没勾 A = 零源码字节**：除不放脚本文件外，日志 / 报错 / 运行记录里 traceback 的源码行与 `^^^` 指示符一律剥掉（`strip_source_lines`，保留 `File …, line N` 帧行与异常行）。看护 `test_source_is_zero_bytes_when_unticked_everywhere`（金丝雀在 worker.log traceback 里，勾了才出现）。
-- **体积（`fit`）**：每类一个原始字节份额（`SHARE`）；总 ZIP 超 `MAX_BYTES - FIT_SLACK` 时按 `PRIORITY` 从大到小截（能缩的按比例缩，不能缩的从末尾整份丢，缩到 <2 KiB 整类去掉），记 `truncated: [{kind, original_bytes, kept_bytes}]`；核心文件不在 `fit` 里；全截光仍超限走 `diagsend.too_large`。`report.json` 只算一次（`build_bundle(report=…)`）。
+- **体积（`fit`）**：每类一个原始字节份额（`SHARE`）；总 ZIP 超 `MAX_BYTES - FIT_SLACK`（64 - 1 = 63 MiB）时按 `PRIORITY` 从大到小截（能缩的按比例缩，不能缩的从末尾整份丢，缩到 <2 KiB 整类去掉），记 `truncated: [{kind, original_bytes, kept_bytes}]`；核心文件不在 `fit` 里；全截光仍超限走 `diagsend.too_large`。`report.json` 只算一次（`build_bundle(report=…)`）。
 - **采集失败不让备包失败**：每类包在 try 里，失败变成该类的一份 `{"collection_error": …}`。测试进程里渲染环境子进程与 DNS 默认被 `tests/conftest.py` 的 autouse 桩换掉（真探测的用例自己取回原函数）。
-- **跨仓库前置条件**：服务端 `diagnostics-api` 的 `zipcheck` 目前拒绝含 `/` 的条目名、限 32 条、压缩比 200:1；infra 放行 `detail/` 之前，发送包会被 422 拒收。`diagsend.ENTRY_KINDS` 的 `detail/…` 键（`/` 结尾 = 目录前缀）经 `kind_of` 给确认框分类，`MAX_BUNDLE_ENTRIES` 放宽到 256。
-- 看护：`tests/test_diag_send_detail.py`（每类在且非空、家目录 / 用户名 / 秘密金丝雀全文 0、源码金丝雀、选项默认 false 不记忆、截断顺序与 10 MiB、导出路径无 detail 且忽略 detail 载荷、请求环不含查询串 / 请求体、探针失败降级、`sanitize_detail` 限界）。
+- **ZIP 形状由 infra 诊断服务的 ZIP 检查决定**（文字出处，不写跨仓库路径）：条目名匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`（**无目录 / 斜杠**）、整包 ≤ 32 条、单条目 `file_size > 1024 且 > 200 × compress_size` 被拒、单条目解压后 ≤ 128 MiB、总解压后 ≤ 256 MiB、`manifest.json` ≤ 64 KiB（所以 manifest 里只列顶层条目，内层清单放内层 zip 的 `index.json`）。
+  常量在 `diagsend.ZIP_RULES`，出包后 `diagdetail.ratio_safe`（压缩比超限的条目改存 STORED）+ `diagsend.zip_problem`（同判据自检，`inspect_bundle` 里不合规 = `bundle_invalid` 内部错误，不发送）。`diagsend.ENTRY_KINDS` 只收精确的扁平名；`MAX_BUNDLE_ENTRIES` = 32。
+- 看护：`tests/test_diag_send_detail.py`（每类在且非空、家目录 / 用户名 / 秘密金丝雀全文 0、源码金丝雀、选项默认 false 不记忆、截断顺序与 64 MiB 上限、ZIP 规则（最大配置 ≤ 32 条且名字合规、重复日志不触发压缩比、自检）、导出路径无 detail 且忽略 detail 载荷、请求环不含查询串 / 请求体、探针失败降级、`sanitize_detail` 限界）。
 

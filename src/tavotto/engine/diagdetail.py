@@ -1,7 +1,7 @@
-"""发送问题反馈的诊断包：`detail/` 目录（bundle schema 8，ADR 0118 修订 2026-10-13）。
+"""发送问题反馈的诊断包：`detail-…` / `optional-…` 条目（bundle schema 8，ADR 0118 修订 2026-10-13）。
 
 **只有「发送」路径用它。** 导出到文件的 `GET/POST /api/diagnostics/bundle` 与「复制诊断」不调本模块，
-那一份仍是严格脱敏、用户可能贴进公开 issue 的包。发送包多出来的东西全部放在 ZIP 的 `detail/` 下，
+那一份仍是严格脱敏、用户可能贴进公开 issue 的包。发送包多出来的东西全部放在 ZIP 的扁平条目 `detail-…` / `optional-…` 里（服务端 ZIP 检查要求条目名无目录、整包 ≤ 32 条、压缩比 ≤ 200；多文件的类别各打成一个内层 zip），
 老三件（report.json / app.log / config.json）的名字与语义不动。
 
 维护者裁决（2026-10-13）：包以「能帮维护者详细定位问题」为准，**不再因为报错或文件里可能带着用户文字就
@@ -47,7 +47,7 @@ from . import config, diagnostics, layoutsession, logsafe, perfprobe, pool, runt
 LOG = logging.getLogger("tavotto.diagdetail")
 
 DETAIL_DIR = "detail"
-#: detail/ 内部各文件的形状版本（与 bundle schema 各自演进；读取方忽略不认识的字段）
+#: detail 条目内部各文件的形状版本（与 bundle schema 各自演进；读取方忽略不认识的字段）
 DETAIL_SCHEMA = 1
 
 # ---------------------------------------------------------------------------
@@ -72,45 +72,57 @@ PRIORITY: dict[str, int] = {
     "corrupt_sessions": 15,
 }
 
+#: 多文件的类别各打成**一个内层 zip**（内层可以有目录与 index.json）：服务端 ZIP 检查要求条目名扁平且整包 ≤ 32 条，
+#: 其余类别一类一个扁平条目。内层 zip 在外层里 STORED（已经压缩过）。
+CONTAINERS: dict[str, str] = {
+    "state": "detail-state.zip",
+    "overrides": "detail-overrides.zip",
+    "source": "optional-source.zip",
+    "crash_reports": "optional-crash-reports.zip",
+    "corrupt_sessions": "optional-corrupt-sessions.zip",
+}
+
 #: 日志里 kind 位明文放行的闭集（`logsafe.known` 要求模块常量）
 KINDS = frozenset(PRIORITY)
 
+MiB = 1024 * 1024
+
 #: 每类的原始字节份额（解压后）。总量超限时才会进一步截断；份额本身是「每类最多收这么多」
 SHARE: dict[str, int] = {
-    "errors": 256 * 1024,
-    "logs": 1280 * 1024,
-    "state": 384 * 1024,
-    "requests": 128 * 1024,
-    "overrides": 512 * 1024,
-    "render_env": 128 * 1024,
-    "runs": 192 * 1024,
-    "shell": 32 * 1024,
-    "storage": 32 * 1024,
-    "console": 256 * 1024,
-    "display": 16 * 1024,
-    "network": 16 * 1024,
-    "source": 2 * 1024 * 1024,
-    "crash_reports": 1536 * 1024,
-    "corrupt_sessions": 512 * 1024,
+    "errors": 1 * MiB,
+    "logs": 8 * MiB,
+    "state": 2 * MiB,
+    "requests": 256 * 1024,
+    "overrides": 2 * MiB,
+    "render_env": 256 * 1024,
+    "runs": 1 * MiB,
+    "shell": 64 * 1024,
+    "storage": 64 * 1024,
+    "console": 512 * 1024,
+    "display": 32 * 1024,
+    "network": 32 * 1024,
+    "source": 16 * MiB,
+    "crash_reports": 16 * MiB,
+    "corrupt_sessions": 4 * MiB,
 }
 
-APP_LOG_TAIL = 640 * 1024
-SIDECAR_LOG_TAIL = 256 * 1024
-WORKER_LOG_TAIL = 128 * 1024
+APP_LOG_TAIL = 4 * MiB
+SIDECAR_LOG_TAIL = 1 * MiB
+WORKER_LOG_TAIL = 1 * MiB
 WORKER_LOG_FILES = 3
 ERROR_RECORDS = 40
 ERROR_RECORD_CHARS = 16 * 1024
 TRACEBACKS_PER_LOG = 5
-STATE_FILE_CAP = 192 * 1024
-CORRUPT_FILE_CAP = 128 * 1024
+STATE_FILE_CAP = 512 * 1024
+CORRUPT_FILE_CAP = 512 * 1024
 CORRUPT_FILES = 3
-SOURCE_FILE_CAP = 256 * 1024
-SOURCE_FILES = 40
-CRASH_FILE_CAP = 400 * 1024
-CRASH_FILES = 5
+SOURCE_FILE_CAP = 1 * MiB
+SOURCE_FILES = 100
+CRASH_FILE_CAP = 2 * MiB
+CRASH_FILES = 8
 CRASH_WINDOW_S = 7 * 24 * 3600
 PROBE_TIMEOUT_S = 10
-DNS_TIMEOUT_S = 3.0
+DNS_TIMEOUT_S = 2.0
 RING_CAPACITY = 400
 
 # ---------------------------------------------------------------------------
@@ -157,8 +169,8 @@ class DetailRequest:
     frontend: dict = dataclasses.field(default_factory=dict)
 
 
-#: 留给 manifest（截断记录会让它变大）与 ZIP 目录的余量
-FIT_SLACK = 8192
+#: 截断预算总额 = 上限 - 余量（64 MiB 上限下为 63 MiB）：留给 manifest（截断记录）、ZIP 目录与压缩比改存带来的增量
+FIT_SLACK = 1 * MiB
 
 
 @dataclasses.dataclass
@@ -166,7 +178,7 @@ class Item:
     """一个将进 ZIP 的 detail 文件。`shrink(cap)` 给出不超过 cap 字节的缩小版；没有就整份保留或整份丢。"""
 
     kind: str
-    path: str  # 相对 detail/
+    path: str  # 扁平类别：外层条目名；`CONTAINERS` 里的类别：内层 zip 里的路径
     data: bytes
     shrink: Callable[[int], bytes] | None = None
     #: 内容被份额 / 单文件上限截过时的原始字节数（None = 没截）
@@ -572,7 +584,7 @@ def collect_errors(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
         r["text"] = _cap_middle(r["text"], ERROR_RECORD_CHARS)
     worker = []
     for mtime, path in _worker_logs(src.project):
-        got = _read_tail(path, WORKER_LOG_TAIL * 2)
+        got = _read_tail(path, WORKER_LOG_TAIL)
         if not got:
             continue
         blocks = traceback_blocks(got[0].decode("utf-8", errors="replace"))
@@ -607,7 +619,7 @@ def collect_errors(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
     return [
         Item(
             "errors",
-            "errors.json",
+            "detail-errors.json",
             data,
             shrink=_list_shrinker(build, records),
         )
@@ -658,13 +670,32 @@ def collect_logs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
             )
         )
 
-    add("logs/app.log.tail", diagnostics._app_log_path(), APP_LOG_TAIL)
-    add("logs/sidecar.log.tail", sidecar_log_file(), SIDECAR_LOG_TAIL)
-    for i, (_mtime, path) in enumerate(_worker_logs(src.project)):
-        add(
-            "logs/worker.log.tail" if i == 0 else f"logs/worker-{i + 1}.log.tail",
-            path,
-            WORKER_LOG_TAIL,
+    add("detail-app-log.txt", diagnostics._app_log_path(), APP_LOG_TAIL)
+    add("detail-sidecar-log.txt", sidecar_log_file(), SIDECAR_LOG_TAIL)
+    # 当前项目最近几份 worker.log 合成一个条目（扁平名只有一个 detail-worker-log.txt），每份前面一行出处
+    parts: list[str] = []
+    sizes = 0
+    cut = False
+    for _mtime, path in _worker_logs(src.project):
+        got = _read_tail(path, WORKER_LOG_TAIL)
+        if got is None:
+            continue
+        raw, size = got
+        sizes += size
+        cut = cut or size > WORKER_LOG_TAIL
+        text = raw.decode("utf-8", errors="replace")
+        text = text if opts.source else strip_source_lines(text)
+        parts.append(f"===== worker.log (modified {_iso(_mtime)}) =====\n{text}")
+    if parts:
+        data = scrub.text("\n".join(parts)).encode("utf-8")
+        items.append(
+            Item(
+                "logs",
+                "detail-worker-log.txt",
+                data,
+                shrink=lambda cap, d=data: _tail_bytes(d, cap),
+                original_bytes=sizes if cut else None,
+            )
         )
     return items
 
@@ -723,7 +754,7 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
         items.append(
             Item(
                 "state",
-                f"state/{_safe_name(p.name)}",
+                _safe_name(p.name),
                 data,
                 shrink=lambda cap, d=data: _head_bytes(d, cap),
                 original_bytes=size if size > STATE_FILE_CAP else None,
@@ -735,7 +766,7 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
         "files": index,
         "corrupt_contents_included": opts.corrupt_sessions,
     }
-    items.insert(0, Item("state", "state/index.json", _dumps(listing)))
+    items.insert(0, Item("state", "index.json", _dumps(listing)))
     return items
 
 
@@ -752,7 +783,7 @@ def collect_corrupt_sessions(src: Sources, opts: DetailOptions, scrub: Scrubber)
         items.append(
             Item(
                 "corrupt_sessions",
-                f"optional/corrupt-sessions/{_safe_name(p.name)}",
+                _safe_name(p.name),
                 data,
                 shrink=lambda cap, d=data: _head_bytes(d, cap),
                 original_bytes=size if size > CORRUPT_FILE_CAP else None,
@@ -779,7 +810,12 @@ def collect_requests(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list
         )
 
     return [
-        Item("requests", "requests.json", build(records), shrink=_list_shrinker(build, records))
+        Item(
+            "requests",
+            "detail-requests.json",
+            build(records),
+            shrink=_list_shrinker(build, records),
+        )
     ]
 
 
@@ -802,7 +838,7 @@ def collect_overrides(src: Sources, opts: DetailOptions, scrub: Scrubber) -> lis
         items.append(
             Item(
                 "overrides",
-                f"overrides/live-{n + 1}-{_safe_name(stem or 'panel')}.json",
+                f"live-{n + 1}-{_safe_name(stem or 'panel')}.json",
                 _dumps(doc),
             )
         )
@@ -819,12 +855,12 @@ def collect_overrides(src: Sources, opts: DetailOptions, scrub: Scrubber) -> lis
                 "entry": entry,
             }
         )
-        items.append(Item("overrides", f"overrides/baked-{_safe_name(stem)}.json", _dumps(doc)))
+        items.append(Item("overrides", f"baked-{_safe_name(stem)}.json", _dumps(doc)))
     if not items:
         items.append(
             Item(
                 "overrides",
-                "overrides/index.json",
+                "index.json",
                 _dumps({"schema": DETAIL_SCHEMA, "note": "no panel was being edited or selected"}),
             )
         )
@@ -960,7 +996,7 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             "env_override": pool.worker_python_env(),
         }
         doc["probe"] = _probe_subprocess(python, source == pool.SOURCE_BUNDLED)
-    return [Item("render_env", "render-env.json", _dumps(scrub.obj(doc)))]
+    return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
 
 
 # ---------------------------------------------------------------------------
@@ -991,7 +1027,7 @@ def collect_runs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
         doc = scrub.obj(doc)
         return _dumps(doc if opts.source else _strip_obj(doc))
 
-    return [Item("runs", "runs.json", build(records), shrink=_list_shrinker(build, records))]
+    return [Item("runs", "detail-runs.json", build(records), shrink=_list_shrinker(build, records))]
 
 
 # ---------------------------------------------------------------------------
@@ -1067,7 +1103,7 @@ def collect_shell(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
         },
         "pip_updater": None if frozen else updater.settings(),
     }
-    return [Item("shell", "shell.json", _dumps(scrub.obj(doc)))]
+    return [Item("shell", "detail-shell.json", _dumps(scrub.obj(doc)))]
 
 
 # ---------------------------------------------------------------------------
@@ -1137,7 +1173,7 @@ def collect_storage(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
             "disk": _disk(p),
             "sync_providers": sync_providers(str(p)),
         }
-    return [Item("storage", "storage.json", _dumps(scrub.obj(doc)))]
+    return [Item("storage", "detail-storage.json", _dumps(scrub.obj(doc)))]
 
 
 # ---------------------------------------------------------------------------
@@ -1160,7 +1196,7 @@ def collect_console(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
     return [
         Item(
             "console",
-            "frontend-console.json",
+            "detail-frontend-console.json",
             build(records),
             shrink=_list_shrinker(build, records),
         )
@@ -1170,7 +1206,7 @@ def collect_console(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
 def collect_display(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     display = (src.frontend or {}).get("display")
     doc = {"schema": DETAIL_SCHEMA, **(display or {"status": "unknown"})}
-    return [Item("display", "display.json", _dumps(scrub.obj(doc)))]
+    return [Item("display", "detail-display.json", _dumps(scrub.obj(doc)))]
 
 
 # ---------------------------------------------------------------------------
@@ -1224,9 +1260,9 @@ def dns_fact(host: str) -> dict:
     t.start()
     t.join(DNS_TIMEOUT_S)
     if t.is_alive():
-        return {"host": host, "error": "timeout"}
+        return {"host": host, "result": "unknown", "reason": "timeout"}
     if "addrs" not in box:
-        return {"host": host, "error": box.get("error", "unknown")}
+        return {"host": host, "result": "unknown", "reason": box.get("error", "unknown")}
     rewritten = False
     for a in box["addrs"]:
         try:
@@ -1249,7 +1285,7 @@ def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
             "utc_offset_minutes": int(off.total_seconds() // 60),
         },
     }
-    return [Item("network", "network.json", _dumps(scrub.obj(doc)))]
+    return [Item("network", "detail-network.json", _dumps(scrub.obj(doc)))]
 
 
 # ---------------------------------------------------------------------------
@@ -1296,7 +1332,7 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
         data = code_scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
         if size > SOURCE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
-        zip_name = f"optional/source/{n + 1:02d}-{_safe_name(rel.replace('/', '__'))}"
+        zip_name = f"{n + 1:02d}-{_safe_name(rel.replace('/', '__'))}"
         index.append({"script": scrub.text(rel), "file": zip_name, "bytes": size})
         items.append(
             Item(
@@ -1311,7 +1347,7 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
         0,
         Item(
             "source",
-            "optional/source/index.json",
+            "index.json",
             _dumps(
                 {
                     "schema": DETAIL_SCHEMA,
@@ -1432,7 +1468,7 @@ def collect_crash_reports(
             data = scrub.text(text).encode("utf-8")
             if size > CRASH_FILE_CAP:
                 data += b"\n" + _marker(len(raw), size, "first")
-            zip_name = f"optional/crash-reports/{_safe_name(zip_stem)}"
+            zip_name = _safe_name(zip_stem)
             index.append(
                 {
                     "source": label,
@@ -1455,7 +1491,7 @@ def collect_crash_reports(
         0,
         Item(
             "crash_reports",
-            "optional/crash-reports/index.json",
+            "index.json",
             _dumps(
                 {
                     "schema": DETAIL_SCHEMA,
@@ -1473,18 +1509,18 @@ def collect_crash_reports(
 # 汇总、截断
 # ---------------------------------------------------------------------------
 DEFAULT_COLLECTORS: list[tuple[str, str, Callable]] = [
-    ("errors", "errors.json", collect_errors),
-    ("logs", "logs/", collect_logs),
-    ("state", "state/", collect_state),
-    ("requests", "requests.json", collect_requests),
-    ("overrides", "overrides/", collect_overrides),
-    ("render_env", "render-env.json", collect_render_env),
-    ("runs", "runs.json", collect_runs),
-    ("shell", "shell.json", collect_shell),
-    ("storage", "storage.json", collect_storage),
-    ("console", "frontend-console.json", collect_console),
-    ("display", "display.json", collect_display),
-    ("network", "network.json", collect_network),
+    ("errors", "detail-errors.json", collect_errors),
+    ("logs", "detail-app-log.txt", collect_logs),
+    ("state", "detail-state.zip", collect_state),
+    ("requests", "detail-requests.json", collect_requests),
+    ("overrides", "detail-overrides.zip", collect_overrides),
+    ("render_env", "detail-render-env.json", collect_render_env),
+    ("runs", "detail-runs.json", collect_runs),
+    ("shell", "detail-shell.json", collect_shell),
+    ("storage", "detail-storage.json", collect_storage),
+    ("console", "detail-frontend-console.json", collect_console),
+    ("display", "detail-display.json", collect_display),
+    ("network", "detail-network.json", collect_network),
 ]
 
 
@@ -1493,25 +1529,19 @@ def collect(src: Sources, opts: DetailOptions) -> list[Item]:
     scrub = Scrubber()
     plan = list(DEFAULT_COLLECTORS)
     if opts.source:
-        plan.append(("source", "optional/source/", collect_source))
+        plan.append(("source", "optional-source.zip", collect_source))
     if opts.crash_reports:
-        plan.append(("crash_reports", "optional/crash-reports/", collect_crash_reports))
+        plan.append(("crash_reports", "optional-crash-reports.zip", collect_crash_reports))
     if opts.corrupt_sessions:
-        plan.append(("corrupt_sessions", "optional/corrupt-sessions/", collect_corrupt_sessions))
+        plan.append(("corrupt_sessions", "optional-corrupt-sessions.zip", collect_corrupt_sessions))
     items: list[Item] = []
     for kind, path, fn in plan:
         try:
             got = fn(src, opts, scrub)
         except Exception as exc:  # noqa: BLE001 — 采集失败不让备包失败
             LOG.warning("detail 采集失败: %s", logsafe.known(kind, KINDS))
-            got = [
-                _failed(
-                    kind,
-                    path.rstrip("/") + ("" if path.endswith(".json") else "/error.json"),
-                    exc,
-                    scrub,
-                )
-            ]
+            # 扁平类别的失败文件顶替它自己的条目名；装进内层 zip 的类别写成内层的 error.json
+            got = [_failed(kind, "error.json" if kind in CONTAINERS else path, exc, scrub)]
         for it in got:
             # 份额：同一类里超出的整份往后丢（先到先得，顺序 = 采集顺序）
             items.append(it)
@@ -1534,6 +1564,53 @@ def _apply_shares(items: list[Item]) -> list[Item]:
         used[it.kind] = used.get(it.kind, 0) + it.size
         out.append(it)
     return out
+
+
+def entries(items: list[Item]) -> list[tuple[str, bytes]]:
+    """items → 外层 ZIP 的扁平条目 `[(条目名, 字节)]`：`CONTAINERS` 里的类别合成一个内层 zip，其余一类一个条目。"""
+    import io
+    import zipfile
+
+    flat: list[tuple[str, bytes]] = []
+    inner: dict[str, list[Item]] = {}
+    for it in items:
+        if it.kind in CONTAINERS:
+            inner.setdefault(it.kind, []).append(it)
+        else:
+            flat.append((it.path, it.data))
+    for kind, group in inner.items():
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for it in group:
+                z.writestr(it.path, it.data)
+        flat.append((CONTAINERS[kind], buf.getvalue()))
+    return sorted(flat)
+
+
+def ratio_safe(data: bytes) -> bytes:
+    """服务端拒收单条目 `file_size > 1024 且 file_size > 200 × compress_size`（高度重复的日志会压到这个比值以上）：
+    出包后逐条核对，超了的条目改 ZIP_STORED 重写（内容与顺序不变）。没有超的包原样返回。"""
+    import io
+    import zipfile
+
+    limit = 200
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        bad = {
+            i.filename
+            for i in z.infolist()
+            if i.file_size > 1024 and i.file_size > limit * max(i.compress_size, 1)
+        }
+        if not bad:
+            return data
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as w:
+            for i in z.infolist():
+                content = z.read(i)
+                info = zipfile.ZipInfo(i.filename, i.date_time)
+                info.external_attr = i.external_attr
+                info.compress_type = zipfile.ZIP_STORED if i.filename in bad else i.compress_type
+                w.writestr(info, content)
+    return out.getvalue()
 
 
 def _kind_bytes(items: list[Item]) -> dict[str, int]:

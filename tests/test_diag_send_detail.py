@@ -1,13 +1,14 @@
-"""「发送问题反馈」的 `detail/`（bundle schema 8，ADR 0118 修订 2026-10-13）。
+"""「发送问题反馈」的 `detail-…` / `optional-…`（bundle schema 8，ADR 0118 修订 2026-10-13）。
 
 判据的主语：**发送包里每个文件的全部字节**（不是某一个字段）——家目录 / 用户名 / 秘密 / 脚本源码这些金丝雀
 在哪个文件里都必须是 0；每条「0」都带一条反证（金丝雀确实进了原始输入、而且处理后的标记出现了），
-免得因为什么都没读到而「搜不到」。导出到文件的老路径（`GET/POST /api/diagnostics/bundle`）不含 `detail/`、
+免得因为什么都没读到而「搜不到」。导出到文件的老路径（`GET/POST /api/diagnostics/bundle`）不含任何 `detail-…` / `optional-…` 条目、
 不读发送载荷里的 `detail`。
 """
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -182,7 +183,21 @@ def _prepare(client, payload=None, **opts):
 
 
 def _texts(z: zipfile.ZipFile) -> dict[str, str]:
-    return {n: z.read(n).decode("utf-8", "replace") for n in z.namelist()}
+    """包里每个文件的文本；内层 zip 展开成 `外层.zip!内层路径`——金丝雀要在内层里也搜。"""
+    out: dict[str, str] = {}
+    for n in z.namelist():
+        raw = z.read(n)
+        if n.endswith(".zip"):
+            with zipfile.ZipFile(io.BytesIO(raw)) as inner:
+                for m in inner.namelist():
+                    out[f"{n}!{m}"] = inner.read(m).decode("utf-8", "replace")
+        else:
+            out[n] = raw.decode("utf-8", "replace")
+    return out
+
+
+def _inner(z: zipfile.ZipFile, name: str) -> zipfile.ZipFile:
+    return zipfile.ZipFile(io.BytesIO(z.read(name)))
 
 
 def _blob(z: zipfile.ZipFile) -> str:
@@ -234,21 +249,20 @@ class TestOptions:
 # 默认收：每一类都在、有内容
 # ---------------------------------------------------------------------------
 EXPECTED_DEFAULT = [
-    "detail/errors.json",
-    "detail/logs/app.log.tail",
-    "detail/logs/sidecar.log.tail",
-    "detail/logs/worker.log.tail",
-    "detail/state/index.json",
-    "detail/state/layout-sessions.json",
-    "detail/state/export-defaults.json",
-    "detail/requests.json",
-    "detail/render-env.json",
-    "detail/runs.json",
-    "detail/shell.json",
-    "detail/storage.json",
-    "detail/frontend-console.json",
-    "detail/display.json",
-    "detail/network.json",
+    "detail-errors.json",
+    "detail-app-log.txt",
+    "detail-sidecar-log.txt",
+    "detail-worker-log.txt",
+    "detail-state.zip",
+    "detail-requests.json",
+    "detail-overrides.zip",
+    "detail-render-env.json",
+    "detail-runs.json",
+    "detail-shell.json",
+    "detail-storage.json",
+    "detail-frontend-console.json",
+    "detail-display.json",
+    "detail-network.json",
 ]
 
 
@@ -261,26 +275,29 @@ class TestDefaultContents:
         for n in EXPECTED_DEFAULT:
             assert n in names, n
             assert z.read(n).strip(), n
-        assert any(n.startswith("detail/overrides/") for n in names)
+        assert {"index.json", "export-defaults.json", "layout-sessions.json"} <= set(
+            _inner(z, "detail-state.zip").namelist()
+        )
         # 勾选项没勾：没有 optional 内容
-        assert not [n for n in names if n.startswith("detail/optional/")]
+        assert not [n for n in names if n.startswith("optional-")]
         manifest = json.loads(z.read("manifest.json"))
         assert manifest["schema_version"] == diagnostics.BUNDLE_SCHEMA_VERSION == 8
         assert manifest["contains_detail"] is True
         assert manifest["truncated"] == []
         listed = {f["path"]: f["bytes"] for f in manifest["detail_files"]}
-        assert listed == {n: z.getinfo(n).file_size for n in names if n.startswith("detail/")}
+        assert listed == {n: z.getinfo(n).file_size for n in names if n.startswith("detail-")}
+        assert len(z.read("manifest.json")) < 64 * 1024
         # prepare 响应带逐项清单与类别，且类别都在 ENTRY_KINDS 里
         kinds = {e["name"]: e["kind"] for e in prep["entries"]}
-        assert kinds["detail/errors.json"] == "detail_errors"
-        assert kinds["detail/logs/worker.log.tail"] == "detail_logs"
+        assert kinds["detail-errors.json"] == "detail_errors"
+        assert kinds["detail-worker-log.txt"] == "detail_logs"
         assert set(kinds.values()) <= set(diagsend.ENTRY_KINDS.values()) | {"other"}
         sizes = {e["name"]: e["bytes"] for e in prep["entries"]}
-        assert sizes["detail/errors.json"] == z.getinfo("detail/errors.json").file_size
+        assert sizes["detail-errors.json"] == z.getinfo("detail-errors.json").file_size
 
     def test_error_originals_and_full_stacks(self, client, world):
         _prep, z = _prepare(client)
-        errors = json.loads(z.read("detail/errors.json"))
+        errors = json.loads(z.read("detail-errors.json"))
         engine = " ".join(e["text"] for e in errors["engine"])
         assert "引擎渲染失败: fig_one" in engine and "RuntimeError: render failed" in engine
         assert 'File "~/proj/fig_one.py", line 7, in main' in engine  # 完整调用栈，家目录已写成 ~
@@ -289,13 +306,13 @@ class TestDefaultContents:
             and "RuntimeError: render failed" in errors["worker"][0]["tracebacks"][0]
         )
         assert errors["frontend"][0]["message"] == "nope"
-        console = json.loads(z.read("detail/frontend-console.json"))
+        console = json.loads(z.read("detail-frontend-console.json"))
         assert console["scope"].startswith("global")
         assert console["records"][0]["stack"].startswith("Error: x")
 
     def test_state_manifest_lists_corrupt_copy_but_not_its_content(self, client, world):
         _prep, z = _prepare(client)
-        index = json.loads(z.read("detail/state/index.json"))
+        index = json.loads(_inner(z, "detail-state.zip").read("index.json"))
         kinds = {f["name"]: f["kind"] for f in index["files"]}
         assert kinds[layoutsession.FILENAME] == "primary"
         assert kinds[layoutsession.FILENAME + ".bak"] == "backup"
@@ -307,19 +324,19 @@ class TestDefaultContents:
         monkeypatch.setattr(diagdetail, "_resolve", lambda host: ["198.19.0.7"])
         _project(client, world["tmp"])
         _prep, z = _prepare(client)
-        display = json.loads(z.read("detail/display.json"))
+        display = json.loads(z.read("detail-display.json"))
         assert display["device_pixel_ratio"] == 2 and display["theme"] == "dark"
-        shell = json.loads(z.read("detail/shell.json"))
+        shell = json.loads(z.read("detail-shell.json"))
         assert shell["frontend_shell"]["tauri_version"] == "2.0"
         assert shell["in_app_update"]["status"] == "unknown"  # 取不到如实写 unknown
         assert shell["channel"]["basis"].startswith("inferred")
         assert "rosetta" in shell["cpu"] and "arch" in shell["cpu"]
-        net = json.loads(z.read("detail/network.json"))
+        net = json.loads(z.read("detail-network.json"))
         assert net["proxy"]["configured"] is True
         assert net["proxy"]["env"]["HTTPS_PROXY"] == "http://proxy.example:8080"  # userinfo 没了
         assert all(d["tun_rewritten_198_18"] is True for d in net["dns"])
         assert "utc_offset_minutes" in net["timezone"]
-        storage = json.loads(z.read("detail/storage.json"))
+        storage = json.loads(z.read("detail-storage.json"))
         assert storage["data_dir"]["disk"]["free_bytes"] > 0
         assert storage["project_dir"]["writable"] is True
         assert storage["windows_long_paths_enabled"] is None  # 非 Windows
@@ -327,14 +344,15 @@ class TestDefaultContents:
     def test_overrides_live_and_baked(self, client, world):
         _project(client, world["tmp"])
         _prep, z = _prepare(client)
-        live = [n for n in z.namelist() if n.startswith("detail/overrides/live-")]
+        inner = _inner(z, "detail-overrides.zip")
+        live = [n for n in inner.namelist() if n.startswith("live-")]
         assert live
-        doc = json.loads(z.read(live[0]))
+        doc = json.loads(inner.read(live[0]))
         assert doc["overrides"][0]["value"] == "My Paper Title"  # 图里的文字保留
 
     def test_runs_carry_task_snapshots_and_engine_log_events(self, client, world):
         _prep, z = _prepare(client)
-        runs = json.loads(z.read("detail/runs.json"))
+        runs = json.loads(z.read("detail-runs.json"))
         assert "task_snapshots" in runs
         assert any("引擎渲染失败" in e["text"] for e in runs["log_events"])
 
@@ -441,20 +459,19 @@ class TestOptionalContent:
         _prep, z = _prepare(client)
         for name, text in _texts(z).items():
             assert SRC_CANARY not in text, name
-        assert not [n for n in z.namelist() if n.startswith("detail/optional/source")]
+        assert "optional-source.zip" not in z.namelist()
 
     def test_source_present_when_ticked_and_criterion_is_registered_scripts(self, client, world):
         _project(client, world["tmp"])
         _prep, z = _prepare(client, source=True)
-        src = [
-            n for n in z.namelist() if n.startswith("detail/optional/source/") and n.endswith(".py")
-        ]
-        assert len(src) == 1 and SRC_CANARY in z.read(src[0]).decode()
-        index = json.loads(z.read("detail/optional/source/index.json"))
+        inner = _inner(z, "optional-source.zip")
+        src = [n for n in inner.namelist() if n.endswith(".py")]
+        assert len(src) == 1 and SRC_CANARY in inner.read(src[0]).decode()
+        index = json.loads(inner.read("index.json"))
         assert index["scripts"][0]["script"] == "fig_one.py"
         assert "registered" in index["criterion"]
         # traceback 里的源码行也跟着出现（A 勾了就都有）
-        assert SRC_CANARY in z.read("detail/logs/worker.log.tail").decode()
+        assert SRC_CANARY in z.read("detail-worker-log.txt").decode()
 
     def test_source_outside_project_is_never_collected(self, client, world, tmp_path):
         proj = _project(client, world["tmp"])
@@ -471,9 +488,14 @@ class TestOptionalContent:
         blob = _blob(z)
         assert "CRASH_CANARY_BODY" not in blob and "CORRUPT_CANARY_BYTES" not in blob
         _prep, z = _prepare(client, crash_reports=True, corrupt_sessions=True)
-        names = z.namelist()
-        assert any(n.startswith("detail/optional/crash-reports/Tavotto") for n in names)
-        assert any(n.startswith("detail/optional/corrupt-sessions/") for n in names)
+        z.namelist()
+        assert any(
+            n.startswith("Tavotto") for n in _inner(z, "optional-crash-reports.zip").namelist()
+        )
+        assert any(
+            n.startswith("layout-sessions.corrupt")
+            for n in _inner(z, "optional-corrupt-sessions.zip").namelist()
+        )
         blob = _blob(z)
         assert "CRASH_CANARY_BODY" in blob and "CORRUPT_CANARY_BYTES" in blob
 
@@ -516,9 +538,9 @@ class TestRequestRing:
         client.get("/api/project?secretq=CANARY_QS_91")
         client.post("/api/perf/report", data=b"CANARY_BODY_92", content_type="application/json")
         _prep, z = _prepare(client)
-        doc = json.loads(z.read("detail/requests.json"))
+        doc = json.loads(z.read("detail-requests.json"))
         recs = doc["records"]
-        text = z.read("detail/requests.json").decode()
+        text = z.read("detail-requests.json").decode()
         assert "CANARY_QS_91" not in text and "CANARY_BODY_92" not in text
         by_rule = {r["rule"]: r for r in recs}
         assert (
@@ -581,7 +603,7 @@ class TestProbes:
             diagdetail, "_probe_subprocess", lambda p, b: {"status": "failed", "reason": "timeout"}
         )
         _prep, z = _prepare(client)
-        env = json.loads(z.read("detail/render-env.json"))
+        env = json.loads(z.read("detail-render-env.json"))
         assert env["probe"] == {"status": "failed", "reason": "timeout"}
 
     def test_a_collector_that_raises_degrades_to_an_error_file(self, client, world, monkeypatch):
@@ -595,9 +617,9 @@ class TestProbes:
         )
         prep, z = _prepare(client)
         assert not prep["too_large"]
-        err = json.loads(z.read("detail/requests.json"))
+        err = json.loads(z.read("detail-requests.json"))
         assert err["collection_error"].startswith("RuntimeError: explode in ~")
-        assert "detail/errors.json" in z.namelist()  # 其他类不受影响
+        assert "detail-errors.json" in z.namelist()  # 其他类不受影响
 
     def test_sync_providers_and_proxy_userinfo(self):
         assert "onedrive" in diagdetail.sync_providers("C:/Users/x/OneDrive - Org/p")
@@ -611,10 +633,14 @@ class TestProbes:
 
     def test_dns_timeout_and_error_are_facts(self, monkeypatch):
         monkeypatch.setattr(diagdetail, "_resolve", lambda h: (_ for _ in ()).throw(OSError("nx")))
-        assert diagdetail.dns_fact("a.example")["error"] == "OSError"
+        assert diagdetail.dns_fact("a.example") == {
+            "host": "a.example",
+            "result": "unknown",
+            "reason": "OSError",
+        }
         monkeypatch.setattr(diagdetail, "DNS_TIMEOUT_S", 0.05)
         monkeypatch.setattr(diagdetail, "_resolve", lambda h: time.sleep(0.5) or ["1.1.1.1"])
-        assert diagdetail.dns_fact("b.example")["error"] == "timeout"
+        assert diagdetail.dns_fact("b.example")["reason"] == "timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -635,7 +661,7 @@ def _build_factory(core: int):
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("report.json", pad)
             for i in items:
-                z.writestr(f"detail/{i.path}", i.data)
+                z.writestr(i.path, i.data)
             z.writestr("manifest.json", json.dumps({"truncated": truncated}))
         return buf.getvalue()
 
@@ -700,11 +726,12 @@ class TestFit:
             "errors",
         ]
 
-    def test_real_ten_mib_cap_with_incompressible_content(self, monkeypatch):
-        for k in diagdetail.SHARE:
-            monkeypatch.setitem(diagdetail.SHARE, k, 6 * 1024 * 1024)
-        items = _items(errors=3_000_000, logs=3_000_000, source=3_000_000, crash_reports=3_000_000)
+    def test_real_cap_with_incompressible_content(self):
+        items = _items(
+            errors=20_000_000, logs=10_000_000, source=30_000_000, crash_reports=20_000_000
+        )
         limit = diagsend.MAX_BYTES - diagdetail.FIT_SLACK
+        assert limit == 63 * 1024 * 1024 and diagsend.MAX_BYTES == 64 * 1024 * 1024
         data, kept, trunc = diagdetail.fit(items, _build_factory(200_000), limit)
         assert len(data) <= diagsend.MAX_BYTES
         assert [t["kind"] for t in trunc][0] == "crash_reports"
@@ -712,11 +739,16 @@ class TestFit:
     def test_end_to_end_manifest_and_prepare_report_truncation(self, client, world, monkeypatch):
         # 把上限压到 60 KiB 左右：核心包约 10 KiB，日志与源码是随机内容
         _project(client, world["tmp"])
-        (world["tmp"] / "proj" / "big.py").write_bytes(b"# " + os.urandom(200_000).hex().encode())
+        (world["tmp"] / "proj" / "big.py").write_bytes(
+            b"# " + base64.b64encode(os.urandom(200_000))
+        )
         monkeypatch.setattr(diagsend, "MAX_BYTES", 120 * 1024)
+        monkeypatch.setattr(diagdetail, "FIT_SLACK", 8192)
         big = world["tmp"] / "big.log"
         big.write_text(
-            "2026-10-13 10:00:00,000 INFO tavotto: " + os.urandom(400_000).hex(), encoding="utf-8"
+            "2026-10-13 10:00:00,000 INFO tavotto: "
+            + base64.b64encode(os.urandom(400_000)).decode(),
+            encoding="utf-8",
         )
         monkeypatch.setattr(diagnostics, "_app_log_path", lambda: big)
         prep, z = _prepare(client, source=True, crash_reports=True)
@@ -735,6 +767,138 @@ class TestFit:
         monkeypatch.setattr(diagsend, "MAX_BYTES", 2000)
         r = client.post("/api/diagnostics/send/prepare", json=PAYLOAD)
         assert r.get_json()["too_large"] is True and r.get_json()["id"] is None
+
+
+# ---------------------------------------------------------------------------
+# infra 诊断服务的 ZIP 检查（条目名扁平、≤ 32 条、压缩比 ≤ 200、manifest ≤ 64 KiB）
+# ---------------------------------------------------------------------------
+def _zip_of(entries: dict[str, bytes], method=zipfile.ZIP_DEFLATED) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", method) as z:
+        for n, d in entries.items():
+            z.writestr(n, d)
+    return buf.getvalue()
+
+
+class TestServerZipRules:
+    def test_constants_are_the_server_values(self):
+        r = diagsend.ZIP_RULES
+        assert r["max_entries"] == 32 and r["max_ratio"] == 200 and r["max_manifest"] == 64 * 1024
+        assert r["max_entry_uncompressed"] == 128 * 1024 * 1024
+        assert r["max_total_uncompressed"] == 256 * 1024 * 1024
+        assert diagsend.MAX_BUNDLE_ENTRIES == 32
+        assert diagsend.MAX_BYTES == 64 * 1024 * 1024
+
+    @pytest.mark.parametrize(
+        ("entries", "problem"),
+        [
+            ({"manifest.json": b"{}", "detail/errors.json": b"x"}, "unsafe_entry_name"),
+            ({"manifest.json": b"{}", "a" * 65: b"x"}, "unsafe_entry_name"),
+            ({"manifest.json": b"{}", ".hidden": b"x"}, "unsafe_entry_name"),
+            (
+                {"manifest.json": b"{}", **{f"f{i}.txt": b"x" for i in range(32)}},
+                "too_many_entries",
+            ),
+            ({"report.json": b"{}"}, "missing_manifest"),
+            ({"manifest.json": os.urandom(70_000)}, "manifest_too_large"),
+            ({"manifest.json": b"{}", "log.txt": b"same line\n" * 100_000}, "compression_ratio"),
+        ],
+    )
+    def test_zip_problem_flags_each_server_rule(self, entries, problem):
+        assert diagsend.zip_problem(_zip_of(entries)) == problem
+
+    def test_a_compliant_zip_passes_and_stored_entries_have_ratio_one(self):
+        ok = _zip_of(
+            {"manifest.json": b"{}", "log.txt": b"same line\n" * 100_000}, zipfile.ZIP_STORED
+        )
+        assert diagsend.zip_problem(ok) is None
+        assert diagsend.zip_problem(_zip_of({"manifest.json": b"{}", "a.json": b"{}"})) is None
+
+    def test_prepare_refuses_a_noncompliant_bundle_as_an_internal_error(self):
+        with pytest.raises(diagsend.SendError) as exc:
+            diagsend.inspect_bundle(
+                _zip_of({"manifest.json": b'{"schema_version": 8}', "d/x.json": b"x"})
+            )
+        assert exc.value.code == "bundle_invalid"
+
+    def test_ratio_safe_restamps_only_the_offending_entries(self):
+        raw = _zip_of(
+            {
+                "manifest.json": b"{}",
+                "log.txt": b"same line\n" * 100_000,
+                "ok.bin": os.urandom(4000),
+            }
+        )
+        assert diagsend.zip_problem(raw) == "compression_ratio"
+        fixed = diagdetail.ratio_safe(raw)
+        assert diagsend.zip_problem(fixed) is None
+        with zipfile.ZipFile(io.BytesIO(fixed)) as z:
+            assert z.getinfo("log.txt").compress_type == zipfile.ZIP_STORED
+            assert z.getinfo("manifest.json").compress_type == zipfile.ZIP_DEFLATED
+            assert z.read("log.txt") == b"same line\n" * 100_000
+            assert z.namelist() == ["manifest.json", "log.txt", "ok.bin"]
+        assert diagdetail.ratio_safe(fixed) == fixed  # 幂等
+        clean = _zip_of({"manifest.json": b"{}"})
+        assert diagdetail.ratio_safe(clean) is clean  # 没问题的包原样返回
+
+    def test_max_configuration_stays_within_every_server_rule(self, client, world):
+        _project(client, world["tmp"])
+        crash = world["crash"]
+        for i in range(12):  # 多于 CRASH_FILES，验证封顶
+            (crash / f"Tavotto-2026-10-13-1200{i:02d}.ips").write_text(
+                f"crash {i}", encoding="utf-8"
+            )
+        for i in range(8):
+            (world["state"] / f"{layoutsession.CORRUPT_PREFIX}{i}.json").write_text(
+                "x" * 50, encoding="utf-8"
+            )
+        prep, z = _prepare(client, source=True, crash_reports=True, corrupt_sessions=True)
+        names = z.namelist()
+        assert len(names) <= 32, names
+        assert all(diagsend.ZIP_RULES["name"].fullmatch(n) for n in names), names
+        assert {
+            "optional-source.zip",
+            "optional-crash-reports.zip",
+            "optional-corrupt-sessions.zip",
+        } <= set(names)
+        assert len(z.read("manifest.json")) < diagsend.ZIP_RULES["max_manifest"]
+        assert (
+            max(i.file_size for i in z.infolist()) <= diagsend.ZIP_RULES["max_entry_uncompressed"]
+        )
+        assert (
+            sum(i.file_size for i in z.infolist()) <= diagsend.ZIP_RULES["max_total_uncompressed"]
+        )
+        assert prep["size"] <= diagsend.MAX_BYTES
+        data = client.get(f"/api/diagnostics/send/{prep['id']}/bundle").data
+        assert diagsend.zip_problem(data) is None
+
+    def test_a_huge_single_line_repeated_log_does_not_trip_the_ratio_rule(
+        self, client, world, monkeypatch
+    ):
+        rep = world["tmp"] / "rep.log"
+        rep.write_text(
+            "2026-10-13 10:00:00,000 INFO tavotto: same line again\n" * 60_000, encoding="utf-8"
+        )
+        monkeypatch.setattr(diagnostics, "_app_log_path", lambda: rep)
+        prep, z = _prepare(client)
+        info = z.getinfo("detail-app-log.txt")
+        assert info.file_size > 1024 and info.file_size > 200 * 1  # 原始内容确实高度重复
+        assert (
+            diagsend.zip_problem(client.get(f"/api/diagnostics/send/{prep['id']}/bundle").data)
+            is None
+        )
+        assert info.file_size <= 200 * max(info.compress_size, 1)
+
+    def test_inner_zips_hold_the_directory_structure_and_an_index(self, client, world):
+        _project(client, world["tmp"])
+        _prep, z = _prepare(client, source=True, crash_reports=True)
+        assert "index.json" in _inner(z, "optional-source.zip").namelist()
+        assert "index.json" in _inner(z, "optional-crash-reports.zip").namelist()
+        assert "index.json" in _inner(z, "detail-overrides.zip").namelist() or any(
+            n.startswith("live-") for n in _inner(z, "detail-overrides.zip").namelist()
+        )
+        manifest = json.loads(z.read("manifest.json"))
+        assert all("/" not in f["path"] for f in manifest["detail_files"])  # 内层清单不进 manifest
 
 
 # ---------------------------------------------------------------------------
@@ -785,7 +949,7 @@ class TestExportPathUnchanged:
         _prep, z = _prepare(client)
         send_readme = z.read("README.txt").decode()
         assert "不包含 / It does NOT intentionally contain:" not in send_readme
-        assert "detail/" in send_readme and 'Without "script source" ticked' in send_readme
+        assert "detail-" in send_readme and 'Without "script source" ticked' in send_readme
 
     def test_report_json_is_identical_between_export_and_send(self, client, world):
         a = self._export(client, "get").read("report.json")

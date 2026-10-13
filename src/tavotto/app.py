@@ -447,7 +447,7 @@ def safe_resolve(rel_id: str) -> Path:
     return p
 
 
-# ---- 最近的后端请求记录（发送问题反馈的 detail/requests.json，ADR 0118 修订 2026-10-13）----
+# ---- 最近的后端请求记录（发送问题反馈的 detail-requests.json，ADR 0118 修订 2026-10-13）----
 # 进程内定长环、不写盘。每条只有 方法 / Flask 路由**规则** / 状态码 / 耗时 / 错误码（失败响应 JSON 的 `code`），
 # 不含请求体、查询串与实参。**任何异常都吞掉**——记录请求不许影响请求。
 _DIAG_REQUEST_SKIP_PREFIX = "/api/diagnostics/send"  # 对话框轮询会把环刷满，且对排障没信息
@@ -2976,7 +2976,7 @@ def _build_diagnostics_bundle(
     detail: "engine_diagdetail.DetailRequest | None" = None,
 ) -> bytes:
     """诊断包字节。导出到本地走 `detail=None`（严格脱敏的老包）；「发送问题反馈」的 prepare 传 `detail`，
-    多出 `detail/` 目录（`engine/diagdetail.py`），其余部分共用这一处。"""
+    多出扁平的 `detail-…` / `optional-…` 条目（`engine/diagdetail.py`），其余部分共用这一处。"""
     status = _diagnostics_project_status()
     ctx = _request_ctx()
     pid = getattr(ctx, "id", None)
@@ -3005,9 +3005,11 @@ def _build_diagnostics_bundle(
 
     def build(kept: list, truncated: list) -> bytes:
         payload = engine_diagnostics.DetailPayload(
-            [(i.path, i.data) for i in kept], detail.options.as_dict(), truncated
+            engine_diagdetail.entries(kept), detail.options.as_dict(), truncated
         )
-        return engine_diagnostics.build_bundle(**common, detail=payload, report=report)
+        built = engine_diagnostics.build_bundle(**common, detail=payload, report=report)
+        # 服务端拒收压缩比 > 200 的条目：改存的增量也要算进 `fit` 的体积里
+        return engine_diagdetail.ratio_safe(built)
 
     data, _kept, _truncated = engine_diagdetail.fit(
         items, build, engine_diagsend.MAX_BYTES - engine_diagdetail.FIT_SLACK

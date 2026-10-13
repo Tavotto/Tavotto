@@ -69,7 +69,7 @@ const ds = (key: string, v?: Record<string, unknown>) =>
 
 const CAP: DiagSendCapability = {
   enabled: true,
-  max_bytes: 10 * 1024 * 1024,
+  max_bytes: 64 * 1024 * 1024,
   note_max_chars: 1000,
   retention_days: 30,
   categories: [
@@ -665,15 +665,15 @@ describe('引擎丢了会话（Codex #923 P2）：状态 404 是终态，不无�
   })
 })
 
-describe('诊断包扩充（detail/、勾选项）', () => {
+describe('诊断包扩充（detail-…、勾选项）', () => {
   const lastPayload = () => prepareMock.mock.calls[prepareMock.mock.calls.length - 1][0] as Record<string, any>
   const box = (key: string) => q<HTMLInputElement>(`[data-diag-send-extra="${key}"]`)!
   const DETAIL_PREPARED: DiagSendPrepared = {
     ...PREPARED,
     entries: [
       { name: 'report.json', kind: 'environment', bytes: 1700 },
-      { name: 'detail/errors.json', kind: 'detail_errors', bytes: 4096 },
-      { name: 'detail/logs/app.log.tail', kind: 'detail_logs', bytes: 2 * 1024 * 1024 },
+      { name: 'detail-errors.json', kind: 'detail_errors', bytes: 4096 },
+      { name: 'detail-app-log.txt', kind: 'detail_logs', bytes: 2 * 1024 * 1024 },
     ],
     options: { source: false, crash_reports: false, corrupt_sessions: false },
     truncated: [{ kind: 'source', original_bytes: 900000, kept_bytes: 1000 }],
@@ -701,10 +701,10 @@ describe('诊断包扩充（detail/、勾选项）', () => {
     const list = q('[data-diag-send-file-list]')!
     expect(list.closest('details[data-diag-send-details]')).toBe(det)
     expect(list.closest('details[data-diag-send-files]')).not.toBeNull()
-    const row = q('[data-diag-file="detail/logs/app.log.tail"]')!
-    expect(row.textContent).toContain('detail/logs/app.log.tail')
+    const row = q('[data-diag-file="detail-app-log.txt"]')!
+    expect(row.textContent).toContain('detail-app-log.txt')
     expect(row.textContent).toContain('2.0 MiB')
-    expect(q('[data-diag-file="detail/errors.json"]')!.textContent).toContain('4 KiB')
+    expect(q('[data-diag-file="detail-errors.json"]')!.textContent).toContain('4 KiB')
     expect(q('[data-diag-send-truncated]')!.textContent).toBe(ds('truncated', { kinds: ds('short.source') }))
     expect(q('[data-diag-send-truncated]')!.closest('details[data-diag-send-details]')).toBe(det)
   })

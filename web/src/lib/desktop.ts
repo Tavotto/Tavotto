@@ -485,7 +485,7 @@ let pendingUpdate: DesktopUpdateInfo | null = null
 
 /**
  * 本次窗口会话里最近一次应用内更新的结果（只放闭集枚举与稳定码，不放错误文本），给「发送问题反馈」的
- * `detail/shell.json` 用（ADR 0118 修订）：走的是国内镜像还是 GitHub、有没有换来源重试。没发生过 = 不写这个键。
+ * `detail-shell.json` 用（ADR 0118 修订）：走的是国内镜像还是 GitHub、有没有换来源重试。没发生过 = 不写这个键。
  * 纯内存；壳没有把「上一次更新结果」存盘，所以重启之后这里是空的，包里如实标 unknown。
  */
 export interface UpdateOutcome {

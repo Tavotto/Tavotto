@@ -92,11 +92,10 @@
 
 维护者裁决：诊断包以「能帮维护者详细定位问题」为准，**不再因为报错或文件里可能带着用户文字就丢掉**；发送前用户在确认框里能看到包里有哪些文件、能把同一份 ZIP 存到本地，逐次确认是最后一道关。本节取代上文「包的内容与脱敏只此一份」「不含报错原文 / 脚本源码」的说法——**仅对发送包**。
 
-- **两种包。** 导出到文件（`GET/POST /api/diagnostics/bundle`、「复制诊断」）保持严格脱敏，一个字节不变——那份可能被贴进公开 issue。发送包（`POST /api/diagnostics/send/prepare`）在其上多一个 `detail/` 目录（`engine/diagdetail.py` 组装，`app._build_diagnostics_bundle(detail=…)` 才传），老三件的名字与语义不动。bundle schema 升到 **8**（manifest 加 `contains_detail` / `detail_files` / `detail_options` / `truncated`）。
+- **两种包。** 导出到文件（`GET/POST /api/diagnostics/bundle`、「复制诊断」）保持严格脱敏，一个字节不变——那份可能被贴进公开 issue。发送包（`POST /api/diagnostics/send/prepare`）在其上多一批扁平条目 `detail-…` / `optional-…`（`engine/diagdetail.py` 组装，`app._build_diagnostics_bundle(detail=…)` 才传），老三件的名字与语义不动。bundle schema 升到 **8**（manifest 加 `contains_detail` / `detail_files` / `detail_options` / `truncated`）。
 - **默认收十二类**（优先级即编号）：报错原文与完整调用栈、app / sidecar / worker 日志尾巴原文、会话状态文件、最近后端请求环（方法 / 路由规则 / 状态码 / 耗时 / 错误码）、样式改动、渲染环境（一次 ≤10 s 的只读子进程）、运行记录、桌面壳与安装信息、存储坑、前端 console 环、显示环境、网络概况。
 - **三个勾选项**（默认不勾、不记忆，变化即重新备包）：A 脚本源码、B 系统崩溃报告、C 会话损坏副本内容。没勾 A 时包里一个字节源码都没有（连日志里 traceback 的源码行也剥掉）。
 - **始终处理**：家目录 → `~`、用户名 → `<user>`、秘密去掉；项目文件夹名、文件名、图里的文字保留。
-- **体积**：上限仍 10 MiB；按优先级从低往高截断（C < B < A，之后默认项从末尾几类），写进 manifest `truncated`，核心文件不截，截后仍超限走 `too_large`。
-- **名字解析。** 网络概况对 `tavotto.cn` / `github.com` 各做一次系统名字解析（不建立连接、≤3 s），这是 prepare「零网络」里唯一的 DNS 查询；用来判断 TUN 把域名改写进 `198.18.0.0/15`。
-- **部署前置条件（跨仓库）。** 服务端 `diagnostics-api` 的 ZIP 检查（`zipcheck`）当前拒绝含斜杠的条目名、限制 32 个条目与 200:1 压缩比，会把发送包判成 `unsafe_entry_name` / `too_many_entries` / `compression_ratio`。**infra 先放行 `detail/` 路径与更多条目，客户端才能发版**；`bundle_schema` 取值范围 1–99，8 无问题。
-
+- **体积**：上限由 10 MiB 改为 **64 MiB**（2026-10-13 起单份 64 MiB、每日 8 GiB，服务端已部署，infra#25；`MAX_BYTES` 与各类份额相应放大，截断预算总额 63 MiB）；按优先级从低往高截断（C < B < A，之后默认项从末尾几类），写进 manifest `truncated`，核心文件不截，截后仍超限走 `too_large`。
+- **名字解析。** 网络概况对 `tavotto.cn` / `github.com` 各做一次系统名字解析（不建立连接，线程里做、≤2 s，超时记 unknown），这是 prepare「零网络」里唯一的 DNS 查询；用来判断 TUN 把域名改写进 `198.18.0.0/15`。
+- **ZIP 形状（服务端（infra 诊断服务）对上传 ZIP 的检查：条目名匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`（无目录 / 斜杠）、整包 ≤ 32 条、单条目 `file_size > 1024 且 > 200 × compress_size` 被拒、单条目解压后 ≤ 128 MiB、总解压后 ≤ 256 MiB、`manifest.json` ≤ 64 KiB）。** 所以条目名一律扁平（`detail-errors.json`、`detail-app-log.txt`……），多文件的类别（会话状态、样式改动、源码、崩溃报告、损坏副本）各打成**一个内层 zip**（内层可有目录与 `index.json`），整包最大配置约 25 条；出包后 `ratio_safe` 把压缩比超限的条目改存 STORED，再用 `diagsend.zip_problem`（同一组判据）自检，不合规当内部错误 `bundle_invalid`、不发送。`bundle_schema` 取值范围 1–99，8 无问题。

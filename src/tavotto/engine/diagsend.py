@@ -94,8 +94,9 @@ CATEGORIES = (
     "other",
 )
 DEFAULT_CATEGORY = "other"
-#: 默认上限 10 MiB（服务端 `DIAG_MAX_REPORT_BYTES`；以 `upload.max_bytes` 为准，init 之后再核一次）。
-MAX_BYTES = 10 * 1024 * 1024
+#: 默认上限 64 MiB（2026-10-13 起，原 10 MiB；服务端 `DIAG_MAX_REPORT_BYTES` 同步调到 64 MiB；
+#: 仍以 init 返回的 `upload.max_bytes` 为准，init 之后再核一次）。
+MAX_BYTES = 64 * 1024 * 1024
 #: 说明文字上限：服务端默认 `note_max_chars` = 1000（openapi 只写了 4000 的硬顶；取严的）。
 NOTE_MAX_CHARS = 1000
 RETENTION_DAYS = 30
@@ -110,35 +111,33 @@ ENTRY_KINDS = {
     "task-diagnostics.json": "task",
     "manifest.json": "manifest",
     "README.txt": "readme",
-    # ---- 发送包独有的 detail/（ADR 0118 修订 2026-10-13；键以 `/` 结尾 = 目录前缀）----
-    "detail/errors.json": "detail_errors",
-    "detail/logs/": "detail_logs",
-    "detail/state/": "detail_state",
-    "detail/requests.json": "detail_requests",
-    "detail/overrides/": "detail_overrides",
-    "detail/render-env.json": "detail_render_env",
-    "detail/runs.json": "detail_runs",
-    "detail/shell.json": "detail_shell",
-    "detail/storage.json": "detail_storage",
-    "detail/frontend-console.json": "detail_console",
-    "detail/display.json": "detail_display",
-    "detail/network.json": "detail_network",
-    "detail/optional/source/": "detail_source",
-    "detail/optional/crash-reports/": "detail_crash_reports",
-    "detail/optional/corrupt-sessions/": "detail_corrupt_sessions",
+    # ---- 发送包独有的内容（ADR 0118 修订 2026-10-13）。条目名一律**扁平**（服务端 ZIP 检查不许目录 / 斜杠），
+    # 多文件的类别各打成一个内层 zip ----
+    "detail-errors.json": "detail_errors",
+    "detail-app-log.txt": "detail_logs",
+    "detail-sidecar-log.txt": "detail_logs",
+    "detail-worker-log.txt": "detail_logs",
+    "detail-state.zip": "detail_state",
+    "detail-requests.json": "detail_requests",
+    "detail-overrides.zip": "detail_overrides",
+    "detail-render-env.json": "detail_render_env",
+    "detail-runs.json": "detail_runs",
+    "detail-shell.json": "detail_shell",
+    "detail-storage.json": "detail_storage",
+    "detail-frontend-console.json": "detail_console",
+    "detail-display.json": "detail_display",
+    "detail-network.json": "detail_network",
+    "optional-source.zip": "detail_source",
+    "optional-crash-reports.zip": "detail_crash_reports",
+    "optional-corrupt-sessions.zip": "detail_corrupt_sessions",
 }
-MAX_BUNDLE_ENTRIES = 256
+#: 服务端 ZIP 检查：整包条目数 ≤ 32（见下方 `ZIP_RULES`）；这里留同一个数
+MAX_BUNDLE_ENTRIES = 32
 
 
 def kind_of(name: str) -> str:
-    """包内文件 → 内容类别（精确名优先，其次目录前缀；没登记的是 `other`）。"""
-    exact = ENTRY_KINDS.get(name)
-    if exact is not None:
-        return exact
-    for key, kind in ENTRY_KINDS.items():
-        if key.endswith("/") and name.startswith(key):
-            return kind
-    return "other"
+    """包内文件 → 内容类别（精确名；没登记的是 `other`）。"""
+    return ENTRY_KINDS.get(name, "other")
 
 
 # ---------------------------------------------------------------------------
@@ -589,8 +588,83 @@ class BundleInfo:
     truncated: tuple[dict, ...] = ()  # manifest 的 truncated
 
 
+#: infra 诊断服务对上传 ZIP 的检查（服务端从不解压到磁盘，只读中央目录与 manifest.json）。**出处是那份检查本身**
+#: （2026-10-13 与主控核对，单条目 / 总量上限同日放宽为 128 / 256 MiB）；客户端出包后用同一组判据自检，
+#: 不合规当内部错误、不发送——否则用户点了「发送」才被服务端以 `bad_bundle` 拒收。
+ZIP_RULES = {
+    "max_entries": 32,
+    "name": re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"),
+    "max_entry_uncompressed": 128 * 1024 * 1024,
+    "max_total_uncompressed": 256 * 1024 * 1024,
+    "max_ratio": 200,  # file_size > 1024 且 file_size > 200 × compress_size 被拒
+    "max_manifest": 64 * 1024,
+}
+
+
+ZIP_PROBLEMS = frozenset(
+    {
+        "corrupt_zip",
+        "empty_zip",
+        "too_many_entries",
+        "unsafe_entry_name",
+        "duplicate_entry",
+        "encrypted_entry",
+        "unsupported_compression",
+        "entry_too_large",
+        "compression_ratio",
+        "total_too_large",
+        "missing_manifest",
+        "manifest_too_large",
+    }
+)
+
+
+def zip_problem(data: bytes) -> str | None:
+    """按服务端的判据过一遍；回第一条不合规的原因（短码），合规回 None。"""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, ValueError, OSError):
+        return "corrupt_zip"
+    with z:
+        infos = z.infolist()
+        if not infos:
+            return "empty_zip"
+        if len(infos) > ZIP_RULES["max_entries"]:
+            return "too_many_entries"
+        seen: set[str] = set()
+        total = 0
+        for i in infos:
+            if not ZIP_RULES["name"].fullmatch(i.filename) or i.filename in (".", ".."):
+                return "unsafe_entry_name"
+            if i.filename in seen:
+                return "duplicate_entry"
+            seen.add(i.filename)
+            if i.flag_bits & 0x1:
+                return "encrypted_entry"
+            if i.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                return "unsupported_compression"
+            if i.file_size > ZIP_RULES["max_entry_uncompressed"]:
+                return "entry_too_large"
+            if i.file_size > 1024 and i.file_size > ZIP_RULES["max_ratio"] * max(
+                i.compress_size, 1
+            ):
+                return "compression_ratio"
+            total += i.file_size
+            if total > ZIP_RULES["max_total_uncompressed"]:
+                return "total_too_large"
+        if "manifest.json" not in seen:
+            return "missing_manifest"
+        if z.getinfo("manifest.json").file_size > ZIP_RULES["max_manifest"]:
+            return "manifest_too_large"
+    return None
+
+
 def inspect_bundle(data: bytes) -> BundleInfo:
     """读 ZIP 的目录与 manifest：给界面「会发送什么」，给 init 的 `bundle_schema`。格式不对抛 `SendError`。"""
+    problem = zip_problem(data)
+    if problem is not None:
+        LOG.warning("诊断包不符合服务端 ZIP 检查: %s", logsafe.known(problem, ZIP_PROBLEMS))
+        raise SendError("bundle_invalid", 500)
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             infos = [i for i in z.infolist() if not i.is_dir()]

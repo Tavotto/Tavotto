@@ -227,7 +227,7 @@ Offering the option uploads nothing; sending does:
   it first. Figures, project files and data files are not part of the bundle.
 * **What the sent bundle contains (more than the export).** So that maintainers can
   diagnose in depth, the *sent* bundle (not the exported one, which is unchanged) adds
-  a `detail/` folder: error messages with full stack traces (engine, render process,
+  a set of extra files (`detail-…` / `optional-…`): error messages with full stack traces (engine, render process,
   interface console), the last part of the application, desktop-shell (sidecar) and
   render-process logs as written, the session state files (and a list of any corrupted
   copies), the most recent backend requests (HTTP method, route pattern, status code,
@@ -241,8 +241,9 @@ Offering the option uploads nothing; sending does:
   setting), recent interface `console.error` / `console.warn` messages, display facts
   (pixel ratio, window and screen size, language, theme) and network facts (whether a
   proxy is configured, with credentials removed; whether `tavotto.cn` and `github.com`
-  resolve to a TUN-rewritten `198.18.0.0/15` address — this is a name lookup, no
-  connection is made; time zone). Project folder names, file names and text inside
+  resolve to a TUN-rewritten `198.18.0.0/15` address — preparing the bundle performs
+  these two name lookups with the system resolver, with a 2-second limit, and makes no
+  connection; time zone). Project folder names, file names and text inside
   figures are **not** removed from these files. Your home directory is written as `~`,
   your system user name as `<user>`, and credentials, cookies, nonces, API keys,
   tokens and proxy passwords are removed from every one of them.
@@ -253,7 +254,7 @@ Offering the option uploads nothing; sending does:
   reports* (Tavotto crash reports from the last 7 days; binary dumps are only listed,
   never attached) and *contents of corrupted session copies* (otherwise only their
   names and sizes). Changing a checkbox rebuilds the bundle.
-* **Size limit.** The upload limit stays 10 MiB. When the bundle is larger, content is
+* **Size limit.** The upload limit is 64 MiB (it was 10 MiB before 2026-10-13). When the bundle is larger, content is
   cut in a fixed order — the three extras first, then the default categories from the
   last — and the dialog and the bundle's manifest say what was cut. The core files are
   never cut; if they alone are too large the bundle is not uploaded and you can save it.
@@ -298,7 +299,7 @@ Offering the option uploads nothing; sending does:
   removed earlier, open an issue on the public issue tracker quoting the report ID
   (without attaching anything else) and a maintainer will delete it.
 * **Failure.** If you are offline, the service is unavailable or the bundle is
-  larger than the limit (10 MiB by default), nothing is cut down or retried behind
+  larger than the limit (64 MiB by default), nothing is cut down or retried behind
   your back: you can export the bundle and keep or send it yourself.
 
 ## Local service
