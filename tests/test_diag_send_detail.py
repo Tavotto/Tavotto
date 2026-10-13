@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import sys
 import time
 import zipfile
@@ -1995,7 +1996,11 @@ class TestNativeProbeEnvironment:
     def test_desktop_owned_session_reproduces_only_the_render_related_variables(self, monkeypatch):
         env, doc = self._doc(monkeypatch, self.Spec())
         assert env == {"MPLBACKEND": "agg", "MPLCONFIGDIR": "/cfg"}  # 不带 AWS_SECRET / PATH
-        assert doc["probe_env"] == {"source": "launch_spec", "keys": ["MPLBACKEND", "MPLCONFIGDIR"]}
+        assert doc["probe_env"] == {
+            "source": "launch_spec",
+            "keys": ["MPLBACKEND", "MPLCONFIGDIR"],
+            "not_applied": [],
+        }
         assert doc["probe"]["matplotlib"]["backend"] == "agg"
 
     def test_unknown_launch_environment_marks_the_env_dependent_dimensions_unavailable(
@@ -2018,6 +2023,181 @@ class TestNativeProbeEnvironment:
             mpl["version"] == "3.9" and doc["probe"]["packages"][0]["name"] == "matplotlib"
         )  # 与环境无关的事实保留
         assert doc["probe"]["python"]["version"] == "3.11"
+
+
+class TestProbeNeverExecutesUserDirectories:
+    """探针在「打开对话框」这一刻跑：cwd 是项目 / 脚本目录，但项目里的 json.py / platform.py / matplotlib.py
+    绝不能被 import 执行（绕过 worker 的文件系统守卫）。"""
+
+    def _evil_dir(self, tmp_path, name):
+        d = tmp_path / name
+        d.mkdir()
+        marker = tmp_path / f"{name}-marker"
+        body = f"open({str(marker)!r}, 'w').write('executed')\n"
+        for mod in (
+            "json",
+            "platform",
+            "matplotlib",
+            "importlib",
+            "sitecustomize",
+            "usercustomize",
+        ):
+            (d / f"{mod}.py").write_text(body, encoding="utf-8")
+        return d, marker
+
+    def _python(self):
+        py = pool.find_worker_python()
+        return py, pool.source_of(py) == pool.SOURCE_BUNDLED
+
+    @pytest.mark.parametrize("mode", ["project_root", "project", "sandbox"])
+    def test_the_three_workdir_modes(self, mode, monkeypatch, tmp_path):
+        from tavotto.engine import workdir
+
+        proj, marker = self._evil_dir(tmp_path, "proj")
+        (proj / "sub").mkdir()
+        (proj / "sub" / "fig.py").write_text("x", encoding="utf-8")
+        for mod in ("json", "platform", "matplotlib"):  # 脚本目录里也放一份
+            (proj / "sub" / f"{mod}.py").write_text(
+                f"open({str(marker)!r}, 'w').write('executed-sub')\n", encoding="utf-8"
+            )
+        py, bundled = self._python()
+        monkeypatch.setattr(workdir, "mode_for", lambda fd: mode)
+        monkeypatch.setattr(pool, "resolve_worker_python", lambda d, **k: (py, pool.source_of(py)))
+        monkeypatch.setattr(diagdetail, "_probe_subprocess", REAL_PROBE)
+        src = diagdetail.Sources(
+            project={"figures_dir": str(proj)},
+            frontend={"overrides": [{"panel": "p", "script": "sub/fig.py"}]},
+        )
+        items = diagdetail.collect_render_env(
+            src, diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        doc = json.loads(items[0].data)
+        assert not marker.exists(), "项目里的模块在探针里被执行了"
+        assert doc["probe"]["status"] == "ok" and doc["probe"]["matplotlib"]["version"]
+
+    def test_native_session_launch_environment_cannot_put_user_dirs_on_the_import_path(
+        self, monkeypatch, tmp_path
+    ):
+        evil, marker = self._evil_dir(tmp_path, "evilpath")
+        py, _bundled = self._python()
+
+        class Spec:
+            env_source = "sidecar_inherited"
+            env = {"PYTHONPATH": str(evil), "PYTHONHOME": str(evil), "MPLBACKEND": "agg"}
+
+        sess = TestNativePanelRenderEnv.FakeSession()
+        sess.interpreter = py
+        sess.cwd = str(evil)  # 连 cwd 也是恶意目录
+        sess.spec = Spec()
+        assert diagdetail._native_launch_env(sess) == {"MPLBACKEND": "agg"}
+        out = diagdetail._probe_subprocess(
+            py, False, str(evil), diagdetail._native_launch_env(sess)
+        )
+        assert out["status"] == "ok" and not marker.exists()
+
+    def test_the_probe_is_launched_from_a_trusted_script_not_dash_c(self, monkeypatch, tmp_path):
+        seen = {}
+        real_run = subprocess.run
+
+        def spy(cmd, **kw):
+            seen["cmd"], seen["env"], seen["cwd"] = cmd, kw.get("env"), kw.get("cwd")
+            seen["script_exists"] = Path(cmd[-1]).is_file()
+            return real_run(cmd, **kw)
+
+        monkeypatch.setattr(subprocess, "run", spy)
+        py, _b = self._python()
+        out = REAL_PROBE(py, False, str(tmp_path))
+        assert out["status"] == "ok"
+        assert "-c" not in seen["cmd"] and "-s" in seen["cmd"] and seen["script_exists"]
+        assert Path(seen["cmd"][-1]).parent != tmp_path  # 脚本在可信临时目录里，不在 cwd
+        assert seen["env"]["PYTHONSAFEPATH"] == "1" and seen["cwd"] == str(tmp_path)
+        assert not Path(seen["cmd"][-1]).exists()  # 跑完就删
+
+
+class TestAnsiColouredTracebacks:
+    COLOURED = (
+        "Traceback \x1b[1;35m(most recent call last)\x1b[0m:\n"
+        '  File \x1b[35m"/p/a.py"\x1b[0m, line \x1b[35m3\x1b[0m, in \x1b[35mf\x1b[0m\n'
+        "    \x1b[1;31mboom_COLOR_SRC()\x1b[0m\n"
+        "    \x1b[1;31m^^^^^^^^^^^^^^^\x1b[0m\n"
+        "\x1b[1;35mValueError\x1b[0m: x\n"
+    )
+    SYNTAX_COLOUR = (
+        '  File \x1b[35m"/p/b.py"\x1b[0m, line \x1b[35m2\x1b[0m\n'
+        "    x = (COLOR_SYNTAX_SRC\n"
+        "         \x1b[1;31m^\x1b[0m\n"
+        "\x1b[1;35mSyntaxError\x1b[0m: '(' was never closed\n"
+    )
+    SYNTAX_PLAIN = "  File \"/p/b.py\", line 2\n    x = (PLAIN_SYNTAX_SRC\n         ^\nSyntaxError: '(' was never closed\n"
+
+    @pytest.mark.parametrize("text", [COLOURED, SYNTAX_COLOUR, SYNTAX_PLAIN])
+    def test_no_source_remains_and_the_output_is_uncoloured(self, text):
+        out = diagdetail.strip_source_lines(text)
+        assert "_SRC" not in out and "\x1b" not in out
+        assert "File" in out and ("ValueError: x" in out or "SyntaxError" in out)
+
+    def test_end_to_end_in_the_log_tails(self, client, world, monkeypatch):
+        tmp = world["tmp"]
+        (tmp / "col.log").write_text(
+            "2026-10-13 10:00:00,000 ERROR tavotto: x\n" + self.COLOURED + self.SYNTAX_COLOUR,
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(diagnostics, "_app_log_path", lambda: tmp / "col.log")
+        (tmp / "sidecar.log").write_text(self.SYNTAX_COLOUR + self.SYNTAX_PLAIN, encoding="utf-8")
+        _prep, z = _prepare(client)
+        for name, text in _texts(z).items():
+            assert "_SRC" not in text, name
+
+
+class TestCrashMemberNamesAreUnique:
+    def test_the_same_wer_report_in_queue_and_archive_gets_distinct_member_names(
+        self, world, monkeypatch, tmp_path
+    ):
+        archive, queue = tmp_path / "archive", tmp_path / "queue"
+        for base in (archive, queue):
+            d = base / "AppCrash_Tavotto.exe_abc"
+            d.mkdir(parents=True)
+            (d / "Report.wer").write_text(f"report from {base.name}", encoding="utf-8")
+        monkeypatch.setattr(
+            diagdetail,
+            "crash_dirs",
+            lambda: [("windows_wer_user_archive", archive), ("windows_wer_machine_queue", queue)],
+        )
+        items = diagdetail.collect_crash_reports(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(crash_reports=True),
+            diagdetail.Scrubber(),
+        )
+        names = [i.path for i in items if i.path != "index.json"]
+        assert len(names) == len(set(names)) == 2
+        assert any(n.startswith("user-archive-") for n in names) and any(
+            n.startswith("machine-queue-") for n in names
+        )
+        rows = json.loads(items[0].data)["reports"]
+        assert sorted(r["file"] for r in rows) == sorted(names)
+        flat = dict(diagdetail.entries(items))
+        with zipfile.ZipFile(io.BytesIO(flat["optional-crash-reports.zip"])) as z:
+            assert len(z.namelist()) == len(set(z.namelist())) == 3
+
+    def test_identical_member_names_get_numeric_suffixes(self, world, monkeypatch, tmp_path):
+        a, b = tmp_path / "a", tmp_path / "b"
+        for base in (a, b):
+            base.mkdir()
+            (base / "Tavotto-2026-10-13-120000.ips").write_text(base.name, encoding="utf-8")
+        monkeypatch.setattr(
+            diagdetail,
+            "crash_dirs",
+            lambda: [("macos_diagnostic_reports", a), ("macos_diagnostic_reports", b)],
+        )
+        items = diagdetail.collect_crash_reports(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(crash_reports=True),
+            diagdetail.Scrubber(),
+        )
+        names = sorted(i.path for i in items if i.path != "index.json")
+        assert names == ["Tavotto-2026-10-13-120000.ips", "Tavotto-2026-10-13-120000.ips-2"]
+        rows = json.loads(items[0].data)["reports"]
+        assert sorted(r["file"] for r in rows) == names
 
 
 class TestSourceStatRaces:

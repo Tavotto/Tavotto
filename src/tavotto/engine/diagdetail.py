@@ -668,6 +668,11 @@ _DECO = re.compile(r"^(?:[ ]*(?:\|[ ]?|\+[ ]))+")
 _GROUP_SEP = re.compile(r"^[ ]*(?:\|[ ]*)*\+[-+]+[ ]*(?:\d+[ ]*-*)?[-+ ]*$")
 
 
+#: ANSI 控制序列（CSI / OSC / 两字符转义）：3.13+ 的 `PYTHON_COLORS=1` 会给 traceback 着色，
+#: `File \x1b[35m"…"` 这样的帧行不去色就认不出
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
+
+
 def strip_source_lines(text: str, *, uncertain_start: bool = False) -> str:
     """去掉 Python traceback / SyntaxError / warning 显示里附带的**用户代码**（源码行、`^^^` / `~~^~~` 指示符、局部变量 repr）。
 
@@ -685,6 +690,7 @@ def strip_source_lines(text: str, *, uncertain_start: bool = False) -> str:
     out: list[str] = []
     in_frames = uncertain_start  # True：正在读帧——缩进的行不是帧就是用户代码
     for line in text.split("\n"):
+        line = _ANSI.sub("", line)  # 先去色再分类；输出也用去色后的行
         if _GROUP_SEP.match(line):
             out.append(line)
             continue
@@ -1347,25 +1353,39 @@ def _probe_subprocess(
 ) -> dict:
     """对渲染解释器跑**一次**有超时的只读采集；任何失败都如实回 `{"status": "failed", "reason": …}`。"""
     env = runtime.probe_env(python, bundled=bundled)
-    if env_extra:
-        env = {**(os.environ if env is None else env), **env_extra}
+    env = {**(os.environ if env is None else env), **(env_extra or {})}
+    # 3.11+：sys.path 里不放脚本目录 / cwd（PYTHONSAFEPATH）；老版本靠下面「脚本在可信临时目录里」达到同一效果
+    env["PYTHONSAFEPATH"] = "1"
+    # **探针不能用 `-c`，也不能让 cwd 进 sys.path**：cwd 是项目 / 脚本目录（matplotlibrc 等相对查找需要它），项目里的
+    # `json.py` / `platform.py` / `matplotlib.py` 会在「打开对话框」这一刻就被 import 执行，绕过 worker 的文件系统守卫。
+    # 所以把探针代码写进我们自己建的临时目录（0700，跑完就删）里的脚本文件，`python -s -B <脚本>` 启动：
+    # `sys.path[0]` 是那个临时目录，不是 cwd；`-s` 不加用户 site。不用 `-I`（会丢掉我们刻意复现的 MPL* 变量）。
+    import shutil
+    import tempfile
+
+    trusted = tempfile.mkdtemp(prefix="tavotto-probe-script-")
     try:
-        proc = subprocess.run(
-            [python, *runtime.probe_args(bundled=bundled), "-c", _PROBE_CODE],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=PROBE_TIMEOUT_S,
-            stdin=subprocess.DEVNULL,
-            env=env,
-            creationflags=runtime.CREATE_NO_WINDOW,
-            cwd=cwd,
-        )
-    except subprocess.TimeoutExpired:
-        return {"status": "failed", "reason": "timeout", "timeout_s": PROBE_TIMEOUT_S}
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"status": "failed", "reason": f"spawn_error:{type(exc).__name__}"}
+        script = Path(trusted) / "probe_main.py"
+        script.write_text(_PROBE_CODE, encoding="utf-8")
+        try:
+            proc = subprocess.run(
+                [python, *runtime.probe_args(bundled=bundled), "-s", str(script)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=PROBE_TIMEOUT_S,
+                stdin=subprocess.DEVNULL,
+                env=env,
+                creationflags=runtime.CREATE_NO_WINDOW,
+                cwd=cwd,
+            )
+        except subprocess.TimeoutExpired:
+            return {"status": "failed", "reason": "timeout", "timeout_s": PROBE_TIMEOUT_S}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"status": "failed", "reason": f"spawn_error:{type(exc).__name__}"}
+    finally:
+        shutil.rmtree(trusted, ignore_errors=True)
     if proc.returncode != 0:
         return {
             "status": "failed",
@@ -1389,17 +1409,11 @@ def _probe_subprocess(
 
 #: 会话启动环境里与渲染相关、可以安全复现给探针的变量（只取这几个，其余一律不碰）
 RENDER_ENV_KEYS = frozenset(
-    {
-        "MPLCONFIGDIR",
-        "MPLBACKEND",
-        "MATPLOTLIBRC",
-        "PYTHONPATH",
-        "PYTHONHOME",
-        "PYTHONNOUSERSITE",
-        "PYTHONUSERBASE",
-        "XDG_CONFIG_HOME",
-        "XDG_CACHE_HOME",
-    }
+    {"MPLCONFIGDIR", "MPLBACKEND", "MATPLOTLIBRC", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"}
+)
+#: **不复现**的：能把项目目录放进导入路径、让探针去 import / 执行用户目录里的模块（只记键名，不记值）
+NOT_APPLIED_ENV_KEYS = frozenset(
+    {"PYTHONPATH", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONNOUSERSITE", "PYTHONSTARTUP"}
 )
 #: 探针结果里依赖启动环境变量的维度：启动环境不明时整个标 `unavailable`
 _ENV_DEPENDENT = (
@@ -1522,8 +1536,10 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
         native_cwd = getattr(session, "cwd", "") or None
         doc["probe_cwd"] = {"mode": "native_session", "cwd": native_cwd}
         launch_env = _native_launch_env(session)
+        spec_env = getattr(getattr(session, "spec", None), "env", None) or {}
+        not_applied = sorted(k for k in spec_env if k in NOT_APPLIED_ENV_KEYS)
         doc["probe_env"] = (
-            {"source": "launch_spec", "keys": sorted(launch_env)}
+            {"source": "launch_spec", "keys": sorted(launch_env), "not_applied": not_applied}
             if launch_env is not None
             else {
                 "source": "unknown",
@@ -1537,6 +1553,8 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             launch_env or None,
         )
         doc["probe"] = probe if launch_env is not None else _mark_env_unavailable(probe)
+        if not_applied:  # 导入路径没复现：包列表可能与会话里实际能 import 的不同
+            doc["probe"]["may_differ"] = {"packages": "pythonpath_not_applied"}
         return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
     doc["inspected"] = "safe_pool"
     if profile == "native":  # native 面板但拿不到它的会话 / 解释器：如实说，下面探的是安全池
@@ -2238,6 +2256,16 @@ def _mentions_tavotto(path: Path) -> bool:
     return b"tavotto" in low or "tavotto".encode("utf-16-le") in low
 
 
+def _source_tag(label: str) -> str:
+    """内层 zip 成员名的来源前缀：同一份 WER 报告目录可以同时出现在 ReportQueue 与 ReportArchive、用户级与机器级。"""
+    return (
+        label.replace("windows_wer_", "")
+        .replace("windows_", "")
+        .replace("macos_diagnostic_reports", "macos")
+        .replace("_", "-")
+    )
+
+
 def _crash_candidates(now: float) -> list[dict]:
     """7 天内、属于 Tavotto / sidecar / 渲染 python 进程的崩溃文件：文本报告（脱敏后收）与二进制转储（原样收）。"""
     found: list[dict] = []
@@ -2298,7 +2326,11 @@ def _crash_candidates(now: float) -> list[dict]:
                         "label": label,
                         "name": q.name,
                         "path": q,
-                        "entry": _safe_name(entry),
+                        "entry": _safe_name(
+                            f"{_source_tag(label)}-{entry}"
+                            if label.startswith("windows_wer")
+                            else entry
+                        ),
                         "mtime": qs.st_mtime,
                         "size": qs.st_size,
                         "id": FileId.of(qs),
@@ -2321,6 +2353,7 @@ def collect_crash_reports(
     index: list[dict] = []
     items: list[Item] = []
     omitted = 0
+    taken: set[str] = {"index.json"}
     for c in _crash_candidates(now):
         if c["id"] is None:  # 登记时 stat 失败：只让它自己出局
             index.append({"source": c["label"], "name": c["name"], "content": "read_failed"})
@@ -2355,9 +2388,17 @@ def collect_crash_reports(
             )
             data = scrub.text(text).encode("utf-8")
         used += len(data)
-        row["file"] = c["entry"]
+        member = c["entry"]
+        base, n = member, 1
+        while (
+            member in taken
+        ):  # 整个内层 zip 的重名检测：重名追加 -2、-3…，index 这一行指向自己的成员名
+            n += 1
+            member = f"{base}-{n}"
+        taken.add(member)
+        row["file"] = member
         index.append(row)
-        items.append(Item("crash_reports", c["entry"], data))
+        items.append(Item("crash_reports", member, data))
     items.insert(
         0,
         Item(
