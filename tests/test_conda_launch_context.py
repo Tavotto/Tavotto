@@ -911,9 +911,9 @@ def test_activation_is_captured_once_cached_in_memory_and_recaptured_when_the_en
     assert delta["SECRET_TOKEN"] == "xyz-secret-token-123"
     assert "SHLVL" not in delta and "_" not in delta  # 每个进程自己都会变的不算激活增量
     (call,) = conda_calls(log)
-    # 捕获命令：conda run --no-capture-output --prefix <p> <python 绝对路径> -c <代码> <结果文件>；没有 `--`
+    # 捕获命令：conda run --no-capture-output --prefix <p> <python 绝对路径> -I -S -c <代码> <结果文件>；没有 `--`
     assert call["opts"] == ["--no-capture-output", "--prefix", str(prefix)]
-    assert call["cmd"][0] == py and call["cmd"][1] == "-c" and "--" not in call["cmd"]
+    assert call["cmd"][:4] == [py, "-I", "-S", "-c"] and "--" not in call["cmd"]
     assert (
         launcher.activated_delta(py, lau) is delta and len(conda_calls(log)) == 1
     )  # 命中进程内缓存
@@ -947,6 +947,90 @@ def test_capture_failure_is_the_stable_error_and_hook_output_never_matters(tmp_p
     ghost = launcher.CondaLauncher(conda_exe=str(tmp_path / "no-such-conda"), prefix=str(prefix))
     with pytest.raises(launcher.LauncherUnavailable):
         launcher.activated_delta(py, ghost)
+
+
+@posix_only
+def test_capture_runs_no_code_from_the_environment_and_does_not_count_sitecustomize_as_activation(
+    tmp_path, monkeypatch
+):
+    """捕获只读 os.environ：环境里的 sitecustomize（经 PYTHONPATH 或 site-packages）不执行，它对环境的改动也不进增量。"""
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    hook = tmp_path / "hook"
+    hook.mkdir()
+    ran = tmp_path / "sitecustomize-ran"
+    # 模拟的 conda 自己也是 Python 脚本、同样继承 PYTHONPATH：只在“被探测的解释器”里生效，conda 进程自己跳过
+    (hook / "sitecustomize.py").write_text(
+        "import os, sys\n"
+        "if not any(str(a).endswith('/bin/conda') for a in sys.orig_argv):\n"
+        f"    open({str(ran)!r}, 'w').close()\n"
+        "    os.environ['FROM_SITECUSTOMIZE'] = '1'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYTHONPATH", str(hook))
+    py = str(prefix / "bin" / "python")
+    lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    delta = launcher.activated_delta(py, lau)
+    assert delta["FAKE_SDK_LICENSE"] == LICENSE  # 激活本身照常捕获
+    assert "FROM_SITECUSTOMIZE" not in delta
+    assert not ran.exists()
+
+
+@posix_only
+def test_a_caller_waiting_behind_another_capture_only_waits_its_own_budget(tmp_path, monkeypatch):
+    """同一个环境正在被别的请求捕获（例如 60s 的预热）：后来的 7s 体检只等自己的预算，到点 fail-closed，不缓存。"""
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "bin" / "python")
+    lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    key = (lau.prefix, launcher.prefix_state(lau.prefix), lau.conda_exe)
+    with launcher._captured_lock:
+        gate = launcher._capture_gates.setdefault(key, threading.Lock())
+    gate.acquire()  # 模拟另一个请求正在捕获
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(launcher.LauncherUnavailable) as exc:
+            launcher.activated_delta(py, lau, timeout=0.5)
+        assert time.monotonic() - t0 < 5
+        assert exc.value.code == "conda_launcher_unavailable"
+    finally:
+        gate.release()
+    assert conda_calls(log) == []
+    assert launcher.activated_delta(py, lau)["FAKE_SDK_LICENSE"] == LICENSE  # 失败没有被缓存
+
+
+@posix_only
+def test_startup_revisits_result_files_that_were_too_recent_to_sweep(tmp_path, monkeypatch):
+    """上一个实例刚被杀、留下的结果文件还没到过期线：启动那次扫不掉，过了过期线必须再扫一次。"""
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    results = tmp_path / "data" / "probe-results"
+    results.mkdir(parents=True)
+    leftover = results / "activated-left.json"
+    leftover.write_text('{"SECRET_TOKEN": "x"}', encoding="utf-8")
+    scheduled, started = [], []
+
+    class FakeTimer:
+        def __init__(self, delay, fn):
+            scheduled.append((delay, fn))
+            self.daemon = False
+
+        def start(self):
+            started.append(self.daemon)
+
+    monkeypatch.setattr(launcher.threading, "Timer", FakeTimer)
+    monkeypatch.setattr(launcher, "_startup_done", False)
+    monkeypatch.setattr(launcher.atexit, "register", lambda fn: None)
+    launcher.startup()
+    assert leftover.exists()  # 太新：启动那次不删
+    ((delay, fn),) = scheduled
+    assert started == [True]  # 真的排上了，而且是守护线程（不拖住退出）
+    assert delay > launcher._STALE_RESULT_S
+    old = time.time() - launcher._STALE_RESULT_S - 1
+    os.utime(leftover, (old, old))  # 时间到了
+    fn()
+    assert not leftover.exists()
 
 
 @posix_only

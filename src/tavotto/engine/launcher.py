@@ -340,7 +340,7 @@ _capture_gates: dict[tuple[str, str, str], threading.Lock] = {}
 _inflight: set[str] = set()
 _inflight_lock = threading.Lock()
 #: 启动时清理的年龄下限（秒）：同一数据目录下可能有另一个正在捕获的 Tavotto 实例，别删它的在途文件
-_STALE_RESULT_S = 600.0
+_STALE_RESULT_S = 3 * CAPTURE_TIMEOUT
 
 
 def reset_captures() -> None:
@@ -389,6 +389,10 @@ def startup() -> None:
         return
     _startup_done = True
     sweep_results()
+    # 被杀的上一个实例刚写下、还不到过期线的结果文件：启动那次扫不到，过了过期线再扫一次（不然长跑的实例会一直留着它）
+    timer = threading.Timer(_STALE_RESULT_S + 5.0, sweep_results)
+    timer.daemon = True
+    timer.start()
     atexit.register(_cleanup_inflight)
 
 
@@ -459,6 +463,10 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str |
             "--prefix",
             lau.prefix,
             python,
+            # -I -S：只读 os.environ，不跑环境里的 sitecustomize / .pth / PYTHONPATH 模块——“检查”不能变成“执行环境里的代码”，
+            # 也不能把 sitecustomize 对环境的改动当成激活增量（真正的 worker 起来还会再跑一次）
+            "-I",
+            "-S",
             "-c",
             _CAPTURE_SRC,
             result_path,
@@ -518,16 +526,26 @@ def activated_delta(
         gate = _capture_gates.setdefault(key, threading.Lock())
     if hit is not None:
         return hit
-    with gate:  # 单飞：并发的同一把键只捕获一次，其余等它的结果
+    budget = CAPTURE_TIMEOUT if timeout is None else timeout
+    deadline = time.monotonic() + budget
+    # 单飞：并发的同一把键只捕获一次，其余等它的结果；等也只等自己的预算（排在 60s 预热后面的 7s 体检不能被拖满一分钟）
+    if not gate.acquire(timeout=max(budget, 0.0)):
+        raise LauncherUnavailable(f"经 Conda 激活取环境超时（{budget:.0f}s，另一个请求正在捕获同一个环境）")
+    try:
         with _captured_lock:
             hit = _captured.get(key)
         if hit is not None:
             return hit
-        delta = _capture(str(python), lau, CAPTURE_TIMEOUT if timeout is None else timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise LauncherUnavailable(f"经 Conda 激活取环境超时（{budget:.0f}s）")
+        delta = _capture(str(python), lau, remaining)
         LOG.info("Conda 激活环境已捕获：%d 个变量（不落盘）", len(delta))  # 只记个数，不记名字和值
         with _captured_lock:
             _captured[key] = delta
         return delta
+    finally:
+        gate.release()
 
 
 def merge_env(

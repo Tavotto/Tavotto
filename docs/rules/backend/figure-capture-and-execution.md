@@ -375,7 +375,8 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   `_VOLATILE_ENV` 永不删。捕获超时的收尾**叶子先死**（先杀后代、让还活着的 conda 收尸，再杀 conda 并 wait），不留僵尸。
 - **捕获的环境键与时机**：缓存键 `(prefix, prefix_state, conda_exe)`，`prefix_state` 含 `conda-meta/history` / 目录 / `state`（`conda env config vars`）
   与 `etc/conda/activate.d`、`deactivate.d` 的文件清单及各自 (size, mtime_ns)。池锁之外预热（`pool.acquire` 里 `launcher.prewarm`），预检的预算
-  传进捕获（`timeout`）；结果文件放 `probe-results/`（0600），启动时清过期残留（`launcher.startup`），退出时清在途的。
+  传进捕获（`timeout`），排在别人的捕获后面也只等自己的预算（单飞锁带超时）；捕获解释器用 `-I -S` 起，只读 `os.environ`，不执行环境里的
+  sitecustomize / `.pth`；结果文件放 `probe-results/`（0600），启动时清过期残留并在过了过期线后再扫一次（`launcher.startup`），退出时清在途的。
 - **按解释器缓存的探针结论**（`depplan` 目标事实 / 静态索引、`projectenv` 系统候选体检、`userenvs` 体检、`pool` 的 `import matplotlib` 结论与选定的
   渲染解释器）都按 `launcher.context_key(python)`（`direct` 或 `conda|exe|prefix|env_state`）分区。
 - **限制**：只捕获环境变量。激活脚本里环境变量以外的副作用（启动 license 服务、`ulimit`、shell 函数）不会在每次启动时重放，
