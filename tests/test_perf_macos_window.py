@@ -1,4 +1,5 @@
 """macOS 窗口诊断脚本的解析、归因边界与数据脱敏契约。"""
+
 import json
 import sys
 from pathlib import Path
