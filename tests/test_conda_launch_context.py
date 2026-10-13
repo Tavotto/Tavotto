@@ -79,7 +79,7 @@ if cwd:
     os.chdir(cwd)
 banner = os.environ.get("FAKE_CONDA_BANNER")
 if banner:  # activate.d 钩子往 stdout 打印的横幅：在用户 Python 启动之前、直通进协议管道
-    sys.stdout.write(banner + "\n")
+    sys.stdout.write(banner + ("" if os.environ.get("FAKE_CONDA_BANNER_NO_NEWLINE") else "\n"))
     sys.stdout.flush()
 # 真 conda（POSIX）：先起一个临时 shell，再由 shell 起用户 Python——Python 的父进程是 shell，不是 conda
 sys.exit(subprocess.Popen(["/bin/sh", "-c", '"$@"; exit $?', "sh", *cmd], env=env).wait())
@@ -772,6 +772,8 @@ def test_real_conda_activate_d_hook_stdout_does_not_break_the_protocol(tmp_path,
     """真 conda：env 的 `activate.d` 钩子往 stdout 打印，会话照常建立、出图，横幅在 worker.log 里。"""
     hook_dir = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
     hook_dir.mkdir(parents=True, exist_ok=True)
+    for stale in hook_dir.glob("p09_*.sh"):  # 上次被打断的运行可能留下钩子，会污染别的真 conda 用例
+        stale.unlink()
     hook = hook_dir / "p09_banner_test.sh"
     hook.write_text('echo "P09 vendor banner: license server ready"\n', encoding="utf-8")
     proj = tmp_path / "proj"
@@ -1222,3 +1224,68 @@ def test_the_pool_turns_an_unavailable_conda_launcher_into_a_stable_error(conda_
     with pytest.raises(_pool.WorkerError) as werr:
         _pool.EngineWorker("fig.py", str(proj), "__main__")
     assert werr.value.code == "conda_launcher_unavailable"
+
+
+def test_envelope_suffix_splits_an_unterminated_banner_from_the_first_envelope():
+    pv = _pool.PROTOCOL_VERSION
+    env = json.dumps({"protocol_version": pv, "request_id": "r1", "ok": True})
+    suffix = _pool.EngineWorker._envelope_suffix
+    assert suffix("initializing…" + env + "\n") == env + "\n"
+    # 键序不固定：真实的 build 回复是 {"ok": true, "protocol_version": 1, "request_id": ...}
+    real = json.dumps({"ok": True, "protocol_version": pv, "request_id": "r2", "stems": {"a": 1}})
+    assert suffix("init {x" + real + "\n") == real + "\n"  # 钩子输出里自带 `{` 也能找到真起点
+    assert suffix(real + "\n") is None
+    assert suffix(env + "\n") is None  # 本来就整行是信封：不拆
+    assert suffix("plain banner\n") is None
+    assert suffix('x {"protocol_version": 1, broken\n') is None  # 形似不合法：不拆
+    assert suffix("a" + json.dumps({"request_id": "r"}) + "\n") is None  # 不带 protocol_version
+
+
+@needs_worker
+def test_an_unterminated_hook_banner_does_not_swallow_the_first_reply(conda_world, monkeypatch):
+    """钩子 `printf 'initializing…'` 没有换行：它和 worker 的第一条信封粘成一行，不能整行被当横幅吞掉（会话随后超时）。"""
+    proj, prefix, log, counter = conda_world
+    monkeypatch.setenv("FAKE_CONDA_BANNER", "initializing vendor SDK...")
+    monkeypatch.setenv("FAKE_CONDA_BANNER_NO_NEWLINE", "1")
+    worker, resp = _pool.build("fig.py", str(proj), "__main__")
+    try:
+        assert "[activation stdout] initializing vendor SDK..." in worker.log_path.read_text(
+            encoding="utf-8", errors="replace"
+        )
+        assert worker.render_png
+    finally:
+        worker.force_kill()
+
+
+@needs_real_conda
+def test_real_conda_unterminated_activate_d_printf_does_not_break_the_protocol(
+    tmp_path, monkeypatch
+):
+    hook_dir = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    for stale in hook_dir.glob("p09_*.sh"):  # 上次被打断的运行可能留下钩子，会污染别的真 conda 用例
+        stale.unlink()
+    hook = hook_dir / "p09_printf_test.sh"
+    hook.write_text("printf 'initializing vendor SDK...'\n", encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(Path(REAL_PREFIX) / "bin" / "python"))
+    _pool.reset_worker_python()
+    worker = None
+    try:
+        worker, resp = _pool.build("fig.py", str(proj), "__main__")
+        assert resp["runtime"]["prefix"] == REAL_PREFIX
+        assert "initializing vendor SDK..." in worker.log_path.read_text(
+            encoding="utf-8", errors="replace"
+        )
+    finally:
+        hook.unlink(missing_ok=True)
+        if worker is not None:
+            worker.force_kill()
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()

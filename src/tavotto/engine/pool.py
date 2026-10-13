@@ -2205,20 +2205,48 @@ class EngineWorker:
         的行，形似信封的行一律交给 `_parse_line` / 请求 id 校验；③ 条数 / 字节有上限，超限那一行原样返回
         （`protocol_mismatch`，日志里已有前面的内容）；④ 读不到信封（Python 没起来）仍由原来的超时 / EOF 路径收场。"""
         while line and not self._is_envelope(line):
+            tail = self._envelope_suffix(line)
+            if tail is not None:
+                # 钩子打印没有以换行结尾（`printf 'initializing…'`），和 worker 的第一条信封粘成了一行：
+                # 前缀当横幅转日志，后缀（一条完整的合法信封）交回去
+                prefix = line[: len(line) - len(tail)]
+                self._divert_banner(prefix.encode("utf-8", "surrogateescape"))
+                return tail
             raw = line.encode("utf-8", "surrogateescape")
             if (
                 self._banner_lines >= self.ACTIVATION_BANNER_MAX_LINES
                 or self._banner_bytes + len(raw) > self.ACTIVATION_BANNER_MAX_BYTES
             ):
                 return line
-            self._banner_lines += 1
-            self._banner_bytes += len(raw)
-            try:
-                self._log.write(b"[activation stdout] " + raw.rstrip(b"\r\n") + b"\n")
-            except (OSError, ValueError):
-                pass
+            self._divert_banner(raw)
             line = self.proc.stdout.readline()
         return line
+
+    #: 在一行里找信封起点时最多试多少个 `{`（一条信封里 `{` 很多，别对每一个都整行解析一遍）
+    _ENVELOPE_SEARCH_LIMIT = 16
+
+    @classmethod
+    def _envelope_suffix(cls, line: str) -> str | None:
+        """`line` 里**结尾的**那条合法信封（前面粘着未换行的钩子输出）；没有 / 前缀为空（本来就整行是信封）→ None。
+        从左到右试每个 `{`：第一个能让后缀整体通过 `_is_envelope`（JSON 对象、`protocol_version` 与字符串 `request_id`
+        都对）的位置就是起点——信封里键的顺序不固定，不能假设 `protocol_version` 在最前。形似但不合法的一律不拆，原样交给
+        横幅 / `_parse_line` 的既有路径。"""
+        tried = 0
+        start = line.find("{")
+        while start > 0 and tried < cls._ENVELOPE_SEARCH_LIMIT:
+            if cls._is_envelope(line[start:]):
+                return line[start:]
+            tried += 1
+            start = line.find("{", start + 1)
+        return None
+
+    def _divert_banner(self, raw: bytes) -> None:
+        self._banner_lines += 1
+        self._banner_bytes += len(raw)
+        try:
+            self._log.write(b"[activation stdout] " + raw.rstrip(b"\r\n") + b"\n")
+        except (OSError, ValueError):
+            pass
 
     def _parse_line(self, line: str) -> dict:
         """协议管道上的一行 → 响应对象；不是合法 UTF-8 / 不是 JSON 都是 `protocol_mismatch`。
