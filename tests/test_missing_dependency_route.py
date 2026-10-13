@@ -172,6 +172,7 @@ def test_real_foreign_platform_import_has_no_environment_retry():
         [sys.executable, "-I", "-S", "-c", f"import {module}"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     assert result.returncode != 0
