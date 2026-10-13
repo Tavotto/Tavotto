@@ -17,6 +17,8 @@ def report(n=16, value=20, browser="chromium"):
             "platform": "linux", "arch": "x64", "browser": browser,
             "browser_major": 125, "viewport_w": 1280, "viewport_h": 720,
             "dpr": 1, "headless": True,
+            "os_release": "test-kernel", "cpu_model": "test-cpu",
+            "cpu_count": 4, "total_mem_gib": 16,
         },
         "scenarios": [
             {
@@ -73,3 +75,13 @@ def test_load_checks_schema_and_file_size(tmp_path):
         pass
     else:
         raise AssertionError("untrusted schema accepted")
+
+
+def test_dialog_sample_multiplier_is_four_per_iteration():
+    r = report(n=12)
+    summary = A.summarize(r)
+    assert summary["status"] == "ok"
+    assert summary["scenarios"]["dialog.presets_open"]["expected_count"] == 48
+    assert summary["scenarios"]["dialog.presets_open"]["count"] == 48
+    r["scenarios"][0]["two_raf_ms"].pop()
+    assert A.summarize(r)["status"] == "incomplete"
