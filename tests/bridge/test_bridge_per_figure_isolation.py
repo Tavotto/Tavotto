@@ -296,3 +296,50 @@ def test_a_figure_broken_between_two_barriers_is_isolated_not_thrown_into_the_sc
         sess.wait_event("barrier")  # script_end
         sess.resume()
         assert sess.wait_event("exit")["code"] == 0
+
+
+def test_an_isolated_figure_that_comes_back_replays_its_saved_edits(
+    user_python, tmp_path, bridge_session
+):
+    """Codex #978 P1：barrier1 做过编辑，barrier2 渲染失败被隔离，脚本修好后 barrier3 回来——
+    它仍是"已知图"，保存的 patch 要重放，之后离开屏障也不丢（不是当新图把编辑清掉）。"""
+    proj = tmp_path / "proj"
+    write(
+        proj / "fig.py",
+        HEAD
+        + "b, bx = plt.subplots()\nbx.plot([0, 1], [3, 4])\nbx.set_title('Plain')\nb.savefig('b.png')\n"
+        + "plt.show()\n"
+        + "class AggOnly(Artist):\n    def draw(self, renderer):\n        renderer.buffer_rgba()\n"
+        + "bx.add_artist(AggOnly())\nplt.show()\n"
+        + "for a in list(bx.artists):\n    a.remove()\nplt.show()\n",
+    )
+
+    def title(sess):
+        man = json.loads(_preview(sess.out_dir, "b", ".json").read_text("utf-8"))
+        return [
+            f["value"]
+            for el in man["elements"]
+            for f in el.get("editable", [])
+            if f["prop"] == "text" and f["value"] in ("Plain", "Edited")
+        ]
+
+    with bridge_session(proj / "fig.py", cwd=str(proj)) as sess:
+        sess.wait_event("barrier")
+        build = sess.ensure_built()
+        assert "b" in build["stems"]
+        gid = _title_gid(
+            json.loads(_preview(sess.out_dir, "b", ".json").read_text("utf-8")), "Plain"
+        )
+        sess.override("b", [{"gid": gid, "prop": "text", "value": "Edited"}])
+        sess.resume()
+        second = sess.wait_event("barrier")
+        assert second["failed_stems"] == ["b"]
+        sess.resume()
+        third = sess.wait_event("barrier")
+        assert third["stems"] == ["b"] and not third.get("failed_stems"), third
+        assert title(sess) == ["Edited"], "回来的图没有重放保存的编辑"
+        sess.resume()
+        sess.wait_event("barrier")  # script_end：离开上一个屏障时存下的编辑没有被清掉
+        assert title(sess) == ["Edited"], "离开屏障之后编辑丢了"
+        sess.resume()
+        assert sess.wait_event("exit")["code"] == 0

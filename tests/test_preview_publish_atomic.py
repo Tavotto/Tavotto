@@ -1182,15 +1182,21 @@ def test_a_lock_left_by_a_dead_process_is_reclaimed_immediately(tmp_path):
 
 
 def test_a_lock_held_by_a_live_process_still_excludes(tmp_path):
-    lock = tmp_path / (figcapture.PREVIEW_LEDGER + ".lock")
-    lock.write_text(f"{os.getpid()} 0\n", encoding="utf-8")
+    import subprocess as sp  # noqa: PLC0415
+    import sys  # noqa: PLC0415
     import time  # noqa: PLC0415
 
-    lock.write_text(f"{os.getpid()} {time.time()}\n", encoding="utf-8")
-    with pytest.raises(OSError, match="locked"):
-        with figcapture._ledger_lock(tmp_path, timeout=0.3):
-            pytest.fail("活着的持有者的锁被抢了")
-    assert lock.exists(), "不能撤掉活人的锁"
+    holder = sp.Popen([sys.executable, "-c", "import time; time.sleep(60)"])  # noqa: S603
+    try:
+        lock = tmp_path / (figcapture.PREVIEW_LEDGER + ".lock")
+        lock.write_text(f"{holder.pid} {time.time()}\n", encoding="utf-8")
+        with pytest.raises(OSError, match="locked"):
+            with figcapture._ledger_lock(tmp_path, timeout=0.3):
+                pytest.fail("活着的持有者的锁被抢了")
+        assert lock.exists(), "不能撤掉活人的锁"
+    finally:
+        holder.kill()
+        holder.wait()
 
 
 def test_a_lock_without_a_pid_falls_back_to_an_age_shorter_than_the_wait(tmp_path):
@@ -1201,3 +1207,56 @@ def test_a_lock_without_a_pid_falls_back_to_an_age_shorter_than_the_wait(tmp_pat
     os.utime(lock, (old, old))
     assert figcapture._LOCK_NO_PID_STALE < 5.0
     assert _publish(tmp_path, "fig") == 1
+
+
+def test_a_lock_file_left_by_a_failed_release_in_this_process_is_reclaimed_at_once(
+    tmp_path, monkeypatch
+):
+    """Codex #978（Windows 瞬时共享冲突）：释放时 remove 一直失败，锁文件留下、里头是本进程的活 pid。
+    下一次发布不能等 300 秒（pid 复用那一档）——本进程并没有持有它，就是自己的遗留，立即回收。"""
+    import time  # noqa: PLC0415
+
+    lock = tmp_path / (figcapture.PREVIEW_LEDGER + ".lock")
+    real_remove = os.remove
+
+    def stuck(path, *a, **k):
+        if str(path) == str(lock):
+            raise PermissionError(13, "sharing violation", str(path))
+        return real_remove(path, *a, **k)
+
+    monkeypatch.setattr(os, "remove", stuck)
+    monkeypatch.setattr(time, "sleep", lambda s: None)  # 释放重试不拖慢用例
+    _publish(tmp_path, "a")
+    assert lock.exists(), "探针无效：锁文件应当因 remove 失败而留下"
+    monkeypatch.setattr(os, "remove", real_remove)
+    monkeypatch.undo()
+    t0 = time.monotonic()
+    _publish(tmp_path, "b")
+    assert time.monotonic() - t0 < 2.0
+    assert figcapture.published_preview_stems(tmp_path) == ["a", "b"]
+
+
+def test_a_lock_held_in_this_process_is_not_mistaken_for_a_leftover(tmp_path):
+    with figcapture._ledger_lock(tmp_path):
+        with pytest.raises(OSError, match="locked"):
+            with figcapture._ledger_lock(tmp_path, timeout=0.2):
+                pytest.fail("同进程里仍被持有的锁被抢了")
+
+
+def test_storage_errors_are_session_level_not_per_figure_failures(tmp_path):
+    """Codex #978：账本 / 产物目录的存储错误不是"这张图画不出来"，不能被逐图隔离吞掉（否则健康图被逐张标成失败）。"""
+    import sys  # noqa: PLC0415
+
+    sys.path.insert(0, ENGINE_DIR)
+    import figcapture as flat  # noqa: PLC0415 — figsession 平铺 import 的那一份（与包内路径是两个模块对象）
+    import figsession  # noqa: PLC0415
+
+    sess = figsession.LiveFigureSession(tmp_path)
+    with pytest.raises(flat.PreviewLedgerUnreadable):
+        sess.isolate_live_failure("fig", flat.PreviewLedgerUnreadable("garbled"))
+    with pytest.raises(PermissionError):
+        sess.isolate_live_failure("fig", PermissionError(13, "denied", str(tmp_path / "x.part")))
+    assert sess.failures == {}
+    # 对照：产物目录之外的 OSError（用户的绘制代码读了个不存在的文件）仍是这张图自己的失败
+    sess.isolate_live_failure("fig", FileNotFoundError(2, "nope", "/somewhere/else.csv"))
+    assert sorted(sess.failures) == ["fig"]

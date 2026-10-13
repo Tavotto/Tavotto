@@ -811,9 +811,24 @@ class LiveFigureSession:
 
         撤出活会话、记失败事实、隐藏它此前的预览、核对恢复；不是 `except: pass`，其它图照常。
         """
+        self._reraise_if_session_level(exc)
         state = self.states.pop(stem, None)
         self.live_captured_at.pop(stem, None)
         self._isolate(stem, state, exc)
+
+    def _reraise_if_session_level(self, exc: BaseException) -> None:
+        """产物目录 / 账本的存储错误是会话级的，不是"这张图画不出来"：不隔离，原样上抛（Codex #978）。
+
+        否则账本读不出来、磁盘满这类错误会把每一张健康的图都逐张标成失败。
+        """
+        if isinstance(exc, figcapture.PreviewLedgerUnreadable):
+            raise exc
+        if isinstance(exc, OSError) and getattr(exc, "filename", None) is not None:
+            try:
+                Path(os.fspath(exc.filename)).resolve().relative_to(self.out_dir.resolve())
+            except (ValueError, OSError, TypeError):
+                return
+            raise exc
 
     def retire_capture(self, stem: str) -> None:
         """把 `stem` 从捕获表与失败记录里整个撤掉（不留任何残余）。"""
@@ -839,6 +854,7 @@ class LiveFigureSession:
             self.artifact_source is not None
         ):
             raise exc
+        self._reraise_if_session_level(exc)
         message = f"{type(exc).__name__}: {exc}"
         if len(message) > 400:
             message = message[:397] + "..."

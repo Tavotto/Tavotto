@@ -721,11 +721,14 @@ class BridgeRun:
                 warnings = overrides.apply(state, patches) if patches else []
                 if warnings:
                     self.rebase_warnings[stem] = list(warnings)
-                self.session.render(stem)
+                staged = self.session._stage_preview(stem)  # noqa: SLF001 — 渲染段；发布段在 try 之外
             except Exception as exc:  # noqa: BLE001 — 脚本在两个屏障之间把这张图改坏了：只隔离这一张
                 # 异常逃出去会打断用户脚本（在 `show()` 里抛），再在 script_end 重复一次。和新捕获同一套逐图隔离
                 self.rebase_warnings.pop(stem, None)
-                self.session.isolate_live_failure(stem, exc)
+                self.session.isolate_live_failure(stem, exc)  # 存储类错误在里头原样上抛
+                continue
+            # 发布段（账本 / 产物目录）出错是会话级的，不隔离，照新捕获路径的口径上抛
+            self.session._publish_staged(stem, staged)  # noqa: SLF001
 
     def release_barrier(self, reason: str) -> list:
         """**任何**离开屏障的路径都要经过这里（ADR 0021 §8.1）。
@@ -768,7 +771,11 @@ class BridgeRun:
                 continue
             if state.unrestored:
                 owed.append(stem)
-        self._known_stems = set(self.session.states)
+        # 在 rebase 里被隔离的已知图：保留"已知"身份和已存的 patch——脚本修好后下个屏障它回来时要按已知图
+        # 重放这些编辑，而不是当新图丢掉（Codex #978）
+        self._known_stems = set(self.session.states) | {
+            s for s in self._known_stems if s in self.session.failures
+        }
         self._had_barrier = True
         # 脚本接着跑：失败过的图下一个屏障再试一次（可能已被脚本改好）
         self.session.allow_retry_failed()

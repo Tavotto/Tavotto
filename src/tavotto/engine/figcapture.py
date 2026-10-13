@@ -697,6 +697,12 @@ _LOCK_NO_PID_STALE = 2.0
 _LOCK_HOLDER_MAX_AGE = 300.0
 
 
+#: 本进程当前持有的账本锁路径。锁文件里写着本进程的活 pid、但这里并没有持有它，说明是本进程上一次释放失败
+#: （Windows 上瞬时共享冲突）遗留的——立即回收，不用等 pid 复用那一档的 300 秒（Codex #978）。
+_HELD_LOCKS: set[str] = set()
+_HELD_LOCKS_GUARD = threading.Lock()
+
+
 def _lock_is_abandoned(path: str) -> bool:
     try:
         age = time.time() - os.stat(path).st_mtime
@@ -708,6 +714,9 @@ def _lock_is_abandoned(path: str) -> bool:
         pid = int(head[0])
     except (IndexError, ValueError):
         return age > _LOCK_NO_PID_STALE
+    if pid == os.getpid():
+        with _HELD_LOCKS_GUARD:
+            return path not in _HELD_LOCKS
     if not _pid_alive(pid):
         return True
     return age > _LOCK_HOLDER_MAX_AGE
@@ -729,6 +738,8 @@ def _ledger_lock(out_dir, timeout: float = 5.0):
                 os.write(fd, f"{os.getpid()} {time.time()}\n".encode())
             finally:
                 os.close(fd)
+            with _HELD_LOCKS_GUARD:
+                _HELD_LOCKS.add(path)
             break
         except FileExistsError:
             if _lock_is_abandoned(path):
@@ -743,10 +754,16 @@ def _ledger_lock(out_dir, timeout: float = 5.0):
     try:
         yield
     finally:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        for attempt in range(5):  # Windows 上扫描器 / 索引器瞬时占着文件：短暂重试
+            try:
+                os.remove(path)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                time.sleep(0.02 * (attempt + 1))
+        with _HELD_LOCKS_GUARD:
+            _HELD_LOCKS.discard(path)  # 删不掉也不再算"持有"：下一个拿锁的会把它当本进程遗留回收
 
 
 def clear_preview_invalid(out_dir, stem: str) -> None:
