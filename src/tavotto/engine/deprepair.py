@@ -1543,6 +1543,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     # ---- 验证三层 ---------------------------------------------------------
     _emit(plan.plan_id, STATE_VERIFYING, on_event, plan=plan)
     health = projectenv.probe_environment(python, req.import_name or None)
+    _raise_if_activation_unavailable(health)
     if not health.get("ok"):
         # pip 退出码 0 不等于「装对了」：装进了另一个环境、装的是同名的另一个
         # 包、扩展模块的 ABI 对不上——这三种都是 exit 0 + import 失败。
@@ -3611,6 +3612,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             ERROR_PACKAGE_NOT_FOUND_AFTER, f"pip 退出了，但环境里没有 {job.distribution}"
         )
     health = projectenv.probe_environment(python)
+    _raise_if_activation_unavailable(health)  # 瞬时：不标记这一代不完整
     if not health.get("ok"):
         managedenv.mark_incomplete(project, f"{job.op} 之后 matplotlib 不可用")
         raise RepairError(ERROR_MANAGED_BROKEN, health.get("detail") or health.get("code") or "")
@@ -5469,6 +5471,13 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     except (ValueError, IndexError):
         return {n: (proc.stderr or "起不来")[:200] for n in names}
     return {n: str(data.get(n, "no result")) for n in names}
+
+
+def _raise_if_activation_unavailable(health: dict) -> None:
+    """装后体检遇到 Conda 激活取环境失败：报瞬时的 `conda_launcher_unavailable`，不报成“装了还 import 不了”
+    （那会叫用户去查包、把受管的一代标成不完整）。"""
+    if not health.get("ok") and health.get("code") == launcher.UNAVAILABLE_CODE:
+        raise RepairError(launcher.UNAVAILABLE_CODE, str(health.get("detail") or "")[:400], health=health)
 
 
 def _verify_imports(python: str, names: tuple[str, ...]) -> None:
