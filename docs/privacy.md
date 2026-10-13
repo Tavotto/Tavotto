@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-12
+Last updated: 2026-10-13
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -291,6 +291,23 @@ region) and covers at most the last 30 days.
 This section covers the website only. The Tavotto application does not contact
 the website; the download mirror `dl.tavotto.cn` used for update checks is a
 separate host and is described under "Update checks" above.
+
+## Supporting the project on tavotto.com
+
+Payments made through the support page <https://www.tavotto.com/support/> are
+handled entirely by Ko-fi or 爱发电 (afdian.com), under their own privacy
+policies; the website never sees card or account details.
+
+When a Ko-fi payment completes, Ko-fi notifies the website. The supporter's email
+address in that notification is used **once**, to send a single thank-you mail
+(through the website's mail provider) with a link for choosing how to appear on
+the supporters wall. The address is not stored, and neither are the amount or
+the message. What is kept is the Ko-fi transaction id, the month, whether it was
+a one-off payment or a membership (and the tier name), and, only if the
+supporter fills in the form, the display name and optional avatar they chose. A
+name or avatar appears on the page only after the supporter submitted it and the
+maintainer approved it; a supporter who stays anonymous is counted but never
+named. To change or remove an entry, write to <hello@tavotto.com>.
 
 ## Changes and contact
 
