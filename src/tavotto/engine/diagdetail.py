@@ -745,16 +745,18 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
             continue
         kind = _state_kind(p.name)
         entry = {"name": p.name, "kind": kind, "bytes": st.st_size, "mtime": _iso(st.st_mtime)}
-        if kind != "corrupt":
-            entry["file"] = _safe_name(
-                p.name
-            )  # 内容在内层 zip 里的名字（`_reconcile_index` 据此核对）
         index.append(entry)
         if kind == "corrupt":
             continue  # 默认只有清单；内容归勾选项 C
         got = _read_head(p, STATE_FILE_CAP)
         if got is None:
+            entry["read_failed"] = (
+                True  # 读失败不是超预算：不写 `file`，`_reconcile_index` 不会误标
+            )
             continue
+        entry["file"] = _safe_name(
+            p.name
+        )  # 读成功才写：内容在内层 zip 里的名字（`_reconcile_index` 据此核对）
         raw, size = got
         data = scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
         if size > STATE_FILE_CAP:
@@ -780,14 +782,17 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
 
 def collect_corrupt_sessions(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     items: list[Item] = []
+    index: list[dict] = []
     corrupt = [p for p in _state_files() if _state_kind(p.name) == "corrupt"]
     corrupt.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     for p in corrupt[:CORRUPT_FILES]:
         got = _read_head(p, CORRUPT_FILE_CAP)
         if got is None:
+            index.append({"name": p.name, "read_failed": True})  # 读失败不是超预算
             continue
         raw, size = got
         data = scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
+        index.append({"name": p.name, "file": _safe_name(p.name), "bytes": size})
         items.append(
             Item(
                 "corrupt_sessions",
@@ -797,6 +802,9 @@ def collect_corrupt_sessions(src: Sources, opts: DetailOptions, scrub: Scrubber)
                 original_bytes=size if size > CORRUPT_FILE_CAP else None,
             )
         )
+    items.insert(
+        0, Item("corrupt_sessions", "index.json", _dumps({"schema": DETAIL_SCHEMA, "files": index}))
+    )
     return items
 
 
@@ -1365,13 +1373,13 @@ def _prose_spans(text: str) -> list[tuple[int, int]] | None:
 def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     """脚本源码的脱敏。可执行代码用 `code`（源码模式：`token = self._next()` 原样）；**注释和字符串字面量里**
     的 `key=value` 是明文，必须用 `full`（完整 KV 替换）——`# api_key=REAL_SECRET` 不带引号，源码模式会放过它。
-    非 .py 一律 `full`；tokenize 失败（语法坏的 .py）时，带 `#` 的行整行按 `full` 处理，其余仍走 `code`。"""
+    非 .py 一律 `full`；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
     if not rel.lower().endswith(".py"):
         return full.text(text)
     spans = _prose_spans(text)
     if spans is None:
-        lines = [full.text(ln) if "#" in ln else ln for ln in text.split("\n")]
-        return code.text("\n".join(lines))
+        # 语法坏 / 字符串没闭合：分不清哪里是注释哪里是字符串（`x = """api_key=REAL` 之后全是字符串），整份按完整模式
+        return full.text(text)
     out: list[str] = []
     pos = 0
     for a, b in spans:
@@ -1393,6 +1401,7 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
     for n, (rel, path) in enumerate(source_candidates(src)):
         got = _read_head(path, SOURCE_FILE_CAP)
         if got is None:
+            index.append({"script": scrub.text(rel), "read_failed": True})
             continue
         raw, size = got
         data = scrub_script(
@@ -1566,6 +1575,8 @@ def collect_crash_reports(
             continue
         got = _read_head(c["path"], c["size"] + 1)
         if got is None:
+            row["content"] = "read_failed"
+            index.append(row)
             continue
         raw = got[0]
         if c["binary"]:

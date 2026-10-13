@@ -14,6 +14,7 @@ import json
 import os
 import time
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -611,10 +612,18 @@ class TestScriptScrub:
         assert 'api_key = os.environ["K"]' in out
         assert "import os" in out and "x = 1" in out
 
-    def test_broken_syntax_falls_back_to_scrubbing_every_hash_line(self):
-        src = "def broken(:\n    # api_key=REAL_SECRET_5\n    token = self._next()\n    x = (\n"
+    @pytest.mark.parametrize(
+        "src",
+        [
+            'x = """api_key=REAL_SECRET_U1\npassword=REAL_SECRET_U2\n',
+            "x = 'api_key=REAL_SECRET_U1 password=REAL_SECRET_U2\n",
+            "def broken(:\n    # api_key=REAL_SECRET_U1\n    password: REAL_SECRET_U2\n    x = (\n",
+        ],
+    )
+    def test_unparsable_files_are_scrubbed_as_a_whole(self, src):
+        """tokenize 失败时分不清哪里是注释 / 字符串（未闭合的三引号之后全是字符串）：整份按完整模式。"""
         out = self.scrub(src)
-        assert "REAL_SECRET_5" not in out and "token = self._next()" in out
+        assert "REAL_SECRET_U1" not in out and "REAL_SECRET_U2" not in out
 
     def test_non_python_script_files_use_the_full_mode(self):
         out = self.scrub("api_key=REAL_SECRET_6\ntoken = self._next()\n", rel="run.R")
@@ -632,6 +641,62 @@ class TestScriptScrub:
             diagdetail.Scrubber(),
         )
         assert b"REAL_SECRET_E2E" not in b"".join(i.data for i in items)
+
+
+class TestReadFailureIsNotOverBudget:
+    def _fail_reads(self, monkeypatch, names):
+        real = diagdetail._read_head
+        monkeypatch.setattr(
+            diagdetail,
+            "_read_head",
+            lambda path, limit: None if Path(path).name in names else real(path, limit),
+        )
+
+    def test_state_file_that_cannot_be_read_is_read_failed_not_skipped(self, world, monkeypatch):
+        self._fail_reads(monkeypatch, {"export-defaults.json"})
+        items = diagdetail.collect_state(
+            diagdetail.Sources(), diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        flat = dict(diagdetail.entries(items))
+        with zipfile.ZipFile(io.BytesIO(flat["detail-state.zip"])) as z:
+            files = {f["name"]: f for f in json.loads(z.read("index.json"))["files"]}
+            assert "export-defaults.json" not in z.namelist()
+        bad = files["export-defaults.json"]
+        assert bad["read_failed"] is True and "skipped_over_budget" not in bad and "file" not in bad
+        assert (
+            files[layoutsession.FILENAME]["file"]
+            and "skipped_over_budget" not in files[layoutsession.FILENAME]
+        )
+
+    def test_source_and_crash_and_corrupt_read_failures_are_marked_the_same_way(
+        self, world, monkeypatch
+    ):
+        proj = world["tmp"] / "proj4"
+        proj.mkdir()
+        (proj / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (proj / "b.py").write_text("y = 2\n", encoding="utf-8")
+        self._fail_reads(
+            monkeypatch,
+            {"a.py", "Tavotto-2026-10-13-120000.ips", f"{layoutsession.CORRUPT_PREFIX}123.json"},
+        )
+        src = diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=["a.py", "b.py"])
+        opts = diagdetail.DetailOptions(source=True, crash_reports=True, corrupt_sessions=True)
+        scrub = diagdetail.Scrubber()
+        for fn, key in (
+            (diagdetail.collect_source, "scripts"),
+            (diagdetail.collect_crash_reports, "reports"),
+            (diagdetail.collect_corrupt_sessions, "files"),
+        ):
+            items = fn(src, opts, scrub)
+            index = json.loads(next(i for i in items if i.path == "index.json").data)
+            rows = index[key]
+            failed = [r for r in rows if r.get("read_failed") or r.get("content") == "read_failed"]
+            assert failed, (fn.__name__, rows)
+            assert not any(r.get("skipped_over_budget") for r in failed)
+            reconciled = json.loads(diagdetail._reconcile_index(items)[0].data)
+            assert not any(r.get("skipped_over_budget") for r in reconciled[key] if r in failed), (
+                fn.__name__
+            )
 
 
 class TestRenderEnvIsProjectAware:
