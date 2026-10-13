@@ -2350,6 +2350,8 @@ def worker_self_test(python: str) -> dict:
                 bundled=pool.same_python(python, runtime.bundled_python())
             ),
         )
+        env_build = pool.build_envelope({"cmd": "build"})
+        env_stop = pool.build_envelope({"cmd": "shutdown"})
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
@@ -2364,10 +2366,12 @@ def worker_self_test(python: str) -> dict:
             creationflags=runtime.CREATE_NO_WINDOW,
         )
         try:
-            # legacy 信封（worker 明确支持，手工调试用的就是它）：一条 build
-            # 一条 shutdown，读到 EOF 即结束，不必在这里重建一套超时读线程。
+            # v1 信封（`pool.build_envelope`，调用侧的唯一出处）：一条 build 一条 shutdown，读到 EOF 即结束，
+            # 不必在这里重建一套超时读线程。回复只认带 `protocol_version` 且 `request_id` 回显对得上的信封——
+            # 别的 JSON（`{"ok": true}` 之类）一律当日志，不能冒充 worker 的回复。
             stdout, stderr = proc.communicate(
-                '{"cmd": "build"}\n{"cmd": "shutdown"}\n', timeout=SELFTEST_TIMEOUT_S
+                json.dumps(env_build) + "\n" + json.dumps(env_stop) + "\n",
+                timeout=SELFTEST_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired:
             _kill(proc)
@@ -2377,7 +2381,12 @@ def worker_self_test(python: str) -> dict:
                 resp = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(resp, dict) and "ok" in resp:
+            if (
+                isinstance(resp, dict)
+                and resp.get("protocol_version") == pool.PROTOCOL_VERSION
+                and resp.get("request_id") == env_build["request_id"]
+                and "ok" in resp
+            ):
                 if resp.get("ok"):
                     # `stems` 才是「捕获到几张图」——调用方据此断言 worker
                     # 是真跑通了，而不是「函数返回了 True」。

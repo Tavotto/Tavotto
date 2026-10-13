@@ -1367,3 +1367,25 @@ def test_real_conda_four_sites_see_activate_d_changes_and_kill_switch_is_the_neg
             worker.force_kill()
         _pool.shutdown_all(wait=True)
         _pool.reset_worker_python()
+
+
+@posix_only
+def test_worker_self_test_only_trusts_a_protocol_envelope_that_echoes_its_request_id(tmp_path):
+    """自检只认 v1 信封：别的 JSON（`{"ok": true}`）冒充不了 worker 的回复。用一个假的「worker 解释器」脚本验证。"""
+    from tavotto.engine import deprepair
+
+    def fake(name: str, body: str) -> str:
+        path = tmp_path / name
+        path.write_text(f"#!{sys.executable}\n{body}", encoding="utf-8")
+        path.chmod(0o755)
+        return str(path)
+
+    spoof = 'print(\'{"ok": true, "stems": {"x": 1}}\', flush=True)\n'
+    honest = (
+        "import json, sys\n"
+        "req = json.loads(sys.stdin.readline())\n"
+        "print(json.dumps({'protocol_version': req['protocol_version'], 'request_id': req['request_id'],"
+        " 'ok': True, 'stems': {'a': 1, 'b': 2}}), flush=True)\n"
+    )
+    assert deprepair.worker_self_test(fake("spoof", spoof))["ok"] is False
+    assert deprepair.worker_self_test(fake("honest", spoof + honest)) == {"ok": True, "figures": 2}
