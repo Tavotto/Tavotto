@@ -1040,6 +1040,8 @@ class SessionService:
         self._ttl = idle_ttl_s
         self._clock = clock
         self._lock = threading.Lock()
+        #: 创建运行意图的临界区（项目 + 脚本粒度的冲突检查与赋值）；只在会话锁之内取，取着它时不再取任何会话锁
+        self._arm_lock = threading.Lock()
         self._by_id: dict[str, Session] = {}
         self._by_key: dict[tuple[str, str], Session] = {}
         #: app 注入：`notifier({"session_id", "project_id", "target", "config_revision"})`（只是「重新读报告」的提示）。
@@ -1678,46 +1680,49 @@ class SessionService:
                 409,
                 {"reason": stale[0], "executed": False},
             )
-        now = self._clock()
-        steps, deadline, lineage = 0, now + RUN_INTENT_TTL_S, []
-        if old is not None:
-            oi = self._transferable(sess, old)
-            # 原子转移：旧意图终局 + 未认领动作当场退役；已认领的 session / claim / attempt / receipt / provider 事实原样保留。
-            # 预算沿用（转移不是续命），血统记下来
-            oi.status = INTENT_TRANSFERRED
-            oi.reason = "run_configuration_changed"
-            oi.transferred_to = sess.session_id
-            oi.ended_at = now
-            oi.launch = oi.finalize = oi.prepare = None
-            oi.note("transfer", sess.session_id, now)
-            old.actions = {k: v for k, v in old.actions.items() if v.attempt_id}
-            steps, deadline, lineage = (
-                oi.steps,
-                min(deadline, oi.deadline),
-                [*oi.lineage, oi.intent_id],
+        # 冲突检查与意图赋值必须在同一个临界区：两个标签页对同一脚本、不同运行配置并发武装时，各自只持有自己会话的锁，
+        # 都能通过检查（Codex r4254020393）。所有意图都只在这把锁里创建，转移路径同守这条不变量
+        with self._arm_lock:
+            now = self._clock()
+            steps, deadline, lineage = 0, now + RUN_INTENT_TTL_S, []
+            if old is not None:
+                oi = self._transferable(sess, old)
+                # 原子转移：旧意图终局 + 未认领动作当场退役；已认领的 session / claim / attempt / receipt / provider 事实原样保留。
+                # 预算沿用（转移不是续命），血统记下来
+                oi.status = INTENT_TRANSFERRED
+                oi.reason = "run_configuration_changed"
+                oi.transferred_to = sess.session_id
+                oi.ended_at = now
+                oi.launch = oi.finalize = oi.prepare = None
+                oi.note("transfer", sess.session_id, now)
+                old.actions = {k: v for k, v in old.actions.items() if v.attempt_id}
+                steps, deadline, lineage = (
+                    oi.steps,
+                    min(deadline, oi.deadline),
+                    [*oi.lineage, oi.intent_id],
+                )
+            else:
+                self._reject_conflict(sess)
+            run = getattr(sess.plan, "run", None)
+            intent = RunIntent(
+                intent_id=f"intent-{uuid.uuid4().hex}",
+                session_id=sess.session_id,
+                project_id=sess.project_id,
+                script=str(sess.plan.script),
+                run_config=run.config_id if run is not None else None,
+                config_revision=sess.config_revision,
+                created_at=now,
+                deadline=deadline,
+                grant=GRANT,
+                steps=steps,
+                lineage=lineage,
+                launch=launch,
+                finalize=finalize,
+                prepare=prepare,
             )
-        else:
-            self._reject_conflict(sess)
-        run = getattr(sess.plan, "run", None)
-        intent = RunIntent(
-            intent_id=f"intent-{uuid.uuid4().hex}",
-            session_id=sess.session_id,
-            project_id=sess.project_id,
-            script=str(sess.plan.script),
-            run_config=run.config_id if run is not None else None,
-            config_revision=sess.config_revision,
-            created_at=now,
-            deadline=deadline,
-            grant=GRANT,
-            steps=steps,
-            lineage=lineage,
-            launch=launch,
-            finalize=finalize,
-            prepare=prepare,
-        )
-        intent.note("arm", action.id, now)
-        sess.intent = intent
-        action.attempt_id = intent.intent_id
+            intent.note("arm", action.id, now)
+            sess.intent = intent
+            action.attempt_id = intent.intent_id
 
     def _transferable(self, sess: Session, old: Session) -> RunIntent:
         """旧会话的意图能不能转移到 `sess`：同项目同脚本、运行配置不同、意图仍 active 且**没有认领任何执行**。"""
@@ -1852,7 +1857,9 @@ class SessionService:
                 return None
             intent.installs.append({"digest": offer["impact_digest"], "installs": sorted(installs)})
             intent.owned_deps.add(action.attempt_id or "")
-            intent.steps += 1
+            if _started:
+                # 加入别人已经起的作业（含转移前旧意图已计过数的那一份）不再扣一步（Codex r4254020397）
+                intent.steps += 1
             intent.note("prepare", action.attempt_id or "", self._clock())
             return late
         if waiting is not None:

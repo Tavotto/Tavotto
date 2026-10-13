@@ -456,6 +456,105 @@ def test_transfer_racing_the_old_target_never_executes_more_than_once(
     assert sum(outcomes.values()) == 8
 
 
+def _three_sessions(client, script: str):
+    return [
+        _create(client, {"script": script, "argv": ["--panel", tag]}).get_json()
+        for tag in ("a", "b", "c")
+    ]
+
+
+def _service_claim(report: dict, kind: str, launches: list, **kw):
+    action = _action(report, kind)
+    return prepsession.SESSIONS.act(
+        report["session_id"],
+        report["project_id"],
+        action["id"],
+        report["config_revision"],
+        launch=lambda plan, on_done: launches.append(plan.plan_id),
+        impact_digest=action["impact"].get("impact_digest") if kind == "run_when_ready" else None,
+        **kw,
+    )
+
+
+def test_concurrent_arming_of_two_run_configurations_leaves_exactly_one_intent(
+    client, tmp_path, fake_pool, argv_pool, sessions
+):
+    """两个标签页对同一脚本、不同运行配置并发武装：冲突检查与意图赋值在同一临界区，只有一边成功（Codex r4254020393）。"""
+    for i in range(30):
+        prepsession.SESSIONS.reset_for_tests()
+        _open(client, _workdir_project(tmp_path, f"c{i}"))
+        one, two, _three = _three_sessions(client, "scripts/fig2.py")
+        launches: list[str] = []
+        barrier = threading.Barrier(2)
+        outcomes: list = []
+
+        def arm(report, _l=launches, _o=outcomes, _b=barrier):
+            _b.wait()
+            try:
+                _service_claim(report, "run_when_ready", _l)
+                _o.append("ok")
+            except prepsession.SessionError as exc:
+                _o.append(exc.code)
+
+        threads = [threading.Thread(target=arm, args=(r,)) for r in (one, two)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        assert sorted(outcomes) == ["ok", "preparation_run_intent_conflict"], (i, outcomes)
+        live = [
+            r
+            for r in (one, two)
+            if (prepsession.SESSIONS.get(r["session_id"], r["project_id"]).intent or None)
+            is not None
+        ]
+        assert len(live) == 1
+        # 目录答完、两边都重新检查：合计恰一次执行
+        _answer_workdir(client)
+        for r in (one, two):
+            _recheck(client, r["session_id"])
+        assert len(launches) == 1, (i, launches)
+
+
+def test_a_transfer_racing_a_plain_arm_never_leaves_two_active_intents(
+    client, tmp_path, fake_pool, argv_pool, sessions
+):
+    for i in range(30):
+        prepsession.SESSIONS.reset_for_tests()
+        _open(client, _workdir_project(tmp_path, f"t{i}"))
+        one, two, three = _three_sessions(client, "scripts/fig2.py")
+        launches: list[str] = []
+        _service_claim(one, "run_when_ready", launches)
+        barrier = threading.Barrier(2)
+        outcomes: list = []
+
+        def go(report, kw, _l=launches, _o=outcomes, _b=barrier):
+            _b.wait()
+            try:
+                _service_claim(report, "run_when_ready", _l, **kw)
+                _o.append("ok")
+            except prepsession.SessionError as exc:
+                _o.append(exc.code)
+
+        threads = [
+            threading.Thread(target=go, args=(two, {"transfer_from": one["session_id"]})),
+            threading.Thread(target=go, args=(three, {})),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        active = [
+            r["session_id"]
+            for r in (one, two, three)
+            if (lambda x: x is not None and x.status == "active")(
+                prepsession.SESSIONS.get(r["session_id"], r["project_id"]).intent
+            )
+        ]
+        assert len(active) == 1, (i, outcomes, active)
+        assert launches == []
+
+
 # ===========================================================================
 # 授权范围内的受管安装（假换代事务 `held`）
 # ===========================================================================
@@ -630,3 +729,49 @@ class TestRealRoundTrip:
         )
         assert done["provider"]["attempts"] == 2
         assert counter.read_text("utf-8").count("ran") == 2
+
+    def test_transferring_during_an_install_joins_the_job_without_spending_another_step(
+        self, client, house, offline_managed_env, opened, monkeypatch
+    ):
+        """安装进行中 argv 变了：新会话加入同一个作业，不再扣一步；装完执行恰一次（Codex r4254020397）。"""
+        real = deprepair._run_generation
+        started, gate = threading.Event(), threading.Event()
+
+        def gated(job, cancel_ev):
+            started.set()
+            assert gate.wait(120)
+            return real(job, cancel_ev)
+
+        monkeypatch.setattr(deprepair, "_run_generation", gated)
+        opened([ALPHA])
+        one = _dep_create(client, {"script": "figure.py", "argv": ["--panel", "a"]})
+        two = _dep_create(client, {"script": "figure.py", "argv": ["--panel", "b"]})
+        assert _arm_dep(client, one).status_code == 202
+        assert started.wait(60)
+        action = next(a for a in two["actions"] if a["kind"] == "run_when_ready")
+        moved = client.post(
+            f"{SESSIONS}/{two['session_id']}/actions",
+            json={
+                "action_id": action["id"],
+                "expected_config_revision": two["config_revision"],
+                "impact_digest": action["impact"]["impact_digest"],
+                "transfer_from": one["session_id"],
+            },
+        )
+        assert moved.status_code == 202, moved.get_json()
+        joined = _dep_get(client, two["session_id"])
+        assert joined["intent"]["status"] == "active" and joined["intent"]["steps"] == 1
+        assert joined["provider"]["dependency"]["joined"] is True
+        gate.set()
+        final = _wait(
+            client,
+            two["session_id"],
+            lambda r: (
+                r["phase"] in ("completed", "partial", "action_required")
+                or r["intent"]["status"] == "revoked"
+            ),
+        )
+        assert final["phase"] == "completed", final["intent"]
+        assert final["intent"]["status"] == "launched" and final["provider"]["attempts"] == 1
+        old = _dep_get(client, one["session_id"])
+        assert old["intent"]["status"] == "transferred" and old["provider"]["attempts"] == 0
