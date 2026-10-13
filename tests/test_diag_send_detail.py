@@ -1205,6 +1205,8 @@ class TestFailClosedScanner:
         'rb"""VAL\nVAL2"""',
         "f'''VAL {x}\nVAL2'''",
         "u'''VAL'''",
+        "'''VAL it's \"q\" \nVAL2'''",  # 三引号里含单 / 双引号：不能在第一个内部引号处收尾
+        '"""VAL "q" \'x\' \nVAL2"""',
     ]
 
     @pytest.mark.parametrize("key", MATRIX_KEYS)
