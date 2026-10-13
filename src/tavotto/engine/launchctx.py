@@ -287,6 +287,20 @@ def launcher_for(
     return launcher.detect(python)
 
 
+def candidate_run(project_root: str | Path, script: str):
+    """上次成功的运行配置**候选**（未核验）：有记录、记录带运行配置、不是敏感的、登记里还取得到 → `RunSelection`，否则 None。
+
+    只给「再次打开」入口用来**提名**；它不代表可以用。核验只在一处：`prepsession._plan_of` 按计划实际选中的解释器调
+    `reusable_run`（执行前 `preparation._execute` 再按此刻生效的解释器核一次）。这里刻意不解析解释器——解析有副作用面。"""
+    record = _record_of(project_root, script)
+    if record is None or not record.get("run_config") or record.get("run_sensitive"):
+        return None
+    try:
+        return runconfig.selection(project_root, record["run_config"], script=script)
+    except runconfig.RunConfigError:
+        return None
+
+
 def reusable_run(
     project_root: str | Path, script: str, *, python: str | None, python_source: str | None
 ):

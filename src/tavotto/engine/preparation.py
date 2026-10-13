@@ -67,6 +67,7 @@ from . import (
     figcapture,
     inputbroker,
     inputremap,
+    launchctx,
     pool,
     projectenv,
     receipt,
@@ -653,7 +654,9 @@ class PreparationService:
         entry.thread.start()
 
     @staticmethod
-    def _replan_in_place(entry: _Entry, plan: PreparationPlan) -> PreparationPlan | None:
+    def _replan_in_place(
+        entry: _Entry, plan: PreparationPlan, *, drop_run: bool = False
+    ) -> PreparationPlan | None:
         """按此刻（已采用项目环境之后）的世界重算同一份计划，沿用计划 id / 创建时间 / 静态原件；换进条目里。"""
         fresh = plan_for(
             project_id=plan.project_id,
@@ -664,8 +667,8 @@ class PreparationService:
             entry=plan.entry,
             original_artifact=None,
             target=plan.target,
-            **({"run": plan.run} if plan.run is not None else {}),
-            run_reused=plan.run_reused,
+            **({"run": plan.run} if plan.run is not None and not drop_run else {}),
+            run_reused=plan.run_reused and not drop_run,
         )
         # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
         # 换计划（交回 None，由对账给出过期结局）
@@ -713,29 +716,37 @@ class PreparationService:
             # 解释器——这一步是**本次运行自己**做的，不是别人改了环境：就地按采用后的解释器重算计划再往下走（能跑就跑；
             # 缺包由起会话那道依赖门收成「需要安装」），不让用户为此重新检查一次。别的过期原因照旧由下面的对账拦下
             decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
-            if decision.adopted is not None and plan.run_reused:
-                # 复用来的运行配置是按检查时的解释器核验的；这次运行自己采用了另一个解释器 = 依据作废。不带着旧 argv
-                # 在新解释器上跑，也不静默改成无参数：按「环境变了」收场，请用户重新检查（重新检查会按新解释器重核）
-                plan = dataclasses.replace(plan, run_reused=False)
-                entry.plan = plan
-                tr.fail("check", ERROR_PLAN_STALE, reason=STALE_ENVIRONMENT)
-                result.error = {
-                    "code": ERROR_PLAN_STALE,
-                    "reason": STALE_ENVIRONMENT,
-                    "executed": False,
-                    "message": _STALE_MESSAGES[STALE_ENVIRONMENT],
-                }
-                self._finish(
-                    entry,
-                    STATUS_ERROR,
-                    note="复用的运行配置依据作废（解释器换了），没有执行任何脚本",
-                )
-                return
             if decision.adopted is not None:
                 before = self._stale_reason(plan)
                 if before is None or before[0] == STALE_ENVIRONMENT:
                     # 只吸收环境变化。工作目录授权档（用户确认过的）变了不吸收：照旧走下面的过期结局，让用户重新检查、看到新档
                     plan = self._replan_in_place(entry, plan) or plan
+            if plan.run_reused and plan.run is not None:
+                # 复用来的运行配置在**执行前**再核一次，按此刻计划里生效的解释器（上面刚吸收的采用已经换进来）和此刻的
+                # 源码 / helper / 数据——与 `prepsession._plan_of` 同一个判定函数（`launchctx.reusable_run`）。通不过 =
+                # 依据作废：旧 argv 不在任何别的环境 / 代码上执行，计划就地换成不带它的版本（无参数，与重新检查后得到的
+                # 一样）；换不了（别的计划输入也变了）就按过期收场
+                still = launchctx.reusable_run(
+                    plan.project_root,
+                    plan.script,
+                    python=plan.interpreter or None,
+                    python_source=(plan.environment or {}).get("source") or None,
+                )
+                if still is None or still.config_id != plan.run.config_id:
+                    dropped = self._replan_in_place(entry, plan, drop_run=True)
+                    if dropped is None:
+                        tr.fail("check", ERROR_PLAN_STALE, reason=STALE_SOURCE)
+                        result.error = {
+                            "code": ERROR_PLAN_STALE,
+                            "reason": STALE_SOURCE,
+                            "executed": False,
+                            "message": _STALE_MESSAGES[STALE_SOURCE],
+                        }
+                        self._finish(
+                            entry, STATUS_ERROR, note="复用的运行配置依据作废，没有执行任何脚本"
+                        )
+                        return
+                    plan = dropped
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale

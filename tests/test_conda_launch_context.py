@@ -416,7 +416,7 @@ def test_success_is_remembered_and_reopening_needs_no_argv_but_changes_reverify(
 
     # ---- 再次打开（新进程）：请求不再给参数，上次成功的配置被带回来
     with fa.running_app(proj, work, env_overrides=env) as app:
-        again = _run_session(app, {"script": "fig.py"})
+        again = _run_session(app, {"script": "fig.py", "reuse_last_success": True})
         assert again["phase"] == "completed", again
         assert [r["argv"] for r in runs(counter)][-1] == ["--scale", "2"]
         # 明确的空数组 = 用户要无参数：不复用
@@ -433,7 +433,7 @@ def test_success_is_remembered_and_reopening_needs_no_argv_but_changes_reverify(
     script = proj / "fig.py"
     script.write_text(script.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
     with fa.running_app(proj, work, env_overrides=env) as app:
-        _run_session(app, {"script": "fig.py"})
+        _run_session(app, {"script": "fig.py", "reuse_last_success": True})
         assert [r["argv"] for r in runs(counter)][-1] == []  # 脚本变了：重新核验，不沿用 --scale 3
 
 
@@ -842,10 +842,16 @@ def test_changing_the_global_interpreter_override_stops_reusing_old_argv(
     with fa.running_app(
         proj, work, env_overrides=env_for(prefix)
     ) as app:  # 正对照：同一覆盖 = 沿用
-        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert (
+            _run_session(app, {"script": "fig.py", "reuse_last_success": True})["phase"]
+            == "completed"
+        )
         assert [r["argv"] for r in runs(counter)][-1] == ["--scale", "2"]
     with fa.running_app(proj, work, env_overrides=env_for(other)) as app:
-        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert (
+            _run_session(app, {"script": "fig.py", "reuse_last_success": True})["phase"]
+            == "completed"
+        )
         assert [r["argv"] for r in runs(counter)][-1] == []  # 覆盖换了：不沿用旧参数
 
 
@@ -1122,7 +1128,10 @@ def test_the_legacy_probe_success_clears_an_older_launch_record(conda_world, tmp
         assert status == 200 and probed["registered"] is True
         stored = json.loads(store_text(work))
         assert "fig.py" not in stored.get("launches", {})  # 旧路径与 default 同事务清掉 A
-        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert (
+            _run_session(app, {"script": "fig.py", "reuse_last_success": True})["phase"]
+            == "completed"
+        )
         assert [r["argv"] for r in runs(counter)][-1] == []  # 不是 A，也不是 B：让用户重新给
 
 
@@ -1155,15 +1164,162 @@ def test_a_run_that_adopts_a_new_project_venv_does_not_carry_the_old_argv(tmp_pa
     assert [r["argv"] for r in first] == [["--scale", "2"]]
     venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
     with fa.running_app(proj, work, env_overrides=env) as app:
-        rep = _run_session(app, {"script": "fig.py"})
-        after = runs(counter)[len(first) :]
-        assert all(r["argv"] != ["--scale", "2"] for r in after), (
-            after
-        )  # 旧 argv 没在新解释器上执行
-        if rep["phase"] != "completed":
-            # 依据作废的收场：什么都没执行；重新检查（按项目 venv 重核）后无旧 argv
-            assert after == []
-            rep = _run_session(app, {"script": "fig.py"})
+        # 检查：旧 argv 按计划里的（默认）解释器核验通过，被带进会话目标
+        status, report = app.call(
+            SESSIONS, {"script": "fig.py", "reuse_last_success": True}, timeout=120
+        )
+        assert status == 201, report
+        assert report["target"].get("run_config"), "检查时应当带上复用的运行配置"
+        sid = report["session_id"]
+
+        def claim(rep, kind):
+            (act,) = [a for a in rep["actions"] if a["kind"] == kind]
+            st, out = app.call(
+                f"{SESSIONS}/{sid}/actions",
+                {"action_id": act["id"], "expected_config_revision": rep["config_revision"]},
+                timeout=60,
+            )
+            assert st in (200, 202), out
+            return out["report"]
+
+        def settle():
+            deadline = time.time() + 300
+            while True:
+                _, rep = app.call(f"{SESSIONS}/{sid}", timeout=30)
+                if rep["phase"] in SETTLED:
+                    return rep
+                assert time.time() < deadline, rep
+                time.sleep(0.2)
+
+        # 点运行：这次运行的环境检测采用了项目 .venv——复用依据作废，旧 argv 不在新解释器上执行（无参数运行）
+        claim(report, "run")
+        rep = settle()
         assert rep["phase"] == "completed", rep
-        last = runs(counter)[-1]
-        assert last["argv"] == [] and Path(last["exe"]) == Path(venv_python).parent.parent
+        done = runs(counter)[len(first) :]
+        assert done and all(r["argv"] == [] for r in done), done
+        assert Path(done[-1]["exe"]) == Path(venv_python).parent.parent
+        # recheck 后再点运行（Codex 的路径）：会话目标里即便还躺着复用配置，执行前的复核也不会让它在项目 venv 上执行
+        rep = claim(rep, "recheck")
+        time.sleep(1.0)
+        _, rep = app.call(f"{SESSIONS}/{sid}", timeout=30)
+        try:
+            claim(rep, "run")
+            settle()
+        except fa.HttpError as exc:  # 认领时对账发现过期也是「没跑」
+            assert exc.body.get("code") == "preparation_plan_stale", exc.body
+        after = runs(counter)[len(first) :]
+        assert all(r["argv"] == [] for r in after), after  # 旧 argv 从未在任何解释器上执行
+        # 用户再次打开（新检查、不带 argv）：上一次成功是无参数的，所以不再有可复用的配置
+        status, again = app.call(
+            SESSIONS, {"script": "fig.py", "reuse_last_success": True}, timeout=120
+        )
+        assert status in (200, 201) and not again["target"].get("run_config"), again["target"]
+
+
+@needs_worker
+def test_a_helper_edit_between_check_and_run_revokes_the_reused_argv(conda_world, tmp_path):
+    """复用只在检查那一刻核验过一次是不够的：检查之后、点运行之前 helper 变了，运行前的复核要拦下。"""
+    proj, prefix, log, counter = conda_world
+    (proj / "helper_mod.py").write_text("X = 1\n", encoding="utf-8")
+    src = (proj / "fig.py").read_text(encoding="utf-8")
+    (proj / "fig.py").write_text("import helper_mod\n" + src, encoding="utf-8")
+    work = tmp_path / "work"
+    env = {
+        "TAVOTTO_USER_ENV_DISCOVERY": "0",
+        "PYTHONPATH": str(ROOT / "src"),
+        "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
+        "FAKE_CONDA_LOG": str(log),
+        "TAVOTTO_WORKERD": "0",
+    }
+    with fa.running_app(proj, work, env_overrides=env) as app:
+        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
+            "completed"
+        )
+    n = len(runs(counter))
+    with fa.running_app(proj, work, env_overrides=env) as app:  # 新进程：没有沿用旧会话
+        status, report = app.call(
+            SESSIONS, {"script": "fig.py", "reuse_last_success": True}, timeout=120
+        )
+        assert status in (200, 201)
+        (proj / "helper_mod.py").write_text("X = 2\n", encoding="utf-8")  # 检查之后 helper 变了
+        (run,) = [a for a in report["actions"] if a["kind"] == "run"]
+        app.call(
+            f"{SESSIONS}/{report['session_id']}/actions",
+            {"action_id": run["id"], "expected_config_revision": report["config_revision"]},
+            timeout=60,
+        )
+        deadline = time.time() + 300
+        while True:
+            _, rep = app.call(f"{SESSIONS}/{report['session_id']}", timeout=30)
+            if rep["phase"] in SETTLED:
+                break
+            assert time.time() < deadline, rep
+            time.sleep(0.2)
+        assert all(r["argv"] != ["--scale", "2"] for r in runs(counter)[n:]), runs(counter)[n:]
+
+
+@posix_only
+def test_plan_builder_is_the_single_judgment_point_for_reused_runs(tmp_path, monkeypatch):
+    """任何时候构建 / 重建计划（首次检查、recheck…）都经 `_plan_of` 按计划实际选中的解释器重核复用的运行配置；
+    通不过就换成不带它的目标并写回 `sess.target`。"""
+    from tavotto.engine import preparation, prepsession
+
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setenv("TAVOTTO_USER_ENV_DISCOVERY", "0")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    run = runconfig.selection_for(proj, "fig.py", ["--n", "1"])
+    target = {
+        "kind": "script",
+        "script": "fig.py",
+        "entry": "__main__",
+        "stem": "",
+        "asset_id": "",
+        "original_artifact": None,
+        "original_path": None,
+        "run": run,
+        "run_reused": True,
+    }
+    plan0 = preparation.plan_for(
+        project_id="pj", project_root=str(proj), asset_id="", stem="", script="fig.py",
+        entry="__main__", original_artifact=None, target="script",
+    )  # fmt: skip
+    src = (plan0.environment or {}).get("source")
+    # 记录按「计划实际选中的解释器」写成：核验通过，目标原样保留
+    rcpt = _good_rcpt(proj, plan0.interpreter)
+    rcpt.python_source = src
+    assert launchctx.record_success(proj, "fig.py", rcpt, run=run, update_default=True)
+    plan, kept = prepsession.SessionService._plan_of("pj", str(proj), target)
+    assert kept is target and plan.run is run and plan.run_reused is True
+    # 记录里的解释器和计划实际选中的不是一个（环境换了）：目标被换成不带复用配置的版本
+    record = runconfig.launch_record(proj, "fig.py")
+    record["interpreter"]["path"] = str(tmp_path / "some-other-python")
+    runconfig.set_launch_record(proj, "fig.py", record)
+    plan, stripped = prepsession.SessionService._plan_of("pj", str(proj), target)
+    assert "run" not in stripped and "run_reused" not in stripped
+    assert plan.run is None and plan.run_reused is False
+    # 会话层：写回 sess.target，复用目标不会留在会话里跨过解释器变化
+    svc = prepsession.SessionService(preparation.SERVICE)
+    sess, _ = svc.check(project_id="pj", project_root=str(proj), target=dict(target))
+    assert "run" not in sess.target and sess.plan.run is None
+
+
+@needs_worker
+def test_omitting_argv_alone_is_a_bare_run_not_a_reopen(conda_world, tmp_path):
+    """界面没有参数时本来就不带 argv：那是明确的无参数运行。沿用上次成功配置必须显式要求（`reuse_last_success`）。"""
+    proj, prefix, log, counter = conda_world
+    work = tmp_path / "work"
+    env = {
+        "TAVOTTO_USER_ENV_DISCOVERY": "0",
+        "PYTHONPATH": str(ROOT / "src"),
+        "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
+        "FAKE_CONDA_LOG": str(log),
+        "TAVOTTO_WORKERD": "0",
+    }
+    with fa.running_app(proj, work, env_overrides=env) as app:
+        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
+            "completed"
+        )
+        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert [r["argv"] for r in runs(counter)][-1] == []  # 没带 argv 也没要求沿用 = 无参数

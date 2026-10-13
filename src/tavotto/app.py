@@ -7484,8 +7484,10 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
     )
     reused = False
-    if run is None and "argv" not in body:
-        # P09 再次打开：请求没提 argv（不是明确的空数组），上次成功的启动上下文全部核验通过才带回它的运行配置
+    if run is None and "argv" not in body and body.get("reuse_last_success") is True:
+        # P09 再次打开：请求**明确要求**沿用上次成功的配置（`reuse_last_success: true`），且没给 argv。不能靠「没带 argv」
+        # 推断——界面在没有参数时本来就不带 argv，那是一次明确的「无参数运行」，沿用会让用户再也跑不了无参数的那份。
+        # 这里只提名候选；核验在 `prepsession._plan_of`（按计划实际选中的解释器）与执行前复核。
         run = _reusable_success_run(ctx, script)
         reused = run is not None
     return {
@@ -7503,13 +7505,9 @@ def _session_target(ctx: "ProjectCtx", body: dict):
 
 
 def _reusable_success_run(ctx: "ProjectCtx", script: str):
-    """上次成功的运行配置能否带回来（`launchctx.reusable_run`）。比较的是**此刻解析器实际会选中的**解释器
-    （全局覆盖 / 设置 / 项目记住 / 默认链都算），不只项目层——任何一层变了结果就变，旧配置不沿用。"""
-    try:
-        python, source = engine_pool.resolve_worker_python(ctx.path, script=script, discover=False)
-    except engine_pool.WorkerError:
-        return None  # 此刻没有可用解释器（或用户挑的环境失效）：不复用，让正常流程去报
-    return engine_launchctx.reusable_run(ctx.path, script, python=python, python_source=source)
+    """上次成功的运行配置**候选**（未核验，`launchctx.candidate_run`）。核验只在一处：`prepsession._plan_of` 按计划
+    实际选中的解释器核验、通不过就把目标换成不带它的版本；执行前 `preparation._execute` 再核一次。"""
+    return engine_launchctx.candidate_run(ctx.path, script)
 
 
 def _session_runtime_input(ctx: "ProjectCtx", sess) -> dict | None:
