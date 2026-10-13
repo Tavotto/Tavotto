@@ -51,6 +51,7 @@ from __future__ import annotations
 import ctypes
 import dataclasses
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -60,6 +61,8 @@ from pathlib import Path
 
 from . import bridge, config, envlease, execspec, nativerelay, nativesession, runcodes, runtime
 from .runcodes import RunError
+
+_LAUNCH_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 SCOPE_GROUP = "process_group"
 SCOPE_JOB = "job_object"
@@ -106,6 +109,12 @@ class OwnedLaunch:
             )
         if not self.launch_id:
             object.__setattr__(self, "launch_id", uuid.uuid4().hex[:16])
+        elif not _LAUNCH_ID_RE.fullmatch(self.launch_id):
+            # launch_id 会拼进缓存目录名与会话 / 租约键：白名单字符 + 长度上限，不合格当场拒绝
+            raise RunError(
+                runcodes.DESKTOP_RUN_LAUNCH_INVALID,
+                reason="launch_id 只能是 1–64 位字母、数字、下划线、连字符",
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -590,7 +599,15 @@ def start(
 
     # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
     session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex[:8]}"
-    out_dir = launch.out_dir or str(config.data_path("cache", "native", launch.launch_id))
+    if launch.out_dir:
+        out_dir = launch.out_dir
+    else:
+        cache_root = Path(config.data_path("cache", "native")).resolve()
+        out_dir = str((cache_root / launch.launch_id).resolve())
+        if (
+            Path(out_dir).parent != cache_root
+        ):  # 白名单之外的最后一道：拼出来的目录必须就在缓存根下一层
+            raise RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID, reason="会话目录不在缓存根内")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     session = nativesession.NativeSession(

@@ -896,3 +896,45 @@ def test_cancel_during_startup_waits_for_the_gate_and_still_confirms(tmp_path):
     """闸门不是死锁：启动流程里随时取消，等登记走完后照常确认。"""
     session = dk.start(tmp_path, RUNNING_SCRIPT)
     assert session.cancel_owned().confirmed and session.owned.finished
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254707207：launch_id 拼进缓存路径之前先校验
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../evil",
+        "..",
+        "a/b",
+        "a\\b",
+        "/abs/path",
+        "C:\\x",
+        "x" * 65,
+        "with space",
+        "a\x00b",
+        "中文",
+        ".",
+    ],
+)
+def test_a_launch_id_that_could_escape_the_cache_root_is_refused(tmp_path, bad):
+    base = dk.launch_for(tmp_path, "pass\n")
+    marker = tmp_path / "ran"
+    with pytest.raises(RunError) as err:
+        desktopproc.start(
+            desktopproc.OwnedLaunch(base.spec, launch_id=bad)  # out_dir 空 = 默认缓存路径
+        )
+    assert err.value.code == runcodes.DESKTOP_RUN_LAUNCH_INVALID
+    assert not marker.exists() and envlease.snapshot()["native"] == {}
+
+
+def test_the_default_session_dir_stays_directly_under_the_cache_root(tmp_path):
+    from tavotto.engine import config
+
+    base = dk.launch_for(tmp_path, "pass\n")
+    session = desktopproc.start(desktopproc.OwnedLaunch(base.spec, launch_id="ok-ID_1"))
+    try:
+        root = Path(config.data_path("cache", "native")).resolve()
+        assert session.out_dir.resolve().parent == root
+    finally:
+        session.owned.wait(30)
