@@ -196,7 +196,7 @@ def _read(project_root: str | Path) -> dict:
     恢复由用户显式进行：修复或删除该登记文件后重试。"""
     found = _locate(project_root)
     if found is None:
-        return {"configs": {}, "defaults": {}}
+        return {"configs": {}, "defaults": {}, "launches": {}}
     return _parse(found[1])
 
 
@@ -223,7 +223,14 @@ def _parse(raw: str) -> dict:
     configs, defaults = data.get("configs", {}), data.get("defaults", {})
     if not _schema_ok(configs, defaults):
         raise bad
-    return {"configs": configs, "defaults": defaults}
+    # P09：最近一次成功的启动上下文（见 `set_launch_record`）。可选字段，不升 FORMAT_VERSION；
+    # 形状不对的整份丢弃为空（它只是「可复用的证据」，坏了 = 没有证据 = 重新核验，不是危险默认）
+    launches = data.get("launches", {})
+    if not isinstance(launches, dict) or not all(
+        isinstance(k, str) and isinstance(v, dict) for k, v in launches.items()
+    ):
+        launches = {}
+    return {"configs": configs, "defaults": defaults, "launches": launches}
 
 
 def _is_number(x) -> bool:
@@ -270,7 +277,10 @@ def _schema_ok(configs, defaults) -> bool:
 def _write(project_root: str | Path, data: dict) -> None:
     path = store_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomicio.write_json(path, {"version": FORMAT_VERSION, **data})
+    out = {"version": FORMAT_VERSION, **data}
+    if not out.get("launches"):
+        out.pop("launches", None)  # 没有成功记录时文件字节与 P09 之前一致
+    atomicio.write_json(path, out)
 
 
 def _load(project_root: str | Path) -> dict[str, dict]:
@@ -457,3 +467,34 @@ def default_selection(project_root: str | Path, script: str):
     if not isinstance(cid, str):
         return None
     return selection(project_root, cid, script=script)
+
+
+# ---------------------------------------------------------------------------
+# 最近一次成功的启动上下文（P09）
+# ---------------------------------------------------------------------------
+def set_launch_record(project_root: str | Path, script: str, record: dict | None) -> None:
+    """记下「这个脚本最近一次**成功**用的启动上下文」（`launchctx.build_record` 的产物；`None` = 清掉）。
+
+    与 `set_default` 同一份登记、同一把锁、同一套坏登记失败关闭的纪律——不另建成功数据库。记录里只有
+    结构化引用与摘要（解释器身份、启动方式引用、cwd 模式、运行配置**引用**、源码 / helper 摘要），
+    **没有 argv 值、没有环境变量、没有答案原文**。调用方只在一次执行真的成功之后调。"""
+    with _LOCK:
+        data = _read(project_root)
+        launches = data["launches"]
+        if record is None:
+            if script not in launches:
+                return
+            launches.pop(script)
+        else:
+            if launches.get(script) == record:
+                return
+            launches[script] = record
+        _write(project_root, data)
+
+
+def launch_record(project_root: str | Path, script: str) -> dict | None:
+    """`set_launch_record` 记下的那份；没有 = None。登记读不出 / 来自新版本 → `RunConfigError` 原样抛
+    （调用方按「没有证据、重新核验」处理，但不改动文件）。"""
+    with _LOCK:
+        rec = _read(project_root)["launches"].get(script)
+    return dict(rec) if isinstance(rec, dict) else None

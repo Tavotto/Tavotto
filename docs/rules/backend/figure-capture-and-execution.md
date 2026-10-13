@@ -341,6 +341,25 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
 
+## 成功启动上下文与 Conda 激活 launcher（P09，EX07 / EX11，AC-11 / AC-19）
+
+- **成功事实只有一份登记**：`runconfig` 的 `launches[脚本]`，由 `app._finalize_script_attempt`（已有的成功收口）经
+  `launchctx.record_success` 写；失败 / 部分结果 / 回执 `partial` 不写。记录只含引用与摘要：解释器身份（路径 + 来源 + 环境代）、
+  启动方式引用（`direct` 或 `conda`：conda 路径 + prefix，及 `conda-meta/history` 派生的环境版本）、cwd 模式、运行配置**引用**、
+  脚本 sha1 + 回执自报的本地 helper / 数据文件 sha256、数据绑定修订。**不存**激活后的环境变量、argv 值、敏感输入、答案原文
+  （非敏感答案仍只在 `scriptanswers`）。
+- **两个消费者，核验范围不同**：`launchctx.launcher_for`（`EngineWorker` 起会话）只核解释器 / 环境 / 源码——裸起成功过的不被自动改成
+  Conda 包装；`launchctx.reusable_run`（`app._session_target`，请求**没提** `argv` 时）全部核验，通过才带回上次成功的运行配置，
+  任一依据变了 = 重新核验、不静默沿用；敏感配置永不自动复用；明确的 `argv: []` = 用户要无参数。
+- **Conda launcher**（`launcher.py`）：`conda run --no-capture-output --prefix <prefix> [--cwd <dir>] -- <argv…>` 的结构化 argv，
+  按官方文档语义（`--no-capture-output` 恒带：worker 协议在 stdout 上）；不拼 shell；不认 `conda.bat`；mamba / micromamba、
+  IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。
+- **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 杀整组，`wait()` 确认组内无残留），所以取消 / 关停 / 看门狗超时
+  留不下仍在跑的用户 Python；环境占用租约仍是池里的会话，`kill→reap` 之后才释放。包装 worker 只走 Python 池（`WorkerdWorker` 抛
+  `WorkerdUnavailable` 回退）——workerd 的杀进程语义不认进程组。`nativesession` 的终止语义未改。
+
+看护：`tests/test_conda_launch_context.py`（用**模拟 conda**；真 conda 的 `test_real_conda_launch` 无 conda 时 skip）。
+
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 
 速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。

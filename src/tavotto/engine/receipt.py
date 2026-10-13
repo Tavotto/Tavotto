@@ -110,6 +110,9 @@ class ExecutionReceipt:
     pid_check: str | None = None
     #: 控制面在预检那一刻记下的数据绑定（`databinding.binding_for()` 的载荷）；None = 没给。
     binding: dict | None = None
+    #: 启动方式的结构化引用（P09，`launcher.CondaLauncher.public()`）；None = 裸起。含机器路径：只进私有投影，
+    #: **不进** `public_identity` / `public_facts`（身份仍是「用户 Python 跑了这个脚本」，启动包装不改它）。
+    launcher: dict | None = None
 
     def __post_init__(self) -> None:
         if self.profile not in execspec.PROFILES:
@@ -309,6 +312,8 @@ class ExecutionReceipt:
             out["private_invalidation_key"] = self.private_invalidation_key()
             out["interpreter"] = self.interpreter
             out["project_root"] = self.project_root
+            if self.launcher is not None:
+                out["launcher"] = dict(self.launcher)
         return out
 
 
@@ -378,7 +383,15 @@ def from_worker(
         runtime_rejected=rejected,
         pid_check=pid_check,
         binding=dict(binding) if isinstance(binding, dict) else None,
+        launcher=_launcher_public(worker),
     )
+
+
+def _launcher_public(worker) -> dict | None:
+    lau = getattr(worker, "launcher", None)
+    public = getattr(lau, "public", None)
+    out = public() if callable(public) else None
+    return dict(out) if isinstance(out, dict) else None
 
 
 def worker_pid(worker) -> int | None:

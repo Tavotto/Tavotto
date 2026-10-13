@@ -84,6 +84,7 @@ from .engine import (
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    launchctx as engine_launchctx,
     layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
@@ -7476,6 +7477,9 @@ def _session_target(ctx: "ProjectCtx", body: dict):
     run = engine_runconfig.selection_for(
         ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
     )
+    if run is None and "argv" not in body:
+        # P09 再次打开：请求没提 argv（不是明确的空数组），上次成功的启动上下文全部核验通过才带回它的运行配置
+        run = _reusable_success_run(ctx, script)
     return {
         "kind": engine_preparation.TARGET_SCRIPT,
         "script": script,
@@ -7486,6 +7490,16 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         "original_path": None,
         **({"run": run} if run is not None else {}),
     }, None
+
+
+def _reusable_success_run(ctx: "ProjectCtx", script: str):
+    """上次成功的运行配置能否带回来（`launchctx.reusable_run`）；解释器此刻的决定只 stat、不体检。"""
+    try:
+        resolved = engine_pool.peek_project_resolution(ctx.path)
+    except engine_pool.WorkerError:
+        return None  # 用户为项目挑的环境失效：不复用，让正常流程去报
+    python, source = resolved if resolved is not None else (None, None)
+    return engine_launchctx.reusable_run(ctx.path, script, python=python, python_source=source)
 
 
 def _session_runtime_input(ctx: "ProjectCtx", sess) -> dict | None:
@@ -7553,6 +7567,10 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         pinned=_plan_pin(plan),
     )
     engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
+    # P09：同一个成功收口里补齐可验证的启动上下文（再次打开时复用；失败 / 部分结果走不到这里）
+    engine_launchctx.record_success(
+        ctx.path, plan.script, getattr(result, "receipt", None), run=run
+    )
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])

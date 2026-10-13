@@ -32,6 +32,8 @@ from . import (
     figcapture,
     inputbroker,
     inputremap,
+    launchctx,
+    launcher as launcher_mod,
     logsafe,
     patchspec,
     projectenv,
@@ -1923,6 +1925,10 @@ class EngineWorker:
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
+        #: 启动方式（P09）：None = 裸起；`CondaLauncher` = 经 `conda run` 激活后起（整棵进程树自成一组）
+        self.launcher = launchctx.launcher_for(
+            figures_dir, script_name, python, self.python_source, bundled=SOURCE_BUNDLED
+        )
         #: 起会话那一刻这条解释器所在环境的「代」：写回重放 / 冷重放据此钉住热会话自己的环境
         self.python_generation = projectenv.environment_generation(python)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
@@ -1962,10 +1968,15 @@ class EngineWorker:
             entry,
             logsafe.known(self.python_source, SOURCE_LABELS),
         )
-        self.proc = subprocess.Popen(
-            execspec.worker_argv(
-                self.spec, worker_py=WORKER_PY, out_dir=self.out_dir, runtime_args=args
-            ),
+        worker_cmd = execspec.worker_argv(
+            self.spec, worker_py=WORKER_PY, out_dir=self.out_dir, runtime_args=args
+        )
+        if self.launcher is not None:
+            # `execspec` 的语义不变（回执 / 身份仍是用户 Python 的）；只在 Popen 这一层包 `conda run`
+            LOG.info("worker 经 Conda 激活启动: %s", self.script_name)
+            worker_cmd = self.launcher.wrap(worker_cmd)
+        self.proc = (launcher_mod.GroupPopen if self.launcher is not None else subprocess.Popen)(
+            worker_cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self._log,
@@ -2694,6 +2705,15 @@ class WorkerdWorker:
         # `resolve_worker_python`，换控制面不换答案。
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
+        self.launcher = None
+        if (
+            launchctx.launcher_for(
+                figures_dir, script_name, python, self.python_source, bundled=SOURCE_BUNDLED
+            )
+            is not None
+        ):
+            # workerd 的杀进程语义不认进程组：包装启动的 worker 只走 Python 池（调用方回退）
+            raise WorkerdUnavailable("该解释器需要 Conda 激活启动，workerd 不接")
         self.python_generation = projectenv.environment_generation(python)
         # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
         self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
