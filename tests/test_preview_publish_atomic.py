@@ -1076,3 +1076,85 @@ def test_a_saved_original_too_large_to_digest_is_not_offered(tmp_path, monkeypat
     obs, fig, _ = _saved_original(tmp_path, b"more than four bytes")
     (orig,) = obs.saved_originals(fig)
     assert orig["intact"] is False
+
+
+def test_poison_recorded_while_the_ledger_was_unreadable_does_not_swallow_the_next_builds_publishes(
+    tmp_path,
+):
+    """Codex #978 回归：作废时账本读不出来，序号下限未知。之前取 sys.maxsize，账本恢复后新 worker 正常发布的
+    有限序号全被判成旧的摘掉（build 报成功、面板全 404）。现在按发布时刻判：作废之前的摘，之后的留。"""
+    import time  # noqa: PLC0415
+
+    out = tmp_path / "out"
+    _publish(out, "old")
+    ledger = out / figcapture.PREVIEW_LEDGER
+    good = ledger.read_bytes()
+    ledger.write_bytes(b"{garbled")
+    figcapture.poison_preview_dir(out)
+    try:
+        ledger.write_bytes(good)  # 账本恢复可读
+        time.sleep(0.02)
+        _publish(out, "new")  # 新一代 build 的正常发布（有限的小序号）
+        assert figcapture.clear_preview_poison(out) is True
+        assert figcapture.usable_preview_generation(out, "old") is None, (
+            "作废之前的旧一代必须被摘掉"
+        )
+        assert figcapture.usable_preview_generation(out, "new") is not None, (
+            "作废之后新发布的被误摘了"
+        )
+        assert figcapture.published_preview_stems(out) == ["new"]
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
+def test_the_audit_never_deletes_a_record_published_after_it_took_its_snapshot(
+    tmp_path, monkeypatch
+):
+    """Codex #978：审计先快照旧记录，worker 随后为同一 stem 发布了新记录——摘指针必须 compare-and-delete，
+    只删审计时看到的那一条。"""
+    out = tmp_path / "out"
+    _publish(out, "old")
+    figcapture.poison_preview_dir(out)
+    real = figcapture.published_preview_stems
+    once = []
+
+    def snapshot_then_republish(path):
+        names = real(path)
+        if not once:
+            once.append(1)
+            _publish(out, "old", svg=b"<svg data-new/>")  # 审计的快照已取走，worker 又发布了一代
+        return names
+
+    monkeypatch.setattr(figcapture, "published_preview_stems", snapshot_then_republish)
+    try:
+        figcapture.clear_preview_poison(out)
+        monkeypatch.setattr(figcapture, "published_preview_stems", real)
+        assert figcapture.clear_preview_poison(out) is True
+        gen = figcapture.usable_preview_generation(out, "old")
+        assert gen is not None and Path(gen[1]).read_bytes() == b"<svg data-new/>", (
+            "新记录被审计误删了"
+        )
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
+
+
+def test_ledger_updates_from_two_actors_do_not_lose_each_other(tmp_path):
+    """发布与摘指针共用账本锁：并发的读-改-写不丢记录。"""
+    out = tmp_path / "out"
+    _publish(out, "keep")
+    errors = []
+
+    def publisher():
+        try:
+            for n in range(30):
+                _publish(out, f"p{n % 3}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t = threading.Thread(target=publisher)
+    t.start()
+    for _ in range(30):
+        figcapture._drop_ledger_stem(out, "ghost")  # 不存在的 stem：只做一次读-改-写竞争
+    t.join(timeout=60)
+    assert not errors, errors
+    assert set(figcapture.published_preview_stems(out)) == {"keep", "p0", "p1", "p2"}

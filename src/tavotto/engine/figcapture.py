@@ -143,6 +143,7 @@ engine 目录平铺 import 它，Flask 父进程也 import 得动。
 from __future__ import annotations
 
 import builtins
+import contextlib
 import dataclasses
 import hashlib
 import inspect
@@ -393,22 +394,30 @@ def publish_preview(out_dir, stem: str, svg_part, man_part, svg_bytes: int, capa
     （#969：重建会丢掉已发布的其它图）；账本不存在才是首次发布。
     """
     out_dir = os.fspath(out_dir)
-    ledger = _load_preview_ledger(out_dir) or {"seq": 0, "stems": {}}
-    seq = ledger["seq"] + 1
-    gen = preview_generation_dir(out_dir, seq)
     committed = False
+    gen = None
     try:
-        shutil.rmtree(gen, ignore_errors=True)  # 账本丢过时留下的同序号孤儿
-        os.makedirs(gen)
-        os.replace(os.fspath(svg_part), os.path.join(gen, f"{stem}.svg"))
-        os.replace(os.fspath(man_part), os.path.join(gen, f"{stem}.json"))
-        stems = dict(ledger["stems"])
-        # 完成描述符：指针所在的这条记录就是这一代的完成事实，能力（预览 / 活图可编辑……）只按实际完成的工作声明
-        stems[stem] = {"seq": seq, "svg_bytes": int(svg_bytes), "capabilities": list(capabilities)}
-        _write_preview_ledger(out_dir, {"seq": seq, "stems": stems})
-        committed = True
+        with _ledger_lock(out_dir):  # 与摘指针 / 审计的读-改-写串行：谁也不会把对方刚写的记录盖掉
+            ledger = _load_preview_ledger(out_dir) or {"seq": 0, "stems": {}}
+            seq = ledger["seq"] + 1
+            gen = preview_generation_dir(out_dir, seq)
+            shutil.rmtree(gen, ignore_errors=True)  # 账本丢过时留下的同序号孤儿
+            os.makedirs(gen)
+            os.replace(os.fspath(svg_part), os.path.join(gen, f"{stem}.svg"))
+            os.replace(os.fspath(man_part), os.path.join(gen, f"{stem}.json"))
+            stems = dict(ledger["stems"])
+            # 完成描述符：指针所在的这条记录就是这一代的完成事实，能力只按实际完成的工作声明；
+            # `at` 是发布时刻（作废审计在序号下限未知时靠它判新旧）
+            stems[stem] = {
+                "seq": seq,
+                "svg_bytes": int(svg_bytes),
+                "capabilities": list(capabilities),
+                "at": time.time(),
+            }
+            _write_preview_ledger(out_dir, {"seq": seq, "stems": stems})
+            committed = True
     finally:
-        if not committed:
+        if not committed and gen is not None:
             shutil.rmtree(gen, ignore_errors=True)
     # 旧的失效标记必须撤掉：撤不掉时读方仍判这个 stem 无预览，此时报发布成功就是谎话（画布 404、CLI 少计一张）。
     # 新一代已提交但对读方不可见，如实抛出让调用方走失败 / 重试（重试会再发布并再撤标记）（Codex #978）
@@ -467,7 +476,9 @@ def preview_invalid(out_dir, stem: str) -> bool:
 PREVIEW_POISONED_CODE = "preview_poisoned"
 #: 目录键 → (作废那一刻账本的发布序号, 作废代号)。解除时要求磁盘上每个还有预览文件的 stem 都在该序号之后重新
 #: 完整发布过；代号每次作废单调递增（与账本无关），审计结束时按它 compare-and-delete（Codex #958）。
-_poisoned_dirs: dict[str, tuple[int, int]] = {}
+#: 第三项是作废发生的墙钟时刻：作废那一刻账本读不出来（序号下限未知，记 None）时，审计改按登记项的发布时刻
+#: （`at`）判「作废之后才发布」——不能拿一个无穷大的下限，那会把账本恢复后新 worker 正常发布的记录全判成旧的摘掉。
+_poisoned_dirs: dict[str, tuple[int | None, int, float]] = {}
 _poison_generations = itertools.count(1)
 #: 作废 / 解除的状态转换互斥：读方审计与新的 `preview_poisoned` 可能并发（Codex #958）
 _poison_lock = threading.Lock()
@@ -480,17 +491,20 @@ def _dir_key(out_dir) -> str:
 def poison_preview_dir(out_dir) -> None:
     """读方进程：`out_dir` 下所有预览产物都不可信（见 `PREVIEW_POISONED_CODE`）。记下此刻的账本序号。"""
     key = _dir_key(out_dir)
+    at = time.time()
     try:
         ledger = _load_preview_ledger(out_dir)
         seq = ledger["seq"] if ledger else 0
     except PreviewLedgerUnreadable:
-        # 账本此刻读不出来：不知道作废时的序号，就当作"此前发布的一切都不可信"——下限取最大，
-        # 之后审计时没有任何登记项算作废之后重新发布的（当 0 会让旧一代在账本恢复后被当成新发布放行）
-        seq = sys.maxsize
+        seq = None  # 下限未知：审计时按发布时刻判（见 `_poisoned_dirs`）；当 0 会让旧一代在账本恢复后被放行
     with _poison_lock:
         prev = _poisoned_dirs.get(key)
-        floor = max(seq, prev[0]) if prev else seq
-        _poisoned_dirs[key] = (floor, next(_poison_generations))
+        if prev is None:
+            floor, when = seq, at
+        else:
+            floor = None if seq is None or prev[0] is None else max(seq, prev[0])
+            when = max(at, prev[2])
+        _poisoned_dirs[key] = (floor, next(_poison_generations), when)
 
 
 def clear_preview_poison(out_dir) -> bool:
@@ -504,7 +518,7 @@ def clear_preview_poison(out_dir) -> bool:
     with _poison_lock:
         if key not in _poisoned_dirs:
             return True
-        floor, generation = _poisoned_dirs[key]
+        floor, generation, poisoned_at = _poisoned_dirs[key]
     # 读方能经指针看到的预览只有账本里登记的 stem；指针之外的文件（代目录里被取代的旧版、`.part` 临时件）
     # 本来就读不到。作废期间没被重新完整发布过的登记项要摘掉指针——新一代不再出这张图时它永远不会被覆盖，
     # 留着会让整个目录永远「无预览」（Codex #958）。摘不掉就继续作废，宁可无预览也不放出错配。
@@ -516,9 +530,17 @@ def clear_preview_poison(out_dir) -> bool:
     fresh = set(published_preview_stems(out_dir))
     stale = False
     for stem, rec in list(ledger.items()):
-        if stem in fresh and isinstance(rec, dict) and int(rec.get("seq") or 0) > floor:
-            continue
-        if not _drop_ledger_stem(out_dir, stem):
+        if stem in fresh and isinstance(rec, dict):
+            after = (
+                int(rec.get("seq") or 0) > floor
+                if floor is not None
+                else float(rec.get("at") or 0.0) > poisoned_at
+            )
+            if after:
+                continue
+        # compare-and-delete：只摘审计时看到的那一条；审计期间 worker 为同一 stem 发布了新记录就别动它
+        seen = rec.get("seq") if isinstance(rec, dict) else None
+        if not _drop_ledger_stem(out_dir, stem, expected_seq=seen):
             stale = True
     if stale:
         return False
@@ -612,31 +634,65 @@ def mark_preview_invalid(out_dir, stem: str) -> bool:
             fh.write("invalid\n")
     except OSError:
         marked = False
-    ledger = _read_preview_ledger(out_dir)
-    if stem in ledger["stems"]:
-        del ledger["stems"][stem]
-        path = os.path.join(out_dir, PREVIEW_LEDGER)
-        try:
-            with open(path + ".part", "w", encoding="utf-8") as fh:
-                json.dump(ledger, fh)
-            os.replace(path + ".part", path)
-        except OSError:
-            pass
+    # 摘指针是尽力而为（标记才是读方的防线），但读-改-写仍走账本锁与 compare 语义：不盖掉别人刚发布的记录
+    _drop_ledger_stem(out_dir, stem)
     return marked
 
 
-def _drop_ledger_stem(out_dir, stem: str) -> bool:
-    """把 `stem` 的指针从账本摘掉（读方从此看不到它）；返回是否成功。"""
+def _drop_ledger_stem(out_dir, stem: str, expected_seq=None, *, check: bool = False) -> bool:
+    """把 `stem` 的指针从账本摘掉（读方从此看不到它）；返回是否成功。
+
+    `check=True`（或给了 `expected_seq`）时是 compare-and-delete：账本里该 stem 当前记录的 `seq` 不等于
+    `expected_seq` 就不删（别人已经为它发布了新一代），返回 True。读-改-写在账本锁里完成，与发布串行。
+    """
     out_dir = os.fspath(out_dir)
     try:
-        ledger = _load_preview_ledger(out_dir)
-        if ledger is None or stem not in ledger["stems"]:
-            return True
-        del ledger["stems"][stem]
-        _write_preview_ledger(out_dir, ledger)
+        with _ledger_lock(out_dir):
+            ledger = _load_preview_ledger(out_dir)
+            if ledger is None or stem not in ledger["stems"]:
+                return True
+            if check or expected_seq is not None:
+                rec = ledger["stems"][stem]
+                if (rec.get("seq") if isinstance(rec, dict) else None) != expected_seq:
+                    return True
+            del ledger["stems"][stem]
+            _write_preview_ledger(out_dir, ledger)
     except OSError:
         return False
     return True
+
+
+@contextlib.contextmanager
+def _ledger_lock(out_dir, timeout: float = 5.0, stale_after: float = 30.0):
+    """账本的读-改-写互斥（跨进程：发布方在 worker，审计 / 摘指针在 app）。
+
+    `O_EXCL` 建锁文件；超过 `stale_after` 秒的锁当成崩溃遗留撤掉；等不到就抛 `OSError`
+    （发布失败 / 摘指针失败，都按失败处理，不无锁硬写）。
+    """
+    path = os.path.join(os.fspath(out_dir), PREVIEW_LEDGER + ".lock")
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(path).st_mtime > stale_after:
+                    os.remove(path)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise OSError(f"preview ledger is locked: {path}") from None
+            time.sleep(0.01)
+    try:
+        yield
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def clear_preview_invalid(out_dir, stem: str) -> None:
