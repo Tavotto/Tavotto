@@ -272,14 +272,20 @@ _SECRET_WORDS = (
     r"|auth[_-]?(?:key|token|header|code)|nonce|signature|session[_-]?(?:id|key|token|secret)"
     r"|private[_-]?key|access[_-]?key|bearer|x-tavotto-auth|q-signature|upload[_-]?(?:url|credential)"
     r"|pwd|passphrase|passcode|cookie"
+    r"|mnemonic|seed[_-]?phrase|connection[_-]?string|database[_-]?url|密码|口令|密钥|秘钥|令牌"
 )
+#: 太短、作子串会误伤（`pine` / `pinyin` / `spin` / `mapping`）的键词：只认**整词**——前后要么是键的边界，
+#: 要么是 `_` `-` `.` 分隔（`pw` / `db_pin` / `OTP_CODE` / `dsn`）
+_SHORT_SECRET_WORDS = r"(?:[\w.\-]{0,40}?[_.\-])?(?:pw|pin|otp|dsn)(?:[_.\-][\w.\-]{0,40})?(?![\w])"
+#: 分隔符两侧允许的空白：ASCII 空格 / 制表符，加 NBSP、en/em 空格…、窄 NBSP、全角空格（不含换行）
+_SEP_SPACE = "[ \t  -   　]"
 #: `key=value` / `key: value` / `"key": "value"` / `'key': 'value'`：键里含秘密词就把值换掉。
 #: 键名前后的通配**有上界**（40）且起点锚在标识符开头：日志里一条几十万字符的十六进制 / base64 长串
 #: 上，无界的 `[\w.\-]*` 前缀会逐位回溯成 O(n²)（备包卡死）。看护：`test_scrubber_is_linear_on_long_tokens`
 _KV_SECRET = re.compile(
     rf"""(?ix)
-    (?P<key>(?<![\w.\-\\])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))\\*["']?)
-    (?P<sep>[ \t]*[:=][ \t]*)
+    (?P<key>(?<![\w.\-\\])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-])|{_SHORT_SECRET_WORDS})\\*["']?)
+    (?P<sep>{_SEP_SPACE}*[:=：＝]{_SEP_SPACE}*)
     """
 )
 # Cookie / Authorization / Proxy-Authorization 头行不再另走行正则：它们的键名在 `_SECRET_WORDS` 里，值同样交给 `_scan_value`
@@ -445,7 +451,17 @@ def _redact_userinfo(text: str) -> str:
 #: 结构化数据里这些键名（子串）的值整体换掉。`diagnostics._SECRET_KEYS` 的超集
 #: 结构化数据里的秘密键名判据：键名**去掉所有非字母数字、转小写**之后包含这些词（`API-KEY`、`apiKey`、`x-api-key`、
 #: `Session_Token` 都归一成同一个形状）。与文本侧 `_SECRET_WORDS` 是同一张词表的两种写法，`TestSecretShapeMatrix` 逐键对拍。
+_SHORT_SECRET_TOKENS = frozenset({"pw", "pwd", "pin", "otp", "dsn"})
 _SECRET_KEY_PARTS = (
+    "mnemonic",
+    "seedphrase",
+    "connectionstring",
+    "databaseurl",
+    "密码",
+    "口令",
+    "密钥",
+    "秘钥",
+    "令牌",
     "apikey",
     "token",
     "secret",
@@ -470,7 +486,13 @@ _AUTH_KEY = re.compile(
 
 
 def is_secret_key(key: object) -> bool:
-    n = re.sub(r"[^a-z0-9]", "", str(key).lower())
+    raw = str(key)
+    if any(
+        t.lower() in _SHORT_SECRET_TOKENS
+        for t in re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", raw)
+    ):
+        return True  # 短词只认整词（`pw` / `db_pin` / `userPin`），`pine` / `pinyin` 不算
+    n = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", raw.lower())
     return n == "key" or bool(_AUTH_KEY.search(n)) or any(p in n for p in _SECRET_KEY_PARTS)
 
 

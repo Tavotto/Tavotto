@@ -720,6 +720,8 @@ MATRIX_KEYS = [
     "sessionId", "Session-Token", "nonce", "access_token", "refreshToken", "private_key",
     "accessKey", "cookie", "signature", "credentials", "bearer", "authToken", "api-token",
     "TOKEN", "Password", "AUTH_TOKEN", "secret_key", "key",
+    "pw", "pin", "otp", "dsn", "mnemonic", "seed_phrase", "connection_string", "database_url",
+    "user_pw", "db-pin", "OTP_CODE", "密码",
 ]  # fmt: skip
 MATRIX_VALUES = {
     "bare": SECRET,
@@ -982,7 +984,9 @@ class TestSecretShapeMatrix:
                     out = full.text(line)
                     assert SECRET not in out, (key, tail, line, out)
                 # JSON 载体：结构化路径
-                js = json.dumps({key: body.replace('\\"', '"').replace("\\\\", "\\")})
+                js = json.dumps(
+                    ensure_ascii=False, obj={key: body.replace('\\"', '"').replace("\\\\", "\\")}
+                )
                 assert SECRET not in full.json_or_text(js)
                 assert SECRET not in full.text(js)
 
@@ -1193,6 +1197,49 @@ class TestContainerSecrets:
             t0 = time.monotonic()
             s.text(blob)
             assert time.monotonic() - t0 < 5, blob[:10]
+
+
+class TestUnicodeSeparatorsAndShortKeywords:
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "token：REAL_S tail",  # 全角冒号
+            "token＝REAL_S tail",  # 全角等号
+            "token\u00a0:\u00a0REAL_S tail",  # NBSP
+            "token\u3000=\u3000REAL_S tail",  # 全角空格
+            "password\u2009:\u2009REAL_S tail",  # 细空格
+            "密码：REAL_S tail",
+            "口令 = REAL_S tail",
+            "pw=REAL_S tail",
+            "db_pin: REAL_S tail",
+            "OTP_CODE=REAL_S tail",
+            "dsn = REAL_S tail",
+            "mnemonic: REAL_S tail",
+            "seed_phrase=REAL_S tail",
+            "connection_string=REAL_S tail",
+            "DATABASE_URL=REAL_S tail",
+        ],
+    )
+    def test_the_value_is_gone(self, line):
+        out = diagdetail.Scrubber().text(line)
+        assert "REAL_S" not in out and "<redacted>" in out, out
+
+    def test_short_keywords_only_match_as_whole_words(self):
+        s = diagdetail.Scrubber()
+        innocent = (
+            "pine=1 pinyin: hello spin=3 mapping: foo happin=5 pins: ok opting: x dsnap=1 pwned: no"
+        )
+        assert s.text(innocent) == innocent
+        assert not diagdetail.is_secret_key("pine") and not diagdetail.is_secret_key("pinyin")
+        assert diagdetail.is_secret_key("pw") and diagdetail.is_secret_key("userPin")
+        assert diagdetail.is_secret_key("DB_DSN") and diagdetail.is_secret_key("database_url")
+        out = s.obj({"pine": "keep", "pw": "S", "db-pin": "S", "密码": "S"})
+        assert out == {
+            "pine": "keep",
+            "pw": "<redacted>",
+            "db-pin": "<redacted>",
+            "密码": "<redacted>",
+        }
 
 
 class TestFailClosedScanner:
