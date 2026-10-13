@@ -292,6 +292,7 @@ _URL_USERINFO = re.compile(
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 _REDACTED = "<redacted>"
+_OPENERS = "[{("
 _STR_PREFIXED = re.compile(r"([bBrRuUfF]{1,2})([\"'])")  # b'x' / rb\"x\" / u'x' / f'x'
 _CALL_VALUE = re.compile(
     r"[A-Za-z_][\w.]*\("
@@ -332,7 +333,7 @@ _BORING_VALUE = re.compile(
 )
 
 _BORING_TOKENS = re.compile(
-    r"[\s\[\]{},:]|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|true|false|null|none", re.I
+    r"[\s\[\]{}(),:]|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|true|false|null|none", re.I
 )
 
 
@@ -563,7 +564,9 @@ class Scrubber:
                 continue
             # 源码模式的代码区：调用表达式不是明文值（字符串实参归 tokenize 的结构判定）；日志 / 注释 / 字符串里才是 repr
             is_call = not self.source_mode and _CALL_VALUE.match(text, vs) is not None
-            if val[:1] not in "[{" and not is_call:
+            if (
+                val[:1] not in _OPENERS and not is_call
+            ):  # 以任何开括号起头 / 标识符+( 起头：整段配平扫描
                 out.append(text[pos : m.start()])
                 out.append(self._kv(m))
                 pos = m.end()

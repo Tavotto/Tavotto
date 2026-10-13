@@ -1129,6 +1129,28 @@ class TestContainerSecrets:
         out = diagdetail.Scrubber().text(text)
         assert "REAL_SECRET" not in out and out.endswith("<redacted>")
 
+    @pytest.mark.parametrize(
+        ("raw", "keep_suffix"),
+        [
+            ("{'auth': ('user', 'REAL_SECRET')} tail", "} tail"),
+            ("{'auth': (('a', 'REAL_SECRET'), ('b',))} tail", "} tail"),
+            ("{'password': ('REAL_SECRET',)} tail", "} tail"),  # 单元素元组
+            ("{'token': (b'REAL_SECRET', 1)} tail", "} tail"),  # bytes
+            ("{'token': ('a\\'REAL_SECRET', 2)} tail", "} tail"),  # 转义引号
+            ("auth=('user', \"REAL_SECRET\") tail", " tail"),
+            ("{'token': frozenset({'REAL_SECRET'}), 'n': 1} tail", ", 'n': 1} tail"),
+            ("{'token': deque(['REAL_SECRET']), 'n': 1} tail", ", 'n': 1} tail"),
+        ],
+    )
+    def test_tuples_and_other_openers(self, raw, keep_suffix):
+        out = diagdetail.Scrubber().text(raw)
+        assert "REAL_SECRET" not in out and out.endswith(keep_suffix), out
+
+    def test_empty_and_numeric_tuples_are_kept(self):
+        s = diagdetail.Scrubber()
+        assert s.text("token=() x") == "token=() x"
+        assert s.text("token=(1, 2.5, None) x") == "token=(1, 2.5, None) x"
+
     def test_text_around_the_segment_is_preserved(self):
         out = diagdetail.Scrubber().text('a {"token":["S1"], "ok": "keep-me"} b')
         assert "S1" not in out and out.startswith('a {"token":') and "b" in out
