@@ -376,6 +376,8 @@ SOURCE_LABELS = {
 }
 
 _worker_python: str | None = None
+#: 选定 `_worker_python` 时的启动上下文（`launcher.context_key`）：体检结论按它分区
+_worker_ctx: str = ""
 _worker_source: str = ""
 _workers: dict[tuple[str, ...], "EngineWorker"] = {}
 
@@ -1396,19 +1398,23 @@ def select_worker_python() -> tuple[str, str]:
     别的工具的配置里，往往是过期的全局状态，`test_a_stale_env_var_does_not_hide_an_explicit_setting`
     钉着；设置里指定的那条不在了则要说出来（那是用户在这个应用里做的选择）。
     """
-    global _worker_python, _worker_source
+    global _worker_python, _worker_source, _worker_ctx
     if _worker_python:
         try:
             still_there = Path(_worker_python).exists()
         except OSError:
             still_there = False
-        if still_there:
+        if still_there and _worker_ctx == launcher_mod.context_key(_worker_python):
             return _worker_python, _worker_source
-        # 选定之后那条解释器被删了（用户删掉了设置里指定的环境、外置盘拔了）：缓存不许替它作答，
-        # 否则起 worker 时 `FileNotFoundError` 原文外露成 internal_error、环境状态仍报旧路径
-        # （QA ENV-03-B1）。重新走一遍下面的链条：设置里指定的那条以 `missing` 收场。
-        LOG.warning("已选定的渲染解释器不在了，重新选择: %s", _worker_python)
-        _worker_python, _worker_source = None, ""
+        if still_there:
+            # 选定时的 `import matplotlib` 体检是在另一个启动上下文里做的（裸起 ↔ Conda 激活）：结论不跨上下文复用，重新选
+            _worker_python, _worker_source = None, ""
+        else:
+            # 选定之后那条解释器被删了（用户删掉了设置里指定的环境、外置盘拔了）：缓存不许替它作答，
+            # 否则起 worker 时 `FileNotFoundError` 原文外露成 internal_error、环境状态仍报旧路径
+            # （QA ENV-03-B1）。重新走一遍下面的链条：设置里指定的那条以 `missing` 收场。
+            LOG.warning("已选定的渲染解释器不在了，重新选择: %s", _worker_python)
+            _worker_python, _worker_source = None, ""
     seen: set[str] = set()
     for cand, source in _prioritized_candidates():
         try:
@@ -1426,6 +1432,7 @@ def select_worker_python() -> tuple[str, str]:
         seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
         if _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED):
             _worker_python, _worker_source = cand, source
+            _worker_ctx = launcher_mod.context_key(cand)
             LOG.info("渲染解释器: %s（来源 %s）", cand, logsafe.known(source, SOURCE_LABELS))
             return cand, source
         if source in _EXPLICIT_SOURCES:
@@ -1443,13 +1450,13 @@ def find_worker_python() -> str:
 #: 已经不是那个环境了（venv 被删了重建），结论作废重验（QA ENV-04-B1）。
 #: **刻意不共用 `_lock`**：worker 构造函数在 `get()` 已持有 `_lock` 时调用
 #: `resolve_worker_python()`，同一把非重入锁会当场自锁。
-_project_python_ok: dict[str, tuple[bool, tuple]] = {}
+_project_python_ok: dict[tuple[str, str], tuple[bool, tuple]] = {}
 
 
 def _cached_verdict(python: str) -> bool | None:
     """这条解释器在本进程里的体检结论；没验过、或验过之后原路径上的环境被替换了，回 None。"""
     with _project_python_lock:
-        hit = _project_python_ok.get(python)
+        hit = _project_python_ok.get((python, launcher_mod.context_key(python)))  # 按启动上下文分区
     if hit is None:
         return None
     ok, fingerprint = hit
@@ -1462,7 +1469,7 @@ def _record_verdict(python: str, ok: bool, fingerprint: tuple | None = None) -> 
     if fingerprint is None:
         fingerprint = projectenv.interpreter_fingerprint(python)
     with _project_python_lock:
-        _project_python_ok[python] = (ok, fingerprint)
+        _project_python_ok[(python, launcher_mod.context_key(python))] = (ok, fingerprint)
 
 
 def forget_python_verdict(python: str | None) -> None:
@@ -1474,7 +1481,10 @@ def forget_python_verdict(python: str | None) -> None:
     if not python:
         return
     with _project_python_lock:
-        _project_python_ok.pop(python, None)
+        for key in [
+            k for k in _project_python_ok if k[0] == python
+        ]:  # 所有启动上下文下的结论一起丢
+            _project_python_ok.pop(key, None)
 
 
 _project_python_lock = threading.Lock()

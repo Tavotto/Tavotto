@@ -1645,3 +1645,72 @@ def test_the_fake_conda_models_the_old_separator_bug():
             env={**os.environ, "FAKE_CONDA_LOG": str(log)},
         )
         assert done.returncode == 127 and "command not found" in done.stderr
+
+
+@needs_worker
+def test_per_interpreter_caches_are_partitioned_by_launch_context(activation_only_env, monkeypatch):
+    """同一个解释器：裸起得出的事实 / 体检结论 / 选择结论，不能在 Conda 激活下原样复用（反之亦然）。"""
+    from tavotto.engine import depplan, projectenv, userenvs
+
+    py, prefix, log = activation_only_env
+    depplan.reset_cache()
+    projectenv.reset_cache()
+    _pool.reset_worker_python()
+
+    # ---- depplan 目标事实
+    with monkeypatch.context() as m:
+        m.setenv(launcher.ENV_DISABLE, "0")
+        bare = depplan.target_facts(py)
+        assert bare is not None and bare.context == "direct"
+        assert depplan.target_facts(py) is bare  # 同一上下文：命中缓存
+    assert conda_calls(log) == []
+    activated = depplan.target_facts(py)  # 换成激活：必须重新探测
+    assert activated is not None and activated.context.startswith("conda|")
+    assert activated is not bare and len(conda_calls(log)) == 1
+    assert depplan.target_facts(py) is activated and len(conda_calls(log)) == 1
+    with monkeypatch.context() as m:  # 再换回裸起：命中当初裸起的那份，没有新的 conda 调用
+        m.setenv(launcher.ENV_DISABLE, "0")
+        assert depplan.target_facts(py) is bare
+    assert len(conda_calls(log)) == 1
+    # 该解释器的 reset 一并清掉所有上下文
+    depplan.reset_cache(py)
+    assert depplan.target_facts(py) is not activated
+
+    # ---- projectenv 系统候选体检缓存
+    entry = {"python": py, "source": "system"}
+    with monkeypatch.context() as m:
+        m.setenv(launcher.ENV_DISABLE, "0")
+        assert projectenv.reprobe_system_candidate(entry, "vendor_sdk")["ok"] is False
+    assert projectenv.reprobe_system_candidate(entry, "vendor_sdk")["ok"] is True
+    contexts = {k[2] for k in projectenv._system_probe_cache if k[1] == "vendor_sdk"}
+    assert "direct" in contexts and any(c.startswith("conda|") for c in contexts)
+
+    # ---- userenvs 体检缓存键
+    key_conda = userenvs._cache_key(py, ("x",), False)
+    with monkeypatch.context() as m:
+        m.setenv(launcher.ENV_DISABLE, "0")
+        key_direct = userenvs._cache_key(py, ("x",), False)
+    assert key_conda != key_direct
+
+    # ---- pool 的 import matplotlib 体检结论
+    _pool._project_python_ok.clear()
+    _pool._record_verdict(py, True)  # 在激活上下文里记下
+    assert _pool._cached_verdict(py) is True
+    with monkeypatch.context() as m:
+        m.setenv(launcher.ENV_DISABLE, "0")
+        assert _pool._cached_verdict(py) is None  # 裸起上下文里没验过
+    _pool.forget_python_verdict(py)
+    assert _pool._cached_verdict(py) is None
+
+    # ---- 选定的渲染解释器
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
+    _pool.reset_worker_python()
+    try:
+        assert _pool.select_worker_python()[0] == py  # 激活下选定
+        with monkeypatch.context() as m:
+            m.setenv(launcher.ENV_DISABLE, "0")
+            with pytest.raises(_pool.WorkerError) as bad:  # 裸起：不能拿激活下的结论冒充
+                _pool.select_worker_python()
+            assert bad.value.code == "explicit_python_unusable"
+    finally:
+        _pool.reset_worker_python()

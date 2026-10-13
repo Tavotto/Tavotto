@@ -34,7 +34,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import projectenv, runtime, scanbudget
+from . import launcher, projectenv, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.userenvs")
 
@@ -722,6 +722,8 @@ def _cache_key(
         tuple(sorted(set(modules))),
         bundled,
         how,
+        # 启动上下文（direct / conda|exe|prefix）：裸起的结论不能在激活下复用。放在末尾——前面几位有人按位置读（`key[1]` 是环境代）
+        launcher.context_key(python),
     )
 
 

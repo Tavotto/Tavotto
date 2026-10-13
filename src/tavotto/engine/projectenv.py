@@ -967,7 +967,7 @@ def probe_environment(
 #: 系统解释器的体检缓存：(解释器 realpath, 模块) → 体检结果。一次接手失败
 #: 最多探六七个解释器、每个最长 60s；同一个项目里第二个脚本也缺同一个包时
 #: 不该再付一遍。`reset_cache()` 一并清掉（用户手动重试 = 重新体检）。
-_system_probe_cache: dict[tuple[str, str], dict] = {}
+_system_probe_cache: dict[tuple[str, str, str], dict] = {}
 
 #: 一次最多体检多少个系统解释器。Windows 上 `C:\Python*` 的 glob 可能翻出
 #: 一堆，全探一遍是分钟级；候选已经按优先级排好，靠前的几个覆盖了绝大多数
@@ -1059,7 +1059,7 @@ def probe_system_candidates(
         except OSError:
             continue
         seen.append(python)
-        key = (_executable_key(python), module)
+        key = (_executable_key(python), module, launcher.context_key(python))  # 按启动上下文分区
         with _lock:
             health = _system_probe_cache.get(key)
         if health is None:
@@ -1096,7 +1096,9 @@ def reprobe_system_candidate(entry: dict, module: str) -> dict:
     python = str(entry.get("python") or "")
     health = probe_environment(python, module)
     with _lock:
-        _system_probe_cache[(_executable_key(python), module)] = health
+        _system_probe_cache[(_executable_key(python), module, launcher.context_key(python))] = (
+            health
+        )
     return _system_entry(python, str(entry.get("source") or ""), health)
 
 

@@ -225,6 +225,26 @@ _PROBE_BOOT = (
 )
 
 
+def effective_launcher(python) -> CondaLauncher | None:
+    """此刻对 `python` 生效的启动方式：`probe_scope` 里的每脚本决策，否则现场 `detect`；可执行文件不是绝对路径（没法安全
+    包装）按裸起。`run_probe` 与 `context_key` 共用这一处，所以「实际怎么起」和「缓存按什么分区」不会分叉。"""
+    decider = _PROBE_DECIDER.get()
+    lau = decider(python) if decider is not None else detect(python)
+    if lau is not None:
+        try:
+            lau.wrap([str(python)])
+        except ValueError:
+            return None
+    return lau
+
+
+def context_key(python) -> str:
+    """启动上下文的稳定投影，给**按解释器缓存**的结论分区用：同一个解释器裸起得出的事实 / 体检结论，换成 Conda 激活
+    （或反过来、或换了 conda / prefix）之后不能原样复用。`direct`，或 `conda|<exe>|<prefix>`。"""
+    lau = effective_launcher(python)
+    return "direct" if lau is None else f"conda|{lau.conda_exe}|{lau.prefix}"
+
+
 def run_probe(argv, python, *, timeout=None, **kwargs):
     """`subprocess.run` 的替身，给「要在 worker 将要使用的那个解释器里跑一小段探针」的预检用（`_has_matplotlib`、
     `projectenv.probe_environment`、依赖计划的目标事实、导入核验、版本盘点……）。
@@ -235,11 +255,10 @@ def run_probe(argv, python, *, timeout=None, **kwargs):
     任何「从 stdout 里找 JSON」的办法失效。所以由我们建一个 0600 的临时结果文件，探针的 fd 1 被引导代码指进去，父进程
     只读这个文件；真正的 stdout / stderr 一律当日志。其余（内置 runtime、受管 venv、Windows、没找到 conda、开关关掉）：
     原样 `subprocess.run`，行为一字不变。只改「怎么起」，不改探针的内容、超时、env、cwd。"""
-    decider = _PROBE_DECIDER.get()
-    lau = decider(python) if decider is not None else detect(python)
+    lau = effective_launcher(python)
     if lau is not None:
         try:
-            lau.wrap(list(argv))  # 先校验：可执行文件不是绝对路径就没法安全包装，按裸起探
+            lau.wrap(list(argv))  # 再校验一遍实际命令（argv[0] 不一定就是 python）
         except ValueError:
             lau = None
     if lau is None:
