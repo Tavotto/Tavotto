@@ -198,7 +198,7 @@ describe('两条路径的载荷', () => {
     console.error('for the maintainers')
     const p = await buildSendPayload(NO_DETAIL_OPTIONS)
     expect(p.detail_options).toEqual({ source: false, crash_reports: false, corrupt_sessions: false })
-    expect(Object.keys(p.detail).sort()).toEqual(['console', 'display', 'errors', 'overrides', 'shell'])
+    expect(Object.keys(p.detail).sort()).toEqual(['console', 'display', 'errors', 'overrides', 'overrides_omitted', 'shell'])
     expect((p.detail.console as { message: string }[])[0].message).toBe('for the maintainers')
     expect(p.frontend_state).toBeTruthy()
     const on = await buildSendPayload({ ...NO_DETAIL_OPTIONS, source: true })
