@@ -635,6 +635,64 @@ def _read_head(path: Path, limit: int) -> tuple[bytes, int] | None:
         return None
 
 
+@dataclasses.dataclass(frozen=True)
+class FileId:
+    """枚举（登记候选）那一刻看到的文件身份：大小 + mtime_ns + 文件 id。之后读它必须还是这个身份，
+    读取上限也只来自登记时的大小与份额——**不按「此刻文件多大就读多大」**（文件在枚举之后变大不会 OOM）。"""
+
+    size: int
+    mtime_ns: int
+    ino: int
+
+    @staticmethod
+    def of(st) -> "FileId":
+        return FileId(st.st_size, st.st_mtime_ns, st.st_ino)
+
+
+def _file_id(path: Path) -> FileId | None:
+    try:
+        return FileId.of(path.stat())
+    except OSError:
+        return None
+
+
+def _stable_candidates(paths) -> tuple[list[tuple[Path, FileId]], list[Path]]:
+    """逐个 stat 登记：`([(路径, 身份)], [stat 失败的路径])`。失败只让那个文件自己出局（调用方标 read_failed），
+    排序只用登记到的 mtime，不再碰文件系统。"""
+    ok: list[tuple[Path, FileId]] = []
+    bad: list[Path] = []
+    for p in paths:
+        fid = _file_id(p)
+        if fid is None:
+            bad.append(p)
+        else:
+            ok.append((p, fid))
+    return ok, bad
+
+
+def _read_capped(
+    path: Path, reg: FileId, cap: int, *, whole: bool = False
+) -> tuple[bytes | None, str]:
+    """按登记的身份读：读之前的 stat 必须与 `reg` 一致，读到的字节数等于预期，读之后再 stat 仍一致。
+    `whole=False`：读登记大小与 `cap` 的较小者（头部，超出的部分不读）；`whole=True`：要整份（`reg.size` ≤ `cap`
+    才读），最多读 `reg.size + 1` 字节——多读到的那个字节就是「读取期间在长」的证据。
+    回 `(字节, "")`，或 `(None, "read_failed" | "changed_while_reading" | "skipped_over_budget")`。"""
+    if whole and reg.size > cap:
+        return None, "skipped_over_budget"
+    want = reg.size if whole else min(reg.size, cap)
+    try:
+        if FileId.of(path.stat()) != reg:
+            return None, "changed_while_reading"
+        with path.open("rb") as fh:
+            raw = fh.read(want + 1 if whole else want)
+        after = FileId.of(path.stat())
+    except OSError:
+        return None, "read_failed"
+    if after != reg or len(raw) != want:
+        return None, "changed_while_reading"
+    return raw, ""
+
+
 def _list_shrinker(build: Callable[[list], bytes], records: list, *, newest_last: bool = True):
     """记录列表型 JSON 的缩小器：从最旧的一端丢记录直到序列化后 ≤ cap。"""
 
@@ -881,26 +939,24 @@ def _state_files() -> list[Path]:
 def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     index: list[dict] = []
     items: list[Item] = []
-    for p in _state_files():
-        try:
-            st = p.stat()
-        except OSError:
-            continue
+    cands, bad = _stable_candidates(_state_files())
+    index.extend({"name": p.name, "kind": _state_kind(p.name), "read_failed": True} for p in bad)
+    for p, fid in cands:
         kind = _state_kind(p.name)
-        entry = {"name": p.name, "kind": kind, "bytes": st.st_size, "mtime": _iso(st.st_mtime)}
+        entry = {"name": p.name, "kind": kind, "bytes": fid.size, "mtime": _iso(fid.mtime_ns / 1e9)}
         index.append(entry)
         if kind == "corrupt":
             continue  # 默认只有清单；内容归勾选项 C
-        got = _read_head(p, STATE_FILE_CAP)
-        if got is None:
-            entry["read_failed"] = (
-                True  # 读失败不是超预算：不写 `file`，`_reconcile_index` 不会误标
+        raw, why = _read_capped(p, fid, STATE_FILE_CAP)
+        if raw is None:
+            entry[why] = (
+                True  # read_failed / changed_while_reading：不写 `file`，`_reconcile_index` 不会误标超预算
             )
             continue
         entry["file"] = _safe_name(
             p.name
         )  # 读成功才写：内容在内层 zip 里的名字（`_reconcile_index` 据此核对）
-        raw, size = got
+        size = fid.size
         data = scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
         if size > STATE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
@@ -927,13 +983,15 @@ def collect_corrupt_sessions(src: Sources, opts: DetailOptions, scrub: Scrubber)
     items: list[Item] = []
     index: list[dict] = []
     corrupt = [p for p in _state_files() if _state_kind(p.name) == "corrupt"]
-    corrupt.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in corrupt[:CORRUPT_FILES]:
-        got = _read_head(p, CORRUPT_FILE_CAP)
-        if got is None:
-            index.append({"name": p.name, "read_failed": True})  # 读失败不是超预算
+    cands, bad = _stable_candidates(corrupt)  # 逐个 stat 缓存；排序只用登记到的 mtime
+    index.extend({"name": p.name, "read_failed": True} for p in bad)
+    cands.sort(key=lambda pf: -pf[1].mtime_ns)
+    for p, fid in cands[:CORRUPT_FILES]:
+        raw, why = _read_capped(p, fid, CORRUPT_FILE_CAP)
+        if raw is None:
+            index.append({"name": p.name, why: True})  # 读失败 / 读取期间在变：都不是超预算
             continue
-        raw, size = got
+        size = fid.size
         data = scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
         index.append({"name": p.name, "file": _safe_name(p.name), "bytes": size})
         items.append(
@@ -1505,7 +1563,9 @@ def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
 # ---------------------------------------------------------------------------
 # A 脚本源码（勾选）
 # ---------------------------------------------------------------------------
-def source_candidates(src: Sources, failed: list[str] | None = None) -> list[tuple[str, Path]]:
+def source_candidates(
+    src: Sources, failed: list[str] | None = None, ids: dict[str, FileId] | None = None
+) -> list[tuple[str, Path]]:
     """要收的脚本：判据 = 当前项目**登记的脚本**（项目相对路径），正在编辑 / 选中的面板的脚本排最前，
     其余按修改时间新的在前。只收解析后仍在项目目录内的文件（登记表是用户文件，不信它）。
     **每个候选单独 stat**：一个无关脚本在枚举与排序之间被删 / 不可读，只让它自己进 `failed`（调用方标 read_failed），
@@ -1520,7 +1580,7 @@ def source_candidates(src: Sources, failed: list[str] | None = None) -> list[tup
         if p.get("script")
     ]
     seen: dict[str, Path] = {}
-    mtimes: dict[str, float] = {}
+    fids: dict[str, FileId] = {}
     tried: set[str] = set()
     for rel in [*focus, *src.scripts]:
         if rel in tried:
@@ -1534,7 +1594,7 @@ def source_candidates(src: Sources, failed: list[str] | None = None) -> list[tup
         try:
             if not path.is_file():
                 continue
-            mtimes[rel] = path.stat().st_mtime
+            fids[rel] = FileId.of(path.stat())
         except OSError:
             if failed is not None:
                 failed.append(rel)
@@ -1542,7 +1602,11 @@ def source_candidates(src: Sources, failed: list[str] | None = None) -> list[tup
         seen[rel] = path
     ordered = list(dict.fromkeys(r for r in focus if r in seen))  # 多张面板同一脚本：按首次出现去重
     rest = [r for r in seen if r not in ordered]
-    rest.sort(key=lambda r: -mtimes[r])  # 用先前各自 stat 到的 mtime 排，排序期间不再碰文件系统
+    rest.sort(
+        key=lambda r: -fids[r].mtime_ns
+    )  # 用先前各自 stat 到的 mtime 排，排序期间不再碰文件系统
+    if ids is not None:
+        ids.update(fids)
     return [(r, seen[r]) for r in [*ordered, *rest]][:SOURCE_FILES]
 
 
@@ -1760,14 +1824,15 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
     full_scrub = Scrubber()
     index = []
     stat_failed: list[str] = []
-    candidates = source_candidates(src, stat_failed)
+    ids: dict[str, FileId] = {}
+    candidates = source_candidates(src, stat_failed, ids)
     index.extend({"script": scrub.text(rel), "read_failed": True} for rel in stat_failed)
     for n, (rel, path) in enumerate(candidates):
-        got = _read_head(path, SOURCE_FILE_CAP)
-        if got is None:
-            index.append({"script": scrub.text(rel), "read_failed": True})
+        raw, why = _read_capped(path, ids[rel], SOURCE_FILE_CAP)
+        if raw is None:
+            index.append({"script": scrub.text(rel), why: True})
             continue
-        raw, size = got
+        size = ids[rel].size
         data = scrub_script(
             raw.decode("utf-8", errors="replace"), rel, full_scrub, code_scrub
         ).encode("utf-8")
@@ -1846,23 +1911,6 @@ def _mentions_tavotto(path: Path) -> bool:
     return b"tavotto" in low or "tavotto".encode("utf-16-le") in low
 
 
-def _read_stable(path: Path) -> tuple[bytes | None, str]:
-    """读一个可能还在写的文件：读前后各 stat 一次（大小 + mtime_ns + 文件 id），并核对实际读到的字节数等于前后一致的
-    大小；任何不一致（读取期间增长 / 被改 / 被替换）回 `(None, "changed_while_reading")`——不把前缀当完整原件收；
-    读不到回 `(None, "read_failed")`。"""
-    try:
-        before = path.stat()
-        with path.open("rb") as fh:
-            raw = fh.read(before.st_size + 1)
-        after = path.stat()
-    except OSError:
-        return None, "read_failed"
-    key = lambda st: (st.st_size, st.st_mtime_ns, st.st_ino)  # noqa: E731
-    if key(before) != key(after) or len(raw) != before.st_size:
-        return None, "changed_while_reading"
-    return raw, ""
-
-
 def _crash_candidates(now: float) -> list[dict]:
     """7 天内、属于 Tavotto / sidecar / 渲染 python 进程的崩溃文件：文本报告（脱敏后收）与二进制转储（原样收）。"""
     found: list[dict] = []
@@ -1885,7 +1933,10 @@ def _crash_candidates(now: float) -> list[dict]:
             if p.is_dir():  # WER：一个目录一份报告，里头有 Report.wer 和可能的 .dmp
                 if not label.startswith("windows_wer"):
                     continue
-                inside = [q for q in p.iterdir() if q.is_file()] if os.access(p, os.R_OK) else []
+                try:
+                    inside = [q for q in p.iterdir() if q.is_file()]
+                except OSError:
+                    inside = []  # 目录读不了：只让这一份报告出局
                 own = bool(_OWN_PROCESS.match(name.split("_", 1)[-1])) or "tavotto" in low
                 if not own and "python" in low:
                     wer = p / "Report.wer"
@@ -1912,6 +1963,7 @@ def _crash_candidates(now: float) -> list[dict]:
                 try:
                     qs = q.stat()
                 except OSError:
+                    found.append({"label": label, "name": q.name, "mtime": 0, "id": None})
                     continue
                 binary = q.suffix.lower() in (".dmp", ".mdmp", ".hdmp")
                 found.append(
@@ -1922,6 +1974,7 @@ def _crash_candidates(now: float) -> list[dict]:
                         "entry": _safe_name(entry),
                         "mtime": qs.st_mtime,
                         "size": qs.st_size,
+                        "id": FileId.of(qs),
                         "binary": binary,
                     }
                 )
@@ -1942,6 +1995,9 @@ def collect_crash_reports(
     items: list[Item] = []
     omitted = 0
     for c in _crash_candidates(now):
+        if c["id"] is None:  # 登记时 stat 失败：只让它自己出局
+            index.append({"source": c["label"], "name": c["name"], "content": "read_failed"})
+            continue
         row = {
             "source": c["label"],
             "name": c["name"],
@@ -1954,7 +2010,8 @@ def collect_crash_reports(
             omitted += c["size"]
             index.append(row)
             continue
-        raw, why = _read_stable(c["path"])
+        # 读之前的身份必须与登记时一致；上限 = 登记大小（已确认放得进剩余份额）+ 1
+        raw, why = _read_capped(c["path"], c["id"], budget - used, whole=True)
         if raw is None:
             # 读失败（读不到）与读取期间文件在变（只拿到前缀）是两回事，都不收内容，也都不是超预算
             row["content"] = why

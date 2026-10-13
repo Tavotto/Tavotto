@@ -1174,11 +1174,15 @@ class TestReadFailureIsNotOverBudget:
             "_read_head",
             lambda path, limit: None if Path(path).name in names else real(path, limit),
         )
-        real_stable = diagdetail._read_stable
+        real_capped = diagdetail._read_capped
         monkeypatch.setattr(
             diagdetail,
-            "_read_stable",
-            lambda path: (None, "read_failed") if Path(path).name in names else real_stable(path),
+            "_read_capped",
+            lambda path, reg, cap, **k: (
+                (None, "read_failed")
+                if Path(path).name in names
+                else real_capped(path, reg, cap, **k)
+            ),
         )
 
     def test_state_file_that_cannot_be_read_is_read_failed_not_skipped(self, world, monkeypatch):
@@ -1283,6 +1287,110 @@ class TestDumpChangedWhileReading:
         assert {i.path: i.data for i in items}["Tavotto.exe.6.dmp"] == b"C" * 1000
 
 
+class TestFilesChangingDuringCollection:
+    """枚举之后文件消失 / 变大：每个读盘的类别都只让那一个文件出局（标 read_failed / changed_while_reading），
+    其余文件照收，类别不变成 error.json；变大的文件绝不按「此刻的大小」读进内存。"""
+
+    def _setup(self, world):
+        proj = world["tmp"] / "projr"
+        proj.mkdir(exist_ok=True)
+        (proj / "victim.py").write_text("# victim\n", encoding="utf-8")
+        (proj / "bystander.py").write_text("# bystander\n", encoding="utf-8")
+        state = world["state"]
+        (state / "victim-state.json").write_text('{"v": 1}', encoding="utf-8")
+        (state / f"{layoutsession.CORRUPT_PREFIX}victim.json").write_text(
+            "v" * 100, encoding="utf-8"
+        )
+        (state / f"{layoutsession.CORRUPT_PREFIX}bystander.json").write_text(
+            "b" * 100, encoding="utf-8"
+        )
+        (world["crash"] / "Tavotto.exe.9.dmp").write_bytes(b"V" * 1000)
+        (world["crash"] / "Tavotto.exe.8.dmp").write_bytes(b"B" * 1000)
+        os.utime(world["crash"] / "Tavotto.exe.8.dmp", (time.time() - 5, time.time() - 5))
+        return proj
+
+    CASES = {
+        "state": ("victim-state.json", "files", "name"),
+        "corrupt": (f"{layoutsession.CORRUPT_PREFIX}victim.json", "files", "name"),
+        "source": ("victim.py", "scripts", "script"),
+        "crash": ("Tavotto.exe.9.dmp", "reports", "name"),
+    }
+
+    def _run(self, kind, proj, scrub=None):
+        scrub = scrub or diagdetail.Scrubber()
+        if kind == "state":
+            return diagdetail.collect_state(diagdetail.Sources(), diagdetail.DetailOptions(), scrub)
+        if kind == "corrupt":
+            return diagdetail.collect_corrupt_sessions(
+                diagdetail.Sources(), diagdetail.DetailOptions(corrupt_sessions=True), scrub
+            )
+        if kind == "source":
+            src = diagdetail.Sources(
+                project={"figures_dir": str(proj)}, scripts=["victim.py", "bystander.py"]
+            )
+            return diagdetail.collect_source(src, diagdetail.DetailOptions(source=True), scrub)
+        return diagdetail.collect_crash_reports(
+            diagdetail.Sources(), diagdetail.DetailOptions(crash_reports=True), scrub
+        )
+
+    @pytest.mark.parametrize("kind", ["state", "corrupt", "source", "crash"])
+    @pytest.mark.parametrize("what", ["vanish", "grow"])
+    def test_one_file_changing_only_drops_that_file(self, kind, what, world, monkeypatch):
+        proj = self._setup(world)
+        victim, key, namekey = self.CASES[kind]
+        real = diagdetail._read_capped
+        reads = []
+
+        def meddling(path, reg, cap, **k):
+            if Path(path).name == victim or Path(path).name.endswith(victim):
+                if what == "vanish":
+                    Path(path).unlink()
+                else:
+                    with Path(path).open("ab") as fh:
+                        fh.write(b"G" * 5000)  # 枚举之后变大
+            got = real(path, reg, cap, **k)
+            reads.append((Path(path).name, got[0] is not None))
+            return got
+
+        monkeypatch.setattr(diagdetail, "_read_capped", meddling)
+        items = self._run(kind, proj)
+        assert not any(i.path == "error.json" for i in items)  # 类别没有变成 error.json
+        index = json.loads(next(i for i in items if i.path == "index.json").data)
+        rows = [r for r in index[key] if victim in str(r.get(namekey))]
+        assert rows, index
+        want = "read_failed" if what == "vanish" else "changed_while_reading"
+        row = rows[0]
+        assert row.get(want) is True or row.get("content") == want, (kind, what, row)
+        assert "skipped_over_budget" not in row and "file" not in row
+        # 变大的文件内容一个字节都没进来
+        assert b"G" * 100 not in b"".join(i.data for i in items)
+        # 其余文件照收
+        others = [i for i in items if i.path != "index.json"]
+        assert others, "bystander 文件也应被收录"
+
+    def test_the_read_limit_comes_from_the_registered_size_not_the_current_one(
+        self, world, monkeypatch
+    ):
+        f = world["state"] / "big-state.json"
+        f.write_bytes(b"x" * 1000)
+        reg = diagdetail._file_id(f)
+        f.write_bytes(b"x" * 10_000_000)  # 登记之后变成 10 MB
+        sizes = []
+        real_open = Path.open
+
+        def spy(self, *a, **k):
+            fh = real_open(self, *a, **k)
+            if self.name == f.name:
+                orig = fh.read
+                fh.read = lambda n=-1: (sizes.append(n), orig(n))[1]
+            return fh
+
+        monkeypatch.setattr(Path, "open", spy)
+        raw, why = diagdetail._read_capped(f, reg, 1 << 20, whole=True)
+        assert raw is None and why == "changed_while_reading"
+        assert sizes == [] or max(sizes) <= reg.size + 1  # 没读，或者最多读 登记大小 + 1
+
+
 class TestSourceStatRaces:
     def test_an_unrelated_script_vanishing_does_not_break_the_category(self, world, monkeypatch):
         proj = world["tmp"] / "proj6"
@@ -1296,7 +1404,9 @@ class TestSourceStatRaces:
         def flaky(self, *a, **k):
             if self.name == "gone.py":
                 calls["n"] += 1
-                if calls["n"] > 1:  # 枚举时还在（is_file / 第一次 stat 过了），排序 / 读取时已经没了
+                if (
+                    calls["n"] > 1
+                ):  # 枚举时还在（is_file / 第一次 stat 过了），排序 / 读取时已经没了
                     raise FileNotFoundError(self.name)
             return real_stat(self, *a, **k)
 
