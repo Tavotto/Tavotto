@@ -307,8 +307,10 @@ keeps.
 When a Ko-fi payment completes, Ko-fi notifies the website. The supporter's email
 address in that notification is used **once**, to send a single thank-you mail
 (through the website's mail provider) with a link for choosing how to appear on
-the supporters wall. The address is not stored, and neither are the amount or
-the message. What is kept is the Ko-fi transaction id, the month, whether it was
+the supporters wall. The notification also carries the supporter's Ko-fi display
+name; it is only checked to recognise Ko-fi's own test notification and is then
+discarded. The address and that name are not stored, and neither are the amount
+or the message. What is kept is the Ko-fi transaction id, the month, whether it was
 a one-off payment or a membership (and the tier name), and, only if the
 supporter fills in the form, the display name and optional avatar they chose. A
 name or avatar appears on the page only after the supporter submitted it and the
