@@ -1022,7 +1022,12 @@ class TestSecretShapeMatrix:
         )
         out = full.obj({"author": "A. Person", "authority_variant": "var:abc", "n": 4})
         assert out == {"author": "A. Person", "authority_variant": "var:abc", "n": 4}
-        assert full.obj({"token": [1, 2, 3]}) == {"token": [1, 2, 3]}
+        assert full.obj({"token": [1, 2, 3]}) == {"token": "<redacted>"}  # 数字也是口令
+        assert full.obj({"token": [], "pin": None, "otp": False}) == {
+            "token": [],
+            "pin": None,
+            "otp": False,
+        }
 
     def test_final_zip_bytes_have_no_canary_in_any_carrier(self, client, world, monkeypatch):
         """同一批「键 × 值」格子塞进所有载体：日志文本、console 记录、overrides、会话状态 JSON、崩溃报告、源码；
@@ -1104,7 +1109,7 @@ class TestContainerSecrets:
             ('\'auth\': ["REAL_SECRET", "b"] z', "'auth': <redacted>"),
             ('token=[ "a]REAL_SECRET" , ["c"] ] after', "token=<redacted>"),  # 引号内的 ]、嵌套
             ('secret={"a":{"b":"] \\" REAL_SECRET ]"}} end', "secret=<redacted>"),  # 转义引号
-            ("token=[1,2] keep", "token=[1,2] keep"),  # 纯数字 / 布尔的容器保留
+            ("token=[1,2] keep", "token=<redacted>"),  # 数字容器也抹（按键豁免，不按值类型豁免）
             ('token={"a": true, "b": null} keep', None),  # 带引号的键 = 含字符串：保守抹
         ],
     )
@@ -1154,10 +1159,11 @@ class TestContainerSecrets:
         out = diagdetail.Scrubber().text(raw + "\nnext line")
         assert "REAL_SECRET" not in out and "<redacted>" in out and out.endswith("\nnext line"), out
 
-    def test_empty_and_numeric_tuples_are_kept(self):
+    def test_empty_and_null_tuples_are_kept_numbers_are_not(self):
         s = diagdetail.Scrubber()
         assert s.text("token=() x") == "token=() x"
-        assert s.text("token=(1, 2.5, None) x") == "token=(1, 2.5, None) x"
+        assert s.text("token=(None, False) x") == "token=(None, False) x"
+        assert "2" not in s.text("token=(1, 2.5, None) x")
 
     def test_text_around_the_segment_is_preserved(self):
         # fail-closed：含秘密键的那一行，键之前的内容保留，键之后到行尾一并抹掉（规则文档写明的牺牲）；下一行不受影响
@@ -3268,3 +3274,61 @@ class TestPemAndYamlBlocks:
 
     def test_empty_value_without_indented_children_is_kept(self):
         assert diagdetail.Scrubber().text("token:\nnext: ok") == "token:\nnext: ok"
+
+
+class TestNumbersUnderSecretKeys:
+    """秘密键下的数字一律抹；计数 / 配置类字段靠键名放行，不靠值类型放行。"""
+
+    NUMS = [
+        "123456",
+        "1234",
+        "593201",
+        "-7",
+        "+42",
+        "0",
+        "00000",
+        "3.14159",
+        "123456789012345678",
+        "1e9",
+    ]
+
+    @pytest.mark.parametrize("key", MATRIX_KEYS)
+    def test_numeric_values_are_erased_under_every_secret_key(self, key):
+        s = diagdetail.Scrubber()
+        for n in self.NUMS:
+            for line in (
+                f"{key}={n}",
+                f"{key}: {n}",
+                f'"{key}": {n}',
+                f"{key}=[{n}]",
+                f"{key}=({n}, {n})",
+                f'{{"{key}": [{n}, {n}]}}',
+            ):
+                out = s.text(line)
+                assert n not in out, (line, out)
+            assert s.obj({key: int(float(n)) if n.lstrip("+-").isdigit() else float(n)}) == {
+                key: "<redacted>"
+            }
+            assert s.obj({key: [int(float(n))]}) == {key: "<redacted>"}
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "max_tokens", "token_count", "tokens_used", "token_limit", "token_ttl", "key_size",
+            "key_bits", "password_max_len", "maxTokens", "num_tokens", "min_password_length",
+            "secret_version", "token_expires", "api_key_index", "session_timeout_seconds_max",
+        ],
+    )  # fmt: skip
+    def test_count_style_keys_are_kept(self, key):
+        s = diagdetail.Scrubber()
+        assert s.text(f"{key}=4096 x") == f"{key}=4096 x"
+        assert s.text(f"{key}: 12") == f"{key}: 12"
+        assert s.obj({key: 2048, "n": 1}) == {key: 2048, "n": 1}
+        assert s.obj({key: "abc"}) == {key: "abc"}
+
+    def test_placeholders_and_nulls_are_still_kept(self):
+        s = diagdetail.Scrubber()
+        for v in ("true", "false", "null", "None", "<redacted>", "***", "...", "<secret>"):
+            assert s.text(f"token={v} x") == f"token={v} x", v
+        assert s.text("token= ") == "token= "
+        assert s.obj({"password": ""}) == {"password": ""}

@@ -330,12 +330,10 @@ _PROVIDER_TOKEN = re.compile(
 )
 _FIRST_TOKEN = re.compile(r"[\"']?[^\s\"',;&)\]}]*[\"']?")
 _BORING_VALUE = re.compile(
-    r"""^["']?(?:|\d{1,6}|true|false|none|null|<redacted>|\*\*\*|<[^>]{1,20}>|\.\.\.)["']?$""", re.I
+    r"""^["']?(?:|true|false|none|null|<redacted>|\*\*\*|<[^>]{1,20}>|\.\.\.)["']?$""", re.I
 )
 
-_BORING_TOKENS = re.compile(
-    r"[\s\[\]{}(),:]|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|true|false|null|none", re.I
-)
+_BORING_TOKENS = re.compile(r"[\s\[\]{}(),:]|true|false|null|none", re.I)
 
 
 def _has_quote(segment: str) -> bool:
@@ -343,7 +341,7 @@ def _has_quote(segment: str) -> bool:
 
 
 def _containers_are_boring(segment: str) -> bool:
-    """括号段里只有数字 / 布尔 / null / 分隔符（没有任何字符串）：保留，如 `token=[1,2]`。"""
+    """括号段里只有布尔 / null / 分隔符（**数字也不行**：`password=[123456]` 是口令）：保留，如 `token=[]`、`token=(None)`。"""
     return _BORING_TOKENS.sub("", segment) == ""
 
 
@@ -526,8 +524,25 @@ _AUTH_KEY = re.compile(
 )  # auth / authorization / authToken；不含 author / authority
 
 
+#: 计数 / 配置类键名（去掉分隔符、转小写之后）：以这些词结尾，或以 `max` / `min` / `num` 开头——`max_tokens`、
+#: `token_count`、`tokens_used`、`token_ttl`、`key_size`、`password_max_len`。**按键名放行，不按值类型放行**：
+#: 它们不当秘密键（数字与非数字值都保留）；其余秘密键下的数字一律抹（`password=123456`、`pin=1234`、`otp: 593201`）。
+_COUNT_SUFFIXES = (
+    "count", "len", "length", "size", "limit", "max", "min", "num", "number", "index", "idx",
+    "ttl", "timeout", "expires", "expiry", "age", "version", "retries", "bits", "used",
+)  # fmt: skip
+_COUNT_PREFIXES = ("max", "min", "num")
+
+
+def is_count_key(raw: str) -> bool:
+    n = re.sub(r"[^a-z0-9]", "", raw.lower())
+    return n.endswith(_COUNT_SUFFIXES) or n.startswith(_COUNT_PREFIXES)
+
+
 def is_secret_key(key: object) -> bool:
     raw = str(key)
+    if is_count_key(raw):
+        return False
     if any(
         t.lower() in _SHORT_SECRET_TOKENS
         for t in re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", raw)
@@ -621,6 +636,8 @@ class Scrubber:
             vs = m.end()
             if vs >= len(text):
                 continue
+            if is_count_key(m.group("key")):
+                continue  # 计数 / 配置类键名（`max_tokens`、`token_count`）：不当秘密键
             if not self.source_mode:
                 yaml_end = _yaml_block_end(text, m.start(), vs)
                 if yaml_end is not None:
@@ -692,8 +709,12 @@ class Scrubber:
                         out[k] = (
                             v if _containers_are_boring(json.dumps(v, default=str)) else _REDACTED
                         )
+                    elif v is None or isinstance(v, bool) or v == "":
+                        out[k] = v
+                    elif isinstance(v, str) and _BORING_VALUE.match(v):
+                        out[k] = v  # 已有占位符 / true / null / `...`
                     else:
-                        out[k] = _REDACTED if v else v
+                        out[k] = _REDACTED  # 数字也抹
                 else:
                     out[k] = self.obj(v)
             return out
