@@ -1,0 +1,92 @@
+name: Performance Agent
+
+# 不改变现有 CI 必需 Gate。定期在独立 runner 真跑浏览器/后端；
+# 不将 Linux 浏览器结果误称 macOS 原生窗口性能。
+on:
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: Browser engine
+        required: true
+        type: choice
+        options:
+          - chromium
+          - webkit
+        default: chromium
+      repeat:
+        description: Repeat each action at least 10 times for comparison
+        required: true
+        type: number
+        default: 16
+  schedule:
+    - cron: '27 17 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: performance-agent-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+env:
+  TAVOTTO_NO_TELEMETRY: '1'
+  TAVOTTO_NO_DIAG_UPLOAD: '1'
+  TAVOTTO_NO_UPDATE_CHECK: '1'
+
+jobs:
+  browser-interaction:
+    name: Browser performance probe (not macOS native)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        id: py
+        with:
+          python-version: '3.13'
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.27.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install Tavotto & matplotlib
+        env:
+          PIP_DEFAULT_TIMEOUT: '30'
+          PIP_RETRIES: '5'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . matplotlib --only-binary=matplotlib
+      - name: Download and verify approved fonts
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+      - name: Build application UI
+        run: python scripts/build_frontend.py
+      - name: Install browser engines
+        working-directory: web
+        env:
+          PERF_BROWSER: ${{ inputs.browser || 'chromium' }}
+        run: pnpm exec playwright install --with-deps "$PERF_BROWSER"
+      - name: Run autonomous UI performance suite
+        env:
+          TAVOTTO_PYTHON: ${{ steps.py.outputs.python-path }}
+          PERF_BROWSER: ${{ inputs.browser || 'chromium' }}
+          PERF_REPEAT: ${{ inputs.repeat || '16' }}
+        run: |
+          python scripts/perf_agent.py run --browser "$PERF_BROWSER" --repeat "$PERF_REPEAT" \
+            --out web/test-results/perf-agent/run.json \
+            --summary web/test-results/perf-agent/summary.json
+      - name: Upload numeric results and failure traces
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: tavotto-performance-agent-${{ github.run_id }}
+          path: |
+            web/test-results/perf-agent/**
+            web/test-results/**/trace.zip
+            web/test-results/**/test-failed-*.png
+          if-no-files-found: warn
+          retention-days: 30
