@@ -524,19 +524,24 @@ _AUTH_KEY = re.compile(
 )  # auth / authorization / authToken；不含 author / authority
 
 
-#: 计数 / 配置类键名（去掉分隔符、转小写之后）：以这些词结尾，或以 `max` / `min` / `num` 开头——`max_tokens`、
-#: `token_count`、`tokens_used`、`token_ttl`、`key_size`、`password_max_len`。**按键名放行，不按值类型放行**：
-#: 它们不当秘密键（数字与非数字值都保留）；其余秘密键下的数字一律抹（`password=123456`、`pin=1234`、`otp: 593201`）。
-_COUNT_SUFFIXES = (
-    "count", "len", "length", "size", "limit", "max", "min", "num", "number", "index", "idx",
-    "ttl", "timeout", "expires", "expiry", "age", "version", "retries", "bits", "used",
+#: 计数 / 配置类键名：按**词**切开（`_` `-` `.` 空白与驼峰边界）之后，**最后一个词**是计数词，或**第一个词**是
+#: `max` / `min` / `num` ——`max_tokens`、`token_count`、`tokens_used`、`token_ttl`、`key_size`、`password_max_len`、
+#: `otp_age`、`secret_version`。**按键名放行，不按值类型放行**：它们不当秘密键（数字与非数字值都保留）；其余秘密键下的
+#: 数字一律抹（`password=123456`、`pin=1234`、`otp: 593201`）。
+#: 刻意**不放行**会和秘密词组成真实凭据名的词：`number` / `num`（`pin_number`、`otp_num`）、`code`（`pin_code`）、
+#: `value` / `val`（`password_value`）；按词匹配也避免 `token_admin` 因子串 `min` 被放行。
+_COUNT_WORDS = frozenset(
+    {
+        "count", "len", "length", "size", "limit", "max", "min", "index", "idx", "ttl", "timeout",
+        "expires", "expiry", "age", "version", "retries", "bits", "used",
+    }
 )  # fmt: skip
-_COUNT_PREFIXES = ("max", "min", "num")
+_COUNT_PREFIX_WORDS = frozenset({"max", "min", "num"})
 
 
 def is_count_key(raw: str) -> bool:
-    n = re.sub(r"[^a-z0-9]", "", raw.lower())
-    return n.endswith(_COUNT_SUFFIXES) or n.startswith(_COUNT_PREFIXES)
+    words = [w.lower() for w in re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", raw) if w]
+    return bool(words) and (words[-1] in _COUNT_WORDS or words[0] in _COUNT_PREFIX_WORDS)
 
 
 def is_secret_key(key: object) -> bool:

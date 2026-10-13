@@ -3326,6 +3326,17 @@ class TestNumbersUnderSecretKeys:
         assert s.obj({key: 2048, "n": 1}) == {key: 2048, "n": 1}
         assert s.obj({key: "abc"}) == {key: "abc"}
 
+    @pytest.mark.parametrize(
+        "key",
+        ["pin_number", "otp_number", "pin_code", "password_value", "password_number", "otp_num",
+         "pin_val", "secret_code", "token_admin", "passwordMin_admin", "secret_number"],
+    )  # fmt: skip
+    def test_credential_names_made_of_a_secret_word_plus_a_look_alike_suffix_are_erased(self, key):
+        s = diagdetail.Scrubber()
+        assert "1234" not in s.text(f"{key}=1234 x")
+        assert "1234" not in s.text(f"{key}: 1234")
+        assert s.obj({key: 1234}) == {key: "<redacted>"}
+
     def test_placeholders_and_nulls_are_still_kept(self):
         s = diagdetail.Scrubber()
         for v in ("true", "false", "null", "None", "<redacted>", "***", "...", "<secret>"):
