@@ -92,12 +92,11 @@ class OwnedLaunch:
     * `spec`：解释器 / 入口（脚本或 `-m`）/ argv（经运行配置引用）/ 显式 cwd / env 增量及来源 /
       stdin 通道——全在 `execspec.desktop_native_spec` 的产物里；
     * `launch_id`：回执与会话的关联键（公开，不含任何参数值）；
-    * `out_dir`：会话产物目录（空 = `data_dir()/cache/native/<会话 id>`（会话 id 含每次启动唯一的后缀））。
+    * 会话产物目录不在身份里：恒为 `data_dir()/cache/native/<会话 id>`，由所有者独占（会话 id 含每次启动唯一的后缀）。
     """
 
     spec: execspec.ExecutionSpec
     launch_id: str = ""
-    out_dir: str = ""
     preview_dpi: int = 200
     policy: OwnedPolicy = OwnedPolicy()
 
@@ -635,16 +634,12 @@ def start(
 
     # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
     session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex[:8]}"
-    if launch.out_dir:
-        out_dir = launch.out_dir
-    else:
-        cache_root = Path(config.data_path("cache", "native")).resolve()
-        # 目录名用**每次启动唯一**的会话 id：同一个 launch_id 重试不会继承上一次的 .preview-ledger 与产物
-        out_dir = str((cache_root / session_id).resolve())
-        if (
-            Path(out_dir).parent != cache_root
-        ):  # 白名单之外的最后一道：拼出来的目录必须就在缓存根下一层
-            raise RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID, reason="会话目录不在缓存根内")
+    # 输出目录由所有者独占、每次启动唯一，不接受调用方指定（共用目录会互相争用、读到别的启动的旧
+    # `.preview-ledger` 与产物；相对路径在 sidecar 和子进程里还会解析到不同位置）
+    cache_root = Path(config.data_path("cache", "native")).resolve()
+    out_dir = str((cache_root / session_id).resolve())
+    if Path(out_dir).parent != cache_root:  # 白名单之外的最后一道：必须就在缓存根下一层
+        raise RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID, reason="会话目录不在缓存根内")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     session = nativesession.NativeSession(
@@ -718,7 +713,7 @@ def start(
             scope,
             pol,
             on_output=on_output,
-            on_exit=_exit_callback(session, registry, launch.launch_id),
+            on_exit=_exit_callback(session, registry, launch.launch_id, ticket),
             gated=True,
         )
         session.owned = owner
@@ -763,22 +758,26 @@ def start(
             registry.unreserve(launch.launch_id)  # 没有所有者就没有回调
         raise
     finally:
-        if ticket is not None:
-            registry.end_start(ticket)
+        if ticket is not None and owner is None:
+            registry.end_start(ticket)  # 有所有者的由它的完成回调撤票据
         if owner is not None:
             owner.arm()  # 任何路径都不许把闸门留着（否则等待线程永远不回调）
         if relay is not None:
             relay.close()
 
 
-def _exit_callback(session, registry, launch_id: str):
-    """所有者的完成回调：先让会话落终态 / 放租约，**最后**才放 launch_id 的占位。"""
+def _exit_callback(session, registry, launch_id: str, ticket):
+    """所有者的完成回调：先让会话落终态 / 放租约，再放 launch_id 的占位，**最后**撤在途票据。
+
+    票据一直留到所有者 finished：握手 / 登记失败后清组没能在期限内确认时，`shutdown_all` 仍要看得见、
+    等得到这个还在收尾的所有者。"""
 
     def _on_exit(code, *, cancelled):
         try:
             session._on_owner_exit(code, cancelled=cancelled)  # noqa: SLF001
         finally:
             registry.unreserve(launch_id)
+            registry.end_start(ticket)
 
     return _on_exit
 

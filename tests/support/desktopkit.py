@@ -61,7 +61,6 @@ def launch_for(
     return desktopproc.OwnedLaunch(
         spec,
         launch_id=launch_id,
-        out_dir=str(tmp_path / f"out-{launch_id or name}"),
         policy=policy,
     )
 

@@ -922,9 +922,7 @@ def test_a_launch_id_that_could_escape_the_cache_root_is_refused(tmp_path, bad):
     base = dk.launch_for(tmp_path, "pass\n")
     marker = tmp_path / "ran"
     with pytest.raises(RunError) as err:
-        desktopproc.start(
-            desktopproc.OwnedLaunch(base.spec, launch_id=bad)  # out_dir 空 = 默认缓存路径
-        )
+        desktopproc.start(desktopproc.OwnedLaunch(base.spec, launch_id=bad))
     assert err.value.code == runcodes.DESKTOP_RUN_LAUNCH_INVALID
     assert not marker.exists() and envlease.snapshot()["native"] == {}
 
@@ -1213,12 +1211,54 @@ def test_a_reused_launch_id_does_not_inherit_the_previous_runs_artifacts(tmp_pat
     fig_script = (
         dk.FIGURE_HEADER + 'fig, ax = plt.subplots()\nax.plot([0, 1])\nfig.savefig("A.png")\n'
     )
-    first_launch = dk.launch_for(tmp_path / "a", fig_script, launch_id="reuse")
-    first = desktopproc.start(desktopproc.OwnedLaunch(first_launch.spec, launch_id="reuse"))
+    first = dk.start(tmp_path / "a", fig_script, launch_id="reuse")
     dk.finish(first)
     assert figcapture.published_preview_stems(str(first.out_dir)) != []
-    second_launch = dk.launch_for(tmp_path / "b", "print('no figure')\n", launch_id="reuse")
-    second = desktopproc.start(desktopproc.OwnedLaunch(second_launch.spec, launch_id="reuse"))
+    second = dk.start(tmp_path / "b", "print('no figure')\n", launch_id="reuse")
     assert second.owned.wait(30)
     assert second.out_dir != first.out_dir
     assert figcapture.published_preview_stems(str(second.out_dir)) == [], "继承了上一次的产物"
+
+
+def test_owned_launch_accepts_no_caller_chosen_output_dir(tmp_path):
+    with pytest.raises(TypeError):
+        desktopproc.OwnedLaunch(dk.launch_for(tmp_path, "pass\n").spec, out_dir=str(tmp_path))
+
+
+def test_a_failed_start_keeps_its_ticket_until_the_owner_finished(tmp_path, monkeypatch):
+    """握手 / 登记失败后清组超时：票据留着，`shutdown_all` 仍看得见并等这个还在收尾的所有者。"""
+    gate = threading.Event()
+    real = desktopproc.DesktopProcess._settle_group
+
+    def stuck(self):
+        gate.wait(60)
+        real(self)
+
+    monkeypatch.setattr(desktopproc.DesktopProcess, "_settle_group", stuck)
+    real_adopt = nativesession.REGISTRY.adopt
+    monkeypatch.setattr(
+        nativesession.REGISTRY,
+        "adopt",
+        lambda s: (_ for _ in ()).throw(RunError(runcodes.NATIVE_SESSION_CONFLICT)),
+    )
+    policy = desktopproc.OwnedPolicy(term_grace=0.3, kill_timeout=0.3, linger_grace=0.0)
+    launch = dk.launch_for(tmp_path, RUNNING_SCRIPT, launch_id="tick", policy=policy)
+    stopper = None
+    try:
+        with pytest.raises(RunError):
+            desktopproc.start(launch)  # 登记失败 -> cancel 清组超时（未确认）
+        assert len(nativesession.REGISTRY._starting) == 1, "未确认就撤了票据"  # noqa: SLF001
+        stopper = threading.Thread(target=nativesession.REGISTRY.shutdown_all, daemon=True)
+        stopper.start()
+        time.sleep(0.8)
+        assert stopper.is_alive(), "shutdown_all 没等仍在收尾的所有者"
+    finally:
+        monkeypatch.setattr(nativesession.REGISTRY, "adopt", real_adopt)
+        gate.set()
+        if stopper is not None:
+            stopper.join(60)
+    dk.wait_until(
+        lambda: nativesession.REGISTRY._starting == {},  # noqa: SLF001
+        timeout=30,
+        what="所有者完成后撤票据",
+    )

@@ -134,3 +134,6 @@ terminal 的 `stable_payload()` / `launch_context()` 逐字节不变（golden）
 | **残余**：`owner.start()` 自己抛错（线程创建失败） | 不处理更深的资源耗尽 |
 
 会话产物目录默认用每次启动唯一的会话 id（`native-owned-<launch_id>-<后缀>`），同一 `launch_id` 重试不继承上一次的 `.preview-ledger` 与产物。
+
+输出目录由所有者独占、每次启动唯一：`OwnedLaunch` 不接受调用方指定的目录（共用目录会互相争用并读到别的启动的旧产物，相对路径在 sidecar
+与子进程里还会解析到不同位置）。在途票据一直留到所有者 `finished`，由它的完成回调撤销：握手 / 登记失败后清组超时，`shutdown_all` 仍看得见并等它。
