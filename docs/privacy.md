@@ -288,6 +288,15 @@ Offering the option uploads nothing; sending does:
   from every screen and the local endpoints that serve it do not exist. Exporting
   a bundle to a file stays available. The destination is built in; a misconfigured
   `TAVOTTO_DIAG_ENDPOINT` turns the feature off rather than falling back to it.
+* **A local exit marker (never uploaded).** The desktop app keeps a tiny file,
+  `session-state.json`, in its configuration folder. It holds only the app version,
+  the start time, whether the last session ended normally (`running` / `clean`) and,
+  if the rendering engine stopped unexpectedly, which of three kinds of stop it was
+  (killed by a signal, non-zero exit, zero exit). It contains no project, path, script
+  name, user identifier or error text; it is not part of any diagnostics bundle, is
+  never uploaded and is not telemetry. It is read once at start-up so that, after an
+  abnormal exit, the app can offer *Send problem report* — which still sends only if
+  you open the dialog and press *Send*. Deleting the file only means one fewer prompt.
 * **Rate limits.** The receiving service limits each address to a few reports per
   hour and caps the total accepted per day; a send that hits a limit fails with a
   message and can be retried later.

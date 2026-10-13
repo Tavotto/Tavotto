@@ -85,6 +85,11 @@ export interface PrepContext {
    * `null` = 没有可用的表单（没有 argparse 证据 / 表单关闭），不判
    */
   missingArgs: number | null
+  /**
+   * 壳已确认本机引擎退出了（`exitNoticeStore.engineExit`）：此时「连接断了，正在重连…」是假话——没有谁在重连，
+   * 要用户点通知轨上的「重新启动」。其它原因的断线（网络暂断）这一位是 false，提示保持原样。
+   */
+  engineExited?: boolean
 }
 
 const has = (report: PreparationReport, kind: PreparationActionKind) =>
@@ -152,10 +157,10 @@ export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
   if (entry.failure) return view('check_failed', 'checkFailed', v, { kind: 'reopen', label: 'retry' }, { tone: 'bad' })
   const report = entry.report
   if (!report) {
-    if (entry.connection === 'lost') return offline(v)
+    if (entry.connection === 'lost') return offline(v, ctx.engineExited)
     return view('checking', 'checking', v, null, { tone: 'busy', slot: 'progress' })
   }
-  if (entry.connection === 'lost') return offline(v)
+  if (entry.connection === 'lost') return offline(v, ctx.engineExited)
   let base = fromReport(report, entry, ctx, script)
   if (entry.rejection) base = { ...base, state: 'rejected', sentence: { key: 'rejected', values: v } }
   else if (entry.restarted && report.phase === 'ready_to_run') {
@@ -181,8 +186,8 @@ export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
 const projectEnvDeferred = (report: PreparationReport): boolean =>
   report.checks.some((c) => c.id === 'dependencies' && c.detail?.deferred === 'project_environment')
 
-const offline = (v: Record<string, unknown>) =>
-  view('offline', 'offline', v, null, { tone: 'mute', slot: 'progress', step: 1 })
+const offline = (v: Record<string, unknown>, engineExited?: boolean) =>
+  view('offline', engineExited ? 'engineStopped' : 'offline', v, null, { tone: 'mute', slot: 'progress', step: 1 })
 
 function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContext, script: string): PrepView {
   const v = { script }

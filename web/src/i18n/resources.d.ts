@@ -4797,6 +4797,16 @@ export default interface Resources {
       "unlock": "解锁",
       "unsupportedTip": "{{title}}暂不支持：{{reason}}"
     },
+    "exitNotice": {
+      "engine": {
+        "note": "重启后可以发送问题反馈",
+        "restart": "重新启动",
+        "text": "渲染服务意外退出了"
+      },
+      "previous": {
+        "text": "上次 Tavotto 没有正常退出"
+      }
+    },
     "fastEdit": {
       "addToCanvas": "添加到画布",
       "added": "{{name}} 已加入画布",
@@ -5131,6 +5141,7 @@ export default interface Resources {
         "dialogFile": "脚本会弹窗选文件，这里弹不出来，请把文件路径写进脚本",
         "editOpening": "正在打开编辑…",
         "editReady": "已进入编辑",
+        "engineStopped": "渲染服务已停止",
         "envChoice": "用项目里自带的那套运行？",
         "envChoiceOpen": "要先选用哪一套运行",
         "envLocked": "设置里固定的 Python 缺组件",
