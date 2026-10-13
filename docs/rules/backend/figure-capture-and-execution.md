@@ -358,6 +358,14 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。钩子输出没有换行结尾时会和 worker 第一条信封粘成一行：读线程从左到右找能让后缀整体通过信封判据（`protocol_version` + 字符串 `request_id`，键序不固定）的 `{`，前缀转日志、后缀交回（最多试 16 个 `{`）；只做解析侧、不改 worker：粘连发生在 Python 启动之前，解析侧一处覆盖所有包装启动，worker 无需知道自己被包装。**Windows 本期不做 Conda 包装**（`detect()` 在 nt 上返回 None、裸起，与 P09 之前一致）：没有真机验证，
   conda.exe 经中间 shell 起 Python 时回执的 pid 核验也没有可靠依据；留待 Windows 真机验证后再开。成功记录的依据必须完整可核验
   （条数超限 / 观察被截断 / 有输入没算出摘要都不记录，并清掉旧记录）；登记里 `launches` 逐条深校验，坏的丢弃。
+- **预检探针与 worker 同一个启动上下文**（AC-11）：需要激活才 import 得到东西的解释器，裸起预检会误报缺依赖 / `explicit_python_unusable`。
+  `launcher.run_probe(argv, python, …)` 是 `subprocess.run` 的替身：`detect(python)` 判定需要就经 `conda run --no-capture-output` 起、
+  自成进程组（超时整棵树收掉）、stdout 用 `json_tail` 剥掉钩子横幅；其余情况原样 `subprocess.run`。已改的预检点：`pool._has_matplotlib`、
+  `projectenv.probe_environment`、`depplan` 目标事实、`deprepair.probe_imports`（装后导入核验）、`deprepair._run`（只读 pip / 盘点）、
+  `runtime.probe_packages` 的模块版本盘点（由 app 注入 `runner=launcher.run_probe`，因为 launcher 依赖 runtime、不能反过来 import）。**不改的**及理由：`discover.analyze_in_interpreter`（纯 AST 静态分析，不 import 用户包，只需要解释器版本）、
+  `deprepair._run_pip` / 包查找 / `managedenv._run`（只作用于 Tavotto 自己的受管环境，不是用户 Conda 环境）、`bootstrap._probe`（问系统 Python
+  有没有 `import venv`，不是 worker 的解释器）、`runspec.probe_interpreter` 与 native 会话（`tavotto run` 由用户自己的终端 / 桌面拥有进程的
+  native 适配器负责，不在本期）、`privatepython*`（Tavotto 自己的私有 runtime）。
 - **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 按 ppid 建出的进程树**从叶子往上**终止：先杀最深一层、等它的父进程把它回收掉（pid 消失，不是变成僵尸），再往上，最后杀 wrapper 由我们 `wait`——对整组同时 SIGKILL 会让 shell 先死、Python 成孤儿，PID 1 不收尸的容器里永远是僵尸；`wait()` 确认组内无残留，僵尸只有父进程是 PID 1（无人能收）时才不算残留，且如实记进 `unreaped` 并告警，不伪装成干净），所以取消 / 关停 / 看门狗超时
   留不下仍在跑的用户 Python；环境占用租约仍是池里的会话，`kill→reap` 之后才释放。包装 worker 只走 Python 池（`WorkerdWorker` 抛
   `WorkerdUnavailable` 回退）——workerd 的杀进程语义不认进程组。`nativesession` 的终止语义未改。

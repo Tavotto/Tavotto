@@ -1326,8 +1326,9 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
         # 症状是桌面版「渲染环境不可用」而同一解释器在终端里探测秒过）
-        probe = subprocess.run(
+        probe = launcher_mod.run_probe(
             [python, *args, "-c", "import matplotlib"],
+            python,
             capture_output=True,
             timeout=30,
             stdin=subprocess.DEVNULL,

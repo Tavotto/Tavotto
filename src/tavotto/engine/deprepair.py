@@ -54,6 +54,7 @@ from . import (
     envlease,
     execspec,
     importscan,
+    launcher,
     logsafe,
     managedenv,
     pool,
@@ -2264,8 +2265,9 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     问一句不许把 .pyc 写回它的安装目录。装 / 卸走 `_run_pip`，不走这里。"""
     argv = [argv[0], *runtime.probe_args(), *argv[1:]]
     try:
-        proc = subprocess.run(
+        proc = launcher.run_probe(
             argv,
+            argv[0],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -5400,8 +5402,9 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
-        proc = subprocess.run(
+        proc = launcher.run_probe(
             [str(python), *runtime.probe_args(), "-c", _IMPORTS_PROBE_SRC, *names],
+            python,
             capture_output=True,
             text=True,
             encoding="utf-8",

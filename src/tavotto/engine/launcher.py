@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -180,6 +181,69 @@ def detect(python: str | os.PathLike) -> CondaLauncher | None:
     if exe is None:
         return None
     return CondaLauncher(conda_exe=exe, prefix=prefix)
+
+
+# ---------------------------------------------------------------------------
+# 预检探针：与 worker 同一个启动上下文
+# ---------------------------------------------------------------------------
+def json_tail(text: str) -> str:
+    """包装启动的探针 stdout 里，`activate.d` 钩子的横幅（可能没有换行、和结果粘成一行）后面跟着探针的 JSON 对象：
+    从左到右试每个 `{`，第一个能让后缀整体解析成 JSON 对象的位置就是起点，返回这段后缀。找不到 / 本来就是整段 JSON → 原样返回。
+    探针只在最后写一个 JSON 对象，所以不会误吞结果；最多试 16 个 `{`。"""
+    stripped = text.strip()
+    try:
+        if isinstance(json.loads(stripped), dict):
+            return text
+    except ValueError:
+        pass
+    tried = 0
+    start = text.find("{")
+    while start >= 0 and tried < 16:
+        try:
+            if isinstance(json.loads(text[start:].strip()), dict):
+                return text[start:]
+        except ValueError:
+            pass
+        tried += 1
+        start = text.find("{", start + 1)
+    return text
+
+
+def run_probe(argv, python, *, timeout=None, **kwargs):
+    """`subprocess.run` 的替身，给「要在 worker 将要使用的那个解释器里跑一小段探针」的预检用（`_has_matplotlib`、
+    `projectenv.probe_environment`、依赖计划的目标事实、导入核验、版本盘点……）。
+
+    需要 Conda 激活的解释器（`detect(python)` 判定，与 worker 同一个判据）：经 `conda run --no-capture-output --prefix …`
+    包装起，自成进程组——超时 / 异常整棵树收掉；stdout 里钩子的横幅用 `json_tail` 剥掉（探针的结果是一个 JSON 对象）。
+    其余（内置 runtime、受管 venv、Windows、没找到 conda、开关关掉）：原样 `subprocess.run`，行为一字不变。
+    只改「怎么起」，不改探针的内容、超时、env、cwd。"""
+    lau = detect(python)
+    if lau is None:
+        kwargs.pop("creationflags", None)  # 探针一律是 GUI 拥有的隐藏子进程
+        return subprocess.run(
+            argv, timeout=timeout, creationflags=runtime.CREATE_NO_WINDOW, **kwargs
+        )
+    kw = dict(kwargs)
+    if kw.pop("capture_output", False):
+        kw["stdout"] = subprocess.PIPE
+        kw["stderr"] = subprocess.PIPE
+    cmd = lau.wrap(list(argv))
+    proc = GroupPopen(cmd, **kw)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        proc.wait()
+        raise subprocess.TimeoutExpired(cmd, timeout) from None
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
+    proc.wait()  # 确认组内没有残留
+    if isinstance(out, str):
+        out = json_tail(out)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 # ---------------------------------------------------------------------------

@@ -58,7 +58,7 @@ import threading
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
-from . import config, depresolve, distmeta, importscan, projectenv, runtime
+from . import config, depresolve, distmeta, importscan, launcher, projectenv, runtime
 
 LOG = logging.getLogger("tavotto.depplan")
 
@@ -496,8 +496,9 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
-        proc = subprocess.run(
+        proc = launcher.run_probe(
             [str(python), *runtime.probe_args(), "-c", _FACTS_SRC],
+            python,
             capture_output=True,
             text=True,
             encoding="utf-8",

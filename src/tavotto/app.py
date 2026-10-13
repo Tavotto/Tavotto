@@ -85,6 +85,7 @@ from .engine import (
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
     launchctx as engine_launchctx,
+    launcher as engine_launcher,
     layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
@@ -6710,7 +6711,11 @@ def api_engine_environment():
         )
         py = st.get("python")
         st["imports"] = (
-            engine_runtime.probe_packages(py, names, bundled=bool(st.get("bundled"))) if py else {}
+            engine_runtime.probe_packages(
+                py, names, bundled=bool(st.get("bundled")), runner=engine_launcher.run_probe
+            )
+            if py
+            else {}
         )
     st["project"] = _project_environment_state()
     resp = jsonify(st)

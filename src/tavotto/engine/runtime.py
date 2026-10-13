@@ -470,7 +470,7 @@ def repair_hint() -> str:
 # 实测
 # ---------------------------------------------------------------------------
 def probe_packages(
-    python: str, names: list[str] | None = None, *, bundled: bool = False
+    python: str, names: list[str] | None = None, *, bundled: bool = False, runner=None
 ) -> dict[str, str | None]:
     """在指定解释器里 import 一遍并报版本；import 不到的回 None。
 
@@ -494,7 +494,9 @@ def probe_packages(
         "sys.stdout.write(json.dumps(out))\n"
     )
     try:
-        proc = subprocess.run(
+        # `runner`（`launcher.run_probe`）由调用方注入：launcher 依赖本模块，本模块不能反过来 import 它
+        call = (lambda argv, **kw: runner(argv, python, **kw)) if runner else subprocess.run
+        proc = call(
             [python, *probe_args(bundled=bundled), "-c", expr],
             capture_output=True,
             text=True,

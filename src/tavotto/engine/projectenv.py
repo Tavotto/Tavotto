@@ -73,7 +73,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from . import config, runtime, scanbudget
+from . import config, launcher, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.projectenv")
 
@@ -889,8 +889,9 @@ def probe_environment(
         spawned = (
             True  # 从这里起算「可能已经起了子进程」：spawn 本身失败的 OSError 在下面单独改回 False
         )
-        proc = subprocess.run(
+        proc = launcher.run_probe(
             argv,
+            python,
             capture_output=True,
             text=True,
             encoding="utf-8",

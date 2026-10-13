@@ -74,6 +74,9 @@ if not live:
 with open(os.environ["FAKE_CONDA_LOG"], "a", encoding="utf-8") as fh:
     fh.write(json.dumps({{"opts": opts, "cmd": cmd}}) + "\n")
 env = dict(os.environ, CONDA_PREFIX=prefix, FAKE_SDK_LICENSE="{license}")
+site = os.path.join(prefix, "activated_site")  # 激活才会加进 PYTHONPATH 的目录（activate.d 设置变量的效果）
+if os.path.isdir(site):
+    env["PYTHONPATH"] = site + os.pathsep + env.get("PYTHONPATH", "")
 if cwd:
     os.chdir(cwd)
 banner = os.environ.get("FAKE_CONDA_BANNER")
@@ -334,7 +337,8 @@ def test_activation_dependent_script_runs_only_through_the_launcher_and_shutdown
     worker, resp = _pool.build("fig.py", str(proj), "__main__")
     try:
         assert worker.launcher is not None and worker.launcher.prefix == str(prefix)
-        (call,) = conda_calls(log)
+        # 预检（`_has_matplotlib`）也经 conda run 起；worker 自己那一次是命令里带 worker.py 的
+        (call,) = [c for c in conda_calls(log) if any(a.endswith("worker.py") for a in c["cmd"])]
         assert call["opts"] == ["--no-capture-output", "--prefix", str(prefix)]
         assert call["cmd"][0] == str(prefix / "bin" / "python")  # wrapper 之后仍是用户的解释器路径
         assert runs(counter)[0]["conda_prefix"] == str(prefix)
@@ -1304,3 +1308,150 @@ def test_real_conda_unterminated_activate_d_printf_does_not_break_the_protocol(
             worker.force_kill()
         _pool.shutdown_all(wait=True)
         _pool.reset_worker_python()
+
+
+# ---------------------------------------------------------------------------
+# 预检探针与 worker 同一个启动上下文（#975 r4255384823）
+# ---------------------------------------------------------------------------
+SHIM_MATPLOTLIB = """\
+import os, sys
+if not os.environ.get("FAKE_SDK_LICENSE"):
+    raise ImportError("matplotlib 只有激活之后才能 import（模拟 activate.d 设置的 DLL / 变量）")
+_here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path[:] = [p for p in sys.path if os.path.abspath(p) != _here]
+del sys.modules[__name__]
+import matplotlib as _real  # noqa: E402 — 此刻找到的是真的那个
+
+sys.modules[__name__] = _real
+"""
+
+
+@pytest.fixture
+def activation_only_env(tmp_path, monkeypatch):
+    """模拟 conda 环境：`matplotlib` 与 `vendor_sdk` 只有经 conda 激活才 import 得到（裸起解释器会 ImportError）。"""
+    prefix, conda, log = make_fake_conda(tmp_path, WORKER_PY or sys.executable)
+    bare = prefix / "bare_site"
+    (bare / "matplotlib").mkdir(parents=True)
+    (bare / "matplotlib" / "__init__.py").write_text(SHIM_MATPLOTLIB, encoding="utf-8")
+    site = prefix / "activated_site"
+    site.mkdir()
+    (site / "vendor_sdk.py").write_text("VALUE = 42\n", encoding="utf-8")
+    py = prefix / "bin" / "python"
+    py.write_text(
+        f'#!/bin/sh\nexport PYTHONPATH="{bare}${{PYTHONPATH:+:$PYTHONPATH}}"\nexec "{WORKER_PY or sys.executable}" "$@"\n',
+        encoding="utf-8",
+    )
+    os.chmod(py, 0o755)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    return str(py), prefix, log
+
+
+@needs_worker
+def test_preflight_probes_run_in_the_same_activation_context_as_the_worker(
+    activation_only_env, tmp_path, monkeypatch
+):
+    from tavotto.engine import deprepair, projectenv
+
+    py, prefix, log = activation_only_env
+    # 负对照：关掉 Conda 激活，同一个解释器裸起——预检全部失败（这正是 AC-11 要消除的假阴性）
+    with monkeypatch.context() as m:
+        m.setenv(launcher.ENV_DISABLE, "0")
+        assert _pool._has_matplotlib(py) is False
+        bare = projectenv.probe_environment(py)
+        assert bare["ok"] is False
+        assert deprepair.probe_imports(py, ("vendor_sdk",))["vendor_sdk"]  # 非空 = 错误文本
+    assert conda_calls(log) == []
+    # 经 conda 激活：同一个解释器的预检全部通过
+    assert _pool._has_matplotlib(py) is True
+    probed = projectenv.probe_environment(py)
+    assert probed["ok"] is True and probed["matplotlib_version"], probed
+    assert deprepair.probe_imports(py, ("vendor_sdk",)) == {"vendor_sdk": ""}
+    assert len(conda_calls(log)) >= 3  # 三个预检都是经 conda run 起的
+
+
+@needs_worker
+def test_selecting_an_activation_only_interpreter_and_drawing_end_to_end(
+    activation_only_env, tmp_path, monkeypatch
+):
+    """显式选中这个解释器：选择（`_has_matplotlib`）不再误报 `explicit_python_unusable`，一路到 worker 出图。"""
+    py, prefix, log = activation_only_env
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
+    _pool.reset_worker_python()
+    worker = None
+    try:
+        with monkeypatch.context() as m:  # 负对照：不激活 → 选择阶段就报显式解释器不可用
+            m.setenv(launcher.ENV_DISABLE, "0")
+            with pytest.raises(_pool.WorkerError) as bad:
+                _pool.select_worker_python()
+            assert bad.value.code == "explicit_python_unusable"
+        _pool.reset_worker_python()
+        worker, resp = _pool.build("fig.py", str(proj), "__main__")
+        assert worker.launcher is not None and resp["runtime"]["prefix"]
+    finally:
+        if worker is not None:
+            worker.force_kill()
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+
+
+@needs_worker
+def test_probe_banner_and_timeout_are_handled_for_wrapped_probes(activation_only_env, monkeypatch):
+    py, prefix, log = activation_only_env
+    monkeypatch.setenv("FAKE_CONDA_BANNER", "initializing vendor SDK...")
+    monkeypatch.setenv("FAKE_CONDA_BANNER_NO_NEWLINE", "1")
+    from tavotto.engine import deprepair
+
+    # 横幅（没有换行结尾）粘在探针的 JSON 前面：照样解析出结果
+    assert deprepair.probe_imports(py, ("vendor_sdk",)) == {"vendor_sdk": ""}
+    # 超时：整组收掉，不留探针里的 Python
+    pidfile = prefix.parent / "probe.pid"
+    started = time.time()
+    with pytest.raises(subprocess.TimeoutExpired):
+        launcher.run_probe(
+            [py, "-c", CHILD, str(pidfile)],
+            py,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    assert time.time() - started < 30
+    assert wait_dead(int(pidfile.read_text()))
+
+
+def test_json_tail_strips_only_what_precedes_the_result_object():
+    assert launcher.json_tail('{"a": 1}') == '{"a": 1}'
+    assert launcher.json_tail('banner {"a": {"b": 2}}') == '{"a": {"b": 2}}'
+    assert launcher.json_tail("banner only") == "banner only"
+    assert launcher.json_tail('x {oops {"a": 1}') == '{"a": 1}'
+
+
+@needs_real_conda
+def test_real_conda_preflight_sees_variables_set_by_activate_d(tmp_path, monkeypatch):
+    """真 conda：activate.d 设置 PYTHONPATH 之后才 import 得到的模块——预检（经 conda run）能看见，裸起看不见。"""
+    from tavotto.engine import deprepair
+
+    hook_dir = Path(REAL_PREFIX) / "etc" / "conda" / "activate.d"
+    hook_dir.mkdir(parents=True, exist_ok=True)
+    for stale in hook_dir.glob("p09_*.sh"):
+        stale.unlink()
+    site = tmp_path / "vendor_site"
+    site.mkdir()
+    (site / "vendor_sdk_p09.py").write_text("VALUE = 7\n", encoding="utf-8")
+    hook = hook_dir / "p09_pythonpath_test.sh"
+    hook.write_text(f'export PYTHONPATH="{site}${{PYTHONPATH:+:$PYTHONPATH}}"\n', encoding="utf-8")
+    real_py = str(Path(REAL_PREFIX) / "bin" / "python")
+    try:
+        assert deprepair.probe_imports(real_py, ("vendor_sdk_p09",)) == {"vendor_sdk_p09": ""}
+        with monkeypatch.context() as m:
+            m.setenv(launcher.ENV_DISABLE, "0")
+            assert deprepair.probe_imports(real_py, ("vendor_sdk_p09",))["vendor_sdk_p09"]
+    finally:
+        hook.unlink(missing_ok=True)
