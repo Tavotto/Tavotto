@@ -420,9 +420,9 @@ describe('多画布数据层', () => {
     expect(JSON.parse(diskSlots.get('d_x')!).updatedAt).toBe(100)
   })
 
-  it('本机副本不比磁盘新 = 陈旧残留，直接清掉，不打扰用户', async () => {
+  it('本机副本内容相同 = 冗余残留，直接清掉，不打扰用户', async () => {
     const disk = { ...emptyProject(), updatedAt: 300 }
-    const stale = { ...emptyProject(), updatedAt: 300 }
+    const stale = { ...disk, updatedAt: 300 }
     diskSlots.set('d_y', JSON.stringify(disk))
     localStorage.setItem('tavotto.autosave.d_y', JSON.stringify(stale))
     const { doc, notice } = await readAutosaveDoc('d_y')

@@ -24,6 +24,7 @@ import {
   type ProjectFileBinding,
 } from '@/lib/projectFile'
 import { currentProjectId } from '@/lib/session'
+import { sameRules } from '@/lib/specBinding'
 import { msg, t, type UiMessage } from '@/i18n'
 import { newId } from '@/lib/id'
 import { boundedCount, captureTelemetry, classifyEditKind } from '@/lib/telemetry'
@@ -1817,6 +1818,14 @@ function readLocalSlot(id: string): ProjectDocument | null {
   }
 }
 
+type LocalRecoveryKind = 'local_newer' | 'local_distinct'
+
+/** 内容不同才有恢复价值；时间戳不能证明另一个快照已经安全落盘（#646）。 */
+function localRecoveryKind(local: ProjectDocument | null, diskDoc: ProjectDocument): LocalRecoveryKind | null {
+  if (!local || sameRules({ ...local, updatedAt: 0 }, { ...diskDoc, updatedAt: 0 })) return null
+  return local.updatedAt > diskDoc.updatedAt ? 'local_newer' : 'local_distinct'
+}
+
 /** 载入一份文档的结果；`notice` 是需要用户裁决的那件事（没有则 null） */
 export interface LoadedDoc {
   doc: ProjectDocument | null
@@ -1843,8 +1852,8 @@ export interface ProbeResult {
   /** 可以打开的那份：磁盘优先；磁盘 missing / unavailable / invalid 时是本机副本 */
   doc: ProjectDocument | null
   from: 'disk' | 'local' | null
-  /** 待裁决（不在探测里挪动任何键）：本机比磁盘新 / 上一轮没裁决完的恢复副本 */
-  pendingRecovery: 'local_newer' | 'recovery_slot' | null
+  /** 待裁决（不在探测里挪键）：不同内容的本机副本 / 上一轮没裁决完的恢复副本 */
+  pendingRecovery: LocalRecoveryKind | 'recovery_slot' | null
   schema?: number
   /**
    * 本机副本（崩溃兜底 / 恢复槽位），**与磁盘探测的结局分开放**：磁盘 `unavailable` / `invalid` 时 `kind` 照实是那个，
@@ -1859,8 +1868,8 @@ export interface ProbeResult {
  * 读文档快照（**只读**）：磁盘是主文档，本机副本是**待裁决的恢复候选**，不再静默取胜。
  *
  * 三条规则（`acceptProbe` 落账时执行）：
- * 1. 磁盘上有 → 打开磁盘那份。本机副本比它新 = 上次写盘没成，挪进恢复槽位
- *    交给用户；不比它新 = 陈旧残留，直接删（"旧 autosave 不提示"）。
+ * 1. 磁盘上有 → 打开磁盘那份。本机副本内容不同则挪进恢复槽位交给用户，
+ *    不用时间戳猜新旧；内容相同（忽略 updatedAt、JSON 键序）才清冗余副本。
  * 2. 磁盘上没有（404）→ 本机那份就是这个文档本身，直接用，没什么可裁决的。
  * 3. 磁盘 schema 比本构建新 → **不打开**，也不许写。旧构建对新字段的语义一无
  *    所知，"尽力打开"等于用旧规则重写用户的新数据。
@@ -1886,9 +1895,7 @@ export async function probeDocument(id: string, pj: string | null): Promise<Prob
       // 上一轮没裁决完的恢复副本优先：它一直有效，直到用户处置它
       const pendingRecovery = pending
         ? 'recovery_slot'
-        : local && local.updatedAt > diskDoc.updatedAt
-          ? 'local_newer'
-          : null
+        : localRecoveryKind(local, diskDoc)
       return { id, kind: 'found', disk, doc: diskDoc, from: 'disk', pendingRecovery, local: local ?? pending }
     }
     // 磁盘上有字节但本构建认不出：当成读不了，有本机副本就用它（与旧 `fetchAutosave` 抛错同一条路）
@@ -1922,9 +1929,10 @@ export function acceptProbe(p: ProbeResult, _pj: string | null, token?: RestoreT
     disk.rememberRevision(id, { revision: p.disk.revision })
     // 读到什么就以什么为基线：之后本标签页的写盘都从这一版往前推进
     if (typeof diskDoc.updatedAt === 'number') disk.setBaseline(id, diskDoc.updatedAt)
-    const candidate = pending ?? (local && local.updatedAt > diskDoc.updatedAt ? local : null)
-    if (local && !pending && local.updatedAt <= diskDoc.updatedAt) {
-      // 陈旧残留：磁盘上那份更新或一样，本机这份没有任何可恢复的东西
+    const localKind = localRecoveryKind(local, diskDoc)
+    const candidate = pending ?? (localKind ? local : null)
+    if (local && !pending && !localKind) {
+      // 内容已经在磁盘中；仅 updatedAt 或 JSON 键序不同，没有要恢复的编辑。
       try {
         localStorage.removeItem(slotKey(id))
       } catch {

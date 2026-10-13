@@ -18,6 +18,8 @@ import {
   hasUnsavedWork,
   overwriteDisk,
   onDocumentPersisted,
+  probeDocument,
+  acceptProbe,
   readAutosaveDoc,
   recoverLocalCopy,
   reloadFromDisk,
@@ -533,6 +535,97 @@ describe('外部修改冲突（R-08）', () => {
 })
 
 describe('崩溃恢复', () => {
+  it.each([100, 99])('重启时保留时间戳 %s 的不同稿，明确恢复并保存前不覆盖磁盘', async (updatedAt) => {
+    const main = seeded(100, 'main', 1)
+    const local = { ...main, updatedAt, project: { ...main.project, name: 'unsaved edit' } }
+    const mainBytes = JSON.stringify(main)
+    disk.set('d_clock_restart', mainBytes)
+    localStorage.setItem(slotKey('d_clock_restart'), JSON.stringify(local))
+    localStorage.setItem('tavotto.currentDoc', 'd_clock_restart')
+
+    expect(await restoreSession()).toBe(true)
+    expect(s().projectMeta.name).toBe('main')
+    expect(s().docNotice).toMatchObject({ kind: 'recovery', docId: 'd_clock_restart' })
+    expect(JSON.parse(localStorage.getItem(recoveryKey('d_clock_restart'))!).project.name).toBe('unsaved edit')
+    expect(disk.get('d_clock_restart')).toBe(mainBytes)
+    expect(puts).toHaveLength(0)
+
+    expect(recoverLocalCopy()).toBe(true)
+    expect(s().projectMeta.name).toBe('unsaved edit')
+    expect(s().saveState).toBe('dirty')
+    expect(disk.get('d_clock_restart')).toBe(mainBytes)
+    expect(puts).toHaveLength(0)
+    expect(await saveNow()).toBe('saved')
+    expect(JSON.parse(disk.get('d_clock_restart')!).project.name).toBe('unsaved edit')
+  })
+
+  it('非活动画布的不同内容也保留为恢复候选，不只比较当前画布', async () => {
+    const main = seeded(100, 'main', 1)
+    main.canvases.push({ ...main.canvases[0], id: 'c_inactive', name: 'Other canvas', objects: [text('other', 'before')] })
+    const local = structuredClone(main)
+    local.updatedAt = 99
+    ;(local.canvases[1].objects[0] as TextObject).text = 'unsaved inactive edit'
+    disk.set('d_inactive', JSON.stringify(main))
+    localStorage.setItem(slotKey('d_inactive'), JSON.stringify(local))
+    const { doc, notice } = await readAutosaveDoc('d_inactive')
+    expect(notice).toMatchObject({ kind: 'recovery' })
+    expect((doc!.canvases[1].objects[0] as TextObject).text).toBe('before')
+    const kept = JSON.parse(localStorage.getItem(recoveryKey('d_inactive'))!)
+    expect(kept.canvases[1].objects[0].text).toBe('unsaved inactive edit')
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each([100, 99])('不同内容的副本在相同或回拨时间戳 %s 下仍可恢复，主文档保持磁盘版', async (updatedAt) => {
+    const main = seeded(100, 'main', 1)
+    const local = { ...main, updatedAt, project: { ...main.project, name: 'unsaved edit' } }
+    const mainBytes = JSON.stringify(main)
+    const localBytes = JSON.stringify(local)
+    disk.set('d_clock', mainBytes)
+    localStorage.setItem(slotKey('d_clock'), localBytes)
+
+    const probe = await probeDocument('d_clock', null)
+    expect(probe).toMatchObject({ from: 'disk', pendingRecovery: 'local_distinct' })
+    expect(probe.doc?.project.name).toBe('main')
+    expect(localStorage.getItem(slotKey('d_clock'))).toBe(localBytes)
+    expect(localStorage.getItem(recoveryKey('d_clock'))).toBeNull()
+    expect(puts).toHaveLength(0)
+
+    const notice = acceptProbe(probe, null)
+    expect(notice).toMatchObject({ kind: 'recovery', docId: 'd_clock', summary: { name: 'unsaved edit' } })
+    expect(JSON.parse(localStorage.getItem(recoveryKey('d_clock'))!).project.name).toBe('unsaved edit')
+    expect(disk.get('d_clock')).toBe(mainBytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it('探测后出现的同时间戳不同副本，接受时重新判定并保留', async () => {
+    const main = seeded(100, 'main', 1)
+    disk.set('d_late_copy', JSON.stringify(main))
+    localStorage.setItem(slotKey('d_late_copy'), JSON.stringify(main))
+    const probe = await probeDocument('d_late_copy', null)
+    expect(probe.pendingRecovery).toBeNull()
+    localStorage.setItem(slotKey('d_late_copy'), JSON.stringify({
+      ...main, project: { ...main.project, name: 'late unsaved edit' },
+    }))
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    expect(JSON.parse(localStorage.getItem(recoveryKey('d_late_copy'))!).project.name).toBe('late unsaved edit')
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each([99, 100, 101])('只有更新时间戳 %s 或 JSON 键序不同，没有恢复内容', async (updatedAt) => {
+    const main = seeded(100, 'main', 1)
+    disk.set('d_same_copy', JSON.stringify(main))
+    localStorage.setItem(slotKey('d_same_copy'), JSON.stringify({ ...main, updatedAt }, (_key, value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+      return Object.fromEntries(Object.entries(value).reverse())
+    }))
+    const probe = await probeDocument('d_same_copy', null)
+    expect(probe.pendingRecovery).toBeNull()
+    expect(acceptProbe(probe, null)).toBeNull()
+    expect(localStorage.getItem(slotKey('d_same_copy'))).toBeNull()
+    expect(localStorage.getItem(recoveryKey('d_same_copy'))).toBeNull()
+    expect(puts).toHaveLength(0)
+  })
+
   it('本机副本比磁盘新 → 打开主文档 + 提供恢复；主文档一个字节不动', async () => {
     disk.set('d_rec', JSON.stringify(seeded(100, 'main', 2)))
     localStorage.setItem(slotKey('d_rec'), JSON.stringify(seeded(500, 'crashed', 5)))
