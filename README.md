@@ -819,10 +819,10 @@ pays for, and the supporters wall, are on [tavotto.com/support](https://www.tavo
 ### Sponsors
 
 Supporters on the $50/month **Sponsor** tier on [Ko-fi](https://ko-fi.com/tavotto/tiers)
-appear here with their avatar, for as long as they sponsor.
+(or the 赞助人 plan on [爱发电](https://afdian.com/a/tavotto)) appear here with their
+avatar, for as long as they sponsor. The image updates on its own.
 
-<!-- sponsors: one <a><img width="48"></a> per sponsor, added by the maintainer after approval -->
-<p><em>No sponsors yet. The first one goes here.</em></p>
+<a href="https://www.tavotto.com/support/"><img src="https://www.tavotto.com/api/supporters/sponsors" alt="Tavotto sponsors" width="720"></a>
 
 ## License
 
