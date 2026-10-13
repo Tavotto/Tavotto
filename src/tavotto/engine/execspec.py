@@ -33,6 +33,19 @@ cwd、argv、env——继续散着拼，就是把同一个语义写第 N 份。�
   场合只准用这一档；`target` 是**项目相对路径（POSIX 分隔）**，这是它
   能跨机器稳定的前提。
 
+## 进程所有权（P06，ADR 0125）
+
+native 档有**两类**进程所有权，写进 spec 的 `owner`（safe 恒空串——它的进程归 pool）：
+
+* `terminal`（默认，`tavotto run`）：进程是 CLI 的子进程，stdin / env / cwd / 控制台都是
+  caller 的，Tavotto 不 kill 它；`run_config` 恒空、`env` 恒 None、`stdin` 恒 `inherit`。
+* `desktop`（桌面拥有的脚本进程）：由 sidecar 自己 spawn，所以启动身份要在 spec 里写全——
+  解释器、入口、argv（经运行配置引用）、显式 cwd、env **增量**及其来源、stdin 通道。
+  这一类的 `argv` / `env` 原文只在进程内，公开投影只带数量、`run_config` 与 env 键名。
+
+`desktop` 不是 safe 的开关：safe 的守卫与 savefig 吞捕获一字不动，`owner="desktop"` 只能和
+`profile=native` 一起出现（构造时拒绝其余组合）。
+
 纯标准库；Flask 父进程 import（与 pool 同边界）。worker/browser 子进程
 不需要它——profile 常量的唯一出处在 `figcapture`（它们平铺 import 得到），
 这里 re-export。
@@ -57,6 +70,21 @@ PROFILES = (PROFILE_SAFE, PROFILE_NATIVE)
 TARGET_SCRIPT = "script"
 TARGET_MODULE = "module"
 TARGET_KINDS = (TARGET_SCRIPT, TARGET_MODULE)
+
+#: native 档的进程所有权（见模块头「进程所有权」）。safe 的 `owner` 恒为空串。
+OWNER_TERMINAL = "terminal"
+OWNER_DESKTOP = "desktop"
+OWNERS = (OWNER_TERMINAL, OWNER_DESKTOP)
+#: 桌面拥有的进程，env 增量叠在哪一份环境上。**只承认 sidecar 自己的环境**：激活过的 conda / IDE /
+#: 内核环境没有证据就不声称恢复（ADR 0125 §四）；将来要加来源，必须同时给出可核的恢复证据。
+ENV_SOURCE_SIDECAR = "sidecar_inherited"
+ENV_SOURCES = (ENV_SOURCE_SIDECAR,)
+#: 脚本的 stdin 通道：`inherit` = caller 的（terminal 恒是它）；`pipe` = 桌面持有写端，由桌面决定何时送入 /
+#: 送 EOF；`null` = 一开始就是 EOF（脚本 `input()` 得到 EOFError，而不是永远挂着）。
+STDIN_INHERIT = "inherit"
+STDIN_PIPE = "pipe"
+STDIN_NULL = "null"
+STDIN_MODES = (STDIN_INHERIT, STDIN_PIPE, STDIN_NULL)
 
 #: spec 序列化形态的版本。加可选字段不升；改语义 / 删字段才升。
 SPEC_VERSION = 1
@@ -92,11 +120,14 @@ CWD_ORIGIN_SANDBOX = "sandbox"
 CWD_ORIGIN_SCRIPT_PARENT = "script.parent"
 CWD_ORIGIN_PROJECT_ROOT = "project.root"
 CWD_ORIGIN_INVOCATION = "invocation.cwd"
+#: 桌面拥有的 native 进程（P06，ADR 0125）：cwd 是桌面启动时**显式**给的那个目录，不是任何 shell 的。
+CWD_ORIGIN_DESKTOP_LAUNCH = "desktop.cwd"
 CWD_ORIGINS = (
     CWD_ORIGIN_SANDBOX,
     CWD_ORIGIN_SCRIPT_PARENT,
     CWD_ORIGIN_PROJECT_ROOT,
     CWD_ORIGIN_INVOCATION,
+    CWD_ORIGIN_DESKTOP_LAUNCH,
 )
 WRITE_MODE_SANDBOXED = "sandboxed"  # 相对路径写进沙盒；真实图库有删 / 写守卫
 WRITE_MODE_PROJECT_DIR = "project_dir"  # 相对路径写进脚本目录；守卫照旧（ADR 0047）
@@ -135,6 +166,25 @@ STABLE_FIELDS = (
 #: 本进程的随机密钥：池键 / 缓存目录里 argv 的区分用它做 HMAC。**不落盘、不出进程**——argv 常常
 #: 低熵（`--seed 1`），裸 sha256 可以被穷举反推；带随机密钥的摘要只在本进程内有意义。
 _PROCESS_KEY = secrets.token_bytes(32)
+
+
+class FrozenDict(dict):
+    """构造后不可改的 dict（spec 里的 `env` / 改指规则用）。
+
+    冻结的 dataclass 只冻结字段绑定，不冻结字段指向的对象：调用方保留着传进来的 dict，事后一改，
+    spec 与据它算出的回执 / `env_keys` 就悄悄跟着变。所以 spec 构造时**复制**并换成它。仍是 `dict`
+    子类（`dict(x)` / `{**x}` / `json.dumps` / `==` 照常），只是所有原地修改都抛 `TypeError`。"""
+
+    __slots__ = ()
+
+    def _ro(self, *a, **k):
+        raise TypeError("ExecutionSpec 里的映射是只读的（构造时已复制）")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _ro
+    __ior__ = _ro
+
+    def __reduce__(self):  # copy / pickle 经构造函数重建，不走被禁掉的 __setitem__
+        return (FrozenDict, (dict(self),))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -192,9 +242,11 @@ class ExecutionSpec:
     target_kind: str  # TARGET_SCRIPT | TARGET_MODULE
     target: str  # script: 项目相对路径（POSIX）；module: 模块名
     entry: str | None  # safe 的入口函数；native 恒 None
-    argv: tuple[str, ...]  # 脚本看到的 sys.argv[1:]（safe 缺省空；T03 起可以是用户给的精确 token）
-    cwd: str  # safe: 会话沙盒；native: 用户 cwd（机器相关）
-    env: dict[str, str] | None  # None = 原样继承；dict = 注入增量（见模块头）
+    #: 脚本看到的 sys.argv[1:]（safe 缺省空；T03 起可以是用户给的精确 token）。repr 不带值：可能是路径 / 令牌。
+    argv: tuple[str, ...] = dataclasses.field(repr=False)
+    cwd: str  # safe: 会话沙盒；native: 用户 cwd / 桌面显式 cwd（机器相关）
+    #: None = 原样继承；dict = 注入增量（见模块头）。repr 不带值：增量里可能有密钥。
+    env: dict[str, str] | None = dataclasses.field(repr=False)
     project_root: str  # 项目根（机器相关；safe 即 figures_dir 原串）
     passthrough_savefig: bool  # safe False（吞掉捕获）；native True（透传）
     #: **用户原样敲进去的那个 target 串**（native 专用；safe 恒空）。
@@ -221,6 +273,12 @@ class ExecutionSpec:
     #: 与私有请求管道里，**公开投影（`stable_payload` / `launch_context` / 回执）只带数量与这个 id**，
     #: 参数值可能是路径 / 令牌 / 患者编号，低熵摘要也不行。
     run_config: str = ""
+    #: native 档的进程所有权（`OWNER_*`）。safe 恒空串；native 缺省（空串）归一成 `terminal`。
+    owner: str = ""
+    #: 仅 `owner=desktop`：`env` 增量叠在哪一份环境上（`ENV_SOURCES`）。其余恒空串。
+    env_source: str = ""
+    #: native 的 stdin 通道（`STDIN_*`）。terminal 恒 `inherit`；safe 不使用（恒 `inherit` 占位）。
+    stdin: str = STDIN_INHERIT
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -249,8 +307,34 @@ class ExecutionSpec:
             raise ValueError("run_config 必须是字符串")
         if self.profile == PROFILE_SAFE and self.argv and not self.run_config:
             raise ValueError("safe 的 argv 非空时 run_config 必须非空（产物要绑定到它的配置）")
-        if self.profile == PROFILE_NATIVE and self.run_config:
-            raise ValueError("native profile 没有运行配置引用（argv 是用户自己的命令行）")
+        if self.profile == PROFILE_NATIVE and not self.owner:
+            object.__setattr__(self, "owner", OWNER_TERMINAL)  # 老调用形状 = 终端拥有
+        if self.profile == PROFILE_SAFE and (
+            self.owner or self.env_source or self.stdin != STDIN_INHERIT
+        ):
+            raise ValueError(
+                "owner / env_source / stdin 只属于 native profile（safe 不接受这些开关）"
+            )
+        if self.owner and self.owner not in OWNERS:
+            raise ValueError(f"owner 非法: {self.owner!r}（可选 {OWNERS}）")
+        if self.stdin not in STDIN_MODES:
+            raise ValueError(f"stdin 非法: {self.stdin!r}（可选 {STDIN_MODES}）")
+        if self.profile == PROFILE_NATIVE and self.owner == OWNER_TERMINAL:
+            if self.run_config:
+                raise ValueError(
+                    "terminal 拥有的 native 没有运行配置引用（argv 是用户自己的命令行）"
+                )
+            if self.env is not None or self.env_source or self.stdin != STDIN_INHERIT:
+                raise ValueError("terminal 拥有的 native 原样继承 env / stdin（env 恒 None）")
+        if self.profile == PROFILE_NATIVE and self.owner == OWNER_DESKTOP:
+            if self.argv and not self.run_config:
+                raise ValueError("桌面拥有的 native 的 argv 非空时 run_config 必须非空")
+            if self.env_source not in ENV_SOURCES:
+                raise ValueError(f"桌面拥有的 native 必须声明 env_source（可选 {ENV_SOURCES}）")
+            if self.stdin == STDIN_INHERIT:
+                raise ValueError("桌面没有可继承的 stdin：必须是 pipe 或 null")
+            if not os.path.isabs(self.cwd) or not os.path.isabs(self.interpreter):
+                raise ValueError("桌面拥有的 native 必须给显式的绝对 cwd 与解释器")
         if self.env is not None and (
             not isinstance(self.env, dict)
             or not all(isinstance(k, str) and isinstance(v, str) for k, v in self.env.items())
@@ -258,6 +342,7 @@ class ExecutionSpec:
             raise ValueError("env 必须是 None 或 str→str 的 dict（只放增量）")
         if not isinstance(self.passthrough_savefig, bool):
             raise ValueError("passthrough_savefig 必须是布尔值")
+
         if not isinstance(self.raw_target, str):
             raise ValueError("raw_target 必须是字符串")
         if self.cwd_mode not in CWD_MODES:
@@ -280,6 +365,12 @@ class ExecutionSpec:
             if not self.raw_target:
                 raise ValueError("native profile 必须带 raw_target（sys.argv[0] 的对拍口径）")
 
+        # 校验过之后复制并冻结：spec 里不留调用方还拿得到的可变对象（argv 已是 str 元组）
+        if self.env is not None:
+            object.__setattr__(self, "env", FrozenDict(self.env))
+        if self.input_remap:
+            object.__setattr__(self, "input_remap", tuple(FrozenDict(r) for r in self.input_remap))
+
     # ---------------- 序列化 ----------------
     def to_payload(self) -> dict:
         """完整运行时形态（含机器相关路径）。进程内 / 调试用，不进用户文档。"""
@@ -298,13 +389,18 @@ class ExecutionSpec:
         """
         out = {k: getattr(self, k) for k in STABLE_FIELDS}
         # 空 argv 的形状逐字节不变（golden）；非空时**原文不出门**：公开身份只带数量与本机不透明引用。
-        if self.profile == PROFILE_NATIVE:  # native 的 argv 是用户自己的命令行：沿用旧形状
+        if self.profile == PROFILE_NATIVE and self.owner == OWNER_TERMINAL:
+            # terminal 拥有的 native：argv 是用户自己的命令行，沿用旧形状
             out["argv"] = list(self.argv)
         else:
             out["argv"] = []
             if self.argv:
                 out["argv_count"] = len(self.argv)
                 out["run_config"] = self.run_config
+        if self.owner == OWNER_DESKTOP:
+            out["owner"] = (
+                self.owner
+            )  # 只有桌面拥有的才多这一键：terminal 的身份逐字节不变（golden）
         out["spec_version"] = SPEC_VERSION
         return out
 
@@ -324,7 +420,8 @@ def launch_context(spec: ExecutionSpec, *, grant: dict | None = None) -> dict:
     派生规则是闭集，每个 profile × cwd_mode 组合各一行；不认识的组合当场抛。
     """
     if spec.profile == PROFILE_NATIVE:
-        origin, write_mode = CWD_ORIGIN_INVOCATION, WRITE_MODE_UNRESTRICTED
+        origin = CWD_ORIGIN_DESKTOP_LAUNCH if spec.owner == OWNER_DESKTOP else CWD_ORIGIN_INVOCATION
+        write_mode = WRITE_MODE_UNRESTRICTED
     elif spec.cwd_mode == CWD_SANDBOX:
         origin, write_mode = CWD_ORIGIN_SANDBOX, WRITE_MODE_SANDBOXED
     elif spec.cwd_mode == CWD_PROJECT:
@@ -341,8 +438,13 @@ def launch_context(spec: ExecutionSpec, *, grant: dict | None = None) -> dict:
         "target_kind": spec.target_kind,
         "target": spec.target,
         "entry": spec.entry,
-        # 原文不进 LaunchContext（它会随计划 / 回执公开）：native 的 argv 是用户自己的命令行，同样只带数量
-        "argv": list(spec.argv) if spec.profile == PROFILE_NATIVE else [],
+        # 原文不进 LaunchContext（它会随计划 / 回执公开）：terminal 拥有的 native 的 argv 是用户自己的
+        # 命令行（沿用旧形状）；桌面拥有的与 safe 一样只带数量与运行配置引用
+        "argv": (
+            list(spec.argv)
+            if spec.profile == PROFILE_NATIVE and spec.owner == OWNER_TERMINAL
+            else []
+        ),
         "cwd_mode": spec.cwd_mode,
         "cwd_origin": origin,
         "write_mode": write_mode,
@@ -350,7 +452,18 @@ def launch_context(spec: ExecutionSpec, *, grant: dict | None = None) -> dict:
         "grant": dict(grant) if grant is not None else None,
         **(
             {"argv_count": len(spec.argv), "run_config": spec.run_config}
-            if spec.argv and spec.profile == PROFILE_SAFE
+            if spec.argv and not (spec.profile == PROFILE_NATIVE and spec.owner == OWNER_TERMINAL)
+            else {}
+        ),
+        # 桌面拥有的启动身份（P06）：env 只公开**键名**与来源，值永远不出进程
+        **(
+            {
+                "owner": spec.owner,
+                "env_source": spec.env_source,
+                "env_keys": sorted(spec.env or ()),
+                "stdin": spec.stdin,
+            }
+            if spec.owner == OWNER_DESKTOP
             else {}
         ),
     }
@@ -382,6 +495,9 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         sandbox=data.get("sandbox", "") or "",
         input_remap=tuple(figcapture.clean_remap_rules(data.get("input_remap") or [])),
         run_config=data.get("run_config", "") or "",
+        owner=data.get("owner", "") or "",
+        env_source=data.get("env_source", "") or "",
+        stdin=data.get("stdin", STDIN_INHERIT) or STDIN_INHERIT,
     )
 
 
@@ -395,6 +511,17 @@ def run_cwd(figures_dir: str | os.PathLike, script: str, cwd_mode: str) -> str |
     if cwd_mode == CWD_PROJECT_ROOT:
         return str(Path(figures_dir))
     return None
+
+
+def desktop_cwd(figures_dir: str | os.PathLike, script: str, cwd_mode: str) -> str:
+    """桌面拥有的 native 进程的 cwd（P06，ADR 0125 §三）：**没有沙盒这一档**。
+
+    `project_root` = 项目根（用户在工作目录问题里选过的那一档，ADR 0057）；其余——包括 safe 默认的
+    `sandbox`——一律是脚本所在目录：用户自己的 Python「像终端里那样跑」的意思表示（ADR 0107），
+    也是相对数据路径最常成立的那一个。"""
+    if cwd_mode == CWD_PROJECT_ROOT:
+        return str(Path(figures_dir))
+    return run_cwd(figures_dir, script, CWD_PROJECT)
 
 
 def safe_spec(
@@ -471,6 +598,68 @@ def native_spec(
     成项目相对 POSIX 路径（身份，跨机器稳定）。target 落在 `project_root`
     之外时会在这里抛——描述符与 asset id 的前提就是「项目相对」。
     """
+    return _native(
+        raw_target,
+        interpreter=interpreter,
+        cwd=cwd,
+        project_root=project_root,
+        target_kind=target_kind,
+        argv=argv,
+    )
+
+
+def desktop_native_spec(
+    raw_target: str,
+    *,
+    interpreter: str,
+    cwd: str,
+    project_root: str,
+    target_kind: str = TARGET_SCRIPT,
+    argv: tuple[str, ...] = (),
+    run_config: str = "",
+    env: dict[str, str] | None = None,
+    stdin: str = STDIN_NULL,
+) -> ExecutionSpec:
+    """**桌面拥有的** native 档启动身份的唯一权威构造函数（P06，ADR 0125）。
+
+    与 `native_spec` 的差别正是「进程归谁」带来的那几条，别的一字不动（savefig 透传、没有守卫、
+    `entry=None`、`raw_target` 是 `sys.argv[0]`）：
+
+    * `cwd` **必须显式且绝对**——桌面没有「用户当时站在哪」可继承；
+    * `argv` 经运行配置引用 `run_config` 绑定（原文只在进程内，公开投影只带数量与引用）；
+    * `env` 是叠在 sidecar 环境上的**增量**，来源恒为 `sidecar_inherited`：没有证据就不声称
+      恢复了 conda 激活 / IDE / 内核环境；
+    * `stdin` 由桌面持有（`pipe` 或 `null`），不再是「继承终端」。
+    """
+    return _native(
+        raw_target,
+        interpreter=interpreter,
+        cwd=cwd,
+        project_root=project_root,
+        target_kind=target_kind,
+        argv=argv,
+        owner=OWNER_DESKTOP,
+        run_config=run_config,
+        env=env,
+        env_source=ENV_SOURCE_SIDECAR,
+        stdin=stdin,
+    )
+
+
+def _native(
+    raw_target: str,
+    *,
+    interpreter: str,
+    cwd: str,
+    project_root: str,
+    target_kind: str,
+    argv: tuple[str, ...],
+    owner: str = OWNER_TERMINAL,
+    run_config: str = "",
+    env: dict[str, str] | None = None,
+    env_source: str = "",
+    stdin: str = STDIN_INHERIT,
+) -> ExecutionSpec:
     if target_kind == TARGET_MODULE:
         target = raw_target
     else:
@@ -489,10 +678,14 @@ def native_spec(
         entry=None,
         argv=tuple(argv),
         cwd=cwd,
-        env=None,
+        env=env,
         project_root=project_root,
         passthrough_savefig=True,
         raw_target=raw_target,
+        run_config=run_config,
+        owner=owner,
+        env_source=env_source,
+        stdin=stdin,
     )
 
 
@@ -536,6 +729,10 @@ def bridge_argv(
         out += ["--control-host", control_host or "127.0.0.1", "--control-port", str(control_port)]
     if report:
         out += ["--report", report]
+    if spec.run_config:
+        # 桌面拥有的、带运行配置的启动：不透明引用（不是 argv 值）交给 runner，描述符 / 资产 id 才带 `~rc_…`，
+        # 不会和不带配置的那次互相覆盖。terminal 拥有的恒空，命令行逐字节不变
+        out += ["--run-config", spec.run_config]
     out.append("--")
     out.extend(spec.argv)
     return out

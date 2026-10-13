@@ -654,6 +654,7 @@ class BridgeRun:
             # native 不谈「原始产物」：passthrough savefig 写到哪由用户脚本
             # 决定，那不是 Tavotto 管的图库。写回原件在 native v1 一律不提供。
             project_root=None,
+            run_config=self.args.run_config,
         )
         # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
         # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
@@ -877,6 +878,9 @@ def _parse_args(argv: list):
     ap.add_argument("--control-port", type=int, default=0)
     ap.add_argument("--report", default="")
     ap.add_argument("--project-root", default="")
+    ap.add_argument(
+        "--run-config", default=""
+    )  # 桌面拥有的启动：运行配置的不透明引用（与 safe 同名同义）
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]

@@ -210,6 +210,17 @@ def _stop_project_watchers_started_by_this_test():
 
 
 @pytest.fixture(autouse=True)
+def _native_registry_reopened():
+    """`REGISTRY.shutdown_all()` 会把进程单例置为 closing（sidecar 退出语义）；用例之间必须重新打开，
+    否则一条关停用例之后，同进程里所有桌面拥有的启动都被拒。"""
+    from tavotto.engine import nativesession
+
+    nativesession.REGISTRY.reopen()
+    yield
+    nativesession.REGISTRY.reopen()
+
+
+@pytest.fixture(autouse=True)
 def _isolated_user_config(tmp_path_factory, monkeypatch):
     """所有测试的用户级配置（最近项目等）落在临时目录，绝不碰真实用户配置。"""
     monkeypatch.setenv(

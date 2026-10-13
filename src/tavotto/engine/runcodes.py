@@ -59,6 +59,15 @@ NATIVE_SESSION_ENDED = "native_session_ended"
 NATIVE_SESSION_DISCONNECTED = "native_session_disconnected"
 NATIVE_SESSION_UNKNOWN = "native_session_unknown"
 BRIDGE_CHILD_EXITED = "bridge_child_exited"
+#: 桌面拥有的脚本进程（P06，ADR 0125）
+#: 这条会话的进程不是桌面起的（终端拥有的）：桌面不杀它，只放手。
+NATIVE_PROCESS_NOT_OWNED = "native_process_not_owned"
+#: 注册表正在 / 已经关停（sidecar 退出）：不再接受新的桌面拥有的启动。
+NATIVE_REGISTRY_CLOSING = "native_registry_closing"
+#: 桌面自己起的用户 Python 在期限内没连回控制通道（进程已被收掉）。
+DESKTOP_RUN_CONNECT_TIMEOUT = "desktop_run_connect_timeout"
+#: 桌面拥有的启动身份不成立（cwd 不是目录 / 不是桌面拥有的 spec）。
+DESKTOP_RUN_LAUNCH_INVALID = "desktop_run_launch_invalid"
 
 # --------------------------- 结果 / 环境 ---------------------------
 NO_FIGURE_CAPTURED = "no_figure_captured"
@@ -203,6 +212,24 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh": "你的 Python 还没连上控制通道就退出了（退出码 {code}）。",
         "en": "Your Python exited before connecting to the control channel (exit code {code}).",
     },
+    NATIVE_PROCESS_NOT_OWNED: {
+        "zh": "这个脚本是你在终端里启动的，Tavotto 不会替你结束它；请在那个终端里按 Ctrl+C。",
+        "en": "You started this script from a terminal, so Tavotto won't stop it for you."
+        " Press Ctrl+C in that terminal.",
+    },
+    NATIVE_REGISTRY_CLOSING: {
+        "zh": "Tavotto 正在关闭，没有启动这次运行。",
+        "en": "Tavotto is shutting down, so this run was not started.",
+    },
+    DESKTOP_RUN_CONNECT_TIMEOUT: {
+        "zh": "你的 Python 在 {seconds} 秒内没有连回控制通道，Tavotto 已经结束了它。",
+        "en": "Your Python didn't connect to the control channel within {seconds} seconds,"
+        " and Tavotto has stopped it.",
+    },
+    DESKTOP_RUN_LAUNCH_INVALID: {
+        "zh": "这次运行的启动信息不成立：{reason}",
+        "en": "This run's launch details are not valid: {reason}",
+    },
     NO_FIGURE_CAPTURED: {
         "zh": "脚本跑完了，但没有捕获到任何 Matplotlib figure。",
         "en": "The script finished, but no Matplotlib figure was captured.",
@@ -247,7 +274,20 @@ EXIT_FOR_CODE: dict[str, int] = {
     NATIVE_HANDOFF_CONSUMED: EXIT_ATTACH_FAILED,
     NATIVE_SESSION_CONFLICT: EXIT_ATTACH_FAILED,
     BRIDGE_CHILD_EXITED: EXIT_ATTACH_FAILED,
+    NATIVE_PROCESS_NOT_OWNED: EXIT_USAGE,
+    NATIVE_REGISTRY_CLOSING: EXIT_ATTACH_FAILED,
+    DESKTOP_RUN_CONNECT_TIMEOUT: EXIT_ATTACH_FAILED,
+    DESKTOP_RUN_LAUNCH_INVALID: EXIT_USAGE,
 }
+
+
+def exit_code_of(code: int) -> int:
+    """`Popen.wait()` 的返回值 → 进程退出码（**唯一出处**：`tavotto run` 与桌面拥有的进程共用）。
+
+    POSIX 上被信号杀掉时它是**负数**（`-SIGINT`）。按 shell 惯例折成 `128 + signo`——
+    直接把 `-2` 当退出码返回会变成 254，那个数字对任何人都没有意义。
+    """
+    return 128 + (-code) if code < 0 else code
 
 
 class RunError(RuntimeError):

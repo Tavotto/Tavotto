@@ -207,6 +207,36 @@ export const SAMPLE_TEXT = {
 /** 画框的最小尺寸与宽高比（示例图外框固定这个比例：换样式、改刻度时设置页不跳） */
 export const SAMPLE_VIEW = { w: 200, h: 128 } as const
 
+/** 示例里的两条数据曲线（归一化的 y = f(t)，t ∈ [0, 1]）：快的实线、慢的虚线 */
+export const SAMPLE_SERIES = [(t: number) => 1 - Math.exp(-4 * t), (t: number) => 1 - Math.exp(-1.5 * t)] as const
+
+/** 一条曲线的折线点：横向 0…1 采样 24 段，纵向按 fn 归一化后占框高的 92% */
+export function sampleSeriesPoints(
+  box: { x: number; y: number; w: number; h: number },
+  bottom: number,
+  fn: (t: number) => number,
+): [number, number][] {
+  const pts: [number, number][] = []
+  for (let i = 0; i <= 24; i += 1) {
+    const t = i / 24
+    pts.push([box.x + t * box.w, bottom - fn(t) * box.h * 0.92])
+  }
+  return pts
+}
+
+/** 横向 [x0, x1] 内两条折线的最低点（SVG 里 y 越大越低）：按画出来的折线段算，不按解析式 */
+function lowestCurveY(box: { x: number; y: number; w: number; h: number }, bottom: number, x0: number, x1: number) {
+  let low = -Infinity
+  for (const fn of SAMPLE_SERIES) {
+    const pts = sampleSeriesPoints(box, bottom, fn)
+    for (let i = 1; i < pts.length; i += 1) {
+      const [[ax, ay], [bx, by]] = [pts[i - 1], pts[i]]
+      if (bx >= x0 && ax <= x1) low = Math.max(low, ay, by)
+    }
+  }
+  return low
+}
+
 /** 估文字外框：字宽按字号的倍数（粗 / 斜体更宽），基线上下各占多少 */
 const GLYPH_W = 0.62
 const GLYPH_W_BOLD = 0.68
@@ -262,14 +292,33 @@ export function sampleLayout(g: StyleSampleGeometry): SampleLayout {
   const yTickLabelX = box.x - clear - 2.5
   const yTickW = Math.max(...SAMPLE_TEXT.yTicks.map((s) => textWidth(s, g.tickPt, g.faces.tick)))
   const yLabelX = yTickLabelX - yTickW - 2.5 - DESCENT * g.axisPt
-  const legendLineY = box.y + 10 + g.legendPt * 0.35
-  const legend = {
-    lineX1: box.x + box.w - 62,
-    lineX2: box.x + box.w - 50,
-    lineY: legendLineY,
-    textX: box.x + box.w - 46,
-    textY: box.y + 10 + g.legendPt * 0.7,
-  }
+  // 图例在右下角（2026-10 设计审计第二轮）：两条曲线都从左下升到右上，右上角正是快的那条曲线经过的地方——
+  // 此前图例放在那里，图例线压在曲线上。候选按序取第一个不碰曲线的（按画出来的折线段与线宽算）：
+  //   1. 框内右下、文字右对齐，横向跨过朝里刻度时往上让刻度长；
+  //   2. 同一处不让刻度（Codex #946：14 pt 图例 + 朝里 20 pt 刻度）——刻度只是框边一小截，压曲线才读不出数据；
+  //   3. 框外右侧、底边对齐（Codex #946：粗体 14 pt 图例 + 7…10 pt 数据线，框内右下哪处都放不下）——
+  //      曲线横向不出框，这一处总是干净的；`viewBox` 按外框并集照常撑大
+  const w2 = g.tickWidthPt / 2
+  const lw2 = g.lineWidthPt / 2
+  const legendW = textWidth(SAMPLE_TEXT.legend, g.legendPt, g.faces.legend)
+  const legendAt = (lineX1: number, textY: number) => ({
+    lineX1,
+    lineX2: lineX1 + 12,
+    lineY: textY - g.legendPt * 0.35,
+    textX: lineX1 + 16,
+    textY,
+  })
+  const curveSafe = (l: SampleLayout['legend']) =>
+    Math.min(l.lineY - lw2, l.textY - ASCENT * g.legendPt) > lowestCurveY(box, bottom, l.lineX1, l.textX + legendW) + lw2
+  const insideX = box.x + box.w - w2 - 4 - legendW - 16
+  const crossesTick = [0, 0.5].some((f) => insideX < box.x + f * box.w + w2 + 1)
+  const resting = bottom - 6 - DESCENT * g.legendPt
+  const outsideX = box.x + box.w + Math.max(lw2, w2, g.spinePt / 2) + 4
+  const legend = [
+    legendAt(insideX, resting - (crossesTick ? tickIn : 0)),
+    legendAt(insideX, resting),
+  ].find(curveSafe) ?? legendAt(outsideX, bottom - DESCENT * g.legendPt)
+  const legendLineY = legend.lineY
 
   const extents: Extent[] = []
   const hText = (s: string, x: number, y: number, pt: number, face: SampleFace, anchor: 'start' | 'middle' | 'end') => {
@@ -279,8 +328,6 @@ export function sampleLayout(g: StyleSampleGeometry): SampleLayout {
   }
   const s2 = g.spinePt / 2
   extents.push({ x0: box.x - s2, y0: box.y - s2, x1: box.x + box.w + s2, y1: bottom + s2 })
-  const w2 = g.tickWidthPt / 2
-  const lw2 = g.lineWidthPt / 2
   extents.push({ x0: box.x - lw2, y0: box.y - lw2, x1: box.x + box.w + lw2, y1: bottom + lw2 })
   hText(SAMPLE_TEXT.title, box.x + box.w / 2, titleY, g.titlePt, g.faces.title, 'middle')
   SAMPLE_TEXT.xTicks.forEach((s, i) => {

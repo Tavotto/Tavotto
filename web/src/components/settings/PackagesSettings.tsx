@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
@@ -207,37 +207,19 @@ export function PackagesSettings() {
           <LookupPanel locked={locked} onInstall={start} />
         </FieldGroup>
 
-        <FieldGroup data-packages-user-table>
-          <PackageTable
-            ariaLabel={pk('userTitle')}
-            empty={loading && !data ? pk('loading') : term ? noMatch : pk('userEmpty')}
-            rows={shownUser.map((u) => ({
-              key: u.distribution,
-              name: (
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-ink">{u.distribution}</span>
-                  <span className="type-caption truncate">
-                    {pk(`reason.${u.reason === 'user_requested' ? 'user' : 'repair'}`)}
-                    {u.requested_specifier ? ` · ${u.distribution}${u.requested_specifier}` : ''}
-                    {u.installed_at ? ` · ${formatDateTime(u.installed_at * 1000)}` : ''}
-                  </span>
-                </span>
-              ),
-              version: u.installed_version || u.recorded_version || '—',
-              status: (
-                <StatusText
-                  status={u.status}
-                  detail={
-                    u.status === 'changed' && u.recorded_version
-                      ? pk('status.changedDetail', { recorded: u.recorded_version })
-                      : undefined
-                  }
-                />
-              ),
-              actions: <UserActions pkg={u} locked={locked} onAction={start} />,
-            }))}
-          />
-        </FieldGroup>
+        {/* 用户包是一组条目行（2026-10 设计审计第二轮）：一包一行，名称 + 版本胶囊 + 只在不正常时出现的状态胶囊，
+            来源在第二行，动作贴右。此前是一张四列表，列头与每格的「已安装」把一屏占满，真正要看的变化反而不显眼 */}
+        {shownUser.length ? (
+          <FieldGroup data-packages-user-list role="list" aria-label={pk('userTitle')}>
+            {shownUser.map((u) => (
+              <UserPackageRow key={u.distribution} pkg={u} locked={locked} onAction={start} />
+            ))}
+          </FieldGroup>
+        ) : (
+          <FieldGroup data-packages-user-list>
+            <p className="type-caption">{loading && !data ? pk('loading') : term ? noMatch : pk('userEmpty')}</p>
+          </FieldGroup>
+        )}
       </FormSection>
 
       {/* ---------------- 背景材料：内置包 · 技术详情（两条原地展开的行） ---------------- */}
@@ -265,16 +247,9 @@ export function PackagesSettings() {
                   ? pk('builtinFromBundled', { product: PRODUCT_NAME })
                   : pk('builtinPlanned')}
             </p>
-            <PackageTable
-              ariaLabel={pk('builtinTitle')}
+            <BuiltinList
+              rows={shownBuiltin}
               empty={loading && !data ? pk('loading') : term ? noMatch : pk('builtinEmpty')}
-              rows={shownBuiltin.map((b) => ({
-                key: b.name,
-                name: b.name,
-                version: b.version || '—',
-                status: <StatusText status={b.status} />,
-                actions: <span className="text-sm text-ink-3">{pk('readOnly')}</span>,
-              }))}
             />
           </DiagnosticDisclosure>
 
@@ -500,21 +475,62 @@ function LookupPanel({
   )
 }
 
-function StatusText({ status, detail }: { status: string; detail?: string }) {
+/**
+ * 状态胶囊：**正常（已安装）不出胶囊**——整列都是「已安装」等于没说；只有缺失 / 版本变了 / 说不清 / 创建时安装
+ * 这几种值得看一眼的才出现。缺失与版本变了带点（danger / warn），其余中性。
+ */
+function PackageStatePill({ status }: { status: string }) {
   useTranslation('dialogs')
-  const tone =
-    status === 'installed'
-      ? 'text-ink-2'
-      : status === 'missing'
-        ? 'text-danger-content'
-        : status === 'changed'
-          ? 'text-warn-content'
-          : 'text-ink-3'
+  if (status === 'installed') return null
+  const tone = status === 'missing' ? 'danger' : status === 'changed' ? 'warn' : 'neutral'
   return (
-    <span className={cn('flex flex-col text-sm', tone)}>
-      <span>{status ? pk(`status.${status}`) : pk('status.unknown')}</span>
-      {detail && <span className="type-caption">{detail}</span>}
-    </span>
+    <StatusPill tone={tone} dot={tone !== 'neutral'} data-package-state={status || 'unknown'}>
+      {status ? pk(`status.${status}`) : pk('status.unknown')}
+    </StatusPill>
+  )
+}
+
+/**
+ * 用户包的一行：标准 `SettingRow`（不是新的 primitive）。标题列 = 包名（等宽，它是代码里的标识符）+ 版本胶囊 +
+ * 状态胶囊；说明 = 来源 · 请求的规范 · 安装时间，版本变了时补一句安装时是多少；控件列 = `UserActions`。
+ * 外面那层 `listitem` 是 FieldGroup 的直接子项：组的内边距与行间细线落在它身上。
+ */
+function UserPackageRow({
+  pkg,
+  locked,
+  onAction,
+}: {
+  pkg: UserPackage
+  locked: boolean
+  onAction: (op: PackageOp, target: string) => Promise<boolean>
+}) {
+  useTranslation('dialogs')
+  const version = pkg.installed_version || pkg.recorded_version
+  const source = [
+    pk(`reason.${pkg.reason === 'user_requested' ? 'user' : 'repair'}`),
+    pkg.requested_specifier ? `${pkg.distribution}${pkg.requested_specifier}` : '',
+    pkg.installed_at ? formatDateTime(pkg.installed_at * 1000) : '',
+    pkg.status === 'changed' && pkg.recorded_version ? pk('status.changedDetail', { recorded: pkg.recorded_version }) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <div role="listitem" data-package-row={pkg.distribution}>
+      <SettingRow
+        label={
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span data-package-name className="min-w-0 truncate font-mono text-sm">
+              {pkg.distribution}
+            </span>
+            {version && <StatusPill className="tabular-nums">{version}</StatusPill>}
+            <PackageStatePill status={pkg.status} />
+          </span>
+        }
+        description={source}
+      >
+        <UserActions pkg={pkg} locked={locked} onAction={onAction} />
+      </SettingRow>
+    </div>
   )
 }
 
@@ -583,52 +599,28 @@ function UserActions({
 }
 
 /**
- * 一张四列的小表：名称 / 版本 / 状态 / 操作。真 `<table>`，读屏能按列读。坐在 `FieldGroup` 里（组给底、圆角与
- * 12 / 16 的内边距——行线因此天然左右各内缩 16，与组里别的行同一条线），行 36px。
+ * 内置包清单（折叠行展开后）：只读，一包一行的紧凑列表——名称、版本，状态不正常时才多一枚胶囊。
+ * 「只读」只在折叠行的摘要里说一次，不再每行重复。
  */
-function PackageTable({
-  ariaLabel,
-  rows,
-  empty,
-}: {
-  ariaLabel: string
-  rows: { key: string; name: ReactNode; version: ReactNode; status: ReactNode; actions: ReactNode }[]
-  empty: string
-}) {
+function BuiltinList({ rows, empty }: { rows: { name: string; version: string; status: string }[]; empty: string }) {
   useTranslation('dialogs')
   if (!rows.length) return <p className="type-caption">{empty}</p>
-  const edge = 'first:pl-0 last:pr-0'
   return (
-    <div className="overflow-x-auto">
-      <table aria-label={ariaLabel} className="w-full table-fixed border-collapse text-sm">
-        <thead>
-          <tr className="text-left text-ink-3">
-            <th scope="col" className={cn('h-8 w-[38%] px-2 align-top font-medium', edge)}>
-              {pk('col.name')}
-            </th>
-            <th scope="col" className={cn('h-8 w-[17%] px-2 align-top font-medium', edge)}>
-              {pk('col.version')}
-            </th>
-            <th scope="col" className={cn('h-8 w-[20%] px-2 align-top font-medium', edge)}>
-              {pk('col.status')}
-            </th>
-            <th scope="col" className={cn('h-8 px-2 text-right align-top font-medium', edge)}>
-              {pk('col.actions')}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.key} className="border-t border-border align-middle">
-              <td className={cn('h-9 min-w-0 px-2 py-1', edge)}>{r.name}</td>
-              <td className={cn('h-9 px-2 py-1 font-mono text-xs text-ink-3', edge)}>{r.version}</td>
-              <td className={cn('h-9 px-2 py-1', edge)}>{r.status}</td>
-              <td className={cn('h-9 px-2 py-1 text-right', edge)}>{r.actions}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul role="list" aria-label={pk('builtinTitle')} className="flex flex-col">
+      {rows.map((b) => (
+        <li
+          key={b.name}
+          data-package-row={b.name}
+          className="flex min-h-8 items-center gap-2 border-t border-border text-sm first:border-t-0"
+        >
+          <span data-package-name className="min-w-0 flex-1 truncate font-mono">
+            {b.name}
+          </span>
+          <PackageStatePill status={b.status} />
+          <span className="text-ink-3 tabular-nums">{b.version || '—'}</span>
+        </li>
+      ))}
+    </ul>
   )
 }
 

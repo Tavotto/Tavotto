@@ -13,6 +13,8 @@
   <a href="https://github.com/Tavotto/Tavotto/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Tavotto/Tavotto/ci.yml?branch=main&style=flat-square&labelColor=1b1b18"></a>
   <a href="https://github.com/Tavotto/Tavotto/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--only-1b1b18?style=flat-square&labelColor=1b1b18"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%20–%203.14-1b1b18?style=flat-square&labelColor=1b1b18">
+  <a href="https://ko-fi.com/tavotto"><img alt="Support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?style=flat-square&logo=kofi&logoColor=white&labelColor=1b1b18"></a>
+  <a href="https://afdian.com/a/Tavotto"><img alt="在爱发电支持" src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E6%94%AF%E6%8C%81-946CE6?style=flat-square&labelColor=1b1b18"></a>
 </p>
 
 <p align="center">
@@ -801,6 +803,18 @@ collects everything usually needed, with keys and personal paths redacted.
 cd web && pnpm test               # frontend
 cd web && pnpm build              # type-check (tsc -b) + bundle
 ```
+
+## Support the project
+
+Tavotto is free and open source, and maintained by one person. If it saves you time,
+you can support its development: one-off or monthly on **Ko-fi**, or with Alipay /
+WeChat Pay on **爱发电** (afdian). Support is voluntary and unlocks no features; what it
+pays for, and the supporters wall, are on [tavotto.com/support](https://www.tavotto.com/support/).
+
+<p>
+  <a href="https://ko-fi.com/tavotto"><img alt="Support Tavotto on Ko-fi" src="https://img.shields.io/badge/Support%20on%20Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white"></a>
+  <a href="https://afdian.com/a/Tavotto"><img alt="在爱发电支持 Tavotto" src="https://img.shields.io/badge/%E5%9C%A8%E7%88%B1%E5%8F%91%E7%94%B5%E6%94%AF%E6%8C%81-946CE6?style=for-the-badge"></a>
+</p>
 
 ## License
 

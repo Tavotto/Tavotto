@@ -144,7 +144,7 @@ const buttons = () => [...document.querySelectorAll('button')] as HTMLButtonElem
 const byName = (name: string) =>
   buttons().find((b) => (b.getAttribute('aria-label') ?? b.textContent ?? '').trim() === name)
 const input = () => document.querySelector<HTMLInputElement>(`input[aria-label="${pk('specAria')}"]`)!
-const rows = (table: string) => [...document.querySelectorAll(`table[aria-label="${table}"] tbody tr`)]
+const rows = (list: string) => [...document.querySelectorAll(`[role="list"][aria-label="${list}"] [data-package-row]`)]
 /**
  * 打开一个 ⋯ 菜单并点其中一项（2026-10-07 设计审计 §9.1：卸载、重建都收进 ⋯）。
  * Radix 的菜单开在 pointerdown 上，jsdom 没有 PointerEvent 构造器——同名的 MouseEvent 照样派发。
@@ -252,7 +252,9 @@ describe('两份清单', () => {
     expect(builtin.map((r) => r.textContent)).toEqual(
       expect.arrayContaining([expect.stringContaining('matplotlib'), expect.stringContaining('numpy')]),
     )
-    for (const r of builtin) expect(r.textContent).toContain(pk('readOnly'))
+    // 内置清单只读：行里没有任何按钮；「只读」只在折叠行的摘要里说一次
+    for (const r of builtin) expect(r.querySelector('button')).toBeNull()
+    expect(text()).toContain(pk('builtinCountMeta', { count: builtin.length }))
     // 每行一颗 ghost「升级」+ ⋯（卸载在 ⋯ 里，是危险项；2026-10-07 设计审计 §9.1）
     const upgrade = byName(pk('updateAria', { name: 'lmfit' }))!
     expect(upgrade).toBeTruthy()
@@ -278,6 +280,24 @@ describe('两份清单', () => {
     expect(text()).toContain('lmfit>=1.3')
     expect(text()).toContain(pk('status.changed'))
     expect(text()).toContain(pk('status.changedDetail', { recorded: '1.3.2' }))
+  })
+
+  it('用户包是条目行：正常不出状态胶囊，版本变了出 warn 胶囊；页面上没有表格', async () => {
+    await mount({
+      ...LISTING,
+      user: [
+        { ...LISTING.user[0], status: 'changed', installed_version: '1.4.0', recorded_version: '1.3.2' },
+        LISTING.user[1],
+      ],
+    })
+    const user = rows(pk('userTitle'))
+    expect(user.length).toBe(2)
+    const changed = user.find((r) => r.getAttribute('data-package-row') === LISTING.user[0].distribution)!
+    const normal = user.find((r) => r.getAttribute('data-package-row') === LISTING.user[1].distribution)!
+    expect(changed.querySelector('[data-package-state="changed"]')!.getAttribute('data-status-pill')).toBe('warn')
+    expect(changed.textContent).toContain('1.4.0')
+    expect(normal.querySelector('[data-package-state]')).toBeNull()
+    expect(document.querySelector('[data-packages-page] table')).toBeNull()
   })
 
   it('环境行：Python 版本、就绪、本项目在用、重建入口', async () => {
@@ -484,7 +504,7 @@ describe('反馈落在用户点的地方（2026-10-07 设计审计 P0 / §9.1）
     await act(async () => byName(pk('install'))!.click())
     const form = document.querySelector('[data-packages-form]')!
     const jobRow = document.querySelector('[data-packages-job]')!
-    const table = document.querySelector(`table[aria-label="${pk('userTitle')}"]`)!
+    const table = document.querySelector('[data-packages-user-list]')!
     // 同一组里：表单的下一行就是作业
     expect(form.nextElementSibling).toBe(jobRow)
     expect(jobRow.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()

@@ -1286,12 +1286,6 @@
       "builtinFromManaged": "Ships with the {{product}} environment; read-only.",
       "builtinPlanned": "Creating the environment installs matplotlib and its dependencies.",
       "builtinTitle": "Built-in packages",
-      "col": {
-        "actions": "Actions",
-        "name": "Name",
-        "status": "Status",
-        "version": "Version"
-      },
       "confirm": {
         "uninstallAction": "Uninstall",
         "uninstallBody": "It will be removed from this project’s Tavotto environment. Scripts that use it cannot render until it is reinstalled.",
@@ -1346,7 +1340,6 @@
         "update": "upgrade"
       },
       "protected": "Built-in dependency, read-only",
-      "readOnly": "Read-only",
       "reason": {
         "repair": "Installed by missing-dependency repair",
         "user": "Installed manually"

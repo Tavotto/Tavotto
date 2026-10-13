@@ -45,7 +45,12 @@ import time
 from pathlib import Path
 
 from . import localserver, security
-from .engine import ai_bridge as engine_ai, pool as engine_pool, project_watch as engine_watch
+from .engine import (
+    ai_bridge as engine_ai,
+    nativesession as engine_nativesession,
+    pool as engine_pool,
+    project_watch as engine_watch,
+)
 
 LOG = logging.getLogger("tavotto.desktop")
 
@@ -291,18 +296,28 @@ class SidecarServer:
         return self._stopped.wait(timeout)
 
     def _cleanup(self) -> None:
-        """serve 循环退出后：停 watcher → 同步关 worker → 中断 AI → 清握手。
+        """serve 循环退出后：收 native 会话 → 停 watcher → 同步关 worker → 中断 AI → 清握手（各步相互隔离）。
 
         监听 socket 此时已经关了（werkzeug 的 `serve_forever` 在 finally 里 `server_close()`）：
         同步关 worker 最多要等好几秒，端口不必陪着等——紧接着启动的下一个 sidecar（应用内更新
         后的重启）才拿得到建议端口（`test_a_stopped_sidecar_releases_its_port_at_once` 看护）。
         """
-        try:
-            engine_watch.stop()  # None = 停掉全部项目的 watcher
-            engine_pool.shutdown_all(wait=True)  # 同步等 worker 真的退了再走
-            engine_ai.interrupt_all()
-        except Exception:  # noqa: BLE001 — 清理路径绝不能把退出堵死
-            LOG.exception("sidecar 清理异常（继续退出）")
+        # 每一步各自隔离：任何一步抛错都跳不过后面的（尤其 native 收尾——跳过它，桌面自己拉起的进程组
+        # 会在 Tavotto 关闭后成孤儿，ADR 0125 §五）。native 放最前：终端拥有的只放手（脚本是用户的，
+        # ADR 0021 §8.1），桌面拥有的先收，进程越早消失越好
+        for what, step in (
+            ("native 会话收尾", engine_nativesession.REGISTRY.shutdown_all),
+            ("watcher 停止", engine_watch.stop),  # None = 停掉全部项目的 watcher
+            (
+                "worker 关闭",
+                lambda: engine_pool.shutdown_all(wait=True),
+            ),  # 同步等 worker 真的退了再走
+            ("AI 中断", engine_ai.interrupt_all),
+        ):
+            try:
+                step()
+            except Exception:  # noqa: BLE001 — 清理路径绝不能把退出堵死
+                LOG.exception("sidecar 清理：%s异常（继续退出）", what)
         if self._handshake is not None:
             try:
                 self._handshake.unlink(missing_ok=True)

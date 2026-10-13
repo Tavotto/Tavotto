@@ -105,7 +105,8 @@ export const NAV_GROUPS: { id: 'general' | 'workflow' | 'integrations' | 'system
 
 /**
  * 每个分区的内容宽度模式。`normal`：一列居中、最大 `CONTENT_MAX_WIDTH`；`wide`：
- * 铺满内容区（只剩包管理的表格）。不给每一页自己随意布局。
+ * 铺满内容区（目前没有分区用它：Python 库的用户包 2026-10 起是条目行，不再是要横向空间的表格）。
+ * 不给每一页自己随意布局。
  */
 export const CONTENT_MODE: Record<SectionId, 'normal' | 'wide'> = {
   general: 'normal',
@@ -115,7 +116,7 @@ export const CONTENT_MODE: Record<SectionId, 'normal' | 'wide'> = {
   spec: 'normal',
   export: 'normal',
   ai: 'normal',
-  packages: 'wide',
+  packages: 'normal',
   diagnostics: 'normal',
   about: 'normal',
 }

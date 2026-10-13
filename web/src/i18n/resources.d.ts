@@ -1667,12 +1667,6 @@ export default interface Resources {
         "builtinFromManaged": "随 {{product}} 环境提供，只读。",
         "builtinPlanned": "创建环境时安装 matplotlib 及其依赖。",
         "builtinTitle": "内置包",
-        "col": {
-          "actions": "操作",
-          "name": "名称",
-          "status": "状态",
-          "version": "版本"
-        },
         "confirm": {
           "rebuildAction": "重建",
           "rebuildBody": "会删掉现有环境、新建一个，并按安装记录重装所有包。期间用到它的图无法渲染；已装包的记录不会丢。",
@@ -1729,7 +1723,6 @@ export default interface Resources {
           "update": "升级"
         },
         "protected": "内置依赖，只读",
-        "readOnly": "只读",
         "reason": {
           "repair": "缺包时自动修复安装",
           "user": "手动安装"

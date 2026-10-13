@@ -115,6 +115,9 @@ class ExecutionReceipt:
     launcher: dict | None = None
     #: 起会话那一刻的环境事实（P09）：`{"generation": …, "env_state": …}`。成功记录用它而不是收口时的值。私有，不进公开投影。
     session_env: dict | None = None
+    #: 这一次启动实例的唯一键（桌面拥有的会话 id）。空 = 不参与（safe / terminal native 的回执逐字节不变）。
+    #: 私有：两次参数完全相同的桌面启动是两次执行，不能得到同一个 `receipt_id`。
+    instance: str = ""
 
     def __post_init__(self) -> None:
         if self.profile not in execspec.PROFILES:
@@ -238,13 +241,14 @@ class ExecutionReceipt:
     @property
     def receipt_id(self) -> str:
         """这一次执行实例的不透明 id（公开身份 + 私有键 + generation）。"""
-        return _sha(
-            {
-                "public": self.public_identity(),
-                "private": self.private_invalidation_key(),
-                "generation": self.generation,
-            }
-        )
+        payload = {
+            "public": self.public_identity(),
+            "private": self.private_invalidation_key(),
+            "generation": self.generation,
+        }
+        if self.instance:
+            payload["instance"] = self.instance
+        return _sha(payload)
 
     def public_facts(self) -> dict:
         """给 ArtifactManifest 的那一小段（U09）：可公开的事实，**没有路径、没有 argv、没有 stem**——
@@ -316,6 +320,8 @@ class ExecutionReceipt:
             out["project_root"] = self.project_root
             if self.launcher is not None:
                 out["launcher"] = dict(self.launcher)
+            if self.instance:
+                out["instance"] = self.instance
         return out
 
 
@@ -431,17 +437,26 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
     """
     from . import execspec
 
-    kind = str(getattr(session, "target_kind", "") or execspec.TARGET_SCRIPT)
-    root = str(getattr(session, "project_root", "") or "")
-    raw_target = script if kind == execspec.TARGET_MODULE else os.path.join(root, script)
-    spec = execspec.native_spec(
-        raw_target,
-        interpreter=str(getattr(session, "interpreter", "") or ""),
-        cwd=str(getattr(session, "cwd", "") or ""),
-        project_root=root,
-        target_kind=kind,
-        argv=(NATIVE_ARGV_PLACEHOLDER,) * int(getattr(session, "arg_count", 0) or 0),
-    )
+    owned_spec = getattr(session, "spec", None)
+    if (
+        isinstance(owned_spec, execspec.ExecutionSpec)
+        and owned_spec.owner == execspec.OWNER_DESKTOP
+    ):
+        # 桌面拥有的会话（P06，ADR 0125）：启动身份就在会话上（不可变、spawn 时定的），回执直接取它的公开
+        # 投影——owner / 运行配置引用 / env 键名 / stdin 通道进身份，argv 与 env 的值不出进程
+        spec = owned_spec
+    else:
+        kind = str(getattr(session, "target_kind", "") or execspec.TARGET_SCRIPT)
+        root = str(getattr(session, "project_root", "") or "")
+        raw_target = script if kind == execspec.TARGET_MODULE else os.path.join(root, script)
+        spec = execspec.native_spec(
+            raw_target,
+            interpreter=str(getattr(session, "interpreter", "") or ""),
+            cwd=str(getattr(session, "cwd", "") or ""),
+            project_root=root,
+            target_kind=kind,
+            argv=(NATIVE_ARGV_PLACEHOLDER,) * int(getattr(session, "arg_count", 0) or 0),
+        )
     # native 的 pid 是用户进程自己的（bridge 附着时记下的 `pid`，没记就不核）
     runtime, rejected, pid_check = accept_runtime(
         getattr(session, "last_build_runtime", None), expected_pid=worker_pid(session)
@@ -463,6 +478,7 @@ def from_native_session(session, script: str, *, grant: dict | None = None) -> E
         descriptors=descriptors,
         runtime_rejected=rejected,
         pid_check=pid_check,
+        instance=(str(getattr(session, "session_id", "") or "") if spec is owned_spec else ""),
     )
 
 

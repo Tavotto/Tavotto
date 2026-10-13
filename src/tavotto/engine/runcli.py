@@ -321,13 +321,8 @@ def _wait_for_child_process(
 
 
 def _exit_code_of(code: int) -> int:
-    """`Popen.wait()` 的返回值 → 进程退出码。
-
-    POSIX 上被信号杀掉时它是**负数**（`-SIGINT`）。按 shell 惯例折成
-    `128 + signo`——直接把 `-2` 当退出码返回会变成 254，那个数字对任何人
-    都没有意义。
-    """
-    return 128 + (-code) if code < 0 else code
+    """`Popen.wait()` 的返回值 → 进程退出码：折法的唯一出处在 `runcodes.exit_code_of`。"""
+    return runcodes.exit_code_of(code)
 
 
 def _figures_written(out_dir: str) -> int:
