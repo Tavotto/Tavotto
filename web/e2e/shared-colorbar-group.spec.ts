@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { expect, openElementsTab, test } from './fixtures'
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -99,9 +99,7 @@ const boxes = async (page: Page) => {
  * 理由：收起动画中它仍「可见」。
  */
 async function openTree(page: Page) {
-  const rail = page.locator('[data-rail="elements"]')
-  if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
-  await expect(rail).toHaveAttribute('aria-expanded', 'true')
+  await openElementsTab(page)
   await expect(page.locator('[role="tree"]')).toBeVisible()
 }
 
