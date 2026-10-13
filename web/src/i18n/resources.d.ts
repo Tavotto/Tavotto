@@ -1557,7 +1557,7 @@ export default interface Resources {
           },
           "extraHint": {
             "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。",
-            "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。",
+            "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
             "source": "当前项目登记的脚本。不勾选时，包里没有任何脚本源码。"
           },
           "extrasTitle": "额外内容（默认不发送）",
