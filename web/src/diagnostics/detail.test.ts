@@ -265,6 +265,25 @@ describe('载荷预算', () => {
     expect(SEND_PAYLOAD_BUDGET).toBeLessThan(1024 * 1024) // 引擎的整份丢弃上限
   })
 
+  it('fit 是纯函数：全局环里的记录与 overrides 数组不会被原地截短', () => {
+    uninstall = installConsoleCapture()
+    for (let i = 0; i < 40; i++) {
+      console.error('m'.repeat(4000), Object.assign(new Error('e'), { stack: 's'.repeat(8000) }))
+    }
+    const before = JSON.stringify([readConsoleRing(), readErrorRing()])
+    const overrides = Array.from({ length: 400 }, (_, i) => ({ gid: `g${i}`, prop: 'text', value: 'v'.repeat(900) }))
+    const p = worst()
+    ;(p.detail as Record<string, unknown>).console = readConsoleRing()
+    ;(p.detail as Record<string, unknown>).errors = readErrorRing()
+    ;(p.detail as Record<string, unknown>).overrides = Array.from({ length: 3 }, () => ({ panel: 'p', overrides }))
+    const fitted = fitDetailToBudget(p)
+    expect((fitted.detail.client_truncated as string[]).length).toBeGreaterThan(0)
+    expect(JSON.stringify([readConsoleRing(), readErrorRing()])).toBe(before)
+    expect(overrides).toHaveLength(400)
+    expect((p.detail.overrides as { overrides: unknown[] }[])[0].overrides).toHaveLength(400)
+    expect(p.detail.client_truncated).toBeUndefined() // 入参也不被改
+  })
+
   it('没超预算时原样、不写 client_truncated', () => {
     const p = worst()
     ;(p.detail as { console: unknown[]; errors: unknown[]; overrides: unknown[] }).console = []

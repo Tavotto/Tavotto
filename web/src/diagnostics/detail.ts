@@ -302,12 +302,20 @@ type Rec = { message: string; stack: string | null }
  * 顺序：栈与消息缩短 → 丢最旧的 console → 丢最旧的错误 → overrides 每面板留 100 条 → 丢面板。老载荷（状态 / 轨迹）不动。
  */
 export function fitDetailToBudget(payload: SendPayload, budget = SEND_PAYLOAD_BUDGET): SendPayload {
-  const d = payload.detail as {
+  // 纯函数：下面的截短只作用在拷贝上。console / errors 环里的记录对象与 store 里的 overrides 数组都是全局的，
+  // 原地改写会把证据永久缩短（下一份报告悄悄变短且没有 client_truncated）
+  const src = payload.detail as {
     console?: Rec[]
     errors?: Rec[]
     overrides?: { overrides?: unknown[] }[]
-    client_truncated?: string[]
   }
+  const d = {
+    ...(payload.detail as Record<string, unknown>),
+    console: src.console?.map((r) => ({ ...r })),
+    errors: src.errors?.map((r) => ({ ...r })),
+    overrides: src.overrides?.map((p) => ({ ...p })),
+  } as typeof src & { client_truncated?: string[] }
+  payload = { ...payload, detail: d as unknown as Record<string, unknown> }
   const cut: string[] = []
   const over = () => bytesOf(payload) > budget
   const note = (what: string) => {
