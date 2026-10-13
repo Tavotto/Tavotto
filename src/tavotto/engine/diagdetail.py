@@ -248,15 +248,16 @@ _SECRET_WORDS = (
     r"api[_-]?key|apikey|secret|passw(?:or)?d|passwd|token|credential|authorization"
     r"|auth[_-]?(?:key|token|header|code)|nonce|signature|session[_-]?(?:id|key|token|secret)"
     r"|private[_-]?key|access[_-]?key|bearer|x-tavotto-auth|q-signature|upload[_-]?(?:url|credential)"
+    r"|pwd|passphrase|passcode|cookie"
 )
 #: `key=value` / `key: value` / `"key": "value"` / `'key': 'value'`：键里含秘密词就把值换掉。
 #: 键名前后的通配**有上界**（40）且起点锚在标识符开头：日志里一条几十万字符的十六进制 / base64 长串
 #: 上，无界的 `[\w.\-]*` 前缀会逐位回溯成 O(n²)（备包卡死）。看护：`test_scrubber_is_linear_on_long_tokens`
 _KV_SECRET = re.compile(
     rf"""(?ix)
-    (?P<key>(?<![\w.\-])["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))["']?)
+    (?P<key>(?<![\w.\-])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))\\*["']?)
     (?P<sep>\s*[:=]\s*)
-    (?P<val>"[^"\n]*"|'[^'\n]*'|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
+    (?P<val>(?P<bs>\\+)"[^\n]{{0,4096}}?(?P=bs)"|"[^"\n]*"|'[^'\n]*'|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
     """
 )
 _COOKIE_LINE = re.compile(r"(?i)\b((?:set-)?cookie(?![\w-])\s*[:=]\s*)[^\n]*")
@@ -266,6 +267,39 @@ _URL_USERINFO = re.compile(
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 _REDACTED = "<redacted>"
+#: 没有键名可依的形状：PEM 私钥块、常见服务商的令牌前缀（AWS 访问密钥 id、GitHub 细粒度、Slack、Google API key）
+_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----")
+PEM_SCAN_MAX = 16 * 1024
+
+
+def _redact_pem(text: str) -> str:
+    """PEM 私钥块整段换掉。线性：每个 BEGIN 最多向后看 `PEM_SCAN_MAX`，换掉之后从块尾继续（不回头）；
+    找不到 END 就抹到窗口末尾（保守）。"""
+    if "PRIVATE KEY-----" not in text:
+        return text
+    out: list[str] = []
+    pos = 0
+    while True:
+        m = _PEM_BEGIN.search(text, pos)
+        if m is None:
+            break
+        window = m.end() + PEM_SCAN_MAX
+        end = text.find("-----END", m.end(), window)
+        if end < 0:
+            stop = min(len(text), window)
+        else:
+            close = text.find("-----", end + 8, end + 8 + 80)
+            stop = close + 5 if close >= 0 else end + 8
+        out.append(text[pos : m.start()])
+        out.append(_REDACTED)
+        pos = stop
+    out.append(text[pos:])
+    return "".join(out)
+
+
+_PROVIDER_TOKEN = re.compile(
+    r"\b(?:AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b"
+)
 _BORING_VALUE = re.compile(
     r"""^["']?(?:|\d{1,6}|true|false|none|null|<redacted>|\*\*\*|<[^>]{1,20}>|\.\.\.)["']?$""", re.I
 )
@@ -314,23 +348,35 @@ def _container_end(text: str, start: int) -> tuple[int, bool]:
 
 
 #: 结构化数据里这些键名（子串）的值整体换掉。`diagnostics._SECRET_KEYS` 的超集
+#: 结构化数据里的秘密键名判据：键名**去掉所有非字母数字、转小写**之后包含这些词（`API-KEY`、`apiKey`、`x-api-key`、
+#: `Session_Token` 都归一成同一个形状）。与文本侧 `_SECRET_WORDS` 是同一张词表的两种写法，`TestSecretShapeMatrix` 逐键对拍。
 _SECRET_KEY_PARTS = (
-    "api_key",
     "apikey",
     "token",
     "secret",
     "password",
     "passwd",
-    "auth",
+    "pwd",
+    "passphrase",
+    "passcode",
     "cookie",
     "nonce",
     "credential",
     "signature",
-    "session_id",
-    "session_key",
-    "private_key",
-    "access_key",
+    "sessionid",
+    "sessionkey",
+    "privatekey",
+    "accesskey",
+    "bearer",
 )
+_AUTH_KEY = re.compile(
+    r"auth(?!or(?!iz)|ority)"
+)  # auth / authorization / authToken；不含 author / authority
+
+
+def is_secret_key(key: object) -> bool:
+    n = re.sub(r"[^a-z0-9]", "", str(key).lower())
+    return n == "key" or bool(_AUTH_KEY.search(n)) or any(p in n for p in _SECRET_KEY_PARTS)
 
 
 def _norm_variants(raw: str) -> set[str]:
@@ -400,10 +446,13 @@ class Scrubber:
             return m.group(0)
         if self.source_mode:
             # 源码：只换带引号的字面量 / Bearer 形状；`token = self._next()` 这类取值表达式原样留着
-            if not (val[:1] in "\"'" and len(val) >= 8) and not re.match(
+            if not (val[:1] in "\"'\\" and len(val) >= 8) and not re.match(
                 r"(?i)^(Bearer|Basic|Token)\s", val
             ):
                 return m.group(0)
+        bs = m.group("bs")
+        if bs:  # 转义过的 JSON 字符串（日志 / JSON 值里嵌着 JSON）：`\"S\"` → `\"<redacted>\"`
+            return f'{m.group("key")}{m.group("sep")}{bs}"{_REDACTED}{bs}"'
         quote = val[0] if val[:1] in "\"'" else ""
         return f"{m.group('key')}{m.group('sep')}{quote}{_REDACTED}{quote}"
 
@@ -437,6 +486,8 @@ class Scrubber:
         text = _BEARER.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
         text = _URL_USERINFO.sub(lambda m: m.group("scheme") + _REDACTED + "@", text)
         text = _JWT.sub(_REDACTED, text)
+        text = _redact_pem(text)
+        text = _PROVIDER_TOKEN.sub(_REDACTED, text)
         text = diagnostics._SECRET_VALUE.sub("***", text)
         if self._install_id:
             text = text.replace(self._install_id, "***")
@@ -447,13 +498,18 @@ class Scrubber:
         return text
 
     def obj(self, obj):
-        """JSON 可序列化的结构：键名带秘密词的值整体换掉，其余字符串过 `text`。"""
+        """JSON 可序列化的结构：秘密键名下的值**不论类型**整体换掉（str / 数 / dict / list / 嵌套容器；
+        只有全是数字·布尔·null 的容器按文本侧同一判据保留），其余字符串过 `text`。"""
         if isinstance(obj, dict):
             out = {}
             for k, v in obj.items():
-                key = str(k).lower()
-                if any(p in key for p in _SECRET_KEY_PARTS) and not isinstance(v, (dict, list)):
-                    out[k] = _REDACTED if v else v
+                if is_secret_key(k):
+                    if isinstance(v, (dict, list)):
+                        out[k] = (
+                            v if _containers_are_boring(json.dumps(v, default=str)) else _REDACTED
+                        )
+                    else:
+                        out[k] = _REDACTED if v else v
                 else:
                     out[k] = self.obj(v)
             return out
@@ -1447,6 +1503,7 @@ def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     非 .py 一律 `full`；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
     if not rel.lower().endswith(".py"):
         return full.text(text)
+    text = _redact_pem(text)  # 多行的块先整体换掉：注释里的 PEM 每行是一个独立的 COMMENT token
     spans = _prose_spans(text)
     if spans is None:
         # 语法坏 / 字符串没闭合：分不清哪里是注释哪里是字符串（`x = """api_key=REAL` 之后全是字符串），整份按完整模式

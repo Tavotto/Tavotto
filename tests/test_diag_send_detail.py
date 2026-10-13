@@ -584,6 +584,176 @@ class TestOptionalContent:
 # ---------------------------------------------------------------------------
 # 源码脱敏（注释 / 字符串里的明文）、渲染环境的项目感知、整份丢弃的记账
 # ---------------------------------------------------------------------------
+SECRET = "CNRYSECRET9x7q"
+MATRIX_KEYS = [
+    "token", "api_key", "apiKey", "API-KEY", "auth", "Authorization", "x-api-key", "X-Api-Key",
+    "password", "passwd", "pwd", "passphrase", "passcode", "secret", "clientSecret", "session_id",
+    "sessionId", "Session-Token", "nonce", "access_token", "refreshToken", "private_key",
+    "accessKey", "cookie", "signature", "credentials", "bearer", "authToken", "api-token",
+    "TOKEN", "Password", "AUTH_TOKEN", "secret_key", "key",
+]  # fmt: skip
+MATRIX_VALUES = {
+    "bare": SECRET,
+    "sq": f"'{SECRET}'",
+    "dq": f'"{SECRET}"',
+    "num": "123456789012",
+    "list": f'["{SECRET}"]',
+    "dict": f'{{"raw":"{SECRET}"}}',
+    "nested": f'{{"a":[{{"b":"{SECRET}"}}]}}',
+    "bearer": f"Bearer {SECRET}",
+    "basic": f"Basic {SECRET}",
+}
+MATRIX_STANDALONE = {
+    "bearer-line": f"Authorization: Bearer {SECRET}",
+    "cookie-line": f"Cookie: sid={SECRET}; b=2",
+    "set-cookie": f"Set-Cookie: sid={SECRET}",
+    "url-userinfo": f"https://u:{SECRET}@h.example/p",
+    "url-userinfo-only-user": f"postgres://{SECRET}@h",
+    "query": f"https://h/p?access_token={SECRET}&x=1",
+    "query-later": f"https://h/p?x=1&api_key={SECRET}",
+    "jwt": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.abcdefghijk" + SECRET,
+    "long-hex": "deadbeefcafe0123456789abcdef0123456789ab" + "0" * 24,
+    "proxy-env": f"HTTP_PROXY=http://user:{SECRET}@proxy:8080",
+    "x-tavotto-auth": f"X-Tavotto-Auth: {SECRET}",
+    "pem": f"-----BEGIN RSA PRIVATE KEY-----\n{SECRET}\n-----END RSA PRIVATE KEY-----",
+    "aws-id": "AKIAABCDEFGHIJKLMNOP",
+    "github-pat": "github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyz",
+    "slack": "xoxb-1234567890-abcdefghijk",
+    "google-key": "AIzaSyA1234567890123456789012345678901",
+}  # fmt: skip
+CANARIES = (
+    SECRET,
+    "123456789012",
+    "deadbeefcafe0123",
+    "AKIAABCDEFGHIJKLMNOP",
+    "github_pat_11ABCDEFG",
+    "xoxb-1234567890",
+    "AIzaSyA12345",
+    "MIIabc",
+)
+
+
+def _json_form(v: str):
+    return v if v[:1] in '"[{' else json.dumps(v)
+
+
+def _leaks(out: str) -> bool:
+    return any(c in out for c in CANARIES)
+
+
+class TestSecretShapeMatrix:
+    """键形状 × 值形状 × 载体（日志文本 / JSON 结构 / 源码注释·文档字符串·代码），金丝雀在输出里 0 命中。"""
+
+    @pytest.mark.parametrize("key", MATRIX_KEYS)
+    def test_key_value_cells(self, key, world):
+        full, code = diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        leaks = []
+        for vn, v in MATRIX_VALUES.items():
+            jv = _json_form(v)
+            try:
+                obj = json.loads(jv)
+            except ValueError:
+                obj = v
+            cells = {
+                "text=": full.text(f"{key}={v} tail"),
+                "text:": full.text(f"{key}: {v} tail"),
+                "json-in-log": full.text('{"%s": %s, "x": 1}' % (key, jv)),
+                "pyrepr-in-log": full.text(
+                    "{'%s': %s}" % (key, v if v[:1] in "'[{\"" else f"'{v}'")
+                ),
+                "obj": json.dumps(
+                    full.obj({key: obj, "n": {"inner": {key: obj}}}), ensure_ascii=False
+                ),
+                "src-comment": diagdetail.scrub_script(f"# {key}={v}\nx=1\n", "a.py", full, code),
+                "src-docstring": diagdetail.scrub_script(f'"""{key}: {v}"""\n', "a.py", full, code),
+            }
+            if vn in ("sq", "dq"):
+                cells["src-code"] = diagdetail.scrub_script(f"{key} = {v}\n", "a.py", full, code)
+            leaks += [(vn, c) for c, out in cells.items() if _leaks(out)]
+        assert not leaks, (key, leaks)
+
+    @pytest.mark.parametrize("name", sorted(MATRIX_STANDALONE))
+    def test_standalone_shapes(self, name, world):
+        t = MATRIX_STANDALONE[name]
+        full, code = diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        for carrier, out in {
+            "text": full.text(t),
+            "obj": json.dumps(full.obj({"msg": t, "nested": [{"m": t}]})),
+            "src-comment": diagdetail.scrub_script(f"# {t}\n", "a.py", full, code),
+        }.items():
+            assert not _leaks(out), (name, carrier, out)
+
+    def test_innocent_neighbours_survive(self, world):
+        full = diagdetail.Scrubber()
+        assert (
+            full.text("the author wrote about authority: fine")
+            == "the author wrote about authority: fine"
+        )
+        out = full.obj({"author": "A. Person", "authority_variant": "var:abc", "n": 4})
+        assert out == {"author": "A. Person", "authority_variant": "var:abc", "n": 4}
+        assert full.obj({"token": [1, 2, 3]}) == {"token": [1, 2, 3]}
+
+    def test_final_zip_bytes_have_no_canary_in_any_carrier(self, client, world, monkeypatch):
+        """同一批「键 × 值」格子塞进所有载体：日志文本、console 记录、overrides、会话状态 JSON、崩溃报告、源码；
+        在最终 ZIP 的全部字节（含内层 zip 解开后）里全文搜索。"""
+        cells = []
+        for key in MATRIX_KEYS:
+            for v in MATRIX_VALUES.values():
+                cells += [f"{key}={v}", f'"{key}": {_json_form(v)}']
+        cells += list(MATRIX_STANDALONE.values())
+        blob = "\n".join(cells)
+        log = world["tmp"] / "matrix.log"
+        log.write_text(
+            "2026-10-13 10:00:00,000 INFO tavotto: start\n" + blob + "\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(diagnostics, "_app_log_path", lambda: log)
+        (world["state"] / "export-defaults.json").write_text(
+            json.dumps(
+                {
+                    "cells": cells[:200],
+                    **{
+                        k: json.loads(_json_form(MATRIX_VALUES["nested"]))
+                        for k in ("token", "apiKey")
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (world["crash"] / "Tavotto-2026-10-13-130000.ips").write_text(blob, encoding="utf-8")
+        proj = _project(client, world["tmp"])
+        (proj / "fig_one.py").write_text(
+            "\n".join(f"# {c}" for c in cells[:300]) + "\ndef main():\n    return None\n",
+            encoding="utf-8",
+        )
+        chunks = ["\n".join(cells[i : i + 25]) for i in range(0, min(len(cells), 800), 25)][:38]
+        payload = {
+            "detail": {
+                "console": [
+                    {"t": i, "level": "error", "message": c, "stack": c}
+                    for i, c in enumerate(chunks)
+                ],
+                "overrides": [
+                    {
+                        "panel": "p.pdf",
+                        "overrides": [
+                            {
+                                "gid": "g",
+                                "prop": "p",
+                                "value": {"token": {"raw": SECRET}, "text": c},
+                            }
+                            for c in chunks[:5]
+                        ],
+                    }
+                ],
+                "shell": {"user_agent": f"UA Authorization: Bearer {SECRET}"},
+            }
+        }
+        _prep, z = _prepare(client, payload, source=True, crash_reports=True, corrupt_sessions=True)
+        for name, text in _texts(z).items():
+            assert not _leaks(text), (name, [c for c in CANARIES if c in text])
+        assert "tavotto: start" in _blob(z)  # 反证：日志确实进了包，只是密钥没有
+
+
 class TestContainerSecrets:
     @pytest.mark.parametrize(
         ("raw", "want"),
@@ -647,7 +817,7 @@ class TestContainerSecrets:
 
     def test_scanning_stays_linear(self):
         s = diagdetail.Scrubber()
-        for blob in ("token=[" * 100_000, "token={" * 100_000, 'token=["' * 60_000 + "x"):
+        for blob in ("token=\\\"" * 50_000, "token=[" * 100_000, "token={" * 100_000, 'token=["' * 60_000 + "x"):
             t0 = time.monotonic()
             s.text(blob)
             assert time.monotonic() - t0 < 5, blob[:10]
