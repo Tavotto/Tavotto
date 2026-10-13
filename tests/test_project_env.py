@@ -29,6 +29,7 @@ import pytest
 from support import venvfixture
 from tavotto.engine import (
     config as engine_config,
+    envlease,
     execspec,
     pool as engine_pool,
     projectenv,
@@ -1509,6 +1510,47 @@ def test_auto_adoption_never_overrides_a_user_decision(tmp_path, monkeypatch, ca
     assert projectenv.remembered_record(project) == before, case
     # 候选照样在：修复卡片上「改用这台机器上已有的环境」仍是兜底
     assert projectenv.healthy_system_candidate(outcome["system"])["python"] == py, case
+
+
+def test_system_adoption_holds_the_environment_through_probe_and_commit(tmp_path, monkeypatch):
+    """第二层自动采用的现场再体检 + 提交整段占住目标环境（`envlease.inspecting`）：写入决定的那一刻，另一个项目
+    要往这个环境装包会被拒；持租约期间 `remember` 不回头要安装租约（要的话采用会被拒、下面断言不成立）。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    [py] = _fake_system(tmp_path, monkeypatch, {"py312": _health()})
+    real = projectenv.remember
+    install: list = []
+
+    def remember_while_another_project_installs(*a, **k):
+        try:
+            with envlease.mutating("other-project-install", py):
+                install.append("started")
+        except envlease.EnvironmentBusy as busy:
+            install.append(busy.code)
+        return real(*a, **k)
+
+    monkeypatch.setattr(projectenv, "remember", remember_while_another_project_installs)
+    outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert install == [envlease.ENVIRONMENT_MUTATING]
+    assert outcome["ok"] is True and projectenv.remembered_record(project)["path"] == py
+    with envlease.mutating("later-install", py):  # 采用结束，租约放掉
+        pass
+
+
+def test_system_adoption_refuses_an_environment_an_install_took_after_the_filter(
+    tmp_path, monkeypatch
+):
+    """`is_mutating` 过滤放行之后装包才开始：决定不能落在装包中的环境上，结果回到修复卡片的候选。"""
+    _auto_on(monkeypatch)
+    project = tmp_path / "p"
+    project.mkdir()
+    [py] = _fake_system(tmp_path, monkeypatch, {"py312": _health()})
+    monkeypatch.setattr(engine_pool, "is_mutating", lambda p: False)  # 过滤时还没人在装
+    with envlease.mutating("other-project-install", py):
+        outcome = engine_pool.try_project_env(str(project), "fig.py", "adjustText")
+    assert outcome["ok"] is False
+    assert projectenv.remembered_record(project) is None
 
 
 def test_auto_adoption_happens_once_per_build(tmp_path, monkeypatch):

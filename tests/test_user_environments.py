@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import deprepair, pool as engine_pool, projectenv, userenvs
+from tavotto.engine import deprepair, envlease, pool as engine_pool, projectenv, userenvs
 
 pytest_plugins = ("support.dependency_repair",)
 
@@ -418,6 +418,44 @@ def test_a_user_decision_landing_during_the_decision_is_not_overwritten(adopt_en
     assert verdicts == [True], "尺子是活的：判的那一刻确实允许"
     record = projectenv.remembered_record(project)
     assert record["mode"] == projectenv.MODE_DEFAULT_CHAIN, record
+    assert heard == []
+
+
+def test_auto_adopt_holds_the_environment_through_the_commit(adopt_env, monkeypatch):
+    """自动采用的提交整段占住目标环境（`envlease.inspecting`，与手动采用同一条）：写入决定的那一刻，另一个项目
+    要往这个环境装包会被拒。同步点：`remember` 一进来就让别的项目来装，不用 sleep。
+    也钉住不死锁：持租约期间 `remember` 不回头要安装租约（要的话这里会被 EnvironmentBusy 拒掉、采用不成立）。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    real = projectenv.remember
+    install: list = []
+
+    def remember_while_another_project_installs(*a, **k):
+        try:
+            with envlease.mutating("other-project-install", str(env)):
+                install.append("started")
+        except envlease.EnvironmentBusy as busy:
+            install.append(busy.code)
+        return real(*a, **k)
+
+    monkeypatch.setattr(projectenv, "remember", remember_while_another_project_installs)
+    got = deprepair.decide_environment(project, "fig.py")
+    assert install == [envlease.ENVIRONMENT_MUTATING]
+    assert got is not None and projectenv.remembered_record(project)["path"] == str(env)
+    with envlease.mutating("later-install", str(env)):  # 采用结束，租约放掉
+        pass
+
+
+def test_auto_adopt_refuses_an_environment_an_install_took_after_the_filter(adopt_env, monkeypatch):
+    """挑选时的 `is_mutating` 过滤是瞬时的：过滤放行之后装包才开始，决定不能落在装包中的环境上。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    monkeypatch.setattr(envlease, "is_mutating", lambda python: False)  # 过滤时还没人在装
+    with envlease.mutating("other-project-install", str(env)):  # 过滤之后、提交之前开始装
+        assert deprepair.decide_environment(project, "fig.py") is None
+    assert projectenv.remembered_record(project) is None
     assert heard == []
 
 

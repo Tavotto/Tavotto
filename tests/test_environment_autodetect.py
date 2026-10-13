@@ -417,6 +417,49 @@ def test_an_engaged_environment_is_not_picked(rig):
         assert deprepair.decide_environment(rig["root"], "fig.py")["python"] == free
 
 
+def test_detection_holds_the_environment_through_the_commit(rig, monkeypatch):
+    """检测的现量 + 提交整段占住候选环境（`envlease.inspecting`）：写入决定的那一刻另一个项目来装包会被拒；
+    持租约期间 `remember` 不回头要安装租约（要的话采用会被 EnvironmentBusy 拒掉，下面的断言不成立）。"""
+    conda = rig["cand"]("conda-env", userenvs.SOURCE_CONDA)
+    rig["satisfying"].add(conda)
+    real = projectenv.remember
+    install: list = []
+
+    def remember_while_another_project_installs(*a, **k):
+        try:
+            with envlease.mutating("other-project-install", conda):
+                install.append("started")
+        except envlease.EnvironmentBusy as busy:
+            install.append(busy.code)
+        return real(*a, **k)
+
+    monkeypatch.setattr(projectenv, "remember", remember_while_another_project_installs)
+    entry = deprepair.decide_environment(rig["root"], "fig.py")
+    assert install == [envlease.ENVIRONMENT_MUTATING]
+    assert entry is not None and entry["python"] == conda
+    with envlease.mutating("later-install", conda):  # 采用结束，租约放掉
+        pass
+
+
+def test_detection_skips_an_environment_an_install_took_after_the_filter(rig, monkeypatch):
+    """挑选时的 `is_mutating` 过滤放行之后装包才开始：这一个不采用，退到下一个没被占的；对照：没有装包照常采用。"""
+    busy = rig["cand"]("busy-env", userenvs.SOURCE_LOGIN_SHELL)
+    free = rig["cand"]("free-env", userenvs.SOURCE_CONDA)
+    rig["satisfying"] |= {busy, free}
+    monkeypatch.setattr(envlease, "is_mutating", lambda python: False)  # 过滤时还没人在装
+    with envlease.mutating(envlease.env_key_of(busy), busy):
+        assert deprepair.decide_environment(rig["root"], "fig.py")["python"] == free
+
+
+def test_detection_adopts_nothing_when_the_only_candidate_is_being_installed_into(rig, monkeypatch):
+    only = rig["cand"]("only-env", userenvs.SOURCE_CONDA)
+    rig["satisfying"].add(only)
+    monkeypatch.setattr(envlease, "is_mutating", lambda python: False)
+    with envlease.mutating(envlease.env_key_of(only), only):
+        assert deprepair.decide_environment(rig["root"], "fig.py") is None
+    assert projectenv.remembered_record(rig["root"]) is None
+
+
 # ===========================================================================
 # 检测出的解释器是不可变值：同项目两个脚本并发时，不被另一个脚本换掉（Codex #820 r4220794171）
 # ===========================================================================
