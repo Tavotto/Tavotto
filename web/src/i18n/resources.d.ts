@@ -1546,6 +1546,15 @@ export default interface Resources {
           },
           "categoryLabel": "问题类型",
           "close": "关闭",
+          "contact": {
+            "hint": "想直接沟通？发消息时附上报告编号：",
+            "hintNoId": "想直接沟通？",
+            "link": "加企业微信联系我们",
+            "qrAlt": "Tavotto 维护者的企业微信二维码，用手机微信扫码添加",
+            "row": "联系维护者",
+            "rowHint": "想直接沟通，可以加企业微信。",
+            "showQr": "显示二维码"
+          },
           "copyId": "复制报告编号",
           "details": "查看详情",
           "done": "完成",

@@ -1308,6 +1308,15 @@
           "source": "script source",
           "crash_reports": "system crash reports (may contain the contents of open files)",
           "corrupt_sessions": "contents of corrupted session copies"
+        },
+        "contact": {
+          "hint": "Want to talk directly? Include the report ID in your message: ",
+          "hintNoId": "Want to talk directly? ",
+          "link": "Contact us on WeCom",
+          "showQr": "Show QR code",
+          "qrAlt": "WeCom QR code for the Tavotto maintainer; scan it with WeChat on your phone",
+          "row": "Contact the maintainer",
+          "rowHint": "For a direct conversation, add us on WeCom (shown in Chinese only)."
         }
       }
     },
