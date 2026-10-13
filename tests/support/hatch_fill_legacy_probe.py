@@ -23,6 +23,10 @@ from matplotlib.patches import Rectangle  # noqa: E402
 import manifest as M  # noqa: E402
 import overrides as O  # noqa: E402
 
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 GID = "axes_0.patches_0"
 USER_COLOR = (0.0, 0.5, 0.0, 1.0)
 
