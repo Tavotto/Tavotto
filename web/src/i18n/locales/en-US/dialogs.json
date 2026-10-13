@@ -1277,7 +1277,7 @@
           "corrupt_sessions": "Contents of corrupted session copies"
         },
         "extraHint": {
-          "source": "The scripts registered in the open project. Unticked, the bundle contains no script source at all.",
+          "source": "Scripts are attached as they are. We try to remove secrets we can recognise, but cannot guarantee it; if your scripts contain secrets, do not tick this.",
           "crash_reports": "Tavotto system crash reports from the last 7 days. Windows crash dumps are snapshots of the program's memory and may contain the contents and paths of files that were open; they cannot be redacted.",
           "corrupt_sessions": "By default only the names and sizes of corrupted copies; tick to attach their contents."
         },

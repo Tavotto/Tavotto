@@ -699,6 +699,8 @@ class TestSecretShapeMatrix:
         'config["{k}"] = "VAL"', "config['{k}'] = 'VAL'", 'f({k}="VAL")', 'f(a=1, {k}="VAL", b=2)',
         '{{"{k}": "VAL"}}', "{{'{k}': b'VAL', 'n': 1}}", '{k} = ("VAL" "T")', '{k} = """VAL"""',
         'os.environ["{k}"] = "VAL"', 'os.environ.setdefault("{k}", "VAL")', 't = ("{k}", "VAL")',
+        'set_{k}("VAL")', 'client.set_{k}("VAL", "x")', '{k}("user", "VAL")', 'obj.{k}.update("VAL")',
+        'x = foo(set_{k}("VAL"), "keep")',
     ]  # fmt: skip
     PY_STRING_KEY_FORMS = [
         'config["{k}"] = "VAL"', '{{"{k}": "VAL"}}', 'os.environ.setdefault("{k}", "VAL")', 't = ("{k}", "VAL")',
@@ -749,6 +751,39 @@ class TestSecretShapeMatrix:
         assert "def main" in body and SECRET not in body
         for name, text in _texts(z).items():
             assert SECRET not in text, name
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "a -----BEGIN PRIVATE KEY-----\n"
+            + "REALPEM" * 5000
+            + "\n-----END PRIVATE KEY-----\nSAFE_TAIL",
+            "a -----BEGIN RSA PRIVATE KEY-----\n" + "REALPEM" * 5000 + "\nSAFE_TAIL_MISSING_END",
+            "-----BEGIN PRIVATE KEY-----\nREALPEM1\n-----END PRIVATE KEY-----\nmid SAFE_MID\n"
+            "-----BEGIN PRIVATE KEY-----\nREALPEM2\n-----END PRIVATE KEY-----\nSAFE_TAIL",
+        ],
+    )
+    def test_pem_blocks_of_any_length_and_without_end(self, text):
+        out = diagdetail.Scrubber().text(text)
+        assert "REALPEM" not in out
+        if "MISSING_END" in text:  # 没有 END：从 BEGIN 抹到输入末尾
+            assert "SAFE_TAIL_MISSING_END" not in out and out == "a <redacted>"
+        else:  # 有 END：块外的正常文本保留
+            assert "SAFE_TAIL" in out
+        if "SAFE_MID" in text:
+            assert "SAFE_MID" in out
+
+    def test_calls_to_secret_named_callables_redact_every_direct_string_argument(self):
+        full, code = diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        out = diagdetail.scrub_script(
+            'login(token="R1", name="KEEP_NAME")\nprint("KEEP_PRINT")\nf(g("KEEP_INNER"), h=["KEEP_LIST"])\n',
+            "a.py",
+            full,
+            code,
+        )
+        assert "R1" not in out
+        for keep in ("KEEP_NAME", "KEEP_PRINT", "KEEP_INNER", "KEEP_LIST"):
+            assert keep in out
 
     def test_innocent_neighbours_survive(self, world):
         full = diagdetail.Scrubber()

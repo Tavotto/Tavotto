@@ -249,8 +249,10 @@ Offering the option uploads nothing; sending does:
   tokens and proxy passwords are removed from every one of them.
 * **Three extras, off by default and never remembered.** The dialog has three
   checkboxes that start unticked every time it opens: *script source* (the scripts
-  registered in the open project — without it the bundle contains no script source at
-  all, including the source lines normally printed inside tracebacks), *system crash
+  registered in the open project, attached as they are — **secret removal in scripts is best
+  effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
+  without it the bundle contains no script source at all, including the source lines normally
+  printed inside tracebacks), *system crash
   reports* (Tavotto, sidecar and render-Python crash reports from the last 7 days:
   macOS reports and Windows WER reports are redacted text, but Windows crash dumps
   (`.dmp`) are snapshots of the program's memory that may contain the contents and

@@ -275,12 +275,11 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}
 _REDACTED = "<redacted>"
 #: 没有键名可依的形状：PEM 私钥块、常见服务商的令牌前缀（AWS 访问密钥 id、GitHub 细粒度、Slack、Google API key）
 _PEM_BEGIN = re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----")
-PEM_SCAN_MAX = 16 * 1024
 
 
 def _redact_pem(text: str) -> str:
-    """PEM 私钥块整段换掉。线性：每个 BEGIN 最多向后看 `PEM_SCAN_MAX`，换掉之后从块尾继续（不回头）；
-    找不到 END 就抹到窗口末尾（保守）。"""
+    """PEM 私钥块整段换掉。线性：每个 BEGIN 向后找 END（不设窗口），换掉之后从块尾继续、不回头——所以总扫描量
+    不超过输入长度。**找不到 END（截断 / 不完整的块）就一直抹到输入末尾**，找到的 END 再多走到它的收尾 `-----`。"""
     if "PRIVATE KEY-----" not in text:
         return text
     out: list[str] = []
@@ -289,10 +288,9 @@ def _redact_pem(text: str) -> str:
         m = _PEM_BEGIN.search(text, pos)
         if m is None:
             break
-        window = m.end() + PEM_SCAN_MAX
-        end = text.find("-----END", m.end(), window)
+        end = text.find("-----END", m.end())
         if end < 0:
-            stop = min(len(text), window)
+            stop = len(text)
         else:
             close = text.find("-----", end + 8, end + 8 + 80)
             stop = close + 5 if close >= 0 else end + 8
@@ -1561,6 +1559,48 @@ def _is_secret_name(tok: tuple[str, str, int, int, int]) -> bool:
     return False
 
 
+def _callee_is_secret(name: str) -> bool:
+    """被调用名：除了 `is_secret_key`，名字里作为一个**词**出现的 `key`（`set_key` / `setKey`）也算
+    （裸 `key` 作为整个名字才算秘密键，但 `set_key("…")` 的实参就是密钥）。"""
+    words = re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", name)
+    return is_secret_key(name) or any(w.lower() == "key" for w in words)
+
+
+CALL_SCAN_TOKENS = 400  # 向前找外层 `(` 的 token 数上限（超长字面量列表里别做成平方）
+
+
+def _in_secret_call(toks: list[tuple[str, str, int, int, int]], i: int) -> bool:
+    """`toks[i]` 是不是某个**被调用名含秘密词**的调用的直接实参（位置或关键字都算，嵌套调用只看直接实参）：
+    `set_password("…")`、`client.set_token("…")`、`auth("user", "pw")`、`credentials.update("…")`。
+    被调用名 = `(` 前面的属性链（`a.b.c`）里任意一段。"""
+    line = toks[i][4]
+    depth = 0
+    k = i - 1
+    floor = max(-1, i - CALL_SCAN_TOKENS)
+    while k > floor and toks[k][4] == line:
+        t = toks[k][1]
+        if t in (")", "]", "}"):
+            depth += 1
+        elif t in ("(", "[", "{"):
+            if depth == 0:
+                break
+            depth -= 1
+        k -= 1
+    else:
+        return False
+    if k < 1 or toks[k][1] != "(" or toks[k - 1][0] != "NAME":
+        return False
+    n = k - 1
+    while n >= 0 and toks[n][4] == line and toks[n][0] == "NAME":
+        if _callee_is_secret(toks[n][1]):
+            return True
+        if n >= 1 and toks[n - 1][1] == ".":
+            n -= 2
+        else:
+            break
+    return False
+
+
 def _secret_string_spans(text: str) -> list[tuple[int, int, str]]:
     """**结构判定**：哪些字符串字面量（含 b / r / u / f / rb… 前缀、f-string 整段）处在「秘密上下文」里——
     `[(起, 止, 替换文本)]`。上下文有三种：
@@ -1604,6 +1644,8 @@ def _secret_string_spans(text: str) -> list[tuple[int, int, str]]:
             secret = any(_is_secret_name(t) for t in toks[k + 1 : j])
         elif op == "," and j >= 1 and toks[j - 1][0] == "STRING":
             secret = _is_secret_name(toks[j - 1])
+        if not secret:
+            secret = _in_secret_call(toks, i)
         if secret:
             prefix = "".join(c for c in m.group(1) if c in "bBuU")
             spans.append((tok[2], tok[3], f'{prefix}"{_REDACTED}"'))
