@@ -279,24 +279,15 @@ _SECRET_WORDS = (
 _KV_SECRET = re.compile(
     rf"""(?ix)
     (?P<key>(?<![\w.\-\\])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))\\*["']?)
-    (?P<sep>\s*[:=]\s*)
-    (?P<val>(?P<bs>\\+)(?P<bq>["'])|(?P<pre>[bBrRuUfF]{{0,2}})(?P<q>["'])|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
+    (?P<sep>[ \t]*[:=][ \t]*)
     """
 )
-#: 头行（`Authorization: Digest username="x", response="…"` 这类值里有逗号和引号）：不确定值到哪结束，就抹到行尾
-_AUTH_LINE = re.compile(r"(?i)\b((?:proxy-)?authorization\s*:\s*)[^\n]*")
-_COOKIE_LINE = re.compile(r"(?i)\b((?:set-)?cookie(?![\w-])\s*[:=]\s*)[^\n]*")
+# Cookie / Authorization / Proxy-Authorization 头行不再另走行正则：它们的键名在 `_SECRET_WORDS` 里，值同样交给 `_scan_value`
+# （值可以是跨行的三引号串，行正则只抹第一行）
 _BEARER = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}")
-_URL_USERINFO = re.compile(
-    r"(?<![A-Za-z0-9+.\-])(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]{0,31}://)[^/\s:@\"'<>]{1,4096}(?::[^/\s@\"'<>]{0,4096})?@"
-)
+_URL_SCHEME = re.compile(r"(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]{0,31}://")
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 _REDACTED = "<redacted>"
-_OPENERS = "[{("
-_STR_PREFIXED = re.compile(r"([bBrRuUfF]{1,2})([\"'])")  # b'x' / rb\"x\" / u'x' / f'x'
-_CALL_VALUE = re.compile(
-    r"[A-Za-z_][\w.]*\("
-)  # SecretStr('x') / bytearray(b'x') / Token(value='x')
 #: 没有键名可依的形状：PEM 私钥块、常见服务商的令牌前缀（AWS 访问密钥 id、GitHub 细粒度、Slack、Google API key）
 _PEM_BEGIN = re.compile(r"-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----")
 
@@ -328,6 +319,7 @@ def _redact_pem(text: str) -> str:
 _PROVIDER_TOKEN = re.compile(
     r"\b(?:AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b"
 )
+_FIRST_TOKEN = re.compile(r"[\"']?[^\s\"',;&)\]}]*[\"']?")
 _BORING_VALUE = re.compile(
     r"""^["']?(?:|\d{1,6}|true|false|none|null|<redacted>|\*\*\*|<[^>]{1,20}>|\.\.\.)["']?$""", re.I
 )
@@ -346,72 +338,108 @@ def _containers_are_boring(segment: str) -> bool:
     return _BORING_TOKENS.sub("", segment) == ""
 
 
-def _quote_end(text: str, i: int, multiline: bool = False) -> tuple[int, bool]:
-    """`text[i]` 是开引号：回 (收尾引号之后的位置, 是否收尾)。**唯一的引号串定界**——`\\` 转义下一个字符（`\\"`、`\\\\`、
-    `\\'`），找到未转义的同种引号才收尾；单行值（`multiline=False`）遇到换行、或扫到输入末尾仍没收尾 → 回
-    (换行 / 末尾位置, False)，调用方按「不确定就抹到边界」处理。容器扫描里的引号串也走它。"""
-    q = text[i]
+_CLOSER = {"(": ")", "[": "]", "{": "}"}
+_STRING_PREFIX_LETTERS = frozenset("bBrRuUfF")
+
+
+def _starts_string(text: str, k: int, start: int) -> bool:
+    """`text[k]` 是引号：它是字符串的开头，还是散文里的撇号（`don't`）？开头 = 值的起点，或前一个字符不是字母数字下划线，
+    或前面紧挨着的是字符串前缀字母（`b'x'`、`rb"x"`）且前缀之前不是字母数字。"""
+    if k == start:
+        return True
+    prev = text[k - 1]
+    if not (prev.isalnum() or prev == "_"):
+        return True
+    j = k
+    while j > start and text[j - 1] in _STRING_PREFIX_LETTERS and k - j < 2:
+        j -= 1
+    if j == k:
+        return False
+    return j == start or not (text[j - 1].isalnum() or text[j - 1] == "_")
+
+
+def _scan_value(text: str, i: int, *, whole_line: bool) -> int:
+    """**唯一的值定界扫描器**（默认收集的自由文本里，秘密键后面的值到哪结束）：从 `text[i]` 起单趟线性扫描，同时跟踪
+    所有开括号 `( [ {`（闭括号必须与栈顶种类匹配，不匹配 = 结构不确定）、单 / 双引号与三引号（含字符串前缀，撇号不算）、
+    反斜杠转义。回结束位置（不含）。
+
+    * `whole_line=True`（默认）：**替换单位是「从值起点到行尾」**。行尾时栈为空且没有未闭合的引号才收尾（确定在一行内结束）；
+      否则继续往下一行抹，直到配平或输入末尾。栈为空时遇到闭括号 = 它关的是我们没跟踪的外层结构，忽略；栈非空时种类不匹配
+      = 不确定，一直抹到输入末尾（fail-closed）。
+    * `whole_line=False`（源码模式的代码区，仅用于「第一个值」）：值在配平的第一个字符串 / 括号段 / 裸词之后结束。"""
     n = len(text)
-    k = i + 1
+    stack: list[str] = []
+    quote = ""
+    k = i
     while k < n:
         ch = text[k]
+        if quote:
+            if ch == "\\":
+                k += 2
+            elif text.startswith(quote, k):
+                k += len(quote)
+                quote = ""
+                if not stack and not whole_line:
+                    return k
+            else:
+                k += 1
+            continue
+        if ch == "\n":
+            if not stack and whole_line:
+                return k
+            k += 1
+            continue
         if ch == "\\":
             k += 2
             continue
-        if ch == q:
-            return k + 1, True
-        if ch == "\n" and not multiline:
-            return k, False
-        k += 1
-    return n, False
-
-
-def _escaped_quote_end(text: str, k: int, backslashes: int, q: str) -> tuple[int, bool]:
-    """转义过的引号串（日志 / JSON 值里嵌着 JSON：`\\"S\\"`）：`k` 是开引号之后；收尾是**恰好同样多个**反斜杠加引号，
-    更长的反斜杠串（`\\\\\\"` = 转义的反斜杠 + 转义的引号）不收尾。单行；没收尾回 (换行 / 末尾, False)。"""
-    n = len(text)
-    while k < n:
-        ch = text[k]
-        if ch == "\n":
-            return k, False
-        if ch == "\\":
-            r = k
-            while r < n and text[r] == "\\":
-                r += 1
-            if r < n and text[r] == q:
-                if r - k == backslashes:
-                    return r + 1, True
-                k = r + 1  # 别的数量的反斜杠 + 引号：引号是串内容
-            else:
-                k = r
+        if ch in "\"'" and _starts_string(text, k, i):
+            quote = ch * 3 if text.startswith(ch * 3, k) else ch
+            k += len(quote)
             continue
-        k += 1
-    return n, False
-
-
-def _container_end(text: str, start: int) -> tuple[int, bool]:
-    """`text[start]` 是 `[` / `{`：回 (括号段结束位置（不含）, 是否配平)。线性单趟扫描，考虑嵌套、引号内的括号与转义引号，
-    **没有扫描上界**（跨行、超过 8 KiB 的容器照样配平）。一直扫到输入末尾仍不配平 → 不确定边界在哪，就从值起点一路抹到
-    **输入末尾**（回 `(len(text), False)`，与 PEM 同一规则）。调用方（`_kv_all`）在抹掉的区间内跳过所有后续命中，
-    每个容器起点只扫一次，所以总扫描量不超过输入长度。"""
-    depth = 0
-    i = start
-    n = len(text)
-    while i < n:
-        ch = text[i]
-        if ch in "\"'":
-            i, closed = _quote_end(text, i, multiline=True)
-            if not closed:
-                return n, False
+        if ch in _CLOSER:
+            stack.append(_CLOSER[ch])
+            k += 1
             continue
-        if ch in "[{(":
-            depth += 1
-        elif ch in "]})":
-            depth -= 1
-            if depth == 0:
-                return i + 1, True
-        i += 1
-    return n, False
+        if ch in ")]}":
+            if not stack:
+                if whole_line:
+                    k += 1
+                    continue
+                return k
+            if stack.pop() != ch:
+                return n  # 种类不匹配：结构不确定，抹到输入末尾
+            k += 1
+            if not stack and not whole_line:
+                return k
+            continue
+        if not whole_line and not stack and ch in " \t,;&":
+            return k
+        k += 1
+    return n
+
+
+def _redact_userinfo(text: str) -> str:
+    """URL 的 userinfo：`scheme://` 之后到第一个空白 / 引号 / `<>` 之前，只要出现 `@`，就把 scheme 之后到**最后一个**
+    这样的 `@` 全部换掉——不设长度窗口。线性：每个 scheme 起点只扫到下一个分隔符，换掉之后从区间末尾继续。"""
+    out: list[str] = []
+    pos = 0
+    scanned = 0  # 已经扫过的区间末尾：落在里面的 scheme 起点共用同一个分隔符，不重扫（否则平方）
+    for m in _URL_SCHEME.finditer(text):
+        if m.start() < max(pos, scanned):
+            continue
+        j = m.end()
+        n = len(text)
+        while j < n and not text[j].isspace() and text[j] not in "\"'<>":
+            j += 1
+        scanned = j
+        at = text.rfind("@", m.end(), j)
+        if at < 0:
+            continue
+        out.append(text[pos : m.end()])
+        out.append(_REDACTED + "@")
+        pos = at + 1
+    out.append(text[pos:])
+    return "".join(out)
 
 
 #: 结构化数据里这些键名（子串）的值整体换掉。`diagnostics._SECRET_KEYS` 的超集
@@ -518,76 +546,59 @@ class Scrubber:
             return self.text(text)
         return json.dumps(self.obj(parsed), ensure_ascii=False, indent=1)
 
-    def _kv(self, m: re.Match) -> str:
-        val = m.group("val")
-        if _BORING_VALUE.match(val):
-            return m.group(0)
-        if self.source_mode:
-            # 源码：只换带引号的字面量 / Bearer 形状；`token = self._next()` 这类取值表达式原样留着
-            if not re.match(r"(?i)^(Bearer|Basic|Token)\s", val):
-                return m.group(0)
-        return f"{m.group('key')}{m.group('sep')}{_REDACTED}"
-
     def _kv_all(self, text: str) -> str:
-        """`_KV_SECRET` 的逐处替换。值以 `[` / `{` 开头时，换掉的是**整个配平的括号段**（`{"token":["S"]}` 里
-        正则只会匹配到 `[`），由 `_container_end` 线性扫描；其余值走 `_kv`。"""
+        """`_KV_SECRET`（秘密键 + 分隔符）命中之后的值替换。默认收集的自由文本一律 **fail-closed**：替换单位是
+        「从值起点到行尾」，行尾时括号 / 引号还没配平就继续抹（`_scan_value`）；确定无信息的值（短数字、布尔、null、
+        `<redacted>`、全是数字的括号段）原样保留。源码模式（代码区）只换带引号的字面量 / Bearer 形状 / 带引号的括号段。"""
         out: list[str] = []
         pos = 0
         for m in _KV_SECRET.finditer(text):
             if m.start() < pos:
-                continue  # 落在前一个已换掉的括号段里
-            val = m.group("val")
-            vs = m.start("val")
-            quote = m.group("q") or m.group("bq")
-            if quote:
-                bs = m.group("bs") or ""
-                if bs:
-                    end, _closed = _escaped_quote_end(text, m.end("val"), len(bs), quote)
-                else:
-                    end, _closed = _quote_end(text, m.end("val") - 1)
-                literal = text[vs:end]
-                out.append(text[pos : m.start()])
-                if _BORING_VALUE.match(literal) or (self.source_mode and len(literal) < 8):
-                    out.append(text[m.start() : end])  # 源码里的短字面量 / 无信息的值原样
-                else:
-                    out.append(f"{m.group('key')}{m.group('sep')}{bs}{quote}{_REDACTED}{bs}{quote}")
-                pos = end
+                continue  # 落在前一个已换掉的区间里
+            vs = m.end()
+            if vs >= len(text):
                 continue
-            if val[:1] == "<" and not _BORING_VALUE.match(val):
-                # `<SecretStr '**********'>` 这类 repr：抹到配对的 `>`，找不到就到行尾
-                nl = text.find("\n", vs)
-                eol = len(text) if nl < 0 else nl
-                gt = text.find(">", vs, eol)
-                out.append(text[pos:vs])
-                out.append(_REDACTED)
-                pos = gt + 1 if gt >= 0 else eol
-                continue
-            # 源码模式的代码区：调用表达式不是明文值（字符串实参归 tokenize 的结构判定）；日志 / 注释 / 字符串里才是 repr
-            is_call = not self.source_mode and _CALL_VALUE.match(text, vs) is not None
-            if (
-                val[:1] not in _OPENERS and not is_call
-            ):  # 以任何开括号起头 / 标识符+( 起头：整段配平扫描
-                out.append(text[pos : m.start()])
-                out.append(self._kv(m))
-                pos = m.end()
-                continue
-            end, balanced = _container_end(text, vs)
-            segment = text[vs:end]
-            keep = (not is_call and _containers_are_boring(segment)) or (
-                self.source_mode and not _has_quote(segment)
-            )
+            ft = _FIRST_TOKEN.match(text, vs)
+            first, after = ft.group(0), ft.end()
+            if _BORING_VALUE.match(first) and (
+                after >= len(text) or text[after] in " \t\r\n,;&)]}"
+            ):
+                continue  # 无信息的**整个**值（`max_tokens: 4096`、`token=None`、已脱敏的 `<redacted>`）
+            if self.source_mode:
+                end = self._source_value_end(text, vs)
+                if end is None:
+                    continue
+            else:
+                if text[vs] in _CLOSER:
+                    e1 = _scan_value(text, vs, whole_line=False)
+                    if _containers_are_boring(text[vs:e1]):
+                        continue  # `token=[1,2]` / `token=()`：第一个括号段里只有数字 / 布尔 / null
+                end = _scan_value(text, vs, whole_line=True)
             out.append(text[pos:vs])
-            out.append(segment if keep and balanced else _REDACTED)
+            out.append(_REDACTED)
             pos = end
         out.append(text[pos:])
         return "".join(out)
 
+    @staticmethod
+    def _source_value_end(text: str, vs: int) -> int | None:
+        """源码模式：值只有三种算明文——带引号的字面量（≥ 8 字符）、`Bearer xxx`、带引号的括号段；其余（表达式）原样。"""
+        b = re.match(r"(?i)(?:Bearer|Basic|Token)[ \t]+[^\s\"',;&)\]}]+", text[vs : vs + 4096])
+        if b:
+            return vs + b.end()
+        end = _scan_value(text, vs, whole_line=False)
+        literal = text[vs:end]
+        quoted = bool(re.match(r"[bBrRuUfF]{0,2}[\"']", literal))
+        if quoted and len(literal) >= 8:
+            return end
+        if literal[:1] in _CLOSER and ('"' in literal or "'" in literal):
+            return end
+        return None
+
     def text(self, text: str) -> str:
-        text = _COOKIE_LINE.sub(lambda m: m.group(1) + _REDACTED, text)
-        text = _AUTH_LINE.sub(lambda m: m.group(1) + _REDACTED, text)
         text = self._kv_all(text)
         text = _BEARER.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
-        text = _URL_USERINFO.sub(lambda m: m.group("scheme") + _REDACTED + "@", text)
+        text = _redact_userinfo(text)
         text = _JWT.sub(_REDACTED, text)
         text = _redact_pem(text)
         text = _PROVIDER_TOKEN.sub(_REDACTED, text)
@@ -1283,7 +1294,7 @@ sys.stdout.write(json.dumps(out))
 """
 
 
-def _probe_subprocess(python: str, bundled: bool) -> dict:
+def _probe_subprocess(python: str, bundled: bool, cwd: str | None = None) -> dict:
     """对渲染解释器跑**一次**有超时的只读采集；任何失败都如实回 `{"status": "failed", "reason": …}`。"""
     try:
         proc = subprocess.run(
@@ -1296,6 +1307,7 @@ def _probe_subprocess(python: str, bundled: bool) -> dict:
             stdin=subprocess.DEVNULL,
             env=runtime.probe_env(python, bundled=bundled),
             creationflags=runtime.CREATE_NO_WINDOW,
+            cwd=cwd,
         )
     except subprocess.TimeoutExpired:
         return {"status": "failed", "reason": "timeout", "timeout_s": PROBE_TIMEOUT_S}
@@ -1320,6 +1332,44 @@ def _probe_subprocess(python: str, bundled: bool) -> dict:
         if isinstance(data, dict)
         else {"status": "failed", "reason": "bad_output"}
     )
+
+
+def _probe_in_render_cwd(src: Sources, python: str, bundled: bool, doc: dict) -> dict:
+    """在**渲染这个项目时实际用的工作目录**里跑探针（cwd 决定 matplotlibrc / 相对路径怎么找）。模式取
+    `workdir.mode_for`（safe worker spawn 的同一个出处）：项目根 → 项目根；脚本目录 → 焦点面板脚本所在目录（没有就项目根）；
+    沙盒 → 一个空的临时目录（与会话沙盒同义）。取不到如实写 unknown，探针照旧在引擎进程的 cwd 里跑。"""
+    import tempfile
+
+    from . import workdir
+
+    figures_dir = (src.project or {}).get("figures_dir")
+    try:
+        mode = workdir.mode_for(figures_dir) if figures_dir else "unknown"
+    except Exception:  # noqa: BLE001
+        mode = "unknown"
+    if mode == "project_root" and figures_dir:
+        doc["probe_cwd"] = {"mode": mode, "cwd": str(figures_dir)}
+        return _probe_subprocess(python, bundled, str(figures_dir))
+    if mode == "project" and figures_dir:
+        script = next(
+            (
+                p.get("script")
+                for p in (src.frontend or {}).get("overrides") or []
+                if p.get("script")
+            ),
+            None,
+        )
+        cwd = Path(figures_dir)
+        if script and (Path(figures_dir) / script).parent.is_dir():
+            cwd = (Path(figures_dir) / script).parent
+        doc["probe_cwd"] = {"mode": mode, "cwd": str(cwd)}
+        return _probe_subprocess(python, bundled, str(cwd))
+    if mode == "sandbox":
+        with tempfile.TemporaryDirectory(prefix="tavotto-probe-") as tmp:
+            doc["probe_cwd"] = {"mode": mode, "cwd": "<empty temporary directory>"}
+            return _probe_subprocess(python, bundled, tmp)
+    doc["probe_cwd"] = {"mode": "unknown", "cwd": None}
+    return _probe_subprocess(python, bundled)
 
 
 def _native_session_for(src: Sources, panel: dict) -> tuple[str, object | None]:
@@ -1368,7 +1418,11 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
         }
         doc["native_receipt"] = session.last_build_runtime()
         doc["native_session"] = session.diagnostics()
-        doc["probe"] = _probe_subprocess(interpreter, False)
+        native_cwd = getattr(session, "cwd", "") or None
+        doc["probe_cwd"] = {"mode": "native_session", "cwd": native_cwd}
+        doc["probe"] = _probe_subprocess(
+            interpreter, False, native_cwd if native_cwd and Path(native_cwd).is_dir() else None
+        )
         return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
     doc["inspected"] = "safe_pool"
     if profile == "native":  # native 面板但拿不到它的会话 / 解释器：如实说，下面探的是安全池
@@ -1393,7 +1447,7 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             "scope": "project" if figures_dir else "global",
             "env_override": pool.worker_python_env(),
         }
-        doc["probe"] = _probe_subprocess(python, source == pool.SOURCE_BUNDLED)
+        doc["probe"] = _probe_in_render_cwd(src, python, source == pool.SOURCE_BUNDLED, doc)
     return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
 
 
@@ -1951,6 +2005,22 @@ def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     return code.text("".join(out))
 
 
+def _decode_script(raw: bytes, rel: str) -> tuple[str, str, bool]:
+    """按脚本**声明的编码**解码（PEP 263 的 coding 行 + BOM，`tokenize.detect_encoding`）：`(文本, 编码, 是否退回)`。
+    声明不合法 / 不认识的编码退回 UTF-8 + replace，并让调用方在 index 里记 `encoding_fallback`。
+    非 `.py` 一律 UTF-8。头部截断可能切在多字节字符中间，所以解码本身总是 replace。"""
+    if not rel.lower().endswith(".py"):
+        return raw.decode("utf-8", errors="replace"), "utf-8", False
+    import io
+    import tokenize
+
+    try:
+        enc, _lines = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        return raw.decode(enc, errors="replace"), enc, False
+    except (SyntaxError, LookupError):
+        return raw.decode("utf-8", errors="replace"), "utf-8", True
+
+
 def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     items: list[Item] = []
     code_scrub = Scrubber(source_mode=True)
@@ -1971,13 +2041,17 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
             index.append({"script": scrub.text(rel), why: True})
             continue
         size = ids[rel].size
-        data = scrub_script(
-            raw.decode("utf-8", errors="replace"), rel, full_scrub, code_scrub
-        ).encode("utf-8")
+        text, encoding, fell_back = _decode_script(raw, rel)
+        data = scrub_script(text, rel, full_scrub, code_scrub).encode("utf-8")
         if size > SOURCE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
         zip_name = f"{n + 1:02d}-{_safe_name(rel.replace('/', '__'))}"
-        index.append({"script": scrub.text(rel), "file": zip_name, "bytes": size})
+        row = {"script": scrub.text(rel), "file": zip_name, "bytes": size, "encoding": encoding}
+        if fell_back:
+            row["encoding_fallback"] = (
+                True  # 声明的编码不合法 / 不认识：按 UTF-8 + replace 解的（文件里的字节不保证准）
+            )
+        index.append(row)
         items.append(
             Item(
                 "source",

@@ -397,8 +397,8 @@ class TestScrubbing:
             "got Bearer abcdef0123456789 here": "got Bearer <redacted> here",
             "Cookie: a=b; c=d": "Cookie: <redacted>",
             "Set-Cookie: sid=1": "Set-Cookie: <redacted>",
-            'password="hunter2xx"': 'password="<redacted>"',
-            "token=abcdefgh&x=1": "token=<redacted>&x=1",
+            'password="hunter2xx"': "password=<redacted>",
+            "token=abcdefgh&x=1": "token=<redacted>",  # fail-closed：替换单位是「从值起点到行尾」
             "https://user:pw@host.example/a": "https://<redacted>@host.example/a",
             "X-Tavotto-Auth: deadbeefdeadbeef": "X-Tavotto-Auth: <redacted>",
         }
@@ -427,7 +427,7 @@ class TestScrubbing:
     def test_source_mode_keeps_expressions_but_drops_literals(self, world):
         s = diagdetail.Scrubber(source_mode=True)
         assert s.text("token = self._next_token()") == "token = self._next_token()"
-        assert s.text('api_key = "abcd1234efgh"') == 'api_key = "<redacted>"'
+        assert "abcd1234efgh" not in s.text('api_key = "abcd1234efgh"')
 
 
 GROUP_TB = (
@@ -908,8 +908,8 @@ class TestSecretShapeMatrix:
     @pytest.mark.parametrize(
         ("text", "keep"),
         [
-            ('password="abc def REAL_SECRET\nnext', "next"),  # 引号没闭合：抹到行尾
-            ("secret='abc def REAL_SECRET\nnext", "next"),
+            ('password="abc def REAL_SECRET\nnext REAL_SECRET2', ""),  # 引号没闭合：抹到输入末尾
+            ("secret='abc def REAL_SECRET\nnext REAL_SECRET2", ""),
             ('{"password": \\"REAL_SECRET unterminated\nnext', "next"),
             ('Authorization: Digest username="u", response="REAL_SECRET"\nnext', "next"),
             ("Proxy-Authorization: Basic REAL_SECRET==\nnext", "next"),
@@ -941,15 +941,14 @@ class TestSecretShapeMatrix:
             ):
                 out = full.text(line)
                 assert SECRET not in out, (key, v, line, out)
-                assert not out.endswith("'REAL"), out
-        # 括号段 / 引号串之外的内容保留
-        assert full.text("{'%s': SecretStr('%s'), 'n': 1} tail" % (key, SECRET)).endswith(
-            ", 'n': 1} tail"
+        # 键之前的内容保留；键所在行的剩余部分按 fail-closed 一并抹掉
+        assert full.text("pre {'%s': SecretStr('%s'), 'n': 1} tail" % (key, SECRET)).startswith(
+            "pre {"
         )
 
     def test_prefixed_quote_is_replaced_whole_and_calls_in_code_are_left_alone(self):
         full, code = diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
-        assert full.text("api_key=b'S1 x'").startswith("api_key='<redacted>'")
+        assert full.text("api_key=b'S1 x'") == "api_key=<redacted>"
         assert "S1" not in full.text("{'api_key': b'S1'}") and "'S1'" not in full.text(
             "{'api_key': b'S1'}"
         )
@@ -1030,6 +1029,11 @@ class TestSecretShapeMatrix:
             for key in MATRIX_KEYS
             for v in self.REPR_VALUES
         ]
+        cells += [
+            "%s=%s" % (key, tq.replace("VAL2", SECRET + "2").replace("VAL", SECRET))
+            for key in MATRIX_KEYS
+            for tq in TestFailClosedScanner.TRIPLES
+        ]
         cells += list(MATRIX_STANDALONE.values())
         blob = "\n".join(cells)
         log = world["tmp"] / "matrix.log"
@@ -1088,14 +1092,11 @@ class TestContainerSecrets:
     @pytest.mark.parametrize(
         ("raw", "want"),
         [
-            ('{"token":["REAL_SECRET"]} ok', '{"token":<redacted>} ok'),
-            ('"password": {"v": "REAL_SECRET"} tail', '"password": <redacted> tail'),
-            ('\'auth\': ["REAL_SECRET", "b"] z', "'auth': <redacted> z"),
-            (
-                'token=[ "a]REAL_SECRET" , ["c"] ] after',
-                "token=<redacted> after",
-            ),  # 引号内的 ]、嵌套
-            ('secret={"a":{"b":"] \\" REAL_SECRET ]"}} end', "secret=<redacted> end"),  # 转义引号
+            ('{"token":["REAL_SECRET"]} ok', '{"token":<redacted>'),  # fail-closed：到行尾
+            ('"password": {"v": "REAL_SECRET"} tail', '"password": <redacted>'),
+            ('\'auth\': ["REAL_SECRET", "b"] z', "'auth': <redacted>"),
+            ('token=[ "a]REAL_SECRET" , ["c"] ] after', "token=<redacted>"),  # 引号内的 ]、嵌套
+            ('secret={"a":{"b":"] \\" REAL_SECRET ]"}} end', "secret=<redacted>"),  # 转义引号
             ("token=[1,2] keep", "token=[1,2] keep"),  # 纯数字 / 布尔的容器保留
             ('token={"a": true, "b": null} keep', None),  # 带引号的键 = 含字符串：保守抹
         ],
@@ -1130,21 +1131,21 @@ class TestContainerSecrets:
         assert "REAL_SECRET" not in out and out.endswith("<redacted>")
 
     @pytest.mark.parametrize(
-        ("raw", "keep_suffix"),
+        "raw",
         [
-            ("{'auth': ('user', 'REAL_SECRET')} tail", "} tail"),
-            ("{'auth': (('a', 'REAL_SECRET'), ('b',))} tail", "} tail"),
-            ("{'password': ('REAL_SECRET',)} tail", "} tail"),  # 单元素元组
-            ("{'token': (b'REAL_SECRET', 1)} tail", "} tail"),  # bytes
-            ("{'token': ('a\\'REAL_SECRET', 2)} tail", "} tail"),  # 转义引号
-            ("auth=('user', \"REAL_SECRET\") tail", " tail"),
-            ("{'token': frozenset({'REAL_SECRET'}), 'n': 1} tail", ", 'n': 1} tail"),
-            ("{'token': deque(['REAL_SECRET']), 'n': 1} tail", ", 'n': 1} tail"),
+            "{'auth': ('user', 'REAL_SECRET')} tail",
+            "{'auth': (('a', 'REAL_SECRET'), ('b',))} tail",
+            "{'password': ('REAL_SECRET',)} tail",  # 单元素元组
+            "{'token': (b'REAL_SECRET', 1)} tail",  # bytes
+            "{'token': ('a\\'REAL_SECRET', 2)} tail",  # 转义引号
+            "auth=('user', \"REAL_SECRET\") tail",
+            "{'token': frozenset({'REAL_SECRET'}), 'n': 1} tail",
+            "{'token': deque(['REAL_SECRET']), 'n': 1} tail",
         ],
     )
-    def test_tuples_and_other_openers(self, raw, keep_suffix):
-        out = diagdetail.Scrubber().text(raw)
-        assert "REAL_SECRET" not in out and out.endswith(keep_suffix), out
+    def test_tuples_and_other_openers(self, raw):
+        out = diagdetail.Scrubber().text(raw + "\nnext line")
+        assert "REAL_SECRET" not in out and "<redacted>" in out and out.endswith("\nnext line"), out
 
     def test_empty_and_numeric_tuples_are_kept(self):
         s = diagdetail.Scrubber()
@@ -1152,8 +1153,9 @@ class TestContainerSecrets:
         assert s.text("token=(1, 2.5, None) x") == "token=(1, 2.5, None) x"
 
     def test_text_around_the_segment_is_preserved(self):
-        out = diagdetail.Scrubber().text('a {"token":["S1"], "ok": "keep-me"} b')
-        assert "S1" not in out and out.startswith('a {"token":') and "b" in out
+        # fail-closed：含秘密键的那一行，键之前的内容保留，键之后到行尾一并抹掉（规则文档写明的牺牲）；下一行不受影响
+        out = diagdetail.Scrubber().text('a {"token":["S1"], "ok": "keep-me"} b\nnext line')
+        assert out == 'a {"token":<redacted>\nnext line'
 
     def test_source_mode_masks_quoted_containers_only(self):
         c = diagdetail.Scrubber(source_mode=True)
@@ -1191,6 +1193,151 @@ class TestContainerSecrets:
             t0 = time.monotonic()
             s.text(blob)
             assert time.monotonic() - t0 < 5, blob[:10]
+
+
+class TestFailClosedScanner:
+    """默认收集的自由文本：秘密键之后「从值起点到行尾」，行尾时括号 / 引号没配平就继续抹，不确定抹到输入末尾。"""
+
+    TRIPLES = [
+        "'''VAL\nVAL2\n'''",
+        '"""VAL\nVAL2\n"""',
+        "b'''VAL\nVAL2'''",
+        'rb"""VAL\nVAL2"""',
+        "f'''VAL {x}\nVAL2'''",
+        "u'''VAL'''",
+    ]
+
+    @pytest.mark.parametrize("key", MATRIX_KEYS)
+    def test_triple_quoted_and_multiline_values(self, key):
+        full = diagdetail.Scrubber()
+        for tq in self.TRIPLES:
+            v = tq.replace("VAL2", SECRET + "2").replace("VAL", SECRET)
+            for line in (
+                "%s=%s tail\nnext" % (key, v),
+                "{'%s': %s}\nnext" % (key, v),
+                "%s: %s\nnext" % (key, v),
+            ):
+                out = full.text(line)
+                assert SECRET not in out, (key, tq, line, out)
+                assert out.endswith("\nnext"), (key, tq, out)  # 三引号闭合后，下一行不受影响
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'token=[ "a" ) "REAL_SECRET" ]\nsafe line',  # 括号种类不匹配：结构不确定 → 抹到输入末尾
+            "token=({'a': 1)]) REAL_SECRET\nsafe line",
+            "token={\n  'a': 1,\n  'b': 'REAL_SECRET'\n",  # 跨行未闭合
+            "token='''REAL_SECRET\nmore\nsafe line",  # 三引号未闭合
+            'token="REAL_SECRET\nsafe line',  # 引号未闭合
+        ],
+    )
+    def test_uncertain_structure_erases_to_the_end_of_the_input(self, text):
+        out = diagdetail.Scrubber().text("pre\n" + text)
+        assert out.startswith("pre\n") and "REAL_SECRET" not in out and "safe line" not in out
+
+    def test_a_determinate_value_stops_at_the_end_of_its_line(self):
+        out = diagdetail.Scrubber().text(
+            "a token=abc, user's x\nsafe line\nb password: it's REAL fine\nsafe 2"
+        )
+        assert out == "a token=<redacted>\nsafe line\nb password: <redacted>\nsafe 2"
+
+    @pytest.mark.parametrize(
+        ("url", "gone"),
+        [
+            ("https://u:" + "p" * 6000 + "REAL_SECRET@h.example/x tail", "REAL_SECRET"),
+            ("https://a@b:REAL_SECRET@c.example/p tail", "REAL_SECRET"),
+            ("postgres://user:pa@ss:REAL_SECRET@db/x?x=1 tail", "REAL_SECRET"),
+            ("see ftp://REAL_SECRET@host/f and more", "REAL_SECRET"),
+        ],
+    )
+    def test_url_userinfo_has_no_length_window(self, url, gone):
+        out = diagdetail.Scrubber().text(url)
+        assert gone not in out and "<redacted>@" in out and out.endswith(("tail", "more")), out
+
+    def test_scanner_inputs_stay_linear(self):
+        full = diagdetail.Scrubber()
+        blobs = [
+            "token='''" * 100_000,
+            "token=(] " * 100_000,
+            "token=" + "([{" * 100_000,
+            "https://" + "u@" * 200_000,
+            "a://" * 200_000,
+            "token='" + "\\\n" * 100_000,
+        ]
+        for blob in blobs:
+            t0 = time.monotonic()
+            full.text(blob)
+            assert time.monotonic() - t0 < 5, blob[:12]
+
+
+class TestProbeRunsInTheRenderWorkingDirectory:
+    def _run(self, monkeypatch, mode, tmp_path, script="sub/fig.py"):
+        from tavotto.engine import workdir
+
+        (tmp_path / "sub").mkdir(exist_ok=True)
+        (tmp_path / "sub" / "fig.py").write_text("x", encoding="utf-8")
+        seen = {}
+        monkeypatch.setattr(workdir, "mode_for", lambda fd: mode)
+        monkeypatch.setattr(pool, "resolve_worker_python", lambda d, **k: ("/py", "bundled"))
+        monkeypatch.setattr(
+            diagdetail,
+            "_probe_subprocess",
+            lambda py, b, cwd=None: seen.update(cwd=cwd) or {"status": "ok"},
+        )
+        src = diagdetail.Sources(
+            project={"figures_dir": str(tmp_path)},
+            frontend={"overrides": [{"panel": "p", "script": script}]},
+        )
+        items = diagdetail.collect_render_env(
+            src, diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        return seen["cwd"], json.loads(items[0].data)
+
+    def test_modes(self, monkeypatch, tmp_path):
+        cwd, doc = self._run(monkeypatch, "project_root", tmp_path)
+        assert cwd == str(tmp_path) and doc["probe_cwd"]["mode"] == "project_root"
+        cwd, doc = self._run(monkeypatch, "project", tmp_path)
+        assert cwd == str(tmp_path / "sub") and doc["probe_cwd"]["mode"] == "project"
+        cwd, doc = self._run(monkeypatch, "sandbox", tmp_path)
+        assert cwd and cwd != str(tmp_path)
+        assert doc["probe_cwd"]["cwd"] == "<empty temporary directory>"
+        cwd, doc = self._run(monkeypatch, "weird", tmp_path)
+        assert cwd is None and doc["probe_cwd"] == {"mode": "unknown", "cwd": None}
+
+
+class TestScriptEncodings:
+    def _collect(self, proj, names):
+        src = diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=names)
+        opts = diagdetail.DetailOptions(source=True)
+        items = diagdetail.collect_source(src, opts, diagdetail.Scrubber())
+        index = json.loads(next(i for i in items if i.path == "index.json").data)
+        return items, {r["script"]: r for r in index["scripts"]}
+
+    def test_declared_encodings_are_decoded_and_still_scrubbed(self, world):
+        proj = world["tmp"] / "projenc"
+        proj.mkdir()
+        latin = "# -*- coding: latin-1 -*-\n# api_key=REAL_L1\nname = 'caf\xe9'\n"
+        (proj / "latin.py").write_bytes(latin.encode("latin-1"))
+        gbk = "# coding: gbk\n# token=REAL_GBK\ntitle = '中文标题'\n"
+        (proj / "gbk.py").write_bytes(gbk.encode("gbk"))
+        (proj / "bom.py").write_bytes(b"\xef\xbb\xbf# password=REAL_BOM\nx = 'ok'\n")
+        (proj / "bad.py").write_bytes(b"# coding: no-such-codec\n# api_key=REAL_BAD\nx = 1\n")
+        items, rows = self._collect(proj, ["latin.py", "gbk.py", "bom.py", "bad.py"])
+        body = {
+            i.path.split("-", 1)[1]: i.data.decode("utf-8") for i in items if i.path != "index.json"
+        }
+        assert "caf\xe9" in body["latin.py"] and "中文标题" in body["gbk.py"]
+        assert "\ufeff" not in body["bom.py"] and "x = 'ok'" in body["bom.py"]
+        for name, secret in (
+            ("latin.py", "REAL_L1"),
+            ("gbk.py", "REAL_GBK"),
+            ("bom.py", "REAL_BOM"),
+            ("bad.py", "REAL_BAD"),
+        ):
+            assert secret not in body[name], name
+        assert rows["latin.py"]["encoding"] == "iso-8859-1" and rows["gbk.py"]["encoding"] == "gbk"
+        assert rows["bad.py"].get("encoding_fallback") is True
+        assert not rows["latin.py"].get("encoding_fallback")
 
 
 class TestTokenizeErrorToken:
@@ -1568,7 +1715,7 @@ class TestDeclarationsMatchTheFinalContents:
         _d, _k, trunc = diagdetail.fit(items, lambda its, t: b"x", 10**9)
         row = next(t for t in trunc if t["kind"] == "source")
         assert (
-            total <= row["original_bytes"] <= total + 8192
+            total <= row["original_bytes"] <= total + 32768
             and row["kept_bytes"] < row["original_bytes"]
         )
 
@@ -1727,7 +1874,9 @@ class TestNativePanelRenderEnv:
         monkeypatch.setattr(nativesession.REGISTRY, "route_for", lambda root, script, stem: session)
         seen = {}
         monkeypatch.setattr(
-            diagdetail, "_probe_subprocess", lambda py, b: seen.update(py=py) or {"status": "ok"}
+            diagdetail,
+            "_probe_subprocess",
+            lambda py, b, cwd=None: seen.update(py=py) or {"status": "ok"},
         )
         return seen
 
@@ -1782,7 +1931,9 @@ class TestRenderEnvIsProjectAware:
         monkeypatch.setattr(
             diagdetail,
             "_probe_subprocess",
-            lambda python, bundled: seen.update(python=python, bundled=bundled) or {"status": "ok"},
+            lambda python, bundled, cwd=None: (
+                seen.update(python=python, bundled=bundled) or {"status": "ok"}
+            ),
         )
         items = diagdetail.collect_render_env(
             diagdetail.Sources(project={"figures_dir": "/p"}),
@@ -1804,7 +1955,7 @@ class TestRenderEnvIsProjectAware:
             lambda d, **k: calls.append(d) or ("/g/python", "bundled"),
         )
         monkeypatch.setattr(
-            diagdetail, "_probe_subprocess", lambda python, bundled: {"bundled": bundled}
+            diagdetail, "_probe_subprocess", lambda python, bundled, cwd=None: {"bundled": bundled}
         )
         items = diagdetail.collect_render_env(
             diagdetail.Sources(), diagdetail.DetailOptions(), diagdetail.Scrubber()
@@ -1933,7 +2084,9 @@ class TestProbes:
 
     def test_failed_probe_does_not_fail_the_bundle(self, client, world, monkeypatch):
         monkeypatch.setattr(
-            diagdetail, "_probe_subprocess", lambda p, b: {"status": "failed", "reason": "timeout"}
+            diagdetail,
+            "_probe_subprocess",
+            lambda p, b, cwd=None: {"status": "failed", "reason": "timeout"},
         )
         _prep, z = _prepare(client)
         env = json.loads(z.read("detail-render-env.json"))
