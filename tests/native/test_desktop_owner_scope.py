@@ -281,3 +281,15 @@ def test_the_public_completion_barrier_includes_the_owner_callback(tmp_path):
     finally:
         gate.set()
         envlease.reset_for_tests()
+
+
+def test_env_overlay_is_merged_case_insensitively_on_windows_and_exactly_elsewhere():
+    base = {"PATH": "/sys", "Home": "/h", "KEEP": "1"}
+    delta = {"Path": "/user", "HOME": "/x"}
+    token = {"tavotto_bridge_token": "t"}
+    win = desktopproc.merged_env(base, delta, token, nt=True)
+    assert win == {"Path": "/user", "HOME": "/x", "KEEP": "1", "tavotto_bridge_token": "t"}
+    assert sorted(k.upper() for k in win) == sorted(set(k.upper() for k in win)), "同名键并存"
+    posix = desktopproc.merged_env(base, delta, token, nt=False)
+    assert posix["PATH"] == "/sys" and posix["Path"] == "/user"  # POSIX 大小写敏感：各是各的
+    assert desktopproc.merged_env({"A": "1"}, nt=True) == {"A": "1"}

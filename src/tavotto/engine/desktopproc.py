@@ -689,7 +689,7 @@ def start(
             control_host=relay.host,
             control_port=relay.child_port,
         )
-        env = {**os.environ, **(spec.env or {}), bridge.TOKEN_ENV: relay.child_token}
+        env = merged_env(os.environ, spec.env or {}, {bridge.TOKEN_ENV: relay.child_token})
         registry.check_start(ticket)  # Popen 之前的最后检查点：关停已开始就不再 spawn
         try:
             proc = subprocess.Popen(  # noqa: S603 — argv 是列表，shell=False
@@ -781,6 +781,24 @@ def _exit_callback(session, registry, launch_id: str):
             registry.unreserve(launch_id)
 
     return _on_exit
+
+
+def merged_env(base, *overlays, nt: bool | None = None) -> dict[str, str]:
+    """子进程环境 = sidecar 环境 + 若干层增量（后者覆盖前者）。
+
+    Windows 的环境变量名不区分大小写：增量里的 `Path` 必须**覆盖**基础环境里的 `PATH`，而不是并存成
+    两个键（`CreateProcess` 的环境块里同名两项，哪个生效不确定）。覆盖时保留增量的写法。
+    `nt` 只给用例模拟 Windows 分支。"""
+    fold = (os.name == "nt") if nt is None else nt
+    out = dict(base)
+    for layer in overlays:
+        for key, value in layer.items():
+            if fold:
+                folded = key.upper()
+                for existing in [k for k in out if k.upper() == folded and k != key]:
+                    del out[existing]
+            out[key] = value
+    return out
 
 
 def _child_watch(proc: subprocess.Popen):
