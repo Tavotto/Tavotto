@@ -478,7 +478,7 @@ export function DiagnosticsSendDialog({
               ))}
             </section>
 
-            <section aria-label={ds('filesTitle')} className="flex flex-col gap-1" data-diag-send-files-section>
+            <section aria-label={ds('filesTitle', { count: prepared?.entries.length ?? 0 })} className="flex flex-col gap-1" data-diag-send-files-section>
               <Details data-diag-send-files className="text-sm">
                 <Summary className="h-6 text-ink-2 hover:text-ink">
                   {ds('filesTitle', { count: prepared?.entries.length ?? 0 })}
