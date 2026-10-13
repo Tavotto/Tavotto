@@ -263,13 +263,15 @@ _KV_SECRET = re.compile(
     rf"""(?ix)
     (?P<key>(?<![\w.\-])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-]))\\*["']?)
     (?P<sep>\s*[:=]\s*)
-    (?P<val>(?P<bs>\\+)"[^\n]{{0,4096}}?(?P=bs)"|"[^"\n]*"|'[^'\n]*'|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
+    (?P<val>(?P<bs>\\+)"(?:[^\n]{{0,4096}}?(?P=bs)"|[^\n]*)|"[^"\n]*"|'[^'\n]*'|"[^\n]*|'[^\n]*|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
     """
 )
+#: 头行（`Authorization: Digest username="x", response="…"` 这类值里有逗号和引号）：不确定值到哪结束，就抹到行尾
+_AUTH_LINE = re.compile(r"(?i)\b((?:proxy-)?authorization\s*:\s*)[^\n]*")
 _COOKIE_LINE = re.compile(r"(?i)\b((?:set-)?cookie(?![\w-])\s*[:=]\s*)[^\n]*")
 _BEARER = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}")
 _URL_USERINFO = re.compile(
-    r"(?<![A-Za-z0-9+.\-])(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]{0,31}://)[^/\s:@\"'<>]{1,256}(?::[^/\s@\"'<>]{0,256})?@"
+    r"(?<![A-Za-z0-9+.\-])(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]{0,31}://)[^/\s:@\"'<>]{1,4096}(?::[^/\s@\"'<>]{0,4096})?@"
 )
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 _REDACTED = "<redacted>"
@@ -308,7 +310,6 @@ _BORING_VALUE = re.compile(
     r"""^["']?(?:|\d{1,6}|true|false|none|null|<redacted>|\*\*\*|<[^>]{1,20}>|\.\.\.)["']?$""", re.I
 )
 
-CONTAINER_SCAN_MAX = 8 * 1024
 _BORING_TOKENS = re.compile(
     r"[\s\[\]{},:]|-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|true|false|null|none", re.I
 )
@@ -324,13 +325,15 @@ def _containers_are_boring(segment: str) -> bool:
 
 
 def _container_end(text: str, start: int) -> tuple[int, bool]:
-    """`text[start]` 是 `[` / `{`：回 (括号段结束位置（不含）, 是否配平)。线性单趟扫描，考虑嵌套、引号内的括号与转义引号；
-    最多扫 `CONTAINER_SCAN_MAX` 字符，不配平 / 超界 / 遇到行尾前没闭合 → 保守地一直抹到行尾（回 False）。"""
+    """`text[start]` 是 `[` / `{`：回 (括号段结束位置（不含）, 是否配平)。线性单趟扫描，考虑嵌套、引号内的括号与转义引号，
+    **没有扫描上界**（跨行、超过 8 KiB 的容器照样配平）。一直扫到输入末尾仍不配平 → 不确定边界在哪，就从值起点一路抹到
+    **输入末尾**（回 `(len(text), False)`，与 PEM 同一规则）。调用方（`_kv_all`）在抹掉的区间内跳过所有后续命中，
+    每个容器起点只扫一次，所以总扫描量不超过输入长度。"""
     depth = 0
     quote = ""
-    limit = min(len(text), start + CONTAINER_SCAN_MAX)
     i = start
-    while i < limit:
+    n = len(text)
+    while i < n:
         ch = text[i]
         if quote:
             if ch == "\\":
@@ -347,8 +350,7 @@ def _container_end(text: str, start: int) -> tuple[int, bool]:
             if depth == 0:
                 return i + 1, True
         i += 1
-    nl = text.find("\n", start, len(text))
-    return (len(text) if nl < 0 else nl), False
+    return n, False
 
 
 #: 结构化数据里这些键名（子串）的值整体换掉。`diagnostics._SECRET_KEYS` 的超集
@@ -486,6 +488,7 @@ class Scrubber:
 
     def text(self, text: str) -> str:
         text = _COOKIE_LINE.sub(lambda m: m.group(1) + _REDACTED, text)
+        text = _AUTH_LINE.sub(lambda m: m.group(1) + _REDACTED, text)
         text = self._kv_all(text)
         text = _BEARER.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
         text = _URL_USERINFO.sub(lambda m: m.group("scheme") + _REDACTED + "@", text)
@@ -1466,7 +1469,7 @@ def source_candidates(src: Sources) -> list[tuple[str, Path]]:
             continue
         if path.is_file():
             seen[rel] = path
-    ordered = [r for r in focus if r in seen]
+    ordered = list(dict.fromkeys(r for r in focus if r in seen))  # 多张面板同一脚本：按首次出现去重
     rest = [r for r in seen if r not in ordered]
     rest.sort(key=lambda r: -seen[r].stat().st_mtime)
     return [(r, seen[r]) for r in [*ordered, *rest]][:SOURCE_FILES]

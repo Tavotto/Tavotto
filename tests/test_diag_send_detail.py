@@ -785,6 +785,21 @@ class TestSecretShapeMatrix:
         for keep in ("KEEP_NAME", "KEEP_PRINT", "KEEP_INNER", "KEEP_LIST"):
             assert keep in out
 
+    @pytest.mark.parametrize(
+        ("text", "keep"),
+        [
+            ('password="abc def REAL_SECRET\nnext', "next"),  # 引号没闭合：抹到行尾
+            ("secret='abc def REAL_SECRET\nnext", "next"),
+            ('{"password": \\"REAL_SECRET unterminated\nnext', "next"),
+            ('Authorization: Digest username="u", response="REAL_SECRET"\nnext', "next"),
+            ("Proxy-Authorization: Basic REAL_SECRET==\nnext", "next"),
+            ("https://u:" + "p" * 500 + "REAL_SECRET@h/x tail", "tail"),
+        ],
+    )
+    def test_uncertain_boundaries_erase_up_to_a_boundary_we_can_be_sure_of(self, text, keep):
+        out = diagdetail.Scrubber().text(text)
+        assert "REAL_SECRET" not in out and keep in out
+
     def test_innocent_neighbours_survive(self, world):
         full = diagdetail.Scrubber()
         assert (
@@ -880,13 +895,26 @@ class TestContainerSecrets:
         else:
             assert "<redacted>" in out
 
-    def test_unbalanced_and_overlong_containers_are_erased_to_end_of_line(self):
+    def test_multiline_containers_longer_than_any_window_are_matched_to_their_closing_bracket(self):
         s = diagdetail.Scrubber()
-        out = s.text('token=[unbalanced "REAL_SECRET" more\nnext line')
-        assert "REAL_SECRET" not in out and out.endswith("\nnext line")
-        big = "token=[" + "x," * (diagdetail.CONTAINER_SCAN_MAX) + "REAL_SECRET]\nkept"
+        big = 'token: {\n  "pad": "' + "x" * 9000 + '",\n  "raw": "REAL_SECRET"\n}\nafter ok'
         out = s.text(big)
-        assert "REAL_SECRET" not in out and out.endswith("\nkept")
+        assert "REAL_SECRET" not in out and out == "token: <redacted>\nafter ok"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            'a token: {"x": "REAL_SECRET"\nmore REAL_SECRET2',
+            'token=[unbalanced "REAL_SECRET" more\nnext line REAL_SECRET2',
+            "token: {\n"
+            + '  "pad": "'
+            + "x" * 20000
+            + '",\n  "raw": "REAL_SECRET"\n',  # 没有闭括号
+        ],
+    )
+    def test_unbalanced_containers_are_erased_to_the_end_of_the_input(self, text):
+        out = diagdetail.Scrubber().text(text)
+        assert "REAL_SECRET" not in out and out.endswith("<redacted>")
 
     def test_text_around_the_segment_is_preserved(self):
         out = diagdetail.Scrubber().text('a {"token":["S1"], "ok": "keep-me"} b')
@@ -1072,6 +1100,26 @@ class TestReadFailureIsNotOverBudget:
             assert not any(r.get("skipped_over_budget") for r in reconciled[key] if r in failed), (
                 fn.__name__
             )
+
+
+class TestSourceDedupe:
+    def test_panels_of_the_same_script_do_not_crowd_out_other_scripts(self, world):
+        proj = world["tmp"] / "proj5"
+        proj.mkdir()
+        for n in ("a.py", "b.py"):
+            (proj / n).write_text(f"# {n}\n", encoding="utf-8")
+        src = diagdetail.Sources(
+            project={"figures_dir": str(proj)},
+            scripts=["a.py", "b.py"],
+            frontend={"overrides": [{"script": "a.py"}, {"script": "a.py"}, {"script": "a.py"}]},
+        )
+        got = [r for r, _p in diagdetail.source_candidates(src)]
+        assert got == ["a.py", "b.py"]
+        items = diagdetail.collect_source(
+            src, diagdetail.DetailOptions(source=True), diagdetail.Scrubber()
+        )
+        files = [i.path for i in items if i.path != "index.json"]
+        assert len(files) == 2 and sum("a.py" in f for f in files) == 1
 
 
 class TestRenderEnvIsProjectAware:
