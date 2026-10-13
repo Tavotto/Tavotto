@@ -10,17 +10,22 @@
     python scripts/perf_macos_window.py record --stage drag --seconds 12 --output drag.json
     python scripts/perf_macos_window.py compare idle.json drag.json
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import platform
-import statistics
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+# Windows 被重定向的子进程按本地代码页编码中文，必须同时固定 stdout / stderr。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 SCHEMA = "tavotto-macos-window-probe/1"
 STAGES = ("idle", "drag", "resize", "complex")
@@ -57,11 +62,7 @@ def parse_ps(stdout: str) -> list[Process]:
 def classify(processes: list[Process]) -> dict[str, float | int | None]:
     """仅以 Tavotto 二进制的精确 basename 找 root；不关联其他应用的 WebKit。"""
     by_pid = {p.pid: p for p in processes}
-    roots = {
-        p.pid
-        for p in processes
-        if Path(p.command).name == "Tavotto"
-    }
+    roots = {p.pid for p in processes if Path(p.command).name == "Tavotto"}
     family = set(roots)
     changed = True
     while changed:
@@ -71,10 +72,7 @@ def classify(processes: list[Process]) -> dict[str, float | int | None]:
                 family.add(p.pid)
                 changed = True
     members = [by_pid[pid] for pid in family]
-    servers = [
-        p.cpu for p in processes
-        if Path(p.command).name == "WindowServer"
-    ]
+    servers = [p.cpu for p in processes if Path(p.command).name == "WindowServer"]
     return {
         "root_count": len(roots),
         "family_processes": len(members),
@@ -112,7 +110,8 @@ def summarize(report: dict) -> dict:
         vals = [
             float(s[field])
             for s in report["samples"]
-            if isinstance(s, dict) and isinstance(s.get(field), (int, float))
+            if isinstance(s, dict)
+            and isinstance(s.get(field), (int, float))
             and not isinstance(s[field], bool)
         ]
         out[field] = {"p50": quantile(vals, 0.5), "p95": quantile(vals, 0.95)}
@@ -171,7 +170,9 @@ def main(argv: list[str] | None = None) -> int:
             for path in args.reports:
                 summary = summarize(json.loads(path.read_text(encoding="utf-8")))
                 print(json.dumps(summary, ensure_ascii=False))
-            print("WindowServer CPU is system-wide; a delta cannot prove Tavotto caused dragging ghosts.")
+            print(
+                "WindowServer CPU is system-wide; a delta cannot prove Tavotto caused dragging ghosts."
+            )
             print("Use Instruments and video/high-speed capture for actual presentation evidence.")
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"Window probe unavailable: {exc}", file=sys.stderr)
