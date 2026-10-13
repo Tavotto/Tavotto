@@ -1,0 +1,1629 @@
+"""发送问题反馈的诊断包：`detail/` 目录（bundle schema 8，ADR 0118 修订 2026-10-13）。
+
+**只有「发送」路径用它。** 导出到文件的 `GET/POST /api/diagnostics/bundle` 与「复制诊断」不调本模块，
+那一份仍是严格脱敏、用户可能贴进公开 issue 的包。发送包多出来的东西全部放在 ZIP 的 `detail/` 下，
+老三件（report.json / app.log / config.json）的名字与语义不动。
+
+维护者裁决（2026-10-13）：包以「能帮维护者详细定位问题」为准，**不再因为报错或文件里可能带着用户文字就
+丢掉**；发送前的逐次确认（能看到包里有哪些文件、能把同一份 ZIP 存到本地）是最后一道关。所以这里：
+
+* 默认收：报错原文与完整调用栈、sidecar / app / worker 日志尾巴、会话状态文件、最近的请求记录、样式改动、
+  渲染环境、运行记录、桌面壳与安装信息、存储坑、前端 console 环、显示环境、网络概况；
+* 勾选才收（`DetailOptions`，默认全 false、不记忆）：A 脚本源码、B 系统崩溃报告、C 会话损坏副本的内容；
+* **始终处理**（`Scrubber`，发送包所有新文件）：家目录 → `~`、系统用户名 → `<user>`，秘密
+  （凭证 / cookie / nonce / API key / token / 代理 userinfo）一律去掉。项目文件夹名、文件名、图里的文字保留。
+
+体积：每类一个份额；总量超限时 `fit` 按优先级从低往高截断（勾选项最低：C < B < A，之后才是默认项
+的末尾几类），截断写进 manifest 的 `truncated`。核心文件（report.json 等）不截。
+
+**没勾「脚本源码」就一个字节源码都不进包**：除了不放脚本文件，日志与报错里 Python traceback 的源码行
+（`File …, line N` 下面缩进的那几行）也在这里剥掉（`strip_source_lines`），金丝雀看护见
+`tests/test_diag_send_detail.py`。
+"""
+
+from __future__ import annotations
+
+import collections
+import dataclasses
+import ipaddress
+import json
+import logging
+import os
+import platform
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import time
+import zlib
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from . import config, diagnostics, layoutsession, logsafe, perfprobe, pool, runtime, updater
+
+LOG = logging.getLogger("tavotto.diagdetail")
+
+DETAIL_DIR = "detail"
+#: detail/ 内部各文件的形状版本（与 bundle schema 各自演进；读取方忽略不认识的字段）
+DETAIL_SCHEMA = 1
+
+# ---------------------------------------------------------------------------
+# 类别与优先级（编号 = 保留优先级；数字大的先被截断）
+# ---------------------------------------------------------------------------
+#: kind id → 优先级。1–12 是默认项（与 lead 的编号一致），13–15 是勾选项：A 源码 > B 崩溃报告 > C 损坏副本
+PRIORITY: dict[str, int] = {
+    "errors": 1,
+    "logs": 2,
+    "state": 3,
+    "requests": 4,
+    "overrides": 5,
+    "render_env": 6,
+    "runs": 7,
+    "shell": 8,
+    "storage": 9,
+    "console": 10,
+    "display": 11,
+    "network": 12,
+    "source": 13,
+    "crash_reports": 14,
+    "corrupt_sessions": 15,
+}
+
+#: 日志里 kind 位明文放行的闭集（`logsafe.known` 要求模块常量）
+KINDS = frozenset(PRIORITY)
+
+#: 每类的原始字节份额（解压后）。总量超限时才会进一步截断；份额本身是「每类最多收这么多」
+SHARE: dict[str, int] = {
+    "errors": 256 * 1024,
+    "logs": 1280 * 1024,
+    "state": 384 * 1024,
+    "requests": 128 * 1024,
+    "overrides": 512 * 1024,
+    "render_env": 128 * 1024,
+    "runs": 192 * 1024,
+    "shell": 32 * 1024,
+    "storage": 32 * 1024,
+    "console": 256 * 1024,
+    "display": 16 * 1024,
+    "network": 16 * 1024,
+    "source": 2 * 1024 * 1024,
+    "crash_reports": 1536 * 1024,
+    "corrupt_sessions": 512 * 1024,
+}
+
+APP_LOG_TAIL = 640 * 1024
+SIDECAR_LOG_TAIL = 256 * 1024
+WORKER_LOG_TAIL = 128 * 1024
+WORKER_LOG_FILES = 3
+ERROR_RECORDS = 40
+ERROR_RECORD_CHARS = 16 * 1024
+TRACEBACKS_PER_LOG = 5
+STATE_FILE_CAP = 192 * 1024
+CORRUPT_FILE_CAP = 128 * 1024
+CORRUPT_FILES = 3
+SOURCE_FILE_CAP = 256 * 1024
+SOURCE_FILES = 40
+CRASH_FILE_CAP = 400 * 1024
+CRASH_FILES = 5
+CRASH_WINDOW_S = 7 * 24 * 3600
+PROBE_TIMEOUT_S = 10
+DNS_TIMEOUT_S = 3.0
+RING_CAPACITY = 400
+
+# ---------------------------------------------------------------------------
+# 选项（确认框里的三个复选框）
+# ---------------------------------------------------------------------------
+OPTION_KEYS = ("source", "crash_reports", "corrupt_sessions")
+
+
+@dataclasses.dataclass(frozen=True)
+class DetailOptions:
+    """三个勾选项。**默认全 false**；引擎侧白名单校验：只认字面 `True`（不是 1 / "true" / 非空）。"""
+
+    source: bool = False
+    crash_reports: bool = False
+    corrupt_sessions: bool = False
+
+    def as_dict(self) -> dict[str, bool]:
+        return {k: bool(getattr(self, k)) for k in OPTION_KEYS}
+
+
+def parse_options(raw: object) -> DetailOptions:
+    """请求体里的 `detail_options` → `DetailOptions`。不认识的键丢掉，值不是字面 `True` 就是 false。"""
+    if not isinstance(raw, dict):
+        return DetailOptions()
+    return DetailOptions(**{k: raw.get(k) is True for k in OPTION_KEYS})
+
+
+@dataclasses.dataclass
+class Sources:
+    """app 层递进来的、本模块不该自己去找的东西（保持本模块不依赖 Flask 与「当前项目」）。"""
+
+    project: dict | None = None  # `_diagnostics_project_status()`
+    scripts: list[str] = dataclasses.field(default_factory=list)  # 项目登记的脚本（项目相对路径）
+    baked: dict | None = None  # `load_baked(ctx)`：{stem: {"versions": [...]}}
+    task_section: dict | None = None  # `taskdiag.bundle_section(..., limit=24)`
+    frontend: dict | None = None  # 经 `diagnostics_frontend.sanitize_detail` 的前端 detail 子对象
+
+
+@dataclasses.dataclass
+class DetailRequest:
+    """一次 prepare 的 detail 请求：勾选项 + 前端 `detail` 子对象（已经过 `sanitize_detail`）。"""
+
+    options: DetailOptions = dataclasses.field(default_factory=DetailOptions)
+    frontend: dict = dataclasses.field(default_factory=dict)
+
+
+#: 留给 manifest（截断记录会让它变大）与 ZIP 目录的余量
+FIT_SLACK = 8192
+
+
+@dataclasses.dataclass
+class Item:
+    """一个将进 ZIP 的 detail 文件。`shrink(cap)` 给出不超过 cap 字节的缩小版；没有就整份保留或整份丢。"""
+
+    kind: str
+    path: str  # 相对 detail/
+    data: bytes
+    shrink: Callable[[int], bytes] | None = None
+    #: 内容被份额 / 单文件上限截过时的原始字节数（None = 没截）
+    original_bytes: int | None = None
+
+    @property
+    def size(self) -> int:
+        return len(self.data)
+
+
+# ---------------------------------------------------------------------------
+# 进程内请求记录环（不写盘）
+# ---------------------------------------------------------------------------
+_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+class RequestRing:
+    """最近的后端请求：方法、Flask 路由**规则**、状态码、耗时、错误码。**没有请求体、查询串、实参。**"""
+
+    def __init__(self, capacity: int = RING_CAPACITY) -> None:
+        self._dq: collections.deque[dict] = collections.deque(maxlen=capacity)
+        self._lock = threading.Lock()
+
+    def record(
+        self, method: str, rule: str, status: int, ms: int | None, code: object = None
+    ) -> None:
+        entry = {
+            "t": int(time.time() * 1000),
+            "method": str(method)[:8],
+            "rule": str(rule)[:200],
+            "status": int(status),
+            "ms": ms,
+            "code": code if isinstance(code, str) and _CODE_RE.match(code) else None,
+        }
+        with self._lock:
+            self._dq.append(entry)
+
+    def snapshot(self) -> list[dict]:
+        with self._lock:
+            return list(self._dq)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._dq.clear()
+
+    @property
+    def capacity(self) -> int:
+        return self._dq.maxlen or 0
+
+
+REQUESTS = RequestRing()
+
+
+# ---------------------------------------------------------------------------
+# 脱敏：家目录 → ~，用户名 → <user>，秘密去掉
+# ---------------------------------------------------------------------------
+_GENERIC_USERNAMES = frozenset(
+    {"user", "root", "admin", "administrator", "guest", "default", "test"}
+)
+
+_SECRET_WORDS = (
+    r"api[_-]?key|apikey|secret|passw(?:or)?d|passwd|token|credential|authorization"
+    r"|auth[_-]?(?:key|token|header|code)|nonce|signature|session[_-]?(?:id|key|token|secret)"
+    r"|private[_-]?key|access[_-]?key|bearer|x-tavotto-auth|q-signature|upload[_-]?(?:url|credential)"
+)
+#: `key=value` / `key: value` / `"key": "value"` / `'key': 'value'`：键里含秘密词就把值换掉。
+#: 键名前后的通配**有上界**（40）且起点锚在标识符开头：日志里一条几十万字符的十六进制 / base64 长串
+#: 上，无界的 `[\w.\-]*` 前缀会逐位回溯成 O(n²)（备包卡死）。看护：`test_scrubber_is_linear_on_long_tokens`
+_KV_SECRET = re.compile(
+    rf"""(?ix)
+    (?P<key>(?<![\w.\-])["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|key(?![\w.\-]))["']?)
+    (?P<sep>\s*[:=]\s*)
+    (?P<val>"[^"\n]*"|'[^'\n]*'|(?:Bearer|Basic|Token|Digest)\s+[^\s"',;&)\]}}]+|[^\s"',;&)\]}}]+)
+    """
+)
+_COOKIE_LINE = re.compile(r"(?i)\b((?:set-)?cookie(?![\w-])\s*[:=]\s*)[^\n]*")
+_BEARER = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}")
+_URL_USERINFO = re.compile(
+    r"(?<![A-Za-z0-9+.\-])(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]{0,31}://)[^/\s:@\"'<>]{1,256}(?::[^/\s@\"'<>]{0,256})?@"
+)
+_JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
+_REDACTED = "<redacted>"
+_BORING_VALUE = re.compile(
+    r"""^["']?(?:|\d{1,6}|true|false|none|null|<redacted>|\*\*\*|<[^>]{1,20}>|\.\.\.)["']?$""", re.I
+)
+
+#: 结构化数据里这些键名（子串）的值整体换掉。`diagnostics._SECRET_KEYS` 的超集
+_SECRET_KEY_PARTS = (
+    "api_key",
+    "apikey",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "cookie",
+    "nonce",
+    "credential",
+    "signature",
+    "session_id",
+    "session_key",
+    "private_key",
+    "access_key",
+)
+
+
+def _norm_variants(raw: str) -> set[str]:
+    """一个路径的各种写法：原样 / 正反斜杠 / JSON 转义的双反斜杠。"""
+    out = {raw}
+    out.add(raw.replace("\\", "/"))
+    out.add(raw.replace("/", "\\"))
+    out.add(raw.replace("\\", "\\\\"))
+    return {v for v in out if len(v) >= 3}
+
+
+class Scrubber:
+    """发送包所有新文件都过它。构造时取一次家目录 / 用户名，之后纯字符串处理。"""
+
+    def __init__(self, *, source_mode: bool = False) -> None:
+        self.source_mode = source_mode
+        homes: set[str] = set()
+        candidates = []
+        try:
+            candidates.append(os.path.expanduser("~"))
+            candidates.append(str(Path.home()))
+        except (RuntimeError, OSError, KeyError):
+            pass
+        for env in ("HOME", "USERPROFILE"):
+            candidates.append(os.environ.get(env, ""))
+        for home in list(candidates):
+            if not home or home in ("/", "\\"):
+                continue
+            homes |= _norm_variants(home)
+            try:
+                homes |= _norm_variants(os.path.realpath(home))
+            except OSError:
+                pass
+        flags = re.IGNORECASE if os.name == "nt" else 0
+        ordered = sorted(homes, key=len, reverse=True)
+        self._home = re.compile("|".join(re.escape(h) for h in ordered), flags) if ordered else None
+        names: set[str] = set()
+        try:
+            import getpass
+
+            names.add(getpass.getuser())
+        except Exception:  # noqa: BLE001 — 取不到用户名就不换，脱敏不该被它拖垮
+            pass
+        for env in ("USER", "USERNAME", "LOGNAME"):
+            names.add(os.environ.get(env, ""))
+        try:
+            names.add(Path.home().name)
+        except (RuntimeError, OSError, KeyError):
+            pass
+        names = {n for n in names if len(n) >= 3 and n.lower() not in _GENERIC_USERNAMES}
+        self._user = (
+            re.compile(
+                r"(?<![\w])(?:"
+                + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+                + r")(?![\w])",
+                flags,
+            )
+            if names
+            else None
+        )
+        self._install_id = diagnostics._install_id()
+
+    # ---- 文本 ----
+    def _kv(self, m: re.Match) -> str:
+        val = m.group("val")
+        if _BORING_VALUE.match(val):
+            return m.group(0)
+        if self.source_mode:
+            # 源码：只换带引号的字面量 / Bearer 形状；`token = self._next()` 这类取值表达式原样留着
+            if not (val[:1] in "\"'" and len(val) >= 8) and not re.match(
+                r"(?i)^(Bearer|Basic|Token)\s", val
+            ):
+                return m.group(0)
+        quote = val[0] if val[:1] in "\"'" else ""
+        return f"{m.group('key')}{m.group('sep')}{quote}{_REDACTED}{quote}"
+
+    def text(self, text: str) -> str:
+        text = _COOKIE_LINE.sub(lambda m: m.group(1) + _REDACTED, text)
+        text = _KV_SECRET.sub(self._kv, text)
+        text = _BEARER.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
+        text = _URL_USERINFO.sub(lambda m: m.group("scheme") + _REDACTED + "@", text)
+        text = _JWT.sub(_REDACTED, text)
+        text = diagnostics._SECRET_VALUE.sub("***", text)
+        if self._install_id:
+            text = text.replace(self._install_id, "***")
+        if self._home is not None:
+            text = self._home.sub("~", text)
+        if self._user is not None:
+            text = self._user.sub("<user>", text)
+        return text
+
+    def obj(self, obj):
+        """JSON 可序列化的结构：键名带秘密词的值整体换掉，其余字符串过 `text`。"""
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                key = str(k).lower()
+                if any(p in key for p in _SECRET_KEY_PARTS) and not isinstance(v, (dict, list)):
+                    out[k] = _REDACTED if v else v
+                else:
+                    out[k] = self.obj(v)
+            return out
+        if isinstance(obj, list):
+            return [self.obj(v) for v in obj]
+        if isinstance(obj, str):
+            return self.text(obj)
+        return obj
+
+
+# ---------------------------------------------------------------------------
+# 没勾「脚本源码」时剥掉 traceback 里的源码行
+# ---------------------------------------------------------------------------
+_TB_FRAME = re.compile(r'^(?P<indent>\s*)File "[^"]*", line \d+')
+_CARETS = re.compile(r"^\s*[\^~\-+]+\s*$")
+_WARNING_HEAD = re.compile(r"^\S[^\n]*:\d+: \w*Warning\b")
+
+
+def strip_source_lines(text: str) -> str:
+    """去掉 Python traceback / SyntaxError / warning 显示里附带的**源码行**（和指示符 `^^^` / `~~^~~`）。
+
+    保留 `File "…", line N, in f` 帧行与异常行——调用栈是完整的，只是不带脚本的代码文本。
+    """
+    out: list[str] = []
+    frame_indent = -1  # >= 0：刚见到帧行，后面更深缩进的行是源码
+    for line in text.split("\n"):
+        m = _TB_FRAME.match(line)
+        if m:
+            out.append(line)
+            frame_indent = len(m.group("indent"))
+            continue
+        if _WARNING_HEAD.match(line):
+            out.append(line)
+            frame_indent = 0
+            continue
+        if frame_indent >= 0:
+            stripped = line.lstrip()
+            indent = len(line) - len(stripped)
+            if stripped and indent > frame_indent and not stripped.startswith("File "):
+                continue  # 源码行 / 指示符
+            if stripped and _CARETS.match(line):
+                continue
+            frame_indent = -1
+        out.append(line)
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# 小工具
+# ---------------------------------------------------------------------------
+def _dumps(obj) -> bytes:
+    return json.dumps(obj, ensure_ascii=False, indent=1, default=str).encode("utf-8")
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def _safe_name(name: str) -> str:
+    return re.sub(r"[^\w.\-]", "_", name)[:120] or "file"
+
+
+def _marker(kept: int, original: int, how: str) -> bytes:
+    return f"[truncated: kept {how} {kept} of {original} bytes]\n".encode()
+
+
+def _tail_bytes(data: bytes, cap: int) -> bytes:
+    """保留最后 `cap` 字节（对齐到整行），前面加一行说明。"""
+    if len(data) <= cap:
+        return data
+    cut = data[-cap:]
+    nl = cut.find(b"\n")
+    if 0 <= nl < len(cut) - 1:
+        cut = cut[nl + 1 :]
+    return _marker(len(cut), len(data), "last") + cut
+
+
+def _head_bytes(data: bytes, cap: int) -> bytes:
+    if len(data) <= cap:
+        return data
+    cut = data[:cap]
+    nl = cut.rfind(b"\n")
+    if nl > 0:
+        cut = cut[: nl + 1]
+    return cut + b"\n" + _marker(len(cut), len(data), "first")
+
+
+def _read_tail(path: Path, limit: int) -> tuple[bytes, int] | None:
+    """文件最后 `limit` 字节 + 文件总大小；seek 过去读，不整读。"""
+    try:
+        size = path.stat().st_size
+        return diagnostics._read_tail_bytes(path, limit), size
+    except OSError:
+        return None
+
+
+def _read_head(path: Path, limit: int) -> tuple[bytes, int] | None:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            return fh.read(limit), size
+    except OSError:
+        return None
+
+
+def _list_shrinker(build: Callable[[list], bytes], records: list, *, newest_last: bool = True):
+    """记录列表型 JSON 的缩小器：从最旧的一端丢记录直到序列化后 ≤ cap。"""
+
+    def shrink(cap: int) -> bytes:
+        recs = list(records)
+        while recs:
+            data = build(recs)
+            if len(data) <= cap:
+                return data
+            if len(recs) == 1:
+                break
+            recs = recs[1:] if newest_last else recs[:-1]
+        return build([])
+
+    return shrink
+
+
+def _failed(kind: str, path: str, exc: BaseException, scrub: Scrubber) -> Item:
+    """某一类采集失败：如实写失败原因，不让备包失败。"""
+    reason = f"{type(exc).__name__}: {exc}"
+    return Item(
+        kind,
+        path,
+        _dumps({"collection_error": scrub.text(reason)[:500], "schema": DETAIL_SCHEMA}),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 1 报错原文与调用栈
+# ---------------------------------------------------------------------------
+_LOG_RECORD = re.compile(
+    r"^(?P<time>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3}) (?P<level>[A-Z]+) (?P<logger>[\w.\-]+): ",
+    re.M,
+)
+
+
+def parse_log_records(text: str) -> list[dict]:
+    """`cache/app.log`（`%(asctime)s %(levelname)s %(name)s: %(message)s`）→ 记录（含多行 traceback）。"""
+    heads = list(_LOG_RECORD.finditer(text))
+    out = []
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        body = text[m.end() : end].rstrip("\n")
+        out.append(
+            {
+                "time": m.group("time"),
+                "level": m.group("level"),
+                "logger": m.group("logger"),
+                "text": body,
+            }
+        )
+    return out
+
+
+def traceback_blocks(text: str, limit: int = TRACEBACKS_PER_LOG) -> list[str]:
+    """worker.log 里最近几段 Python traceback（原文，含异常行）。"""
+    lines = text.splitlines()
+    blocks: list[str] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("Traceback (most recent call last):"):
+            j = i + 1
+            while j < len(lines) and (lines[j][:1] in (" ", "\t")):
+                j += 1
+            end = min(j + 1, len(lines))
+            blocks.append("\n".join(lines[i:end]))
+            i = end
+        else:
+            i += 1
+    return blocks[-limit:]
+
+
+def _cap_middle(text: str, cap: int) -> str:
+    if len(text) <= cap:
+        return text
+    half = cap // 2
+    return text[:half] + f"\n[... {len(text) - cap} chars omitted ...]\n" + text[-half:]
+
+
+def _app_log_text() -> str:
+    got = _read_tail(diagnostics._app_log_path(), 2 * 1024 * 1024)
+    return got[0].decode("utf-8", errors="replace") if got else ""
+
+
+def _worker_logs(project: dict | None) -> list[tuple[float, Path]]:
+    return diagnostics.owned_worker_logs((project or {}).get("figures_dir"))[:WORKER_LOG_FILES]
+
+
+def collect_errors(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    text = _app_log_text()
+    engine = [r for r in parse_log_records(text) if r["level"] in ("ERROR", "CRITICAL")][
+        -ERROR_RECORDS:
+    ]
+    for r in engine:
+        r["text"] = _cap_middle(r["text"], ERROR_RECORD_CHARS)
+    worker = []
+    for mtime, path in _worker_logs(src.project):
+        got = _read_tail(path, WORKER_LOG_TAIL * 2)
+        if not got:
+            continue
+        blocks = traceback_blocks(got[0].decode("utf-8", errors="replace"))
+        if blocks:
+            worker.append(
+                {
+                    "modified": _iso(mtime),
+                    "tracebacks": [_cap_middle(b, ERROR_RECORD_CHARS) for b in blocks],
+                }
+            )
+    fe = (src.frontend or {}).get("errors") or []
+
+    def build(recs: list) -> bytes:
+        engine_n = [r for r in recs if r["_src"] == "engine"]
+        other = {
+            "schema": DETAIL_SCHEMA,
+            "engine": [{k: v for k, v in r.items() if k != "_src"} for r in engine_n],
+            "worker": [r["w"] for r in recs if r["_src"] == "worker"],
+            "frontend": [r["f"] for r in recs if r["_src"] == "frontend"],
+        }
+        other = scrub.obj(other)
+        if not opts.source:
+            other = _strip_obj(other)
+        return _dumps(other)
+
+    records = (
+        [{**r, "_src": "engine"} for r in engine]
+        + [{"_src": "worker", "w": w} for w in worker]
+        + [{"_src": "frontend", "f": f} for f in fe]
+    )
+    data = build(records)
+    return [
+        Item(
+            "errors",
+            "errors.json",
+            data,
+            shrink=_list_shrinker(build, records),
+        )
+    ]
+
+
+def _strip_obj(obj):
+    """对结构里每个字符串去掉 traceback 源码行。"""
+    if isinstance(obj, dict):
+        return {k: _strip_obj(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_obj(v) for v in obj]
+    if isinstance(obj, str):
+        return strip_source_lines(obj)
+    return obj
+
+
+# ---------------------------------------------------------------------------
+# 2 日志尾巴
+# ---------------------------------------------------------------------------
+def sidecar_log_file() -> Path | None:
+    from . import handoff
+
+    raw = handoff.sidecar_log_path()
+    return Path(raw) if raw else None
+
+
+def collect_logs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    items: list[Item] = []
+
+    def add(path: str, file: Path | None, limit: int) -> None:
+        if file is None:
+            return
+        got = _read_tail(file, limit)
+        if got is None:
+            return
+        raw, size = got
+        text = raw.decode("utf-8", errors="replace")
+        text = scrub.text(text if opts.source else strip_source_lines(text))
+        data = text.encode("utf-8")
+        items.append(
+            Item(
+                "logs",
+                path,
+                data,
+                shrink=lambda cap, d=data: _tail_bytes(d, cap),
+                original_bytes=size if size > limit else None,
+            )
+        )
+
+    add("logs/app.log.tail", diagnostics._app_log_path(), APP_LOG_TAIL)
+    add("logs/sidecar.log.tail", sidecar_log_file(), SIDECAR_LOG_TAIL)
+    for i, (_mtime, path) in enumerate(_worker_logs(src.project)):
+        add(
+            "logs/worker.log.tail" if i == 0 else f"logs/worker-{i + 1}.log.tail",
+            path,
+            WORKER_LOG_TAIL,
+        )
+    return items
+
+
+# ---------------------------------------------------------------------------
+# 3 会话状态文件
+# ---------------------------------------------------------------------------
+def state_dir() -> Path:
+    return layoutsession.state_path().parent
+
+
+def _state_kind(name: str) -> str:
+    if name.startswith(layoutsession.CORRUPT_PREFIX):
+        return "corrupt"
+    if name == layoutsession.FILENAME:
+        return "primary"
+    if name.endswith(layoutsession.BACKUP_SUFFIX):
+        return "backup"
+    return "other"
+
+
+def _state_files() -> list[Path]:
+    try:
+        return sorted(
+            p
+            for p in state_dir().iterdir()
+            if p.is_file()
+            and not p.name.endswith(".lock")
+            and p.name != layoutsession.LOCK_FILENAME
+        )
+    except OSError:
+        return []
+
+
+def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    index: list[dict] = []
+    items: list[Item] = []
+    for p in _state_files():
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        kind = _state_kind(p.name)
+        index.append(
+            {"name": p.name, "kind": kind, "bytes": st.st_size, "mtime": _iso(st.st_mtime)}
+        )
+        if kind == "corrupt":
+            continue  # 默认只有清单；内容归勾选项 C
+        got = _read_head(p, STATE_FILE_CAP)
+        if got is None:
+            continue
+        raw, size = got
+        data = scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
+        if size > STATE_FILE_CAP:
+            data += b"\n" + _marker(len(raw), size, "first")
+        items.append(
+            Item(
+                "state",
+                f"state/{_safe_name(p.name)}",
+                data,
+                shrink=lambda cap, d=data: _head_bytes(d, cap),
+                original_bytes=size if size > STATE_FILE_CAP else None,
+            )
+        )
+    listing = {
+        "schema": DETAIL_SCHEMA,
+        "dir": scrub.text(str(state_dir())),
+        "files": index,
+        "corrupt_contents_included": opts.corrupt_sessions,
+    }
+    items.insert(0, Item("state", "state/index.json", _dumps(listing)))
+    return items
+
+
+def collect_corrupt_sessions(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    items: list[Item] = []
+    corrupt = [p for p in _state_files() if _state_kind(p.name) == "corrupt"]
+    corrupt.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for p in corrupt[:CORRUPT_FILES]:
+        got = _read_head(p, CORRUPT_FILE_CAP)
+        if got is None:
+            continue
+        raw, size = got
+        data = scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
+        items.append(
+            Item(
+                "corrupt_sessions",
+                f"optional/corrupt-sessions/{_safe_name(p.name)}",
+                data,
+                shrink=lambda cap, d=data: _head_bytes(d, cap),
+                original_bytes=size if size > CORRUPT_FILE_CAP else None,
+            )
+        )
+    return items
+
+
+# ---------------------------------------------------------------------------
+# 4 请求记录
+# ---------------------------------------------------------------------------
+def collect_requests(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    records = REQUESTS.snapshot()
+
+    def build(recs: list) -> bytes:
+        return _dumps(
+            {
+                "schema": DETAIL_SCHEMA,
+                "capacity": REQUESTS.capacity,
+                "count": len(recs),
+                "note": "method / Flask route rule / status / ms / error code only; no body, query string or arguments",
+                "records": recs,
+            }
+        )
+
+    return [
+        Item("requests", "requests.json", build(records), shrink=_list_shrinker(build, records))
+    ]
+
+
+# ---------------------------------------------------------------------------
+# 5 样式改动（overrides）
+# ---------------------------------------------------------------------------
+MAX_OVERRIDE_PANELS = 3
+
+
+def collect_overrides(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    items: list[Item] = []
+    panels = (src.frontend or {}).get("overrides") or []
+    stems: list[str] = []
+    for n, panel in enumerate(panels[:MAX_OVERRIDE_PANELS]):
+        file = str(panel.get("panel") or "")
+        stem = Path(file).stem if file else ""
+        if stem:
+            stems.append(stem)
+        doc = scrub.obj({"schema": DETAIL_SCHEMA, "source": "live document (hot state)", **panel})
+        items.append(
+            Item(
+                "overrides",
+                f"overrides/live-{n + 1}-{_safe_name(stem or 'panel')}.json",
+                _dumps(doc),
+            )
+        )
+    baked = src.baked or {}
+    for stem in dict.fromkeys(stems):
+        entry = baked.get(stem)
+        if entry is None:
+            continue
+        doc = scrub.obj(
+            {
+                "schema": DETAIL_SCHEMA,
+                "source": "baked baseline (write-back)",
+                "stem": stem,
+                "entry": entry,
+            }
+        )
+        items.append(Item("overrides", f"overrides/baked-{_safe_name(stem)}.json", _dumps(doc)))
+    if not items:
+        items.append(
+            Item(
+                "overrides",
+                "overrides/index.json",
+                _dumps({"schema": DETAIL_SCHEMA, "note": "no panel was being edited or selected"}),
+            )
+        )
+    return items
+
+
+# ---------------------------------------------------------------------------
+# 6 渲染环境
+# ---------------------------------------------------------------------------
+_PROBE_CODE = r"""
+import json, sys, platform, os
+out = {"python": {
+    "version": sys.version.split()[0], "implementation": platform.python_implementation(),
+    "executable": sys.executable, "prefix": sys.prefix, "base_prefix": sys.base_prefix,
+    "in_venv": sys.prefix != sys.base_prefix, "platform": platform.platform()}}
+try:
+    import matplotlib
+    from matplotlib import font_manager as fm
+    rc, rcd = matplotlib.rcParams, matplotlib.rcParamsDefault
+    get = getattr(rc, "_get", None) or (lambda k: dict.__getitem__(rc, k))
+    try:
+        backend = str(get("backend"))
+    except Exception:
+        backend = "unknown"
+    nondefault = {}
+    for k in sorted(rcd.keys()):
+        if k == "backend":
+            continue
+        try:
+            v, d = get(k), rcd[k]
+            if v != d:
+                nondefault[k] = repr(v)[:200]
+        except Exception:
+            continue
+        if len(nondefault) >= 300:
+            break
+    names = set()
+    for e in fm.fontManager.ttflist:
+        names.add(e.name.lower())
+    generic = {"serif", "sans-serif", "sans serif", "cursive", "fantasy", "monospace", "sans"}
+    wanted = []
+    fam = rc["font.family"]
+    wanted += [("font.family", f) for f in (fam if isinstance(fam, (list, tuple)) else [fam])]
+    for key in ("font.sans-serif", "font.serif", "font.monospace", "font.cursive", "font.fantasy"):
+        wanted += [(key, f) for f in list(rc[key])[:12]]
+    fonts = []
+    seen = set()
+    for key, f in wanted:
+        if (key, f) in seen:
+            continue
+        seen.add((key, f))
+        if str(f).lower() in generic:
+            try:
+                resolved = fm.findfont(fm.FontProperties(family=f), fallback_to_default=True)
+                fonts.append({"list": key, "family": f, "generic": True, "resolves_to": os.path.basename(resolved)})
+            except Exception as exc:
+                fonts.append({"list": key, "family": f, "generic": True, "error": type(exc).__name__})
+        else:
+            fonts.append({"list": key, "family": f, "present": str(f).lower() in names})
+    out["matplotlib"] = {
+        "version": matplotlib.__version__, "backend": backend,
+        "matplotlibrc": matplotlib.matplotlib_fname(), "configdir": matplotlib.get_configdir(),
+        "cachedir": matplotlib.get_cachedir(), "non_default_rcparams": nondefault,
+        "font_count": len(fm.fontManager.ttflist), "font_family_count": len(names), "fonts": fonts,
+        "font_note": "system fonts known to matplotlib in this probe; fonts registered by the Tavotto worker at render time are not loaded here"}
+except Exception as exc:
+    out["matplotlib"] = {"error": type(exc).__name__ + ": " + str(exc)[:300]}
+try:
+    from importlib import metadata
+    pk = sorted({(d.metadata["Name"] or "").lower(): d.version for d in metadata.distributions() if d.metadata["Name"]}.items())
+    out["packages"] = [{"name": n, "version": v} for n, v in pk[:400]]
+    out["package_count"] = len(pk)
+except Exception as exc:
+    out["packages_error"] = type(exc).__name__
+sys.stdout.write(json.dumps(out))
+"""
+
+
+def _probe_subprocess(python: str, bundled: bool) -> dict:
+    """对渲染解释器跑**一次**有超时的只读采集；任何失败都如实回 `{"status": "failed", "reason": …}`。"""
+    try:
+        proc = subprocess.run(
+            [python, *runtime.probe_args(bundled=bundled), "-c", _PROBE_CODE],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            env=runtime.probe_env(python, bundled=bundled),
+            creationflags=runtime.CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "reason": "timeout", "timeout_s": PROBE_TIMEOUT_S}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "failed", "reason": f"spawn_error:{type(exc).__name__}"}
+    if proc.returncode != 0:
+        return {
+            "status": "failed",
+            "reason": f"exit:{proc.returncode}",
+            "stderr_tail": (proc.stderr or "")[-2000:],
+        }
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return {
+            "status": "failed",
+            "reason": "bad_output",
+            "stdout_tail": (proc.stdout or "")[-500:],
+        }
+    return (
+        {"status": "ok", **data}
+        if isinstance(data, dict)
+        else {"status": "failed", "reason": "bad_output"}
+    )
+
+
+def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    from .. import __version__
+
+    doc: dict = {"schema": DETAIL_SCHEMA, "tavotto_version": __version__}
+    try:
+        python = pool.find_worker_python()
+    except pool.WorkerError as exc:
+        doc["interpreter"] = {"found": False, "error": str(exc)}
+        python = None
+    if python:
+        source = pool.source_of(python)
+        doc["interpreter"] = {
+            "found": True,
+            "path": python,
+            "source": source,
+            "env_override": pool.worker_python_env(),
+        }
+        doc["probe"] = _probe_subprocess(python, source == pool.SOURCE_BUNDLED)
+    return [Item("render_env", "render-env.json", _dumps(scrub.obj(doc)))]
+
+
+# ---------------------------------------------------------------------------
+# 7 运行记录
+# ---------------------------------------------------------------------------
+_RUN_LOG = re.compile(r"渲染|导出|试运行|准备|运行|脚本|export|render|prepar|worker|probe", re.I)
+RUN_LOG_EVENTS = 80
+
+
+def collect_runs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    records = [
+        r
+        for r in parse_log_records(_app_log_text())
+        if _RUN_LOG.search(r["text"].split("\n", 1)[0])
+    ][-RUN_LOG_EVENTS:]
+    for r in records:
+        r["text"] = _cap_middle(r["text"], 4096)
+    snapshots = src.task_section
+
+    def build(recs: list) -> bytes:
+        doc = {
+            "schema": DETAIL_SCHEMA,
+            "note": "task snapshots are the frozen terminal projections (same as task-diagnostics.json); "
+            "log_events are raw engine log records about renders / exports / script runs",
+            "task_snapshots": snapshots,
+            "log_events": recs,
+        }
+        doc = scrub.obj(doc)
+        return _dumps(doc if opts.source else _strip_obj(doc))
+
+    return [Item("runs", "runs.json", build(records), shrink=_list_shrinker(build, records))]
+
+
+# ---------------------------------------------------------------------------
+# 8 桌面壳与安装信息
+# ---------------------------------------------------------------------------
+def _channel_of(version: str) -> str:
+    return "beta" if re.search(r"(?:a|b|rc|dev)\d*$", version or "") else "stable"
+
+
+def _windows_info() -> dict:
+    if os.name != "nt":
+        return {}
+    try:
+        ver = platform.win32_ver()
+        return {
+            "release": ver[0],
+            "version": ver[1],
+            "csd": ver[2],
+            "edition": platform.win32_edition(),
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def collect_shell(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    from .. import __version__
+
+    frozen = pool.is_frozen()
+    exe = sys.executable or ""
+    bundle = None
+    if frozen:
+        bundle = (
+            "macos-app-bundle" if ".app/Contents/MacOS" in exe.replace("\\", "/") else "windows-exe"
+        )
+    try:
+        facts = perfprobe.system_facts()
+    except Exception:  # noqa: BLE001 — 机器事实取不到不拖垮备包
+        facts = {}
+    rosetta = facts.get("rosetta") if sys.platform == "darwin" else None
+    fe = (src.frontend or {}).get("shell") or {}
+    update = (fe.get("update") if isinstance(fe, dict) else None) or None
+    doc = {
+        "schema": DETAIL_SCHEMA,
+        "app": {
+            "tavotto_version": __version__,
+            "install_kind": diagnostics.install_kind(),
+            "frozen": frozen,
+            "bundle": bundle,
+            "installer_flavor": "unknown",  # dmg / NSIS / portable 在运行时没有可靠记号，不猜
+        },
+        "channel": {"value": _channel_of(__version__), "basis": "inferred from the version string"},
+        "os": {
+            "platform": platform.platform(),
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "mac_ver": platform.mac_ver()[0] if sys.platform == "darwin" else None,
+            "windows": _windows_info() or None,
+            "os_version": facts.get("os_version"),
+        },
+        "cpu": {
+            "arch": platform.machine(),
+            "cpu_count": os.cpu_count(),
+            "model": facts.get("model"),
+            "cpu": facts.get("cpu"),
+            "rosetta": rosetta,
+        },
+        "frontend_shell": fe or None,
+        "in_app_update": update
+        or {
+            "status": "unknown",
+            "note": "no update check / install has happened in this window session",
+        },
+        "pip_updater": None if frozen else updater.settings(),
+    }
+    return [Item("shell", "shell.json", _dumps(scrub.obj(doc)))]
+
+
+# ---------------------------------------------------------------------------
+# 9 存储坑
+# ---------------------------------------------------------------------------
+_SYNC_MARKERS = (
+    ("onedrive", re.compile(r"onedrive", re.I)),
+    ("icloud", re.compile(r"Mobile Documents|com~apple~CloudDocs|iCloud", re.I)),
+    ("dropbox", re.compile(r"dropbox", re.I)),
+    ("google_drive", re.compile(r"Google ?Drive|GoogleDrive", re.I)),
+    ("nutstore", re.compile(r"Nutstore|坚果云", re.I)),
+    ("box", re.compile(r"[/\\]Box( Sync)?[/\\]", re.I)),
+    ("cloudstorage", re.compile(r"CloudStorage", re.I)),
+)
+
+
+def sync_providers(path: str) -> list[str]:
+    return [name for name, rx in _SYNC_MARKERS if rx.search(path)]
+
+
+def _disk(path: Path) -> dict:
+    probe = path
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        u = shutil.disk_usage(probe)
+        return {"free_bytes": u.free, "total_bytes": u.total, "checked": str(probe)}
+    except OSError as exc:
+        return {"error": type(exc).__name__}
+
+
+def _long_paths_enabled() -> int | str | None:
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem"
+        ) as k:
+            return int(winreg.QueryValueEx(k, "LongPathsEnabled")[0])
+    except Exception as exc:  # noqa: BLE001
+        return f"unreadable:{type(exc).__name__}"
+
+
+def collect_storage(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    data = config.data_dir()
+    doc: dict = {
+        "schema": DETAIL_SCHEMA,
+        "data_dir": {
+            "path": str(data),
+            "exists": data.exists(),
+            "writable": os.access(data if data.exists() else data.parent, os.W_OK),
+            "disk": _disk(data),
+            "sync_providers": sync_providers(str(data)),
+        },
+        "windows_long_paths_enabled": _long_paths_enabled(),
+    }
+    fig = (src.project or {}).get("figures_dir")
+    if fig:
+        p = Path(fig)
+        doc["project_dir"] = {
+            "path": str(p),
+            "path_length": len(str(p)),
+            "exists": p.is_dir(),
+            "writable": os.access(p, os.W_OK) if p.exists() else False,
+            "disk": _disk(p),
+            "sync_providers": sync_providers(str(p)),
+        }
+    return [Item("storage", "storage.json", _dumps(scrub.obj(doc)))]
+
+
+# ---------------------------------------------------------------------------
+# 10 前端 console 环   11 显示环境
+# ---------------------------------------------------------------------------
+def collect_console(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    records = list((src.frontend or {}).get("console") or [])
+
+    def build(recs: list) -> bytes:
+        return _dumps(
+            scrub.obj(
+                {
+                    "schema": DETAIL_SCHEMA,
+                    "scope": "global (not cleared when switching projects)",
+                    "records": recs,
+                }
+            )
+        )
+
+    return [
+        Item(
+            "console",
+            "frontend-console.json",
+            build(records),
+            shrink=_list_shrinker(build, records),
+        )
+    ]
+
+
+def collect_display(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    display = (src.frontend or {}).get("display")
+    doc = {"schema": DETAIL_SCHEMA, **(display or {"status": "unknown"})}
+    return [Item("display", "display.json", _dumps(scrub.obj(doc)))]
+
+
+# ---------------------------------------------------------------------------
+# 12 网络概况
+# ---------------------------------------------------------------------------
+TUN_NET = ipaddress.ip_network("198.18.0.0/15")
+DNS_HOSTS = ("tavotto.cn", "github.com")
+
+
+def _strip_userinfo(url: str) -> str:
+    from urllib.parse import urlsplit, urlunsplit
+
+    try:
+        p = urlsplit(url if "://" in url else "//" + url)
+        host = p.hostname or ""
+        netloc = f"[{host}]" if ":" in host else host
+        if p.port:
+            netloc += f":{p.port}"
+        return urlunsplit((p.scheme, netloc, p.path, "", "")) if host else _REDACTED
+    except ValueError:
+        return _REDACTED
+
+
+def proxy_facts() -> dict:
+    import urllib.request
+
+    env = {k: _strip_userinfo(v) for k, v in os.environ.items() if "proxy" in k.lower() and v}
+    try:
+        system = {k: _strip_userinfo(v) for k, v in urllib.request.getproxies().items() if v}
+    except Exception:  # noqa: BLE001
+        system = {}
+    return {"configured": bool(env or system), "env": env, "resolved": system}
+
+
+def _resolve(host: str) -> list[str]:
+    """系统解析器查一次地址（只做名字解析，不建立连接）。"""
+    infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    return sorted({i[4][0] for i in infos})
+
+
+def dns_fact(host: str) -> dict:
+    box: dict = {}
+
+    def run() -> None:
+        try:
+            box["addrs"] = _resolve(host)
+        except OSError as exc:
+            box["error"] = type(exc).__name__
+
+    t = threading.Thread(target=run, name="diag-dns", daemon=True)
+    t.start()
+    t.join(DNS_TIMEOUT_S)
+    if t.is_alive():
+        return {"host": host, "error": "timeout"}
+    if "addrs" not in box:
+        return {"host": host, "error": box.get("error", "unknown")}
+    rewritten = False
+    for a in box["addrs"]:
+        try:
+            if ipaddress.ip_address(a.split("%")[0]) in TUN_NET:
+                rewritten = True
+        except ValueError:
+            continue
+    return {"host": host, "addresses": box["addrs"], "tun_rewritten_198_18": rewritten}
+
+
+def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    now = datetime.now().astimezone()
+    off = now.utcoffset() or timedelta(0)
+    doc = {
+        "schema": DETAIL_SCHEMA,
+        "proxy": proxy_facts(),
+        "dns": [dns_fact(h) for h in DNS_HOSTS],
+        "timezone": {
+            "name": time.tzname[0] if not time.daylight else list(time.tzname),
+            "utc_offset_minutes": int(off.total_seconds() // 60),
+        },
+    }
+    return [Item("network", "network.json", _dumps(scrub.obj(doc)))]
+
+
+# ---------------------------------------------------------------------------
+# A 脚本源码（勾选）
+# ---------------------------------------------------------------------------
+def source_candidates(src: Sources) -> list[tuple[str, Path]]:
+    """要收的脚本：判据 = 当前项目**登记的脚本**（项目相对路径），正在编辑 / 选中的面板的脚本排最前，
+    其余按修改时间新的在前。只收解析后仍在项目目录内的文件（登记表是用户文件，不信它）。"""
+    fig = (src.project or {}).get("figures_dir")
+    if not fig:
+        return []
+    root = Path(fig).resolve()
+    focus = [
+        str(p.get("script"))
+        for p in ((src.frontend or {}).get("overrides") or [])
+        if p.get("script")
+    ]
+    seen: dict[str, Path] = {}
+    for rel in [*focus, *src.scripts]:
+        if rel in seen:
+            continue
+        try:
+            path = (root / rel).resolve()
+            path.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if path.is_file():
+            seen[rel] = path
+    ordered = [r for r in focus if r in seen]
+    rest = [r for r in seen if r not in ordered]
+    rest.sort(key=lambda r: -seen[r].stat().st_mtime)
+    return [(r, seen[r]) for r in [*ordered, *rest]][:SOURCE_FILES]
+
+
+def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
+    items: list[Item] = []
+    code_scrub = Scrubber(source_mode=True)
+    index = []
+    for n, (rel, path) in enumerate(source_candidates(src)):
+        got = _read_head(path, SOURCE_FILE_CAP)
+        if got is None:
+            continue
+        raw, size = got
+        data = code_scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
+        if size > SOURCE_FILE_CAP:
+            data += b"\n" + _marker(len(raw), size, "first")
+        zip_name = f"optional/source/{n + 1:02d}-{_safe_name(rel.replace('/', '__'))}"
+        index.append({"script": scrub.text(rel), "file": zip_name, "bytes": size})
+        items.append(
+            Item(
+                "source",
+                zip_name,
+                data,
+                shrink=lambda cap, d=data: _head_bytes(d, cap),
+                original_bytes=size if size > SOURCE_FILE_CAP else None,
+            )
+        )
+    items.insert(
+        0,
+        Item(
+            "source",
+            "optional/source/index.json",
+            _dumps(
+                {
+                    "schema": DETAIL_SCHEMA,
+                    "criterion": "scripts registered in the open project (panel scripts first, then newest first)",
+                    "scripts": index,
+                }
+            ),
+        ),
+    )
+    return items
+
+
+# ---------------------------------------------------------------------------
+# B 系统崩溃报告（勾选）
+# ---------------------------------------------------------------------------
+_OWN_PROCESS = re.compile(r"^(tavotto|workerd)", re.I)
+
+
+def crash_dirs() -> list[tuple[str, Path]]:
+    """(来源标签, 目录)。macOS DiagnosticReports；Windows CrashDumps 与两处 WER ReportArchive。"""
+    home = Path.home()
+    out: list[tuple[str, Path]] = []
+    if sys.platform == "darwin":
+        out.append(("macos_diagnostic_reports", home / "Library" / "Logs" / "DiagnosticReports"))
+    elif os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            out.append(("windows_crashdumps", Path(local) / "CrashDumps"))
+            out.append(
+                (
+                    "windows_wer_user",
+                    Path(local) / "Microsoft" / "Windows" / "WER" / "ReportArchive",
+                )
+            )
+        pdata = os.environ.get("PROGRAMDATA")
+        if pdata:
+            out.append(
+                (
+                    "windows_wer_machine",
+                    Path(pdata) / "Microsoft" / "Windows" / "WER" / "ReportArchive",
+                )
+            )
+    return out
+
+
+def _process_name(file_name: str) -> str:
+    stem = file_name.rsplit(".", 1)[0]
+    m = re.match(r"^(.*?)[-_]\d{4}-\d\d-\d\d[-_]\d{6}", stem)
+    return m.group(1) if m else stem
+
+
+def collect_crash_reports(
+    src: Sources, opts: DetailOptions, scrub: Scrubber, now: float | None = None
+) -> list[Item]:
+    now = time.time() if now is None else now
+    index: list[dict] = []
+    items: list[Item] = []
+    for label, base in crash_dirs():
+        if not base.is_dir():
+            continue
+        try:
+            entries = sorted(base.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+        except OSError:
+            continue
+        for p in entries:
+            if len(items) >= CRASH_FILES:
+                break
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            if now - st.st_mtime > CRASH_WINDOW_S:
+                continue
+            is_dir = p.is_dir()
+            name = p.name
+            low = name.lower()
+            if label.startswith("windows_wer"):
+                if not is_dir or not (
+                    _OWN_PROCESS.match(name.split("_", 1)[-1]) or "tavotto" in low
+                ):
+                    continue
+                report = p / "Report.wer"
+                if not report.is_file():
+                    continue
+                target, zip_stem = report, f"{name}-Report.wer"
+            else:
+                if is_dir or low.rsplit(".", 1)[-1] not in ("ips", "crash", "dmp"):
+                    continue
+                proc = _process_name(name)
+                own = bool(_OWN_PROCESS.match(proc))
+                if low.endswith(".dmp"):
+                    # 二进制转储没法脱敏（内存里什么都可能有）：只列清单，不收内容
+                    if own or proc.lower().startswith("python"):
+                        index.append(
+                            {
+                                "source": label,
+                                "name": name,
+                                "bytes": st.st_size,
+                                "mtime": _iso(st.st_mtime),
+                                "content": "not_included_binary_dump",
+                            }
+                        )
+                    continue
+                if not own:
+                    if not proc.lower().startswith(("python", "sidecar")):
+                        continue
+                    head = _read_head(p, 256 * 1024)
+                    if head is None or b"tavotto" not in head[0].lower():
+                        continue  # python 进程只在报告里点名 Tavotto 时才算我们的
+                target, zip_stem = p, name
+            got = _read_head(target, CRASH_FILE_CAP)
+            if got is None:
+                continue
+            raw, size = got
+            text = raw.decode(
+                "utf-16" if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else "utf-8", errors="replace"
+            )
+            data = scrub.text(text).encode("utf-8")
+            if size > CRASH_FILE_CAP:
+                data += b"\n" + _marker(len(raw), size, "first")
+            zip_name = f"optional/crash-reports/{_safe_name(zip_stem)}"
+            index.append(
+                {
+                    "source": label,
+                    "name": name,
+                    "bytes": size,
+                    "mtime": _iso(st.st_mtime),
+                    "file": zip_name,
+                }
+            )
+            items.append(
+                Item(
+                    "crash_reports",
+                    zip_name,
+                    data,
+                    shrink=lambda cap, d=data: _head_bytes(d, cap),
+                    original_bytes=size if size > CRASH_FILE_CAP else None,
+                )
+            )
+    items.insert(
+        0,
+        Item(
+            "crash_reports",
+            "optional/crash-reports/index.json",
+            _dumps(
+                {
+                    "schema": DETAIL_SCHEMA,
+                    "window_days": CRASH_WINDOW_S // 86400,
+                    "dirs": [scrub.text(str(b)) for _l, b in crash_dirs()],
+                    "reports": scrub.obj(index),
+                }
+            ),
+        ),
+    )
+    return items
+
+
+# ---------------------------------------------------------------------------
+# 汇总、截断
+# ---------------------------------------------------------------------------
+DEFAULT_COLLECTORS: list[tuple[str, str, Callable]] = [
+    ("errors", "errors.json", collect_errors),
+    ("logs", "logs/", collect_logs),
+    ("state", "state/", collect_state),
+    ("requests", "requests.json", collect_requests),
+    ("overrides", "overrides/", collect_overrides),
+    ("render_env", "render-env.json", collect_render_env),
+    ("runs", "runs.json", collect_runs),
+    ("shell", "shell.json", collect_shell),
+    ("storage", "storage.json", collect_storage),
+    ("console", "frontend-console.json", collect_console),
+    ("display", "display.json", collect_display),
+    ("network", "network.json", collect_network),
+]
+
+
+def collect(src: Sources, opts: DetailOptions) -> list[Item]:
+    """全部 detail 文件。某一类采集失败只让那一类变成一份 `collection_error`。"""
+    scrub = Scrubber()
+    plan = list(DEFAULT_COLLECTORS)
+    if opts.source:
+        plan.append(("source", "optional/source/", collect_source))
+    if opts.crash_reports:
+        plan.append(("crash_reports", "optional/crash-reports/", collect_crash_reports))
+    if opts.corrupt_sessions:
+        plan.append(("corrupt_sessions", "optional/corrupt-sessions/", collect_corrupt_sessions))
+    items: list[Item] = []
+    for kind, path, fn in plan:
+        try:
+            got = fn(src, opts, scrub)
+        except Exception as exc:  # noqa: BLE001 — 采集失败不让备包失败
+            LOG.warning("detail 采集失败: %s", logsafe.known(kind, KINDS))
+            got = [
+                _failed(
+                    kind,
+                    path.rstrip("/") + ("" if path.endswith(".json") else "/error.json"),
+                    exc,
+                    scrub,
+                )
+            ]
+        for it in got:
+            # 份额：同一类里超出的整份往后丢（先到先得，顺序 = 采集顺序）
+            items.append(it)
+    return _apply_shares(items)
+
+
+def _apply_shares(items: list[Item]) -> list[Item]:
+    used: dict[str, int] = {}
+    out: list[Item] = []
+    for it in items:
+        cap = SHARE.get(it.kind, 64 * 1024)
+        left = cap - used.get(it.kind, 0)
+        if it.size > left:
+            if it.shrink is not None and left > 2048:
+                it = dataclasses.replace(
+                    it, data=it.shrink(left), original_bytes=it.original_bytes or it.size
+                )
+            else:
+                continue
+        used[it.kind] = used.get(it.kind, 0) + it.size
+        out.append(it)
+    return out
+
+
+def _kind_bytes(items: list[Item]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for it in items:
+        out[it.kind] = out.get(it.kind, 0) + it.size
+    return out
+
+
+def _compress_ratio(items: list[Item], kind: str) -> float:
+    raw = b"".join(i.data for i in items if i.kind == kind)
+    if not raw:
+        return 1.0
+    return max(0.02, len(zlib.compress(raw, 6)) / len(raw))
+
+
+def fit(
+    items: list[Item],
+    build: Callable[[list[Item], list[dict]], bytes],
+    limit: int,
+) -> tuple[bytes, list[Item], list[dict]]:
+    """把 detail 放进 `limit` 字节的 ZIP：超限时按优先级从低（编号大）往高截断。
+
+    `build(items, truncated)` 回完整 ZIP 字节（核心文件 + detail + manifest）。返回
+    `(zip 字节, 最终保留的 items, truncated 记录)`。核心文件不在这里，永远不截；全部 detail 截光仍超限
+    就如实返回（调用方走 `too_large`）。"""
+    original = _kind_bytes(items)
+    current = list(items)
+    truncated: dict[str, dict] = {}
+
+    def record() -> list[dict]:
+        kept = _kind_bytes(current)
+        return [
+            {"kind": k, "original_bytes": v["original_bytes"], "kept_bytes": kept.get(k, 0)}
+            for k, v in sorted(truncated.items(), key=lambda kv: -PRIORITY.get(kv[0], 99))
+        ]
+
+    # 份额阶段就被截短的单个文件也记一笔
+    for it in current:
+        if it.original_bytes is not None:
+            truncated.setdefault(it.kind, {"original_bytes": 0})
+    for k in list(truncated):
+        truncated[k]["original_bytes"] = max(
+            original.get(k, 0), sum(i.original_bytes or i.size for i in current if i.kind == k)
+        )
+    data = build(current, record())
+    for _ in range(24):
+        if len(data) <= limit:
+            return data, current, record()
+        kept = _kind_bytes(current)
+        victim = max(
+            (k for k, v in kept.items() if v > 0), key=lambda k: PRIORITY.get(k, 99), default=None
+        )
+        if victim is None:
+            return data, current, record()
+        excess = len(data) - limit
+        ratio = _compress_ratio(current, victim)
+        cut = int(excess / ratio * 1.15) + 1024
+        target = kept[victim] - cut
+        truncated.setdefault(victim, {"original_bytes": original.get(victim, kept[victim])})
+        if target < 2048:
+            current = [i for i in current if i.kind != victim]
+        else:
+            current = _shrink_kind(current, victim, target)
+        data = build(current, record())
+    return data, current, record()
+
+
+def _shrink_kind(items: list[Item], kind: str, target: int) -> list[Item]:
+    """把某一类缩到 ≤ target 字节：能缩的文件按比例缩，不能缩的从末尾整份丢。"""
+    mine = [i for i in items if i.kind == kind]
+    total = sum(i.size for i in mine)
+    if total <= target:
+        return items
+    f = target / total
+    shrunk: dict[str, Item] = {}
+    for it in mine:
+        if it.shrink is not None:
+            cap = max(0, int(it.size * f))
+            data = it.shrink(cap) if cap >= 512 else b""
+            if data:
+                shrunk[it.path] = dataclasses.replace(it, data=data)
+        else:
+            shrunk[it.path] = it
+    # 不能缩的文件合起来仍超标：从末尾整份丢
+    order = [i.path for i in mine if i.path in shrunk]
+    while order and sum(shrunk[p].size for p in order) > target:
+        shrunk.pop(order.pop())
+    return [
+        shrunk[i.path] if i.kind == kind and i.path in shrunk else i
+        for i in items
+        if i.kind != kind or i.path in shrunk
+    ]

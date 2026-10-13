@@ -110,8 +110,36 @@ ENTRY_KINDS = {
     "task-diagnostics.json": "task",
     "manifest.json": "manifest",
     "README.txt": "readme",
+    # ---- 发送包独有的 detail/（ADR 0118 修订 2026-10-13；键以 `/` 结尾 = 目录前缀）----
+    "detail/errors.json": "detail_errors",
+    "detail/logs/": "detail_logs",
+    "detail/state/": "detail_state",
+    "detail/requests.json": "detail_requests",
+    "detail/overrides/": "detail_overrides",
+    "detail/render-env.json": "detail_render_env",
+    "detail/runs.json": "detail_runs",
+    "detail/shell.json": "detail_shell",
+    "detail/storage.json": "detail_storage",
+    "detail/frontend-console.json": "detail_console",
+    "detail/display.json": "detail_display",
+    "detail/network.json": "detail_network",
+    "detail/optional/source/": "detail_source",
+    "detail/optional/crash-reports/": "detail_crash_reports",
+    "detail/optional/corrupt-sessions/": "detail_corrupt_sessions",
 }
-MAX_BUNDLE_ENTRIES = 64
+MAX_BUNDLE_ENTRIES = 256
+
+
+def kind_of(name: str) -> str:
+    """包内文件 → 内容类别（精确名优先，其次目录前缀；没登记的是 `other`）。"""
+    exact = ENTRY_KINDS.get(name)
+    if exact is not None:
+        return exact
+    for key, kind in ENTRY_KINDS.items():
+        if key.endswith("/") and name.startswith(key):
+            return kind
+    return "other"
+
 
 # ---------------------------------------------------------------------------
 # 超时与重试（同一次授权之内的有界重试；超出一律交还用户去点）
@@ -556,13 +584,17 @@ def _server_error(resp: _Response) -> tuple[str, int | None]:
 class BundleInfo:
     schema: int
     entries: tuple[tuple[str, str], ...]  # (文件名, 内容类别)
+    sizes: tuple[int, ...] = ()  # 与 entries 一一对应：解压后的字节数
+    options: dict | None = None  # manifest 的 detail_options（老包 / 导出包没有 = None）
+    truncated: tuple[dict, ...] = ()  # manifest 的 truncated
 
 
 def inspect_bundle(data: bytes) -> BundleInfo:
     """读 ZIP 的目录与 manifest：给界面「会发送什么」，给 init 的 `bundle_schema`。格式不对抛 `SendError`。"""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
-            names = z.namelist()
+            infos = [i for i in z.infolist() if not i.is_dir()]
+            names = [i.filename for i in infos]
             if not names or len(names) > MAX_BUNDLE_ENTRIES or "manifest.json" not in names:
                 raise SendError("bundle_invalid", 500)
             manifest = json.loads(z.read("manifest.json").decode("utf-8"))
@@ -573,7 +605,29 @@ def inspect_bundle(data: bytes) -> BundleInfo:
     schema = manifest.get("schema_version") if isinstance(manifest, dict) else None
     if isinstance(schema, bool) or not isinstance(schema, int) or not 1 <= schema <= 99:
         raise SendError("bundle_invalid", 500)
-    return BundleInfo(schema, tuple((n, ENTRY_KINDS.get(n, "other")) for n in names))
+    options = manifest.get("detail_options") if isinstance(manifest, dict) else None
+    options = (
+        {k: v is True for k, v in options.items() if isinstance(k, str)}
+        if isinstance(options, dict)
+        else None
+    )
+    cut = manifest.get("truncated") if isinstance(manifest, dict) else None
+    cut = tuple(
+        {
+            "kind": str(c.get("kind"))[:48],
+            "original_bytes": int(c.get("original_bytes") or 0),
+            "kept_bytes": int(c.get("kept_bytes") or 0),
+        }
+        for c in (cut if isinstance(cut, list) else [])[:32]
+        if isinstance(c, dict)
+    )
+    return BundleInfo(
+        schema,
+        tuple((n, kind_of(n)) for n in names),
+        tuple(i.file_size for i in infos),
+        options,
+        cut,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -738,7 +792,16 @@ def prepare(bundle: bytes, *, scope: str = "") -> dict:
             "sha256": digest,
             "schema": info.schema,
             "max_bytes": MAX_BYTES,
-            "entries": [{"name": n, "kind": k} for n, k in info.entries],
+            "entries": [
+                {"name": n, "kind": k, "bytes": b}
+                for (n, k), b in zip(info.entries, info.sizes or (0,) * len(info.entries))
+            ],
+            # 勾选项的实际取值与被截短的类别（确认框据此说明）；老包 / 导出包 = 全 false、空
+            "options": {
+                k: bool((info.options or {}).get(k))
+                for k in ("source", "crash_reports", "corrupt_sessions")
+            },
+            "truncated": list(info.truncated),
         }
         if len(bundle) > MAX_BYTES:
             return {**summary, "too_large": True, "id": None}
