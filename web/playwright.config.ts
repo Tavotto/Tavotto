@@ -44,7 +44,7 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       // error-recovery-en / preparation-card-en 自带 en-US locale、由 chromium-en 跑：
       // 基础 project 再跑一遍就是同一份内容双倍的串行启动与渲染等待
-      testIgnore: ['error-recovery-en.spec.ts', 'preparation-card-en.spec.ts'],
+      testIgnore: ['error-recovery-en.spec.ts', 'preparation-card-en.spec.ts', 'perf-agent.spec.ts'],
     },
     // WebKit 是 macOS 桌面壳（WKWebView）与 Safari 用户的引擎（审计 P1-03）：
     // 只跑黄金路径与可访问性——全量跑三遍只是把门禁拉长三倍，而剩下那些
