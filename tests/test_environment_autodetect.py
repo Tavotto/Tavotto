@@ -1032,7 +1032,7 @@ def test_when_nothing_can_run_the_only_todo_is_installing_into_tavottos_environm
     assert report["phase"] == "awaiting_confirmation", report
     assert [r["kind"] for r in report["requirements"]] == ["dependency_authorization"]
     assert not any(r["kind"] == "environment_choice" for r in report["requirements"])
-    assert _kinds(report) == ["prepare_dependencies", "recheck"]
+    assert _kinds(report) == ["prepare_dependencies", "recheck", "run_when_ready"]  # 没有 run
     (action,) = [a for a in report["actions"] if a["kind"] == "prepare_dependencies"]
     assert action["impact"]["target_kind"] == deprepair.TARGET_MANAGED
     assert action["impact"]["modifies_user_environment"] is False

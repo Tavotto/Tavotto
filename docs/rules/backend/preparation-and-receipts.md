@@ -279,6 +279,22 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
 - 看护：`tests/test_script_args_session.py`（假 pool）、`tests/test_script_args_e2e.py`（真 worker：A01 表单路径 = 原始 token 路径、
   A05 输出参数只执行一次不覆盖、数据指认后同一会话出图）。
 
+## 运行意图（P05b，ADR 0124）
+
+会话里唯一允许「用户没有再点一次 Run」就推进到首次执行的东西。**只由用户明确认领 `run_when_ready`（回显 `InstallGrant` 摘要）创建**；GET / 刷新 / SSE 重放 /
+组件挂载 / 收到 `done` / `recheck` 都不创建，只推进已有的。要点（全文在 ADR 0124）：
+
+- 绑定会话 + 脚本 + 运行配置引用 + `config_revision` + `InstallGrant`（受管环境、项目声明、不改用户环境、不丢 / 改包、不含未核实用户指定包、≤16 包、至多一次安装）；
+  内存里，重启即无（不猜、不重跑）；步数 ≤ `RUN_INTENT_MAX_STEPS`、墙钟 ≤ `RUN_INTENT_TTL_S`。
+- 状态 `active → launched | cancelled | revoked | transferred`，后四者吸收态；`cancel` 先撤意图；手点 `run` 也用尽意图；安装失败 / 取消 / 同一影响装完仍在（`no_progress`）/
+  影响扩大 / 超出合同 → 撤销，不循环。
+- 修订变化只有「本意图批准的安装终局」与「本意图正在等的目录 / 环境回答」两类是预期（`classify_transition`，纯函数）；脚本字节、解释器、授权、数据绑定、已评估依赖变了 → `revoked`。
+- argv 换了：`run_when_ready` + `transfer_from`，在新旧两把会话锁内原子转移**未认领执行**的意图并退役旧会话未认领动作；旧意图已执行 / 在执行 / 不 active → 409
+  `preparation_run_intent_not_transferable`；未转移而并存 → 409 `preparation_run_intent_conflict`。
+- 已执行之后才缺包（EX13）仍是 `needs_dependencies` + 新一次尝试，意图不复活；运行时 `input()` 复用原 `Pending`。
+- 看护：`tests/test_preparation_run_intent.py`（假 pool：被动 0 次、一次、目录回答后继续、取消 / 外部变化 / 预算 / 重启、argv 转移与竞态；`held`：授权范围内安装、超出授权、影响扩大、
+  取消后迟到 done；真 worker：装好后恰一次执行、**外部计数夹具**写一次后缺包，修复不把计数变 2）。
+
 ## 终局诊断快照（T04）
 
 `PreparationService._finish` 在每个终局（`ready` / `error` / `cancelled`；`needs_input` 在执行线程里同走 `_finish`）之后调

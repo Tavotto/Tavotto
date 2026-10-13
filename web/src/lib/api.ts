@@ -5337,7 +5337,44 @@ export type PreparationRequirement =
       payload: { schema: ScriptArgsSchema; argv_count: number; run_config: string | null }
     }
 
-export type PreparationActionKind = 'run' | 'cancel' | 'recheck' | 'prepare_dependencies'
+export type PreparationActionKind = 'run' | 'cancel' | 'recheck' | 'prepare_dependencies' | 'run_when_ready'
+
+/**
+ * 「打开并运行」授权的安装范围合同（P05b，ADR 0124；动作 `run_when_ready` 的 `impact.run_intent`）。
+ * 它的摘要就是认领时要回显的 `impact_digest`——边界由后端的 `InstallGrant` 一处定义，前端只展示、不另算。
+ */
+export interface RunIntentGrant {
+  grant_version: number
+  target_kind: string
+  scope: string
+  rollback: string
+  modifies_user_environment: false
+  installs_from: 'project_declarations'
+  user_specified_packages: false
+  drops_or_changes_existing: false
+  max_packages: number
+  max_installs: number
+}
+
+/** 运行意图的状态（吸收态：`launched` / `cancelled` / `revoked` / `transferred` 之后不会回到 `active`） */
+export type RunIntentStatus = 'active' | 'launched' | 'cancelled' | 'revoked' | 'transferred'
+
+/** 会话报告里的运行意图（P05b）：`null` = 从没有过；终结后保留，`reason` 是闭集码（不带路径与参数） */
+export interface PreparationRunIntent {
+  id: string
+  status: RunIntentStatus
+  reason: string
+  /** active 时它在等哪一项检查（`workdir` / `environment` / `dependencies`…）；空串 = 没在等用户 */
+  waiting_on: string
+  steps: number
+  max_steps: number
+  /** 墙钟预算的截止（后端时钟的秒） */
+  expires_at: number
+  /** 已执行时的那次尝试 id */
+  attempt_id: string | null
+  /** 是由别的运行配置（argv 换了）的未执行意图转移来的 */
+  transferred: boolean
+}
 
 /** 动作上说清的实际影响（授权绑定的就是它）；依赖准备的动作还带整份 `DependencyImpact` 与摘要 */
 export interface PreparationImpact extends Partial<DependencyImpact> {
@@ -5349,6 +5386,8 @@ export interface PreparationImpact extends Partial<DependencyImpact> {
   script_arguments?: number
   script_writes?: { declared_output_arguments: number; cwd_mode: string }
   impact_digest?: string
+  /** `run_when_ready`：可能在范围内装包（只进 Tavotto 自己的受管环境），范围合同原样在这里 */
+  run_intent?: RunIntentGrant
 }
 
 export interface PreparationAction {
@@ -5402,6 +5441,8 @@ export interface PreparationReport {
     } | null
   }
   dependency_delta?: Record<string, unknown> | null
+  /** 运行意图（P05b）；老后端没有这个键 */
+  intent?: PreparationRunIntent | null
   /** 环境：只是一个可展示的事实（ADR 0114 §六），不要求用户动作；老后端没有 */
   environment?: PreparationEnvironmentFact | null
   /** 正在等的那一问（只有 id / 序号 / 读取方式 / 要不要掩码；提示与答案走 `/api/script_input/*`） */
@@ -5510,7 +5551,13 @@ export const fetchPreparationSession = (sessionId: string, pj: string | null, si
 /** 认领一个后端生成的动作：只交不透明 id + 看到的配置修订（+ 依赖授权回显的影响摘要） */
 export const actOnPreparationSession = (
   sessionId: string,
-  body: { action_id: string; expected_config_revision: number; impact_digest?: string },
+  body: {
+    action_id: string
+    expected_config_revision: number
+    impact_digest?: string
+    /** 只跟 `run_when_ready` 一起给：argv 换了，把旧运行配置会话里还没认领任何执行的意图原子转移过来 */
+    transfer_from?: string
+  },
   pj: string | null,
   signal?: AbortSignal,
 ) =>

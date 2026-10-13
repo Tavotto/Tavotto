@@ -7648,18 +7648,22 @@ def api_engine_preparation_session_action(session_id: str):
     """
     ctx = current_ctx()
     body = request.get_json(force=True) or {}
-    extra = sorted(set(body) - {"action_id", "expected_config_revision", "impact_digest"})
+    extra = sorted(
+        set(body) - {"action_id", "expected_config_revision", "impact_digest", "transfer_from"}
+    )
     revision = body.get("expected_config_revision")
     echoed = body.get("impact_digest")
+    transfer_from = body.get("transfer_from")
     if (
         extra
         or not isinstance(body.get("action_id"), str)
         or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
         or (echoed is not None and not isinstance(echoed, str))
+        or (transfer_from is not None and not isinstance(transfer_from, str))
     ):
         return jsonify(
             {
-                "error": "只接受 action_id（字符串）、expected_config_revision（整数）与 impact_digest（字符串）",
+                "error": "只接受 action_id（字符串）、expected_config_revision（整数）、impact_digest（字符串）与 transfer_from（字符串，仅「打开并运行」）",
                 "code": "bad_request",
                 "params": {"unexpected": extra},
             }
@@ -7674,6 +7678,7 @@ def api_engine_preparation_session_action(session_id: str):
             finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
             impact_digest=echoed,
             prepare=_session_dependency_starter(ctx),
+            transfer_from=transfer_from,
         )
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
@@ -7682,7 +7687,13 @@ def api_engine_preparation_session_action(session_id: str):
     # 202 = 这次请求起了一次新的执行；其余（重复认领 / 取消 / 重新检查）都是 200
     resp.status_code = (
         202
-        if claimed and kind in (engine_prepsession.ACTION_RUN, engine_prepsession.ACTION_PREPARE)
+        if claimed
+        and kind
+        in (
+            engine_prepsession.ACTION_RUN,
+            engine_prepsession.ACTION_PREPARE,
+            engine_prepsession.ACTION_ARM,
+        )
         else 200
     )
     resp.headers["Cache-Control"] = "no-store"

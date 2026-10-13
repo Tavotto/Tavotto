@@ -65,7 +65,8 @@ def test_an_undecided_project_environment_is_a_requirement_not_a_machine_decisio
     payload = requirement["payload"]
     assert payload["decision"]["needs_decision"] is True
     assert payload["recommended_id"] and payload["candidates"][-1]["id"] == "builtin"
-    assert [a["kind"] for a in report["actions"]] == ["recheck"]  # 没有 run
+    # 没有 run；「打开并运行」只是摆出来（P05b），没人认领就一行不跑
+    assert [a["kind"] for a in report["actions"]] == ["recheck", "run_when_ready"]
     assert fake_pool["build_calls"] == 0
     assert projectenv.remembered_record(root) is None  # 检查不替用户决定
 

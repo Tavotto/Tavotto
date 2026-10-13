@@ -188,7 +188,11 @@ class TestAuthorisation:
         assert sorted(req["payload"]["plan"]["requirements"]) == sorted(
             d for d, _ in (ALPHA, BETA, GAMMA)
         )
-        assert _kinds(report) == ["prepare_dependencies", "recheck"]  # 还不能运行
+        assert _kinds(report) == [
+            "prepare_dependencies",
+            "recheck",
+            "run_when_ready",
+        ]  # 还不能运行（没有 run）
         (action,) = [a for a in report["actions"] if a["kind"] == "prepare_dependencies"]
         impact = action["impact"]
         assert impact["installs"] == sorted(d for d, _ in (ALPHA, BETA, GAMMA))
