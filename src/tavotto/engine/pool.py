@@ -1340,7 +1340,10 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
+        launcher_mod.raise_if_unlocated(python)  # 找不到 conda 的 Conda 环境：失败不是结论
         return False
+    if probe.returncode != 0:
+        launcher_mod.raise_if_unlocated(python)
     return probe.returncode == 0
 
 

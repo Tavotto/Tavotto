@@ -1556,7 +1556,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
 
     # ---- 记账 + 换环境 + 作废旧 worker -------------------------------------
     with _lock:
@@ -2316,6 +2316,14 @@ ax.plot([0, 1], [0, 1])
 fig.savefig("SelfTest.pdf")
 """
 _SELFTEST_NAME = "tavotto_selftest.py"
+
+
+def _selftest_error(selftest: dict) -> "RepairError":
+    """自检没过 → `RepairError`。Conda 激活取环境失败是瞬时的“不可用”，透传稳定码，不报成“自检失败”。"""
+    detail = _sanitize(selftest.get("detail", ""))[-800:]
+    if selftest.get("code") == launcher.UNAVAILABLE_CODE:
+        return RepairError(launcher.UNAVAILABLE_CODE, detail)
+    return RepairError(ERROR_SELFTEST_FAILED, detail)
 
 
 def worker_self_test(python: str) -> dict:
@@ -4677,7 +4685,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
     # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
     # 如实报 cancelled + 体检，不接着 remember / 作废会话（Codex #461 P2）。「看事件 + 定提交」
     # 与 `cancel_status` 同一把锁，两边只会有一个赢
@@ -4982,7 +4990,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
         )
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
     # ---- 提交点：切 active。之后拒绝取消 ----
     # 自检期间接受的取消要算数（Codex #461 P2）：「看事件 + 定提交」与 `cancel_status`「看提交 +
     # 设事件」同一把锁——接受了的取消不会与提交交错，两边只会有一个赢

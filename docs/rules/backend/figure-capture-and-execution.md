@@ -364,8 +364,12 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
   不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的
   （`pool.select_worker_python`）。`plan_for` 写进环境错误，`_execute` 零执行收场（`deprepair.decide_environment_pinned` 把它转成 `WorkerError`）。
-  找得到 Conda 环境却找不到 conda 可执行文件：维持裸起（与 main 相同），但体检结果带 `launch_note: conda_not_found`、日志告警一次，不静默；
-  从 `conda-meta/history` 的 `# cmd:` 等处增加 conda 位置候选留给 #985（那是项目目录里可写的文件，当可执行路径要先过安全评审）。
+  找得到 Conda 环境却找不到 conda 可执行文件：先从环境自己的痕迹推位置（`conda-meta/history` 头部 `# cmd:`——只认 Conda 安装根里的
+  `bin/conda`，项目目录里的文件不能指挥我们执行任意路径；`~/.conda/environments.txt`），仍找不到则维持裸起（不需要激活的环境照常工作，与 main
+  相同）；**但裸起失败不是对环境的结论**：`pool._has_matplotlib` / `projectenv.probe_environment` 此时抛 / 返回 `conda_launcher_unavailable`
+  （瞬时，不缓存、不作废记住的解释器、不静默换别的）。
+- **桌面拥有的 native 会话**（`desktopproc.start`，P06）没有用户 shell 替它激活，与 safe 档走同一个 `activate_env`；激活失败 = 零执行（租约 / 输出目录 /
+  spawn 之前），`RunError(conda_launcher_unavailable)`。终端 native 继承用户已激活的 shell，不改。
 - **捕获的环境键与时机**：缓存键 `(prefix, prefix_state, conda_exe)`，`prefix_state` 含 `conda-meta/history` / 目录 / `state`（`conda env config vars`）
   与 `etc/conda/activate.d`、`deactivate.d` 的文件清单及各自 (size, mtime_ns)。池锁之外预热（`pool.acquire` 里 `launcher.prewarm`），预检的预算
   传进捕获（`timeout`）；结果文件放 `probe-results/`（0600），启动时清过期残留（`launcher.startup`），退出时清在途的。

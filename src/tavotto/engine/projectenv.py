@@ -63,6 +63,7 @@ import 本模块），本模块只负责体检、去重、缓存与排序。
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -813,7 +814,7 @@ def execution_note(
     }
 
 
-def probe_environment(
+def _probe_environment(
     python: str,
     module: str | None = None,
     *,
@@ -952,9 +953,6 @@ def probe_environment(
 
     info["python"] = python
     info["execution"] = execution_note(**shape, info=info if isinstance(info, dict) else None)
-    if launcher.unlocated_conda_prefix(python) is not None:
-        # Conda 环境但找不到 conda：只能直接启动（没有激活）。可见的事实，不静默
-        info["launch_note"] = "conda_not_found"
     if info.get("deferred_env"):
         # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
         info.update(ok=True, code="", deferred_env=True)
@@ -978,6 +976,32 @@ def probe_environment(
         return info
     info.update(ok=True, code="", support=support_status(version, info.get("matplotlib_version")))
     return info
+
+
+#: 直接启动失败时，可能只是“没激活”造成的结论（Conda 环境里 import 不到 / worker 起不来）；`UNSUPPORTED_PYTHON` 不在内（版本与激活无关）
+_ACTIVATION_DEPENDENT_CODES = frozenset(
+    {ERROR_UNUSABLE, ERROR_NO_MATPLOTLIB, ERROR_WORKER_IMPORT, ERROR_MODULE_MISSING}
+)
+
+
+@functools.wraps(_probe_environment)
+def probe_environment(python: str, *args, **kwargs) -> dict:
+    health = _probe_environment(python, *args, **kwargs)
+    if (
+        not health.get("ok")
+        and health.get("code") in _ACTIVATION_DEPENDENT_CODES
+        and launcher.unlocated_conda_prefix(python) is not None
+    ):
+        # Conda 环境但找不到 conda，直接启动又失败了：这不是对环境的结论（装了东西但要激活才看得见的环境会在这里被误判），
+        # 报稳定码，调用方当瞬时结论处理（不缓存、不作废记住的解释器）
+        return {
+            "ok": False,
+            "code": launcher.UNAVAILABLE_CODE,
+            "python": python,
+            "detail": "这是一个 Conda 环境，但找不到 conda 可执行文件，没法确认它能不能运行；请检查 Conda 安装",
+            "execution": health.get("execution"),
+        }
+    return health
 
 
 #: 系统解释器的体检缓存：(解释器 realpath, 模块) → 体检结果。一次接手失败

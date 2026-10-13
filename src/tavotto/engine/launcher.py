@@ -36,6 +36,7 @@ import hashlib
 import json
 import logging
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -120,6 +121,65 @@ def _conda_candidates(prefix: str) -> list[str]:
     which = shutil.which("conda")
     if which:
         out.append(which)
+    # 从 Finder / 桌面启动时没有 CONDA_EXE 也没有 PATH：从环境自己留下的痕迹推 conda 的位置
+    out.extend(_history_conda(pre))
+    out.extend(_environments_txt_conda())
+    return out
+
+
+def _conda_root_exe(root: Path) -> str | None:
+    """`<root>/bin/conda`（Windows 不会走到这里）——只认“看起来是 Conda 安装根”的：`<root>/conda-meta` 存在。"""
+    if not (root / "conda-meta").is_dir():
+        return None
+    return str(root / "bin" / "conda")
+
+
+def _history_conda(prefix: Path) -> list[str]:
+    """`conda-meta/history` 头部 `# cmd: <conda 路径> create …`：创建这个环境时用的 conda。
+
+    这个文件可能在项目目录里（`conda create -p ./env`，克隆来的项目可以写任意内容），所以**不信任它的任意路径**：
+    只认文件名是 `conda`、位于一个 Conda 安装根（`<root>/bin/conda` 且 `<root>/conda-meta` 存在）的绝对路径；
+    最终仍要过 `find_conda_exe` 的“存在且可执行”。"""
+    try:
+        with open(prefix / "conda-meta" / "history", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(65536)
+    except OSError:
+        return []
+    for line in head.splitlines():
+        if not line.startswith("# cmd:"):
+            continue
+        try:
+            first = shlex.split(line[len("# cmd:") :].strip())[0]
+        except (ValueError, IndexError):
+            return []
+        exe = Path(first)
+        if exe.is_absolute() and exe.name == "conda" and exe.parent.name == "bin":
+            cand = _conda_root_exe(exe.parent.parent)
+            return [cand] if cand else []
+        return []
+    return []
+
+
+def _environments_txt_path() -> Path:
+    return Path.home() / ".conda" / "environments.txt"
+
+
+def _environments_txt_conda() -> list[str]:
+    """`~/.conda/environments.txt`（conda 登记过的环境前缀，用户自己的文件）→ 各自所属安装根的 `bin/conda`。"""
+    try:
+        with open(_environments_txt_path(), encoding="utf-8", errors="replace") as fh:
+            lines = [ln.strip() for ln in fh.read(65536).splitlines()][:100]
+    except OSError:
+        return []
+    out: list[str] = []
+    for ln in lines:
+        if not ln or not os.path.isabs(ln):
+            continue
+        p = Path(ln)
+        root = p.parent.parent if p.parent.name == "envs" else p
+        cand = _conda_root_exe(root)
+        if cand and cand not in out:
+            out.append(cand)
     return out
 
 
@@ -234,6 +294,18 @@ def unlocated_conda_prefix(python: str | os.PathLike) -> str | None:
         _warned_unlocated.add(prefix)
         LOG.warning("Conda 环境 %s 找不到 conda 可执行文件，按直接启动（没有激活）", prefix)
     return prefix
+
+
+def raise_if_unlocated(python: str | os.PathLike) -> None:
+    """Conda 环境却找不到 conda 可执行文件时，**一次直接启动的失败不是对这个环境的结论**：在只有激活后才能 import 的环境里，
+    裸起必然失败，把它记成“缺 matplotlib / 不可用”会作废记住的解释器、静默换成别的。所以调用方在把失败当结论之前调这里，
+    抛 `LauncherUnavailable`（稳定码 `conda_launcher_unavailable`）。裸起成功的环境（不需要激活）不受影响，与 main 一致。"""
+    prefix = unlocated_conda_prefix(python)
+    if prefix is not None:
+        raise LauncherUnavailable(
+            "这是一个 Conda 环境，但找不到 conda 可执行文件，没法确认它能不能运行；请检查 Conda 安装，"
+            "或设置 CONDA_EXE（或把 conda 放进 PATH）"
+        )
 
 
 def context_key(python) -> str:
