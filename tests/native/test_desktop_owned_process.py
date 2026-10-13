@@ -980,3 +980,58 @@ def test_sidecar_cleanup_ends_desktop_owned_processes_but_leaves_terminal_native
         (term_dir / "release-marker").write_text("1")
         out, _err = proc.communicate(timeout=60)
     assert proc.returncode == 0 and "TERMINAL-SCRIPT-FINISHED" in out
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254813164：握手中、还没登记的所有者，sidecar 关停也要收
+# ---------------------------------------------------------------------------
+def test_shutdown_all_also_ends_owners_that_are_still_handshaking(tmp_path, monkeypatch):
+    from tavotto.engine import nativerelay
+
+    gate = threading.Event()
+    real = nativerelay.NativeRelay.adopt_child
+
+    def stalled(self, *a, **kw):
+        real(self, *a, **kw)  # 子进程已认证、用户脚本已在跑……
+        gate.wait(60)  # ……但卡在登记之前：会话还不在注册表里
+        raise RunError(runcodes.DESKTOP_RUN_CONNECT_TIMEOUT, seconds=1)
+
+    monkeypatch.setattr(nativerelay.NativeRelay, "adopt_child", stalled)
+    box = {}
+
+    def go():
+        try:
+            box["session"] = dk.start(tmp_path, RUNNING_SCRIPT)
+        except BaseException as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    work = tmp_path / "work"
+    try:
+        dk.wait_until(lambda: (work / "ready").exists(), what="子进程已起")
+        child_pid = int((work / "child.pid").read_text())
+        assert nativesession.REGISTRY.list() == []  # 确实还没登记
+
+        nativesession.REGISTRY.shutdown_all()  # sidecar 关停
+
+        dk.wait_until(lambda: not dk.pid_alive(child_pid), timeout=20, what="孙进程消失")
+    finally:
+        gate.set()
+        t.join(60)
+    assert "session" not in box and isinstance(box.get("error"), RunError), box
+    dk.wait_until(lambda: envlease.snapshot()["native"] == {}, timeout=20, what="租约释放")
+    assert nativesession.REGISTRY._starting == {}  # noqa: SLF001
+
+
+def test_a_registered_owned_session_cannot_be_forgotten_or_pruned_while_unfinished(tmp_path):
+    s = dk.start(tmp_path, RUNNING_SCRIPT)
+    dk.wait_until(lambda: (tmp_path / "work" / "ready").exists(), what="就绪")
+    s.shutdown()  # 终态（detached），进程仍在
+    nativesession.REGISTRY.forget(s.session_id)
+    nativesession.REGISTRY.prune(keep=0)
+    assert s in nativesession.REGISTRY.list(), (
+        "未结束的桌面进程从注册表消失了：shutdown_all 将看不见它"
+    )
+    nativesession.REGISTRY.shutdown_all()
+    assert s.owned.finished and not dk.pid_alive(s.owned.pid)

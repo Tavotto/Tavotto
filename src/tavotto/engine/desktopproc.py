@@ -562,6 +562,23 @@ class DesktopProcess:
             confirmed = self._finished.wait(pol.kill_timeout + 1.0)
         return CancelResult(confirmed=confirmed, exit_code=self.exit_code, scope=self.scope.kind)
 
+    def kill_now(self) -> None:
+        """不等确认的取消（sidecar 关停时对「还在启动」的所有者用）：置 cancelled、先礼后兵地发信号就返回。
+
+        启动线程还握着闸门，`cancel()` 会等到超时；这里只负责让进程尽快消失——先礼（`term_grace`）
+        后兵由一条 daemon 线程兜底，清组与确认仍由等待线程完成。"""
+        with self._lock:
+            if self.exited:
+                return
+            self.cancelled = True
+        self.scope.terminate()
+
+        def _escalate() -> None:
+            if not self._exited.wait(self.policy.term_grace):
+                self.scope.kill()
+
+        threading.Thread(target=_escalate, daemon=True, name="tavotto-owned-kill").start()
+
     def snapshot(self) -> dict:
         """诊断用：**没有输出内容、没有路径、没有 argv**。"""
         return {
@@ -681,6 +698,7 @@ def start(
         )
         session.owned = owner
         session.spec = spec
+        registry.begin_start(launch.launch_id, owner)  # 登记之前也要让 sidecar 关停看得见
         owner.start()
         try:
             sock, hello = relay.adopt_child(
@@ -720,6 +738,7 @@ def start(
             registry.unreserve(launch.launch_id)  # 没有所有者就没有回调
         raise
     finally:
+        registry.end_start(launch.launch_id)
         if owner is not None:
             owner.arm()  # 任何路径都不许把闸门留着（否则等待线程永远不回调）
         if relay is not None:

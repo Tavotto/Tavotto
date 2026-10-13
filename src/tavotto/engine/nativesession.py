@@ -810,6 +810,9 @@ class NativeSessionRegistry:
         #: （ADR 0021 §9）：会话结束即失效，绝不进文档。
         self._routes: dict[tuple, str] = {}
         self._reserved: set[str] = set()
+        #: launch_id → 已 spawn、还在握手 / 登记中的所有者。不在 `_sessions` 里，但进程已经在跑：
+        #: `shutdown_all` 必须看得见它，否则 sidecar 关停时漏掉成孤儿。
+        self._starting: dict[str, object] = {}
         self.on_change = None
 
     # ---------------- attach ----------------
@@ -867,6 +870,14 @@ class NativeSessionRegistry:
             if busy or launch_id in self._reserved:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             self._reserved.add(launch_id)
+
+    def begin_start(self, launch_id: str, owner) -> None:
+        with self._lock:
+            self._starting[launch_id] = owner
+
+    def end_start(self, launch_id: str) -> None:
+        with self._lock:
+            self._starting.pop(launch_id, None)
 
     def unreserve(self, launch_id: str) -> None:
         with self._lock:
@@ -960,6 +971,9 @@ class NativeSessionRegistry:
     # ---------------- 收尾 ----------------
     def forget(self, session_id: str) -> None:
         with self._lock:
+            s = self._sessions.get(session_id)
+            if s is not None and s.owned is not None and not s.owned.finished:
+                return  # 桌面拥有的进程还没确认结束：不能从注册表消失，否则 shutdown_all 看不见它
             self._sessions.pop(session_id, None)
         self._drop_routes(session_id)
 
@@ -967,7 +981,11 @@ class NativeSessionRegistry:
         """终态会话留最近 `keep` 条给 UI 看，多的丢掉。"""
         with self._lock:
             done = sorted(
-                (s for s in self._sessions.values() if s.state in TERMINAL_STATES),
+                (
+                    s
+                    for s in self._sessions.values()
+                    if s.state in TERMINAL_STATES and (s.owned is None or s.owned.finished)
+                ),
                 key=lambda s: s.last_event_at,
             )
             victims = done[: max(0, len(done) - keep)]
@@ -984,6 +1002,12 @@ class NativeSessionRegistry:
         先断开，再按所有者的有界策略结束（ADR 0125 §五）。"""
         with self._lock:
             sessions = list(self._sessions.values())
+            starting = list(self._starting.values())
+        for owner in starting:
+            # 还在握手 / 登记的：不在 `_sessions` 里，但进程已经起来了。不等它（启动线程还握着闸门），
+            # 直接收；启动线程会看到子进程退出，走自己的失败收尾（关传输、放租约与占位）
+            with _suppress_all():
+                owner.kill_now()
         for s in sessions:
             with _suppress_all():
                 s.shutdown()
@@ -991,7 +1015,7 @@ class NativeSessionRegistry:
             if s.owned is not None:
                 with _suppress_all():
                     s.cancel_owned()
-        return len(sessions)
+        return len(sessions) + len(starting)
 
 
 def _connect(host: str, port: int, token: str, *, timeout: float = 15.0) -> socket.socket:
