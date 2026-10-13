@@ -9,6 +9,7 @@ Agent 可直接执行：
 不基于未验证的硬件绝对阈值放行。不同平台/浏览器/分辨率或样本不足返回
 incomparable/no_baseline，绝不伪装成 pass。窗口拖影不在本自动化浏览器覆盖范围。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -17,6 +18,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 SCHEMA = "tavotto-perf-agent/1"
 COMPARE_SCHEMA = "tavotto-perf-comparison/1"
@@ -52,11 +57,23 @@ def load(path: Path) -> dict:
 def summarize(data: dict) -> dict:
     env = data["environment"]
     # 白名单字段，不会把测试机的路径、进程命令、用户名、页面数据写出。
-    environment = {k: env.get(k) for k in (
-        "platform", "arch", "browser", "browser_major", "viewport_w",
-        "viewport_h", "dpr", "headless", "os_release", "cpu_model",
-        "cpu_count", "total_mem_gib",
-    )}
+    environment = {
+        k: env.get(k)
+        for k in (
+            "platform",
+            "arch",
+            "browser",
+            "browser_major",
+            "viewport_w",
+            "viewport_h",
+            "dpr",
+            "headless",
+            "os_release",
+            "cpu_model",
+            "cpu_count",
+            "total_mem_gib",
+        )
+    }
     rows = {}
     for raw in data["scenarios"]:
         if not isinstance(raw, dict):
@@ -68,7 +85,8 @@ def summarize(data: dict) -> dict:
         if not isinstance(values, list):
             continue
         valid = [
-            float(x) for x in values
+            float(x)
+            for x in values
             if isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x < 120_000
         ]
         # 无完整样本意味着一次操作没测完；不能在剩下的「成功样本」上报绿。
@@ -84,7 +102,8 @@ def summarize(data: dict) -> dict:
         }
     expected = data.get("iterations")
     complete = (
-        isinstance(expected, int) and not isinstance(expected, bool)
+        isinstance(expected, int)
+        and not isinstance(expected, bool)
         and expected >= 1
         and set(rows) == ALLOWED_SCENARIOS
         and all(x["count"] == x["expected_count"] for x in rows.values())
@@ -105,8 +124,10 @@ def compare(current: dict, baseline: dict, regression_pct: float = DEFAULT_REGRE
         status, rows = "incomparable", []
     elif now["environment"] != old["environment"]:
         status, rows = "incomparable", []
-    elif any(now["scenarios"][key]["count"] < MIN_SAMPLES
-             or old["scenarios"][key]["count"] < MIN_SAMPLES for key in ALLOWED_SCENARIOS):
+    elif any(
+        now["scenarios"][key]["count"] < MIN_SAMPLES or old["scenarios"][key]["count"] < MIN_SAMPLES
+        for key in ALLOWED_SCENARIOS
+    ):
         status, rows = "incomparable", []
     else:
         rows = []
@@ -114,18 +135,25 @@ def compare(current: dict, baseline: dict, regression_pct: float = DEFAULT_REGRE
             c = now["scenarios"][key]["p95_ms"]
             b = old["scenarios"][key]["p95_ms"]
             if c is None or b is None or b <= 0:
-                return {"schema": COMPARE_SCHEMA, "status": "incomparable", "rows": [],
-                        "reason": "invalid_baseline_p95"}
+                return {
+                    "schema": COMPARE_SCHEMA,
+                    "status": "incomparable",
+                    "rows": [],
+                    "reason": "invalid_baseline_p95",
+                }
             delta_ms = round(c - b, 2)
             delta_pct = round(delta_ms / b * 100, 2)
-            regression = (
-                delta_pct > regression_pct and delta_ms >= DEFAULT_ABSOLUTE_DELTA_MS
+            regression = delta_pct > regression_pct and delta_ms >= DEFAULT_ABSOLUTE_DELTA_MS
+            rows.append(
+                {
+                    "id": key,
+                    "baseline_p95_ms": b,
+                    "current_p95_ms": c,
+                    "delta_ms": delta_ms,
+                    "delta_pct": delta_pct,
+                    "verdict": "regression" if regression else "ok",
+                }
             )
-            rows.append({
-                "id": key, "baseline_p95_ms": b, "current_p95_ms": c,
-                "delta_ms": delta_ms, "delta_pct": delta_pct,
-                "verdict": "regression" if regression else "ok",
-            })
         status = "regression" if any(x["verdict"] == "regression" for x in rows) else "pass"
     return {
         "schema": COMPARE_SCHEMA,
@@ -148,8 +176,10 @@ def _write(path: Path, value: dict) -> None:
 def _print_summary(result: dict) -> None:
     print(f"Status: {result['status']} (browser/WebView proxy; native window NOT tested)")
     for key, row in sorted(result["scenarios"].items()):
-        print(f"  {key}: {row['count']} samples, p50={row['p50_ms']}ms, "
-              f"p95={row['p95_ms']}ms, max={row['max_ms']}ms")
+        print(
+            f"  {key}: {row['count']} samples, p50={row['p50_ms']}ms, "
+            f"p95={row['p95_ms']}ms, max={row['max_ms']}ms"
+        )
 
 
 def _append_gha_summary(result: dict) -> None:
@@ -192,14 +222,27 @@ def main(argv: list[str] | None = None) -> int:
             output.parent.mkdir(parents=True, exist_ok=True)
             output.unlink(missing_ok=True)  # 不许把上一轮成功报告误当作本轮通过
             env = {
-                **os.environ, "TAVOTTO_PERF_AGENT_OUTPUT": str(output),
+                **os.environ,
+                "TAVOTTO_PERF_AGENT_OUTPUT": str(output),
                 "TAVOTTO_PERF_AGENT_REPEATS": str(args.repeat),
-                "TAVOTTO_NO_TELEMETRY": "1", "TAVOTTO_NO_DIAG_UPLOAD": "1",
+                "TAVOTTO_NO_TELEMETRY": "1",
+                "TAVOTTO_NO_DIAG_UPLOAD": "1",
             }
             proc = subprocess.run(
-                ["pnpm", "exec", "playwright", "test", "--config", "playwright.perf.config.ts",
-                 "--project", args.browser],
-                cwd=REPO / "web", env=env, check=False, timeout=1800,
+                [
+                    "pnpm",
+                    "exec",
+                    "playwright",
+                    "test",
+                    "--config",
+                    "playwright.perf.config.ts",
+                    "--project",
+                    args.browser,
+                ],
+                cwd=REPO / "web",
+                env=env,
+                check=False,
+                timeout=1800,
             )
             if proc.returncode != 0 or not output.is_file():
                 print("error: perf_agent_browser_run_failed", file=sys.stderr)
