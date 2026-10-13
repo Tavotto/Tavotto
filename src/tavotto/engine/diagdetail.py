@@ -668,7 +668,7 @@ _DECO = re.compile(r"^(?:[ ]*(?:\|[ ]?|\+[ ]))+")
 _GROUP_SEP = re.compile(r"^[ ]*(?:\|[ ]*)*\+[-+]+[ ]*(?:\d+[ ]*-*)?[-+ ]*$")
 
 
-def strip_source_lines(text: str) -> str:
+def strip_source_lines(text: str, *, uncertain_start: bool = False) -> str:
     """去掉 Python traceback / SyntaxError / warning 显示里附带的**用户代码**（源码行、`^^^` / `~~^~~` 指示符、局部变量 repr）。
 
     **白名单，不是黑名单**：traceback 块里（从 `Traceback (most recent call last):` / `Exception Group Traceback`、
@@ -676,9 +676,14 @@ def strip_source_lines(text: str) -> str:
     只留 `File "…", line N[, in …]` 帧行与 `...` / `[Previous line repeated N more times]`，其余一律删；
     不缩进的行（块头、收尾 `Type: message`、链式连接语、`add_note` 的 note、group 分隔行）原样保留，装饰前缀原样还回去。
     块外的行是日志正文，不动。
+
+    `uncertain_start=True`：文本是从文件中间读出来的尾巴，起点可能落在某个帧的中间——在遇到第一个可识别的边界
+    （块头 / 帧行 / 不缩进的普通行）之前，缩进行一律当「块内非白名单行」删掉（fail-closed）。
+    **顺序纪律**：任何截断（`_cap_middle`、头尾截取、按份额截、按字节读尾巴）都必须发生在剥离**之后**——
+    截断点落在帧里、省略标记又不缩进，会让剥离器退出帧模式，后缀里的源码就漏出来了。
     """
     out: list[str] = []
-    in_frames = False  # True：正在读帧——缩进的行不是帧就是用户代码
+    in_frames = uncertain_start  # True：正在读帧——缩进的行不是帧就是用户代码
     for line in text.split("\n"):
         if _GROUP_SEP.match(line):
             out.append(line)
@@ -750,6 +755,21 @@ def _read_tail(path: Path, limit: int) -> tuple[bytes, int] | None:
         return diagnostics._read_tail_bytes(path, limit), size
     except OSError:
         return None
+
+
+def _tail_text(path: Path, limit: int) -> tuple[str, int, bool] | None:
+    """日志尾巴的文本：`(文本, 文件总大小, 起点是否落在文件中间)`。从中间读时第一行（很可能是半行）整行丢掉——
+    半行没法判断它是不是源码的一部分；之后由 `strip_source_lines(uncertain_start=True)` 处理起点落在帧中间的情况。"""
+    got = _read_tail(path, limit)
+    if got is None:
+        return None
+    raw, size = got
+    mid = size > limit
+    text = raw.decode("utf-8", errors="replace")
+    if mid:
+        nl = text.find("\n")
+        text = text[nl + 1 :] if nl >= 0 else ""
+    return text, size, mid
 
 
 def _read_head(path: Path, limit: int) -> tuple[bytes, int] | None:
@@ -891,6 +911,11 @@ def traceback_blocks(text: str, limit: int = TRACEBACKS_PER_LOG) -> list[str]:
     return blocks[-limit:]
 
 
+def _clean(text: str, opts: DetailOptions, *, uncertain_start: bool = False) -> str:
+    """没勾源码时剥掉 traceback 里的用户代码；勾了不动。所有截断都要排在它之后。"""
+    return text if opts.source else strip_source_lines(text, uncertain_start=uncertain_start)
+
+
 def _cap_middle(text: str, cap: int) -> str:
     if len(text) <= cap:
         return text
@@ -899,8 +924,8 @@ def _cap_middle(text: str, cap: int) -> str:
 
 
 def _app_log_text() -> str:
-    got = _read_tail(diagnostics._app_log_path(), 2 * 1024 * 1024)
-    return got[0].decode("utf-8", errors="replace") if got else ""
+    got = _tail_text(diagnostics._app_log_path(), 2 * 1024 * 1024)
+    return got[0] if got else ""
 
 
 def _worker_logs(project: dict | None) -> list[tuple[float, Path]]:
@@ -918,18 +943,21 @@ def collect_errors(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
         -ERROR_RECORDS:
     ]
     for r in engine:
-        r["text"] = _cap_middle(r["text"], ERROR_RECORD_CHARS)
+        # 先剥离再截断（顺序纪律，见 `strip_source_lines`）
+        r["text"] = _cap_middle(_clean(r["text"], opts), ERROR_RECORD_CHARS)
     worker = []
     for mtime, path in _worker_logs(src.project):
-        got = _read_tail(path, WORKER_LOG_TAIL)
+        got = _tail_text(path, WORKER_LOG_TAIL)
         if not got:
             continue
-        blocks = traceback_blocks(got[0].decode("utf-8", errors="replace"))
+        blocks = traceback_blocks(got[0])
         if blocks:
             worker.append(
                 {
                     "modified": _iso(mtime),
-                    "tracebacks": [_cap_middle(b, ERROR_RECORD_CHARS) for b in blocks],
+                    "tracebacks": [
+                        _cap_middle(_clean(b, opts), ERROR_RECORD_CHARS) for b in blocks
+                    ],
                 }
             )
     fe = (src.frontend or {}).get("errors") or []
@@ -990,12 +1018,11 @@ def collect_logs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
     def add(path: str, file: Path | None, limit: int) -> None:
         if file is None:
             return
-        got = _read_tail(file, limit)
+        got = _tail_text(file, limit)
         if got is None:
             return
-        raw, size = got
-        text = raw.decode("utf-8", errors="replace")
-        text = scrub.text(text if opts.source else strip_source_lines(text))
+        text, size, mid = got
+        text = scrub.text(_clean(text, opts, uncertain_start=mid))
         data = text.encode("utf-8")
         items.append(
             Item(
@@ -1014,14 +1041,13 @@ def collect_logs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
     sizes = 0
     cut = False
     for _mtime, path in _worker_logs(src.project):
-        got = _read_tail(path, WORKER_LOG_TAIL)
+        got = _tail_text(path, WORKER_LOG_TAIL)
         if got is None:
             continue
-        raw, size = got
+        text, size, mid = got
         sizes += size
-        cut = cut or size > WORKER_LOG_TAIL
-        text = raw.decode("utf-8", errors="replace")
-        text = text if opts.source else strip_source_lines(text)
+        cut = cut or mid
+        text = _clean(text, opts, uncertain_start=mid)
         parts.append(f"===== worker.log (modified {_iso(_mtime)}) =====\n{text}")
     over = _worker_logs_over_cap(src.project)
     over_bytes = sum((_file_id(p) or FileId(0, 0, 0)).size for _m, p in over)
@@ -1316,8 +1342,13 @@ sys.stdout.write(json.dumps(out))
 """
 
 
-def _probe_subprocess(python: str, bundled: bool, cwd: str | None = None) -> dict:
+def _probe_subprocess(
+    python: str, bundled: bool, cwd: str | None = None, env_extra: dict[str, str] | None = None
+) -> dict:
     """对渲染解释器跑**一次**有超时的只读采集；任何失败都如实回 `{"status": "failed", "reason": …}`。"""
+    env = runtime.probe_env(python, bundled=bundled)
+    if env_extra:
+        env = {**(os.environ if env is None else env), **env_extra}
     try:
         proc = subprocess.run(
             [python, *runtime.probe_args(bundled=bundled), "-c", _PROBE_CODE],
@@ -1327,7 +1358,7 @@ def _probe_subprocess(python: str, bundled: bool, cwd: str | None = None) -> dic
             errors="replace",
             timeout=PROBE_TIMEOUT_S,
             stdin=subprocess.DEVNULL,
-            env=runtime.probe_env(python, bundled=bundled),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
             cwd=cwd,
         )
@@ -1354,6 +1385,54 @@ def _probe_subprocess(python: str, bundled: bool, cwd: str | None = None) -> dic
         if isinstance(data, dict)
         else {"status": "failed", "reason": "bad_output"}
     )
+
+
+#: 会话启动环境里与渲染相关、可以安全复现给探针的变量（只取这几个，其余一律不碰）
+RENDER_ENV_KEYS = frozenset(
+    {
+        "MPLCONFIGDIR",
+        "MPLBACKEND",
+        "MATPLOTLIBRC",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "PYTHONNOUSERSITE",
+        "PYTHONUSERBASE",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+    }
+)
+#: 探针结果里依赖启动环境变量的维度：启动环境不明时整个标 `unavailable`
+_ENV_DEPENDENT = (
+    "matplotlibrc",
+    "configdir",
+    "cachedir",
+    "backend",
+    "non_default_rcparams",
+    "font_count",
+    "font_family_count",
+    "fonts",
+    "font_note",
+)
+
+
+def _native_launch_env(session: object) -> dict[str, str] | None:
+    """native 会话的启动环境里能安全复现的渲染相关变量；**环境不明回 None**。桌面拥有的会话登记了启动规格
+    （`spec.env` 是叠在 sidecar 自己环境上的增量，`env_source == sidecar_inherited`——探针本来就继承 sidecar 的环境），
+    只取 `RENDER_ENV_KEYS`；终端拥有的会话（`tavotto run`）原样继承调用者的环境，我们不知道——不读进程环境之类。"""
+    spec = getattr(session, "spec", None)
+    if spec is None or not getattr(spec, "env_source", ""):
+        return None
+    env = getattr(spec, "env", None) or {}
+    return {k: v for k, v in env.items() if k in RENDER_ENV_KEYS}
+
+
+def _mark_env_unavailable(probe: dict) -> dict:
+    mpl = probe.get("matplotlib")
+    if isinstance(mpl, dict):
+        for k in _ENV_DEPENDENT:
+            if k in mpl:
+                mpl[k] = {"unavailable": "launch_env_unknown"}
+    return probe
 
 
 def _probe_in_render_cwd(src: Sources, python: str, bundled: bool, doc: dict) -> dict:
@@ -1442,9 +1521,22 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
         doc["native_session"] = session.diagnostics()
         native_cwd = getattr(session, "cwd", "") or None
         doc["probe_cwd"] = {"mode": "native_session", "cwd": native_cwd}
-        doc["probe"] = _probe_subprocess(
-            interpreter, False, native_cwd if native_cwd and Path(native_cwd).is_dir() else None
+        launch_env = _native_launch_env(session)
+        doc["probe_env"] = (
+            {"source": "launch_spec", "keys": sorted(launch_env)}
+            if launch_env is not None
+            else {
+                "source": "unknown",
+                "note": "terminal-owned session: launch environment not recorded",
+            }
         )
+        probe = _probe_subprocess(
+            interpreter,
+            False,
+            native_cwd if native_cwd and Path(native_cwd).is_dir() else None,
+            launch_env or None,
+        )
+        doc["probe"] = probe if launch_env is not None else _mark_env_unavailable(probe)
         return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
     doc["inspected"] = "safe_pool"
     if profile == "native":  # native 面板但拿不到它的会话 / 解释器：如实说，下面探的是安全池
@@ -1487,7 +1579,7 @@ def collect_runs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
         if _RUN_LOG.search(r["text"].split("\n", 1)[0])
     ][-RUN_LOG_EVENTS:]
     for r in records:
-        r["text"] = _cap_middle(r["text"], 4096)
+        r["text"] = _cap_middle(_clean(r["text"], opts), 4096)
     snapshots = src.task_section
 
     def build(recs: list) -> bytes:

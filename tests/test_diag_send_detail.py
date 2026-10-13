@@ -1331,7 +1331,7 @@ class TestProbeRunsInTheRenderWorkingDirectory:
         monkeypatch.setattr(
             diagdetail,
             "_probe_subprocess",
-            lambda py, b, cwd=None: seen.update(cwd=cwd) or {"status": "ok"},
+            lambda py, b, cwd=None, env_extra=None: seen.update(cwd=cwd) or {"status": "ok"},
         )
         src = diagdetail.Sources(
             project={"figures_dir": str(tmp_path)},
@@ -1854,6 +1854,172 @@ class TestDeclarationsMatchTheFinalContents:
         }
 
 
+def _long_traceback(frames: int, canary: str = "ORDER_SRC") -> str:
+    lines = ["Traceback (most recent call last):"]
+    for i in range(frames):
+        lines.append(f'  File "/p/mod{i}.py", line {i + 1}, in fn{i}')
+        lines.append(f"    do_secret_thing_{i}()  # {canary}_{i}")
+        lines.append("    ^^^^^^^^^^^^^^^^^^^^^^^^")
+    lines.append("RuntimeError: deep")
+    return "\n".join(lines) + "\n"
+
+
+class TestStripBeforeTruncate:
+    """所有截断（_cap_middle、按字节读尾巴、按份额截）都排在源码剥离之后。"""
+
+    def test_a_record_longer_than_the_cap_leaks_no_source_in_errors_and_runs(
+        self, client, world, monkeypatch
+    ):
+        tb = _long_traceback(800)
+        assert len(tb) > 2 * diagdetail.ERROR_RECORD_CHARS
+        app_log = world["tmp"] / "long_app.log"
+        app_log.write_text(
+            "2026-10-13 10:00:00,000 ERROR tavotto: 渲染失败 export\n" + tb, encoding="utf-8"
+        )
+        monkeypatch.setattr(diagnostics, "_app_log_path", lambda: app_log)
+        _prep, z = _prepare(client)
+        for name, text in _texts(z).items():
+            assert "ORDER_SRC" not in text, name
+        errors = json.loads(z.read("detail-errors.json"))
+        assert "omitted" in errors["engine"][-1]["text"]  # 反证：确实被截断了
+        assert 'File "/p/mod0.py", line 1' in errors["engine"][-1]["text"]
+        _prep, z = _prepare(client, source=True)  # 勾了：保留源码
+        assert "ORDER_SRC" in z.read("detail-errors.json").decode()
+
+    @pytest.mark.parametrize("limit", [2000, 3333, 4097, 6001])
+    def test_log_tails_that_start_in_the_middle_of_a_frame_leak_no_source(
+        self, client, world, monkeypatch, limit
+    ):
+        tb = _long_traceback(300)
+        tmp = world["tmp"]
+        for name in ("app", "sidecar", "worker"):
+            (tmp / f"{name}.log").write_text(tb, encoding="utf-8")
+        app_log = tmp / "app.log"
+        monkeypatch.setattr(diagnostics, "_app_log_path", lambda: app_log)
+        monkeypatch.setattr(diagdetail, "sidecar_log_file", lambda: tmp / "sidecar.log")
+        monkeypatch.setattr(
+            diagnostics,
+            "owned_worker_logs",
+            lambda project_dir, root=None: [(time.time(), tmp / "worker.log")],
+        )
+        for const in ("APP_LOG_TAIL", "SIDECAR_LOG_TAIL", "WORKER_LOG_TAIL"):
+            monkeypatch.setattr(diagdetail, const, limit)
+        _prep, z = _prepare(client)
+        for name in ("detail-app-log.txt", "detail-sidecar-log.txt", "detail-worker-log.txt"):
+            text = z.read(name).decode()
+            assert "ORDER_SRC" not in text and "do_secret_thing" not in text, (name, limit)
+            assert 'File "/p/mod' in text  # 反证：栈的帧行还在
+
+    def test_uncertain_start_drops_indented_lines_until_the_first_boundary(self):
+        frag = (
+            "    do_secret_thing()  # FRAG_SRC\n"
+            "    ^^^^\n"
+            '  File "/p/a.py", line 3, in f\n'
+            "    other()  # FRAG_SRC2\n"
+            "ValueError: x\n"
+            "    indented log text after the block stays\n"
+        )
+        out = diagdetail.strip_source_lines(frag, uncertain_start=True)
+        assert "FRAG_SRC" not in out and 'File "/p/a.py", line 3, in f' in out
+        assert "ValueError: x" in out and "indented log text after the block stays" in out
+        # 起点确定（整个文件从头读）时，开头的缩进行是正文，不动
+        assert (
+            "FRAG_SRC"
+            in diagdetail.strip_source_lines(frag, uncertain_start=False).split("File")[0]
+        )
+
+    def test_tail_text_drops_the_partial_first_line(self, tmp_path):
+        f = tmp_path / "t.log"
+        f.write_text("line one\nline two\nline three\n", encoding="utf-8")
+        text, size, mid = diagdetail._tail_text(f, 14)
+        assert mid and text == "line three\n"
+        text, size, mid = diagdetail._tail_text(f, 1000)
+        assert not mid and text.startswith("line one")
+
+
+class TestNativeProbeEnvironment:
+    class Spec:
+        env_source = "sidecar_inherited"
+        env = {
+            "MPLBACKEND": "agg",
+            "MPLCONFIGDIR": "/cfg",
+            "AWS_SECRET": "must-not-pass",
+            "PATH": "/x",
+        }
+
+    def _session(self, spec):
+        s = TestNativePanelRenderEnv.FakeSession()
+        s.spec = spec
+        return s
+
+    def _doc(self, monkeypatch, spec):
+        seen = {}
+        test = TestNativePanelRenderEnv()
+        from tavotto.engine import enginesession, nativesession, runtimeasset
+
+        monkeypatch.setattr(runtimeasset, "is_runtime_id", lambda f: str(f).startswith("runtime:"))
+        monkeypatch.setattr(enginesession, "profile_of", lambda root, fid: "native")
+        monkeypatch.setattr(
+            runtimeasset, "resolve", lambda fid, reg: {"script": "s.py", "stem": "fig"}
+        )
+        monkeypatch.setattr(
+            nativesession.REGISTRY, "route_for", lambda r, sc, st: self._session(spec)
+        )
+        full_probe = {
+            "status": "ok",
+            "python": {"version": "3.11"},
+            "packages": [{"name": "matplotlib", "version": "3.9"}],
+            "matplotlib": {
+                "version": "3.9",
+                "backend": "agg",
+                "matplotlibrc": "/x/matplotlibrc",
+                "configdir": "/c",
+                "cachedir": "/k",
+                "non_default_rcparams": {"a": "b"},
+                "fonts": [{"family": "X"}],
+                "font_count": 3,
+            },
+        }
+        monkeypatch.setattr(
+            diagdetail,
+            "_probe_subprocess",
+            lambda py, b, cwd=None, env_extra=None: (
+                seen.update(env=env_extra) or json.loads(json.dumps(full_probe))
+            ),
+        )
+        items = diagdetail.collect_render_env(
+            test._src(object()), diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        return seen["env"], json.loads(items[0].data)
+
+    def test_desktop_owned_session_reproduces_only_the_render_related_variables(self, monkeypatch):
+        env, doc = self._doc(monkeypatch, self.Spec())
+        assert env == {"MPLBACKEND": "agg", "MPLCONFIGDIR": "/cfg"}  # 不带 AWS_SECRET / PATH
+        assert doc["probe_env"] == {"source": "launch_spec", "keys": ["MPLBACKEND", "MPLCONFIGDIR"]}
+        assert doc["probe"]["matplotlib"]["backend"] == "agg"
+
+    def test_unknown_launch_environment_marks_the_env_dependent_dimensions_unavailable(
+        self, monkeypatch
+    ):
+        env, doc = self._doc(monkeypatch, None)  # 终端拥有的会话：没有登记启动环境
+        assert env is None and doc["probe_env"]["source"] == "unknown"
+        mpl = doc["probe"]["matplotlib"]
+        for k in (
+            "matplotlibrc",
+            "backend",
+            "non_default_rcparams",
+            "fonts",
+            "configdir",
+            "cachedir",
+            "font_count",
+        ):
+            assert mpl[k] == {"unavailable": "launch_env_unknown"}, k
+        assert (
+            mpl["version"] == "3.9" and doc["probe"]["packages"][0]["name"] == "matplotlib"
+        )  # 与环境无关的事实保留
+        assert doc["probe"]["python"]["version"] == "3.11"
+
+
 class TestSourceStatRaces:
     def test_an_unrelated_script_vanishing_does_not_break_the_category(self, world, monkeypatch):
         proj = world["tmp"] / "proj6"
@@ -1925,7 +2091,7 @@ class TestNativePanelRenderEnv:
         monkeypatch.setattr(
             diagdetail,
             "_probe_subprocess",
-            lambda py, b, cwd=None: seen.update(py=py) or {"status": "ok"},
+            lambda py, b, cwd=None, env_extra=None: seen.update(py=py) or {"status": "ok"},
         )
         return seen
 
@@ -1980,7 +2146,7 @@ class TestRenderEnvIsProjectAware:
         monkeypatch.setattr(
             diagdetail,
             "_probe_subprocess",
-            lambda python, bundled, cwd=None: (
+            lambda python, bundled, cwd=None, env_extra=None: (
                 seen.update(python=python, bundled=bundled) or {"status": "ok"}
             ),
         )
@@ -2004,7 +2170,9 @@ class TestRenderEnvIsProjectAware:
             lambda d, **k: calls.append(d) or ("/g/python", "bundled"),
         )
         monkeypatch.setattr(
-            diagdetail, "_probe_subprocess", lambda python, bundled, cwd=None: {"bundled": bundled}
+            diagdetail,
+            "_probe_subprocess",
+            lambda python, bundled, cwd=None, env_extra=None: {"bundled": bundled},
         )
         items = diagdetail.collect_render_env(
             diagdetail.Sources(), diagdetail.DetailOptions(), diagdetail.Scrubber()
@@ -2135,7 +2303,7 @@ class TestProbes:
         monkeypatch.setattr(
             diagdetail,
             "_probe_subprocess",
-            lambda p, b, cwd=None: {"status": "failed", "reason": "timeout"},
+            lambda p, b, cwd=None, env_extra=None: {"status": "failed", "reason": "timeout"},
         )
         _prep, z = _prepare(client)
         env = json.loads(z.read("detail-render-env.json"))

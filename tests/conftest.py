@@ -199,7 +199,7 @@ def _stub_diag_detail_probes(monkeypatch):
     monkeypatch.setattr(
         diagdetail,
         "_probe_subprocess",
-        lambda python, bundled, cwd=None: {"status": "stubbed"},
+        lambda python, bundled, cwd=None, env_extra=None: {"status": "stubbed"},
         raising=True,
     )
     monkeypatch.setattr(diagdetail, "_resolve", lambda host: ["203.0.113.7"], raising=True)
