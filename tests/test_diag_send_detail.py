@@ -694,7 +694,7 @@ class TestSecretShapeMatrix:
 
     PY_NAME_KEYS = [k for k in MATRIX_KEYS if k.isidentifier()]
     PY_FORMS = [
-        '{k} = "VAL"', "{k} = b\"S\"", "{k} = r'VAL'", '{k} = u"VAL"', '{k} = rb"VAL"', '{k} = f"VAL{{x}}"',
+        '{k} = "VAL"', "{k} = b\"VAL\"", "{k} = r'VAL'", '{k} = u"VAL"', '{k} = rb"VAL"', '{k} = f"VAL{{x}}"',
         '{k}: str = "VAL"', '{k} += "VAL"', 'x = {k} = "VAL"', 'self.{k} = "VAL"', 'obj.a.{k} = "VAL"',
         'config["{k}"] = "VAL"', "config['{k}'] = 'VAL'", 'f({k}="VAL")', 'f(a=1, {k}="VAL", b=2)',
         '{{"{k}": "VAL"}}', "{{'{k}': b'VAL', 'n': 1}}", '{k} = ("VAL" "T")', '{k} = """VAL"""',
