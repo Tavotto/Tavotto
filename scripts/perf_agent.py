@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -55,7 +54,8 @@ def summarize(data: dict) -> dict:
     # 白名单字段，不会把测试机的路径、进程命令、用户名、页面数据写出。
     environment = {k: env.get(k) for k in (
         "platform", "arch", "browser", "browser_major", "viewport_w",
-        "viewport_h", "dpr", "headless",
+        "viewport_h", "dpr", "headless", "os_release", "cpu_model",
+        "cpu_count", "total_mem_gib",
     )}
     rows = {}
     for raw in data["scenarios"]:
@@ -72,9 +72,12 @@ def summarize(data: dict) -> dict:
             if isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x < 120_000
         ]
         # 无完整样本意味着一次操作没测完；不能在剩下的「成功样本」上报绿。
+        requested = data.get("iterations")
+        per_round = 4 if name == "dialog.presets_open" else 1
+        count_expected = requested * per_round if type(requested) is int else None
         rows[name] = {
             "count": len(valid),
-            "expected_count": data.get("iterations"),
+            "expected_count": count_expected,
             "p50_ms": _percentile(valid, 0.50) if valid else None,
             "p95_ms": _percentile(valid, 0.95) if valid else None,
             "max_ms": round(max(valid), 2) if valid else None,
@@ -84,7 +87,7 @@ def summarize(data: dict) -> dict:
         isinstance(expected, int) and not isinstance(expected, bool)
         and expected >= 1
         and set(rows) == ALLOWED_SCENARIOS
-        and all(x["count"] == expected for x in rows.values())
+        and all(x["count"] == x["expected_count"] for x in rows.values())
     )
     return {
         "schema": SCHEMA,
