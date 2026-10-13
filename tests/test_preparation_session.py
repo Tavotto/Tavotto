@@ -277,7 +277,8 @@ def test_an_unanswered_workdir_question_is_awaiting_configuration_and_never_runn
     assert report["phase"] == "awaiting_configuration"
     assert [r["kind"] for r in report["requirements"]] == ["workdir_choice"]
     assert report["requirements"][0]["payload"]["code"] == "workdir_confirmation_required"
-    assert [a["kind"] for a in report["actions"]] == ["recheck"]  # 没有 run
+    # 没有 run；「打开并运行」只是摆出来（P05b），没人认领就一行不跑
+    assert [a["kind"] for a in report["actions"]] == ["recheck", "run_when_ready"]
     assert fake_pool["build_calls"] == 0
 
 
