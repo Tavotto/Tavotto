@@ -340,7 +340,11 @@ class TestDefaultContents:
         storage = json.loads(z.read("detail-storage.json"))
         assert storage["data_dir"]["disk"]["free_bytes"] > 0
         assert storage["project_dir"]["writable"] is True
-        assert storage["windows_long_paths_enabled"] is None  # 非 Windows
+        long_paths = storage["windows_long_paths_enabled"]
+        if os.name == "nt":  # Windows：真实注册表值（0 / 1），读不到时是 "unreadable:…" 或 None
+            assert long_paths in (0, 1, None) or str(long_paths).startswith("unreadable:")
+        else:
+            assert long_paths is None
 
     def test_overrides_live_and_baked(self, client, world):
         _project(client, world["tmp"])
@@ -580,6 +584,31 @@ class TestOptionalContent:
 # ---------------------------------------------------------------------------
 # 源码脱敏（注释 / 字符串里的明文）、渲染环境的项目感知、整份丢弃的记账
 # ---------------------------------------------------------------------------
+class TestTokenizeErrorToken:
+    def test_an_errortoken_means_unparsable_on_every_python_version(self, monkeypatch):
+        """Python ≤ 3.11 对未闭合的单引号字符串不抛异常、产出 ERRORTOKEN；3.12+ 抛 TokenError。两种都要走整份完整模式。"""
+        import tokenize
+
+        def fake(_readline):
+            yield tokenize.TokenInfo(tokenize.NAME, "x", (1, 0), (1, 1), "x = 'api_key=REAL\n")
+            yield tokenize.TokenInfo(
+                tokenize.ERRORTOKEN, "'", (1, 4), (1, 5), "x = 'api_key=REAL\n"
+            )
+
+        monkeypatch.setattr(tokenize, "generate_tokens", fake)
+        assert diagdetail._prose_spans("x = 'api_key=REAL\n") is None
+        out = diagdetail.scrub_script(
+            "x = 'api_key=REAL_SECRET_ET\n",
+            "a.py",
+            diagdetail.Scrubber(),
+            diagdetail.Scrubber(source_mode=True),
+        )
+        assert "REAL_SECRET_ET" not in out
+
+    def test_unterminated_single_quote_on_this_interpreter(self):
+        assert diagdetail._prose_spans("x = 'api_key=REAL password=REAL2\n") is None
+
+
 class TestScriptScrub:
     FULL = staticmethod(lambda: diagdetail.Scrubber())
     CODE = staticmethod(lambda: diagdetail.Scrubber(source_mode=True))

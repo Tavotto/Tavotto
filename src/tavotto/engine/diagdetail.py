@@ -1361,6 +1361,10 @@ def _prose_spans(text: str) -> list[tuple[int, int]] | None:
     spans: list[tuple[int, int]] = []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.ERRORTOKEN:
+                # Python ≤ 3.11 的 tokenize 对未闭合的单引号字符串**不抛异常**，而是产出 ERRORTOKEN（后面的内容
+                # 就不再是字符串 token）：视同解析失败，整份走完整模式
+                return None
             if tok.type in kinds:
                 a = starts[tok.start[0] - 1] + tok.start[1]
                 b = starts[tok.end[0] - 1] + tok.end[1]
