@@ -1035,3 +1035,14 @@ def test_a_registered_owned_session_cannot_be_forgotten_or_pruned_while_unfinish
     )
     nativesession.REGISTRY.shutdown_all()
     assert s.owned.finished and not dk.pid_alive(s.owned.pid)
+
+
+def test_end_start_only_removes_its_own_owner_aba(tmp_path):
+    reg = nativesession.NativeSessionRegistry()
+    first, second = object(), object()
+    reg.begin_start("same", first)
+    reg.begin_start("same", second)  # 同 id 重试登记了新的所有者
+    reg.end_start("same", first)  # 第一次启动迟到的收尾
+    assert reg._starting.get("same") is second, "ABA：收尾删掉了后来者的登记"  # noqa: SLF001
+    reg.end_start("same", second)
+    assert reg._starting == {}  # noqa: SLF001

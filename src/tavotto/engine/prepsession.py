@@ -755,7 +755,11 @@ def target_key(target: dict) -> str:
     if target["kind"] == TARGET_SCRIPT:
         # T03：同一脚本、不同 argv 是不同的执行意图——各有各的会话（互斥键含运行配置引用，不含 argv 原文）
         run = target.get("run")
-        return f"script:{target['script']}" + (f"~{run.config_id}" if run is not None else "")
+        key = f"script:{target['script']}" + (f"~{run.config_id}" if run is not None else "")
+        # P06：执行语义是执行意图的一部分——同一脚本按 safe 检查过，不能让 native 请求拿到那份 safe 计划。
+        # 只有非 safe 才追加：safe 的 key 与此前逐字节相同（现有会话与用例不失效）
+        execution = target.get("execution") or execspec.PROFILE_SAFE
+        return key + ("" if execution == execspec.PROFILE_SAFE else f"@{execution}")
     return f"asset:{target['asset_id']}"
 
 
@@ -788,6 +792,7 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
         "required": (plan.required_input or {}).get("code"),
         # T03：运行配置引用（不透明 id，换任何一个 token 都是新引用）——不放 argv 原文
         "run": plan.run.config_id if plan.run is not None else None,
+        **({} if plan.execution == execspec.PROFILE_SAFE else {"execution": plan.execution}),
         "env_error": ((plan.environment or {}).get("error") or {}).get("code"),
         # JointPlan owns the installation identity and source-input fingerprint.
         # Declarations remain relevant when the dependency gate is not evaluated.

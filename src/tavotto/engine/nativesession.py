@@ -875,9 +875,11 @@ class NativeSessionRegistry:
         with self._lock:
             self._starting[launch_id] = owner
 
-    def end_start(self, launch_id: str) -> None:
+    def end_start(self, launch_id: str, owner) -> None:
+        """按所有者**身份**条件移除：同 id 重试（ABA）时，先前那次启动的收尾不能删掉后来者新登记的。"""
         with self._lock:
-            self._starting.pop(launch_id, None)
+            if self._starting.get(launch_id) is owner:
+                del self._starting[launch_id]
 
     def unreserve(self, launch_id: str) -> None:
         with self._lock:

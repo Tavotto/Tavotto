@@ -309,3 +309,50 @@ def test_spec_holds_no_mutable_container_the_caller_can_still_reach():
     assert desktop(argv=caller_argv).argv == ("--a",)  # 构造函数复制成元组：事后改列表无关
     caller_argv.append("--b")
     assert desktop(argv=tuple(caller_argv)).argv == ("--a", "--b")
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254876583：执行语义进会话 key 与语义指纹（safe 的两者保持不变）
+# ---------------------------------------------------------------------------
+def test_session_key_and_fingerprint_separate_safe_from_native_but_keep_safe_unchanged(tmp_path):
+    from tavotto.engine import prepsession
+
+    safe_t = {"kind": "script", "script": "fig.py", "entry": "__main__"}
+    native_t = {**safe_t, "execution": execspec.PROFILE_NATIVE}
+    assert prepsession.target_key(safe_t) == "script:fig.py"  # 与 main 逐字节相同
+    assert prepsession.target_key({**safe_t, "execution": "safe"}) == "script:fig.py"
+    assert prepsession.target_key(native_t) != prepsession.target_key(safe_t)
+    assert prepsession.target_key(native_t).startswith("script:fig.py")
+
+    plan_native = _native_plan(tmp_path)
+    plan_safe = preparation.plan_for(
+        project_id="p",
+        project_root=plan_native.project_root,
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+    )
+    assert '"execution"' not in prepsession._fingerprint(plan_safe)  # noqa: SLF001 — safe 指纹不变
+    assert prepsession._fingerprint(plan_native) != prepsession._fingerprint(plan_safe)  # noqa: SLF001
+
+
+@nativekit.needs_user_python
+def test_a_native_check_never_reuses_the_safe_session_for_the_same_script(tmp_path):
+    from tavotto.engine import prepsession
+
+    plan = _native_plan(tmp_path)
+    service = prepsession.SessionService()
+    base = {"kind": "script", "script": "fig.py", "entry": "__main__"}
+    safe_sess, _ = service.check(project_id="p", project_root=plan.project_root, target=base)
+    native_sess, created = service.check(
+        project_id="p",
+        project_root=plan.project_root,
+        target={**base, "execution": execspec.PROFILE_NATIVE},
+    )
+    assert created and native_sess is not safe_sess
+    assert safe_sess.plan.execution == execspec.PROFILE_SAFE
+    assert native_sess.plan.execution == execspec.PROFILE_NATIVE
+    assert native_sess.plan.launch_context["owner"] == "desktop"

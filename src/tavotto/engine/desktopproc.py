@@ -738,8 +738,8 @@ def start(
             registry.unreserve(launch.launch_id)  # 没有所有者就没有回调
         raise
     finally:
-        registry.end_start(launch.launch_id)
         if owner is not None:
+            registry.end_start(launch.launch_id, owner)
             owner.arm()  # 任何路径都不许把闸门留着（否则等待线程永远不回调）
         if relay is not None:
             relay.close()
