@@ -67,7 +67,6 @@ from . import (
     figcapture,
     inputbroker,
     inputremap,
-    launchctx,
     pool,
     projectenv,
     receipt,
@@ -189,9 +188,6 @@ class PreparationPlan:
     #: 用户给的精确 argv 的运行配置（T03，`execspec.RunSelection`）。**私有**：argv 原文只在这里和 worker
     #: 命令行里，`to_payload()` / 回执 / LaunchContext 只带数量与本机不透明引用 `run_config`。None = 没给参数。
     run: object | None = None
-    #: `run` 是再次打开时由「上次成功的启动上下文」带回来的（P09，`launchctx.reusable_run`），不是用户这次给的。
-    #: 它是按**检查时**的解释器核验的；执行时若因本次运行的环境检测采用了另一个解释器，这份依据就不再成立（私有）。
-    run_reused: bool = False
     #: 数据改指也是计划的输入快照。私有字段；动作认领与执行线程都经 `_stale_reason` 对账。
     input_remap_generation: int | None = None
     #: 脚本目标的源码修订（`scriptargs.source_revision`：字节摘要 + 解析出的 schema 摘要，私有）。披露给用户的影响
@@ -244,7 +240,6 @@ def plan_for(
     original_path: str | None = None,
     target: str = TARGET_ASSET,
     run=None,
-    run_reused: bool = False,
 ) -> PreparationPlan:
     """按产品**自己的**决定拼一份计划——这里不做任何选择，只读。
 
@@ -462,7 +457,6 @@ def plan_for(
         binding=binding,
         target=target,
         run=run,
-        run_reused=bool(run_reused and run is not None),
         input_remap_generation=remap_generation,
         script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
     )
@@ -666,7 +660,6 @@ class PreparationService:
             original_artifact=None,
             target=plan.target,
             **({"run": plan.run} if plan.run is not None else {}),
-            run_reused=plan.run_reused,
         )
         # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
         # 换计划（交回 None，由对账给出过期结局）
@@ -719,31 +712,6 @@ class PreparationService:
                 if before is None or before[0] == STALE_ENVIRONMENT:
                     # 只吸收环境变化。工作目录授权档（用户确认过的）变了不吸收：照旧走下面的过期结局，让用户重新检查、看到新档
                     plan = self._replan_in_place(entry, plan) or plan
-            if plan.run_reused and plan.run is not None:
-                # 复用来的运行配置在**执行前**再核一次，按此刻计划里生效的解释器（上面刚吸收的采用已经换进来）和此刻的
-                # 源码 / helper / 数据——与 `prepsession._plan_of` 同一个判定函数（`launchctx.reusable_run`）。
-                still = launchctx.reusable_run(
-                    plan.project_root,
-                    plan.script,
-                    python=plan.interpreter or None,
-                    python_source=(plan.environment or {}).get("source") or None,
-                )
-                if still is None or still.config_id != plan.run.config_id:
-                    # 依据作废：不执行。用户批准的报告里写的是旧配置，换成别的（哪怕是无参数）再跑，脚本有可选 / 默认参数时
-                    # 会在没有提示的情况下画出另一张图。按过期收场，重新检查会在 `prepsession._plan_of` 里生成不复用的目标
-                    # （同一个判定函数：这里不通过，那里也不会通过，所以不会循环），用户看到新报告再确认
-                    reason = STALE_ENVIRONMENT if decision.adopted is not None else STALE_SOURCE
-                    tr.fail("check", ERROR_PLAN_STALE, reason=reason)
-                    result.error = {
-                        "code": ERROR_PLAN_STALE,
-                        "reason": reason,
-                        "executed": False,
-                        "message": _STALE_MESSAGES[reason],
-                    }
-                    self._finish(
-                        entry, STATUS_ERROR, note="复用的运行配置依据作废，没有执行任何脚本"
-                    )
-                    return
         stale = self._stale_reason(plan) if plan.script is not None else None
         if stale is not None:
             reason, detail = stale

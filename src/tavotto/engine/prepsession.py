@@ -38,7 +38,6 @@ from . import (
     depplan,
     deprepair,
     dialogscan,
-    launchctx,
     pool,
     preparation,
     rasterhint,
@@ -845,22 +844,12 @@ class SessionService:
             existing = self._by_key.get(key)
             if existing is not None and self._active(existing):
                 return existing, False
-        orig_key = key
-        plan, target = self._plan_of(project_id, project_root, target)
-        # 复用被撤销时 target 换成不带复用配置的那一份，会话键（含运行配置引用）随之变：已有的那个会话（recheck 就是它）
-        # 要原地跟上、换键，而不是另起一个新会话把旧会话和它的复用目标留在原地
-        key = (project_id, target_key(target))
+        plan = self._plan_of(project_id, project_root, target)
         fingerprint = _fingerprint(plan)
         now = self._clock()
         created = False
         with self._lock:
             sess = self._by_key.get(key)
-            if sess is None and key != orig_key:
-                moved = self._by_key.get(orig_key)
-                if moved is not None:
-                    self._by_key.pop(orig_key, None)
-                    self._by_key[key] = moved
-                    sess = moved
             if sess is None:
                 self._make_room()
                 sess = Session(
@@ -879,9 +868,8 @@ class SessionService:
         with sess.lock:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
-                # 目标无论指纹变没变都跟上（复用被撤销时 `target` 已是不带复用配置的版本，不能让旧的复用目标留在会话里）
-                sess.target = dict(target)
                 if sess.stale or fingerprint != sess.fingerprint:
+                    sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint
                     sess.config_revision += 1
@@ -896,45 +884,19 @@ class SessionService:
         return sess, created
 
     @staticmethod
-    def _plan_of(
-        project_id: str, project_root: str, target: dict
-    ) -> tuple[preparation.PreparationPlan, dict]:
-        """目标 → `(计划, 实际生效的目标)`。**复用来的运行配置（`run_reused`）的唯一判定点**：任何时候构建或重建计划
-        （首次检查、recheck、依赖装好后的重算、运行后的刷新、再次打开）都经过这里——按**这份计划实际选中的解释器**
-        重新核验 `launchctx.reusable_run`；通不过（解释器 / 环境 / 脚本 / helper / 数据 / cwd / 配置任一变了）就把目标换成
-        不带复用配置的版本（`run` 去掉、argv 为空）并重建计划。调用方必须用返回的目标（写回 `sess.target`），
-        被复用的配置不能以「已核验」的身份活在会话里跨过解释器变化。"""
-
-        def build(t: dict) -> preparation.PreparationPlan:
-            return preparation.plan_for(
-                project_id=project_id,
-                project_root=project_root,
-                asset_id=t.get("asset_id") or "",
-                stem=t.get("stem") or "",
-                script=t.get("script"),
-                entry=t.get("entry"),
-                original_artifact=t.get("original_artifact"),
-                original_path=t.get("original_path"),
-                target=t["kind"],
-                **({"run": t["run"]} if t.get("run") is not None else {}),
-                **({"run_reused": True} if t.get("run_reused") else {}),
-            )
-
-        plan = build(target)
-        run = target.get("run")
-        if not target.get("run_reused") or run is None:
-            return plan, target
-        env = plan.environment or {}
-        still = launchctx.reusable_run(
-            project_root,
-            target.get("script") or "",
-            python=plan.interpreter or None,
-            python_source=env.get("source") or None,
+    def _plan_of(project_id: str, project_root: str, target: dict) -> preparation.PreparationPlan:
+        return preparation.plan_for(
+            project_id=project_id,
+            project_root=project_root,
+            asset_id=target.get("asset_id") or "",
+            stem=target.get("stem") or "",
+            script=target.get("script"),
+            entry=target.get("entry"),
+            original_artifact=target.get("original_artifact"),
+            original_path=target.get("original_path"),
+            target=target["kind"],
+            **({"run": target["run"]} if target.get("run") is not None else {}),
         )
-        if still is not None and still.config_id == run.config_id:
-            return plan, target
-        stripped = {k: v for k, v in target.items() if k not in ("run", "run_reused")}
-        return build(stripped), stripped
 
     # ---- 动作 ----
     def act(
@@ -1299,16 +1261,14 @@ class SessionService:
             # 点「运行」时体检了项目自带的环境，跑不了这个脚本：回到常规的「需要安装」。新计划在锁外先算好，再和"尝试收尾"
             # 在**同一把锁里**一起落地——读者不会看到"尝试已结束、报告却还是旧的『可运行』"的中间态（否则用户能对着同一个
             # 跑不了的环境再点一次运行）
-            refresh = refreshed_target = rekey = None
+            refresh = None
             if (
                 (sess.plan.dependency_preparation or {}).get("project_check_pending")
                 and done_result.status == preparation.STATUS_NEEDS_INPUT
                 and (done_result.required_input or {}).get("code") == _DEPENDENCY_CODE
             ):
                 try:
-                    refresh, refreshed_target = self._plan_of(
-                        sess.project_id, sess.project_root, sess.target
-                    )
+                    refresh = self._plan_of(sess.project_id, sess.project_root, sess.target)
                 except Exception:  # noqa: BLE001 — 刷新失败不改这次尝试的终局
                     LOG.exception("运行后重新检查失败 %s", done_plan.script)
             with sess.lock:
@@ -1321,9 +1281,6 @@ class SessionService:
                 attempt.missing = missing
                 attempt.finalized = True
                 if refresh is not None:
-                    if target_key(refreshed_target) != target_key(sess.target):
-                        rekey = (target_key(sess.target), target_key(refreshed_target))
-                    sess.target = dict(refreshed_target)  # 复用被撤销时目标也要跟上
                     sess.plan = refresh
                     sess.fingerprint = _fingerprint(refresh)
                     sess.config_revision += 1
@@ -1333,12 +1290,6 @@ class SessionService:
                         for k, v in sess.actions.items()
                         if v.kind in (ACTION_RUN, ACTION_PREPARE) and v.attempt_id
                     }
-            if rekey is not None:
-                # 复用被撤销：会话键里含运行配置引用，跟着换（不在会话锁里拿服务锁，避免锁序倒挂）
-                with self._lock:
-                    if self._by_key.get((sess.project_id, rekey[0])) is sess:
-                        self._by_key.pop((sess.project_id, rekey[0]), None)
-                        self._by_key[(sess.project_id, rekey[1])] = sess
             self._notify(sess)
 
         # A new action after a settled attempt is an explicit rerun. The provider

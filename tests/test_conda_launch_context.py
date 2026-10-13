@@ -383,61 +383,6 @@ def store_text(work: Path) -> str:
 
 
 @needs_worker
-def test_success_is_remembered_and_reopening_needs_no_argv_but_changes_reverify(
-    conda_world, tmp_path, monkeypatch
-):
-    proj, prefix, log, counter = conda_world
-    work = tmp_path / "work"
-    env = {
-        "TAVOTTO_USER_ENV_DISCOVERY": "0",
-        "PYTHONPATH": str(ROOT / "src"),
-        "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
-        "FAKE_CONDA_LOG": str(log),
-        "TAVOTTO_WORKERD": "0",
-    }
-    with fa.running_app(proj, work, env_overrides=env) as app:
-        first = _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})
-        assert first["phase"] == "completed", first
-        assert [r["argv"] for r in runs(counter)] == [["--scale", "2"]]
-        assert len(conda_calls(log)) == 1
-
-    # ---- 持久化的是引用与摘要：没有激活后的环境、没有 argv 值
-    text = store_text(work)
-    record = json.loads(text)["launches"]["fig.py"]
-    assert record["launcher"] == {
-        "kind": "conda",
-        "conda_exe": str(prefix.parent.parent / "bin" / "conda"),
-        "prefix": str(prefix),
-    }
-    assert record["run_config"].startswith("rc_") and record["env_state"]
-    # 激活后的环境一个字都不落盘；成功记录本身不含 argv 值（用户给的参数原有的登记是 runconfigs 既有行为，不是 P09 新增）
-    assert LICENSE not in text and "CONDA_PREFIX" not in text
-    assert "--scale" not in json.dumps(record) and "argv" not in json.dumps(record)
-
-    # ---- 再次打开（新进程）：请求不再给参数，上次成功的配置被带回来
-    with fa.running_app(proj, work, env_overrides=env) as app:
-        again = _run_session(app, {"script": "fig.py", "reuse_last_success": True})
-        assert again["phase"] == "completed", again
-        assert [r["argv"] for r in runs(counter)][-1] == ["--scale", "2"]
-        # 明确的空数组 = 用户要无参数：不复用
-        none = _run_session(app, {"script": "fig.py", "argv": []})
-        assert none["phase"] == "completed"
-        assert [r["argv"] for r in runs(counter)][-1] == []
-
-    # ---- 复用不是永久的：成功记录现在是「无参数」那一条，所以再恢复一条带参数的成功，再改脚本
-    with fa.running_app(proj, work, env_overrides=env) as app:
-        assert (
-            _run_session(app, {"script": "fig.py", "argv": ["--scale", "3"]})["phase"]
-            == "completed"
-        )
-    script = proj / "fig.py"
-    script.write_text(script.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
-    with fa.running_app(proj, work, env_overrides=env) as app:
-        _run_session(app, {"script": "fig.py", "reuse_last_success": True})
-        assert [r["argv"] for r in runs(counter)][-1] == []  # 脚本变了：重新核验，不沿用 --scale 3
-
-
-@needs_worker
 def test_failed_run_leaves_no_success_memory(conda_world, tmp_path):
     proj, prefix, log, counter = conda_world
     (proj / "fig.py").write_text("raise RuntimeError('boom')\n", encoding="utf-8")
@@ -564,35 +509,6 @@ def test_partial_receipt_or_unavailable_evidence_is_not_recorded(tmp_path):
 
     assert launchctx.build_record(tmp_path, "fig.py", Partial("/x/python", "s", [], None)) is None
     assert launchctx.build_record(tmp_path, "fig.py", None) is None
-
-
-@posix_only
-def test_sensitive_run_config_is_never_auto_reused(tmp_path, monkeypatch):
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
-    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
-    sel = runconfig.selection_for(proj, "fig.py", ["--token", "SECRET-777"], sensitive=True)
-    import hashlib
-
-    rec = launchctx.build_record(
-        proj,
-        "fig.py",
-        _Rcpt(
-            sys.executable,
-            hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest(),
-            [],
-            None,
-        ),
-        run=sel,
-    )
-    assert rec["run_sensitive"] is True
-    runconfig.set_launch_record(proj, "fig.py", rec)
-    assert "SECRET-777" not in (tmp_path / "data").rglob("*.json").__next__().read_text("utf-8")
-    assert (
-        launchctx.reusable_run(proj, "fig.py", python=sys.executable, python_source="env_override")
-        is None
-    )
 
 
 REAL_PREFIX = os.environ.get("TAVOTTO_TEST_CONDA_PREFIX", "")
@@ -814,47 +730,6 @@ def test_incomplete_basis_is_not_recorded_so_it_can_never_authorize_reuse(tmp_pa
     assert launchctx.build_record(proj, "fig.py", Truncated(sys.executable, sha, [], None)) is None
 
 
-@needs_worker
-def test_changing_the_global_interpreter_override_stops_reusing_old_argv(
-    conda_world, tmp_path, monkeypatch
-):
-    """解释器来自全局覆盖（项目层没有决定）：覆盖换成另一个环境后，旧 argv 不再沿用。"""
-    import shutil
-
-    proj, prefix, log, counter = conda_world
-    other = prefix.parent / "e2"
-    shutil.copytree(prefix, other, symlinks=True)
-    work = tmp_path / "work"
-
-    def env_for(p):
-        return {
-            "TAVOTTO_USER_ENV_DISCOVERY": "0",
-            "PYTHONPATH": str(ROOT / "src"),
-            "TAVOTTO_WORKER_PYTHON": str(p / "bin" / "python"),
-            "FAKE_CONDA_LOG": str(log),
-            "TAVOTTO_WORKERD": "0",
-        }
-
-    with fa.running_app(proj, work, env_overrides=env_for(prefix)) as app:
-        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
-            "completed"
-        )
-    with fa.running_app(
-        proj, work, env_overrides=env_for(prefix)
-    ) as app:  # 正对照：同一覆盖 = 沿用
-        assert (
-            _run_session(app, {"script": "fig.py", "reuse_last_success": True})["phase"]
-            == "completed"
-        )
-        assert [r["argv"] for r in runs(counter)][-1] == ["--scale", "2"]
-    with fa.running_app(proj, work, env_overrides=env_for(other)) as app:
-        assert (
-            _run_session(app, {"script": "fig.py", "reuse_last_success": True})["phase"]
-            == "completed"
-        )
-        assert [r["argv"] for r in runs(counter)][-1] == []  # 覆盖换了：不沿用旧参数
-
-
 @posix_only
 def test_process_group_check_is_not_a_blanket_pid_allowance():
     """经包装放行的只有「本进程组」：随便一个别的 pid 仍是 pid_mismatch；没有 launcher 时不放行。"""
@@ -938,25 +813,6 @@ def _good_rcpt(proj, py, *, mods=0):
         None,
         databinding.binding_for(proj / "fig.py", proj, "sandbox")["revision"],
     )
-
-
-@posix_only
-def test_a_later_success_without_sufficient_basis_clears_the_older_record(tmp_path, monkeypatch):
-    """B 成功但依据存不全：旧记录 A 必须清掉，不能让下次不带 argv 的打开悄悄跑 A。"""
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
-    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
-    py = sys.executable
-    run_a = runconfig.selection_for(proj, "fig.py", ["--scale", "2"])
-    assert launchctx.record_success(proj, "fig.py", _good_rcpt(proj, py), run=run_a) is True
-    kw = {"python": py, "python_source": "env_override"}
-    assert launchctx.reusable_run(proj, "fig.py", **kw).config_id == run_a.config_id
-    run_b = runconfig.selection_for(proj, "fig.py", ["--scale", "3"])
-    over = _good_rcpt(proj, py, mods=launchctx.MAX_BASIS + 1)
-    assert launchctx.record_success(proj, "fig.py", over, run=run_b) is False
-    assert runconfig.launch_record(proj, "fig.py") is None
-    assert launchctx.reusable_run(proj, "fig.py", **kw) is None  # 不是 A，也不是 B：让用户重新给
 
 
 @posix_only
@@ -1082,7 +938,7 @@ BAD_LAUNCH_SHAPES = {
 @posix_only
 @pytest.mark.parametrize("shape", sorted(BAD_LAUNCH_SHAPES))
 def test_malformed_launch_records_are_dropped_not_raised(tmp_path, monkeypatch, shape):
-    """嵌套字段坏了（source 是 list 等）：登记解析时丢掉这一条，之后的读 / 核验 / 复用不抛 AttributeError（不是 500）。"""
+    """嵌套字段坏了（source 是 list 等）：登记解析时丢掉这一条，之后的读 / 核验不抛 AttributeError（不是 500）。"""
     monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
     proj = tmp_path / "proj"
     proj.mkdir()
@@ -1095,9 +951,19 @@ def test_malformed_launch_records_are_dropped_not_raised(tmp_path, monkeypatch, 
     path.write_text(json.dumps(data), encoding="utf-8")
     assert runconfig.launch_record(proj, "fig.py") is None
     assert (
-        launchctx.reusable_run(proj, "fig.py", python=sys.executable, python_source="env_override")
-        is None
+        launchctx.verify(
+            runconfig.launch_record(proj, "fig.py"),
+            project_root=proj,
+            script="fig.py",
+            python=sys.executable,
+            python_source="env_override",
+        )
+        == launchctx.REASON_NO_RECORD
     )
+    assert (
+        launchctx.launcher_for(proj, "fig.py", sys.executable, "env_override", bundled="bundled")
+        is None
+    )  # 坏记录 = 没有记录：照常检测，不抛
     # 坏的只是这一条：配置本身与别的脚本的记录不受影响
     assert runconfig.get(proj, run.config_id, script="fig.py").argv == ("--n", "1")
 
@@ -1128,197 +994,224 @@ def test_the_legacy_probe_success_clears_an_older_launch_record(conda_world, tmp
         assert status == 200 and probed["registered"] is True
         stored = json.loads(store_text(work))
         assert "fig.py" not in stored.get("launches", {})  # 旧路径与 default 同事务清掉 A
+        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert [r["argv"] for r in runs(counter)][-1] == []  # 不是 A，也不是 B：让用户重新给
+
+
+# ---------------------------------------------------------------------------
+# #975 收缩后：记录的写入与清除（消费端见 #982）、argv 行为不变
+# ---------------------------------------------------------------------------
+@needs_worker
+def test_success_is_recorded_and_argv_behaviour_is_unchanged(conda_world, tmp_path):
+    """成功后写下可验证的启动上下文；但「再次打开」不沿用：省略 argv（含带着已废弃的 `reuse_last_success`）就是无参数运行。"""
+    proj, prefix, log, counter = conda_world
+    work = tmp_path / "work"
+    env = {
+        "TAVOTTO_USER_ENV_DISCOVERY": "0",
+        "PYTHONPATH": str(ROOT / "src"),
+        "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
+        "FAKE_CONDA_LOG": str(log),
+        "TAVOTTO_WORKERD": "0",
+    }
+    with fa.running_app(proj, work, env_overrides=env) as app:
+        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
+            "completed"
+        )
+        record = json.loads(store_text(work))["launches"]["fig.py"]
+        assert record["launcher"]["kind"] == "conda" and record["run_config"].startswith("rc_")
+        assert LICENSE not in store_text(work) and "CONDA_PREFIX" not in store_text(work)
+        assert "--scale" not in json.dumps(record)
+        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
+        assert [r["argv"] for r in runs(counter)][-1] == []
         assert (
             _run_session(app, {"script": "fig.py", "reuse_last_success": True})["phase"]
             == "completed"
         )
-        assert [r["argv"] for r in runs(counter)][-1] == []  # 不是 A，也不是 B：让用户重新给
-
-
-@needs_worker
-def test_a_run_that_adopts_a_new_project_venv_does_not_carry_the_old_argv(tmp_path):
-    """先在默认解释器上成功；再给项目加一个健康的 `.venv`；不带 argv 重开：检查时旧 argv 按默认解释器核验通过，
-    但点「运行」时环境检测采用了项目 venv——复用依据作废，旧 argv 不得在新解释器上执行。"""
-    from support import envworld
-
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    counter = tmp_path / "runs.jsonl"
-    (proj / "fig.py").write_text(
-        "import json, sys\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
-        f"open({str(counter)!r}, 'a').write(json.dumps({{'argv': sys.argv[1:], 'exe': sys.prefix}}) + '\\n')\n"
-        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
-        encoding="utf-8",
-    )
-    work = tmp_path / "work"
-    env = {
-        "TAVOTTO_USER_ENV_DISCOVERY": "1",
-        "PYTHONPATH": str(ROOT / "src"),
-        "TAVOTTO_WORKERD": "0",
-    }
-    with fa.running_app(proj, work, env_overrides=env) as app:
-        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
-            "completed"
-        )
-    first = runs(counter)
-    assert [r["argv"] for r in first] == [["--scale", "2"]]
-    venv_python = envworld.real_venv(proj, ".venv", python=WORKER_PY)
-    with fa.running_app(proj, work, env_overrides=env) as app:
-        # 检查：旧 argv 按计划里的（默认）解释器核验通过，被带进会话目标
-        status, report = app.call(
-            SESSIONS, {"script": "fig.py", "reuse_last_success": True}, timeout=120
-        )
-        assert status == 201, report
-        assert report["target"].get("run_config"), "检查时应当带上复用的运行配置"
-        sid = report["session_id"]
-
-        def claim(rep, kind):
-            (act,) = [a for a in rep["actions"] if a["kind"] == kind]
-            st, out = app.call(
-                f"{SESSIONS}/{sid}/actions",
-                {"action_id": act["id"], "expected_config_revision": rep["config_revision"]},
-                timeout=60,
-            )
-            assert st in (200, 202), out
-            return out["report"]
-
-        def settle():
-            deadline = time.time() + 300
-            while True:
-                _, rep = app.call(f"{SESSIONS}/{sid}", timeout=30)
-                if rep["phase"] in SETTLED:
-                    return rep
-                assert time.time() < deadline, rep
-                time.sleep(0.2)
-
-        # 点运行：这次运行的环境检测采用了项目 .venv——复用依据作废：按过期收场，零执行（不悄悄换成别的配置再跑）
-        claim(report, "run")
-        rep = settle()
-        assert rep["phase"] == "action_required", rep
-        assert rep["outcome"]["code"] == "preparation_plan_stale", rep["outcome"]
-        assert runs(counter)[len(first) :] == [], "依据作废的运行不得执行脚本"
-        # recheck：`_plan_of` 按计划实际选中的解释器重核，复用不通过 → 生成不带复用配置的新目标，用户看得到
-        rep = claim(rep, "recheck")
-        deadline = time.time() + 60
-        while rep["target"].get("run_config") and time.time() < deadline:
-            time.sleep(0.2)
-            _, rep = app.call(f"{SESSIONS}/{sid}", timeout=30)
-        assert not rep["target"].get("run_config"), rep["target"]
-        assert rep["target"].get("argv_count") in (None, 0)
-        assert rep["phase"] != "completed" and runs(counter)[len(first) :] == []
-        # 用户看过新报告再点运行：无参数、在项目 venv 上；不再 stale，没有死循环
-        claim(rep, "run")
-        rep = settle()
-        assert rep["phase"] == "completed", rep
-        after = runs(counter)[len(first) :]
-        assert len(after) == 1 and after[0]["argv"] == [], after  # 旧 argv 从未在任何解释器上执行
-        assert Path(after[0]["exe"]) == Path(venv_python).parent.parent
-
-
-@needs_worker
-def test_a_helper_edit_between_check_and_run_revokes_the_reused_argv(conda_world, tmp_path):
-    """复用只在检查那一刻核验过一次是不够的：检查之后、点运行之前 helper 变了，运行前的复核要拦下。"""
-    proj, prefix, log, counter = conda_world
-    (proj / "helper_mod.py").write_text("X = 1\n", encoding="utf-8")
-    src = (proj / "fig.py").read_text(encoding="utf-8")
-    (proj / "fig.py").write_text("import helper_mod\n" + src, encoding="utf-8")
-    work = tmp_path / "work"
-    env = {
-        "TAVOTTO_USER_ENV_DISCOVERY": "0",
-        "PYTHONPATH": str(ROOT / "src"),
-        "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
-        "FAKE_CONDA_LOG": str(log),
-        "TAVOTTO_WORKERD": "0",
-    }
-    with fa.running_app(proj, work, env_overrides=env) as app:
-        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
-            "completed"
-        )
-    n = len(runs(counter))
-    with fa.running_app(proj, work, env_overrides=env) as app:  # 新进程：没有沿用旧会话
-        status, report = app.call(
-            SESSIONS, {"script": "fig.py", "reuse_last_success": True}, timeout=120
-        )
-        assert status in (200, 201)
-        (proj / "helper_mod.py").write_text("X = 2\n", encoding="utf-8")  # 检查之后 helper 变了
-        (run,) = [a for a in report["actions"] if a["kind"] == "run"]
-        app.call(
-            f"{SESSIONS}/{report['session_id']}/actions",
-            {"action_id": run["id"], "expected_config_revision": report["config_revision"]},
-            timeout=60,
-        )
-        deadline = time.time() + 300
-        while True:
-            _, rep = app.call(f"{SESSIONS}/{report['session_id']}", timeout=30)
-            if rep["phase"] in SETTLED:
-                break
-            assert time.time() < deadline, rep
-            time.sleep(0.2)
-        assert all(r["argv"] != ["--scale", "2"] for r in runs(counter)[n:]), runs(counter)[n:]
+        assert [r["argv"] for r in runs(counter)][-1] == []  # 字段不被认：与 P09 之前逐字节一致
 
 
 @posix_only
-def test_plan_builder_is_the_single_judgment_point_for_reused_runs(tmp_path, monkeypatch):
-    """任何时候构建 / 重建计划（首次检查、recheck…）都经 `_plan_of` 按计划实际选中的解释器重核复用的运行配置；
-    通不过就换成不带它的目标并写回 `sess.target`。"""
-    from tavotto.engine import preparation, prepsession
-
-    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
-    monkeypatch.setenv("TAVOTTO_USER_ENV_DISCOVERY", "0")
+def test_a_later_success_without_sufficient_basis_clears_the_older_record(tmp_path, monkeypatch):
+    """B 成功但依据存不全：旧记录 A 必须清掉，不能让 A 继续冒充「最近成功」。"""
     proj = tmp_path / "proj"
     proj.mkdir()
     (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
-    run = runconfig.selection_for(proj, "fig.py", ["--n", "1"])
-    target = {
-        "kind": "script",
-        "script": "fig.py",
-        "entry": "__main__",
-        "stem": "",
-        "asset_id": "",
-        "original_artifact": None,
-        "original_path": None,
-        "run": run,
-        "run_reused": True,
-    }
-    plan0 = preparation.plan_for(
-        project_id="pj", project_root=str(proj), asset_id="", stem="", script="fig.py",
-        entry="__main__", original_artifact=None, target="script",
-    )  # fmt: skip
-    src = (plan0.environment or {}).get("source")
-    # 记录按「计划实际选中的解释器」写成：核验通过，目标原样保留
-    rcpt = _good_rcpt(proj, plan0.interpreter)
-    rcpt.python_source = src
-    assert launchctx.record_success(proj, "fig.py", rcpt, run=run, update_default=True)
-    plan, kept = prepsession.SessionService._plan_of("pj", str(proj), target)
-    assert kept is target and plan.run is run and plan.run_reused is True
-    # 记录里的解释器和计划实际选中的不是一个（环境换了）：目标被换成不带复用配置的版本
-    record = runconfig.launch_record(proj, "fig.py")
-    record["interpreter"]["path"] = str(tmp_path / "some-other-python")
-    runconfig.set_launch_record(proj, "fig.py", record)
-    plan, stripped = prepsession.SessionService._plan_of("pj", str(proj), target)
-    assert "run" not in stripped and "run_reused" not in stripped
-    assert plan.run is None and plan.run_reused is False
-    # 会话层：写回 sess.target，复用目标不会留在会话里跨过解释器变化
-    svc = prepsession.SessionService(preparation.SERVICE)
-    sess, _ = svc.check(project_id="pj", project_root=str(proj), target=dict(target))
-    assert "run" not in sess.target and sess.plan.run is None
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    py = sys.executable
+    run_a = runconfig.selection_for(proj, "fig.py", ["--scale", "2"])
+    assert launchctx.record_success(proj, "fig.py", _good_rcpt(proj, py), run=run_a) is True
+    assert runconfig.launch_record(proj, "fig.py")["run_config"] == run_a.config_id
+    run_b = runconfig.selection_for(proj, "fig.py", ["--scale", "3"])
+    over = _good_rcpt(proj, py, mods=launchctx.MAX_BASIS + 1)
+    assert launchctx.record_success(proj, "fig.py", over, run=run_b) is False
+    assert runconfig.launch_record(proj, "fig.py") is None
 
 
-@needs_worker
-def test_omitting_argv_alone_is_a_bare_run_not_a_reopen(conda_world, tmp_path):
-    """界面没有参数时本来就不带 argv：那是明确的无参数运行。沿用上次成功配置必须显式要求（`reuse_last_success`）。"""
-    proj, prefix, log, counter = conda_world
-    work = tmp_path / "work"
-    env = {
-        "TAVOTTO_USER_ENV_DISCOVERY": "0",
-        "PYTHONPATH": str(ROOT / "src"),
-        "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
-        "FAKE_CONDA_LOG": str(log),
-        "TAVOTTO_WORKERD": "0",
-    }
-    with fa.running_app(proj, work, env_overrides=env) as app:
-        assert _run_session(app, {"script": "fig.py", "argv": ["--scale", "2"]})["phase"] == (
-            "completed"
+@posix_only
+def test_a_sensitive_run_config_is_recorded_as_such_and_fails_verification(tmp_path, monkeypatch):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    sel = runconfig.selection_for(proj, "fig.py", ["--token", "SECRET-777"], sensitive=True)
+    assert launchctx.record_success(proj, "fig.py", _good_rcpt(proj, sys.executable), run=sel)
+    stored = "\n".join(f.read_text("utf-8") for f in (tmp_path / "data").rglob("*.json"))
+    assert "SECRET-777" not in stored
+    rec = runconfig.launch_record(proj, "fig.py")
+    assert rec["run_sensitive"] is True
+    assert (
+        launchctx.verify(
+            rec,
+            project_root=proj,
+            script="fig.py",
+            python=sys.executable,
+            python_source="env_override",
         )
-        assert _run_session(app, {"script": "fig.py"})["phase"] == "completed"
-        assert [r["argv"] for r in runs(counter)][-1] == []  # 没带 argv 也没要求沿用 = 无参数
+        == launchctx.REASON_RUN_CONFIG
+    )
+
+
+# ---------------------------------------------------------------------------
+# #975 第七轮
+# ---------------------------------------------------------------------------
+@posix_only
+def test_a_recorded_conda_launch_never_silently_degrades_to_a_bare_launch(tmp_path, monkeypatch):
+    """记录说上次是 Conda 启动、现在找不到 conda：不悄悄裸起（会重演激活变量缺失），报稳定码；关开关是明确选择，不在此列。"""
+    prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    py = str(prefix / "bin" / "python")
+    rcpt = _good_rcpt(proj, py)
+    rcpt.python_source = "env_override"
+    rcpt.launcher = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix)).public()
+    assert launchctx.record_success(proj, "fig.py", rcpt)
+    args = (proj, "fig.py", py, "env_override")
+    assert launchctx.launcher_for(*args, bundled="bundled") is not None  # 正对照
+    conda.unlink()  # conda 没了（卸载 / 挪走）
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
+    with pytest.raises(launcher.LauncherUnavailable) as exc:
+        launchctx.launcher_for(*args, bundled="bundled")
+    assert exc.value.code == "conda_launcher_unavailable"
+    # 经池：稳定码的 WorkerError
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
+    _pool.reset_worker_python()
+    try:
+        with pytest.raises(_pool.WorkerError) as werr:
+            _pool.EngineWorker("fig.py", str(proj), "__main__")
+        assert werr.value.code == "conda_launcher_unavailable"
+    finally:
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+    # 用户明确关掉开关：裸起，不报错
+    monkeypatch.setenv(launcher.ENV_DISABLE, "0")
+    assert launchctx.launcher_for(*args, bundled="bundled") is None
+
+
+def _spawn_group_with_member(tmp_path):
+    """起一个自成组的 leader，里面再有一个 **pid 不同于组长** 的同组成员；回 (leader Popen, member pid)。"""
+    pidfile = tmp_path / "member.pid"
+    leader_src = (
+        "import subprocess, sys, time\n"
+        f"subprocess.Popen([sys.executable, '-c', {CHILD!r}, {str(pidfile)!r}], stdout=subprocess.DEVNULL)\n"
+        "time.sleep(300)\n"
+    )
+    leader = subprocess.Popen([sys.executable, "-c", leader_src], start_new_session=True)
+    deadline = time.time() + 20
+    while not pidfile.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    time.sleep(0.2)
+    return leader, int(pidfile.read_text())
+
+
+@posix_only
+def test_process_group_check_accepts_a_member_that_is_not_the_leader(tmp_path):
+    """`via_group` 分支必须用「pid 不同于组长的同组成员」单独测到（用测试进程自己会走到 pid==expected 的直核分支）。"""
+    leader, member = _spawn_group_with_member(tmp_path)
+    try:
+        assert member != leader.pid and os.getpgid(member) == leader.pid
+        rt = {"report_origin": "build", "pid": member, "ppid": leader.pid + 99999}
+        ok = receipt.accept_runtime(rt, expected_pid=leader.pid, via_group=True)
+        assert ok[1] is None and ok[2] == receipt.PID_CHECK_PROCESS_GROUP
+        # 没有 launcher 时同一份自报不放行；组长对不上也不放行
+        assert receipt.accept_runtime(rt, expected_pid=leader.pid, via_group=False)[1] == (
+            "pid_mismatch"
+        )
+        assert receipt.accept_runtime(rt, expected_pid=os.getpid(), via_group=True)[1] == (
+            "pid_mismatch"
+        )
+    finally:
+        for pid in (member, leader.pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        leader.wait(timeout=10)
+
+
+@posix_only
+def test_group_members_lists_the_group_and_tells_zombies_apart(tmp_path):
+    leader, member = _spawn_group_with_member(tmp_path)
+    try:
+        members = dict(launcher.group_members(leader.pid))
+        assert members.get(leader.pid) not in (None, "Z") and members.get(member) not in (None, "Z")
+        # 让成员死但没人收尸：leader 是它的父进程且不 wait → 僵尸
+        os.kill(member, signal.SIGKILL)
+        deadline = time.time() + 10
+        state = None
+        while time.time() < deadline:
+            state = dict(launcher.group_members(leader.pid)).get(member)
+            if state == "Z":
+                break
+            time.sleep(0.05)
+        assert state == "Z", state
+    finally:
+        os.kill(leader.pid, signal.SIGKILL)
+        leader.wait(timeout=10)
+
+
+@posix_only
+def test_zombies_do_not_count_as_a_live_group_and_kill_signals_members_before_the_wrapper(
+    tmp_path, monkeypatch
+):
+    """PID 1 不收尸的容器里：wrapper 先被杀 → 子进程成僵尸，永远留在组里。(1) 僵尸不算活；(2) 杀的顺序是先成员、后 wrapper，
+    让 wrapper 有机会 wait 到它们。真正的「PID 1 不收尸的容器」本机构造不出来（macOS 没有 subreaper / 命名空间）：not_run。"""
+    proc, child = _spawn_wrapped(tmp_path, launcher.GroupPopen)
+    sent: list[int] = []
+    real = launcher.GroupPopen._signal_pid
+
+    def spy(self, pid):
+        sent.append(pid)
+        real(self, pid)
+
+    monkeypatch.setattr(launcher.GroupPopen, "_signal_pid", spy)
+    proc.kill()
+    assert wait_dead(child)
+    proc.wait(timeout=10)
+    assert child in sent and proc.pid not in sent[: sent.index(child)]  # 成员在 wrapper 之前
+    for fh in (proc.stdin, proc.stdout):
+        fh.close()
+    # 僵尸成员存在时 `_group_alive` 仍判「没有活的」
+    leader, member = _spawn_group_with_member(tmp_path)
+    try:
+        gp = launcher.GroupPopen.__new__(launcher.GroupPopen)
+        gp.pid = leader.pid
+        os.kill(member, signal.SIGKILL)
+        os.kill(leader.pid, signal.SIGSTOP)  # leader 不会 wait 它；再放行前它保持僵尸
+        os.kill(leader.pid, signal.SIGCONT)
+        deadline = time.time() + 10
+        while (
+            dict(launcher.group_members(leader.pid)).get(member) != "Z" and time.time() < deadline
+        ):
+            time.sleep(0.05)
+        live = [pid for pid, st in launcher.group_members(leader.pid) if st != "Z"]
+        assert live == [leader.pid] and gp._group_alive() is True  # leader 还活着
+        os.kill(leader.pid, signal.SIGKILL)
+        leader.wait(timeout=10)
+    finally:
+        try:
+            os.kill(leader.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass

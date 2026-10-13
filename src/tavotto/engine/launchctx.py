@@ -17,12 +17,13 @@
 `scriptanswers`，不在这里复制第二份）。回执不完整（`partial`，没有自报的 helper 依据）→ 不记录：证据不全就不
 假装可复用。
 
-两个消费者，核验范围不同（`FACETS_*`）：
+消费者与核验范围（`FACETS_*`）：
 
 * `launcher_for`（`pool.EngineWorker` 起会话时）——只核解释器 / 环境 / 源码：这条解释器这份脚本上次成功用的启动方式，
-  还成立就沿用（裸起成功过的不会被自动改成 Conda 包装），任何一项变了就重新检测；
-* `reusable_run`（再次打开的入口 `app._session_target`）——全部核：成立才把上次成功的运行配置带回来，少让用户再给一次参数；
-  不成立就当没有，**不静默沿用**。
+  还成立就沿用（裸起成功过的不会被自动改成 Conda 包装），任何一项变了就重新检测；上次是 Conda 启动、现在找不到 conda
+  （没有关开关）→ `LauncherUnavailable`，不悄悄改成裸起；
+* `verify`（全部依据）——供「再次打开时沿用上次成功配置」的入口用。**这个消费端不在本期**（见 #982，由 P07 结合界面做）：
+  界面没有参数时本来就不带 argv，不能靠省略推断沿用；记录里的路径也只用来对账、不当可执行路径。
 
 纯标准库；Flask 父进程侧。
 """
@@ -267,6 +268,7 @@ def launcher_for(
     if python_source == bundled:
         return None
     record = _record_of(project_root, script)
+    recorded_conda = False
     if (
         record is not None
         and verify(
@@ -282,47 +284,17 @@ def launcher_for(
         lau = record.get("launcher") or {}
         if lau.get("kind") == launcher.KIND_DIRECT:
             return None
+        recorded_conda = lau.get("kind") == launcher.KIND_CONDA
     # 记录里的 `conda_exe` 来自项目目录里的登记文件，**不拿它当可执行路径**（克隆来的项目
     # 可以写任意路径）：要执行的 conda 永远从这条解释器现场检测出来。
-    return launcher.detect(python)
-
-
-def candidate_run(project_root: str | Path, script: str):
-    """上次成功的运行配置**候选**（未核验）：有记录、记录带运行配置、不是敏感的、登记里还取得到 → `RunSelection`，否则 None。
-
-    只给「再次打开」入口用来**提名**；它不代表可以用。核验只在一处：`prepsession._plan_of` 按计划实际选中的解释器调
-    `reusable_run`（执行前 `preparation._execute` 再按此刻生效的解释器核一次）。这里刻意不解析解释器——解析有副作用面。"""
-    record = _record_of(project_root, script)
-    if record is None or not record.get("run_config") or record.get("run_sensitive"):
-        return None
-    try:
-        return runconfig.selection(project_root, record["run_config"], script=script)
-    except runconfig.RunConfigError:
-        return None
-
-
-def reusable_run(
-    project_root: str | Path, script: str, *, python: str | None, python_source: str | None
-):
-    """再次打开的入口：上次成功的运行配置（`RunSelection`）此刻能不能直接带回来。
-
-    全部核验通过才返回；没有记录 / 任一项变了 / 配置是敏感的 / 记录是无参数运行 → None（调用方照旧：
-    请求没给参数就是无参数，要参数让用户给）。**不静默沿用不再成立的配置。**"""
-    record = _record_of(project_root, script)
-    if record is None or not record.get("run_config"):
-        return None
+    found = launcher.detect(python)
     if (
-        verify(
-            record,
-            project_root=project_root,
-            script=script,
-            python=python,
-            python_source=python_source,
-        )
-        is not None
+        found is None and recorded_conda and not launcher.disabled() and not launcher._is_windows()  # noqa: SLF001 — 同模块族的平台判据，单一出处
     ):
-        return None
-    try:
-        return runconfig.selection(project_root, record["run_config"], script=script)
-    except runconfig.RunConfigError:
-        return None
+        # 上次成功是经 Conda 激活启动的，现在却找不到 conda 可执行文件：裸起会重演「激活变量缺失」的失败，
+        # 还会让用户以为是脚本的错。停下，把话说清楚（关开关是用户明确的选择，不在此列）
+        raise launcher.LauncherUnavailable(
+            "这个环境上次是经 Conda 激活启动并成功的，现在找不到 conda 可执行文件；请检查 Conda 安装，"
+            "或设置 TAVOTTO_CONDA_ACTIVATION=0 改为直接启动"
+        )
+    return found

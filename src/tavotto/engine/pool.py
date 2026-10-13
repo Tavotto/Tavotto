@@ -1926,9 +1926,7 @@ class EngineWorker:
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
         #: 启动方式（P09）：None = 裸起；`CondaLauncher` = 经 `conda run` 激活后起（整棵进程树自成一组）
-        self.launcher = launchctx.launcher_for(
-            figures_dir, script_name, python, self.python_source, bundled=SOURCE_BUNDLED
-        )
+        self.launcher = _launcher_or_error(figures_dir, script_name, python, self.python_source)
         #: 起会话那一刻这条解释器所在环境的「代」：写回重放 / 冷重放据此钉住热会话自己的环境
         self.python_generation = projectenv.environment_generation(python)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
@@ -2760,12 +2758,7 @@ class WorkerdWorker:
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
         self.launcher = None
-        if (
-            launchctx.launcher_for(
-                figures_dir, script_name, python, self.python_source, bundled=SOURCE_BUNDLED
-            )
-            is not None
-        ):
+        if _launcher_or_error(figures_dir, script_name, python, self.python_source) is not None:
             # workerd 的杀进程语义不认进程组：包装启动的 worker 只走 Python 池（调用方回退）
             raise WorkerdUnavailable("该解释器需要 Conda 激活启动，workerd 不接")
         self.python_generation = projectenv.environment_generation(python)
@@ -3245,6 +3238,17 @@ def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
     if cur is not None and figures_dir is not None and cur[0] == projectenv._key(figures_dir):
         return cur[1]
     return None
+
+
+def _launcher_or_error(figures_dir, script_name: str, python: str, source: str):
+    """启动方式（P09）：`launchctx.launcher_for`，其「记录说要 Conda、现在找不到 conda」转成带稳定码的 `WorkerError`
+    （`conda_launcher_unavailable`），不悄悄改成裸起。"""
+    try:
+        return launchctx.launcher_for(
+            figures_dir, script_name, python, source, bundled=SOURCE_BUNDLED
+        )
+    except launcher_mod.LauncherUnavailable as exc:
+        raise WorkerError(str(exc), code=exc.code) from exc
 
 
 def _resolve_for_worker(

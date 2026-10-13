@@ -45,6 +45,12 @@ _OFF_VALUES = frozenset({"0", "off", "false", "no"})
 GROUP_REAP_TIMEOUT = 5.0
 
 
+class LauncherUnavailable(RuntimeError):
+    """记录说该经 Conda 激活启动、现在启动器不可用。`code` 是稳定码，pool 把它转成 `WorkerError`。"""
+
+    code = "conda_launcher_unavailable"
+
+
 def _is_windows() -> bool:
     return os.name == "nt"
 
@@ -174,8 +180,56 @@ def detect(python: str | os.PathLike) -> CondaLauncher | None:
 # ---------------------------------------------------------------------------
 # 进程树
 # ---------------------------------------------------------------------------
+def group_members(pgid: int) -> list[tuple[int, str]]:
+    """进程组 `pgid` 里此刻的成员 `[(pid, 状态首字母)]`（POSIX；读不出回 `[]`）。
+
+    Linux 读 `/proc/<pid>/stat`（字段 3 状态、字段 5 组 id；`comm` 里可能有空格 / 括号，从最后一个 `)` 之后切）；
+    macOS / BSD 用 `ps -axo pid=,pgid=,stat=`。僵尸（状态 `Z`）也在列表里——调用方要自己区分「还活着」和「只是没被收尸」。"""
+    if os.name == "nt":
+        return []
+    out: list[tuple[int, str]] = []
+    proc = Path("/proc")
+    if (proc / "self" / "stat").exists():
+        try:
+            entries = [p for p in proc.iterdir() if p.name.isdigit()]
+        except OSError:
+            entries = []
+        for p in entries:
+            try:
+                text = (p / "stat").read_text(encoding="utf-8", errors="replace")
+                rest = text[text.rindex(")") + 2 :].split()
+                state, group = rest[0], int(rest[2])
+            except (OSError, ValueError, IndexError):
+                continue
+            if group == pgid:
+                out.append((int(p.name), state[:1]))
+        return out
+    try:
+        done = subprocess.run(
+            ["ps", "-axo", "pid=,pgid=,stat="],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    for line in done.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[1].isdigit() and int(parts[1]) == pgid and parts[0].isdigit():
+            out.append((int(parts[0]), parts[2][:1]))
+    return out
+
+
 class GroupPopen(subprocess.Popen):
-    """自成进程组的 Popen；`kill()` 杀整组，`wait()` 确认组里无残留。仅在包装 worker 时用。"""
+    """自成进程组的 Popen；`kill()` 杀整组，`wait()` 确认组里无**活着的**残留。仅在包装 worker 时用。
+
+    杀的顺序：**先杀组里除 wrapper 以外的成员**，给 wrapper 一小段时间自己 `wait` 到它们并退出（真正的父进程收尸，
+    PID 1 不收尸的容器里也不留僵尸），超时再杀整组、最后 `super().kill()`。确认「残留」时僵尸（状态 `Z`）算已死：
+    它们已经不运行用户代码，只是还没人 `wait`；把它们当活的会让 `wait()` 白等到超时。"""
+
+    #: wrapper 在成员被杀之后自己退出的等待上限（秒）
+    WRAPPER_GRACE = 2.0
 
     def __init__(self, *args, **kwargs):
         if os.name == "nt":
@@ -186,30 +240,61 @@ class GroupPopen(subprocess.Popen):
             kwargs["start_new_session"] = True
         super().__init__(*args, **kwargs)
 
+    def _taskkill(self) -> None:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(self.pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def _signal_pid(self, pid: int) -> None:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
     def _kill_group(self) -> None:
+        """整组一起杀（兜底）。"""
         if os.name == "nt":
-            try:
-                subprocess.run(
-                    ["taskkill", "/PID", str(self.pid), "/T", "/F"],
-                    capture_output=True,
-                    timeout=10,
-                    check=False,
-                )
-            except (OSError, subprocess.SubprocessError):
-                pass
+            self._taskkill()
             return
         try:
             os.killpg(self.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
             pass
 
+    def _kill_members_first(self) -> None:
+        """先杀 wrapper 以外的成员，让 wrapper（它是它们的父进程之一）有机会 `wait` 到并自己退出。"""
+        for pid, state in group_members(self.pid):
+            if pid != self.pid and state != "Z":
+                self._signal_pid(pid)
+        deadline = time.monotonic() + self.WRAPPER_GRACE
+        while time.monotonic() < deadline:
+            if self.poll() is not None:
+                return
+            time.sleep(0.02)
+
     def kill(self) -> None:
+        if os.name == "nt":
+            self._taskkill()
+            super().kill()
+            return
+        self._kill_members_first()
         self._kill_group()
         super().kill()
 
     def _group_alive(self) -> bool:
+        """组里还有**活着的**成员吗（僵尸不算）。"""
         if os.name == "nt":
             return False  # taskkill /T 已按树杀；Windows 没有可探测的组
+        members = group_members(self.pid)
+        if members:
+            return any(state != "Z" for _, state in members)
+        # 读不出成员（没有 /proc 也没有 ps）：退回 killpg 探测（僵尸会被算作活的，只会多等到上限，不会漏杀）
         try:
             os.killpg(self.pid, 0)
         except ProcessLookupError:
@@ -220,7 +305,7 @@ class GroupPopen(subprocess.Popen):
 
     def wait(self, timeout=None):
         code = super().wait(timeout=timeout)
-        # wrapper 走了不代表用户 Python 走了（conda 先死、孙进程成孤儿）：组里还有人就补杀并确认
+        # wrapper 走了不代表用户 Python 走了（conda 先死、孙进程成孤儿）：组里还有活的就补杀并确认
         deadline = time.monotonic() + GROUP_REAP_TIMEOUT
         while self._group_alive():
             self._kill_group()

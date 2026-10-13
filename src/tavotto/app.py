@@ -3885,7 +3885,7 @@ def api_registry_probe():
             )
             # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
             # 同一事务里清掉该脚本旧的启动记录（这条旧路径没有回执，不产生新记录）：否则 A 先经准备会话成功、
-            # B 再经这里成功，之后不带 argv 的打开会悄悄沿用 A
+            # B 再经这里成功，旧记录 A 会冒充「最近成功」
             engine_runconfig.commit_success(
                 ctx.path,
                 script,
@@ -7483,13 +7483,6 @@ def _session_target(ctx: "ProjectCtx", body: dict):
     run = engine_runconfig.selection_for(
         ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
     )
-    reused = False
-    if run is None and "argv" not in body and body.get("reuse_last_success") is True:
-        # P09 再次打开：请求**明确要求**沿用上次成功的配置（`reuse_last_success: true`），且没给 argv。不能靠「没带 argv」
-        # 推断——界面在没有参数时本来就不带 argv，那是一次明确的「无参数运行」，沿用会让用户再也跑不了无参数的那份。
-        # 这里只提名候选；核验在 `prepsession._plan_of`（按计划实际选中的解释器）与执行前复核。
-        run = _reusable_success_run(ctx, script)
-        reused = run is not None
     return {
         "kind": engine_preparation.TARGET_SCRIPT,
         "script": script,
@@ -7499,15 +7492,7 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         "original_artifact": None,
         "original_path": None,
         **({"run": run} if run is not None else {}),
-        # 这份运行配置是复用来的（不是用户这次给的）：执行前若解释器因本次运行而换了，复用依据作废（见 preparation）
-        **({"run_reused": True} if reused else {}),
     }, None
-
-
-def _reusable_success_run(ctx: "ProjectCtx", script: str):
-    """上次成功的运行配置**候选**（未核验，`launchctx.candidate_run`）。核验只在一处：`prepsession._plan_of` 按计划
-    实际选中的解释器核验、通不过就把目标换成不带它的版本；执行前 `preparation._execute` 再核一次。"""
-    return engine_launchctx.candidate_run(ctx.path, script)
 
 
 def _session_runtime_input(ctx: "ProjectCtx", sess) -> dict | None:
@@ -7574,8 +7559,8 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         run=run,
         pinned=_plan_pin(plan),
     )
-    # 磁盘面板默认配置与 P09 的可验证启动上下文在同一个登记事务里一起落地（再次打开时复用；
-    # 失败 / 部分结果走不到这里；依据不全则清掉旧记录，见 `runconfig.commit_success`）
+    # 磁盘面板默认配置与 P09 的可验证启动上下文在同一个登记事务里一起落地（失败 / 部分结果走不到这里；
+    # 依据不全则清掉旧记录，见 `runconfig.commit_success`）。记录的消费端（再次打开时沿用）见 #982
     engine_launchctx.record_success(
         ctx.path, plan.script, getattr(result, "receipt", None), run=run, update_default=True
     )

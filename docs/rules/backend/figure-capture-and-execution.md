@@ -348,20 +348,21 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   启动方式引用（`direct` 或 `conda`：conda 路径 + prefix，及 `conda-meta/history` 派生的环境版本）、cwd 模式、运行配置**引用**、
   脚本 sha1 + 回执自报的本地 helper / 数据文件 sha256、数据绑定修订。**不存**激活后的环境变量、argv 值、敏感输入、答案原文
   （非敏感答案仍只在 `scriptanswers`）。
-- **两个消费者，核验范围不同**：`launchctx.launcher_for`（`EngineWorker` 起会话）只核解释器 / 环境 / 源码——裸起成功过的不被自动改成
-  Conda 包装；`launchctx.reusable_run`（再次打开：`/api/engine/preparation-sessions` 请求带 `reuse_last_success: true` 且没给 `argv`；
-  界面无参数时本来就不带 `argv`，所以**不能**靠省略 argv 推断沿用）全部核验，通过才带回上次成功的运行配置，
-  **核验只有一个判定点**：`prepsession._plan_of`（任何构建 / 重建计划——首次检查、recheck、依赖装好后重算——都经它，按**计划实际选中的解释器**重核，不通过就把目标换成不带复用配置的版本并写回 `sess.target`），执行前 `preparation._execute` 再按此刻生效的解释器 / 源码 / helper 复核（运行自己采用了新环境也在内），不通过就按 `preparation_plan_stale` 收场、零执行（不悄悄换成别的配置再跑——用户批准的报告里写的是旧配置），重新检查（recheck）时 `_plan_of` 生成不带复用配置的目标并**原地**换会话键，用户看到新报告再确认；任一依据变了 = 重新核验、不静默沿用；敏感配置永不自动复用；明确的 `argv: []` = 用户要无参数。
+- **消费者**：`launchctx.launcher_for`（`EngineWorker` 起会话）只核解释器 / 环境 / 源码——裸起成功过的不被自动改成 Conda 包装；
+  记录是 Conda 启动、现在找不到 conda（没关开关）→ `conda_launcher_unavailable`，不悄悄改成裸起。记录里的 `conda_exe` 只用来对账、
+  **不当可执行路径**（要执行的 conda 永远由 `launcher.detect(python)` 现场找）。`launchctx.verify` 是全依据核验，供「再次打开时沿用
+  上次成功配置」用——**这个消费端不在本期**（#982，P07 结合界面做）：界面无参数时本来就不带 `argv`，不能靠省略推断；
+  P09 之前的 argv 行为逐字节不变。
 - **Conda launcher**（`launcher.py`）：`conda run --no-capture-output --prefix <prefix> [--cwd <dir>] -- <argv…>` 的结构化 argv，
   按官方文档语义（`--no-capture-output` 恒带：worker 协议在 stdout 上）；不拼 shell；不认 `conda.bat`；mamba / micromamba、
   IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。**Windows 本期不做 Conda 包装**（`detect()` 在 nt 上返回 None、裸起，与 P09 之前一致）：没有真机验证，
   conda.exe 经中间 shell 起 Python 时回执的 pid 核验也没有可靠依据；留待 Windows 真机验证后再开。成功记录的依据必须完整可核验
   （条数超限 / 观察被截断 / 有输入没算出摘要都不记录，并清掉旧记录）；登记里 `launches` 逐条深校验，坏的丢弃。
-- **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 杀整组，`wait()` 确认组内无残留），所以取消 / 关停 / 看门狗超时
+- **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 先杀 wrapper 以外的成员、给 wrapper 自己 wait 收尸的机会，再杀整组；`wait()` 确认组内无**活着的**残留，僵尸 `Z` 不算活），所以取消 / 关停 / 看门狗超时
   留不下仍在跑的用户 Python；环境占用租约仍是池里的会话，`kill→reap` 之后才释放。包装 worker 只走 Python 池（`WorkerdWorker` 抛
   `WorkerdUnavailable` 回退）——workerd 的杀进程语义不认进程组。`nativesession` 的终止语义未改。
 
-看护：`tests/test_conda_launch_context.py`（用**模拟 conda**；真 conda 的 `test_real_conda_launch` 无 conda 时 skip）。
+看护：`tests/test_conda_launch_context.py`（模拟 conda + `TAVOTTO_TEST_CONDA_PREFIX` 指向真 conda 环境时的真 conda 用例，未设则 skip）。
 
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 
