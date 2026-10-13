@@ -8,6 +8,8 @@ import {
   __resetDesktopUpdate,
   bootstrapDesktopSession,
   canRevealInFileManager,
+  cssColorToHex,
+  dragRegionProps,
   checkDesktopUpdate,
   armDesktopCloseGuard,
   fileManagerKind,
@@ -24,6 +26,9 @@ import {
   revealExportedFile,
   revealProjectFolder,
   runCodexIntegration,
+  setDesktopTitlebarColors,
+  showDesktopAppMenu,
+  windowChrome,
 } from './desktop'
 
 // 远程实例窗口那一组用：壳在，但本机文件类能力一条都不许碰
@@ -109,6 +114,84 @@ describe('远程实例窗口（ADR 0105）', () => {
     expect(tauri.listen).toHaveBeenCalledWith('tavotto:menu', expect.any(Function))
     expect(await armDesktopCloseGuard()).toBe(true)
     expect(tauri.invoke).toHaveBeenCalledWith('arm_close_guard')
+  })
+})
+
+describe('窗框（window_chrome.rs 注入的标记）', () => {
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    delete w.__TAVOTTO_REMOTE_ENGINE__
+    delete w.__TAVOTTO_WINDOW_CHROME__
+    vi.clearAllMocks()
+  })
+
+  it('浏览器里一律 native：设了全局也不算（没有壳）', async () => {
+    w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
+    expect(windowChrome()).toBe('native')
+    expect(dragRegionProps()).toEqual({})
+    expect(await showDesktopAppMenu(0, 44)).toBe(false)
+    expect(await setDesktopTitlebarColors('#efefed', '#1b1b18')).toBe(false)
+    expect(tauri.invoke).not.toHaveBeenCalled()
+  })
+
+  it('旧壳不注入标记 / 注入了认不出的值：native，一切照旧', () => {
+    w.__TAURI_INTERNALS__ = {}
+    expect(windowChrome()).toBe('native')
+    w.__TAVOTTO_WINDOW_CHROME__ = 'unified'
+    expect(windowChrome()).toBe('native')
+  })
+
+  it('远程实例窗口不认标记：那里维持系统标题栏 + 菜单栏', () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_REMOTE_ENGINE__ = true
+    w.__TAVOTTO_WINDOW_CHROME__ = 'overlay'
+    expect(windowChrome()).toBe('native')
+  })
+
+  it('macOS（overlay）：顶栏是拖动区，没有「菜单」按钮要弹', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'overlay'
+    expect(windowChrome()).toBe('overlay')
+    expect(dragRegionProps()).toEqual({ 'data-tauri-drag-region': 'deep' })
+    expect(dragRegionProps('self')).toEqual({ 'data-tauri-drag-region': '' })
+    expect(await showDesktopAppMenu(0, 44)).toBe(false)
+    expect(tauri.invoke).not.toHaveBeenCalled()
+  })
+
+  it('Windows（menu-button）：按钮下方弹应用菜单、标题栏随主题上色；顶栏不当拖动区', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
+    expect(windowChrome()).toBe('menu-button')
+    expect(dragRegionProps()).toEqual({})
+    expect(await showDesktopAppMenu(12, 44)).toBe(true)
+    expect(tauri.invoke).toHaveBeenCalledWith('show_app_menu', { x: 12, y: 44 })
+    expect(await setDesktopTitlebarColors('#efefed', '#1b1b18')).toBe(true)
+    expect(tauri.invoke).toHaveBeenCalledWith('set_titlebar_colors', {
+      background: '#efefed',
+      text: '#1b1b18',
+    })
+  })
+
+  it('壳拒了命令（ACL / 旧壳）不抛，回 false', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
+    tauri.invoke.mockRejectedValueOnce(new Error('not allowed'))
+    expect(await showDesktopAppMenu(0, 0)).toBe(false)
+  })
+})
+
+describe('cssColorToHex', () => {
+  it('设计变量与计算样式的几种写法都换成 #rrggbb', () => {
+    expect(cssColorToHex(' #EFEFED ')).toBe('#efefed')
+    expect(cssColorToHex('rgb(22, 22, 21)')).toBe('#161615')
+    expect(cssColorToHex('rgba(27, 27, 24, 1)')).toBe('#1b1b18')
+  })
+  it('认不出来回 null（壳那边就不动标题栏）', () => {
+    expect(cssColorToHex('#fff')).toBeNull()
+    expect(cssColorToHex('oklch(0.9 0 0)')).toBeNull()
+    expect(cssColorToHex('rgb(300, 0, 0)')).toBeNull()
+    expect(cssColorToHex('')).toBeNull()
   })
 })
 

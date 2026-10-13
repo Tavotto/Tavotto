@@ -40,6 +40,7 @@ import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
+import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { startStyleBindingSync } from '@/store/styleBinding'
 import { useBuildVersion } from '@/hooks/useBuildVersion'
 import { runMenuAction } from '@/hooks/menuActions'
@@ -101,6 +102,7 @@ export function App() {
     void hydrateExportDefaults()
   }, [])
   useDesktopMenu()
+  useWindowChrome()
   useHandoff()
   usePickerHistory()
 
