@@ -117,6 +117,9 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
   const report = {
     schema: 'tavotto-perf-agent/1',
     generated_at: new Date().toISOString(),
+    source_sha: /^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA ?? '')
+      ? process.env.GITHUB_SHA
+      : null,
     iterations,
     coverage: 'browser_webview_proxy_only',
     environment: {
@@ -124,6 +127,7 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
       arch: process.arch,
       browser: browser.browserType().name(),
       browser_major: Number(browser.version().split('.')[0]),
+      browser_version: browser.version(),
       viewport_w: page.viewportSize()?.width ?? null,
       viewport_h: page.viewportSize()?.height ?? null,
       dpr: await page.evaluate(() => window.devicePixelRatio),

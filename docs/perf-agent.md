@@ -38,3 +38,10 @@ GitHub Actions 独立的 `Performance Agent` workflow 支持手动触发和每�
 3. 若有同机有效 baseline，执行 `compare`；status 为 `incomparable` 时汇报环境不匹配，不自主提高阈值。
 4. 真机窗口症状归类为 `needs_native_mac_capture`；不要伪造 FPS、截图、性能提升幅度。
 5. 生成修复 PR 时附上基线、候选的原始 JSON、commit SHA、性能差异及视觉/编辑正确性验证。
+
+
+## 历史基线自动发现与可信度
+
+GitHub Actions `Performance Agent` 在成功跑完测试后，使用只读的 Actions API 从 **main 分支最近 8 个成功的同名工作流**寻找原始 artifact `perf-agent/run.json`，自动生成 `comparison.json`。首次合入后的第一次运行尚无历史 main artifact，会明确记录 `no baseline`，不会冒充 `PASS`。
+
+与浏览器样本不同，回归对比需要完整环境元数据（OS release、CPU 型号、核数、内存、浏览器精确版本、窗口尺寸、DPR 等）。字段缺失、重复/未知场景、样本不足、不同环境均是 `incomparable`；不可通过调整阈值掩盖。GitHub 共享 Runner 上的差异只发**提示**不阻断 CI；需要在固定原生 runner 上重复验证后才可升格为强门禁。

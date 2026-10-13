@@ -34,6 +34,12 @@ ALLOWED_SCENARIOS = {
     "preset.dimension",
 }
 MIN_SAMPLES = 10
+# 不同 SHA 可以比较，但机器与浏览器完整版本必须匹配。
+ENV_FIELDS = (
+    "platform", "arch", "browser", "browser_major", "browser_version",
+    "viewport_w", "viewport_h", "dpr", "headless", "os_release",
+    "cpu_model", "cpu_count", "total_mem_gib",
+)
 DEFAULT_REGRESSION_PCT = 25.0
 DEFAULT_ABSOLUTE_DELTA_MS = 15.0
 
@@ -57,32 +63,33 @@ def load(path: Path) -> dict:
 def summarize(data: dict) -> dict:
     env = data["environment"]
     # 白名单字段，不会把测试机的路径、进程命令、用户名、页面数据写出。
-    environment = {
-        k: env.get(k)
-        for k in (
-            "platform",
-            "arch",
-            "browser",
-            "browser_major",
-            "viewport_w",
-            "viewport_h",
-            "dpr",
-            "headless",
-            "os_release",
-            "cpu_model",
-            "cpu_count",
-            "total_mem_gib",
+    environment = {k: env.get(k) for k in ENV_FIELDS}
+    strings = ("platform", "arch", "browser", "browser_version", "os_release", "cpu_model")
+    positive = ("browser_major", "viewport_w", "viewport_h", "dpr", "cpu_count", "total_mem_gib")
+    env_ok = (
+        all(isinstance(environment[k], str) and 0 < len(environment[k]) <= 256 for k in strings)
+        and environment["browser"] in ("chromium", "webkit")
+        and isinstance(environment["headless"], bool)
+        and all(
+            isinstance(environment[k], (int, float))
+            and not isinstance(environment[k], bool)
+            and 0 < environment[k] < 100_000
+            for k in positive
         )
-    }
+    )
     rows = {}
+    invalid_scenarios = False
     for raw in data["scenarios"]:
         if not isinstance(raw, dict):
+            invalid_scenarios = True
             continue
         name = raw.get("id")
-        if name not in ALLOWED_SCENARIOS or name in rows:
+        if not isinstance(name, str) or name not in ALLOWED_SCENARIOS or name in rows:
+            invalid_scenarios = True
             continue
         values = raw.get("two_raf_ms")
         if not isinstance(values, list):
+            invalid_scenarios = True
             continue
         valid = [
             float(x)
@@ -105,6 +112,8 @@ def summarize(data: dict) -> dict:
         isinstance(expected, int)
         and not isinstance(expected, bool)
         and expected >= 1
+        and env_ok
+        and not invalid_scenarios
         and set(rows) == ALLOWED_SCENARIOS
         and all(x["count"] == x["expected_count"] for x in rows.values())
     )
@@ -112,6 +121,7 @@ def summarize(data: dict) -> dict:
         "schema": SCHEMA,
         "status": "ok" if complete else "incomplete",
         "coverage": "browser_webview_proxy_only",
+        "regression_status": "not_checked_without_baseline",
         "not_covered": ["native_window_drag", "gpu_compositor", "macos_windowserver"],
         "environment": environment,
         "scenarios": rows,
@@ -259,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
                 _write(output.with_suffix(".comparison.json"), assessment)
                 print(f"Baseline verdict: {assessment['status']}")
                 return 0 if assessment["status"] == "pass" else 3
+            print("Baseline verdict: not_checked (no baseline provided)")
             return 0
         if args.command == "summarize":
             result = summarize(load(args.report))

@@ -33,6 +33,8 @@ on:
 
 permissions:
   contents: read
+  # 只读历史 main workflow 的 artifact，绝不修改基线或仓库状态。
+  actions: read
 
 concurrency:
   group: performance-agent-${{ github.ref }}-${{ github.event_name }}
@@ -89,6 +91,53 @@ jobs:
           python scripts/perf_agent.py run --browser "$PERF_BROWSER" --repeat "$PERF_REPEAT" \
             --out web/test-results/perf-agent/run.json \
             --summary web/test-results/perf-agent/summary.json
+      # GitHub 托管 runner 的瞬时负载不稳定。历史对照只作 advisory，
+      # 不把不同 CPU / OS / 浏览器的数字伪装成性能过关。
+      - name: Compare to the latest successful main run (advisory)
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT="web/test-results/perf-agent/run.json"
+          BASE=""
+          # workflow 初次出现在 PR 分支时默认分支可能还没有它；这属于 no-baseline，
+          # 不因为查询无结果便假装“回归对比通过”。
+          ids="$(gh run list --workflow performance-agent.yml --branch main --status success --limit 8 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
+          for id in $ids; do
+            if [[ "$id" == "${{ github.run_id }}" ]]; then
+              continue
+            fi
+            target="$RUNNER_TEMP/tavotto-perf-baseline-$id"
+            if gh run download "$id" --repo "$GH_REPO" --name "tavotto-performance-agent-$id" --dir "$target" >/dev/null 2>&1; then
+              if [[ -f "$target/perf-agent/run.json" ]]; then
+                BASE="$target/perf-agent/run.json"
+                echo "Historical main run: $id" >> "$GITHUB_STEP_SUMMARY"
+                break
+              fi
+            fi
+          done
+          if [[ -z "$BASE" ]]; then
+            echo "Baseline: no successful main artifact yet (record-only, NOT regression PASS)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          RESULT="web/test-results/perf-agent/comparison.json"
+          if ! python scripts/perf_agent.py compare "$CURRENT" "$BASE" --json "$RESULT"; then
+            if [[ ! -f "$RESULT" ]]; then
+              echo "::error::Comparison failed without a machine-readable verdict"
+              exit 1
+            fi
+          fi
+          verdict="$(python -c 'import json; print(json.load(open("web/test-results/perf-agent/comparison.json", encoding="utf-8"))["status"])')"
+          echo "Baseline verdict: **$verdict** (advisory: ephemeral shared runner)" >> "$GITHUB_STEP_SUMMARY"
+          case "$verdict" in
+            pass) echo "Comparable baseline found; no defined regression detected." ;;
+            regression) echo "::warning::Potential interaction latency regression; see comparison.json" ;;
+            incomparable) echo "::notice::Environment or sample coverage differs; do not compare these results" ;;
+            *) echo "::error::Unknown comparison verdict"; exit 1 ;;
+          esac
       - name: Upload numeric results and failure traces
         if: always()
         uses: actions/upload-artifact@v6

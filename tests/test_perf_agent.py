@@ -19,6 +19,7 @@ def report(n=16, value=20, browser="chromium"):
             "arch": "x64",
             "browser": browser,
             "browser_major": 125,
+            "browser_version": "125.0.0.0",
             "viewport_w": 1280,
             "viewport_h": 720,
             "dpr": 1,
@@ -95,3 +96,34 @@ def test_dialog_sample_multiplier_is_four_per_iteration():
     assert summary["scenarios"]["dialog.presets_open"]["count"] == 48
     r["scenarios"][0]["two_raf_ms"].pop()
     assert A.summarize(r)["status"] == "incomplete"
+
+
+
+def test_environment_missing_does_not_compare_as_equal():
+    """两份报告都缺浏览器版本/CPU 不等于环境真实一致。"""
+    a = report()
+    b = report()
+    del a["environment"]["cpu_model"]
+    del b["environment"]["cpu_model"]
+    assert A.summarize(a)["status"] == "incomplete"
+    assert A.compare(a, b)["status"] == "incomparable"
+
+
+def test_browser_patch_version_is_part_of_comparison_identity():
+    a, b = report(), report()
+    b["environment"]["browser_version"] = "125.0.1.0"
+    assert A.compare(a, b)["status"] == "incomparable"
+
+
+def test_duplicate_or_unknown_scenario_cannot_be_ignored():
+    a = report()
+    a["scenarios"].append(dict(a["scenarios"][0]))
+    assert A.summarize(a)["status"] == "incomplete"
+    b = report()
+    b["scenarios"].append({"id": "secret_work.py", "two_raf_ms": [0] * 16})
+    assert A.summarize(b)["status"] == "incomplete"
+    assert "secret_work.py" not in json.dumps(A.summarize(b))
+
+
+def test_run_summary_explicitly_says_no_baseline_was_checked():
+    assert A.summarize(report())["regression_status"] == "not_checked_without_baseline"
