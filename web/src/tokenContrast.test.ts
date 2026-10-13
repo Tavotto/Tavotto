@@ -47,6 +47,16 @@ const DARK_MEDIA_BLOCK =
   )?.[1] ?? ''
 const LIGHT_VARS = { ...cssVars(ROOT_BLOCK), ...cssVars(THEME_BLOCK) }
 const DARK_VARS = cssVars(DARK_BLOCK)
+/** 坐在纸上的界面那一块（`[data-on-paper]`，index.css 末尾） */
+const ON_PAPER_BLOCK = CSS.match(/\n\[data-on-paper\] \{([\s\S]*?)\n\}/)?.[1] ?? ''
+/** `--color-paper-ink-N: color-mix(in srgb, var(--color-paper-ink) N%, transparent)` 里的 N */
+function alphaOfPaperInk(name: string): number {
+  const m = (LIGHT_VARS[`color-paper-${name}`] ?? '').match(
+    /^color-mix\(in srgb, var\(--color-paper-ink\) ([\d.]+)%, transparent\)$/,
+  )
+  if (!m) throw new Error(`没有 paper-ink 半透明叠加的 --color-paper-${name}`)
+  return Number(m[1]) / 100
+}
 const VARS: Record<Theme, Record<string, string>> = {
   light: LIGHT_VARS,
   dark: { ...LIGHT_VARS, ...DARK_VARS },
@@ -67,10 +77,10 @@ function alphaOfInkIn(theme: Theme, name: string): number {
 }
 const rgb = (hex: string) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
 const hex = (c: number[]) => '#' + c.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')
-/** ink 以 alpha 叠在 ground 上（sRGB 直接混合，与浏览器 color-mix in srgb 一致） */
-export function over(alpha: number, ground: string, theme: Theme = 'light'): string {
+/** ink（默认界面墨）以 alpha 叠在 ground 上（sRGB 直接混合，与浏览器 color-mix in srgb 一致） */
+export function over(alpha: number, ground: string, theme: Theme = 'light', inkHex?: string): string {
   const g = rgb(ground)
-  const i = rgb(tokenIn(theme, 'ink'))
+  const i = rgb(inkHex ?? tokenIn(theme, 'ink'))
   return hex(g.map((gv, k) => gv * (1 - alpha) + i[k] * alpha))
 }
 function luminance(h: string): number {
@@ -489,18 +499,21 @@ for (const theme of THEMES) {
       expect(contrast(t('shadow'), '#000000')).toBeLessThan(contrast(t('bg'), '#000000'))
     })
 
-    it('坐在纸上的界面（空画布提示）：浅色里底透明、字直接落在纸上 ≥4.5:1；暗色里有自己的面板底，字落在它上面 ≥4.5:1', () => {
-      const v = VARS[theme]['color-paper-chrome']
-      if (theme === 'light') {
-        expect(v).toBe('transparent')
-        for (const name of ['ink', 'ink-2', 'ink-3']) {
-          expect(contrast(t(name), t('paper')), `${name} on paper`).toBeGreaterThanOrEqual(4.5)
-        }
-      } else {
-        const ground = rc('paper-chrome')
-        for (const name of ['ink', 'ink-2', 'ink-3']) {
-          expect(contrast(t(name), ground), `${name} on paper-chrome`).toBeGreaterThanOrEqual(4.5)
-        }
+    it('坐在纸上的界面（空画布提示）：两套主题都不垫底，界面墨重定向到纸上的墨，字对纸 ≥4.5:1', () => {
+      // 纸两套主题同值：暗色表里不许出现纸，否则「纸上的墨」就不再是常数
+      expect(DARK_VARS['color-paper']).toBeUndefined()
+      expect(DARK_VARS['color-paper-ink']).toBeUndefined()
+      const onPaper = cssVars(ON_PAPER_BLOCK)
+      for (const name of ['ink', 'ink-2', 'ink-3']) {
+        expect(onPaper[`color-${name}`]).toBe(`var(--color-paper-${name})`)
+        const ink = name === 'ink' ? t('paper-ink') : over(alphaOfPaperInk(name), t('paper'), theme, t('paper-ink'))
+        expect(contrast(ink, t('paper')), `${name} on paper`).toBeGreaterThanOrEqual(4.5)
+      }
+      // 按钮底的三档叠加与界面同一副公式，只是墨换成纸上的墨
+      for (const name of ['surface-hover', 'surface-active', 'selected']) {
+        expect(onPaper[`color-${name}`]).toBe(
+          VARS.light[`color-${name}`].replace('var(--color-ink)', 'var(--color-paper-ink)'),
+        )
       }
     })
 

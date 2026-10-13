@@ -1295,7 +1295,10 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
       )}
       style={{ transform: `scale(${scale})` }}
     >
+      {/* `data-on-paper`：角标画在图（纸）上，ink / surface 换成纸上的墨与纸（index.css 末尾）——界面的 ink 在暗色里
+          反成浅灰，浅灰底压在白图上几乎看不见（2026-10-13 UI 审计）；这样两套主题都是同一副深底白字 */}
       <span
+        data-on-paper
         data-panel-badge={shown.tone}
         className={cn(
           // 角标是 chip：胶囊（圆角族 full）。三种语气三种颜色（2026-10-07 设计审计 §10.1：此前「过期」与

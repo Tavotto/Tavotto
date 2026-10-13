@@ -489,9 +489,10 @@ function EmptyHint() {
       className="pointer-events-none absolute w-max -translate-x-1/2 -translate-y-1/2"
       style={{ left: cx, top: cy }}
     >
-      {/* 提示坐在页面（纸）上：纸两套主题都是白，暗色里给它一块面板色的底（`paper-chrome`，浅色里透明——
-          字照旧直接落在纸上），浅色的字才不会落在白纸上（2026-10-07 暗色主题，宪法第二十八节） */}
-      <div data-on-paper className="pointer-events-auto rounded-lg bg-paper-chrome p-4">
+      {/* 提示坐在页面（纸）上：纸两套主题都是白，`data-on-paper` 把这一块的界面墨与按钮底换成纸上的墨
+          （index.css 末尾），两套主题都是字直接落在纸上、不垫底（2026-10-13 审计：此前暗色里垫一块深色卡片，
+          白纸正中一块黑，很突兀；2026-10-07 暗色主题，宪法第二十八节） */}
+      <div data-on-paper className="pointer-events-auto p-4">
         <EmptyState
           icon={Images}
           title={sg('emptyTitle')}

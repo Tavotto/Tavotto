@@ -277,7 +277,8 @@ function Workspace() {
                   className="pointer-events-none absolute right-3 top-3 z-canvas-chrome flex max-h-[calc(100%-1.5rem)] w-72 max-w-[calc(100%-1.5rem)] flex-col items-end gap-2"
                 >
                   {fastEdit && (
-                    <div className="pointer-events-auto rounded-full bg-surface shadow-pop">
+                    // data-capsule：胶囊里的输入框跟着变成胶囊（fieldBox 的 in-data-capsule）
+                    <div data-capsule className="pointer-events-auto rounded-full bg-surface shadow-pop">
                       <ZoomControls />
                     </div>
                   )}

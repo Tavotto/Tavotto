@@ -101,7 +101,8 @@ export function Select<T extends string>({
                   <Check size={ICON_SIZE.sm} />
                 </RS.ItemIndicator>
                 <RS.ItemText>{opt.label}</RS.ItemText>
-                {opt.hint && <span className="ml-auto font-mono text-xs text-ink-3">{opt.hint}</span>}
+                {/* 说明是正文（中英混排的一句话），不用等宽字：等宽字体里的中文字宽与字形都不对；数字走 tabular-nums 照样对得齐 */}
+                {opt.hint && <span className="ml-auto pl-2 text-xs tabular-nums text-ink-3">{opt.hint}</span>}
               </RS.Item>
             ))}
           </RS.Viewport>
