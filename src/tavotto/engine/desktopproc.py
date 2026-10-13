@@ -377,6 +377,7 @@ class DesktopProcess:
         *,
         on_output=None,
         on_exit=None,
+        gated: bool = False,
     ):
         self.proc = proc
         self.pid = proc.pid
@@ -392,6 +393,12 @@ class DesktopProcess:
         self._cancel_lock = threading.Lock()
         self._exited = threading.Event()
         self._confirmed = threading.Event()
+        #: 启动闸门（`start()` 用）：握手 / 传输 reader / 登记都就位之前，完成回调不许跑——否则快退出的
+        #: 子进程会在 reader 还没起来时被判「没通知就走了」，或在登记之前就放掉 launch_id 占位。
+        #: `gated=False`（默认）= 一开始就放行，直接用 `DesktopProcess` 的用例不受影响。
+        self._armed = threading.Event()
+        if not gated:
+            self._armed.set()
         self._finished = threading.Event()
         self._pumps: list[threading.Thread] = []
         self._waiter: threading.Thread | None = None
@@ -416,6 +423,10 @@ class DesktopProcess:
     @property
     def scope_kind(self) -> str:
         return self.scope.kind
+
+    def arm(self) -> None:
+        """启动流程走完（成功或失败收尾）：放行完成回调。幂等。"""
+        self._armed.set()
 
     def wait(self, timeout: float | None = None) -> bool:
         return self._finished.wait(timeout)
@@ -468,6 +479,7 @@ class DesktopProcess:
             t.join(2.0)  # 孙进程还攥着管道写端时排空线程不会自己结束：不为它卡住确认
         self.scope.close()
         self._confirmed.set()  # 组确认空：租约此刻才有资格放（会话回调里核它）
+        self._armed.wait()  # 启动还没走完就先不回调（见 `_armed`）
         try:
             if self._on_exit is not None:
                 self._on_exit(code, cancelled=self.cancelled)
@@ -648,6 +660,7 @@ def start(
             pol,
             on_output=on_output,
             on_exit=_exit_callback(session, registry, launch.launch_id),
+            gated=True,
         )
         session.owned = owner
         session.spec = spec
@@ -659,6 +672,7 @@ def start(
                 timeout_code=runcodes.DESKTOP_RUN_CONNECT_TIMEOUT,
             )
         except BaseException:
+            owner.arm()  # 握手没成：没有 reader 也没有登记，收尾已完整，放行回调再取消
             owner.cancel()  # 收掉进程；租约由所有者确认结束后放
             raise
         transport = nativesession.NativeTransport(
@@ -669,8 +683,11 @@ def start(
         session.transport = transport
         session._set_state(nativesession.STARTING_PYTHON)  # noqa: SLF001
         session.note_hello(hello)
-        registry.adopt(session)
+        # 时序：reader 先起（缓冲里的帧才有人处理，所有者判「没通知就走了」前 `join_reader` 才有对象），
+        # 再登记，最后才放行所有者回调（占位 / 租约 / 终局判断都在登记尝试结束之后）
         transport.start()
+        registry.adopt(session)
+        owner.arm()
         return session
     except BaseException:
         if owner is None:
@@ -680,11 +697,14 @@ def start(
             # spawn 之后的任何失败（含登记被拒）：关传输、收进程；租约由所有者确认结束后放
             if session.transport is not None:
                 session.transport.close()
+            owner.arm()  # 登记尝试已结束（失败）：放行回调，再取消
             owner.cancel()  # 清组超时则返回未确认：占位仍由所有者的完成回调释放，不在这里放
         if owner is None:
             registry.unreserve(launch.launch_id)  # 没有所有者就没有回调
         raise
     finally:
+        if owner is not None:
+            owner.arm()  # 任何路径都不许把闸门留着（否则等待线程永远不回调）
         if relay is not None:
             relay.close()
 

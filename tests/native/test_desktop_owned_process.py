@@ -844,3 +844,55 @@ def test_each_launch_has_its_own_lease_key_so_owners_cannot_delete_each_others_l
         assert dk.install_is_refused(b.interpreter) == runcodes.ENVIRONMENT_IN_USE_BY_NATIVE_SESSION
     finally:
         b.cancel_owned()
+
+
+# ---------------------------------------------------------------------------
+# Codex r4254674722 / r4254674730：启动时序——回调与退出不得早于 reader / 登记完成
+# ---------------------------------------------------------------------------
+def test_a_fast_exit_before_the_reader_starts_is_not_reported_as_a_failure(tmp_path, monkeypatch):
+    real = nativesession.NativeTransport.start
+
+    def late_start(self):
+        time.sleep(0.8)  # reader 迟迟不起：子进程早已发完 exit 帧并退出
+        real(self)
+
+    monkeypatch.setattr(nativesession.NativeTransport, "start", late_start)
+    session = dk.start(tmp_path, "print('x')\n")
+    assert session.owned.wait(30)
+    assert session.state == nativesession.ENDED, session.terminal_error
+    assert session.terminal_error is None and session.exit_code == 0
+
+
+def test_the_launch_reservation_survives_until_adoption_has_finished(tmp_path, monkeypatch):
+    import threading
+
+    real = nativesession.REGISTRY.adopt
+
+    def slow_adopt(session):
+        time.sleep(0.8)  # 登记慢：快退出的子进程此时早已结束
+        real(session)
+
+    monkeypatch.setattr(nativesession.REGISTRY, "adopt", slow_adopt)
+    outcome = {}
+
+    def probe():
+        time.sleep(0.4)
+        try:
+            nativesession.REGISTRY.reserve("early")
+            outcome["admitted"] = True
+            nativesession.REGISTRY.unreserve("early")
+        except RunError as exc:
+            outcome["code"] = exc.code
+
+    t = threading.Thread(target=probe)
+    t.start()
+    session = dk.start(tmp_path, "print('x')\n", launch_id="early")
+    t.join(10)
+    assert outcome == {"code": runcodes.NATIVE_SESSION_CONFLICT}, "登记结束前占位被放了"
+    assert session.owned.wait(30)
+
+
+def test_cancel_during_startup_waits_for_the_gate_and_still_confirms(tmp_path):
+    """闸门不是死锁：启动流程里随时取消，等登记走完后照常确认。"""
+    session = dk.start(tmp_path, RUNNING_SCRIPT)
+    assert session.cancel_owned().confirmed and session.owned.finished

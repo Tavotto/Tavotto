@@ -82,7 +82,11 @@ terminal 的 `stable_payload()` / `launch_context()` 逐字节不变（golden）
    Windows 为 Job Object（`KILL_ON_JOB_CLOSE`），取消 = `TerminateJobObject`。**不按 PPID 猜、不遍历进程表**；组外的子进程（自己 `setsid` 走的）
    不是我们纳管的，如实不管。脚本自然退出后组里的残余再给 `linger_grace` 收尾，仍在就按取消强度收掉——否则它们会带着租约的环境活下去。
 5. **sidecar 退出**：`REGISTRY.shutdown_all()` 对 terminal 会话仍只放手；对桌面拥有的会话先断开再 `cancel_owned()`（有界），不留孤儿。
-6. **退出码原样**：脚本自己的退出码（`sys.exit(3)`、未捕获异常的 1）保留；POSIX 被信号杀折成 `128+signo`（`runcodes.exit_code_of`，与 `tavotto run` 同口径）。
+6. **启动时序**（`desktopproc.start`）：占位(`launch_id`) → 租约（会话 id 每次启动唯一后缀）→ spawn → 握手 → **reader 先起** →
+   登记 → **最后才放行所有者的完成回调**（`DesktopProcess` 的启动闸门 `arm()`）。快退出的子进程因此既不会在 reader 起来前被判
+   「没通知就走了」，也不会在登记前放掉占位；任何失败路径先 `arm()` 再 `cancel()`。启动期间的 `cancel()` 会等闸门（微秒级，登记走完即放）。
+   残余：`owner.start()` 自己抛错（线程创建失败）时闸门会等 `finally` 的 `arm()`，不处理更深的资源耗尽。
+7. **退出码原样**：脚本自己的退出码（`sys.exit(3)`、未捕获异常的 1）保留；POSIX 被信号杀折成 `128+signo`（`runcodes.exit_code_of`，与 `tavotto run` 同口径）。
    取消只额外记 `cancelled=True`，不改写码；Windows 取消的 Job 退出码是 `EXIT_CANCELLED`(3)，靠 `cancelled` 区分。
 
 时间全部在 `OwnedPolicy`（连接 / 先礼 / 强杀 / linger / 尾部大小），测试用毫秒级，产品用默认。
