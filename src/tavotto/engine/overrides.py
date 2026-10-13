@@ -3269,11 +3269,27 @@ _LAST_HATCH = "_mm_last_hatch_color"
 def _remember_hatch_color(p) -> None:
     if hasattr(p, "set_hatchcolor") or not hasattr(p, "_hatch_color"):
         return
-    last = getattr(p, _LAST_HATCH, None)
-    if last is not None and not _same_value(last, p._hatch_color):  # noqa: SLF001
+    if _hatch_changed_externally(p):
         setattr(p, _ORIG_HATCH, p._hatch_color)  # noqa: SLF001 — 中间被别人动过：按实况重记
     elif not hasattr(p, _ORIG_HATCH):
         setattr(p, _ORIG_HATCH, p._hatch_color)  # noqa: SLF001
+
+
+def _hatch_changed_externally(p) -> bool:
+    last = getattr(p, _LAST_HATCH, None)
+    return last is not None and not _same_value(last, p._hatch_color)  # noqa: SLF001
+
+
+def _adopt_external_hatch_colors(state) -> None:
+    """`apply` 入口：屏障之间用户改过的花纹色当场采纳为新基准（Codex #993 r4259898020）。
+
+    只在 fill 编辑里才重记会漏掉「这一批没有 fill 编辑」的情形：收尾盖章会把用户的值盖成「写完的样子」，
+    之后再切 fill 就认不出它是外部改的。所以在任何编辑落下之前先过一遍。"""
+    for el in state.elements:
+        a = el.get("artist")
+        if a is not None and hasattr(a, _ORIG_HATCH) and hasattr(a, "_hatch_color"):
+            if _hatch_changed_externally(a):
+                setattr(a, _ORIG_HATCH, _fresh_copy(a._hatch_color))  # noqa: SLF001
 
 
 def _stamp_hatch_colors(state) -> None:
@@ -4725,6 +4741,7 @@ def snapshot(state: FigState) -> list[dict]:
 
 def apply(state: FigState, patches: list[dict]) -> list[str]:
     """`_apply` 加收尾：盖上 ≤3.10 花纹色的「写完的样子」（#951）。"""
+    _adopt_external_hatch_colors(state)
     try:
         return _apply(state, patches)
     finally:

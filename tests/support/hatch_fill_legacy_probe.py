@@ -60,6 +60,21 @@ def run(user_edit):
     }
 
 
+def run_unrelated_between():
+    """Codex #993 r4259898020：fill 编辑 → 撤销 fill、另有一条无关 override 留着 → 屏障间用户改色
+    → 再 apply（仍无 fill 编辑）→ 再切 fill 再撤销：花纹色应是用户的值。"""
+    state = build()
+    art = state.resolve(GID)
+    other = {"gid": GID, "prop": "linewidth", "value": 2.0}
+    warns = O.apply(state, [{"gid": GID, "prop": "fill", "value": False}, other])
+    warns += O.apply(state, [other])  # 撤销 fill，无关 override 留着
+    art._hatch_color = USER_COLOR  # noqa: SLF001 — 屏障之间用户改色
+    warns += O.apply(state, [other])  # 这一批没有 fill 编辑
+    warns += O.apply(state, [{"gid": GID, "prop": "fill", "value": False}, other])
+    warns += O.apply(state, [other])
+    return {"warnings": warns, "after_clear": rgba(art)}
+
+
 def main() -> int:
     out = {
         "matplotlib": matplotlib.__version__,
@@ -67,6 +82,7 @@ def main() -> int:
         "user_color": list(USER_COLOR),
         "untouched": run(False),
         "user_edit": run(True),
+        "unrelated_between": run_unrelated_between(),
     }
     print(json.dumps(out))
     return 0

@@ -55,3 +55,10 @@ def test_user_hatch_color_set_between_barriers_survives_the_fill_undo(report):
     assert c["fill_after_clear"]
     assert c["after_clear"] == report["user_color"], "用户在屏障之间改的花纹色被写回的旧值盖掉了"
     assert c["after_clear"] != c["created"]
+
+
+def test_user_color_adopted_even_when_the_next_apply_has_no_fill_edit(report):
+    """Codex #993 r4259898020：撤销 fill 后无关 override 留着，屏障间改色，下一批 apply 不含 fill 编辑。"""
+    c = report["unrelated_between"]
+    assert not c["warnings"], c["warnings"]
+    assert c["after_clear"] == report["user_color"], "收尾盖章把用户的值盖成了「写完的样子」，之后写回旧色"
