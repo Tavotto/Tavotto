@@ -15,6 +15,8 @@ import {
   isDesktop,
   relaunchDesktop,
   type DesktopUpdateInfo,
+  type UpdateAttempt,
+  type UpdateSource,
 } from '@/lib/desktop'
 import { readDismissedUpdate, writeDismissedUpdate } from '@/lib/updateNotice'
 
@@ -78,6 +80,13 @@ interface UpdateState {
   /** 下载进度 0–1；null = 服务端没给 Content-Length（进度条走不确定态） */
   desktopProgress: number | null
   desktopError: string | null
+  /**
+   * 更新实际来自哪个来源（国内镜像 / GitHub）：查到时是查到它的那个，装完是真正下载成功的那个
+   * （下载失败会换来源，两者可能不同）。只给「技术详情」折叠区看，不进主文案。
+   */
+  desktopSource: UpdateSource | null
+  /** 最近一次失败里逐来源的失败记录（闭集枚举，无原始文本）；新一轮开始或成功时清空 */
+  desktopAttempts: UpdateAttempt[]
   /** 查过一次没有新版（用来把「已是最新版本」和「还没查」分开） */
   desktopChecked: boolean
   /**
@@ -91,6 +100,12 @@ interface UpdateState {
   relaunching: boolean
   relaunchFailed: boolean
   relaunch: () => Promise<void>
+}
+
+/** 壳回报的逐来源失败记录（`DesktopUpdateError.attempts`）；别的错误没有。按形状取，不 import 类——测试常整体替换 desktop 模块 */
+function attemptsOf(e: unknown): UpdateAttempt[] {
+  const a = (e as { attempts?: unknown } | null)?.attempts
+  return Array.isArray(a) ? (a as UpdateAttempt[]) : []
 }
 
 export const useUpdateStore = create<UpdateState>((set, get) => ({
@@ -108,6 +123,8 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   desktopUpdate: null,
   desktopProgress: null,
   desktopError: null,
+  desktopSource: null,
+  desktopAttempts: [],
   desktopChecked: false,
   desktopCheckedAtMs: null,
   relaunching: false,
@@ -196,18 +213,24 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
 
   checkDesktop: async () => {
     if (get().desktopPhase !== 'idle') return
-    set({ desktopPhase: 'checking', desktopError: null })
+    set({ desktopPhase: 'checking', desktopError: null, desktopAttempts: [] })
     try {
       const info = await checkDesktopUpdate()
       set({
         desktopUpdate: info,
+        desktopSource: info?.source ?? null,
         desktopChecked: true,
         desktopCheckedAtMs: Date.now(),
       })
     } catch (e) {
       // 离线是常态，但用户按下的按钮必须有下文——无声无息的按钮和坏掉没区别
       set({
+        // 重查失败时壳里的旧句柄已经作废（desktop.ts / run_check 都先清它），界面就不能还挂着
+        // 旧版本和一个只会回 no_pending_update 的「下载并安装」——一起撤掉
+        desktopUpdate: null,
+        desktopSource: null,
         desktopError: e instanceof Error ? e.message : t('update.desktopCheckFailed', { ns: 'errors' }),
+        desktopAttempts: attemptsOf(e),
       })
     } finally {
       set({ desktopPhase: 'idle' })
@@ -216,9 +239,10 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
 
   installDesktop: async () => {
     if (get().desktopPhase !== 'idle' || !get().desktopUpdate) return
-    set({ desktopPhase: 'downloading', desktopProgress: 0, desktopError: null })
+    set({ desktopPhase: 'downloading', desktopProgress: 0, desktopError: null, desktopAttempts: [] })
     try {
-      await installDesktopUpdate((f) => set({ desktopProgress: f }))
+      const used = await installDesktopUpdate((f) => set({ desktopProgress: f }))
+      set({ desktopSource: used })
       // 装完了但还跑着旧进程：与 pip 那条同一条纪律，重启才算换版本
       set({ desktopPhase: 'installed' })
       // 匿名用量统计：**装成功之后**才记（下载失败 / 用户中途取消都不算）。
@@ -237,6 +261,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         desktopProgress: null,
         desktopError:
           e instanceof Error ? e.message : t('update.desktopInstallFailed', { ns: 'errors' }),
+        desktopAttempts: attemptsOf(e),
       })
     }
   },

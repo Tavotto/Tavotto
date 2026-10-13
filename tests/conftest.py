@@ -156,6 +156,16 @@ def _isolated_login_shell_cache():
     userenvs.reset_cache()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_system_pythons(monkeypatch):
+    """系统解释器是环境候选的一个正式来源（`userenvs.system_candidates`：执行路径、证据、建议同一个入口）。
+    它随机器变（Homebrew / `/usr/bin` / 当前解释器），默认置空，各用例需要时自己注入——否则「候选应为空」的用例
+    单跑绿、换台机器红。"""
+    from tavotto.engine import pool
+
+    monkeypatch.setattr(pool, "system_python_candidates", lambda **_: [])
+
+
 _WATCH_THREAD_PREFIX = "tavotto-project-watch-"
 
 

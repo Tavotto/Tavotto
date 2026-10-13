@@ -36,6 +36,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
+from support.previewkit import publish_fixture
 from tavotto import app as m
 from tavotto.engine import patchspec, pool as engine_pool, project_watch as engine_watch
 
@@ -131,9 +132,7 @@ class _FakeWorker:
         self._write_manifest()
 
     def _write_manifest(self) -> None:
-        (self.out_dir / f"{self.manifest['stem']}.json").write_text(
-            json.dumps(self.manifest, ensure_ascii=False), encoding="utf-8"
-        )
+        publish_fixture(self.out_dir, self.manifest["stem"], self.manifest)
 
     def override(self, stem, patches, preview_dpi=None, inline_svg=False):
         self.calls.append("override")
@@ -1122,7 +1121,7 @@ def test_hot_manifest_is_matched_per_stem_not_per_worker(tmp_path):
     patches = [{"gid": "axes_0.title", "prop": "fontsize", "value": 7}]
     for stem in ("Fig2_yield", "Fig2_correlation"):
         man = {**_manifest(), "stem": stem}
-        (out / f"{stem}.json").write_text(json.dumps(man), encoding="utf-8")
+        publish_fixture(out, stem, man)
 
     class Hot:
         """热会话：只在 Fig2_yield 上应用过 patches。"""
@@ -1138,6 +1137,36 @@ def test_hot_manifest_is_matched_per_stem_not_per_worker(tmp_path):
     hot = Hot()
     assert m._hot_manifest(hot, "Fig2_yield", patches) is not None  # 这个才可比
     assert m._hot_manifest(hot, "Fig2_correlation", patches) is None  # 另一个不可比
+
+
+def test_hot_manifest_rereads_the_path_after_the_rerender_repairs_an_invalid_stem(tmp_path):
+    """发布失败且还原也失败后 stem 被作废（`usable_preview_path` 返回哨兵）。同一组 patches 的写回
+    触发 `override` 重渲染，把标记清掉、manifest 重新发布——此时必须按**修好之后**的路径重读，
+    否则读的仍是哨兵、回 None，写回自检降成 `fresh_only`，热态与重放的比对和像素门被跳过。"""
+    from tavotto.engine import figcapture
+
+    out = tmp_path / "out"
+    out.mkdir()
+    stem = "Fig1"
+    patches = [{"gid": "axes_0.title", "prop": "fontsize", "value": 7}]
+    figcapture.mark_preview_invalid(out, stem)
+    assert figcapture.preview_invalid(out, stem)
+
+    class Hot:
+        built = True
+        out_dir = out
+        last_patch_hash = patchspec.patch_hash(patches)
+        last_patch_hash_by_stem = {stem: patchspec.patch_hash(patches)}
+        calls = 0
+
+        def override(self, s, p):
+            Hot.calls += 1
+            publish_fixture(out, s, {**_manifest(), "stem": s})
+            figcapture.clear_preview_invalid(out, s)
+
+    got = m._hot_manifest(Hot(), stem, patches)
+    assert Hot.calls == 1
+    assert got is not None and got["stem"] == stem
 
 
 def test_verify_replay_answers_script_input_with_the_hot_answers(client, tmp_path, monkeypatch):

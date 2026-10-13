@@ -111,37 +111,131 @@
   结尾，上限永远数不到。判据是**年龄 + pid 已死**——一小时内一律不碰、pid
   还活着的留到一天后（pid 复用 / Windows 量不了存活）；只认 `_next_tmp` 起的
   名字，命名与判据同在 `atomicio`。
-- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§三）**：`engine/layoutsession.py`（纯标准库）
+- **会话状态以后端为准（2026-09-29，#715 PR-B，ADR 0108（`docs/adr/0108-desktop-stable-origin-and-backend-session-state.md`）§三；2026-10-11 文档恢复可靠性修复重写了读取、last 语义、锁与提交顺序，ADR 0120（`docs/adr/0120-document-restore-verdict-and-recoverable-last.md`），见下）**：`engine/layoutsession.py`（纯标准库）
   是 `data_dir()/state/layout-sessions.json` 的唯一读写方（`state_path()` 是位置的唯一出处）。内容：
-  `projects{<normalize_path_identity(项目路径)>: {last{doc_id, name, at}}}`、`no_project{last}`（没开项目那一组）、
-  `owners{槽位 doc_id → 项目键 | null}`（`null` = 确认过写它时没开项目；没有这条 = 不知道，两档）。
+  `projects{<normalize_path_identity(项目路径)>: {last, prev, pending}}`、`no_project{...}`（没开项目那一组）、
+  指针形状都是 `{doc_id, name, at}`；`owners{槽位 doc_id → 项目键 | null}`（`null` = 确认过写它时没开项目；没有这条 = 不知道，两档）；
+  `owner_revisions{槽位 doc_id → 记归属那一刻正文的 revision}`。`version` 仍是 1（新字段是增量，不升级、不碰正文 schema）。
   #674 的 `bindings` 未进 main，本文件暂不带。**不能放**在 `_autosave/`（清理按文件名扫）、`layouts/`、
   项目 `tavottofile/`（会随项目拷到别人机器上）。
-  - 写一律 `atomicio`，模块锁管本进程读改写；**同值不写**（`record_owner` 在每次自动保存都会被调）。
-    读坏了（不是 JSON / 形状不对 / 非有限数）当成空的，下一次写整份替换——这是「上次停在哪」的提示，
-    不值得让任何一次保存失败。
+  - **读取结果四档**（`_read()` 回 `(state, status)`，`GET /api/layout-session` 的 `index`）。**这一档替代了旧合同
+    「读坏了（不是 JSON / 形状不对 / 非有限数）当成空的，下一次写整份替换」**——那条把「文件不存在」「读不动」
+    「字节坏」「来自更新版本」「某个无关字段是 NaN」全部当成首次空状态，下一次普通写入就把一份可能完整、
+    可能更新的文件整份抹掉：`missing`（不存在，首次空）；`ok`（逐字段清洗：坏字段丢、其余保留，**未知顶层键与组内
+    未知键原样保留**，非有限数的字段丢弃；NaN 用标准 `json.loads` 接受，不再整份作废）；`recovered`（字节坏，原字节先存
+    `state/layout-sessions.corrupt-<ms>-<sha256 前 12 位>-<primary|bak>.json`——**按内容命名**，主文件与 bak 同一毫秒里字节不同也不会互相替换；
+    相同字节只存一份、写完读回核对相等才算保存成功、最多留 3 份且不裁本次加载存下的——再用 `layout-sessions.json.bak`，
+    那是每次成功写主文件后同 payload 再写的一份）；`degraded`（读失败拿不到字节 / 字节坏且无可用 bak / `version` 比
+    `FORMAT_VERSION` 新）。读失败与未来格式**拒绝一切写回**——**未知 `version` 永远不用 v1 覆盖**，这条对 `.bak` 同样成立：主文件坏而 bak 是更新版本写的、主文件不在而 bak 是未来格式或读不动、
+    bak 存在却读不动，都按只读处理（正文照存，`metadata:"failed"`）；坏 bak 的字节同样先留副本、留不下就拒写；导出默认值文件来自未来 / 读不动时也不整份替换（503）（`SessionStateUnavailable`，是 `OSError`）：拿空状态覆盖一份
+    可能完整的文件，就是把一次读故障变成永久丢数据；字节坏的那种原字节已备份，写入放行。degraded 时槽位清理一个都不删
+    （不知道谁受保护就当都受保护）。备份都在 `state/`，不在 `_autosave/`。只读路径（`read_status` / `read_readonly`，
+    候选发现与 `/owner` 用）**不写任何东西、不拿锁**（主文件只被整份原子替换，读到的永远是完整的一份）。
+  - **`last` 只指向可恢复的正文**（R3）。每组三个指针：`last`（durable）、`prev`（上一份 durable，容量 1）、
+    `pending`（最新的打开意图但槽位还没有有效正文，容量 1，**不替换** durable last）。`PUT /api/layout-session/last`
+    在槽位的 `_document_lock` 里验「槽位文件在、能读、过 `loads_document` + `validate_document`」（`_slot_recoverable`）再调
+    `set_last(..., slot_ok=)`：通过 → durable（`prev ← 旧 last`、`last ← 新`、同一份的 pending 清掉），回
+    `{ok, last, state:"durable"}`；不通过 → 只写 pending，回 `{ok, last:<durable 或 null>, pending, state:"pending"}`。
+    **pending 只是「最新的、还没 durable 的意图」**：任何更晚的 durable `set_last(X)` 都清掉本组 pending（不管它指着谁），
+    否则 A→B(pending)→A(durable) 之后 B 迟到的首次保存会晋升过期的 pending、把 last 顶回 B。
+    **durable `set_last` 总是前进 `at` 并写盘，哪怕 (doc_id, name) 没变**：`at` 是前端判「谁的打开更晚」的排序令牌，再次明确打开
+    同一份排版必须让它严格前进（`max(now_ms, 本组 last/pending 的 at + 1)`，同一毫秒、时钟回拨也一样），否则别的 profile 里还悬着的
+    pending 会被当成更新的而翻案；`prev` 不动、pending 清掉。晋升（`commit_slot`）同样严格前进。「同值不写」只留给每次保存都调的
+    `record_owner` / `commit_slot` 的归属部分（以及同值的 pending 意图）；前端自己对每帧推送去重。
+    **验证到发布到底串行了什么**：验槽位 + `set_last` 在槽位的 `_document_lock` 里（**只在本进程内**互斥），所以本进程的清理 /
+    DELETE 删不掉验证与发布之间的槽位；**别的进程**（共用数据目录）不持这把锁，所以发布时 `set_last` 在**跨进程会话锁**里
+    再调一次 `slot_check`（app 传的只 stat 回调：文件还在、`(mtime_ns, size)` 与验证时一致），不是 → 只记 pending。
+    所有槽位删除（`DELETE`、清理的 `remove_slot_unless_protected`、教程重置的 `delete_slot`）都把 unlink 放在跨进程会话锁里，
+    于是「删」与「发布」被同一把跨进程锁串行：要么发布先到（删除方在锁里重判保护，删不掉），要么删除先到（发布看到槽位没了，记 pending）。
+    没有新增锁；`slot_check` 不解析正文、不取文档锁。验证（读整份正文）本身仍在会话锁之外，所以内容被别的进程**改成另一份有效正文**
+    不在这里拦（签名变了会降级为 pending）。
+    旧前端的正常顺序是「先 PUT last、再首次自动保存」：early PUT 只记 pending，**首次正文落盘成功的那个提交**
+    （`commit_slot`）把匹配的 pending 晋升为 last——不留悬空 last，也不靠前端记得补一次。`last` 对旧前端仍是 `{doc_id,name,at}`。
+    **不要**只在 `set_last` 里「文件不存在就拒绝」：那会让旧前端的 early PUT 永远失败又不补记。
+    `GET` 回 `{last, prev, pending, index}`，三个指针回之前都按 owner 冲突过滤；`prev` / `pending` 指着的槽位不在时照常回。
+    逐指针在槽位文档锁内重读会话状态和正文 revision；指针换槽位就释放旧锁、重试新槽位（连续变动时报
+    `index: degraded`）。旧记录没有 `owner_revisions` 时也不能拿 F 的旧归属快照拼上 G 的新正文 revision。
+    清理保护 = 各组 `last` + `prev` + `pending`。
+  - **owner 与正文按同一个顺序提交**（R6）。`PUT /api/autosave/<id>` 在**同一把 `_document_lock(p)`** 里：判冲突 → 写正文 →
+    读 revision → `commit_slot(doc_id, key, revision)`（记归属、记 `owner_revisions[doc]=revision`、晋升 pending）。
+    以前归属在锁外记，F/G 两个项目同 docId 交错保存时旧请求的归属回调能晚于新正文落地、把归属改回旧项目（A24）。
+    **锁顺序全局固定：槽位文档锁 → 会话锁**——自动保存、DELETE（先文档锁再 `forget_documents`）、清理
+    （`remove_slot_unless_protected`）、`PUT last`（验槽位 + `set_last`）、教程重置（`forget_project` + 删槽位）都按它；会话锁内不读
+    任何正文、不调需要文档锁的函数，要槽位 revision 的判据由调用方在锁外算好传进来。`_document_lock` 不可重入，别在持锁时再取别的路径的锁。
+    响应 `{ok, saved_at, revision, metadata}`：`metadata` = `"ok"` / `"failed"`（会话状态写不进去或读不到可信状态）/
+    `"owner_unknown"`（pj 已失效，按保数据合同照写正文，归属不知道、不记、不晋升）。**元数据失败不让这次保存失败，
+    revision 一律如实回**（客户端据此推进基线，不会误以为正文没写进去）；下一次保存补记。**这不是跨文件崩溃事务**：
+    进程死在「正文已落盘、元数据未提交」之间时，靠 `owner_revisions[doc]` 与槽位当前 revision 对不上来识别——
+    该归属是**待核对**（`owner_is_stale`），处理**不对称，安全优先**：① `set_last` 里待核对**不解除**冲突——记录说是别的项目的，
+    正文被外部动过也不能让另一个项目认领（409 `layout_foreign`）；② `view_for` / `last_for` 对**任何**项目（含老主人）都不回待核对的指针，
+    不自动恢复未核对的内容；③ `/owner` 回 `{owner:"unknown", evidence:null, verified:false}`，不再往下翻旁证；
+    ④ 候选发现里它对每个项目都只出现在 `scope=unknown`（用户可「恢复副本」）、绝不在 `scope=project`。
+    **没有 `owner_revisions` 的旧记录（含 scalar owners）按现状信任**——兼容边界，不是保证。比较 revision 在会话锁外读文件。
+  - **槽位文档锁也是跨进程的**（2026-10-11）：`_document_lock(path)` = 64 个条带，每个条带 = 进程内线程锁 +
+    `state/doclocks/<条带>.lock` 上的文件锁（与会话锁共用 `layoutsession.acquire_file_lock`）。两个后端进程共用一个数据目录、
+    从同一个 `base_revision` 保存同一个 doc id 时，「判冲突 → 写正文 → 读 revision → `commit_slot`」是同一个原子段，
+    恰好一个成功、另一个 409，归属与 `owner_revisions` 对着最终正文（否则 F 会把 G 的正文 revision 记成自己的）。
+    条带下标 = `zlib.crc32(NFC+casefold 后的文件名)`（组合 / 分解写法在 macOS 上是同一个文件）：**不能用 `hash()`**（每个进程盐不同），也**不能用整条路径字符串**（符号链接别名 / 大小写不同的写法
+    会让两个进程选到不同的锁）；锁文件（会话锁与条带锁）都在**数据目录 realpath** 下的 `state/`，别名写法打开同一个文件。自动保存 / 另存为 / ⌘S / 槽位清理 / DELETE / `PUT last` /
+    教程重置共用这套条带；**没有任何一条路同时持两个文档锁**（不可重入；清理一次只处理一个槽位），
+    顺序全局是 文档锁 → 会话锁。等不到（30 s，要大于持锁方的合理停顿）抛 `SessionStateUnavailable`，
+    `@app.errorhandler` 回 503 `session_unavailable`，此时一个字节没写；清理里等不到只是这次不清它。锁文件打不开
+    **失败即关门**：锁文件打不开、文件系统拒绝咨询锁（ENOLCK / EOPNOTSUPP / EINVAL）也抛 `SessionStateUnavailable`，不退回只有线程锁。
+    真两进程回归 `tests/test_layout_recovery_backend.py`（POSIX）；Windows 的 `msvcrt` 腿只有 CI 验证。
+  - **`/owner` 与候选发现读的是一致的快照**：两者都在**槽位的文档锁**里同时读会话状态（owners / owner_revisions / status，只读、不拿会话锁）
+    和槽位正文——别的项目的保存（正文 + `commit_slot` 都在这把锁里）插不进两次读之间，否则会拿 G 的新正文去对还没有 G 归属的旧状态，
+    把别人的槽位报成 this。`/owner` 回的 `revision` 就是这份快照里正文的。候选发现**按条目**各取自己的槽位锁、各读一次状态
+    （页级快照做不到：它在条目被改写之前读的）；一页最多 `limit` 次短暂持锁。`/owner` 锁等不到回 `unknown`（`revision:null`），
+    候选等不到整页回 503 `candidates_unavailable`——都不猜。这两个只读端点因此会建（空的）锁文件，锁文件是互斥基础设施不是状态。
+  - **教程副本的发布与清理意图标记也是跨进程串行的**：`engine/tutorial.ensure_tutorial_copy` 在 `state/tutorial.lock`
+    （`layoutsession.acquire_file_lock`，30 s）里跑。两个进程同时首次打开 / 重置教程时，副本 rename 与共享标记
+    `state/tutorial-cleanup-pending` 的写入 / 失败回滚必须串行，否则一个进程发布后退出、另一个进程 rename 失败的回滚分支会把对方
+    留下的共享标记删掉，下次打开就漏掉旧固定 ID 槽位的清理。拿不到锁回 409 `tutorial_locked`，绝不在无锁时继续。
+  - **跨进程文件锁**（C2）：模块锁 `_LOCK` = 进程内线程锁 + `state/layout-sessions.lock` 的文件锁（POSIX `fcntl.flock`、
+    Windows `msvcrt.locking`，纯标准库，非阻塞 + 10 ms 重试），多个进程共用一个数据目录时读改写不丢更新；拿不到（5 s）抛
+    `SessionStateUnavailable`。**锁文件打不开 / 文件系统不支持咨询锁（网络盘等）时同样抛它，绝不退回只有线程锁**（会静默丢更新、互相覆盖）；
+    每个进程只记一次日志。**数据目录所在文件系统不支持咨询锁 = 不支持的部署**：保存会可见地 503 失败（前端显示保存失败并保留本机崩溃副本），
+    清理跳过、会话读回 `index:"degraded"`，而不是冒静默覆盖的险。导出默认值
+    （`export-defaults.json`）不在这次范围，仍只有线程锁。`tests/test_layout_recovery_backend.py` 有真两进程交错回归（POSIX 跑过；
+    Windows 的 `msvcrt` 那条腿留给 CI，本机未验证）。
   - 端点：`GET /api/layout-session`、`PUT /api/layout-session/last` 按 `_request_ctx()` 认项目（指名不存在的
-    项目 409、没有项目 = `no_project` 组），回给前端的只有 `{doc_id, name, at}`、不带路径；导出默认值
+    项目 409、没有项目 = `no_project` 组），回给前端的只有 `{doc_id, name, at}`、不带路径；会话状态写不进去 `PUT last` 回
+    503 `session_unavailable`；导出默认值
     `GET/PUT /api/preferences/export-defaults`（`state/export-defaults.json`，只守「不大的 JSON 对象」，
     语义在前端 `lib/exportDefaults.ts`）。都在 ADR 0008 认证之下，错误码复用 `bad_request`。
-  - `PUT /api/autosave/<id>` 写成功后按 pj 记归属（`_record_autosave_owner`）：pj 指名的项目已经不在时**照写不拒**
-    （那是用户的工作），归属记成「不知道」即不记；记不下只打日志。`DELETE` 与槽位清理删掉的槽位，
-    归属与指向它的 last 一并清；清理顺带丢掉磁盘上已不在的槽位的归属。清理删每个槽位走
-    `remove_slot_unless_protected`：**在会话状态锁里**重判「此刻是不是某组的 last」→ 删 → 忘掉记录，
-    `protected_doc_ids()` 只是快照，并发的 `set_last` 能在快照与删除之间把旧槽位记成新 last。
+  - `DELETE` 与槽位清理删掉的槽位，归属（含 `owner_revisions`）与指向它的 last / prev / pending 一并清；清理顺带丢掉磁盘上已不在的槽位的归属。
+    清理删每个槽位走 `remove_slot_unless_protected`：**在会话状态锁里**重判「此刻是不是某组的 last / prev / pending」→ 删 → 忘掉记录，
+    `protected_doc_ids()` 只是快照，并发的 `set_last` 能在快照与删除之间把旧槽位记成新 last（或推成 prev）。
     丢「磁盘上已不在的槽位」的归属同理：扫描快照只挑候选，`drop_owners_not_in` 在锁里当场再看文件
-    （快照之后并发保存刚建出的槽位不丢归属，否则它永远不进配额）。
-  - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last 与教程画布槽位的归属（ADR 0039 §5）。
+    （快照之后并发保存刚建出的槽位不丢归属，否则它永远不进配额）。**没有归属的老槽位仍一个都不删**——候选发现没有放宽这一条。
+  - 教程重置 / 资源升级换副本（`_clear_tutorial_local_state`）一并清教程项目的 last / prev / pending 与教程画布槽位的归属（ADR 0039 §5）。
   - **别的项目的排版不认（2026-10-01，#715 Windows 真机验收 P1）**：判据只有 `owner_conflict(state, doc_id, key)`
-    （owners 里**确知**是别的项目 / 别的组；没有记录 = 不知道，不算）。`set_last` 撞上它抛 `ForeignLayoutError`、
+    （owners 里**确知**是别的项目 / 别的组；没有记录 = 不知道，不算；待核对的归属也不算「确知」）。`set_last` 撞上它抛 `ForeignLayoutError`、
     一个字节不写，端点回 `409 layout_foreign`（不显示给用户，前端据此作废本机缓存那一条、不重推）；`last_for`
     读到指着别的项目槽位的旧记录（修复前写下的）回 `None`。前端的同一条判据是 `web/src/lib/docOwnership.ts`
     （按本机「最近文档」索引），两侧互为纵深。自动保存 PUT 照旧按 pj 改记归属，前端负责只在用户真改过 / ⌘S 之后
     才以当前项目的 pj 写（只打开不算，#773 Codex P2）；失效的 pj 记成「不知道」，不覆盖已有归属。
-    前端本机不知道归属时的证据端点 `GET /api/layout-session/owner?doc_id=`（`_layout_owner_evidence`）：owners 有记录
-    即定论（别的项目 = `other`，素材再像也不翻案）→ 当前项目 `tavottofile/versions/<id>.json` → 槽位里非 runtime 面板的
-    素材**全部**在当前项目目录内且至少一张；都没有回 `unknown`。只读、不改任何记录。
-  - 看护 `tests/test_layout_session.py`。
+    前端本机不知道归属时的证据端点 `GET /api/layout-session/owner?doc_id=`（`_layout_owner_evidence`），回
+    `{owner, evidence, verified}`：owners 有记录即定论（别的项目 = `other`，素材再像也不翻案；`verified` = revision 对得上或旧记录）→
+    当前项目 `tavottofile/versions/<id>.json` → 槽位里非 runtime 面板的素材**全部**在当前项目目录内且至少一张
+    （这两条 `verified:false`）；都没有回 `unknown`。只读、不改任何记录。
+  - **候选发现 `GET /api/layout-session/candidates?scope=project|unknown&limit=50&cursor=`（P03，只读）**：索引丢了 / last 指不到时，
+    从 `AUTOSAVE_DIR` 的**真实槽位**里列出能找回的（不要求先知道 docId，owners 只是线索：不存在的文件不列）。
+    只枚举 docId 形状的 `*.json` 普通文件（不跟随符号链接、不接受任何路径），按 mtime 新→旧、游标分页（游标是
+    `(mtime_ns, 文件名)` 的不透明编码）；每页最多读 `limit`（≤100）个文件、字节有预算（至少读一个），单文件 > 32 MB 不读、
+    `status:"too_large"`；目录条目超过 20000 时只看了目录原序的前一部分，响应带 **`truncated: true`**（游标另带第一页的目录指纹，后面的页重算，对不上——翻页期间有槽位被保存 / 新建 / 删除，
+    按 mtime 的顺序变了、某行可能被漏——也标 `truncated: true` 并照常返回这一页，之后每一页都保持）（`next_cursor` 为 null 也不等于列完了，
+    调用方不得据此自动采用唯一候选或判定为空）；一页里被 scope 过滤掉的不返回，所以一页可能不满、`next_cursor` 仍非空——调用方循环翻页。
+    每项 `{doc_id, name, updatedAt, mtime, revision, schema, status: ok|invalid|too_new|too_large, canvases, objects, owner:
+    this|unknown, evidence, runtime:[{script,figure}], panels:[…], sketch?}`（非 ok 的 `canvases`/`objects` 是 `null`，不冒充 0；
+    `runtime`/`panels` 最多 5 个、绝对路径只留最后一段；`sketch` 复用时间线的 `_version_sketch`，不带 overrides / 脚本）。
+    `scope=project` 只回 `this`（owners 可信记录 / 时间线 / 素材全在项目里），`scope=unknown` 只回 `unknown`（含待核对的归属）；
+    `owner=other` 两个 scope 都不回。**runtime 文档**（`runtime:<脚本>#<图名>`）没有 owners / last / 时间线就只出现在 `unknown`——
+    `/owner` 与这里都不为 runtime 面板作证，也不凭脚本同名 / fingerprint / mtime 自动归项目。一个坏文件只让自己
+    `invalid`；不写任何东西、不回路径、不运行脚本。**恢复副本不加端点**：前端读源正文（带 revision）→ 用户确认时再读一次比对 →
+    固定目标 id 走正常 `switchDocument` + 自动保存，源槽位与源归属不动。
+  - 看护 `tests/test_layout_session.py`（模块与旧端点）与 `tests/test_layout_recovery_backend.py`（读取四档、last/pending 晋升、owner 同序、
+    清理保护、候选发现、跨进程）。
 - 前端文档模型的对应字段（lockedGids / layoutGroups 等）见 `web/AGENTS.md`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

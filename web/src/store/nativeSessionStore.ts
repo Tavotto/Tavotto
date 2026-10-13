@@ -15,7 +15,8 @@ import {
   type NativeSessionInfo,
 } from '@/lib/api'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
-import { useDocumentStore } from '@/store/documentStore'
+import { currentProjectId } from '@/lib/session'
+import { getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -308,7 +309,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
         errors: { ...s.errors, [sessionId]: null },
         conflicts: { ...s.conflicts, [sessionId]: res.conflicts?.stems ?? [] },
       }))
-      placeNativeFigures(res.descriptors)
+      placeNativeFiguresWhenReady(res.descriptors, epoch)
     } catch (e) {
       if (get().epoch !== epoch) return
       // build 失败不改变会话状态——那由 SSE 说了算。这里只记一条原因。
@@ -425,6 +426,28 @@ function runAction(
  *
  * 清单与预览一并换代：这批图刚刚才被物化进 runtime cache。
  */
+function placeNativeFiguresWhenReady(descriptors: CapturedFigureDescriptor[], epoch: number): void {
+  if (!descriptors.length) return
+  const pj = currentProjectId()
+  const gate = getRestoreGate()
+  if (gate.state === 'ready') {
+    if (gate.reason === 'initial' || gate.pj === pj) placeNativeFigures(descriptors)
+    return
+  }
+  // build 已消费屏障序号；恢复待用户处理时，保留这批 descriptor，等文档真的可写后再放置。
+  // 超时只结束这一段等待，仍留在同项目时继续等；换项目 / 清掉原生会话则作废。
+  void (async () => {
+    while (useNativeSessionStore.getState().epoch === epoch && currentProjectId() === pj) {
+      const verdict = await whenDocumentReady(pj)
+      if (verdict === 'superseded') return
+      if (verdict === 'ready') {
+        if (useNativeSessionStore.getState().epoch === epoch && currentProjectId() === pj) placeNativeFigures(descriptors)
+        return
+      }
+    }
+  })()
+}
+
 function placeNativeFigures(descriptors: CapturedFigureDescriptor[]): void {
   if (!descriptors.length) return
   const ids = descriptors.map((d) => d.asset_id)

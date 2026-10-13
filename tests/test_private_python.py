@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -235,7 +236,13 @@ class TestLock:
         missing = sorted(set(privatepython.ERROR_CODES) - set(table))
         assert missing == [], missing
         assert all(str(table[c]).strip() for c in privatepython.ERROR_CODES)
-        assert all("{{" not in str(table[c]) for c in privatepython.ERROR_CODES)  # 不插值
+        # 这批文案不带数据插值（原因 / 路径 / 版本号一概不进句子）；唯一允许的占位符是品牌名 `{{product}}`
+        # （#954：品牌唯一出处 `web/src/lib/brand.ts`）。`engine.repairError` 的消费方逐个核过，全部传 product：
+        # 前端 `repairCodeMessage`（修复卡与包管理页共用）、`DependencyPrepareDialog` 两处（失败行、目标不可用原因）；
+        # Python 侧（app / deprepair / codex-plugin）只发 code，不读这张表。新增消费方必须同样传 product。
+        for c in privatepython.ERROR_CODES:
+            placeholders = set(re.findall(r"\{\{\s*([^}\s]+)\s*\}\}", str(table[c])))
+            assert placeholders <= {"product"}, (locale, c, placeholders)
 
     def test_payloads_carry_no_machine_paths(self, tmp_path, launches):
         archive, sha, rel = _make(tmp_path, launches)

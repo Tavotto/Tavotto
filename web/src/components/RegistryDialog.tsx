@@ -624,8 +624,7 @@ function PanelRow({
             hasAsset={!!asset}
             onAdd={() => {
               if (!asset) return
-              addPanelToCanvas(asset)
-              useProjectReadinessStore.getState().closeCenter()
+              if (addPanelToCanvas(asset)) useProjectReadinessStore.getState().closeCenter()
             }}
             onProbe={onProbe}
             onRescan={onRescan}
@@ -1077,7 +1076,7 @@ function ProbeNoteView({ note }: { note?: ProbeNote }) {
               variant="secondary"
               size="sm"
               onClick={() => {
-                addRuntimePanelToCanvas(d)
+                if (!addRuntimePanelToCanvas(d)) return
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
                 useProjectReadinessStore.getState().closeCenter()
               }}

@@ -136,6 +136,7 @@ import { ColorbarExtendPicker, ColorbarOrientationPicker } from './controls/Colo
 import { ProjectionPicker } from './controls/ProjectionPicker'
 import { ViewAngleDiagram } from './controls/ViewAngleDiagram'
 import { EffectToggle } from './controls/EffectToggle'
+import { FOLLOW_EDGE, HatchColorField, hasFollowEdge, hatchColorReading } from './controls/HatchColorField'
 import { HatchPicker } from './controls/HatchPicker'
 import { LegendBindingControl } from './controls/LegendBindingControl'
 import { LegendPositionPicker } from './controls/LegendPositionPicker'
@@ -1828,6 +1829,41 @@ function BatchFieldRow({
           />
         )
       case 'color':
+        // 带「跟随边框」的颜色（纹理颜色）：每个成员各读各的，全体都跟随才算跟随
+        if (hasFollowEdge(field)) {
+          const reads = elements.map((item) => {
+            const own = item.editable.find((f) => f.prop === field.prop) ?? field
+            return hatchColorReading(
+              currentValue(panel, item.gid, own),
+              own,
+              panel.overrides.some((o) => o.gid === item.gid && o.prop === field.prop),
+            )
+          })
+          return (
+            <HatchColorField
+              ariaLabel={label}
+              // 色号混不混按**显示的**色号算：都写着 `edge` 的成员边色不同，原始值相同却显示不同色（Codex #972 r4251281733）
+              mixed={reads.some((r) => r.hex !== reads[0].hex)}
+              hex={reads[0].hex}
+              follows={
+                reads.every((r) => r.follows) ? true : reads.some((r) => r.follows) ? 'mixed' : false
+              }
+              onColor={(v) => write(v, true)}
+              onFollow={(follow) => {
+                if (follow) return writeOnce(FOLLOW_EDGE)
+                // 固定成**各自**此刻显示的色号（边色不同的成员不被压成同一个色）
+                setOverrides(
+                  panel.id,
+                  elMsg('batchEdit', { label }),
+                  elements.map((item, i) => ({ gid: item.gid, prop: field.prop, value: reads[i].hex })),
+                  true,
+                )
+                gesture.end()
+              }}
+              onGestureEnd={gesture.end}
+            />
+          )
+        }
         // 不一致时色块自己说「多个值」（`ColorField mixed`）：不画任何一个颜色，
         // value 只当取色盘的起点（第一个成员的真色）
         return (
@@ -2435,6 +2471,19 @@ function FieldRow({
       )
 
     case 'color':
+      if (hasFollowEdge(field)) {
+        const read = hatchColorReading(value, field, overridden)
+        return wrap(
+          <HatchColorField
+            ariaLabel={label}
+            hex={read.hex}
+            follows={read.follows}
+            onColor={(v) => write(v, true)}
+            onFollow={(follow) => writeOnce(follow ? FOLLOW_EDGE : read.hex)}
+            onGestureEnd={gesture.end}
+          />,
+        )
+      }
       return wrap(
         <>
           {/* 取色是**连续**动作：系统取色盘拖着走会发一串 change。开一轮事务，

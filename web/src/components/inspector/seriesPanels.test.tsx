@@ -94,19 +94,32 @@ export const scatterFields = (
 
 const HATCH_OPTIONS = ['', '/', '\\\\', '|', '-', '+', 'x', 'o', 'O', '.', '*', '//', 'xx', '///']
 
-/** 与 `_hatch_field` + `_hatch_style_fields` 同形（线宽 3.10+ 才有） */
-const hatchPair = (hatch = '', over: { width?: boolean } = {}): EditableField[] => [
-  f('hatch', 'enum', hatch, { options: HATCH_OPTIONS }),
-  ...(over.width === false ? [] : [num('hatch_linewidth', 1)]),
-]
+/** 与 `_hatch_field` + `_hatch_style_fields` 同形（线宽 3.10+、颜色 3.11+ 才有；颜色默认不带，沿用旧版版面） */
+type HatchColorOpt = boolean | { value?: string; follows?: boolean }
+const hatchPair = (
+  hatch = '',
+  over: { width?: boolean; color?: HatchColorOpt } = {},
+): EditableField[] => {
+  const color = over.color === true ? {} : over.color
+  return [
+    f('hatch', 'enum', hatch, { options: HATCH_OPTIONS }),
+    ...(color
+      ? [f('hatchcolor', 'color', color.value ?? '#000000', { follows_edge: color.follows ?? true })]
+      : []),
+    ...(over.width === false ? [] : [num('hatch_linewidth', 1)]),
+  ]
+}
 
 /** 与 `_bar_series_fields` 同形 */
-export const barSeriesFields = (hatch = ''): EditableField[] => [
+export const barSeriesFields = (
+  hatch = '',
+  color?: HatchColorOpt,
+): EditableField[] => [
   f('label', 'text', 'Measurements'),
   f('facecolor', 'color', '#47749e'),
   f('edgecolor', 'color', '#000000'),
   num('linewidth', 1, { max: 5 }),
-  ...hatchPair(hatch),
+  ...hatchPair(hatch, { color }),
   f('bar_width', 'number', 0.8, { min: 0.01, max: 5, step: 0.02, unit: '数据单位' }),
   alpha(1),
   f('visible', 'bool', true),
@@ -135,13 +148,15 @@ export const fillFields = (): EditableField[] => [
 ]
 
 /** 与 `_patch_fields` 同形（脚本 add_patch 出的独立形状） */
-export const patchFields = (over: { fill?: boolean; hatch?: string } = {}): EditableField[] => [
+export const patchFields = (
+  over: { fill?: boolean; hatch?: string; color?: HatchColorOpt } = {},
+): EditableField[] => [
   f('facecolor', 'color', '#1f77b4'),
   f('fill', 'bool', over.fill ?? true),
   f('edgecolor', 'color', '#000000'),
   num('linewidth', 1),
   f('linestyle', 'enum', '-', { options: ['-', '--', '-.', ':'] }),
-  ...hatchPair(over.hatch ?? ''),
+  ...hatchPair(over.hatch ?? '', { color: over.color }),
   alpha(1),
   f('visible', 'bool', true),
   f('zorder', 'number', 2, { min: -5, max: 50, step: 1, group: '排列' }),
@@ -687,6 +702,131 @@ describe('填充区域：填充一组、描边一组，纹理有名字（T21）'
     await mount(['axes_0.patches_0'])
     expect(row('hatch')).toBeTruthy()
     expect(row('hatch_linewidth')).toBeNull()
+  })
+})
+
+/* ------------------------------ 纹理颜色（#874） ------------------------------ */
+
+const followBox = () => host.querySelector<HTMLInputElement>('input[data-hatch-follow-edge]')
+
+describe('纹理颜色：色块 + 「跟随边框」，只在有花纹时出现', () => {
+  it('三种对象同口径：图案 · 颜色 · 线宽依次排在首屏', async () => {
+    const cases: [string, string, EditableField[]][] = [
+      ['axes_0.bars_0', 'bar_series', barSeriesFields('//', true)],
+      ['axes_0.bars_0.bar_6', 'bar', [...hatchPair('xx', { color: true }), alpha(1)]],
+      ['axes_0.patches_0', 'patch', patchFields({ hatch: 'xx', color: true })],
+    ]
+    for (const [gid, role, fields] of cases) {
+      seedRender(makeManifest([elementOf(gid, role, '对象', fields)]))
+      await mount([gid])
+      const props = Array.from(host.querySelectorAll<HTMLElement>('[data-prop]')).map((e) => e.dataset.prop)
+      const i = props.indexOf('hatch')
+      expect(props.slice(i, i + 3), role).toEqual(['hatch', 'hatchcolor', 'hatch_linewidth'])
+      expect(row('hatchcolor')!.textContent, role).toContain('纹理颜色')
+      expect(row('hatchcolor')!.textContent, role).toContain('跟随边框')
+      await act(async () => {
+        root.unmount()
+      })
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('没有花纹时收起（与线宽同一条判据）；旧版本不发字段就整行不画', async () => {
+    seedRender(makeManifest([elementOf('axes_0.bars_0', 'bar_series', '系列', barSeriesFields('', true))]))
+    await mount(['axes_0.bars_0'])
+    expect(row('hatch')).toBeTruthy()
+    expect(row('hatchcolor')).toBeNull()
+    await act(async () => {
+      root.unmount()
+    })
+    document.body.innerHTML = ''
+    seedRender(makeManifest([elementOf('axes_0.bars_0', 'bar_series', '系列', barSeriesFields('//'))]))
+    await mount(['axes_0.bars_0'])
+    expect(row('hatchcolor')).toBeNull()
+    expect(row('hatch_linewidth')).toBeTruthy()
+  })
+
+  it('勾上「跟随边框」写 edge；去掉勾固定成当前显示的色号', async () => {
+    seedRender(
+      makeManifest([
+        elementOf('axes_0.bars_0', 'bar_series', '系列', barSeriesFields('//', { value: '#008000', follows: false })),
+      ]),
+    )
+    await mount(['axes_0.bars_0'])
+    expect(followBox()!.checked).toBe(false)
+    await act(async () => {
+      followBox()!.click()
+    })
+    expect(overrideOf('axes_0.bars_0', 'hatchcolor')).toBe('edge')
+    // 乐观读数：override 是 edge，勾立刻是勾上的，不等后端回来
+    expect(followBox()!.checked).toBe(true)
+    await act(async () => {
+      followBox()!.click()
+    })
+    expect(overrideOf('axes_0.bars_0', 'hatchcolor')).toBe('#008000')
+    expect(followBox()!.checked).toBe(false)
+  })
+
+  it('脚本里本来就跟随边框：勾着，色块是边色的实况；直接取色就离开「跟随」', async () => {
+    seedRender(
+      makeManifest([
+        elementOf('axes_0.patches_0', 'patch', '形状', patchFields({ hatch: 'xx', color: { value: '#222222', follows: true } })),
+      ]),
+    )
+    await mount(['axes_0.patches_0'])
+    expect(followBox()!.checked).toBe(true)
+    expect(row('hatchcolor')!.querySelector<HTMLElement>('[data-color-field] [title]')!.title.toLowerCase()).toBe('#222222')
+    const native = row('hatchcolor')!.querySelector<HTMLInputElement>('input[type="color"]')!
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(native, '#ff0000')
+      native.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('#ff0000')
+    expect(followBox()!.checked).toBe(false)
+  })
+})
+
+describe('纹理颜色多选：色号混合与跟随模式混合分开算（Codex #972 r4250928450）', () => {
+  const two = (a: { value: string; follows: boolean }, b: { value: string; follows: boolean }) =>
+    makeManifest([
+      elementOf('axes_0.patches_0', 'patch', '形状 1', patchFields({ hatch: 'xx', color: a })),
+      elementOf('axes_0.patches_1', 'patch', '形状 2', patchFields({ hatch: 'xx', color: b })),
+    ])
+
+  it('都跟随边框、边色不同：勾选框是勾上的；点一下各自固定成自己的色号，不写 edge', async () => {
+    seedRender(two({ value: '#222222', follows: true }, { value: '#008000', follows: true }))
+    await mount(['axes_0.patches_0', 'axes_0.patches_1'])
+    expect(followBox()!.checked).toBe(true)
+    expect(followBox()!.indeterminate).toBe(false)
+    await act(async () => {
+      followBox()!.click()
+    })
+    expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('#222222')
+    expect(overrideOf('axes_0.patches_1', 'hatchcolor')).toBe('#008000')
+  })
+
+  it('有的跟随、有的不跟随：不确定态；点一下全部跟随', async () => {
+    seedRender(two({ value: '#222222', follows: true }, { value: '#008000', follows: false }))
+    await mount(['axes_0.patches_0', 'axes_0.patches_1'])
+    expect(followBox()!.indeterminate).toBe(true)
+    await act(async () => {
+      followBox()!.click()
+    })
+    expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('edge')
+    expect(overrideOf('axes_0.patches_1', 'hatchcolor')).toBe('edge')
+  })
+
+  it('都写着 edge、边色不同：色块说「多个值」，不谎报第一个的色号（Codex #972 r4251281733）', async () => {
+    seedRender(two({ value: '#222222', follows: false }, { value: '#008000', follows: false }))
+    await mount(['axes_0.patches_0', 'axes_0.patches_1'])
+    await act(async () => {
+      followBox()!.click()
+    })
+    expect(overrideOf('axes_0.patches_0', 'hatchcolor')).toBe('edge')
+    expect(overrideOf('axes_0.patches_1', 'hatchcolor')).toBe('edge')
+    expect(followBox()!.checked).toBe(true)
+    expect(host.querySelector('[data-color-field] [data-mixed]')).toBeTruthy()
   })
 })
 

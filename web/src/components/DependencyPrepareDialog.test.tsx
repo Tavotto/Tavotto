@@ -1019,3 +1019,32 @@ describe('DependencyPrepareDialog：来源未定的 import（Import Origin PR6�
     })
   }
 })
+
+describe('DependencyPrepareDialog：engine 文案的品牌名走插值', () => {
+  it('不可用目标的原因（repairError.<reason>）带品牌常量', async () => {
+    await render(<DependencyPrepareDialog />)
+    await act(async () =>
+      useEnvStore.getState().requestDependencyPreparation(
+        offer({
+          targets: [
+            { kind: 'tavotto_managed', venv: '', python: '', modifies_user_environment: false, creates_environment: true, available: false, reason: 'private_python_not_offered' },
+            { kind: 'project_venv', venv: '.venv', python: '.venv/bin/python', modifies_user_environment: true, creates_environment: false, available: true, reason: '' },
+          ],
+          target_kind: 'project_venv',
+        }),
+      ),
+    )
+    expect(text()).toContain(en('repairError.private_python_not_offered', { product: PRODUCT_NAME }))
+    expect(text()).toContain(`${PRODUCT_NAME} 自备 Python`)
+    expect(text()).not.toContain('{{')
+  })
+
+  it('失败那一行（repairError.<code>）带品牌常量', async () => {
+    await render(<DependencyPrepareDialog />)
+    await act(async () => useEnvStore.getState().requestDependencyPreparation(offer()))
+    await act(async () => useDepRepairStore.setState({ errorCode: 'pip_unavailable', errorText: '后端原文' }))
+    expect(text()).toContain(en('repairError.pip_unavailable', { product: PRODUCT_NAME }))
+    expect(text()).toContain(`${PRODUCT_NAME} 隔离环境`)
+    expect(text()).not.toContain('{{')
+  })
+})

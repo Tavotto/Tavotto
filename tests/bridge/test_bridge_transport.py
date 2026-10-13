@@ -21,6 +21,7 @@ import pytest
 
 from support import bridgekit
 from support.bridgekit import write
+from support.previewkit import preview_file
 from tavotto.engine import bridge, bridge_spike, pool
 
 pytestmark = pytest.mark.usefixtures("clean_env")
@@ -308,7 +309,7 @@ def test_the_runner_never_writes_into_the_user_home(user_python, tmp_path, monke
     # 有效）→ home 里没有任何 Tavotto 名字、也没有混进去的产物文件。
     out_dir = Path(data["out_dir"])
     assert not out_dir.is_relative_to(home), f"产物目录落在用户 home 里: {out_dir}"
-    assert (out_dir / "fig.svg").is_file(), f"产物没落在报告说的地方: {out_dir}"
+    assert preview_file(out_dir, "fig", ".svg").is_file(), f"产物没落在报告说的地方: {out_dir}"
 
     leaked = sorted(p.name for p in home.iterdir() if "tavotto" in p.name.lower())
     assert leaked == [], f"runner 在用户 home 里留了 Tavotto 的东西: {leaked}"

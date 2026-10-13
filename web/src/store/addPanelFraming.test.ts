@@ -108,7 +108,7 @@ afterEach(() => {
 describe('排版上加图', () => {
   it('addPanelToCanvas（选图对话框 / 接入状态对话框）：超页图取景「页面 ∪ 图」，留在适应模式', () => {
     vp().setView({ zoom: 3, panX: -500, panY: -400 })
-    const obj = addPanelToCanvas(bigInfo())
+    const obj = addPanelToCanvas(bigInfo())!
     expect(obj.w).toBeGreaterThan(page().w) // 软上限下确实伸出页面
     expect(vp().fitted).toBe(true)
     expect(vp().fitFrame()).toMatchObject(unionOf(obj))
@@ -116,7 +116,7 @@ describe('排版上加图', () => {
 
   it('addRuntimePanelToCanvas（脚本库 / 接入状态 / tavotto run 交接）同样取景', () => {
     vp().setView({ zoom: 3, panX: -500, panY: -400 })
-    const obj = addRuntimePanelToCanvas(descriptor(page().w * 3, page().h * 3))
+    const obj = addRuntimePanelToCanvas(descriptor(page().w * 3, page().h * 3))!
     expect(vp().fitted).toBe(true)
     expect(vp().fitFrame()).toMatchObject(unionOf(obj))
   })
@@ -129,7 +129,7 @@ describe('排版上加图', () => {
 
   it('拖放到一点、图伸出视口：同样取景「页面 ∪ 这张图」', () => {
     vp().setView({ zoom: 3, panX: -500, panY: -400 })
-    const obj = addPanelToCanvas(bigInfo(), page().w / 2, page().h / 2)
+    const obj = addPanelToCanvas(bigInfo(), page().w / 2, page().h / 2)!
     expect(vp().fitted).toBe(true)
     expect(vp().fitFrame()).toMatchObject(unionOf(obj))
   })
@@ -140,7 +140,7 @@ describe('快速编辑里加图（r4129948725）', () => {
     customLayoutView()
     openFastEdit('edit.pdf')
     const editing = view()
-    const obj = addPanelToCanvas(bigInfo())
+    const obj = addPanelToCanvas(bigInfo())!
     expect(view(), '正在编辑的那一屏不许被新图带着跳').toEqual(editing)
     returnToLayout()
     expect(vp().fitted).toBe(true)

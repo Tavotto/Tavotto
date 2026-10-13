@@ -55,6 +55,7 @@ import {
   type PrepEntry,
 } from '@/store/projectPreparationStore'
 import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderStore'
+import { takeDeferredEntryOutcome } from '@/store/documentRestore'
 import { findFigurePanel } from '@/store/documentStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
@@ -70,6 +71,7 @@ import { ArgvTokens, PasteCommand } from './ScriptArgvEditor'
 import { isSecret, suggestionText, useScriptInputAnswer, type ScriptInputAnswer } from './ScriptInputForm'
 import { TaskDiagnostic } from './TaskDiagnostic'
 import { SendReportButton } from './SendReportButton'
+import { CopyButton } from './settings/CopyButton'
 import { Button, IconButton } from './ui/Button'
 import { Details, Summary } from './ui/Details'
 import { TextInput } from './ui/Input'
@@ -681,14 +683,30 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         if (!known && !findFigurePanel(d.asset_id)) {
           addRuntimePanelToCanvas(d)
         }
-        openFastEdit(d.asset_id)
-        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个
-        const opened = useWorkspaceStore.getState().activePanelId
-        const found = opened ? findFigurePanel(d.asset_id, opened) : null
-        if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
-        else noteEditingFor(entry.key, d.asset_id)
+        const outcome = openFastEdit(d.asset_id)
+        // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个；
         // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
-        ui.setGuideCard('closed')
+        const landed = () => {
+          const opened = useWorkspaceStore.getState().activePanelId
+          const found = opened ? findFigurePanel(d.asset_id, opened) : null
+          if (found) noteAddedPanelFor(entry.key, d.asset_id, found.panel)
+          else noteEditingFor(entry.key, d.asset_id)
+          ui.setGuideCard('closed')
+        }
+        if (outcome === 'blocked') {
+          // 上次的排版还要用户先处理：这次什么都没放进去（门已经说了「上次的排版还没打开」）——卡片留着，处理完再点
+          return null
+        }
+        if (outcome === 'deferred') {
+          // 上次的排版还在恢复：入口已排队，**真的落进文档之后**才收卡片；被取代 / 超时（没落）就留着
+          // 以这个入口**自己的结局**为准（`ran`）：恢复被同项目里显式打开的别的排版取代时，入口被丢掉；
+          // 那份排版里恰好有同一张图也不能当成这次进入编辑成了
+          void takeDeferredEntryOutcome()?.then((result) => {
+            if (result === 'ran' && guard.still() && findFigurePanel(d.asset_id)) landed()
+          })
+          return null
+        }
+        landed()
         return null
       }
       case 'reopen':
@@ -1110,10 +1128,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const dialogReq = report?.requirements.find((r) => r.kind === 'gui_dialog')
   const dialog = dialogReq?.kind === 'gui_dialog' ? dialogReq.payload : null
   const prepare = report?.actions.find((a) => a.kind === 'prepare_dependencies')
-  const error = report?.result?.error as
-    | { code?: string; message?: string; params?: Record<string, unknown>; traceback?: string }
-    | null
-    | undefined
+  const error = report?.result?.error
   const attempt = report?.provider.attempt_id
   const dep = report?.provider.dependency
   const originFacts = originFactsOf(report)
@@ -1123,13 +1138,15 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const target = entry.target
   const argc = 'id' in target ? 0 : (target.argv?.length ?? 0)
   const failed = report?.outcome.kind === 'failed' && report.outcome.reason !== 'dependency_preparation'
-  // 错误原文：脚本自己的那一行（`params.error`）优先，其次是后端的主文案；traceback 只取最后一帧那一行
-  const original = error ? String(error.params?.error ?? error.message ?? '') : ''
-  const frame = (error?.traceback ?? '')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith('File '))
-    .pop()
+  // 错误原文：traceback 的最后一行（脚本自己的异常那一句）优先，没有 traceback（敏感运行 / 老后端）用后端的主文案；
+  // 默认只露这一句加最后一帧，完整 traceback 在下面的折叠里可展开 / 复制（P05a）
+  const traceback = error?.traceback ?? ''
+  const tbLines = traceback.split('\n').map((l) => l.trim()).filter(Boolean)
+  const original = error ? String(tbLines[tbLines.length - 1] ?? error.message ?? '') : ''
+  const frame = tbLines.filter((l) => l.startsWith('File ')).pop()
+  const errParams = error?.params
+  const parseKind = failed && error?.code === 'script_needs_arguments' ? errParams?.parse_kind : undefined
+  const prompt = failed && (error?.code === 'script_needs_input' || error?.code === 'script_input_timeout') ? errParams?.prompt : undefined
   return (
     <>
       {dialog && <GuiDialogHint payload={dialog} />}
@@ -1142,6 +1159,32 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           {frame ? `\n  ${frame}` : ''}
         </pre>
       )}
+      {failed && traceback && tbLines.length > 1 && (
+        <Details data-prep-traceback>
+          <Summary className="type-meta">{pt('detail.errorFull')}</Summary>
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md bg-surface-2 px-2.5 py-2 font-mono text-xs text-ink-2">
+              {traceback}
+            </pre>
+            {error?.traceback_truncated && <p className="type-caption">{pt('detail.errorTruncated')}</p>}
+            <div>
+              <CopyButton text={traceback} />
+            </div>
+          </div>
+        </Details>
+      )}
+      {parseKind && (
+        <Row
+          k={pt('detail.parseKind')}
+          v={
+            ['missing_required', 'invalid_value', 'unknown'].includes(parseKind)
+              ? pt(`detail.parseKinds.${parseKind}`)
+              : parseKind
+          }
+          attr="parse-kind"
+        />
+      )}
+      {prompt && <Row k={pt('detail.prompt')} v={<span className="font-mono">{prompt}</span>} attr="input-prompt" />}
       {/* 那一次的诊断（T04）：失败尝试的冻结快照，不含路径和参数 */}
       {attempt && failed && <TaskDiagnostic key={attempt} kind="preparation" refId={attempt} folded={false} />}
       {dep && report?.outcome.reason === 'dependency_preparation' && (

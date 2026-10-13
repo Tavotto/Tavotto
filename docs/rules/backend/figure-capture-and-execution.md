@@ -201,7 +201,10 @@
     原来的 `save`，其间每一次 savefig 被拦截、不落盘、记到这个 `stem` 名下（worker 的
     `_SAVE_AS`）；`save` 不可调用时照旧只登记。
 - 安全：worker `cwd=沙盒`（挡相对路径写出/删除）+ `Path.unlink` 守卫
-  （挡 fig6 的绝对路径删除）；脚本 stdout 重定向到 stderr 保护 JSON 协议。
+  （挡 fig6 的绝对路径删除）；脚本 stdout 重定向到 stderr 保护 JSON 协议。守卫拦下的操作之后，
+  脚本若又读了受影响的路径（`os.replace` 缓存再读、`savefig('x.png')` 再 `Image.open('x.png')`），
+  build 以 `safe_file_operation_blocked` 结束而不是 `ok`（P01a，见 `worker-protocol-and-lifecycle.md`）；
+  这不拦 savefig 捕获本身，也不拦没有回读的拦截。
 - **paper_style 是图库方言，不是引擎依赖**：worker 的 `import paper_style` 必须留在
   try/except 里，捕获靠通用的 `_patched_savefig` 兜底。曾经这行是硬 import，
   任何不带 paper_style.py 的图库（论文的 supporting_information、外部用户的图库）

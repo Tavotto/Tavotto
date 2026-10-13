@@ -1,4 +1,4 @@
-import { expect, test, type RunningApp } from './fixtures'
+import { expect, test, waitForDocumentReady, type RunningApp } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -54,7 +54,7 @@ async function clipped(page: Page, selector: string): Promise<string[]> {
 test('T50：快捷键说明一条都没有被切掉，且搜索能收窄', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+  await waitForDocumentReady(page)
 
   await page.keyboard.press('?')
   const dialog = page.getByRole('dialog')
@@ -100,7 +100,7 @@ test('T50：快捷键说明一条都没有被切掉，且搜索能收窄', async
 test('T05：长画布名不挤走行尾的菜单按钮', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
-  await page.locator('[data-canvas-stage]').waitFor({ timeout: 60_000 })
+  await waitForDocumentReady(page)
 
   // 左轨「结构」旁边那一栏是画布列表：先切过去
   await page.getByRole('navigation').getByRole('button', { name: '画布' }).click()

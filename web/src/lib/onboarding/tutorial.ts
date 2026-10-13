@@ -339,8 +339,10 @@ async function landTutorial(
   } else {
     try {
       await adopt(res.project, {
+        // 返回值就是「准备成功了没有」：认领据此确认（失败 → 门停在「需要用户处理」，初始空白不标 ready）
         prepareDocument: async () => {
           docOk = await loadTutorialDocument(meta)
+          return docOk
         },
       })
     } catch (e) {

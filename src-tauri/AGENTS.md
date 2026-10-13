@@ -69,6 +69,14 @@
   （少了它壳永远显示「已是最新」而 CI 全绿）。细节见 ADR 0002 末节。
 - 桌面模式下 Python updater 停用（升级归 Tauri 层），`/api/update/*` 回
   禁用响应；浏览器模式照旧。
+- **来源编排在 `src/app_update.rs`（ADR 0121）**：国内 COS 镜像 + GitHub 两个来源，顺序由时区 / 系统语言 / 界面语言
+  的**唯一**判据 `source_order` 定；前端只调 `desktop_update_check` / `desktop_update_install` 两个命令，
+  `capabilities/main.json` **没有** `updater:*`（webview 绕不过编排）。镜像地址是该文件里唯一的常量
+  `MIRROR_MANIFEST_URL`，`tauri.conf.json` 的 endpoints 仍只有 GitHub 一条（发布链读它）。三条别改坏：
+  ① 第一个**答上来**的来源说「无更新」就是最终答案，不再问另一个；② 下载失败（网络 / 非 2xx / 验签 / 停滞）
+  换来源**重新 check + 重新下**，且回退来源必须报同一个版本；③ 验签永远用内置公钥，来源不影响信任。
+  e2e 触发口 `TAVOTTO_E2E_UPDATE_SOURCE=mirror|github` 钉死单来源且不回退。
+  看护：`app_update.rs` 的顺序单测 + `app_update_flow_tests.rs`（本地假 HTTP 服务 + 测试密钥签名的包，从不调用 `apply`）。
 
 ## 构建、验收与安装界面
 

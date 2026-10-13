@@ -670,7 +670,7 @@ function Pinned({
           // 点名**供值的那个**变量：旧名 MM_WORKER_PYTHON 供的值同样是 env_override，
           // 只让用户清新名的话固定还在、重启后照旧挡着。
           <p className="mt-1 text-xs leading-relaxed text-ink-3">
-            {en('repairPinnedEnvHint', { variable })}
+            {en('repairPinnedEnvHint', { variable, product: PRODUCT_NAME })}
           </p>
         )}
       </div>
@@ -751,7 +751,7 @@ function hint(target: DependencyTarget): string {
     })
     // 钉版之外但能 import 的 matplotlib 照用，但要如实标注（ADR 0018 §十）
     return target.support === 'unverified_but_compatible'
-      ? `${base} · ${en('repairSystemUnverified')}`
+      ? `${base} · ${en('repairSystemUnverified', { product: PRODUCT_NAME })}`
       : base
   }
   // 受管环境不需要这一行副标题：装到哪按钮自己已经说清楚了（「将 X 安装到 Tavotto
@@ -916,7 +916,7 @@ export function repairCodeMessage(code: string): string | null {
   // 先查修复专用表，再查后端通用表：`environment_in_use_by_native_session` 这种
   // 两条控制面共用的 code 文案只在 `backend.*` 里有一份，不为这张卡再抄一份。
   for (const key of [`engine.repairError.${code}`, `backend.${code}`]) {
-    if (i18n.exists(key, { ns: 'errors' })) return translate(key, { ns: 'errors' })
+    if (i18n.exists(key, { ns: 'errors' })) return translate(key, { ns: 'errors', product: PRODUCT_NAME })
   }
   return null
 }
@@ -1003,7 +1003,7 @@ export function ManagedEnvironmentRow() {
         disabled={busy}
         onClick={() => void rebuildManaged()}
       >
-        {en('managedEnvRebuild')}
+        {en('managedEnvRebuild', { product: PRODUCT_NAME })}
       </Button>
     </div>
   )

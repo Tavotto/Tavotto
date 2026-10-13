@@ -466,7 +466,12 @@ def recommend(
     recommended = None
     if locked is None and not default_chain:
         for c in candidates:
-            if c["id"] != BUILTIN_ID and c["status"] not in _BAD:
+            # 只在系统解释器列表里露面、没检查过的，不抢推荐位：它们是「看得见」的候选，不是谁的线索
+            if (
+                c["id"] != BUILTIN_ID
+                and c["status"] not in _BAD
+                and not (c["sources"] == [userenvs.SOURCE_SYSTEM] and c["status"] != STATUS_HEALTHY)
+            ):
                 recommended = c["id"]
                 break
     mode = projectenv.adoption_mode()
@@ -824,6 +829,7 @@ def _check(
     modules=None,
 ) -> dict:
     if include_login_shell:
+        userenvs.forget_empty_login_shell()  # 上一次的空答案可能只是冷启动 / 超时：明确动作值得再问
         userenvs.login_shell_pythons()  # 明确动作：问一次，答案进缓存，`_rows` 随后读得到
     probe_fn = probe or projectenv.probe_environment
     mods, dropped = normalize_modules(modules) if modules is not None else ((), 0)

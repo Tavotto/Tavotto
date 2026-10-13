@@ -1111,7 +1111,7 @@ function CardMeta({
         </span>
         {marker}
       </p>
-      <p className="flex items-center gap-1 type-meta tabular-nums">
+      <p className={cn('flex items-center gap-1 type-meta tabular-nums', selected && 'text-ink-2')}>
         {shown.map((part, i) => (
           <Fragment key={i}>
             {i > 0 && (

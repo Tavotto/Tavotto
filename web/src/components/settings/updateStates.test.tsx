@@ -84,6 +84,8 @@ function seed(patch: Record<string, unknown> = {}) {
     desktopUpdate: null,
     desktopProgress: null,
     desktopError: null,
+    desktopSource: null,
+    desktopAttempts: [],
     desktopChecked: false,
     desktopCheckedAtMs: null,
     check: async () => {},
@@ -345,6 +347,63 @@ describe('失败看得出是失败，重试路径还在', () => {
     await render()
     expect(text()).toContain('签名校验没通过')
     expect(byLabel(st('update.downloadAndInstall'))!.disabled).toBe(false)
+  })
+})
+
+/* ------------------------- 更新来源只在折叠详情里 ------------------------- */
+
+describe('更新来源（ADR 0121）只放「技术详情」折叠区', () => {
+  const openDetails = async () => {
+    const btn = [...document.querySelectorAll('button[aria-expanded]')].find((b) =>
+      b.textContent?.includes(st('techDetails')),
+    ) as HTMLButtonElement
+    await act(async () => btn.click())
+  }
+
+  it('主文案里没有来源；展开详情才看得到来源与逐来源失败记录', async () => {
+    seed({
+      status: { current: '0.13.0', desktop: true, auto_check: true } as never,
+      desktopChecked: true,
+      desktopCheckedAtMs: CHECKED_AT,
+      desktopUpdate: { version: '0.14.0', source: 'mirror' } as never,
+      desktopSource: 'mirror',
+      desktopError: '下载或安装失败',
+      desktopAttempts: [
+        { source: 'mirror', stage: 'download', kind: 'signature' },
+        { source: 'github', stage: 'download', kind: 'a_kind_from_a_newer_shell' },
+      ],
+    })
+    await render()
+    // 折叠时：来源与记录都不在页面上；也没有第二条提示
+    expect(text()).not.toContain(st('update.sourceName.mirror'))
+    expect(document.querySelector('[data-update-source]')).toBeNull()
+    expect(document.querySelectorAll('[role="alert"]').length).toBeLessThanOrEqual(1)
+    await openDetails()
+    expect(document.querySelector('[data-update-source]')?.textContent).toContain(
+      st('update.sourceName.mirror'),
+    )
+    const lines = [...document.querySelectorAll('[data-update-attempts] li')].map((li) => li.textContent)
+    expect(lines).toEqual([
+      st('update.attemptLine', {
+        source: st('update.sourceName.mirror'),
+        stage: st('update.stageName.download'),
+        kind: st('update.kindName.signature'),
+      }),
+      // 壳比前端新、多出来的类别：归到 other，不显示裸 code
+      st('update.attemptLine', {
+        source: st('update.sourceName.github'),
+        stage: st('update.stageName.download'),
+        kind: st('update.kindName.other'),
+      }),
+    ])
+  })
+
+  it('没有来源信息（浏览器通道 / 还没查到）就不画这两行', async () => {
+    seed({ status: { current: '0.13.0', desktop: true, auto_check: true } as never })
+    await render()
+    await openDetails()
+    expect(document.querySelector('[data-update-source]')).toBeNull()
+    expect(document.querySelector('[data-update-attempts]')).toBeNull()
   })
 })
 

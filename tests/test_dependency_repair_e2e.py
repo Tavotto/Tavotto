@@ -153,6 +153,9 @@ def test_golden_path_install_into_the_project_venv(client, project, wheelhouse):
     final = _install(client, plan["plan_id"])
     assert final["state"] == deprepair.STATE_DONE, final
     assert final["result"]["version"] == "1.0"
+    (receipt,) = final["result"]["providers"]  # 项目 venv 单包原地装也带回执
+    assert receipt["distribution"].replace("_", "-") == FIXTURE_DIST
+    assert receipt["source"] == "project_declared" and receipt["generation"] == ""
 
     # ---- 4. 包**真的**进了那个 venv（不是「字符串对了」）------------------
     assert (site_packages(venv) / f"{FIXTURE_IMPORT}.py").is_file()

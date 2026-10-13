@@ -3,9 +3,9 @@ import { perfSpan } from '@/perf/core'
 import { enablePatches, produceWithPatches, type Patch } from 'immer'
 import * as history from '@/lib/history'
 import { rebaseToCurrentNative, sizeBasisOf, type SizeBasis } from '@/lib/panelNativeSize'
-import { fetchAutosave, fetchAutosaveSummary, fetchLayoutOwner, putAutosave } from '@/lib/api'
-import { loadProjectDocument } from '@/lib/projectDocs'
+import { fetchAutosave, fetchAutosaveSummary, probeAutosave, putAutosave, type AutosaveProbe } from '@/lib/api'
 import { DOC_INDEX_KEY, isForeignDocument, recordedProjectOf } from '@/lib/docOwnership'
+import type { RestoreIssue } from '@/store/documentRestore'
 import {
   blocksDiskWrite,
   createDiskWriter,
@@ -172,6 +172,261 @@ export function txnAnchorOf(objectId: string): TxnAnchor | undefined {
   return txnAnchors.get(objectId)
 }
 
+/* -------------------------------------------------------------------------- */
+/*  恢复门（文档恢复可靠性，CONTRACT 2.4）                                       */
+/*                                                                            */
+/*  「项目 ready」与「文档 ready」是两件事：工作台挂载、项目认领完成时，上次的     */
+/*  排版往往还在路上（last / 自动保存 GET、重试、等用户选）。这段时间内存里的     */
+/*  是一份**占位文档**——不是用户的文档，它不许写 currentDoc / 最近文档 / 归属 /    */
+/*  last / 时间线，也不许排队自动保存；所有能写文档的入口（commit、事务、撤销、    */
+/*  画布增删改……）一律看这扇门。                                                */
+/*                                                                            */
+/*  门是模块级的一个值（再镜像到 store 上一个只读字段给界面用）：                  */
+/*    restoring  某次恢复在路上（持当前代次令牌的安装才能写）                      */
+/*    needs_user 恢复没成、等用户处理（占位文档仍不许写；出口是重试 / 打开别的 /   */
+/*               继续新建）                                                      */
+/*    ready      文档已定（恢复成功 / 显式准备 / 确认没有历史 / 用户明确新建）      */
+/*                                                                            */
+/*  **离开旧文档的冲刷在设门之前做**（`resetForNewProject` 第一步），DiskWriter 已   */
+/*  排的队不清；门只管「还没准备好的目标文档」。                                   */
+/* -------------------------------------------------------------------------- */
+
+export type RestoreReason =
+  | 'restored'
+  | 'prepared'
+  | 'explicit'
+  | 'empty'
+  | 'blank_requested'
+  | 'continued_new'
+  | 'failed'
+  | 'superseded'
+  | 'initial'
+
+export interface RestoreGate {
+  state: 'restoring' | 'ready' | 'needs_user'
+  /** 恢复代次：每开始一次恢复 / 每次被显式意图取代都前进 */
+  gen: number
+  /** 这扇门说的是哪个项目（没开项目 = null） */
+  pj: string | null
+  /** 落定时开着的文档（恢复中为 null） */
+  docId: string | null
+  reason: RestoreReason
+}
+
+/** 提交权：只有持**当前代次**令牌的安装才能在门关着时写 */
+export interface RestoreToken {
+  gen: number
+  pj: string | null
+}
+
+export type DocumentReadiness = 'ready' | 'superseded' | 'timeout'
+
+/** 初值 `ready`：playground / 嵌入画布 / 单测不经启动链，不该被一扇没人开的门卡住 */
+let gate: RestoreGate = { state: 'ready', gen: 0, pj: null, docId: null, reason: 'initial' }
+let gateSeq = 0
+/** 正在用令牌安装文档（那一刻订阅方看到的是真文档，不是占位） */
+let installingUnderToken = false
+/** 令牌发出时占位文档的身份（`persistedIdentity`）：门关着期间它被绕过门改过就让位 */
+let tokenIdentity: { gen: number; identity: readonly unknown[] } | null = null
+
+export const getRestoreGate = (): RestoreGate => gate
+
+/** 当前文档是不是还没准备好的占位（门没开，且不是令牌安装的那一刻） */
+export const isDocumentPlaceholder = (): boolean => gate.state !== 'ready' && !installingUnderToken
+
+interface ReadyWaiter {
+  pj: string | null
+  resolve: (r: DocumentReadiness) => void
+  timer: ReturnType<typeof setTimeout> | undefined
+}
+const readyWaiters = new Set<ReadyWaiter>()
+
+function releaseWaiters(): void {
+  for (const w of [...readyWaiters]) {
+    let verdict: DocumentReadiness | null = null
+    if (gate.state === 'ready') {
+      // `initial` 的门不属于任何项目：没有恢复在路上，谁来问都是 ready
+      verdict = gate.reason === 'initial' || gate.pj === w.pj ? 'ready' : 'superseded'
+    } else if (gate.pj !== w.pj) {
+      verdict = 'superseded'
+    }
+    if (!verdict) continue
+    readyWaiters.delete(w)
+    clearTimeout(w.timer)
+    w.resolve(verdict)
+  }
+}
+
+function setGate(next: RestoreGate): void {
+  gate = next
+  useDocumentStore.setState({ restoreGate: next })
+  releaseWaiters()
+}
+
+/**
+ * 仅给用例：把门放回「还没有任何恢复发生过」的初始态。一个用例要模拟「又一次全新启动」时调
+ * （真实的全新启动是模块重新求值，门天然是初值）。清掉等待者与令牌身份，不碰文档本身。
+ */
+export function resetRestoreGateForTests(): void {
+  for (const w of readyWaiters) clearTimeout(w.timer)
+  readyWaiters.clear()
+  tokenIdentity = null
+  installingUnderToken = false
+  useDocumentStore.setState({ restoreIssue: null, restoreMetaIssue: null })
+  setGate({ state: 'ready', gen: ++gateSeq, pj: null, docId: null, reason: 'initial' })
+}
+
+/** 门等待的上限：`needs_user` 期间一直等用户，最长这么久（交接据此给终局） */
+export const DOCUMENT_READY_TIMEOUT_MS = 120_000
+
+/**
+ * 等「`pj` 这个项目的文档」准备好。门 ready 且 pj 相同 → `'ready'`；被取代 / 切了项目 → `'superseded'`；
+ * `needs_user` 期间继续等，最长 `timeoutMs` → `'timeout'`。
+ */
+export function whenDocumentReady(
+  pj: string | null,
+  opts: { timeoutMs?: number } = {},
+): Promise<DocumentReadiness> {
+  if (gate.state === 'ready') {
+    return Promise.resolve(gate.reason === 'initial' || gate.pj === pj ? 'ready' : 'superseded')
+  }
+  if (gate.pj !== pj) return Promise.resolve('superseded')
+  return new Promise<DocumentReadiness>((resolve) => {
+    const w: ReadyWaiter = { pj, resolve, timer: undefined }
+    w.timer = setTimeout(() => {
+      readyWaiters.delete(w)
+      resolve('timeout')
+    }, opts.timeoutMs ?? DOCUMENT_READY_TIMEOUT_MS)
+    readyWaiters.add(w)
+  })
+}
+
+/** 令牌还是当前代次、门也还在「恢复中」（别的意图取代了 / 已落定 = 不再有提交权） */
+export const isRestoreTokenCurrent = (token: RestoreToken): boolean =>
+  gate.state === 'restoring' && gate.gen === token.gen && gate.pj === token.pj
+
+/**
+ * 开始一次恢复：门关上，代次前进（旧令牌从此无提交权）。冷启动 / 切项目 / 重试都走这一个入口。
+ * 旧文档的冲刷必须在调它**之前**做完（见本节说明）。
+ */
+export function beginRestore(pj: string | null): RestoreToken {
+  const token: RestoreToken = { gen: ++gateSeq, pj }
+  tokenIdentity = null
+  useDocumentStore.setState({ restoreIssue: null })
+  setGate({ state: 'restoring', gen: token.gen, pj, docId: null, reason: 'initial' })
+  return token
+}
+
+/** 把占位文档此刻的身份记给这个令牌：之后若被绕过门改过（身份变了），这次安装让位 */
+export function armRestoreToken(token: RestoreToken): void {
+  if (!isRestoreTokenCurrent(token)) return
+  tokenIdentity = { gen: token.gen, identity: persistedIdentity(useDocumentStore.getState()) }
+}
+
+/** 令牌有提交权，且占位文档没有被绕过门改过 */
+export function canCommitRestore(token: RestoreToken): boolean {
+  if (!isRestoreTokenCurrent(token)) return false
+  if (tokenIdentity?.gen === token.gen) {
+    const now = persistedIdentity(useDocumentStore.getState())
+    if (now.some((v, i) => v !== tokenIdentity!.identity[i])) return false
+  }
+  return true
+}
+
+export type SettleOutcome =
+  | { state: 'ready'; reason: Exclude<RestoreReason, 'initial'> }
+  | { state: 'needs_user'; issue: RestoreIssue }
+
+/**
+ * 恢复落定。令牌过期（被显式意图 / 新一轮恢复取代）返回 false，什么都不改。
+ * `ready` 且文档仍是占位（确认没有历史 / 用户要求空白启动）：占位在这一刻转正——此前它没有归属、
+ * 没有身份广播，转正才补上（同 `switchDocument` 换进来的那一刻）。
+ */
+export function settleRestore(token: RestoreToken, outcome: SettleOutcome): boolean {
+  if (!isRestoreTokenCurrent(token)) return false
+  const docId = useDocumentStore.getState().documentId
+  if (outcome.state === 'ready') {
+    // 占位转正：确认没有历史 / 开空白 / 让位给绕过门写进来的那份内存文档（后者此前同样没有归属）
+    if (outcome.reason === 'empty' || outcome.reason === 'blank_requested' || outcome.reason === 'superseded') {
+      adoptDocumentOwner(docId)
+      announceDocOpen(docId)
+    }
+    tokenIdentity = null
+    setGate({ state: 'ready', gen: token.gen, pj: token.pj, docId, reason: outcome.reason })
+    return true
+  }
+  useDocumentStore.setState({ restoreIssue: outcome.issue })
+  setGate({ state: 'needs_user', gen: token.gen, pj: token.pj, docId: null, reason: 'failed' })
+  return true
+}
+
+/** 落定之后给同一代次的门改个更准的理由（教程 prepare：普通切换先取代成 `explicit`，确认后改记 `prepared`） */
+export function relabelReadyGate(gen: number, reason: RestoreReason): void {
+  if (gate.state !== 'ready' || gate.gen !== gen) return
+  setGate({ ...gate, reason })
+}
+
+/**
+ * 显式意图（新建 / 打开排版 / 打开最近 / 教程 prepare / 继续新建 / 选中候选）取代旧恢复：
+ * 代次前进、门置 ready。门本来就开着时什么都不动——已经定了的恢复记录不被后来的普通切换改写。
+ */
+export function supersedeRestore(docId: string, reason: RestoreReason): void {
+  if (gate.state === 'ready') return
+  tokenIdentity = null
+  useDocumentStore.setState({ restoreIssue: null })
+  setGate({ state: 'ready', gen: ++gateSeq, pj: currentProjectId(), docId, reason })
+}
+
+/**
+ * 项目没了 / 回到 Picker 且不再等这次恢复（`dropProject`）：门放成 ready（占位已经没有用户可达的界面），
+ * 等待者拿 `superseded`。
+ */
+export function releaseRestoreGate(): void {
+  if (gate.state === 'ready') return
+  tokenIdentity = null
+  useDocumentStore.setState({ restoreIssue: null })
+  setGate({ state: 'ready', gen: ++gateSeq, pj: null, docId: null, reason: 'superseded' })
+}
+
+/** 门关着时被拒的写入：`needs_user` 时由 `documentRestore` 登记的通知器说一句（自带节流） */
+let blockedWriteNotifier: (() => void) | null = null
+export function onBlockedWrite(fn: (() => void) | null): void {
+  blockedWriteNotifier = fn
+}
+
+/** 用户动作被拒时说一句（`needs_user`；自带节流，登记在 `documentRestore`）。用户级入口在门前自己拦时用 */
+export function noteBlockedWrite(): void {
+  blockedWriteNotifier?.()
+}
+
+/** 写入口的门：占位文档不许写。`notify` = 用户动作被拒，要说一句；派生写入静默 */
+function writesBlocked(notify = true): boolean {
+  if (!isDocumentPlaceholder()) return false
+  if (notify && gate.state === 'needs_user') blockedWriteNotifier?.()
+  return true
+}
+
+/** 保存元数据（下次自动恢复用的 last / owner）没写成：与 `saveState` 正交 */
+export interface RestoreMetaIssue {
+  docId: string
+  pj: string | null
+}
+
+type PersistedListener = (docId: string, pj: string | null, metadata: PersistedMetadata) => void
+export type PersistedMetadata = 'ok' | 'failed' | 'owner_unknown' | undefined
+const persistedListeners = new Set<PersistedListener>()
+
+/**
+ * 某份文档的**正文**真的写盘成功了（不看是不是当前文档，pj 是排队那一刻的）。
+ * 给「保存成功后补记 last」这类元数据落账用；返回注销函数。UI 那一半仍按 `isCurrentDoc` 守。
+ */
+export function onDocumentPersisted(fn: PersistedListener): () => void {
+  persistedListeners.add(fn)
+  return () => {
+    persistedListeners.delete(fn)
+  }
+}
+
 interface DocumentState {
   /** 当前激活画布的活跃编辑态（schema 2 形状；画布编辑代码只认它） */
   doc: FigureDocument
@@ -203,6 +458,15 @@ interface DocumentState {
    * 单独一根轴，不进 `saveState`——见 `DocNotice` 的说明。
    */
   docNotice: DocNotice | null
+  /** 恢复门的镜像（只读，给界面用；写入口只在本文件的 `setGate`） */
+  restoreGate: RestoreGate
+  /**
+   * 上次的排版没能恢复、等用户处理的那件事（一句话 + 一个主按钮，见顶栏芯片）。与 `saveState` 正交：
+   * 一次 `saved → clean` 清不掉它；只有恢复成功 / 用户选了出口才清。
+   */
+  restoreIssue: RestoreIssue | null
+  /** 正文存下了、但「下次自动恢复」要用的元数据没更新（与 `saveState` 正交，下次保存成功清掉） */
+  restoreMetaIssue: RestoreMetaIssue | null
   /**
    * 「整体换文档」的代次，每次载入 +1（磁盘恢复 / 载入布局 / 切项目）。
    *
@@ -313,7 +577,24 @@ interface DocumentState {
     next: FigureDocument | ProjectDocument,
     nextId: string,
     confirmLoss?: () => Promise<boolean>,
+    opts?: SwitchOptions,
   ) => Promise<boolean>
+}
+
+/**
+ * 换文档的三种性质：
+ *  - 普通（默认）：显式意图，**取代**还在路上的恢复（门置 ready，旧恢复回来没有提交权）；
+ *  - `placeholder`：切项目时换上的占位空白——不写 currentDoc / 最近文档 / 归属 / 身份广播，
+ *    不冲刷（旧文档的冲刷在设门之前已经做了）；门关着，它不是用户的文档；
+ *  - `restoreToken`：恢复协调自己的安装（持当前代次令牌才成立，过期回 false）。
+ * `reason` 只在「普通」取代一次未落定的恢复时用（默认 `explicit`）。
+ */
+export interface SwitchOptions {
+  placeholder?: boolean
+  restoreToken?: RestoreToken
+  reason?: Exclude<RestoreReason, 'initial'>
+  /** 显式找回在取代恢复门、确定新文档归属前核实并纠正本机索引；拒绝时保留旧文档。 */
+  beforeInstall?: () => Promise<boolean>
 }
 
 function pushHistory(state: DocumentState, entry: HistoryEntry): Partial<DocumentState> {
@@ -401,6 +682,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   saveState: 'clean',
   saveIssue: null,
   docNotice: null,
+  restoreGate: gate,
+  restoreIssue: null,
+  restoreMetaIssue: null,
   loadSeq: 0,
   derivedSeq: 0,
   lastPersisted: null,
@@ -411,6 +695,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   txn: null,
 
   commit: (label, recipe, opts) => {
+    if (writesBlocked()) return
     if (opts?.undoAlso && get().txn) get().endTxn()
     const state = get()
     const [next, patches, inverse] = produceStamped(state.doc, recipe, opts)
@@ -438,6 +723,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   amendLast: (entry, recipe) => {
+    if (writesBlocked(false)) return false
     const state = get()
     if (state.txn || state.past.at(-1) !== entry) return false
     const [next, patches, inverse] = produceWithPatches(state.doc, recipe)
@@ -454,6 +740,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   beginTxn: (label) => {
+    if (writesBlocked()) return
     // 上一个事务还开着 = 手势与离散操作混在了一起。诊断要看得见这件事：
     // 它正是「撤销一次回退了两件事」那一类现象的成因
     const replaced = get().txn != null
@@ -468,6 +755,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   txnUpdate: (recipe) => {
+    if (writesBlocked(false)) return
     const state = get()
     if (!state.txn) {
       // 没有进行中的事务 = 这次更新没人记账。以前这里会直接 set(doc)：
@@ -545,6 +833,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   undo: () => {
+    if (writesBlocked()) return null
     const state = get()
     recordDiagnosticEvent({
       type: 'undo.request',
@@ -567,6 +856,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   redo: () => {
+    if (writesBlocked()) return null
     const state = get()
     recordDiagnosticEvent({
       type: 'redo.request',
@@ -587,6 +877,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   canRedo: () => get().future.length > 0,
 
   silent: (recipe) => {
+    if (writesBlocked(false)) return
     const [next, patches] = produceWithPatches(get().doc, recipe)
     if (patches.length) set({ doc: next })
   },
@@ -608,6 +899,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   switchCanvas: (id) => {
+    if (writesBlocked()) return
     const s0 = get()
     if (id === s0.activeCanvasId || !s0.canvases.some((c) => c.id === id)) return
     if (s0.txn) s0.endTxn()
@@ -632,6 +924,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   openCanvasTab: (id) => {
+    if (writesBlocked()) return
     const s = get()
     if (!s.canvases.some((c) => c.id === id)) return
     if (!s.openTabs.includes(id)) {
@@ -642,6 +935,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   closeCanvasTab: (id) => {
+    if (writesBlocked()) return false
     const s = get()
     const idx = s.openTabs.indexOf(id)
     if (idx < 0 || s.openTabs.length <= 1) return false
@@ -655,6 +949,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   reorderTabs: (from, to) => {
+    if (writesBlocked()) return
     const s = get()
     if (from === to || from < 0 || from >= s.openTabs.length) return
     const openTabs = [...s.openTabs]
@@ -665,6 +960,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   addCanvas: (name) => {
+    // 占位文档不许加画布；回当前激活画布 id，调用方（切换 / 取景）落在原地，不会拿到一个不存在的 id
+    if (writesBlocked()) return get().activeCanvasId
     const s = get()
     const id = newId('c')
     const canvas: CanvasData = {
@@ -681,6 +978,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   renameCanvas: (id, name) => {
+    if (writesBlocked()) return
     const clean = name.trim()
     if (!clean) return
     const s = get()
@@ -696,6 +994,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   duplicateCanvas: (id) => {
+    if (writesBlocked()) return null
     const s = get()
     const src = s.canvases.find((c) => c.id === id)
     if (!src) return null
@@ -738,6 +1037,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   deleteCanvas: (id) => {
+    if (writesBlocked()) return false
     const s = get()
     if (s.canvases.length <= 1 || !s.canvases.some((c) => c.id === id)) return false
     if (id === s.activeCanvasId) {
@@ -758,6 +1058,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   reorderCanvases: (from, to) => {
+    if (writesBlocked()) return
     const s = get()
     if (from === to || from < 0 || from >= s.canvases.length) return
     const canvases = [...s.canvases]
@@ -767,6 +1068,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   renameProject: (name) => {
+    if (writesBlocked()) return
     const clean = name.trim()
     if (!clean) return
     const changed = clean !== get().projectMeta.name
@@ -779,45 +1081,66 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     flushAutosave()
   },
 
-  switchDocument: async (next, nextId, confirmLoss) => {
-    const hadContent = hasContent(get().buildProject())
-    if (flushAutosave() === 'error' && hadContent && confirmLoss && !(await confirmLoss())) {
-      return false
+  switchDocument: async (next, nextId, confirmLoss, opts) => {
+    const placeholder = opts?.placeholder === true
+    const token = opts?.restoreToken
+    if (!placeholder) {
+      const hadContent = hasContent(get().buildProject())
+      if (flushAutosave() === 'error' && hadContent && confirmLoss && !(await confirmLoss())) {
+        return false
+      }
     }
     const pd = migrateToProject(next)
     if (!pd) return false
+    if (token) {
+      // 恢复协调自己的安装：令牌过期（被显式意图 / 新一轮恢复取代）就不装——旧恢复回来没有提交权。
+      // 确认框（上面）是 await：它期间门可能已经换代，所以提交权在这里、同步地判
+      if (!isRestoreTokenCurrent(token)) return false
+    } else if (!placeholder) {
+      if (opts?.beforeInstall && !(await opts.beforeInstall())) return false
+      // 显式意图取代未落定的恢复（门本来就开着时什么都不动）
+      supersedeRestore(nextId, opts?.reason ?? 'explicit')
+    }
     // 换文档 = 挂起结束（上面那次 flush 已经按挂起跳过了，旧文档的编辑随它一起放弃）
     autosaveSuspendedFor = null
     // 归属在**换进来那一刻**定，不在落盘那一刻现问（见 `docProject`）。
     // 必须排在上面那次 flush 之后：那一次写的是**旧**文档，它属于旧项目。
-    adoptDocumentOwner(nextId)
+    // 占位文档没有归属：转正（`settleRestore`）或被真文档取代时才定
+    if (!placeholder) adoptDocumentOwner(nextId)
     const active = pd.canvases.find((c) => c.id === pd.activeCanvasId) ?? pd.canvases[0]
-    set({
-      doc: canvasToDoc(active),
-      documentId: nextId,
-      projectMeta: { id: pd.project.id, name: pd.project.name, createdAt: pd.createdAt },
-      canvases: pd.canvases,
-      activeCanvasId: active.id,
-      canvasSessions: {},
-      openTabs: restoreTabs(nextId, pd.canvases, active.id),
-      dirty: false,
-      // 换了文档，上一份的待裁决事项跟着走：冲突是**那一份**的冲突，
-      // 挂在新文档头上会让用户对着一份根本没冲突的文档点「重新加载」。
-      saveState: 'clean',
-      saveIssue: null,
-      docNotice: null,
-      loadSeq: get().loadSeq + 1,
-      lastPersisted: null,
-      projectFile: readProjectFile(nextId),
-      past: [],
-      future: [],
-      txn: null,
-    })
-    writeCurrentId(nextId)
-    // 广播「我端着这份了」：别的标签页也开着同一个 documentId 时会回音报警
-    announceDocOpen(nextId)
-    // 新文档立刻落一次快照，这样它马上出现在「最近文档」里
-    flushAutosave()
+    if (token) installingUnderToken = true
+    try {
+      set({
+        doc: canvasToDoc(active),
+        documentId: nextId,
+        projectMeta: { id: pd.project.id, name: pd.project.name, createdAt: pd.createdAt },
+        canvases: pd.canvases,
+        activeCanvasId: active.id,
+        canvasSessions: {},
+        openTabs: restoreTabs(nextId, pd.canvases, active.id),
+        dirty: false,
+        // 换了文档，上一份的待裁决事项跟着走：冲突是**那一份**的冲突，
+        // 挂在新文档头上会让用户对着一份根本没冲突的文档点「重新加载」。
+        saveState: 'clean',
+        saveIssue: null,
+        docNotice: null,
+        restoreMetaIssue: null,
+        loadSeq: get().loadSeq + 1,
+        lastPersisted: null,
+        projectFile: readProjectFile(nextId),
+        past: [],
+        future: [],
+        txn: null,
+      })
+      if (placeholder) return true
+      writeCurrentId(nextId)
+      // 广播「我端着这份了」：别的标签页也开着同一个 documentId 时会回音报警
+      announceDocOpen(nextId)
+      // 新文档立刻落一次快照，这样它马上出现在「最近文档」里
+      flushAutosave()
+    } finally {
+      installingUnderToken = false
+    }
     return true
   },
 }))
@@ -1115,10 +1438,42 @@ const isCurrentDoc = (id: string) => useDocumentStore.getState().documentId === 
  */
 const diskWrites = new Map<string, number>()
 
-/** 写盘成功后：期间又编辑过就还是 dirty，没编辑过才是"存好了" */
-function afterWriteOk(id: string, savedAt: number): void {
+/**
+ * 写盘成功后：期间又编辑过就还是 dirty，没编辑过才是"存好了"。
+ *
+ * 两半，**判据不同**：
+ *  - 元数据那一半（`onDocumentPersisted`：补记 last 等）属于**这份保存自己**，不看现在开着哪份——
+ *    A 的排队保存晚于 B 的打开才完成，A 的槽位照样该被登记；`pj` 是排队那一刻的，不现问；
+ *  - UI 那一半（`lastPersisted` / 保存状态 / `restoreMetaIssue`）只在这份仍是当前文档时才动。
+ */
+function afterWriteOk(
+  id: string,
+  savedAt: number,
+  meta?: { pj?: string | null; metadata?: PersistedMetadata },
+): void {
   diskWrites.set(id, (diskWrites.get(id) ?? 0) + 1)
+  const pj = meta?.pj ?? null
+  for (const fn of [...persistedListeners]) {
+    try {
+      fn(id, pj, meta?.metadata)
+    } catch {
+      /* 监听方的失败不能让保存的收尾半途而废 */
+    }
+  }
   if (!isCurrentDoc(id)) return
+  // 元数据没落成 ≠ 正文没存下：另开一根轴，不碰 saveState；下次这份保存成功时清掉
+  // 回包的 pj 是排队那一刻的：A 项目的排队保存在界面切到 B（恰好同一个 documentId）之后才完成时，
+  // 它的元数据结局不属于现在开着的这份——只按 id 判会把 A 的失败挂到 B 头上。比的是这份排版**现在**的归属项目
+  // （与排队时取 pj 的是同一个表达式）；不一致就既不挂也不清
+  if (pj === (projectOfDoc().id ?? currentProjectId())) {
+    const prevMeta = useDocumentStore.getState().restoreMetaIssue
+    // `owner_unknown`（正文写下了、归属 / 晋升没记：项目在后端已经没了）与 `failed` 一样是「下次自动恢复信息没更新」
+    if (meta?.metadata === 'failed' || meta?.metadata === 'owner_unknown') {
+      useDocumentStore.setState({ restoreMetaIssue: { docId: id, pj } })
+    } else if (prevMeta && prevMeta.docId === id && meta?.metadata !== undefined) {
+      useDocumentStore.setState({ restoreMetaIssue: null })
+    }
+  }
   useDocumentStore.setState({ lastPersisted: savedAt })
   setSaveState(useDocumentStore.getState().dirty ? 'dirty' : 'saved')
   emitActivity({ kind: 'document.saved' })
@@ -1170,6 +1525,8 @@ export function flushAutosave(): FlushResult {
 }
 
 function flushAutosaveNow(): FlushResult {
+  // 占位文档（恢复还没落定）一个字节都不写：它不是用户的文档，写了 last / 最近文档 / 本机副本就是假的
+  if (isDocumentPlaceholder()) return 'skipped'
   const state = useDocumentStore.getState()
   // 挂起中的文档一个字节都不写（见 `suspendAutosaveFor`）：内存里的编辑还在，
   // 换文档时它们随旧文档一起被放弃——这正是「重新开始」要的
@@ -1241,6 +1598,10 @@ export async function saveNow(): Promise<SaveState> {
  * 「排版写成了」（时间线的「保存」点）跟 `wrote` 走，不跟 `state` 走（Codex #679）。
  */
 export async function saveNowWithResult(): Promise<{ state: SaveState; wrote: boolean }> {
+  // 恢复没落定时没有「要存的文档」：不举手动标志、不认领、不等写盘队列
+  if (isDocumentPlaceholder()) {
+    return { state: useDocumentStore.getState().saveState, wrote: false }
+  }
   // 手动保存是用户的动作：显式打开的别的项目的排版，存一下就归到这个项目（与真改一笔同一档）
   claimDocumentOnEdit()
   const id = useDocumentStore.getState().documentId
@@ -1468,67 +1829,136 @@ function futureSchemaOf(raw: unknown): number | null {
 }
 
 /**
- * 读文档快照：磁盘是主文档，本机副本是**待裁决的恢复候选**，不再静默取胜。
+ * 一次只读探测的结果（零副作用：不记 revision / 基线，不挪恢复副本，不 `dropRecovery`，不排队写盘）。
+ * 选中并且仍有提交权的那一份再交给 `acceptProbe` 落账。
+ */
+export interface ProbeResult {
+  id: string
+  kind: 'found' | 'missing' | 'unavailable' | 'invalid' | 'too_new'
+  /** 磁盘那一侧的探测原样 */
+  disk: AutosaveProbe
+  /** 可以打开的那份：磁盘优先；磁盘 missing / unavailable / invalid 时是本机副本 */
+  doc: ProjectDocument | null
+  from: 'disk' | 'local' | null
+  /** 待裁决（不在探测里挪动任何键）：本机比磁盘新 / 上一轮没裁决完的恢复副本 */
+  pendingRecovery: 'local_newer' | 'recovery_slot' | null
+  schema?: number
+  /**
+   * 本机副本（崩溃兜底 / 恢复槽位），**与磁盘探测的结局分开放**：磁盘 `unavailable` / `invalid` 时 `kind` 照实是那个，
+   * `doc` 为 null——不能因为手边有副本就把读失败说成「读到了」（那份副本可能比磁盘旧）。只有确认过 404（`missing`）
+   * 才自动把它当文档本身。恢复协调把它作为用户明确选择的备选（「打开本机副本」）提供；显式打开最近文档
+   * （`readAutosaveDoc`）保持老行为，直接用它。
+   */
+  local: ProjectDocument | null
+}
+
+/**
+ * 读文档快照（**只读**）：磁盘是主文档，本机副本是**待裁决的恢复候选**，不再静默取胜。
  *
- * 三条规则：
+ * 三条规则（`acceptProbe` 落账时执行）：
  * 1. 磁盘上有 → 打开磁盘那份。本机副本比它新 = 上次写盘没成，挪进恢复槽位
  *    交给用户；不比它新 = 陈旧残留，直接删（"旧 autosave 不提示"）。
  * 2. 磁盘上没有（404）→ 本机那份就是这个文档本身，直接用，没什么可裁决的。
  * 3. 磁盘 schema 比本构建新 → **不打开**，也不许写。旧构建对新字段的语义一无
  *    所知，"尽力打开"等于用旧规则重写用户的新数据。
+ *
+ * 探测不碰任何东西，所以恢复协调可以逐个候选地探：没被选中的候选不会产生写入、不会迁移恢复副本。
  */
-export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
-  let fetched: Awaited<ReturnType<typeof fetchAutosave>> = null
-  let reachable = true
-  try {
-    fetched = await fetchAutosave(id)
-  } catch {
-    reachable = false // 后端不可达：退回本机副本，但磁盘状况**未确认**
-  }
-  if (reachable && fetched) {
-    const future = futureSchemaOf(fetched.doc)
-    if (future !== null) {
-      return { doc: null, notice: { kind: 'schema_too_new', docId: id, schema: future } }
-    }
-  }
-  const diskDoc = fetched ? migrateToProject(fetched.doc) : null
-  // 读盘失败时**删掉**条目而不是留个旧的：条目缺席的含义就是「这份文档的
-  // 磁盘状况我还没确认过」，写之前 ensureDiskKnown 会去确认一次。
-  if (!reachable) disk.forgetRevision(id)
-  else disk.rememberRevision(id, fetched)
-  // 读到什么就以什么为基线：之后本标签页的写盘都从这一版往前推进
-  if (diskDoc && typeof diskDoc.updatedAt === 'number') disk.setBaseline(id, diskDoc.updatedAt)
-
+export async function probeDocument(id: string, pj: string | null): Promise<ProbeResult> {
+  const disk = await probeAutosave(id, pj)
   const local = readLocalSlot(id)
   const pending = readRecovery(id)
-  if (!diskDoc) {
-    // 磁盘上没有（或读不到）：本机那份就是文档本身
-    const doc = local ?? pending
-    if (!doc) return { doc: null, notice: null }
-    if (!local) dropRecovery(id) // 恢复槽位转正，别再问一遍
-    // 确认过磁盘上真的没有（404）才推上去。读盘失败时**不推**：那时我们
-    // 不知道磁盘上有什么，一次整份 PUT 就可能盖掉一份从没读过的文档。
-    // 记在这份排版**原本**属于的项目名下：只是打开（显式从「最近文档」打开别的项目的）不算带进当前项目
-    if (reachable) disk.schedule(id, doc, ownerProjectForWrite(id))
-    return { doc, notice: null }
-  }
-  // 上一轮没裁决完的恢复副本优先：它一直有效，直到用户处置它
-  const candidate = pending ?? (local && local.updatedAt > diskDoc.updatedAt ? local : null)
-  if (local && !pending && local.updatedAt <= diskDoc.updatedAt) {
-    // 陈旧残留：磁盘上那份更新或一样，本机这份没有任何可恢复的东西
-    try {
-      localStorage.removeItem(slotKey(id))
-    } catch {
-      /* 删不掉只是留个垃圾键，下次索引清理还会再试 */
+  if (disk.kind === 'found') {
+    const future = futureSchemaOf(disk.doc)
+    if (future !== null) {
+      return { id, kind: 'too_new', disk, doc: null, from: null, pendingRecovery: null, schema: future, local: null }
     }
+    let diskDoc: ProjectDocument | null = null
+    try {
+      diskDoc = migrateToProject(disk.doc)
+    } catch {
+      diskDoc = null // 坏正文：当成读不了（下面退本机副本或回 invalid）
+    }
+    if (diskDoc) {
+      // 上一轮没裁决完的恢复副本优先：它一直有效，直到用户处置它
+      const pendingRecovery = pending
+        ? 'recovery_slot'
+        : local && local.updatedAt > diskDoc.updatedAt
+          ? 'local_newer'
+          : null
+      return { id, kind: 'found', disk, doc: diskDoc, from: 'disk', pendingRecovery, local: local ?? pending }
+    }
+    // 磁盘上有字节但本构建认不出：当成读不了，有本机副本就用它（与旧 `fetchAutosave` 抛错同一条路）
   }
-  if (!candidate) return { doc: diskDoc, notice: null }
-  const kept = pending ?? promoteToRecovery(id)
-  if (!kept) return { doc: diskDoc, notice: null }
-  return {
-    doc: diskDoc,
-    notice: { kind: 'recovery', docId: id, summary: summarizeRecovery(kept) },
+  // 磁盘 missing / unavailable / invalid（或认不出）：本机那份就是文档本身，没有就是没有
+  const fallback = local ?? pending
+  // 只有确认过 404 才自动把本机副本当文档本身；读失败（不可用 / 坏）保持磁盘的结局，副本另放
+  if (fallback && disk.kind === 'missing') {
+    return { id, kind: 'found', disk, doc: fallback, from: 'local', pendingRecovery: null, local: fallback }
   }
+  const kind = disk.kind === 'found' ? 'invalid' : disk.kind
+  return { id, kind, disk, doc: null, from: null, pendingRecovery: null, local: fallback }
+}
+
+/**
+ * 接受探测结果：**只在选中且仍有提交权时调**。revision / 基线 / 恢复副本挪动 / `dropRecovery` /
+ * 本机副本推回磁盘都在这里。`token` 给了就要求它仍是当前恢复代次，过期什么都不做、回 null。
+ * 返回读盘带回来的待裁决事项（调用方在文档换进来**之后**挂上）。
+ */
+export function acceptProbe(p: ProbeResult, _pj: string | null, token?: RestoreToken | null): DocNotice | null {
+  if (token && !isRestoreTokenCurrent(token)) return null
+  const id = p.id
+  if (p.kind === 'too_new') {
+    return { kind: 'schema_too_new', docId: id, schema: p.schema ?? 0 }
+  }
+  if (p.kind !== 'found' || !p.doc) return null
+  const local = readLocalSlot(id)
+  const pending = readRecovery(id)
+  if (p.from === 'disk' && p.disk.kind === 'found') {
+    const diskDoc = p.doc
+    disk.rememberRevision(id, { revision: p.disk.revision })
+    // 读到什么就以什么为基线：之后本标签页的写盘都从这一版往前推进
+    if (typeof diskDoc.updatedAt === 'number') disk.setBaseline(id, diskDoc.updatedAt)
+    const candidate = pending ?? (local && local.updatedAt > diskDoc.updatedAt ? local : null)
+    if (local && !pending && local.updatedAt <= diskDoc.updatedAt) {
+      // 陈旧残留：磁盘上那份更新或一样，本机这份没有任何可恢复的东西
+      try {
+        localStorage.removeItem(slotKey(id))
+      } catch {
+        /* 删不掉只是留个垃圾键，下次索引清理还会再试 */
+      }
+    }
+    if (!candidate) return null
+    const kept = pending ?? promoteToRecovery(id)
+    if (!kept) return null
+    return { kind: 'recovery', docId: id, summary: summarizeRecovery(kept) }
+  }
+  // 磁盘上没有 / 读不到：本机那份就是文档本身
+  if (!local) dropRecovery(id) // 恢复槽位转正，别再问一遍
+  if (p.disk.kind === 'missing') {
+    // 确认过磁盘上真的没有（404）：记成「缺席」档，并把本机那份推上去。记在这份排版**原本**属于的项目名下：
+    // 只是打开（显式从「最近文档」打开别的项目的）不算带进当前项目
+    disk.rememberRevision(id, null)
+    disk.schedule(id, p.doc, ownerProjectForWrite(id))
+  } else {
+    // 读盘失败（不可达 / 5xx / 磁盘上的字节坏了）：**不推**，也不伪造「缺席」——那时我们不知道磁盘上有什么，
+    // 一次整份 PUT 就可能盖掉一份从没读过的文档。删掉条目 = 这份文档的磁盘状况我还没确认过，
+    // 写之前 ensureDiskKnown 会去确认一次
+    disk.forgetRevision(id)
+  }
+  return null
+}
+
+/** 读文档并落账（`probeDocument` + `acceptProbe`）：显式打开最近文档 / 教程装文档用，现有调用方不变 */
+export async function readAutosaveDoc(id: string): Promise<LoadedDoc> {
+  const pj = currentProjectId()
+  let probe = await probeDocument(id, pj)
+  // 显式打开最近文档：读盘失败时本机副本就是能给用户的那份（老行为）；恢复协调不走这里
+  if (!probe.doc && probe.local && (probe.kind === 'unavailable' || probe.kind === 'invalid')) {
+    probe = { ...probe, kind: 'found', doc: probe.local, from: 'local' }
+  }
+  const notice = acceptProbe(probe, pj)
+  return { doc: probe.doc, notice }
 }
 
 /**
@@ -1660,6 +2090,8 @@ export function applyDerivedUpdate(next: {
   canvases?: CanvasData[]
 }): void {
   if (!next.doc && !next.canvases) return
+  // 派生同步也要看门：占位文档上落一次派生更新会排队写盘（照样把占位写成了「用户的文档」）
+  if (writesBlocked(false)) return
   useDocumentStore.setState((s) => ({
     ...(next.doc ? { doc: next.doc } : {}),
     ...(next.canvases ? { canvases: next.canvases } : {}),
@@ -1667,7 +2099,6 @@ export function applyDerivedUpdate(next: {
   }))
 }
 
-/** 启动时恢复上次的当前文档（含旧单槽自动保存的一次性迁移） */
 /**
  * 崩溃逃生开关：界面因某个文档反复崩溃时，「刷新」只会把同一份文档再读回来，
  * 用户就此卡死。ErrorBoundary 置上这个一次性标记后刷新 = 这次开空白文档；
@@ -1683,7 +2114,29 @@ export function requestBlankStart(): void {
   }
 }
 
-function consumeSkipRestore(): boolean {
+/**
+ * 启动恢复（工作台挂载时调）。逻辑在 `documentRestore`（冷启动 / Picker / 重试同一条 `resolveProjectDocument`）；
+ * 这里只转发，让现有调用方与用例的入口（`documentStore.restoreSession`）不变。
+ *
+ * **不静态 / 动态 import `documentRestore`**：它依赖本模块，反过来会把它拉进本模块所在的那个 import 环
+ * （`importArchitecture.test`：旧环不扩大）。改成它加载时把自己的实现登记进来——`projectStore` 在应用里
+ * 总会加载它；只 import 本模块的用例要自己 `import '@/store/documentRestore'`。
+ */
+let restoreSessionImpl: (() => Promise<boolean>) | null = null
+
+export function registerRestoreSession(fn: () => Promise<boolean>): void {
+  restoreSessionImpl = fn
+}
+
+export function restoreSession(): Promise<boolean> {
+  if (!restoreSessionImpl) {
+    return Promise.reject(new Error('restoreSession: `@/store/documentRestore` 没有加载（它加载时登记实现）'))
+  }
+  return restoreSessionImpl()
+}
+
+/** 一次性的「这次启动开空白」标记：读到就消费掉（StrictMode 第二轮拿到的是同一次启动的共享决定，见 `documentRestore`） */
+export function consumeSkipRestoreOnce(): boolean {
   try {
     const skip = window.sessionStorage.getItem(SKIP_RESTORE_KEY) === '1'
     if (skip) window.sessionStorage.removeItem(SKIP_RESTORE_KEY)
@@ -1693,74 +2146,48 @@ function consumeSkipRestore(): boolean {
   }
 }
 
-export async function restoreSession(): Promise<boolean> {
-  const index = readIndex()
-  useDocumentStore.setState({ recentDocs: index })
-  if (consumeSkipRestore()) return false
-  // 工作台挂载**之前**已经有人把这份文档装进来了（教程的 prepareDocument、切项目时接回上次的
-  // 文档）：内存里这份就是它、而且是最新的，不再从磁盘读一遍盖上去。盖上去的是刚落盘的那一版，
-  // 在它路上的这段时间里用户若已开始拖动，拖动当场作废——慢机器上教程一打开就拖，图纹丝不动
-  // （windows-exe-smoke 上撞到过；e2e tutorial.spec「教程刚打开就拖」把读盘压慢后在任何机器上复现）
-  // 装它的那一方（`loadAutosavedDocument`）已经把读盘带回来的待裁决事项挂上了，这里不再重复
-  const before = useDocumentStore.getState()
-  const identity = persistedIdentity(before)
-  const localId = readCurrentId()
-  // 本机记录就指着内存里这份（装它的那一方刚写过）：一个请求都不发
-  if (localId && before.documentId === localId) return false
-  // 取哪一份：**当前项目的 last（后端为准，#715 PR-B；后端没记过时是本机按项目的缓存，
-  // `loadProjectDocument`）→ 旧的本机 currentDoc**。桌面版换了端口 = 换了 origin = 本机存储是空的，
-  // 只有后端还记得。后端没有这组端点（404：playground、嵌入画布、旧后端）或不可达时退回本机。
-  //
-  // **全局的 `currentDoc` 只在确知属于当前项目时才认**（#715 验收 P1）：稳定端口之后不同项目共用
-  // 一个 origin，`currentDoc` 是上一个项目最后开着的那份。改造前「这个项目后端没记过」（`null`）
-  // 就退回它，于是关掉 F 再打开新项目 G，G 一打开就是 F 的排版，随后按 G 记成「G 上次开着的」、
-  // 往 G 的目录里写。没开项目时只认没记在任何项目名下的那份。
-  const pj = currentProjectId()
-  const own = pj ? await loadProjectDocument(pj) : null
-  const id = own?.id ?? (localId !== null && (await currentDocBelongsHere(localId, pj)) ? localId : null)
-  if (!id) return false
-  if (useDocumentStore.getState().documentId === id) return false
-  // 问后端的这段路上别处换过文档或改过它：那份更新，这次恢复让位（与下面读盘那段同一条判据）
-  if (persistedIdentity(useDocumentStore.getState()).some((v, i) => v !== identity[i])) return false
-  const { doc: pd, notice } = await readAutosaveDoc(id)
-  // 读盘在路上时别处换过文档或改过它的任何一片要落盘的内容：那份更新，这次恢复让位
-  const now = persistedIdentity(useDocumentStore.getState())
-  if (now.some((v, i) => v !== identity[i])) return false
-  if (!pd) {
-    // schema 太新是**载入失败里唯一需要说话的那一种**：文件好好的，是这个
-    // 构建读不了它。默不作声地开一份空白，用户会以为自己的文档没了。
-    setDocNotice(notice)
-    return false
-  }
-  applyProject(pd, id, { dirty: false })
-  // 恢复出来的只会是这个项目自己的排版（上面的判据）：归属钉在这个项目上，本机索引里不知道归属的
-  // 那条（升级前的）当场补上（#773）
-  docProject = { id: pj, name: currentProjectLabel() }
-  pendingClaim = null
-  if (pj) backfillIndexOwner(id, pd, pj)
-  useDocumentStore.setState({ lastPersisted: index.find((e) => e.id === id)?.savedAt ?? null })
-  setSaveState('clean')
-  setDocNotice(notice)
-  announceDocOpen(id)
-  return true
+/** 本机 `currentDoc` 记着的文档 id（恢复前捕获线索用——重置会改写它） */
+export const readCurrentDocId = readCurrentId
+
+/** 本机「最近文档」索引刷进 store（启动恢复一开始就做，列表不等文档恢复） */
+export function refreshRecentDocsFromIndex(): void {
+  useDocumentStore.setState({ recentDocs: readIndex() })
 }
 
 /**
- * 全局 `currentDoc` 能不能当成当前项目的排版恢复（#715 验收 P1 / #773）。
- *
- * - 本机索引**记着**归属：就按它（别的项目的一律不认）；
- * - 记着「不知道」（升级前 / T04 之前的条目没有 projectId，或索引里根本没有这条）：**问后端要证据**
- *   （`GET /api/layout-session/owner`：槽位归属 → 当前项目的时间线节点 → 面板素材全在当前项目里），
- *   有证据才认，没有或问不到就不恢复；后端没有这个端点（404：playground / 旧后端）时照旧认——那里
- *   没有跨项目共用的稳定 origin，也没有别处可问；
- * - 没开项目：只认没记在任何项目名下的那份。
+ * 恢复协调的安装：把探测选中的那份换进来（`applyProject`，不冲刷、不写本机副本——那个槽位正是待恢复的那份）。
+ * 令牌过期 / 占位文档被绕过门改过 → 不装、回 false。装的当下订阅方看到的是真文档（`installingUnderToken`），
+ * 落定（`settleRestore`）由调用方紧接着同步做。
  */
-async function currentDocBelongsHere(docId: string, pj: string | null): Promise<boolean> {
-  const recorded = recordedProjectOf(docId)
-  if (!pj) return !isForeignDocument(docId, null)
-  if (typeof recorded === 'string') return recorded === pj
-  const verdict = await fetchLayoutOwner(docId, pj)
-  return verdict === 'this' || verdict === undefined
+export function installRestoredDocument(
+  token: RestoreToken,
+  pd: ProjectDocument,
+  id: string,
+  notice: DocNotice | null,
+): boolean {
+  if (!canCommitRestore(token)) return false
+  installingUnderToken = true
+  try {
+    applyProject(pd, id, { dirty: false })
+    // 恢复出来的只会是这个项目自己的排版（候选已按归属验过）：归属钉在这个项目上，本机索引里不知道归属的
+    // 那条（升级前的）当场补上（#773）
+    docProject = { id: token.pj, name: currentProjectLabel() }
+    pendingClaim = null
+    if (token.pj) backfillIndexOwner(id, pd, token.pj)
+    writeCurrentId(id)
+    useDocumentStore.setState({
+      recentDocs: readIndex(),
+      lastPersisted: readIndex().find((e) => e.id === id)?.savedAt ?? null,
+      saveState: 'clean',
+      saveIssue: null,
+      docNotice: notice,
+      restoreMetaIssue: null,
+    })
+    announceDocOpen(id)
+  } finally {
+    installingUnderToken = false
+  }
+  return true
 }
 
 /** 本机索引里这份排版的归属补成 `pj`（没有这条就补一条）；记着别的项目的不动 */
@@ -1842,6 +2269,8 @@ export function startAutosave(): () => void {
     // 再排一次防抖写只会多一个新的 updatedAt 去和别的标签页抢。
     if (state.loadSeq !== prev.loadSeq) return
     if (state.doc === prev.doc && state.canvases === prev.canvases) return
+    // 占位文档的变化不是编辑：写入口都看门，这里再守一道（绕过门的写入也不排队落盘）
+    if (isDocumentPlaceholder()) return
     if (autosaveSuspendedFor !== null && autosaveSuspendedFor === state.documentId) return
     // 外部派生元数据同步（`applyDerivedUpdate`）：内容确实变了、必须落盘，
     // 但它不是用户的编辑。**只有 `saveState` 这一档不推**——`dirty` 照置

@@ -263,6 +263,10 @@ Tauri bundler）。
   （有包没签名、一个包都没有，都是硬错误——宁可不发清单，也不发一份装到
   一半才发现对不上的），看护 `tests/test_updater_manifest.py`。
 
+- **2026-10-12 修订（[ADR 0121](0121-app-update-source-order-and-fallback.md)）**：检查 / 下载改走壳自有命令，国内镜像与 GitHub
+  按顺序尝试、下载失败也换来源；前端不再直接调用插件（上文「前端唯一桌面感知点」「check 拿到的句柄」两条的句柄现在留在 Rust 侧，
+  语义不变：安装用的就是 check 时那一版）。
+
 ## 修订（2026-09-29，[ADR 0108](0108-desktop-stable-origin-and-backend-session-state.md)，issue #715）
 
 - **端口不再每次都变。** 上文「启动」一条与「桌面/浏览器模式边界」表里的 `127.0.0.1:0` 改为：壳把记在

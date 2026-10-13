@@ -308,6 +308,7 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
     expect(docs.readProjectDocument('p_a')).toEqual({ id: 'd_second', name: 'second' })
     expect(lastByProject.get('p_a')?.doc_id).toBe('d_first') // 前提：后一次确实没推上去
     // 下次读时本机这条待确认、比后端新：以它为准并补推
+    slots.set('d_second', '{}') // 正文在盘上：迁移 / 补推要等正文验证过（修复前是先推再说）
     expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_second', name: 'second' })
     await settle()
     expect(lastByProject.get('p_a')?.doc_id).toBe('d_second')
@@ -323,6 +324,7 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
     docs.rememberProjectDocument('p_a', { id: 'd_new', name: 'new' })
     await settle()
     failSessionPuts = false
+    slots.set('d_new', '{}') // 正文在盘上：迁移 / 补推要等正文验证过（修复前是先推再说）
     expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_new', name: 'new' })
     await settle()
     expect(lastByProject.get('p_a')?.doc_id).toBe('d_new')
@@ -338,6 +340,7 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
     docs.rememberProjectDocument('p_a', { id: 'd_new', name: 'new' })
     await settle()
     failSessionPuts = false
+    slots.set('d_new', '{}') // 正文在盘上：迁移 / 补推要等正文验证过（修复前是先推再说）
     expect(await docs.loadProjectDocument('p_a')).toEqual({ id: 'd_new', name: 'new' })
     await settle()
     expect(lastByProject.get('p_a')?.doc_id).toBe('d_new')
@@ -377,6 +380,7 @@ describe('推给后端失败的写入不丢（#719 Codex P1 / P2）', () => {
 
   it('升级迁移（后端没记过、本机有旧记录）推失败：留待确认，下次读补推', async () => {
     localStorage.setItem('tavotto.projectDoc.p_a', JSON.stringify({ id: 'd_legacy', name: 'legacy' }))
+    slots.set('d_legacy', '{}') // 正文在盘上：迁移 / 补推要等正文验证过（修复前是先推再说）
     vi.resetModules()
     const docs = await import('@/lib/projectDocs')
     failSessionPuts = true
@@ -423,11 +427,14 @@ describe('切项目途中不串项目（#719 Codex P1）', () => {
       .getState()
       .adoptOpenedProject({ open: true, id: 'p_b', figures_dir: '/figs/b' })
     await new Promise((r) => setTimeout(r, 10))
-    // 此刻 pj 已是 p_b，内存里仍是 A 的 d_a：用户又改了一笔
-    expect(app.doc.useDocumentStore.getState().documentId).toBe('d_a')
+    // 此刻 pj 已是 p_b。恢复门改造之后「认领 → 换占位空白」在问后端**之前**就完成了（旧文档的冲刷在设门之前做完），
+    // 内存里已经不是 A 的 d_a——旧设计里那段「还是 A、可以再改一笔」的窗口不复存在；
+    // 用户在这段路上的编辑被门拒掉，所以更不可能被记到 B 名下
+    expect(app.doc.useDocumentStore.getState().documentId).not.toBe('d_a')
     app.doc.useDocumentStore.getState().commit(literal('再加一段'), (d) => {
       d.objects.push(text('t2', 'more'))
     })
+    expect(app.doc.useDocumentStore.getState().doc.objects).toHaveLength(0)
     await settle()
     release()
     holdSessionGet = null

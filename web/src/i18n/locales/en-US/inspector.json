@@ -284,6 +284,7 @@
     "foldTickPlacement": "Tick placement",
     "groupFrame": "Frame",
     "groupTicksGrid": "Ticks and grid",
+    "hatchFollowEdge": "Follow the edge",
     "hiddenElements_one": "Hidden elements ({{count}})",
     "hint": {
       "scatterSize": "pt² is an area, not a diameter; doubling the value makes each dot about 1.4× wider."
@@ -808,6 +809,7 @@
     "handletextpad": "Handle–text gap",
     "hatch": "Hatch pattern",
     "hatch_linewidth": "Hatch width",
+    "hatchcolor": "Hatch color",
     "interpolation": "Interpolation",
     "invert_x": "Invert X axis",
     "invert_y": "Invert Y axis",

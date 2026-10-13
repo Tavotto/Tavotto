@@ -302,9 +302,13 @@ def test_codex_auto_concatenation_stays_under_the_default_cap():
     """从任何一个有 AGENTS.md 的目录开工，Codex 拼进来的那一串都不越过 32 KiB（#608）。
 
     判据的主语：**Codex**（默认 `project_doc_max_bytes`）在**加载项目指令的那一刻**、从
-    **每一份 AGENTS.md（git 跟踪的，含 `.agents/` 这类隐藏目录）所在的目录**开工时拼出来的「根 → cwd」那一串的**原始字节**。更深的
+    **每一份 AGENTS.md（git 跟踪的，含 `.agents/` 这类隐藏目录）所在的目录**开工时拼出来的「根 → cwd」那一串的字节数（**按 CRLF 口径**，见下）。更深的
     cwd 拼到的是最近祖先那一串，不会更长，所以按目录枚举就是全集。Codex 在文件之间另加的
     分隔符不在这里算——留给余量（治理后最长一串约 27 KB）。
+
+    口径：Windows 检出是 CRLF、其他平台是 LF，每行差 1 字节，只在 Windows 重腿见红会让
+    本地与 Linux 分片永远看不到（#935）。所以所有平台统一按 CRLF 量：换行规范成 LF 后取
+    「LF 字节数 + 行数」，LF / CRLF 检出算出同一个数，已是 CRLF 的不重复加。
 
     反证：往任一速查表塞到越过上限 1 KiB，这里必红（变异记在 #608 的 PR 里）。
     """
@@ -316,13 +320,28 @@ def test_codex_auto_concatenation_stays_under_the_default_cap():
     assert {f for _, fs in chains for f in fs} == set(files)
     over = []
     for cwd, fs in chains:
-        total = sum((ROOT / f).stat().st_size for f in fs)
+        total = sum(ab.crlf_bytes((ROOT / f).read_bytes()) for f in fs)
         if total > ab.CODEX_DEFAULT_CAP:
-            over.append(f"cwd={cwd}: {total:,} B > {ab.CODEX_DEFAULT_CAP:,} B ← {' + '.join(fs)}")
+            over.append(
+                f"cwd={cwd}: {total:,} B（CRLF 口径）> {ab.CODEX_DEFAULT_CAP:,} B ← {' + '.join(fs)}"
+            )
     assert not over, (
         "Codex 会截掉这些拼接串的末尾（把速查表里写成全文的要点迁进细则，见 docs/rules/README.md）:\n  "
         + "\n  ".join(over)
     )
+
+
+def test_crlf_bytes_is_platform_independent():
+    """CRLF 口径的计算函数：LF / CRLF 同数，已是 CRLF 不重复加；LF 下未超的内容 CRLF 下会超（#935）。"""
+    ab = _budget()
+    lf = b"x" * 9 + b"\n"
+    lf_text = lf * 3276  # 32,760 B（LF）：旧口径放过
+    crlf_text = lf_text.replace(b"\n", b"\r\n")
+    assert len(lf_text) < ab.CODEX_DEFAULT_CAP < len(crlf_text)
+    assert ab.crlf_bytes(lf_text) == ab.crlf_bytes(crlf_text) == len(crlf_text)
+    assert ab.crlf_bytes(lf_text) > ab.CODEX_DEFAULT_CAP  # 新口径拦住
+    assert ab.crlf_bytes(b"a\r\nb\nc") == len(b"a\r\nb\r\nc")  # 混合换行逐行一次
+    assert ab.crlf_bytes(b"") == 0
 
 
 def test_every_rules_layer_is_routed_from_a_sheet():

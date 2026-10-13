@@ -340,7 +340,7 @@
   这个模块却没有任何发行包认领、PR3 覆盖度缓存里它是 `import_error`（包在、导入失败，装它救不了）。**不新增 `blocked` 理由**
   （`BLOCK_REASONS` 闭集不动）：这些情形不让计划不完整。判决顺序：名字级已装（表 / 声明的名字，旧口径原样）> 已装的备选发行包
   （`cv2` 装的是 headless 不再报缺 `opencv-python`，条目带 `mapped_distribution`）> 别的发行包声称提供 / 无元数据的模块 >
-  覆盖度 `import_error` > 缺。**没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（用户在确认摘要里看得见这个名字；
+  覆盖度 `import_error` > 缺。表外名（`bucket=unknown`，不经 `_verdict`）单独一条：静态索引读全、唯一未被遮蔽的已装候选是 `installed_confirmed` + `provenance=index` + 可重现（PyPI）、该发行包在目标已装集合里、覆盖度不是 `import_error`、且运行目标 == 安装目标（装到另一个环境时维持来源未定）→ 判满足（`_installed_index_satisfies`，#938），不进 `origins`、**仍不产生任何安装名**；歧义 / editable·本地·VCS·Conda / 无元数据 / 被遮蔽 / 名字层不完整 / 导入失败维持来源未定。**没有任何备选装着的 `cv2` 仍按 curated 缺 `opencv-python`**（用户在确认摘要里看得见这个名字；
   条目带 `distribution_status=module_origin_ambiguous` 供展示），不静默改名。已装元数据**只用来判「已经有了 / 来源未定」，从不造安装名**。
   目标环境的静态发行包索引（`depplan.static_index`）与事实**同一刻读**（`target_facts` 里）、同一个 `reset_cache` 清：装上了但验证没过的
   包不会 `reset_cache`，事实停在装之前，索引也必须停在装之前；联合计划读覆盖度只走 `userenvs.cached_probe` 的只读缓存（不起进程）。
@@ -624,8 +624,7 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   基础栈换空表、宿主 site-packages 用 `.pth` 挂进新环境、pip 只从 `PIP_FIND_LINKS` 取包）。这两份**不 import pytest**（posix-e2e 腿没装）；放宽了什么由 `offline_world` 与
   `test_dependency_repair.py::test_managed_venv_creation_is_isolated_and_minimal` 对着钉。POSIX 专用，登记在 `tests/test_e2e_leg_topology.py::PLATFORM_SKIPS`。
 - **两次授权不合并**：可信包（表 / 声明）与用户指定的包是两档信任，先装可信的、会话重新检查后才出现「需要确认」；合成一次需要让 `DependencyPrepareDialog.prepare` 带 `user_specified` 并重做摘要漂移判定（ADR 0119 §十）。
-- **已知差距（修之前别当成设计）**：用户确认包名并装好之后，联合计划对这个表外名仍给 `origins[].reason = unverified`（`distribution_status = installed_confirmed`），卡片仍说「来源待定 / 仍然运行」——
-  `depplan._verdict` 对「表外名 + 已装提供者」一律判来源未定；`web/e2e/import-origin.spec.ts` ④ 钉着现状，修了就把那一处断言改成 `ready`。
+- **（已修，#938）** 用户确认包名并装好之后，表外名被已装的唯一 index 来源发行包满足，卡片回到 `ready`；`web/e2e/import-origin.spec.ts` ④ 断言这一点。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
@@ -652,3 +651,33 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
 速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。
 
 - 内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境一个都不碰；环境建议纯读、检查是唯一起候选的入口、采用要用户点（ADR 0114）；镜像只在网络失败或官方源太慢 / 超时、且无自配源时重试一次，两次共用预算
+
+## 声明 roots（兼容性改造 P02，ADR 0122）
+
+- 目标是受管环境时，**选中的声明里与脚本相关、且目标缺 / 版本不满足的**是安装 roots（`depplan.plan` → `requirements`），不再只做 constraint；用户自己的 venv 目标永不并入。
+  「相关」只有 `depplan._relevant_declarations` 一处：能指到它的 import（无条件 / 函数体内 / 别名动态）或归不到发行包的 import / 非字面量动态导入；可选 / 条件 / `TYPE_CHECKING` 不算。
+  「算不算」的绑定上下文只有 `depplan._is_binding`（import 分类）与 `_binding_dynamic`（非字面量动态导入）两个入口，互斥 provider 的冲突触发（`_arbitrate_providers`）同用它们：
+  `try: import cv2 / except ImportError`、`TYPE_CHECKING` 或条件下的 `import cv2` 不触发冲突；`try` / 条件 / `TYPE_CHECKING` 里的 `importlib.import_module(name)` 不让声明变相关。
+  扫描器为此在 `ImportUse.enclosing` 里保留非字面量动态导入的外围上下文（只加字段，不进 `to_payload`，`context` 仍恒为 `dynamic`）。
+  仲裁出的 provider（`cv2` 的 headless 等）只在脚本确实 import 那个模块时相关——未 import 就不相关，连「有未解释 import」也不让它变相关。
+  `declared_gaps` 对外截到 `MAX_DECLARED_GAPS`（超出时带 `declared_gaps_total`），但 `root_trigger` / 状态一律用完整集合判：先判定、后截断。
+- 差集（`JointPlan.declared_gaps`）≠ 安装集合：前者相对**此刻跑脚本的环境**，后者相对**目标**。相关差集 + 跑脚本的环境归 Tavotto（`deprepair._run_env_ours`）才让计划 `ready`；归属按**路径身份、不 realpath**（`pool.same_python` 比登记的各代 `bin/python`）——托管 venv 的 `bin/python` 常是指向基础解释器的软链接，realpath 会把用户当前用的系统 python 判成「我们的」；
+  用户的系统 / 本进程解释器只记录偏差（`action=recorded`），不静默升降包。`declared_gaps` 是可选字段，`plan_version` 不升。
+- 没有 import 名的 root 照样进账与装后核验（`install_only` 里 `import_name=""`）；`needed_imports` 一律滤掉空名，别拿空串去 probe。
+- 互斥 provider 只有一张表 `depresolve.ALTERNATIVE_DISTRIBUTIONS`：声明点名一个 = 它胜出；点名两个 = `dependency_conflict`；没点名 = curated（观察到的不是授权）。
+  冲突与「能否 ready」都按**本计划实际安装集合**判，不看「是否 roots 模式」这个全局开关：点名的两个 provider 只在脚本 import 了那个模块、或它们真会被装（受管环境按声明装的 roots；hash 模式整份锁）时才冲突，无关脚本不被拦；hash 模式下相关缺口同样让计划 `ready`（`_arbitrate_providers(installing)` / `declared_install`）。
+  账本合并（`generation_requirements`）与记账（`forget_install`）同源，不把被替掉的 provider 带回。
+- 看护：`tests/test_dependency_declared_roots.py`（计划层、账本）、`tests/test_dependency_transaction.py::TestDeclaredRootsTransaction` / `TestRunEnvOwnership`（真 generation + 离线 pip）。
+
+## Import 来源进安装决策（兼容性改造 P03，ADR 0123）
+
+- **观察不授权**：安装名只有三条通道（项目声明 / 表 / `user_specified`，`INSTALLABLE_SOURCES`）。`depplan` 读观察（`distribution_candidates`）只喂披露字段 `JointPlan.provider_decisions`，
+  不得流进 `requirements` / `constraints` / `missing` / `identity` / 影响摘要；`deprepair` / `depresolve` 不读观察字段。行为看护：有无索引（`dists=None`）`requirements` / `identity` 逐字相同。
+- `provider_decisions`（可选字段，`plan_version` 不升）：`basis` ∈ 三档、`action` ∈ `depplan.DECISION_ACTIONS`、`observed` 含 editable / 本地 / VCS 并标 `reproducible=false`、`replaces_observed`。
+  editable / VCS / 本地 wheel 的观察**从不**折成 PyPI `name==version`；披露不带路径与文件内容。
+- 互斥 provider 的 `resolution_source`：声明仲裁替掉表里的名字时是 `project_declared`（`depplan._source_of`）。
+- 切换 provider 的作用域：`deprepair._scope_conflicts` 的 `via: "provider"`——别的作用域仍记着互斥 provider 时 `dependency_scope_conflict`（出路同 D04），同一作用域改声明是正常换，无归属老账不参与。
+- 成功回执 `result.providers`：`{import_name, distribution, version, source, provenance, generation}`，`provenance` 来自装后重读的静态索引（`_verify_distributions` 的返回值），读不出留空。
+  **每条成功安装的对外终态都带它**（托管联合 / 托管单包修复 / 首次装包 / 项目 venv 联合 / 项目 venv 单包 / 包管理原地装·升；卸载不带）：代事务路径原样转交其 `providers`；原地装没有「代」故 `generation` 为空，单包与包管理原地装没有重读元数据故 `provenance` 为空。`source` 缺失一律在 pip / 换代之前拒（`_require_record_sources`）。
+- 看护：`tests/test_dependency_origin_install.py`（计划层，四 provider × 声明 / 观察、editable / 本地 wheel / VCS、本地 helper / namespace、显式选择）、
+  `tests/test_dependency_provider_scopes.py`（真 generation + 离线 pip：安装集合 = 脚本实际 provider = 回执；跨作用域切换；失败不动旧 active）。

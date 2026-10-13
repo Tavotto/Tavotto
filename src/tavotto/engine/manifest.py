@@ -2062,9 +2062,21 @@ def _hatch_style_fields(pt) -> list[dict]:
     改不了单个 artist，所以旧版本不发这条字段，而不是发一条改了不生效的。
 
     没有花纹时照样给值（跟 `facecolor` 之于 `fill` 同一模型：界面 `visibleWhen` 收起，不是引擎隐藏）。
-    花纹**颜色**不在此列（维护者裁决：3.11 的 `set_alpha` 会按当前 rcParams 重解析花纹色，另开 issue 研究）。
+    花纹**颜色**（`hatchcolor`）同样**按真实 setter 判**：只有 `set_hatchcolor` 的版本（matplotlib ≥3.11）发。
+    ≤3.10 的花纹色是边色的副产品（每次 `set_edgecolor` 覆盖），独立编辑会被下一次边色 / 不透明度写入冲掉，
+    不发比发一条改了又回去的好（#874）。
     """
     out: list[dict] = []
+    if hasattr(pt, "set_hatchcolor"):
+        out.append(
+            {
+                "prop": "hatchcolor",
+                "type": "color",
+                # 画出来的花纹色（`'edge'` 时是边色的实况）；「跟随边框」是另一个事实，不塞进色号里
+                "value": to_hex(pt.get_hatchcolor()),
+                "follows_edge": getattr(pt, "_hatch_color", None) == "edge",
+            }
+        )
     if hasattr(pt, "set_hatch_linewidth"):
         out.append(
             {

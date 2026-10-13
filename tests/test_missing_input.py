@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from support.previewkit import publish_fixture
 from tavotto.engine import (
     execspec,
     figcapture,
@@ -1302,7 +1303,7 @@ def test_a_remap_during_the_writeback_replace_loop_waits_for_the_commit(
     out = tmp_path / "_replay_out"
     out.mkdir()
     man = {"stem": "Fig1", "size_mm": [35.28, 17.64], "elements": []}
-    (out / "Fig1.json").write_text(json.dumps(man), encoding="utf-8")
+    publish_fixture(out, "Fig1", man)
 
     class FakeWorker:
         script_name, entry = "fig1.py", "main"

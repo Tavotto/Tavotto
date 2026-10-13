@@ -36,6 +36,7 @@ import pymupdf
 import pytest
 
 from support.pipedrain import StderrDrain
+from support.previewkit import publish_fixture
 from tavotto import app as m
 from tavotto.engine import (
     ai_agents,
@@ -90,7 +91,7 @@ def _fake_workers(monkeypatch, figs, tmp_path, payload: bytes) -> None:
     out = tmp_path / "_replay_out"
     out.mkdir(exist_ok=True)
     man = {"stem": "Fig1", "size_mm": [35.28, 17.64], "elements": []}
-    (out / "Fig1.json").write_text(json.dumps(man), encoding="utf-8")
+    publish_fixture(out, "Fig1", man)
 
     class FakeWorker:
         script_name, entry = "fig1.py", "main"
@@ -3249,7 +3250,7 @@ def test_preview_svg_is_written_without_newline_translation():
 
     # 第二侧：确实是用 `newline=""` 打开的（光"传了个文件对象"不够，
     # 传一个默认模式打开的照样翻译）
-    assert 'open(svg_path, "w", encoding="utf-8", newline="")' in src, (
+    assert 'open(svg_part, "w", encoding="utf-8", newline="")' in src, (
         'figsession 写预览 SVG 必须显式 `newline=""`——默认的 universal '
         "newlines 会在 Windows 上把 `\\n` 翻成 `\\r\\n`"
     )

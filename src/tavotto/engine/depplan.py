@@ -55,7 +55,7 @@ import shutil
 import stat
 import subprocess
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
 from . import config, depresolve, distmeta, importscan, projectenv, runtime
@@ -109,6 +109,21 @@ ORIGIN_REASONS = (
 )
 #: 一个 origins 条目最多列几个候选发行包名（不透明的名字，没有路径）
 MAX_ORIGIN_CANDIDATES = 8
+
+#: 选中的声明相对一个环境的差集（P02，`JointPlan.declared_gaps[].state`）：没装 / 装了但版本不满足声明的约束。
+#: 满足的不出现。与 `JointPlan.satisfied[].matches_declared` 是同一件事的两个视角：后者说「脚本 import 的这个包装着、满不满足」，
+#: 这里说「项目声明要的每一条，环境里差什么」（含脚本里没有任何 import 能指到它的）。
+GAP_ABSENT = "absent"
+GAP_VERSION_UNSATISFIED = "version_unsatisfied"
+GAP_STATES = (GAP_ABSENT, GAP_VERSION_UNSATISFIED)
+#: `declared_gaps[].action`：`install` = 这份计划会把它装进新一代；`recorded` = 只记录偏差（用户自己的环境能原样跑，不为它动手）
+GAP_ACTION_INSTALL = "install"
+GAP_ACTION_RECORDED = "recorded"
+MAX_DECLARED_GAPS = 40
+MAX_PROVIDER_DECISIONS = 40
+
+#: `provider_decisions[].action`：新一代要装它 / 目标里已经有 / 来源未定（不装）
+DECISION_ACTIONS = ("install", "satisfied", "undecided")
 
 
 class UserSpecifiedRejected(ValueError):
@@ -736,6 +751,20 @@ class JointPlan:
     #: 披露里必须标明「用户指定、未经可信来源核实」（`deprepair.impact_of` 的 `user_specified`）。只在有时才进 `to_payload`
     #: （老客户端忽略，`plan_version` 不升）。
     user_specified: tuple[dict, ...] = ()
+    #: 选中的声明相对**此刻跑脚本的环境**的差集（P02）：`{distribution, specifier, state, installed_version, relevant, action}`。
+    #: `relevant` = 脚本里有 import 能指到它、或脚本有未解释的 import / 动态导入（这时声明就是权威，不被 AST 否决）；只有相关的差集才让
+    #: 托管环境的计划 `ready`，不相关的只记录。`action` 见 `GAP_ACTION_*`。只在有差集时才进 `to_payload`（老客户端忽略，`plan_version` 不升）。
+    declared_gaps: tuple[dict, ...] = ()
+    #: 每个提供者决策的依据与环境里**观察到**的提供者（P03，AC-08 / AC-09）：`{import_name, distribution, basis, action,
+    #: observed: [{distribution, version, provenance, reproducible}], replaces_observed}`。`basis` ∈ `depresolve.INSTALLABLE_SOURCES`
+    #: （project_declared / curated / user_specified；没有「观察」这一档）；`action` ∈ `DECISION_ACTIONS`；`observed` 是此刻跑脚本的环境里
+    #: 未被遮蔽的已装提供者（editable / 本地 / VCS 也列出，带 `provenance` 与 `reproducible=false`，**从不**折成 `name==version`）；
+    #: `replaces_observed` = 新一代要装的发行包与观察到的都不同（例：运行环境用 headless、新一代按表装 `opencv-python`）。
+    #: 这是**披露**：不进 `requirements` / `identity` / `inputs_digest` / 影响摘要，观察到的提供者不授权安装。只在有话可说时才进 `to_payload`
+    #: （老客户端忽略，`plan_version` 不升）。
+    provider_decisions: tuple[dict, ...] = ()
+    #: 差集总数；超过 `MAX_DECLARED_GAPS` 被截断时 > `len(declared_gaps)`（状态判定用的是完整集合，只有对外载荷截断）。
+    declared_gaps_total: int = 0
 
     @property
     def install_entries(self) -> tuple[dict, ...]:
@@ -761,6 +790,21 @@ class JointPlan:
             **(
                 {"user_specified": [dict(u) for u in self.user_specified]}
                 if self.user_specified
+                else {}
+            ),
+            **(
+                {"declared_gaps": [dict(g) for g in self.declared_gaps]}
+                if self.declared_gaps
+                else {}
+            ),
+            **(
+                {"provider_decisions": [dict(d) for d in self.provider_decisions]}
+                if self.provider_decisions
+                else {}
+            ),
+            **(
+                {"declared_gaps_total": self.declared_gaps_total}
+                if self.declared_gaps_total > len(self.declared_gaps)
                 else {}
             ),
             "requirements": list(self.requirements),
@@ -899,6 +943,42 @@ def _verdict(
     return _Verdict(_ABSENT)
 
 
+def _installed_index_satisfies(
+    c: importscan.ImportClass, installed: dict, state: str, index_incomplete: bool
+) -> bool:
+    """表外名（`bucket=unknown`，没有可信安装名）是不是已经被**环境里装好的、可由包索引重现的唯一发行包**满足（#938）。
+
+    成立要同时满足（任何一条不成立都维持原判——来源未定）：静态索引读全（`index_incomplete` 为 False）；候选里恰有一个已装行、
+    未被遮蔽，且是 `index` 来源 + 可重现 + PyPI 生态，状态为 `installed_confirmed` / `resolved`（唯一、已确认；多个提供者的
+    歧义、editable / 本地 / VCS / URL / Conda、无元数据、`layer_order_unresolved` 都到不了这里）；该发行包确在目标解释器的
+    已装集合里；覆盖度缓存没说它导入失败（`import_error`）。
+
+    只回答「判满足」：调用方据此不把它放进 `unknown` / `origins`，**不产生任何安装名**——已装元数据是证据，不是安装授权。"""
+    if c.bucket != importscan.BUCKET_UNKNOWN or index_incomplete or state == "import_error":
+        return False
+    if (
+        c.distribution_status != distmeta.ST_CONFIRMED
+        or c.resolution_status != importscan.STATUS_RESOLVED
+        or c.distribution_provenance != distmeta.PROV_INDEX
+        or "layer_order_unresolved" in c.compatibility
+        or distmeta.EV_ORPHAN in c.evidence
+    ):
+        return False
+    rows = [x for x in c.distribution_candidates if x.get("source") == distmeta.SRC_INSTALLED]
+    live = [x for x in rows if not x.get("shadowed")]
+    if len(live) != 1:
+        return False
+    (row,) = live
+    if (
+        row.get("provenance") != distmeta.PROV_INDEX
+        or row.get("reproducible") is not True
+        or row.get("ecosystem") != distmeta.ECO_PYPI
+    ):
+        return False
+    key = depresolve.normalize_distribution(str(row.get("distribution") or ""))
+    return bool(key) and installed.get(key) is not None
+
+
 def _coverage_states(
     coverage: Callable[[tuple[str, ...]], dict | None] | None,
     scan: importscan.ScanResult,
@@ -970,6 +1050,241 @@ def _origin_entry(c: importscan.ImportClass, reason: str, state: str, *, suggest
     return entry
 
 
+def _root_state(
+    intents: list[depresolve.DependencyIntent], installed: Mapping[str, str]
+) -> tuple[str, str]:
+    """一条声明（同名可能来自多个文件）相对一个环境的状态 `(GAP_*或"", 已装版本)`。版本读不懂 / 没有版本（替身事实里
+    adapter 的空串）不判不满足——「判不出就别判」。"""
+    name = intents[0].name
+    version = installed.get(name)
+    if version is None:
+        return GAP_ABSENT, ""
+    for it in intents:
+        if it.specifier and depresolve.version_satisfies(it.specifier, version) is False:
+            return GAP_VERSION_UNSATISFIED, version
+    return "", version
+
+
+#: 脚本「指到」某个发行包时算数的 import 上下文：模块层无条件、函数体内（延后）、别名 / 非恒认形式的动态导入。
+#: `optional`（`try … except ImportError`，脚本自己处理缺席）、`conditional`、`type_checking` 不算——那几种缺了脚本照样跑，
+#: 不为它们启动安装（与 `possible` 「只列出、不在跑前装」的旧合同一致）。
+_BINDING_CONTEXTS = (
+    importscan.CONTEXT_UNCONDITIONAL,
+    importscan.CONTEXT_DEFERRED,
+    importscan.CONTEXT_DYNAMIC,
+)
+
+
+def _is_binding(c) -> bool:
+    """这条 import 分类算不算「指到发行包」：第三方 / 未知桶、绑定上下文、没被弃用。声明相关性与互斥 provider 的冲突触发
+    共用这一处（`_relevant_declarations` / `_arbitrate_providers`）——可选 / 条件 / `TYPE_CHECKING` / 未使用的 import 两处都不算。"""
+    return (
+        c.bucket in (importscan.BUCKET_THIRD_PARTY, importscan.BUCKET_UNKNOWN)
+        and c.context in _BINDING_CONTEXTS
+        and not c.unused
+    )
+
+
+def _binding_dynamic(scan: importscan.ScanResult) -> bool:
+    """有没有落在绑定上下文里的非字面量动态导入（外围是 `optional` / `conditional` / `type_checking` 的不算——
+    缺了脚本照样跑，不需要跑前装什么）。外围没记（旧构造的 `ImportUse`）按保守的「算」。"""
+    return any(
+        (u.enclosing or importscan.CONTEXT_UNCONDITIONAL) in _BINDING_CONTEXTS for u in scan.dynamic
+    )
+
+
+def _relevant_declarations(
+    names,
+    scan: importscan.ScanResult,
+    arbitrated: Mapping[str, str],
+    plain_unknown: set[str],
+) -> set[str]:
+    """选中的声明里，哪些与这个脚本有可见的关联（P02）：脚本里有 import 能指到这个发行包，或脚本有无法归给任何发行包的 import
+    （表外名、函数体内 / 别名的未知名字）、有非字面量的动态导入——后一种里没法逐条对应，声明就是权威（AST 不否决已选声明）。
+    其余的声明（requirements 里躺着、这个脚本从没碰过的包）不因此装进来，也不让计划 `ready`：不污染不相干的脚本。"""
+    bound = [c for c in scan.classes if c.distribution and _is_binding(c)]
+    # 仲裁出的 provider 只对确实 import 了它那个模块的脚本相关（Codex #960 P2）：模块名已知，没 import 就不相关——
+    # 共享 requirements 里点名 headless，只 `import numpy` 的脚本不因此装 OpenCV
+    attached = {
+        depresolve.normalize_distribution(arbitrated.get(c.module, c.distribution)) for c in bound
+    }
+    unimported = {
+        depresolve.normalize_distribution(d)
+        for m, d in arbitrated.items()
+        if m not in {c.module for c in bound}
+    } - attached
+    unexplained = (
+        bool(plain_unknown)
+        or _binding_dynamic(scan)
+        or any(c.bucket == importscan.BUCKET_UNKNOWN and _is_binding(c) for c in scan.classes)
+    )
+    return (set(names) - unimported) if unexplained else set(names) & attached
+
+
+def _declared_gaps(
+    by_name: dict[str, list[depresolve.DependencyIntent]],
+    installed: Mapping[str, str] | None,
+    relevant: set[str],
+) -> tuple[dict, ...]:
+    """选中的声明相对**此刻跑脚本的环境**的差集（`JointPlan.declared_gaps`，未带 `action`）；`relevant` 见
+    `_relevant_declarations`。回**完整**集合：状态判定用它，对外载荷由调用方再截到 `MAX_DECLARED_GAPS`。"""
+    if installed is None:
+        return ()
+    out: list[dict] = []
+    for name, items in sorted(by_name.items()):
+        state, version = _root_state(items, installed)
+        if not state:
+            continue
+        out.append(
+            {
+                "distribution": name,
+                "specifier": ",".join(sorted({it.specifier for it in items if it.specifier})),
+                "state": state,
+                "installed_version": version,
+                "relevant": name in relevant,
+            }
+        )
+    return tuple(out)
+
+
+def _source_of(c: importscan.ImportClass, dist: str, arbitrated: Mapping[str, str]) -> str:
+    """装 `dist` 的依据：`importscan` 按**它自己认的名字**（表 / 声明）给的 `resolution_source`；`dist` 若是 `_arbitrate_providers`
+    让声明点名的互斥 provider 替掉的，依据就是项目声明。"""
+    if arbitrated.get(c.module) == dist and dist != c.distribution:
+        return depresolve.SOURCE_PROJECT_DECLARED
+    return c.resolution_source
+
+
+def _arbitrate_providers(
+    classes,
+    by_name: dict[str, list[depresolve.DependencyIntent]],
+    installing: Collection[str] | None,
+) -> tuple[dict[str, str], list[dict]]:
+    """同一个 import 名有多个互斥发行包（`depresolve.ALTERNATIVE_DISTRIBUTIONS`，`cv2` 的四个）时的最小仲裁（AC-08 启用门）。
+
+    回 `(import 名 → 项目声明点名的那个发行包, 冲突)`。只认**声明**：观察到的 provider 不是授权（装哪个不由已装元数据决定）；
+    点名了恰好一个 = 它胜出，替掉 curated 的名字；点名了两个及以上 = 冲突（互斥发行包同装一代是已知会互相覆盖的坏环境），
+    不是「都装」。声明里一个都没点名 = 不仲裁，维持 curated 行为。冲突只在脚本确实 import 那个名字、或点名的 provider **真的在这次计划的
+    安装集合里**（`installing`：受管环境按声明装 roots 的那些、hash 模式整份锁）时报；`None` = 还没算出安装集合，只判前一种（取 `chosen` 用）。
+    不看「是不是 roots 模式」这种全局开关：无关脚本的计划不装那两个 provider，不该被拦；hash 锁整份都装，同锁里的两个 provider 必须拦。"""
+    scanned = {c.module for c in classes if _is_binding(c)}
+    chosen: dict[str, str] = {}
+    conflicts: list[dict] = []
+    for module, alts in depresolve.ALTERNATIVE_DISTRIBUTIONS.items():
+        named = sorted({depresolve.normalize_distribution(a) for a in alts} & set(by_name))
+        if len(named) == 1:
+            chosen[module] = named[0]
+        elif len(named) > 1 and (
+            module in scanned or (installing is not None and any(n in installing for n in named))
+        ):
+            items = [it for n in named for it in by_name[n]]
+            conflicts.append(
+                {
+                    "name": module,
+                    "specifiers": sorted({it.specifier for it in items if it.specifier}),
+                    "sources": [it.source for it in items],
+                    "kinds": ["requirement"],
+                    "reasons": ["mutually_exclusive_providers: " + ", ".join(named)],
+                }
+            )
+    return chosen, conflicts
+
+
+def _observed_providers(c: importscan.ImportClass) -> list[dict]:
+    """此刻跑脚本的环境里，**未被遮蔽**的已装提供者（来自静态索引的候选）。只带发行包名 / 版本 / 来源种类 / 能否由包索引重现，
+    不带路径与文件内容；editable / 本地 wheel / VCS 照样列出（`reproducible=false`），让披露说得出「它们不可重建」。"""
+    out: list[dict] = []
+    for x in c.distribution_candidates:
+        if x.get("source") != distmeta.SRC_INSTALLED or x.get("shadowed"):
+            continue
+        out.append(
+            {
+                "distribution": depresolve.normalize_distribution(str(x.get("distribution") or "")),
+                "version": str(x.get("version") or ""),
+                "provenance": str(x.get("provenance") or ""),
+                "reproducible": bool(x.get("reproducible")),
+            }
+        )
+    return out[:MAX_ORIGIN_CANDIDATES]
+
+
+def _provider_decisions(
+    scan: importscan.ScanResult,
+    verdicts: Mapping[str, _Verdict],
+    arbitrated: Mapping[str, str],
+    by_name: Mapping[str, list],
+    to_install: set[str],
+    user_entries,
+    target_installed: Mapping[str, str] | None = None,
+) -> tuple[dict, ...]:
+    """每个第三方 import 最终装 / 认哪个发行包、凭什么，以及环境里观察到的提供者（P03）。**只披露，不决定**：
+    这里读观察（`distribution_candidates`），但结果不流回 `requirements` / `missing` / `identity`——观察到的提供者是证据，不是授权
+    （`test_the_observed_provider_never_becomes_an_install_name`；看护用例：有无索引时 `requirements` / `identity` 逐字相同）。
+    只有「有观察」或「该 import 有互斥的备选发行包」的条目才列出。
+
+    `target_installed`：安装目标与运行解释器不是同一个环境时给（目标的已装集合）。`satisfied` 说的是**目标里**谁在满足它——
+    判决（`verdicts`）按运行解释器量，换了目标就不能沿用；目标里认不出唯一提供者（没有 / 多个且声明没点名）如实标 `undecided`。"""
+    out: list[dict] = []
+    for c in scan.needed:
+        verdict = verdicts[c.module]
+        install_name = arbitrated.get(c.module, c.distribution)
+        observed = _observed_providers(c)
+        if not observed and not depresolve.distribution_alternatives(c.module):
+            continue
+        if install_name and install_name in to_install:
+            # 新一代要装它（可能当前环境里是另一个提供者在满足，所以与 `missing` 不是一回事）
+            action, chosen = "install", install_name
+        elif verdict.kind == _OPEN:
+            action, chosen = "undecided", install_name
+        else:
+            # 「已满足」的提供者必须有独立的授权：被声明点名，或正是表 / 用户确认给出的安装名。
+            # 只是观察到的别家发行包（如 yaml 由 yaml-fork 提供）不能借 curated 的名义披露成已满足（Codex #964）。
+            def _authorized(d: str) -> bool:
+                return bool(by_name.get(d)) or d == install_name
+
+            if target_installed is None:
+                present = [verdict.dist] if verdict.dist else []
+            else:
+                present = _providers(c, dict(target_installed))
+            authorized = [d for d in present if _authorized(d)]
+            if target_installed is None and not present:
+                action, chosen = "satisfied", install_name
+            elif len(authorized) == 1:
+                action, chosen = "satisfied", authorized[0]
+            else:
+                action, chosen = "undecided", install_name
+        if not chosen:
+            continue
+        basis = (
+            depresolve.SOURCE_PROJECT_DECLARED
+            if by_name.get(chosen)
+            else (c.resolution_source or depresolve.SOURCE_CURATED)
+        )
+        have = {o["distribution"] for o in observed}
+        out.append(
+            {
+                "import_name": c.module,
+                "distribution": chosen,
+                "basis": basis,
+                "action": action,
+                "observed": observed,
+                "replaces_observed": action == "install" and bool(have) and chosen not in have,
+            }
+        )
+    for entry in user_entries:
+        out.append(
+            {
+                "import_name": entry["import_name"],
+                "distribution": entry["distribution"],
+                "basis": depresolve.SOURCE_USER_SPECIFIED,
+                "action": "install",
+                "observed": [],
+                "replaces_observed": False,
+            }
+        )
+    return tuple(out[:MAX_PROVIDER_DECISIONS])
+
+
 def plan(
     root: str | Path,
     script: str,
@@ -982,6 +1297,7 @@ def plan(
     dists: distmeta.Index | None | object = _AUTO,
     coverage: Callable[[tuple[str, ...]], dict | None] | None = None,
     user_specified: Mapping[str, str] | None = None,
+    run_env_replaceable: bool | None = None,
 ) -> JointPlan:
     """拼一份联合计划。`facts` 是**此刻会跑脚本的**解释器的事实（缺什么按它量——门问的是
     「现在起会话会不会缺包」）；`target_kind` 说安装会落到哪种环境（受管环境并入 adapter 约束，
@@ -998,7 +1314,13 @@ def plan(
     提交的**用户指定**需求。只收「纯粹的表外名」（`_specifiable`），包名与约束过 `depresolve.from_user_input` 的严格语法；
     不满足一律抛 `UserSpecifiedRejected`，不静默丢弃。收下的那些离开 `unknown` / `origins`，作为 `resolution_source=user_specified`
     的条目进 `missing` 与 `requirements`，并列在 `JointPlan.user_specified`（披露：用户指定、未经可信来源核实）。hash 模式（锁文件语义）
-    下它没有 hash，整份计划 `dependency_hashes_incomplete`。"""
+    下它没有 hash，整份计划 `dependency_hashes_incomplete`。
+
+    声明 roots（P02）：目标是受管环境时，选中的 runtime 声明（组 / marker 已按目标求值；纯 constraint 不算）本身就是安装 roots——
+    不必有一条被 AST 认出的 import 指到它；目标里没有、或装着的版本不满足声明的约束，就进 `requirements`。`run_env_replaceable`
+    说此刻跑脚本的环境是不是 Tavotto 自己的（受管代 / 内置 runtime / 尚未落盘的新一代）：是，**相关的**差集（见 `declared_gaps`）才让计划
+    `ready`；不是（用户交给我们的系统解释器；缺省 None = 受管目标一律视为是）只记录偏差、不为它动手。用户自己的 venv 目标永不并入 roots。
+    同一个 import 名有多个互斥发行包（`cv2`）时，项目声明点名的那个胜出，点名了两个 = `dependency_conflict`（roots 不与 curated 取并集）。"""
     if target_kind not in TARGETS:
         raise ValueError(f"target_kind 非法: {target_kind!r}")
     root_p = Path(root)
@@ -1043,6 +1365,14 @@ def plan(
     by_name: dict[str, list[depresolve.DependencyIntent]] = {}
     for it in selection.requirements:
         by_name.setdefault(it.name, []).append(it)
+    hash_mode = any(it.hashes for it in selection.requirements)
+    # 声明 roots 只服务受管环境（用户自己的 venv 是只进不退的原地安装，不为声明多几项去改它）；hash 模式下整份选中集合本来就都装
+    roots_active = target_kind == TARGET_MANAGED and not hash_mode
+    # 「计划能不能因声明而 ready」只看目标是不是受管环境：hash 模式整份锁本来就都装，相关缺口同样值得启动一次安装
+    replaceable = target_kind == TARGET_MANAGED and (
+        True if run_env_replaceable is None else bool(run_env_replaceable)
+    )
+    arbitrated, _ = _arbitrate_providers(scan.classes, by_name, None)
 
     # ---- 每个第三方 import 的来源判决（present / absent / open）-----------------------------
     states = _coverage_states(coverage, scan, plain_unknown)
@@ -1074,12 +1404,15 @@ def plan(
         if verdict.kind == _OPEN:
             open_classes[c.module] = verdict.reason
             continue
-        dist = verdict.dist if verdict.kind == _PRESENT else c.distribution
+        dist = (
+            verdict.dist if verdict.kind == _PRESENT else arbitrated.get(c.module, c.distribution)
+        )
         declared_for = by_name.get(dist, [])
         entry = {
             "import_name": c.module,
             "distribution": dist,
-            "resolution_source": c.resolution_source,
+            # 仲裁让声明点名的 provider 替掉了表里的名字时，装它的依据是声明，不是表（P03：回执 / 披露不能把它记成 curated）
+            "resolution_source": _source_of(c, dist, arbitrated),
             "declared": bool(declared_for),
             "specifiers": sorted({it.specifier for it in declared_for if it.specifier}),
             "via": list(c.via),
@@ -1106,8 +1439,23 @@ def plan(
                     matches = False
         satisfied.append({**entry, "installed_version": version, "matches_declared": matches})
 
+    # 表外名已被环境里装好的唯一 index 来源发行包满足（#938）：不进 unknown / origins，也不产生安装名
+    # 只在运行目标 == 安装目标时成立：装到另一个环境（新托管代）时，当前解释器里装着的包不会出现在那里，
+    # 表外名既不在 requirements 也无安装名，激活后会 import 不到——维持来源未定（Codex #944 P1）
+    same_target = install_facts is None or install_facts is facts
+    index_satisfied = {
+        c.module
+        for c in scan.classes
+        if same_target
+        and c.module in plain_unknown
+        and c.module not in open_classes
+        and _installed_index_satisfies(c, installed, states.get(c.module, ""), index_incomplete)
+    }
     origin_classes = [
-        c for c in scan.classes if c.module in open_classes or c.module in plain_unknown
+        c
+        for c in scan.classes
+        if c.module in open_classes
+        or (c.module in plain_unknown and c.module not in index_satisfied)
     ]
     specifiable = {
         c.module
@@ -1165,30 +1513,74 @@ def plan(
     # 单独判：目标里名字级已有的不装，其余按可信安装名（表 / 声明，`c.distribution`）装；从不拿已装元数据造名字。
     # 当前环境里是 editable 等、可信解析又给不出安装名的 import（`unknown` 桶）本来就不在 `scan.needed`：它们留在
     # `unknown` / `origins`（带 editable / 本地 / Conda 的来源状态），如实标出新环境装不出来，不猜 PyPI 名。
-    same_target = install_facts is None or install_facts is facts
     to_install = {
-        c.distribution
+        arbitrated.get(c.module, c.distribution)
         for c in scan.needed
         if c.distribution
         and (same_target is False or verdicts[c.module].kind != _OPEN)
         and not _providers(c, target_installed)
+        # 点名了 provider 的 import：装哪个由下面的声明 roots 说了算（目标里没有它才装），不再回头装 curated 的名字
+        and not (roots_active and c.module in arbitrated)
     }
+    # ---- 声明 roots（P02）：选中的声明本身是新托管环境的安装根；扫描结果只补充与解释，不否决 -------------------------
+    relevant = _relevant_declarations(by_name, scan, arbitrated, plain_unknown)
+    declared_install: set[str] = set()
+    if target_kind == TARGET_MANAGED:
+        declared_install = {
+            name
+            for name, items in by_name.items()
+            if name in relevant and _root_state(items, target_installed)[0]
+        }
+    if roots_active:
+        to_install |= declared_install
+    # 本计划实际会装的名字：hash 模式 = 整份选中集合；否则 = 上面算出的 to_install（含按声明装的 roots）
+    installing = set(by_name) if hash_mode else set(to_install)
+    _, provider_conflicts = _arbitrate_providers(scan.classes, by_name, installing)
     missing_imports = {m["import_name"] for m in missing}
     install_only = tuple(
         {
             "import_name": c.module,
-            "distribution": c.distribution,
-            "resolution_source": c.resolution_source,
-            "declared": bool(by_name.get(c.distribution)),
+            "distribution": arbitrated.get(c.module, c.distribution),
+            "resolution_source": _source_of(
+                c, arbitrated.get(c.module, c.distribution), arbitrated
+            ),
+            "declared": bool(by_name.get(arbitrated.get(c.module, c.distribution))),
             "specifiers": sorted(
-                {it.specifier for it in by_name.get(c.distribution, []) if it.specifier}
+                {
+                    it.specifier
+                    for it in by_name.get(arbitrated.get(c.module, c.distribution), [])
+                    if it.specifier
+                }
             ),
             "via": list(c.via),
         }
         for c in scan.needed
-        if c.distribution in to_install and c.module not in missing_imports
+        if arbitrated.get(c.module, c.distribution) in to_install
+        and c.module not in missing_imports
     )
-    hash_mode = any(it.hashes for it in selection.requirements)
+    if roots_active:
+        # 没有任何 import 条目指到的声明 root：照样进账（重建时装得回来）与装后核验（发行包 / 版本），import 名未知就留空
+        covered = {m["distribution"] for m in (*missing, *install_only)}
+        modules_of = {
+            arbitrated.get(c.module, c.distribution): c.module
+            for c in scan.classes
+            if c.distribution or c.module in arbitrated
+        }
+        install_only = (
+            *install_only,
+            *(
+                {
+                    "import_name": modules_of.get(name, ""),
+                    "distribution": name,
+                    "resolution_source": depresolve.SOURCE_PROJECT_DECLARED,
+                    "declared": True,
+                    "specifiers": sorted({it.specifier for it in by_name[name] if it.specifier}),
+                    "via": [],
+                }
+                for name in sorted(to_install)
+                if name in by_name and name not in covered
+            ),
+        )
     reqs: list[str] = []
     hashes: dict[str, list[str]] = {}
     cons: list[str] = []
@@ -1273,18 +1665,37 @@ def plan(
                 "count": len(selection.unsupported),
             }
         )
-    if selection.conflicts:
+    if selection.conflicts or provider_conflicts:
         blocked.append(
-            {"code": BLOCK_CONFLICT, "conflicts": [dict(c) for c in selection.conflicts]}
+            {
+                "code": BLOCK_CONFLICT,
+                "conflicts": [dict(c) for c in (*selection.conflicts, *provider_conflicts)],
+            }
         )
     # blocked 优先于「没缺的」：选中的声明里有 unsupported / 矛盾 / 缺 hash / 目标量不出，这份
     # 计划就不能自称完整——哪怕此刻什么都不缺（Codex #459 P2）。要不要装看 `missing`。
+    gaps = _declared_gaps(by_name, installed if facts is not None else None, relevant)
+    # 相关的差集 + 此刻跑脚本的是我们自己的环境 + 目标里确实没有 → 值得启动一次真实的安装任务（不只是改 requirements 数组）
+    root_trigger = replaceable and any(
+        g["relevant"] and g["distribution"] in declared_install for g in gaps
+    )
     if blocked:
         status = STATUS_BLOCKED
-    elif missing:
+    elif missing or root_trigger:
         status = STATUS_READY
     else:
         status = STATUS_NOTHING_NEEDED
+    gaps_total = len(gaps)
+    gaps = tuple(
+        {
+            **g,
+            "action": GAP_ACTION_INSTALL
+            if status == STATUS_READY
+            and (g["distribution"] in to_install or g["distribution"] in declared_install)
+            else GAP_ACTION_RECORDED,
+        }
+        for g in gaps[:MAX_DECLARED_GAPS]
+    )
     facts_payload = facts.to_payload() if facts is not None else {}
     if install_facts is not None:
         facts_payload["install"] = install_facts.to_payload()
@@ -1319,6 +1730,17 @@ def plan(
             for e in user_entries
         ),
         install_only=install_only,
+        declared_gaps=gaps,
+        provider_decisions=_provider_decisions(
+            scan,
+            verdicts,
+            arbitrated,
+            by_name,
+            to_install,
+            user_entries,
+            None if same_target else target_installed,
+        ),
+        declared_gaps_total=gaps_total,
         requirements=tuple(reqs),
         constraints=tuple(cons),
         hashes={k: tuple(v) for k, v in hashes.items()},

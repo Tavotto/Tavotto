@@ -52,7 +52,9 @@ import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
-import { useDocumentStore } from '@/store/documentStore'
+import { beginRestore, settleRestore, resetRestoreGateForTests, useDocumentStore } from '@/store/documentStore'
+import { deferUserEntry } from '@/store/documentRestore'
+import { emptyProject } from '@/types/document'
 import type { PanelObject } from '@/types/document'
 import { seedExactRender } from '@/test/renderFixtures'
 import { useScriptInputStore } from '@/store/scriptInputStore'
@@ -65,6 +67,7 @@ import { refreshProjectNow } from '@/store/liveSync'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/test/visibleBlocks'
+import errorReports from '../../../tests/golden/preparation_error_reports.json'
 import { ORIGIN_VIEWS } from '@/lib/importOrigin'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import type { DependencyPreparationOffer } from '@/lib/api'
@@ -129,6 +132,22 @@ const report = (over: Partial<PreparationReport> = {}): PreparationReport => ({
   ...over,
 })
 
+/**
+ * 准备出错的真实报告片段（P05a）：`tests/golden/preparation_error_reports.json` 由后端测试 `test_preparation_error_detail.py`
+ * 用真实 `WorkerError` 经准备会话序列化生成（漂了后端用例红），这里只把它套进基础报告——不手写理想 payload。
+ */
+type ErrorScenario = keyof typeof errorReports
+const fromBackend = (name: ErrorScenario): Partial<PreparationReport> => {
+  const g = errorReports[name]
+  return {
+    phase: g.phase as PreparationReport['phase'],
+    outcome: g.outcome as PreparationReport['outcome'],
+    requirements: g.requirements as unknown as PreparationReport['requirements'],
+    actions: g.action_kinds.map((k) => action(k as PreparationAction['kind'])),
+    result: g.result as unknown as PreparationReport['result'],
+  }
+}
+
 /** `dependencies` 检查项带来源事实（`prepsession.origin_facts`）：状态仍是 ok，只有 detail 多了计数与原因码 */
 const originChecks = (origins: PreparationOriginFacts): PreparationReport['checks'] => [
   { id: 'target', status: 'ok' },
@@ -139,6 +158,11 @@ const originChecks = (origins: PreparationOriginFacts): PreparationReport['check
 /** 面板要面对的每一种状态（报告形状来自后端合同 `prepsession.report`） */
 const STATES: Record<string, Partial<PreparationReport>> = {
   ready: {},
+  errPlain: fromBackend('plain_exception'),
+  errInvalidArgv: fromBackend('invalid_argv'),
+  errMissingArgv: fromBackend('missing_argv'),
+  errUnansweredInput: fromBackend('unanswered_input'),
+  errMissingInputFile: fromBackend('missing_input_file'),
   dialogFile: {
     requirements: [
       {
@@ -286,6 +310,14 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
     result: { status: 'error', error: { code: 'script_error', message: 'boom' } },
   },
+  // P01a：safe 守卫拦下了脚本的改名/删除/写入、脚本随后又读了它——失败，不是「再试一次」能解决的
+  fileOpsBlocked: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'safe_file_operation_blocked' },
+    actions: [action('run'), action('recheck')],
+    provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+    result: { status: 'error', error: { code: 'safe_file_operation_blocked', message: 'blocked' } },
+  },
   stale: { phase: 'action_required', outcome: { kind: 'stale', code: 'preparation_plan_stale' }, actions: [action('recheck')] },
   expired: { phase: 'action_required', outcome: { kind: 'unknown', code: 'attempt_expired' }, actions: [action('recheck')] },
   noFigure: {
@@ -413,6 +445,27 @@ describe('一句话 + 至多一个主按钮（每一种状态 × 每一种语种
 const toggleDetails = () =>
   act(async () => (panel().querySelector('[data-prep-details-toggle]') as HTMLButtonElement).click())
 const details = () => panel().querySelector('[data-prep-details]') as HTMLElement | null
+
+describe('safe 守卫拦下文件操作之后的失败（P01a）', () => {
+  it('说清是失败、没有出图，且没有「再试一次」「运行」这类会得到同一结果的主按钮', async () => {
+    await mount()
+    await openWith(report(STATES.fileOpsBlocked))
+    const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+    expect(line).toContain('没有出图')
+    expect(line).not.toBe('可以运行了')
+    expect(primary()?.dataset.prepPrimary).not.toBe('run')
+    expect(primary()?.textContent).not.toBe('再试一次')
+  })
+
+  it('英文界面同样是一句话，且没有泄漏中文', async () => {
+    await i18n.changeLanguage('en-US')
+    await mount()
+    await openWith(report(STATES.fileOpsBlocked))
+    const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+    expect(line).toContain('no figure was made')
+    expect(line).not.toMatch(/[一-鿿]/)
+  })
+})
 
 describe('主按钮就是后端给的那件事', () => {
   it('ready：运行 = 认领报告里的 run 动作；旁边是「稍后」', async () => {
@@ -988,31 +1041,36 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(primary()?.textContent).toBe('知道了')
   })
 
-  it('运行出错：详情第一行是脚本的错误原文（不是字面量占位符），下面是这一次的诊断', async () => {
+  it('运行出错：详情第一行是脚本的错误原文（不是字面量占位符），完整 traceback 折叠可复制，下面是这一次的诊断', async () => {
     await mount()
-    await openWith(
-      report({
-        ...STATES.failed,
-        result: {
-          status: 'error',
-          error: {
-            code: 'script_probe_failed',
-            message: '脚本执行失败',
-            params: { error: "ValueError: could not convert string to float: 'abc'" },
-            traceback: 'Traceback (most recent call last):\n  File "tools/plot.py", line 41, in main\nValueError: x',
-          } as never,
-        },
-      }),
-    )
+    await openWith(report({ ...STATES.failed, ...fromBackend('plain_exception') }))
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('运行出错了')
     expect(primary()?.textContent).toBe('再试一次')
     await toggleDetails()
     const first = details()!.firstElementChild as HTMLElement
-    expect(first.dataset.prepError).toBe('script_probe_failed')
-    expect(first.textContent).toContain("ValueError: could not convert string to float: 'abc'")
-    expect(first.textContent).toContain('File "tools/plot.py", line 41')
+    expect(first.dataset.prepError).toBe('script_error')
+    expect(first.textContent).toContain('ZeroDivisionError: division by zero')
+    expect(first.textContent).toContain('File "/work/proj/fig.py", line 7')
+    // 完整 traceback 默认折叠、展开可见、能复制
+    const fold = details()!.querySelector('[data-prep-traceback]') as HTMLDetailsElement
+    expect(fold).not.toBeNull()
+    expect(fold.open).toBe(false)
+    expect(fold.querySelector('pre')?.textContent).toBe(errorReports.plain_exception.result.error.traceback)
+    expect(fold.textContent).toContain('File "/work/proj/fig.py", line 12')
+    expect(fold.querySelector('button')).not.toBeNull()
     expect(details()!.textContent).not.toContain('{{')
     expect(details()!.querySelector('[data-task-diagnostic], button')).not.toBeNull()
+  })
+
+  it('敏感运行 / 老后端没有 traceback：只露后端主文案，没有"完整错误"折叠', async () => {
+    await mount()
+    const g = fromBackend('plain_exception')
+    await openWith(
+      report({ ...STATES.failed, ...g, result: { status: 'error', error: { code: 'script_error', message: 'boom' } } }),
+    )
+    await toggleDetails()
+    expect((details()!.firstElementChild as HTMLElement).textContent).toBe('boom')
+    expect(details()!.querySelector('[data-prep-traceback]')).toBeNull()
   })
 
   it('发送问题反馈（ADR 0118）：开关关着不出现；有「再试一次」主按钮的失败卡把它放进折叠详情；没有任何修复动作的失败卡它就是主按钮', async () => {
@@ -1092,6 +1150,66 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     expect(panel().dataset.prepState).toBe('edit_opening')
     await act(async () => seedExactRender(target, { elements: [] } as never))
     expect(panel().dataset.prepState).toBe('edit_ready')
+  })
+})
+
+describe('进入编辑遇到上次的排版还没恢复好', () => {
+  afterEach(() => resetRestoreGateForTests())
+
+  it('blocked（需要用户先处理恢复）：什么都没放进去，卡片留着，不说已进入编辑', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
+    vi.mocked(openFastEdit).mockImplementation((() => 'blocked') as never)
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().guideCard).not.toBe('closed')
+    expect(panel()).not.toBeNull()
+    expect(useDocumentStore.getState().doc.objects).toEqual([])
+  })
+
+  /** 真实的排队：openFastEdit 的替身走真 `deferUserEntry`，落地时放面板 */
+  const realDeferral = () => {
+    vi.mocked(addRuntimePanelToCanvas).mockImplementation((() => null) as never)
+    vi.mocked(openFastEdit).mockImplementation(((id: string) => {
+      const entry = deferUserEntry(() => void putPanel(id))
+      if (entry === 'run') {
+        putPanel(id)
+        return 'editing'
+      }
+      return entry === 'deferred' ? 'deferred' : 'blocked'
+    }) as never)
+  }
+
+  it('deferred（恢复在路上）：入口排队期间卡片留着；入口真的落地之后才收', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    const token = beginRestore('pj-a')
+    realDeferral()
+    await act(async () => primary()!.click())
+    expect(useUiStore.getState().guideCard).not.toBe('closed')
+    await act(async () => {
+      settleRestore(token, { state: 'ready', reason: 'empty' })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(useUiStore.getState().guideCard).toBe('closed')
+    expect(useDocumentStore.getState().doc.objects).toHaveLength(1)
+  })
+
+  it('deferred 后恢复被同项目里显式打开的别的排版取代，那份排版恰好也有这张图：入口被丢掉，卡片不收、不记编辑', async () => {
+    await mount()
+    await openWith(report(STATES.completed))
+    beginRestore('pj-a')
+    realDeferral()
+    await act(async () => primary()!.click())
+    const other = { ...emptyProject(), canvases: [{ ...emptyProject().canvases[0], objects: [panelFor('runtime:plot.py#a')] }] }
+    await act(async () => {
+      await useDocumentStore.getState().switchDocument(other, 'd_other') // 显式取代（同一个项目）
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(useDocumentStore.getState().doc.objects.map((o) => o.id)).toEqual([panelFor('runtime:plot.py#a').id])
+    expect(useUiStore.getState().guideCard).not.toBe('closed')
   })
 })
 
@@ -1530,5 +1648,76 @@ describe('Import Origin：「确认包名」打开框', () => {
     await click
     expect(useEnvStore.getState().originConfirmation).toBeNull()
     expect(useDepRepairStore.getState().originDraft).toBeNull()
+  })
+})
+
+describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-26）', () => {
+  it('参数被脚本自己的解析器拒绝：说"不认你填的 N 个参数"，参数编辑器直接展开，详情有参数问题类别', async () => {
+    await mount()
+    await openWith(report(fromBackend('invalid_argv')))
+    expect(panel().dataset.prepState).toBe('needs_args')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('脚本不认你填的 2 个参数')
+    expect(primary()?.dataset.prepPrimary).toBe('reopen')
+    await toggleDetails()
+    expect(details()!.querySelector('[data-prep-row="parse-kind"]')?.textContent).toContain('有参数的值不合法')
+  })
+
+  it('没给参数脚本就要参数：仍是"脚本要运行参数"，类别是缺必填项', async () => {
+    await mount()
+    await openWith(report(fromBackend('missing_argv')))
+    expect(panel().dataset.prepState).toBe('needs_args')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('脚本要运行参数')
+    await toggleDetails()
+    expect(details()!.querySelector('[data-prep-row="parse-kind"]')?.textContent).toContain('缺少必填参数')
+  })
+
+  it('无人应答的 input：一句话 + 再运行一次，脚本的提问在详情里', async () => {
+    await mount()
+    await openWith(report(fromBackend('unanswered_input')))
+    expect(panel().dataset.prepState).toBe('input_unanswered')
+    expect(primary()?.textContent).toBe('再试一次')
+    expect(primary()?.dataset.prepPrimary).toBe('run')
+    await toggleDetails()
+    expect(details()!.querySelector('[data-prep-row="input-prompt"]')?.textContent).toContain('Enter output directory:')
+  })
+
+  it('口令类的无人应答：说明口令不会被记住', async () => {
+    await mount()
+    const g = fromBackend('unanswered_input')
+    const err = { ...errorReports.unanswered_input.result.error, params: { prompt: 'Password: ', reason: 'secret_required' } }
+    await openWith(report({ ...g, result: { status: 'error', error: err } as never }))
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('口令不会被记住')
+  })
+
+  it('getpass 首问无人应答（理由不是 secret_required）：仍按口令说明不会被记住', async () => {
+    await mount()
+    const g = fromBackend('unanswered_input')
+    const err = {
+      ...errorReports.unanswered_input.result.error,
+      params: { prompt: 'Password: ', reason: 'no_interactive_client', input_kind: 'getpass' },
+    }
+    await openWith(report({ ...g, result: { status: 'error', error: err } as never }))
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('口令不会被记住')
+  })
+
+  it('getpass 等到超时：仍按口令说明不会被记住', async () => {
+    await mount()
+    const g = fromBackend('unanswered_input')
+    const err = {
+      ...errorReports.unanswered_input.result.error,
+      code: 'script_input_timeout',
+      params: { prompt: 'Password: ', input_kind: 'getpass' },
+    }
+    await openWith(report({ ...g, result: { status: 'error', error: err } as never }))
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('口令不会被记住')
+  })
+
+  it('读不到数据：主按钮仍是已有的"指认数据"（回答走原路径选择），原文 traceback 在折叠里', async () => {
+    await mount()
+    await openWith(report(fromBackend('missing_input_file')))
+    expect(panel().dataset.prepState).toBe('missing_data')
+    expect(primary()?.dataset.prepPrimary).toBe('missing_input')
+    await toggleDetails()
+    expect(details()!.querySelector('[data-prep-traceback]')).not.toBeNull()
   })
 })

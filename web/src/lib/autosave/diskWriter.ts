@@ -78,6 +78,19 @@ export const isExternalChange = (err: unknown) =>
 export type SaveTrigger = 'manual' | 'autosave'
 export type SaveOutcome = 'ok' | 'conflict' | 'failed'
 
+/**
+ * 一次正文落盘成功之后，后端对「下次自动恢复信息」（归属 / 上次开着的）的结局，原样转给 `onWritten`：
+ * `ok` 已记；`failed` 正文写成了、元数据没记上；`owner_unknown` 项目身份失效没记；`undefined` = 旧后端没说。
+ */
+export type WrittenMetadata = 'ok' | 'failed' | 'owner_unknown' | undefined
+
+/** `onWritten` 带出去的、**排队那一刻**捕获的写入上下文——回包时不再现问 store / 当前项目 */
+export interface WrittenInfo {
+  /** 这份正文是替哪个项目写的（排队时的项目，不是回包时碰巧是哪个） */
+  pj: string | null
+  metadata: WrittenMetadata
+}
+
 /** 协调器要用到的那几条磁盘 API（形状与 `@/lib/api` 同名函数一致，便于直接递真的进来）。 */
 export interface DiskApi {
   put: (
@@ -86,7 +99,7 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null }>
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -102,8 +115,12 @@ export interface DiskWriterPorts {
    */
   /** 一次写盘真正开始（当前文档：状态推成 `saving`） */
   onSaving: (id: string) => void
-  /** 写盘成功：期间又编辑过就还是 dirty，没编辑过才是"存好了" */
-  onWritten: (id: string, savedAt: number) => void
+  /**
+   * 写盘成功：期间又编辑过就还是 dirty，没编辑过才是"存好了"。`info.pj` 取自**队列项**
+   * （排队那一刻的项目），元数据结局取自后端回包；后者是「正文成功但归属 / last 没记上」的唯一信号，
+   * 正文 revision 照常推进（不能因元数据失败当正文失败重试）。
+   */
+  onWritten: (id: string, savedAt: number, info: WrittenInfo) => void
   /** 写盘失败或被 409 挡下；`issue` 为 null = io 失败 */
   onFailed: (id: string, issue: SaveIssue | null) => void
   /** 冲突未决：队列里排着的那份不能继续往磁盘上撞（读的是**此刻**的保存状态） */
@@ -274,7 +291,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
         diskBaseline.set(id, pd.updatedAt)
         if (res.revision) diskRevision.set(id, res.revision)
         ports.dropLocalCopy(id)
-        ports.onWritten(id, res.saved_at ?? Date.now())
+        ports.onWritten(id, res.saved_at ?? Date.now(), { pj, metadata: res.metadata })
         ports.outcome(trigger, 'ok')
       })
       .catch((err: unknown) => {

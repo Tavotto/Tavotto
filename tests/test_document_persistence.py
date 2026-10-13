@@ -643,7 +643,6 @@ def test_the_returned_revision_is_read_while_we_still_hold_the_lock(client, monk
     这条只能白盒量：黑盒看到的两种实现在单个请求下完全一样，差别只在一个
     交错窗口里，而那个窗口正好是锁的存在与否决定的。
     """
-    import threading
 
     path = m._autosave_path("held")
     lock = m._document_lock(path)
@@ -658,7 +657,9 @@ def test_the_returned_revision_is_read_while_we_still_hold_the_lock(client, monk
     assert client.put("/api/autosave/held", json=PD).status_code == 200
     assert held, "这次请求根本没读修订号"
     assert held[-1], "交回去的那个修订号是在锁外读的"
-    assert isinstance(lock, threading.Lock().__class__)
+    assert callable(
+        getattr(lock, "locked", None)
+    )  # 槽位文档锁现在是跨进程锁对象，不再是裸 threading.Lock
 
 
 # ------------------------- 严格同源：schema 版本 -----------------------------

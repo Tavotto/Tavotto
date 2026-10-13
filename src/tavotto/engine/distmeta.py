@@ -368,6 +368,11 @@ class Index:
             for i, shape in unclaimed
         ):
             unresolved = True  # 前面有一层的提供者形状推不出：谁遮蔽谁不确定
+        if first_regular is None and any(shape == "namespace" for _i, shape in unclaimed):
+            # 没有常规提供者时，所有 namespace portion 合起来才是这个名字（PathFinder 把各层的同名目录并成一个命名空间包）：
+            # 没有发行包认领的那一层（`PYTHONPATH` 里用户自己的同名目录）也是其中一份，已装发行包只提供了一部分——
+            # 不能把「装着的那份」当唯一提供者（#945）；与两层都有发行包认领的 namespace 同一口径，不替 Python 挑
+            unresolved = True
         if unresolved:
             first_regular = None
         if first_regular is not None:

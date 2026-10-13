@@ -143,11 +143,25 @@ test('纯静态项目：没有引导卡，直接可排版', async ({ app, page }
     await page.goto(a.baseURL)
     await expect(page.locator('[data-card="Only_Static.pdf"]')).toBeVisible({ timeout: 30_000 })
     // 等扫描有了终局再断言「没有条」，免得断言赶在扫描之前
-    await expect
-      .poll(async () => (await (await page.request.get(`${a.baseURL}/api/project/scan`)).json()).state, {
-        timeout: 30_000,
-      })
-      .toBe('complete')
+    // 失败时把最后一次报告的 state 与账本（code / severity / scope，不含路径）带进断言消息，CI 日志里直接能看到为什么没到 complete
+    let last = 'no response yet'
+    try {
+      await expect
+        .poll(
+          async () => {
+            const body = await (await page.request.get(`${a.baseURL}/api/project/scan`)).json()
+            const issues = (body.issues ?? []) as Array<{ code: string; severity: string; scope: string }>
+            last = `state=${body.state} issues=${JSON.stringify(
+              issues.map((i) => ({ code: i.code, severity: i.severity, scope: i.scope })),
+            )}`
+            return body.state
+          },
+          { timeout: 30_000 },
+        )
+        .toBe('complete')
+    } catch (e) {
+      throw new Error(`项目扫描没到 complete；最后一次：${last}`, { cause: e })
+    }
     const report = await (await page.request.get(`${a.baseURL}/api/project/scan`)).json()
     expect(report.outcome.kind).toBe('static_source')
     expect(report.assets.browsable).toBe(true)

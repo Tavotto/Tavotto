@@ -1059,8 +1059,9 @@ class TestCancel:
         assert (
             st_b["state"] == "cancelled" and "report_id" not in st_b and "cancel_raced" not in st_b
         )
-        with pytest.raises(diagsend.SendError):
-            diagsend.status(prep_a["id"])
+        # A 的迟到答复只落在 A 自己身上（done + cancel_raced），以结果快照的形式取得回（#928），绝不出现在 B 上
+        st_a = diagsend.status(prep_a["id"])
+        assert st_a["id"] == prep_a["id"] and st_a["state"] == "done" and st_a["cancel_raced"]
 
     def test_discard_while_sending_cancels_and_frees_the_bundle(self, on):
         gate = threading.Event()
@@ -1223,7 +1224,7 @@ class TestNothingSecretLeaks:
     def test_repr_of_session_and_spec_carry_no_secrets(self, on):
         prep = send(note=CANARY_NOTE)
         wait_for(prep["id"], {"done"})
-        sess = diagsend._CURRENT
+        sess = diagsend._SESSIONS[""]
         spec = diagsend.UploadSpec("https://x/", (("policy", "SECRET_POLICY"),), "file", 1, 1)
         assert "SECRET_POLICY" not in repr(spec) and "SECRET_POLICY" not in str(spec)
         assert CANARY_NOTE not in repr(sess) and (not sess or sess.token == "")
@@ -1481,5 +1482,101 @@ class TestTerminalInvariants:
         now[0] += 30
         assert diagsend.status(prep["id"])["state"] == "prepared"
         now[0] += diagsend.PREPARED_TTL_S + 10  # 闲置超过上限
+        with pytest.raises(diagsend.SendError):
+            diagsend.status(prep["id"])
+
+
+# =========================================================================== #928：失败后重试 / 丢弃的对账
+class TestReconcileAfterFailure:
+    def _landed_but_lost(self, on):
+        """complete 已落地、响应全丢：会话停在可重试 failed，complete_sent 且编号仍在。"""
+        on.force("complete", Forced("drop_after"), times=diagsend.COMPLETE_ATTEMPTS)
+        prep = send(note="first")
+        wait_for(prep["id"], {"failed"})
+        return prep
+
+    def test_changed_params_retry_reconciles_the_first_report_instead_of_orphaning_it(self, on):
+        """Codex #923 P2-1：改类别 / 附言再发，不许静默孤立首份报告——先按 I1 对账：服务端已存 → done 且给首份编号，
+        不再上传第二份。"""
+        prep = self._landed_but_lost(on)
+        first = next(iter(on.reports.values()))
+        assert first.state == "complete"
+        diagsend.start(prep["id"], confirmed=True, category="crash", note="second")
+        st = wait_for(prep["id"], {"done", "unknown", "failed"})
+        assert st["state"] == "done" and st["report_id"] == first.report_id, st
+        assert len(on.reports) == 1, "没有第二份报告"
+        assert len(init_bodies(on)) == 1
+
+    def test_changed_params_retry_after_a_server_confirmed_cancel_starts_a_fresh_report(self, on):
+        """服务端确认首份没存（cancel 2xx）→ 才可以换新 UUID 重传。"""
+        on.fail("upload", 500, "x")
+        prep = send(note="first")
+        wait_for(prep["id"], {"failed"})
+        diagsend.start(prep["id"], confirmed=True, category="crash", note="second")
+        st = wait_for(prep["id"], {"done"})
+        assert st["state"] == "done"
+        ids = [b["client_request_id"] for b in init_bodies(on)]
+        assert len(ids) == 2 and ids[0] != ids[1]
+
+    def test_changed_params_retry_with_an_unconfirmable_first_attempt_is_unknown(self, on):
+        prep = self._landed_but_lost(on)
+        on.fail("cancel", 503, "storage_unavailable", times=4)
+        diagsend.start(prep["id"], confirmed=True, category="crash", note="second")
+        st = wait_for(prep["id"], {"done", "unknown", "failed"})
+        assert st["state"] == "unknown" and st["report_id"].startswith("TVD-"), st
+        assert len(init_bodies(on)) == 1, "不确认首份就不发第二份"
+
+
+class TestDiscardKeepsDeliveryOutcome:
+    def test_discarding_a_complete_sent_failed_session_settles_and_keeps_the_report_id(self, on):
+        """Codex #923 P2-2：complete 响应丢了（实际已落地）后关对话框：丢弃前走 settle，结果可由后续查询取回。"""
+        on.force("complete", Forced("drop_after"), times=diagsend.COMPLETE_ATTEMPTS)
+        prep = send()
+        wait_for(prep["id"], {"failed"})
+        sent_id = next(iter(on.reports.values())).report_id
+        diagsend.discard(prep["id"])
+        deadline = time.monotonic() + 5
+        st = None
+        while time.monotonic() < deadline:
+            try:
+                st = diagsend.status(prep["id"])
+            except diagsend.SendError:
+                st = None
+            if st and st["state"] in ("done", "unknown"):
+                break
+            time.sleep(0.01)
+        assert st is not None and st["state"] == "done", st
+        assert st["report_id"] == sent_id and st.get("cancel_raced") is True
+        # 之后重新备包也取不丢结果
+        diagsend.prepare(make_bundle())
+        assert diagsend.status(prep["id"])["report_id"] == sent_id
+
+    def test_discarding_an_unreachable_complete_sent_session_is_unknown_not_silent(
+        self, on, monkeypatch
+    ):
+        on.force("complete", Forced("drop_after"), times=diagsend.COMPLETE_ATTEMPTS)
+        prep = send()
+        wait_for(prep["id"], {"failed"})
+        on.fail("cancel", 503, "storage_unavailable", times=4)
+        diagsend.discard(prep["id"])
+        deadline = time.monotonic() + 5
+        st = None
+        while time.monotonic() < deadline:
+            try:
+                st = diagsend.status(prep["id"])
+            except diagsend.SendError:
+                st = None
+            if st and st["state"] in ("done", "unknown"):
+                break
+            time.sleep(0.01)
+        assert st is not None and st["state"] == "unknown" and st["report_id"].startswith("TVD-"), (
+            st
+        )
+
+    def test_discarding_a_session_that_never_sent_complete_leaves_nothing(self, on):
+        on.fail("upload", 500, "x")
+        prep = send()
+        wait_for(prep["id"], {"failed"})
+        diagsend.discard(prep["id"])
         with pytest.raises(diagsend.SendError):
             diagsend.status(prep["id"])

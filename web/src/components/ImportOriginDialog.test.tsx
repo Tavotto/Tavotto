@@ -473,7 +473,7 @@ describe('装后核验没过：一句话 + 每个原因一句人话（在详情�
   it('不带 dist_reasons（普通的导入失败）：照旧用修复卡那一句短句', async () => {
     await render()
     await runAndFail(undefined)
-    expect(dialog()!.querySelector('[data-origin-error]')?.textContent).toBe('装好了但还是导入不了，完整输出在详情里。')
+    expect(dialog()!.querySelector('[data-origin-error]')?.textContent).toBe('装好了但还是用不了，完整输出在详情里。')
     expect(dialog()!.querySelector('[data-origin-dist-reasons]')).toBeNull()
   })
 

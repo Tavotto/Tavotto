@@ -318,9 +318,13 @@ zip / egg 里的模块名（`opaque_roots > 0` 时名字层判不完整）；未
 
 **已知缺陷（需要维护者决定）**
 
-1. **确认包名并装好之后，卡片仍说「有 1 个库的来源还没法确定」、主按钮是「仍然运行」，而不是「可以运行了」。** 真浏览器 ④ 复现并钉着现状。根因：联合计划对「表外名 + 已装提供者」判 `origins[].reason = unverified`（条目 `distribution_status = installed_confirmed`、`provenance = index`、`resolution_status = resolved`，候选里就有刚装的包），`depplan._verdict` 里只有「名字级已装 / 备选 / 表 / 声明的名字」能判满足，`_installed_claims` 把任何已装提供者都当成「环境里已经有它、装 curated 的名字救不了」而判 `_OPEN`。单元层可复现：给一个表外名 + 静态索引里有唯一的 index 来源提供者 + `facts.installed` 里有该发行包，`depplan.plan` 仍给 `origins`（见 `docs/implementation/import-origin-resolver/00_BASELINE.md` §12 的判决顺序）。
-   影响：运行本身没有问题；用户确认并装好之后看到的状态措辞不对；**任何**在用户环境里已用 PyPI 装好的表外库（`curated` 里没有的）也会被卡片说「来源待定」。建议修法（未做）：在 `_verdict` 里对 `bucket=unknown` 且唯一未被遮蔽的已装候选是 `installed_confirmed` + `provenance=index` + `reproducible` 时判满足（不进 `missing`、也不进 `origins`），仍不产生安装名；改动面是 `depplan._verdict` 与 `TestPlanOrigins`，属 `risk:high` 的判据改动，所以没有放进 PR7。
-2. #918 第 1 条（§7.1）：依赖任务诊断里的 `impact.digest` 可离线复算（含用户指定包名）。
+1. #918 第 1 条（§7.1）：依赖任务诊断里的 `impact.digest` 可离线复算（含用户指定包名）。
+
+**已修（原已知缺陷 #1，#938）**
+
+* **确认包名并装好之后，卡片说「有 1 个库的来源还没法确定」、主按钮是「仍然运行」**——已修。根因：联合计划对「表外名 + 已装提供者」判 `origins[].reason = unverified`（条目 `distribution_status = installed_confirmed`、`provenance = index`），`depplan._verdict` 一路只认名字级已装 / 备选 / 表 / 声明名字，`_installed_claims` 把任何已装提供者都当成「环境里已有它、装 curated 名字救不了」。同一缺陷也影响**任何**在用户环境里用 PyPI 装好、但不在 curated 表里的库。
+  修法：`depplan._installed_index_satisfies`（表外名 `bucket=unknown`）——静态索引读全、没有 `layer_order_unresolved` / 无元数据残留、`distribution_status = installed_confirmed` 且 `resolution_status = resolved`、候选里**恰有一个未被遮蔽的已装行**且它是 `index` 来源 + 可重现 + PyPI 生态、该发行包确在目标解释器的已装集合里、覆盖度缓存没说 `import_error`、**且运行目标与安装目标是同一个环境**（`install_facts` 为空或就是 `facts`；装到另一个环境时当前解释器里装着的包不会出现在那里，表外名既无安装名也进不了 `requirements`，维持来源未定，Codex #944 P1），才判满足：不进 `unknown` / `origins`，**不产生任何安装名**（装到另一个空环境时也不会因此去装它；已装元数据是证据，不是安装授权）。多个提供者、editable / 本地 / VCS / URL / Conda / 无元数据、被遮蔽、名字层不完整（`names_complete=False` / `uncovered_paths>0`）、发行包没装、导入失败一律维持原判。没有新增 `BLOCK_REASONS`，默认扫描仍零子进程。
+  覆盖：`tests/test_dependency_plan.py::TestPlanOrigins` 的 `test_938_*`（端到端的正例与反例，加 `test_938_the_judgement_one_condition_at_a_time` 逐条件隔离）；真浏览器 `web/e2e/import-origin.spec.ts` ④ 现在断言装好后卡片是 `ready`（不再带 `known-gap` 注解）。
 
 **已知限制（继承自各 PR 的「仍未覆盖」，逐条核对过仍然成立）**
 

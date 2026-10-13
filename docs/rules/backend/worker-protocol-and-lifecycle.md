@@ -75,7 +75,27 @@
   safe 档不带参数，出路是默认值或 `tavotto run`；argparse 的 usage 打在 stderr，
   `pool._attach_script_output` 把 worker.log 尾巴接到 traceback 前面，两条控制面
   同一处拼），否则 `script_exited`——都不再把 worker 带走。`ensure_built` 放行
-  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。`SystemExit`
+  `ProtocolError`，只把裸 `Exception` 归 `script_error`。probe 原样透传这两个码。
+  **守卫拦下的关键文件操作不洗成完整成功（P01a，`safe_file_operation_blocked`，AC-02）**：safe 的删除 /
+  改名 / `write_text` 守卫与 savefig 拦截靠「悄悄跳过」工作，脚本看不到异常——脚本 `os.replace` 缓存后读它，
+  拿到旧值 1（直接 Python 是 2）却 `ok`。守卫一字不动，另有一本带外账本 `figcapture.BlockedFileOps`
+  （`worker.BLOCKED_OPS`）：守卫每拦一次记「操作类别 + 影响的路径」，**最外层**（晚于输入观察器与相对读回退，看到的是脚本交出的原始路径，不是回退改写后的；沙盒档项目里有旧 `stage.png` 时
+  装在回退之下会永远对不上，#952 第三轮 P1）的 open / `os.stat` 包装在
+  **拦下之后**看到脚本打开（读，含 `r+`/`a+`）或 stat 了受影响路径，才算 material；脚本自己以 `w`/`x` 重写
+  该路径则清掉嫌疑（成功重写的后代同时记入「已重写」集合，目录级污点盖不到它——`rmtree` 后重建目录再写再读；目录重建**只在直跑也会得到同样成功结果之后**才记：`os.mkdir` 成功、或 `makedirs(exist_ok=True)` / `Path.mkdir(exist_ok=True)` 撞上守卫留下的目录（外层吞掉），豁免该目录自身的状态查询；非 `exist_ok` 的 `os.mkdir` 撞上还在的目录（直跑里它成功）抛 `FileExistsError` 是守卫造成的分叉，本身记为观察；被删目录之下没重建就 `open(...,'w')` 写子文件（直跑里 `FileNotFoundError`）也是分叉，不给「已重写」豁免、记为观察；`makedirs` / `mkdir(parents=True)` 建被删目录之内的子目录会连父目录一起重建，不带 `parents` 的算分叉；里面没被重写的文件仍受污点；后来的阻断撤销豁免）；相对只读读还要按回退的同一判据（`install_relative_read_fallback(...).resolve`）解析出实际会读的项目路径一并比对（绝对路径的阻断 + 沙盒里相对路径的回读）；守卫按签名取参，`dst=` / `src=` / `path=` 关键字与位置参数等价（**只在底层 open 成功返回之后清**；`x` 撞上被我们拦删而留下的旧文件抛 `FileExistsError` 时不清，且这次失败本身就是一次观察——直接运行里删除生效、`x` 会成功，不等回读；**只对直跑结果会让该路径不存在的事件**生效：删除、删除目录、改名/移动的源；被拦的写入、改名/移动的目的、savefig 目标直跑后同样存在，`x` 两边都失败，不走这条捷径），`shutil.move` 进已存在目录只记 `dst/basename(src)` 与源，不把整个目录记成受影响，被拦截的 `savefig` 目标记**有效目标名**（`figcapture.savefig_effective_names`：无后缀且无 `format=` 时**只**记补了 `rcParams["savefig.format"]`/`png` 后缀的名字、不记字面名（matplotlib 不会写它，否则同名无关旧文件被读会误判），`format=` 显式则字面名）、只认读内容、不认 `exists`（校验打印不判失败），先于拦截的读、读别的路径、从没回读（`test_workdir_mode` 那种顺手删过期输出）都不算。
+  material 非空时 build 以该 code 结束——脚本跑到末尾、`except Exception` 吞掉了异常、或因读不到而崩
+  （原因是守卫不是 `missing_input`）、或随后 `sys.exit` 非零，一律如此。载荷只有类别（`operations`）、
+  `required_execution="preserve_file_semantics"` 与 `adapter_available=false`，没有路径（message 会进
+  app.log）。**拦下超过 200 次也不丢**：事件账上限 `MAX_EVENTS=200`，超出的操作并入按 (op, kind) 的溢出路径集合
+  （去重；超 `MAX_SPILL_PATHS=2048` 粗化为父目录；目录也超则记「丢失」，此后任何观察都算命中），
+  所以清理几百个缓存再回读第 201+ 个路径照样判失败，拦下几百次但从不回读照旧成功；只有拦下上千个互不相干
+  的目录之后才会退化成「之后任何观察都算」，这是宁可误报不假成功的取舍。**状态查询入口**：除 `os.stat` 外，
+  `os.path.exists`/`lexists`/`isfile`/`isdir`/`islink` 逐个包装——Windows 3.12+ 它们是 C 实现、不经 `os.stat`，
+  不包就观察不到（CI Windows 腿抓到的 `os.remove` 后 `os.path.exists` 假成功）；被拦截的 savefig 目标仍只认读内容。
+  盲区写在明处：C 扩展直接 `fopen`、`os.open`、`listdir`/`glob`/`scandir`、`os.access` 等未包装的状态查询观察不到，
+  账本不宣称它们干净。pool 的镜像常量 `FILE_OPERATION_BLOCKED_CODE` 与
+  `file_operation_blocked_params`、HTTP `_worker_error_payload`、probe 透传同一份载荷。看护
+  `tests/test_worker_blocked_file_ops.py`。`SystemExit`
   的载荷若不是整数（`sys.exit("…")`）不进 message——那是用户的文字，message 会进 app.log
   再随诊断包出门；退出状态按 CPython 的规则记 1，文字只在 traceback 区的 `SystemExit: …`。**协议管道上的
   一行先判 UTF-8、再解析 JSON，两条控制面同一口径**：非 UTF-8 字节是「管道上有垃圾」
@@ -148,3 +168,46 @@
 - `_terminate_and_reap()` / `_kill_and_reap()` 闭环
 - export / preview_png 状态中立
 - 请求之间死掉的 worker（拿锁时已死 / 写管道 BrokenPipe / 读到 EOF）一律同一个带退出状态的 `session_dead`，非 shutdown 的 `session_dead` 丢掉那条解释器的体检结论（`pool.forget_python_verdict`）
+
+## 预览发布：同代指针 + 逐图隔离（P01b #958 → P08a）
+
+写预览的是 worker / native 子进程，读的是 app 进程（`/api/engine/svg`、manifest 读取、
+runtimeasset 物化，全经 `figcapture.usable_preview_path` / 各 worker 的 `svg_path`）——
+**进程内内存标记对读方无效**，每一条保证都必须是读方能观测到的东西。
+
+**同代发布**（`figcapture.publish_preview`）：每次发布写一个**不可变**的 `.gen-<序号>/<stem>.svg|json`，
+账本 `.preview-ledger` 里该 stem 的记录（`seq` / `svg_bytes` / `capabilities`）就是**指针**，也是完成描述符；
+切换它（一次 `os.replace`）是唯一提交点。要 SVG + manifest 成对的读方用 `usable_preview_generation`
+一次解出，两份出自同一次发布；只要一份的用 `usable_preview_path`（指向账本里那一代）。没有指针 = 无预览，
+目录里碰巧同名的文件、`.part` 临时件、被取代的旧代目录（落后 `GENERATION_GRACE` 个序号**且**过了 `GENERATION_GRACE_SECONDS` 秒才清，
+刚解出旧路径的读方不会撞上刚删的文件）读方都看不见。
+
+失败语义：提交前任何一步失败，新代目录撤掉、账本不动——**上一版整套原封不动，没有「还原」这一步**；
+账本**存在但读不出来 / 格式坏**（`PreviewLedgerUnreadable`）发布失败并如实报错，**不许**当空账本重建
+（会丢已发布的其它图）；账本不存在才是首次发布。完成计数（`published_preview_stems`）= 账本有记录且指针指向的
+SVG 字节数对得上，不数文件。
+
+**逐图隔离**（`LiveFigureSession.instrument_all`）：一张图在「建状态 / 出预览」里的普通异常只属于这张图——
+记进 `failures`（`preview_capture_failed`）、从活会话撤掉，其它图照常发布；build 响应带 `failed_figures`，
+native 另带 `figure_facts`（逐图 `state` / `generation` / `capabilities` / `saved_originals` / 时刻）与
+`capture_summary`。不是 `except: pass`：失败图动过的 Figure 要核对恢复（`failed_restore_owed`，还原不了照样挡 continue）；
+选定产物上下文（`artifact_source`）、线程归属这类不属于单张图的异常原样抛；产物目录 / 账本的问题（发布段）
+仍整批失败。safe worker 传 `raise_if_none_live=True`（一张活图都不剩时把第一个失败原样抛出，build 仍失败）。
+能力只按实际完成的工作声明：`preview` + `live_edit`（同代发布过的活图）与 `original_readonly`（**这个 Figure
+对象**本次运行成功 save 的原产物，`SavefigObservations.saved_originals` 按 Figure 身份认领并对账字节数 / mtime，
+绝不按 basename 或目录扫描找替身）是独立的事实——Saved Stage 的磁盘原件与之后 Unsaved Final 的活对象不必相同。
+
+### 保留的兜底层级（P01b）
+
+原子指针之后，发布路径不再产生「新旧错配」，下面几级只在遗留路径上可达，代码保留（`mark_preview_invalid` /
+`poison_preview_dir` / `PreviewPoisoned` 仍被父进程三条控制面识别）：
+
+1. **磁盘失效标记**（`.<stem>.preview-invalid`，`mark_preview_invalid` 返回是否写成，**不许吞**）：读方回「无预览」。
+2. **会话作废**：`PreviewPoisoned`（`protocol_code = preview_poisoned`，非 retryable，build 里也不归 `script_error`）。
+   父进程在**三条控制面**上同样处理：Python 池 `_error_of` 与 workerd `_to_worker_error`
+   （`preview_poisoned ∈ _FATAL_CODES`）判死会话、下一次 `get()` 重建；native `_request` 把传输标 `poison`
+   （既有的「会话不再可信」机制）；bridge 同。同时 `figcapture.poison_preview_dir(out_dir)` 把
+   `out_dir` 记进**读方进程**的作废表，`usable_preview_path` 对它回「无预览」，直到新一代会话 build 成功
+   （`clear_preview_poison`：作废之后没重新发布的指针摘掉再解除）。
+
+新增会改预览发布的失败路径时，别在某一级里加 `except OSError: pass`——先问「这一级失败后读方还有没有拦截」。

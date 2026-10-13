@@ -17,6 +17,7 @@ import {
   hasUnsavedWork,
   type DiskWriterPorts,
   type SaveIssue,
+  type WrittenMetadata,
   type SaveOutcome,
   type SaveTrigger,
 } from './diskWriter'
@@ -47,6 +48,8 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
   const outcomes: [SaveTrigger, SaveOutcome][] = []
   const dropped: string[] = []
   let putMode: 'ok' | 'stale' | 'external' | 'io' = 'ok'
+  let putMetadata: WrittenMetadata = undefined
+  const written: { id: string; savedAt: number; pj: string | null; metadata: WrittenMetadata }[] = []
   let gate: (() => void) | null = null
   let onDisk: { revision: string | null } | null = null
   let fetchThrows = false
@@ -56,7 +59,9 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
       put: (id, pd, baseline, revision, pj) => {
         puts.push({ id, updatedAt: pd.updatedAt, baseline, revision, pj })
         const settle = () => {
-          if (putMode === 'ok') return Promise.resolve({ saved_at: 1000, revision: `r${pd.updatedAt}` })
+          if (putMode === 'ok') {
+            return Promise.resolve({ saved_at: 1000, revision: `r${pd.updatedAt}`, metadata: putMetadata })
+          }
           if (putMode === 'io') return Promise.reject(new Error('boom'))
           return Promise.reject(
             new ApiError('409', 409, {
@@ -83,7 +88,10 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
     },
     isCurrent: (id) => id === current,
     onSaving: (id) => events.push(`saving:${id}`),
-    onWritten: (id, savedAt) => events.push(`written:${id}@${savedAt}`),
+    onWritten: (id, savedAt, info) => {
+      events.push(`written:${id}@${savedAt}`)
+      written.push({ id, savedAt, ...info })
+    },
     onFailed: (id, issue) => events.push(`failed:${id}:${issue ? issue.kind : 'io'}`),
     writeBlocked: opts.blocked ?? (() => false),
     dropLocalCopy: (id) => dropped.push(id),
@@ -97,6 +105,10 @@ function harness(opts: { current?: string; blocked?: () => boolean } = {}) {
     events,
     outcomes,
     dropped,
+    written,
+    setPutMetadata: (m: WrittenMetadata) => {
+      putMetadata = m
+    },
     setPutMode: (m: typeof putMode) => {
       putMode = m
     },
@@ -387,5 +399,87 @@ describe('判据与冲突形状', () => {
     expect(all.filter(hasUnsavedWork)).toEqual(['dirty', 'saving', 'save_error', 'conflict'])
     const issue: SaveIssue = { kind: 'io', docId: 'A' }
     expect(issue.disk).toBeUndefined()
+  })
+})
+
+
+describe('onWritten 带出排队那一刻的写入上下文（A10 / A11 / A25）', () => {
+  it('pj 取自队列项，不是回包时碰巧是哪个项目：A 排队时属于 p1，B 属于 p2，各自回各自的', async () => {
+    const h = harness()
+    h.writer.rememberRevision('A', null)
+    h.writer.rememberRevision('B', null)
+    h.holdPuts()
+    h.writer.schedule('A', doc(1), 'p1')
+    h.writer.schedule('B', doc(2), 'p2')
+    h.release()
+    await tick()
+    h.release()
+    await tick()
+    expect(h.written.map((w) => [w.id, w.pj])).toEqual([
+      ['A', 'p1'],
+      ['B', 'p2'],
+    ])
+  })
+
+  it('同 id 在写盘期间被改排到另一个项目：回的是最后写出去的那一次所属的项目', async () => {
+    const h = harness()
+    h.writer.rememberRevision('A', null)
+    h.holdPuts()
+    h.writer.schedule('A', doc(1), 'p1')
+    h.writer.schedule('A', doc(2), 'p2')
+    h.release()
+    await tick()
+    h.release()
+    await tick()
+    expect(h.written.map((w) => [w.id, w.pj])).toEqual([
+      ['A', 'p1'],
+      ['A', 'p2'],
+    ])
+  })
+
+  it('没开项目的写入 pj 是 null（不借用别的）', async () => {
+    const h = harness()
+    h.writer.rememberRevision('A', null)
+    h.writer.schedule('A', doc(1), null)
+    await tick()
+    expect(h.written[0].pj).toBeNull()
+  })
+
+  it('元数据结局原样转给 onWritten；元数据失败仍是写成功：基线与 revision 照常推进，不重试正文', async () => {
+    const h = harness()
+    h.writer.rememberRevision('A', null)
+    h.setPutMetadata('failed')
+    h.writer.schedule('A', doc(1), 'p1')
+    await tick()
+    expect(h.written).toMatchObject([{ id: 'A', pj: 'p1', metadata: 'failed' }])
+    expect(h.outcomes).toEqual([['autosave', 'ok']])
+    expect(h.dropped).toEqual(['A']) // 正文落盘了：本机兜底副本照清
+    h.writer.schedule('A', doc(2), 'p1')
+    await tick()
+    expect(h.puts.map((p) => [p.baseline, p.revision])).toEqual([
+      [undefined, REVISION_ABSENT],
+      [1, 'r1'], // 第二次写带着第一次写成功的基线与 revision
+    ])
+    h.setPutMetadata('owner_unknown')
+    h.writer.schedule('A', doc(3), 'p1')
+    await tick()
+    expect(h.written[2].metadata).toBe('owner_unknown')
+    h.setPutMetadata(undefined) // 旧后端不发：就是 undefined，不被当成 ok
+    h.writer.schedule('A', doc(4), 'p1')
+    await tick()
+    expect(h.written[3].metadata).toBeUndefined()
+  })
+
+  it('失败 / 409 不触发 onWritten（不晋升）', async () => {
+    const h = harness()
+    h.writer.rememberRevision('A', null)
+    h.setPutMode('io')
+    h.writer.schedule('A', doc(1), 'p1')
+    await tick()
+    h.setPutMode('stale')
+    h.writer.schedule('A', doc(2), 'p1')
+    await tick()
+    expect(h.written).toEqual([])
+    expect(h.outcomes.map((o) => o[1])).toEqual(['failed', 'conflict'])
   })
 })

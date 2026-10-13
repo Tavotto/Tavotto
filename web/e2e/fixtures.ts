@@ -236,6 +236,22 @@ export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp> }
 
 export { expect }
 
+/** 舞台先挂载占位文档；只有恢复门 ready 才能开始编辑（ADR 0120）。 */
+export async function waitForDocumentReady(page: Page): Promise<void> {
+  const stage = page.locator('[data-canvas-stage]')
+  await expect(stage).toHaveCount(1, { timeout: 60_000 })
+  await expect(stage).toHaveAttribute('data-document-state', 'ready', { timeout: 60_000 })
+}
+
+/** 素材预览 PNG 可早于快速编辑与引擎正文到达，不能拿它当图内编辑已就绪。 */
+export async function waitForFigureEdit(page: Page): Promise<void> {
+  await waitForDocumentReady(page)
+  await expect(page.locator('[data-workspace-context-bar]'))
+    .toHaveAttribute('data-workspace-mode', 'fast_edit', { timeout: 60_000 })
+  await expect(page.locator('[data-canvas-stage] [data-display="exact"]'))
+    .toHaveCount(1, { timeout: 60_000 })
+}
+
 /**
  * 幂等地打开左栏「图内元素」。rail 按钮是 **toggle**（对已激活 tab 再点
  * 一次 = 收起），而 `enterElementEdit` 在 wide 布局下会自动把左栏切到

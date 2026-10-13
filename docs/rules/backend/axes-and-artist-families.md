@@ -142,9 +142,15 @@
     （广播与单柱叠加时撤销才回得到脚本原样）。**`hatch_linewidth` 按真实 setter 是否存在发，不按版本号**：它是
     3.10 起的 per-artist 属性（之前只有全局 `rcParams['hatch.linewidth']`）。旧版本上重放新存的 override 是**静默
     空操作、不报 warning**（warning 会阻断写回，而用户在界面里已经找不到那一行去撤它）。
-    **纹理颜色（`hatchcolor`）不在此列（维护者裁决 2026-10-08）**：3.11 的 `Patch.set_alpha` 会按当前 rcParams 重解析花纹色，
-    与 `rc_context` 里临时的 `hatch.color`（`'edge'` / 自带 alpha 的 RGBA）叠加后，撤销与重放的热态一致性连续出 P1，
-    另开 issue 研究。看护 `tests/test_hatch_editing.py`（nightly 版本矩阵也跑它）。
+    **纹理颜色 `hatchcolor` 是第三项（#874 第二步，2026-10-12；先决的钉住修复见 `override-application-and-replay.md`）**：
+    `patch` / `bar` / `bar_series` 三处发字段、注册 setter（`_PATCH_CAPS` 一行 + `bar_series` 的 `_bprop` 一串 + `ALIAS_GROUPS`
+    点名）。**按真实 setter 判（`hasattr(pt, "set_hatchcolor")`），不按版本号**：只有 matplotlib ≥3.11 发——≤3.10 的花纹色是边色的
+    副产品（每次 `set_edgecolor` 覆盖），独立编辑会被下一次边色 / 不透明度写入冲掉，不发比发一条改了又回去的好；
+    旧版本重放新存的 override 同样是静默空操作。manifest 形状：`{"prop": "hatchcolor", "type": "color", "value": "#rrggbb",
+    "follows_edge": bool}`——`value` 是**画出来的**色号（跟随边框时是边色的实况），`follows_edge` 说它为什么是这个色；
+    写回取 `'#rrggbb'` 或字面量 `'edge'`（前端 `controls/HatchColorField.FOLLOW_EDGE`，严格同源）。`value_original` 走 `_field_values`
+    的口径（hex）。**Collection（`fill_between` / 散点）第一版不做**（它们的 alpha 钉住照旧）。看护 `tests/test_hatchcolor_editing.py`、
+    `tests/test_hatch_mode_restored.py`（撤空后模式回到「未设」）。
     Collection（`fill_between` / 散点）的 `hatch` 不变，没有线宽项。
   * **颜色字段不把「没有颜色」显示成一个实色（2026-09-19，#427）**：`overrides.to_hex`
     见到 alpha 为 0 的颜色报 `NO_COLOR`（`"none"`）——没设边色的 patch、`'none'`、空心

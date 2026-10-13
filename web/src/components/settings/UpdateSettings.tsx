@@ -17,6 +17,19 @@ import {
   settingRowLabelId,
 } from './SettingRow'
 
+/** `update.kindName.*` 里有的失败类别（壳回报的是闭集；老壳 / 新壳多出来的归到 other） */
+const KIND_NAMES: Record<string, true> = {
+  network: true,
+  not_on_mirror: true,
+  timeout: true,
+  stalled: true,
+  http: true,
+  bad_manifest: true,
+  signature: true,
+  version_mismatch: true,
+  other: true,
+}
+
 const st = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
@@ -292,6 +305,8 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
     desktopUpdate,
     desktopProgress,
     desktopError,
+    desktopSource,
+    desktopAttempts,
     desktopChecked,
     desktopCheckedAtMs,
     checkDesktop,
@@ -407,6 +422,28 @@ function DesktopUpdateSettings({ status }: { status: UpdateStatus }) {
 
       <DiagnosticDisclosure variant="row" title={st('techDetails')}>
         <p className="type-caption">{st('update.signatureNote')}</p>
+        {/* 来源只放折叠详情里（ADR 0121）：镜像与 GitHub 对用户是同一件事，信任都来自内置公钥 */}
+        {desktopSource && (
+          <p className="type-caption" data-update-source={desktopSource}>
+            {st('update.sourceUsed', { source: st(`update.sourceName.${desktopSource}`) })}
+          </p>
+        )}
+        {desktopAttempts.length > 0 && (
+          <div className="type-caption" data-update-attempts>
+            <p>{st('update.attemptsTitle')}</p>
+            <ul className="list-none">
+              {desktopAttempts.map((a, i) => (
+                <li key={i}>
+                  {st('update.attemptLine', {
+                    source: st(`update.sourceName.${a.source}`),
+                    stage: st(`update.stageName.${a.stage}`),
+                    kind: st(`update.kindName.${a.kind in KIND_NAMES ? a.kind : 'other'}`),
+                  })}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </DiagnosticDisclosure>
     </UpdatesGroup>
   )

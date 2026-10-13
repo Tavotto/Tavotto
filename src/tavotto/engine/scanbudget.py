@@ -22,7 +22,9 @@
 from __future__ import annotations
 
 import io
+import ntpath
 import os
+import re
 import stat
 import threading
 import time
@@ -82,6 +84,19 @@ ISSUE_CODES = (
 
 SEVERITY_PARTIAL = "partial"
 SEVERITY_NOTE = "note"
+
+#: 机器级「系统解释器」候选枚举（PATH 逐项、逐级 lstat、`C:\\Python*` scandir……）的**独立子预算**。
+#: 它是补充来源，不能拿项目扫描的账：真 Windows runner 上 PATH 很长、hostedtoolcache 多版本、盘根条目多，
+#: 曾把整次扫描的预算吃光、降成 partial（#957 windows-exe-smoke）。
+#: 条目数 2000：典型机器 PATH ~40 项 × 候选 2~3 个 × 祖先层级（walker 按目录缓存）合计几百次 lstat，
+#: 盘根通配枚举几十到一两百项，2000 留约 10 倍余量，又只有总预算（100k）的 2%。
+SYSTEM_MAX_ENTRIES = 2_000
+#: 时间 3 秒：冷盘 + 杀毒软件下单次 lstat 可到毫秒级，2000 次内的正常量远低于此；超了宁可少列系统候选。
+SYSTEM_MAX_SECONDS = 3.0
+#: 子预算用尽的账本行用这个 scope：无路径、note 级，且**不参与**「没找到脚本就升级 partial」（见 `projscan.scan`）。
+SCOPE_SYSTEM = "system"
+#: 机器级路径（PATH / Conda / pyenv / IDE 线索）逐级检查的剪枝：与项目扫描完整性无关
+SCOPE_MACHINE = "machine"
 
 #: macOS `SF_DATALESS`（`st_flags`）：文件内容不在本机，读它会触发下载。
 _DARWIN_DATALESS = 0x40000000
@@ -167,6 +182,116 @@ def redirected_component(root, path, *, allow_final_link: bool = False) -> str |
                 return None
             return rel
     return None
+
+
+_DRIVE_UNKNOWN = 0
+_DRIVE_NO_ROOT_DIR = 1
+_DRIVE_REMOTE = 4
+
+
+def _windows_drive_type(root: str) -> int:
+    """`GetDriveTypeW(root)`（kernel32，只读、不联系网络共享）。非 Windows 不调用 ctypes.windll，回固定盘。
+    Windows 真机行为未验证（CI 不覆盖）；测试用注入的假函数。"""
+    if os.name != "nt":
+        return 3
+    import ctypes
+
+    return int(ctypes.windll.kernel32.GetDriveTypeW(root))  # type: ignore[attr-defined]
+
+
+class PathWalker:
+    """机器级绝对路径的逐级不跟随检查（`redirected_component` 的姊妹：那个只管项目根之下）。
+
+    Windows 语义（`nt=True`）下，扫描构造出的「本地样子」候选（PATH 目录、IDE 的解释器线索、Conda / pyenv 前缀、
+    glob 的字面目录前缀）可能在**任何一级祖先**上是指向断线 UNC / WebDAV 共享的 junction——只验叶子不够：
+    对后代路径做 `lstat` 时系统会先解析那个祖先、联系共享。所以从盘符根起每一级只 `lstat` 该级本身
+    （祖先已验证非重定向），UNC / 设备命名空间根、重定向（`is_redirect`，含最后一级）、不可读都拒；第一个
+    被拒的那一级之下不再有任何 `lstat`。非路径替身的 AppExecLink（商店版 python）不被 `is_redirect` 命中。
+
+    POSIX 语义（`nt=False`）是空操作：`/tmp`、`/var`、Homebrew、pyenv、venv 的 `bin/python` 软链接是常态，
+    不是网络重定向（项目之下的链接另由 `redirected_component` 管）。每一级 `lstat` 计入 `budget`
+    （预算耗尽按拒处理，调用方自会收手），结果按路径缓存，PATH 很长也不重复。命中的记账本（severity=note）。
+    """
+
+    def __init__(
+        self,
+        *,
+        nt: bool | None = None,
+        budget: Budget | None = None,
+        drive_type: Callable[[str], int] | None = None,
+    ):
+        self.nt = os.name == "nt" if nt is None else nt
+        self.budget = budget
+        self._drive_type = drive_type or _windows_drive_type
+        self._drives: dict[str, bool] = {}  # 盘符 -> 是否可碰（GetDriveTypeW 结果按盘符缓存）
+        self._seen: dict[str, str | None] = {}  # 前缀 -> 被拒的那一级（None = 干净）
+        self._missing: set[str] = set()
+
+    def _note(self, code: str) -> None:
+        if self.budget is not None:
+            # 机器上某条 PATH / 前缀按策略不碰，是设计内的剪枝，不是项目扫描没做完：记 note（不把整次扫描降成 partial）。
+            # 报告是公开的（`/api/project/scan` 原样回），机器级路径（用户目录、UNC 主机名）不进去：
+            # 只记无路径的一行（同 code 合并计数）。scope 用机器级 `SCOPE_MACHINE`，**不是**项目遍历的 `walk`：
+            # 后者在「一个脚本都没找到」时会把扫描升级成 partial，而机器上的剪枝与项目扫没扫全无关（Codex #957）。
+            self.budget.note(code, severity=SEVERITY_NOTE, scope=SCOPE_MACHINE)
+
+    def _drive_ok(self, drive: str) -> bool:
+        """盘符根可不可碰：在**任何**文件系统操作（含 lstat 盘符根）之前先问盘类型。远程盘（含断开的映射盘）、
+        根不存在、类型未知一律拒；本地固定盘 / 可移动盘 / 光驱 / RAM 盘照常。按盘符缓存。"""
+        key = drive.upper()
+        ok = self._drives.get(key)
+        if ok is None:
+            try:
+                kind = self._drive_type(key + "\\")
+                ok = kind not in (_DRIVE_UNKNOWN, _DRIVE_NO_ROOT_DIR, _DRIVE_REMOTE)
+            except Exception:  # noqa: BLE001 - 判不出就当不可碰
+                ok = False
+            self._drives[key] = ok
+        return ok
+
+    def redirected(self, path) -> str | None:
+        """`path` 经过重定向 / UNC 根 / 读不动的一级：回第一个被拒的前缀（已记账本）；干净或不存在回 None。"""
+        if not self.nt:
+            return None
+        text = os.fspath(path)
+        drive, rest = ntpath.splitdrive(text)
+        if drive.startswith(("\\\\", "//")):
+            self._note(ISSUE_SYMLINK_DIR)
+            return drive
+        if len(drive) == 2 and drive[1] == ":" and not self._drive_ok(drive):
+            # 远程 / 断开的映射盘：盘符根的 lstat 也会碰网络，一次都不发
+            self._note(ISSUE_SYMLINK_DIR)
+            return drive
+        cur = drive + (rest[:1] if rest[:1] in ("\\", "/") else "")
+        for part in (x for x in re.split(r"[\\/]+", rest) if x and x != "."):
+            if part == "..":  # 名字而非路径：normpath 会悄悄折叠掉中间一级的 lstat
+                self._note(ISSUE_SYMLINK_DIR)
+                return os.path.join(cur, part)
+            cur = os.path.join(cur, part)
+            key = os.path.normcase(cur)
+            if key in self._missing:
+                return None
+            if key in self._seen:
+                if self._seen[key] is not None:
+                    return self._seen[key]
+                continue
+            if self.budget is not None and not self.budget.charge_entry():
+                return cur
+            try:
+                st = os.lstat(cur)
+            except (FileNotFoundError, NotADirectoryError):
+                self._missing.add(key)
+                return None
+            except (OSError, ValueError):
+                self._seen[key] = cur
+                self._note(ISSUE_UNREADABLE_FILE)
+                return cur
+            bad = cur if is_redirect(st) else None
+            self._seen[key] = bad
+            if bad is not None:
+                self._note(ISSUE_SYMLINK_DIR)
+                return bad
+        return None
 
 
 def _contained_lexical(base, parts: tuple[str, ...]) -> str:
@@ -395,6 +520,31 @@ class Budget:
                 "seconds": self.limits.max_seconds,
             },
         }
+
+
+def system_sub_budget(parent: Budget) -> Budget:
+    """系统候选枚举用的子预算：自己的条目数与时间上限，取消回调与时钟沿用父预算。
+    枚举里所有 `charge_entry` / walker 的 lstat 都记在它名下，不动父预算的 `entries`。"""
+    # 时间上限不得越过父预算的截止：父预算剩多少就最多给多少（扫描末尾才开始枚举时不能再白送 3 秒，Codex #957）
+    remaining = parent.limits.max_seconds - (parent.clock() - parent._t0)
+    return Budget(
+        limits=Limits(
+            max_entries=SYSTEM_MAX_ENTRIES,
+            max_seconds=max(0.0, min(SYSTEM_MAX_SECONDS, remaining)),
+        ),
+        cancel=parent.cancel,
+        clock=parent.clock,
+    )
+
+
+def fold_system_issues(parent: Budget, sub: Budget) -> None:
+    """把子预算的账本折回父预算：一律降成 note 级、scope=system、不带路径（报告是公开的）。
+    取消不折（父预算自己会观察到取消并记账）。子预算用完 = 只少列了系统候选，不是项目没扫完。"""
+    for row in sub.issues():
+        if row["code"] == ISSUE_CANCELLED:
+            continue
+        code = ISSUE_ENTRIES if row["code"] == "more_issues" else row["code"]
+        parent.note(code, severity=SEVERITY_NOTE, scope=SCOPE_SYSTEM)
 
 
 def no_follow_isfile(root, charge=None):

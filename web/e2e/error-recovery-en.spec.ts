@@ -23,7 +23,7 @@ import { copyFileSync, chmodSync, mkdirSync, readdirSync, writeFileSync } from '
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { expect, showAllProjects, test } from './fixtures'
+import { expect, showAllProjects, test, waitForFigureEdit } from './fixtures'
 import { withWindowsFileLock } from './file-lock'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
@@ -243,6 +243,7 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // 选中一个可参数化面板后打开助手 → 英文说明「两个 CLI 都没找到」+ 设置入口。
   // noCli 提示在「作用范围与执行器」弹层里（AiPanel 的 agent 分区）；面板顶层输入框上方另有一条中性说明条。
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await waitForFigureEdit(page)
   // 2026-09-14 起助手是右栏 tablist 里的第三个页签（ADR 0010 修订），不再是头部按钮
   await page.getByRole('tab', { name: /Assistant/i }).click()
   const panel = page.getByLabel('Right panel', { exact: true })

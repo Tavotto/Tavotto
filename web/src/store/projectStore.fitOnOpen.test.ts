@@ -77,9 +77,7 @@ describe('打开项目后的视口', () => {
     await useProjectStore.getState().adoptOpenedProject(
       { open: true, id: 'p_b', figures_dir: '/figs/b' },
       {
-        prepareDocument: async () => {
-          await useDocumentStore.getState().switchDocument(docWithPage(200, 160), 'd_big')
-        },
+        prepareDocument: async () => useDocumentStore.getState().switchDocument(docWithPage(200, 160), 'd_big'),
       },
     )
     expect(useViewportStore.getState().zoom).toBeCloseTo(expectedZoom(200, 160), 6)

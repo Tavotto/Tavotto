@@ -1552,6 +1552,19 @@ def distribution_alternatives(import_name: str) -> tuple[str, ...]:
     return ALTERNATIVE_DISTRIBUTIONS.get(str(import_name or ""), ())
 
 
+def provider_peers(distribution: str) -> frozenset[str]:
+    """与 `distribution` 互相排斥地提供同一个 import 名的**其他**发行包（规范化名；没有登记回空集）。
+
+    读的是上面那一张 `ALTERNATIVE_DISTRIBUTIONS`，不另立名单。用途是仲裁而不是授权：项目声明点名了其中一个时，
+    它胜出，其余的不能一起装进同一代环境（P02，AC-08 启用门）。"""
+    key = normalize_distribution(distribution)
+    for alts in ALTERNATIVE_DISTRIBUTIONS.values():
+        group = {normalize_distribution(a) for a in alts}
+        if key in group:
+            return frozenset(group - {key})
+    return frozenset()
+
+
 def version_satisfies(specifier: str, version: str) -> bool | None:
     """已安装 `version` 是否满足声明的版本约束 `specifier`；约束或版本读不懂、没有 `packaging` 回 None（不判）。
 

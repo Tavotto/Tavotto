@@ -28,6 +28,7 @@ import { useUiStore } from '@/store/uiStore'
 import { dirTail } from '@/lib/pathDisplay'
 import { FormRow } from './FormRow'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
+import { LayoutRecover } from './LayoutRecover'
 import { Button } from './ui/Button'
 import { Dialog } from './ui/Dialog'
 import { TextInput } from './ui/Input'
@@ -418,6 +419,9 @@ export function LayoutDialog() {
             ))}
           </ul>
         )}
+
+        {/* 找回本机排版（ADR 0108 §四）：只在「打开」那一屏；自动保存槽位里没人记着的那些 */}
+        {!saving && <LayoutRecover open={open} onClose={() => setOpen(false)} />}
 
         {/* 撞名：一条警示放在页脚上方，裁决（改名 / 覆盖）在页脚 */}
         {conflict && (

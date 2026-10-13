@@ -950,6 +950,11 @@
       "depsRuntime": "{{module}} is missing",
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",
+      "fileOpsBlocked": "The script changes project files, then reads them; safe mode doesn't change them, so the result would differ and no figure was made",
+      "argsRejected_one": "The script rejected the argument you gave",
+      "argsRejected_other": "The script rejected the {{count}} arguments you gave",
+      "inputUnanswered": "The script stopped to ask you something; run it again to answer",
+      "inputUnansweredSecret": "The script wants a password; run it again to enter it (it is never remembered)",
       "missingData": "Can't find the data it reads",
       "stale": "Settings changed, check again",
       "expired": "The last run's record is gone",
@@ -1066,6 +1071,15 @@
       "argsHidden_other": "{{count}} (has a password, hidden)",
       "installs": "Installs",
       "installTo": "Into",
+      "prompt": "The script asked",
+      "parseKind": "Argument problem",
+      "parseKinds": {
+        "missing_required": "A required argument is missing",
+        "invalid_value": "An argument has an invalid value",
+        "unknown": "The script’s argument parser did not accept these arguments"
+      },
+      "errorFull": "Full error output",
+      "errorTruncated": "Too long; only the last part is kept.",
       "noFigureWhy": "It never called savefig and left no Figure open.",
       "unlinked": "{{names}}, made earlier with other arguments, is no longer linked. Run again with those arguments to restore it."
     },
@@ -1163,5 +1177,40 @@
     "rulers": "Rulers",
     "grid": "Grid",
     "safeArea": "Safe area"
+  },
+  "restore": {
+    "autoAdopted": "Opened the layout “{{name}}” found on this computer",
+    "blockedWrite": "Your last layout isn’t open yet.",
+    "choose": "Pick one to open",
+    "continueNew": "Start a new layout",
+    "entrySuperseded": "The project was switched, so this action wasn’t carried out.",
+    "entryTimeout": "Your last layout still wasn’t handled, so this action wasn’t carried out.",
+    "indexDegraded": "The record of your last layout couldn’t be read, so a blank layout was opened. Your older layouts are still there — look in “Open layout”.",
+    "meta": {
+      "pill": "Auto-recovery info not updated",
+      "retry": "Save again",
+      "title": "Your layout is saved, but the record used to reopen it next time wasn’t updated."
+    },
+    "openAlt": "Open “{{name}}”",
+    "openLocal": "Open the local copy of “{{name}}” (may not be the latest)",
+    "pill": {
+      "choose": "Layouts found on this computer",
+      "indexDegraded": "Recovery record unreadable",
+      "invalid": "Last layout can’t be read",
+      "missing": "Last layout not found",
+      "prepareFailed": "Example layout didn’t open",
+      "tooNew": "Last layout is from a newer version",
+      "unavailable": "Last layout isn’t open yet"
+    },
+    "retry": "Try again",
+    "title": {
+      "choose": "Found a few layouts on this computer — pick one to open.",
+      "indexDegraded": "The record of your last layout couldn’t be read. Your older layouts are still there.",
+      "invalid": "The last layout “{{name}}” can’t be read.",
+      "missing": "The last layout “{{name}}” wasn’t found.",
+      "prepareFailed": "The example layout didn’t open.",
+      "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
+      "unavailable": "Your last layout isn’t open yet."
+    }
   }
 }

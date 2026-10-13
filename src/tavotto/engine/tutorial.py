@@ -41,6 +41,7 @@ Flask 父进程可安全 import。
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import json
 import os
@@ -51,7 +52,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import atomicio, config, documents, registry
+from . import atomicio, config, documents, layoutsession, registry
 
 #: 包内资源目录（相对 `tavotto` 包根）。
 RESOURCE_PARTS = ("resources", "tutorial_project")
@@ -273,6 +274,11 @@ def tutorial_destination(meta: dict | None = None, digest: str | None = None) ->
     return tutorial_version_dir(meta, digest) / PROJECT_DIRNAME
 
 
+def cleanup_pending_path() -> Path:
+    """新副本发布前的清理意图：应用清掉旧固定 ID 槽位后才删除。"""
+    return config.data_dir() / "state" / "tutorial-cleanup-pending"
+
+
 def is_tutorial_path(path: str | Path) -> bool:
     """这个路径在教程树（`<data_dir>/tutorial/`）之下吗？
 
@@ -385,7 +391,38 @@ def _sweep_leftovers(version_dir: Path) -> None:
             shutil.rmtree(p, ignore_errors=True)
 
 
+#: 等别的 Tavotto 进程做完教程副本发布 / 清理意图标记的上限（秒）
+TUTORIAL_LOCK_TIMEOUT_S = 30.0
+
+
+def tutorial_lock_path() -> Path:
+    return layoutsession.canonical_state_dir() / "tutorial.lock"
+
+
 def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
+    """`_ensure_tutorial_copy_locked`，在**跨进程**教程锁里跑。
+
+    共用一个数据目录的两个后端进程同时首次打开 / 重置教程时，副本发布（rename）与清理意图标记
+    （`cleanup_pending_path`，两个进程共享）必须串行：否则一个进程发布后退出、另一个进程 rename 失败的
+    回滚分支会把对方留下的共享标记删掉，下次打开就漏掉旧固定 ID 槽位的清理。拿不到锁一律失败
+    （`tutorial_locked`），绝不在没有锁的情况下继续。
+    """
+    try:
+        fd = layoutsession.acquire_file_lock(
+            tutorial_lock_path(), time.monotonic() + TUTORIAL_LOCK_TIMEOUT_S
+        )
+    except layoutsession.SessionStateUnavailable as exc:
+        raise TutorialError(
+            "tutorial_locked", f"另一个 Tavotto 正在准备教程副本，稍后再试：{exc}"
+        ) from exc
+    try:
+        return _ensure_tutorial_copy_locked(reset=reset)
+    finally:
+        if fd is not None:
+            layoutsession.release_file_lock(fd)
+
+
+def _ensure_tutorial_copy_locked(*, reset: bool = False) -> TutorialProject:
     """确保数据目录里有一份可用的教程副本，返回它的位置。
 
     * 没有 → 复制一份（`created=True`）；
@@ -444,10 +481,27 @@ def ensure_tutorial_copy(*, reset: bool = False) -> TutorialProject:
                     f"关掉之后再试：{exc}",
                 ) from exc
             raise TutorialError("tutorial_copy_failed", f"无法替换旧的教程副本：{exc}") from exc
+    # 新建和重置都先记清理意图再发布副本。重置时旧目录此刻已挪到 .old；
+    # 崩溃后 dest 不在，下次 ensure 会新建，而已发布后崩溃则凭标记清旧槽位。
+    marker = cleanup_pending_path()
+    had_pending = marker.exists()
+    try:
+        atomicio.write_bytes(marker, b"pending\n")
+    except (OSError, atomicio.AtomicWriteError) as exc:
+        shutil.rmtree(tmp, ignore_errors=True)
+        if old is not None:
+            with contextlib.suppress(OSError):
+                os.rename(old, dest)
+        raise TutorialError("tutorial_copy_failed", f"无法记录教程旧排版清理：{exc}") from exc
     try:
         os.rename(tmp, dest)
     except OSError as exc:
         shutil.rmtree(tmp, ignore_errors=True)
+        if not had_pending:
+            # 发布失败时先撤回这次新写的意图，再把旧目录放回；崩溃在两步之间
+            # 只会留下 dest 缺失，不会用重置失败的标记清掉恢复后的旧进度。
+            with contextlib.suppress(OSError):
+                marker.unlink(missing_ok=True)
         if old is not None:
             try:
                 os.rename(old, dest)  # 把旧副本放回去：用户不该因为一次失败失去教程

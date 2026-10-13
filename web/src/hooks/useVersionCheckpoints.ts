@@ -1,4 +1,4 @@
-import { useDocumentStore } from '@/store/documentStore'
+import { isDocumentPlaceholder, useDocumentStore } from '@/store/documentStore'
 import { hasActiveGesture } from '@/store/gestureCoordinator'
 import { setMomentSink, takeCheckpoint, markMoment } from '@/lib/timelineCheckpoint'
 import { onLayoutSaved } from '@/lib/layoutSaved'
@@ -78,6 +78,8 @@ export function startVersionCheckpoints(): () => void {
   const inFlight = new Set<string>()
 
   const fire = () => {
+    // 占位文档（上次的排版还没恢复落定）不是用户的文档：不往时间线打自动节点
+    if (isDocumentPlaceholder()) return
     const ctx = currentTimelineCtx()
     const wait = (lastSaved.get(ctx) ?? 0) + minGapMs - Date.now()
     if (wait > 0) {
@@ -114,6 +116,8 @@ export function startVersionCheckpoints(): () => void {
   // 事，与命名节点、恢复前一样不因为画布空着就静默缺席；只有普通自动节点在空画布上不拍。
   // 「空」按节点实际拍的那份判——带快照时是快照里那份（`takeCheckpoint` 里同一个 `id.doc`）
   setMomentSink(async (moment, snapshot) => {
+    // 占位文档不打点（离开旧文档的「关闭」点发生在设门之前，那时门还开着、点照打）
+    if (isDocumentPlaceholder()) return null
     // 点打在哪份排版的时间线上，就重新计哪份的间隔（发起那一刻取，await 回来可能已经换了）
     const ctx = snapshot?.ctx ?? currentTimelineCtx()
     const res = await takeCheckpoint({ auto: true, moment, allowEmpty: true }, snapshot)
@@ -128,6 +132,7 @@ export function startVersionCheckpoints(): () => void {
 
   const unsub = useDocumentStore.subscribe((state, prev) => {
     if (state.doc === prev.doc) return
+    if (isDocumentPlaceholder()) return
     window.clearTimeout(timer)
     timer = window.setTimeout(fire, debounceMs)
   })

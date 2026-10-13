@@ -1,7 +1,7 @@
 import { copyFileSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, showAllProjects, test } from './fixtures'
+import { expect, showAllProjects, test, waitForFigureEdit } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 
@@ -173,6 +173,7 @@ test.describe('英文界面的排版', () => {
       timeout: 30_000,
     })
     await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+    await waitForFigureEdit(page)
     // 抽屉是宽度动画，动画途中量到的是中间帧——等它停下来再量，
     // 否则这条用例会按机器快慢随机红（问过一次 getAnimations 就够）
     await page.waitForFunction(

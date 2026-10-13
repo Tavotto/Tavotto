@@ -294,6 +294,8 @@ class NativeSession:
         self.process_pid: int | None = None
         self.descriptors: list = []
         self.stems: list[str] = []
+        #: 逐图的实际完成事实（P08a）：活图 / 失败图 / 只读原件各自声明的能力与时刻。`stems` 只列活图。
+        self.figure_facts: list[dict] = []
         self.script_error: dict | None = None
         self.terminal_error: dict | None = None
         self.exit_code: int | None = None
@@ -380,6 +382,11 @@ class NativeSession:
         name = frame.get(EVENT_KEY)
         if name == "barrier":
             stems = frame.get("stems") or []
+            facts = frame.get("figure_facts")
+            if isinstance(facts, list):
+                # 不进事件日志（里头有路径）：先于状态落定，读到 BARRIER 的人一定看到这一个 barrier 的事实
+                with self._lock:
+                    self.figure_facts = list(facts)
             self._set_state(
                 BARRIER,
                 barrier_reason=str(frame.get("reason") or ""),
@@ -437,9 +444,19 @@ class NativeSession:
         return self.transport
 
     def _request(self, obj: dict, timeout: float) -> dict:
-        return self._require_barrier().request(
-            obj, generation=self.generation, revision=self.rev, timeout=timeout
-        )
+        try:
+            return self._require_barrier().request(
+                obj, generation=self.generation, revision=self.rev, timeout=timeout
+            )
+        except pool.WorkerError as exc:
+            if exc.code == pool.figcapture.PREVIEW_POISONED_CODE:
+                # 预览产物对读方不可信：读方进程回「无预览」，传输标 poison（既有的
+                # 「会话不再可信」机制），之后每条请求都 NATIVE_RELAY_FAILED
+                pool.figcapture.poison_preview_dir(self.out_dir)
+                transport = self.transport
+                if transport is not None and transport.poison is None:
+                    transport.poison = {"code": runcodes.NATIVE_RELAY_FAILED, "detail": str(exc)}
+            raise
 
     @property
     def last_build_descriptors(self) -> list:
@@ -481,6 +498,7 @@ class NativeSession:
         self.built = True
         self.last_build = resp
         self.descriptors = list(resp.get("descriptors") or [])
+        self.figure_facts = list(resp.get("figure_facts") or [])
         self.stems = list((resp.get("stems") or {}).keys())
         self.script_error = resp.get("script_error") or self.script_error
         return resp
@@ -587,7 +605,7 @@ class NativeSession:
             return resp
 
     def svg_path(self, stem: str) -> Path:
-        return self.out_dir / f"{stem}.svg"
+        return Path(pool.figcapture.usable_preview_path(self.out_dir, stem, ".svg"))
 
     def resume(self) -> dict:
         """放开屏障，让用户脚本接着往下跑。
@@ -682,6 +700,7 @@ class NativeSession:
             "process_pid": self.process_pid,
             "stems": list(self.stems),
             "descriptors": list(self.descriptors),
+            "figure_facts": list(self.figure_facts),
             "script_error": self.script_error,
             "terminal_error": self.terminal_error,
             "exit_code": self.exit_code,

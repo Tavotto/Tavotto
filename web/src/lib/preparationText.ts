@@ -335,7 +335,16 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   const missing = find(report, 'input_location')
   const code = report.outcome.code ?? ''
   if (report.outcome.kind === 'failed' && code === 'script_needs_arguments') {
-    return view('needs_args', 'needsArgs', v, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
+    // 用户已经给了参数、脚本自己的解析器仍然拒绝（P05a：`params.argv_count` 来自后端本地错误详情）：别再说"要参数"
+    const given = Number(report.result?.error?.params?.argv_count)
+    return given > 0
+      ? view('needs_args', 'argsRejected', { count: given }, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
+      : view('needs_args', 'needsArgs', v, { kind: 'reopen', label: 'continue' }, { slot: 'args', argsOpen: true })
+  }
+  // safe 守卫拦下了脚本的文件操作、脚本随后又读了它（P01a）：重试得到同样的结果，没有「再试一次」；
+  // 当前桌面没有保留文件语义的执行路径，所以也没有主按钮——如实说，不替用户换环境重跑
+  if (report.outcome.kind === 'failed' && code === 'safe_file_operation_blocked') {
+    return view('file_ops_blocked', 'fileOpsBlocked', v, null, { tone: 'bad', step: 1 })
   }
   if (missing) return view('missing_data', 'missingData', v, { kind: 'missing_input', payload: missing.payload }, { step: 1 })
   const fallback = has(report, 'recheck') ? act('recheck', 'recheck') : null
@@ -352,6 +361,16 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
       return view('blocked', 'blocked', v, fallback)
     case 'failed':
       if (report.outcome.reason === 'dependency_preparation') return view('deps_failed', 'depsFailed', v, fallback, { tone: 'bad' })
+      if (code === 'script_needs_input' || code === 'script_input_timeout') {
+        // 脚本中途要输入而这一次没有人能答：再运行一次，提问会出现在卡片里（口令类说清不会被记住）
+        // 口令：理由是 secret_required，或读取方式本身是 getpass（首问无人应答 / 超时时理由是别的）
+        const params = report.result?.error?.params
+        const secret = params?.reason === 'secret_required' || params?.input_kind === 'getpass'
+        return view('input_unanswered', secret ? 'inputUnansweredSecret' : 'inputUnanswered', v, has(report, 'run') ? act('run', 'retry') : fallback, {
+          tone: 'bad',
+          step: 1,
+        })
+      }
       return view('failed', 'failed', v, has(report, 'run') ? act('run', 'retry') : fallback, { tone: 'bad', step: 1 })
     case 'cancelled':
       return view('cancelled', 'depsCancelled', v, fallback, { tone: 'mute' })

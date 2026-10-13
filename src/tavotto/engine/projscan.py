@@ -558,6 +558,21 @@ def environment_evidence(
         root, script, ask_login_shell=None, no_follow=True, budget=budget
     ):
         add(entry["python"], entry["source"], entry.get("label") or "")
+    # 系统解释器与执行路径是同一个来源（`userenvs.system_candidates`）：只 `is_file`，不起进程
+    # 扫描里用只读版：PATH 过预算与取消、UNC / 网络路径不碰（清单与执行路径同一份）
+    # 系统候选是补充来源：用独立子预算（条目数 + 时间），用尽只少列、记一条无路径 note，不拖垮项目扫描
+    if budget is None:
+        # 没有扫描预算的调用方（页面挂载时的环境建议 `envadvice.recommend`）同样走只读、有界、不碰网络路径的版本，
+        # 不退回执行路径那个不设限的 helper（Codex #957）。执行路径选解释器不经这里，行为不变。
+        system = userenvs.system_candidates(scanbudget.system_sub_budget(scanbudget.Budget()))
+    elif budget.stop_reason() is None:
+        sub = scanbudget.system_sub_budget(budget)
+        system = userenvs.system_candidates(sub)
+        scanbudget.fold_system_issues(budget, sub)
+    else:
+        system = []
+    for entry in system:
+        add(entry["python"], entry["source"], "")
 
     candidates = [by_key[k] for k in order]
     truncated = len(candidates) > MAX_ENV_CANDIDATES
@@ -733,8 +748,11 @@ def scan(
     else:
         has_partial = any(i["severity"] == scanbudget.SEVERITY_PARTIAL for i in issues)
         # 设计内的静默剪枝（层级太深）只有在「一个脚本都没找到」时才升级成 partial
+        # 机器级的 note（system 子预算用尽 / machine 逐级剪枝）不算：只说明少列了机器上的解释器，与项目脚本找没找全无关
+        machine_scopes = (scanbudget.SCOPE_SYSTEM, scanbudget.SCOPE_MACHINE)
         notes_matter = (not items) and any(
-            i["severity"] == scanbudget.SEVERITY_NOTE for i in issues
+            i["severity"] == scanbudget.SEVERITY_NOTE and i["scope"] not in machine_scopes
+            for i in issues
         )
         state = STATE_PARTIAL if (has_partial or notes_matter) else STATE_COMPLETE
     partial = state in (STATE_PARTIAL, STATE_CANCELLED)

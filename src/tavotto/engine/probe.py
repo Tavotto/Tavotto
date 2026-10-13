@@ -74,6 +74,10 @@ ERROR_STEM_CONFLICT = "multiple_stem_conflict"
 #: `script_probe_failed` 会把出路（给默认值或 `tavotto run` / 去掉那句 exit）说丢。
 ERROR_NEEDS_ARGUMENTS = "script_needs_arguments"
 ERROR_SCRIPT_EXITED = "script_exited"
+#: safe 守卫拦下了脚本的关键文件操作、脚本随后又观察了它（P01a）：原样透传——出路（保留文件语义的执行路径）
+#: 归成通用的 `script_probe_failed` 会被说丢。**不**算「与入口无关」：被拦的操作可能只在某个入口函数里
+#: （`main()` 删缓存再读，而 `render()` 是干净的图入口），换下一个入口照旧要试；都失败时报的是第一次的这个码。
+ERROR_FILE_OPERATION_BLOCKED = pool.FILE_OPERATION_BLOCKED_CODE
 #: 脚本 `input()`（ADR 0099）：没人能答 / 等到超时脚本没接住 EOF。worker 原样透传。
 ERROR_NEEDS_INPUT = "script_needs_input"
 ERROR_INPUT_TIMEOUT = "script_input_timeout"
@@ -172,11 +176,17 @@ def _error_from_worker(
         return out
     if exc.code in (ERROR_NEEDS_INPUT, ERROR_INPUT_TIMEOUT):
         # 脚本要输入而没人能答 / 等到超时（ADR 0099）：提示原文走 params，界面按 code 翻
-        extra = getattr(exc, "extra", None) or {}
         return _err(
             exc.code,
             str(exc),
-            params={"prompt": str(extra.get("prompt") or "")},
+            params=pool.recovery_params(exc),
+            traceback_text=exc.traceback_text,
+        )
+    if exc.code == ERROR_FILE_OPERATION_BLOCKED:
+        return _err(
+            exc.code,
+            str(exc),
+            params=pool.file_operation_blocked_params(getattr(exc, "extra", None)),
             traceback_text=exc.traceback_text,
         )
     if exc.code in (ERROR_NEEDS_ARGUMENTS, ERROR_SCRIPT_EXITED):
@@ -187,12 +197,8 @@ def _error_from_worker(
         if exc.code == ERROR_NEEDS_ARGUMENTS:
             # T03：用户给了精确 token 时（`argv_count` > 0）脚本自己的解析器仍拒绝；`parse_kind` 只在 worker
             # 有 argparse 的实际证据时才有（missing_required / invalid_value / unknown）。
-            # 只带类别与个数，不带参数值。
-            extra = getattr(exc, "extra", None) or {}
-            if extra.get("argv_count"):
-                params["argv_count"] = str(int(extra["argv_count"]))
-            if extra.get("parse_kind"):
-                params["parse_kind"] = str(extra["parse_kind"])
+            # 只带类别与个数，不带参数值（字段来自错误转换合同 `pool.recovery_params`）。
+            params.update(pool.recovery_params(exc))
         out = _err(
             exc.code,
             str(exc),
@@ -467,6 +473,8 @@ def _probe(
                 "error": None,
                 "timings": dict(resp.get("timings") or {}),
                 "dropped_figures": int(resp.get("dropped_figures") or 0),
+                # 逐图隔离（P08a）：有图预览捕获失败时如实带出去——部分成功不是"一切正常"
+                **_partial_fields(resp),
                 # 这次试运行按哪一代改指表跑的（ADR 0106 §五）：登记 / 物化落地前核对
                 "remap_generation": getattr(_worker, "remap_generation", None),
                 # T03：这次执行绑定的运行配置引用（不透明 id；argv 原文不出现在结果里）
@@ -526,6 +534,14 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
     return out
 
 
+def _partial_fields(build_resp) -> dict:
+    """build 响应里被逐图隔离的图 → `{"failed_figures": [...], "partial": True}`；没有失败时不加任何键。"""
+    failed = build_resp.get("failed_figures") if isinstance(build_resp, dict) else None
+    if not isinstance(failed, list) or not failed:
+        return {}
+    return {"failed_figures": [dict(f) for f in failed if isinstance(f, dict)], "partial": True}
+
+
 def probe_and_register(
     figures_dir: str | Path,
     script: str,
@@ -566,7 +582,15 @@ def register_probed(
     探测的私事，是「捕获到的图要能被编辑请求按 stem 找到」的那一步。`result` 至少带 `stems` /
     `entry` / `remap_generation`；原样展开回去，加 `registered`（与可能的 `error` / `stem_conflicts`）。
     """
-    conflicts = _live_stem_conflicts(figures_dir, script, result["stems"])
+    # 预览捕获失败的图（P08a 逐图隔离）也是这个脚本产出的图：照样登记，否则部分成功会把它此前的登记整条替换掉；
+    # 编辑请求落到它身上时拿到的是失败原因（`preview_capture_failed`），不是"不存在"
+    failed_stems = [
+        str(f["stem"])
+        for f in (result.get("failed_figures") or ())
+        if isinstance(f, dict) and f.get("stem")
+    ]
+    all_stems = sorted({*result["stems"], *failed_stems})
+    conflicts = _live_stem_conflicts(figures_dir, script, all_stems)
     if conflicts:
         detail = "；".join(f"{stem} → {owner}" for stem, owner in sorted(conflicts.items()))
         return {
@@ -590,13 +614,11 @@ def register_probed(
             # 「替换掉了哪些此前真捕获过的图名」的证据在**注册表提交之前**算完：任何环节在这里失败，整次登记失败、
             # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
             # 一次索引：运行配置读一次、cache 目录列一次，不随被替换 stem 数 × 配置数增长（#819 r4232302927）
-            unlinked = sorted(
-                captured_stems(figures_dir, script, set(before) - set(result["stems"]))[0]
-            )
+            unlinked = sorted(captured_stems(figures_dir, script, set(before) - set(all_stems))[0])
             discover.register(
                 figures_dir,
                 script,
-                result["stems"],
+                all_stems,
                 entry=result["entry"],
                 cost=cost,
                 # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让

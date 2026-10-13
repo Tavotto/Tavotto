@@ -5,7 +5,7 @@ name: CI
 # **覆盖面一条没减，改的是每类验证在哪个提交上执行**：
 #
 #   PR（含草稿）    快速反馈：python-lint（Ruff）/ invariants /
-#                   backend-fast（Linux 3.10 / 3.13 / 3.14，每档按文件分 3 片）/
+#                   backend-fast（Linux 3.10 / 3.13 / 3.14，每档按文件分 4 片）/
 #                   frontend / workerd / compat-smoke / CodeQL。
 #                   重型资格**不在 PR 上跑**——CI integration gate 显式回
 #                   deferred（summary 与 JSON 都写明），PR 靠三个 Gate 进队列。
@@ -36,8 +36,9 @@ name: CI
 # 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
-# `shard` 轴，目前各为 `[1, 2, 3]`，每档全量 pytest 拆成三个并行 job（`--shard=K/3`，
-# 按文件分、不拆文件、每个进程先算全部三片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
+# `shard` 轴，目前 backend-fast 为 `[1, 2, 3, 4]`（`--shard=K/4`）、backend-platforms 为
+# `[1, 2, 3]`（`--shard=K/3`），每档全量 pytest 拆成并行 job（按文件分、不拆文件、
+# 每个进程先算全部各片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
 # 就是 rc 4；任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
 # 照红。理由、自验与漏片兜底链写在 `backend-fast` 那一段。lab 常规套件同机跑齐全部分片；
 # nightly / desktop-tauri 的 pytest 命令没有 `--shard`，跑的仍是全集。
@@ -537,14 +538,14 @@ jobs:
   #
   # **每档再按文件分片**（CI03a，2026-09-16；设计与实测见
   # docs/implementation/ci-foundation/CI03A_PYTEST_SHARDS.md）。以下按 backend-fast
-  # 的 3 片举例——backend-platforms 2026-09-30 起也是 3 片（理由见它自己的注释）：
+  # 的 4 片举例——backend-platforms 2026-09-30 起是 3 片（理由见它自己的注释）：
   #   * 为什么按文件、不拆文件：29 个文件有 module 级 fixture、文件内共享 worker /
   #     figure 状态（CI_BASELINE.md §7）；文件是 fixture 生命周期自洽的最小单位。
-  #   * 为什么 3 片：2026-10-09 两个合并组（#853，run 37900187745 / 37906698476）
-  #     的 Linux 3.10 / 3.14 分片 1 分别撞上 60 分钟；同组 3.13 分片 1 已需 56:26。
-  #     现有权重估计约 101 分钟总量，改为 3 片给余量；不抬超时、不加 -n。
-  #   * 自验做了什么：`--shard=K/3` 在**同一进程 collection 之后**做（tests/conftest.py
-  #     → tests/support/shard.py），每个进程都算出全部三片，断言 nodeid 集合的并集 ==
+  #   * 为什么 4 片：2026-10-09 两个合并组（#853，run 37900187745 / 37906698476）
+  #     的 Linux 3.10 / 3.14 分片 1 分别撞上 60 分钟，当时由 2 片改为 3 片；3 片后合并组
+  #     每片仍实测 46–59.5 分钟（#896），2026-10-12 再加到 4 片。不加 -n。
+  #   * 自验做了什么：`--shard=K/4` 在**同一进程 collection 之后**做（tests/conftest.py
+  #     → tests/support/shard.py），每个进程都算出全部四片，断言 nodeid 集合的并集 ==
   #     全集、两两不交、每片非空、无重复，任一条不成立 rc 4——不是静默跑全集，也不是
   #     静默跑空集。
   #   * 漏片由谁兜：进程内自验是第一层；第二层是 matrix 语义——任一片不
@@ -565,7 +566,7 @@ jobs:
       # os 固定 ubuntu-24.04，写在 runs-on 上，不再是 matrix 的一维。
       matrix:
         python: ["3.10", "3.13", "3.14"]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     # 分片后每片实测 10–20 分钟（合入后三个真实合并组 35061049078 / 35069266028 /
     # 35073686963 的 18 片：610–1201s）；分片前整档中位 29–35 分钟、max 36。
     # 2026-09-25 用例增长后分片 1 在 hosted runner 上实测 35–40 分钟，两个合并组
@@ -575,7 +576,11 @@ jobs:
     # 2026-10-09 再抬到 90：main 自己的合并组每片已实测 46–59.5 分钟（run 37883555344 /
     # 37886523633），#817 加用例后两次合并组都在 60 分钟被取消、整组踢出。合并队列的
     # check_response_timeout 是 180 分钟（线上值，仓库里 scripts/ci/merge_queue_ruleset.py 已同步，
-    # 测试要求与 job 上限差 ≥30 分钟），90 仍在其内；拆片（#636）做完再收回。
+    # 测试要求与 job 上限差 ≥30 分钟），90 仍在其内。
+    # 2026-10-12 由 3 片加到 4 片（#896）：3 片下分片 1 仍普遍比分片 2 慢 15–20 分钟，
+    # #882 / #860 的 3.14 / 3.10 分片 1 在 57–60 分钟处撞点被取消（日志里没有失败用例，只是超时）。
+    # 加片摊薄每片总量；超时**暂不收回**，等四片在 main 合并组上有实测再定（目标是每片落在
+    # 45 分钟内再降到 60）。按 runner 实测重算权重表（#636）仍是下一步。
     timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
@@ -621,7 +626,7 @@ jobs:
         run: |
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
-      # `--shard=K/3` 的 3 与上面 matrix.shard 的长度必须是同一个数
+      # `--shard=K/4` 的 4 与上面 matrix.shard 的长度必须是同一个数
       # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
       # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
       # **两个 conftest 选项必须写成 `--opt=值`**（本机实测，rc 4）：它们在 tests/conftest.py
@@ -632,7 +637,7 @@ jobs:
       # 不会自己露头——所以合同测试钉 `=` 形式，别等 self-hosted 复用目录时才发现。
       - name: pytest
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/3
+          python -m pytest --shard=${{ matrix.shard }}/4
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs

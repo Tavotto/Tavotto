@@ -363,6 +363,8 @@ USER_VISIBLE_CODES = {
     "tutorial_resources_invalid": {"reason"},
     "tutorial_copy_failed": {"reason"},
     "tutorial_locked": {"reason"},
+    # 重置时新副本已就位、但旧教程排版因会话状态被另一个进程占着没清掉（500）：文案固定、不带参数
+    "tutorial_reset_incomplete": set(),
     # --- #264：版本时间线读不出来时拒绝整份写回（写入侧那道闸）---
     "versions_unreadable": set(),
     # --- ADR 0101：排版时间线。命名节点超出字节上限时拒绝再命名（已有的一条不删）；
@@ -556,6 +558,12 @@ NON_UI_CODES = {
     # #715 验收 P1：「上次开着的排版」记到了别的项目的槽位上。只在后台推送里出现，前端认它作废
     # 本机缓存（`lib/projectDocs.LAYOUT_FOREIGN_CODE`），从不显示给用户
     "layout_foreign",
+    # ADR 0120：会话状态此刻读不到 / 跨进程锁拿不到（503）。同样只在后台「上次开着的」推送里出现，前端当成
+    # 可重试的失败、留着待确认标记下次补推（`lib/projectDocs.pushRemote`），从不显示给用户
+    "session_unavailable",
+    # 候选发现（只读）：槽位目录在、却列不出来（权限 / 网络盘）→ 503。前端当成 unavailable 走重试，不折成空项目，
+    # 从不把这个 code 显示给用户
+    "candidates_unavailable",
 }
 
 

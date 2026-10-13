@@ -786,6 +786,7 @@ export function ProbeResultsDialog({
               onClick={() => {
                 if (guard.current && !guard.current.still()) return
                 const added = addRuntimePanelToCanvas(d)
+                if (!added) return // 上次的排版还在恢复：已排队 / 被拒，不说"已加入"
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
                 onAdded?.(d, added)
               }}

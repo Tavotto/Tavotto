@@ -1158,6 +1158,8 @@ def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
         return offer, envs
 
     monkeypatch.setattr(deprepair, "_preparation_offer", door)
+    # 自动采用在租约内对选中的候选现量一次（#980 r4254586851）；`lab` 是假解释器，替身说「此刻仍满足」
+    monkeypatch.setattr(userenvs, "evaluate", lambda cands, needed, unknown, **kw: [dict(entry)])
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     assert resp.status_code == 202, resp.get_json()
     plan = resp.get_json()["plan"]

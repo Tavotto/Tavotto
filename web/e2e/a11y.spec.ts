@@ -18,7 +18,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, test, writeRuntimeNamedProject } from './fixtures'
+import { expect, test, waitForFigureEdit, writeRuntimeNamedProject } from './fixtures'
 import { lowContrastNodes } from './contrast'
 import { resolveScanned, type ScannedNode } from './scannedNodes'
 
@@ -235,12 +235,17 @@ test('工作台（项目已开、画布有面板）：axe 无违规、无未定�
   app,
   page,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  // 等面板真的渲染出来再扫，扫到一半加载的骨架屏没有意义
-  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
-    .toBeVisible({ timeout: 60_000 })
+  await waitForFigureEdit(page)
+  // 快速编辑会切到元素树；把素材栏打开并选中卡片，确实覆盖选中底色上的元数据。
+  const assets = page.locator('[data-rail="assets"]')
+  if ((await assets.getAttribute('aria-expanded')) !== 'true') await assets.click()
+  const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
+  await card.click()
+  await expect(card).toHaveAttribute('aria-selected', 'true')
   // 素材卡上的角标是「覆盖层下的文字」，axe 算不出背景色；标题层级它也判不了。
   // 两条都不按规则 id 放行——各自带一遍真核对。
   await expectAccessible(page, {
@@ -252,8 +257,7 @@ test('图内编辑的属性栏：展开每一个折叠区之后 axe 仍然干净
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
-    .toBeVisible({ timeout: 60_000 })
+  await waitForFigureEdit(page)
 
   const inspector = page.locator('[data-inspector-panel]')
   await expect(inspector).toHaveCount(1)
@@ -319,8 +323,7 @@ test('图内编辑的属性栏（属性页签，选中标题）：正文框有�
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  await expect(page.locator('[data-canvas-stage] img, [data-canvas-stage] svg').first())
-    .toBeVisible({ timeout: 60_000 })
+  await waitForFigureEdit(page)
 
   // 元素树 → 展开「文字」组 → 点标题。按 role 与双语正则走（本 spec 三条腿里有
   // 一条是 en-US；这里量的正是无障碍名本身，所以不走 fixtures 的 `openElementsTab`）。
@@ -389,6 +392,8 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   const a = await app()
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  // 预览 PNG 先于快速编辑到达；等工作流和精确图都就绪，导出才默认这张原图。
+  await waitForFigureEdit(page)
 
   const exportButton = page.getByRole('button', { name: /导出|Export/ }).first()
   await exportButton.focus()
@@ -408,6 +413,13 @@ test('导出对话框：axe 干净 + 焦点 trap + Escape 关闭后焦点恢复'
   // 它 portal 到 `<body>` 末尾、背景整片 aria-hidden 之后）——axe 判不了它在文档
   // 里的层级位置，就丢进 incomplete；判不判得了随扫描那一刻的可见性而变，所以
   // 时红时绿。工作台/问题面板那两条用例早就声明了它，这里补齐。
+  await expectAccessible(page, {
+    allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
+  })
+
+  // 原图的 EPS 可用；切到画布也扫一遍，覆盖「禁用控件 + 淡色标签」的整项语义。
+  await dialog.locator('[data-onboarding-anchor="export-scope"] [data-value="canvas"]').click()
+  await expect(dialog.locator('[data-export-formats] input').nth(2)).toBeDisabled()
   await expectAccessible(page, {
     allow: [dialogBackgroundIsInert, contrastCoveredByOurOwnRuler, headingOrderCheckedByOurselves],
   })

@@ -449,6 +449,29 @@ def export_format_kwargs(fmt: str) -> dict:
     return {}
 
 
+#: 一代预览发布时在完成记录里声明的能力：SVG 与 manifest 都完整落盘（`preview`），且图在本会话里是活对象、
+#: 能改能导出（`live_edit`）。只读原件（`original_readonly`）不在这里——它是另一个事实，见 `figure_facts`。
+PREVIEW_CAPABILITIES = ("preview", "live_edit")
+
+
+#: `failures[stem]["code"]`：这张图的预览没能捕获出来（画不出 / 写不出），其它图不受影响。
+PREVIEW_CAPTURE_FAILED = "preview_capture_failed"
+
+
+class PreviewInvalidated(RuntimeError):
+    """发布中途失败且还原上一版也失败：该 stem 的预览已作废（读者看到「无预览」，不是成功）。"""
+
+
+class PreviewPoisoned(PreviewInvalidated):
+    """还原、删除 / 改名、失效标记**三道都落空**：磁盘上的错配对读方无法在磁盘层面隐藏。
+
+    致命：`protocol_code` 让 `wireproto.respond` 回 `preview_poisoned`（非 retryable），
+    app 侧据此判死这条会话并把 `out_dir` 记进读方进程的作废表（`figcapture.poison_preview_dir`）。
+    """
+
+    protocol_code = figcapture.PREVIEW_POISONED_CODE
+
+
 class LiveFigureSession:
     """捕获到的一组 Figure + 它们的可编辑状态。
 
@@ -486,6 +509,17 @@ class LiveFigureSession:
         #: stem -> FigState（`instrument()` 之后才有）
         self.states: dict[str, overrides_mod.FigState] = {}
         self._manifest_cache: dict[str, dict] = {}
+        #: stem -> 这张图**没能进入可编辑会话**的事实（P08a 逐图隔离）。只记这张图自己的失败；
+        #: 其它图照常 instrument / 发布。键不在 `states` 里：它不是活图，没有预览。
+        self.failures: dict[str, dict] = {}
+        #: 失败那张图失败时手里的 `FigState`（若已建出来）。它可能已经动过 Figure，屏障离开时要和健康图
+        #: 一样核对「恢复成脚本原样」——还原不了就不许放行（见 `failed_restore_owed`）。
+        self._failed_states: dict[str, object] = {}
+        #: 失败过的图只在**下一次离开屏障之后**才重试：同一个屏障里 build / barrier / 报告会各调一次
+        #: `instrument_all`，每次都重画一张必败的图只会重复付费、重复刷屏。
+        self._retry_failed = False
+        #: stem -> 它被捕获进活会话那一刻（epoch 秒）。与磁盘原件的 `saved_at` 是两个独立的时间事实。
+        self.live_captured_at: dict[str, float] = {}
         #: 拥有这些 Figure 的线程。见模块头「线程归属」。
         self.owner_thread = threading.get_ident()
 
@@ -674,15 +708,34 @@ class LiveFigureSession:
                 file=sys.stderr,
             )
 
-    def instrument_all(self, *, suppressed_savefig: bool = False) -> None:
+    def instrument_all(
+        self, *, suppressed_savefig: bool = False, raise_if_none_live: bool = False
+    ) -> None:
         """给捕获表里还没有 FigState 的图建状态并出一次预览。
 
         可重入：native bridge 在每次 `plt.show()` 屏障处都会再调一次，
         只有新出现的图会被 instrument（已有的 FigState 带着用户的 override，
         重建等于把编辑丢掉）。
+
+        **逐图隔离**（P08a，EX04/EX12）：一张图在「建状态 / 出预览」里抛出的普通异常只属于这张图——
+        记进 `failures`、从会话里撤掉它（活对象仍留在捕获表里，原产物的事实照旧可查），其它图继续。
+        不是 `except: pass`：失败有明确的事实（`failures` / `figure_facts` / build 响应的
+        `failed_figures`），而且这张图已经动过的 Figure 状态要核对恢复。产物目录 / 账本的问题
+        （发布段失败）不属于任何一张图，照旧整批失败。选定产物上下文（`artifact_source`）
+        只认那一张图，没有「隔离」可言，照旧原样抛。
+
+        `raise_if_none_live=True`（safe worker）：一张活图都没留下、又有图失败时，把第一个失败原样抛出，
+        build 仍然是失败——那条入口没有「只剩静态原件」这一档。
         """
         self._own()
-        fresh = [(stem, fig) for stem, fig in self.capture.items() if stem not in self.states]
+        retry = self._retry_failed
+        self._retry_failed = False
+        fresh = [
+            (stem, fig)
+            for stem, fig in self.capture.items()
+            if stem not in self.states and (retry or stem not in self.failures)
+        ]
+        first_error: BaseException | None = None
         if suppressed_savefig:
             pathgeom.stabilize_captured_tight_layouts(
                 dict(fresh), self.savefig_calls, self.passthrough_figures, ordered_axes=ordered_axes
@@ -703,14 +756,160 @@ class LiveFigureSession:
             overrides_mod.register_font_name_aliases()
         # 图幅（ADR 0098）在一切之前定：字体回退尾巴与 override 都不该改变「脚本存盘时
         # 裁成什么样」——原件是在它们之前存下的
+        framed = []
         for stem, fig in fresh:
-            self.establish_frame(stem, fig)
-        for stem, fig in fresh:
-            overrides_mod.ensure_figure_fallback(fig)
-            state = overrides_mod.FigState(fig)
-            manifest_mod.instrument(state)
-            self.states[stem] = state
-            self.render(stem)
+            try:
+                self.establish_frame(stem, fig)
+            except Exception as exc:  # noqa: BLE001 — 逐图隔离：见 `_isolate`
+                first_error = first_error or exc
+                self._isolate(stem, None, exc)
+                continue
+            framed.append((stem, fig))
+        try:
+            for stem, fig in framed:
+                state = None
+                try:
+                    overrides_mod.ensure_figure_fallback(fig)
+                    state = overrides_mod.FigState(fig)
+                    manifest_mod.instrument(state)
+                    self.states[stem] = state
+                    staged = self._stage_preview(stem)
+                except Exception as exc:  # noqa: BLE001 — 逐图隔离：见 `_isolate`
+                    self.states.pop(stem, None)
+                    first_error = first_error or exc
+                    self._isolate(stem, state, exc)
+                    continue
+                self._publish_staged(stem, staged)
+                self.failures.pop(stem, None)
+                self._failed_states.pop(stem, None)
+                self.live_captured_at[stem] = time.time()
+        except BaseException:
+            # 这一批新图里任何一张**发布**失败（例如 Windows 上账本瞬时被锁）：**整批**撤掉——pool 会复用这个 worker
+            # 重跑脚本，重跑画出的是新 Figure；留着同批里已发布的旧图，`add_figure` 会拒收它们的新图，再把失败那次执行
+            # 的旧图当成功结果；没出过预览的那张还会让 `stems_summary` 缺缓存 manifest、永久 KeyError（Codex #958）。
+            # 已在编辑的图不在 `fresh` 里，不受影响；同批已发布的磁盘产物会在重试时被新发布覆盖。
+            for stem, _fig in fresh:
+                self.states.pop(stem, None)
+                self._manifest_cache.pop(stem, None)
+                self.capture.pop(stem, None)
+                self.capture_source.pop(stem, None)
+                self.savefig_calls.pop(stem, None)
+                self.savefig_extras.pop(stem, None)
+                self.failures.pop(stem, None)
+                self._failed_states.pop(stem, None)
+                self.live_captured_at.pop(stem, None)
+            raise
+        if raise_if_none_live and first_error is not None and not self.states:
+            # 抛之前把这次隔离的捕获全部退役：worker 会被复用，留着失败 stem 的话重跑脚本画出的新 Figure 会被
+            # `add_figure` 拒收、`instrument_all` 又跳过旧失败，第二次 build 就成了「零活图的成功」（Codex #978）
+            for stem in list(self.failures):
+                self.retire_capture(stem)
+            raise first_error
+
+    def isolate_live_failure(self, stem: str, exc: Exception) -> None:
+        """已经在编辑的图在后续重渲染（native 的 rebase）里失败：和新捕获同一套隔离。
+
+        撤出活会话、记失败事实、隐藏它此前的预览、核对恢复；不是 `except: pass`，其它图照常。
+        """
+        self._reraise_if_session_level(exc)
+        state = self.states.pop(stem, None)
+        self.live_captured_at.pop(stem, None)
+        self._isolate(stem, state, exc)
+
+    def _reraise_if_session_level(self, exc: BaseException) -> None:
+        """产物目录 / 账本的存储错误是会话级的，不是"这张图画不出来"：不隔离，原样上抛（Codex #978）。
+
+        否则账本读不出来、磁盘满这类错误会把每一张健康的图都逐张标成失败。
+        """
+        if isinstance(exc, figcapture.PreviewLedgerUnreadable):
+            raise exc
+        if isinstance(exc, OSError) and getattr(exc, "filename", None) is not None:
+            try:
+                Path(os.fspath(exc.filename)).resolve().relative_to(self.out_dir.resolve())
+            except (ValueError, OSError, TypeError):
+                return
+            raise exc
+
+    def retire_capture(self, stem: str) -> None:
+        """把 `stem` 从捕获表与失败记录里整个撤掉（不留任何残余）。"""
+        for table in (
+            self.states,
+            self._manifest_cache,
+            self.capture,
+            self.capture_source,
+            self.savefig_calls,
+            self.savefig_extras,
+            self.failures,
+            self._failed_states,
+            self.live_captured_at,
+        ):
+            table.pop(stem, None)
+
+    def _isolate(self, stem: str, state, exc: Exception) -> None:
+        """记下 `stem` 这张图的失败，并把它已经动过的 Figure 状态核对恢复。
+
+        选定产物上下文、线程归属这类**不属于单张图**的异常原样重抛，不当作「这张图坏了」。
+        """
+        if isinstance(exc, (WrongThread, figcapture.ArtifactContextError)) or (
+            self.artifact_source is not None
+        ):
+            raise exc
+        self._reraise_if_session_level(exc)
+        message = f"{type(exc).__name__}: {exc}"
+        if len(message) > 400:
+            message = message[:397] + "..."
+        self.failures[stem] = {"code": PREVIEW_CAPTURE_FAILED, "message": message}
+        self._manifest_cache.pop(stem, None)
+        self._hide_previous_preview(stem)
+        if state is not None:
+            self._failed_states[stem] = state
+            self._restore_failed(stem, state)
+        print(
+            f"[tavotto] 图 {stem!r} 没能进入可编辑会话，已隔离（其它图不受影响）: {message}",
+            file=sys.stderr,
+        )
+
+    def _hide_previous_preview(self, stem: str) -> None:
+        """这张图本次捕获已确认失败：读方不能再把它此前发布的那一版当成本次结果（Codex #978）。
+
+        与"发布写失败，旧预览保持完整"不同：那是没产出新版、旧版仍是同一份有效结果；这里对外就是
+        「失败 + 无预览」，与 `usable_preview_path` 的语义一致。摘掉账本指针；摘不掉退到失效标记
+        （下一次成功发布会撤掉它）；两者都落空读方失去保证，升级为致命。
+        """
+        try:
+            ledger = figcapture._load_preview_ledger(self.out_dir)
+        except figcapture.PreviewLedgerUnreadable:
+            ledger = False  # 读不出来 ≠ 没有指针：不知道有没有，按有处理（失败即关闭）
+        if ledger is None or (ledger and stem not in ledger["stems"]):
+            return
+        if ledger and figcapture._drop_ledger_stem(self.out_dir, stem):
+            return
+        if not figcapture.mark_preview_invalid(self.out_dir, stem):
+            raise PreviewPoisoned(
+                f"preview of {stem!r} failed this run and its previous preview could not be hidden"
+            )
+
+    @staticmethod
+    def _restore_failed(stem: str, state) -> bool:
+        """把失败图的 Figure 恢复成脚本原样；恢复不干净返回 False。"""
+        try:
+            overrides_mod.apply(state, [])
+        except Exception as exc:  # noqa: BLE001 — 还原不了要如实说，由屏障拒绝放行
+            print(f"[tavotto] 恢复失败图 {stem!r} 的脚本原样时出错: {exc}", file=sys.stderr)
+            return False
+        return not state.unrestored
+
+    def failed_restore_owed(self) -> list:
+        """失败图里**没能恢复成脚本原样**的 stem。非空 = 不许放行（与健康图同一条纪律，ADR 0021 §8.1）。"""
+        return [
+            stem
+            for stem, state in self._failed_states.items()
+            if not self._restore_failed(stem, state)
+        ]
+
+    def allow_retry_failed(self) -> None:
+        """离开屏障之后调用：脚本接着跑，失败过的图下一次 `instrument_all` 再试一次。"""
+        self._retry_failed = True
 
     def stems_summary(self, dropped_figures: int = 0) -> dict:
         """build 响应的 stems 表。
@@ -729,6 +928,55 @@ class LiveFigureSession:
         }
         if dropped_figures:
             out["dropped_figures"] = dropped_figures
+        if self.failures:
+            # 加字段，不升协议版本（ADR 0003 §1）：没有失败时一个字节都不多
+            out["failed_figures"] = [
+                {
+                    "stem": stem,
+                    "capture_source": self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG),
+                    **fact,
+                }
+                for stem, fact in self.failures.items()
+            ]
+        return out
+
+    def figure_facts(self, observations=None) -> list[dict]:
+        """每张捕获 Figure 的**实际完成事实**（P08a）：能力只按真正做完的工作声明。
+
+        * `state="live"`：本会话里的活对象，SVG / manifest / 完成记录同一代（`generation`）发布过——
+          能力 `preview` + `live_edit`；
+        * `state="failed"`：没能进入可编辑会话，`failure` 说明原因，**没有**预览、没有 `live_edit`；
+        * `original_readonly`：**这次运行里这个 Figure 对象**成功 save 出的、至今未被改动的原产物
+          （`saved_originals` 逐条带 `saved_at`）。来源是保存观察账本按 Figure 身份认领的记录——
+          不按 basename、不扫目录找替身。它与活图是两个独立的事实：Saved Stage 的磁盘原件与之后
+          Unsaved Final 的活对象不必相同，两边各有各的 `saved_at` / `live_captured_at`。
+        """
+        out = []
+        for stem, fig in self.capture.items():
+            if stem not in self.states and stem not in self.failures:
+                continue
+            originals = []
+            if observations is not None:
+                originals = [o for o in observations.saved_originals(fig) if o["intact"]]
+            caps: list[str] = []
+            fact = {
+                "stem": stem,
+                "capture_source": self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG),
+                "state": "live" if stem in self.states else "failed",
+                "generation": None,
+                "failure": self.failures.get(stem),
+                "live_captured_at": self.live_captured_at.get(stem),
+            }
+            if stem in self.states:
+                gen = figcapture.usable_preview_generation(self.out_dir, stem)
+                if gen is not None:
+                    fact["generation"] = gen[0]
+                    caps.extend(PREVIEW_CAPABILITIES)
+            if originals:
+                caps.append("original_readonly")
+            fact["capabilities"] = caps
+            fact["saved_originals"] = originals
+            out.append(fact)
         return out
 
     def descriptors(
@@ -804,6 +1052,16 @@ class LiveFigureSession:
         排版。语义读取不落在临时表示法里，几何则与真正交出去的那张图同源。
         """
         self._own()
+        staged = self._stage_preview(stem, timings, preview_dpi, preview)
+        return self._publish_staged(stem, staged)
+
+    def _stage_preview(self, stem, timings=None, preview_dpi=None, preview=None):
+        """渲染阶段：把这一版的 SVG / manifest 写成**临时文件**，返回 `(man, svg_part, man_part, svg_bytes)`。
+
+        与发布（`_publish_staged`）分成两段是 P08a 逐图隔离的边界：这一段抛出的是「这张图画不出来」
+        （Agg-only 的 Artist、不支持的后端……），属于**这张图**的事实，`instrument_all` 把它隔离在这张图上；
+        发布段抛出的是产物目录 / 账本的问题，不属于任何一张图，照旧整批失败。
+        """
         state = self.states[stem]
         self.out_dir.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
@@ -826,14 +1084,18 @@ class LiveFigureSession:
         # 抓到它的是 `test_v1_render_reports_the_preview_verdict` 在
         # `backend-platforms (windows-latest)` 上——PR 上那一格是 skipping，
         # 所以本机与 PR 全绿都是真的，它只在 merge_group 里发作。
-        svg_path = self.out_dir / f"{stem}.svg"
+        # **先写临时文件，成功了才发布**（P01b，EX12）：直接开正式 `<stem>.svg` 写，
+        # 画到一半抛了就留下半份 XML——既被当成「这张图完成了」，也覆盖了上一版
+        # 有效预览。临时名不以 `.svg` 结尾，任何按后缀找预览的人都看不到它。
+        svg_part = self.out_dir / f".{stem}.svg.part"
+        man_part = self.out_dir / f".{stem}.json.part"
         dpi = preview_dpi or self.preview_dpi
 
         def _save(_plan) -> int:
-            with self.real_output(), open(svg_path, "w", encoding="utf-8", newline="") as fh:
+            with self.real_output(), open(svg_part, "w", encoding="utf-8", newline="") as fh:
                 state.fig.savefig(fh, format="svg", dpi=dpi, **pathgeom.output_kwargs(state.fig))
             try:
-                return svg_path.stat().st_size
+                return svg_part.stat().st_size
             except OSError:
                 # 刚写完它，这里读不到 size 说明磁盘 / 权限出了事。按 0 记会把
                 # 这一版说成「很小的矢量图」，接着 read_text 也一定会抛——不如
@@ -842,11 +1104,15 @@ class LiveFigureSession:
 
         # `preview_plan_ms` / `canvas_draw_ms` 由 `save_preview_svg` 自己填——
         # 只有它知道那两段各自从哪到哪（升档时 savefig 跑两遍）。
-        with manifest_mod.capture_preview_manifest(state, stem) as measured:
-            plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
-            # Rasterization has been restored before reading semantic fields.
-            t2 = time.perf_counter()
-            man = measured()
+        try:
+            with manifest_mod.capture_preview_manifest(state, stem) as measured:
+                plan, svg_bytes = preview_hybrid.save_preview_svg(state, _save, timings)
+                # Rasterization has been restored before reading semantic fields.
+                t2 = time.perf_counter()
+                man = measured()
+        except BaseException:
+            self._discard_parts(svg_part, man_part)
+            raise
         if timings is not None:
             timings["manifest_ms"] = round((t1 - t0 + time.perf_counter() - t2) * 1000.0, 3)
         if preview is not None:
@@ -866,11 +1132,45 @@ class LiveFigureSession:
                     estimated_nodes=plan.estimated_nodes,
                 )
             )
-        (self.out_dir / f"{stem}.json").write_text(
-            json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8"
-        )
+        try:
+            man_part.write_text(
+                json.dumps(man, ensure_ascii=False, default=_json_default), encoding="utf-8"
+            )
+            return man, svg_part, man_part, svg_part.stat().st_size
+        except BaseException:
+            self._discard_parts(svg_part, man_part)
+            raise
+
+    def _publish_staged(self, stem, staged) -> dict:
+        """发布段：SVG、manifest、完成记录同一代（`figcapture.publish_preview`），最后返回 manifest。
+
+        账本里的指针一次切换就是提交点；任何一步失败（含账本存在但读不出来）上一版预览与它的完成记录
+        原封不动，这里只清掉自己的临时件。
+        """
+        man, svg_part, man_part, svg_bytes = staged
+        try:
+            with self.real_output():
+                figcapture.publish_preview(
+                    self.out_dir,
+                    stem,
+                    svg_part,
+                    man_part,
+                    svg_bytes,
+                    capabilities=PREVIEW_CAPABILITIES,
+                )
+        except BaseException:
+            self._discard_parts(svg_part, man_part)
+            raise
         self._manifest_cache[stem] = man
         return man
+
+    @staticmethod
+    def _discard_parts(*parts: Path) -> None:
+        for part in parts:
+            try:
+                part.unlink()
+            except OSError:
+                pass
 
     def manifest(self, stem: str) -> dict:
         return self._manifest_cache[stem]
@@ -969,9 +1269,11 @@ class LiveFigureSession:
         if preview is not None:
             preview.update(verdict)
         if inline_svg and verdict["mode"] != previewbudget.MODE_RASTER:
-            # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与
-            # out_dir/<stem>.svg 逐字节相同，排障时不必怀疑「是不是两份」
-            result["svg"] = (self.out_dir / f"{stem}.svg").read_text(encoding="utf-8")
+            # 读回磁盘那一份而不是另存一个内存缓冲：调用方拿到的与刚发布的那一代
+            # `<stem>.svg` 逐字节相同，排障时不必怀疑「是不是两份」
+            result["svg"] = Path(
+                figcapture.usable_preview_path(self.out_dir, stem, ".svg")
+            ).read_text(encoding="utf-8")
         return result
 
     def do_render_png(self, stem: str, width: int) -> dict:

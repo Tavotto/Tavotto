@@ -257,7 +257,7 @@ function InterpreterRow() {
                   </Button>
                 </div>
                 <p className="type-caption">
-                  {en('useOtherHintBefore')}
+                  {en('useOtherHintBefore', { product: PRODUCT_NAME })}
                   <strong className="font-medium text-ink-2">{en('useOtherHintStrong')}</strong>
                   {en('useOtherHintAfter')}
                 </p>
@@ -343,7 +343,7 @@ function EnvironmentAdviceRow() {
           {en('envAdviceUse')}
         </Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => void run(() => setProjectPython(null))}>
-          {en('envAdviceBuiltIn')}
+          {en('envAdviceBuiltIn', { product: PRODUCT_NAME })}
         </Button>
       </div>
       {/* 这个环境对脚本要的库的覆盖度（后端 `candidate.coverage.detail`，只有检查过才有）：每个 detail 码一句人话，默认收起 */}
@@ -400,7 +400,7 @@ function ProjectEnvironmentRow() {
       }
     >
       <Button variant="ghost" size="sm" onClick={() => void setProjectPython(null)}>
-        {en('projectEnvUseBuiltIn')}
+        {en('projectEnvUseBuiltIn', { product: PRODUCT_NAME })}
       </Button>
     </SettingRow>
   )
@@ -454,7 +454,7 @@ function ManagedEnvironmentRow() {
         }
       >
         <MenuItem icon={RotateCcw} danger disabled={busy} onSelect={() => void rebuild()}>
-          {en('managedEnvRebuild')}
+          {en('managedEnvRebuild', { product: PRODUCT_NAME })}
         </MenuItem>
       </Menu>
     </SettingRow>

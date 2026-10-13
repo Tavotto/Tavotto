@@ -128,6 +128,8 @@ _ENABLERS: dict[str, tuple[tuple[str, object], ...]] = {
     "hatch": (("edgecolor", "#ff00ff"), ("linewidth", 1.0)),
     # 花纹的线宽要先有花纹才有东西可加粗（3.10 起才有这条字段）
     "hatch_linewidth": (("hatch", "/"),),
+    # 花纹色同理（3.11 起才有这条字段）：没有花纹就没有东西可染
+    "hatchcolor": (("hatch", "/"),),
     "linewidth": (("edgecolor", "#ff00ff"),),
     "linestyle": (("edgecolor", "#ff00ff"), ("linewidth", 1.5)),
     "facecolor": (("fill", True),),

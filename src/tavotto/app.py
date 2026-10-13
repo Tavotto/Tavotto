@@ -26,11 +26,13 @@ import socket
 import sys
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
+import zlib
 from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -595,6 +597,12 @@ def _atomic_write_error(exc):
     return jsonify(exc.as_payload()), 500
 
 
+@app.errorhandler(engine_layoutsession.SessionStateUnavailable)
+def _session_unavailable_handler(exc):
+    """槽位 / 会话状态的跨进程锁等不到（或会话状态读不到可信状态）：503，请求什么都没写。"""
+    return _session_unavailable()
+
+
 @app.errorhandler(engine_refresh.RefreshError)
 def _refresh_error(exc):
     """项目刷新失败。**400 而不是 500**：这一族的成因是用户图库里的东西
@@ -623,21 +631,13 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
     if stage:
         body["stage"] = stage
-    if exc.code in ("script_needs_input", "script_input_timeout"):
-        # 脚本要输入（ADR 0099）：界面按 code 翻译，提示原文走 params
-        extra = getattr(exc, "extra", None) or {}
-        body["params"] = {"prompt": str(extra.get("prompt") or "")}
-        # 为什么没人能答（闭集，T08）：口令要重新提供 / 冷重放的上下文对不上——界面据此说清下一步
-        if extra.get("reason") in engine_inputbroker.REASONS:
-            body["params"]["reason"] = extra["reason"]
-    if exc.code == "script_needs_arguments":
-        extra = getattr(exc, "extra", None) or {}
-        params = {}
-        if extra.get("argv_count"):
-            params["argv_count"] = str(int(extra["argv_count"]))
-        if extra.get("parse_kind"):
-            params["parse_kind"] = str(extra["parse_kind"])
-        body["params"] = params
+    if exc.code in (*engine_pool.INPUT_ERROR_CODES, engine_pool.ARGUMENTS_ERROR_CODE):
+        # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
+        # 界面按 code 翻译，字段由错误转换合同 `pool.recovery_params` 统一给出（探测与准备会话同一份）
+        body["params"] = engine_pool.recovery_params(exc)
+    if exc.code == engine_pool.FILE_OPERATION_BLOCKED_CODE:
+        # safe 守卫拦下了脚本的关键文件操作、脚本随后又观察了它（P01a）：只带操作类别与接入依据，没有路径
+        body["params"] = engine_pool.file_operation_blocked_params(getattr(exc, "extra", None))
     if getattr(exc, "module", ""):
         body["module"] = exc.module
     # 项目环境自动接手失败时的结构化原因（ADR 0018）：找不到 venv / venv 里
@@ -2982,6 +2982,18 @@ def _diag_send_json(payload: dict, status: int = 200):
     return resp
 
 
+def _diag_send_scope() -> str:
+    """本次请求属于哪个项目（#927）：诊断发送会话按它分键，状态 / 发送 / 取消 / 丢弃都只认本项目的会话。
+
+    项目已关闭（指名的 pj 不再存在）时 `_request_ctx` 抛 `NoProjectError`——discard 仍要能丢掉它名下的会话，
+    所以退回到请求里写的原始 pj（仍是该项目自己的键，不会落到别的项目上）。"""
+    try:
+        ctx = _request_ctx()
+    except NoProjectError:
+        return (request.args.get("pj") or request.headers.get("X-Tavotto-Project") or "").strip()
+    return ctx.id if ctx is not None else ""
+
+
 @app.get("/api/diagnostics/send")
 def api_diagnostics_send_capability():
     """「发送问题反馈」此刻可不可用（本机判断，**不联网**）。关闭时界面不画入口。"""
@@ -2999,7 +3011,7 @@ def api_diagnostics_send_prepare():
     frontend, dropped = _read_frontend_payload()
     try:
         data = _build_diagnostics_bundle(frontend, dropped)
-        return _diag_send_json(engine_diagsend.prepare(data))
+        return _diag_send_json(engine_diagsend.prepare(data, scope=_diag_send_scope()))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 
@@ -3008,7 +3020,7 @@ def api_diagnostics_send_prepare():
 def api_diagnostics_send_bundle(pid: str):
     """用户要查看 / 保存的**同一份字节**（就是点发送时会上传的那份）。"""
     try:
-        data = engine_diagsend.bundle_bytes(pid)
+        data = engine_diagsend.bundle_bytes(pid, scope=_diag_send_scope())
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
     name = f"tavotto-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
@@ -3025,7 +3037,7 @@ def api_diagnostics_send_bundle(pid: str):
 @app.get("/api/diagnostics/send/<pid>")
 def api_diagnostics_send_status(pid: str):
     try:
-        return _diag_send_json(engine_diagsend.status(pid))
+        return _diag_send_json(engine_diagsend.status(pid, scope=_diag_send_scope()))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 
@@ -3044,6 +3056,7 @@ def api_diagnostics_send_start(pid: str):
             category=body.get("category"),
             note=body.get("note"),
             gen=body.get("gen"),
+            scope=_diag_send_scope(),
         )
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
@@ -3053,7 +3066,7 @@ def api_diagnostics_send_start(pid: str):
 @app.post("/api/diagnostics/send/<pid>/cancel")
 def api_diagnostics_send_cancel(pid: str):
     try:
-        return _diag_send_json(engine_diagsend.cancel(pid))
+        return _diag_send_json(engine_diagsend.cancel(pid, scope=_diag_send_scope()))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 
@@ -3061,7 +3074,7 @@ def api_diagnostics_send_cancel(pid: str):
 @app.post("/api/diagnostics/send/<pid>/discard")
 def api_diagnostics_send_discard(pid: str):
     """对话框关了：释放内存里的包；发送中等于取消。重复调用无害。"""
-    return _diag_send_json(engine_diagsend.discard(pid))
+    return _diag_send_json(engine_diagsend.discard(pid, scope=_diag_send_scope()))
 
 
 @app.get("/api/project")
@@ -3279,6 +3292,8 @@ def api_projects_remove():
 
 def _tutorial_error(exc: engine_tutorial.TutorialError):
     status = 409 if exc.code == "tutorial_locked" else 500
+    if exc.code == "tutorial_reset_incomplete":  # 固定文案，没有占位符，不带 reason
+        return jsonify({"error": exc.message, "code": exc.code}), status
     return jsonify(
         {"error": exc.message, "code": exc.code, "params": {"reason": exc.message}}
     ), status
@@ -3326,11 +3341,23 @@ def api_tutorial_open():
     # 里的排版——页面尺寸、面板摆放都可能已经不是这份资源的了（2026-09-13 把
     # 教程图幅从 80 mm 改到 65 mm 时抓到：旧槽位把面板按 1.19 倍摆回来，线宽
     # 检查全红）。副本目录都换了，进度本来就随目录走；槽位一并清掉，与重置同一处
-    cleared = (
-        _clear_tutorial_local_state(_project_id(tp.path), tp.metadata, tp.path)
-        if tp.created
-        else []
-    )
+    # 副本发布前已持久化清理意图；即使进程在发布与这里之间退出，下一次 ensure
+    # 回 created=False 也会凭标记重试。只有清理成功才移除，避免旧槽位盖回新教程。
+    cleanup_pending = engine_tutorial.cleanup_pending_path()
+    try:
+        if tp.created or cleanup_pending.exists():
+            cleared = _clear_tutorial_local_state(
+                _project_id(tp.path), tp.metadata, tp.path, strict=True
+            )
+            cleanup_pending.unlink()
+        else:
+            cleared = []
+    except (OSError, engine_atomicio.AtomicWriteError):
+        return _tutorial_error(
+            engine_tutorial.TutorialError("tutorial_reset_incomplete", "旧教程排版没清掉")
+        )
+    except engine_tutorial.TutorialError as exc:
+        return _tutorial_error(exc)
     try:
         status = open_project(str(tp.path), make_default=bool(body.get("default", True)))
     except engine_tutorial.TutorialError as exc:
@@ -3351,8 +3378,13 @@ def api_tutorial_open():
     )
 
 
+#: 教程清槽位拿不到会话锁时的有界重试（次数 / 间隔秒）
+_TUTORIAL_CLEAR_ATTEMPTS = 3
+_TUTORIAL_CLEAR_PAUSE_S = 0.3
+
+
 def _clear_tutorial_local_state(
-    pid: str, meta: dict, project_path: Path | None = None
+    pid: str, meta: dict, project_path: Path | None = None, *, strict: bool = False
 ) -> list[str]:
     """重置时清掉数据目录里**只属于教程**的两样东西；别的项目一个字节不碰。
 
@@ -3363,25 +3395,64 @@ def _clear_tutorial_local_state(
     全局 recent 不动（路径没变），遥测同意与 onboarding 状态不属于这里。
     另外（#715 PR-B，给了 `project_path` 时）：数据目录会话状态里教程项目的「上次开着的排版」
     与教程画布槽位的归属（`engine/layoutsession.py`）；不进返回的 `cleared`（那是文件名清单）。
+
+    **槽位只在跨进程会话锁里删**（`delete_slot`）：绕过它删，另一个进程已通过 `slot_check` 的 `set_last`
+    会发布一个指向已删文件的 durable last。拿不到锁就有界重试；仍不行**不删槽位**——`strict`（重置）
+    抛 `TutorialError("tutorial_reset_incomplete")`（新副本已就位、旧排版没清掉，文案见 errors.json）让调用方如实报失败。
     """
     removed: list[str] = []
+    slot = _autosave_path(str(meta["document_id"]))
+
     # 会话状态（#715 PR-B）：教程项目「上次开着的排版」与教程画布槽位的归属一并清掉——
-    # 槽位删了，指向它的记录留着的话下次打开教程会报一份不存在的「找不到上次排版」
-    if project_path is not None:
+    # 槽位删了，指向它的记录留着的话下次打开教程会报一份不存在的「找不到上次排版」。
+    # 锁顺序：槽位的文档锁 → 会话锁（与自动保存 / DELETE / 清理同序，见 `_document_lock`）：
+    # 记录与槽位在同一把文档锁里一起消失，并发的自动保存不会在两者之间把归属记回来
+    def _unlink_slot() -> bool:
         try:
-            engine_layoutsession.forget_project(
-                engine_layoutsession.project_key(project_path), [str(meta["document_id"])]
-            )
-        except OSError as exc:
-            LOG.warning("重置教程：会话状态清不掉（%s）", exc)
-    for target in (_autosave_path(str(meta["document_id"])), _baked_store().path_for(pid)):
-        try:
-            target.unlink()
+            slot.unlink()
         except FileNotFoundError:
-            continue
+            return True
         except OSError as exc:
-            LOG.warning("重置教程：清不掉 %s（%s）", target, exc)
-            continue
+            LOG.warning("重置教程：清不掉 %s（%s）", slot, exc)
+            return False
+        removed.append(slot.name)
+        return True
+
+    failure: OSError | None = None
+    try:
+        with _document_lock(slot):
+            for attempt in range(_TUTORIAL_CLEAR_ATTEMPTS):
+                try:
+                    if not engine_layoutsession.delete_slot(slot.stem, _unlink_slot):
+                        raise OSError("教程旧排版槽位未能删除")
+                    if project_path is not None:
+                        engine_layoutsession.forget_project(
+                            engine_layoutsession.project_key(project_path),
+                            [str(meta["document_id"])],
+                        )
+                    failure = None
+                    break
+                except OSError as exc:  # 会话锁拿不到：文件没动，稍后再试
+                    failure = exc
+                    if attempt + 1 < _TUTORIAL_CLEAR_ATTEMPTS:
+                        time.sleep(_TUTORIAL_CLEAR_PAUSE_S)
+    except engine_layoutsession.SessionStateUnavailable as exc:
+        failure = exc  # 槽位的文档锁等不到：和会话锁等不到同一档，槽位没动
+    if failure is not None:
+        LOG.warning("重置教程：会话状态被占用，教程旧排版没清掉（%s）", failure)
+        if strict:
+            raise engine_tutorial.TutorialError(
+                "tutorial_reset_incomplete",
+                "旧教程排版没清掉：本机会话状态被另一个进程占用",
+            )
+    target = _baked_store().path_for(pid)
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        LOG.warning("重置教程：清不掉 %s（%s）", target, exc)
+    else:
         removed.append(target.name)
     return removed
 
@@ -3412,7 +3483,22 @@ def api_tutorial_reset():
                 pass
         return _tutorial_error(exc)
     pid = _project_id(tp.path)
-    cleared = _clear_tutorial_local_state(pid, meta, tp.path)
+    try:
+        try:
+            cleared = _clear_tutorial_local_state(pid, meta, tp.path, strict=True)
+            # 先前的首次打开若留了清理意图，本次重置已清掉同一个固定 ID 槽位。
+            engine_tutorial.cleanup_pending_path().unlink(missing_ok=True)
+        except OSError as os_exc:
+            # 目录已换、项目还关着：任何漏出来的 I/O 错误都按「没清完」走恢复分支
+            raise engine_tutorial.TutorialError(
+                "tutorial_reset_incomplete", "旧教程排版没清掉"
+            ) from os_exc
+    except engine_tutorial.TutorialError as exc:
+        # 副本已换成干净的，但旧排版槽位没清掉：如实报失败（前端按 code 显示 tutorial_reset_incomplete 的那句话，用户可以
+        # 再点一次重置），把新副本重新打开还给用户；绝不在会话锁之外硬删槽位
+        with contextlib.suppress(RuntimeError, OSError):
+            open_project(str(tp.path), make_default=was_default or ctx is None)
+        return _tutorial_error(exc)
     try:
         status = open_project(
             str(tp.path), make_default=bool(body.get("default", was_default or ctx is None))
@@ -5881,12 +5967,14 @@ def _hot_manifest(worker, stem: str, patches: list) -> dict | None:
     # 同一条会话（见 `pool.stem_patch_hash` 的说明）。
     if engine_pool.stem_patch_hash(worker, stem) != want:
         return None
-    path = Path(worker.out_dir) / f"{stem}.json"
+    path = Path(engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json"))
     if not path.exists():
         try:
             worker.override(stem, patches)  # 同一组 patches，幂等
         except engine_pool.WorkerError:
             return None
+        # 重渲染可能刚把失效 stem 修好（清掉标记）：路径要重取，否则读的还是失效哨兵、热重放校验被跳过
+        path = Path(engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json"))
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -6043,7 +6131,11 @@ def _write_source_files(
         for w in resp.get("warnings") or []:
             if w not in warnings:
                 warnings.append(str(w))
-        man_fresh = json.loads((Path(fresh.out_dir) / f"{stem}.json").read_text(encoding="utf-8"))
+        man_fresh = json.loads(
+            Path(engine_figcapture.usable_preview_path(fresh.out_dir, stem, ".json")).read_text(
+                encoding="utf-8"
+            )
+        )
         pixel_state = None
         if man_hot is None:
             diffs, compared = [], 0
@@ -6301,7 +6393,11 @@ _SYNC_POINT = {"pos_frac", "loc_frac"}  # 点位经 axes 框换算后可搬
 def _manifest_of(worker, stem: str) -> dict:
     if not worker.built:
         worker.ensure_built()
-    return json.loads((worker.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    return json.loads(
+        Path(engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json")).read_text(
+            encoding="utf-8"
+        )
+    )
 
 
 def _axes_info(man: dict) -> list[dict]:
@@ -6513,9 +6609,12 @@ def api_engine_svg():
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     svg = worker.svg_path(stem)
-    if not svg.exists():
+    try:
+        # 解出路径后立刻打开：句柄把这一代钉住，响应发多久都不会被发布后的清理抽掉文件（Codex #978）
+        handle = open(svg, "rb")
+    except OSError:
         abort(404)
-    resp = send_file(svg, mimetype="image/svg+xml")
+    resp = send_file(handle, mimetype="image/svg+xml")
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -7435,6 +7534,12 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
             "stems": stems,
             "descriptors": descriptors,
             "remap_generation": captured.get("remap_generation"),
+            # 逐图隔离：预览捕获失败的图随结果带到登记（不摘它此前的登记）
+            **(
+                {"failed_figures": captured["failed_figures"]}
+                if captured.get("failed_figures")
+                else {}
+            ),
             # T03：带配置的执行并进注册表，不换掉（见 `probe.register_probed`）
             **(
                 {"run_config": plan.run.config_id} if getattr(plan, "run", None) is not None else {}
@@ -7460,7 +7565,17 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
-    return {"registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
+    failed = [
+        {"stem": f.get("stem"), "code": f.get("code")}
+        for f in (captured.get("failed_figures") or ())
+        if isinstance(f, dict)
+    ]
+    return {
+        "registered": True,
+        **({"unlinked_stems": unlinked} if unlinked else {}),
+        # 部分成功：哪些图预览没捕获出来（只给稳定码，原因文字留在 build 响应 / 编辑请求的错误里）
+        **({"partial": True, "failed_figures": failed} if failed else {}),
+    }
 
 
 def _publish_preparation_session(payload: dict) -> None:
@@ -7552,18 +7667,22 @@ def api_engine_preparation_session_action(session_id: str):
     """
     ctx = current_ctx()
     body = request.get_json(force=True) or {}
-    extra = sorted(set(body) - {"action_id", "expected_config_revision", "impact_digest"})
+    extra = sorted(
+        set(body) - {"action_id", "expected_config_revision", "impact_digest", "transfer_from"}
+    )
     revision = body.get("expected_config_revision")
     echoed = body.get("impact_digest")
+    transfer_from = body.get("transfer_from")
     if (
         extra
         or not isinstance(body.get("action_id"), str)
         or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
         or (echoed is not None and not isinstance(echoed, str))
+        or (transfer_from is not None and not isinstance(transfer_from, str))
     ):
         return jsonify(
             {
-                "error": "只接受 action_id（字符串）、expected_config_revision（整数）与 impact_digest（字符串）",
+                "error": "只接受 action_id（字符串）、expected_config_revision（整数）、impact_digest（字符串）与 transfer_from（字符串，仅「打开并运行」）",
                 "code": "bad_request",
                 "params": {"unexpected": extra},
             }
@@ -7578,6 +7697,7 @@ def api_engine_preparation_session_action(session_id: str):
             finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
             impact_digest=echoed,
             prepare=_session_dependency_starter(ctx),
+            transfer_from=transfer_from,
         )
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
@@ -7586,7 +7706,13 @@ def api_engine_preparation_session_action(session_id: str):
     # 202 = 这次请求起了一次新的执行；其余（重复认领 / 取消 / 重新检查）都是 200
     resp.status_code = (
         202
-        if claimed and kind in (engine_prepsession.ACTION_RUN, engine_prepsession.ACTION_PREPARE)
+        if claimed
+        and kind
+        in (
+            engine_prepsession.ACTION_RUN,
+            engine_prepsession.ACTION_PREPARE,
+            engine_prepsession.ACTION_ARM,
+        )
         else 200
     )
     resp.headers["Cache-Control"] = "no-store"
@@ -9086,7 +9212,56 @@ def _autosave_path(doc_id: str) -> Path:
 _DOCUMENT_LOCKS = [threading.Lock() for _ in range(64)]
 
 
-def _document_lock(path: Path) -> threading.Lock:
+#: 等槽位文档锁的上限（秒；要大于持锁方最长的合理停顿——有用例会让持锁方停 10 s）。超时抛 `SessionStateUnavailable` → 503 `session_unavailable`，正文一个字节没写
+DOCUMENT_LOCK_TIMEOUT_S = 30.0
+
+
+class _DocumentLock:
+    """一个条带的「线程锁 + 跨进程文件锁」。**不可重入**：持锁期间不要再取任何文档锁。"""
+
+    def __init__(self, stripe: int) -> None:
+        self._stripe = stripe
+        self._fd: int | None = None
+
+    def locked(self) -> bool:
+        """这个条带此刻有人持着（本进程内；测试与自检用）。"""
+        return _DOCUMENT_LOCKS[self._stripe].locked()
+
+    def __enter__(self) -> "_DocumentLock":
+        deadline = time.monotonic() + DOCUMENT_LOCK_TIMEOUT_S
+        thread_lock = _DOCUMENT_LOCKS[self._stripe]
+        if not thread_lock.acquire(timeout=DOCUMENT_LOCK_TIMEOUT_S):
+            raise engine_layoutsession.SessionStateUnavailable(
+                "槽位被本进程的另一个请求占着，等待超时"
+            )
+        try:
+            self._fd = engine_layoutsession.acquire_file_lock(
+                engine_layoutsession.doclock_path(self._stripe), deadline
+            )
+        except BaseException:
+            thread_lock.release()
+            raise
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        fd, self._fd = self._fd, None
+        try:
+            if fd is not None:
+                engine_layoutsession.release_file_lock(fd)
+        finally:
+            _DOCUMENT_LOCKS[self._stripe].release()
+
+
+def _lock_stripe(path: Path) -> int:
+    """条带下标只取决于**文件名**（Unicode NFC + casefold），不取决于路径怎么拼：两个进程经符号链接别名 / 大小写不同的写法
+    走到同一个槽位时必须选到同一把锁。不同目录里的同名文件共用一个条带，只是多串行一点。"""
+    # NFC + casefold + NFC：组合 / 分解写法（macOS 上同一个文件）与大小写写法都落到同一个条带
+    name = unicodedata.normalize("NFC", Path(path).name)
+    name = unicodedata.normalize("NFC", name.casefold())
+    return zlib.crc32(name.encode("utf-8")) % len(_DOCUMENT_LOCKS)
+
+
+def _document_lock(path: Path) -> _DocumentLock:
     """按**落盘路径**取锁，不按 doc_id / 画布名：`_autosave_path` 与
     `layout_path` 都会把非法字符归一成 `_`，于是两个不同的名字可能指向同一个
     文件——按名字分锁的话，那两个请求以为自己各写各的。
@@ -9094,8 +9269,20 @@ def _document_lock(path: Path) -> threading.Lock:
     自动保存、命名画布文件（「另存为」）、槽位清理三条路共用这一条锁带：同一个
     文件被两条路同时动时它们必须互斥。**锁不可重入**——持锁期间不要再去锁
     另一个路径（槽位清理因此放在写入的锁段之外）。
+
+    **锁是跨进程的**（`state/doclocks/<条带>.lock` 上的文件锁 + 进程内线程锁）：两个 Tavotto 进程共用
+    一个数据目录时，「判冲突 → 写正文 → 读 revision → 提交归属」同样是一个原子段，否则 F 的归属会
+    记在 G 的正文 revision 上。条带下标用 `zlib.crc32(NFC+casefold 后的文件名)`：**不能用 `hash()`**（每个进程盐不同），
+    也不能用整条路径字符串（符号链接别名 / 大小写不同的写法会让两个进程选到不同的锁；锁文件在数据目录 realpath 下）。
+    不同文档偶尔共用一个条带只是多串行一点点。Windows 的 `msvcrt` 那条腿
+    只有 CI 验证。拿不到（30 s）抛 `SessionStateUnavailable`，由 `_session_unavailable_handler` 回 503。
+
+    **与会话状态锁（`engine/layoutsession._LOCK`）的顺序全局固定：文档锁 → 会话锁**。
+    自动保存（写正文 + `commit_slot`）、DELETE、清理（`remove_slot_unless_protected`）、
+    `PUT /api/layout-session/last`（验槽位 + `set_last`）、教程重置都按这个顺序；
+    会话锁内不读任何正文、不调需要文档锁的函数。反过来（持会话锁再取文档锁）会和上面任何一条路死锁。
     """
-    return _DOCUMENT_LOCKS[hash(str(path)) % len(_DOCUMENT_LOCKS)]
+    return _DocumentLock(_lock_stripe(path))
 
 
 @app.get("/api/autosave/<doc_id>")
@@ -9239,6 +9426,18 @@ def api_autosave_put(doc_id):
     # 然后一前一后落盘，后写的把先写的整份盖掉。锁按落盘路径取（见
     # `_document_lock`），不同文档互不阻塞。
     with _document_lock(p):
+        # 新教程副本已发布而旧固定 ID 槽位尚未清掉时，reset 的错误回包可能让
+        # 前端继续编辑。此时拒绝向该槽位写新进度：否则下次 /tutorial/open 会把
+        # 它当旧槽位删除。清理与这次检查持同一把文档锁，跨进程也不会插入。
+        if engine_tutorial.cleanup_pending_path().exists():
+            try:
+                tutorial_doc_id = engine_tutorial.tutorial_metadata()["document_id"]
+            except engine_tutorial.TutorialError:
+                tutorial_doc_id = doc_id  # 清理意图在、资源读不到时关门
+            if doc_id == tutorial_doc_id:
+                return _tutorial_error(
+                    engine_tutorial.TutorialError("tutorial_reset_incomplete", "旧教程排版没清掉")
+                )
         if base_revision:
             try:
                 current = engine_atomicio.existing_revision(p)
@@ -9262,12 +9461,23 @@ def api_autosave_put(doc_id):
         # **在锁里读**：放到锁外读的话，返回给 A 的可能是 B 刚写下的那份内容的
         # hash，于是 A 的下一次写会带着一个「不是我写的」基线过来。
         revision = engine_atomicio.content_revision(p)
-    # 槽位归属（#715 PR-B）：这一份属于发请求那一刻的项目（前端按**排队那一刻**的 pj 发，
-    # `session.apiUrlFor`）。记不下只少一条归属，绝不让这次保存失败——内容已经落盘了。
-    _record_autosave_owner(p.stem)
+        # 槽位归属 + 晋升 pending 的 last 与正文在**同一把文档锁**里提交（文档恢复可靠性 R6）：
+        # 以前归属在锁外记，F/G 两个项目同 docId 交错保存时，旧请求的归属回调能晚于新正文落地、把归属
+        # 改回旧项目。锁顺序全局固定：文档锁 → 会话锁。
+        # 元数据失败**不让这次保存失败**（内容已经落盘了，revision 如实回），但要让客户端知道：
+        # `metadata: "failed"`。注意这不是跨文件崩溃事务——进程死在两个文件之间时靠
+        # `owner_revisions` 与槽位 revision 对不上来识别（该归属按「待核对」处理）。
+        metadata = _commit_autosave_metadata(p.stem, revision)
     # 清理放在锁**外**：`_document_lock` 不可重入，而清理要去锁别的路径。
     _prune_autosave_slots(p)
-    return jsonify({"ok": True, "saved_at": int(time.time() * 1000), "revision": revision})
+    return jsonify(
+        {
+            "ok": True,
+            "saved_at": int(time.time() * 1000),
+            "revision": revision,
+            "metadata": metadata,
+        }
+    )
 
 
 _OWNER_UNKNOWN = object()
@@ -9286,14 +9496,23 @@ def _layout_session_owner():
     return engine_layoutsession.project_key(ctx.path) if ctx is not None else None
 
 
-def _record_autosave_owner(doc_id: str) -> None:
+def _commit_autosave_metadata(doc_id: str, revision: str | None) -> str:
+    """正文刚写成功、**仍持着槽位的文档锁**时提交恢复元数据：归属、归属对应的 revision、pending 的晋升。
+
+    回 `"ok"` / `"failed"`（会话状态写不进去 / 读不到可信状态；正文已落盘，下一次保存会补记）/
+    `"owner_unknown"`（pj 已失效，归属不知道，按保数据合同照写正文、什么都不记）。
+    """
     owner = _layout_session_owner()
     if owner is _OWNER_UNKNOWN:
-        return
+        return "owner_unknown"
+    if revision is None:
+        return "failed"
     try:
-        engine_layoutsession.record_owner(doc_id, owner)
+        engine_layoutsession.commit_slot(doc_id, owner, revision)
     except OSError as exc:
-        LOG.warning("自动保存槽位归属记不下（%s）", exc)
+        LOG.warning("自动保存槽位的恢复元数据记不下（%s）", exc)
+        return "failed"
+    return "ok"
 
 
 #: 自动保存槽位的磁盘上限。
@@ -9392,8 +9611,11 @@ def _prune_autosave_slots(keep: Path) -> list[str]:
 
         # 上面的 `protected` 只是快照：删之前在会话状态锁里重判一次（并发的「记成上次开着的」
         # 插不进判与删之间），删了当场忘掉它的归属——见 `remove_slot_unless_protected`
-        with _document_lock(path):
-            gone = engine_layoutsession.remove_slot_unless_protected(path.stem, _unlink)
+        try:
+            with _document_lock(path):
+                gone = engine_layoutsession.remove_slot_unless_protected(path.stem, _unlink)
+        except OSError:  # 锁等不到：这次不清它，下次保存再清；绝不让已成功的保存回 5xx
+            continue
         if gone:
             removed.append(path.name)
     if removed:
@@ -9413,16 +9635,23 @@ def api_autosave_summary(doc_id):
 @app.delete("/api/autosave/<doc_id>")
 def api_autosave_delete(doc_id):
     p = _autosave_path(doc_id)
-    if p.is_file():
-        try:
-            p.unlink()
-        except OSError:
-            pass
-    if not p.exists():
-        try:
-            engine_layoutsession.forget_documents([p.stem])
-        except OSError as exc:
-            LOG.warning("删除槽位后会话状态没跟上（%s）", exc)
+
+    # 锁顺序：文档锁 → 会话锁。删文件与忘记录在同一把文档锁里，并发的自动保存不会在两者之间
+    # 把归属记在一个已经删掉的槽位上；unlink 本身在**跨进程会话锁**里（`delete_slot`），和别的进程
+    # 的 `set_last` 发布串行
+    def _unlink() -> bool:
+        if p.is_file():
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        return not p.exists()
+
+    try:
+        with _document_lock(p):
+            engine_layoutsession.delete_slot(p.stem, _unlink)
+    except OSError:
+        return _session_unavailable()
     return jsonify({"ok": True})
 
 
@@ -9433,17 +9662,73 @@ def api_autosave_delete(doc_id):
 # 回给前端的只有 doc_id / 名字 / 时间，不带项目路径。
 
 
+def _slot_revision(doc_id: str) -> str | None:
+    """槽位正文**此刻**的 revision（锁外读，只用来核对归属新鲜度）；槽位不在 / 读不出回 `None`。"""
+    if not engine_layoutsession.valid_doc_id(doc_id):
+        return None
+    # 按目录列表匹配文件名，不拿请求里的 doc_id 拼路径（与 `_layout_owner_evidence` 同一做法）
+    slot = _file_named(AUTOSAVE_DIR, doc_id)
+    return engine_atomicio.content_revision(slot) if slot is not None else None
+
+
+def _slot_recoverable(path: Path) -> tuple[bool, str | None]:
+    """槽位 `path` 此刻是不是一份**能恢复**的正文：文件在、读得出、过 `loads_document` + `validate_document`。
+
+    回 `(可恢复, 读到的那份字节的 revision)`。`set_last` 的 `slot_ok` 就是它：last 只指向可恢复的槽位。
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False, None
+    revision = engine_atomicio.revision_of(raw)
+    try:
+        engine_documents.validate_document(engine_documents.loads_document(raw))
+    except (ValueError, RecursionError):
+        return False, revision
+    return True, revision
+
+
+def _slot_signature(path: Path) -> tuple[int, int] | None:
+    """槽位文件的 `(mtime_ns, size)`；不在 / 读不出回 None。只 stat，会话锁里也能用。"""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def _session_unavailable():
+    return jsonify(
+        {
+            "error": "会话状态此刻读不到或写不进去，上次打开的排版没有记下",
+            "code": "session_unavailable",
+        }
+    ), 503
+
+
 @app.get("/api/layout-session")
 def api_layout_session_get():
+    """`{last, prev, pending, index}`：`last` 只指向可恢复的槽位（durable）、`prev` 是上一份 durable、
+    `pending` 是还没有有效正文的最新打开意图；`index` 是会话状态的读取结果
+    （`ok` / `missing` / `degraded` / `recovered`）。三个指针回之前都按 owner 冲突过滤。"""
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
-    resp = jsonify({"last": engine_layoutsession.last_for(key)})
+    try:
+        view = engine_layoutsession.view_for(
+            key, _slot_revision, lambda doc_id: _document_lock(_autosave_path(doc_id))
+        )
+    except OSError:  # 连会话锁都拿不到：当「读不到可信状态」说，不假装首次空
+        view = {"last": None, "prev": None, "pending": None, "index": "degraded"}
+    resp = jsonify(view)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 @app.put("/api/layout-session/last")
 def api_layout_session_put_last():
+    """记「这个项目想打开这份排版」。槽位已有可恢复的正文 → durable `last`；还没有 → 只记 `pending`，
+    durable `last` 不动（旧前端「先 PUT last、再首次自动保存」的顺序由此不留悬空 last，首次保存成功时
+    `commit_slot` 把 pending 晋升）。回 `{ok, last, state: "durable"|"pending", pending?}`。"""
     body = request.get_json(silent=True)
     doc_id = body.get("doc_id") if isinstance(body, dict) else None
     name = body.get("name", "") if isinstance(body, dict) else None
@@ -9451,8 +9736,29 @@ def api_layout_session_put_last():
         return jsonify({"error": "doc_id / name 不合法", "code": "bad_request"}), 400
     ctx = _request_ctx()
     key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    slot = _autosave_path(doc_id)
     try:
-        last = engine_layoutsession.set_last(key, doc_id, name)
+        # 验槽位与记 last 在槽位的文档锁里（锁顺序：文档锁 → 会话锁）：验完到记完之间清理删不掉它
+        with _document_lock(slot):
+            # 碰文件系统的路径一律取自目录列表（`_file_named`），不拿请求里的 doc_id 拼（CodeQL
+            # py/path-injection）；`slot` 只当锁的键用
+            found = _file_named(AUTOSAVE_DIR, doc_id)
+            before = _slot_signature(found) if found is not None else None
+            slot_ok, revision = _slot_recoverable(found) if found is not None else (False, None)
+            sig = _slot_signature(found) if found is not None else None
+            slot_ok = slot_ok and sig is not None and sig == before
+            # 文档锁只在本进程内；别的进程（共用数据目录）可能在验证之后、发布之前删掉槽位。
+            # 发布时在跨进程会话锁里再 stat 一眼（删除同样在会话锁里），变了就只记 pending
+            result = engine_layoutsession.set_last(
+                key,
+                doc_id,
+                name,
+                slot_ok=slot_ok,
+                current_revision=revision,
+                slot_check=(lambda: _slot_signature(found) == sig)
+                if slot_ok and found is not None
+                else None,
+            )
     except engine_layoutsession.ForeignLayoutError:
         # 这份排版的槽位记在别的项目名下（#715 验收 P1）：不记成这个项目「上次开着的」。
         # 前端认这个 code，作废本机缓存里的这一条、不重推（`lib/projectDocs.LAYOUT_FOREIGN_CODE`）
@@ -9462,7 +9768,9 @@ def api_layout_session_put_last():
                 "code": "layout_foreign",
             }
         ), 409
-    return jsonify({"ok": True, "last": last})
+    except OSError:
+        return _session_unavailable()
+    return jsonify({"ok": True, **result})
 
 
 def _file_named(directory: Path, doc_id: str) -> Path | None:
@@ -9480,38 +9788,30 @@ def _file_named(directory: Path, doc_id: str) -> Path | None:
         return None
 
 
-def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
-    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据)。
+def _runtime_ref(file_id: str) -> tuple[str, str]:
+    """`runtime:<相对脚本>#<图名>` → (脚本, 图名)。绝对路径只留最后一段——候选列表不回本机路径。"""
+    script, _sep, figure = file_id[len("runtime:") :].partition("#")
+    return _relative_name(script), figure
 
-    只给**前端本机索引不知道归属**的那一档用（升级前、T04 之前的 docIndex 条目没有 projectId；
-    #715 验收 P1 之后这类排版要正面证据才恢复）。证据按可信度依次看：
 
-    1. `owners`（#719 起每次自动保存按 pj 记）：有记录就是定论，别的项目的一律 `other`；
-    2. 当前项目的 `tavottofile/versions/<doc_id>.json`（ADR 0101 起时间线节点按项目写）；
-    3. 槽位里的面板引用的素材**全部**在当前项目里、且至少有一个（升级前的槽位没有任何归属记录，
-       只剩内容本身：它放的就是这个项目的图）。runtime 面板（`runtime:` 前缀）不计。
+def _relative_name(name: str) -> str:
+    norm = name.replace("\\", "/")
+    if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm) or ".." in norm.split("/"):
+        return norm.rstrip("/").rsplit("/", 1)[-1]
+    return norm
 
-    都没有就是 `unknown`——前端据此不恢复。
-    """
-    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
-    verdict = engine_layoutsession.owner_verdict(doc_id, key)
-    if verdict is not None:
-        return verdict, "owners"
+
+def _project_owner_evidence(doc_id: str, ctx, doc: dict | None) -> tuple[str, str | None]:
+    """owners 没有（可信的）记录时的两条旁证：当前项目的时间线、槽位里面板引用的素材。`doc` 是槽位正文
+    （调用方读好的；`None` = 读不到，不看素材那一条）。"""
     if ctx is None:
         return "unknown", None
-    # 两处都按**目录里已有的文件名**去找，不拿请求里的 doc_id 拼路径（它虽然已过 `valid_doc_id`，
+    # 按**目录里已有的文件名**去找，不拿请求里的 doc_id 拼路径（它虽然已过 `valid_doc_id`，
     # 只读端点也不给路径注入留口子）
     store = project_store_dir(ctx)
     if store is not None and _file_named(store / "versions", doc_id) is not None:
         return "this", "versions"
-    slot = _file_named(AUTOSAVE_DIR, doc_id)
-    if slot is None:
-        return "unknown", None
-    try:
-        doc = engine_documents.loads_document(slot.read_bytes())
-    except (OSError, ValueError):
-        return "unknown", None
-    if not isinstance(doc, dict):
+    if doc is None:
         return "unknown", None
     root = Path(ctx.path).resolve()
     files = [
@@ -9530,14 +9830,341 @@ def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None]:
     return "this", "assets"
 
 
+def _layout_owner_evidence(doc_id: str, ctx) -> tuple[str, str | None, bool, str | None]:
+    """`_layout_owner_evidence_locked` 在槽位的文档锁里跑：会话状态（owners / owner_revisions）与槽位正文
+    出自同一个一致的快照——别的项目的保存（正文 + 归属提交都在这把锁里）不能插在「读状态」与「读正文」之间，
+    否则会拿新正文去对旧的、还没有它归属的状态，把别人的槽位报成 this。锁顺序：文档锁 → （会话状态只读，
+    不拿会话锁）。锁等不到回 unknown，绝不猜。"""
+    try:
+        with _document_lock(_autosave_path(doc_id)):
+            return _layout_owner_evidence_locked(doc_id, ctx)
+    except engine_layoutsession.SessionStateUnavailable:
+        return "unknown", None, False, None
+
+
+def _layout_owner_evidence_locked(doc_id: str, ctx) -> tuple[str, str | None, bool, str | None]:
+    """槽位 `doc_id` 与当前项目的关系：(`this` / `other` / `unknown`, 证据, 是否已核对, revision)。
+
+    `revision` = 这次判断所依据的那份槽位正文的 revision（槽位不在 / 读不出为 `None`）。前端取正文时
+    比对它：判断之后别的项目可能又保存了这个槽位，那份新内容没被这次判断认过。
+
+    只给**前端本机索引不知道归属**的那一档用（升级前、T04 之前的 docIndex 条目没有 projectId；
+    #715 验收 P1 之后这类排版要正面证据才恢复）。证据按可信度依次看：
+
+    1. `owners`（#719 起每次自动保存按 pj 记）：有记录就是定论，别的项目的一律 `other`；
+       **但**记录里的 `owner_revisions` 与槽位正文此刻的 revision 对不上（进程死在「正文已落盘、
+       元数据未提交」之间）= 待核对：整条按 `unknown` 回，不当 this 也不当 other、不再往下翻旁证
+       （有人记过归属，旁证不能替它翻案）。`verified` = owners 证据且 revision 一致，或旧记录
+       （没有 `owner_revisions`，按现状信任——兼容边界）；
+    2. 当前项目的 `tavottofile/versions/<doc_id>.json`（ADR 0101 起时间线节点按项目写）；
+    3. 槽位里的面板引用的素材**全部**在当前项目里、且至少有一个（升级前的槽位没有任何归属记录，
+       只剩内容本身：它放的就是这个项目的图）。runtime 面板（`runtime:` 前缀）不计。
+
+    都没有就是 `unknown`——前端据此不恢复。
+    """
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    state, status = engine_layoutsession.read_readonly()
+    # 槽位只读一遍：新鲜度判断、素材旁证、交回去的 revision 都来自同一份字节
+    slot = _file_named(AUTOSAVE_DIR, doc_id)
+    doc = None
+    revision = None
+    if slot is not None:
+        try:
+            raw = slot.read_bytes()
+        except OSError:
+            raw = None
+        if raw is not None:
+            revision = engine_atomicio.revision_of(raw)
+            try:
+                loaded = engine_documents.loads_document(raw)
+                doc = loaded if isinstance(loaded, dict) else None
+            except (ValueError, RecursionError):
+                doc = None
+    if status == engine_layoutsession.STATUS_DEGRADED:
+        # 会话状态读不到可信的内容：空的 owners 不是「没人认领」。不推断任何归属（也不翻 versions / assets 旁证——
+        # 那会把别的项目的槽位报成 this）
+        return "unknown", None, False, revision
+    verdict, verified = engine_layoutsession.owner_status_in(state, doc_id, key, revision)
+    if verdict == "unverified":
+        return "unknown", None, False, revision
+    if verdict is not None:
+        return verdict, "owners", verified, revision
+    owner, evidence = _project_owner_evidence(doc_id, ctx, doc)
+    return owner, evidence, False, revision
+
+
 @app.get("/api/layout-session/owner")
 def api_layout_session_owner():
-    """前端不知道归属的那份排版，后端有没有证据说它属于当前项目（#715 验收 P1 / #773）。"""
+    """前端不知道归属的那份排版，后端有没有证据说它属于当前项目（#715 验收 P1 / #773）。
+    回 `{owner, evidence, verified}`，`evidence` ∈ `owners|versions|assets|null`。"""
     doc_id = request.args.get("doc_id")
     if not engine_layoutsession.valid_doc_id(doc_id):
         return jsonify({"error": "doc_id 不合法", "code": "bad_request"}), 400
-    owner, evidence = _layout_owner_evidence(doc_id, _request_ctx())
-    resp = jsonify({"owner": owner, "evidence": evidence})
+    owner, evidence, verified, revision = _layout_owner_evidence(doc_id, _request_ctx())
+    resp = jsonify(
+        {"owner": owner, "evidence": evidence, "verified": verified, "revision": revision}
+    )
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ---- 候选发现（文档恢复可靠性 P03）：索引丢了 / last 指不到时，从真实槽位里把能找回的列出来 ----
+CANDIDATE_DEFAULT_LIMIT = 50
+CANDIDATE_MAX_LIMIT = 100
+#: 单个槽位超过它就不读（记 `too_large`）
+CANDIDATE_MAX_BYTES = 32 * 1024 * 1024
+#: 一页读的正文字节预算：`limit` 个大文件不会把一页拖成几个 GB（至少读一个，剩下的留给下一页）
+CANDIDATE_PAGE_BYTES = 256 * 1024 * 1024
+#: 目录里最多认这么多条目（防御：槽位目录被塞进海量文件）
+CANDIDATE_MAX_ENTRIES = 20000
+CANDIDATE_LIST_CAP = 5
+
+
+def _candidate_entries() -> tuple[list[tuple[int, str, int, Path]], bool]:
+    """`AUTOSAVE_DIR` 里的槽位文件 `(mtime_ns, 文件名, 字节数, 目录列表给出的路径)`，新→旧。
+
+    只认 docId 形状的 `*.json` 普通文件，**不跟随符号链接**；不接受任何调用方给的路径。
+    回 `(行, truncated)`：目录里的条目超过 `CANDIDATE_MAX_ENTRIES` 时只看了前面一部分（扫描顺序是
+    目录原序，不是 mtime），`truncated=True`——调用方不能把这当成「列完了」。"""
+    rows: list[tuple[int, str, int, Path]] = []
+    truncated = False
+    try:
+        with os.scandir(AUTOSAVE_DIR) as it:
+            for n, entry in enumerate(it):
+                if n >= CANDIDATE_MAX_ENTRIES:
+                    truncated = True
+                    break
+                name = entry.name
+                if not name.endswith(".json") or not engine_layoutsession.valid_doc_id(name[:-5]):
+                    continue
+                try:
+                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                        continue
+                    st = entry.stat(follow_symlinks=False)
+                except OSError:
+                    # 瞬时的 stat 失败不能让候选消失：留一行 size=-1，`_candidate_item` 把它报成 invalid
+                    rows.append((0, name, -1, Path(entry.path)))
+                    continue
+                rows.append((st.st_mtime_ns, name, st.st_size, Path(entry.path)))
+    except FileNotFoundError:
+        return [], False  # 槽位目录还不存在 = 没有任何槽位
+    # 其余 OSError（权限、网络盘）**往上抛**：目录在、只是列不出来，不是「没有」——折成空页的话
+    # 前端会把项目当成空的、直接开一份空白排版
+    rows.sort(key=lambda r: (-r[0], r[1]))
+    return rows, truncated
+
+
+def _listing_fingerprint(rows: list[tuple[int, str, int, Path]]) -> str:
+    """目录列表（名字 + mtime + 大小）的指纹。游标带着第一页的指纹，后面的页重算：对不上 = 翻页期间有槽位被保存
+    / 新建 / 删除，按 mtime 排的顺序已经变了，某一行可能从没翻到的位置跳到游标前面被漏掉。"""
+    h = hashlib.sha1()
+    for mtime_ns, name, size, _path in rows:
+        h.update(f"{name}\0{mtime_ns}\0{size}\n".encode())
+    return h.hexdigest()[:16]
+
+
+def _encode_cursor(row: tuple[int, str, int, Path], fingerprint: str) -> str:
+    import base64
+
+    raw = json.dumps([row[0], row[1], fingerprint]).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(text: str) -> tuple[int, str, str] | None:
+    import base64
+
+    try:
+        data = json.loads(base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)))
+    except (ValueError, TypeError):
+        return None
+    if (
+        isinstance(data, list)
+        and len(data) == 3
+        and isinstance(data[0], int)
+        and not isinstance(data[0], bool)
+        and isinstance(data[1], str)
+        and isinstance(data[2], str)
+    ):
+        return data[0], data[1], data[2]
+    return None
+
+
+def _candidate_item(row: tuple[int, str, int, Path], ctx, key, scope: str):
+    """一个槽位的候选摘要；不属于这次 `scope` 的回 `None`。**只读**，任何一步出错只让自己 `invalid`。
+
+    每个条目在**它自己的槽位文档锁**里读：会话状态（归属）与正文出自同一个一致的快照，别的项目的保存
+    不能插在两次读之间（与 `/owner` 同一条规则）。页级快照做不到这一点——它在这个条目被别人改写之前读的。
+    锁等不到抛 `SessionStateUnavailable`，整页回 503 `candidates_unavailable`，不猜。"""
+    with _document_lock(row[3]):
+        return _candidate_item_locked(row, ctx, key, scope)
+
+
+def _candidate_item_locked(row: tuple[int, str, int, Path], ctx, key, scope: str):
+    state, session_status = engine_layoutsession.read_readonly()
+    degraded = session_status == engine_layoutsession.STATUS_DEGRADED
+    mtime_ns, name, size, path = row  # path 来自目录列表，不是请求字符串
+    doc_id = name[:-5]
+    status = "ok"
+    raw_bytes = None
+    revision = None
+    doc: dict | None = None
+    loaded = None
+    schema = None
+    if size < 0:
+        status = "invalid"  # 列目录时 stat 不了：不读，如实报 invalid
+    elif size > CANDIDATE_MAX_BYTES:
+        status = "too_large"
+    else:
+        try:
+            raw_bytes = path.read_bytes()
+        except OSError:
+            status = "invalid"
+    if raw_bytes is not None:
+        revision = engine_atomicio.revision_of(raw_bytes)
+        try:
+            loaded = engine_documents.loads_document(raw_bytes)
+        except (ValueError, RecursionError):
+            loaded = None
+        if not isinstance(loaded, dict):
+            status = "invalid"
+        else:
+            schema = loaded.get("schema")
+            try:
+                doc = engine_documents.validate_document(loaded)
+            except engine_documents.DocumentError as exc:
+                status = "too_new" if exc.code == "schema_too_new" else "invalid"
+            except (ValueError, RecursionError):
+                status = "invalid"
+    verdict, _verified = engine_layoutsession.owner_status_in(state, doc_id, key, revision)
+    if degraded:
+        # 会话状态读不到可信的内容：不推断归属，所有行都进 scope=unknown（与 `/owner` 同一条规则）
+        owner, evidence = "unknown", None
+    elif verdict == "other":
+        return None, degraded
+    elif verdict == "this":
+        owner, evidence = "this", "owners"
+    elif verdict == "unverified":
+        owner, evidence = "unknown", None
+    else:
+        owner, evidence = _project_owner_evidence(doc_id, ctx, doc)
+        if owner != "this":
+            owner = "unknown"
+    if (scope == "project") != (owner == "this"):
+        return None, degraded
+    item: dict = {
+        "doc_id": doc_id,
+        "name": "",
+        "updatedAt": None,
+        "mtime": mtime_ns // 1_000_000,
+        "revision": revision,
+        "schema": schema if isinstance(schema, int) and not isinstance(schema, bool) else None,
+        "status": status,
+        "canvases": None,
+        "objects": None,
+        "owner": owner,
+        "evidence": evidence,
+        "runtime": [],
+        "panels": [],
+    }
+    if status in ("ok", "too_new") and isinstance(loaded, dict):
+        proj = loaded.get("project")
+        if isinstance(proj, dict) and isinstance(proj.get("name"), str):
+            item["name"] = proj["name"][: engine_layoutsession.MAX_NAME_CHARS]
+        upd = loaded.get("updatedAt")
+        if isinstance(upd, (int, float)) and not isinstance(upd, bool) and upd == upd:
+            item["updatedAt"] = int(upd) if abs(upd) < 1e15 else None
+    if status == "ok" and doc is not None:
+        try:
+            canvases = doc.get("canvases")
+            objects = _doc_objects(doc)
+            item["canvases"] = len(canvases) if isinstance(canvases, list) else 1
+            item["objects"] = len(objects)
+            for o in objects:
+                fid = o.get("fileId")
+                if o.get("type") != "panel" or not isinstance(fid, str):
+                    continue
+                if fid.startswith("runtime:"):
+                    if len(item["runtime"]) < CANDIDATE_LIST_CAP:
+                        script, figure = _runtime_ref(fid)
+                        item["runtime"].append({"script": script, "figure": figure})
+                elif len(item["panels"]) < CANDIDATE_LIST_CAP:
+                    item["panels"].append(_relative_name(fid))
+            sketch = _version_sketch({"doc": doc, "canvasId": doc.get("activeCanvasId")}, 40, 0)
+        except (TypeError, AttributeError, ValueError, RecursionError):
+            item["status"] = "invalid"
+            item["canvases"] = item["objects"] = None
+            item["runtime"], item["panels"] = [], []
+        else:
+            if sketch is not None:
+                item["sketch"] = sketch
+    return item, degraded
+
+
+@app.get("/api/layout-session/candidates")
+def api_layout_session_candidates():
+    """只读发现：从 `AUTOSAVE_DIR` 的真实槽位里列出能找回的排版（不要求先知道 docId）。
+
+    `scope=project`：只列这个项目**明确归属**的（owners 可信记录 / 时间线 / 素材全在项目里）；
+    `scope=unknown`：只列归属不知道（或待核对）的——runtime 文档在这里（`/owner` 刻意不为 runtime
+    面板作证）。别的项目的（owner=other）两个 scope 都不出现。
+    按 mtime 新→旧分页，每页最多读 `limit`（≤100）个文件、字节有预算；一个坏文件只让自己
+    `status: "invalid"`。不写任何东西、不回路径。"""
+    scope = request.args.get("scope", "project")
+    if scope not in ("project", "unknown"):
+        return jsonify({"error": "scope 不合法", "code": "bad_request"}), 400
+    try:
+        limit = int(request.args.get("limit", CANDIDATE_DEFAULT_LIMIT))
+    except ValueError:
+        return jsonify({"error": "limit 不合法", "code": "bad_request"}), 400
+    limit = max(1, min(limit, CANDIDATE_MAX_LIMIT))
+    cursor = request.args.get("cursor")
+    after = None
+    if cursor:
+        after = _decode_cursor(cursor)
+        if after is None:
+            return jsonify({"error": "cursor 不合法", "code": "bad_request"}), 400
+    ctx = _request_ctx()
+    key = engine_layoutsession.project_key(ctx.path) if ctx is not None else None
+    try:
+        _state, index = (
+            engine_layoutsession.read_readonly()
+        )  # 只取页级 index；归属按条目在各自的锁里读
+    except OSError:
+        index = "degraded"
+    try:
+        rows, truncated = _candidate_entries()
+    except OSError:
+        return jsonify({"error": "本机排版目录此刻读不出来", "code": "candidates_unavailable"}), 503
+    fingerprint = after[2] if after is not None else _listing_fingerprint(rows)
+    if after is not None:
+        if _listing_fingerprint(rows) != after[2]:
+            # 翻页期间目录变了：不保证没漏行，调用方按「不完整」处理（仍返回这一页）
+            truncated = True
+        rows = [r for r in rows if (-r[0], r[1]) > (-after[0], after[1])]
+    items: list[dict] = []
+    consumed = 0
+    budget = 0
+    for row in rows[:limit]:
+        if consumed and budget + min(row[2], CANDIDATE_MAX_BYTES) > CANDIDATE_PAGE_BYTES:
+            break
+        budget += min(row[2], CANDIDATE_MAX_BYTES)
+        consumed += 1
+        try:
+            item, row_degraded = _candidate_item(row, ctx, key, scope)
+        except OSError:
+            return jsonify({"error": "本机排版此刻读不出来", "code": "candidates_unavailable"}), 503
+        if row_degraded:
+            index = "degraded"  # 页级快照之后变坏也不能把空项目页报成完整的成功
+        if item is not None:
+            items.append(item)
+    next_cursor = (
+        _encode_cursor(rows[consumed - 1], fingerprint)
+        if consumed < len(rows) and consumed
+        else None
+    )
+    resp = jsonify(
+        {"items": items, "next_cursor": next_cursor, "index": index, "truncated": truncated}
+    )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

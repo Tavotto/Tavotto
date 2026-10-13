@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { expect, openElementsTab, test } from './fixtures'
+import { expect, openElementsTab, test, waitForDocumentReady } from './fixtures'
 
 /**
  * 功能登记表的核心路径用例（ADR 0097，`docs/features/registry.json`）。
@@ -225,6 +225,7 @@ test(
     await page.goto(a.baseURL)
     const stage = page.locator('[data-canvas-stage]')
     await expect(stage).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
 
     // 三段文字，左边各不相同（文字工具的快捷键是 T，见快捷键帮助）
     for (const [x, y, s] of [
@@ -287,6 +288,7 @@ test(
     await page.goto(a.baseURL)
     const stage = page.locator('[data-canvas-stage]')
     await expect(stage).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
 
     // 第一张画布：一段文字（文字工具的快捷键是 T），选中它 ⌘C
     await page.keyboard.press('t')
@@ -379,6 +381,7 @@ test(
     const stage = page.locator('[data-canvas-stage]')
     const sheet = page.locator('[data-page-sheet]')
     await expect(sheet).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
 
     // 页面改成 40 × 30 mm（示例图 Fig1_kinetics 是 73 × 58 mm，约 1.9 倍）。
     // 尺寸行没有逐框的 data 锚点：行上有 `data-page-size-row`，里面依次是 W、H 两个输入框
@@ -688,6 +691,7 @@ test(
     await page.setViewportSize(VIEWPORT)
     await page.goto(a.baseURL)
     await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
     const objs = page.locator('[data-canvas-stage] [data-object-id]')
     const n0 = await objs.count()
 

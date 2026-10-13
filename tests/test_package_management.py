@@ -644,6 +644,15 @@ def test_install_update_uninstall_end_to_end(tmp_path, wheelhouse, offline_manag
     assert python, "受管环境该建出来了"
     assert _in_venv(python, f"import {FIXTURE_IMPORT}; print({FIXTURE_IMPORT}.VALUE)") == "42"
     assert rec["result"]["version"] == "1.0"
+    # 首装 = 建第一代：回执带 generation，来源是用户指定
+    (receipt,) = rec["result"]["providers"]
+    assert receipt["distribution"] == FIXTURE_DIST and receipt["version"] == "1.0"
+    assert receipt["source"] == "user_specified"
+    assert (
+        receipt["generation"]
+        == managedenv.active_generation(project)
+        == rec["result"]["generation"]
+    )
     ledger = managedenv.installed_entry(project, FIXTURE_DIST)
     assert ledger and ledger["reason"] == managedenv.REASON_USER_REQUESTED
     with pytest.raises(subprocess.CalledProcessError):
@@ -660,10 +669,18 @@ def test_install_update_uninstall_end_to_end(tmp_path, wheelhouse, offline_manag
     # ---- update（wheelhouse 里没有更新的版本 → pip 说 already satisfied，幂等）----
     rec = run(deprepair.OP_UPDATE, FIXTURE_DIST)
     assert rec["result"]["version"] == "1.0"
+    (receipt,) = rec["result"]["providers"]  # 原地升：没有新代，generation 如实为空
+    assert (receipt["distribution"], receipt["version"], receipt["source"]) == (
+        FIXTURE_DIST,
+        "1.0",
+        "user_specified",
+    )
+    assert receipt["generation"] == ""
 
     # ---- uninstall ----
     rec = run(deprepair.OP_UNINSTALL, FIXTURE_DIST)
     assert rec["result"]["op"] == deprepair.OP_UNINSTALL
+    assert "providers" not in rec["result"]  # 卸载没有装入的 provider
     out = subprocess.run(
         [python, "-c", f"import {FIXTURE_IMPORT}"], capture_output=True, text=True, encoding="utf-8"
     )

@@ -61,6 +61,7 @@ export function CanvasStage() {
   const tweening = useViewportStore((s) => s.tweening)
   const setViewRect = useViewportStore((s) => s.setViewRect)
   const page = useDocumentStore((s) => s.doc.page)
+  const documentState = useDocumentStore((s) => s.restoreGate.state)
   const objects = useDocumentStore((s) => s.doc.objects)
   const dragging = useInteractionStore((s) => s.kind !== 'none')
   /** 空白画布上的右键菜单落点（client 坐标）；null = 没开 */
@@ -203,6 +204,8 @@ export function CanvasStage() {
         // 端到端测试的落点：画布是纯图形区域，没有可靠的语义角色可以选中，
         // 与其套一个会误导读屏器的 role，不如留一个明确的测试钩子
         data-canvas-stage=""
+        data-document-state={documentState}
+        aria-busy={documentState === 'restoring'}
         className="absolute overflow-hidden bg-canvas"
         style={{ left: pad, top: pad, right: 0, bottom: 0, cursor }}
         onPointerDown={onPointerDown}

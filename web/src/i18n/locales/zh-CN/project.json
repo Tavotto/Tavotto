@@ -48,7 +48,9 @@
     "openFailed": "打不开项目：{{error}}",
     "panelMissing": "没找到图 {{stem}}——脚本可能还没产出，或它在别的图库里",
     "projectOpened": "已打开项目 {{name}}",
-    "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。"
+    "restoreTimeout": "这次交接的图没有放进排版：上次的排版还没打开，图在素材库里。",
+    "runtimeNeedsRun": "{{stem}} 已登记为运行时图，但还没有预览——到素材库的「脚本」区运行一次。",
+    "superseded": "项目已切换，这次交接没有放入。"
   },
   "picker": {
     "backToCurrent": "返回当前项目",

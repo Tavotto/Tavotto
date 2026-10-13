@@ -63,10 +63,7 @@ on:
           生产证书要求每次手动批准，长时间等待会占住 runner，用 submit-only 拆开。
         required: false
         default: 'wait'
-        type: choice
-        options:
-          - 'wait'
-          - 'submit-only'
+        type: string
     # **每一个 secret 都显式声明。** `secrets: inherit` 只能写在**调用方**
     # （`jobs.<id>.secrets: inherit`），写在被调用方是语法错误——actionlint
     # 当场逮到了。显式列一遍还有第二个好处：这份清单就是「桌面发布链需要

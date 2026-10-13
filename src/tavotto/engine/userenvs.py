@@ -25,11 +25,13 @@ from __future__ import annotations
 
 import glob
 import logging
+import ntpath
 import os
 import re
 import stat
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from . import projectenv, runtime, scanbudget
@@ -105,15 +107,30 @@ def is_project_controlled(cand: dict, root: str | Path) -> bool:
 LOGIN_SHELL_TIMEOUT_S = 8.0
 _MARK = "__TAVOTTO_PY__"
 
+#: 登录 shell 答了空表（rc 文件慢 / 超时 / 那一刻 PATH 还没就绪）之后，多久内不再重问。有结论的答案不因时间失效
+EMPTY_LOGIN_SHELL_TTL_S = 30.0
+_monotonic = time.monotonic
+
 _lock = threading.Lock()
 _login_shell_cache: dict[str, list[str]] = {}
+#: 空答案是什么时候得到的（`_monotonic()` 时刻）；有结论的 shell 不在这张表里
+_login_shell_empty_at: dict[str, float] = {}
 
 
 def reset_cache() -> None:
     """用户点「重新检查」= 推翻旧结论（与 `projectenv.reset_cache()` 一起清）。"""
     with _lock:
         _login_shell_cache.clear()
+        _login_shell_empty_at.clear()
         _probe_cache.clear()
+
+
+def forget_empty_login_shell() -> None:
+    """明确的检查动作之前调：只忘掉**空**的登录 shell 答案（有结论的保留），下一次 `login_shell_pythons()` 重问。"""
+    with _lock:
+        for shell in list(_login_shell_empty_at):
+            _login_shell_cache.pop(shell, None)
+            _login_shell_empty_at.pop(shell, None)
 
 
 def _home() -> str:
@@ -141,24 +158,41 @@ def _read_hint_text(base: Path, *parts: str, no_follow: bool = False) -> str:
     return scanbudget.read_regular_text(base, *parts, no_follow=no_follow, max_bytes=MAX_HINT_BYTES)
 
 
-def _is_python_file(path: str) -> bool:
+def _walker(budget: scanbudget.Budget | None = None, walker=None, *, nt: bool | None = None):
+    """扫描里构造候选路径用的逐级不跟随检查（Windows 语义才生效，见 `scanbudget.PathWalker`）。"""
+    return walker if walker is not None else scanbudget.PathWalker(nt=nt, budget=budget)
+
+
+def _is_python_file(path: str, *, nt: bool | None = None, walker=None) -> bool:
     if not _local_hint(path):
         return False
     try:
+        # 构造出的候选可能在任何一级祖先上是指向断线共享的 junction：先逐级不跟随地验，再让 `is_file` 碰它
+        if _walker(None, walker, nt=nt).redirected(path) is not None:
+            return False
         p = Path(path)
         return p.name.lower().startswith("python") and p.is_file()
     except (OSError, ValueError):
         return False
 
 
-def _prefix_python(prefix: str) -> str | None:
-    """环境前缀（Conda / pyenv / venv）→ 里面的解释器；没有回 None。"""
+def _prefix_python(prefix: str, *, nt: bool | None = None, walker=None) -> str | None:
+    """环境前缀（Conda / pyenv / venv）→ 里面的解释器；没有回 None。
+
+    Windows：Conda / pyenv-win 的解释器在前缀根，venv 的在 `Scripts\\python.exe`。`nt` 仅供测试在别的平台上求值路径组合。"""
     if not _local_hint(prefix):
         return None
-    names = ("python.exe",) if os.name == "nt" else ("bin/python3", "bin/python")
+    nt = os.name == "nt" if nt is None else nt
+    walker = _walker(None, walker, nt=nt)
+    if (
+        walker.redirected(prefix) is not None
+    ):  # 前缀自己或祖先是重定向：下面的 `Scripts` / `python.exe` 一级都不碰
+        return None
+    names = ("python.exe", "Scripts/python.exe") if nt else ("bin/python3", "bin/python")
+    join = ntpath.join if nt else os.path.join
     for name in names:
-        cand = os.path.join(prefix, name)
-        if _is_python_file(cand):
+        cand = join(prefix, *name.split("/"))
+        if _is_python_file(cand, nt=nt, walker=walker):
             return cand
     return None
 
@@ -204,15 +238,21 @@ def _vscode_pythons(dirs: list[Path], *, no_follow: bool = False) -> list[str]:
     return out
 
 
-def _pyenv_root() -> str:
-    return os.environ.get("PYENV_ROOT") or os.path.join(_home(), ".pyenv")
+def _pyenv_root(path=os.path) -> str:
+    return os.environ.get("PYENV_ROOT") or path.join(_home(), ".pyenv")
 
 
-def _pyenv_version_dirs() -> list[str]:
-    root = _pyenv_root()
-    if os.name == "nt":
-        return [os.path.join(root, "pyenv-win", "versions")]
-    return [os.path.join(root, "versions")]
+def _pyenv_version_dirs(*, nt: bool | None = None) -> list[str]:
+    """pyenv 的 versions 目录。pyenv-win 的 `PYENV_ROOT` 通常**已经**指到 `…\\.pyenv\\pyenv-win`，不能再追加一层
+    `pyenv-win`；只给到 `…\\.pyenv` 时才补。`nt` 仅供测试在别的平台上用 ntpath 求值，不是 Windows 真机。"""
+    nt = os.name == "nt" if nt is None else nt
+    if nt:
+        root = _pyenv_root(ntpath).rstrip("\\/")
+        base = (
+            root if ntpath.basename(root).lower() == "pyenv-win" else ntpath.join(root, "pyenv-win")
+        )
+        return [ntpath.join(base, "versions")]
+    return [os.path.join(_pyenv_root(), "versions")]
 
 
 def _python_version_pythons(dirs: list[Path], *, no_follow: bool = False) -> list[tuple[str, str]]:
@@ -237,8 +277,13 @@ _ENV_NAME = re.compile(r"^name:\s*['\"]?([A-Za-z0-9_.\-]+)['\"]?\s*$", re.M)
 
 
 def _environment_yml_pythons(
-    dirs: list[Path], *, no_follow: bool = False, budget: scanbudget.Budget | None = None
+    dirs: list[Path],
+    *,
+    no_follow: bool = False,
+    budget: scanbudget.Budget | None = None,
+    walker=None,
 ) -> list[tuple[str, str]]:
+    walker = _walker(budget, walker)
     out: list[tuple[str, str]] = []
     for d in dirs:
         for fname in ("environment.yml", "environment.yaml"):
@@ -250,9 +295,9 @@ def _environment_yml_pythons(
             if not m:
                 continue
             name = m.group(1)
-            for prefix in _conda_prefixes(budget):
+            for prefix in _conda_prefixes(budget, walker):
                 if os.path.basename(prefix.rstrip("/\\")) == name:
-                    py = _prefix_python(prefix)
+                    py = _prefix_python(prefix, walker=walker)
                     if py:
                         out.append((py, name))
     return out
@@ -356,11 +401,19 @@ def login_shell_pythons() -> list[str]:
         return []
     with _lock:
         hit = _login_shell_cache.get(shell)
+        # 空答案只管一小段时间：一次超时 / 冷启动的空结果不该让这个进程里此后永远看不见终端里的 python
+        if hit is not None and not hit:
+            if _monotonic() - _login_shell_empty_at.get(shell, 0.0) >= EMPTY_LOGIN_SHELL_TTL_S:
+                hit = None
     if hit is not None:
         return list(hit)
     found = _ask_login_shell(shell)
     with _lock:
         _login_shell_cache[shell] = found
+        if found:
+            _login_shell_empty_at.pop(shell, None)
+        else:
+            _login_shell_empty_at[shell] = _monotonic()
     return list(found)
 
 
@@ -392,9 +445,13 @@ def _conda_roots() -> list[str]:
     return roots
 
 
-def _scan_children(pattern_dir: str, budget: scanbudget.Budget | None) -> list[str]:
+def _scan_children(pattern_dir: str, budget: scanbudget.Budget | None, walker=None) -> list[str]:
     """`pattern_dir/*` 的子项（排序）。有预算时用 `os.scandir` **增量**枚举：每项记一笔、到期 / 取消就收手
     （返回已枚举到的那部分，账本由 `Budget.stop_reason()` 记 time_budget / cancelled）。"""
+    if (
+        _walker(budget, walker).redirected(pattern_dir) is not None
+    ):  # 枚举前先验：祖先是 junction 就不 scandir / glob
+        return []
     if budget is None:
         return sorted(glob.glob(os.path.join(pattern_dir, "*")))
     names: list[str] = []
@@ -411,8 +468,10 @@ def _scan_children(pattern_dir: str, budget: scanbudget.Budget | None) -> list[s
     return sorted(names)
 
 
-def _conda_environments_txt(budget: scanbudget.Budget | None) -> list[str]:
+def _conda_environments_txt(budget: scanbudget.Budget | None, walker=None) -> list[str]:
     path = Path(_home(), ".conda", "environments.txt")
+    if _walker(budget, walker).redirected(path.parent) is not None:
+        return []
     try:
         if budget is None:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -434,19 +493,20 @@ def _conda_environments_txt(budget: scanbudget.Budget | None) -> list[str]:
     return out
 
 
-def _conda_prefixes(budget: scanbudget.Budget | None = None) -> list[str]:
+def _conda_prefixes(budget: scanbudget.Budget | None = None, walker=None) -> list[str]:
     """Conda 知道的每一个环境前缀（base 与具名环境），去重、保序。
 
     `budget`（导入即扫描传）：`environments.txt` 有界读、`envs` 目录增量枚举，到期 / 取消返回已有的那部分。"""
-    out: list[str] = _conda_environments_txt(budget)
+    walker = _walker(budget, walker)
+    out: list[str] = _conda_environments_txt(budget, walker)
     for root in _conda_roots():
         if budget is not None and budget.stop_reason() is not None:
             break
-        if os.path.isdir(root):
+        if _local_hint(root) and walker.redirected(root) is None and os.path.isdir(root):
             out.append(root)
-            out += _scan_children(os.path.join(root, "envs"), budget)
+            out += _scan_children(os.path.join(root, "envs"), budget, walker)
     if budget is None or budget.stop_reason() is None:
-        out += _scan_children(os.path.join(_home(), ".conda", "envs"), budget)
+        out += _scan_children(os.path.join(_home(), ".conda", "envs"), budget, walker)
     seen: set[str] = set()
     uniq: list[str] = []
     for p in out:
@@ -463,13 +523,14 @@ def _conda_label(prefix: str) -> str:
     return name if parent == "envs" else "base"
 
 
-def _pyenv_pythons(budget: scanbudget.Budget | None = None) -> list[tuple[str, str]]:
+def _pyenv_pythons(budget: scanbudget.Budget | None = None, walker=None) -> list[tuple[str, str]]:
+    walker = _walker(budget, walker)
     out: list[tuple[str, str]] = []
     for vdir in _pyenv_version_dirs():
-        for prefix in sorted(_scan_children(vdir, budget), reverse=True):
+        for prefix in sorted(_scan_children(vdir, budget, walker), reverse=True):
             if budget is not None and budget.stop_reason() is not None:
                 return out
-            py = _prefix_python(prefix)
+            py = _prefix_python(prefix, walker=walker)
             if py:
                 out.append((py, os.path.basename(prefix)))
     return out
@@ -479,15 +540,8 @@ def _pyenv_pythons(budget: scanbudget.Budget | None = None) -> list[tuple[str, s
 
 
 def _key(python: str) -> tuple[str, str]:
-    """去重键 = (所在目录, 真实文件)：同一目录下 `python3` / `python` 两个别名是同一个环境；
-    **目录不 realpath**——`.venv/bin/python` 指向基础解释器，但它与基础解释器是两个环境
-    （site-packages 不同），目录不同就分得开（ADR 0044 §四）。"""
-    path = os.path.abspath(python)
-    try:
-        real = os.path.realpath(path)
-    except (OSError, ValueError):
-        real = path
-    return os.path.normcase(os.path.dirname(path)), os.path.normcase(real)
+    """去重键，实现见 `projectenv.env_key`（`pool` 也要算 id，不能反过来依赖本模块）。"""
+    return projectenv.env_key(python)
 
 
 def discover(
@@ -515,6 +569,9 @@ def discover(
     root_real = os.path.realpath(os.fspath(figures_dir))
     script_path = projectenv.contained_path(root_real, script) if script else None
     dirs = _hint_dirs(root_real, script_path)
+    walker = _walker(
+        budget
+    )  # 本次发现里所有「构造候选 → 探文件」共用：逐级不跟随检查，目录结果缓存
     raw: list[tuple[str, str, str]] = []
     raw += [(p, SOURCE_VSCODE, "") for p in _vscode_pythons(dirs, no_follow=no_follow)]
     raw += [
@@ -522,7 +579,9 @@ def discover(
     ]
     raw += [
         (p, SOURCE_ENVIRONMENT_YML, n)
-        for p, n in _environment_yml_pythons(dirs, no_follow=no_follow, budget=budget)
+        for p, n in _environment_yml_pythons(
+            dirs, no_follow=no_follow, budget=budget, walker=walker
+        )
     ]
     shebang = _shebang_python(script_path, no_follow=no_follow)
     if shebang:
@@ -531,14 +590,14 @@ def discover(
         raw += [(p, SOURCE_LOGIN_SHELL, "") for p in login_shell_pythons()]
     elif ask_login_shell is None:
         raw += [(p, SOURCE_LOGIN_SHELL, "") for p in cached_login_shell_pythons()]
-    for pre in _conda_prefixes(budget):
+    for pre in _conda_prefixes(budget, walker):
         if budget is not None and budget.stop_reason() is not None:
             break
-        py = _prefix_python(pre)
+        py = _prefix_python(pre, walker=walker)
         if py:
             raw.append((py, SOURCE_CONDA, _conda_label(pre)))
     if budget is None or budget.stop_reason() is None:
-        raw += [(p, SOURCE_PYENV, n) for p, n in _pyenv_pythons(budget)]
+        raw += [(p, SOURCE_PYENV, n) for p, n in _pyenv_pythons(budget, walker)]
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for python, source, label in raw:
@@ -554,7 +613,25 @@ def discover(
             if budget is not None:
                 budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
             continue
-        if not _is_python_file(python):
+        if (
+            source == SOURCE_VSCODE
+            and _local_hint(python)
+            and walker.redirected(python) is not None
+        ):
+            continue  # 机器级线索（项目之外）的某一级祖先 / 叶子是重定向：`isdir` 之前就丢弃（记账本由 walker 做）
+        if source == SOURCE_VSCODE and os.path.isdir(python):
+            # IDE 线索可以指向环境**文件夹**（`python.defaultInterpreterPath` 两种写法都合法）：换成里面的解释器，
+            # 它自己的路径也过一遍重定向检查——文件夹没被重定向不代表 `bin` 没有
+            inner = _prefix_python(python, walker=walker)
+            if inner is None:
+                continue
+            bad = scanbudget.redirected_component(root_real, inner, allow_final_link=True)
+            if bad is not None:
+                if budget is not None:
+                    budget.note(scanbudget.ISSUE_SYMLINK_DIR, scope="file", path=bad)
+                continue
+            python = inner
+        if not _is_python_file(python, walker=walker):
             continue
         key = _key(python)
         if key in seen:
@@ -584,6 +661,25 @@ _SOURCE_RANK = {
     SOURCE_PYENV: 3,
     SOURCE_SYSTEM: 4,
 }
+
+#: 体检结论的分类（`evaluate()` 每条结果的 `probe_status`）。**只描述这一次独立探测看到了什么**，不是脚本的成败：
+#: 探测通过不等于脚本能跑，探测里 import 失败也不等于脚本跑不了（SDK 常要脚本里先初始化再 import）
+PROBE_UNCHECKED = "unchecked"  # 没量过（只读缓存没有结论 / 延后到运行时），不冒充装齐也不冒充没装齐
+PROBE_UNLAUNCHABLE = (
+    "unlaunchable"  # 解释器起不来或不满足 Tavotto 的健康要求（具体原因在 `code`），模块谈不上
+)
+PROBE_MODULE_MISSING = "module_missing"  # 解释器健康，但脚本要的某个模块找不到（装包能救）
+PROBE_IMPORT_FAILED = (
+    "import_failed"  # 模块在，独立 import 时抛了别的（初始化顺序 / 自身依赖 / ABI），装包救不了
+)
+PROBE_PASSED = "probe_passed"  # 解释器健康且这组 import 都得到——仅此而已
+PROBE_STATUSES = (
+    PROBE_UNCHECKED,
+    PROBE_UNLAUNCHABLE,
+    PROBE_MODULE_MISSING,
+    PROBE_IMPORT_FAILED,
+    PROBE_PASSED,
+)
 
 _probe_cache: dict[tuple, dict] = {}
 
@@ -732,6 +828,7 @@ def evaluate(
     use_cache: bool = True,
     cache_only: bool = False,
     root: str = "",
+    project_name: str = "",
 ) -> list[dict]:
     """逐个体检候选，回同顺序的结果表。`use_cache=False` 真起一次、不读也不写缓存：采用前的
     复核要的是此刻的环境，不是弹窗打开那一刻（或并发的另一次）体检。
@@ -749,7 +846,7 @@ def evaluate(
     imports = tuple(
         dict.fromkeys([n["import_name"] for n in needed if n.get("import_name")] + list(unknown))
     )
-    todo = candidates[:PROBE_LIMIT]
+    todo = _within_budget(candidates, project_name or (Path(root).name if root else ""))
 
     def one(cand: dict) -> dict:
         if cache_only:
@@ -765,6 +862,7 @@ def evaluate(
                     "missing": [],
                     "satisfies": None,
                     "checked": False,
+                    "probe_status": PROBE_UNCHECKED,
                 }
         elif use_cache:
             health = (
@@ -801,6 +899,7 @@ def evaluate(
                 "missing": [],
                 "satisfies": None,
                 "checked": False,
+                "probe_status": PROBE_UNCHECKED,
                 "deferred": True,
             }
         if (
@@ -822,6 +921,7 @@ def evaluate(
                 "missing": [],
                 "satisfies": None,
                 "checked": False,
+                "probe_status": PROBE_UNCHECKED,
                 "deferred": True,
                 "health_deferred": True,
             }
@@ -831,6 +931,15 @@ def evaluate(
         )
         missing += sorted(u for u in unknown if ok_map.get(u) is not True)
         healthy = bool(health.get("ok"))
+        import_failed = sorted(m for m, d in detail_map.items() if d == "import_error")
+        if not healthy:
+            status = PROBE_UNLAUNCHABLE
+        elif any(ok_map.get(n) is not True and n not in import_failed for n in imports):
+            status = PROBE_MODULE_MISSING
+        elif import_failed:
+            status = PROBE_IMPORT_FAILED
+        else:
+            status = PROBE_PASSED
         return {
             **cand,
             "ok": healthy,
@@ -840,11 +949,10 @@ def evaluate(
             "matplotlib_version": health.get("matplotlib_version") or "",
             "missing": missing if healthy else [],
             # 在、但导入时抛了错（依赖缺 / ABI / DLL）：和「没装」分开——装它救不了（Import Origin PR3）
-            "import_failed": sorted(m for m, d in detail_map.items() if d == "import_error")
-            if healthy
-            else [],
+            "import_failed": import_failed if healthy else [],
             "satisfies": healthy and not missing,
             "checked": True,
+            "probe_status": status,
         }
 
     if not todo:
@@ -855,6 +963,21 @@ def evaluate(
         return list(pool.map(one, todo))
 
 
+def system_candidates(budget: scanbudget.Budget | None = None) -> list[dict]:
+    """老链条里的系统解释器（`pool.system_python_candidates`，只 `is_file`，不起进程）的候选形状。
+    执行路径（`deprepair`）与证据 / 建议（`projscan` / `envadvice`）共用这一个入口。
+
+    `budget`（导入即扫描传）：同一份清单的只读扫描版——PATH 过预算与取消、UNC / 网络路径不碰。"""
+    from . import pool  # noqa: PLC0415 — pool 重，且只有要系统候选时才需要
+
+    found = (
+        pool.system_python_candidates()
+        if budget is None
+        else pool.system_python_candidates(budget=budget)
+    )
+    return [{"python": py, "source": SOURCE_SYSTEM, "label": ""} for py, _src in found]
+
+
 def _version_tuple(text: str) -> tuple[int, ...]:
     out: list[int] = []
     for part in (text or "").split(".")[:3]:
@@ -863,8 +986,9 @@ def _version_tuple(text: str) -> tuple[int, ...]:
     return tuple(out)
 
 
-def rank(entry: dict, project_name: str = "") -> tuple:
-    """挑选的排序键（小的更好）：来源档位 → verified 优先 → Python 新的优先 → 原顺序由稳定排序保留。"""
+def source_tier(entry: dict, project_name: str = "") -> int:
+    """候选的来源档位（小 = 更接近用户意图）：**只看静态可得的证据**（来源、与项目目录同名的 Conda 环境），
+    不起任何进程。`rank()` 的第一把尺子，也是体检预算之前排序的唯一依据。"""
     tier = _SOURCE_RANK.get(entry.get("source", ""), 5)
     if (
         entry.get("source") == SOURCE_CONDA
@@ -872,6 +996,28 @@ def rank(entry: dict, project_name: str = "") -> tuple:
         and (entry.get("label") or "").lower() == project_name.lower()
     ):
         tier = 2
+    return tier
+
+
+def static_order(candidates: list[dict], project_name: str = "") -> list[dict]:
+    """按静态相关性稳定排序（同档保持原顺序）。体检有上限（`PROBE_LIMIT`）：排序必须发生在截断**之前**，
+    否则第 13 个唯一的项目匹配者会被前 12 个无关候选饿死。"""
+    return sorted(candidates, key=lambda c: source_tier(c, project_name))
+
+
+def _within_budget(candidates: list[dict], project_name: str = "") -> list[dict]:
+    """超过上限时，按静态相关性挑出入选的 `PROBE_LIMIT` 个，**回表仍是输入的相对顺序**。"""
+    if len(candidates) <= PROBE_LIMIT:
+        return list(candidates)
+    ranked = sorted(
+        range(len(candidates)), key=lambda i: (source_tier(candidates[i], project_name), i)
+    )
+    return [candidates[i] for i in sorted(ranked[:PROBE_LIMIT])]
+
+
+def rank(entry: dict, project_name: str = "") -> tuple:
+    """挑选的排序键（小的更好）：来源档位 → verified 优先 → Python 新的优先 → 原顺序由稳定排序保留。"""
+    tier = source_tier(entry, project_name)
     verified = 0 if entry.get("support") == "verified" else 1
     ver = _version_tuple(entry.get("python_version", ""))
     return (tier, verified, tuple(-v for v in ver))
@@ -886,12 +1032,8 @@ def best(entries: list[dict], project_name: str = "") -> dict | None:
 
 
 def env_id(python: str) -> str:
-    """对外的不透明身份：HTTP 投影不带机器路径（ADR 0053 §二），界面采用时交回这个 id，后端用自己的
-    发现结果换回路径——路径只来自本模块的枚举，不接受调用方给（ADR 0044 的安全口径）。"""
-    import hashlib
-
-    d, real = _key(python)
-    return hashlib.sha1(f"{d}|{real}".encode()).hexdigest()[:16]
+    """对外的不透明身份，实现见 `projectenv.env_id`（ADR 0053 §二：HTTP 投影不带机器路径）。"""
+    return projectenv.env_id(python)
 
 
 #: 投影里保留的字段（`python` 不在其中）
@@ -906,6 +1048,8 @@ PUBLIC_FIELDS = (
     "missing",
     "satisfies",
     "checked",
+    "import_failed",
+    "probe_status",
 )
 
 

@@ -1961,6 +1961,7 @@ def _set_patch_facecolor(p, v) -> None:
 
 
 def _get_patch_edgecolor(p):
+    _remember_hatch_color(p)  # ≤3.10：边色 setter 会改写 `_hatch_color`，先采创建时的值（#874）
     if not hasattr(p, "_original_edgecolor"):
         return p.get_edgecolor()  # 认不出的实现：退回按值（老行为）
     hatch = None if hasattr(p, "set_hatchcolor") else getattr(p, "_hatch_color", None)
@@ -3165,7 +3166,183 @@ def _get_coll_facecolor(coll):
 # ---------------------------------------------------------------------------
 #: Collection / Patch 通用的「安全 setter」——都是 Artist 基类或 family 基类
 #: 上的公开 API，子类没有一个重定义成别的语义。
-_CAP_ALPHA = (lambda a: a.get_alpha(), lambda a, v: a.set_alpha(None if v is None else float(v)))
+#: 记在 artist 上的 (创建时已解析的花纹色, 我们上次写完之后它的样子)。第二项用来识别「中间被别人
+#: 动过」：native 会话里用户的 Python 在屏障之间可以改 rcParams、再 `set_alpha`，那之后记着的
+#: 创建时的值就过期了，必须按此刻的实况重新记。
+_HATCH_BASE = "_mm_hatch_base"
+
+
+def _hatch_resolved(a):
+    resolved = getattr(a, "_hatchcolors", None)  # Collection：'edge' 或 RGBA 数组
+    return getattr(a, "_hatch_color", None) if resolved is None else resolved
+
+
+def _hatch_base(a):
+    """这个 artist「脚本创建时」解析出来的花纹色（`'edge'` 或 RGBA）。
+
+    记着的创建时的值（`_HATCH_BASE`）若与「我们上次写完的样子」对不上，说明中间有别人动过，按实况。
+    """
+    cur = _hatch_resolved(a)
+    rec = getattr(a, _HATCH_BASE, None)
+    return rec[0] if rec is not None and _same_value(rec[1], cur) else cur
+
+
+def _fresh_copy(v):
+    """与 `v` 相等、但**不是同一个对象**的副本（matplotlib 的 `set_hatchcolor` 原样存引用，不转换）。
+    字符串 / 元组可能被解释器复用同一对象，所以重新拼一个。"""
+    if isinstance(v, str):
+        return "".join(list(v))
+    if isinstance(v, tuple):
+        return tuple(list(v))
+    return v.copy() if hasattr(v, "copy") else v
+
+
+def _with_hatch_pinned(a, fn) -> None:
+    """跑 `fn()`（会让 matplotlib ≥3.11 重解析花纹色的 setter），期间把花纹色钉在创建时的值（#874）。
+
+    3.11 起 `Patch` / `Collection` 的 `set_alpha`（Patch 还有 `set_fill`）会把
+    `_original_hatchcolor is None` 的花纹色按**此刻**的 `rcParams['hatch.color']` 重新解析；
+    脚本若在 `rc_context` / `style.context` 里临时改过 `hatch.color`，创建时解析出来的 red /
+    `'edge'` / 半透明 RGBA 就被环境值（3.11 默认 `'edge'`）盖掉，撤销也回不去，而只见最终列表
+    的全新 worker 没经历过这一步——热态 ≠ 重放（manifest 相同、像素不同）。
+
+    钉法：`set_hatchcolor(创建时已解析的值)` → 跑 `fn` → **把模式还原成 None**。`'edge'` 哨兵、RGBA
+    （含自带 alpha）在 `fn` 期间是显式设定，重解析读的是它而不是环境；`fn` 之后模式回到「未设」，
+    `_hatch_color` 是按当前 alpha 合成出来的值，不再带着我们的钉。所以**任何时刻**（含 native 屏障
+    释放 `apply([])` 之后、用户恢复运行的 Python 再改 rc 并 `set_alpha`）这个 artist 的模式都与没被
+    Tavotto 编辑过的一样，用户后续脚本照常跟随新的 rc（Codex #950 r4245786615）。
+
+    创建时的值另记在 artist 上（`_HATCH_BASE`）而不是读当下的 `_hatch_color`：撤销要把内在 alpha
+    （`rc_context` 里的 `(1,0,0,.25)`）找回来，当下的值已经被 alpha 编辑合成过了。记的值若与
+    「我们上次写完的样子」对不上，说明中间有别人动过，按实况重记。判据是真实 setter 在不在，不是
+    版本号；脚本显式给过 hatchcolor（`_original_hatchcolor` 不是 None）的 artist 原样跑 `fn`。
+
+    还原只在 `fn` 跑完后模式**仍是我们钉完那一刻实际存进去的那个对象**时才做（身份比较，钉的是独有副本；
+    比钉完后读回的对象而不是传入的参数，子类 `set_hatchcolor` 可能复制后再存，Codex #950 r4246402299）：用户子类若
+    重写 `set_alpha` / `set_fill` 并在里面调 `set_hatchcolor`，那是它有意装的模式，保留（Codex #950
+    r4246080546）；`fn` 抛异常时规则相同。
+    """
+    pin = getattr(a, "set_hatchcolor", None)
+    if pin is None or getattr(a, "_original_hatchcolor", 0) is not None:
+        fn()
+        return
+    base = _hatch_base(a)
+    if base is None:
+        fn()
+        return
+    pin(_fresh_copy(base))  # 钉进去的是一个独有的对象：身份比较才分得出「仍是我们钉的」
+    # 比的是钉完后**实际存进去**的那个对象：子类的 `set_hatchcolor` 可能先复制 / 规范化再存
+    # （Codex #950 r4246402299），那时存进去的与传进去的相等但不是同一个
+    token = getattr(a, "_original_hatchcolor", 0)  # noqa: SLF001
+    try:
+        fn()
+    finally:
+        if getattr(a, "_original_hatchcolor", 0) is token:  # noqa: SLF001
+            # 仍是我们钉的：还原模式本身，不重解析
+            a._original_hatchcolor = None  # noqa: SLF001
+            setattr(a, _HATCH_BASE, (base, _hatch_resolved(a)))
+        # 否则是用户子类的 set_alpha / set_fill 自己调了 `set_hatchcolor`，那个模式是它有意装的，
+        # 原样留下（setter 抛异常时同样适用；Codex #950 r4246080546）
+
+
+def _set_alpha_pinned(a, v) -> None:
+    """所有 Patch / Collection 的 alpha 编辑唯一入口（#874 / #956）：新增 alpha handler 若作用于
+    可能带花纹的 artist，必须走这里，不得直接 `set_alpha`（`tests/test_hatch_alpha_consumers.py` 扫源码）。"""
+    _with_hatch_pinned(a, lambda: a.set_alpha(None if v is None else float(v)))
+
+
+# 图例族模块是叶子、不能 import 本模块：把钉住入口交给它（#956）
+legendmodel.install_alpha_setter(_set_alpha_pinned)
+
+_CAP_ALPHA = (lambda a: a.get_alpha(), _set_alpha_pinned)
+
+#: ≤3.10 的 `Patch.set_fill`：无边色时 `set_fill(False)` 把 `_hatch_color` 改成 `patch.edgecolor`，
+#: `set_fill(True)` 因边色回到 'none' 不再写它——花纹色停在改过的值，撤销回不去（#874）。
+#: 创建时的花纹色记在 artist 上（首次触碰前采；边色 getter 也会采，见 `_get_patch_edgecolor`）。
+_ORIG_HATCH = "_mm_orig_hatch_color"
+
+
+def _remember_hatch_color(p) -> None:
+    if hasattr(p, "set_hatchcolor") or not hasattr(p, "_hatch_color"):
+        return
+    if not hasattr(p, _ORIG_HATCH):
+        setattr(p, _ORIG_HATCH, p._hatch_color)  # noqa: SLF001
+
+
+def _set_patch_fill(p, v) -> None:
+    _remember_hatch_color(p)
+    _with_hatch_pinned(p, lambda: p.set_fill(bool(v)))
+    if (
+        bool(v)
+        and not hasattr(p, "set_hatchcolor")
+        and getattr(p, "_original_edgecolor", 0) is None
+        and hasattr(p, _ORIG_HATCH)
+    ):
+        p._hatch_color = getattr(p, _ORIG_HATCH)  # noqa: SLF001
+
+
+class _HatchUnset:
+    """`hatchcolor` 的脚本原样 = 「脚本没设」（`_original_hatchcolor is None`，跟随 rc / 边框），不是某个值（#874）。
+
+    与 `_PatchEdge` 同一个坑：按值写回创建时解析出的 RGBA 会把模式换成「显式」，之后 native 屏障里
+    用户的 Python 改 rc 再 `set_alpha` 就不再跟随（Codex #950 r4245786615）。所以 getter 在「未设」
+    模式下回这个哨兵，带着创建时的解析值 `base`（还原时重算当前 alpha 用）；它只活在 `originals` 里，不过 JSON。
+    """
+
+    __slots__ = ("base",)
+
+    def __init__(self, base) -> None:
+        self.base = base
+
+    def __repr__(self) -> str:
+        return f"<hatchcolor unset base={self.base!r}>"
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, _HatchUnset) and _same_value(self.base, other.base)
+
+    __hash__ = None
+
+
+def _get_hatchcolor(p):
+    """显式模式回 `_original_hatchcolor` 的副本（RGBA / 颜色名 / `'edge'`，setter 吃得回去）；
+    「未设」模式回 `_HatchUnset`。没有 `set_hatchcolor` 的版本（≤3.10）不发这条 prop，这里回 None。"""
+    if not hasattr(p, "set_hatchcolor"):
+        return None
+    mode = getattr(p, "_original_hatchcolor", None)
+    return _HatchUnset(_fresh_copy(_hatch_base(p))) if mode is None else _fresh_copy(mode)
+
+
+def _restore_hatch_unset(p, base) -> None:
+    """显式模式 → 回到「未设」：花纹色按创建时的 `base` 与**当前** alpha 重新合成，再把模式还原成 None。"""
+    if getattr(p, "_original_hatchcolor", 0) is None:
+        return
+    if base is not None:
+        # `set_hatchcolor` 自己按**当前** alpha 合成（`to_rgba(color, self._alpha)`），不用再 `set_alpha` 一遍
+        # （试过加：变异后全部用例照绿，是等价变异）
+        p.set_hatchcolor(_fresh_copy(base))
+    p._original_hatchcolor = None  # noqa: SLF001
+    if base is not None:
+        setattr(p, _HATCH_BASE, (base, _hatch_resolved(p)))
+
+
+def _set_hatchcolor(p, v) -> None:
+    """吃 `'#rrggbb'` / `'edge'`（改的），或 getter 回的 RGBA / `_HatchUnset`（还原时喂回来的）。
+
+    设显式值**不需要**钉住（`set_hatchcolor(颜色)` 不读 rc）：与 alpha / fill 的应用顺序无关靠的是——先 alpha 后
+    hatchcolor 时 alpha 已按钉住的规则收尾（模式回到 None），再显式设；先 hatchcolor 后 alpha 时
+    `_original_hatchcolor` 已是显式，`_with_hatch_pinned` 见到显式模式原样放行，花纹色以显式色配当前 alpha。
+    （试过把它也包进 `_with_hatch_pinned`：变异后全部用例照绿，是等价变异，故不留死分支。）
+    """
+    if not hasattr(p, "set_hatchcolor") or v is None:
+        return
+    if isinstance(v, _HatchUnset):
+        _restore_hatch_unset(p, v.base)
+        return
+    p.set_hatchcolor(_fresh_copy(v))
+
+
+_CAP_HATCHCOLOR = (_get_hatchcolor, _set_hatchcolor)
+
 _CAP_VISIBLE = (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v)))
 _CAP_ZORDER = (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v)))
 _CAP_LABEL = (lambda a: str(a.get_label()), lambda a, v: a.set_label(str(v)))
@@ -3249,7 +3426,8 @@ _PATCH_CAPS: dict[str, tuple] = {
     "linestyle": (lambda a: a.get_linestyle(), _set_linestyle),
     "hatch": _CAP_HATCH,
     "hatch_linewidth": (_get_hatch_linewidth, _set_hatch_linewidth),
-    "fill": (lambda a: bool(a.get_fill()), lambda a, v: a.set_fill(bool(v))),
+    "hatchcolor": _CAP_HATCHCOLOR,
+    "fill": (lambda a: bool(a.get_fill()), _set_patch_fill),
     "alpha": _CAP_ALPHA,
     "visible": _CAP_VISIBLE,
     "zorder": _CAP_ZORDER,
@@ -3688,10 +3866,7 @@ HANDLERS: dict[tuple[str, str], tuple] = {
         lambda a: a.get_mutation_scale(),
         lambda a, v: a.set_mutation_scale(float(v)),
     ),
-    ("arrowpatch", "alpha"): (
-        lambda a: a.get_alpha(),
-        lambda a, v: a.set_alpha(None if v is None else float(v)),
-    ),
+    ("arrowpatch", "alpha"): (lambda a: a.get_alpha(), _set_alpha_pinned),
     ("arrowpatch", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     ("arrowpatch", "zorder"): (
         lambda a: float(a.get_zorder()),
@@ -3882,10 +4057,8 @@ HANDLERS: dict[tuple[str, str], tuple] = {
     ("linecoll", "color"): (lambda a: a.get_color().copy(), lambda a, v: a.set_color(v)),
     ("linecoll", "linewidth"): (lambda a: a.get_linewidths().copy(), _set_collection_lw),
     ("linecoll", "linestyle"): (_get_linecoll_ls, _set_linecoll_ls),
-    ("linecoll", "alpha"): (
-        lambda a: a.get_alpha(),
-        lambda a, v: a.set_alpha(None if v is None else float(v)),
-    ),
+    # LineCollection 是 Collection：`set_alpha` 同样重解析花纹色（#956）
+    ("linecoll", "alpha"): (lambda a: a.get_alpha(), _set_alpha_pinned),
     ("linecoll", "zorder"): (lambda a: float(a.get_zorder()), lambda a, v: a.set_zorder(float(v))),
     ("linecoll", "visible"): (lambda a: a.get_visible(), lambda a, v: a.set_visible(bool(v))),
     # ---- legend: 预设位置 / 外侧锚点 / 标题 / 边框样式（模型在 legendmodel）----
@@ -3905,7 +4078,8 @@ for _prop, _g1, _s1 in [
     ("linewidth", lambda r: float(r.get_linewidth()), lambda r, v: r.set_linewidth(float(v))),
     ("hatch", _CAP_HATCH[0], _CAP_HATCH[1]),
     ("hatch_linewidth", _get_hatch_linewidth, _set_hatch_linewidth),
-    ("alpha", lambda r: r.get_alpha(), lambda r, v: r.set_alpha(None if v is None else float(v))),
+    ("hatchcolor", _get_hatchcolor, _set_hatchcolor),
+    ("alpha", _CAP_ALPHA[0], _CAP_ALPHA[1]),  # 柱是 Patch：同样要在重解析前钉住花纹色
     ("visible", lambda r: r.get_visible(), lambda r, v: r.set_visible(bool(v))),
     ("zorder", lambda r: float(r.get_zorder()), lambda r, v: r.set_zorder(float(v))),
     ("bar_width", _bar_width_get, _bar_width_set),
@@ -4101,10 +4275,8 @@ _BBOX_PROPS = {
     "bbox_facecolor": (lambda p: p.get_facecolor(), lambda p, v: p.set_facecolor(v)),
     "bbox_edgecolor": (lambda p: p.get_edgecolor(), lambda p, v: p.set_edgecolor(v)),
     "bbox_linewidth": (lambda p: float(p.get_linewidth()), lambda p, v: p.set_linewidth(float(v))),
-    "bbox_alpha": (
-        lambda p: p.get_alpha(),
-        lambda p, v: p.set_alpha(None if v is None else float(v)),
-    ),
+    # 背景框是 FancyBboxPatch：3.11 的 `Patch.set_alpha` 会按此刻的 rc 重解析花纹色（#956）
+    "bbox_alpha": (lambda p: p.get_alpha(), _set_alpha_pinned),
     "bbox_pad": (lambda p: _boxstyle_info(p)[0], lambda p, v: _boxstyle_set(p, pad=v)),
     "bbox_rounded": (lambda p: _boxstyle_info(p)[1], lambda p, v: _boxstyle_set(p, rounded=v)),
 }
@@ -4382,10 +4554,12 @@ for _bprop in (
     "linewidth",
     "hatch",
     "hatch_linewidth",
+    "hatchcolor",
     "alpha",
     "visible",
 ):
     ALIAS_GROUPS[("bar_series", _bprop)] = _alias_by_artists(lambda g: list(g.artists), _bprop)
+    ALIAS_GROUPS[("bar_series", _bprop)]._member_aligned = True  # 见 apply() 里代采原样那段
 # stem 系列 → 被它消费掉的成员。这里的「窄端」不是界面上的另一个条目，而是
 # 那些成员的**旧 gid 别名**（`manifest._alias_consumed_member`）：容器化之前
 # markerline 是一条普通曲线（`axes_i.lines_k`）、stemlines 是一条线组
@@ -4878,6 +5052,23 @@ def apply(state: FigState, patches: list[dict]) -> list[str]:
                     if _seeded is _NOTHING:
                         _capture_original_value(key)
                         state.originals[key] = getter(artist)
+                        # 柱系列：getter 读的是**此刻**每根柱的值，单柱若已先被改过（originals 里有它的脚本
+                        # 原样），系列代采的那一份必须用单柱的原样，否则全撤时系列的还原把单柱的编辑写回
+                        # （#968，Codex #972 r4250928441）。成员序与 getter 的列表序一致（同取 `grp.artists`）
+                        if getattr(
+                            ALIAS_GROUPS.get((_cls_key(artist), key[1])), "_member_aligned", False
+                        ) and isinstance(state.originals[key], list):
+                            _mem = _alias_members(key, artist)
+                            if len(_mem) == len(state.originals[key]):
+                                state.originals[key] = [
+                                    state.originals.get(m, cur)
+                                    for m, cur in zip(_mem, state.originals[key])
+                                ]
+                                # `value_original` 同理：系列字段的读数取自第一根柱（`_bar_series_fields` 的
+                                # `rects[0]`），它若已被单柱先改过，快照里读到的是编辑后的值，要改借单柱那份
+                                # （Codex #972 r4251097939）
+                                if _mem and _mem[0] in state.original_values:
+                                    state.original_values[key] = state.original_values[_mem[0]]
                     else:
                         # 借来的原样（对等广播端 / 组员采的，同名 prop、指着同一个值）：`value_original`
                         # 也借它那一份——此刻自己的实况已经被对方改过，读不得。不借的话热会话（先改了对方）

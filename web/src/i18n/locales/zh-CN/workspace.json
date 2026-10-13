@@ -896,6 +896,10 @@
       "depsRuntime": "运行时缺 {{module}}",
       "install": "要先安装缺少的组件",
       "needsArgs": "脚本要运行参数",
+      "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
+      "argsRejected_other": "脚本不认你填的 {{count}} 个参数",
+      "inputUnanswered": "脚本中途要你回答，再运行一次就能答",
+      "inputUnansweredSecret": "脚本要口令，再运行一次时输入（口令不会被记住）",
       "missingData": "找不到要读的数据",
       "stale": "设置变了，要重新检查",
       "expired": "上次的记录没了",
@@ -1005,6 +1009,15 @@
       "installs": "将安装",
       "installTo": "装到",
       "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
+      "prompt": "脚本的提问",
+      "parseKind": "参数问题",
+      "parseKinds": {
+        "missing_required": "缺少必填参数",
+        "invalid_value": "有参数的值不合法",
+        "unknown": "脚本的参数解析器不接受这些参数"
+      },
+      "errorFull": "完整错误信息",
+      "errorTruncated": "太长，只保留了最后一部分。",
       "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。"
     },
     "fact": {
@@ -1099,5 +1112,40 @@
     "rulers": "标尺",
     "grid": "网格",
     "safeArea": "安全区"
+  },
+  "restore": {
+    "autoAdopted": "已打开本机找到的排版“{{name}}”",
+    "blockedWrite": "上次的排版还没打开。",
+    "choose": "选一份打开",
+    "continueNew": "继续新建",
+    "entrySuperseded": "项目已切换，这次操作没有执行。",
+    "entryTimeout": "等了很久上次的排版仍没处理，这次操作没有执行。",
+    "indexDegraded": "上次的恢复记录读不了，先开了一份空白排版。旧排版还在，可以在“打开排版”里找。",
+    "meta": {
+      "pill": "下次自动恢复信息没更新",
+      "retry": "再存一次",
+      "title": "排版已经存好，但“下次自动恢复”要用的记录没更新成功。"
+    },
+    "openAlt": "打开“{{name}}”",
+    "openLocal": "打开本机副本“{{name}}”（可能不是最新）",
+    "pill": {
+      "choose": "找到了几份本机排版",
+      "indexDegraded": "恢复记录读不了",
+      "invalid": "上次的排版读不出来",
+      "missing": "上次的排版找不到了",
+      "prepareFailed": "示例排版没能打开",
+      "tooNew": "上次的排版来自更新版本",
+      "unavailable": "上次的排版暂时没打开"
+    },
+    "retry": "重试",
+    "title": {
+      "choose": "本机找到了几份排版，选一份打开。",
+      "indexDegraded": "上次的恢复记录读不了，旧排版还在。",
+      "invalid": "上次的排版“{{name}}”读不出来。",
+      "missing": "上次的排版“{{name}}”找不到了。",
+      "prepareFailed": "示例排版没能打开。",
+      "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
+      "unavailable": "上次的排版暂时没打开。"
+    }
   }
 }

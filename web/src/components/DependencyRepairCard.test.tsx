@@ -38,8 +38,9 @@ import {
   type DependencyRepairOffer,
   type DependencyRepairPlan,
 } from '@/lib/api'
-import { DependencyRepairCard } from '@/components/DependencyRepairCard'
+import { DependencyRepairCard, ManagedEnvironmentRow, repairCodeMessage } from '@/components/DependencyRepairCard'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { useEnvStore } from '@/store/envStore'
 import { i18n, t } from '@/i18n'
 import { __resetDepRepairParkingForTests, useDepRepairStore } from '@/store/depRepairStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -942,7 +943,7 @@ describe('这台机器上已有的解释器（ADR 0044）', () => {
 
   it('未经验证的 matplotlib 版本要如实标注', async () => {
     await render({ ...OFFER, targets: [{ ...SYSTEM, support: 'unverified_but_compatible' }] })
-    expect(text()).toContain(en('repairSystemUnverified'))
+    expect(text()).toContain(en('repairSystemUnverified', { product: PRODUCT_NAME }))
   })
 })
 
@@ -1011,13 +1012,13 @@ describe('渲染解释器被全局固定（#465）', () => {
     })
     expect(byName(en('repairPinnedClear'))).toBeUndefined()
     // 旧名供的值：只让用户清新名的话固定还在，所以这里必须是 MM_WORKER_PYTHON
-    expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'MM_WORKER_PYTHON' }))
+    expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'MM_WORKER_PYTHON', product: PRODUCT_NAME }))
     expect(text()).not.toContain('TAVOTTO_WORKER_PYTHON')
   })
 
   it('老服务端没给 variable 时退到新名', async () => {
     await render({ ...PINNED, pinned: { python: '/opt/venv/bin/python', source: 'env_override' } })
-    expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'TAVOTTO_WORKER_PYTHON' }))
+    expect(text()).toContain(en('repairPinnedEnvHint', { variable: 'TAVOTTO_WORKER_PYTHON', product: PRODUCT_NAME }))
   })
 
   it('offer 之后才钉上的：plan 的 400 带回 pinned，卡片切到「恢复自动检测」而不是留着旧目标', async () => {
@@ -1599,5 +1600,31 @@ describe('英文界面', () => {
       } as never)
     })
     expect(text()).not.toMatch(/[一-鿿]/)
+  })
+})
+
+describe('engine 文案的品牌名走插值', () => {
+  it('repairCodeMessage（修复卡与包管理页共用）把品牌常量传进 repairError.*', () => {
+    for (const code of ['pip_unavailable', 'private_python_not_offered', 'managed_env_broken', 'private_python_write_failed']) {
+      const msg = repairCodeMessage(code)!
+      expect(msg, code).toBe(en(`repairError.${code}`, { product: PRODUCT_NAME }))
+      expect(msg, code).toContain(PRODUCT_NAME)
+      expect(msg, code).not.toContain('{{')
+    }
+  })
+
+  it('受管环境行的「重建」按钮带品牌常量', async () => {
+    useEnvStore.setState({
+      env: { ok: true, project: { open: true, managed: { exists: true, installed: [], python_version: '3.12' } } } as never,
+    })
+    await act(async () => {
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      root.render(<ManagedEnvironmentRow />)
+    })
+    expect(text()).toContain(`重建 ${PRODUCT_NAME} 环境`)
+    expect(byName(en('managedEnvRebuild', { product: PRODUCT_NAME }))).toBeTruthy()
+    expect(text()).not.toContain('{{')
   })
 })

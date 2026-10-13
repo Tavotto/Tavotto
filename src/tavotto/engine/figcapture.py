@@ -143,10 +143,12 @@ engine 目录平铺 import 它，Flask 父进程也 import 得动。
 from __future__ import annotations
 
 import builtins
+import contextlib
 import dataclasses
 import hashlib
 import inspect
 import io
+import itertools
 import json
 import math
 import ntpath
@@ -154,7 +156,11 @@ import os
 import pathlib
 import posixpath
 import re
+import shutil
+import stat
 import sys
+import threading
+import time
 import weakref
 
 if __package__:
@@ -193,6 +199,12 @@ __all__ = [
     "PROFILE_NATIVE",
     "ARTIFACT_EXTS",
     "DESCRIPTOR_VERSION",
+    "PREVIEW_LEDGER",
+    "publish_preview",
+    "usable_preview_generation",
+    "open_preview_pair",
+    "PreviewLedgerUnreadable",
+    "published_preview_stems",
     "CapturedFigureDescriptor",
     "build_descriptor",
     "descriptor_from_payload",
@@ -291,6 +303,475 @@ ARTIFACT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff
 #: fingerprint 构成……）；它参与 fingerprint，所以升版 = 所有旧 fingerprint
 #: 自然失配 = 「按旧语义捕的图可能已过时」这句 stale hint 如实成立。
 DESCRIPTOR_VERSION = 1
+
+#: 预览发布账本（P01b，EX12）：会话产物目录里的这份文件逐 stem 记着
+#: 「**本次运行**已经完整发布过的预览」。`<stem>.svg` 文件存在**不是**完成事实——
+#: 半写的文件、上一次运行残留的文件都满足「存在」。CLI 的「捕获了几张图」读它，
+#: 不再数 `.svg` 后缀。写入方是 `figsession.render`（发布成功之后才记），读取方是
+#: `runcli`；两边都 import 这一个模块，不各写一份格式。
+#:
+#: **文件名不能撞用户 stem**：stem 来自 `savefig("published.png")` 这类脚本自己起的名字
+#: （可以以点开头），引擎写进同一目录的名字只有 `<stem>.svg` / `<stem>.json` /
+#: `.<stem>.svg.part` / `.<stem>.json.part` / `.<stem>.<ext>.prev.part`。账本取一个
+#: **不带任何扩展名**的点名——它不以 `.svg` / `.json` / `.part` 结尾，上面任何一个
+#: 形态都不可能等于它（`published.json` 就曾被 stem=`published` 的 manifest 撞上）。
+#: 它也不是图：任何按 `.svg` / `.json` 后缀枚举目录的人都看不见它。
+PREVIEW_LEDGER = ".preview-ledger"
+
+
+class PreviewLedgerUnreadable(OSError):
+    """账本**存在但读不了 / 格式坏**——与「账本不存在」（首次发布）是两件事（#969）。
+
+    发布路径遇到它必须失败（上一版预览原封不动），不能当成空账本重建：重建会把已发布的
+    其它 stem 的完成记录静默覆盖掉。
+    """
+
+
+def _load_preview_ledger(out_dir) -> dict | None:
+    """读账本。**不存在** → None（首次发布）；读不出来 / 格式坏 → `PreviewLedgerUnreadable`。"""
+    try:
+        with open(os.path.join(os.fspath(out_dir), PREVIEW_LEDGER), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise PreviewLedgerUnreadable(f"preview ledger cannot be read: {exc}") from exc
+    stems = data.get("stems") if isinstance(data, dict) else None
+    seq = data.get("seq") if isinstance(data, dict) else None
+    if not isinstance(stems, dict) or type(seq) is not int:
+        raise PreviewLedgerUnreadable("preview ledger is malformed")
+    return {"seq": seq, "stems": stems}
+
+
+def _read_preview_ledger(out_dir) -> dict:
+    """读方用：读不到一律当空（**读方对「无法确认」的回答就是「无预览」**，不会放出东西）。
+
+    发布路径不许用它——见 `PreviewLedgerUnreadable`。
+    """
+    try:
+        return _load_preview_ledger(out_dir) or {"seq": 0, "stems": {}}
+    except PreviewLedgerUnreadable:
+        return {"seq": 0, "stems": {}}
+
+
+#: 代目录：每次发布一个**不可变**的 `.gen-<序号>/`，里头放这一版的 `<stem>.svg` 与 `<stem>.json`。
+#: 账本里 stem 的记录就是**指针**——切换它（一次 `os.replace`）是发布的唯一提交点，所以读方
+#: 经 `usable_preview_generation` 一次解出的这一对 SVG / manifest 永远出自同一次发布（#969 原子指针）。
+#: 目录名以点开头且无扩展名，既不会被按 `.svg` / `.json` 后缀枚举的人看见，也撞不上用户 stem 的任何产物名。
+GENERATION_DIR_PREFIX = ".gen-"
+#: 被新版取代的代目录要**同时**满足「落后当前序号至少这么多」和「已经过了这么多秒」才清：刚解出旧路径、
+#: 正要打开的读方不会撞上刚删的文件。只按序号不够——拖动编辑时发布很密，读方被调度走几十毫秒就落后好几个序号；
+#: 只按时间则密集发布会堆出一串大 SVG。两者取交集：窗口是秒级，磁盘上限是 `GRACE` 个代目录起步 + 两秒内的发布量。
+GENERATION_GRACE = 4
+GENERATION_GRACE_SECONDS = 2.0
+
+
+def preview_generation_dir(out_dir, seq: int) -> str:
+    return os.path.join(os.fspath(out_dir), f"{GENERATION_DIR_PREFIX}{int(seq)}")
+
+
+def _replace_with_retry(src: str, dst: str, attempts: int = 12) -> None:
+    """`os.replace`，Windows 上目标正被读方短时打开时会被拒（`PermissionError`，共享冲突）：有界退避重试，
+    总时长不超过约 1 秒，仍失败就把最后的错误抛出去（发布失败，不无限等）。读方（`_load_preview_ledger`）
+    读完立刻关，所以冲突是瞬时的。"""
+    delay = 0.005
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if os.name != "nt" or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 1.6, 0.15)
+
+
+def _write_preview_ledger(out_dir: str, ledger: dict) -> None:
+    path = os.path.join(out_dir, PREVIEW_LEDGER)
+    tmp = path + ".part"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(ledger, fh)
+        _replace_with_retry(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def publish_preview(out_dir, stem: str, svg_part, man_part, svg_bytes: int, capabilities=()) -> int:
+    """把已写完的临时 SVG / manifest 发布成 `stem` 的新一代，返回发布序号（单调递增）。
+
+    **同代发布**：两个文件先落进这一版独有的新目录（不覆盖任何读方看得见的文件），最后一次
+    账本替换把指针切过去——要么读方看到整套新版，要么整套旧版。任何一步失败：新目录撤掉，
+    账本不动，上一版预览与它的完成记录原封不动。账本存在但读不出来时同样失败，**不**当空账本重建
+    （#969：重建会丢掉已发布的其它图）；账本不存在才是首次发布。
+    """
+    out_dir = os.fspath(out_dir)
+    committed = False
+    gen = None
+    try:
+        with _ledger_lock(out_dir):  # 与摘指针 / 审计的读-改-写串行：谁也不会把对方刚写的记录盖掉
+            ledger = _load_preview_ledger(out_dir) or {"seq": 0, "stems": {}}
+            seq = ledger["seq"] + 1
+            gen = preview_generation_dir(out_dir, seq)
+            shutil.rmtree(gen, ignore_errors=True)  # 账本丢过时留下的同序号孤儿
+            os.makedirs(gen)
+            os.replace(os.fspath(svg_part), os.path.join(gen, f"{stem}.svg"))
+            os.replace(os.fspath(man_part), os.path.join(gen, f"{stem}.json"))
+            stems = dict(ledger["stems"])
+            # 完成描述符：指针所在的这条记录就是这一代的完成事实，能力只按实际完成的工作声明；
+            # `at` 是发布时刻（作废审计在序号下限未知时靠它判新旧）
+            stems[stem] = {
+                "seq": seq,
+                "svg_bytes": int(svg_bytes),
+                "capabilities": list(capabilities),
+                "at": time.time(),
+            }
+            _write_preview_ledger(out_dir, {"seq": seq, "stems": stems})
+            committed = True
+    finally:
+        if not committed and gen is not None:
+            shutil.rmtree(gen, ignore_errors=True)
+    # 旧的失效标记必须撤掉：撤不掉时读方仍判这个 stem 无预览，此时报发布成功就是谎话（画布 404、CLI 少计一张）。
+    # 新一代已提交但对读方不可见，如实抛出让调用方走失败 / 重试（重试会再发布并再撤标记）（Codex #978）
+    try:
+        clear_preview_invalid(out_dir, stem)
+    except OSError as exc:
+        raise OSError(
+            f"preview of {stem!r} was published but the stale invalid marker could not be removed: {exc}"
+        ) from exc
+    _prune_generations(out_dir, {"seq": seq, "stems": stems})
+    return seq
+
+
+def _prune_generations(out_dir: str, ledger: dict) -> None:
+    referenced = {
+        int(rec["seq"])
+        for rec in ledger["stems"].values()
+        if isinstance(rec, dict) and type(rec.get("seq")) is int
+    }
+    try:
+        names = os.listdir(out_dir)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith(GENERATION_DIR_PREFIX):
+            continue
+        try:
+            n = int(name[len(GENERATION_DIR_PREFIX) :])
+        except ValueError:
+            continue
+        if n in referenced or n > ledger["seq"] - GENERATION_GRACE:
+            continue
+        path = os.path.join(out_dir, name)
+        try:
+            if time.time() - os.stat(path).st_mtime < GENERATION_GRACE_SECONDS:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _invalid_marker(out_dir, stem: str) -> str:
+    # 无扩展名（不以 .svg / .json / .part 结尾），与账本同理不会撞用户 stem 的任何产物名
+    return os.path.join(os.fspath(out_dir), f".{stem}.preview-invalid")
+
+
+def preview_invalid(out_dir, stem: str) -> bool:
+    """`stem` 的预览是否被标成失效（发布中途失败且还原也失败，磁盘上可能新旧错配）。"""
+    return os.path.exists(_invalid_marker(out_dir, stem))
+
+
+#: 失效标记都写不下去时的最后一道（`PREVIEW_POISONED_CODE`，规则 worker-protocol-and-lifecycle §预览失效四级）：
+#: 写预览的是 worker / native 子进程，读的是 app 进程——磁盘标记写不下去，worker 进程内的任何
+#: 内存标记读方都看不见。所以这一级由 **读方进程**自己记：app 侧收到该错误码（会话同时被判死）
+#: 就把整个 `out_dir` 记进这张表，`usable_preview_path` 对它回「无预览」，直到下一代会话 build 成功。
+PREVIEW_POISONED_CODE = "preview_poisoned"
+#: 目录键 → (作废那一刻账本的发布序号, 作废代号)。解除时要求磁盘上每个还有预览文件的 stem 都在该序号之后重新
+#: 完整发布过；代号每次作废单调递增（与账本无关），审计结束时按它 compare-and-delete（Codex #958）。
+#: 第三项是作废发生的墙钟时刻：作废那一刻账本读不出来（序号下限未知，记 None）时，审计改按登记项的发布时刻
+#: （`at`）判「作废之后才发布」——不能拿一个无穷大的下限，那会把账本恢复后新 worker 正常发布的记录全判成旧的摘掉。
+_poisoned_dirs: dict[str, tuple[int | None, int, float]] = {}
+_poison_generations = itertools.count(1)
+#: 作废 / 解除的状态转换互斥：读方审计与新的 `preview_poisoned` 可能并发（Codex #958）
+_poison_lock = threading.Lock()
+
+
+def _dir_key(out_dir) -> str:
+    return os.path.normcase(os.path.abspath(os.fspath(out_dir)))
+
+
+def poison_preview_dir(out_dir) -> None:
+    """读方进程：`out_dir` 下所有预览产物都不可信（见 `PREVIEW_POISONED_CODE`）。记下此刻的账本序号。"""
+    key = _dir_key(out_dir)
+    at = time.time()
+    try:
+        ledger = _load_preview_ledger(out_dir)
+        seq = ledger["seq"] if ledger else 0
+    except PreviewLedgerUnreadable:
+        seq = None  # 下限未知：审计时按发布时刻判（见 `_poisoned_dirs`）；当 0 会让旧一代在账本恢复后被放行
+    with _poison_lock:
+        prev = _poisoned_dirs.get(key)
+        if prev is None:
+            floor, when = seq, at
+        else:
+            floor = None if seq is None or prev[0] is None else max(seq, prev[0])
+            when = max(at, prev[2])
+        _poisoned_dirs[key] = (floor, next(_poison_generations), when)
+
+
+def clear_preview_poison(out_dir) -> bool:
+    """新一代会话 build 成功后**尝试**解除，返回是否已解除。
+
+    `out_dir` 跨会话代复用、build 不会清掉旧文件：新一代可能一张图都没出、或出的是另一组 stem，被作废时
+    藏起来的错配文件仍在磁盘上（Codex #958）。所以只有当磁盘上**每一个**还有 `<stem>.svg` / `<stem>.json`
+    的 stem 都在作废之后重新完整发布过（账本序号大于作废时的序号、字节数对得上），才解除；否则继续「无预览」。
+    """
+    key = _dir_key(out_dir)
+    with _poison_lock:
+        if key not in _poisoned_dirs:
+            return True
+        floor, generation, poisoned_at = _poisoned_dirs[key]
+    # 读方能经指针看到的预览只有账本里登记的 stem；指针之外的文件（代目录里被取代的旧版、`.part` 临时件）
+    # 本来就读不到。作废期间没被重新完整发布过的登记项要摘掉指针——新一代不再出这张图时它永远不会被覆盖，
+    # 留着会让整个目录永远「无预览」（Codex #958）。摘不掉就继续作废，宁可无预览也不放出错配。
+    try:
+        ledger = (_load_preview_ledger(out_dir) or {"stems": {}})["stems"]
+    except PreviewLedgerUnreadable:
+        # 账本读不出来 = 审计不了：继续作废。当空账本处理会解除作废，账本恢复可读后被标为不可信的旧一代又被放出来（Codex #978）
+        return False
+    fresh = set(published_preview_stems(out_dir))
+    stale = False
+    for stem, rec in list(ledger.items()):
+        if stem in fresh and isinstance(rec, dict):
+            after = (
+                int(rec.get("seq") or 0) > floor
+                if floor is not None
+                else float(rec.get("at") or 0.0) > poisoned_at
+            )
+            if after:
+                continue
+        # compare-and-delete：只摘审计时看到的那一条；审计期间 worker 为同一 stem 发布了新记录就别动它
+        seen = rec.get("seq") if isinstance(rec, dict) else None
+        if not _drop_ledger_stem(out_dir, stem, expected_seq=seen):
+            stale = True
+    if stale:
+        return False
+    with _poison_lock:
+        # compare-and-delete：审计期间若又来了一次作废（代号变了——哪怕账本序号没动），这次审计没覆盖它，不得一并抹掉
+        if (_poisoned_dirs.get(key) or (None, None))[1] != generation:
+            return False
+        del _poisoned_dirs[key]
+    return True
+
+
+def preview_dir_poisoned(out_dir) -> bool:
+    """`out_dir` 是否仍在作废中。作废期间每次问都**重试审计**：build 成功那一刻旧产物可能正被锁着删不掉，
+    之后锁放开、worker 却不会再 build——一次性的解除会让目录在这个 worker 的整个生命周期都「无预览」（Codex #958）。"""
+    if _dir_key(out_dir) not in _poisoned_dirs:
+        return False
+    return not clear_preview_poison(out_dir)
+
+
+def usable_preview_generation(out_dir, stem: str) -> tuple[int, str, str] | None:
+    """`stem` 当前发布的这一代：`(序号, svg 路径, manifest 路径)`；没有可用的预览返回 None。
+
+    要**一对**产物的读方用它：SVG 与 manifest 由账本里的同一个指针一次解出，出自同一次发布，
+    中间不会插进另一次发布（#969 原子指针）。失效 / 作废 / 没发布过 / 账本读不出来 → None。
+    """
+    out_dir = os.fspath(out_dir)
+    if preview_invalid(out_dir, stem) or preview_dir_poisoned(out_dir):
+        return None
+    rec = _read_preview_ledger(out_dir)["stems"].get(stem)
+    if not isinstance(rec, dict) or type(rec.get("seq")) is not int:
+        return None
+    gen = preview_generation_dir(out_dir, rec["seq"])
+    return rec["seq"], os.path.join(gen, f"{stem}.svg"), os.path.join(gen, f"{stem}.json")
+
+
+def open_preview_pair(out_dir, stem: str, attempts: int = 3):
+    """解出当前一代并**立刻**以二进制打开 SVG 与 manifest，返回 `(序号, svg 文件对象, manifest 文件对象)`；无预览返回 None。
+
+    要读一对产物又会读得久的消费者用它：打开的句柄把这一代的内容钉住（POSIX 上删目录不影响已打开的句柄；
+    Windows 上删不掉的目录留到下次清理），读多久都是同一代。只持有**路径**的读方没有这个保证——
+    清理是有界的（序号 + 秒数双宽限），拖过宽限再去开就会 FileNotFoundError；这里在
+    解出 → 打开之间撞上清理时重新解出（新指针指向的一代必在），所以拿到的永远是完整的一对（Codex #978）。
+    """
+    for _ in range(max(1, attempts)):
+        gen = usable_preview_generation(out_dir, stem)
+        if gen is None:
+            return None
+        seq, svg, man = gen
+        opened = []
+        try:
+            for path in (svg, man):
+                opened.append(open(path, "rb"))
+        except FileNotFoundError:
+            for fh in opened:
+                fh.close()
+            continue
+        return seq, opened[0], opened[1]
+    return None
+
+
+def usable_preview_path(out_dir, stem: str, suffix: str) -> str:
+    """读 `<stem><suffix>`（`.svg` / `.json`）的**统一入口**：没有可用预览的 stem 返回一个必不存在的路径。
+
+    所有按路径读预览产物的消费者（`/api/engine/svg`、manifest 读取、runtimeasset 物化……）
+    经它拿路径，于是「新像素配旧几何」的错配代只会被读成「无预览」。路径指向账本里那一代的
+    不可变文件；要 SVG 与 manifest 成对一致，用 `usable_preview_generation` 一次解出两个。
+    """
+    out_dir = os.fspath(out_dir)
+    gen = usable_preview_generation(out_dir, stem)
+    if gen is None:
+        return os.path.join(out_dir, f".{stem}{suffix}.invalid-absent")
+    return (
+        gen[1]
+        if suffix == ".svg"
+        else gen[2]
+        if suffix == ".json"
+        else os.path.join(os.path.dirname(gen[1]), f"{stem}{suffix}")
+    )
+
+
+def mark_preview_invalid(out_dir, stem: str) -> bool:
+    """尽力把 `stem` 从账本里摘掉并落失效标记；返回**标记是否写成**（账本那步失败不抛）。
+
+    标记写不下去（缓存卷满 / 权限变了）不是可以吞掉的小事：它可能是读方唯一的防线，
+    调用方必须据返回值升级成 `PreviewPoisoned`（见 `PREVIEW_POISONED_CODE`）。
+    """
+    out_dir = os.fspath(out_dir)
+    marked = True
+    try:
+        with open(_invalid_marker(out_dir, stem), "w", encoding="utf-8") as fh:
+            fh.write("invalid\n")
+    except OSError:
+        marked = False
+    # 摘指针是尽力而为（标记才是读方的防线），但读-改-写仍走账本锁与 compare 语义：不盖掉别人刚发布的记录
+    _drop_ledger_stem(out_dir, stem)
+    return marked
+
+
+def _drop_ledger_stem(out_dir, stem: str, expected_seq=None, *, check: bool = False) -> bool:
+    """把 `stem` 的指针从账本摘掉（读方从此看不到它）；返回是否成功。
+
+    `check=True`（或给了 `expected_seq`）时是 compare-and-delete：账本里该 stem 当前记录的 `seq` 不等于
+    `expected_seq` 就不删（别人已经为它发布了新一代），返回 True。读-改-写在账本锁里完成，与发布串行。
+    """
+    out_dir = os.fspath(out_dir)
+    try:
+        with _ledger_lock(out_dir):
+            ledger = _load_preview_ledger(out_dir)
+            if ledger is None or stem not in ledger["stems"]:
+                return True
+            if check or expected_seq is not None:
+                rec = ledger["stems"][stem]
+                if (rec.get("seq") if isinstance(rec, dict) else None) != expected_seq:
+                    return True
+            del ledger["stems"][stem]
+            _write_preview_ledger(out_dir, ledger)
+    except OSError:
+        return False
+    return True
+
+
+#: 账本读-改-写的互斥（跨进程：发布方在 worker，审计 / 摘指针在 app）用**操作系统的 advisory lock**，
+#: 锁常驻在产物目录里的 `.preview-ledger.lock`（文件本身从不删除，里头没有内容）：持锁进程退出 / 被杀，
+#: 内核自动释放，所以没有 pid、陈旧阈值、遗留回收这类靠文件存在加启发式判活的东西（它们连着出过三轮竞态）。
+#: 同一进程的多个线程先过这把进程内的锁再去拿文件锁——`flock` 对同一进程内不同 fd 的语义因平台而异，不依赖它。
+_LEDGER_THREAD_LOCK = threading.Lock()
+
+
+def _try_lock_file(fd: int) -> bool:
+    if os.name == "nt":
+        import msvcrt  # noqa: PLC0415
+
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # 锁第 0 字节（可越过 EOF）
+        except OSError:
+            return False
+        return True
+    import fcntl  # noqa: PLC0415
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def _unlock_file(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt  # noqa: PLC0415
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl  # noqa: PLC0415
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass  # 关 fd 时内核也会放
+
+
+@contextlib.contextmanager
+def _ledger_lock(out_dir, timeout: float = 5.0):
+    """账本读-改-写互斥；等锁用非阻塞加轮询，最多 `timeout` 秒，超时抛 `OSError`（发布 / 摘指针按失败处理，不无锁硬写）。"""
+    path = os.path.join(os.fspath(out_dir), PREVIEW_LEDGER + ".lock")
+    deadline = time.monotonic() + timeout
+    if not _LEDGER_THREAD_LOCK.acquire(timeout=timeout):
+        raise OSError(f"preview ledger is locked: {path}")
+    fd = None
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_RDWR)
+        while not _try_lock_file(fd):
+            if time.monotonic() >= deadline:
+                raise OSError(f"preview ledger is locked: {path}")
+            time.sleep(0.01)
+        try:
+            yield
+        finally:
+            _unlock_file(fd)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        _LEDGER_THREAD_LOCK.release()
+
+
+def clear_preview_invalid(out_dir, stem: str) -> None:
+    try:
+        os.remove(_invalid_marker(out_dir, stem))
+    except FileNotFoundError:
+        pass
+
+
+def published_preview_stems(out_dir) -> list:
+    """本次运行**完整发布过**预览的 stem。
+
+    账本说发布了、指针指向的那一代 `<stem>.svg` 也还在且字节数对得上才算——被截断或被
+    换掉的文件不计。没有账本（引擎一张都没发布成功）就是空表，不退回去数文件。
+    """
+    out_dir = os.fspath(out_dir)
+    done = []
+    for stem, rec in _read_preview_ledger(out_dir)["stems"].items():
+        if preview_invalid(out_dir, stem):
+            continue
+        if not isinstance(rec, dict) or type(rec.get("seq")) is not int:
+            continue
+        try:
+            size = os.stat(
+                os.path.join(preview_generation_dir(out_dir, rec["seq"]), f"{stem}.svg")
+            ).st_size
+        except OSError:
+            continue
+        if rec.get("svg_bytes") == size:
+            done.append(stem)
+    return done
 
 
 def size_mm_of(fig) -> tuple[float, float]:
@@ -825,6 +1306,34 @@ def savefig_stem(fname) -> str:
     return os.path.splitext(os.path.basename(os.fsdecode(fname)))[0]
 
 
+def savefig_effective_names(fname, kwargs: dict) -> list:
+    """`savefig(fname, **kwargs)` 真正会写（被拦截时就是没写）的文件名，供 `BlockedFileOps` 记账（P01a）。
+
+    `print_figure` 的规则：显式 `format=` 时文件名**原样**（不补后缀）；否则 `str` / `PathLike`
+    取文件名后缀作格式，**没有后缀**就补默认格式（`stage` → `stage.png`，`stage.` → `stage.png`）。
+    默认格式由 canvas 决定、用户可重载（`savefig_call` 因此不把它当已确定），这里不调用任何用户方法：
+    显式 `format=` / 有后缀 / `bytes` 只记字面名；否则字面名**不会**被写出，只记补 `rcParams["savefig.format"]` 与 `png` 两个候选后缀名——多记一个候选只会让
+    「读了那个名字」多算一次回读，不会漏。`bytes` 目的地 matplotlib 不补后缀，只记字面名。
+    """
+    if not savefig_targets_path(fname):
+        return []
+    name = os.fsdecode(fname)
+    names = [fname]
+    if kwargs.get("format") is not None or isinstance(fname, bytes):
+        return names
+    if os.path.splitext(name)[1][1:]:
+        return names
+    mpl = sys.modules.get("matplotlib")
+    rc = getattr(mpl, "rcParams", None) or {}
+    fmts = (rc.get("savefig.format"), "png")
+    # 没有后缀也没有显式 format：matplotlib 写的是补了后缀的名字，字面名不会被写出——不记，
+    # 否则同名的无关旧文件被读时会被误判成回读被拦下的 savefig（#952 Codex P2）
+    return [
+        name.rstrip(".") + "." + fmt
+        for fmt in dict.fromkeys(f for f in fmts if isinstance(f, str) and f)
+    ]
+
+
 def savefig_call(fname, kwargs: dict) -> dict:
     """一次 `fig.savefig(fname, **kwargs)` 里决定产物长相的参数 → JSON 对象。
 
@@ -1036,6 +1545,23 @@ def savefig_metadata_reader(mfigure):
     return read
 
 
+#: 只读原件的内容摘要上限：更大的文件不算摘要，也就核验不了，不提供只读降级。
+ORIGINAL_DIGEST_LIMIT_BYTES = 64 * 1024 * 1024
+
+
+def _content_digest(path, size: int):
+    if size > ORIGINAL_DIGEST_LIMIT_BYTES:
+        return None
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
 class SavefigObservations:
     """按保存发生次序记事实，不参与 stem 捕获、图幅选择或编辑。
 
@@ -1055,6 +1581,9 @@ class SavefigObservations:
         self._figures: list = []
         self._observed_count = 0
         self._complete = True
+        #: 记录下标 -> 保存完成那一刻的事实（时刻、字节数、mtime）。**不进 `report()`**：
+        #: 观察报告的形状是既有合同，这是 P08a 给「只读原件」做核对用的内部旁证。
+        self._saved_facts: dict[int, dict] = {}
 
     def record(self, fig, fname, stem, call, *, explicit_format=False, backend=None):
         """返回待完成记录的下标。失败只标不完整，不改变原 savefig 的返回 / 异常。
@@ -1158,6 +1687,79 @@ class SavefigObservations:
     def complete(self, index, result):
         if index is not None:
             self._records[index]["result"] = result
+            if result == "saved":
+                self._saved_facts[index] = self._stat_saved(self._records[index])
+
+    def _original_path(self, record):
+        """记录的目的地换回绝对路径：只认记录当时已解出的 `scope` + 相对路径，不扫目录、不按文件名找。"""
+        dest = record.get("destination") or {}
+        root = dict(self._roots).get(dest.get("scope"))
+        rel = dest.get("path")
+        if root is None or not rel:
+            return None
+        return os.path.join(root, *rel.split("/"))
+
+    def _stat_saved(self, record):
+        facts = {"at": time.time(), "bytes": None, "mtime_ns": None, "sha256": None}
+        path = self._original_path(record)
+        if path is not None:
+            try:
+                st = os.stat(path)
+            except OSError:
+                return facts
+            if stat.S_ISREG(st.st_mode):
+                facts["bytes"], facts["mtime_ns"] = st.st_size, st.st_mtime_ns
+                facts["sha256"] = _content_digest(path, st.st_size)
+        return facts
+
+    def saved_originals(self, fig) -> list[dict]:
+        """**这次运行里这个 Figure 对象**成功 save 到磁盘的原产物（P08a 只读降级的唯一依据）。
+
+        认领靠保存当时记下的 Figure 身份（`figure_ordinal` 对应的弱引用就是这个对象）与 `saved`
+        结果，不看 basename、不扫目录、不用 mtime 找「最像的」。`intact` 是保存完成时记下的字节数 /
+        mtime 与现在磁盘上的对账：脚本之后又覆盖了它（或被别的进程改了），这条就不再是「本次保存的那份」。
+        没有活着的 Figure 引用 / 不在项目与执行目录之内（根外路径不外发）的保存一律不返回。
+        """
+        out = []
+        for index, record in enumerate(self._records):
+            facts = self._saved_facts.get(index)
+            if record.get("result") != "saved" or facts is None:
+                continue
+            ordinal = record.get("figure_ordinal")
+            if type(ordinal) is not int or not 0 < ordinal <= len(self._figures):
+                continue
+            if self._figures[ordinal - 1]() is not fig:
+                continue
+            path = self._original_path(record)
+            if path is None:
+                continue
+            try:
+                st = os.stat(path)
+                # 字节数 + mtime 挡不住 copy2 / 粗时间戳文件系统上"同长度同时间戳"的替换：再对一遍内容摘要。
+                # 保存当时没能算出摘要（超过上限 / 读失败）= 无法核验 = 不提供只读降级（Codex #978）
+                intact = (
+                    stat.S_ISREG(st.st_mode)
+                    and facts["sha256"] is not None
+                    and facts["bytes"] == st.st_size
+                    and facts["mtime_ns"] == st.st_mtime_ns
+                    and _content_digest(path, st.st_size) == facts["sha256"]
+                )
+            except OSError:
+                intact = False
+            dest = record["destination"]
+            ext = os.path.splitext(dest["path"])[1].lstrip(".").lower()
+            out.append(
+                {
+                    "scope": dest["scope"],
+                    "path": dest["path"],
+                    "format": (record.get("options") or {}).get("format") or ext or None,
+                    "occurrence": record["occurrence"],
+                    "saved_at": facts["at"],
+                    "bytes": facts["bytes"],
+                    "intact": bool(intact),
+                }
+            )
+        return out
 
     def observation(self, index):
         return None if index is None else json.loads(json.dumps(self._records[index]))
@@ -1433,6 +2035,499 @@ def _readonly_mode(mode) -> bool:
     return "r" in mode and not any(c in mode for c in "+wxa")
 
 
+class BlockedFileOps:
+    """safe worker 的守卫**确实拦下**了哪些关键文件操作，以及脚本随后有没有去看被它们影响的路径（P01a）。
+
+    守卫（删除 / 改名 / `write_text` 对真实图库、以及被拦截不落盘的 `savefig` 路径目标）是 safe 档的
+    保护，原样保留；它们靠「悄悄跳过」工作，脚本看不到异常。这本账补上缺的那半句终局事实：
+    **跳过之后脚本读到了什么**。判据一条：被拦下的操作影响了路径 P，此后脚本打开（读，含 `r+`/`a+`）
+    或 `os.stat`（`exists` / `isfile` / `Path.exists`）P，就是「这个脚本随后观察到的世界与直接用 Python
+    运行不同」——`material()` 非空，build 以 `safe_file_operation_blocked` 结束，不记成完整成功。
+
+    * **只算拦下之后的观察**：先于阻断的读、读不相干的路径、拦下了但从没回读（脚本只是顺手删个过期
+      输出），都不算——这些脚本照旧成功。
+    * **脚本自己重写（`w` / `x` 打开）会清掉那条路径的嫌疑**：此后读到的是它自己写的，与直接运行一致。
+    * **拦下上百次也不丢**：事件账有上限（`MAX_EVENTS`），超出的操作并入按 (op, kind) 的溢出路径集合
+      （去重、有上限，再超则粗化为父目录，最后记「丢失」＝此后任何观察都算命中）；回读第 201+ 个被拦路径
+      同样判失败，拦下几百次但从不回读照旧成功。
+    * **事实在带外账本里，不在异常里**：脚本 `except Exception: pass` 吞掉什么都洗不掉它。
+    * **盲区写在明处（判不出就别判）**：C 扩展直接 `fopen`、`os.open`、`os.scandir` / `listdir` / `glob`、
+      `os.access`、`os.path.samefile` 等不在包装清单里的状态查询观察不到——这些不会产生 `material()`，
+      也就**不宣称**它们干净；账本只回答「观察到了」，不回答「没观察到所以没事」。被拦截的 `savefig`
+      目标只认**读内容**（open），不认 `exists` / `getsize` 这类 stat：`savefig(p); print(os.path.exists(p))`
+      是常见的校验打印，据此判失败会把原本能出图的脚本变成失败。
+    * 记账只存**操作类别与次数**，路径只在进程内用来比对，不出进程、不进 message / 诊断。
+
+    `install()` 装的 open / `os.stat` / `os.path.exists` 系包装在没有任何阻断记录时是一次属性读取就返回；`stop()`
+    （脚本跑完）之后整本账变成惰性——引擎自己后续写预览、读字体不会被误算。
+    """
+
+    MAX_EVENTS = 200
+    #: 超过 `MAX_EVENTS` 之后的「溢出账」：每个 (op, kind) 一本，只存受影响路径的集合（去重）。
+    #: 路径数超过 `MAX_SPILL_PATHS` 就粗化成它们的父目录；父目录也超过就记「丢失」，
+    #: 此后任何脚本观察都算命中（宁可误报也不假成功；只发生在拦下上千个互不相干的目录之后）。
+    MAX_SPILL_PATHS = 2048
+
+    #: 操作类别（`kind`）的闭集：message 与载荷只出现这些，不出现路径。
+    KIND_RENAME = "rename"
+    KIND_DELETE = "delete"
+    KIND_DELETE_DIR = "delete_dir"
+    KIND_WRITE = "write"
+    KIND_SAVEFIG = "savefig"
+
+    def __init__(self) -> None:
+        self._events: list[dict] = []
+        self._spill: dict[tuple[str, str], dict] = {}
+        self._active = True
+        self._busy = False
+        self._uninstall = None
+        #: 脚本自己 `w` / `x` 重写成功的路径：目录级污点（`rmtree` 后重建）盖不到它们。后来的阻断会撤销。
+        self._rewritten: set[str] = set()
+        #: 只读相对路径回退的解析函数（worker 装回退后挂上）：脚本交出的路径 → 回退实际会去读的路径。
+        self.read_redirect = None
+
+    # ---- 记账 ----
+    @staticmethod
+    def _norm(path) -> str | None:
+        if isinstance(path, bytes):
+            try:
+                path = os.fsdecode(path)
+            except ValueError:
+                return None
+        elif isinstance(path, os.PathLike):
+            try:
+                path = os.fspath(path)
+            except TypeError:
+                return None
+            if isinstance(path, bytes):
+                path = os.fsdecode(path)
+        if not isinstance(path, str) or not path:
+            return None
+        try:
+            return os.path.normcase(os.path.realpath(path))
+        except (OSError, ValueError):
+            return None
+
+    def blocked(self, op: str, kind: str, *paths, dests=()) -> None:
+        """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。
+
+        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。"""
+        try:
+            if not self._active:
+                return
+            affected = [p for p in (self._norm(x) for x in paths) if p]
+            if not affected:
+                return
+            dest_set = {p for p in (self._norm(x) for x in dests) if p}
+            if self._rewritten:  # 新的阻断重新盖住这些路径：之前的「已重写」不再作数
+                self._rewritten = {
+                    r for r in self._rewritten if not any(self._covers(p, r) for p in affected)
+                }
+            if len(self._events) >= self.MAX_EVENTS:
+                self._spill_paths(op, kind, affected, dest_set)
+                return
+            self._events.append(
+                {"op": op, "kind": kind, "paths": affected, "dests": dest_set, "observed": False}
+            )
+        except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
+            return
+
+    def _spill_paths(
+        self, op: str, kind: str, affected: list[str], dest_set: frozenset | set = frozenset()
+    ) -> None:
+        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。"""
+        ev = self._spill.get((op, kind))
+        if ev is None:
+            ev = self._spill[(op, kind)] = {
+                "op": op,
+                "kind": kind,
+                "paths": set(),
+                "dests": set(),
+                "observed": False,
+                "lost": False,
+                "coarse": False,
+            }
+        if ev["lost"]:
+            return
+        ev["paths"].update(affected)
+        if len(ev["dests"]) + len(dest_set) <= self.MAX_SPILL_PATHS:
+            ev["dests"].update(dest_set)
+        if len(ev["paths"]) > self.MAX_SPILL_PATHS:
+            if ev["coarse"]:
+                ev["lost"], ev["paths"] = True, set()
+            else:
+                ev["coarse"] = True
+                ev["paths"] = {os.path.dirname(p) or p for p in ev["paths"]}
+                if len(ev["paths"]) > self.MAX_SPILL_PATHS:
+                    ev["lost"], ev["paths"] = True, set()
+
+    @staticmethod
+    def _spill_hit(ev: dict, real: str) -> bool:
+        if ev["lost"]:
+            return True
+        paths = ev["paths"]
+        cur = real
+        while True:
+            if cur in paths:
+                return True
+            parent = os.path.dirname(cur)
+            if not parent or parent == cur:
+                return False
+            cur = parent
+
+    @staticmethod
+    def _covers(taint: str, path: str) -> bool:
+        return path == taint or path.startswith(taint.rstrip(os.sep) + os.sep)
+
+    def observe(self, path, mode="r") -> None:
+        """脚本打开了 `path`（`mode` 是 `open` 的模式串）。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            if not isinstance(mode, str):
+                return
+            real = self._norm(path)
+            if real is None:
+                return
+            if "w" in mode or "x" in mode:
+                return  # 写模式：打开**成功**之后才清嫌疑（`opened`），这里什么都不动
+            if "a" in mode and "+" not in mode:
+                return  # 纯追加：不读
+            self._mark(real)
+            # 只读相对路径回退会把这次读改到项目里的另一条路径：那才是脚本实际读到的文件，也要比对
+            redirect = self.read_redirect
+            if redirect is not None and _readonly_mode(mode):
+                alt = self._norm(redirect(path))
+                if alt is not None and alt != real:
+                    self._mark(alt)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    @staticmethod
+    def is_write_mode(mode) -> bool:
+        return isinstance(mode, str) and ("w" in mode or "x" in mode)
+
+    def opened(self, path, mode) -> None:
+        """写模式（`w` / `x`）的底层 open **成功返回**了：脚本自己重写了这条路径，此后读到的是它写的
+        （与直接运行一致），清掉它的嫌疑。open 抛异常（如被拦删除后 `x` 撞上还在的旧文件）时不调用，记录保留。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is None:
+                return
+            # 写进一个被拦下的目录删除所覆盖、且脚本没（成功）重建过的目录：直接运行里父目录已被删，
+            # 这次 open 会 FileNotFoundError，这里却因目录还在而成功——写入本身就是分叉，记为观察，不给豁免
+            unrecreated = self._under_unrecreated_deleted_dir(real)
+            if unrecreated:
+                self._mark(real)
+            for ev in self._events:
+                ev["paths"] = [p for p in ev["paths"] if p != real]
+            for ev in self._spill.values():
+                if not ev["coarse"]:  # 粗化后存的是目录，清不掉其中某个文件的嫌疑
+                    ev["paths"].discard(real)
+            # 目录级污点（`rmtree` 之后脚本重建目录、写进新文件）盖不到脚本自己写成功的后代
+            if not unrecreated and len(self._rewritten) < self.MAX_SPILL_PATHS:
+                self._rewritten.add(real)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def _deleted_dirs_covering(self, real: str) -> list[str]:
+        """被拦下的目录删除里，覆盖 `real`（自身或祖先）的那些目录。粗化 / 丢失的溢出账认不出具体目录，不在此列。"""
+        found: list[str] = []
+        for ev in (*self._events, *self._spill.values()):
+            if ev["kind"] != self.KIND_DELETE_DIR or ev.get("lost") or ev.get("coarse"):
+                continue
+            found.extend(p for p in ev["paths"] if self._covers(p, real))
+        return found
+
+    def _under_unrecreated_deleted_dir(self, real: str) -> bool:
+        """`real` 落在某个被拦下的目录删除之下，且那个被删的目录没被脚本成功重建过。
+        溢出账粗化 / 丢失后认不出具体目录：命中就宁可当作没重建。"""
+        for ev in (*self._events, *self._spill.values()):
+            if ev["kind"] != self.KIND_DELETE_DIR:
+                continue
+            if ev.get("lost"):
+                return True
+            if ev.get("coarse"):
+                if self._spill_hit(ev, real):
+                    return True
+                continue
+            if any(
+                d != real and self._covers(d, real) and d not in self._rewritten
+                for d in ev["paths"]
+            ):
+                return True
+        return False
+
+    def recreating_directory(self, path, *, parents: bool = False) -> None:
+        """脚本 `mkdir` 一个被拦下的 `rmtree` / `rmdir` 影响过的目录，且直接运行也会得到同样的成功结果
+        （mkdir 成功，或 `makedirs(exist_ok=True)` / `Path.mkdir(exist_ok=True)` 撞上还在的目录）：
+        记这条目录已被脚本重建，随后的 `isdir` 探测与写进去的新文件都不算分叉。只豁免这条目录自身的状态
+        与脚本写成功的后代——里面没被重写的文件仍受污点覆盖。
+        `path` 是被删目录**之内**的子目录时：`parents`（`makedirs` / `mkdir(parents=True)`）会连父目录一起重建；
+        否则直接运行里父目录不在、会 FileNotFoundError，这里的成功是分叉，记为观察。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is None:
+                return
+            covering = self._deleted_dirs_covering(real)
+            if not covering:
+                return
+            if real in covering:
+                self._rewritten.add(real)
+            elif parents:
+                self._rewritten.update(covering)
+            else:
+                self._mark(real)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def mkdir_collided(self, path) -> None:
+        """脚本 `os.mkdir`（非 `exist_ok`）一个被拦下的删除所覆盖的目录，撞上了守卫留下的旧目录
+        （`FileExistsError`）：直接运行里目录已被删、mkdir 会成功——脚本走进了异常分支，本身就是一次观察。
+        脚本自己重建过的目录不算（两边都会失败；`_mark` 对 `_rewritten` 直接放行）。
+        与 `x` 打开撞名同一判据：只有**破坏性**操作（删除 / 删除目录 / 改名移动的源）影响过的路径才算——
+        写入等保留存在性的操作被拦后，`os.mkdir` 撞名在两边同样失败，不是分叉（Codex #952）。永不抛。"""
+        self.exclusive_create_failed(path)
+
+    def exclusive_create_failed(self, path) -> None:
+        """`x` 打开撞上了已存在的文件（`FileExistsError`）。若这条路径被守卫拦下的**破坏性**操作
+        （删除 / 删除目录 / 改名移动的源）影响过，直接运行时那次操作已经生效、`x` 会成功——脚本这里看到的
+        结果（异常、随后读到的旧文件）与直接运行不同，本身就是一次观察，不必等它回读。
+        写入（直跑后同样存在）、改名移动的**目的**、被拦截的 savefig 目标（直跑后也存在）不走这条捷径：
+        `x` 在两边都会失败。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is None or real in self._rewritten:
+                return
+            destructive = (self.KIND_DELETE, self.KIND_DELETE_DIR, self.KIND_RENAME)
+            for ev in (*self._events, *self._spill.values()):
+                if ev["observed"] or ev["kind"] not in destructive:
+                    continue
+                if isinstance(ev["paths"], list):
+                    hit = any(self._covers(p, real) for p in ev["paths"])
+                else:
+                    hit = self._spill_hit(ev, real)
+                if not hit:
+                    continue
+                if ev["kind"] == self.KIND_RENAME and any(
+                    self._covers(d, real) for d in ev["dests"]
+                ):
+                    continue  # 改名 / 移动的目的：直跑后它存在，`x` 同样失败
+                ev["observed"] = True
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def move_destination(self, src, dst):
+        """`shutil.move(src, dst)` 真正影响的目的路径：`dst` 是已存在的目录时是 `dst/basename(src)`，
+        否则就是 `dst`——不能把整个目录记成受影响（目录里无关的文件不受这次移动影响）。永不抛。"""
+        try:
+            self._busy, was = True, self._busy  # 判断目录不算脚本的观察
+            try:
+                dst_s = os.fspath(dst)
+                src_s = os.fspath(src)
+                if os.path.isdir(dst_s):
+                    if isinstance(src_s, bytes):
+                        src_s = os.fsdecode(src_s)
+                    if isinstance(dst_s, bytes):
+                        dst_s = os.fsdecode(dst_s)
+                    base = os.path.basename(src_s.rstrip("/" + (os.sep or "/")))
+                    return os.path.join(dst_s, base) if base else dst_s
+                return dst_s
+            finally:
+                self._busy = was
+        except Exception:  # noqa: BLE001
+            return dst
+
+    def observe_stat(self, path) -> None:
+        """脚本查了 `path` 的状态（`exists` / `isfile` / `stat`）。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is not None:
+                self._mark(real, via_stat=True)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def _mark(self, real: str, *, via_stat: bool = False) -> None:
+        if real in self._rewritten:
+            return  # 读到的是脚本自己写的（阻断在其后会撤销这条）
+        for ev in self._events:
+            # 被拦截的 savefig 目标：`exists` / `getsize` 多是「存好了」的校验打印，不据此判分叉；
+            # 读内容（open）才算——`Image.open` / `imread` / `open('rb')` 读到的才是错的数据
+            if via_stat and ev["kind"] == self.KIND_SAVEFIG:
+                continue
+            if not ev["observed"] and any(self._covers(p, real) for p in ev["paths"]):
+                ev["observed"] = True
+        for ev in self._spill.values():
+            if via_stat and ev["kind"] == self.KIND_SAVEFIG:
+                continue
+            if not ev["observed"] and self._spill_hit(ev, real):
+                ev["observed"] = True
+
+    # ---- 终局 ----
+    def material(self) -> list[dict]:
+        """被拦下、且脚本随后观察过受影响路径的操作，按 (op, kind) 聚合：`[{op, kind, count}]`。"""
+        counts: dict[tuple[str, str], int] = {}
+        for ev in (*self._events, *self._spill.values()):
+            if ev["observed"]:
+                key = (ev["op"], ev["kind"])
+                counts[key] = counts.get(key, 0) + 1
+        return [{"op": op, "kind": kind, "count": n} for (op, kind), n in sorted(counts.items())]
+
+    def stop(self) -> None:
+        """脚本跑完：之后一切观察都不算（引擎自己的读写不是脚本的）。"""
+        self._active = False
+
+    # ---- 钩子 ----
+    def install(self):
+        """装 open（`builtins.open` / `io.open` / `Path.open`）与 `os.stat` 的观察包装；返回卸载函数。
+
+        worker 把它装在**最外层**（晚于输入观察器、数据改指与相对路径回退）：看到的是脚本交出的那条路径，
+        与守卫记账时用的是同一个 cwd 下的同一种解析。`os.stat` 一并包——`os.path.exists` /
+        `isfile` / `Path.exists` 都经它（Windows 3.12+ 的 `os.path.exists` 系是 C 实现、不经 `os.stat`，另行逐个包装，见下）。
+        """
+        ledger = self
+        real_open, real_io_open = builtins.open, io.open
+        real_path_open, real_stat = pathlib.Path.open, os.stat
+        real_mkdir = os.mkdir
+        real_makedirs = os.makedirs
+        real_path_mkdir = pathlib.Path.mkdir
+        #: 正在进行的 `makedirs` / `Path.mkdir` 的 (exist_ok, parents)：内部的 `os.mkdir` 撞上还在的目录时
+        #: 由外层自己吞掉（`exist_ok`），不是脚本看到的异常
+        mk_ctx: list[tuple[bool, bool]] = []
+
+        def _open_through(original, file, mode, args, kwargs):
+            ledger.observe(file, mode)
+            if not ledger.is_write_mode(mode):
+                return original(file, mode, *args, **kwargs)
+            try:
+                result = original(file, mode, *args, **kwargs)
+            except FileExistsError:
+                if "x" in mode:
+                    ledger.exclusive_create_failed(file)
+                raise
+            ledger.opened(file, mode)  # 写模式成功之后才清嫌疑
+            return result
+
+        def _wrap(original):
+            def watched_open(file, mode="r", *args, **kwargs):
+                return _open_through(original, file, mode, args, kwargs)
+
+            return watched_open
+
+        def watched_path_open(self_path, mode="r", *args, **kwargs):
+            return _open_through(
+                lambda f, m, *a, **k: real_path_open(f, m, *a, **k), self_path, mode, args, kwargs
+            )
+
+        def watched_stat(path, *args, **kwargs):
+            ledger.observe_stat(path)
+            return real_stat(path, *args, **kwargs)
+
+        # Windows 3.12+ 的 `os.path.exists` / `isfile` / `isdir` / `islink` / `lexists` 是 C 实现，
+        # 不经 `os.stat`：逐个包上（POSIX 上它们本来经 `os.stat`，重复观察是幂等的）
+        real_path_checks: dict[str, object] = {}
+
+        def _wrap_check(original):
+            def watched_check(path, *args, **kwargs):
+                ledger.observe_stat(path)
+                return original(path, *args, **kwargs)
+
+            return watched_check
+
+        for name in ("exists", "lexists", "isfile", "isdir", "islink"):
+            fn = getattr(os.path, name, None)
+            if fn is not None:
+                real_path_checks[name] = fn
+                setattr(os.path, name, _wrap_check(fn))
+
+        builtins.open = _wrap(real_open)
+        io.open = _wrap(real_io_open)
+        pathlib.Path.open = watched_path_open
+        os.stat = watched_stat
+
+        def watched_mkdir(path, *args, **kwargs):
+            tolerant, parents = mk_ctx[-1] if mk_ctx else (False, False)
+            try:
+                result = real_mkdir(path, *args, **kwargs)
+            except FileExistsError:
+                if tolerant:
+                    ledger.recreating_directory(path, parents=parents)  # 直跑也成功：等价结果
+                else:
+                    ledger.mkdir_collided(path)
+                raise
+            ledger.recreating_directory(path, parents=parents)  # 成功之后才给豁免
+            return result
+
+        def watched_makedirs(name, mode=0o777, exist_ok=False):
+            mk_ctx.append((bool(exist_ok), True))
+            try:
+                return real_makedirs(name, mode, exist_ok)
+            finally:
+                mk_ctx.pop()
+
+        def watched_path_mkdir(self_path, mode=0o777, parents=False, exist_ok=False):
+            # 3.10 的 `Path.mkdir` 走导入时绑定的 `self._accessor.mkdir`，看不到上面的 `os.mkdir` 包装——
+            # 这里自己按结果记账（3.11+ 内层 `os.mkdir` 包装也会记一次，重复记账无害）
+            mk_ctx.append((bool(exist_ok), bool(parents)))
+            try:
+                result = real_path_mkdir(self_path, mode, parents, exist_ok)
+            except FileExistsError:
+                if not exist_ok:
+                    ledger.mkdir_collided(self_path)
+                raise
+            finally:
+                mk_ctx.pop()
+            # 正常返回：目录此刻在（新建或 exist_ok 撞上）
+            ledger.recreating_directory(self_path, parents=parents)
+            return result
+
+        os.mkdir = watched_mkdir
+        os.makedirs = watched_makedirs
+        pathlib.Path.mkdir = watched_path_mkdir
+
+        def uninstall() -> None:
+            os.mkdir = real_mkdir
+            os.makedirs = real_makedirs
+            pathlib.Path.mkdir = real_path_mkdir
+            builtins.open = real_open
+            io.open = real_io_open
+            pathlib.Path.open = real_path_open
+            os.stat = real_stat
+            for name, fn in real_path_checks.items():
+                setattr(os.path, name, fn)
+
+        self._uninstall = uninstall
+        return uninstall
+
+    def uninstall(self) -> None:
+        if self._uninstall is not None:
+            self._uninstall()
+            self._uninstall = None
+
+
 def observed_local_modules(
     project_root: str, modules: dict, *, exclude_dir: str = ""
 ) -> list[dict]:
@@ -1634,6 +2729,8 @@ def install_relative_read_fallback(
         if real_ds_open is not None:
             datasource.open = real_ds_open
 
+    #: 账本比对用：这次只读 open 回退会改读哪条路径（None＝不改道）。与回退本身是同一个判据。
+    uninstall.resolve = _fallback_path
     return uninstall
 
 

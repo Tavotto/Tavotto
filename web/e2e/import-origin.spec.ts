@@ -480,16 +480,10 @@ test(
         timeout: LONG,
       }).toBe(true)
       expect(execs(w)).toEqual([])
-      // 已知差距（FINAL_ACCEPTANCE.md「已知缺陷」#1，本条钉着现状）：装好之后会话重新检查，联合计划对这个表外名仍给
-      // `origins[].reason = unverified`（已装的发行包声称提供它，`distribution_status = installed_confirmed`，但
-      // `depplan._verdict` 对「表外名 + 已装提供者」一律判来源未定），所以卡片说「来源还没法确定」、主按钮是「仍然运行」，
-      // 而不是「可以运行了」。运行本身没有问题。哪天 `_verdict` 认下「用户确认并装好的包」，这里会红——改成 `ready` 即可。
-      test.info().annotations.push({
-        type: 'known-gap',
-        description: '确认包名并装好之后，卡片仍是「来源待定 / 仍然运行」（depplan._verdict 对表外名的已装提供者判 unverified）',
-      })
-      await expect(card(page)).toHaveAttribute('data-prep-state', 'origin_unknown', { timeout: LONG })
-      await expect(primary(page)).toHaveText('仍然运行')
+      // 装好、核验通过之后会话重新检查：表外名已被受管环境里装好的唯一 index 来源发行包满足（#938，
+      // `depplan._installed_index_satisfies`），联合计划不再给 origins——卡片回到「可以运行」，主按钮是「运行」
+      await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: LONG })
+      await expect(primary(page)).not.toHaveText('仍然运行')
 
       await primary(page).click()
       await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: LONG })
