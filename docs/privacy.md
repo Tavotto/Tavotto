@@ -203,7 +203,7 @@ missing. Computing it never leaves the machine and never runs the user's code:
 
 **Export (always available).** The diagnostics bundle (*Settings → Privacy,
 diagnostics & About → Export diagnostics*) is created locally and shared only if
-the user chooses to send it. Secrets and the user's home directory are redacted,
+the user chooses to send it. It is the strictly redacted form: secrets and the user's home directory are redacted,
 and the anonymous telemetry identifier is redacted as well, so pasting a bundle
 into a public issue does not link that issue to the anonymous analytics records.
 Whether telemetry is on or off is included — that is useful for troubleshooting
@@ -222,9 +222,41 @@ Offering the option uploads nothing; sending does:
   cancelled, closed or failed send is never resumed on its own — after a restart
   nothing is retried. Telemetry consent is a separate decision and does not imply
   this one (nor the reverse).
-* **You see what you send.** The dialog lists the kinds of content in the bundle and
-  lets you save the exact file that would be uploaded and read it first. Figures,
-  scripts, project files and data files are not part of the bundle.
+* **You see what you send.** The dialog lists the kinds of content in the bundle, each
+  file with its size, and lets you save the exact file that would be uploaded and read
+  it first. Figures, project files and data files are not part of the bundle.
+* **What the sent bundle contains (more than the export).** So that maintainers can
+  diagnose in depth, the *sent* bundle (not the exported one, which is unchanged) adds
+  a `detail/` folder: error messages with full stack traces (engine, render process,
+  interface console), the last part of the application, desktop-shell (sidecar) and
+  render-process logs as written, the session state files (and a list of any corrupted
+  copies), the most recent backend requests (HTTP method, route pattern, status code,
+  duration and error code only — no request bodies, query strings or arguments), the
+  style edits of the figure being edited, the render environment (Python and matplotlib
+  versions, installed packages, non-default matplotlib settings, missing fonts), recent
+  render/export/test-run records, desktop-shell and install facts (app, Tauri and
+  WebView versions, OS version, CPU architecture, Rosetta, install method, update result
+  and whether the mirror or GitHub was used when known), storage facts (free disk space,
+  writability, whether the project is in a cloud-sync folder, the Windows long-path
+  setting), recent interface `console.error` / `console.warn` messages, display facts
+  (pixel ratio, window and screen size, language, theme) and network facts (whether a
+  proxy is configured, with credentials removed; whether `tavotto.cn` and `github.com`
+  resolve to a TUN-rewritten `198.18.0.0/15` address — this is a name lookup, no
+  connection is made; time zone). Project folder names, file names and text inside
+  figures are **not** removed from these files. Your home directory is written as `~`,
+  your system user name as `<user>`, and credentials, cookies, nonces, API keys,
+  tokens and proxy passwords are removed from every one of them.
+* **Three extras, off by default and never remembered.** The dialog has three
+  checkboxes that start unticked every time it opens: *script source* (the scripts
+  registered in the open project — without it the bundle contains no script source at
+  all, including the source lines normally printed inside tracebacks), *system crash
+  reports* (Tavotto crash reports from the last 7 days; binary dumps are only listed,
+  never attached) and *contents of corrupted session copies* (otherwise only their
+  names and sizes). Changing a checkbox rebuilds the bundle.
+* **Size limit.** The upload limit stays 10 MiB. When the bundle is larger, content is
+  cut in a fixed order — the three extras first, then the default categories from the
+  last — and the dialog and the bundle's manifest say what was cut. The core files are
+  never cut; if they alone are too large the bundle is not uploaded and you can save it.
 * **What is transmitted.** The bundle itself, plus: the problem type you choose,
   an optional free-text note you may type (up to 1000 characters; please do not
   put names, email addresses, paths or data in it — it is sent as typed), the

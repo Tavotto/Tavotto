@@ -87,3 +87,16 @@
 - **测试不连生产。** 测试进程默认 `TAVOTTO_NO_DIAG_UPLOAD=1`（`tests/conftest.py`；e2e `fixtures.ts` 同），诊断发送用例在 fixture 里摘掉它并指向回环模拟端；`conftest` 的会话级探针拦下任何发往生产主机的 `OpenerDirector.open` 并判红。
 - **服务端限制（`Tavotto/infra`）。** 每 IP 每小时 6 次 `init`、每日最多 500 份 / 2 GiB；报告保留 30 天后删除。客户端不复述数字，只把 429 / 503 交还用户去点。
 - **隐私声明。** `docs/privacy.md` 的「Diagnostics bundle」一节已按本行为改写（去向、30 天、关闭方式、删除方式）。
+
+## 修订（2026-10-13，诊断包扩充）
+
+维护者裁决：诊断包以「能帮维护者详细定位问题」为准，**不再因为报错或文件里可能带着用户文字就丢掉**；发送前用户在确认框里能看到包里有哪些文件、能把同一份 ZIP 存到本地，逐次确认是最后一道关。本节取代上文「包的内容与脱敏只此一份」「不含报错原文 / 脚本源码」的说法——**仅对发送包**。
+
+- **两种包。** 导出到文件（`GET/POST /api/diagnostics/bundle`、「复制诊断」）保持严格脱敏，一个字节不变——那份可能被贴进公开 issue。发送包（`POST /api/diagnostics/send/prepare`）在其上多一个 `detail/` 目录（`engine/diagdetail.py` 组装，`app._build_diagnostics_bundle(detail=…)` 才传），老三件的名字与语义不动。bundle schema 升到 **8**（manifest 加 `contains_detail` / `detail_files` / `detail_options` / `truncated`）。
+- **默认收十二类**（优先级即编号）：报错原文与完整调用栈、app / sidecar / worker 日志尾巴原文、会话状态文件、最近后端请求环（方法 / 路由规则 / 状态码 / 耗时 / 错误码）、样式改动、渲染环境（一次 ≤10 s 的只读子进程）、运行记录、桌面壳与安装信息、存储坑、前端 console 环、显示环境、网络概况。
+- **三个勾选项**（默认不勾、不记忆，变化即重新备包）：A 脚本源码、B 系统崩溃报告、C 会话损坏副本内容。没勾 A 时包里一个字节源码都没有（连日志里 traceback 的源码行也剥掉）。
+- **始终处理**：家目录 → `~`、用户名 → `<user>`、秘密去掉；项目文件夹名、文件名、图里的文字保留。
+- **体积**：上限仍 10 MiB；按优先级从低往高截断（C < B < A，之后默认项从末尾几类），写进 manifest `truncated`，核心文件不截，截后仍超限走 `too_large`。
+- **名字解析。** 网络概况对 `tavotto.cn` / `github.com` 各做一次系统名字解析（不建立连接、≤3 s），这是 prepare「零网络」里唯一的 DNS 查询；用来判断 TUN 把域名改写进 `198.18.0.0/15`。
+- **部署前置条件（跨仓库）。** 服务端 `diagnostics-api` 的 ZIP 检查（`zipcheck`）当前拒绝含斜杠的条目名、限制 32 个条目与 200:1 压缩比，会把发送包判成 `unsafe_entry_name` / `too_many_entries` / `compression_ratio`。**infra 先放行 `detail/` 路径与更多条目，客户端才能发版**；`bundle_schema` 取值范围 1–99，8 无问题。
+
