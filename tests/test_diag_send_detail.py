@@ -555,7 +555,7 @@ class TestOptionalContent:
         index = items[0]
         assert index.dropped_bytes == 400
         rows = {r["name"]: r["content"] for r in json.loads(index.data)["reports"]}
-        assert rows["Tavotto.exe.2.dmp"] == "omitted_for_size"
+        assert rows["Tavotto.exe.2.dmp"] == "skipped_over_budget"
         _data, _kept, trunc = diagdetail.fit(
             items, lambda its, t: b"x" * 10 + json.dumps(t).encode(), 10**9
         )

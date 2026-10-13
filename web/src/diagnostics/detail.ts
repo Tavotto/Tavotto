@@ -46,19 +46,67 @@ function push(ring: RingRecord[], cap: number, rec: RingRecord): void {
   if (ring.length > cap) ring.splice(0, ring.length - cap)
 }
 
-function show(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value instanceof Error) return `${value.name}: ${value.message}`
+/** 有界序列化的上限：深度、每层键 / 元素数。累计输出到 MAX_MESSAGE 就停——不先全量 stringify（几 MB 的文档对象会拖慢编辑）。 */
+const SHOW_MAX_DEPTH = 4
+const SHOW_MAX_BREADTH = 50
+
+/** 小的递归 writer：往 `out` 里追加，超出 `budget` 立刻停；超界处写 `…`。 */
+function write(value: unknown, out: string[], budget: { left: number }, depth: number, seen: WeakSet<object>): void {
+  if (budget.left <= 0) return
+  const emit = (t: string) => {
+    out.push(t.length > budget.left ? t.slice(0, budget.left) : t)
+    budget.left -= t.length
+  }
+  if (value === null || value === undefined) return emit(String(value))
+  const ty = typeof value
+  if (ty === 'string') return emit(depth === 0 ? (value as string) : JSON.stringify((value as string).slice(0, 200)))
+  if (ty === 'number' || ty === 'boolean' || ty === 'bigint') return emit(String(value))
+  if (ty === 'function' || ty === 'symbol') return emit(`[${ty}]`)
+  if (value instanceof Error) return emit(`${value.name}: ${value.message}`)
+  const obj = value as object
+  if (seen.has(obj)) return emit('[Circular]')
+  if (depth >= SHOW_MAX_DEPTH) return emit('…')
+  seen.add(obj)
   try {
-    const seen = new WeakSet<object>()
-    const text = JSON.stringify(value, (_k, v) => {
-      if (typeof v === 'object' && v !== null) {
-        if (seen.has(v)) return '[Circular]'
-        seen.add(v)
+    if (Array.isArray(obj)) {
+      emit('[')
+      for (let i = 0; i < obj.length && i < SHOW_MAX_BREADTH && budget.left > 0; i++) {
+        if (i) emit(',')
+        write(obj[i], out, budget, depth + 1, seen)
       }
-      return typeof v === 'bigint' ? String(v) : v
-    })
-    return text === undefined ? String(value) : text
+      if (obj.length > SHOW_MAX_BREADTH) emit(',…')
+      emit(']')
+    } else {
+      emit('{')
+      let n = 0
+      for (const k in obj) {
+        if (!Object.prototype.hasOwnProperty.call(obj, k)) continue
+        if (n >= SHOW_MAX_BREADTH || budget.left <= 0) {
+          emit(',…')
+          break
+        }
+        if (n++) emit(',')
+        emit(JSON.stringify(k.slice(0, 80)) + ':')
+        let v: unknown
+        try {
+          v = (obj as Record<string, unknown>)[k]
+        } catch {
+          v = '[unreadable]'
+        }
+        write(v, out, budget, depth + 1, seen)
+      }
+      emit('}')
+    }
+  } finally {
+    seen.delete(obj)
+  }
+}
+
+function show(value: unknown): string {
+  try {
+    const out: string[] = []
+    write(value, out, { left: MAX_MESSAGE }, 0, new WeakSet())
+    return out.join('')
   } catch {
     return Object.prototype.toString.call(value)
   }

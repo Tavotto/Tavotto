@@ -1394,7 +1394,7 @@ def _process_name(file_name: str) -> str:
     return m.group(1) if m else stem
 
 
-DUMP_SCAN_BYTES = 16 * MiB
+DUMP_SCAN_BYTES = 4 * MiB
 
 
 def _mentions_tavotto(path: Path) -> bool:
@@ -1493,7 +1493,7 @@ def collect_crash_reports(
             "content": "raw_binary" if c["binary"] else "redacted_text",
         }
         if len(items) >= CRASH_FILES or used + c["size"] > budget:
-            row["content"] = "omitted_for_size"
+            row["content"] = "skipped_over_budget"
             omitted += c["size"]
             index.append(row)
             continue

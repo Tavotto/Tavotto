@@ -81,6 +81,26 @@ describe('console 环', () => {
     expect(readConsoleRing()).toHaveLength(1)
   })
 
+  it('有界序列化：10 万元素数组 / 深嵌套对象不会让 console 调用变慢，message ≤ MAX_MESSAGE', () => {
+    uninstall = installConsoleCapture()
+    const big = Array.from({ length: 100_000 }, (_, i) => ({ i, text: 'x'.repeat(50) }))
+    let deep: Record<string, unknown> = { leaf: 1 }
+    for (let i = 0; i < 5000; i++) deep = { child: deep }
+    const wide: Record<string, number> = {}
+    for (let i = 0; i < 100_000; i++) wide[`k${i}`] = i
+    const t0 = performance.now()
+    console.error(big)
+    console.warn(deep)
+    console.error(wide)
+    console.error('prefix', big, deep)
+    expect(performance.now() - t0).toBeLessThan(50)
+    for (const r of readConsoleRing()) expect(r.message.length).toBeLessThanOrEqual(4000)
+    const [a, b, c] = readConsoleRing()
+    expect(a.message.startsWith('[{"i":0')).toBe(true)
+    expect(b.message).toContain('…') // 深度超界写省略号
+    expect(c.message).toContain(',…') // 键数超界
+  })
+
   it('幂等安装，卸载后还原且不再记录', () => {
     const first = installConsoleCapture()
     const second = installConsoleCapture()
