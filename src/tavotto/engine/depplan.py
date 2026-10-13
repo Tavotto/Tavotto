@@ -513,6 +513,10 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
             env=launcher.activate_env(python, runtime.owned_env(python)),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：瞬时结论，不缓存；稳定码由入口（`deprepair.decide_environment_pinned` / pool）交给用户
+        LOG.warning("目标环境事实探测失败（%s）: %s", exc.code, python)
+        return None
     except (OSError, subprocess.SubprocessError) as exc:
         LOG.warning("目标环境事实探测失败: %s: %s", python, exc)
         return None

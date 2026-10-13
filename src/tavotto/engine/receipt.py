@@ -113,6 +113,8 @@ class ExecutionReceipt:
     #: 启动方式的结构化引用（P09，`launcher.CondaLauncher.public()`）；None = 直接启动。含机器路径：只进私有投影，
     #: **不进** `public_identity` / `public_facts`（身份仍是「用户 Python 跑了这个脚本」，启动方式不改它）。
     launcher: dict | None = None
+    #: 起会话那一刻的环境事实（P09）：`{"generation": …, "env_state": …}`。成功记录用它而不是收口时的值。私有，不进公开投影。
+    session_env: dict | None = None
 
     def __post_init__(self) -> None:
         if self.profile not in execspec.PROFILES:
@@ -384,7 +386,21 @@ def from_worker(
         pid_check=pid_check,
         binding=dict(binding) if isinstance(binding, dict) else None,
         launcher=_launcher_public(worker),
+        session_env=_session_env(worker),
     )
+
+
+def _session_env(worker) -> dict | None:
+    gen = getattr(worker, "python_generation", None)
+    state = getattr(worker, "env_state", None)
+    if gen is None and not isinstance(state, str):
+        return None
+    out: dict = {}
+    if gen is not None:
+        out["generation"] = gen
+    if isinstance(state, str):
+        out["env_state"] = state
+    return out
 
 
 def _launcher_public(worker) -> dict | None:

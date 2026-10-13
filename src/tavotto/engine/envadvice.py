@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import pool, projectenv, projscan, runtime, userenvs
+from . import launcher, pool, projectenv, projscan, runtime, userenvs
 
 REC_VERSION = 1
 
@@ -870,7 +870,8 @@ def _check(
             timeout=min(projectenv.PROBE_TIMEOUT_S, remaining),
             **({"modules": mods} if mods else {}),
         )
-        _store_verdict(python, generation, health)
+        if not launcher.is_unavailable(health):  # 激活取环境失败是瞬时的：不记结论
+            _store_verdict(python, generation, health)
         notes.append(_execution_of(health, mods))
         # 覆盖度的唯一一份缓存在 userenvs（路径 + 环境代 + import 集合）；这里只往里写，不另存
         userenvs.remember_probe(python, mods, health, generation=generation)

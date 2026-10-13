@@ -17,6 +17,11 @@
 限制：只捕获环境变量。激活脚本里环境变量以外的副作用（启动 license 服务、`ulimit`、shell 函数）不会在每次启动时重放，
 `deactivate.d` 不再执行——与 IDE 的通行做法一致。
 
+**启动方式是解释器路径的纯函数**（`launcher_for_interpreter`：关开关 → Windows → 现场检测）：不看脚本、项目、成功记录、
+来源标签，也没有 ContextVar 之类的“范围”——所有入口、所有线程对同一条解释器天然给出同一个答案。成功记录里的 launcher 只
+作为事实记下，不驱动决策。**激活失败一律 fail-closed**：对 Conda 环境捕获失败 / 超时，任何调用点都抛
+`LauncherUnavailable`（稳定码 `conda_launcher_unavailable`），不退回裸起，失败也不进任何缓存。
+
 不碰：Windows（本期没有真机验证，`detect()` 恒 None；捕获方案本身可直接扩到 Windows）、mamba / micromamba（选项集不同，
 另列样本门）、内置 runtime 与 Tavotto 自己的受管环境（venv，没有 `conda-meta`）。
 
@@ -25,8 +30,7 @@
 
 from __future__ import annotations
 
-import contextlib
-import contextvars
+import atexit
 import dataclasses
 import hashlib
 import json
@@ -37,6 +41,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import config, runtime
@@ -52,10 +57,20 @@ ENV_DISABLE = "TAVOTTO_CONDA_ACTIVATION"
 _OFF_VALUES = frozenset({"0", "off", "false", "no"})
 
 
-class LauncherUnavailable(RuntimeError):
-    """记录说该经 Conda 激活启动、现在启动器不可用。`code` 是稳定码，pool 把它转成 `WorkerError`。"""
+#: 稳定码：Conda 环境激活取环境失败（对外只有这一个）
+UNAVAILABLE_CODE = "conda_launcher_unavailable"
 
-    code = "conda_launcher_unavailable"
+
+def is_unavailable(health: dict | None) -> bool:
+    """一条体检 / 事实结论是不是“激活取环境失败”：这样的结论是**瞬时**的，不进任何 verdict / facts 缓存。"""
+    return isinstance(health, dict) and health.get("code") == UNAVAILABLE_CODE
+
+
+class LauncherUnavailable(RuntimeError):
+    """这条解释器在 Conda 环境里、也找得到 conda，但激活取环境失败（超时 / 退出码非 0 / 起不来）。`code` 是稳定码；
+    入口（pool / 准备流程）把它转成 `WorkerError`。**不退回裸起**，失败也不缓存。"""
+
+    code = UNAVAILABLE_CODE
 
 
 def _is_windows() -> bool:
@@ -118,26 +133,54 @@ def find_conda_exe(prefix: str) -> str | None:
     return None
 
 
+def _sig(path: Path) -> tuple | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
+def _dir_sig(path: Path) -> tuple | None:
+    """目录里的文件清单 + 各自的 (size, mtime_ns)；目录不在回 None。"""
+    try:
+        with os.scandir(path) as it:
+            return tuple(sorted((e.name, *(_sig(Path(e.path)) or ())) for e in it))
+    except OSError:
+        return None
+
+
 def prefix_state(prefix: str) -> str:
-    """环境 prefix 的「版本」：`conda-meta/history` 每次事务（装 / 卸 / 升降包）都会追加，取它的 (size, mtime_ns)
-    + `conda-meta` 目录的 mtime_ns。装包 / 升级换值；纯读不换。不含路径。读不到回空串。"""
-    meta = Path(prefix) / "conda-meta"
-    parts: list = []
-    for p in (meta / "history", meta):
-        try:
-            st = os.stat(p)
-        except OSError:
-            parts.append(None)
-            continue
-        parts.append((st.st_size if p.name == "history" else 0, st.st_mtime_ns))
+    """环境 prefix 的「版本」：激活结果可能随之变化的那些文件的指纹。
+
+    * `conda-meta/history`（每次装 / 卸 / 升降包事务都追加）与 `conda-meta` 目录本身；
+    * `conda-meta/state`（`conda env config vars set / unset` 写在这里：激活会导出这些变量）；
+    * `etc/conda/activate.d` 与 `deactivate.d` 的文件清单与各自的 (size, mtime_ns)（新增 / 改动钩子脚本）。
+
+    纯读不换值；不含路径。读不到任何一项回空串。"""
+    pre = Path(prefix)
+    meta = pre / "conda-meta"
+    parts = [
+        _sig(meta / "history"),
+        _sig(meta),
+        _sig(meta / "state"),
+        _dir_sig(pre / "etc" / "conda" / "activate.d"),
+        _dir_sig(pre / "etc" / "conda" / "deactivate.d"),
+    ]
     if all(x is None for x in parts):
         return ""
     return hashlib.sha256(repr(parts).encode()).hexdigest()[:16]
 
 
+def env_state_of(python: str | os.PathLike) -> str:
+    """解释器所在 Conda 环境的 `prefix_state`（不是 Conda 环境 = 空串）。起会话时取一次，成功记录用。"""
+    prefix = conda_prefix_of(python)
+    return prefix_state(prefix) if prefix else ""
+
+
 @dataclasses.dataclass(frozen=True)
 class CondaLauncher:
-    """`conda run` 的结构化描述。不可变；只含路径，不含环境变量。"""
+    """Conda 环境的结构化描述。不可变；只含路径，不含环境变量。"""
 
     conda_exe: str
     prefix: str
@@ -148,21 +191,28 @@ class CondaLauncher:
             raise ValueError("CondaLauncher 需要 conda_exe 与 prefix")
 
     def public(self) -> dict:
-        """可持久化的结构化引用（**没有**激活后的环境变量）。只用来对账，**不得**读回后当可执行路径：
-        要执行的 conda 永远由 `detect()` 从解释器现场找。"""
+        """可持久化的结构化引用（**没有**激活后的环境变量）。只用来对账 / 当事实记下，**不得**读回后当可执行路径：
+        要执行的 conda 永远由 `launcher_for_interpreter()` 从解释器现场找。"""
         return {"kind": self.kind, "conda_exe": self.conda_exe, "prefix": self.prefix}
 
 
-def detect(python: str | os.PathLike) -> CondaLauncher | None:
-    """这条解释器要不要、能不能经 Conda 激活起：是 Conda 环境且找得到 conda 可执行文件 → launcher；否则 None
-    （None = 裸起，与 P09 之前一致）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。"""
+def _activation_wanted(python: str | os.PathLike) -> str | None:
+    """这条解释器**该不该**经 Conda 激活：关开关 / Windows / 绝对路径之外 / 不是 Conda 环境 → None；否则回 prefix。"""
     if disabled():
         return None
     if _is_windows():
-        # 本期 Windows 不做 Conda 包装：没有真机验证（conda.exe 经中间 shell 起 Python 时的回执 / 进程树 / DLL 搜索路径），
-        # 也没有可靠的进程组核验，包装了回执只会恒 partial。Windows 保持 P09 之前的裸起，真机验证后再开。
+        # 本期 Windows 不做 Conda 激活：没有真机验证（conda.exe 的 DLL 搜索路径 / 进程树）。Windows 保持 P09 之前的裸起，
+        # 真机验证后再开（捕获方案本身可直接扩到 Windows）。
         return None
-    prefix = conda_prefix_of(python)
+    if not os.path.isabs(str(python)) or str(python).startswith("-"):
+        return None  # 捕获要把解释器当 `conda run` 的可执行部分：必须是绝对路径、不以 `-` 开头
+    return conda_prefix_of(python)
+
+
+def launcher_for_interpreter(python: str | os.PathLike) -> CondaLauncher | None:
+    """**唯一的启动决策**：解释器路径的纯函数。关开关 → Windows → 现场检测（Conda 环境 + 找得到 conda）→ launcher；
+    否则 None（= 直接启动，与 P09 之前一致）。不读脚本、项目、成功记录、来源标签；任何线程、任何入口结果相同。"""
+    prefix = _activation_wanted(python)
     if prefix is None:
         return None
     exe = find_conda_exe(prefix)
@@ -171,45 +221,34 @@ def detect(python: str | os.PathLike) -> CondaLauncher | None:
     return CondaLauncher(conda_exe=exe, prefix=prefix)
 
 
-# ---------------------------------------------------------------------------
-# 激活环境的捕获与合并
-# ---------------------------------------------------------------------------
-#: 本次探针该用的启动决策（`(python) -> CondaLauncher | None`）。由知道「这是哪个项目的哪个脚本」的调用方设置
-#: （`pool.launch_scope`），探针与 worker 才用同一个「每脚本启动决策」。没设置 = 只按解释器现场检测（`detect`）。
-_PROBE_DECIDER: contextvars.ContextVar = contextvars.ContextVar(
-    "tavotto_probe_launcher", default=None
-)
+_warned_unlocated: set[str] = set()
 
 
-@contextlib.contextmanager
-def probe_scope(decider):
-    token = _PROBE_DECIDER.set(decider)
-    try:
-        yield
-    finally:
-        _PROBE_DECIDER.reset(token)
-
-
-def effective_launcher(python) -> CondaLauncher | None:
-    """此刻对 `python` 生效的启动方式：`probe_scope` 里的每脚本决策，否则现场 `detect`；可执行文件不是绝对路径
-    （捕获需要绝对路径的可执行文件）按直接启动。"""
-    decider = _PROBE_DECIDER.get()
-    lau = decider(python) if decider is not None else detect(python)
-    if lau is not None and (not os.path.isabs(str(python)) or str(python).startswith("-")):
+def unlocated_conda_prefix(python: str | os.PathLike) -> str | None:
+    """这条解释器是 Conda 环境、但找不到 conda 可执行文件（只能直接启动，没有激活）→ 回 prefix；否则 None。
+    给体检 / 报告一个可见的事实（`launch_note`）：不静默。"""
+    prefix = _activation_wanted(python)
+    if prefix is None or find_conda_exe(prefix) is not None:
         return None
-    return lau
+    if prefix not in _warned_unlocated:
+        _warned_unlocated.add(prefix)
+        LOG.warning("Conda 环境 %s 找不到 conda 可执行文件，按直接启动（没有激活）", prefix)
+    return prefix
 
 
 def context_key(python) -> str:
     """启动上下文的稳定投影，给**按解释器缓存**的结论分区用：直接启动得出的事实 / 体检结论，换成 Conda 激活（或反过来、
     或换了 conda / prefix / 环境版本）之后不能原样复用。`direct`，或 `conda|<exe>|<prefix>|<env_state>`。"""
-    lau = effective_launcher(python)
+    lau = launcher_for_interpreter(python)
     if lau is None:
         return "direct"
     return f"conda|{lau.conda_exe}|{lau.prefix}|{prefix_state(lau.prefix)}"
 
 
-#: 捕获时的超时（秒）。激活脚本卡住不能拖住整个预检 / 起会话。
+# ---------------------------------------------------------------------------
+# 激活环境的捕获与合并
+# ---------------------------------------------------------------------------
+#: 捕获时的缺省超时（秒）。激活脚本卡住不能拖住整个预检 / 起会话；有预算的调用方（体检）传自己的。
 CAPTURE_TIMEOUT = 60.0
 #: 每个进程自己都会变、不该当作「激活增量」的变量
 _VOLATILE_ENV = frozenset({"_", "SHLVL", "PWD", "OLDPWD", "PS1", "PS2"})
@@ -221,31 +260,94 @@ _CAPTURE_SRC = (
 
 _captured: dict[tuple[str, str, str], dict[str, str]] = {}
 _captured_lock = threading.Lock()
+_capture_gates: dict[tuple[str, str, str], threading.Lock] = {}
+#: 结果文件含完整环境（可能有许可证串 / 令牌）：在途的路径登记在这里，退出时清掉；崩溃留下的由 `sweep_results` 扫
+_inflight: set[str] = set()
+_inflight_lock = threading.Lock()
+#: 启动时清理的年龄下限（秒）：同一数据目录下可能有另一个正在捕获的 Tavotto 实例，别删它的在途文件
+_STALE_RESULT_S = 600.0
 
 
 def reset_captures() -> None:
     with _captured_lock:
         _captured.clear()
+        _capture_gates.clear()
 
 
-def _capture(python: str, lau: CondaLauncher) -> dict[str, str]:
-    """跑一次 `conda run … python -c <写 os.environ 到结果文件>`；失败 / 超时 → `LauncherUnavailable`。"""
-    results = config.data_dir() / "probe-results"
-    results.mkdir(parents=True, exist_ok=True)
-    fd, result_path = tempfile.mkstemp(prefix="activated-", suffix=".json", dir=results)
-    os.close(fd)  # mkstemp 建出来就是 0600
-    argv = [
-        lau.conda_exe,
-        "run",
-        "--no-capture-output",
-        "--prefix",
-        lau.prefix,
-        python,
-        "-c",
-        _CAPTURE_SRC,
-        result_path,
-    ]
+def _results_dir() -> Path:
+    return config.data_dir() / "probe-results"
+
+
+def sweep_results(*, everything: bool = False) -> None:
+    """删掉 `probe-results/` 里的结果文件：启动时只删过期的（崩溃残留），`everything=True` 删全部（测试）。"""
     try:
+        entries = list(os.scandir(_results_dir()))
+    except OSError:
+        return
+    now = time.time()
+    for e in entries:
+        try:
+            if everything or now - e.stat().st_mtime > _STALE_RESULT_S:
+                os.unlink(e.path)
+        except OSError:
+            pass
+
+
+def _cleanup_inflight() -> None:
+    with _inflight_lock:
+        paths = list(_inflight)
+        _inflight.clear()
+    for path in paths:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+_startup_done = False
+
+
+def startup() -> None:
+    """引擎启动时调一次：清掉崩溃留下的结果文件，并登记退出清理。幂等。"""
+    global _startup_done
+    if _startup_done:
+        return
+    _startup_done = True
+    sweep_results()
+    atexit.register(_cleanup_inflight)
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    if os.name != "nt":
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+    proc.kill()
+    proc.wait()
+
+
+def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str]:
+    """跑一次 `conda run … python -c <写 os.environ 到结果文件>`；任何失败 / 超时 → `LauncherUnavailable`。"""
+    result_path = ""
+    try:
+        results = _results_dir()
+        results.mkdir(parents=True, exist_ok=True)
+        fd, result_path = tempfile.mkstemp(prefix="activated-", suffix=".json", dir=results)
+        os.close(fd)  # mkstemp 建出来就是 0600
+        with _inflight_lock:
+            _inflight.add(result_path)
+        argv = [
+            lau.conda_exe,
+            "run",
+            "--no-capture-output",
+            "--prefix",
+            lau.prefix,
+            python,
+            "-c",
+            _CAPTURE_SRC,
+            result_path,
+        ]
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.DEVNULL,
@@ -255,17 +357,11 @@ def _capture(python: str, lau: CondaLauncher) -> dict[str, str]:
             creationflags=runtime.CREATE_NO_WINDOW,
         )
         try:
-            code = proc.wait(timeout=CAPTURE_TIMEOUT)
+            code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            if os.name != "nt":
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except OSError:
-                    pass
-            proc.kill()
-            proc.wait()
+            _kill_tree(proc)
             raise LauncherUnavailable(
-                f"经 Conda 激活取环境超时（{CAPTURE_TIMEOUT:.0f}s）；请检查这个环境的 activate.d 脚本"
+                f"经 Conda 激活取环境超时（{timeout:.0f}s）；请检查这个环境的 activate.d 脚本"
             ) from None
         try:
             data = json.loads(Path(result_path).read_text(encoding="utf-8"))
@@ -276,53 +372,63 @@ def _capture(python: str, lau: CondaLauncher) -> dict[str, str]:
                 f"经 Conda 激活取环境失败（conda run 退出码 {code}）；请检查 Conda 安装与这个环境"
             )
     except OSError as exc:
-        raise LauncherUnavailable(f"无法启动 conda：{exc.__class__.__name__}") from exc
+        raise LauncherUnavailable(f"无法经 Conda 激活取环境：{exc.__class__.__name__}") from exc
     finally:
-        try:
-            os.unlink(result_path)
-        except OSError:
-            pass
+        if result_path:
+            with _inflight_lock:
+                _inflight.discard(result_path)
+            try:
+                os.unlink(result_path)
+            except OSError:
+                pass
     return {
         str(k): str(v) for k, v in data.items() if k not in _VOLATILE_ENV and os.environ.get(k) != v
     }
 
 
-def activated_delta(python: str, lau: CondaLauncher) -> dict[str, str]:
-    """`python` 经 Conda 激活后相对当前进程环境的**增量**（进程内缓存；环境版本变了重新捕获）。"""
+def activated_delta(
+    python: str, lau: CondaLauncher, *, timeout: float | None = None
+) -> dict[str, str]:
+    """`python` 经 Conda 激活后相对当前进程环境的**增量**（进程内缓存；环境版本变了重新捕获）。
+    失败抛 `LauncherUnavailable`，**不缓存失败**。"""
     key = (lau.prefix, prefix_state(lau.prefix), lau.conda_exe)
     with _captured_lock:
         hit = _captured.get(key)
+        gate = _capture_gates.setdefault(key, threading.Lock())
     if hit is not None:
         return hit
-    delta = _capture(str(python), lau)
-    LOG.info("Conda 激活环境已捕获：%d 个变量（不落盘）", len(delta))  # 只记个数，不记名字和值
-    with _captured_lock:
-        _captured[key] = delta
-    return delta
+    with gate:  # 单飞：并发的同一把键只捕获一次，其余等它的结果
+        with _captured_lock:
+            hit = _captured.get(key)
+        if hit is not None:
+            return hit
+        delta = _capture(str(python), lau, CAPTURE_TIMEOUT if timeout is None else timeout)
+        LOG.info("Conda 激活环境已捕获：%d 个变量（不落盘）", len(delta))  # 只记个数，不记名字和值
+        with _captured_lock:
+            _captured[key] = delta
+        return delta
 
 
-def merge_env(lau: CondaLauncher | None, python, base: dict | None = None) -> dict | None:
+def merge_env(
+    lau: CondaLauncher | None, python, base: dict | None = None, *, timeout: float | None = None
+) -> dict | None:
     """起子进程用的 env：没有 launcher 原样返回 `base`（None = 继承）；有就是 `base`（或当前环境）叠上激活增量。
     调用方传进来的就是它原来要用的 env（`worker_env` / `runtime.probe_env` / `owned_env`），Tavotto 自己的增量保留。"""
     if lau is None:
         return base
     env = dict(base if base is not None else os.environ)
-    env.update(activated_delta(str(python), lau))
+    env.update(activated_delta(str(python), lau, timeout=timeout))
     return env
 
 
-def activate_env(python, base: dict | None = None) -> dict | None:
-    """预检探针 / 自检 / 模块盘点取 env 的入口：按 `effective_launcher` 的决策合并激活增量。
+def activate_env(python, base: dict | None = None, *, timeout: float | None = None) -> dict | None:
+    """所有「用目标解释器起子进程」的地方取 env 的唯一入口：`launcher_for_interpreter` 的决策 + 合并激活增量。
+    Conda 环境捕获失败抛 `LauncherUnavailable`——**没有**“范围外降级成裸起”的分支。"""
+    return merge_env(launcher_for_interpreter(python), python, base, timeout=timeout)
 
-    在 `probe_scope`（知道项目 / 脚本）里捕获失败就抛 `LauncherUnavailable`（由 `pool.launch_scope` 转成稳定码）；
-    不在范围里（没有项目上下文的诊断类调用）捕获失败只告警、按直接启动——不把一次环境状态查询变成 500。"""
-    lau = effective_launcher(python)
-    if lau is None:
-        return base
-    try:
-        return merge_env(lau, python, base)
-    except LauncherUnavailable:
-        if _PROBE_DECIDER.get() is None:
-            LOG.warning("经 Conda 激活取环境失败，这次按直接启动处理")
-            return base
-        raise
+
+def prewarm(python, *, timeout: float | None = None) -> None:
+    """（不持任何池锁时）先把这条解释器的激活增量捕获进缓存；之后锁内起会话只命中缓存。不需要激活的解释器什么都不做。"""
+    lau = launcher_for_interpreter(python)
+    if lau is not None:
+        activated_delta(str(python), lau, timeout=timeout)

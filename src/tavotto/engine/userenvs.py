@@ -751,6 +751,8 @@ def _probe(
         extra.update(import_mode="spec", project_root=root)
     health = projectenv.probe_environment(python, modules=modules, **extra)
     health["_site_fp"] = _health_fingerprint(health)
+    if launcher.is_unavailable(health):
+        return health  # 激活取环境失败是瞬时的：不缓存
     with _lock:
         _probe_cache[key] = health
     return health
@@ -770,7 +772,7 @@ def remember_probe(
     读到的就是用户刚点的那次检查，不会各自再起一遍；环境被重建（换代）后旧结论自然对不上。不带 `modules` 的结论不存
     （健康体检另有 `envadvice` 的结论表；这里只管覆盖度）。"""
     mods = tuple(dict.fromkeys(m for m in modules if m))
-    if not mods or not isinstance(health, dict):
+    if not mods or not isinstance(health, dict) or launcher.is_unavailable(health):
         return
     key = _cache_key(python, mods, bundled)
     # `generation`：探测**之前**取的环境代。探测期间环境被重建 / 替换（换代）时，量到的是旧解释器，不许记到新代名下——

@@ -1554,7 +1554,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             health.get("detail") or health.get("error") or "",
             health=health,
         )
-    selftest = _scoped_self_test(python, plan.project, plan.script)
+    selftest = worker_self_test(python)
     if not selftest.get("ok"):
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
 
@@ -2205,9 +2205,12 @@ def _run_pip(
             errors="replace",
             # 受管环境里跑的 pip 把缓存放进数据目录（不是 `%LOCALAPPDATA%\pip`）；用户 venv 上的
             # 安装原样继承——那是用户自己的 pip（`runtime.owned_env`）。
-            env=runtime.owned_env(argv[0]),
+            # 用户的 Conda 环境里装包：与 worker 同一个启动决策（激活后的环境）。取环境失败 = 什么都没装
+            env=launcher.activate_env(argv[0], runtime.owned_env(argv[0])),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
+    except launcher.LauncherUnavailable as exc:
+        return exc.code, str(exc)
     except OSError as exc:
         return ERROR_FAILED, str(exc)
     if on_started is not None:
@@ -2278,7 +2281,7 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
         )
     except subprocess.TimeoutExpired:
         return 1, f"超时（{timeout}s）"
-    except OSError as exc:
+    except (OSError, launcher.LauncherUnavailable) as exc:
         return 1, str(exc)
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
@@ -2313,13 +2316,6 @@ ax.plot([0, 1], [0, 1])
 fig.savefig("SelfTest.pdf")
 """
 _SELFTEST_NAME = "tavotto_selftest.py"
-
-
-def _scoped_self_test(python: str, project: str, script: str) -> dict:
-    """在这个项目 / 脚本的启动决策范围里跑 `worker_self_test`（与 worker / 预检探针同一个 `launchctx.decide`）。
-    范围由这里设，`worker_self_test` 本身仍是单参数——测试大量以单参数替身替换它。"""
-    with pool.launch_scope(project, script):
-        return worker_self_test(python)
 
 
 def worker_self_test(python: str) -> dict:
@@ -2361,7 +2357,7 @@ def worker_self_test(python: str) -> dict:
             encoding="utf-8",
             errors="replace",
             # 与池里起 worker 同一份 env 判据（受管环境的 matplotlib 缓存落回数据目录）
-            # Conda 环境：自检也用激活后的环境（与 worker 同一个启动决策；调用方在 `launch_scope` 里）
+            # Conda 环境：自检也用激活后的环境（与 worker 同一个启动决策：解释器路径的纯函数）
             env=launcher.activate_env(python, runtime.owned_env(python)),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
@@ -2393,6 +2389,8 @@ def worker_self_test(python: str) -> dict:
                     return {"ok": True, "figures": len(resp.get("stems") or {})}
                 return {"ok": False, "detail": str(resp.get("error", ""))[:800]}
         return {"ok": False, "detail": (stderr or stdout or "")[-800:]}
+    except launcher.LauncherUnavailable as exc:
+        return {"ok": False, "detail": str(exc)[:800], "code": exc.code}
     except OSError as exc:
         return {"ok": False, "detail": str(exc)[:800]}
     finally:
@@ -3596,7 +3594,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
     if not health.get("ok"):
         managedenv.mark_incomplete(project, f"{job.op} 之后 matplotlib 不可用")
         raise RepairError(ERROR_MANAGED_BROKEN, health.get("detail") or health.get("code") or "")
-    selftest = _scoped_self_test(python, project, "")
+    selftest = worker_self_test(python)
     if not selftest.get("ok"):
         managedenv.mark_incomplete(project, f"{job.op} 之后 worker 自检未通过")
         raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(selftest.get("detail", ""))[-800:])
@@ -4677,7 +4675,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         plan.constraints,
         user_specified=plan.user_specified,
     )
-    selftest = _scoped_self_test(python, plan.project, plan.script)
+    selftest = worker_self_test(python)
     if not selftest.get("ok"):
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
     # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
@@ -4979,7 +4977,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             code=ERROR_CANCELLED,
             result={"generation": generation, "activated": False},
         )
-    selftest = _scoped_self_test(python, job.project, job.script)
+    selftest = worker_self_test(python)
     if not selftest.get("ok"):
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
@@ -5430,7 +5428,7 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
             env=launcher.activate_env(python, runtime.owned_env(python)),
             creationflags=runtime.CREATE_NO_WINDOW,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, launcher.LauncherUnavailable) as exc:
         return {n: str(exc)[:200] for n in names}
     finally:
         if scratch:
@@ -6101,10 +6099,12 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
 def decide_environment_pinned(
     project: str | Path, script: str, *, project_exec: bool = True
 ) -> pool.EnvironmentDecision:
-    """（启动决策范围包装：体检候选解释器的预检探针与 worker 用同一个每脚本启动决策，见 `launchctx.probe_scope`。）
-    真正的判据在 `_decide_environment_pinned`。"""
-    with pool.launch_scope(str(project), script):
+    """（稳定出口包装：Conda 激活取环境失败 → 带 `conda_launcher_unavailable` 的 `WorkerError`，由 `preparation.plan_for` /
+    `_execute` 接住成稳定结论；真正的判据在 `_decide_environment_pinned`。）"""
+    try:
         return _decide_environment_pinned(project, script, project_exec=project_exec)
+    except launcher.LauncherUnavailable as exc:
+        raise pool.WorkerError(str(exc), code=exc.code) from exc
 
 
 def _decide_environment_pinned(

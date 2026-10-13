@@ -17,20 +17,17 @@
 `scriptanswers`，不在这里复制第二份）。回执不完整（`partial`，没有自报的 helper 依据）→ 不记录：证据不全就不
 假装可复用。
 
-消费者与核验范围（`FACETS_*`）：
+记录只是**事实**，不驱动启动决策：启动方式是解释器路径的纯函数（`launcher.launcher_for_interpreter`），与脚本、项目、记录
+无关——所以以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对 Conda 环境的预期）。
 
-* `launcher_for`（`pool.EngineWorker` 起会话时）——只核解释器 / 环境 / 源码：这条解释器这份脚本上次成功用的启动方式，
-  还成立就沿用（裸起成功过的不会被自动改成 Conda 包装），任何一项变了就重新检测；上次是 Conda 启动、现在找不到 conda
-  （没有关开关）→ `LauncherUnavailable`，不悄悄改成裸起；
-* `verify`（全部依据）——供「再次打开时沿用上次成功配置」的入口用。**这个消费端不在本期**（见 #982，由 P07 结合界面做）：
-  界面没有参数时本来就不带 argv，不能靠省略推断沿用；记录里的路径也只用来对账、不当可执行路径。
+`verify`（全部依据）——供「再次打开时沿用上次成功配置」的入口用。**这个消费端不在本期**（见 #982，由 P07 结合界面做）：
+界面没有参数时本来就不带 argv，不能靠省略推断沿用；记录里的路径也只用来对账、不当可执行路径。
 
 纯标准库；Flask 父进程侧。
 """
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import os
 import time
@@ -126,8 +123,16 @@ def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> di
     lau_ref = dict(lau) if lau else {"kind": launcher.KIND_DIRECT}
     # 解释器在 Conda 环境里时，无论这次是 direct 还是 conda 启动，都记环境版本：装 / 升降包之后「裸起成功过」的结论
     # 同样不再成立（激活后才能 import 的东西可能是新装的），要重新判断启动方式
+    # 环境版本与“代”取**起会话那一刻**的值（回执里的 `session_env`），不取收口这一刻的：脚本跑的途中环境被改了，
+    # 记录就该对不上现在的环境，而不是把改动之后的状态当成“跑成功时的样子”
+    sess = rcpt.session_env if isinstance(getattr(rcpt, "session_env", None), dict) else {}
     env_prefix = launcher.conda_prefix_of(rcpt.interpreter)
-    env_state = launcher.prefix_state(env_prefix) if env_prefix else ""
+    env_state = sess.get("env_state")
+    if not isinstance(env_state, str):
+        env_state = launcher.prefix_state(env_prefix) if env_prefix else ""
+    generation = sess.get("generation")
+    if generation is None:
+        generation = projectenv.environment_generation(rcpt.interpreter)
     binding = rcpt.binding if isinstance(rcpt.binding, dict) else {}
     basis = _basis_of(rcpt)
     if basis is None:
@@ -138,7 +143,7 @@ def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> di
         "interpreter": {
             "path": rcpt.interpreter,
             "source": rcpt.python_source,
-            "generation": projectenv.environment_generation(rcpt.interpreter),
+            "generation": generation,
             # 当时项目有没有定过解释器（True = 项目记住 / 用户选的；False = 默认链条给的）：
             # 再次打开时 `python=None`（项目没有决定）只对得上后者
             "project_decided": _project_decided(project_root, rcpt.interpreter),
@@ -255,77 +260,3 @@ def verify(
         if now != (record.get("binding_revision") or ""):
             return REASON_BINDING
     return None
-
-
-def _record_of(project_root: str | Path, script: str) -> dict | None:
-    try:
-        return runconfig.launch_record(project_root, script)
-    except runconfig.RunConfigError:
-        return None
-
-
-def probe_launcher(
-    project_root: str | Path, script: str, python: str
-) -> launcher.CondaLauncher | None:
-    """预检探针 / 依赖门 / worker 自检用的启动决策：就是 `decide`，**包括**「记录说要 Conda 而 conda 不见了」时的
-    `LauncherUnavailable`——不降级成裸起：裸起的预检会误报缺依赖、提议修复或换环境，worker 那里该有的
-    `conda_launcher_unavailable` 永远走不到。范围边界（`pool.launch_scope`）把它转成同一个稳定码的 `WorkerError`。"""
-    return decide(project_root, script, python)
-
-
-def env_for(
-    project_root: str | Path, script: str, python: str, base: dict | None = None
-) -> dict | None:
-    """起目标解释器的子进程该用的 env：`decide` 判 direct / conda；conda 就是 `base`（或当前环境）叠上激活增量
-    （`launcher.merge_env`，增量只在内存里，见 `launcher` 模块头）。worker（`pool.EngineWorker`）、预检探针与自检
-    （`launcher.activate_env`，同一个 `probe_scope` 决策）拿到的 env 完全相同。"""
-    return launcher.merge_env(decide(project_root, script, python), python, base)
-
-
-@contextlib.contextmanager
-def probe_scope(project_root: str | Path, script: str):
-    """在这个范围里，所有预检探针（`launcher.activate_env`）用这个项目 / 脚本的启动决策。"""
-    with launcher.probe_scope(lambda py: probe_launcher(project_root, script, py)):
-        yield
-
-
-def decide(project_root: str | Path, script: str, python: str) -> launcher.CondaLauncher | None:
-    """**「用目标解释器起子进程」的唯一启动决策**（None = 裸起）。worker（`EngineWorker` / `WorkerdWorker`）、预检探针
-    （`launcher.activate_env`，经 `probe_scope`）、依赖门（`SPAWN_GATES`）、`deprepair.worker_self_test` 都只经这一处拿 launcher，
-    输入只有 `(项目, 脚本, 解释器路径)`——**没有来源标签**：标签（`env_override` / `project_venv` …）是解释器路径的派生元数据，
-    探针在解析解释器的过程中还不知道它；让决策依赖它，三方就会因为「谁拿到了标签、谁没拿到」而分叉。内置 runtime 没有
-    `conda-meta`，`detect` 自然回 None，不需要靠标签特判。
-
-    这条解释器这份脚本上次成功的启动方式还成立（解释器 / 环境 / 源码核验通过，环境含 Conda 环境版本）就沿用——裸起成功过的
-    不会被改成 Conda 包装；任何一项变了就现场检测（Conda 环境 + 找得到 conda → 包装）。"""
-    record = _record_of(project_root, script)
-    recorded_conda = False
-    if (
-        record is not None
-        and verify(
-            record,
-            project_root=project_root,
-            script=script,
-            python=python,
-            python_source=None,  # 决策不依赖来源标签（见 docstring）
-            facets=FACETS_LAUNCHER,
-        )
-        is None
-    ):
-        lau = record.get("launcher") or {}
-        if lau.get("kind") == launcher.KIND_DIRECT:
-            return None
-        recorded_conda = lau.get("kind") == launcher.KIND_CONDA
-    # 记录里的 `conda_exe` 来自项目目录里的登记文件，**不拿它当可执行路径**（克隆来的项目
-    # 可以写任意路径）：要执行的 conda 永远从这条解释器现场检测出来。
-    found = launcher.detect(python)
-    if (
-        found is None and recorded_conda and not launcher.disabled() and not launcher._is_windows()  # noqa: SLF001 — 同模块族的平台判据，单一出处
-    ):
-        # 上次成功是经 Conda 激活启动的，现在却找不到 conda 可执行文件：裸起会重演「激活变量缺失」的失败，
-        # 还会让用户以为是脚本的错。停下，把话说清楚（关开关是用户明确的选择，不在此列）
-        raise launcher.LauncherUnavailable(
-            "这个环境上次是经 Conda 激活启动并成功的，现在找不到 conda 可执行文件；请检查 Conda 安装，"
-            "或设置 TAVOTTO_CONDA_ACTIVATION=0 改为直接启动"
-        )
-    return found

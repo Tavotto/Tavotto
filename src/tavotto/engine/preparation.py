@@ -269,7 +269,7 @@ def plan_for(
         try:
             decision = deprepair.decide_environment_pinned(root, script, project_exec=False)
         except pool.WorkerError as exc:
-            # 例如 `conda_launcher_unavailable`（记录说要 Conda、现在找不到 conda）：与解析解释器失败同一条路——写进计划的
+            # 例如 `conda_launcher_unavailable`（Conda 激活取环境失败）：与解析解释器失败同一条路——写进计划的
             # 环境错误，计划照样成立；不是 500
             decide_error = exc
     adopted = decision.adopted
@@ -723,7 +723,7 @@ class PreparationService:
             try:
                 decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
             except pool.WorkerError as exc:
-                # 例如 `conda_launcher_unavailable`：一行用户代码都没跑，稳定码原样交给调用方
+                # 例如 `conda_launcher_unavailable`（Conda 激活取环境失败）：一行用户代码都没跑，稳定码原样交给调用方
                 code = getattr(exc, "code", "") or "worker_error"
                 tr.fail("check", code)
                 result.error = {"code": code, "message": str(exc), "executed": False}

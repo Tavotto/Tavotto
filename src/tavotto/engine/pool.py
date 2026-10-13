@@ -32,7 +32,6 @@ from . import (
     figcapture,
     inputbroker,
     inputremap,
-    launchctx,
     launcher as launcher_mod,
     logsafe,
     patchspec,
@@ -1324,7 +1323,10 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     """
     args = runtime.probe_args(bundled=bundled)
     # 需要 Conda 激活的解释器：预检也用激活后的环境（与 worker 同一个启动决策）
-    env = launcher_mod.activate_env(python, runtime.probe_env(python, bundled=bundled))
+    # 激活取环境失败 → `LauncherUnavailable` 原样抛出（不是“没有 matplotlib”，不进体检缓存）；预算 = 下面探针的 30s
+    env = launcher_mod.activate_env(
+        python, runtime.probe_env(python, bundled=bundled), timeout=30.0
+    )
     try:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
@@ -1416,6 +1418,7 @@ def select_worker_python() -> tuple[str, str]:
             LOG.warning("已选定的渲染解释器不在了，重新选择: %s", _worker_python)
             _worker_python, _worker_source = None, ""
     seen: set[str] = set()
+    launcher_failure: WorkerError | None = None
     for cand, source in _prioritized_candidates():
         try:
             exists = Path(cand).exists()
@@ -1430,13 +1433,25 @@ def select_worker_python() -> tuple[str, str]:
         if cand in seen:
             continue
         seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
-        if _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED):
+        try:
+            has_mpl = _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED)
+        except launcher_mod.LauncherUnavailable as exc:
+            # 激活取环境失败：既不是“可用”也不是“缺 matplotlib”，不缓存。显式选择的把稳定码交给用户；
+            # 默认链条 / 系统候选只跳过这一个，继续试后面的
+            err = _launcher_error(exc)
+            if source in _EXPLICIT_SOURCES:
+                raise err from exc
+            launcher_failure = launcher_failure or err
+            continue
+        if has_mpl:
             _worker_python, _worker_source = cand, source
             _worker_ctx = launcher_mod.context_key(cand)
             LOG.info("渲染解释器: %s（来源 %s）", cand, logsafe.known(source, SOURCE_LABELS))
             return cand, source
         if source in _EXPLICIT_SOURCES:
             raise _explicit_unusable(source, cand, "no_matplotlib")
+    if launcher_failure is not None:
+        raise launcher_failure  # 没有别的可用候选：说真话（Conda 激活失败），不说“找不到装有 matplotlib 的 Python”
     raise _no_python_error()
 
 
@@ -1595,7 +1610,11 @@ def resolve_worker_python(
                 # 轻量复检：venv 被删掉 / 被重建成另一个 Python 是常事，
                 # 记住过不等于现在还成立。每个进程每条解释器（每个指纹）只做一次。
                 fingerprint = projectenv.interpreter_fingerprint(remembered)
-                ok = _has_matplotlib(remembered)
+                try:
+                    ok = _has_matplotlib(remembered)
+                except launcher_mod.LauncherUnavailable as exc:
+                    # 项目已选定 / 记住的环境：稳定码直接交给用户。不记体检结论、不作废记住的解释器、不静默换别的
+                    raise _launcher_error(exc) from exc
                 _record_verdict(remembered, ok, fingerprint)
             if ok:
                 return remembered, remembered_source(figures_dir, remembered)
@@ -1936,10 +1955,12 @@ class EngineWorker:
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
-        #: 启动方式（P09）：None = 直接启动；`CondaLauncher` = 用 Conda 激活后的环境变量启动（仍是直接子进程）
-        self.launcher = _launcher_or_error(figures_dir, script_name, python)
+        #: 启动方式（P09）：解释器路径的纯函数。None = 直接启动；`CondaLauncher` = 用 Conda 激活后的环境变量启动（仍是直接子进程）
+        self.launcher = launcher_mod.launcher_for_interpreter(python)
         #: 起会话那一刻这条解释器所在环境的「代」：写回重放 / 冷重放据此钉住热会话自己的环境
         self.python_generation = projectenv.environment_generation(python)
+        #: 起会话那一刻的 Conda 环境版本（成功记录用起会话时的值，不用收口时的）
+        self.env_state = launcher_mod.env_state_of(python)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
         # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
@@ -1980,7 +2001,7 @@ class EngineWorker:
         try:
             popen_env = launcher_mod.merge_env(self.launcher, python, env)
         except launcher_mod.LauncherUnavailable as exc:  # 激活取环境失败：稳定码，什么都没起
-            raise WorkerError(str(exc), code=exc.code) from exc
+            raise _launcher_error(exc) from exc
         self.proc = subprocess.Popen(
             execspec.worker_argv(
                 self.spec, worker_py=WORKER_PY, out_dir=self.out_dir, runtime_args=args
@@ -2715,10 +2736,11 @@ class WorkerdWorker:
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
         self.launcher = None
-        if _launcher_or_error(figures_dir, script_name, python) is not None:
+        if launcher_mod.launcher_for_interpreter(python) is not None:
             # workerd 的 spawn 规格里没有激活增量：需要 Conda 激活的解释器只走 Python 池（调用方回退）
             raise WorkerdUnavailable("该解释器需要 Conda 激活启动，workerd 不接")
         self.python_generation = projectenv.environment_generation(python)
+        self.env_state = launcher_mod.env_state_of(python)
         # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
         self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
@@ -3197,24 +3219,9 @@ def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
     return None
 
 
-@contextlib.contextmanager
-def launch_scope(figures_dir, script_name: str):
-    """每脚本启动决策的范围（`launchctx.probe_scope`）+ 把「记录说要 Conda、现在找不到 conda / 激活取环境失败」转成带稳定码的
-    `WorkerError`（`conda_launcher_unavailable`）。预检、依赖门、自检、worker 构造都在这个范围里拿同一个决策、抛同一个错。"""
-    try:
-        with launchctx.probe_scope(figures_dir, script_name):
-            yield
-    except launcher_mod.LauncherUnavailable as exc:
-        raise WorkerError(str(exc), code=exc.code) from exc
-
-
-def _launcher_or_error(figures_dir, script_name: str, python: str):
-    """启动方式（P09）：`launchctx.decide`（唯一启动决策），其不可用转成带稳定码的 `WorkerError`
-    （`conda_launcher_unavailable`），不悄悄改成直接启动。"""
-    try:
-        return launchctx.decide(figures_dir, script_name, python)
-    except launcher_mod.LauncherUnavailable as exc:
-        raise WorkerError(str(exc), code=exc.code) from exc
+def _launcher_error(exc: "launcher_mod.LauncherUnavailable") -> "WorkerError":
+    """Conda 激活取环境失败 → 带稳定码 `conda_launcher_unavailable` 的 `WorkerError`（不降级成裸起）。"""
+    return WorkerError(str(exc), code=exc.code)
 
 
 def _resolve_for_worker(
@@ -3226,8 +3233,7 @@ def _resolve_for_worker(
         if not pinned.matches(pinned.python):
             raise _environment_changed()
         return pinned.python, pinned.source
-    with launch_scope(figures_dir, script_name):  # 选择解释器时的预检与 worker 用同一个启动决策
-        return resolve_worker_python(figures_dir, script=script_name)
+    return resolve_worker_python(figures_dir, script=script_name)
 
 
 def register_environment_decider(decider) -> None:
@@ -3249,28 +3255,6 @@ def _workdir_gate(figures_dir: str, script_name: str) -> None:
 
 
 def _new_worker(
-    script_name: str,
-    figures_dir: str,
-    entry: str,
-    *,
-    artifact_source=None,
-    run=None,
-    pinned: EnvironmentDecision | None = None,
-):
-    """起会话的唯一入口：整个流程（依赖门 `SPAWN_GATES` 与两个构造函数里的解释器解析）都在 `launch_scope` 里——
-    预检探针与 worker 用同一个每脚本启动决策（见 `_new_worker_unscoped`）。"""
-    with launch_scope(figures_dir, script_name):
-        return _new_worker_unscoped(
-            script_name,
-            figures_dir,
-            entry,
-            artifact_source=artifact_source,
-            run=run,
-            pinned=pinned,
-        )
-
-
-def _new_worker_unscoped(
     script_name: str,
     figures_dir: str,
     entry: str,
@@ -3668,6 +3652,12 @@ def acquire(
             )
             decided = True
         _refuse_if_mutating(want_python)
+        if want_python:
+            # 需要 Conda 激活的解释器：激活捕获（最长一个超时）在池锁**外**做完；锁内起会话只命中缓存
+            try:
+                launcher_mod.prewarm(want_python)
+            except launcher_mod.LauncherUnavailable as exc:
+                raise _launcher_error(exc) from exc
         with _lock:
             w = _workers.get(key)
             why = ""

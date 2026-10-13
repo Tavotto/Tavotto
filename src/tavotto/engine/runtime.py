@@ -508,7 +508,8 @@ def probe_packages(
             else probe_env(python, bundled=bundled),
             creationflags=CREATE_NO_WINDOW,
         )
-    except (OSError, subprocess.SubprocessError):
+    # RuntimeError：注入的 `env_for` 激活取环境失败（`launcher.LauncherUnavailable`）
+    except (OSError, subprocess.SubprocessError, RuntimeError):
         return {n: None for n in names}
     if proc.returncode != 0:
         return {n: None for n in names}

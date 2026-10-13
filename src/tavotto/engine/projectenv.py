@@ -886,6 +886,12 @@ def probe_environment(
         # 分配也在守卫之内：系统临时目录不可用 / 只读 / 满的时候，这里抛出去
         # 就是一个 500，而 `probe_environment` 承诺的是结构化失败。
         scratch = _probe_scratch_dir()
+        probe_timeout = PROBE_TIMEOUT_S if timeout is None else min(PROBE_TIMEOUT_S, timeout)
+        # Conda 环境：体检也用激活后的环境（解释器路径的纯函数决策，与 worker 一致）。取环境失败 = 什么都没起，
+        # 返回“不可用：conda_launcher_unavailable”——瞬时结论，调用方不得缓存
+        probe_env = launcher.activate_env(
+            python, runtime.probe_env(python, bundled=bundled), timeout=probe_timeout
+        )
         spawned = (
             True  # 从这里起算「可能已经起了子进程」：spawn 本身失败的 OSError 在下面单独改回 False
         )
@@ -895,13 +901,20 @@ def probe_environment(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=PROBE_TIMEOUT_S if timeout is None else min(PROBE_TIMEOUT_S, timeout),
+            timeout=probe_timeout,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            # 需要 Conda 激活的解释器：体检也用激活后的环境（与 worker 同一个启动决策）
-            env=launcher.activate_env(python, runtime.probe_env(python, bundled=bundled)),
+            env=probe_env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
+    except launcher.LauncherUnavailable as exc:
+        return {
+            "ok": False,
+            "code": launcher.UNAVAILABLE_CODE,
+            "python": python,
+            "detail": str(exc)[:400],
+            "execution": execution_note(**shape, started=False),
+        }
     except (OSError, subprocess.SubprocessError) as exc:
         # 起不来：bad executable format（venv 建在另一个架构上）、被杀毒
         # 隔离、动态库缺失、venv 的 home 指向一个已经删掉的解释器……
@@ -939,6 +952,9 @@ def probe_environment(
 
     info["python"] = python
     info["execution"] = execution_note(**shape, info=info if isinstance(info, dict) else None)
+    if launcher.unlocated_conda_prefix(python) is not None:
+        # Conda 环境但找不到 conda：只能直接启动（没有激活）。可见的事实，不静默
+        info["launch_note"] = "conda_not_found"
     if info.get("deferred_env"):
         # 环境的 site-packages 里有指向项目的 .pth / finder（可编辑安装）：运行之前什么都不 import，整个候选延后
         info.update(ok=True, code="", deferred_env=True)
@@ -1064,8 +1080,9 @@ def probe_system_candidates(
             health = _system_probe_cache.get(key)
         if health is None:
             health = probe_environment(python, module)
-            with _lock:
-                _system_probe_cache[key] = health
+            if not launcher.is_unavailable(health):  # 瞬时结论不缓存
+                with _lock:
+                    _system_probe_cache[key] = health
         entry = _system_entry(python, source, health)
         out.append(entry)
         if entry["ok"]:
@@ -1095,10 +1112,11 @@ def reprobe_system_candidate(entry: dict, module: str) -> dict:
     拿旧观测替用户换环境，结果多半是同一个缺包再报一次，还白跑了一遍脚本。"""
     python = str(entry.get("python") or "")
     health = probe_environment(python, module)
-    with _lock:
-        _system_probe_cache[(_executable_key(python), module, launcher.context_key(python))] = (
-            health
-        )
+    if not launcher.is_unavailable(health):  # 瞬时结论不缓存
+        with _lock:
+            _system_probe_cache[(_executable_key(python), module, launcher.context_key(python))] = (
+                health
+            )
     return _system_entry(python, str(entry.get("source") or ""), health)
 
 
@@ -1728,8 +1746,9 @@ def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> 
     else:
         code = rejected[0]["code"] if rejected else ERROR_NOT_FOUND
         outcome = {"ok": False, "code": code, "rejected": rejected, "candidates": candidates}
-    with _lock:
-        _first_open[key] = (outcome, tuple(probed))
+    if not any(launcher.is_unavailable(e) for e in rejected):  # 激活取环境失败是瞬时的：不缓存
+        with _lock:
+            _first_open[key] = (outcome, tuple(probed))
     return outcome
 
 

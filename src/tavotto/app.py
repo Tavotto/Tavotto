@@ -11290,6 +11290,8 @@ def main():
     threading.Thread(
         target=engine_pool.prune_engine_cache, daemon=True, name="mm-engine-cache-prune"
     ).start()
+    # Conda 激活捕获的结果文件含完整环境变量（可能有许可证串 / 令牌）：清上个进程崩溃留下的，并登记退出清理
+    engine_launcher.startup()
     # runtime 素材的 materialized cache（可删除可重建的派生物）同一治理
     threading.Thread(
         target=engine_runtimeasset.prune_cache, daemon=True, name="mm-runtime-cache-prune"
