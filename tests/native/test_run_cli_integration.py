@@ -606,7 +606,7 @@ def test_client_shutdown_at_the_script_end_barrier_is_not_a_terminate(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 完成计数来自本次已发布的预览，不是 .svg 文件数（P01b，EX12，AC-05 前半）
+# 完成计数来自本次已发布的预览，不是 .svg 文件数；一张图失败不拖垮其它图（P01b → P08a，EX12，AC-05）
 _GOOD_FIG = """\
 fig, ax = plt.subplots()
 ax.plot([0, 1], [1, 2])
@@ -629,7 +629,9 @@ _TWO_FIG_HEAD = (
 
 
 @pytest.mark.parametrize("order", ["good_first", "bad_first"])
-def test_a_half_written_preview_is_not_counted_as_a_captured_figure(tmp_path, order):
+def test_a_bad_figure_is_isolated_and_only_complete_figures_are_counted(tmp_path, order):
+    """两图一坏，坏图先 / 后两种顺序：脚本照常跑完（退出 0，不再被首个 barrier 前的预览失败拖垮），
+    计数 == 完整发布的图 == 恰好 1 张；坏图没有半份 XML；记成完成的每一份都是完整 XML。"""
     import xml.etree.ElementTree as ET  # noqa: PLC0415
 
     from tavotto.engine import config, figcapture  # noqa: PLC0415
@@ -643,21 +645,67 @@ def test_a_half_written_preview_is_not_counted_as_a_captured_figure(tmp_path, or
         cwd=tmp_path,
         tavotto_args=("--status-file", str(status)),
     ) as (session, proc, native_id):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        build = session.ensure_built()
+        assert list(build["stems"]) == ["good"], "恰好 1 张健康图进入可编辑会话"
+        assert [f["stem"] for f in build["failed_figures"]] == ["bad"]
         code, _, err = nativekit.finish(session, proc)
-    assert code != 0 and "AttributeError" in err, "探针无效：坏图的预览应当失败\n" + err
+    assert code == 0, f"一张图的预览失败不该改变脚本的退出码: {code}\n{err}"
     out_dir = config.data_path("cache", "native", native_id)
     published = sorted(figcapture.published_preview_stems(out_dir))
     data = _status(status)
-    # 计数 == 完整发布的图；坏图（半份 XML 或根本没有）一张都不在里面
-    assert data["figures_captured"] == len(published)
-    assert "bad" not in published
+    assert published == ["good"] and data["figures_captured"] == 1
+    assert data["session_result"] == "ok"
+    assert not figcapture.usable_preview_generation(out_dir, "bad"), "坏图不该有预览"
     assert not any(n.endswith(".part") for n in os.listdir(out_dir)), "临时文件没清"
-    for stem in published:
-        ET.parse(out_dir / f"{stem}.svg")  # 记成完成的每一份都是完整 XML
-    if order == "good_first":
-        # 好图先画好：它必须还在、必须被数到（不能靠「全部丢弃」过关）
-        assert published == ["good"] and data["figures_captured"] == 1
-        assert data["session_result"] == "ok"
-    else:
-        # 坏图先抛错、好图没轮到：逐图隔离归 P08a，这里只保证诚实——没有假完成
-        assert "bad.svg" not in os.listdir(out_dir)
+    ET.parse(figcapture.usable_preview_path(out_dir, "good", ".svg"))  # 记成完成的是完整 XML
+
+
+# --------------------------------------------------------------------------
+# 逐图事实随每个 barrier 刷新（P08a，Codex #978）：不靠再发一次 build
+_FACTS_HEAD = (
+    "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+    "from matplotlib.artist import Artist\n"
+    "class AggOnly(Artist):\n    def draw(self, renderer):\n        renderer.buffer_rgba()\n"
+)
+
+
+def _facts_at_each_show_barrier(tmp_path, script: str, shows: int):
+    nativekit.write(tmp_path / "figure.py", _FACTS_HEAD + script)
+    seen = []
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        for _n in range(shows):
+            nativekit.wait_state(session, [nativesession.BARRIER])
+            # 刻意不调 ensure_built：事实必须随 barrier 事件到达
+            seen.append({f["stem"]: f["state"] for f in session.public_state()["figure_facts"]})
+            session.resume()
+        nativekit.finish(session, proc)
+    return seen
+
+
+def test_facts_follow_a_figure_that_goes_from_failed_to_live_at_the_next_barrier(tmp_path):
+    seen = _facts_at_each_show_barrier(
+        tmp_path,
+        "bad, ax = plt.subplots()\nax.plot([0, 1], [0, 1])\nax.add_artist(AggOnly())\n"
+        "bad.savefig('b.png')\nplt.show()\n"
+        "for a in list(ax.artists):\n    a.remove()\nplt.show()\n",
+        2,
+    )
+    assert seen[0] == {"b": "failed"}, seen
+    assert seen[1] == {"b": "live"}, f"第二个 barrier 还是旧事实: {seen}"
+
+
+def test_facts_show_a_figure_that_first_fails_at_the_second_barrier(tmp_path):
+    seen = _facts_at_each_show_barrier(
+        tmp_path,
+        "g, ax = plt.subplots()\nax.plot([0, 1], [0, 1])\ng.savefig('g.png')\nplt.show()\n"
+        "bad, ax2 = plt.subplots()\nax2.plot([0, 1], [0, 1])\nax2.add_artist(AggOnly())\n"
+        "bad.savefig('b.png')\nplt.show()\n",
+        2,
+    )
+    assert seen[0] == {"g": "live"}, seen
+    assert seen[1] == {"g": "live", "b": "failed"}, f"第二个 barrier 漏了新出现的坏图: {seen}"

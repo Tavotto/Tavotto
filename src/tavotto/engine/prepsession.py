@@ -21,10 +21,16 @@
 捕获之后怎么登记，全是 app 在调用点注入的回调。会话只存在内存里——应用重启后 GET 一个旧会话 id 得到
 `preparation_session_not_found`（`params.reason = unknown_or_restarted`，客户端重新创建检查会话，
 由当时的真实状态重新判定），**不自动重跑**。
+
+**一次运行意图（P05b，ADR 0124）**是本模块里唯一允许「用户没有再点一次 Run」就推进到首次执行的东西：它只由用户
+明确的 `run_when_ready`（「打开并运行」）动作创建，绑定会话 / 脚本 / 运行配置 / `config_revision` 与一份有界的
+安装授权合同（`InstallGrant`），只推进**用户代码第一次执行之前**的步骤，执行一次即用尽；取消、外部变化、授权扩大、
+预算用尽都是吸收态（后到的 done / ready 复活不了它）。GET、刷新、SSE 重放、组件挂载、收到 done 都不创建意图。
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
@@ -120,7 +126,10 @@ ACTION_CANCEL = "cancel"
 ACTION_RECHECK = "recheck"
 #: 授权一次依赖准备（T06）：认领 = 用户确认了动作上说清的影响（`impact`），后端按 `impact_digest` 核对后起作业
 ACTION_PREPARE = "prepare_dependencies"
-ACTION_KINDS = (ACTION_RUN, ACTION_CANCEL, ACTION_RECHECK, ACTION_PREPARE)
+#: 「打开并运行」（P05b）：用户明确授权一次有界的持续意图——把用户代码**首次执行之前**的准备（授权范围内的受管安装、
+#: 必要的目录 / 环境回答之后的重核）连续推进，然后执行恰一次。认领它必须回显 `InstallGrant` 的摘要。
+ACTION_ARM = "run_when_ready"
+ACTION_KINDS = (ACTION_RUN, ACTION_CANCEL, ACTION_RECHECK, ACTION_PREPARE, ACTION_ARM)
 
 # 稳定错误码（协议契约：code 不许改，文案随便改）
 ERROR_NOT_FOUND = "preparation_session_not_found"
@@ -133,6 +142,34 @@ ERROR_IMPACT_CHANGED = "preparation_impact_changed"
 #: 会改用户自己环境的动作必须回显它看到的 `impact_digest`（不能只靠"点了一下"）
 ERROR_IMPACT_UNCONFIRMED = "preparation_impact_unconfirmed"
 ERROR_BAD_REQUEST = "bad_request"
+#: 同一脚本在本项目里已有另一个在等的运行意图（别的运行配置）：两条意图并存会让合计多跑一次，要显式 `transfer_from`
+ERROR_INTENT_CONFLICT = "preparation_run_intent_conflict"
+#: 想转移的旧意图不在「还没认领任何执行」的状态（已执行 / 在执行 / 已取消 / 已撤销 / 不存在）：零副作用
+ERROR_INTENT_NOT_TRANSFERABLE = "preparation_run_intent_not_transferable"
+
+#: 持续意图的状态（吸收态一旦进入不再回到 active）
+INTENT_ACTIVE = "active"
+INTENT_LAUNCHED = (
+    "launched"  # 首次执行已被认领：意图用尽，之后的一切（缺包、失败、再跑）都要用户另行决定
+)
+INTENT_CANCELLED = "cancelled"  # 用户取消
+INTENT_REVOKED = (
+    "revoked"  # 外部变化 / 授权不够 / 预算用尽 / 依赖失败 / 认领被拒……（reason 是闭集码）
+)
+INTENT_TRANSFERRED = "transferred"  # 未执行的意图受控转移给了另一个运行配置的会话
+INTENT_STATUSES = (
+    INTENT_ACTIVE,
+    INTENT_LAUNCHED,
+    INTENT_CANCELLED,
+    INTENT_REVOKED,
+    INTENT_TRANSFERRED,
+)
+#: 意图的有界预算：墙钟（含等用户回答、等安装）与认领步数（一次安装 + 一次执行）
+RUN_INTENT_TTL_S = 60 * 60
+RUN_INTENT_MAX_STEPS = 2
+_MAX_INTENT_LEDGER = 16
+#: 依赖准备完成后会话自己为重新检查置的失效理由：它是本意图批准的安装造成的，不是外部变化
+_INTERNAL_STALE = frozenset({"dependencies_prepared"})
 
 #: 「跑完了但没有图」的两个 code（`pool.NO_FIGURES_CODE` / `_SILENT_CODE` 的值；这里不 import pool 的常量
 #: 名，闭集字面量由 `tests/test_preparation_session.py` 钉着与 pool 一致）。
@@ -697,6 +734,18 @@ class _DepAttempt:
 
 
 @dataclasses.dataclass
+class _Observation:
+    """`SessionService._observe_locked` 的结果（私有）：给 `report` 与意图的推进共用。"""
+
+    found: tuple | None
+    checks: list[dict]
+    derived: dict
+    attempt_fact: dict | None
+    facts: dict
+    missing: dict | None
+
+
+@dataclasses.dataclass
 class _Attempt:
     attempt_id: str  # = 这次执行的 PreparationPlan.plan_id
     action_id: str
@@ -708,6 +757,116 @@ class _Attempt:
     #: 这次执行以 `missing_dependency` 收场时的差异计划（`_observe_missing`）：模块名 / 能否在会话里授权 /
     #: 影响摘要。None = 不是这类终局
     missing: dict | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class InstallGrant:
+    """「打开并运行」授权的**安装范围**（typed 合同，不是一次次伪造的确认）。
+
+    只覆盖：Tavotto 自己的受管环境（新一代，原子回滚）、由项目自己的声明算出的联合计划、不改用户自己的环境、
+    不丢 / 不改账上别的作用域装进去的包、不含未经可信来源核实的用户指定包、数量有上限、整个意图至多一次安装。
+    超出任何一条就是**真实的新增影响**，必须由用户再看一次（重新「打开并运行」）。摘要由合同本身算出——
+    调用方回显它，等于确认了这些边界；每次安装认领时仍照常核对 `deprepair` 的实际影响摘要（`ACTION_PREPARE` 的老检查
+    一条没删）。"""
+
+    version: int = 1
+    max_packages: int = 16
+    max_installs: int = 1
+
+    def contract(self) -> dict:
+        return {
+            "grant_version": self.version,
+            "target_kind": deprepair.TARGET_MANAGED,
+            "scope": deprepair.SCOPE_MANAGED_GENERATION,
+            "rollback": deprepair.ROLLBACK_GENERATION_ATOMIC,
+            "modifies_user_environment": False,
+            "installs_from": "project_declarations",
+            "user_specified_packages": False,
+            "drops_or_changes_existing": False,
+            "max_packages": self.max_packages,
+            "max_installs": self.max_installs,
+        }
+
+    def digest(self) -> str:
+        return deprepair.impact_digest(self.contract())
+
+    def refusal(self, impact: dict, scope_policy: str, installs_so_far: int) -> str:
+        """这份实际影响是不是超出了授权：回理由码（闭集）；空串 = 在授权之内。"""
+        if installs_so_far >= self.max_installs:
+            return "install_budget"
+        if scope_policy:
+            return "scope_policy"
+        if impact.get("target_kind") != deprepair.TARGET_MANAGED:
+            return "target_kind"
+        if impact.get("scope") != deprepair.SCOPE_MANAGED_GENERATION or impact.get(
+            "modifies_user_environment"
+        ):
+            return "user_environment"
+        if impact.get("rollback") != deprepair.ROLLBACK_GENERATION_ATOMIC:
+            return "no_rollback"
+        if impact.get("drops") or impact.get("changes"):
+            return "drops_or_changes"
+        if impact.get("user_specified"):
+            return "user_specified"
+        if len(impact.get("installs") or ()) > self.max_packages:
+            return "package_count"
+        return ""
+
+
+GRANT = InstallGrant()
+
+
+@dataclasses.dataclass
+class RunIntent:
+    """一次有界的持续运行意图（ADR 0124）。内存里、随会话；应用重启即消失（不猜、不重跑）。
+
+    绑定：项目 + 会话 + 脚本 + 运行配置引用 + `config_revision`（预期的变化才跟着前进）。认领闭包（`launch` /
+    `finalize` / `prepare`）是创建它的那次请求里 app 注入的——意图终结时放手。"""
+
+    intent_id: str
+    session_id: str
+    project_id: str
+    script: str
+    run_config: str | None
+    config_revision: int
+    created_at: float
+    deadline: float
+    grant: InstallGrant
+    status: str = INTENT_ACTIVE
+    reason: str = ""
+    ended_at: float | None = None
+    steps: int = 0
+    #: 本意图认领过的安装：`{"digest", "installs"}`（至多 `grant.max_installs` 个）；再要装就是没有进展 / 影响扩大
+    installs: list[dict] = dataclasses.field(default_factory=list)
+    #: 本意图认领的依赖作业 id：只有它们的终局算「本意图批准的预期变化」
+    owned_deps: set[str] = dataclasses.field(default_factory=set)
+    #: 本意图批准的安装已经装好、尚未被一次重新检查吸收（吸收时预期变化的范围包含环境 / 依赖）
+    dep_done_pending: bool = False
+    waiting_on: str = ""
+    launched_attempt: str | None = None
+    transferred_to: str | None = None
+    lineage: list[str] = dataclasses.field(default_factory=list)
+    ledger: list[dict] = dataclasses.field(default_factory=list)
+    launch: Callable | None = dataclasses.field(default=None, repr=False)
+    finalize: Callable | None = dataclasses.field(default=None, repr=False)
+    prepare: Callable | None = dataclasses.field(default=None, repr=False)
+
+    def note(self, kind: str, ref: str, at: float) -> None:
+        self.ledger.append({"kind": kind, "ref": ref, "at": at})
+        del self.ledger[:-_MAX_INTENT_LEDGER]
+
+    def public(self) -> dict:
+        return {
+            "id": self.intent_id,
+            "status": self.status,
+            "reason": self.reason,
+            "waiting_on": self.waiting_on if self.status == INTENT_ACTIVE else "",
+            "steps": self.steps,
+            "max_steps": RUN_INTENT_MAX_STEPS,
+            "expires_at": self.deadline,
+            "attempt_id": self.launched_attempt,
+            "transferred": bool(self.lineage),
+        }
 
 
 @dataclasses.dataclass
@@ -731,6 +890,8 @@ class Session:
     signature: tuple = ()
     #: 「跑完没出图」的原因提示缓存（`rasterhint.detect`）：按尝试 id 记，一次尝试只读一遍源码
     no_figure_hint: dict = dataclasses.field(default_factory=dict)
+    #: 最近一次「打开并运行」意图（P05b）；None = 从没有过。终结后保留到被新的取代，供报告说明发生了什么
+    intent: RunIntent | None = None
     lock: threading.RLock = dataclasses.field(default_factory=threading.RLock, repr=False)
 
     def public_target(self) -> dict:
@@ -759,6 +920,10 @@ def target_key(target: dict) -> str:
 
 
 def _fingerprint(plan: preparation.PreparationPlan) -> str:
+    return json.dumps(_fingerprint_parts(plan), sort_keys=True, default=str)
+
+
+def _fingerprint_parts(plan: preparation.PreparationPlan) -> dict:
     """语义修订的判据（私有，含解释器路径，**不**对外）：目标、解释器、工作目录档、授权、数据绑定、
     门的结论变了才算「执行意图变了」。进度 / 文案 / 时间戳不在里面——它们只动 `observation_seq`。
     T03 起 argv / 运行配置也加进来。"""
@@ -802,7 +967,61 @@ def _fingerprint(plan: preparation.PreparationPlan) -> str:
             "impact_digest"
         ),
     }
-    return json.dumps(payload, sort_keys=True, default=str)
+    return payload
+
+
+# ---------------------------------------------------------------- 持续意图：预期变化 vs 外部变化
+# `_fingerprint_parts` 的键按「谁能让它合法地变」分组。意图期间的修订变化只有两类来源被批准：
+#   * 本意图批准的安装完成 → 目标环境 / 依赖结论变（`_ENV_PARTS | _DEP_PARTS`）；
+#   * 本意图正在等的用户回答被答了（工作目录 / 环境选择）→ 对应的键变；依赖在那之前**没被评估过**时，评估出结论
+#     本身也是预期（先问目录再看依赖）。已经评估过的依赖结论变了（别处改了 requirements 等）就不是。
+# 其余任何键（脚本 / 运行配置 / 授权 / 数据绑定 / 改指表……）变了、或脚本字节变了，都是外部变化：撤销意图。
+_ENV_PARTS = frozenset({"interpreter", "env_generation", "env_needs_decision", "env_error"})
+_DEP_PARTS = frozenset(
+    {
+        "deps",
+        "dependency_intents",
+        "dependency_conflicts",
+        "deps_impact",
+        "deps_switch",
+        "required",
+    }
+)
+_WORKDIR_PARTS = frozenset({"cwd_mode", "cwd_decided", "grant", "binding", "required"})
+
+
+def classify_transition(
+    old: preparation.PreparationPlan,
+    new: preparation.PreparationPlan,
+    *,
+    stale: dict | None,
+    dep_done: bool,
+) -> str:
+    """意图期间的一次修订变化是不是预期的。回 `""`（预期，意图跟着前进）或撤销理由码（外部变化）。
+
+    纯函数：只比较两份计划的指纹分量与脚本字节修订，吃「本意图批准的安装是否刚完成」与「会话失效理由」。"""
+    if stale is not None and str(stale.get("reason") or "") not in _INTERNAL_STALE:
+        return "external_change"
+    if old.script_revision != new.script_revision:
+        return "source_changed"
+    before, after = _fingerprint_parts(old), _fingerprint_parts(new)
+    changed = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
+    allowed: set[str] = set()
+    if dep_done:
+        allowed |= _ENV_PARTS | _DEP_PARTS
+    answering = {
+        c["id"] for c in checks_of(old) if c["status"] == CHECK_NEEDS_ACTION
+    }  # 旧计划里正等着用户回答的那些项
+    evaluated_before = old.dependency_preparation is not None
+    if "workdir" in answering:
+        allowed |= _WORKDIR_PARTS
+        if not evaluated_before:
+            allowed |= _DEP_PARTS
+    if "environment" in answering:
+        allowed |= _ENV_PARTS
+        if not evaluated_before:
+            allowed |= _DEP_PARTS
+    return "external_change" if changed - allowed else ""
 
 
 class SessionService:
@@ -821,6 +1040,8 @@ class SessionService:
         self._ttl = idle_ttl_s
         self._clock = clock
         self._lock = threading.Lock()
+        #: 创建运行意图的临界区（项目 + 脚本粒度的冲突检查与赋值）；只在会话锁之内取，取着它时不再取任何会话锁
+        self._arm_lock = threading.Lock()
         self._by_id: dict[str, Session] = {}
         self._by_key: dict[tuple[str, str], Session] = {}
         #: app 注入：`notifier({"session_id", "project_id", "target", "config_revision"})`（只是「重新读报告」的提示）。
@@ -869,16 +1090,18 @@ class SessionService:
             sess.touched_at = now
             if not created and not self._has_active_attempt(sess):
                 if sess.stale or fingerprint != sess.fingerprint:
+                    old_plan, old_stale = sess.plan, sess.stale
                     sess.target = dict(target)
                     sess.plan = plan
                     sess.fingerprint = fingerprint
                     sess.config_revision += 1
                     sess.stale = None
+                    self._follow_intent(sess, old_plan, old_stale)
                     # 旧修订的动作全部作废（已认领的留着：重复点击要找得到当初的尝试）
                     sess.actions = {
                         k: v
                         for k, v in sess.actions.items()
-                        if v.kind in (ACTION_RUN, ACTION_PREPARE) and v.attempt_id
+                        if v.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM) and v.attempt_id
                     }
         self._notify(sess)
         return sess, created
@@ -911,6 +1134,7 @@ class SessionService:
         | None = None,
         impact_digest: str | None = None,
         prepare: Callable[..., dict] | None = None,
+        transfer_from: str | None = None,
     ) -> tuple[Session, bool, str]:
         """认领一个动作。回 `(会话, claimed, 动作 kind)`：`claimed=False` = 这个动作早已被认领（重复点击 / 另一个
         标签页），返回的是当初那次尝试，**没有任何新副作用**。
@@ -922,13 +1146,36 @@ class SessionService:
         `prepare_dependencies`（T06）：`impact_digest` 是用户看到的影响摘要的回显（会改用户自己环境的动作**必须**
         带；别的动作带了也要对得上）；`prepare(...)` 是 app 注入的「按已确认的摘要起依赖作业」
         （`deprepair.start_confirmed` + SSE 转发），回 `{plan_id, started, joined, progress}`。
+
+        `run_when_ready`（P05b）：创建一次有界的运行意图——同样要回显授权合同的摘要；`launch` / `finalize` /
+        `prepare` 会被意图保管，用来在之后（安装完成、用户答完目录）无请求上下文地继续**这一次**首次执行。
+        `transfer_from`（只许跟 `run_when_ready` 一起给）：另一个运行配置（argv 换了）的旧会话 id——把它**还没认领
+        任何执行**的意图原子地转移过来；旧意图及其未认领动作当场退役，已认领的一切保留。
         """
         sess = self.session(session_id, project_id)
+        old: Session | None = None
+        if transfer_from is not None:
+            peek = sess.actions.get(action_id)
+            if not isinstance(transfer_from, str) or (peek is not None and peek.kind != ACTION_ARM):
+                raise SessionError(
+                    ERROR_BAD_REQUEST,
+                    "transfer_from 只能跟 run_when_ready 一起给",
+                    400,
+                    {"field": "transfer_from"},
+                )
+            old = self.session(transfer_from, project_id)
         recheck = False
         claimed = False
+        arming = False
         kind = ""
         late: tuple[_DepAttempt, dict] | None = None
-        with sess.lock:
+        # 转移要同时持有新旧两个会话的锁：按 session_id 排序取，两条路径不会反向等待
+        with contextlib.ExitStack() as locks:
+            for held in sorted(
+                {id(x): x for x in (sess, old) if x is not None}.values(),
+                key=lambda x: x.session_id,
+            ):
+                locks.enter_context(held.lock)
             sess.touched_at = self._clock()
             action = sess.actions.get(action_id)
             if action is None:
@@ -961,13 +1208,28 @@ class SessionService:
                 if action.attempt_id is not None:
                     return sess, False, action.kind  # 幂等认领：同一个动作 → 同一份依赖作业
                 claimed, late = self._claim_prepare(sess, action, impact_digest, prepare)
+            elif action.kind == ACTION_ARM:
+                if action.attempt_id is not None:
+                    return sess, False, action.kind  # 幂等认领：同一个动作 → 同一个意图
+                self._claim_arm(
+                    sess,
+                    action,
+                    impact_digest,
+                    old,
+                    launch=launch,
+                    finalize=finalize,
+                    prepare=prepare,
+                )
+                claimed = arming = True
             elif action.kind == ACTION_CANCEL:
-                # 只退役**这次会话拥有的**工作；共享 worker / 别人起的会话的所有权判断在
-                # `PreparationService.cancel` 与 `pool.build_owned` 的 created 里，这里不重判
+                # 取消先撤销持续意图（吸收态：之后到的 done / ready 复活不了它），再只退役**这次会话拥有的**工作；
+                # 共享 worker / 别人起的会话的所有权判断在 `PreparationService.cancel` 与 `pool.build_owned` 的
+                # created 里，这里不重判
+                self._revoke_intent(sess, INTENT_CANCELLED, "user_cancelled")
                 if action.attempt_id in {d.plan_id for d in sess.dep_attempts}:
                     deprepair.cancel_status(action.attempt_id or "")
-                else:
-                    self._prep.cancel(action.attempt_id or "", project_id)
+                elif action.attempt_id:
+                    self._prep.cancel(action.attempt_id, project_id)
                 claimed = True
             else:  # ACTION_RECHECK：规划有副作用面（解释器体检），不在会话锁里做
                 recheck = True
@@ -984,6 +1246,9 @@ class SessionService:
             claimed = True
         else:
             self._notify(sess)
+        if arming or recheck:
+            # 只推进**已有**的意图（recheck 本身不创建意图）；它是否还成立由 `_advance` 内部核
+            self.advance(sess)
         return sess, claimed, kind
 
     def _claim_prepare(
@@ -1116,6 +1381,15 @@ class SessionService:
                 "retryable": snap.get("retryable"),
                 "committed": bool(snap.get("committed")),
             }
+            intent = self._intent_live(sess)
+            if intent is not None and attempt.plan_id in intent.owned_deps:
+                if state == deprepair.STATE_DONE:
+                    # 本意图批准的安装装好了：之后那次重新检查带来的环境 / 依赖变化是预期的
+                    intent.dep_done_pending = True
+                    intent.note("dependency_done", attempt.plan_id, self._clock())
+                else:
+                    # 失败 / 取消：意图终结，不自己重装（没有进展不循环）；用户在报告里看到失败，再决定
+                    self._revoke_intent(sess, INTENT_REVOKED, f"dependency_{state}")
         if state == deprepair.STATE_DONE:
             threading.Thread(
                 target=self._replan_after_dependency,
@@ -1156,6 +1430,8 @@ class SessionService:
             with sess.lock:
                 attempt.absorbed = True
             self._notify(sess)
+            # 意图批准的安装装好并已重新检查：再推进一步（别的安装完成没有意图就什么都不做）
+            self.advance(sess)
 
     def _observe_missing(self, sess: Session, plan, result) -> dict | None:
         """一次执行以 `missing_dependency` 收场：算出差异计划（要装什么 / 装到哪 / 影响摘要）并记在那次尝试上。
@@ -1288,7 +1564,7 @@ class SessionService:
                     sess.actions = {
                         k: v
                         for k, v in sess.actions.items()
-                        if v.kind in (ACTION_RUN, ACTION_PREPARE) and v.attempt_id
+                        if v.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM) and v.attempt_id
                     }
             self._notify(sess)
 
@@ -1309,7 +1585,301 @@ class SessionService:
         else:
             # register 当场落了终局（needs_input / 静态）：没有执行线程，登记也无从谈起
             attempt.finalized = True
+        # 首次执行已被认领（自动或手点都一样）：运行意图用尽，之后不会再有自动的第二次
+        self._consume_intent(sess, plan.plan_id)
         return True
+
+    # ---- 持续运行意图（P05b，ADR 0124）----
+    def _intent_live(self, sess: Session, *, expire: bool = True) -> RunIntent | None:
+        """会话锁内：当前仍然 active 的意图（超出墙钟预算的当场撤销）；没有 = None。"""
+        intent = sess.intent
+        if intent is None or intent.status != INTENT_ACTIVE:
+            return None
+        if expire and self._clock() >= intent.deadline:
+            self._revoke_intent(sess, INTENT_REVOKED, "budget_exhausted")
+            return None
+        return intent
+
+    def _revoke_intent(self, sess: Session, status: str, reason: str) -> bool:
+        """会话锁内：把 active 意图终结成吸收态，并放手认领闭包。回是不是真的撤销了一个 active 意图。"""
+        intent = sess.intent
+        if intent is None or intent.status != INTENT_ACTIVE:
+            return False
+        intent.status = status
+        intent.reason = reason
+        intent.ended_at = self._clock()
+        intent.launch = intent.finalize = intent.prepare = None
+        intent.note(status, reason, intent.ended_at)
+        # 未认领的执行 / 依赖 / 再次授权动作：它们是为这条意图摆出来的，意图没了就不留（下次读报告按现状补发）
+        return True
+
+    def _consume_intent(self, sess: Session, attempt_id: str) -> None:
+        """会话锁内：首次执行被认领（无论自动还是用户手点 Run）——意图用尽。手点也用尽：同一会话里不能既手动跑一次又被自动再跑。"""
+        intent = self._intent_live(sess, expire=False)
+        if intent is None:
+            return
+        intent.status = INTENT_LAUNCHED
+        intent.launched_attempt = attempt_id
+        intent.steps += 1
+        intent.ended_at = self._clock()
+        intent.launch = intent.finalize = intent.prepare = None
+        intent.note("launch", attempt_id, intent.ended_at)
+
+    def _follow_intent(
+        self, sess: Session, old_plan: preparation.PreparationPlan, old_stale: dict | None
+    ) -> None:
+        """`check()` 换了修订之后（会话锁内，`sess.plan` 已是新计划）：预期的变化让意图跟着前进到新修订，
+        外部变化撤销它——撤销是终局，后到的 ready / done 复活不了。"""
+        intent = self._intent_live(sess)
+        if intent is None:
+            return
+        reason = classify_transition(
+            old_plan, sess.plan, stale=old_stale, dep_done=intent.dep_done_pending
+        )
+        if reason:
+            self._revoke_intent(sess, INTENT_REVOKED, reason)
+            return
+        intent.config_revision = sess.config_revision
+        intent.dep_done_pending = False
+
+    def _claim_arm(
+        self,
+        sess: Session,
+        action: _Action,
+        echoed: str | None,
+        old: Session | None,
+        *,
+        launch,
+        finalize,
+        prepare,
+    ) -> None:
+        """会话锁内（转移时新旧两把锁都在）：核对授权摘要 → 核会话可武装 → 冲突 / 转移 → 创建意图。
+        什么都不执行；失败一律零副作用。"""
+        if not isinstance(echoed, str) or not echoed:
+            raise SessionError(
+                ERROR_IMPACT_UNCONFIRMED,
+                "「打开并运行」需要带上你看到的授权摘要（impact_digest）才能确认",
+                400,
+                {"field": "impact_digest"},
+            )
+        if echoed != action.impact_digest:
+            raise self._impact_changed(
+                sess, {"impact_digest": action.impact_digest, "impact": action.impact}, stale=False
+            )
+        if sess.plan.script is None or sess.plan.target != TARGET_SCRIPT:
+            raise SessionError(ERROR_NOT_RUNNABLE, "只有脚本目标可以「打开并运行」", 409)
+        if self._has_active_attempt(sess) or self._intent_live(sess) is not None:
+            raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试或意图在进行", 409)
+        stale = preparation.stale_reason(sess.plan)
+        if stale is not None:
+            sess.stale = {"reason": stale[0]}
+            sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+            raise SessionError(
+                preparation.ERROR_PLAN_STALE,
+                "检查之后环境 / 授权 / 数据变了，请重新检查",
+                409,
+                {"reason": stale[0], "executed": False},
+            )
+        # 冲突检查与意图赋值必须在同一个临界区：两个标签页对同一脚本、不同运行配置并发武装时，各自只持有自己会话的锁，
+        # 都能通过检查（Codex r4254020393）。所有意图都只在这把锁里创建，转移路径同守这条不变量
+        with self._arm_lock:
+            now = self._clock()
+            steps, deadline, lineage = 0, now + RUN_INTENT_TTL_S, []
+            if old is not None:
+                oi = self._transferable(sess, old)
+                # 原子转移：旧意图终局 + 未认领动作当场退役；已认领的 session / claim / attempt / receipt / provider 事实原样保留。
+                # 预算沿用（转移不是续命），血统记下来
+                oi.status = INTENT_TRANSFERRED
+                oi.reason = "run_configuration_changed"
+                oi.transferred_to = sess.session_id
+                oi.ended_at = now
+                oi.launch = oi.finalize = oi.prepare = None
+                oi.note("transfer", sess.session_id, now)
+                old.actions = {k: v for k, v in old.actions.items() if v.attempt_id}
+                steps, deadline, lineage = (
+                    oi.steps,
+                    min(deadline, oi.deadline),
+                    [*oi.lineage, oi.intent_id],
+                )
+            else:
+                self._reject_conflict(sess)
+            run = getattr(sess.plan, "run", None)
+            intent = RunIntent(
+                intent_id=f"intent-{uuid.uuid4().hex}",
+                session_id=sess.session_id,
+                project_id=sess.project_id,
+                script=str(sess.plan.script),
+                run_config=run.config_id if run is not None else None,
+                config_revision=sess.config_revision,
+                created_at=now,
+                deadline=deadline,
+                grant=GRANT,
+                steps=steps,
+                lineage=lineage,
+                launch=launch,
+                finalize=finalize,
+                prepare=prepare,
+            )
+            intent.note("arm", action.id, now)
+            sess.intent = intent
+            action.attempt_id = intent.intent_id
+
+    def _transferable(self, sess: Session, old: Session) -> RunIntent:
+        """旧会话的意图能不能转移到 `sess`：同项目同脚本、运行配置不同、意图仍 active 且**没有认领任何执行**。"""
+
+        def refuse(reason: str) -> SessionError:
+            return SessionError(
+                ERROR_INTENT_NOT_TRANSFERABLE,
+                "旧的运行意图不能转移（它已经执行过 / 在执行 / 已取消 / 已失效）",
+                409,
+                {"reason": reason, "executed": False},
+            )
+
+        if old is sess or old.project_id != sess.project_id or old.plan.script != sess.plan.script:
+            raise refuse("different_target")
+        if target_key(old.target) == target_key(sess.target):
+            raise refuse("same_run_configuration")
+        oi = self._intent_live(old)
+        if oi is None:
+            raise refuse("no_active_intent")
+        if oi.launched_attempt is not None or self._exec_active(old):
+            raise refuse("already_claimed")
+        return oi
+
+    def _reject_conflict(self, sess: Session) -> None:
+        """同项目同脚本已有别的运行配置的 active 意图：并存会让合计多跑一次，必须显式转移（或先取消）。"""
+        with self._lock:
+            others = [
+                s
+                for s in self._by_id.values()
+                if s is not sess
+                and s.project_id == sess.project_id
+                and s.plan.script == sess.plan.script
+            ]
+        for other in others:
+            held = other.intent
+            if held is not None and held.status == INTENT_ACTIVE and self._clock() < held.deadline:
+                raise SessionError(
+                    ERROR_INTENT_CONFLICT,
+                    "这个脚本已经有另一份运行配置的「打开并运行」在等；换参数请转移它，或先取消",
+                    409,
+                    {"executed": False},
+                )
+
+    def advance(self, sess: Session) -> None:
+        """推进**已有**的运行意图一步（没有意图什么都不做——它不创建意图）。由明确的驱动者调：创建意图的认领、
+        意图自己批准的安装终局之后的重新检查、用户答完目录 / 环境之后的 `recheck`。GET / 刷新 / SSE 不调它。"""
+        with sess.lock:
+            late = self._advance_locked(sess)
+        if late is not None:
+            self._dependency_event(sess, late[0], late[1])
+        self._notify(sess)
+
+    def _advance_locked(self, sess: Session) -> tuple[_DepAttempt, dict] | None:
+        intent = self._intent_live(sess)
+        if intent is None:
+            return None
+        if intent.config_revision != sess.config_revision:
+            self._revoke_intent(sess, INTENT_REVOKED, "revision_changed")
+            return None
+        if self._has_active_attempt(sess):
+            return None  # 安装 / 执行在途：它的终局自己会再来推进
+        if sess.stale:
+            self._revoke_intent(sess, INTENT_REVOKED, str(sess.stale.get("reason") or "stale"))
+            return None
+        self._note_source_change(sess)
+        if sess.stale:
+            self._revoke_intent(sess, INTENT_REVOKED, str(sess.stale.get("reason") or "stale"))
+            return None
+        ob = self._observe_locked(sess)
+        checks = ob.checks
+        by_id = {c["id"]: c for c in checks}
+        if ob.missing is not None or (
+            ob.attempt_fact is not None
+            and ob.attempt_fact["status"] != preparation.STATUS_CANCELLED
+        ):
+            # 当前修订已经有过一次执行：意图只管首次执行之前，不为补包 / 换环境 / 进编辑悄悄再来一次
+            self._revoke_intent(sess, INTENT_REVOKED, "already_executed")
+            return None
+        blocked = next((c for c in checks if c["status"] == CHECK_BLOCKED), None)
+        if blocked is not None:
+            self._revoke_intent(sess, INTENT_REVOKED, "blocked")
+            return None
+        waiting = next((c for c in checks if c["status"] != CHECK_OK), None)
+        intent.waiting_on = waiting["id"] if waiting is not None else ""
+        deps = by_id.get("dependencies")
+        others_ok = all(c["status"] == CHECK_OK for c in checks if c["id"] != "dependencies")
+        if deps is not None and deps["status"] == CHECK_NEEDS_ACTION and others_ok:
+            offer = self._prepare_offer(sess, checks, None)
+            if offer is None:
+                self._revoke_intent(sess, INTENT_REVOKED, "dependency_unavailable")
+                return None
+            installs = set(offer["impact"].get("installs") or ())
+            if intent.installs:
+                approved = set().union(*(set(i["installs"]) for i in intent.installs))
+                self._revoke_intent(
+                    sess,
+                    INTENT_REVOKED,
+                    "impact_expanded" if not installs <= approved else "no_progress",
+                )
+                return None
+            refusal = intent.grant.refusal(
+                offer["impact"], offer["scope_policy"], len(intent.installs)
+            )
+            if refusal:
+                self._revoke_intent(sess, INTENT_REVOKED, f"grant_exceeded:{refusal}")
+                return None
+            if intent.steps >= RUN_INTENT_MAX_STEPS:
+                self._revoke_intent(sess, INTENT_REVOKED, "budget_exhausted")
+                return None
+            action = next(
+                (
+                    a
+                    for a in sess.actions.values()
+                    if a.kind == ACTION_PREPARE
+                    and self._open(a)
+                    and a.impact_digest == offer["impact_digest"]
+                ),
+                None,
+            )
+            if action is None:
+                return None  # 不应发生：_observe_locked 刚补发过；等下一次驱动
+            try:
+                _started, late = self._claim_prepare(
+                    sess, action, action.impact_digest, intent.prepare
+                )
+            except SessionError as exc:
+                self._revoke_intent(sess, INTENT_REVOKED, f"claim_refused:{exc.code}")
+                return None
+            except Exception:  # noqa: BLE001 — 起安装失败：意图终结，不循环
+                LOG.exception("运行意图起依赖准备失败 %s", sess.plan.script)
+                self._revoke_intent(sess, INTENT_REVOKED, "dependency_start_failed")
+                return None
+            intent.installs.append({"digest": offer["impact_digest"], "installs": sorted(installs)})
+            intent.owned_deps.add(action.attempt_id or "")
+            if _started:
+                # 加入别人已经起的作业（含转移前旧意图已计过数的那一份）不再扣一步（Codex r4254020397）
+                intent.steps += 1
+            intent.note("prepare", action.attempt_id or "", self._clock())
+            return late
+        if waiting is not None:
+            return None  # 在等用户答（目录 / 环境）或判不出（unknown 不当通过）：不推进也不撤销
+        action = next(
+            (a for a in sess.actions.values() if a.kind == ACTION_RUN and self._open(a)), None
+        )
+        if action is None:
+            return None
+        if intent.steps >= RUN_INTENT_MAX_STEPS:
+            self._revoke_intent(sess, INTENT_REVOKED, "budget_exhausted")
+            return None
+        try:
+            self._claim_run(sess, action, launch=intent.launch, finalize=intent.finalize)
+        except SessionError as exc:
+            self._revoke_intent(sess, INTENT_REVOKED, f"claim_refused:{exc.code}")
+        except Exception:  # noqa: BLE001 — 没交出去（`_claim_run` 已撤回认领）：意图终结，不重试
+            LOG.exception("运行意图起执行失败 %s", sess.plan.script)
+            self._revoke_intent(sess, INTENT_REVOKED, "launch_failed")
+        return None
 
     # ---- 报告 ----
     def report(
@@ -1319,44 +1889,13 @@ class SessionService:
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
         with sess.lock:
             sess.touched_at = self._clock()
+            self._intent_live(
+                sess
+            )  # 墙钟预算到了就当场撤销（只读报告也不能让过期的意图继续显示 active）
             self._note_source_change(sess)
-            found = self._current_attempt(sess)
-            checks = checks_of(sess.plan)
-            # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
-            # （它仍在 provider 引用与历史里）
-            current_rev = (
-                bool(sess.attempts) and sess.attempts[-1].config_revision == sess.config_revision
-            )
-            attempt_fact, attempt_gone = (
-                self._attempt_fact(sess, found) if current_rev else (None, False)
-            )
-            dep_fact = self._dependency_fact(sess)
-            if attempt_fact is not None and sess.attempts:
-                attempt_fact["missing_installable"] = bool(
-                    (sess.attempts[-1].missing or {}).get("installable")
-                )
-            facts = {
-                "target_kind": sess.plan.target,
-                "has_script": sess.plan.script is not None,
-                "checks": checks,
-                "stale": sess.stale,
-                "attempt": attempt_fact,
-                "awaiting_input": bool(awaiting_input) and attempt_fact is not None,
-                "dependency": dep_fact,
-            }
-            derived = derive(facts)
-            if attempt_gone:
-                # 尝试的记录已被 provider 清掉（内存里的 TTL）：如实说不知道，不猜它成没成
-                derived = _result(PHASE_ACTION_REQUIRED, OUTCOME_UNKNOWN, code="attempt_expired")
-            missing = self._pending_missing(sess) if attempt_fact is not None else None
-            self._sync_actions(
-                sess,
-                derived,
-                checks,
-                attempt_active=self._is_running(attempt_fact),
-                dependency_busy=dep_fact is not None and dep_fact["running"],
-                missing=missing,
-            )
+            ob = self._observe_locked(sess, awaiting_input=awaiting_input)
+            found, checks, derived = ob.found, ob.checks, ob.derived
+            attempt_fact, facts, missing = ob.attempt_fact, ob.facts, ob.missing
             dep_progress = self._dependency_progress(sess)
             signature = (
                 derived["phase"],
@@ -1368,6 +1907,9 @@ class SessionService:
                 found[1].trace.current_phase if found else None,
                 (dep_progress or {}).get("state"),
                 (dep_progress or {}).get("stage"),
+                (sess.intent.status, sess.intent.reason, sess.intent.waiting_on)
+                if sess.intent is not None
+                else None,
             )
             if signature != sess.signature:
                 sess.signature = signature
@@ -1447,9 +1989,54 @@ class SessionService:
                     if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
                     else None
                 ),
+                # 运行意图（P05b）：None = 从没有过；终结后保留，说明是怎么结束的（reason 是闭集码，不带路径与参数）
+                "intent": sess.intent.public() if sess.intent is not None else None,
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
+
+    def _observe_locked(self, sess: Session, *, awaiting_input: bool = False) -> "_Observation":
+        """会话锁内：读出此刻的事实 → 派生 phase → 补齐 / 撤掉未认领动作。`report` 与意图的推进共用这一份，
+        所以意图看到的世界与用户在报告里看到的是同一个。"""
+        found = self._current_attempt(sess)
+        checks = checks_of(sess.plan)
+        # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
+        # （它仍在 provider 引用与历史里）
+        current_rev = (
+            bool(sess.attempts) and sess.attempts[-1].config_revision == sess.config_revision
+        )
+        attempt_fact, attempt_gone = (
+            self._attempt_fact(sess, found) if current_rev else (None, False)
+        )
+        dep_fact = self._dependency_fact(sess)
+        if attempt_fact is not None and sess.attempts:
+            attempt_fact["missing_installable"] = bool(
+                (sess.attempts[-1].missing or {}).get("installable")
+            )
+        facts = {
+            "target_kind": sess.plan.target,
+            "has_script": sess.plan.script is not None,
+            "checks": checks,
+            "stale": sess.stale,
+            "attempt": attempt_fact,
+            "awaiting_input": bool(awaiting_input) and attempt_fact is not None,
+            "dependency": dep_fact,
+        }
+        derived = derive(facts)
+        if attempt_gone:
+            # 尝试的记录已被 provider 清掉（内存里的 TTL）：如实说不知道，不猜它成没成
+            derived = _result(PHASE_ACTION_REQUIRED, OUTCOME_UNKNOWN, code="attempt_expired")
+        missing = self._pending_missing(sess) if attempt_fact is not None else None
+        self._sync_actions(
+            sess,
+            derived,
+            checks,
+            attempt_active=self._is_running(attempt_fact),
+            dependency_busy=dep_fact is not None and dep_fact["running"],
+            missing=missing,
+            attempt_fact=attempt_fact,
+        )
+        return _Observation(found, checks, derived, attempt_fact, facts, missing)
 
     def _note_source_change(self, sess: Session) -> None:
         """脚本在检查之后被改了：披露过的影响（`script_writes` / 参数个数……）不再是真的。没有尝试在进行时，
@@ -1653,6 +2240,10 @@ class SessionService:
     def _has_active_attempt(self, sess: Session) -> bool:
         if self._dep_running(sess) is not None:
             return True
+        return self._exec_active(sess)
+
+    def _exec_active(self, sess: Session) -> bool:
+        """有没有**用户代码的执行**尝试在进行（不含依赖作业）。"""
         found = self._current_attempt(sess)
         if found is None:
             return False
@@ -1668,6 +2259,17 @@ class SessionService:
     def _active(self, sess: Session) -> bool:
         return self._has_active_attempt(sess)
 
+    def _retained(self, sess: Session) -> bool:
+        """回收时要留着的会话：有尝试在进行，或有 active 的运行意图（只读，持 `_lock` 时被调；意图自己的墙钟预算会让它终结）。"""
+        intent = sess.intent
+        if (
+            intent is not None
+            and intent.status == INTENT_ACTIVE
+            and self._clock() < intent.deadline
+        ):
+            return True
+        return self._active(sess)
+
     def _runnable(self, sess: Session) -> bool:
         if sess.stale or sess.plan.script is None:
             return False
@@ -1682,6 +2284,7 @@ class SessionService:
         attempt_active: bool,
         dependency_busy: bool = False,
         missing: dict | None = None,
+        attempt_fact: dict | None = None,
     ) -> None:
         """补齐 / 撤掉当前该有的**未认领**动作：`run`（可运行且没有尝试在进行）、`cancel`（有自己拥有的尝试 / 依赖
         作业在进行）、`recheck`（没有尝试在进行）、`prepare_dependencies`（有可授权的依赖影响且没有尝试在进行）。
@@ -1709,11 +2312,26 @@ class SessionService:
             if (attempt_active or dependency_busy or sess.stale)
             else self._prepare_offer(sess, checks, missing)
         )
+        intent_live = self._intent_live(sess, expire=False) is not None
+        # 「打开并运行」：脚本目标、没有尝试 / 依赖在进行、没有走不通的检查项、没有已发生的执行（当前修订里除了被取消的）、
+        # 没有运行时缺包待办、没有在等的意图——已经执行过之后的再来一次是用户明确的 `run`，不是意图
+        armable = (
+            not attempt_active
+            and not dependency_busy
+            and not sess.stale
+            and sess.plan.script is not None
+            and sess.plan.target == TARGET_SCRIPT
+            and missing is None
+            and not intent_live
+            and all(c["status"] != CHECK_BLOCKED for c in checks)
+            and (attempt_fact is None or attempt_fact.get("status") == preparation.STATUS_CANCELLED)
+        )
         want: dict[str, bool] = {
             ACTION_RUN: runnable,
-            ACTION_CANCEL: current is not None,
+            ACTION_CANCEL: current is not None or intent_live,
             ACTION_RECHECK: not attempt_active and not dependency_busy,
             ACTION_PREPARE: prep is not None,
+            ACTION_ARM: armable,
         }
         for kind, wanted in want.items():
             open_ones = [a for a in sess.actions.values() if a.kind == kind and self._open(a)]
@@ -1742,6 +2360,8 @@ class SessionService:
                     if kind == ACTION_PREPARE and prep is not None
                     else self._impact(sess, kind),
                 )
+                if kind == ACTION_ARM:
+                    action.impact_digest = GRANT.digest()
                 if kind == ACTION_PREPARE and prep is not None:
                     action.impact_digest = prep["impact_digest"]
                     action.impact_core = dict(prep["impact"])
@@ -1752,7 +2372,7 @@ class SessionService:
         consumed = [
             a
             for a in sess.actions.values()
-            if a.kind in (ACTION_RUN, ACTION_PREPARE) and a.attempt_id
+            if a.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM) and a.attempt_id
         ]
         for stale_action in consumed[:-_MAX_CONSUMED_ACTIONS]:
             sess.actions.pop(stale_action.id, None)
@@ -1824,6 +2444,16 @@ class SessionService:
 
     @staticmethod
     def _impact(sess: Session, kind: str) -> dict:
+        if kind == ACTION_ARM:
+            # 在 `run` 的影响之上：可能在授权范围内装包（只进 Tavotto 自己的受管环境）。授权合同原样摆在 `run_intent`，
+            # 它的摘要就是认领时要回显的 `impact_digest`
+            return {
+                **SessionService._impact(sess, ACTION_RUN),
+                "installs_packages": True,
+                "changes_environment": True,
+                "run_intent": GRANT.contract(),
+                "impact_digest": GRANT.digest(),
+            }
         if kind == ACTION_RUN:
             return {
                 "executes_user_script": True,
@@ -1892,7 +2522,7 @@ class SessionService:
         if len(self._by_id) < self._max:
             return
         idle = sorted(
-            (s for s in self._by_id.values() if not self._active(s)), key=lambda s: s.touched_at
+            (s for s in self._by_id.values() if not self._retained(s)), key=lambda s: s.touched_at
         )
         if not idle:
             raise SessionError(
@@ -1908,7 +2538,7 @@ class SessionService:
         cutoff = self._clock() - self._ttl
         with self._lock:
             for sess in list(self._by_id.values()):
-                if sess.touched_at < cutoff and not self._active(sess):
+                if sess.touched_at < cutoff and not self._retained(sess):
                     self._drop(sess)
 
     def reset_for_tests(self) -> None:

@@ -36,6 +36,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
+from support.previewkit import publish_fixture
 from tavotto import app as m
 from tavotto.engine import patchspec, pool as engine_pool, project_watch as engine_watch
 
@@ -131,9 +132,7 @@ class _FakeWorker:
         self._write_manifest()
 
     def _write_manifest(self) -> None:
-        (self.out_dir / f"{self.manifest['stem']}.json").write_text(
-            json.dumps(self.manifest, ensure_ascii=False), encoding="utf-8"
-        )
+        publish_fixture(self.out_dir, self.manifest["stem"], self.manifest)
 
     def override(self, stem, patches, preview_dpi=None, inline_svg=False):
         self.calls.append("override")
@@ -1122,7 +1121,7 @@ def test_hot_manifest_is_matched_per_stem_not_per_worker(tmp_path):
     patches = [{"gid": "axes_0.title", "prop": "fontsize", "value": 7}]
     for stem in ("Fig2_yield", "Fig2_correlation"):
         man = {**_manifest(), "stem": stem}
-        (out / f"{stem}.json").write_text(json.dumps(man), encoding="utf-8")
+        publish_fixture(out, stem, man)
 
     class Hot:
         """热会话：只在 Fig2_yield 上应用过 patches。"""
@@ -1162,7 +1161,7 @@ def test_hot_manifest_rereads_the_path_after_the_rerender_repairs_an_invalid_ste
 
         def override(self, s, p):
             Hot.calls += 1
-            (out / f"{s}.json").write_text(json.dumps({**_manifest(), "stem": s}), encoding="utf-8")
+            publish_fixture(out, s, {**_manifest(), "stem": s})
             figcapture.clear_preview_invalid(out, s)
 
     got = m._hot_manifest(Hot(), stem, patches)

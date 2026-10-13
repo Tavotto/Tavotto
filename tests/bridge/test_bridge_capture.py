@@ -15,6 +15,7 @@ import json
 import pytest
 
 from support.bridgekit import run_runner, write
+from support.previewkit import preview_file
 from tavotto.engine import bridge
 
 pytestmark = pytest.mark.usefixtures("clean_env")
@@ -238,7 +239,7 @@ def test_a_figure_created_after_the_first_barrier_reaches_the_session(
         assert list(build["stems"]) == ["fig", "fig-2"]
         # 新图要真的可编辑（不只是名字出现在清单里）
         assert sess.override("fig-2", [])["warnings"] == []
-        assert (sess.out_dir / "fig-2.svg").is_file()
+        assert preview_file(sess.out_dir, "fig-2", ".svg").is_file()
         sess.resume()
         sess.wait_event("barrier")
         sess.resume()
@@ -264,7 +265,7 @@ def test_editing_survives_the_next_barrier(user_python, tmp_path, bridge_session
         sess.wait_event("barrier")
         man = sess.ensure_built()
         stem = next(iter(man["stems"]))
-        doc = json.loads((sess.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+        doc = json.loads(preview_file(sess.out_dir, stem, ".json").read_text(encoding="utf-8"))
         gid = next(
             el["gid"]
             for el in doc["elements"]

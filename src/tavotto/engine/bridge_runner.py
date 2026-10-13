@@ -625,6 +625,9 @@ class BridgeRun:
                 raise wireproto.ProtocolError("unknown_cmd", f"未知指令: {cmd}")
 
         self.session = _NativeSession(self.args.out_dir, self.args.preview_dpi)
+        # 保存观察账本在 runner 里是模块级的（钩子拿不到实例）；会话要靠它按 Figure 身份认领「这次运行
+        # 成功 save 的原产物」（P08a 只读降级），所以把同一份挂过去
+        self.session.savefig_observations = _SAVEFIG_OBSERVATIONS
         self._sync_captures()
         self.session.instrument_all()
         self.handler = _NativeHandler(self.session)
@@ -636,6 +639,13 @@ class BridgeRun:
         _resolve_module_source(self.args)
         out = self.session.stems_summary(_DROPPED)
         out["savefig_observations"] = _SAVEFIG_OBSERVATIONS.report()
+        # 逐图的实际完成事实（P08a）：活图 / 失败图 / 只读原件各自声明，不由一个总成功数代替
+        facts = self.session.figure_facts(_SAVEFIG_OBSERVATIONS)
+        out["figure_facts"] = facts
+        out["capture_summary"] = {
+            "live": sum(1 for f in facts if f["state"] == "live"),
+            "failed": sum(1 for f in facts if f["state"] == "failed"),
+        }
         out["descriptors"] = self.session.descriptors(
             script=self.args.rel_target,
             entry=self.args.entry,
@@ -695,22 +705,30 @@ class BridgeRun:
         manifest = _PKG.manifest
         overrides = _PKG.overrides
         self.rebase_warnings = {}
-        for stem, state in self.session.states.items():
+        for stem, state in list(self.session.states.items()):
             if stem not in self._known_stems:
                 # 这一轮**新出现**的图：`instrument_all()` 刚给它建过状态、
                 # 出过预览，baseline 就是此刻。再来一遍纯属重复渲染。
                 continue
-            # 图幅（ADR 0098）在重放之前定：此刻 Figure 是脚本原样（离开上一个屏障时已还原）。
-            # 上一个屏障按 pyplot 兜底捕获、之后才被按同一个 stem 存盘的图，第一次有了调用——
-            # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
-            # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
-            self.session.establish_frame(stem, state.fig)
-            manifest.instrument(state)
-            patches = self.saved_patches.get(stem) or []
-            warnings = overrides.apply(state, patches) if patches else []
-            if warnings:
-                self.rebase_warnings[stem] = list(warnings)
-            self.session.render(stem)
+            try:
+                # 图幅（ADR 0098）在重放之前定：此刻 Figure 是脚本原样（离开上一个屏障时已还原）。
+                # 上一个屏障按 pyplot 兜底捕获、之后才被按同一个 stem 存盘的图，第一次有了调用——
+                # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
+                # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
+                self.session.establish_frame(stem, state.fig)
+                manifest.instrument(state)
+                patches = self.saved_patches.get(stem) or []
+                warnings = overrides.apply(state, patches) if patches else []
+                if warnings:
+                    self.rebase_warnings[stem] = list(warnings)
+                staged = self.session._stage_preview(stem)  # noqa: SLF001 — 渲染段；发布段在 try 之外
+            except Exception as exc:  # noqa: BLE001 — 脚本在两个屏障之间把这张图改坏了：只隔离这一张
+                # 异常逃出去会打断用户脚本（在 `show()` 里抛），再在 script_end 重复一次。和新捕获同一套逐图隔离
+                self.rebase_warnings.pop(stem, None)
+                self.session.isolate_live_failure(stem, exc)  # 存储类错误在里头原样上抛
+                continue
+            # 发布段（账本 / 产物目录）出错是会话级的，不隔离，照新捕获路径的口径上抛
+            self.session._publish_staged(stem, staged)  # noqa: SLF001
 
     def release_barrier(self, reason: str) -> list:
         """**任何**离开屏障的路径都要经过这里（ADR 0021 §8.1）。
@@ -733,6 +751,9 @@ class BridgeRun:
             return []
         overrides = _PKG.overrides
         owed: list = []
+        # 失败图（P08a）：它的预览没出来，但 Figure 可能已经被 instrument 动过——同样要核对恢复，
+        # 恢复不了就和健康图一样不许放行
+        owed.extend(self.session.failed_restore_owed())
         for stem, state in self.session.states.items():
             snapshot = self.session.snapshot(stem)
             if snapshot:
@@ -750,8 +771,14 @@ class BridgeRun:
                 continue
             if state.unrestored:
                 owed.append(stem)
-        self._known_stems = set(self.session.states)
+        # 在 rebase 里被隔离的已知图：保留"已知"身份和已存的 patch——脚本修好后下个屏障它回来时要按已知图
+        # 重放这些编辑，而不是当新图丢掉（Codex #978）
+        self._known_stems = set(self.session.states) | {
+            s for s in self._known_stems if s in self.session.failures
+        }
         self._had_barrier = True
+        # 脚本接着跑：失败过的图下一个屏障再试一次（可能已被脚本改好）
+        self.session.allow_retry_failed()
         return owed
 
     def resume_editing(self) -> None:
@@ -785,6 +812,10 @@ class BridgeRun:
             "barrier",
             reason=reason,
             stems=list(self.session.states),
+            failed_stems=list(self.session.failures) or None,
+            # 逐图事实随每个 barrier 一起带过去：桌面侧不必为了拿它再发一次 build，
+            # 也就不会在第二个 barrier 之后还拿着第一个 barrier 的旧事实
+            figure_facts=self.session.figure_facts(_SAVEFIG_OBSERVATIONS),
             script_error=self.script_error,
             rebase_warnings=self.rebase_warnings or None,
         )

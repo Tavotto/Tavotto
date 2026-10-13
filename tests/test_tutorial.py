@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from support.pipedrain import StderrDrain
+from support.previewkit import preview_file
 from tavotto import app as m
 from tavotto.engine import (
     config as engine_config,
@@ -1169,7 +1170,9 @@ def test_tutorial_scripts_build_in_a_worker_and_expose_editable_roles(
     try:
         resp = _rpc(proc, {"cmd": "build"})
         assert panel["stem"] in resp["stems"]
-        man = json.loads((tmp_path / "out" / f"{panel['stem']}.json").read_text(encoding="utf-8"))
+        man = json.loads(
+            preview_file(tmp_path / "out", panel["stem"], ".json").read_text(encoding="utf-8")
+        )
         roles = {el["role"] for el in man["elements"]}
         assert set(panel["editable_roles"]) <= roles, roles
         texts = [

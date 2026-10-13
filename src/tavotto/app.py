@@ -6617,9 +6617,12 @@ def api_engine_svg():
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
     svg = worker.svg_path(stem)
-    if not svg.exists():
+    try:
+        # 解出路径后立刻打开：句柄把这一代钉住，响应发多久都不会被发布后的清理抽掉文件（Codex #978）
+        handle = open(svg, "rb")
+    except OSError:
         abort(404)
-    resp = send_file(svg, mimetype="image/svg+xml")
+    resp = send_file(handle, mimetype="image/svg+xml")
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -7543,6 +7546,12 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
             "stems": stems,
             "descriptors": descriptors,
             "remap_generation": captured.get("remap_generation"),
+            # 逐图隔离：预览捕获失败的图随结果带到登记（不摘它此前的登记）
+            **(
+                {"failed_figures": captured["failed_figures"]}
+                if captured.get("failed_figures")
+                else {}
+            ),
             # T03：带配置的执行并进注册表，不换掉（见 `probe.register_probed`）
             **(
                 {"run_config": plan.run.config_id} if getattr(plan, "run", None) is not None else {}
@@ -7572,7 +7581,17 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
-    return {"registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
+    failed = [
+        {"stem": f.get("stem"), "code": f.get("code")}
+        for f in (captured.get("failed_figures") or ())
+        if isinstance(f, dict)
+    ]
+    return {
+        "registered": True,
+        **({"unlinked_stems": unlinked} if unlinked else {}),
+        # 部分成功：哪些图预览没捕获出来（只给稳定码，原因文字留在 build 响应 / 编辑请求的错误里）
+        **({"partial": True, "failed_figures": failed} if failed else {}),
+    }
 
 
 def _publish_preparation_session(payload: dict) -> None:
@@ -7664,18 +7683,22 @@ def api_engine_preparation_session_action(session_id: str):
     """
     ctx = current_ctx()
     body = request.get_json(force=True) or {}
-    extra = sorted(set(body) - {"action_id", "expected_config_revision", "impact_digest"})
+    extra = sorted(
+        set(body) - {"action_id", "expected_config_revision", "impact_digest", "transfer_from"}
+    )
     revision = body.get("expected_config_revision")
     echoed = body.get("impact_digest")
+    transfer_from = body.get("transfer_from")
     if (
         extra
         or not isinstance(body.get("action_id"), str)
         or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
         or (echoed is not None and not isinstance(echoed, str))
+        or (transfer_from is not None and not isinstance(transfer_from, str))
     ):
         return jsonify(
             {
-                "error": "只接受 action_id（字符串）、expected_config_revision（整数）与 impact_digest（字符串）",
+                "error": "只接受 action_id（字符串）、expected_config_revision（整数）、impact_digest（字符串）与 transfer_from（字符串，仅「打开并运行」）",
                 "code": "bad_request",
                 "params": {"unexpected": extra},
             }
@@ -7690,6 +7713,7 @@ def api_engine_preparation_session_action(session_id: str):
             finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
             impact_digest=echoed,
             prepare=_session_dependency_starter(ctx),
+            transfer_from=transfer_from,
         )
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
@@ -7698,7 +7722,13 @@ def api_engine_preparation_session_action(session_id: str):
     # 202 = 这次请求起了一次新的执行；其余（重复认领 / 取消 / 重新检查）都是 200
     resp.status_code = (
         202
-        if claimed and kind in (engine_prepsession.ACTION_RUN, engine_prepsession.ACTION_PREPARE)
+        if claimed
+        and kind
+        in (
+            engine_prepsession.ACTION_RUN,
+            engine_prepsession.ACTION_PREPARE,
+            engine_prepsession.ACTION_ARM,
+        )
         else 200
     )
     resp.headers["Cache-Control"] = "no-store"

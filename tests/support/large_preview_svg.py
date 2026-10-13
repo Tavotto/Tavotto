@@ -206,8 +206,10 @@ def main(argv: list[str] | None = None) -> int:
             sess.do_render(stem, [], timings=timings, inline_svg=False, preview=preview)
         wall_ms = round((time.perf_counter() - t0) * 1000.0, 1)
 
-        svg = Path(tmp) / f"{stem}.svg"
-        manifest = json.loads((Path(tmp) / f"{stem}.json").read_text(encoding="utf-8"))
+        svg = Path(figcapture.usable_preview_path(tmp, stem, ".svg"))
+        manifest = json.loads(
+            Path(figcapture.usable_preview_path(tmp, stem, ".json")).read_text(encoding="utf-8")
+        )
         payload = {
             "shape": args.shape,
             "n": n,

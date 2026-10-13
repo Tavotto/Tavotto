@@ -36,6 +36,7 @@ import pymupdf
 import pytest
 
 from support.pipedrain import StderrDrain
+from support.previewkit import publish_fixture
 from tavotto import app as m
 from tavotto.engine import (
     ai_agents,
@@ -90,7 +91,7 @@ def _fake_workers(monkeypatch, figs, tmp_path, payload: bytes) -> None:
     out = tmp_path / "_replay_out"
     out.mkdir(exist_ok=True)
     man = {"stem": "Fig1", "size_mm": [35.28, 17.64], "elements": []}
-    (out / "Fig1.json").write_text(json.dumps(man), encoding="utf-8")
+    publish_fixture(out, "Fig1", man)
 
     class FakeWorker:
         script_name, entry = "fig1.py", "main"

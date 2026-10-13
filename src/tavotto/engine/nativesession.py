@@ -294,6 +294,8 @@ class NativeSession:
         self.process_pid: int | None = None
         self.descriptors: list = []
         self.stems: list[str] = []
+        #: 逐图的实际完成事实（P08a）：活图 / 失败图 / 只读原件各自声明的能力与时刻。`stems` 只列活图。
+        self.figure_facts: list[dict] = []
         self.script_error: dict | None = None
         self.terminal_error: dict | None = None
         self.exit_code: int | None = None
@@ -380,6 +382,11 @@ class NativeSession:
         name = frame.get(EVENT_KEY)
         if name == "barrier":
             stems = frame.get("stems") or []
+            facts = frame.get("figure_facts")
+            if isinstance(facts, list):
+                # 不进事件日志（里头有路径）：先于状态落定，读到 BARRIER 的人一定看到这一个 barrier 的事实
+                with self._lock:
+                    self.figure_facts = list(facts)
             self._set_state(
                 BARRIER,
                 barrier_reason=str(frame.get("reason") or ""),
@@ -491,6 +498,7 @@ class NativeSession:
         self.built = True
         self.last_build = resp
         self.descriptors = list(resp.get("descriptors") or [])
+        self.figure_facts = list(resp.get("figure_facts") or [])
         self.stems = list((resp.get("stems") or {}).keys())
         self.script_error = resp.get("script_error") or self.script_error
         return resp
@@ -692,6 +700,7 @@ class NativeSession:
             "process_pid": self.process_pid,
             "stems": list(self.stems),
             "descriptors": list(self.descriptors),
+            "figure_facts": list(self.figure_facts),
             "script_error": self.script_error,
             "terminal_error": self.terminal_error,
             "exit_code": self.exit_code,

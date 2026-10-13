@@ -26,6 +26,7 @@ import time
 import pytest
 
 from support import nativekit
+from support.previewkit import preview_file
 from tavotto import app as m
 from tavotto.engine import nativesession, pool, runcodes
 from tavotto.engine.runcodes import RunError
@@ -358,7 +359,7 @@ print("AFTER-SHOW")
 def _picky_gid(session, stem):
     import json
 
-    man = json.loads((session.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    man = json.loads(preview_file(session.out_dir, stem, ".json").read_text(encoding="utf-8"))
     for el in man["elements"]:
         for f in el.get("editable") or []:
             if f.get("prop") == "text" and f.get("value") == "picky":

@@ -1363,6 +1363,143 @@ class TestPlanOrigins:
         plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
         assert plan.unknown == ("lab_tools",) and plan.requirements == ()
 
+    # ---- #945：PYTHONPATH / extra 层里没有发行包元数据的同名顶层名，要参与遮蔽（与真解释器的 PathFinder 对拍）-------------
+    _SITE_SHAPES = {
+        "pkg": ["lab_tools/__init__.py"],
+        "mod": ["lab_tools.py"],
+        "ns": ["lab_tools/part/__init__.py"],
+    }
+
+    def _layered(self, tmp_path, site_kind, vendor_kind, *, vendor_first=True, ext=None):
+        """site-packages 里装着 index 来源的 lab-tools（形状 `site_kind`），`vendor/` 是 PYTHONPATH 上无元数据的一层
+        （`vendor_kind`：none / mod / pkg / ns / ns_empty / ext 或具体文件名）。返回 (plan, [sys.path 顺序的两层])。"""
+        prefix, site = _env(tmp_path)
+        rec = self._SITE_SHAPES[site_kind]
+        _dist(site, "lab-tools", "1.0", top="lab_tools\n", record=rec)
+        for r in rec:
+            _write(site, r, "")
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        if vendor_kind == "mod":
+            _write(vendor, "lab_tools.py", "")
+        elif vendor_kind == "pkg":
+            _write(vendor, "lab_tools/__init__.py", "")
+        elif vendor_kind == "ns":
+            _write(vendor, "lab_tools/x.py", "")
+        elif vendor_kind == "ns_empty":
+            (vendor / "lab_tools").mkdir()
+        elif vendor_kind not in ("none",):
+            _write(vendor, vendor_kind, "")
+        order = (str(vendor), str(site)) if vendor_first else (str(site), str(vendor))
+        facts = dataclasses.replace(
+            _facts_at(prefix, {"lab-tools": "1.0"}),
+            site_roots=(str(site),),
+            extra_roots=(str(vendor),),
+            path_order=order,
+            ext_suffixes=ext or (),
+        )
+        plan = self._plan(self._project(tmp_path, "import lab_tools\n"), facts)
+        return plan, list(order), site
+
+    @staticmethod
+    def _real_import_only_in(order: list[str], site: Path) -> bool:
+        """真解释器（隔离、sys.path 只有这两层）里 `lab_tools` 的所有提供者是不是只落在 site 层。"""
+        import subprocess
+
+        code = (
+            "import sys, json, importlib.machinery as m; "
+            "s = m.PathFinder.find_spec('lab_tools', json.loads(sys.argv[1])); "
+            "print(json.dumps(None if s is None else (list(s.submodule_search_locations) "
+            "if s.origin in (None, 'namespace') else [s.origin])))"
+        )
+        out = subprocess.run(
+            [sys.executable, "-I", "-S", "-c", code, json.dumps(order)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+        ).stdout
+        got = json.loads(out)
+        return bool(got) and all(str(site) in g for g in got)
+
+    def test_945_a_bare_vendor_module_ahead_of_site_packages_is_not_satisfied_by_the_index_dist(
+        self, tmp_path
+    ):
+        plan, order, site = self._layered(tmp_path, "pkg", "mod")
+        assert (
+            self._real_import_only_in(order, site) is False
+        )  # 真实 import 落在 vendor/lab_tools.py
+        assert plan.unknown == ("lab_tools",) and plan.requirements == ()
+        assert plan.missing == ()  # 也不去装同名包
+        (origin,) = plan.origins
+        assert origin["import_name"] == "lab_tools" and "suggested_distribution" not in origin
+
+    def test_945_control_no_same_named_file_in_vendor_is_still_satisfied(self, tmp_path):
+        plan, order, site = self._layered(tmp_path, "pkg", "none")
+        assert self._real_import_only_in(order, site) is True
+        assert plan.unknown == () and plan.origins == () and plan.status == "nothing_needed"
+
+    def test_945_control_vendor_after_site_packages_does_not_shadow(self, tmp_path):
+        plan, order, site = self._layered(tmp_path, "pkg", "mod", vendor_first=False)
+        assert self._real_import_only_in(order, site) is True
+        assert plan.unknown == () and plan.origins == ()
+
+    def test_945_a_vendor_namespace_directory_does_not_beat_a_regular_index_package(self, tmp_path):
+        """命名空间包优先级低于普通包：site 里是常规包时，前面层的无 `__init__` 同名目录不遮蔽它。"""
+        for kind in ("ns", "ns_empty"):
+            plan, order, site = self._layered(tmp_path / kind, "pkg", kind)
+            assert self._real_import_only_in(order, site) is True
+            assert plan.unknown == () and plan.origins == (), kind
+
+    def test_945_a_vendor_namespace_directory_is_one_more_portion_next_to_a_namespace_index_dist(
+        self, tmp_path
+    ):
+        """site 里装的本身就是 namespace portion 时，vendor 里的同名目录是同一个命名空间包的另一份：已装发行包只提供了一部分。"""
+        for kind in ("ns", "ns_empty"):
+            for first in (True, False):
+                plan, order, site = self._layered(
+                    tmp_path / f"{kind}{first}", "ns", kind, vendor_first=first
+                )
+                assert self._real_import_only_in(order, site) is False
+                assert plan.unknown == ("lab_tools",) and plan.requirements == (), (kind, first)
+
+    @pytest.mark.parametrize("vendor_first", [True, False])
+    @pytest.mark.parametrize("vendor", ["none", "mod", "pkg", "ns", "ns_empty"])
+    @pytest.mark.parametrize("site_kind", ["pkg", "mod", "ns"])
+    def test_945_satisfied_exactly_when_the_real_import_lands_only_on_the_index_dist(
+        self, tmp_path, site_kind, vendor, vendor_first
+    ):
+        plan, order, site = self._layered(tmp_path, site_kind, vendor, vendor_first=vendor_first)
+        satisfied = plan.unknown == () and plan.origins == ()
+        assert satisfied == self._real_import_only_in(order, site)
+
+    @pytest.mark.parametrize(
+        ("ext", "filename", "shadows"),
+        [
+            (None, "lab_tools.cpython-312-darwin.so", True),  # 没量到后缀：宽松形状
+            (
+                (".cpython-312-darwin.so", ".abi3.so", ".so"),
+                "lab_tools.cpython-312-darwin.so",
+                True,
+            ),
+            ((".cpython-312-darwin.so", ".abi3.so", ".so"), "lab_tools.cp313-win_amd64.pyd", False),
+            (
+                (".cpython-312-darwin.so", ".abi3.so", ".so"),
+                "lab_tools.cpython-39-x86_64-linux-gnu.so",
+                False,
+            ),
+        ],
+        ids=["loose-so", "exact-so", "foreign-pyd", "foreign-so"],
+    )
+    def test_945_a_vendor_extension_module_shadows_only_when_the_target_can_load_it(
+        self, tmp_path, ext, filename, shadows
+    ):
+        plan, _order, _site = self._layered(tmp_path, "pkg", filename, ext=ext)
+        assert (plan.unknown == ("lab_tools",)) is shadows
+        if shadows:
+            # 真提供者是 vendor 里的扩展模块：site 里的那份是「被遮蔽」（来源未验证），不是形状推不出的「歧义」
+            assert [o["reason"] for o in plan.origins] == ["unverified"]
+
     def test_938_found_but_the_distribution_is_not_installed_stays_unknown(self, tmp_path):
         """覆盖度说它能 import，目标解释器的已装集合里却没有那个发行包：不冒充满足。"""
         prefix, _site = self._lab_env(tmp_path)

@@ -488,7 +488,13 @@ def _captured_of(worker, build_resp) -> dict | None:
     if stems is None:
         return None
     descriptors = build_resp.get("descriptors") if isinstance(build_resp, dict) else None
+    failed = build_resp.get("failed_figures") if isinstance(build_resp, dict) else None
     return {
+        **(
+            {"failed_figures": [dict(f) for f in failed if isinstance(f, dict)], "partial": True}
+            if isinstance(failed, list) and failed
+            else {}
+        ),
         "stems": sorted(stems),
         "descriptors": list(descriptors) if isinstance(descriptors, list) else [],
         "remap_generation": getattr(worker, "remap_generation", None),

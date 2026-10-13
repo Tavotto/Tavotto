@@ -1088,7 +1088,7 @@ class Worker(wireproto.V1Handler):
             ):
                 raise figsession.ArtifactSourceUnavailable("unsupported_render_state")
             self.session.prepare_artifact()
-            self.session.instrument_all(suppressed_savefig=True)
+            self.session.instrument_all(suppressed_savefig=True, raise_if_none_live=True)
             self.session.finish_artifact()
         except figsession.ArtifactSourceUnavailable as exc:
             raise ProtocolError(
@@ -1174,6 +1174,14 @@ class Worker(wireproto.V1Handler):
 
         stem = req.get("stem", "")
         states = self.session.states
+        failure = self.session.failures.get(stem)
+        if stem not in states and failure is not None:
+            return {
+                "ok": False,
+                "code": failure["code"],
+                "error": f"stem {stem} 的预览没能捕获: {failure['message']}",
+                "known": sorted(states),
+            }
         if stem not in states:
             return {"ok": False, "error": f"stem 不存在: {stem}", "known": sorted(states)}
 
