@@ -692,6 +692,64 @@ class TestSecretShapeMatrix:
         }.items():
             assert not _leaks(out), (name, carrier, out)
 
+    PY_NAME_KEYS = [k for k in MATRIX_KEYS if k.isidentifier()]
+    PY_FORMS = [
+        '{k} = "VAL"', "{k} = b\"S\"", "{k} = r'VAL'", '{k} = u"VAL"', '{k} = rb"VAL"', '{k} = f"VAL{{x}}"',
+        '{k}: str = "VAL"', '{k} += "VAL"', 'x = {k} = "VAL"', 'self.{k} = "VAL"', 'obj.a.{k} = "VAL"',
+        'config["{k}"] = "VAL"', "config['{k}'] = 'VAL'", 'f({k}="VAL")', 'f(a=1, {k}="VAL", b=2)',
+        '{{"{k}": "VAL"}}', "{{'{k}': b'VAL', 'n': 1}}", '{k} = ("VAL" "T")', '{k} = """VAL"""',
+        'os.environ["{k}"] = "VAL"', 'os.environ.setdefault("{k}", "VAL")', 't = ("{k}", "VAL")',
+    ]  # fmt: skip
+    PY_STRING_KEY_FORMS = [
+        'config["{k}"] = "VAL"', '{{"{k}": "VAL"}}', 'os.environ.setdefault("{k}", "VAL")', 't = ("{k}", "VAL")',
+    ]  # fmt: skip
+
+    @pytest.mark.parametrize("key", MATRIX_KEYS)
+    def test_python_literal_forms_in_the_code_region(self, key, world):
+        """代码区（不是注释 / 文档字符串）里的 Python 字面量：前缀 b/r/u/f/rb、类型注解、下标目标、关键字参数、
+        dict 值、`setdefault("k", v)` 都按 tokenize 的结构判定，不靠正则。"""
+        full, code = diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        forms = self.PY_FORMS if key.isidentifier() else self.PY_STRING_KEY_FORMS
+        for form in forms:
+            line = (
+                form.replace("{{", "{")
+                .replace("}}", "}")
+                .replace("{k}", key)
+                .replace("VAL", SECRET)
+            )
+            out = diagdetail.scrub_script(f"import os\n{line}\n", "a.py", full, code)
+            assert SECRET not in out, (key, form, out)
+
+    def test_non_secret_code_and_expressions_are_untouched(self, world):
+        full, code = diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        src = (
+            "import os\n"
+            "token = self._next()\n"
+            'api_key = os.environ["K"]\n'
+            'name = "keep-me"\n'
+            'f(label="keep-me-too", n=3)\n'
+            'D = {"title": "keep-title"}\n'
+            "password = None\n"
+        )
+        assert diagdetail.scrub_script(src, "a.py", full, code) == src
+
+    def test_final_zip_has_no_python_literal_secret(self, client, world):
+        proj = _project(client, world["tmp"])
+        lines = [
+            f.replace("{{", "{").replace("}}", "}").replace("{k}", k).replace("VAL", SECRET)
+            for k in self.PY_NAME_KEYS
+            for f in self.PY_FORMS
+        ]
+        (proj / "fig_one.py").write_text(
+            "import os\n" + "\n".join(lines) + "\ndef main():\n    return None\n", encoding="utf-8"
+        )
+        _prep, z = _prepare(client, source=True)
+        inner = _inner(z, "optional-source.zip")
+        body = "\n".join(inner.read(n).decode("utf-8", "replace") for n in inner.namelist())
+        assert "def main" in body and SECRET not in body
+        for name, text in _texts(z).items():
+            assert SECRET not in text, name
+
     def test_innocent_neighbours_survive(self, world):
         full = diagdetail.Scrubber()
         assert (

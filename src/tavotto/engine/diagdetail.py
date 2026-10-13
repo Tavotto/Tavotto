@@ -1504,6 +1504,112 @@ def _prose_spans(text: str) -> list[tuple[int, int]] | None:
     return spans
 
 
+_SKIP_TOKENS = ("COMMENT", "NL", "INDENT", "DEDENT", "ENCODING")
+_STR_PREFIX = re.compile(r"^([A-Za-z]*)(\"\"\"|'''|\"|')")
+
+
+def _logical_tokens(text: str) -> list[tuple[str, str, int, int, int]] | None:
+    """`.py` 的有意义 token：`(类型名, 文本, 起, 止, 逻辑行号)`。3.12+ 把 f-string 拆成 FSTRING_START / MIDDLE / END，
+    这里并回一个 STRING（整段）；注释、空行、缩进不要。tokenize 失败 / ERRORTOKEN 回 None。"""
+    import io
+    import tokenize
+
+    starts = [0]
+    for line in text.splitlines(keepends=True):
+        starts.append(starts[-1] + len(line))
+    out: list[tuple[str, str, int, int, int]] = []
+    line_id = 0
+    depth = 0
+    fs_start = 0
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            name = tokenize.tok_name.get(tok.type, "")
+            if tok.type == tokenize.ERRORTOKEN:
+                return None
+            a = starts[tok.start[0] - 1] + tok.start[1]
+            b = starts[tok.end[0] - 1] + tok.end[1]
+            if name == "FSTRING_START":
+                if depth == 0:
+                    fs_start = a
+                depth += 1
+                continue
+            if name == "FSTRING_END":
+                depth -= 1
+                if depth == 0:
+                    out.append(("STRING", text[fs_start:b], fs_start, b, line_id))
+                continue
+            if depth > 0 or name in _SKIP_TOKENS or name == "ENDMARKER":
+                continue
+            if name == "NEWLINE":
+                line_id += 1
+                continue
+            out.append((name, tok.string, a, b, line_id))
+    except (tokenize.TokenError, IndentationError, SyntaxError, IndexError):
+        return None
+    return out
+
+
+def _is_secret_name(tok: tuple[str, str, int, int, int]) -> bool:
+    kind, string = tok[0], tok[1]
+    if kind == "NAME":
+        return is_secret_key(string)
+    if kind == "STRING":
+        m = _STR_PREFIX.match(string)
+        if not m or len(string) > 80:
+            return False
+        return is_secret_key(string[m.end() :].rstrip("\"'"))
+    return False
+
+
+def _secret_string_spans(text: str) -> list[tuple[int, int, str]]:
+    """**结构判定**：哪些字符串字面量（含 b / r / u / f / rb… 前缀、f-string 整段）处在「秘密上下文」里——
+    `[(起, 止, 替换文本)]`。上下文有三种：
+    ① 赋值 / 注解赋值 / 增量赋值 / 关键字参数的**目标**含秘密名（`api_key = b"…"`、`token: str = "…"`、
+       `config["password"] = "…"`、`self.api_key = "…"`、`f(api_key="…")`）；
+    ② dict 字面量里键含秘密名的值（`{"token": "…"}`）；
+    ③ 紧跟在秘密名字符串参数后面的值（`setdefault("api_key", "…")`、`("token", "…")`）。
+    隐式拼接（`("a" "b")`）一并算。数字 / 非字符串表达式不动（`token = self._next()` 原样）。"""
+    toks = _logical_tokens(text)
+    if toks is None:
+        return []
+    spans: list[tuple[int, int, str]] = []
+    for i, tok in enumerate(toks):
+        if tok[0] != "STRING":
+            continue
+        m = _STR_PREFIX.match(tok[1])
+        if m is None or len(tok[1]) <= len(m.group(0)) * 2:
+            continue  # 空字符串
+        line = tok[4]
+        j = i - 1
+        while j >= 0 and toks[j][4] == line and (toks[j][0] == "STRING" or toks[j][1] == "("):
+            j -= 1  # 隐式拼接 / 包着的括号
+        if j < 0 or toks[j][4] != line:
+            continue
+        op = toks[j][1]
+        secret = False
+        if op in ("=", ":=", "+=", "|=", ":"):
+            depth = 0
+            k = j - 1
+            while k >= 0 and toks[k][4] == line:
+                t = toks[k][1]
+                if t in (")", "]", "}"):
+                    depth += 1
+                elif t in ("(", "[", "{"):
+                    if depth == 0:
+                        break
+                    depth -= 1
+                elif t == "," and depth == 0:
+                    break
+                k -= 1
+            secret = any(_is_secret_name(t) for t in toks[k + 1 : j])
+        elif op == "," and j >= 1 and toks[j - 1][0] == "STRING":
+            secret = _is_secret_name(toks[j - 1])
+        if secret:
+            prefix = "".join(c for c in m.group(1) if c in "bBuU")
+            spans.append((tok[2], tok[3], f'{prefix}"{_REDACTED}"'))
+    return spans
+
+
 def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     """脚本源码的脱敏。可执行代码用 `code`（源码模式：`token = self._next()` 原样）；**注释和字符串字面量里**
     的 `key=value` 是明文，必须用 `full`（完整 KV 替换）——`# api_key=REAL_SECRET` 不带引号，源码模式会放过它。
@@ -1515,13 +1621,17 @@ def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     if spans is None:
         # 语法坏 / 字符串没闭合：分不清哪里是注释哪里是字符串（`x = """api_key=REAL` 之后全是字符串），整份按完整模式
         return full.text(text)
+    secret = {(a, b): rep for a, b, rep in _secret_string_spans(text)}
+    merged = sorted(
+        {*spans, *secret}, key=lambda ab: (ab[0], -ab[1])
+    )  # 同起点先处理更长的（f-string 整段）
     out: list[str] = []
     pos = 0
-    for a, b in spans:
+    for a, b in merged:
         if a < pos:
             continue
         out.append(text[pos:a])
-        out.append(full.text(text[a:b]))
+        out.append(secret[(a, b)] if (a, b) in secret else full.text(text[a:b]))
         pos = b
     out.append(text[pos:])
     # 先把注释 / 字符串里的明文换掉，再整体过一遍源码模式（带引号的 `api_key = "…"` 字面量归它）
