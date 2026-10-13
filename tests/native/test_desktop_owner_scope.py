@@ -237,3 +237,47 @@ def test_cancel_is_idempotent_and_concurrent_callers_get_the_same_answer(tmp_pat
     [t.join(30) for t in threads]
     assert len(results) == 4 and all(r.confirmed for r in results)
     assert len({r.exit_code for r in results}) == 1 and owner.cancelled
+
+
+def test_the_public_completion_barrier_includes_the_owner_callback(tmp_path):
+    """Codex P2：`wait()` / `cancel()` 报完成时，会话必须已落终态、租约已放（回调做完才算）。"""
+    gate = threading.Event()
+    popen = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-c", "import time; time.sleep(600)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=runtime.CREATE_NO_WINDOW,
+        start_new_session=sys.platform != "win32",
+    )
+    session = nativesession.NativeSession(
+        session_id="native-owned-barrier",
+        descriptor={
+            "native_id": "barrier",
+            "out_dir": str(tmp_path),
+            "metadata": {"interpreter": sys.executable},
+        },
+    )
+    envlease.acquire_native(sys.executable, session.session_id)
+
+    def slow_exit(code, *, cancelled):
+        gate.wait(0.5)  # 回调慢半拍：旧实现此时 finished 已经为真
+        session._on_owner_exit(code, cancelled=cancelled)  # noqa: SLF001
+
+    owner = desktopproc.DesktopProcess(
+        popen,
+        desktopproc._scope_for(popen),
+        desktopproc.OwnedPolicy(term_grace=1.0, kill_timeout=5.0, linger_grace=0.1),
+        on_exit=slow_exit,
+    )
+    session.owned = owner
+    owner.start()
+    try:
+        result = owner.cancel()
+        assert result.confirmed
+        assert session.state == nativesession.ENDED and session.cancelled
+        assert not dk.holds_lease(session), "确认取消时租约还没放"
+        assert dk.install_is_refused(sys.executable) is None
+    finally:
+        gate.set()
+        envlease.reset_for_tests()

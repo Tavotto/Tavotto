@@ -435,7 +435,7 @@ class NativeSession:
 
     def _release_lease(self) -> None:
         owned = self.owned
-        if owned is not None and not owned.finished:
+        if owned is not None and not owned.confirmed:
             # 桌面拥有的进程还没被所有者确认结束：控制连接断了、状态进了终态都不放租约——
             # 还活着的脚本正在用这个环境，放了就等于放安装器进来改它（AC-16）。
             # 所有者确认结束时回调 `_on_owner_exit()`，那里再放。

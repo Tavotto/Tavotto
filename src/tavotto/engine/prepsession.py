@@ -38,6 +38,7 @@ from . import (
     depplan,
     deprepair,
     dialogscan,
+    execspec,
     pool,
     preparation,
     rasterhint,
@@ -895,6 +896,7 @@ class SessionService:
             original_artifact=target.get("original_artifact"),
             original_path=target.get("original_path"),
             target=target["kind"],
+            execution=target.get("execution") or execspec.PROFILE_SAFE,
             **({"run": target["run"]} if target.get("run") is not None else {}),
         )
 

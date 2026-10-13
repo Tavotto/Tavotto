@@ -391,6 +391,7 @@ class DesktopProcess:
         self._lock = threading.Lock()
         self._cancel_lock = threading.Lock()
         self._exited = threading.Event()
+        self._confirmed = threading.Event()
         self._finished = threading.Event()
         self._pumps: list[threading.Thread] = []
         self._waiter: threading.Thread | None = None
@@ -403,8 +404,13 @@ class DesktopProcess:
         return self._exited.is_set()
 
     @property
+    def confirmed(self) -> bool:
+        """进程组 / Job 已确认空（内部状态，会话放租约只认它）；回调还没做完时 `finished` 仍为 False。"""
+        return self._confirmed.is_set()
+
+    @property
     def finished(self) -> bool:
-        """**所有者确认结束**：直接子进程已 reap，且进程组 / Job 已确认空。租约只认它。"""
+        """**所有者确认结束**：进程组 / Job 已确认空，且会话的退出回调（落终态、放租约）已做完——对外的完成栅栏。"""
         return self._finished.is_set()
 
     @property
@@ -461,9 +467,12 @@ class DesktopProcess:
         for t in self._pumps:
             t.join(2.0)  # 孙进程还攥着管道写端时排空线程不会自己结束：不为它卡住确认
         self.scope.close()
-        self._finished.set()
-        if self._on_exit is not None:
-            self._on_exit(code, cancelled=self.cancelled)
+        self._confirmed.set()  # 组确认空：租约此刻才有资格放（会话回调里核它）
+        try:
+            if self._on_exit is not None:
+                self._on_exit(code, cancelled=self.cancelled)
+        finally:
+            self._finished.set()  # 对外的完成栅栏：回调（会话落终态、放租约）做完才算
 
     def _settle_group(self) -> None:
         """直接子进程走了之后，把组里的残余收干净（**确认**，不是假设）。

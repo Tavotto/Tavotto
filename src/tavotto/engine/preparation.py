@@ -194,6 +194,10 @@ class PreparationPlan:
     #: （含 `script_writes`）是按这一版源码算的；认领 / 执行前再算一次，不同 = `preparation_plan_stale` /
     #: `script_changed`，一行不跑。资产目标（已知图）不记（None）：它们的源码修订由写回事务管。
     script_revision: str | None = None
+    #: 这份计划选定的执行语义（`execspec.PROFILE_SAFE` | `PROFILE_NATIVE`=桌面拥有的 native，P06 / ADR 0125）。
+    #: 私有：不进 `to_payload()`（公开的是 `launch_context`）。就地重算计划、复用现有会话都按它对账，
+    #: 不得悄悄回落成 safe。
+    execution: str = execspec.PROFILE_SAFE
 
     def to_payload(self) -> dict:
         return {
@@ -465,6 +469,7 @@ def plan_for(
         dependency_intents=tuple(i.to_payload() for i in intents),
         dependency_conflicts=tuple(depresolve.conflicts(intents)),
         launch_context=launch_context,
+        execution=execution,
         grant=grant,
         budget={
             "build_idle_timeout_s": pool.BUILD_IDLE_TIMEOUT,
@@ -679,6 +684,7 @@ class PreparationService:
             entry=plan.entry,
             original_artifact=None,
             target=plan.target,
+            execution=plan.execution,
             **({"run": plan.run} if plan.run is not None else {}),
         )
         # 只吸收「采用换了环境」带来的变化：授权档 / 数据绑定 / 源码 / 改指表任何一个也变了，就是别的过期原因，不就地
@@ -1036,6 +1042,9 @@ class PreparationService:
         if existing is None or not getattr(existing, "built", False):
             return None
         spec = getattr(existing, "spec", None)
+        if getattr(spec, "profile", execspec.PROFILE_SAFE) != plan.execution:
+            # 池里的 worker 恒是 safe（吞 savefig、有守卫）：选了 native 的计划不得拿它当「现有 runtime」交差
+            return None
         if getattr(existing, "entry", getattr(spec, "entry", None)) != plan.entry:
             return None
         try:

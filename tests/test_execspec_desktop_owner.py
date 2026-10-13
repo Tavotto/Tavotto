@@ -201,3 +201,68 @@ def test_desktop_cwd_has_no_sandbox_tier():
         root, "a", "b"
     )
     assert execspec.desktop_cwd(root, "a/b/fig.py", execspec.CWD_PROJECT_ROOT) == root
+
+
+# ---------------------------------------------------------------------------
+# Codex P1 ×2：计划选定的执行语义不得悄悄回落成 safe
+# ---------------------------------------------------------------------------
+def _native_plan(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir(exist_ok=True)
+    (root / "fig.py").write_text("print('x')\n", encoding="utf-8")
+    return preparation.plan_for(
+        project_id="p",
+        project_root=str(root),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+        execution=execspec.PROFILE_NATIVE,
+    )
+
+
+@nativekit.needs_user_python
+def test_replanning_in_place_keeps_the_chosen_execution(tmp_path):
+    from types import SimpleNamespace
+
+    plan = _native_plan(tmp_path)
+    assert plan.execution == execspec.PROFILE_NATIVE
+    entry = SimpleNamespace(plan=plan)
+    fresh = preparation.PreparationService._replan_in_place(entry, plan)
+    assert fresh is not None
+    assert fresh.execution == execspec.PROFILE_NATIVE
+    assert fresh.launch_context["owner"] == "desktop", "环境重算把 native 计划改回了 safe"
+
+
+@nativekit.needs_user_python
+def test_a_warm_safe_worker_is_never_reused_for_a_native_plan(tmp_path):
+    from types import SimpleNamespace
+
+    plan = _native_plan(tmp_path)
+    safe_spec = execspec.safe_spec(
+        "fig.py", plan.project_root, "__main__", interpreter=PY, sandbox="/sb"
+    )
+    warm = SimpleNamespace(
+        built=True,
+        spec=safe_spec,
+        entry="__main__",
+        python=plan.interpreter,
+        last_build_descriptors=[],
+        last_build_runtime=None,
+    )
+    assert preparation.PreparationService._reusable(warm, plan) is None
+    # 正对照：同一个 worker 对 safe 计划仍可复用
+    safe_plan = preparation.plan_for(
+        project_id="p",
+        project_root=plan.project_root,
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+    )
+    assert safe_plan.execution == execspec.PROFILE_SAFE
+    assert preparation.PreparationService._reusable(warm, safe_plan) is not None
