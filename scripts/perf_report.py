@@ -220,6 +220,63 @@ def level_by(value: float, minor: float, major: float, critical: float) -> str |
     return None
 
 
+# ---------------------------------------------------------------- 普通交互动作
+
+
+def action_summaries(report: dict) -> list[dict]:
+    """按闭集动作汇总同步耗时与双 rAF 代理。旧版报告没有 actions 时返回空。
+
+    仅接收数值与受控 action/phase 名称：即使外部报告被改写，也不输出用户文本。
+    """
+    names = ("symbol.insert", "preset.insert")
+    phase_names = ("document.commit", "selection.update", "ui.status")
+    result = []
+    raw = report.get("actions")
+    if not isinstance(raw, list):
+        return result
+    for kind in names:
+        events = [a for a in raw if isinstance(a, dict) and a.get("kind") == kind]
+
+        def timings(key: str) -> list[float]:
+            return [
+                float(a[key])
+                for a in events
+                if isinstance(a.get(key), (int, float))
+                and not isinstance(a[key], bool)
+                and 0 <= a[key] < 120_000
+            ]
+
+        sync = timings("sync_ms")
+        if not sync:
+            continue
+        phases = {}
+        for phase in phase_names:
+            values = [
+                float(a["phases"][phase])
+                for a in events
+                if isinstance(a.get("phases"), dict)
+                and isinstance(a["phases"].get(phase), (int, float))
+                and not isinstance(a["phases"][phase], bool)
+                and 0 <= a["phases"][phase] < 120_000
+            ]
+            if values:
+                phases[phase] = round(pct(values, 0.95), 1)
+        two_raf = timings("two_raf_ms")
+        result.append(
+            {
+                "kind": kind,
+                "count": len(sync),
+                "sync_p50_ms": round(pct(sync, 0.50), 1),
+                "sync_p95_ms": round(pct(sync, 0.95), 1),
+                "sync_max_ms": round(max(sync), 1),
+                "two_raf_p95_ms": round(pct(two_raf, 0.95), 1) if two_raf else None,
+                "phase_p95_ms": phases,
+                "failed": sum(a.get("ok") is False for a in events),
+            }
+        )
+    return result
+
+
 # ---------------------------------------------------------------- 每段统计
 
 
@@ -1401,6 +1458,7 @@ def analyze_report(report: dict) -> dict:
     return {
         "refresh": refresh,
         "stats": stats,
+        "actions": action_summaries(report),
         "findings": findings,
         "grades": grades,
         "headroom": headroom,
@@ -1603,6 +1661,18 @@ def text_report(path: str, a: dict) -> str:
                 f"{fmt(s.latency_p95, nd=0):>8}{fmt(s.tail_max, nd=0):>6}  {cause}"
             )
         lines.append("")
+    if a["actions"]:
+        lines.append("普通交互动作（点击同步阶段；双 rAF 不代表实际 GPU 上屏）")
+        for action in a["actions"]:
+            parts = "，".join(f"{k} P95 {v:.1f}ms" for k, v in action["phase_p95_ms"].items())
+            lines.append(
+                f"  {action['kind']} ×{action['count']}：同步 P50 {action['sync_p50_ms']:.1f}ms"
+                f" / P95 {action['sync_p95_ms']:.1f}ms / 最大 {action['sync_max_ms']:.1f}ms；"
+                f"双 rAF P95 {fmt(action['two_raf_p95_ms'], 'ms')}；失败 {action['failed']}"
+            )
+            if parts:
+                lines.append(f"    归因：{parts}")
+        lines.append("")
     by_level = {lv: [f for f in a["findings"] if f.level == lv] for lv in LEVELS}
     if not by_level["严重"] and not by_level["问题"]:
         lines.append(
@@ -1724,6 +1794,19 @@ def html_report(analyses: list[tuple[str, dict]]) -> str:
                 out += [f"<li class='mut'>位置：<code>{e(x)}</code></li>" for x in f.where]
                 out += [f"<li><strong>建议</strong>：{e(x)}</li>" for x in f.fix]
                 out.append("</ul></div>")
+        if a["actions"]:
+            out.append("<h3>普通交互动作</h3><div class='card wrap'><table>"
+                       "<tr><th>动作</th><th>次数</th><th>同步 P50 / P95 / max</th>"
+                       "<th>双 rAF P95（非实际 GPU 上屏）</th><th>阶段 P95</th><th>失败</th></tr>")
+            for act in a["actions"]:
+                phases = "、".join(f"{k}: {v:.1f}ms" for k, v in act["phase_p95_ms"].items())
+                out.append(
+                    f"<tr><td>{e(act['kind'])}</td><td>{act['count']}</td>"
+                    f"<td>{act['sync_p50_ms']:.1f} / {act['sync_p95_ms']:.1f} / {act['sync_max_ms']:.1f}</td>"
+                    f"<td>{fmt(act['two_raf_p95_ms'])}</td>"
+                    f"<td>{e(phases)}</td><td>{act['failed']}</td></tr>"
+                )
+            out.append("</table></div>")
         if a["stats"]:
             out.append(
                 "<h3>逐段数据</h3><div class='card wrap'><table><tr><th>片段</th><th>帧/秒</th><th>超时%</th>"
@@ -1782,6 +1865,7 @@ def main(argv: list[str] | None = None) -> int:
                 "machine": machine_line(a),
                 "grades": [{"dimension": d, "grade": g, "why": w} for d, g, w in a["grades"]],
                 "headroom": a["headroom"],
+                "actions": a["actions"],
                 "findings": [f.to_json() for f in a["findings"]],
                 "segments": [
                     {

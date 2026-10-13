@@ -712,3 +712,47 @@ def test_os_version_falls_back_to_sw_vers_when_mac_ver_is_empty(monkeypatch):
     monkeypatch.setattr(perfprobe, "_run", spy)
     assert perfprobe.system_facts()["os_version"] == "15.6.1"
     assert "/usr/bin/sw_vers" in calls
+
+
+def test_action_summary_is_independent_of_drag_and_old_reports():
+    """插入符号是点击，不是拖动；旧版报告没有 actions 也不能报错。"""
+    old = PR.analyze_report(_report([]))
+    assert old["actions"] == []
+
+    report = _report([])
+    report["actions"] = [
+        {
+            "kind": "symbol.insert",
+            "sync_ms": n,
+            "two_raf_ms": n + 12,
+            "phases": {
+                "document.commit": n - 1,
+                "selection.update": 0.5,
+                "ui.status": 0.5,
+            },
+            "ok": True,
+        }
+        for n in (8, 12, 50, 90)
+    ]
+    a = PR.analyze_report(report)
+    assert a["actions"][0]["kind"] == "symbol.insert"
+    assert a["actions"][0]["count"] == 4
+    assert a["actions"][0]["sync_p95_ms"] == 90
+    assert a["actions"][0]["phase_p95_ms"]["document.commit"] == 89
+    assert "普通交互动作" in PR.text_report("synthetic.json", a)
+    assert "symbol.insert" in PR.html_report([("synthetic.json", a)])
+
+
+def test_action_summary_filters_untrusted_names_and_values():
+    report = _report([])
+    report["actions"] = [
+        {"kind": "secret_file.py", "sync_ms": 999, "ok": True},
+        {"kind": "symbol.insert", "sync_ms": -4, "ok": True},
+        {"kind": "symbol.insert", "sync_ms": 12, "two_raf_ms": None,
+         "phases": {"path": 20, "document.commit": 9}, "ok": False},
+    ]
+    a = PR.analyze_report(report)
+    assert a["actions"][0]["count"] == 1
+    assert a["actions"][0]["failed"] == 1
+    assert a["actions"][0]["phase_p95_ms"] == {"document.commit": 9}
+    assert "secret_file.py" not in PR.text_report("test.json", a)
