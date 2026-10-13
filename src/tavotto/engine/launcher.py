@@ -36,7 +36,6 @@ import hashlib
 import json
 import logging
 import os
-import shlex
 import shutil
 import signal
 import subprocess
@@ -122,8 +121,7 @@ def _conda_candidates(prefix: str) -> list[str]:
     if which:
         out.append(which)
     # 从 Finder / 桌面启动时没有 CONDA_EXE 也没有 PATH：从环境自己留下的痕迹推 conda 的位置
-    out.extend(_history_conda(pre))
-    out.extend(_environments_txt_conda())
+    out.extend(_environments_txt_conda(pre))
     return out
 
 
@@ -134,43 +132,47 @@ def _conda_root_exe(root: Path) -> str | None:
     return str(root / "bin" / "conda")
 
 
-def _history_conda(prefix: Path) -> list[str]:
-    """`conda-meta/history` 头部 `# cmd: <conda 路径> create …`：创建这个环境时用的 conda。
-
-    这个文件可能在项目目录里（`conda create -p ./env`，克隆来的项目可以写任意内容），所以**不信任它的任意路径**：
-    只认文件名是 `conda`、位于一个 Conda 安装根（`<root>/bin/conda` 且 `<root>/conda-meta` 存在）的绝对路径；
-    最终仍要过 `find_conda_exe` 的“存在且可执行”。"""
-    try:
-        with open(prefix / "conda-meta" / "history", encoding="utf-8", errors="replace") as fh:
-            head = fh.read(65536)
-    except OSError:
-        return []
-    for line in head.splitlines():
-        if not line.startswith("# cmd:"):
-            continue
-        try:
-            first = shlex.split(line[len("# cmd:") :].strip())[0]
-        except (ValueError, IndexError):
-            return []
-        exe = Path(first)
-        if exe.is_absolute() and exe.name == "conda" and exe.parent.name == "bin":
-            cand = _conda_root_exe(exe.parent.parent)
-            return [cand] if cand else []
-        return []
-    return []
-
-
 def _environments_txt_path() -> Path:
     return Path.home() / ".conda" / "environments.txt"
 
 
-def _environments_txt_conda() -> list[str]:
+def _inside(path: str | os.PathLike, parent: str | os.PathLike) -> bool:
+    try:
+        a, b = os.path.realpath(path), os.path.realpath(parent)
+        return os.path.commonpath([a, b]) == b
+    except ValueError:  # 不同盘符（Windows）
+        return False
+
+
+_PROJECT_MARKERS = (
+    ".git",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "requirements.txt",
+    "environment.yml",
+)
+
+
+def _untrusted_zones(prefix: Path) -> list[Path]:
+    """conda 位置**不许落进**的地方：正在探测的 prefix 本身，以及它所在的项目目录（沿父目录往上找到第一个带项目标记
+    的目录）。克隆来的项目可以带任意目录结构，不能让“打开项目”就变成“执行项目里的文件”。"""
+    zones = [prefix]
+    for parent in prefix.parents:
+        if any((parent / m).exists() for m in _PROJECT_MARKERS):
+            zones.append(parent)
+            break
+    return zones
+
+
+def _environments_txt_conda(prefix: Path) -> list[str]:
     """`~/.conda/environments.txt`（conda 登记过的环境前缀，用户自己的文件）→ 各自所属安装根的 `bin/conda`。"""
     try:
         with open(_environments_txt_path(), encoding="utf-8", errors="replace") as fh:
             lines = [ln.strip() for ln in fh.read(65536).splitlines()][:100]
     except OSError:
         return []
+    zones = _untrusted_zones(prefix)
     out: list[str] = []
     for ln in lines:
         if not ln or not os.path.isabs(ln):
@@ -178,8 +180,9 @@ def _environments_txt_conda() -> list[str]:
         p = Path(ln)
         root = p.parent.parent if p.parent.name == "envs" else p
         cand = _conda_root_exe(root)
-        if cand and cand not in out:
-            out.append(cand)
+        if cand is None or cand in out or any(_inside(cand, z) for z in zones):
+            continue
+        out.append(cand)
     return out
 
 
@@ -330,7 +333,7 @@ _CAPTURE_SRC = (
     "    fh.write(json.dumps(dict(os.environ)))\n"
 )
 
-_captured: dict[tuple[str, str, str], dict[str, str]] = {}
+_captured: dict[tuple[str, str, str], dict[str, str | None]] = {}
 _captured_lock = threading.Lock()
 _capture_gates: dict[tuple[str, str, str], threading.Lock] = {}
 #: 结果文件含完整环境（可能有许可证串 / 令牌）：在途的路径登记在这里，退出时清掉；崩溃留下的由 `sweep_results` 扫
@@ -389,17 +392,56 @@ def startup() -> None:
     atexit.register(_cleanup_inflight)
 
 
+def _descendant_levels(root_pid: int) -> list[list[int]]:
+    """`root_pid` 的后代，按深度分层（第 0 层 = 直接子进程）。读不到进程表回空（调用方退回按组杀）。"""
+    try:
+        out = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid="],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    kids: dict[int, list[int]] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    levels: list[list[int]] = []
+    frontier = kids.get(root_pid, [])
+    seen = {root_pid}
+    while frontier:
+        levels.append([p for p in frontier if p not in seen])
+        seen.update(frontier)
+        frontier = [c for p in frontier for c in kids.get(p, []) if c not in seen]
+    return [lv for lv in levels if lv]
+
+
 def _kill_tree(proc: subprocess.Popen) -> None:
+    """超时收尾：**叶子先死**。conda 还活着时它的子进程先被杀，由 conda（它在 wait 它们）收尸，不留僵尸；
+    最后才杀 conda 本身并 wait。整组一起 SIGKILL 会让子进程在父进程来不及收尸时变成孤儿（PID 1 不收尸的容器里就是僵尸）。"""
     if os.name != "nt":
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
+        for level in reversed(_descendant_levels(proc.pid)):
+            for pid in level:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            time.sleep(0.1)  # 让还活着的父进程（conda / 它起的 shell）收掉这一层
     proc.kill()
     proc.wait()
+    if os.name != "nt":
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)  # 兜底：组里仍有漏网的
+        except OSError:
+            pass
 
 
-def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str]:
+def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str | None]:
     """跑一次 `conda run … python -c <写 os.environ 到结果文件>`；任何失败 / 超时 → `LauncherUnavailable`。"""
     result_path = ""
     try:
@@ -453,15 +495,21 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str]:
                 os.unlink(result_path)
             except OSError:
                 pass
-    return {
+    delta: dict[str, str | None] = {
         str(k): str(v) for k, v in data.items() if k not in _VOLATILE_ENV and os.environ.get(k) != v
     }
+    # 激活去掉的变量（`unset PYTHONPATH` 之类）：捕获进程继承了我们的环境，所以“我们有、它没有”就是被激活去掉的——
+    # 用 None 表示“要从子进程环境里删掉”。每个进程自己会变的（`_VOLATILE_ENV`）永不删
+    for k in os.environ:
+        if k not in data and k not in _VOLATILE_ENV:
+            delta[k] = None
+    return delta
 
 
 def activated_delta(
     python: str, lau: CondaLauncher, *, timeout: float | None = None
-) -> dict[str, str]:
-    """`python` 经 Conda 激活后相对当前进程环境的**增量**（进程内缓存；环境版本变了重新捕获）。
+) -> dict[str, str | None]:
+    """`python` 经 Conda 激活后相对当前进程环境的**增量**（值为 None = 激活把它去掉了）（进程内缓存；环境版本变了重新捕获）。
     失败抛 `LauncherUnavailable`，**不缓存失败**。"""
     key = (lau.prefix, prefix_state(lau.prefix), lau.conda_exe)
     with _captured_lock:
@@ -489,7 +537,11 @@ def merge_env(
     if lau is None:
         return base
     env = dict(base if base is not None else os.environ)
-    env.update(activated_delta(str(python), lau, timeout=timeout))
+    for key, value in activated_delta(str(python), lau, timeout=timeout).items():
+        if value is None:
+            env.pop(key, None)  # 激活去掉的变量：启动时同样去掉（所有启动点都经这一处）
+        else:
+            env[key] = value
     return env
 
 

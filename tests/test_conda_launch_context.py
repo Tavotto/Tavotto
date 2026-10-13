@@ -108,7 +108,13 @@ if os.environ.get("FAKE_CONDA_SLEEP"):  # 模拟 activate.d 卡住
     time.sleep(float(os.environ["FAKE_CONDA_SLEEP"]))
 with open(os.environ["FAKE_CONDA_LOG"], "a", encoding="utf-8") as fh:
     fh.write(json.dumps({{"opts": opts, "cmd": cmd}}) + "\n")
+if os.environ.get("FAKE_CONDA_HANG_CHILD"):  # 模拟 conda 起了子进程（activate.d 里的后台进程）然后一直等它
+    child = subprocess.Popen(["/bin/sleep", "300"])
+    open(os.environ["FAKE_CONDA_HANG_CHILD"], "w").write(str(child.pid))
+    child.wait()
 env = dict(os.environ, CONDA_PREFIX=prefix, FAKE_SDK_LICENSE="{license}", SECRET_TOKEN="xyz-secret-token-123")
+for _name in filter(None, os.environ.get("FAKE_CONDA_UNSET", "").split(",")):  # activate.d 里的 `unset NAME`
+    env.pop(_name, None)
 site = os.path.join(prefix, "activated_site")  # 激活才会加进 PYTHONPATH 的目录（activate.d 设置变量的效果）
 if os.path.isdir(site):
     env["PYTHONPATH"] = site + os.pathsep + env.get("PYTHONPATH", "")
@@ -1613,39 +1619,44 @@ def test_a_conda_env_that_works_bare_is_unaffected_when_conda_is_missing(tmp_pat
 
 
 @posix_only
-def test_conda_is_found_from_the_env_history_and_environments_txt(tmp_path, monkeypatch):
-    """Finder 启动（没有 CONDA_EXE / PATH）时，项目内 `conda create -p` 的环境靠 history 头部 / environments.txt 找到 conda。"""
+def test_conda_is_found_from_environments_txt_but_never_from_the_project_or_the_probed_prefix(
+    tmp_path, monkeypatch
+):
+    """Finder 启动（没有 CONDA_EXE / PATH）时靠用户自己的 `~/.conda/environments.txt` 找 conda；`conda-meta/history` 不再是来源，
+    推出来的位置也不许落进项目目录或正在探测的 prefix（克隆来的项目可以自带 `evil/bin/conda` + `evil/conda-meta`）。"""
     root = tmp_path / "miniforge"
     (root / "conda-meta").mkdir(parents=True)
     (root / "bin").mkdir()
     conda = root / "bin" / "conda"
     conda.write_text("#!/bin/sh\n", encoding="utf-8")
     conda.chmod(0o755)
-    inproj = tmp_path / "proj" / "env"
-    (inproj / "conda-meta").mkdir(parents=True)
-    (inproj / "conda-meta" / "history").write_text(
-        f"==> 2026-10-13 <==\n# cmd: {conda} create -p ./env python\n", encoding="utf-8"
-    )
+    proj = tmp_path / "proj"
+    (proj / "env" / "conda-meta").mkdir(parents=True)
+    (proj / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
     _no_conda_anywhere(tmp_path, monkeypatch)
-    assert launcher.find_conda_exe(str(inproj)) == str(conda)
-    # 恶意 / 无关的 history：路径不是 Conda 安装根里的 bin/conda → 不采用（项目目录里的文件不能指挥我们执行任意路径）
-    evil = tmp_path / "evil" / "bin"
-    evil.mkdir(parents=True)
-    (evil / "conda").write_text("#!/bin/sh\n", encoding="utf-8")
-    (evil / "conda").chmod(0o755)
-    other = tmp_path / "proj2" / "env"
-    (other / "conda-meta").mkdir(parents=True)
-    (other / "conda-meta" / "history").write_text(
-        f"# cmd: {evil / 'conda'} create\n", encoding="utf-8"
-    )
-    assert launcher.find_conda_exe(str(other)) is None
-    # environments.txt：登记过的环境所属的安装根
     envs_txt = tmp_path / "environments.txt"
     envs_txt.write_text(f"{root}/envs/e1\n{root}\n", encoding="utf-8")
     monkeypatch.setattr(launcher, "_environments_txt_path", lambda: envs_txt)
-    bare = tmp_path / "proj3" / "env"
-    (bare / "conda-meta").mkdir(parents=True)
-    assert launcher.find_conda_exe(str(bare)) == str(conda)
+    assert launcher.find_conda_exe(str(proj / "env")) == str(conda)  # 正对照：用户自己登记的安装根
+    # history 头部不再是来源：哪怕写着一个“看起来对”的路径
+    (proj / "env" / "conda-meta" / "history").write_text(
+        f"# cmd: {proj / 'evil' / 'bin' / 'conda'} create\n", encoding="utf-8"
+    )
+    evil = proj / "evil"
+    (evil / "bin").mkdir(parents=True)
+    (evil / "conda-meta").mkdir()
+    (evil / "bin" / "conda").write_text("#!/bin/sh\n", encoding="utf-8")
+    (evil / "bin" / "conda").chmod(0o755)
+    envs_txt.write_text("", encoding="utf-8")
+    assert launcher.find_conda_exe(str(proj / "env")) is None
+    # 即便 environments.txt 登记了项目里的目录（或探测的 prefix 自己），推出的 conda 也不许落在项目目录 / prefix 内
+    envs_txt.write_text(f"{evil}\n{evil}/envs/x\n{proj / 'env'}\n", encoding="utf-8")
+    assert launcher.find_conda_exe(str(proj / "env")) is None
+    # 项目标记是祖先目录判的，不依赖 prefix 恰好在项目根下一层
+    deep = proj / "a" / "b" / "env"
+    (deep / "conda-meta").mkdir(parents=True)
+    assert launcher.find_conda_exe(str(deep)) is None
+    assert not hasattr(launcher, "_history_conda")
 
 
 @needs_worker
@@ -1724,3 +1735,120 @@ def test_a_desktop_owned_native_session_uses_the_same_launch_decision(tmp_path, 
     assert err.value.code == "conda_launcher_unavailable"
     assert not (tmp_path / "work" / "seen.txt").exists()
     assert nativesession.REGISTRY.list() == before and envlease.native_sessions_on(py) == []
+
+
+# ---------------------------------------------------------------------------
+# Codex #975 第三轮：激活去掉的变量启动时也要去掉；超时收尾叶子先死
+# ---------------------------------------------------------------------------
+@needs_worker
+def test_a_variable_the_activation_removes_is_removed_at_every_launch_site(
+    activation_only_env, tmp_path, monkeypatch
+):
+    """激活 `unset` 掉的变量（如 PYTHONPATH / 许可变量）：捕获进增量（None = 删），每个启动点的子进程都看不到它。"""
+    from tavotto.engine import depplan, deprepair, projectenv
+
+    py, prefix, log = activation_only_env
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(
+        "import os, matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "open('unset-seen.txt', 'w').write(repr(os.environ.get('P09_UNSET_ME')))\n"
+        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("P09_UNSET_ME", "leaks-if-not-removed")
+    monkeypatch.setenv("FAKE_CONDA_UNSET", "P09_UNSET_ME,SHLVL")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    lau = launcher.launcher_for_interpreter(py)
+    delta = launcher.activated_delta(py, lau)
+    assert delta["P09_UNSET_ME"] is None  # 去掉的记成 None
+    assert "SHLVL" not in delta  # 每个进程自己会变的永不删
+    seen = _spy_popen(monkeypatch)
+    worker = None
+    try:
+        assert launcher.activate_env(py, {"KEEP": "1"}) == {
+            **{k: v for k, v in launcher.merge_env(lau, py, {"KEEP": "1"}).items()},
+        }
+        assert "P09_UNSET_ME" not in launcher.activate_env(py, None)
+        assert _pool._has_matplotlib(py) is True  # noqa: SLF001
+        assert projectenv.probe_environment(py)["ok"] is True
+        assert depplan.target_facts(py) is not None
+        assert deprepair.probe_imports(py, ("vendor_sdk",)) == {"vendor_sdk": ""}
+        assert deprepair.worker_self_test(py)["ok"] is True
+        assert deprepair._run([py, "-c", "pass"], 60)[0] == 0  # noqa: SLF001
+        assert deprepair._run_pip([py, "-c", "pass"], threading.Event(), None)[0] == ""  # noqa: SLF001
+        monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
+        _pool.reset_worker_python()
+        worker, _ = _pool.build("fig.py", str(proj), "__main__")
+    finally:
+        if worker is not None:
+            worker.force_kill()
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+    ours = [(a, e) for a, e in seen if a and str(a[0]) == py]
+    assert len(ours) >= 7
+    for argv, env in ours:
+        assert env is not None and "P09_UNSET_ME" not in env, [str(a)[:50] for a in argv[:4]]
+        assert env.get("FAKE_SDK_LICENSE") == LICENSE  # 对照：增量里“加的”照常生效
+
+
+@posix_only
+@pytest.mark.skipif(
+    __import__("support.nativekit", fromlist=["x"]).USER_PYTHON is None,
+    reason="需要装有 Bridge 依赖的用户 Python",
+)
+def test_the_desktop_owned_session_also_drops_what_the_activation_removed(tmp_path, monkeypatch):
+    from support import desktopkit as dk
+    from tavotto.engine import desktopproc
+
+    prefix, conda, log = make_fake_conda(tmp_path, dk.current_python())
+    py = str(prefix / "bin" / "python")
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setenv("P09_UNSET_ME", "leaks-if-not-removed")
+    monkeypatch.setenv("FAKE_CONDA_UNSET", "P09_UNSET_ME")
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    script = "import os\nopen('seen.txt', 'w').write(repr(os.environ.get('P09_UNSET_ME')))\n"
+    session = desktopproc.start(dk.launch_for(tmp_path, script, interpreter=py))
+    try:
+        assert session.owned.wait(60)
+    finally:
+        dk.finish(session)
+    assert (tmp_path / "work" / "seen.txt").read_text(encoding="utf-8") == "None"
+
+
+@posix_only
+def test_capture_timeout_kills_the_descendants_before_conda_itself(tmp_path, monkeypatch):
+    """超时收尾叶子先死：conda 已经起了子进程再超时，子进程先于 conda 被杀（conda 还活着时收尸），最后没有残留。"""
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    pidfile = tmp_path / "child.pid"
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setenv("FAKE_CONDA_HANG_CHILD", str(pidfile))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "bin" / "python")
+    kills: list[int] = []
+    real_kill = launcher.os.kill
+
+    def spy_kill(pid, sig):
+        kills.append(pid)
+        return real_kill(pid, sig)
+
+    monkeypatch.setattr(launcher.os, "kill", spy_kill)
+    conda_pids: list[int] = []
+    real_popen = subprocess.Popen
+
+    class Spy(real_popen):
+        def __init__(self, args, *a, **k):
+            super().__init__(args, *a, **k)
+            if args and str(args[0]) == str(conda):
+                conda_pids.append(self.pid)
+
+    monkeypatch.setattr(subprocess, "Popen", Spy)
+    with pytest.raises(launcher.LauncherUnavailable):
+        launcher.activate_env(py, {}, timeout=3.0)
+    child = int(pidfile.read_text())  # 超时之前 conda 已经起了它
+    (conda_pid,) = conda_pids
+    assert child in kills, kills
+    # 叶子先死：对 conda 本身的 os.kill（Popen.kill 走 os.kill）排在子进程之后（或根本只靠 wait 收尾）
+    assert conda_pid not in kills or kills.index(child) < kills.index(conda_pid)
+    assert wait_gone(child) and wait_gone(conda_pid)

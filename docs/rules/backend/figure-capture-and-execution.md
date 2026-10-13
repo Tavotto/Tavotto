@@ -364,8 +364,9 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
   不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的
   （`pool.select_worker_python`）。`plan_for` 写进环境错误，`_execute` 零执行收场（`deprepair.decide_environment_pinned` 把它转成 `WorkerError`）。
-  找得到 Conda 环境却找不到 conda 可执行文件：先从环境自己的痕迹推位置（`conda-meta/history` 头部 `# cmd:`——只认 Conda 安装根里的
-  `bin/conda`，项目目录里的文件不能指挥我们执行任意路径；`~/.conda/environments.txt`），仍找不到则维持裸起（不需要激活的环境照常工作，与 main
+  找得到 Conda 环境却找不到 conda 可执行文件：先从用户自己的 `~/.conda/environments.txt` 推安装根（**不**读 `conda-meta/history`：那是项目目录里
+  可写的文件，克隆来的项目能自造 `evil/bin/conda` + `evil/conda-meta`，打开项目就会执行它；推出的位置也不许落在项目目录或正在探测的 prefix 里），
+  仍找不到则维持裸起（不需要激活的环境照常工作，与 main
   相同）；**但裸起失败不是对环境的结论**：`pool._has_matplotlib` / `projectenv.probe_environment` 此时抛 / 返回 `conda_launcher_unavailable`
   （瞬时，不缓存、不作废记住的解释器、不静默换别的）。
 - **桌面拥有的 native 会话**（`desktopproc.start`，P06）没有用户 shell 替它激活，与 safe 档走同一个 `activate_env`；激活失败 = 零执行（租约 / 输出目录 /
