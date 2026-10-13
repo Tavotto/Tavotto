@@ -215,7 +215,7 @@ function panelStateFor(
     sizeMm,
   }
   panels.set(panelId, next)
-  if (cur && (cur.lines.size || linesDirty)) bumpLines()
+  if (cur && (cur.lines.size || dirtyLinePanels.has(panelId))) bumpLines(panelId)
   return next
 }
 
@@ -288,12 +288,14 @@ export function previewTransformOf(panelId: string, gid: string): [number, numbe
 
 /* ---- 覆盖层预览线（订阅式：OverlaySvg 要跟着重画）---- */
 let linesVersion = 0
-let linesDirty = false
+const dirtyLinePanels = new Set<string>()
 const lineListeners = new Set<() => void>()
 
-function bumpLines(): void {
-  // 收尾即时发布时，也已涵盖这一帧尚未发布的线变更。
-  linesDirty = false
+function bumpLines(panelId?: string): void {
+  // 帧落地 / 全量 reset 消费所有 dirty；单面板收尾只消费它自己的。
+  // A 等图时 B 可已排队移动：A 换图不能吞掉 B 在 DOM 写好之后的通知。
+  if (panelId == null) dirtyLinePanels.clear()
+  else dirtyLinePanels.delete(panelId)
   linesVersion++
   for (const fn of lineListeners) fn()
 }
@@ -301,9 +303,9 @@ function bumpLines(): void {
 /** 面板的预览账本整份作废（还原 / 权威换上来 / 版本换了）：连同预览线一起 */
 function dropPanel(panelId: string): void {
   // 最后一根线可能已排队删除，当前表虽空，上一帧覆盖层仍需立即撤下。
-  const had = !!panels.get(panelId)?.lines.size || linesDirty
+  const had = !!panels.get(panelId)?.lines.size || dirtyLinePanels.has(panelId)
   panels.delete(panelId)
-  if (had) bumpLines()
+  if (had) bumpLines(panelId)
 }
 
 const NO_LINES: ReadonlyMap<string, { a: [number, number]; b: [number, number] }> = new Map()
@@ -354,7 +356,7 @@ export function previewLine(
   if (!p) return
   if (ends) p.lines.set(gid, ends)
   else if (!p.lines.delete(gid)) return
-  linesDirty = true
+  dirtyLinePanels.add(session.panelId)
   requestPreviewFrame()
 }
 
@@ -391,7 +393,7 @@ export function resetPreview(): void {
   session = null
   const hadLines = [...panels.values()].some((p) => p.lines.size)
   panels.clear()
-  if (hadLines || linesDirty) bumpLines()
+  if (hadLines || dirtyLinePanels.size) bumpLines()
   pending.clear()
   if (rafId != null) cancelRaf(rafId)
   rafId = null
@@ -467,7 +469,7 @@ function requestPreviewFrame(): void {
  * 只落一次 DOM 写入。测试里直接调它，不必等真实的动画帧。
  */
 export function flushPreviewFrame(): void {
-  if (!pending.size && !linesDirty) return
+  if (!pending.size && !dirtyLinePanels.size) return
   const ops = [...pending.values()]
   pending.clear()
   perfSpan('raf.preview_write', () => {
@@ -477,7 +479,7 @@ export function flushPreviewFrame(): void {
     }
   })
   // 在同帧 DOM 位移写好后，再让覆盖层一次读到所有箭头的最新端点。
-  if (linesDirty) bumpLines()
+  if (dirtyLinePanels.size) bumpLines()
   if (session) traceFrame(session.timing)
 }
 

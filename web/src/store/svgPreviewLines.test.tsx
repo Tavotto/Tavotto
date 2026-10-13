@@ -47,9 +47,10 @@ let host: HTMLDivElement
 let frames: Map<number, FrameRequestCallback>
 let frameSeq: number
 
-function LinesObserver() {
-  const lines = usePreviewLines(PANEL)
-  return <output>{JSON.stringify([...lines])}</output>
+function LinesObserver({ panelId = PANEL }: { panelId?: string }) {
+  const lines = usePreviewLines(panelId)
+  const transform = document.querySelector(`[data-element-svg="${panelId}"] [id="axes_0.lines_0"]`)?.getAttribute('transform') ?? ''
+  return <output data-preview-transform={transform}>{JSON.stringify([...lines])}</output>
 }
 
 function PanelsObserver() {
@@ -181,5 +182,48 @@ describe('预览线通知与 DOM 写入共用 rAF', () => {
     expect(rendered()).toEqual([])
     await nextFrame()
     expect(observed.notifications).toBe(2)
+  })
+
+  it.each(['authority', 'discard'] as const)('A 面板 %s 收尾不能消费 B 面板等待 DOM 位移的线通知', async (finish) => {
+    begin()
+    previewLine('arrow_A', ends(3))
+    await nextFrame()
+    commitPreview([], FINAL_KEY)
+
+    const other = 'p2'
+    document.body.insertAdjacentHTML('beforeend', `<div data-element-svg="${other}">${MATPLOTLIB_SVG}</div>`)
+    await act(async () => root.render(<LinesObserver panelId={other} />))
+    beginPreview({ panelId: other, renderKey: KEY })
+    observed.notifications = 0
+    previewTransform('axes_0.lines_0', 0.4, 0)
+    previewLine('arrow_B', ends(40))
+    expect(frames.size).toBe(1)
+    await act(async () => {
+      if (finish === 'authority') reattachPreview(PANEL, FINAL_KEY)
+      else discardPanelPreview(PANEL)
+    })
+    expect(previewLinesOf(PANEL).size).toBe(0)
+    expect(observed.notifications).toBe(1) // A 覆盖层即时撤下
+    expect(host.querySelector('output')?.getAttribute('data-preview-transform')).toBe('')
+    await nextFrame()
+    // B 的帧仍需通知：否则 DOM 已移动，覆盖层还停在 A 收尾时读到的状态。
+    expect(observed.notifications).toBe(2)
+    expect(rendered()).toEqual([['arrow_B', ends(40)]])
+    expect(host.querySelector('output')?.getAttribute('data-preview-transform')).toBe(`translate(${0.4 * 288},0)`)
+  })
+
+  it('收掉本身无线的 A 账本不提前发布或吞掉 B 的待发布通知', async () => {
+    begin()
+    commitPreview([], FINAL_KEY)
+    const other = 'p2'
+    await act(async () => root.render(<LinesObserver panelId={other} />))
+    beginPreview({ panelId: other, renderKey: KEY })
+    previewLine('arrow_B', ends(4))
+    await act(async () => discardPanelPreview(PANEL))
+    expect(observed.notifications).toBe(0)
+    expect(rendered()).toEqual([])
+    await nextFrame()
+    expect(observed.notifications).toBe(1)
+    expect(rendered()).toEqual([['arrow_B', ends(4)]])
   })
 })
