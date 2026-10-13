@@ -5920,7 +5920,6 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
             )
         }
         free = [real.get(e["python"], e) if e.get("health_deferred") else e for e in free]
-    deferred = {e["python"] for e in pending}
     if not _auto_adopt_allowed(project, offer):
         return None
     while True:
@@ -5931,21 +5930,20 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
         # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
         # 现量 + 提交整段占住目标环境（`envlease.inspecting`，与手动采用、检测路径同一条）：上面的 `is_mutating` 只是
         # 挑选时的过滤，租约外那次真量只用来排序——真量期间另一个项目的卸载 / 升级可能已经做完，等拿到租约时环境
-        # 已空闲，过时的结论会被写进记录。所以原本延迟的候选在租约内再现量一次，最终决定只认这一次；量不过 / 占不到
-        # （装包在跑）就换下一个。持租约期间只调体检与写项目设置，不会回头要安装租约
+        # 已空闲，过时的结论会被写进记录。所以选中的候选——不论先前结论来自延迟真量还是 import 缓存（Codex
+        # r4254586851）——在租约内一律现量一次，最终决定只认这一次；量不过 / 占不到（装包在跑）就换下一个。持租约期间只调体检与写项目设置，不会回头要安装租约
         try:
             with envlease.inspecting(entry["python"]):
-                if entry["python"] in deferred:
-                    fresh = userenvs.evaluate(
-                        [{k: entry[k] for k in ("python", "source", "label") if k in entry}],
-                        needed,
-                        unknown,
-                        use_cache=False,
-                    )[0]
-                    if not fresh.get("satisfies"):
-                        free = [e for e in free if e["python"] != entry["python"]]
-                        continue
-                    entry = fresh
+                fresh = userenvs.evaluate(
+                    [{k: entry[k] for k in ("python", "source", "label") if k in entry}],
+                    needed,
+                    unknown,
+                    use_cache=False,
+                )[0]
+                if not fresh.get("satisfies"):
+                    free = [e for e in free if e["python"] != entry["python"]]
+                    continue
+                entry = fresh
                 saved = projectenv.remember(
                     project,
                     entry["python"],

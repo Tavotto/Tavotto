@@ -281,6 +281,13 @@ def adopt_env(tmp_path, monkeypatch):
     monkeypatch.setattr(deprepair, "_adoption_listeners", [lambda p, e: heard.append((p, e))])
     monkeypatch.setattr(engine_pool, "explicit_worker_python", lambda: "")
     monkeypatch.setattr(engine_pool.config, "worker_python", lambda: "")
+    # 自动采用在租约内对选中的候选现量一次（Codex r4254586851）；这些候选是假解释器，缺省替身说「此刻仍满足」，
+    # 要量出「已被改掉」的用例自己再换替身
+    monkeypatch.setattr(
+        userenvs,
+        "evaluate",
+        lambda cands, needed, unknown, **kw: [_entry(c["python"], c["source"]) for c in cands],
+    )
     return project, env, heard
 
 
@@ -521,6 +528,25 @@ def test_auto_adopt_adopts_nothing_when_every_deferred_candidate_fails_the_repro
     project, first, second, calls = _deferred_world(adopt_env, monkeypatch, verdicts)
     assert deprepair.decide_environment(project, "fig.py") is None
     assert projectenv.remembered_record(project) is None
+
+
+def test_auto_adopt_reprobes_a_cached_candidate_inside_the_lease_too(adopt_env, monkeypatch):
+    """不只延迟候选：结论来自先前 import 缓存的普通候选（`health_deferred` 未置），在租约前被另一个项目卸掉了包，
+    租约内的复核同样量不过 → 不采用（Codex r4254586851）。"""
+    project, env, heard = adopt_env
+    envs = [_entry(str(env), userenvs.SOURCE_LOGIN_SHELL)]  # 缓存结论：satisfies=True
+    monkeypatch.setattr(deprepair, "_preparation_offer", lambda p, s: _door(envs))
+    calls: list = []
+
+    def evaluate(cands, needed, unknown, **kw):
+        calls.append(kw.get("use_cache", True))
+        return [_entry(c["python"], c["source"], missing=("x",)) for c in cands]
+
+    monkeypatch.setattr(userenvs, "evaluate", evaluate)
+    assert deprepair.decide_environment(project, "fig.py") is None
+    assert calls == [False], "租约内现量一次，且不读缓存"
+    assert projectenv.remembered_record(project) is None
+    assert heard == []
 
 
 def test_decide_adopts_without_deadlocking_under_the_pool_lock(adopt_env, monkeypatch):
