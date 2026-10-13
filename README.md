@@ -816,6 +816,14 @@ pays for, and the supporters wall, are on [tavotto.com/support](https://www.tavo
   <a href="https://afdian.com/a/Tavotto"><img alt="在爱发电支持 Tavotto" src="https://img.shields.io/badge/%E5%9C%A8%E7%88%B1%E5%8F%91%E7%94%B5%E6%94%AF%E6%8C%81-946CE6?style=for-the-badge"></a>
 </p>
 
+### Sponsors
+
+Supporters on the $50/month **Sponsor** tier on [Ko-fi](https://ko-fi.com/tavotto/tiers)
+appear here with their avatar, for as long as they sponsor.
+
+<!-- sponsors: one <a><img width="48"></a> per sponsor, added by the maintainer after approval -->
+<p><em>No sponsors yet. The first one goes here.</em></p>
+
 ## License
 
 [AGPL-3.0-only](LICENSE).

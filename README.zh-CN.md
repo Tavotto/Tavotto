@@ -665,6 +665,14 @@ Tavotto 免费开源，由一个人维护。如果它帮你省了时间，可以
   <a href="https://ko-fi.com/tavotto"><img alt="Support Tavotto on Ko-fi" src="https://img.shields.io/badge/Support%20on%20Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white"></a>
 </p>
 
+### 赞助者
+
+在 [Ko-fi](https://ko-fi.com/tavotto/tiers) 选择每月 $50 **赞助人（Sponsor）** 档的支持者，
+会带头像列在这里，赞助期间一直保留。
+
+<!-- sponsors: 每位赞助者一个 <a><img width="48"></a>，维护者批准后添加 -->
+<p><em>还没有赞助者，第一位会出现在这里。</em></p>
+
 ## 许可证
 
 [AGPL-3.0-only](LICENSE)。
