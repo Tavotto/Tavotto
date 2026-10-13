@@ -427,6 +427,11 @@ class NativeSession:
             self._set_state(ENDED)
 
     def _on_transport_closed(self, reason: dict | None) -> None:
+        owned = self.owned
+        if reason is not None and owned is not None and owned.cancelled:
+            # 所有者主动取消（SIGTERM / TerminateJobObject）：对端被杀，Windows 上 reader 读到的是
+            # `ConnectionResetError` 而不是干净 EOF——那是取消的后果，不是「连接故障」。取消的终态是 ENDED
+            reason = None
         self._release_lease()
         if self.state in TERMINAL_STATES:
             return

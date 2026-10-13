@@ -293,3 +293,25 @@ def test_env_overlay_is_merged_case_insensitively_on_windows_and_exactly_elsewhe
     posix = desktopproc.merged_env(base, delta, token, nt=False)
     assert posix["PATH"] == "/sys" and posix["Path"] == "/user"  # POSIX 大小写敏感：各是各的
     assert desktopproc.merged_env({"A": "1"}, nt=True) == {"A": "1"}
+
+
+@pytest.mark.parametrize("cancelled", [True, False])
+def test_a_reset_from_a_killed_peer_is_ended_when_cancelled_and_failed_otherwise(
+    tmp_path, cancelled
+):
+    """Windows 上 TerminateJobObject 杀掉对端后，reader 读到的是 reset（不是干净 EOF，也没有 exit 帧）。
+    所有者主动取消的，终态是 ENDED；不是取消的（进程自己崩了）才是 FAILED。"""
+    session = nativesession.NativeSession(
+        session_id="native-owned-reset",
+        descriptor={"native_id": "reset", "out_dir": str(tmp_path), "metadata": {}},
+    )
+    session.owned = SimpleNamespace(cancelled=cancelled, confirmed=True, finished=False)
+    session._set_state(nativesession.BARRIER)  # noqa: SLF001
+    session._on_transport_closed(  # noqa: SLF001
+        {"code": runcodes.NATIVE_SESSION_DISCONNECTED, "detail": "ConnectionResetError"}
+    )
+    if cancelled:
+        assert session.state == nativesession.ENDED and session.terminal_error is None
+    else:
+        assert session.state == nativesession.FAILED
+        assert session.terminal_error["code"] == runcodes.NATIVE_SESSION_DISCONNECTED
