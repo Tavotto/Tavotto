@@ -322,7 +322,7 @@ def test_session_key_and_fingerprint_separate_safe_from_native_but_keep_safe_unc
     assert prepsession.target_key(safe_t) == "script:fig.py"  # 与 main 逐字节相同
     assert prepsession.target_key({**safe_t, "execution": "safe"}) == "script:fig.py"
     assert prepsession.target_key(native_t) != prepsession.target_key(safe_t)
-    assert prepsession.target_key(native_t).startswith("script:fig.py")
+    assert prepsession.target_key(native_t) == "native|script:fig.py"
 
     plan_native = _native_plan(tmp_path)
     plan_safe = preparation.plan_for(
@@ -364,13 +364,13 @@ def test_asset_session_key_also_separates_safe_from_native():
     safe_t = {"kind": "asset", "asset_id": "Fig1.pdf", "stem": "Fig1", "script": "fig.py"}
     native_t = {**safe_t, "execution": execspec.PROFILE_NATIVE}
     assert prepsession.target_key(safe_t) == "asset:Fig1.pdf"  # 与 main 逐字节相同
-    assert prepsession.target_key(native_t) == "asset:Fig1.pdf@native"
+    assert prepsession.target_key(native_t) == "native|asset:Fig1.pdf"
     # 带 argv 引用的 script 目标：后缀在引用之后
     run = execspec.RunSelection(config_id="rc_1", argv=("--x",))
     script_t = {"kind": "script", "script": "fig.py", "run": run}
     assert prepsession.target_key(script_t) == "script:fig.py~rc_1"
     assert (
-        prepsession.target_key({**script_t, "execution": "native"}) == "script:fig.py~rc_1@native"
+        prepsession.target_key({**script_t, "execution": "native"}) == "native|script:fig.py~rc_1"
     )
 
 
@@ -397,3 +397,29 @@ def test_a_native_asset_check_never_reuses_the_safe_asset_session(tmp_path):
     assert created and native_sess is not safe_sess
     assert safe_sess.plan.execution == execspec.PROFILE_SAFE
     assert native_sess.plan.execution == execspec.PROFILE_NATIVE
+
+
+@nativekit.needs_user_python
+def test_the_execution_dimension_is_injective_even_for_ids_that_end_in_the_old_suffix(tmp_path):
+    """asset id 不透明：safe 的 `...@native` 与 native 的 `...` 曾得到同一个 key。"""
+    from tavotto.engine import prepsession
+
+    safe_t = {
+        "kind": "asset",
+        "asset_id": "runtime:s.py#plot@native",
+        "stem": "plot",
+        "script": "fig.py",
+    }
+    native_t = {**safe_t, "asset_id": "runtime:s.py#plot", "execution": execspec.PROFILE_NATIVE}
+    assert prepsession.target_key(safe_t) != prepsession.target_key(native_t)
+    assert prepsession.target_key(safe_t) == "asset:runtime:s.py#plot@native"  # safe 与 main 一致
+
+    plan = _native_plan(tmp_path)
+    service = prepsession.SessionService()
+    base = {"entry": "__main__", "original_artifact": None}
+    s1, _ = service.check(project_id="p", project_root=plan.project_root, target={**safe_t, **base})
+    s2, created = service.check(
+        project_id="p", project_root=plan.project_root, target={**native_t, **base}
+    )
+    assert created and s1 is not s2
+    assert s1.plan.execution == "safe" and s2.plan.execution == "native"

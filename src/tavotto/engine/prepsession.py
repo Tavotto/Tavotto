@@ -920,9 +920,11 @@ def target_key(target: dict) -> str:
     else:
         key = f"asset:{target['asset_id']}"
     # P06：执行语义是执行意图的一部分——同一目标（脚本或素材）按 safe 检查过，不能让 native 请求拿到那份
-    # safe 计划。只有非 safe 才追加：safe 的 key 与此前逐字节相同（现有会话与用例不失效）
+    # safe 计划。非 safe 加**前缀**（不是后缀）：素材 id 是不透明的、本身可能以任何串结尾，后缀会撞上别的
+    # safe key；原 key 恒以 `script:` / `asset:` 开头，`<执行语义>|` 前缀的 key 因此不可能等于任何 safe key。
+    # safe 的 key 与此前逐字节相同（现有会话与用例不失效）
     execution = target.get("execution") or execspec.PROFILE_SAFE
-    return key + ("" if execution == execspec.PROFILE_SAFE else f"@{execution}")
+    return key if execution == execspec.PROFILE_SAFE else f"{execution}|{key}"
 
 
 def _fingerprint(plan: preparation.PreparationPlan) -> str:
