@@ -251,7 +251,10 @@ describe('通知轨：外形与先后', () => {
     expect(box.querySelector('[data-toast-bar]')).toBeNull()
     expect(box.textContent).toContain('写盘失败：/very/long/path/that/goes/on')
     expect(box.querySelector('[title="写盘失败：/very/long/path/that/goes/on"]')).not.toBeNull()
-    expect(box.querySelector('.truncate')).not.toBeNull()
+    // 截断要落在块级盒子上：行内 span 的 overflow / text-overflow 不生效（Codex #995）
+    const clipped = box.querySelector<HTMLElement>('.truncate')!
+    expect(clipped.classList.contains('block')).toBe(true)
+    expect(clipped.parentElement!.className).toContain('min-w-0')
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     await act(async () => box.querySelector<HTMLButtonElement>('[data-copy-details]')!.click())
