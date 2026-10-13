@@ -411,6 +411,8 @@ class GroupPopen(subprocess.Popen):
 
     #: 每一层等「父进程把它回收掉」的上限（秒）
     LEVEL_GRACE = 2.0
+    #: 整次叶子往上遍历的总期限（秒）：树越深不能等得越久。超了就停下，交给整组收尸（顺序已经走完的那些层保持叶子在前）
+    TREE_BUDGET = 5.0
 
     def __init__(self, *args, **kwargs):
         if os.name == "nt":
@@ -474,12 +476,15 @@ class GroupPopen(subprocess.Popen):
         return [by_depth[d] for d in sorted(by_depth, reverse=True)]
 
     def _kill_tree_leaves_first(self) -> None:
+        budget_end = time.monotonic() + self.TREE_BUDGET
         for level in self._levels():
+            if time.monotonic() >= budget_end:
+                return  # 总期限用完：剩下的层交给整组收尸（`kill()` / `wait()` 里的 `_kill_group`）
             for pid, state in level:
                 if state != "Z":
                     self._signal_pid(pid)
             pids = {pid for pid, _ in level}
-            deadline = time.monotonic() + self.LEVEL_GRACE
+            deadline = min(time.monotonic() + self.LEVEL_GRACE, budget_end)
             while time.monotonic() < deadline:
                 if not pids & {m[0] for m in group_members(self.pid)}:
                     break  # 它们（含僵尸）的父进程已经把它们回收掉了（pid 消失）

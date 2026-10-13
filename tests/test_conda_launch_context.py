@@ -1743,3 +1743,55 @@ def test_graceful_shutdown_lets_deactivate_hooks_finish_and_is_not_a_protocol_er
     assert "[post-exit stdout] deactivate: cleaning up" in text
     assert "protocol_mismatch" not in text and "协议" not in text
     assert worker.proc.poll() is not None
+
+
+@posix_only
+def test_deep_tree_termination_has_one_overall_deadline(monkeypatch):
+    """叶子往上遍历共用一个总期限：深 20 层、父进程都不收尸（被杀的成员一直留在表里）时，总时长不随深度线性增长。"""
+    gp = launcher.GroupPopen.__new__(launcher.GroupPopen)
+    gp.pid = 100
+    gp.LEVEL_GRACE = 0.3
+    gp.TREE_BUDGET = 0.8
+    chain = [(100, 1, "S")] + [(100 + i, 100 + i - 1, "S") for i in range(1, 21)]  # wrapper + 20 层
+    sent: list[int] = []
+    gp._signal_pid = lambda pid: sent.append(pid)
+    monkeypatch.setattr(launcher, "group_members", lambda pgid: list(chain))
+    started = time.monotonic()
+    gp._kill_tree_leaves_first()
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.8 + 0.4, elapsed  # 旧写法：20 层 × 0.3 秒 = 6 秒
+    assert sent and sent == sorted(sent, reverse=True)  # 已经走过的层仍是叶子在前
+    assert len(sent) < 20  # 期限用完就停，剩下的交给整组收尸
+
+
+@needs_worker
+def test_spawn_gates_run_inside_the_per_script_launch_scope(conda_world, tmp_path, monkeypatch):
+    """`_new_worker` 里的依赖门（SPAWN_GATES）也要用与 worker 相同的每脚本启动决策：记录为 direct、开关打开时，门里的预检也裸起。"""
+    import hashlib
+
+    proj, prefix, log, counter = conda_world
+    py = str(prefix / "bin" / "python")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    seen: list[str] = []
+
+    def gate(figures_dir, script_name):
+        seen.append(launcher.context_key(py))
+
+    monkeypatch.setattr(_pool, "SPAWN_GATES", [gate])
+    rcpt = _good_rcpt(proj, py)
+    rcpt.python_source = "env_override"
+    rcpt.source_revision = hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest()
+    assert launchctx.record_success(proj, "fig.py", rcpt)  # 启动方式：direct
+    worker = None
+    try:
+        # 构造函数里 worker 本身会因记录是 direct 而裸起（脚本需要激活 → 会失败），这里只关心门看到的上下文
+        with pytest.raises(_pool.WorkerError):
+            _pool._new_worker("fig.py", str(proj), "__main__").ensure_built()
+    finally:
+        if worker is not None:
+            worker.force_kill()
+        _pool.shutdown_all(wait=True)
+    assert seen == [
+        "direct"
+    ]  # 门在范围里：记录为 direct → 门里的探针也是 direct（无范围时会是 conda|…）
+    assert launcher.context_key(py).startswith("conda|")  # 对照：范围外现场检测是 conda

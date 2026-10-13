@@ -3371,6 +3371,28 @@ def _new_worker(
     run=None,
     pinned: EnvironmentDecision | None = None,
 ):
+    """起会话的唯一入口：整个流程（依赖门 `SPAWN_GATES` 与两个构造函数里的解释器解析）都在
+    `launchctx.probe_scope` 里——预检探针与 worker 用同一个每脚本启动决策（见 `_new_worker_unscoped`）。"""
+    with launchctx.probe_scope(figures_dir, script_name):
+        return _new_worker_unscoped(
+            script_name,
+            figures_dir,
+            entry,
+            artifact_source=artifact_source,
+            run=run,
+            pinned=pinned,
+        )
+
+
+def _new_worker_unscoped(
+    script_name: str,
+    figures_dir: str,
+    entry: str,
+    *,
+    artifact_source=None,
+    run=None,
+    pinned: EnvironmentDecision | None = None,
+):
     """按可用性挑控制面。**任何失败都回退 Python 池**——渲染不能因为一个
     可选的加速件起不来就整个不可用。
 
