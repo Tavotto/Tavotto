@@ -1301,3 +1301,35 @@ def test_two_identical_desktop_launches_have_different_receipt_ids(tmp_path):
         assert ra.receipt_id != rb.receipt_id
     finally:
         b.cancel_owned()
+
+
+@pytest.mark.parametrize("failing", ["watch", "pool", "ai"])
+def test_sidecar_cleanup_still_ends_owned_processes_when_another_step_raises(
+    tmp_path, monkeypatch, failing
+):
+    from tavotto import app as appmod, desktop
+
+    def boom(*a, **kw):
+        raise RuntimeError(f"injected {failing} failure")
+
+    if failing == "watch":
+        monkeypatch.setattr(desktop.engine_watch, "stop", boom)
+    elif failing == "pool":
+        monkeypatch.setattr(desktop.engine_pool, "shutdown_all", boom)
+    else:
+        monkeypatch.setattr(desktop.engine_ai, "interrupt_all", boom)
+    owned = dk.start(tmp_path, RUNNING_SCRIPT)
+    work = tmp_path / "work"
+    dk.wait_until(lambda: (work / "ready").exists(), what="就绪")
+    child_pid = int((work / "child.pid").read_text())
+    srv = desktop.SidecarServer(
+        appmod.app, desktop.DesktopState("n"), tmp_path / "hs" / "handshake.json"
+    )
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    srv.announce_ready()
+    srv.shutdown()
+    assert srv.wait_stopped(timeout=60)
+    t.join(10)
+    assert owned.owned.finished and not dk.pid_alive(owned.owned.pid)
+    assert not dk.pid_alive(child_pid), f"{failing} 清理抛错后桌面拥有的进程成了孤儿"
