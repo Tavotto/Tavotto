@@ -34,6 +34,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import runtime
+
 LOG = logging.getLogger("tavotto.engine")
 
 KIND_DIRECT = "direct"
@@ -212,8 +214,11 @@ def group_members(pgid: int) -> list[tuple[int, int, str]]:
             ["ps", "-axo", "pid=,ppid=,pgid=,stat="],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
+            creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -234,7 +239,13 @@ def _state_of(pid: int) -> str:
         pass
     try:
         done = subprocess.run(
-            ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=10
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -243,13 +254,14 @@ def _state_of(pid: int) -> str:
 
 def is_running(pid: int) -> bool:
     """`pid` 此刻在**运行**吗：存在且不是僵尸。僵尸不再执行任何代码，只是还没被它的父进程收尸。"""
+    if os.name == "nt":
+        # Windows 上 `os.kill(pid, 0)` 会终止进程（#523）；这个函数只服务 POSIX 的进程组确认，Windows 不探测
+        return True
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except (PermissionError, OSError):
-        return True
-    if os.name == "nt":
         return True
     return _state_of(pid) != "Z"
 
@@ -286,6 +298,7 @@ class GroupPopen(subprocess.Popen):
                 capture_output=True,
                 timeout=10,
                 check=False,
+                creationflags=runtime.CREATE_NO_WINDOW,
             )
         except (OSError, subprocess.SubprocessError):
             pass

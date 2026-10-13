@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import os
 import signal
-import stat
 import subprocess
 import sys
 import time
@@ -100,7 +99,7 @@ def make_fake_conda(tmp_path: Path, real_python: str) -> tuple[Path, Path, Path]
     conda = root / "bin" / "conda"
     conda.write_text(FAKE_CONDA.format(python=sys.executable, license=LICENSE), encoding="utf-8")
     for p in (py, conda):
-        p.chmod(p.stat().st_mode | stat.S_IXUSR)
+        os.chmod(p, 0o755)
     return prefix, conda, tmp_path / "conda.log"
 
 
@@ -111,6 +110,10 @@ def conda_calls(log: Path) -> list[dict]:
 
 
 def alive(pid: int) -> bool:
+    if (
+        os.name == "nt"
+    ):  # Windows 上 os.kill(pid, 0) 会终止进程（#523）；这些用例本来就只在 POSIX 上跑
+        return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -549,6 +552,8 @@ def test_real_conda_launch():
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     got = []
     for msg in ("a", "b", "q"):  # 逐行双向往返：缓冲或 stdin 不通会在这里卡住（readline 无限等）
@@ -594,7 +599,13 @@ def test_real_conda_worker_roundtrip_and_cancel_leaves_no_user_python(tmp_path, 
         _pool.shutdown_all(wait=True)
         _pool.reset_worker_python()
     assert wait_dead(user_pid), "取消 wrapper 后用户 Python 仍在运行"
-    ps = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+    ps = subprocess.run(
+        ["ps", "-axo", "pid=,command="],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    ).stdout
     assert not [ln for ln in ps.splitlines() if str(tmp_path) in ln and "worker.py" in ln], ps
 
 
@@ -1208,7 +1219,7 @@ def test_a_zombie_with_a_live_parent_is_still_residue_but_an_orphan_zombie_of_in
 
 
 @needs_worker
-def test_the_pool_turns_an_unavailable_conda_launcher_into_a_stable_error(conda_world):
+def test_the_pool_turns_an_unavailable_conda_launcher_into_a_stable_error(conda_world, monkeypatch):
     proj, prefix, log, counter = conda_world
     import hashlib
 
@@ -1221,6 +1232,10 @@ def test_the_pool_turns_an_unavailable_conda_launcher_into_a_stable_error(conda_
     rcpt.source_revision = hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest()
     assert launchctx.record_success(proj, "fig.py", rcpt)
     (prefix.parent.parent / "bin" / "conda").unlink()
+    monkeypatch.setenv(
+        "PATH", str(proj / "nothing")
+    )  # CI 的机器上 PATH / CONDA_EXE 里可能真有 conda
+    monkeypatch.delenv("CONDA_EXE", raising=False)
     with pytest.raises(_pool.WorkerError) as werr:
         _pool.EngineWorker("fig.py", str(proj), "__main__")
     assert werr.value.code == "conda_launcher_unavailable"
