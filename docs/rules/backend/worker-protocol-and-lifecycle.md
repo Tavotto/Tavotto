@@ -169,22 +169,45 @@
 - export / preview_png 状态中立
 - 请求之间死掉的 worker（拿锁时已死 / 写管道 BrokenPipe / 读到 EOF）一律同一个带退出状态的 `session_dead`，非 shutdown 的 `session_dead` 丢掉那条解释器的体检结论（`pool.forget_python_verdict`）
 
-## 预览发布失败的降级层级（P01b #958）
+## 预览发布：同代指针 + 逐图隔离（P01b #958 → P08a）
 
 写预览的是 worker / native 子进程，读的是 app 进程（`/api/engine/svg`、manifest 读取、
 runtimeasset 物化，全经 `figcapture.usable_preview_path` / 各 worker 的 `svg_path`）——
-**进程内内存标记对读方无效**，每一级都必须是读方能观测到的东西。发布中途失败时依次降级：
+**进程内内存标记对读方无效**，每一条保证都必须是读方能观测到的东西。
 
-1. **还原**（`_restore_previous`）：把已换上的文件换回上一版。成功 = 普通失败，会话继续用。
-2. **删除 / 改名隔离**（`_invalidate_preview`）：还原失败时撤掉该 stem 的 `.svg` / `.json`。
-3. **磁盘失效标记**（`.<stem>.preview-invalid`，`mark_preview_invalid` 返回是否写成，**不许吞**）：
-   删除 / 改名也被锁时的兜底；写成了读方回「无预览」，抛 `PreviewInvalidated`（非致命）。
-4. **会话作废**：第 2、3 级都落空（磁盘上确有错配、读方无法在磁盘层面被拦）——抛
-   `PreviewPoisoned`（`protocol_code = preview_poisoned`，非 retryable，build 里也不归 `script_error`）。
+**同代发布**（`figcapture.publish_preview`）：每次发布写一个**不可变**的 `.gen-<序号>/<stem>.svg|json`，
+账本 `.preview-ledger` 里该 stem 的记录（`seq` / `svg_bytes` / `capabilities`）就是**指针**，也是完成描述符；
+切换它（一次 `os.replace`）是唯一提交点。要 SVG + manifest 成对的读方用 `usable_preview_generation`
+一次解出，两份出自同一次发布；只要一份的用 `usable_preview_path`（指向账本里那一代）。没有指针 = 无预览，
+目录里碰巧同名的文件、`.part` 临时件、被取代的旧代目录（落后 `GENERATION_GRACE` 个序号**且**过了 `GENERATION_GRACE_SECONDS` 秒才清，
+刚解出旧路径的读方不会撞上刚删的文件）读方都看不见。
+
+失败语义：提交前任何一步失败，新代目录撤掉、账本不动——**上一版整套原封不动，没有「还原」这一步**；
+账本**存在但读不出来 / 格式坏**（`PreviewLedgerUnreadable`）发布失败并如实报错，**不许**当空账本重建
+（会丢已发布的其它图）；账本不存在才是首次发布。完成计数（`published_preview_stems`）= 账本有记录且指针指向的
+SVG 字节数对得上，不数文件。
+
+**逐图隔离**（`LiveFigureSession.instrument_all`）：一张图在「建状态 / 出预览」里的普通异常只属于这张图——
+记进 `failures`（`preview_capture_failed`）、从活会话撤掉，其它图照常发布；build 响应带 `failed_figures`，
+native 另带 `figure_facts`（逐图 `state` / `generation` / `capabilities` / `saved_originals` / 时刻）与
+`capture_summary`。不是 `except: pass`：失败图动过的 Figure 要核对恢复（`failed_restore_owed`，还原不了照样挡 continue）；
+选定产物上下文（`artifact_source`）、线程归属这类不属于单张图的异常原样抛；产物目录 / 账本的问题（发布段）
+仍整批失败。safe worker 传 `raise_if_none_live=True`（一张活图都不剩时把第一个失败原样抛出，build 仍失败）。
+能力只按实际完成的工作声明：`preview` + `live_edit`（同代发布过的活图）与 `original_readonly`（**这个 Figure
+对象**本次运行成功 save 的原产物，`SavefigObservations.saved_originals` 按 Figure 身份认领并对账字节数 / mtime，
+绝不按 basename 或目录扫描找替身）是独立的事实——Saved Stage 的磁盘原件与之后 Unsaved Final 的活对象不必相同。
+
+### 保留的兜底层级（P01b）
+
+原子指针之后，发布路径不再产生「新旧错配」，下面几级只在遗留路径上可达，代码保留（`mark_preview_invalid` /
+`poison_preview_dir` / `PreviewPoisoned` 仍被父进程三条控制面识别）：
+
+1. **磁盘失效标记**（`.<stem>.preview-invalid`，`mark_preview_invalid` 返回是否写成，**不许吞**）：读方回「无预览」。
+2. **会话作废**：`PreviewPoisoned`（`protocol_code = preview_poisoned`，非 retryable，build 里也不归 `script_error`）。
    父进程在**三条控制面**上同样处理：Python 池 `_error_of` 与 workerd `_to_worker_error`
    （`preview_poisoned ∈ _FATAL_CODES`）判死会话、下一次 `get()` 重建；native `_request` 把传输标 `poison`
    （既有的「会话不再可信」机制）；bridge 同。同时 `figcapture.poison_preview_dir(out_dir)` 把
    `out_dir` 记进**读方进程**的作废表，`usable_preview_path` 对它回「无预览」，直到新一代会话 build 成功
-   （`clear_preview_poison`）。
+   （`clear_preview_poison`：作废之后没重新发布的指针摘掉再解除）。
 
 新增会改预览发布的失败路径时，别在某一级里加 `except OSError: pass`——先问「这一级失败后读方还有没有拦截」。

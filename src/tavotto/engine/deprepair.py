@@ -5909,8 +5909,8 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
     free = [e for e in user_envs if not envlease.is_mutating(e["python"])]
     # 旧模式（legacy）的采用发生在起会话 / 运行的时刻：运行之前只读了 dist-info 的候选（`health_deferred`）现在用 import 方式真量
     pending = [e for e in free if e.get("health_deferred")]
+    needed, unknown = _plan_imports(offer.get("plan") or {})
     if pending:
-        needed, unknown = _plan_imports(offer.get("plan") or {})
         real = {
             e["python"]: e
             for e in userenvs.evaluate(
@@ -5920,19 +5920,43 @@ def _auto_adopt(project: str, offer: dict, user_envs: list[dict]) -> dict | None
             )
         }
         free = [real.get(e["python"], e) if e.get("health_deferred") else e for e in free]
-    entry = userenvs.best(free, Path(project).name)
-    if entry is None or not _auto_adopt_allowed(project, offer):
+    if not _auto_adopt_allowed(project, offer):
         return None
-    # 上面判过的「项目记录允许自动换」在写入锁里再判一次：判完到写之间用户的显式选择（设置里挑了一个 /
-    # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
-    if not projectenv.remember(
-        project,
-        entry["python"],
-        automatic=True,
-        trigger=TRIGGER_USER_ENVIRONMENT,
-        health=entry,
-        only_if=_record_allows_auto_adopt,
-    ):
+    while True:
+        entry = userenvs.best(free, Path(project).name)
+        if entry is None:
+            return None
+        # 上面判过的「项目记录允许自动换」在写入锁里再判一次：判完到写之间用户的显式选择（设置里挑了一个 /
+        # 点了「改回」）可能刚落地，不许被这条自动决策盖掉（ADR 0079 §四：用户决定过的一个都不碰）
+        # 现量 + 提交整段占住目标环境（`envlease.inspecting`，与手动采用、检测路径同一条）：上面的 `is_mutating` 只是
+        # 挑选时的过滤，租约外那次真量只用来排序——真量期间另一个项目的卸载 / 升级可能已经做完，等拿到租约时环境
+        # 已空闲，过时的结论会被写进记录。所以选中的候选——不论先前结论来自延迟真量还是 import 缓存（Codex
+        # r4254586851）——在租约内一律现量一次，最终决定只认这一次；量不过 / 占不到（装包在跑）就换下一个。持租约期间只调体检与写项目设置，不会回头要安装租约
+        try:
+            with envlease.inspecting(entry["python"]):
+                fresh = userenvs.evaluate(
+                    [{k: entry[k] for k in ("python", "source", "label") if k in entry}],
+                    needed,
+                    unknown,
+                    use_cache=False,
+                )[0]
+                if not fresh.get("satisfies"):
+                    free = [e for e in free if e["python"] != entry["python"]]
+                    continue
+                entry = fresh
+                saved = projectenv.remember(
+                    project,
+                    entry["python"],
+                    automatic=True,
+                    trigger=TRIGGER_USER_ENVIRONMENT,
+                    health=entry,
+                    only_if=_record_allows_auto_adopt,
+                )
+        except envlease.EnvironmentBusy:
+            free = [e for e in free if e["python"] != entry["python"]]
+            continue
+        break
+    if not saved:
         return None
     # 不调 `pool.reset_worker_python()`：`remember()` 已经更新了项目级解析缓存，全局链条的缓存与项目
     # 决策无关。（以前这里跑在持有 `pool._lock` 的 `_new_worker()` 里，再拿锁就是死锁——2026-09-23 真机
@@ -6200,6 +6224,7 @@ def _detect_environment_unlocked(
         candidates = declared
     candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
     entry = None
+    adopted = False
     if candidates and not _user_env_discovery_off():
         entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
         if not project_exec and any(e.get("deferred") for e in entries):
@@ -6207,21 +6232,46 @@ def _detect_environment_unlocked(
             return None
         while True:
             entry = userenvs.best(entries, Path(root).name)
-            if entry is None or not _reprobe_needed(entry, root, project_exec):
+            if entry is None:
                 break
-            # 缓存里的"装齐"结论来自过去的某一刻（装包被卸掉不换代）：记下之前现量一次，量不过就换下一个
-            # （Codex #820 r4233884149）。项目说了算的候选在运行之前不能现量，只信带环境代的缓存
-            fresh = userenvs.evaluate(
-                [entry],
-                needed,
-                unknown,
-                use_cache=False,
-                **({} if project_exec else {"root": root}),
-            )[0]
-            if fresh.get("satisfies"):
-                entry = {**entry, **fresh}
-                break
-            entries = [e for e in entries if e["python"] != entry["python"]]
+            # 现量 + 提交整段占住候选环境（`envlease.inspecting`，与手动采用同一条）：上面的 `is_mutating` 只是挑选时的
+            # 过滤，过滤之后别的项目开始往这个环境装包的话，决定落地后会话就起在装包中的环境上。占不到（装包在跑）=
+            # 这一个不采用、换下一个；占到之后装包被拒、等这里结束。租约内只调 `unless_installing` + 写项目设置，
+            # 不会回头要安装租约
+            try:
+                with envlease.inspecting(entry["python"]):
+                    if _reprobe_needed(entry, root, project_exec):
+                        # 缓存里的"装齐"结论来自过去的某一刻（装包被卸掉不换代）：记下之前现量一次，量不过就换下一个
+                        # （Codex #820 r4233884149）。项目说了算的候选在运行之前不能现量，只信带环境代的缓存
+                        fresh = userenvs.evaluate(
+                            [entry],
+                            needed,
+                            unknown,
+                            use_cache=False,
+                            **({} if project_exec else {"root": root}),
+                        )[0]
+                        if not fresh.get("satisfies"):
+                            entries = [e for e in entries if e["python"] != entry["python"]]
+                            continue
+                        entry = {**entry, **fresh}
+                    try:
+                        adopted = unless_installing(
+                            root,
+                            lambda: projectenv.remember(
+                                root,
+                                entry["python"],
+                                automatic=True,
+                                trigger=projectenv.TRIGGER_AUTO_DETECTED,
+                                health=entry,
+                                only_if=_record_allows_auto_adopt,
+                            ),
+                        )
+                    except envlease.EnvironmentBusy:
+                        return None
+            except envlease.EnvironmentBusy:
+                entries = [e for e in entries if e["python"] != entry["python"]]
+                continue
+            break
     if entry is None:
         if (
             not runs_now
@@ -6234,20 +6284,6 @@ def _detect_environment_unlocked(
                 unless_installing(root, lambda: pool.invalidate_remembered(root, record))
             except envlease.EnvironmentBusy:
                 pass
-        return None
-    try:
-        adopted = unless_installing(
-            root,
-            lambda: projectenv.remember(
-                root,
-                entry["python"],
-                automatic=True,
-                trigger=projectenv.TRIGGER_AUTO_DETECTED,
-                health=entry,
-                only_if=_record_allows_auto_adopt,
-            ),
-        )
-    except envlease.EnvironmentBusy:
         return None
     if not adopted:
         return None

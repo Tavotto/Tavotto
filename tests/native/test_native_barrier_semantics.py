@@ -16,6 +16,7 @@ import json
 import pytest
 
 from support import nativekit
+from support.previewkit import preview_file
 from tavotto.engine import nativesession, runcodes
 from tavotto.engine.runcodes import RunError
 
@@ -23,7 +24,7 @@ pytestmark = nativekit.needs_user_python
 
 
 def manifest_of(session, stem: str) -> dict:
-    return json.loads((session.out_dir / f"{stem}.json").read_text(encoding="utf-8"))
+    return json.loads(preview_file(session.out_dir, stem, ".json").read_text(encoding="utf-8"))
 
 
 def title_gid(session, stem: str) -> str:

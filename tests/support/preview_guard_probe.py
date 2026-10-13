@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         # legacy 不给——探针走的是 v1 那条路。
         preview: dict = {}
         result = session.do_render(STEM, [], inline_svg=True, preview=preview)
-        svg_path = str(Path(tmp) / f"{STEM}.svg")
+        svg_path = figcapture.usable_preview_path(tmp, STEM, ".svg")
 
         print(
             json.dumps(

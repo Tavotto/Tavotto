@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from support.previewkit import preview_file
 from tavotto.engine import pool
 
 try:
@@ -71,7 +72,7 @@ def worker(library):
 
 def _cold(w, stem):
     # Deliberately no w.override(stem, []): that would warm up layout.
-    manifest = json.loads((Path(w.out_dir) / f"{stem}.json").read_text(encoding="utf-8"))
+    manifest = json.loads(preview_file(w.out_dir, stem, ".json").read_text(encoding="utf-8"))
     return {e["gid"]: e for e in manifest["elements"]}, w.svg_path(stem).read_text(encoding="utf-8")
 
 

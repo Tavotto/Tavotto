@@ -143,6 +143,7 @@ engine 目录平铺 import 它，Flask 父进程也 import 得动。
 from __future__ import annotations
 
 import builtins
+import contextlib
 import dataclasses
 import hashlib
 import inspect
@@ -155,8 +156,11 @@ import os
 import pathlib
 import posixpath
 import re
+import shutil
+import stat
 import sys
 import threading
+import time
 import weakref
 
 if __package__:
@@ -196,7 +200,10 @@ __all__ = [
     "ARTIFACT_EXTS",
     "DESCRIPTOR_VERSION",
     "PREVIEW_LEDGER",
-    "record_preview_published",
+    "publish_preview",
+    "usable_preview_generation",
+    "open_preview_pair",
+    "PreviewLedgerUnreadable",
     "published_preview_stems",
     "CapturedFigureDescriptor",
     "build_descriptor",
@@ -312,45 +319,160 @@ DESCRIPTOR_VERSION = 1
 PREVIEW_LEDGER = ".preview-ledger"
 
 
-def _read_preview_ledger(out_dir) -> dict:
+class PreviewLedgerUnreadable(OSError):
+    """账本**存在但读不了 / 格式坏**——与「账本不存在」（首次发布）是两件事（#969）。
+
+    发布路径遇到它必须失败（上一版预览原封不动），不能当成空账本重建：重建会把已发布的
+    其它 stem 的完成记录静默覆盖掉。
+    """
+
+
+def _load_preview_ledger(out_dir) -> dict | None:
+    """读账本。**不存在** → None（首次发布）；读不出来 / 格式坏 → `PreviewLedgerUnreadable`。"""
     try:
         with open(os.path.join(os.fspath(out_dir), PREVIEW_LEDGER), encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError):
-        return {"seq": 0, "stems": {}}
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise PreviewLedgerUnreadable(f"preview ledger cannot be read: {exc}") from exc
     stems = data.get("stems") if isinstance(data, dict) else None
     seq = data.get("seq") if isinstance(data, dict) else None
-    if not isinstance(stems, dict) or not isinstance(seq, int):
-        return {"seq": 0, "stems": {}}
+    if not isinstance(stems, dict) or type(seq) is not int:
+        raise PreviewLedgerUnreadable("preview ledger is malformed")
     return {"seq": seq, "stems": stems}
 
 
-def record_preview_published(out_dir, stem: str, svg_bytes: int) -> int:
-    """把 `stem` 的这一版预览记成「已完整发布」，返回它的发布序号（单调递增）。
+def _read_preview_ledger(out_dir) -> dict:
+    """读方用：读不到一律当空（**读方对「无法确认」的回答就是「无预览」**，不会放出东西）。
 
-    **调用方必须已经把 `<stem>.svg` 与 `<stem>.json` 都原子地放到位**——账本是
-    「完成」的声明，不是「开始写」的声明。账本自己也是临时文件 + `os.replace`：
-    读到它的人要么看到上一版、要么看到这一版，不会看到半份 JSON。
-    序号是同代发布的锚：P08a 逐图隔离时，同一个 stem 的 SVG / manifest / 完成记录
-    以它对齐。
+    发布路径不许用它——见 `PreviewLedgerUnreadable`。
     """
-    out_dir = os.fspath(out_dir)
-    ledger = _read_preview_ledger(out_dir)
-    ledger["seq"] += 1
-    ledger["stems"][stem] = {"seq": ledger["seq"], "svg_bytes": int(svg_bytes)}
+    try:
+        return _load_preview_ledger(out_dir) or {"seq": 0, "stems": {}}
+    except PreviewLedgerUnreadable:
+        return {"seq": 0, "stems": {}}
+
+
+#: 代目录：每次发布一个**不可变**的 `.gen-<序号>/`，里头放这一版的 `<stem>.svg` 与 `<stem>.json`。
+#: 账本里 stem 的记录就是**指针**——切换它（一次 `os.replace`）是发布的唯一提交点，所以读方
+#: 经 `usable_preview_generation` 一次解出的这一对 SVG / manifest 永远出自同一次发布（#969 原子指针）。
+#: 目录名以点开头且无扩展名，既不会被按 `.svg` / `.json` 后缀枚举的人看见，也撞不上用户 stem 的任何产物名。
+GENERATION_DIR_PREFIX = ".gen-"
+#: 被新版取代的代目录要**同时**满足「落后当前序号至少这么多」和「已经过了这么多秒」才清：刚解出旧路径、
+#: 正要打开的读方不会撞上刚删的文件。只按序号不够——拖动编辑时发布很密，读方被调度走几十毫秒就落后好几个序号；
+#: 只按时间则密集发布会堆出一串大 SVG。两者取交集：窗口是秒级，磁盘上限是 `GRACE` 个代目录起步 + 两秒内的发布量。
+GENERATION_GRACE = 4
+GENERATION_GRACE_SECONDS = 2.0
+
+
+def preview_generation_dir(out_dir, seq: int) -> str:
+    return os.path.join(os.fspath(out_dir), f"{GENERATION_DIR_PREFIX}{int(seq)}")
+
+
+def _replace_with_retry(src: str, dst: str, attempts: int = 12) -> None:
+    """`os.replace`，Windows 上目标正被读方短时打开时会被拒（`PermissionError`，共享冲突）：有界退避重试，
+    总时长不超过约 1 秒，仍失败就把最后的错误抛出去（发布失败，不无限等）。读方（`_load_preview_ledger`）
+    读完立刻关，所以冲突是瞬时的。"""
+    delay = 0.005
+    for attempt in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if os.name != "nt" or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 1.6, 0.15)
+
+
+def _write_preview_ledger(out_dir: str, ledger: dict) -> None:
     path = os.path.join(out_dir, PREVIEW_LEDGER)
     tmp = path + ".part"
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(ledger, fh)
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except BaseException:
         try:
             os.remove(tmp)
         except OSError:
             pass
         raise
-    return ledger["seq"]
+
+
+def publish_preview(out_dir, stem: str, svg_part, man_part, svg_bytes: int, capabilities=()) -> int:
+    """把已写完的临时 SVG / manifest 发布成 `stem` 的新一代，返回发布序号（单调递增）。
+
+    **同代发布**：两个文件先落进这一版独有的新目录（不覆盖任何读方看得见的文件），最后一次
+    账本替换把指针切过去——要么读方看到整套新版，要么整套旧版。任何一步失败：新目录撤掉，
+    账本不动，上一版预览与它的完成记录原封不动。账本存在但读不出来时同样失败，**不**当空账本重建
+    （#969：重建会丢掉已发布的其它图）；账本不存在才是首次发布。
+    """
+    out_dir = os.fspath(out_dir)
+    committed = False
+    gen = None
+    try:
+        with _ledger_lock(out_dir):  # 与摘指针 / 审计的读-改-写串行：谁也不会把对方刚写的记录盖掉
+            ledger = _load_preview_ledger(out_dir) or {"seq": 0, "stems": {}}
+            seq = ledger["seq"] + 1
+            gen = preview_generation_dir(out_dir, seq)
+            shutil.rmtree(gen, ignore_errors=True)  # 账本丢过时留下的同序号孤儿
+            os.makedirs(gen)
+            os.replace(os.fspath(svg_part), os.path.join(gen, f"{stem}.svg"))
+            os.replace(os.fspath(man_part), os.path.join(gen, f"{stem}.json"))
+            stems = dict(ledger["stems"])
+            # 完成描述符：指针所在的这条记录就是这一代的完成事实，能力只按实际完成的工作声明；
+            # `at` 是发布时刻（作废审计在序号下限未知时靠它判新旧）
+            stems[stem] = {
+                "seq": seq,
+                "svg_bytes": int(svg_bytes),
+                "capabilities": list(capabilities),
+                "at": time.time(),
+            }
+            _write_preview_ledger(out_dir, {"seq": seq, "stems": stems})
+            committed = True
+    finally:
+        if not committed and gen is not None:
+            shutil.rmtree(gen, ignore_errors=True)
+    # 旧的失效标记必须撤掉：撤不掉时读方仍判这个 stem 无预览，此时报发布成功就是谎话（画布 404、CLI 少计一张）。
+    # 新一代已提交但对读方不可见，如实抛出让调用方走失败 / 重试（重试会再发布并再撤标记）（Codex #978）
+    try:
+        clear_preview_invalid(out_dir, stem)
+    except OSError as exc:
+        raise OSError(
+            f"preview of {stem!r} was published but the stale invalid marker could not be removed: {exc}"
+        ) from exc
+    _prune_generations(out_dir, {"seq": seq, "stems": stems})
+    return seq
+
+
+def _prune_generations(out_dir: str, ledger: dict) -> None:
+    referenced = {
+        int(rec["seq"])
+        for rec in ledger["stems"].values()
+        if isinstance(rec, dict) and type(rec.get("seq")) is int
+    }
+    try:
+        names = os.listdir(out_dir)
+    except OSError:
+        return
+    for name in names:
+        if not name.startswith(GENERATION_DIR_PREFIX):
+            continue
+        try:
+            n = int(name[len(GENERATION_DIR_PREFIX) :])
+        except ValueError:
+            continue
+        if n in referenced or n > ledger["seq"] - GENERATION_GRACE:
+            continue
+        path = os.path.join(out_dir, name)
+        try:
+            if time.time() - os.stat(path).st_mtime < GENERATION_GRACE_SECONDS:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _invalid_marker(out_dir, stem: str) -> str:
@@ -370,7 +492,9 @@ def preview_invalid(out_dir, stem: str) -> bool:
 PREVIEW_POISONED_CODE = "preview_poisoned"
 #: 目录键 → (作废那一刻账本的发布序号, 作废代号)。解除时要求磁盘上每个还有预览文件的 stem 都在该序号之后重新
 #: 完整发布过；代号每次作废单调递增（与账本无关），审计结束时按它 compare-and-delete（Codex #958）。
-_poisoned_dirs: dict[str, tuple[int, int]] = {}
+#: 第三项是作废发生的墙钟时刻：作废那一刻账本读不出来（序号下限未知，记 None）时，审计改按登记项的发布时刻
+#: （`at`）判「作废之后才发布」——不能拿一个无穷大的下限，那会把账本恢复后新 worker 正常发布的记录全判成旧的摘掉。
+_poisoned_dirs: dict[str, tuple[int | None, int, float]] = {}
 _poison_generations = itertools.count(1)
 #: 作废 / 解除的状态转换互斥：读方审计与新的 `preview_poisoned` 可能并发（Codex #958）
 _poison_lock = threading.Lock()
@@ -383,11 +507,20 @@ def _dir_key(out_dir) -> str:
 def poison_preview_dir(out_dir) -> None:
     """读方进程：`out_dir` 下所有预览产物都不可信（见 `PREVIEW_POISONED_CODE`）。记下此刻的账本序号。"""
     key = _dir_key(out_dir)
-    seq = _read_preview_ledger(out_dir)["seq"]
+    at = time.time()
+    try:
+        ledger = _load_preview_ledger(out_dir)
+        seq = ledger["seq"] if ledger else 0
+    except PreviewLedgerUnreadable:
+        seq = None  # 下限未知：审计时按发布时刻判（见 `_poisoned_dirs`）；当 0 会让旧一代在账本恢复后被放行
     with _poison_lock:
         prev = _poisoned_dirs.get(key)
-        floor = max(seq, prev[0]) if prev else seq
-        _poisoned_dirs[key] = (floor, next(_poison_generations))
+        if prev is None:
+            floor, when = seq, at
+        else:
+            floor = None if seq is None or prev[0] is None else max(seq, prev[0])
+            when = max(at, prev[2])
+        _poisoned_dirs[key] = (floor, next(_poison_generations), when)
 
 
 def clear_preview_poison(out_dir) -> bool:
@@ -401,31 +534,30 @@ def clear_preview_poison(out_dir) -> bool:
     with _poison_lock:
         if key not in _poisoned_dirs:
             return True
-        floor, generation = _poisoned_dirs[key]
+        floor, generation, poisoned_at = _poisoned_dirs[key]
+    # 读方能经指针看到的预览只有账本里登记的 stem；指针之外的文件（代目录里被取代的旧版、`.part` 临时件）
+    # 本来就读不到。作废期间没被重新完整发布过的登记项要摘掉指针——新一代不再出这张图时它永远不会被覆盖，
+    # 留着会让整个目录永远「无预览」（Codex #958）。摘不掉就继续作废，宁可无预览也不放出错配。
     try:
-        names = os.listdir(os.fspath(out_dir))
-    except OSError:
+        ledger = (_load_preview_ledger(out_dir) or {"stems": {}})["stems"]
+    except PreviewLedgerUnreadable:
+        # 账本读不出来 = 审计不了：继续作废。当空账本处理会解除作废，账本恢复可读后被标为不可信的旧一代又被放出来（Codex #978）
         return False
-    # 不按「点开头」排除：用户 stem 可以以点开头（`savefig(".published.png")`，Codex #958）。引擎自己的
-    # 内部文件（账本 `.preview-ledger`、失效标记 `.<stem>.preview-invalid`、`.part` 临时件）都不以
-    # `.svg` / `.json` 结尾，天然不在这里。
-    on_disk = {n.rsplit(".", 1)[0] for n in names if n.endswith(".svg") or n.endswith(".json")}
-    ledger = _read_preview_ledger(out_dir)["stems"]
     fresh = set(published_preview_stems(out_dir))
     stale = False
-    for stem in on_disk:
-        rec = ledger.get(stem)
-        if stem in fresh and isinstance(rec, dict) and int(rec.get("seq") or 0) > floor:
-            continue
-        # 作废之后没被重新完整发布的旧产物：新一代不再出这张图时它永远不会被覆盖——留着会让整个目录永远「无预览」
-        # （Codex #958）。读方进程这里尽力删掉它；删不掉（仍被锁着）就继续作废，宁可无预览也不放出错配。
-        for suffix in (".svg", ".json"):
-            try:
-                os.remove(os.path.join(os.fspath(out_dir), stem + suffix))
-            except FileNotFoundError:
-                pass
-            except OSError:
-                stale = True
+    for stem, rec in list(ledger.items()):
+        if stem in fresh and isinstance(rec, dict):
+            after = (
+                int(rec.get("seq") or 0) > floor
+                if floor is not None
+                else float(rec.get("at") or 0.0) > poisoned_at
+            )
+            if after:
+                continue
+        # compare-and-delete：只摘审计时看到的那一条；审计期间 worker 为同一 stem 发布了新记录就别动它
+        seen = rec.get("seq") if isinstance(rec, dict) else None
+        if not _drop_ledger_stem(out_dir, stem, expected_seq=seen):
+            stale = True
     if stale:
         return False
     with _poison_lock:
@@ -444,23 +576,72 @@ def preview_dir_poisoned(out_dir) -> bool:
     return not clear_preview_poison(out_dir)
 
 
-def usable_preview_path(out_dir, stem: str, suffix: str) -> str:
-    """读 `<stem><suffix>`（`.svg` / `.json`）的**统一入口**：失效的 stem 返回一个必不存在的路径。
+def usable_preview_generation(out_dir, stem: str) -> tuple[int, str, str] | None:
+    """`stem` 当前发布的这一代：`(序号, svg 路径, manifest 路径)`；没有可用的预览返回 None。
 
-    所有按路径读预览产物的消费者（`/api/engine/svg`、manifest 读取、runtimeasset 物化……）
-    经它拿路径，于是「新像素配旧几何」的错配代只会被读成「无预览」。
+    要**一对**产物的读方用它：SVG 与 manifest 由账本里的同一个指针一次解出，出自同一次发布，
+    中间不会插进另一次发布（#969 原子指针）。失效 / 作废 / 没发布过 / 账本读不出来 → None。
     """
     out_dir = os.fspath(out_dir)
     if preview_invalid(out_dir, stem) or preview_dir_poisoned(out_dir):
+        return None
+    rec = _read_preview_ledger(out_dir)["stems"].get(stem)
+    if not isinstance(rec, dict) or type(rec.get("seq")) is not int:
+        return None
+    gen = preview_generation_dir(out_dir, rec["seq"])
+    return rec["seq"], os.path.join(gen, f"{stem}.svg"), os.path.join(gen, f"{stem}.json")
+
+
+def open_preview_pair(out_dir, stem: str, attempts: int = 3):
+    """解出当前一代并**立刻**以二进制打开 SVG 与 manifest，返回 `(序号, svg 文件对象, manifest 文件对象)`；无预览返回 None。
+
+    要读一对产物又会读得久的消费者用它：打开的句柄把这一代的内容钉住（POSIX 上删目录不影响已打开的句柄；
+    Windows 上删不掉的目录留到下次清理），读多久都是同一代。只持有**路径**的读方没有这个保证——
+    清理是有界的（序号 + 秒数双宽限），拖过宽限再去开就会 FileNotFoundError；这里在
+    解出 → 打开之间撞上清理时重新解出（新指针指向的一代必在），所以拿到的永远是完整的一对（Codex #978）。
+    """
+    for _ in range(max(1, attempts)):
+        gen = usable_preview_generation(out_dir, stem)
+        if gen is None:
+            return None
+        seq, svg, man = gen
+        opened = []
+        try:
+            for path in (svg, man):
+                opened.append(open(path, "rb"))
+        except FileNotFoundError:
+            for fh in opened:
+                fh.close()
+            continue
+        return seq, opened[0], opened[1]
+    return None
+
+
+def usable_preview_path(out_dir, stem: str, suffix: str) -> str:
+    """读 `<stem><suffix>`（`.svg` / `.json`）的**统一入口**：没有可用预览的 stem 返回一个必不存在的路径。
+
+    所有按路径读预览产物的消费者（`/api/engine/svg`、manifest 读取、runtimeasset 物化……）
+    经它拿路径，于是「新像素配旧几何」的错配代只会被读成「无预览」。路径指向账本里那一代的
+    不可变文件；要 SVG 与 manifest 成对一致，用 `usable_preview_generation` 一次解出两个。
+    """
+    out_dir = os.fspath(out_dir)
+    gen = usable_preview_generation(out_dir, stem)
+    if gen is None:
         return os.path.join(out_dir, f".{stem}{suffix}.invalid-absent")
-    return os.path.join(out_dir, f"{stem}{suffix}")
+    return (
+        gen[1]
+        if suffix == ".svg"
+        else gen[2]
+        if suffix == ".json"
+        else os.path.join(os.path.dirname(gen[1]), f"{stem}{suffix}")
+    )
 
 
 def mark_preview_invalid(out_dir, stem: str) -> bool:
     """尽力把 `stem` 从账本里摘掉并落失效标记；返回**标记是否写成**（账本那步失败不抛）。
 
     标记写不下去（缓存卷满 / 权限变了）不是可以吞掉的小事：它可能是读方唯一的防线，
-    调用方必须据返回值升级（见 `LiveFigureSession._invalidate_preview`）。
+    调用方必须据返回值升级成 `PreviewPoisoned`（见 `PREVIEW_POISONED_CODE`）。
     """
     out_dir = os.fspath(out_dir)
     marked = True
@@ -469,17 +650,97 @@ def mark_preview_invalid(out_dir, stem: str) -> bool:
             fh.write("invalid\n")
     except OSError:
         marked = False
-    ledger = _read_preview_ledger(out_dir)
-    if stem in ledger["stems"]:
-        del ledger["stems"][stem]
-        path = os.path.join(out_dir, PREVIEW_LEDGER)
-        try:
-            with open(path + ".part", "w", encoding="utf-8") as fh:
-                json.dump(ledger, fh)
-            os.replace(path + ".part", path)
-        except OSError:
-            pass
+    # 摘指针是尽力而为（标记才是读方的防线），但读-改-写仍走账本锁与 compare 语义：不盖掉别人刚发布的记录
+    _drop_ledger_stem(out_dir, stem)
     return marked
+
+
+def _drop_ledger_stem(out_dir, stem: str, expected_seq=None, *, check: bool = False) -> bool:
+    """把 `stem` 的指针从账本摘掉（读方从此看不到它）；返回是否成功。
+
+    `check=True`（或给了 `expected_seq`）时是 compare-and-delete：账本里该 stem 当前记录的 `seq` 不等于
+    `expected_seq` 就不删（别人已经为它发布了新一代），返回 True。读-改-写在账本锁里完成，与发布串行。
+    """
+    out_dir = os.fspath(out_dir)
+    try:
+        with _ledger_lock(out_dir):
+            ledger = _load_preview_ledger(out_dir)
+            if ledger is None or stem not in ledger["stems"]:
+                return True
+            if check or expected_seq is not None:
+                rec = ledger["stems"][stem]
+                if (rec.get("seq") if isinstance(rec, dict) else None) != expected_seq:
+                    return True
+            del ledger["stems"][stem]
+            _write_preview_ledger(out_dir, ledger)
+    except OSError:
+        return False
+    return True
+
+
+#: 账本读-改-写的互斥（跨进程：发布方在 worker，审计 / 摘指针在 app）用**操作系统的 advisory lock**，
+#: 锁常驻在产物目录里的 `.preview-ledger.lock`（文件本身从不删除，里头没有内容）：持锁进程退出 / 被杀，
+#: 内核自动释放，所以没有 pid、陈旧阈值、遗留回收这类靠文件存在加启发式判活的东西（它们连着出过三轮竞态）。
+#: 同一进程的多个线程先过这把进程内的锁再去拿文件锁——`flock` 对同一进程内不同 fd 的语义因平台而异，不依赖它。
+_LEDGER_THREAD_LOCK = threading.Lock()
+
+
+def _try_lock_file(fd: int) -> bool:
+    if os.name == "nt":
+        import msvcrt  # noqa: PLC0415
+
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # 锁第 0 字节（可越过 EOF）
+        except OSError:
+            return False
+        return True
+    import fcntl  # noqa: PLC0415
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False
+    return True
+
+
+def _unlock_file(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt  # noqa: PLC0415
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl  # noqa: PLC0415
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass  # 关 fd 时内核也会放
+
+
+@contextlib.contextmanager
+def _ledger_lock(out_dir, timeout: float = 5.0):
+    """账本读-改-写互斥；等锁用非阻塞加轮询，最多 `timeout` 秒，超时抛 `OSError`（发布 / 摘指针按失败处理，不无锁硬写）。"""
+    path = os.path.join(os.fspath(out_dir), PREVIEW_LEDGER + ".lock")
+    deadline = time.monotonic() + timeout
+    if not _LEDGER_THREAD_LOCK.acquire(timeout=timeout):
+        raise OSError(f"preview ledger is locked: {path}")
+    fd = None
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_RDWR)
+        while not _try_lock_file(fd):
+            if time.monotonic() >= deadline:
+                raise OSError(f"preview ledger is locked: {path}")
+            time.sleep(0.01)
+        try:
+            yield
+        finally:
+            _unlock_file(fd)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        _LEDGER_THREAD_LOCK.release()
 
 
 def clear_preview_invalid(out_dir, stem: str) -> None:
@@ -492,7 +753,7 @@ def clear_preview_invalid(out_dir, stem: str) -> None:
 def published_preview_stems(out_dir) -> list:
     """本次运行**完整发布过**预览的 stem。
 
-    账本说发布了、磁盘上的 `<stem>.svg` 也还在且字节数对得上才算——被截断或被
+    账本说发布了、指针指向的那一代 `<stem>.svg` 也还在且字节数对得上才算——被截断或被
     换掉的文件不计。没有账本（引擎一张都没发布成功）就是空表，不退回去数文件。
     """
     out_dir = os.fspath(out_dir)
@@ -500,11 +761,15 @@ def published_preview_stems(out_dir) -> list:
     for stem, rec in _read_preview_ledger(out_dir)["stems"].items():
         if preview_invalid(out_dir, stem):
             continue
+        if not isinstance(rec, dict) or type(rec.get("seq")) is not int:
+            continue
         try:
-            size = os.stat(os.path.join(out_dir, f"{stem}.svg")).st_size
+            size = os.stat(
+                os.path.join(preview_generation_dir(out_dir, rec["seq"]), f"{stem}.svg")
+            ).st_size
         except OSError:
             continue
-        if isinstance(rec, dict) and rec.get("svg_bytes") == size:
+        if rec.get("svg_bytes") == size:
             done.append(stem)
     return done
 
@@ -1280,6 +1545,23 @@ def savefig_metadata_reader(mfigure):
     return read
 
 
+#: 只读原件的内容摘要上限：更大的文件不算摘要，也就核验不了，不提供只读降级。
+ORIGINAL_DIGEST_LIMIT_BYTES = 64 * 1024 * 1024
+
+
+def _content_digest(path, size: int):
+    if size > ORIGINAL_DIGEST_LIMIT_BYTES:
+        return None
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
 class SavefigObservations:
     """按保存发生次序记事实，不参与 stem 捕获、图幅选择或编辑。
 
@@ -1299,6 +1581,9 @@ class SavefigObservations:
         self._figures: list = []
         self._observed_count = 0
         self._complete = True
+        #: 记录下标 -> 保存完成那一刻的事实（时刻、字节数、mtime）。**不进 `report()`**：
+        #: 观察报告的形状是既有合同，这是 P08a 给「只读原件」做核对用的内部旁证。
+        self._saved_facts: dict[int, dict] = {}
 
     def record(self, fig, fname, stem, call, *, explicit_format=False, backend=None):
         """返回待完成记录的下标。失败只标不完整，不改变原 savefig 的返回 / 异常。
@@ -1402,6 +1687,79 @@ class SavefigObservations:
     def complete(self, index, result):
         if index is not None:
             self._records[index]["result"] = result
+            if result == "saved":
+                self._saved_facts[index] = self._stat_saved(self._records[index])
+
+    def _original_path(self, record):
+        """记录的目的地换回绝对路径：只认记录当时已解出的 `scope` + 相对路径，不扫目录、不按文件名找。"""
+        dest = record.get("destination") or {}
+        root = dict(self._roots).get(dest.get("scope"))
+        rel = dest.get("path")
+        if root is None or not rel:
+            return None
+        return os.path.join(root, *rel.split("/"))
+
+    def _stat_saved(self, record):
+        facts = {"at": time.time(), "bytes": None, "mtime_ns": None, "sha256": None}
+        path = self._original_path(record)
+        if path is not None:
+            try:
+                st = os.stat(path)
+            except OSError:
+                return facts
+            if stat.S_ISREG(st.st_mode):
+                facts["bytes"], facts["mtime_ns"] = st.st_size, st.st_mtime_ns
+                facts["sha256"] = _content_digest(path, st.st_size)
+        return facts
+
+    def saved_originals(self, fig) -> list[dict]:
+        """**这次运行里这个 Figure 对象**成功 save 到磁盘的原产物（P08a 只读降级的唯一依据）。
+
+        认领靠保存当时记下的 Figure 身份（`figure_ordinal` 对应的弱引用就是这个对象）与 `saved`
+        结果，不看 basename、不扫目录、不用 mtime 找「最像的」。`intact` 是保存完成时记下的字节数 /
+        mtime 与现在磁盘上的对账：脚本之后又覆盖了它（或被别的进程改了），这条就不再是「本次保存的那份」。
+        没有活着的 Figure 引用 / 不在项目与执行目录之内（根外路径不外发）的保存一律不返回。
+        """
+        out = []
+        for index, record in enumerate(self._records):
+            facts = self._saved_facts.get(index)
+            if record.get("result") != "saved" or facts is None:
+                continue
+            ordinal = record.get("figure_ordinal")
+            if type(ordinal) is not int or not 0 < ordinal <= len(self._figures):
+                continue
+            if self._figures[ordinal - 1]() is not fig:
+                continue
+            path = self._original_path(record)
+            if path is None:
+                continue
+            try:
+                st = os.stat(path)
+                # 字节数 + mtime 挡不住 copy2 / 粗时间戳文件系统上"同长度同时间戳"的替换：再对一遍内容摘要。
+                # 保存当时没能算出摘要（超过上限 / 读失败）= 无法核验 = 不提供只读降级（Codex #978）
+                intact = (
+                    stat.S_ISREG(st.st_mode)
+                    and facts["sha256"] is not None
+                    and facts["bytes"] == st.st_size
+                    and facts["mtime_ns"] == st.st_mtime_ns
+                    and _content_digest(path, st.st_size) == facts["sha256"]
+                )
+            except OSError:
+                intact = False
+            dest = record["destination"]
+            ext = os.path.splitext(dest["path"])[1].lstrip(".").lower()
+            out.append(
+                {
+                    "scope": dest["scope"],
+                    "path": dest["path"],
+                    "format": (record.get("options") or {}).get("format") or ext or None,
+                    "occurrence": record["occurrence"],
+                    "saved_at": facts["at"],
+                    "bytes": facts["bytes"],
+                    "intact": bool(intact),
+                }
+            )
+        return out
 
     def observation(self, index):
         return None if index is None else json.loads(json.dumps(self._records[index]))

@@ -22,6 +22,7 @@ from pathlib import Path
 import pikepdf
 import pytest
 
+from support.previewkit import preview_file
 from tavotto.engine import pool, project_watch
 
 try:
@@ -100,7 +101,7 @@ def _replay(figs: Path, patches: list) -> tuple[dict, list[str]]:
     w = pool.one_shot("fig1.py", str(figs), "main")
     try:
         resp = w.override("Fig1", patches)
-        manifest = json.loads((Path(w.out_dir) / "Fig1.json").read_text(encoding="utf-8"))
+        manifest = json.loads(preview_file(w.out_dir, "Fig1", ".json").read_text(encoding="utf-8"))
         return manifest, list(resp.get("warnings") or [])
     finally:
         pool.discard(w)
@@ -212,14 +213,18 @@ def test_refused_edit_is_undone_in_a_live_session(tmp_path):
     w = pool.one_shot("fig1.py", str(figs), "main")
     try:
         w.override("Fig1", [])
-        first = json.loads((Path(w.out_dir) / "Fig1.json").read_text(encoding="utf-8"))
+        first = json.loads(preview_file(w.out_dir, "Fig1", ".json").read_text(encoding="utf-8"))
         patches, gid = _stamped_patches(first)
         w.override("Fig1", patches)
-        hot = _lines(json.loads((Path(w.out_dir) / "Fig1.json").read_text(encoding="utf-8")))
+        hot = _lines(
+            json.loads(preview_file(w.out_dir, "Fig1", ".json").read_text(encoding="utf-8"))
+        )
         assert hot["alpha"]["color"] == MAGENTA
         wrong = [dict(p, identity=_lines(first)["beta"]["identity"]) for p in patches]
         resp = w.override("Fig1", wrong)
-        after = _lines(json.loads((Path(w.out_dir) / "Fig1.json").read_text(encoding="utf-8")))
+        after = _lines(
+            json.loads(preview_file(w.out_dir, "Fig1", ".json").read_text(encoding="utf-8"))
+        )
         assert after["alpha"]["color"] == "#1f77b4"
         assert any(REFUSED.search(x) and gid in x for x in resp.get("warnings") or [])
     finally:
@@ -246,14 +251,14 @@ def test_renaming_the_curve_does_not_invalidate_its_own_edits(tmp_path):
     w = pool.one_shot("fig1.py", str(figs), "main")
     try:
         w.override("Fig1", [])
-        first = json.loads((Path(w.out_dir) / "Fig1.json").read_text(encoding="utf-8"))
+        first = json.loads(preview_file(w.out_dir, "Fig1", ".json").read_text(encoding="utf-8"))
         patches, gid = _stamped_patches(first)
         ident = patches[0]["identity"]
         patches.append({"gid": gid, "prop": "label", "value": "renamed", "identity": ident})
         for _ in range(2):
             resp = w.override("Fig1", patches)
             assert list(resp.get("warnings") or []) == []
-        man = json.loads((Path(w.out_dir) / "Fig1.json").read_text(encoding="utf-8"))
+        man = json.loads(preview_file(w.out_dir, "Fig1", ".json").read_text(encoding="utf-8"))
         assert _lines(man)["renamed"]["color"] == MAGENTA
         assert _lines(man)["renamed"]["identity"] == ident
     finally:

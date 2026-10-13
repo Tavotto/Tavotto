@@ -3847,21 +3847,29 @@ def _adopt_system_interpreter(
     python = found["python"]
     if is_mutating(python):
         return None
-    # 体检表可能来自进程内缓存（不带环境指纹）：采用之前对选中的这一个现场再体检一次，仍合格才采用
-    found = projectenv.auto_adoptable_system_candidate(
-        [projectenv.reprobe_system_candidate(found, module)]
-    )
-    if found is None:
+    # 体检表可能来自进程内缓存（不带环境指纹）：采用之前对选中的这一个现场再体检一次，仍合格才采用。
+    # 现场体检 + 提交整段占住目标环境（`envlease.inspecting`，与手动采用同一条）：上面的 `is_mutating` 只是
+    # 过滤，过滤之后别的项目开始往这个环境装包的话，决定落地后会话就起在装包中的环境上。装包在跑 = 不采用；
+    # 占到之后装包被拒。租约内只调体检与写项目设置，不会回头要安装租约
+    try:
+        with envlease.inspecting(python):
+            found = projectenv.auto_adoptable_system_candidate(
+                [projectenv.reprobe_system_candidate(found, module)]
+            )
+            if found is None:
+                return None
+            saved = projectenv.remember(
+                figures_dir,
+                python,
+                automatic=True,
+                trigger=projectenv.TRIGGER_MISSING_DEPENDENCY,
+                module=module,
+                health=found,
+                only_if=projectenv.record_allows_auto_adopt,
+            )
+    except envlease.EnvironmentBusy:
         return None
-    if not projectenv.remember(
-        figures_dir,
-        python,
-        automatic=True,
-        trigger=projectenv.TRIGGER_MISSING_DEPENDENCY,
-        module=module,
-        health=found,
-        only_if=projectenv.record_allows_auto_adopt,
-    ):
+    if not saved:
         return None
     note_project_python_ok(python)
     invalidate(script_name, figures_dir)
