@@ -58,3 +58,8 @@ GitHub Actions `Performance Agent` 在成功跑完测试后，使用只读的 Ac
 - `drag-findings.json`：`scripts/perf_report.py` 的机器可读结论和阶段归因。
 
 任何拖动 E2E 失败、漏报、分析器失败都返回非零，不把没有测试到的拖动场景冒充绿灯。不同进程 / 窗口 GPU 呈现问题仍需要真实 Mac 原生验证。历史基线的自动对比当前仅覆盖符号 UI 指标，**拖动报告是诊断证据，不应误称为已通过拖动性能回归门禁**。
+
+
+## 自动触发的热点文件
+
+`performance-agent.yml` 使用精确 PR 路径列表：包括预设面板/缩略图、`TextView`、`ObjectView`、`MeasureChip`、`PanelView`、画布拖动交互和相关 Zustand store。改这些代码的 PR 会自动触发 Agent 的符号与画布拖动 E2E；与性能无关的文档/依赖调整不会因本工作流承担额外的浏览器测试。此为独立的非必需工作流，保留 merge queue 的原有门禁结构。
