@@ -142,6 +142,12 @@ class DetailOptions:
         return {k: bool(getattr(self, k)) for k in OPTION_KEYS}
 
 
+def options_from_query(raw: str | None) -> dict[str, bool]:
+    """`?options=source,crash_reports` → `{"source": True, "crash_reports": True}`；只认 `OPTION_KEYS` 里的名字。"""
+    names = {n.strip() for n in (raw or "").split(",")}
+    return {k: True for k in OPTION_KEYS if k in names}
+
+
 def parse_options(raw: object) -> DetailOptions:
     """请求体里的 `detail_options` → `DetailOptions`。不认识的键丢掉，值不是字面 `True` 就是 false。"""
     if not isinstance(raw, dict):
@@ -1335,6 +1341,7 @@ def collect_console(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
                 {
                     "schema": DETAIL_SCHEMA,
                     "scope": "global (not cleared when switching projects)",
+                    "client_truncated": (src.frontend or {}).get("client_truncated") or [],
                     "records": recs,
                 }
             )

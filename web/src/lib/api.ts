@@ -4974,12 +4974,21 @@ export interface DiagSendStatus {
 export const fetchDiagSendCapability = () => jsonFetch<DiagSendCapability>('/api/diagnostics/send')
 
 /** 在本机备好一份包（零网络）。载荷与导出诊断包相同。 */
-export const prepareDiagSend = (payload: unknown) =>
-  jsonFetch<DiagSendPrepared>('/api/diagnostics/send/prepare', {
+export const prepareDiagSend = (
+  payload: unknown,
+  options?: { source?: boolean; crash_reports?: boolean; corrupt_sessions?: boolean },
+) => {
+  // 勾选项同时走查询串：载荷超过引擎的请求体上限会被整份丢弃，勾选项不能跟着消失（引擎以查询串为准）
+  const picked = Object.entries(options ?? {})
+    .filter(([, v]) => v === true)
+    .map(([k]) => k)
+  const q = options ? `?options=${picked.join(',')}` : ''
+  return jsonFetch<DiagSendPrepared>(`/api/diagnostics/send/prepare${q}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
 
 /** 用户要保存的**同一份字节**（就是点发送时会上传的那份）。 */
 export async function fetchDiagSendBundle(id: string): Promise<Blob> {

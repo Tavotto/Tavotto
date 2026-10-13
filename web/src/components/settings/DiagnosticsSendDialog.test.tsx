@@ -724,7 +724,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
       setter.call(note, 'keep me')
       note.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', gen: 0 })
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', gen: 0, options: { source: true, crash_reports: false, corrupt_sessions: false } })
     await click(box('source'))
     await act(async () => {})
     expect(prepareMock).toHaveBeenCalledTimes(2)
@@ -734,7 +734,7 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(q<HTMLTextAreaElement>('[data-diag-send-note]')!.value).toBe('keep me')
     expect(startMock).not.toHaveBeenCalled()
     // 再勾第二项：两项都在载荷里
-    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3' })
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3', options: { source: true, crash_reports: true, corrupt_sessions: false } })
     await click(box('crash_reports'))
     await act(async () => {})
     expect(lastPayload().detail_options).toEqual({ source: true, crash_reports: true, corrupt_sessions: false })
@@ -744,9 +744,26 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(startMock.mock.calls[0][0]).toBe('pid-3')
   })
 
+  it('引擎没把勾选项附上（载荷被丢）：复选框以引擎回的 options 为准，并说明「太大没能附上」', async () => {
+    await mount(DETAIL_PREPARED)
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: false, crash_reports: false, corrupt_sessions: false } })
+    await click(box('source'))
+    await act(async () => {})
+    expect(prepareMock.mock.calls[1][1]).toEqual({ source: true, crash_reports: false, corrupt_sessions: false }) // 选项也走查询串
+    expect(box('source').checked).toBe(false)
+    expect(q('[data-diag-send-options-lost]')!.textContent).toBe(ds('optionsLost'))
+    expect(q('[data-diag-send-options-lost]')!.closest('details[data-diag-send-details]')).not.toBeNull()
+    // 引擎照实采用时没有这句话
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-3', options: { source: true, crash_reports: false, corrupt_sessions: false } })
+    await click(box('source'))
+    await act(async () => {})
+    expect(box('source').checked).toBe(true)
+    expect(q('[data-diag-send-options-lost]')).toBeNull()
+  })
+
   it('不记忆：关掉对话框再打开，三个框都回到不勾，载荷也回到全 false', async () => {
     await mount(DETAIL_PREPARED)
-    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2' })
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: false, crash_reports: false, corrupt_sessions: true } })
     await click(box('corrupt_sessions'))
     await act(async () => {})
     expect(box('corrupt_sessions').checked).toBe(true)

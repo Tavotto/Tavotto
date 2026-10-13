@@ -1624,6 +1624,7 @@ export default interface Resources {
           "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
           "noteLabel": "补充说明（可选）",
           "open": "发送…",
+          "optionsLost": "附加内容太大，这次没能附上。",
           "packageGone": "这份诊断包已经不在引擎里了（应用可能重启过）。请重新准备后再发送；也可以用设置里的「导出诊断包」保存到本地。",
           "policy": "隐私政策",
           "prepareFailed": "没能生成诊断包。可以关闭后重试，或改用「导出诊断包」保存到本地。",

@@ -1289,7 +1289,8 @@
           "source": "脚本源码",
           "crash_reports": "崩溃报告",
           "corrupt_sessions": "损坏副本"
-        }
+        },
+        "optionsLost": "附加内容太大，这次没能附上。"
       }
     },
     "export": {

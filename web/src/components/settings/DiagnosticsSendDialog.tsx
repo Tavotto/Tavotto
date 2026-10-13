@@ -123,6 +123,8 @@ export function DiagnosticsSendDialog({
   const [options, setOptions] = useState<DetailOptions>(NO_DETAIL_OPTIONS)
   const optionsRef = useRef<DetailOptions>(NO_DETAIL_OPTIONS)
   const keepForm = useRef(false)
+  /** 勾了但引擎没附上（引擎侧丢了载荷 / 老引擎）：折叠区里一句话说明 */
+  const [optionsLost, setOptionsLost] = useState(false)
 
   const discard = useCallback(() => {
     const id = idRef.current
@@ -156,7 +158,7 @@ export function DiagnosticsSendDialog({
     // 还是旧项目的文档与轨迹，此刻备的包会是 A/B 混合包——不备，等 `switching` 落下去再来（下面的订阅）
     if (useProjectStore.getState().switching) return () => void (gen.current++)
     void buildSendPayload(opts)
-      .then((payload) => (gen.current === mine ? prepareDiagSend(payload) : null))
+      .then((payload) => (gen.current === mine ? prepareDiagSend(payload, opts) : null))
       .then((p) => {
         if (!p) return
         if (gen.current !== mine) {
@@ -164,6 +166,13 @@ export function DiagnosticsSendDialog({
           return
         }
         setPrepared(p)
+        // 以引擎实际采用的为准：勾着的框不能在引擎没附上内容时仍显示勾着
+        const applied = { ...NO_DETAIL_OPTIONS, ...(p.options ?? {}) }
+        if (p.options) {
+          optionsRef.current = applied
+          setOptions(applied)
+          setOptionsLost(EXTRA_KEYS.some((k) => opts[k] && !applied[k]))
+        } else setOptionsLost(false)
         idRef.current = p.id
         actionGen.current = p.gen
         setPhase(p.too_large ? 'tooLarge' : 'ready')
@@ -477,6 +486,12 @@ export function DiagnosticsSendDialog({
                 </label>
               ))}
             </section>
+
+            {optionsLost && (
+              <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
+                {ds('optionsLost')}
+              </p>
+            )}
 
             <section aria-label={ds('filesTitle', { count: prepared?.entries.length ?? 0 })} className="flex flex-col gap-1" data-diag-send-files-section>
               <Details data-diag-send-files className="text-sm">

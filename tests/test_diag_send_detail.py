@@ -244,6 +244,15 @@ class TestOptions:
         r = client.post("/api/diagnostics/send/prepare", json=body)
         prep = r.get_json()
         assert prep["options"]["source"] is False
+        # 勾选项走查询串：载荷被整份丢弃时它仍在，勾着的框不会悄悄变成没勾
+        r = client.post(
+            "/api/diagnostics/send/prepare?options=source,crash_reports,bogus", json=body
+        )
+        got = r.get_json()["options"]
+        assert got == {"source": True, "crash_reports": True, "corrupt_sessions": False}
+        assert (
+            diagdetail.options_from_query(None) == {} and diagdetail.options_from_query("x,y") == {}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -817,7 +826,12 @@ class TestContainerSecrets:
 
     def test_scanning_stays_linear(self):
         s = diagdetail.Scrubber()
-        for blob in ("token=\\\"" * 50_000, "token=[" * 100_000, "token={" * 100_000, 'token=["' * 60_000 + "x"):
+        for blob in (
+            'token=\\"' * 50_000,
+            "token=[" * 100_000,
+            "token={" * 100_000,
+            'token=["' * 60_000 + "x",
+        ):
             t0 = time.monotonic()
             s.text(blob)
             assert time.monotonic() - t0 < 5, blob[:10]

@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildDiagnosticPayload } from './index'
 import {
   buildSendPayload,
+  fitDetailToBudget,
+  SEND_PAYLOAD_BUDGET,
+  type SendPayload,
   collectDisplayEnv,
   collectFocusedOverrides,
   CONSOLE_RING_CAPACITY,
@@ -195,5 +198,78 @@ describe('两条路径的载荷', () => {
     expect(p.frontend_state).toBeTruthy()
     const on = await buildSendPayload({ ...NO_DETAIL_OPTIONS, source: true })
     expect(on.detail_options.source).toBe(true)
+  })
+})
+
+describe('有界序列化不触发 getter', () => {
+  it('带副作用 getter 的对象 / 数组被 console.error 时 getter 调用 0 次，写成 [getter]', () => {
+    uninstall = installConsoleCapture()
+    let calls = 0
+    const obj = {
+      plain: 1,
+      get boom() {
+        calls++
+        return 'x'
+      },
+      nested: {
+        get deep() {
+          calls++
+          return 1
+        },
+      },
+    }
+    const arr: unknown[] = [1]
+    Object.defineProperty(arr, 1, {
+      enumerable: true,
+      get() {
+        calls++
+        return 2
+      },
+    })
+    console.error(obj, arr)
+    expect(calls).toBe(0)
+    const msg = readConsoleRing()[0].message
+    expect(msg).toContain('"plain":1')
+    expect(msg).toContain('"boom":[getter]')
+    expect(msg).toContain('"deep":[getter]')
+    expect(msg).toContain('[1,[getter]]')
+  })
+})
+
+describe('载荷预算', () => {
+  const rec = (n: number) => ({ t: n, level: 'error', message: 'm'.repeat(4000), stack: 's'.repeat(8000) })
+  const worst = (): SendPayload =>
+    ({
+      frontend_state: {},
+      interaction_trace: [],
+      detail_options: NO_DETAIL_OPTIONS,
+      detail: {
+        console: Array.from({ length: 40 }, (_, i) => rec(i)),
+        errors: Array.from({ length: 30 }, (_, i) => rec(i)),
+        display: {},
+        shell: {},
+        overrides: Array.from({ length: 3 }, () => ({
+          panel: 'p',
+          overrides: Array.from({ length: 400 }, (_, i) => ({ gid: `g${i}`, prop: 'text', value: 'v'.repeat(900) })),
+        })),
+      },
+    }) as unknown as SendPayload
+  const size = (p: unknown) => new TextEncoder().encode(JSON.stringify(p)).length
+
+  it('最坏情形的载荷被截进预算，截过什么记进 client_truncated', () => {
+    const p = worst()
+    expect(size(p)).toBeGreaterThan(SEND_PAYLOAD_BUDGET)
+    const fitted = fitDetailToBudget(p)
+    expect(size(fitted)).toBeLessThanOrEqual(SEND_PAYLOAD_BUDGET)
+    expect((fitted.detail.client_truncated as string[]).length).toBeGreaterThan(0)
+    expect(SEND_PAYLOAD_BUDGET).toBeLessThan(1024 * 1024) // 引擎的整份丢弃上限
+  })
+
+  it('没超预算时原样、不写 client_truncated', () => {
+    const p = worst()
+    ;(p.detail as { console: unknown[]; errors: unknown[]; overrides: unknown[] }).console = []
+    ;(p.detail as { errors: unknown[] }).errors = []
+    ;(p.detail as { overrides: unknown[] }).overrides = []
+    expect(fitDetailToBudget(p).detail.client_truncated).toBeUndefined()
   })
 })

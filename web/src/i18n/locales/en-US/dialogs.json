@@ -1300,7 +1300,8 @@
           "source": "script source",
           "crash_reports": "crash reports",
           "corrupt_sessions": "corrupted copies"
-        }
+        },
+        "optionsLost": "The extras were too large, so they could not be attached this time."
       }
     },
     "export": {

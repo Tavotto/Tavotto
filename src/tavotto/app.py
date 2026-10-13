@@ -3079,7 +3079,13 @@ def api_diagnostics_send_prepare():
     frontend, dropped = _read_frontend_payload(engine_diagnostics_frontend.MAX_SEND_REQUEST_BYTES)
     # 勾选项只认字面 true（默认全 false）；`detail` 子对象只按类型 / 长度限界，脱敏在 diagdetail.Scrubber
     detail = engine_diagdetail.DetailRequest(
-        options=engine_diagdetail.parse_options((frontend or {}).get("detail_options")),
+        # 勾选项走查询串 `?options=source,crash_reports`：载荷超限被整份丢弃（frontend=None）时它仍在，
+        # 勾着的框不会悄悄变成没勾；查询串没给才看请求体里的 `detail_options`（老客户端）
+        options=engine_diagdetail.parse_options(
+            engine_diagdetail.options_from_query(request.args.get("options"))
+            if request.args.get("options") is not None
+            else (frontend or {}).get("detail_options")
+        ),
         frontend=engine_diagnostics_frontend.sanitize_detail((frontend or {}).get("detail")),
     )
     try:

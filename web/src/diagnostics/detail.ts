@@ -72,7 +72,10 @@ function write(value: unknown, out: string[], budget: { left: number }, depth: n
       emit('[')
       for (let i = 0; i < obj.length && i < SHOW_MAX_BREADTH && budget.left > 0; i++) {
         if (i) emit(',')
-        write(obj[i], out, budget, depth + 1, seen)
+        const d = Object.getOwnPropertyDescriptor(obj, i)
+        if (!d) emit('[object]')
+        else if (!('value' in d)) emit('[getter]')
+        else write(d.value, out, budget, depth + 1, seen)
       }
       if (obj.length > SHOW_MAX_BREADTH) emit(',…')
       emit(']')
@@ -87,13 +90,16 @@ function write(value: unknown, out: string[], budget: { left: number }, depth: n
         }
         if (n++) emit(',')
         emit(JSON.stringify(k.slice(0, 80)) + ':')
-        let v: unknown
+        // 绝不触发 getter（有副作用 / 读布局的 accessor）：先看属性描述符，accessor 只写占位
+        let desc: PropertyDescriptor | undefined
         try {
-          v = (obj as Record<string, unknown>)[k]
+          desc = Object.getOwnPropertyDescriptor(obj, k)
         } catch {
-          v = '[unreadable]'
+          desc = undefined
         }
-        write(v, out, budget, depth + 1, seen)
+        if (!desc) emit('[object]')
+        else if (!('value' in desc)) emit('[getter]')
+        else write(desc.value, out, budget, depth + 1, seen)
       }
       emit('}')
     }
@@ -283,6 +289,62 @@ export type SendPayload = DiagnosticPayload & {
   detail: Record<string, unknown>
 }
 
+/** 请求体预算：引擎对发送载荷的上限是 1 MiB（`MAX_SEND_REQUEST_BYTES`），超了整份被丢；留出余量。 */
+export const SEND_PAYLOAD_BUDGET = 900 * 1024
+
+const bytesOf = (v: unknown): number => new TextEncoder().encode(JSON.stringify(v)).length
+
+type Rec = { message: string; stack: string | null }
+
+/**
+ * 最坏情形下（40 条 console 各 4000+8000 字符、30 条错误、3 张面板各 400 条 overrides，再加 300 条轨迹）载荷会超预算：
+ * 在前端按固定顺序**先截 detail 再说**，并把截过什么记进 `client_truncated`（引擎原样带进 `detail-frontend-console.json`）。
+ * 顺序：栈与消息缩短 → 丢最旧的 console → 丢最旧的错误 → overrides 每面板留 100 条 → 丢面板。老载荷（状态 / 轨迹）不动。
+ */
+export function fitDetailToBudget(payload: SendPayload, budget = SEND_PAYLOAD_BUDGET): SendPayload {
+  const d = payload.detail as {
+    console?: Rec[]
+    errors?: Rec[]
+    overrides?: { overrides?: unknown[] }[]
+    client_truncated?: string[]
+  }
+  const cut: string[] = []
+  const over = () => bytesOf(payload) > budget
+  const note = (what: string) => {
+    if (!cut.includes(what)) cut.push(what)
+  }
+  const shorten = (rs?: Rec[]) =>
+    rs?.forEach((r) => {
+      r.message = r.message.slice(0, 1500)
+      if (r.stack) r.stack = r.stack.slice(0, 2000)
+    })
+  if (over()) {
+    shorten(d.console)
+    shorten(d.errors)
+    note('stack_text')
+  }
+  while (over() && (d.console?.length ?? 0) > 0) {
+    d.console!.shift()
+    note('console')
+  }
+  while (over() && (d.errors?.length ?? 0) > 0) {
+    d.errors!.shift()
+    note('errors')
+  }
+  if (over()) {
+    d.overrides?.forEach((p) => {
+      if (p.overrides && p.overrides.length > 100) p.overrides = p.overrides.slice(0, 100)
+    })
+    note('overrides')
+  }
+  while (over() && (d.overrides?.length ?? 0) > 0) {
+    d.overrides!.pop()
+    note('overrides')
+  }
+  if (cut.length) d.client_truncated = cut
+  return payload
+}
+
 /**
  * 发送路径的载荷 = 老载荷 + 勾选项 + detail。导出路径不调它。
  * 采集的任何一块失败只让那一块缺席，不让备包失败。
@@ -302,7 +364,7 @@ export async function buildSendPayload(options: DetailOptions): Promise<SendPayl
   } catch {
     /* 同上 */
   }
-  return {
+  return fitDetailToBudget({
     ...base,
     detail_options: { ...NO_DETAIL_OPTIONS, ...options },
     detail: {
@@ -312,5 +374,5 @@ export async function buildSendPayload(options: DetailOptions): Promise<SendPayl
       shell,
       overrides: guard(collectFocusedOverrides, []),
     },
-  }
+  })
 }

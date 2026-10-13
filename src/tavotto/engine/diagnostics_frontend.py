@@ -783,4 +783,9 @@ def sanitize_detail(raw) -> dict:
             }
         )
     out["overrides"] = panels
+    # 前端为了塞进请求体上限而自己截短过哪些环（短标识，最多 8 个）：原样带进包里，读包的人知道缺了什么
+    cut = raw.get("client_truncated")
+    out["client_truncated"] = (
+        [c[:40] for c in cut[:8] if isinstance(c, str)] if isinstance(cut, list) else []
+    )
     return out
