@@ -756,11 +756,12 @@ def target_key(target: dict) -> str:
         # T03：同一脚本、不同 argv 是不同的执行意图——各有各的会话（互斥键含运行配置引用，不含 argv 原文）
         run = target.get("run")
         key = f"script:{target['script']}" + (f"~{run.config_id}" if run is not None else "")
-        # P06：执行语义是执行意图的一部分——同一脚本按 safe 检查过，不能让 native 请求拿到那份 safe 计划。
-        # 只有非 safe 才追加：safe 的 key 与此前逐字节相同（现有会话与用例不失效）
-        execution = target.get("execution") or execspec.PROFILE_SAFE
-        return key + ("" if execution == execspec.PROFILE_SAFE else f"@{execution}")
-    return f"asset:{target['asset_id']}"
+    else:
+        key = f"asset:{target['asset_id']}"
+    # P06：执行语义是执行意图的一部分——同一目标（脚本或素材）按 safe 检查过，不能让 native 请求拿到那份
+    # safe 计划。只有非 safe 才追加：safe 的 key 与此前逐字节相同（现有会话与用例不失效）
+    execution = target.get("execution") or execspec.PROFILE_SAFE
+    return key + ("" if execution == execspec.PROFILE_SAFE else f"@{execution}")
 
 
 def _fingerprint(plan: preparation.PreparationPlan) -> str:

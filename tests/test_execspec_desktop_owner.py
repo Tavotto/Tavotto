@@ -356,3 +356,44 @@ def test_a_native_check_never_reuses_the_safe_session_for_the_same_script(tmp_pa
     assert safe_sess.plan.execution == execspec.PROFILE_SAFE
     assert native_sess.plan.execution == execspec.PROFILE_NATIVE
     assert native_sess.plan.launch_context["owner"] == "desktop"
+
+
+def test_asset_session_key_also_separates_safe_from_native():
+    from tavotto.engine import prepsession
+
+    safe_t = {"kind": "asset", "asset_id": "Fig1.pdf", "stem": "Fig1", "script": "fig.py"}
+    native_t = {**safe_t, "execution": execspec.PROFILE_NATIVE}
+    assert prepsession.target_key(safe_t) == "asset:Fig1.pdf"  # 与 main 逐字节相同
+    assert prepsession.target_key(native_t) == "asset:Fig1.pdf@native"
+    # 带 argv 引用的 script 目标：后缀在引用之后
+    run = execspec.RunSelection(config_id="rc_1", argv=("--x",))
+    script_t = {"kind": "script", "script": "fig.py", "run": run}
+    assert prepsession.target_key(script_t) == "script:fig.py~rc_1"
+    assert (
+        prepsession.target_key({**script_t, "execution": "native"}) == "script:fig.py~rc_1@native"
+    )
+
+
+@nativekit.needs_user_python
+def test_a_native_asset_check_never_reuses_the_safe_asset_session(tmp_path):
+    from tavotto.engine import prepsession
+
+    plan = _native_plan(tmp_path)
+    service = prepsession.SessionService()
+    base = {
+        "kind": "asset",
+        "asset_id": "Fig1.pdf",
+        "stem": "Fig1",
+        "script": "fig.py",
+        "entry": "__main__",
+        "original_artifact": None,
+    }
+    safe_sess, _ = service.check(project_id="p", project_root=plan.project_root, target=base)
+    native_sess, created = service.check(
+        project_id="p",
+        project_root=plan.project_root,
+        target={**base, "execution": execspec.PROFILE_NATIVE},
+    )
+    assert created and native_sess is not safe_sess
+    assert safe_sess.plan.execution == execspec.PROFILE_SAFE
+    assert native_sess.plan.execution == execspec.PROFILE_NATIVE
