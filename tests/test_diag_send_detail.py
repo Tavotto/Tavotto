@@ -1374,15 +1374,20 @@ class TestFilesChangingDuringCollection:
         self._setup(world)
         gone = f"{layoutsession.CORRUPT_PREFIX}victim.json"
         real_stat = Path.stat
-        n = {"c": 0}
+        registered = {"done": False}
+        real_candidates = diagdetail._stable_candidates
+
+        def after_registration(paths):
+            got = real_candidates(paths)
+            registered["done"] = True  # 登记（逐个 stat）完成之后，这个副本才“消失”
+            return got
 
         def flaky(self, *a, **k):
-            if self.name == gone:
-                n["c"] += 1
-                if n["c"] > 1:  # 登记（第一次 stat）时还在，之后没了
-                    raise FileNotFoundError(self.name)
+            if registered["done"] and self.name == gone:
+                raise FileNotFoundError(self.name)
             return real_stat(self, *a, **k)
 
+        monkeypatch.setattr(diagdetail, "_stable_candidates", after_registration)
         monkeypatch.setattr(Path, "stat", flaky)
         items = diagdetail.collect_corrupt_sessions(
             diagdetail.Sources(),
