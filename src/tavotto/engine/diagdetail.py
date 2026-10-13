@@ -168,6 +168,10 @@ class DetailRequest:
     frontend: dict = dataclasses.field(default_factory=dict)
 
 
+#: `fit` 重建 ZIP 的次数上限（首建之外最多再建这么多次）。64 MiB 上限下各类份额之和（`SHARE`，约 51 MiB）本身就小于
+#: 预算（63 MiB），最坏的全勾、各类超份额也只会在份额阶段被截，`fit` 通常一次建成；上限只是兜底。
+FIT_MAX_REBUILDS = 24
+
 #: 截断预算总额 = 上限 - 余量（64 MiB 上限下为 63 MiB）：留给 manifest（截断记录）、ZIP 目录与压缩比改存带来的增量
 FIT_SLACK = 1 * MiB
 
@@ -1688,7 +1692,7 @@ def fit(
             original.get(k, 0), sum(i.original_bytes or i.size for i in current if i.kind == k)
         )
     data = build(current, record())
-    for _ in range(24):
+    for _ in range(FIT_MAX_REBUILDS):
         if len(data) <= limit:
             return data, current, record()
         kept = _kind_bytes(current)

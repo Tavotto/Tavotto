@@ -154,6 +154,9 @@ COMPLETE_BACKOFF_S = (1.0, 2.0, 4.0)
 RETRY_AFTER_CAP_S = 10
 #: 没被动用的会话多久后自动丢弃（内存里的 ≤10 MiB）。
 PREPARED_TTL_S = 30 * 60
+#: 全局保管预算：所有项目里已备好（prepared / failed，非发送中）的包合计不超过它。上限 64 MiB 之后若每个项目 / 窗口各留一份，
+#: N 个对话框就是 N × 64 MiB 压在引擎进程里；超了就回收闲置最久的（`_enforce_budget_locked`）。
+STORED_BUDGET_BYTES = 128 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_UPLOAD_FIELDS = 32
 MAX_FIELD_VALUE = 4096
@@ -799,6 +802,29 @@ def _expire_locked() -> None:
                 _discard_locked(cur)
 
 
+def _stored_bytes(sess: SendSession) -> int:
+    return (
+        len(sess.bundle) if sess.bundle is not None and sess.state in ("prepared", "failed") else 0
+    )
+
+
+def _enforce_budget_locked(keep: SendSession) -> None:
+    """保管的包合计超过 `STORED_BUDGET_BYTES` 就按「闲置最久」回收 prepared / failed 会话（走 `_discard_locked`：
+    complete 发出过的仍按 I1 先对账再丢，不能直接吞）。发送中 / 取消中 / 已完成的不计入也绝不回收；刚备好的 `keep` 不回收。
+    被回收的会话再被问到就是 404（前端「包已不在引擎里 → 重新准备」路径）。"""
+    while True:
+        pool_ = [s for s in _SESSIONS.values() if _stored_bytes(s)]
+        if sum(_stored_bytes(s) for s in pool_) <= STORED_BUDGET_BYTES:
+            return
+        victims = sorted((s for s in pool_ if s is not keep), key=lambda s: s.touched)
+        if not victims:
+            return
+        before = _stored_bytes(victims[0])
+        _discard_locked(victims[0])
+        if _stored_bytes(victims[0]) >= before:  # 没有进展（理论上不会）：别死循环
+            return
+
+
 def _archive_locked(sess: SendSession) -> None:
     """被丢弃的会话若有「已送达 / 可能已送达」的报告编号，留一份状态快照（#928）：complete 发出过而结果没定论的
     一律记 unknown——不能因为用户关了窗就把一份可能已存下的报告藏起来。"""
@@ -890,6 +916,7 @@ def prepare(bundle: bytes, *, scope: str = "") -> dict:
             scope=scope,
         )
         _SESSIONS[scope] = sess
+        _enforce_budget_locked(keep=sess)
         return {**summary, "too_large": False, "id": sess.id, "gen": sess.gen}
 
 

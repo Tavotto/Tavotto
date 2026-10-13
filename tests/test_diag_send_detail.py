@@ -948,6 +948,127 @@ class TestServerZipRules:
 
 
 # ---------------------------------------------------------------------------
+# 全局保管预算 / fit 重建上界
+# ---------------------------------------------------------------------------
+def _stored_bundle(pad: int) -> bytes:
+    return _zip_of(
+        {"manifest.json": b'{"schema_version": 8}', "app.log": os.urandom(pad)}, zipfile.ZIP_STORED
+    )
+
+
+class TestWorstCasePrepare:
+    def test_everything_ticked_and_every_share_filled_stays_under_the_cap_in_bounded_time(
+        self, client, world, monkeypatch
+    ):
+        """全勾、各类逼近份额的不可压缩内容：份额之和小于 63 MiB，所以不需要 `fit` 反复重建；整个 prepare 的耗时有界。"""
+        tmp = world["tmp"]
+        proj = _project(client, tmp)
+        for i in range(24):  # 源码：每份 ~700 KB 不可压缩（base64），合计接近 16 MiB 份额
+            (proj / f"gen_{i:02d}.py").write_text(
+                "# " + base64.b64encode(os.urandom(520_000)).decode(), encoding="utf-8"
+            )
+        big_log = tmp / "big_app.log"
+        big_log.write_text(
+            "2026-10-13 10:00:00,000 INFO tavotto: "
+            + base64.b64encode(os.urandom(3_000_000)).decode()
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(diagnostics, "_app_log_path", lambda: big_log)
+        for i in range(4):
+            (world["crash"] / f"Tavotto-2026-10-13-1{i}0000.ips").write_bytes(
+                base64.b64encode(os.urandom(2_800_000))
+            )
+        for i in range(3):
+            (world["state"] / f"{layoutsession.CORRUPT_PREFIX}9{i}.json").write_bytes(
+                base64.b64encode(os.urandom(300_000))
+            )
+        builds = []
+        real_fit = diagdetail.fit
+
+        def counting_fit(items, build, limit):
+            def counted(its, trunc):
+                builds.append(1)
+                return build(its, trunc)
+
+            return real_fit(items, counted, limit)
+
+        monkeypatch.setattr(diagdetail, "fit", counting_fit)
+        monkeypatch.setattr(m.engine_diagdetail, "fit", counting_fit)
+        t0 = time.monotonic()
+        prep, z = _prepare(client, source=True, crash_reports=True, corrupt_sessions=True)
+        took = time.monotonic() - t0
+        print(
+            f"WORST-CASE prepare: {took:.2f}s, bundle {prep['size'] / 2**20:.1f} MiB, builds={len(builds)}"
+        )
+        assert prep["size"] > 10 * 2**20 and not prep["too_large"]
+        assert prep["size"] <= diagsend.MAX_BYTES
+        assert len(builds) <= 1 + diagdetail.FIT_MAX_REBUILDS
+        assert took < 60
+
+
+class TestStoredBudget:
+    def test_constants(self):
+        assert diagsend.STORED_BUDGET_BYTES == 128 * 1024 * 1024
+        # 最坏情况下各类份额之和仍小于截断预算：fit 不会因为份额而反复重建
+        assert sum(diagdetail.SHARE.values()) < diagsend.MAX_BYTES - diagdetail.FIT_SLACK
+        assert 0 < diagdetail.FIT_MAX_REBUILDS <= 24
+
+    def test_three_projects_over_budget_reclaims_the_longest_idle_one(self, client, monkeypatch):
+        monkeypatch.setattr(diagsend, "STORED_BUDGET_BYTES", 400_000)
+        a = diagsend.prepare(_stored_bundle(150_000), scope="A")
+        b = diagsend.prepare(_stored_bundle(150_000), scope="B")
+        diagsend._SESSIONS["A"].touched -= 100  # A 闲置最久
+        c = diagsend.prepare(_stored_bundle(150_000), scope="C")  # 合计 450k > 400k
+        assert "A" not in diagsend._SESSIONS and {"B", "C"} <= set(diagsend._SESSIONS)
+        with pytest.raises(diagsend.SendError) as exc:
+            diagsend.status(a["id"], scope="A")  # 被挤掉的会话：404，前端走「重新准备」
+        assert exc.value.status == 404
+        assert diagsend.status(b["id"], scope="B")["state"] == "prepared"
+        assert diagsend.status(c["id"], scope="C")["state"] == "prepared"
+
+    def test_a_sending_bundle_is_neither_counted_nor_reclaimed(self, client, monkeypatch):
+        monkeypatch.setattr(diagsend, "STORED_BUDGET_BYTES", 250_000)
+        diagsend.prepare(_stored_bundle(100_000), scope="A")
+        diagsend.prepare(_stored_bundle(100_000), scope="B")
+        diagsend._SESSIONS["A"].touched -= 100
+        diagsend._SESSIONS["B"].touched -= 50
+        diagsend._SESSIONS["B"].state = "sending"  # 发送中：不计入、不回收
+        diagsend.prepare(
+            _stored_bundle(100_000), scope="C"
+        )  # 计入的是 A + C = 200k ≤ 250k，暂时都留着
+        diagsend.prepare(_stored_bundle(100_000), scope="D")  # A + C + D = 300k > 250k → 回收 A
+        assert "A" not in diagsend._SESSIONS
+        assert (
+            diagsend._SESSIONS["B"].state == "sending"
+            and diagsend._SESSIONS["B"].bundle is not None
+        )
+        assert {"C", "D"} <= set(diagsend._SESSIONS)
+
+    def test_the_bundle_just_prepared_is_never_its_own_victim(self, client, monkeypatch):
+        monkeypatch.setattr(diagsend, "STORED_BUDGET_BYTES", 10)
+        got = diagsend.prepare(_stored_bundle(5000), scope="Z")
+        assert diagsend.status(got["id"], scope="Z")["state"] == "prepared"
+
+    def test_a_session_that_already_sent_complete_is_reconciled_not_dropped(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setattr(diagsend, "STORED_BUDGET_BYTES", 250_000)
+        diagsend.prepare(_stored_bundle(100_000), scope="A")
+        a = diagsend._SESSIONS["A"]
+        a.touched -= 100
+        a.state, a.complete_sent, a.report_id = "failed", True, "TVD-AAAA-AAAA-AAAA-AAAA"
+        a.server_open, a.token = True, "0" * 64
+        monkeypatch.setattr(diagsend, "_cancel_remote_async", lambda sess, settle=False: None)
+        diagsend.prepare(_stored_bundle(100_000), scope="B")
+        diagsend.prepare(_stored_bundle(100_000), scope="C")
+        # A 走 I1 对账（先 cancelling 等答复），不是被直接移出丢掉编号
+        assert (
+            diagsend._SESSIONS["A"].state == "cancelling" and diagsend._SESSIONS["A"].discard_after
+        )
+
+
+# ---------------------------------------------------------------------------
 # 导出路径不变
 # ---------------------------------------------------------------------------
 class TestExportPathUnchanged:

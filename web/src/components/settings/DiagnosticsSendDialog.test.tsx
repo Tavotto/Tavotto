@@ -310,6 +310,8 @@ describe('发送', () => {
     await tick()
     expect(q('[data-diag-send-status]')!.textContent).toContain(ds('packageGone'))
     expect(q('[data-diag-send-confirm]')).toBeNull()
+    // 全局保管预算回收了这份包时同一条路径：给「重新准备」
+    expect(q('[data-diag-send-reprepare]')).not.toBeNull()
   })
 
   it('取消时报告其实已送达（cancel_raced）：按成功展示报告编号并如实说明', async () => {
