@@ -662,27 +662,81 @@ def _drop_ledger_stem(out_dir, stem: str, expected_seq=None, *, check: bool = Fa
     return True
 
 
+def _pid_alive(pid: int) -> bool:
+    """持锁进程还活着吗（拿不准时按活着算：宁可多等，不抢活人的锁）。"""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes  # noqa: PLC0415
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED：在，但不归我们查
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and (
+                code.value == STILL_ACTIVE
+            )
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # EPERM：存在，只是不归我们
+    return True
+
+
+#: 没写 pid 的锁（刚建出来还没来得及写 / 旧格式）只能按时间判陈旧；必须小于等锁超时，否则崩溃遗留的锁
+#: 会让等锁先超时（Codex #978）。写了 pid 的锁按持有者死活判，活着的持有者超过 `_LOCK_HOLDER_MAX_AGE` 才当 pid 复用遗留。
+_LOCK_NO_PID_STALE = 2.0
+_LOCK_HOLDER_MAX_AGE = 300.0
+
+
+def _lock_is_abandoned(path: str) -> bool:
+    try:
+        age = time.time() - os.stat(path).st_mtime
+        with open(path, encoding="utf-8") as fh:
+            head = fh.read(64).split()
+    except OSError:
+        return False
+    try:
+        pid = int(head[0])
+    except (IndexError, ValueError):
+        return age > _LOCK_NO_PID_STALE
+    if not _pid_alive(pid):
+        return True
+    return age > _LOCK_HOLDER_MAX_AGE
+
+
 @contextlib.contextmanager
-def _ledger_lock(out_dir, timeout: float = 5.0, stale_after: float = 30.0):
+def _ledger_lock(out_dir, timeout: float = 5.0):
     """账本的读-改-写互斥（跨进程：发布方在 worker，审计 / 摘指针在 app）。
 
-    `O_EXCL` 建锁文件；超过 `stale_after` 秒的锁当成崩溃遗留撤掉；等不到就抛 `OSError`
-    （发布失败 / 摘指针失败，都按失败处理，不无锁硬写）。
+    `O_EXCL` 建锁文件并写入持有者 pid；持有者已死的锁立即回收（不用等时间），拿不到 pid 才退回时间判据；
+    等不到就抛 `OSError`（发布失败 / 摘指针失败，都按失败处理，不无锁硬写）。
     """
     path = os.path.join(os.fspath(out_dir), PREVIEW_LEDGER + ".lock")
     deadline = time.monotonic() + timeout
     while True:
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd)
+            try:
+                os.write(fd, f"{os.getpid()} {time.time()}\n".encode())
+            finally:
+                os.close(fd)
             break
         except FileExistsError:
-            try:
-                if time.time() - os.stat(path).st_mtime > stale_after:
+            if _lock_is_abandoned(path):
+                try:
                     os.remove(path)
-                    continue
-            except OSError:
-                pass
+                except OSError:
+                    pass
+                continue
             if time.monotonic() >= deadline:
                 raise OSError(f"preview ledger is locked: {path}") from None
             time.sleep(0.01)

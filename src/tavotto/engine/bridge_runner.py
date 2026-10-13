@@ -705,22 +705,27 @@ class BridgeRun:
         manifest = _PKG.manifest
         overrides = _PKG.overrides
         self.rebase_warnings = {}
-        for stem, state in self.session.states.items():
+        for stem, state in list(self.session.states.items()):
             if stem not in self._known_stems:
                 # 这一轮**新出现**的图：`instrument_all()` 刚给它建过状态、
                 # 出过预览，baseline 就是此刻。再来一遍纯属重复渲染。
                 continue
-            # 图幅（ADR 0098）在重放之前定：此刻 Figure 是脚本原样（离开上一个屏障时已还原）。
-            # 上一个屏障按 pyplot 兜底捕获、之后才被按同一个 stem 存盘的图，第一次有了调用——
-            # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
-            # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
-            self.session.establish_frame(stem, state.fig)
-            manifest.instrument(state)
-            patches = self.saved_patches.get(stem) or []
-            warnings = overrides.apply(state, patches) if patches else []
-            if warnings:
-                self.rebase_warnings[stem] = list(warnings)
-            self.session.render(stem)
+            try:
+                # 图幅（ADR 0098）在重放之前定：此刻 Figure 是脚本原样（离开上一个屏障时已还原）。
+                # 上一个屏障按 pyplot 兜底捕获、之后才被按同一个 stem 存盘的图，第一次有了调用——
+                # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
+                # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
+                self.session.establish_frame(stem, state.fig)
+                manifest.instrument(state)
+                patches = self.saved_patches.get(stem) or []
+                warnings = overrides.apply(state, patches) if patches else []
+                if warnings:
+                    self.rebase_warnings[stem] = list(warnings)
+                self.session.render(stem)
+            except Exception as exc:  # noqa: BLE001 — 脚本在两个屏障之间把这张图改坏了：只隔离这一张
+                # 异常逃出去会打断用户脚本（在 `show()` 里抛），再在 script_end 重复一次。和新捕获同一套逐图隔离
+                self.rebase_warnings.pop(stem, None)
+                self.session.isolate_live_failure(stem, exc)
 
     def release_barrier(self, reason: str) -> list:
         """**任何**离开屏障的路径都要经过这里（ADR 0021 §8.1）。

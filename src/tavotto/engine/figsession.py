@@ -806,6 +806,15 @@ class LiveFigureSession:
                 self.retire_capture(stem)
             raise first_error
 
+    def isolate_live_failure(self, stem: str, exc: Exception) -> None:
+        """已经在编辑的图在后续重渲染（native 的 rebase）里失败：和新捕获同一套隔离。
+
+        撤出活会话、记失败事实、隐藏它此前的预览、核对恢复；不是 `except: pass`，其它图照常。
+        """
+        state = self.states.pop(stem, None)
+        self.live_captured_at.pop(stem, None)
+        self._isolate(stem, state, exc)
+
     def retire_capture(self, stem: str) -> None:
         """把 `stem` 从捕获表与失败记录里整个撤掉（不留任何残余）。"""
         for table in (

@@ -1158,3 +1158,46 @@ def test_ledger_updates_from_two_actors_do_not_lose_each_other(tmp_path):
     t.join(timeout=60)
     assert not errors, errors
     assert set(figcapture.published_preview_stems(out)) == {"keep", "p0", "p1", "p2"}
+
+
+def _dead_pid() -> int:
+    import subprocess as sp  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    p = sp.Popen([sys.executable, "-c", "pass"])  # noqa: S603
+    p.wait()
+    return p.pid
+
+
+def test_a_lock_left_by_a_dead_process_is_reclaimed_immediately(tmp_path):
+    """Codex #978：持有者崩溃后遗留的锁（刚写不久）不能让随后的发布白等超时再失败。"""
+    import time  # noqa: PLC0415
+
+    lock = tmp_path / (figcapture.PREVIEW_LEDGER + ".lock")
+    lock.write_text(f"{_dead_pid()} {time.time()}\n", encoding="utf-8")
+    t0 = time.monotonic()
+    assert _publish(tmp_path, "fig") == 1
+    assert time.monotonic() - t0 < 2.0, "死进程的锁没有被立即回收"
+    assert not lock.exists()
+
+
+def test_a_lock_held_by_a_live_process_still_excludes(tmp_path):
+    lock = tmp_path / (figcapture.PREVIEW_LEDGER + ".lock")
+    lock.write_text(f"{os.getpid()} 0\n", encoding="utf-8")
+    import time  # noqa: PLC0415
+
+    lock.write_text(f"{os.getpid()} {time.time()}\n", encoding="utf-8")
+    with pytest.raises(OSError, match="locked"):
+        with figcapture._ledger_lock(tmp_path, timeout=0.3):
+            pytest.fail("活着的持有者的锁被抢了")
+    assert lock.exists(), "不能撤掉活人的锁"
+
+
+def test_a_lock_without_a_pid_falls_back_to_an_age_shorter_than_the_wait(tmp_path):
+    """拿不到 pid 才退回时间判据，且阈值小于等锁超时（否则等锁先超时）。"""
+    lock = tmp_path / (figcapture.PREVIEW_LEDGER + ".lock")
+    lock.write_text("", encoding="utf-8")
+    old = lock.stat().st_mtime - (figcapture._LOCK_NO_PID_STALE + 1)
+    os.utime(lock, (old, old))
+    assert figcapture._LOCK_NO_PID_STALE < 5.0
+    assert _publish(tmp_path, "fig") == 1

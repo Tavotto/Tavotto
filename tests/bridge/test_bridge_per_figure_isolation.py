@@ -262,3 +262,37 @@ def test_a_healthy_script_is_unchanged(user_python, tmp_path, bridge_session):
         assert build["capture_summary"] == {"live": 1, "failed": 0}
         sess.resume()
         sess.wait_event("exit")
+
+
+def test_a_figure_broken_between_two_barriers_is_isolated_not_thrown_into_the_script(
+    user_python, tmp_path, bridge_session
+):
+    """Codex #978：脚本在第一个 barrier 之后把已捕获的图弄坏（SVG 渲染失败）。rebase 路径要和新捕获同样逐图隔离：
+    异常不能逃进用户脚本的 `show()`；第二个 barrier 照发、另一张图仍 live、坏图的旧预览被隐藏、脚本正常结束。"""
+    proj = tmp_path / "proj"
+    write(
+        proj / "fig.py",
+        HEAD
+        + GOOD
+        + "b, bx = plt.subplots()\nbx.plot([0, 1], [3, 4])\nb.savefig('b.png')\n"
+        + "plt.show()\n"
+        + "class AggOnly(Artist):\n    def draw(self, renderer):\n        renderer.buffer_rgba()\n"
+        + "bx.add_artist(AggOnly())\n"
+        + "plt.show()\nprint('SCRIPT-FINISHED', flush=True)\n",
+    )
+    with bridge_session(proj / "fig.py", cwd=str(proj)) as sess:
+        first = sess.wait_event("barrier")
+        assert first["stems"] == ["good", "b"] and not first.get("failed_stems")
+        sess.ensure_built()
+        assert _preview(sess.out_dir, "b", ".svg").exists()
+        sess.resume()
+        second = sess.wait_event("barrier")
+        assert second["stems"] == ["good"] and second["failed_stems"] == ["b"], second
+        facts = {f["stem"]: f["state"] for f in second["figure_facts"]}
+        assert facts == {"good": "live", "b": "failed"}
+        assert not _preview(sess.out_dir, "b", ".svg").exists(), "上一版预览不该当本次结果"
+        assert sess.override("good", [])["warnings"] == []
+        sess.resume()
+        sess.wait_event("barrier")  # script_end
+        sess.resume()
+        assert sess.wait_event("exit")["code"] == 0
