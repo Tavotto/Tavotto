@@ -65,6 +65,23 @@ def _isolated_conda_registry(tmp_path, monkeypatch):
 def _fresh_captures():
     launcher.reset_captures()  # 激活增量只缓存在进程内存里；用例之间不串
     yield
+    # 上一个用例留下的进程级状态 / 后台线程不许在下一个用例里拿旧解释器去捕获（捕获读的是“此刻”的环境变量与数据目录，
+    # 会串进下一个用例的 conda 日志）：收掉会话、清各层按解释器的缓存，再等 Tavotto 自己的后台线程退出
+    from tavotto.engine import depplan, deprepair, projectenv, userenvs
+
+    _pool.shutdown_all(wait=True)
+    _pool.reset_worker_python()
+    projectenv.reset_cache()
+    depplan.reset_cache()
+    userenvs.reset_cache()
+    deprepair.reset_state()
+    deadline = time.time() + 15
+    while time.time() < deadline and any(
+        t.is_alive() and t.name.startswith(("tavotto-", "mm-"))
+        for t in threading.enumerate()
+        if t is not threading.current_thread()
+    ):
+        time.sleep(0.05)
     launcher.reset_captures()
 
 
