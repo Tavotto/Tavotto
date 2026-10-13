@@ -13,6 +13,8 @@ import { defineConfig, devices } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './e2e',
+  // Agent 专用长时间性能基准由 playwright.perf.config.ts 启动，常规黄金路径不运行它。
+  testIgnore: ['perf-agent.spec.ts'],
   // 每个用例都要起一次后端（含冷启动的 matplotlib 会话），给足时间
   timeout: 180_000,
   expect: { timeout: 15_000 },
