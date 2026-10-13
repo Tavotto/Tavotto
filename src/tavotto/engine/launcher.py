@@ -225,6 +225,34 @@ _PROBE_BOOT = (
 )
 
 
+def popen(argv, lau: CondaLauncher | None, **kwargs):
+    """用目标解释器起一个子进程的**唯一入口**（`lau` 来自 `launchctx.decide` / `probe_launcher` / `effective_launcher`）：
+    `lau` 为 None 原样 `subprocess.Popen`；否则 `conda run` 包装（`wrap` 校验可执行文件）并自成进程组（`GroupPopen`）。
+    调用方负责读写管道与超时——语义同 `subprocess.Popen`。"""
+    kwargs.pop("creationflags", None)  # 目标解释器的子进程一律是 GUI 拥有的隐藏子进程
+    if lau is None:
+        return subprocess.Popen(argv, creationflags=runtime.CREATE_NO_WINDOW, **kwargs)
+    return GroupPopen(lau.wrap(list(argv)), creationflags=runtime.CREATE_NO_WINDOW, **kwargs)
+
+
+def json_suffix(line: str):
+    """`line` 里能整体解析成 JSON 对象的后缀（钩子的横幅没有换行、粘在 JSON 前面）；没有回 None。最多试 16 个 `{`。"""
+    import json
+
+    tried = 0
+    start = line.find("{")
+    while start >= 0 and tried < 16:
+        try:
+            obj = json.loads(line[start:])
+        except ValueError:
+            obj = None
+        if isinstance(obj, dict):
+            return obj
+        tried += 1
+        start = line.find("{", start + 1)
+    return None
+
+
 def effective_launcher(python) -> CondaLauncher | None:
     """此刻对 `python` 生效的启动方式：`probe_scope` 里的每脚本决策，否则现场 `detect`；可执行文件不是绝对路径（没法安全
     包装）按裸起。`run_probe` 与 `context_key` 共用这一处，所以「实际怎么起」和「缓存按什么分区」不会分叉。"""

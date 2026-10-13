@@ -124,9 +124,10 @@ def build_record(project_root: str | Path, script: str, rcpt, *, run=None) -> di
         return None
     lau = rcpt.launcher if isinstance(getattr(rcpt, "launcher", None), dict) else None
     lau_ref = dict(lau) if lau else {"kind": launcher.KIND_DIRECT}
-    env_state = ""
-    if lau_ref.get("kind") == launcher.KIND_CONDA and isinstance(lau_ref.get("prefix"), str):
-        env_state = launcher.prefix_state(lau_ref["prefix"])
+    # 解释器在 Conda 环境里时，无论这次是 direct 还是 conda 启动，都记环境版本：装 / 升降包之后「裸起成功过」的结论
+    # 同样不再成立（激活后才能 import 的东西可能是新装的），要重新判断启动方式
+    env_prefix = launcher.conda_prefix_of(rcpt.interpreter)
+    env_state = launcher.prefix_state(env_prefix) if env_prefix else ""
     binding = rcpt.binding if isinstance(rcpt.binding, dict) else {}
     basis = _basis_of(rcpt)
     if basis is None:
@@ -209,13 +210,15 @@ def verify(
         ) != projectenv.environment_generation(env_python):
             return REASON_ENVIRONMENT
         lau = record.get("launcher") or {}
-        if lau.get("kind") == launcher.KIND_CONDA:
-            # prefix 从解释器现场推，记录里的只用来对账；记录里的路径不当可执行 / 探测对象
-            prefix = launcher.conda_prefix_of(env_python)
-            if prefix is None or _norm(prefix) != _norm(str(lau.get("prefix") or "")):
-                return REASON_LAUNCHER
-            if launcher.prefix_state(prefix) != record.get("env_state"):
-                return REASON_ENVIRONMENT
+        # prefix 从解释器现场推，记录里的只用来对账；记录里的路径不当可执行 / 探测对象
+        prefix = launcher.conda_prefix_of(env_python)
+        if lau.get("kind") == launcher.KIND_CONDA and (
+            prefix is None or _norm(prefix) != _norm(str(lau.get("prefix") or ""))
+        ):
+            return REASON_LAUNCHER
+        if prefix is not None and launcher.prefix_state(prefix) != (record.get("env_state") or ""):
+            # Conda 环境（direct 与 conda 记录都算）：装 / 升降包后环境版本变了 = 重新核验
+            return REASON_ENVIRONMENT
     if FACET_SOURCE in facets:
         src = record.get("source") or {}
         if _sha1(root / script) != src.get("script_sha1") or not src.get("script_sha1"):
@@ -264,10 +267,10 @@ def _record_of(project_root: str | Path, script: str) -> dict | None:
 def probe_launcher(
     project_root: str | Path, script: str, python: str
 ) -> launcher.CondaLauncher | None:
-    """预检探针用的启动决策：与 worker 同一个 `launcher_for`（记录说裸起成功过的，预检也裸起），只是探针不知道来源标签
-    （`python_source=None`，只比解释器路径）。记录说要 Conda 而 conda 不见了：探针不抛（worker 起会话时会报稳定码），按裸起探。"""
+    """预检探针 / 依赖门 / worker 自检用的启动决策：就是 `decide`；唯一的区别是「记录说要 Conda 而 conda 不见了」时
+    探针不抛（worker 起会话时会报稳定码），按裸起探。"""
     try:
-        return launcher_for(project_root, script, python, None, bundled="")
+        return decide(project_root, script, python)
     except launcher.LauncherUnavailable:
         return None
 
@@ -279,15 +282,15 @@ def probe_scope(project_root: str | Path, script: str):
         yield
 
 
-def launcher_for(
-    project_root: str | Path, script: str, python: str, python_source: str | None, *, bundled: str
-) -> launcher.CondaLauncher | None:
-    """`pool.EngineWorker` 起会话时用的启动方式：None = 裸起。
+def decide(project_root: str | Path, script: str, python: str) -> launcher.CondaLauncher | None:
+    """**「用目标解释器起子进程」的唯一启动决策**（None = 裸起）。worker（`EngineWorker` / `WorkerdWorker`）、预检探针
+    （`launcher.run_probe`，经 `probe_scope`）、依赖门（`SPAWN_GATES`）、`deprepair.worker_self_test` 都只经这一处拿 launcher，
+    输入只有 `(项目, 脚本, 解释器路径)`——**没有来源标签**：标签（`env_override` / `project_venv` …）是解释器路径的派生元数据，
+    探针在解析解释器的过程中还不知道它；让决策依赖它，三方就会因为「谁拿到了标签、谁没拿到」而分叉。内置 runtime 没有
+    `conda-meta`，`detect` 自然回 None，不需要靠标签特判。
 
-    内置 runtime（`python_source == bundled`）永远裸起。这条解释器这份脚本上次成功的启动方式还成立（解释器 / 环境 /
-    源码三项核验通过）就沿用——裸起成功过的不会被改成 Conda 包装；否则现场检测（Conda 环境 + 找得到 conda → 包装）。"""
-    if python_source == bundled:
-        return None
+    这条解释器这份脚本上次成功的启动方式还成立（解释器 / 环境 / 源码核验通过，环境含 Conda 环境版本）就沿用——裸起成功过的
+    不会被改成 Conda 包装；任何一项变了就现场检测（Conda 环境 + 找得到 conda → 包装）。"""
     record = _record_of(project_root, script)
     recorded_conda = False
     if (
@@ -297,7 +300,7 @@ def launcher_for(
             project_root=project_root,
             script=script,
             python=python,
-            python_source=python_source,
+            python_source=None,  # 决策不依赖来源标签（见 docstring）
             facets=FACETS_LAUNCHER,
         )
         is None

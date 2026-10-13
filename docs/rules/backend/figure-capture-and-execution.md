@@ -366,6 +366,10 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   `deprepair._run_pip` / 包查找 / `managedenv._run`（只作用于 Tavotto 自己的受管环境，不是用户 Conda 环境）、`bootstrap._probe`（问系统 Python
   有没有 `import venv`，不是 worker 的解释器）、`runspec.probe_interpreter` 与 native 会话（`tavotto run` 由用户自己的终端 / 桌面拥有进程的
   native 适配器负责，不在本期）、`privatepython*`（Tavotto 自己的私有 runtime）。
+- **启动决策只有一处**：`launchctx.decide(项目, 脚本, 解释器路径)`（**不含来源标签**：标签是路径的派生元数据，探针在解析解释器的
+  过程中还拿不到它，让决策依赖它三方就会分叉）。worker（`EngineWorker` / `WorkerdWorker` 经 `pool._launcher_or_error`）、预检探针与依赖门
+  （`launchctx.probe_scope` → `launcher.run_probe`）、`deprepair.worker_self_test`（`launcher.popen`）都只经它拿 launcher；起子进程的唯一入口
+  `launcher.popen` / `run_probe`。direct 记录在 Conda 环境里同样记并核验环境版本（`env_state`）。
 - **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 按 ppid 建出的进程树**从叶子往上**终止：先杀最深一层、等它的父进程把它回收掉（pid 消失，不是变成僵尸），再往上，最后杀 wrapper 由我们 `wait`——对整组同时 SIGKILL 会让 shell 先死、Python 成孤儿，PID 1 不收尸的容器里永远是僵尸；`wait()` 确认组内无残留，僵尸只有父进程是 PID 1（无人能收）时才不算残留，且如实记进 `unreaped` 并告警，不伪装成干净），所以取消 / 关停 / 看门狗超时
   留不下仍在跑的用户 Python；环境占用租约仍是池里的会话，`kill→reap` 之后才释放。包装 worker 只走 Python 池（`WorkerdWorker` 抛
   `WorkerdUnavailable` 回退）——workerd 的杀进程语义不认进程组。`nativesession` 的终止语义未改。

@@ -1555,7 +1555,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             health.get("detail") or health.get("error") or "",
             health=health,
         )
-    selftest = worker_self_test(python)
+    selftest = _scoped_self_test(python, plan.project, plan.script)
     if not selftest.get("ok"):
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
 
@@ -2317,6 +2317,13 @@ fig.savefig("SelfTest.pdf")
 _SELFTEST_NAME = "tavotto_selftest.py"
 
 
+def _scoped_self_test(python: str, project: str, script: str) -> dict:
+    """在这个项目 / 脚本的启动决策范围里跑 `worker_self_test`（与 worker / 预检探针同一个 `launchctx.decide`）。
+    范围由这里设，`worker_self_test` 本身仍是单参数——测试大量以单参数替身替换它。"""
+    with launchctx.probe_scope(project, script):
+        return worker_self_test(python)
+
+
 def worker_self_test(python: str) -> dict:
     """真起一次 worker 跑通一次 build——验证的第三层。
 
@@ -2326,6 +2333,9 @@ def worker_self_test(python: str) -> dict:
     子进程里才崩，都只有真跑一次才看得见）。
 
     argv 走 `execspec.worker_argv`——worker 命令行的唯一出处，这里不另拼一份。
+    启动方式走 `launcher.effective_launcher(python)`——调用方在 `launchctx.probe_scope(项目, 脚本)` 里（`_scoped_self_test`）
+    就是与 worker / 预检探针 / 依赖门同一个启动决策（唯一出处 `launchctx.decide`），否则按解释器现场判。需要 Conda 激活的解释器自检也经 `conda run`，
+    否则会拿裸起的失败去否决一个激活后才能跑的环境。
     """
     tmp = tempfile.mkdtemp(prefix="tavotto-selftest-")
     try:
@@ -2345,8 +2355,10 @@ def worker_self_test(python: str) -> dict:
                 bundled=pool.same_python(python, runtime.bundled_python())
             ),
         )
-        proc = subprocess.Popen(
+        lau = launcher.effective_launcher(python)
+        proc = launcher.popen(
             argv,
+            lau,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2370,7 +2382,11 @@ def worker_self_test(python: str) -> dict:
             try:
                 resp = json.loads(line)
             except ValueError:
-                continue
+                # 包装启动时钩子的横幅可能（没有换行）粘在回复前面：取能解析成 JSON 对象的后缀
+                suffix = launcher.json_suffix(line) if lau is not None else None
+                if suffix is None:
+                    continue
+                resp = suffix
             if isinstance(resp, dict) and "ok" in resp:
                 if resp.get("ok"):
                     # `stems` 才是「捕获到几张图」——调用方据此断言 worker
@@ -3581,7 +3597,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
     if not health.get("ok"):
         managedenv.mark_incomplete(project, f"{job.op} 之后 matplotlib 不可用")
         raise RepairError(ERROR_MANAGED_BROKEN, health.get("detail") or health.get("code") or "")
-    selftest = worker_self_test(python)
+    selftest = _scoped_self_test(python, project, "")
     if not selftest.get("ok"):
         managedenv.mark_incomplete(project, f"{job.op} 之后 worker 自检未通过")
         raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(selftest.get("detail", ""))[-800:])
@@ -4662,7 +4678,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         plan.constraints,
         user_specified=plan.user_specified,
     )
-    selftest = worker_self_test(python)
+    selftest = _scoped_self_test(python, plan.project, plan.script)
     if not selftest.get("ok"):
         raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
     # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
@@ -4964,7 +4980,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             code=ERROR_CANCELLED,
             result={"generation": generation, "activated": False},
         )
-    selftest = worker_self_test(python)
+    selftest = _scoped_self_test(python, job.project, job.script)
     if not selftest.get("ok"):
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"

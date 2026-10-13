@@ -712,7 +712,7 @@ def test_a_planted_conda_exe_in_the_record_is_never_executed(tmp_path, monkeypat
         databinding.binding_for(proj / "fig.py", proj, "sandbox")["revision"],
     )
     assert launchctx.record_success(proj, "fig.py", rcpt) is True
-    got = launchctx.launcher_for(proj, "fig.py", py, "env_override", bundled="bundled")
+    got = launchctx.decide(proj, "fig.py", py)
     assert got is not None and got.conda_exe == str(conda)
     log = tmp_path / "plant.log"
     monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
@@ -756,10 +756,10 @@ def test_kill_switch_beats_a_recorded_conda_launcher(tmp_path, monkeypatch):
         databinding.binding_for(proj / "fig.py", proj, "sandbox")["revision"],
     )
     assert launchctx.record_success(proj, "fig.py", rcpt) is True
-    args = (proj, "fig.py", py, "env_override")
-    assert launchctx.launcher_for(*args, bundled="bundled") is not None  # 正对照
+    args = (proj, "fig.py", py)
+    assert launchctx.decide(*args) is not None  # 正对照
     monkeypatch.setenv(launcher.ENV_DISABLE, "0")
-    assert launchctx.launcher_for(*args, bundled="bundled") is None
+    assert launchctx.decide(*args) is None
 
 
 @posix_only
@@ -1008,8 +1008,7 @@ def test_malformed_launch_records_are_dropped_not_raised(tmp_path, monkeypatch, 
         == launchctx.REASON_NO_RECORD
     )
     assert (
-        launchctx.launcher_for(proj, "fig.py", sys.executable, "env_override", bundled="bundled")
-        is None
+        launchctx.decide(proj, "fig.py", sys.executable) is None
     )  # 坏记录 = 没有记录：照常检测，不抛
     # 坏的只是这一条：配置本身与别的脚本的记录不受影响
     assert runconfig.get(proj, run.config_id, script="fig.py").argv == ("--n", "1")
@@ -1135,16 +1134,16 @@ def test_a_recorded_conda_launch_never_silently_degrades_to_a_bare_launch(tmp_pa
     rcpt.python_source = "env_override"
     rcpt.launcher = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix)).public()
     assert launchctx.record_success(proj, "fig.py", rcpt)
-    args = (proj, "fig.py", py, "env_override")
-    assert launchctx.launcher_for(*args, bundled="bundled") is not None  # 正对照
+    args = (proj, "fig.py", py)
+    assert launchctx.decide(*args) is not None  # 正对照
     conda.unlink()  # conda 没了（卸载 / 挪走）
     monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
     with pytest.raises(launcher.LauncherUnavailable) as exc:
-        launchctx.launcher_for(*args, bundled="bundled")
+        launchctx.decide(*args)
     assert exc.value.code == "conda_launcher_unavailable"
     # 用户明确关掉开关：裸起，不报错
     monkeypatch.setenv(launcher.ENV_DISABLE, "0")
-    assert launchctx.launcher_for(*args, bundled="bundled") is None
+    assert launchctx.decide(*args) is None
 
 
 def _spawn_group_with_member(tmp_path):
@@ -1795,3 +1794,101 @@ def test_spawn_gates_run_inside_the_per_script_launch_scope(conda_world, tmp_pat
         "direct"
     ]  # 门在范围里：记录为 direct → 门里的探针也是 direct（无范围时会是 conda|…）
     assert launcher.context_key(py).startswith("conda|")  # 对照：范围外现场检测是 conda
+
+
+# ---------------------------------------------------------------------------
+# 启动决策收口（#975 r4256685537 / 545 / 555）
+# ---------------------------------------------------------------------------
+@posix_only
+def test_a_direct_record_in_a_conda_env_is_invalidated_when_the_environment_changes(
+    tmp_path, monkeypatch
+):
+    """解释器在 Conda 环境里时，direct 记录也记环境版本：装 / 升降包之后「裸起成功过」不再成立，要重新判断启动方式。"""
+    prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    py = str(prefix / "bin" / "python")
+    rcpt = _good_rcpt(proj, py)  # launcher=None：裸起成功
+    assert launchctx.record_success(proj, "fig.py", rcpt)
+    record = runconfig.launch_record(proj, "fig.py")
+    assert record["launcher"]["kind"] == "direct" and record["env_state"]  # 记了环境版本
+    assert launchctx.decide(proj, "fig.py", py) is None  # 环境没变：沿用裸起
+    with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+        fh.write("# cmd: conda install vendor-sdk\n")  # conda 事务：环境版本变了
+    found = launchctx.decide(proj, "fig.py", py)
+    assert found is not None and found.prefix == str(prefix)  # 重新判断：现在要激活
+    assert (
+        launchctx.verify(
+            record,
+            project_root=proj,
+            script="fig.py",
+            python=py,
+            python_source=None,
+            facets=launchctx.FACETS_LAUNCHER,
+        )
+        == launchctx.REASON_ENVIRONMENT
+    )
+
+
+@needs_worker
+def test_worker_self_test_follows_the_same_launch_decision(activation_only_env, monkeypatch):
+    """`deprepair.worker_self_test` 以前裸 Popen：激活后才能 import matplotlib 的解释器自检必然失败。"""
+    from tavotto.engine import deprepair
+
+    py, prefix, log = activation_only_env
+    with monkeypatch.context() as m:
+        m.setenv(launcher.ENV_DISABLE, "0")
+        bare = deprepair.worker_self_test(py)
+        assert bare["ok"] is False  # 负对照：裸起 import 不了 matplotlib
+    assert conda_calls(log) == []
+    done = deprepair.worker_self_test(py)
+    assert done == {"ok": True, "figures": 1}, done
+    assert len(conda_calls(log)) == 1  # 经 conda run 起的
+
+
+@needs_worker
+@pytest.mark.parametrize("state", ["no_record", "direct_record", "conda_record"])
+def test_every_spawn_site_gets_the_same_launcher_for_the_same_project_script_python(
+    activation_only_env, tmp_path, monkeypatch, state
+):
+    """总不变量：同一个 (项目, 脚本, 解释器) 下，worker 构造、预检探针、依赖门（同一个 probe_scope）、worker 自检拿到的
+    launcher 完全相同——它们都只经 `launchctx.decide`，且决策不依赖来源标签（调用方有的拿得到、有的拿不到）。"""
+    from tavotto.engine import deprepair
+
+    py, prefix, log = activation_only_env
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    if state != "no_record":
+        rcpt = _good_rcpt(proj, py)
+        if state == "conda_record":
+            rcpt.launcher = launcher.CondaLauncher(
+                conda_exe=str(prefix.parent.parent / "bin" / "conda"), prefix=str(prefix)
+            ).public()
+        assert launchctx.record_success(proj, "fig.py", rcpt)
+
+    def pub(lau):
+        return None if lau is None else lau.public()
+
+    expected = pub(launchctx.decide(proj, "fig.py", py))
+    assert (expected is None) == (state == "direct_record")
+    # worker 构造用的（EngineWorker / WorkerdWorker 同一个入口）
+    assert pub(_pool._launcher_or_error(str(proj), "fig.py", py)) == expected
+    # 预检探针与依赖门：同一个 probe_scope
+    with launchctx.probe_scope(proj, "fig.py"):
+        assert pub(launcher.effective_launcher(py)) == expected
+        assert (launcher.context_key(py) == "direct") == (expected is None)
+    # worker 自检：记录它实际拿到的 launcher
+    seen = []
+    real_popen = launcher.popen
+    monkeypatch.setattr(
+        launcher,
+        "popen",
+        lambda argv, lau, **kw: (seen.append(pub(lau)), real_popen(argv, lau, **kw))[1],
+    )
+    deprepair._scoped_self_test(py, str(proj), "fig.py")
+    assert seen == [expected]
