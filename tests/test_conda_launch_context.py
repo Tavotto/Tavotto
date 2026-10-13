@@ -583,61 +583,111 @@ def test_sensitive_run_config_is_never_auto_reused(tmp_path, monkeypatch):
     )
 
 
-@pytest.mark.skipif(
-    not any(__import__("shutil").which(n) for n in ("conda",)),
-    reason="本机没有 conda（real conda launch: not_run）",
+REAL_PREFIX = os.environ.get("TAVOTTO_TEST_CONDA_PREFIX", "")
+needs_real_conda = pytest.mark.skipif(
+    os.name == "nt" or not REAL_PREFIX or not (Path(REAL_PREFIX) / "conda-meta").is_dir(),
+    reason="没有真实 conda 环境（TAVOTTO_TEST_CONDA_PREFIX 指向带 matplotlib 的 conda prefix）：not_run",
 )
-def test_real_conda_launch():  # pragma: no cover — 本机无 conda 时恒 skip
-    """有真 conda 时：`conda run --no-capture-output -- python -c ...` 必须把 stdout 直通且返回子进程退出码。"""
-    import shutil
 
-    conda = shutil.which("conda")
-    out = subprocess.run(
-        [
-            conda,
-            "run",
-            "--no-capture-output",
-            "--",
-            "python",
-            "-c",
-            "import sys;print('ok');sys.exit(3)",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
+
+def _real_conda() -> str:
+    found = launcher.detect(Path(REAL_PREFIX) / "bin" / "python")
+    assert found is not None, "真实 prefix 下找不到 conda 可执行文件"
+    return found.conda_exe
+
+
+@needs_real_conda
+def test_real_conda_launch():
+    """真 conda：`conda run --no-capture-output` 把 stdin / stdout 直通并返回子进程退出码。"""
+    lau = launcher.detect(Path(REAL_PREFIX) / "bin" / "python")
+    code = (
+        "import sys\nfor l in sys.stdin:\n print('echo',l.strip(),flush=True)\n"
+        " if l.strip()=='q': sys.exit(3)"
     )
-    assert out.returncode == 3 and "ok" in out.stdout
+    proc = subprocess.Popen(
+        lau.wrap([str(Path(REAL_PREFIX) / "bin" / "python"), "-u", "-c", code]),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    got = []
+    for msg in ("a", "b", "q"):  # 逐行双向往返：缓冲或 stdin 不通会在这里卡住（readline 无限等）
+        proc.stdin.write(msg + "\n")
+        proc.stdin.flush()
+        got.append(proc.stdout.readline().strip())
+    assert got == ["echo a", "echo b", "echo q"]
+    assert proc.wait(timeout=30) == 3
+    proc.stdin.close()
+    proc.stdout.close()
 
 
-@posix_only
-def test_a_recorded_direct_success_is_not_rewrapped_until_something_changes(tmp_path, monkeypatch):
-    """裸起成功过的（同解释器、同环境、同脚本）不会被自动改成 Conda 包装；脚本变了才重新检测。"""
-    import hashlib
-
-    prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
+@needs_real_conda
+def test_real_conda_worker_roundtrip_and_cancel_leaves_no_user_python(tmp_path, monkeypatch):
+    """真 conda：完整 worker 协议往返（build → 出图 → 渲染），再强杀 wrapper，用户 Python 不得残留。"""
     proj = tmp_path / "proj"
     proj.mkdir()
-    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
-    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
-    monkeypatch.delenv("CONDA_EXE", raising=False)
-    py = str(prefix / "bin" / "python")
-    args = (proj, "fig.py", py, "env_override")
-    assert launchctx.launcher_for(*args, bundled="bundled") is not None  # 没有记录：现场检测 → 包装
-    rcpt = _Rcpt(
-        py,
-        hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest(),
-        [],
-        None,
-        databinding.binding_for(proj / "fig.py", proj, "sandbox")["revision"],
+    (proj / "fig.py").write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt, os\n"
+        "assert os.environ.get('CONDA_PREFIX')\n"
+        "fig, ax = plt.subplots(figsize=(3, 2)); ax.plot([0, 1, 2], [1, 4, 2])\n"
+        "fig.savefig('result.pdf')\n",
+        encoding="utf-8",
     )
-    assert launchctx.record_success(proj, "fig.py", rcpt) is True
-    assert launchctx.launcher_for(*args, bundled="bundled") is None  # 记录说裸起成功过
-    (proj / "fig.py").write_text("print(2)\n", encoding="utf-8")
-    assert launchctx.launcher_for(*args, bundled="bundled") is not None  # 脚本变了：重新检测
-    assert (
-        launchctx.launcher_for(*args, bundled=env_override_label()) is None
-    )  # 内置 runtime 永远裸起
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(Path(REAL_PREFIX) / "bin" / "python"))
+    _pool.reset_worker_python()
+    worker, resp = _pool.build("fig.py", str(proj), "__main__")
+    try:
+        assert worker.launcher is not None and worker.launcher.prefix == REAL_PREFIX
+        assert resp["runtime"]["prefix"] == REAL_PREFIX  # 脚本真的跑在这个 conda 环境里
+        user_pid = resp["runtime"]["pid"]
+        assert user_pid != worker.child_pid and alive(user_pid)
+        assert worker.render_png  # 热会话还能服务
+    finally:
+        worker.force_kill()
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+    assert wait_dead(user_pid), "取消 wrapper 后用户 Python 仍在运行"
+    ps = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+    assert not [ln for ln in ps.splitlines() if str(tmp_path) in ln and "worker.py" in ln], ps
 
 
-def env_override_label() -> str:
-    return "env_override"
+@needs_real_conda
+def test_real_conda_cancel_mid_computation_leaves_no_user_python(tmp_path, monkeypatch):
+    """真 conda：脚本正在长计算时硬取消（force_kill），wrapper 和用户 Python 都不得残留。"""
+    import threading
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    pidfile = tmp_path / "user.pid"
+    (proj / "slow.py").write_text(
+        f"import os, time\nopen({str(pidfile)!r}, 'w').write(str(os.getpid()))\ntime.sleep(300)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", str(Path(REAL_PREFIX) / "bin" / "python"))
+    _pool.reset_worker_python()
+    worker = _pool.get("slow.py", str(proj), "__main__")
+    box: list = []
+
+    def run() -> None:
+        try:
+            worker.ensure_built()
+        except Exception as exc:  # noqa: BLE001 — 被取消的 build 本来就会失败
+            box.append(exc)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    deadline = time.time() + 120
+    while not pidfile.exists() and time.time() < deadline:
+        time.sleep(0.1)
+    user_pid = int(pidfile.read_text())
+    wrapper = worker.child_pid
+    assert alive(user_pid) and alive(wrapper)
+    try:
+        worker.force_kill()
+        t.join(timeout=30)
+    finally:
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+    assert wait_dead(user_pid) and wait_dead(wrapper)
+    assert box, "被取消的 build 应当报错而不是成功"
