@@ -973,25 +973,124 @@ def test_default_and_launch_record_commit_in_one_transaction(tmp_path, monkeypat
     runs_ = [runconfig.selection_for(proj, "fig.py", ["--n", str(i)]) for i in range(2)]
     rcpt = _good_rcpt(proj, py)
 
-    def fresh_state(fn):
-        mismatches = 0
-        for _ in range(15):
-            ts = [threading.Thread(target=fn, args=(r,)) for r in runs_]
-            [t.start() for t in ts]
-            [t.join() for t in ts]
-            data = runconfig._read(proj)
-            if data["defaults"].get("fig.py") != data["launches"]["fig.py"]["run_config"]:
-                mismatches += 1
-        return mismatches
-
-    def legacy(run):  # 旧写法：两次各自加锁的写入
-        runconfig.set_default(proj, "fig.py", run.config_id)
-        runconfig.set_launch_record(
-            proj, "fig.py", launchctx.build_record(proj, "fig.py", rcpt, run=run)
-        )
-
     def txn(run):
         launchctx.record_success(proj, "fig.py", rcpt, run=run, update_default=True)
 
-    assert fresh_state(legacy) > 0, "夹具没有放大出旧写法的交错：并发用例没有牙齿"
-    assert fresh_state(txn) == 0
+    # 旧写法（两次各自加锁的写入）允许的一种交错：A.默认 → B.默认 → B.记录 → A.记录，结果默认指 B、记录是 A
+    rec = {r.config_id: launchctx.build_record(proj, "fig.py", rcpt, run=r) for r in runs_}
+    a, b = runs_
+    runconfig.set_default(proj, "fig.py", a.config_id)
+    runconfig.set_default(proj, "fig.py", b.config_id)
+    runconfig.set_launch_record(proj, "fig.py", rec[b.config_id])
+    runconfig.set_launch_record(proj, "fig.py", rec[a.config_id])
+    data = runconfig._read(proj)
+    assert data["defaults"]["fig.py"] != data["launches"]["fig.py"]["run_config"]  # 旧写法确会错配
+
+    # 事务写法：并发收尾无论谁先谁后，默认与记录永远指向同一个
+    mismatches = 0
+    for _ in range(15):
+        ts = [threading.Thread(target=txn, args=(r,)) for r in runs_]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        data = runconfig._read(proj)
+        if data["defaults"]["fig.py"] != data["launches"]["fig.py"]["run_config"]:
+            mismatches += 1
+    assert mismatches == 0
+
+
+# ---------------------------------------------------------------------------
+# #975 第三轮评审
+# ---------------------------------------------------------------------------
+@posix_only
+def test_windows_gets_no_conda_wrapping(tmp_path, monkeypatch):
+    """本期 Windows 不做 Conda 包装（没有真机验证，回执也核不了 pid）：模拟 nt 时 detect 返回 None。"""
+    prefix, conda, _ = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    assert launcher.detect(prefix / "bin" / "python") is not None  # 正对照
+    monkeypatch.setattr(launcher, "_is_windows", lambda: True)
+    assert launcher.detect(prefix / "bin" / "python") is None
+
+
+@posix_only
+def test_an_input_without_a_digest_makes_the_record_unverifiable(tmp_path, monkeypatch):
+    """输入过大没算出摘要：只核「还在」会让原地改内容也照样沿用——这样的依据不记录；旧 / 手改的记录 verify 也拒。"""
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    (proj / "big.dat").write_text("x", encoding="utf-8")
+    rcpt = _good_rcpt(proj, sys.executable)
+    rcpt.observed_files = lambda: {"big.dat": None}
+    assert launchctx.build_record(proj, "fig.py", rcpt) is None
+    good = launchctx.build_record(proj, "fig.py", _good_rcpt(proj, sys.executable))
+    good["source"]["basis"] = {"big.dat": None}
+    kw = {
+        "project_root": proj,
+        "script": "fig.py",
+        "python": sys.executable,
+        "python_source": "env_override",
+    }
+    assert launchctx.verify(good, **kw) == launchctx.REASON_HELPER
+
+
+def test_a_json_object_printed_by_a_hook_is_not_a_protocol_envelope():
+    is_env = _pool.EngineWorker._is_envelope
+    pv = _pool.PROTOCOL_VERSION
+    assert is_env(json.dumps({"protocol_version": pv, "request_id": "r1", "ok": True}))
+    assert not is_env('{"status": "license ready"}')
+    assert not is_env(json.dumps({"request_id": "r1"}))  # 缺 protocol_version
+    assert not is_env(json.dumps({"protocol_version": pv}))  # 缺 request_id
+    assert not is_env(json.dumps({"protocol_version": pv + 1, "request_id": "r1"}))
+    assert not is_env(json.dumps({"protocol_version": pv, "request_id": 7}))
+    assert not is_env("[1, 2]") and not is_env("plain text")
+
+
+@needs_worker
+def test_a_json_banner_from_a_hook_is_diverted_not_mistaken_for_a_reply(conda_world, monkeypatch):
+    proj, prefix, log, counter = conda_world
+    monkeypatch.setenv("FAKE_CONDA_BANNER", '{"status": "license ready"}')
+    worker, resp = _pool.build("fig.py", str(proj), "__main__")
+    try:
+        text = worker.log_path.read_text(encoding="utf-8", errors="replace")
+        assert '[activation stdout] {"status": "license ready"}' in text
+        assert worker.render_png
+    finally:
+        worker.force_kill()
+
+
+BAD_LAUNCH_SHAPES = {
+    "source_is_list": lambda r: r.update(source=[1, 2]),
+    "basis_is_list": lambda r: r["source"].update(basis=["a.py"]),
+    "basis_value_int": lambda r: r["source"].update(basis={"a.py": 7}),
+    "interpreter_is_str": lambda r: r.update(interpreter="/usr/bin/python"),
+    "interpreter_path_missing": lambda r: r["interpreter"].pop("path"),
+    "launcher_is_null": lambda r: r.update(launcher=None),
+    "launcher_prefix_list": lambda r: r["launcher"].update(prefix=["x"]),
+    "run_config_not_a_ref": lambda r: r.update(run_config="../../etc/passwd"),
+    "env_state_int": lambda r: r.update(env_state=3),
+    "run_sensitive_str": lambda r: r.update(run_sensitive="yes"),
+    "cwd_mode_missing": lambda r: r.pop("cwd_mode"),
+}
+
+
+@posix_only
+@pytest.mark.parametrize("shape", sorted(BAD_LAUNCH_SHAPES))
+def test_malformed_launch_records_are_dropped_not_raised(tmp_path, monkeypatch, shape):
+    """嵌套字段坏了（source 是 list 等）：登记解析时丢掉这一条，之后的读 / 核验 / 复用不抛 AttributeError（不是 500）。"""
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    run = runconfig.selection_for(proj, "fig.py", ["--n", "1"])
+    assert launchctx.record_success(proj, "fig.py", _good_rcpt(proj, sys.executable), run=run)
+    path = runconfig.store_path(proj)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    BAD_LAUNCH_SHAPES[shape](data["launches"]["fig.py"])
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert runconfig.launch_record(proj, "fig.py") is None
+    assert (
+        launchctx.reusable_run(proj, "fig.py", python=sys.executable, python_source="env_override")
+        is None
+    )
+    # 坏的只是这一条：配置本身与别的脚本的记录不受影响
+    assert runconfig.get(proj, run.config_id, script="fig.py").argv == ("--n", "1")

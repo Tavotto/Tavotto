@@ -2183,13 +2183,20 @@ class EngineWorker:
 
     @staticmethod
     def _is_envelope(line: str) -> bool:
+        """真实的 v1 协议信封：JSON 对象且带 `protocol_version == PROTOCOL_VERSION` 与字符串 `request_id`
+        （worker 的每条响应都有，`wireproto` 一处产出）。钩子打印的任意 JSON（`{"status": "ok"}`）不算。"""
         text = line.strip()
         if not (text.startswith("{") and text.endswith("}")):
             return False
         try:
-            return isinstance(json.loads(text), dict)
+            obj = json.loads(text)
         except ValueError:
             return False
+        return (
+            isinstance(obj, dict)
+            and obj.get("protocol_version") == PROTOCOL_VERSION
+            and isinstance(obj.get("request_id"), str)
+        )
 
     def _skip_activation_banner(self, line: str) -> str:
         """只在**包装启动**且**还没收到第一条协议信封**时用：`conda run --no-capture-output` 让 `activate.d` 钩子的

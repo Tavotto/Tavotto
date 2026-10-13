@@ -353,7 +353,9 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   任一依据变了 = 重新核验、不静默沿用；敏感配置永不自动复用；明确的 `argv: []` = 用户要无参数。
 - **Conda launcher**（`launcher.py`）：`conda run --no-capture-output --prefix <prefix> [--cwd <dir>] -- <argv…>` 的结构化 argv，
   按官方文档语义（`--no-capture-output` 恒带：worker 协议在 stdout 上）；不拼 shell；不认 `conda.bat`；mamba / micromamba、
-  IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。
+  IDE / 厂商 SDK 适配另列真实样本门。`TAVOTTO_CONDA_ACTIVATION=0` 关闭自动包装。**Windows 本期不做 Conda 包装**（`detect()` 在 nt 上返回 None、裸起，与 P09 之前一致）：没有真机验证，
+  conda.exe 经中间 shell 起 Python 时回执的 pid 核验也没有可靠依据；留待 Windows 真机验证后再开。成功记录的依据必须完整可核验
+  （条数超限 / 观察被截断 / 有输入没算出摘要都不记录，并清掉旧记录）；登记里 `launches` 逐条深校验，坏的丢弃。
 - **进程树**：包装 worker 用 `GroupPopen`（自成进程组，`kill()` 杀整组，`wait()` 确认组内无残留），所以取消 / 关停 / 看门狗超时
   留不下仍在跑的用户 Python；环境占用租约仍是池里的会话，`kill→reap` 之后才释放。包装 worker 只走 Python 池（`WorkerdWorker` 抛
   `WorkerdUnavailable` 回退）——workerd 的杀进程语义不认进程组。`nativesession` 的终止语义未改。

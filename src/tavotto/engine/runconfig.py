@@ -226,11 +226,54 @@ def _parse(raw: str) -> dict:
     # P09：最近一次成功的启动上下文（见 `set_launch_record`）。可选字段，不升 FORMAT_VERSION；
     # 形状不对的整份丢弃为空（它只是「可复用的证据」，坏了 = 没有证据 = 重新核验，不是危险默认）
     launches = data.get("launches", {})
-    if not isinstance(launches, dict) or not all(
-        isinstance(k, str) and isinstance(v, dict) for k, v in launches.items()
-    ):
-        launches = {}
+    launches = (
+        {k: v for k, v in launches.items() if isinstance(k, str) and _launch_record_ok(v)}
+        if isinstance(launches, dict)
+        else {}
+    )
     return {"configs": configs, "defaults": defaults, "launches": launches}
+
+
+def _is_str(x) -> bool:
+    return isinstance(x, str)
+
+
+def _launch_record_ok(rec) -> bool:
+    """启动记录的深校验（形状与 `launchctx.build_record` 一一对应）。只是「可复用的证据」：任何字段类型不对 =
+    这一条丢掉（等于没有证据、重新核验），而不是留着让 `verify` 在某个嵌套字段上抛 AttributeError。"""
+    if not isinstance(rec, dict):
+        return False
+    interp, lau, src = rec.get("interpreter"), rec.get("launcher"), rec.get("source")
+    if not (isinstance(interp, dict) and isinstance(lau, dict) and isinstance(src, dict)):
+        return False
+    if not (_is_str(interp.get("path")) and _is_str(interp.get("source"))):
+        return False
+    if not _is_str(interp.get("generation")):
+        return False
+    if "project_decided" in interp and not isinstance(interp["project_decided"], bool):
+        return False
+    if not _is_str(lau.get("kind")):
+        return False
+    for key in ("conda_exe", "prefix"):
+        if key in lau and not _is_str(lau[key]):
+            return False
+    if not (_is_str(rec.get("env_state")) and _is_str(rec.get("cwd_mode"))):
+        return False
+    cid = rec.get("run_config")
+    if cid is not None and not (_is_str(cid) and ID_RE.fullmatch(cid)):
+        return False
+    if not isinstance(rec.get("run_sensitive", False), bool):
+        return False
+    if not _is_str(rec.get("binding_revision", "")):
+        return False
+    if "recorded_at" in rec and not _is_number(rec["recorded_at"]):
+        return False
+    if not _is_str(src.get("script_sha1")):
+        return False
+    basis = src.get("basis")
+    if not isinstance(basis, dict):
+        return False
+    return all(_is_str(k) and (v is None or _is_str(v)) for k, v in basis.items())
 
 
 def _is_number(x) -> bool:

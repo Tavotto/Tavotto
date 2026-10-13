@@ -45,6 +45,10 @@ _OFF_VALUES = frozenset({"0", "off", "false", "no"})
 GROUP_REAP_TIMEOUT = 5.0
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 def disabled() -> bool:
     return os.environ.get(ENV_DISABLE, "").strip().lower() in _OFF_VALUES
 
@@ -153,6 +157,10 @@ def detect(python: str | os.PathLike) -> CondaLauncher | None:
     """这条解释器要不要、能不能经 Conda 激活起：是 Conda 环境且找得到 conda 可执行文件 → launcher；否则 None
     （None = 裸起，与 P09 之前一致）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。"""
     if disabled():
+        return None
+    if _is_windows():
+        # 本期 Windows 不做 Conda 包装：没有真机验证（conda.exe 经中间 shell 起 Python 时的回执 / 进程树 / DLL 搜索路径），
+        # 也没有可靠的进程组核验，包装了回执只会恒 partial。Windows 保持 P09 之前的裸起，真机验证后再开。
         return None
     prefix = conda_prefix_of(python)
     if prefix is None:

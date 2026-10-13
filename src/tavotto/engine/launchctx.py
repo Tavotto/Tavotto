@@ -105,7 +105,8 @@ def _basis_of(rcpt) -> dict[str, str | None] | None:
         if isinstance(m, dict) and isinstance(m.get("path"), str):
             out[m["path"]] = m.get("sha256") if isinstance(m.get("sha256"), str) else None
     out.update(rcpt.observed_files())
-    if len(out) > MAX_BASIS:
+    if len(out) > MAX_BASIS or any(v is None for v in out.values()):
+        # 条数存不全，或有输入没算出摘要（过大）：核验只能看「还在不在」，内容原地改了发现不了——这样的依据不充分
         return None
     return dict(sorted(out.items()))
 
@@ -220,7 +221,7 @@ def verify(
             if real is None or not Path(real).is_file():
                 return REASON_HELPER
             if want is None:
-                continue  # 当时没算出摘要（过大）：只核仍在
+                return REASON_HELPER  # 没有摘要 = 不可核验（新记录不会有；防御旧 / 手改的记录）
             try:
                 got = figcapture.hash_file(real)[0]
             except OSError:
