@@ -778,10 +778,11 @@ def test_action_only_report_is_not_falsely_marked_as_missing_drag():
     a = PR.analyze_report(report)
     assert a["actions"][0]["kind"] == "symbol.insert"
     assert not [
-        f for f in a["findings"]
+        f
+        for f in a["findings"]
         if f.dimension == "覆盖" and "没有足够长的拖动" in " ".join(f.evidence)
     ]
     assert not [
-        f for f in a["findings"]
-        if f.dimension == "覆盖" and "没跑自动测试" in " ".join(f.evidence)
+        f for f in a["findings"] if f.dimension == "覆盖" and "没跑自动测试" in " ".join(f.evidence)
     ]
+    assert next(g for dim, g, _ in a["grades"] if dim == "覆盖") == "—"

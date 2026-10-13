@@ -1456,6 +1456,12 @@ def analyze_report(report: dict) -> dict:
     findings = merge_findings(findings)
     findings.sort(key=lambda f: -f.severity)
     grades = grade(stats, findings, refresh, headroom, idle_late, auth)
+    if action_only:
+        # 普通点击报告不能替拖动、渲染放大等维度背书；覆盖维度亦不可给 A。
+        grades = [
+            (dim, "—", "只记录普通交互；未测拖动") if dim == "覆盖" else (dim, g, why)
+            for dim, g, why in grades
+        ]
     return {
         "refresh": refresh,
         "stats": stats,
