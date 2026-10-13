@@ -633,14 +633,17 @@ def start(
         raise RunError(runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter=spec.interpreter)
 
     # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
-    session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex[:8]}"
+    # 完整 128 位随机（不截断）：同一 launch_id 反复复用时也不会生日碰撞回到旧目录 / 旧回执身份
+    session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex}"
     # 输出目录由所有者独占、每次启动唯一，不接受调用方指定（共用目录会互相争用、读到别的启动的旧
     # `.preview-ledger` 与产物；相对路径在 sidecar 和子进程里还会解析到不同位置）
     cache_root = Path(config.data_path("cache", "native")).resolve()
     out_dir = str((cache_root / session_id).resolve())
     if Path(out_dir).parent != cache_root:  # 白名单之外的最后一道：必须就在缓存根下一层
         raise RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID, reason="会话目录不在缓存根内")
-    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    # 独占创建：目录已存在说明会话 id 撞了（或残留），宁可失败也不继承旧 `.preview-ledger`
+    Path(out_dir).mkdir(exist_ok=False)
 
     session = nativesession.NativeSession(
         session_id=session_id,
