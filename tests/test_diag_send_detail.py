@@ -1291,9 +1291,13 @@ class TestSourceStatRaces:
             (proj / n).write_text(f"# {n}\n", encoding="utf-8")
         real_stat = Path.stat
 
+        calls = {"n": 0}
+
         def flaky(self, *a, **k):
             if self.name == "gone.py":
-                raise FileNotFoundError(self.name)
+                calls["n"] += 1
+                if calls["n"] > 1:  # 枚举时还在（is_file / 第一次 stat 过了），排序 / 读取时已经没了
+                    raise FileNotFoundError(self.name)
             return real_stat(self, *a, **k)
 
         monkeypatch.setattr(Path, "stat", flaky)
