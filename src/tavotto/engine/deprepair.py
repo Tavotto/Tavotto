@@ -54,7 +54,6 @@ from . import (
     envlease,
     execspec,
     importscan,
-    launchctx,
     launcher,
     logsafe,
     managedenv,
@@ -2320,7 +2319,7 @@ _SELFTEST_NAME = "tavotto_selftest.py"
 def _scoped_self_test(python: str, project: str, script: str) -> dict:
     """在这个项目 / 脚本的启动决策范围里跑 `worker_self_test`（与 worker / 预检探针同一个 `launchctx.decide`）。
     范围由这里设，`worker_self_test` 本身仍是单参数——测试大量以单参数替身替换它。"""
-    with launchctx.probe_scope(project, script):
+    with pool.launch_scope(project, script):
         return worker_self_test(python)
 
 
@@ -2356,6 +2355,8 @@ def worker_self_test(python: str) -> dict:
             ),
         )
         lau = launcher.effective_launcher(python)
+        env_build = pool.build_envelope({"cmd": "build"})
+        env_stop = pool.build_envelope({"cmd": "shutdown"})
         proc = launcher.popen(
             argv,
             lau,
@@ -2370,10 +2371,12 @@ def worker_self_test(python: str) -> dict:
             creationflags=runtime.CREATE_NO_WINDOW,
         )
         try:
-            # legacy 信封（worker 明确支持，手工调试用的就是它）：一条 build
-            # 一条 shutdown，读到 EOF 即结束，不必在这里重建一套超时读线程。
+            # v1 信封（`pool.build_envelope`，调用侧的唯一出处）：一条 build 一条 shutdown，读到 EOF 即结束，
+            # 不必在这里重建一套超时读线程。回复只认带 `protocol_version` 且 `request_id` 回显对得上的信封——
+            # 钩子打印的 `{"ok": true}` 之类不是 worker 的回复，一律当日志。
             stdout, stderr = proc.communicate(
-                '{"cmd": "build"}\n{"cmd": "shutdown"}\n', timeout=SELFTEST_TIMEOUT_S
+                json.dumps(env_build) + "\n" + json.dumps(env_stop) + "\n",
+                timeout=SELFTEST_TIMEOUT_S,
             )
         except subprocess.TimeoutExpired:
             _kill(proc)
@@ -2387,7 +2390,12 @@ def worker_self_test(python: str) -> dict:
                 if suffix is None:
                     continue
                 resp = suffix
-            if isinstance(resp, dict) and "ok" in resp:
+            if (
+                isinstance(resp, dict)
+                and resp.get("protocol_version") == pool.PROTOCOL_VERSION
+                and resp.get("request_id") == env_build["request_id"]
+                and "ok" in resp
+            ):
                 if resp.get("ok"):
                     # `stems` 才是「捕获到几张图」——调用方据此断言 worker
                     # 是真跑通了，而不是「函数返回了 True」。
@@ -6105,7 +6113,7 @@ def decide_environment_pinned(
 ) -> pool.EnvironmentDecision:
     """（启动决策范围包装：体检候选解释器的预检探针与 worker 用同一个每脚本启动决策，见 `launchctx.probe_scope`。）
     真正的判据在 `_decide_environment_pinned`。"""
-    with launchctx.probe_scope(str(project), script):
+    with pool.launch_scope(str(project), script):
         return _decide_environment_pinned(project, script, project_exec=project_exec)
 
 

@@ -3318,6 +3318,18 @@ def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
     return None
 
 
+@contextlib.contextmanager
+def launch_scope(figures_dir, script_name: str):
+    """每脚本启动决策的范围（`launchctx.probe_scope`）+ 把「记录说要 Conda、现在找不到 conda」转成带稳定码的 `WorkerError`
+    （`conda_launcher_unavailable`）。预检、依赖门、自检、worker 构造都在这个范围里拿同一个决策、抛同一个错——
+    不会有「预检降级成裸起、报缺依赖，worker 才报 Conda 不可用」的分叉。"""
+    try:
+        with launchctx.probe_scope(figures_dir, script_name):
+            yield
+    except launcher_mod.LauncherUnavailable as exc:
+        raise WorkerError(str(exc), code=exc.code) from exc
+
+
 def _launcher_or_error(figures_dir, script_name: str, python: str):
     """启动方式（P09）：`launchctx.decide`（唯一启动决策），其「记录说要 Conda、现在找不到 conda」转成带稳定码的
     `WorkerError`（`conda_launcher_unavailable`），不悄悄改成裸起。"""
@@ -3336,9 +3348,7 @@ def _resolve_for_worker(
         if not pinned.matches(pinned.python):
             raise _environment_changed()
         return pinned.python, pinned.source
-    with launchctx.probe_scope(
-        figures_dir, script_name
-    ):  # 选择解释器时的预检与 worker 用同一个启动决策
+    with launch_scope(figures_dir, script_name):  # 选择解释器时的预检与 worker 用同一个启动决策
         return resolve_worker_python(figures_dir, script=script_name)
 
 
@@ -3371,7 +3381,7 @@ def _new_worker(
 ):
     """起会话的唯一入口：整个流程（依赖门 `SPAWN_GATES` 与两个构造函数里的解释器解析）都在
     `launchctx.probe_scope` 里——预检探针与 worker 用同一个每脚本启动决策（见 `_new_worker_unscoped`）。"""
-    with launchctx.probe_scope(figures_dir, script_name):
+    with launch_scope(figures_dir, script_name):
         return _new_worker_unscoped(
             script_name,
             figures_dir,

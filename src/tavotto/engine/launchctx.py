@@ -267,12 +267,10 @@ def _record_of(project_root: str | Path, script: str) -> dict | None:
 def probe_launcher(
     project_root: str | Path, script: str, python: str
 ) -> launcher.CondaLauncher | None:
-    """预检探针 / 依赖门 / worker 自检用的启动决策：就是 `decide`；唯一的区别是「记录说要 Conda 而 conda 不见了」时
-    探针不抛（worker 起会话时会报稳定码），按裸起探。"""
-    try:
-        return decide(project_root, script, python)
-    except launcher.LauncherUnavailable:
-        return None
+    """预检探针 / 依赖门 / worker 自检用的启动决策：就是 `decide`，**包括**「记录说要 Conda 而 conda 不见了」时的
+    `LauncherUnavailable`——不降级成裸起：裸起的预检会误报缺依赖、提议修复或换环境，worker 那里该有的
+    `conda_launcher_unavailable` 永远走不到。范围边界（`pool.launch_scope`）把它转成同一个稳定码的 `WorkerError`。"""
+    return decide(project_root, script, python)
 
 
 @contextlib.contextmanager

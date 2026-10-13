@@ -95,7 +95,10 @@ if banner:  # activate.d 钩子往 stdout 打印的横幅：在用户 Python 启
     sys.stdout.write(banner + ("" if os.environ.get("FAKE_CONDA_BANNER_NO_NEWLINE") else "\n"))
     sys.stdout.flush()
 # 真 conda（POSIX）：先起一个临时 shell，再由 shell 起用户 Python——Python 的父进程是 shell，不是 conda
-code = subprocess.Popen(["/bin/sh", "-c", '"$@"; exit $?', "sh", *cmd], env=env).wait()
+if os.environ.get("FAKE_CONDA_SKIP_CMD"):  # 模拟「钩子打印了东西，但被包装的命令根本没成功」
+    code = 1
+else:
+    code = subprocess.Popen(["/bin/sh", "-c", '"$@"; exit $?', "sh", *cmd], env=env).wait()
 after = os.environ.get("FAKE_CONDA_AFTER_BANNER")
 if after:  # deactivate.d 钩子在命令结束之后往 stdout 打印的内容
     sys.stdout.write(after + "\n")
@@ -1892,3 +1895,59 @@ def test_every_spawn_site_gets_the_same_launcher_for_the_same_project_script_pyt
     )
     deprepair._scoped_self_test(py, str(proj), "fig.py")
     assert seen == [expected]
+
+
+@needs_worker
+def test_a_hook_printing_ok_true_cannot_fake_a_passing_self_test(activation_only_env, monkeypatch):
+    """自检只认协议信封（`protocol_version` + 回显的 `request_id`）：钩子打印的 `{"ok": true}` 不是 worker 的回复。"""
+    from tavotto.engine import deprepair
+
+    py, prefix, log = activation_only_env
+    monkeypatch.setenv("FAKE_CONDA_BANNER", '{"ok": true, "stems": {"x": 1}}')
+    monkeypatch.setenv("FAKE_CONDA_SKIP_CMD", "1")  # worker 实际没跑成
+    done = deprepair.worker_self_test(py)
+    assert done["ok"] is False, done
+    monkeypatch.delenv("FAKE_CONDA_SKIP_CMD")
+    # 正对照：worker 真跑成了，钩子横幅照样存在——自检通过且图数来自 worker 的回复
+    assert deprepair.worker_self_test(py) == {"ok": True, "figures": 1}
+
+
+@needs_worker
+def test_a_vanished_conda_surfaces_the_stable_error_before_any_preflight_can_misreport(
+    conda_world, tmp_path, monkeypatch
+):
+    """记录说要 Conda、现在找不到 conda：打开脚本时预检 / 依赖门也不降级成裸起（会误报缺依赖、提议修复），
+    直接是 `conda_launcher_unavailable`（与 worker 同一个稳定码）。"""
+    from tavotto.engine import preparation
+
+    proj, prefix, log, counter = conda_world
+    py = str(prefix / "bin" / "python")
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    rcpt = _good_rcpt(proj, py)
+    rcpt.python_source = "env_override"
+    rcpt.launcher = launcher.CondaLauncher(
+        conda_exe=str(prefix.parent.parent / "bin" / "conda"), prefix=str(prefix)
+    ).public()
+    import hashlib
+
+    rcpt.source_revision = hashlib.sha1((proj / "fig.py").read_bytes()).hexdigest()
+    assert launchctx.record_success(proj, "fig.py", rcpt)
+    (prefix.parent.parent / "bin" / "conda").unlink()
+    monkeypatch.setenv("PATH", str(tmp_path / "nothing"))
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    # 起会话：预检（选解释器）与依赖门都在范围里，错误码就是稳定码，不是缺依赖 / 显式解释器不可用
+    with pytest.raises(_pool.WorkerError) as werr:
+        _pool._new_worker("fig.py", str(proj), "__main__")
+    assert werr.value.code == "conda_launcher_unavailable"
+    # 准备计划（检查，不执行）里环境错误同样是这个码
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(proj),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target="script",
+    )
+    assert (plan.environment.get("error") or {}).get("code") == "conda_launcher_unavailable"
