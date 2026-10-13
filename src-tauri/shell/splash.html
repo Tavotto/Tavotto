@@ -28,7 +28,8 @@
   }
 </style>
 </head>
-<body>
+<!-- macOS 的系统标题栏透明叠在页面上（window_chrome.rs）：整页都是拖动区 -->
+<body data-tauri-drag-region="deep">
   <main>
     <h1>Tavotto</h1>
     <p><span id="booting">正在启动渲染服务</span><span class="dot"></span><span class="dot"></span><span class="dot"></span></p>

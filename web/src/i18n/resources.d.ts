@@ -150,6 +150,7 @@ export default interface Resources {
   },
   "common": {
     "actions": {
+      "appMenu": "菜单",
       "cancel": "取消",
       "clearSearch": "清除搜索",
       "close": "关闭",

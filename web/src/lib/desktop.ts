@@ -387,6 +387,84 @@ export async function setDesktopMenuLocale(
 }
 
 /* -------------------------------------------------------------------------- */
+/*  窗框：系统标题栏 / 菜单栏与页面顶栏融成一片（2026-10-13）                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 主窗口的窗框形态，由壳在建窗口时注入（`src-tauri/src/window_chrome.rs` 的 `MARKER_GLOBAL`
+ * 与两个取值，两侧严格同源，`tests/test_desktop_window_chrome.py` 看护）：
+ *
+ * - `overlay`（macOS）：系统标题栏透明叠在页面上，红绿灯在页面顶栏那一行——顶栏让出左侧
+ *   `TRAFFIC_LIGHTS_INSET`，空白处是拖动区。
+ * - `menu-button`（Windows）：菜单栏藏起来，页面顶栏给一个「菜单」按钮弹出同一份菜单；
+ *   标题栏底色随页面主题。
+ * - `native`：浏览器、远程实例窗口（不注入标记）、以及不认这个标记的旧壳——一切照旧。
+ */
+export type WindowChrome = 'overlay' | 'menu-button' | 'native'
+
+export function windowChrome(): WindowChrome {
+  if (!isDesktop()) return 'native'
+  const v = (window as unknown as Record<string, unknown>).__TAVOTTO_WINDOW_CHROME__
+  return v === 'overlay' || v === 'menu-button' ? v : 'native'
+}
+
+/**
+ * `overlay` 下顶栏左侧给红绿灯让出的宽度（CSS 像素）。与壳的 `TRAFFIC_LIGHTS`（关闭钮 x = 16，
+ * 三颗按钮右缘实测在 76）配套，再留 12：主页胶囊的悬停底色不贴着绿灯。
+ */
+export const TRAFFIC_LIGHTS_INSET = 88
+
+/**
+ * 拖动区标记（Tauri 的 `data-tauri-drag-region`）：`deep` = 子树里非交互的地方都能拖，按钮 /
+ * 输入框 / 带 tabindex 的元素照常点击。只在 `overlay` 下给——别的窗框有系统标题栏可拖。
+ */
+export function dragRegionProps(mode: 'deep' | 'self' = 'deep'): Record<string, string> {
+  if (windowChrome() !== 'overlay') return {}
+  return { 'data-tauri-drag-region': mode === 'deep' ? 'deep' : '' }
+}
+
+/**
+ * Windows 顶栏「菜单」按钮：在 (x, y)（页面 CSS 像素，一般是按钮左下角）弹出应用菜单。
+ * 选中的项照旧经 `tavotto:menu` 回来（`useDesktopMenu`）。不在 `menu-button` 窗框里返回 false。
+ */
+export async function showDesktopAppMenu(x: number, y: number): Promise<boolean> {
+  if (windowChrome() !== 'menu-button') return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('show_app_menu', { x, y })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** `rgb(r, g, b)` / `rgba(...)` / `#rrggbb` → `#rrggbb`；认不出来回 null */
+export function cssColorToHex(value: string): string | null {
+  const v = value.trim().toLowerCase()
+  if (/^#[0-9a-f]{6}$/.test(v)) return v
+  const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*[\d.]+\s*)?\)$/.exec(v)
+  if (!m) return null
+  const parts = m.slice(1, 4).map(Number)
+  if (parts.some((n) => n > 255)) return null
+  return '#' + parts.map((n) => n.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Windows：系统标题栏与页面顶栏同色（底色 / 文字色，`#rrggbb`）。Windows 10 上壳照收、系统不认，
+ * 标题栏维持原样。不在 `menu-button` 窗框里返回 false。
+ */
+export async function setDesktopTitlebarColors(background: string, text: string): Promise<boolean> {
+  if (windowChrome() !== 'menu-button') return false
+  try {
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('set_titlebar_colors', { background, text })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /*  Codex 集成的安装 / 诊断（ADR 0012）                                          */
 /* -------------------------------------------------------------------------- */
 
