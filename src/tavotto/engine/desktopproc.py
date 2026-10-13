@@ -562,6 +562,25 @@ class DesktopProcess:
             confirmed = self._finished.wait(pol.kill_timeout + 1.0)
         return CancelResult(confirmed=confirmed, exit_code=self.exit_code, scope=self.scope.kind)
 
+    def terminate_sync(self) -> bool:
+        """关停用：置 cancelled，先礼（`term_grace`）后兵，**同步**等直接子进程与进程组确认消失（有界）。
+
+        不等 `finished`（启动线程可能还握着闸门）；返回是否确认消失。进程忽略 SIGTERM 时也会在返回前被强杀。"""
+        with self._lock:
+            if not self.exited:
+                self.cancelled = True
+        pol = self.policy
+        if not self.exited:
+            self.scope.terminate()
+            if not self._exited.wait(pol.term_grace):
+                self.scope.kill()
+                self._exited.wait(pol.kill_timeout)
+        deadline = time.monotonic() + pol.kill_timeout
+        while not self.scope.empty() and time.monotonic() < deadline:
+            self.scope.kill()
+            time.sleep(0.02)
+        return self.exited and self.scope.empty()
+
     def kill_now(self) -> None:
         """不等确认的取消（sidecar 关停时对「还在启动」的所有者用）：置 cancelled、先礼后兵地发信号就返回。
 
@@ -655,7 +674,11 @@ def start(
         raise
     relay = None
     owner: DesktopProcess | None = None
+    ticket = None
     try:
+        ticket = registry.begin_start(
+            launch.launch_id
+        )  # spawn 之前先登记在途：关停的快照一定看得见
         relay = nativerelay.NativeRelay()
         argv = execspec.bridge_argv(
             spec,
@@ -698,8 +721,8 @@ def start(
         )
         session.owned = owner
         session.spec = spec
-        registry.begin_start(launch.launch_id, owner)  # 登记之前也要让 sidecar 关停看得见
         owner.start()
+        registry.attach_owner(ticket, owner)  # 关停已开始则拒绝：下面的失败收尾会收掉这个子进程
         try:
             sock, hello = relay.adopt_child(
                 pol.connect_timeout,
@@ -738,8 +761,9 @@ def start(
             registry.unreserve(launch.launch_id)  # 没有所有者就没有回调
         raise
     finally:
+        if ticket is not None:
+            registry.end_start(ticket)
         if owner is not None:
-            registry.end_start(launch.launch_id, owner)
             owner.arm()  # 任何路径都不许把闸门留着（否则等待线程永远不回调）
         if relay is not None:
             relay.close()

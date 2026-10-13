@@ -1037,12 +1037,124 @@ def test_a_registered_owned_session_cannot_be_forgotten_or_pruned_while_unfinish
     assert s.owned.finished and not dk.pid_alive(s.owned.pid)
 
 
-def test_end_start_only_removes_its_own_owner_aba(tmp_path):
+def test_end_start_only_removes_its_own_ticket_aba(tmp_path):
     reg = nativesession.NativeSessionRegistry()
-    first, second = object(), object()
-    reg.begin_start("same", first)
-    reg.begin_start("same", second)  # 同 id 重试登记了新的所有者
-    reg.end_start("same", first)  # 第一次启动迟到的收尾
+    first = reg.begin_start("same")
+    second = reg.begin_start("same")  # 同 id 重试领了新的在途登记
+    reg.end_start(first)  # 第一次启动迟到的收尾
     assert reg._starting.get("same") is second, "ABA：收尾删掉了后来者的登记"  # noqa: SLF001
-    reg.end_start("same", second)
+    reg.end_start(second)
     assert reg._starting == {}  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# 关停与启动的交界：closing 状态、spawn 之前领登记、关停同步升级
+# ---------------------------------------------------------------------------
+def test_registry_closing_atomically_refuses_every_new_entry_point():
+    reg = nativesession.NativeSessionRegistry()
+    reg.shutdown_all()
+    for call in (
+        lambda: reg.reserve("x"),
+        lambda: reg.begin_start("x"),
+        lambda: reg.attach_owner(nativesession.StartTicket("x"), object()),
+        lambda: reg.adopt(object()),
+    ):
+        with pytest.raises(RunError) as err:
+            call()
+        assert err.value.code == runcodes.NATIVE_REGISTRY_CLOSING
+    reg.reopen()
+    reg.reserve("x")  # 重新打开后恢复
+
+
+def test_shutdown_during_the_gap_between_popen_and_owner_attach_never_leaves_a_child(
+    tmp_path, monkeypatch
+):
+    """把 Popen 之后、挂所有者之前的窗口撑开，并发关停：启动被拒，子进程被启动线程自己收掉。"""
+    gate = threading.Event()
+    spawned = threading.Event()
+    box = {}
+    real = desktopproc._scope_for
+
+    def slow_scope(proc, **kw):
+        box["pid"] = proc.pid
+        spawned.set()
+        gate.wait(60)
+        return real(proc, **kw)
+
+    monkeypatch.setattr(desktopproc, "_scope_for", slow_scope)
+
+    def go():
+        try:
+            box["session"] = dk.start(tmp_path, RUNNING_SCRIPT)
+        except BaseException as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    assert spawned.wait(30)
+    try:
+        nativesession.REGISTRY.shutdown_all()  # 此刻进程已起、所有者还没挂：快照里是在途登记
+    finally:
+        gate.set()
+        t.join(60)
+    assert "session" not in box, "关停之后启动仍然成功了"
+    assert isinstance(box.get("error"), RunError)
+    assert box["error"].code == runcodes.NATIVE_REGISTRY_CLOSING
+    dk.wait_until(lambda: not dk.pid_alive(box["pid"]), timeout=20, what="子进程被收掉")
+    dk.wait_until(lambda: envlease.snapshot()["native"] == {}, timeout=20, what="租约释放")
+    assert nativesession.REGISTRY._starting == {}  # noqa: SLF001
+
+
+SIGTERM_IGNORING = (
+    "import signal, time\n"
+    "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    'open("ready", "w").write("1")\n'
+    "time.sleep(600)\n"
+)
+
+
+@POSIX_ONLY
+def test_shutdown_all_returns_only_after_a_sigterm_ignoring_registered_child_is_gone(tmp_path):
+    policy = desktopproc.OwnedPolicy(term_grace=0.5, kill_timeout=5.0, linger_grace=0.0)
+    session = dk.start(tmp_path, SIGTERM_IGNORING, policy=policy)
+    dk.wait_until(lambda: (tmp_path / "work" / "ready").exists(), what="就绪")
+    pid = session.owned.pid
+    nativesession.REGISTRY.shutdown_all()
+    assert not dk.pid_alive(pid), "shutdown_all 返回时忽略 SIGTERM 的子进程还在"
+
+
+@POSIX_ONLY
+def test_shutdown_all_returns_only_after_a_sigterm_ignoring_starting_child_is_gone(
+    tmp_path, monkeypatch
+):
+    from tavotto.engine import nativerelay
+
+    gate = threading.Event()
+    real = nativerelay.NativeRelay.adopt_child
+
+    def stalled(self, *a, **kw):
+        real(self, *a, **kw)
+        gate.wait(60)  # 脚本已在跑，但卡在登记之前
+        raise RunError(runcodes.DESKTOP_RUN_CONNECT_TIMEOUT, seconds=1)
+
+    monkeypatch.setattr(nativerelay.NativeRelay, "adopt_child", stalled)
+    policy = desktopproc.OwnedPolicy(term_grace=0.5, kill_timeout=5.0, linger_grace=0.0)
+    box = {}
+
+    def go():
+        try:
+            dk.start(tmp_path, SIGTERM_IGNORING, policy=policy)
+        except BaseException as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    work = tmp_path / "work"
+    dk.wait_until(lambda: (work / "ready").exists(), what="就绪")
+    owner_pid = next(iter(nativesession.REGISTRY._starting.values())).owner.pid  # noqa: SLF001
+    try:
+        nativesession.REGISTRY.shutdown_all()
+        assert not dk.pid_alive(owner_pid), "shutdown_all 返回时在途的、忽略 SIGTERM 的子进程还在"
+    finally:
+        gate.set()
+        t.join(60)

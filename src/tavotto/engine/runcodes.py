@@ -62,6 +62,8 @@ BRIDGE_CHILD_EXITED = "bridge_child_exited"
 #: 桌面拥有的脚本进程（P06，ADR 0125）
 #: 这条会话的进程不是桌面起的（终端拥有的）：桌面不杀它，只放手。
 NATIVE_PROCESS_NOT_OWNED = "native_process_not_owned"
+#: 注册表正在 / 已经关停（sidecar 退出）：不再接受新的桌面拥有的启动。
+NATIVE_REGISTRY_CLOSING = "native_registry_closing"
 #: 桌面自己起的用户 Python 在期限内没连回控制通道（进程已被收掉）。
 DESKTOP_RUN_CONNECT_TIMEOUT = "desktop_run_connect_timeout"
 #: 桌面拥有的启动身份不成立（cwd 不是目录 / 不是桌面拥有的 spec）。
@@ -215,6 +217,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "You started this script from a terminal, so Tavotto won't stop it for you."
         " Press Ctrl+C in that terminal.",
     },
+    NATIVE_REGISTRY_CLOSING: {
+        "zh": "Tavotto 正在关闭，没有启动这次运行。",
+        "en": "Tavotto is shutting down, so this run was not started.",
+    },
     DESKTOP_RUN_CONNECT_TIMEOUT: {
         "zh": "你的 Python 在 {seconds} 秒内没有连回控制通道，Tavotto 已经结束了它。",
         "en": "Your Python didn't connect to the control channel within {seconds} seconds,"
@@ -269,6 +275,7 @@ EXIT_FOR_CODE: dict[str, int] = {
     NATIVE_SESSION_CONFLICT: EXIT_ATTACH_FAILED,
     BRIDGE_CHILD_EXITED: EXIT_ATTACH_FAILED,
     NATIVE_PROCESS_NOT_OWNED: EXIT_USAGE,
+    NATIVE_REGISTRY_CLOSING: EXIT_ATTACH_FAILED,
     DESKTOP_RUN_CONNECT_TIMEOUT: EXIT_ATTACH_FAILED,
     DESKTOP_RUN_LAUNCH_INVALID: EXIT_USAGE,
 }

@@ -800,6 +800,20 @@ class NativeSession:
         }
 
 
+class StartTicket:
+    """一次桌面拥有的启动在注册表里的「在途」登记：**spawn 之前**就领，Popen 之后才挂上所有者。
+
+    `shutdown_all` 的快照里要么看得到它（并标 `cancelled`，之后挂所有者的一步会被拒），要么注册表已 closing
+    根本领不到——两者之间没有「进程已起、谁也看不见」的窗口。"""
+
+    __slots__ = ("launch_id", "owner", "cancelled")
+
+    def __init__(self, launch_id: str):
+        self.launch_id = launch_id
+        self.owner = None
+        self.cancelled = False
+
+
 class NativeSessionRegistry:
     """进程内的所有 native 会话 + logical asset → live route 的映射。"""
 
@@ -812,7 +826,11 @@ class NativeSessionRegistry:
         self._reserved: set[str] = set()
         #: launch_id → 已 spawn、还在握手 / 登记中的所有者。不在 `_sessions` 里，但进程已经在跑：
         #: `shutdown_all` 必须看得见它，否则 sidecar 关停时漏掉成孤儿。
-        self._starting: dict[str, object] = {}
+        self._starting: dict[str, StartTicket] = {}
+        #: sidecar 退出中 / 已退出：`shutdown_all()` 第一步在锁内置位。此后 `reserve` / `begin_start` /
+        #: `attach_owner` / `adopt` 一律原子拒绝（`native_registry_closing`），在途的启动在下一个检查点
+        #: 自行收掉子进程。只有 `reopen()`（测试 / 同进程重启）能清。
+        self._closing = False
         self.on_change = None
 
     # ---------------- attach ----------------
@@ -862,6 +880,8 @@ class NativeSessionRegistry:
         占位由所有者的完成回调释放（`desktopproc.start`）——握手 / 登记失败后清组超时（取消未确认）也不例外。
         租约键另有一层保险：每次启动的会话 id 都带唯一后缀，不同所有者互相删不掉对方的租约。"""
         with self._lock:
+            if self._closing:
+                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
             busy = any(
                 s.launch_id == launch_id
                 and (s.alive() or (s.owned is not None and not s.owned.finished))
@@ -871,15 +891,32 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             self._reserved.add(launch_id)
 
-    def begin_start(self, launch_id: str, owner) -> None:
+    def begin_start(self, launch_id: str) -> StartTicket:
+        """spawn **之前**领在途登记；closing 时拒绝（一行用户代码都没跑）。"""
         with self._lock:
-            self._starting[launch_id] = owner
+            if self._closing:
+                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+            ticket = StartTicket(launch_id)
+            self._starting[launch_id] = ticket
+            return ticket
 
-    def end_start(self, launch_id: str, owner) -> None:
-        """按所有者**身份**条件移除：同 id 重试（ABA）时，先前那次启动的收尾不能删掉后来者新登记的。"""
+    def attach_owner(self, ticket: StartTicket, owner) -> None:
+        """Popen 之后把所有者挂到登记上。关停已经开始（标了 cancelled / closing）就拒绝——调用方自己收子进程。"""
         with self._lock:
-            if self._starting.get(launch_id) is owner:
-                del self._starting[launch_id]
+            if self._closing or ticket.cancelled:
+                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+            ticket.owner = owner
+
+    def end_start(self, ticket: StartTicket) -> None:
+        """按登记**身份**移除：同 id 重试（ABA）时先前那次的收尾删不掉后来者的。"""
+        with self._lock:
+            if self._starting.get(ticket.launch_id) is ticket:
+                del self._starting[ticket.launch_id]
+
+    def reopen(self) -> None:
+        """清 closing（仅测试隔离 / 同进程重启用）。"""
+        with self._lock:
+            self._closing = False
 
     def unreserve(self, launch_id: str) -> None:
         with self._lock:
@@ -892,6 +929,8 @@ class NativeSessionRegistry:
         （live route、终态丢路由、`on_change`）是同一套。
         """
         with self._lock:
+            if self._closing:
+                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
             prev = self._sessions.get(session.session_id)
             if prev is not None and (
                 prev.alive() or (prev.owned is not None and not prev.owned.finished)
@@ -1003,21 +1042,34 @@ class NativeSessionRegistry:
         桌面拥有的进程是 sidecar 自己起的，退出时不能留成没人管的孤儿（还占着环境）：
         先断开，再按所有者的有界策略结束（ADR 0125 §五）。"""
         with self._lock:
+            self._closing = True  # 第一步：此后任何新启动 / 登记都被原子拒绝
             sessions = list(self._sessions.values())
-            starting = list(self._starting.values())
-        for owner in starting:
-            # 还在握手 / 登记的：不在 `_sessions` 里，但进程已经起来了。不等它（启动线程还握着闸门），
-            # 直接收；启动线程会看到子进程退出，走自己的失败收尾（关传输、放租约与占位）
-            with _suppress_all():
-                owner.kill_now()
+            tickets = list(self._starting.values())
+            for t in tickets:
+                t.cancelled = True  # 还没挂所有者的，挂的那一步会被拒
         for s in sessions:
             with _suppress_all():
                 s.shutdown()
-        for s in sessions:
-            if s.owned is not None:
-                with _suppress_all():
-                    s.cancel_owned()
-        return len(sessions) + len(starting)
+        # 在途启动的所有者 + 已登记会话的所有者：并发收、**同步等到进程确认消失**（有界）再返回，
+        # 否则 sidecar 比子进程先退，就成了孤儿
+        # 已登记的走 `cancel_owned()`（等到 finished：终态与租约都落定）；在途的所有者还握着启动闸门，
+        # 走 `terminate_sync()`（等进程与进程组确认消失，不等闸门）
+        targets = [t.owner.terminate_sync for t in tickets if t.owner is not None]
+        targets += [s.cancel_owned for s in sessions if s.owned is not None]
+        threads = [
+            threading.Thread(target=_run_quiet, args=(fn,), daemon=True, name="tavotto-owned-stop")
+            for fn in targets
+        ]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(60)
+        return len(sessions) + len(tickets)
+
+
+def _run_quiet(fn) -> None:
+    with _suppress_all():
+        fn()
 
 
 def _connect(host: str, port: int, token: str, *, timeout: float = 15.0) -> socket.socket:

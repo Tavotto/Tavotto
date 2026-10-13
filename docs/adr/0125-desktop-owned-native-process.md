@@ -82,9 +82,7 @@ terminal 的 `stable_payload()` / `launch_context()` 逐字节不变（golden）
    Windows 为 Job Object（`KILL_ON_JOB_CLOSE`），取消 = `TerminateJobObject`。**不按 PPID 猜、不遍历进程表**；组外的子进程（自己 `setsid` 走的）
    不是我们纳管的，如实不管。脚本自然退出后组里的残余再给 `linger_grace` 收尾，仍在就按取消强度收掉——否则它们会带着租约的环境活下去。
 5. **sidecar 退出**：`REGISTRY.shutdown_all()` 对 terminal 会话仍只放手；对桌面拥有的会话先断开再 `cancel_owned()`（有界），不留孤儿。
-   覆盖三类状态：已登记的；**还在握手 / 登记的**（`REGISTRY.begin_start/end_start`，`kill_now()` 不等闸门）；已断开 / 终态但进程未结束的
-   （`forget` / `prune` 不得移除 `owned` 未 finished 的会话）。sidecar 的 `_cleanup()` 调它。残余：`shutdown_all` 之后才开始的启动
-   不会被它收（监听 socket 先关，只剩已在途的请求）。
+   结构见下「关停与启动的交界」。
 6. **启动时序**（`desktopproc.start`）：占位(`launch_id`) → 租约（会话 id 每次启动唯一后缀）→ spawn → 握手 → **reader 先起** →
    登记 → **最后才放行所有者的完成回调**（`DesktopProcess` 的启动闸门 `arm()`）。快退出的子进程因此既不会在 reader 起来前被判
    「没通知就走了」，也不会在登记前放掉占位；任何失败路径先 `arm()` 再 `cancel()`。启动期间的 `cancel()` 会等闸门（微秒级，登记走完即放）。
@@ -109,3 +107,28 @@ terminal 的 `stable_payload()` / `launch_context()` 逐字节不变（golden）
 * stdout 管道对 Python 默认块缓冲：要实时输出，调用方在 `env` 增量里放 `PYTHONUNBUFFERED=1`（P07 决定默认）。
 * 不支持：任意 GUI 事件循环、Jupyter/IPython、子进程创建的 Figure、已运行的外部宿主 attach——与 ADR 0021 §0 同。
 * 本阶段**不接**前端 / 桌面入口 / preparation runner / 输入弹窗（P07）；桌面 GUI、Windows/macOS 真机归 P07 / P10。
+
+## 关停与启动的交界（`REGISTRY.shutdown_all()` × `desktopproc.start()`）
+
+结构：注册表有 `closing` 状态。`shutdown_all()` 第一步在锁内置位，此后 `reserve` / `begin_start` / `attach_owner` / `adopt`
+一律原子拒绝（`native_registry_closing`）；在途启动在下一个检查点看到拒绝，**自己**收掉子进程（走既有失败收尾：关传输、`arm()`、`cancel()`、
+放租约与占位）。`begin_start` 在 **spawn 之前**领 `StartTicket`，Popen 之后才 `attach_owner`——快照里要么看得到票据（标 `cancelled`，
+挂所有者的一步被拒），要么 closing 已置位根本领不到。关停对已登记会话走 `cancel_owned()`（等到 `finished`），对在途所有者走
+`terminate_sync()`（先礼 `term_grace`，后兵，**同步**等进程与进程组确认消失再返回；不等启动闸门）。`forget` / `prune` 不得移除
+`owned` 未 finished 的会话。`reopen()` 仅供测试 / 同进程重启（`tests/conftest.py` 每个用例前后调用）。
+
+窗口清单（逐个标注）：
+
+| 窗口 | 处理 |
+|---|---|
+| 关停先于 `reserve` / `begin_start` | closing 拒绝，一行用户代码没跑 |
+| `begin_start` 之后、Popen 之前关停 | 票据已 `cancelled`；Popen 后 `attach_owner` 被拒，启动线程收子进程 |
+| Popen 之后、`attach_owner` 之前（含 `_scope_for` 慢） | 同上（有用例撑开此窗口） |
+| `attach_owner` 之后、握手 / reader / 登记之前 | 快照里有所有者，`terminate_sync` 同步收；启动线程看到子进程退出走失败收尾 |
+| `adopt` 之前 closing | `adopt` 拒绝，失败收尾收进程 |
+| 已登记、`arm()` 之前 | `cancel_owned()` 等闸门（微秒级） |
+| 进程忽略 SIGTERM | `term_grace` 后强杀，返回前确认（POSIX 有用例；Windows 的 Job 本就是强杀） |
+| `shutdown_all` 返回之后才进来的启动 | closing 拒绝 |
+| **残余**：sidecar 被 SIGKILL / 崩溃 | POSIX 无 `KILL_ON_JOB_CLOSE` 等价物，子进程成孤儿（Windows 靠 Job） |
+| **残余**：`terminate_sync` / `cancel_owned` 的并发上限 60 s | 超时仍在则不阻止退出（租约随进程消失） |
+| **残余**：`owner.start()` 自己抛错（线程创建失败） | 不处理更深的资源耗尽 |
