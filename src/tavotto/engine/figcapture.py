@@ -662,108 +662,69 @@ def _drop_ledger_stem(out_dir, stem: str, expected_seq=None, *, check: bool = Fa
     return True
 
 
-def _pid_alive(pid: int) -> bool:
-    """持锁进程还活着吗（拿不准时按活着算：宁可多等，不抢活人的锁）。"""
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        import ctypes  # noqa: PLC0415
+#: 账本读-改-写的互斥（跨进程：发布方在 worker，审计 / 摘指针在 app）用**操作系统的 advisory lock**，
+#: 锁常驻在产物目录里的 `.preview-ledger.lock`（文件本身从不删除，里头没有内容）：持锁进程退出 / 被杀，
+#: 内核自动释放，所以没有 pid、陈旧阈值、遗留回收这类靠文件存在加启发式判活的东西（它们连着出过三轮竞态）。
+#: 同一进程的多个线程先过这把进程内的锁再去拿文件锁——`flock` 对同一进程内不同 fd 的语义因平台而异，不依赖它。
+_LEDGER_THREAD_LOCK = threading.Lock()
 
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED：在，但不归我们查
+
+def _try_lock_file(fd: int) -> bool:
+    if os.name == "nt":
+        import msvcrt  # noqa: PLC0415
+
         try:
-            code = ctypes.c_ulong()
-            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and (
-                code.value == STILL_ACTIVE
-            )
-        finally:
-            kernel32.CloseHandle(handle)
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # 锁第 0 字节（可越过 EOF）
+        except OSError:
+            return False
+        return True
+    import fcntl  # noqa: PLC0415
+
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        return True  # EPERM：存在，只是不归我们
+        return False
     return True
 
 
-#: 没写 pid 的锁（刚建出来还没来得及写 / 旧格式）只能按时间判陈旧；必须小于等锁超时，否则崩溃遗留的锁
-#: 会让等锁先超时（Codex #978）。写了 pid 的锁按持有者死活判，活着的持有者超过 `_LOCK_HOLDER_MAX_AGE` 才当 pid 复用遗留。
-_LOCK_NO_PID_STALE = 2.0
-_LOCK_HOLDER_MAX_AGE = 300.0
-
-
-#: 本进程当前持有的账本锁路径。锁文件里写着本进程的活 pid、但这里并没有持有它，说明是本进程上一次释放失败
-#: （Windows 上瞬时共享冲突）遗留的——立即回收，不用等 pid 复用那一档的 300 秒（Codex #978）。
-_HELD_LOCKS: set[str] = set()
-_HELD_LOCKS_GUARD = threading.Lock()
-
-
-def _lock_is_abandoned(path: str) -> bool:
+def _unlock_file(fd: int) -> None:
     try:
-        age = time.time() - os.stat(path).st_mtime
-        with open(path, encoding="utf-8") as fh:
-            head = fh.read(64).split()
+        if os.name == "nt":
+            import msvcrt  # noqa: PLC0415
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl  # noqa: PLC0415
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
     except OSError:
-        return False
-    try:
-        pid = int(head[0])
-    except (IndexError, ValueError):
-        return age > _LOCK_NO_PID_STALE
-    if pid == os.getpid():
-        with _HELD_LOCKS_GUARD:
-            return path not in _HELD_LOCKS
-    if not _pid_alive(pid):
-        return True
-    return age > _LOCK_HOLDER_MAX_AGE
+        pass  # 关 fd 时内核也会放
 
 
 @contextlib.contextmanager
 def _ledger_lock(out_dir, timeout: float = 5.0):
-    """账本的读-改-写互斥（跨进程：发布方在 worker，审计 / 摘指针在 app）。
-
-    `O_EXCL` 建锁文件并写入持有者 pid；持有者已死的锁立即回收（不用等时间），拿不到 pid 才退回时间判据；
-    等不到就抛 `OSError`（发布失败 / 摘指针失败，都按失败处理，不无锁硬写）。
-    """
+    """账本读-改-写互斥；等锁用非阻塞加轮询，最多 `timeout` 秒，超时抛 `OSError`（发布 / 摘指针按失败处理，不无锁硬写）。"""
     path = os.path.join(os.fspath(out_dir), PREVIEW_LEDGER + ".lock")
     deadline = time.monotonic() + timeout
-    while True:
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            try:
-                os.write(fd, f"{os.getpid()} {time.time()}\n".encode())
-            finally:
-                os.close(fd)
-            with _HELD_LOCKS_GUARD:
-                _HELD_LOCKS.add(path)
-            break
-        except FileExistsError:
-            if _lock_is_abandoned(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-                continue
-            if time.monotonic() >= deadline:
-                raise OSError(f"preview ledger is locked: {path}") from None
-            time.sleep(0.01)
+    if not _LEDGER_THREAD_LOCK.acquire(timeout=timeout):
+        raise OSError(f"preview ledger is locked: {path}")
+    fd = None
     try:
-        yield
+        fd = os.open(path, os.O_CREAT | os.O_RDWR)
+        while not _try_lock_file(fd):
+            if time.monotonic() >= deadline:
+                raise OSError(f"preview ledger is locked: {path}")
+            time.sleep(0.01)
+        try:
+            yield
+        finally:
+            _unlock_file(fd)
     finally:
-        for attempt in range(5):  # Windows 上扫描器 / 索引器瞬时占着文件：短暂重试
-            try:
-                os.remove(path)
-                break
-            except FileNotFoundError:
-                break
-            except OSError:
-                time.sleep(0.02 * (attempt + 1))
-        with _HELD_LOCKS_GUARD:
-            _HELD_LOCKS.discard(path)  # 删不掉也不再算"持有"：下一个拿锁的会把它当本进程遗留回收
+        if fd is not None:
+            os.close(fd)
+        _LEDGER_THREAD_LOCK.release()
 
 
 def clear_preview_invalid(out_dir, stem: str) -> None:

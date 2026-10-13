@@ -473,6 +473,8 @@ def _probe(
                 "error": None,
                 "timings": dict(resp.get("timings") or {}),
                 "dropped_figures": int(resp.get("dropped_figures") or 0),
+                # 逐图隔离（P08a）：有图预览捕获失败时如实带出去——部分成功不是"一切正常"
+                **_partial_fields(resp),
                 # 这次试运行按哪一代改指表跑的（ADR 0106 §五）：登记 / 物化落地前核对
                 "remap_generation": getattr(_worker, "remap_generation", None),
                 # T03：这次执行绑定的运行配置引用（不透明 id；argv 原文不出现在结果里）
@@ -532,6 +534,14 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
     return out
 
 
+def _partial_fields(build_resp) -> dict:
+    """build 响应里被逐图隔离的图 → `{"failed_figures": [...], "partial": True}`；没有失败时不加任何键。"""
+    failed = build_resp.get("failed_figures") if isinstance(build_resp, dict) else None
+    if not isinstance(failed, list) or not failed:
+        return {}
+    return {"failed_figures": [dict(f) for f in failed if isinstance(f, dict)], "partial": True}
+
+
 def probe_and_register(
     figures_dir: str | Path,
     script: str,
@@ -572,7 +582,15 @@ def register_probed(
     探测的私事，是「捕获到的图要能被编辑请求按 stem 找到」的那一步。`result` 至少带 `stems` /
     `entry` / `remap_generation`；原样展开回去，加 `registered`（与可能的 `error` / `stem_conflicts`）。
     """
-    conflicts = _live_stem_conflicts(figures_dir, script, result["stems"])
+    # 预览捕获失败的图（P08a 逐图隔离）也是这个脚本产出的图：照样登记，否则部分成功会把它此前的登记整条替换掉；
+    # 编辑请求落到它身上时拿到的是失败原因（`preview_capture_failed`），不是"不存在"
+    failed_stems = [
+        str(f["stem"])
+        for f in (result.get("failed_figures") or ())
+        if isinstance(f, dict) and f.get("stem")
+    ]
+    all_stems = sorted({*result["stems"], *failed_stems})
+    conflicts = _live_stem_conflicts(figures_dir, script, all_stems)
     if conflicts:
         detail = "；".join(f"{stem} → {owner}" for stem, owner in sorted(conflicts.items()))
         return {
@@ -596,13 +614,11 @@ def register_probed(
             # 「替换掉了哪些此前真捕获过的图名」的证据在**注册表提交之前**算完：任何环节在这里失败，整次登记失败、
             # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
             # 一次索引：运行配置读一次、cache 目录列一次，不随被替换 stem 数 × 配置数增长（#819 r4232302927）
-            unlinked = sorted(
-                captured_stems(figures_dir, script, set(before) - set(result["stems"]))[0]
-            )
+            unlinked = sorted(captured_stems(figures_dir, script, set(before) - set(all_stems))[0])
             discover.register(
                 figures_dir,
                 script,
-                result["stems"],
+                all_stems,
                 entry=result["entry"],
                 cost=cost,
                 # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让

@@ -7534,6 +7534,12 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
             "stems": stems,
             "descriptors": descriptors,
             "remap_generation": captured.get("remap_generation"),
+            # 逐图隔离：预览捕获失败的图随结果带到登记（不摘它此前的登记）
+            **(
+                {"failed_figures": captured["failed_figures"]}
+                if captured.get("failed_figures")
+                else {}
+            ),
             # T03：带配置的执行并进注册表，不换掉（见 `probe.register_probed`）
             **(
                 {"run_config": plan.run.config_id} if getattr(plan, "run", None) is not None else {}
@@ -7559,7 +7565,17 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
-    return {"registered": True, **({"unlinked_stems": unlinked} if unlinked else {})}
+    failed = [
+        {"stem": f.get("stem"), "code": f.get("code")}
+        for f in (captured.get("failed_figures") or ())
+        if isinstance(f, dict)
+    ]
+    return {
+        "registered": True,
+        **({"unlinked_stems": unlinked} if unlinked else {}),
+        # 部分成功：哪些图预览没捕获出来（只给稳定码，原因文字留在 build 响应 / 编辑请求的错误里）
+        **({"partial": True, "failed_figures": failed} if failed else {}),
+    }
 
 
 def _publish_preparation_session(payload: dict) -> None:
