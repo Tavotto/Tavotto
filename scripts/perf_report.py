@@ -1795,9 +1795,11 @@ def html_report(analyses: list[tuple[str, dict]]) -> str:
                 out += [f"<li><strong>建议</strong>：{e(x)}</li>" for x in f.fix]
                 out.append("</ul></div>")
         if a["actions"]:
-            out.append("<h3>普通交互动作</h3><div class='card wrap'><table>"
-                       "<tr><th>动作</th><th>次数</th><th>同步 P50 / P95 / max</th>"
-                       "<th>双 rAF P95（非实际 GPU 上屏）</th><th>阶段 P95</th><th>失败</th></tr>")
+            out.append(
+                "<h3>普通交互动作</h3><div class='card wrap'><table>"
+                "<tr><th>动作</th><th>次数</th><th>同步 P50 / P95 / max</th>"
+                "<th>双 rAF P95（非实际 GPU 上屏）</th><th>阶段 P95</th><th>失败</th></tr>"
+            )
             for act in a["actions"]:
                 phases = "、".join(f"{k}: {v:.1f}ms" for k, v in act["phase_p95_ms"].items())
                 out.append(
