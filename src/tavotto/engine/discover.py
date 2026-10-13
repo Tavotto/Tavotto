@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import ast
 import fnmatch
+import functools
 import hashlib
 import io
 import json
@@ -1110,6 +1111,16 @@ _rel_key = rel_key  # 旧名（模块内与既有调用方）
 _output_scandir = os.scandir
 
 
+@functools.lru_cache(maxsize=256)
+def _output_matcher(pattern: str, windows: bool):
+    """Use pathlib glob's basename semantics, including Windows Unicode IGNORECASE.
+
+    `fnmatch.fnmatch` and older `PureWindowsPath.match` lowercase names instead; that loses matches
+    such as dotless-i which pathlib's Windows glob selector accepts even on Python 3.10.
+    """
+    return re.compile(fnmatch.translate(pattern), re.IGNORECASE if windows else 0).fullmatch
+
+
 class _OutputIndex:
     """One bounded, no-follow output listing shared by host-parsed scripts in a discovery report.
 
@@ -1121,16 +1132,46 @@ class _OutputIndex:
 
     def __init__(self, root: Path, budget: scanbudget.Budget | None = None):
         self.root = root
-        self.budget = budget or scanbudget.Budget()
+        self._budget = budget
+        self._windows = os.name == "nt"
         self.names: set[str] | None = None
         self.reason: str | None = None
+        self._claims: list[tuple[dict, frozenset[str]]] = []
+
+    @property
+    def budget(self) -> scanbudget.Budget:
+        # Lazy output work has its own deadline. Script enumeration / earlier AST work must not
+        # consume it; a caller's explicit budget, however, keeps its original deadline and cancel.
+        if self._budget is None:
+            self._budget = scanbudget.Budget()
+        return self._budget
+
+    def track(self, info: dict, patterns: set[str]) -> None:
+        if any("*" in pat for pat in patterns):
+            self._claims.append((info, frozenset(patterns)))
+
+    def finalize(self) -> None:
+        # A later script can exhaust the shared matching deadline after an earlier one succeeded.
+        # Finalize the whole report before conflict detection: retaining just the earlier owner's
+        # wildcard claim would silently resolve a genuine conflict in its favor.
+        if self.reason is None:
+            return
+        for info, patterns in self._claims:
+            literals = sorted(pat for pat in patterns if "*" not in pat)
+            wildcard = sorted(pat for pat in patterns if "*" in pat)
+            info.update(
+                stems=literals,
+                unresolved=wildcard,
+                unresolved_reasons=dict.fromkeys(wildcard, self.reason),
+                dynamic_names=not literals,
+            )
 
     def load(self) -> None:
         if self.names is not None:
             return
         self.names = set()
         pending = [(self.root, 0)]
-        extensions = {os.path.normcase(ext) for ext in OUT_EXTS}
+        extensions = tuple(_output_matcher("*" + ext, self._windows) for ext in OUT_EXTS)
         while pending:
             if reason := self.budget.stop_reason():
                 self.reason = reason
@@ -1160,9 +1201,8 @@ class _OutputIndex:
                                 pending.append((Path(entry.path), depth + 1))
                             else:
                                 self.reason = scanbudget.ISSUE_DEPTH
-                        elif (
-                            stat.S_ISREG(metadata.st_mode)
-                            and os.path.normcase(Path(entry.name).suffix) in extensions
+                        elif stat.S_ISREG(metadata.st_mode) and any(
+                            matches(entry.name) for matches in extensions
                         ):
                             self.names.add(entry.name)
             except OSError:
@@ -1202,11 +1242,12 @@ def _resolve(
         if reason := index.budget.stop_reason():
             index.reason = reason
             break
+        matchers = tuple(_output_matcher(pat + ext, index._windows) for ext in OUT_EXTS)
         for i, name in enumerate(index.names or ()):
             if i % 64 == 0 and (reason := index.budget.stop_reason()):
                 index.reason = reason
                 break
-            if any(fnmatch.fnmatch(name, pat + ext) for ext in OUT_EXTS):
+            if any(matches(name) for matches in matchers):
                 found.add(Path(name).stem)
         found_patterns[pat] = found
     if index.reason:
@@ -1326,7 +1367,7 @@ def _analyze_tree(
     stems, unresolved, reasons = _resolve(
         an.patterns, figures_dir, glob_disk=glob_disk, output_index=output_index
     )
-    return {
+    info = {
         "entry": entry,
         "stems": sorted(stems),
         "unresolved": unresolved,
@@ -1336,6 +1377,9 @@ def _analyze_tree(
         "dynamic_names": not stems,
         "save_calls": len(an.sites),
     }
+    if glob_disk and output_index is not None:
+        output_index.track(info, an.patterns)
+    return info
 
 
 def claims_of(scripts: dict[str, dict]) -> dict[str, list[str]]:
@@ -1375,6 +1419,7 @@ def discover(figures_dir: str | Path, *, target_python: str | None = None) -> di
                 scripts[rel]["parser"] = PARSER_TARGET
         elif seen["problem"] is not None:
             problems[rel] = seen["problem"]
+    output_index.finalize()
     conflicts = {s: sorted(cs) for s, cs in claims_of(scripts).items() if len(cs) > 1}
     return {"scripts": scripts, "conflicts": conflicts, "problems": problems}
 
