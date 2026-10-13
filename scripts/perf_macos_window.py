@@ -196,7 +196,9 @@ def main(argv: list[str] | None = None) -> int:
     capture.add_argument("--output", type=Path, required=True)
     compare = subs.add_parser("compare")
     compare.add_argument("reports", type=Path, nargs="+")
-    compare.add_argument("--json", type=Path, help="numeric-only machine-readable diagnostic result")
+    compare.add_argument(
+        "--json", type=Path, help="numeric-only machine-readable diagnostic result"
+    )
     args = parser.parse_args(argv)
     try:
         if args.command == "record":

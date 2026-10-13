@@ -73,8 +73,7 @@ def test_native_resource_delta_is_not_mislabeled_as_presentation_pass():
         "macos_version": "26.1",
         "arch": "arm64",
         "samples": [
-            {"family_cpu_pct": 2.0, "family_rss_sum_mib": 120.0,
-             "windowserver_global_cpu_pct": 8.0}
+            {"family_cpu_pct": 2.0, "family_rss_sum_mib": 120.0, "windowserver_global_cpu_pct": 8.0}
             for _ in range(8)
         ],
     }
@@ -82,8 +81,11 @@ def test_native_resource_delta_is_not_mislabeled_as_presentation_pass():
         **idle,
         "stage": "drag",
         "samples": [
-            {"family_cpu_pct": 8.0, "family_rss_sum_mib": 128.0,
-             "windowserver_global_cpu_pct": 21.0}
+            {
+                "family_cpu_pct": 8.0,
+                "family_rss_sum_mib": 128.0,
+                "windowserver_global_cpu_pct": 21.0,
+            }
             for _ in range(8)
         ],
     }
