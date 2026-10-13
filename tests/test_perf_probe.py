@@ -761,3 +761,27 @@ def test_action_summary_filters_untrusted_names_and_values():
     assert a["actions"][0]["failed"] == 1
     assert a["actions"][0]["phase_p95_ms"] == {"document.commit": 9}
     assert "secret_file.py" not in PR.text_report("test.json", a)
+
+
+def test_action_only_report_is_not_falsely_marked_as_missing_drag():
+    """符号动作报告没有拖动是正常覆盖，不应输出“没跑自动测试”的误导建议。"""
+    report = _report([])
+    report["actions"] = [
+        {
+            "kind": "symbol.insert",
+            "sync_ms": 12.0,
+            "two_raf_ms": 35.0,
+            "phases": {"document.commit": 9.0},
+            "ok": True,
+        }
+    ]
+    a = PR.analyze_report(report)
+    assert a["actions"][0]["kind"] == "symbol.insert"
+    assert not [
+        f for f in a["findings"]
+        if f.dimension == "覆盖" and "没有足够长的拖动" in " ".join(f.evidence)
+    ]
+    assert not [
+        f for f in a["findings"]
+        if f.dimension == "覆盖" and "没跑自动测试" in " ".join(f.evidence)
+    ]

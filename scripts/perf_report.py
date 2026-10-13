@@ -1392,11 +1392,12 @@ def analyze_report(report: dict) -> dict:
         auth = [a.get("commit_to_authority_ms") for a in report.get("authority") or []]
         auth = [a for a in auth if isinstance(a, (int, float))]
 
-    # ---- 覆盖：这份报告够不够下结论
+    # ---- 覆盖：纯符号/预设动作报告没有拖动很正常；不能把没拖动算作卡顿证据不足。
     coverage: list[str] = []
-    if not stats:
+    action_only = bool(action_summaries(report)) and not stats
+    if not stats and not action_only:
         coverage.append("没有足够长的拖动（每段至少 10 帧、5 个 pointermove）")
-    if not syn:
+    if not syn and not action_only:
         coverage.append("没跑自动测试：缺少「输入频率」这一维的对照")
     big = max((float(s.context.get("largest_svg_nodes") or 0) for s in stats), default=0)
     if stats and big < 1000:
@@ -1413,7 +1414,7 @@ def analyze_report(report: dict) -> dict:
             f"{len(unsplit)} 段图内拖动途中有 documentStore 通知，这版探针分不清是改了文档还是自动保存在改保存状态"
             "（新版分开记，重录即可判）"
         )
-    if len(report.get("idle_frame_ms") or []) < 20:
+    if len(report.get("idle_frame_ms") or []) < 20 and not action_only:
         coverage.append("空转基线太短（开始后马上就拖了），刷新周期是估的")
     if coverage:
         findings.append(
@@ -1754,7 +1755,7 @@ def html_report(analyses: list[tuple[str, dict]]) -> str:
         "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         f"<title>Tavotto 性能报告</title><style>{CSS}</style><main>",
-        "<h1>Tavotto 拖动性能报告</h1>",
+        "<h1>Tavotto 性能报告（画布拖动与普通交互）</h1>",
         f"<p class='mut'>{len(analyses)} 份报告 · 由 scripts/perf_report.py 生成</p>",
     ]
     if len(analyses) > 1:
