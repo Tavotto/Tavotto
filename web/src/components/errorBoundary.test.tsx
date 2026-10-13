@@ -57,3 +57,24 @@ describe('ErrorBoundary 崩溃页', () => {
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('kaboom'))
   })
 })
+
+describe('崩溃页也是窗框的一部分（Codex #994）', () => {
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    delete w.__TAVOTTO_WINDOW_CHROME__
+  })
+  const crashRoot = () => document.querySelector('[data-crash-screen]')!.parentElement!
+
+  it('macOS（标题栏叠在页面上）：崩溃页取代了整棵树，空白处是拖动区，窗口仍拖得动', () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'overlay'
+    act(() => root.render(<ErrorBoundary><Boom /></ErrorBoundary>))
+    expect(crashRoot().getAttribute('data-tauri-drag-region')).toBe('')
+  })
+
+  it('浏览器里不挂拖动区', () => {
+    act(() => root.render(<ErrorBoundary><Boom /></ErrorBoundary>))
+    expect(crashRoot().hasAttribute('data-tauri-drag-region')).toBe(false)
+  })
+})

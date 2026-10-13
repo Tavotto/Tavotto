@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { IconProvider } from './components/ui/Icon'
-import { bootstrapDesktopSession, setDesktopMenuLocale } from './lib/desktop'
+import { bootstrapDesktopSession, dragRegionProps, setDesktopMenuLocale } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
 import { applyTheme } from './lib/theme'
 import { useUiStore } from './store/uiStore'
@@ -40,6 +40,8 @@ void bootstrapDesktopSession().then((r) => {
     // 与崩溃页同一副——panel 圆角、对话框投影、17 / 600 标题、13 正文、一颗主按钮「重新加载」
     const div = document.createElement('div')
     div.setAttribute('data-boot-failure', '')
+    // macOS 的系统标题栏叠在页面上（窗框 overlay）：这一页取代了整棵树，空白处得是拖动区，否则窗口拖不动（Codex #994）
+    for (const [k, v] of Object.entries(dragRegionProps('self'))) div.setAttribute(k, v)
     div.setAttribute(
       'style',
       'display:flex;height:100%;align-items:center;justify-content:center;padding:16px;' +

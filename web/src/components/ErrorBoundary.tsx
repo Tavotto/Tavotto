@@ -3,6 +3,7 @@ import { requestBlankStart } from '@/store/documentStore'
 import { t } from '@/i18n'
 import { Button } from './ui/Button'
 import { Details, Summary } from './ui/Details'
+import { dragRegionProps } from '@/lib/desktop'
 
 interface State {
   error: Error | null
@@ -33,7 +34,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     if (!error) return this.props.children
     const detail = [error.message, error.stack].filter(Boolean).join('\n\n')
     return (
-      <div className="flex h-screen items-center justify-center bg-bg p-4">
+      // 崩溃页取代了整棵树：macOS 叠了标题栏的窗口靠这里的空白处拖动（Codex #994）
+      <div className="flex h-screen items-center justify-center bg-bg p-4" {...dragRegionProps('self')}>
         {/* 与对话框同一副外壳：panel 16 圆角 + dialog 投影（2026-10-07 设计审计 §10.2） */}
         <div role="alert" data-crash-screen className="flex w-[480px] max-w-full flex-col gap-3 rounded-panel bg-surface p-5 shadow-dialog">
           <h1 className="type-heading">{t('crash.title', { ns: 'workspace' })}</h1>
