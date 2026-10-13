@@ -851,10 +851,13 @@ class LiveFigureSession:
         「失败 + 无预览」，与 `usable_preview_path` 的语义一致。摘掉账本指针；摘不掉退到失效标记
         （下一次成功发布会撤掉它）；两者都落空读方失去保证，升级为致命。
         """
-        rec = figcapture.published_preview_record(self.out_dir, stem)
-        if rec is None:
+        try:
+            ledger = figcapture._load_preview_ledger(self.out_dir)
+        except figcapture.PreviewLedgerUnreadable:
+            ledger = False  # 读不出来 ≠ 没有指针：不知道有没有，按有处理（失败即关闭）
+        if ledger is None or (ledger and stem not in ledger["stems"]):
             return
-        if figcapture._drop_ledger_stem(self.out_dir, stem):
+        if ledger and figcapture._drop_ledger_stem(self.out_dir, stem):
             return
         if not figcapture.mark_preview_invalid(self.out_dir, stem):
             raise PreviewPoisoned(

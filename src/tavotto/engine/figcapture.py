@@ -480,7 +480,13 @@ def _dir_key(out_dir) -> str:
 def poison_preview_dir(out_dir) -> None:
     """读方进程：`out_dir` 下所有预览产物都不可信（见 `PREVIEW_POISONED_CODE`）。记下此刻的账本序号。"""
     key = _dir_key(out_dir)
-    seq = _read_preview_ledger(out_dir)["seq"]
+    try:
+        ledger = _load_preview_ledger(out_dir)
+        seq = ledger["seq"] if ledger else 0
+    except PreviewLedgerUnreadable:
+        # 账本此刻读不出来：不知道作废时的序号，就当作"此前发布的一切都不可信"——下限取最大，
+        # 之后审计时没有任何登记项算作废之后重新发布的（当 0 会让旧一代在账本恢复后被当成新发布放行）
+        seq = sys.maxsize
     with _poison_lock:
         prev = _poisoned_dirs.get(key)
         floor = max(seq, prev[0]) if prev else seq
@@ -617,12 +623,6 @@ def mark_preview_invalid(out_dir, stem: str) -> bool:
         except OSError:
             pass
     return marked
-
-
-def published_preview_record(out_dir, stem: str):
-    """账本里 `stem` 的指针记录（没有 / 读不出来 → None）。"""
-    rec = _read_preview_ledger(out_dir)["stems"].get(stem)
-    return rec if isinstance(rec, dict) else None
 
 
 def _drop_ledger_stem(out_dir, stem: str) -> bool:

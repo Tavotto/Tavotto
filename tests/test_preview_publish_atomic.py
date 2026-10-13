@@ -210,6 +210,25 @@ with tempfile.TemporaryDirectory() as tmp:
         out["generation"] = figcapture.usable_preview_generation(tmp, "fig")
         out["published"] = sorted(figcapture.published_preview_stems(tmp))
         out["keep_wellformed"] = wellformed(usable(tmp, "keep", ".svg"))
+    elif scenario == "failure_with_unreadable_ledger_still_hides_the_preview":
+        prev = LiveFigureSession(tmp, preview_dpi=72)
+        prev.add_figure("fig", good("last-run"), figcapture.SOURCE_SAVEFIG)
+        prev.add_figure("keep", good("K"), figcapture.SOURCE_SAVEFIG)
+        prev.instrument_all()
+        ledger_path = Path(tmp) / figcapture.PREVIEW_LEDGER
+        saved = ledger_path.read_bytes()
+        ledger_path.write_bytes(b"{garbled")  # 扫描器瞬时改写：存在但读不出来
+        sess.add_figure("fig", bad(), figcapture.SOURCE_SAVEFIG)
+        try:
+            sess.instrument_all()
+            out["error"] = None
+        except Exception as exc:
+            out["error"] = type(exc).__name__
+        ledger_path.write_bytes(saved)  # 账本恢复可读
+        out["failed"] = sorted(sess.failures)
+        out["fig_visible"] = usable(tmp, "fig", ".svg").exists()
+        out["keep_visible"] = usable(tmp, "keep", ".svg").exists()
+        out["fig_counted"] = "fig" in figcapture.published_preview_stems(tmp)
     elif scenario == "failed_figure_that_cannot_be_restored":
         sess.add_figure("bad", bad(), figcapture.SOURCE_SAVEFIG)
         import overrides
@@ -516,6 +535,32 @@ def test_a_figure_that_fails_this_run_does_not_show_last_runs_preview():
     assert r["generation"] is None
     assert r["published"] == ["keep", "keep2"], r
     assert r["keep_wellformed"] is True
+
+
+@needs_mpl
+def test_hiding_the_previous_preview_fails_closed_when_the_ledger_is_unreadable():
+    """Codex #978 P1：隔离时账本读不出来 ≠ 没有指针。必须落失效标记（或抛 PreviewPoisoned），
+    账本恢复可读后这张图仍然不可见、不被计数；其它 stem 不受影响。"""
+    r = _drive("failure_with_unreadable_ledger_still_hides_the_preview")
+    assert r["error"] is None and r["failed"] == ["fig"], r
+    assert r["fig_visible"] is False and r["fig_counted"] is False, r
+    assert r["keep_visible"] is True, r
+
+
+def test_poison_floor_is_pessimistic_when_the_ledger_is_unreadable(tmp_path):
+    """账本读不出来时作废的序号下限不能当 0：否则账本恢复后旧一代被当成"作废之后重新发布"而放行。"""
+    out = tmp_path / "out"
+    _publish(out, "old")
+    ledger = out / figcapture.PREVIEW_LEDGER
+    good = ledger.read_bytes()
+    ledger.write_bytes(b"{garbled")
+    figcapture.poison_preview_dir(out)
+    try:
+        ledger.write_bytes(good)
+        assert figcapture.clear_preview_poison(out) is True
+        assert figcapture.usable_preview_generation(out, "old") is None
+    finally:
+        figcapture._poisoned_dirs.pop(figcapture._dir_key(out), None)
 
 
 @needs_mpl
