@@ -129,6 +129,9 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
       dpr: await page.evaluate(() => window.devicePixelRatio),
       headless: true,
       os_release: os.release(),
+      cpu_model: os.cpus()[0]?.model ?? null,
+      cpu_count: os.cpus().length,
+      total_mem_gib: Math.round(os.totalmem() / 1024 ** 3),
     },
     scenarios: keys.map((id) => ({ id, two_raf_ms: results[id] })),
   }
