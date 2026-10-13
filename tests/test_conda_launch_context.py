@@ -1858,6 +1858,41 @@ def test_a_desktop_owned_native_session_uses_the_same_launch_decision(tmp_path, 
     assert err.value.code == "conda_launcher_unavailable"
     assert not (tmp_path / "work" / "seen.txt").exists()
     assert nativesession.REGISTRY.list() == before and envlease.native_sessions_on(py) == []
+    # 环境正在装包：租约先于激活——拿不到租约就一行环境代码都不跑（conda / activate.d 都不调）
+    launcher.reset_captures()
+    monkeypatch.delenv("FAKE_CONDA_SKIP_CMD")  # 捕获本身恢复正常：下面拦住它的只能是租约
+    calls_before = len(conda_calls(log))
+    with envlease.mutating(envlease.env_key_of(py), py):
+        with pytest.raises(envlease.EnvironmentBusy):
+            desktopproc.start(dk.launch_for(tmp_path, script, interpreter=py))
+    assert len(conda_calls(log)) == calls_before
+    assert not (tmp_path / "work" / "seen.txt").exists()
+    assert nativesession.REGISTRY.list() == before and envlease.native_sessions_on(py) == []
+
+
+@posix_only
+def test_a_capture_that_raced_an_environment_change_is_neither_used_nor_cached(tmp_path, monkeypatch):
+    """捕获期间环境被改了（装 / 卸包追加 history）：这份结果可能取自改到一半的 prefix，fail-closed、不缓存；下一次按新版本重新捕获。"""
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    monkeypatch.setattr(launcher.config, "data_dir", lambda: tmp_path / "data")
+    py = str(prefix / "bin" / "python")
+    lau = launcher.CondaLauncher(conda_exe=str(conda), prefix=str(prefix))
+    real = launcher._capture
+
+    def racing(*a, **k):
+        out = real(*a, **k)
+        with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+            fh.write("# cmd: conda install something\n")
+        return out
+
+    monkeypatch.setattr(launcher, "_capture", racing)
+    with pytest.raises(launcher.LauncherUnavailable) as exc:
+        launcher.activated_delta(py, lau)
+    assert exc.value.code == "conda_launcher_unavailable"
+    assert launcher._captured == {}
+    monkeypatch.setattr(launcher, "_capture", real)
+    assert launcher.activated_delta(py, lau)["FAKE_SDK_LICENSE"] == LICENSE
 
 
 # ---------------------------------------------------------------------------

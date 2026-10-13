@@ -641,13 +641,6 @@ def start(
         raise RunError(runcodes.DESKTOP_RUN_LAUNCH_INVALID, reason="cwd 不是一个目录")
     if not os.path.isfile(spec.interpreter):
         raise RunError(runcodes.INTERPRETER_NOT_EXECUTABLE, interpreter=spec.interpreter)
-    # Conda 环境：与 safe 档同一个启动决策（`launcher_for_interpreter`）。桌面拥有的会话由 GUI 启动，没有用户 shell 替它激活。
-    # 在租约 / 输出目录 / spawn 之前取：激活失败 = 零执行，稳定码，什么都没创建
-    try:
-        base_env = launcher.activate_env(spec.interpreter, dict(os.environ))
-    except launcher.LauncherUnavailable as exc:
-        raise RunError(runcodes.CONDA_LAUNCHER_UNAVAILABLE, reason=str(exc)[:200]) from exc
-
     # 租约键 = 会话 id：每次启动唯一（launch_id + 随机后缀），不同所有者之间互相删不掉对方的租约
     # 完整 128 位随机（不截断）：同一 launch_id 反复复用时也不会生日碰撞回到旧目录 / 旧回执身份
     session_id = f"native-owned-{launch.launch_id}-{uuid.uuid4().hex}"
@@ -694,6 +687,13 @@ def start(
         ticket = registry.begin_start(
             launch.launch_id
         )  # spawn 之前先登记在途：关停的快照一定看得见
+        # Conda 环境：与 safe 档同一个启动决策（`launcher_for_interpreter`）。桌面拥有的会话由 GUI 启动，没有用户 shell 替它激活。
+        # **在租约之内、spawn 之前**取：激活要跑 conda 与 activate.d，不能和正在进行的装包并发（租约挡住）；
+        # 激活失败 = 不 spawn、稳定码，下面的收尾放租约
+        try:
+            base_env = launcher.activate_env(spec.interpreter, dict(os.environ))
+        except launcher.LauncherUnavailable as exc:
+            raise RunError(runcodes.CONDA_LAUNCHER_UNAVAILABLE, reason=str(exc)[:200]) from exc
         relay = nativerelay.NativeRelay()
         argv = execspec.bridge_argv(
             spec,

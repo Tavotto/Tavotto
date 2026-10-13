@@ -540,6 +540,9 @@ def activated_delta(
         if remaining <= 0:
             raise LauncherUnavailable(f"经 Conda 激活取环境超时（{budget:.0f}s）")
         delta = _capture(str(python), lau, remaining)
+        if prefix_state(lau.prefix) != key[1]:
+            # 捕获期间环境被改了（装 / 卸包、改 activate.d）：这份结果可能取自改到一半的 prefix，不用也不缓存
+            raise LauncherUnavailable("经 Conda 激活取环境时这个环境正在被修改；请稍后再试")
         LOG.info("Conda 激活环境已捕获：%d 个变量（不落盘）", len(delta))  # 只记个数，不记名字和值
         with _captured_lock:
             _captured[key] = delta
