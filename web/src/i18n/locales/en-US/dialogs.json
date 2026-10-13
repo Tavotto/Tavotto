@@ -1301,7 +1301,13 @@
           "crash_reports": "crash reports",
           "corrupt_sessions": "corrupted copies"
         },
-        "optionsLost": "The extras were too large, so they could not be attached this time."
+        "optionsLost": "The extras were too large, so they could not be attached this time.",
+        "sentenceExtras": "A diagnostic bundle will be sent, with error details and logs, plus what you ticked: {{items}}.",
+        "sentenceItem": {
+          "source": "script source",
+          "crash_reports": "system crash reports (may contain the contents of open files)",
+          "corrupt_sessions": "contents of corrupted session copies"
+        }
       }
     },
     "export": {

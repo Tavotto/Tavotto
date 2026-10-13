@@ -761,6 +761,37 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
     expect(q('[data-diag-send-options-lost]')).toBeNull()
   })
 
+  it('常显的那一句按引擎确认的 options 选句：都没勾 = 原句；勾了就如实说附带了什么（仍只有一句）', async () => {
+    await mount(DETAIL_PREPARED)
+    const sentence = () => q('[data-diag-send-sentence]')!.textContent
+    expect(sentence()).toBe(ds('sentence'))
+    const cases: [Partial<Record<'source' | 'crash_reports' | 'corrupt_sessions', boolean>>, string[]][] = [
+      [{ source: true }, ['source']],
+      [{ crash_reports: true }, ['crash_reports']],
+      [{ corrupt_sessions: true }, ['corrupt_sessions']],
+      [{ source: true, crash_reports: true, corrupt_sessions: true }, ['source', 'crash_reports', 'corrupt_sessions']],
+    ]
+    let n = 0
+    for (const [opts, keys] of cases) {
+      const full = { source: false, crash_reports: false, corrupt_sessions: false, ...opts }
+      prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: `pid-s${n++}`, options: full })
+      // 点任意一个框触发重新备包；显示以引擎回的 options 为准
+      await click(box('source'))
+      await act(async () => {})
+      const want = ds('sentenceExtras', {
+        items: keys.map((k) => ds(`sentenceItem.${k}`)).join(ds('listSeparator')),
+      })
+      expect(sentence()).toBe(want)
+      expect(document.body.querySelectorAll('[data-diag-send-sentence]')).toHaveLength(1)
+      expect(sentence()).not.toBe(ds('sentence'))
+    }
+    // 勾了但引擎没附上（options 全 false）：按引擎的来，回到原句
+    prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-s9', options: { source: false, crash_reports: false, corrupt_sessions: false } })
+    await click(box('crash_reports'))
+    await act(async () => {})
+    expect(sentence()).toBe(ds('sentence'))
+  })
+
   it('不记忆：关掉对话框再打开，三个框都回到不勾，载荷也回到全 false', async () => {
     await mount(DETAIL_PREPARED)
     prepareMock.mockResolvedValue({ ...DETAIL_PREPARED, id: 'pid-2', options: { source: false, crash_reports: false, corrupt_sessions: true } })

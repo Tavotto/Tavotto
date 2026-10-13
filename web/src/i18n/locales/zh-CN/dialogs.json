@@ -1290,7 +1290,13 @@
           "crash_reports": "崩溃报告",
           "corrupt_sessions": "损坏副本"
         },
-        "optionsLost": "附加内容太大，这次没能附上。"
+        "optionsLost": "附加内容太大，这次没能附上。",
+        "sentenceExtras": "将发送诊断包，含报错详情和日志，并附带你勾选的：{{items}}。",
+        "sentenceItem": {
+          "source": "脚本源码",
+          "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
+          "corrupt_sessions": "会话损坏副本的内容"
+        }
       }
     },
     "export": {

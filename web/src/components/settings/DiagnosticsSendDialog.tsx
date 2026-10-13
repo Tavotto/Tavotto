@@ -304,6 +304,12 @@ export function DiagnosticsSendDialog({
       })
   }
 
+  // 常显的那一句按**引擎确认的** options 选句（`prepared.options`，不是用户点的）：勾了源码 / 崩溃报告就如实说附带了什么。
+  // 仍然只有一句话（卡片一句话纪律）；多项组合用同一个模板列出。
+  const applied = EXTRA_KEYS.filter((k) => prepared?.options?.[k])
+  const sentence = applied.length
+    ? ds('sentenceExtras', { items: applied.map((k) => ds(`sentenceItem.${k}`)).join(ds('listSeparator')) })
+    : ds('sentence')
   const sending = phase === 'sending' || phase === 'cancelling'
   const editable = phase === 'ready' || phase === 'failed'
   const retryable = phase === 'failed' && status?.retryable !== false
@@ -425,7 +431,7 @@ export function DiagnosticsSendDialog({
       <div className="flex flex-col gap-3" data-diag-send-body>
         {/* 默认只露这一句话 + 页脚的「发送」；其余全在折叠的「查看详情」里（卡片一句话纪律） */}
         <p className="text-sm text-ink" data-diag-send-sentence>
-          {ds('sentence')}
+          {sentence}
         </p>
         <Details data-diag-send-details className="text-sm">
           <Summary className="h-6 text-ink-2 hover:text-ink">{ds('details')}</Summary>

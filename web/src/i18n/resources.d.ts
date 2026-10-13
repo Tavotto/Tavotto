@@ -1648,6 +1648,12 @@ export default interface Resources {
           "saved": "已保存",
           "send": "发送",
           "sentence": "将发送诊断包，含报错详情和日志，不含你的脚本源码和数据文件。",
+          "sentenceExtras": "将发送诊断包，含报错详情和日志，并附带你勾选的：{{items}}。",
+          "sentenceItem": {
+            "corrupt_sessions": "会话损坏副本的内容",
+            "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
+            "source": "脚本源码"
+          },
           "short": {
             "console": "控制台",
             "corrupt_sessions": "损坏副本",

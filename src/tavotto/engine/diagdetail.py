@@ -1348,44 +1348,106 @@ sys.stdout.write(json.dumps(out))
 """
 
 
+PROBE_DIR_PREFIX = "tavotto-probe-script-"
+PROBE_LEFTOVER_AGE_S = 3600
+PROBE_RMTREE_ATTEMPTS = 3
+
+
+def _rmtree_with_retry(
+    path: str | Path, attempts: int = PROBE_RMTREE_ATTEMPTS, delay: float = 0.05
+) -> bool:
+    """有界重试地删目录树（Windows 上杀软 / 索引器短暂占着文件，一次 `rmtree` 常常失败）。仓库里没有现成的目录树重试删除
+    （`figcapture._replace_with_retry` 是文件替换），所以这里是唯一一份。成功回 True；一直失败回 False。"""
+    import shutil
+
+    for i in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if i + 1 < attempts:
+                time.sleep(delay * (i + 1))
+    return not Path(path).exists()
+
+
+def _sweep_probe_leftovers(now: float | None = None) -> int:
+    """清掉**我们自己**上次没删掉的探针脚本目录：前缀 `tavotto-probe-script-`、是目录、属于当前用户、权限 0700、
+    超过 1 小时。别的任何东西不碰。回清掉几个。"""
+    import tempfile
+
+    now = time.time() if now is None else now
+    root = Path(tempfile.gettempdir())
+    removed = 0
+    try:
+        entries = [p for p in root.iterdir() if p.name.startswith(PROBE_DIR_PREFIX)]
+    except OSError:
+        return 0
+    for p in entries:
+        try:
+            st = p.stat()
+            if not p.is_dir() or p.is_symlink() or now - st.st_mtime < PROBE_LEFTOVER_AGE_S:
+                continue
+            if hasattr(os, "getuid") and (st.st_uid != os.getuid() or st.st_mode & 0o077):
+                continue
+        except OSError:
+            continue
+        if _rmtree_with_retry(p):
+            removed += 1
+    return removed
+
+
 def _probe_subprocess(
     python: str, bundled: bool, cwd: str | None = None, env_extra: dict[str, str] | None = None
 ) -> dict:
-    """对渲染解释器跑**一次**有超时的只读采集；任何失败都如实回 `{"status": "failed", "reason": …}`。"""
+    """对渲染解释器跑**一次**有超时的只读采集；任何失败都如实回 `{"status": "failed", "reason": …}`。
+    探针脚本放进我们自己建的临时目录（见 `_probe_in`），用完有界重试地删；删不掉就在结果里记 `probe_cleanup: "failed"`
+    并写一条日志，下次再探之前由 `_sweep_probe_leftovers` 清遗留。"""
+    import tempfile
+
+    _sweep_probe_leftovers()
+    trusted = tempfile.mkdtemp(prefix=PROBE_DIR_PREFIX)
+    try:
+        result = _probe_in(trusted, python, bundled, cwd, env_extra)
+    finally:
+        cleaned = _rmtree_with_retry(trusted)
+    if not cleaned:
+        LOG.warning("探针临时目录没能删掉")
+        result["probe_cleanup"] = "failed"
+    return result
+
+
+def _probe_in(
+    trusted: str, python: str, bundled: bool, cwd: str | None, env_extra: dict[str, str] | None
+) -> dict:
     env = runtime.probe_env(python, bundled=bundled)
     env = {**(os.environ if env is None else env), **(env_extra or {})}
-    # 3.11+：sys.path 里不放脚本目录 / cwd（PYTHONSAFEPATH）；老版本靠下面「脚本在可信临时目录里」达到同一效果
+    # 3.11+：sys.path 里不放脚本目录 / cwd（PYTHONSAFEPATH）；老版本靠「脚本在可信临时目录里」达到同一效果
     env["PYTHONSAFEPATH"] = "1"
     # **探针不能用 `-c`，也不能让 cwd 进 sys.path**：cwd 是项目 / 脚本目录（matplotlibrc 等相对查找需要它），项目里的
     # `json.py` / `platform.py` / `matplotlib.py` 会在「打开对话框」这一刻就被 import 执行，绕过 worker 的文件系统守卫。
-    # 所以把探针代码写进我们自己建的临时目录（0700，跑完就删）里的脚本文件，`python -s -B <脚本>` 启动：
+    # 所以把探针代码写进我们自己建的临时目录（0700）里的脚本文件，`python -s -B <脚本>` 启动：
     # `sys.path[0]` 是那个临时目录，不是 cwd；`-s` 不加用户 site。不用 `-I`（会丢掉我们刻意复现的 MPL* 变量）。
-    import shutil
-    import tempfile
-
-    trusted = tempfile.mkdtemp(prefix="tavotto-probe-script-")
+    script = Path(trusted) / "probe_main.py"
+    script.write_text(_PROBE_CODE, encoding="utf-8")
     try:
-        script = Path(trusted) / "probe_main.py"
-        script.write_text(_PROBE_CODE, encoding="utf-8")
-        try:
-            proc = subprocess.run(
-                [python, *runtime.probe_args(bundled=bundled), "-s", str(script)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=PROBE_TIMEOUT_S,
-                stdin=subprocess.DEVNULL,
-                env=env,
-                creationflags=runtime.CREATE_NO_WINDOW,
-                cwd=cwd,
-            )
-        except subprocess.TimeoutExpired:
-            return {"status": "failed", "reason": "timeout", "timeout_s": PROBE_TIMEOUT_S}
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {"status": "failed", "reason": f"spawn_error:{type(exc).__name__}"}
-    finally:
-        shutil.rmtree(trusted, ignore_errors=True)
+        proc = subprocess.run(
+            [python, *runtime.probe_args(bundled=bundled), "-s", str(script)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_S,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            creationflags=runtime.CREATE_NO_WINDOW,
+            cwd=cwd,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "reason": "timeout", "timeout_s": PROBE_TIMEOUT_S}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "failed", "reason": f"spawn_error:{type(exc).__name__}"}
     if proc.returncode != 0:
         return {
             "status": "failed",
@@ -1440,12 +1502,13 @@ def _native_launch_env(session: object) -> dict[str, str] | None:
     return {k: v for k, v in env.items() if k in RENDER_ENV_KEYS}
 
 
-def _mark_env_unavailable(probe: dict) -> dict:
+def _mark_unavailable(probe: dict, reason: str) -> dict:
+    """把依赖「启动环境 / 工作目录」的维度整个标 `unavailable`（只保留与之无关的版本、包列表这类事实）。"""
     mpl = probe.get("matplotlib")
     if isinstance(mpl, dict):
         for k in _ENV_DEPENDENT:
             if k in mpl:
-                mpl[k] = {"unavailable": "launch_env_unknown"}
+                mpl[k] = {"unavailable": reason}
     return probe
 
 
@@ -1534,7 +1597,11 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
         doc["native_receipt"] = session.last_build_runtime()
         doc["native_session"] = session.diagnostics()
         native_cwd = getattr(session, "cwd", "") or None
-        doc["probe_cwd"] = {"mode": "native_session", "cwd": native_cwd}
+        cwd_ok = (
+            bool(native_cwd)
+            and os.path.isdir(native_cwd)
+            and os.access(native_cwd, os.R_OK | os.X_OK)
+        )
         launch_env = _native_launch_env(session)
         spec_env = getattr(getattr(session, "spec", None), "env", None) or {}
         not_applied = sorted(k for k in spec_env if k in NOT_APPLIED_ENV_KEYS)
@@ -1546,15 +1613,30 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
                 "note": "terminal-owned session: launch environment not recorded",
             }
         )
-        probe = _probe_subprocess(
-            interpreter,
-            False,
-            native_cwd if native_cwd and Path(native_cwd).is_dir() else None,
-            launch_env or None,
-        )
-        doc["probe"] = probe if launch_env is not None else _mark_env_unavailable(probe)
+        if cwd_ok:
+            doc["probe_cwd"] = {"mode": "native_session", "cwd": native_cwd}
+            probe = _probe_subprocess(interpreter, False, native_cwd, launch_env or None)
+        else:
+            # 会话的工作目录不存在 / 读不了：不能在别处探这些维度还说成是会话目录。版本类事实在一个中性空目录里取，
+            # `probe_cwd` 如实写 null 和原因；依赖 cwd 的维度（matplotlibrc / backend / rcparams / fonts…）标 unavailable
+            import tempfile
+
+            with tempfile.TemporaryDirectory(prefix="tavotto-probe-") as neutral:
+                doc["probe_cwd"] = {
+                    "mode": "native_session",
+                    "cwd": None,
+                    "reason": "native_cwd_unavailable",
+                    "version_probe_cwd": "<empty temporary directory>",
+                }
+                probe = _probe_subprocess(interpreter, False, neutral, launch_env or None)
+            probe = _mark_unavailable(probe, "native_cwd_unavailable")
+        if launch_env is None and cwd_ok:
+            probe = _mark_unavailable(probe, "launch_env_unknown")
+        doc["probe"] = probe
         if not_applied:  # 导入路径没复现：包列表可能与会话里实际能 import 的不同
             doc["probe"]["may_differ"] = {"packages": "pythonpath_not_applied"}
+        if probe.get("probe_cleanup"):
+            doc["probe_cleanup"] = probe["probe_cleanup"]
         return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
     doc["inspected"] = "safe_pool"
     if profile == "native":  # native 面板但拿不到它的会话 / 解释器：如实说，下面探的是安全池
@@ -1580,6 +1662,8 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             "env_override": pool.worker_python_env(),
         }
         doc["probe"] = _probe_in_render_cwd(src, python, source == pool.SOURCE_BUNDLED, doc)
+        if doc["probe"].get("probe_cleanup"):
+            doc["probe_cleanup"] = doc["probe"]["probe_cleanup"]
     return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
 
 

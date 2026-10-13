@@ -279,6 +279,24 @@ describe('Error 子类的 accessor 不被触发', () => {
     expect(readErrorRing().every((r) => r.message.includes('[getter]') || r.message === '')).toBe(true)
   })
 
+  it('bound / Proxy 包装的用户 getter 也不被调用（身份白名单，不靠 toString 判）', () => {
+    uninstall = installConsoleCapture()
+    let calls = 0
+    const userGetter = function (this: unknown) {
+      calls++
+      return 'evil-stack'
+    }
+    const bound = userGetter.bind(null) // toString 是 [native code]
+    const proxied = new Proxy(userGetter, {})
+    for (const get of [bound, proxied, userGetter]) {
+      const e = new Error('x')
+      Object.defineProperty(e, 'stack', { get, configurable: true })
+      console.error('boom', e)
+    }
+    expect(calls).toBe(0)
+    expect(readConsoleRing().every((r) => r.stack === null || !r.stack.includes('evil-stack'))).toBe(true)
+  })
+
   it('普通 Error 仍取到名字、消息与栈', () => {
     uninstall = installConsoleCapture()
     class Custom extends Error {

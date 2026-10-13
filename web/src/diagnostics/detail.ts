@@ -55,13 +55,27 @@ const SHOW_MAX_BREADTH = 50
  * （原生函数，如新版 V8 的 `stack`）才调用，用户写的（子类把 `message` / `stack` 覆盖成 getter）返回 `GETTER`。
  */
 const GETTER = Symbol('getter')
-function isNativeFunction(fn: (...a: never[]) => unknown): boolean {
+/**
+ * 引擎原生的 `stack` accessor 的**身份白名单**：模块加载时从新建的 `Error` 上取出它的 getter（V8 里是同一个函数对象）。
+ * 只有 `desc.get` 与白名单里的某个函数全等才调用；其余一切 accessor（用户写的、`bind` 过的、被 Proxy 包过的）都写
+ * `[getter]`。（旧版靠 `toString` 含 `[native code]` 判，挡不住 bound getter。）
+ */
+const NATIVE_GETTERS: ReadonlySet<unknown> = (() => {
+  const set = new Set<unknown>()
   try {
-    return Function.prototype.toString.call(fn).includes('[native code]')
+    let o: object | null = new Error('probe')
+    for (let i = 0; o && i < 4; i++) {
+      const d = Object.getOwnPropertyDescriptor(o, 'stack')
+      if (d?.get) set.add(d.get)
+      o = Object.getPrototypeOf(o)
+    }
+    const d = Object.getOwnPropertyDescriptor(Error.prototype, 'stack')
+    if (d?.get) set.add(d.get)
   } catch {
-    return false
+    /* 取不到就没有白名单：所有 accessor 都不调，栈只剩 data 属性 */
   }
-}
+  return set
+})()
 
 function dataProp(obj: object, key: string): unknown {
   let o: object | null = obj
@@ -74,8 +88,8 @@ function dataProp(obj: object, key: string): unknown {
     }
     if (d) {
       if ('value' in d) return d.value
-      // 引擎自带的 accessor（新版 V8 的 `stack` 就是）是安全的；用户写的 getter（原生函数的 toString 才含 [native code]）不调
-      if (typeof d.get === 'function' && isNativeFunction(d.get)) {
+      // 引擎自带的 accessor（新版 V8 的 `stack` 就是）按身份白名单放行；其余 accessor（用户写的 / bind 过的 / Proxy 包的）一律不调
+      if (typeof d.get === 'function' && NATIVE_GETTERS.has(d.get)) {
         try {
           return d.get.call(obj)
         } catch {

@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -2198,6 +2199,147 @@ class TestCrashMemberNamesAreUnique:
         assert sorted(r["file"] for r in rows) == names
 
 
+class TestProbeDirectoryCleanup:
+    def test_rmtree_retries_a_bounded_number_of_times(self, tmp_path, monkeypatch):
+        import shutil
+
+        d = tmp_path / "x"
+        d.mkdir()
+        calls = {"n": 0}
+        real = shutil.rmtree
+
+        def flaky(path, *a, **k):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise PermissionError("busy")  # Windows：杀软 / 索引器短暂占着
+            return real(path, *a, **k)
+
+        monkeypatch.setattr(shutil, "rmtree", flaky)
+        assert diagdetail._rmtree_with_retry(d, attempts=3, delay=0) is True
+        assert calls["n"] == 3 and not d.exists()
+
+    def test_a_failure_that_never_goes_away_is_recorded_and_logged(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        import shutil
+
+        monkeypatch.setattr(
+            shutil, "rmtree", lambda *a, **k: (_ for _ in ()).throw(PermissionError("busy"))
+        )
+        monkeypatch.setattr(diagdetail, "PROBE_RMTREE_ATTEMPTS", 2)
+        monkeypatch.setattr(diagdetail, "_probe_in", lambda *a, **k: {"status": "ok"})
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="tavotto.diagdetail"):
+            out = REAL_PROBE("/py", False)
+        assert out["status"] == "ok" and out["probe_cleanup"] == "failed"
+        assert any("探针临时目录" in r.getMessage() for r in caplog.records)
+
+    def test_cleanup_failure_is_hoisted_into_the_render_env_document(self, monkeypatch):
+        monkeypatch.setattr(pool, "resolve_worker_python", lambda d, **k: ("/py", "bundled"))
+        monkeypatch.setattr(
+            diagdetail,
+            "_probe_subprocess",
+            lambda py, b, cwd=None, env_extra=None: {"status": "ok", "probe_cleanup": "failed"},
+        )
+        items = diagdetail.collect_render_env(
+            diagdetail.Sources(project={"figures_dir": "/p"}),
+            diagdetail.DetailOptions(),
+            diagdetail.Scrubber(),
+        )
+        assert json.loads(items[0].data)["probe_cleanup"] == "failed"
+
+    def test_the_next_probe_sweeps_only_our_own_old_private_leftovers(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        now = time.time()
+
+        def mk(name, age, mode=0o700):
+            d = tmp_path / name
+            d.mkdir()
+            (d / "probe_main.py").write_text("x", encoding="utf-8")
+            os.chmod(d, mode)
+            os.utime(d, (now - age, now - age))
+            return d
+
+        old = mk("tavotto-probe-script-old", 2 * 3600)
+        fresh = mk("tavotto-probe-script-fresh", 60)
+        open_ = mk("tavotto-probe-script-open", 2 * 3600, 0o755)
+        other = mk("tavotto-something-else", 2 * 3600)
+        assert diagdetail._sweep_probe_leftovers(now) == (1 if os.name != "nt" else 2)
+        assert not old.exists()
+        assert fresh.exists() and other.exists()
+        if os.name != "nt":
+            assert open_.exists()  # 权限不是 0700：不是我们建的，不碰
+
+
+class TestNativeCwdUnavailable:
+    def _doc(self, monkeypatch, cwd):
+        seen = {}
+        test = TestNativePanelRenderEnv()
+        from tavotto.engine import enginesession, nativesession, runtimeasset
+
+        monkeypatch.setattr(runtimeasset, "is_runtime_id", lambda f: str(f).startswith("runtime:"))
+        monkeypatch.setattr(enginesession, "profile_of", lambda root, fid: "native")
+        monkeypatch.setattr(
+            runtimeasset, "resolve", lambda fid, reg: {"script": "s.py", "stem": "fig"}
+        )
+        sess = TestNativePanelRenderEnv.FakeSession()
+        sess.cwd = cwd
+        sess.spec = TestNativeProbeEnvironment.Spec()
+        monkeypatch.setattr(nativesession.REGISTRY, "route_for", lambda r, sc, st: sess)
+        probe = {
+            "status": "ok",
+            "python": {"version": "3.11"},
+            "matplotlib": {
+                "version": "3.9",
+                "backend": "agg",
+                "matplotlibrc": "/x",
+                "fonts": [1],
+                "configdir": "/c",
+            },
+        }
+        monkeypatch.setattr(
+            diagdetail,
+            "_probe_subprocess",
+            lambda py, b, cwd=None, env_extra=None: (
+                seen.update(cwd=cwd) or json.loads(json.dumps(probe))
+            ),
+        )
+        items = diagdetail.collect_render_env(
+            test._src(object()), diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        return seen["cwd"], json.loads(items[0].data)
+
+    def test_a_usable_session_cwd_is_used_and_reported(self, monkeypatch, tmp_path):
+        cwd, doc = self._doc(monkeypatch, str(tmp_path))
+        assert cwd == str(tmp_path) and doc["probe_cwd"] == {
+            "mode": "native_session",
+            "cwd": str(tmp_path),
+        }
+        assert doc["probe"]["matplotlib"]["backend"] == "agg"
+
+    @pytest.mark.parametrize("which", ["missing", "empty", "file"])
+    def test_an_unusable_session_cwd_is_never_reported_as_the_probe_cwd(
+        self, monkeypatch, tmp_path, which
+    ):
+        bad = {"missing": str(tmp_path / "nope"), "empty": "", "file": None}[which]
+        if which == "file":
+            f = tmp_path / "f.txt"
+            f.write_text("x", encoding="utf-8")
+            bad = str(f)
+        cwd, doc = self._doc(monkeypatch, bad)
+        assert cwd and cwd != bad  # 在一个中性的空目录里取版本类事实
+        assert (
+            doc["probe_cwd"]["cwd"] is None
+            and doc["probe_cwd"]["reason"] == "native_cwd_unavailable"
+        )
+        mpl = doc["probe"]["matplotlib"]
+        for k in ("backend", "matplotlibrc", "fonts", "configdir"):
+            assert mpl[k] == {"unavailable": "native_cwd_unavailable"}, k
+        assert mpl["version"] == "3.9" and doc["probe"]["python"]["version"] == "3.11"
+
+
 class TestSourceStatRaces:
     def test_an_unrelated_script_vanishing_does_not_break_the_category(self, world, monkeypatch):
         proj = world["tmp"] / "proj6"
@@ -2247,6 +2389,7 @@ class TestNativePanelRenderEnv:
 
     class FakeSession:
         interpreter = "/conda/bin/python"
+        cwd = tempfile.gettempdir()
         interpreter_fingerprint = "fp123"
         python_version = "3.11.9"
 
