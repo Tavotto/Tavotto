@@ -256,7 +256,7 @@ describe('先看再发', () => {
   it('包太大：不给发送按钮、如实说明、不截取', async () => {
     await mount({ ...PREPARED, id: null, too_large: true, size: 11 * 1024 * 1024 })
     expect(q('[data-diag-send-confirm]')).toBeNull()
-    expect(document.body.textContent).toContain(ds('tooLarge', { size: '11.0 MiB', max: '10.0 MiB' }))
+    expect(document.body.textContent).toContain(ds('tooLarge', { size: '11.0 MiB', max: '64.0 MiB' }))
     expect(startMock).not.toHaveBeenCalled()
   })
 
