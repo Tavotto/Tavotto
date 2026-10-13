@@ -6,7 +6,7 @@
  * message 的 hash）→ 补未捕获错误环（原文与栈，只随发送包走）→ 只有「发送问题反馈」开着（`diagSendStore.capability !== null`）
  * 才可能登记通知轨卡片。卡片只是一句话 + 打开现有确认框；**上传必须等用户在确认框点「发送」**。
  */
-import { ApiError, setEngine500Handler } from '@/lib/api'
+import { setEngine500Handler } from '@/lib/api'
 import { errorMessageHash, recordDiagnosticEvent } from '@/diagnostics'
 import { onUncaughtError, recordUncaughtDetail } from '@/diagnostics/detail'
 import {
@@ -39,7 +39,7 @@ export type UnexpectedErrorOutcome = 'ignored' | 'recorded' | 'prompted'
 
 const BUILTIN_NAMES = new Set<string>(UNEXPECTED_ERROR_NAMES)
 
-/** 内建错误类的原型表：原型不在表里 = 业务自己的错误类（ApiError / EngineError / PendingConflict …）= 结构化失败，各有各的卡 */
+/** 内建错误类的原型表：原型不在表里 = 业务自己的错误类（`ApiError` / `EngineError` / `PendingConflict` …）= 结构化失败，各有各的卡 */
 function builtinPrototypes(): object[] {
   const out: object[] = [Error.prototype]
   for (const C of [TypeError, RangeError, ReferenceError, SyntaxError, EvalError, URIError]) out.push(C.prototype)
@@ -48,7 +48,6 @@ function builtinPrototypes(): object[] {
 }
 
 function isStructuredFailure(e: unknown): boolean {
-  if (e instanceof ApiError) return true
   if (!(e instanceof Error) && !(typeof DOMException !== 'undefined' && e instanceof DOMException)) return false
   return !builtinPrototypes().includes(Object.getPrototypeOf(e))
 }
