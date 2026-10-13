@@ -371,6 +371,8 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   （瞬时，不缓存、不作废记住的解释器、不静默换别的）。
 - **桌面拥有的 native 会话**（`desktopproc.start`，P06）没有用户 shell 替它激活，与 safe 档走同一个 `activate_env`；激活失败 = 零执行（租约 / 输出目录 /
   spawn 之前），`RunError(conda_launcher_unavailable)`。终端 native 继承用户已激活的 shell，不改。
+- **增量是双向的**：激活 `unset` 掉的变量在增量里记成 `None`，`launcher.merge_env` 启动时 `pop` 它（所有启动点都经这一处，含 `desktopproc`）；
+  `_VOLATILE_ENV` 永不删。捕获超时的收尾**叶子先死**（先杀后代、让还活着的 conda 收尸，再杀 conda 并 wait），不留僵尸。
 - **捕获的环境键与时机**：缓存键 `(prefix, prefix_state, conda_exe)`，`prefix_state` 含 `conda-meta/history` / 目录 / `state`（`conda env config vars`）
   与 `etc/conda/activate.d`、`deactivate.d` 的文件清单及各自 (size, mtime_ns)。池锁之外预热（`pool.acquire` 里 `launcher.prewarm`），预检的预算
   传进捕获（`timeout`）；结果文件放 `probe-results/`（0600），启动时清过期残留（`launcher.startup`），退出时清在途的。
