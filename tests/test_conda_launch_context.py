@@ -2185,7 +2185,7 @@ def test_timeout_cleanup_has_one_overall_deadline_however_deep_the_tree(monkeypa
         def kill(self):
             pass
 
-        def wait(self):
+        def wait(self, timeout=None):
             return -9
 
     t0 = time.monotonic()
@@ -2346,3 +2346,73 @@ def test_a_coverage_result_measured_before_an_in_place_conda_change_is_not_store
         py, ("vendor_sdk",), {"ok": True, "python": py}, context=launcher.context_key(py)
     )
     assert len(userenvs._probe_cache) == 1  # noqa: SLF001
+
+
+@needs_worker
+def test_an_environment_change_after_prewarm_never_runs_the_capture_under_the_pool_lock(
+    activation_only_env, tmp_path, monkeypatch
+):
+    """预热之后、进池锁之前 Conda 环境被改：锁内缓存没命中——出锁重新预热再起会话，捕获从不在池锁里跑。"""
+    py, prefix, log = activation_only_env
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(); ax.plot([1, 2]); fig.savefig('r.pdf')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runconfig.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setenv("TAVOTTO_WORKER_PYTHON", py)
+    _pool.reset_worker_python()
+    real_prewarm = launcher.prewarm
+    real_capture = launcher._capture  # noqa: SLF001
+    prewarms: list[int] = []
+    under_lock: list[bool] = []
+
+    def racing_prewarm(python, **k):
+        real_prewarm(python, **k)
+        prewarms.append(1)
+        if len(prewarms) == 1:  # 第一次预热之后、进锁之前：外部 conda install
+            with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+                fh.write("# cmd: conda install vendor-sdk\n")
+
+    def spy_capture(*a, **k):
+        under_lock.append(_pool._lock.locked())  # noqa: SLF001
+        return real_capture(*a, **k)
+
+    monkeypatch.setattr(launcher, "prewarm", racing_prewarm)
+    monkeypatch.setattr(launcher, "_capture", spy_capture)
+    launcher.reset_captures()
+    try:
+        w, _ = _pool.build("fig.py", str(proj), "__main__")
+        assert w.alive()
+        assert len(prewarms) >= 2
+        assert under_lock and not any(under_lock)
+    finally:
+        _pool.shutdown_all(wait=True)
+        _pool.reset_worker_python()
+
+
+@posix_only
+def test_the_final_reap_in_timeout_cleanup_is_bounded(monkeypatch):
+    """卡在不可中断 I/O 的进程 SIGKILL 后也不可收：收尾的最后一次 wait 有期限，不无限挡住调用方。"""
+    monkeypatch.setattr(launcher, "_descendant_levels", lambda pid, **k: [])
+    monkeypatch.setattr(launcher.os, "killpg", lambda pid, sig: None)
+    waits: list = []
+
+    class Stuck:
+        pid = 4242
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            waits.append(timeout)
+            if timeout is None:
+                time.sleep(30)  # 模拟永远收不掉
+            raise subprocess.TimeoutExpired("conda", timeout)
+
+    t0 = time.monotonic()
+    launcher._kill_tree(Stuck())  # noqa: SLF001
+    assert time.monotonic() - t0 < 5
+    assert waits and all(w is not None for w in waits)

@@ -3631,6 +3631,7 @@ def acquire(
     # 进锁时它却死了 / 换了入口，就得出锁把决定补上再来一遍（Codex #562 P2），否则锁内重建走到只读的
     # 依赖门，本该自动改用的只会弹框。第二遍一定已经决定过，所以最多两遍。
     force_decide = False
+    rewarms = 0
     while True:
         # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
@@ -3721,6 +3722,17 @@ def acquire(
                 # 它先拿到 → 这里看得见；这里先登记 → 它的 `shutdown_workers_using()` 要等这把锁，
                 # 然后收掉这条会话，pip 在那之后才开始。锁序 `_lock` → envlease 内部锁，没有反向嵌套。
                 _refuse_if_mutating(want_python)
+                if want_python and not launcher_mod.is_warm(want_python):
+                    # 锁外预热之后、进锁之前 Conda 环境被改了（conda install / 改 activate.d）：缓存没命中。
+                    # 不在池锁里跑捕获（最长 60s，期间所有项目的取会话 / 关停都被挡住）——出锁重新预热再来
+                    rewarms += 1
+                    if rewarms > 3:
+                        raise _launcher_error(
+                            launcher_mod.LauncherUnavailable(
+                                "这个 Conda 环境在起会话前反复被修改；请等它稳定后再试"
+                            )
+                        )
+                    continue
                 context = (
                     {"artifact_source": artifact_source} if artifact_source is not None else {}
                 )

@@ -472,12 +472,17 @@ def _kill_tree(proc: subprocess.Popen) -> None:
                 break
             time.sleep(min(0.1, left))  # 让还活着的父进程（conda / 它起的 shell）收掉这一层
     proc.kill()
-    proc.wait()
     if os.name != "nt":
         try:
             os.killpg(proc.pid, signal.SIGKILL)  # 兜底：组里仍有漏网的
         except OSError:
             pass
+    # 收尸也有期限：卡在不可中断 I/O 里的进程 SIGKILL 之后也不会马上可收，不能让调用方无限等（它最终退出时由
+    # Popen 的回收机制收掉）
+    try:
+        proc.wait(timeout=_KILL_TREE_BUDGET_S)
+    except subprocess.TimeoutExpired:
+        LOG.warning("Conda 激活超时收尾：进程 %s 在期限内没能收掉", proc.pid)
 
 
 def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str | None]:
@@ -605,6 +610,17 @@ def activate_env(python, base: dict | None = None, *, timeout: float | None = No
     """所有「用目标解释器起子进程」的地方取 env 的唯一入口：`launcher_for_interpreter` 的决策 + 合并激活增量。
     Conda 环境捕获失败抛 `LauncherUnavailable`——**没有**“范围外降级成裸起”的分支。"""
     return merge_env(launcher_for_interpreter(python), python, base, timeout=timeout)
+
+
+def is_warm(python) -> bool:
+    """这条解释器起会话要用的激活增量此刻已在缓存里（不需要激活的解释器恒真）。纯读，不起任何进程——
+    持着池锁的调用方据此决定能不能在锁内起会话（缓存没命中就出锁再预热，不在锁里跑一次最长 60s 的捕获）。"""
+    lau = launcher_for_interpreter(python)
+    if lau is None:
+        return True
+    key = (lau.prefix, prefix_state(lau.prefix), lau.conda_exe)
+    with _captured_lock:
+        return key in _captured
 
 
 def prewarm(python, *, timeout: float | None = None) -> None:
