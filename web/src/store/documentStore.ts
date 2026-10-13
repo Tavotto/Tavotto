@@ -1807,23 +1807,42 @@ export async function overwriteDisk(): Promise<SaveState> {
   return saveNow()
 }
 
-/** 本机兜底副本（若有）；schema 2 旧槽位自动迁移 */
-function readLocalSlot(id: string): ProjectDocument | null {
+interface LocalSnapshot {
+  raw: unknown
+  doc: ProjectDocument
+}
+
+/** 原始快照与可打开的文档一起读取；旧格式迁移生成的身份不能用于判断原稿是否相同。 */
+function readLocalSnapshot(id: string): LocalSnapshot | null {
   try {
     const raw = localStorage.getItem(slotKey(id))
     if (!raw) return null
-    return migrateToProject(JSON.parse(raw))
+    const parsed: unknown = JSON.parse(raw)
+    const doc = migrateToProject(parsed)
+    return doc ? { raw: parsed, doc } : null
   } catch {
     return null
   }
 }
 
+/** 本机兜底副本（若有）；schema 2 旧槽位自动迁移 */
+function readLocalSlot(id: string): ProjectDocument | null {
+  return readLocalSnapshot(id)?.doc ?? null
+}
+
 type LocalRecoveryKind = 'local_newer' | 'local_distinct'
 
 /** 内容不同才有恢复价值；时间戳不能证明另一个快照已经安全落盘（#646）。 */
-function localRecoveryKind(local: ProjectDocument | null, diskDoc: ProjectDocument): LocalRecoveryKind | null {
-  if (!local || sameRules({ ...local, updatedAt: 0 }, { ...diskDoc, updatedAt: 0 })) return null
-  return local.updatedAt > diskDoc.updatedAt ? 'local_newer' : 'local_distinct'
+function localRecoveryKind(local: LocalSnapshot | null, diskDoc: ProjectDocument, diskRaw: unknown): LocalRecoveryKind | null {
+  if (!local) return null
+  const localRaw = local.raw as Record<string, unknown>
+  const rawDisk = diskRaw as Record<string, unknown> | null
+  if (localRaw.schema === 2 && rawDisk?.schema === 2) {
+    // schema 2 两次迁移会生成不同 project/canvas ID 与时间；比较完整原稿，保留所有用户字段。
+    return sameRules({ ...localRaw, updatedAt: 0 }, { ...rawDisk, updatedAt: 0 }) ? null : 'local_distinct'
+  }
+  if (sameRules({ ...local.doc, updatedAt: 0 }, { ...diskDoc, updatedAt: 0 })) return null
+  return local.doc.updatedAt > diskDoc.updatedAt ? 'local_newer' : 'local_distinct'
 }
 
 /** 载入一份文档的结果；`notice` 是需要用户裁决的那件事（没有则 null） */
@@ -1878,7 +1897,8 @@ export interface ProbeResult {
  */
 export async function probeDocument(id: string, pj: string | null): Promise<ProbeResult> {
   const disk = await probeAutosave(id, pj)
-  const local = readLocalSlot(id)
+  const localSnapshot = readLocalSnapshot(id)
+  const local = localSnapshot?.doc ?? null
   const pending = readRecovery(id)
   if (disk.kind === 'found') {
     const future = futureSchemaOf(disk.doc)
@@ -1895,7 +1915,7 @@ export async function probeDocument(id: string, pj: string | null): Promise<Prob
       // 上一轮没裁决完的恢复副本优先：它一直有效，直到用户处置它
       const pendingRecovery = pending
         ? 'recovery_slot'
-        : localRecoveryKind(local, diskDoc)
+        : localRecoveryKind(localSnapshot, diskDoc, disk.doc)
       return { id, kind: 'found', disk, doc: diskDoc, from: 'disk', pendingRecovery, local: local ?? pending }
     }
     // 磁盘上有字节但本构建认不出：当成读不了，有本机副本就用它（与旧 `fetchAutosave` 抛错同一条路）
@@ -1922,14 +1942,15 @@ export function acceptProbe(p: ProbeResult, _pj: string | null, token?: RestoreT
     return { kind: 'schema_too_new', docId: id, schema: p.schema ?? 0 }
   }
   if (p.kind !== 'found' || !p.doc) return null
-  const local = readLocalSlot(id)
+  const localSnapshot = readLocalSnapshot(id)
+  const local = localSnapshot?.doc ?? null
   const pending = readRecovery(id)
   if (p.from === 'disk' && p.disk.kind === 'found') {
     const diskDoc = p.doc
     disk.rememberRevision(id, { revision: p.disk.revision })
     // 读到什么就以什么为基线：之后本标签页的写盘都从这一版往前推进
     if (typeof diskDoc.updatedAt === 'number') disk.setBaseline(id, diskDoc.updatedAt)
-    const localKind = localRecoveryKind(local, diskDoc)
+    const localKind = localRecoveryKind(localSnapshot, diskDoc, p.disk.doc)
     const candidate = pending ?? (localKind ? local : null)
     if (local && !pending && !localKind) {
       // 内容已经在磁盘中；仅 updatedAt 或 JSON 键序不同，没有要恢复的编辑。

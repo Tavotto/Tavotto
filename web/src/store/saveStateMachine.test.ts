@@ -535,6 +535,120 @@ describe('外部修改冲突（R-08）', () => {
 })
 
 describe('崩溃恢复', () => {
+  it('legacy schema2 comparison: identical stored bytes are redundant before migration', async () => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const bytes = JSON.stringify(legacy)
+    disk.set('d_legacy_same', bytes)
+    localStorage.setItem(slotKey('d_legacy_same'), bytes)
+    const probe = await probeDocument('d_legacy_same', null)
+    expect(probe).toMatchObject({ from: 'disk', pendingRecovery: null })
+    expect(probe.doc?.schema).toBe(3)
+    expect(localStorage.getItem(slotKey('d_legacy_same'))).toBe(bytes)
+    expect(acceptProbe(probe, null)).toBeNull()
+    expect(localStorage.getItem(slotKey('d_legacy_same'))).toBeNull()
+    expect(localStorage.getItem(recoveryKey('d_legacy_same'))).toBeNull()
+    expect(disk.get('d_legacy_same')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it('legacy schema2 comparison: timestamp and recursive key order do not create an edit', async () => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const bytes = JSON.stringify(legacy)
+    const localBytes = JSON.stringify({ ...legacy, updatedAt: 99 }, (_key, value) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+      return Object.fromEntries(Object.entries(value).reverse())
+    })
+    disk.set('d_legacy_keys', bytes)
+    localStorage.setItem(slotKey('d_legacy_keys'), localBytes)
+    const probe = await probeDocument('d_legacy_keys', null)
+    expect(probe.pendingRecovery).toBeNull()
+    expect(acceptProbe(probe, null)).toBeNull()
+    expect(localStorage.getItem(slotKey('d_legacy_keys'))).toBeNull()
+    expect(localStorage.getItem(recoveryKey('d_legacy_keys'))).toBeNull()
+    expect(disk.get('d_legacy_keys')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it('legacy schema2 comparison: different legacy content remains a user recovery candidate', async () => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const local = { ...legacy, updatedAt: 99, objects: [text('legacy_t', 'unsaved legacy edit')] }
+    const bytes = JSON.stringify(legacy)
+    disk.set('d_legacy_edit', bytes)
+    localStorage.setItem(slotKey('d_legacy_edit'), JSON.stringify(local))
+    const probe = await probeDocument('d_legacy_edit', null)
+    expect(probe.from).toBe('disk')
+    expect(probe.pendingRecovery).not.toBeNull()
+    expect((probe.doc!.canvases[0].objects[0] as TextObject).text).toBe('same')
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    const kept = JSON.parse(localStorage.getItem(recoveryKey('d_legacy_edit'))!)
+    expect(kept.canvases[0].objects[0].text).toBe('unsaved legacy edit')
+    expect(disk.get('d_legacy_edit')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it('legacy schema2 comparison: accept rereads a distinct legacy draft that arrived after probe', async () => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const bytes = JSON.stringify(legacy)
+    disk.set('d_legacy_late', bytes)
+    localStorage.setItem(slotKey('d_legacy_late'), bytes)
+    const probe = await probeDocument('d_legacy_late', null)
+    expect(probe.pendingRecovery).toBeNull()
+    localStorage.setItem(slotKey('d_legacy_late'), JSON.stringify({
+      ...legacy, updatedAt: 99, objects: [text('legacy_t', 'late legacy edit')],
+    }))
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    const kept = JSON.parse(localStorage.getItem(recoveryKey('d_legacy_late'))!)
+    expect(kept.canvases[0].objects[0].text).toBe('late legacy edit')
+    expect(disk.get('d_legacy_late')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each(['legacy disk', 'legacy local'] as const)('legacy schema2 comparison: mixed schemas retain modern identity (%s)', async (side) => {
+    const legacy = { schema: 2, name: 'Legacy Figure', page: { w: 80, h: 60 }, objects: [text('legacy_t', 'same')], guides: [], updatedAt: 100 }
+    const modern = {
+      ...seeded(100, legacy.name, 1),
+      project: { id: 'p_existing', name: legacy.name },
+      canvases: [{ id: 'c_existing', name: legacy.name, page: legacy.page, objects: legacy.objects, guides: [] }],
+      activeCanvasId: 'c_existing',
+      createdAt: 1,
+    }
+    const diskBytes = JSON.stringify(side === 'legacy disk' ? legacy : modern)
+    const localBytes = JSON.stringify(side === 'legacy local' ? legacy : modern)
+    disk.set('d_mixed_identity', diskBytes)
+    localStorage.setItem(slotKey('d_mixed_identity'), localBytes)
+    const probe = await probeDocument('d_mixed_identity', null)
+    expect(probe.from).toBe('disk')
+    expect(probe.pendingRecovery).not.toBeNull()
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    expect(localStorage.getItem(recoveryKey('d_mixed_identity'))).not.toBeNull()
+    if (side === 'legacy disk') {
+      const kept = JSON.parse(localStorage.getItem(recoveryKey('d_mixed_identity'))!)
+      expect(kept.project.id).toBe('p_existing')
+      expect(kept.canvases[0].id).toBe('c_existing')
+    }
+    expect(disk.get('d_mixed_identity')).toBe(diskBytes)
+    expect(puts).toHaveLength(0)
+  })
+
+  it.each(['project', 'canvas'] as const)('legacy schema2 comparison: modern %s identity remains meaningful', async (identity) => {
+    const main = seeded(100, 'main', 1)
+    const local = structuredClone(main)
+    if (identity === 'project') local.project.id = 'p_other'
+    else {
+      local.canvases[0].id = 'c_other'
+      local.activeCanvasId = 'c_other'
+    }
+    const bytes = JSON.stringify(main)
+    disk.set('d_modern_identity', bytes)
+    localStorage.setItem(slotKey('d_modern_identity'), JSON.stringify(local))
+    const probe = await probeDocument('d_modern_identity', null)
+    expect(probe.pendingRecovery).not.toBeNull()
+    expect(acceptProbe(probe, null)).toMatchObject({ kind: 'recovery' })
+    expect(localStorage.getItem(recoveryKey('d_modern_identity'))).not.toBeNull()
+    expect(disk.get('d_modern_identity')).toBe(bytes)
+    expect(puts).toHaveLength(0)
+  })
+
   it.each([100, 99])('重启时保留时间戳 %s 的不同稿，明确恢复并保存前不覆盖磁盘', async (updatedAt) => {
     const main = seeded(100, 'main', 1)
     const local = { ...main, updatedAt, project: { ...main.project, name: 'unsaved edit' } }
