@@ -659,3 +659,53 @@ def test_a_bad_figure_is_isolated_and_only_complete_figures_are_counted(tmp_path
     assert not figcapture.usable_preview_generation(out_dir, "bad"), "坏图不该有预览"
     assert not any(n.endswith(".part") for n in os.listdir(out_dir)), "临时文件没清"
     ET.parse(figcapture.usable_preview_path(out_dir, "good", ".svg"))  # 记成完成的是完整 XML
+
+
+# --------------------------------------------------------------------------
+# 逐图事实随每个 barrier 刷新（P08a，Codex #978）：不靠再发一次 build
+_FACTS_HEAD = (
+    "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+    "from matplotlib.artist import Artist\n"
+    "class AggOnly(Artist):\n    def draw(self, renderer):\n        renderer.buffer_rgba()\n"
+)
+
+
+def _facts_at_each_show_barrier(tmp_path, script: str, shows: int):
+    nativekit.write(tmp_path / "figure.py", _FACTS_HEAD + script)
+    seen = []
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        for _n in range(shows):
+            nativekit.wait_state(session, [nativesession.BARRIER])
+            # 刻意不调 ensure_built：事实必须随 barrier 事件到达
+            seen.append({f["stem"]: f["state"] for f in session.public_state()["figure_facts"]})
+            session.resume()
+        nativekit.finish(session, proc)
+    return seen
+
+
+def test_facts_follow_a_figure_that_goes_from_failed_to_live_at_the_next_barrier(tmp_path):
+    seen = _facts_at_each_show_barrier(
+        tmp_path,
+        "bad, ax = plt.subplots()\nax.plot([0, 1], [0, 1])\nax.add_artist(AggOnly())\n"
+        "bad.savefig('b.png')\nplt.show()\n"
+        "for a in list(ax.artists):\n    a.remove()\nplt.show()\n",
+        2,
+    )
+    assert seen[0] == {"b": "failed"}, seen
+    assert seen[1] == {"b": "live"}, f"第二个 barrier 还是旧事实: {seen}"
+
+
+def test_facts_show_a_figure_that_first_fails_at_the_second_barrier(tmp_path):
+    seen = _facts_at_each_show_barrier(
+        tmp_path,
+        "g, ax = plt.subplots()\nax.plot([0, 1], [0, 1])\ng.savefig('g.png')\nplt.show()\n"
+        "bad, ax2 = plt.subplots()\nax2.plot([0, 1], [0, 1])\nax2.add_artist(AggOnly())\n"
+        "bad.savefig('b.png')\nplt.show()\n",
+        2,
+    )
+    assert seen[0] == {"g": "live"}, seen
+    assert seen[1] == {"g": "live", "b": "failed"}, f"第二个 barrier 漏了新出现的坏图: {seen}"

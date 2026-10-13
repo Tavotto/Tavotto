@@ -801,6 +801,9 @@ class BridgeRun:
             reason=reason,
             stems=list(self.session.states),
             failed_stems=list(self.session.failures) or None,
+            # 逐图事实随每个 barrier 一起带过去：桌面侧不必为了拿它再发一次 build，
+            # 也就不会在第二个 barrier 之后还拿着第一个 barrier 的旧事实
+            figure_facts=self.session.figure_facts(_SAVEFIG_OBSERVATIONS),
             script_error=self.script_error,
             rebase_warnings=self.rebase_warnings or None,
         )

@@ -382,6 +382,11 @@ class NativeSession:
         name = frame.get(EVENT_KEY)
         if name == "barrier":
             stems = frame.get("stems") or []
+            facts = frame.get("figure_facts")
+            if isinstance(facts, list):
+                # 不进事件日志（里头有路径）：先于状态落定，读到 BARRIER 的人一定看到这一个 barrier 的事实
+                with self._lock:
+                    self.figure_facts = list(facts)
             self._set_state(
                 BARRIER,
                 barrier_reason=str(frame.get("reason") or ""),
