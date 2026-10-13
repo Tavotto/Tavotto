@@ -50,6 +50,61 @@ function push(ring: RingRecord[], cap: number, rec: RingRecord): void {
 const SHOW_MAX_DEPTH = 4
 const SHOW_MAX_BREADTH = 50
 
+/**
+ * 读对象属性但**绝不触发用户写的 getter**：沿原型链找到定义处的描述符，data 属性取值；accessor 只有引擎自带的
+ * （原生函数，如新版 V8 的 `stack`）才调用，用户写的（子类把 `message` / `stack` 覆盖成 getter）返回 `GETTER`。
+ */
+const GETTER = Symbol('getter')
+function isNativeFunction(fn: (...a: never[]) => unknown): boolean {
+  try {
+    return Function.prototype.toString.call(fn).includes('[native code]')
+  } catch {
+    return false
+  }
+}
+
+function dataProp(obj: object, key: string): unknown {
+  let o: object | null = obj
+  for (let i = 0; o && i < 32; i++) {
+    let d: PropertyDescriptor | undefined
+    try {
+      d = Object.getOwnPropertyDescriptor(o, key)
+    } catch {
+      return GETTER
+    }
+    if (d) {
+      if ('value' in d) return d.value
+      // 引擎自带的 accessor（新版 V8 的 `stack` 就是）是安全的；用户写的 getter（原生函数的 toString 才含 [native code]）不调
+      if (typeof d.get === 'function' && isNativeFunction(d.get)) {
+        try {
+          return d.get.call(obj)
+        } catch {
+          return GETTER
+        }
+      }
+      return GETTER
+    }
+    try {
+      o = Object.getPrototypeOf(o)
+    } catch {
+      return GETTER
+    }
+  }
+  return undefined
+}
+
+function errorHead(err: Error): string {
+  const name = dataProp(err, 'name')
+  const message = dataProp(err, 'message')
+  const str = (v: unknown) => (v === GETTER ? '[getter]' : typeof v === 'string' ? v : String(v ?? ''))
+  return `${str(name)}: ${str(message)}`
+}
+
+function errorStack(err: Error): string | null {
+  const stack = dataProp(err, 'stack')
+  return typeof stack === 'string' && stack ? stack : null
+}
+
 /** 小的递归 writer：往 `out` 里追加，超出 `budget` 立刻停；超界处写 `…`。 */
 function write(value: unknown, out: string[], budget: { left: number }, depth: number, seen: WeakSet<object>): void {
   if (budget.left <= 0) return
@@ -62,7 +117,7 @@ function write(value: unknown, out: string[], budget: { left: number }, depth: n
   if (ty === 'string') return emit(depth === 0 ? (value as string) : JSON.stringify((value as string).slice(0, 200)))
   if (ty === 'number' || ty === 'boolean' || ty === 'bigint') return emit(String(value))
   if (ty === 'function' || ty === 'symbol') return emit(`[${ty}]`)
-  if (value instanceof Error) return emit(`${value.name}: ${value.message}`)
+  if (value instanceof Error) return emit(errorHead(value))
   const obj = value as object
   if (seen.has(obj)) return emit('[Circular]')
   if (depth >= SHOW_MAX_DEPTH) return emit('…')
@@ -121,9 +176,12 @@ function show(value: unknown): string {
 function formatArgs(args: unknown[]): { message: string; stack: string | null } {
   let stack: string | null = null
   for (const a of args) {
-    if (a instanceof Error && a.stack) {
-      stack = a.stack
-      break
+    if (a instanceof Error) {
+      const st = errorStack(a)
+      if (st) {
+        stack = st
+        break
+      }
     }
   }
   const message = args.map(show).join(' ')
@@ -179,8 +237,8 @@ export function installConsoleCapture(): () => void {
       push(errorRing, ERROR_RING_CAPACITY, {
         t: Date.now(),
         level: 'error',
-        message: (err instanceof Error ? `${err.name}: ${err.message}` : e.message || 'error').slice(0, MAX_MESSAGE),
-        stack: err instanceof Error && err.stack ? err.stack.slice(0, MAX_STACK) : `${e.filename}:${e.lineno}:${e.colno}`,
+        message: (err instanceof Error ? errorHead(err) : e.message || 'error').slice(0, MAX_MESSAGE),
+        stack: (err instanceof Error ? errorStack(err)?.slice(0, MAX_STACK) : null) ?? `${e.filename}:${e.lineno}:${e.colno}`,
       })
     } catch {
       /* 同上 */
@@ -193,7 +251,7 @@ export function installConsoleCapture(): () => void {
         t: Date.now(),
         level: 'unhandledrejection',
         message: show(r).slice(0, MAX_MESSAGE),
-        stack: r instanceof Error && r.stack ? r.stack.slice(0, MAX_STACK) : null,
+        stack: (r instanceof Error ? errorStack(r)?.slice(0, MAX_STACK) : null) ?? null,
       })
     } catch {
       /* 同上 */

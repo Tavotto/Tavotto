@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -427,6 +428,125 @@ class TestScrubbing:
         s = diagdetail.Scrubber(source_mode=True)
         assert s.text("token = self._next_token()") == "token = self._next_token()"
         assert s.text('api_key = "abcd1234efgh"') == 'api_key = "<redacted>"'
+
+
+GROUP_TB = (
+    "  + Exception Group Traceback (most recent call last):\n"
+    '  |   File "/p/fig.py", line 18, in <module>\n'
+    "  |     h()  # GRP_SRC_1\n"
+    "  |     ~^^\n"
+    '  |   File "/p/fig.py", line 10, in g\n'
+    '  |     raise ExceptionGroup("grp", [e])  # GRP_SRC_2\n'
+    "  | ExceptionGroup: grp (2 sub-exceptions)\n"
+    "  | NOTE_USER_TEXT\n"
+    "  +-+---------------- 1 ----------------\n"
+    "    | Traceback (most recent call last):\n"
+    '    |   File "/p/fig.py", line 8, in g\n'
+    "    |     f(secret_local)  # GRP_SRC_3\n"
+    "    |     ~^^^^^^^^^^^^^\n"
+    "    |   ...\n"
+    "    | ValueError: 1\n"
+    "    +---------------- 2 ----------------\n"
+    "    | ExceptionGroup: inner (1 sub-exception)\n"
+    "    +-+---------------- 1 ----------------\n"
+    "      | Traceback (most recent call last):\n"
+    '      |   File "/p/fig.py", line 3, in z\n'
+    "      |     raise KeyError(x)  # GRP_SRC_4\n"
+    "      | KeyError: 2\n"
+    "      +------------------------------------\n"
+    "\n"
+    "The above exception was the direct cause of the following exception:\n"
+    "\n"
+    "Traceback (most recent call last):\n"
+    '  File "/p/fig.py", line 25, in <module>\n'
+    "    chained()  # GRP_SRC_5\n"
+    "    x = 1  # a local: GRP_SRC_6\n"
+    "RuntimeError: chained\n"
+    "NOTE_AFTER_EXC\n"
+)
+GROUP_CANARIES = [f"GRP_SRC_{i}" for i in range(1, 7)] + ["secret_local"]
+
+
+class TestExceptionGroupTracebacks:
+    def test_whitelist_keeps_frames_and_exception_lines_and_decoration(self):
+        out = diagdetail.strip_source_lines(GROUP_TB)
+        for c in GROUP_CANARIES:
+            assert c not in out, c
+        for keep in (
+            "  + Exception Group Traceback (most recent call last):",
+            '  |   File "/p/fig.py", line 18, in <module>',
+            "  | ExceptionGroup: grp (2 sub-exceptions)",
+            "  | NOTE_USER_TEXT",  # add_note 的 note 不是源码：保留
+            "  +-+---------------- 1 ----------------",
+            "    |   ...",
+            "    | ValueError: 1",
+            "      | KeyError: 2",
+            "      +------------------------------------",
+            "The above exception was the direct cause of the following exception:",
+            "RuntimeError: chained",
+            "NOTE_AFTER_EXC",
+        ):
+            assert keep in out, keep
+        assert "~^^" not in out
+
+    def test_plain_and_chained_tracebacks_still_work(self):
+        tb = (
+            "Traceback (most recent call last):\n"
+            '  File "/p/a.py", line 3, in <module>\n'
+            "    boom()  # PLAIN_SRC\n"
+            "    ^^^^^^\n"
+            "ValueError: x\n"
+            "\n"
+            "During handling of the above exception, another exception occurred:\n"
+            "\n"
+            "Traceback (most recent call last):\n"
+            '  File "/p/a.py", line 5, in <module>\n'
+            "    other()  # PLAIN_SRC2\n"
+            "KeyError: y\n"
+            "normal log line afterwards\n"
+            "    indented log continuation stays\n"
+        )
+        out = diagdetail.strip_source_lines(tb)
+        assert "PLAIN_SRC" not in out
+        assert "ValueError: x" in out and "KeyError: y" in out
+        assert "    indented log continuation stays" in out  # 块外（收尾异常行之后）的缩进正文不动
+
+    @pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup 需要 3.11+")
+    def test_a_real_exception_group_traceback(self, tmp_path):
+        import subprocess
+
+        script = tmp_path / "eg.py"
+        script.write_text(
+            "def f():\n    raise ValueError(REAL_SRC_A := 1)\n"
+            "try:\n    f()\nexcept Exception as e:\n"
+            "    raise ExceptionGroup('g', [e, ExceptionGroup('i', [KeyError(REAL_SRC_B := 2)])])\n",
+            encoding="utf-8",
+        )
+        err = subprocess.run([sys.executable, str(script)], capture_output=True, text=True).stderr
+        assert "REAL_SRC_A" in err  # 反证：原始输出里确实有源码行
+        out = diagdetail.strip_source_lines(err)
+        assert "REAL_SRC_A" not in out and "REAL_SRC_B" not in out
+        assert "ExceptionGroup: g" in out and "ValueError: 1" in out
+
+    def test_unticked_has_zero_source_canaries_in_errors_and_every_log_tail(
+        self, client, world, monkeypatch
+    ):
+        tmp = world["tmp"]
+        app_log = tmp / "grp_app.log"
+        app_log.write_text(
+            "2026-10-13 10:00:00,000 ERROR tavotto: render failed\n" + GROUP_TB, encoding="utf-8"
+        )
+        monkeypatch.setattr(diagnostics, "_app_log_path", lambda: app_log)
+        (tmp / "sidecar.log").write_text(GROUP_TB, encoding="utf-8")
+        (tmp / "worker.log").write_text(GROUP_TB, encoding="utf-8")
+        _prep, z = _prepare(client)
+        for name, text in _texts(z).items():
+            for c in GROUP_CANARIES:
+                assert c not in text, (name, c)
+        assert "NOTE_USER_TEXT" in _blob(z)  # 反证：日志确实进了包
+        _prep, z = _prepare(client, source=True)  # 勾了源码：不剥
+        assert "GRP_SRC_1" in z.read("detail-worker-log.txt").decode()
+        assert "GRP_SRC_1" in z.read("detail-app-log.txt").decode()
 
 
 class TestStripSourceLines:

@@ -530,36 +530,46 @@ class Scrubber:
 # ---------------------------------------------------------------------------
 # 没勾「脚本源码」时剥掉 traceback 里的源码行
 # ---------------------------------------------------------------------------
-_TB_FRAME = re.compile(r'^(?P<indent>\s*)File "[^"]*", line \d+')
-_CARETS = re.compile(r"^\s*[\^~\-+]+\s*$")
+_FRAME = re.compile(r'^\s*File "[^"]*", line \d+(?:, in .*)?$')
 _WARNING_HEAD = re.compile(r"^\S[^\n]*:\d+: \w*Warning\b")
+_TB_HEADER = re.compile(r"^(?:Exception Group )?Traceback \(most recent call last\):$")
+_ELLIPSIS = re.compile(r"^(?:\.\.\.|\[Previous line repeated \d+ more times?\])$")
+#: Python 3.11+ ExceptionGroup 的装饰前缀：任意层 `|`（后跟至多一个空格）、`+ ` 头、`+-+---- 1 ----` 分隔行
+_DECO = re.compile(r"^(?:[ ]*(?:\|[ ]?|\+[ ]))+")
+_GROUP_SEP = re.compile(r"^[ ]*(?:\|[ ]*)*\+[-+]+[ ]*(?:\d+[ ]*-*)?[-+ ]*$")
 
 
 def strip_source_lines(text: str) -> str:
-    """去掉 Python traceback / SyntaxError / warning 显示里附带的**源码行**（和指示符 `^^^` / `~~^~~`）。
+    """去掉 Python traceback / SyntaxError / warning 显示里附带的**用户代码**（源码行、`^^^` / `~~^~~` 指示符、局部变量 repr）。
 
-    保留 `File "…", line N, in f` 帧行与异常行——调用栈是完整的，只是不带脚本的代码文本。
+    **白名单，不是黑名单**：traceback 块里（从 `Traceback (most recent call last):` / `Exception Group Traceback`、
+    或任何 `File "…", line N` 帧行、或 `file.py:N: XxxWarning` 起），先剥掉 ExceptionGroup 的装饰前缀再分类——缩进的行
+    只留 `File "…", line N[, in …]` 帧行与 `...` / `[Previous line repeated N more times]`，其余一律删；
+    不缩进的行（块头、收尾 `Type: message`、链式连接语、`add_note` 的 note、group 分隔行）原样保留，装饰前缀原样还回去。
+    块外的行是日志正文，不动。
     """
     out: list[str] = []
-    frame_indent = -1  # >= 0：刚见到帧行，后面更深缩进的行是源码
+    in_frames = False  # True：正在读帧——缩进的行不是帧就是用户代码
     for line in text.split("\n"):
-        m = _TB_FRAME.match(line)
-        if m:
+        if _GROUP_SEP.match(line):
             out.append(line)
-            frame_indent = len(m.group("indent"))
             continue
-        if _WARNING_HEAD.match(line):
+        m = _DECO.match(line)
+        core = line[m.end() :] if m else line
+        stripped = core.strip()
+        if _TB_HEADER.match(stripped) or _FRAME.match(core) or _WARNING_HEAD.match(core):
             out.append(line)
-            frame_indent = 0
+            in_frames = True
             continue
-        if frame_indent >= 0:
-            stripped = line.lstrip()
-            indent = len(line) - len(stripped)
-            if stripped and indent > frame_indent and not stripped.startswith("File "):
-                continue  # 源码行 / 指示符
-            if stripped and _CARETS.match(line):
+        if in_frames:
+            if not stripped:
+                out.append(line)
                 continue
-            frame_indent = -1
+            if core[:1] in (" ", "\t"):
+                if _ELLIPSIS.match(stripped):
+                    out.append(line)
+                continue  # 源码行 / 指示符 / 局部变量：删
+            in_frames = False  # 不缩进：收尾异常行（之后的 note、连接语都属于块外正文，原样）
         out.append(line)
     return "\n".join(out)
 

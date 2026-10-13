@@ -236,6 +236,59 @@ describe('有界序列化不触发 getter', () => {
   })
 })
 
+describe('Error 子类的 accessor 不被触发', () => {
+  const makeEvil = () => {
+    const calls = { name: 0, message: 0, stack: 0 }
+    class Evil extends Error {
+      get message(): string {
+        calls.message++
+        return 'evil-message'
+      }
+      get name(): string {
+        calls.name++
+        return 'EvilError'
+      }
+    }
+    const e = new Evil('x')
+    Object.defineProperty(e, 'stack', {
+      get() {
+        calls.stack++
+        return 'evil-stack'
+      },
+    })
+    return { e, calls }
+  }
+
+  it('console.error / 未捕获错误 / unhandledrejection：name、message、stack 的 getter 调用 0 次', () => {
+    uninstall = installConsoleCapture()
+    const a = makeEvil()
+    console.error('boom', a.e)
+    const b = makeEvil()
+    window.dispatchEvent(new ErrorEvent('error', { error: b.e, message: 'm' }))
+    const c = makeEvil()
+    const rej = new Event('unhandledrejection') as Event & { reason: unknown }
+    rej.reason = c.e
+    window.dispatchEvent(rej)
+    for (const { calls } of [a, b, c]) expect(calls).toEqual({ name: 0, message: 0, stack: 0 })
+    expect(readConsoleRing()[0].message).toContain('[getter]')
+    expect(readErrorRing().every((r) => r.message.includes('[getter]') || r.message === '')).toBe(true)
+  })
+
+  it('普通 Error 仍取到名字、消息与栈', () => {
+    uninstall = installConsoleCapture()
+    class Custom extends Error {
+      constructor(m: string) {
+        super(m)
+        this.name = 'CustomError'
+      }
+    }
+    console.error(new Custom('plain'))
+    const r = readConsoleRing()[0]
+    expect(r.message).toBe('CustomError: plain')
+    expect(r.stack).toContain('plain')
+  })
+})
+
 describe('载荷预算', () => {
   const rec = (n: number) => ({ t: n, level: 'error', message: 'm'.repeat(4000), stack: 's'.repeat(8000) })
   const worst = (): SendPayload =>
