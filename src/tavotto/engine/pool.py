@@ -616,8 +616,8 @@ class WorkerError(RuntimeError):
         self.extra: dict = {}
         #: 数据找不到（ADR 0106）时弹窗的结构化载荷（`inputremap.payload_for`）；没有就是 None。
         self.missing_input: dict | None = None
-        #: 缺依赖三类里的哪一类（`INSTALL_ROUTE_*`），只在 `missing_dependency` 时有意义。这里（池层）只认得出
-        #: 「标准库缺了」；「装得了 / 装不了」要查可信解析（`deprepair.offer`），由 app 层 / 准备会话补上。空 = 池层不知道。
+        #: 缺依赖的去向（`INSTALL_ROUTE_*`），只在 `missing_dependency` 时有意义。这里（池层）认得出
+        #: 「标准库缺了 / 不支持当前系统」；「装得了 / 装不了」要查可信解析，由 app 层 / 准备会话补上。空 = 池层不知道。
         self.install_route = ""
 
 
@@ -963,33 +963,55 @@ def structured_missing_dependency(fields) -> tuple[bool, str]:
     return bool(module) or fields.get("missing_dependency") is True, module
 
 
-#: 缺依赖的三类去向（前端按这个字段选引导，不按文案判断）：
+#: 缺依赖的去向（前端按这个字段选引导，不按文案判断）：
 #: 可安装（能经可信解析映射到 PyPI distribution，一键安装）/ 装不了（映射不到，如 CERN ROOT，只能换一个装了它的
 #: Python 环境）/ 标准库缺了（模块在解释器的 `sys.stdlib_module_names` 里，却 import 不到，典型是 Windows 内置
-#: embeddable runtime 没有 tkinter）。pip 装不了标准库，所以后两类都只剩「换用自己的 Python」。
+#: embeddable runtime 没有 tkinter）。平台专属标准库在另一种系统上缺失时，换 Python 也无法补齐。
 INSTALL_ROUTE_INSTALLABLE = "installable"
 INSTALL_ROUTE_UNRESOLVABLE = "unresolvable"
 INSTALL_ROUTE_STDLIB = "stdlib_missing"
-INSTALL_ROUTES = (INSTALL_ROUTE_INSTALLABLE, INSTALL_ROUTE_UNRESOLVABLE, INSTALL_ROUTE_STDLIB)
+INSTALL_ROUTE_PLATFORM = "unsupported_platform"
+INSTALL_ROUTES = (
+    INSTALL_ROUTE_INSTALLABLE,
+    INSTALL_ROUTE_UNRESOLVABLE,
+    INSTALL_ROUTE_STDLIB,
+    INSTALL_ROUTE_PLATFORM,
+)
+
+# 只对执行时已报缺失的模块分类，绝不拦静态 import（脚本可能有平台分支或本地同名模块）。
+# worker 是本机子进程，平台与控制面相同；这是系统限制，不是宿主 Python 的打包缺口。
+_PLATFORM_STDLIB = {
+    "pwd": "posix",
+    "grp": "posix",
+    "fcntl": "posix",
+    "termios": "posix",
+    "winreg": "nt",
+    "msvcrt": "nt",
+    "_winapi": "nt",
+}
 
 
 def stdlib_install_route(module: str) -> str:
-    """池层唯一能直接判的一类：`module` 是标准库名（宿主那份 `sys.stdlib_module_names`；目标解释器
-    与宿主同为受支持的 3.10+，tkinter 这类名字在各版本里一致）→ `stdlib_missing`，否则空串（待查可信解析）。"""
+    """执行时缺失的标准库：先判平台限制，再判宿主的标准库名字表。其余交给可信解析。"""
     from . import importscan
 
+    platform = _PLATFORM_STDLIB.get(module)
+    if platform is not None and os.name in {"posix", "nt"} and platform != os.name:
+        return INSTALL_ROUTE_PLATFORM
     return INSTALL_ROUTE_STDLIB if module in importscan.HOST_STDLIB else ""
 
 
 def install_offer_blocked(route: str) -> bool:
     """这个去向下**不许出安装 offer**（pip 装不了标准库；项目 requirements 里即便写了 tkinter 也不算可信依赖）。
     三条入口——Flask worker 错误、准备会话、素材库探测——共用这一个判据，别各写各的。"""
-    return route == INSTALL_ROUTE_STDLIB
+    return route in {INSTALL_ROUTE_STDLIB, INSTALL_ROUTE_PLATFORM}
 
 
 def missing_dependency_message(module: str, route: str = "") -> str:
     """缺依赖的主文案（后端原文，界面按 code 翻、回退用它）。**只有「可安装」才许说一键装上**：
     标准库缺了、映射不到 PyPI 的包（ROOT）装不上，说了就是骗人。"""
+    if route == INSTALL_ROUTE_PLATFORM:
+        return f"{module} 是其他系统专用的 Python 标准库，这个脚本无法在当前系统运行。"
     if route == INSTALL_ROUTE_STDLIB:
         return (
             f"{module} 是 Python 自带的标准库，但当前渲染环境里没有它（装不了）。"
@@ -3727,7 +3749,8 @@ PROJECT_ENV_ALREADY_ATTEMPTED = "project_env_already_attempted"
 def should_try_project_env(exc) -> bool:
     """这个错误值不值得为它换个环境重跑——**判据的唯一出处**。
 
-    只有 `missing_dependency`。脚本自己的 `ValueError` / `TypeError` /
+    只有能通过环境补齐的 `missing_dependency`。平台专属标准库缺失时换环境无效。
+    脚本自己的 `ValueError` / `TypeError` /
     `FileNotFoundError` 换个解释器一样错：为它们切环境既要多跑一遍脚本，
     又把真正的代码错误伪装成了环境问题（用户于是去折腾环境，而 bug 在第 12 行）。
 
@@ -3735,7 +3758,10 @@ def should_try_project_env(exc) -> bool:
     各写一份 `exc.code == …` 的话，其中一处迟早会放宽，而只有另一处有用例
     看着——门禁抽掉不红正是这么来的。
     """
-    return getattr(exc, "code", "") == "missing_dependency"
+    return (
+        getattr(exc, "code", "") == "missing_dependency"
+        and getattr(exc, "install_route", "") != INSTALL_ROUTE_PLATFORM
+    )
 
 
 def try_project_env(figures_dir: str, script_name: str, module: str) -> dict:

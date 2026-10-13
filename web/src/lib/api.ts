@@ -250,6 +250,9 @@ export function engineErrorMsg(err: unknown): UiMessage {
   if (err instanceof ArtifactValidationError || (err instanceof EngineError && err.code === 'artifact_source_unavailable')) {
     return artifactErrorMsg(err instanceof ArtifactValidationError ? err.reason : err.params?.reason)
   }
+  if (err instanceof EngineError && err.installRoute === 'unsupported_platform') {
+    return msg('prep.line.depsPlatform', { module: err.module }, 'workspace')
+  }
   if (err instanceof EngineError && err.code && i18n.exists(`backend.${err.code}`, { ns: 'errors' })) {
     const detail = err.traceback.trim().split('\n').at(-1)?.trim() ?? ''
     // 文案要 {{error}} 却拿不到 traceback（老 server / 精简错误体）时退回
@@ -2442,6 +2445,8 @@ export class EngineError extends Error {
   code: string
   /** code === 'missing_dependency' 时缺的那个包名 */
   module: string
+  /** 缺依赖的后端分类；平台限制不能通过更换本机 Python 补齐 */
+  installRoute?: string
   /**
    * `missing_dependency` 且**项目环境自动接手也没成**时的结构化原因
    * （ADR 0018）。有它才能把「这个项目附近没有虚拟环境」和「找到了但它
@@ -2480,6 +2485,7 @@ export class EngineError extends Error {
     extra?: {
       params?: Record<string, unknown>
       retryable?: boolean
+      installRoute?: string
       confirmation?: WorkdirConfirmation
       explicit?: ExplicitInterpreterFailure
       dependencyPreparation?: DependencyPreparationOffer
@@ -2489,6 +2495,7 @@ export class EngineError extends Error {
     super(message)
     this.params = extra?.params
     this.retryable = extra?.retryable
+    this.installRoute = extra?.installRoute
     this.traceback = traceback
     this.code = code
     this.module = module
@@ -2551,6 +2558,7 @@ export async function engineRender(
       {
         params: body.params as Record<string, unknown> | undefined,
         retryable: body.retryable as boolean | undefined,
+        installRoute: body.install_route as string | undefined,
         confirmation: body.confirmation as WorkdirConfirmation | undefined,
         explicit: body.explicit as ExplicitInterpreterFailure | undefined,
         dependencyPreparation: body.dependency_preparation as
@@ -2719,7 +2727,7 @@ async function previewPngResponse(
       (body.module as string) || '',
       body.project_env as ProjectEnvFailure | undefined,
       body.dependency_repair as DependencyRepairOffer | undefined,
-      { params: body.params as Record<string, unknown> | undefined, retryable: body.retryable as boolean | undefined },
+      { params: body.params as Record<string, unknown> | undefined, retryable: body.retryable as boolean | undefined, installRoute: body.install_route as string | undefined },
     )
   }
   return res
@@ -5113,6 +5121,8 @@ export interface SavefigCall {
 /** 试运行失败的结构化错误：稳定 code + params；traceback 只是诊断详情 */
 export interface ProbeError {
   code: string
+  /** 缺依赖的后端分类（与渲染端点同源） */
+  install_route?: string
   /** 后端中文原文（回退）；界面先按 code 查 `errors:backend.*` */
   message: string
   params?: Record<string, unknown>

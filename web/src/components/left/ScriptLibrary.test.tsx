@@ -326,6 +326,19 @@ describe('运行 / 取消 / 结果', () => {
     ).toBe(false)
   })
 
+  it('系统专属模块缺失：旧试运行入口也不给换环境的恢复建议', async () => {
+    mockRegistry.mockResolvedValue(view([entry({ script: 'show.py' })]))
+    mockProbe.mockResolvedValue({
+      ...ok([]), registered: false,
+      error: { code: 'missing_dependency', message: '平台不支持', params: { module: 'winreg' }, install_route: 'unsupported_platform' },
+    })
+    await mount()
+    await act(async () => runButton().click())
+    await flush()
+    expect(host.textContent).toContain('winreg 是其他系统专用模块')
+    expect(host.querySelector('[data-script-recovery]')).toBeNull()
+  })
+
   it('「选择渲染环境」就地打开渲染环境对话框（卡片在里面），不跳设置页', async () => {
     // 环境状态先备好：卡片挂上就有东西可画，不去真的请求 /api/engine
     useEnvStore.setState({

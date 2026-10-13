@@ -99,6 +99,8 @@ export interface PanelRender {
   code: string
   /** code === 'missing_dependency' 时缺的那个包名 */
   module: string
+  /** 后端缺依赖分类；消费事实，不在前端根据模块名再判平台 */
+  installRoute?: string
   /**
    * `missing_dependency` 且**项目环境自动接手也没成**时的结构化原因
    * （ADR 0018）：找不到 venv / 找到了但也没这个包 / 没有 matplotlib /
@@ -811,6 +813,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             ...(artifactValidation ? { stale: true, manifest: null, svg: null, svgBytes: 0, svgSeq: 0 } : {}),
             code: err instanceof EngineError || err instanceof ArtifactValidationError ? err.code : '',
             module: err instanceof EngineError ? err.module : '',
+            installRoute: err instanceof EngineError ? err.installRoute : undefined,
             projectEnv: err instanceof EngineError ? (err.projectEnv ?? null) : null,
             dependencyRepair:
               err instanceof EngineError ? (err.dependencyRepair ?? null) : null,

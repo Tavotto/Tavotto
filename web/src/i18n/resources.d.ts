@@ -5048,6 +5048,7 @@ export default interface Resources {
         "completed_other": "画好了 {{count}} 张图",
         "depsCancelled": "安装已停止",
         "depsFailed": "没装好，原有文件没动",
+        "depsPlatform": "{{module}} 是其他系统专用模块，这个脚本无法在当前系统运行",
         "depsRuntime": "运行时缺 {{module}}",
         "depsScope": "组件版本冲突",
         "depsStdlib": "Tavotto 自带的环境里没有 {{module}}",
