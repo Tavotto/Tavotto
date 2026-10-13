@@ -17,6 +17,7 @@ import {
   flushAutosave,
   hasUnsavedWork,
   overwriteDisk,
+  onDocumentPersisted,
   readAutosaveDoc,
   recoverLocalCopy,
   reloadFromDisk,
@@ -59,6 +60,9 @@ let putMode: 'ok' | 'external' | 'stale' | 'io' = 'ok'
 /** PUT 的门：非空时 PUT 挂起，releasePuts() 放行 */
 let gatePuts = false
 const gates: (() => void)[] = []
+const gateWaiters: (() => void)[] = []
+let responseMicrotasks = 0
+const nextHeldPut = () => new Promise<void>((resolve) => gateWaiters.push(resolve))
 const puts: { id: string; rev: string | null; base: string | null }[] = []
 
 const fakeFetch = (async (url: unknown, init?: RequestInit) => {
@@ -85,7 +89,11 @@ const fakeFetch = (async (url: unknown, init?: RequestInit) => {
   if (init?.method === 'PUT') {
     const body = String(init.body)
     puts.push({ id, rev: q.get('base_revision'), base: q.get('base') })
-    if (gatePuts) await new Promise<void>((r) => gates.push(r))
+    if (gatePuts) await new Promise<void>((r) => {
+      gates.push(r)
+      gateWaiters.shift()?.()
+    })
+    for (let i = 0; i < responseMicrotasks; i++) await Promise.resolve()
     if (putMode === 'io') return new Response('{"error":"disk full"}', { status: 500 })
     // `stale_write` 比的是 updatedAt，**body 里没有磁盘修订号也没有摘要**
     if (putMode === 'stale') {
@@ -146,6 +154,8 @@ beforeEach(async () => {
   disk.clear()
   puts.length = 0
   gates.length = 0
+  gateWaiters.length = 0
+  responseMicrotasks = 0
   gatePuts = false
   putMode = 'ok'
   localStorage.clear()
@@ -174,15 +184,17 @@ describe('保存状态机', () => {
     '旧 PUT 完成时保留更新内容的本机副本（新副本时间戳 %s，#646）',
     async (nextTimestamp) => {
       await s().switchDocument(seeded(1), 'd_copy_race')
-      await tick()
+      await saveNow()
       const clock = vi.spyOn(Date, 'now').mockReturnValue(10000)
       try {
         gatePuts = true
+        responseMicrotasks = 200 // HTTP 收尾可以经过任意多个异步任务，不能猜微任务轮数。
+        const firstHeld = nextHeldPut()
         s().commit(literal('第一笔'), (d) => {
           d.objects.push(text('n1', 'A'))
         })
         flushAutosave()
-        await tick()
+        await firstHeld
         expect(gates).toHaveLength(1)
         const firstCopy = localStorage.getItem(slotKey('d_copy_race'))!
 
@@ -195,19 +207,28 @@ describe('保存状态机', () => {
         expect(nextCopy).not.toBe(firstCopy)
 
         // 只放行旧 PUT：更新的一版仍由第二道 gate 扣住，不依赖计时器。
+        const secondHeld = nextHeldPut()
         gates.shift()!()
-        await tick()
+        await secondHeld
         expect(disk.get('d_copy_race')).toBe(firstCopy)
         expect(gates).toHaveLength(1)
         expect(localStorage.getItem(slotKey('d_copy_race'))).toBe(nextCopy)
         expect(puts.at(-1)?.base).toBe('10000')
         expect(puts.at(-1)?.rev).toBe(revOf(firstCopy))
 
+        const written = new Promise<void>((resolve) => {
+          const stop = onDocumentPersisted((id) => {
+            if (id !== 'd_copy_race') return
+            stop()
+            resolve()
+          })
+        })
         gates.shift()!()
-        await tick()
+        await written
         expect(disk.get('d_copy_race')).toBe(nextCopy)
         expect(localStorage.getItem(slotKey('d_copy_race'))).toBeNull()
       } finally {
+        responseMicrotasks = 0
         clock.mockRestore()
       }
     },
