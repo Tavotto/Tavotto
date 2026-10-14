@@ -121,9 +121,18 @@ export class LiveService {
       canSign:this.c.signingEnabled && currentPacket(this.c,p,now) && !completed && !blocked && !rows.some(r=>r.role===role) && (role==='contributor' || rows.some(r=>r.role==='contributor')),
       canHold:this.c.signingEnabled && !blocked};
   }
-  async packets(token:string):Promise<unknown> {
-    const s=await this.session(token),rows=(await this.store.stmt('SELECT id FROM packets WHERE subject=? OR ?=? ORDER BY created DESC LIMIT 20',s.actor,s.actor,this.c.holderId).all<{id:string}>()).results;
-    return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor'},packets:rows};
+  async packets(token:string,cursor?:string):Promise<unknown> {
+    const s=await this.session(token);
+    // Packet IDs are immutable cursors, not authorization. Reauthorize the
+    // anchor and retain the subject predicate on every bounded page.
+    const anchor=cursor===undefined?undefined:await this.packetFor(s,cursor);
+    const rows=(await this.store.stmt(`SELECT id FROM packets WHERE (subject=? OR ?=?)
+      ${anchor?'AND (created<? OR (created=? AND id<?))':''}
+      ORDER BY created DESC,id DESC LIMIT 21`,s.actor,s.actor,this.c.holderId,
+      ...(anchor?[anchor.created,anchor.created,anchor.id]:[])).all<{id:string}>()).results;
+    const packets=rows.slice(0,20);
+    return {actor:{id:s.actor,login:s.login,role:s.actor===this.c.holderId?'holder':'contributor'},packets,
+      nextCursor:rows.length>20?packets[packets.length-1]!.id:null};
   }
   private async qualified(subject:number):Promise<boolean> {
     const p=await this.store.qualification(subject,this.c.policy.agreements.individual.sha256);

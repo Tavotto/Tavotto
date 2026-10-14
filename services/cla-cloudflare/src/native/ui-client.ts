@@ -2,6 +2,7 @@ export function client():void {
   const $=<T extends HTMLElement=HTMLElement>(id:string)=>document.getElementById(id) as T;
   const text=(id:string,value:unknown)=>{$(id).textContent=String(value);};
   let packet=new URL(location.href).searchParams.get('packet') ?? sessionStorage.getItem('cla.packet') ?? '',state:any=null,busy=false,uncertain=false,cap:any={};
+  let nextCursor:string|null=null,hasPackets=false;
   const csrf=()=>document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith('__Host-cla-csrf='))?.split('=')[1] ?? '';
   async function api(path:string,body?:unknown){
     const r=await fetch(path,{method:body===undefined?'GET':'POST',credentials:'same-origin',cache:'no-store',
@@ -9,10 +10,14 @@ export function client():void {
     const data=await r.json();if(!r.ok)throw new Error(data.error ?? 'request_unavailable');return data;
   }
   function message(value:string,error=false){text('message',value);$('message').className=error?'notice error':'notice';}
+  const canCreate=()=>cap.signingEnabled && cap.actor?.role==='contributor' && (!state?!hasPackets:
+    state.actor?.id===cap.actor.id && state.packet?.subject===cap.actor.id && state.completed===false && state.blocked===false &&
+    Number.isSafeInteger(state.now) && Number.isSafeInteger(state.packet.valid_until) && state.packet.valid_until<=state.now);
   function controls(){
     ($('sign') as HTMLButtonElement).disabled=busy || uncertain || !state?.canSign;
     ($('hold') as HTMLButtonElement).disabled=busy || uncertain || !state?.canHold;
-    ($('create') as HTMLButtonElement).disabled=busy || uncertain || !cap.signingEnabled || cap.actor?.role!=='contributor' || !!state;
+    ($('create') as HTMLButtonElement).disabled=busy || uncertain || !canCreate();
+    ($('packets-more') as HTMLButtonElement).disabled=busy || uncertain || !nextCursor;
     ($('login') as HTMLButtonElement).disabled=busy || !cap.oauthEnabled;
     ($('refresh') as HTMLButtonElement).disabled=busy;
   }
@@ -23,14 +28,22 @@ export function client():void {
     read:'我已经阅读上方完整协议，并同意这个版本和哈希对应的文本。',identity:'该 GitHub 数字身份属于我；姓名和地址是我本人填写的。',
     adult:'我已满十八岁。',own_rights:'我拥有本次贡献所需的权利；不属于他人或雇主所有。',independent:'我以个人身份签署；若涉及雇主或公司权利，我会先寻求人工审查。',
     reviewed:'我作为权利人已独立审阅此协议及贡献者的签署证据，并愿意签署。'};
+  function packetPage(own:any,reset=false){
+    const select=$<HTMLSelectElement>('packets');
+    if(reset)select.replaceChildren(new Option('选择签署记录',''));
+    for(const p of own.packets)if(![...select.options].some(option=>option.value===p.id))select.add(new Option(p.id,p.id));
+    nextCursor=own.nextCursor ?? null;hasPackets=select.options.length>1;
+    // A selected historical packet may be beyond this first page after refresh.
+    if(packet && ![...select.options].some(option=>option.value===packet))select.add(new Option(packet,packet));
+    select.value=packet;
+    text('packets-page',nextCursor?'还有更早的记录；可继续加载。':'已载入全部可访问记录。');
+  }
   async function refresh(){
     cap=await api('/capabilities');text('mode',cap.signingEnabled?'签署入口已开放':'签署入口已关闭');
     try{const own=await api('/session');cap.actor=own.actor;text('actor',`${own.actor.login} · GitHub ID ${own.actor.id} · ${own.actor.role==='holder'?'权利人':'贡献者'}`);
-      const select=$<HTMLSelectElement>('packets');select.replaceChildren(new Option('选择签署记录',''));
-      for(const p of own.packets)select.add(new Option(p.id,p.id));
       if(packet && !/^[A-Za-z0-9_-]{43}$/.test(packet))throw new Error('packet_unavailable');
-      if(!packet && own.packets.length===1)packet=own.packets[0].id;
-      select.value=packet;
+      if(!packet && own.packets.length===1 && !own.nextCursor)packet=own.packets[0].id;
+      packetPage(own,true);
       if(packet){state=await api('/status?packet='+encodeURIComponent(packet));sessionStorage.setItem('cla.packet',packet);
         history.replaceState(null,'','/?packet='+encodeURIComponent(packet));
         await agreement('/agreement?packet='+encodeURIComponent(packet));
@@ -46,7 +59,7 @@ export function client():void {
         text('sign',state.actor.role==='holder'?'由我本人签署（权利人）':'由我本人签署（贡献者）');
         ($('download-contributor') as HTMLButtonElement).disabled=!state.signatures.some((r:any)=>r.role==='contributor');
         ($('download-holder') as HTMLButtonElement).disabled=!state.signatures.some((r:any)=>r.role==='holder');
-      }else{state=null;await agreement('/agreement');text('eligibility','创建本人记录后才能签署。');}
+      }else{state=null;await agreement('/agreement');text('eligibility',hasPackets?'请选择已有签署记录。':'创建本人记录后才能签署。');}
     }catch(error){state=null;if((error as Error).message==='session_rejected'){text('actor','尚未登录 · 先确认您的 GitHub 身份');await agreement('/agreement');}
       else throw error;}
     uncertain=false;controls();
@@ -55,8 +68,12 @@ export function client():void {
     catch(error){uncertain=true;clearConsent();message('操作没有确认完成（'+(error as Error).message+'）。请点击“刷新状态”先核对；确认未签署后，重新阅读、勾选并手动提交。不会自动重发。',true);}
     finally{busy=false;controls();}}
   $('login').onclick=()=>void action(async()=>{sessionStorage.setItem('cla.packet',packet);const r=await api('/oauth/start',{});location.assign(r.authorizationURL);});
-  $('create').onclick=()=>void action(async()=>{packet=(await api('/packets',{kind:'individual'})).id;await refresh();message('记录已创建。请完整阅读协议后，亲自决定是否签署。');});
+  $('create').onclick=()=>void action(async()=>{if(!canCreate())throw new Error('packet_creation_unavailable');
+    packet=(await api('/packets',{kind:'individual'})).id;clearConsent();await refresh();message('记录已创建。请完整阅读协议后，亲自决定是否签署。');});
   $('refresh').onclick=()=>void action(async()=>{await refresh();message('状态已重新读取。刷新不会签署或重复提交。');});
+  $('packets-more').onclick=()=>void action(async()=>{if(!nextCursor)return;
+    const own=await api('/session?cursor='+encodeURIComponent(nextCursor));
+    if(own.actor.id!==cap.actor?.id)throw new Error('session_changed');packetPage(own);message('已加载更多签署记录。请选择要查看的记录。');});
   $<HTMLSelectElement>('packets').onchange=()=>void action(async()=>{packet=$<HTMLSelectElement>('packets').value;clearConsent();await refresh();});
   $<HTMLFormElement>('sign-form').onsubmit=event=>{event.preventDefault();void action(async()=>{
     if(!state?.canSign)throw new Error('signing_unavailable');

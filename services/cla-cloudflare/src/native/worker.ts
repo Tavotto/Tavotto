@@ -87,7 +87,10 @@ export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
       response.headers.append('set-cookie',`__Host-cla-csrf=${login.csrf}; Path=/; Max-Age=900; Secure; SameSite=Strict`);
       response.headers.append('set-cookie',cookie('__Host-cla-oauth','',0));return response;
     }
-    if(req.method==='GET' && url.pathname==='/session' && !url.search)return json(await s.packets(token));
+    if(req.method==='GET' && url.pathname==='/session') {
+      if(url.search && [...url.searchParams.keys()].join(',')!=='cursor')throw new Rejected('form_rejected');
+      return json(await s.packets(token,url.searchParams.get('cursor') ?? undefined));
+    }
     if(req.method==='GET' && url.pathname==='/status' && [...url.searchParams.keys()].join(',')==='packet')return json(await s.status(token,url.searchParams.get('packet')!));
     if(req.method==='GET' && url.pathname==='/agreement' && (!url.search || [...url.searchParams.keys()].join(',')==='packet'))return json(await s.document(token,url.searchParams.get('packet') ?? undefined));
     if(req.method==='GET' && url.pathname==='/evidence') {

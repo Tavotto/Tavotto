@@ -9,7 +9,7 @@ Use Node 24 and Python 3.10+ with sqlite3. From this directory:
     npm ci --ignore-scripts
     npm run check
 
-The exact development versions and integrity hashes are in package-lock.json. There are no production npm dependencies. check runs TypeScript checking, Node tests, local SQLite migration tests, an esbuild production-import check and three isolated mutation checks. The build writes only ignored dist/ files; there is no deployment script or resource binding configuration.
+The exact development versions and integrity hashes are in package-lock.json. There are no production npm dependencies. check runs TypeScript checking, Node tests, local SQLite migration tests, an esbuild production-import check and isolated mutation checks. The build writes only ignored dist/ files; there is no deployment script or resource binding configuration.
 
 Tests use synthetic identities, ephemeral test encryption keys, a test-only database clock and local SQLite. Outbound fetch and publication are forbidden. The concurrency test uses two worker threads with separate WAL connections and real BEGIN IMMEDIATE transactions; it is not a Cloudflare D1 concurrency claim. Test databases are removed afterward.
 
@@ -38,7 +38,11 @@ This is not a D1 migration command or authorization to read production evidence.
 
 ## Validation boundary
 
-The initial offline lifecycle regression covered 31 Node cases and 3 SQLite migration cases, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
+The offline regression covers 69 Node cases, 3 SQLite migration cases and 6 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
 
 
 The dedicated path-filtered PR workflow uses a GitHub-hosted Ubuntu runner, Node 24 and Python 3.12, with contents:read only, no secrets, no deployment and no dependency cache. It runs npm ci --ignore-scripts and npm run check. It adds no required context and does not change the existing aggregate gates. Local and CI passes do not establish live free-tier acceptance.
+
+Installation tokens are treated as opaque; the adapter does not inspect a legacy prefix or JWT structure. It accepts 520-character stateless tokens while retaining repository, permission and expiration checks. Its separate 8192-byte visible-ASCII/no-whitespace header bound is a service resource-safety limit, not an assertion about GitHub's token format. No token is logged. See https://github.blog/changelog/2026-10-02-stateless-github-app-installation-tokens-rolled-out/.
+
+The signing UI permits an expired incomplete, unblocked contributor packet to be replaced without transferring consent. Holder history uses explicitly requested, authorized packet-ID keyset pages (20 results plus one lookahead), ordered by creation time and ID. Every cursor and page is reauthorized; pagination never grants access to another contributor.

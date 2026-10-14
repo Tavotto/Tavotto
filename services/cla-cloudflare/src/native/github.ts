@@ -172,7 +172,10 @@ export class GitHub implements GitHubPort {
     const data = await this.json(`https://api.github.com/app/installations/${this.c.installationId}/access_tokens`,'POST',jwt,
       {repository_ids:[this.c.repositoryId],permissions});
     unchanged();
-    if (typeof data.token !== 'string' || !/^ghs_[A-Za-z0-9_]{8,256}$/.test(data.token) ||
+    // Installation tokens are opaque, including stateless JWT-shaped tokens.
+    // 8192 visible ASCII bytes is this service's resource/header safety bound,
+    // not a claim about GitHub token syntax. Never parse a prefix or JWT payload.
+    if (typeof data.token !== 'string' || data.token.length===0 || data.token.length>8192 || /[^\x21-\x7e]/.test(data.token) ||
         !Number.isFinite(Date.parse(data.expires_at)) || Date.parse(data.expires_at) <= this.now()*1000 ||
         !Array.isArray(data.repositories) || data.repositories.length !== 1 || data.repositories[0]?.id !== this.c.repositoryId ||
         Object.entries(permissions).some(([k,v]) => data.permissions?.[k] !== v) ||
