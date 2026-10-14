@@ -31,3 +31,15 @@ Chromium + chromium-en 所有用例（不改 project 集合）。2026-10-14 #100
 全部注册用例存在；GitHub matrix 聚合语义要求三片全部成功，
 `needs.posix-e2e` 才是 success。故无需修改 Gate job id、needs 或 required 闭集。
 失败 trace artifact 名须包含 shard 号，防止 artifact 冲突。
+
+
+
+## WebKit-only 注册用例防假绿（#1021 审核补强）
+
+Chromium / chromium-en 的各 shard 真跑前，额外生成一次两者**未分片**的
+`playwright test --list`，由 `feature_registry.py verify-run --all-planned-list`
+检验每一条 active 注册引用至少被这两个 POSIX project 中的一项以
+`expectedStatus=passed` 收集。只有 WebKit 拥有的用例不能只凭 frontend
+“全浏览器有登记”就被错判为真实运行通过；须改变注册策略或在另一条腿补齐
+运行期验证后才放行。任何缺少全量清单的分片调用都返回 rc=2，三个 Runner
+不得拿局部 JSON 假冒完整覆盖。

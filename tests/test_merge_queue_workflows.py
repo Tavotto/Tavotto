@@ -1721,6 +1721,10 @@ class TestPlaywrightShards:
         assert "--shard=${{ matrix.shard }}/3" in e2e[0]
         assert "playwright test --list --reporter=json" in code
         assert "--expected-list" in code and "e2e-planned.json" in code
+        # 一份无 --shard 的所有 POSIX project 清单必须先于本 shard 的计划。
+        assert "e2e-planned-all.json" in code
+        assert "--all-planned-list" in code
+        assert code.index("e2e-planned-all.json") < code.index("e2e-planned.json")
         assert "posix-e2e-report-${{ matrix.shard }}" in code
         gate = _job(CI, "ci-integration-gate")
         assert "posix-e2e" in _needs_of(gate) and "posix-e2e" in _required_of(gate)

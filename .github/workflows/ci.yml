@@ -2107,6 +2107,10 @@ jobs:
           # 先让 Playwright 报出本 shard 的预期用例，再真正执行；
           # 注册表校验以计划的身份集合为主语，不许因为没有执行就悄悄漏报。
           # 防止 config 的 TAVOTTO_E2E_JSON 把 --list 的 JSON 输到真实运行报告路径。
+          # 先验明两个 POSIX project 的全集覆盖每一条 active 引用，防止
+          # 原来 full verify-run 发现的 webkit-only 注册用例在 shard 模式变成假绿。
+          TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
+            --project=chromium --project=chromium-en > "$RUNNER_TEMP/e2e-planned-all.json"
           TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
             --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3 \
             > "$RUNNER_TEMP/e2e-planned.json"
@@ -2118,7 +2122,10 @@ jobs:
       - name: 功能登记表：登记的用例在合并态真的执行并通过
         env:
           TAVOTTO_E2E_JSON: ${{ runner.temp }}/e2e-results.json
-        run: python scripts/ci/feature_registry.py verify-run "$TAVOTTO_E2E_JSON" --expected-list "${{ runner.temp }}/e2e-planned.json"
+        run: |
+          python scripts/ci/feature_registry.py verify-run "$TAVOTTO_E2E_JSON" \
+            --expected-list "${{ runner.temp }}/e2e-planned.json" \
+            --all-planned-list "${{ runner.temp }}/e2e-planned-all.json"
 
       - name: 失败时收集 trace 与操作轨迹
         if: failure()

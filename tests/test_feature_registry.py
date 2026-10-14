@@ -659,3 +659,37 @@ def test_posix_shard_rejects_skipped_registered_case():
     actual = FR.parse_playwright_json(_run_report(status_drag="skipped"), "actual")
     problems, _ = FR.verify_run_shard(_feats(BASE_REG), planned, actual)
     assert any("canvas.drag" in item and "不通过" in item for item in problems)
+
+
+def test_posix_full_selection_rejects_a_webkit_only_active_reference():
+    """Codex #1021 P1：注册用例仅被 WebKit 收集时，三份 POSIX shard 不能一起假绿。"""
+    feats = _feats(BASE_REG)
+    selected = FR.parse_playwright_json(_run_report(), "POSIX selection")
+    assert FR.verify_posix_selection_covers_all_active(feats, selected) == []
+    selected.pop(next(ref for ref in selected if ref.spec == "b.spec.ts"))
+    problems = FR.verify_posix_selection_covers_all_active(feats, selected)
+    assert any("legend.move" in item and "没有被 POSIX" in item for item in problems)
+
+
+def test_posix_full_selection_rejects_registered_cases_with_only_skipped_projects():
+    feats = _feats(BASE_REG)
+    selected = FR.parse_playwright_json(_run_report(), "POSIX selection")
+    first = next(ref for ref in selected if ref.spec == "a.spec.ts")
+    selected[first].expected = {"webkit": "passed"}
+    problems = FR.verify_posix_selection_covers_all_active(feats, selected)
+    assert any("canvas.drag" in item and "skipped/缺席" in item for item in problems)
+
+
+def test_posix_verification_cli_requires_full_selected_project_plan(tmp_path):
+    """缺全量 --list 报 rc=2，而不是沿用局部 shard 只数实际跑到的已登记用例。"""
+    original = tmp_path / "report.json"
+    original.write_text(json.dumps(_run_report()), encoding="utf-8")
+    rc = FR.main([
+        "--registry",
+        str(FR.REGISTRY),
+        "verify-run",
+        str(original),
+        "--expected-list",
+        str(original),
+    ])
+    assert rc == 2
