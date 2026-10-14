@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { t as translate } from '@/i18n'
+import { currentLocale, t as translate } from '@/i18n'
 import { fetchBuildVersion, type TelemetrySettings } from '@/lib/api'
-import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL } from '@/lib/brand'
+import { PRIVACY_DOC_URL, PRODUCT_NAME, REPO_URL, supportPageUrl } from '@/lib/brand'
 import { TELEMETRY_DISCLOSED_EVENTS } from '@/lib/telemetryDisclosure'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useTelemetryStore } from '@/store/telemetryStore'
 import { useUpdateStore } from '@/store/updateStore'
 import { BrandMark } from '../ui/BrandMark'
+import { buttonClass } from '../ui/buttonClass'
+import { ICON_SIZE } from '../ui/Icon'
+import { ExternalLink } from '../ui/icons'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Toggle } from '../ui/Toggle'
 import { DiagnosticDisclosure, SettingRow } from './SettingRow'
@@ -24,7 +27,7 @@ const st = (key: string, values?: Record<string, unknown>) =>
  * （before/zh-1440-settings-about.png）。
  *
  * 现在这一页是三块（导航 id 仍是 `about`，不动 schema；2026-09-30 并进了「更新」）：
- *   1. 产品与版本（页首：标志 + 名字 + 版本 + 许可）；
+ *   1. 产品与版本（页首：标志 + 名字 + 版本 + 许可；右侧一颗「支持 Tavotto」，去官网的支持页）；
  *   2. 更新（`UpdateSettings`：自动检查 / 检查更新 / 有新版本时一条 accent Notice + 32px 主按钮）；
  *   3. 隐私与数据——**最短摘要常驻**，逐条数据清单进默认折叠的
  *      「会发送哪些数据」（审计 T49；此前那两段清单在小问号里，且已经与
@@ -64,7 +67,7 @@ export function PrivacyAboutSettings() {
 
 function ProductBlock({ version }: { version?: string }) {
   return (
-    <div className="flex items-center gap-4">
+    <div className="flex items-center gap-4" data-settings-anchor="about.support">
       {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
       <BrandMark size={54} />
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -89,6 +92,17 @@ function ProductBlock({ version }: { version?: string }) {
           {st('about.licenseAfter')}
         </p>
       </div>
+      {/* 只是一条去官网的链接：点了才出网，由系统浏览器打开；页内不嵌任何捐赠服务 */}
+      <a
+        href={supportPageUrl(currentLocale())}
+        target="_blank"
+        rel="noreferrer"
+        data-about-support
+        className={buttonClass({ variant: 'secondary', size: 'md', className: 'ml-auto shrink-0' })}
+      >
+        {st('about.support', { product: PRODUCT_NAME })}
+        <ExternalLink size={ICON_SIZE.xs} aria-hidden />
+      </a>
     </div>
   )
 }

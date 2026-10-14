@@ -1260,6 +1260,7 @@ export default interface Resources {
         "privacySend": "诊断包只有在你于“发送问题反馈”里逐次确认后才会上传到 Tavotto 维护者的服务；导出诊断包只会保存在本机。",
         "privacyTitle": "隐私与数据",
         "source": "获取源代码",
+        "support": "支持 {{product}}",
         "tagline": "论文图排版与参数化图表编辑",
         "telemetry": {
           "autoProps": "每条记录只带应用版本、操作系统、CPU 架构和安装渠道。",
@@ -1823,6 +1824,7 @@ export default interface Resources {
           "scripts": "脚本 来源 注册",
           "shortcuts": "快捷键 键盘 速查表",
           "spec": "规范 期刊 检查 字号 栏宽",
+          "support": "支持 捐赠 赞助 爱发电 ko-fi",
           "telemetry": "隐私 统计 遥测 数据",
           "theme": "主题 深色 浅色 暗色 夜间 外观 模式 颜色",
           "tutorial": "教程 新手 提示 引导",

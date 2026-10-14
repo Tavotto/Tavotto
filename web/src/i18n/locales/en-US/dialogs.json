@@ -882,6 +882,7 @@
       "privacy": "Rendering and editing use the machine running the engine: your computer by default, or the server when you connect to a remote instance. Network activity includes update checks, downloads when you choose to update, and usage statistics only after you opt in. Package lookups, environment preparation and dependency installation can contact package indexes and download packages. The Codex / Claude tools you invoke may contact their own services under their own privacy settings. In browser mode, “Check daily” controls automatic update checks; the desktop app checks at startup and has no in-app switch to disable those checks.",
       "privacyTitle": "Privacy and data",
       "source": "get the source",
+      "support": "Support {{product}}",
       "tagline": "Figure layout and parameterized chart editing for papers",
       "telemetry": {
         "autoProps": "Every record carries: app version, operating system, CPU architecture, and how it was installed (desktop, pipx, pip, source). Deliberately absent: hostname, user name, Python path, interface language, time zone and screen size.",
@@ -1548,6 +1549,7 @@
         "agents": "assistant codex claude agent default",
         "packages": "packages install pip pypi libraries",
         "diagnostics": "diagnostics report logs export bug",
+        "support": "support donate sponsor ko-fi",
         "updates": "updates version upgrade",
         "telemetry": "privacy statistics telemetry data",
         "theme": "theme dark light mode appearance night colour color"
