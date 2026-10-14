@@ -4155,8 +4155,12 @@ class TestIssue1012BackendItems:
 
     def test_no_proxy_hosts_are_reduced_to_a_count(self, monkeypatch):
         """9：NO_PROXY / no_proxy 里的主机名与 IP 不进 detail-network.json，只剩条目数。"""
-        monkeypatch.setenv("NO_PROXY", "corp.internal.example,10.1.2.3, .intra.example")
-        monkeypatch.setenv("no_proxy", "localhost,secret-host.example")
+        # Windows 的环境变量名不分大小写：NO_PROXY 与 no_proxy 是同一个，只设一个
+        monkeypatch.delenv("no_proxy", raising=False)
+        monkeypatch.setenv(
+            "NO_PROXY",
+            "corp.internal.example,10.1.2.3, .intra.example,localhost,secret-host.example",
+        )
         monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
         src = diagdetail.Sources()
         items = diagdetail.collect_network(src, diagdetail.DetailOptions(), diagdetail.Scrubber())
@@ -4164,6 +4168,6 @@ class TestIssue1012BackendItems:
         for leak in ("corp.internal", "10.1.2.3", "intra.example", "secret-host", "localhost"):
             assert leak not in text
         net = json.loads(text)
-        assert net["proxy"]["no_proxy_entries"] == 3
+        assert net["proxy"]["no_proxy_entries"] == 5
         assert "NO_PROXY" not in net["proxy"]["env"] and "no_proxy" not in net["proxy"]["env"]
         assert net["proxy"]["env"]["HTTPS_PROXY"] == "http://proxy.example:8080"
