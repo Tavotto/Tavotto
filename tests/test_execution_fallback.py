@@ -224,6 +224,47 @@ def test_cancel_landing_after_planning_but_before_the_handoff_still_stops_the_fa
     assert _history(final)[0]["declined"] == "cancelled" and len(_history(final)) == 1
 
 
+def test_closing_the_project_before_the_fallback_starts_no_native_run(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """关项目（`cancel_project`）落在「safe 已终局、回退还没接上」的窗口：没有未终局计划可取消，标记必须拦住 native。"""
+    entered, release = threading.Event(), threading.Event()
+    real = prepsession.SessionService._plan_fallback
+
+    def slow(self, *a, **kw):
+        entered.set()
+        assert release.wait(10)
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(prepsession.SessionService, "_plan_fallback", slow)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    project_id = _get(client, sid).get_json()["project_id"]
+    preparation.SERVICE.cancel_project(project_id)
+    release.set()
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert native["calls"] == []
+    assert _history(final)[0]["declined"] == "cancelled" and len(_history(final)) == 1
+
+
+def test_closing_the_project_cancels_a_running_fallback_attempt(
+    client, tmp_path, fake_pool, native, sessions
+):
+    """回退已接上、native 尝试在跑时关项目：这次 native 尝试也被取消。"""
+    native["gate"].clear()
+    sid = _start(client, tmp_path, fake_pool)
+    deadline = time.time() + 10
+    while not native["calls"]:
+        assert time.time() < deadline
+        time.sleep(0.02)
+    mid = _get(client, sid).get_json()
+    assert preparation.SERVICE.cancel_project(mid["project_id"]) >= 1
+    native["gate"].set()
+    final = _settle(client, sid)
+    assert final["phase"] == "cancelled", final
+
+
 def test_cancelling_the_native_attempt_hits_the_native_attempt(
     client, tmp_path, fake_pool, native, sessions
 ):

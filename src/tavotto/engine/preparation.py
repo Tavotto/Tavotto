@@ -673,6 +673,8 @@ class PreparationService:
     def __init__(self) -> None:
         self._entries: dict[str, _Entry] = {}
         self._lock = threading.Lock()
+        #: `cancel_project(project_id)` 之前调的回调（准备会话登记；纯标记，不取别的锁）
+        self.project_cancel_listeners: list = []
 
     # ---- 登记 ----
     def register(self, plan: PreparationPlan, *, force_rebuild: bool = False) -> PreparationResult:
@@ -1205,7 +1207,15 @@ class PreparationService:
 
     def cancel_project(self, project_id: str) -> int:
         """项目关闭:取消这个项目名下所有还没终局的计划(执行线程据此在下一个取消接受时刻收工,新建的会话当场关掉)。
-        返回接受了取消的数量。别的项目的计划不动。"""
+        返回接受了取消的数量。别的项目的计划不动。
+
+        先通知项目关闭的监听者（准备会话据此给本项目的会话落「已取消」标记，ADR 0127）：safe 尝试刚终局、
+        回退还没接上的窗口里没有「未终局的计划」可取消，只有这个标记能拦住随后的 native 回退。"""
+        for listener in list(self.project_cancel_listeners):
+            try:
+                listener(project_id)
+            except Exception:  # noqa: BLE001 — 监听者出错不能挡住关项目
+                LOG.exception("项目取消监听者失败")
         with self._lock:
             mine = [
                 pid

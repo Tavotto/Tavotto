@@ -1097,6 +1097,15 @@ class SessionService:
         #: app 注入：`notifier({"session_id", "project_id", "target", "config_revision"})`（只是「重新读报告」的提示）。
         #: 在会话锁**之外**调；它抛出的异常只记日志。
         self.notifier: Callable[[dict], None] | None = None
+        self._prep.project_cancel_listeners.append(self._on_project_cancel)
+
+    def _on_project_cancel(self, project_id: str) -> None:
+        """项目关闭（`PreparationService.cancel_project`）：本项目所有会话落取消标记，之后到的 blocked 不再回退 native。
+        只赋一个布尔，不取会话锁（调用方可能持着别的锁）。"""
+        with self._lock:
+            mine = [s for s in self._by_id.values() if s.project_id == project_id]
+        for sess in mine:
+            sess.cancel_requested = True
 
     # ---- 检查（不执行任何用户代码）----
     def check(
