@@ -492,9 +492,18 @@ def main(argv: list[str] | None = None) -> int:
             # 所有派生 sidecar 和基线一起检查；尤其 out=drag.json 时不能先
             # 成功完成符号阶段又被后续的 drag_path.unlink() 错误清掉原结果。
             if _run_io_collision(args.out, args.summary, args.baseline, args.include_drag):
-                if args.summary is not None and not _run_io_collision(
-                    args.out, args.summary, None, args.include_drag
-                ) and not (args.baseline is not None and _same_report_path(args.summary, args.baseline)):
+                write_targets = [args.out]
+                if args.include_drag:
+                    write_targets += [
+                        args.out.with_name("drag.json"),
+                        args.out.with_name("drag-findings.json"),
+                    ]
+                summary_safe = (
+                    args.summary is not None
+                    and all(not _same_report_path(args.summary, path) for path in write_targets)
+                    and (args.baseline is None or not _same_report_path(args.summary, args.baseline))
+                )
+                if summary_safe:
                     failed = failed_run_summary(args.include_drag)
                     if args.baseline is not None:
                         failed["regression_status"] = "failed"
