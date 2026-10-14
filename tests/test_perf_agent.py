@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import perf_agent as A  # noqa: E402
 
@@ -262,3 +264,227 @@ def test_external_comparison_writes_back_the_run_summary(tmp_path):
     assert saved["status"] == "regression"
     assert saved["regression_status"] == "regression"
     assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "ok"}
+
+
+def test_different_repeat_counts_are_different_canvas_workloads():
+    """每轮新增对象且不撤销；10 与 60 轮的 P95 不是同一场景规模。"""
+    assert A.compare(report(n=10), report(n=60))["status"] == "incomparable"
+
+
+@pytest.mark.parametrize("phase", ["symbol", "drag", "analysis"])
+@pytest.mark.parametrize("failure", ["nonzero", "missing", "timeout", "oserror"])
+def test_run_replaces_previous_success_with_current_failure(tmp_path, monkeypatch, phase, failure):
+    """主语是本次命令最终交出的 summary，覆盖每个子进程的三类失败。"""
+    output = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps(A.compose_run_summary(A.summarize(report()), "ok")))
+    output.write_text(json.dumps(report()))
+    calls = []
+
+    def execute(argv, **kwargs):
+        stage = ("symbol", "drag", "analysis")[len(calls)]
+        calls.append(stage)
+        assert json.loads(summary.read_text())["status"] == "pending"
+        if stage == phase:
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+            if failure == "oserror":
+                raise FileNotFoundError("synthetic_unavailable_tool")
+            if failure == "nonzero":
+                # 即使失败子进程留下完整形状的产物，退出码也必须阻断成功。
+                if stage == "symbol":
+                    output.write_text(json.dumps(report()))
+                elif stage == "drag":
+                    Path(kwargs["env"]["TAVOTTO_PERF_REPORT_OUT"]).write_text("{}")
+                else:
+                    Path(argv[argv.index("--json") + 1]).write_text("[]")
+            return subprocess.CompletedProcess(argv, 1 if failure == "nonzero" else 0)
+        if stage == "symbol":
+            Path(kwargs["env"]["TAVOTTO_PERF_AGENT_OUTPUT"]).write_text(json.dumps(report()))
+        elif stage == "drag":
+            Path(kwargs["env"]["TAVOTTO_PERF_REPORT_OUT"]).write_text("{}")
+        else:
+            raise AssertionError("analysis should be the failing stage")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(A.subprocess, "run", execute)
+    assert A.main(["run", "--out", str(output), "--summary", str(summary), "--include-drag"]) == 2
+    result = json.loads(summary.read_text())
+    assert result["status"] == "failed"
+    assert result["suites"]["symbol_ui" if phase == "symbol" else "canvas_drag"] == "failed"
+    assert len(calls) == ("symbol", "drag", "analysis").index(phase) + 1
+
+
+def test_invalid_run_parameters_cannot_leave_previous_success(tmp_path, monkeypatch):
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps({"status": "ok"}))
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: pytest.fail("invalid run launched"))
+    assert A.main(["run", "--repeat", "2", "--summary", str(summary)]) == 2
+    assert json.loads(summary.read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "baseline_ms, baseline_browser, expected, code",
+    [
+        (20, "chromium", "pass", 0),
+        (1, "chromium", "regression", 3),
+        (20, "webkit", "incomparable", 3),
+    ],
+)
+def test_run_summary_records_the_baseline_verdict(
+    tmp_path, monkeypatch, baseline_ms, baseline_browser, expected, code
+):
+    output = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(report(value=baseline_ms, browser=baseline_browser)))
+
+    def execute(argv, **kwargs):
+        Path(kwargs["env"]["TAVOTTO_PERF_AGENT_OUTPUT"]).write_text(json.dumps(report()))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(A.subprocess, "run", execute)
+    assert (
+        A.main(
+            ["run", "--out", str(output), "--summary", str(summary), "--baseline", str(baseline)]
+        )
+        == code
+    )
+    saved = json.loads(summary.read_text())
+    assert saved["regression_status"] == expected
+    assert saved["status"] == ("ok" if expected == "pass" else expected)
+    assert saved["comparison"]["status"] == expected
+
+
+@pytest.mark.parametrize("command", ["summarize", "compare"])
+@pytest.mark.parametrize("input_kind", ["missing", "malformed"])
+def test_failed_subcommand_replaces_previous_machine_verdict(tmp_path, command, input_kind):
+    """Agent 重用 --json 路径时，输入失败不能交出上一轮的 pass。"""
+    bad = tmp_path / "input.json"
+    if input_kind == "malformed":
+        bad.write_text("{")
+    output = tmp_path / "verdict.json"
+    output.write_text(json.dumps({"status": "pass"}))
+    argv = [command, str(bad)]
+    if command == "compare":
+        argv.append(str(bad))
+    assert A.main([*argv, "--json", str(output)]) == 2
+    assert json.loads(output.read_text())["status"] == "failed"
+
+
+def test_unavailable_pnpm_never_launches_a_subprocess(tmp_path, monkeypatch):
+    summary = tmp_path / "summary.json"
+    monkeypatch.setattr(A.shutil, "which", lambda _: None)
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: pytest.fail("pnpm was not found"))
+    assert A.main(["run", "--out", str(tmp_path / "run.json"), "--summary", str(summary)]) == 2
+    assert json.loads(summary.read_text())["status"] == "failed"
+
+
+def test_invalid_baseline_fails_the_current_run_summary(tmp_path, monkeypatch):
+    output = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+
+    def execute(argv, **kwargs):
+        Path(kwargs["env"]["TAVOTTO_PERF_AGENT_OUTPUT"]).write_text(json.dumps(report()))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(A.subprocess, "run", execute)
+    assert (
+        A.main(
+            [
+                "run",
+                "--out",
+                str(output),
+                "--summary",
+                str(summary),
+                "--baseline",
+                str(tmp_path / "missing.json"),
+            ]
+        )
+        == 2
+    )
+    result = json.loads(summary.read_text())
+    assert result["status"] == "failed"
+    assert result["suites"]["symbol_ui"] == "ok"
+    assert result["regression_status"] == "failed"
+
+
+@pytest.mark.parametrize("input_kind", ["missing", "malformed"])
+@pytest.mark.parametrize("with_json", [False, True])
+def test_external_comparison_input_failure_invalidates_completed_summary(
+    tmp_path, input_kind, with_json
+):
+    current = tmp_path / "run.json"
+    if input_kind == "malformed":
+        current.write_text("{")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(report()))
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps(A.compose_run_summary(A.summarize(report()), "ok")))
+    argv = ["compare", str(current), str(baseline), "--summary", str(summary)]
+    if with_json:
+        argv.extend(["--json", str(tmp_path / "comparison.json")])
+    assert A.main(argv) == 2
+    saved = json.loads(summary.read_text())
+    assert saved["status"] == "failed"
+    assert saved["regression_status"] == "failed"
+    assert saved["comparison"]["status"] == "failed"
+    assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "ok"}
+
+
+def test_external_comparison_rejects_pending_summary_without_overwriting_it(tmp_path):
+    current = tmp_path / "run.json"
+    current.write_text(json.dumps(report()))
+    summary = tmp_path / "summary.json"
+    pending = A.compose_run_summary(A.summarize(report()), "pending")
+    summary.write_text(json.dumps(pending))
+    verdict = tmp_path / "comparison.json"
+    assert (
+        A.main(
+            [
+                "compare",
+                str(current),
+                str(current),
+                "--summary",
+                str(summary),
+                "--json",
+                str(verdict),
+            ]
+        )
+        == 2
+    )
+    assert json.loads(summary.read_text()) == pending
+    assert json.loads(verdict.read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize("regression_pct", ["0", "201", "nan"])
+def test_external_comparison_invalid_threshold_invalidates_completed_summary(
+    tmp_path, regression_pct
+):
+    current = tmp_path / "run.json"
+    current.write_text(json.dumps(report()))
+    summary = tmp_path / "summary.json"
+    summary.write_text(json.dumps(A.compose_run_summary(A.summarize(report()), "ok")))
+    verdict = tmp_path / "comparison.json"
+    assert (
+        A.main(
+            [
+                "compare",
+                str(current),
+                str(current),
+                "--summary",
+                str(summary),
+                "--json",
+                str(verdict),
+                "--regression-pct",
+                regression_pct,
+            ]
+        )
+        == 2
+    )
+    saved = json.loads(summary.read_text())
+    assert saved["status"] == "failed"
+    assert saved["regression_status"] == "failed"
+    assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "ok"}
+    assert saved["comparison"]["status"] == "failed"
+    assert json.loads(verdict.read_text())["status"] == "failed"

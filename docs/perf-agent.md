@@ -7,7 +7,7 @@
 ```bash
 python scripts/build_frontend.py
 cd web && pnpm install --frozen-lockfile && pnpm exec playwright install chromium && cd ..
-python scripts/perf_agent.py run --browser chromium --repeat 16 --out web/test-results/perf-agent/run.json
+python scripts/perf_agent.py run --browser chromium --repeat 16 --out web/test-results/perf-agent/run.json --summary web/test-results/perf-agent/summary.json
 python scripts/perf_agent.py summarize web/test-results/perf-agent/run.json --json perf-summary.json
 python scripts/perf_agent.py compare web/test-results/perf-agent/run.json baseline.json --json comparison.json
 ```
@@ -17,17 +17,20 @@ Agent 只要调用 CLI，然后读取 JSON 的 `status`、`scenarios`、`rows` �
 - 2：执行失败、输入无效、覆盖不完整；**绝不当性能通过**
 - 3：相对基线回归或环境/样本不可比；见 JSON `status`
 
+本地后端默认使用执行 CLI 的同一个 Python（包括 Windows 的 `Scripts/python.exe`、conda 或自选 venv）；显式 `TAVOTTO_PYTHON` 仍优先。pnpm 按 PATH 解析实际程序，支持安装路径含中文/空格及 Windows 的 `.CMD` shim。
+
 GitHub Actions 独立的 `Performance Agent` workflow 支持手动触发和每天自动执行，自动保存 JSON、Playwright trace 和截图。默认报告模式，不自动修改主分支，不改变现有 merge queue Gate。
 
 ## 数据真相
 测试是真实后端 + Playwright Chromium/WebKit：先预热，再使用 DOM 稳定锚点点击“科研预设与符号”菜单、逐个插入符号 α、²、μm 和尺寸线预设，验证对象数量确实增加。采样的 `two_raf_ms` 是从 click capture 到**第二个 rAF 回调**的耗时，不能冒充 GPU 实际 present 或完整端到端交互延迟。
 
 - 样本少于 10、覆盖不完整、浏览器/平台/分辨率/DPR 等变化，一律 `incomparable`，不能通过门禁。
+- 两次报告的 `iterations` 也必须一致：每轮插入会增加画布对象，10 轮和 60 轮代表不同负载，不能只把它们当作样本数量不同。
 - 性能回归阈值默认 `P95 > 基线 25%` **且** 绝对增加至少 15ms。需要人工在相同固定 runner 和真实稳定数据上确认阈值。
 - nightly 首次尚无同机基线，只记录并上传报告，不输出“性能没退化”的假结论。后续可从同规格历史报告作为 `--baseline` 交给 Agent 比较。
 - 报告只有硬件分类、受控场景名与耗时数字。没有脚本路径、用户文档文本、对象 ID 或文件名。
 - 有些现象无法在后台浏览器里模拟，特别是 macOS 拖动原生窗口、GPU 合成与显示器拖影。原生档必须运行真实签名 App + macOS runner，配合 `scripts/perf_macos_window.py` 与 Instruments。
-- 本 workflow 的真实环境目前未运行验证；只有 Actions 中的成功 run 才是有效自动化证据。
+- 只有与待验 SHA 匹配的 Actions 成功 run 才是有效浏览器自动化证据；本地 pytest 不等同于浏览器实测。
 
 ## 与现有性能探针组合
 本 CLI 的黑盒 UI 计时与 ADR 0075 性能探针互补。待 #1000 的 `PerfAction` 诊断成熟后可增加录制/下载原始分段报告，并把渲染耗时拆成同步提交、React、字体/layout 三类。禁止直接暴露用户内容给 Agent。
@@ -67,5 +70,11 @@ GitHub Actions `Performance Agent` 在成功跑完测试后，使用只读的 Ac
 ## Agent 读取整个测试的结果
 
 使用 `run --include-drag --summary summary.json` 时，`summary.json` 除了各场景 P95，还包含顶层 `status` 与 `suites.symbol_ui`、`suites.canvas_drag`。拖动开始前整体状态为 `pending`，拖动和分析器都成功才是 `ok`；任一失败后为 `failed` / `incomplete`。**Agent 不能仅因为 `run.json` 的符号测量存在或 `symbol_ui=ok` 就认为整条流水线已通过。**
+
+每次 `run` 开始就用本次的 `pending` 替换旧摘要；启动失败、非零退出、缺产物、超时和参数范围无效都会留下本次 `failed` 结论。`summarize` / `compare` 在输入失败时也会把指定的 `--json` 写为 `failed`，避免 Agent 读到上一轮的成功。摘要位置不可写时以退出码 2 为准。
+
+`run --baseline` 还会将 `regression_status` 更新为实际的 `pass` / `regression` / `incomparable`；比较完成前摘要保持 `pending`，比较输入失败则为 `failed`。性能回归或不可比时，顶层 `status` 也分别为 `regression` / `incomparable`，而 `suites` 保留套件的执行结果。
+
+独立执行历史比较时，`compare run.json baseline.json --json comparison.json --summary summary.json` 会把裁决同步到已完成的运行摘要；输入失败也会使该摘要成为 `failed`。仍在执行或不完整的摘要不能被外部比较改写为完成。
 
 如果没有 `--include-drag`，`canvas_drag=not_requested`，该状态只说明符号套件成功；不得据此宣称拖动已经测试。

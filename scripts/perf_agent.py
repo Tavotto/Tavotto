@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -161,11 +162,15 @@ def compose_run_summary(symbol: dict, drag_status: str) -> dict:
     if drag_status not in ("not_requested", "pending", "ok", "failed"):
         raise ValueError("invalid_drag_status")
     symbol_status = symbol.get("status")
-    if symbol_status != "ok":
+    if symbol_status in ("pending", "failed"):
+        whole = symbol_status
+    elif symbol_status != "ok":
         whole = "incomplete"
     elif drag_status == "failed":
         whole = "failed"
     elif drag_status == "pending":
+        whole = "pending"
+    elif symbol.get("regression_status") == "pending":
         whole = "pending"
     else:
         whole = "ok"
@@ -178,11 +183,10 @@ def compose_run_summary(symbol: dict, drag_status: str) -> dict:
 
 def comparison_run_summary(symbol: dict, drag_status: str, comparison: dict) -> dict:
     """比较未通过时，整个 run 不得继续显示 ok / not_checked。"""
-    result = compose_run_summary(symbol, drag_status)
     verdict = comparison.get("status")
     if verdict not in ("pass", "regression", "incomparable"):
         raise ValueError("invalid_comparison_verdict")
-    result["regression_status"] = verdict
+    result = compose_run_summary({**symbol, "regression_status": verdict}, drag_status)
     result["comparison"] = comparison
     if result["status"] == "ok" and verdict != "pass":
         result["status"] = verdict
@@ -194,6 +198,9 @@ def compare(current: dict, baseline: dict, regression_pct: float = DEFAULT_REGRE
     if now["status"] != "ok" or old["status"] != "ok":
         status, rows = "incomparable", []
     elif now["environment"] != old["environment"]:
+        status, rows = "incomparable", []
+    elif current["iterations"] != baseline["iterations"]:
+        # 场景每轮都新增对象，不同 repeat 不只是样本数不同，也是画布负载不同。
         status, rows = "incomparable", []
     elif any(
         now["scenarios"][key]["count"] < MIN_SAMPLES or old["scenarios"][key]["count"] < MIN_SAMPLES
@@ -295,15 +302,42 @@ def main(argv: list[str] | None = None) -> int:
     comp.add_argument("--regression-pct", type=float, default=DEFAULT_REGRESSION_PCT)
     args = p.parse_args(argv)
 
+    result = None
+    comparison_summary = None
+    drag_status = "pending" if args.command == "run" and args.include_drag else "not_requested"
+    command_failed = False
+
+    def save_suite_summary() -> None:
+        if result is None:
+            return
+        whole = compose_run_summary(result, drag_status)
+        if command_failed:
+            whole["status"] = "failed"
+        if args.summary:
+            _write(args.summary, whole)
+        if whole["status"] != "pending" and not args.baseline:
+            _append_gha_summary(whole)
+
     try:
         if args.command == "run":
+            result = failed_run_summary(args.include_drag)
+            result["status"] = "pending"
+            # 先作废上次的成功摘要；启动失败/超时也必须交出本次任务的明确结论。
+            save_suite_summary()
             if not 3 <= args.repeat <= 60 or not 1 <= args.regression_pct <= 200:
                 raise ValueError("invalid_run_parameters")
             output = args.out.resolve()
             output.parent.mkdir(parents=True, exist_ok=True)
             output.unlink(missing_ok=True)  # 不许把上一轮成功报告误当作本轮通过
+            pnpm = shutil.which("pnpm")
+            if pnpm is None:
+                result["status"] = "failed"
+                save_suite_summary()
+                print("error: perf_agent_pnpm_unavailable", file=sys.stderr)
+                return 2
             env = {
                 **os.environ,
+                "TAVOTTO_PYTHON": os.environ.get("TAVOTTO_PYTHON") or sys.executable,
                 "TAVOTTO_PERF_AGENT_OUTPUT": str(output),
                 "TAVOTTO_PERF_AGENT_REPEATS": str(args.repeat),
                 "TAVOTTO_NO_TELEMETRY": "1",
@@ -311,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
             }
             proc = subprocess.run(
                 [
-                    "pnpm",
+                    pnpm,
                     "exec",
                     "playwright",
                     "test",
@@ -326,24 +360,14 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=1800,
             )
             if proc.returncode != 0 or not output.is_file():
-                result = failed_run_summary(args.include_drag)
-                if args.summary:
-                    _write(args.summary, result)
-                _append_gha_summary(result)
+                result["status"] = "failed"
+                save_suite_summary()
                 print("error: perf_agent_browser_run_failed", file=sys.stderr)
                 return 2
             result = summarize(load(output))
+            if args.baseline:
+                result["regression_status"] = "pending"
             _print_summary(result)
-            drag_status = "pending" if args.include_drag else "not_requested"
-
-            def save_suite_summary() -> None:
-                whole = compose_run_summary(result, drag_status)
-                if args.summary:
-                    _write(args.summary, whole)
-                # 只在全部子测试已有明确结论时显示整体通过/失败。
-                if whole["status"] != "pending" and not args.baseline:
-                    _append_gha_summary(whole)
-
             save_suite_summary()
             if result["status"] != "ok":
                 return 2
@@ -358,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     drag_run = subprocess.run(
                         [
-                            "pnpm",
+                            pnpm,
                             "exec",
                             "playwright",
                             "test",
@@ -431,12 +455,6 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 _write(args.json, result)
             return 0 if result["status"] == "ok" else 2
-        if not 1 <= args.regression_pct <= 200:
-            raise ValueError("invalid_regression_pct")
-        result = compare(load(args.current), load(args.baseline), args.regression_pct)
-        print(f"Comparison: {result['status']}")
-        if args.json:
-            _write(args.json, result)
         if args.summary:
             previous = json.loads(args.summary.read_text(encoding="utf-8"))
             suites = previous.get("suites") if isinstance(previous, dict) else None
@@ -449,16 +467,55 @@ def main(argv: list[str] | None = None) -> int:
                 or suites.get("canvas_drag") not in ("ok", "not_requested")
             ):
                 raise ValueError("cannot_update_incomplete_summary")
+            comparison_summary = previous
+        if not 1 <= args.regression_pct <= 200:
+            raise ValueError("invalid_regression_pct")
+        result = compare(load(args.current), load(args.baseline), args.regression_pct)
+        print(f"Comparison: {result['status']}")
+        if args.json:
+            _write(args.json, result)
+        if comparison_summary is not None:
             _write(
                 args.summary,
-                comparison_run_summary(previous, suites["canvas_drag"], result),
+                comparison_run_summary(
+                    comparison_summary, comparison_summary["suites"]["canvas_drag"], result
+                ),
             )
         return 0 if result["status"] == "pass" else 3
     except (OSError, json.JSONDecodeError, ValueError, subprocess.TimeoutExpired) as exc:
-        # 超时/浏览器崩溃时仍输出机器可读失败，避免 Agent 只看残留 run.json。
-        if args.command == "run" and args.summary:
+        if args.command == "run" and result is not None:
+            if result["status"] == "pending":
+                result["status"] = "failed"
+            elif drag_status == "pending":
+                drag_status = "failed"
+            command_failed = True
+            if result.get("regression_status") == "pending":
+                result["regression_status"] = "failed"
             try:
-                _write(args.summary, failed_run_summary(args.include_drag))
+                save_suite_summary()
+            except OSError:
+                pass  # 摘要目录不可写时仍以失败码交出，不能再盖住原始失败。
+        elif args.command in ("summarize", "compare"):
+            # summarize/compare 的失败也必须作废旧机器结论。
+            failed = (
+                {"schema": COMPARE_SCHEMA, "rows": []}
+                if args.command == "compare"
+                else summarize({"environment": {}, "scenarios": []})
+            )
+            failed.update(status="failed", reason="invalid_or_unavailable_benchmark")
+            try:
+                if args.json:
+                    _write(args.json, failed)
+                if comparison_summary is not None:
+                    _write(
+                        args.summary,
+                        {
+                            **comparison_summary,
+                            "status": "failed",
+                            "regression_status": "failed",
+                            "comparison": failed,
+                        },
+                    )
             except OSError:
                 pass
         # 不把用户路径或操作数据写进控制台。
