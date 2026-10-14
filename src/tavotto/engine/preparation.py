@@ -260,10 +260,12 @@ class PreparationPlan:
         }
 
 
-def _last_success_profile(root: str, script: str, *, python: str, source: str) -> str | None:
+def _last_success_profile(
+    root: str, script: str, *, python: str, source: str, run=None
+) -> str | None:
     """这个脚本上一次成功用的执行语义（`launchctx` 记录），记录此刻仍成立才算；否则 None。
 
-    成立 = 解释器 / 环境 / 脚本字节 / 运行目录档都没变（运行配置与数据绑定不看：它们不改变「该用哪种语义」）。"""
+    成立 = 解释器 / 环境 / 脚本字节 / 运行目录档都没变，**且记录的运行配置就是本次请求的运行配置**（argv 的不透明引用相同）。"""
     if not python:
         return None
     try:
@@ -281,18 +283,30 @@ def _last_success_profile(root: str, script: str, *, python: str, source: str) -
     reason = launchctx.verify(
         record, project_root=root, script=script, python=python, python_source=source, facets=facets
     )
-    return launchctx.profile_of(record) if reason is None else None
+    if reason is not None:
+        return None
+    # 记录是对**某个运行配置**的成功：本次请求的运行配置不同（或记录有而请求没有），沿用的就是别人的结论
+    if record.get("run_config") != (run.config_id if run is not None else None):
+        return None
+    profile = launchctx.profile_of(record)
+    if (
+        profile == execspec.PROFILE_NATIVE
+        and (record.get("source") or {}).get("basis_observed") is False
+    ):
+        # 与 #982 的 reuse_last_success 同样保守：native 没有观察过 helper / 数据文件，不证明它们没变，不据此沿用 native
+        return None
+    return profile
 
 
 def _route_of(
-    root: str, script: str, *, python: str, source: str, decision: dict | None
+    root: str, script: str, *, python: str, source: str, decision: dict | None, run=None
 ) -> runroute.Route:
     """`execution="auto"` 的落点：策略 / 运维开关 / 上次成功 / 静态证据 → 路由（零执行用户代码）。"""
     policy = execpolicy.mode_for(root)
     enabled = execpolicy.fallback_enabled()
     last = None
     if policy != execpolicy.MODE_SAFE_ONLY and enabled:
-        last = _last_success_profile(root, script, python=python, source=source)
+        last = _last_success_profile(root, script, python=python, source=source, run=run)
     mode = decision["mode"] if decision else workdir.mode_for(root)
     route = runroute.route_for_file(
         Path(root) / figcapture.normalize_relative_script(script),
@@ -483,7 +497,9 @@ def plan_for(
         # 运行前路由（V2 PR2，ADR 0129）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
         execution = execspec.PROFILE_SAFE
         if script is not None and target == TARGET_SCRIPT:
-            route = _route_of(root, script, python=python, source=source, decision=decision)
+            route = _route_of(
+                root, script, python=python, source=source, decision=decision, run=run
+            )
             if route.execution == execspec.PROFILE_NATIVE and not python:
                 route = route.downgraded("no_interpreter")  # 没有解释器就没有 native 可起
             execution = route.execution

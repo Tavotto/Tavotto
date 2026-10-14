@@ -211,6 +211,8 @@ class Event:
     dest: PathVal | None = None  # move 的目的
     #: savefig 的接收者确实解析到 matplotlib（`plt.savefig` / 来自 `plt.figure()` 等的 Figure）；其它事件恒 True
     certain: bool = True
+    #: 在会无条件执行的位置（模块 / 函数体顶层语句序列；不在条件 / 循环 / try / with 体 / lambda / 推导式里）
+    top: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -606,39 +608,94 @@ class _Collector:
     def collect(self) -> None:
         self._walk(self.tree, self.module, ())
 
-    def _walk(self, node: ast.AST, scope: _Scope, branches: tuple) -> None:
+    #: 子节点是否仍是「无条件执行」：这些节点的子树按条件 / 循环 / 异常 / 表达式级分支处理，一律不算
+    _CONDITIONAL_EXPR = (
+        ast.Lambda,
+        ast.IfExp,
+        ast.BoolOp,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+
+    @staticmethod
+    def _main_guard(test: ast.expr) -> bool:
+        """`if __name__ == "__main__":`——作为脚本运行时恒真，它的 body 按无条件处理（几乎所有脚本都这么写入口）。"""
+        return (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "__name__"
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq)
+            and len(test.comparators) == 1
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value == "__main__"
+        )
+
+    def _walk(self, node: ast.AST, scope: _Scope, branches: tuple, top: bool = True) -> None:
+        """`top`：这个节点是否在「会无条件执行」的位置（模块 / 函数体的顶层语句序列；不在任何条件分支、循环、try、with 体、
+        lambda / 推导式 / 三元里）。只有 `top` 的事件才够格升 high（ADR 0129「保守边界」）。"""
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             inner = self.scopes.get(id(node), scope)
             for dec in node.decorator_list:
-                self._walk(dec, scope, branches)
+                self._walk(dec, scope, branches, top)
+            # 函数体是它自己的语句序列（能不能走到由可达性判）；类体在定义时执行，跟随外层
+            body_top = True if not isinstance(node, ast.ClassDef) else top
             for stmt in node.body:
-                self._walk(stmt, inner, branches)
+                self._walk(stmt, inner, branches, body_top)
             return
         if isinstance(node, (ast.If, ast.While)) and self._constant_false(node.test):
-            # 条件是常量 False 的 `if` / `while`：body 永远不执行，里面的调用与证据都不算（`else` 照常）。只认这一种形状
-            self._walk(node.test, scope, branches)
+            # 条件是常量 False 的 `if` / `while`：body 永远不执行，里面的调用与证据都不算（`else` 照常）
+            self._walk(node.test, scope, branches, top)
             for stmt in node.orelse:
-                self._walk(stmt, scope, (*branches, (id(node), 1)))
+                self._walk(stmt, scope, (*branches, (id(node), 1)), top)
             return
         if isinstance(node, ast.If):
-            self._walk(node.test, scope, branches)
+            self._walk(node.test, scope, branches, top)
+            body_top = top and self._main_guard(node.test)
             for stmt in node.body:
-                self._walk(stmt, scope, (*branches, (id(node), 0)))
+                self._walk(stmt, scope, (*branches, (id(node), 0)), body_top)
             for stmt in node.orelse:
-                self._walk(stmt, scope, (*branches, (id(node), 1)))
+                self._walk(stmt, scope, (*branches, (id(node), 1)), False)
             return
         if isinstance(node, ast.Match):
-            self._walk(node.subject, scope, branches)
+            self._walk(node.subject, scope, branches, top)
             for i, case in enumerate(node.cases):
                 for stmt in case.body:
-                    self._walk(stmt, scope, (*branches, (id(node), i)))
+                    self._walk(stmt, scope, (*branches, (id(node), i)), False)
+            return
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            self._walk(node.iter, scope, branches, top)
+            for stmt in (*node.body, *node.orelse):
+                self._walk(stmt, scope, branches, False)
+            return
+        if isinstance(node, ast.While):
+            self._walk(node.test, scope, branches, top)
+            for stmt in (*node.body, *node.orelse):
+                self._walk(stmt, scope, branches, False)
+            return
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:  # `with open(p, "w") as f:` 的 open 在进入 body 之前无条件执行
+                self._walk(item.context_expr, scope, branches, top)
+            for stmt in node.body:
+                self._walk(stmt, scope, branches, False)
+            return
+        if isinstance(node, (ast.Try, getattr(ast, "TryStar", ast.Try))):
+            for stmt in (*node.body, *node.orelse, *node.finalbody):
+                self._walk(stmt, scope, branches, False)
+            for handler in node.handlers:
+                for stmt in handler.body:
+                    self._walk(stmt, scope, branches, False)
             return
         if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name):
+            if top and isinstance(node.func, ast.Name):
                 self.calls.append((scope, node.func.id))
+            self._top = top
             self._call(node, scope, branches)
+        child_top = top and not isinstance(node, self._CONDITIONAL_EXPR)
         for child in ast.iter_child_nodes(node):
-            self._walk(child, scope, branches)
+            self._walk(child, scope, branches, child_top)
 
     def live_scopes(self) -> frozenset[int]:
         """模块执行真会走到的作用域：模块、类体（定义时执行）、被可达作用域按名字调用到的函数。"""
@@ -679,6 +736,8 @@ class _Collector:
             return test.id == "TYPE_CHECKING"
         return isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
 
+    _top = True
+
     def _add(self, kind, op, node, scope, branches, path, dest=None, certain=True) -> None:
         self.events.append(
             Event(
@@ -691,6 +750,7 @@ class _Collector:
                 path=path,
                 dest=dest,
                 certain=certain,
+                top=self._top,
             )
         )
 
@@ -1062,7 +1122,7 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
             if r.kind == _E_READ:
                 if not same_scope:
                     rule = RULE_R1_CROSS_SCOPE
-                elif s.certain and s.scope in facts.live_scopes:
+                elif s.certain and s.top and r.top and s.scope in facts.live_scopes:
                     rule = RULE_R1
                     high_r1 = True
                 else:
@@ -1087,6 +1147,7 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
             wk == mk
             and x.kind in (_E_WRITE, _E_SAVEFIG)
             and x.certain
+            and x.top
             and x.scope == m.scope
             and _after(m, x)
             for x, wk in keyed
@@ -1097,12 +1158,13 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
                 if (
                     rk == dk
                     and r.kind in (_E_READ, _E_STAT)
+                    and r.top
                     and r.scope == m.scope
                     and _after(r, m)
                 ):
                     read_line = r.line
                     break
-        if wrote and read_line is not None and m.scope in facts.live_scopes:
+        if wrote and read_line is not None and m.top and m.scope in facts.live_scopes:
             ev(RULE_R3, KIND_RENAME, m.op, m.line, read_line)
             high_r3 = True
         else:

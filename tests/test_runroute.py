@@ -111,19 +111,6 @@ NATIVE = [
         "R1",
     ),
     (
-        "savefig_in_loop_then_read",
-        """
-        import matplotlib.pyplot as plt
-        from PIL import Image
-        for i in range(3):
-            plt.savefig("t.png")
-            Image.open("t.png")
-        """,
-        runroute.CWD_SANDBOX,
-        runroute.REASON_SAVEFIG_READBACK,
-        "R1",
-    ),
-    (
         "tmp_write_replace_read_project_cwd",
         """
         import os
@@ -1085,3 +1072,122 @@ open("sub/a.dat").read()
 """
     assert _win_route(src, runroute.CWD_PROJECT_ROOT).execution == "native"
     assert _win_route(src, runroute.CWD_SANDBOX).execution == "safe"
+
+
+# ---------------------------------------------------------------- Codex #1034 r6：high 只给「无条件执行」的位置
+SAVE = 'plt.savefig("x.png")'
+READ = 'open("x.png", "rb").read()'
+
+
+def _ind(code, n=4):
+    return "\n".join(" " * n + ln for ln in code.splitlines())
+
+
+NOT_UNCONDITIONAL = [
+    ("if_body", MPL + f"if flag:\n{_ind(SAVE)}\n{_ind(READ)}\n"),
+    ("elif_branch", MPL + f"if a:\n    pass\nelif b:\n{_ind(SAVE)}\n{_ind(READ)}\n"),
+    ("else_branch", MPL + f"if a:\n    pass\nelse:\n{_ind(SAVE)}\n{_ind(READ)}\n"),
+    ("for_body", MPL + f"for i in items:\n{_ind(SAVE)}\n{_ind(READ)}\n"),
+    ("while_body", MPL + f"while cond():\n{_ind(SAVE)}\n{_ind(READ)}\n"),
+    ("try_body", MPL + f"try:\n{_ind(SAVE)}\n{_ind(READ)}\nexcept Exception:\n    pass\n"),
+    ("except_handler", MPL + f"try:\n    pass\nexcept Exception:\n{_ind(SAVE)}\n{_ind(READ)}\n"),
+    ("finally_block", MPL + f"try:\n    pass\nfinally:\n{_ind(SAVE)}\n{_ind(READ)}\n"),
+    ("with_body", MPL + f"with ctx():\n{_ind(SAVE)}\n{_ind(READ)}\n"),
+    ("match_case", MPL + f"match v:\n    case 1:\n{_ind(SAVE, 8)}\n{_ind(READ, 8)}\n"),
+    ("save_top_but_read_conditional", MPL + f"{SAVE}\nif flag:\n{_ind(READ)}\n"),
+    ("read_top_but_save_in_loop", MPL + f"for i in items:\n{_ind(SAVE)}\n{READ}\n"),
+    ("lambda_body", MPL + f"f = lambda: plt.savefig('x.png')\n{READ}\n"),
+    ("short_circuit", MPL + f"flag and plt.savefig('x.png')\n{READ}\n"),
+    ("ternary", MPL + f"plt.savefig('x.png') if flag else None\n{READ}\n"),
+    (
+        "function_called_only_from_a_branch",
+        MPL + f"def helper():\n{_ind(SAVE)}\n{_ind(READ)}\nif flag:\n    helper()\n",
+    ),
+    (
+        "function_called_only_in_a_loop",
+        MPL + f"def helper():\n{_ind(SAVE)}\n{_ind(READ)}\nfor i in items:\n    helper()\n",
+    ),
+    (
+        "function_called_only_in_try",
+        MPL
+        + f"def helper():\n{_ind(SAVE)}\n{_ind(READ)}\ntry:\n    helper()\nexcept Exception:\n    pass\n",
+    ),
+    (
+        "branch_inside_the_called_function",
+        MPL + f"def helper():\n    if flag:\n{_ind(SAVE, 8)}\n{_ind(READ, 8)}\nhelper()\n",
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", NOT_UNCONDITIONAL, ids=[c[0] for c in NOT_UNCONDITIONAL])
+def test_r1_evidence_outside_unconditional_positions_is_never_high(name, src):
+    route = _route(src)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+
+
+R3_CHAIN = 'open("c.tmp", "w").write("1")\nos.replace("c.tmp", "c.csv")\nopen("c.csv").read()'
+R3_NOT_UNCONDITIONAL = [
+    ("if_body", f"import os\nif flag:\n{_ind(R3_CHAIN)}\n"),
+    ("for_body", f"import os\nfor i in items:\n{_ind(R3_CHAIN)}\n"),
+    ("try_body", f"import os\ntry:\n{_ind(R3_CHAIN)}\nexcept Exception:\n    pass\n"),
+    ("with_body", f"import os\nwith ctx():\n{_ind(R3_CHAIN)}\n"),
+    (
+        "only_the_read_is_conditional",
+        'import os\nopen("c.tmp", "w").write("1")\nos.replace("c.tmp", "c.csv")\nif flag:\n    open("c.csv").read()\n',
+    ),
+    (
+        "only_the_move_is_conditional",
+        'import os\nopen("c.tmp", "w").write("1")\nif flag:\n    os.replace("c.tmp", "c.csv")\nopen("c.csv").read()\n',
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", R3_NOT_UNCONDITIONAL, ids=[c[0] for c in R3_NOT_UNCONDITIONAL])
+def test_r3_evidence_outside_unconditional_positions_is_never_high(name, src):
+    route = _route(src, cwd=runroute.CWD_PROJECT)
+    assert route.execution == "safe" and "R3" not in _rules(route), route.public()
+
+
+UNCONDITIONAL = [
+    ("module_top_level", MPL + f"{SAVE}\n{READ}\n"),
+    ("main_guard_body", MPL + f'if __name__ == "__main__":\n{_ind(SAVE)}\n{_ind(READ)}\n'),
+    (
+        "with_item_expression_runs_before_the_body",
+        MPL + 'with open("x.png", "rb") as f:\n    pass\n',
+    ),
+    (
+        "function_called_unconditionally",
+        MPL + f"def helper():\n{_ind(SAVE)}\n{_ind(READ)}\nhelper()\n",
+    ),
+    (
+        "function_called_from_the_main_guard",
+        MPL + f'def main():\n{_ind(SAVE)}\n{_ind(READ)}\nif __name__ == "__main__":\n    main()\n',
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", UNCONDITIONAL, ids=[c[0] for c in UNCONDITIONAL])
+def test_unconditional_positions_still_qualify(name, src):
+    route = _route(src)
+    if name.startswith(
+        "with_item"
+    ):  # 只有读、没有 savefig：不构成证据，仅验证 with 的 item 表达式被当作无条件
+        assert route.execution == "safe"
+        return
+    assert route.execution == "native" and "R1" in _rules(route), route.public()
+
+
+def test_a_with_item_open_is_an_unconditional_write_for_r3():
+    src = """
+import os
+with open("c.tmp", "w") as f:
+    f.write("1")
+os.replace("c.tmp", "c.csv")
+open("c.csv").read()
+"""
+    assert _route(src, cwd=runroute.CWD_PROJECT).execution == "native"
+
+
+def test_a_savefig_in_a_loop_then_read_is_only_medium():
+    route = _route(MPL + f"for i in range(3):\n{_ind(SAVE)}\n{_ind(READ)}\n")
+    assert route.execution == "safe" and route.confidence == runroute.CONFIDENCE_MEDIUM
