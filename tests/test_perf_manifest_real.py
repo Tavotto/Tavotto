@@ -2,6 +2,7 @@
 
 Flask Python 不一定装 matplotlib；需要独立 worker Python 时按仓库现有约定跳过。
 """
+
 from __future__ import annotations
 
 import json
@@ -9,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
 from tavotto.engine import pool
 
 ENGINE = Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engine"
@@ -44,22 +46,33 @@ with tempfile.TemporaryDirectory() as workdir:
 def test_timing_breakdown_follows_real_session_and_preserves_total():
     result = subprocess.run(
         [str(WORKER), "-c", DRIVER, str(ENGINE)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        check=True, timeout=120,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        timeout=120,
     )
     payload = json.loads(result.stdout.splitlines()[-1])
     times = payload["timing"]
     assert payload["elements"] > 0
     keys = (
-        "manifest_ms", "manifest_prepare_ms", "manifest_layout_ms",
-        "manifest_measure_ms", "manifest_final_geometry_ms",
+        "manifest_ms",
+        "manifest_prepare_ms",
+        "manifest_layout_ms",
+        "manifest_measure_ms",
+        "manifest_final_geometry_ms",
     )
     for key in keys:
         assert 0 <= times[key] < 120_000, (key, times)
-    assert abs(
-        times["manifest_ms"] - times["manifest_prepare_ms"]
-        - times["manifest_final_geometry_ms"]
-    ) <= 0.01
+    assert (
+        abs(
+            times["manifest_ms"]
+            - times["manifest_prepare_ms"]
+            - times["manifest_final_geometry_ms"]
+        )
+        <= 0.01
+    )
     assert (
         times["manifest_layout_ms"] + times["manifest_measure_ms"]
         <= times["manifest_prepare_ms"] + 0.5

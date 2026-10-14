@@ -1,4 +1,5 @@
 """Agent manifest 阶段报告：样本完整性、时间守恒、脱敏与失败关闭。"""
+
 from __future__ import annotations
 
 import json
@@ -25,12 +26,14 @@ def sample():
 def report(n=9):
     return {
         "meta": {"figures": "/home/secret-user/Project", "python": "/Users/A/.venv/bin/python"},
-        "rows": [{
-            "id": "private_study_α.pdf",
-            "plane": "Python",
-            "hot_n": n,
-            "hot_samples": [sample() for _ in range(n)],
-        }],
+        "rows": [
+            {
+                "id": "private_study_α.pdf",
+                "plane": "Python",
+                "hot_n": n,
+                "hot_samples": [sample() for _ in range(n)],
+            }
+        ],
     }
 
 
@@ -68,8 +71,12 @@ def test_malformed_stage_sum_negative_or_nan_fails_closed():
 
 
 def test_bench_numeric_whitelist_rejects_user_strings_boolean_and_infinity():
-    row = {**sample(), "script": "secrets.py", "manifest_layout_ms": True,
-           "canvas_draw_ms": float("inf")}
+    row = {
+        **sample(),
+        "script": "secrets.py",
+        "manifest_layout_ms": True,
+        "canvas_draw_ms": float("inf"),
+    }
     filtered = BR.numeric_hot_sample(row)
     assert "script" not in filtered
     assert "manifest_layout_ms" not in filtered
