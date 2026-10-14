@@ -116,10 +116,12 @@ jobs:
           set -euo pipefail
           CURRENT="web/test-results/perf-agent/run.json"
           BASE=""
+          RESULT="web/test-results/perf-agent/comparison.json"
+          # 即使 main 一个历史 run 都没有，也不可上传上一次留下的 comparison.json。
+          rm -f "$RESULT"
           # workflow 初次出现在 PR 分支时默认分支可能还没有它；这属于 no-baseline，
           # 不因为查询无结果便假装“回归对比通过”。
           ids="$(gh run list --workflow performance-agent.yml --branch main --status success --limit 8 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
-          RESULT="web/test-results/perf-agent/comparison.json"
           had_baseline=0
           for id in $ids; do
             target="$RUNNER_TEMP/tavotto-perf-baseline-$id"

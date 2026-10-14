@@ -24,7 +24,7 @@ def _comparison_step() -> str:
     return textwrap.dedent(source[start:end].split("        run: |\n", 1)[1])
 
 
-@pytest.mark.parametrize("later_verdict", ["incomparable", "pass", "regression"])
+@pytest.mark.parametrize("later_verdict", ["incomparable", "pass", "regression", "no_main_runs"])
 def test_historical_baseline_shell_keeps_only_a_compatible_comparison(tmp_path, later_verdict):
     bash = shutil.which("bash")
     if bash is None or sys.platform == "win32":
@@ -48,7 +48,7 @@ def test_historical_baseline_shell_keeps_only_a_compatible_comparison(tmp_path, 
         import json, os, sys
         from pathlib import Path
         if sys.argv[1:3] == ["run", "list"]:
-            print("101\\n102")
+            print(os.environ.get("TEST_RUN_LIST", "101\\n102"))
         elif sys.argv[1:3] == ["run", "download"]:
             run_id = sys.argv[3]
             target = Path(sys.argv[sys.argv.index("--dir") + 1]) / "test-results/perf-agent/run.json"
@@ -96,6 +96,7 @@ def test_historical_baseline_shell_keeps_only_a_compatible_comparison(tmp_path, 
             "GITHUB_STEP_SUMMARY": str(step_summary),
             "GH_REPO": "Tavotto/Tavotto",
             "TEST_VERDICTS": json.dumps({"101": "incomparable", "102": later_verdict}),
+            "TEST_RUN_LIST": "" if later_verdict == "no_main_runs" else "101\\n102",
             "TEST_COMPARE_LOG": str(calls_path),
         },
         capture_output=True,
@@ -103,6 +104,12 @@ def test_historical_baseline_shell_keeps_only_a_compatible_comparison(tmp_path, 
         timeout=20,
     )
     assert executed.returncode == 0, executed.stdout + executed.stderr
+    if later_verdict == "no_main_runs":
+        assert not calls_path.exists(), "No baseline: a comparison must not have been attempted"
+        assert not comparison.exists(), "Even without main runs, stale comparison must be removed"
+        assert json.loads(summary.read_text()) == original
+        assert "no successful main artifact yet" in step_summary.read_text()
+        return
     calls = [json.loads(line) for line in calls_path.read_text().splitlines()]
     assert calls[:2] == [{"run_id": "101", "summary": False}, {"run_id": "102", "summary": False}]
     saved = json.loads(summary.read_text())
