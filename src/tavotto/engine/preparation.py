@@ -715,11 +715,7 @@ class PreparationService:
             )
             result.finished_at = time.time()
             result.status = STATUS_NEEDS_INPUT
-        with self._lock:
-            self._order += 1
-            order = self._order
-        # 登记序号对所有计划盖（safe 的重跑让位也要拿它判先后）；关闭代次只对桌面 native 计划有意义
-        plan = dataclasses.replace(plan, launch_order=order)
+        # 关闭代次只对桌面 native 计划有意义；先在锁外取（注册表有自己的锁），别夹在拿序号与入表之间
         if plan.execution == execspec.PROFILE_NATIVE:
             plan = dataclasses.replace(
                 plan,
@@ -730,6 +726,10 @@ class PreparationService:
                 ),
             )
         with self._lock:
+            # 登记序号对所有计划盖（safe 的重跑让位也要拿它判先后）；拿序号与入表在同一把锁里，入表顺序
+            # （`cancel_project` / `older_than` / `superseded` 用）与 `launch_order`（native runner 用）才一致（Codex #1028 r4273983562）
+            self._order += 1
+            plan = dataclasses.replace(plan, launch_order=self._order)
             self._sweep()
             self._entries[plan.plan_id] = _Entry(
                 plan=plan, result=result, force_rebuild=force_rebuild
