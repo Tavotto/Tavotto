@@ -822,7 +822,6 @@ def test_short_drag_after_symbol_is_not_disguised_as_action_only():
     assert not a["stats"]
     assert a["actions"][0]["kind"] == "symbol.insert"
     assert any(
-        f.dimension == "覆盖" and "没有足够长的拖动" in " ".join(f.evidence)
-        for f in a["findings"]
+        f.dimension == "覆盖" and "没有足够长的拖动" in " ".join(f.evidence) for f in a["findings"]
     )
     assert next(g for dim, g, _ in a["grades"] if dim == "覆盖") != "—"
