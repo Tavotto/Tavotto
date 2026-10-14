@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -795,6 +796,12 @@ def test_an_unconditional_exit_after_a_final_probe_keeps_script_exited(figs):
     assert e.code == "script_exited", e.code
 
 
+posix_only = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows 没有 dir_fd，也不能用 os.open 打开目录拿 fd（PermissionError）；这些用例钉的是 POSIX 的 fd 相对路径语义",
+)
+
+
 # ============================================================ 第五轮：dir_fd / 直接传 fd 不可靠解析 → 不归因
 def _dirfd_ledger(tmp_path, monkeypatch):
     here, other = tmp_path / "here", tmp_path / "other"
@@ -807,6 +814,7 @@ def _dirfd_ledger(tmp_path, monkeypatch):
     return led, other
 
 
+@posix_only
 @pytest.mark.parametrize("call", ["stat", "open"])
 def test_a_dir_fd_call_is_never_attributed_to_the_cwd_relative_target(tmp_path, monkeypatch, call):
     import os
@@ -831,6 +839,7 @@ def test_a_dir_fd_call_is_never_attributed_to_the_cwd_relative_target(tmp_path, 
     assert led.explain_exit(controlled=True) is False
 
 
+@posix_only
 def test_the_same_calls_without_dir_fd_are_still_attributed(tmp_path, monkeypatch):
     import os
 
@@ -844,6 +853,7 @@ def test_the_same_calls_without_dir_fd_are_still_attributed(tmp_path, monkeypatc
     assert ("savefig", "probe_failed") in {(s["kind"], s["via"]) for s in led.suspects()}
 
 
+@posix_only
 def test_a_stat_of_a_bare_file_descriptor_is_not_a_path_observation(tmp_path, monkeypatch):
     import os
 
@@ -857,6 +867,7 @@ def test_a_stat_of_a_bare_file_descriptor_is_not_a_path_observation(tmp_path, mo
     assert led.suspects() == [] and led.material() == []
 
 
+@posix_only
 @needs_worker
 def test_a_dir_fd_failure_in_a_real_script_stays_a_script_error(figs):
     src = (
@@ -868,6 +879,7 @@ def test_a_dir_fd_failure_in_a_real_script_stays_a_script_error(figs):
     assert e.code != CODE, e.code
 
 
+@posix_only
 def test_open_with_a_custom_opener_is_not_a_cwd_relative_read(tmp_path, monkeypatch):
     import os
 
@@ -965,3 +977,39 @@ def test_the_artifact_inspection_whitelist_keeps_every_public_receipt_fact():
     )
     # 透传的是已投影过的段：再投影一次不变（单一入口，没有第二套 schema）
     assert receipt.project_fidelity(facts["fidelity"]) == facts["fidelity"]
+
+
+# ---- CI Windows：os.path.exists 等是 C 实现，不经 os.stat ----
+def test_a_false_probe_result_counts_even_when_the_probe_never_reaches_os_stat(
+    tmp_path, monkeypatch
+):
+    """Windows 3.12+ 的 `os.path.exists` / `isfile` / `Path.exists` 不经 `os.stat`：落空要从返回值上认。"""
+    import os
+    import pathlib
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(os.path, "exists", lambda p: False)  # 模拟 C 实现：不碰 os.stat
+    monkeypatch.setattr(os.path, "isfile", lambda p: False)
+    for call in (
+        lambda: os.path.exists("o.png"),
+        lambda: os.path.isfile("o.png"),
+    ):
+        led = figcapture.BlockedFileOps()
+        led.blocked("savefig", led.KIND_SAVEFIG, "o.png")
+        led.install()
+        try:
+            call()
+        finally:
+            led.uninstall()
+        assert led.explain_exit(controlled=True) is True
+        assert led.material()  # 被升级为确定偏差
+    # 返回 True（比如旧文件还在）不算落空；无关路径不算
+    led = figcapture.BlockedFileOps()
+    led.blocked("savefig", led.KIND_SAVEFIG, "o.png")
+    led.install()
+    try:
+        os.path.exists("other.png")
+        pathlib.Path("also_other.png").exists()
+    finally:
+        led.uninstall()
+    assert led.explain_exit(controlled=True) is False

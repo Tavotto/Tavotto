@@ -2788,6 +2788,32 @@ class BlockedFileOps:
         finally:
             self._busy = False
 
+    def note_missing_path(self, path) -> None:
+        """探路调用（`exists` / `isfile` / `Path.exists`…）对被拦截的 savefig 目标**返回了假**：记下此刻的观察序号。
+        POSIX 上落空本来经 `os.stat` 抛 `FileNotFoundError` 被 `note_missing_stat` 记下；Windows 3.12+ 的这些探路是 C 实现、
+        不碰 `os.stat`，只能从返回值认。两条路径记同一个序号，重复无害。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path)
+            if real is None or real in self._rewritten:
+                return
+            for ev in (*self._events, *self._spill.values()):
+                if ev["kind"] != self.KIND_SAVEFIG:
+                    continue
+                hit = (
+                    any(self._covers(p, real) for p in ev["paths"])
+                    if isinstance(ev["paths"], list)
+                    else self._spill_hit(ev, real)
+                )
+                if hit:
+                    ev["miss_seq"] = self._seq
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
     def explain_exit(self, *, controlled: bool) -> bool:
         """脚本以非零状态退出：退出是守卫造成的吗？必须同时成立（缺一保留原分类）：
         1. 退出前**最后一次**观察就是被拦截 savefig 目标的落空探测（`miss_seq == _seq`）；
@@ -2938,13 +2964,18 @@ class BlockedFileOps:
 
         def _counting(original):
             def counted(*args, **kwargs):
-                if not ledger._check_depth and args:
+                # `Path.mkdir(exist_ok=True)` 内部自己会 `is_dir()`（3.10 / 3.11 在撞上旧目录之后、
+                # 豁免记账之前）：那是 mkdir 的实现，不是脚本的观察
+                if not ledger._check_depth and not mk_ctx and args:
                     ledger.observe_stat(args[0])
                 ledger._check_depth += 1
                 try:
-                    return original(*args, **kwargs)
+                    result = original(*args, **kwargs)
                 finally:
                     ledger._check_depth -= 1
+                if args and not result and not mk_ctx:
+                    ledger.note_missing_path(args[0])
+                return result
 
             return counted
 
@@ -2958,9 +2989,12 @@ class BlockedFileOps:
                     ledger.observe_stat(path)
                 ledger._check_depth += 1
                 try:
-                    return original(path, *args, **kwargs)
+                    result = original(path, *args, **kwargs)
                 finally:
                     ledger._check_depth -= 1
+                if not result:
+                    ledger.note_missing_path(path)
+                return result
 
             return watched_check
 
