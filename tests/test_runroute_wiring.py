@@ -497,33 +497,31 @@ def test_explicit_safe_and_omitted_execution_are_different_sessions():
     )
 
 
-def _claim_with_hook(client, tmp_path, fake_pool, native, hook):
+def _claim_with_hook(client, tmp_path, fake_pool, native, hook, monkeypatch):
     """桌面窗口点运行；`hook(plan)` 在计划登记之后、交给执行线程之前被调用（模拟那一刻的竞态）。"""
     _setup(client, tmp_path, READBACK)
     report = _report(client)
     assert _route(report)["execution"] == "native"
-    real = preparation.SERVICE.register
+    real = preparation.PreparationService.register
     fired: list[int] = []
 
-    def register(plan, **kw):
-        out = real(plan, **kw)
+    def register(self, plan, **kw):
+        out = real(self, plan, **kw)
         if plan.execution == "native" and not fired:
             fired.append(1)
             hook(plan, report)
         return out
 
-    preparation.SERVICE.register = register
-    try:
-        resp = _act(
-            client, report["session_id"], _action(report, "run")["id"], report["config_revision"]
-        )
-    finally:
-        preparation.SERVICE.register = real
+    # 类级补丁：对实例打补丁撤销时会留下遮住类属性的实例属性，污染别的用例的类级补丁
+    monkeypatch.setattr(preparation.PreparationService, "register", register)
+    resp = _act(
+        client, report["session_id"], _action(report, "run")["id"], report["config_revision"]
+    )
     return report, resp
 
 
 def test_a_routed_native_run_superseded_by_a_newer_same_script_plan_never_launches(
-    client, tmp_path, fake_pool, native, sessions
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
 ):
     from test_execution_fallback import _register_newer_plan
 
@@ -533,6 +531,7 @@ def test_a_routed_native_run_superseded_by_a_newer_same_script_plan_never_launch
         fake_pool,
         native,
         lambda plan, rep: _register_newer_plan({**rep, "provider": {"attempt_id": plan.plan_id}}),
+        monkeypatch,
     )
     assert resp.status_code == 409, resp.get_json()
     assert resp.get_json()["params"]["reason"] == "superseded"
@@ -542,7 +541,7 @@ def test_a_routed_native_run_superseded_by_a_newer_same_script_plan_never_launch
 
 
 def test_a_routed_native_run_begun_before_the_project_was_reopened_never_launches(
-    client, tmp_path, fake_pool, native, sessions
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
 ):
     registry = m.engine_nativesession.REGISTRY
 
@@ -551,7 +550,14 @@ def test_a_routed_native_run_begun_before_the_project_was_reopened_never_launche
         registry.mark_project_closed(root)
         registry.reopen_project(root)
 
-    report, resp = _claim_with_hook(client, tmp_path, fake_pool, native, reopen)
+    report, resp = _claim_with_hook(client, tmp_path, fake_pool, native, reopen, monkeypatch)
     assert resp.status_code == 409, resp.get_json()
     assert resp.get_json()["params"]["reason"] == "project_reopened"
     assert native["calls"] == [] and fake_pool["build_calls"] == 0
+
+
+@pytest.fixture(autouse=True)
+def _no_instance_level_patches_leak():
+    """本文件的竞态钩子必须打在类上：留在 `PreparationService` 实例上的补丁会遮住后面用例的类级补丁（PR1 的代次用例因此假红过）。"""
+    yield
+    assert "register" not in vars(preparation.SERVICE)
