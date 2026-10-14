@@ -942,3 +942,23 @@ def test_parse_error_does_not_clobber_baseline_via_derived_temp_alias(tmp_path):
     assert rc == 2
     assert baseline.read_bytes() == before
     assert json.loads(verdict.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+@pytest.mark.parametrize("command", ["summarize", "compare"])
+def test_all_report_subparsers_reject_abbreviated_json_flag(tmp_path, command):
+    """Codex P1 反证：不能只看护 run 子命令的 allow_abbrev=False。"""
+    current = tmp_path / "current.json"
+    baseline = tmp_path / "baseline.json"
+    target = tmp_path / "prior-verdict.json"
+    current.write_text(json.dumps(report()), encoding="utf-8")
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    target.write_text(json.dumps({"status": "pass", "canary": "do-not-touch"}), encoding="utf-8")
+    before = target.read_bytes()
+    args = (
+        ["summarize", str(current), "--j", str(target)]
+        if command == "summarize"
+        else ["compare", str(current), str(baseline), "--j", str(target)]
+    )
+    # 若该子解析器重新启用 unique-prefix 识别，就会成功执行并改写结果。
+    assert A.main(args) == 2
+    assert target.read_bytes() == before
