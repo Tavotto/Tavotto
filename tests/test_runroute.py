@@ -1017,3 +1017,71 @@ REBOUND_FUNCTIONS = [
 def test_a_function_name_rebound_anywhere_is_not_proven_reachable(name, src):
     route = _route(src)
     assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+
+
+# ---------------------------------------------------------------- Windows 真路径（ntpath 风格，在任何平台上模拟）
+@pytest.fixture
+def windows_paths(monkeypatch):
+    """把 `runroute` 里的 `os` 换成 ntpath 语义的最小替身（`os.path` / `os.sep`），在非 Windows 上复现 Windows 的路径判断。"""
+    import ntpath
+    import types
+
+    fake = types.SimpleNamespace(
+        path=ntpath, sep="\\", fspath=__import__("os").fspath, PathLike=__import__("os").PathLike
+    )
+    monkeypatch.setattr(runroute, "os", fake)
+
+
+def _win_chain(tmp, final):
+    return f"""
+import os
+open({tmp!r}, "w").write("1")
+os.replace({tmp!r}, {final!r})
+open({final!r}).read()
+"""
+
+
+def _win_route(src, cwd=runroute.CWD_PROJECT_ROOT):
+    return runroute.decide(
+        runroute.facts_of(src), cwd_mode=cwd, project_root=r"C:\proj", script=r"figs\fig.py"
+    )
+
+
+@pytest.mark.parametrize(
+    "tmp,final",
+    [
+        (r"C:\proj\figs\a.tmp", r"C:\proj\figs\a.dat"),
+        ("C:/proj/figs/a.tmp", "C:/proj/figs/a.dat"),
+        (r"c:\PROJ\figs\a.tmp", r"c:\PROJ\figs\a.dat"),  # 盘符与目录大小写不敏感
+    ],
+)
+def test_windows_absolute_paths_under_the_project_root_are_inside(windows_paths, tmp, final):
+    route = _win_route(_win_chain(tmp, final))
+    assert route.execution == "native" and "R3" in _rules(route), route.public()
+
+
+@pytest.mark.parametrize(
+    "tmp,final",
+    [
+        (r"D:\other\a.tmp", r"D:\other\a.dat"),
+        (r"C:\proj2\a.tmp", r"C:\proj2\a.dat"),  # 前缀相同但不是子目录
+        (r"\\server\share\a.tmp", r"\\server\share\a.dat"),
+        (r"\cache.tmp", r"\cache.dat"),
+        ("C:cache.tmp", "C:cache.dat"),
+    ],
+)
+def test_windows_paths_outside_the_project_root_never_promote(windows_paths, tmp, final):
+    assert _win_route(_win_chain(tmp, final)).execution == "safe"
+
+
+def test_windows_relative_names_use_the_cwd_mode_and_backslash_spellings_compare_equal(
+    windows_paths,
+):
+    src = r"""
+import os
+open("sub\\a.tmp", "w").write("1")
+os.replace("sub/a.tmp", "sub\\a.dat")
+open("sub/a.dat").read()
+"""
+    assert _win_route(src, runroute.CWD_PROJECT_ROOT).execution == "native"
+    assert _win_route(src, runroute.CWD_SANDBOX).execution == "safe"

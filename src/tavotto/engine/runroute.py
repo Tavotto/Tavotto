@@ -989,9 +989,11 @@ def _canon(v: PathVal | None, w: _Where) -> tuple[str, str] | None:
         return ("tmp", v.text)
     if v.base == "abs":
         for r in w.roots_abs:
-            if v.text == r:
+            # Windows 路径（带盘符）大小写不敏感；POSIX 区分大小写
+            fold = (lambda t: t.lower()) if ntpath.splitdrive(r)[0] else (lambda t: t)
+            if fold(v.text) == fold(r):
                 return ("root", ".")
-            if v.text.startswith(r.rstrip("/") + "/"):
+            if fold(v.text).startswith(fold(r.rstrip("/")) + "/"):
                 return ("root", _norm(v.text[len(r.rstrip("/")) + 1 :]))
         return ("abs", v.text)
     if v.base == "script":
