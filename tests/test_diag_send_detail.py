@@ -3897,3 +3897,51 @@ class TestPassKeysInTheFinalZip:
         assert any("compass=keep_me" in t for t in texts.values()), "日志没进包：用例是空的"
         for name, text in texts.items():
             assert "CANARY" not in text, name
+
+
+class TestYamlIndentlessSequence:
+    """YAML 允许列表项和键同列：`token:` 下一行直接 `- REAL`。空值秘密键后同列的 `-` 项都是值，后面的同级键保留。"""
+
+    @pytest.mark.parametrize("nl", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+    @pytest.mark.parametrize("pad", ["", "  "], ids=["top", "nested"])
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            "{p}{k}:{nl}{p}- REAL_SECRET{nl}{p}- REAL_SECRET2{nl}",
+            "{p}{k}: # c{nl}{p}- REAL_SECRET{nl}",
+            "{p}{k}:{nl}{p}- a: REAL_SECRET{nl}{p}  b: REAL_SECRET2{nl}",
+            "{p}{k}:{nl}{p}-{nl}{p}  REAL_SECRET{nl}",
+            "{p}{k}:{nl}{nl}{p}- REAL_SECRET{nl}",
+        ],
+        ids=["plain", "comment", "item-map", "bare-dash", "blank-line"],
+    )
+    @pytest.mark.parametrize("key", ["token", "password", "DB_PASS"])
+    def test_items_are_redacted_and_siblings_kept(self, key, shape, pad, nl):
+        text = (
+            f"{pad}before: keep_a{nl}"
+            + shape.format(k=key, p=pad, nl=nl)
+            + f"{pad}after: keep_b{nl}"
+        )
+        out = diagdetail.Scrubber().text(text)
+        assert "REAL_SECRET" not in out, out
+        assert "keep_a" in out and "keep_b" in out, out
+
+    def test_same_column_dash_after_non_empty_value_is_not_swallowed(self):
+        out = diagdetail.Scrubber().text("token: REAL_SECRET\n- keep_item\n")
+        assert "REAL_SECRET" not in out and "keep_item" in out, out
+
+    def test_final_zip_has_no_hits(self, client, world):
+        log = world["tmp"] / "seq.log"
+        log.write_text("token:\n- REAL_SECRET\n- REAL_SECRET2\nsib: ok_seq\n", encoding="utf-8")
+        import tavotto.engine.diagnostics as dg
+
+        orig = dg._app_log_path
+        dg._app_log_path = lambda: log
+        try:
+            _prep, z = _prepare(client)
+        finally:
+            dg._app_log_path = orig
+        texts = _texts(z)
+        assert any("sib: ok_seq" in t for t in texts.values()), "日志没进包：用例是空的"
+        for name, text in texts.items():
+            assert "REAL_SECRET" not in text, name

@@ -475,7 +475,7 @@ def _ws_width(ws: str) -> int:
 def _yaml_block_end(text: str, key_start: int, vs: int) -> int | None:
     """值从下一行才开始的写法：`token: |` / `token: >-` / `token: |2`（YAML 块标量）、`token:`（行尾空值，下面缩进的
     是值）、行尾续行符 `\\`。fail-closed：键所在行之后**所有比键行缩进更深的行**（以及续行）都是值，一直抹到遇到缩进不深于
-    键行的非空行或输入末尾；空行不终止块。回块的结束位置（不含）；这一处不是这种写法回 None。"""
+    键行的非空行或输入末尾；空行不终止块。空值键之后与键同列的 `- ` 项（YAML 不缩进的序列）也算值。回块的结束位置（不含）；这一处不是这种写法回 None。"""
     n = len(text)
     nl = text.find("\n", vs)
     eol = n if nl < 0 else nl
@@ -503,7 +503,16 @@ def _yaml_block_end(text: str, key_start: int, vs: int) -> int | None:
         bws = body[: len(body) - len(body.lstrip(" \t"))]
         # 缩进里 tab 与空格混用（键行与这一行一边有 tab 一边没有）：宽度没法比，fail-closed 当作更深
         deeper = _ws_width(bws) > indent or (bool(bws) and ("\t" in bws) != ("\t" in kws))
-        if not (continued or deeper):
+        # 不缩进的序列（`token:` 下一行 `- REAL`，和键同列）：空值键之后同列的 `-` 项也是值
+        item = body.lstrip(" \t")
+        indentless = (
+            stripped == ""
+            and not continued
+            and _ws_width(bws) == indent
+            and item[:1] == "-"
+            and item[1:2] in ("", " ", "\t", "\r")
+        )
+        if not (continued or deeper or indentless):
             break
         last = line_end
         continued = body.rstrip().endswith("\\")
