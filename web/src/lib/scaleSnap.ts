@@ -13,6 +13,7 @@ import {
   isElementHidden,
   snapKindOf,
 } from '@/lib/elementGeom'
+import { rectsIntersect, visualBounds } from '@/lib/geometry'
 import type { Rect, ResizeDir, SnapLine, SnapLineCandidates, SnapTargets } from '@/lib/geometry'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { panelRotation } from '@/types/document'
@@ -160,7 +161,10 @@ function contentBoxes(panel: PanelObject, manifest: Manifest): { kind: 'axes' | 
     if (kind !== 'axes' && kind !== 'colorbar') continue
     const box = elementBoxOf(panel, el)
     if (!box || box[2] <= 0 || box[3] <= 0) continue
-    out.push({ kind, rect: fracBoxToMm(panel, box) })
+    const rect = fracBoxToMm(panel, box)
+    // 与面板可见窗没有二维交集的框整个丢掉：只按轴过滤会让「x 在窗内、y 在窗外」的框留下看不见的线
+    if (!rectsIntersect(rect, panel)) continue
+    out.push({ kind, rect })
   }
   return out
 }
@@ -214,10 +218,11 @@ export function scaleSnapCandidates(i: ScaleCandidateInput): SnapLineCandidates 
   if (prefs.objects) {
     for (const o of i.objects) {
       if (i.exclude.has(o.id) || o.hidden) continue
-      const rect = { x: o.x, y: o.y, w: o.w, h: o.h }
+      // 画布上看得见的是旋转后的外接盒（面板的 x/y/w/h 本来就是，text / arrow / shape 要绕中心转出来）
+      const rect = visualBounds(o)
       const meta = { kind: 'frame' as const, rect, panelId: o.type === 'panel' ? o.id : undefined }
-      threeX(o).forEach((v, e) => pushX(v, { ...meta, edge: e as 0 | 1 | 2 }))
-      threeY(o).forEach((v, e) => pushY(v, { ...meta, edge: e as 0 | 1 | 2 }))
+      threeX(rect).forEach((v, e) => pushX(v, { ...meta, edge: e as 0 | 1 | 2 }))
+      threeY(rect).forEach((v, e) => pushY(v, { ...meta, edge: e as 0 | 1 | 2 }))
     }
   }
   if (prefs.guides) for (const g of i.guides) (g.axis === 'x' ? pushX : pushY)(g.pos, { kind: 'guide' })

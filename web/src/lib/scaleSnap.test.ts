@@ -229,3 +229,51 @@ describe('子图 / 色条的中线以内容身份出线（Codex #1033 r426815738
     expect(a.ys.every((x) => x.frame)).toBe(true)
   })
 })
+
+describe('Codex #1033 第二轮', () => {
+  const prefs = { objects: true, guides: false, grid: false, gridSize: 10 }
+  const page = { w: 150, h: 100 }
+
+  it('旋转 90° 的形状：外框线取旋转后的外接盒（10 / 20 / 30），不是未旋转的 0 / 20 / 40', () => {
+    const shape = {
+      id: 's', type: 'shape', shape: 'rect', x: 0, y: 0, w: 40, h: 20, rotationDeg: 90,
+    } as unknown as CanvasObject
+    const c = scaleSnapCandidates({
+      objects: [shape], exclude: new Set(), page, guides: [], prefs, manifestOf: () => null,
+    })
+    const near = (got: number[], want: number[]) => {
+      expect(got).toHaveLength(want.length)
+      got.forEach((v, i) => expect(v).toBeCloseTo(want[i], 9))
+    }
+    near(c.xs.filter((l) => l.kind === 'frame').map((l) => l.v), [10, 20, 30])
+    near(c.ys.filter((l) => l.kind === 'frame').map((l) => l.v), [-10, 10, 30])
+  })
+
+  // 完整内容 100×75，只露出下半（crop.y=0.5,h=0.5）：窗口 y∈[0,37.5]，完整内容 y∈[−37.5,37.5]
+  const lowerHalf = {
+    id: 'p', type: 'panel', x: 0, y: 0, w: 100, h: 37.5, nativeW: 100, nativeH: 75,
+    fileId: 'f', overrides: [], crop: { x: 0, y: 0.5, w: 1, h: 0.5 },
+  } as unknown as PanelObject
+  // 子图 top-origin y∈[0.1,0.3] → 页面 y∈[−33.75,−26.25]：整个在窗口上方；x∈[10,60] 在窗内范围
+  const above: Manifest = {
+    stem: 'F', size_mm: [100, 75],
+    elements: [
+      { gid: 'axes_0', role: 'axes', label: '', bbox: [0.1, 0.1, 0.5, 0.2], draggable: false, resizable: true,
+        editable: [{ prop: 'position', type: 'rect', value: [0.1, 0.7, 0.5, 0.2] }] },
+    ],
+  } as unknown as Manifest
+
+  it('与可见窗没有二维交集的子图：锚点不出线（x 落在面板范围内也不出）', () => {
+    const a = scaleAnchorsFor(lowerHalf, above)
+    expect(a.xs.filter((x) => !x.frame)).toEqual([])
+    expect(a.ys.filter((x) => !x.frame)).toEqual([])
+  })
+
+  it('与可见窗没有二维交集的子图：候选不出线', () => {
+    const c = scaleSnapCandidates({
+      objects: [lowerHalf], exclude: new Set(), page, guides: [], prefs, manifestOf: () => above,
+    })
+    expect(c.xs.filter((l) => l.kind === 'axes')).toEqual([])
+    expect(c.ys.filter((l) => l.kind === 'axes')).toEqual([])
+  })
+})
