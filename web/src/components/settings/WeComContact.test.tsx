@@ -129,6 +129,25 @@ describe('发送问题反馈确认框', () => {
     expect(q('[data-wecom-contact="reserved"]')).not.toBeNull()
   })
 
+  it.each(['ready', 'done', 'unknown', 'failed'] as const)(
+    'zh-CN %s：隐形尺寸副本恒为最长文案（带编号那句），各态取同一最大高度',
+    async (state) => {
+      await dialogAt(state)
+      const sizer = q('[data-wecom-contact-sizer]')!
+      expect(sizer.getAttribute('aria-hidden')).toBe('true')
+      expect(sizer.className).toContain('invisible')
+      const hint = i18n.t('settings.diagnostics.send.contact.hint', { ns: 'dialogs' })
+      const noId = i18n.t('settings.diagnostics.send.contact.hintNoId', { ns: 'dialogs' })
+      expect(hint.length).toBeGreaterThanOrEqual(noId.length)
+      expect(sizer.textContent).toContain(hint)
+      // 可见那句与尺寸副本叠在同一个网格格子里，高度取两者最大
+      const shown = sizer.parentElement!.querySelector('p:not([data-wecom-contact-sizer])')!
+      expect(shown.className).toContain('[grid-area:1/1]')
+      expect(sizer.className).toContain('[grid-area:1/1]')
+      expect(sizer.textContent!.length).toBeGreaterThanOrEqual(shown.textContent!.length)
+    },
+  )
+
   it('zh-CN ready：不出现', async () => {
     await dialogAt('ready')
     expect(q('[data-diag-send-status]')!.getAttribute('data-diag-send-status')).toBe('ready')

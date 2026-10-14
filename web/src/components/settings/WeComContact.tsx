@@ -71,19 +71,28 @@ export function WeComContactNote({ withReportId, active }: { withReportId: boole
       aria-hidden={active ? undefined : true}
       inert={!active}
     >
-      <p className="type-caption">
-        {wc(withReportId ? 'hint' : 'hintNoId')} <WeComLink />
-        {' · '}
-        <button
-          type="button"
-          aria-expanded={qrOpen}
-          data-wecom-qr-toggle
-          className="underline underline-offset-2 hover:text-ink"
-          onClick={() => setQrOpen((v) => !v)}
-        >
-          {wc('showQr')}
-        </button>
-      </p>
+      {/* 两句文案长短不一（带编号的 hint 更长），窄窗口 / 高缩放下会多折一行：叠一份最长文案的隐形副本占住高度，
+          占位、失败、成功各态取同一个最大高度，页脚不跳位 */}
+      <div className="grid">
+        <p className="type-caption invisible [grid-area:1/1]" aria-hidden data-wecom-contact-sizer>
+          {wc('hint')} <span className="underline underline-offset-2">{wc('link')}</span>
+          {' · '}
+          <span className="underline underline-offset-2">{wc('showQr')}</span>
+        </p>
+        <p className="type-caption [grid-area:1/1]">
+          {wc(withReportId ? 'hint' : 'hintNoId')} <WeComLink />
+          {' · '}
+          <button
+            type="button"
+            aria-expanded={qrOpen}
+            data-wecom-qr-toggle
+            className="underline underline-offset-2 hover:text-ink"
+            onClick={() => setQrOpen((v) => !v)}
+          >
+            {wc('showQr')}
+          </button>
+        </p>
+      </div>
       {active && qrOpen && <WeComQrImage />}
     </div>
   )
