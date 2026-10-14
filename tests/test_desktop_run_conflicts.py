@@ -599,3 +599,33 @@ def test_cancellation_between_the_checkpoints_and_the_spawn_is_still_caught(
     assert err.value.code == runcodes.NATIVE_REGISTRY_CLOSING
     assert not _spawn_witness(tmp_path).exists()
     assert nativesession.REGISTRY.list(str(proj)) == []
+
+
+def test_registration_order_matches_launch_order_when_registrations_interleave(
+    tmp_path, monkeypatch
+):
+    """两次登记交错：先拿到序号的那次在入表前被插队，另一次先入表——入表顺序（`cancel_project` / `older_than` /
+    `superseded` 按它判先后）必须与 `launch_order`（native runner 按它判先后）一致（Codex #1028 r4273983562）。
+    插队点放在登记里查项目关闭代次的那一刻：它在拿序号与入表之间就会把两种顺序拆开。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    first, cutter = _native_plan(proj, "pj-interleave"), _native_plan(proj, "pj-interleave")
+    real_epoch = nativesession.REGISTRY.project_epoch
+    cut = []
+
+    def epoch_with_cut_in(root):
+        if not cut:
+            cut.append(True)
+            preparation.SERVICE.register(cutter)
+        return real_epoch(root)
+
+    monkeypatch.setattr(nativesession.REGISTRY, "project_epoch", epoch_with_cut_in)
+    preparation.SERVICE.register(first)
+    assert cut, "插队点没有触发：用例空转"
+    entries = preparation.SERVICE._entries  # noqa: SLF001
+    ids = [pid for pid in entries if pid in (first.plan_id, cutter.plan_id)]
+    by_order = sorted(ids, key=lambda pid: entries[pid].plan.launch_order)
+    assert ids == by_order, "入表顺序与 launch_order 不一致：较老的计划会把较新的当成更早的结束掉"
+    for pid in ids:
+        preparation.SERVICE.cancel(pid, "pj-interleave")
