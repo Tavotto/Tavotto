@@ -17,6 +17,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }))
 
 import { prepareDiagSend, discardDiagSend, startDiagSend, type DiagSendPrepared } from '@/lib/api'
+import { ApiError } from '@/lib/api'
 import { t } from '@/i18n'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ResultBlock } from '@/components/ExportDialog'
@@ -143,5 +144,50 @@ describe('点击只是打开对话框', () => {
     await act(async () => useDiagSendStore.getState().setOpen(false))
     expect(discardDiagSend).toHaveBeenCalledWith('pid-1', null)
     expect(startDiagSend).not.toHaveBeenCalled()
+  })
+})
+
+describe('迟到的旧备包被引擎取代（409 stale_prepare）', () => {
+  it('关了再开：旧请求晚到的 stale_prepare 不改界面、不丢弃新会话、不显示失败', async () => {
+    useDiagSendStore.setState({ capability: CAP })
+    let rejectA!: (e: unknown) => void
+    const pending = new Promise<DiagSendPrepared>((_res, rej) => (rejectA = rej))
+    vi.mocked(prepareDiagSend)
+      .mockReset()
+      .mockReturnValueOnce(pending)
+      .mockResolvedValueOnce({ ...PREPARED, id: 'pid-B' })
+    await render(<SendReportButton variant="primary" />)
+    await act(async () => buttons()[0].click())
+    await act(async () => {})
+    await act(async () => useDiagSendStore.getState().setOpen(false))
+    await act(async () => buttons()[0].click())
+    await act(async () => {})
+    expect(prepareDiagSend).toHaveBeenCalledTimes(2)
+    const failed = t('settings.diagnostics.send.prepareFailed', { ns: 'dialogs' })
+    expect(document.body.textContent).not.toContain(failed)
+    vi.mocked(discardDiagSend).mockClear()
+    await act(async () => rejectA(new ApiError('diag_stale_prepare', 409, { code: 'diag_stale_prepare' })))
+    await act(async () => {})
+    expect(document.body.textContent).not.toContain(failed)
+    expect(discardDiagSend).not.toHaveBeenCalledWith('pid-B', expect.anything())
+    await act(async () => useDiagSendStore.getState().setOpen(false))
+    expect(discardDiagSend).toHaveBeenCalledWith('pid-B', null) // 新会话仍是界面持有的那份
+  })
+
+  it('被另一个窗口的更新请求取代（同一次打开里收到 stale_prepare）：不显示「备包失败」，其他错误才显示', async () => {
+    useDiagSendStore.setState({ capability: CAP })
+    const failed = t('settings.diagnostics.send.prepareFailed', { ns: 'dialogs' })
+    vi.mocked(prepareDiagSend)
+      .mockReset()
+      .mockRejectedValueOnce(new ApiError('diag_stale_prepare', 409, { code: 'diag_stale_prepare' }))
+    await render(<SendReportButton variant="primary" />)
+    await act(async () => buttons()[0].click())
+    await act(async () => {})
+    expect(document.body.textContent).not.toContain(failed)
+    await act(async () => useDiagSendStore.getState().setOpen(false))
+    vi.mocked(prepareDiagSend).mockRejectedValueOnce(new ApiError('boom', 500, {}))
+    await act(async () => buttons()[0].click())
+    await act(async () => {})
+    expect(document.body.textContent).toContain(failed)
   })
 })

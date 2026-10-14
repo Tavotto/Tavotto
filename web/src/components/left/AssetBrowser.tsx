@@ -31,10 +31,11 @@ import { runtimeSiblingOf } from '@/lib/assetSibling'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { addFigureToLayout, openFastEdit } from '@/store/workspace'
-import { reasonText, statusLabel } from '@/lib/readinessText'
+import { PENDING_STATUSES, reasonText, statusLabel } from '@/lib/readinessText'
 import {
   DEFAULT_ASSET_FILTERS,
   useAssetBrowseStore,
+  type AssetEditabilityFilter,
   type AssetFilters,
   type AssetSortKey,
   type AssetTypeFilter,
@@ -54,6 +55,7 @@ import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
 import { Row } from '../ui/Field'
 import { SearchInput } from '../ui/SearchInput'
+import { Segmented } from '../ui/Segmented'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { TruncateMiddle } from '../ui/TruncateMiddle'
@@ -77,22 +79,14 @@ type SortKey = AssetSortKey
 const ab = (key: string, values?: Record<string, unknown>) =>
   translate(`assets.${key}`, { ns: 'workspace', ...(values ?? {}) })
 
-const TYPE_VALUES: TypeFilter[] = ['all', 'pdf', 'raster', 'script', 'runtime']
+const TYPE_VALUES: TypeFilter[] = ['all', 'pdf', 'raster', 'runtime']
 const SORT_VALUES: SortKey[] = ['name', 'recent', 'used']
 
 /** PDF 是格式名，不翻译；其余按 key 取当前语言 */
 const typeLabel = (v: TypeFilter) =>
   v === 'pdf'
     ? 'PDF'
-    : ab(
-        v === 'all'
-          ? 'typeAll'
-          : v === 'raster'
-            ? 'typeRaster'
-            : v === 'runtime'
-              ? 'typeRuntime'
-              : 'typeScript',
-      )
+    : ab(v === 'all' ? 'typeAll' : v === 'raster' ? 'typeRaster' : 'typeRuntime')
 const sortLabel = (v: SortKey) =>
   ab(v === 'name' ? 'sortName' : v === 'recent' ? 'sortRecent' : 'sortUsed')
 
@@ -113,6 +107,39 @@ type LibraryItem =
 
 const itemId = (it: LibraryItem) => (it.kind === 'file' ? it.panel.id : it.asset.id)
 
+type Editability = Exclude<AssetEditabilityFilter, 'all'>
+
+/**
+ * 一张图归进「能不能编辑」的哪一组——**这是唯一的一份归组**（搜索框下那排胶囊用它）。
+ *
+ * 只翻译后端的事实，不另起判据：磁盘图按 `capability.status` 归——`editable` 是「可编辑」、
+ * `layout_only` 是「仅版面」、`PENDING_STATUSES` 那四档是「待连接」（与横幅 / 接入中心同一个集合）。
+ * 把待连接的并进「仅版面」是一句假话：卡上写着「需试运行」，下一步是跑一下，不是只能排版。
+ * `capability` 缺席 = 这一轮还不知道（见 `PanelInfo.capability`）：有 `script` 就照卡片角标的老口径
+ * 算可编辑，没有就**不归组**（返回 null，只在「全部」里出现）——绝不替后端补一个 `layout_only`。
+ * 运行时图本身就出自脚本：跑过（有描述符）就能进图内编辑，没跑过是「待连接」——下一步是运行。
+ */
+function editabilityOf(it: LibraryItem): Editability | null {
+  if (it.kind === 'runtime') return it.asset.descriptor ? 'editable' : 'pending'
+  const status = it.panel.capability?.status
+  if (status === undefined) return it.panel.script ? 'editable' : null
+  if (status === 'editable') return 'editable'
+  if (status === 'layout_only') return 'layout'
+  return PENDING_STATUSES.includes(status) ? 'pending' : null
+}
+
+// 胶囊要放进 280px 的最窄抽屉（扣掉内边距只剩 256px），四档英文加起来不能超：所以用专用短标签，
+// 不复用 statusLabel 的长句（"Layout only" / "To connect" 会把第四档挤出抽屉；Codex #1027）。
+const editabilityLabel = (v: AssetEditabilityFilter) =>
+  ab(
+    v === 'editable'
+      ? 'editabilityEditable'
+      : v === 'layout'
+        ? 'editabilityLayout'
+        : v === 'pending'
+          ? 'editabilityPending'
+          : 'editabilityAll',
+  )
 
 export function AssetBrowser() {
   const panels = useAssetStore((s) => s.panels)
@@ -169,8 +196,9 @@ export function AssetBrowser() {
   /** 用不了的文件跟着同一组搜索 / 来源 / 类型筛选走；「已使用」筛选下它们不可能出现 */
   const unsupportedShown = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const { source: src, type: ty, usedOnly: used } = filters
-    if (used || (ty !== 'all' && ty !== 'raster')) return []
+    const { source: src, type: ty, usedOnly: used, editability: ed } = filters
+    // 用不了的文件连排版都进不去，不属于「能不能编辑」的任何一组
+    if (used || ed !== 'all' || (ty !== 'all' && ty !== 'raster')) return []
     return unsupported.filter(
       (u) =>
         (src === 'all' || u.folder === src) &&
@@ -178,7 +206,7 @@ export function AssetBrowser() {
     )
   }, [unsupported, query, filters])
 
-  const { source, type, sort, usedOnly } = filters
+  const { source, type, sort, usedOnly, editability } = filters
   const items = useMemo<LibraryItem[]>(() => {
     const q = query.trim().toLowerCase()
     let list = panels.filter((p) => {
@@ -187,8 +215,9 @@ export function AssetBrowser() {
       if (source !== 'all' && p.folder !== source) return false
       if (type === 'pdf' && p.kind !== 'pdf') return false
       if (type === 'raster' && p.kind !== 'raster') return false
-      if (type === 'script' && !p.script) return false
       if (type === 'runtime') return false
+      if (editability !== 'all' && editabilityOf({ kind: 'file', panel: p }) !== editability)
+        return false
       return true
     })
     list = [...list]
@@ -211,6 +240,8 @@ export function AssetBrowser() {
       if (usedOnly && !usage.has(a.id)) return false
       if (source !== 'all') return false
       if (type !== 'all' && type !== 'runtime') return false
+      if (editability !== 'all' && editabilityOf({ kind: 'runtime', asset: a }) !== editability)
+        return false
       return true
     })
     rt = [...rt]
@@ -237,7 +268,20 @@ export function AssetBrowser() {
       if (!placed.has(asset.id)) out.push({ kind: 'runtime', asset })
     }
     return out
-  }, [panels, runtimeAssets, query, source, type, sort, usedOnly, usage, recentlyUsed])
+  }, [panels, runtimeAssets, query, source, type, sort, usedOnly, editability, usage, recentlyUsed])
+
+  // 「待连接」那一档只在项目里真有这样的图时出现（多数项目没有，常驻一个恒空的选项是噪音）；
+  // 正选着它时不收——否则连好最后一张，选中的那一档凭空消失、清单却还是空的
+  const hasPending = useMemo(
+    () =>
+      panels.some((panel) => editabilityOf({ kind: 'file', panel }) === 'pending') ||
+      (runtimeAssets ?? []).some((asset) => editabilityOf({ kind: 'runtime', asset }) === 'pending'),
+    [panels, runtimeAssets],
+  )
+  const editabilityValues: AssetEditabilityFilter[] =
+    hasPending || editability === 'pending'
+      ? ['all', 'editable', 'pending', 'layout']
+      : ['all', 'editable', 'layout']
 
   // 列数按实测宽度算：抽屉最窄 280px 时也是双列（每张卡 ~125px，预览 3:2 约 83px 高）——
   // 这是素材库而不是看图器，同屏能扫到的张数比单张预览的尺寸重要；看细节有空格键放大。
@@ -300,20 +344,10 @@ export function AssetBrowser() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 三颗同权重的图标钮（只看可参数化 / 筛选 / 刷新）进标题行的动作槽，搜索行只放搜索
-          （2026-10-07 设计审计 §10.3）。都是 IconButton：28px、透明底、hover 才浮出，名字与气泡同一份；
+      {/* 两颗同权重的图标钮（筛选 / 刷新）进标题行的动作槽（2026-10-07 设计审计 §10.3）；
+          「只看可编辑」从这里的图标钮换成了搜索框下那排胶囊——藏在图标里没人找得到。都是 IconButton：28px、透明底、hover 才浮出，名字与气泡同一份；
           图标走默认的 16px——与面板头的钉、画布页的「+」同一档（左栏审计 L13） */}
       <DrawerHeaderActions>
-        {/* 一键只看可参数化：等价于筛选弹层里的类型=可参数化，走同一份状态，
-            生效时下方出现同一个可移除的筛选标签 */}
-        <IconButton
-          label={ab('scriptOnly')}
-          active={type === 'script'}
-          aria-pressed={type === 'script'}
-          onClick={() => setFilters((f) => ({ ...f, type: f.type === 'script' ? 'all' : 'script' }))}
-        >
-          <EditableFigureIcon size={ICON_SIZE.md} className={type === 'script' ? undefined : 'text-ink-2'} />
-        </IconButton>
         <FilterButton
           filters={filters}
           folders={folders}
@@ -351,6 +385,21 @@ export function AssetBrowser() {
           placeholder={ab('search')}
           aria-label={ab('searchAria')}
         />
+
+        {/* 能不能编辑：一排常驻的胶囊（全部 / 可编辑 / [待连接] / 仅版面）。可编辑与仅排版的图在网格里
+            混在一起时，靠卡上那个小角标一张张认太累。它是一眼可见的取值，所以不再进下面那排
+            可移除的筛选标签。显示规则：有图、或有用不了的文件（它们只在「全部」下列出，得给入口）、
+            或正选着非「全部」时都出；正选着非默认值时绝不藏控件，否则一次刷新让最后一张图消失就把
+            用户困在「没有匹配的图」里、回不到「全部」（Codex #1027）。三者皆无才不出 */}
+        {(total > 0 || unsupported.length > 0 || editability !== 'all') && (
+          <Segmented<AssetEditabilityFilter>
+            value={editability}
+            onChange={(v) => setFilters((f) => ({ ...f, editability: v }))}
+            ariaLabel={ab('editabilityAria')}
+            items={editabilityValues.map((value) => ({ value, label: editabilityLabel(value) }))}
+            data-testid="asset-editability"
+          />
+        )}
 
         {chips.length > 0 && (
           <div className="flex flex-wrap gap-1" aria-label={ab('activeFilters')}>
@@ -426,7 +475,7 @@ export function AssetBrowser() {
           {/* 用不了的文件也是「有东西可说」：只有一张范围之外的 TIFF 的项目不是「还没有图」，
               只搜中了它也不是「没有匹配」——空态与下面那张清单不同时出现 */}
           {loaded && !error && items.length === 0 && unsupportedShown.length === 0 && (
-            query || chips.length ? (
+            query || chips.length || editability !== 'all' ? (
               <EmptyState icon={SearchX} title={ab('noMatch')} />
             ) : (
               <EmptyState

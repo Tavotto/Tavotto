@@ -476,3 +476,50 @@ json.dump([bounded, list(zero), tail], open("hint.json", "w"))
     session.answer_input(nxt["request_id"], text="done")
     dk.finish(session)
     assert dk.read_json(tmp_path / "work" / "hint.json") == [["aa\n"], ["", ""], "done"]
+
+
+def test_input_consumes_buffered_stdin_before_asking(tmp_path):
+    """有界读剩下的缓冲先给 `input()`:`readline(1)` 收到 "abc" 后缓冲里有 "bc\\n",随后的 `input()` 直接返回 "bc",
+    不再开新提问(Codex #1022 第十一轮)。"""
+    script = (
+        dk.FIGURE_HEADER
+        + """\
+import json, sys
+a = sys.stdin.readline(1)
+b = input()
+c = input("next? ")
+json.dump([a, b, c], open("buf.json", "w"))
+"""
+    )
+    session = start(tmp_path, script)
+    p = wait_pending(session, "readline")
+    session.answer_input(p["request_id"], text="abc")
+    nxt = wait_pending(session, "input")
+    assert nxt["prompt"] == "next? ", f"缓冲里还有 'bc'，却又问了: {nxt}"
+    session.answer_input(nxt["request_id"], text="last")
+    dk.finish(session)
+    assert dk.read_json(tmp_path / "work" / "buf.json") == ["a", "bc", "last"]
+
+
+def test_partial_read_leftovers_are_input_lines_not_eof(tmp_path):
+    """`read(n)` 的整次回答多出来的部分：后续 `input()` 逐行取完（含没有换行的最后一段），取尽之后才是 EOFError；
+    全程只有一次提问。"""
+    script = (
+        dk.FIGURE_HEADER
+        + """\
+import json, sys
+head = sys.stdin.read(2)
+lines = [input(), input()]
+try:
+    input()
+    tail = "no-eof"
+except EOFError:
+    tail = "EOFError"
+json.dump([head, lines, tail], open("leftover.json", "w"))
+"""
+    )
+    session = start(tmp_path, script)
+    p = wait_pending(session, "read")
+    session.answer_input(p["request_id"], text="abcd\nzz")
+    dk.finish(session)
+    assert dk.read_json(tmp_path / "work" / "leftover.json") == ["ab", ["cd", "zz"], "EOFError"]

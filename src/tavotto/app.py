@@ -69,6 +69,7 @@ from .engine import (
     depplan as engine_depplan,
     deprepair as engine_deprepair,
     desktopproc as engine_desktopproc,
+    diagdetail as engine_diagdetail,
     diagnostics as engine_diagnostics,
     diagnostics_frontend as engine_diagnostics_frontend,
     diagsend as engine_diagsend,
@@ -448,6 +449,41 @@ def safe_resolve(rel_id: str) -> Path:
     if p.suffix.lower() in TIFF_EXT:
         tiffprobe.check(p)
     return p
+
+
+# ---- 最近的后端请求记录（发送问题反馈的 detail-requests.json，ADR 0118 修订 2026-10-13）----
+# 进程内定长环、不写盘。每条只有 方法 / Flask 路由**规则** / 状态码 / 耗时 / 错误码（失败响应 JSON 的 `code`），
+# 不含请求体、查询串与实参。**任何异常都吞掉**——记录请求不许影响请求。
+_DIAG_REQUEST_SKIP_PREFIX = "/api/diagnostics/send"  # 对话框轮询会把环刷满，且对排障没信息
+
+
+@app.before_request
+def _diag_request_start():
+    g._diag_t0 = time.perf_counter()
+
+
+@app.after_request
+def _diag_request_end(resp):
+    try:
+        rule = request.url_rule.rule if request.url_rule is not None else "<unmatched>"
+        if rule.startswith(_DIAG_REQUEST_SKIP_PREFIX):
+            return resp
+        t0 = getattr(g, "_diag_t0", None)
+        ms = int((time.perf_counter() - t0) * 1000) if t0 is not None else None
+        code = None
+        if (
+            resp.status_code >= 400
+            and resp.mimetype == "application/json"
+            and not resp.is_streamed
+            and not resp.direct_passthrough
+            and (resp.content_length or 0) <= 65536
+        ):
+            body = json.loads(resp.get_data())
+            code = body.get("code") if isinstance(body, dict) else None
+        engine_diagdetail.REQUESTS.record(request.method, rule, resp.status_code, ms, code)
+    except Exception:  # noqa: BLE001 — 诊断记录自己出错不许伤到请求
+        pass
+    return resp
 
 
 @app.errorhandler(tiffprobe.UnsupportedTiff)
@@ -2819,7 +2855,9 @@ def _read_body_capped(limit: int) -> bytes:
     return b"".join(chunks)
 
 
-def _read_frontend_payload() -> tuple[dict | None, bool]:
+def _read_frontend_payload(
+    limit: int = engine_diagnostics_frontend.MAX_REQUEST_BYTES,
+) -> tuple[dict | None, bool]:
     """请求体 → (载荷, 是不是被整份丢掉了)。**不抛异常**。
 
     **上限卡在读取本身，不卡 `Content-Length`**：chunked transfer encoding 的
@@ -2828,7 +2866,6 @@ def _read_frontend_payload() -> tuple[dict | None, bool]:
     所以这里自己按上限 +1 读流：多出来的那一个字节就是「超了」的判据，
     而且无论有没有 Content-Length 都成立。
     """
-    limit = engine_diagnostics_frontend.MAX_REQUEST_BYTES
     try:
         raw = _read_body_capped(limit)
     except Exception:  # noqa: BLE001 — 读流失败不该 500
@@ -2946,12 +2983,16 @@ def _diagnostics_project_status() -> dict:
 
 
 def _build_diagnostics_bundle(
-    frontend: dict | None = None, frontend_dropped: bool = False
+    frontend: dict | None = None,
+    frontend_dropped: bool = False,
+    detail: "engine_diagdetail.DetailRequest | None" = None,
 ) -> bytes:
-    """诊断包字节（导出到本地与「发送问题反馈」共用这一处，包的内容与脱敏只此一份）。"""
+    """诊断包字节。导出到本地走 `detail=None`（严格脱敏的老包）；「发送问题反馈」的 prepare 传 `detail`，
+    多出扁平的 `detail-…` / `optional-…` 条目（`engine/diagdetail.py`），其余部分共用这一处。"""
     status = _diagnostics_project_status()
-    pid = getattr(_request_ctx(), "id", None)
-    return engine_diagnostics.build_bundle(
+    ctx = _request_ctx()
+    pid = getattr(ctx, "id", None)
+    common = dict(
         project=status,
         port=request.host.rsplit(":", 1)[-1],
         frontend=frontend,
@@ -2959,6 +3000,35 @@ def _build_diagnostics_bundle(
         # 本项目最近几次任务的冻结快照（失败在前）；只读登记表，不采集（T04）
         task_snapshots=engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid) if pid else None,
     )
+    if detail is None:
+        return engine_diagnostics.build_bundle(**common)
+    src = engine_diagdetail.Sources(
+        project=status,
+        scripts=ctx.registry.all_scripts() if ctx is not None else [],
+        baked=load_baked(ctx) if ctx is not None else None,
+        task_section=(
+            engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid, limit=24) if pid else None
+        ),
+        frontend=detail.frontend,
+        registry=ctx.registry if ctx is not None else None,
+    )
+    items = engine_diagdetail.collect(src, detail.options)
+    # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
+    report = engine_diagnostics.build_report(status, common["port"])
+
+    def build(kept: list, truncated: list) -> bytes:
+        # 声明从**最终保留下来的条目**推导：附件被 `fit` 整类丢掉了，就是没附上（options 为 false，`truncated` 里有它）
+        payload = engine_diagnostics.DetailPayload(
+            engine_diagdetail.entries(kept), engine_diagdetail.options_of(kept), truncated
+        )
+        built = engine_diagnostics.build_bundle(**common, detail=payload, report=report)
+        # 服务端拒收压缩比 > 200 的条目：改存的增量也要算进 `fit` 的体积里
+        return engine_diagdetail.ratio_safe(built)
+
+    data, _kept, _truncated = engine_diagdetail.fit(
+        items, build, engine_diagsend.MAX_BYTES - engine_diagdetail.FIT_SLACK
+    )
+    return data
 
 
 def _diagnostics_bundle_response(frontend: dict | None = None, frontend_dropped: bool = False):
@@ -3020,10 +3090,30 @@ def api_diagnostics_send_prepare():
     包超过上限时不保管、回 `too_large: true`：界面让用户把包导出到本地。"""
     if not engine_diagsend.enabled():
         return _diag_send_error(engine_diagsend.SendError("send_disabled", 404))
-    frontend, dropped = _read_frontend_payload()
+    # 前端每次备包带单调的 `seq`：比已收到的更旧的（关了再开 / 切走再回时晚到的）直接 409，不再建包
     try:
-        data = _build_diagnostics_bundle(frontend, dropped)
-        return _diag_send_json(engine_diagsend.prepare(data, scope=_diag_send_scope()))
+        seq = int(request.args["seq"]) if "seq" in request.args else None
+    except ValueError:
+        seq = None
+    try:
+        engine_diagsend.begin_prepare(_diag_send_scope(), seq)
+    except engine_diagsend.SendError as exc:
+        return _diag_send_error(exc)
+    frontend, dropped = _read_frontend_payload(engine_diagnostics_frontend.MAX_SEND_REQUEST_BYTES)
+    # 勾选项只认字面 true（默认全 false）；`detail` 子对象只按类型 / 长度限界，脱敏在 diagdetail.Scrubber
+    detail = engine_diagdetail.DetailRequest(
+        # 勾选项走查询串 `?options=source,crash_reports`：载荷超限被整份丢弃（frontend=None）时它仍在，
+        # 勾着的框不会悄悄变成没勾；查询串没给才看请求体里的 `detail_options`（老客户端）
+        options=engine_diagdetail.parse_options(
+            engine_diagdetail.options_from_query(request.args.get("options"))
+            if request.args.get("options") is not None
+            else (frontend or {}).get("detail_options")
+        ),
+        frontend=engine_diagnostics_frontend.sanitize_detail((frontend or {}).get("detail")),
+    )
+    try:
+        data = _build_diagnostics_bundle(frontend, dropped, detail)
+        return _diag_send_json(engine_diagsend.prepare(data, scope=_diag_send_scope(), seq=seq))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 
@@ -7439,6 +7529,7 @@ def _native_preparation_runner(pl, before_retry=None):
                 launch_id=pl.plan_id,
                 project_epoch=pl.project_epoch,
                 launch_order=pl.launch_order,
+                cancelled=lambda: engine_preparation.SERVICE.is_cancelled(pl.plan_id),
             )
         )
     except engine_runcodes.RunError as exc:

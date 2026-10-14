@@ -635,3 +635,163 @@ def trace_to_jsonl(events: list[dict]) -> str:
         json.dumps(e, ensure_ascii=False, sort_keys=False, separators=(",", ":")) + "\n"
         for e in events
     )
+
+
+# ---------------------------------------------------------------------------
+# 发送包专用的 `detail` 子对象（bundle schema 8，ADR 0118 修订 2026-10-13）
+# ---------------------------------------------------------------------------
+# 与上面老字段的判据**刻意不同**：老字段是「无自由文本」的结构性防线（导出包可能贴进公开 issue）；
+# 这个子对象是发送包专用的、维护者要看原文的内容（console 报错原文 + 调用栈、壳版本、显示环境、
+# 正在编辑的面板的样式改动），所以**只按类型 / 长度 / 条数限界**，不按形状拒绝文字。
+# 它只在「发送」路径被读；导出路径（`GET/POST /api/diagnostics/bundle`）根本不会碰这个键。
+# 脱敏（家目录 / 用户名 / 秘密）不在这里做，在 `diagdetail.Scrubber`，对进包的每个文件统一过一遍。
+MAX_SEND_REQUEST_BYTES = 1024 * 1024
+DETAIL_MAX_CONSOLE = 40
+DETAIL_MAX_ERRORS = 30
+DETAIL_MAX_MESSAGE = 4000
+DETAIL_MAX_STACK = 8000
+DETAIL_MAX_SHORT = 300
+DETAIL_MAX_OVERRIDE_PANELS = 3
+DETAIL_MAX_OVERRIDES = 400
+DETAIL_MAX_DEPTH = 6
+DETAIL_MAX_JSON_NODES = 20_000
+
+
+def _d_str(value, limit: int) -> str | None:
+    return value[:limit] if isinstance(value, str) else None
+
+
+def _d_num(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        return None
+    return value
+
+
+def _d_json(value, budget: list[int], depth: int = 0):
+    """任意 JSON 值的有界拷贝（样式改动的 value 可以是数、串、列表、字典）。超限的部分直接略去。"""
+    budget[0] -= 1
+    if budget[0] < 0 or depth > DETAIL_MAX_DEPTH:
+        return None
+    if value is None or isinstance(value, (bool, str)):
+        return value[:DETAIL_MAX_MESSAGE] if isinstance(value, str) else value
+    if isinstance(value, (int, float)):
+        return _d_num(value)
+    if isinstance(value, list):
+        return [_d_json(v, budget, depth + 1) for v in value[:200]]
+    if isinstance(value, dict):
+        return {str(k)[:64]: _d_json(v, budget, depth + 1) for k, v in list(value.items())[:64]}
+    return None
+
+
+def _d_records(raw, limit: int, kinds: tuple[str, ...]) -> list[dict]:
+    out = []
+    for r in (raw if isinstance(raw, list) else [])[-limit:]:
+        if not isinstance(r, dict):
+            continue
+        kind = r.get("level") or r.get("kind")
+        out.append(
+            {
+                "t": _d_num(r.get("t")),
+                "level": kind if kind in kinds else "error",
+                "message": _d_str(r.get("message"), DETAIL_MAX_MESSAGE) or "",
+                "stack": _d_str(r.get("stack"), DETAIL_MAX_STACK),
+            }
+        )
+    return out
+
+
+def _d_flat(
+    raw, str_keys: tuple[str, ...], num_keys: tuple[str, ...] = (), bool_keys: tuple[str, ...] = ()
+):
+    if not isinstance(raw, dict):
+        return None
+    out: dict = {}
+    for k in str_keys:
+        v = _d_str(raw.get(k), DETAIL_MAX_SHORT)
+        if v is not None:
+            out[k] = v
+    for k in num_keys:
+        v = _d_num(raw.get(k))
+        if v is not None:
+            out[k] = v
+    for k in bool_keys:
+        if isinstance(raw.get(k), bool):
+            out[k] = raw[k]
+    return out
+
+
+def sanitize_detail(raw) -> dict:
+    """发送载荷里的 `detail` 子对象 → 有界的 dict（形状不对的部分略去，**不抛**）。
+
+    键：`console`（console.error / warn 环）、`errors`（未捕获错误 / unhandledrejection）、`display`、
+    `shell`、`overrides`（正在编辑的面板的样式改动，至多 3 张）。"""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {
+        "console": _d_records(raw.get("console"), DETAIL_MAX_CONSOLE, ("error", "warn")),
+        "errors": _d_records(raw.get("errors"), DETAIL_MAX_ERRORS, ("error", "unhandledrejection")),
+    }
+    display = _d_flat(
+        raw.get("display"),
+        ("language", "theme", "resolved_theme"),
+        (
+            "device_pixel_ratio",
+            "window_width",
+            "window_height",
+            "screen_width",
+            "screen_height",
+            "screen_avail_width",
+            "screen_avail_height",
+            "color_depth",
+            "visual_viewport_scale",
+        ),
+    )
+    if display is not None:
+        langs = raw["display"].get("languages")
+        if isinstance(langs, list):
+            display["languages"] = [s[:32] for s in langs[:8] if isinstance(s, str)]
+        out["display"] = display
+    shell = _d_flat(
+        raw.get("shell"),
+        ("app_version", "tauri_version", "webview_version", "user_agent", "platform"),
+        (),
+        ("desktop",),
+    )
+    if shell is not None:
+        upd = raw["shell"].get("update")
+        if isinstance(upd, dict):
+            shell["update"] = _d_json(upd, [200])
+        out["shell"] = shell
+    panels = []
+    for p in (raw.get("overrides") if isinstance(raw.get("overrides"), list) else [])[
+        :DETAIL_MAX_OVERRIDE_PANELS
+    ]:
+        if not isinstance(p, dict):
+            continue
+        ovs = p.get("overrides")
+        panels.append(
+            {
+                "panel": _d_str(p.get("panel"), 200),
+                "kind": _d_str(p.get("kind"), 32),
+                "script": _d_str(p.get("script"), 300),
+                "overrides": [
+                    _d_json(o, [DETAIL_MAX_JSON_NODES // DETAIL_MAX_OVERRIDES + 20])
+                    for o in (ovs if isinstance(ovs, list) else [])[:DETAIL_MAX_OVERRIDES]
+                ],
+            }
+        )
+    out["overrides"] = panels
+    # 面板数量上限之外被前端 / 这里砍掉的张数（记进 overrides 的 index.json）
+    sent = raw.get("overrides") if isinstance(raw.get("overrides"), list) else []
+    client_omitted = raw.get("overrides_omitted")
+    out["overrides_omitted"] = max(0, len(sent) - DETAIL_MAX_OVERRIDE_PANELS) + (
+        min(client_omitted, 1000) if isinstance(client_omitted, int) and client_omitted > 0 else 0
+    )
+    # 前端为了塞进请求体上限而自己截短过哪些环（短标识，最多 8 个）：原样带进包里，读包的人知道缺了什么
+    cut = raw.get("client_truncated")
+    out["client_truncated"] = (
+        [c[:40] for c in cut[:8] if isinstance(c, str)] if isinstance(cut, list) else []
+    )
+    return out

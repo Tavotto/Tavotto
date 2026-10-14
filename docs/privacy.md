@@ -203,7 +203,7 @@ missing. Computing it never leaves the machine and never runs the user's code:
 
 **Export (always available).** The diagnostics bundle (*Settings → Privacy,
 diagnostics & About → Export diagnostics*) is created locally and shared only if
-the user chooses to send it. Secrets and the user's home directory are redacted,
+the user chooses to send it. It is the strictly redacted form: secrets and the user's home directory are redacted,
 and the anonymous telemetry identifier is redacted as well, so pasting a bundle
 into a public issue does not link that issue to the anonymous analytics records.
 Whether telemetry is on or off is included — that is useful for troubleshooting
@@ -222,9 +222,50 @@ Offering the option uploads nothing; sending does:
   cancelled, closed or failed send is never resumed on its own — after a restart
   nothing is retried. Telemetry consent is a separate decision and does not imply
   this one (nor the reverse).
-* **You see what you send.** The dialog lists the kinds of content in the bundle and
-  lets you save the exact file that would be uploaded and read it first. Figures,
-  scripts, project files and data files are not part of the bundle.
+* **You see what you send.** The dialog lists the kinds of content in the bundle, each
+  file with its size, and lets you save the exact file that would be uploaded and read
+  it first. Figures, project files and data files are not part of the bundle.
+* **What the sent bundle contains (more than the export).** So that maintainers can
+  diagnose in depth, the *sent* bundle (not the exported one, which is unchanged) adds
+  a set of extra files (`detail-…` / `optional-…`): error messages with full stack traces (engine, render process,
+  interface console), the last part of the application, desktop-shell (sidecar) and
+  render-process logs as written, the session state files (and a list of any corrupted
+  copies), the most recent backend requests (HTTP method, route pattern, status code,
+  duration and error code only — no request bodies, query strings or arguments), the
+  style edits of the figure being edited, the render environment (Python and matplotlib
+  versions, installed packages, non-default matplotlib settings, missing fonts), recent
+  render/export/test-run records, desktop-shell and install facts (app, Tauri and
+  WebView versions, OS version, CPU architecture, Rosetta, install method, update result
+  and whether the mirror or GitHub was used when known), storage facts (free disk space,
+  writability, whether the project is in a cloud-sync folder, the Windows long-path
+  setting), recent interface `console.error` / `console.warn` messages, display facts
+  (pixel ratio, window and screen size, language, theme) and network facts (whether a
+  proxy is configured, with credentials removed; whether `tavotto.cn` and `github.com`
+  resolve to a TUN-rewritten `198.18.0.0/15` address — preparing the bundle performs
+  these two name lookups with the system resolver, with a 2-second limit, and makes no
+  connection; time zone). Project folder names, file names and text inside
+  figures are **not** removed from these files. Your home directory is written as `~`,
+  your system user name as `<user>`, and credentials, cookies, nonces, API keys,
+  tokens and proxy passwords are removed from every one of them.
+* **Three extras, off by default and never remembered.** The dialog has three
+  checkboxes that start unticked every time it opens: *script source* (the scripts
+  registered in the open project, attached as they are — **secret removal in scripts is best
+  effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
+  without it the bundle contains no script source at all, including the source lines normally
+  printed inside tracebacks), *system crash
+  reports* (Tavotto, sidecar and render-Python crash reports from the last 7 days:
+  macOS reports and Windows WER reports are redacted text, but Windows crash dumps
+  (`.dmp`) are snapshots of the program's memory that may contain the contents and
+  paths of files that were open and **cannot be redacted** — they are attached as they
+  are, whole files only, newest first, within a size share) and *contents of corrupted session copies* (otherwise only their
+  names and sizes). Changing a checkbox rebuilds the bundle.
+* **A limit of automatic redaction.** Passwords or tokens that appear in logs without anything
+  that marks them as secrets cannot be recognised automatically. Before sending you can
+  expand the dialog to see the list of files, or save the exact bundle to your computer and read it.
+* **Size limit.** The upload limit is 64 MiB (it was 10 MiB before 2026-10-13). When the bundle is larger, content is
+  cut in a fixed order — the three extras first, then the default categories from the
+  last — and the dialog and the bundle's manifest say what was cut. The core files are
+  never cut; if they alone are too large the bundle is not uploaded and you can save it.
 * **What is transmitted.** The bundle itself, plus: the problem type you choose,
   an optional free-text note you may type (up to 1000 characters; please do not
   put names, email addresses, paths or data in it — it is sent as typed), the
@@ -266,7 +307,7 @@ Offering the option uploads nothing; sending does:
   removed earlier, open an issue on the public issue tracker quoting the report ID
   (without attaching anything else) and a maintainer will delete it.
 * **Failure.** If you are offline, the service is unavailable or the bundle is
-  larger than the limit (10 MiB by default), nothing is cut down or retried behind
+  larger than the limit (64 MiB by default), nothing is cut down or retried behind
   your back: you can export the bundle and keep or send it yourself.
 
 ## Local service

@@ -562,6 +562,20 @@ function toUpdateError(e: unknown, fallbackKey: 'update.desktopCheckFailed' | 'u
 let pendingUpdate: DesktopUpdateInfo | null = null
 
 /**
+ * 本次窗口会话里最近一次应用内更新的结果（只放闭集枚举与稳定码，不放错误文本），给「发送问题反馈」的
+ * `detail-shell.json` 用（ADR 0118 修订）：走的是国内镜像还是 GitHub、有没有换来源重试。没发生过 = 不写这个键。
+ * 纯内存；壳没有把「上一次更新结果」存盘，所以重启之后这里是空的，包里如实标 unknown。
+ */
+export interface UpdateOutcome {
+  check?: { at: number; ok: boolean; found?: boolean; source?: UpdateSource; code?: string; attempts?: UpdateAttempt[] }
+  install?: { at: number; ok: boolean; source?: UpdateSource; code?: string; attempts?: UpdateAttempt[] }
+}
+let updateOutcome: UpdateOutcome = {}
+export function getUpdateOutcome(): UpdateOutcome | null {
+  return updateOutcome.check || updateOutcome.install ? { ...updateOutcome } : null
+}
+
+/**
  * 查有没有新版。没有新版返回 null；**浏览器模式也返回 null**——那条路由
  * Python updater 负责（/api/update/*），两条不能同时插手。
  */
@@ -574,8 +588,11 @@ export async function checkDesktopUpdate(): Promise<DesktopUpdateInfo | null> {
     // 界面语言交给壳参与来源顺序（简体中文界面 → 镜像优先）
     found = await invoke<DesktopUpdateInfo | null>('desktop_update_check', { uiLang: currentLocale() })
   } catch (e) {
-    throw toUpdateError(e, 'update.desktopCheckFailed')
+    const err = toUpdateError(e, 'update.desktopCheckFailed')
+    updateOutcome = { ...updateOutcome, check: { at: Date.now(), ok: false, code: err.code, attempts: err.attempts } }
+    throw err
   }
+  updateOutcome = { ...updateOutcome, check: { at: Date.now(), ok: true, found: !!found, source: found?.source } }
   if (!found) return null
   pendingUpdate = {
     version: found.version,
@@ -619,8 +636,11 @@ export async function installDesktopUpdate(
   try {
     source = await invoke<UpdateSource>('desktop_update_install', { onEvent: channel })
   } catch (e) {
-    throw toUpdateError(e, 'update.desktopInstallFailed')
+    const err = toUpdateError(e, 'update.desktopInstallFailed')
+    updateOutcome = { ...updateOutcome, install: { at: Date.now(), ok: false, code: err.code, attempts: err.attempts } }
+    throw err
   }
+  updateOutcome = { ...updateOutcome, install: { at: Date.now(), ok: true, source } }
   pendingUpdate = null
   return source
 }
@@ -638,4 +658,5 @@ export async function relaunchDesktop(): Promise<void> {
 /** 仅供测试：清掉 check 留下的句柄 */
 export function __resetDesktopUpdate(): void {
   pendingUpdate = null
+  updateOutcome = {}
 }

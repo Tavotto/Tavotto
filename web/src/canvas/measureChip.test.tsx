@@ -9,8 +9,9 @@
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { perfSegmentBegin, perfStart, perfStop } from '@/perf/core'
 import { MeasureChip } from './MeasureChip'
 import { nudgeKeyDown, nudgeKeyUp, resetNudge } from './nudge'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
@@ -69,6 +70,39 @@ afterEach(async () => {
 describe('MeasureChip', () => {
   it('没有交互：不渲染', () => {
     expect(chip()).toBeNull()
+  })
+
+  it('图内指针拖动：预览平面每次更新不能唤醒不可见的读数芯片', () => {
+    // 子图/标签指针拖动的读数不由 MeasureChip 显示（只有方向键微调报 Δ）。
+    // 原实现直接订阅 gidDrag 和 elementPreview：每个 pointermove 仍白重渲染一次。
+    act(() => useInteractionStore.getState().begin('element'))
+    expect(chip()).toBeNull()
+
+    // jsdom 没有真 rAF：探针只用于记录 render.Count，帧循环在本测试里不调度。
+    vi.stubGlobal('requestAnimationFrame', () => 1)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    try {
+      expect(perfStart()).toBe(true)
+      perfSegmentBegin('element')
+      for (let i = 0; i < 12; i++) {
+        act(() => {
+          useInteractionStore.getState().setGidDrag({ gid: 'axes_0.title', dfx: i / 100, dfy: 0 })
+          useInteractionStore.getState().setElementPreview({
+            boxes: { 'axes_0.title': [i / 100, 0.1, 0.2, 0.03] },
+          })
+        })
+      }
+      const report = perfStop()!
+      expect(report.segments).toHaveLength(1)
+      expect(
+        report.segments[0].counts['render.MeasureChip'] ?? 0,
+        '隐藏的 MeasureChip 不得跟着图内元素的每次 pointermove 重渲染',
+      ).toBe(0)
+      expect(chip()).toBeNull()
+    } finally {
+      perfStop()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('移动：报对象的 X, Y（不是指针坐标），贴在框下方居中', () => {

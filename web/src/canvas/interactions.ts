@@ -12,6 +12,7 @@ import {
   snapCandidates,
   snapEdge,
   snapMove,
+  createSnapHold,
   snapMoveNearest,
   unrotateVecDeg,
   type Rect,
@@ -1799,17 +1800,20 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean) {
   const cands = inFigureSnapCandidates(panel, manifest, moving)
   if (!cands) return null
   const full = panelFullRect(panel)
+  // 吸住后保持（ADR 0128 §一）：一次手势一份，手势结束随闭包丢弃
+  const hold = createSnapHold()
   return (
     box: Rect4,
     ev: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean },
     locked: [number, number],
   ): [number, number] => {
     if (ev.metaKey || ev.ctrlKey) {
+      hold.x = hold.y = null
       interaction().setSnap([], [])
       return [0, 0]
     }
     const snap = perfSpan('snap.compute', () =>
-      snapMoveNearest(fracBoxToMm(panel, box), cands, snapTolMm(getTransform())),
+      snapMoveNearest(fracBoxToMm(panel, box), cands, snapTolMm(getTransform()), { hold }),
     )
     const sx = snap.dx / full.w
     const sy = snap.dy / full.h
@@ -1820,6 +1824,9 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean) {
       const ky = snap.guideYs.length ? sy / locked[1] : null
       const useX = kx != null && (ky == null || Math.abs(kx) <= Math.abs(ky))
       const k = useX ? kx : ky
+      // 没被采用的轴不算吸着，别让它悄悄留在 hold 里
+      if (k == null || !useX) hold.x = null
+      if (k == null || useX) hold.y = null
       if (k == null) {
         interaction().setSnap([], [])
         return [0, 0]
@@ -1829,6 +1836,8 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean) {
     }
     const freeX = !ev.shiftKey || locked[0] !== 0
     const freeY = !ev.shiftKey || locked[1] !== 0
+    if (!freeX) hold.x = null
+    if (!freeY) hold.y = null
     interaction().setSnap(freeX ? snap.guideXs : [], freeY ? snap.guideYs : [])
     return [freeX ? sx : 0, freeY ? sy : 0]
   }

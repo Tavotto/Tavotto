@@ -17,7 +17,7 @@
 `scriptanswers`，不在这里复制第二份）。回执不完整（`partial`，没有自报的 helper 依据）→ 不记录：证据不全就不
 假装可复用。
 
-v2（V2 PR2，ADR 0128）起记录多一个 `profile`（`safe` | `native`）：safe 成功由 app 的成功收口按回执写，native 成功由准备会话在尝试成功后写
+v2（V2 PR2，ADR 0129）起记录多一个 `profile`（`safe` | `native`）：safe 成功由 app 的成功收口按回执写，native 成功由准备会话在尝试成功后写
 （`record_native_success`；native 没有 helper 观察回执，`source.basis_observed: false`）。运行前路由读它回答「上次成功用哪种执行语义」。
 
 记录只是**事实**，不驱动启动决策：启动方式是解释器路径的纯函数（`launcher.launcher_for_interpreter`），与脚本、项目、记录
@@ -39,7 +39,7 @@ from pathlib import Path
 
 from . import databinding, figcapture, launcher, projectenv, runconfig, scriptargs, workdir
 
-#: v2（V2 PR2，ADR 0128）：记录多了 `profile`（这次成功用的执行语义 `safe` | `native`）。v1 记录照常可读，按 `safe` 算——
+#: v2（V2 PR2，ADR 0129）：记录多了 `profile`（这次成功用的执行语义 `safe` | `native`）。v1 记录照常可读，按 `safe` 算——
 #: 它们只可能来自 safe 回执。
 RECORD_VERSION = 2
 READABLE_VERSIONS = (1, 2)

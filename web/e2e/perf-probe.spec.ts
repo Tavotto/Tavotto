@@ -131,6 +131,20 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   )
   expect(after, '自动测试结束后被拖元素的 transform 必须复原').toBe(target!.transform)
 
+  // 普通点击动作：返回画布后打开预设面板，真实插入科学符号。
+  // 同一份探针报告必须同时含拖动片段与符号动作，互不污染；无须新增独立 App 启动。
+  await page.locator('[data-context-back]').click()
+  await expect(page.locator('[data-canvas-toolbar]')).toBeVisible()
+  await page.locator('[data-tool-menu="annotate"]').click()
+  await page.getByRole('menuitem', { name: /科研预设与符号/ }).click()
+  const beforeSymbol = await page.locator('[data-canvas-stage] [data-object-id]').count()
+  await page.locator('[data-dialog="presets"]').getByRole('button', { name: /插入符号 μm/ }).click()
+  await expect.poll(() => page.locator('[data-canvas-stage] [data-object-id]').count()).toBe(beforeSymbol + 1)
+  // 真浏览器里需要让 perfAction 的双 rAF 回调真正完成，不能用 jsdom 假帧代表。
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+
   // 保存：浏览器模式另给一份下载
   const dl = page.waitForEvent('download')
   await hud.locator('[data-perf-action="finish"]').click()
@@ -146,6 +160,21 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   const report = JSON.parse(raw)
   expect(report.schema).toBe('tavotto-perf-probe/1')
   expect(raw).not.toContain('Fig1_kinetics')
+  // 动作报告的隐私契约：symbol 本文、文件名、对象 id 均不得进入动作记录。
+  const symbolActions = report.actions.filter((a: { kind: string }) => a.kind === 'symbol.insert')
+  expect(symbolActions).toHaveLength(1)
+  const sym = symbolActions[0] as {
+    kind: string
+    sync_ms: number
+    two_raf_ms: number | null
+    phases: Record<string, number>
+    ok: boolean
+  }
+  expect(sym.ok).toBe(true)
+  expect(sym.sync_ms).toBeGreaterThanOrEqual(0)
+  expect(sym.two_raf_ms).not.toBeNull()
+  expect(Object.keys(sym.phases).sort()).toEqual(['document.commit', 'selection.update', 'ui.status'])
+  expect(JSON.stringify(symbolActions)).not.toContain('μm')
 
   const synth = report.segments.filter((s: { source: string }) => s.source === 'synthetic')
   const labels = synth.map((s: { label: string }) => s.label)

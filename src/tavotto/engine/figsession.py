@@ -1065,7 +1065,7 @@ class LiveFigureSession:
         state = self.states[stem]
         self.out_dir.mkdir(parents=True, exist_ok=True)
         t0 = time.perf_counter()
-        man = manifest_mod.build_manifest(state, stem)
+        man = manifest_mod.build_manifest(state, stem, timings=timings)
         t1 = time.perf_counter()
         # **传文件对象、且 `newline=""`，不许传路径。** matplotlib 拿到路径时走
         # `cbook.to_filehandle` → `open(fname, "w", encoding=…)`——**没有
@@ -1114,7 +1114,13 @@ class LiveFigureSession:
             self._discard_parts(svg_part, man_part)
             raise
         if timings is not None:
-            timings["manifest_ms"] = round((t1 - t0 + time.perf_counter() - t2) * 1000.0, 3)
+            # 保留 manifest_ms 的既有语义（准备 + 最终 SVG 几何，包括作用域退出）；
+            # 新键只增加诊断，不改变协议版本或图形/布局的任何流程。
+            final_geometry_ms = (time.perf_counter() - t2) * 1000.0
+            prepare_ms = (t1 - t0) * 1000.0
+            timings["manifest_prepare_ms"] = round(prepare_ms, 3)
+            timings["manifest_final_geometry_ms"] = round(final_geometry_ms, 3)
+            timings["manifest_ms"] = round(prepare_ms + final_geometry_ms, 3)
         if preview is not None:
             mode, reason = previewbudget.resolve_mode(
                 svg_bytes=svg_bytes,

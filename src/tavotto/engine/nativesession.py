@@ -946,7 +946,16 @@ class StartTicket:
     `shutdown_all` 的快照里要么看得到它（并标 `cancelled`，之后挂所有者的一步会被拒），要么注册表已 closing
     根本领不到——两者之间没有「进程已起、谁也看不见」的窗口。"""
 
-    __slots__ = ("launch_id", "project_root", "script", "order", "owner", "cancelled", "done")
+    __slots__ = (
+        "launch_id",
+        "project_root",
+        "script",
+        "order",
+        "cancel_check",
+        "owner",
+        "cancelled",
+        "done",
+    )
 
     def __init__(
         self, launch_id: str, project_root: str = "", script: str = "", order: int | None = None
@@ -958,6 +967,9 @@ class StartTicket:
         self.script = script
         #: 所属计划的登记序号（`PreparationPlan.launch_order`）；None = 未知
         self.order = order
+        #: 启动方的「我是不是已被取消 / 取代」判定（`PreparationService.is_cancelled`）；None = 不核。`check_start`
+        #: 在 Popen 之前最后再问一次，与 `reserve` / `begin_start` 是同一个判定
+        self.cancel_check = None
         self.owner = None
         self.cancelled = False
         #: 启动线程走完（成功或失败收尾都做完）时置位：关停据此等「在途的启动线程」，哪怕它还没 Popen
@@ -1033,9 +1045,15 @@ class NativeSessionRegistry:
         with self._lock:
             return self._project_epoch.get(os.path.realpath(project_root), 0)
 
-    def _refuse_if_closed(self, project_root: str, epoch: int | None = None) -> None:
+    def _refuse_if_closed(
+        self, project_root: str, epoch: int | None = None, cancelled=None
+    ) -> None:
         """调用方持锁。注册表 closing、这个项目已关闭、或启动方的代次已过期 → 当场拒绝(一行用户代码都没跑)。"""
         if self._closing:
+            raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+        if cancelled is not None and cancelled():
+            # 启动方的计划已被取消 / 被更新的同脚本计划取代：一行用户代码都不跑（取消落在「还没领票据」的窗口里，
+            # 重跑的 `cancel_project` 看不见它）
             raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
         if not project_root:
             return
@@ -1045,14 +1063,20 @@ class NativeSessionRegistry:
         ):
             raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
 
-    def reserve(self, launch_id: str, project_root: str = "", epoch: int | None = None) -> None:
+    def reserve(
+        self,
+        launch_id: str,
+        project_root: str = "",
+        epoch: int | None = None,
+        cancelled=None,
+    ) -> None:
         """原子占住一个桌面拥有的 launch_id（取租约 / spawn 之前）；已被占、或同 id 的上一任还没被所有者确认
         结束（`owned.finished`）就抛冲突。检查与占位在同一把锁里。
 
         占位由所有者的完成回调释放（`desktopproc.start`）——握手 / 登记失败后清组超时（取消未确认）也不例外。
         租约键另有一层保险：每次启动的会话 id 都带唯一后缀，不同所有者互相删不掉对方的租约。"""
         with self._lock:
-            self._refuse_if_closed(project_root, epoch)
+            self._refuse_if_closed(project_root, epoch, cancelled)
             busy = any(
                 s.launch_id == launch_id
                 and (s.alive() or (s.owned is not None and not s.owned.finished))
@@ -1069,13 +1093,15 @@ class NativeSessionRegistry:
         script: str = "",
         epoch: int | None = None,
         order: int | None = None,
+        cancelled=None,
     ) -> StartTicket:
         """spawn **之前**领在途登记；closing 时拒绝（一行用户代码都没跑）。"""
         with self._lock:
-            self._refuse_if_closed(project_root, epoch)
+            self._refuse_if_closed(project_root, epoch, cancelled)
             ticket = StartTicket(
                 launch_id, os.path.realpath(project_root) if project_root else "", script, order
             )
+            ticket.cancel_check = cancelled
             self._starting[launch_id] = ticket
             return ticket
 
@@ -1089,7 +1115,11 @@ class NativeSessionRegistry:
     def check_start(self, ticket: StartTicket) -> None:
         """Popen 之前的检查点：关停已开始就拒绝，**不再 spawn**。"""
         with self._lock:
-            if self._closing or ticket.cancelled:
+            if (
+                self._closing
+                or ticket.cancelled
+                or (ticket.cancel_check is not None and ticket.cancel_check())
+            ):
                 raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
 
     def end_start(self, ticket: StartTicket) -> None:

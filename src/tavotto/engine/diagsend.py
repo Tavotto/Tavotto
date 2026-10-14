@@ -94,8 +94,9 @@ CATEGORIES = (
     "other",
 )
 DEFAULT_CATEGORY = "other"
-#: 默认上限 10 MiB（服务端 `DIAG_MAX_REPORT_BYTES`；以 `upload.max_bytes` 为准，init 之后再核一次）。
-MAX_BYTES = 10 * 1024 * 1024
+#: 默认上限 64 MiB（2026-10-13 起，原 10 MiB；服务端 `DIAG_MAX_REPORT_BYTES` 同步调到 64 MiB；
+#: 仍以 init 返回的 `upload.max_bytes` 为准，init 之后再核一次）。
+MAX_BYTES = 64 * 1024 * 1024
 #: 说明文字上限：服务端默认 `note_max_chars` = 1000（openapi 只写了 4000 的硬顶；取严的）。
 NOTE_MAX_CHARS = 1000
 RETENTION_DAYS = 30
@@ -110,8 +111,34 @@ ENTRY_KINDS = {
     "task-diagnostics.json": "task",
     "manifest.json": "manifest",
     "README.txt": "readme",
+    # ---- 发送包独有的内容（ADR 0118 修订 2026-10-13）。条目名一律**扁平**（服务端 ZIP 检查不许目录 / 斜杠），
+    # 多文件的类别各打成一个内层 zip ----
+    "detail-errors.json": "detail_errors",
+    "detail-app-log.txt": "detail_logs",
+    "detail-sidecar-log.txt": "detail_logs",
+    "detail-worker-log.txt": "detail_logs",
+    "detail-state.zip": "detail_state",
+    "detail-requests.json": "detail_requests",
+    "detail-overrides.zip": "detail_overrides",
+    "detail-render-env.json": "detail_render_env",
+    "detail-runs.json": "detail_runs",
+    "detail-shell.json": "detail_shell",
+    "detail-storage.json": "detail_storage",
+    "detail-frontend-console.json": "detail_console",
+    "detail-display.json": "detail_display",
+    "detail-network.json": "detail_network",
+    "optional-source.zip": "detail_source",
+    "optional-crash-reports.zip": "detail_crash_reports",
+    "optional-corrupt-sessions.zip": "detail_corrupt_sessions",
 }
-MAX_BUNDLE_ENTRIES = 64
+#: 服务端 ZIP 检查：整包条目数 ≤ 32（见下方 `ZIP_RULES`）；这里留同一个数
+MAX_BUNDLE_ENTRIES = 32
+
+
+def kind_of(name: str) -> str:
+    """包内文件 → 内容类别（精确名；没登记的是 `other`）。"""
+    return ENTRY_KINDS.get(name, "other")
+
 
 # ---------------------------------------------------------------------------
 # 超时与重试（同一次授权之内的有界重试；超出一律交还用户去点）
@@ -127,6 +154,9 @@ COMPLETE_BACKOFF_S = (1.0, 2.0, 4.0)
 RETRY_AFTER_CAP_S = 10
 #: 没被动用的会话多久后自动丢弃（内存里的 ≤10 MiB）。
 PREPARED_TTL_S = 30 * 60
+#: 全局保管预算：所有项目里已备好（prepared / failed，非发送中）的包合计不超过它。上限 64 MiB 之后若每个项目 / 窗口各留一份，
+#: N 个对话框就是 N × 64 MiB 压在引擎进程里；超了就回收闲置最久的（`_enforce_budget_locked`）。
+STORED_BUDGET_BYTES = 128 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_UPLOAD_FIELDS = 32
 MAX_FIELD_VALUE = 4096
@@ -556,13 +586,92 @@ def _server_error(resp: _Response) -> tuple[str, int | None]:
 class BundleInfo:
     schema: int
     entries: tuple[tuple[str, str], ...]  # (文件名, 内容类别)
+    sizes: tuple[int, ...] = ()  # 与 entries 一一对应：解压后的字节数
+    options: dict | None = None  # manifest 的 detail_options（老包 / 导出包没有 = None）
+    truncated: tuple[dict, ...] = ()  # manifest 的 truncated
+
+
+#: infra 诊断服务对上传 ZIP 的检查（服务端从不解压到磁盘，只读中央目录与 manifest.json）。**出处是那份检查本身**
+#: （2026-10-13 与主控核对，单条目 / 总量上限同日放宽为 128 / 256 MiB）；客户端出包后用同一组判据自检，
+#: 不合规当内部错误、不发送——否则用户点了「发送」才被服务端以 `bad_bundle` 拒收。
+ZIP_RULES = {
+    "max_entries": 32,
+    "name": re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"),
+    "max_entry_uncompressed": 128 * 1024 * 1024,
+    "max_total_uncompressed": 256 * 1024 * 1024,
+    "max_ratio": 200,  # file_size > 1024 且 file_size > 200 × compress_size 被拒
+    "max_manifest": 64 * 1024,
+}
+
+
+ZIP_PROBLEMS = frozenset(
+    {
+        "corrupt_zip",
+        "empty_zip",
+        "too_many_entries",
+        "unsafe_entry_name",
+        "duplicate_entry",
+        "encrypted_entry",
+        "unsupported_compression",
+        "entry_too_large",
+        "compression_ratio",
+        "total_too_large",
+        "missing_manifest",
+        "manifest_too_large",
+    }
+)
+
+
+def zip_problem(data: bytes) -> str | None:
+    """按服务端的判据过一遍；回第一条不合规的原因（短码），合规回 None。"""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, ValueError, OSError):
+        return "corrupt_zip"
+    with z:
+        infos = z.infolist()
+        if not infos:
+            return "empty_zip"
+        if len(infos) > ZIP_RULES["max_entries"]:
+            return "too_many_entries"
+        seen: set[str] = set()
+        total = 0
+        for i in infos:
+            if not ZIP_RULES["name"].fullmatch(i.filename) or i.filename in (".", ".."):
+                return "unsafe_entry_name"
+            if i.filename in seen:
+                return "duplicate_entry"
+            seen.add(i.filename)
+            if i.flag_bits & 0x1:
+                return "encrypted_entry"
+            if i.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                return "unsupported_compression"
+            if i.file_size > ZIP_RULES["max_entry_uncompressed"]:
+                return "entry_too_large"
+            if i.file_size > 1024 and i.file_size > ZIP_RULES["max_ratio"] * max(
+                i.compress_size, 1
+            ):
+                return "compression_ratio"
+            total += i.file_size
+            if total > ZIP_RULES["max_total_uncompressed"]:
+                return "total_too_large"
+        if "manifest.json" not in seen:
+            return "missing_manifest"
+        if z.getinfo("manifest.json").file_size > ZIP_RULES["max_manifest"]:
+            return "manifest_too_large"
+    return None
 
 
 def inspect_bundle(data: bytes) -> BundleInfo:
     """读 ZIP 的目录与 manifest：给界面「会发送什么」，给 init 的 `bundle_schema`。格式不对抛 `SendError`。"""
+    problem = zip_problem(data)
+    if problem is not None:
+        LOG.warning("诊断包不符合服务端 ZIP 检查: %s", logsafe.known(problem, ZIP_PROBLEMS))
+        raise SendError("bundle_invalid", 500)
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
-            names = z.namelist()
+            infos = [i for i in z.infolist() if not i.is_dir()]
+            names = [i.filename for i in infos]
             if not names or len(names) > MAX_BUNDLE_ENTRIES or "manifest.json" not in names:
                 raise SendError("bundle_invalid", 500)
             manifest = json.loads(z.read("manifest.json").decode("utf-8"))
@@ -573,7 +682,29 @@ def inspect_bundle(data: bytes) -> BundleInfo:
     schema = manifest.get("schema_version") if isinstance(manifest, dict) else None
     if isinstance(schema, bool) or not isinstance(schema, int) or not 1 <= schema <= 99:
         raise SendError("bundle_invalid", 500)
-    return BundleInfo(schema, tuple((n, ENTRY_KINDS.get(n, "other")) for n in names))
+    options = manifest.get("detail_options") if isinstance(manifest, dict) else None
+    options = (
+        {k: v is True for k, v in options.items() if isinstance(k, str)}
+        if isinstance(options, dict)
+        else None
+    )
+    cut = manifest.get("truncated") if isinstance(manifest, dict) else None
+    cut = tuple(
+        {
+            "kind": str(c.get("kind"))[:48],
+            "original_bytes": int(c.get("original_bytes") or 0),
+            "kept_bytes": int(c.get("kept_bytes") or 0),
+        }
+        for c in (cut if isinstance(cut, list) else [])[:32]
+        if isinstance(c, dict)
+    )
+    return BundleInfo(
+        schema,
+        tuple((n, kind_of(n)) for n in names),
+        tuple(i.file_size for i in infos),
+        options,
+        cut,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +777,24 @@ _SESSIONS: dict[str, SendSession] = {}
 #: 每个项目最近一次「已送达 / 结果未知」的会话在被丢弃时留下的状态快照（只有状态与报告编号，没有包与令牌）：
 #: 关对话框 / 切项目不能吞掉送达结果，用户凭编号才能要求删除（#928）。每个项目最多一份，后来的覆盖。
 _OUTCOMES: dict[str, dict] = {}
+#: 每个项目收到过的最大备包序号（前端每次备包带一个单调的 `seq`）：比它旧的备包请求（关了再开 / 切走再回时晚到的那份）
+#: 不许登记会话、也不许替换新会话——否则前端丢弃旧响应后，界面上的新编号指向一个不存在的会话。
+_PREPARE_SEQ: dict[str, int] = {}
+_PREPARE_SEQ_CAP = 64
+
+
+def begin_prepare(scope: str, seq: int | None) -> None:
+    """备包请求到达时登记它的序号；比已登记的更旧就 409 `stale_prepare`（不必再建这份包）。
+    `seq=None`（老客户端）不参与排序。"""
+    if seq is None:
+        return
+    with _LOCK:
+        if seq < _PREPARE_SEQ.get(scope, 0):
+            raise SendError("stale_prepare", 409)
+        _PREPARE_SEQ[scope] = seq
+        while len(_PREPARE_SEQ) > _PREPARE_SEQ_CAP:
+            del _PREPARE_SEQ[next(iter(_PREPARE_SEQ))]
+
 
 #: 测试可换的时钟/睡眠（重试退避不该让用例真等）。
 _sleep = time.sleep
@@ -669,6 +818,29 @@ def _expire_locked() -> None:
                 _drop_locked(cur, archive=False)
             else:
                 _discard_locked(cur)
+
+
+def _stored_bytes(sess: SendSession) -> int:
+    return (
+        len(sess.bundle) if sess.bundle is not None and sess.state in ("prepared", "failed") else 0
+    )
+
+
+def _enforce_budget_locked(keep: SendSession) -> None:
+    """保管的包合计超过 `STORED_BUDGET_BYTES` 就按「闲置最久」回收 prepared / failed 会话（走 `_discard_locked`：
+    complete 发出过的仍按 I1 先对账再丢，不能直接吞）。发送中 / 取消中 / 已完成的不计入也绝不回收；刚备好的 `keep` 不回收。
+    被回收的会话再被问到就是 404（前端「包已不在引擎里 → 重新准备」路径）。"""
+    while True:
+        pool_ = [s for s in _SESSIONS.values() if _stored_bytes(s)]
+        if sum(_stored_bytes(s) for s in pool_) <= STORED_BUDGET_BYTES:
+            return
+        victims = sorted((s for s in pool_ if s is not keep), key=lambda s: s.touched)
+        if not victims:
+            return
+        before = _stored_bytes(victims[0])
+        _discard_locked(victims[0])
+        if _stored_bytes(victims[0]) >= before:  # 没有进展（理论上不会）：别死循环
+            return
 
 
 def _archive_locked(sess: SendSession) -> None:
@@ -716,13 +888,15 @@ def _get(pid: object, scope: str) -> SendSession:
 # ---------------------------------------------------------------------------
 # 对 Flask 层的接口
 # ---------------------------------------------------------------------------
-def prepare(bundle: bytes, *, scope: str = "") -> dict:
+def prepare(bundle: bytes, *, scope: str = "", seq: int | None = None) -> dict:
     """备好一份包（**零网络**）。包超限不保管、不发送：回 `too_large` 让界面去导出到本地。
     `scope` = 请求的项目上下文：只替换**本项目**的旧会话，别的项目的会话（含发送中的）不受影响。"""
     if resolve_target() is None:
         raise SendError("send_disabled", 404)
     info = inspect_bundle(bundle)
     with _LOCK:
+        if seq is not None and seq < _PREPARE_SEQ.get(scope, 0):
+            raise SendError("stale_prepare", 409)  # 登记会话前再比一次：建包期间更新的请求已经到了
         _expire_locked()
         cur = _SESSIONS.get(scope)
         if cur is not None and cur.state in ("sending", "cancelling"):
@@ -738,7 +912,16 @@ def prepare(bundle: bytes, *, scope: str = "") -> dict:
             "sha256": digest,
             "schema": info.schema,
             "max_bytes": MAX_BYTES,
-            "entries": [{"name": n, "kind": k} for n, k in info.entries],
+            "entries": [
+                {"name": n, "kind": k, "bytes": b}
+                for (n, k), b in zip(info.entries, info.sizes or (0,) * len(info.entries))
+            ],
+            # 勾选项的实际取值与被截短的类别（确认框据此说明）；老包 / 导出包 = 全 false、空
+            "options": {
+                k: bool((info.options or {}).get(k))
+                for k in ("source", "crash_reports", "corrupt_sessions")
+            },
+            "truncated": list(info.truncated),
         }
         if len(bundle) > MAX_BYTES:
             return {**summary, "too_large": True, "id": None}
@@ -753,6 +936,7 @@ def prepare(bundle: bytes, *, scope: str = "") -> dict:
             scope=scope,
         )
         _SESSIONS[scope] = sess
+        _enforce_budget_locked(keep=sess)
         return {**summary, "too_large": False, "id": sess.id, "gen": sess.gen}
 
 
@@ -932,6 +1116,7 @@ def reset_for_tests() -> None:
             cur.cancel.set()
         _SESSIONS.clear()
         _OUTCOMES.clear()
+        _PREPARE_SEQ.clear()
     for cur in curs:
         th = cur.thread
         if th is not None and th.is_alive():

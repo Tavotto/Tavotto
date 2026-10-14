@@ -1703,15 +1703,31 @@ class TestPlaywrightShards:
         gate = _job(CI, "ci-integration-gate")
         assert self.JOB in _needs_of(gate) and self.JOB in _required_of(gate)
 
-    def test_posix_e2e_stays_a_single_job_on_configured_projects(self):
-        """posix-e2e 目前不分片（单 worker 约 19.7 分钟，step 上限 35；分片另开 issue）；它写死的 project 名必须仍在配置里。"""
+    def test_posix_e2e_shard_matrix_checks_all_planned_registered_cases(self):
+        """Issue #768：三台真 Runner、计划对拍、防漏测、不改变原 Gate 闭集。"""
         block = _job(CI, "posix-e2e")
-        assert not re.search(r"(?m)^    strategy:", _code(block)), (
-            "posix-e2e 分片了——先改文档里的决定"
+        code = _code(block)
+        assert "name: posix-e2e (${{ matrix.shard }}/3)" in code
+        assert re.search(
+            r"(?m)^    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[1, 2, 3\]",
+            code,
         )
-        e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", _code(block))
+        e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", code)
         assert len(e2e) == 1, e2e
-        assert _project_flags(e2e[0], "posix-e2e") <= set(_playwright_projects())
+        # _project_flags 只解析 --project 参数；先分离 --shard，避免把 matrix 表达式当作 project。
+        project_args, shard_args = e2e[0].split(" --shard=", 1)
+        assert _project_flags(project_args, "posix-e2e") == {"chromium", "chromium-en"}
+        assert shard_args.strip() == "${{ matrix.shard }}/3"
+        assert "--shard=${{ matrix.shard }}/3" in e2e[0]
+        assert "playwright test --list --reporter=json" in code
+        assert "--expected-list" in code and "e2e-planned.json" in code
+        # 一份无 --shard 的所有 POSIX project 清单必须先于本 shard 的计划。
+        assert "e2e-planned-all.json" in code
+        assert "--all-planned-list" in code
+        assert code.index("e2e-planned-all.json") < code.index("e2e-planned.json")
+        assert "posix-e2e-report-${{ matrix.shard }}" in code
+        gate = _job(CI, "ci-integration-gate")
+        assert "posix-e2e" in _needs_of(gate) and "posix-e2e" in _required_of(gate)
 
 
 # ============================================================ package 冒烟的实例隔离（CI03b）

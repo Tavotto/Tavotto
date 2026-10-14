@@ -4951,7 +4951,12 @@ export interface DiagSendPrepared {
   schema: number
   max_bytes: number
   too_large: boolean
-  entries: { name: string; kind: string }[]
+  /** 包内文件：名字、内容类别（闭集 id）、解压后的字节数 */
+  entries: { name: string; kind: string; bytes?: number }[]
+  /** 三个勾选项在这份包里的实际取值（引擎白名单校验后的；老引擎没有这个键 = 全 false） */
+  options?: { source: boolean; crash_reports: boolean; corrupt_sessions: boolean }
+  /** 因体积上限被截短的类别（按优先级从低往高截；核心文件不截） */
+  truncated?: { kind: string; original_bytes: number; kept_bytes: number }[]
 }
 
 export type DiagSendState = 'prepared' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled' | 'unknown'
@@ -4978,13 +4983,29 @@ export interface DiagSendStatus {
 
 export const fetchDiagSendCapability = () => jsonFetch<DiagSendCapability>('/api/diagnostics/send')
 
+let lastPrepareSeq = 0
+/** 单调的备包序号（毫秒时间戳起步，页面重载后仍大于上一页的）：引擎只认最新的，晚到的旧请求回 409 `diag_stale_prepare`。 */
+const nextPrepareSeq = () => (lastPrepareSeq = Math.max(Date.now(), lastPrepareSeq + 1))
+/** 备包被更新的请求取代（引擎 409 `stale_prepare`）：不是失败，静默忽略。 */
+export const isStalePrepare = (e: unknown) =>
+  e instanceof ApiError && e.status === 409 && e.body?.code === 'diag_stale_prepare'
+
 /** 在本机备好一份包（零网络）。载荷与导出诊断包相同。 */
-export const prepareDiagSend = (payload: unknown) =>
-  jsonFetch<DiagSendPrepared>('/api/diagnostics/send/prepare', {
+export const prepareDiagSend = (
+  payload: unknown,
+  options?: { source?: boolean; crash_reports?: boolean; corrupt_sessions?: boolean },
+) => {
+  // 勾选项同时走查询串：载荷超过引擎的请求体上限会被整份丢弃，勾选项不能跟着消失（引擎以查询串为准）
+  const picked = Object.entries(options ?? {})
+    .filter(([, v]) => v === true)
+    .map(([k]) => k)
+  const q = `?seq=${nextPrepareSeq()}${options ? `&options=${picked.join(',')}` : ''}`
+  return jsonFetch<DiagSendPrepared>(`/api/diagnostics/send/prepare${q}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
 
 /** 用户要保存的**同一份字节**（就是点发送时会上传的那份）。 */
 export async function fetchDiagSendBundle(id: string): Promise<Blob> {

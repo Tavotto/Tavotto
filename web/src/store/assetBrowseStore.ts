@@ -12,12 +12,19 @@
  */
 import { create } from 'zustand'
 
-export type AssetTypeFilter = 'all' | 'pdf' | 'raster' | 'script' | 'runtime'
+export type AssetTypeFilter = 'all' | 'pdf' | 'raster' | 'runtime'
 export type AssetSortKey = 'name' | 'recent' | 'used'
+/**
+ * 「能不能编辑」这一维（搜索框下面那排胶囊）。只是把后端的接入状态
+ * （`capability.status`）归成三组来看，不是第二份判据——归组规则只在
+ * `AssetBrowser` 的 `editabilityOf()` 一处。
+ */
+export type AssetEditabilityFilter = 'all' | 'editable' | 'pending' | 'layout'
 
 export interface AssetFilters {
   source: string
   type: AssetTypeFilter
+  editability: AssetEditabilityFilter
   sort: AssetSortKey
   usedOnly: boolean
 }
@@ -25,6 +32,7 @@ export interface AssetFilters {
 export const DEFAULT_ASSET_FILTERS: AssetFilters = {
   source: 'all',
   type: 'all',
+  editability: 'all',
   sort: 'name',
   usedOnly: false,
 }

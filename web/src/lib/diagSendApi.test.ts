@@ -47,7 +47,7 @@ describe('diag send api', () => {
     await fetchDiagSendBundle('abc')
     await cancelDiagSend('abc')
     await discardDiagSend('abc')
-    expect(calls.map((c) => c.url.replace(/^.*\/api/, '/api'))).toEqual([
+    expect(calls.map((c) => c.url.replace(/^.*\/api/, '/api').replace(/\?seq=\d+/, ''))).toEqual([
       '/api/diagnostics/send',
       '/api/diagnostics/send/prepare',
       '/api/diagnostics/send/abc/bundle',
