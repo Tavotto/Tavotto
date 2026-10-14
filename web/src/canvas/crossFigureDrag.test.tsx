@@ -443,12 +443,17 @@ describe('图内子图缩放手柄：吸别的图子图的同一条边', () => {
 
 describe('吸附反馈：自身所属框与跨图目标框', () => {
   /** 拖到 (x, y) 停住（不松手），返回此刻的反馈，再松手 */
+  let heldXs: number[] = []
+  let heldYs: number[] = []
   const feedbackAt = (x: number, y: number, mods: { metaKey?: boolean } = {}) => {
     for (let i = 1; i <= 10; i++) {
       fire('pointermove', (x * i) / 10, (y * i) / 10, mods)
       flushPreviewFrame()
     }
     const fb = useInteractionStore.getState().snapFeedback
+    // 松手会清掉吸附线，所以在松手前取
+    heldXs = [...useInteractionStore.getState().snapXs]
+    heldYs = [...useInteractionStore.getState().snapYs]
     fire('pointerup', x, y, mods)
     return fb
   }
@@ -506,7 +511,7 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     startElementDrag(down(), livePanel(), legendP1, layout)
     const fb = feedbackAt(0, (lineY - startBottom) / MM_PER_PX + 1)
     expect(fb).toHaveLength(0)
-    expect(useInteractionStore.getState().snapYs).toHaveLength(0)
+    expect(heldYs).toHaveLength(0)
     // 落点就是手指停的位置（差 1 px），没有被拽到那条线上
     const y = overrideOf('axes_0.legend', 'loc_frac')![1] * H
     expect(Math.abs(y - (lineY + MM_PER_PX))).toBeLessThan(0.2)
@@ -521,7 +526,7 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     startAxesDrag(down(), livePanel(), axes0, layout, 'w')
     const fb = feedbackAt(0.5 / PX_X, 0)
     expect(fb.some((f) => f.axis === 'x')).toBe(false)
-    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+    expect(heldXs).toHaveLength(0)
   })
 
   it('跨图候选在面板右侧之外（x 向）：不参与', async () => {
@@ -534,7 +539,7 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     const fb = feedbackAt((lineX - 0.6 * W) / MM_PER_PX + 1, 0)
     // 对方图例与自己等高，y 向照常吸（范围内）；x 向那条在 p1 之外，不参与
     expect(fb.some((f) => f.axis === 'x')).toBe(false)
-    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+    expect(heldXs).toHaveLength(0)
   })
 
   it('恰在面板边界上的参考线（含边界）：照吸', async () => {
@@ -554,7 +559,7 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     })
     startElementDrag(down(), livePanel(), legendP1, layout)
     expect(feedbackAt(0, (1.5 * H - 0.72 * H) / MM_PER_PX + 1)).toHaveLength(0)
-    expect(useInteractionStore.getState().snapYs).toHaveLength(0)
+    expect(heldYs).toHaveLength(0)
   })
 
   it('子图被拖向图边被钳住、线在范围内却够不着：无吸附线、无反馈', async () => {
@@ -566,7 +571,7 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     startAxesDrag(down(), livePanel(), axes0, layout, 'move')
     const fb = feedbackAt(-(0.25 / PX_X) + 1, 0)
     expect(fb.some((f) => f.axis === 'x')).toBe(false)
-    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+    expect(heldXs).toHaveLength(0)
     expect(overrideOf('axes_0', 'position')![0]).toBeCloseTo(0, 3)
   })
 
