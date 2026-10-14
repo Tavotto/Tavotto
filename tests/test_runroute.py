@@ -939,3 +939,81 @@ os.replace("cache.tmp", "cache.csv")
 open("cache.csv").read()
 """
     assert _route(src, cwd=runroute.CWD_PROJECT).execution == "native"
+
+
+# ---------------------------------------------------------------- Codex #1034 r5：符号链接 / 重新绑定的函数名
+def test_an_r3_source_behind_a_symlink_leaving_the_project_is_not_high(tmp_path):
+    """safe 的改名守卫先 resolve 再判「在不在真实图库内」：项目里的 `out -> 项目外` 下的改名 safe 照常真执行，不能升 native。"""
+    import os
+
+    proj, outside = tmp_path / "proj", tmp_path / "elsewhere"
+    proj.mkdir()
+    outside.mkdir()
+    os.symlink(outside, proj / "out")
+    src = """
+import os
+from pathlib import Path
+Path("out/t").write_text("1")
+os.replace("out/t", "out/f")
+open("out/f").read()
+"""
+    facts = runroute.facts_of(textwrap.dedent(src))
+    route = runroute.decide(facts, cwd_mode="project_root", project_root=proj, script="fig.py")
+    assert route.execution == "safe", route.public()
+    assert "R3" not in _rules(route)
+
+
+def test_a_symlink_that_stays_inside_the_project_is_still_high(tmp_path):
+    import os
+
+    proj = tmp_path / "proj"
+    (proj / "real").mkdir(parents=True)
+    os.symlink(proj / "real", proj / "out")
+    src = """
+import os
+open("out/t", "w").write("1")
+os.replace("out/t", "out/f")
+open("out/f").read()
+"""
+    route = runroute.decide(
+        runroute.facts_of(textwrap.dedent(src)),
+        cwd_mode="project_root",
+        project_root=proj,
+        script="fig.py",
+    )
+    assert route.execution == "native", route.public()
+
+
+REBOUND_FUNCTIONS = [
+    (
+        "reassigned_after_def",
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\nhelper = lambda: None\nhelper()\n',
+    ),
+    (
+        "defined_twice",
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\ndef helper():\n    pass\nhelper()\n',
+    ),
+    (
+        "shadowed_by_import",
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\nfrom other import helper\nhelper()\n',
+    ),
+    (
+        "same_name_param_elsewhere",
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\ndef go(helper):\n    helper()\ngo(None)\nhelper()\n',
+    ),
+    (
+        "same_name_def_in_a_class_or_function",
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\ndef outer():\n    def helper():\n        pass\n    helper()\nouter()\nhelper()\n',
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", REBOUND_FUNCTIONS, ids=[c[0] for c in REBOUND_FUNCTIONS])
+def test_a_function_name_rebound_anywhere_is_not_proven_reachable(name, src):
+    route = _route(src)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()

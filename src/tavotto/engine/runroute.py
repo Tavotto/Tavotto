@@ -661,6 +661,9 @@ class _Collector:
                 while s is not None:
                     if name in s.defs:
                         target = s.defs[name]
+                        # 名字在模块任何地方被重新绑定过（赋值 / 再次 def / 形参 / import 同名）：调用的未必是这个 def，不证明可达
+                        if self.bind_total.get(name) != 1 or name in self.aliases:
+                            target = None
                         if target is not None and target.ident not in live:
                             live.add(target.ident)
                             changed = True
@@ -1005,6 +1008,16 @@ def _canon(v: PathVal | None, w: _Where) -> tuple[str, str] | None:
     return ("root", rel)
 
 
+def _really_inside(w: _Where, rel: str) -> bool:
+    """项目根内的相对路径 `rel`，经 `realpath`（只 lstat，不读内容）解析后是否仍在项目根之内。解析不了 = 证明不了 = False。"""
+    try:
+        real = os.path.normcase(os.path.realpath(os.path.join(w.root or "", rel)))
+        roots = {os.path.normcase(os.path.realpath(r)) for r in w.roots_abs}
+    except (OSError, ValueError):
+        return False
+    return any(real == r or real.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+
 def _exclusive(a: Event, b: Event) -> bool:
     arms = dict(a.branches)
     return any(node in arms and arms[node] != arm for node, arm in b.branches)
@@ -1064,7 +1077,8 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
         if m.kind != _E_MOVE or mk is None:
             continue
         dk = _canon(m.dest, w)
-        inside = mk[0] == "root"  # safe 的删除 / 改名守卫只看源是否在真实图库内
+        # safe 的删除 / 改名守卫先 resolve 再看源是否在真实图库内：词法上在项目里、但经符号链接指到项目外的，safe 照常真执行
+        inside = mk[0] == "root" and _really_inside(w, mk[1])
         if not inside:
             continue
         wrote = any(

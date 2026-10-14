@@ -7921,7 +7921,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     engine_launchctx.record_success(
         ctx.path,
         plan.script,
-        None if captured.get("failed_figures") else getattr(result, "receipt", None),
+        engine_launchctx.basis_of(result, plan, bool(captured.get("failed_figures"))),
         run=run,
         update_default=True,
     )

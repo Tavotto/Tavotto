@@ -46,7 +46,6 @@ from . import (
     dialogscan,
     execpolicy,
     execspec,
-    launchctx,
     nativesession,
     pool,
     preparation,
@@ -1740,19 +1739,7 @@ class SessionService:
                 fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code, desktop)
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
-            if (
-                outcome == execpolicy.OUTCOME_SUCCEEDED
-                and done_plan.execution == execspec.PROFILE_NATIVE
-                and done_plan.target == TARGET_SCRIPT
-                and not (isinstance(fin, dict) and fin.get("partial"))
-            ):
-                # native 成功也记「上次成功的执行语义」：下次打开并运行沿用（safe 成功由 app 的成功收口按回执写）
-                try:
-                    launchctx.record_native_success(
-                        done_plan.project_root, done_plan.script, done_plan, run=done_plan.run
-                    )
-                except Exception:  # noqa: BLE001 — 记不下来只是少一条沿用依据，不改这次的终局
-                    LOG.exception("记录 native 成功失败 %s", done_plan.script)
+            # native 成功的启动记录 + 运行默认值已在 app 的成功收口里同一次写入提交（`launchctx.basis_of`）——这里不再补写
             with sess.lock:
                 sess.ledger.close(attempt.attempt_id, outcome, code)
                 if done_plan.interpreter != sess.plan.interpreter:
