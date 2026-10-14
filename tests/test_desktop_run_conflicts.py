@@ -407,6 +407,7 @@ def test_native_runner_supersedes_older_plans_of_the_same_script(tmp_path):
     (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
     old, new = _native_plan(proj, "pj-super"), _native_plan(proj, "pj-super")
     preparation.SERVICE.register(old)
+    preparation.SERVICE.register(new)  # 真实路径里 runner 跑的计划一定已登记（登记顺序 = 先后）
     session, _resp, _ = m._native_preparation_runner(new)
     try:
         assert preparation.SERVICE.get(old.plan_id, "pj-super")[1].status == (
@@ -414,3 +415,26 @@ def test_native_runner_supersedes_older_plans_of_the_same_script(tmp_path):
         )
     finally:
         session.cancel_owned()
+
+
+def test_rerun_only_cancels_older_plans_never_newer_ones(tmp_path):
+    """两个窗口几乎同时重跑同一脚本:各自只取消**比自己早**登记的计划,不互相取消(Codex #1022 r4267606089)。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    first, second = _native_plan(proj, "pj-age"), _native_plan(proj, "pj-age")
+    preparation.SERVICE.register(first)
+    preparation.SERVICE.register(second)
+    # 先登记的那个重跑:后登记的更新,不能被取消
+    assert preparation.SERVICE.cancel_project("pj-age", script="fig.py", keep=first.plan_id) == 0
+    assert preparation.SERVICE.get(second.plan_id, "pj-age")[1].status != (
+        preparation.STATUS_CANCELLED
+    )
+    assert preparation.SERVICE.get(first.plan_id, "pj-age")[1].status != (
+        preparation.STATUS_CANCELLED
+    )
+    # 后登记的那个重跑:更早的被取消
+    assert preparation.SERVICE.cancel_project("pj-age", script="fig.py", keep=second.plan_id) == 1
+    assert preparation.SERVICE.get(first.plan_id, "pj-age")[1].status == (
+        preparation.STATUS_CANCELLED
+    )

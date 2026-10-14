@@ -7525,6 +7525,35 @@ def _launch_preparation(ctx: "ProjectCtx", plan, on_done=None) -> None:
     )
 
 
+def _desktop_initiated() -> bool:
+    """这个请求是不是**桌面用户主动发起**的（ADR 0127 D1 的授权边界）。服务端可验证，不信请求体里任何自报字段：
+
+    * 进程是 `--desktop-sidecar`（`TAVOTTO_DESKTOP_MODE` 只由 `SidecarServer` 设置）；
+    * 没有磁盘本机凭据（`api_secret is None`——桌面模式不存在能被 MCP / Agent / 脚本拿走的凭据）；
+    * 请求带着由启动 nonce 兑换的会话 cookie（只有 Tauri 壳里的窗口兑换得到）。
+
+    没有会话状态（测试 / `--insecure-no-auth`）、浏览器模式、带本机凭据头的 API 客户端一律 False（fail closed）。"""
+    if not app.config.get("TAVOTTO_DESKTOP_MODE"):
+        return False
+    state = app.config.get(security.STATE_KEY)
+    if state is None or state.api_secret:
+        return False
+    return state.valid_cookie(request.cookies.get(security.COOKIE_NAME))
+
+
+def _launch_session_attempt(ctx: "ProjectCtx", plan, on_done=None) -> None:
+    """会话 `run` 认领出来的尝试交给执行线程。safe 尝试开始前，同一脚本上一次桌面 native 会话 / 计划票据先让位
+    （P2）：回退成功后 native 进程停在屏障上占着环境租约，用户重跑 safe 不让位就会一直 `environment_in_use_by_native_session`。
+    复用 #1022 重跑入口的同两个机制（`cancel_project(script=, keep=)` 与 `REGISTRY.cancel_project(script=)`）；
+    native 尝试由 `_native_preparation_runner` 自己做同样的事。旧的素材准备端点不走这里（面板展示不该结束正在编辑的活图）。"""
+    if plan.execution != engine_execspec.PROFILE_NATIVE and plan.script:
+        engine_preparation.SERVICE.cancel_project(
+            plan.project_id, script=plan.script, keep=plan.plan_id
+        )
+        engine_nativesession.REGISTRY.cancel_project(plan.project_root, script=plan.script)
+    _launch_preparation(ctx, plan, on_done)
+
+
 def _preparation_payload(plan, result) -> dict:
     return {"plan": plan.to_payload(), "result": result.to_payload()}
 
@@ -7921,8 +7950,9 @@ def api_engine_preparation_session_action(session_id: str):
             ctx.id,
             body["action_id"],
             revision,
-            launch=lambda plan, on_done: _launch_preparation(ctx, plan, on_done),
+            launch=lambda plan, on_done: _launch_session_attempt(ctx, plan, on_done),
             finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
+            desktop_initiated=_desktop_initiated(),
             impact_digest=echoed,
             prepare=_session_dependency_starter(ctx),
             transfer_from=transfer_from,

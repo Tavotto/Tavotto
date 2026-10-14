@@ -24,8 +24,9 @@ ADR 0126 把「何时发 `execution:"native"`」留给调用方。结果是用�
 * **同一会话的第二个 attempt**：不新建会话、不改前端、不多开标签页。第二次尝试用 #1022 的 `_native_preparation_runner`（`execution=native`），解释器**沿用 safe 当时解出的那一个**
   （解出的不一致就不回退，`interpreter_changed`）。回退在 safe 尝试的收尾**同一把会话锁里**接上，读者不会看到「第一次已结束、第二次还没开始」。
 * **单向、至多一次**：native 失败就报 native 自己的真实错误，**不回 safe**；一次用户发起的运行（`run` 动作认领）里执行语义最多变一次。用户再点一次运行是新的运行，预算重算。
-* **只在桌面用户发起的运行里**：回退只发生在会话 `run` / `run_when_ready` 认领出来的尝试上。GET / SSE / recheck / 打开项目 / 缩略图不执行用户代码（不变）；
+* **只在桌面用户发起的运行里**——一个**服务端可验证**的事实，不信请求体：进程是 `--desktop-sidecar`（`app.config["TAVOTTO_DESKTOP_MODE"]` 只由 `SidecarServer` 设置）、会话状态里没有本机凭据（`api_secret is None`，桌面模式磁盘上不存在任何凭据）、且该请求带着由启动 nonce 兑换的会话 cookie（`app._desktop_initiated()`）。浏览器模式、带本机凭据头的 API 客户端（MCP / Agent / 脚本）、无认证入口（测试 / `--insecure-no-auth`）一律不是，`decide_fallback` 默认 fail closed（`not_desktop_initiated`）。`run_when_ready` 在创建意图时记下来源，之后自动推进的执行沿用。回退只发生在会话 `run` / `run_when_ready` 认领出来的尝试上。GET / SSE / recheck / 打开项目 / 缩略图不执行用户代码（不变）；
   CLI `tavotto run`（终端拥有进程，`runcli` 不 import 本策略）、MCP 工具（无 `native_run`、无 `execution` 参数）、旧的 `/api/engine/preparation` 端点不触发回退（有看护用例）。
+* **重跑让位**：会话里 safe 尝试开始前，同脚本上一次桌面 native 会话与更早的计划票据先让位（复用 #1022 的 `REGISTRY.cancel_project(script=)` 与 `PreparationService.cancel_project(script=, keep=)`），否则回退成功后停在屏障上的 native 进程会一直占着环境租约。
 * **取消与过期**：取消落在回退之前（含锁外规划与锁内交接之间的窗口）不再起 native；检查之后源码 / 解释器 / 授权变了（`preparation_plan_stale`）不回退。取消动作落在**最新**的那次尝试上，不是动作当初指着的那次。
 * **不弹确认框**：见下「授权来源」。
 * **外部副作用（场景 17）**：safe 档在被拦之前可能已产生外部副作用（网络、计数文件）；接受回退时这些副作用**重复一次**。这是用户裁决，不是疏漏——见「后果」。

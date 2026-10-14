@@ -533,7 +533,7 @@ class NativeSession:
     def answer_input(self, request_id: str, *, text: str | None = None, eof: bool = False) -> dict:
         """把用户的答复交给停在提问上的脚本——**同一个进程、同一批对象续跑**。
 
-        先到先得：认领（清掉 pending）在锁里一步完成，之后才发；第二个窗口的答复、旧提问的答复、
+        先到先得：答复先校验（类型 / 长度 / 能否编码）、认领（清掉 pending）是**最后一步校验**，之后才发；第二个窗口的答复、旧提问的答复、
         没有提问时的答复一律 `native_input_not_pending`，不排队、不喂给之后的提问。`eof=True` =
         「没有输入」（`input` 抛 `EOFError`、读回空串；之后同一个进程里 stdin 家族不再提问）。
         口令的值只经这条通道发一次，不进事件 / 日志 / 状态。
@@ -541,7 +541,15 @@ class NativeSession:
         if not eof:
             if not isinstance(text, str):
                 raise RunError(runcodes.NATIVE_INPUT_INVALID, reason="答复必须是文本")
-            if len(text.encode("utf-8", "surrogatepass")) > INPUT_ANSWER_LIMIT:
+            try:
+                size = len(
+                    text.encode("utf-8")
+                )  # 严格编码:控制通道两侧钉 UTF-8,编不出来的答复到不了脚本
+            except UnicodeEncodeError:
+                raise RunError(
+                    runcodes.NATIVE_INPUT_INVALID, reason="答复含有无法编码的字符"
+                ) from None
+            if size > INPUT_ANSWER_LIMIT:
                 raise RunError(runcodes.NATIVE_INPUT_INVALID, reason="答复太长")
         with self._lock:
             pending = self._pending_input

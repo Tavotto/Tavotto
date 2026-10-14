@@ -1282,7 +1282,7 @@ class PreparationService:
         """取消这个项目名下所有还没终局的计划(执行线程据此在下一个取消接受时刻收工,新建的会话当场关掉)。
 
         * 项目关闭:只给 `project_id`;
-        * 同一脚本重新运行:给 `script`,并用 `keep` 放过新计划自己——更早的同脚本计划让位。
+        * 同一脚本重新运行:给 `script` 与 `keep`(新计划自己)——只有**比 keep 更早登记**的同脚本计划让位,更新的(另一个窗口刚发起的重跑)不取消。
         返回接受了取消的数量。别的项目 / 别的脚本的计划不动。
 
         先通知监听者（准备会话据此给范围内的会话落「已取消」标记，ADR 0127）：safe 尝试刚终局、回退还没接上的
@@ -1293,15 +1293,25 @@ class PreparationService:
             except Exception:  # noqa: BLE001 — 监听者出错不能挡住关项目
                 LOG.exception("项目取消监听者失败")
         with self._lock:
+            order = list(self._entries)  # 登记顺序 = 计划的先后
+            if keep is not None and keep not in order:
+                return 0
+            older = set(order[: order.index(keep)]) if keep is not None else set(order)
             mine = [
                 pid
                 for pid, e in self._entries.items()
-                if e.plan.project_id == project_id
+                if pid in older
+                and e.plan.project_id == project_id
                 and e.result.status not in TERMINAL
-                and pid != keep
                 and (script is None or e.plan.script == script)
             ]
         return sum(1 for pid in mine if self.cancel(pid, project_id).get("accepted"))
+
+    def older_than(self, keep: str) -> frozenset[str]:
+        """登记得比 `keep` 更早的计划号（登记顺序 = 计划的先后）；`keep` 未登记 = 空。`cancel_project(keep=)` 取消的就是这一批。"""
+        with self._lock:
+            order = list(self._entries)
+        return frozenset(order[: order.index(keep)]) if keep in order else frozenset()
 
     def cancel_plan(self, plan_id: str) -> bool:
         """按计划号取消(界面只拿到 native 会话的 `launch_id` 时用:它就是计划号)。没有这个计划 / 已终局回 False。"""

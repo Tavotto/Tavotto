@@ -374,3 +374,20 @@ def test_a_question_asked_before_registration_is_still_announced(tmp_path, monke
     assert p is not None
     session.answer_input(p["request_id"], text="x")
     dk.finish(session)
+
+
+def test_an_unencodable_answer_is_rejected_without_claiming_the_pending(tmp_path):
+    """答复里有孤立的 UTF-16 代理项(JS 字符串可以有):编码失败不能已经把 pending 认领掉,
+    否则重试被拒、脚本永远等下去(Codex #1022 r4267606099)。"""
+    script = dk.FIGURE_HEADER + "import json\njson.dump(input('q? '), open('a.json','w'))\n"
+    session = start(tmp_path, script)
+    p = wait_pending(session, "input")
+    with pytest.raises(RunError) as bad:
+        session.answer_input(p["request_id"], text="ok\ud800bad")
+    assert bad.value.code == runcodes.NATIVE_INPUT_INVALID
+    assert (
+        session.pending_input is not None and session.pending_input["request_id"] == p["request_id"]
+    )
+    session.answer_input(p["request_id"], text="fine")  # 同一问还能答
+    dk.finish(session)
+    assert dk.read_json(tmp_path / "work" / "a.json") == "fine"

@@ -859,6 +859,8 @@ class RunIntent:
     launch: Callable | None = dataclasses.field(default=None, repr=False)
     finalize: Callable | None = dataclasses.field(default=None, repr=False)
     prepare: Callable | None = dataclasses.field(default=None, repr=False)
+    #: 创建这个意图的动作是否来自桌面窗口（服务端验证过，ADR 0127）；意图之后自动推进的执行沿用它
+    desktop: bool = False
 
     def note(self, kind: str, ref: str, at: float) -> None:
         self.ledger.append({"kind": kind, "ref": ref, "at": at})
@@ -1108,15 +1110,17 @@ class SessionService:
         self, project_id: str, script: str | None = None, keep: str | None = None
     ) -> None:
         """`PreparationService.cancel_project` 的监听：范围内的会话落取消标记，之后到的 blocked 不再回退 native。
-        范围 = 项目（关闭）或项目内同一脚本（重跑让位）；名下有 `keep`（重跑的新计划）的会话不标——那是重跑自己。
-        只赋一个布尔，不取会话锁（调用方可能持着别的锁）。"""
+        范围 = 项目（关闭）或项目内同一脚本（重跑让位）；重跑只让**比 `keep` 更早登记**的尝试让位（与 `cancel_project`
+        取消的计划同一批）——会话最新一次尝试就是 `keep` 自己（回退的 native 尝试启动时的调用）或比它更新（另一个窗口刚发起的
+        重跑）的，都不标。只赋一个布尔，不取会话锁（调用方可能持着别的锁）。"""
+        older = self._prep.older_than(keep) if keep else None
         with self._lock:
             mine = [
                 s
                 for s in self._by_id.values()
                 if s.project_id == project_id
                 and (script is None or s.plan.script == script)
-                and not (keep and any(a.attempt_id == keep for a in s.attempts))
+                and (older is None or (s.attempts and s.attempts[-1].attempt_id in older))
             ]
         for sess in mine:
             sess.cancel_requested = True
@@ -1216,6 +1220,7 @@ class SessionService:
         impact_digest: str | None = None,
         prepare: Callable[..., dict] | None = None,
         transfer_from: str | None = None,
+        desktop_initiated: bool = False,
     ) -> tuple[Session, bool, str]:
         """认领一个动作。回 `(会话, claimed, 动作 kind)`：`claimed=False` = 这个动作早已被认领（重复点击 / 另一个
         标签页），返回的是当初那次尝试，**没有任何新副作用**。
@@ -1230,6 +1235,9 @@ class SessionService:
 
         `run_when_ready`（P05b）：创建一次有界的运行意图——同样要回显授权合同的摘要；`launch` / `finalize` /
         `prepare` 会被意图保管，用来在之后（安装完成、用户答完目录）无请求上下文地继续**这一次**首次执行。
+        `desktop_initiated`（ADR 0127）：调用方（app）**服务端验证过**的事实——这次动作来自桌面窗口，而不是浏览器 / 本机凭据
+        的 API 客户端 / 无认证入口。只有它为真，这次运行里 safe 被拦下后才可能回退 native；默认 False（fail closed）。
+        `run_when_ready` 在创建意图时记下它，之后自动推进的执行沿用。
         `transfer_from`（只许跟 `run_when_ready` 一起给）：另一个运行配置（argv 换了）的旧会话 id——把它**还没认领
         任何执行**的意图原子地转移过来；旧意图及其未认领动作当场退役，已认领的一切保留。
         """
@@ -1284,7 +1292,9 @@ class SessionService:
             if action.kind == ACTION_RUN:
                 if action.attempt_id is not None:
                     return sess, False, action.kind  # 幂等认领：同一个动作 → 同一次尝试
-                claimed = self._claim_run(sess, action, launch=launch, finalize=finalize)
+                claimed = self._claim_run(
+                    sess, action, launch=launch, finalize=finalize, desktop=desktop_initiated
+                )
             elif action.kind == ACTION_PREPARE:
                 if action.attempt_id is not None:
                     return sess, False, action.kind  # 幂等认领：同一个动作 → 同一份依赖作业
@@ -1300,6 +1310,7 @@ class SessionService:
                     launch=launch,
                     finalize=finalize,
                     prepare=prepare,
+                    desktop=desktop_initiated,
                 )
                 claimed = arming = True
             elif action.kind == ACTION_CANCEL:
@@ -1572,7 +1583,9 @@ class SessionService:
         )
         return info
 
-    def _claim_run(self, sess: Session, action: _Action, *, launch, finalize) -> bool:
+    def _claim_run(
+        self, sess: Session, action: _Action, *, launch, finalize, desktop: bool = False
+    ) -> bool:
         """会话锁内：核对 → 失效检查 → 认领 → 提交给 provider。四步之间没有无保护窗口。"""
         if self._has_active_attempt(sess):
             raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
@@ -1606,7 +1619,7 @@ class SessionService:
         sess.ledger.begin_run()
         sess.cancel_requested = False
         sess.ledger.record(plan.plan_id, spec_key_of(plan))
-        done = self._done_callback(sess, attempt, launch=launch, finalize=finalize)
+        done = self._done_callback(sess, attempt, launch=launch, finalize=finalize, desktop=desktop)
 
         # A new action after a settled attempt is an explicit rerun. The provider
         # retires the old build only after its cancellation and stale-plan checks.
@@ -1630,7 +1643,9 @@ class SessionService:
         self._consume_intent(sess, plan.plan_id)
         return True
 
-    def _done_callback(self, sess: Session, attempt: _Attempt, *, launch, finalize):
+    def _done_callback(
+        self, sess: Session, attempt: _Attempt, *, launch, finalize, desktop: bool = False
+    ):
         """一次执行尝试的收尾回调（执行线程上、项目绑定里调）：登记捕获 → 缺包差异计划 → 在同一把锁里落地终局；
         safe 尝试若以 `blocked` 收场且策略允许，**在同一把锁里**接上第二次尝试（native，ADR 0127），这样读者
         不会看到「第一次已结束、第二次还没开始」的中间态。"""
@@ -1677,7 +1692,7 @@ class SessionService:
             outcome, code = _outcome_of(done_result, fin)
             fallback = None
             try:
-                fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code)
+                fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code, desktop)
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
             if (
@@ -1704,7 +1719,13 @@ class SessionService:
                 attempt.missing = missing
                 if fallback is not None:
                     self._start_fallback(
-                        sess, attempt, fallback, code, launch=launch, finalize=finalize
+                        sess,
+                        attempt,
+                        fallback,
+                        code,
+                        launch=launch,
+                        finalize=finalize,
+                        desktop=desktop,
                     )
                 attempt.finalized = True
                 if refresh is not None:
@@ -1727,7 +1748,13 @@ class SessionService:
         sess.ledger.decline(attempt.attempt_id, reason)
 
     def _plan_fallback(
-        self, sess: Session, attempt: _Attempt, done_plan, done_result, code: str
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        done_plan,
+        done_result,
+        code: str,
+        desktop: bool = False,
     ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
         """锁外：safe 尝试以 `code` 收场后，要不要接一次 native。回 `(native 计划, 它的执行身份)`；不回退回 None。
 
@@ -1745,6 +1772,7 @@ class SessionService:
             cause_code=code,
             nxt=provisional,
             cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
+            desktop_initiated=desktop,
         )
         if not decision:
             self._decline(sess, attempt, decision.reason)
@@ -1783,6 +1811,7 @@ class SessionService:
             cause_code=code,
             nxt=key,
             cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
+            desktop_initiated=desktop,
         )
         if not again:
             self._decline(sess, attempt, again.reason)
@@ -1799,7 +1828,15 @@ class SessionService:
         return nplan, key
 
     def _start_fallback(
-        self, sess: Session, attempt: _Attempt, fallback, code: str, *, launch, finalize
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        fallback,
+        code: str,
+        *,
+        launch,
+        finalize,
+        desktop: bool = False,
     ) -> None:
         """会话锁内：把 native 回退作为**同一会话的第二个 attempt** 交出去。最后一刻再核一次取消 / 失效 / 闸门
         （锁外规划期间用户可能点了取消）；任何一项不成立就保持原结局，一行用户代码都不再跑。"""
@@ -1820,6 +1857,7 @@ class SessionService:
             cause_code=code,
             nxt=key,
             cancelled=False,
+            desktop_initiated=desktop,
         )
         if not decision:
             self._decline(sess, attempt, decision.reason)
@@ -1834,7 +1872,7 @@ class SessionService:
         sess.ledger.record(nplan.plan_id, key, cause=code)
         self._prep.register(nplan)
         sess.attempts.append(second)
-        done = self._done_callback(sess, second, launch=launch, finalize=finalize)
+        done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
         found = self._prep.get(nplan.plan_id, sess.project_id)
         try:
             if found is None or found[1].status != preparation.STATUS_PENDING:
@@ -1915,6 +1953,7 @@ class SessionService:
         launch,
         finalize,
         prepare,
+        desktop: bool = False,
     ) -> None:
         """会话锁内（转移时新旧两把锁都在）：核对授权摘要 → 核会话可武装 → 冲突 / 转移 → 创建意图。
         什么都不执行；失败一律零副作用。"""
@@ -1982,6 +2021,7 @@ class SessionService:
                 launch=launch,
                 finalize=finalize,
                 prepare=prepare,
+                desktop=desktop,
             )
             intent.note("arm", action.id, now)
             sess.intent = intent
@@ -2136,7 +2176,13 @@ class SessionService:
             self._revoke_intent(sess, INTENT_REVOKED, "budget_exhausted")
             return None
         try:
-            self._claim_run(sess, action, launch=intent.launch, finalize=intent.finalize)
+            self._claim_run(
+                sess,
+                action,
+                launch=intent.launch,
+                finalize=intent.finalize,
+                desktop=intent.desktop,
+            )
         except SessionError as exc:
             self._revoke_intent(sess, INTENT_REVOKED, f"claim_refused:{exc.code}")
         except Exception:  # noqa: BLE001 — 没交出去（`_claim_run` 已撤回认领）：意图终结，不重试
