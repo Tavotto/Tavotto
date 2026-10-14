@@ -471,3 +471,10 @@ def test_baseline_shape_pins_render_failures_and_every_registered_baseline_has_a
     a = _o(figures_captured=0, render_errors=[])
     b = _o(figures_captured=1, render_errors=[{"asset_id": "a", "error": "X"}])
     assert cs.baseline_shape(a) != cs.baseline_shape(b)
+
+
+def test_baseline_shape_has_exactly_the_pinned_keys_including_facts():
+    shape = cs.baseline_shape(_o(facts={"dependency_installs": ["x"]}))
+    assert set(shape) == set(cs.SHAPE_KEYS)
+    assert shape["facts.dependency_installs"] == ["x"]
+    assert shape["facts.modules_absent"] is None
