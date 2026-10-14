@@ -3945,3 +3945,45 @@ class TestYamlIndentlessSequence:
         assert any("sib: ok_seq" in t for t in texts.values()), "日志没进包：用例是空的"
         for name, text in texts.items():
             assert "REAL_SECRET" not in text, name
+
+
+class TestBoringContainerWordsNeedBoundaries:
+    """容器里的 true/false/null/none 豁免只认独立的词；拼在一起的哨兵词是口令。"""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "[truefalse]",
+            "(nullnone)",
+            "[TrueNone]",
+            "{falsetrue}",
+            "[true,falsenull]",
+            "(none nulltrue)",
+            "[truex]",
+        ],
+    )
+    @pytest.mark.parametrize("key", ["password", "token", "DB_PASS"])
+    def test_concatenated_sentinels_are_redacted(self, key, value):
+        out = diagdetail.Scrubber().text(f"{key}={value} tail=keep")
+        assert value not in out and "<redacted>" in out, out
+
+    @pytest.mark.parametrize("value", ["[]", "(None)", "[true, false]", "{null: none}", "( TRUE )"])
+    def test_real_boring_containers_are_kept(self, value):
+        out = diagdetail.Scrubber().text(f"token={value}")
+        assert out == f"token={value}", out
+
+    def test_final_zip_has_no_hits(self, client, world):
+        log = world["tmp"] / "boring.log"
+        log.write_text("password=[truefalse]\ntoken=(nullnone)\nsib: ok_boring\n", encoding="utf-8")
+        import tavotto.engine.diagnostics as dg
+
+        orig = dg._app_log_path
+        dg._app_log_path = lambda: log
+        try:
+            _prep, z = _prepare(client)
+        finally:
+            dg._app_log_path = orig
+        texts = _texts(z)
+        assert any("sib: ok_boring" in t for t in texts.values()), "日志没进包：用例是空的"
+        for name, text in texts.items():
+            assert "truefalse" not in text and "nullnone" not in text, name

@@ -373,7 +373,8 @@ _BORING_VALUE = re.compile(
     re.I,
 )
 
-_BORING_TOKENS = re.compile(r"[\s\[\]{}(),:]|true|false|null|none", re.I)
+_CONTAINER_SEPARATORS = re.compile(r"[\s\[\]{}(),:]+")
+_BORING_WORDS = frozenset({"true", "false", "null", "none"})
 
 
 def _has_quote(segment: str) -> bool:
@@ -381,8 +382,10 @@ def _has_quote(segment: str) -> bool:
 
 
 def _containers_are_boring(segment: str) -> bool:
-    """括号段里只有布尔 / null / 分隔符（**数字也不行**：`password=[123456]` 是口令）：保留，如 `token=[]`、`token=(None)`。"""
-    return _BORING_TOKENS.sub("", segment) == ""
+    """括号段里只有布尔 / null / 分隔符（**数字也不行**：`password=[123456]` 是口令）：保留，如 `token=[]`、`token=(None)`。
+    每个白名单字面量都要是独立的词：`password=[truefalse]`、`token=(nullnone)` 是口令。"""
+    # 按分隔符切成整词再逐个比：`[truefalse]` / `(nullnone)` 是一个词，不在白名单里
+    return all(w.lower() in _BORING_WORDS for w in _CONTAINER_SEPARATORS.split(segment) if w)
 
 
 _CLOSER = {"(": ")", "[": "]", "{": "}"}
