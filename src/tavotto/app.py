@@ -7429,11 +7429,16 @@ def _native_preparation_runner(pl, before_retry=None):
     # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
     # 顺序与关项目一致:先计划、再会话 / 票据
     engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)
-    engine_nativesession.REGISTRY.cancel_project(pl.project_root, script=spec.target)
+    engine_nativesession.REGISTRY.cancel_project(
+        pl.project_root, script=spec.target, older_than=pl.launch_order
+    )
     try:
         session = engine_desktopproc.start(
             engine_desktopproc.OwnedLaunch(
-                spec, launch_id=pl.plan_id, project_epoch=pl.project_epoch
+                spec,
+                launch_id=pl.plan_id,
+                project_epoch=pl.project_epoch,
+                launch_order=pl.launch_order,
             )
         )
     except engine_runcodes.RunError as exc:
@@ -7548,17 +7553,19 @@ def _desktop_initiated() -> bool:
 def _launch_session_attempt(ctx: "ProjectCtx", plan, on_done=None) -> None:
     """会话 `run` 认领出来的尝试交给执行线程。safe 尝试开始前，同一脚本上一次桌面 native 会话 / 计划票据先让位
     （P2）：回退成功后 native 进程停在屏障上占着环境租约，用户重跑 safe 不让位就会一直 `environment_in_use_by_native_session`。
-    复用 #1022 重跑入口的同两个机制（`cancel_project(script=, keep=)` 与 `REGISTRY.cancel_project(script=)`）；
+    复用 #1022 重跑入口的同两个机制（`cancel_project(script=, keep=)` 与 `REGISTRY.cancel_project(script=, older_than=)`）；
     native 尝试由 `_native_preparation_runner` 自己做同样的事。旧的素材准备端点不走这里（面板展示不该结束正在编辑的活图）。"""
-    if plan.execution != engine_execspec.PROFILE_NATIVE and plan.script:
+    found = engine_preparation.SERVICE.get(plan.plan_id, plan.project_id)
+    order = found[0].launch_order if found is not None else None
+    if plan.execution != engine_execspec.PROFILE_NATIVE and plan.script and order is not None:
+        # 与 `_native_preparation_runner` 同一套让位语义：只结束登记序号**比自己小**的（`older_than=`）。被更新的重跑取代的
+        # 旧动作因此结束不了新一次（可能已回退到 native）的会话 / 票据（Codex #1028 r4268029512）
         engine_preparation.SERVICE.cancel_project(
             plan.project_id, script=plan.script, keep=plan.plan_id
         )
-        # native 会话 / 在途票据没有登记顺序，按计划的登记顺序判：已有更新的同脚本重跑 = 本动作被取代，
-        # 它（可能已回退到 native）才是该让位的对象，不是我们——不去结束它（Codex #1028 r4268029512）。
-        # 判定与结束之间仍有一个极窄的窗口（新重跑恰在两者之间登记）；那种情形新重跑自己的启动会再让位一次
-        if not engine_preparation.SERVICE.superseded(plan.plan_id):
-            engine_nativesession.REGISTRY.cancel_project(plan.project_root, script=plan.script)
+        engine_nativesession.REGISTRY.cancel_project(
+            plan.project_root, script=plan.script, older_than=order
+        )
     _launch_preparation(ctx, plan, on_done)
 
 

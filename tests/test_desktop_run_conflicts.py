@@ -491,3 +491,48 @@ def test_a_reopened_project_is_not_blocked_by_the_old_marker_but_old_plans_stay_
     preparation.SERVICE.register(fresh)
     session, _resp, _ = m._native_preparation_runner(preparation.SERVICE._entry(fresh.plan_id).plan)  # noqa: SLF001
     session.cancel_owned()
+
+
+def test_an_older_rerun_never_stops_a_newer_launch_of_the_same_script(tmp_path):
+    """两个重跑交错:较新的计划先起了会话,较老的(已被标取消的)线程随后才走到 runner——它只能停比自己更早的启动,
+    不能把较新的那条杀掉(Codex #1022 第十轮)。较老的那条自己则被 `note_owner` 的取消收掉。"""
+    from tavotto import app as m
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    older, newer = _native_plan(proj, "pj-order"), _native_plan(proj, "pj-order")
+    preparation.SERVICE.register(older)
+    preparation.SERVICE.register(newer)
+    plan_older = preparation.SERVICE._entry(older.plan_id).plan  # noqa: SLF001
+    plan_newer = preparation.SERVICE._entry(newer.plan_id).plan  # noqa: SLF001
+    assert plan_older.launch_order < plan_newer.launch_order
+    session_newer, _resp, _ = m._native_preparation_runner(plan_newer)  # 较新的先走完 runner
+    try:
+        with pytest.raises(pool.WorkerError):  # 较老的随后才到:自己因计划已被取消而收场
+            m._native_preparation_runner(plan_older)
+        assert not session_newer.owned.finished, "较老的重跑把较新的启动杀了"
+        assert session_newer.state == nativesession.BARRIER
+    finally:
+        session_newer.cancel_owned()
+
+
+def test_registry_rerun_cancel_follows_launch_order_for_sessions(tmp_path):
+    """会话带着计划序号:`older_than=N` 只停序号 < N 的;序号未知的(终端拥有的 / 不经计划的)不碰。"""
+    import dataclasses
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    base = dk.launch_for(tmp_path, SCRIPT, name="fig.py", launch_id="ord-5")
+    session = dk.desktopproc.start(dataclasses.replace(base, launch_order=5))
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    nativesession.REGISTRY._starting.clear()  # noqa: SLF001 — 只量会话自己带的序号（票据的序号另有用例）
+    try:
+        assert nativesession.REGISTRY.cancel_project(str(proj), script="fig.py", older_than=5) == 0
+        assert nativesession.REGISTRY.cancel_project(str(proj), script="fig.py", older_than=3) == 0
+        assert not session.owned.finished
+        assert nativesession.REGISTRY.cancel_project(str(proj), script="fig.py", older_than=6) == 1
+        assert session.owned.finished
+    finally:
+        if not session.owned.finished:
+            session.cancel_owned()

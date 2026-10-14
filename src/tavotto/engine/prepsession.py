@@ -1924,7 +1924,7 @@ class SessionService:
             epoch=attempt.epoch,
         )
         sess.ledger.record(nplan.plan_id, key, cause=code)
-        self._prep.register(nplan)
+        self._prep.register(nplan, project_epoch=attempt.epoch)
         sess.attempts.append(second)
         done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
         found = self._prep.get(nplan.plan_id, sess.project_id)
