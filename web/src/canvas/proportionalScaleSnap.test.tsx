@@ -146,6 +146,23 @@ describe('等比缩放吸附', () => {
     drag('se', [16, 0], { ctrlKey: true })
   })
 
+  it('Alt 反转成非等比的角柄：仍走原来的只吸动边，不套等比', () => {
+    drag('se', [16, 0], { altKey: true })
+    const a = get('pa') as PanelObject
+    expect(a.w).toBeCloseTo(116, 6)
+    expect(a.h).toBeCloseTo(75, 6)
+  })
+
+  it('⌘ 那帧清掉保持：松开 ⌘ 后离旧吸点 2mm（> 容差、< 2×容差）不再被拽回去', () => {
+    startResizeDrag(down(0, 0), 'pa', 'se')
+    fire('pointermove', [16, 0])
+    expect((get('pa') as PanelObject).w).toBeCloseTo(100 * (70 / 60), 6) // 吸上
+    fire('pointermove', [18, 0], { metaKey: true })
+    fire('pointermove', [20, 0]) // 子图右边 72：旧吸点 70 在 2mm 外
+    expect((get('pa') as PanelObject).w).toBeCloseTo(120, 6)
+    fire('pointerup', [20, 0])
+  })
+
   it('容差外不吸', () => {
     drag('se', [10, 0]) // s0 = 1.10：子图右边 66，离 70 有 4mm
     expect((get('pa') as PanelObject).w).toBeCloseTo(110, 6)

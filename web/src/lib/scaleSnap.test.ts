@@ -3,9 +3,13 @@
  */
 import { describe, expect, it } from 'vitest'
 
+import type { Manifest } from './api'
+import type { PanelObject } from '@/types/document'
 import type { SnapLine } from './geometry'
 import {
   createScaleHold,
+  scaleAnchorsFor,
+  scaleSnapCandidates,
   frameAnchors,
   scaleFixedPoint,
   scaledRect,
@@ -150,5 +154,35 @@ describe('scaleFixedPoint / scaledRect', () => {
     expect(r).toEqual({ x: -30, y: -10, w: 80, h: 40 })
     expect(r.x + r.w).toBe(50)
     expect(r.y + r.h).toBe(30)
+  })
+})
+
+describe('裁剪窗外的子图线不算', () => {
+  // 完整内容 100 宽、只露出中间 50（crop.x=0.3,w=0.5）：面板 x∈[0,50]，完整内容 x∈[−30,70]
+  const cropped = {
+    id: 'p', type: 'panel', x: 0, y: 0, w: 50, h: 75, nativeW: 100, nativeH: 75,
+    fileId: 'f', overrides: [], crop: { x: 0.3, y: 0, w: 0.5, h: 1 },
+  } as unknown as PanelObject
+  const manifest: Manifest = {
+    stem: 'F', size_mm: [100, 75],
+    elements: [
+      { gid: 'axes_0', role: 'axes', label: '', bbox: [0.1, 0.2, 0.5, 0.6], draggable: false, resizable: true,
+        editable: [{ prop: 'position', type: 'rect', value: [0.1, 0.2, 0.5, 0.6] }] },
+    ],
+  } as unknown as Manifest
+
+  it('锚点：子图左边 −20 在窗外，中线 5 与右边 30 在窗内', () => {
+    const a = scaleAnchorsFor(cropped, manifest)
+    expect(a.xs.filter((x) => !x.frame).map((x) => x.v)).toEqual([5, 30])
+  })
+
+  it('候选：别的面板子图左边 −20 在窗外不出线，右边 30 出线', () => {
+    const c = scaleSnapCandidates({
+      objects: [cropped], exclude: new Set(), page: { w: 150, h: 100 }, guides: [],
+      prefs: { objects: true, guides: false, grid: false, gridSize: 10 },
+      manifestOf: () => manifest,
+    })
+    const axes = c.xs.filter((l) => l.kind === 'axes').map((l) => l.v)
+    expect(axes).toEqual([30])
   })
 })
