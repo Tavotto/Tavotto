@@ -441,7 +441,8 @@ def main(argv: list[str] | None = None) -> int:
             previous = json.loads(args.summary.read_text(encoding="utf-8"))
             suites = previous.get("suites") if isinstance(previous, dict) else None
             if (
-                previous.get("schema") != SCHEMA
+                not isinstance(previous, dict)
+                or previous.get("schema") != SCHEMA
                 or previous.get("status") != "ok"
                 or not isinstance(suites, dict)
                 or suites.get("symbol_ui") != "ok"

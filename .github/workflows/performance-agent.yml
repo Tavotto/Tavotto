@@ -159,6 +159,15 @@ jobs:
             fi
             exit 0
           fi
+          # 外部同机历史比较完成后也更新本次 Agent 的总报告，
+          # 不能让 summary.json 继续声称 not_checked。
+          python scripts/perf_agent.py compare "$CURRENT" "$BASE" --json "$RESULT" \
+            --summary "web/test-results/perf-agent/summary.json" || :
+          summary_verdict="$(python -c 'import json; print(json.load(open("web/test-results/perf-agent/summary.json", encoding="utf-8"))["regression_status"])')"
+          if [[ "$summary_verdict" != "$verdict" ]]; then
+            echo "::error::Failed to persist baseline comparison into summary.json"
+            exit 1
+          fi
           echo "Baseline verdict: **$verdict** (advisory: ephemeral shared runner)" >> "$GITHUB_STEP_SUMMARY"
           case "$verdict" in
             pass) echo "Comparable baseline found; no defined regression detected." ;;

@@ -243,3 +243,26 @@ def test_workflow_checks_each_recent_main_artifact_until_compatible():
     assert 'candidate="$target/test-results/perf-agent/run.json"' in workflow
     assert 'if [[ "$verdict" == "incomparable" ]]; then' in workflow
     assert 'if [[ "$verdict" != "pass" && "$verdict" != "regression" ]]; then' in workflow
+
+
+
+def test_external_comparison_writes_back_the_run_summary(tmp_path):
+    """Actions 单独 compare 一次，原 summary 也必须反映回归，不能继续 not_checked。"""
+    current = tmp_path / "run.json"
+    baseline = tmp_path / "baseline.json"
+    summary = tmp_path / "summary.json"
+    outcome = tmp_path / "comparison.json"
+    current.write_text(json.dumps(report(value=55)), encoding="utf-8")
+    baseline.write_text(json.dumps(report(value=20)), encoding="utf-8")
+    summary.write_text(
+        json.dumps(A.compose_run_summary(A.summarize(report(value=55)), "ok")),
+        encoding="utf-8",
+    )
+    rc = A.main(
+        ["compare", str(current), str(baseline), "--json", str(outcome), "--summary", str(summary)]
+    )
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert rc == 3
+    assert saved["status"] == "regression"
+    assert saved["regression_status"] == "regression"
+    assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "ok"}
