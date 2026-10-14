@@ -281,7 +281,7 @@ describe('Proxy 实参不被反射遍历（#1012 2）', () => {
     return { proxy: new Proxy(target, handler as ProxyHandler<object>), traps }
   }
 
-  it('Proxy 对象 / 数组 / 函数被 console.error 时 trap 调用 0 次，写 [object]', () => {
+  it('Proxy 对象 / 数组 / 无原型对象被 console.error 时 trap 调用 0 次，写 [object]', () => {
     uninstall = installConsoleCapture()
     const cases = [countingProxy({ a: 1 }), countingProxy([1, 2]), countingProxy(Object.create(null))]
     for (const c of cases) console.error('x', c.proxy)
