@@ -37,7 +37,8 @@ def test_route_conflict_fails_the_run_and_ends_the_new_process(tmp_path):
     nativekit.wait_state(holder, [nativesession.BARRIER])
     holder.ensure_built()
     assert nativesession.REGISTRY.bind_assets(holder) == []
-    holder.spec = None  # 不是本脚本的桌面运行:重新运行时的「旧图让位」不会收它,冲突必须由路由判
+    holder.spec = None
+    nativesession.REGISTRY._starting.clear()  # noqa: SLF001 — 终端拥有的会话没有启动票据:别让它被重跑的取消带走  # 不是本脚本的桌面运行:重新运行时的「旧图让位」不会收它,冲突必须由路由判
 
     plan = preparation.plan_for(
         project_id="p",
@@ -72,7 +73,8 @@ def _holder_and_second(tmp_path):
     nativekit.wait_state(holder, [nativesession.BARRIER])
     holder.ensure_built()
     assert nativesession.REGISTRY.bind_assets(holder) == []
-    holder.spec = None  # 不是本脚本的桌面运行:重新运行时的「旧图让位」不会收它
+    holder.spec = None
+    nativesession.REGISTRY._starting.clear()  # noqa: SLF001 — 终端拥有的会话没有启动票据:别让它被重跑的取消带走  # 不是本脚本的桌面运行:重新运行时的「旧图让位」不会收它
     second = dk.desktopproc.start(dk.launch_for(tmp_path, SCRIPT, name="fig.py", launch_id="s1"))
     nativekit.wait_state(second, [nativesession.BARRIER])
     return proj, holder, second
@@ -306,3 +308,109 @@ def test_app_close_project_cancels_preparations_and_marks_the_project_closed(tmp
     nativesession.REGISTRY.reserve("after-reopen", str(proj))
     nativesession.REGISTRY.unreserve("after-reopen")
     m.close_project(pid)
+
+
+def _native_plan(proj, project_id):
+    return preparation.plan_for(
+        project_id=project_id,
+        project_root=str(proj),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+        execution="native",
+    )
+
+
+def test_rerun_cancels_an_in_flight_launch_of_the_same_script(tmp_path, monkeypatch):
+    """同一脚本的重新运行 = 取消该脚本上还在启动的那一条(票据),不只是已登记的会话(Codex #1022 r4267467883)。"""
+    import threading
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gate, reached = threading.Event(), threading.Event()
+    real_adopt = nativesession.REGISTRY.adopt
+
+    def slow_adopt(session):
+        reached.set()
+        gate.wait(30)
+        real_adopt(session)
+
+    monkeypatch.setattr(nativesession.REGISTRY, "adopt", slow_adopt)
+    launch = dk.launch_for(tmp_path, "import time\ntime.sleep(600)\n", name="fig.py")
+    box = {}
+
+    def go():
+        try:
+            box["session"] = dk.desktopproc.start(launch)
+        except Exception as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    assert reached.wait(60)
+    # 别的脚本的重跑不碰它
+    assert nativesession.REGISTRY.cancel_project(str(proj), script="other.py") == 0
+    assert nativesession.REGISTRY.cancel_project(str(proj), script="fig.py") == 1
+    gate.set()
+    t.join(60)
+    owned = box["session"].owned
+    dk.wait_until(lambda: owned.finished, timeout=30, what="重跑取消了在途启动")
+
+
+def test_preparation_service_rerun_cancels_older_plans_of_the_same_script(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    old, new = _native_plan(proj, "pj-r"), _native_plan(proj, "pj-r")
+    preparation.SERVICE.register(old)
+    preparation.SERVICE.register(new)
+    assert preparation.SERVICE.cancel_project("pj-r", script="fig.py", keep=new.plan_id) == 1
+    assert preparation.SERVICE.get(old.plan_id, "pj-r")[1].status == preparation.STATUS_CANCELLED
+    assert preparation.SERVICE.get(new.plan_id, "pj-r")[1].status != preparation.STATUS_CANCELLED
+
+
+def test_close_project_cancels_and_marks_before_the_blocking_pool_shutdown(tmp_path, monkeypatch):
+    """`close_project(wait=True)` 里 `pool.shutdown_all` 可能阻塞数秒:此时准备已被取消、项目已标记关闭
+    (Codex #1022 r4267467886)。"""
+    from tavotto import app as m
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    pid = m.open_project(str(proj), make_default=False)["id"]
+    plan = _native_plan(proj, pid)
+    preparation.SERVICE.register(plan)
+    seen = {}
+
+    def fake_shutdown(*a, **k):
+        seen["plan"] = preparation.SERVICE.get(plan.plan_id, pid)[1].status
+        try:
+            nativesession.REGISTRY.reserve("during-shutdown", str(proj))
+            seen["closed"] = False
+        except runcodes.RunError:
+            seen["closed"] = True
+
+    monkeypatch.setattr(m.engine_pool, "shutdown_all", fake_shutdown)
+    m.close_project(pid, wait=True)
+    assert seen == {"plan": preparation.STATUS_CANCELLED, "closed": True}
+
+
+def test_native_runner_supersedes_older_plans_of_the_same_script(tmp_path):
+    """runner 的重跑入口:先取消同脚本更早的准备计划,再处理票据 / 会话(与关项目同一个顺序)。"""
+    from tavotto import app as m
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    old, new = _native_plan(proj, "pj-super"), _native_plan(proj, "pj-super")
+    preparation.SERVICE.register(old)
+    session, _resp, _ = m._native_preparation_runner(new)
+    try:
+        assert preparation.SERVICE.get(old.plan_id, "pj-super")[1].status == (
+            preparation.STATUS_CANCELLED
+        )
+    finally:
+        session.cancel_owned()

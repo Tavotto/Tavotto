@@ -248,6 +248,81 @@ def test_closing_the_project_before_the_fallback_starts_no_native_run(
     assert _history(final)[0]["declined"] == "cancelled" and len(_history(final)) == 1
 
 
+def _window(monkeypatch):
+    """把 `_plan_fallback` 停在「safe 已终局、回退还没接上」的窗口里。"""
+    entered, release = threading.Event(), threading.Event()
+    real = prepsession.SessionService._plan_fallback
+
+    def slow(self, *a, **kw):
+        entered.set()
+        assert release.wait(10)
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(prepsession.SessionService, "_plan_fallback", slow)
+    return entered, release
+
+
+def test_a_same_script_rerun_elsewhere_cancels_a_session_waiting_to_fall_back(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """别处同脚本重跑（`cancel_project(script=, keep=别的计划)`）让位：本会话窗口里的回退不再起 native。"""
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    pid = _get(client, sid).get_json()["project_id"]
+    preparation.SERVICE.cancel_project(pid, script="fig.py", keep="prep-someone-elses")
+    release.set()
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert native["calls"] == [] and _history(final)[0]["declined"] == "cancelled"
+
+
+def test_a_rerun_of_another_script_does_not_stop_the_fallback(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    pid = _get(client, sid).get_json()["project_id"]
+    preparation.SERVICE.cancel_project(pid, script="other.py", keep="prep-x")
+    release.set()
+    final = _settle(client, sid)
+    assert len(native["calls"]) == 1 and final["phase"] == "completed"
+
+
+def test_the_sessions_own_rerun_plan_is_kept_and_does_not_block_its_fallback(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """`keep` 是本会话自己的计划（回退的 native 尝试启动时自己调 `cancel_project(script=, keep=自己)`）：不标自己。"""
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    mid = _get(client, sid).get_json()
+    own = mid["provider"]["attempt_id"]
+    preparation.SERVICE.cancel_project(mid["project_id"], script="fig.py", keep=own)
+    release.set()
+    final = _settle(client, sid)
+    assert len(native["calls"]) == 1 and final["phase"] == "completed"
+
+
+def test_a_same_script_rerun_elsewhere_cancels_a_running_fallback_attempt(
+    client, tmp_path, fake_pool, native, sessions
+):
+    native["gate"].clear()
+    sid = _start(client, tmp_path, fake_pool)
+    deadline = time.time() + 10
+    while not native["calls"]:
+        assert time.time() < deadline
+        time.sleep(0.02)
+    mid = _get(client, sid).get_json()
+    got = preparation.SERVICE.cancel_project(
+        mid["project_id"], script="fig.py", keep="prep-someone-elses"
+    )
+    assert got >= 1
+    native["gate"].set()
+    assert _settle(client, sid)["phase"] == "cancelled"
+
+
 def test_closing_the_project_cancels_a_running_fallback_attempt(
     client, tmp_path, fake_pool, native, sessions
 ):

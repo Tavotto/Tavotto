@@ -1099,11 +1099,20 @@ class SessionService:
         self.notifier: Callable[[dict], None] | None = None
         self._prep.project_cancel_listeners.append(self._on_project_cancel)
 
-    def _on_project_cancel(self, project_id: str) -> None:
-        """项目关闭（`PreparationService.cancel_project`）：本项目所有会话落取消标记，之后到的 blocked 不再回退 native。
+    def _on_project_cancel(
+        self, project_id: str, script: str | None = None, keep: str | None = None
+    ) -> None:
+        """`PreparationService.cancel_project` 的监听：范围内的会话落取消标记，之后到的 blocked 不再回退 native。
+        范围 = 项目（关闭）或项目内同一脚本（重跑让位）；名下有 `keep`（重跑的新计划）的会话不标——那是重跑自己。
         只赋一个布尔，不取会话锁（调用方可能持着别的锁）。"""
         with self._lock:
-            mine = [s for s in self._by_id.values() if s.project_id == project_id]
+            mine = [
+                s
+                for s in self._by_id.values()
+                if s.project_id == project_id
+                and (script is None or s.plan.script == script)
+                and not (keep and any(a.attempt_id == keep for a in s.attempts))
+            ]
         for sess in mine:
             sess.cancel_requested = True
 

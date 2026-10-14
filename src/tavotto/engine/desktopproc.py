@@ -685,7 +685,7 @@ def start(
     ticket = None
     try:
         ticket = registry.begin_start(
-            launch.launch_id, spec.project_root
+            launch.launch_id, spec.project_root, spec.target
         )  # spawn 之前先登记在途：关停的快照一定看得见
         # Conda 环境：与 safe 档同一个启动决策（`launcher_for_interpreter`）。桌面拥有的会话由 GUI 启动，没有用户 shell 替它激活。
         # **在租约之内、spawn 之前**取：激活要跑 conda 与 activate.d，不能和正在进行的装包并发（租约挡住）；

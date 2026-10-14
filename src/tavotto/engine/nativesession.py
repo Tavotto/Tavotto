@@ -930,12 +930,14 @@ class StartTicket:
     `shutdown_all` 的快照里要么看得到它（并标 `cancelled`，之后挂所有者的一步会被拒），要么注册表已 closing
     根本领不到——两者之间没有「进程已起、谁也看不见」的窗口。"""
 
-    __slots__ = ("launch_id", "project_root", "owner", "cancelled", "done")
+    __slots__ = ("launch_id", "project_root", "script", "owner", "cancelled", "done")
 
-    def __init__(self, launch_id: str, project_root: str = ""):
+    def __init__(self, launch_id: str, project_root: str = "", script: str = ""):
         self.launch_id = launch_id
         #: 这次启动属于哪个项目(项目关闭据此取消在途启动);空 = 不属于任何项目
         self.project_root = project_root
+        #: 启动的脚本(`spec.target`,项目相对);同一脚本的重新运行据此取消在途启动
+        self.script = script
         self.owner = None
         self.cancelled = False
         #: 启动线程走完（成功或失败收尾都做完）时置位：关停据此等「在途的启动线程」，哪怕它还没 Popen
@@ -1027,11 +1029,13 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             self._reserved.add(launch_id)
 
-    def begin_start(self, launch_id: str, project_root: str = "") -> StartTicket:
+    def begin_start(self, launch_id: str, project_root: str = "", script: str = "") -> StartTicket:
         """spawn **之前**领在途登记；closing 时拒绝（一行用户代码都没跑）。"""
         with self._lock:
             self._refuse_if_closed(project_root)
-            ticket = StartTicket(launch_id, os.path.realpath(project_root) if project_root else "")
+            ticket = StartTicket(
+                launch_id, os.path.realpath(project_root) if project_root else "", script
+            )
             self._starting[launch_id] = ticket
             return ticket
 
@@ -1067,6 +1071,11 @@ class NativeSessionRegistry:
         with self._lock:
             self._closed_projects.add(os.path.realpath(project_root))
         return self.cancel_project(project_root)
+
+    def mark_project_closed(self, project_root: str) -> None:
+        """只做标记(此后这个项目的新启动当场被拒)。关项目分步做时先标记、再取消准备、再 `close_project` 结束会话。"""
+        with self._lock:
+            self._closed_projects.add(os.path.realpath(project_root))
 
     def reopen_project(self, project_root: str) -> None:
         with self._lock:
@@ -1202,10 +1211,15 @@ class NativeSessionRegistry:
         终端拥有的一条不碰（用户的进程，关项目不该带走它，ADR 0021 §8.1）。`script` 非空 = 只结束这个脚本的
         （`spec.target` 是项目相对 POSIX 路径）。每条走 `cancel_owned()`：等到所有者确认进程组 / Job 空、租约放掉。"""
         # 还没登记的在途启动(`begin_start` 与 `adopt` 之间):标 cancelled,挂所有者 / 登记的下一步会被拒;
-        # 已挂所有者的当场同步结束(与 `shutdown_all` 同一套)。按脚本收(重新运行)时不碰在途启动——那是调用方自己接下来要起的
+        # 已挂所有者的当场同步结束(与 `shutdown_all` 同一套)。重新运行(`script` 非空)只取消**同一脚本**的在途启动:
+        # 调用方自己的启动此刻还没领票据,所以不会误伤;两条重叠的重跑,后来的取消先来的(旧的先于新的起进程之前收掉)
         root = os.path.realpath(project_root)
         with self._lock:
-            flying = [t for t in self._starting.values() if t.project_root == root and not script]
+            flying = [
+                t
+                for t in self._starting.values()
+                if t.project_root == root and (not script or t.script == script)
+            ]
             for t in flying:
                 t.cancelled = True
         stoppers = [t.owner.terminate_sync for t in flying if t.owner is not None]

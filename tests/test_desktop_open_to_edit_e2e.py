@@ -362,3 +362,19 @@ def test_a_failing_native_script_is_not_rerun_behind_the_users_back(tmp_path):
         # 失败的运行不留活进程 / 租约：没有仍在运行的桌面会话
         live = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
         assert live == []
+
+
+def test_stopping_the_native_session_cancels_the_preparation_too(tmp_path):
+    """界面在提问上点「停止」只调 native 会话的 cancel 端点:准备会话也要落 `cancelled`,不是失败
+    (Codex #1022 r4267467892)。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text("input('go? ')\n", encoding="utf-8")
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        sid = _start(app, proj)
+        s = _pending(app, proj)
+        pid = s["process_pid"]
+        status, body = app.call(f"/api/native/sessions/{s['session_id']}/cancel", {})
+        assert status == 200 and body["confirmed"] is True
+        _wait(lambda: not _alive(pid), "进程退出", 30)
+        assert _settled(app, sid)["phase"] == "cancelled"
