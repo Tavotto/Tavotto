@@ -364,18 +364,16 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
   不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的
   （`pool.select_worker_python`）。`plan_for` 写进环境错误，`_execute` 零执行收场（`deprepair.decide_environment_pinned` 把它转成 `WorkerError`）。
-  **只激活用户自己的 conda 认领过的 prefix**：登记在 `~/.conda/environments.txt`，或就是 `CONDA_EXE` / `PATH` 上那个 conda 的安装根
-  （base）/ 它的 `envs/<名字>`（`launcher._trusted_prefix`）。激活会 source prefix 自己的 `activate.d`——克隆来的项目自带的
-  `.venv/conda-meta/` + 钩子一律直接启动（与 P09 之前一致），检查不执行项目里的脚本。
+  **只激活用户自己的 conda 安装里的环境**：安装根本身（base）或它的 `envs/<名字>`；安装根来自 `CONDA_EXE` / `PATH` 上的 conda
+  与常见安装位置（`launcher._STANDARD_ROOTS`，须确实是安装根：`conda-meta/` + 可执行的 `bin/conda`）。激活会 source prefix
+  自己的 `activate.d`；任何凭登记 / 路径形状的推断（environments.txt、项目标记）都可能被项目目录冒充，所以不用——其它位置的
+  Conda 环境（`conda create -p` 到任意目录、克隆项目自带的 `.venv/conda-meta/`）一律直接启动（与 P09 之前一致），
+  直接启动失败也不当成对环境的结论（`unlocated_conda_prefix`）。
   计划 / 钉下的决定 / 热会话比的是完整启动上下文 `launcher.context_key`（直接启动 ↔ 激活、conda、prefix、环境版本）。
-  **prefix 旁边的 conda**（`<root>/envs/<name>` 的 `<root>/bin/conda`、prefix 自己的 `bin/conda`）只在这个 prefix 登记在用户的
-  `~/.conda/environments.txt` 里时才信：克隆来的项目可以自带 `.venv/conda-meta/` + 可执行的 `.venv/bin/conda`，体检不能执行它；
-  `CONDA_EXE` / `PATH` 上的 conda 是用户自己的，照常。
-  找得到 Conda 环境却找不到 conda 可执行文件：先从用户自己的 `~/.conda/environments.txt` 推安装根（**不**读 `conda-meta/history`：那是项目目录里
-  可写的文件，克隆来的项目能自造 `evil/bin/conda` + `evil/conda-meta`，打开项目就会执行它；推出的位置也不许落在项目目录或正在探测的 prefix 里），
-  仍找不到则维持裸起（不需要激活的环境照常工作，与 main
-  相同）；**但裸起失败不是对环境的结论**：`pool._has_matplotlib` / `projectenv.probe_environment` 此时抛 / 返回 `conda_launcher_unavailable`
-  （瞬时，不缓存、不作废记住的解释器、不静默换别的）。
+  conda 可执行文件的候选：prefix 所属安装根的 `bin/conda`，再是 `CONDA_EXE` / `PATH`（不读 `conda-meta/history`、不读 environments.txt：
+  都是项目能伪造或会过期的线索）。不会被激活的 Conda 形状的解释器（找不到 conda / 不在用户 conda 安装里）照常裸起；**但裸起失败不是对环境的
+  结论**：`pool._has_matplotlib` / `projectenv.probe_environment` 此时抛 / 返回 `conda_launcher_unavailable`（瞬时，不缓存、不作废记住的
+  解释器、不静默换别的）。
 - **桌面拥有的 native 会话**（`desktopproc.start`，P06）没有用户 shell 替它激活，与 safe 档走同一个 `activate_env`；激活在**拿到 native 租约之后**、spawn 之前（装包期间连 conda / activate.d 都不跑），
   失败 = 不 spawn、放租约，`RunError(conda_launcher_unavailable)`。捕获前后 `prefix_state` 不一致（捕获期间环境被改）的结果不用也不缓存。终端 native 继承用户已激活的 shell，不改。
 - **增量是双向的**：激活 `unset` 掉的变量在增量里记成 `None`，`launcher.merge_env` 启动时 `pop` 它（所有启动点都经这一处，含 `desktopproc`）；

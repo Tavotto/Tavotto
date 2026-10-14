@@ -103,113 +103,83 @@ def conda_prefix_of(python: str | os.PathLike) -> str | None:
     return None
 
 
-def _conda_candidates(prefix: str) -> list[str]:
-    """prefix 对应的 conda 可执行文件候选（按可信度排序）。"""
-    pre = Path(prefix)
-    # `<root>/envs/<name>` → root；否则 prefix 自己可能就是 base。
-    # **只在这个 prefix 是用户自己的 conda 登记过的环境时**才信 prefix 旁边的 conda：克隆来的项目可以自带一个
-    # `conda-meta/` + 可执行的 `bin/conda`，“检查环境”不能变成“执行项目里的文件”。conda 每建一个环境（含 `-p`）都会
-    # 写进 `~/.conda/environments.txt`——那是用户自己的文件，项目改不了它
-    roots = []
-    if _registered_prefix(pre):
-        roots = [pre.parent.parent] if pre.parent.name == "envs" else []
-        roots.append(pre)
+#: 常见的 conda 安装位置（用户目录 / 系统目录，都不在项目里）。从 Finder / 桌面启动时没有 `CONDA_EXE`、`PATH` 也很短，
+#: 靠这张表找到用户自己的 conda。只认“确实是安装根”的（`conda-meta/` + 可执行的 `bin/conda`）
+_STANDARD_ROOTS = (
+    "~/miniconda3",
+    "~/anaconda3",
+    "~/miniforge3",
+    "~/mambaforge",
+    "~/opt/miniconda3",
+    "~/opt/anaconda3",
+    "/opt/conda",
+    "/opt/miniconda3",
+    "/opt/anaconda3",
+    "/opt/miniforge3",
+    "/usr/local/miniconda3",
+    "/usr/local/anaconda3",
+    "/opt/homebrew/Caskroom/miniforge/base",
+    "/opt/homebrew/Caskroom/miniconda/base",
+    "/opt/homebrew/anaconda3",
+)
+
+
+def _standard_conda_roots() -> list[str]:
+    return [os.path.expanduser(r) for r in _STANDARD_ROOTS]
+
+
+def _is_install_root(root: str) -> bool:
+    return os.path.isdir(os.path.join(root, "conda-meta")) and _is_executable(
+        os.path.join(root, "bin", "conda")
+    )
+
+
+def _user_conda_roots() -> list[str]:
+    """用户自己的 conda 安装根：`CONDA_EXE` / `PATH` 上的 conda 所在的根，加上常见安装位置里确实装着 conda 的那些。
+    全都来自用户的环境变量或固定的安装目录——项目目录里的文件改不了它们。"""
+    raw: list[str] = []
+    for exe in (os.environ.get("CONDA_EXE"), shutil.which("conda")):
+        if exe:
+            try:
+                raw.append(os.path.dirname(os.path.dirname(os.path.realpath(exe))))
+            except (OSError, ValueError):
+                continue
+    for root in _standard_conda_roots():
+        try:
+            raw.append(os.path.realpath(root))
+        except (OSError, ValueError):
+            continue
     out: list[str] = []
-    for root in roots:
-        if os.name == "nt":
-            out.append(str(root / "Scripts" / "conda.exe"))
-        else:
-            out.append(str(root / "bin" / "conda"))
+    for root in raw:
+        if root and root not in out and _is_install_root(root):
+            out.append(root)
+    return out
+
+
+def _owning_root(prefix: str) -> str | None:
+    """prefix 属于哪一个用户 conda 安装：就是安装根本身（base），或在它的 `envs/` 下一层；都不是回 None。"""
+    try:
+        real = os.path.realpath(prefix)
+    except (OSError, ValueError):
+        return None
+    for root in _user_conda_roots():
+        if real == root or os.path.dirname(real) == os.path.join(root, "envs"):
+            return root
+    return None
+
+
+def _conda_candidates(prefix: str) -> list[str]:
+    """prefix 对应的 conda 可执行文件候选（按可信度排序）：它所属安装根的 `bin/conda`，再是 `CONDA_EXE` / `PATH`。"""
+    out: list[str] = []
+    root = _owning_root(prefix)
+    if root is not None:
+        out.append(os.path.join(root, "bin", "conda"))
     env_exe = os.environ.get("CONDA_EXE")
     if env_exe:
         out.append(env_exe)
     which = shutil.which("conda")
     if which:
         out.append(which)
-    # 从 Finder / 桌面启动时没有 CONDA_EXE 也没有 PATH：从环境自己留下的痕迹推 conda 的位置
-    out.extend(_environments_txt_conda(pre))
-    return out
-
-
-def _conda_root_exe(root: Path) -> str | None:
-    """`<root>/bin/conda`（Windows 不会走到这里）——只认“看起来是 Conda 安装根”的：`<root>/conda-meta` 存在。"""
-    if not (root / "conda-meta").is_dir():
-        return None
-    return str(root / "bin" / "conda")
-
-
-def _environments_txt_path() -> Path:
-    return Path.home() / ".conda" / "environments.txt"
-
-
-def _inside(path: str | os.PathLike, parent: str | os.PathLike) -> bool:
-    try:
-        a, b = os.path.realpath(path), os.path.realpath(parent)
-        return os.path.commonpath([a, b]) == b
-    except ValueError:  # 不同盘符（Windows）
-        return False
-
-
-_PROJECT_MARKERS = (
-    ".git",
-    "pyproject.toml",
-    "setup.py",
-    "setup.cfg",
-    "requirements.txt",
-    "environment.yml",
-)
-
-
-def _untrusted_zones(prefix: Path) -> list[Path]:
-    """conda 位置**不许落进**的地方：正在探测的 prefix 本身，以及它所在的项目目录（沿父目录往上找到第一个带项目标记
-    的目录）。克隆来的项目可以带任意目录结构，不能让“打开项目”就变成“执行项目里的文件”。"""
-    zones = [prefix]
-    for parent in prefix.parents:
-        if any((parent / m).exists() for m in _PROJECT_MARKERS):
-            zones.append(parent)
-            break
-    return zones
-
-
-def _environments_txt_lines() -> list[str]:
-    try:
-        with open(_environments_txt_path(), encoding="utf-8", errors="replace") as fh:
-            # 只限字节数（防一个超大文件），不限条数：登记多的用户，后面的环境同样要认得出来
-            return [ln.strip() for ln in fh.read(1 << 20).splitlines()]
-    except OSError:
-        return []
-
-
-def _registered_prefix(prefix: Path) -> bool:
-    """这个 prefix 是不是用户自己的 conda 登记过的环境（`~/.conda/environments.txt` 里有它）。"""
-    try:
-        want = os.path.realpath(prefix)
-    except (OSError, ValueError):
-        return False
-    for ln in _environments_txt_lines():
-        if ln and os.path.isabs(ln):
-            try:
-                if os.path.realpath(ln) == want:
-                    return True
-            except (OSError, ValueError):
-                continue
-    return False
-
-
-def _environments_txt_conda(prefix: Path) -> list[str]:
-    """`~/.conda/environments.txt`（conda 登记过的环境前缀，用户自己的文件）→ 各自所属安装根的 `bin/conda`。"""
-    lines = _environments_txt_lines()
-    zones = _untrusted_zones(prefix)
-    out: list[str] = []
-    for ln in lines:
-        if not ln or not os.path.isabs(ln):
-            continue
-        p = Path(ln)
-        root = p.parent.parent if p.parent.name == "envs" else p
-        cand = _conda_root_exe(root)
-        if cand is None or cand in out or any(_inside(cand, z) for z in zones):
-            continue
-        out.append(cand)
     return out
 
 
@@ -286,8 +256,9 @@ class CondaLauncher:
         return {"kind": self.kind, "conda_exe": self.conda_exe, "prefix": self.prefix}
 
 
-def _activation_wanted(python: str | os.PathLike) -> str | None:
-    """这条解释器**该不该**经 Conda 激活：关开关 / Windows / 绝对路径之外 / 不是 Conda 环境 → None；否则回 prefix。"""
+def _conda_shaped(python: str | os.PathLike) -> str | None:
+    """这条解释器**看起来**在一个 Conda 环境里（关开关 / Windows / 绝对路径之外 → None；否则有 `conda-meta/` 的 prefix）。
+    只看路径与目录，不执行任何东西；**不**代表会被激活（见 `_activation_wanted`）。"""
     if disabled():
         return None
     if _is_windows():
@@ -296,54 +267,24 @@ def _activation_wanted(python: str | os.PathLike) -> str | None:
         return None
     if not os.path.isabs(str(python)) or str(python).startswith("-"):
         return None  # 捕获要把解释器当 `conda run` 的可执行部分：必须是绝对路径、不以 `-` 开头
-    prefix = conda_prefix_of(python)
+    return conda_prefix_of(python)
+
+
+def _activation_wanted(python: str | os.PathLike) -> str | None:
+    """这条解释器**该不该**经 Conda 激活：Conda 环境，**且**在用户自己的 conda 安装里（`_trusted_prefix`）→ 回 prefix。
+    激活会 source 这个 prefix 自己的 `etc/conda/activate.d` 钩子——那是环境里的代码；不在用户 conda 安装里的 prefix
+    （克隆来的项目自带的 `.venv/conda-meta/`、`conda create -p` 到任意目录）一律直接启动（与 P09 之前一致）。"""
+    prefix = _conda_shaped(python)
     if prefix is None or not _trusted_prefix(prefix):
-        # 激活会 source 这个 prefix 自己的 `etc/conda/activate.d` 钩子——那是环境里的代码。克隆来的项目可以自带
-        # `.venv/conda-meta/` + 钩子：没被用户自己的 conda 认领过的 prefix 一律不激活（直接启动，与 P09 之前一致），
-        # 否则“打开项目做体检”就执行了项目里的脚本
         return None
     return prefix
 
 
-def _user_conda_roots() -> list[str]:
-    """用户自己的 conda 安装根（`CONDA_EXE` / `PATH` 上的 `conda` 的 `<root>/bin/conda` → `<root>`）。"""
-    roots: list[str] = []
-    for exe in (os.environ.get("CONDA_EXE"), shutil.which("conda")):
-        if not exe:
-            continue
-        try:
-            root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
-        except (OSError, ValueError):
-            continue
-        if root and root not in roots:
-            roots.append(root)
-    return roots
-
-
 def _trusted_prefix(prefix: str) -> bool:
-    """这个 prefix 是不是**用户自己的 conda** 建的环境：登记在用户的 `~/.conda/environments.txt` 里（conda 每建一个环境都会
-    登记，含 `-p`），或者就是用户 conda 安装根本身（base）/ 它的 `envs/<名字>`。项目目录里的文件改不了这两样。"""
-    pre = Path(prefix)
-    try:
-        real = os.path.realpath(prefix)
-    except (OSError, ValueError):
-        return False
-    for root in _user_conda_roots():
-        if real == root or os.path.dirname(real) == os.path.join(root, "envs"):
-            return True
-    # 登记只证明“这条路径曾经是用户建的环境”，不证明此刻这个目录还是它：环境被手动删掉之后同一路径上克隆的项目会
-    # 继承那条过期登记。所以**项目目录里的 prefix**（沿父目录有项目标记）不凭登记自动激活——直接启动（与 P09 之前一致）
-    if _inside_a_project(pre):
-        return False
-    return _registered_prefix(pre)
-
-
-def _inside_a_project(prefix: Path) -> bool:
-    """prefix 是不是在一个项目目录里（它自己或某一层父目录带项目标记：`.git` / `pyproject.toml` / …）。"""
-    for d in (prefix, *prefix.parents):
-        if any((d / m).exists() for m in _PROJECT_MARKERS):
-            return True
-    return False
+    """只有**用户自己的 conda 安装里**的环境才会被激活：安装根本身（base）或它的 `envs/<名字>`。激活会 source prefix 自己的
+    `etc/conda/activate.d`——那是环境里的代码。任何“登记过 / 路径像”的推断都可能被项目目录冒充（过期的 environments.txt
+    条目、克隆在同一路径上的项目），所以不用；`conda create -p <任意目录>` 建的环境直接启动（与 P09 之前一致）。"""
+    return _owning_root(prefix) is not None
 
 
 def launcher_for_interpreter(python: str | os.PathLike) -> CondaLauncher | None:
@@ -362,14 +303,17 @@ _warned_unlocated: set[str] = set()
 
 
 def unlocated_conda_prefix(python: str | os.PathLike) -> str | None:
-    """这条解释器是 Conda 环境、但找不到 conda 可执行文件（只能直接启动，没有激活）→ 回 prefix；否则 None。
-    给体检 / 报告一个可见的事实（`launch_note`）：不静默。"""
-    prefix = _activation_wanted(python)
-    if prefix is None or find_conda_exe(prefix) is not None:
+    """这条解释器看起来是 Conda 环境、但这次**不会被激活**（找不到 conda，或不在用户自己的 conda 安装里）→ 回 prefix；
+    否则 None。只看路径，不执行任何东西：调用方据此不把一次直接启动的失败当成对环境的结论（见 `raise_if_unlocated`）。"""
+    prefix = _conda_shaped(python)
+    if prefix is None or launcher_for_interpreter(python) is not None:
         return None
     if prefix not in _warned_unlocated:
         _warned_unlocated.add(prefix)
-        LOG.warning("Conda 环境 %s 找不到 conda 可执行文件，按直接启动（没有激活）", prefix)
+        LOG.warning(
+            "Conda 环境 %s 不会经激活启动（找不到 conda，或不在用户的 conda 安装里），按直接启动",
+            prefix,
+        )
     return prefix
 
 

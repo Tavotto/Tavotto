@@ -53,12 +53,17 @@ needs_worker = pytest.mark.skipif(
 LICENSE = "activated-secret-xyz"
 
 
+#: 用例里“用户自己的 conda 安装根”（替 `launcher._STANDARD_ROOTS`）：`make_fake_conda` 往里登记，autouse 夹具每个用例清空
+_FAKE_ROOTS: list[str] = []
+
+
 @pytest.fixture(autouse=True)
-def _isolated_conda_registry(tmp_path, monkeypatch):
-    """本机的 `~/.conda/environments.txt` 不许影响“找不到 conda”的用例。"""
-    monkeypatch.setattr(
-        launcher, "_environments_txt_path", lambda: tmp_path / "no-environments.txt"
-    )
+def _isolated_conda_roots(monkeypatch):
+    """本机真实装着的 conda（~/miniconda3 之类）不许影响用例：常见安装位置只认这个用例自己建的假安装根。"""
+    _FAKE_ROOTS.clear()
+    monkeypatch.setattr(launcher, "_standard_conda_roots", lambda: list(_FAKE_ROOTS))
+    yield
+    _FAKE_ROOTS.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -167,6 +172,7 @@ def make_fake_conda(
     py = prefix / "bin" / "python"
     py.write_text(f'#!/bin/sh\nexec "{real_python}" "$@"\n', encoding="utf-8")
     (root / "bin").mkdir(parents=True)
+    (root / "conda-meta").mkdir(exist_ok=True)  # 真正的安装根（base）也是一个带 conda-meta 的环境
     conda = root / "bin" / "conda"
     conda.write_text(
         "#!/bin/sh\nexit 3\n"
@@ -176,10 +182,8 @@ def make_fake_conda(
     )
     for p in (py, conda):
         os.chmod(p, 0o755)
-    # 真 conda 建环境时会登记进用户的 `~/.conda/environments.txt`（这里是被 autouse 夹具改到 tmp 的那份）：
-    # 只有登记过的 prefix，旁边的 conda 才被信任
-    with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
-        fh.write(f"{prefix}\n")
+    # 这是“用户自己的 conda 安装”（像 ~/miniconda3）：它的 `envs/<名字>` 才会被激活
+    _FAKE_ROOTS.append(os.path.realpath(root))
     return prefix, conda, tmp_path / "conda.log"
 
 
@@ -370,7 +374,7 @@ def test_failed_run_leaves_no_success_memory(conda_world, tmp_path):
         "PYTHONPATH": str(ROOT / "src"),
         "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
         "FAKE_CONDA_LOG": str(log),
-        # 应用子进程读的是真实的 ~/.conda/environments.txt（不是夹具改过的那份）：像用户的终端一样给 CONDA_EXE
+        # 应用子进程里没有夹具的假安装根：像用户的终端一样给 CONDA_EXE
         "CONDA_EXE": str(prefix.parent.parent / "bin" / "conda"),
         "TAVOTTO_WORKERD": "0",
     }
@@ -683,7 +687,7 @@ def test_the_legacy_probe_success_clears_an_older_launch_record(conda_world, tmp
         "PYTHONPATH": str(ROOT / "src"),
         "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
         "FAKE_CONDA_LOG": str(log),
-        # 应用子进程读的是真实的 ~/.conda/environments.txt（不是夹具改过的那份）：像用户的终端一样给 CONDA_EXE
+        # 应用子进程里没有夹具的假安装根：像用户的终端一样给 CONDA_EXE
         "CONDA_EXE": str(prefix.parent.parent / "bin" / "conda"),
         "TAVOTTO_WORKERD": "0",
     }
@@ -715,7 +719,7 @@ def test_success_is_recorded_and_argv_behaviour_is_unchanged(conda_world, tmp_pa
         "PYTHONPATH": str(ROOT / "src"),
         "TAVOTTO_WORKER_PYTHON": str(prefix / "bin" / "python"),
         "FAKE_CONDA_LOG": str(log),
-        # 应用子进程读的是真实的 ~/.conda/environments.txt（不是夹具改过的那份）：像用户的终端一样给 CONDA_EXE
+        # 应用子进程里没有夹具的假安装根：像用户的终端一样给 CONDA_EXE
         "CONDA_EXE": str(prefix.parent.parent / "bin" / "conda"),
         "TAVOTTO_WORKERD": "0",
     }
@@ -1749,53 +1753,40 @@ def test_a_conda_env_that_works_bare_is_unaffected_when_conda_is_missing(tmp_pat
     py.write_text(f'#!/bin/sh\nexec "{WORKER_PY}" "$@"\n', encoding="utf-8")
     py.chmod(0o755)
     _no_conda_anywhere(tmp_path, monkeypatch)
-    # 用户自己的 conda 建的环境（登记过），只是 conda 被移走了 / 从 Finder 启动看不到
-    with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
-        fh.write(f"{lone}\n")
     assert launcher.unlocated_conda_prefix(py) == str(lone)
     assert _pool._has_matplotlib(str(py)) is True
     assert projectenv.probe_environment(str(py))["ok"] is True
 
 
 @posix_only
-def test_conda_is_found_from_environments_txt_but_never_from_the_project_or_the_probed_prefix(
-    tmp_path, monkeypatch
-):
-    """Finder 启动（没有 CONDA_EXE / PATH）时靠用户自己的 `~/.conda/environments.txt` 找 conda；`conda-meta/history` 不再是来源，
-    推出来的位置也不许落进项目目录或正在探测的 prefix（克隆来的项目可以自带 `evil/bin/conda` + `evil/conda-meta`）。"""
+def test_conda_is_found_from_the_users_install_root_and_never_from_a_project(tmp_path, monkeypatch):
+    """Finder 启动（没有 CONDA_EXE / PATH）时靠常见安装位置里的用户 conda 找到它；项目里自带的 `conda-meta/` + `bin/conda`
+    （不在用户 conda 安装里）既不被激活、它的 conda 也不被执行；`conda-meta/history` / environments.txt 都不是来源。"""
     root = tmp_path / "miniforge"
     (root / "conda-meta").mkdir(parents=True)
     (root / "bin").mkdir()
     conda = root / "bin" / "conda"
     conda.write_text("#!/bin/sh\n", encoding="utf-8")
     conda.chmod(0o755)
-    proj = tmp_path / "proj"
-    (proj / "env" / "conda-meta").mkdir(parents=True)
-    (proj / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (root / "envs" / "e1" / "conda-meta").mkdir(parents=True)
     _no_conda_anywhere(tmp_path, monkeypatch)
-    envs_txt = tmp_path / "environments.txt"
-    envs_txt.write_text(f"{root}/envs/e1\n{root}\n", encoding="utf-8")
-    monkeypatch.setattr(launcher, "_environments_txt_path", lambda: envs_txt)
-    assert launcher.find_conda_exe(str(proj / "env")) == str(conda)  # 正对照：用户自己登记的安装根
-    # history 头部不再是来源：哪怕写着一个“看起来对”的路径
-    (proj / "env" / "conda-meta" / "history").write_text(
-        f"# cmd: {proj / 'evil' / 'bin' / 'conda'} create\n", encoding="utf-8"
-    )
+    _FAKE_ROOTS.append(os.path.realpath(root))
+    assert launcher.find_conda_exe(str(root / "envs" / "e1")) == str(conda)  # 正对照
+    assert launcher.find_conda_exe(str(root)) == str(conda)  # base 本身
+    proj = tmp_path / "proj"
     evil = proj / "evil"
     (evil / "bin").mkdir(parents=True)
     (evil / "conda-meta").mkdir()
     (evil / "bin" / "conda").write_text("#!/bin/sh\n", encoding="utf-8")
     (evil / "bin" / "conda").chmod(0o755)
-    envs_txt.write_text("", encoding="utf-8")
+    (proj / "env" / "conda-meta").mkdir(parents=True)
+    (proj / "env" / "conda-meta" / "history").write_text(
+        f"# cmd: {evil / 'bin' / 'conda'} create\n", encoding="utf-8"
+    )
     assert launcher.find_conda_exe(str(proj / "env")) is None
-    # 即便 environments.txt 登记了项目里的目录（或探测的 prefix 自己），推出的 conda 也不许落在项目目录 / prefix 内
-    envs_txt.write_text(f"{evil}\n{evil}/envs/x\n{proj / 'env'}\n", encoding="utf-8")
-    assert launcher.find_conda_exe(str(proj / "env")) is None
-    # 项目标记是祖先目录判的，不依赖 prefix 恰好在项目根下一层
-    deep = proj / "a" / "b" / "env"
-    (deep / "conda-meta").mkdir(parents=True)
-    assert launcher.find_conda_exe(str(deep)) is None
-    assert not hasattr(launcher, "_history_conda")
+    assert launcher.find_conda_exe(str(evil)) is None  # 项目自带的“安装根”不是用户的
+    assert not launcher._trusted_prefix(str(evil))  # noqa: SLF001
+    assert not hasattr(launcher, "_history_conda") and not hasattr(launcher, "_registered_prefix")
 
 
 @needs_worker
@@ -2343,10 +2334,6 @@ def test_a_cloned_project_cannot_plant_its_own_conda_next_to_an_unregistered_pre
     assert launcher.find_conda_exe(str(venv)) is None
     assert launcher.launcher_for_interpreter(str(venv / "bin" / "python")) is None
     assert not marker.exists()
-    # 用户自己用 conda 建的（登记过）：旁边的 conda 照常
-    with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
-        fh.write(f"{venv}\n")
-    assert launcher.find_conda_exe(str(venv)) == str(planted)
 
 
 @posix_only
@@ -2637,8 +2624,8 @@ def test_a_plan_made_while_conda_was_missing_goes_stale_once_conda_is_back(tmp_p
     py = str(prefix / "bin" / "python")
     monkeypatch.delenv("CONDA_EXE", raising=False)
     monkeypatch.setenv("PATH", "/nonexistent")
-    monkeypatch.setattr(launcher, "_environments_txt_path", lambda: tmp_path / "none.txt")
-    assert launcher.context_key(py).startswith("direct")  # 计划那一刻：找不到 conda
+    _FAKE_ROOTS.clear()  # 计划那一刻：Finder 启动，哪儿都找不到用户的 conda
+    assert launcher.context_key(py).startswith("direct")
     decision = _pool.EnvironmentDecision(
         python=py,
         source="system",
@@ -2694,7 +2681,8 @@ def test_an_unclaimed_project_prefix_is_never_activated_even_with_the_users_own_
     assert launcher.conda_prefix_of(str(py)) == str(venv)
     assert launcher.launcher_for_interpreter(str(py)) is None  # 直接启动（与 P09 之前一致）
     assert launcher.context_key(str(py)).startswith("direct")
-    assert launcher.unlocated_conda_prefix(str(py)) is None  # 也不当成“找不到 conda 的 Conda 环境”
+    # 只报“这是个不会被激活的 Conda 形状的目录”（直接启动失败不当结论），什么都不执行
+    assert launcher.unlocated_conda_prefix(str(py)) == str(venv)
     launcher.activate_env(str(py), {})
     assert conda_calls(log) == [] and not ran.exists()
     # 用户自己的 conda 建的（登记过）/ 它的 envs/<名字>：照常激活
@@ -2702,24 +2690,23 @@ def test_an_unclaimed_project_prefix_is_never_activated_even_with_the_users_own_
 
 
 @posix_only
-def test_a_stale_registration_does_not_trust_a_project_cloned_at_the_same_path(
-    tmp_path, monkeypatch
-):
-    """环境被手动删掉、同一路径上又克隆了一个项目：environments.txt 里那条过期登记不证明此刻的目录是用户的环境——
-    项目目录里的 prefix 不凭登记自动激活，钩子一次都不跑。"""
+def test_a_prefix_outside_the_users_conda_install_is_never_activated(tmp_path, monkeypatch):
+    """不在用户 conda 安装里（安装根本身 / 它的 envs/<名字>）的 prefix——过期的 environments.txt 条目上克隆的项目、
+    没有任何项目标记的普通作图目录、`conda create -p` 到任意目录——一律直接启动，钩子一次都不跑。"""
     users_prefix, users_conda, log = make_fake_conda(tmp_path / "home", sys.executable)
     monkeypatch.setenv("CONDA_EXE", str(users_conda))
     monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
-    proj = tmp_path / "work" / "proj"
-    venv = proj / ".venv"
-    (venv / "conda-meta").mkdir(parents=True)
-    (venv / "bin").mkdir()
-    (proj / ".git").mkdir()
-    py = venv / "bin" / "python"
+    plain = tmp_path / "figs" / "env"  # 没有 .git / pyproject 的普通目录
+    (plain / "conda-meta").mkdir(parents=True)
+    (plain / "bin").mkdir()
+    (plain / "etc" / "conda" / "activate.d").mkdir(parents=True)
+    py = plain / "bin" / "python"
     py.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
     os.chmod(py, 0o755)
-    with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
-        fh.write(f"{venv}\n")  # 当年用户在这里 `conda create -p` 过（后来删了）
+    home = tmp_path / "fakehome"
+    (home / ".conda").mkdir(parents=True)
+    (home / ".conda" / "environments.txt").write_text(f"{plain}\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))  # 就算 environments.txt 登记了它
     assert launcher.launcher_for_interpreter(str(py)) is None
     launcher.activate_env(str(py), {})
     assert conda_calls(log) == []
@@ -2734,20 +2721,9 @@ def test_a_directly_launched_conda_env_still_records_its_version_in_the_context(
     py = str(prefix / "bin" / "python")
     monkeypatch.delenv("CONDA_EXE", raising=False)
     monkeypatch.setenv("PATH", "/nonexistent")
-    monkeypatch.setattr(launcher, "_environments_txt_path", lambda: tmp_path / "none.txt")
+    _FAKE_ROOTS.clear()
     before = launcher.context_key(py)
     assert before.startswith("direct|")
     with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
         fh.write("# cmd: conda install vendor-sdk\n")
     assert launcher.context_key(py) != before
-
-
-def test_registration_lookup_is_not_capped_by_entry_count(tmp_path, monkeypatch):
-    """environments.txt 登记很多（>100 条）的用户：排在后面的 `conda create -p` 环境同样认得出来。"""
-    target = tmp_path / "late-env"
-    target.mkdir()
-    lines = [str(tmp_path / f"e{i}") for i in range(500)] + [str(target)]
-    p = tmp_path / "environments.txt"
-    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    monkeypatch.setattr(launcher, "_environments_txt_path", lambda: p)
-    assert launcher._registered_prefix(target)  # noqa: SLF001
