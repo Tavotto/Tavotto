@@ -109,7 +109,12 @@ def _ideal_s18(o: Observation) -> list[str]:
     return miss
 
 
-def _ideal_deps(o: Observation, installs: set[str], missing: dict[str, str]) -> list[str]:
+def _ideal_deps(o: Observation, missing: dict[str, str]) -> list[str]:
+    """只对「worker 解释器里真的缺」的 import 提要求：已装的包依赖计划里本来就不会出现（测试驱动在
+    `facts["modules_absent"]` 里写入探针结果；没写 = 全部视为缺）。"""
+    absent = set(o.facts.get("modules_absent", missing))
+    missing = {imp: dist for imp, dist in missing.items() if imp in absent}
+    installs = set(missing.values())
     miss = []
     if o.exec_count != 0:
         miss.append(f"检查阶段不得执行用户代码，实测 {o.exec_count}")
@@ -256,7 +261,7 @@ _add(
         0,
         "dependency_plan",
     ),
-    lambda o: _ideal_deps(o, {"scikit-learn"}, {"sklearn": "scikit-learn"}),
+    lambda o: _ideal_deps(o, {"sklearn": "scikit-learn"}),
 )
 _add(
     _scenario(
@@ -363,9 +368,7 @@ _add(
         "dependency_plan",
         notes="另列场景：import 名与发行包名不一致",
     ),
-    lambda o: _ideal_deps(
-        o, {"opencv-python", "scikit-learn"}, {"cv2": "opencv-python", "sklearn": "scikit-learn"}
-    ),
+    lambda o: _ideal_deps(o, {"cv2": "opencv-python", "sklearn": "scikit-learn"}),
 )
 _add(
     _scenario(
@@ -381,6 +384,13 @@ _add(
     ),
     lambda o: _figure(o, max_exec=1),
 )
+
+
+# 这些场景要求 worker 解释器里**缺**这些 import 名；一个都不缺 = 前提不成立（测试里 skip，不是红）
+NEEDS_ABSENT = {
+    "s14_missing_pkg_then_limit": ("sklearn",),
+    "s26_import_cv2_sklearn": ("cv2", "sklearn"),
+}
 
 
 def baseline_shape(obs: Observation) -> dict:

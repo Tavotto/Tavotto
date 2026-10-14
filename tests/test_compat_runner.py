@@ -280,6 +280,22 @@ class TestReport:
             assert obs[key] is None, key
             assert obs["unobserved"].get(key), key
 
+    def test_v2_case_duration_counts_each_measured_group_once(self):
+        """`_finish()` 把整组的耗时抄给组内每个 case；同一脚本三个 stem 不能给 p50/p95 投三票。"""
+        cases = [dict(case(f"g{i}"), script="s.py") for i in range(3)] + [
+            dict(case("h"), script="t.py")
+        ]
+        results = {}
+        for c in cases:
+            results[c["id"]] = {
+                "id": c["id"],
+                "stages": {"execute": True, "capture": True, "open": True},
+                "duration_ms": 9000.0 if c["script"] == "s.py" else 1000.0,
+            }
+        dur = CM.v2_observation(cases, results)["case_duration_ms"]
+        assert dur["groups"] == 2
+        assert dur["p50"] == 5000.0  # {1000, 9000}；逐 case 计则是 9000
+
     def test_report_json_is_deterministic(self):
         cases, results = self._fixture()
         a = CM.build_report(cases, results, {}, "current", "all")

@@ -25,6 +25,7 @@ import sqlite3
 import statistics
 import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,6 +39,8 @@ FIXTURES = ROOT / "tests" / "fixtures" / "compat_v2"
 SESSIONS = "/api/engine/preparation-sessions"
 RESULTS_ENV = "TAVOTTO_COMPAT_V2_RESULTS"
 SCHEMA = 1
+# 一次运行的身份：同一进程内的所有记录共用；复用结果目录时 summarize 靠它拒绝混跑
+RUN_ID = os.environ.get("TAVOTTO_COMPAT_V2_RUN_ID") or uuid.uuid4().hex
 
 # 现在拿不到的指标：字段留 null，原因写这里（不伪造）。
 UNOBSERVED = {
@@ -61,7 +64,6 @@ class Scenario:
     main_baseline: dict | None = None
     # 夹具特殊处理
     readonly_project: bool = False
-    needs_site_packages: tuple[str, ...] = ()  # 想验证的包名（跑前核本机确实缺 / 有）
     notes: str = ""
     extra: dict = field(default_factory=dict)
 
@@ -144,6 +146,31 @@ def side_effects(parent: Path) -> int | None:
         db.close()
 
 
+class PreconditionUnmet(Exception):
+    """场景的前提在这台机器上无法建立（例如 Windows 的 chmod 不会让目录只读）——测试 skip，不是产品失败。"""
+
+
+def make_readonly(path: Path) -> None:
+    path.chmod(0o555)
+
+
+def restore_writable(path: Path) -> None:
+    with contextlib.suppress(OSError):
+        path.chmod(0o755)
+
+
+def assert_readonly(path: Path) -> None:
+    """用写入探针**验证**目录确实不可写，而不是相信 chmod（Windows 上无效；root 下的 POSIX 也无效）。"""
+    probe = path / ".tavotto_ro_probe"
+    try:
+        probe.write_bytes(b"")
+    except OSError:
+        return
+    with contextlib.suppress(OSError):
+        probe.unlink()
+    raise PreconditionUnmet(f"{path} 在这台机器上无法设为只读（平台 {sys.platform}）")
+
+
 def stage(scenario_id: str, tmp: Path) -> Path:
     """把夹具复制进隔离临时目录；返回项目根（日志 / 副作用库在它的父目录，项目外）。"""
     proj = tmp / "proj"
@@ -220,7 +247,7 @@ def observe(scenario: Scenario, tmp: Path, *, env_overrides: dict | None = None)
     env = {"TAVOTTO_USER_ENV_DISCOVERY": "0", "PYTHONPATH": str(ROOT / "src")}
     env.update(env_overrides or {})
     t_total = time.monotonic()
-    ro_restore: list[tuple[Path, int]] = []
+    ro_restore: list[Path] = []
     try:
         with fa.running_app(proj, work, env_overrides=env) as app:
             t0 = time.monotonic()
@@ -268,8 +295,9 @@ def observe(scenario: Scenario, tmp: Path, *, env_overrides: dict | None = None)
 
             if "run" in kinds:
                 if scenario.readonly_project:
-                    ro_restore.append((proj, proj.stat().st_mode))
-                    proj.chmod(0o555)
+                    ro_restore.append(proj)
+                    make_readonly(proj)
+                    assert_readonly(proj)
                 (act,) = [a for a in report["actions"] if a["kind"] == "run"]
                 t0 = time.monotonic()
                 status, claimed = app.call(
@@ -317,9 +345,8 @@ def observe(scenario: Scenario, tmp: Path, *, env_overrides: dict | None = None)
             )
             obs.facts["report_keys"] = sorted(report)
     finally:
-        for path, mode in ro_restore:
-            with contextlib.suppress(OSError):
-                path.chmod(mode)
+        for path in ro_restore:
+            restore_writable(path)
         obs.timings_s["total"] = round(time.monotonic() - t_total, 3)
         obs.exec_count = len(exec_log(tmp))
         obs.side_effect_count = side_effects(tmp)
@@ -397,6 +424,7 @@ def record(
         "matches_registered_baseline": baseline_ok,
         "observed": obs.to_json(),
         "source_sha": fh.source_sha(ROOT),
+        "run_id": RUN_ID,
         "recorded_at": time.time(),
         "unobserved": UNOBSERVED,
     }
@@ -430,6 +458,14 @@ def main(argv: list[str] | None = None) -> int:
     rows = load_records(args.dir)
     if not rows:
         print(f"{args.dir} 里没有记录——空集合不是通过")
+        return 2
+    shas = {r.get("source_sha") for r in rows}
+    runs = {r.get("run_id") for r in rows}
+    if len(shas) != 1 or len(runs) != 1 or None in runs:
+        print(
+            f"{args.dir} 混了不同的运行（source_sha={sorted(map(str, shas))}, run_id={sorted(map(str, runs))}）"
+            "——换一个空的结果目录重跑，不要复用旧目录"
+        )
         return 2
     report = {
         "schema": SCHEMA,

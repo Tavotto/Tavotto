@@ -1603,7 +1603,13 @@ def v2_observation(cases: list[dict], results: dict) -> dict:
         for c in ran
         if all(results[c["id"]]["stages"].get(st) for st in ("execute", "capture", "open"))
     ]
-    durations = [float(results[c["id"]].get("duration_ms", 0)) for c in cases]
+    # `_finish()` 把整组（同一脚本的所有 stem）的 wall-clock 抄给组内每个 case：按被量的单位（组）去重，
+    # 否则多 stem 脚本在分位数里按 stem 数重复投票
+    groups = {
+        (c.get("script"), c.get("entry"), float(results[c["id"]].get("duration_ms", 0)))
+        for c in cases
+    }
+    durations = [g[2] for g in groups]
     return {
         "layer": "engine_one_shot",
         "first_valid_figure": {
@@ -1612,7 +1618,12 @@ def v2_observation(cases: list[dict], results: dict) -> dict:
             "rate": round(len(first_figure) / len(ran), 4) if ran else None,
             "definition": "execute、capture、open 三级都通过（引擎层，不经准备会话）",
         },
-        "case_duration_ms": {"p50": quantile(durations, 50), "p95": quantile(durations, 95)},
+        "case_duration_ms": {
+            "unit": "script_group",
+            "groups": len(groups),
+            "p50": quantile(durations, 50),
+            "p95": quantile(durations, 95),
+        },
         "exec_count": None,
         "fallback_rate": None,
         "intervention_count": None,

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -74,11 +75,38 @@ def test_unobserved_metrics_are_null_not_zero():
     assert set(summary["unobserved"]) >= {"fallback_rate", "intervention_count"}
 
 
+def _absent_modules(names) -> list[str]:
+    """worker 解释器里**导入不了**的那些（独立探针，不经产品代码）。"""
+    import subprocess
+
+    code = (
+        "import importlib.util, json, sys; "
+        "print(json.dumps([n for n in sys.argv[1:] if importlib.util.find_spec(n) is None]))"
+    )
+    out = subprocess.run(
+        [WORKER_PY, "-I", "-c", code, *names],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
 @needs_worker
 @pytest.mark.parametrize("scenario_id", RUN_IDS)
 def test_scenario_baseline(scenario_id, tmp_path):
     sc = cs.SCENARIOS[scenario_id]
-    obs = cb.observe(sc, tmp_path)
+    wanted = cs.NEEDS_ABSENT.get(scenario_id)
+    absent = _absent_modules(wanted) if wanted else None
+    if wanted and not absent:
+        pytest.skip(f"worker 解释器里 {wanted} 都已安装，缺包前提不成立")
+    try:
+        obs = cb.observe(sc, tmp_path)
+    except cb.PreconditionUnmet as exc:
+        pytest.skip(str(exc))
+    if absent is not None:
+        obs.facts["modules_absent"] = absent
     missing = cs.IDEAL[scenario_id](obs)
     shape = cs.baseline_shape(obs)
     baseline_ok = None if sc.main_baseline is None else shape == sc.main_baseline
@@ -96,3 +124,84 @@ def test_scenario_baseline(scenario_id, tmp_path):
     assert shape == sc.main_baseline, (
         f"{scenario_id} 失败的样子变了（不是登记的那一种）:\n实测 {shape}\n登记 {sc.main_baseline}"
     )
+
+
+# ---------------------------------------------------------------- Codex 评审（PR #1023）追加
+
+
+def _obs(**facts):
+    return cb.Observation(
+        scenario="s26_import_cv2_sklearn", final_phase="awaiting_confirmation", facts=facts
+    )
+
+
+def test_dependency_ideal_only_expects_packages_that_are_actually_absent():
+    """worker 解释器里已经装了 cv2 或 sklearn 时，依赖计划里不会、也不该出现它——理想判据只对缺的那个提要求。"""
+    ideal = cs.IDEAL["s26_import_cv2_sklearn"]
+    only_sklearn = _obs(
+        modules_absent=["sklearn"],
+        dependency_installs=["scikit-learn"],
+        dependency_missing={"sklearn": "scikit-learn"},
+    )
+    assert ideal(only_sklearn) == []
+    # 缺的两个里只给出一个 = 仍然是未达成
+    both_absent = _obs(
+        modules_absent=["cv2", "sklearn"],
+        dependency_installs=["scikit-learn"],
+        dependency_missing={"sklearn": "scikit-learn"},
+    )
+    assert ideal(both_absent)
+
+
+def test_summarize_rejects_a_directory_that_mixes_runs(tmp_path):
+    def rec(sid, sha, run_id):
+        return {
+            "scenario": sid,
+            "source_sha": sha,
+            "run_id": run_id,
+            "ideal_outcome": "figure",
+            "ideal_met": True,
+            "observed": {
+                "first_valid_figure": True,
+                "one_shot_success": True,
+                "exec_count": 1,
+                "timings_s": {"total": 1.0},
+            },
+        }
+
+    import json
+
+    for name, row in {
+        "a": rec("a", "sha1", "run1"),
+        "b": rec("b", "sha2", "run1"),
+    }.items():
+        (tmp_path / f"{name}.json").write_text(json.dumps(row), "utf-8")
+    assert cb.main(["summarize", str(tmp_path)]) == 2  # 两个修订混在一起
+    (tmp_path / "b.json").write_text(json.dumps(rec("b", "sha1", "run2")), "utf-8")
+    assert (
+        cb.main(["summarize", str(tmp_path)]) == 2
+    )  # 同一修订但两次运行混在一起（冒烟跑盖在全量上）
+    (tmp_path / "b.json").write_text(json.dumps(rec("b", "sha1", "run1")), "utf-8")
+    assert cb.main(["summarize", str(tmp_path)]) == 0
+
+
+def test_write_record_replaces_nothing_from_other_runs_silently(tmp_path):
+    """record() 必须带 run_id，summarize 靠它识别混跑。"""
+    sc = cs.SCENARIOS["s01_plain"]
+    rec = cb.record(cb.Observation(scenario=sc.id), sc, [], None)
+    assert rec["run_id"] and rec["source_sha"]
+
+
+def test_readonly_precondition_is_verified_not_assumed(tmp_path):
+    """chmod 在 Windows 上不会让目录只读（root 下的 POSIX 也不会）；前提不成立必须报 PreconditionUnmet，而不是跑出假结果。"""
+    d = tmp_path / "ro"
+    d.mkdir()
+    cb.make_readonly(d)
+    try:
+        cb.assert_readonly(d)
+    finally:
+        cb.restore_writable(d)
+    d2 = tmp_path / "rw"
+    d2.mkdir()
+    with pytest.raises(cb.PreconditionUnmet):
+        cb.assert_readonly(d2)  # 根本没设只读：探针写得进去 -> 前提不成立
