@@ -419,3 +419,37 @@ def test_a_question_arriving_during_the_terminal_transition_is_dropped(tmp_path,
     assert session.state == nativesession.ENDED
     assert session.pending_input is None
     assert not [e for e in events if e.get("input") == "requested"]
+
+
+class _CountingBridge:
+    """只数「问了几次」的假桥：`_BridgeStdin` 的缓冲语义单测用。"""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.asked = 0
+        self.buffer = ""
+        self.eof = False
+
+    def ask(self, kind, prompt=""):
+        self.asked += 1
+        return self.answers.pop(0) if self.answers else None
+
+
+def test_zero_length_readline_returns_immediately_without_asking():
+    from tavotto.engine.bridge_runner import _BridgeStdin
+
+    b = _CountingBridge(["never\n"])
+    stdin = _BridgeStdin(b)
+    assert stdin.readline(0) == ""
+    assert stdin.read(0) == ""
+    assert b.asked == 0  # 0 长度读不是一次提问：脚本不会因此停在界面上
+
+
+def test_sized_readline_stops_at_size_without_waiting_for_newline():
+    from tavotto.engine.bridge_runner import _BridgeStdin
+
+    b = _CountingBridge(["abcdefgh\n"])
+    stdin = _BridgeStdin(b)
+    assert stdin.readline(3) == "abc"
+    assert stdin.readline(-1) == "defgh\n"
+    assert b.asked == 1
