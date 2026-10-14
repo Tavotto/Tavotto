@@ -143,6 +143,24 @@ describe('native pending input', () => {
     expect(s.error).toBeNull()
   })
 
+  it('同一个 409 端点还会因断线返回 native_session_disconnected：框留着并显示原因（只有 not_pending 才收起）', async () => {
+    vi.mocked(answerNativeInput).mockRejectedValueOnce(
+      new ApiError('连接断了', 409, { code: 'native_session_disconnected' }),
+    )
+    useNativeSessionStore.getState().applyEvent(asking(2))
+    await useScriptInputStore.getState().submit('x')
+    const s = useScriptInputStore.getState()
+    expect(s.queue).toHaveLength(1)
+    expect(s.error).toContain('连接断了')
+  })
+
+  it('慢的 refresh 带回旧快照（已被更新的 SSE 清掉的问）：不复活已答的问', async () => {
+    useNativeSessionStore.getState().applyEvent(base({ sequence: 5 }))
+    vi.mocked(fetchNativeSessions).mockResolvedValueOnce({ sessions: [asking(3)] })
+    await useNativeSessionStore.getState().refresh('/p')
+    expect(useScriptInputStore.getState().queue).toHaveLength(0)
+  })
+
   it('其它失败：框留着并显示原因（可以重试）', async () => {
     vi.mocked(answerNativeInput).mockRejectedValueOnce(new ApiError('连不上', 500, {}))
     useNativeSessionStore.getState().applyEvent(asking(2))

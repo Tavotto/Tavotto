@@ -215,8 +215,10 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
       if (get().epoch !== epoch) return
       // 这一问已经不在等了（脚本结束 / 被停）：收起，不留一个答不了的框
       // native：409 `native_input_not_pending` = 别的窗口先答了 / 脚本已不在等——同样收起
-      if (e instanceof ApiError && (e.status === 404 || (head.native && e.status === 409)))
-        get().onClosed(head.id)
+      // 同一端点的 409 还可能是 `native_session_disconnected`：只有 not_pending 才收起，其它留框显示原因
+      const notPending =
+        !!head.native && e instanceof ApiError && e.body?.code === 'native_input_not_pending'
+      if (e instanceof ApiError && (e.status === 404 || notPending)) get().onClosed(head.id)
       else set({ busy: false, error: errorText(e) })
     }
   },

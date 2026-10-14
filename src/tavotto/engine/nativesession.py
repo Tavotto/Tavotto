@@ -1071,6 +1071,12 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             session._on_change = self._changed  # noqa: SLF001 — 注册表持有会话
             self._sessions[session.session_id] = session
+        # 传输 reader 在登记之前就已经在跑:脚本一起来就 `input()` / 到屏障时,那条事件发出时回调还没装上,
+        # 会被丢掉而界面再也收不到(准备一直等着)。登记完成后把当前最新一条补发出去(序号单调,重复无害)
+        with session._lock:  # noqa: SLF001
+            last = session.events[-1] if session.events else None
+        if last is not None:
+            self._changed(session, last)
 
     def _changed(self, session: NativeSession, entry: dict) -> None:
         if session.state in TERMINAL_STATES:

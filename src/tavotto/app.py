@@ -7430,7 +7430,15 @@ def _native_preparation_runner(pl, before_retry=None):
     except engine_pool.WorkerError:
         _end_native_session(session)
         raise
-    engine_nativesession.REGISTRY.bind_assets(session)
+    rejected = engine_nativesession.REGISTRY.bind_assets(session)
+    if rejected:
+        # 这些图的活路由还被另一条活会话占着(例如用户终端里的 `tavotto run`):继续完成会让预览换成这次运行的、
+        # 编辑 / 导出却仍落在旧会话上——静默错图。不发布被拒的描述符,结束这次运行,如实报冲突(ADR 0021 §9.2)
+        _end_native_session(session)
+        raise engine_pool.WorkerError(
+            str(engine_runcodes.RunError(engine_runcodes.NATIVE_ASSET_CONFLICT)),
+            code=engine_runcodes.NATIVE_ASSET_CONFLICT,
+        )
     return session, resp, True
 
 

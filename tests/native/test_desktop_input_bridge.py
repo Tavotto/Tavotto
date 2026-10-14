@@ -346,3 +346,29 @@ def test_input_bridge_flag_belongs_to_the_bridge_stdin_channel_only(tmp_path):
     assert "--input-bridge" not in execspec.bridge_argv(
         terminal, runner_py=bridge.RUNNER_PY, out_dir=tmp_path / "out"
     )
+
+
+def test_a_question_asked_before_registration_is_still_announced(tmp_path, monkeypatch):
+    """脚本一起来就 `input()`:传输 reader 先于 `registry.adopt` 处理提问时,`_on_change` 还没装上——
+    登记完成后必须补发当前状态,否则界面永远收不到那一问的事件(Codex #1022 P1)。"""
+    seen = []
+    nativesession.REGISTRY.on_change = lambda s, entry: seen.append(dict(entry))
+    real_adopt = nativesession.NativeSessionRegistry.adopt
+
+    def slow_adopt(self, session):
+        # 让提问在登记前到达:等 pending 出现(此时回调还是 None)再登记
+        dk.wait_until(lambda: session.pending_input is not None, what="登记前的提问")
+        real_adopt(self, session)
+
+    monkeypatch.setattr(nativesession.NativeSessionRegistry, "adopt", slow_adopt)
+    try:
+        session = start(tmp_path, "input('immediately? ')\n")
+        dk.wait_until(
+            lambda: any(e.get("input") == "requested" for e in seen), what="补发的提问事件"
+        )
+    finally:
+        nativesession.REGISTRY.on_change = None
+    p = session.pending_input
+    assert p is not None
+    session.answer_input(p["request_id"], text="x")
+    dk.finish(session)

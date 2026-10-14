@@ -374,7 +374,12 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
         return { sessions }
       })
       // 重连 / 刷新页面时把还在等的问接回来（断线期间发的那条事件收不到）
-      for (const one of res.sessions) syncNativePendingInput(one)
+      // 只同步**合并后**的当前会话：被序号挡掉的旧快照不许复活已答 / 已结束的问
+      const current = get().sessions
+      for (const one of res.sessions) {
+        const cur = current[one.session_id]
+        if (cur) syncNativePendingInput(cur)
+      }
     } catch {
       /* 清单取不到不清空已知会话：SSE 仍在，下一条事件会补上 */
     }
