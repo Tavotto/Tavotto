@@ -39,7 +39,7 @@ BLOCKED = engine_pool.WorkerError("blocked", code="safe_file_operation_blocked")
 
 
 @pytest.fixture
-def native(monkeypatch):
+def native(monkeypatch, fake_pool, tmp_path):
     """可控的 native runner 替身：只数调用、可注入错误 / 阻塞；与真 runner 同一个调用约定。"""
     box = {"calls": [], "error": None, "gate": threading.Event()}
     box["gate"].set()
@@ -52,6 +52,12 @@ def native(monkeypatch):
         return _FakeWorker(Path(pl.project_root)), _build_resp(), True
 
     monkeypatch.setattr(m, "_native_preparation_runner", runner)
+    # 假解释器必须是**本平台的绝对路径**：桌面拥有的 native 计划（`execspec.desktop_native_spec`）用 `os.path.isabs`
+    # 校验解释器与 cwd，Windows 上 `/envs/fake/bin/python` 不是绝对路径，回退计划就算不出来
+    fake_python = str(tmp_path / "envs" / "fake" / "bin" / "python")
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda root=None, **kw: (fake_python, "system")
+    )
     # 回退只授权给桌面用户主动发起的运行（ADR 0127）：本文件的用例默认就是桌面发起；非桌面来源的用例在
     # `test_execution_fallback_origin.py` 里走真判据
     monkeypatch.setattr(m, "_desktop_initiated", lambda: True, raising=False)
