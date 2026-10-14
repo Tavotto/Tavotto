@@ -48,7 +48,7 @@ function WeComQrImage() {
       width={160}
       height={160}
       data-wecom-qr-img
-      className="mt-1 rounded-md bg-white"
+      className="mt-1 rounded-md bg-paper"
     />
   )
 }
