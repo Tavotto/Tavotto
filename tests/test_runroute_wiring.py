@@ -495,3 +495,63 @@ def test_explicit_safe_and_omitted_execution_are_different_sessions():
     assert prepsession.target_key({**base, "execution": "safe"}) != prepsession.target_key(
         {**base, "execution": "auto"}
     )
+
+
+def _claim_with_hook(client, tmp_path, fake_pool, native, hook):
+    """桌面窗口点运行；`hook(plan)` 在计划登记之后、交给执行线程之前被调用（模拟那一刻的竞态）。"""
+    _setup(client, tmp_path, READBACK)
+    report = _report(client)
+    assert _route(report)["execution"] == "native"
+    real = preparation.SERVICE.register
+    fired: list[int] = []
+
+    def register(plan, **kw):
+        out = real(plan, **kw)
+        if plan.execution == "native" and not fired:
+            fired.append(1)
+            hook(plan, report)
+        return out
+
+    preparation.SERVICE.register = register
+    try:
+        resp = _act(
+            client, report["session_id"], _action(report, "run")["id"], report["config_revision"]
+        )
+    finally:
+        preparation.SERVICE.register = real
+    return report, resp
+
+
+def test_a_routed_native_run_superseded_by_a_newer_same_script_plan_never_launches(
+    client, tmp_path, fake_pool, native, sessions
+):
+    from test_execution_fallback import _register_newer_plan
+
+    report, resp = _claim_with_hook(
+        client,
+        tmp_path,
+        fake_pool,
+        native,
+        lambda plan, rep: _register_newer_plan({**rep, "provider": {"attempt_id": plan.plan_id}}),
+    )
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["params"]["reason"] == "superseded"
+    assert native["calls"] == [] and fake_pool["build_calls"] == 0
+    # 没有留下孤儿尝试：会话里没有任何执行历史
+    assert _get(client, report["session_id"]).get_json()["attempt_history"] == []
+
+
+def test_a_routed_native_run_begun_before_the_project_was_reopened_never_launches(
+    client, tmp_path, fake_pool, native, sessions
+):
+    registry = m.engine_nativesession.REGISTRY
+
+    def reopen(plan, rep):
+        root = plan.project_root
+        registry.mark_project_closed(root)
+        registry.reopen_project(root)
+
+    report, resp = _claim_with_hook(client, tmp_path, fake_pool, native, reopen)
+    assert resp.status_code == 409, resp.get_json()
+    assert resp.get_json()["params"]["reason"] == "project_reopened"
+    assert native["calls"] == [] and fake_pool["build_calls"] == 0

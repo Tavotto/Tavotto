@@ -47,6 +47,7 @@ from . import (
     execpolicy,
     execspec,
     launchctx,
+    nativesession,
     pool,
     preparation,
     rasterhint,
@@ -763,6 +764,9 @@ class _Attempt:
     missing: dict | None = None
     #: 这次尝试的执行语义（V2，ADR 0127）：一次运行里第二次尝试可以是 native 回退
     profile: str = execspec.PROFILE_SAFE
+    #: 这次运行开始（认领）那一刻项目的关闭代次（`nativesession.REGISTRY.project_epoch`）。回退的最后一刻与此刻比：
+    #: 关闭再重开会升代次，关闭之前开始的运行不得在重开后的项目里起 native 进程（#1022 的代次合同延伸到回退）
+    epoch: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1635,6 +1639,7 @@ class SessionService:
             config_revision=sess.config_revision,
             created_at=self._clock(),
             profile=plan.execution,
+            epoch=nativesession.REGISTRY.project_epoch(sess.project_root),
         )
         # 新的一次用户发起的运行：回退预算与取消标记都从头算（ADR 0127）
         sess.ledger.begin_run()
@@ -1650,12 +1655,31 @@ class SessionService:
         entry = self._prep.get(plan.plan_id, sess.project_id)
         if entry is not None and entry[1].status == preparation.STATUS_PENDING:
             try:
+                if plan.execution == execspec.PROFILE_NATIVE:
+                    # 直达 native（路由 / 显式）与回退同一套最后一刻复核：native runner 启动时无条件让位该脚本的桌面 native 会话
+                    # 并占用项目——已有更新的同脚本计划登记（被取代），或运行开始后项目关闭又重开（代次对不上），都不起进程
+                    if self._prep.superseded(plan.plan_id):
+                        raise SessionError(
+                            ERROR_NOT_RUNNABLE,
+                            "已有更新的同脚本运行，这一次不再启动",
+                            409,
+                            {"reason": execpolicy.REASON_SUPERSEDED, "executed": False},
+                        )
+                    if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+                        raise SessionError(
+                            ERROR_NOT_RUNNABLE,
+                            "项目已关闭并重新打开，这一次不再启动",
+                            409,
+                            {"reason": execpolicy.REASON_PROJECT_REOPENED, "executed": False},
+                        )
                 launch(plan, done)
             except Exception:
                 # 没交出去：撤回认领，动作仍可再用
                 sess.attempts.remove(attempt)
                 sess.ledger.discard(plan.plan_id)
                 action.attempt_id = None
+                if plan.execution == execspec.PROFILE_NATIVE:
+                    self._prep.cancel_plan(plan.plan_id)  # 已登记的待执行计划不留成孤儿
                 raise
         else:
             # register 当场落了终局（needs_input / 静态）：没有执行线程，登记也无从谈起
@@ -1871,6 +1895,14 @@ class SessionService:
         if intent is not None and intent.status == INTENT_CANCELLED:
             self._decline(sess, attempt, execpolicy.REASON_CANCELLED)
             return
+        if self._prep.superseded(attempt.attempt_id):
+            # 两个桌面运行交错：已有更新的同脚本计划登记。native runner 启动时无条件让位（结束该脚本的桌面 native 会话），
+            # 现在接上就会结束新一次的运行——与取消标记同一把锁、同一时刻的最后复核（Codex #1028 r4268196418）
+            self._decline(sess, attempt, execpolicy.REASON_SUPERSEDED)
+            return
+        if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+            self._decline(sess, attempt, execpolicy.REASON_PROJECT_REOPENED)
+            return
         decision = execpolicy.decide_fallback(
             mode=execpolicy.mode_for(sess.project_root),
             enabled=execpolicy.fallback_enabled(),
@@ -1889,6 +1921,7 @@ class SessionService:
             config_revision=sess.config_revision,
             created_at=self._clock(),
             profile=nplan.execution,
+            epoch=attempt.epoch,
         )
         sess.ledger.record(nplan.plan_id, key, cause=code)
         self._prep.register(nplan)

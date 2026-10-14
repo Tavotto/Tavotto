@@ -251,12 +251,13 @@ def test_closing_the_project_before_the_fallback_starts_no_native_run(
     assert _history(final)[0]["declined"] == "cancelled" and len(_history(final)) == 1
 
 
-def _register_newer_plan(report, plan_id="prep-newer-rerun"):
+def _register_newer_plan(report, plan_id="prep-newer-rerun", script=None):
     """登记一份比会话现有尝试更晚的同脚本计划（只登记不执行），当 `cancel_project(keep=)` 的「新计划」。"""
     import dataclasses
 
     template, _ = preparation.SERVICE.get(report["provider"]["attempt_id"], report["project_id"])
-    preparation.SERVICE.register(dataclasses.replace(template, plan_id=plan_id))
+    changed = {"plan_id": plan_id, **({"script": script} if script else {})}
+    preparation.SERVICE.register(dataclasses.replace(template, **changed))
     return plan_id
 
 
@@ -307,6 +308,73 @@ def test_an_older_rerun_elsewhere_does_not_cancel_a_newer_attempt(
     assert len(native["calls"]) == 2 and final["phase"] == "completed"
 
 
+def test_a_fallback_superseded_by_a_newer_same_script_run_never_launches_native(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """Codex #1028 r4268196418：两个桌面运行交错，旧的那次走到回退时已有更新的同脚本计划登记——回退的 native runner 会无条件让位
+    （结束新一次的 native），所以最后一刻（和取消标记的复核同一把锁、同一时刻）必须再核一次登记顺序。"""
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    mid = _get(client, sid).get_json()
+    _register_newer_plan(mid)  # 另一个窗口的更新重跑已登记（没有取消标记：不经 cancel_project）
+    release.set()
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert native["calls"] == []
+    assert _history(final)[0]["declined"] == "superseded" and len(_history(final)) == 1
+
+
+def test_the_fallback_native_plan_is_stamped_with_the_project_epoch(
+    client, tmp_path, fake_pool, native, sessions
+):
+    """#1022：桌面 native 计划登记时盖项目关闭代次；回退的 native 计划走同一个 `register`，同样拿到。"""
+    sid = _start(client, tmp_path, fake_pool)
+    final = _settle(client, sid)
+    nplan, _ = preparation.SERVICE.get(_history(final)[1]["attempt_id"], final["project_id"])
+    assert nplan.execution == "native"
+    assert nplan.project_epoch == m.engine_nativesession.REGISTRY.project_epoch(str(tmp_path / "p"))
+    assert nplan.project_epoch is not None
+
+
+def test_a_fallback_begun_before_the_project_was_closed_and_reopened_never_launches_native(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """项目关闭再重开：关闭前开始的运行，回退不得在重开后的项目里起进程。就算关闭路径漏了取消标记（这里只升代次、不经
+    `cancel_project`），运行开始时记下的代次与此刻对不上也拒绝。"""
+    registry = m.engine_nativesession.REGISTRY
+    root = str(tmp_path / "p")
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    registry.mark_project_closed(root)
+    registry.reopen_project(root)
+    release.set()
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert native["calls"] == []
+    assert _history(final)[0]["declined"] == "project_reopened"
+
+
+def test_closing_and_reopening_the_project_through_the_real_close_order_declines_the_fallback(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    registry = m.engine_nativesession.REGISTRY
+    root = str(tmp_path / "p")
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    project_id = _get(client, sid).get_json()["project_id"]
+    registry.mark_project_closed(root)  # 与 app 关项目同一顺序：标记 → 取消准备
+    preparation.SERVICE.cancel_project(project_id)
+    registry.reopen_project(root)
+    release.set()
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert native["calls"] == []
+    assert _history(final)[0]["declined"] in ("cancelled", "project_reopened")
+
+
 def test_a_rerun_of_another_script_does_not_stop_the_fallback(
     client, tmp_path, fake_pool, native, sessions, monkeypatch
 ):
@@ -314,7 +382,7 @@ def test_a_rerun_of_another_script_does_not_stop_the_fallback(
     sid = _start(client, tmp_path, fake_pool)
     assert entered.wait(10)
     mid = _get(client, sid).get_json()
-    keep = _register_newer_plan(mid)
+    keep = _register_newer_plan(mid, script="other.py")
     preparation.SERVICE.cancel_project(mid["project_id"], script="other.py", keep=keep)
     release.set()
     final = _settle(client, sid)

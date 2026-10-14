@@ -595,7 +595,9 @@ class _BridgeStdin(io.TextIOBase):
 
     def readline(self, size=-1):  # noqa: D102
         b = self._bridge
-        while "\n" not in b.buffer:
+        if size is not None and size == 0:
+            return ""  # 与真文件一致：0 长度读不消费、不阻塞——也就不是一次提问
+        while "\n" not in b.buffer and (size is None or size < 0 or len(b.buffer) < size):
             if not self._fill("readline"):
                 break
         head, nl, rest = b.buffer.partition("\n")
@@ -619,12 +621,17 @@ class _BridgeStdin(io.TextIOBase):
         return out
 
     def readlines(self, hint=-1):  # noqa: D102
+        # 与 IOBase.readlines 一致：hint <= 0 / None 读到 EOF；否则累计长度达到 hint 就停（读够即止，不再提问）
         out = []
+        total = 0
         while True:
             line = self.readline()
             if not line:
                 return out
             out.append(line)
+            total += len(line)
+            if hint is not None and hint > 0 and total >= hint:
+                return out
 
 
 def _install_input_bridge(run: "BridgeRun") -> None:

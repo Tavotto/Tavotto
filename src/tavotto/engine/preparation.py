@@ -70,6 +70,7 @@ from . import (
     inputremap,
     launchctx,
     launcher,
+    nativesession,
     pool,
     projectenv,
     receipt,
@@ -218,6 +219,9 @@ class PreparationPlan:
     #: 运行前路由的结果（V2 PR2，ADR 0128）：只有调用方给了 `execution="auto"` 才有（`runroute.Route.public()`：闭集原因 /
     #: 置信度 / 命中规则 / 行号 / 耗时，不含路径与源码）；显式 safe / native 恒 None。**不入语义指纹**（`execution` 已在里面）
     route: dict | None = None
+    #: 登记那一刻项目的关闭代次（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章）。启动时带给注册表：
+    #: 关闭之后才走到起进程的旧计划，即使项目已重新打开也被拒（代次对不上）
+    project_epoch: int | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -769,6 +773,10 @@ class PreparationService:
             )
             result.finished_at = time.time()
             result.status = STATUS_NEEDS_INPUT
+        if plan.execution == execspec.PROFILE_NATIVE:
+            plan = dataclasses.replace(
+                plan, project_epoch=nativesession.REGISTRY.project_epoch(plan.project_root)
+            )
         with self._lock:
             self._sweep()
             self._entries[plan.plan_id] = _Entry(
@@ -831,6 +839,7 @@ class PreparationService:
             plan_id=plan.plan_id,
             created_at=plan.created_at,
             static_source=plan.static_source,
+            project_epoch=plan.project_epoch,
         )
         entry.plan = fresh
         return fresh

@@ -179,10 +179,10 @@ def test_closing_a_project_blocks_a_launch_that_has_not_reserved_yet(tmp_path, m
     reached = threading.Event()
     real_reserve = nativesession.REGISTRY.reserve
 
-    def slow_reserve(launch_id, project_root=""):
+    def slow_reserve(launch_id, project_root="", epoch=None):
         reached.set()
         gate.wait(30)
-        return real_reserve(launch_id, project_root)
+        return real_reserve(launch_id, project_root, epoch)
 
     monkeypatch.setattr(nativesession.REGISTRY, "reserve", slow_reserve)
     launch = dk.launch_for(tmp_path, "open('ran.txt','w').write('x')\n", name="fig.py")
@@ -466,3 +466,28 @@ def test_partial_route_conflict_rejects_the_whole_build_and_binds_nothing(tmp_pa
     assert runtimeasset.load_metadata(str(proj), "runtime:fig.py#fig-2") is None
     assert nativesession.REGISTRY.route_for(str(proj), "fig.py", "fig-2") is None
     assert nativesession.REGISTRY.route_for(str(proj), "fig.py", "fig") is holder
+
+
+def test_a_reopened_project_is_not_blocked_by_the_old_marker_but_old_plans_stay_blocked(
+    tmp_path,
+):
+    """关→开→新准备成功;而关闭前就登记的旧计划即使项目已重新打开也不能起进程(代次判定,Codex #1022 第九轮)。"""
+    from tavotto import app as m
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    old = _native_plan(proj, "pj-gen")
+    preparation.SERVICE.register(old)
+    old_plan = preparation.SERVICE._entry(old.plan_id).plan  # noqa: SLF001 — runner 拿到的是登记后的计划
+    nativesession.REGISTRY.close_project(str(proj))  # 关
+    nativesession.REGISTRY.reopen_project(str(proj))  # 又很快打开
+    with pytest.raises(pool.WorkerError) as err:
+        m._native_preparation_runner(old_plan)  # 旧线程此刻才走到起进程这一步
+    assert err.value.code == runcodes.NATIVE_REGISTRY_CLOSING
+    assert nativesession.REGISTRY.list(str(proj)) == [], "旧计划不应起出进程"
+    # 重新打开之后的新准备:正常
+    fresh = _native_plan(proj, "pj-gen")
+    preparation.SERVICE.register(fresh)
+    session, _resp, _ = m._native_preparation_runner(preparation.SERVICE._entry(fresh.plan_id).plan)  # noqa: SLF001
+    session.cancel_owned()
