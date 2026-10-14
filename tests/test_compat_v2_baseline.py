@@ -300,7 +300,13 @@ def test_side_effect_scenario_requires_the_effect_to_actually_happen():
 
 def test_figure_scenarios_reject_a_failed_outcome_with_a_figure():
     ideal = cs.IDEAL["s01_plain"]
-    ok = dict(final_phase="completed", outcome_kind="succeeded", problem_codes=[], figures_valid=1)
+    ok = dict(
+        final_phase="completed",
+        outcome_kind="succeeded",
+        problem_codes=[],
+        figures_valid=1,
+        figures_captured=1,
+    )
     assert ideal(_o(**ok, error_type=None)) == []
     assert ideal(_o(**{**ok, "outcome_kind": "failed"}, error_type=None))
 
@@ -456,10 +462,13 @@ def test_every_field_the_ideal_predicates_read_is_pinned_in_the_baseline_shape()
     expanded = set()
     for f in read:
         expanded |= _DERIVED.get(f, {f})
+    # 十个必填维度由 getattr(obs, dim) 读取（AST 扫不到），其形状键由 DIM_TO_SHAPE 登记
+    for keys in cs.DIM_TO_SHAPE.values():
+        expanded |= set(keys)
     missing = expanded - set(cs.SHAPE_KEYS)
     assert not missing, f"理想判据读了但基线形状没钉的字段: {sorted(missing)}"
     # 扫描器自检：确实扫到了东西
-    assert {"final_phase", "render_errors", "facts.dependency_installs"} <= read
+    assert {"error_type", "facts.dependency_installs", "side_effect_count"} <= read
 
 
 def test_baseline_shape_pins_render_failures_and_every_registered_baseline_has_all_keys():
@@ -478,3 +487,123 @@ def test_baseline_shape_has_exactly_the_pinned_keys_including_facts():
     assert set(shape) == set(cs.SHAPE_KEYS)
     assert shape["facts.dependency_installs"] == ["x"]
     assert shape["facts.modules_absent"] is None
+
+
+# ---------------------------------------------------------------- 第七轮（PR #1023）：完整期望表
+
+
+def test_every_scenario_has_a_complete_expectation_table():
+    """每个场景的理想判据 = 一张显式期望表；十个维度都必须表态（确定值，或 ANY 加写明理由）。"""
+    assert set(cs.EXPECT) == set(cs.SCENARIOS)
+    assert set(cs.REQUIRED_DIMS) == {
+        "final_phase",
+        "outcome_kind",
+        "problem_codes",
+        "figures_valid",
+        "figures_captured",
+        "render_errors",
+        "failed_figures",
+        "exec_count",
+        "dependency_plan",
+        "side_effects",
+    }
+    for sid, ex in cs.EXPECT.items():
+        for dim in cs.REQUIRED_DIMS:
+            assert hasattr(ex, dim), (sid, dim)  # 数据类字段无默认值：漏写在构造时就是 TypeError
+            if getattr(ex, dim) is cs.ANY:
+                assert ex.any_reasons.get(dim, "").strip(), f"{sid}.{dim} 写了 ANY 却没写理由"
+        assert set(ex.any_reasons) <= set(cs.REQUIRED_DIMS)
+        for dim in ex.any_reasons:
+            assert getattr(ex, dim) is cs.ANY, f"{sid}.{dim} 有理由却不是 ANY"
+
+
+def test_expectation_dimensions_are_all_pinned_in_the_baseline_shape():
+    for dim, keys in cs.DIM_TO_SHAPE.items():
+        assert set(keys) <= set(cs.SHAPE_KEYS), (dim, keys)
+    assert set(cs.DIM_TO_SHAPE) == set(cs.REQUIRED_DIMS)
+
+
+def _clean(**kw):
+    base = dict(
+        final_phase="completed",
+        outcome_kind="succeeded",
+        problem_codes=[],
+        error_type=None,
+        exec_count=1,
+        figures_valid=1,
+        figures_captured=1,
+        failed_figures=[],
+        render_errors=[],
+    )
+    base.update(kw)
+    return cb.Observation(scenario="x", **base)
+
+
+def test_figure_controls_require_clean_completion():
+    ideal = cs.IDEAL["s01_plain"]
+    assert ideal(_clean()) == []
+    # 一张可渲染的图，但会话是 partial / 带 failed_figures / 带原因码：新出现的不完整结果不能放过
+    assert ideal(_clean(final_phase="partial"))
+    assert ideal(_clean(failed_figures=["bad"]))
+    assert ideal(_clean(problem_codes=["script_error"]))
+    assert ideal(_clean(figures_captured=2))  # 捕获了两张、只有一张有效
+    assert ideal(_clean(render_errors=[{"asset_id": "a", "error": "X"}], figures_captured=2))
+
+
+def test_stop_scenarios_reject_any_captured_descriptor():
+    ideal = cs.IDEAL["s16a_zero_division"]
+    stop = dict(
+        final_phase="action_required",
+        outcome_kind="failed",
+        problem_codes=["script_error"],
+        error_type="ZeroDivisionError",
+        figures_valid=0,
+        figures_captured=0,
+    )
+    assert ideal(_clean(**stop)) == []
+    # 发布了捕获描述但渲染不出来：figures_valid 仍是 0，旧判据放过
+    assert ideal(
+        _clean(
+            **{**stop, "figures_captured": 1, "render_errors": [{"asset_id": "a", "error": "X"}]}
+        )
+    )
+    assert ideal(_clean(**{**stop, "failed_figures": ["x"]}))
+    assert cs.IDEAL["s21_no_figure"](
+        _clean(
+            final_phase="partial",
+            outcome_kind="execution_finished_no_figure",
+            problem_codes=["no_figures_captured"],
+            error_type=None,
+            figures_valid=0,
+            figures_captured=1,
+            render_errors=[{"asset_id": "a", "error": "X"}],
+        )
+    )
+
+
+def test_probe_runs_with_the_launch_environment_or_declines(monkeypatch, tmp_path):
+    import subprocess
+
+    # conda 环境：启动要靠激活脚本，这里复现不了 -> 拿不到启动环境 -> None（调用方 skip）
+    conda = tmp_path / "conda" / "bin"
+    conda.mkdir(parents=True)
+    (conda.parent / "conda-meta").mkdir()
+    py = conda / "python"
+    py.write_text("")
+    assert cb.probe_env(str(py), {"PATH": "/bin", "PYTHONPATH": "/src"}) is None
+    # 普通环境：用 app 同一份环境（含 PYTHONPATH），且不再用 -I
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    vpy = venv / "python"
+    vpy.write_text("")
+    env = cb.probe_env(str(vpy), {"PATH": "/bin", "PYTHONPATH": "/src"})
+    assert env and env["PYTHONPATH"] == "/src"
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["env"] = cmd, kw.get("env")
+        return subprocess.CompletedProcess(cmd, 0, stdout='["cv2"]\n', stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert cb.absent_modules(str(vpy), ("cv2",), env=env) == ["cv2"]
+    assert "-I" not in seen["cmd"] and seen["env"]["PYTHONPATH"] == "/src"

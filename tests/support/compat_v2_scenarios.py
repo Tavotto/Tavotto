@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import re
-from typing import Callable
+from dataclasses import dataclass, field
 
 from support.compatbench_v2 import Observation, Scenario
 
@@ -71,124 +71,225 @@ NOT_RUN = {
 }
 
 
-def _figure(
-    obs: Observation, *, title: str | None = None, title_re: str | None = None, max_exec: int
-) -> list[str]:
-    miss = []
-    if not obs.first_valid_figure:
-        miss.append(f"没有首次有效出图（final_phase={obs.final_phase}, codes={obs.problem_codes}）")
-    if obs.outcome_kind != "succeeded":
-        miss.append(f"会话结果应为 succeeded，实测 {obs.outcome_kind}")
-    if obs.render_errors:
-        miss.append(f"有捕获的图渲染不出来: {obs.render_errors}")
-    if obs.exec_count > max_exec:
-        miss.append(f"真实执行 {obs.exec_count} 次，理想上限 {max_exec}")
-    if obs.exec_count == 0 and obs.first_valid_figure:
-        miss.append("有图但执行日志为 0（日志坏了或图不是这次执行的）")
-    if title is not None and title not in obs.titles:
-        miss.append(f"图里的标题 {obs.titles!r} 不含语义真值 {title!r}")
-    if title_re is not None and not any(re.fullmatch(title_re, t) for t in obs.titles):
-        miss.append(f"图里的标题 {obs.titles!r} 不匹配 {title_re!r}")
+# ---------------------------------------------------------------- 完整期望表
+#
+# 每个场景的理想判据是一张显式的期望表（`Expect`）：十个维度**每一个都必须表态**——确定值，或 `ANY` 并在
+# `any_reasons` 里写明理由（数据类字段没有默认值，漏写 = 构造时 TypeError；`ANY` 没理由 = 测试红）。
+# 判据太宽（只核成功码不核 phase、只核有效张数不核捕获张数……）的同一家族问题靠这张表一次收口。
+
+REQUIRED_DIMS = (
+    "final_phase",
+    "outcome_kind",
+    "problem_codes",
+    "figures_valid",
+    "figures_captured",
+    "render_errors",
+    "failed_figures",
+    "exec_count",
+    "dependency_plan",
+    "side_effects",
+)
+
+# 每个维度由哪些基线形状键钉住（不变量测试核对：期望表表态的，登记的失败形状也必须钉）
+DIM_TO_SHAPE = {
+    "final_phase": ("final_phase",),
+    "outcome_kind": ("outcome_kind",),
+    "problem_codes": ("problem_codes",),
+    "figures_valid": ("figures_valid",),
+    "figures_captured": ("figures_captured",),
+    "render_errors": ("render_errors",),
+    "failed_figures": ("failed_figures",),
+    "exec_count": ("exec_count",),
+    "dependency_plan": (
+        "facts.dependency_installs",
+        "facts.dependency_missing",
+        "facts.actions_offered_final",
+        "facts.modules_absent",
+    ),
+    "side_effects": ("side_effect_count",),
+}
+
+
+class _Sentinel:
+    def __init__(self, name: str):
+        self.name = name
+
+    def __repr__(self) -> str:
+        return self.name
+
+
+ANY = _Sentinel("ANY")  # 显式「不关心」——必须在 any_reasons 里写理由
+NONEMPTY = _Sentinel("NONEMPTY")  # 必须非空（例如「有原因码」，但不钉具体是哪个）
+NO_PLAN = _Sentinel("NO_PLAN")  # 没有依赖计划：installs / missing 为空，也没有「准备依赖」动作
+NO_SIDE_EFFECT = _Sentinel("NO_SIDE_EFFECT")  # 夹具不写外部副作用：side_effect_count 必须是 None
+
+
+@dataclass(frozen=True)
+class OneOf:
+    values: tuple
+
+    def __init__(self, *values):
+        object.__setattr__(self, "values", tuple(values))
+
+
+@dataclass(frozen=True)
+class DepPlan:
+    """依赖计划：`missing` 是 import 名 -> 发行包名；只对 worker 解释器里**真的缺**的（`facts.modules_absent`）提要求，
+    且计划与缺失映射必须**恰好**等于探针判定的缺失集（已装的不得出现）。"""
+
+    missing: dict
+
+
+@dataclass(frozen=True)
+class SideEffects:
+    """外部副作用必须真发生，次数在 `allowed` 内，且等于脚本自写的执行日志次数。"""
+
+    allowed: tuple = (1, 2)
+
+
+@dataclass(frozen=True)
+class Expect:
+    final_phase: object
+    outcome_kind: object
+    problem_codes: object
+    figures_valid: object
+    figures_captured: object
+    render_errors: object
+    failed_figures: object
+    exec_count: object
+    dependency_plan: object
+    side_effects: object
+    # 可选的附加语义判据（不属于十个必填维度）
+    error_type: object = ANY
+    title: str | None = None
+    title_re: str | None = None
+    any_reasons: dict = field(default_factory=dict)
+
+
+def _match(spec, value) -> bool:
+    if spec is ANY:
+        return True
+    if spec is NONEMPTY:
+        return bool(value)
+    if isinstance(spec, OneOf):
+        return value in spec.values
+    if isinstance(spec, list) and isinstance(value, list):
+        return sorted(map(str, spec)) == sorted(map(str, value))
+    return value == spec
+
+
+def check(obs: Observation, ex: Expect) -> list[str]:
+    """按期望表逐维度核对，回未达成项（空 = 理想达成）。"""
+    miss: list[str] = []
+    for dim in (
+        "final_phase",
+        "outcome_kind",
+        "problem_codes",
+        "figures_valid",
+        "figures_captured",
+        "render_errors",
+        "failed_figures",
+        "exec_count",
+    ):
+        want = getattr(ex, dim)
+        got = getattr(obs, dim)
+        if not _match(want, got):
+            miss.append(f"{dim} 应为 {want!r}，实测 {got!r}")
+    if not _match(ex.error_type, obs.error_type):
+        miss.append(f"error_type 应为 {ex.error_type!r}，实测 {obs.error_type!r}")
+
+    plan = ex.dependency_plan
+    installs = set(obs.facts.get("dependency_installs") or [])
+    got_missing = obs.facts.get("dependency_missing") or {}
+    offered = obs.facts.get("actions_offered_final") or []
+    if plan is NO_PLAN:
+        if installs or got_missing or "prepare_dependencies" in offered:
+            miss.append(
+                f"不该有依赖计划，实测 installs={sorted(installs)} missing={got_missing} actions={offered}"
+            )
+    elif isinstance(plan, DepPlan):
+        absent = set(obs.facts.get("modules_absent", plan.missing))
+        want_missing = {k: v for k, v in plan.missing.items() if k in absent}
+        if installs != set(want_missing.values()):
+            miss.append(
+                f"依赖计划应恰好装 {sorted(set(want_missing.values()))}，实测 {sorted(installs)}"
+            )
+        if got_missing != want_missing:
+            miss.append(f"缺失映射应恰好是 {want_missing}，实测 {got_missing}")
+        if "prepare_dependencies" not in offered:
+            miss.append("用户没有「准备依赖」这个动作可点")
+    elif plan is not ANY:
+        raise AssertionError(f"未知的 dependency_plan 期望: {plan!r}")
+
+    fx = ex.side_effects
+    if fx is NO_SIDE_EFFECT:
+        if obs.side_effect_count is not None:
+            miss.append(f"夹具不该有外部副作用，实测 {obs.side_effect_count}")
+    elif isinstance(fx, SideEffects):
+        if obs.side_effect_count not in fx.allowed:
+            miss.append(
+                f"外部副作用应在 {fx.allowed}，实测 {obs.side_effect_count}（夹具坏了或写入丢了）"
+            )
+        elif obs.side_effect_count != obs.exec_count:
+            miss.append(f"副作用 {obs.side_effect_count} 次与执行日志 {obs.exec_count} 次对不上")
+    elif fx is not ANY:
+        raise AssertionError(f"未知的 side_effects 期望: {fx!r}")
+
+    if ex.title is not None and ex.title not in obs.titles:
+        miss.append(f"图里的标题 {obs.titles!r} 不含语义真值 {ex.title!r}")
+    if ex.title_re is not None and not any(re.fullmatch(ex.title_re, t) for t in obs.titles):
+        miss.append(f"图里的标题 {obs.titles!r} 不匹配 {ex.title_re!r}")
     return miss
 
 
-def _stop(
-    obs: Observation,
-    *,
-    code: str,
-    error_type: str | None = None,
-    phase: str,
-    kind: str,
-) -> list[str]:
-    """停下来说明原因：一次执行、没有图、不回退，且会话**投影成停下**（phase / outcome_kind 对），
-    而不是错误码还在、界面却说成功。"""
-    miss = []
-    if obs.final_phase != phase:
-        miss.append(f"终局 phase 应为 {phase}，实测 {obs.final_phase}")
-    if obs.outcome_kind != kind:
-        miss.append(f"outcome.kind 应为 {kind}，实测 {obs.outcome_kind}")
-    if obs.exec_count != 1:
-        miss.append(f"应恰好执行 1 次（不回退、不重试），实测 {obs.exec_count}")
-    if obs.figures_valid:
-        miss.append("不该有图")
-    if code not in obs.problem_codes:
-        miss.append(f"原因码应含 {code}，实测 {obs.problem_codes}")
-    if error_type is not None and obs.error_type != error_type:
-        miss.append(f"异常类型应为 {error_type}，实测 {obs.error_type}")
-    return miss
+def _fig(exec_count, **kw) -> Expect:
+    """干净完成的出图：completed / succeeded / 无原因码 / 一张捕获且有效 / 无失败图 / 无依赖计划。"""
+    base = dict(
+        final_phase="completed",
+        outcome_kind="succeeded",
+        problem_codes=[],
+        figures_valid=1,
+        figures_captured=1,
+        render_errors=[],
+        failed_figures=[],
+        exec_count=exec_count,
+        dependency_plan=NO_PLAN,
+        side_effects=NO_SIDE_EFFECT,
+    )
+    base.update(kw)
+    return Expect(**base)
 
 
-def _ideal_s05(o):
-    return _figure(o, title="bytes>0=True", max_exec=2)
+def _stop(code, *, phase, kind, error_type=ANY) -> Expect:
+    """停下来说明原因：一次执行、没有图（捕获 0 张、无渲染错误、无失败图）、不回退。"""
+    return Expect(
+        final_phase=phase,
+        outcome_kind=kind,
+        problem_codes=[code],
+        figures_valid=0,
+        figures_captured=0,
+        render_errors=[],
+        failed_figures=[],
+        exec_count=1,
+        dependency_plan=NO_PLAN,
+        side_effects=NO_SIDE_EFFECT,
+        error_type=error_type,
+    )
 
 
-def _ideal_s25(o: Observation) -> list[str]:
-    miss = []
-    if o.figures_valid != 1:
-        miss.append(f"应保留成功那张（1 张），实测 {o.figures_valid}")
-    if o.final_phase != "partial":
-        miss.append(f"部分捕获失败应投影为 partial，实测 {o.final_phase}")
-    if sorted(o.failed_figures) != ["bad"]:
-        miss.append(f"会话报告应恰好指认未捕获的 bad，实测 failed_figures={o.failed_figures}")
-    if o.outcome_kind != "succeeded":
-        miss.append(f"保留了一张图，outcome.kind 应为 succeeded，实测 {o.outcome_kind}")
-    if o.problem_codes:
-        miss.append(f"部分成功不该带错误码，实测 {o.problem_codes}")
-    if o.exec_count != 1:
-        miss.append(f"partial 不是回退理由，应执行 1 次，实测 {o.exec_count}")
-    if o.render_errors:
-        miss.append(f"保留的那张图渲染不出来: {o.render_errors}")
-    return miss
-
-
-def _ideal_s17(o: Observation) -> list[str]:
-    """副作用必须真发生：1（路由直达）或 2（回退，已裁决接受），且与脚本自写的执行日志次数一致。"""
-    miss = _figure(o, title="bytes>0=True", max_exec=2)
-    if o.side_effect_count not in (1, 2):
-        miss.append(f"外部副作用应为 1 或 2 次，实测 {o.side_effect_count}（夹具坏了或写入丢了）")
-    elif o.side_effect_count != o.exec_count:
-        miss.append(f"副作用 {o.side_effect_count} 次与执行日志 {o.exec_count} 次对不上")
-    return miss
-
-
-def _ideal_s18(o: Observation) -> list[str]:
-    miss = []
-    if o.exec_count != 1:
-        miss.append(f"只读目录不该触发重试 / 回退循环，应执行 1 次，实测 {o.exec_count}")
-    if o.figures_valid:
-        miss.append("只读目录下不该有图")
-    if not o.problem_codes:
-        miss.append("没有任何原因码，用户看不到为什么")
-    if o.final_phase == "completed" or o.outcome_kind == "succeeded":
-        miss.append(f"只读目录写不出东西，会话不该投影成功（{o.final_phase}/{o.outcome_kind}）")
-    return miss
-
-
-def _ideal_deps(o: Observation, missing: dict[str, str]) -> list[str]:
-    """只对「worker 解释器里真的缺」的 import 提要求：已装的包依赖计划里本来就不会出现（测试驱动在
-    `facts["modules_absent"]` 里写入探针结果；没写 = 全部视为缺）。"""
-    absent = set(o.facts.get("modules_absent", missing))
-    missing = {imp: dist for imp, dist in missing.items() if imp in absent}
-    installs = set(missing.values())
-    miss = []
-    if o.exec_count != 0:
-        miss.append(f"检查阶段不得执行用户代码，实测 {o.exec_count}")
-    if o.final_phase != "awaiting_confirmation":
-        miss.append(f"缺包应停在 awaiting_confirmation，实测 {o.final_phase}")
-    if o.outcome_kind != "pending":
-        miss.append(f"outcome.kind 应为 pending，实测 {o.outcome_kind}")
-    if "dependency_preparation_required" not in o.problem_codes:
-        miss.append(f"原因码应含 dependency_preparation_required，实测 {o.problem_codes}")
-    if "prepare_dependencies" not in (o.facts.get("actions_offered_final") or []):
-        miss.append("用户没有「准备依赖」这个动作可点")
-    # 精确相等：缺的必须在计划里，**已装的不得出现**（否则会无谓改动用户已有的依赖）
-    got = set(o.facts.get("dependency_installs") or [])
-    if installs != got:
-        miss.append(f"依赖计划应恰好装 {sorted(installs)}，实测 {sorted(got)}")
-    got_missing = o.facts.get("dependency_missing") or {}
-    if got_missing != missing:
-        miss.append(f"缺失映射应恰好是 {missing}，实测 {got_missing}")
-    return miss
+def _deps(missing: dict) -> Expect:
+    return Expect(
+        final_phase="awaiting_confirmation",
+        outcome_kind="pending",
+        problem_codes=["dependency_preparation_required"],
+        figures_valid=0,
+        figures_captured=0,
+        render_errors=[],
+        failed_figures=[],
+        exec_count=0,
+        dependency_plan=DepPlan(missing),
+        side_effects=NO_SIDE_EFFECT,
+    )
 
 
 def _scenario(id_: str, scenes, title, failure, strategy, ideal_exec, ideal_max, outcome, **kw):
@@ -220,17 +321,19 @@ _BLOCKED_AS_PLAIN_ERROR = {
 }
 
 SCENARIOS: dict[str, Scenario] = {}
-IDEAL: dict[str, Callable[[Observation], list[str]]] = {}
+EXPECT: dict[str, Expect] = {}
+IDEAL: dict = {}  # 兼容旧名：IDEAL[sid](obs) -> 未达成项
 
 
-def _add(s: Scenario, ideal: Callable[[Observation], list[str]]) -> None:
+def _add(s: Scenario, ex: Expect) -> None:
     SCENARIOS[s.id] = s
-    IDEAL[s.id] = ideal
+    EXPECT[s.id] = ex
+    IDEAL[s.id] = lambda obs, _ex=ex: check(obs, _ex)
 
 
 _add(
     _scenario("s01_plain", (1,), "普通 Matplotlib", "无（对照）", "Safe 直接成功", 1, 1, "figure"),
-    lambda o: _figure(o, title=None, max_exec=1),
+    _fig(1),
 )
 _add(
     _scenario(
@@ -243,7 +346,7 @@ _add(
         1,
         "figure",
     ),
-    lambda o: _figure(o, title="value=2", max_exec=1),
+    _fig(1, title="value=2"),
 )
 _add(
     _scenario(
@@ -257,7 +360,7 @@ _add(
         "figure",
         main_baseline=_BLOCKED_AS_PLAIN_ERROR,
     ),
-    lambda o: _figure(o, title="final bytes>0=True", max_exec=2),
+    _fig(OneOf(1, 2), title="final bytes>0=True"),
 )
 _add(
     _scenario(
@@ -271,7 +374,7 @@ _add(
         "figure",
         main_baseline=_BLOCKED_AS_PLAIN_ERROR,
     ),
-    _ideal_s05,
+    _fig(OneOf(1, 2), title="bytes>0=True"),
 )
 _add(
     _scenario(
@@ -294,7 +397,7 @@ _add(
             "side_effect_count": None,
         },
     ),
-    lambda o: _figure(o, title_re=r"\d+x\d+", max_exec=2),
+    _fig(OneOf(1, 2), title_re=r"\d+x\d+"),
 )
 _add(
     _scenario(
@@ -317,7 +420,7 @@ _add(
             "side_effect_count": None,
         },
     ),
-    lambda o: _figure(o, title="saved", max_exec=2),
+    _fig(OneOf(1, 2), title="saved"),
 )
 _add(
     _scenario(
@@ -330,7 +433,7 @@ _add(
         0,
         "dependency_plan",
     ),
-    lambda o: _ideal_deps(o, {"sklearn": "scikit-learn"}),
+    _deps({"sklearn": "scikit-learn"}),
 )
 _add(
     _scenario(
@@ -343,13 +446,7 @@ _add(
         1,
         "stop_no_fallback",
     ),
-    lambda o: _stop(
-        o,
-        code="script_error",
-        error_type="ZeroDivisionError",
-        phase="action_required",
-        kind="failed",
-    ),
+    _stop("script_error", phase="action_required", kind="failed", error_type="ZeroDivisionError"),
 )
 _add(
     _scenario(
@@ -362,9 +459,7 @@ _add(
         1,
         "stop_no_fallback",
     ),
-    lambda o: _stop(
-        o, code="script_error", error_type="NameError", phase="action_required", kind="failed"
-    ),
+    _stop("script_error", phase="action_required", kind="failed", error_type="NameError"),
 )
 _add(
     _scenario(
@@ -378,7 +473,7 @@ _add(
         "figure",
         main_baseline={**_BLOCKED_AS_PLAIN_ERROR, "side_effect_count": 1},
     ),
-    _ideal_s17,
+    _fig(OneOf(1, 2), title="bytes>0=True", side_effects=SideEffects((1, 2))),
 )
 _add(
     _scenario(
@@ -394,7 +489,19 @@ _add(
         notes="main 实测：Safe 沙盒里脚本跑完，登记写项目目录失败 -> partial + registration_failed（无图）。"
         "对照组只钉「一次执行、无图、不循环」；原因码是否够清楚属于 PR3a/PR4 的文案问题。",
     ),
-    _ideal_s18,
+    # 只读目录：原因码是否够清楚属于文案问题，这里只要求「有原因码」；phase 只能是停下的两种之一
+    Expect(
+        final_phase=OneOf("action_required", "partial"),
+        outcome_kind="failed",
+        problem_codes=NONEMPTY,
+        figures_valid=0,
+        figures_captured=0,
+        render_errors=[],
+        failed_figures=[],
+        exec_count=1,
+        dependency_plan=NO_PLAN,
+        side_effects=NO_SIDE_EFFECT,
+    ),
 )
 _add(
     _scenario(
@@ -407,12 +514,7 @@ _add(
         1,
         "stop_no_fallback",
     ),
-    lambda o: _stop(
-        o,
-        code="no_figures_captured",
-        phase="partial",
-        kind="execution_finished_no_figure",
-    ),
+    _stop("no_figures_captured", phase="partial", kind="execution_finished_no_figure"),
 )
 _add(
     _scenario(
@@ -436,7 +538,7 @@ _add(
             "side_effect_count": None,
         },
     ),
-    _ideal_s25,
+    _fig(1, final_phase="partial", failed_figures=["bad"]),
 )
 _add(
     _scenario(
@@ -450,7 +552,7 @@ _add(
         "dependency_plan",
         notes="另列场景：import 名与发行包名不一致",
     ),
-    lambda o: _ideal_deps(o, {"cv2": "opencv-python", "sklearn": "scikit-learn"}),
+    _deps({"cv2": "opencv-python", "sklearn": "scikit-learn"}),
 )
 _add(
     _scenario(
@@ -464,7 +566,7 @@ _add(
         "figure",
         notes="另列场景：import 名与发行包名不一致",
     ),
-    lambda o: _figure(o, max_exec=1),
+    _fig(1),
 )
 
 

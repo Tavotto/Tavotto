@@ -187,8 +187,24 @@ def probe_interpreter(env, reported: str) -> str | None:
     return next(iter(forwarded.values()), None) or reported or None
 
 
-def absent_modules(python: str, names) -> list[str]:
-    """该解释器里**导入不了**的那些（独立探针，不经产品代码）。"""
+def probe_env(python: str, app_env: dict) -> dict | None:
+    """探针该用的环境 = 隔离 app 启动 worker 时的那一份（继承 `os.environ` + app 的覆盖，含 PYTHONPATH）。
+
+    conda 环境靠激活脚本补 PATH / 环境变量，这里复现不了、也不该自己拼 -> 返回 None，调用方 skip
+    （拿不到 worker 的启动环境就不判缺包前提）。"""
+    exe = Path(python)
+    for prefix in (
+        exe.parent.parent,
+        exe.parent,
+    ):  # POSIX: <prefix>/bin/python；Windows: <prefix>/python.exe
+        if (prefix / "conda-meta").is_dir():
+            return None
+    return {**os.environ, **app_env}
+
+
+def absent_modules(python: str, names, *, env: dict | None = None) -> list[str]:
+    """该解释器里**导入不了**的那些（独立探针，不经产品代码）；用 worker 启动环境，不用 `-I`（`-I` 会
+    忽略 PYTHONPATH / 用户 site，worker 并不隔离它们）。"""
     import subprocess
 
     code = (
@@ -196,7 +212,8 @@ def absent_modules(python: str, names) -> list[str]:
         "print(json.dumps([n for n in sys.argv[1:] if importlib.util.find_spec(n) is None]))"
     )
     out = subprocess.run(
-        [python, "-I", "-c", code, *names],
+        [python, "-c", code, *names],
+        env=env,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -333,7 +350,12 @@ def observe(
                 python = probe_interpreter(env, reported)
                 if python is None:
                     raise PreconditionUnmet("拿不到隔离 app 选中的解释器，无法核对缺包前提")
-                absent = absent_modules(python, needs_absent)
+                launch_env = probe_env(python, env)
+                if launch_env is None:
+                    raise PreconditionUnmet(
+                        "拿不到 worker 的启动环境（conda 等靠激活脚本的环境），不判缺包前提"
+                    )
+                absent = absent_modules(python, needs_absent, env=launch_env)
                 if not absent:
                     raise PreconditionUnmet(
                         f"app 的解释器里 {list(needs_absent)} 都已安装，缺包前提不成立"
