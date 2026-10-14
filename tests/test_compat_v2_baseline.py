@@ -354,3 +354,59 @@ def test_zero_execution_is_asserted_after_every_check_not_only_the_first():
     obs.facts["exec_counts_at_checks"] = []  # 没记录 = 没验证，同样不通过
     with pytest.raises(AssertionError, match="没有记录"):
         cb.assert_no_execution_before_run(obs)
+
+
+# ---------------------------------------------------------------- 第五轮（PR #1023）
+
+
+def test_partial_scenario_requires_success_outcome_and_clean_codes():
+    ideal = cs.IDEAL["s25_partial_capture"]
+    ok = dict(
+        final_phase="partial",
+        outcome_kind="succeeded",
+        problem_codes=[],
+        error_type=None,
+        figures_valid=1,
+        figures_captured=1,
+        failed_figures=["bad"],
+    )
+    assert ideal(_o(**ok)) == []
+    # 指认了 bad，但把会话投影成失败 / 无图 / 带错误码：坏的 UI 结果不能算理想
+    assert ideal(_o(**{**ok, "outcome_kind": "failed"}))
+    assert ideal(_o(**{**ok, "outcome_kind": "execution_finished_no_figure"}))
+    assert ideal(_o(**{**ok, "problem_codes": ["script_error"]}))
+    assert ideal(_o(**{**ok, "failed_figures": ["bad", "good"]}))  # 把成功那张也说成失败
+
+
+def test_dependency_plan_must_match_exactly_the_probed_absent_set():
+    ideal = cs.IDEAL["s26_import_cv2_sklearn"]
+    base = dict(
+        final_phase="awaiting_confirmation",
+        outcome_kind="pending",
+        problem_codes=["dependency_preparation_required"],
+        error_type=None,
+        exec_count=0,
+    )
+
+    def facts(absent, installs, missing):
+        return {
+            "modules_absent": absent,
+            "dependency_installs": installs,
+            "dependency_missing": missing,
+            "actions_offered_final": ["recheck", "prepare_dependencies"],
+        }
+
+    # cv2 已装、sklearn 缺：只该装 scikit-learn
+    good = facts(["sklearn"], ["scikit-learn"], {"sklearn": "scikit-learn"})
+    assert ideal(_o(**base, facts=good)) == []
+    # 退化的规划器把已装的 cv2 也拉进来：不能放过
+    regress_installs = facts(
+        ["sklearn"], ["opencv-python", "scikit-learn"], {"sklearn": "scikit-learn"}
+    )
+    assert ideal(_o(**base, facts=regress_installs))
+    regress_missing = facts(
+        ["sklearn"],
+        ["scikit-learn"],
+        {"sklearn": "scikit-learn", "cv2": "opencv-python"},
+    )
+    assert ideal(_o(**base, facts=regress_missing))

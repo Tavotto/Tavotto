@@ -109,8 +109,12 @@ def _ideal_s25(o: Observation) -> list[str]:
         miss.append(f"应保留成功那张（1 张），实测 {o.figures_valid}")
     if o.final_phase != "partial":
         miss.append(f"部分捕获失败应投影为 partial，实测 {o.final_phase}")
-    if "bad" not in o.failed_figures:
-        miss.append(f"会话报告应指认未捕获的 bad，实测 failed_figures={o.failed_figures}")
+    if sorted(o.failed_figures) != ["bad"]:
+        miss.append(f"会话报告应恰好指认未捕获的 bad，实测 failed_figures={o.failed_figures}")
+    if o.outcome_kind != "succeeded":
+        miss.append(f"保留了一张图，outcome.kind 应为 succeeded，实测 {o.outcome_kind}")
+    if o.problem_codes:
+        miss.append(f"部分成功不该带错误码，实测 {o.problem_codes}")
     if o.exec_count != 1:
         miss.append(f"partial 不是回退理由，应执行 1 次，实测 {o.exec_count}")
     if o.render_errors:
@@ -158,13 +162,13 @@ def _ideal_deps(o: Observation, missing: dict[str, str]) -> list[str]:
         miss.append(f"原因码应含 dependency_preparation_required，实测 {o.problem_codes}")
     if "prepare_dependencies" not in (o.facts.get("actions_offered_final") or []):
         miss.append("用户没有「准备依赖」这个动作可点")
+    # 精确相等：缺的必须在计划里，**已装的不得出现**（否则会无谓改动用户已有的依赖）
     got = set(o.facts.get("dependency_installs") or [])
-    if not installs <= got:
-        miss.append(f"依赖计划应含 {sorted(installs)}，实测 {sorted(got)}")
+    if installs != got:
+        miss.append(f"依赖计划应恰好装 {sorted(installs)}，实测 {sorted(got)}")
     got_missing = o.facts.get("dependency_missing") or {}
-    for imp, dist in missing.items():
-        if got_missing.get(imp) != dist:
-            miss.append(f"import {imp} 应映射到发行包 {dist}，实测 {got_missing.get(imp)}")
+    if got_missing != missing:
+        miss.append(f"缺失映射应恰好是 {missing}，实测 {got_missing}")
     return miss
 
 
