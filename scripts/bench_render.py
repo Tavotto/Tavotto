@@ -66,6 +66,10 @@ TIMING_KEYS = [
     "patch_apply_ms",
     "canvas_draw_ms",
     "manifest_ms",
+    "manifest_prepare_ms",
+    "manifest_layout_ms",
+    "manifest_measure_ms",
+    "manifest_final_geometry_ms",
     "total_ms",
 ]
 
@@ -232,6 +236,14 @@ def bench_panel(
         rev = r["rev"]  # 取 SVG 要带上（服务端拿它做缓存穿透）
     rec["hot"] = {k: _median(samples, k) for k in [*TIMING_KEYS, "wall_ms"]}
     rec["hot_n"] = repeat
+    # 过去只保存中位数，Agent 无法识别偶发 P95 卡顿，也无法证明样本足够。
+    # 仅保留固定数字键，不包含用户脚本、路径、文字、异常细节。
+    rec["hot_samples"] = [
+        {key: value for key in [*TIMING_KEYS, "wall_ms"] if isinstance(
+            value := sample.get(key), (int, float)
+        )}
+        for sample in samples
+    ]
     # 预览 SVG 的体积与 primitive 计数：前端每次渲染都要把它下载 + 解析 +
     # 塞进 DOM，属于「快显」的另一半（含 imshow 的面板里体积是 dpi 的直接
     # 函数，纯矢量图上是常数）。**path 数比体积更能说明问题**——体积随
