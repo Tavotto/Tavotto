@@ -176,6 +176,19 @@ def compose_run_summary(symbol: dict, drag_status: str) -> dict:
     }
 
 
+def comparison_run_summary(symbol: dict, drag_status: str, comparison: dict) -> dict:
+    """比较未通过时，整个 run 不得继续显示 ok / not_checked。"""
+    result = compose_run_summary(symbol, drag_status)
+    verdict = comparison.get("status")
+    if verdict not in ("pass", "regression", "incomparable"):
+        raise ValueError("invalid_comparison_verdict")
+    result["regression_status"] = verdict
+    result["comparison"] = comparison
+    if result["status"] == "ok" and verdict != "pass":
+        result["status"] = verdict
+    return result
+
+
 def compare(current: dict, baseline: dict, regression_pct: float = DEFAULT_REGRESSION_PCT) -> dict:
     now, old = summarize(current), summarize(baseline)
     if now["status"] != "ok" or old["status"] != "ok":
@@ -327,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.summary:
                     _write(args.summary, whole)
                 # 只在全部子测试已有明确结论时显示整体通过/失败。
-                if whole["status"] != "pending":
+                if whole["status"] != "pending" and not args.baseline:
                     _append_gha_summary(whole)
 
             save_suite_summary()
@@ -341,45 +354,57 @@ def main(argv: list[str] | None = None) -> int:
                 drag_path.unlink(missing_ok=True)
                 findings_path.unlink(missing_ok=True)
                 drag_env = {**env, "TAVOTTO_PERF_REPORT_OUT": str(drag_path)}
-                drag_run = subprocess.run(
-                    [
-                        "pnpm",
-                        "exec",
-                        "playwright",
-                        "test",
-                        "--config",
-                        "playwright.config.ts",
-                        "--project",
-                        args.browser,
-                        "--output",
-                        DRAG_E2E_OUTPUT,
-                        "--grep",
-                        "性能探针：录制真实拖动",
-                        "e2e/perf-probe.spec.ts",
-                    ],
-                    cwd=REPO / "web",
-                    env=drag_env,
-                    check=False,
-                    timeout=900,
-                )
+                try:
+                    drag_run = subprocess.run(
+                        [
+                            "pnpm",
+                            "exec",
+                            "playwright",
+                            "test",
+                            "--config",
+                            "playwright.config.ts",
+                            "--project",
+                            args.browser,
+                            "--output",
+                            DRAG_E2E_OUTPUT,
+                            "--grep",
+                            "性能探针：录制真实拖动",
+                            "e2e/perf-probe.spec.ts",
+                        ],
+                        cwd=REPO / "web",
+                        env=drag_env,
+                        check=False,
+                        timeout=900,
+                    )
+                except subprocess.TimeoutExpired:
+                    drag_status = "failed"
+                    save_suite_summary()
+                    print("error: perf_agent_drag_probe_timeout", file=sys.stderr)
+                    return 2
                 if drag_run.returncode != 0 or not drag_path.is_file():
                     drag_status = "failed"
                     save_suite_summary()
                     print("error: perf_agent_drag_probe_failed", file=sys.stderr)
                     return 2
-                analysis = subprocess.run(
-                    [
-                        sys.executable,
-                        str(REPO / "scripts" / "perf_report.py"),
-                        str(drag_path),
-                        "--json",
-                        str(findings_path),
-                    ],
-                    cwd=REPO,
-                    env=drag_env,
-                    check=False,
-                    timeout=120,
-                )
+                try:
+                    analysis = subprocess.run(
+                        [
+                            sys.executable,
+                            str(REPO / "scripts" / "perf_report.py"),
+                            str(drag_path),
+                            "--json",
+                            str(findings_path),
+                        ],
+                        cwd=REPO,
+                        env=drag_env,
+                        check=False,
+                        timeout=120,
+                    )
+                except subprocess.TimeoutExpired:
+                    drag_status = "failed"
+                    save_suite_summary()
+                    print("error: perf_agent_drag_analysis_timeout", file=sys.stderr)
+                    return 2
                 if analysis.returncode != 0 or not findings_path.is_file():
                     drag_status = "failed"
                     save_suite_summary()
@@ -391,6 +416,10 @@ def main(argv: list[str] | None = None) -> int:
             if args.baseline:
                 assessment = compare(load(output), load(args.baseline), args.regression_pct)
                 _write(output.with_suffix(".comparison.json"), assessment)
+                whole = comparison_run_summary(result, drag_status, assessment)
+                if args.summary:
+                    _write(args.summary, whole)
+                _append_gha_summary(whole)
                 print(f"Baseline verdict: {assessment['status']}")
                 return 0 if assessment["status"] == "pass" else 3
             print("Baseline verdict: not_checked (no baseline provided)")
