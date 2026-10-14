@@ -1876,6 +1876,7 @@ export default interface Resources {
         "kw": {
           "agents": "助手 codex claude agent 默认",
           "canvas": "画布 网格 吸附 标尺 参考线",
+          "contact": "企业微信 微信 联系我们 联系维护者 反馈",
           "diagnostics": "诊断 报告 日志 导出 问题",
           "formats": "格式 pdf png svg tiff eps",
           "language": "语言 中文 英文 locale",
