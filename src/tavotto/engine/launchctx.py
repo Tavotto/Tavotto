@@ -225,13 +225,21 @@ def build_native_record(project_root: str | Path, script: str, plan, *, run=None
 
 
 def record_native_success(project_root: str | Path, script: str, plan, *, run=None) -> bool:
-    """native 成功收口调（`prepsession` 在尝试成功之后）：写 `profile: native` 的记录，下次「打开并运行」沿用。
-    依据不全（脚本在执行期间变了等）→ 什么都不写，回 False。不动磁盘面板默认配置（那是 safe 成功收口的事）。"""
+    """native 成功收口调（`prepsession` 在尝试成功后）：启动记录（`profile: native`）与磁盘面板默认配置在**同一次**登记写入里提交
+    （`runconfig.commit_success`，与 safe 成功同一个事务）——分两次写会让中间插进来的 safe 成功留下「safe 的默认 + 旧 native 的记录」，
+    下次自动运行就沿用 native（Codex #1034 r3）。默认值与 app 成功收口刚写的相同，这里重写是幂等的。
+    依据不全（脚本在执行期间变了等）→ 什么都不写，回 False。"""
     record = build_native_record(project_root, script, plan, run=run)
     if record is None:
         return False
     try:
-        runconfig.set_launch_record(project_root, script, record)
+        runconfig.commit_success(
+            project_root,
+            script,
+            record,
+            default_config_id=run.config_id if run is not None else None,
+            update_default=True,
+        )
     except runconfig.RunConfigError:
         return False
     return True

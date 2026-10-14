@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import ntpath
 import os
 import posixpath
 import threading
@@ -158,11 +159,9 @@ class PathVal:
 
 
 def _is_abs_text(text: str) -> bool:
-    return (
-        text.startswith(("/", "\\\\"))
-        or (len(text) > 2 and text[1] == ":" and text[2] in "/\\" and text[0].isalpha())
-        or text.startswith("~")
-    )
+    """POSIX 绝对、Windows 盘符 / UNC / **单分隔符根**（`\\foo`，当前盘符的根）/ 盘符相对（`C:foo`）都算「不是项目内相对路径」。
+    用 `ntpath` 判，不依赖当前平台：路由在哪个平台算，脚本都可能在 Windows 上跑。"""
+    return bool(text.startswith(("/", "\\", "~")) or ntpath.splitdrive(text)[0])
 
 
 def _norm(text: str) -> str:
@@ -257,6 +256,9 @@ class _Collector:
         self.scopes[id(tree)] = self.module
         self.aliases: dict[str, str | None] = {}
         self.events: list[Event] = []
+        #: 名字在**整个模块任何作用域**被非 import 方式绑定的次数（赋值 / 形参 / def / class / for·with 目标 / global·nonlocal…）。
+        #: 保守起见不做作用域精析：别名（`plt`）被重绑过、或接收者名（`fig`）不是恰好绑定一次，一律当解析不了
+        self.bind_total: dict[str, int] = {}
         #: 每个作用域里按名字发生的调用：(调用方作用域, 名字)，供可达性推导
         self.calls: list[tuple[_Scope, str]] = []
         #: `with open(...) as fh` 绑出来的文件句柄名：把它交给 `savefig` 不是动态路径
@@ -269,10 +271,16 @@ class _Collector:
         for child in ast.iter_child_nodes(node):
             self._bind(child, scope)
 
-    def _poison(self, scope: _Scope, names) -> None:
+    def _poison(self, scope: _Scope, names, *, imported: bool = False) -> None:
         for n in names:
             scope.poison_n[n] = scope.poison_n.get(n, 0) + 1
+            if not imported:
+                self.bind_total[n] = self.bind_total.get(n, 0) + 1
         scope.poisoned.update(names)
+
+    def _assign(self, scope: _Scope, name: str, value: ast.expr) -> None:
+        scope.assigns.setdefault(name, []).append(value)
+        self.bind_total[name] = self.bind_total.get(name, 0) + 1
 
     def _bind(self, node: ast.AST, scope: _Scope) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -306,7 +314,7 @@ class _Collector:
         if isinstance(node, ast.Assign):
             tgt = node.targets[0] if len(node.targets) == 1 else None
             if isinstance(tgt, ast.Name):
-                scope.assigns.setdefault(tgt.id, []).append(node.value)
+                self._assign(scope, tgt.id, node.value)
             elif (
                 isinstance(tgt, (ast.Tuple, ast.List))
                 and isinstance(node.value, (ast.Tuple, ast.List))
@@ -316,7 +324,7 @@ class _Collector:
             ):
                 # `tmp, final = a, b`：逐个按单赋值记（元素个数对得上、没有 `*`）
                 for t, v in zip(tgt.elts, node.value.elts, strict=True):
-                    scope.assigns.setdefault(t.id, []).append(v)
+                    self._assign(scope, t.id, v)
             else:
                 if (
                     isinstance(tgt, (ast.Tuple, ast.List))
@@ -330,7 +338,7 @@ class _Collector:
                     self._poison(scope, _target_names(t))
         elif isinstance(node, ast.AnnAssign):
             if isinstance(node.target, ast.Name) and node.value is not None:
-                scope.assigns.setdefault(node.target.id, []).append(node.value)
+                self._assign(scope, node.target.id, node.value)
             else:
                 self._poison(scope, _target_names(node.target))
         elif isinstance(node, ast.AugAssign):
@@ -366,14 +374,14 @@ class _Collector:
             for a in node.names:
                 bound = a.asname or a.name.split(".")[0]
                 self._alias(bound, a.name if a.asname else a.name.split(".")[0])
-                self._poison(scope, [bound])
+                self._poison(scope, [bound], imported=True)
         elif isinstance(node, ast.ImportFrom):
             for a in node.names:
                 if a.name == "*":
                     continue
                 bound = a.asname or a.name
                 self._alias(bound, None if node.level else f"{node.module}.{a.name}")
-                self._poison(scope, [bound])
+                self._poison(scope, [bound], imported=True)
         elif hasattr(ast, "MatchAs") and isinstance(node, (ast.MatchAs, ast.MatchStar)):
             if getattr(node, "name", None):
                 self._poison(scope, [node.name])
@@ -398,6 +406,8 @@ class _Collector:
             node = node.value
         if not isinstance(node, ast.Name):
             return None
+        if self.bind_total.get(node.id):
+            return None  # 这个名字在模块里的某处被重新绑定过（形参 / 赋值 / def…）：不信它还是那个 import
         head = self.aliases.get(node.id)
         if head is None:
             return None
@@ -604,6 +614,12 @@ class _Collector:
             for stmt in node.body:
                 self._walk(stmt, inner, branches)
             return
+        if isinstance(node, (ast.If, ast.While)) and self._constant_false(node.test):
+            # 条件是常量 False 的 `if` / `while`：body 永远不执行，里面的调用与证据都不算（`else` 照常）。只认这一种形状
+            self._walk(node.test, scope, branches)
+            for stmt in node.orelse:
+                self._walk(stmt, scope, (*branches, (id(node), 1)))
+            return
         if isinstance(node, ast.If):
             self._walk(node.test, scope, branches)
             for stmt in node.body:
@@ -651,6 +667,14 @@ class _Collector:
                         break
                     s = s.parent
         return frozenset(live)
+
+    @staticmethod
+    def _constant_false(test: ast.expr) -> bool:
+        if isinstance(test, ast.Constant):
+            return not test.value
+        if isinstance(test, ast.Name):
+            return test.id == "TYPE_CHECKING"
+        return isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
 
     def _add(self, kind, op, node, scope, branches, path, dest=None, certain=True) -> None:
         self.events.append(
@@ -710,6 +734,8 @@ class _Collector:
         if isinstance(node, ast.Call):
             return self.qual(node.func) in self._FIGURE_MAKERS
         if isinstance(node, ast.Name):
+            if self.bind_total.get(node.id) != 1:
+                return False  # 不是恰好绑定一次（别的作用域里同名的形参 / 赋值也算）：不猜
             vals = self._lookup(node.id, scope)
             if vals:
                 return self._is_figure(vals[0], scope, depth + 1)

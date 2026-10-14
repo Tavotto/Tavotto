@@ -817,3 +817,125 @@ REACHED = [
 def test_functions_the_module_calls_keep_their_evidence_high(name, body):
     route = _route(body)
     assert route.execution == "native" and "R1" in _rules(route), route.public()
+
+
+# ---------------------------------------------------------------- Codex #1034 r3：遮蔽 / 常量假分支 / Windows 根路径
+MPL = "import matplotlib.pyplot as plt\n"
+
+SHADOWED = [
+    (
+        "parameter_named_like_the_alias",
+        MPL
+        + 'def run(plt):\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\nrun(object())\n',
+    ),
+    (
+        "alias_rebound_later",
+        MPL + 'plt = Other()\nplt.savefig("x.png")\nopen("x.png", "rb").read()\n',
+    ),
+    (
+        "alias_rebound_in_another_function",
+        MPL
+        + 'def patch():\n    global plt\n    plt = Other()\nplt.savefig("x.png")\nopen("x.png", "rb").read()\n',
+    ),
+    (
+        "alias_rebound_by_for_target",
+        MPL + 'for plt in things:\n    pass\nplt.savefig("x.png")\nopen("x.png", "rb").read()\n',
+    ),
+    (
+        "alias_rebound_by_def",
+        MPL + 'def plt(): ...\nplt.savefig("x.png")\nopen("x.png", "rb").read()\n',
+    ),
+    (
+        "figure_name_rebound_in_another_scope",
+        MPL
+        + 'fig = plt.figure()\ndef other():\n    fig = make()\nfig.savefig("x.png")\nopen("x.png", "rb").read()\n',
+    ),
+    (
+        "figure_name_is_a_parameter_elsewhere",
+        MPL
+        + 'fig = plt.figure()\ndef other(fig):\n    return fig\nfig.savefig("x.png")\nopen("x.png", "rb").read()\n',
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", SHADOWED, ids=[c[0] for c in SHADOWED])
+def test_a_rebound_alias_or_receiver_name_anywhere_in_the_module_is_not_trusted(name, src):
+    route = _route(src)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+    assert "R1_unproven" in _rules(route)
+
+
+DEAD = [
+    (
+        "if_false_calls_helper",
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\nif False:\n    helper()\n',
+    ),
+    (
+        "if_zero_calls_helper",
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\nif 0:\n    helper()\n',
+    ),
+    (
+        "type_checking_branch",
+        "from typing import TYPE_CHECKING\n"
+        + MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\nif TYPE_CHECKING:\n    helper()\n',
+    ),
+    (
+        "while_false",
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\nwhile False:\n    helper()\n',
+    ),
+    (
+        "evidence_written_directly_in_a_dead_branch",
+        MPL + 'if False:\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\n',
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", DEAD, ids=[c[0] for c in DEAD])
+def test_calls_and_evidence_under_a_constant_false_branch_do_not_count(name, src):
+    route = _route(src)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+
+
+def test_the_else_arm_of_a_constant_false_branch_still_counts():
+    route = _route(
+        MPL
+        + 'def helper():\n    plt.savefig("x.png")\n    open("x.png", "rb").read()\nif False:\n    pass\nelse:\n    helper()\n'
+    )
+    assert route.execution == "native"
+
+
+WINDOWS_ROOTED = [
+    r"\cache.tmp",
+    "C:/cache.tmp",
+    r"C:\cache.tmp",
+    r"\\server\share\cache.tmp",
+    "C:cache.tmp",
+]
+
+
+@pytest.mark.parametrize("tmp", WINDOWS_ROOTED)
+def test_windows_rooted_paths_are_never_project_local(tmp):
+    final = tmp.replace("cache.tmp", "cache.csv")
+    src = f"""
+import os
+open({tmp!r}, "w").write("1")
+os.replace({tmp!r}, {final!r})
+open({final!r}).read()
+"""
+    for cwd in (runroute.CWD_PROJECT, runroute.CWD_PROJECT_ROOT):
+        route = _route(src, cwd=cwd)
+        assert route.execution == "safe", (tmp, cwd, route.public())
+
+
+def test_a_plain_relative_name_is_still_project_local():
+    src = """
+import os
+open("cache.tmp", "w").write("1")
+os.replace("cache.tmp", "cache.csv")
+open("cache.csv").read()
+"""
+    assert _route(src, cwd=runroute.CWD_PROJECT).execution == "native"

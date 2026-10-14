@@ -49,6 +49,14 @@
 * **native 成功也记**：`launchctx` 记录升到 v2，多 `profile`（v1 读作 safe）。safe 成功仍由 app 的成功收口按回执写；**native 成功由 `prepsession` 在尝试成功后调 `launchctx.record_native_success`** 写（native 没有 helper 观察回执，记录取计划快照，`source.basis` 为空且 `basis_observed: false`：它回答「上次用哪种语义」，**不是**「数据与 helper 没变」的证据，#982 的沿用入口读它时要看这个标记）。脚本字节与计划的 `script_revision` 不一致（执行期间被改）→ 不记。
 * 授权来源：与 0127 同一条——桌面用户主动「运行 / 打开并运行」+ 项目策略（缺省 `compatible`）；高置信静态证据只是**选择**，不扩大授权范围（同一个项目 × 脚本 × 解出的解释器）。`safe_only` 撤回。CLI / MCP 的确认合同不变。
 
+### 保守边界与收口原则（#1034 第三轮）
+
+* **遮蔽**：不做作用域精析。matplotlib 别名（`plt`）在模块任何作用域被非 import 方式重新绑定过（赋值 / 形参 / `def` / `class` / `for`·`with` 目标 / `global`·`nonlocal`），或接收者名（`fig`）不是恰好绑定一次，一律当解析不了（`R1_unproven`，不升 high）。
+* **不可达**：只排除条件是常量假的 `if` / `while`（`False` / `0` / `None` / `TYPE_CHECKING`）的 body，里面的调用与证据都不算；`else` 照常；其它形状不处理。
+* **Windows 根路径**：`C:\`、`C:/`、`C:foo`、`\\server\share`、单分隔符根 `\foo` 一律按「不在项目内」，用 `ntpath` 判，不依赖当前平台。
+* **native 启动记录**与运行默认值走 `runconfig.commit_success` 同一次写入，不分两步。
+* **收口原则**：静态规则还会被找出新的边角。**漏判**（该升 high 没升）退化为 safe + 0127 回退，无副作用，记 issue 收口、不在评审轮里逐个追；只有**误判升 high**（不该直达 native 却直达了）才继续修。新增规则一律往保守方向走。
+
 ## 后果
 
 * 对 `savefig → 读回` / `tmp → replace → 读回` 的脚本，执行次数 2 → 1。静态判错（把 safe 能跑对的脚本送去 native）会丢掉沙盒守卫——所以只有 high 才直达，并有同源对看护：`tests/test_runroute_consistency.py` 对每个高置信形状用真 safe worker 实跑核对「确实被拦」，对几个 safe 形状核对「确实成功」。
