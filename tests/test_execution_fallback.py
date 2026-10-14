@@ -536,8 +536,9 @@ def _record_native_retirements(monkeypatch):
     monkeypatch.setattr(
         m.engine_nativesession.REGISTRY,
         "cancel_project",
-        lambda root, script=None, **kw: (
-            calls.append((str(root), script)) or real(root, script=script)
+        lambda root, *, script="", older_than=None: (
+            calls.append((str(root), script, older_than))
+            or real(root, script=script, older_than=older_than)
         ),
     )
     return calls
@@ -598,14 +599,56 @@ def test_a_superseded_safe_launch_does_not_retire_the_newer_reruns_native_sessio
     )
 
     m._launch_session_attempt(None, older)  # 迟到的旧动作
-    assert retired == [], "旧动作已被取代：不得结束新一次的 native 会话"
+    m._launch_session_attempt(None, newer)  # 最新的那次
+    older_order = preparation.SERVICE.get("prep-older-safe", report["project_id"])[0].launch_order
+    newer_order = preparation.SERVICE.get("prep-newer-rerun", report["project_id"])[0].launch_order
+    assert older_order is not None and newer_order is not None and older_order < newer_order
+    # 让位用 #1022 的 `older_than=` 语义：只结束登记序号**比自己小**的 native 会话 / 票据——旧动作的调用结束不了新一次的
+    assert [(r[1], r[2]) for r in retired] == [("fig.py", older_order), ("fig.py", newer_order)]
     assert preparation.SERVICE.get("prep-newer-rerun", report["project_id"])[1].status == "pending"
-    m._launch_session_attempt(None, newer)  # 最新的那次照旧让位更早的
-    assert [r[1] for r in retired] == ["fig.py"]
     assert started == [
         "prep-older-safe",
         "prep-newer-rerun",
     ]  # 旧动作自己的执行不受影响，仍交给执行线程
+
+
+def test_the_fallback_native_plan_has_a_launch_order_after_its_safe_attempt(
+    client, tmp_path, fake_pool, native, sessions
+):
+    """#1022 的 `launch_order`：回退的 native 计划登记时拿到序号，且晚于它的 safe 尝试（native runner 据此只结束更早的）。"""
+    sid = _start(client, tmp_path, fake_pool)
+    final = _settle(client, sid)
+    safe_id, native_id = (h["attempt_id"] for h in _history(final))
+    safe_plan, _ = preparation.SERVICE.get(safe_id, final["project_id"])
+    native_plan, _ = preparation.SERVICE.get(native_id, final["project_id"])
+    assert safe_plan.launch_order is not None and native_plan.launch_order is not None
+    assert native_plan.launch_order > safe_plan.launch_order
+
+
+def test_the_fallback_plan_keeps_the_run_start_epoch_even_if_the_project_is_reopened_at_registration(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """Codex #1028 r4268453923：代次比较之后、登记之前项目关闭又重开——登记不能盖「登记那一刻」的新代次，
+    否则关闭前的旧回退能通过注册表层的代次检查。回退计划必须继承运行开始时记下的代次。"""
+    registry = m.engine_nativesession.REGISTRY
+    root = str(tmp_path / "p")
+    real_register = preparation.PreparationService.register
+
+    def bump_then_register(self, plan, **kw):
+        if plan.execution == "native" and not getattr(bump_then_register, "done", False):
+            bump_then_register.done = True
+            registry.mark_project_closed(root)
+            registry.reopen_project(root)
+        return real_register(self, plan, **kw)
+
+    start_epoch = registry.project_epoch(root)
+    monkeypatch.setattr(preparation.PreparationService, "register", bump_then_register)
+    sid = _start(client, tmp_path, fake_pool)
+    _settle(client, sid)
+    time.sleep(0.3)
+    assert registry.project_epoch(root) == start_epoch + 1  # 确实在登记前升了代次
+    stamped = [p.project_epoch for p in native["calls"]]
+    assert stamped in ([], [start_epoch]), "回退计划盖了登记时的新代次，关闭前的旧运行就能起进程"
 
 
 def test_a_first_safe_run_and_a_legacy_asset_preparation_do_not_retire_native_sessions(
