@@ -199,6 +199,7 @@ def absent_modules(python: str, names) -> list[str]:
         [python, "-I", "-c", code, *names],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
         check=True,
     )
@@ -562,4 +563,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # 被 subprocess 调起时 stdout 是管道：Windows 上会退回系统区域编码，中文第一行就 UnicodeEncodeError
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
     raise SystemExit(main())
