@@ -106,3 +106,16 @@ def test_manifest_stage_coverage_fails_when_timing_is_mostly_unaccounted_for():
         sample_row["manifest_layout_ms"] = 105
         sample_row["manifest_measure_ms"] = 30
     assert R.summarize(source)["status"] == "incomplete"
+
+
+def test_absurdly_large_integer_timings_fail_closed_without_crashing(tmp_path):
+    """400 位合法 JSON 整数不能触发 math.isfinite 的 OverflowError。"""
+    data = report()
+    data["rows"][0]["hot_samples"][0]["manifest_ms"] = 10**400
+    assert R.summarize(data)["status"] == "incomplete"
+
+    raw = tmp_path / "input.json"
+    result = tmp_path / "summary.json"
+    raw.write_text(json.dumps(data), encoding="utf-8")
+    assert R.main([str(raw), "--json", str(result)]) == 2
+    assert json.loads(result.read_text(encoding="utf-8"))["status"] == "incomplete"

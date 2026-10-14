@@ -26,7 +26,9 @@ KEYS = (
 
 
 def _valid(value: object) -> bool:
-    return type(value) in (int, float) and math.isfinite(value) and 0 <= value < 120_000
+    # Python int 可以远超 float 范围：先比较整数区间，再调用 isfinite，
+    # 避免 10**400 之类合法 JSON 整数触发 OverflowError，破坏文档承诺的 rc=2。
+    return type(value) in (int, float) and 0 <= value < 120_000 and math.isfinite(value)
 
 
 def _percentile(values: list[float], q: float) -> float:
