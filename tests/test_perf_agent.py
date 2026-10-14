@@ -837,3 +837,27 @@ def test_agent_workflow_tracks_drag_probe_instrumentation():
     ).read_text(encoding="utf-8")
     assert "'web/e2e/perf-probe.spec.ts'" in workflow
     assert "'web/src/perf/**'" in workflow
+
+
+def test_malformed_compare_does_not_replace_input_with_failure_json(tmp_path):
+    current = tmp_path / "current.json"
+    baseline = tmp_path / "baseline.json"
+    current.write_text(json.dumps(report(value=21)), encoding="utf-8")
+    baseline.write_text(json.dumps(report(value=19)), encoding="utf-8")
+    saved = baseline.read_text(encoding="utf-8")
+    rc = A.main(
+        [
+            "compare", str(current), str(baseline),
+            "--json", str(baseline), "--regression-pct", "invalid",
+        ]
+    )
+    assert rc == 2
+    assert baseline.read_text(encoding="utf-8") == saved
+
+
+def test_malformed_summarize_does_not_replace_source_with_failure_json(tmp_path):
+    raw = tmp_path / "source.json"
+    raw.write_text(json.dumps(report()), encoding="utf-8")
+    original = raw.read_text(encoding="utf-8")
+    assert A.main(["summarize", str(raw), "--json", str(raw), "--unknown"]) == 2
+    assert raw.read_text(encoding="utf-8") == original

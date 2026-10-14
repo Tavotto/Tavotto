@@ -333,9 +333,24 @@ def _invalidate_parse_error(argv: list[str]) -> None:
             }
             if command == "compare":
                 failed["rows"] = []
-            if json_path:
+            # 参数语法错误也不能借“失败报告”覆盖只读的 current / baseline。
+            # argparse 尚未确认输入合法，位置参数只作为保守的保护集合。
+            protected = []
+            if command == "compare":
+                protected = [Path(token) for token in argv[1:3] if not token.startswith("-")]
+            elif command == "summarize" and len(argv) > 1 and not argv[1].startswith("-"):
+                protected = [Path(argv[1])]
+
+            def can_write(path: Path | None) -> bool:
+                return path is not None and not any(
+                    _same_report_path(path, source) for source in protected
+                )
+
+            if can_write(json_path):
                 _write(json_path, failed)
-            if command == "compare" and summary_path:
+            if command == "compare" and can_write(summary_path) and (
+                json_path is None or not _same_report_path(summary_path, json_path)
+            ):
                 previous = {}
                 if summary_path.is_file():
                     try:
