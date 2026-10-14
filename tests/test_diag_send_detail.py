@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -4039,3 +4040,134 @@ class TestYamlNodePropertiesBeforeSecretValues:
         assert any("sib: ok_anchor" in t for t in texts.values()), "日志没进包：用例是空的"
         for name, text in texts.items():
             assert "REAL_SECRET" not in text, name
+
+
+class TestIssue1012BackendItems:
+    """#1012 第 3、5、8、9 项。"""
+
+    def _python(self):
+        py = pool.find_worker_python()
+        return py, pool.source_of(py) == pool.SOURCE_BUNDLED
+
+    def test_probe_does_not_write_the_matplotlib_font_cache(self, tmp_path, monkeypatch):
+        """3：空缓存目录跑真探针，前后各列一次目录，内容不变；字体数量与字体族仍报得出。"""
+        py, bundled = self._python()
+        cfg = tmp_path / "mplcfg"
+        cfg.mkdir()
+        before = sorted(p.name for p in cfg.rglob("*"))
+        monkeypatch.setattr(
+            diagdetail, "PROBE_TIMEOUT_S", 120
+        )  # 空缓存要现建字体表，慢机器上超过默认 10 s
+        out = REAL_PROBE(py, bundled, str(tmp_path), {"MPLCONFIGDIR": str(cfg)})
+        assert out["status"] == "ok", out
+        assert sorted(p.name for p in cfg.rglob("*")) == before == []
+        mpl = out["matplotlib"]
+        assert mpl["font_count"] > 0 and mpl["font_family_count"] > 0 and mpl["fonts"]
+        assert mpl["cachedir"] == str(cfg)  # 报的是真实缓存目录，不是临时目录
+
+    def _render_env(self, monkeypatch, project):
+        py, bundled = self._python()
+        from tavotto.engine import workdir
+
+        monkeypatch.setattr(workdir, "mode_for", lambda fd: "project_root")
+        monkeypatch.setattr(pool, "resolve_worker_python", lambda d, **k: (py, pool.source_of(py)))
+        monkeypatch.setattr(diagdetail, "_probe_subprocess", REAL_PROBE)
+        src = diagdetail.Sources(project={"figures_dir": str(project)}, frontend={"overrides": []})
+        items = diagdetail.collect_render_env(
+            src, diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        return json.loads(items[0].data)
+
+    def test_isolated_probe_is_marked_and_lists_shadowing_files_without_running_them(
+        self, monkeypatch, tmp_path
+    ):
+        """5：项目里放 matplotlib.py / numpy.py / matplotlib/ 时带 may_differ，shadowing_candidates 列出文件名，探针不执行它们。"""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        marker = tmp_path / "marker"
+        body = f"open({str(marker)!r}, 'w').write('executed')\n"
+        (proj / "matplotlib.py").write_text(body, encoding="utf-8")
+        (proj / "numpy.py").write_text(body, encoding="utf-8")
+        (proj / "numpy").mkdir()
+        (proj / "matplotlib").mkdir()
+        (proj / "notes.txt").write_text("x", encoding="utf-8")
+        doc = self._render_env(monkeypatch, proj)
+        probe = doc["probe"]
+        assert probe["status"] == "ok"
+        assert probe["may_differ"] == "user_import_paths_not_reproduced"
+        assert probe["shadowing_candidates"] == [
+            "matplotlib.py",
+            "matplotlib/",
+            "numpy.py",
+            "numpy/",
+        ]
+        assert not marker.exists(), "探针不能执行项目里的同名模块"
+
+    def test_a_symlinked_package_directory_counts_as_a_shadowing_candidate(
+        self, monkeypatch, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        (tmp_path / "vendor" / "numpy").mkdir(parents=True)
+        proj.mkdir()
+        try:
+            os.symlink(tmp_path / "vendor" / "numpy", proj / "numpy", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable (Windows without privilege)")
+        probe = self._render_env(monkeypatch, proj)["probe"]
+        assert probe["shadowing_candidates"] == ["numpy/"]
+
+    def test_clean_project_has_the_mark_and_an_empty_candidate_list(self, monkeypatch, tmp_path):
+        proj = tmp_path / "clean"
+        proj.mkdir()
+        probe = self._render_env(monkeypatch, proj)["probe"]
+        assert probe["may_differ"] == "user_import_paths_not_reproduced"
+        assert probe["shadowing_candidates"] == []
+
+    def test_dns_probe_threads_are_bounded_after_timeouts(self, monkeypatch):
+        """8：解析卡住（超时）后反复发送，遗留线程数不超过主机数；上一个没结束就不再起新的。"""
+        release = threading.Event()
+        started = []
+
+        def stuck(host):
+            started.append(host)
+            release.wait(30)
+            return ["203.0.113.7"]
+
+        monkeypatch.setattr(diagdetail, "_resolve", stuck)
+        monkeypatch.setattr(diagdetail, "DNS_TIMEOUT_S", 0.05)
+        diagdetail._DNS_PENDING.clear()
+        try:
+            first = [diagdetail.dns_fact(h) for h in diagdetail.DNS_HOSTS]
+            assert all(f["reason"] == "timeout" for f in first)
+            for _ in range(5):
+                again = [diagdetail.dns_fact(h) for h in diagdetail.DNS_HOSTS]
+                assert all(f["reason"] == "previous_lookup_pending" for f in again)
+            assert len(started) == len(diagdetail.DNS_HOSTS), "重复发送不许再起新线程"
+            assert sum(t.name == "diag-dns" for t in threading.enumerate()) <= len(
+                diagdetail.DNS_HOSTS
+            )
+        finally:
+            release.set()
+            for t in list(diagdetail._DNS_PENDING.values()):
+                t.join(5)
+            diagdetail._DNS_PENDING.clear()
+        assert diagdetail.dns_fact("tavotto.cn")["addresses"] == ["203.0.113.7"]
+
+    def test_no_proxy_hosts_are_reduced_to_a_count(self, monkeypatch):
+        """9：NO_PROXY / no_proxy 里的主机名与 IP 不进 detail-network.json，只剩条目数。"""
+        # Windows 的环境变量名不分大小写：NO_PROXY 与 no_proxy 是同一个，只设一个
+        monkeypatch.delenv("no_proxy", raising=False)
+        monkeypatch.setenv(
+            "NO_PROXY",
+            "corp.internal.example,10.1.2.3, .intra.example,localhost,secret-host.example",
+        )
+        monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:8080")
+        src = diagdetail.Sources()
+        items = diagdetail.collect_network(src, diagdetail.DetailOptions(), diagdetail.Scrubber())
+        text = items[0].data.decode("utf-8")
+        for leak in ("corp.internal", "10.1.2.3", "intra.example", "secret-host", "localhost"):
+            assert leak not in text
+        net = json.loads(text)
+        assert net["proxy"]["no_proxy_entries"] == 5
+        assert "NO_PROXY" not in net["proxy"]["env"] and "no_proxy" not in net["proxy"]["env"]
+        assert net["proxy"]["env"]["HTTPS_PROXY"] == "http://proxy.example:8080"

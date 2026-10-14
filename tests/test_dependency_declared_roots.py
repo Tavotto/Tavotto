@@ -346,6 +346,232 @@ class TestBindingContextsAreOneDefinition:
         assert all("enclosing" not in d for d in scan.to_payload()["dynamic"])
 
 
+_LITERAL_ALIASES = [
+    ("import importlib as il\n", 'il.import_module("auditlate")'),
+    ("from importlib import import_module as im\n", 'im("auditlate")'),
+    ("import builtins as b\n", 'b.__import__("auditlate")'),
+]
+_ALIAS_CONTEXTS = {
+    "optional": "try:\n    {call}\nexcept ImportError:\n    pass\n",
+    "conditional": "if flag:\n    {call}\n",
+    "type_checking": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    {call}\n",
+    "unconditional": "{call}\n",
+    "deferred": "def run():\n    {call}\n",
+}
+
+
+class TestLiteralAliasContexts:
+    """#962：别名仍是 dynamic 候选，但可选位置不能启动安装或 provider 冲突。"""
+
+    @pytest.mark.parametrize("prefix,call", _LITERAL_ALIASES)
+    @pytest.mark.parametrize("context", _ALIAS_CONTEXTS)
+    def test_only_binding_alias_calls_install_the_declaration(
+        self, tmp_path, prefix, call, context
+    ):
+        proj = _project(
+            tmp_path, prefix + _ALIAS_CONTEXTS[context].format(call=call), "auditlate==1.0\n"
+        )
+        plan = _plan(proj)
+        binding = context in {"unconditional", "deferred"}
+        assert plan.status == (depplan.STATUS_READY if binding else depplan.STATUS_NOTHING_NEEDED)
+        assert plan.requirements == (("auditlate==1.0",) if binding else ())
+        assert plan.declared_gaps[0]["relevant"] is binding
+        scan = importscan.scan(proj, "plot.py")
+        (use,) = [u for u in scan.uses if u.module == "auditlate"]
+        assert (use.context, use.enclosing) == ("dynamic", context)
+        (cls,) = [c for c in scan.classes if c.module == "auditlate"]
+        assert cls.needed is False  # 不能把可能被改绑的别名提为普通 needed。
+        payload = scan.to_payload()
+        assert "enclosing" not in use.to_payload()
+        assert all("enclosing_contexts" not in c for c in payload["classes"])
+
+    @pytest.mark.parametrize("context", ["optional", "conditional", "type_checking"])
+    def test_a_local_module_alias_inherits_its_import_context(self, tmp_path, context):
+        proj = _project(
+            tmp_path,
+            _ALIAS_CONTEXTS[context].format(call="import helper"),
+            "auditlate==1.0\n",
+            **{"helper.py": 'import importlib as il\nil.import_module("auditlate")\n'},
+        )
+        plan = _plan(proj)
+        assert plan.status == depplan.STATUS_NOTHING_NEEDED
+        assert plan.requirements == ()
+
+    @pytest.mark.parametrize("context", ["optional", "conditional", "type_checking"])
+    def test_an_alias_loading_a_local_module_keeps_its_children_optional(self, tmp_path, context):
+        proj = _project(
+            tmp_path,
+            "import importlib as il\n"
+            + _ALIAS_CONTEXTS[context].format(call='il.import_module("helper")'),
+            "auditlate==1.0\n",
+            **{"helper.py": "import auditlate\nprint(auditlate.VALUE)\n"},
+        )
+        assert _plan(proj).status == depplan.STATUS_NOTHING_NEEDED
+
+    @pytest.mark.parametrize("order", ["optional_first", "binding_first"])
+    @pytest.mark.parametrize("nonbinding", ["optional", "conditional", "type_checking"])
+    def test_a_binding_alias_survives_another_nonbinding_occurrence(
+        self, tmp_path, order, nonbinding
+    ):
+        optional = _ALIAS_CONTEXTS[nonbinding].format(call="import auditlate")
+        binding = 'import importlib as il\ndef run():\n    il.import_module("auditlate")\n'
+        script = optional + binding if order == "optional_first" else binding + optional
+        proj = _project(tmp_path, script, "auditlate==1.0\n")
+        assert _plan(proj).requirements == ("auditlate==1.0",)
+
+    def test_alias_package_relative_imports_inherit_the_optional_context(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            'import importlib as il\ntry:\n    il.import_module("helper")\nexcept ImportError:\n    pass\n',
+            "auditlate==1.0\n",
+            **{
+                "helper/__init__.py": "from . import child\n",
+                "helper/child.py": "import auditlate\nprint(auditlate.VALUE)\n",
+            },
+        )
+        assert _plan(proj).status == depplan.STATUS_NOTHING_NEEDED
+
+    def test_a_direct_import_after_an_alias_still_becomes_needed(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            'import importlib as il\nil.import_module("helper")\nimport helper\nprint(helper.VALUE)\n',
+            "auditlate==1.0\n",
+            **{"helper.py": "import numpy\nVALUE = numpy.VALUE\n"},
+        )
+        scan = importscan.scan(proj, "plot.py")
+        assert "numpy" in {c.module for c in scan.needed}
+
+    def test_local_alias_cycles_are_bounded(self, tmp_path):
+        proj = _project(
+            tmp_path,
+            'import importlib as il\ntry:\n    il.import_module("helper")\nexcept ImportError:\n    pass\n',
+            "auditlate==1.0\n",
+            **{
+                "helper.py": "import sibling\nimport auditlate\nprint(auditlate.VALUE)\n",
+                "sibling.py": "import helper\n",
+            },
+        )
+        scan = importscan.scan(proj, "plot.py")
+        assert scan.truncated is False
+        assert scan.files == ("helper.py", "plot.py", "sibling.py")
+        assert _plan(proj).requirements == ()
+
+    @pytest.mark.parametrize("first", ["optional", "deferred"])
+    def test_a_local_module_revisited_through_a_binding_alias_remains_relevant(
+        self, tmp_path, first
+    ):
+        proj = _project(
+            tmp_path,
+            "import importlib as il\n"
+            + _ALIAS_CONTEXTS[first].format(call='il.import_module("helper")')
+            + 'il.import_module("helper")\n',
+            "auditlate==1.0\n",
+            **{"helper.py": "import auditlate\nprint(auditlate.VALUE)\n"},
+        )
+        assert _plan(proj).requirements == ("auditlate==1.0",)
+
+    @pytest.mark.parametrize("context", _ALIAS_CONTEXTS)
+    def test_provider_conflicts_use_the_same_alias_context(self, tmp_path, context):
+        proj = _project(
+            tmp_path,
+            "import importlib as il\n"
+            + _ALIAS_CONTEXTS[context].format(call='il.import_module("cv2")'),
+            _TWO_CV2,
+        )
+        plan = _plan(proj)
+        binding = context in {"unconditional", "deferred"}
+        assert (plan.status == depplan.STATUS_BLOCKED) is binding
+        assert bool([b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]) is binding
+
+
+def _guarded(context: str, body: str) -> str:
+    if context == "unconditional":
+        return body
+    if context == "optional":
+        return "try:\n" + textwrap.indent(body, "    ") + "except ImportError:\n    pass\n"
+    if context == "type_checking":
+        head = "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n"
+    elif context == "deferred":
+        head = "def run():\n"
+    else:
+        head = "if flag:\n"
+    return head + textwrap.indent(body, "    ")
+
+
+class TestNestedLiteralAliasContexts:
+    """#1015 P2：条件 / 可选 / 类型检查的保护不会被内层或外层函数体覆盖。"""
+
+    @pytest.mark.parametrize("outer", _ALIAS_CONTEXTS)
+    @pytest.mark.parametrize("inner", _ALIAS_CONTEXTS)
+    @pytest.mark.parametrize(
+        "route",
+        [
+            "direct",
+            "local_alias",
+            "alias_local",
+            "alias_relative",
+            "nested_relative",
+            "nested_helper",
+            "nested_from",
+            "nested_entry",
+        ],
+    )
+    def test_nonbinding_guards_survive_every_literal_alias_route(
+        self, tmp_path, outer, inner, route
+    ):
+        alias = "import importlib as il\n"
+        call = 'il.import_module("auditlate")\n'
+        ordinary = "import auditlate\nprint(auditlate.VALUE)\n"
+        if route == "direct":
+            script, files = alias + _guarded(outer, _guarded(inner, call)), {}
+        elif route == "local_alias":
+            script = _guarded(outer, "import helper\n")
+            files = {"helper.py": alias + _guarded(inner, call)}
+        elif route == "alias_local":
+            script = alias + _guarded(outer, 'il.import_module("helper")\n')
+            files = {"helper.py": _guarded(inner, ordinary)}
+        elif route == "alias_relative":
+            script = alias + _guarded(outer, 'il.import_module("helper")\n')
+            files = {
+                "helper/__init__.py": _guarded(inner, "from . import child\n"),
+                "helper/child.py": ordinary,
+            }
+        elif route == "nested_relative":
+            script = alias + 'il.import_module("helper")\n'
+            files = {
+                "helper/__init__.py": _guarded(outer, _guarded(inner, "from . import child\n")),
+                "helper/child.py": ordinary,
+            }
+        elif route == "nested_from":
+            script = alias + 'il.import_module("helper")\n'
+            files = {
+                "helper.py": _guarded(
+                    outer, _guarded(inner, "from auditlate import VALUE\nprint(VALUE)\n")
+                )
+            }
+        elif route == "nested_helper":
+            script = alias + 'il.import_module("helper")\n'
+            files = {"helper.py": _guarded(outer, _guarded(inner, ordinary))}
+        else:
+            script = _guarded(outer, _guarded(inner, "import helper\n"))
+            files = {"helper.py": alias + call}
+        proj = _project(tmp_path, script, "auditlate==1.0\n", **files)
+        binding = all(ctx in {"unconditional", "deferred"} for ctx in (outer, inner))
+        plan = _plan(proj)
+        assert plan.status == (depplan.STATUS_READY if binding else depplan.STATUS_NOTHING_NEEDED)
+        assert plan.requirements == (("auditlate==1.0",) if binding else ())
+        assert plan.declared_gaps[0]["relevant"] is binding
+
+    @pytest.mark.parametrize("call", ["import numpy", 'importlib.import_module("numpy")'])
+    def test_ordinary_import_public_context_and_needed_are_unchanged(self, tmp_path, call):
+        script = "import importlib\n" + _guarded("conditional", _guarded("deferred", call + "\n"))
+        proj = _project(tmp_path, script)
+        scan = importscan.scan(proj, "plot.py")
+        (cls,) = [c for c in scan.classes if c.module == "numpy"]
+        assert cls.context == "deferred" and cls.needed is False
+        assert cls.to_payload()["context"] == "deferred"
+
+
 class TestVersionGap:
     SCRIPT = "import auditroot\nprint(auditroot.VALUE)\n"
 

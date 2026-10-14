@@ -526,6 +526,28 @@ describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，
     expect(startMock.mock.calls.map((c) => c[0])).toEqual(['pid-new'])
   })
 
+  it('延迟的备包绑定调度时的项目（#1012 7）：载荷还在采集时切了项目，旧项目的备包请求被丢弃，之后的备包只属于新项目', async () => {
+    setCurrentProjectId('A')
+    prepareMock.mockResolvedValue({ ...PREPARED, id: 'pid-B' })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    // 同步渲染：effect 已跑、buildSendPayload 的 promise 还没落地，此刻项目换了
+    act(() => {
+      root.render(
+        <TooltipProvider>
+          <DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />
+        </TooltipProvider>,
+      )
+    })
+    setCurrentProjectId('B')
+    await act(async () => {})
+    await act(async () => {})
+    expect(prepareMock.mock.calls.length).toBeGreaterThan(0)
+    expect(prepareMock.mock.calls.map((c) => c[2])).not.toContain('A')
+    expect(prepareMock.mock.calls.every((c) => c[2] === 'B')).toBe(true)
+  })
+
   it('真实的切换顺序：先认领新 pj、之后才换代（switching 期间）——这期间不备包，换代完成后备的包只含 B 的轨迹', async () => {
     // 与 projectStore.adoptSteps 同一个顺序：switching 亮 → setCurrentProjectId(B) → （await 加载）→ 清轨迹等换代 → switching 灭
     setCurrentProjectId('A')
@@ -836,6 +858,32 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
         expect(send.extraHint[k]).toBeTruthy()
       }
     }
+  })
+})
+
+describe('摘要句如实说明日志里可能有脚本打印的内容（#1012 4）', () => {
+  const sends = [
+    ['zh-CN', zhDialogs, '日志里可能有脚本打印出的内容'],
+    ['en-US', enDialogs, 'may contain output printed by your script'],
+  ] as const
+
+  it('常显摘要句、带勾选项的摘要句、「默认不含」都提醒日志可能含脚本输出，且不再声称不含脚本源码', () => {
+    for (const [lang, d, phrase] of sends) {
+      const send = (d as any).settings.diagnostics.send
+      expect(send.sentence, lang).toContain(phrase)
+      expect(send.sentenceExtras, lang).toContain(phrase)
+      expect(send.notIncluded, lang).toContain(
+        lang === 'zh-CN' ? '脚本打印出的内容' : 'output printed by your script',
+      )
+      expect(send.sentence, lang).not.toMatch(/不含你的脚本源码|without your script source/)
+    }
+  })
+
+  it('界面上显示的就是这句', async () => {
+    await mount()
+    const text = q('[data-diag-send-sentence]')!.textContent!
+    expect(text).toContain(t('settings.diagnostics.send.sentence', { ns: 'dialogs' }))
+    expect(text).toMatch(/脚本打印出的内容|output printed by your script/)
   })
 })
 

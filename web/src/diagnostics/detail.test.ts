@@ -13,6 +13,8 @@ import {
   type SendPayload,
   collectDisplayEnv,
   collectFocusedOverrides,
+  overridesOmitted,
+  markPlainData,
   CONSOLE_RING_CAPACITY,
   ERROR_RING_CAPACITY,
   installConsoleCapture,
@@ -23,6 +25,7 @@ import {
 } from './detail'
 import { __resetDesktopUpdate, getUpdateOutcome } from '@/lib/desktop'
 import { useDocumentStore } from '@/store/documentStore'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 
 let uninstall: () => void
@@ -48,7 +51,8 @@ describe('console 环', () => {
     const base = console.error as ReturnType<typeof vi.fn>
     uninstall = installConsoleCapture()
     const err = new Error('boom 原文')
-    console.error('render failed:', err, { a: 1 })
+    const data = markPlainData({ a: 1 })
+    console.error('render failed:', err, data)
     console.warn('careful', 42)
     const ring = readConsoleRing()
     expect(ring).toHaveLength(2)
@@ -59,7 +63,7 @@ describe('console 环', () => {
     expect(ring[0].stack).toContain('Error: boom 原文') // Error 自带的完整栈
     expect(ring[1]).toMatchObject({ level: 'warn', message: 'careful 42' })
     expect(ring[1].stack).toBeTypeOf('string') // 字符串消息记调用点的栈
-    expect(base).toHaveBeenCalledWith('render failed:', err, { a: 1 })
+    expect(base).toHaveBeenCalledWith('render failed:', err, data)
   })
 
   it('定长环：只留最近 40 条，更早的被挤掉', () => {
@@ -86,16 +90,16 @@ describe('console 环', () => {
 
   it('有界序列化：10 万元素数组 / 深嵌套对象不会让 console 调用变慢，message ≤ MAX_MESSAGE', () => {
     uninstall = installConsoleCapture()
-    const big = Array.from({ length: 100_000 }, (_, i) => ({ i, text: 'x'.repeat(50) }))
+    const big = markPlainData(Array.from({ length: 100_000 }, (_, i) => ({ i, text: 'x'.repeat(50) })))
     let deep: Record<string, unknown> = { leaf: 1 }
     for (let i = 0; i < 5000; i++) deep = { child: deep }
     const wide: Record<string, number> = {}
     for (let i = 0; i < 100_000; i++) wide[`k${i}`] = i
     const t0 = performance.now()
     console.error(big)
-    console.warn(deep)
-    console.error(wide)
-    console.error('prefix', big, deep)
+    console.warn(markPlainData(deep))
+    console.error(markPlainData(wide))
+    console.error('prefix', big, markPlainData(deep))
     expect(performance.now() - t0).toBeLessThan(50)
     for (const r of readConsoleRing()) expect(r.message.length).toBeLessThanOrEqual(4000)
     const [a, b, c] = readConsoleRing()
@@ -182,6 +186,26 @@ describe('样式改动', () => {
   })
 })
 
+describe('多选时主选面板排第一（#1012 1）', () => {
+  const mk = (id: string) => ({ id, type: 'panel', fileId: `${id}.pdf`, fileKind: 'pdf', script: null, overrides: [] })
+
+  it('主选（最后选中的）不是文档里第一张时，overrides[0] 是主选，其余按文档顺序', () => {
+    const doc = useDocumentStore.getState().doc
+    useDocumentStore.setState({ doc: { ...doc, objects: [mk('p1'), mk('p2'), mk('p3'), mk('p4')] as never[] } })
+    useUiStore.setState({ elementPanelId: null })
+    useSelectionStore.setState({ ids: ['p1', 'p4', 'p3'] }) // p3 是最后选中的 = 主选
+    try {
+      expect(collectFocusedOverrides().map((p) => p.panel)).toEqual(['p3.pdf', 'p1.pdf', 'p4.pdf'])
+      useSelectionStore.setState({ ids: ['p1', 'p2', 'p3', 'p4'] })
+      expect(collectFocusedOverrides().map((p) => p.panel)).toEqual(['p4.pdf', 'p1.pdf', 'p2.pdf'])
+      expect(overridesOmitted()).toBe(1)
+    } finally {
+      useSelectionStore.setState({ ids: [] })
+      useDocumentStore.setState({ doc })
+    }
+  })
+})
+
 describe('两条路径的载荷', () => {
   it('导出路径的载荷没有 detail / detail_options', () => {
     const p = buildDiagnosticPayload() as unknown as Record<string, unknown>
@@ -231,13 +255,49 @@ describe('有界序列化不触发 getter', () => {
         return 2
       },
     })
-    console.error(obj, arr)
+    console.error(markPlainData(obj), markPlainData(arr))
     expect(calls).toBe(0)
     const msg = readConsoleRing()[0].message
     expect(msg).toContain('"plain":1')
     expect(msg).toContain('"boom":[getter]')
     expect(msg).toContain('"deep":[getter]')
     expect(msg).toContain('[1,[getter]]')
+  })
+})
+
+describe('Proxy 实参不被反射遍历（#1012 2）', () => {
+  /** 记录每一次 trap 调用（含 getPrototypeOf / has / ownKeys / get / getOwnPropertyDescriptor……）。 */
+  const countingProxy = (target: object) => {
+    const traps: string[] = []
+    const handler = new Proxy(
+      {},
+      {
+        get: (_t, name) => (...args: unknown[]) => {
+          traps.push(String(name))
+          return (Reflect as never as Record<string, (...a: unknown[]) => unknown>)[name as string](...args)
+        },
+      },
+    )
+    return { proxy: new Proxy(target, handler as ProxyHandler<object>), traps }
+  }
+
+  it('Proxy 对象 / 数组 / 无原型对象被 console.error 时 trap 调用 0 次，写 [object]', () => {
+    uninstall = installConsoleCapture()
+    const cases = [countingProxy({ a: 1 }), countingProxy([1, 2]), countingProxy(Object.create(null))]
+    for (const c of cases) console.error('x', c.proxy)
+    for (const c of cases) {
+      // 老 WebView 没有 Error.isError 时退回 instanceof，会有一次 getPrototypeOf；其余 trap 任何时候都不许有
+      const allowed = typeof (Error as unknown as { isError?: unknown }).isError === 'function' ? [] : ['getPrototypeOf']
+      expect(c.traps.filter((t) => !allowed.includes(t))).toEqual([])
+      expect(c.traps.length).toBe(allowed.length ? c.traps.length : 0)
+    }
+    expect(readConsoleRing().map((r) => r.message)).toEqual(['x [object]', 'x [object]', 'x [object]'])
+  })
+
+  it('原始值与 Error 照常记；未声明为纯数据的普通对象写 [object]', () => {
+    uninstall = installConsoleCapture()
+    console.error('n', 1, true, null, new Error('e1'), { a: 1 })
+    expect(readConsoleRing()[0].message).toBe('n 1 true null Error: e1 [object]')
   })
 })
 

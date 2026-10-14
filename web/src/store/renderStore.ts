@@ -31,6 +31,14 @@ import { fileHash, recordDiagnosticEvent, variantHash } from '@/diagnostics'
 
 export type RenderStatus = 'idle' | 'rendering' | 'ready' | 'error'
 
+/** 文件级等待；准备阶段尚不知道会话是否为冷启动。时间只用于本地显示。 */
+export interface BuildingInfo {
+  cold: boolean
+  cost: string
+  phase?: 'preparing' | 'rendering'
+  startedAt?: number
+}
+
 export interface PanelRender {
   /** 这份渲染态属于哪个素材文件（文件级操作靠它反查，见 markStale / reset） */
   fileId: string
@@ -273,13 +281,13 @@ interface RenderState {
   get: (key: string) => PanelRender
   patch: (key: string, next: Partial<PanelRender>) => void
   /**
-   * 文件级「正在构建」（SSE 的 render.started/done，只带 fileId）。
+   * 文件级「正在准备/构建」（SSE 的 preparing/started/done/failed，只带 fileId）。
    * **不写进变体条目**：manifest / status 属于某个具体变体，被一条文件级事件
    * 盖掉的话，同文件另一个副本会永远转着圈——它自己根本没在渲染，也就没人
    * 来把那个状态收掉。冷启动提示本来就是文件粒度的（worker 一个 stem 一份）。
    */
-  building: Record<string, { cold: boolean; cost: string }>
-  noteBuilding: (fileId: string, info: { cold: boolean; cost: string } | null) => void
+  building: Record<string, BuildingInfo>
+  noteBuilding: (fileId: string, info: BuildingInfo | null) => void
   /** 渲染并取回 SVG（与 manifest 同一响应）；同键渲染中重复调用只保留最后一次待办。
    *  `policy` 只进诊断事件，**不影响任何渲染行为**——它是「这次是定稿还是防抖」
    *  的说明，缺省按 immediate 记。
@@ -573,7 +581,12 @@ export const useRenderStore = create<RenderState>((set, get) => ({
         delete building[fileId]
         return { building }
       }
-      return { building: { ...s.building, [fileId]: info } }
+      return { building: { ...s.building, [fileId]: {
+        ...info,
+        phase: info.phase ?? 'rendering',
+        // worker 准备完只是换阶段，不是另一次等待；冷启动前半段也要算进去。
+        startedAt: s.building[fileId]?.startedAt ?? Date.now(),
+      } } }
     }),
 
   render: async (fileId, patches, previewDpi, policy, epoch, artifactValidation) => {

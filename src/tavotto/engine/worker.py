@@ -289,10 +289,14 @@ def _patched_savefig(self, fname, *args, **kwargs):
     to_path = figcapture.savefig_targets_path(fname)
     if to_path and BLOCKED_OPS is not None:
         # 拦截不落盘：脚本若随后读这个路径（`Image.open('stage.png')`），读到的不是它刚存的（P01a，EX02）
-        BLOCKED_OPS.blocked(
-            "savefig",
-            figcapture.BlockedFileOps.KIND_SAVEFIG,
-            *figcapture.savefig_effective_names(fname, kwargs),
+        try:
+            from matplotlib.backend_bases import FigureCanvasBase  # noqa: PLC0415
+
+            supported = {str(k).lower() for k in FigureCanvasBase.filetypes}
+        except Exception:  # noqa: BLE001
+            supported = None
+        BLOCKED_OPS.blocked_savefig(
+            figcapture.savefig_effective_names(fname, kwargs), kwargs.get("format"), supported
         )
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
     if SESSION is not None:
@@ -372,8 +376,9 @@ SCRIPT_EXITED = "script_exited"
 #: safe 档的守卫拦下了脚本的关键文件操作（删除 / 改名 / 写入真实图库，或被拦截不落盘的 savefig），
 #: 脚本随后又观察了受影响的路径（P01a，ADR 0003）。结果可能与直接 Python 不同：不是完整成功。
 FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
-#: 载荷里的「该走哪条执行路径」：保留文件语义（native bridge / `tavotto run`）。字符串是后续
-#: 桌面 adapter（P06/P07）的接入依据；`adapter_available` 如实说当前桌面界面里还没有它。
+#: 载荷里的「该走哪条执行路径」：保留文件语义（native bridge / `tavotto run`）。字符串是桌面侧
+#: 接入依据；`adapter_available` 只说「这个 build 失败之后，桌面界面是否已经会自动换那条路径重跑」——
+#: 终端里的 `tavotto run` 一直可用，但自动回退没接通之前这个值保持 false（不承诺没接通的东西）。
 REQUIRED_EXECUTION_FILE_SEMANTICS = "preserve_file_semantics"
 
 
@@ -469,24 +474,45 @@ def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError
     )
 
 
+def _script_frame_line(exc: BaseException, script) -> int | None:
+    """异常回溯里**最内层**属于用户脚本文件的那一帧的行号（退出在脚本哪一行）；找不到是 None。"""
+    try:
+        want = os.path.normcase(os.path.realpath(str(script)))
+        line = None
+        tb = exc.__traceback__
+        while tb is not None:
+            name = tb.tb_frame.f_code.co_filename
+            if os.path.normcase(os.path.realpath(name)) == want:
+                line = tb.tb_lineno
+            tb = tb.tb_next
+        return line
+    except (OSError, ValueError):
+        return None
+
+
 def _blocked_operations_error(
-    ops: list[dict], *, cause: BaseException | None = None
+    ops: list[dict],
+    *,
+    cause: BaseException | None = None,
+    fidelity: dict | None = None,
 ) -> ProtocolError:
     """守卫拦下的关键操作 + 脚本随后的观察 → 结构化错误。message 与载荷只有操作类别，没有路径
-    （message 会进 app.log 与诊断包）。不自动换环境重跑、不改脚本、不原地放行。"""
+    （message 会进 app.log 与诊断包）。不自动换环境重跑、不改脚本、不原地放行。
+    `fidelity` 是账本的 `summary()`（闭集枚举 + 计数）：失败的 build 没有回执，诊断从这里取证。"""
     names = ", ".join(o["op"] for o in ops)
     return ProtocolError(
         FILE_OPERATION_BLOCKED,
         f"脚本做了 Tavotto 安全模式不会真正执行的文件操作（{names}），随后又读取了受影响的路径，"
         "得到的结果可能与直接用 Python 运行不同，所以这次不算成功。"
-        "Tavotto 没有改你的脚本，也没有换环境重跑；需要保留真实文件操作的运行方式——"
-        "终端里的 `tavotto run -- python 脚本.py` 可以，桌面界面里的一键方式尚未接入。",
+        "Tavotto 没有改你的脚本，也没有换环境重跑；这类脚本需要按真实文件运行——"
+        "终端里的 `tavotto run -- python 脚本.py` 就是这样跑的。",
         retryable=False,
         traceback_text=traceback.format_exc() if cause is not None else "",
         extra={
             "operations": ops,
             "required_execution": REQUIRED_EXECUTION_FILE_SEMANTICS,
             "adapter_available": False,
+            **({"fidelity": fidelity} if fidelity is not None else {}),
         },
     )
 
@@ -861,7 +887,13 @@ class Worker(wireproto.V1Handler):
                     return None
             except OSError:
                 pass
-            return real_unlink(p, missing_ok=missing_ok)
+            try:
+                return real_unlink(p, missing_ok=missing_ok)
+            except FileNotFoundError as exc:
+                ledger.note_failed_call(
+                    exc, ledger.VIA_MOVE_FAILED
+                )  # 删 savefig 目标落空：直接运行不会
+                raise
 
         Path.unlink = _guarded_unlink
 
@@ -899,7 +931,16 @@ class Worker(wireproto.V1Handler):
                         affected = (dst,)
                     ledger.blocked(op, kind, path, *affected, dests=affected)
                     return None
-                return real_fn(*a, **kw)
+                try:
+                    return real_fn(*a, **kw)
+                except FileNotFoundError as exc:
+                    # 真实执行的改名 / 删除落空；源是被拦截的 savefig 目标时，直接运行不会落空。
+                    # 带 `*dir_fd` 的路径相对那个 fd，不是 cwd：解析不了，不归因（保留原分类）
+                    if ledger.uses_dir_fd(kw):
+                        ledger.tag_unresolvable(exc)
+                    else:
+                        ledger.note_failed_call(exc, ledger.VIA_MOVE_FAILED)
+                    raise
 
             return guarded
 
@@ -1036,16 +1077,30 @@ class Worker(wireproto.V1Handler):
             except SystemExit as exc:
                 if exc.code not in (None, 0):
                     # 被拦下的操作之后观察到不同的世界而退出：原因是守卫，不是脚本自己想退（P01a）
-                    if ledger.material():
-                        raise _blocked_operations_error(ledger.material(), cause=exc) from exc
+                    # `savefig(p); if not exists(p): sys.exit(1)`：退出分支在直接运行里走不到——也是守卫造成的
+                    if ledger.material() or (
+                        not _raised_by_cli_parser(exc)
+                        and ledger.explain_exit(
+                            controlled=figcapture.exit_controlled_by_probe(
+                                script_source, _script_frame_line(exc, self.script)
+                            )
+                        )
+                    ):
+                        raise _blocked_operations_error(
+                            ledger.material(), cause=exc, fidelity=ledger.summary()
+                        ) from exc
                     raise _script_exit_error(exc, argv_count=len(self.script_argv)) from exc
             except scriptinput.ScriptNeedsInput as exc:
                 raise _needs_input_error(exc) from None
             except Exception as exc:
                 # 脚本在被拦下的操作之后读不到东西而崩了（`FileNotFoundError`…）：根因是守卫，
                 # 不是「数据找不到」（那会请用户去指认一个其实被我们拦下的路径）
-                if ledger.material():
-                    raise _blocked_operations_error(ledger.material(), cause=exc) from exc
+                # `savefig(p)` 之后 `os.replace(p, q)` / `getsize(p)` / `Path(p).stat()` / `os.open(p)` 落空同理：
+                # 这个 FileNotFoundError 是守卫不落盘造成的，不是脚本错误，更不是该请用户指认的"缺数据"
+                if ledger.explains(exc) or ledger.material():
+                    raise _blocked_operations_error(
+                        ledger.material(), cause=exc, fidelity=ledger.summary()
+                    ) from exc
                 raise
             finally:
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
@@ -1055,7 +1110,7 @@ class Worker(wireproto.V1Handler):
         # 脚本跑到了末尾，但被守卫拦下的关键操作之后它观察过受影响的路径（用户 `except Exception`
         # 吞掉什么都不影响这条带外事实）：结果可能与直接 Python 不同，不记成完整成功（P01a，AC-02）
         if ledger.material():
-            raise _blocked_operations_error(ledger.material())
+            raise _blocked_operations_error(ledger.material(), fidelity=ledger.summary())
 
         # pyplot 兜底：从不 savefig 的脚本（`plt.plot(...); plt.show()` 这种
         # AI 最常写的形态）也要能用。**与浏览器 playground 同一份策略**——
@@ -1323,6 +1378,16 @@ class Worker(wireproto.V1Handler):
                 return False
         return name in _static_import_roots(self.script)
 
+    def _fidelity_summary(self) -> dict | None:
+        """本轮账本的 `fidelity` 段（闭集枚举 + 计数）；有弱信号时在 worker.log 留一行供诊断。"""
+        ledger = self._blocked_ops
+        if ledger is None:
+            return None
+        summary = ledger.summary()
+        if summary["level"] != figcapture.BlockedFileOps.LEVEL_NONE_OBSERVED:
+            print(f"[fidelity] {json.dumps(summary, ensure_ascii=False)}", file=sys.stderr)
+        return summary
+
     def build_result(self, timings: dict) -> dict:
         """v1 build 响应的 body（分派逻辑在 `wireproto.V1Handler`）。
 
@@ -1340,7 +1405,9 @@ class Worker(wireproto.V1Handler):
                 if self.session.artifact_source is not None
                 else {}
             ),
-            "runtime": figsession.runtime_report(inputs=self._inputs_report),
+            "runtime": figsession.runtime_report(
+                inputs=self._inputs_report, fidelity=self._fidelity_summary()
+            ),
             # 本次 build 实际用到的每一问（ADR 0099 §二）：写回的一次性重放按它严格重放；T08 起带上下文摘要，
             # 口令那一问只有 `secret: true`、没有答案（记账里本来就没有）
             "script_inputs": [

@@ -1871,18 +1871,9 @@ def same_python(a: str | None, b: str | None) -> bool:
     `C:/Users/张三/python.exe` 与 `C:\\Users\\张三\\Python.exe` 是同一个文件，
     按字符串比会当成两个，来源标签立刻错位。
     """
-    if not a or not b:
-        return False
-    import os
+    from . import interpreterpath
 
-    def norm(p: str) -> str:
-        try:
-            s = os.path.normpath(os.path.abspath(os.path.expanduser(p)))
-        except (OSError, ValueError):
-            s = p
-        return os.path.normcase(s)
-
-    return norm(a) == norm(b)
+    return interpreterpath.same_python(a, b)
 
 
 def source_of(python: str) -> str:

@@ -1551,8 +1551,23 @@ out = {"python": {
     "version": sys.version.split()[0], "implementation": platform.python_implementation(),
     "executable": sys.executable, "prefix": sys.prefix, "base_prefix": sys.base_prefix,
     "in_venv": sys.prefix != sys.base_prefix, "platform": platform.platform()}}
+_tmp_cache, _own_cache = os.environ.get("TAVOTTO_PROBE_FONTCACHE"), False
 try:
     import matplotlib
+    # 探针是只读的：font_manager 在没有字体缓存时会把 fontlist-v*.json 写进用户的 Matplotlib 缓存目录。
+    # 配置事实（matplotlibrc / configdir / cachedir / rcParams）照旧取真实目录；字体缓存换到一个临时目录——
+    # 已有的 fontlist 复制过去照样命中（不白重建），没有就在临时目录里建。临时目录由父进程在可信目录下给出
+    # （探针超时被杀时也由父进程清掉）；没给就自己建、自己删。
+    import glob, shutil, tempfile
+    real_cache = matplotlib.get_cachedir()
+    if not _tmp_cache:
+        _tmp_cache, _own_cache = tempfile.mkdtemp(prefix="tavotto-mplcache-"), True
+    for _f in glob.glob(os.path.join(real_cache, "fontlist-v*.json")):
+        try:
+            shutil.copy(_f, _tmp_cache)
+        except OSError:
+            pass
+    matplotlib.get_cachedir = lambda: _tmp_cache
     from matplotlib import font_manager as fm
     rc, rcd = matplotlib.rcParams, matplotlib.rcParamsDefault
     get = getattr(rc, "_get", None) or (lambda k: dict.__getitem__(rc, k))
@@ -1598,11 +1613,14 @@ try:
     out["matplotlib"] = {
         "version": matplotlib.__version__, "backend": backend,
         "matplotlibrc": matplotlib.matplotlib_fname(), "configdir": matplotlib.get_configdir(),
-        "cachedir": matplotlib.get_cachedir(), "non_default_rcparams": nondefault,
+        "cachedir": real_cache, "non_default_rcparams": nondefault,
         "font_count": len(fm.fontManager.ttflist), "font_family_count": len(names), "fonts": fonts,
         "font_note": "system fonts known to matplotlib in this probe; fonts registered by the Tavotto worker at render time are not loaded here"}
 except Exception as exc:
     out["matplotlib"] = {"error": type(exc).__name__ + ": " + str(exc)[:300]}
+if _own_cache:
+    import shutil
+    shutil.rmtree(_tmp_cache, ignore_errors=True)
 try:
     from importlib import metadata
     pk = sorted({(d.metadata["Name"] or "").lower(): d.version for d in metadata.distributions() if d.metadata["Name"]}.items())
@@ -1717,6 +1735,11 @@ def _probe_in(
     # `sys.path[0]` 是那个临时目录，不是 cwd；`-s` 不加用户 site。不用 `-I`（会丢掉我们刻意复现的 MPL* 变量）。
     probe_main = Path(trusted) / "probe_main.py"
     probe_main.write_text(_PROBE_CODE, encoding="utf-8")
+    fontcache = (
+        Path(trusted) / "mplcache"
+    )  # 探针的字体缓存落点（见 `_PROBE_CODE`），随 trusted 一起删
+    fontcache.mkdir(exist_ok=True)
+    env["TAVOTTO_PROBE_FONTCACHE"] = str(fontcache)
     try:
         proc = subprocess.run(
             [python, "-E", *runtime.probe_args(bundled=bundled), "-s", str(probe_main)],
@@ -1796,6 +1819,66 @@ def _mark_unavailable(probe: dict, reason: str) -> dict:
             if k in mpl:
                 mpl[k] = {"unavailable": reason}
     return probe
+
+
+#: 探针里不论用户装没装都要看有没有被遮挡的模块（探针自己和 matplotlib 的导入链会用到）
+_SHADOW_ALWAYS = frozenset(
+    {"matplotlib", "numpy", "json", "platform", "importlib", "sitecustomize", "usercustomize"}
+)
+_SHADOW_SCAN_LIMIT = 5000
+_SHADOW_SUFFIXES = (".py", ".pyc", ".pyd", ".so")
+
+
+def shadowing_candidates(dirs: list[str], names: set[str]) -> list[str]:
+    """项目目录里有没有会遮挡这些模块的同名文件或包（`matplotlib.py` / `matplotlib/` / `numpy.py`……）。
+    **只看文件名，不 import、不读内容、不执行**；只扫每个目录的第一层，至多 `_SHADOW_SCAN_LIMIT` 项。"""
+    found: list[str] = []
+    for d in dirs:
+        try:
+            with os.scandir(d) as it:
+                for n, entry in enumerate(it):
+                    if n >= _SHADOW_SCAN_LIMIT:
+                        break
+                    stem = entry.name.split(".", 1)[0]
+                    if stem not in names:
+                        continue
+                    try:
+                        is_dir = (
+                            entry.is_dir()
+                        )  # 目录符号链接（`numpy -> vendor/numpy`）也算包目录；只 stat，不读不导入
+                    except OSError:
+                        is_dir = False
+                    if is_dir:
+                        label = entry.name + "/"
+                    elif entry.name.endswith(_SHADOW_SUFFIXES):
+                        label = entry.name
+                    else:
+                        continue
+                    if label not in found:
+                        found.append(label)
+        except OSError:
+            continue
+    return sorted(found)[:50]
+
+
+def _annotate_isolated_probe(doc: dict, figures_dir: object) -> None:
+    """隔离探针用 `-E` 在项目外运行，看不到 safe worker 实际会优先导入的项目目录 / `PYTHONPATH`：
+    依赖导入结果的事实（matplotlib 版本、包列表、backend、rcParams）可能与渲染时不同——如实标出来，
+    并列出项目目录里可能遮挡它们的同名文件（只看文件名）。隔离本身不变。"""
+    probe = doc.get("probe")
+    if not isinstance(probe, dict) or probe.get("status") != "ok":
+        return
+    probe["may_differ"] = "user_import_paths_not_reproduced"
+    dirs: list[str] = []
+    cwd = (doc.get("probe_cwd") or {}).get("cwd")
+    for d in (figures_dir, cwd):
+        if isinstance(d, str) and os.path.isdir(d) and d not in dirs:
+            dirs.append(d)
+    names = set(_SHADOW_ALWAYS)
+    for pk in probe.get("packages") or []:
+        if isinstance(pk, dict) and isinstance(pk.get("name"), str):
+            names.add(pk["name"].lower().replace("-", "_"))
+    probe["shadowing_candidates"] = shadowing_candidates(dirs, names)
 
 
 def _probe_in_render_cwd(src: Sources, python: str, bundled: bool, doc: dict) -> dict:
@@ -1948,6 +2031,7 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             "env_override": pool.worker_python_env(),
         }
         doc["probe"] = _probe_in_render_cwd(src, python, source == pool.SOURCE_BUNDLED, doc)
+        _annotate_isolated_probe(doc, figures_dir)
         if doc["probe"].get("probe_cleanup"):
             doc["probe_cleanup"] = doc["probe"]["probe_cleanup"]
     return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]
@@ -2188,18 +2272,42 @@ def _strip_userinfo(url: str) -> str:
 def proxy_facts() -> dict:
     import urllib.request
 
-    env = {k: _strip_userinfo(v) for k, v in os.environ.items() if "proxy" in k.lower() and v}
+    # `NO_PROXY` / `no_proxy` 的内容常是内部域名 / 内网地址：只记条目数，不记主机名与 IP
+    env: dict[str, str] = {}
+    no_proxy_entries = 0
+    for k, v in os.environ.items():
+        if "proxy" not in k.lower() or not v:
+            continue
+        if k.lower() == "no_proxy":
+            no_proxy_entries = max(no_proxy_entries, len([e for e in v.split(",") if e.strip()]))
+            continue
+        env[k] = _strip_userinfo(v)
     try:
-        system = {k: _strip_userinfo(v) for k, v in urllib.request.getproxies().items() if v}
+        system = {
+            k: _strip_userinfo(v)
+            for k, v in urllib.request.getproxies().items()
+            if v and k.lower() not in ("no", "no_proxy", "exclude", "exceptions")
+        }
     except Exception:  # noqa: BLE001
         system = {}
-    return {"configured": bool(env or system), "env": env, "resolved": system}
+    return {
+        "configured": bool(env or system),
+        "env": env,
+        "resolved": system,
+        "no_proxy_entries": no_proxy_entries,
+    }
 
 
 def _resolve(host: str) -> list[str]:
     """系统解析器查一次地址（只做名字解析，不建立连接）。"""
     infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
     return sorted({i[4][0] for i in infos})
+
+
+#: 仍在跑的名字解析线程（按主机）。超时后线程还会跑到系统解析器返回为止：同一主机上一个没结束就不再起新的，
+#: 反复点发送也不会堆出越来越多的遗留线程——总数以 `len(DNS_HOSTS)` 为上界。
+_DNS_PENDING: dict[str, threading.Thread] = {}
+_DNS_LOCK = threading.Lock()
 
 
 def dns_fact(host: str) -> dict:
@@ -2211,8 +2319,13 @@ def dns_fact(host: str) -> dict:
         except OSError as exc:
             box["error"] = type(exc).__name__
 
-    t = threading.Thread(target=run, name="diag-dns", daemon=True)
-    t.start()
+    with _DNS_LOCK:
+        old = _DNS_PENDING.get(host)
+        if old is not None and old.is_alive():
+            return {"host": host, "result": "unknown", "reason": "previous_lookup_pending"}
+        t = threading.Thread(target=run, name="diag-dns", daemon=True)
+        _DNS_PENDING[host] = t
+        t.start()
     t.join(DNS_TIMEOUT_S)
     if t.is_alive():
         return {"host": host, "result": "unknown", "reason": "timeout"}

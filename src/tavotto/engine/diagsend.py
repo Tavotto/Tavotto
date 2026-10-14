@@ -777,10 +777,22 @@ _SESSIONS: dict[str, SendSession] = {}
 #: 每个项目最近一次「已送达 / 结果未知」的会话在被丢弃时留下的状态快照（只有状态与报告编号，没有包与令牌）：
 #: 关对话框 / 切项目不能吞掉送达结果，用户凭编号才能要求删除（#928）。每个项目最多一份，后来的覆盖。
 _OUTCOMES: dict[str, dict] = {}
-#: 每个项目收到过的最大备包序号（前端每次备包带一个单调的 `seq`）：比它旧的备包请求（关了再开 / 切走再回时晚到的那份）
+#: 每个项目收到过的最大备包序号（前端每次备包带一个单调的 `seq`（由 `issue_prepare_seq` 发放））：比它旧的备包请求（关了再开 / 切走再回时晚到的那份）
 #: 不许登记会话、也不许替换新会话——否则前端丢弃旧响应后，界面上的新编号指向一个不存在的会话。
 _PREPARE_SEQ: dict[str, int] = {}
 _PREPARE_SEQ_CAP = 64
+
+
+_SEQ_ISSUED = 0
+
+
+def issue_prepare_seq(scope: str) -> int:
+    """发一个备包序号：引擎自己计数，不看墙钟（系统时钟被往回校正、WebView 重载都不会让新页面的序号落到旧序号后面）。
+    至少比本项目已登记的大 1，所以引擎里记住的序号再大，新发的也排在它前面。进程内单调，只发放不登记（登记在 begin_prepare）。"""
+    global _SEQ_ISSUED
+    with _LOCK:
+        _SEQ_ISSUED = max(_SEQ_ISSUED, _PREPARE_SEQ.get(scope, 0)) + 1
+        return _SEQ_ISSUED
 
 
 def begin_prepare(scope: str, seq: int | None) -> None:

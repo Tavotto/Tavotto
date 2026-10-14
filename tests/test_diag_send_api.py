@@ -355,6 +355,23 @@ class TestStalePrepareRace:
         assert r.status_code == 409 and not built
         assert self._post(client, 201).status_code == 200
 
+    def test_engine_issued_seq_ignores_the_wall_clock_and_beats_any_remembered_seq(
+        self, client, on
+    ):
+        """#1012 6：引擎记住的序号比「现在」的毫秒时间戳还大（时钟被回拨 / 引擎一直在跑），发出的序号仍排在它前面。"""
+        huge = 4_000_000_000_000_000
+        diagsend._PREPARE_SEQ[""] = huge
+        a = client.post("/api/diagnostics/send/seq").get_json()["seq"]
+        b = client.post("/api/diagnostics/send/seq").get_json()["seq"]
+        assert a > huge and b == a + 1
+        r = self._post(client, a)
+        assert r.status_code == 200, "按引擎发的序号备包不能被当成 stale_prepare"
+        assert self._post(client, b).status_code == 200
+
+    def test_seq_endpoint_is_404_when_the_feature_is_off(self, client, monkeypatch):
+        monkeypatch.setenv(diagsend.ENV_HARD_OFF, "1")
+        assert client.post("/api/diagnostics/send/seq").status_code == 404
+
     def test_clients_without_seq_keep_working(self, client, on):
         assert self._post(client, None).status_code == 200
         assert self._post(client, None).status_code == 200
