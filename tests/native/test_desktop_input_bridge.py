@@ -453,3 +453,26 @@ def test_sized_readline_stops_at_size_without_waiting_for_newline():
     assert stdin.readline(3) == "abc"
     assert stdin.readline(-1) == "defgh\n"
     assert b.asked == 1
+
+
+def test_readlines_honours_the_size_hint_like_a_real_text_stream(tmp_path):
+    """`readlines(hint)`:累计长度达到 hint 就停,不继续发起提问(Codex #1022 第九轮);`read(0)` / `readline(0)`
+    同样不提问。真文件:`StringIO('aa\\nbb\\n').readlines(3)` 只回第一行。"""
+    script = (
+        dk.FIGURE_HEADER
+        + """\
+import json, sys
+bounded = sys.stdin.readlines(3)           # 第一行 'aa\\n' 已经 3 个字符:读够即止
+zero = (sys.stdin.read(0), sys.stdin.readline(0))
+tail = input("next? ")                     # 真正的下一问应当是这条,而不是又一个 readline
+json.dump([bounded, list(zero), tail], open("hint.json", "w"))
+"""
+    )
+    session = start(tmp_path, script)
+    p = wait_pending(session, "readline")
+    session.answer_input(p["request_id"], text="aa")
+    nxt = wait_pending(session, None)
+    assert nxt["kind"] == "input", f"readlines(3) 读够之后还在提问: {nxt['kind']}"
+    session.answer_input(nxt["request_id"], text="done")
+    dk.finish(session)
+    assert dk.read_json(tmp_path / "work" / "hint.json") == [["aa\n"], ["", ""], "done"]

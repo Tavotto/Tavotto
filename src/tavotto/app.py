@@ -7432,7 +7432,9 @@ def _native_preparation_runner(pl, before_retry=None):
     engine_nativesession.REGISTRY.cancel_project(pl.project_root, script=spec.target)
     try:
         session = engine_desktopproc.start(
-            engine_desktopproc.OwnedLaunch(spec, launch_id=pl.plan_id)
+            engine_desktopproc.OwnedLaunch(
+                spec, launch_id=pl.plan_id, project_epoch=pl.project_epoch
+            )
         )
     except engine_runcodes.RunError as exc:
         raise engine_pool.WorkerError(str(exc), code=exc.code) from exc

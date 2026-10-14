@@ -68,6 +68,7 @@ from . import (
     inputbroker,
     inputremap,
     launcher,
+    nativesession,
     pool,
     projectenv,
     receipt,
@@ -206,6 +207,9 @@ class PreparationPlan:
     #: 私有。conda install / 改 activate.d、conda 从找不到变成找得到（直接启动 → 激活）都不换「代」，但跑起来的环境变了：
     #: 执行前 `_stale_reason` 比它，对不上 = 计划过期（P09）
     environment_state: str = ""
+    #: 登记那一刻项目的关闭代次（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章）。启动时带给注册表：
+    #: 关闭之后才走到起进程的旧计划，即使项目已重新打开也被拒（代次对不上）
+    project_epoch: int | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -690,6 +694,10 @@ class PreparationService:
             )
             result.finished_at = time.time()
             result.status = STATUS_NEEDS_INPUT
+        if plan.execution == execspec.PROFILE_NATIVE:
+            plan = dataclasses.replace(
+                plan, project_epoch=nativesession.REGISTRY.project_epoch(plan.project_root)
+            )
         with self._lock:
             self._sweep()
             self._entries[plan.plan_id] = _Entry(
@@ -752,6 +760,7 @@ class PreparationService:
             plan_id=plan.plan_id,
             created_at=plan.created_at,
             static_source=plan.static_source,
+            project_epoch=plan.project_epoch,
         )
         entry.plan = fresh
         return fresh
