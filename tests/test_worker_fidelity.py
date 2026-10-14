@@ -644,6 +644,51 @@ EXIT_CASES = {
         PRE + "if not os.path.ismount(o):\n    sys.exit(3)  # EXIT\n",
         False,
     ),
+    # Codex #1024 r4267917227：探路调用必须解析到 os.path / os.stat / pathlib.Path 的方法
+    "custom_class_exists": (
+        "import sys\nclass Backend:\n    @staticmethod\n    def exists(p):\n        return False\n"
+        "o = 'o.png'\nfig.savefig(o)\nif not Backend.exists(o):\n    sys.exit(7)  # EXIT\n",
+        False,
+    ),
+    "user_defined_exists_function": (
+        "import sys\ndef exists(p):\n    return False\n"
+        "o = 'o.png'\nfig.savefig(o)\nif not exists(o):\n    sys.exit(7)  # EXIT\n",
+        False,
+    ),
+    "user_function_shadows_the_imported_name": (
+        "import sys\nfrom os.path import exists\ndef exists(p):\n    return False\n"
+        "o = 'o.png'\nfig.savefig(o)\nif not exists(o):\n    sys.exit(7)  # EXIT\n",
+        False,
+    ),
+    "method_on_an_unknown_object": (
+        PRE + "class B:\n    def exists(self):\n        return False\n"
+        "b = B()\nif not b.exists():\n    sys.exit(7)  # EXIT\n",
+        False,
+    ),
+    "from_import_of_os_path_exists": (
+        "import sys\nfrom os.path import exists\no = 'o.png'\nfig.savefig(o)\n"
+        "if not exists(o):\n    sys.exit(7)  # EXIT\n",
+        True,
+    ),
+    "os_path_alias": (
+        "import sys\nimport os.path as osp\no = 'o.png'\nfig.savefig(o)\n"
+        "if not osp.exists(o):\n    sys.exit(7)  # EXIT\n",
+        True,
+    ),
+    "from_os_import_path": (
+        "import sys\nfrom os import path\no = 'o.png'\nfig.savefig(o)\n"
+        "if not path.isfile(o):\n    sys.exit(7)  # EXIT\n",
+        True,
+    ),
+    "os_stat_probe": (
+        PRE + "if not os.stat(o):\n    sys.exit(7)  # EXIT\n",
+        True,
+    ),
+    "path_object_variable": (
+        "import sys\nimport pathlib\nout = pathlib.Path('o.png')\nfig.savefig(out)\n"
+        "if not out.exists():\n    sys.exit(7)  # EXIT\n",
+        True,
+    ),
     "probe_of_a_different_file": (
         PRE + "if not os.path.exists('data.csv'):\n    sys.exit(3)  # EXIT\n",
         False,
@@ -835,3 +880,43 @@ def test_open_with_a_custom_opener_is_not_a_cwd_relative_read(tmp_path, monkeypa
         led.uninstall()
         os.close(fd)
     assert led.material() == [] and led.suspects() == []
+
+
+# ---- Codex #1024 r4267917234：改名失败先确认是源路径、目标目录可用 ----
+def test_a_rename_failure_needs_a_usable_destination_to_be_blamed_on_the_guard(
+    tmp_path, monkeypatch
+):
+    import os
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sub").mkdir()
+
+    def attributed(dest: str) -> bool:
+        led = figcapture.BlockedFileOps()
+        led.blocked("savefig", led.KIND_SAVEFIG, "o.png")
+        exc = FileNotFoundError(2, "No such file or directory", "o.png", None, dest)
+        return led.explains(exc)
+
+    assert attributed("sub/final.png") is True  # 目标目录在：缺的只可能是被拦的源
+    assert attributed("missing/final.png") is False  # 直接运行也会因为目标目录不存在而失败
+    assert attributed("final.png") is True  # 当前目录
+    # 失败的是目标（filename2）不是源：不拿它去对账
+    led = figcapture.BlockedFileOps()
+    led.blocked("savefig", led.KIND_SAVEFIG, "o.png")
+    other = FileNotFoundError(2, "No such file", "x.tmp", None, "o.png")
+    assert led.explains(other) is False
+    assert os.path.isdir("sub")
+
+
+@needs_worker
+def test_a_real_rename_into_a_missing_directory_keeps_its_script_error(figs):
+    e = _deviated(
+        figs, HDR + "fig.savefig('o.png')\nos.replace('o.png', 'missing/final.png')\n", "sandbox"
+    )
+    assert e.code != CODE, e.code
+    e = _deviated(
+        figs,
+        HDR + "os.mkdir('sub')\nfig.savefig('o.png')\nos.replace('o.png', 'sub/final.png')\n",
+        "sandbox",
+    )
+    assert e.code == CODE, e.code

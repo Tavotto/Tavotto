@@ -2035,15 +2035,20 @@ def _readonly_mode(mode) -> bool:
     return "r" in mode and not any(c in mode for c in "+wxa")
 
 
-#: 退出归因认的探路调用：**savefig 成功写出文件之后必然为真 / 不抛**的那些（`exists` / `isfile` / `getsize` / `stat`…）。
-#: `isdir` / `islink` / `is_dir` / `is_symlink` / `ismount` 在真实文件语义下 savefig 之后同样是 False——
-#: 退出不是守卫造成的，故意不在表里（证明不了就不归因）。
-_PROBE_CALL_NAMES = frozenset(
+#: 退出归因认的探路调用：**savefig 成功写出文件之后必然为真 / 不抛**的那些，且必须**解析到**标准库的这些 API
+#: （看 import 别名与属性链，不是只比名字）。`isdir` / `islink` / `is_dir` / `is_symlink` / `ismount` 在真实文件语义下
+#: savefig 之后同样是 False——退出不是守卫造成的，故意不在表里；用户自己的同名函数 / 类方法一律不认（证明不了就不归因）。
+_PROBE_FUNCS = frozenset(
     {
-        "exists", "lexists", "isfile", "is_file",
-        "getsize", "getmtime", "getctime", "getatime", "stat", "lstat",
+        "os.path.exists", "os.path.lexists", "os.path.isfile", "os.path.getsize",
+        "os.path.getmtime", "os.path.getctime", "os.path.getatime", "os.stat", "os.lstat",
     }
 )  # fmt: skip
+#: `pathlib.Path(...)` 对象上的探路方法
+_PROBE_PATH_METHODS = frozenset({"exists", "is_file", "stat", "lstat"})
+_PATH_CLASSES = frozenset(
+    {"pathlib.Path", "pathlib.PurePath", "pathlib.PosixPath", "pathlib.WindowsPath"}
+)
 
 
 def exit_controlled_by_probe(source: str, exit_line: int | None) -> bool:
@@ -2120,17 +2125,54 @@ def exit_controlled_by_probe(source: str, exit_line: int | None) -> bool:
     if not savefig_keys:
         return False
 
+    # import 别名：只认 `import os` / `import os.path as osp` / `from os import path` / `from os.path import exists`
+    # 这类绝对导入；被用户自己定义 / 赋值 / 当参数的名字一律不解析（它不再指向标准库）
+    imports: dict[str, str] = {}
+    shadowed: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for al in node.names:
+                if al.asname:
+                    imports[al.asname] = al.name
+                else:
+                    imports[al.name.split(".")[0]] = al.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            for al in node.names:
+                imports[al.asname or al.name] = f"{node.module}.{al.name}"
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            shadowed.add(node.name)
+            if not isinstance(node, ast.ClassDef):
+                shadowed.update(a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            shadowed.add(node.id)
+
+    def dotted(node) -> str | None:
+        if isinstance(node, ast.Name):
+            return None if node.id in shadowed else imports.get(node.id)
+        if isinstance(node, ast.Attribute):
+            base = dotted(node.value)
+            return f"{base}.{node.attr}" if base else None
+        return None
+
+    def is_path_object(node) -> bool:
+        """`node` 是 `pathlib.Path(...)` 的实例：直接构造，或只赋值过一次、值就是这样一次构造的变量。"""
+        if isinstance(node, ast.Name) and len(assigned.get(node.id, ())) == 1:
+            node = assigned[node.id][0]
+        return isinstance(node, ast.Call) and dotted(node.func) in _PATH_CLASSES
+
     def is_probe(node) -> bool:
-        """`node` 就是一次对 savefig 目标的探路调用。"""
+        """`node` 就是一次对 savefig 目标的探路调用，且 callee 解析到标准库的 os.path / os.stat / pathlib.Path。"""
         if not isinstance(node, ast.Call):
             return False
         fn = node.func
-        name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
-        if name not in _PROBE_CALL_NAMES:
-            return False
-        if node.args:  # os.path.exists(o) / os.path.getsize(o) / os.stat(o)
+        if dotted(fn) in _PROBE_FUNCS and node.args:  # os.path.exists(o) / os.stat(o)
             return target_key(node.args[0]) in savefig_keys
-        if isinstance(fn, ast.Attribute):  # Path(o).exists() / out.exists()
+        if (
+            isinstance(fn, ast.Attribute)
+            and fn.attr in _PROBE_PATH_METHODS
+            and not node.args
+            and is_path_object(fn.value)
+        ):  # Path(o).exists() / out.exists()
             return target_key(fn.value) in savefig_keys
         return False
 
@@ -2653,13 +2695,15 @@ class BlockedFileOps:
         fnf = _file_not_found_in(exc)
         if fnf is None or getattr(fnf, "_tavotto_unresolvable", False):
             return []
-        reals = []
-        for attr in ("filename", "filename2"):
-            real = self._norm(getattr(fnf, attr, None))
-            if real is not None and real not in self._rewritten:
-                reals.append(real)
-        if not reals:
+        # 只对账 `filename`（失败的那条路径）。改名类调用还带 `filename2`（目的地）：失败的若是源，才可能是守卫
+        # 没把它写出来；目的地目录不存在 / 不可用时直接运行同样失败，保留原分类
+        real = self._norm(getattr(fnf, "filename", None))
+        if real is None or real in self._rewritten:
             return []
+        dest = getattr(fnf, "filename2", None)
+        if dest is not None and not self._destination_usable(dest):
+            return []
+        reals = [real]
         hits = []
         for ev in (*self._events, *self._spill.values()):
             if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME):
@@ -2670,6 +2714,16 @@ class BlockedFileOps:
             elif any(self._spill_hit(ev, r) for r in reals):
                 hits.append(ev)
         return hits
+
+    def _destination_usable(self, dest) -> bool:
+        """改名 / 移动的目的地的父目录此刻是个存在的目录（直接运行里这次改名才不会因目的地失败）。
+        判断不是脚本的观察：临时置 busy，不记账。"""
+        was, self._busy = self._busy, True
+        try:
+            real = self._norm(dest)
+            return real is not None and os.path.isdir(os.path.dirname(real) or real)
+        finally:
+            self._busy = was
 
     def note_failed_call(self, exc: BaseException, via: str) -> None:
         """某个被包装的调用（stat / `os.open` / 守卫放行的改名删除）抛了文件不存在，且指向受影响路径：弱信号
