@@ -835,7 +835,7 @@ def test_per_interpreter_caches_are_partitioned_by_launch_context(activation_onl
     with monkeypatch.context() as m:
         m.setenv(launcher.ENV_DISABLE, "0")
         bare = depplan.target_facts(py)
-        assert bare is not None and bare.context == "direct"
+        assert bare is not None and bare.context.startswith("direct")
         assert depplan.target_facts(py) is bare  # 同一上下文：命中缓存
     assert conda_calls(log) == []
     activated = depplan.target_facts(py)  # 换成激活：必须重新探测
@@ -857,7 +857,9 @@ def test_per_interpreter_caches_are_partitioned_by_launch_context(activation_onl
         assert projectenv.reprobe_system_candidate(entry, "vendor_sdk")["ok"] is False
     assert projectenv.reprobe_system_candidate(entry, "vendor_sdk")["ok"] is True
     contexts = {k[2] for k in projectenv._system_probe_cache if k[1] == "vendor_sdk"}
-    assert "direct" in contexts and any(c.startswith("conda|") for c in contexts)
+    assert any(c.startswith("direct") for c in contexts) and any(
+        c.startswith("conda|") for c in contexts
+    )
 
     # ---- userenvs 体检缓存键
     key_conda = userenvs._cache_key(py, ("x",), False)
@@ -2636,7 +2638,7 @@ def test_a_plan_made_while_conda_was_missing_goes_stale_once_conda_is_back(tmp_p
     monkeypatch.delenv("CONDA_EXE", raising=False)
     monkeypatch.setenv("PATH", "/nonexistent")
     monkeypatch.setattr(launcher, "_environments_txt_path", lambda: tmp_path / "none.txt")
-    assert launcher.context_key(py) == "direct"  # 计划那一刻：找不到 conda
+    assert launcher.context_key(py).startswith("direct")  # 计划那一刻：找不到 conda
     decision = _pool.EnvironmentDecision(
         python=py,
         source="system",
@@ -2664,7 +2666,7 @@ def test_a_plan_made_while_conda_was_missing_goes_stale_once_conda_is_back(tmp_p
     assert preparation.PreparationService._stale_reason(plan)[0] == preparation.STALE_ENVIRONMENT
     assert not decision.matches(py)
     worker = types.SimpleNamespace(
-        python=py, python_generation=decision.generation, launch_context="direct"
+        python=py, python_generation=decision.generation, launch_context=decision.launch_context
     )
     assert _pool.generation_stale(worker)  # 热会话同样判陈旧、重建
 
@@ -2691,9 +2693,61 @@ def test_an_unclaimed_project_prefix_is_never_activated_even_with_the_users_own_
     os.chmod(py, 0o755)
     assert launcher.conda_prefix_of(str(py)) == str(venv)
     assert launcher.launcher_for_interpreter(str(py)) is None  # 直接启动（与 P09 之前一致）
-    assert launcher.context_key(str(py)) == "direct"
+    assert launcher.context_key(str(py)).startswith("direct")
     assert launcher.unlocated_conda_prefix(str(py)) is None  # 也不当成“找不到 conda 的 Conda 环境”
     launcher.activate_env(str(py), {})
     assert conda_calls(log) == [] and not ran.exists()
     # 用户自己的 conda 建的（登记过）/ 它的 envs/<名字>：照常激活
     assert launcher.launcher_for_interpreter(str(users_prefix / "bin" / "python")) is not None
+
+
+@posix_only
+def test_a_stale_registration_does_not_trust_a_project_cloned_at_the_same_path(
+    tmp_path, monkeypatch
+):
+    """环境被手动删掉、同一路径上又克隆了一个项目：environments.txt 里那条过期登记不证明此刻的目录是用户的环境——
+    项目目录里的 prefix 不凭登记自动激活，钩子一次都不跑。"""
+    users_prefix, users_conda, log = make_fake_conda(tmp_path / "home", sys.executable)
+    monkeypatch.setenv("CONDA_EXE", str(users_conda))
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    proj = tmp_path / "work" / "proj"
+    venv = proj / ".venv"
+    (venv / "conda-meta").mkdir(parents=True)
+    (venv / "bin").mkdir()
+    (proj / ".git").mkdir()
+    py = venv / "bin" / "python"
+    py.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    os.chmod(py, 0o755)
+    with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
+        fh.write(f"{venv}\n")  # 当年用户在这里 `conda create -p` 过（后来删了）
+    assert launcher.launcher_for_interpreter(str(py)) is None
+    launcher.activate_env(str(py), {})
+    assert conda_calls(log) == []
+
+
+@posix_only
+def test_a_directly_launched_conda_env_still_records_its_version_in_the_context(
+    tmp_path, monkeypatch
+):
+    """找不到 conda 而直接启动的 Conda 环境：启动上下文仍带环境版本——外部 conda install / 改钩子后，热会话与计划看得见。"""
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    py = str(prefix / "bin" / "python")
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setenv("PATH", "/nonexistent")
+    monkeypatch.setattr(launcher, "_environments_txt_path", lambda: tmp_path / "none.txt")
+    before = launcher.context_key(py)
+    assert before.startswith("direct|")
+    with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+        fh.write("# cmd: conda install vendor-sdk\n")
+    assert launcher.context_key(py) != before
+
+
+def test_registration_lookup_is_not_capped_by_entry_count(tmp_path, monkeypatch):
+    """environments.txt 登记很多（>100 条）的用户：排在后面的 `conda create -p` 环境同样认得出来。"""
+    target = tmp_path / "late-env"
+    target.mkdir()
+    lines = [str(tmp_path / f"e{i}") for i in range(500)] + [str(target)]
+    p = tmp_path / "environments.txt"
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    monkeypatch.setattr(launcher, "_environments_txt_path", lambda: p)
+    assert launcher._registered_prefix(target)  # noqa: SLF001

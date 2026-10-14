@@ -174,7 +174,8 @@ def _untrusted_zones(prefix: Path) -> list[Path]:
 def _environments_txt_lines() -> list[str]:
     try:
         with open(_environments_txt_path(), encoding="utf-8", errors="replace") as fh:
-            return [ln.strip() for ln in fh.read(65536).splitlines()][:100]
+            # 只限字节数（防一个超大文件），不限条数：登记多的用户，后面的环境同样要认得出来
+            return [ln.strip() for ln in fh.read(1 << 20).splitlines()]
     except OSError:
         return []
 
@@ -323,14 +324,24 @@ def _trusted_prefix(prefix: str) -> bool:
     """这个 prefix 是不是**用户自己的 conda** 建的环境：登记在用户的 `~/.conda/environments.txt` 里（conda 每建一个环境都会
     登记，含 `-p`），或者就是用户 conda 安装根本身（base）/ 它的 `envs/<名字>`。项目目录里的文件改不了这两样。"""
     pre = Path(prefix)
-    if _registered_prefix(pre):
-        return True
     try:
         real = os.path.realpath(prefix)
     except (OSError, ValueError):
         return False
     for root in _user_conda_roots():
         if real == root or os.path.dirname(real) == os.path.join(root, "envs"):
+            return True
+    # 登记只证明“这条路径曾经是用户建的环境”，不证明此刻这个目录还是它：环境被手动删掉之后同一路径上克隆的项目会
+    # 继承那条过期登记。所以**项目目录里的 prefix**（沿父目录有项目标记）不凭登记自动激活——直接启动（与 P09 之前一致）
+    if _inside_a_project(pre):
+        return False
+    return _registered_prefix(pre)
+
+
+def _inside_a_project(prefix: Path) -> bool:
+    """prefix 是不是在一个项目目录里（它自己或某一层父目录带项目标记：`.git` / `pyproject.toml` / …）。"""
+    for d in (prefix, *prefix.parents):
+        if any((d / m).exists() for m in _PROJECT_MARKERS):
             return True
     return False
 
@@ -376,10 +387,12 @@ def raise_if_unlocated(python: str | os.PathLike) -> None:
 
 def context_key(python) -> str:
     """启动上下文的稳定投影，给**按解释器缓存**的结论分区用：直接启动得出的事实 / 体检结论，换成 Conda 激活（或反过来、
-    或换了 conda / prefix / 环境版本）之后不能原样复用。`direct`，或 `conda|<exe>|<prefix>|<env_state>`。"""
+    或换了 conda / prefix / 环境版本）之后不能原样复用。`direct`（Conda 环境带 `|<env_state>`），或 `conda|<exe>|<prefix>|<env_state>`。"""
     lau = launcher_for_interpreter(python)
     if lau is None:
-        return "direct"
+        # 直接启动的 Conda 环境（找不到 conda / 不激活）同样带环境版本：conda install / 改钩子之后，热会话与计划都要看得见
+        prefix = conda_prefix_of(python)
+        return f"direct|{prefix_state(prefix)}" if prefix else "direct"
     return f"conda|{lau.conda_exe}|{lau.prefix}|{prefix_state(lau.prefix)}"
 
 
