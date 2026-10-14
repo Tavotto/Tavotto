@@ -2105,29 +2105,44 @@ export function startAxesDrag(
     return [x, y, w, h]
   }
 
-  // 松手写 onMove 最后一次的结果（与 trackInFigureMove 同一取舍）
+  // 松手写最后一次的框（与 trackInFigureMove 同一取舍）。吸附要按**此刻**的修饰键重算：
+  // 吸上后手不动、只按下 / 松开 ⌘ / Ctrl，没有新的 pointermove，预览与提交都得跟着退回 / 回到吸附
+  let raw: [number, number] | null = null
   let last: Rect4 | null = null
+  const frame = (mods: { metaKey: boolean; ctrlKey: boolean }) => {
+    if (!raw) return
+    let [dfx, dfy] = raw
+    let rect = compute(dfx, dfy)
+    // 吸附只改最终框（写法不变：仍是一条 position）；吸的是钳位后正在动的那条边
+    if (snapper) {
+      const [sx, sy] = snapper(rect, mods)
+      if (sx || sy) {
+        dfx += sx
+        dfy += sy
+        rect = compute(dfx, dfy)
+      }
+    }
+    last = rect
+    // 只给覆盖层线框：缩放要 matplotlib 重排（刻度、字号、图例都不会跟着线性缩放），
+    // 假装缩放只会画出一张必然被纠正的图——线框如实表达「框会变成这么大」，
+    // 成图由权威渲染说了算
+    interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
+  }
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key === 'Meta' || ev.key === 'Control') frame(ev)
+  }
+  window.addEventListener('keydown', onKey)
+  window.addEventListener('keyup', onKey)
 
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
-      let [dfx, dfy] = toContent(dxPx, dyPx)
-      let rect = compute(dfx, dfy)
-      // 吸附只改最终框（写法不变：仍是一条 position）；吸的是钳位后正在动的那条边
-      if (snapper) {
-        const [sx, sy] = snapper(rect, ev)
-        if (sx || sy) {
-          dfx += sx
-          dfy += sy
-          rect = compute(dfx, dfy)
-        }
-      }
-      last = rect
-      // 只给覆盖层线框：缩放要 matplotlib 重排（刻度、字号、图例都不会跟着线性缩放），
-      // 假装缩放只会画出一张必然被纠正的图——线框如实表达「框会变成这么大」，
-      // 成图由权威渲染说了算
-      interaction().setElementPreview({ boxes: { [element.gid]: flipY(rect) } })
+      raw = toContent(dxPx, dyPx)
+      frame(ev)
     },
-    onEnd: (moved, _ev, end) => {
+    onEnd: (moved, ev, end) => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      if (moved && !end.cancelled) frame(ev)
       interaction().end()
       // 终点净位移为零（拖回原处 / 贴边钳回原位）同样不写（GEO-07）
       if (!moved || !last || end.cancelled || sameAfterRound4(last, start)) {

@@ -367,6 +367,37 @@ describe('图内子图缩放手柄：吸别的图子图的同一条边', () => {
     expect(overrideOf('axes_0', 'position')![2]).toBeCloseTo(0.35 + 3 * PX_X, 3)
   })
 
+  it('吸上后手不动、按下 ⌘ 再松手：提交的是未吸附的框（松手事件的修饰键）', async () => {
+    await setup({ p2: p2Axes() })
+    startAxesDrag(down(), livePanel(), axes0, layout, 'e')
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', (3 * i) / 10, 0)
+      flushPreviewFrame()
+    }
+    expect(useInteractionStore.getState().snapXs.length).toBeGreaterThan(0)
+    fire('pointerup', 3, 0, { metaKey: true })
+    expect(overrideOf('axes_0', 'position')![2]).toBeCloseTo(0.35 + 3 * PX_X, 3)
+  })
+
+  it('吸上后手不动、按下 ⌘：预览立刻退回未吸附；松开 ⌘ 又吸回', async () => {
+    await setup({ p2: p2Axes() })
+    startAxesDrag(down(), livePanel(), axes0, layout, 'e')
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', (3 * i) / 10, 0)
+      flushPreviewFrame()
+    }
+    const previewW = () => useInteractionStore.getState().elementPreview?.boxes?.axes_0?.[2]
+    const snapped = previewW()!
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta', metaKey: true }))
+    const free = previewW()!
+    expect(free - snapped).toBeCloseTo(PX_X, 3)
+    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta' }))
+    expect(previewW()).toBeCloseTo(snapped, 6)
+    fire('pointerup', 3, 0)
+    expect(overrideOf('axes_0', 'position')![2]).toBeCloseTo(0.35 + 2 * PX_X, 3)
+  })
+
   it('快速编辑：不吸别的图', async () => {
     await setup({ p2: p2Axes() })
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
