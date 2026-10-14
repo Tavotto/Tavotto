@@ -1977,6 +1977,8 @@ class EngineWorker:
         self.python_generation = projectenv.environment_generation(python)
         #: 起会话那一刻的 Conda 环境版本（成功记录用起会话时的值，不用收口时的）
         self.env_state = launcher_mod.env_state_of(python)
+        #: 起会话那一刻的完整启动上下文（直接启动 / Conda 激活 + conda + prefix + 环境版本）：钉下的决定与它比
+        self.launch_context = launcher_mod.context_key(python)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
         # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
@@ -2759,6 +2761,7 @@ class WorkerdWorker:
             raise WorkerdUnavailable("该解释器需要 Conda 激活启动，workerd 不接")
         self.python_generation = projectenv.environment_generation(python)
         self.env_state = launcher_mod.env_state_of(python)
+        self.launch_context = launcher_mod.context_key(python)
         # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
         self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
@@ -3158,9 +3161,10 @@ class EnvironmentDecision:
     python: str = ""
     source: str = ""
     generation: str = ""
-    #: 钉下那一刻的 Conda 环境版本（`launcher.env_state_of`；不是 Conda 环境 = 空）。conda install / 改 activate.d 不换代，
-    #: 但激活后的环境变了——计划验证的不是那个环境（P09）
-    env_state: str = ""
+    #: 钉下那一刻的完整启动上下文（`launcher.context_key`：`direct`，或 Conda 激活 + conda + prefix + 环境版本）。
+    #: conda install / 改 activate.d 不换代，conda 从找不到变成找得到（直接启动 → 激活）也不换代——计划验证的都不是那个
+    #: 环境（P09）。空 = 没钉（旧值 / 替身），只比路径与代
+    launch_context: str = ""
 
     @property
     def pinned(self) -> bool:
@@ -3174,7 +3178,7 @@ class EnvironmentDecision:
             and (
                 not self.generation or projectenv.environment_generation(python) == self.generation
             )
-            and (not self.env_state or launcher_mod.env_state_of(python) == self.env_state)
+            and (not self.launch_context or launcher_mod.context_key(python) == self.launch_context)
         )
 
     def matches_worker(self, worker) -> bool:
@@ -3185,20 +3189,23 @@ class EnvironmentDecision:
         if not (self.pinned and same_python(getattr(worker, "python", ""), self.python)):
             return False
         born = getattr(worker, "python_generation", "") or ""
-        if self.env_state and (getattr(worker, "env_state", "") or "") != self.env_state:
+        if (
+            self.launch_context
+            and (getattr(worker, "launch_context", "") or "") != self.launch_context
+        ):
             return False
         return not self.generation or born == self.generation
 
 
 def generation_stale(worker) -> bool:
     """会话起的时候记下的环境代，与它的解释器**此刻**的环境代不是同一代（环境被原地重建了），或 Conda 环境版本
-    （`launcher.env_state_of`）变了。会话没记环境代 / 环境版本（替身 / 路径不存在 / 不是 Conda 环境）不判陈旧。"""
+    / 启动上下文（`launcher.context_key`：直接启动 ↔ 激活、环境版本）变了。会话没记的（替身 / 路径不存在）不判陈旧。"""
     python = getattr(worker, "python", "")
     # Conda 环境原地变了（conda install / 改 activate.d / env config vars）：`environment_generation` 故意不看包与钩子，
     # 但热会话的 import 与激活环境变量都还是旧的——同样判陈旧，重建（P09）
-    state = getattr(worker, "env_state", "") or ""
-    if state and launcher_mod.env_state_of(python) != state:
-        return True
+    ctx = getattr(worker, "launch_context", "") or ""
+    if ctx and launcher_mod.context_key(python) != ctx:
+        return True  # 含直接启动 ↔ Conda 激活的切换（conda 找回来了 / 被移走了）
     born = getattr(worker, "python_generation", "") or ""
     if not born:
         return False
@@ -3211,7 +3218,7 @@ def pin_of_worker(worker) -> EnvironmentDecision:
         python=getattr(worker, "python", "") or "",
         source=getattr(worker, "python_source", "") or "",
         generation=getattr(worker, "python_generation", "") or "",
-        env_state=getattr(worker, "env_state", "") or "",
+        launch_context=getattr(worker, "launch_context", "") or "",
     )
 
 

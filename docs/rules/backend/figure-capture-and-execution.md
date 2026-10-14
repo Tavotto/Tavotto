@@ -364,6 +364,10 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
   不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
   不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的
   （`pool.select_worker_python`）。`plan_for` 写进环境错误，`_execute` 零执行收场（`deprepair.decide_environment_pinned` 把它转成 `WorkerError`）。
+  **只激活用户自己的 conda 认领过的 prefix**：登记在 `~/.conda/environments.txt`，或就是 `CONDA_EXE` / `PATH` 上那个 conda 的安装根
+  （base）/ 它的 `envs/<名字>`（`launcher._trusted_prefix`）。激活会 source prefix 自己的 `activate.d`——克隆来的项目自带的
+  `.venv/conda-meta/` + 钩子一律直接启动（与 P09 之前一致），检查不执行项目里的脚本。
+  计划 / 钉下的决定 / 热会话比的是完整启动上下文 `launcher.context_key`（直接启动 ↔ 激活、conda、prefix、环境版本）。
   **prefix 旁边的 conda**（`<root>/envs/<name>` 的 `<root>/bin/conda`、prefix 自己的 `bin/conda`）只在这个 prefix 登记在用户的
   `~/.conda/environments.txt` 里时才信：克隆来的项目可以自带 `.venv/conda-meta/` + 可执行的 `.venv/bin/conda`，体检不能执行它；
   `CONDA_EXE` / `PATH` 上的 conda 是用户自己的，照常。

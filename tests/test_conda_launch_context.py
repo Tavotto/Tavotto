@@ -1747,6 +1747,9 @@ def test_a_conda_env_that_works_bare_is_unaffected_when_conda_is_missing(tmp_pat
     py.write_text(f'#!/bin/sh\nexec "{WORKER_PY}" "$@"\n', encoding="utf-8")
     py.chmod(0o755)
     _no_conda_anywhere(tmp_path, monkeypatch)
+    # 用户自己的 conda 建的环境（登记过），只是 conda 被移走了 / 从 Finder 启动看不到
+    with open(launcher._environments_txt_path(), "a", encoding="utf-8") as fh:  # noqa: SLF001
+        fh.write(f"{lone}\n")
     assert launcher.unlocated_conda_prefix(py) == str(lone)
     assert _pool._has_matplotlib(str(py)) is True
     assert projectenv.probe_environment(str(py))["ok"] is True
@@ -2578,11 +2581,11 @@ def test_a_pinned_decision_and_a_plan_go_stale_when_the_conda_environment_change
         python=py,
         source="system",
         generation=projectenv.environment_generation(py),
-        env_state=launcher.env_state_of(py),
+        launch_context=launcher.context_key(py),
     )
-    assert decision.env_state and decision.matches(py)
+    assert decision.launch_context.startswith("conda|") and decision.matches(py)
     worker = types.SimpleNamespace(
-        python=py, python_generation=decision.generation, env_state=decision.env_state
+        python=py, python_generation=decision.generation, launch_context=decision.launch_context
     )
     assert decision.matches_worker(worker)
     plan = types.SimpleNamespace(
@@ -2594,7 +2597,7 @@ def test_a_pinned_decision_and_a_plan_go_stale_when_the_conda_environment_change
         script_revision=None,
         binding=None,
         environment={"generation": decision.generation},
-        environment_state=decision.env_state,
+        environment_state=decision.launch_context,
     )
     monkeypatch.setattr(preparation.workdir, "grant_for", lambda root: None)
     monkeypatch.setattr(
@@ -2606,7 +2609,7 @@ def test_a_pinned_decision_and_a_plan_go_stale_when_the_conda_environment_change
     assert projectenv.environment_generation(py) == decision.generation  # 代没变……
     assert preparation.PreparationService._stale_reason(plan)[0] == preparation.STALE_ENVIRONMENT
     assert not decision.matches(py)
-    assert _pool.pin_of_worker(worker).env_state == worker.env_state
+    assert _pool.pin_of_worker(worker).launch_context == worker.launch_context
 
 
 def test_activate_within_shares_one_budget(monkeypatch):
@@ -2618,3 +2621,79 @@ def test_activate_within_shares_one_budget(monkeypatch):
     assert env == {"A": "1"} and remaining <= 5.0 - 0.4
     with pytest.raises(launcher.LauncherUnavailable):
         launcher.activate_within(sys.executable, {}, 0.2)
+
+
+@posix_only
+def test_a_plan_made_while_conda_was_missing_goes_stale_once_conda_is_back(tmp_path, monkeypatch):
+    """计划时找不到 conda（直接启动），确认运行前 conda 回来了（会改成激活启动）：环境代与环境版本都没变，启动上下文变了——
+    计划过期、钉下的决定对不上，不在计划没验证过的上下文里跑。"""
+    import types
+
+    from tavotto.engine import preparation, projectenv
+
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    py = str(prefix / "bin" / "python")
+    monkeypatch.delenv("CONDA_EXE", raising=False)
+    monkeypatch.setenv("PATH", "/nonexistent")
+    monkeypatch.setattr(launcher, "_environments_txt_path", lambda: tmp_path / "none.txt")
+    assert launcher.context_key(py) == "direct"  # 计划那一刻：找不到 conda
+    decision = _pool.EnvironmentDecision(
+        python=py,
+        source="system",
+        generation=projectenv.environment_generation(py),
+        launch_context=launcher.context_key(py),
+    )
+    plan = types.SimpleNamespace(
+        project_root=str(tmp_path),
+        grant=None,
+        input_remap_generation=None,
+        interpreter=py,
+        script=None,
+        script_revision=None,
+        binding=None,
+        environment={"generation": decision.generation},
+        environment_state=decision.launch_context,
+    )
+    monkeypatch.setattr(preparation.workdir, "grant_for", lambda root: None)
+    monkeypatch.setattr(
+        preparation.pool, "resolve_worker_python", lambda root, script=None: (py, "system")
+    )
+    assert preparation.PreparationService._stale_reason(plan) is None and decision.matches(py)
+    monkeypatch.setenv("CONDA_EXE", str(conda))  # conda 回来了
+    assert launcher.context_key(py).startswith("conda|")
+    assert preparation.PreparationService._stale_reason(plan)[0] == preparation.STALE_ENVIRONMENT
+    assert not decision.matches(py)
+    worker = types.SimpleNamespace(
+        python=py, python_generation=decision.generation, launch_context="direct"
+    )
+    assert _pool.generation_stale(worker)  # 热会话同样判陈旧、重建
+
+
+@posix_only
+def test_an_unclaimed_project_prefix_is_never_activated_even_with_the_users_own_conda(
+    tmp_path, monkeypatch
+):
+    """克隆来的项目自带 `.venv/conda-meta/` + `etc/conda/activate.d` 钩子，主机上又有用户自己的 conda（CONDA_EXE / PATH）：
+    激活会 source 这个钩子——没被用户的 conda 认领过（没登记、不是它的 base / envs）的 prefix 一律不激活，钩子一次都不跑。"""
+    users_prefix, users_conda, log = make_fake_conda(tmp_path / "home", sys.executable)
+    monkeypatch.setenv("CONDA_EXE", str(users_conda))
+    monkeypatch.setenv("FAKE_CONDA_LOG", str(log))
+    proj = tmp_path / "cloned"
+    venv = proj / ".venv"
+    (venv / "conda-meta").mkdir(parents=True)
+    (venv / "bin").mkdir()
+    hook_dir = venv / "etc" / "conda" / "activate.d"
+    hook_dir.mkdir(parents=True)
+    ran = tmp_path / "hook-ran"
+    (hook_dir / "evil.sh").write_text(f"touch {ran}\n", encoding="utf-8")
+    py = venv / "bin" / "python"
+    py.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    os.chmod(py, 0o755)
+    assert launcher.conda_prefix_of(str(py)) == str(venv)
+    assert launcher.launcher_for_interpreter(str(py)) is None  # 直接启动（与 P09 之前一致）
+    assert launcher.context_key(str(py)) == "direct"
+    assert launcher.unlocated_conda_prefix(str(py)) is None  # 也不当成“找不到 conda 的 Conda 环境”
+    launcher.activate_env(str(py), {})
+    assert conda_calls(log) == [] and not ran.exists()
+    # 用户自己的 conda 建的（登记过）/ 它的 envs/<名字>：照常激活
+    assert launcher.launcher_for_interpreter(str(users_prefix / "bin" / "python")) is not None

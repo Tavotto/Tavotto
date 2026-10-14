@@ -295,7 +295,44 @@ def _activation_wanted(python: str | os.PathLike) -> str | None:
         return None
     if not os.path.isabs(str(python)) or str(python).startswith("-"):
         return None  # 捕获要把解释器当 `conda run` 的可执行部分：必须是绝对路径、不以 `-` 开头
-    return conda_prefix_of(python)
+    prefix = conda_prefix_of(python)
+    if prefix is None or not _trusted_prefix(prefix):
+        # 激活会 source 这个 prefix 自己的 `etc/conda/activate.d` 钩子——那是环境里的代码。克隆来的项目可以自带
+        # `.venv/conda-meta/` + 钩子：没被用户自己的 conda 认领过的 prefix 一律不激活（直接启动，与 P09 之前一致），
+        # 否则“打开项目做体检”就执行了项目里的脚本
+        return None
+    return prefix
+
+
+def _user_conda_roots() -> list[str]:
+    """用户自己的 conda 安装根（`CONDA_EXE` / `PATH` 上的 `conda` 的 `<root>/bin/conda` → `<root>`）。"""
+    roots: list[str] = []
+    for exe in (os.environ.get("CONDA_EXE"), shutil.which("conda")):
+        if not exe:
+            continue
+        try:
+            root = os.path.dirname(os.path.dirname(os.path.realpath(exe)))
+        except (OSError, ValueError):
+            continue
+        if root and root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _trusted_prefix(prefix: str) -> bool:
+    """这个 prefix 是不是**用户自己的 conda** 建的环境：登记在用户的 `~/.conda/environments.txt` 里（conda 每建一个环境都会
+    登记，含 `-p`），或者就是用户 conda 安装根本身（base）/ 它的 `envs/<名字>`。项目目录里的文件改不了这两样。"""
+    pre = Path(prefix)
+    if _registered_prefix(pre):
+        return True
+    try:
+        real = os.path.realpath(prefix)
+    except (OSError, ValueError):
+        return False
+    for root in _user_conda_roots():
+        if real == root or os.path.dirname(real) == os.path.join(root, "envs"):
+            return True
+    return False
 
 
 def launcher_for_interpreter(python: str | os.PathLike) -> CondaLauncher | None:

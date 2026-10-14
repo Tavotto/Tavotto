@@ -6422,7 +6422,7 @@ def _detect_environment_pinned(
             python=python,
             source=source,
             generation=projectenv.environment_generation(python),
-            env_state=launcher.env_state_of(python),
+            launch_context=launcher.context_key(python),
         )
 
 
