@@ -512,6 +512,18 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     expect(Math.abs(y - (lineY + MM_PER_PX))).toBeLessThan(0.2)
   })
 
+  it('子图缩放手柄：最小尺寸钳位使线够不着：无吸附线、无反馈', async () => {
+    await setup()
+    // 左柄拖过头：左边最多到 右边 − 0.05（页面 0.40·W）。参考线在它右侧 0.5 mm 处（范围内）——吸它要越过钳位
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'x', pos: 0.4 * W + 0.5 })
+    })
+    startAxesDrag(down(), livePanel(), axes0, layout, 'w')
+    const fb = feedbackAt(0.5 / PX_X, 0)
+    expect(fb.some((f) => f.axis === 'x')).toBe(false)
+    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+  })
+
   it('跨图候选在面板右侧之外（x 向）：不参与', async () => {
     await setup({
       p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }),
@@ -545,20 +557,30 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     expect(useInteractionStore.getState().snapYs).toHaveLength(0)
   })
 
-  it('子图被拖向图边被钳住：反馈的 self 就是钳位后实际落下的框', async () => {
+  it('子图被拖向图边被钳住、线在范围内却够不着：无吸附线、无反馈', async () => {
     await setup()
-    // 参考线在 x = 0.2·W：子图右边吸它需要左边落到 −0.15（图外），实际被钳在 0
+    // 参考线在 x = 0.2·W：子图右边吸它需要左边落到 −0.15（图外），实际被钳在 0，右边够不着
     useDocumentStore.getState().commit(literal('加参考线'), (d) => {
       d.guides.push({ axis: 'x', pos: 0.2 * W })
     })
     startAxesDrag(down(), livePanel(), axes0, layout, 'move')
     const fb = feedbackAt(-(0.25 / PX_X) + 1, 0)
+    expect(fb.some((f) => f.axis === 'x')).toBe(false)
+    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+    expect(overrideOf('axes_0', 'position')![0]).toBeCloseTo(0, 3)
+  })
+
+  it('子图被钳在图边、线恰是那条边：照常有反馈，self 是钳位后的框', async () => {
+    await setup()
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'x', pos: 0 })
+    })
+    startAxesDrag(down(), livePanel(), axes0, layout, 'move')
+    const fb = feedbackAt(-(0.1 / PX_X) - 1, 0) // 左边越过图边 1 px：吸到 0，同时本该被钳在 0
     const x = fb.find((f) => f.axis === 'x')
     expect(x).toBeTruthy()
     near(x!.self.x, 0)
     near(x!.self.w, 0.35 * W)
-    // 与选中框 / 预览同一个框（预览在松手前读不到了，用落点：松手写下的 position 左边也是 0）
-    expect(overrideOf('axes_0', 'position')![0]).toBeCloseTo(0, 3)
   })
 
   it('松手后反馈消失', async () => {

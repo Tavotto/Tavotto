@@ -17,6 +17,7 @@ import {
   type SnapEdge,
   type SnapKind,
   type SnapLine,
+  type SnapPick,
   type SnapLineCandidates,
   unrotateVecDeg,
   type Rect,
@@ -1924,7 +1925,7 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
   const holdX = createSnapHold()
   const holdY = createSnapHold()
   // 本帧吸上的线；反馈要等调用方算出钳位后的最终框才能发（`report`）
-  let pending: { guideXs: number[]; guideYs: number[]; x?: SnapLine; y?: SnapLine } | null = null
+  let pending: { guideXs: number[]; guideYs: number[]; x?: SnapPick; y?: SnapPick } | null = null
   const snapper = (
     pos: Rect4,
     ev: { metaKey: boolean; ctrlKey: boolean },
@@ -1940,8 +1941,8 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
     const guideYs: number[] = []
     let sx = 0
     let sy = 0
-    let lineX: SnapLine | undefined
-    let lineY: SnapLine | undefined
+    let lineX: SnapPick | undefined
+    let lineY: SnapPick | undefined
     if (dir.includes('e') || dir.includes('w')) {
       const e: SnapEdge = dir.includes('e') ? 2 : 0
       const f = e === 2 ? pos[0] + pos[2] : pos[0]
@@ -1953,7 +1954,7 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
       )
       sx = r.dx / full.w
       guideXs.push(...r.guideXs)
-      lineX = r.x?.line
+      lineX = r.x ?? undefined
     }
     if (dir.includes('n') || dir.includes('s')) {
       // position 是左下角原点：上沿 = y + h，下沿 = y；换成页面（top-origin）
@@ -1967,7 +1968,7 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
       )
       sy = r.dy / full.h
       guideYs.push(...r.guideYs)
-      lineY = r.y?.line
+      lineY = r.y ?? undefined
     }
     pending = { guideXs, guideYs, x: lineX, y: lineY }
     return [sx, sy]
@@ -1977,9 +1978,17 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
     if (!pending) return
     const self = fracBoxToMm(panel, flipY(rect))
     const fb: SnapFeedback[] = []
-    if (pending.x) fb.push(feedbackFor('x', pending.x, self, panel.id))
-    if (pending.y) fb.push(feedbackFor('y', pending.y, self, panel.id))
-    interaction().setSnap(pending.guideXs, pending.guideYs, fb)
+    let { guideXs, guideYs } = pending
+    // 被钳位够不着的轴：吸附线与反馈都不发
+    if (pending.x) {
+      if (reached(self, 'x', pending.x.selfEdge, pending.x.line.v)) fb.push(feedbackFor('x', pending.x.line, self, panel.id))
+      else guideXs = []
+    }
+    if (pending.y) {
+      if (reached(self, 'y', pending.y.selfEdge, pending.y.line.v)) fb.push(feedbackFor('y', pending.y.line, self, panel.id))
+      else guideYs = []
+    }
+    interaction().setSnap(guideXs, guideYs, fb)
   }
   return snapper
 }
@@ -2009,7 +2018,7 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
   // 吸住后保持（ADR 0128 §一）：一次手势一份，手势结束随闭包丢弃
   const hold = createSnapHold()
   // 本帧吸上的线；反馈要等调用方算出钳位后的最终框才能发（`report`，与子图缩放手柄同一做法）
-  let pending: { guideXs: number[]; guideYs: number[]; x?: SnapLine; y?: SnapLine } | null = null
+  let pending: { guideXs: number[]; guideYs: number[]; x?: SnapPick; y?: SnapPick } | null = null
   const snapper = (
     box: Rect4,
     ev: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean },
@@ -2031,7 +2040,7 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
       useY: boolean,
       out: [number, number],
     ) => {
-      pending = { guideXs, guideYs, x: useX ? snap.x?.line : undefined, y: useY ? snap.y?.line : undefined }
+      pending = { guideXs, guideYs, x: useX ? (snap.x ?? undefined) : undefined, y: useY ? (snap.y ?? undefined) : undefined }
       return out
     }
     const sx = snap.dx / full.w
@@ -2069,11 +2078,28 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
     if (!pending) return
     const self = fracBoxToMm(panel, finalBox)
     const fb: SnapFeedback[] = []
-    if (pending.x) fb.push(feedbackFor('x', pending.x, self, panel.id))
-    if (pending.y) fb.push(feedbackFor('y', pending.y, self, panel.id))
-    interaction().setSnap(pending.guideXs, pending.guideYs, fb)
+    let { guideXs, guideYs } = pending
+    // 被钳位够不着的轴：吸附线与反馈都不发
+    if (pending.x) {
+      if (reached(self, 'x', pending.x.selfEdge, pending.x.line.v)) fb.push(feedbackFor('x', pending.x.line, self, panel.id))
+      else guideXs = []
+    }
+    if (pending.y) {
+      if (reached(self, 'y', pending.y.selfEdge, pending.y.line.v)) fb.push(feedbackFor('y', pending.y.line, self, panel.id))
+      else guideYs = []
+    }
+    interaction().setSnap(guideXs, guideYs, fb)
   }
   return snapper
+}
+
+/**
+ * 吸附是否真的落在了最终框上：框的 `edge`（0/1/2 = 左中右 / 上中下）沿 `axis` 的位置与线重合。
+ * 元素被钳在图内时位移已被钳位，够不着的线不能再画吸附线 / 反馈（Codex #1036）。
+ */
+function reached(self: Rect, axis: 'x' | 'y', edge: SnapEdge, v: number): boolean {
+  const at = axis === 'x' ? self.x + (self.w * edge) / 2 : self.y + (self.h * edge) / 2
+  return Math.abs(at - v) <= 1e-6
 }
 
 /** `gid` 是 roots 之一或其后代 */
