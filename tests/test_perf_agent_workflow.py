@@ -101,6 +101,8 @@ def test_historical_baseline_shell_keeps_only_a_compatible_comparison(tmp_path, 
         },
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=20,
     )
     assert executed.returncode == 0, executed.stdout + executed.stderr
