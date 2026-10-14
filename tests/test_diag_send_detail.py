@@ -3987,3 +3987,54 @@ class TestBoringContainerWordsNeedBoundaries:
         assert any("sib: ok_boring" in t for t in texts.values()), "日志没进包：用例是空的"
         for name, text in texts.items():
             assert "truefalse" not in text and "nullnone" not in text, name
+
+
+class TestYamlNodePropertiesBeforeSecretValues:
+    """YAML 锚点 / 标签写在值前面：`password: &shared REAL`、`token: !!str REAL`。属性不是值，后面的值照样抹。"""
+
+    @pytest.mark.parametrize("nl", ["\n", "\r\n"], ids=["lf", "crlf"])
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            "{k}: &shared REAL_SECRET{nl}",
+            "{k}: !!str REAL_SECRET{nl}",
+            "{k}: &a !!str REAL_SECRET{nl}",
+            "{k}: !<tag:yaml.org,2002:str> REAL_SECRET{nl}",
+            "{k}: &a 'REAL_SECRET x'{nl}",
+            "{k}: &a{nl}  REAL_SECRET{nl}",
+            "{k}: &a |{nl}  REAL_SECRET{nl}",
+            "{k}: !!str >-{nl}  REAL_SECRET{nl}",
+            "{k}: &a{nl}- REAL_SECRET{nl}",
+            "{k}：&a REAL_SECRET{nl}",
+        ],
+        ids=["anchor", "tag", "anchor-tag", "verbatim-tag", "quoted", "anchor-block", "anchor-literal",
+             "tag-folded", "anchor-indentless", "fullwidth-colon"],
+    )  # fmt: skip
+    @pytest.mark.parametrize("key", ["password", "token", "DB_PASS"])
+    def test_value_behind_properties_is_redacted(self, key, shape, nl):
+        text = f"before: keep_a{nl}" + shape.format(k=key, nl=nl) + f"after: keep_b{nl}"
+        out = diagdetail.Scrubber().text(text)
+        assert "REAL_SECRET" not in out, out
+        assert "keep_a" in out and "keep_b" in out, out
+
+    def test_query_string_empty_value_before_ampersand_is_kept(self):
+        assert diagdetail.Scrubber().text("https://h/p?token=&x=1") == "https://h/p?token=&x=1"
+
+    def test_final_zip_has_no_hits(self, client, world):
+        log = world["tmp"] / "anchor.log"
+        log.write_text(
+            "password: &shared REAL_SECRET\ntoken: !!str REAL_SECRET\nsib: ok_anchor\n",
+            encoding="utf-8",
+        )
+        import tavotto.engine.diagnostics as dg
+
+        orig = dg._app_log_path
+        dg._app_log_path = lambda: log
+        try:
+            _prep, z = _prepare(client)
+        finally:
+            dg._app_log_path = orig
+        texts = _texts(z)
+        assert any("sib: ok_anchor" in t for t in texts.values()), "日志没进包：用例是空的"
+        for name, text in texts.items():
+            assert "REAL_SECRET" not in text, name

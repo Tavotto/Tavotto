@@ -475,6 +475,10 @@ def _ws_width(ws: str) -> int:
     return len(ws) + 7 * ws.count("\t")  # tab 按 8 列算
 
 
+#: YAML 节点属性：锚点 `&name` 与标签 `!tag` / `!!str` / `!<…>`，可以叠，写在值前面。它们不是值本身，判值之前跳过
+_YAML_NODE_PROPS = re.compile(r"^(?:[&!][^\s]*[ \t]*)+")
+
+
 def _yaml_block_end(text: str, key_start: int, vs: int) -> int | None:
     """值从下一行才开始的写法：`token: |` / `token: >-` / `token: |2`（YAML 块标量）、`token:`（行尾空值，下面缩进的
     是值）、行尾续行符 `\\`。fail-closed：键所在行之后**所有比键行缩进更深的行**（以及续行）都是值，一直抹到遇到缩进不深于
@@ -483,7 +487,9 @@ def _yaml_block_end(text: str, key_start: int, vs: int) -> int | None:
     nl = text.find("\n", vs)
     eol = n if nl < 0 else nl
     rest = text[vs:eol]
-    stripped = rest.strip()
+    stripped = _YAML_NODE_PROPS.sub(
+        "", rest.strip()
+    )  # `token: &anchor` / `token: !!str |`：属性不是值
     if stripped.startswith("#"):
         stripped = ""  # 只有行尾注释（`password:   # prod`）= 空值：值在下面缩进的行里
         rest = ""
@@ -713,7 +719,19 @@ class Scrubber:
                     out.append(_REDACTED)
                     pos = max(yaml_end, _scan_value(text, vs, whole_line=True))
                     continue
-            ft = _FIRST_TOKEN.match(text, vs)
+            fs = vs
+            if text[vs] in "&!" and any(c in m.group("sep") for c in ":："):
+                props = _YAML_NODE_PROPS.match(
+                    text, vs
+                )  # `password: &shared REAL` / `token: !!str REAL`
+                fs = props.end() if props else vs
+                if fs < len(text) and text[fs] not in "\r\n#":
+                    # 属性后面还有值：整段（属性 + 值）都当值处理，不再走「无信息值」豁免
+                    out.append(text[pos:vs])
+                    out.append(_REDACTED)
+                    pos = _scan_value(text, fs, whole_line=True)
+                    continue
+            ft = _FIRST_TOKEN.match(text, fs)
             first, after = ft.group(0), ft.end()
             if _BORING_VALUE.match(first) and (
                 after >= len(text) or text[after] in " \t\r\n,;&)]}"
