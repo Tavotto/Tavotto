@@ -119,6 +119,24 @@ function errorStack(err: Error): string | null {
   return typeof stack === 'string' && stack ? stack : null
 }
 
+/**
+ * 是不是 Error：优先用 `Error.isError`（ES2026，内部槽位检查，**不触发 Proxy 的任何 trap**）；老 WebView 没有它时退回
+ * `instanceof`（对 Proxy 会触发一次 getPrototypeOf trap——只在这些引擎上，且不会再往下读别的东西）。
+ */
+const nativeIsError = (Error as unknown as { isError?: (v: unknown) => boolean }).isError
+const isErrorValue = (v: unknown): v is Error => (typeof nativeIsError === 'function' ? nativeIsError(v) : v instanceof Error)
+
+/**
+ * 业务侧声明「这是一棵纯数据」的对象树（调用方保证里面没有 Proxy / 带副作用的 accessor）。console 包装对**其余**
+ * 对象一律只写 `[object]`：判断一个对象是不是纯数据（取原型、读描述符、`for...in`）本身就会触发 Proxy 的 trap
+ * （immer draft 之类），所以不碰。原始值与 Error 照常记。
+ */
+const PLAIN_DATA = new WeakSet<object>()
+export function markPlainData<T extends object>(tree: T): T {
+  PLAIN_DATA.add(tree)
+  return tree
+}
+
 /** 小的递归 writer：往 `out` 里追加，超出 `budget` 立刻停；超界处写 `…`。 */
 function write(value: unknown, out: string[], budget: { left: number }, depth: number, seen: WeakSet<object>): void {
   if (budget.left <= 0) return
@@ -131,8 +149,9 @@ function write(value: unknown, out: string[], budget: { left: number }, depth: n
   if (ty === 'string') return emit(depth === 0 ? (value as string) : JSON.stringify((value as string).slice(0, 200)))
   if (ty === 'number' || ty === 'boolean' || ty === 'bigint') return emit(String(value))
   if (ty === 'function' || ty === 'symbol') return emit(`[${ty}]`)
-  if (value instanceof Error) return emit(errorHead(value))
+  if (isErrorValue(value)) return emit(errorHead(value))
   const obj = value as object
+  if (depth === 0 && !PLAIN_DATA.has(obj)) return emit('[object]') // WeakSet.has 不触发 trap
   if (seen.has(obj)) return emit('[Circular]')
   if (depth >= SHOW_MAX_DEPTH) return emit('…')
   seen.add(obj)
@@ -190,7 +209,7 @@ function show(value: unknown): string {
 function formatArgs(args: unknown[]): { message: string; stack: string | null } {
   let stack: string | null = null
   for (const a of args) {
-    if (a instanceof Error) {
+    if (isErrorValue(a)) {
       const st = errorStack(a)
       if (st) {
         stack = st
@@ -296,8 +315,8 @@ export function installConsoleCapture(): () => void {
       push(errorRing, ERROR_RING_CAPACITY, {
         t: Date.now(),
         level: 'error',
-        message: (err instanceof Error ? errorHead(err) : e.message || 'error').slice(0, MAX_MESSAGE),
-        stack: (err instanceof Error ? errorStack(err)?.slice(0, MAX_STACK) : null) ?? `${e.filename}:${e.lineno}:${e.colno}`,
+        message: (isErrorValue(err) ? errorHead(err) : e.message || 'error').slice(0, MAX_MESSAGE),
+        stack: (isErrorValue(err) ? errorStack(err)?.slice(0, MAX_STACK) : null) ?? `${e.filename}:${e.lineno}:${e.colno}`,
       })
     } catch {
       /* 同上 */
@@ -316,7 +335,7 @@ export function installConsoleCapture(): () => void {
         t: Date.now(),
         level: 'unhandledrejection',
         message: show(r).slice(0, MAX_MESSAGE),
-        stack: (r instanceof Error ? errorStack(r)?.slice(0, MAX_STACK) : null) ?? null,
+        stack: (isErrorValue(r) ? errorStack(r)?.slice(0, MAX_STACK) : null) ?? null,
       })
     } catch {
       /* 同上 */
@@ -394,25 +413,31 @@ export async function collectShellInfo(): Promise<Record<string, unknown>> {
 
 export const MAX_OVERRIDE_PANELS = 3
 
-/** 焦点面板总数里超出数量上限（3）而没发的张数：引擎记进 overrides 的 index */
-export function overridesOmitted(): number {
+/**
+ * 焦点面板：正在编辑的那张；没有就取选中的面板，**主选（最后选中的那张）排第一**，其余按文档顺序——
+ * 引擎把 `overrides[0]` 当焦点面板去探解释器 / 执行配置 / cwd，丢了主选顺序会探错面板。
+ */
+function pickFocusedPanels(): PanelObject[] {
   const objects = useDocumentStore.getState().doc.objects
   const panels = objects.filter((o): o is PanelObject => o.type === 'panel')
   const editing = useUiStore.getState().elementPanelId
-  const picked = editing
-    ? panels.filter((p) => p.id === editing)
-    : panels.filter((p) => useSelectionStore.getState().ids.includes(p.id))
+  if (editing) return panels.filter((p) => p.id === editing)
+  const ids = useSelectionStore.getState().ids
+  const picked = panels.filter((p) => ids.includes(p.id))
+  const primary = ids.findLast((id) => picked.some((p) => p.id === id))
+  const first = picked.find((p) => p.id === primary)
+  return first ? [first, ...picked.filter((p) => p !== first)] : picked
+}
+
+/** 焦点面板总数里超出数量上限（3）而没发的张数：引擎记进 overrides 的 index */
+export function overridesOmitted(): number {
+  const picked = pickFocusedPanels()
   return Math.max(0, picked.length - MAX_OVERRIDE_PANELS)
 }
 
 /** 正在编辑的面板（没有就取选中的面板）的样式改动——「这张图现在被改成了什么样」的热态，至多 3 张。 */
 export function collectFocusedOverrides(): Record<string, unknown>[] {
-  const objects = useDocumentStore.getState().doc.objects
-  const panels = objects.filter((o): o is PanelObject => o.type === 'panel')
-  const editing = useUiStore.getState().elementPanelId
-  const picked = editing
-    ? panels.filter((p) => p.id === editing)
-    : panels.filter((p) => useSelectionStore.getState().ids.includes(p.id))
+  const picked = pickFocusedPanels()
   return picked.slice(0, MAX_OVERRIDE_PANELS).map((p) => ({
     panel: p.fileId,
     kind: p.fileKind,

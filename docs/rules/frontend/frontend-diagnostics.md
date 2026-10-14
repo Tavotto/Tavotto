@@ -84,6 +84,8 @@
 
 - **只走发送路径。** `buildSendPayload(options)` = `buildDiagnosticPayload()`（老载荷）+ `detail_options` + `detail`；导出路径仍用 `buildDiagnosticPayload()`，一个 detail 字段都没有（`detail.test.ts` 钉）。引擎导出端点也不读这些键。
 - **两个定长全局环**（纯内存、不写盘、不进 telemetry、**切项目不清**——console 输出不属于某个项目，包里 `frontend-console.json` 注明 `scope: global`）：console.error/warn 40 条（原文 + Error 自带栈，字符串消息记调用点栈）、未捕获错误 / unhandledrejection 30 条。
+- **console 实参只记原始值与 Error，其余对象写 `[object]`**（#1012 2）：判断「是不是纯数据」（取原型 / 读描述符 / `for...in`）本身就会触发 Proxy（immer draft）的 trap，所以不判；业务侧确实要记一棵纯数据时用 `markPlainData(tree)` 声明（调用方保证无 Proxy / 副作用 accessor）。Error 判定走 `Error.isError`（不触发 trap），老 WebView 退回 `instanceof`。看护 `detail.test.ts` 的 trap 计数用例。
+- **焦点面板的顺序**（#1012 1）：没有正在编辑的面板时，`overrides[0]` 必须是主选（最后选中的面板），其余按文档顺序——引擎拿它当焦点面板去探环境。
   `main.tsx` 里 `installConsoleCapture()` 越早装越好；包装函数**吞掉自身所有异常**且一定调用原方法，幂等、可卸载。
 - **detail 里还有**：显示环境（缩放 / 窗口 / 屏幕 / 语言 / 主题）、壳信息（Tauri `getVersion` / `getTauriVersion`、UA 里的 WebView 版本；`lib/desktop.ts` 的 `getUpdateOutcome()` 记本窗口会话内最近一次检查 / 安装的结果：来源 mirror/github、稳定码、attempts，没发生过 = 引擎写 unknown）、正在编辑（没有就取选中）面板的 overrides 热态至多 3 张。
 - **三个复选框**（`DiagnosticsSendDialog`，在折叠的「查看详情」里）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 推进 epoch 重新备包（旧包 `discardDiagSend`，新包换新 `client_request_id`），用 `keepForm` 让这次重备不清掉已填的类型与说明；备包中 / 发送中复选框 disabled。
