@@ -157,6 +157,7 @@ Python，首次渲染也不联网：
   把整包子模块铺进 hiddenimports（`_windows` / `_macos` / `_openssl` 按平台条件 import），打包环境里没装它就拒绝打包；
   wheel 那边它是 `dependencies` 的一员（`requirements.txt` 钉死镜像）。看护 `tests/test_private_python_tls.py::
   TestStructure`。
+- **Windows 冻结产物里 OpenSSL 的 DLL 必须与 `_ssl.pyd` 同源**（2026-10-15，#1051）：内置 runtime 在 Windows 上于 Analysis **之后**以 `Tree` 加入（不进 `datas`，否则里面的 PE 被重新归类为二进制、它的 `libcrypto-3.dll` / `libssl-3.dll` 作为依赖抢先占住顶层，打包 Python 一升 OpenSSL 就 `DLL load failed while importing _ssl`）；spec 在 Analysis 后跑 `scripts/frozen_ssl_gate.py`，构建后 `tavotto-cli --ssl-selftest`（`build_desktop.py` 与 `smoke_app.py --exe` 都跑）。看护 `tests/test_frozen_ssl_gate.py`。
 - **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
   `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
   `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**

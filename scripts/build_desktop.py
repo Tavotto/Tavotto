@@ -284,6 +284,24 @@ def main() -> None:
         )
     print(f"* tavotto-cli: {cli}（doctor 自检通过，协议 v{report.get('protocol')}）")
 
+    # 冻结产物里 OpenSSL 必须能加载（#1051）：`doctor` 不 import ssl，所以上面那条挡不住「_ssl 与 libcrypto 不配套」，
+    # 而那种包一启动（app 的 import 链里有 ssl）就崩。真产物、真加载。
+    ssl_probe = subprocess.run(
+        [str(cli), "--ssl-selftest"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if ssl_probe.returncode != 0:
+        raise SystemExit(
+            f"tavotto-cli --ssl-selftest 失败（退出码 {ssl_probe.returncode}）：\n"
+            f"  stdout: {(ssl_probe.stdout or '').strip()[:400]}\n"
+            f"  stderr: {(ssl_probe.stderr or '').strip()[-800:]}\n"
+            "  多半是 _ssl 与收进包的 libcrypto/libssl 版本不配套（#1051，见 scripts/frozen_ssl_gate.py）。"
+        )
+    print(f"* tavotto-cli: ssl 自检通过（{(ssl_probe.stdout or '').strip()}）")
+
     # `tavotto run` 的**打包闭包复核**（ADR 0021）。`runcli` / `runspec` /
     # `runcodes` 这几个模块是靠 PyInstaller 的字节码分析被收进去的——与
     # `handoff` / `codexinstall` 同一条既有路径，spec 里没有它们的名字。

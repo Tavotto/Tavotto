@@ -103,6 +103,16 @@ def main() -> None:
         from tavotto.rendercore import renderchild
 
         sys.exit(renderchild.child_main(sys.argv[2:]))
+    if sys.argv[1:2] == ["--ssl-selftest"]:
+        # 构建后闸门（#1051）：冻结产物里 ssl / hashlib 的 OpenSSL 必须能加载。打出来的 exe 在 import 阶段就崩时，
+        # 这条比整套冒烟更早、更直白地失败。
+        _reopen_child_pipes()
+        import hashlib
+        import ssl
+
+        hashlib.sha256(b"x")
+        print(ssl.OPENSSL_VERSION)
+        sys.exit(0)
     if sys.argv[1:2] == ["--private-python-smoke"]:
         _reopen_child_pipes()
         from tavotto.engine import privatepython_smoke
