@@ -273,3 +273,22 @@ def test_run_when_ready_from_the_desktop_window_falls_back_after_the_automatic_r
     final = _settle(client, report["session_id"])
     assert len(native["calls"]) == 1 and final["phase"] == "completed"
     assert final["intent"]["steps"] == 1 and final["intent"]["attempts"] == 2
+
+
+def test_a_valid_window_cookie_plus_a_local_secret_is_still_not_desktop_initiated():
+    """进程里存在本机凭据 = 不是纯桌面窗口（桌面 sidecar 没有磁盘凭据）：带着有效 cookie 也不算。"""
+    state = _mode(desktop=True, secret=SECRET)
+    token = state.redeem(NONCE)
+    with m.app.test_request_context(
+        "/x",
+        headers={"Cookie": f"{security.COOKIE_NAME}={token}", AUTH_HEADER: SECRET},
+    ):
+        assert m._desktop_initiated() is False
+
+
+def test_a_valid_cookie_without_the_sidecar_process_flag_is_not_desktop_initiated():
+    """进程不是 `--desktop-sidecar`（`TAVOTTO_DESKTOP_MODE` 没设）：即使状态里没有本机凭据、cookie 有效，也不算桌面。"""
+    state = _mode(desktop=False, secret=None)
+    token = state.redeem(NONCE)
+    with m.app.test_request_context("/x", headers={"Cookie": f"{security.COOKIE_NAME}={token}"}):
+        assert m._desktop_initiated() is False
