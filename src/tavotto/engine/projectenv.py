@@ -370,6 +370,8 @@ _modules_before = set(sys.modules)
 mode = sys.argv[4] if len(sys.argv) > 4 else ""
 project_root = sys.argv[5] if len(sys.argv) > 5 else ""
 isolated = (sys.argv[6] if len(sys.argv) > 6 else "") == "isolated"
+out["pythonpath_entries"] = (os.environ.get("PYTHONPATH") or "").split(os.pathsep) if os.environ.get("PYTHONPATH") else []
+out["pythonpath_dirs"] = []
 
 
 def _norm(path):
@@ -656,18 +658,44 @@ if out["matplotlib_version"] and not isolated:
         out["error"] = "worker: %s: %s" % (type(exc).__name__, exc)
     finally:
         sys.dont_write_bytecode = dont_write
+def _pythonpath_might_provide(top):
+    # -I 不采用 PYTHONPATH，但真正的用户 worker 会继承它。只找顶层 spec，不把这些目录塞进 sys.path、
+    # 不 import 包 / 启动钩子。找到也只是"可能可用"，留到 Run 的真实 import 确认。
+    import importlib.machinery
+    for path in out["pythonpath_entries"]:
+        # 本轮只补绝对路径；相对 / 空条目要与 worker 启动 cwd 统一建模，维持原来的隔离探测口径。
+        if not os.path.isabs(path):
+            continue
+        if project_root and _touches(path, project_root):
+            return True
+        if path not in out["pythonpath_dirs"]:
+            out["pythonpath_dirs"].append(path)
+        try:
+            for name in (top, "sitecustomize", "usercustomize"):
+                if importlib.machinery.PathFinder.find_spec(name, [path]) is not None:
+                    return True
+        except Exception:
+            return True  # 没读全不当成缺失
+    return False
+
+
 def _spec_state(name):
     # 用户点「运行」之前（Codex 安全 #820 r4234465621）：**绝不 import 脚本要的模块**——可编辑安装的 .pth 可以把项目里的
     # 包解析成它们，import 就是执行项目代码。只问顶层名的 find_spec（点号名的 find_spec 会 import 父包）：True = 找得到且
     # 不在项目里；False = 找不到；None = 落在项目里（延后到运行再量，不冒充"装了"也不冒充"没装"）。
     import importlib.util
     top = name.split(".")[0]
-    if top in _editable_provided:
-        return True  # 项目外的可编辑安装 finder 的 MAPPING 提供它（finder 不执行，所以 find_spec 看不到）
     try:
         spec = importlib.util.find_spec(top)
     except Exception:
         return False
+    if spec is not None and spec.origin in ("built-in", "frozen"):
+        return True  # 这两种提供者先于 PYTHONPATH；同名文件不会遮蔽它们
+    if isolated and _pythonpath_might_provide(top):
+        out["pythonpath_deferred"] = True
+        return None
+    if top in _editable_provided:
+        return True  # 项目外的可编辑安装 finder 的 MAPPING 提供它（finder 不执行，所以 find_spec 看不到）
     if spec is None:
         return False
     places = list(spec.submodule_search_locations or [])
@@ -720,6 +748,8 @@ for name in extra:
 if isolated:
     if _spec_state("matplotlib") is None:
         out["deferred_env"] = True  # matplotlib 本身解析进了项目
+    if out.get("pythonpath_deferred"):
+        out["deferred_env"] = True
     if _skipped_import_pth and (
         not out["matplotlib_version"]
         or out.get("requested_module_ok") is False
