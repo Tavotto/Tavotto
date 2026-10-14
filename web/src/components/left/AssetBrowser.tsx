@@ -383,8 +383,10 @@ export function AssetBrowser() {
 
         {/* 能不能编辑：一排常驻的胶囊（全部 / 可编辑 / [待连接] / 仅版面）。可编辑与仅排版的图在网格里
             混在一起时，靠卡上那个小角标一张张认太累。它是一眼可见的取值，所以不再进下面那排
-            可移除的筛选标签；项目里一张图都没有时不出（筛一份空清单没有意义） */}
-        {total > 0 && (
+            可移除的筛选标签。显示规则：有图、或有用不了的文件（它们只在「全部」下列出，得给入口）、
+            或正选着非「全部」时都出；正选着非默认值时绝不藏控件，否则一次刷新让最后一张图消失就把
+            用户困在「没有匹配的图」里、回不到「全部」（Codex #1027）。三者皆无才不出 */}
+        {(total > 0 || unsupported.length > 0 || editability !== 'all') && (
           <Segmented<AssetEditabilityFilter>
             value={editability}
             onChange={(v) => setFilters((f) => ({ ...f, editability: v }))}

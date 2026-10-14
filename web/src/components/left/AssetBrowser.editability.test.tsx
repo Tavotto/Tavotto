@@ -28,7 +28,13 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   }),
 }))
 
-import type { PanelCapability, PanelInfo, ReadinessStatus, RuntimeAssetInfo } from '@/lib/api'
+import type {
+  PanelCapability,
+  PanelInfo,
+  ReadinessStatus,
+  RuntimeAssetInfo,
+  UnsupportedAsset,
+} from '@/lib/api'
 import { AssetBrowser } from '@/components/left/AssetBrowser'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { resetAssetLoadBookkeeping, useAssetStore } from '@/store/assetStore'
@@ -87,10 +93,11 @@ const panel = (id: string, over: Partial<PanelInfo> = {}): PanelInfo => ({
 let host: HTMLElement
 let root: Root
 
-async function mount(panels: PanelInfo[]) {
+async function mount(panels: PanelInfo[], unsupported: UnsupportedAsset[] = []) {
   useAssetStore.setState({
     panels,
     byId: Object.fromEntries(panels.map((p) => [p.id, p])),
+    unsupported,
     loaded: true,
     loading: false,
     error: null,
@@ -211,6 +218,31 @@ describe('能不能编辑的胶囊筛选', () => {
   it('项目里一张图都没有时不出这排胶囊', async () => {
     await mount([])
     expect(group()).toBeNull()
+  })
+
+  const bad: UnsupportedAsset = {
+    id: 'raw/scan.tif',
+    name: 'scan.tif',
+    folder: 'raw',
+    code: 'tiff_sample_format',
+  }
+
+  it('选着「仅版面」时最后一张图消失：胶囊仍在，点「全部」能回到用不了的文件（Codex #1027）', async () => {
+    await mount([panel('Photo.pdf', { capability: cap('layout_only') })])
+    await pick('layout')
+    await act(async () => {
+      useAssetStore.setState({ panels: [], byId: {}, unsupported: [bad] })
+    })
+    expect(group()).not.toBeNull()
+    expect(segment('layout')!.getAttribute('aria-checked')).toBe('true')
+    expect(host.querySelector('[data-asset-unsupported]')).toBeNull()
+    await pick('all')
+    expect(host.querySelector('[data-asset-unsupported]')).not.toBeNull()
+  })
+
+  it('只有用不了的文件、筛选为「全部」时胶囊也在', async () => {
+    await mount([], [bad])
+    expect(group()).not.toBeNull()
   })
 
   it('是常驻取值，不再进可移除的筛选标签；旧的「只看可编辑」图标钮已移除', async () => {
