@@ -3348,7 +3348,7 @@ class TestNumbersUnderSecretKeys:
 
     def test_placeholders_and_nulls_are_still_kept(self):
         s = diagdetail.Scrubber()
-        for v in ("true", "false", "null", "None", "<redacted>", "***", "...", "<secret>"):
+        for v in ("true", "false", "null", "None", "<redacted>", "***", "...", "…"):
             assert s.text(f"token={v} x") == f"token={v} x", v
         assert s.text("token= ") == "token= "
         assert s.obj({"password": ""}) == {"password": ""}
@@ -3496,3 +3496,41 @@ class TestSecretsInDictKeys:
         s = diagdetail.Scrubber()
         doc = {"name": 1, "项目/图1.py": 2, 3: 4, "max_tokens": 5}
         assert s.obj(doc) == doc
+
+
+class TestPlaceholderWhitelist:
+    """秘密键下只有我们自己产出的记号算「无信息」；任意 `<…>` 不算。"""
+
+    KEPT = [
+        "<redacted>", "***", "<user>", "<email>", "<project:0123456789ab>", "seg:0123456789",
+        "str:abcdef0123", "file:0123456789abcdef.png", "mod:abcdef0123", "url:0123456789",
+        "acct:0123456789", "~", "...", "…", "true", "false", "null", "None",
+    ]  # fmt: skip
+    ERASED = [
+        "<REAL>",
+        "<hunter2>",
+        "<a b>",
+        "<REAL_SECRET>",
+        "<project:zz>",
+        "seg:hunter2",
+        "str:",
+        "<>",
+    ]
+
+    @pytest.mark.parametrize("v", KEPT)
+    def test_own_tokens_are_kept(self, v):
+        s = diagdetail.Scrubber()
+        assert s.text(f"password={v} x") == f"password={v} x"
+        assert s.obj({"password": v}) == {"password": v}
+
+    @pytest.mark.parametrize("v", ERASED)
+    def test_anything_else_is_erased(self, v):
+        s = diagdetail.Scrubber()
+        for line in (f"password={v}", f"password: {v}", f'"password": "{v}"'):
+            out = s.text(line)
+            assert v.strip("<>") not in out or v in ("<>", "str:"), (line, out)
+        assert s.obj({"password": v}) == {"password": "<redacted>"}
+        if v not in ("<>", "str:"):
+            assert "REAL" not in s.text(f"password=[{v}]") and "hunter2" not in s.text(
+                f"token=({v})"
+            )

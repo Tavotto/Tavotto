@@ -336,8 +336,13 @@ _PROVIDER_TOKEN = re.compile(
     r"\b(?:AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b"
 )
 _FIRST_TOKEN = re.compile(r"[\"']?[^\s\"',;&)\]}]*[\"']?")
+#: 秘密键下**无信息**的值：true/false/null/none、空值，以及**我们自己产出的**占位记号的显式白名单——`<redacted>`、`***`、
+#: `<user>`、`<email>`、`<project:十六进制>`、`seg:` / `str:` / `file:` / `mod:` / `url:` / `acct:` + 十六进制、`~`、`...` / `…`。
+#: 任意 `<…>` 不算占位符（`password=<REAL_SECRET>` 是口令）。text / obj / 容器判据共用这一个正则。
 _BORING_VALUE = re.compile(
-    r"""^["']?(?:|true|false|none|null|<redacted>|\*\*\*|<[^>]{1,20}>|\.\.\.)["']?$""", re.I
+    r"""^["']?(?:|true|false|none|null|<redacted>|\*\*\*|<user>|<email>|<project:[0-9a-f]{4,64}>"""
+    r"""|(?:seg|str|file|mod|url|acct):[0-9a-f]{4,64}(?:\.[\w]{1,8})?|~|\.\.\.|…)["']?$""",
+    re.I,
 )
 
 _BORING_TOKENS = re.compile(r"[\s\[\]{}(),:]|true|false|null|none", re.I)

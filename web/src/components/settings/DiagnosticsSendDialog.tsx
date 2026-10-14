@@ -7,6 +7,7 @@ import {
   discardDiagSend,
   fetchDiagSendBundle,
   fetchDiagSendStatus,
+  isStalePrepare,
   prepareDiagSend,
   startDiagSend,
   type DiagSendCapability,
@@ -177,7 +178,8 @@ export function DiagnosticsSendDialog({
         actionGen.current = p.gen
         setPhase(p.too_large ? 'tooLarge' : 'ready')
       })
-      .catch(() => {
+      .catch((e) => {
+        if (isStalePrepare(e)) return // 被更新的备包取代：不是失败，界面由那份新请求更新
         if (gen.current === mine) setPhase('prepareFailed')
       })
     return () => {

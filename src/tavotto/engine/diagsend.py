@@ -777,6 +777,24 @@ _SESSIONS: dict[str, SendSession] = {}
 #: 每个项目最近一次「已送达 / 结果未知」的会话在被丢弃时留下的状态快照（只有状态与报告编号，没有包与令牌）：
 #: 关对话框 / 切项目不能吞掉送达结果，用户凭编号才能要求删除（#928）。每个项目最多一份，后来的覆盖。
 _OUTCOMES: dict[str, dict] = {}
+#: 每个项目收到过的最大备包序号（前端每次备包带一个单调的 `seq`）：比它旧的备包请求（关了再开 / 切走再回时晚到的那份）
+#: 不许登记会话、也不许替换新会话——否则前端丢弃旧响应后，界面上的新编号指向一个不存在的会话。
+_PREPARE_SEQ: dict[str, int] = {}
+_PREPARE_SEQ_CAP = 64
+
+
+def begin_prepare(scope: str, seq: int | None) -> None:
+    """备包请求到达时登记它的序号；比已登记的更旧就 409 `stale_prepare`（不必再建这份包）。
+    `seq=None`（老客户端）不参与排序。"""
+    if seq is None:
+        return
+    with _LOCK:
+        if seq < _PREPARE_SEQ.get(scope, 0):
+            raise SendError("stale_prepare", 409)
+        _PREPARE_SEQ[scope] = seq
+        while len(_PREPARE_SEQ) > _PREPARE_SEQ_CAP:
+            del _PREPARE_SEQ[next(iter(_PREPARE_SEQ))]
+
 
 #: 测试可换的时钟/睡眠（重试退避不该让用例真等）。
 _sleep = time.sleep
@@ -870,13 +888,15 @@ def _get(pid: object, scope: str) -> SendSession:
 # ---------------------------------------------------------------------------
 # 对 Flask 层的接口
 # ---------------------------------------------------------------------------
-def prepare(bundle: bytes, *, scope: str = "") -> dict:
+def prepare(bundle: bytes, *, scope: str = "", seq: int | None = None) -> dict:
     """备好一份包（**零网络**）。包超限不保管、不发送：回 `too_large` 让界面去导出到本地。
     `scope` = 请求的项目上下文：只替换**本项目**的旧会话，别的项目的会话（含发送中的）不受影响。"""
     if resolve_target() is None:
         raise SendError("send_disabled", 404)
     info = inspect_bundle(bundle)
     with _LOCK:
+        if seq is not None and seq < _PREPARE_SEQ.get(scope, 0):
+            raise SendError("stale_prepare", 409)  # 登记会话前再比一次：建包期间更新的请求已经到了
         _expire_locked()
         cur = _SESSIONS.get(scope)
         if cur is not None and cur.state in ("sending", "cancelling"):
@@ -1096,6 +1116,7 @@ def reset_for_tests() -> None:
             cur.cancel.set()
         _SESSIONS.clear()
         _OUTCOMES.clear()
+        _PREPARE_SEQ.clear()
     for cur in curs:
         th = cur.thread
         if th is not None and th.is_alive():

@@ -3078,6 +3078,15 @@ def api_diagnostics_send_prepare():
     包超过上限时不保管、回 `too_large: true`：界面让用户把包导出到本地。"""
     if not engine_diagsend.enabled():
         return _diag_send_error(engine_diagsend.SendError("send_disabled", 404))
+    # 前端每次备包带单调的 `seq`：比已收到的更旧的（关了再开 / 切走再回时晚到的）直接 409，不再建包
+    try:
+        seq = int(request.args["seq"]) if "seq" in request.args else None
+    except ValueError:
+        seq = None
+    try:
+        engine_diagsend.begin_prepare(_diag_send_scope(), seq)
+    except engine_diagsend.SendError as exc:
+        return _diag_send_error(exc)
     frontend, dropped = _read_frontend_payload(engine_diagnostics_frontend.MAX_SEND_REQUEST_BYTES)
     # 勾选项只认字面 true（默认全 false）；`detail` 子对象只按类型 / 长度限界，脱敏在 diagdetail.Scrubber
     detail = engine_diagdetail.DetailRequest(
@@ -3092,7 +3101,7 @@ def api_diagnostics_send_prepare():
     )
     try:
         data = _build_diagnostics_bundle(frontend, dropped, detail)
-        return _diag_send_json(engine_diagsend.prepare(data, scope=_diag_send_scope()))
+        return _diag_send_json(engine_diagsend.prepare(data, scope=_diag_send_scope(), seq=seq))
     except engine_diagsend.SendError as exc:
         return _diag_send_error(exc)
 

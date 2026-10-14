@@ -4973,6 +4973,13 @@ export interface DiagSendStatus {
 
 export const fetchDiagSendCapability = () => jsonFetch<DiagSendCapability>('/api/diagnostics/send')
 
+let lastPrepareSeq = 0
+/** 单调的备包序号（毫秒时间戳起步，页面重载后仍大于上一页的）：引擎只认最新的，晚到的旧请求回 409 `diag_stale_prepare`。 */
+const nextPrepareSeq = () => (lastPrepareSeq = Math.max(Date.now(), lastPrepareSeq + 1))
+/** 备包被更新的请求取代（引擎 409 `stale_prepare`）：不是失败，静默忽略。 */
+export const isStalePrepare = (e: unknown) =>
+  e instanceof ApiError && e.status === 409 && e.body?.code === 'diag_stale_prepare'
+
 /** 在本机备好一份包（零网络）。载荷与导出诊断包相同。 */
 export const prepareDiagSend = (
   payload: unknown,
@@ -4982,7 +4989,7 @@ export const prepareDiagSend = (
   const picked = Object.entries(options ?? {})
     .filter(([, v]) => v === true)
     .map(([k]) => k)
-  const q = options ? `?options=${picked.join(',')}` : ''
+  const q = `?seq=${nextPrepareSeq()}${options ? `&options=${picked.join(',')}` : ''}`
   return jsonFetch<DiagSendPrepared>(`/api/diagnostics/send/prepare${q}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
