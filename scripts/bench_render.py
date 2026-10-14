@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import platform
 import shutil
@@ -72,6 +73,21 @@ TIMING_KEYS = [
     "manifest_final_geometry_ms",
     "total_ms",
 ]
+
+
+def numeric_hot_sample(sample: dict) -> dict[str, float]:
+    """仅保留计时白名单；用户字符串及非有限值绝不进入 Agent 的热态样本。"""
+    out = {}
+    for key in [*TIMING_KEYS, "wall_ms"]:
+        value = sample.get(key)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and 0 <= value < 120_000
+        ):
+            out[key] = float(value)
+    return out
 
 
 class BenchError(RuntimeError):
@@ -238,12 +254,7 @@ def bench_panel(
     rec["hot_n"] = repeat
     # 过去只保存中位数，Agent 无法识别偶发 P95 卡顿，也无法证明样本足够。
     # 仅保留固定数字键，不包含用户脚本、路径、文字、异常细节。
-    rec["hot_samples"] = [
-        {key: value for key in [*TIMING_KEYS, "wall_ms"] if isinstance(
-            value := sample.get(key), (int, float)
-        )}
-        for sample in samples
-    ]
+    rec["hot_samples"] = [numeric_hot_sample(s) for s in samples]
     # 预览 SVG 的体积与 primitive 计数：前端每次渲染都要把它下载 + 解析 +
     # 塞进 DOM，属于「快显」的另一半（含 imshow 的面板里体积是 dpi 的直接
     # 函数，纯矢量图上是常数）。**path 数比体积更能说明问题**——体积随
