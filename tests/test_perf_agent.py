@@ -517,3 +517,62 @@ def test_any_extra_invalid_sample_rejects_an_otherwise_complete_report(tmp_path,
     assert A.summarize(loaded)["status"] == "incomplete"
     assert A.compare(loaded, report())["status"] == "incomparable"
     assert A.compare(report(), loaded)["status"] == "incomparable"
+
+
+def test_symbol_failure_leaves_unstarted_drag_terminal_not_pending(tmp_path, monkeypatch):
+    """符号 Playwright 失败就不会进入拖动；summary 必须是明确失败终态。"""
+    output = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(A.shutil, "which", lambda _: "pnpm")
+
+    def fail_symbol(argv, **_kwargs):
+        assert "playwright.perf.config.ts" in argv
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(A.subprocess, "run", fail_symbol)
+    rc = A.main(["run", "--include-drag", "--out", str(output), "--summary", str(summary)])
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert rc == 2
+    assert saved["status"] == "failed"
+    assert saved["suites"] == {"symbol_ui": "failed", "canvas_drag": "not_started"}
+
+
+def test_incomplete_symbol_samples_leave_drag_not_started(tmp_path, monkeypatch):
+    """符号成功启动但样本不完整，后继拖动不能标为 pending。"""
+    output = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(A.shutil, "which", lambda _: "pnpm")
+    incomplete = report()
+    incomplete["scenarios"].pop()
+
+    def write_bad_samples(argv, **_kwargs):
+        assert "playwright.perf.config.ts" in argv
+        output.write_text(json.dumps(incomplete), encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(A.subprocess, "run", write_bad_samples)
+    rc = A.main(["run", "--include-drag", "--out", str(output), "--summary", str(summary)])
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert rc == 2
+    assert saved["status"] == "incomplete"
+    assert saved["suites"] == {"symbol_ui": "incomplete", "canvas_drag": "not_started"}
+
+
+def test_local_runner_disables_background_update_checks(tmp_path, monkeypatch):
+    """CI 之外的本地 agent 启动也必须关 updater，测量时不能偷偷联网。"""
+    output = tmp_path / "run.json"
+    monkeypatch.delenv("TAVOTTO_NO_UPDATE_CHECK", raising=False)
+    monkeypatch.setattr(A.shutil, "which", lambda _: "pnpm")
+    observed = []
+
+    def capture_environment(argv, **kwargs):
+        assert "playwright.perf.config.ts" in argv
+        observed.append(kwargs["env"]["TAVOTTO_NO_UPDATE_CHECK"])
+        output.write_text(json.dumps(report()), encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(A.subprocess, "run", capture_environment)
+    assert A.main(["run", "--out", str(output)]) == 0
+    assert observed == ["1"]

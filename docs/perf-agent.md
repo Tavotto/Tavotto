@@ -78,3 +78,13 @@ GitHub Actions `Performance Agent` 在成功跑完测试后，使用只读的 Ac
 独立执行历史比较时，`compare run.json baseline.json --json comparison.json --summary summary.json` 会把裁决同步到已完成的运行摘要；输入失败也会使该摘要成为 `failed`。仍在执行或不完整的摘要不能被外部比较改写为完成。
 
 如果没有 `--include-drag`，`canvas_drag=not_requested`，该状态只说明符号套件成功；不得据此宣称拖动已经测试。
+
+
+## 未启动拖动的终态语义与本地确定性
+
+`run --include-drag` 的 `canvas_drag` 在符号阶段是 `not_started`；
+仅在符号采样完整且即将启动拖动子进程时进入 `pending`。
+符号阶段发生非零退出、超时或样本不完整时不会把拖动伪称为正在运行；
+一旦拖动启动，其失败仍单独归到 `canvas_drag=failed`。
+本地 Agent CLI 与 Actions 一样，强制传入 `TAVOTTO_NO_UPDATE_CHECK=1`，
+避免在首次运行时由自动更新请求污染性能计时。

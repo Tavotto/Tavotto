@@ -161,7 +161,7 @@ def failed_run_summary(include_drag: bool) -> dict:
 
 def compose_run_summary(symbol: dict, drag_status: str) -> dict:
     """Agent 所读的 summary.json 必须反映整次任务，不能因第一段绿掩盖第二段失败。"""
-    if drag_status not in ("not_requested", "pending", "ok", "failed"):
+    if drag_status not in ("not_requested", "not_started", "pending", "ok", "failed"):
         raise ValueError("invalid_drag_status")
     symbol_status = symbol.get("status")
     if symbol_status in ("pending", "failed"):
@@ -170,7 +170,7 @@ def compose_run_summary(symbol: dict, drag_status: str) -> dict:
         whole = "incomplete"
     elif drag_status == "failed":
         whole = "failed"
-    elif drag_status == "pending":
+    elif drag_status in ("pending", "not_started"):
         whole = "pending"
     elif symbol.get("regression_status") == "pending":
         whole = "pending"
@@ -306,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result = None
     comparison_summary = None
-    drag_status = "pending" if args.command == "run" and args.include_drag else "not_requested"
+    drag_status = "not_started" if args.command == "run" and args.include_drag else "not_requested"
     command_failed = False
 
     def save_suite_summary() -> None:
@@ -344,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
                 "TAVOTTO_PERF_AGENT_REPEATS": str(args.repeat),
                 "TAVOTTO_NO_TELEMETRY": "1",
                 "TAVOTTO_NO_DIAG_UPLOAD": "1",
+                "TAVOTTO_NO_UPDATE_CHECK": "1",
             }
             proc = subprocess.run(
                 [
@@ -374,6 +375,10 @@ def main(argv: list[str] | None = None) -> int:
             if result["status"] != "ok":
                 return 2
             if args.include_drag:
+                # 只有符号套件完整成功、实际准备启动拖动时才标 pending；
+                # 早期失败时保持 not_started，避免将终态报告伪装成运行中。
+                drag_status = "pending"
+                save_suite_summary()
                 # 使用仓库既有 E2E：真实拖动 + 两轮合成输入，严格收尾且不改原图。
                 # 其报告由原有浏览器测试产生，禁止为了测性能另写一个假的拖动协议。
                 drag_path = output.with_name("drag.json")
