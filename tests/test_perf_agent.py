@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import perf_agent as A  # noqa: E402
@@ -172,3 +174,72 @@ def test_browser_suite_failure_has_an_unambiguous_machine_readable_summary():
     assert failure["comparison_verdict"] == "not_checked"
     assert failure["scenarios"] == {}
     assert A.failed_run_summary(False)["suites"]["canvas_drag"] == "not_requested"
+
+
+def test_agent_drag_timeout_preserves_passed_symbol_suite(tmp_path, monkeypatch):
+    """浏览器符号通过而拖动超时：Agent 的 summary 不得归咎于已成功的符号。"""
+    output = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    def fake_run(argv, **kwargs):
+        if "playwright.perf.config.ts" in argv:
+            output.write_text(json.dumps(report()), encoding="utf-8")
+            return SimpleNamespace(returncode=0)
+        if "playwright.config.ts" in argv:
+            raise subprocess.TimeoutExpired(argv, 900)
+        raise AssertionError("unexpected subprocess")
+
+    monkeypatch.setattr(A.subprocess, "run", fake_run)
+    rc = A.main(
+        ["run", "--include-drag", "--out", str(output), "--summary", str(summary)]
+    )
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert rc == 2
+    assert saved["status"] == "failed"
+    assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "failed"}
+
+
+def test_requested_baseline_regression_updates_the_same_machine_readable_summary(
+    tmp_path, monkeypatch
+):
+    """有基线时真实回归检测红了，summary 必须一起红。"""
+    output = tmp_path / "run.json"
+    baseline = tmp_path / "baseline.json"
+    summary = tmp_path / "summary.json"
+    baseline.write_text(json.dumps(report(value=20)), encoding="utf-8")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    def fake_run(argv, **kwargs):
+        assert "playwright.perf.config.ts" in argv
+        output.write_text(json.dumps(report(value=55)), encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(A.subprocess, "run", fake_run)
+    rc = A.main(
+        [
+            "run",
+            "--out",
+            str(output),
+            "--baseline",
+            str(baseline),
+            "--summary",
+            str(summary),
+        ]
+    )
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert rc == 3
+    assert saved["status"] == "regression"
+    assert saved["regression_status"] == "regression"
+    assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "not_requested"}
+    assert saved["comparison"]["status"] == "regression"
+
+
+def test_workflow_checks_each_recent_main_artifact_until_compatible():
+    """不能在第一份 Chromium / 不同 CPU 基线就结束 WebKit 的历史搜索。"""
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/performance-agent.yml"
+    ).read_text(encoding="utf-8")
+    assert 'candidate="$target/test-results/perf-agent/run.json"' in workflow
+    assert 'if [[ "$verdict" == "incomparable" ]]; then' in workflow
+    assert 'if [[ "$verdict" != "pass" && "$verdict" != "regression" ]]; then' in workflow
