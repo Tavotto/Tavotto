@@ -291,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     comp.add_argument("current", type=Path)
     comp.add_argument("baseline", type=Path)
     comp.add_argument("--json", type=Path)
+    comp.add_argument("--summary", type=Path, help="update the completed run summary with verdict")
     comp.add_argument("--regression-pct", type=float, default=DEFAULT_REGRESSION_PCT)
     args = p.parse_args(argv)
 
@@ -436,6 +437,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Comparison: {result['status']}")
         if args.json:
             _write(args.json, result)
+        if args.summary:
+            previous = json.loads(args.summary.read_text(encoding="utf-8"))
+            suites = previous.get("suites") if isinstance(previous, dict) else None
+            if (
+                previous.get("schema") != SCHEMA
+                or previous.get("status") != "ok"
+                or not isinstance(suites, dict)
+                or suites.get("symbol_ui") != "ok"
+                or suites.get("canvas_drag") not in ("ok", "not_requested")
+            ):
+                raise ValueError("cannot_update_incomplete_summary")
+            _write(
+                args.summary,
+                comparison_run_summary(previous, suites["canvas_drag"], result),
+            )
         return 0 if result["status"] == "pass" else 3
     except (OSError, json.JSONDecodeError, ValueError, subprocess.TimeoutExpired) as exc:
         # 超时/浏览器崩溃时仍输出机器可读失败，避免 Agent 只看残留 run.json。
