@@ -233,6 +233,7 @@ const DATA_EXTENSIONS: Readonly<Record<string, string>> = {
   '.json': 'JSON 只有数据，import 进来拿不到函数',
   '.css': '样式表',
   '.webp': '图片',
+  '.png': '图片（联系入口的二维码，打包进前端、不从网络加载）',
   '.py': 'playground 的示例脚本：在 Pyodide 里跑的 Python，不是 JS 模块',
 }
 /** 按文件名点名的非代码文件（不进 git 的本机杂物） */

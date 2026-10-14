@@ -38,7 +38,14 @@ const PLACEHOLDER_CLASS: Record<SelectionInk, string> = {
  * 文档默认族（衬线 = `--font-doc`），与 UI 字体分离。
  * 高度由内容撑开后回写到文档，但不进 undo —— 它是渲染派生值。
  */
-export function TextView({ obj }: { obj: TextObject }) {
+export function TextView({
+  obj,
+  preview = false,
+}: {
+  obj: TextObject
+  /** 仅用于结构缩略图：保留相同字形，但不测量并写回不存在的文档对象。 */
+  preview?: boolean
+}) {
   const editing = useUiStore((s) => s.editingTextId === obj.id)
   const pageBg = useDocumentStore((s) => s.doc.page.bg)
   const pageTransparent = useDocumentStore((s) => s.doc.page.transparent)
@@ -52,6 +59,10 @@ export function TextView({ obj }: { obj: TextObject }) {
   const sizePx = mmToWorld(obj.sizePt * MM_PER_PT)
 
   useLayoutEffect(() => {
+    // 缩略图的 ID 由 buildPreset 临时生成，不在用户文档中。
+    // 之前每个 ResizeObserver 回调都会对整份 doc 做一次无效查找与 Immer produce。
+    // 跳过仅文档持久化所需的高度回写，文字渲染本身完全不变。
+    if (preview) return
     const el = ref.current
     if (!el) return
     const measure = () => {
@@ -68,7 +79,7 @@ export function TextView({ obj }: { obj: TextObject }) {
     ro.observe(el)
     return () => ro.disconnect()
     // editing 在依赖里：div 带着 key 随编辑态重建（见下），必须重新 observe 新节点
-  }, [obj.id, editing])
+  }, [obj.id, editing, preview])
 
   // 进入编辑态时 React 已把子节点清空，这里接管 DOM 内容避免打字被重渲染覆盖
   useEffect(() => {

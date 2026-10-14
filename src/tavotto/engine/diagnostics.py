@@ -20,6 +20,7 @@ Python」「日志在哪」）才能定位一次。有了这个包，用户点�
 from __future__ import annotations
 
 import builtins
+import dataclasses
 import hashlib
 import io
 import json
@@ -80,7 +81,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: 稳定错误码计数、逐条的 outcome + error_code；2026-10 Windows 实测脚本跑失败多次，recent_errors / worker_logs /
 #: missing_dependencies 全空）；缺依赖现场也开始覆盖试运行与准备两条路（此前只有渲染端点）。
 #: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
-BUNDLE_SCHEMA_VERSION = 7
+#: 8 = 发送包新增 `detail-…` / `optional-…` 条目与 manifest 的 `contains_detail` / `detail_files` / `detail_options` / `truncated`
+#: （ADR 0118 修订 2026-10-13）；导出包的 report.json 与老文件一个字节没动，只有 manifest 多了这几个键。
+BUNDLE_SCHEMA_VERSION = 8
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1457,23 +1460,15 @@ def last_blocks_within(blocks: list[list[str]], budget: int) -> list[list[str]]:
     return out
 
 
-def worker_log_tails(
-    root: Path | None = None,
-    *,
-    project_dir: str | Path | None,
-    files: int = WORKER_LOG_FILES,
-    lines: int = WORKER_LOG_TAIL_LINES,
-) -> list[dict]:
-    """**当前项目**最近几份 `worker.log` 尾巴里的证据行（未脱敏——调用方经 `_redact_obj`）。
+def owned_worker_logs(
+    project_dir: str | Path | None, root: Path | None = None
+) -> list[tuple[float, Path]]:
+    """**当前项目**名下的 `worker.log`，最近的在前：`[(mtime, 路径), …]`。
 
-    只读、不起任何子进程。目录名是 `pool._cache_slug` 拼出来的 `<项目哈希>-<脚本名>`
-    （一次性重放是 `_replay-<nonce>-<项目哈希>-<脚本名>`），只取哈希等于
-    `pool.cache_digest(project_dir)` 的那些：诊断包是「当前打开的这个项目」的，
-    别的项目的脚本名与报错一个字都不该跟着出门（评审 #443 P1）。**没打开项目就
-    一份都不带**——没有项目就没有「属于谁」这个判据，宁可少给。
-    `empty` 说的是这一份日志尾巴**整个**是空的（进程一个字没留下就没了——硬崩溃
-    的形状），`omitted` 是按 `evidence_lines` 略去的行数。
-    """
+    目录名是 `pool._cache_slug` 拼出来的 `<项目哈希>-<脚本名>`（一次性重放是
+    `_replay-<nonce>-<项目哈希>-<脚本名>`），只取哈希等于 `pool.cache_digest(project_dir)` 的那些。
+    **没打开项目就一份都没有**。`worker_log_tails`（出门版）与发送包的 `detail-*-log.txt`（原文尾巴）共用
+    这一个「谁属于当前项目」的判据（评审 #443 P1：别的项目的脚本名与报错不该跟着出门）。"""
     if not project_dir:
         return []
     digest = pool.cache_digest(project_dir)
@@ -1499,6 +1494,27 @@ def worker_log_tails(
         except OSError:
             continue
     stamped.sort(reverse=True)
+    return stamped
+
+
+def worker_log_tails(
+    root: Path | None = None,
+    *,
+    project_dir: str | Path | None,
+    files: int = WORKER_LOG_FILES,
+    lines: int = WORKER_LOG_TAIL_LINES,
+) -> list[dict]:
+    """**当前项目**最近几份 `worker.log` 尾巴里的证据行（未脱敏——调用方经 `_redact_obj`）。
+
+    只读、不起任何子进程。目录名是 `pool._cache_slug` 拼出来的 `<项目哈希>-<脚本名>`
+    （一次性重放是 `_replay-<nonce>-<项目哈希>-<脚本名>`），只取哈希等于
+    `pool.cache_digest(project_dir)` 的那些：诊断包是「当前打开的这个项目」的，
+    别的项目的脚本名与报错一个字都不该跟着出门（评审 #443 P1）。**没打开项目就
+    一份都不带**——没有项目就没有「属于谁」这个判据，宁可少给。
+    `empty` 说的是这一份日志尾巴**整个**是空的（进程一个字没留下就没了——硬崩溃
+    的形状），`omitted` 是按 `evidence_lines` 略去的行数。
+    """
+    stamped = owned_worker_logs(project_dir, root)
     out: list[dict] = []
     for mtime, p in stamped[:files]:
         try:
@@ -1770,12 +1786,23 @@ def render_text(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+@dataclasses.dataclass
+class DetailPayload:
+    """发送包的 `detail-…` / `optional-…` 部分（`engine/diagdetail.py` 组装）。**导出路径永远不带它。**"""
+
+    files: list[tuple[str, bytes]]  # (扁平条目名 `detail-…` / `optional-…`, 字节)
+    options: dict[str, bool]
+    truncated: list[dict]
+
+
 def build_bundle(
     project: dict | None = None,
     port: int | None = None,
     frontend: dict | None = None,
     frontend_dropped: bool = False,
     task_snapshots: dict | None = None,
+    detail: DetailPayload | None = None,
+    report: dict | None = None,
 ) -> bytes:
     """诊断包 zip 的字节流（全部内容已脱敏）。
 
@@ -1783,7 +1810,7 @@ def build_bundle(
     （`{frontend_state, interaction_trace}`，见 ADR 0016）。**它是可选的**：
     老的 GET 端点不带，出的包就是 schema 2 但只有老三件 + manifest。
     """
-    report = build_report(project, port)
+    report = report if report is not None else build_report(project, port)
     roots = project_roots(project)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -1814,6 +1841,13 @@ def build_bundle(
                 "task-diagnostics.json", json.dumps(task_snapshots, ensure_ascii=False, indent=1)
             )
 
+        # ---- 发送包独有的 detail-… / optional-… 条目（diagdetail 组装；导出路径 detail=None，一个都不会有）----
+        detail_files: list[dict] = []
+        if detail is not None:
+            for name, blob in sorted(detail.files):
+                z.writestr(name, blob)
+                detail_files.append({"path": name, "bytes": len(blob)})
+
         z.writestr(
             "manifest.json",
             json.dumps(
@@ -1830,6 +1864,14 @@ def build_bundle(
                     "trace_truncated": truncated,
                     "frontend_snapshot_schema": FRONTEND_SNAPSHOT_SCHEMA,
                     "trace_schema": TRACE_SCHEMA,
+                    "contains_detail": detail is not None,
+                    "detail_files": detail_files,
+                    "detail_options": dict(
+                        detail.options
+                        if detail is not None
+                        else {"source": False, "crash_reports": False, "corrupt_sessions": False}
+                    ),
+                    "truncated": list(detail.truncated) if detail is not None else [],
                 },
                 ensure_ascii=False,
                 indent=1,
@@ -1842,6 +1884,7 @@ def build_bundle(
                 bool(trace),
                 list(report.get("project") or {}),
                 has_tasks=task_snapshots is not None,
+                detail=detail,
             ),
         )
     return buf.getvalue()
@@ -1875,6 +1918,7 @@ def _readme(
     project_keys: list[str] | None = None,
     *,
     has_tasks: bool = False,
+    detail: DetailPayload | None = None,
 ) -> str:
     """包里有什么、**没有什么**。双语——用户得看得懂自己在往 issue 上贴什么。
 
@@ -1906,7 +1950,7 @@ def _readme(
             "configuration choices, output dimensions/PPI, revision hashes and opaque local "
             "attempt/configuration references; no file names, paths, argument values or error text)\n"
         )
-    return (
+    text = (
         "Tavotto 诊断包 / Tavotto diagnostic package\n"
         "\n"
         "包含 / This package contains:\n"
@@ -1980,4 +2024,67 @@ def _readme(
         "whether two states are the same, and cannot be reversed.\n"
         "\n"
         "发出去之前仍建议自己扫一眼。/ You may still want to skim it before sharing.\n"
+    )
+    if detail is None:
+        return text
+    return text[: text.index("不包含 / It does NOT intentionally contain:")] + _readme_detail(
+        detail
+    )
+
+
+def _readme_detail(detail: DetailPayload) -> str:
+    """发送包的 README 后半：取代「不包含」那一节（那一节对发送包不成立）。"""
+    opts = detail.options
+    on_zh = (
+        "、".join(
+            n
+            for k, n in (
+                ("source", "脚本源码"),
+                ("crash_reports", "系统崩溃报告"),
+                ("corrupt_sessions", "会话损坏副本内容"),
+            )
+            if opts.get(k)
+        )
+        or "（无）"
+    )
+    on_en = (
+        ", ".join(
+            n
+            for k, n in (
+                ("source", "script source"),
+                ("crash_reports", "system crash reports"),
+                ("corrupt_sessions", "corrupted-session contents"),
+            )
+            if opts.get(k)
+        )
+        or "(none)"
+    )
+    return (
+        '这是「发送问题反馈」的包 / This package was built for "Send problem report":\n'
+        "\n"
+        "为了帮维护者详细定位问题，`detail-…` / `optional-…` 条目里放了更多内容：报错原文与完整调用栈、应用 / sidecar / 渲染进程日志的末尾、\n"
+        "会话状态文件、最近的后端请求记录（只有方法、路由规则、状态码、耗时、错误码）、样式改动、渲染环境、运行记录、\n"
+        "桌面壳与安装信息、存储环境、前端 console 报错、显示环境、网络概况。\n"
+        "项目文件夹名、文件名、图里的文字不再被抹掉；家目录统一写成 ~，系统用户名写成 <user>，\n"
+        "凭证 / cookie / API key / token / 代理账号密码一律去掉。\n"
+        f"你在确认框里勾选了的额外内容 / Extras you ticked: {on_zh}。\n"
+        "没有勾选「脚本源码」时，包里没有任何脚本源码（日志里 traceback 的源码行也已去掉）。\n"
+        "\n"
+        "This package carries more in its detail-… / optional-… entries so maintainers can diagnose in depth: error messages with full stack\n"
+        "traces, tails of the app / sidecar / render-process logs, session state files, recent backend requests\n"
+        "(method, route rule, status, duration, error code only), style edits, the render environment, run records,\n"
+        "desktop-shell and install facts, storage environment, front-end console errors, display environment and\n"
+        "network facts. Project folder names, file names and text inside figures are kept; your home directory is\n"
+        "written as ~, the system user name as <user>, and credentials / cookies / API keys / tokens / proxy\n"
+        "passwords are removed. Extras you ticked: "
+        + on_en
+        + '. Without "script source" ticked, the package contains\n'
+        "no script source at all (source lines inside log tracebacks are removed too).\n"
+        "\n"
+        "manifest.json 的 detail_files 列出了每个 detail-… / optional-… 条目与大小；truncated 记录因体积上限被截短的类别。\n"
+        "manifest.json lists every detail-… / optional-… entry with its size (detail_files) and any category cut short to fit the\n"
+        "size limit (truncated).\n"
+        "\n"
+        "脱敏是尽力而为，不保证绝对；发送前可以保存并查看这份包。\n"
+        "Redaction is best effort, not absolute; you can save and inspect this package before sending.\n"
     )

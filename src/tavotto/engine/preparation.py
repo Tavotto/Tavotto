@@ -1340,6 +1340,12 @@ class PreparationService:
             ]
         return sum(1 for pid in mine if self.cancel(pid, project_id).get("accepted"))
 
+    def is_cancelled(self, plan_id: str) -> bool:
+        """这份计划是不是已被取消（含被更新的同脚本计划取代、项目关闭）。取消是正向信息：没登记过的计划（直接调 runner 的
+        用例）不算已取消。"""
+        entry = self._entry(plan_id)
+        return entry is not None and entry.cancel.is_set()
+
     def older_than(self, keep: str) -> frozenset[str]:
         """登记得比 `keep` 更早的计划号（登记顺序 = 计划的先后）；`keep` 未登记 = 空。`cancel_project(keep=)` 取消的就是这一批。"""
         with self._lock:
