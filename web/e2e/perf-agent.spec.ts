@@ -1,4 +1,5 @@
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
@@ -60,9 +61,15 @@ async function openPresets(page: Page): Promise<number> {
 /** 原子写报告：没有完全跑通的轮次就不会留下伪装成成功的结果。 */
 function save(output: string, value: object) {
   mkdirSync(path.dirname(output), { recursive: true })
-  const tmp = output + '.tmp'
-  writeFileSync(tmp, JSON.stringify(value, null, 2), { encoding: 'utf8' })
-  renameSync(tmp, output)
+  // 固定 output.tmp 可恰好等于 --baseline 文件名（甚至是其软/硬链接）。
+  // 只有独占创建的随机临时文件才能避免先截断历史样本。
+  const tmp = `${output}.${randomBytes(16).toString('hex')}.tmp`
+  try {
+    writeFileSync(tmp, JSON.stringify(value, null, 2), { encoding: 'utf8', flag: 'wx' })
+    renameSync(tmp, output)
+  } finally {
+    rmSync(tmp, { force: true })
+  }
 }
 
 test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, browser }) => {

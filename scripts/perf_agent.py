@@ -349,6 +349,23 @@ def _protected_parse_positionals(argv: list[str]) -> list[Path]:
     return protected
 
 
+def _run_io_collision(
+    output: Path, summary: Path | None, baseline: Path | None, include_drag: bool
+) -> bool:
+    """跑测试前检查输出/sidecar/历史基线的所有别名（包括硬链接）。"""
+    writable = [output]
+    if include_drag:
+        writable += [output.with_name("drag.json"), output.with_name("drag-findings.json")]
+    if summary is not None:
+        writable.append(summary)
+    for i, candidate in enumerate(writable):
+        if baseline is not None and _same_report_path(candidate, baseline):
+            return True
+        if any(_same_report_path(candidate, other) for other in writable[:i]):
+            return True
+    return False
+
+
 def _invalidate_parse_error(argv: list[str]) -> None:
     """argparse 先于运行态抛 SystemExit 时，也必须作废指定位置的旧成功结论。
 
@@ -472,14 +489,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             result = failed_run_summary(args.include_drag)
-            # 输出/摘要/历史基线必须是独立文件。这些检查先于任何写入，
-            # 否则测试尚未运行就可能覆写只读基线，甚至把当前样本和自己比较。
-            if args.baseline is not None and args.summary is not None:
-                if _same_report_path(args.baseline, args.summary):
-                    print("error: baseline_aliases_summary", file=sys.stderr)
-                    return 2
-            if args.summary is not None and _same_report_path(args.summary, args.out):
-                print("error: summary_aliases_run_output", file=sys.stderr)
+            # 所有派生 sidecar 和基线一起检查；尤其 out=drag.json 时不能先
+            # 成功完成符号阶段又被后续的 drag_path.unlink() 错误清掉原结果。
+            if _run_io_collision(args.out, args.summary, args.baseline, args.include_drag):
+                if args.summary is not None and not _run_io_collision(
+                    args.out, args.summary, None, args.include_drag
+                ) and not (args.baseline is not None and _same_report_path(args.summary, args.baseline)):
+                    failed = failed_run_summary(args.include_drag)
+                    if args.baseline is not None:
+                        failed["regression_status"] = "failed"
+                    _write(args.summary, failed)
+                print("error: output_or_sidecar_aliases_readonly_data", file=sys.stderr)
                 return 2
             result["status"] = "pending"
             # 先作废上次的成功摘要；启动失败/超时也必须交出本次任务的明确结论。
@@ -539,6 +559,11 @@ def main(argv: list[str] | None = None) -> int:
             _print_summary(result)
             save_suite_summary()
             if result["status"] != "ok":
+                if args.baseline is not None:
+                    # 未完整取得符号样本时比较根本不应启动，
+                    # 因而不能留下一个永久 pending 的 regression_status。
+                    result["regression_status"] = "failed"
+                    save_suite_summary()
                 return 2
             if args.include_drag:
                 # 只有符号套件完整成功、实际准备启动拖动时才标 pending；
@@ -623,6 +648,8 @@ def main(argv: list[str] | None = None) -> int:
             print("Baseline verdict: not_checked (no baseline provided)")
             return 0
         if args.command == "summarize":
+            if args.json is not None and _same_report_path(args.json, args.report):
+                raise ValueError("summarize_output_aliases_input")
             result = summarize(load(args.report))
             _print_summary(result)
             if args.json:
@@ -691,11 +718,13 @@ def main(argv: list[str] | None = None) -> int:
             failed.update(status="failed", reason="invalid_or_unavailable_benchmark")
             try:
                 if args.json and not (
-                    args.command == "compare"
-                    and (
-                        _same_report_path(args.json, args.current)
-                        or _same_report_path(args.json, args.baseline)
-                    )
+                    (args.command == "compare"
+                     and (
+                         _same_report_path(args.json, args.current)
+                         or _same_report_path(args.json, args.baseline)
+                     ))
+                    or (args.command == "summarize"
+                        and _same_report_path(args.json, args.report))
                 ):
                     _write(args.json, failed)
                 if comparison_summary is not None and not (

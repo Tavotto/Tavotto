@@ -962,3 +962,77 @@ def test_all_report_subparsers_reject_abbreviated_json_flag(tmp_path, command):
     # 若该子解析器重新启用 unique-prefix 识别，就会成功执行并改写结果。
     assert A.main(args) == 2
     assert target.read_bytes() == before
+
+
+@pytest.mark.parametrize("output_name", ["drag.json", "drag-findings.json"])
+def test_run_rejects_symbol_output_colliding_with_drag_sidecars(
+    tmp_path, monkeypatch, output_name
+):
+    """真实 Agent 不可先报符号通过再让 sidecar 覆写 --out。"""
+    output = tmp_path / output_name
+    output.write_text(json.dumps(report()), encoding="utf-8")
+    prior = output.read_bytes()
+    summary = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        A.subprocess, "run", lambda *a, **k: pytest.fail("Preflight must reject collision")
+    )
+    rc = A.main(["run", "--include-drag", "--out", str(output), "--summary", str(summary)])
+    assert rc == 2
+    assert output.read_bytes() == prior
+    assert json.loads(summary.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+@pytest.mark.parametrize("name", ["drag.json", "drag-findings.json"])
+def test_drag_sidecar_cannot_unlink_the_readonly_baseline(tmp_path, monkeypatch, name):
+    base = tmp_path / name
+    base.write_text(json.dumps(report()), encoding="utf-8")
+    before = base.read_bytes()
+    monkeypatch.setattr(
+        A.subprocess, "run", lambda *a, **k: pytest.fail("No benchmark may be launched")
+    )
+    rc = A.main([
+        "run", "--include-drag", "--out", str(tmp_path / "run.json"),
+        "--baseline", str(base), "--summary", str(tmp_path / "summary.json"),
+    ])
+    assert rc == 2
+    assert base.read_bytes() == before
+    result = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert result["regression_status"] == "failed"
+
+
+def test_summarize_rejects_in_place_or_hardlink_report_output(tmp_path):
+    """既保住同路径输入，也不能通过硬链接用同名 schema 覆盖原样本。"""
+    original = tmp_path / "report.json"
+    alias = tmp_path / "alias.json"
+    original.write_text(json.dumps(report()), encoding="utf-8")
+    alias.hardlink_to(original)
+    before = original.read_bytes()
+    for target in (original, alias):
+        assert A.main(["summarize", str(original), "--json", str(target)]) == 2
+        assert original.read_bytes() == before
+        assert alias.read_bytes() == before
+
+
+def test_incomplete_symbol_with_requested_baseline_is_terminal_not_pending(tmp_path, monkeypatch):
+    raw = tmp_path / "run.json"
+    baseline = tmp_path / "baseline.json"
+    summary = tmp_path / "summary.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    incomplete = report()
+    incomplete["scenarios"].pop()
+    monkeypatch.setattr(A.shutil, "which", lambda _: "pnpm")
+
+    def write_incomplete(argv, **kwargs):
+        assert "playwright.perf.config.ts" in argv
+        raw.write_text(json.dumps(incomplete), encoding="utf-8")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(A.subprocess, "run", write_incomplete)
+    assert A.main([
+        "run", "--out", str(raw), "--baseline", str(baseline), "--summary", str(summary),
+    ]) == 2
+    result = json.loads(summary.read_text(encoding="utf-8"))
+    assert result["suites"]["symbol_ui"] == "incomplete"
+    assert result["status"] == "incomplete"
+    assert result["regression_status"] == "failed"
