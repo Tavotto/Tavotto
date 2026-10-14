@@ -130,8 +130,7 @@ async function dragLegendToOther(
   await page.mouse.up()
   await page.waitForTimeout(400)
   await page.keyboard.press('Escape')
-  // 别的图在排版画布上是位图，图例的位置取它出图时引擎给的 manifest（分数坐标）：
-  // 先进 b 的图内编辑让它出一次图，记下图例框；再回画布进 a
+  // 别的图在排版画布上是位图，图例的位置取引擎渲染 b 时给的 manifest（分数坐标）
   const manifests: Record<string, { x: number; y: number; w: number; h: number }> = {}
   page.on('response', async (r) => {
     if (!r.url().includes('/api/engine/render')) return
@@ -151,15 +150,14 @@ async function dragLegendToOther(
     await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 60_000 })
     await page.waitForTimeout(2000)
   }
-  await enter(1)
-  await expect.poll(() => manifests['Fig_cross_b'], { timeout: 30_000 }).toBeTruthy()
-  await page.locator('[data-context-back]').click()
-  await expect(page.locator('[data-element-svg]')).toHaveCount(0)
-  await page.waitForTimeout(500)
   const objB = (await objs.nth(1).boundingBox())!
+  // 直接进 a 的图内编辑、不预热 b：进编辑时引擎要把视口里看得见的 b 也渲染出来（权威 manifest，
+  // `crossFigureNeighbours`）。等待条件 = 引擎对 b 的渲染响应已回来、画面也换上了（再等一拍入库）
+  await enter(0)
+  await expect.poll(() => manifests['Fig_cross_b'], { timeout: 60_000, message: 'b 应被补渲染' }).toBeTruthy()
+  await page.waitForTimeout(1500)
   const lb = manifests['Fig_cross_b']
   const theirsLeft = objB.x + lb.x * objB.width
-  await enter(0)
 
   const mine0 = (await editBox(page, LEGEND))!
   expect(mine0, '编辑中的图应有图例').not.toBeNull()

@@ -1382,7 +1382,6 @@ describe('跨图邻居补渲染（ADR 0128 §二）', () => {
       useWorkspaceStore.setState({ mode, activePanelId: mode === 'fast_edit' ? 'a' : null })
       useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, viewW: 900, viewH: 700 })
       syncEngine(objs(), 'a')
-      flushRender()
       expect(calls.map((c) => c.fileId).sort()).toEqual([...expected])
     }
     useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
