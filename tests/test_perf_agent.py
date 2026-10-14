@@ -597,3 +597,61 @@ def test_local_runner_disables_background_update_checks(tmp_path, monkeypatch):
     monkeypatch.setattr(A.subprocess, "run", capture_environment)
     assert A.main(["run", "--out", str(output)]) == 0
     assert observed == ["1"]
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        ["--repeat", "10.5"],
+        ["--repeat", "oops"],
+        ["--regression-pct", "not-a-number"],
+        ["--unsupported-opt"],
+    ],
+)
+def test_invalid_run_cli_args_invalidate_previous_successful_summary(tmp_path, bad_args):
+    """argparse 提前错误退出前，旧成功摘要必须被替换为本次 failed。"""
+    old = tmp_path / "summary.json"
+    raw = tmp_path / "run.json"
+    old.write_text(json.dumps(A.compose_run_summary(A.summarize(report()), "ok")), encoding="utf-8")
+    raw.write_text(json.dumps(report()), encoding="utf-8")
+    args = ["run", "--summary", str(old), "--out", str(raw), *bad_args]
+    assert A.main(args) == 2
+    assert json.loads(old.read_text(encoding="utf-8"))["status"] == "failed"
+    assert not raw.exists()
+
+
+def test_invalid_compare_cli_args_invalidate_stale_verdict_and_summary(tmp_path):
+    """--regression-pct 无法解析，也不能留下上次 comparison PASS。"""
+    outcome = tmp_path / "comparison.json"
+    summary = tmp_path / "summary.json"
+    outcome.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    summary.write_text(
+        json.dumps(A.compose_run_summary(A.summarize(report()), "ok")), encoding="utf-8"
+    )
+    rc = A.main(
+        [
+            "compare",
+            "current.json",
+            "base.json",
+            "--regression-pct",
+            "broken",
+            "--json",
+            str(outcome),
+            "--summary",
+            str(summary),
+        ]
+    )
+    assert rc == 2
+    assert json.loads(outcome.read_text(encoding="utf-8"))["status"] == "failed"
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert saved["status"] == "failed"
+    assert saved["comparison"]["status"] == "failed"
+    assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "not_requested"}
+
+
+def test_help_does_not_destroy_existing_successful_report(tmp_path):
+    summary = tmp_path / "summary.json"
+    good = A.compose_run_summary(A.summarize(report()), "ok")
+    summary.write_text(json.dumps(good), encoding="utf-8")
+    assert A.main(["run", "--help", "--summary", str(summary)]) == 0
+    assert json.loads(summary.read_text(encoding="utf-8")) == good

@@ -280,6 +280,67 @@ def _append_gha_summary(result: dict) -> None:
             f.write(f"| {k} | {v['count']} | {v['p50_ms']} | {v['p95_ms']} | {v['max_ms']} |\n")
 
 
+def _option_path(argv: list[str], flag: str) -> Path | None:
+    """解析失败后的保底提取：只看明确的 --summary / --json / --out，不猜未知选项。"""
+    for i, token in enumerate(argv):
+        if token.startswith(flag + "="):
+            value = token[len(flag) + 1 :]
+            return Path(value) if value else None
+        if token == flag and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+            return Path(argv[i + 1])
+    return None
+
+
+def _invalidate_parse_error(argv: list[str]) -> None:
+    """argparse 先于运行态抛 SystemExit 时，也必须作废指定位置的旧成功结论。
+
+    主语是 Agent 交付的文件，而不是命令行的错误退出码；没有参数时不写默认路径。
+    """
+    if not argv:
+        return
+    command = argv[0]
+    json_path = _option_path(argv, "--json")
+    summary_path = _option_path(argv, "--summary")
+    try:
+        if command == "run":
+            output = _option_path(argv, "--out")
+            if output:
+                output.unlink(missing_ok=True)
+            if summary_path:
+                _write(summary_path, failed_run_summary("--include-drag" in argv))
+        elif command in ("compare", "summarize"):
+            failed = {
+                "schema": COMPARE_SCHEMA if command == "compare" else SCHEMA,
+                "status": "failed",
+                "reason": "invalid_command_arguments",
+            }
+            if command == "compare":
+                failed["rows"] = []
+            if json_path:
+                _write(json_path, failed)
+            if command == "compare" and summary_path:
+                previous = {}
+                if summary_path.is_file():
+                    try:
+                        previous = json.loads(summary_path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        pass
+                if not isinstance(previous, dict) or previous.get("schema") != SCHEMA:
+                    previous = {"schema": SCHEMA}
+                _write(
+                    summary_path,
+                    {
+                        **previous,
+                        "status": "failed",
+                        "regression_status": "failed",
+                        "comparison": failed,
+                    },
+                )
+    except OSError:
+        # 输出目录无权限时命令仍失败，不得因报告写入失败变成退出 0。
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Agent-friendly Tavotto performance CLI")
     commands = p.add_subparsers(dest="command", required=True)
@@ -302,7 +363,15 @@ def main(argv: list[str] | None = None) -> int:
     comp.add_argument("--json", type=Path)
     comp.add_argument("--summary", type=Path, help="update the completed run summary with verdict")
     comp.add_argument("--regression-pct", type=float, default=DEFAULT_REGRESSION_PCT)
-    args = p.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        args = p.parse_args(raw_argv)
+    except SystemExit as exc:
+        # --help 不是失败，不能删除前次结果。类型错误/未知选项则不能留旧的 pass。
+        if exc.code == 0:
+            return 0
+        _invalidate_parse_error(raw_argv)
+        return 2
 
     result = None
     comparison_summary = None
