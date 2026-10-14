@@ -283,6 +283,9 @@ def _append_gha_summary(result: dict) -> None:
 def _option_path(argv: list[str], flag: str) -> Path | None:
     """解析失败后的保底提取：只看明确的 --summary / --json / --out，不猜未知选项。"""
     for i, token in enumerate(argv):
+        # argparse 标准 -- 终止符后面全是位置数据：后面的 --out 等绝不能误删文件。
+        if token == "--":
+            break
         if token.startswith(flag + "="):
             value = token[len(flag) + 1 :]
             return Path(value) if value else None
@@ -342,9 +345,15 @@ def _invalidate_parse_error(argv: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Agent-friendly Tavotto performance CLI")
+    # 禁用唯一前缀的长选项缩写：错误路径扫描只认完整名称，
+    # 解析器与失败报告清理器必须共享同一套 CLI 语法。
+    p = argparse.ArgumentParser(
+        description="Agent-friendly Tavotto performance CLI", allow_abbrev=False
+    )
     commands = p.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="run real UI interactions automatically")
+    run = commands.add_parser(
+        "run", help="run real UI interactions automatically", allow_abbrev=False
+    )
     run.add_argument("--browser", choices=("chromium", "webkit"), default="chromium")
     run.add_argument("--repeat", type=int, default=16)
     run.add_argument("--out", type=Path, default=Path("web/test-results/perf-agent/run.json"))
@@ -354,10 +363,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     run.add_argument("--summary", type=Path)
     run.add_argument("--regression-pct", type=float, default=DEFAULT_REGRESSION_PCT)
-    report = commands.add_parser("summarize")
+    report = commands.add_parser("summarize", allow_abbrev=False)
     report.add_argument("report", type=Path)
     report.add_argument("--json", type=Path)
-    comp = commands.add_parser("compare")
+    comp = commands.add_parser("compare", allow_abbrev=False)
     comp.add_argument("current", type=Path)
     comp.add_argument("baseline", type=Path)
     comp.add_argument("--json", type=Path)

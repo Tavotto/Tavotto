@@ -678,3 +678,36 @@ def test_perf_playwright_cleanup_cannot_erase_agent_pending_summary():
     workflow = (root / ".github/workflows/performance-agent.yml").read_text(encoding="utf-8")
     assert "web/test-results/perf-agent/**" in workflow
     assert "web/test-results-perf-agent-playwright/**" in workflow
+
+
+@pytest.mark.parametrize(
+    "command,flag",
+    [
+        ("run", "--out"),
+        ("run", "--summary"),
+        ("compare", "--json"),
+        ("compare", "--summary"),
+        ("summarize", "--json"),
+    ],
+)
+def test_cli_option_terminator_does_not_erase_positional_files(tmp_path, command, flag):
+    """恶意/错误调用在 -- 之后给出看似输出 flag，不得覆盖或删除该文件。"""
+    victim = tmp_path / "important-user-file.json"
+    victim.write_text("must-not-touch", encoding="utf-8")
+    if command == "run":
+        argv = [command, "--", flag, str(victim)]
+    elif command == "compare":
+        argv = [command, "--", flag, str(victim)]
+    else:
+        argv = [command, "--", flag, str(victim)]
+    assert A.main(argv) == 2
+    assert victim.read_text(encoding="utf-8") == "must-not-touch"
+
+
+def test_long_option_abbreviation_is_not_accepted_or_treated_as_output(tmp_path):
+    """--summ 不再由 argparse 自动认作 --summary，清理器不会误认另一套语法。"""
+    important = tmp_path / "non-output.json"
+    important.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+    assert A.main(["run", "--summ", str(important), "--repeat", "10.5"]) == 2
+    assert json.loads(important.read_text(encoding="utf-8"))["status"] == "ok"
+    assert A._option_path(["--", "--out", str(important)], "--out") is None
