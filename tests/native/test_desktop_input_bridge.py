@@ -391,3 +391,31 @@ def test_an_unencodable_answer_is_rejected_without_claiming_the_pending(tmp_path
     session.answer_input(p["request_id"], text="fine")  # 同一问还能答
     dk.finish(session)
     assert dk.read_json(tmp_path / "work" / "a.json") == "fine"
+
+
+def test_a_question_arriving_during_the_terminal_transition_is_dropped(tmp_path, monkeypatch):
+    """提问的「状态检查」与「装 pending」是一步:终态转换夹在它们之间时,提问必须被丢弃,不能在已结束的会话上
+    复活一个答不了的框(Codex #1022 r4267749679)。时序用 `time.time` 钩子在检查与装载之间同步触发终态——不靠 sleep。"""
+    session = nativesession.NativeSession(
+        session_id="race-1", descriptor={"native_id": "n", "out_dir": str(tmp_path), "metadata": {}}
+    )
+    session.owned = object()  # 桌面拥有(鸭子类型,本用例不碰它)
+    session._set_state(nativesession.WAITING_FOR_FIGURE)  # noqa: SLF001
+    events = []
+    session._on_change = lambda s, entry: events.append(dict(entry))  # noqa: SLF001
+    real_time = nativesession.time.time
+    fired = []
+
+    def hooked():
+        if not fired:  # 只在提问处理里触发一次:进终态(取消 / 断线都走这里)
+            fired.append(1)
+            session._set_state(nativesession.ENDED)  # noqa: SLF001
+        return real_time()
+
+    monkeypatch.setattr(nativesession.time, "time", hooked)
+    session._on_input_request({"request_id": "in-1-1", "kind": "input", "prompt": "q? "})  # noqa: SLF001
+    monkeypatch.setattr(nativesession.time, "time", real_time)
+    assert fired, "钩子没触发,用例没有量到想量的窗口"
+    assert session.state == nativesession.ENDED
+    assert session.pending_input is None
+    assert not [e for e in events if e.get("input") == "requested"]

@@ -1343,7 +1343,7 @@ function EmbeddedInput({ requestId, answer }: { requestId: string; answer: Scrip
           <span data-script-input-suggestion="">{suggestionText(head, suggestion)}</span>
         ) : secret ? (
           pt('card.secretNote')
-        ) : (
+        ) : head.native ? null : (
           pt('card.rememberNote')
         )}
       </p>

@@ -438,3 +438,31 @@ def test_rerun_only_cancels_older_plans_never_newer_ones(tmp_path):
     assert preparation.SERVICE.get(first.plan_id, "pj-age")[1].status == (
         preparation.STATUS_CANCELLED
     )
+
+
+def test_partial_route_conflict_rejects_the_whole_build_and_binds_nothing(tmp_path, monkeypatch):
+    """多图时只有一张冲突:`/build` 与 runner 一样「冲突即整体失败」——不物化、不回任何描述符、也不绑任何路由
+    (Codex #1022 r4267749664)。"""
+    from tavotto import app as m
+    from tavotto.engine import runtimeasset
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path / "data"))
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    holder = dk.desktopproc.start(dk.launch_for(tmp_path, SCRIPT, name="fig.py", launch_id="h1"))
+    nativekit.wait_state(holder, [nativesession.BARRIER])
+    holder.ensure_built()
+    assert nativesession.REGISTRY.bind_assets(holder) == []  # 占着 `fig`
+    holder.spec = None
+    nativesession.REGISTRY._starting.clear()  # noqa: SLF001
+    two = SCRIPT + "fig2, ax2 = plt.subplots()\n"  # stems: fig + fig-2
+    second = dk.desktopproc.start(dk.launch_for(tmp_path, two, name="fig.py", launch_id="s1"))
+    nativekit.wait_state(second, [nativesession.BARRIER])
+    m.app.config["TESTING"] = True
+    body = m.app.test_client().post(f"/api/native/sessions/{second.session_id}/build").get_json()
+    assert body["conflicts"]["stems"] == ["fig"]
+    assert body["descriptors"] == [] and body["stems"] == {}
+    assert runtimeasset.load_metadata(str(proj), "runtime:fig.py#fig-2") is None
+    assert nativesession.REGISTRY.route_for(str(proj), "fig.py", "fig-2") is None
+    assert nativesession.REGISTRY.route_for(str(proj), "fig.py", "fig") is holder
