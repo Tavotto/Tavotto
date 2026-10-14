@@ -2612,7 +2612,8 @@ class TestShareDropsAreAccounted:
         proj.mkdir()
         names = []
         for i in range(4):
-            (proj / f"s{i}.py").write_text(f"# script {i}\n" + "x = 1\n" * 300, encoding="utf-8")
+            # 按字节写：Windows 上 write_text 会写成 CRLF，读入时规范成 LF，原始字节数就对不上
+            (proj / f"s{i}.py").write_bytes((f"# script {i}\n" + "x = 1\n" * 300).encode())
             names.append(f"s{i}.py")
         monkeypatch.setitem(diagdetail.SHARE, "source", 4000)  # 放得下约两份
         opts = diagdetail.DetailOptions(source=True)
