@@ -526,6 +526,28 @@ describe('项目代次（Codex #923 P1）：对话框开着时项目被换掉，
     expect(startMock.mock.calls.map((c) => c[0])).toEqual(['pid-new'])
   })
 
+  it('延迟的备包绑定调度时的项目（#1012 7）：载荷还在采集时切了项目，旧项目的备包请求被丢弃，之后的备包只属于新项目', async () => {
+    setCurrentProjectId('A')
+    prepareMock.mockResolvedValue({ ...PREPARED, id: 'pid-B' })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    // 同步渲染：effect 已跑、buildSendPayload 的 promise 还没落地，此刻项目换了
+    act(() => {
+      root.render(
+        <TooltipProvider>
+          <DiagnosticsSendDialog open onOpenChange={() => {}} capability={CAP} />
+        </TooltipProvider>,
+      )
+    })
+    setCurrentProjectId('B')
+    await act(async () => {})
+    await act(async () => {})
+    expect(prepareMock.mock.calls.length).toBeGreaterThan(0)
+    expect(prepareMock.mock.calls.map((c) => c[2])).not.toContain('A')
+    expect(prepareMock.mock.calls.every((c) => c[2] === 'B')).toBe(true)
+  })
+
   it('真实的切换顺序：先认领新 pj、之后才换代（switching 期间）——这期间不备包，换代完成后备的包只含 B 的轨迹', async () => {
     // 与 projectStore.adoptSteps 同一个顺序：switching 亮 → setCurrentProjectId(B) → （await 加载）→ 清轨迹等换代 → switching 灭
     setCurrentProjectId('A')

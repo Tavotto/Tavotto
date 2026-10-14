@@ -5002,28 +5002,35 @@ export interface DiagSendStatus {
 
 export const fetchDiagSendCapability = () => jsonFetch<DiagSendCapability>('/api/diagnostics/send')
 
-let lastPrepareSeq = 0
-/** 单调的备包序号（毫秒时间戳起步，页面重载后仍大于上一页的）：引擎只认最新的，晚到的旧请求回 409 `diag_stale_prepare`。 */
-const nextPrepareSeq = () => (lastPrepareSeq = Math.max(Date.now(), lastPrepareSeq + 1))
+/** 备包序号由引擎发放（单调计数、不看墙钟）：引擎只认最新的，晚到的旧请求回 409 `diag_stale_prepare`。 */
+const fetchDiagSendSeq = (pj?: string | null) =>
+  jsonFetch<{ seq: number }>('/api/diagnostics/send/seq', { method: 'POST' }, pj)
 /** 备包被更新的请求取代（引擎 409 `stale_prepare`）：不是失败，静默忽略。 */
 export const isStalePrepare = (e: unknown) =>
   e instanceof ApiError && e.status === 409 && e.body?.code === 'diag_stale_prepare'
 
 /** 在本机备好一份包（零网络）。载荷与导出诊断包相同。 */
-export const prepareDiagSend = (
+export const prepareDiagSend = async (
   payload: unknown,
   options?: { source?: boolean; crash_reports?: boolean; corrupt_sessions?: boolean },
+  /** 显式的项目：备包绑定调用方当时采载荷的那个项目，不跟着全局当前项目走 */
+  pj?: string | null,
 ) => {
   // 勾选项同时走查询串：载荷超过引擎的请求体上限会被整份丢弃，勾选项不能跟着消失（引擎以查询串为准）
   const picked = Object.entries(options ?? {})
     .filter(([, v]) => v === true)
     .map(([k]) => k)
-  const q = `?seq=${nextPrepareSeq()}${options ? `&options=${picked.join(',')}` : ''}`
-  return jsonFetch<DiagSendPrepared>(`/api/diagnostics/send/prepare${q}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  const { seq } = await fetchDiagSendSeq(pj)
+  const q = `?seq=${seq}${options ? `&options=${picked.join(',')}` : ''}`
+  return jsonFetch<DiagSendPrepared>(
+    `/api/diagnostics/send/prepare${q}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    pj,
+  )
 }
 
 /** 用户要保存的**同一份字节**（就是点发送时会上传的那份）。 */

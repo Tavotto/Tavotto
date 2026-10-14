@@ -3072,6 +3072,14 @@ def api_diagnostics_send_capability():
     return _diag_send_json(engine_diagsend.capability())
 
 
+@app.post("/api/diagnostics/send/seq")
+def api_diagnostics_send_seq():
+    """发一个备包序号（引擎单调计数，不依赖墙钟）。本机、不联网；备包请求带着它来排先后。"""
+    if not engine_diagsend.enabled():
+        return _diag_send_error(engine_diagsend.SendError("send_disabled", 404))
+    return _diag_send_json({"seq": engine_diagsend.issue_prepare_seq(_diag_send_scope())})
+
+
 @app.post("/api/diagnostics/send/prepare")
 def api_diagnostics_send_prepare():
     """在本机备好一份诊断包并交出「会发送什么」。**零网络**：用户看过、点了发送之前不会有任何远程请求。
