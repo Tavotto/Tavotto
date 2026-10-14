@@ -730,7 +730,7 @@ MATRIX_KEYS = [
     "accessKey", "cookie", "signature", "credentials", "bearer", "authToken", "api-token",
     "TOKEN", "Password", "AUTH_TOKEN", "secret_key", "key",
     "pw", "pin", "otp", "dsn", "mnemonic", "seed_phrase", "connection_string", "database_url",
-    "user_pw", "db-pin", "OTP_CODE", "密码",
+    "user_pw", "db-pin", "OTP_CODE", "密码", "pass", "DB_PASS", "smtpPass", "redis-pass",
 ]  # fmt: skip
 MATRIX_VALUES = {
     "bare": SECRET,
@@ -1245,11 +1245,15 @@ class TestUnicodeSeparatorsAndShortKeywords:
         s = diagdetail.Scrubber()
         innocent = (
             "pine=1 pinyin: hello spin=3 mapping: foo happin=5 pins: ok opting: x dsnap=1 pwned: no"
+            " compass=1 bypass: x passenger=2 passes: ok passed=3"
         )
         assert s.text(innocent) == innocent
         assert not diagdetail.is_secret_key("pine") and not diagdetail.is_secret_key("pinyin")
         assert diagdetail.is_secret_key("pw") and diagdetail.is_secret_key("userPin")
         assert diagdetail.is_secret_key("DB_DSN") and diagdetail.is_secret_key("database_url")
+        assert diagdetail.is_secret_key("DB_PASS") and diagdetail.is_secret_key("smtpPass")
+        assert not diagdetail.is_secret_key("compass") and not diagdetail.is_secret_key("bypass")
+        assert not diagdetail.is_secret_key("pass_count")
         out = s.obj({"pine": "keep", "pw": "S", "db-pin": "S", "密码": "S"})
         assert out == {
             "pine": "keep",
@@ -3863,3 +3867,33 @@ class TestYamlCommentOnlyAndIndicatorComments:
         assert any("sib: ok" in t for t in texts.values()), "日志没进包：用例是空的"
         for name, text in texts.items():
             assert "REAL_SECRET" not in text, name
+
+
+class TestPassKeysInTheFinalZip:
+    """`DB_PASS` / `SMTP_PASS` / `REDIS_PASS` 这类 `*_PASS` 键：默认收集的日志、对象里都要抹，最终 ZIP 0 命中。"""
+
+    def test_object_values_are_redacted(self):
+        out = diagdetail.Scrubber().obj(
+            {"DB_PASS": "PASS_CANARY_1", "smtpPass": "PASS_CANARY_2", "compass": "N"}
+        )
+        assert out == {"DB_PASS": "<redacted>", "smtpPass": "<redacted>", "compass": "N"}
+
+    def test_final_zip_has_no_hits(self, client, world):
+        log = world["tmp"] / "pass.log"
+        log.write_text(
+            "DB_PASS=TAVOTTO_DB_PASS_CANARY_7f3b\nSMTP_PASS: PASS_CANARY_8\n"
+            'cfg {"REDIS_PASS": "PASS_CANARY_9"}\ncompass=keep_me\n',
+            encoding="utf-8",
+        )
+        import tavotto.engine.diagnostics as dg
+
+        orig = dg._app_log_path
+        dg._app_log_path = lambda: log
+        try:
+            _prep, z = _prepare(client)
+        finally:
+            dg._app_log_path = orig
+        texts = _texts(z)
+        assert any("compass=keep_me" in t for t in texts.values()), "日志没进包：用例是空的"
+        for name, text in texts.items():
+            assert "CANARY" not in text, name

@@ -540,7 +540,7 @@ def _redact_userinfo(text: str) -> str:
 #: 结构化数据里这些键名（子串）的值整体换掉。`diagnostics._SECRET_KEYS` 的超集
 #: 结构化数据里的秘密键名判据：键名**去掉所有非字母数字、转小写**之后包含这些词（`API-KEY`、`apiKey`、`x-api-key`、
 #: `Session_Token` 都归一成同一个形状）。与文本侧 `_SECRET_WORDS` 是同一张词表的两种写法，`TestSecretShapeMatrix` 逐键对拍。
-_SHORT_SECRET_TOKENS = frozenset({"pw", "pwd", "pin", "otp", "dsn"})
+_SHORT_SECRET_TOKENS = frozenset({"pw", "pwd", "pass", "pin", "otp", "dsn"})
 _SECRET_KEY_PARTS = (
     "mnemonic",
     "seedphrase",
@@ -603,7 +603,7 @@ def is_secret_key(key: object) -> bool:
         t.lower() in _SHORT_SECRET_TOKENS
         for t in re.split(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])", raw)
     ):
-        return True  # 短词只认整词（`pw` / `db_pin` / `userPin`），`pine` / `pinyin` 不算
+        return True  # 短词只认整词（`pw` / `db_pin` / `userPin` / `DB_PASS`），`pine` / `pinyin` / `compass` 不算
     n = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", raw.lower())
     return n == "key" or bool(_AUTH_KEY.search(n)) or any(p in n for p in _SECRET_KEY_PARTS)
 
