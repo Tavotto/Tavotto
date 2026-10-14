@@ -1860,6 +1860,22 @@ class SessionService:
         )
         sess.ledger.record(nplan.plan_id, key, cause=code)
         self._prep.register(nplan, project_epoch=attempt.epoch)
+        if sess.cancel_requested or self._prep.superseded(
+            attempt.attempt_id, ignoring={nplan.plan_id}
+        ):
+            # 上面的复核到这次登记之间，另一个窗口登记了更新的重跑：回退计划拿到的序号比它大，native runner 启动时会
+            # 把它当「更早」的结束掉（Codex #1028 r4273826766）。登记之后再核一次身份：登记在前的更新重跑这里一定看得见，
+            # 登记在后的由它自己的 `cancel_project(keep=)` 取消本回退计划
+            self._prep.cancel(nplan.plan_id, sess.project_id)
+            sess.ledger.discard(nplan.plan_id)
+            self._decline(
+                sess,
+                attempt,
+                execpolicy.REASON_CANCELLED
+                if sess.cancel_requested
+                else execpolicy.REASON_SUPERSEDED,
+            )
+            return
         sess.attempts.append(second)
         done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
         found = self._prep.get(nplan.plan_id, sess.project_id)
