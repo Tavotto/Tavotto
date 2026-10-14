@@ -710,25 +710,37 @@ class Scrubber:
             text = self._user.sub("<user>", text)
         return text
 
+    def _key(self, k, taken: dict):
+        """字典的**键**也是写出去的文本：`{"https://alice:REAL@proxy": true}`、`{"api_key=REAL": true}`。字符串键过 `text()`
+        （userinfo / KV / PEM / 令牌前缀 / 家目录 / 用户名）；清理后和已有键撞了就追加 `#2`、`#3`…，不丢条目。"""
+        if not isinstance(k, str):
+            return k
+        ck = self.text(k)
+        if ck not in taken:
+            return ck
+        n = 2
+        while f"{ck}#{n}" in taken:
+            n += 1
+        return f"{ck}#{n}"
+
     def obj(self, obj):
         """JSON 可序列化的结构：秘密键名下的值**不论类型**整体换掉（str / 数 / dict / list / 嵌套容器；
         只有全是数字·布尔·null 的容器按文本侧同一判据保留），其余字符串过 `text`。"""
         if isinstance(obj, dict):
             out = {}
             for k, v in obj.items():
-                if is_secret_key(k):
+                if is_secret_key(k):  # 分类用**原始键**
                     if isinstance(v, (dict, list)):
-                        out[k] = (
-                            v if _containers_are_boring(json.dumps(v, default=str)) else _REDACTED
-                        )
+                        nv = v if _containers_are_boring(json.dumps(v, default=str)) else _REDACTED
                     elif v is None or isinstance(v, bool) or v == "":
-                        out[k] = v
+                        nv = v
                     elif isinstance(v, str) and _BORING_VALUE.match(v):
-                        out[k] = v  # 已有占位符 / true / null / `...`
+                        nv = v  # 已有占位符 / true / null / `...`
                     else:
-                        out[k] = _REDACTED  # 数字也抹
+                        nv = _REDACTED  # 数字也抹
                 else:
-                    out[k] = self.obj(v)
+                    nv = self.obj(v)
+                out[self._key(k, out)] = nv
             return out
         if isinstance(obj, list):
             return [self.obj(v) for v in obj]

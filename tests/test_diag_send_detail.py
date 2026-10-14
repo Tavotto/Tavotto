@@ -3436,3 +3436,63 @@ class TestLineEndingsAreNormalisedAtTheEntrance:
             src, "a.py", diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
         )
         assert not re.search(r"S\dreal", out) and "keep = 1" in out
+
+
+class TestSecretsInDictKeys:
+    """结构化数据的**键**也会被写出去：键过 `text()`，分类用原始键，撞键加 `#n`。"""
+
+    KEYS = [
+        "https://alice:KEYSECRETxyz@proxy.example/x",
+        "api_key=KEYSECRETxyz",
+        "-----BEGIN PRIVATE KEY-----\nKEYSECRETxyz\n-----END PRIVATE KEY-----",
+        "ghp_" + "KEYSECRETxyz" * 3,
+        "github_pat_" + "KEYSECRETxyz" * 3,
+        "AKIAKEYSECRETXYZ1234",
+        "Authorization: Bearer KEYSECRETxyz1234",
+        "password: KEYSECRETxyz",
+    ]
+
+    @pytest.mark.parametrize("key", KEYS)
+    def test_secret_in_a_key_at_every_nesting(self, key):
+        s = diagdetail.Scrubber()
+        for doc in (
+            {key: True},
+            {"outer": {key: 1}},
+            {"outer": [{key: "v"}, {"x": {key: None}}]},
+            [{key: [1, 2]}],
+        ):
+            assert "KEYSECRETxyz" not in json.dumps(s.obj(doc)), (key, doc)
+            assert "KEYSECRETxyz" not in s.json_or_text(json.dumps(doc))
+
+    def test_home_and_user_in_keys_are_scrubbed(self):
+        s = diagdetail.Scrubber()
+        home = os.path.expanduser("~")
+        out = s.obj({f"{home}/proj/a.py": 1})
+        assert home not in json.dumps(out)
+
+    def test_colliding_cleaned_keys_keep_every_entry(self):
+        s = diagdetail.Scrubber()
+        out = s.obj(
+            {
+                "https://u1:AAAA1111@h/x": 1,
+                "https://u2:BBBB2222@h/x": 2,
+                "https://u3:CCCC3333@h/x": 3,
+            }
+        )
+        assert sorted(out.values()) == [1, 2, 3] and len(out) == 3
+        assert (
+            len(set(out)) == 3
+            and any(k.endswith("#2") for k in out)
+            and any(k.endswith("#3") for k in out)
+        )
+        assert "AAAA1111" not in json.dumps(out)
+
+    def test_classification_uses_the_original_key(self):
+        s = diagdetail.Scrubber()
+        out = s.obj({"api_key=x": "VALUE_SECRET_9", "plain": "ok"})
+        assert "VALUE_SECRET_9" not in json.dumps(out) and out["plain"] == "ok"
+
+    def test_ordinary_keys_are_untouched(self):
+        s = diagdetail.Scrubber()
+        doc = {"name": 1, "项目/图1.py": 2, 3: 4, "max_tokens": 5}
+        assert s.obj(doc) == doc
