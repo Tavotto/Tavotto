@@ -119,37 +119,51 @@ jobs:
           # workflow 初次出现在 PR 分支时默认分支可能还没有它；这属于 no-baseline，
           # 不因为查询无结果便假装“回归对比通过”。
           ids="$(gh run list --workflow performance-agent.yml --branch main --status success --limit 8 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
+          RESULT="web/test-results/perf-agent/comparison.json"
+          had_baseline=0
           for id in $ids; do
-            if [[ "$id" == "${{ github.run_id }}" ]]; then
+            target="$RUNNER_TEMP/tavotto-perf-baseline-$id"
+            if ! gh run download "$id" --repo "$GH_REPO" --name "tavotto-performance-agent-$id" --dir "$target" >/dev/null 2>&1; then
               continue
             fi
-            target="$RUNNER_TEMP/tavotto-perf-baseline-$id"
-            if gh run download "$id" --repo "$GH_REPO" --name "tavotto-performance-agent-$id" --dir "$target" >/dev/null 2>&1; then
-              if [[ -f "$target/test-results/perf-agent/run.json" ]]; then
-                BASE="$target/test-results/perf-agent/run.json"
-                echo "Historical main run: $id" >> "$GITHUB_STEP_SUMMARY"
-                break
-              fi
+            candidate="$target/test-results/perf-agent/run.json"
+            if [[ ! -f "$candidate" ]]; then
+              continue
             fi
-          done
-          if [[ -z "$BASE" ]]; then
-            echo "Baseline: no successful main artifact yet (record-only, NOT regression PASS)." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          RESULT="web/test-results/perf-agent/comparison.json"
-          if ! python scripts/perf_agent.py compare "$CURRENT" "$BASE" --json "$RESULT"; then
+            had_baseline=1
+            rm -f "$RESULT"
+            # --compare 对不同 CPU / OS / 浏览器返回 incomparable (rc 3)。
+            # 不能在第一份不兼容的 main 历史报告就停止搜索。
+            python scripts/perf_agent.py compare "$CURRENT" "$candidate" --json "$RESULT" || :
             if [[ ! -f "$RESULT" ]]; then
-              echo "::error::Comparison failed without a machine-readable verdict"
+              echo "::error::Downloaded baseline was not analyzable"
               exit 1
             fi
+            verdict="$(python -c 'import json; print(json.load(open("web/test-results/perf-agent/comparison.json", encoding="utf-8"))["status"])')"
+            if [[ "$verdict" == "incomparable" ]]; then
+              continue
+            fi
+            if [[ "$verdict" != "pass" && "$verdict" != "regression" ]]; then
+              echo "::error::Unexpected baseline verdict"
+              exit 1
+            fi
+            BASE="$candidate"
+            echo "Compatible historical main run: $id" >> "$GITHUB_STEP_SUMMARY"
+            break
+          done
+          if [[ -z "$BASE" ]]; then
+            if [[ "$had_baseline" -eq 1 ]]; then
+              echo "Baseline: recent main artifacts exist, but none are comparable (NOT regression PASS)." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Baseline: no successful main artifact yet (record-only, NOT regression PASS)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
           fi
-          verdict="$(python -c 'import json; print(json.load(open("web/test-results/perf-agent/comparison.json", encoding="utf-8"))["status"])')"
           echo "Baseline verdict: **$verdict** (advisory: ephemeral shared runner)" >> "$GITHUB_STEP_SUMMARY"
           case "$verdict" in
             pass) echo "Comparable baseline found; no defined regression detected." ;;
             regression) echo "::warning::Potential interaction latency regression; see comparison.json" ;;
-            incomparable) echo "::notice::Environment or sample coverage differs; do not compare these results" ;;
-            *) echo "::error::Unknown comparison verdict"; exit 1 ;;
+            *) echo "::error::Unexpected comparison verdict"; exit 1 ;;
           esac
       - name: Upload numeric results and failure traces
         if: always()
