@@ -1714,7 +1714,10 @@ class TestPlaywrightShards:
         )
         e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", code)
         assert len(e2e) == 1, e2e
-        assert _project_flags(e2e[0], "posix-e2e") == {"chromium", "chromium-en"}
+        # _project_flags 只解析 --project 参数；先分离 --shard，避免把 matrix 表达式当作 project。
+        project_args, shard_args = e2e[0].split(" --shard=", 1)
+        assert _project_flags(project_args, "posix-e2e") == {"chromium", "chromium-en"}
+        assert shard_args.strip() == "${{ matrix.shard }}/3"
         assert "--shard=${{ matrix.shard }}/3" in e2e[0]
         assert "playwright test --list --reporter=json" in code
         assert "--expected-list" in code and "e2e-planned.json" in code
