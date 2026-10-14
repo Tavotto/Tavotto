@@ -309,11 +309,13 @@ def _scenario(id_: str, scenes, title, failure, strategy, ideal_exec, ideal_max,
 
 
 # main 上 safe 里 savefig 衍生的 FileNotFoundError：被当成普通 script_error（audit-D G1：误归因）
+# #1024（V2 PR3a）之后：savefig 衍生的 FileNotFoundError 由 BlockedFileOps 正确归因为守卫（不再是普通 script_error）；
+# 静默回退（V2 PR1）接通前理想仍未达成，所以仍登记为基线。
 _BLOCKED_AS_PLAIN_ERROR = {
     "final_phase": "action_required",
     "outcome_kind": "failed",
     "failed_figures": [],
-    "problem_codes": ["script_error"],
+    "problem_codes": ["safe_file_operation_blocked"],
     "error_type": "FileNotFoundError",
     "exec_count": 1,
     "figures_valid": 0,
@@ -413,7 +415,8 @@ _add(
             "final_phase": "action_required",
             "outcome_kind": "failed",
             "failed_figures": [],
-            "problem_codes": ["script_exited"],
+            # #1024 之后：落空的 savefig 目标探测决定了退出分支 -> 归因为守卫
+            "problem_codes": ["safe_file_operation_blocked"],
             "error_type": "SystemExit",
             "exec_count": 1,
             "figures_valid": 0,
