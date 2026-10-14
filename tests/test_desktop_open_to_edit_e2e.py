@@ -17,6 +17,7 @@ import os
 import time
 from pathlib import Path
 
+import pymupdf
 import pytest
 
 from support import foundation_app as fa, nativekit
@@ -217,6 +218,37 @@ def test_open_native_run_input_edit_export_and_cancel(project):
         assert any(f["prop"] == "fontsize" and f["value"] == 22 for f in etitle["editable"])
         assert (out / "compute.log").read_text() == "x", "编辑不应触发脚本再次执行"
 
+        # ---- 真实导出：独立读 PDF——标题是用户答的名字，字号是改后的 22pt（不是脚本原样的 12pt）
+        _, exported = app.call(
+            "/api/export",
+            {
+                "scope": "original",
+                "filename": "p07_edited",
+                "formats": ["pdf"],
+                "overwrite": "replace",
+                "original": {
+                    "figure_id": asset_id,
+                    "overrides": [{"gid": title["gid"], "prop": "fontsize", "value": 22}],
+                    "source_kind": "figure",
+                    "w_mm": 76.2,
+                    "h_mm": 50.8,
+                },
+            },
+            timeout=300,
+        )
+        assert exported["status"] == "done", exported
+        (pdf_out,) = [o for o in exported["outputs"] if o["format"] == "pdf"]
+        with pymupdf.open(Path(exported["export_dir"]) / pdf_out["name"]) as doc:
+            spans = [
+                sp
+                for block in doc[0].get_text("dict")["blocks"]
+                for line in block.get("lines", [])
+                for sp in line["spans"]
+                if "hello Ada" in sp["text"]
+            ]
+        assert spans and round(spans[0]["size"], 1) == 22.0, spans
+        assert (out / "compute.log").read_text() == "x", "导出不应触发脚本再次执行"
+
         # ---- 桌面保留的真文件语义：脚本自己 savefig 写的 PNG 是真文件；native 路径不开放原产物写回（AC-23）
         stage = out / "stage.png"
         before_bytes = stage.read_bytes()
@@ -258,10 +290,27 @@ def test_closing_the_project_terminates_the_owned_process(project):
         _wait(lambda: not _alive(pid), "关项目后进程退出", 30)
 
 
-def test_cancelling_the_preparation_session_while_waiting_for_input_kills_the_process(project):
-    """准备会话的取消（脚本还停在提问上、没到屏障）也是真终止，且准备会话落 `cancelled`。"""
-    proj, out, work = project
-    with fa.running_app(proj, work, env_overrides=ENV) as app:
+def test_cancelling_the_preparation_session_while_waiting_for_input_kills_the_process(tmp_path):
+    """准备会话的取消（脚本还停在提问上、没到屏障）也是真终止，且准备会话落 `cancelled`。
+
+    脚本故意吞掉 EOF 后继续睡：若取消只是「放手」（断开控制通道，`force_kill` 的语义），`input()` 会拿到 EOF、
+    脚本照样活着——只有真终止（`cancel_owned`）能让这个进程消失。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    (proj / "fig.py").write_text(
+        "import time\n"
+        f"open({str(out / 'started.txt')!r}, 'w').write('1')\n"
+        "try:\n"
+        "    input('go? ')\n"
+        "except EOFError:\n"
+        "    pass\n"
+        "time.sleep(600)  # 放手不会让它停下，真终止才会\n"
+        f"open({str(out / 'after.txt')!r}, 'w').write('ran')\n",
+        encoding="utf-8",
+    )
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         sid = _start(app, proj)
         s = _pending(app, proj)
         pid = s["process_pid"]
@@ -275,7 +324,7 @@ def test_cancelling_the_preparation_session_while_waiting_for_input_kills_the_pr
         assert status == 200
         _wait(lambda: not _alive(pid), "取消后进程退出", 30)
         assert _settled(app, sid)["phase"] == "cancelled"
-        assert not (out / "observed.json").exists(), "取消后脚本不应继续往下跑"
+        assert not (out / "after.txt").exists(), "取消后脚本不应继续往下跑"
 
 
 def test_safe_default_is_unchanged_when_execution_is_omitted(project):

@@ -35,7 +35,7 @@ runner 发 `input_request` 事件（`request_id` / `kind` / `prompt` / `ordinal`
 ### 二、Pending 是会话的后端事实，不属于任何窗口
 
 `NativeSession.pending_input`（`request_id` / `kind` / `prompt` / `masked` / `ordinal` / `at`）。`masked` 由 `kind == getpass` 推出，不信对端自报。
-出现 / 被答 / 被清都推一次会话事件（序号 +1；**事件里没有提示词也没有答案**）；`public_state()["pending_input"]` 让任何窗口重连后接回同一问。
+出现 / 被答 / 被清都推一次会话事件（序号 +1；事件日志条目里只有 `input` 与 `request_id` / `input_kind`，**没有提示词也没有答案**）；`public_state()["pending_input"]`（含提示词、不含答案）让任何窗口重连后接回同一问。
 
 `answer_input(request_id, text | eof)`：**先到先得**——认领（清 pending）在锁里一步完成，之后才发；第二个窗口、旧提问、没有提问、终端拥有的会话
 一律 `native_input_not_pending`（HTTP 409），不排队、不喂给之后的提问。答复超 4 MiB / 非文本是 `native_input_invalid`（脚本继续等）。
@@ -76,4 +76,6 @@ runner 发 `input_request` 事件（`request_id` / `kind` / `prompt` / `ordinal`
 * **成功答案的上下文记忆**（`scriptanswers`）与菜单 / 读取方式 / argv 变化失效：未接到 native 路径（本轮每个提问都问）。
 * **`reuse_last_success`（#982）**：依赖 P09 / #975，本轮不做。接口点：打开脚本动作发 `execution` 的那一处。
 * 缺依赖、凭据、外部软件的「一句话原因 + 一个动作」（AC-21）沿用 safe 路径的映射，native 的 `script_error` 暂以原文呈现。
+* 提问只支持主线程里的调用：runner 的控制通道只在主线程上使用（线程模型不变）；脚本在子线程里 `input()` 与屏障同时读同一条通道的边角未处理（残余）。
+* `sys.stdin.readlines()` / `for line in sys.stdin` 读到 EOF 才结束——界面上要点「没有输入」才会收尾，与终端里按 Ctrl-D 同义。
 * 无应答端 / 重连期间脚本已停在提问上：Pending 保留在后端（进程活着、租约持有），窗口回来即可答；窗口永远不来 = 脚本一直等，用户可取消（没有超时自动 EOF）。
