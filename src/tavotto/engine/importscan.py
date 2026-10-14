@@ -83,6 +83,16 @@ CONTEXTS = (
     CONTEXT_TYPE_CHECKING,
     CONTEXT_DYNAMIC,
 )
+# 实际外围按「有没有保护」合并：函数体只表示延后，不会撤销任一层的条件 / 可选 / 类型检查。
+# 与旧的公开 context 排序分开，后者的聚合与 needed 语义保持不动。
+_ENCLOSING_CONTEXTS = (
+    CONTEXT_UNCONDITIONAL,
+    CONTEXT_DEFERRED,
+    CONTEXT_DYNAMIC,
+    CONTEXT_CONDITIONAL,
+    CONTEXT_OPTIONAL,
+    CONTEXT_TYPE_CHECKING,
+)
 
 # ---- 来源（Import Origin Resolver；只加字段，bucket 语义不变） ---------------------------------
 ORIGIN_BUILTIN = "built-in"
@@ -276,9 +286,9 @@ class ImportUse:
     `names` 是 `from X import a, b` 的名字（`a` 可能是 `X` 的子模块也可能是属性——是哪个由磁盘定，
     不假定）；不进 `to_payload`（协议形状不变）。
 
-    `enclosing` 给非字面量与别名字面量的动态导入用：它所在位置的外围上下文（`optional` /
-    `conditional` / `type_checking` / `deferred` / `unconditional`）——`context` 对它恒为 `dynamic`，丢了外围；
-    依赖计划靠它区分「跑到这行才知道装什么」与「try/except ImportError 里、缺了脚本照样跑」。同样不进 `to_payload`。"""
+    `enclosing` 记录 named import 的实际外围保护，供别名字面量及其本地闭包判断相关性；普通 import 也保留它，
+    防止在到达别名之前丢掉外层条件。分类仅在有 dynamic 候选时消费这份内部上下文，公开 `context` / `needed` 不变。
+    非字面量动态导入照旧在 `ScanResult.dynamic` 内记录外围。同样不进 `to_payload`。"""
 
     module: str
     full: str
@@ -307,6 +317,7 @@ class RelativeImport:
     names: tuple[str, ...]
     context: str
     lineno: int
+    enclosing: str = ""  # 实际保护；公开 context 对函数体的旧优先级不适合沿别名闭包判断相关性。
 
 
 @dataclasses.dataclass(frozen=True)
@@ -521,6 +532,10 @@ def _is_sys_path(node: ast.AST, al: _Aliases) -> bool:
     )
 
 
+def _join_enclosing(*contexts: str) -> str:
+    return max(contexts, key=_ENCLOSING_CONTEXTS.index)
+
+
 class _Visitor(ast.NodeVisitor):
     """收集一份模块里的 import 及其上下文。"""
 
@@ -544,6 +559,9 @@ class _Visitor(ast.NodeVisitor):
         if CONTEXT_CONDITIONAL in self._stack:
             return CONTEXT_CONDITIONAL
         return CONTEXT_UNCONDITIONAL
+
+    def _enclosing(self) -> str:
+        return _join_enclosing(CONTEXT_UNCONDITIONAL, *self._stack)
 
     def _push(self, ctx: str, body):
         self._stack.append(ctx)
@@ -614,21 +632,43 @@ class _Visitor(ast.NodeVisitor):
         ctx = self._context()
         for alias in node.names:
             self.uses.append(
-                ImportUse(alias.name.split(".", 1)[0], alias.name, ctx, node.lineno, self.via)
+                ImportUse(
+                    alias.name.split(".", 1)[0],
+                    alias.name,
+                    ctx,
+                    node.lineno,
+                    self.via,
+                    enclosing=self._enclosing(),
+                )
             )
 
     def visit_ImportFrom(self, node):
         names = tuple(a.name for a in node.names)
         if node.level:  # 相对 import：包内的事，不是依赖——按包上下文解析、只为跟进
             self.relatives.append(
-                RelativeImport(node.level, node.module or "", names, self._context(), node.lineno)
+                RelativeImport(
+                    node.level,
+                    node.module or "",
+                    names,
+                    self._context(),
+                    node.lineno,
+                    enclosing=self._enclosing(),
+                )
             )
             return
         mod = node.module or ""
         if not mod:
             return
         self.uses.append(
-            ImportUse(mod.split(".", 1)[0], mod, self._context(), node.lineno, self.via, names)
+            ImportUse(
+                mod.split(".", 1)[0],
+                mod,
+                self._context(),
+                node.lineno,
+                self.via,
+                names,
+                enclosing=self._enclosing(),
+            )
         )
 
     def visit_Call(self, node):
@@ -647,7 +687,7 @@ class _Visitor(ast.NodeVisitor):
                         ctx,
                         node.lineno,
                         self.via,
-                        enclosing=self._context() if not canonical else "",
+                        enclosing=self._enclosing(),
                     )
                 )
             else:
@@ -1190,7 +1230,7 @@ class _Job:
     depth: int
     via: str  # 项目相对路径（脚本本身为空）
     pkg_dir: Path | None = None  # 是包的 `__init__` 时的包目录
-    enclosing: str = ""  # 别名导入的实际外围，与保留 dynamic 候选语义的 ctx 分开传递。
+    enclosing: str = ""  # 实际外围保护；独立于公开的 ctx 排序。
 
 
 class _Scanner:
@@ -1569,7 +1609,7 @@ class _Scanner:
             else:
                 merged = max((job.ctx, su.context), key=CONTEXTS.index)
                 enclosing = (
-                    max((job.enclosing or job.ctx, su.enclosing or su.context), key=CONTEXTS.index)
+                    _join_enclosing(job.enclosing or job.ctx, su.enclosing or su.context)
                     if job.enclosing or su.enclosing
                     else ""
                 )
@@ -1646,7 +1686,7 @@ class _Scanner:
             base = base[: len(base) - drop]
         parts = base + (rel.module.split(".") if rel.module else [])
         top = self.find_top(parts[0], job.path.parent)
-        self.follow_chain(parts, rel.names, ctx, top, job)
+        self.follow_chain(parts, rel.names, ctx, top, job, enclosing=rel.enclosing)
 
     def follow_chain(
         self,
@@ -1679,7 +1719,7 @@ class _Scanner:
                     chain.append((f"{'.'.join(parts)}.{n}", sub))
         merged = max((job.ctx, ctx), key=CONTEXTS.index)
         enclosing = (
-            max((job.enclosing or job.ctx, enclosing or ctx), key=CONTEXTS.index)
+            _join_enclosing(job.enclosing or job.ctx, enclosing or ctx)
             if job.enclosing or enclosing
             else ""
         )
@@ -1808,7 +1848,7 @@ class _Scanner:
         via = tuple(sorted({u.via for u in group if u.via}))
         top = self.origins.get(name) or self.find_top(name, None)
         base = {"module": name, "context": context, "lines": lines, "via": via}
-        if any(u.enclosing for u in group):
+        if any(u.context == CONTEXT_DYNAMIC and u.enclosing for u in group):
             base["enclosing_contexts"] = tuple(
                 sorted({u.enclosing or u.context for u in group}, key=CONTEXTS.index)
             )

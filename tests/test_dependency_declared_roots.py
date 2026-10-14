@@ -484,6 +484,94 @@ class TestLiteralAliasContexts:
         assert bool([b for b in plan.blocked if b["code"] == depplan.BLOCK_CONFLICT]) is binding
 
 
+def _guarded(context: str, body: str) -> str:
+    if context == "unconditional":
+        return body
+    if context == "optional":
+        return "try:\n" + textwrap.indent(body, "    ") + "except ImportError:\n    pass\n"
+    if context == "type_checking":
+        head = "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n"
+    elif context == "deferred":
+        head = "def run():\n"
+    else:
+        head = "if flag:\n"
+    return head + textwrap.indent(body, "    ")
+
+
+class TestNestedLiteralAliasContexts:
+    """#1015 P2：条件 / 可选 / 类型检查的保护不会被内层或外层函数体覆盖。"""
+
+    @pytest.mark.parametrize("outer", _ALIAS_CONTEXTS)
+    @pytest.mark.parametrize("inner", _ALIAS_CONTEXTS)
+    @pytest.mark.parametrize(
+        "route",
+        [
+            "direct",
+            "local_alias",
+            "alias_local",
+            "alias_relative",
+            "nested_relative",
+            "nested_helper",
+            "nested_from",
+            "nested_entry",
+        ],
+    )
+    def test_nonbinding_guards_survive_every_literal_alias_route(
+        self, tmp_path, outer, inner, route
+    ):
+        alias = "import importlib as il\n"
+        call = 'il.import_module("auditlate")\n'
+        ordinary = "import auditlate\nprint(auditlate.VALUE)\n"
+        if route == "direct":
+            script, files = alias + _guarded(outer, _guarded(inner, call)), {}
+        elif route == "local_alias":
+            script = _guarded(outer, "import helper\n")
+            files = {"helper.py": alias + _guarded(inner, call)}
+        elif route == "alias_local":
+            script = alias + _guarded(outer, 'il.import_module("helper")\n')
+            files = {"helper.py": _guarded(inner, ordinary)}
+        elif route == "alias_relative":
+            script = alias + _guarded(outer, 'il.import_module("helper")\n')
+            files = {
+                "helper/__init__.py": _guarded(inner, "from . import child\n"),
+                "helper/child.py": ordinary,
+            }
+        elif route == "nested_relative":
+            script = alias + 'il.import_module("helper")\n'
+            files = {
+                "helper/__init__.py": _guarded(outer, _guarded(inner, "from . import child\n")),
+                "helper/child.py": ordinary,
+            }
+        elif route == "nested_from":
+            script = alias + 'il.import_module("helper")\n'
+            files = {
+                "helper.py": _guarded(
+                    outer, _guarded(inner, "from auditlate import VALUE\nprint(VALUE)\n")
+                )
+            }
+        elif route == "nested_helper":
+            script = alias + 'il.import_module("helper")\n'
+            files = {"helper.py": _guarded(outer, _guarded(inner, ordinary))}
+        else:
+            script = _guarded(outer, _guarded(inner, "import helper\n"))
+            files = {"helper.py": alias + call}
+        proj = _project(tmp_path, script, "auditlate==1.0\n", **files)
+        binding = all(ctx in {"unconditional", "deferred"} for ctx in (outer, inner))
+        plan = _plan(proj)
+        assert plan.status == (depplan.STATUS_READY if binding else depplan.STATUS_NOTHING_NEEDED)
+        assert plan.requirements == (("auditlate==1.0",) if binding else ())
+        assert plan.declared_gaps[0]["relevant"] is binding
+
+    @pytest.mark.parametrize("call", ["import numpy", 'importlib.import_module("numpy")'])
+    def test_ordinary_import_public_context_and_needed_are_unchanged(self, tmp_path, call):
+        script = "import importlib\n" + _guarded("conditional", _guarded("deferred", call + "\n"))
+        proj = _project(tmp_path, script)
+        scan = importscan.scan(proj, "plot.py")
+        (cls,) = [c for c in scan.classes if c.module == "numpy"]
+        assert cls.context == "deferred" and cls.needed is False
+        assert cls.to_payload()["context"] == "deferred"
+
+
 class TestVersionGap:
     SCRIPT = "import auditroot\nprint(auditroot.VALUE)\n"
 
