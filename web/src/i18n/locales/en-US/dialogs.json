@@ -1612,6 +1612,7 @@
         "packages": "packages install pip pypi libraries",
         "diagnostics": "diagnostics report logs export bug",
         "support": "support donate sponsor ko-fi",
+        "contact": "wecom wechat contact maintainer",
         "updates": "updates version upgrade",
         "telemetry": "privacy statistics telemetry data",
         "theme": "theme dark light mode appearance night colour color"
