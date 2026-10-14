@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import collections
 import dataclasses
+import hashlib
 import ipaddress
 import json
 import logging
@@ -359,7 +360,8 @@ def _nl(text: str) -> str:
 
 
 _PROVIDER_TOKEN = re.compile(
-    r"\b(?:AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b"
+    r"(?<![A-Za-z0-9])(?:AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{10,}"
+    r"|sk-[A-Za-z0-9_\-]{8,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})"
 )
 _FIRST_TOKEN = re.compile(r"[\"']?[^\s\"',;&)\]}]*[\"']?")
 #: 秘密键下**无信息**的值：true/false/null/none、空值，以及**我们自己产出的**占位记号的显式白名单——`<redacted>`、`***`、
@@ -855,6 +857,62 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^\w.\-]", "_", name)[:120] or "file"
 
 
+#: 清理过的名字仍保留下来的常见扩展名（`token=REAL.pdf` 抹成 `token=<redacted>` 后丢了 `.pdf`，维护者还要靠它认文件类型）
+_KEEP_EXTS = frozenset(
+    {
+        ".py",
+        ".json",
+        ".txt",
+        ".log",
+        ".pdf",
+        ".png",
+        ".svg",
+        ".wer",
+        ".dmp",
+        ".mdmp",
+        ".hdmp",
+        ".ips",
+        ".crash",
+        ".zip",
+    }
+)
+
+
+def _name_id(raw: str) -> str:
+    """原名的不可逆短标识（sha1 前 10 位）：index 里的名字被清理后，维护者靠它把多份对应起来。"""
+    return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:10]
+
+
+def _clean_name(scrub: "Scrubber", raw: str) -> str:
+    """名字（文件名 / 面板标识 / 脚本相对路径）的清理 = `Scrubber.text()`。令牌贴在下划线后面（WER 目录名
+    `AppCrash_Tavotto.exe_ghp_…`）也要认得出，所以 `_PROVIDER_TOKEN` 的起点不用 `\\b`（`_` 是词字符）。"""
+    return scrub.text(raw)
+
+
+def _member_name(
+    scrub: "Scrubber", raw: str, taken: set[str] | None = None, slash: str = "_"
+) -> str:
+    """**所有**从用户可控字符串（图 / 脚本 / 状态文件 / 崩溃报告 / 损坏副本 / WER 目录名）派生出的内层 zip 成员名都走这里：
+    先过 `Scrubber.text()`（家目录、用户名、KV、令牌前缀、userinfo）**再** `_safe_name()`——顺序不能反，`_safe_name` 会把
+    `token=REAL` 的 `=` 换成 `_`，之后任何正则都认不出来了。清理后撞名（含 `index.json`）追加 `-2`、`-3`…；`taken` 给了就登记。"""
+    clean = _clean_name(scrub, raw).replace(
+        "/", slash
+    )  # 先清理、后替换分隔符：`https://u:REAL@h` 在被拆开之前才认得出
+    name = _safe_name(clean)
+    ext = Path(raw).suffix.lower()
+    if clean != raw and ext in _KEEP_EXTS and not name.lower().endswith(ext):
+        name = name[: 120 - len(ext)] + ext
+    if taken is not None:
+        base, dot, tail = name.rpartition(".")
+        stem, suffix = (base, dot + tail) if dot and base else (name, "")
+        n = 1
+        while name in taken:
+            n += 1
+            name = f"{stem}-{n}{suffix}"
+        taken.add(name)
+    return name
+
+
 def _marker(kept: int, original: int, how: str) -> bytes:
     return f"[truncated: kept {how} {kept} of {original} bytes]\n".encode()
 
@@ -1235,11 +1293,26 @@ def _state_files() -> list[Path]:
 def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     index: list[dict] = []
     items: list[Item] = []
+    taken: set[str] = {"index.json"}
     cands, bad = _stable_candidates(_state_files())
-    index.extend({"name": p.name, "kind": _state_kind(p.name), "read_failed": True} for p in bad)
+    index.extend(
+        {
+            "name": _clean_name(scrub, p.name),
+            "id": _name_id(p.name),
+            "kind": _state_kind(p.name),
+            "read_failed": True,
+        }
+        for p in bad
+    )
     for p, fid in cands:
         kind = _state_kind(p.name)
-        entry = {"name": p.name, "kind": kind, "bytes": fid.size, "mtime": _iso(fid.mtime_ns / 1e9)}
+        entry = {
+            "name": _clean_name(scrub, p.name),
+            "id": _name_id(p.name),
+            "kind": kind,
+            "bytes": fid.size,
+            "mtime": _iso(fid.mtime_ns / 1e9),
+        }
         index.append(entry)
         if kind == "corrupt":
             continue  # 默认只有清单；内容归勾选项 C
@@ -1249,9 +1322,8 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
                 True  # read_failed / changed_while_reading：不写 `file`，`_reconcile_index` 不会误标超预算
             )
             continue
-        entry["file"] = _safe_name(
-            p.name
-        )  # 读成功才写：内容在内层 zip 里的名字（`_reconcile_index` 据此核对）
+        member = _member_name(scrub, p.name, taken)
+        entry["file"] = member  # 读成功才写：内容在内层 zip 里的名字（`_reconcile_index` 据此核对）
         size = fid.size
         # 状态文件多半是 JSON：能解析就走结构化清理（没有引号边界问题），截断 / 损坏的才退回文本
         data = scrub.json_or_text(raw.decode("utf-8", errors="replace")).encode("utf-8")
@@ -1260,7 +1332,7 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
         items.append(
             Item(
                 "state",
-                _safe_name(p.name),
+                member,
                 data,
                 shrink=lambda cap, d=data: _head_bytes(d, cap),
                 original_bytes=size if size > STATE_FILE_CAP else None,
@@ -1279,25 +1351,46 @@ def collect_state(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[It
 def collect_corrupt_sessions(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     items: list[Item] = []
     index: list[dict] = []
+    taken: set[str] = {"index.json"}
     corrupt = [p for p in _state_files() if _state_kind(p.name) == "corrupt"]
     cands, bad = _stable_candidates(corrupt)  # 逐个 stat 缓存；排序只用登记到的 mtime
-    index.extend({"name": p.name, "read_failed": True} for p in bad)
+    index.extend(
+        {"name": _clean_name(scrub, p.name), "id": _name_id(p.name), "read_failed": True}
+        for p in bad
+    )
     cands.sort(key=lambda pf: -pf[1].mtime_ns)
     over_cap = sum(fid.size for _p, fid in cands[CORRUPT_FILES:])
     for p, fid in cands[CORRUPT_FILES:]:  # 份数上限之外：index 里列出来，字节计入 truncated
-        index.append({"name": p.name, "bytes": fid.size, "skipped_over_count_cap": True})
+        index.append(
+            {
+                "name": _clean_name(scrub, p.name),
+                "id": _name_id(p.name),
+                "bytes": fid.size,
+                "skipped_over_count_cap": True,
+            }
+        )
     for p, fid in cands[:CORRUPT_FILES]:
         raw, why = _read_capped(p, fid, CORRUPT_FILE_CAP)
         if raw is None:
-            index.append({"name": p.name, why: True})  # 读失败 / 读取期间在变：都不是超预算
+            index.append(
+                {"name": _clean_name(scrub, p.name), "id": _name_id(p.name), why: True}
+            )  # 读失败 / 读取期间在变：都不是超预算
             continue
         size = fid.size
         data = scrub.text(raw.decode("utf-8", errors="replace")).encode("utf-8")
-        index.append({"name": p.name, "file": _safe_name(p.name), "bytes": size})
+        member = _member_name(scrub, p.name, taken)
+        index.append(
+            {
+                "name": _clean_name(scrub, p.name),
+                "id": _name_id(p.name),
+                "file": member,
+                "bytes": size,
+            }
+        )
         items.append(
             Item(
                 "corrupt_sessions",
-                _safe_name(p.name),
+                member,
                 data,
                 shrink=lambda cap, d=data: _head_bytes(d, cap),
                 original_bytes=size if size > CORRUPT_FILE_CAP else None,
@@ -1361,11 +1454,12 @@ def collect_overrides(src: Sources, opts: DetailOptions, scrub: Scrubber) -> lis
         items.append(
             Item(
                 "overrides",
-                f"live-{n + 1}-{_safe_name(stem or 'panel')}.json",
+                f"live-{n + 1}-{_member_name(scrub, stem or 'panel')}.json",
                 _dumps(doc),
             )
         )
     baked = src.baked or {}
+    baked_taken: set[str] = set()
     for stem in dict.fromkeys(stems):
         entry = baked.get(stem)
         if entry is None:
@@ -1378,7 +1472,9 @@ def collect_overrides(src: Sources, opts: DetailOptions, scrub: Scrubber) -> lis
                 "entry": entry,
             }
         )
-        items.append(Item("overrides", f"baked-{_safe_name(stem)}.json", _dumps(doc)))
+        items.append(
+            Item("overrides", f"baked-{_member_name(scrub, stem, baked_taken)}.json", _dumps(doc))
+        )
     omitted = max(0, len(panels) - MAX_OVERRIDE_PANELS) + int(
         (src.frontend or {}).get("overrides_omitted") or 0
     )
@@ -1391,7 +1487,11 @@ def collect_overrides(src: Sources, opts: DetailOptions, scrub: Scrubber) -> lis
                 {
                     "schema": DETAIL_SCHEMA,
                     "panels": [
-                        str(p.get("panel") or "")[:200] for p in panels[:MAX_OVERRIDE_PANELS]
+                        _clean_name(scrub, str(p.get("panel") or "")[:200])
+                        for p in panels[:MAX_OVERRIDE_PANELS]
+                    ],
+                    "panel_ids": [
+                        _name_id(str(p.get("panel") or "")) for p in panels[:MAX_OVERRIDE_PANELS]
                     ],
                     "skipped_over_count_cap": omitted,  # 数量上限（每次至多 3 张面板）之外没收的面板数
                     **({} if panels else {"note": "no panel was being edited or selected"}),
@@ -2411,14 +2511,14 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
     over_cap: list[str] = []
     candidates = source_candidates(src, stat_failed, ids, over_cap)
     index.extend(
-        {"script": scrub.text(r), "bytes": ids[r].size, "skipped_over_count_cap": True}
+        {"script": _clean_name(scrub, r), "bytes": ids[r].size, "skipped_over_count_cap": True}
         for r in over_cap
     )
-    index.extend({"script": scrub.text(rel), "read_failed": True} for rel in stat_failed)
+    index.extend({"script": _clean_name(scrub, rel), "read_failed": True} for rel in stat_failed)
     for n, (rel, path) in enumerate(candidates):
         raw, why = _read_capped(path, ids[rel], SOURCE_FILE_CAP)
         if raw is None:
-            index.append({"script": scrub.text(rel), why: True})
+            index.append({"script": _clean_name(scrub, rel), why: True})
             continue
         size = ids[rel].size
         text, encoding, fell_back = _decode_script(raw, rel)
@@ -2428,8 +2528,14 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
         data = out_text.encode("utf-8")
         if size > SOURCE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
-        zip_name = f"{n + 1:02d}-{_safe_name(rel.replace('/', '__'))}"
-        row = {"script": scrub.text(rel), "file": zip_name, "bytes": size, "encoding": encoding}
+        zip_name = f"{n + 1:02d}-{_member_name(scrub, rel, slash='__')}"
+        row = {
+            "script": _clean_name(scrub, rel),
+            "id": _name_id(rel),
+            "file": zip_name,
+            "bytes": size,
+            "encoding": encoding,
+        }
         if fell_back:
             row["encoding_fallback"] = (
                 True  # 声明的编码不合法 / 不认识：按 UTF-8 + replace 解的（文件里的字节不保证准）
@@ -2577,7 +2683,7 @@ def _crash_candidates(now: float) -> list[dict]:
                         "label": label,
                         "name": q.name,
                         "path": q,
-                        "entry": _safe_name(
+                        "entry": (
                             f"{_source_tag(label)}-{entry}"
                             if label.startswith("windows_wer")
                             else entry
@@ -2607,11 +2713,18 @@ def collect_crash_reports(
     taken: set[str] = {"index.json"}
     for c in _crash_candidates(now):
         if c["id"] is None:  # 登记时 stat 失败：只让它自己出局
-            index.append({"source": c["label"], "name": c["name"], "content": "read_failed"})
+            index.append(
+                {
+                    "source": c["label"],
+                    "name": _clean_name(scrub, c["name"]),
+                    "content": "read_failed",
+                }
+            )
             continue
         row = {
             "source": c["label"],
-            "name": c["name"],
+            "name": _clean_name(scrub, c["name"]),
+            "id": _name_id(c["name"]),
             "bytes": c["size"],
             "mtime": _iso(c["mtime"]),
             "content": "raw_binary" if c["binary"] else "redacted_text",
@@ -2639,14 +2752,9 @@ def collect_crash_reports(
             )
             data = scrub.text(text).encode("utf-8")
         used += len(data)
-        member = c["entry"]
-        base, n = member, 1
-        while (
-            member in taken
-        ):  # 整个内层 zip 的重名检测：重名追加 -2、-3…，index 这一行指向自己的成员名
-            n += 1
-            member = f"{base}-{n}"
-        taken.add(member)
+        member = _member_name(
+            scrub, c["entry"], taken
+        )  # 重名追加 -2、-3…，index 这一行指向自己的成员名
         row["file"] = member
         index.append(row)
         items.append(Item("crash_reports", member, data))

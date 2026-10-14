@@ -2289,7 +2289,7 @@ class TestCrashMemberNamesAreUnique:
             diagdetail.Scrubber(),
         )
         names = sorted(i.path for i in items if i.path != "index.json")
-        assert names == ["Tavotto-2026-10-13-120000.ips", "Tavotto-2026-10-13-120000.ips-2"]
+        assert names == ["Tavotto-2026-10-13-120000-2.ips", "Tavotto-2026-10-13-120000.ips"]
         rows = json.loads(items[0].data)["reports"]
         assert sorted(r["file"] for r in rows) == names
 
@@ -3691,3 +3691,117 @@ class TestLongKeys:
         s.text("a" * 400_000)
         s.text("a-" * 200_000 + "=")
         assert time.monotonic() - t < 5
+
+
+class TestNamesDerivedFromUserStringsAreScrubbed:
+    """用户可控字符串（文件名 / 面板名 / 脚本名）派生出的内层 zip 成员名与 index 里的名字字段：先过 `Scrubber.text()` 再 `_safe_name()`。"""
+
+    BAD = [  # 文件系统里合法的名字
+        "token=NAMESECRETxyz",
+        "ghp_" + "NAMESECRETxyz" * 3,
+        "api_key=NAMESECRETxyz",
+        "password: NAMESECRETxyz" if os.name != "nt" else "password=NAMESECRETxyz",
+    ]
+    PANEL_BAD = BAD + ["https://alice:NAMESECRETxyz@proxy.example/fig"]  # 面板标识不一定是文件名
+
+    def _everything(self, items):
+        """全部成员名 + 全部内容（含内层 zip 解开）+ 外层 zip 原始字节。"""
+        blob = b""
+        for name, data in diagdetail.entries(items):
+            blob += name.encode() + b"\0" + data
+            if name.endswith(".zip"):
+                with zipfile.ZipFile(io.BytesIO(data)) as z:
+                    for n in z.namelist():
+                        blob += n.encode() + b"\0" + z.read(n)
+        return blob
+
+    def test_member_name_helper(self):
+        s = diagdetail.Scrubber()
+        taken = {"index.json"}
+        a = diagdetail._member_name(s, "token=NAMESECRETxyz.pdf", taken)
+        b = diagdetail._member_name(s, "token=OTHERSECRETabc.pdf", taken)
+        c = diagdetail._member_name(s, "index.json", taken)
+        assert "NAMESECRETxyz" not in a and a.endswith(".pdf") and b != a and c != "index.json"
+        assert len({a, b, c, "index.json"}) == 4
+        assert diagdetail._name_id("x") == diagdetail._name_id("x") != diagdetail._name_id("y")
+        assert diagdetail._member_name(s, "plain name.py") == "plain_name.py"
+
+    def test_state_and_corrupt_sessions(self, world, monkeypatch):
+        state = world["tmp"] / "state2"
+        state.mkdir()
+        for i, bad in enumerate(self.BAD):
+            (state / f"{bad}-{i}.json").write_text('{"a": 1}', encoding="utf-8")
+            (state / f"{bad}-{i}.corrupt-1").write_text("CORRUPTBODY", encoding="utf-8")
+        monkeypatch.setattr(diagdetail, "state_dir", lambda: state)
+        opts = diagdetail.DetailOptions(corrupt_sessions=True)
+        items = diagdetail.collect_state(diagdetail.Sources(), opts, diagdetail.Scrubber())
+        items += diagdetail.collect_corrupt_sessions(
+            diagdetail.Sources(), opts, diagdetail.Scrubber()
+        )
+        assert b"NAMESECRETxyz" not in self._everything(items)
+        idx = json.loads(
+            next(i for i in items if i.path == "index.json" and i.kind == "state").data
+        )
+        assert all(len(r["id"]) == 10 for r in idx["files"])
+
+    def test_colliding_cleaned_names_keep_every_entry(self, world, monkeypatch):
+        state = world["tmp"] / "state3"
+        state.mkdir()
+        for tail in ("AAAA1111", "BBBB2222", "CCCC3333"):
+            (state / f"token={tail}.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(diagdetail, "state_dir", lambda: state)
+        items = diagdetail.collect_state(
+            diagdetail.Sources(), diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        members = [i.path for i in items if i.path != "index.json"]
+        assert len(members) == len(set(members)) == 3
+        idx = json.loads(next(i for i in items if i.path == "index.json").data)
+        assert sorted(r["file"] for r in idx["files"]) == sorted(members)
+        assert len({r["id"] for r in idx["files"]}) == 3
+
+    def test_scripts_and_overrides(self, world):
+        proj = world["tmp"] / "projnames"
+        proj.mkdir()
+        names = []
+        for i, bad in enumerate(self.BAD):
+            (proj / f"{bad}-{i}.py").write_text("x = 1\n", encoding="utf-8")
+            names.append(f"{bad}-{i}.py")
+        src = diagdetail.Sources(
+            project={"figures_dir": str(proj)},
+            scripts=names,
+            baked={f"{b}-{i}": {"versions": []} for i, b in enumerate(self.PANEL_BAD)},
+            frontend={
+                "overrides": [
+                    {"panel": f"{b}-{i}.pdf", "x": 1} for i, b in enumerate(self.PANEL_BAD)
+                ]
+            },
+        )
+        items = diagdetail.collect_source(
+            src, diagdetail.DetailOptions(source=True), diagdetail.Scrubber()
+        )
+        items += diagdetail.collect_overrides(
+            src, diagdetail.DetailOptions(), diagdetail.Scrubber()
+        )
+        blob = self._everything(items)
+        assert b"NAMESECRETxyz" not in blob, blob[:300]
+
+    def test_crash_report_names(self, world, monkeypatch):
+        base = world["tmp"] / "crashnames"
+        base.mkdir()
+        for i, bad in enumerate(self.BAD):
+            d = base / f"AppCrash_Tavotto.exe_{bad}-{i}"
+            d.mkdir()
+            (d / "Report.wer").write_text("report", encoding="utf-8")
+            (base / f"Tavotto-{bad}-{i}.ips").write_text("ips", encoding="utf-8")
+        monkeypatch.setattr(
+            diagdetail,
+            "crash_dirs",
+            lambda: [("windows_wer_user_archive", base), ("macos_diagnostic_reports", base)],
+        )
+        items = diagdetail.collect_crash_reports(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(crash_reports=True),
+            diagdetail.Scrubber(),
+        )
+        assert len(items) > 1
+        assert b"NAMESECRETxyz" not in self._everything(items)
