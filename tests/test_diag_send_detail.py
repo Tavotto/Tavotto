@@ -525,7 +525,13 @@ class TestExceptionGroupTracebacks:
             "    raise ExceptionGroup('g', [e, ExceptionGroup('i', [KeyError(REAL_SRC_B := 2)])])\n",
             encoding="utf-8",
         )
-        err = subprocess.run([sys.executable, str(script)], capture_output=True, text=True).stderr
+        err = subprocess.run(
+            [sys.executable, str(script)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        ).stderr
         assert "REAL_SRC_A" in err  # 反证：原始输出里确实有源码行
         out = diagdetail.strip_source_lines(err)
         assert "REAL_SRC_A" not in out and "REAL_SRC_B" not in out
