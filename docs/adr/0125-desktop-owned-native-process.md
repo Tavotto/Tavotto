@@ -29,7 +29,7 @@
 | | terminal（`tavotto run`） | desktop（本 ADR） |
 |---|---|---|
 | 谁 spawn | CLI | sidecar（`desktopproc.start`） |
-| stdin | 继承终端 | 桌面持有：`pipe`（write/close=EOF）或 `null`（立即 EOF） |
+| stdin | 继承终端 | 桌面持有：`pipe`（write/close=EOF）或 `null`（立即 EOF）；P07 增 `bridge`（提问走控制通道由界面作答，[ADR 0126](0126-desktop-owned-script-input-and-run-entry.md)） |
 | stdout / stderr | 继承终端，Tavotto 不碰 | 桌面持有的管道，**持续排空**；有界尾部 + 可选 sink；与控制协议分开 |
 | cwd / env | 调用者 shell 的，原样 | 启动身份里显式给的 cwd；env = **sidecar 环境 + 显式增量** |
 | `force_kill` / `shutdown` | 放手（detach），脚本继续 | 只断开控制连接，**不结束进程、不放租约** |

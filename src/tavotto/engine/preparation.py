@@ -198,6 +198,9 @@ class PreparationPlan:
     #: 私有：不进 `to_payload()`（公开的是 `launch_context`）。就地重算计划、复用现有会话都按它对账，
     #: 不得悄悄回落成 safe。
     execution: str = execspec.PROFILE_SAFE
+    #: `execution == native` 时的桌面拥有的启动身份（`execspec.desktop_native_spec` 的产物；`desktopproc.OwnedLaunch`
+    #: 吃它，P07）。**私有**：含 argv / env 原文，不进 `to_payload()`；公开的是 `launch_context`。safe 恒 None。
+    native_spec: object | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -366,6 +369,7 @@ def plan_for(
     }
     grant = workdir.grant_for(root)
     launch_context = None
+    native_spec = None
     decision = None
     if script is not None:
         # 工作目录：决定过就是记住的那一档；没决定过按脚本的静态证据判要不要先问
@@ -387,8 +391,13 @@ def plan_for(
             interpreter=python,
             cwd=execspec.desktop_cwd(root, script, mode),
             project_root=root,
+            # 桌面「打开并运行」的输入通道：脚本的 input / stdin / getpass 由界面作答（P07，ADR 0126）
+            stdin=execspec.STDIN_BRIDGE,
+            # 无缓冲：stdout 管道对 Python 默认块缓冲，不设的话界面看不到实时输出（ADR 0125 残余）
+            env={"PYTHONUNBUFFERED": "1"},
             **execspec.run_kwargs(run),
         )
+        native_spec = spec
         launch_context = execspec.launch_context(spec, grant=grant)
     elif execution not in (execspec.PROFILE_SAFE, execspec.PROFILE_NATIVE):
         raise ValueError(f"execution 非法: {execution!r}")
@@ -484,7 +493,22 @@ def plan_for(
         run=run,
         input_remap_generation=remap_generation,
         script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
+        native_spec=native_spec,
     )
+
+
+def _kill_owned_worker(worker) -> None:
+    """取消「本计划新建、已不在池里」的那条会话。
+
+    桌面拥有的 native 会话（`nativesession.NativeSession`，P07）的 `force_kill` 是**放手**（终端语义，不杀进程）；
+    用户在界面里点取消要的是真终止，所以走 `cancel_owned()`（结束进程组 / Job，确认后才放租约）。池里的 safe
+    worker 沿用 `force_kill`。"""
+    if getattr(worker, "owned", None) is not None and callable(
+        getattr(worker, "cancel_owned", None)
+    ):
+        worker.cancel_owned()
+    else:
+        worker.force_kill()
 
 
 def _script_revision(root: str, script: str | None) -> str | None:
@@ -1126,7 +1150,9 @@ class PreparationService:
                 expected_worker=owned,
                 **({"run": entry.plan.run} if entry.plan.run is not None else {}),
             ):
-                owned.force_kill()  # 已被 watcher / invalidate 摘出池子：池侧只会优雅关闭（排在 build 后面），这里只杀自己的那条
+                # 已被 watcher / invalidate 摘出池子：池侧只会优雅关闭（排在 build 后面），这里只杀自己的那条；
+                # 桌面拥有的 native 会话不在池里：取消 = 结束它的进程组（P07）
+                _kill_owned_worker(owned)
         elif acquired:
             # 共享会话的等待者：会话属于别的消费者（编辑那条渲染、另一份计划）——不关它，只是本计划不再等；
             # 执行线程之后回来时发现自己已经终局，什么都不写
@@ -1157,7 +1183,7 @@ class PreparationService:
                 expected_worker=worker,
                 **({"run": entry.plan.run} if entry.plan.run is not None else {}),
             ):
-                worker.force_kill()  # 同上：已离池就只杀这一条
+                _kill_owned_worker(worker)  # 同上：已离池就只杀这一条
         else:
             self._finish(
                 entry,

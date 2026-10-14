@@ -72,6 +72,14 @@ from .runcodes import RunError
 
 #: 带外事件的键——**与 `bridge_runner.EVENT_KEY` 严格同源**。
 EVENT_KEY = "bridge_event"
+#: 桌面拥有的进程里脚本发起一次提问 / 桌面把答复交回去——**与 `bridge_runner` 严格同源**（P07，ADR 0126）。
+INPUT_REQUEST_EVENT = "input_request"
+INPUT_REPLY_KEY = "input_reply"
+#: 提问的闭集种类（未知种类按 `input` 处理，不信对端）；`getpass` 是口令，答复永不留存
+INPUT_KINDS = ("input", "readline", "read", "getpass")
+INPUT_PROMPT_LIMIT = 1000
+#: 一次答复的字节上限（`read` 可能是整份数据；超限当场拒绝，脚本继续等）
+INPUT_ANSWER_LIMIT = 4 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # 状态闭集（ADR 0021 §5.1）。**不用多个互相矛盾的 boolean**：
@@ -103,6 +111,8 @@ STATES = (
 )
 #: 终态：进了就不再出来（`detached` 也是——Tavotto 已经放手了）。
 TERMINAL_STATES = frozenset({ENDED, DETACHED, FAILED})
+#: 进入这些状态时，脚本不可能还停在一次提问上（到了屏障 / 放行 / 终态）。
+_INPUT_CLEARING_STATES = frozenset({BARRIER, CONTINUING, ENDED, DETACHED, FAILED})
 
 #: 单条请求的上限（与 `pool.REQUEST_TIMEOUT` 同口径）。
 REQUEST_TIMEOUT = pool.REQUEST_TIMEOUT
@@ -132,6 +142,8 @@ class NativeTransport:
         self._on_event = on_event
         self._on_close = on_close
         self._lock = threading.Lock()
+        #: 发送串行化：请求 / 单向命令 / 输入答复各自从不同线程发，一行 JSON 不许被另一行劈开
+        self._send_lock = threading.Lock()
         self._waiters: dict[str, dict] = {}
         self._reader: threading.Thread | None = None
         self._closed = False
@@ -243,7 +255,8 @@ class NativeTransport:
         with self._lock:
             self._waiters[rid] = slot
         try:
-            self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
+            with self._send_lock:
+                self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
         except OSError as exc:
             with self._lock:
                 self._waiters.pop(rid, None)
@@ -283,11 +296,25 @@ class NativeTransport:
         """发一条不等响应的请求（`shutdown` 那一条——对端会直接走掉）。"""
         env = pool.build_envelope(obj, generation=generation, revision=revision)
         with _suppress():
-            self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
+            with self._send_lock:
+                self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
+
+    def send_line(self, obj: dict) -> None:
+        """发一行**不是请求**的控制帧（输入答复）。发不出去抛 `NATIVE_SESSION_DISCONNECTED`。"""
+        if self._closed:
+            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+        try:
+            with self._send_lock:
+                self.sock.sendall((json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8"))
+        except OSError as exc:
+            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED) from exc
 
 
 class NativeSession:
     """一条 native 会话。**Worker-like**——上层不该知道自己拿的是哪一种。"""
+
+    #: 回执 / 准备路径按它认控制面（`pool.control_plane_of` 读这个属性；值与 `receipt.CONTROL_PLANE_NATIVE` 同）
+    control_plane = "native"
 
     def __init__(self, *, session_id: str, descriptor: dict):
         meta = descriptor.get("metadata") or {}
@@ -315,6 +342,9 @@ class NativeSession:
         self.launch_id = str(meta.get("launch_id") or "")
         #: 这条会话是被所有者取消结束的（与脚本自己退出、崩溃分开记）
         self.cancelled = False
+        #: 脚本此刻正停在的那一次提问（桌面拥有的才有；事实在后端，不属于某个窗口）。键：`request_id` / `kind` /
+        #: `prompt` / `masked` / `ordinal` / `at`。**答复从不存在这里**。
+        self._pending_input: dict | None = None
 
         self.state = PENDING_CONFIRMATION
         self.barrier_reason = ""
@@ -373,6 +403,9 @@ class NativeSession:
                 # 迟到的事件又显示成"正在运行"。
                 return
             self.state = state
+            if state in _INPUT_CLEARING_STATES:
+                # 脚本已经到了屏障 / 结束：不可能还停在提问上（取消 / 退出 / 断线都走这里）
+                self._pending_input = None
             self.sequence += 1
             self.last_event_at = time.time()
             for k, v in fields.items():
@@ -422,6 +455,8 @@ class NativeSession:
             )
         elif name == "released":
             self._set_state(RUNNING_SCRIPT, barrier_reason="")
+        elif name == INPUT_REQUEST_EVENT:
+            self._on_input_request(frame)
         elif name == "exit":
             self._release_lease()
             self._set_state(
@@ -450,6 +485,76 @@ class NativeSession:
     def note_hello(self, hello: dict) -> None:
         """收到 Bridge Runner 转发过来的握手帧——用户的 Python 起来了。"""
         self._set_state(WAITING_FOR_FIGURE, process_pid=_as_int(hello.get("pid")))
+
+    # ------------------------------------------------------------------
+    # 脚本的提问（P07，ADR 0126）：桌面拥有的进程里 input / stdin / getpass
+    # ------------------------------------------------------------------
+    @property
+    def pending_input(self) -> dict | None:
+        """脚本此刻停在的那一次提问的公开形状（拷贝）；没有在等的 = None。"""
+        with self._lock:
+            return dict(self._pending_input) if self._pending_input else None
+
+    def _publish(self, **fields) -> None:
+        """状态不变、但对界面有意义的变化（提问出现 / 被答 / 被取消）：序号 +1、记事件、推变更。
+
+        事件里只有 `input` 与 `request_id` / `input_kind`——**没有提示词与答案**（SSE 是给所有窗口的）。"""
+        with self._changed:
+            self.sequence += 1
+            self.last_event_at = time.time()
+            entry = {"seq": self.sequence, "state": self.state, "at": self.last_event_at, **fields}
+            self.events.append(entry)
+            self._changed.notify_all()
+        if self._on_change is not None:
+            self._on_change(self, entry)
+
+    def _on_input_request(self, frame: dict) -> None:
+        """reader 线程里跑。终端拥有的会话从不装输入桥，收到也不信（没有人能答）。"""
+        if self.owned is None or self.state in TERMINAL_STATES:
+            return
+        rid = frame.get("request_id")
+        if not isinstance(rid, str) or not rid or len(rid) > 128:
+            return
+        kind = frame.get("kind")
+        kind = kind if kind in INPUT_KINDS else "input"
+        prompt = frame.get("prompt")
+        pending = {
+            "request_id": rid,
+            "kind": kind,
+            "prompt": prompt[:INPUT_PROMPT_LIMIT] if isinstance(prompt, str) else "",
+            "masked": kind == "getpass",  # 由种类推出，不信对端自报
+            "ordinal": _as_int(frame.get("ordinal")) or 0,
+            "at": time.time(),
+        }
+        with self._lock:
+            self._pending_input = pending
+        self._publish(input="requested", request_id=rid, input_kind=kind)
+
+    def answer_input(self, request_id: str, *, text: str | None = None, eof: bool = False) -> dict:
+        """把用户的答复交给停在提问上的脚本——**同一个进程、同一批对象续跑**。
+
+        先到先得：认领（清掉 pending）在锁里一步完成，之后才发；第二个窗口的答复、旧提问的答复、
+        没有提问时的答复一律 `native_input_not_pending`，不排队、不喂给之后的提问。`eof=True` =
+        「没有输入」（`input` 抛 `EOFError`、读回空串；之后同一个进程里 stdin 家族不再提问）。
+        口令的值只经这条通道发一次，不进事件 / 日志 / 状态。
+        """
+        if not eof:
+            if not isinstance(text, str):
+                raise RunError(runcodes.NATIVE_INPUT_INVALID, reason="答复必须是文本")
+            if len(text.encode("utf-8", "surrogatepass")) > INPUT_ANSWER_LIMIT:
+                raise RunError(runcodes.NATIVE_INPUT_INVALID, reason="答复太长")
+        with self._lock:
+            pending = self._pending_input
+            if self.owned is None or pending is None or pending["request_id"] != request_id:
+                raise RunError(runcodes.NATIVE_INPUT_NOT_PENDING)
+            transport = self.transport
+            self._pending_input = None  # 认领：此后的任何答复都会被拒
+        if transport is None or transport.closed:
+            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+        reply = {"request_id": request_id, **({"eof": True} if eof else {"text": text})}
+        transport.send_line({INPUT_REPLY_KEY: reply})
+        self._publish(input="answered", request_id=request_id, input_kind=pending["kind"])
+        return {"answered": True, "request_id": request_id}
 
     def _release_lease(self) -> None:
         owned = self.owned
@@ -790,6 +895,7 @@ class NativeSession:
             "last_event_at": self.last_event_at,
             "sequence": self.sequence,
             "editable": self.state == BARRIER,
+            "pending_input": self.pending_input,
         }
 
     def diagnostics(self) -> dict:
@@ -1061,6 +1167,28 @@ class NativeSessionRegistry:
                 self._sessions.pop(s.session_id, None)
         for s in victims:
             self._drop_routes(s.session_id)
+        return len(victims)
+
+    def cancel_project(self, project_root: str, *, script: str = "") -> int:
+        """结束这个项目里**桌面拥有的**还活着的会话（项目关闭 / 同一脚本重新运行）；返回结束了几条。
+
+        终端拥有的一条不碰（用户的进程，关项目不该带走它，ADR 0021 §8.1）。`script` 非空 = 只结束这个脚本的
+        （`spec.target` 是项目相对 POSIX 路径）。每条走 `cancel_owned()`：等到所有者确认进程组 / Job 空、租约放掉。"""
+        victims = [
+            s
+            for s in self.list(project_root)
+            if s.owned is not None
+            and not s.owned.finished
+            and (not script or (s.spec is not None and s.spec.target == script))
+        ]
+        threads = [
+            threading.Thread(target=_run_quiet, args=(s.cancel_owned,), daemon=True)
+            for s in victims
+        ]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(60)
         return len(victims)
 
     def shutdown_all(self) -> int:
