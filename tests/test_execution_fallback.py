@@ -248,6 +248,36 @@ def test_cancelling_the_native_attempt_hits_the_native_attempt(
     assert _history(_get(client, sid).get_json())[1]["outcome"] == "cancelled"
 
 
+def test_a_cancel_action_issued_against_the_safe_attempt_cancels_the_native_one_after_fallback(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """用户拿着回退之前发出的取消动作（指着 safe 那次）点取消：回退已经接上了，取消必须落在 native 上。"""
+    entered, release = threading.Event(), threading.Event()
+    real = prepsession.SessionService._plan_fallback
+
+    def slow(self, *a, **kw):
+        entered.set()
+        assert release.wait(10)
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(prepsession.SessionService, "_plan_fallback", slow)
+    native["gate"].clear()  # native 起来后停住
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    mid = _get(client, sid).get_json()
+    stale_cancel = _action(mid, "cancel")  # 指着 safe 那次
+    release.set()
+    deadline = time.time() + 10
+    while not native["calls"]:
+        assert time.time() < deadline
+        time.sleep(0.02)
+    resp = _act(client, sid, stale_cancel["id"], mid["config_revision"])  # 不重新读报告：就用旧动作
+    assert resp.status_code == 200, resp.get_json()
+    native["gate"].set()
+    final = _settle(client, sid)
+    assert final["phase"] == "cancelled", final
+
+
 def test_an_explicit_rerun_gets_a_fresh_fallback_budget(
     client, tmp_path, fake_pool, native, sessions
 ):
