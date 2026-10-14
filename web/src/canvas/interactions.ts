@@ -67,6 +67,14 @@ import {
   geomHitTolMm,
   geomInkAreaFrac,
 } from '@/lib/pathGeom'
+import {
+  createScaleHold,
+  scaleAnchorsFor,
+  scaledRect,
+  scaleFixedPoint,
+  scaleSnapCandidates,
+  snapScaleNearest,
+} from '@/lib/scaleSnap'
 import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { registerPointerCancel } from '@/store/gestureCoordinator'
@@ -366,6 +374,27 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
   const rot = objectRotation(target)
   // 面板的等比与否由它自己的宽高比锁定开关决定，形状仍是默认等比
   const keepRatio = target.type === 'panel' ? panelAspectLocked(target) : !isText
+  // 等比缩放吸附（ADR 0128 §三）：锚点与候选在手势开始时定下，整个手势里下标不变（hold 靠它）
+  const prefs = snapPrefs()
+  const scaleSnap =
+    prefs && !rot && !isText
+      ? {
+          fixed: scaleFixedPoint(orig, dir),
+          anchors: scaleAnchorsFor(
+            target,
+            target.type === 'panel' ? exactPanelManifest(useRenderStore.getState(), target) : null,
+          ),
+          cands: scaleSnapCandidates({
+            objects: doc().objects,
+            exclude: excluded,
+            page: doc().page,
+            guides: doc().guides,
+            prefs,
+            manifestOf: (p) => exactPanelManifest(useRenderStore.getState(), p),
+          }),
+          hold: createScaleHold(),
+        }
+      : null
 
   interaction().begin('resize')
   store.beginTxn(hist('resizeObjects'))
@@ -426,6 +455,22 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
             next.y = hit
             snapY.push(hit)
           }
+        }
+      }
+      if (scaleSnap) {
+        if (proportional && !ev.metaKey && !ev.ctrlKey) {
+          const hit = snapScaleNearest({
+            ...scaleSnap,
+            size: orig,
+            s0: next.w / orig.w,
+            tol,
+          })
+          if (hit) {
+            next = scaledRect(orig, dir, hit.s)
+            ;(hit.axis === 'x' ? snapX : snapY).push(hit.line.v)
+          }
+        } else {
+          scaleSnap.hold.held = null
         }
       }
       interaction().setSnap(snapX, snapY)
