@@ -495,6 +495,49 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     expect(fb.every((f) => f.target === undefined)).toBe(true)
   })
 
+  it('跨图候选在正在编辑的面板之外：不参与（拖到它旁边不吸、没有吸附线也没有反馈）', async () => {
+    // p2 下移 50 mm：它的图例底边在页面 y = 50 + 0.725·H ≈ 105 mm，落在 p1（0..H）之外
+    await setup({
+      p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }),
+      p2Extra: { y: 50 },
+    })
+    const lineY = 50 + 0.725 * H
+    const startBottom = 0.72 * H
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    const fb = feedbackAt(0, (lineY - startBottom) / MM_PER_PX + 1)
+    expect(fb).toHaveLength(0)
+    expect(useInteractionStore.getState().snapYs).toHaveLength(0)
+    // 落点就是手指停的位置（差 1 px），没有被拽到那条线上
+    const y = overrideOf('axes_0.legend', 'loc_frac')![1] * H
+    expect(Math.abs(y - (lineY + MM_PER_PX))).toBeLessThan(0.2)
+  })
+
+  it('参考线在正在编辑的面板之外：同样不参与', async () => {
+    await setup()
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'y', pos: 1.5 * H })
+    })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    expect(feedbackAt(0, (1.5 * H - 0.72 * H) / MM_PER_PX + 1)).toHaveLength(0)
+    expect(useInteractionStore.getState().snapYs).toHaveLength(0)
+  })
+
+  it('子图被拖向图边被钳住：反馈的 self 就是钳位后实际落下的框', async () => {
+    await setup()
+    // 参考线在 x = 0.2·W：子图右边吸它需要左边落到 −0.15（图外），实际被钳在 0
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'x', pos: 0.2 * W })
+    })
+    startAxesDrag(down(), livePanel(), axes0, layout, 'move')
+    const fb = feedbackAt(-(0.25 / PX_X) + 1, 0)
+    const x = fb.find((f) => f.axis === 'x')
+    expect(x).toBeTruthy()
+    near(x!.self.x, 0)
+    near(x!.self.w, 0.35 * W)
+    // 与选中框 / 预览同一个框（预览在松手前读不到了，用落点：松手写下的 position 左边也是 0）
+    expect(overrideOf('axes_0', 'position')![0]).toBeCloseTo(0, 3)
+  })
+
   it('松手后反馈消失', async () => {
     await setup({ p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }) })
     startElementDrag(down(), livePanel(), legendP1, layout)

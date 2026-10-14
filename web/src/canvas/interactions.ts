@@ -1389,6 +1389,11 @@ export interface InFigureMove {
   moving: (gid: string) => boolean
   /** 按住 / 松开 ⌘ / Ctrl 时要切换预览的那些被带着走的内容（`watchCarryKeys`） */
   carryPreview: CarriedItem[]
+  /**
+   * 累计位移在落点处被钳位后的**实际**位移（子图被钳在图框内）；缺省 = 不钳位。吸附反馈的自身框取它，
+   * 免得虚线框跑到子图实际够不着的线上
+   */
+  settle?: (dfx: number, dfy: number) => [number, number]
   /** 预览到累计位移：只改 SVG DOM 与覆盖层，不写文档、不进历史、不发后端 */
   preview: (dfx: number, dfy: number, carry: boolean) => void
   /** 以累计位移提交：一条撤销、一次权威渲染。净位移为零时与取消同样处理，回 false */
@@ -1606,6 +1611,8 @@ function trackInFigureMove(
         )
         dfx += sx
         dfy += sy
+        const [rx, ry] = mv.settle ? mv.settle(dfx, dfy) : [dfx, dfy]
+        snapper.report([box0[0] + rx, box0[1] + ry, box0[2], box0[3]])
       }
       last = [dfx, dfy]
       mv.preview(dfx, dfy, carriesContents(ev))
@@ -1878,7 +1885,13 @@ function crossAndGuideLines(panel: PanelObject, selfKind?: SnapKind): SnapLineCa
     for (const g of doc().guides)
       (g.axis === 'x' ? xs : ys).push({ v: g.pos, kind: 'guide', edge: null })
   }
-  return { xs, ys }
+  // 元素被钳在正在编辑的面板里，范围外的线够不着——吸附线与反馈不能指向它（Codex #1036）
+  const full = panelFullRect(panel)
+  const within = (v: number, lo: number, size: number) => v >= lo - 1e-6 && v <= lo + size + 1e-6
+  return {
+    xs: xs.filter((l) => within(l.v, full.x, full.w)),
+    ys: ys.filter((l) => within(l.v, full.y, full.h)),
+  }
 }
 
 /**
@@ -1995,11 +2008,14 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
   const full = panelFullRect(panel)
   // 吸住后保持（ADR 0128 §一）：一次手势一份，手势结束随闭包丢弃
   const hold = createSnapHold()
-  return (
+  // 本帧吸上的线；反馈要等调用方算出钳位后的最终框才能发（`report`，与子图缩放手柄同一做法）
+  let pending: { guideXs: number[]; guideYs: number[]; x?: SnapLine; y?: SnapLine } | null = null
+  const snapper = (
     box: Rect4,
     ev: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean },
     locked: [number, number],
   ): [number, number] => {
+    pending = null
     if (ev.metaKey || ev.ctrlKey) {
       hold.x = hold.y = null
       interaction().setSnap([], [])
@@ -2008,7 +2024,6 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
     const snap = perfSpan('snap.compute', () =>
       snapMoveNearest(fracBoxToMm(panel, box), cands, snapTolMm(getTransform()), { hold, pair }),
     )
-    // 反馈：自身此刻（吸附后）的框 + 每个采用的轴一项
     const report = (
       guideXs: number[],
       guideYs: number[],
@@ -2016,11 +2031,7 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
       useY: boolean,
       out: [number, number],
     ) => {
-      const self = fracBoxToMm(panel, [box[0] + out[0], box[1] + out[1], box[2], box[3]])
-      const fb: SnapFeedback[] = []
-      if (useX && snap.x) fb.push(feedbackFor('x', snap.x.line, self, panel.id))
-      if (useY && snap.y) fb.push(feedbackFor('y', snap.y.line, self, panel.id))
-      interaction().setSnap(guideXs, guideYs, fb)
+      pending = { guideXs, guideYs, x: useX ? snap.x?.line : undefined, y: useY ? snap.y?.line : undefined }
       return out
     }
     const sx = snap.dx / full.w
@@ -2053,6 +2064,16 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
       freeY ? sy : 0,
     ])
   }
+  /** 发吸附线与反馈：`finalBox` = 调用方钳位后实际落下的框（内容分数、top-origin） */
+  snapper.report = (finalBox: Rect4) => {
+    if (!pending) return
+    const self = fracBoxToMm(panel, finalBox)
+    const fb: SnapFeedback[] = []
+    if (pending.x) fb.push(feedbackFor('x', pending.x, self, panel.id))
+    if (pending.y) fb.push(feedbackFor('y', pending.y, self, panel.id))
+    interaction().setSnap(pending.guideXs, pending.guideYs, fb)
+  }
+  return snapper
 }
 
 /** `gid` 是 roots 之一或其后代 */
@@ -2107,6 +2128,7 @@ export function axesMove(panel: PanelObject, element: ManifestElement): InFigure
   return {
     snapBox: flipY(start),
     snapKind: snapKindOf(element),
+    settle: (dfx, dfy) => netDelta(rectAt(dfx, dfy)),
     // 随行元素一起动，不出线
     moving: underAny([element.gid, ...(element.follow_gids ?? []), ...companions.map((c) => c.gid)]),
     carryPreview: [],
