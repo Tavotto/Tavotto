@@ -1825,6 +1825,11 @@ class SessionService:
         if intent is not None and intent.status == INTENT_CANCELLED:
             self._decline(sess, attempt, execpolicy.REASON_CANCELLED)
             return
+        if self._prep.superseded(attempt.attempt_id):
+            # 两个桌面运行交错：已有更新的同脚本计划登记。native runner 启动时无条件让位（结束该脚本的桌面 native 会话），
+            # 现在接上就会结束新一次的运行——与取消标记同一把锁、同一时刻的最后复核（Codex #1028 r4268196418）
+            self._decline(sess, attempt, execpolicy.REASON_SUPERSEDED)
+            return
         decision = execpolicy.decide_fallback(
             mode=execpolicy.mode_for(sess.project_root),
             enabled=execpolicy.fallback_enabled(),
