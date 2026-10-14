@@ -294,6 +294,17 @@ def _option_path(argv: list[str], flag: str) -> Path | None:
     return None
 
 
+def _same_report_path(a: Path, b: Path) -> bool:
+    """正规化路径 + 硬链接同 inode：两者不能作为独立的输入和输出。"""
+    x, y = a.resolve(), b.resolve()
+    if x == y:
+        return True
+    try:
+        return x.samefile(y)
+    except FileNotFoundError:
+        return False
+
+
 def _invalidate_parse_error(argv: list[str]) -> None:
     """argparse 先于运行态抛 SystemExit 时，也必须作废指定位置的旧成功结论。
 
@@ -307,9 +318,12 @@ def _invalidate_parse_error(argv: list[str]) -> None:
     try:
         if command == "run":
             output = _option_path(argv, "--out")
-            if output:
+            baseline = _option_path(argv, "--baseline")
+            # 在解析失败时也要遵守基线只读原则；之前直接 unlink 会把
+            # --out 与 --baseline 同一路径的历史采样永久删除。
+            if output and not (baseline and _same_report_path(output, baseline)):
                 output.unlink(missing_ok=True)
-            if summary_path:
+            if summary_path and not (baseline and _same_report_path(summary_path, baseline)):
                 _write(summary_path, failed_run_summary("--include-drag" in argv))
         elif command in ("compare", "summarize"):
             failed = {
@@ -401,6 +415,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             result = failed_run_summary(args.include_drag)
+            # 输出/摘要/历史基线必须是独立文件。这些检查先于任何写入，
+            # 否则测试尚未运行就可能覆写只读基线，甚至把当前样本和自己比较。
+            if args.baseline is not None and args.summary is not None:
+                if _same_report_path(args.baseline, args.summary):
+                    print("error: baseline_aliases_summary", file=sys.stderr)
+                    return 2
+            if args.summary is not None and _same_report_path(args.summary, args.out):
+                print("error: summary_aliases_run_output", file=sys.stderr)
+                return 2
             result["status"] = "pending"
             # 先作废上次的成功摘要；启动失败/超时也必须交出本次任务的明确结论。
             save_suite_summary()
@@ -410,11 +433,7 @@ def main(argv: list[str] | None = None) -> int:
             # 性能基线是只读证据；即使通过符号链接/硬链接别名，
             # 也不许先 unlink 再将本次报告当成自己的历史基线，伪造 PASS。
             if args.baseline is not None:
-                baseline = args.baseline.resolve()
-                aliased = output == baseline or (
-                    output.is_file() and baseline.is_file() and output.samefile(baseline)
-                )
-                if aliased:
+                if _same_report_path(output, args.baseline):
                     raise ValueError("baseline_aliases_run_output")
             output.unlink(missing_ok=True)
             if not 3 <= args.repeat <= 60 or not 1 <= args.regression_pct <= 200:

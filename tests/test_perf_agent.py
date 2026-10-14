@@ -748,3 +748,51 @@ def test_baseline_same_inode_through_another_path_is_protected(tmp_path, monkeyp
     )
     assert rc == 2
     assert base.read_text(encoding="utf-8") == raw
+
+
+def test_parse_error_with_aliased_output_does_not_delete_baseline(tmp_path):
+    baseline = tmp_path / "baseline.json"
+    original = json.dumps(report(value=31))
+    baseline.write_text(original, encoding="utf-8")
+    summary = tmp_path / "summary.json"
+    rc = A.main(
+        [
+            "run",
+            "--repeat",
+            "10.5",
+            "--baseline",
+            str(baseline),
+            "--out",
+            str(baseline),
+            "--summary",
+            str(summary),
+        ]
+    )
+    assert rc == 2
+    assert baseline.read_text(encoding="utf-8") == original
+    assert json.loads(summary.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+@pytest.mark.parametrize("shared", ["baseline", "output"])
+def test_run_rejects_summary_path_alias_before_any_file_is_changed(tmp_path, shared):
+    """summary 若直接指向历史基线或当前输出，绝不允许写 pending 覆盖文件。"""
+    baseline = tmp_path / "baseline.json"
+    current = tmp_path / "run.json"
+    baseline.write_text(json.dumps(report(value=20)), encoding="utf-8")
+    current.write_text(json.dumps(report(value=30)), encoding="utf-8")
+    summary = baseline if shared == "baseline" else current
+    before = summary.read_text(encoding="utf-8")
+    rc = A.main(
+        [
+            "run",
+            "--out",
+            str(current),
+            "--baseline",
+            str(baseline),
+            "--summary",
+            str(summary),
+        ]
+    )
+    assert rc == 2
+    assert summary.read_text(encoding="utf-8") == before
+    assert baseline.exists() and current.exists()
