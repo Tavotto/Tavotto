@@ -1454,10 +1454,11 @@ class SessionService:
         info: dict = {"module": module, "installable": False}
         if not module:
             return info
-        if pool.install_offer_blocked(str(err.get("install_route") or "")):
-            # 标准库缺了：不查可信解析（不许把 tkinter 之类映射成某个同名 PyPI 包去装），只剩换环境
+        route = str(err.get("install_route") or "")
+        if pool.install_offer_blocked(route):
+            # 标准库缺了：不查可信解析；平台不支持时换环境也无效，保留池层给出的去向。
             info["code"] = "stdlib_module_missing"
-            info["route"] = pool.INSTALL_ROUTE_STDLIB
+            info["route"] = route
             return info
         try:
             offer = deprepair.offer(sess.project_root, plan.script, module)
@@ -2195,11 +2196,14 @@ class SessionService:
             return {
                 "module": missing["module"],
                 "installable": False,
-                # 装不了的两种去向（前端按它选一句话，不按 code 文案判断）：unresolvable = 映射不到 PyPI；
-                # stdlib_missing = 标准库缺了。预览失败等拿不准的情形回落 unresolvable：同样只剩换环境这条路
+                # 前端消费池层的去向；平台不支持时不给指定包名 / 换 Python 这两条无效出路。
                 "route": missing.get("route") or pool.INSTALL_ROUTE_UNRESOLVABLE,
                 "code": missing.get("code", ""),
-                "options": ["specify_package", "choose_environment"],
+                "options": (
+                    []
+                    if missing.get("route") == pool.INSTALL_ROUTE_PLATFORM
+                    else ["specify_package", "choose_environment"]
+                ),
                 "rerun_required": True,
             }
         return {

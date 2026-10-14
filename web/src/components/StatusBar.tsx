@@ -72,8 +72,10 @@ export function CanvasHud() {
  * 一条通知的形态。几种来源共用（二审 D1）：
  *   - 普通的（状态 / 提示 / 加入说明……）：图标 + 一句话 + 至多一个动作 / 关闭，**胶囊**（单行浮动条，
  *     浮动外观三档，2026-10-07 设计审计 §10.1）；
- *   - 错误：多行浮动面板 = 圆角 12，左侧一道 danger 锚点色竖条 + 标题 + 至多两行正文 + 「复制详情」——
- *     报错原文常常很长（路径、后端给的句子），此前整段塞进一行胶囊里截不断也读不完。
+ *   - 错误：**也是胶囊**（2026-10-13，用户：「这个弹窗好丑，也要做成胶囊形状的」）——danger 图标 +
+ *     「这一步没有完成：」+ 原因一行（放不下就截断，全文在 title）+「复制详情」图标钮 + 关闭。
+ *     报错原文常常很长（路径、后端给的句子），读全文靠悬停与复制，不再把面板撑成三四行。
+ *     此前（2026-10-07 设计审计 §10.1）是圆角 12 的多行面板 + 左侧一道红色竖条。
  *
  * 会自己走的那几种带着各自的 `timer`：指针停在上面、焦点落在它的按钮上就不走表
  * （宪法第二十三节）。按住的原因记在 ref 里，**卸载时一并放开**——用户点 × 把它关掉时指针还在
@@ -126,7 +128,8 @@ function Toast({
     <div
       {...rest}
       data-state={state}
-      data-toast-layout={error ? 'panel' : 'pill'}
+      data-toast-layout="pill"
+      data-toast-tone={tone}
       onPointerEnter={() => grip('pointer')}
       onPointerLeave={() => drop('pointer')}
       onFocus={() => grip('focus')}
@@ -137,15 +140,11 @@ function Toast({
       className={cn(
         // 浮层不画实色 border（宪法第一节）：环在 shadow-pop 里。字 12 / ink（2026-09-15 打磨 N2）。
         // 一种高度 36：带动作的那条由 28 的按钮 + py 4 撑到 36，不带动作的靠 min-h 补齐（N3）
-        'pointer-events-auto relative flex max-w-[520px] gap-2 bg-surface text-sm text-ink shadow-pop',
-        error
-          ? 'items-start overflow-hidden rounded-lg py-2.5 pl-4 pr-2'
-          : 'min-h-9 items-center rounded-full py-1 pl-3.5 pr-1.5',
+        'pointer-events-auto relative flex min-h-9 max-w-[560px] items-center gap-2 rounded-full bg-surface py-1 pl-3.5 pr-1.5 text-sm text-ink shadow-pop',
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
-      {error && <span aria-hidden data-toast-bar className="absolute inset-y-0 left-0 w-1 bg-danger" />}
-      <span className={cn('flex shrink-0', error && 'pt-px')}>{icon}</span>
+      <span className="flex shrink-0">{icon}</span>
       {error ? (
         <ErrorBody text={text} />
       ) : (
@@ -171,7 +170,7 @@ function Toast({
   )
 }
 
-/** 错误 toast 的正文：一行标题、至多两行原文（全文在 title 与「复制详情」里） */
+/** 错误 toast 的正文（胶囊里的一行）：「这一步没有完成：」+ 原因，截断；全文在 title 与「复制详情」里 */
 function ErrorBody({ text }: { text: string }) {
   const { t } = useTranslation('workspace')
   const [copied, setCopied] = useState(false)
@@ -181,25 +180,26 @@ function ErrorBody({ text }: { text: string }) {
     return () => clearTimeout(id)
   }, [copied])
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-      <p className="font-medium text-danger-content">{t('status.errorTitle')}</p>
-      <SwapText className="min-w-0" textClassName="line-clamp-2 break-words text-ink-2" text={text} title={text} />
-      <div className="-ml-2 pt-0.5">
-        <Button
-          variant="ghost"
-          size="sm"
-          data-copy-details
-          onClick={() => {
-            void navigator.clipboard?.writeText(text).then(
-              () => setCopied(true),
-              () => {},
-            )
-          }}
-        >
-          {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
-          {t(copied ? 'status.copiedDetails' : 'status.copyDetails')}
-        </Button>
-      </div>
+    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+      <span className="shrink-0 font-medium text-danger-content">{t('status.errorTitle')}</span>
+      <span aria-hidden className="shrink-0 text-ink-faint">·</span>
+      {/* 截断落在里层且是块级：行内的 span 上 overflow / text-overflow 不生效，长路径会穿到按钮底下（Codex #995） */}
+      <SwapText className="min-w-0 flex-1" textClassName="block truncate text-ink-2" text={text} title={text} />
+      <Button
+        size="icon-xs"
+        aria-label={t(copied ? 'status.copiedDetails' : 'status.copyDetails')}
+        title={t(copied ? 'status.copiedDetails' : 'status.copyDetails')}
+        data-copy-details
+        className="shrink-0 text-ink-3 hover:text-ink"
+        onClick={() => {
+          void navigator.clipboard?.writeText(text).then(
+            () => setCopied(true),
+            () => {},
+          )
+        }}
+      >
+        {copied ? <Check size={ICON_SIZE.sm} aria-hidden /> : <Copy size={ICON_SIZE.sm} aria-hidden />}
+      </Button>
     </div>
   )
 }

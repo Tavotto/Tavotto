@@ -793,7 +793,7 @@ def test_probe_terminal_exceptions_keep_diagnostic_reference(
     outcome = {"registered": True, "stems": ["fig"], "entry": "main", "descriptors": []}
     monkeypatch.setattr(m.engine_probe, "probe_and_register", lambda *a, **kw: outcome.copy())
     monkeypatch.setattr(m, "_materialize_runtime", lambda *a, **kw: None)
-    monkeypatch.setattr(m.engine_runconfig, "set_default", lambda *a, **kw: None)
+    monkeypatch.setattr(m.engine_runconfig, "commit_success", lambda *a, **kw: None)
     monkeypatch.setattr(m, "refresh_project", lambda *a, **kw: None)
 
     def fail(*args, **kwargs):
@@ -803,7 +803,7 @@ def test_probe_terminal_exceptions_keep_diagnostic_reference(
         "started": (m, "sse_publish"),
         "probe": (m.engine_probe, "probe_and_register"),
         "materialize": (m, "_materialize_runtime"),
-        "default": (m.engine_runconfig, "set_default"),
+        "default": (m.engine_runconfig, "commit_success"),
         "refresh": (m, "refresh_project"),
     }[failure_at]
     monkeypatch.setattr(target, name, fail)
@@ -857,7 +857,7 @@ def test_probe_refresh_failure_keeps_original_status_and_diagnostic(
         lambda *a, **kw: {"registered": True, "stems": ["fig"], "entry": "main", "descriptors": []},
     )
     monkeypatch.setattr(m, "_materialize_runtime", lambda *a, **kw: None)
-    monkeypatch.setattr(m.engine_runconfig, "set_default", lambda *a, **kw: None)
+    monkeypatch.setattr(m.engine_runconfig, "commit_success", lambda *a, **kw: None)
 
     def fail(*args, **kwargs):
         raise m.engine_refresh.RefreshError("registry_invalid", SECRET, {"detail": SECRET})

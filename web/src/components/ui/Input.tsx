@@ -590,6 +590,9 @@ export function ColorField({
           // 只剩色块时取色盘是**透明盖在色块上的真控件**；带面板时盖着的是面板触发钮。
           // 两种都在这一层画焦点环（overflow-hidden 只裁子元素，不吃这一层自己的 outline）
           'relative h-5 w-8 shrink-0 overflow-hidden rounded-sm border border-border transition-colors has-[:focus-visible]:focus-ring',
+          // 坐在胶囊（浮动工具条，祖先带 data-capsule）里是一枚与控件同高的圆：胶囊左端是半圆，28 的圆在 p-1 里与它同心
+          // （2026-10-13 用户：「左侧的颜色可以改成圆形了」；输入框同一条规则在 fieldBox）
+          'in-data-capsule:size-7 in-data-capsule:rounded-full',
           disabled ? 'cursor-not-allowed' : 'hover:border-border-strong',
         )}
       >

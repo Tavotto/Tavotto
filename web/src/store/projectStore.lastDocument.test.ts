@@ -144,11 +144,18 @@ describe('切项目', () => {
     const disk = JSON.parse(diskSlots.get('d_a')!) as ProjectDocument
     localStorage.setItem(
       'tavotto.autosave.d_a',
-      JSON.stringify({ ...disk, updatedAt: (disk.updatedAt ?? 0) + 1000 }),
+      JSON.stringify({
+        ...disk,
+        updatedAt: (disk.updatedAt ?? 0) + 1000,
+        project: { ...disk.project, name: 'Fig A unsaved edit' },
+      }),
     )
     await p().open('/figs/a')
     expect(s().documentId).toBe('d_a')
     expect(s().docNotice).toMatchObject({ kind: 'recovery', docId: 'd_a' })
+    expect(s().projectMeta.name).toBe('Fig A')
+    expect(JSON.parse(localStorage.getItem('tavotto.recovery.d_a')!).project.name).toBe('Fig A unsaved edit')
+    expect(JSON.parse(diskSlots.get('d_a')!).project.name).toBe('Fig A')
   })
 
   it('记录在、槽位读不回来：说出名字并给重试；重试成功后横幅收起', async () => {

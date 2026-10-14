@@ -15,3 +15,31 @@
   就要回去改那张 matrix，合同测试会红。两条 Playwright 步都有 **step 级** `timeout-minutes`（45 / 35，job 级 60 / 45 不动；posix-e2e 单 worker 约 19.7 分钟、209 条，20 分钟上限在 run 36734896556 上误杀过，所以放到 35；windows 片 1 只剩 chromium 一个 project、2026-10-07 实测 27.4–29.4 分钟，30 分钟上限在 PR #828 / #833 上误杀过，所以放到 45——按 project 切的片已切不动，要再平衡得在 chromium 内部再分片）：job 级硬杀时 step
   停在 in_progress、`if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1 实测），step 级超时把挂起变成带日志的失败。
   设计、本机实测、负例与已知边界：`docs/implementation/ci-foundation/CI03C_PLAYWRIGHT_SHARDS.md`。
+
+
+## POSIX Playwright 三路分片（Issue #768）
+
+`posix-e2e` 的 job id 不变，`strategy.matrix.shard: [1, 2, 3]`，
+三个独立 `ubuntu-24.04` Runner 使用 Playwright 原生 `--shard=i/3` 分配
+Chromium + chromium-en 所有用例（不改 project 集合）。2026-10-14 #1000 full-ci
+单 Runner 的 step 级 35 分钟上限只跑到约 274 条用例即被杀；原先止血余量已耗尽。
+
+每个 shard 先让 Playwright `test --list --shard=i/3 --reporter=json` 产生计划，
+随后相同项目和相同分片实际运行；`feature_registry.py verify-run --expected-list`
+严格核验该 shard **计划中的 active 用例与 project** 均有真实成功结果。
+其他 shard 的注册用例允许不在本报告内，但未分片的 frontend 静态资格已确认
+全部注册用例存在；GitHub matrix 聚合语义要求三片全部成功，
+`needs.posix-e2e` 才是 success。故无需修改 Gate job id、needs 或 required 闭集。
+失败 trace artifact 名须包含 shard 号，防止 artifact 冲突。
+
+
+
+## WebKit-only 注册用例防假绿（#1021 审核补强）
+
+Chromium / chromium-en 的各 shard 真跑前，额外生成一次两者**未分片**的
+`playwright test --list`，由 `feature_registry.py verify-run --all-planned-list`
+检验每一条 active 注册引用至少被这两个 POSIX project 中的一项以
+`expectedStatus=passed` 收集。只有 WebKit 拥有的用例不能只凭 frontend
+“全浏览器有登记”就被错判为真实运行通过；须改变注册策略或在另一条腿补齐
+运行期验证后才放行。任何缺少全量清单的分片调用都返回 rc=2，三个 Runner
+不得拿局部 JSON 假冒完整覆盖。

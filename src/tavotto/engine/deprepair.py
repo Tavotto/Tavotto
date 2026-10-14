@@ -54,6 +54,7 @@ from . import (
     envlease,
     execspec,
     importscan,
+    launcher,
     logsafe,
     managedenv,
     pool,
@@ -1500,11 +1501,8 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     )
 
     # ---- pip 在不在 -------------------------------------------------------
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        # **不静默 ensurepip**：那是往用户环境里再加一样东西，而用户确认的是
-        # 「装 lmfit」。
-        raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
+    # **不静默 ensurepip**：那是往用户环境里再加一样东西，而用户确认的是「装 lmfit」。
+    _require_pip(python, ERROR_PIP_UNAVAILABLE)
 
     # ---- 安装 -------------------------------------------------------------
     # 租约在手、解释器已知之后再查一次「这一轮装成功过没有」（Codex 评审 #469 P2）：
@@ -1545,6 +1543,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
     # ---- 验证三层 ---------------------------------------------------------
     _emit(plan.plan_id, STATE_VERIFYING, on_event, plan=plan)
     health = projectenv.probe_environment(python, req.import_name or None)
+    _raise_if_activation_unavailable(health)
     if not health.get("ok"):
         # pip 退出码 0 不等于「装对了」：装进了另一个环境、装的是同名的另一个
         # 包、扩展模块的 ABI 对不上——这三种都是 exit 0 + import 失败。
@@ -1555,7 +1554,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
         )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
 
     # ---- 记账 + 换环境 + 作废旧 worker -------------------------------------
     with _lock:
@@ -2193,6 +2192,23 @@ def _run_pip(
     """
     if cancel_ev.is_set():
         return ERROR_CANCELLED, ""
+    if deadline is None:
+        deadline = time.time() + INSTALL_TIMEOUT_S
+    try:
+        # 受管环境里跑的 pip 把缓存放进数据目录（不是 `%LOCALAPPDATA%\pip`）；用户 venv 上的
+        # 安装原样继承——那是用户自己的 pip（`runtime.owned_env`）。
+        # 用户的 Conda 环境里装包：与 worker 同一个启动决策（激活后的环境）。取环境失败 = 什么都没装。
+        # 激活捕获可能要几十秒：用安装的剩余预算，捕获完**再查一次取消与期限**才起 pip——
+        # 用户在激活期间点了取消，pip 一个字节都不许动环境
+        env = launcher.activate_env(
+            argv[0], runtime.owned_env(argv[0]), timeout=max(deadline - time.time(), 0.0)
+        )
+    except launcher.LauncherUnavailable as exc:
+        return exc.code, str(exc)
+    if cancel_ev.is_set():
+        return ERROR_CANCELLED, ""
+    if time.time() >= deadline:
+        return ERROR_TIMEOUT, ""
     try:
         proc = subprocess.Popen(
             argv,
@@ -2202,9 +2218,7 @@ def _run_pip(
             text=True,
             encoding="utf-8",
             errors="replace",
-            # 受管环境里跑的 pip 把缓存放进数据目录（不是 `%LOCALAPPDATA%\pip`）；用户 venv 上的
-            # 安装原样继承——那是用户自己的 pip（`runtime.owned_env`）。
-            env=runtime.owned_env(argv[0]),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except OSError as exc:
@@ -2216,8 +2230,6 @@ def _run_pip(
             LOG.warning("pip 启动回调异常", exc_info=True)
 
     chunks: list[str] = []
-    if deadline is None:
-        deadline = time.time() + INSTALL_TIMEOUT_S
 
     def _pump() -> None:
         for line in proc.stdout or ():
@@ -2264,22 +2276,47 @@ def _run(argv: list[str], timeout: int) -> tuple[int, str]:
     问一句不许把 .pyc 写回它的安装目录。装 / 卸走 `_run_pip`，不走这里。"""
     argv = [argv[0], *runtime.probe_args(), *argv[1:]]
     try:
+        # 激活捕获与命令本身共用一个预算：慢的激活不能让 `pip --version` 这类短探测远超它自己的超时
+        deadline = time.monotonic() + timeout
+        env = launcher.activate_env(argv[0], runtime.owned_env(argv[0]), timeout=timeout)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise launcher.LauncherUnavailable(
+                "经 Conda 激活取环境用完了这次探测的时间预算；请稍后再试"
+            )
         proc = subprocess.run(
             argv,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
-            env=runtime.owned_env(argv[0]),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         return 1, f"超时（{timeout}s）"
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：不是 pip / 环境本身的结论。返回专用码，需要报错的调用方（`_require_pip`）透传稳定码
+        return RC_ACTIVATION_UNAVAILABLE, str(exc)
     except OSError as exc:
         return 1, str(exc)
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+#: `_run` 的返回码：Conda 激活取环境失败（什么都没起）。负数，不会与真实进程退出码混淆
+RC_ACTIVATION_UNAVAILABLE = -10_975
+
+
+def _require_pip(python: str, missing_code: str) -> None:
+    """装 / 卸之前确认目标环境的 pip 在。pip 不在 → `missing_code`；激活取环境失败 → `conda_launcher_unavailable`
+    （瞬时，恢复动作不同：不是“这个环境没有 pip”）。"""
+    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc == RC_ACTIVATION_UNAVAILABLE:
+        raise RepairError(launcher.UNAVAILABLE_CODE, out[:400])
+    if rc != 0:
+        raise RepairError(missing_code, _sanitize(out)[-800:])
 
 
 def installed_version(python: str, distribution: str) -> str:
@@ -2314,6 +2351,14 @@ fig.savefig("SelfTest.pdf")
 _SELFTEST_NAME = "tavotto_selftest.py"
 
 
+def _selftest_error(selftest: dict) -> "RepairError":
+    """自检没过 → `RepairError`。Conda 激活取环境失败是瞬时的“不可用”，透传稳定码，不报成“自检失败”。"""
+    detail = _sanitize(selftest.get("detail", ""))[-800:]
+    if selftest.get("code") == launcher.UNAVAILABLE_CODE:
+        return RepairError(launcher.UNAVAILABLE_CODE, detail)
+    return RepairError(ERROR_SELFTEST_FAILED, detail)
+
+
 def worker_self_test(python: str) -> dict:
     """真起一次 worker 跑通一次 build——验证的第三层。
 
@@ -2342,6 +2387,12 @@ def worker_self_test(python: str) -> dict:
                 bundled=pool.same_python(python, runtime.bundled_python())
             ),
         )
+        env_build = pool.build_envelope({"cmd": "build"})
+        env_stop = pool.build_envelope({"cmd": "shutdown"})
+        # Conda 环境：自检也用激活后的环境（与 worker 同一个启动决策：解释器路径的纯函数）；激活与自检共用一个预算
+        child_env, remaining = launcher.activate_within(
+            python, runtime.owned_env(python), SELFTEST_TIMEOUT_S
+        )
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
@@ -2351,14 +2402,16 @@ def worker_self_test(python: str) -> dict:
             encoding="utf-8",
             errors="replace",
             # 与池里起 worker 同一份 env 判据（受管环境的 matplotlib 缓存落回数据目录）
-            env=runtime.owned_env(python),
+            env=child_env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
         try:
-            # legacy 信封（worker 明确支持，手工调试用的就是它）：一条 build
-            # 一条 shutdown，读到 EOF 即结束，不必在这里重建一套超时读线程。
+            # v1 信封（`pool.build_envelope`，调用侧的唯一出处）：一条 build 一条 shutdown，读到 EOF 即结束，
+            # 不必在这里重建一套超时读线程。回复只认带 `protocol_version` 且 `request_id` 回显对得上的信封——
+            # 别的 JSON（`{"ok": true}` 之类）一律当日志，不能冒充 worker 的回复。
             stdout, stderr = proc.communicate(
-                '{"cmd": "build"}\n{"cmd": "shutdown"}\n', timeout=SELFTEST_TIMEOUT_S
+                json.dumps(env_build) + "\n" + json.dumps(env_stop) + "\n",
+                timeout=remaining,
             )
         except subprocess.TimeoutExpired:
             _kill(proc)
@@ -2368,13 +2421,20 @@ def worker_self_test(python: str) -> dict:
                 resp = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(resp, dict) and "ok" in resp:
+            if (
+                isinstance(resp, dict)
+                and resp.get("protocol_version") == pool.PROTOCOL_VERSION
+                and resp.get("request_id") == env_build["request_id"]
+                and "ok" in resp
+            ):
                 if resp.get("ok"):
                     # `stems` 才是「捕获到几张图」——调用方据此断言 worker
                     # 是真跑通了，而不是「函数返回了 True」。
                     return {"ok": True, "figures": len(resp.get("stems") or {})}
                 return {"ok": False, "detail": str(resp.get("error", ""))[:800]}
         return {"ok": False, "detail": (stderr or stdout or "")[-800:]}
+    except launcher.LauncherUnavailable as exc:
+        return {"ok": False, "detail": str(exc)[:800], "code": exc.code}
     except OSError as exc:
         return {"ok": False, "detail": str(exc)[:800]}
     finally:
@@ -3533,9 +3593,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
         managedenv.mark_incomplete(project, f"{job.op} 被取消")
         return _emit_job(job.job_id, STATE_CANCELLED, on_event, job=job, code=ERROR_CANCELLED)
 
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])
+    _require_pip(python, ERROR_MANAGED_BROKEN)
 
     # 改动前的快照：不是回滚（pip 没有事务），是修复时的对照
     before = _freeze(python)
@@ -3575,6 +3633,7 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             ERROR_PACKAGE_NOT_FOUND_AFTER, f"pip 退出了，但环境里没有 {job.distribution}"
         )
     health = projectenv.probe_environment(python)
+    _raise_if_activation_unavailable(health)  # 瞬时：不标记这一代不完整
     if not health.get("ok"):
         managedenv.mark_incomplete(project, f"{job.op} 之后 matplotlib 不可用")
         raise RepairError(ERROR_MANAGED_BROKEN, health.get("detail") or health.get("code") or "")
@@ -3993,6 +4052,16 @@ def _facts_for(
     （选中的是项目 venv / 系统解释器，目标是受管环境）计划的集合按目标量，否则新的一代会漏装
     选中环境里碰巧有的包、marker 会按另一个 minor 求值（Codex #461 P1）。
     """
+    try:
+        return _facts_for_inner(kind, python, root, use_cache=use_cache, fresh=fresh)
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：瞬时、不缓存；稳定码交给用户（不是“目标不可用”）
+        raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
+
+
+def _facts_for_inner(
+    kind: str, python: str, root: str, *, use_cache: bool = True, fresh: bool = False
+) -> tuple[depplan.TargetFacts | None, depplan.TargetFacts | None, str]:
     run = depplan.target_facts(python, use_cache=use_cache) if python else None
     if kind != TARGET_MANAGED:
         return run, None, python
@@ -4618,9 +4687,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     python = plan.python
     _require_record_sources(plan.record)  # 回执的来源字段：缺了在 pip 之前拒绝
     _emit(plan.plan_id, STATE_PREPARING, on_event, joint=plan)
-    rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
-    if rc != 0:
-        raise RepairError(ERROR_PIP_UNAVAILABLE, _sanitize(out)[-800:])
+    _require_pip(python, ERROR_PIP_UNAVAILABLE)
     _emit(plan.plan_id, STATE_INSTALLING, on_event, joint=plan)
     pi = plan.pip_inputs
     with tempfile.TemporaryDirectory(prefix="tavotto-joint-") as tmp:
@@ -4661,7 +4728,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
     )
     selftest = worker_self_test(python)
     if not selftest.get("ok"):
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
     # 自检期间接受的取消（`cancel_status` 还没过提交点）要算数：包已经在用户 venv 里了，
     # 如实报 cancelled + 体检，不接着 remember / 作废会话（Codex #461 P2）。「看事件 + 定提交」
     # 与 `cancel_status` 同一把锁，两边只会有一个赢
@@ -4890,6 +4957,8 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
             result={"generation": generation, "activated": False},
         )
     rc, out = _run([python, "-m", "pip", "--version"], PIP_PROBE_TIMEOUT_S)
+    if rc == RC_ACTIVATION_UNAVAILABLE:
+        raise RepairError(launcher.UNAVAILABLE_CODE, out[:400])
     if rc != 0:
         managedenv.mark_generation(project, generation, managedenv.GEN_STATE_INCOMPLETE, "没有 pip")
         raise RepairError(ERROR_MANAGED_BROKEN, _sanitize(out)[-800:])
@@ -4966,7 +5035,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, "worker 自检未通过"
         )
-        raise RepairError(ERROR_SELFTEST_FAILED, _sanitize(selftest.get("detail", ""))[-800:])
+        raise _selftest_error(selftest)
     # ---- 提交点：切 active。之后拒绝取消 ----
     # 自检期间接受的取消要算数（Codex #461 P2）：「看事件 + 定提交」与 `cancel_status`「看提交 +
     # 设事件」同一把锁——接受了的取消不会与提交交错，两边只会有一个赢
@@ -5400,20 +5469,25 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
+        # 激活捕获与 import 探测共用一个预算
+        env, remaining = launcher.activate_within(
+            python, runtime.owned_env(python), projectenv.PROBE_TIMEOUT_S
+        )
         proc = subprocess.run(
             [str(python), *runtime.probe_args(), "-c", _IMPORTS_PROBE_SRC, *names],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=projectenv.PROBE_TIMEOUT_S,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=runtime.owned_env(python),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return {n: str(exc)[:200] for n in names}
+    # `launcher.LauncherUnavailable` 不在这里折成逐个模块的错误：调用方（`_verify_imports`）报稳定码
     finally:
         if scratch:
             shutil.rmtree(scratch, ignore_errors=True)
@@ -5424,8 +5498,22 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     return {n: str(data.get(n, "no result")) for n in names}
 
 
+def _raise_if_activation_unavailable(health: dict) -> None:
+    """装后体检遇到 Conda 激活取环境失败：报瞬时的 `conda_launcher_unavailable`，不报成“装了还 import 不了”
+    （那会叫用户去查包、把受管的一代标成不完整）。"""
+    if not health.get("ok") and health.get("code") == launcher.UNAVAILABLE_CODE:
+        raise RepairError(
+            launcher.UNAVAILABLE_CODE, str(health.get("detail") or "")[:400], health=health
+        )
+
+
 def _verify_imports(python: str, names: tuple[str, ...]) -> None:
-    failed = {n: e for n, e in probe_imports(python, names).items() if e}
+    try:
+        results = probe_imports(python, names)
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：瞬时，不是“装了还 import 不了”——不许标记这一代不完整、不许叫用户去查包
+        raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
+    failed = {n: e for n, e in results.items() if e}
     if failed:
         raise RepairError(
             ERROR_IMPORT_STILL_FAILED,
@@ -5494,7 +5582,11 @@ def _verify_distributions(
     problems: dict[str, str] = {}
     provided: list[dict] = []
     try:
-        facts = depplan.target_facts(python, use_cache=False)
+        try:
+            facts = depplan.target_facts(python, use_cache=False)
+        except launcher.LauncherUnavailable as exc:
+            # 装后核验时取不到激活环境：瞬时的 conda_launcher_unavailable，不是“装上的东西不对”
+            raise RepairError(launcher.UNAVAILABLE_CODE, str(exc)[:400]) from exc
         index = depplan.static_index(facts)
     finally:
         # 目标环境刚被改动（或这一代即将丢弃）：别让这次量到的事实留在缓存里冒充「装之前」
@@ -6083,6 +6175,21 @@ def decide_environment(project: str | Path, script: str) -> dict | None:
 def decide_environment_pinned(
     project: str | Path, script: str, *, project_exec: bool = True
 ) -> pool.EnvironmentDecision:
+    """（稳定出口包装：Conda 激活取环境失败 → 带 `conda_launcher_unavailable` 的 `WorkerError`，由 `preparation.plan_for` /
+    `_execute` 接住成稳定结论；真正的判据在 `_decide_environment_pinned`。）"""
+    try:
+        return _decide_environment_pinned(project, script, project_exec=project_exec)
+    except launcher.LauncherUnavailable as exc:
+        raise pool.WorkerError(str(exc), code=exc.code) from exc
+    except RepairError as exc:
+        if exc.code != launcher.UNAVAILABLE_CODE:
+            raise
+        raise pool.WorkerError(str(exc), code=exc.code) from exc
+
+
+def _decide_environment_pinned(
+    project: str | Path, script: str, *, project_exec: bool = True
+) -> pool.EnvironmentDecision:
     """「换不换解释器」的**唯一一处**决定（ADR 0079 §四）：缺包且有装齐的用户环境、此刻的解释器又是
     机器替用户挑的，就把它记成本项目的自动决策；回 `pool.EnvironmentDecision`：`adopted` 是采用的那一条（`userenvs.evaluate` 的形状，没换 None）；检测模式还带
     锁内钉下的解释器（见 `_detect_environment_pinned`）。
@@ -6315,6 +6422,7 @@ def _detect_environment_pinned(
             python=python,
             source=source,
             generation=projectenv.environment_generation(python),
+            launch_context=launcher.context_key(python),
         )
 
 

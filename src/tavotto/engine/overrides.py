@@ -3458,13 +3458,44 @@ _CAP_ALPHA = (lambda a: a.get_alpha(), _set_alpha_pinned)
 #: `set_fill(True)` 因边色回到 'none' 不再写它——花纹色停在改过的值，撤销回不去（#874）。
 #: 创建时的花纹色记在 artist 上（首次触碰前采；边色 getter 也会采，见 `_get_patch_edgecolor`）。
 _ORIG_HATCH = "_mm_orig_hatch_color"
+#: 与 ≥3.11 的 `_HATCH_BASE` 第二项同义：每次 `apply` 收尾时 `_hatch_color` 的样子（#951）。
+#: native 屏障之间用户的 Python 可以直接改 `_hatch_color`（≤3.10 没有公开入口），那之后创建时的
+#: 记录就过期了：下一次 fill 编辑发现此刻的值与「上次写完的样子」对不上，就把此刻的值当新基准。
+_LAST_HATCH = "_mm_last_hatch_color"
 
 
 def _remember_hatch_color(p) -> None:
     if hasattr(p, "set_hatchcolor") or not hasattr(p, "_hatch_color"):
         return
-    if not hasattr(p, _ORIG_HATCH):
+    if _hatch_changed_externally(p):
+        setattr(p, _ORIG_HATCH, p._hatch_color)  # noqa: SLF001 — 中间被别人动过：按实况重记
+    elif not hasattr(p, _ORIG_HATCH):
         setattr(p, _ORIG_HATCH, p._hatch_color)  # noqa: SLF001
+
+
+def _hatch_changed_externally(p) -> bool:
+    last = getattr(p, _LAST_HATCH, None)
+    return last is not None and not _same_value(last, p._hatch_color)  # noqa: SLF001
+
+
+def _adopt_external_hatch_colors(state) -> None:
+    """`apply` 入口：屏障之间用户改过的花纹色当场采纳为新基准（Codex #993 r4259898020）。
+
+    只在 fill 编辑里才重记会漏掉「这一批没有 fill 编辑」的情形：收尾盖章会把用户的值盖成「写完的样子」，
+    之后再切 fill 就认不出它是外部改的。所以在任何编辑落下之前先过一遍。"""
+    for el in state.elements:
+        a = el.get("artist")
+        if a is not None and hasattr(a, _ORIG_HATCH) and hasattr(a, "_hatch_color"):
+            if _hatch_changed_externally(a):
+                setattr(a, _ORIG_HATCH, _fresh_copy(a._hatch_color))  # noqa: SLF001
+
+
+def _stamp_hatch_colors(state) -> None:
+    """`apply` 收尾：给记着创建时花纹色的 ≤3.10 patch 盖上「写完的样子」（见 `_LAST_HATCH`）。"""
+    for el in state.elements:
+        a = el.get("artist")
+        if a is not None and hasattr(a, _ORIG_HATCH) and hasattr(a, "_hatch_color"):
+            setattr(a, _LAST_HATCH, _fresh_copy(a._hatch_color))  # noqa: SLF001
 
 
 def _set_patch_fill(p, v) -> None:
@@ -4909,6 +4940,15 @@ def snapshot(state: FigState) -> list[dict]:
 
 
 def apply(state: FigState, patches: list[dict]) -> list[str]:
+    """`_apply` 加收尾：盖上 ≤3.10 花纹色的「写完的样子」（#951）。"""
+    _adopt_external_hatch_colors(state)
+    try:
+        return _apply(state, patches)
+    finally:
+        _stamp_hatch_colors(state)
+
+
+def _apply(state: FigState, patches: list[dict]) -> list[str]:
     """把全量 patch 列表同步到 Figure。返回 warning 列表（孤儿 gid 等）。
 
     应用顺序是**规范化**的，七个档位见 `_apply_rank` 的表：图幅 → 结构改造

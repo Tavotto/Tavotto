@@ -110,6 +110,11 @@ class ExecutionReceipt:
     pid_check: str | None = None
     #: 控制面在预检那一刻记下的数据绑定（`databinding.binding_for()` 的载荷）；None = 没给。
     binding: dict | None = None
+    #: 启动方式的结构化引用（P09，`launcher.CondaLauncher.public()`）；None = 直接启动。含机器路径：只进私有投影，
+    #: **不进** `public_identity` / `public_facts`（身份仍是「用户 Python 跑了这个脚本」，启动方式不改它）。
+    launcher: dict | None = None
+    #: 起会话那一刻的环境事实（P09）：`{"generation": …, "env_state": …}`。成功记录用它而不是收口时的值。私有，不进公开投影。
+    session_env: dict | None = None
     #: 这一次启动实例的唯一键（桌面拥有的会话 id）。空 = 不参与（safe / terminal native 的回执逐字节不变）。
     #: 私有：两次参数完全相同的桌面启动是两次执行，不能得到同一个 `receipt_id`。
     instance: str = ""
@@ -313,6 +318,8 @@ class ExecutionReceipt:
             out["private_invalidation_key"] = self.private_invalidation_key()
             out["interpreter"] = self.interpreter
             out["project_root"] = self.project_root
+            if self.launcher is not None:
+                out["launcher"] = dict(self.launcher)
             if self.instance:
                 out["instance"] = self.instance
         return out
@@ -384,7 +391,29 @@ def from_worker(
         runtime_rejected=rejected,
         pid_check=pid_check,
         binding=dict(binding) if isinstance(binding, dict) else None,
+        launcher=_launcher_public(worker),
+        session_env=_session_env(worker),
     )
+
+
+def _session_env(worker) -> dict | None:
+    gen = getattr(worker, "python_generation", None)
+    state = getattr(worker, "env_state", None)
+    if gen is None and not isinstance(state, str):
+        return None
+    out: dict = {}
+    if gen is not None:
+        out["generation"] = gen
+    if isinstance(state, str):
+        out["env_state"] = state
+    return out
+
+
+def _launcher_public(worker) -> dict | None:
+    lau = getattr(worker, "launcher", None)
+    public = getattr(lau, "public", None)
+    out = public() if callable(public) else None
+    return dict(out) if isinstance(out, dict) else None
 
 
 def worker_pid(worker) -> int | None:

@@ -282,6 +282,14 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     ],
     actions: [action('recheck')],
   },
+  depsPlatform: {
+    phase: 'awaiting_confirmation',
+    outcome: { kind: 'needs_dependencies', code: 'missing_dependency' },
+    requirements: [
+      { id: 'dependencies', kind: 'dependency_authorization', origin: 'runtime_missing', code: 'missing_dependency', payload: { module: 'winreg', installable: false, route: 'unsupported_platform', options: [] } },
+    ],
+    actions: [action('recheck')],
+  },
   // Import Origin（PR6）：计划里有 import 没有可信的安装名——检查项不变状态，只在 detail 里带计数与闭集原因码
   originConfirm: {
     checks: originChecks({ count: 2, by_reason: { distribution_unresolved: 1, module_origin_ambiguous: 1 }, confirmable: 1 }),
@@ -700,6 +708,15 @@ describe('缺依赖三类：可安装 / 装不了 / 标准库缺了——各一�
     expect(panel().dataset.prepState).toBe('deps_stdlib')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('Tavotto 自带的环境里没有 tkinter')
     expect(primary()?.dataset.prepPrimary).toBe('pick_environment')
+  })
+
+  it('系统专属标准库不可用：说明脚本不支持当前系统，不再给换 Python 的按钮', async () => {
+    await mount()
+    await openWith(report(STATES.depsPlatform))
+    expect(panel().dataset.prepState).toBe('deps_platform')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('winreg 是其他系统专用模块，这个脚本无法在当前系统运行')
+    expect(primary()).toBeNull()
+    expect(panel().querySelector('[data-prep-primary="pick_environment"]')).toBeNull()
   })
 
   it('关上弹窗就清掉「直达选环境」的意图（下次从设置进来不会被预先展开）', () => {

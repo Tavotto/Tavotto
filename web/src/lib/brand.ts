@@ -23,6 +23,13 @@ export const PRIVACY_DOC_URL = `${REPO_URL}/blob/main/docs/privacy.md`
  * codex 命令行改脚本。设置页的两个小节分别对应这两个方向，别把它们的状态
  * 混在一起说。
  */
+/**
+ * 官网与它的「支持 Tavotto」页（设置页「关于与更新」的那颗按钮链到这里）。
+ * 中文界面去官网的中文页，那一页同时给 Ko-fi 与爱发电两条路。
+ */
+export const WEBSITE_URL = 'https://www.tavotto.com'
+export const supportPageUrl = (locale: 'zh-CN' | 'en-US'): string =>
+  `${WEBSITE_URL}${locale === 'zh-CN' ? '/zh/support/' : '/support/'}`
 export const CODEX_GUIDE_URL = `${REPO_URL}#using-tavotto-with-codex-for-the-first-time`
 
 export const PACKAGE_KIND = 'tavotto-package'

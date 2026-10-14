@@ -150,6 +150,7 @@ export default interface Resources {
   },
   "common": {
     "actions": {
+      "appMenu": "菜单",
       "cancel": "取消",
       "clearSearch": "清除搜索",
       "close": "关闭",
@@ -1259,6 +1260,7 @@ export default interface Resources {
         "privacySend": "诊断包只有在你于“发送问题反馈”里逐次确认后才会上传到 Tavotto 维护者的服务；导出诊断包只会保存在本机。",
         "privacyTitle": "隐私与数据",
         "source": "获取源代码",
+        "support": "支持 {{product}}",
         "tagline": "论文图排版与参数化图表编辑",
         "telemetry": {
           "autoProps": "每条记录只带应用版本、操作系统、CPU 架构和安装渠道。",
@@ -1822,6 +1824,7 @@ export default interface Resources {
           "scripts": "脚本 来源 注册",
           "shortcuts": "快捷键 键盘 速查表",
           "spec": "规范 期刊 检查 字号 栏宽",
+          "support": "支持 捐赠 赞助 爱发电 ko-fi",
           "telemetry": "隐私 统计 遥测 数据",
           "theme": "主题 深色 浅色 暗色 夜间 外观 模式 颜色",
           "tutorial": "教程 新手 提示 引导",
@@ -2192,6 +2195,7 @@ export default interface Resources {
       "bad_request": "导出请求格式有误，请刷新页面后重试。",
       "bad_scope": "无法识别导出范围：{{value}}。",
       "bad_validation": "检查设置格式有误，请刷新页面后重试。",
+      "conda_launcher_unavailable": "Conda 环境激活失败（取不到激活后的环境变量），这次没有运行任何东西。通常是暂时的：稍后再试；如果一直这样，请检查这个环境的 conda 安装和 activate.d 脚本。",
       "dependency_preparation_required": "脚本开跑就需要的包渲染环境里没有，要先准备依赖",
       "desktop_updater_disabled": "桌面版不支持 pip 自升级，请更新桌面应用。",
       "dir_fsync_failed": "内容已写入，但系统无法确认已落盘。关闭前请再保存一次：{{reason}}",
@@ -5047,6 +5051,7 @@ export default interface Resources {
         "completed_other": "画好了 {{count}} 张图",
         "depsCancelled": "安装已停止",
         "depsFailed": "没装好，原有文件没动",
+        "depsPlatform": "{{module}} 是其他系统专用模块，这个脚本无法在当前系统运行",
         "depsRuntime": "运行时缺 {{module}}",
         "depsScope": "组件版本冲突",
         "depsStdlib": "Tavotto 自带的环境里没有 {{module}}",

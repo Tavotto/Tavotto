@@ -341,6 +341,55 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
 
+## 成功启动上下文与 Conda 激活（P09，EX07 / EX11，AC-11 / AC-19）
+
+- **成功事实只有一份登记**：`runconfig` 的 `launches[脚本]`，由 `app._finalize_script_attempt`（已有的成功收口）经
+  `launchctx.record_success`（`runconfig.commit_success` 事务，与磁盘面板默认配置同一次写入）写；失败 / 部分结果 / 回执 `partial` /
+  依据不全都不写，依据不全还清掉旧记录。记录只含引用与摘要：解释器身份、启动方式引用（`direct` 或 `conda`：conda 路径 + prefix）、
+  Conda 环境版本 `env_state` 与环境代（direct 记录在 Conda 环境里同样记；取**起会话那一刻**的值，不取收口时的）、cwd 模式、运行配置**引用**、脚本 sha1 + 回执自报的 helper /
+  数据文件 sha256、数据绑定修订。**不存**激活后的环境变量、argv 值、敏感输入、答案原文。记录里的路径只用来对账，**永不当可执行路径**。
+  记录的消费端（再次打开时沿用上次成功配置，`launchctx.verify`）**不在本期**，见 #982。
+- **激活一次、捕获环境、直接启动**：对 Conda 环境，`launcher.activated_delta` 只跑一次
+  `conda run --no-capture-output --prefix <p> <python 绝对路径> -c <把 os.environ 写进 0600 结果文件>`（不带 `--`：conda run 的命令部分是
+  argparse REMAINDER，老 conda 24.5.0 不认 `--`；`activate.d` / `deactivate.d` 往 stdout 打印什么都不影响，结果走文件），取相对当前环境的
+  **增量**，缓存在**进程内存**里（键 `(prefix, env_state, conda_exe)`，环境一变重新捕获，**绝不持久化**：不进登记、记录、回执、日志、
+  诊断，日志只记变量个数）。所有「用目标解释器起子进程」的地方都**直接**起目标解释器（我们的直接子进程，取消 / 超时 / 协议 / 回执 pid
+  与没有 Conda 时一样），只把 env 换成「调用方原来的 env + 激活增量」：worker（`pool.EngineWorker`）、预检探针（`launcher.activate_env`）、
+  依赖门、`deprepair.worker_self_test`、`runtime.probe_packages`（app 注入 `env_for`）。
+- **启动方式是解释器路径的纯函数**：`launcher.launcher_for_interpreter(python)`——关开关 → Windows → 现场检测（Conda 环境 + 找得到 conda），
+  不读脚本、项目、成功记录、来源标签，**没有** ContextVar 之类的“范围”，所以任何线程、任何入口对同一条解释器给出同一个 env。成功记录里的
+  launcher 只作为事实写入（回执、记录照记），**不驱动决策**。行为变化：以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对
+  Conda 环境的预期）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 本期不启用**（没有真机验证；捕获方案本身可直接扩到 Windows）。
+- **捕获失败一律 fail-closed 且不缓存**：Conda 环境捕获失败 / 超时，任何调用点都抛 `LauncherUnavailable`（稳定码 `conda_launcher_unavailable`），
+  不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
+  不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的
+  （`pool.select_worker_python`）。`plan_for` 写进环境错误，`_execute` 零执行收场（`deprepair.decide_environment_pinned` 把它转成 `WorkerError`）。
+  **只激活用户自己的 conda 安装里的环境**：安装根本身（base）或它的 `envs/<名字>`；安装根来自 `CONDA_EXE` / `PATH` 上的 conda
+  与常见安装位置（`launcher._STANDARD_ROOTS`，须确实是安装根：`conda-meta/` + 可执行的 `bin/conda`）。激活会 source prefix
+  自己的 `activate.d`；任何凭登记 / 路径形状的推断（environments.txt、项目标记）都可能被项目目录冒充，所以不用——其它位置的
+  Conda 环境（`conda create -p` 到任意目录、克隆项目自带的 `.venv/conda-meta/`）一律直接启动（与 P09 之前一致），
+  直接启动失败也不当成对环境的结论（`unlocated_conda_prefix`）。
+  计划 / 钉下的决定 / 热会话比的是完整启动上下文 `launcher.context_key`（直接启动 ↔ 激活、conda、prefix、环境版本）。
+  conda 可执行文件的候选：prefix 所属安装根的 `bin/conda`，再是 `CONDA_EXE` / `PATH`（不读 `conda-meta/history`、不读 environments.txt：
+  都是项目能伪造或会过期的线索）。不会被激活的 Conda 形状的解释器（找不到 conda / 不在用户 conda 安装里）照常裸起；**但裸起失败不是对环境的
+  结论**：`pool._has_matplotlib` / `projectenv.probe_environment` 此时抛 / 返回 `conda_launcher_unavailable`（瞬时，不缓存、不作废记住的
+  解释器、不静默换别的）。
+- **桌面拥有的 native 会话**（`desktopproc.start`，P06）没有用户 shell 替它激活，与 safe 档走同一个 `activate_env`；激活在**拿到 native 租约之后**、spawn 之前（装包期间连 conda / activate.d 都不跑），
+  失败 = 不 spawn、放租约，`RunError(conda_launcher_unavailable)`。捕获前后 `prefix_state` 不一致（捕获期间环境被改）的结果不用也不缓存。终端 native 继承用户已激活的 shell，不改。
+- **增量是双向的**：激活 `unset` 掉的变量在增量里记成 `None`，`launcher.merge_env` 启动时 `pop` 它（所有启动点都经这一处，含 `desktopproc`）；
+  `_VOLATILE_ENV` 永不删。捕获超时的收尾**叶子先死**（先杀后代、让还活着的 conda 收尸，再杀 conda 并 wait），不留僵尸。
+- **捕获的环境键与时机**：缓存键 `(prefix, prefix_state, conda_exe)`，`prefix_state` 含 `conda-meta/history` / 目录 / `state`（`conda env config vars`）
+  与 `etc/conda/activate.d`、`deactivate.d` 的文件清单及各自 (size, mtime_ns)。池锁之外预热（`pool.acquire` 里 `launcher.prewarm`），预检的预算
+  传进捕获（`timeout`），排在别人的捕获后面也只等自己的预算（单飞锁带超时）；捕获解释器用 `-I -S` 起，只读 `os.environ`，不执行环境里的
+  sitecustomize / `.pth`；结果文件放 `probe-results/`（0600），启动时清过期残留并在过了过期线后再扫一次（`launcher.startup`），退出时清在途的。
+- **按解释器缓存的探针结论**（`depplan` 目标事实 / 静态索引、`projectenv` 系统候选体检、`userenvs` 体检、`pool` 的 `import matplotlib` 结论与选定的
+  渲染解释器）都按 `launcher.context_key(python)`（`direct` 或 `conda|exe|prefix|env_state`）分区。
+- **限制**：只捕获环境变量。激活脚本里环境变量以外的副作用（启动 license 服务、`ulimit`、shell 函数）不会在每次启动时重放，
+  `deactivate.d` 不再执行——与 IDE 的通行做法一致。需要激活的解释器只走 Python 池（`WorkerdWorker` 抛 `WorkerdUnavailable` 回退）。
+
+看护：`tests/test_conda_launch_context.py`（模拟 conda + `TAVOTTO_TEST_CONDA_PREFIX` / `TAVOTTO_TEST_OLD_CONDA_EXE` 指向真 conda 环境时的真 conda 用例，
+未设则 skip）。
+
 ## 速查表原要点（#815 精简时迁入，原文照搬）
 
 速查表那一格为让 Codex 自动拼接留出余量而收成索引；下面是当时的全文，与上文同等有效。

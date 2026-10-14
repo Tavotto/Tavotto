@@ -2001,6 +2001,7 @@ jobs:
           retention-days: 7
 
   posix-e2e:
+    name: posix-e2e (${{ matrix.shard }}/3)
     # **POSIX 那条 e2e 腿**（issue #30 / STATUS 的 R-16）。
     #
     # 在这之前，全仓唯一执行 `pnpm e2e` 的地方是 windows-exe-smoke，于是
@@ -2027,6 +2028,12 @@ jobs:
           && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # 只 needs frontend（短预筛），不等 backend-fast——理由与数字见 `package` 那一段（CI01）。
     needs: [frontend]
+    # #768：三台独立 GitHub 托管 Runner 通过 Playwright 原生 --shard 划分测试。
+    # Gate 原有 posix-e2e id 不变；任一矩阵副本失败整个 needs 都失败。
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -2088,8 +2095,8 @@ jobs:
         # **step 级上限 35 分钟**（job 级 45 不动，step 必须严格小于 job 级，留 10 分钟给
         # 收集 / 上传 / Post 步骤）：CI00 实测这一步 7.4 分钟，现在 209 条用例（180 通过、
         # 29 跳过）单 worker 约 19.7 分钟，run 36734896556（#679 的 full-ci）被旧的 20 分钟
-        # 上限杀掉、没有任何用例失败。当初「不分片：7 分钟，不在关键路径上」的前提已不成立；
-        # 35 只是止血的余量，分片是后续动作（见 issue，不在这个 PR 里做）。理由与
+        # 上限杀掉、没有任何用例失败；2026-10-14 #1000 又在 35 分钟时只执行约 274 个用例。
+        # 现在按 #768 用三台 Runner 分片，35 分钟是每片的独立止损线。理由与
         # windows-exe-smoke 那一步相同——job 级上限硬杀时 step 停在 in_progress、
         # `if: failure()` 的收集步骤不跑、日志 blob 与 artifact 都没有（PR #373 attempt 1）；
         # step 级超时把挂起变成带日志的失败。
@@ -2097,7 +2104,17 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm exec playwright install --with-deps chromium
-          pnpm e2e --project=chromium --project=chromium-en
+          # 先让 Playwright 报出本 shard 的预期用例，再真正执行；
+          # 注册表校验以计划的身份集合为主语，不许因为没有执行就悄悄漏报。
+          # 防止 config 的 TAVOTTO_E2E_JSON 把 --list 的 JSON 输到真实运行报告路径。
+          # 先验明两个 POSIX project 的全集覆盖每一条 active 引用，防止
+          # 原来 full verify-run 发现的 webkit-only 注册用例在 shard 模式变成假绿。
+          TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
+            --project=chromium --project=chromium-en > "$RUNNER_TEMP/e2e-planned-all.json"
+          TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
+            --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3 \
+            > "$RUNNER_TEMP/e2e-planned.json"
+          pnpm e2e --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3
 
       # 功能登记表的「真跑」那一半（ADR 0097）：合并态这次运行的报告里，每个 active 功能登记的
       # 用例都出现了、结论都是 expected / flaky。skipped 判红（skip 不是绿），报告里没有它也判红
@@ -2105,13 +2122,16 @@ jobs:
       - name: 功能登记表：登记的用例在合并态真的执行并通过
         env:
           TAVOTTO_E2E_JSON: ${{ runner.temp }}/e2e-results.json
-        run: python scripts/ci/feature_registry.py verify-run "$TAVOTTO_E2E_JSON"
+        run: |
+          python scripts/ci/feature_registry.py verify-run "$TAVOTTO_E2E_JSON" \
+            --expected-list "${{ runner.temp }}/e2e-planned.json" \
+            --all-planned-list "${{ runner.temp }}/e2e-planned-all.json"
 
       - name: 失败时收集 trace 与操作轨迹
         if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: posix-e2e-report
+          name: posix-e2e-report-${{ matrix.shard }}
           path: |
             web/playwright-report/**
             web/test-results/**

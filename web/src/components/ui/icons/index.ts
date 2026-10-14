@@ -1,5 +1,5 @@
 /**
- * 图标集的公开面：143 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
+ * 图标集的公开面：144 个图标组件，名字与 lucide 时代一一相同（同一语义只用一个名字，
  * 表在 `docs/ux/ICONOGRAPHY.md` 第四节）。几何在 `defs.ts`，组件工厂在 `createIcon.tsx`。
  * 写法 `<X size={ICON_SIZE.md} />`，选中态 `<X filled />`。
  */
@@ -36,6 +36,7 @@ export const Minimize2 = createIcon('Minimize2', ICON_DEFS.Minimize2)
 export const Download = createIcon('Download', ICON_DEFS.Download)
 export const Upload = createIcon('Upload', ICON_DEFS.Upload)
 export const Ellipsis = createIcon('Ellipsis', ICON_DEFS.Ellipsis)
+export const Menu = createIcon('Menu', ICON_DEFS.Menu)
 export const ChevronDown = createIcon('ChevronDown', ICON_DEFS.ChevronDown)
 export const ChevronUp = createIcon('ChevronUp', ICON_DEFS.ChevronUp)
 export const ChevronRight = createIcon('ChevronRight', ICON_DEFS.ChevronRight)

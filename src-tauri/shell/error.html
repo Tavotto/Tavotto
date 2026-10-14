@@ -32,7 +32,8 @@
   }
 </style>
 </head>
-<body>
+<!-- macOS 的系统标题栏透明叠在页面上（window_chrome.rs）：空白处是拖动区；日志路径要能选中复制，不用 deep -->
+<body data-tauri-drag-region>
   <main>
     <h1 id="title">Tavotto 启动失败</h1>
     <p id="body">本机渲染服务没有启动成功。重新打开应用通常可以恢复；若反复出现，请重新安装。</p>

@@ -14,6 +14,7 @@ mod i18n;
 mod native_drop;
 mod remote;
 mod sidecar;
+mod window_chrome;
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -27,6 +28,7 @@ use tauri::menu::{
 };
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
+use window_chrome::MainWindowChrome as _;
 
 struct AppState {
     sidecar: Mutex<Option<sidecar::Sidecar>>,
@@ -1155,6 +1157,61 @@ fn set_menu_locale(
     }
     let menu = build_menu_in(&app, next).map_err(|e| e.to_string())?;
     app.set_menu(menu).map_err(|e| e.to_string())?;
+    hide_main_menu_bar(&app);
+    Ok(())
+}
+
+/// Windows：主窗口的菜单栏藏起来（窗框形态见 `window_chrome`）。菜单仍挂在窗口上——加速键
+/// 照旧由它截获——只是不占一行。`app.set_menu` 会把菜单重新挂上**并显示**，所以每次换菜单
+/// 之后都要再藏一次。远程实例窗口不藏：那里是服务器那一版前端，未必有「菜单」按钮。
+fn hide_main_menu_bar(app: &tauri::AppHandle) {
+    #[cfg(not(target_os = "macos"))]
+    if let Some(win) = app.get_webview_window(MAIN_WINDOW) {
+        if let Err(e) = win.hide_menu() {
+            eprintln!("hide main menu bar: {e}");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app;
+}
+
+/// 页面顶栏的「菜单」按钮（Windows）：在按钮下方弹出应用菜单——就是藏起来的那一份，
+/// 项、id 与加速键一个不差，选中后照旧经 `on_menu_event` 转发。坐标是页面 CSS 像素，
+/// 即窗口客户区的逻辑像素。ACL 只给主窗口。
+#[tauri::command]
+fn show_app_menu(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    if !(x.is_finite() && y.is_finite()) {
+        return Err("菜单位置无效".into());
+    }
+    let menu = app.menu().ok_or_else(|| "应用菜单还没建好".to_string())?;
+    window
+        .popup_menu_at(&menu, tauri::LogicalPosition::new(x, y))
+        .map_err(|e| e.to_string())
+}
+
+/// 页面按当前主题报上来的顶栏底色 / 文字色（`#rrggbb`）→ 系统标题栏同色（Windows 11 起；
+/// 别的平台与 Windows 10 什么都不做）。颜色认不出来就回错，标题栏维持原样。
+#[tauri::command]
+fn set_titlebar_colors(
+    window: tauri::WebviewWindow,
+    background: String,
+    text: String,
+) -> Result<(), String> {
+    let (Some(bg), Some(fg)) = (
+        window_chrome::parse_hex_rgb(&background),
+        window_chrome::parse_hex_rgb(&text),
+    ) else {
+        return Err(format!("颜色认不出来：{background} / {text}"));
+    };
+    #[cfg(windows)]
+    window_chrome::apply_caption_colors(&window, bg, fg);
+    #[cfg(not(windows))]
+    let _ = (window, bg, fg);
     Ok(())
 }
 
@@ -1418,7 +1475,9 @@ fn main() {
             native_file_drop,
             connect_remote,
             desktop_update_check,
-            desktop_update_install
+            desktop_update_install,
+            show_app_menu,
+            set_titlebar_colors
         ])
         .on_window_event(|window, event| {
             // 事件回调是全局的：只看有关窗询问闸的那两个窗口。
@@ -1474,6 +1533,9 @@ fn main() {
             .inner_size(1280.0, 860.0)
             // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
             .min_inner_size(1024.0, 680.0)
+            // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏；
+            // 并注入窗框标记，页面据它让出红绿灯 / 摆出「菜单」按钮
+            .main_window_chrome()
             // Tauri 默认接管窗口的拖放事件（tauri://drag-drop），代价是 webview 里
             // 的 HTML5 drag&drop 整个失效——「素材拖入画布」在桌面壳里就是这么坏的。
             // 关掉它把 DnD 还给页面。主页要的 OS 文件路径不靠它：macOS 上由 native_drop
@@ -1490,6 +1552,7 @@ fn main() {
                 },
             )
             .build()?;
+            hide_main_menu_bar(&handle);
             // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
             // （上面那条注释说的 HTML5 拖放照旧归页面）。见 native_drop.rs 与 ADR 0092。
             #[cfg(target_os = "macos")]

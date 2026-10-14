@@ -68,6 +68,8 @@ NATIVE_REGISTRY_CLOSING = "native_registry_closing"
 DESKTOP_RUN_CONNECT_TIMEOUT = "desktop_run_connect_timeout"
 #: 桌面拥有的启动身份不成立（cwd 不是目录 / 不是桌面拥有的 spec）。
 DESKTOP_RUN_LAUNCH_INVALID = "desktop_run_launch_invalid"
+#: Conda 环境激活取环境失败（桌面拥有的 native 会话与 safe 档同一个启动决策、同一个稳定码；一行用户代码都没跑）。
+CONDA_LAUNCHER_UNAVAILABLE = "conda_launcher_unavailable"
 
 # --------------------------- 结果 / 环境 ---------------------------
 NO_FIGURE_CAPTURED = "no_figure_captured"
@@ -230,6 +232,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "zh": "这次运行的启动信息不成立：{reason}",
         "en": "This run's launch details are not valid: {reason}",
     },
+    CONDA_LAUNCHER_UNAVAILABLE: {
+        "zh": "这个 Conda 环境需要先激活才能运行，但激活失败了（{reason}），脚本没有运行。请检查 Conda 安装与这个环境。",
+        "en": "This Conda environment must be activated before it can run, but activation failed"
+        " ({reason}); the script did not run. Check the Conda installation and the environment.",
+    },
     NO_FIGURE_CAPTURED: {
         "zh": "脚本跑完了，但没有捕获到任何 Matplotlib figure。",
         "en": "The script finished, but no Matplotlib figure was captured.",
@@ -278,6 +285,7 @@ EXIT_FOR_CODE: dict[str, int] = {
     NATIVE_REGISTRY_CLOSING: EXIT_ATTACH_FAILED,
     DESKTOP_RUN_CONNECT_TIMEOUT: EXIT_ATTACH_FAILED,
     DESKTOP_RUN_LAUNCH_INVALID: EXIT_USAGE,
+    CONDA_LAUNCHER_UNAVAILABLE: EXIT_ATTACH_FAILED,
 }
 
 

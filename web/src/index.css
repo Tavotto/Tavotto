@@ -68,9 +68,6 @@
      `lib/canvasSelection` 按实际的底挑跟底同深浅的那块，与底拉不开 1.3:1 时换另一块（tokenContrast.test 扫 0–255 灰阶守着）。 */
   --color-paper-selection: color-mix(in srgb, var(--color-sel) 35%, var(--color-paper));
   --color-paper-selection-deep: color-mix(in srgb, var(--color-sel) 50%, var(--color-paper-ink));
-  /* 界面浮在纸上时的底（空画布的起步提示这类直接坐在页面上的界面）：浅色里透明——字就落在白纸上；
-     暗色里是面板色——浅色的字不能直接落在不变的白纸上 */
-  --color-paper-chrome: transparent;
   /* 交互面：hover < active < selected，三档都是 ink 的半透明叠加，白 surface 与
      灰 bg 上都成立。组件里不再手写 bg-ink/[.035]…[.09] 那串随机透明度
      （2026-09-11 收敛前全仓有 9 种）。 */
@@ -994,7 +991,6 @@
     --color-syntax-type: #6fc7ad;
     --color-syntax-builtin: #e3a457;
     --color-thumb: #3a3a37;
-    --color-paper-chrome: var(--color-surface);
     --color-shadow: #000000;
     --color-shadow-edge: #ffffff;
     --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
@@ -1031,8 +1027,25 @@
   --color-syntax-type: #6fc7ad;
   --color-syntax-builtin: #e3a457;
   --color-thumb: #3a3a37;
-  --color-paper-chrome: var(--color-surface);
   --color-shadow: #000000;
   --color-shadow-edge: #ffffff;
   --color-scrim: color-mix(in srgb, var(--color-shadow) 50%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   坐在纸上的界面（空画布的起步提示这类直接画在页面上的提示，`data-on-paper`）：
+   纸两套主题同值（暗色里仍是白），所以这一小块界面**两套主题都用纸上的墨**——界面墨一族与按钮底的
+   几档叠加在这里重定向到 paper-ink。此前暗色里给它垫一块面板色的底（`paper-chrome`），白纸正中压着一块
+   深色卡片，很突兀（2026-10-13 UI 审计）。叠加档必须在这里重写一遍：它们在 :root 上按界面墨算好后才继承下来，
+   只换 --color-ink 不会让它们跟着变。tokenContrast.test 守着字对纸 ≥ 4.5:1、叠加档与界面同一副公式。
+   --------------------------------------------------------------------------- */
+[data-on-paper] {
+  color-scheme: light;
+  --color-ink: var(--color-paper-ink);
+  --color-ink-2: var(--color-paper-ink-2);
+  --color-ink-3: var(--color-paper-ink-3);
+  --color-surface: var(--color-paper);
+  --color-surface-hover: color-mix(in srgb, var(--color-paper-ink) 5%, transparent);
+  --color-surface-active: color-mix(in srgb, var(--color-paper-ink) 8%, transparent);
+  --color-selected: color-mix(in srgb, var(--color-paper-ink) 10%, transparent);
 }

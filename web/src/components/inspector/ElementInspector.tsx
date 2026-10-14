@@ -377,7 +377,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
               script={render.dependencyRepair.script}
             />
           ) : (
-            <MissingDependencyCard module={render.module} projectEnv={render.projectEnv ?? undefined} />
+            <MissingDependencyCard module={render.module} projectEnv={render.projectEnv ?? undefined} installRoute={render.installRoute} />
           )}
         </Section>
       ) : ENVIRONMENT_CODES.includes(render?.code as (typeof ENVIRONMENT_CODES)[number]) ? (

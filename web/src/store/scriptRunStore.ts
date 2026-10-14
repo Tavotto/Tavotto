@@ -105,7 +105,7 @@ export const isBusyPhase = (phase: ScriptRunPhase): boolean =>
  * 实际入口，此前只给文案与「复制诊断」。
  */
 export const needsNative = (state: ScriptRunState | undefined): boolean =>
-  !!state && ['missing_dependency', 'timeout', 'failed'].includes(state.phase)
+  !!state && state.error?.install_route !== 'unsupported_platform' && ['missing_dependency', 'timeout', 'failed'].includes(state.phase)
 
 const PHASE_BY_CODE: Record<string, ScriptRunPhase> = {
   missing_dependency: 'missing_dependency',
@@ -152,6 +152,7 @@ function probeErrorOf(e: unknown): ProbeError {
   const api = e instanceof ApiError ? e : null
   const body = (api?.body ?? {}) as {
     code?: string
+    install_route?: string
     params?: Record<string, unknown>
     dependency_preparation?: DependencyPreparationOffer
     confirmation?: WorkdirConfirmation
@@ -159,6 +160,7 @@ function probeErrorOf(e: unknown): ProbeError {
   const code = body.code ?? ''
   return {
     code: code || 'internal_error',
+    install_route: body.install_route,
     message: e instanceof Error ? e.message : String(e),
     params: body.params,
     dependency_preparation: body.dependency_preparation,

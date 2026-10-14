@@ -318,9 +318,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
     if (deps.origin === 'runtime_missing') {
       const p = (deps.payload ?? {}) as { module?: string; installable?: boolean; route?: string }
       if (!p.installable) {
-        // 三类缺依赖的另外两类（按后端的稳定字段 `route`，不看文案）：标准库缺了（内置环境没带，如 Windows 上的 tkinter）/ 映射不到安装包（如 ROOT）。
-        // pip 都装不了——主按钮只有一个：换用自己的 Python，且直接落在选环境那一步
+        // 按后端去向翻译，不根据模块名再判平台；平台限制无法通过换 Python 补齐。
         const values = { script, module: p.module ?? '' }
+        if (p.route === 'unsupported_platform') {
+          return view('deps_platform', 'depsPlatform', values, null, { tone: 'bad' })
+        }
         const pick: PrepPrimary = { kind: 'pick_environment' }
         if (p.route === 'stdlib_missing') {
           const builtin = report.environment?.kind === 'builtin'

@@ -12,6 +12,10 @@ import { mmToPx, mmToViewX, mmToViewY, useViewportStore, type ViewTransform } fr
 import { startGuideDrag } from './interactions'
 
 export const RULER_SIZE = 20
+/** 横向标尺上离起点（单位角）不到这么远的刻度数字不写，免得与角里的单位连成一串 */
+const RULER_LABEL_CLEARANCE = 8
+/** 11px 系统字体一个数字（含负号）的宽度上限：纵向标尺据它判转过去的数字会不会被起点裁掉 */
+const RULER_DIGIT_W = 7
 
 const STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500]
 
@@ -154,6 +158,9 @@ function draw(
       ctx.fillStyle = text
       // 刻度数字一律整数（步长最小 1 mm），也不写出「-0」
       const label = String(Math.round(mm) || 0)
+      // 紧贴标尺起点（单位角就在那一侧）的数字不写：横向会与角里的「mm」连成「mm-10」，纵向转过去的字
+      // 会被标尺起点裁掉半截（2026-10-13 UI 审计）。刻度线照画，下一档数字照常出现
+      if (axis === 'x' ? v < RULER_LABEL_CLEARANCE : v - 3 - label.length * RULER_DIGIT_W < 2) continue
       if (axis === 'x') {
         // 起点从 +2 挪到 +3：11px 的字比 10px 宽，贴着刻度线读起来像连在一起
         ctx.fillText(label, v + 3, 2)

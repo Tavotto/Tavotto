@@ -553,7 +553,8 @@ function RowThumb({ docId, meta }: { docId: string; meta: LayoutVersionMeta }) {
         src={versionThumbUrl(docId, meta)}
         alt=""
         data-timeline-thumb
-        className="h-10 w-14 shrink-0 rounded-xs bg-paper object-contain"
+        // 一道细边：纸是白的，浅色主题里白纸落在白面板上整个看不见（2026-10-13 UI 审计）；与草图缩略图的页框同一档
+        className="h-10 w-14 shrink-0 rounded-xs border border-border-strong bg-paper object-contain"
       />
     )
   }

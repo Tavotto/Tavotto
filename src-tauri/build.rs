@@ -49,6 +49,8 @@ fn main() {
             "connect_remote",
             "desktop_update_check",
             "desktop_update_install",
+            "show_app_menu",
+            "set_titlebar_colors",
         ]),
     ))
     .expect("failed to run tauri-build");

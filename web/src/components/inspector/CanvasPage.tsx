@@ -44,19 +44,24 @@ const cv = (key: string, values?: Record<string, unknown>) =>
 const hist = (key: string): UiMessage => msg(`history.${key}`, undefined, 'inspector')
 
 /**
- * 预设缩略图：**各档共用同一个 mm→px 比例**，所以「单栏比双栏窄一半」这件事在图形上是真的；
- * 选项里的小图与触发器里的同一副。
+ * 预设缩略图：**各档按宽度共用同一个 mm→px 比例**，所以「单栏比双栏窄一半」这件事在图形上是真的；
+ * 只有放不进 16 格的那档（整页 180×240 太高）单独缩到装得下。选项里的小图与触发器里的同一副。
+ *
+ * 比例按最宽那档定、不按最高那档（2026-10-13）：按整页的 240 mm 高度定时单栏只剩 6×4 像素，
+ * 再套上 4px 的圆角就成了一颗小椭圆，认不出是一页纸。纸是直角的，不加圆角。
  */
 const THUMB_BOX = 16
-const THUMB_SCALE = THUMB_BOX / Math.max(...PRESETS.map((p) => Math.max(p.w, p.h)))
+const THUMB_MIN = 5
+const THUMB_SCALE = THUMB_BOX / Math.max(...PRESETS.map((p) => p.w))
 
 function PageThumb({ w, h }: { w: number; h: number }) {
   const k = Math.min(THUMB_SCALE, THUMB_BOX / Math.max(w, h))
   return (
-    <span aria-hidden className="flex h-4 w-4 shrink-0 items-end justify-center">
+    <span aria-hidden className="flex h-4 w-4 shrink-0 items-center justify-center">
       <span
-        className="block rounded-xs border border-ink-3 bg-surface"
-        style={{ width: Math.max(3, w * k), height: Math.max(3, h * k) }}
+        data-page-thumb
+        className="block border border-ink-3 bg-surface"
+        style={{ width: Math.max(THUMB_MIN, Math.round(w * k)), height: Math.max(THUMB_MIN, Math.round(h * k)) }}
       />
     </span>
   )

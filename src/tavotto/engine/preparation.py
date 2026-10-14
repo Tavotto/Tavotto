@@ -67,6 +67,7 @@ from . import (
     figcapture,
     inputbroker,
     inputremap,
+    launcher,
     pool,
     projectenv,
     receipt,
@@ -198,6 +199,10 @@ class PreparationPlan:
     #: 私有：不进 `to_payload()`（公开的是 `launch_context`）。就地重算计划、复用现有会话都按它对账，
     #: 不得悄悄回落成 safe。
     execution: str = execspec.PROFILE_SAFE
+    #: 计划那一刻解释器的完整启动上下文（`launcher.context_key`：`direct` 或 Conda 激活 + conda + prefix + 环境版本）。
+    #: 私有。conda install / 改 activate.d、conda 从找不到变成找得到（直接启动 → 激活）都不换「代」，但跑起来的环境变了：
+    #: 执行前 `_stale_reason` 比它，对不上 = 计划过期（P09）
+    environment_state: str = ""
 
     def to_payload(self) -> dict:
         return {
@@ -270,6 +275,7 @@ def plan_for(
     """
     root = str(project_root)
     decision = pool.EnvironmentDecision()
+    decide_error: pool.WorkerError | None = None
     remap_generation = inputremap.generation(root)
     if script is not None:
         # 「换不换解释器」先落地（ADR 0079 §四，`deprepair.decide_environment` 是唯一一处；检测模式下就是那次自动检测，
@@ -277,9 +283,16 @@ def plan_for(
         # 决定之前拍，第一次准备就以 `preparation_plan_stale` 收场（Codex #522 P1）。
         # 检查（建会话 / 出报告）在用户点「运行」之前：项目自己带的解释器（项目 venv、`.vscode` 指向的……）不在这里
         # 起，体检推迟到运行那一下（`_run` 里的 `decide_environment_pinned`；Codex 安全 #820 r4232804805）
-        decision = deprepair.decide_environment_pinned(root, script, project_exec=False)
+        try:
+            decision = deprepair.decide_environment_pinned(root, script, project_exec=False)
+        except pool.WorkerError as exc:
+            # 例如 `conda_launcher_unavailable`（Conda 激活取环境失败）：与解析解释器失败同一条路——写进计划的
+            # 环境错误，计划照样成立；不是 500
+            decide_error = exc
     adopted = decision.adopted
     try:
+        if decide_error is not None:
+            raise decide_error
         if decision.pinned:
             # 检测出的解释器是个不可变值（含环境代）：快照只认它，不再解析共享的项目记录——同一项目的另一个脚本
             # 可能刚在两次解析之间把记录换了（Codex #820 P1）。换了的话执行前 `_stale_reason` 拿它与此刻比，
@@ -307,6 +320,13 @@ def plan_for(
     discovery = pool.first_open_outcome(root)
     # 作废的事实只报一次：写进这一份计划就消费掉，后面的检查不再重复说「换过了」
     invalidated = pool.consume_invalidated(root)
+    # Conda 环境版本的快照（私有，进 `PreparationPlan.environment_state`）：与上面的「代」同一刻、同一份决定取。
+    # 必须在这里取——下面 `decision` 这个名字会被工作目录的决定覆盖
+    environment_state = (
+        (decision.launch_context if decision.pinned else launcher.context_key(python))
+        if python
+        else ""
+    )
     environment = {
         "python": _project_relative(root, python) if python else None,
         "source": source,
@@ -484,6 +504,7 @@ def plan_for(
         run=run,
         input_remap_generation=remap_generation,
         script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
+        environment_state=environment_state,
     )
 
 
@@ -738,7 +759,15 @@ class PreparationService:
             # 用户点了「运行」= 同意体检项目自带的候选解释器（Codex 安全 #820）：现在才可以体检、采用。采用了就换了
             # 解释器——这一步是**本次运行自己**做的，不是别人改了环境：就地按采用后的解释器重算计划再往下走（能跑就跑；
             # 缺包由起会话那道依赖门收成「需要安装」），不让用户为此重新检查一次。别的过期原因照旧由下面的对账拦下
-            decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
+            try:
+                decision = deprepair.decide_environment_pinned(plan.project_root, plan.script)
+            except pool.WorkerError as exc:
+                # 例如 `conda_launcher_unavailable`（Conda 激活取环境失败）：一行用户代码都没跑，稳定码原样交给调用方
+                code = getattr(exc, "code", "") or "worker_error"
+                tr.fail("check", code)
+                result.error = {"code": code, "message": str(exc), "executed": False}
+                self._finish(entry, STATUS_ERROR, note="启动方式不可用，没有执行任何脚本")
+                return
             if decision.adopted is not None:
                 before = self._stale_reason(plan)
                 if before is None or before[0] == STALE_ENVIRONMENT:
@@ -995,6 +1024,11 @@ class PreparationService:
             # 路径没变、环境换了一代（删了重建）：计划确认的是上一代（ADR 0114 §四）
             planned = (plan.environment or {}).get("generation")
             if planned and projectenv.environment_generation(plan.interpreter) != planned:
+                return STALE_ENVIRONMENT, {}
+            # Conda 环境原地变了（conda install / 改 activate.d / env config vars）：代没变，激活后的环境变了
+            if plan.environment_state and (
+                launcher.context_key(plan.interpreter) != plan.environment_state
+            ):
                 return STALE_ENVIRONMENT, {}
         if (
             source

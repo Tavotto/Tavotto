@@ -334,7 +334,9 @@ order up through 爱发电's API to confirm it was paid, and keeps the order num
 the month and whether the amount allows an avatar; the supporter's 爱发电 user id
 is kept only as a keyed hash, so that one person is counted once. To appear on
 the wall, the supporter enters the order number on the support page and gets the
-same form; the rest is as for Ko-fi above.
+same form; the rest is as for Ko-fi above. Next to the order number the supporter
+may type an email address; it is used **once**, to send a single thank-you mail
+carrying the same form link (at most one per order), and is not stored.
 
 To change or remove an entry, write to <hello@tavotto.com>.
 

@@ -58,7 +58,7 @@ import threading
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
-from . import config, depresolve, distmeta, importscan, projectenv, runtime
+from . import config, depresolve, distmeta, importscan, launcher, projectenv, runtime
 
 LOG = logging.getLogger("tavotto.depplan")
 
@@ -338,6 +338,8 @@ class TargetFacts:
     #: 它们由解释器构建决定，不是计划的输入，也就不改 `inputs_digest` / `identity`。
     builtin: frozenset[str] = frozenset()
     ext_suffixes: tuple[str, ...] = ()
+    #: 量这份事实时的启动上下文（`launcher.context_key`）：缓存分区用，不进 digest / payload。
+    context: str = ""
     #: 目标解释器**看得见**的全部 site 目录（`sys.path` 顺序：prefix 内的、`include-system-site-packages` 的基础解释器层、
     #: 启用的 user site、其它 site-packages / dist-packages）。静态索引（`static_index`）按它读元数据，否则别的层里的替代提供者
     #: 会被漏掉（Codex #920 P1）。**空 = 没量到**（替身事实、老缓存），索引退回只读前缀的旧口径。与 `builtin` 同理不进
@@ -482,7 +484,10 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
     按解释器路径缓存：同一进程里同一个环境反复问是常态（每次准备 / 每次渲染前的门）。
     环境被改动（装完包 / 换代）时调 `reset_cache(python)`——`deprepair` 在事务结束时做。
     """
-    key = _key(python)
+    ctx = launcher.context_key(python)
+    key = (
+        f"{_key(python)}|{ctx}"  # 启动上下文分区：裸起量到的事实不能在 Conda 激活下复用（反之亦然）
+    )
     if use_cache:
         with _facts_lock:
             hit = _facts_cache.get(key)
@@ -496,18 +501,27 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
+        # 激活捕获与事实探测共用 `FACTS_TIMEOUT_S` 一个预算
+        env, remaining = launcher.activate_within(
+            python, runtime.owned_env(python), FACTS_TIMEOUT_S
+        )
         proc = subprocess.run(
             [str(python), *runtime.probe_args(), "-c", _FACTS_SRC],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=FACTS_TIMEOUT_S,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=runtime.owned_env(python),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
+    except launcher.LauncherUnavailable as exc:
+        # 激活取环境失败：瞬时、不缓存，**原样抛出**——不能折成 None（那会被当成“目标不可用”给出错误的恢复动作）；
+        # 稳定码由入口（`deprepair._facts_for` / `decide_environment_pinned` / pool）交给用户
+        LOG.warning("目标环境事实探测失败（%s）: %s", exc.code, python)
+        raise
     except (OSError, subprocess.SubprocessError) as exc:
         LOG.warning("目标环境事实探测失败: %s: %s", python, exc)
         return None
@@ -541,7 +555,7 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
         path_order=tuple(str(x) for x in data.get("path_order") or () if isinstance(x, str)),
         skipped_roots=tuple(str(x) for x in data.get("skipped_roots") or () if isinstance(x, str)),
     )
-    facts = dataclasses.replace(facts, layers=_measure_layers(facts))
+    facts = dataclasses.replace(facts, layers=_measure_layers(facts), context=ctx)
     with _facts_lock:
         _facts_cache[key] = facts
         _index_cache.pop(key, None)  # 重新量了事实 = 环境可能变了：旧的元数据索引一起作废
@@ -559,8 +573,10 @@ def reset_cache(python: str | None = None) -> None:
             _facts_cache.clear()
             _index_cache.clear()
         else:
-            _facts_cache.pop(_key(python), None)
-            _index_cache.pop(_key(python), None)
+            prefix = f"{_key(python)}|"  # 该解释器在所有启动上下文下的结论一起作废
+            for cache in (_facts_cache, _index_cache):
+                for k in [k for k in cache if k.startswith(prefix)]:
+                    cache.pop(k, None)
 
 
 # ---------------------------------------------------------------- 目标环境的静态发行包索引（不起进程）
@@ -581,7 +597,7 @@ def static_index(facts: TargetFacts | None) -> distmeta.Index | None:
     不增加任何暴露面；默认扫描不走这里（它自己带项目根调 `distmeta`）。"""
     if facts is None or not facts.prefix:
         return None
-    key = _key(facts.python or facts.prefix)
+    key = f"{_key(facts.python or facts.prefix)}|{facts.context}"
     with _facts_lock:
         hit = _index_cache.get(key)
     if hit is not None:

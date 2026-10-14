@@ -125,8 +125,8 @@ export interface DiskWriterPorts {
   onFailed: (id: string, issue: SaveIssue | null) => void
   /** 冲突未决：队列里排着的那份不能继续往磁盘上撞（读的是**此刻**的保存状态） */
   writeBlocked: () => boolean
-  /** 写盘成功后清掉本机兜底副本 */
-  dropLocalCopy: (id: string) => void
+  /** 写盘成功后仅清掉与落盘快照相同的本机兜底副本（期间可能已换成更新的一版） */
+  dropLocalCopy: (id: string, written: ProjectDocument) => void
   /** 遥测：一次写盘的结局 */
   outcome: (trigger: SaveTrigger, outcome: SaveOutcome) => void
 }
@@ -290,7 +290,7 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
       .then((res) => {
         diskBaseline.set(id, pd.updatedAt)
         if (res.revision) diskRevision.set(id, res.revision)
-        ports.dropLocalCopy(id)
+        ports.dropLocalCopy(id, pd)
         ports.onWritten(id, res.saved_at ?? Date.now(), { pj, metadata: res.metadata })
         ports.outcome(trigger, 'ok')
       })

@@ -948,6 +948,7 @@
       "depsUnknown": "Tavotto can't install {{module}}. Pick a Python environment that has it",
       "depsStdlib": "Tavotto's built-in environment doesn't include {{module}}",
       "depsStdlibOther": "The Python in use doesn't include {{module}}",
+      "depsPlatform": "{{module}} is specific to another operating system; this script can't run on this system",
       "depsRuntime": "{{module}} is missing",
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",

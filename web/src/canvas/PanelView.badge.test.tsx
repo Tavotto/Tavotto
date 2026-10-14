@@ -187,5 +187,7 @@ describe('面板角标的语气', () => {
     expect(b.dataset.panelBadge).toBe('stale')
     expect(b.className).toContain('bg-warn-surface')
     expect(b.className).not.toMatch(/\bbg-ink\b/)
+    // 锚点色底与 -content 字是按界面 surface 配好的一对：不挂纸面作用域（Codex #995）
+    expect(b.hasAttribute('data-on-paper')).toBe(false)
   })
 })

@@ -15,8 +15,10 @@ import { cn } from '@/lib/utils'
  * PickerTrigger 都从这里取，不各写一遍；改图助手的输入框是浮在对话流上的玻璃，另一副（AiPanel）。
  */
 export const FIELD_BOX = cn(
-  // 框里的值是「要读的字」：12px（正文档），标签 / caption / meta 留 11px（2026-09-14 审计分歧 1，用户拍板试 12）
-  'rounded-md border border-transparent bg-field text-sm text-ink transition-colors duration-fast',
+  // 框里的值是「要读的字」：12px（正文档），标签 / caption / meta 留 11px（2026-09-14 审计分歧 1，用户拍板试 12）。
+  // 圆角默认 md；坐在胶囊（单行浮动条，祖先带 `data-capsule`）里换成全圆——胶囊套方角框，内外圆角不配
+  // （2026-10-13 用户：「这个输入框和胶囊的圆角不匹配」）
+  'rounded-md in-data-capsule:rounded-full border border-transparent bg-field text-sm text-ink transition-colors duration-fast',
   'hover:bg-field-hover',
 )
 /** 框本身就是 `<input>` 时的聚焦态 */

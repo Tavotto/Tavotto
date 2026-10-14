@@ -84,6 +84,8 @@ from .engine import (
     inputbroker as engine_inputbroker,
     inputremap as engine_inputremap,
     inputtranscript as engine_inputtranscript,
+    launchctx as engine_launchctx,
+    launcher as engine_launcher,
     layoutsession as engine_layoutsession,
     locate as engine_locate,
     logsafe as engine_logsafe,
@@ -3883,8 +3885,14 @@ def api_registry_probe():
                 run=run,
             )
             # 磁盘面板重跑该用哪份配置：这次明确运行用的（无参数 = 清掉旧的）
-            engine_runconfig.set_default(
-                ctx.path, script, run.config_id if run is not None else None
+            # 同一事务里清掉该脚本旧的启动记录（这条旧路径没有回执，不产生新记录）：否则 A 先经准备会话成功、
+            # B 再经这里成功，旧记录 A 会冒充「最近成功」
+            engine_runconfig.commit_success(
+                ctx.path,
+                script,
+                None,
+                default_config_id=run.config_id if run is not None else None,
+                update_default=True,
             )
             # probe 已经把结果写进注册表了（`probe.probe_and_register` → `discover.register`），
             # 这里只要重装 + 发事件：再跑一遍静态扫描既慢，又会把刚刚按**真实产出**
@@ -6705,9 +6713,17 @@ def api_engine_environment():
             else None
         )
         py = st.get("python")
-        st["imports"] = (
-            engine_runtime.probe_packages(py, names, bundled=bool(st.get("bundled"))) if py else {}
-        )
+        try:
+            st["imports"] = (
+                engine_runtime.probe_packages(
+                    py, names, bundled=bool(st.get("bundled")), env_for=engine_launcher.activate_env
+                )
+                if py
+                else {}
+            )
+        except engine_runtime.ActivationUnavailable as exc:  # 含 `launcher.LauncherUnavailable`
+            # Conda 激活取环境失败：瞬时，不是“包都 import 不到”——不给 `imports`，给稳定码
+            st["imports_error"] = {"code": exc.code, "detail": str(exc)[:400]}
     st["project"] = _project_environment_state()
     resp = jsonify(st)
     resp.headers["Cache-Control"] = "no-store"
@@ -7304,6 +7320,7 @@ def _plan_pin(pl):
         python=pl.interpreter,
         source=str(env.get("source") or ""),
         generation=str(env.get("generation") or ""),
+        launch_context=str(getattr(pl, "environment_state", "") or ""),
     )
 
 
@@ -7561,7 +7578,16 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         run=run,
         pinned=_plan_pin(plan),
     )
-    engine_runconfig.set_default(ctx.path, plan.script, run.config_id if run is not None else None)
+    # 磁盘面板默认配置与 P09 的可验证启动上下文在同一个登记事务里一起落地（失败走不到这里，部分结果见下；
+    # 依据不全则清掉旧记录，见 `runconfig.commit_success`）。记录的消费端（再次打开时沿用）见 #982
+    # 有图失败（partial）不是一次完整的成功：启动上下文记录按“依据不全”处理（清掉旧记录、不写新记录），默认配置照常更新
+    engine_launchctx.record_success(
+        ctx.path,
+        plan.script,
+        None if captured.get("failed_figures") else getattr(result, "receipt", None),
+        run=run,
+        update_default=True,
+    )
     refresh_project(ctx, reason="probe", allow_static_merge=False)
     # 无参数运行整条替换掉的旧图名（T09b）：报告里如实说，界面给「用原参数再运行」的可恢复提示
     unlinked = list(registered.get("unlinked_stems") or [])
@@ -11274,6 +11300,8 @@ def main():
     threading.Thread(
         target=engine_pool.prune_engine_cache, daemon=True, name="mm-engine-cache-prune"
     ).start()
+    # Conda 激活捕获的结果文件含完整环境变量（可能有许可证串 / 令牌）：清上个进程崩溃留下的，并登记退出清理
+    engine_launcher.startup()
     # runtime 素材的 materialized cache（可删除可重建的派生物）同一治理
     threading.Thread(
         target=engine_runtimeasset.prune_cache, daemon=True, name="mm-runtime-cache-prune"
