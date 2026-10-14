@@ -173,8 +173,17 @@ def test_readonly_precondition_is_verified_not_assumed(tmp_path):
     cb.make_readonly(d)
     try:
         cb.assert_readonly(d)
+    except cb.PreconditionUnmet:
+        # Windows / POSIX root：chmod 挡不住写入，正是要识别的那种环境——正例前提不成立，只验反例
+        readonly_works = False
+    else:
+        readonly_works = True
     finally:
         cb.restore_writable(d)
+    if not readonly_works:
+        assert os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0), (
+            "普通 POSIX 用户下 chmod(0o555) 应当让目录只读"
+        )
     d2 = tmp_path / "rw"
     d2.mkdir()
     with pytest.raises(cb.PreconditionUnmet):
