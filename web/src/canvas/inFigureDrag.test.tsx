@@ -555,3 +555,64 @@ describe('图例缩放松手后按成图实测钉对角', () => {
     expect(overrideOf('axes_1.legend', 'fontsize')).toBeCloseTo(5.6, 6)
   })
 })
+
+/* ============================ 吸住后保持（ADR 0128） ============================ */
+
+describe('图内拖动：吸住后保持', () => {
+  const W = layout.width
+  /** 逐点移动指针，每点冲一次预览；mods 可按点给 */
+  const moveThrough = (pts: Array<[number, { metaKey?: boolean }?]>) => {
+    for (const [x, mods] of pts) {
+      fire('pointermove', x, 0, mods)
+      flushPreviewFrame()
+    }
+  }
+  const leftOf = () => (overrideOf('axes_0.texts_0', 'pos_frac') as number[])[0]
+
+  it('吸住后拖开超过一倍容差仍保持，超过两倍才放开', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    moveThrough([[3], [8]])
+    // 8px 已出 6px 容差（别处的线此刻还在 2px 内，没保持的话会被它吸走），
+    // 但这一对还在 2 倍（12px）内：仍吸着，落点不动
+    fire('pointerup', 8, 0)
+    expect(leftOf()).toBeCloseTo(0.2, 6)
+
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    moveThrough([[3], [8], [14]])
+    fire('pointerup', 14, 0)
+    // 放开了：不再钉在 0.2 上（落点可能被别处的线再吸走，所以只断言离开了 0.2）
+    expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
+  })
+
+  it('途经两条几乎等距的线，来回小幅移动时吸附目标不变', async () => {
+    // 与「Superconductor」左边（0.2）相距 4px 处再放一个小标签：Vacuum 在两者之间晃
+    const rivalLeft = 0.2 + 4 / W
+    const rival: ManifestElement = {
+      gid: 'axes_1.texts_9',
+      role: 'text',
+      label: '文字 “rival”',
+      bbox: [rivalLeft, 0.8, 0.0005, 0.03],
+      editable: [],
+      draggable: true,
+      anchor: [rivalLeft, 0.83],
+      drag_prop: 'pos_frac',
+    }
+    await setup(legendOf(), [], [rival])
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    // 3px：离 rival 1px 最近，吸 rival；退回 1.5px：此刻离 0.2 更近，但已吸着 rival
+    moveThrough([[3], [2.5], [1.5], [2.2], [1.6]])
+    fire('pointerup', 1.6, 0)
+    expect(leftOf()).toBeCloseTo(rivalLeft, 6)
+  })
+
+  it('按住 ⌘ 的那一帧清掉保持：松开后要重新进容差才吸', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    moveThrough([[3], [3.5, { metaKey: true }], [8]])
+    fire('pointerup', 8, 0)
+    // 若保持没被清掉，这里会钉回 0.2；清掉了就是自由位置（再被别处的线吸走也远离 0.2）
+    expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
+  })
+})
