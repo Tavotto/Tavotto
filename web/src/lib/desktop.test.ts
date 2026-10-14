@@ -445,7 +445,7 @@ describe('Codex 集成的浏览器回退', () => {
   })
 })
 
-describe('引擎退出与上次退出（ADR 0126）：回退契约', () => {
+describe('引擎退出与上次退出（ADR 0129）：回退契约', () => {
   const w = window as unknown as Record<string, unknown>
   afterEach(() => {
     delete w.__TAURI_INTERNALS__

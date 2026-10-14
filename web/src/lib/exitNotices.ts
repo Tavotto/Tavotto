@@ -8,7 +8,7 @@ import { useDiagSendStore } from '@/store/diagSendStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 
 /**
- * 退出相关两张通知轨卡片的接线（ADR 0126）。App 挂载时调一次，返回取消函数。
+ * 退出相关两张通知轨卡片的接线（ADR 0129）。App 挂载时调一次，返回取消函数。
  *
  * - **引擎意外退出**：订阅壳的事件，并回读一次（事件可能早于监听）。不看发送开关：
  *   这是修复卡，引擎没了谁都需要「重新启动」。

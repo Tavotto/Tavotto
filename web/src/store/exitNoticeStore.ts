@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { EngineExitKind, PreviousExit } from '@/lib/desktop'
 
 /**
- * 退出相关两张通知轨卡片的状态（ADR 0126）。**纯内存**：不落盘、不进 telemetry、不带任何错误文本。
+ * 退出相关两张通知轨卡片的状态（ADR 0129）。**纯内存**：不落盘、不进 telemetry、不带任何错误文本。
  *
  * - `engineExit`：本次会话里本机引擎已意外退出（壳发事件 / 回读得来）。「重新启动」修复卡由它驱动，
  *   **不受发送开关控制**（引擎没了，谁都需要这颗按钮）；它同时让「连接断了，正在重连…」这句假话让位。

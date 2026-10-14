@@ -41,7 +41,7 @@ struct AppState {
     port: Arc<Mutex<Option<u16>>>,
     /// 当前引擎的一次性 nonce；每次（重新）启动引擎都换一个新的。
     nonce: Mutex<String>,
-    /// 退出标记写手（ADR 0126）。`setup` 里拿到配置目录后才建，所以是 `OnceLock`。
+    /// 退出标记写手（ADR 0129）。`setup` 里拿到配置目录后才建，所以是 `OnceLock`。
     marker: OnceLock<exit_marker::Marker>,
     /// 上次会话的结局（`setup` 里读一次，前端经 `take_previous_exit` 取走即清空）。
     previous_exit: Mutex<Option<exit_marker::Previous>>,
@@ -1443,7 +1443,7 @@ fn restart_engine_blocking(app: &tauri::AppHandle) -> bool {
 }
 
 /// 所有应用内更新的 `UpdaterBuilder` 都从这里拿。Windows 上插件装包前会 `std::process::exit(0)`，
-/// 不走 `RunEvent::Exit`——`on_before_exit` 是它留的唯一钩子，在这里写 `clean`（ADR 0126）。
+/// 不走 `RunEvent::Exit`——`on_before_exit` 是它留的唯一钩子，在这里写 `clean`（ADR 0129）。
 fn updater_builder(app: &tauri::AppHandle) -> tauri_plugin_updater::UpdaterBuilder {
     use tauri_plugin_updater::UpdaterExt;
     let builder = app.updater_builder();
@@ -1706,7 +1706,7 @@ fn main() {
                     Err(e) => eprintln!("rebuild menu for {}: {e}", boot_locale.tag()),
                 }
             }
-            // 退出标记（ADR 0126）：先读上次的结局存进内存，再立刻写本次的 running。
+            // 退出标记（ADR 0129）：先读上次的结局存进内存，再立刻写本次的 running。
             // 单实例插件在更早注册——第二个实例到不了这里，不会冲掉第一个实例的标记。
             {
                 let state = app.state::<AppState>();
@@ -1781,7 +1781,7 @@ fn main() {
 mod tests {
     use super::*;
 
-    /// 退出标记的看护（ADR 0126）：**绕过 `RunEvent::Exit` 的退出路径必须先写 `clean`**，否则
+    /// 退出标记的看护（ADR 0129）：**绕过 `RunEvent::Exit` 的退出路径必须先写 `clean`**，否则
     /// 每次升级 / e2e 更新之后都会误报「上次没有正常退出」。这里读源码结构而不是搜子串：
     /// 生产代码里（测试模块之前）不许出现裸 `process::exit` / `.exit(` / `.restart()` /
     /// `.updater_builder()`——只能经 `e2e_exit` / `mark_clean_exit` / `updater_builder` 三个出口。

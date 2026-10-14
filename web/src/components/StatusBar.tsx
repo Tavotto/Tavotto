@@ -321,7 +321,7 @@ export function NotificationRail() {
   const lastUnexpected = useRef<{ token: number } | null>(null)
   if (unexpected) lastUnexpected.current = unexpected
   const diagEnabled = useDiagSendStore((s) => s.capability !== null)
-  // 引擎意外退出的修复卡（ADR 0126）：引擎没了，这是唯一能做的事，所以与状态一样从不让位；
+  // 引擎意外退出的修复卡（ADR 0129）：引擎没了，这是唯一能做的事，所以与状态一样从不让位；
   // 不受发送开关控制（只有「重新启动」，没有发送入口）
   const engineExit = useExitNoticeStore((s) => s.engineExit)
   const restarting = useExitNoticeStore((s) => s.restarting)
@@ -331,7 +331,7 @@ export function NotificationRail() {
   const unexpectedHasSlot = diagEnabled && [!!engineExit, justAdded, !!status].filter(Boolean).length < 2
   const unexpectedPresence = usePresence(!!unexpected && unexpectedHasSlot, DURATION.exit)
   const unexpectedShown = unexpected ?? lastUnexpected.current
-  // 「上次 Tavotto 没有正常退出」卡（ADR 0126）：与意外错误卡同档、排在它后面；只在发送入口可用时登记
+  // 「上次 Tavotto 没有正常退出」卡（ADR 0129）：与意外错误卡同档、排在它后面；只在发送入口可用时登记
   const previous = useExitNoticeStore((s) => s.previous)
   const lastPrevious = useRef<{ kind: string; token: number } | null>(null)
   if (previous) lastPrevious.current = previous

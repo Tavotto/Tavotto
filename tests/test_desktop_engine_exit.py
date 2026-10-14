@@ -1,4 +1,4 @@
-"""引擎意外退出的检测 / 重启与退出标记（ADR 0126）里**跨语言、跨文件**的同源关系。
+"""引擎意外退出的检测 / 重启与退出标记（ADR 0129）里**跨语言、跨文件**的同源关系。
 
 Rust 侧的判定表、损坏文件、时序、`poll_exit` 与 `shutdown` 互斥、「绕过 `RunEvent::Exit` 的退出路径先写 clean」
 由 `src-tauri` 的 `cargo test` 看护；前端的回退与卡片由 vitest 看护。这里只钉 Python 测试能看到、cargo 与 vitest
@@ -104,6 +104,6 @@ def test_marker_file_is_declared_to_users_and_documented_as_not_uploaded():
     assert name == "session-state.json"
     privacy = (ROOT / "docs" / "privacy.md").read_text(encoding="utf-8")
     assert name in privacy, "隐私声明没有如实声明本机退出标记"
-    adr = next((ROOT / "docs" / "adr").glob("0126-*.md")).read_text(encoding="utf-8")
+    adr = next((ROOT / "docs" / "adr").glob("0129-abnormal-exit-marker.md")).read_text(encoding="utf-8")
     assert name in adr
     assert "不上传" in adr

@@ -369,7 +369,7 @@ describe('「出了点意外」卡（PR A）', () => {
   })
 })
 
-describe('引擎退出两张卡（ADR 0126）', () => {
+describe('引擎退出两张卡（ADR 0129）', () => {
   const engineCard = () => container.querySelector<HTMLElement>('[data-engine-exited-card]')
   const previousCard = () => container.querySelector<HTMLElement>('[data-previous-exit-card]')
   const toasts = () => container.querySelectorAll('[data-toast-layout]')

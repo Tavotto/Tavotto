@@ -18,7 +18,7 @@ const lost: PrepEntry = {
 }
 const ctx: PrepContext = { argsChanged: false, editReady: false, missingArgs: null }
 
-describe('断线那一句（ADR 0126）', () => {
+describe('断线那一句（ADR 0129）', () => {
   it('其它原因的断线：照旧说「正在重连」', () => {
     const v = prepView(lost, ctx)
     expect(v.state).toBe('offline')

@@ -38,7 +38,7 @@
   **必须留看门狗**（没有它 = 一个关不掉的窗口；拦的唯一入口是 `hold_window()`，
   行为有 Rust 单测钉住，别退回「在源码里搜 token」那种空门禁）。
   ⌘Q 与系统注销不走这条路。两侧同源由 `tests/test_desktop_close_guard.py` 看护。
-- **引擎监视、重启与退出标记**（ADR 0126）：握手后监视线程约 1 s `Sidecar::poll_exit()`（shutdown 取走 child 后回 `None` = 正常关闭）；
+- **引擎监视、重启与退出标记**（ADR 0129）：握手后监视线程约 1 s `Sidecar::poll_exit()`（shutdown 取走 child 后回 `None` = 正常关闭）；
   意外退出写标记、发 `tavotto:engine-exited`、`current_engine_exit` 回读；`restart_engine`（仅主窗口，远程窗口**无**）与首启共用 `boot_engine`
   （新 nonce，`AppState.port` 可变）。`app_config_dir()/session-state.json` 只含版本 / 时间 / running|clean / 退出类型闭集，不上传；
   `take_previous_exit` 取走即清空。**绕过 `RunEvent::Exit` 的退出路径必须先写 clean**：`std::process::exit` 只许经 `e2e_exit`，
