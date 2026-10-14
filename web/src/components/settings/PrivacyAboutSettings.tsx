@@ -67,30 +67,34 @@ export function PrivacyAboutSettings() {
 
 function ProductBlock({ version }: { version?: string }) {
   return (
-    <div className="flex items-center gap-4" data-settings-anchor="about.support">
-      {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
-      <BrandMark size={54} />
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <p className="type-title">
-          {PRODUCT_NAME}
-          {version && <span className="ml-1.5 font-mono text-sm font-normal text-ink-2">v{version}</span>}
-        </p>
-        <p className="type-caption">{st('about.tagline')}</p>
-        <p className="type-meta">
-          {st('about.licenseBefore')}{' '}
-          <a
-            href={REPO_URL}
-            target="_blank"
-            rel="noreferrer"
-            // 正文句子里的链接必须**不靠颜色**也能认出来（axe
-            // link-in-text-block，serious）——只在悬停时下划线等于对色觉障碍
-            // 与灰度打印一律无效。这一页此前从没被 axe 跑过，所以一直没人看见
-            className="text-ink-2 underline underline-offset-2 hover:text-ink"
-          >
-            {st('about.source')}
-          </a>
-          {st('about.licenseAfter')}
-        </p>
+    // 窄宽度（约 350px 或高缩放）下按钮折到产品块下面一行，而不是把产品文字挤到被裁掉：
+    // 标志 + 文字是一组、基准宽 18rem，放不下按钮时整组占满一行
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-3" data-settings-anchor="about.support">
+      <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-4" data-about-product>
+        {/* About 是标志唯一允许的 full 档界面位置（54px，弹窗白底用默认灰） */}
+        <BrandMark size={54} />
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <p className="type-title">
+            {PRODUCT_NAME}
+            {version && <span className="ml-1.5 font-mono text-sm font-normal text-ink-2">v{version}</span>}
+          </p>
+          <p className="type-caption">{st('about.tagline')}</p>
+          <p className="type-meta">
+            {st('about.licenseBefore')}{' '}
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              // 正文句子里的链接必须**不靠颜色**也能认出来（axe
+              // link-in-text-block，serious）——只在悬停时下划线等于对色觉障碍
+              // 与灰度打印一律无效。这一页此前从没被 axe 跑过，所以一直没人看见
+              className="text-ink-2 underline underline-offset-2 hover:text-ink"
+            >
+              {st('about.source')}
+            </a>
+            {st('about.licenseAfter')}
+          </p>
+        </div>
       </div>
       {/* 只是一条去官网的链接：点了才出网，由系统浏览器打开；页内不嵌任何捐赠服务 */}
       <a
