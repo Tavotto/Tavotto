@@ -623,6 +623,27 @@ EXIT_CASES = {
         PRE + "a = True\nif a and os.path.exists(o):\n    sys.exit(3)  # EXIT\n",
         False,
     ),
+    # Codex #1024 r4267844405：savefig 之后在真实文件语义下仍为 False 的谓词，退出不是守卫造成的
+    "isdir_stays_false_after_savefig": (
+        PRE + "if not os.path.isdir(o):\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "islink_stays_false_after_savefig": (
+        PRE + "if not os.path.islink(o):\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "path_is_dir_stays_false_after_savefig": (
+        PRE + "if not Path(o).is_dir():\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "path_is_symlink_stays_false_after_savefig": (
+        PRE + "if not Path(o).is_symlink():\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "ismount_stays_false_after_savefig": (
+        PRE + "if not os.path.ismount(o):\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
     "probe_of_a_different_file": (
         PRE + "if not os.path.exists('data.csv'):\n    sys.exit(3)  # EXIT\n",
         False,

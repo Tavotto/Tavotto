@@ -2035,10 +2035,12 @@ def _readonly_mode(mode) -> bool:
     return "r" in mode and not any(c in mode for c in "+wxa")
 
 
-#: 探路 / 取状态的函数名：脚本拿它们的结果决定走不走某个分支（`if not os.path.exists(out): sys.exit(1)`）。
+#: 退出归因认的探路调用：**savefig 成功写出文件之后必然为真 / 不抛**的那些（`exists` / `isfile` / `getsize` / `stat`…）。
+#: `isdir` / `islink` / `is_dir` / `is_symlink` / `ismount` 在真实文件语义下 savefig 之后同样是 False——
+#: 退出不是守卫造成的，故意不在表里（证明不了就不归因）。
 _PROBE_CALL_NAMES = frozenset(
     {
-        "exists", "lexists", "isfile", "isdir", "islink", "is_file", "is_dir", "is_symlink",
+        "exists", "lexists", "isfile", "is_file",
         "getsize", "getmtime", "getctime", "getatime", "stat", "lstat",
     }
 )  # fmt: skip
