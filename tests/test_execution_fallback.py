@@ -325,6 +325,56 @@ def test_a_fallback_superseded_by_a_newer_same_script_run_never_launches_native(
     assert _history(final)[0]["declined"] == "superseded" and len(_history(final)) == 1
 
 
+def test_the_fallback_native_plan_is_stamped_with_the_project_epoch(
+    client, tmp_path, fake_pool, native, sessions
+):
+    """#1022：桌面 native 计划登记时盖项目关闭代次；回退的 native 计划走同一个 `register`，同样拿到。"""
+    sid = _start(client, tmp_path, fake_pool)
+    final = _settle(client, sid)
+    nplan, _ = preparation.SERVICE.get(_history(final)[1]["attempt_id"], final["project_id"])
+    assert nplan.execution == "native"
+    assert nplan.project_epoch == m.engine_nativesession.REGISTRY.project_epoch(str(tmp_path / "p"))
+    assert nplan.project_epoch is not None
+
+
+def test_a_fallback_begun_before_the_project_was_closed_and_reopened_never_launches_native(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """项目关闭再重开：关闭前开始的运行，回退不得在重开后的项目里起进程。就算关闭路径漏了取消标记（这里只升代次、不经
+    `cancel_project`），运行开始时记下的代次与此刻对不上也拒绝。"""
+    registry = m.engine_nativesession.REGISTRY
+    root = str(tmp_path / "p")
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    registry.mark_project_closed(root)
+    registry.reopen_project(root)
+    release.set()
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert native["calls"] == []
+    assert _history(final)[0]["declined"] == "project_reopened"
+
+
+def test_closing_and_reopening_the_project_through_the_real_close_order_declines_the_fallback(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    registry = m.engine_nativesession.REGISTRY
+    root = str(tmp_path / "p")
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    project_id = _get(client, sid).get_json()["project_id"]
+    registry.mark_project_closed(root)  # 与 app 关项目同一顺序：标记 → 取消准备
+    preparation.SERVICE.cancel_project(project_id)
+    registry.reopen_project(root)
+    release.set()
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert native["calls"] == []
+    assert _history(final)[0]["declined"] in ("cancelled", "project_reopened")
+
+
 def test_a_rerun_of_another_script_does_not_stop_the_fallback(
     client, tmp_path, fake_pool, native, sessions, monkeypatch
 ):
