@@ -31,3 +31,8 @@ python scripts/perf_manifest_report.py /tmp/bench-render.json \
 后续 A/B 必须使用相同计算机、Python/Matplotlib、字体环境、样本图和热态设置，
 记录 P50/P95、波动与几何不变量；不同机器的 GitHub Runner 只用来验证功能，
 不能替代同机性能收益证明。
+
+
+## 阶段守恒验证
+
+真实 v1 Worker 的响应字段集合增加了上述四个阶段键，`tests/test_worker_roundtrip.py` 会逐键核对并验证两级时间总量。前置 `prepare` 在布局/测量之外仅允许少量 context enter/exit 开销，校验 `abs(prepare-layout-measure) <= max(2ms, prepare×5%)`，正反两侧均判断。不能只检查局部之和未超时而漏掉未归因的大量 CPU 时间；超出误差的样本一律标记为不完整。

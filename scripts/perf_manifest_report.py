@@ -60,7 +60,10 @@ def summarize(report: dict, min_samples: int = 9) -> dict:
             total = float(sample["manifest_ms"])
             layout = float(sample["manifest_layout_ms"])
             measure = float(sample["manifest_measure_ms"])
-            if abs((prep + final) - total) > 0.01 or layout + measure > prep + 0.5:
+            if (
+                abs((prep + final) - total) > 0.01
+                or abs(prep - layout - measure) > max(2.0, prep * 0.05)
+            ):
                 valid = False
             for k in KEYS:
                 metrics[k].append(float(sample[k]))

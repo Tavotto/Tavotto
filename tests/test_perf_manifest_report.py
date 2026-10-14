@@ -92,3 +92,18 @@ def test_foreign_or_empty_report_is_not_pass():
         pass
     else:
         raise AssertionError("foreign JSON should be rejected")
+
+
+
+def test_manifest_stage_coverage_fails_when_timing_is_mostly_unaccounted_for():
+    """即使 prepare + final 等于总量，也不允许 layout/measure 都是假零。"""
+    source = report()
+    for sample_row in source["rows"][0]["hot_samples"]:
+        sample_row["manifest_layout_ms"] = 0
+        sample_row["manifest_measure_ms"] = 0
+    assert R.summarize(source)["status"] == "incomplete"
+    source = report()
+    for sample_row in source["rows"][0]["hot_samples"]:
+        sample_row["manifest_layout_ms"] = 105
+        sample_row["manifest_measure_ms"] = 30
+    assert R.summarize(source)["status"] == "incomplete"

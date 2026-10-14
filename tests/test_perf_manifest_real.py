@@ -73,7 +73,6 @@ def test_timing_breakdown_follows_real_session_and_preserves_total():
         )
         <= 0.01
     )
-    assert (
-        times["manifest_layout_ms"] + times["manifest_measure_ms"]
-        <= times["manifest_prepare_ms"] + 0.5
-    )
+    prepare = times["manifest_prepare_ms"]
+    gap = prepare - times["manifest_layout_ms"] - times["manifest_measure_ms"]
+    assert abs(gap) <= max(2.0, prepare * 0.05)
