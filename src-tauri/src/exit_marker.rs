@@ -313,6 +313,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 替换已存在的文件（`write_atomic` 的 tmp + rename 在任何平台都必须能覆盖旧文件）：running → clean 之后
+    /// 文件内容是 clean、没有遗留 tmp。Windows 上 `std::fs::rename` 是 MOVEFILE_REPLACE_EXISTING，这条用例防任何平台替换失败。
+    #[test]
+    fn running_then_clean_replaces_the_existing_file_without_a_leftover_tmp() {
+        let dir = tmp_dir("replace");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        assert!(read(&dir).contains(r#""state":"running""#));
+        m.mark_clean();
+        let text = read(&dir);
+        assert!(text.contains(r#""state":"clean""#), "{text}");
+        assert!(!text.contains("running"));
+        assert!(!dir.join(format!("{FILE_NAME}.tmp")).exists(), "不留 tmp");
+        let names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, [FILE_NAME.to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_corrupt_file_is_ignored_and_overwritten() {
         let dir = tmp_dir("corrupt");
