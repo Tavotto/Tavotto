@@ -131,14 +131,15 @@ def test_closing_a_project_cancels_a_launch_that_has_not_registered_yet(tmp_path
     proj.mkdir()
     gate = threading.Event()
     reached = threading.Event()
-    real_adopt = nativesession.NativeSessionRegistry.adopt
+    real_adopt = nativesession.REGISTRY.adopt
 
-    def slow_adopt(self, session):
+    def slow_adopt(session):
         reached.set()
         gate.wait(30)
-        real_adopt(self, session)
+        real_adopt(session)
 
-    monkeypatch.setattr(nativesession.NativeSessionRegistry, "adopt", slow_adopt)
+    # 补丁打在实例上(与 test_desktop_owned_process 同写法):别的用例会在实例上留下 adopt 属性,类上的补丁会被它遮住
+    monkeypatch.setattr(nativesession.REGISTRY, "adopt", slow_adopt)
     launch = dk.launch_for(tmp_path, "import time\ntime.sleep(600)\n", name="fig.py")
     box = {}
 
@@ -150,7 +151,7 @@ def test_closing_a_project_cancels_a_launch_that_has_not_registered_yet(tmp_path
 
     t = threading.Thread(target=go, daemon=True)
     t.start()
-    assert reached.wait(60), "启动没走到登记前"
+    assert reached.wait(60), f"启动没走到登记前: {box.get('error')!r}"
     nativesession.REGISTRY.cancel_project(str(proj))  # 项目关闭
     gate.set()
     t.join(60)

@@ -353,14 +353,16 @@ def test_a_question_asked_before_registration_is_still_announced(tmp_path, monke
     登记完成后必须补发当前状态,否则界面永远收不到那一问的事件(Codex #1022 P1)。"""
     seen = []
     nativesession.REGISTRY.on_change = lambda s, entry: seen.append(dict(entry))
-    real_adopt = nativesession.NativeSessionRegistry.adopt
+    real_adopt = nativesession.REGISTRY.adopt
 
-    def slow_adopt(self, session):
+    def slow_adopt(session):
         # 让提问在登记前到达:等 pending 出现(此时回调还是 None)再登记
         dk.wait_until(lambda: session.pending_input is not None, what="登记前的提问")
-        real_adopt(self, session)
+        real_adopt(session)
 
-    monkeypatch.setattr(nativesession.NativeSessionRegistry, "adopt", slow_adopt)
+    monkeypatch.setattr(
+        nativesession.REGISTRY, "adopt", slow_adopt
+    )  # 打在实例上,不被别的用例遗留的实例属性遮住
     try:
         session = start(tmp_path, "input('immediately? ')\n")
         dk.wait_until(
