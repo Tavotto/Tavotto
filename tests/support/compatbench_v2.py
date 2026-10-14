@@ -212,36 +212,62 @@ def require_current_process_worker(envst: dict) -> None:
         raise PreconditionUnmet(f"worker 来源是 {source!r}，拿不到可复现的启动环境，不判缺包前提")
 
 
-def env_identity(python: str, matplotlib_version: str | None, python_version: str | None) -> dict:
-    """被测环境的身份（摘要，不放原始路径）：解释器真实路径的 sha256 前 16 位 + 版本 + 平台。"""
-    import hashlib
-    import platform
-
-    real = os.path.realpath(python) if python else ""
-    return {
-        "python_sha": hashlib.sha256(real.encode("utf-8")).hexdigest()[:16] if real else None,
-        "python_version": python_version,
-        "matplotlib_version": matplotlib_version,
-        "platform": f"{sys.platform}-{platform.machine()}",
-    }
+_FACTS_CODE = (
+    "import json, sys\n"
+    "from importlib import metadata\n"
+    "d = sorted({str(x.metadata['Name']).lower().replace('_', '-') + '==' + x.version\n"
+    "            for x in metadata.distributions() if x.metadata['Name']})\n"
+    "print(json.dumps({'version': sys.version, 'dists': d}))\n"
+)
 
 
-def _python_version(python: str, env: dict) -> str | None:
+def environment_facts(python: str, env: dict) -> dict | None:
+    """被测解释器自报：`sys.version` 与已装发行包的「名称==版本」排序列表（不含任何路径）。拿不到 -> None。"""
     import subprocess
 
     try:
         out = subprocess.run(
-            [python, "-c", "import platform; print(platform.python_version())"],
+            [python, "-c", _FACTS_CODE],
             env=env,
             capture_output=True,
             text=True,
             encoding="utf-8",
-            timeout=60,
+            timeout=120,
             check=True,
         )
-        return out.stdout.strip().splitlines()[-1]
-    except Exception:  # noqa: BLE001 — 拿不到就是 None（未观测），不伪造
+        facts = json.loads(out.stdout.strip().splitlines()[-1])
+        return {"version": str(facts["version"]), "dists": sorted(facts["dists"])}
+    except Exception:  # noqa: BLE001 — 拿不到就是未观测，不伪造
         return None
+
+
+def env_identity(facts: dict | None, matplotlib_version: str | None) -> dict:
+    """被测环境的身份：指纹由**环境内容**决定（sys.version + 已装发行包 名称==版本 + matplotlib 版本 + 平台），
+    不由路径决定；记录里不放路径原文。`facts` 为 None（拿不到）-> 指纹 null，`summarize` 视作缺失。"""
+    import hashlib
+    import platform
+
+    plat = f"{sys.platform}-{platform.machine()}"
+    fingerprint = None
+    if facts is not None:
+        canon = json.dumps(
+            {
+                "version": facts["version"],
+                "dists": sorted(facts["dists"]),
+                "matplotlib": matplotlib_version,
+                "platform": plat,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        fingerprint = hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
+    return {
+        "fingerprint": fingerprint,
+        "python_version": facts["version"].split()[0] if facts else None,
+        "matplotlib_version": matplotlib_version,
+        "platform": plat,
+        "dists": len(facts["dists"]) if facts else None,
+    }
 
 
 def absent_modules(python: str, names, *, env: dict | None = None) -> list[str]:
@@ -389,9 +415,8 @@ def observe(
             if reported and not Path(reported).is_absolute():
                 reported = str(proj / reported)
             obs.env_identity = env_identity(
-                reported,
+                environment_facts(reported, app.env) if reported else None,
                 envst.get("matplotlib"),
-                _python_version(reported, app.env) if reported else None,
             )
             if needs_absent:
                 require_current_process_worker(envst)
@@ -622,7 +647,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{args.dir} 里没有记录——空集合不是通过")
         return 2
     idents = {json.dumps(r.get("env_identity"), sort_keys=True) for r in rows}
-    if len(idents) != 1 or "null" in idents:
+    if len(idents) != 1 or any(not (r.get("env_identity") or {}).get("fingerprint") for r in rows):
         print(f"{args.dir} 的记录没有绑定、或绑定了不一致的被测环境身份: {sorted(idents)}")
         return 2
     shas = {r.get("source_sha") for r in rows}

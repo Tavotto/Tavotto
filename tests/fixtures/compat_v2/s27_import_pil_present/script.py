@@ -24,4 +24,5 @@ from PIL import Image  # noqa: F401
 
 fig, ax = plt.subplots()
 ax.plot([0, 1], [1, 0])
+ax.set_title("pil present")
 fig.savefig("pil_present.png")

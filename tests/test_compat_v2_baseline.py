@@ -142,7 +142,7 @@ def test_summarize_rejects_a_directory_that_mixes_runs(tmp_path):
             "source_sha": sha,
             "run_id": run_id,
             "env_identity": {
-                "python_sha": "x",
+                "fingerprint": "x",
                 "python_version": "3",
                 "matplotlib_version": "3",
                 "platform": "p",
@@ -313,6 +313,7 @@ def test_figure_scenarios_reject_a_failed_outcome_with_a_figure():
         problem_codes=[],
         figures_valid=1,
         figures_captured=1,
+        titles=["plain"],
     )
     assert ideal(_o(**ok, error_type=None)) == []
     assert ideal(_o(**{**ok, "outcome_kind": "failed"}, error_type=None))
@@ -348,6 +349,7 @@ def test_partial_scenario_requires_a_clean_partial_projection():
         figures_valid=1,
         figures_captured=1,
         failed_figures=["bad"],
+        titles=["good"],
     )
     assert ideal(_o(**ok)) == []
     assert ideal(_o(**{**ok, "render_errors": [{"asset_id": "a", "error": "X"}]}))
@@ -382,6 +384,7 @@ def test_partial_scenario_requires_success_outcome_and_clean_codes():
         figures_valid=1,
         figures_captured=1,
         failed_figures=["bad"],
+        titles=["good"],
     )
     assert ideal(_o(**ok)) == []
     # 指认了 bad，但把会话投影成失败 / 无图 / 带错误码：坏的 UI 结果不能算理想
@@ -541,6 +544,7 @@ def _clean(**kw):
         figures_captured=1,
         failed_figures=[],
         render_errors=[],
+        titles=["plain"],
     )
     base.update(kw)
     return cb.Observation(scenario="x", **base)
@@ -645,20 +649,48 @@ def test_only_the_current_process_worker_has_a_reproducible_launch_environment()
             cb.require_current_process_worker(other)
 
 
-def test_env_identity_is_a_digest_not_a_path():
-    ident = cb.env_identity("/home/u/secret/venv/bin/python", "3.11.2", "3.13.1")
-    assert set(ident) == {"python_sha", "python_version", "matplotlib_version", "platform"}
-    text = json.dumps(ident)
-    assert "secret" not in text and "/" not in ident["python_sha"]
-    assert ident["python_version"] == "3.13.1" and ident["matplotlib_version"] == "3.11.2"
-    assert ident == cb.env_identity("/home/u/secret/venv/bin/python", "3.11.2", "3.13.1")
-    assert ident["python_sha"] != cb.env_identity("/other/python", "3.11.2", "3.13.1")["python_sha"]
+def _facts(**dists):
+    return {
+        "version": "3.13.1 (main, Jan 1 2026) [Clang]",
+        "dists": sorted(f"{k}=={v}" for k, v in dists.items()),
+    }
+
+
+def test_env_identity_fingerprints_the_environment_contents_not_a_path():
+    a = cb.env_identity(_facts(numpy="2.0", matplotlib="3.11.2"), "3.11.2")
+    assert set(a) == {"fingerprint", "python_version", "matplotlib_version", "platform", "dists"}
+    assert a["dists"] == 2 and a["python_version"] == "3.13.1"
+    # 同样的内容（与顺序无关）-> 同一个指纹；不涉及任何路径
+    b = cb.env_identity(
+        {"version": _facts()["version"], "dists": ["matplotlib==3.11.2", "numpy==2.0"]}, "3.11.2"
+    )
+    assert a == b
+    # 任何一个已装发行包的版本变了、或少了一个，指纹都变（路径一样也不行）
+    assert cb.env_identity(_facts(numpy="2.1", matplotlib="3.11.2"), "3.11.2") != a
+    assert cb.env_identity(_facts(matplotlib="3.11.2"), "3.11.2")["fingerprint"] != a["fingerprint"]
+    assert (
+        cb.env_identity(_facts(numpy="2.0", matplotlib="3.11.2"), "3.12.0")["fingerprint"]
+        != a["fingerprint"]
+    )
+    assert "/" not in json.dumps(a).replace("3.13.1 (main", "")
+    # 拿不到环境内容 -> 指纹 null（summarize 视作缺失）
+    assert cb.env_identity(None, "3.11.2")["fingerprint"] is None
+
+
+def test_environment_facts_come_from_the_real_interpreter():
+    import sys
+
+    facts = cb.environment_facts(sys.executable, dict(os.environ))
+    assert facts and facts["version"].startswith(sys.version.split()[0])
+    assert facts["dists"] == sorted(facts["dists"])
+    assert any(d.lower().startswith("pytest==") for d in facts["dists"])
+    assert cb.environment_facts("/nonexistent/python", {}) is None
 
 
 def test_records_carry_the_measured_environment_identity():
     sc = cs.SCENARIOS["s01_plain"]
     obs = cb.Observation(scenario=sc.id)
-    obs.env_identity = cb.env_identity("/p/python", "3.11.2", "3.13.1")
+    obs.env_identity = cb.env_identity(_facts(numpy="2.0"), "3.11.2")
     assert cb.record(obs, sc, [], None)["env_identity"] == obs.env_identity
 
 
@@ -679,8 +711,8 @@ def test_summarize_rejects_mixed_or_missing_environment_identities(tmp_path):
             },
         }
 
-    a = cb.env_identity("/a/python", "3.11.2", "3.13.1")
-    b = cb.env_identity("/b/python", "3.11.2", "3.13.1")
+    a = cb.env_identity(_facts(numpy="2.0"), "3.11.2")
+    b = cb.env_identity(_facts(numpy="2.1"), "3.11.2")  # 同路径不同内容
     (tmp_path / "a.json").write_text(json.dumps(rec("a", a)), "utf-8")
     (tmp_path / "b.json").write_text(json.dumps(rec("b", a)), "utf-8")
     assert cb.main(["summarize", str(tmp_path)]) == 0
@@ -688,3 +720,15 @@ def test_summarize_rejects_mixed_or_missing_environment_identities(tmp_path):
     assert cb.main(["summarize", str(tmp_path)]) == 2  # 同一 run 里量了两个不同的环境
     (tmp_path / "b.json").write_text(json.dumps(rec("b", None)), "utf-8")
     assert cb.main(["summarize", str(tmp_path)]) == 2  # 没绑环境身份 = 不知道量的是什么
+    unknown = cb.env_identity(None, "3.11.2")  # 拿不到环境内容：指纹 null，同样视作缺失
+    (tmp_path / "a.json").write_text(json.dumps(rec("a", unknown)), "utf-8")
+    (tmp_path / "b.json").write_text(json.dumps(rec("b", unknown)), "utf-8")
+    assert cb.main(["summarize", str(tmp_path)]) == 2
+
+
+def test_figure_scenarios_pin_the_in_figure_truth():
+    """出图类场景（含对照组 s01、s27 与部分成功 s25）的期望表必须钉住图内标题真值，不能不关心。"""
+    for sid, sc in cs.SCENARIOS.items():
+        if sc.ideal_outcome in ("figure", "partial_figure"):
+            ex = cs.EXPECT[sid]
+            assert ex.title is not None or ex.title_re is not None, f"{sid} 没有钉图内标题真值"

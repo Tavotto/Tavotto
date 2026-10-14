@@ -29,6 +29,7 @@ class AggOnly(Artist):
 
 good, ax = plt.subplots()
 ax.plot([0, 1], [1, 2])
+ax.set_title("good")
 good.savefig("good.png")
 bad, ax2 = plt.subplots()
 ax2.add_artist(AggOnly())

@@ -333,7 +333,7 @@ def _add(s: Scenario, ex: Expect) -> None:
 
 _add(
     _scenario("s01_plain", (1,), "普通 Matplotlib", "无（对照）", "Safe 直接成功", 1, 1, "figure"),
-    _fig(1),
+    _fig(1, title="plain"),
 )
 _add(
     _scenario(
@@ -535,10 +535,11 @@ _add(
             "exec_count": 1,
             "figures_valid": 1,
             "figures_captured": 1,
+            "titles": ["good"],
             "side_effect_count": None,
         },
     ),
-    _fig(1, final_phase="partial", failed_figures=["bad"]),
+    _fig(1, final_phase="partial", failed_figures=["bad"], title="good"),
 )
 _add(
     _scenario(
@@ -566,7 +567,7 @@ _add(
         "figure",
         notes="另列场景：import 名与发行包名不一致",
     ),
-    _fig(1),
+    _fig(1, title="pil present"),
 )
 
 
