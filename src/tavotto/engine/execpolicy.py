@@ -59,6 +59,9 @@ _STALE_CODE = "preparation_plan_stale"
 
 # ---------------------------------------------------------------- 不回退 / 不重试的理由（闭集；诊断与测试都读它）
 REASON_OK = ""
+REASON_SUPERSEDED = (
+    "superseded"  # 已有更新的同脚本重跑取代了这次运行：回退会结束新一次的 native，不接
+)
 REASON_NOT_DESKTOP = (
     "not_desktop_initiated"  # 不是桌面用户主动发起的运行（浏览器 / API 客户端 / 无认证）
 )
@@ -75,6 +78,7 @@ REASON_INTERPRETER_CHANGED = "interpreter_changed"  # native 计划解出的解�
 REASON_PLAN_UNAVAILABLE = "plan_unavailable"  # native 计划算不出来
 REASON_LAUNCH_FAILED = "launch_failed"  # 交给执行线程时失败
 REASONS = (
+    REASON_SUPERSEDED,
     REASON_NOT_DESKTOP,
     REASON_DISABLED,
     REASON_SAFE_ONLY,
