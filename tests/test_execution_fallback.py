@@ -197,6 +197,33 @@ def test_cancel_before_the_fallback_starts_no_native_run(
     assert final["provider"]["attempts"] == 1
 
 
+def test_cancel_landing_after_planning_but_before_the_handoff_still_stops_the_fallback(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """取消落在「锁外规划完、锁内交出去」之间：最后一刻的复核（`_start_fallback`）必须再看一次取消标记。"""
+    planned, release = threading.Event(), threading.Event()
+    real = prepsession.SessionService._plan_fallback
+
+    def after(self, *a, **kw):
+        got = real(self, *a, **kw)
+        assert got is not None  # 规划本身是放行的
+        planned.set()
+        assert release.wait(10)
+        return got
+
+    monkeypatch.setattr(prepsession.SessionService, "_plan_fallback", after)
+    sid = _start(client, tmp_path, fake_pool)
+    assert planned.wait(10)
+    mid = _get(client, sid).get_json()
+    resp = _act(client, sid, _action(mid, "cancel")["id"], mid["config_revision"])
+    assert resp.status_code == 200, resp.get_json()
+    release.set()
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert native["calls"] == []
+    assert _history(final)[0]["declined"] == "cancelled" and len(_history(final)) == 1
+
+
 def test_cancelling_the_native_attempt_hits_the_native_attempt(
     client, tmp_path, fake_pool, native, sessions
 ):
