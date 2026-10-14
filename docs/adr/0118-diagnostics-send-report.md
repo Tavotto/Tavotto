@@ -87,3 +87,16 @@
 - **测试不连生产。** 测试进程默认 `TAVOTTO_NO_DIAG_UPLOAD=1`（`tests/conftest.py`；e2e `fixtures.ts` 同），诊断发送用例在 fixture 里摘掉它并指向回环模拟端；`conftest` 的会话级探针拦下任何发往生产主机的 `OpenerDirector.open` 并判红。
 - **服务端限制（`Tavotto/infra`）。** 每 IP 每小时 6 次 `init`、每日最多 500 份 / 2 GiB；报告保留 30 天后删除。客户端不复述数字，只把 429 / 503 交还用户去点。
 - **隐私声明。** `docs/privacy.md` 的「Diagnostics bundle」一节已按本行为改写（去向、30 天、关闭方式、删除方式）。
+
+## 修订（2026-10-13，诊断包扩充）
+
+维护者裁决：诊断包以「能帮维护者详细定位问题」为准，**不再因为报错或文件里可能带着用户文字就丢掉**；发送前用户在确认框里能看到包里有哪些文件、能把同一份 ZIP 存到本地，逐次确认是最后一道关。本节取代上文「包的内容与脱敏只此一份」「不含报错原文 / 脚本源码」的说法——**仅对发送包**。
+
+- **两种包。** 导出到文件（`GET/POST /api/diagnostics/bundle`、「复制诊断」）保持严格脱敏，一个字节不变——那份可能被贴进公开 issue。发送包（`POST /api/diagnostics/send/prepare`）在其上多一批扁平条目 `detail-…` / `optional-…`（`engine/diagdetail.py` 组装，`app._build_diagnostics_bundle(detail=…)` 才传），老三件的名字与语义不动。bundle schema 升到 **8**（manifest 加 `contains_detail` / `detail_files` / `detail_options` / `truncated`）。
+- **默认收十二类**（优先级即编号）：报错原文与完整调用栈、app / sidecar / worker 日志尾巴原文、会话状态文件、最近后端请求环（方法 / 路由规则 / 状态码 / 耗时 / 错误码）、样式改动、渲染环境（一次 ≤10 s 的只读子进程）、运行记录、桌面壳与安装信息、存储坑、前端 console 环、显示环境、网络概况。
+- **三个勾选项**（默认不勾、不记忆，变化即重新备包）：A 脚本源码、B 系统崩溃报告、C 会话损坏副本内容。B 勾选时 **Windows 崩溃转储（.dmp，CrashDumps 与 WER ReportArchive / ReportQueue，属于 Tavotto / sidecar / 渲染 python 进程、7 天内）原样收**（用户裁决）：那是程序内存快照，可能含正在打开的文件内容与路径，**无法脱敏**，确认框与隐私声明都写明；按文件整份取舍、新的优先、不截半个文件，放不下的记进索引与 manifest `truncated`；没勾时零字节。没勾 A 时包里一个字节源码都没有（连日志里 traceback 的源码行也剥掉）。**契约措辞：默认收集的内容（日志、console、state、overrides 等）按秘密形状矩阵严格清理；勾选的源码与崩溃报告是用户逐次确认的原样附件，清理是尽力而为、不作保证**（任意源码里的密钥无法靠规则穷尽；确认框说明为「脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾」）。
+- **始终处理**：家目录 → `~`、用户名 → `<user>`、秘密去掉；项目文件夹名、文件名、图里的文字保留。
+- **体积**：上限由 10 MiB 改为 **64 MiB**（2026-10-13 起单份 64 MiB、每日 8 GiB，服务端已部署，infra#25；`MAX_BYTES` 与各类份额相应放大，截断预算总额 63 MiB）；按优先级从低往高截断（C < B < A，之后默认项从末尾几类），写进 manifest `truncated`，核心文件不截，截后仍超限走 `too_large`。
+- **名字解析。** 网络概况对 `tavotto.cn` / `github.com` 各做一次系统名字解析（不建立连接，线程里做、≤2 s，超时记 unknown），这是 prepare「零网络」里唯一的 DNS 查询；用来判断 TUN 把域名改写进 `198.18.0.0/15`。
+- **ZIP 形状（服务端（infra 诊断服务）对上传 ZIP 的检查：条目名匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`（无目录 / 斜杠）、整包 ≤ 32 条、单条目 `file_size > 1024 且 > 200 × compress_size` 被拒、单条目解压后 ≤ 128 MiB、总解压后 ≤ 256 MiB、`manifest.json` ≤ 64 KiB）。** 所以条目名一律扁平（`detail-errors.json`、`detail-app-log.txt`……），多文件的类别（会话状态、样式改动、源码、崩溃报告、损坏副本）各打成**一个内层 zip**（内层可有目录与 `index.json`），整包最大配置约 25 条；出包后 `ratio_safe` 把压缩比超限的条目改存 STORED，再用 `diagsend.zip_problem`（同一组判据）自检，不合规当内部错误 `bundle_invalid`、不发送。`bundle_schema` 取值范围 1–99，8 无问题。
+- **已知局限。** 默认收集的自由文本只按「秘密词 + 分隔符」「PEM / JWT / 长十六进制 / 服务商令牌前缀」等形状清理（fail-closed：命中后从值起点抹到行尾，不确定抹到输入末尾），日志里没有标注成密钥的口令无法自动识别；缓解是逐次确认、确认框可展开看清单、可先保存同一份 ZIP 检查。逐条局限与取舍见 `docs/rules/backend/diagnostics.md`。

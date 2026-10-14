@@ -1,7 +1,7 @@
 import type { Manifest, ManifestElement, ManifestGroup } from './api'
 import { segIntersectsSeg } from './pathGeom'
 import { msg, t, type UiMessage } from '@/i18n'
-import type { AlignMode } from './geometry'
+import type { AlignMode, SnapKind, SnapLine, SnapLineCandidates } from './geometry'
 import {
   flipY,
   layoutBoxes,
@@ -114,23 +114,52 @@ export function inFigureSnapCandidates(
   panel: PanelObject,
   manifest: Manifest,
   moving: (gid: string) => boolean,
-): { xs: number[]; ys: number[] } | null {
+): SnapLineCandidates | null {
   if (panelRotation(panel) || panel.flipH || panel.flipV) return null
   const full = panelFullRect(panel)
-  const xs: number[] = []
-  const ys: number[] = []
-  const push = (b: Rect4) => {
-    xs.push(full.x + b[0] * full.w, full.x + (b[0] + b[2] / 2) * full.w, full.x + (b[0] + b[2]) * full.w)
-    ys.push(full.y + b[1] * full.h, full.y + (b[1] + b[3] / 2) * full.h, full.y + (b[1] + b[3]) * full.h)
+  const xs: SnapLine[] = []
+  const ys: SnapLine[] = []
+  const push = (b: Rect4, kind: SnapKind, gid: string) => {
+    const rect = fracBoxToMm(panel, b)
+    const meta = { kind, panelId: panel.id, gid, rect }
+    const x = [full.x + b[0] * full.w, full.x + (b[0] + b[2] / 2) * full.w, full.x + (b[0] + b[2]) * full.w]
+    const y = [full.y + b[1] * full.h, full.y + (b[1] + b[3] / 2) * full.h, full.y + (b[1] + b[3]) * full.h]
+    for (const e of [0, 1, 2] as const) {
+      xs.push({ v: x[e], edge: e, ...meta })
+      ys.push({ v: y[e], edge: e, ...meta })
+    }
   }
-  push([0, 0, 1, 1])
+  push([0, 0, 1, 1], 'figure', 'figure')
   for (const el of manifest.elements) {
     if (!isAlignable(el) || isElementHidden(el) || el.arrow_endpoints || el.geom_gid) continue
     if (moving(el.gid)) continue
     const box = elementBoxOf(panel, el)
-    if (box && box[2] > 0 && box[3] > 0) push(box)
+    if (box && box[2] > 0 && box[3] > 0) push(box, snapKindOf(el), el.gid)
   }
   return { xs, ys }
+}
+
+/**
+ * manifest 元素 → 吸附语义类型。轴标题靠 gid 后缀（`axes_i.xlabel` / `.ylabel`，role 不区分
+ * x 与 y），色条靠 `is_colorbar`（role 仍是 axes），其余看 role。PR2 的跨图配对复用这一处。
+ */
+export function snapKindOf(el: Pick<ManifestElement, 'gid' | 'role' | 'is_colorbar'>): SnapKind {
+  if (el.gid === 'figure' || el.role === 'figure') return 'figure'
+  if (el.gid.endsWith('.xlabel')) return 'xlabel'
+  if (el.gid.endsWith('.ylabel')) return 'ylabel'
+  if (el.is_colorbar) return 'colorbar'
+  switch (el.role) {
+    case 'axes':
+      return 'axes'
+    case 'legend':
+      return 'legend'
+    case 'title':
+      return 'title'
+    case 'text':
+      return 'text'
+    default:
+      return 'other'
+  }
 }
 
 /**

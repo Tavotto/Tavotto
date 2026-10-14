@@ -80,6 +80,29 @@
       ]
     },
     {
+      "id": "assets.editability-filter",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "素材库按能不能编辑筛图：全部 / 可编辑 / 待连接 / 仅版面",
+        "en-US": "Filter the asset library by editability: all / editable / to connect / layout only"
+      },
+      "entry": "左栏「素材」→ 搜索框下的胶囊「全部 / 可编辑 / 仅版面」（有待连接的图时多一档「待连接」）",
+      "e2e": [
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "能不能编辑的胶囊：可编辑 / 仅版面一点就分开，回到全部恢复"
+        },
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "能不能编辑的胶囊：英文四档在 280px 最窄抽屉里不溢出"
+        }
+      ],
+      "desktop_manual": [
+        "左栏「素材」→ 点「可编辑」只剩有脚本的图、点「仅版面」只剩没有脚本的图，点「全部」恢复"
+      ]
+    },
+    {
       "id": "assets.dependency-one-click-repair",
       "status": "active",
       "platform": "both",

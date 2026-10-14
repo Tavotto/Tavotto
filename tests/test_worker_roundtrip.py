@@ -2489,10 +2489,27 @@ def test_v1_timings_have_the_documented_shape(worker):
 
     resp = _ok(proc, _v1("render", stem="TestFig_a", payload={"patches": []}, rid="r-t2"))
     t = resp["timings"]
-    assert set(t) == {"patch_apply_ms", "canvas_draw_ms", "manifest_ms", "preview_plan_ms"}
+    assert set(t) == {
+        "patch_apply_ms",
+        "canvas_draw_ms",
+        "manifest_ms",
+        "manifest_prepare_ms",
+        "manifest_layout_ms",
+        "manifest_measure_ms",
+        "manifest_final_geometry_ms",
+        "preview_plan_ms",
+    }
     assert "svg_ms" not in t
     assert all(isinstance(v, float) and v >= 0 for v in t.values())
     assert t["canvas_draw_ms"] > 0 and t["manifest_ms"] > 0
+    assert (
+        abs(t["manifest_prepare_ms"] + t["manifest_final_geometry_ms"] - t["manifest_ms"]) <= 0.01
+    )
+    # ticklabel_memo / vector_text_metrics 上下文收尾在 prepare 里但不属于测量。
+    # 不得让漏算了大量时间的分段报告自称完整。
+    prep = t["manifest_prepare_ms"]
+    gap = prep - t["manifest_layout_ms"] - t["manifest_measure_ms"]
+    assert abs(gap) <= max(2.0, prep * 0.05)
     # 复杂度分析（ADR 0022 / Session 03）进的是热路径，它必须比它省下的那件事
     # 便宜几个数量级——量它就是为了让「它其实很贵」这件事没法悄悄发生
     assert t["preview_plan_ms"] < t["canvas_draw_ms"]

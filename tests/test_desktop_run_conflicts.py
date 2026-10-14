@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from support import desktopkit as dk, nativekit
@@ -179,10 +181,10 @@ def test_closing_a_project_blocks_a_launch_that_has_not_reserved_yet(tmp_path, m
     reached = threading.Event()
     real_reserve = nativesession.REGISTRY.reserve
 
-    def slow_reserve(launch_id, project_root="", epoch=None):
+    def slow_reserve(launch_id, project_root="", epoch=None, cancelled=None):
         reached.set()
         gate.wait(30)
-        return real_reserve(launch_id, project_root, epoch)
+        return real_reserve(launch_id, project_root, epoch, cancelled)
 
     monkeypatch.setattr(nativesession.REGISTRY, "reserve", slow_reserve)
     launch = dk.launch_for(tmp_path, "open('ran.txt','w').write('x')\n", name="fig.py")
@@ -536,3 +538,64 @@ def test_registry_rerun_cancel_follows_launch_order_for_sessions(tmp_path):
     finally:
         if not session.owned.finished:
             session.cancel_owned()
+
+
+def _spawn_witness(tmp_path):
+    return tmp_path / "work" / "spawned.txt"
+
+
+def test_a_cancelled_plan_never_spawns(tmp_path):
+    """计划在走到起进程之前就已被取消 / 取代:一行用户代码都不跑（Codex #1022 第十一轮）。"""
+    from tavotto import app as m
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    script = "open('spawned.txt', 'w').write('x')\n"
+    (proj / "fig.py").write_text(script, encoding="utf-8")
+    older, newer = _native_plan(proj, "pj-pre"), _native_plan(proj, "pj-pre")
+    preparation.SERVICE.register(older)
+    preparation.SERVICE.register(newer)
+    plan_older = preparation.SERVICE._entry(older.plan_id).plan  # noqa: SLF001
+    preparation.SERVICE.cancel_project(
+        "pj-pre", script="fig.py", keep=newer.plan_id
+    )  # 较新的取代了它
+    # 走真实 runner,但它的 spec 必须指向 tmp 下的 work 目录以便观测:用 dk 的 cwd 约定重建启动身份
+    launch = dk.launch_for(tmp_path, script, name="fig.py")
+    plan_older = dataclasses.replace(plan_older, native_spec=launch.spec)
+    with pytest.raises(pool.WorkerError):
+        m._native_preparation_runner(plan_older)
+    assert not _spawn_witness(tmp_path).exists(), "已取消的计划仍然起了进程、跑了用户代码"
+    assert nativesession.REGISTRY.list(str(proj)) == []
+
+
+@pytest.mark.parametrize("where", ["begin_start", "check_start"])
+def test_cancellation_between_the_checkpoints_and_the_spawn_is_still_caught(
+    tmp_path, monkeypatch, where
+):
+    """取消恰好落在 `reserve` 之后 / `Popen` 之前的两个窗口：都在注册表的同一处判定里被拦住，没有进程。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    script = "open('spawned.txt', 'w').write('x')\n"
+    plan = _native_plan(proj, "pj-mid")
+    preparation.SERVICE.register(plan)
+    plan = preparation.SERVICE._entry(plan.plan_id).plan  # noqa: SLF001
+    launch = dk.launch_for(tmp_path, script, name="fig.py", launch_id=plan.plan_id)
+    launch = dataclasses.replace(
+        launch,
+        project_epoch=plan.project_epoch,
+        launch_order=plan.launch_order,
+        cancelled=lambda: preparation.SERVICE.is_cancelled(plan.plan_id),
+    )
+    real = getattr(nativesession.REGISTRY, where)
+
+    def cancel_then(*a, **k):
+        # 取消发生在这一步「之前」: 随后这一步（或它后面的 Popen 前检查）必须看到
+        preparation.SERVICE.cancel(plan.plan_id, "pj-mid")
+        return real(*a, **k)
+
+    monkeypatch.setattr(nativesession.REGISTRY, where, cancel_then)
+    with pytest.raises(runcodes.RunError) as err:
+        dk.desktopproc.start(launch)
+    assert err.value.code == runcodes.NATIVE_REGISTRY_CLOSING
+    assert not _spawn_witness(tmp_path).exists()
+    assert nativesession.REGISTRY.list(str(proj)) == []

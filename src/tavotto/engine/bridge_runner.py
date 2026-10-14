@@ -517,6 +517,18 @@ class InputBridge:
         self.buffer = ""
         self.eof = False
 
+    def take_buffered_line(self) -> str | None:
+        """`input()` 先吃缓冲：缓冲里有完整一行就取走；流已到尽头而缓冲里还有没换行的尾巴，也当一行取走。
+        什么都没有（或还差半行、流没到尽头）返回 None，由调用方发起提问。"""
+        if "\n" in self.buffer:
+            head, _nl, rest = self.buffer.partition("\n")
+            self.buffer = rest
+            return head.rstrip("\r")
+        if self.buffer and self.eof:
+            tail, self.buffer = self.buffer, ""
+            return tail.rstrip("\r")
+        return None
+
     def ask(self, kind: str, prompt: str = "") -> str | None:
         """发一次提问并等答复。返回答复文本；`None` = EOF（用户选了「没有输入」/ 通道已断）。"""
         # stdin 家族（input / readline / read）共用一个「流已到尽头」：EOF 之后与关闭的 stdin 一样不再提问。
@@ -647,6 +659,10 @@ def _install_input_bridge(run: "BridgeRun") -> None:
             with contextlib.suppress(Exception):
                 sys.stdout.write(text)
                 sys.stdout.flush()
+        # 先消费有界读剩在缓冲里的数据（与真 stdin 一致：缓冲里已有的行不再问）
+        buffered = bridge.take_buffered_line()
+        if buffered is not None:
+            return buffered
         answer = bridge.ask("input", text)
         if answer is None:
             raise EOFError("EOF when reading a line")
