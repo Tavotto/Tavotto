@@ -74,6 +74,8 @@ def test_one_click_open_and_run_falls_back_in_the_same_session_with_one_stable_f
         # 进入编辑不再执行用户脚本；同一个桌面拥有的进程停在屏障上等编辑
         live = [s for s in _native_sessions(app, proj) if s["state"] not in ("ended", "failed")]
         assert len(live) == 1 and live[0]["owner"] == "desktop"
+        # 界面把「停止运行」对到这次运行靠 launch_id（= 当前尝试的计划号）
+        assert live[0]["launch_id"] == final["provider"]["attempt_id"]
         assert _runs(log) == 2
         # 公开报告里没有路径 / 参数原文
         assert str(tmp_path) not in json.dumps(final["attempt_history"])

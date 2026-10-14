@@ -20,7 +20,9 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
+  cancelNativeSession,
   fetchDependencyOffer,
+  isNativeTerminal,
   type GuiDialogPayload,
   type PreparationAttempt,
   type PreparationReport,
@@ -63,6 +65,7 @@ import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useUiStore } from '@/store/uiStore'
 import { ProbeResultsDialog } from './left/ScriptLibrary'
 import { OriginReasonCounts } from './OriginDetails'
@@ -582,6 +585,22 @@ const ARGS_FOLDED = new Set([
   'cancelled',
 ])
 
+/**
+ * 「停止运行」：用户不感知运行层。这次运行此刻有桌面拥有的进程（`launch_id` = 报告里当前尝试的计划号、会话没结束）就结束它——
+ * 后端同一个端点会连准备计划一起取消；否则（safe 阶段 / 还没起进程）认领准备会话的 `cancel` 动作。
+ */
+function useStopRun(entry: PrepEntry): () => void {
+  const sessions = useNativeSessionStore((s) => s.sessions)
+  return () => {
+    const plan = entry.report?.provider.attempt_id
+    const owned = plan
+      ? Object.values(sessions).find((s) => s.owner === 'desktop' && s.launch_id === plan && !isNativeTerminal(s.state))
+      : undefined
+    if (owned) void cancelNativeSession(owned.session_id).catch(() => undefined)
+    else void useProjectPreparationStore.getState().act(entry.key, 'cancel')
+  }
+}
+
 const primaryId = (p: PrepPrimary): string => (p.kind === 'action' ? p.action : p.kind)
 
 function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
@@ -723,7 +742,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   // 报告换了（新修订 / 新观察）就把上一次本地动作的失败收起
   useEffect(() => setLocalError(null), [report?.config_revision, report?.observation_seq])
   const runPrimary = useRunPrimary(entry, () => setResultsOpen(true))
-  const store = useProjectPreparationStore.getState()
+  const stopRun = useStopRun(entry)
   const pending = entry.pending !== null
   // 回答框、「回答」、⋯ 共用同一份作答状态（框里的字只在这里，不进 store）
   const answer = useScriptInputAnswer()
@@ -777,7 +796,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         data-prep-stop
         className="text-ink-2"
         disabled={pending}
-        onClick={() => void store.act(entry.key, 'cancel')}
+        onClick={stopRun}
       >
         {pt('btn.stop')}
       </Button>
@@ -855,6 +874,18 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
     }
   })()
   const enter = view.primary?.kind === 'enter_edit' ? view.primary : null
+  const stopRun = useStopRun(entry)
+  const stop =
+    view.ghost === 'stop' ? (
+      <button
+        type="button"
+        data-prep-pill-stop
+        className="shrink-0 rounded-full px-1.5 text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+        onClick={stopRun}
+      >
+        {pt('btn.stop')}
+      </button>
+    ) : undefined
   return (
     <Pill
       attrs={attrs}
@@ -870,7 +901,9 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
           >
             {primaryLabel(enter, null)}
           </button>
-        ) : undefined
+        ) : (
+          stop
+        )
       }
     >
       <b className="font-medium">{script}</b> {text}

@@ -122,3 +122,25 @@ describe('NativeSessionCards 的动作按钮', () => {
     expect(document.body.textContent).toContain('已结束')
   })
 })
+
+describe('桌面拥有的会话不出「tavotto run」式卡（V2 PR4 第二轮，D1）', () => {
+  it('owner=desktop（准备会话的回退 / 路由产生的）：一张卡都没有，哪个状态都一样', async () => {
+    for (const state of ['running_script', 'barrier', 'ended', 'failed'] as NativeSessionState[]) {
+      put(session({ owner: 'desktop', state, editable: state === 'barrier' }))
+      await render()
+      expect(document.body.querySelector('[data-native-session-cards]')).toBeNull()
+    }
+  })
+
+  it('终端拥有的照旧显示；两种并存时只显示终端那条', async () => {
+    useNativeSessionStore.setState({
+      sessions: {
+        a: session({ session_id: 'a', owner: 'desktop' }),
+        b: session({ session_id: 'b', owner: 'terminal' }),
+        c: session({ session_id: 'c' }), // 老后端没有 owner：按终端算
+      },
+    })
+    await render()
+    expect(document.body.querySelectorAll('[data-native-session-cards] > *')).toHaveLength(2)
+  })
+})

@@ -894,6 +894,8 @@ class NativeSession:
             "arg_count": self.arg_count,
             "python_version": self.python_version,
             "owner": "desktop" if self.owned is not None else "terminal",
+            #: 桌面拥有的会话属于哪个准备计划（计划号，不透明）：界面据此把「停止运行」对到这次运行；终端拥有的为空串
+            "launch_id": self.launch_id,
             "state": self.state,
             "barrier_reason": self.barrier_reason,
             "process_pid": self.process_pid,

@@ -4958,7 +4958,7 @@ export default interface Resources {
         "run": "运行",
         "runAgain": "再运行",
         "runAnyway": "仍然运行",
-        "stop": "停止",
+        "stop": "停止运行",
         "switchScope": "用本项目的版本",
         "useIt": "用它",
         "viewFigures_other": "查看 {{count}} 张图",

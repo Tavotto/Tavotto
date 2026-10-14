@@ -5914,6 +5914,8 @@ export interface NativeSessionInfo {
   editable: boolean
   /** 谁拥有这个脚本进程：`desktop` = Tavotto 自己起的（可取消、脚本的 input 由界面作答）；`terminal` = 用户的终端 */
   owner?: 'desktop' | 'terminal'
+  /** 桌面拥有的会话所属的准备计划号（= 准备报告 `provider.attempt_id`）；终端拥有的为空串，老后端没有 */
+  launch_id?: string
   /** 桌面拥有的脚本此刻停在的那一次提问（事实在后端，不属于某个窗口）；没有在等的 = null */
   pending_input?: NativePendingInput | null
   /** 被所有者取消结束的（与脚本自己退出 / 崩溃分开） */

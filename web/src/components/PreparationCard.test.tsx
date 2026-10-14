@@ -23,6 +23,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
   fetchDependencyOffer: vi.fn(),
   fetchScriptArguments: vi.fn().mockResolvedValue({ ok: true, script: 'plot.py', arguments: { status: 'none', arguments: [] } }),
+  cancelNativeSession: vi.fn().mockResolvedValue({ confirmed: true, session: {} }),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
@@ -37,6 +38,7 @@ vi.mock('@/store/workspace', async (importOriginal) => ({
 import {
   actOnPreparationSession,
   ApiError,
+  cancelNativeSession,
   createPreparationSession,
   fetchDependencyOffer,
   fetchPreparationSession,
@@ -53,6 +55,7 @@ import { PreparationCard } from '@/components/PreparationCard'
 import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
+import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { beginRestore, settleRestore, resetRestoreGateForTests, useDocumentStore } from '@/store/documentStore'
 import { deferUserEntry } from '@/store/documentRestore'
@@ -2007,5 +2010,70 @@ describe('沿用上次成功的参数的呈现（#982）', () => {
     await openReuse(reused())
     await toggleDetails()
     expect(details()?.querySelector('[data-prep-row="args"]')?.textContent).toContain('沿用上次成功的 2 个参数')
+  })
+})
+
+describe('停止运行（V2 PR4 第二轮）：用户不感知运行层，只有「停止运行」', () => {
+  const runningNative = (over: Partial<PreparationReport> = {}) =>
+    report({
+      phase: 'running',
+      outcome: { kind: 'running' },
+      actions: [action('cancel')],
+      provider: { plan_id: 'p', attempt_id: 'plan-2', attempts: 2, dependency: null },
+      ...over,
+    })
+  const putNative = () =>
+    useNativeSessionStore.setState({
+      sessions: {
+        'native-owned-1': {
+          session_id: 'native-owned-1', owner: 'desktop', launch_id: 'plan-2', state: 'running_script',
+        } as never,
+      },
+    })
+  beforeEach(() => vi.mocked(cancelNativeSession).mockClear())
+
+  it('卡上「停止运行」：这次运行有桌面拥有的会话（launch_id 对得上计划）→ 调 native 取消端点，不再另发准备动作', async () => {
+    await mount()
+    putNative()
+    await openWith(runningNative())
+    const stop = panel().querySelector('[data-prep-stop]') as HTMLButtonElement
+    expect(stop.textContent).toBe('停止运行')
+    await act(async () => stop.click())
+    expect(cancelNativeSession).toHaveBeenCalledWith('native-owned-1')
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
+  it('没有对得上的桌面会话（safe 阶段 / 别的计划的会话）：走准备会话的 cancel 动作', async () => {
+    await mount()
+    putNative()
+    await openWith(runningNative({ provider: { plan_id: 'p', attempt_id: 'plan-OTHER', attempts: 1, dependency: null } }))
+    mockAct.mockResolvedValueOnce({ claimed: true, report: runningNative() })
+    await act(async () => (panel().querySelector('[data-prep-stop]') as HTMLButtonElement).click())
+    expect(cancelNativeSession).not.toHaveBeenCalled()
+    expect(mockAct).toHaveBeenCalledTimes(1)
+  })
+
+  it('角标上运行中也有「停止运行」（同一条路径）；文案里没有 native / tavotto run', async () => {
+    await mount()
+    putNative()
+    await openWith(runningNative())
+    useUiStore.setState({ guideCard: 'pill' })
+    await act(async () => {})
+    const pillStop = host.querySelector('[data-prep-pill] [data-prep-pill-stop]') as HTMLButtonElement
+    expect(pillStop.textContent).toBe('停止运行')
+    expect(host.querySelector('[data-prep-pill]')!.textContent).not.toMatch(/native|tavotto run/i)
+    await act(async () => pillStop.click())
+    expect(cancelNativeSession).toHaveBeenCalledWith('native-owned-1')
+  })
+
+  it('已结束的桌面会话不拿来取消', async () => {
+    await mount()
+    useNativeSessionStore.setState({
+      sessions: { 'native-owned-1': { session_id: 'native-owned-1', owner: 'desktop', launch_id: 'plan-2', state: 'ended' } as never },
+    })
+    await openWith(runningNative())
+    mockAct.mockResolvedValueOnce({ claimed: true, report: runningNative() })
+    await act(async () => (panel().querySelector('[data-prep-stop]') as HTMLButtonElement).click())
+    expect(cancelNativeSession).not.toHaveBeenCalled()
   })
 })

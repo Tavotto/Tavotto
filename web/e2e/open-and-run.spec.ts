@@ -135,3 +135,40 @@ test('要先回答运行目录：停在目录卡上，答完是「打开并运�
     rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }
 })
+
+test('运行中卡上就是「停止运行」，没有「tavotto run」式卡；点它当场停下', async ({ app, page }) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-openrun-s-'))
+  const project = path.join(root, 'proj')
+  const log = path.join(root, 'runs.jsonl')
+  const hold = path.join(root, 'HOLD')
+  mkdirSync(project, { recursive: true })
+  writeFileSync(hold, 'hold')
+  writeFileSync(
+    path.join(project, 'fig.py'),
+    [
+      'import os, time',
+      `open(${JSON.stringify(log)}, "a").write("x")`,
+      `while os.path.exists(${JSON.stringify(hold)}):`,
+      '    time.sleep(0.1)',
+      '',
+    ].join('\n'),
+    'utf-8',
+  )
+  let a: Awaited<ReturnType<typeof app>> | undefined
+  try {
+    a = await app({ figures: project })
+    await page.setViewportSize({ width: 1400, height: 900 })
+    await page.goto(a.baseURL)
+    await page.locator('[data-script-run="fig.py"]').click({ timeout: 30_000 })
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'running', { timeout: 120_000 })
+    await expect(card(page).locator('[data-prep-stop]')).toHaveText('停止运行')
+    await expect(page.locator('[data-native-session-cards]')).toHaveCount(0)
+    expect(JSON.stringify(await card(page).textContent())).not.toMatch(/native|tavotto run/i)
+    await card(page).locator('[data-prep-stop]').click()
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'cancelled', { timeout: 30_000 })
+  } finally {
+    rmSync(hold, { force: true })
+    await a?.stop().catch(() => undefined)
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  }
+})

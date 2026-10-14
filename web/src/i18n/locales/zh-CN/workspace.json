@@ -925,7 +925,7 @@
       "runAnyway": "仍然运行",
       "runAgain": "再运行",
       "retry": "再试一次",
-      "stop": "停止",
+      "stop": "停止运行",
       "install": "安装",
       "switchScope": "用本项目的版本",
       "recheck": "重新检查",

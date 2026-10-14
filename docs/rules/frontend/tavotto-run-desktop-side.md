@@ -34,6 +34,8 @@ descriptor 文件读。
   回退与路由产生的）由准备会话**独占展示面**——runner 自己已经 `ensure_built`，图由卡片上的（或「打开并运行」完成后自动的）
   「进入编辑」放进画布（`store/prepEnterEdit.ts`，面板身份是资产 id，不含执行语义，所以不会多开标签页）；`applyEvent` / `build`
   对它们不 build、不放置、不开选择器，只把状态写进 store（面板角标读它）并镜像 `pending_input`（ADR 0125 / 0126 / 0127，V2 PR4）。
+  `NativeSessionCards` 同样过滤掉它们（用户不感知运行层切换，不出「tavotto run」式卡，也不给「放手」）；用户停止走准备卡 / 角标上的「停止运行」
+  （`PreparationCard.useStopRun`：`launch_id` 对得上当前尝试计划号的活桌面会话 → `cancelNativeSession`，后端同一端点连准备计划一起取消；否则认领准备会话的 `cancel`）。
 - **面板角标只在需要说话时说话**（`nativePanelState`）：停在屏障上 → 无；
   脚本正在跑 → 「停下来才能编辑」；出自 native 但没有活会话 → 「会话已
   结束」；停在屏障上但这张图**与文档不一致**（引擎撤掉的改动还原不回去，

@@ -37,7 +37,9 @@ const ns = (key: string, values?: Record<string, unknown>) =>
 export function NativeSessionCards() {
   useTranslation('workspace')
   const sessions = useNativeSessionStore((s) => s.sessions)
-  const list = sortSessions(Object.values(sessions))
+  // 桌面拥有的会话由准备会话管（owner === 'desktop' 只来自准备会话的回退 / 路由，ADR 0125）：用户不感知运行层切换，不出「tavotto run」式卡；
+  // 停止走准备卡 / 角标上的「停止运行」。终端拥有的照旧
+  const list = sortSessions(Object.values(sessions).filter((s) => s.owner !== 'desktop'))
   if (!list.length) return null
   // 位置不在这里定：画布右上角的堆叠容器（App 的 `data-canvas-corner="top-right"`，缩放 → 会话卡 → 探针）
   // 给 12px 内距与宽度；此前这里自己 absolute 在 right-2 top-2，与快速编辑的缩放、探针互相压（2026-10-07 设计审计 §10.1）
