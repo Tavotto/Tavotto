@@ -512,6 +512,29 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     expect(Math.abs(y - (lineY + MM_PER_PX))).toBeLessThan(0.2)
   })
 
+  it('跨图候选在面板右侧之外（x 向）：不参与', async () => {
+    await setup({
+      p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }),
+      p2Extra: { x: 150 },
+    })
+    const lineX = 150 + 0.6 * W // 对方图例左边，p1 之外
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    const fb = feedbackAt((lineX - 0.6 * W) / MM_PER_PX + 1, 0)
+    // 对方图例与自己等高，y 向照常吸（范围内）；x 向那条在 p1 之外，不参与
+    expect(fb.some((f) => f.axis === 'x')).toBe(false)
+    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+  })
+
+  it('恰在面板边界上的参考线（含边界）：照吸', async () => {
+    await setup()
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'y', pos: H })
+    })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    const fb = feedbackAt(0, (H - 0.72 * H) / MM_PER_PX + 1)
+    expect(fb.find((f) => f.axis === 'y')).toBeTruthy()
+  })
+
   it('参考线在正在编辑的面板之外：同样不参与', async () => {
     await setup()
     useDocumentStore.getState().commit(literal('加参考线'), (d) => {
