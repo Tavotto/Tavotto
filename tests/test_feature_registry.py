@@ -632,7 +632,8 @@ def test_posix_shard_only_checks_registered_cases_assigned_to_this_shard():
         assert not problems and count > 0
     # 单看实际的另一片不能冒充计划中的这一片：必须报“没跑不是绿”。
     problems, _ = FR.verify_run_shard(
-        _feats(BASE_REG), FR.parse_playwright_json(a, "a"),
+        _feats(BASE_REG),
+        FR.parse_playwright_json(a, "a"),
         FR.parse_playwright_json(b, "b"),
     )
     assert any("canvas.drag" in item and "没跑不是绿" in item for item in problems)
@@ -646,7 +647,9 @@ def test_posix_shard_detects_an_unexecuted_second_project():
     assert len(cases) == 2
     actual_data["suites"][0]["specs"][0]["tests"] = cases[:1]
     problems, _ = FR.verify_run_shard(
-        _feats(BASE_REG), planned, FR.parse_playwright_json(actual_data, "actual"),
+        _feats(BASE_REG),
+        planned,
+        FR.parse_playwright_json(actual_data, "actual"),
     )
     assert any("canvas.drag" in item and "没跑不是绿" in item for item in problems)
 

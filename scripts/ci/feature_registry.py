@@ -370,9 +370,11 @@ def verify_run_shard(
                 if expectation.expected.get(project) != "passed":
                     problems.append(f"{feature.id}：{ref.show()} 的 {project} 声明期被跳过")
                     continue
-                statuses = [] if observed is None else [
-                    status for name, status in observed.outcomes if name == project
-                ]
+                statuses = (
+                    []
+                    if observed is None
+                    else [status for name, status in observed.outcomes if name == project]
+                )
                 if not statuses:
                     problems.append(
                         f"{feature.id}：本 shard 应执行 {ref.show()} ({project}) 却没有结果——没跑不是绿"
