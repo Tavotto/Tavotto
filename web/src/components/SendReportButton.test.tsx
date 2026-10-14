@@ -173,4 +173,21 @@ describe('迟到的旧备包被引擎取代（409 stale_prepare）', () => {
     await act(async () => useDiagSendStore.getState().setOpen(false))
     expect(discardDiagSend).toHaveBeenCalledWith('pid-B', null) // 新会话仍是界面持有的那份
   })
+
+  it('被另一个窗口的更新请求取代（同一次打开里收到 stale_prepare）：不显示「备包失败」，其他错误才显示', async () => {
+    useDiagSendStore.setState({ capability: CAP })
+    const failed = t('settings.diagnostics.send.prepareFailed', { ns: 'dialogs' })
+    vi.mocked(prepareDiagSend)
+      .mockReset()
+      .mockRejectedValueOnce(new ApiError('diag_stale_prepare', 409, { code: 'diag_stale_prepare' }))
+    await render(<SendReportButton variant="primary" />)
+    await act(async () => buttons()[0].click())
+    await act(async () => {})
+    expect(document.body.textContent).not.toContain(failed)
+    await act(async () => useDiagSendStore.getState().setOpen(false))
+    vi.mocked(prepareDiagSend).mockRejectedValueOnce(new ApiError('boom', 500, {}))
+    await act(async () => buttons()[0].click())
+    await act(async () => {})
+    expect(document.body.textContent).toContain(failed)
+  })
 })
