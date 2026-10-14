@@ -407,6 +407,15 @@ def main(argv: list[str] | None = None) -> int:
             # 即使参数是合法浮点/整型、但超出允许区间，也必须先作废旧原始报告。
             # 否则 --repeat 2 --out old-run.json 会留下上一轮成功采样。
             output = args.out.resolve()
+            # 性能基线是只读证据；即使通过符号链接/硬链接别名，
+            # 也不许先 unlink 再将本次报告当成自己的历史基线，伪造 PASS。
+            if args.baseline is not None:
+                baseline = args.baseline.resolve()
+                aliased = output == baseline or (
+                    output.is_file() and baseline.is_file() and output.samefile(baseline)
+                )
+                if aliased:
+                    raise ValueError("baseline_aliases_run_output")
             output.unlink(missing_ok=True)
             if not 3 <= args.repeat <= 60 or not 1 <= args.regression_pct <= 200:
                 raise ValueError("invalid_run_parameters")

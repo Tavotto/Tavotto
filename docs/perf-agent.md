@@ -102,3 +102,11 @@ Actions 同时归档两者。拖动 E2E 的 `--output test-results-perf-drag`
 
 超范围但语法合法的选项（例如 `run --repeat 2`）先删除同一路径的旧
 `run.json` 再返回失败摘要，避免 Agent 因看到上一轮成功数据而误判本轮。
+
+
+## 历史性能基线永远只读
+
+`run --baseline base.json --out run.json` 会在移除旧输出之前先拒绝任何
+`--out` 与 `--baseline` 指向同一真实文件的调用，包括路径正规化和已存在
+硬链接别名。同文件当作当前与历史基线会给出伪造的 `pass`，所以宁可返回
+失败也不覆盖用户的基线。

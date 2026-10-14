@@ -626,7 +626,7 @@ def test_invalid_compare_cli_args_invalidate_stale_verdict_and_summary(tmp_path)
     summary = tmp_path / "summary.json"
     outcome.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
     summary.write_text(
-        json.dumps(A.compose_run_summary(A.summarize(report()), "ok")), encoding="utf-8"
+        json.dumps(A.compose_run_summary(A.summarize(report()), "not_requested")), encoding="utf-8"
     )
     rc = A.main(
         [
@@ -709,3 +709,42 @@ def test_long_option_abbreviation_is_not_accepted_or_treated_as_output(tmp_path,
     assert A.main(["run", "--summ", str(important), "--repeat", "3"]) == 2
     assert json.loads(important.read_text(encoding="utf-8"))["status"] == "ok"
     assert A._option_path(["--", "--out", str(important)], "--out") is None
+
+
+def test_run_rejects_same_baseline_and_output_without_deleting_baseline(tmp_path, monkeypatch):
+    """baseline 绝不能被 unlink；否则 current 与 baseline 指向同一份会伪 PASS。"""
+    path = tmp_path / "historical-baseline.json"
+    original = json.dumps(report(value=22))
+    path.write_text(original, encoding="utf-8")
+    summary = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        A.subprocess, "run", lambda *a, **k: pytest.fail("不得在基线别名下启动浏览器")
+    )
+    rc = A.main(
+        ["run", "--repeat", "16", "--out", str(path), "--baseline", str(path),
+         "--summary", str(summary)]
+    )
+    assert rc == 2
+    assert path.read_text(encoding="utf-8") == original
+    saved = json.loads(summary.read_text(encoding="utf-8"))
+    assert saved["status"] == "failed"
+    assert saved["regression_status"] == "failed"
+
+
+def test_baseline_same_inode_through_another_path_is_protected(tmp_path, monkeypatch):
+    """目录 .. 或硬链接指向同一历史数据，也不许清除/复写。"""
+    base = tmp_path / "baseline.json"
+    raw = json.dumps(report(value=25))
+    base.write_text(raw, encoding="utf-8")
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    disguised = nested / ".." / "baseline.json"
+    monkeypatch.setattr(
+        A.subprocess, "run", lambda *a, **k: pytest.fail("不允许覆盖基线")
+    )
+    rc = A.main(
+        ["run", "--out", str(disguised), "--baseline", str(base), "--summary",
+         str(tmp_path / "summary.json")]
+    )
+    assert rc == 2
+    assert base.read_text(encoding="utf-8") == raw
