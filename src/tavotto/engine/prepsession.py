@@ -46,10 +46,12 @@ from . import (
     dialogscan,
     execpolicy,
     execspec,
+    launchctx,
     pool,
     preparation,
     rasterhint,
     registry,
+    runroute,
     scriptargs,
     taskdiag,
 )
@@ -935,7 +937,10 @@ def target_key(target: dict) -> str:
     # safe key；原 key 恒以 `script:` / `asset:` 开头，`<执行语义>|` 前缀的 key 因此不可能等于任何 safe key。
     # safe 的 key 与此前逐字节相同（现有会话与用例不失效）
     execution = target.get("execution") or execspec.PROFILE_SAFE
-    return key if execution == execspec.PROFILE_SAFE else f"{execution}|{key}"
+    # `auto`（V2 PR2）是「让路由挑」：会话键与省略时相同（路由的结论在计划里，`plan.execution` 才是解析后的语义）
+    if execution in (execspec.PROFILE_SAFE, runroute.EXECUTION_AUTO):
+        return key
+    return f"{execution}|{key}"
 
 
 def _fingerprint(plan: preparation.PreparationPlan) -> str:
@@ -1186,7 +1191,14 @@ class SessionService:
             original_artifact=target.get("original_artifact"),
             original_path=target.get("original_path"),
             target=target["kind"],
-            execution=target.get("execution") or execspec.PROFILE_SAFE,
+            # 桌面用户发起的脚本运行：不指定执行语义时让运行前路由挑 safe / native（V2 PR2，ADR 0128）；
+            # 素材目标（已知的一张图）没有「第一次运行」的路由问题，仍是 safe
+            execution=target.get("execution")
+            or (
+                runroute.EXECUTION_AUTO
+                if target["kind"] == TARGET_SCRIPT
+                else execspec.PROFILE_SAFE
+            ),
             **({"run": target["run"]} if target.get("run") is not None else {}),
         )
 
@@ -1668,6 +1680,19 @@ class SessionService:
                 fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code)
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
+            if (
+                outcome == execpolicy.OUTCOME_SUCCEEDED
+                and done_plan.execution == execspec.PROFILE_NATIVE
+                and done_plan.target == TARGET_SCRIPT
+                and not (isinstance(fin, dict) and fin.get("partial"))
+            ):
+                # native 成功也记「上次成功的执行语义」：下次打开并运行沿用（safe 成功由 app 的成功收口按回执写）
+                try:
+                    launchctx.record_native_success(
+                        done_plan.project_root, done_plan.script, done_plan, run=done_plan.run
+                    )
+                except Exception:  # noqa: BLE001 — 记不下来只是少一条沿用依据，不改这次的终局
+                    LOG.exception("记录 native 成功失败 %s", done_plan.script)
             with sess.lock:
                 sess.ledger.close(attempt.attempt_id, outcome, code)
                 if done_plan.interpreter != sess.plan.interpreter:

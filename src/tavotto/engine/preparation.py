@@ -68,10 +68,13 @@ from . import (
     figcapture,
     inputbroker,
     inputremap,
+    launchctx,
     launcher,
     pool,
     projectenv,
     receipt,
+    runconfig,
+    runroute,
     scriptargs,
     taskdiag,
     trace as tracemod,
@@ -212,6 +215,9 @@ class PreparationPlan:
     retry_of: str | None = None
     retry_cause: str = ""
     retry_changed: tuple[str, ...] = ()
+    #: 运行前路由的结果（V2 PR2，ADR 0128）：只有调用方给了 `execution="auto"` 才有（`runroute.Route.public()`：闭集原因 /
+    #: 置信度 / 命中规则 / 行号 / 耗时，不含路径与源码）；显式 safe / native 恒 None。**不入语义指纹**（`execution` 已在里面）
+    route: dict | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -238,12 +244,67 @@ class PreparationPlan:
                 dict(self.dependency_preparation) if self.dependency_preparation else None
             ),
             "binding": dict(self.binding) if self.binding else None,
+            **({"route": dict(self.route)} if self.route else {}),
             **(
                 {"run_config": self.run.config_id, "argv_count": len(self.run.argv)}
                 if self.run is not None
                 else {}
             ),
         }
+
+
+def _last_success_profile(root: str, script: str, *, python: str, source: str) -> str | None:
+    """这个脚本上一次成功用的执行语义（`launchctx` 记录），记录此刻仍成立才算；否则 None。
+
+    成立 = 解释器 / 环境 / 脚本字节 / 运行目录档都没变（运行配置与数据绑定不看：它们不改变「该用哪种语义」）。"""
+    if not python:
+        return None
+    try:
+        record = runconfig.launch_record(root, script)
+    except runconfig.RunConfigError:
+        return None
+    if record is None:
+        return None
+    facets = (
+        launchctx.FACET_INTERPRETER,
+        launchctx.FACET_ENVIRONMENT,
+        launchctx.FACET_SOURCE,
+        launchctx.FACET_CWD,
+    )
+    reason = launchctx.verify(
+        record, project_root=root, script=script, python=python, python_source=source, facets=facets
+    )
+    return launchctx.profile_of(record) if reason is None else None
+
+
+def _route_of(
+    root: str, script: str, *, python: str, source: str, decision: dict | None
+) -> runroute.Route:
+    """`execution="auto"` 的落点：策略 / 运维开关 / 上次成功 / 静态证据 → 路由（零执行用户代码）。"""
+    policy = execpolicy.mode_for(root)
+    enabled = execpolicy.fallback_enabled()
+    last = None
+    if policy != execpolicy.MODE_SAFE_ONLY and enabled:
+        last = _last_success_profile(root, script, python=python, source=source)
+    mode = decision["mode"] if decision else workdir.mode_for(root)
+    route = runroute.route_for_file(
+        Path(root) / figcapture.normalize_relative_script(script),
+        cwd_mode=mode,
+        project_root=root,
+        script=script,
+        policy=policy,
+        last_success=last,
+        operator_enabled=enabled,
+    )
+    LOG.info(
+        "run route %s reason=%s confidence=%s rules=%s ms=%.2f",
+        route.execution,
+        route.reason,
+        route.confidence,
+        ",".join(sorted({e["rule"] for e in route.evidence})) or "-",
+        route.elapsed_ms,
+    )
+    return route
 
 
 def plan_for(
@@ -410,6 +471,15 @@ def plan_for(
             root,
             decision["mode"] if decision else workdir.mode_for(root),
         )
+    route = None
+    if execution == runroute.EXECUTION_AUTO:
+        # 运行前路由（V2 PR2，ADR 0128）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
+        execution = execspec.PROFILE_SAFE
+        if script is not None and target == TARGET_SCRIPT:
+            route = _route_of(root, script, python=python, source=source, decision=decision)
+            if route.execution == execspec.PROFILE_NATIVE and not python:
+                route = route.downgraded("no_interpreter")  # 没有解释器就没有 native 可起
+            execution = route.execution
     if script is not None and python and execution == execspec.PROFILE_NATIVE:
         mode = decision["mode"] if decision else workdir.mode_for(root)
         spec = execspec.desktop_native_spec(
@@ -505,6 +575,7 @@ def plan_for(
         dependency_conflicts=tuple(depresolve.conflicts(intents)),
         launch_context=launch_context,
         execution=execution,
+        route=route.public() if route is not None else None,
         grant=grant,
         budget={
             "build_idle_timeout_s": pool.BUILD_IDLE_TIMEOUT,
@@ -1409,6 +1480,24 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
                 if result.captured
                 else None,
             },
+            "route": (
+                {
+                    "execution": taskdiag.closed(plan.route.get("execution"), runroute.EXECUTIONS),
+                    "reason": taskdiag.closed(plan.route.get("reason"), runroute.REASONS),
+                    "confidence": taskdiag.closed(
+                        plan.route.get("confidence"), runroute.CONFIDENCES
+                    ),
+                    "rules": [
+                        r
+                        for r in plan.route.get("rules") or []
+                        if taskdiag.closed(r, runroute.RULES)
+                    ],
+                    "dynamic_paths": taskdiag.count(plan.route.get("dynamic_paths")),
+                    "elapsed_ms": taskdiag.number(plan.route.get("elapsed_ms")),
+                }
+                if plan.route
+                else None
+            ),
             "retry": (
                 {
                     "of": taskdiag.ident(plan.retry_of),
