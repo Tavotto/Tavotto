@@ -69,7 +69,7 @@
 - **故障卡入口与轻确认框（用户 10-10 要求）。** 对话框全应用只挂一处（`components/DiagnosticsSendHost.tsx`，状态 `diagSendStore.open`）；设置页入口行与故障卡的 `components/SendReportButton.tsx` 都只是 `setOpen(true)`
   （打开 = 本机备包，不发送），开关判据同一个（`diagSendStore.capability`，关着完全不渲染）。覆盖的故障卡（都经 `TaskDiagnostic` 或点名处理）：导出失败卡（`ExportDialog.ResultBlock`：可重试时在折叠的「本次问题的诊断」里；
   不可恢复、没有任何修复动作时**就是主按钮**）、导出部分失败（折叠详情）、准备卡失败态（`PreparationCard`：有主按钮时在详情里；失败且没有任何可执行动作时是主按钮）、脚本行「详情」里的运行失败、依赖准备失败。
-  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。确认框默认只露一句话（「将发送诊断包，含报错详情和日志，不含你的脚本源码和数据文件。」）+「发送」+「关闭」，其余
+  **不带故障上下文进对话框**（note 只由用户自己写；没有现成的闭集字段可带）。确认框默认只露一句话（「将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。」——必须如实提醒日志里可能有脚本输出，#1012 4，文案测试钉住）+「发送」+「关闭」，其余
   （内容类别、保存 ZIP、类型、说明、保存期、隐私政策链接、「脱敏尽力而为」）全在默认收起的「查看详情」里；用户在说明框写的字会原样附上，框旁写明。那句承诺由
   `tests/test_diagnostics_bundle.py` / `test_diagnostics_log_privacy.py` 的金丝雀全文搜索撑着（源码行略去、异常 message 不出门、路径哈希化）；这两处任何一处放松，那句话就得先改。
 - **项目代次与引擎丢会话（Codex #923）。** 备包流程绑定当前项目：`DiagnosticsSendDialog` 订阅 `onCurrentProjectChange`，对话框开着时项目一换（外部 `tavotto open`、切项目）就让备包重来——
@@ -87,6 +87,8 @@
 
 - **只走发送路径。** `buildSendPayload(options)` = `buildDiagnosticPayload()`（老载荷）+ `detail_options` + `detail`；导出路径仍用 `buildDiagnosticPayload()`，一个 detail 字段都没有（`detail.test.ts` 钉）。引擎导出端点也不读这些键。
 - **两个定长全局环**（纯内存、不写盘、不进 telemetry、**切项目不清**——console 输出不属于某个项目，包里 `frontend-console.json` 注明 `scope: global`）：console.error/warn 40 条（原文 + Error 自带栈，字符串消息记调用点栈）、未捕获错误 / unhandledrejection 30 条。
+- **console 实参只记原始值与 Error，其余对象写 `[object]`**（#1012 2）：判断「是不是纯数据」（取原型 / 读描述符 / `for...in`）本身就会触发 Proxy（immer draft）的 trap，所以不判；业务侧确实要记一棵纯数据时用 `markPlainData(tree)` 声明（调用方保证无 Proxy / 副作用 accessor）。Error 判定走 `Error.isError`（不触发 trap），老 WebView 退回 `instanceof`。看护 `detail.test.ts` 的 trap 计数用例。
+- **焦点面板的顺序**（#1012 1）：没有正在编辑的面板时，`overrides[0]` 必须是主选（最后选中的面板），其余按文档顺序——引擎拿它当焦点面板去探环境。
   `main.tsx` 里 `installConsoleCapture()` 越早装越好；包装函数**吞掉自身所有异常**且一定调用原方法，幂等、可卸载。
 - **detail 里还有**：显示环境（缩放 / 窗口 / 屏幕 / 语言 / 主题）、壳信息（Tauri `getVersion` / `getTauriVersion`、UA 里的 WebView 版本；`lib/desktop.ts` 的 `getUpdateOutcome()` 记本窗口会话内最近一次检查 / 安装的结果：来源 mirror/github、稳定码、attempts，没发生过 = 引擎写 unknown）、正在编辑（没有就取选中）面板的 overrides 热态至多 3 张。
 - **三个复选框**（`DiagnosticsSendDialog`，在折叠的「查看详情」里）：**默认不勾、不记忆**——每次打开（以及切项目）从全不勾开始；勾选变化 = 内容变了 = 推进 epoch 重新备包（旧包 `discardDiagSend`，新包换新 `client_request_id`），用 `keepForm` 让这次重备不清掉已填的类型与说明；备包中 / 发送中复选框 disabled。
@@ -94,3 +96,14 @@
 - 文案键 `settings.diagnostics.send.{kind.detail_*, extra.*, extraHint.*, short.*, filesTitle, truncated}`；`short.*` 的键集 = `diagdetail.PRIORITY`，`extra.*` = `OPTION_KEYS`（`DiagnosticsSendDialog.test.tsx` 读 Python 源码对拍）。
 - 看护：`diagnostics/detail.test.ts`、`DiagnosticsSendDialog.test.tsx`「诊断包扩充」一组。
 
+
+## 意外错误入口（PR A，ADR 0118 补充 2026-10-14）
+
+- **唯一汇聚点** `lib/unexpectedErrors.ts` + 纯内存 `store/unexpectedErrorStore.ts`。来源：`diagnostics/detail.ts` 的 `onUncaughtError`（window error / unhandledrejection 全应用只有那一份监听，**不得再装第二个**）、`ErrorBoundary.componentDidCatch`、`lib/api.ts` 的 `setEngine500Handler`（`status >= 500` 且 `code === 'internal_error'`，只认兜底码；回调注册制避免 api ↔ store 成环）。`main.tsx` 调 `installUnexpectedErrorCapture()`。
+- **事件闭集**：`ui.unexpected_error { source, error_name, message_hash }`。`source` ∈ `UNEXPECTED_ERROR_SOURCES`，`error_name` ∈ `UNEXPECTED_ERROR_NAMES`（`types.ts`；后端 `_ENUM_FIELDS["source" / "error_name"]` 严格同源，`test_unexpected_error_enums_match_frontend` 对拍；字段名由 `test_event_fields_match_frontend_schema` 对拍）。**trace 里没有 message / stack 原文**，原文只在未捕获错误环（`recordUncaughtDetail('boundary' | 'engine_500', …)` 或 detail.ts 自己的 window 记录）随发送包走。
+- **顺序固定**：分类（忽略的不记任何东西）→ 先 `recordDiagnosticEvent`（吞异常）→ 补环 → 仅当 `capability !== null` 且非 boundary 来源、发送对话框没开、栈不指回诊断模块，才进去重 / 上界 / 登记卡片。
+- **分类按结构**：`ApiError`、原型不是内建错误原型的业务错误类、AbortError、`ResizeObserver loop…`、`Script error.`、pyodide / worker 来源、非 Error 的拒绝 → 忽略。**不准凭消息关键词判严重度**；要新增一类忽略，加结构判据与一条看护。
+- **上界**：`MAX_FINGERPRINTS`（64，LRU）、`MAX_PROMPTS_PER_SESSION`（5）、轨上同时 1 张；指纹同一会话只提示一次，关掉后不再提示。
+- **卡片**：`NotificationRail` 的 `data-unexpected-error-card` 槽位（`Toast tone="error" plain`），一句话 + 「发送问题反馈」+ ×；主动作只 `setOpen(true)`（并收起这张卡），prepare / start 调用次数为 0（`notificationRail.test.tsx`）。仲裁：低于「刚为编辑加入」、高于全部提示类；提示类的让位判据数的是「更高档在场条数」。**绝不往 `BannerStack` 加条。**
+- **ErrorBoundary 崩溃页**：「重新加载」仍是唯一主按钮；`SendReportButton`（secondary）在折叠「详情」里；崩溃页自己渲染 `DiagnosticsSendHost`（`TooltipProvider` + 内层 `SendHostBoundary`，对话框出错退回空）。**放宽的边界仅限 `diagSendStore` 与发送对话框**；关着时元素序列与改动前一致（`errorBoundary.test.tsx` 锚定）。
+- 看护：`lib/unexpectedErrors.test.ts`、`store/unexpectedErrorStore.test.ts`、`diagnostics/privacy.test.ts`（新事件一组）、`components/notificationRail.test.tsx`、`components/errorBoundary.test.tsx`、`tests/test_diagnostics_bundle.py`。

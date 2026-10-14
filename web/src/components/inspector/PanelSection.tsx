@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useTranslation } from 'react-i18next'
+import { useRenderProgress } from '@/hooks/useRenderProgress'
 import {
   Crop,
   FlipHorizontal2,
@@ -16,7 +17,7 @@ import {
   Unlink2,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { useExactPanelManifest, usePanelRender, useRenderStore } from '@/store/renderStore'
+import { useExactPanelManifest, usePanelRender } from '@/store/renderStore'
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { msg, t as translate, type UiMessage } from '@/i18n'
 import { formatQuantity } from '@/i18n/format'
@@ -699,9 +700,8 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
   const render = usePanelRender(panel)
   const editing = useUiStore((s) => s.elementPanelId === panel.id)
   // 冷启动是文件级事实（SSE 写在 building 表里），渲染中是本变体的状态
-  const buildingFile = useRenderStore((s) => s.building[panel.fileId])
-  const building = render?.status === 'rendering' || !!buildingFile
-  const cold = !!buildingFile?.cold
+  const engineProgress = useRenderProgress(panel.fileId, render?.status === 'rendering', pn('building'))
+  const { active: building, cold } = engineProgress
   // 「整张图改了几项」与两颗恢复按钮上的数字是同一件事（审计 T32）：
   // 各自 `panel.overrides.length` 一遍就是同一条判据的两份实现
   const overrides = overrideCounts(panel.overrides, null).figure
@@ -763,6 +763,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
               key={kind}
               data-panel-engine-message={kind}
               data-panel-engine-progress={kind === 'stale' ? undefined : true}
+              data-render-progress={shown && kind !== 'stale' ? engineProgress.phase : undefined}
               aria-hidden={!shown}
               className={cn(
                 'col-start-1 row-start-1 flex min-h-5 items-center gap-1.5 text-xs',
@@ -774,7 +775,7 @@ function ElementEditEntry({ panel }: { panel: PanelObject }) {
                 pn('staleScript')
               ) : (
                 // 「进行中」的字是 text-shimmer（宪法第七节的加载方言之一），不配呼吸点
-                <span className="text-shimmer">{pn(kind === 'cold' ? 'coldBuilding' : 'building')}</span>
+                <span className="text-shimmer">{shown ? engineProgress.text : pn(kind === 'cold' ? 'coldBuilding' : 'building')}</span>
               )}
             </p>
           )

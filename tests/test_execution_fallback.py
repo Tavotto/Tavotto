@@ -39,7 +39,7 @@ BLOCKED = engine_pool.WorkerError("blocked", code="safe_file_operation_blocked")
 
 
 @pytest.fixture
-def native(monkeypatch):
+def native(monkeypatch, fake_pool, tmp_path):
     """可控的 native runner 替身：只数调用、可注入错误 / 阻塞；与真 runner 同一个调用约定。"""
     box = {"calls": [], "error": None, "gate": threading.Event()}
     box["gate"].set()
@@ -52,6 +52,12 @@ def native(monkeypatch):
         return _FakeWorker(Path(pl.project_root)), _build_resp(), True
 
     monkeypatch.setattr(m, "_native_preparation_runner", runner)
+    # 假解释器必须是**本平台的绝对路径**：桌面拥有的 native 计划（`execspec.desktop_native_spec`）用 `os.path.isabs`
+    # 校验解释器与 cwd，Windows 上 `/envs/fake/bin/python` 不是绝对路径，回退计划就算不出来
+    fake_python = str(tmp_path / "envs" / "fake" / "bin" / "python")
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda root=None, **kw: (fake_python, "system")
+    )
     # 回退只授权给桌面用户主动发起的运行（ADR 0127）：本文件的用例默认就是桌面发起；非桌面来源的用例在
     # `test_execution_fallback_origin.py` 里走真判据
     monkeypatch.setattr(m, "_desktop_initiated", lambda: True, raising=False)
@@ -703,3 +709,50 @@ def test_fallback_is_not_an_intent_step(client, tmp_path, fake_pool, native, ses
     assert len(native["calls"]) == 1 and fake_pool["build_calls"] == 1
     assert final["intent"]["status"] == "launched" and final["intent"]["steps"] == 1
     assert final["intent"]["attempts"] == 2
+
+
+def test_a_newer_run_registered_between_the_supersede_check_and_the_fallback_registration_blocks_native(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """Codex #1028 r4273826766：`superseded()` 复核之后、回退计划登记之前，另一个窗口登记了更新的重跑——回退计划的序号会比它大，
+    native runner 启动就把它结束了。登记后必须再核一次；确定性地在「检查之后、登记之前」插入更新的运行（不靠睡眠）。"""
+    import dataclasses
+
+    real_register = preparation.PreparationService.register
+    injected = []
+
+    def register_with_newer_run_first(self, plan, **kw):
+        if plan.retry_of and not injected:
+            template, _ = self.get(plan.retry_of, plan.project_id)
+            injected.append("prep-newer-window")
+            real_register(self, dataclasses.replace(template, plan_id="prep-newer-window"))
+        return real_register(self, plan, **kw)
+
+    monkeypatch.setattr(preparation.PreparationService, "register", register_with_newer_run_first)
+    sid = _start(client, tmp_path, fake_pool)
+    final = _settle(client, sid)
+    time.sleep(0.2)
+    assert injected == ["prep-newer-window"]
+    assert native["calls"] == []
+    assert _history(final)[0]["declined"] == "superseded" and len(_history(final)) == 1
+
+
+def test_an_asset_preparation_of_the_same_script_does_not_supersede_the_fallback(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """Codex #1028 r4273826779：旧端点按素材做准备（`TARGET_ASSET`）同脚本登记，不是替代运行——不能让合格的回退被记成 superseded。"""
+    import dataclasses
+
+    entered, release = _window(monkeypatch)
+    sid = _start(client, tmp_path, fake_pool)
+    assert entered.wait(10)
+    mid = _get(client, sid).get_json()
+    template, _ = preparation.SERVICE.get(mid["provider"]["attempt_id"], mid["project_id"])
+    preparation.SERVICE.register(
+        dataclasses.replace(template, plan_id="prep-asset", target=preparation.TARGET_ASSET)
+    )
+    release.set()
+    final = _settle(client, sid)
+    assert len(native["calls"]) == 1
+    assert final["phase"] == "completed" and len(_history(final)) == 2
+    assert not _history(final)[0].get("declined")

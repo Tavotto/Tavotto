@@ -180,9 +180,11 @@ def test_the_operator_kill_switch_stops_direct_native_too(
     assert (route["execution"], route["reason"]) == ("safe", "operator_disabled")
 
 
-def test_a_native_success_is_remembered_and_the_next_open_and_run_is_native_directly(
+def test_a_native_success_is_recorded_but_not_reused_while_its_helper_inputs_were_never_observed(
     client, tmp_path, fake_pool, native, sessions
 ):
+    """Codex #1034 r6：native 没有观察 helper / 数据文件（`basis_observed: false`），与 #982 的 reuse_last_success 一样保守——
+    不据此沿用 native，回到静态路由（动态路径 → safe + 回退）。记录本身仍写（#982 / 诊断读它）。"""
     root = _setup(client, tmp_path, DYNAMIC)
     first = _report(client)
     fake_pool["error"] = BLOCKED
@@ -194,19 +196,56 @@ def test_a_native_success_is_remembered_and_the_next_open_and_run_is_native_dire
     )
     assert record["source"]["basis_observed"] is False
 
-    fake_pool["error"] = None
-    again = _report(client)  # 同一个会话重新检查：沿用上次成功的语义
+    again = _report(client)
     route = _route(again)
+    assert (route["execution"], route["reason"]) == ("safe", "ordinary_plot")
+    builds, natives = fake_pool["build_calls"], len(native["calls"])
+    final2 = _run(client, again)
+    assert fake_pool["build_calls"] == builds + 1 and len(native["calls"]) == natives + 1
+    assert [h["profile"] for h in final2["attempt_history"][-2:]] == ["safe", "native"]
+
+
+def test_a_native_record_whose_inputs_were_observed_is_reused(
+    client, tmp_path, fake_pool, native, sessions
+):
+    root = _setup(client, tmp_path, DYNAMIC)
+    fake_pool["error"] = BLOCKED
+    _run(client, _report(client))
+    record = runconfig.launch_record(root, "fig.py")
+    observed = {**record, "source": {**record["source"], "basis_observed": True}}
+    runconfig.set_launch_record(root, "fig.py", observed)
+    fake_pool["error"] = None
+    route = _route(_report(client))
     assert (route["execution"], route["reason"], route["confidence"]) == (
         "native",
         "previous_successful_profile",
         "high",
     )
-    builds_before, natives_before = fake_pool["build_calls"], len(native["calls"])
-    final2 = _run(client, again)
-    assert fake_pool["build_calls"] == builds_before, "不再有 safe 白跑"
-    assert len(native["calls"]) == natives_before + 1
-    assert final2["attempt_history"][-1]["profile"] == "native"
+
+
+def test_a_remembered_profile_is_reused_only_for_the_same_run_configuration(
+    client, tmp_path, fake_pool, native, sessions
+):
+    """Codex #1034 r6：记录是对某个运行配置（argv 引用）的成功；请求的配置不同就不沿用，回到静态路由。"""
+    root = _setup(client, tmp_path, READBACK)
+    plain = _report(client)
+    plan = prepsession.SESSIONS.session(plain["session_id"], plain["project_id"]).plan
+    record = launchctx.build_native_record(
+        root, "fig.py", dataclasses.replace(plan, execution="native"), run=None
+    )
+    assert record is not None and record["run_config"] is None
+    runconfig.set_launch_record(root, "fig.py", {**record, "profile": "safe"})
+    same = _route(_report(client))
+    assert (same["execution"], same["reason"]) == ("safe", "previous_successful_profile")
+    with_args = _create(client, {"script": "fig.py", "argv": ["--n", "3"]}).get_json()
+    other = _route(with_args)
+    assert other["reason"] == "savefig_readback" and other["execution"] == "native"
+    # 记录里是有 argv 的配置、请求没有：同样不沿用
+    run = runconfig.selection_for(root, "fig.py", ["--n", "3"], sensitive=False)
+    runconfig.set_launch_record(
+        root, "fig.py", {**record, "profile": "safe", "run_config": run.config_id}
+    )
+    assert _route(_report(client))["reason"] == "savefig_readback"
 
 
 def test_editing_the_script_invalidates_the_remembered_profile(

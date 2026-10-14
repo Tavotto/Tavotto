@@ -260,10 +260,12 @@ class PreparationPlan:
         }
 
 
-def _last_success_profile(root: str, script: str, *, python: str, source: str) -> str | None:
+def _last_success_profile(
+    root: str, script: str, *, python: str, source: str, run=None
+) -> str | None:
     """这个脚本上一次成功用的执行语义（`launchctx` 记录），记录此刻仍成立才算；否则 None。
 
-    成立 = 解释器 / 环境 / 脚本字节 / 运行目录档都没变（运行配置与数据绑定不看：它们不改变「该用哪种语义」）。"""
+    成立 = 解释器 / 环境 / 脚本字节 / 运行目录档都没变，**且记录的运行配置就是本次请求的运行配置**（argv 的不透明引用相同）。"""
     if not python:
         return None
     try:
@@ -281,18 +283,30 @@ def _last_success_profile(root: str, script: str, *, python: str, source: str) -
     reason = launchctx.verify(
         record, project_root=root, script=script, python=python, python_source=source, facets=facets
     )
-    return launchctx.profile_of(record) if reason is None else None
+    if reason is not None:
+        return None
+    # 记录是对**某个运行配置**的成功：本次请求的运行配置不同（或记录有而请求没有），沿用的就是别人的结论
+    if record.get("run_config") != (run.config_id if run is not None else None):
+        return None
+    profile = launchctx.profile_of(record)
+    if (
+        profile == execspec.PROFILE_NATIVE
+        and (record.get("source") or {}).get("basis_observed") is False
+    ):
+        # 与 #982 的 reuse_last_success 同样保守：native 没有观察过 helper / 数据文件，不证明它们没变，不据此沿用 native
+        return None
+    return profile
 
 
 def _route_of(
-    root: str, script: str, *, python: str, source: str, decision: dict | None
+    root: str, script: str, *, python: str, source: str, decision: dict | None, run=None
 ) -> runroute.Route:
     """`execution="auto"` 的落点：策略 / 运维开关 / 上次成功 / 静态证据 → 路由（零执行用户代码）。"""
     policy = execpolicy.mode_for(root)
     enabled = execpolicy.fallback_enabled()
     last = None
     if policy != execpolicy.MODE_SAFE_ONLY and enabled:
-        last = _last_success_profile(root, script, python=python, source=source)
+        last = _last_success_profile(root, script, python=python, source=source, run=run)
     mode = decision["mode"] if decision else workdir.mode_for(root)
     route = runroute.route_for_file(
         Path(root) / figcapture.normalize_relative_script(script),
@@ -483,7 +497,9 @@ def plan_for(
         # 运行前路由（V2 PR2，ADR 0129）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
         execution = execspec.PROFILE_SAFE
         if script is not None and target == TARGET_SCRIPT:
-            route = _route_of(root, script, python=python, source=source, decision=decision)
+            route = _route_of(
+                root, script, python=python, source=source, decision=decision, run=run
+            )
             if route.execution == execspec.PROFILE_NATIVE and not python:
                 route = route.downgraded("no_interpreter")  # 没有解释器就没有 native 可起
             execution = route.execution
@@ -786,11 +802,7 @@ class PreparationService:
             )
             result.finished_at = time.time()
             result.status = STATUS_NEEDS_INPUT
-        with self._lock:
-            self._order += 1
-            order = self._order
-        # 登记序号对所有计划盖（safe 的重跑让位也要拿它判先后）；关闭代次只对桌面 native 计划有意义
-        plan = dataclasses.replace(plan, launch_order=order)
+        # 关闭代次只对桌面 native 计划有意义；先在锁外取（注册表有自己的锁），别夹在拿序号与入表之间
         if plan.execution == execspec.PROFILE_NATIVE:
             plan = dataclasses.replace(
                 plan,
@@ -801,6 +813,10 @@ class PreparationService:
                 ),
             )
         with self._lock:
+            # 登记序号对所有计划盖（safe 的重跑让位也要拿它判先后）；拿序号与入表在同一把锁里，入表顺序
+            # （`cancel_project` / `older_than` / `superseded` 用）与 `launch_order`（native runner 用）才一致（Codex #1028 r4273983562）
+            self._order += 1
+            plan = dataclasses.replace(plan, launch_order=self._order)
             self._sweep()
             self._entries[plan.plan_id] = _Entry(
                 plan=plan, result=result, force_rebuild=force_rebuild
@@ -1352,16 +1368,21 @@ class PreparationService:
             order = list(self._entries)
         return frozenset(order[: order.index(keep)]) if keep in order else frozenset()
 
-    def superseded(self, plan_id: str) -> bool:
-        """同项目同脚本里有没有登记得比 `plan_id` 更晚的计划（登记顺序 = 计划的先后）：有 = 这份计划已被更新的重跑取代。
-        `plan_id` 未登记按「没被取代」。"""
+    def superseded(
+        self, plan_id: str, *, ignoring: frozenset[str] | set[str] = frozenset()
+    ) -> bool:
+        """同项目同脚本里有没有登记得比 `plan_id` 更晚的**运行计划**（登记顺序 = 计划的先后）：有 = 这份计划已被更新的重跑取代。
+        只数脚本目标（会话里的运行尝试）：旧端点按素材做准备（`TARGET_ASSET`）不是替代运行，不算取代。
+        `ignoring`：不计入的计划号（调用方自己刚登记的回退计划）。`plan_id` 未登记按「没被取代」。"""
         with self._lock:
             order = list(self._entries)
             if plan_id not in order:
                 return False
             mine = self._entries[plan_id].plan
             return any(
-                self._entries[pid].plan.project_id == mine.project_id
+                pid not in ignoring
+                and self._entries[pid].plan.target == TARGET_SCRIPT
+                and self._entries[pid].plan.project_id == mine.project_id
                 and self._entries[pid].plan.script == mine.script
                 for pid in order[order.index(plan_id) + 1 :]
             )

@@ -17,8 +17,8 @@
 `scriptanswers`，不在这里复制第二份）。回执不完整（`partial`，没有自报的 helper 依据）→ 不记录：证据不全就不
 假装可复用。
 
-v2（V2 PR2，ADR 0129）起记录多一个 `profile`（`safe` | `native`）：safe 成功由 app 的成功收口按回执写，native 成功由准备会话在尝试成功后写
-（`record_native_success`；native 没有 helper 观察回执，`source.basis_observed: false`）。运行前路由读它回答「上次成功用哪种执行语义」。
+v2（V2 PR2，ADR 0129）起记录多一个 `profile`（`safe` | `native`）：safe 成功由 app 的成功收口按回执写，native 成功由同一个成功收口按计划快照写
+（`NativeBasis`，由 app 成功收口经 `record_success` 同一事务写入；native 没有 helper 观察回执，`source.basis_observed: false`）。运行前路由读它回答「上次成功用哪种执行语义」。
 
 记录只是**事实**，不驱动启动决策：启动方式是解释器路径的纯函数（`launcher.launcher_for_interpreter`），与脚本、项目、记录
 无关——所以以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对 Conda 环境的预期）。
@@ -32,6 +32,7 @@ v2（V2 PR2，ADR 0129）起记录多一个 `profile`（`safe` | `native`）：s
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import os
 import time
@@ -225,25 +226,20 @@ def build_native_record(project_root: str | Path, script: str, plan, *, run=None
     }
 
 
-def record_native_success(project_root: str | Path, script: str, plan, *, run=None) -> bool:
-    """native 成功收口调（`prepsession` 在尝试成功后）：启动记录（`profile: native`）与磁盘面板默认配置在**同一次**登记写入里提交
-    （`runconfig.commit_success`，与 safe 成功同一个事务）——分两次写会让中间插进来的 safe 成功留下「safe 的默认 + 旧 native 的记录」，
-    下次自动运行就沿用 native（Codex #1034 r3）。默认值与 app 成功收口刚写的相同，这里重写是幂等的。
-    依据不全（脚本在执行期间变了等）→ 什么都不写，回 False。"""
-    record = build_native_record(project_root, script, plan, run=run)
-    if record is None:
-        return False
-    try:
-        runconfig.commit_success(
-            project_root,
-            script,
-            record,
-            default_config_id=run.config_id if run is not None else None,
-            update_default=True,
-        )
-    except runconfig.RunConfigError:
-        return False
-    return True
+@dataclasses.dataclass(frozen=True)
+class NativeBasis:
+    """native 成功的依据（计划快照，不是回执）：交给 `record_success` 在**同一个**成功事务里写 native 记录与运行默认值。"""
+
+    plan: object
+
+
+def basis_of(result, plan, partial: bool):
+    """成功收口的启动记录依据：有图失败（partial）= None（清旧记录）；native 计划 = `NativeBasis`；其余取 safe 的回执。"""
+    if partial:
+        return None
+    if getattr(plan, "execution", None) == PROFILE_NATIVE:
+        return NativeBasis(plan)
+    return getattr(result, "receipt", None)
 
 
 def reusable_run_config(
@@ -288,7 +284,10 @@ def record_success(
 
     依据不全（`build_record` 回 None）也要提交：它**清掉**旧记录，不让上一次成功的 A 在这次成功的 B 之后继续冒充
     「最近成功」。`update_default=True` 时磁盘面板默认配置同一事务里一起更新（`run` 的引用；无参数 = 清掉）。"""
-    record = build_record(project_root, script, rcpt, run=run)
+    if isinstance(rcpt, NativeBasis):
+        record = build_native_record(project_root, script, rcpt.plan, run=run)
+    else:
+        record = build_record(project_root, script, rcpt, run=run)
     try:
         runconfig.commit_success(
             project_root,

@@ -44,7 +44,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import config, privatepython, runtime
+from . import config, interpreterpath, privatepython, runtime
 
 LOG = logging.getLogger("tavotto.managedenv")
 
@@ -823,21 +823,13 @@ def create_generation_venv(project: str | Path, generation: str, base: str) -> t
 
 
 def is_managed_python(project: str | Path, python: str | None) -> bool:
-    """这条解释器是不是这个项目受管环境的**某一代**（含旧布局）。"""
+    """是不是这个项目受管环境的某一代（含旧布局）：按路径身份，不跟随 venv 指向基础 Python 的软链接。"""
     if not python:
         return False
-    try:
-        target = os.path.normcase(os.path.realpath(str(python)))
-    except OSError:
-        return False
-    for gen in list(generations(project)) or [LEGACY_GENERATION]:
-        try:
-            cand = os.path.normcase(os.path.realpath(str(generation_python(project, gen))))
-        except OSError:
-            continue
-        if cand == target:
-            return True
-    return False
+    return any(
+        interpreterpath.same_python(python, str(generation_python(project, gen)))
+        for gen in generations(project) or [LEGACY_GENERATION]
+    )
 
 
 def referenced_base_runtimes() -> set[str]:

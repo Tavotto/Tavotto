@@ -24,8 +24,9 @@
 
 1. **用户显式**：项目策略 `safe_only` → `safe`，reason `user_explicit_profile`。显式 `execution=safe|native` 的调用方（CLI / MCP / 回退自己规划的 native 计划）根本不经路由。
 2. **运维开关**：`TAVOTTO_EXECUTION_FALLBACK=0` → `safe`，reason `operator_disabled`。一个开关关掉 V2 的全部自动选语义（直达 native 与 0127 的回退），否则「关了回退、却还在悄悄直达 native」就是名不副实的开关。（0127 的闭集之外多出的唯一一个原因。）
-3. **上次成功沿用**：`launchctx` 记录（`profile: safe|native`）此刻仍成立 → 沿用那个语义，reason `previous_successful_profile`。「成立」= 解释器 / 环境代 / 脚本字节 / 运行目录档没变。
+3. **上次成功沿用**：`launchctx` 记录（`profile: safe|native`）此刻仍成立 → 沿用那个语义，reason `previous_successful_profile`。「成立」= 解释器 / 环境代 / 脚本字节 / 运行目录档没变，**且记录的运行配置（argv 的不透明引用）就是本次请求的运行配置**，不一致就不沿用。
    上次是 safe 成功就留在 safe，即使静态规则会说 native：safe 的完整成功是被运行期账本验证过的。
+   **native 记录默认不沿用**：它的 `source.basis_observed` 是 `false`（native 没有 helper / 数据文件的观察回执），与 #982 的 `reuse_last_success` 同样保守，回到静态路由。记录仍写（诊断与 #982 读它）。
 4. **静态高置信**：规则 R1 / R3（下）→ `native`，reason `savefig_readback` / `native_file_semantics_required`（后者的 `required_execution` 与 0003 的 `preserve_file_semantics` 同一个词）。
 5. 其余 → `safe`，reason `ordinary_plot`；`confidence` 说明有没有疑点（high 无 / medium 有 R2·R3_partial·跨函数读回 / low 只有动态路径或解析不了）。**低、中置信度永不升级**。
 
@@ -49,8 +50,9 @@
 * **native 成功也记**：`launchctx` 记录升到 v2，多 `profile`（v1 读作 safe）。safe 成功仍由 app 的成功收口按回执写；**native 成功由 `prepsession` 在尝试成功后调 `launchctx.record_native_success`** 写（native 没有 helper 观察回执，记录取计划快照，`source.basis` 为空且 `basis_observed: false`：它回答「上次用哪种语义」，**不是**「数据与 helper 没变」的证据，#982 的沿用入口读它时要看这个标记）。脚本字节与计划的 `script_revision` 不一致（执行期间被改）→ 不记。
 * 授权来源：与 0127 同一条——桌面用户主动「运行 / 打开并运行」+ 项目策略（缺省 `compatible`）；高置信静态证据只是**选择**，不扩大授权范围（同一个项目 × 脚本 × 解出的解释器）。`safe_only` 撤回。CLI / MCP 的确认合同不变。
 
-### 保守边界与收口原则（#1034 第三轮）
+### 保守边界与收口原则（#1034 第三轮起）
 
+* **high 的结构性门槛（一条规则，取代逐个形状的补丁）**：R1 / R3 的每一个证据点（`savefig` 与读回；写、改名、读）都必须出现在**会无条件执行的位置**——模块顶层，或可达函数体的顶层语句序列——且**不在任何条件分支、循环、`try` / `except` / `finally`、`with` 体、`match` 分支、`lambda` / 推导式 / 三元 / `and`·`or` 里**；函数要靠无条件的按名调用才算可达。例外两处：`if __name__ == "__main__":` 的 body 按无条件处理（脚本入口的通行写法），`with` 的 item 表达式（`with open(p, "w") as f:` 的 `open`）在进入 body 之前无条件执行。其余位置证据最高 medium，走 safe，由 0127 回退兜底。常量假分支同属这一规则。
 * **遮蔽**：不做作用域精析。matplotlib 别名（`plt`）在模块任何作用域被非 import 方式重新绑定过（赋值 / 形参 / `def` / `class` / `for`·`with` 目标 / `global`·`nonlocal`），或接收者名（`fig`）不是恰好绑定一次，一律当解析不了（`R1_unproven`，不升 high）。
 * **不可达**：只排除条件是常量假的 `if` / `while`（`False` / `0` / `None` / `TYPE_CHECKING`）的 body，里面的调用与证据都不算；`else` 照常；其它形状不处理。
 * **Windows 根路径**：`C:\`、`C:/`、`C:foo`、`\\server\share`、单分隔符根 `\foo` 一律按「不在项目内」，用 `ntpath` 判，不依赖当前平台。
@@ -62,7 +64,7 @@
 * 对 `savefig → 读回` / `tmp → replace → 读回` 的脚本，执行次数 2 → 1。静态判错（把 safe 能跑对的脚本送去 native）会丢掉沙盒守卫——所以只有 high 才直达，并有同源对看护：`tests/test_runroute_consistency.py` 对每个高置信形状用真 safe worker 实跑核对「确实被拦」，对几个 safe 形状核对「确实成功」。
 * 漏判（动态路径等）退化为 0127 的「safe 白跑 + 回退」，无副作用（守卫拦住了）。
 * 路由要多读一遍脚本：1093 行 / 42 KB 的脚本约 5–15 ms（审计 B 实测同量级；不是缺口，且有 64 项 LRU）。没有现成耗时门禁，本 PR 也只断言解析次数（每个文件修订 1 次）而不断言毫秒。
-* 上次 native 成功沿用意味着：重新打开并运行会**真执行一次**，native 会真写盘——与 safe 重开同样会重跑是一致的，区别只在 native 的写是真的。用户随时可以在项目设置选 `safe_only`。
+* 上次 native 成功**默认不沿用**（`basis_observed:false`，见优先级 3）；沿用 safe 成功意味着重新打开并运行会真执行一次，与 safe 重开同样会重跑。用户随时可以在项目设置选 `safe_only`。
 * 已知局限：`launchctx` 记录按脚本一份（不分 argv）；`native` 记录的 `cwd_mode` 取计划那一刻的档位。
 * 证据只认能证明会执行、且确属 matplotlib 的调用（#1034 评审）：`savefig` 的接收者必须解析到 matplotlib（`plt.savefig`、`from matplotlib.pyplot import savefig`、`plt.figure()` / `plt.gcf()` / `Figure()` / `plt.subplots()` 得来的 Figure）；用户自定义同名函数 / 方法、形参、被重新赋值的名字解析不了，记 `R1_unproven`（medium，走 safe）。证据只出现在模块从未调用到的函数体里时（未调用的 helper、未被调用的 `main`），R1 记 `R1_unproven`、R3 降为 `R3_partial`，都不直达 native；经 `atexit` / 线程 / 回调间接调用的函数视为不可达——宁可走 safe 再回退。
 * 用户显式 `execution: "safe"` 一律走 safe，路由不覆盖；省略（或 `auto`）才由路由决定。显式 safe / native 各有自己的会话键，不复用路由选了 native 的会话。

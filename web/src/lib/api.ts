@@ -342,6 +342,24 @@ function noteProjectGone(status: number, body: Record<string, unknown>): void {
   }
 }
 
+/**
+ * 引擎兜底 500（`code === 'internal_error'`）的汇聚出口——「意外错误卡」的来源之一（PR A）。
+ * **只认这个兜底码**：具体业务码各有各的卡。回调注册制（同上，避免 api ↔ store 成环）；只带方法与路由，
+ * 不带 params / 响应体。回调里的异常吞掉，绝不改变本次请求往上抛的错误。
+ */
+let engine500Handler: ((n: { method: string; url: string }) => void) | null = null
+export function setEngine500Handler(fn: ((n: { method: string; url: string }) => void) | null): void {
+  engine500Handler = fn
+}
+function noteEngine500(status: number, body: Record<string, unknown>, method: string | undefined, url: string): void {
+  if (status < 500 || body?.code !== 'internal_error' || !engine500Handler) return
+  try {
+    engine500Handler({ method: (method ?? 'GET').toUpperCase(), url })
+  } catch {
+    /* 同上 */
+  }
+}
+
 /** 失败响应的 JSON 错误体（非 JSON 时给空对象）；只在 !res.ok 时调用 */
 const errorBody = (res: Response): Promise<Record<string, unknown>> =>
   res
@@ -368,6 +386,7 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
       /* 非 JSON 错误体，保留状态码 */
     }
     noteProjectGone(res.status, body)
+    noteEngine500(res.status, body, init?.method, url)
     throw new ApiError(detail, res.status, body, res.headers?.get('X-Tavotto-Diagnostic-Ref') || null)
   }
   return res.json() as Promise<T>
@@ -1814,6 +1833,14 @@ export interface ArtifactReceiptFacts {
   packages: Record<string, string>
   cwd_origin: string | null
   observation: string | null
+  /** safe 档的执行保真度（V2 PR3a，`receipt.project_fidelity`）：闭集枚举 + 计数，没有路径；native / 老 worker 没有 */
+  fidelity?: {
+    level: 'deviated' | 'suspect' | 'none_observed'
+    blocked: { op: string; kind: string; count: number }[]
+    intercepted: { op: string; kind: string; count: number }[]
+    signals: { kind: string; via: string; count: number }[]
+    unobserved: string[]
+  } | null
   binding: { revision: string | null; matched: boolean | null; changed: number; unobserved: number }
 }
 
@@ -3179,6 +3206,7 @@ interface ProjectScoped {
 }
 
 export type ServerEvent =
+  | ({ kind: 'render.preparing'; id: string } & ProjectScoped)
   | ({ kind: 'render.started'; id: string; cost?: string; cold?: boolean } & ProjectScoped)
   | ({ kind: 'render.done'; id: string; rev?: number } & ProjectScoped)
   | ({ kind: 'render.failed'; id: string; error?: string } & ProjectScoped)
@@ -3308,6 +3336,7 @@ export interface AiRefreshOutcome {
 }
 
 const EVENT_KINDS = [
+  'render.preparing',
   'render.started',
   'render.done',
   'render.failed',
@@ -4983,28 +5012,35 @@ export interface DiagSendStatus {
 
 export const fetchDiagSendCapability = () => jsonFetch<DiagSendCapability>('/api/diagnostics/send')
 
-let lastPrepareSeq = 0
-/** 单调的备包序号（毫秒时间戳起步，页面重载后仍大于上一页的）：引擎只认最新的，晚到的旧请求回 409 `diag_stale_prepare`。 */
-const nextPrepareSeq = () => (lastPrepareSeq = Math.max(Date.now(), lastPrepareSeq + 1))
+/** 备包序号由引擎发放（单调计数、不看墙钟）：引擎只认最新的，晚到的旧请求回 409 `diag_stale_prepare`。 */
+const fetchDiagSendSeq = (pj?: string | null) =>
+  jsonFetch<{ seq: number }>('/api/diagnostics/send/seq', { method: 'POST' }, pj)
 /** 备包被更新的请求取代（引擎 409 `stale_prepare`）：不是失败，静默忽略。 */
 export const isStalePrepare = (e: unknown) =>
   e instanceof ApiError && e.status === 409 && e.body?.code === 'diag_stale_prepare'
 
 /** 在本机备好一份包（零网络）。载荷与导出诊断包相同。 */
-export const prepareDiagSend = (
+export const prepareDiagSend = async (
   payload: unknown,
   options?: { source?: boolean; crash_reports?: boolean; corrupt_sessions?: boolean },
+  /** 显式的项目：备包绑定调用方当时采载荷的那个项目，不跟着全局当前项目走 */
+  pj?: string | null,
 ) => {
   // 勾选项同时走查询串：载荷超过引擎的请求体上限会被整份丢弃，勾选项不能跟着消失（引擎以查询串为准）
   const picked = Object.entries(options ?? {})
     .filter(([, v]) => v === true)
     .map(([k]) => k)
-  const q = `?seq=${nextPrepareSeq()}${options ? `&options=${picked.join(',')}` : ''}`
-  return jsonFetch<DiagSendPrepared>(`/api/diagnostics/send/prepare${q}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  const { seq } = await fetchDiagSendSeq(pj)
+  const q = `?seq=${seq}${options ? `&options=${picked.join(',')}` : ''}`
+  return jsonFetch<DiagSendPrepared>(
+    `/api/diagnostics/send/prepare${q}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+    pj,
+  )
 }
 
 /** 用户要保存的**同一份字节**（就是点发送时会上传的那份）。 */

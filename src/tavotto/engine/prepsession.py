@@ -46,7 +46,6 @@ from . import (
     dialogscan,
     execpolicy,
     execspec,
-    launchctx,
     nativesession,
     pool,
     preparation,
@@ -1740,19 +1739,7 @@ class SessionService:
                 fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code, desktop)
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
-            if (
-                outcome == execpolicy.OUTCOME_SUCCEEDED
-                and done_plan.execution == execspec.PROFILE_NATIVE
-                and done_plan.target == TARGET_SCRIPT
-                and not (isinstance(fin, dict) and fin.get("partial"))
-            ):
-                # native 成功也记「上次成功的执行语义」：下次打开并运行沿用（safe 成功由 app 的成功收口按回执写）
-                try:
-                    launchctx.record_native_success(
-                        done_plan.project_root, done_plan.script, done_plan, run=done_plan.run
-                    )
-                except Exception:  # noqa: BLE001 — 记不下来只是少一条沿用依据，不改这次的终局
-                    LOG.exception("记录 native 成功失败 %s", done_plan.script)
+            # native 成功的启动记录 + 运行默认值已在 app 的成功收口里同一次写入提交（`launchctx.basis_of`）——这里不再补写
             with sess.lock:
                 sess.ledger.close(attempt.attempt_id, outcome, code)
                 if done_plan.interpreter != sess.plan.interpreter:
@@ -1925,6 +1912,22 @@ class SessionService:
         )
         sess.ledger.record(nplan.plan_id, key, cause=code)
         self._prep.register(nplan, project_epoch=attempt.epoch)
+        if sess.cancel_requested or self._prep.superseded(
+            attempt.attempt_id, ignoring={nplan.plan_id}
+        ):
+            # 上面的复核到这次登记之间，另一个窗口登记了更新的重跑：回退计划拿到的序号比它大，native runner 启动时会
+            # 把它当「更早」的结束掉（Codex #1028 r4273826766）。登记之后再核一次身份：登记在前的更新重跑这里一定看得见，
+            # 登记在后的由它自己的 `cancel_project(keep=)` 取消本回退计划
+            self._prep.cancel(nplan.plan_id, sess.project_id)
+            sess.ledger.discard(nplan.plan_id)
+            self._decline(
+                sess,
+                attempt,
+                execpolicy.REASON_CANCELLED
+                if sess.cancel_requested
+                else execpolicy.REASON_SUPERSEDED,
+            )
+            return
         sess.attempts.append(second)
         done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
         found = self._prep.get(nplan.plan_id, sess.project_id)

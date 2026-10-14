@@ -37,6 +37,9 @@
   `DataSource.open`（`np.loadtxt` / `np.genfromtxt`，2026-09-24）只读打开的
   项目内文件（相对路径 + sha256）与 import 到的本地模块；`observation=partial` 永远如实——原生 I/O / 网络 /
   子进程看不见（D13 / FO-061）。观察到的文件身份**进公开语义身份**（数据换了就是另一次执行），机器路径不进。
+* **执行保真度**（`runtime["fidelity"]`，safe 账本 `BlockedFileOps.summary()`，V2 PR3a）：`level` 三档（`deviated` /
+  `suspect` / `none_observed`）+ 拦下的操作类别与次数 + 弱信号计数；只收闭集枚举与有界整数，无路径。
+  **不进**公开语义身份（疑似偏差不是另一次执行）；native 回执没有这一段（None）。
 * **数据绑定**（`binding`，控制面给）：准备计划在预检那一刻按静态证据记下的「打算读哪些文件、内容是什么」
   （`databinding.binding_for()`），回执把它与观察到的输入逐条对：`binding_check()` 回 `matched ∈ {True, False,
   None}`——None = 一条都没观察到（原生读），不冒充核过。
@@ -74,6 +77,18 @@ RUNTIME_REJECTIONS = (RUNTIME_REJECTED_NOT_BUILD, RUNTIME_REJECTED_PID)
 #: `tests/test_execution_receipt.py` 钉两边相等）。
 REPORT_ORIGIN_BUILD = "build"
 
+#: 自报的执行保真度（`runtime["fidelity"]`，V2 PR3a）里允许出现的闭集：与 safe 账本同源（`figcapture.BlockedFileOps`）。
+FIDELITY_LEVELS = figcapture.BlockedFileOps.LEVELS
+FIDELITY_VIAS = figcapture.BlockedFileOps.SIGNAL_VIAS
+FIDELITY_OPS = figcapture.BlockedFileOps.OPS
+FIDELITY_KINDS = (
+    figcapture.BlockedFileOps.KIND_RENAME,
+    figcapture.BlockedFileOps.KIND_DELETE,
+    figcapture.BlockedFileOps.KIND_DELETE_DIR,
+    figcapture.BlockedFileOps.KIND_WRITE,
+    figcapture.BlockedFileOps.KIND_SAVEFIG,
+)
+
 PID_CHECK_OK = "ok"
 #: 控制面起的那个进程是个 launcher（Windows 上 venv 的 `python.exe` 就是：它 CreateProcess 出真正的解释器再等它），
 #: 自报的 `ppid` 等于控制面的 `child_pid`——仍是这一条会话跑脚本的进程，但要如实写是经 launcher 核的
@@ -87,6 +102,73 @@ def _canon(payload: dict) -> str:
 
 def _sha(payload: dict) -> str:
     return "sha256:" + hashlib.sha256(_canon(payload).encode("utf-8")).hexdigest()
+
+
+#: `fidelity` 投影的白名单 schema：集合字段 → (行内字符串字段 → 闭集)。行内另有有界整数 `count`。
+_FIDELITY_ROW_SCHEMA = {
+    "blocked": {"op": FIDELITY_OPS, "kind": FIDELITY_KINDS},
+    "intercepted": {"op": FIDELITY_OPS, "kind": FIDELITY_KINDS},
+    "signals": {"kind": FIDELITY_KINDS, "via": FIDELITY_VIAS},
+}
+#: `unobserved`：盲区通道的闭集（与输入观察器同源）。
+_FIDELITY_UNOBSERVED = tuple(figcapture.INPUT_OBSERVER_UNOBSERVED)
+_FIDELITY_MAX_ROWS = 32
+_FIDELITY_MAX_COUNT = 9999
+
+
+def project_fidelity(raw) -> dict | None:
+    """worker 自报的 `fidelity` → 公开投影。**这是它进入回执公开面的唯一一处。**
+
+    自报是不可信输入，按白名单 schema 逐字段投影：
+    * 每个字符串字段（`level` / `op` / `kind` / `via` / `unobserved` 各项）必须落在闭集里，否则丢弃该项；
+    * 每个集合先核是 list 再取，行必须是 dict；最多 `_FIDELITY_MAX_ROWS` 行（先截再验，超长输入不被整个遍历）；
+    * `count` 是 0..9999 的 int（拒 bool / float / 超界）；
+    * 未知键一律丢弃，输出只有 schema 里的键；
+    * 任何畸形都不抛：整体不合格（非 dict / `level` 不在闭集）返回 None，局部不合格丢那一项。
+    """
+    try:
+        if not isinstance(raw, dict):
+            return None
+        level = raw.get("level")
+        if not isinstance(level, str) or level not in FIDELITY_LEVELS:
+            return None
+        out: dict = {"level": level}
+        for key, fields in _FIDELITY_ROW_SCHEMA.items():
+            rows: list[dict] = []
+            value = raw.get(key)
+            if isinstance(value, list):
+                for row in value[:_FIDELITY_MAX_ROWS]:
+                    if not isinstance(row, dict):
+                        continue
+                    clean: dict = {}
+                    for field, allowed in fields.items():
+                        item = row.get(field)
+                        if not isinstance(item, str) or item not in allowed:
+                            break
+                        clean[field] = item
+                    else:
+                        count = row.get("count")
+                        if (
+                            isinstance(count, int)
+                            and not isinstance(count, bool)
+                            and 0 <= count <= _FIDELITY_MAX_COUNT
+                        ):
+                            clean["count"] = count
+                            rows.append(clean)
+            out[key] = rows
+        blind = raw.get("unobserved")
+        out["unobserved"] = (
+            [
+                item
+                for item in blind[:_FIDELITY_MAX_ROWS]
+                if isinstance(item, str) and item in _FIDELITY_UNOBSERVED
+            ]
+            if isinstance(blind, list)
+            else []
+        )
+        return out
+    except Exception:  # noqa: BLE001 —— 投影永不抛：一份畸形自报不能让回执 / 准备接口失败
+        return None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -153,6 +235,11 @@ class ExecutionReceipt:
         rt = self.runtime or {}
         ins = rt.get("inputs")
         return dict(ins) if isinstance(ins, dict) else None
+
+    @property
+    def fidelity(self) -> dict | None:
+        """safe worker 自报的执行保真度，经 `project_fidelity` 投影（唯一的公开出口）；没报 / 畸形是 None。"""
+        return project_fidelity((self.runtime or {}).get("fidelity"))
 
     def observed_files(self) -> dict[str, str | None]:
         """观察到的项目内文件：相对 POSIX 路径 → sha256（大文件没算 hash 是 None）。"""
@@ -272,6 +359,7 @@ class ExecutionReceipt:
             "packages": dict(rt.get("packages") or {}),
             "cwd_origin": self.launch_context.get("cwd_origin"),
             "observation": (self.inputs or {}).get("observation"),
+            "fidelity": self.fidelity,
             "binding": {
                 "revision": check["revision"],
                 "matched": check["matched"],
@@ -288,6 +376,8 @@ class ExecutionReceipt:
         版本类字段，私有那几项归 `include_private`。
         """
         rt = self.runtime
+        if rt is not None and "fidelity" in rt:
+            rt = {**rt, "fidelity": self.fidelity}  # 自报的原样段不外泄：只出过滤后的闭集
         if rt is not None and not include_private:
             rt = {
                 k: v
@@ -310,6 +400,7 @@ class ExecutionReceipt:
             "runtime_rejected": self.runtime_rejected,
             "pid_check": self.pid_check,
             "inputs": self.inputs,
+            "fidelity": self.fidelity,
             "binding": dict(self.binding) if self.binding is not None else None,
             "binding_check": self.binding_check(),
             "descriptors": [dict(d) for d in self.descriptors],

@@ -419,6 +419,26 @@ describe('project.error', () => {
 })
 
 describe('渲染通知的语气（2026-10-07 审计 P0）', () => {
+  it('准备阶段先记文件级进度，started 保留起点，终局清除且不污染其它项目', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1000)
+    try {
+      handleServerEvent(ev({ kind: 'render.preparing', pj: 'other', id: 'Fig1.pdf' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toBeUndefined()
+      handleServerEvent(ev({ kind: 'render.preparing', pj: 'p1', id: 'Fig1.pdf' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toMatchObject({ phase: 'preparing', startedAt: 1000 })
+      now.mockReturnValue(16000)
+      handleServerEvent(ev({ kind: 'render.started', pj: 'p1', id: 'Fig1.pdf', cold: true, cost: 'medium' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toMatchObject({ phase: 'rendering', startedAt: 1000, cold: true })
+      handleServerEvent(ev({ kind: 'render.done', pj: 'p1', id: 'Fig1.pdf' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toBeUndefined()
+      handleServerEvent(ev({ kind: 'render.preparing', pj: 'p1', id: 'Fig1.pdf' }))
+      handleServerEvent(ev({ kind: 'render.failed', pj: 'p1', id: 'Fig1.pdf', error: 'unavailable' }))
+      expect(useRenderStore.getState().building['Fig1.pdf']).toBeUndefined()
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('冷启动「正在构建…」是 progress，随后的「渲染完成」是 done', () => {
     handleServerEvent(ev({ kind: 'render.started', pj: 'p1', id: 'Fig1.pdf', cold: true }))
     expect(statusKey()).toBe('status.building')

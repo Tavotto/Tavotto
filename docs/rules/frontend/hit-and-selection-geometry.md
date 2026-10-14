@@ -113,15 +113,55 @@
   对象」任一关掉就不吸；shift 锁成水平 / 垂直时只在仍在走的那一轴上吸，锁成 45° 时修正沿锁定
   方向投影（两轴里走得少的那条胜出，另一轴按比例跟着动，#575 评审）；⑤ 面板旋转 / 翻转时
   不吸（与混排对齐同一取舍）；⑥ 吸附只改位移，写法不变（仍是一条 pos_frac / position）。
-  缩放手柄不吸；
   ⑦ **吸住后保持（2 倍容差放开，ADR 0128）**：候选线带元信息（`SnapLine`：kind / edge /
   panelId / gid / rect，kind 由 `elementGeom.snapKindOf` 推——轴标题看 gid 后缀 `.xlabel` /
   `.ylabel`，色条看 `is_colorbar`），`snapMoveNearest` X / Y 各自独立，容差内先比档位（`rank`，
   缺省全 0）、同档比距离；手势起手建一份 `SnapHold`（每轴记自身锚点 + 目标线在**本手势候选表**里
   的下标，不记浮点值），这一对距离仍 < 2×容差就继续吸它，否则放开重挑，手势结束丢弃；⌘ / Ctrl
   那一帧清空，⇧ 锁向时没被采用的轴也清空。画布对象层 `snapMove` 不动。
+  ⑧ **跨图对齐同类元素 + 参考线 + 子图缩放手柄吸附（ADR 0128 §二，PR2）**：手势起手把本图候选、
+  跨图候选（`elementGeom.crossFigureSnapCandidates`）与参考线合成**一份**数组（hold 按下标认线），
+  配对过滤是 `elementGeom.crossFigurePair`：本图线与参考线全收；别的图的线只收 **kind 匹配**且
+  **自身边 === 线的边**（色条另可配子图，只配上下边；x / y 轴标题、图标题互不相配）。每种类型只出表里
+  那几条边（`CROSS_EDGES`：子图 / 色条 / 图例四边，轴标题 / 图标题中线，普通文字左边与中线）。
+  参与的别的图：`type==='panel'`、未隐藏、不是正在编辑的、未旋转 / 翻转、拿得到**权威** manifest
+  （ADR 0017）、外框与**视口可见矩形**（`viewportStore.visibleRectMm`，视口尺寸未知时不剔）相交；
+  元素中心在它自己面板裁剪窗外的不出线。**邻居要有权威 manifest 才出线，所以进图内编辑时补渲染**：
+  `useEngineSync.crossFigureNeighbours`（排版模式、视口里看得见、未隐藏、非 runtime、`cost !== 'heavy'`、
+  未旋转 / 翻转、有脚本）算出的面板 id 作为 `renderTargets` 的参数传入，「只带基线、没动过」的邻居也渲染一次
+  （同 `styleBound` 的纪律；runtime 面板仍不自动执行脚本）；不订阅视口，只在进编辑 / 文档变化时按当时视口算，
+  渲染回来后下一次手势起手自然拿到。**只在排版模式**：`workspaceStore.mode === 'fast_edit'`
+  不跨图（别的图让开了）；**多选整组平移不跨图**（`InFigureMove.snapKind` 缺省 = 只吸本图与参考线，
+  整组没有「同类」可言）。「吸附到参考线」开着时 `doc().guides` 进候选（kind 'guide'，所有自身边都可配）——
+  快速编辑里参考线照样画在画布上，所以也吸。**子图缩放手柄现在吸**（`interactions.axesResizeSnapper`）：
+  只吸正在动的那条边（角柄两条）：本图其他子图 / 色条的同一条边、整图四边（不要中线）、别的图子图的
+  同一条边、参考线；复用同一把容差、吸住后保持（x / y 各一份 hold）与 ⌘ / Ctrl 临时不吸；吸附只改最终框，
+  写法仍是一条 position；锁宽高比的缩放是 PR3，这里没有。
   看护：`lib/snapNearest.test.ts`（挑法 / 保持 / 不来回跳 / 类型推断）、
-  `canvas/inFigureDrag.test.tsx`「图内拖动：吸住后保持」。
+  `canvas/inFigureDrag.test.tsx`「图内拖动：吸住后保持」、`lib/crossFigureSnap.test.ts`（候选出线规则与配对）、
+  `canvas/crossFigureDrag.test.tsx`（集成：跨图 / 参考线 / 缩放手柄）、`e2e/cross-figure-align.spec.ts`
+  （功能 `figure.cross-figure-align`）。
+- **等比缩放吸附**（ADR 0128 §三）：画布对象锁比例的角柄 / ⇧ 强制等比（含形状）缩放也吸。
+  纯函数与候选 / 锚点构造唯一出处 `lib/scaleSnap.ts`，`startResizeDrag` 只接线。
+  ① 固定点 F = 被拖手柄对侧、**按 `resizeRect` 实际落位取**（东 / 南向固定左 / 上边，西 / 北向固定
+  右 / 下边，没提到的轴固定左 / 上边——边柄等比时 y / x 不动，不是对边中点；`setTxnAnchor` 那份
+  只管图幅中途变化的收尾）；② 每个**会动**的锚点 a（相对 F 偏移非零）与候选线 c 解 `s = (c − F) /
+  (a − F)`，宽高同乘 s；容差按**锚点此刻位置**（`F + (a − F)·s0`，s0 = 未吸附倍数）到线的距离算，
+  容差内先档位后距离，X / Y 合挑一对（只显示胜出那一对的线）；s 使宽 < 3 或高 < 2 mm 的对不参与；
+  ③ 档位：外框↔外框、内容↔内容、任何↔页面 / 参考线 / 网格 = 0，外框↔内容混搭 = 1
+  （`scaleTier`）；④ 锚点：外框三线 + 面板（未旋转、未翻转、权威 manifest）子图（`role: axes`
+  非色条）与色条各三线，裁剪窗外的线不算；轴标题 / 文字 / 图例不当锚点；⑤ 候选：`candidatesFor`
+  那一套（页面 / 别的对象外框 / 参考线 / 网格 / 别的图元素中心线）**加**别的面板（未隐藏、未旋转、
+  未翻转、权威 manifest）子图与色条的左右上下边——**只缩放用**（`scaleSnapCandidates`），平移
+  候选 `candidatesFor` 一个字不变；⑥ 吸住后保持（`ScaleHold`，下标指向手势起手固定的锚点表与候选表，
+  < 2×容差继续吸，⌘ / Ctrl 与非等比的帧清空）；⑦ 旋转过的对象（`rotationDeg`）、文字、Alt 反转成
+  非等比的角柄不走这条（后者仍是原来的「只吸正在动的边」）；面板 `rotation` 为 90 / 180 / 270 或翻转时
+  只剩外框锚点。吸附只改面板 x / y / w / h，写法不变。
+  **开关**：页面线始终参与、参考线 / 网格各看自己的开关（与 `snapCandidates` 一致）；自身子图 / 色条锚点
+  （`scaleAnchorsFor` 第三参）与对象类候选归「吸附到对象」，关掉时只剩外框锚点与页面 / 参考线 / 网格候选。
+  别的图子图 / 色条的中线以 axes / colorbar 身份出线，与之重合的 `'other'` 线去掉（并列时不让 `'other'` 抢先）。
+  看护：`lib/scaleSnap.test.ts`（挑法 / 档位 / 保持 / 最小尺寸 / 裁剪窗）、
+  `canvas/proportionalScaleSnap.test.tsx`（集成 + 平移候选不变）、`e2e/proportional-scale-snap.spec.ts`。
 - **子图的随行元素跟着一切平移手势走**（2026-09-25，用户：挪过「(a)」再拖主图，标签
   有时不跟）：被手动摆过的后代（带 pos_frac / loc_frac / endpoints_frac）与 manifest
   点名的随行 axes（`follow_gids`：色条、孪生轴），单个子图拖动由 `axesCompanions` 带着走；

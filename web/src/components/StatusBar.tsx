@@ -24,6 +24,8 @@ import {
 import { statusDismissTimer, useUiStore, type StatusTone } from '@/store/uiStore'
 import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
+import { useDiagSendStore } from '@/store/diagSendStore'
+import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
 
 /**
  * 底部不再有常驻状态栏。这里是两块按需出现的浮层：
@@ -91,6 +93,7 @@ function Toast({
   state,
   timer,
   order,
+  plain,
   ...rest
 }: {
   tone: 'info' | 'error' | 'hint'
@@ -104,6 +107,8 @@ function Toast({
   timer?: DismissTimer
   /** 出现的先后（越新越大）：轨里按它排，最新的那条最靠近底边 */
   order: number
+  /** error 语气但正文是一句固定的话（没有「这一步没有完成：原因」，没有复制详情）——意外错误卡用 */
+  plain?: boolean
 } & Record<`data-${string}`, string | undefined>) {
   const held = useRef(new Set<string>())
   const grip = (reason: string) => {
@@ -145,7 +150,7 @@ function Toast({
       )}
     >
       <span className="flex shrink-0">{icon}</span>
-      {error ? (
+      {error && !plain ? (
         <ErrorBody text={text} />
       ) : (
         /* 同一条 toast 换文字时原位换（旧字退、新字进），不硬切 */
@@ -298,7 +303,17 @@ export function NotificationRail() {
   const adopted = useEnvStore((s) => s.adoptedEnvironment)
   const lastAdopted = useRef<AdoptedEnvironment | null>(null)
   if (adopted) lastAdopted.current = adopted
-  const adoptedHasSlot = !(justAdded && !!status)
+  // 「出了点意外」卡（PR A）：优先级低于「刚为编辑加入」、高于全部提示类（改回 / 已用上次的答案 / 操作提示）。
+  // 状态那条从不让位，所以 加入说明 + 状态 已满两条时它让位；下面三类提示的让位判据都改成数「更高档」的在场条数。
+  const unexpected = useUnexpectedErrorStore((s) => s.card)
+  const lastUnexpected = useRef<{ token: number } | null>(null)
+  if (unexpected) lastUnexpected.current = unexpected
+  const diagEnabled = useDiagSendStore((s) => s.capability !== null)
+  const unexpectedHasSlot = diagEnabled && !(justAdded && !!status)
+  const unexpectedPresence = usePresence(!!unexpected && unexpectedHasSlot, DURATION.exit)
+  const unexpectedShown = unexpected ?? lastUnexpected.current
+  const higherThanNotices = [justAdded, !!status, !!unexpected && unexpectedHasSlot].filter(Boolean).length
+  const adoptedHasSlot = higherThanNotices < 2
   const adoptedPresence = usePresence(!!adopted && adoptedHasSlot, DURATION.exit)
   const adoptedShown = adopted ?? lastAdopted.current
   const adoptedText = adoptedShown
@@ -327,7 +342,7 @@ export function NotificationRail() {
   const autofilled = useScriptInputStore((s) => s.autofilled)
   const lastAutofilled = useRef<AutofillNotice | null>(null)
   if (autofilled) lastAutofilled.current = autofilled
-  const autofillHasSlot = !adopted && !(justAdded && !!status)
+  const autofillHasSlot = !adopted && higherThanNotices < 2
   const autofillPresence = usePresence(!!autofilled && autofillHasSlot, DURATION.exit)
   const autofillShown = autofilled ?? lastAutofilled.current
   const autofillText = autofillShown
@@ -344,7 +359,12 @@ export function NotificationRail() {
     }
   }
 
-  const hintHasSlot = [justAdded, !!adopted || !!autofilled, !!status].filter(Boolean).length < 2
+  const openSendFromCard = () => {
+    useUnexpectedErrorStore.getState().dismiss()
+    useDiagSendStore.getState().setOpen(true)
+  }
+
+  const hintHasSlot = [justAdded, !!adopted || !!autofilled, !!status, !!unexpected && unexpectedHasSlot].filter(Boolean).length < 2
   const hintPresence = usePresence(!!hint && hintHasSlot, DURATION.exit)
 
   // 出现的先后：最新的一条最靠近底边（见 useArrivalOrder）
@@ -352,6 +372,7 @@ export function NotificationRail() {
   const addedOrder = arrival('added', addedPresence.mounted && `added:${addedDepth}`)
   const adoptedOrder = arrival('adopted', adoptedPresence.mounted && adoptedShown?.token)
   const autofillOrder = arrival('autofill', autofillPresence.mounted && autofillShown?.token)
+  const unexpectedOrder = arrival('unexpected', unexpectedPresence.mounted && unexpectedShown?.token)
   const hintOrder = arrival('hint', hintPresence.mounted && hint && hintToken)
   const statusOrder = arrival('status', statusPresence.mounted && shown.status)
 
@@ -389,6 +410,9 @@ export function NotificationRail() {
       </div>
       <div aria-live="polite" className="sr-only">
         {autofilled ? autofillText : ''}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {unexpected && unexpectedHasSlot ? translate('unexpectedError.text', { ns: 'workspace' }) : ''}
       </div>
       {/* 显示顺序 = 出现的先后（`order`），最新的最靠近底边；DOM 顺序固定 */}
       {addedPresence.mounted && (
@@ -429,6 +453,22 @@ export function NotificationRail() {
           text={autofillText}
           action={{ label: translate('scriptInput.autofilledAction', { ns: 'dialogs' }), onClick: changeAutofilled }}
           onClose={() => useScriptInputStore.getState().dismissAutofilled()}
+          closeLabel={translate('actions.close')}
+        />
+      )}
+      {unexpectedPresence.mounted && unexpectedShown && (
+        <Toast
+          key={`unexpected-${unexpectedShown.token}`}
+          order={unexpectedOrder}
+          tone="error"
+          state={unexpectedPresence.state}
+          plain
+          data-unexpected-error-card=""
+          icon={<StatusIcon tone="error" />}
+          text={translate('unexpectedError.text', { ns: 'workspace' })}
+          // 只打开现有的确认框（本机备包）；上传要等用户在框里点「发送」
+          action={{ label: translate('settings.diagnostics.send.cardButton', { ns: 'dialogs' }), onClick: openSendFromCard }}
+          onClose={() => useUnexpectedErrorStore.getState().dismiss()}
           closeLabel={translate('actions.close')}
         />
       )}

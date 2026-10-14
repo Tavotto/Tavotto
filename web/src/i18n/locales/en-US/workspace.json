@@ -145,6 +145,9 @@
     "sizeMenu": "Size",
     "textMenu": "Text"
   },
+  "unexpectedError": {
+    "text": "Something unexpected happened. You can send us the diagnostics."
+  },
   "crash": {
     "blank": "Open a blank layout",
     "body": "Your layout is saved on this computer; reload to resume from the last snapshot. If it fails again, choose “Open a blank layout” — nothing is deleted.",
@@ -725,7 +728,7 @@
     "clipboardWriteDenied": "Can’t access the clipboard. The browser denied permission.",
     "coldHint": {
       "heavy": "a cold start can take a few minutes",
-      "medium": "a cold start takes about ten seconds"
+      "medium": "the first run may take longer"
     },
     "dismissError": "Dismiss error",
     "documentLoaded_one": "Loaded {{name}} ({{count}} canvas)",
@@ -1256,5 +1259,9 @@
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
       "unavailable": "Your last layout isn’t open yet."
     }
+  },
+  "renderProgress": {
+    "preparing": "Preparing the figure…",
+    "elapsed": "{{message}} · {{seconds}} s elapsed"
   }
 }

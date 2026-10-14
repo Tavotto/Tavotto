@@ -160,7 +160,8 @@ export function DiagnosticsSendDialog({
     // 还是旧项目的文档与轨迹，此刻备的包会是 A/B 混合包——不备，等 `switching` 落下去再来（下面的订阅）
     if (useProjectStore.getState().switching) return () => void (gen.current++)
     void buildSendPayload(opts)
-      .then((payload) => (gen.current === mine ? prepareDiagSend(payload, opts) : null))
+      // 延迟的备包绑定调度时抓到的项目：等待期间项目换了就丢弃，绝不对新项目备包；请求也显式写这个项目
+      .then((payload) => (gen.current === mine && currentProjectId() === pj ? prepareDiagSend(payload, opts, pj) : null))
       .then((p) => {
         if (!p) return
         if (gen.current !== mine) {

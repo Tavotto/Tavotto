@@ -1629,7 +1629,7 @@ export default interface Resources {
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
           "listSeparator": "、",
-          "notIncluded": "默认不含：你的脚本源码、数据文件，也不含匿名统计用的标识。报错原文、日志里可能出现项目文件夹名和文件名。",
+          "notIncluded": "默认不含：你的脚本文件、数据文件，也不含匿名统计用的标识。报错原文、日志里可能出现项目文件夹名、文件名和脚本打印出的内容。",
           "noteAttached": "你在这里写的说明会原样随诊断包一起发送。",
           "noteCount": "{{count}} / {{max}}",
           "noteHint": "请不要填写姓名、邮箱、路径或数据内容。",
@@ -1658,8 +1658,8 @@ export default interface Resources {
           "saveFailed": "没能保存",
           "saved": "已保存",
           "send": "发送",
-          "sentence": "将发送诊断包，含报错详情和日志，不含你的脚本源码和数据文件。",
-          "sentenceExtras": "将发送诊断包，含报错详情和日志，并附带你勾选的：{{items}}。",
+          "sentence": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。",
+          "sentenceExtras": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），并附带你勾选的：{{items}}。",
           "sentenceItem": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
@@ -1876,6 +1876,7 @@ export default interface Resources {
         "kw": {
           "agents": "助手 codex claude agent 默认",
           "canvas": "画布 网格 吸附 标尺 参考线",
+          "contact": "企业微信 微信 联系我们 联系维护者 反馈",
           "diagnostics": "诊断 报告 日志 导出 问题",
           "formats": "格式 pdf png svg tiff eps",
           "language": "语言 中文 英文 locale",
@@ -2404,7 +2405,7 @@ export default interface Resources {
       "runtime_asset_unknown": "运行时素材没有记录：{{id}}。重新运行该脚本即可重新建立关联；若它来自带参数的运行，请用原参数重新运行。",
       "runtime_cache_missing": "该运行时素材尚未生成预览。运行脚本后会自动生成。",
       "runtime_source_writeback_unsupported": "暂不支持把修改写回脚本源码。运行时素材的编辑只保存在排版中。",
-      "safe_file_operation_blocked": "脚本改了项目里的文件又去读它；安全运行不会真改文件，读到的会和直接运行不同，所以这次没有出图，桌面版暂时没有按真实文件运行的方式（终端里可用「tavotto run」）。",
+      "safe_file_operation_blocked": "脚本改了项目里的文件或读了刚存的图，而安全运行不会真改文件、读到的会和直接运行不同，所以这次没有出图；这类脚本需要按真实文件运行（终端里的「tavotto run」就是这样跑的）。",
       "scan_failed": "扫描失败：{{reason}}",
       "script_backup_failed": "备份写不进去，脚本没有被修改：{{script}}。请检查磁盘空间和目录权限。",
       "script_backup_unknown": "找不到这份备份：{{id}}",
@@ -5382,6 +5383,10 @@ export default interface Resources {
       },
       "whyNotEditable": "为什么不能编辑？"
     },
+    "renderProgress": {
+      "elapsed": "{{message}} · 已用时 {{seconds}} 秒",
+      "preparing": "正在准备图表…"
+    },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
       "blockedWrite": "上次的排版还没打开。",
@@ -5554,7 +5559,7 @@ export default interface Resources {
       "clipboardWriteDenied": "无法访问剪贴板。浏览器未授权。",
       "coldHint": {
         "heavy": "冷启动可能需要几分钟",
-        "medium": "冷启动约十几秒"
+        "medium": "首次运行可能需要更久"
       },
       "copiedDetails": "已复制",
       "copyDetails": "复制详情",
@@ -5761,6 +5766,9 @@ export default interface Resources {
       "zoomSelection": "缩放到选中对象",
       "zoomValue": "缩放 {{percent}}%",
       "zoomValueInput": "缩放比例（%）"
+    },
+    "unexpectedError": {
+      "text": "Tavotto 出了点意外，可以把诊断发给我们"
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",

@@ -136,6 +136,9 @@
     "sizeMenu": "尺寸",
     "textMenu": "文字"
   },
+  "unexpectedError": {
+    "text": "Tavotto 出了点意外，可以把诊断发给我们"
+  },
   "crash": {
     "blank": "打开空白排版",
     "body": "排版已自动保存在本机，刷新后从最后一次快照继续。仍然出错可选「打开空白排版」，原排版不会删除。",
@@ -690,7 +693,7 @@
     "clipboardWriteDenied": "无法访问剪贴板。浏览器未授权。",
     "coldHint": {
       "heavy": "冷启动可能需要几分钟",
-      "medium": "冷启动约十几秒"
+      "medium": "首次运行可能需要更久"
     },
     "dismissError": "关闭错误提示",
     "documentLoaded_other": "已载入：{{name}}（{{count}} 张画布）",
@@ -1190,5 +1193,9 @@
       "tooNew": "上次的排版“{{name}}”来自更新版本的 Tavotto，这个版本打不开。",
       "unavailable": "上次的排版暂时没打开。"
     }
+  },
+  "renderProgress": {
+    "preparing": "正在准备图表…",
+    "elapsed": "{{message}} · 已用时 {{seconds}} 秒"
   }
 }

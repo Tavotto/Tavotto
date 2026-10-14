@@ -8,7 +8,7 @@
 * 临时文件 → `os.replace` → 读回（路径可静态折叠）→ 直达 native，1 次，`os.replace` 真实发生；
 * 动态路径（路由看不出）→ safe 被拦 → 同会话回退 native，共 2 次；
 * `safe_only` 项目 → 不走 native；
-* 上次 native 成功的脚本再次运行 → 直接 native。
+* 上次 native 成功的脚本再次运行 → 不沿用 native（记录没观察过 helper / 数据），回到静态路由。
 """
 
 from __future__ import annotations
@@ -177,7 +177,9 @@ def test_a_safe_only_project_never_goes_native(tmp_path, monkeypatch):
         assert _native_sessions(app, proj) == []
 
 
-def test_a_script_that_succeeded_in_native_before_runs_native_directly_next_time(tmp_path):
+def test_a_native_success_is_not_reused_while_its_helper_inputs_were_never_observed(tmp_path):
+    """V2 PR2（Codex #1034 r6）：native 成功的记录 `basis_observed:false`，与 #982 同样保守——重开不沿用 native，回到静态路由
+    （动态路径 → safe 被拦 → 回退 native），而不是静默直接 native。"""
     proj, log = _project(tmp_path, DYNAMIC)
     with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
@@ -185,27 +187,21 @@ def test_a_script_that_succeeded_in_native_before_runs_native_directly_next_time
         assert _history(final) == [("safe", "blocked"), ("native", "succeeded")]
         assert _runs(log) == 2
 
-        again = _reopen(app)  # 「再次打开并运行」：同一份脚本、没改动
+        again = _reopen(app)
         route = again["plan"]["route"]
-        assert (route["execution"], route["reason"], route["confidence"]) == (
-            "native",
-            "previous_successful_profile",
-            "high",
-        )
+        assert (route["execution"], route["reason"]) == ("safe", "ordinary_plot")
         _run(app, again)
-        deadline = time.time() + 120
-        while _runs(log) < 3 and time.time() < deadline:
+        deadline = time.time() + 150
+        while _runs(log) < 4 and time.time() < deadline:
             time.sleep(0.3)
-        time.sleep(3)  # 给「偷偷多跑」留出发生的时间
-        assert _runs(log) == 3, "这一次只执行 1 次：直接 native，不再 safe 白跑"
+        time.sleep(3)
+        assert _runs(log) == 4, "这一次又是 safe 一次（被拦）+ native 一次"
         settled = _settled(app, again["session_id"])
-        assert settled["attempt_history"][-1]["profile"] == "native"
-        assert [h["profile"] for h in settled["attempt_history"]][-2:] != ["safe", "native"]
+        assert [h["profile"] for h in settled["attempt_history"]][-2:] == ["safe", "native"]
 
-        # 改了脚本：记录失效，回到静态判断
+        # 改了脚本：照旧回到静态判断
         (proj / "fig.py").write_text((proj / "fig.py").read_text() + "\n# edit\n", encoding="utf-8")
-        edited = _reopen(app)
-        assert edited["plan"]["route"]["reason"] == "ordinary_plot"
+        assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
 
 
 def test_a_browser_mode_session_is_never_routed_to_native(tmp_path):

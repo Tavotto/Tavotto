@@ -3966,13 +3966,8 @@ def private_fresh_facts() -> depplan.TargetFacts | None:
 
 
 def _is_managed_generation_path(project: str | Path, python: str) -> bool:
-    """这条解释器路径是不是登记过的某一代的 `bin/python`——**按路径身份、不 realpath**（`pool.same_python`）：
-    托管 venv 的 `bin/python` 通常是指向基础解释器的软链接，`managedenv.is_managed_python` 的 realpath 会把用户项目
-    正在用的系统 python（或基于它的别的 venv）判成「我们的」，相关差集就会被当成可换一代去修。"""
-    gens = managedenv.generations(project) or {managedenv.LEGACY_GENERATION: {}}
-    return any(
-        pool.same_python(python, str(managedenv.generation_python(project, g))) for g in gens
-    )
+    """与来源标签共用托管代的路径身份判据。"""
+    return managedenv.is_managed_python(project, python)
 
 
 def _run_env_ours(project: str | Path, facts: depplan.TargetFacts | None) -> bool:

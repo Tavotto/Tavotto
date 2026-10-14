@@ -47,14 +47,30 @@ describe('diag send api', () => {
     await fetchDiagSendBundle('abc')
     await cancelDiagSend('abc')
     await discardDiagSend('abc')
-    expect(calls.map((c) => c.url.replace(/^.*\/api/, '/api').replace(/\?seq=\d+/, ''))).toEqual([
+    expect(calls.map((c) => c.url.replace(/^.*\/api/, '/api').replace(/\?seq=\w+/, ''))).toEqual([
       '/api/diagnostics/send',
+      '/api/diagnostics/send/seq',
       '/api/diagnostics/send/prepare',
       '/api/diagnostics/send/abc/bundle',
       '/api/diagnostics/send/abc/cancel',
       '/api/diagnostics/send/abc/discard',
     ])
     for (const c of calls) expect(String(c.init?.body ?? '')).not.toContain('confirm')
+  })
+
+  it('备包序号由引擎发放：先取 seq 再带着它备包，不看墙钟（#1012 6）', async () => {
+    const now = vi.spyOn(Date, 'now')
+    vi.mocked(fetch).mockImplementation((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init })
+      const body = String(url).includes('/send/seq') ? { seq: 7 } : {}
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body), headers: new Headers() } as Response)
+    })
+    await prepareDiagSend({ frontend_state: null, interaction_trace: [] })
+    expect(calls[0].url).toContain('/api/diagnostics/send/seq')
+    expect(calls[0].init?.method).toBe('POST')
+    expect(calls[1].url).toContain('/api/diagnostics/send/prepare?seq=7')
+    expect(now).not.toHaveBeenCalled()
+    now.mockRestore()
   })
 
   it('id 进路径前被编码（不能借 id 改写路径）', async () => {
