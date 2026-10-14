@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { expect, openElementsTab, test, type RunningApp } from './fixtures'
@@ -457,3 +457,55 @@ test('窄视口：脚本行的「运行并发现图」仍可见可点', async ({
   expect(box!.x).toBeGreaterThanOrEqual(0)
   expect(box!.x + box!.width).toBeLessThanOrEqual(960)
 })
+
+/**
+ * 「能不能编辑」胶囊筛选（`data-testid="asset-editability"`）：可编辑与仅版面的图混在网格里时，
+ * 一点就只剩那一类。项目 = 示例图（3 张有脚本的 PDF）+ 一张没有脚本的 PNG（后端判 `layout_only`）。
+ * 判的是真界面上卡片集合真的变了，不只是胶囊在 DOM 里。
+ */
+test(
+  '能不能编辑的胶囊：可编辑 / 仅版面一点就分开，回到全部恢复',
+  { tag: '@feature:assets.editability-filter' },
+  async ({ app, page }) => {
+    const repo = path.resolve(import.meta.dirname, '..', '..')
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-editability-'))
+    cpSync(path.join(repo, 'examples', 'figures'), dir, { recursive: true })
+    copyFileSync(path.join(repo, 'tests', 'compat', 'assets', 'sample.png'), path.join(dir, 'Photo_plain.png'))
+    const a = await app({ figures: dir })
+    await page.goto(a.baseURL)
+
+    const group = page.locator('[data-testid="asset-editability"]')
+    await expect(group).toBeVisible({ timeout: 30_000 })
+    const viewport = page.viewportSize()!
+    const box = await group.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width)
+
+    const cards = page.locator('li[role="option"][data-card]')
+    const cardIds = async () => (await cards.evaluateAll((els) => els.map((el) => el.getAttribute('data-card')))).sort()
+    const plain = page.locator('li[role="option"][data-card="Photo_plain.png"]')
+    const kinetics = page.locator('li[role="option"][data-card="Fig1_kinetics.pdf"]')
+    await expect(plain).toBeVisible()
+    await expect(kinetics).toBeVisible()
+    const all = await cardIds()
+    expect(all.length).toBeGreaterThanOrEqual(4)
+
+    // 可编辑：没有脚本的那张消失，有脚本的还在
+    await group.locator('[role="radio"][data-value="editable"]').click()
+    await expect(group.locator('[data-value="editable"]')).toHaveAttribute('aria-checked', 'true')
+    await expect(plain).toHaveCount(0)
+    await expect(kinetics).toBeVisible()
+
+    // 仅版面：只剩没有脚本的那张
+    await group.locator('[role="radio"][data-value="layout"]').click()
+    await expect(kinetics).toHaveCount(0)
+    await expect(plain).toBeVisible()
+    expect(await cardIds()).toEqual(['Photo_plain.png'])
+
+    // 回到全部：清单与开始时一样
+    await group.locator('[role="radio"][data-value="all"]').click()
+    await expect(cards).toHaveCount(all.length)
+    expect(await cardIds()).toEqual(all)
+  },
+)
