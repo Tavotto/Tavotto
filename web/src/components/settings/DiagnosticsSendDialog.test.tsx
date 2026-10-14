@@ -861,6 +861,32 @@ describe('诊断包扩充（detail-…、勾选项）', () => {
   })
 })
 
+describe('摘要句如实说明日志里可能有脚本打印的内容（#1012 4）', () => {
+  const sends = [
+    ['zh-CN', zhDialogs, '日志里可能有脚本打印出的内容'],
+    ['en-US', enDialogs, 'may contain output printed by your script'],
+  ] as const
+
+  it('常显摘要句、带勾选项的摘要句、「默认不含」都提醒日志可能含脚本输出，且不再声称不含脚本源码', () => {
+    for (const [lang, d, phrase] of sends) {
+      const send = (d as any).settings.diagnostics.send
+      expect(send.sentence, lang).toContain(phrase)
+      expect(send.sentenceExtras, lang).toContain(phrase)
+      expect(send.notIncluded, lang).toContain(
+        lang === 'zh-CN' ? '脚本打印出的内容' : 'output printed by your script',
+      )
+      expect(send.sentence, lang).not.toMatch(/不含你的脚本源码|without your script source/)
+    }
+  })
+
+  it('界面上显示的就是这句', async () => {
+    await mount()
+    const text = q('[data-diag-send-sentence]')!.textContent!
+    expect(text).toContain(t('settings.diagnostics.send.sentence', { ns: 'dialogs' }))
+    expect(text).toMatch(/脚本打印出的内容|output printed by your script/)
+  })
+})
+
 describe('文案与引擎同源', () => {
   const py = readFileSync(resolve(__dirname, '../../../../src/tavotto/engine/diagsend.py'), 'utf-8')
 

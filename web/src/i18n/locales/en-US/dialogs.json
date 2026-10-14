@@ -1190,7 +1190,7 @@
           "detail_crash_reports": "System crash reports (you ticked this)",
           "detail_corrupt_sessions": "Contents of corrupted session copies (you ticked this)"
         },
-        "notIncluded": "Not included by default: your script source, data files, or the identifier used by anonymous usage statistics. Error messages and logs may mention project folder and file names.",
+        "notIncluded": "Not included by default: your script files, data files, or the identifier used by anonymous usage statistics. Error messages and logs may mention project folder names, file names, and output printed by your script.",
         "size": "Size {{size}}",
         "save": "Save this bundle",
         "saved": "Saved",
@@ -1262,7 +1262,7 @@
           "internal": "An internal error occurred and nothing was sent. Save the bundle and report it."
         },
         "packageGone": "This bundle is no longer held by the engine (the app may have restarted). Prepare it again before sending, or use Export diagnostics in Settings to save one locally.",
-        "sentence": "A diagnostic bundle will be sent, with error details and logs but without your script source or data files.",
+        "sentence": "A diagnostic bundle will be sent, with error details and logs (the logs may contain output printed by your script), but without your script files or data files.",
         "details": "Show details",
         "bestEffort": "Redaction is best-effort and not guaranteed; you can save and inspect the bundle before sending.",
         "noteAttached": "Anything you write here is sent as typed, together with the bundle.",
@@ -1303,7 +1303,7 @@
           "corrupt_sessions": "corrupted copies"
         },
         "optionsLost": "The extras were too large, so they could not be attached this time.",
-        "sentenceExtras": "A diagnostic bundle will be sent, with error details and logs, plus what you ticked: {{items}}.",
+        "sentenceExtras": "A diagnostic bundle will be sent, with error details and logs (the logs may contain output printed by your script), plus what you ticked: {{items}}.",
         "sentenceItem": {
           "source": "script source",
           "crash_reports": "system crash reports (may contain the contents of open files)",
