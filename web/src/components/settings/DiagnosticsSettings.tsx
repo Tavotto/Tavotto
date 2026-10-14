@@ -18,6 +18,7 @@ import { FieldGroup, FormSection } from '../ui/FormSection'
 import { StatusPill } from '../ui/StatusPill'
 import { CopyButton } from './CopyButton'
 import { saveDiagnosticsZip } from './diagnosticsSave'
+import { useWeComContactVisible, WeComLink, WeComQr } from './WeComContact'
 import { PathValue } from './PathValue'
 import { DiagnosticDisclosure, DiagnosticItem, SettingRow } from './SettingRow'
 
@@ -302,6 +303,7 @@ function DiagnosticsReportSection() {
   const [bundle, setBundle] = useState<'idle' | 'busy' | 'done' | 'error'>('idle')
   /** 「发送问题反馈」此刻可不可用（本机判断，不联网；App 启动时取一次）。前端侧失败即关（没取到 / 关着）：没有就不画那一行。 */
   const sendCap = useDiagSendStore((s) => s.capability)
+  const showContact = useWeComContactVisible()
   useEffect(() => {
     void useDiagSendStore.getState().load()
   }, [])
@@ -382,6 +384,19 @@ function DiagnosticsReportSection() {
             </>
           )}
         </SettingRow>
+        {/* 联系方式不依赖上传通道：发送功能关着也在；仅中文界面。放在发送行之前，让发送行仍是组的最后一行 */}
+        {showContact && (
+          <SettingRow
+            label={st('diagnostics.send.contact.row')}
+            description={st('diagnostics.send.contact.rowHint')}
+            below={<WeComQr />}
+            data-diagnostics-contact
+          >
+            <span className="text-sm">
+              <WeComLink />
+            </span>
+          </SettingRow>
+        )}
         {/* 放在组的最后一行：能力说明是异步取到的，它出现时上面的行一个像素都不动 */}
         {sendCap && (
           <SettingRow

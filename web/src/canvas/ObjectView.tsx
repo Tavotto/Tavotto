@@ -17,7 +17,14 @@ import { ShapeView } from './ShapeView'
 import { TextView } from './TextView'
 
 /** 世界层里的单个对象：只负责定位与命中，选择框/手柄交给屏幕层的 OverlaySvg */
-export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject }) {
+export const ObjectView = memo(function ObjectView({
+  obj,
+  preview = false,
+}: {
+  obj: CanvasObject
+  /** 科研预设缩略图不是文档对象，不触发文字高度回写。 */
+  preview?: boolean
+}) {
   perfCount('render.ObjectView')
   const editing = useUiStore((s) => s.editingTextId === obj.id)
   const cropping = useUiStore((s) => s.cropTargetId === obj.id)
@@ -149,7 +156,7 @@ export const ObjectView = memo(function ObjectView({ obj }: { obj: CanvasObject 
       }}
     >
       {obj.type === 'panel' && <PanelView obj={obj} />}
-      {obj.type === 'text' && <TextView obj={obj} />}
+      {obj.type === 'text' && <TextView obj={obj} preview={preview} />}
       {obj.type === 'arrow' && <ArrowView obj={obj} hit={hit} />}
       {obj.type === 'shape' && <ShapeView obj={obj} hit={hit} />}
     </div>

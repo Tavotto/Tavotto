@@ -60,6 +60,23 @@ export const PERF_SPANS: readonly PerfSpan[] = [
 /** 每帧一行：[间隔, 主线程渲染, handler, react_flush, rAF 脚本, pointermove 数, 输入延迟] */
 export type FrameRow = [number, number | null, number, number, number, number, number | null]
 
+/** 通用点击动作：只用闭集名称，不记录用户文本/对象 ID。 */
+export type PerfActionKind = 'symbol.insert' | 'preset.insert'
+export type PerfActionPhase = 'document.commit' | 'selection.update' | 'ui.status'
+
+export interface PerfActionRecord {
+  kind: PerfActionKind
+  /** 相对开始录制的毫秒数 */
+  start_ms: number
+  /** 点击回调同步代码耗时；不是端到端上屏时间 */
+  sync_ms: number
+  /** 从点击开始到第二次 rAF 回调的时间；是上屏近似代理，非实际 GPU 呈现 */
+  two_raf_ms: number | null
+  /** 实际各阶段耗时；不含异步任务/浏览器绘制 */
+  phases: Partial<Record<PerfActionPhase, number>>
+  ok: boolean
+}
+
 export interface SpanStat {
   count: number
   total: number
@@ -126,6 +143,7 @@ interface RenderLive {
 }
 
 const MAX_RENDERS = 400
+const MAX_ACTIONS = 120
 
 interface FrameAcc {
   handler: number
@@ -140,6 +158,8 @@ interface Recording {
   t0: number
   idle: number[]
   segments: Segment[]
+  actions: PerfActionRecord[]
+  activeAction: PerfActionRecord | null
   current: Segment | null
   lastRaf: number | null
   acc: FrameAcc
@@ -273,6 +293,56 @@ export function perfCount(name: string): void {
   bag[name] = (bag[name] ?? 0) + 1
 }
 
+/* ----------------------------------------------------------------- 普通点击动作 */
+
+/** 不是拖动片段：记录点击/插入同步阶段和到第二个 rAF 的代理延迟。
+ * 已在录制时才分配；拖动过程中或嵌套调用不会反复建立动作。
+ */
+export function perfAction<T>(kind: PerfActionKind, fn: () => T): T {
+  const r = rec
+  if (!r || r.activeAction || r.current || r.actions.length >= MAX_ACTIONS) return fn()
+  const start = perfNow()
+  const action: PerfActionRecord = {
+    kind,
+    start_ms: round1(start - r.t0),
+    sync_ms: 0,
+    two_raf_ms: null,
+    phases: {},
+    ok: true,
+  }
+  r.actions.push(action)
+  r.activeAction = action
+  try {
+    return fn()
+  } catch (err) {
+    action.ok = false
+    throw err
+  } finally {
+    action.sync_ms = round1(perfNow() - start)
+    r.activeAction = null
+    // 双 rAF 仅近似主线程视觉反馈；窗口合成/GPU 是否真正呈现不在此处断言。
+    // 录制停止后不更新已交付的报告。
+    requestAnimationFrame(() => {
+      if (rec !== r) return
+      requestAnimationFrame(() => {
+        if (rec === r) action.two_raf_ms = round1(perfNow() - start)
+      })
+    })
+  }
+}
+
+/** 把文档提交 / 选择 / 状态提示分别归因；不录制时仅执行 fn。 */
+export function perfActionPhase<T>(phase: PerfActionPhase, fn: () => T): T {
+  const action = rec?.activeAction
+  if (!action) return fn()
+  const start = perfNow()
+  try {
+    return fn()
+  } finally {
+    action.phases[phase] = round1((action.phases[phase] ?? 0) + perfNow() - start)
+  }
+}
+
 /* ----------------------------------------------------------------- 片段 */
 
 export type SegmentHook = (seg: Segment, phase: 'begin' | 'end') => void
@@ -399,6 +469,8 @@ export function perfStart(): boolean {
     t0: perfNow(),
     idle: [],
     segments: [],
+    actions: [],
+    activeAction: null,
     current: null,
     lastRaf: null,
     acc: newAcc(),
@@ -431,6 +503,7 @@ export function perfStart(): boolean {
 }
 
 export interface PerfRaw {
+  actions: PerfActionRecord[]
   duration_ms: number
   idle_frame_ms: number[]
   segments: Segment[]
@@ -453,6 +526,7 @@ export function perfStop(): PerfRaw | null {
     duration_ms: round1(perfNow() - r.t0),
     idle_frame_ms: r.idle,
     segments: r.segments,
+    actions: r.actions,
     renders: r.renders,
   }
   for (const l of r.listeners) l()

@@ -64,6 +64,10 @@ BRIDGE_CHILD_EXITED = "bridge_child_exited"
 NATIVE_PROCESS_NOT_OWNED = "native_process_not_owned"
 #: 注册表正在 / 已经关停（sidecar 退出）：不再接受新的桌面拥有的启动。
 NATIVE_REGISTRY_CLOSING = "native_registry_closing"
+#: 脚本此刻没有在等的提问（已被别的窗口答了 / 已取消 / 根本没问 / 终端拥有的会话）：答复当场拒绝，不排队（P07）。
+NATIVE_INPUT_NOT_PENDING = "native_input_not_pending"
+#: 答复的形状不对（不是文本、超长）：脚本仍在等，换一份答复即可（P07）。
+NATIVE_INPUT_INVALID = "native_input_invalid"
 #: 桌面自己起的用户 Python 在期限内没连回控制通道（进程已被收掉）。
 DESKTOP_RUN_CONNECT_TIMEOUT = "desktop_run_connect_timeout"
 #: 桌面拥有的启动身份不成立（cwd 不是目录 / 不是桌面拥有的 spec）。
@@ -228,6 +232,15 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Your Python didn't connect to the control channel within {seconds} seconds,"
         " and Tavotto has stopped it.",
     },
+    NATIVE_INPUT_NOT_PENDING: {
+        "zh": "脚本现在没有在等这个输入（可能已在别的窗口回答，或脚本已经结束）。",
+        "en": "The script is not waiting for this input (it may have been answered in another"
+        " window, or the script has ended).",
+    },
+    NATIVE_INPUT_INVALID: {
+        "zh": "这个回答不能交给脚本：{reason}",
+        "en": "This answer can't be handed to the script: {reason}",
+    },
     DESKTOP_RUN_LAUNCH_INVALID: {
         "zh": "这次运行的启动信息不成立：{reason}",
         "en": "This run's launch details are not valid: {reason}",
@@ -285,6 +298,8 @@ EXIT_FOR_CODE: dict[str, int] = {
     NATIVE_REGISTRY_CLOSING: EXIT_ATTACH_FAILED,
     DESKTOP_RUN_CONNECT_TIMEOUT: EXIT_ATTACH_FAILED,
     DESKTOP_RUN_LAUNCH_INVALID: EXIT_USAGE,
+    NATIVE_INPUT_NOT_PENDING: EXIT_USAGE,
+    NATIVE_INPUT_INVALID: EXIT_USAGE,
     CONDA_LAUNCHER_UNAVAILABLE: EXIT_ATTACH_FAILED,
 }
 

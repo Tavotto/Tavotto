@@ -7,6 +7,7 @@
  * 计数（对象几个、SVG 节点几个）与枚举（拖动种类、预览表示法）。报告由用户
  * 自己存下来、自己决定发给谁，Tavotto 不上传（与诊断包同一条隐私线）。
  */
+import type { PerfActionRecord } from './core'
 import { isDesktop } from '@/lib/desktop'
 import { apiUrl, withProject } from '@/lib/session'
 import { previewTimings } from '@/lib/previewTrace'
@@ -98,6 +99,8 @@ export interface PerfReport {
   system: Record<string, unknown> | null
   idle_frame_ms: number[]
   segments: Segment[]
+  /** 普通点击/插入，不含用户文字；旧报告无此字段。 */
+  actions?: PerfActionRecord[]
   authority: { frames: number; moves: number; first_frame_ms: number | null; commit_to_authority_ms: number | null }[]
   /** 每次引擎渲染的时间线（ADR 0075「松手链路」）；只有数字 */
   renders: RenderRecord[]
@@ -120,6 +123,7 @@ export async function finishProbe(): Promise<PerfReport | null> {
     system,
     idle_frame_ms: raw.idle_frame_ms,
     segments: raw.segments,
+    actions: raw.actions,
     renders: raw.renders,
     // 图内元素拖动的「松手 → 权威 SVG 换上画布」：用户眼里的第二种卡。
     // 计时环里有面板 id，这里只取数字

@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import {
+  answerNativeInput,
   answerScriptInput,
   ApiError,
+  cancelNativeSession,
   fetchScriptAnswers,
   forgetScriptAnswer,
   listenScriptInput,
@@ -203,7 +205,8 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     const epoch = get().epoch
     set({ busy: true, error: null })
     try {
-      await answerScriptInput(head.id, answer)
+      if (head.native) await answerNativeInput(head.native.session_id, head.native.request_id, answer)
+      else await answerScriptInput(head.id, answer)
       if (get().epoch !== epoch) return
       // 后端随后发 `script.input_closed`；这里先出队，界面不必等那条事件
       get().onClosed(head.id)
@@ -211,7 +214,11 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     } catch (e) {
       if (get().epoch !== epoch) return
       // 这一问已经不在等了（脚本结束 / 被停）：收起，不留一个答不了的框
-      if (e instanceof ApiError && e.status === 404) get().onClosed(head.id)
+      // native：409 `native_input_not_pending` = 别的窗口先答了 / 脚本已不在等——同样收起
+      // 同一端点的 409 还可能是 `native_session_disconnected`：只有 not_pending 才收起，其它留框显示原因
+      const notPending =
+        !!head.native && e instanceof ApiError && e.body?.code === 'native_input_not_pending'
+      if (e instanceof ApiError && (e.status === 404 || notPending)) get().onClosed(head.id)
       else set({ busy: false, error: errorText(e) })
     }
   },
@@ -222,7 +229,9 @@ export const useScriptInputStore = create<ScriptInputState>((set, get) => ({
     const epoch = get().epoch
     set({ busy: true, error: null })
     try {
-      await stopScriptInput(head.id)
+      // native：停止 = 真终止这个脚本进程（取消桌面拥有的会话）
+      if (head.native) await cancelNativeSession(head.native.session_id)
+      else await stopScriptInput(head.id)
       if (get().epoch !== epoch) return
       get().onClosed(head.id)
     } catch (e) {

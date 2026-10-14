@@ -109,6 +109,14 @@ class OwnedLaunch:
     launch_id: str = ""
     preview_dpi: int = 200
     policy: OwnedPolicy = OwnedPolicy()
+    #: 计划登记时看到的项目关闭代次（`NativeSessionRegistry.project_epoch`）；None = 不核。关闭之前登记的旧计划借此
+    #: 在项目重新打开后依旧起不了进程
+    project_epoch: int | None = None
+    #: 计划的登记序号（`PreparationPlan.launch_order`）；票据与会话带着它，重跑据此只停更早的启动。None = 没有序号（不被重跑停）
+    launch_order: int | None = None
+    #: 「这份计划是不是已被取消 / 取代」的判定（`PreparationService.is_cancelled`），在 `reserve` / `begin_start` / Popen 之前
+    #: 最后一次核对，与代次、序号是同一处判定（注册表 `_refuse_if_closed`）。None = 不核
+    cancelled: object | None = None
 
     def __post_init__(self) -> None:
         spec = self.spec
@@ -674,7 +682,7 @@ def start(
         },
     )
     # launch_id 复用：会话 id 也是租约键，后者会被前者的回调放掉。原子占位，先于租约与 spawn 拒绝
-    registry.reserve(launch.launch_id)
+    registry.reserve(launch.launch_id, spec.project_root, launch.project_epoch, launch.cancelled)
     try:
         envlease.acquire_native(spec.interpreter, session_id)  # 先于一切：拿不到就一行都不跑
     except BaseException:
@@ -685,7 +693,12 @@ def start(
     ticket = None
     try:
         ticket = registry.begin_start(
-            launch.launch_id
+            launch.launch_id,
+            spec.project_root,
+            spec.target,
+            launch.project_epoch,
+            launch.launch_order,
+            launch.cancelled,
         )  # spawn 之前先登记在途：关停的快照一定看得见
         # Conda 环境：与 safe 档同一个启动决策（`launcher_for_interpreter`）。桌面拥有的会话由 GUI 启动，没有用户 shell 替它激活。
         # **在租约之内、spawn 之前**取：激活要跑 conda 与 activate.d，不能和正在进行的装包并发（租约挡住）；
@@ -737,6 +750,7 @@ def start(
         )
         session.owned = owner
         session.spec = spec
+        session.launch_order = launch.launch_order
         owner.start()
         registry.attach_owner(ticket, owner)  # 关停已开始则拒绝：下面的失败收尾会收掉这个子进程
         try:

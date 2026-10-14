@@ -68,6 +68,7 @@ from . import (
     inputbroker,
     inputremap,
     launcher,
+    nativesession,
     pool,
     projectenv,
     receipt,
@@ -199,10 +200,19 @@ class PreparationPlan:
     #: 私有：不进 `to_payload()`（公开的是 `launch_context`）。就地重算计划、复用现有会话都按它对账，
     #: 不得悄悄回落成 safe。
     execution: str = execspec.PROFILE_SAFE
+    #: `execution == native` 时的桌面拥有的启动身份（`execspec.desktop_native_spec` 的产物；`desktopproc.OwnedLaunch`
+    #: 吃它，P07）。**私有**：含 argv / env 原文，不进 `to_payload()`；公开的是 `launch_context`。safe 恒 None。
+    native_spec: object | None = None
     #: 计划那一刻解释器的完整启动上下文（`launcher.context_key`：`direct` 或 Conda 激活 + conda + prefix + 环境版本）。
     #: 私有。conda install / 改 activate.d、conda 从找不到变成找得到（直接启动 → 激活）都不换「代」，但跑起来的环境变了：
     #: 执行前 `_stale_reason` 比它，对不上 = 计划过期（P09）
     environment_state: str = ""
+    #: 登记那一刻项目的关闭代次（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章）。启动时带给注册表：
+    #: 关闭之后才走到起进程的旧计划，即使项目已重新打开也被拒（代次对不上）
+    project_epoch: int | None = None
+    #: 登记序号（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章，单调递增）。启动的票据与会话都带着它：
+    #: 同脚本重跑只取消序号**更小**（更早登记）的启动，序号是唯一的先后依据——和准备层的取消同一个顺序
+    launch_order: int | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -386,6 +396,7 @@ def plan_for(
     }
     grant = workdir.grant_for(root)
     launch_context = None
+    native_spec = None
     decision = None
     if script is not None:
         # 工作目录：决定过就是记住的那一档；没决定过按脚本的静态证据判要不要先问
@@ -407,8 +418,13 @@ def plan_for(
             interpreter=python,
             cwd=execspec.desktop_cwd(root, script, mode),
             project_root=root,
+            # 桌面「打开并运行」的输入通道：脚本的 input / stdin / getpass 由界面作答（P07，ADR 0126）
+            stdin=execspec.STDIN_BRIDGE,
+            # 无缓冲：stdout 管道对 Python 默认块缓冲，不设的话界面看不到实时输出（ADR 0125 残余）
+            env={"PYTHONUNBUFFERED": "1"},
             **execspec.run_kwargs(run),
         )
+        native_spec = spec
         launch_context = execspec.launch_context(spec, grant=grant)
     elif execution not in (execspec.PROFILE_SAFE, execspec.PROFILE_NATIVE):
         raise ValueError(f"execution 非法: {execution!r}")
@@ -504,8 +520,23 @@ def plan_for(
         run=run,
         input_remap_generation=remap_generation,
         script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
+        native_spec=native_spec,
         environment_state=environment_state,
     )
+
+
+def _kill_owned_worker(worker) -> None:
+    """取消「本计划新建、已不在池里」的那条会话。
+
+    桌面拥有的 native 会话（`nativesession.NativeSession`，P07）的 `force_kill` 是**放手**（终端语义，不杀进程）；
+    用户在界面里点取消要的是真终止，所以走 `cancel_owned()`（结束进程组 / Job，确认后才放租约）。池里的 safe
+    worker 沿用 `force_kill`。"""
+    if getattr(worker, "owned", None) is not None and callable(
+        getattr(worker, "cancel_owned", None)
+    ):
+        worker.cancel_owned()
+    else:
+        worker.force_kill()
 
 
 def _script_revision(root: str, script: str | None) -> str | None:
@@ -643,6 +674,7 @@ class PreparationService:
     def __init__(self) -> None:
         self._entries: dict[str, _Entry] = {}
         self._lock = threading.Lock()
+        self._order = 0  # 登记序号计数（`PreparationPlan.launch_order`）
 
     # ---- 登记 ----
     def register(self, plan: PreparationPlan, *, force_rebuild: bool = False) -> PreparationResult:
@@ -666,6 +698,15 @@ class PreparationService:
             )
             result.finished_at = time.time()
             result.status = STATUS_NEEDS_INPUT
+        with self._lock:
+            self._order += 1
+            order = self._order
+        if plan.execution == execspec.PROFILE_NATIVE:
+            plan = dataclasses.replace(
+                plan,
+                project_epoch=nativesession.REGISTRY.project_epoch(plan.project_root),
+                launch_order=order,
+            )
         with self._lock:
             self._sweep()
             self._entries[plan.plan_id] = _Entry(
@@ -728,6 +769,8 @@ class PreparationService:
             plan_id=plan.plan_id,
             created_at=plan.created_at,
             static_source=plan.static_source,
+            project_epoch=plan.project_epoch,
+            launch_order=plan.launch_order,
         )
         entry.plan = fresh
         return fresh
@@ -1160,7 +1203,9 @@ class PreparationService:
                 expected_worker=owned,
                 **({"run": entry.plan.run} if entry.plan.run is not None else {}),
             ):
-                owned.force_kill()  # 已被 watcher / invalidate 摘出池子：池侧只会优雅关闭（排在 build 后面），这里只杀自己的那条
+                # 已被 watcher / invalidate 摘出池子：池侧只会优雅关闭（排在 build 后面），这里只杀自己的那条；
+                # 桌面拥有的 native 会话不在池里：取消 = 结束它的进程组（P07）
+                _kill_owned_worker(owned)
         elif acquired:
             # 共享会话的等待者：会话属于别的消费者（编辑那条渲染、另一份计划）——不关它，只是本计划不再等；
             # 执行线程之后回来时发现自己已经终局，什么都不写
@@ -1170,6 +1215,42 @@ class PreparationService:
                 note="取消：会话属于别的消费者，未关闭；本计划不再等它",
             )
         return {"accepted": True, "reason": ""}
+
+    def cancel_project(
+        self, project_id: str, script: str | None = None, keep: str | None = None
+    ) -> int:
+        """取消这个项目名下所有还没终局的计划(执行线程据此在下一个取消接受时刻收工,新建的会话当场关掉)。
+
+        * 项目关闭:只给 `project_id`;
+        * 同一脚本重新运行:给 `script` 与 `keep`(新计划自己)——只有**比 keep 更早登记**的同脚本计划让位,更新的(另一个窗口刚发起的重跑)不取消。
+        返回接受了取消的数量。别的项目 / 别的脚本的计划不动。"""
+        with self._lock:
+            order = list(self._entries)  # 登记顺序 = 计划的先后
+            if keep is not None and keep not in order:
+                return 0
+            older = set(order[: order.index(keep)]) if keep is not None else set(order)
+            mine = [
+                pid
+                for pid, e in self._entries.items()
+                if pid in older
+                and e.plan.project_id == project_id
+                and e.result.status not in TERMINAL
+                and (script is None or e.plan.script == script)
+            ]
+        return sum(1 for pid in mine if self.cancel(pid, project_id).get("accepted"))
+
+    def is_cancelled(self, plan_id: str) -> bool:
+        """这份计划是不是已被取消（含被更新的同脚本计划取代、项目关闭）。取消是正向信息：没登记过的计划（直接调 runner 的
+        用例）不算已取消。"""
+        entry = self._entry(plan_id)
+        return entry is not None and entry.cancel.is_set()
+
+    def cancel_plan(self, plan_id: str) -> bool:
+        """按计划号取消(界面只拿到 native 会话的 `launch_id` 时用:它就是计划号)。没有这个计划 / 已终局回 False。"""
+        entry = self._entry(plan_id)
+        if entry is None:
+            return False
+        return bool(self.cancel(plan_id, entry.plan.project_id).get("accepted"))
 
     def note_owner(self, plan_id: str, worker, created: bool) -> None:
         """runner 取到会话那一刻报一次（每次 take 一次，含缺包后换环境的第二次）：`created` 来自 `pool.acquire`
@@ -1191,7 +1272,7 @@ class PreparationService:
                 expected_worker=worker,
                 **({"run": entry.plan.run} if entry.plan.run is not None else {}),
             ):
-                worker.force_kill()  # 同上：已离池就只杀这一条
+                _kill_owned_worker(worker)  # 同上：已离池就只杀这一条
         else:
             self._finish(
                 entry,

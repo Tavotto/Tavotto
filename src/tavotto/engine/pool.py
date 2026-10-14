@@ -457,6 +457,11 @@ def peek(script_name: str, figures_dir: str | Path, run=None):
 
 def control_plane_of(worker) -> str:
     """这条会话实际走的控制面（回执的 `control_plane`）。"""
+    declared = getattr(worker, "control_plane", None)
+    if isinstance(declared, str) and declared:
+        # 桌面拥有的 native 会话（`nativesession.NativeSession`，Worker-like）自己声明（P07）；nativesession
+        # import pool，这里不能反向 import 它
+        return declared
     return "workerd" if isinstance(worker, WorkerdWorker) else "python_pool"
 
 

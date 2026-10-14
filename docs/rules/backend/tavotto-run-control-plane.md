@@ -96,7 +96,22 @@
 - 公开投影（`stable_payload` / `launch_context` / 回执 / `public_state` / 诊断）只带 `argv_count` / `run_config` / env 键名；
   值只在进程内（`session.spec` 私有，`repr` 不带值）。
 - `creationflags` 声明 `CREATE_NO_WINDOW`（GUI 拥有的隐藏子进程）；Windows Job 代码在 CI 以替身 kernel32 单测，**真机 not_run**。
-- 不接前端 / 桌面入口 / preparation runner（P07）；`preparation.plan_for(execution="native")` 只改计划里的 `LaunchContext`，默认 `safe`。
+- `preparation.plan_for(execution="native")` 只改计划里的 `LaunchContext`，默认 `safe`；入口接线与输入见下一节（P07，ADR 0126）。
+
+## 桌面拥有的脚本：输入与入口（P07，ADR 0126）
+
+看护 `tests/native/test_desktop_input_bridge.py`（真 spawn 用户 Python）、`tests/test_desktop_open_to_edit_e2e.py`（真服务子进程 + HTTP）、
+`web/src/store/nativeInput.test.ts`。纪律：
+
+- **输入桥只属于 `stdin=bridge`**：`bridge_argv` 仅此档多 `--input-bridge`；terminal / `pipe` / `null` 命令行逐字节不变。runner 里提问的阻塞读
+  在提问的主线程上，不起后台线程；`input_request` / `input_reply` 两个键名与 `nativesession.INPUT_REQUEST_EVENT` / `INPUT_REPLY_KEY` 严格同源。
+- **EOF 粘性只属于 stdin 家族**（input / readline / read）；`getpass` 不受它影响也不制造它。
+- **Pending 在后端、先到先得**：`answer_input` 在锁里认领再发；迟到 / 重复 / 错 id / 终端拥有的会话一律 `native_input_not_pending`（409）。
+  事件与 `diagnostics()` 里没有提示词和答案；口令值不落任何盘（用例做字节扫描）。
+- **取消是真终止**：准备会话取消、`POST /api/native/sessions/<id>/cancel`、关闭项目都走 `cancel_owned()`；`force_kill` 对 native 会话永远是放手。
+- **入口只是换 runner**：`execution: "native"` 的 `script` 目标走同一个准备会话 / 同一个 `PreparationService` 状态机，只有 `_native_preparation_runner`
+  替换 `pool.build_owned`；不另建状态机。省略 `execution` = safe，逐字节不变。
+- 脚本自己的异常以 `script_error` + 真实 traceback 收场（进程放行跑完、退出码保留），不吞；native 路径不自动修复缺依赖。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

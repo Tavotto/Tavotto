@@ -712,3 +712,116 @@ def test_os_version_falls_back_to_sw_vers_when_mac_ver_is_empty(monkeypatch):
     monkeypatch.setattr(perfprobe, "_run", spy)
     assert perfprobe.system_facts()["os_version"] == "15.6.1"
     assert "/usr/bin/sw_vers" in calls
+
+
+def test_action_summary_is_independent_of_drag_and_old_reports():
+    """插入符号是点击，不是拖动；旧版报告没有 actions 也不能报错。"""
+    old = PR.analyze_report(_report([]))
+    assert old["actions"] == []
+
+    report = _report([])
+    report["actions"] = [
+        {
+            "kind": "symbol.insert",
+            "sync_ms": n,
+            "two_raf_ms": n + 12,
+            "phases": {
+                "document.commit": n - 1,
+                "selection.update": 0.5,
+                "ui.status": 0.5,
+            },
+            "ok": True,
+        }
+        for n in (8, 12, 50, 90)
+    ]
+    a = PR.analyze_report(report)
+    assert a["actions"][0]["kind"] == "symbol.insert"
+    assert a["actions"][0]["count"] == 4
+    assert a["actions"][0]["sync_p95_ms"] == 90
+    assert a["actions"][0]["phase_p95_ms"]["document.commit"] == 89
+    assert "普通交互动作" in PR.text_report("synthetic.json", a)
+    assert "symbol.insert" in PR.html_report([("synthetic.json", a)])
+
+
+def test_action_summary_filters_untrusted_names_and_values():
+    report = _report([])
+    report["actions"] = [
+        {"kind": "secret_file.py", "sync_ms": 999, "ok": True},
+        {"kind": "symbol.insert", "sync_ms": -4, "ok": True},
+        {
+            "kind": "symbol.insert",
+            "sync_ms": 12,
+            "two_raf_ms": None,
+            "phases": {"path": 20, "document.commit": 9},
+            "ok": False,
+        },
+    ]
+    a = PR.analyze_report(report)
+    assert a["actions"][0]["count"] == 1
+    assert a["actions"][0]["failed"] == 1
+    assert a["actions"][0]["phase_p95_ms"] == {"document.commit": 9}
+    assert "secret_file.py" not in PR.text_report("test.json", a)
+
+
+def test_action_only_report_is_not_falsely_marked_as_missing_drag():
+    """符号动作报告没有拖动是正常覆盖，不应输出“没跑自动测试”的误导建议。"""
+    report = _report([])
+    report["actions"] = [
+        {
+            "kind": "symbol.insert",
+            "sync_ms": 12.0,
+            "two_raf_ms": 35.0,
+            "phases": {"document.commit": 9.0},
+            "ok": True,
+        }
+    ]
+    a = PR.analyze_report(report)
+    assert a["actions"][0]["kind"] == "symbol.insert"
+    assert not [
+        f
+        for f in a["findings"]
+        if f.dimension == "覆盖" and "没有足够长的拖动" in " ".join(f.evidence)
+    ]
+    assert not [
+        f for f in a["findings"] if f.dimension == "覆盖" and "没跑自动测试" in " ".join(f.evidence)
+    ]
+    assert next(g for dim, g, _ in a["grades"] if dim == "覆盖") == "—"
+
+
+def test_machine_line_uses_the_actual_os_not_unconditionally_macos():
+    """Linux 自动 Runner 的 6.x 内核号不可被报告成 macOS 6.x。"""
+    cases = [
+        ("linux", "6.17.0-1022-azure", "Linux 6.17.0-1022-azure"),
+        ("win32", "10", "Windows 10"),
+        ("darwin", "26.0", "macOS 26.0"),
+        ("unrecognized-platform", "1.0", "OS 1.0"),
+    ]
+    for os_name, version, expected in cases:
+        a = PR.analyze_report(
+            _report([], system={"os": os_name, "os_version": version, "tavotto_version": "0.18.1"})
+        )
+        line = PR.machine_line(a)
+        assert expected in line
+        if os_name == "linux":
+            assert "macOS" not in line
+
+
+def test_short_drag_after_symbol_is_not_disguised_as_action_only():
+    """反证：只有 3 帧的拖动被过滤后，仍须报告覆盖不足，不能冒充纯符号。"""
+    report = _report([_seg(_smooth(3))])
+    report["actions"] = [
+        {
+            "kind": "symbol.insert",
+            "sync_ms": 10.0,
+            "two_raf_ms": 36.0,
+            "phases": {"document.commit": 8.0},
+            "ok": True,
+        }
+    ]
+    a = PR.analyze_report(report)
+    assert not a["stats"]
+    assert a["actions"][0]["kind"] == "symbol.insert"
+    assert any(
+        f.dimension == "覆盖" and "没有足够长的拖动" in " ".join(f.evidence) for f in a["findings"]
+    )
+    assert next(g for dim, g, _ in a["grades"] if dim == "覆盖") != "—"

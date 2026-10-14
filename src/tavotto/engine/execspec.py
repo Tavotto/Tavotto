@@ -80,11 +80,14 @@ OWNERS = (OWNER_TERMINAL, OWNER_DESKTOP)
 ENV_SOURCE_SIDECAR = "sidecar_inherited"
 ENV_SOURCES = (ENV_SOURCE_SIDECAR,)
 #: 脚本的 stdin 通道：`inherit` = caller 的（terminal 恒是它）；`pipe` = 桌面持有写端，由桌面决定何时送入 /
-#: 送 EOF；`null` = 一开始就是 EOF（脚本 `input()` 得到 EOFError，而不是永远挂着）。
+#: 送 EOF；`null` = 一开始就是 EOF（脚本 `input()` 得到 EOFError，而不是永远挂着）；`bridge` = 进程的 OS stdin 是
+#: null，但 Bridge Runner 把脚本的 `input` / `sys.stdin` 读取 / `getpass` 变成控制通道上的提问，由界面作答——
+#: 同一个进程、同一批对象续跑（P07，ADR 0126；桌面「打开并运行」用它）。
 STDIN_INHERIT = "inherit"
 STDIN_PIPE = "pipe"
 STDIN_NULL = "null"
-STDIN_MODES = (STDIN_INHERIT, STDIN_PIPE, STDIN_NULL)
+STDIN_BRIDGE = "bridge"
+STDIN_MODES = (STDIN_INHERIT, STDIN_PIPE, STDIN_NULL, STDIN_BRIDGE)
 
 #: spec 序列化形态的版本。加可选字段不升；改语义 / 删字段才升。
 SPEC_VERSION = 1
@@ -733,6 +736,10 @@ def bridge_argv(
         # 桌面拥有的、带运行配置的启动：不透明引用（不是 argv 值）交给 runner，描述符 / 资产 id 才带 `~rc_…`，
         # 不会和不带配置的那次互相覆盖。terminal 拥有的恒空，命令行逐字节不变
         out += ["--run-config", spec.run_config]
+    if spec.stdin == STDIN_BRIDGE:
+        # 桌面拥有、stdin 走输入桥：脚本的 input / stdin / getpass 变成控制通道上的提问（P07，ADR 0126）。
+        # 其余通道（terminal 的真 stdin、桌面的 pipe / null）命令行逐字节不变（golden）
+        out.append("--input-bridge")
     out.append("--")
     out.extend(spec.argv)
     return out

@@ -555,3 +555,114 @@ describe('图例缩放松手后按成图实测钉对角', () => {
     expect(overrideOf('axes_1.legend', 'fontsize')).toBeCloseTo(5.6, 6)
   })
 })
+
+/* ============================ 吸住后保持（ADR 0128） ============================ */
+
+describe('图内拖动：吸住后保持', () => {
+  const W = layout.width
+  /** 逐点移动指针，每点冲一次预览；mods 可按点给 */
+  const moveThrough = (pts: Array<[number, { metaKey?: boolean }?]>) => {
+    for (const [x, mods] of pts) {
+      fire('pointermove', x, 0, mods)
+      flushPreviewFrame()
+    }
+  }
+  const leftOf = () => (overrideOf('axes_0.texts_0', 'pos_frac') as number[])[0]
+
+  it('吸住后拖开超过一倍容差仍保持，超过两倍才放开', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    moveThrough([[3], [8]])
+    // 8px 已出 6px 容差（别处的线此刻还在 2px 内，没保持的话会被它吸走），
+    // 但这一对还在 2 倍（12px）内：仍吸着，落点不动
+    fire('pointerup', 8, 0)
+    expect(leftOf()).toBeCloseTo(0.2, 6)
+
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    moveThrough([[3], [8], [14]])
+    fire('pointerup', 14, 0)
+    // 放开了：不再钉在 0.2 上（落点可能被别处的线再吸走，所以只断言离开了 0.2）
+    expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
+  })
+
+  it('途经两条几乎等距的线，来回小幅移动时吸附目标不变', async () => {
+    // 与「Superconductor」左边（0.2）相距 4px 处再放一个小标签：Vacuum 在两者之间晃
+    const rivalLeft = 0.2 + 4 / W
+    const rival: ManifestElement = {
+      gid: 'axes_1.texts_9',
+      role: 'text',
+      label: '文字 “rival”',
+      bbox: [rivalLeft, 0.8, 0.0005, 0.03],
+      editable: [],
+      draggable: true,
+      anchor: [rivalLeft, 0.83],
+      drag_prop: 'pos_frac',
+    }
+    await setup(legendOf(), [], [rival])
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    // 3px：离 rival 1px 最近，吸 rival；退回 1.5px：此刻离 0.2 更近，但已吸着 rival
+    moveThrough([[3], [2.5], [1.5], [2.2], [1.6]])
+    fire('pointerup', 1.6, 0)
+    expect(leftOf()).toBeCloseTo(rivalLeft, 6)
+  })
+
+  it('按住 ⌘ 的那一帧清掉保持：松开后要重新进容差才吸', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    moveThrough([[3], [3.5, { metaKey: true }], [8]])
+    fire('pointerup', 8, 0)
+    // 若保持没被清掉，这里会钉回 0.2；清掉了就是自由位置（再被别处的线吸走也远离 0.2）
+    expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
+  })
+
+  describe('⇧ 锁向时没被采用的那一轴不留保持', () => {
+    const H = layout.height
+    const mv = (x: number, y: number, mods: { shiftKey?: boolean } = {}) => {
+      fire('pointermove', x, y, mods)
+      flushPreviewFrame()
+    }
+    const posOf = () => overrideOf('axes_0.texts_0', 'pos_frac') as number[]
+
+    it('锁水平：被锁的 y 轴先前吸着的线，松开 ⇧ 后不再拽住（落点是自由位置，不是旧线）', async () => {
+      await setup()
+      startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+      mv(0, 2) // 下边离 y=0.30 的线 3.8px：吸上，y 轴记下这一对
+      mv(30, 2, { shiftKey: true }) // 锁水平：y 不走也不吸，保持必须清掉
+      mv(30, -2.2) // 松开 ⇧：下边离旧线 8px（1×–2× 容差之间），别处 6px 内没线
+      fire('pointerup', 30, -2.2)
+      // 若保持没清，这里会被钉回 0.30
+      expect(posOf()[1]).toBeCloseTo(0.28 - 2.2 / H, 5)
+    })
+
+    it('锁竖直：被锁的 x 轴先前吸着的线，松开 ⇧ 后不再拽住', async () => {
+      await setup()
+      startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+      mv(3, 0) // 左边吸上 0.2
+      mv(3, 30, { shiftKey: true }) // 锁竖直
+      mv(8, 30) // 松开 ⇧：离旧线 8px；若保持没清会钉回 0.2
+      fire('pointerup', 8, 30)
+      expect(posOf()[0] - 0.2).toBeGreaterThan(5 / layout.width)
+    })
+
+    it('45° 锁定采用 x 轴时，没被采用的 y 轴保持被清掉', async () => {
+      await setup()
+      startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+      mv(0, 2) // y 吸上 0.30
+      mv(2, 2, { shiftKey: true }) // 45°：x 修正 1 个单位、y 要 1.9 个，采用 x
+      mv(0, -2.2) // 松开 ⇧：y 离旧线 8px
+      fire('pointerup', 0, -2.2)
+      expect(posOf()[1]).toBeCloseTo(0.28 - 2.2 / H, 5)
+    })
+
+    it('45° 锁定采用 y 轴时，没被采用的 x 轴保持被清掉', async () => {
+      await setup()
+      startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+      mv(3, 0) // x 吸上 0.2
+      mv(4, 4, { shiftKey: true }) // 45°：x 要 1 个单位、y 只要 0.45 个，采用 y
+      mv(8, 0) // 松开 ⇧：x 离旧线 8px
+      fire('pointerup', 8, 0)
+      expect(posOf()[0] - 0.2).toBeGreaterThan(5 / layout.width)
+    })
+  })
+})

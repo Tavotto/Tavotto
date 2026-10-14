@@ -4959,7 +4959,12 @@ export interface DiagSendPrepared {
   schema: number
   max_bytes: number
   too_large: boolean
-  entries: { name: string; kind: string }[]
+  /** 包内文件：名字、内容类别（闭集 id）、解压后的字节数 */
+  entries: { name: string; kind: string; bytes?: number }[]
+  /** 三个勾选项在这份包里的实际取值（引擎白名单校验后的；老引擎没有这个键 = 全 false） */
+  options?: { source: boolean; crash_reports: boolean; corrupt_sessions: boolean }
+  /** 因体积上限被截短的类别（按优先级从低往高截；核心文件不截） */
+  truncated?: { kind: string; original_bytes: number; kept_bytes: number }[]
 }
 
 export type DiagSendState = 'prepared' | 'sending' | 'cancelling' | 'done' | 'failed' | 'cancelled' | 'unknown'
@@ -4986,13 +4991,29 @@ export interface DiagSendStatus {
 
 export const fetchDiagSendCapability = () => jsonFetch<DiagSendCapability>('/api/diagnostics/send')
 
+let lastPrepareSeq = 0
+/** 单调的备包序号（毫秒时间戳起步，页面重载后仍大于上一页的）：引擎只认最新的，晚到的旧请求回 409 `diag_stale_prepare`。 */
+const nextPrepareSeq = () => (lastPrepareSeq = Math.max(Date.now(), lastPrepareSeq + 1))
+/** 备包被更新的请求取代（引擎 409 `stale_prepare`）：不是失败，静默忽略。 */
+export const isStalePrepare = (e: unknown) =>
+  e instanceof ApiError && e.status === 409 && e.body?.code === 'diag_stale_prepare'
+
 /** 在本机备好一份包（零网络）。载荷与导出诊断包相同。 */
-export const prepareDiagSend = (payload: unknown) =>
-  jsonFetch<DiagSendPrepared>('/api/diagnostics/send/prepare', {
+export const prepareDiagSend = (
+  payload: unknown,
+  options?: { source?: boolean; crash_reports?: boolean; corrupt_sessions?: boolean },
+) => {
+  // 勾选项同时走查询串：载荷超过引擎的请求体上限会被整份丢弃，勾选项不能跟着消失（引擎以查询串为准）
+  const picked = Object.entries(options ?? {})
+    .filter(([, v]) => v === true)
+    .map(([k]) => k)
+  const q = `?seq=${nextPrepareSeq()}${options ? `&options=${picked.join(',')}` : ''}`
+  return jsonFetch<DiagSendPrepared>(`/api/diagnostics/send/prepare${q}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
 
 /** 用户要保存的**同一份字节**（就是点发送时会上传的那份）。 */
 export async function fetchDiagSendBundle(id: string): Promise<Blob> {
@@ -5629,6 +5650,8 @@ export interface ScriptInputRequest {
   suggestion?: string | null
   /** 为什么要重新确认：`context_changed` / `config_changed` / `legacy_answer` */
   recheck?: string | null
+  /** 这一问来自桌面拥有的 native 会话（P07）：作答 / 停止走 `/api/native/sessions/*`，不走 `/api/script_input/*` */
+  native?: { session_id: string; request_id: string }
 }
 
 export interface RememberedAnswer {
@@ -5881,6 +5904,23 @@ export interface NativeSessionInfo {
   sequence: number
   /** 此刻能不能做对象级编辑（= 停在屏障上）。后端说了算，前端不自己推 */
   editable: boolean
+  /** 谁拥有这个脚本进程：`desktop` = Tavotto 自己起的（可取消、脚本的 input 由界面作答）；`terminal` = 用户的终端 */
+  owner?: 'desktop' | 'terminal'
+  /** 桌面拥有的脚本此刻停在的那一次提问（事实在后端，不属于某个窗口）；没有在等的 = null */
+  pending_input?: NativePendingInput | null
+  /** 被所有者取消结束的（与脚本自己退出 / 崩溃分开） */
+  cancelled?: boolean
+}
+
+/** 桌面拥有的脚本里 `input` / `readline` / `read` / `getpass` 停住的那一问（P07，ADR 0126）。 */
+export interface NativePendingInput {
+  request_id: string
+  kind: 'input' | 'readline' | 'read' | 'getpass'
+  prompt: string
+  /** 口令：密码框作答、不记住、不预填；后端由 `kind` 推出，不信脚本自报 */
+  masked: boolean
+  ordinal: number
+  at: number
 }
 
 /** 一次 build 的结果：stems + 描述符 + （如实报的）冲突。 */
@@ -5966,6 +6006,29 @@ export const detachNativeSession = (sessionId: string) =>
 /** 结束用户脚本——**明确的危险操作**，退出码固定 5，不伪装成 continue。 */
 export const terminateNativeSession = (sessionId: string) =>
   nativeAction(sessionId, 'terminate')
+
+/**
+ * 回答桌面拥有的脚本此刻停在的那一问（`eof` = 「没有输入」，脚本得到 EOF）。脚本在**同一个进程里续跑**；
+ * 别的窗口先答了 / 提问已过 → 409 `native_input_not_pending`。口令只经这一个请求，不进任何 store / 日志。
+ */
+export const answerNativeInput = (sessionId: string, requestId: string, answer: string | null) =>
+  jsonFetch<{ session: NativeSessionInfo }>(
+    `/api/native/sessions/${encodeURIComponent(sessionId)}/input`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        answer === null ? { request_id: requestId, eof: true } : { request_id: requestId, text: answer },
+      ),
+    },
+  )
+
+/** 结束桌面拥有的脚本进程（运行中 / 停在提问上 / 停在屏障上都行）；真终止，不是放手。 */
+export const cancelNativeSession = (sessionId: string) =>
+  jsonFetch<{ confirmed: boolean; session: NativeSessionInfo }>(
+    `/api/native/sessions/${encodeURIComponent(sessionId)}/cancel`,
+    { method: 'POST' },
+  )
 
 export const fetchNativePermissions = (projectRoot?: string) =>
   jsonFetch<{ permissions: NativePermission[] }>(
