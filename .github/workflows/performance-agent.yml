@@ -141,6 +141,7 @@ jobs:
             fi
             verdict="$(python -c 'import json; print(json.load(open("web/test-results/perf-agent/comparison.json", encoding="utf-8"))["status"])')"
             if [[ "$verdict" == "incomparable" ]]; then
+              rm -f "$RESULT"
               continue
             fi
             if [[ "$verdict" != "pass" && "$verdict" != "regression" ]]; then

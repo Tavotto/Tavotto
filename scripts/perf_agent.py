@@ -109,6 +109,8 @@ def summarize(data: dict) -> dict:
             for x in values
             if isinstance(x, (int, float)) and not isinstance(x, bool) and 0 <= x < 120_000
         ]
+        if len(valid) != len(values):
+            invalid_scenarios = True
         # 无完整样本意味着一次操作没测完；不能在剩下的「成功样本」上报绿。
         requested = data.get("iterations")
         per_round = 4 if name == "dialog.presets_open" else 1

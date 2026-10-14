@@ -488,3 +488,32 @@ def test_external_comparison_invalid_threshold_invalidates_completed_summary(
     assert saved["suites"] == {"symbol_ui": "ok", "canvas_drag": "ok"}
     assert saved["comparison"]["status"] == "failed"
     assert json.loads(verdict.read_text())["status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    "bad_sample",
+    [
+        None,
+        True,
+        False,
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        -1,
+        "20",
+        120_000,
+    ],
+    ids=["null", "true", "false", "nan", "inf", "negative_inf", "negative", "string", "too_large"],
+)
+def test_any_extra_invalid_sample_rejects_an_otherwise_complete_report(tmp_path, bad_sample):
+    """合法数已足量也不许吞掉额外的坏样本，导入路径同样不能洗成 pass。"""
+    malformed = report()
+    next(row for row in malformed["scenarios"] if row["id"] == "symbol.alpha")["two_raf_ms"].append(
+        bad_sample
+    )
+    path = tmp_path / "imported.json"
+    path.write_text(json.dumps(malformed))
+    loaded = A.load(path)
+    assert A.summarize(loaded)["status"] == "incomplete"
+    assert A.compare(loaded, report())["status"] == "incomparable"
+    assert A.compare(report(), loaded)["status"] == "incomparable"
