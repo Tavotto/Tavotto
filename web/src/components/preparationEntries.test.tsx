@@ -1,8 +1,8 @@
 /**
  * T09 / T13b：GUI 入口走同一个准备会话（本地开关默认开），落在同一张引导卡上。
  *
- *   * 素材库脚本行的 ▶ 与引导卡上的「开始准备」都只**打开**会话：后端只做只读检查（创建会话），
- *     一个试运行请求都不发、`run` 动作也不认领；参数草稿在那一刻随目标带上；
+ *   * 素材库脚本行的 ▶ 与引导卡上的「打开并运行」是**明确的**入口（V2 PR4）：打开会话 = 只读检查，报告里有后端的 `run_when_ready`
+ *     才代用户认领它；一个试运行请求都不发、永远不发 `execution`；参数草稿在那一刻随目标带上；
  *   * 扫描发现绘图脚本时引导卡**每个项目自动弹一次**，弹出时**不建会话**（建会话 = 检查 = 会起解释器）；
  *   * 脚本行的状态一句话翻译会话的 phase（不另判），点它回到卡片；「已关联」与扫描同一判据（后端 `linked`），
  *     这一次出错 / 跑完没图的脚本不再留在「尚未运行」组。
@@ -150,6 +150,78 @@ describe('素材库脚本行', () => {
   })
 })
 
+const armAction = {
+  id: 'act-arm',
+  kind: 'run_when_ready' as const,
+  config_revision: 1,
+  impact: {
+    executes_user_script: true,
+    installs_packages: true,
+    changes_environment: true,
+    writes_to_project: [],
+    impact_digest: 'grant-1',
+  },
+}
+const armed = (over: Partial<PreparationReport> = {}) => {
+  const base = prep(over)
+  return { ...base, actions: [...base.actions, armAction] }
+}
+
+describe('「打开并运行」入口：一次点击检查并认领 run_when_ready（V2 PR4）', () => {
+  const registry = () =>
+    vi.mocked(fetchRegistry).mockResolvedValue({
+      source: 'tavotto_registry.json',
+      scripts: {},
+      candidates: [],
+      conflicts: {},
+      all_scripts: [
+        { script: 'plot.py', registered: false, static_stems: [], entry_candidates: ['__main__'], reason: 'dynamic_stems', can_probe: true },
+      ],
+    })
+
+  it('素材库 ▶：检查完接着认领，回显授权摘要，请求里没有 execution；按钮读「打开并运行」', async () => {
+    registry()
+    mockCreate.mockResolvedValueOnce(armed())
+    vi.mocked(actOnPreparationSession).mockResolvedValueOnce({
+      claimed: true,
+      report: armed({ phase: 'running', outcome: { kind: 'running' }, observation_seq: 2, actions: [] }),
+    })
+    await mount(<ScriptLibrary query="" />)
+    const run = host.querySelector<HTMLButtonElement>('[data-script-run="plot.py"]')!
+    await act(async () => run.click())
+    await flush()
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(actOnPreparationSession)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(actOnPreparationSession).mock.calls[0][1]).toEqual({
+      action_id: 'act-arm',
+      expected_config_revision: 1,
+      impact_digest: 'grant-1',
+    })
+    expect(JSON.stringify([...mockCreate.mock.calls, ...vi.mocked(actOnPreparationSession).mock.calls])).not.toContain('execution')
+    expect(vi.mocked(probeScript)).not.toHaveBeenCalled()
+  })
+
+  it('素材库 ▶：报告里没有 run_when_ready（老后端 / 杀开关）→ 只检查，不认领 run', async () => {
+    registry()
+    mockCreate.mockResolvedValueOnce(prep())
+    await mount(<ScriptLibrary query="" />)
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-script-run="plot.py"]')!.click())
+    await flush()
+    expect(vi.mocked(actOnPreparationSession)).not.toHaveBeenCalled()
+  })
+
+  it('本地开关关闭：▶ 回到旧的试运行，不建会话也不认领', async () => {
+    localStorage.setItem('tavotto.preparationPanel', 'off')
+    registry()
+    vi.mocked(probeScript).mockResolvedValue({ ok: true, script: 'plot.py', stems: [], figures: [] } as never)
+    await mount(<ScriptLibrary query="" />)
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-script-run="plot.py"]')!.click())
+    await flush()
+    expect(mockCreate).not.toHaveBeenCalled()
+    expect(vi.mocked(actOnPreparationSession)).not.toHaveBeenCalled()
+  })
+})
+
 const inventory = (rows: Partial<import('@/lib/api').ScriptInventoryEntry>[]) => ({
   source: 'tavotto_registry.json',
   scripts: Object.fromEntries(
@@ -247,7 +319,7 @@ describe('引导卡：扫描发现绘图脚本', () => {
     useOnboardingStore.setState({ ...ONBOARDING_DEFAULTS })
   })
 
-  it('自动弹一次、弹出时不建会话；「开始准备」才建（只读检查），不走旧的试运行', async () => {
+  it('自动弹一次、弹出时不建会话；「打开并运行」才建（检查完接着认领 run_when_ready），不走旧的试运行', async () => {
     useProjectScanStore.setState({ scan: scan() })
     mockCreate.mockResolvedValueOnce(prep())
     await mount(<PreparationCard />)
@@ -256,13 +328,29 @@ describe('引导卡：扫描发现绘图脚本', () => {
     expect(card()!.querySelector('[data-prep-line]')!.textContent).toBe('发现绘图脚本 plot.py')
     expect(mockCreate).not.toHaveBeenCalled() // 弹出 ≠ 检查
     const btn = card()!.querySelector<HTMLButtonElement>('[data-prep-primary="start"]')!
-    expect(btn.textContent).toBe('开始准备')
+    expect(btn.textContent).toBe('打开并运行')
     await act(async () => btn.click())
     await flush()
-    expect(mockCreate).toHaveBeenCalledWith({ script: 'plot.py' }, 'pj-a', expect.anything())
+    // 明确的「打开」动作带 reuse_last_success（#982）：后端核验依据不全就当没有
+    expect(mockCreate).toHaveBeenCalledWith({ script: 'plot.py', reuse_last_success: true }, 'pj-a', expect.anything())
     expect(vi.mocked(probeScript)).not.toHaveBeenCalled()
     expect(useProjectPreparationStore.getState().focus).toBe('script:plot.py')
     expect(card()!.dataset.prepState).toBe('ready')
+  })
+
+  it('「打开并运行」一次点击：检查完接着认领后端的 run_when_ready，不再停在 ready 等第二次点击', async () => {
+    useProjectScanStore.setState({ scan: scan() })
+    mockCreate.mockResolvedValueOnce(armed())
+    vi.mocked(actOnPreparationSession).mockResolvedValueOnce({
+      claimed: true,
+      report: armed({ phase: 'running', outcome: { kind: 'running' }, observation_seq: 2, actions: [] }),
+    })
+    await mount(<PreparationCard />)
+    await act(async () => card()!.querySelector<HTMLButtonElement>('[data-prep-primary="start"]')!.click())
+    await flush()
+    expect(vi.mocked(actOnPreparationSession)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(actOnPreparationSession).mock.calls[0][1]).toMatchObject({ action_id: 'act-arm', impact_digest: 'grant-1' })
+    expect(card()!.dataset.prepState).toBe('running')
   })
 
   it('重新检查后目标清单变了：旧的选择（已不在清单里）不再被拿去开始准备', async () => {
@@ -287,7 +375,7 @@ describe('引导卡：扫描发现绘图脚本', () => {
     await act(async () => useProjectScanStore.setState({ scan: multi('s1', ['a.py', 'c.py']) }))
     await act(async () => card()!.querySelector<HTMLButtonElement>('[data-prep-primary="start"]')!.click())
     await flush()
-    expect(mockCreate).toHaveBeenLastCalledWith({ script: 'a.py' }, 'pj-a', expect.anything())
+    expect(mockCreate).toHaveBeenLastCalledWith({ script: 'a.py', reuse_last_success: true }, 'pj-a', expect.anything())
     // 重新检查（新的 scan_id）：选择也不带过去
     useProjectPreparationStore.getState().clear()
     useUiStore.setState({ guideCard: 'card' })

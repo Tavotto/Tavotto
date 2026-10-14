@@ -5416,6 +5416,29 @@ export interface PreparationAction {
   impact: PreparationImpact
 }
 
+/**
+ * 会话里一次真实执行尝试的公开记录（`execpolicy.AttemptRecord.public`，ADR 0127）：执行语义 · 解释器 / 启动上下文摘要 ·
+ * 触发它的原因码 · 与上次相比变了什么 · 结局 · 本可回退却没回退的理由。全是闭集码与不可还原的摘要，没有路径 / argv / 环境值。
+ */
+export interface PreparationAttempt {
+  /** 第几次用户发起的运行（新的运行动作重算预算） */
+  run: number
+  /** 在这次运行里的序号，从 1 起 */
+  seq: number
+  attempt_id: string
+  profile: 'safe' | 'native'
+  interpreter: string
+  launch: string
+  /** 触发这次尝试的上一次尝试的稳定错误码；第一次为空串 */
+  cause: string
+  /** 相对上一次变了的维度：`profile` | `interpreter` | `launch_context` */
+  changed: string[]
+  outcome: 'pending' | 'succeeded' | 'failed' | 'blocked' | 'cancelled'
+  code: string
+  /** 本可回退（原因是 blocked）却没回退的闭集理由（`execpolicy.REASONS`）；空串 = 不适用 / 已回退 */
+  declined: string
+}
+
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 /** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
 export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
@@ -5462,6 +5485,8 @@ export interface PreparationReport {
   dependency_delta?: Record<string, unknown> | null
   /** 运行意图（P05b）；老后端没有这个键 */
   intent?: PreparationRunIntent | null
+  /** 这个会话里每次真实执行尝试的账本（V2，ADR 0127，有界）；老后端没有这个键 */
+  attempt_history?: PreparationAttempt[]
   /** 环境：只是一个可展示的事实（ADR 0114 §六），不要求用户动作；老后端没有 */
   environment?: PreparationEnvironmentFact | null
   /** 正在等的那一问（只有 id / 序号 / 读取方式 / 要不要掩码；提示与答案走 `/api/script_input/*`） */
@@ -5521,7 +5546,17 @@ export interface PreparationEnvironmentFact {
 
 /** 会话目标：一份脚本（可带精确 argv，空 = 不带参数、请求体里没有 `argv`）或一张已知的图 */
 export type PreparationTarget =
-  | { script: string; entry?: string; argv?: readonly string[]; argv_sensitive?: boolean }
+  | {
+      script: string
+      entry?: string
+      argv?: readonly string[]
+      argv_sensitive?: boolean
+      /**
+       * 「打开 / 再次打开脚本」的明确动作：让后端沿用上次成功的运行配置（#982）。后端核验解释器 / 环境 / 脚本 / helper / 数据
+       * 全部仍成立才沿用，沿用了几个参数在会话报告 `target.argv_count`（值不回前端）。给了 `argv` 时被忽略
+       */
+      reuse_last_success?: true
+    }
   | { id: string }
 
 const preparationBody = (target: PreparationTarget) =>
@@ -5532,7 +5567,9 @@ const preparationBody = (target: PreparationTarget) =>
         ...(target.entry ? { entry: target.entry } : {}),
         ...(target.argv && target.argv.length > 0
           ? { argv: [...target.argv], ...(target.argv_sensitive ? { argv_sensitive: true } : {}) }
-          : {}),
+          : target.reuse_last_success
+            ? { reuse_last_success: true }
+            : {}),
       }
 
 /**

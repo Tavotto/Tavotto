@@ -1,0 +1,558 @@
+/**
+ * 「打开并运行」黄金路径（V2 PR4，ADR 0124 / 0126 / 0127）：一次点击 → 检查 → 认领后端的 `run_when_ready` →
+ * 运行（含后端会话内的 safe→native 静默回退）→ 自动进入编辑。看护的几条界线：
+ *
+ *   * 前端**永远不发 `execution`**：回退是后端同一会话里的第二个 attempt，前端只翻译；
+ *   * 只有明确的「打开并运行」入口（`open(..., { run: true })`）会代用户认领；普通 `open` 只检查；
+ *   * 必填参数没填齐 / 报告里没有 `run_when_ready`（老后端、杀开关）时不认领；
+ *   * 认领带授权摘要回显；argv 换了且旧会话还有在等的意图时带 `transfer_from`；
+ *   * 跑完恰好一张图才自动进入编辑；多张要用户挑、失败 / 取消 / 没图不进入；
+ *   * 回退产生新的 attempt_id 不会让「已进入编辑」的记录冒充新结果，也不会多开面板（面板身份是资产 id）。
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  createPreparationSession: vi.fn(),
+  fetchPreparationSession: vi.fn(),
+  actOnPreparationSession: vi.fn(),
+  fetchEngineEnvironment: vi.fn().mockResolvedValue({}),
+  fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
+  fetchPanels: vi.fn().mockResolvedValue({ figures_dir: '', panels: [] }),
+}))
+vi.mock('@/store/workspace', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/workspace')>()),
+  addRuntimePanelToCanvas: vi.fn(),
+  openFastEdit: vi.fn(() => 'editing'),
+}))
+
+import {
+  actOnPreparationSession,
+  ApiError,
+  createPreparationSession,
+  fetchPreparationSession,
+  type CapturedFigureDescriptor,
+  type PreparationAction,
+  type PreparationAttempt,
+  type PreparationReport,
+} from '@/lib/api'
+import { setCurrentProjectId } from '@/lib/session'
+import { useDocumentStore } from '@/store/documentStore'
+import {
+  __setPreparationTimingForTests,
+  draftDiffers,
+  reusedArgCount,
+  scriptTarget,
+  useProjectPreparationStore,
+} from './projectPreparationStore'
+import { useRuntimeAssetStore } from './runtimeAssetStore'
+import { useScriptArgvStore } from './scriptArgvStore'
+import { useUiStore } from './uiStore'
+import { addRuntimePanelToCanvas, openFastEdit } from '@/store/workspace'
+import type { PanelObject } from '@/types/document'
+
+const mockCreate = vi.mocked(createPreparationSession)
+const mockGet = vi.mocked(fetchPreparationSession)
+const mockAct = vi.mocked(actOnPreparationSession)
+
+const DIGEST = 'grant-digest-1'
+
+const action = (kind: PreparationAction['kind'], id = `act-${kind}`): PreparationAction => ({
+  id,
+  kind,
+  config_revision: 1,
+  impact: {
+    executes_user_script: kind === 'run' || kind === 'run_when_ready',
+    installs_packages: kind === 'run_when_ready',
+    changes_environment: kind === 'run_when_ready',
+    writes_to_project: [],
+    ...(kind === 'run_when_ready' ? { impact_digest: DIGEST } : {}),
+  },
+})
+
+const fig = (stem: string): CapturedFigureDescriptor =>
+  ({
+    asset_id: `runtime:plot.py#${stem}`,
+    script: 'plot.py',
+    entry: '__main__',
+    stem,
+    capture_source: 'pyplot',
+    execution_profile: 'safe',
+    original_artifact: null,
+    size_mm: [80, 60],
+    source_fingerprint: 'sha256:x',
+    can_writeback_artifact: false,
+    can_writeback_source: false,
+  }) as CapturedFigureDescriptor
+
+const report = (over: Partial<PreparationReport> = {}): PreparationReport => ({
+  session_version: 1,
+  session_id: 'psess-1',
+  project_id: 'pj-a',
+  target: { kind: 'script', script: 'plot.py', entry: '__main__', asset_id: null, stem: null },
+  config_revision: 1,
+  observation_seq: 1,
+  phase: 'ready_to_run',
+  outcome: { kind: 'pending' },
+  facts: { execution_finished: null, figure_captured: null },
+  checks: [{ id: 'target', status: 'ok' }],
+  requirements: [],
+  actions: [action('run'), action('run_when_ready'), action('recheck')],
+  provider: { plan_id: 'prep-plan', attempt_id: null, attempts: 0, dependency: null },
+  runtime_input: null,
+  captured: [],
+  result: null,
+  ...over,
+})
+
+const running = (seq = 2, over: Partial<PreparationReport> = {}) =>
+  report({
+    phase: 'running',
+    outcome: { kind: 'running' },
+    observation_seq: seq,
+    actions: [action('cancel')],
+    provider: { plan_id: 'prep-plan', attempt_id: 'att-1', attempts: 1, dependency: null },
+    ...over,
+  })
+
+const done = (stems: string[], attemptId = 'att-1', seq = 3, over: Partial<PreparationReport> = {}) =>
+  report({
+    phase: 'completed',
+    outcome: { kind: 'succeeded' },
+    facts: { execution_finished: true, figure_captured: true },
+    observation_seq: seq,
+    actions: [action('recheck')],
+    captured: stems.map(fig),
+    provider: { plan_id: 'prep-plan', attempt_id: attemptId, attempts: 1, dependency: null },
+    ...over,
+  })
+
+const attempt = (over: Partial<PreparationAttempt>): PreparationAttempt => ({
+  run: 1,
+  seq: 1,
+  attempt_id: 'att-1',
+  profile: 'safe',
+  interpreter: 'aaaaaaaaaaaa',
+  launch: 'bbbbbbbbbbbb',
+  cause: '',
+  changed: [],
+  outcome: 'succeeded',
+  code: '',
+  declined: '',
+  ...over,
+})
+
+const panelFor = (fileId: string): PanelObject =>
+  ({
+    id: `panel-${fileId}`, type: 'panel', x: 0, y: 0, w: 100, h: 80, fileId, fileKind: 'png',
+    nativeW: 100, nativeH: 80, script: 'plot.py', overrides: [],
+  }) as unknown as PanelObject
+
+const putPanel = (fileId: string) => {
+  const p = panelFor(fileId)
+  useDocumentStore.setState((st) => ({
+    doc: { ...st.doc, objects: [...st.doc.objects.filter((o) => o.id !== p.id), p] },
+  }))
+}
+
+const flush = async () => {
+  for (let i = 0; i < 8; i++) await Promise.resolve()
+  await new Promise((r) => setTimeout(r, 0))
+}
+
+const KEY = 'script:plot.py'
+const store = () => useProjectPreparationStore.getState()
+const entry = () => store().entries[KEY]
+const open = (run = true) => store().open(scriptTarget('plot.py'), { run })
+const claimed = (r: PreparationReport) => mockAct.mockResolvedValueOnce({ claimed: true, report: r })
+
+beforeEach(() => {
+  vi.useRealTimers()
+  mockCreate.mockReset()
+  mockGet.mockReset()
+  mockAct.mockReset()
+  vi.mocked(addRuntimePanelToCanvas).mockReset()
+  vi.mocked(openFastEdit).mockReset()
+  vi.mocked(openFastEdit).mockImplementation((id: string) => {
+    putPanel(id)
+    return 'editing'
+  })
+  vi.mocked(addRuntimePanelToCanvas).mockImplementation(((d: CapturedFigureDescriptor) => putPanel(d.asset_id)) as never)
+  __setPreparationTimingForTests({ requestTimeoutMs: 15_000, pollMs: [10_000] })
+  store().clear()
+  useScriptArgvStore.getState().clear()
+  useRuntimeAssetStore.setState({ assets: [], loadAssets: async () => {} })
+  useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [] } }))
+  useUiStore.setState({ guideCard: 'closed' })
+  setCurrentProjectId('pj-a')
+})
+
+afterEach(() => {
+  store().clear()
+  setCurrentProjectId(null)
+})
+
+describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要）→ 自动进入编辑', () => {
+  it('黄金路径：恰好一张图，不需要再点「运行」「进入编辑」；请求里永远没有 execution', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1]).toEqual({
+      action_id: 'act-run_when_ready',
+      expected_config_revision: 1,
+      impact_digest: DIGEST,
+    })
+    expect(entry().armed).toBe(true)
+    expect(openFastEdit).not.toHaveBeenCalled() // 还在跑
+    // 后端跑完（SSE 提示后补拉）
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    expect(openFastEdit).toHaveBeenCalledWith('runtime:plot.py#a')
+    expect(entry().editing).toEqual(['runtime:plot.py#a'])
+    expect(entry().armed).toBe(false)
+    expect(useUiStore.getState().guideCard).toBe('closed') // 进入编辑后卡片收起
+    // 前端从不发 execution：创建与动作的请求体里都没有
+    expect(JSON.stringify(mockCreate.mock.calls)).not.toContain('execution')
+    expect(JSON.stringify(mockAct.mock.calls)).not.toContain('execution')
+  })
+
+  it('后端会话内静默回退（第二个 attempt）：同一个资产 id、只开一个面板，不再多开', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    // safe 被拦、后端在同一会话里接上 native 回退：报告还是 running，attempt_id 换了（前端不发 execution）
+    mockGet.mockResolvedValueOnce(
+      running(3, {
+        provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null },
+        attempt_history: [
+          attempt({ outcome: 'blocked', code: 'safe_file_operation_blocked' }),
+          attempt({ seq: 2, attempt_id: 'att-2', profile: 'native', cause: 'safe_file_operation_blocked', changed: ['profile'], outcome: 'pending' }),
+        ],
+      }),
+    )
+    await store().refresh(KEY)
+    expect(entry().armed).toBe(true) // 回退中途不撤销「打开并运行」
+    expect(openFastEdit).not.toHaveBeenCalled()
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-2', 4))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    const panels = useDocumentStore.getState().doc.objects.filter((o) => o.type === 'panel')
+    expect(panels).toHaveLength(1)
+    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
+  })
+
+  it('这次运行替换掉了旧图名（unlinked_stems）：不自动进入——卡片详情里的恢复提示是用户必须看到的', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-1', 3, { unlinked_stems: ['Extra_map'] }))
+    await store().refresh(KEY)
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+    expect(entry().editing).toEqual([])
+    expect(entry().armed).toBe(false)
+  })
+
+  it.each(['pill', 'closed'] as const)('用户把卡放到后台 / 收起（%s）之后才跑完：不抢他的工作区，角标 / 卡上仍有「进入编辑」', async (mode) => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    useUiStore.setState({ guideCard: mode })
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+    expect(entry().editing).toEqual([])
+    expect(entry().armed).toBe(false)
+    expect(entry().report?.captured).toHaveLength(1) // 结果还在，用户随时点「进入编辑」
+  })
+
+  it('用户切去看了别的脚本的卡（聚焦不在这个条目）：同样不自动进入', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    store().blur()
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+  })
+
+  it('多张图：不自动进入（要用户挑，绝不只取第一张）；之后卡片的进入编辑不再被抢', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    mockGet.mockResolvedValueOnce(done(['a', 'b']))
+    await store().refresh(KEY)
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
+    expect(entry().editing).toEqual([])
+    expect(entry().armed).toBe(false)
+  })
+
+  it.each([
+    ['失败', { phase: 'action_required', outcome: { kind: 'failed', code: 'script_error' } }],
+    ['取消', { phase: 'cancelled', outcome: { kind: 'cancelled' } }],
+    ['没出图', { phase: 'partial', outcome: { kind: 'execution_finished_no_figure' } }],
+  ] as const)('%s：不进入编辑，也撤掉「打开并运行」的记号（之后手点的运行成功不会被自动抢走）', async (_n, over) => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    mockGet.mockResolvedValueOnce(running(3, over as Partial<PreparationReport>))
+    await store().refresh(KEY)
+    expect(entry().armed).toBe(false)
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-9', 5))
+    await store().refresh(KEY)
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+  })
+
+  it('safe 被拦（blocked）而后端还没记下「为什么没回退」：可能紧接着就是回退，先不撤记号', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    mockGet.mockResolvedValueOnce(
+      running(3, {
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'safe_file_operation_blocked' },
+        attempt_history: [attempt({ outcome: 'blocked', code: 'safe_file_operation_blocked' })],
+      }),
+    )
+    await store().refresh(KEY)
+    expect(entry().armed).toBe(true)
+  })
+})
+
+describe('只有明确的入口才认领', () => {
+  it('普通 open（只检查）：报告里有 run_when_ready 也不认领', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    await open(false)
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(entry().armed).toBe(false)
+  })
+
+  it('老后端 / 杀开关：报告里没有 run_when_ready → 不认领（也不退而认领 run）', async () => {
+    mockCreate.mockResolvedValueOnce(report({ actions: [action('run'), action('recheck')] }))
+    await open()
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
+  it('必填参数没填齐：不认领（卡片换成参数卡，填完用卡上的主按钮）', async () => {
+    const schema = {
+      status: 'complete',
+      form_enabled: true,
+      reasons: [],
+      exclusive_groups: [],
+      subcommands: null,
+      arguments: [
+        { id: 'scale', dest: 'scale', flags: ['--scale'], positional: false, required: true, arity: 1, action: 'store', type: 'float', editable: true, hidden: false, help: null, default: null, choices: null, metavar: null, role: null },
+      ],
+    }
+    mockCreate.mockResolvedValueOnce(
+      report({
+        requirements: [
+          { id: 'arguments', kind: 'script_arguments', code: 'script_arguments', blocking: false, payload: { schema: schema as never, argv_count: 0, run_config: null } },
+        ],
+      }),
+    )
+    await open()
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
+  describe('只在卡片会说「可以运行了」时代认领：有要用户先看 / 先答的事就停在各自的卡上', () => {
+    const arm = action('run_when_ready')
+    const cases: [string, Partial<PreparationReport>][] = [
+      [
+        '要先选运行目录',
+        {
+          phase: 'awaiting_configuration',
+          requirements: [
+            { id: 'workdir', kind: 'workdir_choice', code: 'workdir_confirmation_required', payload: { recommended: 'project_root', options: [], conflicts: [] } as never },
+          ],
+          actions: [action('recheck'), arm],
+        },
+      ],
+      [
+        '要先装组件（用户该先看见装什么、装到哪）',
+        {
+          phase: 'awaiting_confirmation',
+          requirements: [{ id: 'dependencies', kind: 'dependency_authorization', code: 'dependency_preparation_required', payload: {} }],
+          actions: [action('prepare_dependencies'), action('recheck'), arm],
+        },
+      ],
+      [
+        '脚本会弹窗（提醒要先读）',
+        {
+          requirements: [
+            { id: 'interaction', kind: 'gui_dialog', code: 'script_uses_gui_dialog', blocking: false, payload: { calls: [{ api: 'tkinter.filedialog.askopenfilename', kind: 'file', line: 7 }], truncated: false } },
+          ],
+          actions: [action('run'), action('recheck'), arm],
+        },
+      ],
+      [
+        '有 import 来源不明（提醒要先读）',
+        { checks: [{ id: 'target', status: 'ok' }, { id: 'dependencies', status: 'ok', detail: { origins: { count: 2, by_reason: { module_origin_ambiguous: 2 } } } }], actions: [action('run'), action('recheck'), arm] },
+      ],
+    ]
+    it.each(cases)('%s：不认领', async (_name, over) => {
+      mockCreate.mockResolvedValueOnce(report(over))
+      await open()
+      expect(mockAct).not.toHaveBeenCalled()
+      expect(entry().armed).toBe(false)
+    })
+  })
+
+  it('检查失败（没能建会话）：不认领', async () => {
+    mockCreate.mockRejectedValueOnce(new ApiError('x', 404, { code: 'script_not_found' }))
+    await open()
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(entry().failure?.code).toBe('script_not_found')
+  })
+
+  it('认领被拒（影响变了 409）：说一句、重读报告，不重发、不记号', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    mockAct.mockRejectedValueOnce(new ApiError('x', 409, { code: 'preparation_impact_changed' }))
+    mockGet.mockResolvedValueOnce(report({ observation_seq: 2 }))
+    await open()
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(entry().rejection?.code).toBe('preparation_impact_changed')
+    expect(entry().armed).toBe(false)
+  })
+
+  it('重新打开（continue / 再试一次）沿用这份意图；同参数再 open 不带记号', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    expect(entry().wantsRun).toBe(true)
+    mockCreate.mockResolvedValueOnce(report({ observation_seq: 5 }))
+    await store().open(scriptTarget('plot.py'))
+    expect(entry().wantsRun).toBe(false)
+    expect(entry().armed).toBe(false)
+  })
+})
+
+describe('argv 换了：旧会话里在等的意图原子转移，不并存', () => {
+  it('旧会话意图 active → 新会话认领带 transfer_from；成功后不再带', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(
+      report({
+        intent: { id: 'i1', status: 'active', reason: '', waiting_on: 'dependencies', steps: 0, max_steps: 2, expires_at: 1, attempt_id: null, transferred: false },
+      }),
+    )
+    await open(false)
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockResolvedValueOnce(report({ session_id: 'psess-2' }))
+    await open(false)
+    expect(entry().transferFrom).toBe('psess-1')
+    claimed(running(2, { session_id: 'psess-2' }))
+    await store().act(KEY, 'run_when_ready')
+    expect(mockAct.mock.calls[0][0]).toBe('psess-2')
+    expect(mockAct.mock.calls[0][1]).toMatchObject({ transfer_from: 'psess-1' })
+    expect(entry().transferFrom).toBeNull()
+  })
+
+  it('旧会话没有在等的意图：不带 transfer_from（带了后端 409）', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(report())
+    await open(false)
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockResolvedValueOnce(report({ session_id: 'psess-2' }))
+    await open(false)
+    expect(entry().transferFrom).toBeNull()
+    claimed(running(2, { session_id: 'psess-2' }))
+    await store().act(KEY, 'run_when_ready')
+    expect(mockAct.mock.calls[0][1]).not.toHaveProperty('transfer_from')
+  })
+
+  it('转移被拒（已执行 / 已取消）：下一次点击不再带它', async () => {
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    mockCreate.mockResolvedValueOnce(
+      report({
+        intent: { id: 'i1', status: 'active', reason: '', waiting_on: '', steps: 0, max_steps: 2, expires_at: 1, attempt_id: null, transferred: false },
+      }),
+    )
+    await open(false)
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '2'])
+    mockCreate.mockResolvedValueOnce(report({ session_id: 'psess-2' }))
+    await open(false)
+    mockAct.mockRejectedValueOnce(new ApiError('x', 409, { code: 'preparation_run_intent_not_transferable' }))
+    mockGet.mockResolvedValueOnce(report({ session_id: 'psess-2', observation_seq: 2 }))
+    await store().act(KEY, 'run_when_ready')
+    expect(entry().rejection?.code).toBe('preparation_run_intent_not_transferable')
+    expect(entry().transferFrom).toBeNull()
+  })
+})
+
+describe('沿用上次成功的参数（#982）：只从明确的打开动作发，值不回前端', () => {
+  const reusedReport = (over: Partial<PreparationReport> = {}) =>
+    report({ target: { kind: 'script', script: 'plot.py', entry: '__main__', asset_id: null, stem: null, argv_count: 2 }, ...over })
+
+  it('scriptTarget 默认不带；明确 reuse 且草稿为空才带；草稿里有参数时用户给的赢', () => {
+    expect(scriptTarget('plot.py')).toEqual({ script: 'plot.py' })
+    expect(scriptTarget('plot.py', { reuse: true })).toEqual({ script: 'plot.py', reuse_last_success: true })
+    useScriptArgvStore.getState().setTokens('plot.py', ['--n', '1'])
+    expect(scriptTarget('plot.py', { reuse: true })).toEqual({ script: 'plot.py', argv: ['--n', '1'], argv_sensitive: false })
+  })
+
+  it('请求体只在明确要求时带 reuse_last_success；没有 argv 一起带', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    await store().open(scriptTarget('plot.py', { reuse: true }), { run: false })
+    expect(mockCreate.mock.calls[0][0]).toEqual({ script: 'plot.py', reuse_last_success: true })
+  })
+
+  it('会话沿用了参数：报告只给个数，条目据此算出「沿用 N 个」；沿用不算「草稿与冻结的参数不同」', async () => {
+    mockCreate.mockResolvedValueOnce(reusedReport())
+    await store().open(scriptTarget('plot.py', { reuse: true }), { run: false })
+    expect(reusedArgCount(entry())).toBe(2)
+    expect(draftDiffers(entry().target)).toBe(false) // 否则卡片会误报「参数已填好」
+  })
+
+  it('没沿用（后端核验不成立 → 报告里 argv_count 为 0 / 缺）：个数是 0', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    await store().open(scriptTarget('plot.py', { reuse: true }), { run: false })
+    expect(reusedArgCount(entry())).toBe(0)
+  })
+
+  it('「打开并运行」沿用了参数时不代认领：先让用户看到「沿用 N 个」（卡上有清除）', async () => {
+    mockCreate.mockResolvedValueOnce(reusedReport())
+    await store().open(scriptTarget('plot.py', { reuse: true }), { run: true })
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(entry().wantsRun).toBe(true)
+  })
+
+  it('没沿用到任何参数时「打开并运行」照常一键认领', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await store().open(scriptTarget('plot.py', { reuse: true }), { run: true })
+    expect(mockAct).toHaveBeenCalledTimes(1)
+  })
+
+  it('清除：用不带标志的目标重新打开（另一个会话，旧报告不留），不替用户运行', async () => {
+    mockCreate.mockResolvedValueOnce(reusedReport())
+    await store().open(scriptTarget('plot.py', { reuse: true }), { run: true })
+    mockCreate.mockResolvedValueOnce(report({ session_id: 'psess-2' }))
+    await store().open(scriptTarget('plot.py'), { run: false })
+    expect(mockCreate.mock.calls[1][0]).toEqual({ script: 'plot.py' })
+    expect(entry().report?.session_id).toBe('psess-2')
+    expect(reusedArgCount(entry())).toBe(0)
+    expect(mockAct).not.toHaveBeenCalled()
+  })
+
+  it('清除的检查在途时，旧会话的报告不留在卡上（它属于另一份运行配置）', async () => {
+    mockCreate.mockResolvedValueOnce(reusedReport())
+    await store().open(scriptTarget('plot.py', { reuse: true }), { run: false })
+    let release!: (r: PreparationReport) => void
+    mockCreate.mockReturnValueOnce(new Promise<PreparationReport>((r) => (release = r)))
+    const pending = store().open(scriptTarget('plot.py'), { run: false })
+    expect(entry().report).toBeNull()
+    release(report({ session_id: 'psess-2' }))
+    await pending
+    expect(entry().report?.session_id).toBe('psess-2')
+  })
+})

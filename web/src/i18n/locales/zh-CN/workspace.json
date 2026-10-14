@@ -899,6 +899,9 @@
       "install": "要先安装缺少的组件",
       "needsArgs": "脚本要运行参数",
       "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
+      "fileOpsBlockedSafeOnly": "这个项目设成了只用安全运行；脚本改了文件又去读，结果会不同，所以没有出图",
+      "fileOpsBlockedOff": "原样运行被关掉了；脚本改了项目里的文件又去读，安全运行结果会不同，所以没有出图",
+      "failedAfterFallback": "安全运行不能照常执行，改用原样运行后又出错了",
       "argsRejected_other": "脚本不认你填的 {{count}} 个参数",
       "inputUnanswered": "脚本中途要你回答，再运行一次就能答",
       "inputUnansweredSecret": "脚本要口令，再运行一次时输入（口令不会被记住）",
@@ -915,9 +918,10 @@
       "originUnknown_other": "有 {{count}} 个库的来源还没法确定"
     },
     "btn": {
-      "start": "开始准备",
       "later": "稍后",
       "run": "运行",
+      "openRun": "打开并运行",
+      "clearReuse": "不沿用",
       "runAnyway": "仍然运行",
       "runAgain": "再运行",
       "retry": "再试一次",
@@ -1006,6 +1010,7 @@
       "workdir": "运行目录",
       "args": "参数",
       "argsCount_other": "{{count}} 个",
+      "argsReused_other": "沿用上次成功的 {{count}} 个参数",
       "argsNone": "不带参数",
       "argsHidden_other": "{{count}} 个（含口令，不显示）",
       "installs": "将安装",
@@ -1020,7 +1025,40 @@
       },
       "errorFull": "完整错误信息",
       "errorTruncated": "太长，只保留了最后一部分。",
-      "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。"
+      "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
+      "history": {
+        "title": "运行记录",
+        "attempt": "第 {{n}} 次",
+        "profile": {
+          "safe": "安全运行",
+          "native": "原样运行"
+        },
+        "outcome": {
+          "pending": "进行中",
+          "succeeded": "成功",
+          "failed": "出错",
+          "blocked": "被拦下",
+          "cancelled": "已停止"
+        },
+        "switched": "由安全运行换成原样运行",
+        "declined": {
+          "project_reopened": "项目重新打开过，没有换",
+          "superseded": "被更新的一次运行取代，没有换",
+          "not_desktop_initiated": "不是桌面窗口发起的，没有换",
+          "fallback_disabled": "原样运行已关闭，没有换",
+          "policy_safe_only": "项目设为只用安全运行，没有换",
+          "not_blocked": "原因不是安全运行的限制，没有换",
+          "cancelled": "已停止，没有换",
+          "plan_stale": "检查之后环境变了，没有换",
+          "already_fell_back": "这次运行已经换过一次，没有再换",
+          "native_to_safe": "不从原样运行换回安全运行",
+          "no_new_root_cause": "没有新的原因，没有再试",
+          "not_runnable": "原样运行还有事要先答，没有换",
+          "interpreter_changed": "解释器变了，没有换",
+          "plan_unavailable": "没能算出原样运行，没有换",
+          "launch_failed": "没能启动原样运行"
+        }
+      }
     },
     "fact": {
       "finished": "脚本执行完成",

@@ -276,7 +276,8 @@ function ScriptRow({
 
   const onRunOrCancel = () => {
     if (viaPanel) {
-      void useProjectPreparationStore.getState().open(scriptTarget(entry.script))
+      // 这颗钮就是「打开并运行」：检查完接着认领后端的 run_when_ready，准备完成后自动进入编辑
+      void useProjectPreparationStore.getState().open(scriptTarget(entry.script, { reuse: true }), { run: true })
       return
     }
     const store = useScriptRunStore.getState()

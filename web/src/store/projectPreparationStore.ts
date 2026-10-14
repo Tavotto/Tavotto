@@ -33,8 +33,10 @@ import {
   type PreparationReport,
   type PreparationTarget,
 } from '@/lib/api'
+import { currentAttempt, prepView } from '@/lib/preparationText'
 import { currentProjectId } from '@/lib/session'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
+import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { useEnvStore } from '@/store/envStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useUiStore } from '@/store/uiStore'
@@ -79,6 +81,15 @@ export interface PrepEntry {
    * （按文件 id 扫会把 `markStale()` 留下的旧渲染、别的 override 变体当成这一次）。
    */
   editRenders: Record<string, EditRender>
+  /**
+   * 用户认领过「打开并运行」（`run_when_ready`）、这次运行还没走到尽头：会话 `completed` 且恰好捕获到一张图时自动进入编辑，
+   * 不再要用户点「进入编辑」。**不是后端事实**（只是这个窗口里的用户意图记号）：多张图要用户挑、失败 / 取消 / 没出图都不进入。
+   */
+  armed: boolean
+  /** 这个条目是从明确的「打开并运行」入口打开的：卡片上的「继续 / 再试一次」（重新打开）沿用这份意图，不让用户为同一个目的点两次 */
+  wantsRun: boolean
+  /** 同一脚本换了参数（另一份运行配置）时，旧会话里还在等的运行意图：「打开并运行」带它去后端原子转移，不并存两份 */
+  transferFrom: string | null
 }
 
 export interface EditRender {
@@ -92,8 +103,12 @@ interface PreparationState {
   /** 引导卡此刻展示哪一份（呈现在 `uiStore.guideCard`） */
   focus: string | null
 
-  /** 打开（或复用）一个目标的检查会话并聚焦面板。脚本目标的参数草稿在这一刻取一份拷贝 */
-  open: (target: PreparationTarget, opts?: { show?: boolean }) => Promise<void>
+  /**
+   * 打开（或复用）一个目标的检查会话并聚焦面板。脚本目标的参数草稿在这一刻取一份拷贝。
+   * `run: true` = 用户在一个**明确的「打开并运行」入口**上点了它：检查完、报告里有 `run_when_ready` 动作且必填参数齐了，
+   * 就代用户认领它（授权合同的摘要由 `act` 回显）——这是唯一一条「打开」之后自动认领的路径；其余入口只检查
+   */
+  open: (target: PreparationTarget, opts?: { show?: boolean; run?: boolean }) => Promise<void>
   /** 只读补拉（SSE 提示 / 轮询 / 重连） */
   refresh: (key: string) => Promise<void>
   /** SSE `preparation.session`：只是「重读」的提示 */
@@ -115,11 +130,22 @@ interface PreparationState {
 export const keyOfTarget = (target: PreparationTarget): string =>
   'id' in target ? `asset:${target.id}` : `script:${target.script}`
 
-/** 脚本目标：参数草稿在**这一刻**取拷贝（空草稿 = 不带参数，请求体里没有 argv） */
-export function scriptTarget(script: string): PreparationTarget {
+/**
+ * 脚本目标：参数草稿在**这一刻**取拷贝（空草稿 = 不带参数，请求体里没有 argv）。
+ * `reuse`（#982）只由明确的「打开 / 再次打开脚本」动作传：草稿为空时让后端沿用上次成功的运行配置；草稿有参数时用户给的赢。
+ * 目标构造点仍只有这一处——`recheckIdle` / 草稿变化不经这里发请求，所以会话目标不会在「沿用」与「不沿用」之间翻转。
+ */
+export function scriptTarget(script: string, opts?: { reuse?: boolean }): PreparationTarget {
   const d = useScriptArgvStore.getState().drafts[script]
-  if (!d || d.tokens.length === 0) return { script }
+  if (!d || d.tokens.length === 0) return opts?.reuse ? { script, reuse_last_success: true } : { script }
   return { script, argv: [...d.tokens], argv_sensitive: d.sensitive }
+}
+
+/** 这个条目的会话正在沿用上次成功的参数：返回个数（值不回前端）；没有沿用 = 0 */
+export function reusedArgCount(entry: PrepEntry): number {
+  const t = entry.target
+  if ('id' in t || !t.reuse_last_success || (t.argv?.length ?? 0) > 0) return 0
+  return entry.report?.target.argv_count ?? 0
 }
 
 /** 草稿与会话冻结的参数是否已经不同（用户在面板里改了参数）：不同就需要按新参数重新检查 */
@@ -135,6 +161,18 @@ function targetChanged(a: PreparationTarget, b: PreparationTarget): boolean {
   const y = b.argv ?? []
   if (x.length !== y.length || !!a.argv_sensitive !== !!b.argv_sensitive) return true
   return x.some((t, i) => t !== y[i])
+}
+
+/** 报告里后端给的参数 schema（`script_arguments` 待办的载荷）；没有 argparse 证据就没有 */
+export const argsSchemaOf = (report: PreparationReport | null): ScriptArgsSchema | null => {
+  const req = report?.requirements.find((r) => r.kind === 'script_arguments')
+  return req && req.kind === 'script_arguments' ? req.payload.schema : null
+}
+
+/** 草稿按后端 schema 还差几个必填参数；没有 schema（没有 argparse 证据 / 表单关闭）= null，不判。卡片与「打开并运行」同一把尺子 */
+export function missingArgsOf(report: PreparationReport | null, tokens: readonly string[]): number | null {
+  const schema = argsSchemaOf(report)
+  return schema ? missingRequirements(schema, readTokens(schema, [...tokens]), [...tokens]).count : null
 }
 
 /** 成功的报告里这次尝试真正捕获到的图（老后端没有这个字段 → 空） */
@@ -251,6 +289,19 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     }))
     if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) {
       void onCompleted(report, owner)
+      if (entry(key)?.armed) {
+        // 「打开并运行」认领过：这一轮到头了——恰好一张图就直接进入编辑（多张要用户挑；没有图 / 静态不进）。
+        // 这次无参数运行替换掉了旧图名（`unlinked_stems`，T09b）时不自动进入：卡片详情里「哪些旧图不再关联、怎么恢复」是用户必须看到的
+        // 用户正看着这张卡（聚焦且展开）才自动进入：放到后台（角标）或收起之后他可能正在编辑别的图，不抢他的工作区——角标上仍有「进入编辑」
+        patch(key, () => ({ armed: false }))
+        const figures = capturedOf(report)
+        const watching = get().focus === key && useUiStore.getState().guideCard === 'card'
+        if (watching && figures.length === 1 && (report.unlinked_stems ?? []).length === 0) {
+          void autoEnterEdit(key, figures[0], owner)
+        }
+      }
+    } else if (entry(key)?.armed && endedWithoutEdit(report)) {
+      patch(key, () => ({ armed: false }))
     }
     // 同一会话里的依赖作业刚装完（T09b）：画布上因「要先准备依赖」停着的渲染与原授权框作答之后一样重排——同一份
     // 需求两个展示面，下游效果只有一种（重排的是渲染请求，不是脚本首跑；首跑仍由用户点报告里的 run）
@@ -302,6 +353,25 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     }
   }
 
+  /**
+   * 「打开并运行」入口的下半截：检查完了，报告里有后端的 `run_when_ready` 动作、会话也没卡在必填参数上，就代用户认领它。
+   * 只由 `open(..., { run: true })` 调——也就是用户明确点了那个入口；其余任何路径（刷新 / 重连 / 重建会话 / `recheckIdle`）都不走这里。
+   * 必填参数没填齐时不认领（卡片已换成参数卡，填完用卡上的主按钮）。
+   */
+  const armIfReady = async (key: string) => {
+    const e = entry(key)
+    const report = e?.report
+    if (!e || !report || e.failure || e.pending || e.connection !== 'ok' || 'id' in e.target) return
+    if (!report.actions.some((a) => a.kind === 'run_when_ready')) return
+    // 只在卡片会说「可以运行了」（`ready`，没有要用户先看的事）时代认领：要先答的事（运行目录 / 环境 / 数据 / 必填参数）、要装的组件（用户该先看见
+    // 装什么、装到哪）、弹窗 / 来源不明的提醒、重启后重建的会话都停在各自的卡上，由用户点那张卡的主按钮（它同样是 run_when_ready）
+    const missing = missingArgsOf(report, e.target.argv ?? [])
+    if (prepView(e, { argsChanged: draftDiffers(e.target), editReady: false, missingArgs: missing }).state !== 'ready') return
+    // 沿用了上次成功的参数：一键运行之前让用户看一眼「将沿用 N 个参数」（卡上有清除），所以这一次不代认领
+    if (reusedArgCount(e) > 0) return
+    await get().act(key, 'run_when_ready')
+  }
+
   return {
     epoch: 0,
     entries: {},
@@ -315,7 +385,9 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       const prev = entry(key)
       // 同一脚本换了参数再打开：上一份报告属于旧参数的会话，不许留（留着的话，新会话建不出来时 refresh 会去补拉旧会话，
       // 报告和动作就按旧参数展示 / 执行，而条目记着新目标，「草稿不同」的提示也就不亮了）。同参数再打开才保留不闪空
-      const sameTarget = !!prev && !targetChanged(prev.target, target)
+      // 沿用标志换了（「清除」）也是另一个会话（不同运行配置），上一份报告不许留；但它不算「草稿与会话冻结的参数不同」（`draftDiffers`）
+      const reuseOf = (t: PreparationTarget) => !('id' in t) && !!t.reuse_last_success
+      const sameTarget = !!prev && !targetChanged(prev.target, target) && reuseOf(prev.target) === reuseOf(target)
       if (prev && !sameTarget) {
         targetGens.set(key, (targetGens.get(key) ?? 0) + 1)
         stopTimer(key)
@@ -340,11 +412,20 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             // 「进入编辑」的记录属于那份目标的结果：换了参数就是另一批图，旧图的编辑不许混进新结果的判断
             editing: sameTarget ? (prev?.editing ?? []) : [],
             editRenders: sameTarget ? (prev?.editRenders ?? {}) : {},
+            // 「打开并运行」的意图记号只属于明确点过它的这一次；同参数再打开不带过去，换参数时看旧会话里还有没有在等的意图
+            armed: false,
+            wantsRun: !!opts?.run,
+            transferFrom: sameTarget
+              ? (prev?.transferFrom ?? null)
+              : prev?.report?.intent?.status === 'active'
+                ? prev.report.session_id
+                : null,
           },
         },
       }))
       if (opts?.show !== false) useUiStore.getState().setGuideCard('card')
       await check(key, target, false)
+      if (opts?.run) await armIfReady(key)
     },
 
     refresh: (key) => {
@@ -407,6 +488,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       const g = guardOf(key)
       const pj = e.pj
       patch(key, () => ({ pending: kind, rejection: null }))
+      const transferFrom = kind === 'run_when_ready' ? e.transferFrom : null
       try {
         // 动作 POST 与创建 / 轮询走同一个看门狗：连接卡住时超时落进下面的「连接失败 → 补拉报告」，不重发
         const res = await withWatchdog((signal) =>
@@ -416,13 +498,15 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
               action_id: action.id,
               expected_config_revision: report.config_revision,
               ...(action.impact.impact_digest ? { impact_digest: action.impact.impact_digest } : {}),
+              ...(transferFrom ? { transfer_from: transferFrom } : {}),
             },
             pj,
             signal,
           ),
         )
         if (!live(key, g)) return
-        patch(key, () => ({ pending: null }))
+        // 认领了「打开并运行」：这一轮跑完时自动进入编辑（先记下，再接这份报告——它可能已经是 running）
+        patch(key, () => ({ pending: null, ...(kind === 'run_when_ready' ? { armed: true, transferFrom: null } : {}) }))
         pollStep.delete(key)
         accept(key, res.report)
       } catch (err) {
@@ -438,7 +522,11 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         } else {
           // 修订变了 / 检查之后世界变了 / 影响变了 / 现在不能运行：零副作用的拒绝——说一句，重读报告
           const { code, params } = apiCode(err)
-          patch(key, () => ({ rejection: { code, params } }))
+          // 旧意图不能转移（已执行 / 已取消）：下一次点击不再带它，别让「转移」成为永远的死胡同
+          patch(key, () => ({
+            rejection: { code, params },
+            ...(code === 'preparation_run_intent_not_transferable' ? { transferFrom: null } : {}),
+          }))
         }
         await get().refresh(key)
       } finally {
@@ -466,6 +554,33 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     },
   }
 })
+
+/**
+ * 「打开并运行」这一轮没有（也不会）走到进入编辑：意图终结了、或这次尝试以失败 / 取消 / 没图收场。
+ * 一次 safe 以 `safe_file_operation_blocked` 收场、后端还没记下「为什么没回退」时，可能紧接着就是同会话的回退尝试，先不撤。
+ */
+function endedWithoutEdit(report: PreparationReport): boolean {
+  const intent = report.intent?.status
+  if (intent === 'cancelled' || intent === 'revoked') return true
+  if (report.phase === 'cancelled' || report.phase === 'partial') return true
+  if (report.outcome.kind === 'failed') {
+    const last = currentAttempt(report)
+    return !(report.outcome.code === 'safe_file_operation_blocked' && !last?.declined)
+  }
+  return false
+}
+
+/** 自动进入编辑：动态 import（`prepEnterEdit` 反过来 import 本 store）；回来时项目 / 代已换了就整个丢掉 */
+async function autoEnterEdit(key: string, figure: CapturedFigureDescriptor, owner: ProjectEpochGuard): Promise<void> {
+  try {
+    const { enterEdit } = await import('@/store/prepEnterEdit')
+    if (!owner.still()) return
+    const store = useProjectPreparationStore.getState
+    await enterEdit({ epoch: () => store().epoch, note: (id, render) => store().noteEditing(key, id, render) }, figure)
+  } catch {
+    /* 尽力而为：自动进入没成，卡片上的「进入编辑」仍在 */
+  }
+}
 
 /**
  * 一次尝试成功：素材库与画布上同一脚本的图要看到新结果（与试运行成功后同一串刷新）。只刷新清单与渲染态，

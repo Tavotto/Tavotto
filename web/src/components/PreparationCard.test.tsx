@@ -36,12 +36,14 @@ vi.mock('@/store/workspace', async (importOriginal) => ({
 
 import {
   actOnPreparationSession,
+  ApiError,
   createPreparationSession,
   fetchDependencyOffer,
   fetchPreparationSession,
   probeScript,
   type CapturedFigureDescriptor,
   type PreparationAction,
+  type PreparationAttempt,
   type PreparationOriginFacts,
   type PreparationReport,
 } from '@/lib/api'
@@ -154,6 +156,22 @@ const originChecks = (origins: PreparationOriginFacts): PreparationReport['check
   { id: 'environment', status: 'ok' },
   { id: 'dependencies', status: 'ok', detail: { origins } },
 ]
+
+/** 账本里 safe 被拦下的那一条（`execpolicy.AttemptRecord.public`），按需覆盖字段 */
+const HIST_BLOCKED = (over: Partial<PreparationAttempt>): PreparationAttempt => ({
+  run: 1,
+  seq: 1,
+  attempt_id: 'prep-1',
+  profile: 'safe',
+  interpreter: 'aaaaaaaaaaaa',
+  launch: 'bbbbbbbbbbbb',
+  cause: '',
+  changed: [],
+  outcome: 'blocked',
+  code: 'safe_file_operation_blocked',
+  declined: '',
+  ...over,
+})
 
 /** 面板要面对的每一种状态（报告形状来自后端合同 `prepsession.report`） */
 const STATES: Record<string, Partial<PreparationReport>> = {
@@ -326,6 +344,55 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
     result: { status: 'error', error: { code: 'safe_file_operation_blocked', message: 'blocked' } },
   },
+  // V2 PR4：后端后加的「打开并运行」动作取代主按钮；没有它（老后端 / 杀开关）就是上面原来的 run / 安装
+  readyArm: { actions: [action('run'), action('run_when_ready', { impact_digest: 'grant-1' }), action('recheck')] },
+  depsArm: {
+    phase: 'awaiting_confirmation',
+    requirements: [{ id: 'dependencies', kind: 'dependency_authorization', code: 'dependency_preparation_required', payload: {} }],
+    actions: [
+      action('prepare_dependencies', { installs: ['numpy'], impact_digest: 'imp-1' }),
+      action('run_when_ready', { impact_digest: 'grant-1' }),
+      action('recheck'),
+    ],
+  },
+  // 要改用户自己环境的安装不在「打开并运行」的授权合同里：仍是逐次确认的「安装」
+  depsArmUserEnv: {
+    phase: 'awaiting_confirmation',
+    requirements: [{ id: 'dependencies', kind: 'dependency_authorization', code: 'dependency_preparation_required', payload: {} }],
+    actions: [
+      action('prepare_dependencies', { installs: ['numpy'], impact_digest: 'imp-1', modifies_user_environment: true } as never),
+      action('run_when_ready', { impact_digest: 'grant-1' }),
+      action('recheck'),
+    ],
+  },
+  fileOpsBlockedSafeOnly: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'safe_file_operation_blocked' },
+    actions: [action('run'), action('recheck')],
+    provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+    result: { status: 'error', error: { code: 'safe_file_operation_blocked', message: 'blocked' } },
+    attempt_history: [HIST_BLOCKED({ declined: 'policy_safe_only' })],
+  },
+  fileOpsBlockedOff: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'safe_file_operation_blocked' },
+    actions: [action('run'), action('recheck')],
+    provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+    result: { status: 'error', error: { code: 'safe_file_operation_blocked', message: 'blocked' } },
+    attempt_history: [HIST_BLOCKED({ declined: 'fallback_disabled' })],
+  },
+  // 换成原样运行之后又出错了：一句话 + 一个主按钮（再试一次），历史在详情里
+  failedAfterFallback: {
+    phase: 'action_required',
+    outcome: { kind: 'failed', code: 'script_error' },
+    actions: [action('run'), action('recheck')],
+    provider: { plan_id: 'p', attempt_id: 'prep-2', attempts: 2, dependency: null },
+    result: { status: 'error', error: { code: 'script_error', message: 'boom' } },
+    attempt_history: [
+      HIST_BLOCKED({}),
+      HIST_BLOCKED({ seq: 2, attempt_id: 'prep-2', profile: 'native', cause: 'safe_file_operation_blocked', changed: ['profile'], outcome: 'failed', code: 'script_error' }),
+    ],
+  },
   stale: { phase: 'action_required', outcome: { kind: 'stale', code: 'preparation_plan_stale' }, actions: [action('recheck')] },
   expired: { phase: 'action_required', outcome: { kind: 'unknown', code: 'attempt_expired' }, actions: [action('recheck')] },
   noFigure: {
@@ -443,7 +510,7 @@ describe('一句话 + 至多一个主按钮（每一种状态 × 每一种语种
         expect(panel().querySelector('[data-prep-details]')).toBeNull()
         // 任何卡都不说「可以运行」，除非真的可以运行（主按钮就是 run）
         if (panel().querySelector('[data-prep-line]')!.textContent === (lng === 'zh-CN' ? '可以运行了' : 'Ready to run')) {
-          expect(primary()?.dataset.prepPrimary).toBe('run')
+          expect(['run', 'run_when_ready']).toContain(primary()?.dataset.prepPrimary)
         }
       })
     }
@@ -1736,5 +1803,209 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
     expect(primary()?.dataset.prepPrimary).toBe('missing_input')
     await toggleDetails()
     expect(details()!.querySelector('[data-prep-traceback]')).not.toBeNull()
+  })
+})
+
+describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
+  it('ready 且报告里有 run_when_ready：主按钮是「打开并运行」，认领它并回显授权摘要；永远不发 execution', async () => {
+    await mount()
+    await openWith(report(STATES.readyArm))
+    expect(primary()?.dataset.prepPrimary).toBe('run_when_ready')
+    expect(primary()?.textContent).toBe('打开并运行')
+    mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
+    await act(async () => primary()!.click())
+    expect(mockAct).toHaveBeenCalledWith(
+      'psess-1',
+      { action_id: 'act-run_when_ready', expected_config_revision: 1, impact_digest: 'grant-1' },
+      'pj-a',
+      expect.any(AbortSignal),
+    )
+    expect(JSON.stringify(mockAct.mock.calls)).not.toContain('execution')
+    expect(JSON.stringify(mockCreate.mock.calls)).not.toContain('execution')
+  })
+
+  it('老后端 / 杀开关（报告里没有 run_when_ready）：回到「运行」', async () => {
+    await mount()
+    await openWith(report())
+    expect(primary()?.dataset.prepPrimary).toBe('run')
+    expect(primary()?.textContent).toBe('运行')
+  })
+
+  it('缺组件：打开并运行取代「安装」（装完自动接着运行）；要改用户自己环境的安装不在授权合同里，仍是「安装」', async () => {
+    await mount()
+    await openWith(report(STATES.depsArm))
+    expect(panel().dataset.prepState).toBe('deps')
+    expect(primary()?.dataset.prepPrimary).toBe('run_when_ready')
+    expect(primary()?.textContent).toBe('打开并运行')
+    await act(async () => root.unmount())
+    host.remove()
+    useProjectPreparationStore.getState().clear()
+    await mount()
+    await openWith(report(STATES.depsArmUserEnv))
+    expect(primary()?.dataset.prepPrimary).toBe('prepare_dependencies')
+    expect(primary()?.textContent).toBe('安装')
+  })
+
+  it('运行时才发现缺包（已执行过）：没有 run_when_ready，仍是逐次确认的「安装」', async () => {
+    await mount()
+    await openWith(report({ ...STATES.depsRuntime, actions: [...(STATES.depsRuntime.actions ?? []), action('run_when_ready')] }))
+    expect(primary()?.dataset.prepPrimary).toBe('prepare_dependencies')
+  })
+
+  describe('safe 被自己的守卫拦下、后端没有回退（file_ops_blocked 的死胡同只剩这一种成因）', () => {
+    it.each([
+      ['fileOpsBlockedSafeOnly', '只用安全运行'],
+      ['fileOpsBlockedOff', '原样运行被关掉了'],
+    ] as const)('%s：按账本里的闭集理由说一句具体的话，没有主按钮', async (name, snippet) => {
+      await mount()
+      await openWith(report(STATES[name]))
+      expect(panel().dataset.prepState).toBe('file_ops_blocked')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toContain(snippet)
+      expect(primary()).toBeNull()
+    })
+
+    it('没有账本（老后端）：保持原来的一句话', async () => {
+      await mount()
+      await openWith(report(STATES.fileOpsBlocked))
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('没有出图')
+      expect(primary()).toBeNull()
+    })
+
+    it('运行记录在默认折叠的详情里：理由是闭集码翻成的人话', async () => {
+      await mount()
+      await openWith(report(STATES.fileOpsBlockedSafeOnly))
+      expect(panel().querySelector('[data-prep-history]')).toBeNull()
+      await toggleDetails()
+      const rows = [...(details()?.querySelectorAll('[data-prep-row="history"]') ?? [])]
+      expect(rows).toHaveLength(1)
+      expect(rows[0].textContent).toContain('安全运行')
+      expect(rows[0].textContent).toContain('项目设为只用安全运行，没有换')
+    })
+
+    it('英文界面同样是一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(report(STATES.fileOpsBlockedSafeOnly))
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toContain('safe mode only')
+      expect(line).not.toMatch(/[一-鿿]/)
+    })
+  })
+
+  describe('回退也失败了', () => {
+    it('一句话说明已经换过 + 一个主按钮（再试一次）；运行记录两条在详情里，原因码不进可见区', async () => {
+      await mount()
+      await openWith(report(STATES.failedAfterFallback))
+      expect(panel().dataset.prepState).toBe('failed')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('安全运行不能照常执行，改用原样运行后又出错了')
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.textContent).toBe('再试一次')
+      expect(panel().textContent).not.toContain('safe_file_operation_blocked')
+      await toggleDetails()
+      const rows = [...(details()?.querySelectorAll('[data-prep-row="history"]') ?? [])].map((r) => r.textContent)
+      expect(rows).toHaveLength(2)
+      expect(rows[0]).toContain('第 1 次')
+      expect(rows[0]).toContain('被拦下')
+      expect(rows[1]).toContain('第 2 次')
+      expect(rows[1]).toContain('原样运行')
+      expect(rows[1]).toContain('出错')
+    })
+
+    it('没换过的普通失败不说「换过」，也不显示运行记录（只有一次且没有理由，没有可说的）', async () => {
+      await mount()
+      await openWith(report({ ...STATES.failed, attempt_history: [HIST_BLOCKED({ outcome: 'failed', code: 'script_error' })] }))
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('运行出错了')
+      await toggleDetails()
+      expect(details()?.querySelector('[data-prep-history]')).toBeNull()
+    })
+
+    it('后端以后新增的原因码（旧前端不认识）原样显示，不丢也不猜', async () => {
+      await mount()
+      await openWith(
+        report({ ...STATES.fileOpsBlockedSafeOnly, attempt_history: [HIST_BLOCKED({ declined: 'brand_new_reason' })] }),
+      )
+      await toggleDetails()
+      expect(details()?.querySelector('[data-prep-row="history"]')?.textContent).toContain('brand_new_reason')
+    })
+  })
+
+  it('取消之后「再运行」也走 run_when_ready（报告里有就用），说的字不变', async () => {
+    await mount()
+    await openWith(
+      report({
+        phase: 'cancelled',
+        outcome: { kind: 'cancelled' },
+        actions: [action('run'), action('run_when_ready', { impact_digest: 'grant-1' }), action('recheck')],
+      }),
+    )
+    expect(primary()?.dataset.prepPrimary).toBe('run_when_ready')
+    expect(primary()?.textContent).toBe('再运行')
+  })
+})
+
+describe('沿用上次成功的参数的呈现（#982）', () => {
+  const reused = (over: Partial<PreparationReport> = {}) =>
+    report({ target: { kind: 'script', script: 'plot.py', entry: '__main__', asset_id: null, stem: null, argv_count: 2 }, ...over })
+  const openReuse = async (r: PreparationReport) => {
+    mockCreate.mockResolvedValueOnce(r)
+    await act(async () => {
+      await useProjectPreparationStore.getState().open({ script: 'plot.py', reuse_last_success: true })
+    })
+  }
+
+  it('ready 卡的参数行说「沿用上次成功的 2 个参数」（只有个数，值不显示），旁边一个文字钮「不沿用」，主按钮仍只有一个', async () => {
+    await mount()
+    await openReuse(reused(STATES.readyArm as Partial<PreparationReport>))
+    expect(panel().dataset.prepState).toBe('ready')
+    expect(panel().querySelector('[data-prep-args-summary]')?.textContent).toBe('沿用上次成功的 2 个参数')
+    expect(panel().querySelector('[data-prep-reuse-clear]')?.textContent).toBe('不沿用')
+    expect(visiblePrimaryButtons(panel())).toBe(1)
+    expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
+    expect(panel().textContent).not.toContain('参数已填好') // 沿用不是用户改了草稿
+  })
+
+  it('没沿用（报告里没有个数）：不显示清除钮', async () => {
+    await mount()
+    await openReuse(report(STATES.readyArm as Partial<PreparationReport>))
+    expect(panel().querySelector('[data-prep-reuse-clear]')).toBeNull()
+    expect(panel().querySelector('[data-prep-args-summary]')?.textContent).toBe('不带参数')
+  })
+
+  it('点「不沿用」：按无参数重新检查（请求里没有 reuse_last_success），不运行', async () => {
+    await mount()
+    await openReuse(reused())
+    mockCreate.mockResolvedValueOnce(report({ session_id: 'psess-2' }))
+    await act(async () => (panel().querySelector('[data-prep-reuse-clear]') as HTMLButtonElement).click())
+    expect(mockCreate).toHaveBeenLastCalledWith({ script: 'plot.py' }, 'pj-a', expect.anything())
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(panel().querySelector('[data-prep-reuse-clear]')).toBeNull()
+  })
+
+  it('没能建会话时点「再试一次」：重新打开仍沿用（目标构造点只有 scriptTarget，不翻转成无参数）', async () => {
+    await mount()
+    mockCreate.mockRejectedValueOnce(new ApiError('x', 404, { code: 'script_not_found' }))
+    await act(async () => {
+      await useProjectPreparationStore.getState().open({ script: 'plot.py', reuse_last_success: true })
+    })
+    expect(panel().dataset.prepState).toBe('check_failed')
+    mockCreate.mockResolvedValueOnce(reused())
+    await act(async () => primary()!.click())
+    expect(mockCreate).toHaveBeenLastCalledWith({ script: 'plot.py', reuse_last_success: true }, 'pj-a', expect.anything())
+  })
+
+  it('英文界面同样一句话、没有泄漏中文', async () => {
+    await i18n.changeLanguage('en-US')
+    await mount()
+    await openReuse(reused())
+    expect(panel().querySelector('[data-prep-args-summary]')?.textContent).toBe('Reusing the last 2 successful arguments')
+    expect(panel().querySelector('[data-prep-reuse-clear]')?.textContent).toBe("Don't reuse")
+    expect(panel().textContent).not.toMatch(/[一-鿿]/)
+  })
+
+  it('详情里的「参数」行同样说沿用的个数，不说「不带参数」', async () => {
+    await mount()
+    await openReuse(reused())
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-row="args"]')?.textContent).toContain('沿用上次成功的 2 个参数')
   })
 })
