@@ -93,11 +93,14 @@ export function handleServerEvent(ev: ServerEvent) {
       usePackageStore.getState().onProgress(ev)
       break
 
+    case 'render.preparing':
+      render.noteBuilding(ev.id, { cold: false, cost: '', phase: 'preparing' })
+      break
     case 'render.started': {
       // 事件只带 fileId，而渲染态按变体分键：冷启动提示记在**文件级**的
       // building 表里，不写进任何一个变体条目——同文件另一个副本被盖成
       // 「渲染中」之后没人会来收掉它（它自己根本没在渲染）。
-      render.noteBuilding(ev.id, { cold: !!ev.cold, cost: ev.cost ?? '' })
+      render.noteBuilding(ev.id, { cold: !!ev.cold, cost: ev.cost ?? '', phase: 'rendering' })
       if (ev.cold) {
         const hint = costHint(ev.cost ?? '')
         setStatus(

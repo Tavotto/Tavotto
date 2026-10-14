@@ -4953,16 +4953,22 @@ def api_engine_render():
         ), 400
     t0 = time.time()
     t_get = time.perf_counter()
-    worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
-    # 取会话可能当场 spawn 一个解释器并 import matplotlib——冷启动的大头常常
-    # 在这里，而它**既不在 worker 的 timings 里也不在 build 里**。不单独量出来，
-    # 用户等的那十几秒在数据里就凭空消失了（第一版计时管道就是这么骗了自己）。
-    get_ms = round((time.perf_counter() - t_get) * 1000, 3)
-    info = current_registry().for_stem(Path(stem).stem) or {}
-    cold = not worker.built
-    # 三个事件都得带 pj：前端 renderStore 按 fileId 索引且不分项目，不带的话
-    # 另一个标签页里同名的面板（到处都是的 Fig1.pdf）会跟着显示「正在构建…」
+    # 取会话会起解释器 / 准备环境，必须在这段静默等待之前给界面进度。
+    # 此时还不知道 worker.built，不把「准备中」谎报成冷启动。
     pj = current_ctx().id
+    sse_publish("render.preparing", {"pj": pj, "id": rel_id})
+    try:
+        worker, stem = _engine_worker(rel_id, **_artifact_kwargs(artifact_source))
+        # 取会话的时间不在 worker 的 timings/build 里，单独保留原有计时。
+        get_ms = round((time.perf_counter() - t_get) * 1000, 3)
+        info = current_registry().for_stem(Path(stem).stem) or {}
+        cold = not worker.built
+    except Exception as exc:
+        # 准备态同样须有终局；原异常留给原有 Flask handler，HTTP/code 不变。
+        sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
+        raise
+    # 进度与终局事件都得带 pj：前端 renderStore 按 fileId 索引且不分项目，不带的话
+    # 另一个标签页里同名的面板（到处都是的 Fig1.pdf）会跟着显示「正在构建…」
     sse_publish(
         "render.started", {"pj": pj, "id": rel_id, "cost": info.get("cost", ""), "cold": cold}
     )

@@ -722,7 +722,7 @@
     "clipboardWriteDenied": "Can’t access the clipboard. The browser denied permission.",
     "coldHint": {
       "heavy": "a cold start can take a few minutes",
-      "medium": "a cold start takes about ten seconds"
+      "medium": "the first run may take longer"
     },
     "dismissError": "Dismiss error",
     "documentLoaded_one": "Loaded {{name}} ({{count}} canvas)",
@@ -1213,5 +1213,9 @@
       "tooNew": "The last layout “{{name}}” is from a newer Tavotto and can’t be opened by this version.",
       "unavailable": "Your last layout isn’t open yet."
     }
+  },
+  "renderProgress": {
+    "preparing": "Preparing the figure…",
+    "elapsed": "{{message}} · {{seconds}} s elapsed"
   }
 }

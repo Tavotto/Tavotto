@@ -5272,6 +5272,10 @@ export default interface Resources {
       },
       "whyNotEditable": "为什么不能编辑？"
     },
+    "renderProgress": {
+      "elapsed": "{{message}} · 已用时 {{seconds}} 秒",
+      "preparing": "正在准备图表…"
+    },
     "restore": {
       "autoAdopted": "已打开本机找到的排版“{{name}}”",
       "blockedWrite": "上次的排版还没打开。",
@@ -5444,7 +5448,7 @@ export default interface Resources {
       "clipboardWriteDenied": "无法访问剪贴板。浏览器未授权。",
       "coldHint": {
         "heavy": "冷启动可能需要几分钟",
-        "medium": "冷启动约十几秒"
+        "medium": "首次运行可能需要更久"
       },
       "copiedDetails": "已复制",
       "copyDetails": "复制详情",

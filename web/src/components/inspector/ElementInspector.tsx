@@ -189,12 +189,26 @@ import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { effectiveOverride } from '@/lib/effectiveOverride'
 import { patchBoundsOf } from '@/lib/patchResize'
 import { PatchSizeControls } from './PatchSizeControls'
+import { useRenderProgress } from '@/hooks/useRenderProgress'
 
 /** 本文件的文案都在 inspector:element.* 下 */
 const el = (key: string, values?: Record<string, unknown>) =>
   translate(`element.${key}`, { ns: 'inspector', ...(values ?? {}) })
 const elMsg = (key: string, values?: Record<string, unknown>) =>
   msg(`element.${key}`, values, 'inspector')
+
+function ElementBuildMessage({ fileId, rendering }: { fileId: string; rendering: boolean }) {
+  const progress = useRenderProgress(fileId, rendering, el('building'))
+  return <p
+    data-element-building={progress.active || undefined}
+    data-render-progress={progress.active ? progress.phase : undefined}
+    className="text-xs text-ink-3"
+  >
+    <span className={cn(progress.active && 'text-shimmer')}>
+      {progress.active ? progress.text : el('waiting')}
+    </span>
+  </p>
+}
 
 /**
  * 图内元素编辑器。**能力**完全由 manifest.editable 决定；**版面**由展示注册表
@@ -420,11 +434,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         {manifest && element && <ColorScaleLink manifest={manifest} element={element} />}
         {!manifest ? (
           // 正在构建是「进行中的字」：text-shimmer（宪法第七节的加载方言之一），等待态是静止的 ink-3
-          <p data-element-building={render?.status === 'rendering' || undefined} className="text-xs text-ink-3">
-            <span className={cn(render?.status === 'rendering' && 'text-shimmer')}>
-              {el(render?.status === 'rendering' ? 'building' : 'waiting')}
-            </span>
-          </p>
+          <ElementBuildMessage fileId={panel.fileId} rendering={render?.status === 'rendering'} />
         ) : !element?.editable.length || !buckets ? (
           <>
             <p className="text-xs text-ink-3">{el('clickToEdit')}</p>
