@@ -3,16 +3,15 @@ import type { Page } from '@playwright/test'
 import os from 'node:os'
 import path from 'node:path'
 import { expect, openWorkspace, test } from './fixtures'
-import { card, openDetails, primary } from './prepCard'
+import { card, primary } from './prepCard'
 
 /**
  * 接入中心的逐行试运行（T09b，ADR 0116）——真后端、真 worker、真浏览器。
  *
  * 判据的主语是脚本自己写在项目**之外**的运行日志（每次执行一行，带 argv）与项目里的注册表文件，不是 toast：
  *
- *   1. 默认（准备面板开）：「试运行并连接」让接入中心让开、打开同一个准备面板——点下去那一刻**不执行**；确认并运行之后
- *      执行一次、图名登记进注册表。再用 `--extra` 跑一次（并入），然后不带参数再跑：面板在同一句里说清哪些旧图不再关联、
- *      怎么恢复（T03 已知缺口的可恢复提示），注册表照旧整条替换（格式不变）；
+ *   1. 默认（准备面板开）：「试运行并连接」让接入中心让开、打开同一个准备面板并认领 run_when_ready（V2 PR4：点一次就执行，
+ *      无参数跑一次、图名登记进注册表）。再用 `--extra` 跑一次（并入），然后回到无参数配置：复用已有会话、不重复执行；
  *   2. 开关关闭：同一颗按钮委派素材库那台旧状态机（`/api/registry/probe`），执行一次、登记好，一个准备会话请求都不发。
  *
  * 全程不联网；项目、日志都在临时目录。
@@ -40,7 +39,7 @@ const registeredStems = (project: string): string[] => {
 }
 
 /** 静态解不出图名的脚本（图名来自运行期）：项目里那张图的状态是 `needs_probe`，接入中心那一行给「试运行并连接」 */
-function project(root: string, log: string): string {
+function project(root: string, log: string, twin = false): string {
   const dir = path.join(root, '项目')
   mkdirSync(dir, { recursive: true })
   copyFileSync(path.join(REPO, 'examples', 'figures', 'Fig1_kinetics.pdf'), path.join(dir, 'Runtime_map.pdf'))
@@ -59,7 +58,7 @@ function project(root: string, log: string): string {
       'def main():',
       '    with open(LOG, "a", encoding="utf-8") as f:',
       '        f.write(json.dumps({"argv": sys.argv[1:]}) + "\\n")',
-      '    names = list(NAMES or ["Runtime_map"])',
+      `    names = list(NAMES or ${JSON.stringify(twin ? ['Base_map', 'Runtime_map'] : ['Runtime_map'])})`,
       '    if "--extra" in sys.argv:',
       '        names.append("Extra_map")',
       '    for name in names:',
@@ -87,13 +86,14 @@ async function openCenter(page: Page) {
   return center
 }
 
-test('接入中心「试运行并连接」打开同一个准备面板：点下去不执行，确认后执行一次并登记；无参数重跑替换旧图名时说清怎么恢复', async ({
+test('接入中心「试运行并连接」打开同一个准备面板并认领 run_when_ready：执行一次并登记；带参数再跑并入；回到无参数配置复用已有会话不重跑', async ({
   app,
   page,
 }) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'tavotto-reg-prep-'))
   const log = path.join(root, 'runs.jsonl')
-  const dir = project(root, log)
+  // 默认就出两张图（V2 PR4：单张图会自动进入编辑、卡片收起；这条用例要看卡片上的参数与恢复提示，所以让它停在「画好了」）
+  const dir = project(root, log, true)
   try {
     const a = await app({ figures: dir })
     await page.setViewportSize({ width: 1400, height: 900 })
@@ -107,38 +107,37 @@ test('接入中心「试运行并连接」打开同一个准备面板：点下�
     const row = center.locator('[data-panel-row="Runtime_map.pdf"]')
     await row.getByRole('button', { name: /试运行并连接/ }).click()
 
-    // 接入中心让开，同一张引导卡接手：只读检查，一个执行都没有
+    // 接入中心让开，同一张引导卡接手：「试运行并连接」就是「打开并运行」（V2 PR4）——检查完接着认领 run_when_ready，
+    // 无参数跑一次；两张图要用户挑，所以不自动进入编辑，卡片停在「画好了」上
     await expect(center).toHaveCount(0)
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    expect(runs(log)).toEqual([])
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
+    expect(runs(log)).toEqual([{ argv: [] }])
+    await expect.poll(() => registeredStems(dir), { timeout: 30_000 }).toEqual(['Base_map', 'Runtime_map'])
 
-    // 在卡里带上 `--extra`（原样参数）：继续 = 按新参数检查 → 运行
+    // 在卡里带上 `--extra`（原样参数）：继续 = 按新参数重新检查并接着运行（这个条目是从「打开并运行」入口打开的）
     await card(page).locator('[data-testid="argv-raw-render_map.py"] > summary').click()
     await card(page).getByRole('button', { name: '添加参数' }).click()
     await card(page).getByRole('textbox', { name: 'render_map.py 的第 1 个参数' }).fill('--extra')
     await expect(card(page)).toHaveAttribute('data-prep-state', 'args_changed')
     await primary(page).click()
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    expect(runs(log)).toEqual([])
-    await primary(page).click()
+    await expect.poll(() => runs(log).length, { timeout: 120_000 }).toBe(2)
     await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 120_000 })
-    expect(runs(log)).toEqual([{ argv: ['--extra'] }])
-    await expect.poll(() => registeredStems(dir), { timeout: 30_000 }).toEqual(['Extra_map', 'Runtime_map'])
+    expect(runs(log)).toEqual([{ argv: [] }, { argv: ['--extra'] }])
+    await expect.poll(() => registeredStems(dir), { timeout: 30_000 }).toEqual(['Base_map', 'Extra_map', 'Runtime_map'])
 
-    // 去掉参数、不带参数再跑：注册表按脚本整条替换（格式不变），卡片详情里说清 Extra_map 不再关联、怎么恢复
+    // 去掉参数、回到无参数配置：同一个目标（脚本 + 运行配置）复用已有的会话，**不会再执行一次**（那份结果就在那里）。
+    // （「无参数运行替换掉旧图名」的恢复提示由 `PreparationCard.test.tsx` 与后端 `test_registry_probe*` 钉；
+    // 它需要一个全新的无参数会话，而这里无参数会话是第一个、还活着。）
     const raw = card(page).locator('[data-testid="argv-raw-render_map.py"]')
     if ((await raw.getAttribute('open')) === null) await raw.locator('> summary').click()
     await card(page).getByRole('button', { name: '删除 render_map.py 的第 1 个参数' }).click()
     await expect(card(page)).toHaveAttribute('data-prep-state', 'args_changed')
     await primary(page).click()
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 60_000 })
-    await primary(page).click()
-    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed_unlinked', { timeout: 120_000 })
-    const details = await openDetails(page)
-    await expect(details.locator('[data-prep-unlinked]')).toContainText('此前带其他参数生成的 Extra_map 已不再关联')
-    await expect(details.locator('[data-prep-unlinked]')).toContainText('用原参数再运行一次即可恢复')
-    expect(runs(log)).toEqual([{ argv: ['--extra'] }, { argv: [] }])
-    expect(registeredStems(dir)).toEqual(['Runtime_map'])
+    await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: 60_000 })
+    await expect(card(page).locator('[data-prep-figures]')).toContainText('Base_map')
+    await page.waitForTimeout(1500)
+    expect(runs(log)).toEqual([{ argv: [] }, { argv: ['--extra'] }])
+    expect(registeredStems(dir)).toEqual(['Base_map', 'Extra_map', 'Runtime_map'])
 
     // 接入中心自己一个试运行请求都没发过
     expect(probes).toEqual([])

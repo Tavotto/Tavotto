@@ -229,17 +229,15 @@ test(
       expect((await environment(page, a)).project.consent).toBe('none')
       expect(execs(w)).toEqual([])
 
-      // —— 经正式入口跑：卡里选目录 → 可以运行 → 运行 → 画好了
+      // —— 经正式入口跑：卡里选目录 → 可以运行 → 打开并运行（V2 PR4：画好一张图就自动进入编辑）
       await startToWorkdir(page, a)
       await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: 120_000 })
       await expect(card(page)).toHaveAttribute('data-origin-view', 'ready')
       expect(execs(w)).toEqual([]) // 准备阶段不执行用户脚本
+      await expect(primary(page)).toHaveText('打开并运行')
       await primary(page).click()
-      await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: LONG })
-      await expect(card(page).locator('[data-prep-line]')).toHaveText('画好了 1 张图')
-      const details = await openDetails(page)
-      await expect(details.locator('[data-fact="execution_finished"]')).toHaveAttribute('data-value', 'true')
-      await expect(details.locator('[data-fact="figure_captured"]')).toHaveAttribute('data-value', 'true')
+      await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: LONG })
+      await expect(card(page)).toHaveCount(0)
 
       // —— 真值：恰好执行一次，用的是项目 .venv（不是宿主）、cwd 是项目根、数据是 data/results.csv、docx 来自 .venv 自己的 site-packages
       const venvRoot = path.join(w.project, '.venv')
@@ -260,11 +258,8 @@ test(
         .checks.find((c: { id: string }) => c.id === 'dependencies')
       expect(dep.detail?.origins).toBeUndefined()
 
-      // —— 进入编辑：用这次捕获的图，不重跑；卡片收起
-      await primary(page).click()
-      await expect(card(page)).toHaveCount(0)
+      // —— 进入编辑是自动的（用这次捕获的图，不重跑）；卡片收起、不留角标
       await expect(pill(page)).toHaveCount(0)
-      await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
       await page.waitForTimeout(1500)
       expect(execs(w)).toHaveLength(1)
     } finally {
@@ -307,13 +302,12 @@ test(
       expect(impact.creates_environment).toBe(true)
       expect(impact.modifies_user_environment).toBe(false)
 
-      // 一次授权：点「安装」——卡片进入进度，没有逐包弹窗
+      // 一次授权：点「打开并运行」（V2 PR4：报告里有 run_when_ready、这次只装进 Tavotto 自己的环境，它取代「安装」）——
+      // 授权合同（只进受管环境、只装项目声明的）就是这一次点击的范围：装好 → 按新环境重新检查 → 执行恰好一次 → 画好一张图就自动进入编辑，没有逐包弹窗
+      await expect(primary(page)).toHaveText('打开并运行')
       await primary(page).click()
-      await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: LONG })
-      expect(execs(w)).toEqual([]) // 装好了，仍然没有执行用户脚本（重跑要用户点「运行」）
-      await primary(page).click()
-      await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: LONG })
-      await expect(card(page).locator('[data-prep-line]')).toHaveText('画好了 1 张图')
+      await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: LONG })
+      await expect(card(page)).toHaveCount(0)
 
       // 真值：恰好执行一次，跑在 Tavotto 新建的受管环境里；docx 是受管环境里装的；宿主解释器仍然 import 不到
       const runs = execs(w)
@@ -331,10 +325,6 @@ test(
       // 项目里没有被写进任何东西：没有新建 .venv，requirements.txt 还是用户写的那一份
       expect(existsSync(path.join(w.project, '.venv'))).toBe(false)
       expect(readFileSync(path.join(w.project, 'requirements.txt'), 'utf-8')).toBe('python-docx\n')
-
-      await primary(page).click()
-      await expect(card(page)).toHaveCount(0)
-      await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
     } finally {
       await cleanup(a, root)
     }
@@ -387,7 +377,7 @@ test(
 
       // 后续选项：仍然运行（用户自己拿主意）。它不装、不建环境；跑在宿主解释器上，orphan_lib 来自 PYTHONPATH 那个目录
       await primary(page).click()
-      await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: LONG })
+      await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: LONG })
       const runs = execs(w)
       expect(runs).toHaveLength(1)
       expect(inside(runs[0].lib!, w.extra_path)).toBe(true)
@@ -484,9 +474,10 @@ test(
       // `depplan._installed_index_satisfies`），联合计划不再给 origins——卡片回到「可以运行」，主按钮是「运行」
       await expect(card(page)).toHaveAttribute('data-prep-state', 'ready', { timeout: LONG })
       await expect(primary(page)).not.toHaveText('仍然运行')
+      await expect(primary(page)).toHaveText('打开并运行')
 
       await primary(page).click()
-      await expect(card(page)).toHaveAttribute('data-prep-state', 'completed', { timeout: LONG })
+      await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: LONG })
       const runs = execs(w)
       expect(runs).toHaveLength(1)
       expect(runs[0].lib_value).toBe(42) // mystery_lib 的 answer()：真是装进去的那个包在跑

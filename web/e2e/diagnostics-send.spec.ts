@@ -139,9 +139,7 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     await page.goto(a.baseURL)
     const card = page.locator('[data-prep-card]')
     await expect(card).toHaveAttribute('data-prep-state', 'discover', { timeout: 60_000 })
-    await card.locator('[data-prep-primary]').click()
-    await expect(card).toHaveAttribute('data-prep-state', 'ready', { timeout: 120_000 })
-    await card.locator('[data-prep-primary]').click() // 运行
+    await card.locator('[data-prep-primary]').click() // 打开并运行：点一次就检查并认领（V2 PR4）
     await expect(card).toHaveAttribute('data-prep-state', /failed|error/, { timeout: 120_000 })
 
     // 主按钮仍是修复类（再试一次），发送反馈住在折叠详情里
