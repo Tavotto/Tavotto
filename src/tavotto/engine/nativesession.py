@@ -968,6 +968,9 @@ class NativeSessionRegistry:
         self._reserved: set[str] = set()
         #: 已关闭的项目(realpath):其后任何新启动在 `reserve` / `begin_start` 当场被拒,直到项目重新打开
         self._closed_projects: set[str] = set()
+        #: 项目的「关闭代次」:每次关闭 +1。启动方带着自己登记时看到的代次来:代次对不上 = 它是关闭**之前**的旧准备,
+        #: 项目即使已重新打开也不许起进程（重新打开只清「已关闭」标记,不让旧计划借新状态复活）
+        self._project_epoch: dict[str, int] = {}
         #: launch_id → 已 spawn、还在握手 / 登记中的所有者。不在 `_sessions` 里，但进程已经在跑：
         #: `shutdown_all` 必须看得见它，否则 sidecar 关停时漏掉成孤儿。
         self._starting: dict[str, StartTicket] = {}
@@ -1017,21 +1020,31 @@ class NativeSessionRegistry:
             self._sessions[session_id] = session
         return session
 
-    def _refuse_if_closed(self, project_root: str) -> None:
-        """调用方持锁。注册表 closing、或这个项目已关闭 → 当场拒绝(一行用户代码都没跑)。"""
-        if self._closing or (
-            project_root and os.path.realpath(project_root) in self._closed_projects
+    def project_epoch(self, project_root: str) -> int:
+        """这个项目当前的关闭代次（登记计划时取一份带着走）。"""
+        with self._lock:
+            return self._project_epoch.get(os.path.realpath(project_root), 0)
+
+    def _refuse_if_closed(self, project_root: str, epoch: int | None = None) -> None:
+        """调用方持锁。注册表 closing、这个项目已关闭、或启动方的代次已过期 → 当场拒绝(一行用户代码都没跑)。"""
+        if self._closing:
+            raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+        if not project_root:
+            return
+        root = os.path.realpath(project_root)
+        if root in self._closed_projects or (
+            epoch is not None and epoch != self._project_epoch.get(root, 0)
         ):
             raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
 
-    def reserve(self, launch_id: str, project_root: str = "") -> None:
+    def reserve(self, launch_id: str, project_root: str = "", epoch: int | None = None) -> None:
         """原子占住一个桌面拥有的 launch_id（取租约 / spawn 之前）；已被占、或同 id 的上一任还没被所有者确认
         结束（`owned.finished`）就抛冲突。检查与占位在同一把锁里。
 
         占位由所有者的完成回调释放（`desktopproc.start`）——握手 / 登记失败后清组超时（取消未确认）也不例外。
         租约键另有一层保险：每次启动的会话 id 都带唯一后缀，不同所有者互相删不掉对方的租约。"""
         with self._lock:
-            self._refuse_if_closed(project_root)
+            self._refuse_if_closed(project_root, epoch)
             busy = any(
                 s.launch_id == launch_id
                 and (s.alive() or (s.owned is not None and not s.owned.finished))
@@ -1041,10 +1054,12 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             self._reserved.add(launch_id)
 
-    def begin_start(self, launch_id: str, project_root: str = "", script: str = "") -> StartTicket:
+    def begin_start(
+        self, launch_id: str, project_root: str = "", script: str = "", epoch: int | None = None
+    ) -> StartTicket:
         """spawn **之前**领在途登记；closing 时拒绝（一行用户代码都没跑）。"""
         with self._lock:
-            self._refuse_if_closed(project_root)
+            self._refuse_if_closed(project_root, epoch)
             ticket = StartTicket(
                 launch_id, os.path.realpath(project_root) if project_root else "", script
             )
@@ -1076,18 +1091,21 @@ class NativeSessionRegistry:
         with self._lock:
             self._closing = False
             self._closed_projects.clear()
+            self._project_epoch.clear()
 
     def close_project(self, project_root: str) -> int:
         """项目关闭:**先**标记(此后这个项目的新启动在 `reserve` / `begin_start` 当场被拒,覆盖「准备线程还没走到
         登记」的所有窗口),**再**结束已登记的会话与在途票据。返回结束的数量。项目重新打开时 `reopen_project`。"""
-        with self._lock:
-            self._closed_projects.add(os.path.realpath(project_root))
+        self.mark_project_closed(project_root)
         return self.cancel_project(project_root)
 
     def mark_project_closed(self, project_root: str) -> None:
         """只做标记(此后这个项目的新启动当场被拒)。关项目分步做时先标记、再取消准备、再 `close_project` 结束会话。"""
+        root = os.path.realpath(project_root)
         with self._lock:
-            self._closed_projects.add(os.path.realpath(project_root))
+            if root not in self._closed_projects:  # 已在关闭中（分步关项目会标记两次）不重复升代次
+                self._closed_projects.add(root)
+                self._project_epoch[root] = self._project_epoch.get(root, 0) + 1
 
     def reopen_project(self, project_root: str) -> None:
         with self._lock:

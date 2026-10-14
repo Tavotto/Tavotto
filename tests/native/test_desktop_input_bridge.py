@@ -419,3 +419,60 @@ def test_a_question_arriving_during_the_terminal_transition_is_dropped(tmp_path,
     assert session.state == nativesession.ENDED
     assert session.pending_input is None
     assert not [e for e in events if e.get("input") == "requested"]
+
+
+class _CountingBridge:
+    """只数「问了几次」的假桥：`_BridgeStdin` 的缓冲语义单测用。"""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.asked = 0
+        self.buffer = ""
+        self.eof = False
+
+    def ask(self, kind, prompt=""):
+        self.asked += 1
+        return self.answers.pop(0) if self.answers else None
+
+
+def test_zero_length_readline_returns_immediately_without_asking():
+    from tavotto.engine.bridge_runner import _BridgeStdin
+
+    b = _CountingBridge(["never\n"])
+    stdin = _BridgeStdin(b)
+    assert stdin.readline(0) == ""
+    assert stdin.read(0) == ""
+    assert b.asked == 0  # 0 长度读不是一次提问：脚本不会因此停在界面上
+
+
+def test_sized_readline_stops_at_size_without_waiting_for_newline():
+    from tavotto.engine.bridge_runner import _BridgeStdin
+
+    b = _CountingBridge(["abcdefgh\n"])
+    stdin = _BridgeStdin(b)
+    assert stdin.readline(3) == "abc"
+    assert stdin.readline(-1) == "defgh\n"
+    assert b.asked == 1
+
+
+def test_readlines_honours_the_size_hint_like_a_real_text_stream(tmp_path):
+    """`readlines(hint)`:累计长度达到 hint 就停,不继续发起提问(Codex #1022 第九轮);`read(0)` / `readline(0)`
+    同样不提问。真文件:`StringIO('aa\\nbb\\n').readlines(3)` 只回第一行。"""
+    script = (
+        dk.FIGURE_HEADER
+        + """\
+import json, sys
+bounded = sys.stdin.readlines(3)           # 第一行 'aa\\n' 已经 3 个字符:读够即止
+zero = (sys.stdin.read(0), sys.stdin.readline(0))
+tail = input("next? ")                     # 真正的下一问应当是这条,而不是又一个 readline
+json.dump([bounded, list(zero), tail], open("hint.json", "w"))
+"""
+    )
+    session = start(tmp_path, script)
+    p = wait_pending(session, "readline")
+    session.answer_input(p["request_id"], text="aa")
+    nxt = wait_pending(session, None)
+    assert nxt["kind"] == "input", f"readlines(3) 读够之后还在提问: {nxt['kind']}"
+    session.answer_input(nxt["request_id"], text="done")
+    dk.finish(session)
+    assert dk.read_json(tmp_path / "work" / "hint.json") == [["aa\n"], ["", ""], "done"]
