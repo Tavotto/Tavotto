@@ -220,6 +220,63 @@ def level_by(value: float, minor: float, major: float, critical: float) -> str |
     return None
 
 
+# ---------------------------------------------------------------- 普通交互动作
+
+
+def action_summaries(report: dict) -> list[dict]:
+    """按闭集动作汇总同步耗时与双 rAF 代理。旧版报告没有 actions 时返回空。
+
+    仅接收数值与受控 action/phase 名称：即使外部报告被改写，也不输出用户文本。
+    """
+    names = ("symbol.insert", "preset.insert")
+    phase_names = ("document.commit", "selection.update", "ui.status")
+    result = []
+    raw = report.get("actions")
+    if not isinstance(raw, list):
+        return result
+    for kind in names:
+        events = [a for a in raw if isinstance(a, dict) and a.get("kind") == kind]
+
+        def timings(key: str) -> list[float]:
+            return [
+                float(a[key])
+                for a in events
+                if isinstance(a.get(key), (int, float))
+                and not isinstance(a[key], bool)
+                and 0 <= a[key] < 120_000
+            ]
+
+        sync = timings("sync_ms")
+        if not sync:
+            continue
+        phases = {}
+        for phase in phase_names:
+            values = [
+                float(a["phases"][phase])
+                for a in events
+                if isinstance(a.get("phases"), dict)
+                and isinstance(a["phases"].get(phase), (int, float))
+                and not isinstance(a["phases"][phase], bool)
+                and 0 <= a["phases"][phase] < 120_000
+            ]
+            if values:
+                phases[phase] = round(pct(values, 0.95), 1)
+        two_raf = timings("two_raf_ms")
+        result.append(
+            {
+                "kind": kind,
+                "count": len(sync),
+                "sync_p50_ms": round(pct(sync, 0.50), 1),
+                "sync_p95_ms": round(pct(sync, 0.95), 1),
+                "sync_max_ms": round(max(sync), 1),
+                "two_raf_p95_ms": round(pct(two_raf, 0.95), 1) if two_raf else None,
+                "phase_p95_ms": phases,
+                "failed": sum(a.get("ok") is False for a in events),
+            }
+        )
+    return result
+
+
 # ---------------------------------------------------------------- 每段统计
 
 
@@ -1335,11 +1392,14 @@ def analyze_report(report: dict) -> dict:
         auth = [a.get("commit_to_authority_ms") for a in report.get("authority") or []]
         auth = [a for a in auth if isinstance(a, (int, float))]
 
-    # ---- 覆盖：这份报告够不够下结论
+    # ---- 覆盖：纯符号/预设动作报告没有拖动很正常；不能把没拖动算作卡顿证据不足。
     coverage: list[str] = []
-    if not stats:
+    # seg_stats 会过滤短拖动；只认原始没有任何拖动段的报告为纯动作。
+    # 否则一段不达标的真实拖动会被误当“没测试”，吞掉覆盖提示。
+    action_only = bool(action_summaries(report)) and not (report.get("segments") or [])
+    if not stats and not action_only:
         coverage.append("没有足够长的拖动（每段至少 10 帧、5 个 pointermove）")
-    if not syn:
+    if not syn and not action_only:
         coverage.append("没跑自动测试：缺少「输入频率」这一维的对照")
     big = max((float(s.context.get("largest_svg_nodes") or 0) for s in stats), default=0)
     if stats and big < 1000:
@@ -1356,7 +1416,7 @@ def analyze_report(report: dict) -> dict:
             f"{len(unsplit)} 段图内拖动途中有 documentStore 通知，这版探针分不清是改了文档还是自动保存在改保存状态"
             "（新版分开记，重录即可判）"
         )
-    if len(report.get("idle_frame_ms") or []) < 20:
+    if len(report.get("idle_frame_ms") or []) < 20 and not action_only:
         coverage.append("空转基线太短（开始后马上就拖了），刷新周期是估的")
     if coverage:
         findings.append(
@@ -1398,9 +1458,16 @@ def analyze_report(report: dict) -> dict:
     findings = merge_findings(findings)
     findings.sort(key=lambda f: -f.severity)
     grades = grade(stats, findings, refresh, headroom, idle_late, auth)
+    if action_only:
+        # 普通点击报告不能替拖动、渲染放大等维度背书；覆盖维度亦不可给 A。
+        grades = [
+            (dim, "—", "只记录普通交互；未测拖动") if dim == "覆盖" else (dim, g, why)
+            for dim, g, why in grades
+        ]
     return {
         "refresh": refresh,
         "stats": stats,
+        "actions": action_summaries(report),
         "findings": findings,
         "grades": grades,
         "headroom": headroom,
@@ -1567,11 +1634,18 @@ def grade(
 def machine_line(a: dict) -> str:
     s = a["system"] or {}
     client = a["report"].get("client") or {}
+    # perfprobe.system_facts() 在非 macOS 同样回 os_version（Linux 为 kernel release）；
+    # 报告不能把 CI/Linux 的内核版本冒充 macOS 版本。
+    platform_name = {
+        "darwin": "macOS",
+        "win32": "Windows",
+        "linux": "Linux",
+    }.get(s.get("os"), "OS")
     parts = [
         s.get("model") or "?",
         s.get("cpu") or "",
         f"{s['memory_gb']:.0f}GB" if s.get("memory_gb") else "",
-        f"macOS {s['os_version']}" if s.get("os_version") else "",
+        f"{platform_name} {s['os_version']}" if s.get("os_version") else "",
         f"Tavotto {s['tavotto_version']}" if s.get("tavotto_version") else "",
         f"DPR {client.get('dpr')}" if client.get("dpr") else "",
         f"界面帧率 {1000 / a['refresh']:.0f}Hz",
@@ -1602,6 +1676,18 @@ def text_report(path: str, a: dict) -> str:
                 f"{s.name:<30}{s.fps:>6.0f}{s.late_pct:>6.0f}{s.dt_p95:>6.0f}{s.dt_max:>6.0f}{s.streak:>5}"
                 f"{fmt(s.latency_p95, nd=0):>8}{fmt(s.tail_max, nd=0):>6}  {cause}"
             )
+        lines.append("")
+    if a["actions"]:
+        lines.append("普通交互动作（点击同步阶段；双 rAF 不代表实际 GPU 上屏）")
+        for action in a["actions"]:
+            parts = "，".join(f"{k} P95 {v:.1f}ms" for k, v in action["phase_p95_ms"].items())
+            lines.append(
+                f"  {action['kind']} ×{action['count']}：同步 P50 {action['sync_p50_ms']:.1f}ms"
+                f" / P95 {action['sync_p95_ms']:.1f}ms / 最大 {action['sync_max_ms']:.1f}ms；"
+                f"双 rAF P95 {fmt(action['two_raf_p95_ms'], 'ms')}；失败 {action['failed']}"
+            )
+            if parts:
+                lines.append(f"    归因：{parts}")
         lines.append("")
     by_level = {lv: [f for f in a["findings"] if f.level == lv] for lv in LEVELS}
     if not by_level["严重"] and not by_level["问题"]:
@@ -1684,7 +1770,7 @@ def html_report(analyses: list[tuple[str, dict]]) -> str:
         "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         f"<title>Tavotto 性能报告</title><style>{CSS}</style><main>",
-        "<h1>Tavotto 拖动性能报告</h1>",
+        "<h1>Tavotto 性能报告（画布拖动与普通交互）</h1>",
         f"<p class='mut'>{len(analyses)} 份报告 · 由 scripts/perf_report.py 生成</p>",
     ]
     if len(analyses) > 1:
@@ -1724,6 +1810,21 @@ def html_report(analyses: list[tuple[str, dict]]) -> str:
                 out += [f"<li class='mut'>位置：<code>{e(x)}</code></li>" for x in f.where]
                 out += [f"<li><strong>建议</strong>：{e(x)}</li>" for x in f.fix]
                 out.append("</ul></div>")
+        if a["actions"]:
+            out.append(
+                "<h3>普通交互动作</h3><div class='card wrap'><table>"
+                "<tr><th>动作</th><th>次数</th><th>同步 P50 / P95 / max</th>"
+                "<th>双 rAF P95（非实际 GPU 上屏）</th><th>阶段 P95</th><th>失败</th></tr>"
+            )
+            for act in a["actions"]:
+                phases = "、".join(f"{k}: {v:.1f}ms" for k, v in act["phase_p95_ms"].items())
+                out.append(
+                    f"<tr><td>{e(act['kind'])}</td><td>{act['count']}</td>"
+                    f"<td>{act['sync_p50_ms']:.1f} / {act['sync_p95_ms']:.1f} / {act['sync_max_ms']:.1f}</td>"
+                    f"<td>{fmt(act['two_raf_p95_ms'])}</td>"
+                    f"<td>{e(phases)}</td><td>{act['failed']}</td></tr>"
+                )
+            out.append("</table></div>")
         if a["stats"]:
             out.append(
                 "<h3>逐段数据</h3><div class='card wrap'><table><tr><th>片段</th><th>帧/秒</th><th>超时%</th>"
@@ -1782,6 +1883,7 @@ def main(argv: list[str] | None = None) -> int:
                 "machine": machine_line(a),
                 "grades": [{"dimension": d, "grade": g, "why": w} for d, g, w in a["grades"]],
                 "headroom": a["headroom"],
+                "actions": a["actions"],
                 "findings": [f.to_json() for f in a["findings"]],
                 "segments": [
                     {

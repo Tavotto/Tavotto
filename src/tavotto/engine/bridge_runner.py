@@ -492,6 +492,196 @@ def _json_default(o):
 
 
 # ---------------------------------------------------------------------------
+# 桌面拥有的进程里的输入桥（P07，ADR 0126）
+# ---------------------------------------------------------------------------
+#: 与 `nativesession.INPUT_REQUEST_EVENT` / `INPUT_REPLY_KEY` 严格同源（改一处必须改两处）。
+INPUT_REQUEST_EVENT = "input_request"
+INPUT_REPLY_KEY = "input_reply"
+#: 提示词随提问交给桌面的上限（字符）；更长的截断，不影响脚本自己拿到的任何东西
+_PROMPT_LIMIT = 1000
+
+
+class InputBridge:
+    """脚本的 `input / sys.stdin.readline|read / getpass` → 控制通道上的一问一答。
+
+    只在桌面拥有的进程里装（`--input-bridge`）：终端拥有的 native 继续用真 stdin。**阻塞读就在
+    提问的这个（主）线程上**，不起后台线程；答复回来这一行 `input()` 就返回，**同一个进程、同一批
+    对象、同一个调用栈**往下走。口令（`getpass`）的答复只经这条通道、只存在于本函数的局部变量里，
+    不写盘、不打日志。
+    """
+
+    def __init__(self, run: "BridgeRun"):
+        self.run = run
+        self.count = 0
+        #: `sys.stdin.read*` / `readline` 的未消费缓冲（一次回答可能含多行）
+        self.buffer = ""
+        self.eof = False
+
+    def take_buffered_line(self) -> str | None:
+        """`input()` 先吃缓冲：缓冲里有完整一行就取走；流已到尽头而缓冲里还有没换行的尾巴，也当一行取走。
+        什么都没有（或还差半行、流没到尽头）返回 None，由调用方发起提问。"""
+        if "\n" in self.buffer:
+            head, _nl, rest = self.buffer.partition("\n")
+            self.buffer = rest
+            return head.rstrip("\r")
+        if self.buffer and self.eof:
+            tail, self.buffer = self.buffer, ""
+            return tail.rstrip("\r")
+        return None
+
+    def ask(self, kind: str, prompt: str = "") -> str | None:
+        """发一次提问并等答复。返回答复文本；`None` = EOF（用户选了「没有输入」/ 通道已断）。"""
+        # stdin 家族（input / readline / read）共用一个「流已到尽头」：EOF 之后与关闭的 stdin 一样不再提问。
+        # getpass 在真终端上读的是 /dev/tty 而不是 stdin，所以不受它影响，也不让它变成「到尽头」
+        sticky = kind != "getpass"
+        if sticky and self.eof:
+            return None
+        control = self.run.control
+        if control is None or control.gone:
+            if sticky:
+                self.eof = True
+            return None
+        self.count += 1
+        request_id = f"in-{os.getpid()}-{self.count}"
+        control.event(
+            INPUT_REQUEST_EVENT,
+            request_id=request_id,
+            kind=kind,
+            prompt=str(prompt)[:_PROMPT_LIMIT],
+            ordinal=self.count,
+        )
+        while True:
+            line = control.readline()
+            if not line:  # 父进程走了：与关闭的 stdin 同一个结论
+                self.run.control = None
+                if sticky:
+                    self.eof = True
+                return None
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            reply = msg.get(INPUT_REPLY_KEY) if isinstance(msg, dict) else None
+            if not isinstance(reply, dict) or reply.get("request_id") != request_id:
+                continue  # 不是给这次提问的（桌面不会这样发；忽略，不猜）
+            text = reply.get("text")
+            if reply.get("eof") or not isinstance(text, str):
+                if sticky:
+                    self.eof = True
+                return None
+            return text
+
+
+class _BridgeStdin(io.TextIOBase):
+    """替掉 `sys.stdin`：读操作变成提问。语义对齐真文件：`readline` 含换行、EOF 回空串。"""
+
+    def __init__(self, bridge: InputBridge):
+        super().__init__()
+        self._bridge = bridge
+
+    @property
+    def encoding(self):  # noqa: D102
+        return "utf-8"
+
+    def readable(self):  # noqa: D102
+        return True
+
+    def isatty(self):  # noqa: D102
+        return False
+
+    def fileno(self):  # noqa: D102
+        raise io.UnsupportedOperation("fileno")
+
+    def _fill(self, kind: str) -> bool:
+        """问一次，把答复放进缓冲。返回 False = EOF。"""
+        b = self._bridge
+        text = b.ask(kind)
+        if text is None:
+            return False
+        if kind == "readline" and not text.endswith("\n"):
+            text += "\n"
+        b.buffer += text
+        if kind == "read":
+            b.eof = True  # 「读到 EOF」的一次回答就是全部内容
+        return True
+
+    def readline(self, size=-1):  # noqa: D102
+        b = self._bridge
+        if size is not None and size == 0:
+            return ""  # 与真文件一致：0 长度读不消费、不阻塞——也就不是一次提问
+        while "\n" not in b.buffer and (size is None or size < 0 or len(b.buffer) < size):
+            if not self._fill("readline"):
+                break
+        head, nl, rest = b.buffer.partition("\n")
+        line = head + nl
+        if size is not None and 0 <= size < len(line):
+            line, rest = line[:size], line[size:] + rest
+        b.buffer = rest
+        return line
+
+    def read(self, size=-1):  # noqa: D102
+        b = self._bridge
+        if size is None or size < 0:
+            while self._fill("read"):
+                pass
+            out, b.buffer = b.buffer, ""
+            return out
+        while len(b.buffer) < size:
+            if not self._fill("read"):
+                break
+        out, b.buffer = b.buffer[:size], b.buffer[size:]
+        return out
+
+    def readlines(self, hint=-1):  # noqa: D102
+        # 与 IOBase.readlines 一致：hint <= 0 / None 读到 EOF；否则累计长度达到 hint 就停（读够即止，不再提问）
+        out = []
+        total = 0
+        while True:
+            line = self.readline()
+            if not line:
+                return out
+            out.append(line)
+            total += len(line)
+            if hint is not None and hint > 0 and total >= hint:
+                return out
+
+
+def _install_input_bridge(run: "BridgeRun") -> None:
+    """装 `input` / `sys.stdin` / `getpass`。在用户脚本之前、控制通道握手之后。"""
+    import getpass  # noqa: PLC0415 — 纯标准库；只有开了输入桥才要
+
+    bridge = InputBridge(run)
+
+    def _input(prompt=""):
+        text = "" if prompt is None else str(prompt)
+        if text:
+            # 与 CPython 的 `input` 一致：非终端 stdin 时提示写到 stdout 并 flush
+            with contextlib.suppress(Exception):
+                sys.stdout.write(text)
+                sys.stdout.flush()
+        # 先消费有界读剩在缓冲里的数据（与真 stdin 一致：缓冲里已有的行不再问）
+        buffered = bridge.take_buffered_line()
+        if buffered is not None:
+            return buffered
+        answer = bridge.ask("input", text)
+        if answer is None:
+            raise EOFError("EOF when reading a line")
+        return answer.split("\n", 1)[0].rstrip("\r")
+
+    def _getpass(prompt="Password: ", stream=None):
+        answer = bridge.ask("getpass", "" if prompt is None else str(prompt))
+        if answer is None:
+            raise EOFError("EOF when reading a line")
+        return answer.split("\n", 1)[0].rstrip("\r")
+
+    _input.__name__ = "input"
+    _getpass.__name__ = "getpass"
+    builtins.input = _input
+    getpass.getpass = _getpass
+    sys.stdin = _BridgeStdin(bridge)
+
+
+# ---------------------------------------------------------------------------
 # 会话
 # ---------------------------------------------------------------------------
 class BridgeRun:
@@ -881,6 +1071,8 @@ def _parse_args(argv: list):
     ap.add_argument(
         "--run-config", default=""
     )  # 桌面拥有的启动：运行配置的不透明引用（与 safe 同名同义）
+    # 桌面拥有的启动：脚本的 input / stdin 读取 / getpass 变成控制通道上的提问（P07）；终端拥有的不带
+    ap.add_argument("--input-bridge", action="store_true")
     if "--" in argv:
         cut = argv.index("--")
         mine, user_argv = argv[:cut], argv[cut + 1 :]
@@ -944,6 +1136,8 @@ def main(argv: list | None = None) -> int:
     token = _take_token()
     if args.control_port:
         run.control = Control(args.control_host, args.control_port, token)
+        if args.input_bridge:
+            _install_input_bridge(run)
 
     exit_code = 0
     try:

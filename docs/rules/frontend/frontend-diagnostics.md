@@ -78,6 +78,9 @@
   **备包只在切换完成之后做**（Codex #923 复核 P1）：`projectStore.adoptSteps` 先 `setCurrentProjectId(B)`、之后才 await 加载并 `resetForNewProject`，认领那一刻内存里仍是 A 的文档与轨迹。所以对话框以 `projectStore.switching`（`runSwitch` 排队到执行完一直亮着，既有机制，不另造代次）为「项目已完全加载」的信号：switching 亮起 → 旧包作废、置「正在准备」、发送禁用、不备包；落下 → 才备新包（`DiagnosticsSendDialog.test.tsx`「真实的切换顺序」，反证：去掉等待则红）。
 - **迟到 start 的 409 不是失败（#928，Codex #923）。** 取消先被引擎处理时，引擎正确拒绝迟到的 start（409 `diag_stale_action` / `diag_session_cancelled`）。`DiagnosticsSendDialog` 的 `send()` catch 把这两个 code 当作取消流程的一部分：置 `cancelling`（不覆盖成不可重试的 `failed`），轮询继续到 `cancelled` 后自动重新备包（`DiagnosticsSendDialog.test.tsx`「迟到的 start」两组）。
 - **清理显式带备包时的项目（Codex #955）。** 引擎会话按项目分键，而切项目时全局当前项目先于 effect 清理变成 B；`discardDiagSend(id, pj)` 因此由对话框传 `packagePj`（备包那一刻的项目；迟到的 prepare 响应用闭包里捕获的 `pj`），请求以 `?pj=` + 头显式指向 A。不传则按 B 找不到 A 的 id、静默 `{ok:true}`，A 的上传继续。后端 `?pj=` 本就先于请求头（`app._request_ctx` / `_diag_send_scope`），`test_diag_send_api.py::test_explicit_pj_query_wins_over_a_conflicting_header` 钉住。
+- **联系维护者（企业微信，仅中文界面）。** 两个地址只在 `lib/contact.ts`（获客链接 `WECOM_CONTACT_URL`、名片码地址 `WECOM_CARD_URL`），二维码图 `assets/wecom-contact-qr.png` 必须解码为后者（`tests/test_wecom_contact_qr.py`，无 `cv2` 则跳过）。
+  组件 `settings/WeComContact.tsx`：**判据是界面语言 `currentLocale() === 'zh-CN'`，不看系统区域**；英文界面不渲染元素（不是隐藏）。位置：发送问题反馈确认框的 done / unknown / failed 三态（ready / preparing 不出现），
+  与设置页「诊断报告」组里发送行之前的「联系维护者」行（发送功能关闭也在，联系方式不依赖上传通道）；确认框里链接与「显示二维码」同占一行，其余阶段该行**占位不显示**（`invisible` + `inert`，#797 的发送按钮不跳位；英文界面连占位也不渲染）；二维码默认折叠、展开才挂 `<img>`；链接是 `target=_blank` 外链。不收集、不上传任何联系方式，不进诊断包；/try 不加（`WeComContact.test.tsx`）。
 - **异步回调一律认代号**：`DiagnosticsSendDialog` 里 prepare / startDiagSend / 保存 / 状态轮询的 then·catch 都捕获发起时的 `gen`（轮询用 `stop`），代号变了（项目切换、重新备包、关窗）就忽略——A 的迟到失败不许改 B 的对话框（`DiagnosticsSendDialog.test.tsx`「A 的 start 挂起 → 切到 B」，含 404）。
 
 ## 发送包的 detail 载荷与勾选项（bundle schema 8，ADR 0118 修订 2026-10-13，`diagnostics/detail.ts`）

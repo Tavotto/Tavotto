@@ -28,6 +28,7 @@ import { Select } from '../ui/Select'
 import { FormRow } from '../FormRow'
 import { CopyButton } from './CopyButton'
 import { saveDiagnosticsZip } from './diagnosticsSave'
+import { WeComContactNote } from './WeComContact'
 
 const ds = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.diagnostics.send.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -436,6 +437,11 @@ export function DiagnosticsSendDialog({
         <p className="text-sm text-ink" data-diag-send-sentence>
           {sentence}
         </p>
+        {/* 结果出来后（成功 / 未知 / 失败）给一条直接找人的路；其余阶段占位不显示（按钮不跳位）；仅中文界面 */}
+        <WeComContactNote
+          active={phase === 'done' || phase === 'unknown' || phase === 'failed'}
+          withReportId={phase !== 'failed' && !!status?.report_id}
+        />
         <Details data-diag-send-details className="text-sm">
           <Summary className="h-6 text-ink-2 hover:text-ink">{ds('details')}</Summary>
           <div className="mt-2 flex flex-col gap-3">

@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { expect, openElementsTab, test, type RunningApp } from './fixtures'
+import { expect, openElementsTab, test, writeRuntimeNamedProject, type RunningApp } from './fixtures'
 import type { Page } from '@playwright/test'
+import { horizontalOffenders } from './overflow'
 
 // 这一组钉的是**旧**的同步试运行路径（T09 起它只在本地开关关闭时走；默认的准备面板路径见
 // `preparation-card.spec.ts`）。开关是本机 localStorage 偏好，在页面脚本之前写好
@@ -457,3 +458,116 @@ test('窄视口：脚本行的「运行并发现图」仍可见可点', async ({
   expect(box!.x).toBeGreaterThanOrEqual(0)
   expect(box!.x + box!.width).toBeLessThanOrEqual(960)
 })
+
+/**
+ * 「能不能编辑」胶囊筛选（`data-testid="asset-editability"`）：可编辑与仅版面的图混在网格里时，
+ * 一点就只剩那一类。项目 = 示例图（3 张有脚本的 PDF）+ 一张没有脚本的 PNG（后端判 `layout_only`）。
+ * 判的是真界面上卡片集合真的变了，不只是胶囊在 DOM 里。
+ */
+test(
+  '能不能编辑的胶囊：可编辑 / 仅版面一点就分开，回到全部恢复',
+  { tag: '@feature:assets.editability-filter' },
+  async ({ app, page }) => {
+    const repo = path.resolve(import.meta.dirname, '..', '..')
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-editability-'))
+    cpSync(path.join(repo, 'examples', 'figures'), dir, { recursive: true })
+    copyFileSync(path.join(repo, 'tests', 'compat', 'assets', 'sample.png'), path.join(dir, 'Photo_plain.png'))
+    const a = await app({ figures: dir })
+    await page.goto(a.baseURL)
+
+    const group = page.locator('[data-testid="asset-editability"]')
+    await expect(group).toBeVisible({ timeout: 30_000 })
+    const viewport = page.viewportSize()!
+    const box = await group.boundingBox()
+    expect(box).not.toBeNull()
+    expect(box!.x).toBeGreaterThanOrEqual(0)
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width)
+
+    const cards = page.locator('li[role="option"][data-card]')
+    const cardIds = async () => (await cards.evaluateAll((els) => els.map((el) => el.getAttribute('data-card')))).sort()
+    const plain = page.locator('li[role="option"][data-card="Photo_plain.png"]')
+    const kinetics = page.locator('li[role="option"][data-card="Fig1_kinetics.pdf"]')
+    await expect(plain).toBeVisible()
+    await expect(kinetics).toBeVisible()
+    const all = await cardIds()
+    expect(all.length).toBeGreaterThanOrEqual(4)
+
+    // 可编辑：没有脚本的那张消失，有脚本的还在
+    await group.locator('[role="radio"][data-value="editable"]').click()
+    await expect(group.locator('[data-value="editable"]')).toHaveAttribute('aria-checked', 'true')
+    await expect(plain).toHaveCount(0)
+    await expect(kinetics).toBeVisible()
+
+    // 仅版面：只剩没有脚本的那张
+    await group.locator('[role="radio"][data-value="layout"]').click()
+    await expect(kinetics).toHaveCount(0)
+    await expect(plain).toBeVisible()
+    expect(await cardIds()).toEqual(['Photo_plain.png'])
+
+    // 回到全部：清单与开始时一样
+    await group.locator('[role="radio"][data-value="all"]').click()
+    await expect(cards).toHaveCount(all.length)
+    expect(await cardIds()).toEqual(all)
+  },
+)
+
+/**
+ * 英文四档在 280px 最窄抽屉里放得下（Codex #1027 r4267757501）：抽屉扣掉 `px-3` 只剩 256px，
+ * "All / Editable / Pending / Layout" 四档的固有宽度不能超出它，否则右边被 LeftPanel 的 overflow-hidden 裁掉。
+ * 语言用 localStorage 偏好切（不依赖 project locale，chromium 下同样执行），宽度用抽屉自己的键盘把手收到下限；
+ * 量的是**抽屉**不是视口。「待连接」那一档靠 `writeRuntimeNamedProject`：图名来自运行期、静态解不出，那张图的状态是 needs_probe。
+ */
+test(
+  '能不能编辑的胶囊：英文四档在 280px 最窄抽屉里不溢出',
+  { tag: '@feature:assets.editability-filter' },
+  async ({ app, page }) => {
+    await page.addInitScript(() => localStorage.setItem('tavotto.locale', 'en-US'))
+    const repo = path.resolve(import.meta.dirname, '..', '..')
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'tavotto-e2e-editability-en-'))
+    cpSync(path.join(repo, 'examples', 'figures'), dir, { recursive: true })
+    copyFileSync(path.join(repo, 'tests', 'compat', 'assets', 'sample.png'), path.join(dir, 'Photo_plain.png'))
+    writeRuntimeNamedProject(dir) // Runtime_map.pdf 的图名静态解不出 → needs_probe（待连接）
+    const a = await app({ figures: dir })
+    await page.goto(a.baseURL)
+
+    const group = page.locator('[data-testid="asset-editability"]')
+    await expect(group).toBeVisible({ timeout: 30_000 })
+    // 四档都出现：All / Editable / Pending / Layout
+    await expect(group.locator('[role="radio"]')).toHaveCount(4, { timeout: 30_000 })
+    await expect(group.locator('[role="radio"]')).toHaveText(['All', 'Editable', 'Pending', 'Layout'])
+
+    // 把抽屉收到下限 280（键盘把手每次 16px）
+    const handle = page.locator('[role="separator"][aria-valuemin="280"]')
+    await handle.focus()
+    for (let i = 0; i < 20 && Number(await handle.getAttribute('aria-valuenow')) > 280; i++) {
+      await page.keyboard.press('ArrowLeft')
+    }
+    await expect(handle).toHaveAttribute('aria-valuenow', '280')
+
+    // 整个胶囊与每一档都落在抽屉的右缘之内
+    const drawerOf = () =>
+      handle.evaluate((el) => {
+        const r = (el.parentElement as HTMLElement).getBoundingClientRect()
+        return { left: r.left, right: r.right }
+      })
+    // 宽度有过渡动画：等量到的宽度真的是 280 再量胶囊，不然是量在半路上
+    await expect.poll(async () => Math.round((await drawerOf()).right - (await drawerOf()).left)).toBe(280)
+    const drawer = await drawerOf()
+    expect(drawer.right - drawer.left).toBeLessThanOrEqual(281)
+    // 抽屉内容区的右缘 = 抽屉右缘 - px-3(12)；胶囊是 min-w-fit，字太长时会比内容区宽几个像素，所以一像素都不给
+    const contentRight = drawer.right - 12
+    await expect
+      .poll(async () => {
+        const b = (await group.boundingBox())!
+        return b.x + b.width
+      })
+      .toBeLessThanOrEqual(contentRight + 0.01)
+    const radios = group.locator('[role="radio"]')
+    for (let i = 0; i < 4; i++) {
+      const b = (await radios.nth(i).boundingBox())!
+      expect(b.x, `第 ${i} 档左缘`).toBeGreaterThanOrEqual(drawer.left)
+      expect(b.x + b.width, `第 ${i} 档右缘`).toBeLessThanOrEqual(contentRight + 0.01)
+    }
+    expect(await horizontalOffenders(page, '[data-testid="asset-editability"]')).toEqual([])
+  },
+)
