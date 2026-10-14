@@ -515,3 +515,24 @@ def test_an_older_rerun_never_stops_a_newer_launch_of_the_same_script(tmp_path):
         assert session_newer.state == nativesession.BARRIER
     finally:
         session_newer.cancel_owned()
+
+
+def test_registry_rerun_cancel_follows_launch_order_for_sessions(tmp_path):
+    """会话带着计划序号:`older_than=N` 只停序号 < N 的;序号未知的(终端拥有的 / 不经计划的)不碰。"""
+    import dataclasses
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    base = dk.launch_for(tmp_path, SCRIPT, name="fig.py", launch_id="ord-5")
+    session = dk.desktopproc.start(dataclasses.replace(base, launch_order=5))
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    nativesession.REGISTRY._starting.clear()  # noqa: SLF001 — 只量会话自己带的序号（票据的序号另有用例）
+    try:
+        assert nativesession.REGISTRY.cancel_project(str(proj), script="fig.py", older_than=5) == 0
+        assert nativesession.REGISTRY.cancel_project(str(proj), script="fig.py", older_than=3) == 0
+        assert not session.owned.finished
+        assert nativesession.REGISTRY.cancel_project(str(proj), script="fig.py", older_than=6) == 1
+        assert session.owned.finished
+    finally:
+        if not session.owned.finished:
+            session.cancel_owned()
