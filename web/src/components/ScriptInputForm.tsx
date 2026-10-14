@@ -142,7 +142,10 @@ export function ScriptInputFields({
           {suggestionText(head, suggestion)}
         </p>
       )}
-      <p className="text-sm text-ink-3">{secret ? si('getpassNote') : si('rememberNote')}</p>
+      {/* native（桌面拥有的进程）的答复直接交给进程、不写答案记忆:不许暗示「会记住」（Codex #1022） */}
+      {(secret || !head.native) && (
+        <p className="text-sm text-ink-3">{secret ? si('getpassNote') : si('rememberNote')}</p>
+      )}
       {error && <Notice tone="danger">{si('failed', { error })}</Notice>}
     </form>
   )
