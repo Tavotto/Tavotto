@@ -206,6 +206,13 @@ def absent_modules(python: str, names) -> list[str]:
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
+def assert_no_execution_before_run(obs: Observation) -> None:
+    """C23：每一次检查 / 重新检查之后、认领 run 之前，用户代码一次都没跑。没有记录 = 没验证，同样不通过。"""
+    counts = obs.facts.get("exec_counts_at_checks") or []
+    assert counts, "没有记录任何检查后的执行次数——C23 没有被验证"
+    assert all(c == 0 for c in counts), f"检查阶段执行了用户代码: {counts}"
+
+
 class PreconditionUnmet(Exception):
     """场景的前提在这台机器上无法建立（例如 Windows 的 chmod 不会让目录只读）——测试 skip，不是产品失败。"""
 
@@ -358,8 +365,8 @@ def observe(
             report = _wait(app, report["session_id"], SETTLED, timeout=120)
             if obs.phases[-1] != report["phase"]:
                 obs.phases.append(report["phase"])
-            # 检查阶段不得执行用户代码（C23）
-            obs.facts["exec_count_after_check"] = len(exec_log(tmp))
+            # 检查阶段不得执行用户代码（C23）：每次检查 / 重新检查之后各记一次，认领 run 之前再记一次
+            obs.facts["exec_counts_at_checks"] = [len(exec_log(tmp))]
 
             kinds = [a["kind"] for a in report.get("actions", [])]
             obs.facts["actions_offered_after_check"] = kinds
@@ -375,6 +382,7 @@ def observe(
                 obs.actions_claimed.append("recheck")
                 report = _wait(app, report["session_id"], SETTLED, timeout=120)
                 obs.phases.append(report["phase"])
+                obs.facts["exec_counts_at_checks"].append(len(exec_log(tmp)))
                 kinds = [a["kind"] for a in report.get("actions", [])]
 
             if "run" in kinds:
@@ -383,6 +391,9 @@ def observe(
                     make_readonly(proj)
                     assert_readonly(proj)
                 (act,) = [a for a in report["actions"] if a["kind"] == "run"]
+                obs.facts["exec_counts_at_checks"].append(
+                    len(exec_log(tmp))
+                )  # 认领 run 之前最后一次
                 t0 = time.monotonic()
                 status, claimed = app.call(
                     f"{SESSIONS}/{report['session_id']}/actions",

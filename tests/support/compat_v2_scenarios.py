@@ -20,6 +20,8 @@ from support.compatbench_v2 import Observation, Scenario
 # 基线形状只比这些键（会随行为修复而变的判据；耗时等噪声不进）
 SHAPE_KEYS = (
     "final_phase",
+    "outcome_kind",
+    "failed_figures",
     "problem_codes",
     "error_type",
     "exec_count",
@@ -56,6 +58,10 @@ def _figure(
     miss = []
     if not obs.first_valid_figure:
         miss.append(f"没有首次有效出图（final_phase={obs.final_phase}, codes={obs.problem_codes}）")
+    if obs.outcome_kind != "succeeded":
+        miss.append(f"会话结果应为 succeeded，实测 {obs.outcome_kind}")
+    if obs.render_errors:
+        miss.append(f"有捕获的图渲染不出来: {obs.render_errors}")
     if obs.exec_count > max_exec:
         miss.append(f"真实执行 {obs.exec_count} 次，理想上限 {max_exec}")
     if obs.exec_count == 0 and obs.first_valid_figure:
@@ -67,9 +73,21 @@ def _figure(
     return miss
 
 
-def _stop(obs: Observation, *, code: str, error_type: str | None = None) -> list[str]:
-    """停下来说明原因：一次执行、没有图、不回退（执行次数 == 1 且原因码不变）。"""
+def _stop(
+    obs: Observation,
+    *,
+    code: str,
+    error_type: str | None = None,
+    phase: str,
+    kind: str,
+) -> list[str]:
+    """停下来说明原因：一次执行、没有图、不回退，且会话**投影成停下**（phase / outcome_kind 对），
+    而不是错误码还在、界面却说成功。"""
     miss = []
+    if obs.final_phase != phase:
+        miss.append(f"终局 phase 应为 {phase}，实测 {obs.final_phase}")
+    if obs.outcome_kind != kind:
+        miss.append(f"outcome.kind 应为 {kind}，实测 {obs.outcome_kind}")
     if obs.exec_count != 1:
         miss.append(f"应恰好执行 1 次（不回退、不重试），实测 {obs.exec_count}")
     if obs.figures_valid:
@@ -95,6 +113,18 @@ def _ideal_s25(o: Observation) -> list[str]:
         miss.append(f"会话报告应指认未捕获的 bad，实测 failed_figures={o.failed_figures}")
     if o.exec_count != 1:
         miss.append(f"partial 不是回退理由，应执行 1 次，实测 {o.exec_count}")
+    if o.render_errors:
+        miss.append(f"保留的那张图渲染不出来: {o.render_errors}")
+    return miss
+
+
+def _ideal_s17(o: Observation) -> list[str]:
+    """副作用必须真发生：1（路由直达）或 2（回退，已裁决接受），且与脚本自写的执行日志次数一致。"""
+    miss = _figure(o, title="bytes>0=True", max_exec=2)
+    if o.side_effect_count not in (1, 2):
+        miss.append(f"外部副作用应为 1 或 2 次，实测 {o.side_effect_count}（夹具坏了或写入丢了）")
+    elif o.side_effect_count != o.exec_count:
+        miss.append(f"副作用 {o.side_effect_count} 次与执行日志 {o.exec_count} 次对不上")
     return miss
 
 
@@ -106,6 +136,8 @@ def _ideal_s18(o: Observation) -> list[str]:
         miss.append("只读目录下不该有图")
     if not o.problem_codes:
         miss.append("没有任何原因码，用户看不到为什么")
+    if o.final_phase == "completed" or o.outcome_kind == "succeeded":
+        miss.append(f"只读目录写不出东西，会话不该投影成功（{o.final_phase}/{o.outcome_kind}）")
     return miss
 
 
@@ -120,6 +152,12 @@ def _ideal_deps(o: Observation, missing: dict[str, str]) -> list[str]:
         miss.append(f"检查阶段不得执行用户代码，实测 {o.exec_count}")
     if o.final_phase != "awaiting_confirmation":
         miss.append(f"缺包应停在 awaiting_confirmation，实测 {o.final_phase}")
+    if o.outcome_kind != "pending":
+        miss.append(f"outcome.kind 应为 pending，实测 {o.outcome_kind}")
+    if "dependency_preparation_required" not in o.problem_codes:
+        miss.append(f"原因码应含 dependency_preparation_required，实测 {o.problem_codes}")
+    if "prepare_dependencies" not in (o.facts.get("actions_offered_final") or []):
+        miss.append("用户没有「准备依赖」这个动作可点")
     got = set(o.facts.get("dependency_installs") or [])
     if not installs <= got:
         miss.append(f"依赖计划应含 {sorted(installs)}，实测 {sorted(got)}")
@@ -147,6 +185,8 @@ def _scenario(id_: str, scenes, title, failure, strategy, ideal_exec, ideal_max,
 # main 上 safe 里 savefig 衍生的 FileNotFoundError：被当成普通 script_error（audit-D G1：误归因）
 _BLOCKED_AS_PLAIN_ERROR = {
     "final_phase": "action_required",
+    "outcome_kind": "failed",
+    "failed_figures": [],
     "problem_codes": ["script_error"],
     "error_type": "FileNotFoundError",
     "exec_count": 1,
@@ -220,6 +260,8 @@ _add(
         "figure",
         main_baseline={
             "final_phase": "action_required",
+            "outcome_kind": "failed",
+            "failed_figures": [],
             "problem_codes": ["safe_file_operation_blocked"],
             "error_type": "FileNotFoundError",
             "exec_count": 1,
@@ -241,6 +283,8 @@ _add(
         "figure",
         main_baseline={
             "final_phase": "action_required",
+            "outcome_kind": "failed",
+            "failed_figures": [],
             "problem_codes": ["script_exited"],
             "error_type": "SystemExit",
             "exec_count": 1,
@@ -274,7 +318,13 @@ _add(
         1,
         "stop_no_fallback",
     ),
-    lambda o: _stop(o, code="script_error", error_type="ZeroDivisionError"),
+    lambda o: _stop(
+        o,
+        code="script_error",
+        error_type="ZeroDivisionError",
+        phase="action_required",
+        kind="failed",
+    ),
 )
 _add(
     _scenario(
@@ -287,7 +337,9 @@ _add(
         1,
         "stop_no_fallback",
     ),
-    lambda o: _stop(o, code="script_error", error_type="NameError"),
+    lambda o: _stop(
+        o, code="script_error", error_type="NameError", phase="action_required", kind="failed"
+    ),
 )
 _add(
     _scenario(
@@ -301,10 +353,7 @@ _add(
         "figure",
         main_baseline={**_BLOCKED_AS_PLAIN_ERROR, "side_effect_count": 1},
     ),
-    lambda o: (
-        _figure(o, title="bytes>0=True", max_exec=2)
-        + ([f"副作用 {o.side_effect_count} 次，上限 2"] if (o.side_effect_count or 0) > 2 else [])
-    ),
+    _ideal_s17,
 )
 _add(
     _scenario(
@@ -333,7 +382,12 @@ _add(
         1,
         "stop_no_fallback",
     ),
-    lambda o: _stop(o, code="no_figures_captured"),
+    lambda o: _stop(
+        o,
+        code="no_figures_captured",
+        phase="partial",
+        kind="execution_finished_no_figure",
+    ),
 )
 _add(
     _scenario(
@@ -347,6 +401,8 @@ _add(
         "partial_figure",
         main_baseline={
             "final_phase": "completed",
+            "outcome_kind": "succeeded",
+            "failed_figures": [],
             "problem_codes": [],
             "error_type": None,
             "exec_count": 1,

@@ -90,7 +90,7 @@ def test_scenario_baseline(scenario_id, tmp_path):
     cb.write_record(cb.record(obs, sc, missing, baseline_ok), out)
 
     # 检查阶段零执行（C23）——所有场景
-    assert obs.facts["exec_count_after_check"] == 0, "检查阶段执行了用户代码"
+    cb.assert_no_execution_before_run(obs)
     if sc.main_baseline is None:
         assert not missing, f"对照组退步了: {missing}\n{obs.to_json()}"
         return
@@ -106,8 +106,13 @@ def test_scenario_baseline(scenario_id, tmp_path):
 
 
 def _obs(**facts):
+    facts.setdefault("actions_offered_final", ["recheck", "prepare_dependencies"])
     return cb.Observation(
-        scenario="s26_import_cv2_sklearn", final_phase="awaiting_confirmation", facts=facts
+        scenario="s26_import_cv2_sklearn",
+        final_phase="awaiting_confirmation",
+        outcome_kind="pending",
+        problem_codes=["dependency_preparation_required"],
+        facts=facts,
     )
 
 
@@ -239,3 +244,113 @@ def test_probe_uses_the_interpreter_the_isolated_app_uses():
     # 没有覆盖：问 app 实际选了哪个
     assert cb.probe_interpreter({}, "/app/py") == "/app/py"
     assert cb.probe_interpreter({}, "") is None
+
+
+# ---------------------------------------------------------------- 第四轮：判据收紧（PR #1023）
+
+
+def _o(**kw):
+    base = dict(
+        scenario="x",
+        final_phase="action_required",
+        outcome_kind="failed",
+        problem_codes=["script_error"],
+        error_type="ZeroDivisionError",
+        exec_count=1,
+    )
+    base.update(kw)
+    return cb.Observation(**base)
+
+
+def test_stop_scenarios_reject_a_success_projection():
+    """错误码还在、但会话把它投影成 completed / succeeded：UI 说成功而不是停下解释，不能算对照组达标。"""
+    ideal = cs.IDEAL["s16a_zero_division"]
+    assert ideal(_o()) == []
+    assert ideal(_o(final_phase="completed"))
+    assert ideal(_o(outcome_kind="succeeded"))
+    no_fig = cs.IDEAL["s21_no_figure"]
+    ok = _o(
+        final_phase="partial",
+        outcome_kind="execution_finished_no_figure",
+        problem_codes=["no_figures_captured"],
+        error_type=None,
+    )
+    assert no_fig(ok) == []
+    assert no_fig(_o(**{**ok.__dict__, "final_phase": "completed"}))
+    assert cs.IDEAL["s18_readonly_dir"](_o(final_phase="completed", outcome_kind="succeeded"))
+
+
+def test_side_effect_scenario_requires_the_effect_to_actually_happen():
+    ideal = cs.IDEAL["s17_side_effect_then_limit"]
+    fig = dict(
+        final_phase="completed",
+        outcome_kind="succeeded",
+        problem_codes=[],
+        error_type=None,
+        figures_valid=1,
+        figures_captured=1,
+        titles=["bytes>0=True"],
+    )
+    assert ideal(_o(**fig, side_effect_count=1)) == []
+    assert ideal(_o(**fig, exec_count=2, side_effect_count=2)) == []
+    assert ideal(_o(**fig, side_effect_count=None))  # 副作用库坏了 / 没写
+    assert ideal(_o(**fig, side_effect_count=0))
+    assert ideal(_o(**fig, exec_count=2, side_effect_count=1))  # 次数对不上 = 日志或夹具坏了
+
+
+def test_figure_scenarios_reject_a_failed_outcome_with_a_figure():
+    ideal = cs.IDEAL["s01_plain"]
+    ok = dict(final_phase="completed", outcome_kind="succeeded", problem_codes=[], figures_valid=1)
+    assert ideal(_o(**ok, error_type=None)) == []
+    assert ideal(_o(**{**ok, "outcome_kind": "failed"}, error_type=None))
+
+
+def test_dependency_scenarios_require_the_prepare_action_and_the_code():
+    ideal = cs.IDEAL["s26_import_cv2_sklearn"]
+    facts = {
+        "dependency_installs": ["opencv-python", "scikit-learn"],
+        "dependency_missing": {"cv2": "opencv-python", "sklearn": "scikit-learn"},
+        "actions_offered_final": ["recheck", "prepare_dependencies", "run_when_ready"],
+    }
+    ok = dict(
+        final_phase="awaiting_confirmation",
+        outcome_kind="pending",
+        problem_codes=["dependency_preparation_required"],
+        error_type=None,
+        exec_count=0,
+        facts=facts,
+    )
+    assert ideal(_o(**ok)) == []
+    assert ideal(_o(**{**ok, "facts": {**facts, "actions_offered_final": ["recheck"]}}))
+    assert ideal(_o(**{**ok, "problem_codes": []}))
+
+
+def test_partial_scenario_requires_a_clean_partial_projection():
+    ideal = cs.IDEAL["s25_partial_capture"]
+    ok = dict(
+        final_phase="partial",
+        outcome_kind="succeeded",
+        problem_codes=[],
+        error_type=None,
+        figures_valid=1,
+        figures_captured=1,
+        failed_figures=["bad"],
+    )
+    assert ideal(_o(**ok)) == []
+    assert ideal(_o(**{**ok, "render_errors": [{"asset_id": "a", "error": "X"}]}))
+
+
+def test_baseline_shape_pins_the_outcome_kind_and_failed_figures():
+    assert {"outcome_kind", "failed_figures"} <= set(cs.SHAPE_KEYS)
+
+
+def test_zero_execution_is_asserted_after_every_check_not_only_the_first():
+    obs = cb.Observation(scenario="x")
+    obs.facts["exec_counts_at_checks"] = [0, 0, 0]
+    cb.assert_no_execution_before_run(obs)
+    obs.facts["exec_counts_at_checks"] = [0, 1, 1]  # recheck 之后开始执行用户代码
+    with pytest.raises(AssertionError, match="执行了用户代码"):
+        cb.assert_no_execution_before_run(obs)
+    obs.facts["exec_counts_at_checks"] = []  # 没记录 = 没验证，同样不通过
+    with pytest.raises(AssertionError, match="没有记录"):
+        cb.assert_no_execution_before_run(obs)
