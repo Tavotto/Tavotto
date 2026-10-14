@@ -804,3 +804,25 @@ def test_machine_line_uses_the_actual_os_not_unconditionally_macos():
         assert expected in line
         if os_name == "linux":
             assert "macOS" not in line
+
+
+def test_short_drag_after_symbol_is_not_disguised_as_action_only():
+    """反证：只有 3 帧的拖动被过滤后，仍须报告覆盖不足，不能冒充纯符号。"""
+    report = _report([_seg(_smooth(3))])
+    report["actions"] = [
+        {
+            "kind": "symbol.insert",
+            "sync_ms": 10.0,
+            "two_raf_ms": 36.0,
+            "phases": {"document.commit": 8.0},
+            "ok": True,
+        }
+    ]
+    a = PR.analyze_report(report)
+    assert not a["stats"]
+    assert a["actions"][0]["kind"] == "symbol.insert"
+    assert any(
+        f.dimension == "覆盖" and "没有足够长的拖动" in " ".join(f.evidence)
+        for f in a["findings"]
+    )
+    assert next(g for dim, g, _ in a["grades"] if dim == "覆盖") != "—"

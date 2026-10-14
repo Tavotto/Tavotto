@@ -1394,7 +1394,9 @@ def analyze_report(report: dict) -> dict:
 
     # ---- 覆盖：纯符号/预设动作报告没有拖动很正常；不能把没拖动算作卡顿证据不足。
     coverage: list[str] = []
-    action_only = bool(action_summaries(report)) and not stats
+    # seg_stats 会过滤短拖动；只认原始没有任何拖动段的报告为纯动作。
+    # 否则一段不达标的真实拖动会被误当“没测试”，吞掉覆盖提示。
+    action_only = bool(action_summaries(report)) and not (report.get("segments") or [])
     if not stats and not action_only:
         coverage.append("没有足够长的拖动（每段至少 10 帧、5 个 pointermove）")
     if not syn and not action_only:
