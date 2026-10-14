@@ -356,6 +356,8 @@ def _run_io_collision(
     writable = [output]
     if include_drag:
         writable += [output.with_name("drag.json"), output.with_name("drag-findings.json")]
+    if baseline is not None:
+        writable.append(output.with_suffix(".comparison.json"))
     if summary is not None:
         writable.append(summary)
     for i, candidate in enumerate(writable):
@@ -382,10 +384,28 @@ def _invalidate_parse_error(argv: list[str]) -> None:
             baseline = _option_path(argv, "--baseline")
             # 在解析失败时也要遵守基线只读原则；之前直接 unlink 会把
             # --out 与 --baseline 同一路径的历史采样永久删除。
-            if output and not (baseline and _same_report_path(output, baseline)):
+            collision = (
+                output is not None
+                and _run_io_collision(output, summary_path, baseline, "--include-drag" in argv)
+            )
+            if output is not None and not collision:
                 output.unlink(missing_ok=True)
-            if summary_path and not (baseline and _same_report_path(summary_path, baseline)):
-                _write(summary_path, failed_run_summary("--include-drag" in argv))
+            if summary_path is not None and not (
+                baseline is not None and _same_report_path(summary_path, baseline)
+            ):
+                # summary 与主报告/派生文件撞名时，也禁止在解析失败后误写数据。
+                outputs = [output] if output is not None else []
+                if output is not None and "--include-drag" in argv:
+                    outputs.extend(
+                        [output.with_name("drag.json"), output.with_name("drag-findings.json")]
+                    )
+                if output is not None and baseline is not None:
+                    outputs.append(output.with_suffix(".comparison.json"))
+                if all(not _same_report_path(summary_path, candidate) for candidate in outputs):
+                    failure = failed_run_summary("--include-drag" in argv)
+                    if baseline is not None:
+                        failure["regression_status"] = "failed"
+                    _write(summary_path, failure)
         elif command in ("compare", "summarize"):
             failed = {
                 "schema": COMPARE_SCHEMA if command == "compare" else SCHEMA,
@@ -498,6 +518,8 @@ def main(argv: list[str] | None = None) -> int:
                         args.out.with_name("drag.json"),
                         args.out.with_name("drag-findings.json"),
                     ]
+                if args.baseline is not None:
+                    write_targets.append(args.out.with_suffix(".comparison.json"))
                 summary_safe = (
                     args.summary is not None
                     and all(not _same_report_path(args.summary, path) for path in write_targets)

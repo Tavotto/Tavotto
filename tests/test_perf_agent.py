@@ -1053,3 +1053,64 @@ def test_incomplete_symbol_with_requested_baseline_is_terminal_not_pending(tmp_p
     assert result["suites"]["symbol_ui"] == "incomplete"
     assert result["status"] == "incomplete"
     assert result["regression_status"] == "failed"
+
+
+@pytest.mark.parametrize("alias_kind", ["direct", "hardlink", "symlink"])
+def test_run_rejects_derived_comparison_output_aliasing_historical_baseline(
+    tmp_path, monkeypatch, alias_kind
+):
+    """Codex P1：out=run.json 的附属 run.comparison.json 不得成为历史 baseline。"""
+    current = tmp_path / "run.json"
+    derived = tmp_path / "run.comparison.json"
+    historical = tmp_path / "history.json"
+    historical.write_text(json.dumps(report(value=20)), encoding="utf-8")
+    if alias_kind == "direct":
+        derived.write_bytes(historical.read_bytes())
+    elif alias_kind == "hardlink":
+        derived.hardlink_to(historical)
+    else:
+        try:
+            derived.symlink_to(historical)
+        except (OSError, NotImplementedError):
+            pytest.skip("Symlink creation is unavailable on this Windows runner")
+    before = historical.read_bytes()
+    summary = tmp_path / "summary.json"
+    monkeypatch.setattr(
+        A.subprocess, "run", lambda *a, **k: pytest.fail("Baseline collision must reject first")
+    )
+    assert A.main(
+        [
+            "run",
+            "--out",
+            str(current),
+            "--baseline",
+            str(derived),
+            "--summary",
+            str(summary),
+        ]
+    ) == 2
+    assert derived.read_bytes() == historical.read_bytes() == before
+    assert json.loads(summary.read_text(encoding="utf-8"))["regression_status"] == "failed"
+
+
+def test_failed_run_argparse_does_not_erase_derived_comparison_baseline(tmp_path):
+    raw = tmp_path / "run.json"
+    baseline = tmp_path / "run.comparison.json"
+    baseline.write_text(json.dumps(report(value=20)), encoding="utf-8")
+    before = baseline.read_bytes()
+    summary = tmp_path / "summary.json"
+    assert A.main(
+        [
+            "run",
+            "--repeat",
+            "not-a-number",
+            "--out",
+            str(raw),
+            "--baseline",
+            str(baseline),
+            "--summary",
+            str(summary),
+        ]
+    ) == 2
+    assert baseline.read_bytes() == before
+    assert json.loads(summary.read_text(encoding="utf-8"))["regression_status"] == "failed"
