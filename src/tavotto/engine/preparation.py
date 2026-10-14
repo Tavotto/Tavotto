@@ -685,8 +685,17 @@ class PreparationService:
         self._order = 0  # 登记序号计数（`PreparationPlan.launch_order`）
 
     # ---- 登记 ----
-    def register(self, plan: PreparationPlan, *, force_rebuild: bool = False) -> PreparationResult:
-        """登记一份计划。没有脚本可跑的直接落 `static_source_available`（不起线程）。"""
+    def register(
+        self,
+        plan: PreparationPlan,
+        *,
+        force_rebuild: bool = False,
+        project_epoch: int | None = None,
+    ) -> PreparationResult:
+        """登记一份计划。没有脚本可跑的直接落 `static_source_available`（不起线程）。
+
+        `project_epoch`：桌面 native 计划盖的项目关闭代次，缺省 = 登记那一刻的。执行回退（ADR 0127）传**运行开始时**记下的
+        代次——登记发生在 safe 尝试之后，期间项目关闭再重开，盖新代次就让关闭前的旧运行通过注册表的代次检查。"""
         result = PreparationResult()
         if plan.script is None:
             result.note = (
@@ -709,11 +718,16 @@ class PreparationService:
         with self._lock:
             self._order += 1
             order = self._order
+        # 登记序号对所有计划盖（safe 的重跑让位也要拿它判先后）；关闭代次只对桌面 native 计划有意义
+        plan = dataclasses.replace(plan, launch_order=order)
         if plan.execution == execspec.PROFILE_NATIVE:
             plan = dataclasses.replace(
                 plan,
-                project_epoch=nativesession.REGISTRY.project_epoch(plan.project_root),
-                launch_order=order,
+                project_epoch=(
+                    project_epoch
+                    if project_epoch is not None
+                    else nativesession.REGISTRY.project_epoch(plan.project_root)
+                ),
             )
         with self._lock:
             self._sweep()
