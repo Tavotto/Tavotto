@@ -1814,6 +1814,14 @@ export interface ArtifactReceiptFacts {
   packages: Record<string, string>
   cwd_origin: string | null
   observation: string | null
+  /** safe 档的执行保真度（V2 PR3a，`receipt.project_fidelity`）：闭集枚举 + 计数，没有路径；native / 老 worker 没有 */
+  fidelity?: {
+    level: 'deviated' | 'suspect' | 'none_observed'
+    blocked: { op: string; kind: string; count: number }[]
+    intercepted: { op: string; kind: string; count: number }[]
+    signals: { kind: string; via: string; count: number }[]
+    unobserved: string[]
+  } | null
   binding: { revision: string | null; matched: boolean | null; changed: number; unobserved: number }
 }
 

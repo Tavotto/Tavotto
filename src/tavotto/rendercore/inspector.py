@@ -1028,6 +1028,7 @@ _PUBLIC_RECEIPT_KEYS = (
     "packages",
     "cwd_origin",
     "observation",
+    "fidelity",  # 已由 `receipt.project_fidelity` 投影过（闭集枚举 + 计数）；这里只透传，不另写一套 schema
     "binding",
 )
 _PUBLIC_NODE_KEYS = ("kind", "origin", "receipt_identity", "internal")

@@ -2346,6 +2346,30 @@ class BlockedFileOps:
         except (OSError, ValueError):
             return None
 
+    def blocked_savefig(self, names, fmt, supported) -> None:
+        """被拦截的 `savefig` 记账——**只在保存本身在真实语义下能成功时**才记。目标目录不存在、格式不支持（或确认不了）时，
+        直接运行里 `savefig` 自己就会失败：之后的 `FileNotFoundError` 不是守卫造成的，不能算到它头上。
+        `names` 是 `savefig_effective_names`，`fmt` 是显式 `format=`，`supported` 是 matplotlib 认的格式集合（None = 确认不了）。
+        检查本身不是脚本的观察，期间置 busy。永不抛。"""
+        was, self._busy = self._busy, True
+        try:
+            if not names or not self._active:
+                return
+            for name in names:
+                path = os.fsdecode(name)
+                parent = os.path.dirname(os.path.abspath(path))
+                if not os.path.isdir(parent):
+                    return
+                ext = os.path.splitext(path)[1][1:]
+                chosen = str(fmt or ext or "").lower()
+                if supported is None or chosen not in supported:
+                    return
+        except Exception:  # noqa: BLE001 —— 确认不了就不记（不归因）
+            return
+        finally:
+            self._busy = was
+        self.blocked("savefig", self.KIND_SAVEFIG, *names)
+
     def blocked(self, op: str, kind: str, *paths, dests=()) -> None:
         """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。
 

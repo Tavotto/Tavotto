@@ -920,3 +920,48 @@ def test_a_real_rename_into_a_missing_directory_keeps_its_script_error(figs):
         "sandbox",
     )
     assert e.code == CODE, e.code
+
+
+# ---- Codex #1024 r4268068602：被拦截的保存本身在真实语义下就会失败 → 后续失败不算守卫的 ----
+@needs_worker
+@pytest.mark.parametrize(
+    ("script", "attributed"),
+    [
+        ("fig.savefig('missing/o.png')\nos.path.getsize('missing/o.png')\n", False),
+        ("fig.savefig('o.notaformat')\nos.path.getsize('o.notaformat')\n", False),
+        ("os.mkdir('sub')\nfig.savefig('sub/o.png')\nos.path.getsize('sub/o.png')\n", True),
+        ("fig.savefig('o.svg')\nos.path.getsize('o.svg')\n", True),
+    ],
+)
+def test_a_save_that_could_not_have_succeeded_is_not_blamed_on_the_guard(figs, script, attributed):
+    e = _deviated(figs, HDR + script, "sandbox")
+    assert (e.code == CODE) is attributed, (e.code, str(e)[:120])
+
+
+def test_blocked_savefig_records_only_a_viable_destination(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sub").mkdir()
+    fmts = {"png", "pdf", "svg"}
+
+    def recorded(name, fmt=None, supported=fmts):
+        led = figcapture.BlockedFileOps()
+        led.blocked_savefig([name], fmt, supported)
+        return bool(led._events)
+
+    assert recorded("o.png") and recorded("sub/o.png") and recorded("o", fmt="svg")
+    assert not recorded("missing/o.png")
+    assert not recorded("o.xyz")
+    assert not recorded("o.png", supported=None)  # 确认不了就不记
+
+
+def test_the_artifact_inspection_whitelist_keeps_every_public_receipt_fact():
+    """r4268068611：`public_facts()` 加键必须同步导出检视的白名单，否则同一次执行两处事实不一致。"""
+    from tavotto.rendercore import inspector
+
+    facts = _rcpt_with(GOOD).public_facts()
+    # `receipt_id` 是不透明实例号，导出检视有意只带 `receipt_identity`
+    assert set(facts) - {"receipt_id"} <= set(inspector._PUBLIC_RECEIPT_KEYS), (
+        set(facts) - {"receipt_id"} - set(inspector._PUBLIC_RECEIPT_KEYS)
+    )
+    # 透传的是已投影过的段：再投影一次不变（单一入口，没有第二套 schema）
+    assert receipt.project_fidelity(facts["fidelity"]) == facts["fidelity"]

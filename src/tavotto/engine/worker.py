@@ -289,10 +289,14 @@ def _patched_savefig(self, fname, *args, **kwargs):
     to_path = figcapture.savefig_targets_path(fname)
     if to_path and BLOCKED_OPS is not None:
         # 拦截不落盘：脚本若随后读这个路径（`Image.open('stage.png')`），读到的不是它刚存的（P01a，EX02）
-        BLOCKED_OPS.blocked(
-            "savefig",
-            figcapture.BlockedFileOps.KIND_SAVEFIG,
-            *figcapture.savefig_effective_names(fname, kwargs),
+        try:
+            from matplotlib.backend_bases import FigureCanvasBase  # noqa: PLC0415
+
+            supported = {str(k).lower() for k in FigureCanvasBase.filetypes}
+        except Exception:  # noqa: BLE001
+            supported = None
+        BLOCKED_OPS.blocked_savefig(
+            figcapture.savefig_effective_names(fname, kwargs), kwargs.get("format"), supported
         )
     stem = _SAVE_AS or figcapture.savefig_stem(fname)  # 不是路径时 savefig_stem 是空串
     if SESSION is not None:
