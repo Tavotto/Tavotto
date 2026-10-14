@@ -396,3 +396,21 @@ def test_close_project_cancels_and_marks_before_the_blocking_pool_shutdown(tmp_p
     monkeypatch.setattr(m.engine_pool, "shutdown_all", fake_shutdown)
     m.close_project(pid, wait=True)
     assert seen == {"plan": preparation.STATUS_CANCELLED, "closed": True}
+
+
+def test_native_runner_supersedes_older_plans_of_the_same_script(tmp_path):
+    """runner 的重跑入口:先取消同脚本更早的准备计划,再处理票据 / 会话(与关项目同一个顺序)。"""
+    from tavotto import app as m
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    old, new = _native_plan(proj, "pj-super"), _native_plan(proj, "pj-super")
+    preparation.SERVICE.register(old)
+    session, _resp, _ = m._native_preparation_runner(new)
+    try:
+        assert preparation.SERVICE.get(old.plan_id, "pj-super")[1].status == (
+            preparation.STATUS_CANCELLED
+        )
+    finally:
+        session.cancel_owned()
