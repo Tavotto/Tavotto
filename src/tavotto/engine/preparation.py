@@ -1239,6 +1239,12 @@ class PreparationService:
             ]
         return sum(1 for pid in mine if self.cancel(pid, project_id).get("accepted"))
 
+    def is_cancelled(self, plan_id: str) -> bool:
+        """这份计划是不是已被取消（含被更新的同脚本计划取代、项目关闭）。取消是正向信息：没登记过的计划（直接调 runner 的
+        用例）不算已取消。"""
+        entry = self._entry(plan_id)
+        return entry is not None and entry.cancel.is_set()
+
     def cancel_plan(self, plan_id: str) -> bool:
         """按计划号取消(界面只拿到 native 会话的 `launch_id` 时用:它就是计划号)。没有这个计划 / 已终局回 False。"""
         entry = self._entry(plan_id)
