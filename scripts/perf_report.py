@@ -1632,11 +1632,18 @@ def grade(
 def machine_line(a: dict) -> str:
     s = a["system"] or {}
     client = a["report"].get("client") or {}
+    # perfprobe.system_facts() 在非 macOS 同样回 os_version（Linux 为 kernel release）；
+    # 报告不能把 CI/Linux 的内核版本冒充 macOS 版本。
+    platform_name = {
+        "darwin": "macOS",
+        "win32": "Windows",
+        "linux": "Linux",
+    }.get(s.get("os"), "OS")
     parts = [
         s.get("model") or "?",
         s.get("cpu") or "",
         f"{s['memory_gb']:.0f}GB" if s.get("memory_gb") else "",
-        f"macOS {s['os_version']}" if s.get("os_version") else "",
+        f"{platform_name} {s['os_version']}" if s.get("os_version") else "",
         f"Tavotto {s['tavotto_version']}" if s.get("tavotto_version") else "",
         f"DPR {client.get('dpr')}" if client.get("dpr") else "",
         f"界面帧率 {1000 / a['refresh']:.0f}Hz",

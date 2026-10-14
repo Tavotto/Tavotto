@@ -786,3 +786,21 @@ def test_action_only_report_is_not_falsely_marked_as_missing_drag():
         f for f in a["findings"] if f.dimension == "覆盖" and "没跑自动测试" in " ".join(f.evidence)
     ]
     assert next(g for dim, g, _ in a["grades"] if dim == "覆盖") == "—"
+
+
+def test_machine_line_uses_the_actual_os_not_unconditionally_macos():
+    """Linux 自动 Runner 的 6.x 内核号不可被报告成 macOS 6.x。"""
+    cases = [
+        ("linux", "6.17.0-1022-azure", "Linux 6.17.0-1022-azure"),
+        ("win32", "10", "Windows 10"),
+        ("darwin", "26.0", "macOS 26.0"),
+        ("unrecognized-platform", "1.0", "OS 1.0"),
+    ]
+    for os_name, version, expected in cases:
+        a = PR.analyze_report(
+            _report([], system={"os": os_name, "os_version": version, "tavotto_version": "0.18.1"})
+        )
+        line = PR.machine_line(a)
+        assert expected in line
+        if os_name == "linux":
+            assert "macOS" not in line
