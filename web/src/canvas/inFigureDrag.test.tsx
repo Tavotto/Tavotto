@@ -615,4 +615,54 @@ describe('图内拖动：吸住后保持', () => {
     // 若保持没被清掉，这里会钉回 0.2；清掉了就是自由位置（再被别处的线吸走也远离 0.2）
     expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
   })
+
+  describe('⇧ 锁向时没被采用的那一轴不留保持', () => {
+    const H = layout.height
+    const mv = (x: number, y: number, mods: { shiftKey?: boolean } = {}) => {
+      fire('pointermove', x, y, mods)
+      flushPreviewFrame()
+    }
+    const posOf = () => overrideOf('axes_0.texts_0', 'pos_frac') as number[]
+
+    it('锁水平：被锁的 y 轴先前吸着的线，松开 ⇧ 后不再拽住（落点是自由位置，不是旧线）', async () => {
+      await setup()
+      startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+      mv(0, 2) // 下边离 y=0.30 的线 3.8px：吸上，y 轴记下这一对
+      mv(30, 2, { shiftKey: true }) // 锁水平：y 不走也不吸，保持必须清掉
+      mv(30, -2.2) // 松开 ⇧：下边离旧线 8px（1×–2× 容差之间），别处 6px 内没线
+      fire('pointerup', 30, -2.2)
+      // 若保持没清，这里会被钉回 0.30
+      expect(posOf()[1]).toBeCloseTo(0.28 - 2.2 / H, 5)
+    })
+
+    it('锁竖直：被锁的 x 轴先前吸着的线，松开 ⇧ 后不再拽住', async () => {
+      await setup()
+      startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+      mv(3, 0) // 左边吸上 0.2
+      mv(3, 30, { shiftKey: true }) // 锁竖直
+      mv(8, 30) // 松开 ⇧：离旧线 8px；若保持没清会钉回 0.2
+      fire('pointerup', 8, 30)
+      expect(posOf()[0] - 0.2).toBeGreaterThan(5 / layout.width)
+    })
+
+    it('45° 锁定采用 x 轴时，没被采用的 y 轴保持被清掉', async () => {
+      await setup()
+      startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+      mv(0, 2) // y 吸上 0.30
+      mv(2, 2, { shiftKey: true }) // 45°：x 修正 1 个单位、y 要 1.9 个，采用 x
+      mv(0, -2.2) // 松开 ⇧：y 离旧线 8px
+      fire('pointerup', 0, -2.2)
+      expect(posOf()[1]).toBeCloseTo(0.28 - 2.2 / H, 5)
+    })
+
+    it('45° 锁定采用 y 轴时，没被采用的 x 轴保持被清掉', async () => {
+      await setup()
+      startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+      mv(3, 0) // x 吸上 0.2
+      mv(4, 4, { shiftKey: true }) // 45°：x 要 1 个单位、y 只要 0.45 个，采用 y
+      mv(8, 0) // 松开 ⇧：x 离旧线 8px
+      fire('pointerup', 8, 0)
+      expect(posOf()[0] - 0.2).toBeGreaterThan(5 / layout.width)
+    })
+  })
 })
