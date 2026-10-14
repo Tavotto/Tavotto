@@ -32,6 +32,7 @@ from . import (
     figcapture,
     inputbroker,
     inputremap,
+    launcher as launcher_mod,
     logsafe,
     patchspec,
     projectenv,
@@ -374,6 +375,8 @@ SOURCE_LABELS = {
 }
 
 _worker_python: str | None = None
+#: 选定 `_worker_python` 时的启动上下文（`launcher.context_key`）：体检结论按它分区
+_worker_ctx: str = ""
 _worker_source: str = ""
 _workers: dict[tuple[str, ...], "EngineWorker"] = {}
 
@@ -1329,6 +1332,10 @@ def worker_env(python: str, source: str, *, base: dict | None = None) -> dict | 
     return runtime.owned_env(python, base)
 
 
+#: 选解释器预检（`_has_matplotlib`）的总预算：Conda 激活捕获 + import 探针共用
+_HAS_MPL_BUDGET_S = 30.0
+
+
 def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     """真去 import 一次。manifest 说装了不算数——DLL 缺失、被杀毒软件隔离了
     某个 .pyd，都是「文件在但 import 不了」。
@@ -1346,7 +1353,18 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
     `.pyc`；它不改 import 的结果，「同一套」要对齐的那几个维度不变。
     """
     args = runtime.probe_args(bundled=bundled)
-    env = runtime.probe_env(python, bundled=bundled)
+    # 需要 Conda 激活的解释器：预检也用激活后的环境（与 worker 同一个启动决策）
+    # 激活取环境失败 → `LauncherUnavailable` 原样抛出（不是“没有 matplotlib”，不进体检缓存）。
+    # 激活与探针共用一个 30s 预算；激活把它用完同样是瞬时的不可用，不是“没有 matplotlib”
+    deadline = time.monotonic() + _HAS_MPL_BUDGET_S
+    env = launcher_mod.activate_env(
+        python, runtime.probe_env(python, bundled=bundled), timeout=_HAS_MPL_BUDGET_S
+    )
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise launcher_mod.LauncherUnavailable(
+            "经 Conda 激活取环境用完了预检的时间预算；请稍后再试"
+        )
     try:
         # stdin 必须显式断开：桌面 sidecar 的 stdin 是「父进程死亡信号」管道，
         # 绝不能被子进程继承（Windows 上实测继承它会让子解释器启动挂死 30s，
@@ -1354,13 +1372,16 @@ def _has_matplotlib(python: str, *, bundled: bool = False) -> bool:
         probe = subprocess.run(
             [python, *args, "-c", "import matplotlib"],
             capture_output=True,
-            timeout=30,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
             env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
+        launcher_mod.raise_if_unlocated(python)  # 找不到 conda 的 Conda 环境：失败不是结论
         return False
+    if probe.returncode != 0:
+        launcher_mod.raise_if_unlocated(python)
     return probe.returncode == 0
 
 
@@ -1420,20 +1441,25 @@ def select_worker_python() -> tuple[str, str]:
     别的工具的配置里，往往是过期的全局状态，`test_a_stale_env_var_does_not_hide_an_explicit_setting`
     钉着；设置里指定的那条不在了则要说出来（那是用户在这个应用里做的选择）。
     """
-    global _worker_python, _worker_source
+    global _worker_python, _worker_source, _worker_ctx
     if _worker_python:
         try:
             still_there = Path(_worker_python).exists()
         except OSError:
             still_there = False
-        if still_there:
+        if still_there and _worker_ctx == launcher_mod.context_key(_worker_python):
             return _worker_python, _worker_source
-        # 选定之后那条解释器被删了（用户删掉了设置里指定的环境、外置盘拔了）：缓存不许替它作答，
-        # 否则起 worker 时 `FileNotFoundError` 原文外露成 internal_error、环境状态仍报旧路径
-        # （QA ENV-03-B1）。重新走一遍下面的链条：设置里指定的那条以 `missing` 收场。
-        LOG.warning("已选定的渲染解释器不在了，重新选择: %s", _worker_python)
-        _worker_python, _worker_source = None, ""
+        if still_there:
+            # 选定时的 `import matplotlib` 体检是在另一个启动上下文里做的（直接 ↔ Conda 激活）：结论不跨上下文复用，重新选
+            _worker_python, _worker_source = None, ""
+        else:
+            # 选定之后那条解释器被删了（用户删掉了设置里指定的环境、外置盘拔了）：缓存不许替它作答，
+            # 否则起 worker 时 `FileNotFoundError` 原文外露成 internal_error、环境状态仍报旧路径
+            # （QA ENV-03-B1）。重新走一遍下面的链条：设置里指定的那条以 `missing` 收场。
+            LOG.warning("已选定的渲染解释器不在了，重新选择: %s", _worker_python)
+            _worker_python, _worker_source = None, ""
     seen: set[str] = set()
+    launcher_failure: WorkerError | None = None
     for cand, source in _prioritized_candidates():
         try:
             exists = Path(cand).exists()
@@ -1448,12 +1474,27 @@ def select_worker_python() -> tuple[str, str]:
         if cand in seen:
             continue
         seen.add(cand)  # 同一个解释器不重复探测（每次探测最多 30s）
-        if _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED):
+        try:
+            has_mpl = _has_matplotlib(cand, bundled=source == SOURCE_BUNDLED)
+        except launcher_mod.CaptureDeferred:
+            raise  # 持锁时缓存没命中：不是“这个候选不行”，不许跳到下一个候选（那会静默换解释器）
+        except launcher_mod.LauncherUnavailable as exc:
+            # 激活取环境失败：既不是“可用”也不是“缺 matplotlib”，不缓存。显式选择的把稳定码交给用户；
+            # 默认链条 / 系统候选只跳过这一个，继续试后面的
+            err = _launcher_error(exc)
+            if source in _EXPLICIT_SOURCES:
+                raise err from exc
+            launcher_failure = launcher_failure or err
+            continue
+        if has_mpl:
             _worker_python, _worker_source = cand, source
+            _worker_ctx = launcher_mod.context_key(cand)
             LOG.info("渲染解释器: %s（来源 %s）", cand, logsafe.known(source, SOURCE_LABELS))
             return cand, source
         if source in _EXPLICIT_SOURCES:
             raise _explicit_unusable(source, cand, "no_matplotlib")
+    if launcher_failure is not None:
+        raise launcher_failure  # 没有别的可用候选：说真话（Conda 激活失败），不说“找不到装有 matplotlib 的 Python”
     raise _no_python_error()
 
 
@@ -1467,13 +1508,13 @@ def find_worker_python() -> str:
 #: 已经不是那个环境了（venv 被删了重建），结论作废重验（QA ENV-04-B1）。
 #: **刻意不共用 `_lock`**：worker 构造函数在 `get()` 已持有 `_lock` 时调用
 #: `resolve_worker_python()`，同一把非重入锁会当场自锁。
-_project_python_ok: dict[str, tuple[bool, tuple]] = {}
+_project_python_ok: dict[tuple[str, str], tuple[bool, tuple]] = {}
 
 
 def _cached_verdict(python: str) -> bool | None:
     """这条解释器在本进程里的体检结论；没验过、或验过之后原路径上的环境被替换了，回 None。"""
     with _project_python_lock:
-        hit = _project_python_ok.get(python)
+        hit = _project_python_ok.get((python, launcher_mod.context_key(python)))  # 按启动上下文分区
     if hit is None:
         return None
     ok, fingerprint = hit
@@ -1486,7 +1527,7 @@ def _record_verdict(python: str, ok: bool, fingerprint: tuple | None = None) -> 
     if fingerprint is None:
         fingerprint = projectenv.interpreter_fingerprint(python)
     with _project_python_lock:
-        _project_python_ok[python] = (ok, fingerprint)
+        _project_python_ok[(python, launcher_mod.context_key(python))] = (ok, fingerprint)
 
 
 def forget_python_verdict(python: str | None) -> None:
@@ -1498,7 +1539,10 @@ def forget_python_verdict(python: str | None) -> None:
     if not python:
         return
     with _project_python_lock:
-        _project_python_ok.pop(python, None)
+        for key in [
+            k for k in _project_python_ok if k[0] == python
+        ]:  # 所有启动上下文下的结论一起丢
+            _project_python_ok.pop(key, None)
 
 
 _project_python_lock = threading.Lock()
@@ -1609,7 +1653,11 @@ def resolve_worker_python(
                 # 轻量复检：venv 被删掉 / 被重建成另一个 Python 是常事，
                 # 记住过不等于现在还成立。每个进程每条解释器（每个指纹）只做一次。
                 fingerprint = projectenv.interpreter_fingerprint(remembered)
-                ok = _has_matplotlib(remembered)
+                try:
+                    ok = _has_matplotlib(remembered)
+                except launcher_mod.LauncherUnavailable as exc:
+                    # 项目已选定 / 记住的环境：稳定码直接交给用户。不记体检结论、不作废记住的解释器、不静默换别的
+                    raise _launcher_error(exc) from exc
                 _record_verdict(remembered, ok, fingerprint)
             if ok:
                 return remembered, remembered_source(figures_dir, remembered)
@@ -1950,8 +1998,14 @@ class EngineWorker:
         # B 项目用它自己的 .venv（ADR 0018）。两条控制面都从这一个出处取。
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
+        #: 启动方式（P09）：解释器路径的纯函数。None = 直接启动；`CondaLauncher` = 用 Conda 激活后的环境变量启动（仍是直接子进程）
+        self.launcher = launcher_mod.launcher_for_interpreter(python)
         #: 起会话那一刻这条解释器所在环境的「代」：写回重放 / 冷重放据此钉住热会话自己的环境
         self.python_generation = projectenv.environment_generation(python)
+        #: 起会话那一刻的 Conda 环境版本（成功记录用起会话时的值，不用收口时的）
+        self.env_state = launcher_mod.env_state_of(python)
+        #: 起会话那一刻的完整启动上下文（直接启动 / Conda 激活 + conda + prefix + 环境版本）：钉下的决定与它比
+        self.launch_context = launcher_mod.context_key(python)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
         # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
@@ -1989,6 +2043,12 @@ class EngineWorker:
             entry,
             logsafe.known(self.python_source, SOURCE_LABELS),
         )
+        try:
+            popen_env = launcher_mod.merge_env(self.launcher, python, env)
+        except launcher_mod.CaptureDeferred:
+            raise  # 持锁起会话时缓存没命中：交回 `acquire` 出锁预热再来
+        except launcher_mod.LauncherUnavailable as exc:  # 激活取环境失败：稳定码，什么都没起
+            raise _launcher_error(exc) from exc
         self.proc = subprocess.Popen(
             execspec.worker_argv(
                 self.spec, worker_py=WORKER_PY, out_dir=self.out_dir, runtime_args=args
@@ -1996,7 +2056,8 @@ class EngineWorker:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self._log,
-            env=env,
+            # Conda 激活增量只进这一次 Popen 的 env，不进 `self.spec`（spec 会进回执 / 调试载荷）
+            env=popen_env,
             text=True,
             bufsize=1,
             # 显式 UTF-8：text=True 默认跟随系统区域编码，Windows 上是 cp1252/
@@ -2721,7 +2782,13 @@ class WorkerdWorker:
         # `resolve_worker_python`，换控制面不换答案。
         python, self.python_source = _resolve_for_worker(figures_dir, script_name, pinned)
         self.python = python
+        self.launcher = None
+        if launcher_mod.launcher_for_interpreter(python) is not None:
+            # workerd 的 spawn 规格里没有激活增量：需要 Conda 激活的解释器只走 Python 池（调用方回退）
+            raise WorkerdUnavailable("该解释器需要 Conda 激活启动，workerd 不接")
         self.python_generation = projectenv.environment_generation(python)
+        self.env_state = launcher_mod.env_state_of(python)
+        self.launch_context = launcher_mod.context_key(python)
         # 与 EngineWorker 同源：改指表的代次与规则同一刻取（ADR 0106 §五）
         self.remap_generation, remap_rules = inputremap.snapshot(figures_dir)
         # 与 EngineWorker 同形：两条控制面都持一份 ExecutionSpec（唯一权威
@@ -3121,6 +3188,10 @@ class EnvironmentDecision:
     python: str = ""
     source: str = ""
     generation: str = ""
+    #: 钉下那一刻的完整启动上下文（`launcher.context_key`：`direct`，或 Conda 激活 + conda + prefix + 环境版本）。
+    #: conda install / 改 activate.d 不换代，conda 从找不到变成找得到（直接启动 → 激活）也不换代——计划验证的都不是那个
+    #: 环境（P09）。空 = 没钉（旧值 / 替身），只比路径与代
+    launch_context: str = ""
 
     @property
     def pinned(self) -> bool:
@@ -3134,6 +3205,7 @@ class EnvironmentDecision:
             and (
                 not self.generation or projectenv.environment_generation(python) == self.generation
             )
+            and (not self.launch_context or launcher_mod.context_key(python) == self.launch_context)
         )
 
     def matches_worker(self, worker) -> bool:
@@ -3144,16 +3216,27 @@ class EnvironmentDecision:
         if not (self.pinned and same_python(getattr(worker, "python", ""), self.python)):
             return False
         born = getattr(worker, "python_generation", "") or ""
+        if (
+            self.launch_context
+            and (getattr(worker, "launch_context", "") or "") != self.launch_context
+        ):
+            return False
         return not self.generation or born == self.generation
 
 
 def generation_stale(worker) -> bool:
-    """会话起的时候记下的环境代，与它的解释器**此刻**的环境代不是同一代（环境被原地重建了）。
-    会话没记环境代（替身 / 路径不存在）不判陈旧。"""
+    """会话起的时候记下的环境代，与它的解释器**此刻**的环境代不是同一代（环境被原地重建了），或 Conda 环境版本
+    / 启动上下文（`launcher.context_key`：直接启动 ↔ 激活、环境版本）变了。会话没记的（替身 / 路径不存在）不判陈旧。"""
+    python = getattr(worker, "python", "")
+    # Conda 环境原地变了（conda install / 改 activate.d / env config vars）：`environment_generation` 故意不看包与钩子，
+    # 但热会话的 import 与激活环境变量都还是旧的——同样判陈旧，重建（P09）
+    ctx = getattr(worker, "launch_context", "") or ""
+    if ctx and launcher_mod.context_key(python) != ctx:
+        return True  # 含直接启动 ↔ Conda 激活的切换（conda 找回来了 / 被移走了）
     born = getattr(worker, "python_generation", "") or ""
     if not born:
         return False
-    return projectenv.environment_generation(getattr(worker, "python", "")) != born
+    return projectenv.environment_generation(python) != born
 
 
 def pin_of_worker(worker) -> EnvironmentDecision:
@@ -3162,6 +3245,7 @@ def pin_of_worker(worker) -> EnvironmentDecision:
         python=getattr(worker, "python", "") or "",
         source=getattr(worker, "python_source", "") or "",
         generation=getattr(worker, "python_generation", "") or "",
+        launch_context=getattr(worker, "launch_context", "") or "",
     )
 
 
@@ -3198,6 +3282,11 @@ def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
     if cur is not None and figures_dir is not None and cur[0] == projectenv._key(figures_dir):
         return cur[1]
     return None
+
+
+def _launcher_error(exc: "launcher_mod.LauncherUnavailable") -> "WorkerError":
+    """Conda 激活取环境失败 → 带稳定码 `conda_launcher_unavailable` 的 `WorkerError`（不降级成裸起）。"""
+    return WorkerError(str(exc), code=exc.code)
 
 
 def _resolve_for_worker(
@@ -3589,6 +3678,7 @@ def acquire(
     # 进锁时它却死了 / 换了入口，就得出锁把决定补上再来一遍（Codex #562 P2），否则锁内重建走到只读的
     # 依赖门，本该自动改用的只会弹框。第二遍一定已经决定过，所以最多两遍。
     force_decide = False
+    rewarms = 0
     while True:
         # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
@@ -3628,6 +3718,12 @@ def acquire(
             )
             decided = True
         _refuse_if_mutating(want_python)
+        if want_python:
+            # 需要 Conda 激活的解释器：激活捕获（最长一个超时）在池锁**外**做完；锁内起会话只命中缓存
+            try:
+                launcher_mod.prewarm(want_python)
+            except launcher_mod.LauncherUnavailable as exc:
+                raise _launcher_error(exc) from exc
         with _lock:
             w = _workers.get(key)
             why = ""
@@ -3678,7 +3774,25 @@ def acquire(
                 )
                 if run is not None:
                     context["run"] = run
-                w = _new_worker(script_name, figures_dir, entry, pinned=pin, **context)
+                # 锁外预热之后 Conda 环境被改了（conda install / 改 activate.d）：构造函数里的激活缓存没命中。
+                # 不在池锁里跑捕获（最长 60s，期间所有项目的取会话 / 关停都被挡住）——`no_capture` 让它抛
+                # `CaptureDeferred`，出锁重新预热再来；检查与使用是同一次查找，中间没有窗口
+                try:
+                    with launcher_mod.no_capture():
+                        w = _new_worker(script_name, figures_dir, entry, pinned=pin, **context)
+                except Exception as exc:
+                    # 构造途中的各道门（解释器解析、依赖门）会把激活失败转成各自的错误码；只要根因是“持锁时缓存
+                    # 没命中”（`CaptureDeferred` 在异常链上），就不是结论——出锁重新预热再来
+                    if not launcher_mod.is_capture_deferred(exc):
+                        raise
+                    rewarms += 1
+                    if rewarms > 3:
+                        raise _launcher_error(
+                            launcher_mod.LauncherUnavailable(
+                                "这个 Conda 环境在起会话前反复被修改；请等它稳定后再试"
+                            )
+                        ) from None
+                    continue
                 if pin is not None and not pin.matches(getattr(w, "python", pin.python)):
                     # 会话构造时解析到的不是这次检测钉下的那一个（记录在两次解析之间被换了 / 环境被重建）：
                     # 不替用户悄悄换解释器——收掉这条刚起的会话，按 `environment_changed` 让调用方重新准备

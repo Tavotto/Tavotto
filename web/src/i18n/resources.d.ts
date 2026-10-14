@@ -2193,6 +2193,7 @@ export default interface Resources {
       "bad_request": "导出请求格式有误，请刷新页面后重试。",
       "bad_scope": "无法识别导出范围：{{value}}。",
       "bad_validation": "检查设置格式有误，请刷新页面后重试。",
+      "conda_launcher_unavailable": "Conda 环境激活失败（取不到激活后的环境变量），这次没有运行任何东西。通常是暂时的：稍后再试；如果一直这样，请检查这个环境的 conda 安装和 activate.d 脚本。",
       "dependency_preparation_required": "脚本开跑就需要的包渲染环境里没有，要先准备依赖",
       "desktop_updater_disabled": "桌面版不支持 pip 自升级，请更新桌面应用。",
       "dir_fsync_failed": "内容已写入，但系统无法确认已落盘。关闭前请再保存一次：{{reason}}",

@@ -3940,6 +3940,8 @@ export interface EngineEnvironment {
   error?: string | null
   /** ?probe= 时才有：各包实测 import 到的版本，null = import 不到 */
   imports?: Record<string, string | null>
+  /** ?probe= 时 Conda 激活取环境失败（瞬时）：没有 `imports`，`code` 为 `conda_launcher_unavailable` */
+  imports_error?: { code: string; detail: string }
   /** 当前项目那一份（没打开项目时是 `{ open: false }`） */
   project?: ProjectEnvironment
 }
