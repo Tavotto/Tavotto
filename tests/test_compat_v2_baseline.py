@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -140,6 +141,12 @@ def test_summarize_rejects_a_directory_that_mixes_runs(tmp_path):
             "scenario": sid,
             "source_sha": sha,
             "run_id": run_id,
+            "env_identity": {
+                "python_sha": "x",
+                "python_version": "3",
+                "matplotlib_version": "3",
+                "platform": "p",
+            },
             "ideal_outcome": "figure",
             "ideal_met": True,
             "observed": {
@@ -607,3 +614,77 @@ def test_probe_runs_with_the_launch_environment_or_declines(monkeypatch, tmp_pat
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert cb.absent_modules(str(vpy), ("cv2",), env=env) == ["cv2"]
     assert "-I" not in seen["cmd"] and seen["env"]["PYTHONPATH"] == "/src"
+
+
+# ---------------------------------------------------------------- 第八轮（PR #1023）
+
+
+def test_running_app_exposes_the_exact_child_environment():
+    from support import foundation_app as fa
+
+    app = fa.RunningApp("http://x", {}, None, Path("log"), Path("w"), env={"A": "1"})
+    assert app.env == {"A": "1"}
+
+
+def test_probe_env_is_exactly_the_childs_environment(monkeypatch, tmp_path):
+    """子 app 进程真正用的环境（Popen 的 env）原样给探针——不再把测试进程的 os.environ 并进去
+    （HOME / TAVOTTO_* / 被摘掉的 TAVOTTO_WORKER_PYTHON 都会不一样）。"""
+    monkeypatch.setenv("ONLY_IN_TEST_PROCESS", "1")
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("")
+    child = {"PATH": "/bin", "HOME": "/work/home", "PYTHONPATH": "/src"}
+    assert cb.probe_env(str(venv / "python"), child) == child
+
+
+def test_only_the_current_process_worker_has_a_reproducible_launch_environment():
+    ok = {"source": "current_process", "project": {"source": "current_process"}}
+    cb.require_current_process_worker(ok)  # 不抛
+    for other in ({"source": "managed"}, {"source": "user_env"}, {}):
+        with pytest.raises(cb.PreconditionUnmet):
+            cb.require_current_process_worker(other)
+
+
+def test_env_identity_is_a_digest_not_a_path():
+    ident = cb.env_identity("/home/u/secret/venv/bin/python", "3.11.2", "3.13.1")
+    assert set(ident) == {"python_sha", "python_version", "matplotlib_version", "platform"}
+    text = json.dumps(ident)
+    assert "secret" not in text and "/" not in ident["python_sha"]
+    assert ident["python_version"] == "3.13.1" and ident["matplotlib_version"] == "3.11.2"
+    assert ident == cb.env_identity("/home/u/secret/venv/bin/python", "3.11.2", "3.13.1")
+    assert ident["python_sha"] != cb.env_identity("/other/python", "3.11.2", "3.13.1")["python_sha"]
+
+
+def test_records_carry_the_measured_environment_identity():
+    sc = cs.SCENARIOS["s01_plain"]
+    obs = cb.Observation(scenario=sc.id)
+    obs.env_identity = cb.env_identity("/p/python", "3.11.2", "3.13.1")
+    assert cb.record(obs, sc, [], None)["env_identity"] == obs.env_identity
+
+
+def test_summarize_rejects_mixed_or_missing_environment_identities(tmp_path):
+    def rec(sid, ident):
+        return {
+            "scenario": sid,
+            "source_sha": "s",
+            "run_id": "r",
+            "env_identity": ident,
+            "ideal_outcome": "figure",
+            "ideal_met": True,
+            "observed": {
+                "first_valid_figure": True,
+                "one_shot_success": True,
+                "exec_count": 1,
+                "timings_s": {"total": 1.0},
+            },
+        }
+
+    a = cb.env_identity("/a/python", "3.11.2", "3.13.1")
+    b = cb.env_identity("/b/python", "3.11.2", "3.13.1")
+    (tmp_path / "a.json").write_text(json.dumps(rec("a", a)), "utf-8")
+    (tmp_path / "b.json").write_text(json.dumps(rec("b", a)), "utf-8")
+    assert cb.main(["summarize", str(tmp_path)]) == 0
+    (tmp_path / "b.json").write_text(json.dumps(rec("b", b)), "utf-8")
+    assert cb.main(["summarize", str(tmp_path)]) == 2  # 同一 run 里量了两个不同的环境
+    (tmp_path / "b.json").write_text(json.dumps(rec("b", None)), "utf-8")
+    assert cb.main(["summarize", str(tmp_path)]) == 2  # 没绑环境身份 = 不知道量的是什么

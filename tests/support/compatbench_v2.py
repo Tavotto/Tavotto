@@ -88,6 +88,7 @@ class Observation:
     render_errors: list[dict] = field(default_factory=list)
     error_type: str | None = None
     outcome_kind: str | None = None
+    env_identity: dict | None = None  # 被测环境身份（摘要）；summarize 要求同一 run 内一致
     titles: list[str] = field(
         default_factory=list
     )  # 捕获的图里读出的标题（语义真值，不只是「有图」）
@@ -129,6 +130,7 @@ class Observation:
             "error_type": self.error_type,
             "outcome_kind": self.outcome_kind,
             "titles": self.titles,
+            "env_identity": self.env_identity,
         }
 
 
@@ -188,7 +190,7 @@ def probe_interpreter(env, reported: str) -> str | None:
 
 
 def probe_env(python: str, app_env: dict) -> dict | None:
-    """探针该用的环境 = 隔离 app 启动 worker 时的那一份（继承 `os.environ` + app 的覆盖，含 PYTHONPATH）。
+    """探针该用的环境 = 隔离 app 进程 Popen 的完整环境（`RunningApp.env`，含 HOME / PYTHONPATH / TAVOTTO_*）。
 
     conda 环境靠激活脚本补 PATH / 环境变量，这里复现不了、也不该自己拼 -> 返回 None，调用方 skip
     （拿不到 worker 的启动环境就不判缺包前提）。"""
@@ -199,7 +201,47 @@ def probe_env(python: str, app_env: dict) -> dict | None:
     ):  # POSIX: <prefix>/bin/python；Windows: <prefix>/python.exe
         if (prefix / "conda-meta").is_dir():
             return None
-    return {**os.environ, **app_env}
+    return dict(app_env)  # 子 app 进程 Popen 的完整环境，原样；不并入测试进程的 os.environ
+
+
+def require_current_process_worker(envst: dict) -> None:
+    """只有「worker 就是 app 自己的解释器」(`source == current_process`) 时，子 app 的 Popen 环境才等于 worker 启动环境；
+    受管环境 / 用户环境 / conda 等由启动上下文另行包装，复现不了 -> 不判缺包前提（skip）。"""
+    source = envst.get("source") or (envst.get("project") or {}).get("source")
+    if source != "current_process":
+        raise PreconditionUnmet(f"worker 来源是 {source!r}，拿不到可复现的启动环境，不判缺包前提")
+
+
+def env_identity(python: str, matplotlib_version: str | None, python_version: str | None) -> dict:
+    """被测环境的身份（摘要，不放原始路径）：解释器真实路径的 sha256 前 16 位 + 版本 + 平台。"""
+    import hashlib
+    import platform
+
+    real = os.path.realpath(python) if python else ""
+    return {
+        "python_sha": hashlib.sha256(real.encode("utf-8")).hexdigest()[:16] if real else None,
+        "python_version": python_version,
+        "matplotlib_version": matplotlib_version,
+        "platform": f"{sys.platform}-{platform.machine()}",
+    }
+
+
+def _python_version(python: str, env: dict) -> str | None:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [python, "-c", "import platform; print(platform.python_version())"],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=True,
+        )
+        return out.stdout.strip().splitlines()[-1]
+    except Exception:  # noqa: BLE001 — 拿不到就是 None（未观测），不伪造
+        return None
 
 
 def absent_modules(python: str, names, *, env: dict | None = None) -> list[str]:
@@ -341,16 +383,22 @@ def observe(
     ro_restore: list[Path] = []
     try:
         with fa.running_app(proj, work, env_overrides=env) as app:
+            # 被测环境由子 app 自己报告（解释器 / matplotlib 版本 / worker 来源），不在测试进程里重建
+            _, envst = app.call("/api/engine/environment", timeout=60)
+            reported = (envst.get("project") or {}).get("python") or envst.get("python") or ""
+            if reported and not Path(reported).is_absolute():
+                reported = str(proj / reported)
+            obs.env_identity = env_identity(
+                reported,
+                envst.get("matplotlib"),
+                _python_version(reported, app.env) if reported else None,
+            )
             if needs_absent:
-                # 缺包前提：探**这个 app 实际用的**解释器，不是测试进程自己的
-                _, envst = app.call("/api/engine/environment", timeout=60)
-                reported = (envst.get("project") or {}).get("python") or ""
-                if reported and not Path(reported).is_absolute():
-                    reported = str(proj / reported)
+                require_current_process_worker(envst)
                 python = probe_interpreter(env, reported)
                 if python is None:
                     raise PreconditionUnmet("拿不到隔离 app 选中的解释器，无法核对缺包前提")
-                launch_env = probe_env(python, env)
+                launch_env = probe_env(python, app.env)
                 if launch_env is None:
                     raise PreconditionUnmet(
                         "拿不到 worker 的启动环境（conda 等靠激活脚本的环境），不判缺包前提"
@@ -538,6 +586,7 @@ def record(
         "observed": obs.to_json(),
         "source_sha": fh.source_sha(ROOT),
         "run_id": RUN_ID,
+        "env_identity": obs.env_identity,
         "recorded_at": time.time(),
         "unobserved": UNOBSERVED,
     }
@@ -571,6 +620,10 @@ def main(argv: list[str] | None = None) -> int:
     rows = load_records(args.dir)
     if not rows:
         print(f"{args.dir} 里没有记录——空集合不是通过")
+        return 2
+    idents = {json.dumps(r.get("env_identity"), sort_keys=True) for r in rows}
+    if len(idents) != 1 or "null" in idents:
+        print(f"{args.dir} 的记录没有绑定、或绑定了不一致的被测环境身份: {sorted(idents)}")
         return 2
     shas = {r.get("source_sha") for r in rows}
     runs = {r.get("run_id") for r in rows}
