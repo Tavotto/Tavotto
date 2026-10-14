@@ -117,8 +117,13 @@ export const currentAttempt = (report: PreparationReport): PreparationAttempt | 
 }
 
 /** 这个会话的账本里有没有 safe → native 的回退（native 尝试的触发原因 = safe 自己的限制） */
-export const fellBack = (report: PreparationReport): boolean =>
-  (report.attempt_history ?? []).some((a) => a.profile === 'native' && a.changed.includes('profile'))
+export const fellBack = (report: PreparationReport): boolean => {
+  const current = currentAttempt(report)
+  // 只看**本次运行**（账本按 run 分组，历史里更早一次运行的回退不算）
+  return (report.attempt_history ?? []).some(
+    (a) => current !== undefined && a.run === current.run && a.profile === 'native' && a.changed.includes('profile'),
+  )
+}
 
 type Extra = Partial<Pick<PrepView, 'input' | 'argsOpen' | 'primaryDisabled' | 'ghost' | 'step' | 'tone' | 'slot'>>
 

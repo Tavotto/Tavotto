@@ -1914,6 +1914,22 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(rows[1]).toContain('出错')
     })
 
+    it('只看本次运行：历史里更早一次运行回退过，这次是普通 safe 失败 → 不说「换过」（Codex #1044 r4271063109）', async () => {
+      await mount()
+      await openWith(
+        report({
+          ...STATES.failed,
+          provider: { plan_id: 'p', attempt_id: 'prep-3', attempts: 3, dependency: null },
+          attempt_history: [
+            HIST_BLOCKED({}),
+            HIST_BLOCKED({ seq: 2, attempt_id: 'prep-2', profile: 'native', changed: ['profile'], outcome: 'succeeded', code: '' }),
+            HIST_BLOCKED({ run: 2, seq: 1, attempt_id: 'prep-3', outcome: 'failed', code: 'script_error' }),
+          ],
+        }),
+      )
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('运行出错了')
+    })
+
     it('没换过的普通失败不说「换过」，也不显示运行记录（只有一次且没有理由，没有可说的）', async () => {
       await mount()
       await openWith(report({ ...STATES.failed, attempt_history: [HIST_BLOCKED({ outcome: 'failed', code: 'script_error' })] }))

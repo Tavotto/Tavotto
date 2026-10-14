@@ -7749,7 +7749,7 @@ def _session_target(ctx: "ProjectCtx", body: dict):
         )
     # #982：沿用上次成功的运行配置——只在请求明确要求、且没有给 argv 时；依据（解释器 / 环境 / 脚本 / helper / 数据）不全成立就当没有
     run = (
-        _last_success_selection(ctx, script) if reuse and not body.get("argv") else None
+        _last_success_selection(ctx, script) if reuse and body.get("argv") is None else None
     ) or engine_runconfig.selection_for(
         ctx.path, script, body.get("argv"), sensitive=bool(body.get("argv_sensitive"))
     )

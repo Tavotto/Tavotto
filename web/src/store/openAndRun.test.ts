@@ -489,6 +489,111 @@ describe('argv 换了：旧会话里在等的意图原子转移，不并存', ()
   })
 })
 
+describe('状态丢失后以后端报告为准（Codex #1044 r4271063082 / r4271063100）', () => {
+  const live = (over: Partial<PreparationReport> = {}) =>
+    running(2, {
+      intent: { id: 'i1', status: 'launched', reason: '', waiting_on: '', steps: 1, max_steps: 2, expires_at: 1, attempt_id: 'att-1', transferred: false },
+      ...over,
+    })
+
+  it('认领响应丢了（连接失败）：之后补拉到的报告证实意图存在 → 自动进入编辑照样兑现', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    mockAct.mockRejectedValueOnce(new TypeError('network'))
+    mockGet.mockResolvedValueOnce(live())
+    await open() // 失败后的补拉读到 running + 意图：以报告为准恢复
+    expect(entry().armed).toBe(true)
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+  })
+
+  it('卡上点「打开并运行」（条目不是从入口打开的）认领响应丢了：补拉到意图 → 武装；没收到 → 记号清掉，之后别处的意图不武装', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    await open(false)
+    mockAct.mockRejectedValueOnce(new TypeError('network'))
+    mockGet.mockResolvedValueOnce(live())
+    await store().act(KEY, 'run_when_ready')
+    expect(entry().armed).toBe(true)
+
+    store().clear()
+    mockCreate.mockResolvedValueOnce(report())
+    await open(false)
+    mockAct.mockRejectedValueOnce(new TypeError('network'))
+    mockGet.mockResolvedValueOnce(report({ observation_seq: 2 })) // 没收到
+    await store().act(KEY, 'run_when_ready')
+    expect(entry().armMaybe).toBe(false)
+    mockGet.mockResolvedValueOnce(live({ observation_seq: 3 })) // 别处武装的
+    await store().refresh(KEY)
+    expect(entry().armed).toBe(false)
+  })
+
+  it('认领响应丢了、而服务端其实没收到（报告里仍有 run_when_ready、没有意图）：不武装', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    mockAct.mockRejectedValueOnce(new TypeError('network'))
+    mockGet.mockResolvedValueOnce(report({ observation_seq: 2 }))
+    await open()
+    await store().refresh(KEY)
+    expect(entry().armed).toBe(false)
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-9', 5))
+    await store().refresh(KEY)
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+  })
+
+  it('刷新页面后同一个「打开并运行」入口再打开：报告里意图仍在跑 → 恢复「自动进入编辑」', async () => {
+    mockCreate.mockResolvedValueOnce(live())
+    await open() // 新的前端内存：没有 armed 记号
+    expect(entry().armed).toBe(true)
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+  })
+
+  it('普通打开（不是「打开并运行」入口）遇到别处武装的意图：不替它武装', async () => {
+    mockCreate.mockResolvedValueOnce(live())
+    await open(false)
+    expect(entry().armed).toBe(false)
+  })
+
+  it('打开一个已经跑完的会话（意图 launched、phase completed）：不因重建记号而自动进入', async () => {
+    mockCreate.mockResolvedValueOnce(done(['a'], 'att-1', 3, { intent: live().intent }))
+    await open()
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+  })
+
+  it('另一份运行配置的意图还在（前端丢了旧会话 id）：服务端 409 带回旧会话 id → 自动带 transfer_from 重试一次', async () => {
+    mockCreate.mockResolvedValueOnce(report({ session_id: 'psess-2' }))
+    mockAct.mockRejectedValueOnce(new ApiError('x', 409, { code: 'preparation_run_intent_conflict', params: { session_id: 'psess-old' } }))
+    claimed(running(2, { session_id: 'psess-2' }))
+    await open()
+    expect(mockAct).toHaveBeenCalledTimes(2)
+    expect(mockAct.mock.calls[0][1]).not.toHaveProperty('transfer_from')
+    expect(mockAct.mock.calls[1][1]).toMatchObject({ transfer_from: 'psess-old' })
+    expect(entry().armed).toBe(true)
+  })
+
+  it('重试后又是冲突：只重试这一次，不无限循环', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    const conflict = () => new ApiError('x', 409, { code: 'preparation_run_intent_conflict', params: { session_id: 'psess-old' } })
+    mockAct.mockRejectedValueOnce(conflict()).mockRejectedValueOnce(conflict())
+    mockGet.mockResolvedValue(report({ observation_seq: 3 }))
+    await open()
+    expect(mockAct).toHaveBeenCalledTimes(2)
+  })
+
+  it('冲突带回的会话也转移不了：只重试一次，不循环', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    mockAct.mockRejectedValueOnce(new ApiError('x', 409, { code: 'preparation_run_intent_conflict', params: { session_id: 'psess-old' } }))
+    mockAct.mockRejectedValueOnce(new ApiError('x', 409, { code: 'preparation_run_intent_not_transferable' }))
+    mockGet.mockResolvedValue(report({ observation_seq: 3 }))
+    await open()
+    expect(mockAct).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('沿用上次成功的参数（#982）：只从明确的打开动作发，值不回前端', () => {
   const reusedReport = (over: Partial<PreparationReport> = {}) =>
     report({ target: { kind: 'script', script: 'plot.py', entry: '__main__', asset_id: null, stem: null, argv_count: 2 }, ...over })

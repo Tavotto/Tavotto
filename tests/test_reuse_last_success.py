@@ -117,6 +117,15 @@ def test_reuse_is_explicit_and_runs_the_recorded_argv(world):
         assert _argvs(log)[-1] == ["--scale", "7.125"]
         assert "7.125" not in json.dumps(reused["created"])  # 参数值不进公开投影
 
+        # 显式给了空 argv（明确要「不带参数运行」）：它赢，不用上次的参数覆盖（Codex #1044 r4271063076）；
+        # 只有省略 argv 才考虑沿用
+        bare = _run(app, {"script": "fig.py", "argv": [], "reuse_last_success": True}, log)
+        assert bare["created"]["target"].get("argv_count", 0) == 0
+        assert _argvs(log)[-1] == []
+        # 无参数那次成功把「上次成功」改写成无参数，重新造一次带参数的成功，让后面的断言仍有东西可沿用
+        again2 = _run(app, {"script": "fig.py", "argv": ["--scale", "7.125"]}, log)
+        assert again2["final"]["phase"] == "completed"
+
         # 给了 argv：用户给的赢，标志不覆盖
         explicit = _run(
             app, {"script": "fig.py", "argv": ["--tag", "x"], "reuse_last_success": True}, log

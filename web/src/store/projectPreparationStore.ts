@@ -86,6 +86,8 @@ export interface PrepEntry {
    * 不再要用户点「进入编辑」。**不是后端事实**（只是这个窗口里的用户意图记号）：多张图要用户挑、失败 / 取消 / 没出图都不进入。
    */
   armed: boolean
+  /** 认领 `run_when_ready` 的响应丢了（连接失败）：服务端收没收到不知道——之后的报告里有意图就证实收到了（`armed`），仍有 `run_when_ready` 动作就是没收到 */
+  armMaybe: boolean
   /** 这个条目是从明确的「打开并运行」入口打开的：卡片上的「继续 / 再试一次」（重新打开）沿用这份意图，不让用户为同一个目的点两次 */
   wantsRun: boolean
   /** 同一脚本换了参数（另一份运行配置）时，旧会话里还在等的运行意图：「打开并运行」带它去后端原子转移，不并存两份 */
@@ -116,7 +118,7 @@ interface PreparationState {
   /** 事件流（重）连上：断线期间的进展一律以 GET 补拉（重启过的后端 404 → 重建只读检查） */
   refreshAll: () => void
   /** 认领后端生成的动作（run / cancel / recheck / prepare_dependencies）；报告里没有这个动作就什么都不做 */
-  act: (key: string, kind: PreparationActionKind) => Promise<void>
+  act: (key: string, kind: PreparationActionKind, retried?: boolean) => Promise<void>
   /** 环境 / 运行目录 / 数据位置答完了：空闲的会话只读地重新检查（不运行） */
   recheckIdle: () => void
   /** 「进入编辑」：记下加进画布的那张图与它的面板 / 渲染键（呈现层用它观察首次编辑渲染） */
@@ -287,6 +289,15 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         ? { editing: [], editRenders: {}, ...(before?.session_id === report.session_id ? { restarted: false } : {}) }
         : {}),
     }))
+    // 以后端报告为准恢复「自动进入编辑」（Codex #1044）：意图只由「打开并运行」的认领创建，报告里它还在（active / launched）、会话没跑完，
+    // 而这个条目是从「打开并运行」入口打开的（刷新 / 切项目后重新打开）或认领响应丢了（`armMaybe`）——就是那次认领的延续，不依赖前端内存
+    const cur = entry(key)
+    const intentLive = report.intent?.status === 'active' || report.intent?.status === 'launched'
+    if (cur && !cur.armed && intentLive && report.phase !== 'completed' && (cur.wantsRun || cur.armMaybe)) {
+      patch(key, () => ({ armed: true, armMaybe: false }))
+    } else if (cur?.armMaybe && report.actions.some((a) => a.kind === 'run_when_ready')) {
+      patch(key, () => ({ armMaybe: false })) // 认领没落地：别留着
+    }
     if (report.phase === 'completed' && (before?.phase !== 'completed' || attemptChanged)) {
       void onCompleted(report, owner)
       if (entry(key)?.armed) {
@@ -414,6 +425,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             editRenders: sameTarget ? (prev?.editRenders ?? {}) : {},
             // 「打开并运行」的意图记号只属于明确点过它的这一次；同参数再打开不带过去，换参数时看旧会话里还有没有在等的意图
             armed: false,
+            armMaybe: false,
             wantsRun: !!opts?.run,
             transferFrom: sameTarget
               ? (prev?.transferFrom ?? null)
@@ -479,7 +491,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       }
     },
 
-    act: async (key, kind) => {
+    act: async (key, kind, retried = false) => {
       const e = entry(key)
       const report = e?.report
       if (!e || !report || e.pending) return
@@ -518,10 +530,17 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         }
         if (isConnectionFailure(err)) {
           // 不知道后端收没收到：不重发（同一个动作 id 重发是幂等的，但「是否已认领」以报告为准），只补拉事实
-          patch(key, () => ({ connection: 'lost' }))
+          patch(key, () => ({ connection: 'lost', ...(kind === 'run_when_ready' ? { armMaybe: true } : {}) }))
         } else {
           // 修订变了 / 检查之后世界变了 / 影响变了 / 现在不能运行：零副作用的拒绝——说一句，重读报告
           const { code, params } = apiCode(err)
+          // 另一份运行配置的意图还在、而前端丢了旧会话 id（刷新 / 切项目）：后端把旧会话 id 带回来了——带着它转移，只重试一次
+          const old = params?.session_id
+          if (kind === 'run_when_ready' && code === 'preparation_run_intent_conflict' && typeof old === 'string' && !retried) {
+            patch(key, () => ({ transferFrom: old }))
+            await get().act(key, kind, true)
+            return
+          }
           // 旧意图不能转移（已执行 / 已取消）：下一次点击不再带它，别让「转移」成为永远的死胡同
           patch(key, () => ({
             rejection: { code, params },
