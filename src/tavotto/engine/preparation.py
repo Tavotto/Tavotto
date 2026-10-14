@@ -63,6 +63,7 @@ from . import (
     deprepair,
     depresolve,
     envadvice,
+    execpolicy,
     execspec,
     figcapture,
     inputbroker,
@@ -206,6 +207,11 @@ class PreparationPlan:
     #: 私有。conda install / 改 activate.d、conda 从找不到变成找得到（直接启动 → 激活）都不换「代」，但跑起来的环境变了：
     #: 执行前 `_stale_reason` 比它，对不上 = 计划过期（P09）
     environment_state: str = ""
+    #: 这份计划是对上一次尝试的**重试**（V2，ADR 0127）：上一次尝试的 plan_id / 触发它的稳定错误码 / 相对上一次变了哪几维
+    #: （`execpolicy.CHANGED_DIMENSIONS`）。三者都是诊断事实：不含路径 / argv。第一次尝试全为空。
+    retry_of: str | None = None
+    retry_cause: str = ""
+    retry_changed: tuple[str, ...] = ()
 
     def to_payload(self) -> dict:
         return {
@@ -1367,6 +1373,20 @@ def diagnostic_projection(plan: PreparationPlan, result: PreparationResult) -> d
                 if result.captured
                 else None,
             },
+            "retry": (
+                {
+                    "of": taskdiag.ident(plan.retry_of),
+                    "cause": taskdiag.code(plan.retry_cause),
+                    "changed": [
+                        c
+                        for c in plan.retry_changed
+                        if taskdiag.closed(c, execpolicy.CHANGED_DIMENSIONS)
+                    ],
+                    "execution": taskdiag.closed(plan.execution, execspec.PROFILES),
+                }
+                if plan.retry_of
+                else None
+            ),
             "error": (
                 {
                     "code": taskdiag.code(err.get("code")),

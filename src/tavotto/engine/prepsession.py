@@ -44,6 +44,7 @@ from . import (
     depplan,
     deprepair,
     dialogscan,
+    execpolicy,
     execspec,
     pool,
     preparation,
@@ -758,6 +759,8 @@ class _Attempt:
     #: 这次执行以 `missing_dependency` 收场时的差异计划（`_observe_missing`）：模块名 / 能否在会话里授权 /
     #: 影响摘要。None = 不是这类终局
     missing: dict | None = None
+    #: 这次尝试的执行语义（V2，ADR 0127）：一次运行里第二次尝试可以是 native 回退
+    profile: str = execspec.PROFILE_SAFE
 
 
 @dataclasses.dataclass(frozen=True)
@@ -845,6 +848,9 @@ class RunIntent:
     dep_done_pending: bool = False
     waiting_on: str = ""
     launched_attempt: str | None = None
+    #: 本意图名下的真实执行尝试（plan_id，有界）：首次执行之后若按执行证据回退（ADR 0127），第二次尝试也记在这里。
+    #: 回退**不是**意图步数：`steps` 仍是「安装 + 首次执行」
+    attempts: list[str] = dataclasses.field(default_factory=list)
     transferred_to: str | None = None
     lineage: list[str] = dataclasses.field(default_factory=list)
     ledger: list[dict] = dataclasses.field(default_factory=list)
@@ -866,6 +872,7 @@ class RunIntent:
             "max_steps": RUN_INTENT_MAX_STEPS,
             "expires_at": self.deadline,
             "attempt_id": self.launched_attempt,
+            "attempts": len(self.attempts),
             "transferred": bool(self.lineage),
         }
 
@@ -893,6 +900,10 @@ class Session:
     no_figure_hint: dict = dataclasses.field(default_factory=dict)
     #: 最近一次「打开并运行」意图（P05b）；None = 从没有过。终结后保留到被新的取代，供报告说明发生了什么
     intent: RunIntent | None = None
+    #: 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：原因码 · 与上次相比变了什么 · 结局
+    ledger: execpolicy.AttemptLedger = dataclasses.field(default_factory=execpolicy.AttemptLedger)
+    #: 用户在本次运行里点过取消：之后到的失败不再触发任何额外执行（回退也不）
+    cancel_requested: bool = False
     lock: threading.RLock = dataclasses.field(default_factory=threading.RLock, repr=False)
 
     def public_target(self) -> dict:
@@ -1031,6 +1042,36 @@ def classify_transition(
         if not evaluated_before:
             allowed |= _DEP_PARTS
     return "external_change" if changed - allowed else ""
+
+
+def spec_key_of(plan: preparation.PreparationPlan) -> execpolicy.SpecKey:
+    """一份计划的执行身份（执行语义 · 解释器摘要 · 启动上下文摘要）：账本与闸门只比较它，不碰路径 / argv 原文。"""
+    return execpolicy.SpecKey(
+        profile=plan.execution,
+        interpreter=execpolicy.digest(plan.interpreter),
+        launch=execpolicy.digest(
+            plan.entry,
+            plan.run.config_id if plan.run is not None else None,
+            json.dumps(plan.launch_context or {}, sort_keys=True, default=str),
+        ),
+    )
+
+
+def _outcome_of(result: preparation.PreparationResult, fin: dict | None) -> tuple[str, str]:
+    """一次尝试的终局 → `(账本结局, 稳定码)`。只用已有的稳定码。"""
+    status = result.status
+    code = str((result.error or {}).get("code") or "")
+    if status == preparation.STATUS_CANCELLED:
+        return execpolicy.OUTCOME_CANCELLED, "cancelled"
+    if status == preparation.STATUS_READY:
+        if isinstance(fin, dict) and fin.get("registered") is False:
+            return execpolicy.OUTCOME_FAILED, _finalize_failure_code(fin)
+        return execpolicy.OUTCOME_SUCCEEDED, ""
+    if status == preparation.STATUS_ERROR:
+        if execpolicy.may_fall_back(code):
+            return execpolicy.OUTCOME_BLOCKED, code
+        return execpolicy.OUTCOME_FAILED, code
+    return execpolicy.OUTCOME_FAILED, code
 
 
 class SessionService:
@@ -1239,7 +1280,19 @@ class SessionService:
                 if action.attempt_id in {d.plan_id for d in sess.dep_attempts}:
                     deprepair.cancel_status(action.attempt_id or "")
                 elif action.attempt_id:
-                    self._prep.cancel(action.attempt_id, project_id)
+                    # 取消之后不再有任何额外执行（ADR 0127）：标记先于取消落下，回退的最后一刻核对它；
+                    # 回退可能已经把第二次尝试接上了，取消要落在**最新**的那次上，不是动作当初指着的那次
+                    sess.cancel_requested = True
+                    for aid in dict.fromkeys(
+                        [action.attempt_id]
+                        + (
+                            [sess.attempts[-1].attempt_id]
+                            if sess.attempts
+                            and action.attempt_id in {a.attempt_id for a in sess.attempts}
+                            else []
+                        )
+                    ):
+                        self._prep.cancel(aid, project_id)
                 claimed = True
             else:  # ACTION_RECHECK：规划有副作用面（解释器体检），不在会话锁里做
                 recheck = True
@@ -1517,7 +1570,40 @@ class SessionService:
             action_id=action.id,
             config_revision=sess.config_revision,
             created_at=self._clock(),
+            profile=plan.execution,
         )
+        # 新的一次用户发起的运行：回退预算与取消标记都从头算（ADR 0127）
+        sess.ledger.begin_run()
+        sess.cancel_requested = False
+        sess.ledger.record(plan.plan_id, spec_key_of(plan))
+        done = self._done_callback(sess, attempt, launch=launch, finalize=finalize)
+
+        # A new action after a settled attempt is an explicit rerun. The provider
+        # retires the old build only after its cancellation and stale-plan checks.
+        self._prep.register(plan, force_rebuild=bool(sess.attempts))
+        sess.attempts.append(attempt)
+        action.attempt_id = plan.plan_id
+        entry = self._prep.get(plan.plan_id, sess.project_id)
+        if entry is not None and entry[1].status == preparation.STATUS_PENDING:
+            try:
+                launch(plan, done)
+            except Exception:
+                # 没交出去：撤回认领，动作仍可再用
+                sess.attempts.remove(attempt)
+                sess.ledger.discard(plan.plan_id)
+                action.attempt_id = None
+                raise
+        else:
+            # register 当场落了终局（needs_input / 静态）：没有执行线程，登记也无从谈起
+            attempt.finalized = True
+        # 首次执行已被认领（自动或手点都一样）：运行意图用尽，之后不会再有自动的第二次
+        self._consume_intent(sess, plan.plan_id)
+        return True
+
+    def _done_callback(self, sess: Session, attempt: _Attempt, *, launch, finalize):
+        """一次执行尝试的收尾回调（执行线程上、项目绑定里调）：登记捕获 → 缺包差异计划 → 在同一把锁里落地终局；
+        safe 尝试若以 `blocked` 收场且策略允许，**在同一把锁里**接上第二次尝试（native，ADR 0127），这样读者
+        不会看到「第一次已结束、第二次还没开始」的中间态。"""
 
         def _done(done_plan, done_result) -> None:
             fin = None
@@ -1558,7 +1644,14 @@ class SessionService:
                     refresh = self._plan_of(sess.project_id, sess.project_root, sess.target)
                 except Exception:  # noqa: BLE001 — 刷新失败不改这次尝试的终局
                     LOG.exception("运行后重新检查失败 %s", done_plan.script)
+            outcome, code = _outcome_of(done_result, fin)
+            fallback = None
+            try:
+                fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code)
+            except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
+                LOG.exception("执行回退的判断失败 %s", done_plan.script)
             with sess.lock:
+                sess.ledger.close(attempt.attempt_id, outcome, code)
                 if done_plan.interpreter != sess.plan.interpreter:
                     # 点「运行」时采用了项目环境，执行线程就地重算了计划：会话的计划跟上（不加修订——这次尝试的结局
                     # 仍属于当前修订），之后的检查 / 再次运行读到的是已采用的环境
@@ -1566,6 +1659,10 @@ class SessionService:
                     sess.fingerprint = _fingerprint(done_plan)
                 attempt.finalize = fin
                 attempt.missing = missing
+                if fallback is not None:
+                    self._start_fallback(
+                        sess, attempt, fallback, code, launch=launch, finalize=finalize
+                    )
                 attempt.finalized = True
                 if refresh is not None:
                     sess.plan = refresh
@@ -1579,26 +1676,137 @@ class SessionService:
                     }
             self._notify(sess)
 
-        # A new action after a settled attempt is an explicit rerun. The provider
-        # retires the old build only after its cancellation and stale-plan checks.
-        self._prep.register(plan, force_rebuild=bool(sess.attempts))
-        sess.attempts.append(attempt)
-        action.attempt_id = plan.plan_id
-        entry = self._prep.get(plan.plan_id, sess.project_id)
-        if entry is not None and entry[1].status == preparation.STATUS_PENDING:
-            try:
-                launch(plan, _done)
-            except Exception:
-                # 没交出去：撤回认领，动作仍可再用
-                sess.attempts.remove(attempt)
-                action.attempt_id = None
-                raise
-        else:
-            # register 当场落了终局（needs_input / 静态）：没有执行线程，登记也无从谈起
-            attempt.finalized = True
-        # 首次执行已被认领（自动或手点都一样）：运行意图用尽，之后不会再有自动的第二次
-        self._consume_intent(sess, plan.plan_id)
-        return True
+        return _done
+
+    # ---- 执行回退（V2，ADR 0127）----
+    def _decline(self, sess: Session, attempt: _Attempt, reason: str) -> None:
+        """记下「这次本可回退但没有」的理由（闭集，诊断读）。"""
+        sess.ledger.decline(attempt.attempt_id, reason)
+
+    def _plan_fallback(
+        self, sess: Session, attempt: _Attempt, done_plan, done_result, code: str
+    ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
+        """锁外：safe 尝试以 `code` 收场后，要不要接一次 native。回 `(native 计划, 它的执行身份)`；不回退回 None。
+
+        只有 `blocked` 类原因才会走到重新规划（便宜的否决先做）；规划只读，不执行用户代码。"""
+        if done_plan.execution != execspec.PROFILE_SAFE or done_plan.target != TARGET_SCRIPT:
+            return None
+        if done_result.status != preparation.STATUS_ERROR or not execpolicy.may_fall_back(code):
+            return None
+        safe_key = spec_key_of(done_plan)
+        provisional = execpolicy.SpecKey(execpolicy.PROFILE_NATIVE, safe_key.interpreter, "")
+        decision = execpolicy.decide_fallback(
+            mode=execpolicy.mode_for(sess.project_root),
+            enabled=execpolicy.fallback_enabled(),
+            ledger=sess.ledger,
+            cause_code=code,
+            nxt=provisional,
+            cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
+        )
+        if not decision:
+            self._decline(sess, attempt, decision.reason)
+            return None
+        try:
+            nplan = self._plan_of(
+                sess.project_id,
+                sess.project_root,
+                {**sess.target, "execution": execspec.PROFILE_NATIVE},
+            )
+        except Exception:  # noqa: BLE001 — 规划失败 = 这次不回退，原结局保留
+            LOG.exception("native 回退计划失败 %s", done_plan.script)
+            self._decline(sess, attempt, execpolicy.REASON_PLAN_UNAVAILABLE)
+            return None
+        if nplan.native_spec is None or nplan.script != done_plan.script:
+            self._decline(sess, attempt, execpolicy.REASON_PLAN_UNAVAILABLE)
+            return None
+        if nplan.interpreter != done_plan.interpreter:
+            # 沿用 safe 当时解出的那个解释器（D3 / ADR 0021 §14.1）：换了就不是「同一个环境里换执行语义」
+            self._decline(sess, attempt, execpolicy.REASON_INTERPRETER_CHANGED)
+            return None
+        if nplan.script_revision != done_plan.script_revision:
+            self._decline(sess, attempt, execpolicy.REASON_STALE)
+            return None
+        if nplan.required_input or any(c["status"] != CHECK_OK for c in checks_of(nplan)):
+            self._decline(sess, attempt, execpolicy.REASON_NOT_RUNNABLE)
+            return None
+        if preparation.stale_reason(nplan) is not None:
+            self._decline(sess, attempt, execpolicy.REASON_STALE)
+            return None
+        key = spec_key_of(nplan)
+        again = execpolicy.decide_fallback(
+            mode=execpolicy.mode_for(sess.project_root),
+            enabled=execpolicy.fallback_enabled(),
+            ledger=sess.ledger,
+            cause_code=code,
+            nxt=key,
+            cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
+        )
+        if not again:
+            self._decline(sess, attempt, again.reason)
+            return None
+        changed = execpolicy.changed_between(safe_key, key)
+        nplan = dataclasses.replace(
+            nplan,
+            plan_id=f"prep-{uuid.uuid4().hex}",
+            created_at=self._clock(),
+            retry_of=done_plan.plan_id,
+            retry_cause=code,
+            retry_changed=changed,
+        )
+        return nplan, key
+
+    def _start_fallback(
+        self, sess: Session, attempt: _Attempt, fallback, code: str, *, launch, finalize
+    ) -> None:
+        """会话锁内：把 native 回退作为**同一会话的第二个 attempt** 交出去。最后一刻再核一次取消 / 失效 / 闸门
+        （锁外规划期间用户可能点了取消）；任何一项不成立就保持原结局，一行用户代码都不再跑。"""
+        nplan, key = fallback
+        if sess.attempts[-1] is not attempt:
+            return  # 会话已经往前走了（重新检查换了修订 / 别的尝试）：不接
+        if sess.cancel_requested:
+            self._decline(sess, attempt, execpolicy.REASON_CANCELLED)
+            return
+        intent = sess.intent
+        if intent is not None and intent.status == INTENT_CANCELLED:
+            self._decline(sess, attempt, execpolicy.REASON_CANCELLED)
+            return
+        decision = execpolicy.decide_fallback(
+            mode=execpolicy.mode_for(sess.project_root),
+            enabled=execpolicy.fallback_enabled(),
+            ledger=sess.ledger,
+            cause_code=code,
+            nxt=key,
+            cancelled=False,
+        )
+        if not decision:
+            self._decline(sess, attempt, decision.reason)
+            return
+        second = _Attempt(
+            attempt_id=nplan.plan_id,
+            action_id=attempt.action_id,
+            config_revision=sess.config_revision,
+            created_at=self._clock(),
+            profile=nplan.execution,
+        )
+        sess.ledger.record(nplan.plan_id, key, cause=code)
+        self._prep.register(nplan)
+        sess.attempts.append(second)
+        done = self._done_callback(sess, second, launch=launch, finalize=finalize)
+        found = self._prep.get(nplan.plan_id, sess.project_id)
+        try:
+            if found is None or found[1].status != preparation.STATUS_PENDING:
+                raise RuntimeError("native 回退计划没有进入待执行")
+            launch(nplan, done)
+        except Exception:  # noqa: BLE001 — 没交出去：撤回第二次尝试，原结局保留
+            LOG.exception("native 回退没能交给执行线程 %s", nplan.script)
+            sess.attempts.remove(second)
+            sess.ledger.discard(nplan.plan_id)
+            self._decline(sess, attempt, execpolicy.REASON_LAUNCH_FAILED)
+            return
+        if sess.intent is not None and attempt.attempt_id in sess.intent.attempts:
+            sess.intent.attempts.append(nplan.plan_id)
+            sess.intent.note("fallback", nplan.plan_id, self._clock())
+        sess.dependency_delta = None
 
     # ---- 持续运行意图（P05b，ADR 0124）----
     def _intent_live(self, sess: Session, *, expire: bool = True) -> RunIntent | None:
@@ -1634,6 +1842,7 @@ class SessionService:
         intent.steps += 1
         intent.ended_at = self._clock()
         intent.launch = intent.finalize = intent.prepare = None
+        intent.attempts.append(attempt_id)
         intent.note("launch", attempt_id, intent.ended_at)
 
     def _follow_intent(
@@ -2002,6 +2211,9 @@ class SessionService:
                 ),
                 # 运行意图（P05b）：None = 从没有过；终结后保留，说明是怎么结束的（reason 是闭集码，不带路径与参数）
                 "intent": sess.intent.public() if sess.intent is not None else None,
+                # 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：执行语义 · 原因码 · 与上次相比变了什么 · 结局。
+                # 只有摘要与闭集码，没有路径 / argv / 环境值
+                "attempt_history": sess.ledger.history(),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
