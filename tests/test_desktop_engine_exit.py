@@ -104,6 +104,8 @@ def test_marker_file_is_declared_to_users_and_documented_as_not_uploaded():
     assert name == "session-state.json"
     privacy = (ROOT / "docs" / "privacy.md").read_text(encoding="utf-8")
     assert name in privacy, "隐私声明没有如实声明本机退出标记"
-    adr = next((ROOT / "docs" / "adr").glob("0129-abnormal-exit-marker.md")).read_text(encoding="utf-8")
+    adr = next((ROOT / "docs" / "adr").glob("0129-abnormal-exit-marker.md")).read_text(
+        encoding="utf-8"
+    )
     assert name in adr
     assert "不上传" in adr
