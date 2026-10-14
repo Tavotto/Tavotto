@@ -1197,6 +1197,17 @@ class PreparationService:
             )
         return {"accepted": True, "reason": ""}
 
+    def cancel_project(self, project_id: str) -> int:
+        """项目关闭:取消这个项目名下所有还没终局的计划(执行线程据此在下一个取消接受时刻收工,新建的会话当场关掉)。
+        返回接受了取消的数量。别的项目的计划不动。"""
+        with self._lock:
+            mine = [
+                pid
+                for pid, e in self._entries.items()
+                if e.plan.project_id == project_id and e.result.status not in TERMINAL
+            ]
+        return sum(1 for pid in mine if self.cancel(pid, project_id).get("accepted"))
+
     def note_owner(self, plan_id: str, worker, created: bool) -> None:
         """runner 取到会话那一刻报一次（每次 take 一次，含缺包后换环境的第二次）：`created` 来自 `pool.acquire`
         的池锁，不是快照猜的。取消已经在等（来得比取到会话还早）：这条是本计划新建的 → 当场关掉它，不让它开跑；

@@ -164,3 +164,112 @@ def test_closing_a_project_cancels_a_launch_that_has_not_registered_yet(tmp_path
         dk.wait_until(lambda: owned.finished, timeout=30, what="关项目后在途进程被结束")
     live = [s for s in nativesession.REGISTRY.list(str(proj)) if s.owned and not s.owned.finished]
     assert live == []
+
+
+def test_closing_a_project_blocks_a_launch_that_has_not_reserved_yet(tmp_path, monkeypatch):
+    """准备线程在 `reserve` 之前被挂住时关项目:此时既没有会话也没有票据,但关闭之后它再往下走也不许 spawn
+    (Codex #1022 r4267320690;顺带堵上 `reserve` 到 `begin_start` 之间的窗口)。"""
+    import threading
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gate = threading.Event()
+    reached = threading.Event()
+    real_reserve = nativesession.REGISTRY.reserve
+
+    def slow_reserve(launch_id, project_root=""):
+        reached.set()
+        gate.wait(30)
+        return real_reserve(launch_id, project_root)
+
+    monkeypatch.setattr(nativesession.REGISTRY, "reserve", slow_reserve)
+    launch = dk.launch_for(tmp_path, "open('ran.txt','w').write('x')\n", name="fig.py")
+    box = {}
+
+    def go():
+        try:
+            box["session"] = dk.desktopproc.start(launch)
+        except Exception as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    assert reached.wait(60)
+    nativesession.REGISTRY.close_project(str(proj))
+    gate.set()
+    t.join(60)
+    assert "session" not in box, "项目已关闭,启动不许再进行"
+    assert getattr(box.get("error"), "code", "") == runcodes.NATIVE_REGISTRY_CLOSING
+    assert not (tmp_path / "work" / "ran.txt").exists(), "关项目之后不应跑任何用户代码"
+    # 重新打开项目之后可以再启动
+    nativesession.REGISTRY.reopen_project(str(proj))
+    session = dk.desktopproc.start(dk.launch_for(tmp_path, "pass\n", name="fig.py"))
+    session.cancel_owned()
+
+
+def test_preparation_service_cancels_every_plan_of_a_closed_project(tmp_path):
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    plan = preparation.plan_for(
+        project_id="pj-closed",
+        project_root=str(proj),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+        execution="native",
+    )
+    preparation.SERVICE.register(plan)
+    other = preparation.SERVICE.register(
+        preparation.plan_for(
+            project_id="pj-other",
+            project_root=str(proj),
+            asset_id="",
+            stem="",
+            script="fig.py",
+            entry="__main__",
+            original_artifact=None,
+            target=preparation.TARGET_SCRIPT,
+            execution="native",
+        )
+    )
+    assert preparation.SERVICE.cancel_project("pj-closed") == 1
+    _, result = preparation.SERVICE.get(plan.plan_id, "pj-closed")
+    assert result.status == preparation.STATUS_CANCELLED
+    assert other.status != preparation.STATUS_CANCELLED  # 别的项目的计划不受影响
+
+
+def test_registration_failure_ends_the_native_session(tmp_path, monkeypatch):
+    """准备跑完、登记被拒(`multiple_stem_conflict` 等)时,桌面拥有的进程不能留在屏障上占着租约与路由
+    (Codex #1022 r4267320696)。"""
+    import types
+
+    from tavotto.engine import probe
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    session = dk.desktopproc.start(
+        dk.launch_for(tmp_path, SCRIPT, name="fig.py", launch_id="plan-reg-fail")
+    )
+    nativekit.wait_state(session, [nativesession.BARRIER])
+    resp = session.ensure_built()
+    monkeypatch.setattr(
+        probe,
+        "register_probed",
+        lambda *a, **k: {"registered": False, "error": {"code": "multiple_stem_conflict"}},
+    )
+    from tavotto import app as m
+
+    ctx = types.SimpleNamespace(path=proj)
+    plan = types.SimpleNamespace(
+        script="fig.py", entry="__main__", run=None, execution="native", plan_id="plan-reg-fail"
+    )
+    captured = {"stems": list(resp["stems"]), "descriptors": resp["descriptors"]}
+    out = m._finalize_script_attempt(ctx, plan, types.SimpleNamespace(captured=captured))
+    assert out["registered"] is False
+    dk.wait_until(lambda: session.owned.finished, what="登记失败后进程被结束")
+    assert not dk.holds_lease(session)

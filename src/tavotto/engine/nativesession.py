@@ -952,6 +952,8 @@ class NativeSessionRegistry:
         #: （ADR 0021 §9）：会话结束即失效，绝不进文档。
         self._routes: dict[tuple, str] = {}
         self._reserved: set[str] = set()
+        #: 已关闭的项目(realpath):其后任何新启动在 `reserve` / `begin_start` 当场被拒,直到项目重新打开
+        self._closed_projects: set[str] = set()
         #: launch_id → 已 spawn、还在握手 / 登记中的所有者。不在 `_sessions` 里，但进程已经在跑：
         #: `shutdown_all` 必须看得见它，否则 sidecar 关停时漏掉成孤儿。
         self._starting: dict[str, StartTicket] = {}
@@ -1001,15 +1003,21 @@ class NativeSessionRegistry:
             self._sessions[session_id] = session
         return session
 
-    def reserve(self, launch_id: str) -> None:
+    def _refuse_if_closed(self, project_root: str) -> None:
+        """调用方持锁。注册表 closing、或这个项目已关闭 → 当场拒绝(一行用户代码都没跑)。"""
+        if self._closing or (
+            project_root and os.path.realpath(project_root) in self._closed_projects
+        ):
+            raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+
+    def reserve(self, launch_id: str, project_root: str = "") -> None:
         """原子占住一个桌面拥有的 launch_id（取租约 / spawn 之前）；已被占、或同 id 的上一任还没被所有者确认
         结束（`owned.finished`）就抛冲突。检查与占位在同一把锁里。
 
         占位由所有者的完成回调释放（`desktopproc.start`）——握手 / 登记失败后清组超时（取消未确认）也不例外。
         租约键另有一层保险：每次启动的会话 id 都带唯一后缀，不同所有者互相删不掉对方的租约。"""
         with self._lock:
-            if self._closing:
-                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+            self._refuse_if_closed(project_root)
             busy = any(
                 s.launch_id == launch_id
                 and (s.alive() or (s.owned is not None and not s.owned.finished))
@@ -1022,8 +1030,7 @@ class NativeSessionRegistry:
     def begin_start(self, launch_id: str, project_root: str = "") -> StartTicket:
         """spawn **之前**领在途登记；closing 时拒绝（一行用户代码都没跑）。"""
         with self._lock:
-            if self._closing:
-                raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
+            self._refuse_if_closed(project_root)
             ticket = StartTicket(launch_id, os.path.realpath(project_root) if project_root else "")
             self._starting[launch_id] = ticket
             return ticket
@@ -1052,6 +1059,18 @@ class NativeSessionRegistry:
         """清 closing（仅测试隔离 / 同进程重启用）。"""
         with self._lock:
             self._closing = False
+            self._closed_projects.clear()
+
+    def close_project(self, project_root: str) -> int:
+        """项目关闭:**先**标记(此后这个项目的新启动在 `reserve` / `begin_start` 当场被拒,覆盖「准备线程还没走到
+        登记」的所有窗口),**再**结束已登记的会话与在途票据。返回结束的数量。项目重新打开时 `reopen_project`。"""
+        with self._lock:
+            self._closed_projects.add(os.path.realpath(project_root))
+        return self.cancel_project(project_root)
+
+    def reopen_project(self, project_root: str) -> None:
+        with self._lock:
+            self._closed_projects.discard(os.path.realpath(project_root))
 
     def unreserve(self, launch_id: str) -> None:
         with self._lock:

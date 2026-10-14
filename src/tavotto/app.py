@@ -2255,6 +2255,7 @@ def open_project(path_str: str, make_default: bool = True) -> dict:
     失败（目录不存在 / 注册表损坏）抛 RuntimeError，已打开的项目不受影响。
     """
     path = Path(path_str).expanduser().resolve()
+    engine_nativesession.REGISTRY.reopen_project(str(path))  # 关过又打开:桌面拥有的运行可以再启动
     with _tutorial_operation(path):
         return _open_project(path, make_default)
 
@@ -2359,7 +2360,10 @@ def close_project(pid: str, wait: bool = False) -> bool:
     engine_pool.shutdown_all(str(ctx.path), wait=wait)
     # 桌面拥有的 native 会话是 sidecar 自己起的进程：关项目 = 真终止（含进程组 / Job），不留孤儿占着环境
     # （终端拥有的不碰，ADR 0021 §8.1）
-    engine_nativesession.REGISTRY.cancel_project(str(ctx.path))
+    # 顺序是契约:先取消这个项目的准备(执行线程在 spawn 之前也会收工),再 `close_project` 标记并结束会话 / 在途启动——
+    # 标记之后 `reserve` / `begin_start` 当场拒绝,关闭之前还没走到登记的准备线程再也起不了进程
+    engine_preparation.SERVICE.cancel_project(pid)
+    engine_nativesession.REGISTRY.close_project(str(ctx.path))
     LOG.info("项目已关闭: %s", ctx.path)
     return True
 
@@ -7737,6 +7741,11 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         },
     )
     if not registered.get("registered"):
+        if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
+            # 登记被拒(多脚本同名 stem 等):准备以失败收场,但桌面拥有的进程还停在屏障上占着租约与路由——收掉
+            for sess in engine_nativesession.REGISTRY.list(str(ctx.path)):
+                if sess.launch_id == plan.plan_id and sess.owned is not None:
+                    _end_native_session(sess)
         return {
             "registered": False,
             "code": (registered.get("error") or {}).get("code") or "registration_failed",
