@@ -818,16 +818,12 @@ def test_compare_cannot_overwrite_historical_input_via_output_alias(tmp_path):
     baseline.write_text(json.dumps(report(value=19)), encoding="utf-8")
     for target in (current, baseline):
         before = target.read_text(encoding="utf-8")
-        assert A.main(
-            ["compare", str(current), str(baseline), "--json", str(target)]
-        ) == 2
+        assert A.main(["compare", str(current), str(baseline), "--json", str(target)]) == 2
         assert target.read_text(encoding="utf-8") == before
     hardlink = tmp_path / "baseline-hardlink.json"
     hardlink.hardlink_to(baseline)
     before = baseline.read_text(encoding="utf-8")
-    assert A.main(
-        ["compare", str(current), str(baseline), "--json", str(hardlink)]
-    ) == 2
+    assert A.main(["compare", str(current), str(baseline), "--json", str(hardlink)]) == 2
     assert baseline.read_text(encoding="utf-8") == before
 
 
@@ -847,8 +843,13 @@ def test_malformed_compare_does_not_replace_input_with_failure_json(tmp_path):
     saved = baseline.read_text(encoding="utf-8")
     rc = A.main(
         [
-            "compare", str(current), str(baseline),
-            "--json", str(baseline), "--regression-pct", "invalid",
+            "compare",
+            str(current),
+            str(baseline),
+            "--json",
+            str(baseline),
+            "--regression-pct",
+            "invalid",
         ]
     )
     assert rc == 2
@@ -870,10 +871,17 @@ def test_parse_error_with_interleaved_options_never_overwrites_readonly_baseline
     current.write_text(json.dumps(report(value=21)), encoding="utf-8")
     baseline.write_text(json.dumps(report(value=19)), encoding="utf-8")
     before = baseline.read_bytes()
-    rc = A.main([
-        "compare", str(current), "--regression-pct", "invalid",
-        str(baseline), "--json", str(baseline),
-    ])
+    rc = A.main(
+        [
+            "compare",
+            str(current),
+            "--regression-pct",
+            "invalid",
+            str(baseline),
+            "--json",
+            str(baseline),
+        ]
+    )
     assert rc == 2
     assert baseline.read_bytes() == before
 
@@ -917,10 +925,17 @@ def test_parse_error_does_not_clobber_baseline_via_derived_temp_alias(tmp_path):
     current.write_text(json.dumps(report()), encoding="utf-8")
     baseline.write_text(json.dumps(report()), encoding="utf-8")
     before = baseline.read_bytes()
-    rc = A.main([
-        "compare", str(current), str(baseline),
-        "--json", str(verdict), "--regression-pct", "not-a-number",
-    ])
+    rc = A.main(
+        [
+            "compare",
+            str(current),
+            str(baseline),
+            "--json",
+            str(verdict),
+            "--regression-pct",
+            "not-a-number",
+        ]
+    )
     assert rc == 2
     assert baseline.read_bytes() == before
     assert json.loads(verdict.read_text(encoding="utf-8"))["status"] == "failed"

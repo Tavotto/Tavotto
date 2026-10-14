@@ -326,9 +326,7 @@ def _protected_parse_positionals(argv: list[str]) -> list[Path]:
     if not argv or argv[0] not in ("compare", "summarize"):
         return []
     value_options = (
-        {"--json", "--summary", "--regression-pct"}
-        if argv[0] == "compare"
-        else {"--json"}
+        {"--json", "--summary", "--regression-pct"} if argv[0] == "compare" else {"--json"}
     )
     protected: list[Path] = []
     i = 1
@@ -390,8 +388,10 @@ def _invalidate_parse_error(argv: list[str]) -> None:
 
             if can_write(json_path):
                 _write(json_path, failed)
-            if command == "compare" and can_write(summary_path) and (
-                json_path is None or not _same_report_path(summary_path, json_path)
+            if (
+                command == "compare"
+                and can_write(summary_path)
+                and (json_path is None or not _same_report_path(summary_path, json_path))
             ):
                 previous = {}
                 if summary_path.is_file():
