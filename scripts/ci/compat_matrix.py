@@ -47,6 +47,7 @@ import contextlib
 import json
 import os
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -1581,6 +1582,61 @@ def artist_census(results: dict) -> list[dict]:
     return rows
 
 
+def v2_observation(cases: list[dict], results: dict) -> dict:
+    """Compatibility-first Execution V2 基线指标（只观测，不设门禁，不进 baseline.json）。
+
+    口径诚实：CompatBench 的 execute 走 `pool.one_shot`，**不经准备会话**——所以「首次有效出图」是引擎层口径
+    （execute+capture+open 全过），「真实执行次数」「回退率」「干预次数」在这一层没有定义，字段留 null 并写明原因，
+    不是 0。会话层的同名指标在 `tests/support/compatbench_v2.py` 的场景基线里（独立结果文件）。"""
+
+    def quantile(values: list[float], q: int) -> float | None:
+        vals = sorted(values)
+        if not vals:
+            return None
+        if len(vals) == 1:
+            return vals[0]
+        return statistics.quantiles(vals, n=100, method="inclusive")[q - 1]
+
+    ran = [c for c in cases if "execute" in results[c["id"]]["stages"]]
+    first_figure = [
+        c
+        for c in ran
+        if all(results[c["id"]]["stages"].get(st) for st in ("execute", "capture", "open"))
+    ]
+    # `_finish()` 把整组（同一脚本的所有 stem）的 wall-clock 抄给组内每个 case：按被量的单位（组）去重，
+    # 否则多 stem 脚本在分位数里按 stem 数重复投票
+    groups = {
+        (c.get("script"), c.get("entry"), float(results[c["id"]].get("duration_ms", 0)))
+        for c in cases
+    }
+    durations = [g[2] for g in groups]
+    return {
+        "layer": "engine_one_shot",
+        "first_valid_figure": {
+            "passed": len(first_figure),
+            "total": len(ran),
+            "rate": round(len(first_figure) / len(ran), 4) if ran else None,
+            "definition": "execute、capture、open 三级都通过（引擎层，不经准备会话）",
+        },
+        "case_duration_ms": {
+            "unit": "script_group",
+            "groups": len(groups),
+            "p50": quantile(durations, 50),
+            "p95": quantile(durations, 95),
+        },
+        "exec_count": None,
+        "fallback_rate": None,
+        "intervention_count": None,
+        "e2e_first_figure_ms_p50_p95": None,
+        "unobserved": {
+            "exec_count": "未观测：one_shot 不写脚本自己的执行日志；会话层真实执行次数见 compatbench_v2",
+            "fallback_rate": "未观测：main 没有回退概念",
+            "intervention_count": "未观测：产品内没有干预计数器",
+            "e2e_first_figure_ms_p50_p95": "未观测：没有端到端（点击到可编辑图）计时，case 级 duration_ms 仅含引擎阶段",
+        },
+    }
+
+
 def build_report(
     cases: list[dict], results: dict, target: dict, target_name: str, mode: str
 ) -> dict:
@@ -1658,6 +1714,7 @@ def build_report(
             # 顺序跟着 dict 的插入序走，报告就不再可 diff。
             for cid in sorted(results, key=lambda c: (-results[c].get("duration_ms", 0), c))[:10]
         ],
+        "v2_observation": v2_observation(cases, results),
         "artist_census": artist_census(results),
         "browser_parity": parity,
         # 产品路由（Session 6）：路由 × 状态计数 + 失败明细
