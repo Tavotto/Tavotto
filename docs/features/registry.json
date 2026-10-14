@@ -206,6 +206,22 @@
       ]
     },
     {
+      "id": "canvas.proportional-scale-snap",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "锁比例缩放图时，图里的子图边吸到别的图的子图边（智能对齐）",
+        "en-US": "Proportional resize snaps a figure's subplot edges to other figures' subplot edges (smart alignment)"
+      },
+      "entry": "画布 → 选中图 → 拖角柄（默认锁比例）",
+      "e2e": [
+        {
+          "spec": "proportional-scale-snap.spec.ts",
+          "title": "功能：锁比例角柄缩放时，面板的子图边吸到别的图的子图边，松手后对齐、宽高比不变"
+        }
+      ]
+    },
+    {
       "id": "canvas.single-context-bar",
       "status": "active",
       "platform": "both",
