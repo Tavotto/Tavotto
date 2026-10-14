@@ -46,7 +46,7 @@ describe('snapScaleNearest', () => {
     const hit = snapScaleNearest({
       ...base,
       s0: 1.98,
-      anchors: anchorsOf([{ v: 40, frame: false }]),
+      anchors: anchorsOf([{ v: 40, frame: false, rect: { x: 20, y: 0, w: 20, h: 10 } }]),
       cands: { xs: [line(70, 'axes')], ys: [] },
     })
     expect(hit?.s).toBeCloseTo(2, 9) // (70 − 10) / (40 − 10)
@@ -58,7 +58,7 @@ describe('snapScaleNearest', () => {
     const hit = snapScaleNearest({
       ...base,
       s0: 1.49,
-      anchors: anchorsOf([{ v: 40, frame: false }]),
+      anchors: anchorsOf([{ v: 40, frame: false, rect: { x: 20, y: 0, w: 20, h: 10 } }]),
       cands: { xs: [line(69.9, 'axes'), line(70.4, 'frame')], ys: [] },
     })
     // 外框右边(69.6)→frame 线 70.4 距 0.8 同档 0；→axes 线 69.9 混搭
@@ -70,7 +70,7 @@ describe('snapScaleNearest', () => {
     const hit = snapScaleNearest({
       ...base,
       s0: 1.98,
-      anchors: anchorsOf([{ v: 40, frame: false }]),
+      anchors: anchorsOf([{ v: 40, frame: false, rect: { x: 20, y: 0, w: 20, h: 10 } }]),
       cands: { xs: [line(69.5, 'frame'), line(70.3, 'guide')], ys: [] },
     })
     expect(hit?.line.kind).toBe('guide')

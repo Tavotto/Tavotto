@@ -438,3 +438,82 @@ describe('图内子图缩放手柄：吸别的图子图的同一条边', () => {
     expect(useInteractionStore.getState().snapXs).toHaveLength(0)
   })
 })
+
+/* ============================ 吸附反馈（PR4） ============================= */
+
+describe('吸附反馈：自身所属框与跨图目标框', () => {
+  /** 拖到 (x, y) 停住（不松手），返回此刻的反馈，再松手 */
+  const feedbackAt = (x: number, y: number, mods: { metaKey?: boolean } = {}) => {
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', (x * i) / 10, (y * i) / 10, mods)
+      flushPreviewFrame()
+    }
+    const fb = useInteractionStore.getState().snapFeedback
+    fire('pointerup', x, y, mods)
+    return fb
+  }
+  const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThan(0.1)
+
+  it('图例吸上本图的线：有 self（图例此刻的框）、没有 target', async () => {
+    await setup()
+    // 图例顶 0.62 → 子图下沿 0.5：往上约 0.12·H
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    const fb = feedbackAt(0, -(0.12 / PX_Y) + 1)
+    const y = fb.find((f) => f.axis === 'y')!
+    expect(y).toBeTruthy()
+    expect(y.target).toBeUndefined()
+    near(y.self.y, 0.5 * H)
+    near(y.self.x, 0.6 * W)
+    near(y.self.w, 0.2 * W)
+  })
+
+  it('图例吸上另一张图的图例底边：target = 对方图例框', async () => {
+    await setup({ p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }) })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    const fb = feedbackAt(0, 2)
+    const y = fb.find((f) => f.axis === 'y')!
+    expect(y).toBeTruthy()
+    // 两个图例等高：顶对顶与底对底同时在容差内，谁胜出都对——线必须落在对方框的上沿或下沿，
+    // 且自身框同一条边与它重合
+    near(Math.min(Math.abs(y.v - 0.625 * H), Math.abs(y.v - 0.725 * H)), 0)
+    near(Math.min(Math.abs(y.self.y - y.v), Math.abs(y.self.y + y.self.h - y.v)), 0)
+    expect(y.target).toBeTruthy()
+    near(y.target!.x, P2_X + 0.6 * W)
+    near(y.target!.y, 0.625 * H)
+    near(y.target!.w, 0.2 * W)
+    near(y.target!.h, 0.1 * H)
+  })
+
+  it('松手后反馈消失', async () => {
+    await setup({ p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }) })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    feedbackAt(0, 2)
+    expect(useInteractionStore.getState().snapFeedback).toHaveLength(0)
+  })
+
+  it('按住 ⌘：没有反馈', async () => {
+    await setup({ p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }) })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    expect(feedbackAt(0, 2, { metaKey: true })).toHaveLength(0)
+  })
+
+  it('子图缩放手柄吸上对方子图右边：self 是缩放后的子图框，target 是对方子图框', async () => {
+    const rightMm = 0.45 * W + 2 * MM_PER_PX
+    const leftMm = 0.1 * W + 1 * MM_PER_PX
+    const r2 = (rightMm - P2_X) / W
+    const l2 = (leftMm - P2_X) / W
+    await setup({ p2: manifestOf(axesAt('axes_0', [l2, 0.5 + PX_Y, r2 - l2, 0.4])) })
+    startAxesDrag(down(), livePanel(), axes0, layout, 'e')
+    const fb = feedbackAt(3, 0)
+    const x = fb.find((f) => f.axis === 'x')!
+    expect(x).toBeTruthy()
+    near(x.self.x, 0.1 * W)
+    near(x.self.x + x.self.w, rightMm) // 缩放后的右边，不是原来的 0.45
+    near(x.self.y, 0.1 * H)
+    near(x.self.h, 0.4 * H)
+    expect(x.target).toBeTruthy()
+    near(x.target!.x + x.target!.w, rightMm)
+    // 不动的上下沿不出反馈
+    expect(fb.some((f) => f.axis === 'y')).toBe(false)
+  })
+})

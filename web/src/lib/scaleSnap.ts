@@ -22,6 +22,8 @@ import { panelRotation } from '@/types/document'
 export interface ScaleAnchor {
   v: number
   frame: boolean
+  /** 锚点所属元素在 s = 1（起手）时的页面 mm 框；外框锚点 = 起手外框（吸附反馈用） */
+  rect: Rect
 }
 
 export interface ScaleAnchors {
@@ -146,7 +148,11 @@ const threeY = (r: Rect) => [r.y, r.y + r.h / 2, r.y + r.h]
 
 /** 外框的三条线（不动的那条由 snapScaleNearest 按「相对 F 偏移为 0」自然略过） */
 export function frameAnchors(r: Rect): ScaleAnchor[][] {
-  return [threeX(r).map((v) => ({ v, frame: true })), threeY(r).map((v) => ({ v, frame: true }))]
+  const rect = { x: r.x, y: r.y, w: r.w, h: r.h }
+  return [
+    threeX(r).map((v) => ({ v, frame: true, rect })),
+    threeY(r).map((v) => ({ v, frame: true, rect })),
+  ]
 }
 
 /** 面板可当「内容」参与缩放吸附：未旋转、未翻转 */
@@ -186,9 +192,9 @@ export function scaleAnchorsFor(
   if (!objects || target.type !== 'panel' || !manifest || !plainPanel(target)) return anchors
   for (const { rect } of contentBoxes(target, manifest)) {
     for (const v of threeX(rect))
-      if (within(v, target.x, target.x + target.w)) anchors.xs.push({ v, frame: false })
+      if (within(v, target.x, target.x + target.w)) anchors.xs.push({ v, frame: false, rect })
     for (const v of threeY(rect))
-      if (within(v, target.y, target.y + target.h)) anchors.ys.push({ v, frame: false })
+      if (within(v, target.y, target.y + target.h)) anchors.ys.push({ v, frame: false, rect })
   }
   return anchors
 }
@@ -256,4 +262,10 @@ export function scaleSnapCandidates(i: ScaleCandidateInput): SnapLineCandidates 
     }
   }
   return { xs, ys }
+}
+
+/** 吸附后的反馈框：锚点所属框绕固定点 F 按倍数 s 缩放（面板缩放是显示缩放，框随 s 线性变） */
+export function scaledAnchorRect(anchor: ScaleAnchor, fixed: { x: number; y: number }, s: number): Rect {
+  const r = anchor.rect
+  return { x: fixed.x + (r.x - fixed.x) * s, y: fixed.y + (r.y - fixed.y) * s, w: r.w * s, h: r.h * s }
 }

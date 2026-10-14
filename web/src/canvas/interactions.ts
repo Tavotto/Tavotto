@@ -73,12 +73,14 @@ import {
   scaledRect,
   scaleFixedPoint,
   scaleSnapCandidates,
+  scaledAnchorRect,
   snapScaleNearest,
 } from '@/lib/scaleSnap'
 import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
 import { registerPointerCancel } from '@/store/gestureCoordinator'
-import { useInteractionStore } from '@/store/interactionStore'
+import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
+import { feedbackFor } from '@/lib/snapFeedback'
 import { displayedExactManifest } from '@/store/mountedSvgStore'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -428,6 +430,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
       const tol = snapTolMm(t)
       const snapX: number[] = []
       const snapY: number[] = []
+      let feedback: SnapFeedback[] = []
       if (cands && !rot && !ev.metaKey && !ev.ctrlKey && !proportional) {
         if (dir.includes('e')) {
           const hit = snapEdge(next.x + next.w, cands.xs, tol)
@@ -469,12 +472,21 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
           if (hit) {
             next = scaledRect(orig, dir, hit.s)
             ;(hit.axis === 'x' ? snapX : snapY).push(hit.line.v)
+            // 反馈：胜出锚点所属的框（外框锚点 = 外框，子图 / 色条锚点 = 那个元素），吸附后的位置
+            feedback = [
+              feedbackFor(
+                hit.axis,
+                hit.line,
+                scaledAnchorRect(hit.anchor, scaleSnap.fixed, hit.s),
+                objectId,
+              ),
+            ]
           }
         } else {
           scaleSnap.hold.held = null
         }
       }
-      interaction().setSnap(snapX, snapY)
+      interaction().setSnap(snapX, snapY, feedback)
 
       const placed = anchoredRect(orig, next, dir, rot)
       store.txnUpdate((d) => {
@@ -1898,10 +1910,13 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
   const full = panelFullRect(panel)
   const holdX = createSnapHold()
   const holdY = createSnapHold()
-  return (
+  // 本帧吸上的线；反馈要等调用方算出钳位后的最终框才能发（`report`）
+  let pending: { guideXs: number[]; guideYs: number[]; x?: SnapLine; y?: SnapLine } | null = null
+  const snapper = (
     pos: Rect4,
     ev: { metaKey: boolean; ctrlKey: boolean },
   ): [number, number] => {
+    pending = null
     if (ev.metaKey || ev.ctrlKey) {
       holdX.x = holdY.y = null
       interaction().setSnap([], [])
@@ -1912,6 +1927,8 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
     const guideYs: number[] = []
     let sx = 0
     let sy = 0
+    let lineX: SnapLine | undefined
+    let lineY: SnapLine | undefined
     if (dir.includes('e') || dir.includes('w')) {
       const e: SnapEdge = dir.includes('e') ? 2 : 0
       const f = e === 2 ? pos[0] + pos[2] : pos[0]
@@ -1923,6 +1940,7 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
       )
       sx = r.dx / full.w
       guideXs.push(...r.guideXs)
+      lineX = r.x?.line
     }
     if (dir.includes('n') || dir.includes('s')) {
       // position 是左下角原点：上沿 = y + h，下沿 = y；换成页面（top-origin）
@@ -1936,10 +1954,21 @@ function axesResizeSnapper(panel: PanelObject, element: ManifestElement, dir: Re
       )
       sy = r.dy / full.h
       guideYs.push(...r.guideYs)
+      lineY = r.y?.line
     }
-    interaction().setSnap(guideXs, guideYs)
+    pending = { guideXs, guideYs, x: lineX, y: lineY }
     return [sx, sy]
   }
+  /** 发吸附线与反馈：`rect` = 调用方钳位后的最终子图框（position，左下角原点） */
+  snapper.report = (rect: Rect4) => {
+    if (!pending) return
+    const self = fracBoxToMm(panel, flipY(rect))
+    const fb: SnapFeedback[] = []
+    if (pending.x) fb.push(feedbackFor('x', pending.x, self, panel.id))
+    if (pending.y) fb.push(feedbackFor('y', pending.y, self, panel.id))
+    interaction().setSnap(pending.guideXs, pending.guideYs, fb)
+  }
+  return snapper
 }
 
 /**
@@ -1979,6 +2008,21 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
     const snap = perfSpan('snap.compute', () =>
       snapMoveNearest(fracBoxToMm(panel, box), cands, snapTolMm(getTransform()), { hold, pair }),
     )
+    // 反馈：自身此刻（吸附后）的框 + 每个采用的轴一项
+    const report = (
+      guideXs: number[],
+      guideYs: number[],
+      useX: boolean,
+      useY: boolean,
+      out: [number, number],
+    ) => {
+      const self = fracBoxToMm(panel, [box[0] + out[0], box[1] + out[1], box[2], box[3]])
+      const fb: SnapFeedback[] = []
+      if (useX && snap.x) fb.push(feedbackFor('x', snap.x.line, self, panel.id))
+      if (useY && snap.y) fb.push(feedbackFor('y', snap.y.line, self, panel.id))
+      interaction().setSnap(guideXs, guideYs, fb)
+      return out
+    }
     const sx = snap.dx / full.w
     const sy = snap.dy / full.h
     if (ev.shiftKey && locked[0] !== 0 && locked[1] !== 0) {
@@ -1995,15 +2039,19 @@ function inFigureSnapper(panel: PanelObject, moving: (gid: string) => boolean, s
         interaction().setSnap([], [])
         return [0, 0]
       }
-      interaction().setSnap(useX ? snap.guideXs : [], useX ? [] : snap.guideYs)
-      return [k * locked[0], k * locked[1]]
+      return report(useX ? snap.guideXs : [], useX ? [] : snap.guideYs, useX, !useX, [
+        k * locked[0],
+        k * locked[1],
+      ])
     }
     const freeX = !ev.shiftKey || locked[0] !== 0
     const freeY = !ev.shiftKey || locked[1] !== 0
     if (!freeX) hold.x = null
     if (!freeY) hold.y = null
-    interaction().setSnap(freeX ? snap.guideXs : [], freeY ? snap.guideYs : [])
-    return [freeX ? sx : 0, freeY ? sy : 0]
+    return report(freeX ? snap.guideXs : [], freeY ? snap.guideYs : [], freeX, freeY, [
+      freeX ? sx : 0,
+      freeY ? sy : 0,
+    ])
   }
 }
 
@@ -2169,6 +2217,7 @@ export function startAxesDrag(
       }
     }
     last = rect
+    snapper?.report(rect)
     // 只给覆盖层线框：缩放要 matplotlib 重排（刻度、字号、图例都不会跟着线性缩放），
     // 假装缩放只会画出一张必然被纠正的图——线框如实表达「框会变成这么大」，
     // 成图由权威渲染说了算
