@@ -109,88 +109,93 @@ async function addCard(page: Page, card: string, count: number) {
 
 const LEGEND = 'axes_0.legend'
 
-for (const pressCtrl of [false, true]) {
-  test(
-    pressCtrl
-      ? '图内编辑拖图例靠近另一张图的图例：按住 Ctrl 不吸，落点就是光标位移'
-      : '图内编辑拖图例靠近另一张图的图例：左边与对方图例左边对齐（页面 mm 误差 < 0.1）',
-    pressCtrl ? {} : { tag: '@feature:figure.cross-figure-align' },
-    async ({ app, page }) => {
-      const a = await app({ figures: library() })
-      await page.setViewportSize({ width: 1600, height: 1000 })
-      await page.goto(a.baseURL)
-      await addCard(page, 'Fig_cross_a.pdf', 1)
-      await addCard(page, 'Fig_cross_b.pdf', 2)
+/** 两条用例同一套步骤，只差拖动时按没按 Ctrl（用例要各自是字面量，功能登记的扫描器才认得） */
+async function dragLegendToOther(
+  { app, page }: { app: (o?: { figures?: string }) => Promise<{ baseURL: string }>; page: Page },
+  pressCtrl: boolean,
+) {
+  const a = await app({ figures: library() })
+  await page.setViewportSize({ width: 1600, height: 1000 })
+  await page.goto(a.baseURL)
+  await addCard(page, 'Fig_cross_a.pdf', 1)
+  await addCard(page, 'Fig_cross_b.pdf', 2)
 
-      const objs = page.locator('[data-object-id]')
-      // 两张图置入时叠在页面中央：把第二张（b，在上层）往下拖开 400 px，两张图只在竖直方向错开一点，
-      // 水平方向仍重叠——图例左边在页面上差一大截，正好拿来对齐
-      const b0 = (await objs.nth(1).boundingBox())!
-      await page.mouse.move(b0.x + b0.width / 2, b0.y + b0.height / 2)
-      await page.mouse.down()
-      for (let i = 1; i <= 8; i++) await page.mouse.move(b0.x + b0.width / 2, b0.y + b0.height / 2 + (400 * i) / 8)
-      await page.mouse.up()
-      await page.waitForTimeout(400)
-      await page.keyboard.press('Escape')
-      // 别的图在排版画布上是位图，图例的位置取它出图时引擎给的 manifest（分数坐标）：
-      // 先进 b 的图内编辑让它出一次图，记下图例框；再回画布进 a
-      const manifests: Record<string, { x: number; y: number; w: number; h: number }> = {}
-      page.on('response', async (r) => {
-        if (!r.url().includes('/api/engine/render')) return
-        try {
-          const j = (await r.json()) as { manifest?: { stem: string; elements: { gid: string; bbox: number[] }[] } }
-          const el = j.manifest?.elements.find((e) => e.gid === LEGEND)
-          if (j.manifest && el)
-            manifests[j.manifest.stem] = { x: el.bbox[0], y: el.bbox[1], w: el.bbox[2], h: el.bbox[3] }
-        } catch {
-          /* 非 JSON 响应：忽略 */
-        }
-      })
-      const enter = async (i: number) => {
-        const box = (await objs.nth(i).boundingBox())!
-        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-        await page.keyboard.press('Enter')
-        await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 60_000 })
-        await page.waitForTimeout(2000)
-      }
-      await enter(1)
-      await expect.poll(() => manifests['Fig_cross_b'], { timeout: 30_000 }).toBeTruthy()
-      await page.locator('[data-context-back]').click()
-      await expect(page.locator('[data-element-svg]')).toHaveCount(0)
-      await page.waitForTimeout(500)
-      const objB = (await objs.nth(1).boundingBox())!
-      const lb = manifests['Fig_cross_b']
-      const theirsLeft = objB.x + lb.x * objB.width
-      await enter(0)
+  const objs = page.locator('[data-object-id]')
+  // 两张图置入时叠在页面中央：把第二张（b，在上层）往下拖开 400 px，两张图只在竖直方向错开一点，
+  // 水平方向仍重叠——图例左边在页面上差一大截，正好拿来对齐
+  const b0 = (await objs.nth(1).boundingBox())!
+  await page.mouse.move(b0.x + b0.width / 2, b0.y + b0.height / 2)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) await page.mouse.move(b0.x + b0.width / 2, b0.y + b0.height / 2 + (400 * i) / 8)
+  await page.mouse.up()
+  await page.waitForTimeout(400)
+  await page.keyboard.press('Escape')
+  // 别的图在排版画布上是位图，图例的位置取它出图时引擎给的 manifest（分数坐标）：
+  // 先进 b 的图内编辑让它出一次图，记下图例框；再回画布进 a
+  const manifests: Record<string, { x: number; y: number; w: number; h: number }> = {}
+  page.on('response', async (r) => {
+    if (!r.url().includes('/api/engine/render')) return
+    try {
+      const j = (await r.json()) as { manifest?: { stem: string; elements: { gid: string; bbox: number[] }[] } }
+      const el = j.manifest?.elements.find((e) => e.gid === LEGEND)
+      if (j.manifest && el)
+        manifests[j.manifest.stem] = { x: el.bbox[0], y: el.bbox[1], w: el.bbox[2], h: el.bbox[3] }
+    } catch {
+      /* 非 JSON 响应：忽略 */
+    }
+  })
+  const enter = async (i: number) => {
+    const box = (await objs.nth(i).boundingBox())!
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+    await page.keyboard.press('Enter')
+    await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 60_000 })
+    await page.waitForTimeout(2000)
+  }
+  await enter(1)
+  await expect.poll(() => manifests['Fig_cross_b'], { timeout: 30_000 }).toBeTruthy()
+  await page.locator('[data-context-back]').click()
+  await expect(page.locator('[data-element-svg]')).toHaveCount(0)
+  await page.waitForTimeout(500)
+  const objB = (await objs.nth(1).boundingBox())!
+  const lb = manifests['Fig_cross_b']
+  const theirsLeft = objB.x + lb.x * objB.width
+  await enter(0)
 
-      const mine0 = (await editBox(page, LEGEND))!
-      expect(mine0, '编辑中的图应有图例').not.toBeNull()
+  const mine0 = (await editBox(page, LEGEND))!
+  expect(mine0, '编辑中的图应有图例').not.toBeNull()
 
-      // 把我的图例左边拖到差 3 px 的地方（再往右 3 px，容差 6 px 内），其余维度不动
-      const dx = theirsLeft - mine0.x + 3
-      const sx = mine0.x + mine0.w * 0.5
-      const sy = mine0.y + mine0.h * 0.5
-      expect(Math.abs(dx), '起点已经几乎对齐，用例没有意义').toBeGreaterThan(20)
+  // 把我的图例左边拖到差 3 px 的地方（再往右 3 px，容差 6 px 内），其余维度不动
+  const dx = theirsLeft - mine0.x + 3
+  const sx = mine0.x + mine0.w * 0.5
+  const sy = mine0.y + mine0.h * 0.5
+  expect(Math.abs(dx), '起点已经几乎对齐，用例没有意义').toBeGreaterThan(20)
 
-      if (pressCtrl) await page.keyboard.down('Control')
-      await page.mouse.move(sx, sy)
-      await page.mouse.down()
-      for (let i = 1; i <= 10; i++) await page.mouse.move(sx + (dx * i) / 10, sy)
-      await page.waitForTimeout(150)
-      await settleAfter(page, () => page.mouse.up())
-      if (pressCtrl) await page.keyboard.up('Control')
+  if (pressCtrl) await page.keyboard.down('Control')
+  await page.mouse.move(sx, sy)
+  await page.mouse.down()
+  for (let i = 1; i <= 10; i++) await page.mouse.move(sx + (dx * i) / 10, sy)
+  await page.waitForTimeout(150)
+  await settleAfter(page, () => page.mouse.up())
+  if (pressCtrl) await page.keyboard.up('Control')
 
-      const mine1 = (await editBox(page, LEGEND))!
-      // 页面 mm 误差 = px 误差 / (px 每 mm)；对象 b 宽 110 mm（脚本 11 cm、原尺寸置入）
-      const pxPerMm = objB.width / 110
-      const errPx = mine1.x - theirsLeft
-      const errMm = errPx / pxPerMm
-      if (pressCtrl) {
-        expect(mine1.x - mine0.x, 'Ctrl：落点就是光标位移').toBeCloseTo(dx, 0)
-        expect(Math.abs(errPx), 'Ctrl：不吸，停在差几个像素的地方').toBeGreaterThan(2)
-      } else {
-        expect(Math.abs(errMm), `吸上后两图例左边的页面误差（mm），px 误差=${errPx.toFixed(2)}`).toBeLessThan(0.1)
-      }
-    },
-  )
+  const mine1 = (await editBox(page, LEGEND))!
+  // 页面 mm 误差 = px 误差 / (px 每 mm)；对象 b 宽 110 mm（脚本 11 cm、原尺寸置入）
+  const pxPerMm = objB.width / 110
+  const errPx = mine1.x - theirsLeft
+  const errMm = errPx / pxPerMm
+  if (pressCtrl) {
+    expect(mine1.x - mine0.x, 'Ctrl：落点就是光标位移').toBeCloseTo(dx, 0)
+    expect(Math.abs(errPx), 'Ctrl：不吸，停在差几个像素的地方').toBeGreaterThan(2)
+  } else {
+    expect(Math.abs(errMm), `吸上后两图例左边的页面误差（mm），px 误差=${errPx.toFixed(2)}`).toBeLessThan(0.1)
+  }
 }
+
+test(
+  '图内编辑拖图例靠近另一张图的图例：左边与对方图例左边对齐（页面 mm 误差 < 0.1）',
+  { tag: '@feature:figure.cross-figure-align' },
+  async ({ app, page }) => dragLegendToOther({ app, page }, false),
+)
+
+test('图内编辑拖图例靠近另一张图的图例：按住 Ctrl 不吸，落点就是光标位移', async ({ app, page }) =>
+  dragLegendToOther({ app, page }, true))
