@@ -1707,18 +1707,18 @@ class TestPlaywrightShards:
         """Issue #768：三台真 Runner、计划对拍、防漏测、不改变原 Gate 闭集。"""
         block = _job(CI, "posix-e2e")
         code = _code(block)
-        assert "name: posix-e2e (\${{ matrix.shard }}/3)" in code
+        assert "name: posix-e2e (${{ matrix.shard }}/3)" in code
         assert re.search(
             r"(?m)^    strategy:\n      fail-fast: false\n      matrix:\n        shard: \[1, 2, 3\]",
             code,
         )
-        e2e = re.findall(r"(?m)^\\s+pnpm e2e(.*)$", code)
+        e2e = re.findall(r"(?m)^\s+pnpm e2e(.*)$", code)
         assert len(e2e) == 1, e2e
         assert _project_flags(e2e[0], "posix-e2e") == {"chromium", "chromium-en"}
-        assert "--shard=\${{ matrix.shard }}/3" in e2e[0]
+        assert "--shard=${{ matrix.shard }}/3" in e2e[0]
         assert "playwright test --list --reporter=json" in code
         assert "--expected-list" in code and "e2e-planned.json" in code
-        assert "posix-e2e-report-\${{ matrix.shard }}" in code
+        assert "posix-e2e-report-${{ matrix.shard }}" in code
         gate = _job(CI, "ci-integration-gate")
         assert "posix-e2e" in _needs_of(gate) and "posix-e2e" in _required_of(gate)
 
