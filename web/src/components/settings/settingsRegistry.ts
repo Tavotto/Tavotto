@@ -94,6 +94,7 @@ export const SETTINGS_REGISTRY: readonly SettingsEntry[] = [
   // ---- 关于与更新 ----
   { id: 'about.updates', section: 'about', label: () => st('update.check'), keywords: () => st('search.kw.updates') },
   { id: 'about.telemetry', section: 'about', label: () => st('about.telemetry.title'), keywords: () => st('search.kw.telemetry') },
+  { id: 'about.support', section: 'about', label: () => st('about.support', { product: PRODUCT_NAME }), keywords: () => st('search.kw.support') },
 ]
 
 /** 归一：小写、去掉首尾空白；中英文都按子串比 */
