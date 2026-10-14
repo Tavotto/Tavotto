@@ -1,0 +1,114 @@
+import type { D1Database } from '../core/types.ts';
+import { Rejected } from '../core/types.ts';
+import { importAes, unbase64 } from '../core/crypto.ts';
+import type { LiveConfig, Secrets } from './config.ts';
+import { validateLive } from './config.ts';
+import { GitHub } from './github.ts';
+import { LiveStore } from './store.ts';
+import { LiveService } from './service.ts';
+import { uiHTML, uiCSS, uiScript } from './ui.ts';
+import { reconcileOne } from './background.ts';
+import { verification } from './verification.ts';
+import { InvocationBudget } from './budget.ts';
+
+export interface Env {
+  DB:D1Database; CLA_CONFIG?:string; CLA_EVIDENCE_KEY?:string; CLA_CLIENT_SECRET?:string; CLA_APP_PKCS8?:string;
+  CLA_GITHUB_ENABLED?:string; CLA_OAUTH_ENABLED?:string; CLA_SIGNING_ENABLED?:string; CLA_CHECK_PUBLISHING_ENABLED?:string;
+  CLA_UI_ENABLED?:string; CLA_BACKGROUND_ENABLED?:string;
+  CLA_CI_VERIFICATION_ENABLED?:string;
+}
+const headers = {'cache-control':'no-store','referrer-policy':'no-referrer','x-content-type-options':'nosniff',
+  'content-security-policy':"default-src 'none'; frame-ancestors 'none'"};
+const json = (data:unknown,status=200,extra:Record<string,string>={}) => Response.json(data,{status,headers:{...headers,...extra}});
+const cookie = (name:string,value:string,age:number) => `${name}=${value}; Path=/; Max-Age=${age}; Secure; HttpOnly; SameSite=Lax`;
+function cookies(req:Request):Map<string,string> {
+  const result=new Map<string,string>();
+  for (const piece of (req.headers.get('cookie') ?? '').split(';').filter(x=>x.trim())) {
+    const match=/^\s*([^=\s]+)=([^;]*)$/.exec(piece); if (!match || result.has(match[1]!)) throw new Rejected('cookie_rejected');
+    result.set(match[1]!,match[2]!);
+  } return result;
+}
+async function body(req:Request,keys:string[]):Promise<Record<string,any>> {
+  if (req.headers.get('content-type')?.split(';')[0] !== 'application/json') throw new Rejected('form_rejected');
+  const reader=req.body?.getReader(); if (!reader) throw new Rejected('form_rejected');
+  const chunks:Uint8Array[]=[];let size=0;
+  for (;;) {const {done,value}=await reader.read();if(done)break;size+=value.length;
+    if(size>32768){await reader.cancel();throw new Rejected('form_rejected');} chunks.push(value);}
+  const all=new Uint8Array(size);let offset=0;for(const chunk of chunks){all.set(chunk,offset);offset+=chunk.length;}
+  let data;try{data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(all));}catch{throw new Rejected('form_rejected');}
+  if(!data || typeof data!=='object' || Array.isArray(data) || Object.keys(data).sort().join(',')!==keys.sort().join(','))
+    throw new Rejected('form_rejected');return data;
+}
+export function config(env:Env):LiveConfig {
+  let c:LiveConfig;try{c=JSON.parse(env.CLA_CONFIG ?? '');}catch{throw new Rejected('configuration_required');}
+  // A JSON config cannot silently turn capabilities on. Each binding is explicit and defaults false.
+  return {...c,githubEnabled:env.CLA_GITHUB_ENABLED==='true',oauthEnabled:env.CLA_OAUTH_ENABLED==='true',
+    signingEnabled:env.CLA_SIGNING_ENABLED==='true',checkPublishingEnabled:env.CLA_CHECK_PUBLISHING_ENABLED==='true',backgroundEnabled:env.CLA_BACKGROUND_ENABLED==='true'};
+}
+export async function service(env:Env,budget?:InvocationBudget):Promise<LiveService> {
+  const c=config(env),secrets:Secrets={clientSecret:env.CLA_CLIENT_SECRET ?? '',pkcs8:env.CLA_APP_PKCS8 ?? '',evidenceKey:env.CLA_EVIDENCE_KEY ?? ''};
+  const key=await importAes(unbase64(secrets.evidenceKey));
+  return new LiveService(c,new LiveStore(env.DB,budget),new GitHub(c,secrets,undefined,undefined,budget),key);
+}
+export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
+  if(env.CLA_BACKGROUND_ENABLED!=='true')return;
+  await reconcileOne(await service(env,new InvocationBudget()));
+},async fetch(req:Request,env:Env):Promise<Response> {
+  try {
+    const url=new URL(req.url),enabled=[env.CLA_GITHUB_ENABLED,env.CLA_OAUTH_ENABLED,env.CLA_SIGNING_ENABLED,env.CLA_CHECK_PUBLISHING_ENABLED,env.CLA_UI_ENABLED,env.CLA_CI_VERIFICATION_ENABLED].some(v=>v==='true');
+    if (!enabled) return json({runtime:'workers-d1',enabled:false,signingEnabled:false,checkPublishingEnabled:false},503);
+    const c=config(env);
+    validateLive(c);
+    if (url.origin!==c.origin) throw new Rejected('origin_rejected');
+    if(env.CLA_UI_ENABLED==='true' && req.method==='GET') {
+      const assets:Record<string,[string,string]>={'/':[uiHTML,'text/html; charset=utf-8'],'/ui.css':[uiCSS,'text/css; charset=utf-8'],'/ui.js':[uiScript(),'application/javascript; charset=utf-8']};
+      const asset=assets[url.pathname];if(asset && (url.pathname==='/' || !url.search))return new Response(asset[0],{headers:{...headers,'content-type':asset[1],
+        'content-security-policy':"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"}});
+    }
+    if(req.method==='GET' && url.pathname==='/capabilities' && !url.search)return json({oauthEnabled:c.oauthEnabled,signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
+    if (req.method==='GET' && url.pathname==='/health' && !url.search)
+      return json({runtime:'workers-d1',signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
+    if(req.method==='GET' && url.pathname==='/verification/pr') {
+      if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
+      if([...url.searchParams.keys()].sort().join(',')!=='attempt,head,pr,run' || !/^[1-9][0-9]*$/.test(url.searchParams.get('pr') ?? '') ||
+        !/^[1-9][0-9]*$/.test(url.searchParams.get('run') ?? ''))throw new Rejected('verification_invalid');
+      return json(await verification(await service(env),Number(url.searchParams.get('pr')),url.searchParams.get('head')!,Number(url.searchParams.get('run')),url.searchParams.get('attempt')!));
+    }
+    const s=await service(env),jar=cookies(req),token=jar.get('__Host-cla-session') ?? '',csrf=req.headers.get('x-csrf-token') ?? '';
+    if(req.method==='POST' && url.pathname==='/oauth/start' && !url.search) {
+      await body(req,[]);const flow=await s.startOAuth(req.headers.get('origin'));
+      return json({authorizationURL:flow.url},200,{'set-cookie':cookie('__Host-cla-oauth',flow.browser,300)});
+    }
+    if(req.method==='GET' && url.pathname==='/oauth/callback') {
+      const query=[...url.searchParams.keys()];if(query.length!==2 || !query.includes('state') || !query.includes('code')) throw new Rejected('oauth_rejected');
+      const login=await s.completeOAuth(url.searchParams.get('state')!,jar.get('__Host-cla-oauth') ?? '',url.searchParams.get('code')!);
+      const browser=req.headers.get('accept')?.includes('text/html');
+      const response=browser?new Response(null,{status:303,headers:{...headers,location:'/'}}):json({csrf:login.csrf});response.headers.append('set-cookie',cookie('__Host-cla-session',login.token,900));
+      response.headers.append('set-cookie',`__Host-cla-csrf=${login.csrf}; Path=/; Max-Age=900; Secure; SameSite=Strict`);
+      response.headers.append('set-cookie',cookie('__Host-cla-oauth','',0));return response;
+    }
+    if(req.method==='GET' && url.pathname==='/session' && !url.search)return json(await s.packets(token));
+    if(req.method==='GET' && url.pathname==='/status' && [...url.searchParams.keys()].join(',')==='packet')return json(await s.status(token,url.searchParams.get('packet')!));
+    if(req.method==='GET' && url.pathname==='/agreement' && (!url.search || [...url.searchParams.keys()].join(',')==='packet'))return json(await s.document(token,url.searchParams.get('packet') ?? undefined));
+    if(req.method==='GET' && url.pathname==='/evidence') {
+      const query=[...url.searchParams.keys()];if(query.length!==2 || !query.includes('packet') || !query.includes('role')) throw new Rejected('form_rejected');
+      return json(await s.readEvidence(token,url.searchParams.get('packet')!,url.searchParams.get('role')!));
+    }
+    if(req.method==='POST' && !url.search) {
+      const origin=req.headers.get('origin');
+      if(url.pathname==='/packets'){const b=await body(req,['kind']);return json(await s.packet(token,csrf,origin,b.kind));}
+      if(url.pathname==='/intents'){const b=await body(req,['packet','role']);return json({intent:await s.intent(token,csrf,origin,b.packet,b.role)});}
+      if(url.pathname==='/sign'){const b=await body(req,['packet','intent','role','evidence']);return json(await s.sign(token,csrf,origin,b.packet,b.intent,b.role,b.evidence));}
+      if(url.pathname==='/hold'){const b=await body(req,['packet','intent']);return json(await s.hold(token,csrf,origin,b.packet,b.intent));}
+      if(url.pathname==='/checks/pr'){
+        await s.authorize(token,csrf,origin);const session=await s.session(token);
+        if(session.actor!==c.holderId)throw new Rejected('holder_required');
+        const b=await body(req,['pr']);return json(await s.check(b.pr));
+      }
+    }
+    return json({error:'route_unavailable'},404);
+  } catch(error) {
+    // Never log upstream responses, OAuth URLs/codes, request data, cookies, evidence or secrets.
+    return json({error:error instanceof Rejected ? error.code : 'request_unavailable'},error instanceof Rejected ? 403 : 503);
+  }
+}};
