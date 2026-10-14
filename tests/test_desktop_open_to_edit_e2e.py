@@ -13,14 +13,13 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 
 import pymupdf
 import pytest
 
-from support import foundation_app as fa, nativekit
+from support import foundation_app as fa, nativekit, procprobe
 from tavotto.engine import figcapture
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -71,13 +70,7 @@ SETTLED = (
 
 
 def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return procprobe.alive(pid)  # Windows 上 os.kill(pid, 0) 会杀进程（#523），探测只经 procprobe
 
 
 def _native_sessions(app, root: Path) -> list[dict]:
