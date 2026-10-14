@@ -410,3 +410,64 @@ def test_dependency_plan_must_match_exactly_the_probed_absent_set():
         {"sklearn": "scikit-learn", "cv2": "opencv-python"},
     )
     assert ideal(_o(**base, facts=regress_missing))
+
+
+# ---------------------------------------------------------------- 第六轮（PR #1023）
+
+
+def _fields_read_by_the_ideal_predicates() -> set[str]:
+    """静态扫 compat_v2_scenarios：理想判据（及其辅助函数）读了 Observation 的哪些字段 / facts 键。"""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(cs))
+    params = {"obs", "o"}
+    fields: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in params
+        ):
+            fields.add(node.attr)
+        # o.facts.get("key") / obs.facts["key"]
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "facts"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+        ):
+            fields.add(f"facts.{node.args[0].value}")
+    # `facts` 是容器（各键已展开成 facts.<k>）；to_json 是方法，不是字段
+    return fields - {"facts", "to_json"}
+
+
+# 派生属性 -> 它由哪些形状字段决定（派生量本身不必重复登记）
+_DERIVED = {"first_valid_figure": {"final_phase", "figures_valid"}}
+
+
+def test_every_field_the_ideal_predicates_read_is_pinned_in_the_baseline_shape():
+    """理想判据检查的字段，必须全部出现在登记的基线形状里，没有例外：
+    否则「失败的样子」变了（例如从无图变成有图但渲染不出）基线不会红。"""
+    read = _fields_read_by_the_ideal_predicates()
+    expanded = set()
+    for f in read:
+        expanded |= _DERIVED.get(f, {f})
+    missing = expanded - set(cs.SHAPE_KEYS)
+    assert not missing, f"理想判据读了但基线形状没钉的字段: {sorted(missing)}"
+    # 扫描器自检：确实扫到了东西
+    assert {"final_phase", "render_errors", "facts.dependency_installs"} <= read
+
+
+def test_baseline_shape_pins_render_failures_and_every_registered_baseline_has_all_keys():
+    assert {"render_errors", "figures_captured", "titles"} <= set(cs.SHAPE_KEYS)
+    for sid, sc in cs.SCENARIOS.items():
+        if sc.main_baseline is not None:
+            assert set(sc.main_baseline) == set(cs.SHAPE_KEYS), sid
+    # 「有图但渲染不出」与「无图」是两种不同的失败形状
+    a = _o(figures_captured=0, render_errors=[])
+    b = _o(figures_captured=1, render_errors=[{"asset_id": "a", "error": "X"}])
+    assert cs.baseline_shape(a) != cs.baseline_shape(b)

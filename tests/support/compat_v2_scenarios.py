@@ -26,8 +26,27 @@ SHAPE_KEYS = (
     "error_type",
     "exec_count",
     "figures_valid",
+    "figures_captured",
+    "render_errors",
+    "titles",
     "side_effect_count",
+    # 理想判据读的 facts 键（不变量测试 test_every_field_the_ideal_predicates_read... 钉着：判据读什么，形状就钉什么）
+    "facts.dependency_installs",
+    "facts.dependency_missing",
+    "facts.actions_offered_final",
+    "facts.modules_absent",
 )
+
+# 登记基线时，main 上这几项对所有失败场景相同；场景自己的字典可覆盖
+_MAIN_COMMON = {
+    "figures_captured": 0,
+    "render_errors": [],
+    "titles": [],
+    "facts.dependency_installs": [],
+    "facts.dependency_missing": {},
+    "facts.actions_offered_final": ["run", "recheck"],
+    "facts.modules_absent": None,  # 非缺包场景不探针
+}
 
 # 默认（CI / 本地）跑的冒烟子集：覆盖各类失败形状，约 2 分钟；其余 `TAVOTTO_COMPAT_V2_ALL=1`
 SMOKE = (
@@ -173,6 +192,8 @@ def _ideal_deps(o: Observation, missing: dict[str, str]) -> list[str]:
 
 
 def _scenario(id_: str, scenes, title, failure, strategy, ideal_exec, ideal_max, outcome, **kw):
+    if kw.get("main_baseline") is not None:
+        kw["main_baseline"] = {**_MAIN_COMMON, **kw["main_baseline"]}
     return Scenario(
         id=id_,
         scenes=tuple(scenes),
@@ -411,6 +432,7 @@ _add(
             "error_type": None,
             "exec_count": 1,
             "figures_valid": 1,
+            "figures_captured": 1,
             "side_effect_count": None,
         },
     ),
@@ -455,4 +477,7 @@ NEEDS_ABSENT = {
 
 def baseline_shape(obs: Observation) -> dict:
     full = obs.to_json()
-    return {k: full[k] for k in SHAPE_KEYS}
+    return {
+        k: (full["facts"].get(k[len("facts.") :]) if k.startswith("facts.") else full[k])
+        for k in SHAPE_KEYS
+    }
