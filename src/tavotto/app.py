@@ -7552,7 +7552,11 @@ def _launch_session_attempt(ctx: "ProjectCtx", plan, on_done=None) -> None:
         engine_preparation.SERVICE.cancel_project(
             plan.project_id, script=plan.script, keep=plan.plan_id
         )
-        engine_nativesession.REGISTRY.cancel_project(plan.project_root, script=plan.script)
+        # native 会话 / 在途票据没有登记顺序，按计划的登记顺序判：已有更新的同脚本重跑 = 本动作被取代，
+        # 它（可能已回退到 native）才是该让位的对象，不是我们——不去结束它（Codex #1028 r4268029512）。
+        # 判定与结束之间仍有一个极窄的窗口（新重跑恰在两者之间登记）；那种情形新重跑自己的启动会再让位一次
+        if not engine_preparation.SERVICE.superseded(plan.plan_id):
+            engine_nativesession.REGISTRY.cancel_project(plan.project_root, script=plan.script)
     _launch_preparation(ctx, plan, on_done)
 
 
