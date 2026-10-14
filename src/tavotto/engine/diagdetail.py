@@ -1874,20 +1874,34 @@ def _focused_script_dir(src: Sources, figures_dir: object) -> str | None:
     return None
 
 
-def _annotate_isolated_probe(
-    doc: dict, src: Sources, figures_dir: object, extra_dirs: tuple[object, ...] = ()
-) -> None:
+def _native_import_roots(session: object) -> list[str]:
+    """原生会话的 runner 真正放进 `sys.path[0]` 的目录（`bridge_runner`）：script 目标 = 脚本所在目录
+    （`_run_script`：`sys.path.insert(0, dirname(abspath))`）；module 目标 = 会话 cwd（`_run_module`：补的是 `os.getcwd()`，
+    runpy 自己不动 sys.path）。**`project_root` 只是组织信息，不进 `sys.path`**，script 目标下 cwd 也不进。
+    script 的目录只有桌面拥有的会话能算出来（启动规格里 `target` = 项目相对路径）；终端拥有的只记了文件名——
+    拿不准就不列（宁可漏一个，不报假的）。"""
+    kind = getattr(session, "target_kind", "")
+    if kind == "module":
+        cwd = getattr(session, "cwd", "")
+        return [cwd] if isinstance(cwd, str) and cwd else []
+    if kind == "script":
+        spec = getattr(session, "spec", None)
+        root, target = getattr(spec, "project_root", ""), getattr(spec, "target", "")
+        if isinstance(root, str) and isinstance(target, str) and root and target:
+            return [os.path.dirname(os.path.join(root, target))]
+    return []
+
+
+def _annotate_isolated_probe(doc: dict, roots: tuple[object, ...]) -> None:
     """隔离探针用 `-E` 在项目外运行，看不到 safe worker 实际会优先导入的项目目录 / `PYTHONPATH`：
     依赖导入结果的事实（matplotlib 版本、包列表、backend、rcParams）可能与渲染时不同——如实标出来，
-    并列出项目目录里可能遮挡它们的同名文件（只看文件名）。隔离本身不变。"""
+    并列出 `roots`（调用方给的、真正会进 `sys.path` 前面的目录）里可能遮挡它们的同名文件（只看文件名）。隔离本身不变。"""
     probe = doc.get("probe")
     if not isinstance(probe, dict) or probe.get("status") != "ok":
         return
     probe["may_differ"] = "user_import_paths_not_reproduced"
     dirs: list[str] = []
-    cwd = (doc.get("probe_cwd") or {}).get("cwd")
-    # 每一个会被放到导入路径前面的根：项目根、焦点脚本所在目录、渲染 cwd，以及调用方给的（native 会话的项目根 / cwd）
-    for d in (figures_dir, _focused_script_dir(src, figures_dir), cwd, *extra_dirs):
+    for d in roots:
         if isinstance(d, str) and os.path.isdir(d) and d not in dirs:
             dirs.append(d)
     names = set(_SHADOW_ALWAYS)
@@ -2018,13 +2032,8 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
         if launch_env is None and cwd_ok:
             probe = _mark_unavailable(probe, "launch_env_unknown")
         doc["probe"] = probe
-        # 原生会话的探针同样用 `-E` 在隔离环境里跑：标注与遮挡扫描和 safe 池一致（会话的项目根与 cwd 也扫）
-        _annotate_isolated_probe(
-            doc,
-            src,
-            (src.project or {}).get("figures_dir"),
-            (getattr(session, "project_root", None), native_cwd),
-        )
+        # 原生会话的探针同样用 `-E` 在隔离环境里跑：标注与遮挡扫描和 safe 池一致，但只扫 runner 真正放进 `sys.path` 的目录
+        _annotate_isolated_probe(doc, tuple(_native_import_roots(session)))
         if (
             not_applied
         ):  # 会话启动环境里的 PYTHONPATH 等没复现：包列表可能与会话里实际能 import 的不同
@@ -2056,7 +2065,15 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             "env_override": pool.worker_python_env(),
         }
         doc["probe"] = _probe_in_render_cwd(src, python, source == pool.SOURCE_BUNDLED, doc)
-        _annotate_isolated_probe(doc, src, figures_dir)
+        # safe worker 的导入根：项目根、焦点脚本所在目录（`worker.py` 的 `sys.path.insert`），加渲染 cwd
+        _annotate_isolated_probe(
+            doc,
+            (
+                figures_dir,
+                _focused_script_dir(src, figures_dir),
+                (doc.get("probe_cwd") or {}).get("cwd"),
+            ),
+        )
         if doc["probe"].get("probe_cleanup"):
             doc["probe_cleanup"] = doc["probe"]["probe_cleanup"]
     return [Item("render_env", "detail-render-env.json", _dumps(scrub.obj(doc)))]

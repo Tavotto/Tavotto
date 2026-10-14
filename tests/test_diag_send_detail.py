@@ -2374,7 +2374,7 @@ class TestProbeDirectoryCleanup:
 
 
 class TestNativeCwdUnavailable:
-    def _doc(self, monkeypatch, cwd):
+    def _doc(self, monkeypatch, cwd, configure=None):
         seen = {}
         test = TestNativePanelRenderEnv()
         from tavotto.engine import enginesession, nativesession, runtimeasset
@@ -2387,6 +2387,8 @@ class TestNativeCwdUnavailable:
         sess = TestNativePanelRenderEnv.FakeSession()
         sess.cwd = cwd
         sess.spec = TestNativeProbeEnvironment.Spec()
+        if configure:
+            configure(sess)
         monkeypatch.setattr(nativesession.REGISTRY, "route_for", lambda r, sc, st: sess)
         probe = {
             "status": "ok",
@@ -4134,13 +4136,40 @@ class TestIssue1012BackendItems:
         assert not marker.exists()
         assert self._render_env(monkeypatch, proj)["probe"]["shadowing_candidates"] == []
 
-    def test_native_sessions_carry_the_mark_and_the_scan(self, monkeypatch, tmp_path):
-        (tmp_path / "numpy.py").write_text("x", encoding="utf-8")
-        (tmp_path / "matplotlib").mkdir()
-        _cwd, doc = TestNativeCwdUnavailable()._doc(monkeypatch, str(tmp_path))
+    def _native(self, monkeypatch, tmp_path, kind, *, target=None, with_spec=True):
+        """原生会话：项目根与 cwd 是两个不同的目录，各放一个会遮挡的文件。"""
+        proj, cwd = tmp_path / "proj", tmp_path / "cwd"
+        (proj / "panels").mkdir(parents=True)
+        cwd.mkdir()
+        (proj / "numpy.py").write_text("x", encoding="utf-8")  # 项目根：不是导入根
+        (proj / "panels" / "numpy.py").write_text("x", encoding="utf-8")  # 脚本所在目录
+        (cwd / "matplotlib.py").write_text("x", encoding="utf-8")
+
+        def configure(sess):
+            sess.target_kind = kind
+            sess.project_root = str(proj)
+            if with_spec:
+                sess.spec.project_root = str(proj)
+                sess.spec.target = target
+
+        _c, doc = TestNativeCwdUnavailable()._doc(monkeypatch, str(cwd), configure)
         assert doc["inspected"] == "native_session"
         assert doc["probe"]["may_differ"] == "user_import_paths_not_reproduced"
-        assert doc["probe"]["shadowing_candidates"] == ["matplotlib/", "numpy.py"]
+        return doc["probe"]["shadowing_candidates"]
+
+    def test_native_module_target_scans_only_the_cwd_not_the_project_root(
+        self, monkeypatch, tmp_path
+    ):
+        """#1041 4：`-m` 目标只有 cwd 在 sys.path 最前（`_run_module`）；project_root 里的同名模块不能报成遮挡。"""
+        assert self._native(monkeypatch, tmp_path, "module", target="pkg.fig") == ["matplotlib.py"]
+
+    def test_native_script_target_scans_the_scripts_directory_only(self, monkeypatch, tmp_path):
+        """script 目标：sys.path[0] 是脚本所在目录（不是项目根、也不是 cwd）。"""
+        assert self._native(monkeypatch, tmp_path, "script", target="panels/fig.py") == ["numpy.py"]
+
+    def test_native_script_target_without_a_launch_spec_is_left_out(self, monkeypatch, tmp_path):
+        """终端拥有的会话只记了文件名、算不出脚本目录：不列（宁可漏，不报假的）。"""
+        assert self._native(monkeypatch, tmp_path, "script", with_spec=False) == []
 
     def test_clean_project_has_the_mark_and_an_empty_candidate_list(self, monkeypatch, tmp_path):
         proj = tmp_path / "clean"
