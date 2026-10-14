@@ -4065,14 +4065,16 @@ class TestIssue1012BackendItems:
         assert mpl["font_count"] > 0 and mpl["font_family_count"] > 0 and mpl["fonts"]
         assert mpl["cachedir"] == str(cfg)  # 报的是真实缓存目录，不是临时目录
 
-    def _render_env(self, monkeypatch, project):
+    def _render_env(self, monkeypatch, project, overrides=None):
         py, bundled = self._python()
         from tavotto.engine import workdir
 
         monkeypatch.setattr(workdir, "mode_for", lambda fd: "project_root")
         monkeypatch.setattr(pool, "resolve_worker_python", lambda d, **k: (py, pool.source_of(py)))
         monkeypatch.setattr(diagdetail, "_probe_subprocess", REAL_PROBE)
-        src = diagdetail.Sources(project={"figures_dir": str(project)}, frontend={"overrides": []})
+        src = diagdetail.Sources(
+            project={"figures_dir": str(project)}, frontend={"overrides": overrides or []}
+        )
         items = diagdetail.collect_render_env(
             src, diagdetail.DetailOptions(), diagdetail.Scrubber()
         )
@@ -4115,6 +4117,30 @@ class TestIssue1012BackendItems:
             pytest.skip("symlinks unavailable (Windows without privilege)")
         probe = self._render_env(monkeypatch, proj)["probe"]
         assert probe["shadowing_candidates"] == ["numpy/"]
+
+    def test_scan_also_covers_the_focused_scripts_own_directory(self, monkeypatch, tmp_path):
+        """#1041 1：safe worker 把脚本所在目录也放到 sys.path 最前——`panels/chart.py` 旁边的 `panels/numpy.py` 也要列出来。"""
+        proj = tmp_path / "proj"
+        (proj / "panels").mkdir(parents=True)
+        (proj / "panels" / "chart.py").write_text("x", encoding="utf-8")
+        marker = tmp_path / "marker"
+        (proj / "panels" / "numpy.py").write_text(
+            f"open({str(marker)!r}, 'w').write('executed')\n", encoding="utf-8"
+        )
+        probe = self._render_env(monkeypatch, proj, [{"panel": "p", "script": "panels/chart.py"}])[
+            "probe"
+        ]
+        assert probe["shadowing_candidates"] == ["numpy.py"]
+        assert not marker.exists()
+        assert self._render_env(monkeypatch, proj)["probe"]["shadowing_candidates"] == []
+
+    def test_native_sessions_carry_the_mark_and_the_scan(self, monkeypatch, tmp_path):
+        (tmp_path / "numpy.py").write_text("x", encoding="utf-8")
+        (tmp_path / "matplotlib").mkdir()
+        _cwd, doc = TestNativeCwdUnavailable()._doc(monkeypatch, str(tmp_path))
+        assert doc["inspected"] == "native_session"
+        assert doc["probe"]["may_differ"] == "user_import_paths_not_reproduced"
+        assert doc["probe"]["shadowing_candidates"] == ["matplotlib/", "numpy.py"]
 
     def test_clean_project_has_the_mark_and_an_empty_candidate_list(self, monkeypatch, tmp_path):
         proj = tmp_path / "clean"
