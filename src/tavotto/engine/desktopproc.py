@@ -676,7 +676,7 @@ def start(
     ticket = None
     try:
         ticket = registry.begin_start(
-            launch.launch_id
+            launch.launch_id, spec.project_root
         )  # spawn 之前先登记在途：关停的快照一定看得见
         relay = nativerelay.NativeRelay()
         argv = execspec.bridge_argv(

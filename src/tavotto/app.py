@@ -4486,12 +4486,14 @@ def api_native_session_build(session_id: str):
         # （issue #191），现在由 `test_native_api.py` 逐个端点钉着。
         return jsonify(_worker_error_payload(exc)), 500
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
-    _materialize_native(session)
+    # 发布决定只有这一处:被另一条活会话占着路由的 stem,既不物化预览、也不回给前端去放进画布——否则预览是这次运行的、
+    # 编辑 / 导出却仍落在旧会话上(静默错图,ADR 0021 §9.2)。准备 runner 的 native 分支也问同一个 `bind_assets`
+    _materialize_native(session, skip=rejected)
     out = {
         "ok": True,
         "session": session.public_state(),
-        "stems": resp.get("stems", {}),
-        "descriptors": session.descriptors,
+        "stems": {k: v for k, v in (resp.get("stems") or {}).items() if k not in rejected},
+        "descriptors": [d for d in session.descriptors if d.get("stem") not in rejected],
     }
     if rejected:
         # **如实说**：这些 stem 已经被另一条还活着的会话占着（用户在两个终端
@@ -4600,7 +4602,7 @@ def api_native_forget_permission():
     return jsonify({"ok": True, "removed": removed})
 
 
-def _materialize_native(session) -> None:
+def _materialize_native(session, skip=()) -> None:
     """把 native 会话这一轮的预览物化进 runtime cache（**last known preview**）。
 
     它不是 live Figure，也不是原始产物：会话结束之后这份 cache 仍然看得见，
@@ -4612,7 +4614,7 @@ def _materialize_native(session) -> None:
         if not isinstance(desc, dict):
             continue
         stem = desc.get("stem")
-        if not stem:
+        if not stem or stem in skip:
             continue
         engine_runtimeasset.materialize(root, desc, session.svg_path(stem))
 
@@ -7430,6 +7432,11 @@ def _native_preparation_runner(pl, before_retry=None):
     except engine_pool.WorkerError:
         _end_native_session(session)
         raise
+    if not resp.get("stems"):
+        # 脚本停在屏障上却没有任何可编辑的图:准备以「没有图」收场,但进程还活在屏障上占着环境租约、也不在池里,
+        # 没有谁会替它清理——这里收掉
+        _end_native_session(session)
+        return session, resp, True
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
     if rejected:
         # 这些图的活路由还被另一条活会话占着(例如用户终端里的 `tavotto run`):继续完成会让预览换成这次运行的、

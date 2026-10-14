@@ -930,10 +930,12 @@ class StartTicket:
     `shutdown_all` 的快照里要么看得到它（并标 `cancelled`，之后挂所有者的一步会被拒），要么注册表已 closing
     根本领不到——两者之间没有「进程已起、谁也看不见」的窗口。"""
 
-    __slots__ = ("launch_id", "owner", "cancelled", "done")
+    __slots__ = ("launch_id", "project_root", "owner", "cancelled", "done")
 
-    def __init__(self, launch_id: str):
+    def __init__(self, launch_id: str, project_root: str = ""):
         self.launch_id = launch_id
+        #: 这次启动属于哪个项目(项目关闭据此取消在途启动);空 = 不属于任何项目
+        self.project_root = project_root
         self.owner = None
         self.cancelled = False
         #: 启动线程走完（成功或失败收尾都做完）时置位：关停据此等「在途的启动线程」，哪怕它还没 Popen
@@ -1017,12 +1019,12 @@ class NativeSessionRegistry:
                 raise RunError(runcodes.NATIVE_SESSION_CONFLICT)
             self._reserved.add(launch_id)
 
-    def begin_start(self, launch_id: str) -> StartTicket:
+    def begin_start(self, launch_id: str, project_root: str = "") -> StartTicket:
         """spawn **之前**领在途登记；closing 时拒绝（一行用户代码都没跑）。"""
         with self._lock:
             if self._closing:
                 raise RunError(runcodes.NATIVE_REGISTRY_CLOSING)
-            ticket = StartTicket(launch_id)
+            ticket = StartTicket(launch_id, os.path.realpath(project_root) if project_root else "")
             self._starting[launch_id] = ticket
             return ticket
 
@@ -1180,6 +1182,14 @@ class NativeSessionRegistry:
 
         终端拥有的一条不碰（用户的进程，关项目不该带走它，ADR 0021 §8.1）。`script` 非空 = 只结束这个脚本的
         （`spec.target` 是项目相对 POSIX 路径）。每条走 `cancel_owned()`：等到所有者确认进程组 / Job 空、租约放掉。"""
+        # 还没登记的在途启动(`begin_start` 与 `adopt` 之间):标 cancelled,挂所有者 / 登记的下一步会被拒;
+        # 已挂所有者的当场同步结束(与 `shutdown_all` 同一套)。按脚本收(重新运行)时不碰在途启动——那是调用方自己接下来要起的
+        root = os.path.realpath(project_root)
+        with self._lock:
+            flying = [t for t in self._starting.values() if t.project_root == root and not script]
+            for t in flying:
+                t.cancelled = True
+        stoppers = [t.owner.terminate_sync for t in flying if t.owner is not None]
         victims = [
             s
             for s in self.list(project_root)
@@ -1188,14 +1198,14 @@ class NativeSessionRegistry:
             and (not script or (s.spec is not None and s.spec.target == script))
         ]
         threads = [
-            threading.Thread(target=_run_quiet, args=(s.cancel_owned,), daemon=True)
-            for s in victims
+            threading.Thread(target=_run_quiet, args=(fn,), daemon=True)
+            for fn in [*stoppers, *(s.cancel_owned for s in victims)]
         ]
         for th in threads:
             th.start()
         for th in threads:
             th.join(60)
-        return len(victims)
+        return len(victims) + len(flying)
 
     def shutdown_all(self) -> int:
         """sidecar 退出：终端拥有的**只放手，不杀**（ADR 0021 §8.1 / §10.2）。
