@@ -384,9 +384,8 @@ def _invalidate_parse_error(argv: list[str]) -> None:
             baseline = _option_path(argv, "--baseline")
             # 在解析失败时也要遵守基线只读原则；之前直接 unlink 会把
             # --out 与 --baseline 同一路径的历史采样永久删除。
-            collision = (
-                output is not None
-                and _run_io_collision(output, summary_path, baseline, "--include-drag" in argv)
+            collision = output is not None and _run_io_collision(
+                output, summary_path, baseline, "--include-drag" in argv
             )
             if output is not None and not collision:
                 output.unlink(missing_ok=True)

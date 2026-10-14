@@ -1078,17 +1078,20 @@ def test_run_rejects_derived_comparison_output_aliasing_historical_baseline(
     monkeypatch.setattr(
         A.subprocess, "run", lambda *a, **k: pytest.fail("Baseline collision must reject first")
     )
-    assert A.main(
-        [
-            "run",
-            "--out",
-            str(current),
-            "--baseline",
-            str(derived),
-            "--summary",
-            str(summary),
-        ]
-    ) == 2
+    assert (
+        A.main(
+            [
+                "run",
+                "--out",
+                str(current),
+                "--baseline",
+                str(derived),
+                "--summary",
+                str(summary),
+            ]
+        )
+        == 2
+    )
     assert derived.read_bytes() == historical.read_bytes() == before
     assert json.loads(summary.read_text(encoding="utf-8"))["regression_status"] == "failed"
 
@@ -1099,18 +1102,21 @@ def test_failed_run_argparse_does_not_erase_derived_comparison_baseline(tmp_path
     baseline.write_text(json.dumps(report(value=20)), encoding="utf-8")
     before = baseline.read_bytes()
     summary = tmp_path / "summary.json"
-    assert A.main(
-        [
-            "run",
-            "--repeat",
-            "not-a-number",
-            "--out",
-            str(raw),
-            "--baseline",
-            str(baseline),
-            "--summary",
-            str(summary),
-        ]
-    ) == 2
+    assert (
+        A.main(
+            [
+                "run",
+                "--repeat",
+                "not-a-number",
+                "--out",
+                str(raw),
+                "--baseline",
+                str(baseline),
+                "--summary",
+                str(summary),
+            ]
+        )
+        == 2
+    )
     assert baseline.read_bytes() == before
     assert json.loads(summary.read_text(encoding="utf-8"))["regression_status"] == "failed"
