@@ -159,7 +159,7 @@ def test_actions_baseline_artifact_path_matches_actual_upload_root():
     workflow = (
         Path(__file__).resolve().parents[1] / ".github/workflows/performance-agent.yml"
     ).read_text(encoding="utf-8")
-    assert 'web/test-results/perf-agent/**' in workflow
+    assert "web/test-results/perf-agent/**" in workflow
     assert '"$target/test-results/perf-agent/run.json"' in workflow
     assert '"$target/perf-agent/run.json"' not in workflow
 
