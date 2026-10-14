@@ -103,7 +103,7 @@ class FakeDiagServer:
     """`with FakeDiagServer(tls_ctx) as srv:`；`srv.base` 是 `https://127.0.0.1:<port>`。"""
 
     def __init__(
-        self, tls, *, max_bytes: int = 10 * 1024 * 1024, notes_enabled: bool = True
+        self, tls, *, max_bytes: int = 64 * 1024 * 1024, notes_enabled: bool = True
     ) -> None:
         self.tls = tls
         self.max_bytes = max_bytes

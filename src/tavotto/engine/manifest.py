@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import re
 import sys
+import time
 from contextlib import contextmanager
 from functools import lru_cache
 
@@ -4665,17 +4666,19 @@ def capture_preview_manifest(state: FigState, stem: str, *, vector_metrics: bool
         fig.canvas.mpl_disconnect(cid)
 
 
-def build_manifest(state: FigState, stem: str) -> dict:
+def build_manifest(state: FigState, stem: str, *, timings: dict | None = None) -> dict:
     """准备布局并测量一份 manifest（`overrides.ticklabel_memo` 只包本次测量）。
 
     普通调用先 draw；预览交付则经 `capture_preview_manifest` 在最终 SVG draw
     之后重测。两条路各开一次刻度记忆表，绝不把它跨过两次 draw。
+    `timings` 为可选的诊断出参；未传时不增加时钟调用。
     """
     with ticklabel_memo(), vector_text_metrics() as arm:
-        return _build_manifest(state, stem, arm)
+        return _build_manifest(state, stem, arm, timings=timings)
 
 
-def _build_manifest(state: FigState, stem: str, arm) -> dict:
+def _build_manifest(state: FigState, stem: str, arm, *, timings: dict | None = None) -> dict:
+    t_start = time.perf_counter() if timings is not None else 0.0
     fig = state.fig
     renderer = _ensure_agg_canvas(fig)
     # 图幅（ADR 0098）：布局在上面那次 draw 里已经在 figsize 上跑过（与 `print_figure` 的
@@ -4688,7 +4691,13 @@ def _build_manifest(state: FigState, stem: str, arm) -> dict:
             with fig._cm_set(layout_engine="none"), image_pixels_skipped(fig):  # noqa: SLF001
                 fig.canvas.draw()
             renderer = fig.canvas.get_renderer()
-        return _measure_manifest(state, stem, arm, fig, renderer)
+        # 这里才开始语义与几何测量：layout 包括 Agg draw 与图幅适配 draw。
+        t_measure = time.perf_counter() if timings is not None else 0.0
+        result = _measure_manifest(state, stem, arm, fig, renderer)
+        if timings is not None:
+            timings["manifest_layout_ms"] = round((t_measure - t_start) * 1000, 3)
+            timings["manifest_measure_ms"] = round((time.perf_counter() - t_measure) * 1000, 3)
+        return result
 
 
 def _measure_manifest(

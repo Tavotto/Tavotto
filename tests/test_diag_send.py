@@ -208,7 +208,7 @@ class TestFeatureFlag:
     def test_capability_has_no_endpoint_address(self, on):
         cap = diagsend.capability()
         assert (
-            cap["enabled"] and cap["max_bytes"] == 10 * 1024 * 1024 and cap["retention_days"] == 30
+            cap["enabled"] and cap["max_bytes"] == 64 * 1024 * 1024 and cap["retention_days"] == 30
         )
         assert on.base not in json.dumps(cap) and "127.0.0.1" not in json.dumps(cap)
 

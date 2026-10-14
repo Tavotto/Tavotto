@@ -31,7 +31,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import ts from 'typescript'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 import { ICON_SIZE, ICON_STROKE, IconProvider } from './Icon'
 import { ChevronRight, ICON_DEFS, TriangleAlert, Type, X, type IconDef } from './icons'
@@ -210,11 +210,29 @@ export function audit(path: string, src: string): Finding[] {
   return out
 }
 
-function offenders(kind: Finding['kind']): string[] {
-  const rows: string[] = []
+/**
+ * 审计的主语始终是这次构建的完整 SOURCES 快照。
+ * 原实现按 8 类规则对一千余个文件重复 ts.createSourceFile/遍历；在
+ * merge_group 的满负载 Runner 上偶发超过每例 5 秒预算（issue #616）。
+ * 缓存的是全部发现而非某一种 kind 的通过名单，不能跳过任何后续规则。
+ */
+let sourceAuditCache: Map<string, Finding[]> | null = null
+
+function sourceAudits(): Map<string, Finding[]> {
+  if (sourceAuditCache) return sourceAuditCache
+  const next = new Map<string, Finding[]>()
   for (const [path, src] of Object.entries(SOURCES)) {
     if (isTest(path)) continue
-    const hits = audit(path, src).filter((f) => f.kind === kind)
+    next.set(path, audit(path, src))
+  }
+  sourceAuditCache = next
+  return next
+}
+
+function offenders(kind: Finding['kind']): string[] {
+  const rows: string[] = []
+  for (const [path, allFindings] of sourceAudits()) {
+    const hits = allFindings.filter((f) => f.kind === kind)
     if (kind === 'inline-svg') {
       const allowed = SVG_ALLOWLIST[path] ?? 0
       if (hits.length > allowed) rows.push(`${path}（${hits.length} 处，豁免 ${allowed}）`)
@@ -227,6 +245,23 @@ function offenders(kind: Finding['kind']): string[] {
 }
 
 describe('图标只有一套：components/ui/icons + Icon.tsx 的阶梯', () => {
+  // 每类规则依然检查整仓；只在一次 beforeAll 中解析 AST，避免每个 it 重扫。
+  // 独立钉住 30s 初始化预算，错误仍让整组红，而非调高所有测试的默认超时。
+  beforeAll(() => {
+    sourceAudits()
+  }, 30_000)
+
+  it('完整源码扫描在全部规则之间只解析一次，保留原始问题类别', () => {
+    const first = sourceAudits()
+    expect(first).toBe(sourceAudits())
+    expect(first.size).toBe(Object.keys(SOURCES).filter((path) => !isTest(path)).length)
+    expect(first.size).toBeGreaterThan(100)
+    expect([...first.values()].every((findings) => Array.isArray(findings))).toBe(true)
+    // 不允许把缓存缩成“没有违规”的结果：与独立的 audit() 对比同一份源码。
+    const target = '/src/components/ui/Details.tsx'
+    expect(first.get(target)).toEqual(audit(target, SOURCES[target]))
+  })
+
   it('没有手写的内联 svg 图标（样本图 / 画布本体 / 品牌标 / 图标集本体按个数豁免）', () => {
     expect(
       offenders('inline-svg'),

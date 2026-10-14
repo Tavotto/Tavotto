@@ -305,3 +305,57 @@ class TestPerProjectSessions:
         )
         r = client.get(f"/api/diagnostics/send/{pa['id']}", headers={"X-Tavotto-Project": a})
         assert r.status_code == 404, "A 的会话应已被丢弃"
+
+
+class TestStalePrepareRace:
+    """关对话框再开 / 切走再回：旧的备包请求比新的晚完成，不能覆盖新会话（Codex P2）。"""
+
+    BODY = {"frontend_state": None, "interaction_trace": []}
+
+    def _post(self, client, seq):
+        q = "" if seq is None else f"?seq={seq}"
+        return client.post(f"/api/diagnostics/send/prepare{q}", json=self.BODY)
+
+    def test_the_older_request_finishing_last_gets_409_and_the_newer_session_survives(
+        self, client, on, monkeypatch
+    ):
+        real = m._build_diagnostics_bundle
+        a_started, b_done = threading.Event(), threading.Event()
+
+        def build(frontend, dropped, detail):
+            if not a_started.is_set():  # 第一个进来的是 A：卡住，等 B 登记完
+                a_started.set()
+                assert b_done.wait(15)
+            return real(frontend, dropped, detail)
+
+        monkeypatch.setattr(m, "_build_diagnostics_bundle", build)
+        out = {}
+        ta = threading.Thread(target=lambda: out.setdefault("a", self._post(client, 100)))
+        ta.start()
+        assert a_started.wait(15)
+        rb = self._post(client, 101)  # B 后发起、先完成
+        b_done.set()
+        ta.join(15)
+        assert rb.status_code == 200
+        ra = out["a"]
+        assert ra.status_code == 409 and ra.get_json()["code"] == "diag_stale_prepare"
+        pb = rb.get_json()
+        st = client.get(f"/api/diagnostics/send/{pb['id']}")
+        assert st.status_code == 200, "B 的会话必须还在"
+        assert len(diagsend._SESSIONS) == 1
+
+    def test_a_request_older_than_one_already_seen_is_refused_before_building(
+        self, client, on, monkeypatch
+    ):
+        assert self._post(client, 200).status_code == 200
+        built = []
+        real = m._build_diagnostics_bundle
+        monkeypatch.setattr(m, "_build_diagnostics_bundle", lambda *a: built.append(1) or real(*a))
+        r = self._post(client, 150)
+        assert r.status_code == 409 and not built
+        assert self._post(client, 201).status_code == 200
+
+    def test_clients_without_seq_keep_working(self, client, on):
+        assert self._post(client, None).status_code == 200
+        assert self._post(client, None).status_code == 200
+        assert self._post(client, "junk").status_code == 200

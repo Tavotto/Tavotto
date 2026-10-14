@@ -113,7 +113,15 @@
   对象」任一关掉就不吸；shift 锁成水平 / 垂直时只在仍在走的那一轴上吸，锁成 45° 时修正沿锁定
   方向投影（两轴里走得少的那条胜出，另一轴按比例跟着动，#575 评审）；⑤ 面板旋转 / 翻转时
   不吸（与混排对齐同一取舍）；⑥ 吸附只改位移，写法不变（仍是一条 pos_frac / position）。
-  缩放手柄不吸。看护：`canvas/inFigureDrag.test.tsx`。
+  缩放手柄不吸；
+  ⑦ **吸住后保持（2 倍容差放开，ADR 0128）**：候选线带元信息（`SnapLine`：kind / edge /
+  panelId / gid / rect，kind 由 `elementGeom.snapKindOf` 推——轴标题看 gid 后缀 `.xlabel` /
+  `.ylabel`，色条看 `is_colorbar`），`snapMoveNearest` X / Y 各自独立，容差内先比档位（`rank`，
+  缺省全 0）、同档比距离；手势起手建一份 `SnapHold`（每轴记自身锚点 + 目标线在**本手势候选表**里
+  的下标，不记浮点值），这一对距离仍 < 2×容差就继续吸它，否则放开重挑，手势结束丢弃；⌘ / Ctrl
+  那一帧清空，⇧ 锁向时没被采用的轴也清空。画布对象层 `snapMove` 不动。
+  看护：`lib/snapNearest.test.ts`（挑法 / 保持 / 不来回跳 / 类型推断）、
+  `canvas/inFigureDrag.test.tsx`「图内拖动：吸住后保持」。
 - **子图的随行元素跟着一切平移手势走**（2026-09-25，用户：挪过「(a)」再拖主图，标签
   有时不跟）：被手动摆过的后代（带 pos_frac / loc_frac / endpoints_frac）与 manifest
   点名的随行 axes（`follow_gids`：色条、孪生轴），单个子图拖动由 `axesCompanions` 带着走；

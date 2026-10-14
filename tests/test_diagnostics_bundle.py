@@ -151,7 +151,7 @@ def test_get_bundle_still_works_and_keeps_the_old_three_files(client):
 def test_manifest_declares_its_own_schema(client):
     z = open_bundle(client.get("/api/diagnostics/bundle").data)
     manifest = json.loads(z.read("manifest.json"))
-    assert manifest["schema_version"] == 7
+    assert manifest["schema_version"] == 8
     assert manifest["frontend_snapshot_schema"] == 1
     assert manifest["trace_schema"] == 1
     assert manifest["privacy_mode"] == "safe-default"
@@ -1431,7 +1431,7 @@ def test_custom_endpoint_url_keeps_only_its_origin_in_export_and_sent_bundle(cli
         assert (
             json.loads(z.read("manifest.json"))["schema_version"]
             == engine_diagnostics.BUNDLE_SCHEMA_VERSION
-            == 7
+            == 8
         )
     for rec in ai_providers.list_providers():
         ai_providers.delete(rec["id"])

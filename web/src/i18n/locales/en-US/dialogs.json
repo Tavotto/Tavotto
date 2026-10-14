@@ -1173,9 +1173,24 @@
           "task": "Classification of recent failed tasks",
           "manifest": "Bundle version notes",
           "readme": "Readme inside the bundle",
-          "other": "Other diagnostic files"
+          "other": "Other diagnostic files",
+          "detail_errors": "Error messages with full stack traces (engine, render process, interface)",
+          "detail_logs": "Tails of the app, sidecar and render-process logs (verbatim)",
+          "detail_state": "Session state files (with a list of corrupted copies)",
+          "detail_requests": "Recent backend requests (method, route, status, duration, error code only)",
+          "detail_overrides": "Style edits of the figure being edited",
+          "detail_render_env": "Render environment (Python, matplotlib, installed packages, fonts)",
+          "detail_runs": "Recent render, export and script test-run records",
+          "detail_shell": "Desktop shell and install facts (versions, OS, architecture, update result)",
+          "detail_storage": "Storage environment (free space, writable, sync folder)",
+          "detail_console": "Recent errors and warnings from the interface console",
+          "detail_display": "Display environment (scale, window, language, theme)",
+          "detail_network": "Network facts (proxy, name resolution, time zone)",
+          "detail_source": "Script source (you ticked this)",
+          "detail_crash_reports": "System crash reports (you ticked this)",
+          "detail_corrupt_sessions": "Contents of corrupted session copies (you ticked this)"
         },
-        "notIncluded": "Not included: your scripts, figures and data files, or the identifier used by anonymous usage statistics.",
+        "notIncluded": "Not included by default: your script source, data files, or the identifier used by anonymous usage statistics. Error messages and logs may mention project folder and file names.",
         "size": "Size {{size}}",
         "save": "Save this bundle",
         "saved": "Saved",
@@ -1197,7 +1212,7 @@
         "retention": "Reports are kept for {{days}} days, readable only by the Tavotto maintainers, and are not linked to the anonymous-statistics identifier.",
         "preparing": "Building the bundle…",
         "prepareFailed": "Could not build the bundle. Close and try again, or use Export diagnostics to save it locally.",
-        "tooLarge": "This bundle is {{size}}, above the online limit of {{max}}. It is never trimmed — save it locally and send it to the maintainers yourself.",
+        "tooLarge": "This bundle is {{size}}, above the online limit of {{max}} (extras were already cut short). Save it locally and send it to the maintainers yourself.",
         "progress": {
           "init": "Contacting the diagnostics service…",
           "upload": "Uploading {{percent}}%",
@@ -1247,7 +1262,7 @@
           "internal": "An internal error occurred and nothing was sent. Save the bundle and report it."
         },
         "packageGone": "This bundle is no longer held by the engine (the app may have restarted). Prepare it again before sending, or use Export diagnostics in Settings to save one locally.",
-        "sentence": "Sends a diagnostics bundle — no data or script contents.",
+        "sentence": "A diagnostic bundle will be sent, with error details and logs but without your script source or data files.",
         "details": "Show details",
         "bestEffort": "Redaction is best-effort and not guaranteed; you can save and inspect the bundle before sending.",
         "noteAttached": "Anything you write here is sent as typed, together with the bundle.",
@@ -1255,7 +1270,45 @@
         "cardButton": "Send problem report",
         "reprepare": "Prepare again",
         "doneAfterCancel": "Cancelled too late — the report had already arrived",
-        "unknownOutcome": "Could not confirm whether the report arrived; to have it removed, open a GitHub issue quoting only the report ID"
+        "unknownOutcome": "Could not confirm whether the report arrived; to have it removed, open a GitHub issue quoting only the report ID",
+        "extrasTitle": "Extras (not sent by default)",
+        "extra": {
+          "source": "Script source",
+          "crash_reports": "System crash reports",
+          "corrupt_sessions": "Contents of corrupted session copies"
+        },
+        "extraHint": {
+          "source": "Scripts are attached as they are. We try to remove secrets we can recognise, but cannot guarantee it; if your scripts contain secrets, do not tick this.",
+          "crash_reports": "Tavotto system crash reports from the last 7 days. Windows crash dumps are snapshots of the program's memory and may contain the contents and paths of files that were open; they cannot be redacted.",
+          "corrupt_sessions": "By default only the names and sizes of corrupted copies; tick to attach their contents."
+        },
+        "filesTitle": "Files in the bundle ({{count}})",
+        "truncated": "The bundle was over the size limit, so these were cut short (lowest priority first): {{kinds}}.",
+        "listSeparator": ", ",
+        "short": {
+          "errors": "error messages",
+          "logs": "logs",
+          "state": "session state",
+          "requests": "request records",
+          "overrides": "style edits",
+          "render_env": "render environment",
+          "runs": "run records",
+          "shell": "shell facts",
+          "storage": "storage",
+          "console": "console",
+          "display": "display",
+          "network": "network",
+          "source": "script source",
+          "crash_reports": "crash reports",
+          "corrupt_sessions": "corrupted copies"
+        },
+        "optionsLost": "The extras were too large, so they could not be attached this time.",
+        "sentenceExtras": "A diagnostic bundle will be sent, with error details and logs, plus what you ticked: {{items}}.",
+        "sentenceItem": {
+          "source": "script source",
+          "crash_reports": "system crash reports (may contain the contents of open files)",
+          "corrupt_sessions": "contents of corrupted session copies"
+        }
       }
     },
     "export": {

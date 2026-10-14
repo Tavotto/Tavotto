@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { buildDiagnosticPayload } from '@/diagnostics'
+import { buildSendPayload, NO_DETAIL_OPTIONS, type DetailOptions } from '@/diagnostics/detail'
 import {
   cancelDiagSend,
   discardDiagSend,
   fetchDiagSendBundle,
   fetchDiagSendStatus,
+  isStalePrepare,
   prepareDiagSend,
   startDiagSend,
   type DiagSendCapability,
@@ -19,6 +20,7 @@ import { cn } from '@/lib/utils'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { useProjectStore } from '@/store/projectStore'
 import { Button } from '../ui/Button'
+import { Checkbox } from '../ui/Checkbox'
 import { Details, Summary } from '../ui/Details'
 import { Dialog } from '../ui/Dialog'
 import { TextArea } from '../ui/Input'
@@ -29,6 +31,8 @@ import { saveDiagnosticsZip } from './diagnosticsSave'
 
 const ds = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.diagnostics.send.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+const EXTRA_KEYS = ['source', 'crash_reports', 'corrupt_sessions'] as const
 
 const POLL_MS = 350
 const DEFAULT_NOTE_MAX = 1000
@@ -112,6 +116,16 @@ export function DiagnosticsSendDialog({
   const packagePj = useRef<string | null>(null)
   /** 换代计数：项目切换 / 用户点「重新准备」都让备包流程重来一遍（旧包随清理被丢弃）。 */
   const [epoch, setEpoch] = useState(0)
+  /**
+   * 三个勾选项（脚本源码 / 系统崩溃报告 / 会话损坏副本内容）：**每次打开对话框都从全不勾开始、不记忆**。
+   * 勾选变化 = 内容变了 = 重新备包（旧包随清理被丢弃，新包换新 `client_request_id`）；备包流程从 ref 读，
+   * 所以改选项只需要记一笔 + 把 epoch 推进一格。`keepForm` 让这一次重备不清掉用户已填的问题类型与说明。
+   */
+  const [options, setOptions] = useState<DetailOptions>(NO_DETAIL_OPTIONS)
+  const optionsRef = useRef<DetailOptions>(NO_DETAIL_OPTIONS)
+  const keepForm = useRef(false)
+  /** 勾了但引擎没附上（引擎侧丢了载荷 / 老引擎）：折叠区里一句话说明 */
+  const [optionsLost, setOptionsLost] = useState(false)
 
   const discard = useCallback(() => {
     const id = idRef.current
@@ -127,8 +141,14 @@ export function DiagnosticsSendDialog({
     setPhase('preparing')
     setPrepared(null)
     setStatus(null)
-    setCategory(DEFAULT_CATEGORY)
-    setNote('')
+    const opts = keepForm.current ? optionsRef.current : NO_DETAIL_OPTIONS
+    if (!keepForm.current) {
+      setCategory(DEFAULT_CATEGORY)
+      setNote('')
+    }
+    keepForm.current = false
+    optionsRef.current = opts
+    setOptions(opts)
     setSaveState('idle')
     setCancelledNotice(showCancelled.current)
     showCancelled.current = false
@@ -138,18 +158,28 @@ export function DiagnosticsSendDialog({
     // 切项目进行中（`projectStore.switching`：从认领新 pj 到文档 / 轨迹 / 各 store 换代完成）：内存里
     // 还是旧项目的文档与轨迹，此刻备的包会是 A/B 混合包——不备，等 `switching` 落下去再来（下面的订阅）
     if (useProjectStore.getState().switching) return () => void (gen.current++)
-    void prepareDiagSend(buildDiagnosticPayload())
+    void buildSendPayload(opts)
+      .then((payload) => (gen.current === mine ? prepareDiagSend(payload, opts) : null))
       .then((p) => {
+        if (!p) return
         if (gen.current !== mine) {
           if (p.id) void discardDiagSend(p.id, pj).catch(() => {})
           return
         }
         setPrepared(p)
+        // 以引擎实际采用的为准：勾着的框不能在引擎没附上内容时仍显示勾着
+        const applied = { ...NO_DETAIL_OPTIONS, ...(p.options ?? {}) }
+        if (p.options) {
+          optionsRef.current = applied
+          setOptions(applied)
+          setOptionsLost(EXTRA_KEYS.some((k) => opts[k] && !applied[k]))
+        } else setOptionsLost(false)
         idRef.current = p.id
         actionGen.current = p.gen
         setPhase(p.too_large ? 'tooLarge' : 'ready')
       })
-      .catch(() => {
+      .catch((e) => {
+        if (isStalePrepare(e)) return // 被更新的备包取代：不是失败，界面由那份新请求更新
         if (gen.current === mine) setPhase('prepareFailed')
       })
     return () => {
@@ -215,6 +245,14 @@ export function DiagnosticsSendDialog({
     }
   }, [phase])
 
+  const toggleOption = (key: keyof DetailOptions) => {
+    if (phase !== 'ready' && phase !== 'failed') return
+    keepForm.current = true
+    optionsRef.current = { ...optionsRef.current, [key]: !optionsRef.current[key] }
+    setOptions(optionsRef.current)
+    setEpoch((e) => e + 1)
+  }
+
   const send = () => {
     const id = idRef.current
     if (!id || (phase !== 'ready' && phase !== 'failed')) return
@@ -268,6 +306,12 @@ export function DiagnosticsSendDialog({
       })
   }
 
+  // 常显的那一句按**引擎确认的** options 选句（`prepared.options`，不是用户点的）：勾了源码 / 崩溃报告就如实说附带了什么。
+  // 仍然只有一句话（卡片一句话纪律）；多项组合用同一个模板列出。
+  const applied = EXTRA_KEYS.filter((k) => prepared?.options?.[k])
+  const sentence = applied.length
+    ? ds('sentenceExtras', { items: applied.map((k) => ds(`sentenceItem.${k}`)).join(ds('listSeparator')) })
+    : ds('sentence')
   const sending = phase === 'sending' || phase === 'cancelling'
   const editable = phase === 'ready' || phase === 'failed'
   const retryable = phase === 'failed' && status?.retryable !== false
@@ -389,7 +433,7 @@ export function DiagnosticsSendDialog({
       <div className="flex flex-col gap-3" data-diag-send-body>
         {/* 默认只露这一句话 + 页脚的「发送」；其余全在折叠的「查看详情」里（卡片一句话纪律） */}
         <p className="text-sm text-ink" data-diag-send-sentence>
-          {ds('sentence')}
+          {sentence}
         </p>
         <Details data-diag-send-details className="text-sm">
           <Summary className="h-6 text-ink-2 hover:text-ink">{ds('details')}</Summary>
@@ -429,6 +473,55 @@ export function DiagnosticsSendDialog({
                   </span>
                 )}
               </div>
+            </section>
+
+            {/* 额外内容：默认不勾、不记忆（每次打开从头来）；勾选变化 = 重新备包 */}
+            <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5" data-diag-send-extras>
+              <h3 className="type-section">{ds('extrasTitle')}</h3>
+              {EXTRA_KEYS.map((key) => (
+                <label key={key} className="flex items-start gap-2 text-sm text-ink-2">
+                  <Checkbox
+                    checked={options[key]}
+                    disabled={!editable}
+                    onChange={() => toggleOption(key)}
+                    data-diag-send-extra={key}
+                    className="mt-0.5"
+                  />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="text-ink">{ds(`extra.${key}`)}</span>
+                    <span className="type-caption">{ds(`extraHint.${key}`)}</span>
+                  </span>
+                </label>
+              ))}
+            </section>
+
+            {optionsLost && (
+              <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
+                {ds('optionsLost')}
+              </p>
+            )}
+
+            <section aria-label={ds('filesTitle', { count: prepared?.entries.length ?? 0 })} className="flex flex-col gap-1" data-diag-send-files-section>
+              <Details data-diag-send-files className="text-sm">
+                <Summary className="h-6 text-ink-2 hover:text-ink">
+                  {ds('filesTitle', { count: prepared?.entries.length ?? 0 })}
+                </Summary>
+                <ul className="mt-1 flex flex-col gap-0.5 font-mono text-xs text-ink-3" data-diag-send-file-list>
+                  {(prepared?.entries ?? []).map((e) => (
+                    <li key={e.name} className="flex justify-between gap-3" data-diag-file={e.name}>
+                      <span className="min-w-0 truncate">{e.name}</span>
+                      <span className="shrink-0">{formatBytes(e.bytes ?? 0)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </Details>
+              {prepared && (prepared.truncated?.length ?? 0) > 0 && (
+                <p className="type-caption" data-diag-send-truncated>
+                  {ds('truncated', {
+                    kinds: (prepared.truncated ?? []).map((c) => ds(`short.${c.kind}`)).join(ds('listSeparator')),
+                  })}
+                </p>
+              )}
             </section>
 
             <FormRow label={ds('categoryLabel')}>
