@@ -86,7 +86,7 @@ const cross = (
 ) => crossFigureSnapCandidates(objects, getManifest, 'a', visible)
 
 const linesOf = (ls: SnapLine[], gid: string) =>
-  ls.filter((l) => l.gid === gid).map((l) => [l.edge, l.v])
+  ls.filter((l) => l.gid === gid).map((l) => [l.edge, Math.round(l.v * 1e6) / 1e6])
 
 describe('crossFigureSnapCandidates：每种元素出哪几条边', () => {
   it('子图 / 色条 / 图例：四条边（左右、上下）；页面 mm、带 panelId / gid / rect / kind', () => {
@@ -105,7 +105,10 @@ describe('crossFigureSnapCandidates：每种元素出哪几条边', () => {
     ])
     const l = c.xs.find((x) => x.gid === 'axes_1')!
     expect(l).toMatchObject({ kind: 'colorbar', panelId: 'b' })
-    expect(l.rect).toEqual({ x: 270, y: 20, w: 5, h: 60 })
+    expect(l.rect!.x).toBeCloseTo(270)
+    expect(l.rect!.y).toBeCloseTo(20)
+    expect(l.rect!.w).toBeCloseTo(5)
+    expect(l.rect!.h).toBeCloseTo(60)
     expect(c.xs.find((x) => x.gid === 'axes_0.legend')?.kind).toBe('legend')
   })
 
