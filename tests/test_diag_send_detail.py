@@ -3805,3 +3805,61 @@ class TestNamesDerivedFromUserStringsAreScrubbed:
         )
         assert len(items) > 1
         assert b"NAMESECRETxyz" not in self._everything(items)
+
+
+class TestYamlCommentOnlyAndIndicatorComments:
+    """秘密键后面只有注释 / 块标量记号加注释：值在下面缩进的行里。"""
+
+    SHAPES = [
+        "{k}:   # prod\n  REAL_SECRET\n",
+        "{k}: # x\n  - REAL_SECRET\n  - REAL_SECRET2\n",
+        "{k}: #\n  nested: REAL_SECRET\n",
+        "{k}: | # c\n  REAL_SECRET\n",
+        "{k}: >- # c\n  REAL_SECRET\n\n  REAL_SECRET2\n",
+        "{k}: |2+ #c\n   REAL_SECRET\n",
+        "{k}:\t# tab comment\n\tREAL_SECRET\n",  # 子行用 tab 缩进
+        "{k}: # x\n\t- REAL_SECRET\n",
+        "{k}:    \n  REAL_SECRET\n",
+    ]
+
+    @NEWLINES
+    @pytest.mark.parametrize("key", ["password", "token", "api_key", "client_secret"])
+    @pytest.mark.parametrize("shape", SHAPES)
+    def test_value_is_gone_and_siblings_stay(self, nl, key, shape):
+        for ws in ("", "  "):
+            block = shape.format(k=key)
+            lines = block.split("\n")
+            body = "\n".join([lines[0]] + [ws + ln if ln.strip() else ln for ln in lines[1:]])
+            text = f"top:\n{ws}before: keep_a\n{ws}{body}{ws}after: keep_b\n"
+            out = diagdetail.Scrubber().text(_nl(text, nl))
+            assert "REAL_SECRET" not in out, repr(out)
+            assert "before: keep_a" in out and "after: keep_b" in out, repr(out)
+
+    def test_mixed_tab_and_space_indent_fails_closed(self):
+        out = diagdetail.Scrubber().text(
+            "a:\n" + " " * 12 + "password: # c\n\tREAL_SECRET\n" + " " * 12 + "after: keep_b\n"
+        )
+        assert "REAL_SECRET" not in out
+
+    def test_comment_only_value_without_children_is_not_a_leak(self):
+        out = diagdetail.Scrubber().text("password: # prod\nnext: ok\n")
+        assert "next: ok" in out
+
+    def test_final_zip_has_no_hits(self, client, world):
+        (world["tmp"] / "yaml.log").write_text(
+            "password:   # prod\n  REAL_SECRET\ntoken: # x\n  - REAL_SECRET\napi_key: #\n  nested: REAL_SECRET\nsib: ok\n",
+            encoding="utf-8",
+        )
+        diagnostics_log = world["tmp"] / "yaml.log"
+        import tavotto.engine.diagnostics as dg
+
+        orig = dg._app_log_path
+        dg._app_log_path = lambda: diagnostics_log
+        try:
+            _prep, z = _prepare(client)
+        finally:
+            dg._app_log_path = orig
+        texts = _texts(z)
+        assert any("sib: ok" in t for t in texts.values()), "日志没进包：用例是空的"
+        for name, text in texts.items():
+            assert "REAL_SECRET" not in text, name

@@ -468,6 +468,10 @@ def _scan_value(text: str, i: int, *, whole_line: bool) -> int:
 _YAML_BLOCK_INDICATOR = re.compile(r"[|>][-+0-9]*[ \t]*(?:#.*)?")
 
 
+def _ws_width(ws: str) -> int:
+    return len(ws) + 7 * ws.count("\t")  # tab 按 8 列算
+
+
 def _yaml_block_end(text: str, key_start: int, vs: int) -> int | None:
     """值从下一行才开始的写法：`token: |` / `token: >-` / `token: |2`（YAML 块标量）、`token:`（行尾空值，下面缩进的
     是值）、行尾续行符 `\\`。fail-closed：键所在行之后**所有比键行缩进更深的行**（以及续行）都是值，一直抹到遇到缩进不深于
@@ -477,12 +481,16 @@ def _yaml_block_end(text: str, key_start: int, vs: int) -> int | None:
     eol = n if nl < 0 else nl
     rest = text[vs:eol]
     stripped = rest.strip()
+    if stripped.startswith("#"):
+        stripped = ""  # 只有行尾注释（`password:   # prod`）= 空值：值在下面缩进的行里
+        rest = ""
     continued = rest.rstrip().endswith("\\")
     if not (stripped == "" or _YAML_BLOCK_INDICATOR.fullmatch(stripped) or continued):
         return None
     ls = text.rfind("\n", 0, key_start) + 1
     line = text[ls:key_start]
-    indent = len(line) - len(line.lstrip(" \t"))
+    kws = line[: len(line) - len(line.lstrip(" \t"))]
+    indent = _ws_width(kws)
     last = None  # 最后一行被纳入的非空行的末尾
     j = eol
     while j < n:  # text[j] 是上一行末尾的换行
@@ -492,7 +500,9 @@ def _yaml_block_end(text: str, key_start: int, vs: int) -> int | None:
         if body.strip() == "":
             j = line_end
             continue
-        deeper = len(body) - len(body.lstrip(" \t")) > indent
+        bws = body[: len(body) - len(body.lstrip(" \t"))]
+        # 缩进里 tab 与空格混用（键行与这一行一边有 tab 一边没有）：宽度没法比，fail-closed 当作更深
+        deeper = _ws_width(bws) > indent or (bool(bws) and ("\t" in bws) != ("\t" in kws))
         if not (continued or deeper):
             break
         last = line_end
