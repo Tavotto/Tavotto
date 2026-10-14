@@ -1380,6 +1380,42 @@ class TestScriptEncodings:
         index = json.loads(next(i for i in items if i.path == "index.json").data)
         return items, {r["script"]: r for r in index["scripts"]}
 
+    def test_written_utf8_scripts_declare_utf8(self, world):
+        """按声明的编码解码后写出的是 UTF-8：前两行的 `coding:` 声明改成 utf-8，解压后读回来内容一致。"""
+        import io
+        import tokenize
+
+        proj = world["tmp"] / "projdecl"
+        proj.mkdir()
+        cases = {
+            "latin.py": ("# -*- coding: latin-1 -*-\nname = 'caf\xe9'\n", "latin-1"),
+            "gbk.py": (
+                "#!/usr/bin/env python\n# vim: set fileencoding=gbk :\ntitle = '中文标题'\n",
+                "gbk",
+            ),
+            "same.py": ("# coding: utf-8\nx = 'é'\n", "utf-8"),
+            "late.py": ("x = 1\n# coding: latin-1\ny = 'caf\xe9'\n", "utf-8"),  # 第 3 行的不是声明
+            "bad.py": ("# coding: no-such-codec\nx = 'é'\n", "utf-8"),
+        }
+        for name, (text, enc) in cases.items():
+            codec = "utf-8" if enc == "utf-8" else enc
+            try:
+                raw = text.encode(codec)
+            except LookupError:
+                raw = text.encode("utf-8")
+            (proj / name).write_bytes(raw)
+        items, rows = self._collect(proj, list(cases))
+        body = {i.path.split("-", 1)[1]: i.data for i in items if i.path != "index.json"}
+        for name in ("latin.py", "gbk.py", "same.py", "bad.py"):
+            enc, _ = tokenize.detect_encoding(io.BytesIO(body[name]).readline)
+            assert enc == "utf-8", (name, body[name][:80])
+            assert body[name].decode("utf-8")  # 能按 utf-8 读回
+        assert "caf\xe9" in body["latin.py"].decode("utf-8")
+        assert "中文标题" in body["gbk.py"].decode("utf-8")
+        assert b"vim: set fileencoding=utf-8 :" in body["gbk.py"]
+        assert b"# coding: latin-1" in body["late.py"]  # 不是声明的行不动
+        assert rows["latin.py"]["encoding"] == "iso-8859-1" and rows["gbk.py"]["encoding"] == "gbk"
+
     def test_declared_encodings_are_decoded_and_still_scrubbed(self, world):
         proj = world["tmp"] / "projenc"
         proj.mkdir()
@@ -3608,3 +3644,50 @@ class TestPrivateKeyArmorFamily:
         diagdetail.Scrubber().text("-----BEGIN CERTIFICATE-----\n" * 20000)
         diagdetail.Scrubber().text("-----BEGIN " + "A" * 5000)
         assert time.monotonic() - t < 3
+
+
+class TestLongKeys:
+    """键名不设长度窗口：任意长的键也要判得出（Codex P1：41+ 字符前缀让 `password=REAL` 整条不匹配）。"""
+
+    @pytest.mark.parametrize("n", [41, 200, 100_000])
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            "password=",
+            "_token: ",
+            "-api_key=",
+            "Authorization: ",
+            "secret_key = ",
+            "_pin=",
+            "_otp:",
+            '"password": ',
+        ],
+    )
+    def test_long_prefix_before_a_secret_word(self, n, tail):
+        out = diagdetail.Scrubber().text(("x" * n) + tail + "REAL_SECRET9 tail")
+        assert "REAL_SECRET9" not in out, (n, tail)
+
+    @pytest.mark.parametrize("n", [41, 200, 100_000])
+    def test_long_suffix_and_camel_case_keys(self, n):
+        s = diagdetail.Scrubber()
+        assert "REAL_SECRET9" not in s.text("password" + "x" * n + "=REAL_SECRET9")
+        assert "REAL_SECRET9" not in s.text("myVeryLong" * (n // 10 + 1) + "ApiKey: REAL_SECRET9")
+        assert "REAL_SECRET9" not in s.text("a." * (n // 2) + "token=REAL_SECRET9")
+
+    def test_long_innocent_keys_are_kept(self):
+        s = diagdetail.Scrubber()
+        line = ("x" * 300) + "=hello"
+        assert s.text(line) == line
+        line = ("max_" + "x" * 300 + "_tokens") + "=4096"
+        assert s.text(line) == line
+
+    def test_linear_on_many_long_tokens(self):
+        import time
+
+        s = diagdetail.Scrubber()
+        t = time.monotonic()
+        s.text(("x" * 5000 + " ") * 200)  # 大量长 token、无分隔符
+        s.text(("x" * 5000 + "=1 ") * 200)  # 大量长 token、带分隔符
+        s.text("a" * 400_000)
+        s.text("a-" * 200_000 + "=")
+        assert time.monotonic() - t < 5

@@ -267,24 +267,15 @@ _GENERIC_USERNAMES = frozenset(
     {"user", "root", "admin", "administrator", "guest", "default", "test"}
 )
 
-_SECRET_WORDS = (
-    r"api[_-]?key|apikey|secret|passw(?:or)?d|passwd|token|credential|authorization"
-    r"|auth[_-]?(?:key|token|header|code)|nonce|signature|session[_-]?(?:id|key|token|secret)"
-    r"|private[_-]?key|access[_-]?key|bearer|x-tavotto-auth|q-signature|upload[_-]?(?:url|credential)"
-    r"|pwd|passphrase|passcode|cookie"
-    r"|mnemonic|seed[_-]?phrase|connection[_-]?string|database[_-]?url|密码|口令|密钥|秘钥|令牌"
-)
-#: 太短、作子串会误伤（`pine` / `pinyin` / `spin` / `mapping`）的键词：只认**整词**——前后要么是键的边界，
-#: 要么是 `_` `-` `.` 分隔（`pw` / `db_pin` / `OTP_CODE` / `dsn`）
-_SHORT_SECRET_WORDS = r"(?:[\w.\-]{0,40}?[_.\-])?(?:pw|pin|otp|dsn)(?:[_.\-][\w.\-]{0,40})?(?![\w])"
 #: 分隔符两侧允许的空白：ASCII 空格 / 制表符，加 NBSP、en/em 空格…、窄 NBSP、全角空格（不含换行）
 _SEP_SPACE = "[ \t  -   　]"
-#: `key=value` / `key: value` / `"key": "value"` / `'key': 'value'`：键里含秘密词就把值换掉。
-#: 键名前后的通配**有上界**（40）且起点锚在标识符开头：日志里一条几十万字符的十六进制 / base64 长串
-#: 上，无界的 `[\w.\-]*` 前缀会逐位回溯成 O(n²)（备包卡死）。看护：`test_scrubber_is_linear_on_long_tokens`
+#: `key=value` / `key: value` / `"key": "value"` / `'key': 'value'` 的**键 token + 分隔符**。只做「找位置」：键 token 是一段连续的
+#: `[\w.\-]`（含中文键字符），**整段贪婪取、不设长度上限**；起点由 lookbehind 钉在 token 开头，所以不会逐位回溯成 O(n²)（日志里
+#: 几十万字符的十六进制 / base64 长串照样线性）。是不是秘密键由 `is_secret_key(整个 token)` 判断（与结构化侧同一个判据，键再长也能判）。
+#: 看护：`test_scrubber_is_linear_on_long_tokens`、`TestLongKeys`
 _KV_SECRET = re.compile(
-    rf"""(?ix)
-    (?P<key>(?<![\w.\-\\])\\*["']?(?:[\w.\-]{{0,40}}?(?:{_SECRET_WORDS})[\w.\-]{{0,40}}|(?:key|auth)(?![\w.\-])|{_SHORT_SECRET_WORDS})\\*["']?)
+    rf"""(?x)
+    (?<![\w.\-\\])\\*["']?(?P<key>[\w.\-]+)\\*["']?
     (?P<sep>{_SEP_SPACE}*[:=：＝]{_SEP_SPACE}*)
     """
 )
@@ -548,6 +539,7 @@ _SECRET_KEY_PARTS = (
     "密钥",
     "秘钥",
     "令牌",
+    "uploadurl",
     "apikey",
     "token",
     "secret",
@@ -688,8 +680,8 @@ class Scrubber:
             vs = m.end()
             if vs >= len(text):
                 continue
-            if is_count_key(m.group("key")):
-                continue  # 计数 / 配置类键名（`max_tokens`、`token_count`）：不当秘密键
+            if not is_secret_key(m.group("key")):
+                continue  # 不是秘密键（含计数 / 配置类键名：`max_tokens`、`token_count`）
             if not self.source_mode:
                 yaml_end = _yaml_block_end(text, m.start(), vs)
                 if yaml_end is not None:
@@ -2392,6 +2384,23 @@ def _decode_script(raw: bytes, rel: str) -> tuple[str, str, bool]:
         return raw.decode("utf-8", errors="replace"), "utf-8", True
 
 
+_CODING_DECL = re.compile(r"^([ \t\f]*#.*?coding[:=][ \t]*)[-\w.]+")
+
+
+def _declare_utf8(text: str) -> str:
+    """脚本按声明的编码解码后我们**一律写出 UTF-8**：前两行（PEP 263）里的 `coding:` 声明改成 `utf-8`（行里其余内容不动），
+    否则解压后的 `# coding: latin-1` 会让 Python / 编辑器把 UTF-8 字节读成乱码。BOM 已在解码时去掉、写出时不加。"""
+    lines = text.split("\n", 2)
+    for i in range(min(2, len(lines))):
+        if i == 1 and not re.match(r"^[ \t\f]*(?:#.*)?$", lines[0]):
+            break  # 第一行是代码：第二行的声明不生效
+        new = _CODING_DECL.sub(r"\1utf-8", lines[i], count=1)
+        if new != lines[i]:
+            lines[i] = new
+            break
+    return "\n".join(lines)
+
+
 def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Item]:
     items: list[Item] = []
     code_scrub = Scrubber(source_mode=True)
@@ -2413,7 +2422,10 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
             continue
         size = ids[rel].size
         text, encoding, fell_back = _decode_script(raw, rel)
-        data = scrub_script(text, rel, full_scrub, code_scrub).encode("utf-8")
+        out_text = scrub_script(text, rel, full_scrub, code_scrub)
+        if rel.lower().endswith(".py"):
+            out_text = _declare_utf8(out_text)
+        data = out_text.encode("utf-8")
         if size > SOURCE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
         zip_name = f"{n + 1:02d}-{_safe_name(rel.replace('/', '__'))}"
