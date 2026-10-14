@@ -2357,13 +2357,14 @@ def close_project(pid: str, wait: bool = False) -> bool:
         return False
     # 导入即扫描：取消在跑的扫描并忘掉它的账（只此一件——没有执行 / 安装归它所有）
     engine_projscan.SCANS.drop(pid)
-    engine_pool.shutdown_all(str(ctx.path), wait=wait)
     # 桌面拥有的 native 会话是 sidecar 自己起的进程：关项目 = 真终止（含进程组 / Job），不留孤儿占着环境
-    # （终端拥有的不碰，ADR 0021 §8.1）
-    # 顺序是契约:先取消这个项目的准备(执行线程在 spawn 之前也会收工),再 `close_project` 标记并结束会话 / 在途启动——
-    # 标记之后 `reserve` / `begin_start` 当场拒绝,关闭之前还没走到登记的准备线程再也起不了进程
+    # （终端拥有的不碰，ADR 0021 §8.1）。顺序是契约,且**先于**可能阻塞数秒的 `pool.shutdown_all`:
+    # ① 标记项目已关闭（此后 `reserve` / `begin_start` 当场拒绝）→ ② 取消这个项目的准备（执行线程在 spawn 之前也会收工）
+    # → ③ 结束已登记的会话与在途启动。关闭之前还没走到登记的准备线程因此再也起不了进程
+    engine_nativesession.REGISTRY.mark_project_closed(str(ctx.path))
     engine_preparation.SERVICE.cancel_project(pid)
     engine_nativesession.REGISTRY.close_project(str(ctx.path))
+    engine_pool.shutdown_all(str(ctx.path), wait=wait)
     LOG.info("项目已关闭: %s", ctx.path)
     return True
 
@@ -4572,6 +4573,10 @@ def api_native_session_cancel(session_id: str):
     """
     try:
         session = engine_nativesession.REGISTRY.get(session_id)
+        # 这条会话属于某个准备计划（`launch_id` 就是计划号）：先让计划进入「取消」，进程随后被结束时执行线程按取消收场，
+        # 而不是把「被取消」记成失败
+        if session.launch_id:
+            engine_preparation.SERVICE.cancel_plan(session.launch_id)
         result = session.cancel_owned()
     except engine_runcodes.RunError as exc:
         return _native_error(exc)
@@ -7419,7 +7424,9 @@ def _native_preparation_runner(pl, before_retry=None):
         raise engine_pool.WorkerError(
             "这份计划没有桌面拥有的启动身份", code=engine_runcodes.DESKTOP_RUN_LAUNCH_INVALID
         )
-    # 重新运行：同一脚本上一次桌面运行的活图让位（它占着 live route 与环境租约）
+    # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
+    # 顺序与关项目一致:先计划、再会话 / 票据
+    engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)
     engine_nativesession.REGISTRY.cancel_project(pl.project_root, script=spec.target)
     try:
         session = engine_desktopproc.start(

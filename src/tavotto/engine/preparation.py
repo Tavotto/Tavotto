@@ -1197,16 +1197,31 @@ class PreparationService:
             )
         return {"accepted": True, "reason": ""}
 
-    def cancel_project(self, project_id: str) -> int:
-        """项目关闭:取消这个项目名下所有还没终局的计划(执行线程据此在下一个取消接受时刻收工,新建的会话当场关掉)。
-        返回接受了取消的数量。别的项目的计划不动。"""
+    def cancel_project(
+        self, project_id: str, script: str | None = None, keep: str | None = None
+    ) -> int:
+        """取消这个项目名下所有还没终局的计划(执行线程据此在下一个取消接受时刻收工,新建的会话当场关掉)。
+
+        * 项目关闭:只给 `project_id`;
+        * 同一脚本重新运行:给 `script`,并用 `keep` 放过新计划自己——更早的同脚本计划让位。
+        返回接受了取消的数量。别的项目 / 别的脚本的计划不动。"""
         with self._lock:
             mine = [
                 pid
                 for pid, e in self._entries.items()
-                if e.plan.project_id == project_id and e.result.status not in TERMINAL
+                if e.plan.project_id == project_id
+                and e.result.status not in TERMINAL
+                and pid != keep
+                and (script is None or e.plan.script == script)
             ]
         return sum(1 for pid in mine if self.cancel(pid, project_id).get("accepted"))
+
+    def cancel_plan(self, plan_id: str) -> bool:
+        """按计划号取消(界面只拿到 native 会话的 `launch_id` 时用:它就是计划号)。没有这个计划 / 已终局回 False。"""
+        entry = self._entry(plan_id)
+        if entry is None:
+            return False
+        return bool(self.cancel(plan_id, entry.plan.project_id).get("accepted"))
 
     def note_owner(self, plan_id: str, worker, created: bool) -> None:
         """runner 取到会话那一刻报一次（每次 take 一次，含缺包后换环境的第二次）：`created` 来自 `pool.acquire`
