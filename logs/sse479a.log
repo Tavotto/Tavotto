@@ -1,0 +1,4 @@
+    1.3s event: render.started
+    1.3s data: {"pj": "b65dc01f69eb", "id": "slow_png.png", "cost": "medium", "cold": true}
+   18.5s event: render.done
+   18.5s data: {"pj": "b65dc01f69eb", "id": "slow_png.png", "rev": 1}

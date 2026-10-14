@@ -1,0 +1,6 @@
+listening on 8443
+HANDSHAKE_FAIL from ('127.0.0.1', 55053): [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1032)
+POST / len=7 body={"t":1}
+HTTPLOG "%s" %s %s POST / HTTP/1.1 200 -
+POST / len=235 body={"schema_version": 1, "distinct_id": "af56ff0f-9bac-4274-840d-04d45a4f5f7d", "event": "canvas_created", "properties": {"app_version": "0.18.0", "platform": "macos", "arch": "arm64", "distribution": "desktop", "creation_kind": "blank"}}
+HTTPLOG "%s" %s %s POST / HTTP/1.1 200 -
