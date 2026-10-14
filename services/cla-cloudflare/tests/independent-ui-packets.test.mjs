@@ -19,7 +19,7 @@ function status(id=ID(1),changes={}){
   return {packet:{id,subject:2,valid_until:100},actor,now:100,completed:false,blocked:false,current:false,
     signatures:[],canSign:false,canHold:true,...changes};
 }
-async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],states={[ID(1)]:status()},signingEnabled=true,stored='',createID=ID(99),failPage=false}={}){
+async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],states={[ID(1)]:status()},signingEnabled=true,stored='',urlPacket='',createID=ID(99),failPage=false}={}){
   const elements=new Map([...uiHTML.matchAll(/\bid="([^"]+)"/g)].map(match=>[match[1],new Element(match[1]==='packets'?'select':'div')]));
   const inputs=()=>{
     const walk=node=>[...(node.tagName==='input'?[node]:[]),...(node.children??[]).flatMap(walk)];
@@ -27,21 +27,22 @@ async function browser({pages=[{actor,packets:[{id:ID(1)}],nextCursor:null}],sta
   };
   const document={cookie:'__Host-cla-csrf=synthetic',getElementById:id=>elements.get(id),createElement:tag=>new Element(tag),
     createTextNode:text=>({textContent:text}),querySelectorAll:selector=>selector==='#attestations input'?inputs():[]};
-  const location={href:'https://cla.invalid/',assign(){throw Error('NAVIGATION_FORBIDDEN');}};
+  const location={href:'https://cla.invalid/'+(urlPacket?'?packet='+encodeURIComponent(urlPacket):''),assign(){throw Error('NAVIGATION_FORBIDDEN');}};
   const storage=new Map(stored?[['cla.packet',stored]]:[]),calls=[];
   const context={document,URL,Blob,location,Option:class {constructor(label,value){this.textContent=label;this.value=value;}},
-    sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)},
+    sessionStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},
     history:{replaceState:(_state,_title,url)=>{location.href=new URL(url,location.href).href;}},
     fetch:async(url,options)=>{
       calls.push({url,options});let result;
       if(url==='/capabilities')result={signingEnabled,oauthEnabled:false};
-      else if(url==='/session')result=pages[0];
+      else if(url==='/session'){result=pages[0];if(result.error)return {ok:false,json:async()=>structuredClone(result)};}
       else if(url.startsWith('/session?cursor=')){
         if(failPage)return {ok:false,json:async()=>({error:'request_unavailable'})};
         const cursor=decodeURIComponent(url.split('=')[1]),index=pages.findIndex(page=>page.nextCursor===cursor);
         assert.ok(index>=0&&pages[index+1],'unknown cursor');result=pages[index+1];
       }else if(url.startsWith('/status?packet=')){
         const id=decodeURIComponent(url.split('=')[1]);assert.ok(states[id],'unknown status packet');result=states[id];
+        if(result.error)return {ok:false,json:async()=>structuredClone(result)};
       }else if(url.startsWith('/agreement'))result={version:'1.0',digest:'a'.repeat(64),content:'SYNTHETIC AGREEMENT'};
       else if(url==='/packets'){
         result={id:createID};states[createID]=status(createID,{packet:{id:createID,subject:2,valid_until:1000},current:true,canSign:true});
@@ -132,5 +133,77 @@ test('failed load-more stops with no automatic retry or mutation',async()=>{
   assert.equal(b.elements.get('create').disabled,true);
   assert.match(b.elements.get('message').textContent,/request_unavailable/);
   assert.equal(b.calls.filter(call=>call.url.startsWith('/session?')).length,1);
+  assert.ok(b.calls.every(call=>call.options.method==='GET'));
+});
+
+for(const source of ['session storage','URL'])test('unauthorized '+source+' packet is discarded while current account history remains usable',async()=>{
+  const other={id:3,login:'synthetic-other',role:'contributor'};
+  const packets=Array.from({length:21},(_,n)=>({id:ID(n+30)}));
+  const pages=[{actor:other,packets:packets.slice(0,20),nextCursor:ID(49)},{actor:other,packets:packets.slice(20),nextCursor:null}];
+  const states={[ID(1)]:{error:'packet_unavailable'},[ID(50)]:status(ID(50),{actor:other,packet:{id:ID(50),subject:3,valid_until:100}})};
+  const b=await browser({pages,states,stored:ID(1),...(source==='URL'?{urlPacket:ID(1)}:{})});
+  assert.equal(b.storage.has('cla.packet'),false);assert.equal(new URL(b.location.href).search,'');
+  assert.equal(b.elements.get('packets').value,'');
+  assert.equal(b.elements.get('packets').options.some(option=>option.value===ID(1)),false);
+  assert.deepEqual(b.elements.get('packets').options.slice(1).map(option=>option.value),packets.slice(0,20).map(packet=>packet.id));
+  assert.equal(b.elements.get('sign').disabled,true);assert.equal(b.elements.get('hold').disabled,true);
+  assert.equal(b.elements.get('download-contributor').disabled,true);assert.equal(b.elements.get('download-holder').disabled,true);
+  await b.click('refresh');
+  assert.equal(b.calls.filter(call=>call.url==='/status?packet='+ID(1)).length,1,'manual refresh must not retry the rejected cached ID');
+  await b.click('packets-more');
+  assert.equal(b.elements.get('packets').options.some(option=>option.value===ID(1)),false);
+  assert.equal(b.elements.get('packets').options.length,22);
+  await b.select(ID(50));
+  assert.equal(b.elements.get('packets').value,ID(50));
+  assert.equal(b.storage.get('cla.packet'),ID(50));
+  assert.equal(b.elements.get('packets').options.filter(option=>option.value===ID(50)).length,1,'authorized historical selection remains pinned');
+  assert.equal(b.elements.get('packets').options.some(option=>option.value===ID(1)),false);
+  assert.ok(b.calls.every(call=>call.options.method==='GET'));
+});
+
+test('account switch clears stale consent and packet state without reintroducing the old selection',async()=>{
+  const old=status(ID(1),{signatures:[{role:'contributor'}],canSign:true});
+  const b=await browser({states:{[ID(1)]:old}});
+  b.elements.get('name').value='SYNTHETIC OLD NAME';b.elements.get('address').value='SYNTHETIC OLD ADDRESS';
+  b.elements.get('signature').value='SYNTHETIC OLD NAME';b.elements.get('hold-confirm').checked=true;
+  for(const input of b.inputs())input.checked=true;
+  assert.equal(b.elements.get('download-contributor').disabled,false);
+  const other={id:3,login:'synthetic-other',role:'contributor'};
+  b.pages[0]={actor:other,packets:[{id:ID(30)},{id:ID(31)}],nextCursor:null};
+  b.states[ID(1)]={error:'packet_unavailable'};
+  await b.click('refresh');
+  for(const id of ['name','address','signature'])assert.equal(b.elements.get(id).value,'');
+  assert.equal(b.elements.get('hold-confirm').checked,false);assert.equal(b.inputs().length,0);
+  assert.equal(b.elements.get('record-time').textContent,'');
+  assert.equal(b.elements.get('contributor-state').textContent,'尚未签署');
+  assert.equal(b.elements.get('sign').disabled,true);assert.equal(b.elements.get('hold').disabled,true);
+  assert.equal(b.elements.get('download-contributor').disabled,true);assert.equal(b.elements.get('download-holder').disabled,true);
+  assert.equal(b.storage.has('cla.packet'),false);assert.equal(new URL(b.location.href).search,'');
+  assert.deepEqual(b.elements.get('packets').options.map(option=>option.value),['',ID(30),ID(31)]);
+  const callsAfterSwitch=b.calls.length;
+  await b.click('refresh');
+  assert.equal(b.calls.slice(callsAfterSwitch).some(call=>call.url==='/status?packet='+ID(1)),false);
+  assert.deepEqual(b.elements.get('packets').options.map(option=>option.value),['',ID(30),ID(31)]);
+  assert.ok(b.calls.every(call=>call.options.method==='GET'));
+});
+
+for(const interrupted of [false,true])test('contributor to holder on the same authorized packet clears prior actor consent and identity fields'+(interrupted?' after an expired session':''),async()=>{
+  const b=await browser({states:{[ID(1)]:status(ID(1),{signatures:[{role:'contributor'}]})}});
+  b.elements.get('name').value='SYNTHETIC CONTRIBUTOR NAME';b.elements.get('address').value='SYNTHETIC CONTRIBUTOR ADDRESS';
+  b.elements.get('signature').value='SYNTHETIC CONTRIBUTOR NAME';b.elements.get('hold-confirm').checked=true;
+  for(const input of b.inputs())input.checked=true;
+  if(interrupted){b.pages[0]={error:'session_rejected'};await b.click('refresh');}
+  const holder={id:1,login:'synthetic-holder',role:'holder'};
+  b.pages[0]={actor:holder,packets:[{id:ID(1)}],nextCursor:null};
+  b.states[ID(1)]=status(ID(1),{actor:holder,signatures:[{role:'contributor'}],canSign:true,canHold:true});
+  await b.click('refresh');
+  for(const id of ['name','address','signature'])assert.equal(b.elements.get(id).value,'');
+  assert.equal(b.elements.get('hold-confirm').checked,false);assert.ok(b.inputs().every(input=>!input.checked));
+  assert.equal(b.inputs().length,5);assert.ok(b.inputs().some(input=>input.name==='reviewed'));
+  assert.equal(b.elements.get('packets').value,ID(1));assert.equal(b.storage.get('cla.packet'),ID(1));
+  assert.equal(new URL(b.location.href).searchParams.get('packet'),ID(1));
+  assert.equal(b.elements.get('sign').textContent,'由我本人签署（权利人）');
+  assert.equal(b.elements.get('sign').disabled,false);assert.equal(b.elements.get('hold').disabled,false);
+  assert.equal(b.elements.get('create').disabled,true);
   assert.ok(b.calls.every(call=>call.options.method==='GET'));
 });
