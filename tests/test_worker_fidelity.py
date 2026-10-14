@@ -462,3 +462,189 @@ def test_an_unrelated_nonzero_exit_keeps_its_own_classification(figs):
         "sandbox",
     )
     assert e.code != CODE, e.code
+
+
+# ============================================================ 第三轮：唯一的 fidelity 投影 + 敌对载荷
+def _rcpt_with(fidelity):
+    return receipt.ExecutionReceipt(
+        profile="safe",
+        control_plane="python_pool",
+        python_source="",
+        generation=1,
+        source_revision="",
+        spec_stable={},
+        launch_context={},
+        interpreter="",
+        project_root="",
+        runtime={"fidelity": fidelity},
+    )
+
+
+PATHY = "/Users/alice/private.csv"
+GOOD = {
+    "level": "suspect",
+    "blocked": [{"op": "os.replace", "kind": "rename", "count": 1}],
+    "intercepted": [{"op": "savefig", "kind": "savefig", "count": 2}],
+    "signals": [{"kind": "savefig", "via": "stat", "count": 3}],
+    "unobserved": ["subprocess"],
+}
+
+
+def _hostile_variants():
+    """对每个字段塞：路径、非列表、超长、嵌套、错类型。"""
+    row_fields = {
+        "blocked": ("op", "kind"),
+        "intercepted": ("op", "kind"),
+        "signals": ("kind", "via"),
+    }
+    out = []
+    for key in GOOD:
+        for bad in (
+            PATHY,
+            {},
+            [],
+            7,
+            None,
+            True,
+            ["x"] * 500,
+            [[PATHY]],
+            {"a": PATHY},
+            "x" * 100000,
+        ):
+            out.append({**GOOD, key: bad})
+    for key, fields in row_fields.items():
+        for field in (*fields, "count"):
+            for bad in (PATHY, {"p": PATHY}, [PATHY], 10**30, -1, True, None, 1.5, "9"):
+                row = {**GOOD[key][0], field: bad}
+                out.append({**GOOD, key: [row]})
+        out.append({**GOOD, key: [{**GOOD[key][0], "path": PATHY}]})  # 未知键
+        out.append({**GOOD, key: [PATHY] * 100})  # 行不是对象
+        out.append({**GOOD, key: [dict(GOOD[key][0]) for _ in range(5000)]})  # 过长
+    out.append({**GOOD, "unobserved": [PATHY, "subprocess", {"p": 1}]})
+    out.append({**GOOD, "extra": PATHY, PATHY: PATHY})
+    return out
+
+
+def _all_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from _all_strings(k)
+            yield from _all_strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _all_strings(v)
+
+
+def _closed_strings():
+    b = figcapture.BlockedFileOps
+    return {
+        *receipt.FIDELITY_LEVELS,
+        *receipt.FIDELITY_OPS,
+        *receipt.FIDELITY_KINDS,
+        *receipt.FIDELITY_VIAS,
+        *figcapture.INPUT_OBSERVER_UNOBSERVED,
+        *b.LEVELS,
+        # 投影本身的键名
+        "level", "blocked", "intercepted", "signals", "unobserved", "op", "kind", "via", "count",
+    }  # fmt: skip
+
+
+@pytest.mark.parametrize("variant", _hostile_variants())
+def test_hostile_worker_payloads_never_reach_the_public_projections(variant):
+    rcpt = _rcpt_with(variant)
+    closed = _closed_strings()
+    # 畸形输入不许抛：public_facts / to_payload 在准备接口里被直接调用
+    for projection in (
+        rcpt.fidelity,
+        rcpt.public_facts()["fidelity"],
+        rcpt.to_payload()["fidelity"],
+    ):
+        if projection is None:
+            continue
+        leaked = {s for s in _all_strings(projection) if s not in closed}
+        assert not leaked, leaked
+        for key in ("blocked", "intercepted", "signals", "unobserved"):
+            assert isinstance(projection[key], list) and len(projection[key]) <= 32
+            for row in projection[key]:
+                if isinstance(row, dict):
+                    assert isinstance(row["count"], int) and 0 <= row["count"] <= 9999
+    payload = rcpt.to_payload()
+    assert PATHY not in json.dumps(payload) and "x" * 1000 not in json.dumps(payload)
+
+
+def test_a_malformed_top_level_fidelity_is_absent_not_an_error():
+    for bad in ([], "suspect", 3, None, {"level": ["suspect"]}, {"level": {}}):
+        r = _rcpt_with(bad)
+        assert r.fidelity is None and r.public_facts()["fidelity"] is None
+        assert r.to_payload()["fidelity"] is None
+
+
+def test_the_one_projection_function_is_the_only_public_path():
+    assert receipt.project_fidelity(GOOD) == _rcpt_with(GOOD).fidelity
+    assert receipt.project_fidelity("nope") is None
+
+
+# ---- 退出归因：纯函数 ----
+EXIT_CASES = {
+    "return_after_probe": ("import os\nos.path.exists('o.png')\n", None, False),
+    "unrelated_exit_after_probe": (
+        "import os, sys\nos.path.exists('o.png')\nsys.exit(7)\n",
+        3,
+        False,
+    ),
+    "if_not_exists_exit": (
+        "import os, sys\nif not os.path.exists('o.png'):\n    sys.exit(3)\n",
+        3,
+        True,
+    ),
+    "exit_in_function_under_probe_branch": (
+        "import os, sys\ndef main():\n    if not os.path.isfile('o.png'):\n"
+        "        print('x')\n        sys.exit(2)\nmain()\n",
+        5,
+        True,
+    ),
+    "exit_in_the_condition_of_a_different_if": (
+        "import os, sys\nos.path.exists('o.png')\nif len(sys.argv) > 5:\n    sys.exit(2)\n",
+        4,
+        False,
+    ),
+    "and_chain": ("import os, sys\nos.path.exists('o.png') or sys.exit(4)\n", 2, True),
+    "probe_in_body_not_test": (
+        "import os, sys\nif len(sys.argv) > 5:\n    os.path.exists('o.png')\n    sys.exit(2)\n",
+        4,
+        False,
+    ),
+    "unparseable": ("def (:\n", 1, False),
+}
+
+
+@pytest.mark.parametrize("name", sorted(EXIT_CASES))
+def test_exit_is_attributed_only_when_it_sits_under_a_probe_controlled_branch(name):
+    source, line, expected = EXIT_CASES[name]
+    assert figcapture.exit_controlled_by_probe(source, line) is expected
+
+
+def test_explain_exit_needs_both_the_last_missing_probe_and_a_controlled_branch(tmp_path):
+    def ledger_with_miss():
+        led = figcapture.BlockedFileOps()
+        led.blocked("savefig", led.KIND_SAVEFIG, str(tmp_path / "o.png"))
+        led._seq = 5
+        for ev in led._events:
+            ev["miss_seq"] = 5
+        return led
+
+    assert ledger_with_miss().explain_exit(controlled=True) is True
+    assert ledger_with_miss().explain_exit(controlled=False) is False
+    late = ledger_with_miss()
+    late._seq = 6
+    assert late.explain_exit(controlled=True) is False
+
+
+@needs_worker
+def test_an_unconditional_exit_after_a_final_probe_keeps_script_exited(figs):
+    e = _deviated(
+        figs, HDR + "fig.savefig('o.png')\nos.path.exists('o.png')\nsys.exit(7)\n", "sandbox"
+    )
+    assert e.code == "script_exited", e.code

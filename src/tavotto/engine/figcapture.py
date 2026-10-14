@@ -2035,6 +2035,64 @@ def _readonly_mode(mode) -> bool:
     return "r" in mode and not any(c in mode for c in "+wxa")
 
 
+#: 探路 / 取状态的函数名：脚本拿它们的结果决定走不走某个分支（`if not os.path.exists(out): sys.exit(1)`）。
+_PROBE_CALL_NAMES = frozenset(
+    {
+        "exists", "lexists", "isfile", "isdir", "islink", "is_file", "is_dir", "is_symlink",
+        "getsize", "getmtime", "getctime", "getatime", "stat", "lstat",
+    }
+)  # fmt: skip
+
+
+def exit_controlled_by_probe(source: str, exit_line: int | None) -> bool:
+    """`exit_line` 那一行的退出，在脚本源码里是不是位于"由探路调用控制的分支"之下。纯函数，永不抛。
+
+    成立条件：该行的最内层语句有祖先 `if` / `while` / 三元 / `and`-`or` 链，且这个祖先的**条件**（不是被控制的分支体）
+    里含对 `_PROBE_CALL_NAMES` 的调用。条件里没有探路调用、或探路调用只在分支体里、或无条件退出，都不成立。
+    判不出（语法错、没有行号、探测结果先存进变量再判断）一律 False——保留原分类，宁可不归因。"""
+    if not isinstance(source, str) or not isinstance(exit_line, int):
+        return False
+    try:
+        import ast  # noqa: PLC0415
+
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+
+    def has_probe(node) -> bool:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Call):
+                fn = sub.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+                if name in _PROBE_CALL_NAMES:
+                    return True
+        return False
+
+    def contains(node, line: int) -> bool:
+        return getattr(node, "lineno", 0) <= line <= getattr(node, "end_lineno", 0)
+
+    def walk(node, line: int) -> bool:
+        """沿着包含 `line` 的节点链下降；链上每个 if / while / ifexp / boolop：行落在条件之外且条件里有探路调用 → True。"""
+        for child in ast.iter_child_nodes(node):
+            if not contains(child, line):
+                continue
+            if isinstance(node, (ast.If, ast.While, ast.IfExp)) and child is not node.test:
+                if not contains(node.test, line) and has_probe(node.test):
+                    return True
+            if isinstance(node, ast.BoolOp):
+                idx = node.values.index(child) if child in node.values else -1
+                if idx > 0 and any(has_probe(v) for v in node.values[:idx]):
+                    return True
+            if walk(child, line):
+                return True
+        return False
+
+    try:
+        return walk(tree, exit_line)
+    except RecursionError:
+        return False
+
+
 class BlockedFileOps:
     """safe worker 的守卫**确实拦下**了哪些关键文件操作，以及脚本随后有没有去看被它们影响的路径（P01a）。
 
@@ -2547,11 +2605,14 @@ class BlockedFileOps:
         finally:
             self._busy = False
 
-    def explain_exit(self) -> bool:
-        """脚本以非零状态退出，且退出前**最后一次**观察就是被拦截 savefig 目标的落空探测
-        （典型：`if not os.path.exists(out): sys.exit(1)`）：直接运行里那个目标存在，退出分支不会走——退出是守卫造成的。
-        探测之后脚本又做了别的观察（读别的文件、列目录…）说明退出未必由它控制，保留原分类。
-        参数解析库自己的退出由调用方排除。把这些 savefig 事件记为已观察。永不抛。"""
+    def explain_exit(self, *, controlled: bool) -> bool:
+        """脚本以非零状态退出：退出是守卫造成的吗？必须同时成立（缺一保留原分类）：
+        1. 退出前**最后一次**观察就是被拦截 savefig 目标的落空探测（`miss_seq == _seq`）；
+        2. `controlled`：这次退出在脚本源码里位于由探测函数控制的分支之下（`exit_controlled_by_probe`）。
+           只"最后一次探测"不够——`os.path.exists(o); sys.exit(7)` 直接运行也是 7。
+        参数解析库自己的退出由调用方排除。满足时把这些 savefig 事件记为已观察。永不抛。"""
+        if not controlled:
+            return False
         try:
             hit = False
             for ev in (*self._events, *self._spill.values()):

@@ -104,6 +104,73 @@ def _sha(payload: dict) -> str:
     return "sha256:" + hashlib.sha256(_canon(payload).encode("utf-8")).hexdigest()
 
 
+#: `fidelity` 投影的白名单 schema：集合字段 → (行内字符串字段 → 闭集)。行内另有有界整数 `count`。
+_FIDELITY_ROW_SCHEMA = {
+    "blocked": {"op": FIDELITY_OPS, "kind": FIDELITY_KINDS},
+    "intercepted": {"op": FIDELITY_OPS, "kind": FIDELITY_KINDS},
+    "signals": {"kind": FIDELITY_KINDS, "via": FIDELITY_VIAS},
+}
+#: `unobserved`：盲区通道的闭集（与输入观察器同源）。
+_FIDELITY_UNOBSERVED = tuple(figcapture.INPUT_OBSERVER_UNOBSERVED)
+_FIDELITY_MAX_ROWS = 32
+_FIDELITY_MAX_COUNT = 9999
+
+
+def project_fidelity(raw) -> dict | None:
+    """worker 自报的 `fidelity` → 公开投影。**这是它进入回执公开面的唯一一处。**
+
+    自报是不可信输入，按白名单 schema 逐字段投影：
+    * 每个字符串字段（`level` / `op` / `kind` / `via` / `unobserved` 各项）必须落在闭集里，否则丢弃该项；
+    * 每个集合先核是 list 再取，行必须是 dict；最多 `_FIDELITY_MAX_ROWS` 行（先截再验，超长输入不被整个遍历）；
+    * `count` 是 0..9999 的 int（拒 bool / float / 超界）；
+    * 未知键一律丢弃，输出只有 schema 里的键；
+    * 任何畸形都不抛：整体不合格（非 dict / `level` 不在闭集）返回 None，局部不合格丢那一项。
+    """
+    try:
+        if not isinstance(raw, dict):
+            return None
+        level = raw.get("level")
+        if not isinstance(level, str) or level not in FIDELITY_LEVELS:
+            return None
+        out: dict = {"level": level}
+        for key, fields in _FIDELITY_ROW_SCHEMA.items():
+            rows: list[dict] = []
+            value = raw.get(key)
+            if isinstance(value, list):
+                for row in value[:_FIDELITY_MAX_ROWS]:
+                    if not isinstance(row, dict):
+                        continue
+                    clean: dict = {}
+                    for field, allowed in fields.items():
+                        item = row.get(field)
+                        if not isinstance(item, str) or item not in allowed:
+                            break
+                        clean[field] = item
+                    else:
+                        count = row.get("count")
+                        if (
+                            isinstance(count, int)
+                            and not isinstance(count, bool)
+                            and 0 <= count <= _FIDELITY_MAX_COUNT
+                        ):
+                            clean["count"] = count
+                            rows.append(clean)
+            out[key] = rows
+        blind = raw.get("unobserved")
+        out["unobserved"] = (
+            [
+                item
+                for item in blind[:_FIDELITY_MAX_ROWS]
+                if isinstance(item, str) and item in _FIDELITY_UNOBSERVED
+            ]
+            if isinstance(blind, list)
+            else []
+        )
+        return out
+    except Exception:  # noqa: BLE001 —— 投影永不抛：一份畸形自报不能让回执 / 准备接口失败
+        return None
+
+
 @dataclasses.dataclass(frozen=True)
 class ExecutionReceipt:
     """一次执行的回执（不可变、可 JSON 化）。字段分三组，见模块头。"""
@@ -171,43 +238,8 @@ class ExecutionReceipt:
 
     @property
     def fidelity(self) -> dict | None:
-        """safe worker 自报的执行保真度（`figcapture.BlockedFileOps.summary()`，V2 PR3a）：
-        `level`（`deviated` / `suspect` / `none_observed`）、拦下的操作类别与次数、弱信号计数、盲区。
-        worker 自报是不可信输入：这里只收闭集枚举与有界整数，其余丢弃；没报（native / 老 worker）是 None。"""
-        rt = self.runtime or {}
-        raw = rt.get("fidelity")
-        if not isinstance(raw, dict):
-            return None
-        level = raw.get("level")
-        if level not in FIDELITY_LEVELS:
-            return None
-
-        def rows(key: str, fields: dict[str, tuple[str, ...]]) -> list[dict]:
-            out: list[dict] = []
-            for row in (raw.get(key) or [])[:32]:
-                if not isinstance(row, dict):
-                    continue
-                clean = {}
-                for field, allowed in fields.items():
-                    value = row.get(field)
-                    if not isinstance(value, str) or (allowed and value not in allowed):
-                        break
-                    clean[field] = value
-                else:
-                    count = row.get("count")
-                    if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
-                        clean["count"] = min(count, 9999)
-                        out.append(clean)
-            return out
-
-        op_fields = {"op": FIDELITY_OPS, "kind": FIDELITY_KINDS}
-        return {
-            "level": level,
-            "blocked": rows("blocked", op_fields),
-            "intercepted": rows("intercepted", op_fields),
-            "signals": rows("signals", {"kind": FIDELITY_KINDS, "via": FIDELITY_VIAS}),
-            "unobserved": [u for u in (raw.get("unobserved") or [])[:16] if isinstance(u, str)],
-        }
+        """safe worker 自报的执行保真度，经 `project_fidelity` 投影（唯一的公开出口）；没报 / 畸形是 None。"""
+        return project_fidelity((self.runtime or {}).get("fidelity"))
 
     def observed_files(self) -> dict[str, str | None]:
         """观察到的项目内文件：相对 POSIX 路径 → sha256（大文件没算 hash 是 None）。"""

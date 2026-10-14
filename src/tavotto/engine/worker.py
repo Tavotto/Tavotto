@@ -470,6 +470,22 @@ def _script_exit_error(exc: SystemExit, *, argv_count: int = 0) -> ProtocolError
     )
 
 
+def _script_frame_line(exc: BaseException, script) -> int | None:
+    """异常回溯里**最内层**属于用户脚本文件的那一帧的行号（退出在脚本哪一行）；找不到是 None。"""
+    try:
+        want = os.path.normcase(os.path.realpath(str(script)))
+        line = None
+        tb = exc.__traceback__
+        while tb is not None:
+            name = tb.tb_frame.f_code.co_filename
+            if os.path.normcase(os.path.realpath(name)) == want:
+                line = tb.tb_lineno
+            tb = tb.tb_next
+        return line
+    except (OSError, ValueError):
+        return None
+
+
 def _blocked_operations_error(
     ops: list[dict],
     *,
@@ -1055,7 +1071,12 @@ class Worker(wireproto.V1Handler):
                     # 被拦下的操作之后观察到不同的世界而退出：原因是守卫，不是脚本自己想退（P01a）
                     # `savefig(p); if not exists(p): sys.exit(1)`：退出分支在直接运行里走不到——也是守卫造成的
                     if ledger.material() or (
-                        not _raised_by_cli_parser(exc) and ledger.explain_exit()
+                        not _raised_by_cli_parser(exc)
+                        and ledger.explain_exit(
+                            controlled=figcapture.exit_controlled_by_probe(
+                                script_source, _script_frame_line(exc, self.script)
+                            )
+                        )
                     ):
                         raise _blocked_operations_error(
                             ledger.material(), cause=exc, fidelity=ledger.summary()
