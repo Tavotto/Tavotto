@@ -368,8 +368,7 @@ def verify_posix_selection_covers_all_active(
                     "——只能在其他浏览器中出现不等于已真跑"
                 )
             elif not any(
-                row.expected.get(name) == "passed"
-                for name in ("chromium", "chromium-en")
+                row.expected.get(name) == "passed" for name in ("chromium", "chromium-en")
             ):
                 problems.append(
                     f"{feature.id}：{ref.show()} 在 POSIX 选中的项目里全都 skipped/缺席"
@@ -607,7 +606,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             if args.expected_list is not None:
                 if args.all_planned_list is None:
-                    raise InputError("POSIX 分片必须提供完整的 --all-planned-list，防止漏跑非 Chromium 用例")
+                    raise InputError(
+                        "POSIX 分片必须提供完整的 --all-planned-list，防止漏跑非 Chromium 用例"
+                    )
                 planned = parse_playwright_json(
                     json.loads(args.expected_list.read_text(encoding="utf-8")),
                     str(args.expected_list),

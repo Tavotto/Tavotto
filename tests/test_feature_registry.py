@@ -684,12 +684,14 @@ def test_posix_verification_cli_requires_full_selected_project_plan(tmp_path):
     """缺全量 --list 报 rc=2，而不是沿用局部 shard 只数实际跑到的已登记用例。"""
     original = tmp_path / "report.json"
     original.write_text(json.dumps(_run_report()), encoding="utf-8")
-    rc = FR.main([
-        "--registry",
-        str(FR.REGISTRY),
-        "verify-run",
-        str(original),
-        "--expected-list",
-        str(original),
-    ])
+    rc = FR.main(
+        [
+            "--registry",
+            str(FR.REGISTRY),
+            "verify-run",
+            str(original),
+            "--expected-list",
+            str(original),
+        ]
+    )
     assert rc == 2
