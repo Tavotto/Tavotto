@@ -75,38 +75,14 @@ def test_unobserved_metrics_are_null_not_zero():
     assert set(summary["unobserved"]) >= {"fallback_rate", "intervention_count"}
 
 
-def _absent_modules(names) -> list[str]:
-    """worker 解释器里**导入不了**的那些（独立探针，不经产品代码）。"""
-    import subprocess
-
-    code = (
-        "import importlib.util, json, sys; "
-        "print(json.dumps([n for n in sys.argv[1:] if importlib.util.find_spec(n) is None]))"
-    )
-    out = subprocess.run(
-        [WORKER_PY, "-I", "-c", code, *names],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=True,
-    )
-    return json.loads(out.stdout.strip().splitlines()[-1])
-
-
 @needs_worker
 @pytest.mark.parametrize("scenario_id", RUN_IDS)
 def test_scenario_baseline(scenario_id, tmp_path):
     sc = cs.SCENARIOS[scenario_id]
-    wanted = cs.NEEDS_ABSENT.get(scenario_id)
-    absent = _absent_modules(wanted) if wanted else None
-    if wanted and not absent:
-        pytest.skip(f"worker 解释器里 {wanted} 都已安装，缺包前提不成立")
     try:
-        obs = cb.observe(sc, tmp_path)
+        obs = cb.observe(sc, tmp_path, needs_absent=cs.NEEDS_ABSENT.get(scenario_id, ()))
     except cb.PreconditionUnmet as exc:
         pytest.skip(str(exc))
-    if absent is not None:
-        obs.facts["modules_absent"] = absent
     missing = cs.IDEAL[scenario_id](obs)
     shape = cs.baseline_shape(obs)
     baseline_ok = None if sc.main_baseline is None else shape == sc.main_baseline
@@ -169,8 +145,6 @@ def test_summarize_rejects_a_directory_that_mixes_runs(tmp_path):
             },
         }
 
-    import json
-
     for name, row in {
         "a": rec("a", "sha1", "run1"),
         "b": rec("b", "sha2", "run1"),
@@ -205,3 +179,54 @@ def test_readonly_precondition_is_verified_not_assumed(tmp_path):
     d2.mkdir()
     with pytest.raises(cb.PreconditionUnmet):
         cb.assert_readonly(d2)  # 根本没设只读：探针写得进去 -> 前提不成立
+
+
+# ---------------------------------------------------------------- 第三轮（PR #1023 复评）
+
+
+def _good_render(_asset):
+    return {
+        "manifest": {"elements": [{"role": "title", "editable": [{"prop": "text", "value": "T"}]}]}
+    }
+
+
+def test_a_captured_figure_counts_only_after_its_render_validates():
+    """会话说「捕获了」不等于「有效 Figure」：渲染失败 / manifest 畸形 / 没有元素，都不能计入成功。"""
+    captured = [
+        {"asset_id": "ok"},
+        {"asset_id": "boom"},
+        {"asset_id": "bad"},
+        {"asset_id": "empty"},
+    ]
+
+    def render(asset):
+        if asset == "boom":
+            raise RuntimeError("render 500")
+        if asset == "bad":
+            return {"nope": 1}
+        if asset == "empty":
+            return {"manifest": {"elements": []}}
+        return _good_render(asset)
+
+    valid, titles, errors = cb.validate_captured(render, captured)
+    assert valid == 1 and titles == ["T"]
+    assert sorted(e["asset_id"] for e in errors) == ["bad", "boom", "empty"]
+
+
+def test_an_unrenderable_capture_is_not_a_first_valid_figure():
+    obs = cb.Observation(scenario="x", final_phase="completed", figures_valid=0, exec_count=1)
+    obs.figures_captured = 1
+    obs.render_errors = [{"asset_id": "a", "error": "RuntimeError"}]
+    assert obs.first_valid_figure is False and obs.one_shot_success is False
+
+
+def test_probe_uses_the_interpreter_the_isolated_app_uses():
+    # 显式覆盖：转发给 app，探针也探它
+    assert cb.app_worker_overrides({"TAVOTTO_WORKER_PYTHON": "/x/py", "OTHER": "1"}) == {
+        "TAVOTTO_WORKER_PYTHON": "/x/py"
+    }
+    assert cb.app_worker_overrides({"OTHER": "1"}) == {}
+    assert cb.probe_interpreter({"TAVOTTO_WORKER_PYTHON": "/x/py"}, "/app/py") == "/x/py"
+    # 没有覆盖：问 app 实际选了哪个
+    assert cb.probe_interpreter({}, "/app/py") == "/app/py"
+    assert cb.probe_interpreter({}, "") is None

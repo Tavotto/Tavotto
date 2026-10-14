@@ -84,6 +84,8 @@ class Observation:
     timings_s: dict = field(default_factory=dict)
     facts: dict = field(default_factory=dict)
     ran: bool = False  # 是否有可认领的 run 动作且已认领
+    figures_captured: int = 0  # 会话报告里 captured 的个数（未经渲染验证）
+    render_errors: list[dict] = field(default_factory=list)
     error_type: str | None = None
     outcome_kind: str | None = None
     titles: list[str] = field(
@@ -122,6 +124,8 @@ class Observation:
             "first_valid_figure": self.first_valid_figure,
             "one_shot_success": self.one_shot_success,
             "ran": self.ran,
+            "figures_captured": self.figures_captured,
+            "render_errors": self.render_errors,
             "error_type": self.error_type,
             "outcome_kind": self.outcome_kind,
             "titles": self.titles,
@@ -144,6 +148,61 @@ def side_effects(parent: Path) -> int | None:
         return int(db.execute("SELECT COUNT(*) FROM effects").fetchone()[0])
     finally:
         db.close()
+
+
+def validate_captured(render, captured: list[dict]) -> tuple[int, list[str], list[dict]]:
+    """逐张渲染验证：回 `(有效张数, 标题们, 失败明细)`。渲染抛错 / manifest 畸形 / 没有元素都算无效（只记异常类名）。"""
+    valid = 0
+    titles: list[str] = []
+    errors: list[dict] = []
+    for cap in captured:
+        asset = str(cap.get("asset_id"))
+        try:
+            elements = render(asset)["manifest"]["elements"]
+            if not isinstance(elements, list) or not elements:
+                raise ValueError("manifest 没有元素")
+            found = [
+                str(f["value"])
+                for el in elements
+                if el.get("role") == "title"
+                for f in el.get("editable", [])
+                if f.get("prop") == "text"
+            ]
+        except Exception as exc:  # noqa: BLE001 — 任何失败都是「这张图打不开」
+            errors.append({"asset_id": asset, "error": type(exc).__name__})
+            continue
+        valid += 1
+        titles.extend(found)
+    return valid, titles, errors
+
+
+def app_worker_overrides(env) -> dict:
+    """测试进程显式选了渲染解释器时转发给隔离 app（`running_app` 默认会摘掉）；没选 = 让 app 自己发现。"""
+    return {k: env[k] for k in ("TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON") if env.get(k)}
+
+
+def probe_interpreter(env, reported: str) -> str | None:
+    """缺包探针该探哪个解释器：显式覆盖（已转发给 app）优先，否则取 app 自己报告的那个。"""
+    forwarded = app_worker_overrides(env)
+    return next(iter(forwarded.values()), None) or reported or None
+
+
+def absent_modules(python: str, names) -> list[str]:
+    """该解释器里**导入不了**的那些（独立探针，不经产品代码）。"""
+    import subprocess
+
+    code = (
+        "import importlib.util, json, sys; "
+        "print(json.dumps([n for n in sys.argv[1:] if importlib.util.find_spec(n) is None]))"
+    )
+    out = subprocess.run(
+        [python, "-I", "-c", code, *names],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    return json.loads(out.stdout.strip().splitlines()[-1])
 
 
 class PreconditionUnmet(Exception):
@@ -239,17 +298,41 @@ def _error_type(report: dict) -> str | None:
     return head if head.replace(".", "").replace("_", "").isalnum() else None
 
 
-def observe(scenario: Scenario, tmp: Path, *, env_overrides: dict | None = None) -> Observation:
+def observe(
+    scenario: Scenario,
+    tmp: Path,
+    *,
+    env_overrides: dict | None = None,
+    needs_absent: tuple[str, ...] = (),
+) -> Observation:
     """经真实公共入口跑一遍场景并记录；不替产品选环境、不预热、不预装。"""
     proj = stage(scenario.id, tmp)
     work = tmp / "work"
     obs = Observation(scenario=scenario.id)
     env = {"TAVOTTO_USER_ENV_DISCOVERY": "0", "PYTHONPATH": str(ROOT / "src")}
+    env.update(app_worker_overrides(os.environ))
     env.update(env_overrides or {})
     t_total = time.monotonic()
     ro_restore: list[Path] = []
     try:
         with fa.running_app(proj, work, env_overrides=env) as app:
+            if needs_absent:
+                # 缺包前提：探**这个 app 实际用的**解释器，不是测试进程自己的
+                _, envst = app.call("/api/engine/environment", timeout=60)
+                reported = (envst.get("project") or {}).get("python") or ""
+                if reported and not Path(reported).is_absolute():
+                    reported = str(proj / reported)
+                python = probe_interpreter(env, reported)
+                if python is None:
+                    raise PreconditionUnmet("拿不到隔离 app 选中的解释器，无法核对缺包前提")
+                absent = absent_modules(python, needs_absent)
+                if not absent:
+                    raise PreconditionUnmet(
+                        f"app 的解释器里 {list(needs_absent)} 都已安装，缺包前提不成立"
+                    )
+                obs.facts["modules_absent"] = absent
+                obs.facts["probe_interpreter"] = python
+
             t0 = time.monotonic()
             status, scan = app.call("/api/project/scan", {"reason": "claim"}, timeout=60)
             assert status in (200, 202), scan
@@ -314,20 +397,16 @@ def observe(scenario: Scenario, tmp: Path, *, env_overrides: dict | None = None)
             obs.final_phase = report["phase"]
             captured = report.get("captured") or []
             obs.captured_stems = [c.get("stem", "") for c in captured]
-            obs.figures_valid = len(captured)
             obs.failed_figures = [
                 str(f.get("stem"))
                 for f in (report.get("failed_figures") or [])
                 if isinstance(f, dict)
             ]
-            for cap in captured:
-                with contextlib.suppress(Exception):
-                    render = app.render(cap["asset_id"])
-                    for el in render["manifest"]["elements"]:
-                        if el["role"] == "title":
-                            obs.titles.extend(
-                                str(f["value"]) for f in el["editable"] if f["prop"] == "text"
-                            )
+            # 「有效 Figure」= 会话说捕获了 **且** 渲染得出带元素的 manifest；渲染不出来的不计入成功
+            obs.figures_captured = len(captured)
+            obs.figures_valid, obs.titles, obs.render_errors = validate_captured(
+                app.render, captured
+            )
             obs.problem_codes = _problem_codes(report)
             obs.error_type = _error_type(report)
             obs.outcome_kind = (report.get("outcome") or {}).get("kind")
