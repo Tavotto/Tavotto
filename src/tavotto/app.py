@@ -7429,11 +7429,16 @@ def _native_preparation_runner(pl, before_retry=None):
     # 重新运行：同一脚本更早的准备、在途启动、已登记的活图都让位（它们占着 live route 与环境租约）。
     # 顺序与关项目一致:先计划、再会话 / 票据
     engine_preparation.SERVICE.cancel_project(pl.project_id, script=pl.script, keep=pl.plan_id)
-    engine_nativesession.REGISTRY.cancel_project(pl.project_root, script=spec.target)
+    engine_nativesession.REGISTRY.cancel_project(
+        pl.project_root, script=spec.target, older_than=pl.launch_order
+    )
     try:
         session = engine_desktopproc.start(
             engine_desktopproc.OwnedLaunch(
-                spec, launch_id=pl.plan_id, project_epoch=pl.project_epoch
+                spec,
+                launch_id=pl.plan_id,
+                project_epoch=pl.project_epoch,
+                launch_order=pl.launch_order,
             )
         )
     except engine_runcodes.RunError as exc:
