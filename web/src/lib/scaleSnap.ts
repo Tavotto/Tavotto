@@ -168,13 +168,18 @@ function contentBoxes(panel: PanelObject, manifest: Manifest): { kind: 'axes' | 
 const within = (v: number, lo: number, hi: number) => v >= lo - FLOOR_EPS && v <= hi + FLOOR_EPS
 
 /**
- * 缩放锚点：外框三线 + （面板、未旋转 / 翻转、有权威 manifest 时）子图与色条的三线。
+ * 缩放锚点：外框三线 + （面板、未旋转 / 翻转、有权威 manifest 时）子图与色条的三线（「吸附到对象」开着时）。
  * 在面板裁剪窗外的线不算——画布上看不见。
  */
-export function scaleAnchorsFor(target: CanvasObject, manifest: Manifest | null): ScaleAnchors {
+export function scaleAnchorsFor(
+  target: CanvasObject,
+  manifest: Manifest | null,
+  /** 「吸附到对象」：关掉时自身内容锚点（子图 / 色条）不参与，只剩外框 */
+  objects = true,
+): ScaleAnchors {
   const [xs, ys] = frameAnchors(target)
   const anchors: ScaleAnchors = { xs, ys }
-  if (target.type !== 'panel' || !manifest || !plainPanel(target)) return anchors
+  if (!objects || target.type !== 'panel' || !manifest || !plainPanel(target)) return anchors
   for (const { rect } of contentBoxes(target, manifest)) {
     for (const v of threeX(rect))
       if (within(v, target.x, target.x + target.w)) anchors.xs.push({ v, frame: false })
@@ -225,16 +230,20 @@ export function scaleSnapCandidates(i: ScaleCandidateInput): SnapLineCandidates 
       if (o.type !== 'panel' || o.hidden || i.exclude.has(o.id)) continue
       const manifest = i.manifestOf(o)
       if (!manifest) continue
+      const plain = plainPanel(o)
+      const boxes = plain ? contentBoxes(o, manifest) : []
+      // 子图 / 色条的中线以 axes / colorbar 的身份出线（反馈要认出对方是谁）；
+      // elementSnapCandidates 里与之重合的 'other' 线去掉，免得并列时 'other' 抢先
+      const dup = (v: number, axis: 'x' | 'y') =>
+        boxes.some(({ rect }) => Math.abs(v - (axis === 'x' ? rect.x + rect.w / 2 : rect.y + rect.h / 2)) < FLOOR_EPS)
       const extra = elementSnapCandidates(o, manifest)
-      for (const v of extra.xs) pushX(v, { kind: 'other', panelId: o.id })
-      for (const v of extra.ys) pushY(v, { kind: 'other', panelId: o.id })
-      if (!plainPanel(o)) continue
-      for (const { kind, rect } of contentBoxes(o, manifest)) {
+      for (const v of extra.xs) if (!dup(v, 'x')) pushX(v, { kind: 'other', panelId: o.id })
+      for (const v of extra.ys) if (!dup(v, 'y')) pushY(v, { kind: 'other', panelId: o.id })
+      for (const { kind, rect } of boxes) {
         const meta = { kind, panelId: o.id, rect }
-        // 只取左右 / 上下边：中线留给图内元素中心线那一路
-        for (const e of [0, 2] as const) {
-          const vx = e === 0 ? rect.x : rect.x + rect.w
-          const vy = e === 0 ? rect.y : rect.y + rect.h
+        for (const e of [0, 1, 2] as const) {
+          const vx = rect.x + (rect.w * e) / 2
+          const vy = rect.y + (rect.h * e) / 2
           if (within(vx, o.x, o.x + o.w)) pushX(vx, { ...meta, edge: e })
           if (within(vy, o.y, o.y + o.h)) pushY(vy, { ...meta, edge: e })
         }

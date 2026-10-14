@@ -383,6 +383,7 @@ export function startResizeDrag(e: ReactPointerEvent, objectId: string, dir: Res
           anchors: scaleAnchorsFor(
             target,
             target.type === 'panel' ? exactPanelManifest(useRenderStore.getState(), target) : null,
+            prefs.objects,
           ),
           cands: scaleSnapCandidates({
             objects: doc().objects,

@@ -223,6 +223,36 @@ describe('等比缩放吸附', () => {
   })
 })
 
+describe('「吸附到对象」关掉（Codex #1033 r4268157398）', () => {
+  const addGuide = (pos: number) =>
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ id: 'g', axis: 'x', pos } as never)
+    })
+
+  it('自身子图锚点不吸：参考线在 70，子图右边 69.6 也不被拽过去（开着时会吸）', () => {
+    useUiStore.setState({ snapToObjects: false })
+    addGuide(70)
+    drag('se', [16, 0])
+    expect((get('pa') as PanelObject).w).toBeCloseTo(116, 6)
+  })
+
+  it('外框↔参考线仍吸（页面线 / 参考线 / 网格不归「吸附到对象」）', () => {
+    useUiStore.setState({ snapToObjects: false })
+    addGuide(110)
+    drag('se', [10.3, 0])
+    expect((get('pa') as PanelObject).w).toBeCloseTo(110, 6)
+  })
+
+  it('别的对象外框不吸：B 外框右边 100，A 拖到 100.6 停在手指处；开着时吸到 100', () => {
+    useUiStore.setState({ snapToObjects: false })
+    drag('se', [0.6, 0])
+    expect((get('pa') as PanelObject).w).toBeCloseTo(100.6, 6)
+    useUiStore.setState({ snapToObjects: true })
+    drag('se', [0.6, 0])
+    expect((get('pa') as PanelObject).w).toBeCloseTo(100, 6)
+  })
+})
+
 describe('平移候选不变', () => {
   it('拖整张 A：别的图的子图边不会出现在平移候选里', () => {
     // A 外框右边 100 → 拖 −19.5 后在 80.5；B 的子图右边在 70、外框线在 0 / 50 / 100，都不在 1.6mm 内

@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Manifest } from './api'
-import type { PanelObject } from '@/types/document'
+import type { CanvasObject, PanelObject } from '@/types/document'
 import type { SnapLine } from './geometry'
 import {
   createScaleHold,
@@ -176,13 +176,56 @@ describe('裁剪窗外的子图线不算', () => {
     expect(a.xs.filter((x) => !x.frame).map((x) => x.v)).toEqual([5, 30])
   })
 
-  it('候选：别的面板子图左边 −20 在窗外不出线，右边 30 出线', () => {
+  it('候选：别的面板子图左边 −20 在窗外不出线，中线 5 与右边 30 出线', () => {
     const c = scaleSnapCandidates({
       objects: [cropped], exclude: new Set(), page: { w: 150, h: 100 }, guides: [],
       prefs: { objects: true, guides: false, grid: false, gridSize: 10 },
       manifestOf: () => manifest,
     })
     const axes = c.xs.filter((l) => l.kind === 'axes').map((l) => l.v)
-    expect(axes).toEqual([30])
+    expect(axes).toEqual([5, 30]) // 中线 5 与右边 30；左边 −20 在窗外
+  })
+})
+
+describe('子图 / 色条的中线以内容身份出线（Codex #1033 r4268157388）', () => {
+  const axesManifest = (): Manifest =>
+    ({
+      stem: 'F', size_mm: [100, 75],
+      elements: [
+        { gid: 'axes_0', role: 'axes', label: '', bbox: [0.2, 0.2, 0.5, 0.6], draggable: false, resizable: true,
+          editable: [{ prop: 'position', type: 'rect', value: [0.2, 0.2, 0.5, 0.6] }] },
+      ],
+    }) as unknown as Manifest
+  const panelAt = (id: string, x: number) =>
+    ({ id, type: 'panel', x, y: 0, w: 100, h: 75, nativeW: 100, nativeH: 75, fileId: id, overrides: [] }) as unknown as PanelObject
+  const T = panelAt('t', 0)
+  const P2 = panelAt('p2', 100)
+  // 外框右边 321.8 的对象：与 T 外框右边（此刻 321.1）是外框↔外框，距 0.7，比子图中线（0.5）更远
+  const shape = { id: 's', type: 'shape', shape: 'rect', x: 221.8, y: 0, w: 100, h: 75 } as unknown as CanvasObject
+  const prefs = { objects: true, guides: false, grid: false, gridSize: 10 }
+
+  const pick = () => {
+    const cands = scaleSnapCandidates({
+      objects: [T, P2, shape], exclude: new Set(['t']), page: { w: 150, h: 100 }, guides: [], prefs,
+      manifestOf: () => axesManifest(),
+    })
+    return snapScaleNearest({
+      fixed: { x: 0, y: 0 }, size: { w: 100, h: 75 }, s0: 3.2111,
+      anchors: scaleAnchorsFor(T, axesManifest()), cands, tol: 1.2,
+    })
+  }
+
+  it('子图中线↔子图中线（同档、距 0.5）胜过更远的外框↔外框（距 0.7）', () => {
+    const hit = pick()
+    expect(hit?.anchor.frame).toBe(false)
+    expect(hit?.line.kind).toBe('axes')
+    expect(hit?.line.edge).toBe(1)
+    expect(hit?.line.v).toBeCloseTo(145, 9)
+  })
+
+  it('「吸附到对象」关掉：自身内容锚点不出，只剩外框', () => {
+    const a = scaleAnchorsFor(T, axesManifest(), false)
+    expect(a.xs.every((x) => x.frame)).toBe(true)
+    expect(a.ys.every((x) => x.frame)).toBe(true)
   })
 })

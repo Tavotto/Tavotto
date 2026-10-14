@@ -157,6 +157,9 @@
   < 2×容差继续吸，⌘ / Ctrl 与非等比的帧清空）；⑦ 旋转过的对象（`rotationDeg`）、文字、Alt 反转成
   非等比的角柄不走这条（后者仍是原来的「只吸正在动的边」）；面板 `rotation` 为 90 / 180 / 270 或翻转时
   只剩外框锚点。吸附只改面板 x / y / w / h，写法不变。
+  **开关**：页面线始终参与、参考线 / 网格各看自己的开关（与 `snapCandidates` 一致）；自身子图 / 色条锚点
+  （`scaleAnchorsFor` 第三参）与对象类候选归「吸附到对象」，关掉时只剩外框锚点与页面 / 参考线 / 网格候选。
+  别的图子图 / 色条的中线以 axes / colorbar 身份出线，与之重合的 `'other'` 线去掉（并列时不让 `'other'` 抢先）。
   看护：`lib/scaleSnap.test.ts`（挑法 / 档位 / 保持 / 最小尺寸 / 裁剪窗）、
   `canvas/proportionalScaleSnap.test.tsx`（集成 + 平移候选不变）、`e2e/proportional-scale-snap.spec.ts`。
 - **子图的随行元素跟着一切平移手势走**（2026-09-25，用户：挪过「(a)」再拖主图，标签
