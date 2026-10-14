@@ -503,6 +503,43 @@ def test_a_safe_rerun_retires_the_previous_native_session_of_the_same_script(
     assert cancelled == [("fig.py", newest)]  # 同脚本更早的计划票据也让位，放过本次自己
 
 
+def _plan_copy(template, plan_id):
+    import dataclasses
+
+    plan = dataclasses.replace(template, plan_id=plan_id)
+    preparation.SERVICE.register(plan)
+    return plan
+
+
+def test_a_superseded_safe_launch_does_not_retire_the_newer_reruns_native_session(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """Codex #1028 r4268029512：两个重跑交错——旧的 safe 动作登记了计划，却在新的那次已经回退到 native 之后才轮到启动。
+    它的让位必须和 `cancel_project(keep=)` 同一个登记顺序：比自己新的同脚本计划还在，就是被取代了，不能去结束新一次的 native 会话。"""
+    sid = _start(client, tmp_path, fake_pool)
+    report = _settle(client, sid)
+    template, _ = preparation.SERVICE.get(
+        report["attempt_history"][0]["attempt_id"], report["project_id"]
+    )  # safe 计划
+    older = _plan_copy(template, "prep-older-safe")  # 先登记（旧动作）
+    newer = _plan_copy(template, "prep-newer-rerun")  # 后登记（新动作，已回退到 native）
+    retired = _record_native_retirements(monkeypatch)
+    started = []
+    monkeypatch.setattr(
+        m, "_launch_preparation", lambda ctx, plan, on_done=None: started.append(plan.plan_id)
+    )
+
+    m._launch_session_attempt(None, older)  # 迟到的旧动作
+    assert retired == [], "旧动作已被取代：不得结束新一次的 native 会话"
+    assert preparation.SERVICE.get("prep-newer-rerun", report["project_id"])[1].status == "pending"
+    m._launch_session_attempt(None, newer)  # 最新的那次照旧让位更早的
+    assert [r[1] for r in retired] == ["fig.py"]
+    assert started == [
+        "prep-older-safe",
+        "prep-newer-rerun",
+    ]  # 旧动作自己的执行不受影响，仍交给执行线程
+
+
 def test_a_first_safe_run_and_a_legacy_asset_preparation_do_not_retire_native_sessions(
     client, tmp_path, fake_pool, native, sessions, monkeypatch
 ):

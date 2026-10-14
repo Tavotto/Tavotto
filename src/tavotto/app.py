@@ -4499,14 +4499,16 @@ def api_native_session_build(session_id: str):
         # （issue #191），现在由 `test_native_api.py` 逐个端点钉着。
         return jsonify(_worker_error_payload(exc)), 500
     rejected = engine_nativesession.REGISTRY.bind_assets(session)
-    # 发布决定只有这一处:被另一条活会话占着路由的 stem,既不物化预览、也不回给前端去放进画布——否则预览是这次运行的、
-    # 编辑 / 导出却仍落在旧会话上(静默错图,ADR 0021 §9.2)。准备 runner 的 native 分支也问同一个 `bind_assets`
-    _materialize_native(session, skip=rejected)
+    # 发布决定只有这一处,且全有或全无:任一张图的路由被另一条活会话占着,这一轮 build 的图一张都不物化、不回给前端、
+    # 不绑路由——否则预览是这次运行的、编辑 / 导出却仍落在旧会话上（静默错图,ADR 0021 §9.2），而准备 runner 对同一结果
+    # 判的是整体失败。准备 runner 的 native 分支问的是同一个 `bind_assets`
+    if not rejected:
+        _materialize_native(session)
     out = {
         "ok": True,
         "session": session.public_state(),
-        "stems": {k: v for k, v in (resp.get("stems") or {}).items() if k not in rejected},
-        "descriptors": [d for d in session.descriptors if d.get("stem") not in rejected],
+        "stems": {} if rejected else (resp.get("stems") or {}),
+        "descriptors": [] if rejected else list(session.descriptors),
     }
     if rejected:
         # **如实说**：这些 stem 已经被另一条还活着的会话占着（用户在两个终端
@@ -7550,7 +7552,11 @@ def _launch_session_attempt(ctx: "ProjectCtx", plan, on_done=None) -> None:
         engine_preparation.SERVICE.cancel_project(
             plan.project_id, script=plan.script, keep=plan.plan_id
         )
-        engine_nativesession.REGISTRY.cancel_project(plan.project_root, script=plan.script)
+        # native 会话 / 在途票据没有登记顺序，按计划的登记顺序判：已有更新的同脚本重跑 = 本动作被取代，
+        # 它（可能已回退到 native）才是该让位的对象，不是我们——不去结束它（Codex #1028 r4268029512）。
+        # 判定与结束之间仍有一个极窄的窗口（新重跑恰在两者之间登记）；那种情形新重跑自己的启动会再让位一次
+        if not engine_preparation.SERVICE.superseded(plan.plan_id):
+            engine_nativesession.REGISTRY.cancel_project(plan.project_root, script=plan.script)
     _launch_preparation(ctx, plan, on_done)
 
 

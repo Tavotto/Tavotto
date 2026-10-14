@@ -510,7 +510,7 @@ class NativeSession:
 
     def _on_input_request(self, frame: dict) -> None:
         """reader 线程里跑。终端拥有的会话从不装输入桥，收到也不信（没有人能答）。"""
-        if self.owned is None or self.state in TERMINAL_STATES:
+        if self.owned is None:
             return
         rid = frame.get("request_id")
         if not isinstance(rid, str) or not rid or len(rid) > 128:
@@ -527,6 +527,10 @@ class NativeSession:
             "at": time.time(),
         }
         with self._lock:
+            # 终态判定与装 pending 在同一把锁里:`_set_state` 进终态也持这把锁（并清 pending）,所以终态之后才到的
+            # 提问一律丢弃,不会在已结束的会话上复活一个答不了的框
+            if self.state in TERMINAL_STATES:
+                return
             self._pending_input = pending
         self._publish(input="requested", request_id=rid, input_kind=kind)
 
@@ -1152,6 +1156,7 @@ class NativeSessionRegistry:
         现有面板。
         """
         rejected: list[str] = []
+        claims: list[tuple] = []
         with self._lock:
             for desc in session.descriptors:
                 if not isinstance(desc, dict):
@@ -1165,7 +1170,12 @@ class NativeSessionRegistry:
                     if other is not None and other.alive():
                         rejected.append(str(desc.get("stem", "")))
                         continue
-                self._routes[key] = session.session_id
+                claims.append(key)
+            # 全有或全无:任一张被占着,这一轮 build 的图一张都不绑——否则界面 / 缓存里留着一张「没有活路由」的图,
+            # 而 runner 对同一结果判的是失败（`/build` 端点与准备 runner 共用这一个判定）
+            if not rejected:
+                for key in claims:
+                    self._routes[key] = session.session_id
         return rejected
 
     def route_for(self, project_root: str, script: str, stem: str) -> NativeSession | None:
