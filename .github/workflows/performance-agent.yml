@@ -13,6 +13,8 @@ on:
       - 'web/playwright.perf.config.ts'
       - 'web/e2e/perf-agent.spec.ts'
       - 'scripts/perf_report.py'
+      - 'web/e2e/perf-probe.spec.ts'
+      - 'web/src/perf/**'
       - 'web/src/lib/presets.ts'
       - 'web/src/components/PresetsDialog.tsx'
       - 'web/src/components/PresetPreview.tsx'

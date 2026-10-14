@@ -432,9 +432,10 @@ def main(argv: list[str] | None = None) -> int:
             output = args.out.resolve()
             # 性能基线是只读证据；即使通过符号链接/硬链接别名，
             # 也不许先 unlink 再将本次报告当成自己的历史基线，伪造 PASS。
-            if args.baseline is not None:
-                if _same_report_path(output, args.baseline):
-                    raise ValueError("baseline_aliases_run_output")
+            if args.baseline is not None and _same_report_path(output, args.baseline):
+                # 基线不可写，但本次请求比较失败必须给 Agent 明确 failed 裁决。
+                result["regression_status"] = "failed"
+                raise ValueError("baseline_aliases_run_output")
             output.unlink(missing_ok=True)
             if not 3 <= args.repeat <= 60 or not 1 <= args.regression_pct <= 200:
                 raise ValueError("invalid_run_parameters")
@@ -583,6 +584,19 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 raise ValueError("cannot_update_incomplete_summary")
             comparison_summary = previous
+        # current/baseline 是只读历史证据。输出名无论是同路径、软链接
+        # 还是硬链接同 inode，都绝不能先被 _write 替换。
+        if args.json is not None and (
+            _same_report_path(args.json, args.current)
+            or _same_report_path(args.json, args.baseline)
+        ):
+            raise ValueError("comparison_output_aliases_input")
+        if args.summary is not None and (
+            _same_report_path(args.summary, args.current)
+            or _same_report_path(args.summary, args.baseline)
+            or (args.json is not None and _same_report_path(args.summary, args.json))
+        ):
+            raise ValueError("comparison_summary_aliases_input")
         if not 1 <= args.regression_pct <= 200:
             raise ValueError("invalid_regression_pct")
         result = compare(load(args.current), load(args.baseline), args.regression_pct)
@@ -619,9 +633,19 @@ def main(argv: list[str] | None = None) -> int:
             )
             failed.update(status="failed", reason="invalid_or_unavailable_benchmark")
             try:
-                if args.json:
+                if args.json and not (
+                    args.command == "compare"
+                    and (
+                        _same_report_path(args.json, args.current)
+                        or _same_report_path(args.json, args.baseline)
+                    )
+                ):
                     _write(args.json, failed)
-                if comparison_summary is not None:
+                if comparison_summary is not None and not (
+                    _same_report_path(args.summary, args.current)
+                    or _same_report_path(args.summary, args.baseline)
+                    or (args.json is not None and _same_report_path(args.summary, args.json))
+                ):
                     _write(
                         args.summary,
                         {

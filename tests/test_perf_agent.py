@@ -808,3 +808,32 @@ def test_run_rejects_summary_path_alias_before_any_file_is_changed(tmp_path, sha
     assert rc == 2
     assert summary.read_text(encoding="utf-8") == before
     assert baseline.exists() and current.exists()
+
+
+def test_compare_cannot_overwrite_historical_input_via_output_alias(tmp_path):
+    """比较结果路径不能与 current 或 baseline 同名/硬链接。"""
+    current = tmp_path / "current.json"
+    baseline = tmp_path / "baseline.json"
+    current.write_text(json.dumps(report(value=21)), encoding="utf-8")
+    baseline.write_text(json.dumps(report(value=19)), encoding="utf-8")
+    for target in (current, baseline):
+        before = target.read_text(encoding="utf-8")
+        assert A.main(
+            ["compare", str(current), str(baseline), "--json", str(target)]
+        ) == 2
+        assert target.read_text(encoding="utf-8") == before
+    hardlink = tmp_path / "baseline-hardlink.json"
+    hardlink.hardlink_to(baseline)
+    before = baseline.read_text(encoding="utf-8")
+    assert A.main(
+        ["compare", str(current), str(baseline), "--json", str(hardlink)]
+    ) == 2
+    assert baseline.read_text(encoding="utf-8") == before
+
+
+def test_agent_workflow_tracks_drag_probe_instrumentation():
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/performance-agent.yml"
+    ).read_text(encoding="utf-8")
+    assert "'web/e2e/perf-probe.spec.ts'" in workflow
+    assert "'web/src/perf/**'" in workflow
