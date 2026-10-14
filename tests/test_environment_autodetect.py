@@ -1994,6 +1994,29 @@ def test_a_new_module_in_pythonpath_invalidates_the_cached_negative(tmp_path, mo
 
 
 @needs_worker
+@pytest.mark.parametrize("spec", [False, True], ids=["import-mode", "spec-mode"])
+def test_creating_a_pythonpath_root_invalidates_an_import_negative(tmp_path, monkeypatch, spec):
+    """#1019 复审：import 阴性也要记住尚不存在的绝对根；spec 复用这份证据前同样检查失效。"""
+    base = tmp_path / "ext"
+    base.mkdir()
+    py = _plain_venv(base, "lab")
+    external = tmp_path / "later"
+    monkeypatch.setenv("PYTHONPATH", str(external))
+    first = userenvs._probe(py, ("pythonpath_only_pkg",))
+    assert first["modules_ok"] == {"pythonpath_only_pkg": False}
+    marker = tmp_path / "IMPORTED"
+    external.mkdir()
+    (external / "pythonpath_only_pkg.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).touch()\nVALUE = 42\n", "utf-8"
+    )
+    mode = {"mode": "spec", "root": str(tmp_path / "proj")} if spec else {}
+    fresh = userenvs._probe(py, ("pythonpath_only_pkg",), **mode)
+    assert fresh["modules_ok"] == {"pythonpath_only_pkg": None if spec else True}
+    assert fresh is not first
+    assert marker.exists() is (not spec)
+
+
+@needs_worker
 def test_pythonpath_startup_hook_is_not_executed_during_preflight(tmp_path, monkeypatch):
     base = tmp_path / "ext"
     base.mkdir()

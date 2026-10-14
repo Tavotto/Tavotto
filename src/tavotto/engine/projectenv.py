@@ -371,7 +371,8 @@ mode = sys.argv[4] if len(sys.argv) > 4 else ""
 project_root = sys.argv[5] if len(sys.argv) > 5 else ""
 isolated = (sys.argv[6] if len(sys.argv) > 6 else "") == "isolated"
 out["pythonpath_entries"] = (os.environ.get("PYTHONPATH") or "").split(os.pathsep) if os.environ.get("PYTHONPATH") else []
-out["pythonpath_dirs"] = []
+# 两种体检都记住尚未创建的绝对根；相对 / 空条目仍待统一 worker 启动 cwd 后处理。
+out["pythonpath_dirs"] = [p for p in out["pythonpath_entries"] if os.path.isabs(p)]
 
 
 def _norm(path):
@@ -662,14 +663,9 @@ def _pythonpath_might_provide(top):
     # -I 不采用 PYTHONPATH，但真正的用户 worker 会继承它。只找顶层 spec，不把这些目录塞进 sys.path、
     # 不 import 包 / 启动钩子。找到也只是"可能可用"，留到 Run 的真实 import 确认。
     import importlib.machinery
-    for path in out["pythonpath_entries"]:
-        # 本轮只补绝对路径；相对 / 空条目要与 worker 启动 cwd 统一建模，维持原来的隔离探测口径。
-        if not os.path.isabs(path):
-            continue
+    for path in out["pythonpath_dirs"]:
         if project_root and _touches(path, project_root):
             return True
-        if path not in out["pythonpath_dirs"]:
-            out["pythonpath_dirs"].append(path)
         try:
             for name in (top, "sitecustomize", "usercustomize"):
                 if importlib.machinery.PathFinder.find_spec(name, [path]) is not None:

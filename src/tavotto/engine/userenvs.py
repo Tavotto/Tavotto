@@ -710,7 +710,7 @@ def _health_fingerprint(health: dict) -> tuple:
     """一条体检结论的"站点内容"指纹：**体检进程自己报的目录表**（`site_dirs`——两种方式都报：隔离体检是它真正放进 `sys.path`
     的那些，import 方式是正常启动之后 site / .pth 给出的，含启用时的用户 site 和还不存在的用户 site 目录）。没有这张表
     （启动就失败的结论，没有可看的站点）回空指纹：失败结论不因站点变化重测（重测一个起不来的解释器最长 60 秒）。
-    隔离体检另外报告只读查看过的 PYTHONPATH 路径；它们后来新增提供者时，旧的缺失结论也要失效。"""
+    两种体检均报告继承的绝对 PYTHONPATH 路径（含尚未创建的根）；它们后来新增提供者时，旧的缺失结论也要失效。"""
     dirs = health.get("site_dirs")
     if not isinstance(dirs, list):
         return ()
