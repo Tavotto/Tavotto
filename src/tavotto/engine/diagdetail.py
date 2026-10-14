@@ -1843,7 +1843,9 @@ def shadowing_candidates(dirs: list[str], names: set[str]) -> list[str]:
                     if stem not in names:
                         continue
                     try:
-                        is_dir = entry.is_dir()  # 目录符号链接（`numpy -> vendor/numpy`）也算包目录；只 stat，不读不导入
+                        is_dir = (
+                            entry.is_dir()
+                        )  # 目录符号链接（`numpy -> vendor/numpy`）也算包目录；只 stat，不读不导入
                     except OSError:
                         is_dir = False
                     if is_dir:
