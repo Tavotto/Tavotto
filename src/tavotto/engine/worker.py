@@ -930,8 +930,12 @@ class Worker(wireproto.V1Handler):
                 try:
                     return real_fn(*a, **kw)
                 except FileNotFoundError as exc:
-                    # 真实执行的改名 / 删除落空；源是被拦截的 savefig 目标时，直接运行不会落空
-                    ledger.note_failed_call(exc, ledger.VIA_MOVE_FAILED)
+                    # 真实执行的改名 / 删除落空；源是被拦截的 savefig 目标时，直接运行不会落空。
+                    # 带 `*dir_fd` 的路径相对那个 fd，不是 cwd：解析不了，不归因（保留原分类）
+                    if ledger.uses_dir_fd(kw):
+                        ledger.tag_unresolvable(exc)
+                    else:
+                        ledger.note_failed_call(exc, ledger.VIA_MOVE_FAILED)
                     raise
 
             return guarded

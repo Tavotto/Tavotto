@@ -727,3 +727,90 @@ def test_an_unconditional_exit_after_a_final_probe_keeps_script_exited(figs):
         figs, HDR + "fig.savefig('o.png')\nos.path.exists('o.png')\nsys.exit(7)\n", "sandbox"
     )
     assert e.code == "script_exited", e.code
+
+
+# ============================================================ 第五轮：dir_fd / 直接传 fd 不可靠解析 → 不归因
+def _dirfd_ledger(tmp_path, monkeypatch):
+    here, other = tmp_path / "here", tmp_path / "other"
+    here.mkdir()
+    other.mkdir()
+    monkeypatch.chdir(here)
+    led = figcapture.BlockedFileOps()
+    led.blocked("savefig", led.KIND_SAVEFIG, "o.png")  # 解析成 <here>/o.png
+    led.install()
+    return led, other
+
+
+@pytest.mark.parametrize("call", ["stat", "open"])
+def test_a_dir_fd_call_is_never_attributed_to_the_cwd_relative_target(tmp_path, monkeypatch, call):
+    import os
+
+    led, other = _dirfd_ledger(tmp_path, monkeypatch)
+    fd = os.open(str(other), os.O_RDONLY)
+    caught = None
+    try:
+        try:
+            if call.startswith("stat"):
+                os.stat("o.png", dir_fd=fd)
+            else:
+                os.open("o.png", os.O_RDONLY, dir_fd=fd)
+        except FileNotFoundError as exc:  # 直接运行与 safe 里都会失败：和守卫无关
+            caught = exc
+    finally:
+        led.uninstall()
+        os.close(fd)
+    assert caught is not None
+    assert led.explains(caught) is False and led.material() == []
+    assert led.suspects() == []
+    assert led.explain_exit(controlled=True) is False
+
+
+def test_the_same_calls_without_dir_fd_are_still_attributed(tmp_path, monkeypatch):
+    import os
+
+    led, _other = _dirfd_ledger(tmp_path, monkeypatch)
+    try:
+        with pytest.raises(FileNotFoundError) as err:
+            os.stat("o.png")
+    finally:
+        led.uninstall()
+    assert led.explains(err.value) is True
+    assert ("savefig", "probe_failed") in {(s["kind"], s["via"]) for s in led.suspects()}
+
+
+def test_a_stat_of_a_bare_file_descriptor_is_not_a_path_observation(tmp_path, monkeypatch):
+    import os
+
+    led, other = _dirfd_ledger(tmp_path, monkeypatch)
+    fd = os.open(str(other), os.O_RDONLY)
+    try:
+        os.stat(fd)
+    finally:
+        led.uninstall()
+        os.close(fd)
+    assert led.suspects() == [] and led.material() == []
+
+
+@needs_worker
+def test_a_dir_fd_failure_in_a_real_script_stays_a_script_error(figs):
+    src = (
+        HDR
+        + "import tempfile\nd = os.open(tempfile.mkdtemp(), os.O_RDONLY)\n"
+        + "fig.savefig('o.png')\nos.stat('o.png', dir_fd=d)\n"
+    )
+    e = _deviated(figs, src, "sandbox")
+    assert e.code != CODE, e.code
+
+
+def test_open_with_a_custom_opener_is_not_a_cwd_relative_read(tmp_path, monkeypatch):
+    import os
+
+    led, other = _dirfd_ledger(tmp_path, monkeypatch)
+    fd = os.open(str(other), os.O_RDONLY)
+    try:
+        with pytest.raises(FileNotFoundError):
+            open("o.png", "rb", opener=lambda p, flags: os.open(p, flags, dir_fd=fd))
+    finally:
+        led.uninstall()
+        os.close(fd)
+    assert led.material() == [] and led.suspects() == []

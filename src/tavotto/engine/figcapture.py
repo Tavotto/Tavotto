@@ -2633,10 +2633,23 @@ class BlockedFileOps:
         finally:
             self._busy = False
 
+    @staticmethod
+    def uses_dir_fd(kwargs) -> bool:
+        """调用带了非空的 `*dir_fd`：异常里的相对 `filename` 相对的是那个 fd，不是 cwd，解析不了就别解析。"""
+        return any(k.endswith("dir_fd") and v is not None for k, v in kwargs.items())
+
+    @staticmethod
+    def tag_unresolvable(exc: BaseException) -> None:
+        """给这次 dir_fd 调用抛出的异常打标：之后 `explains` / 弱信号不拿它的 `filename` 去对 cwd 相对的账。永不抛。"""
+        try:
+            exc._tavotto_unresolvable = True  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+
     def _failure_events(self, exc: BaseException | None) -> list[dict]:
         """异常链里的「文件不存在」指向的路径，落在被拦截 savefig 目标或被拦改名的路径上的那些事件。"""
         fnf = _file_not_found_in(exc)
-        if fnf is None:
+        if fnf is None or getattr(fnf, "_tavotto_unresolvable", False):
             return []
         reals = []
         for attr in ("filename", "filename2"):
@@ -2777,7 +2790,9 @@ class BlockedFileOps:
         mk_ctx: list[tuple[bool, bool]] = []
 
         def _open_through(original, file, mode, args, kwargs):
-            ledger.observe(file, mode)
+            # 自带 `opener`（常见用法是 `os.open(p, f, dir_fd=fd)`）：路径怎么解析由 opener 说了算，不当 cwd 相对路径记账
+            if kwargs.get("opener") is None:
+                ledger.observe(file, mode)
             if not ledger.is_write_mode(mode):
                 return original(file, mode, *args, **kwargs)
             try:
@@ -2801,13 +2816,18 @@ class BlockedFileOps:
             )
 
         def watched_stat(path, *args, **kwargs):
+            # 带 dir_fd：路径相对那个 fd，不能当 cwd 相对路径记账 / 归因（直接传 fd 的 `_norm` 本来就是 None）
+            via_fd = ledger.uses_dir_fd(kwargs)
             if (
-                not ledger._check_depth
+                not ledger._check_depth and not via_fd
             ):  # 探路包装已经观察过这一次（POSIX 上 exists 内部再走 os.stat）：只算一次
                 ledger.observe_stat(path)
             try:
                 return real_stat(path, *args, **kwargs)
             except FileNotFoundError as exc:
+                if via_fd:
+                    ledger.tag_unresolvable(exc)
+                    raise
                 ledger.note_missing_stat(exc)
                 if (
                     not ledger._check_depth
@@ -2822,7 +2842,10 @@ class BlockedFileOps:
             try:
                 return real_os_open(path, *args, **kwargs)
             except FileNotFoundError as exc:
-                ledger.note_failed_call(exc, ledger.VIA_PROBE_FAILED)
+                if ledger.uses_dir_fd(kwargs):
+                    ledger.tag_unresolvable(exc)
+                else:
+                    ledger.note_failed_call(exc, ledger.VIA_PROBE_FAILED)
                 raise
 
         def watched_listdir(path=None):
