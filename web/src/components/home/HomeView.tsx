@@ -13,6 +13,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import type { RecentProject } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import {
+  dragRegionProps,
   isDesktop,
   nativeFileDropAvailable,
   onNativeFileDrop,
@@ -46,6 +47,7 @@ import { Button, IconButton } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { dropZoneClass } from '../ui/dropZone'
 import { Menu, MenuItem } from '../ui/Menu'
+import { AppMenuButton } from '../AppMenuButton'
 import { DirBrowser, TailPath } from '../DirBrowser'
 
 /**
@@ -113,10 +115,13 @@ export function HomeView({
       data-home-variant={variant}
       className="h-full overflow-y-auto bg-bg"
       {...dropHandlers}
+      {...dragRegionProps('self')}
     >
-      <div className="mx-auto flex w-full max-w-[1000px] flex-col px-6 pb-10 pt-4">
-        {/* 从设置 / 菜单「切换项目」进来时后端仍有打开的项目——允许原路返回 */}
-        <div className="flex h-7 shrink-0 items-center justify-end">
+      <div className="mx-auto flex w-full max-w-[1000px] flex-col px-6 pb-10 pt-4" {...dragRegionProps('self')}>
+        {/* 从设置 / 菜单「切换项目」进来时后端仍有打开的项目——允许原路返回。
+            这一行也是窗框的一部分：macOS 下空白处可拖动窗口，Windows 的应用菜单在最左 */}
+        <div className="flex h-7 shrink-0 items-center justify-end" {...dragRegionProps('self')}>
+          <AppMenuButton className="-ml-2.5 mr-auto" />
           {currentOpen && (
             <Button
               size="md"

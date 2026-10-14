@@ -894,6 +894,7 @@
       "depsUnknown": "Tavotto 装不了 {{module}}，请选一个装了它的 Python 环境",
       "depsStdlib": "Tavotto 自带的环境里没有 {{module}}",
       "depsStdlibOther": "当前用的 Python 里没有 {{module}}",
+      "depsPlatform": "{{module}} 是其他系统专用模块，这个脚本无法在当前系统运行",
       "depsRuntime": "运行时缺 {{module}}",
       "install": "要先安装缺少的组件",
       "needsArgs": "脚本要运行参数",

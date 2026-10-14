@@ -40,6 +40,7 @@ import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { EngineRenderSync, useEngineDocumentSync } from '@/hooks/useEngineSync'
+import { useWindowChrome } from '@/hooks/useWindowChrome'
 import { startStyleBindingSync } from '@/store/styleBinding'
 import { useBuildVersion } from '@/hooks/useBuildVersion'
 import { runMenuAction } from '@/hooks/menuActions'
@@ -74,7 +75,7 @@ import { useSelectionRouting } from '@/hooks/useSelectionRouting'
 import { useUiStore } from '@/store/uiStore'
 import { startValidation } from '@/store/validationStore'
 import { startWorkspacePersistence, useWorkspaceStore } from '@/store/workspace'
-import { onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
+import { dragRegionProps, onDesktopMenu, onDesktopOpen } from '@/lib/desktop'
 import { DURATION, usePresence } from '@/lib/motion'
 import { applyOpenRequest, claimUrlOpenRequest } from '@/lib/openRequest'
 import { msg } from '@/i18n'
@@ -101,11 +102,13 @@ export function App() {
     void hydrateExportDefaults()
   }, [])
   useDesktopMenu()
+  useWindowChrome()
   useHandoff()
   usePickerHistory()
 
   // 启动探测中不闪 Picker；探测完没有项目 → Picker 接管整个界面
-  if (phase === 'loading') return <div className="h-full bg-bg" />
+  // 探测中的空白屏也是窗框的一部分：macOS 叠了标题栏，没有拖动区窗口就拖不动
+  if (phase === 'loading') return <div className="h-full bg-bg" {...dragRegionProps('self')} />
   // 首启询问挂在 Picker 与 Workspace **共同的**根上：还没打开项目的用户
   // 一样该被问到，而不是等他开了项目才弹
   if (phase === 'none')

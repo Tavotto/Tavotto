@@ -597,7 +597,9 @@ function StatusLine({
   } else if (phase === 'cancelled') {
     body = sc('cancelledNote')
   } else if (run?.error) {
-    const text = formatMessage(backendCodeMsg(run.error.code, run.error.params, run.error.message))
+    const text = run.error.install_route === 'unsupported_platform'
+      ? translate('prep.line.depsPlatform', { ns: 'workspace', module: String(run.error.params?.module ?? '') })
+      : formatMessage(backendCodeMsg(run.error.code, run.error.params, run.error.message))
     title = text
     // 门上的那句是「还差一个决定」，不是错误：不用危险色
     body = <span className={isGatePhase(phase) ? 'text-ink-2' : 'text-danger'}>{text}</span>

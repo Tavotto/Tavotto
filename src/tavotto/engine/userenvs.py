@@ -34,7 +34,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import projectenv, runtime, scanbudget
+from . import launcher, projectenv, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.userenvs")
 
@@ -722,6 +722,8 @@ def _cache_key(
         tuple(sorted(set(modules))),
         bundled,
         how,
+        # 启动上下文（direct / conda|exe|prefix）：裸起的结论不能在激活下复用。放在末尾——前面几位有人按位置读（`key[1]` 是环境代）
+        launcher.context_key(python),
     )
 
 
@@ -749,6 +751,8 @@ def _probe(
         extra.update(import_mode="spec", project_root=root)
     health = projectenv.probe_environment(python, modules=modules, **extra)
     health["_site_fp"] = _health_fingerprint(health)
+    if launcher.is_unavailable(health):
+        return health  # 激活取环境失败是瞬时的：不缓存
     with _lock:
         _probe_cache[key] = health
     return health
@@ -761,6 +765,7 @@ def remember_probe(
     *,
     bundled: bool = False,
     generation: object = None,
+    context: str | None = None,
 ) -> None:
     """把一次**明确的环境检查**（`envadvice.check`）量到的结论写进这张缓存——覆盖度只有这一份。
 
@@ -768,12 +773,16 @@ def remember_probe(
     读到的就是用户刚点的那次检查，不会各自再起一遍；环境被重建（换代）后旧结论自然对不上。不带 `modules` 的结论不存
     （健康体检另有 `envadvice` 的结论表；这里只管覆盖度）。"""
     mods = tuple(dict.fromkeys(m for m in modules if m))
-    if not mods or not isinstance(health, dict):
+    if not mods or not isinstance(health, dict) or launcher.is_unavailable(health):
         return
     key = _cache_key(python, mods, bundled)
     # `generation`：探测**之前**取的环境代。探测期间环境被重建 / 替换（换代）时，量到的是旧解释器，不许记到新代名下——
     # 键里的代是写入时现算的，站点指纹也是重建后的，新鲜度检查拦不住（Codex #906 r4236570685）；丢掉，下次重量
     if generation is not None and key[1] != generation:
+        return
+    # `context`：探测之前取的启动上下文（`launcher.context_key`）。conda install / 改 activate.d 不换代，但上下文变了——
+    # 旧激活下量到的结论不许记到新上下文名下（键里的上下文同样是写入时现算的）
+    if context is not None and key[-1] != context:
         return
     stored = {**health, "_site_fp": _health_fingerprint(health)}
     with _lock:

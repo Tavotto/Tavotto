@@ -4,6 +4,12 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from types import SimpleNamespace
+
+import pytest
+
 from tavotto import app as app_module
 from tavotto.engine import pool, prepsession
 
@@ -146,3 +152,79 @@ def test_a_stdlib_name_declared_in_requirements_is_never_a_trusted_install_targe
     assert depresolve.resolve(str(tmp_path), "tkinter", "fit.py") is None
     assert depresolve.resolve(str(tmp_path), "scipy", "fit.py") is not None
     assert deprepair.offer(str(tmp_path), "fit.py", "tkinter")["requirement"] is None
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+@pytest.mark.parametrize(
+    "module", ["pwd", "grp", "fcntl", "termios", "winreg", "msvcrt", "_winapi"]
+)
+def test_platform_stdlib_is_only_unsupported_on_the_other_platform(monkeypatch, platform, module):
+    monkeypatch.setattr(pool, "os", SimpleNamespace(name=platform))
+    available_on = "nt" if module in {"winreg", "msvcrt", "_winapi"} else "posix"
+    route = pool.stdlib_install_route(module)
+    assert route == ("stdlib_missing" if platform == available_on else "unsupported_platform")
+
+
+def test_real_foreign_platform_import_has_no_environment_retry():
+    # 主语：本机 Python 的实际失败，不靠伪造 traceback。Linux/macOS 缺 winreg，Windows 缺 pwd。
+    module = "pwd" if sys.platform == "win32" else "winreg"
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", f"import {module}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode != 0
+    err = pool._worker_error("脚本执行失败", "script_error", result.stderr)
+    assert err.install_route == "unsupported_platform"
+    assert pool.should_try_project_env(err) is False
+    assert "当前系统" in str(err)
+
+
+def test_foreign_platform_missing_never_offers_install_on_either_error_entry(monkeypatch, tmp_path):
+    from tavotto.engine import deprepair, probe
+
+    module = "pwd" if sys.platform == "win32" else "winreg"
+    body, calls = _payload(monkeypatch, module, {"requirement": {"distribution": module}})
+    assert body["install_route"] == "unsupported_platform"
+    assert calls == [] and "dependency_repair" not in body
+    monkeypatch.setattr(deprepair, "offer", lambda *a, **k: pytest.fail("must not offer pip"))
+    out = probe._error_from_worker(
+        _exc(module), "fit.py", figures_dir=str(tmp_path), script="fit.py"
+    )
+    assert out["install_route"] == "unsupported_platform"
+    assert "dependency_repair" not in out
+
+
+def test_prep_foreign_platform_preserves_route_and_offers_no_package_or_environment(monkeypatch):
+    from tavotto.engine import deprepair
+
+    monkeypatch.setattr(deprepair, "offer", lambda *a, **k: pytest.fail("must not resolve pip"))
+    info = _observe(
+        {"code": "missing_dependency", "module": "winreg", "install_route": "unsupported_platform"}
+    )
+    public = prepsession.SessionService._public_missing(info)
+    assert public["route"] == "unsupported_platform"
+    assert public["installable"] is False
+    assert public["options"] == []
+
+
+def test_foreign_platform_build_does_not_discover_or_rerun_environments(monkeypatch):
+    module = "pwd" if sys.platform == "win32" else "winreg"
+    error = _exc(module)
+    takes = []
+
+    class Worker:
+        def ensure_built(self):
+            raise error
+
+    def take():
+        takes.append(True)
+        return Worker(), True
+
+    monkeypatch.setattr(pool, "try_project_env", lambda *a: pytest.fail("must not switch Python"))
+    with pytest.raises(pool.WorkerError) as raised:
+        pool._build_with(take, "fit.py", "", allow_project_env=True)
+    assert raised.value is error
+    assert len(takes) == 1

@@ -63,6 +63,7 @@ import 本模块），本模块只负责体检、去重、缓存与排序。
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -71,9 +72,10 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
 
-from . import config, runtime, scanbudget
+from . import config, launcher, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.projectenv")
 
@@ -764,6 +766,7 @@ def execution_note(
     modules: tuple[str, ...],
     started: bool = True,
     info: dict | None = None,
+    activation: bool = False,
 ) -> dict:
     """这次体检**实际执行了什么**的如实声明（Import Origin PR3：授权的环境检查不得宣称无副作用）。
 
@@ -780,17 +783,19 @@ def execution_note(
       matplotlib 与 worker 启动链——全是用户环境里的代码；`-I -S` 的运行前体检不跑 site、不 import；
     * `imported_modules`：真 `__import__` 过哪些名字（运行前的 `find_spec` 方式一个都不 import）——导入一个包就是执行它的
       `__init__`，可能写文件、联网、改全局状态，我们看不见也拦不住；
+    * `activation=True`（Conda 环境：体检前经 `conda run` 取激活环境，跑过 activate.d 钩子）→ 不管体检本身是否隔离，
+      `ran_environment_code=True`——钩子就是环境里的代码；
     * 没有 `side_effect_free`：我们从不宣称「无副作用」。"""
     if not started:
         return {
-            "ran_environment_code": False,
+            "ran_environment_code": activation,  # 体检进程没起来，但激活钩子可能已经跑过
             "imported_modules": [],
             "may_run_package_init": False,
             "incomplete": False,
         }
     if info is None:
         return {
-            "ran_environment_code": not isolated,
+            "ran_environment_code": activation or not isolated,
             "imported_modules": [],
             "may_run_package_init": not spec_mode,
             "incomplete": True,
@@ -806,14 +811,14 @@ def execution_note(
         done.add(module)
     imported = [] if spec_mode else [m for m in dict.fromkeys(requested) if m in done]
     return {
-        "ran_environment_code": not isolated,
+        "ran_environment_code": activation or not isolated,
         "imported_modules": imported,
         "may_run_package_init": bool(imported),
         "incomplete": False,
     }
 
 
-def probe_environment(
+def _probe_environment(
     python: str,
     module: str | None = None,
     *,
@@ -881,11 +886,28 @@ def probe_environment(
     shape = {"isolated": isolate, "spec_mode": spec_mode, "module": module, "modules": modules}
     scratch = ""
     spawned = False
+    activating = False
     try:
         # 空目录放在数据目录下（运行时可写数据一律走 `config.data_dir()`），
         # 分配也在守卫之内：系统临时目录不可用 / 只读 / 满的时候，这里抛出去
         # 就是一个 500，而 `probe_environment` 承诺的是结构化失败。
         scratch = _probe_scratch_dir()
+        probe_timeout = PROBE_TIMEOUT_S if timeout is None else min(PROBE_TIMEOUT_S, timeout)
+        deadline = time.monotonic() + probe_timeout  # 激活捕获与体检子进程共用一个预算
+        # Conda 环境：体检也用激活后的环境（解释器路径的纯函数决策，与 worker 一致）。取环境失败 = 返回
+        # “不可用：conda_launcher_unavailable”——瞬时结论，调用方不得缓存
+        activating = launcher.launcher_for_interpreter(python) is not None
+        shape["activation"] = activating
+        probe_env = launcher.activate_env(
+            python, runtime.probe_env(python, bundled=bundled), timeout=probe_timeout
+        )
+        spawned = activating  # 激活跑过 conda 与 activate.d：之后的任何失败都不许报成「什么都没跑」
+        probe_timeout = deadline - time.monotonic()
+        if probe_timeout <= 0:
+            # 预算被激活捕获用完：不是对这个环境的结论（瞬时、不缓存），与捕获失败同一个码
+            raise launcher.LauncherUnavailable(
+                "经 Conda 激活取环境用完了体检的时间预算；请稍后再试"
+            )
         spawned = (
             True  # 从这里起算「可能已经起了子进程」：spawn 本身失败的 OSError 在下面单独改回 False
         )
@@ -895,12 +917,21 @@ def probe_environment(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=PROBE_TIMEOUT_S if timeout is None else min(PROBE_TIMEOUT_S, timeout),
+            timeout=probe_timeout,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=runtime.probe_env(python, bundled=bundled),
+            env=probe_env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
+    except launcher.LauncherUnavailable as exc:
+        return {
+            "ok": False,
+            "code": launcher.UNAVAILABLE_CODE,
+            "python": python,
+            "detail": str(exc)[:400],
+            # 取激活环境要跑 conda 与 activate.d 钩子：失败 / 超时也可能已经执行过环境里的代码，不许报成「没跑」
+            "execution": execution_note(**shape, started=activating),
+        }
     except (OSError, subprocess.SubprocessError) as exc:
         # 起不来：bad executable format（venv 建在另一个架构上）、被杀毒
         # 隔离、动态库缺失、venv 的 home 指向一个已经删掉的解释器……
@@ -963,10 +994,36 @@ def probe_environment(
     return info
 
 
+#: 直接启动失败时，可能只是“没激活”造成的结论（Conda 环境里 import 不到 / worker 起不来）；`UNSUPPORTED_PYTHON` 不在内（版本与激活无关）
+_ACTIVATION_DEPENDENT_CODES = frozenset(
+    {ERROR_UNUSABLE, ERROR_NO_MATPLOTLIB, ERROR_WORKER_IMPORT, ERROR_MODULE_MISSING}
+)
+
+
+@functools.wraps(_probe_environment)
+def probe_environment(python: str, *args, **kwargs) -> dict:
+    health = _probe_environment(python, *args, **kwargs)
+    if (
+        not health.get("ok")
+        and health.get("code") in _ACTIVATION_DEPENDENT_CODES
+        and launcher.unlocated_conda_prefix(python) is not None
+    ):
+        # Conda 环境但找不到 conda，直接启动又失败了：这不是对环境的结论（装了东西但要激活才看得见的环境会在这里被误判），
+        # 报稳定码，调用方当瞬时结论处理（不缓存、不作废记住的解释器）
+        return {
+            "ok": False,
+            "code": launcher.UNAVAILABLE_CODE,
+            "python": python,
+            "detail": "这是一个 Conda 环境，但找不到 conda 可执行文件，没法确认它能不能运行；请检查 Conda 安装",
+            "execution": health.get("execution"),
+        }
+    return health
+
+
 #: 系统解释器的体检缓存：(解释器 realpath, 模块) → 体检结果。一次接手失败
 #: 最多探六七个解释器、每个最长 60s；同一个项目里第二个脚本也缺同一个包时
 #: 不该再付一遍。`reset_cache()` 一并清掉（用户手动重试 = 重新体检）。
-_system_probe_cache: dict[tuple[str, str], dict] = {}
+_system_probe_cache: dict[tuple[str, str, str], dict] = {}
 
 #: 一次最多体检多少个系统解释器。Windows 上 `C:\Python*` 的 glob 可能翻出
 #: 一堆，全探一遍是分钟级；候选已经按优先级排好，靠前的几个覆盖了绝大多数
@@ -1058,13 +1115,14 @@ def probe_system_candidates(
         except OSError:
             continue
         seen.append(python)
-        key = (_executable_key(python), module)
+        key = (_executable_key(python), module, launcher.context_key(python))  # 按启动上下文分区
         with _lock:
             health = _system_probe_cache.get(key)
         if health is None:
             health = probe_environment(python, module)
-            with _lock:
-                _system_probe_cache[key] = health
+            if not launcher.is_unavailable(health):  # 瞬时结论不缓存
+                with _lock:
+                    _system_probe_cache[key] = health
         entry = _system_entry(python, source, health)
         out.append(entry)
         if entry["ok"]:
@@ -1094,8 +1152,11 @@ def reprobe_system_candidate(entry: dict, module: str) -> dict:
     拿旧观测替用户换环境，结果多半是同一个缺包再报一次，还白跑了一遍脚本。"""
     python = str(entry.get("python") or "")
     health = probe_environment(python, module)
-    with _lock:
-        _system_probe_cache[(_executable_key(python), module)] = health
+    if not launcher.is_unavailable(health):  # 瞬时结论不缓存
+        with _lock:
+            _system_probe_cache[(_executable_key(python), module, launcher.context_key(python))] = (
+                health
+            )
     return _system_entry(python, str(entry.get("source") or ""), health)
 
 
@@ -1647,7 +1708,8 @@ def _outcome_fingerprint(outcome: dict) -> tuple:
     pythons = [e.get("python", "") for e in outcome.get("rejected") or []]
     if outcome.get("ok"):
         pythons.append(outcome.get("python", ""))
-    return tuple((p, interpreter_fingerprint(p)) for p in pythons if p)
+    # 带启动上下文（`launcher.context_key`）：conda install / 改 activate.d 不动解释器文件，但激活后的结论变了（P09）
+    return tuple((p, interpreter_fingerprint(p), launcher.context_key(p)) for p in pythons if p)
 
 
 def cached_first_open(figures_dir: str | Path) -> dict | None:
@@ -1700,12 +1762,12 @@ def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> 
     rejected: list[dict] = []
     chosen: dict | None = None
     # 指纹在体检**之前**量：体检途中被替换的话，下一次比对就对不上、重新体检
-    probed: list[tuple[str, tuple]] = []
+    probed: list[tuple[str, tuple, str]] = []
     for venv in candidates:
         python = interpreter_of(venv, root=figures_dir)
         if not python:
             continue
-        probed.append((python, interpreter_fingerprint(python)))
+        probed.append((python, interpreter_fingerprint(python), launcher.context_key(python)))
         health = probe_environment(python)
         entry = {
             "venv": venv,
@@ -1725,8 +1787,9 @@ def first_open_candidate(figures_dir: str | Path, script: str | None = None) -> 
     else:
         code = rejected[0]["code"] if rejected else ERROR_NOT_FOUND
         outcome = {"ok": False, "code": code, "rejected": rejected, "candidates": candidates}
-    with _lock:
-        _first_open[key] = (outcome, tuple(probed))
+    if not any(launcher.is_unavailable(e) for e in rejected):  # 激活取环境失败是瞬时的：不缓存
+        with _lock:
+            _first_open[key] = (outcome, tuple(probed))
     return outcome
 
 

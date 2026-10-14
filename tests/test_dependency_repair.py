@@ -1334,6 +1334,31 @@ def test_a_failed_pip_run_leaves_the_requirement_retryable(project, monkeypatch)
     assert again.plan_id, "pip 没跑成的那次不该进黑名单"
 
 
+def test_a_failed_activation_after_install_is_the_launcher_code_not_import_still_failed(
+    project, monkeypatch
+):
+    """pip 成功之后、装后体检时 Conda 激活取环境失败：报瞬时的 conda_launcher_unavailable，不说“装了还 import 不了”（P09，Codex #975）。"""
+    real_venv(project)
+    (project / "requirements.txt").write_text(f"{FIXTURE_DIST}\n", encoding="utf-8")
+    plan = deprepair.create_plan(
+        str(project), "figure.py", FIXTURE_IMPORT, target_kind=deprepair.TARGET_PROJECT_VENV
+    )
+    _stub_pip(monkeypatch, pip_code="")
+    monkeypatch.setattr(
+        deprepair.projectenv,
+        "probe_environment",
+        lambda py, mod=None: {
+            "ok": False,
+            "code": "conda_launcher_unavailable",
+            "python": py,
+            "detail": "x",
+        },
+    )
+    with pytest.raises(deprepair.RepairError) as err:
+        deprepair.install(plan.plan_id, confirmed_impact=plan.impact_digest)
+    assert err.value.code == "conda_launcher_unavailable"
+
+
 def test_a_successful_pip_run_is_not_repeated_even_when_verification_fails(project, monkeypatch):
     """pip 退出码 0 之后再装同一个改不了任何东西——验证没过也一样进黑名单。"""
     real_venv(project)

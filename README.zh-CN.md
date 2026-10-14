@@ -667,11 +667,10 @@ Tavotto 免费开源，由一个人维护。如果它帮你省了时间，可以
 
 ### 赞助者
 
-在 [Ko-fi](https://ko-fi.com/tavotto/tiers) 选择每月 $50 **赞助人（Sponsor）** 档的支持者，
-会带头像列在这里，赞助期间一直保留。
+在 [爱发电](https://afdian.com/a/tavotto) 选择**赞助人**方案、或在 [Ko-fi](https://ko-fi.com/tavotto/tiers)
+选择每月 $50 **Sponsor** 档的支持者，会带头像列在这里，赞助期间一直保留。图片自动更新。
 
-<!-- sponsors: 每位赞助者一个 <a><img width="48"></a>，维护者批准后添加 -->
-<p><em>还没有赞助者，第一位会出现在这里。</em></p>
+<a href="https://www.tavotto.com/zh/support/"><img src="https://www.tavotto.com/api/supporters/sponsors" alt="Tavotto 赞助者" width="720"></a>
 
 ## 许可证
 

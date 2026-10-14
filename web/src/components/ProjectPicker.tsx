@@ -11,9 +11,10 @@ import {
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendErrorText, type RecentProject } from '@/lib/api'
+import { AppMenuButton } from './AppMenuButton'
 import { useRovingList } from './left/rovingList'
 import { ProjectRow } from './ProjectPickerRow'
-import { isDesktop, pickDirectory } from '@/lib/desktop'
+import { dragRegionProps, isDesktop, pickDirectory } from '@/lib/desktop'
 import { useFormatMessage } from '@/i18n/react'
 import { PRODUCT_NAME } from '@/lib/brand'
 import {
@@ -141,13 +142,17 @@ function AllProjects({
   const roving = useRovingList<HTMLDivElement>()
 
   return (
-    <div className="flex h-full justify-center bg-bg">
+    // 窗框：macOS 下空白处可拖动窗口（红绿灯在左上角，这一列居中、碰不到它们）
+    <div className="relative flex h-full justify-center bg-bg" {...dragRegionProps('self')}>
+      {/* Windows 的应用菜单：与首页同一个位置（左上角） */}
+      <AppMenuButton className="absolute left-2 top-3" />
       <main
         aria-label={t('picker.regionLabel')}
         className="flex h-full w-[460px] max-w-[calc(100vw-3rem)] flex-col"
+        {...dragRegionProps('self')}
       >
         {/* 固定区：品牌 + 主入口。`shrink-0` 是这一屏的要点——列表再长也挤不动它 */}
-        <header className="shrink-0 pt-3">
+        <header className="shrink-0 pt-3" {...dragRegionProps('self')}>
           <Button size="md" className="-ml-2.5 mb-2 text-ink-2" data-home-back onClick={onBack}>
             <ArrowLeft size={ICON_SIZE.sm} />
             {t('home.backHome')}

@@ -92,7 +92,7 @@
   「清除失效修改」把身份对不上的也算进去（`isStaleIdentityOverride`，与引擎同一条判据）。
 - **自动保存**：磁盘为主（`PUT /api/autosave/<docId>` 原子写
   `layouts/_autosave/`），localStorage 只留索引 + 崩溃兜底副本
-  （写盘成功即清、读取按 updatedAt 取新）。兜底副本在桌面版能不能「下次启动恢复」取决于
+  （成功仅清同一快照，#646；内容不同的副本保留待裁决，忽略更新时间与键序，旧格式比较迁移前原稿）。桌面兜底恢复取决于
   origin 稳定（ADR 0108：壳记端口；端口被占的那次仍读不到）。失败发
   `tavotto:autosave-error` 事件 → 常驻错误 toast。**怎样安全地落到磁盘上**——按文档
   排队、串行 PUT、乐观并发基线（updatedAt）与外部修改基线（内容 hash 三档 + 缺席）、

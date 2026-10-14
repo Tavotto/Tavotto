@@ -42,6 +42,7 @@
     "bad_request": "The export request was malformed. Reload the page and try again.",
     "bad_scope": "Unknown export scope: {{value}}.",
     "bad_validation": "The validation settings were malformed. Reload the page and try again.",
+    "conda_launcher_unavailable": "Couldn’t activate this Conda environment (its activated environment variables couldn’t be read), so nothing was run. This is usually temporary: try again shortly. If it keeps happening, check the conda installation and this environment’s activate.d scripts.",
     "dependency_preparation_required": "Packages this script needs at start are missing from the rendering environment; prepare dependencies first",
     "desktop_updater_disabled": "The desktop app doesn’t self-upgrade via pip. Update the desktop app instead.",
     "dir_fsync_failed": "Content was written, but the system couldn’t confirm it’s on disk. Save once more before closing: {{reason}}",

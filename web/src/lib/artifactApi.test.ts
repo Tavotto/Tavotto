@@ -10,6 +10,14 @@ const req:ExportRequest={scope:'original',filename:'out',formats:['png'],ppi:300
 const ok=(body:unknown)=>new Response(JSON.stringify(body),{status:200,headers:{'Content-Type':'application/json'}})
 beforeEach(()=>{setCurrentProjectId('A');vi.restoreAllMocks()})
 describe('selected API negotiation',()=>{
+ it('render preserves the unsupported-platform route and translates the explanation',async()=>{
+  vi.spyOn(globalThis,'fetch').mockResolvedValue({ok:false,status:500,json:async()=>({code:'missing_dependency',module:'winreg',install_route:'unsupported_platform',error:'平台不支持'})} as Response)
+  const error=await engineRender('Fig1.pdf',[],{}).catch(e=>e)
+  expect(error).toBeInstanceOf(EngineError)
+  expect(error.installRoute).toBe('unsupported_platform')
+  expect(formatMessage(engineErrorMsg(error))).toContain('winreg')
+  expect(engineErrorMsg(error).key).toBe('prep.line.depsPlatform')
+ })
  it('render preserves source fields and refuses missing old-server acknowledgement',async()=>{
   const fetch=vi.spyOn(globalThis,'fetch').mockResolvedValue(ok({rev:1,manifest:{}}))
   await expect(engineRender('plot.png',[],fields)).rejects.toThrow()

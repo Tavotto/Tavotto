@@ -1,4 +1,4 @@
-import { test as base, expect, type Page } from '@playwright/test'
+import { test as base, expect, type Locator, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { copyFileSync, cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
@@ -263,12 +263,26 @@ export async function waitForFigureEdit(page: Page): Promise<void> {
  * 关闭（CI #453 的 900s 挂死，两轮同形状）。按 `aria-expanded` 判态，
  * 不在才点，点完等状态坐实。按稳定钩子 `data-rail` 找按钮（无障碍名是本地化文案，
  * en-US 腿里对不上），并断言恰有一个。
+ *
+ * **「读 → 点」不是原子的**（#991）：自动切换发生在读之后、点击之前，这一下点击就
+ * 是把刚开的面板关掉。慢机 / 打包版上这个窗口足够宽——本机无节流也量到过
+ * （READ false @377ms → 自动切到元素树 @401ms → CLICK @470ms → 收起 @481ms）。
+ * 所以整段「读 + 点 + 坐实」放进 `toPass` 重试：被关掉时下一轮读到 false 再点一次。
+ * 这样重试不会掩盖真缺陷：自动切换是一次性的（只在 `leftTab !== 'elements'` 时触发，
+ * 我们点开后就是 no-op），一次重试之内不会再被它翻回去；点击真的打不开时每一轮都
+ * 失败，`toPass` 照样超时变红。
+ *
+ * `nav` 默认按 `data-rail` 找；量无障碍名的用例（a11y）传自己的定位器。
  */
-export async function openElementsTab(page: Page): Promise<void> {
-  const nav = page.locator('[data-rail="elements"]')
+export async function openElementsTab(
+  page: Page,
+  nav: Locator = page.locator('[data-rail="elements"]'),
+): Promise<void> {
   await expect(nav).toHaveCount(1)
-  if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
-  await expect(nav).toHaveAttribute('aria-expanded', 'true')
+  await expect(async () => {
+    if ((await nav.getAttribute('aria-expanded')) !== 'true') await nav.click()
+    await expect(nav).toHaveAttribute('aria-expanded', 'true', { timeout: 3_000 })
+  }).toPass({ timeout: 30_000 })
 }
 
 /**
