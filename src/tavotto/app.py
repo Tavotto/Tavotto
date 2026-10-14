@@ -7743,7 +7743,7 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
         }
     # 物化在刷新之前：刷新会发 `registry.changed`，前端收到就去取 runtime 清单与预览
     run = getattr(plan, "run", None)
-    if plan.execution == engine_execspec.PROFILE_NATIVE:
+    if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:
         # 桌面拥有的 native：预览从那条活会话的产物目录来（不是 safe 池里的热 worker）；活图路由已在 runner 里绑好
         native = next(
             (

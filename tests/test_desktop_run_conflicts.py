@@ -54,7 +54,7 @@ def test_route_conflict_fails_the_run_and_ends_the_new_process(tmp_path):
     with pytest.raises(pool.WorkerError) as err:
         m._native_preparation_runner(plan)
     assert err.value.code == runcodes.NATIVE_ASSET_CONFLICT
-    new = [s for s in nativesession.REGISTRY.list() if s is not holder]
+    new = [s for s in nativesession.REGISTRY.list(str(proj)) if s is not holder]
     assert len(new) == 1
     dk.wait_until(lambda: new[0].owned.finished, what="新进程被结束")
     # 旧图仍是该路由的持有者,没有被抢走
