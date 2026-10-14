@@ -861,3 +861,66 @@ def test_malformed_summarize_does_not_replace_source_with_failure_json(tmp_path)
     original = raw.read_text(encoding="utf-8")
     assert A.main(["summarize", str(raw), "--json", str(raw), "--unknown"]) == 2
     assert raw.read_text(encoding="utf-8") == original
+
+
+def test_parse_error_with_interleaved_options_never_overwrites_readonly_baseline(tmp_path):
+    """Codex P1：baseline 在非法 --regression-pct 后面时仍是只读输入。"""
+    current = tmp_path / "current.json"
+    baseline = tmp_path / "baseline.json"
+    current.write_text(json.dumps(report(value=21)), encoding="utf-8")
+    baseline.write_text(json.dumps(report(value=19)), encoding="utf-8")
+    before = baseline.read_bytes()
+    rc = A.main([
+        "compare", str(current), "--regression-pct", "invalid",
+        str(baseline), "--json", str(baseline),
+    ])
+    assert rc == 2
+    assert baseline.read_bytes() == before
+
+
+def test_summarize_parse_error_with_options_first_keeps_source(tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps(report()), encoding="utf-8")
+    before = source.read_bytes()
+    assert A.main(["summarize", "--json", str(source), str(source), "--unknown"]) == 2
+    assert source.read_bytes() == before
+
+
+@pytest.mark.parametrize("link_type", ["ordinary", "hardlink", "symlink"])
+def test_report_atomic_temp_cannot_clobber_baseline_named_output_tmp(tmp_path, link_type):
+    """输出是 comparison.json，历史基线刚好叫 comparison.json.tmp。"""
+    current = tmp_path / "current.json"
+    original = tmp_path / "historical.json"
+    baseline = tmp_path / "comparison.json.tmp"
+    output = tmp_path / "comparison.json"
+    current.write_text(json.dumps(report(value=22)), encoding="utf-8")
+    original.write_text(json.dumps(report(value=20)), encoding="utf-8")
+    if link_type == "ordinary":
+        baseline.write_bytes(original.read_bytes())
+    elif link_type == "hardlink":
+        baseline.hardlink_to(original)
+    else:
+        baseline.symlink_to(original)
+    before = original.read_bytes()
+    rc = A.main(["compare", str(current), str(baseline), "--json", str(output)])
+    assert rc == 0
+    assert original.read_bytes() == before
+    assert baseline.read_bytes() == before
+    assert json.loads(output.read_text(encoding="utf-8"))["status"] == "pass"
+
+
+def test_parse_error_does_not_clobber_baseline_via_derived_temp_alias(tmp_path):
+    """即使输出报告本身不与输入同名，旧固定 .tmp 也不许截断历史基线。"""
+    current = tmp_path / "current.json"
+    baseline = tmp_path / "verdict.json.tmp"
+    verdict = tmp_path / "verdict.json"
+    current.write_text(json.dumps(report()), encoding="utf-8")
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    before = baseline.read_bytes()
+    rc = A.main([
+        "compare", str(current), str(baseline),
+        "--json", str(verdict), "--regression-pct", "not-a-number",
+    ])
+    assert rc == 2
+    assert baseline.read_bytes() == before
+    assert json.loads(verdict.read_text(encoding="utf-8"))["status"] == "failed"

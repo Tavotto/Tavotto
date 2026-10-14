@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 for _stream in (sys.stdout, sys.stderr):
@@ -247,10 +248,20 @@ def compare(current: dict, baseline: dict, regression_pct: float = DEFAULT_REGRE
 
 
 def _write(path: Path, value: dict) -> None:
+    """原子替换报告；随机独占临时文件避免误写同名 .tmp 历史采样。
+
+    曾使用固定 <output>.tmp：如果该路径恰好是 baseline 或其软/硬链接，
+    写报告就会先截断只读输入。mkstemp 使用 O_EXCL，写完关闭后再 replace。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-    temp.replace(path)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as writer:
+            json.dump(value, writer, ensure_ascii=False, indent=2)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _print_summary(result: dict) -> None:
@@ -305,6 +316,41 @@ def _same_report_path(a: Path, b: Path) -> bool:
         return False
 
 
+def _protected_parse_positionals(argv: list[str]) -> list[Path]:
+    """从错误的 CLI 中保守提取只读位置输入，不能假设 argv[1:3]。
+
+    argparse 允许选项在位置参数前/中/后出现，--regression-pct 的非法值也
+    会占一个 token。只跳过已知带值选项；不确定的裸 token 一律当输入保护。
+    这样宁可留下旧输出让本次返回 rc=2，也绝不抹掉用户的 current/baseline。
+    """
+    if not argv or argv[0] not in ("compare", "summarize"):
+        return []
+    value_options = (
+        {"--json", "--summary", "--regression-pct"}
+        if argv[0] == "compare"
+        else {"--json"}
+    )
+    protected: list[Path] = []
+    i = 1
+    positional_mode = False
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--" and not positional_mode:
+            positional_mode = True
+            i += 1
+            continue
+        if not positional_mode and arg in value_options:
+            i += 2
+            continue
+        if not positional_mode and any(arg.startswith(key + "=") for key in value_options):
+            i += 1
+            continue
+        if positional_mode or not arg.startswith("-"):
+            protected.append(Path(arg))
+        i += 1
+    return protected
+
+
 def _invalidate_parse_error(argv: list[str]) -> None:
     """argparse 先于运行态抛 SystemExit 时，也必须作废指定位置的旧成功结论。
 
@@ -333,13 +379,9 @@ def _invalidate_parse_error(argv: list[str]) -> None:
             }
             if command == "compare":
                 failed["rows"] = []
-            # 参数语法错误也不能借“失败报告”覆盖只读的 current / baseline。
-            # argparse 尚未确认输入合法，位置参数只作为保守的保护集合。
-            protected = []
-            if command == "compare":
-                protected = [Path(token) for token in argv[1:3] if not token.startswith("-")]
-            elif command == "summarize" and len(argv) > 1 and not argv[1].startswith("-"):
-                protected = [Path(argv[1])]
+            # 不能按 argv[1:3] 读取：argparse 允许 option 和 positional
+            # 交错，也要保护那些出现在非法 --regression-pct 后面的基线。
+            protected = _protected_parse_positionals(argv)
 
             def can_write(path: Path | None) -> bool:
                 return path is not None and not any(
