@@ -325,6 +325,13 @@ def _redact_pem(text: str) -> str:
     return "".join(out)
 
 
+def _nl(text: str) -> str:
+    """换行规范化：`\\r\\n` 和单独的 `\\r` 都变成 `\\n`。**所有按行处理的清理与分类（traceback 块、帧行、YAML 块缩进、
+    「抹到行尾」、PEM、tokenize）只在入口做这一次**，不在每个正则里各补 `\\r?`：Windows 日志是 CRLF，行尾带 `\\r`
+    会让帧行 / 块头匹配失败，源码就漏出去了。输出一律 `\\n`。"""
+    return text.replace("\r\n", "\n").replace("\r", "\n") if "\r" in text else text
+
+
 _PROVIDER_TOKEN = re.compile(
     r"\b(?:AKIA[0-9A-Z]{16}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b"
 )
@@ -624,7 +631,7 @@ class Scrubber:
         try:
             parsed = json.loads(text)
         except ValueError:
-            return self.text(text)
+            return self.text(_nl(text))
         if not isinstance(parsed, (dict, list)):
             return self.text(text)
         return json.dumps(self.obj(parsed), ensure_ascii=False, indent=1)
@@ -688,7 +695,7 @@ class Scrubber:
         return None
 
     def text(self, text: str) -> str:
-        text = self._kv_all(text)
+        text = self._kv_all(_nl(text))
         text = _BEARER.sub(lambda m: f"{m.group(1)} {_REDACTED}", text)
         text = _redact_userinfo(text)
         text = _JWT.sub(_REDACTED, text)
@@ -761,6 +768,7 @@ def strip_source_lines(text: str, *, uncertain_start: bool = False) -> str:
     **顺序纪律**：任何截断（`_cap_middle`、头尾截取、按份额截、按字节读尾巴）都必须发生在剥离**之后**——
     截断点落在帧里、省略标记又不缩进，会让剥离器退出帧模式，后缀里的源码就漏出来了。
     """
+    text = _nl(text)
     out: list[str] = []
     in_frames = uncertain_start  # True：正在读帧——缩进的行不是帧就是用户代码
     for line in text.split("\n"):
@@ -845,7 +853,7 @@ def _tail_text(path: Path, limit: int) -> tuple[str, int, bool] | None:
         return None
     raw, size = got
     mid = size > limit
-    text = raw.decode("utf-8", errors="replace")
+    text = _nl(raw.decode("utf-8", errors="replace"))
     if mid:
         nl = text.find("\n")
         text = text[nl + 1 :] if nl >= 0 else ""
@@ -2291,6 +2299,7 @@ def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     """脚本源码的脱敏。可执行代码用 `code`（源码模式：`token = self._next()` 原样）；**注释和字符串字面量里**
     的 `key=value` 是明文，必须用 `full`（完整 KV 替换）——`# api_key=REAL_SECRET` 不带引号，源码模式会放过它。
     非 .py 一律 `full`；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
+    text = _nl(text)
     if not rel.lower().endswith(".py"):
         return full.text(text)
     text = _redact_pem(text)  # 多行的块先整体换掉：注释里的 PEM 每行是一个独立的 COMMENT token

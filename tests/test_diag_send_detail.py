@@ -1948,7 +1948,7 @@ class TestStripBeforeTruncate:
 
     def test_tail_text_drops_the_partial_first_line(self, tmp_path):
         f = tmp_path / "t.log"
-        f.write_text("line one\nline two\nline three\n", encoding="utf-8")
+        f.write_bytes(b"line one\nline two\nline three\n")  # 字节写，不吃平台换行转换
         text, size, mid = diagdetail._tail_text(f, 14)
         assert mid and text == "line three\n"
         text, size, mid = diagdetail._tail_text(f, 1000)
@@ -3352,3 +3352,87 @@ class TestNumbersUnderSecretKeys:
             assert s.text(f"token={v} x") == f"token={v} x", v
         assert s.text("token= ") == "token= "
         assert s.obj({"password": ""}) == {"password": ""}
+
+
+NEWLINES = pytest.mark.parametrize("nl", ["\n", "\r\n", "\r"], ids=["lf", "crlf", "cr"])
+
+
+def _nl(text: str, nl: str) -> str:
+    return text.replace("\n", nl)
+
+
+class TestLineEndingsAreNormalisedAtTheEntrance:
+    """Windows 的日志 / 脚本是 CRLF（老 Mac 是单独 CR）：所有按行处理的清理与分类在入口规范成 `\\n`，
+    在 macOS 上也能复现 Windows 的行为。"""
+
+    TB = (
+        "2026-10-13 10:00:00,000 ERROR tavotto: x\n"
+        "Traceback (most recent call last):\n"
+        '  File "/p/a.py", line 3, in f\n'
+        "    LOR_SYNTAX_SRC(password_arg)\n"
+        "    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
+        "ValueError: x\n"
+        'warn.py:7: UserWarning: w\n  WARN_SRC = 1\n  File "/p/b.py", line 2\n    x = (PLAIN_SYNTAX_SRC\n         ^\n'
+        "SyntaxError: '(' was never closed\n"
+    )
+
+    @NEWLINES
+    def test_traceback_source_is_stripped(self, nl):
+        out = diagdetail.strip_source_lines(_nl(self.TB, nl))
+        assert "_SRC" not in out and "password_arg" not in out
+        assert "File" in out and "ValueError: x" in out and "\r" not in out
+
+    @NEWLINES
+    def test_uncertain_start_tail_is_stripped(self, nl):
+        out = diagdetail.strip_source_lines(
+            _nl("    PARTIAL_SRC()\n    ^^^^\nValueError: y\n", nl), uncertain_start=True
+        )
+        assert "PARTIAL_SRC" not in out and "ValueError: y" in out
+
+    @NEWLINES
+    def test_tail_text_drops_the_partial_first_line_and_has_no_cr(self, tmp_path, nl):
+        f = tmp_path / "t.log"
+        f.write_bytes(_nl("line one\nline two\nline three\n", nl).encode())
+        limit = len(_nl("ne two\nline three\n", nl))
+        text, _size, mid = diagdetail._tail_text(f, limit)
+        assert mid and text == "line three\n"
+        text, _size, mid = diagdetail._tail_text(f, 1000)
+        assert not mid and text == "line one\nline two\nline three\n"
+
+    @NEWLINES
+    def test_end_to_end_in_the_log_tails(self, client, world, monkeypatch, nl):
+        tmp = world["tmp"]
+        (tmp / "crlf.log").write_bytes(_nl(self.TB, nl).encode())
+        monkeypatch.setattr(diagnostics, "_app_log_path", lambda: tmp / "crlf.log")
+        (tmp / "sidecar.log").write_bytes(_nl(self.TB, nl).encode())
+        _prep, z = _prepare(client)
+        for name, text in _texts(z).items():
+            assert "_SRC" not in text, name
+
+    @NEWLINES
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "token: |\n  S1\n\n  S2\nsibling: keep_me\n",
+            "token:\n  - S1\n  - S2\nsibling: keep_me\n",
+            "token='''S1\nS2'''\nsibling: keep_me\n",
+            "token=[\n  'S1',\n  'S2',\n]\nsibling: keep_me\n",
+            "-----BEGIN PRIVATE KEY-----\nS1\nS2\n-----END PRIVATE KEY-----\nsibling: keep_me\n",
+            "password=S1 tail\nsibling: keep_me\n",
+            "Authorization: Bearer S1abcdefgh\nsibling: keep_me\n",
+        ],
+    )
+    def test_secret_values_across_lines(self, nl, body):
+        out = diagdetail.Scrubber().text(_nl(body, nl))
+        assert not re.search(r"S\d", out), repr(out)
+        assert "sibling: keep_me" in out and "\r" not in out
+
+    @NEWLINES
+    def test_script_comments_and_strings(self, nl):
+        src = _nl(
+            '# api_key=S1real\nx = """\npassword: S2real\n"""\ntoken = "S3real"\nkeep = 1\n', nl
+        )
+        out = diagdetail.scrub_script(
+            src, "a.py", diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        )
+        assert not re.search(r"S\dreal", out) and "keep = 1" in out
