@@ -466,3 +466,32 @@ def test_the_desktop_window_run_when_ready_is_routed_to_native(
     final = _settle(client, report["session_id"])
     assert len(native["calls"]) == 1 and fake_pool["build_calls"] == 0
     assert [h["profile"] for h in final["attempt_history"]] == ["native"]
+
+
+def test_an_explicit_safe_request_is_never_overridden_by_the_router(
+    client, tmp_path, fake_pool, native, sessions
+):
+    """Codex #1034 r2 P1：请求里显式写了 `execution: "safe"` 就是 safe；只有省略才是 auto。"""
+    _setup(client, tmp_path, READBACK)
+    report = client.post(SESSIONS, json={"script": "fig.py", "execution": "safe"}).get_json()
+    assert report["plan"].get("route") is None
+    fake_pool["error"] = BLOCKED
+    resp = client.post(
+        f"{SESSIONS}/{report['session_id']}/actions",
+        json={
+            "action_id": _action(report, "run")["id"],
+            "expected_config_revision": report["config_revision"],
+        },
+    )
+    assert resp.status_code == 202, resp.get_json()
+    final = _settle(client, report["session_id"])
+    assert fake_pool["build_calls"] == 1
+    assert final["attempt_history"][0]["profile"] == "safe"
+
+
+def test_explicit_safe_and_omitted_execution_are_different_sessions():
+    base = {"kind": "script", "script": "fig.py"}
+    assert prepsession.target_key({**base, "execution": "safe"}) != prepsession.target_key(base)
+    assert prepsession.target_key({**base, "execution": "safe"}) != prepsession.target_key(
+        {**base, "execution": "auto"}
+    )

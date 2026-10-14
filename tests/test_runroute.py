@@ -630,3 +630,190 @@ def test_every_route_reason_and_rule_is_in_a_closed_set():
         """
     ).evidence:
         assert e["rule"] in runroute.RULES
+
+
+# ---------------------------------------------------------------- Codex #1034 r2：接收者与可达性
+READ_BACK = '\nopen("x.png", "rb").read()\n'
+
+NOT_MATPLOTLIB_SAVEFIG = [
+    (
+        "custom_object_method",
+        """
+        class Report:
+            def savefig(self, p): ...
+        report = Report()
+        report.savefig("x.png")
+        """,
+    ),
+    (
+        "unresolved_parameter_receiver",
+        """
+        def go(report):
+            report.savefig("x.png")
+            open("x.png", "rb").read()
+        go(None)
+        """,
+    ),
+    (
+        "user_defined_bare_savefig",
+        """
+        def savefig(p): ...
+        savefig("x.png")
+        """,
+    ),
+    (
+        "import_alias_rebound_to_another_module",
+        """
+        import mymod as plt
+        plt.savefig("x.png")
+        """,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "name,body", NOT_MATPLOTLIB_SAVEFIG, ids=[c[0] for c in NOT_MATPLOTLIB_SAVEFIG]
+)
+def test_savefig_on_something_that_is_not_matplotlib_never_goes_native(name, body):
+    route = _route(textwrap.dedent(body) + READ_BACK)
+    assert route.execution == "safe", route.public()
+    assert route.confidence == runroute.CONFIDENCE_MEDIUM and "R1_unproven" in _rules(route)
+
+
+MATPLOTLIB_SAVEFIG = [
+    ("plt_savefig", "import matplotlib.pyplot as plt\nplt.savefig('x.png')"),
+    ("from_import_pyplot", "from matplotlib import pyplot as p\np.savefig('x.png')"),
+    ("from_import_function", "from matplotlib.pyplot import savefig\nsavefig('x.png')"),
+    ("figure_call", "import matplotlib.pyplot as plt\nf = plt.figure()\nf.savefig('x.png')"),
+    (
+        "subplots_unpack",
+        "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nfig.savefig('x.png')",
+    ),
+    ("gcf", "import matplotlib.pyplot as plt\nplt.gcf().savefig('x.png')"),
+    ("figure_class", "from matplotlib.figure import Figure\nf = Figure()\nf.savefig('x.png')"),
+]
+
+
+@pytest.mark.parametrize("name,body", MATPLOTLIB_SAVEFIG, ids=[c[0] for c in MATPLOTLIB_SAVEFIG])
+def test_recognized_matplotlib_savefig_receivers_still_go_native(name, body):
+    route = _route(textwrap.dedent(body) + READ_BACK)
+    assert route.execution == "native" and "R1" in _rules(route), route.public()
+
+
+def test_a_reassigned_figure_name_is_not_a_recognized_receiver():
+    route = _route(
+        """
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        fig = make_report()
+        fig.savefig("x.png")
+        """.replace("\n        ", "\n")
+        + READ_BACK
+    )
+    assert route.execution == "safe" and "R1_unproven" in _rules(route)
+
+
+UNREACHED = [
+    (
+        "unused_helper",
+        """
+        import matplotlib.pyplot as plt
+        def helper():
+            plt.savefig("x.png")
+            open("x.png", "rb").read()
+        """,
+    ),
+    (
+        "never_called_main",
+        """
+        import matplotlib.pyplot as plt
+        def main():
+            plt.savefig("x.png")
+            open("x.png", "rb").read()
+        if __name__ == "__main__":
+            pass
+        """,
+    ),
+    (
+        "method_never_called_by_name",
+        """
+        import matplotlib.pyplot as plt
+        class A:
+            def run(self):
+                plt.savefig("x.png")
+                open("x.png", "rb").read()
+        """,
+    ),
+    (
+        "replace_chain_in_unused_function",
+        """
+        import os
+        def helper():
+            open("c.tmp", "w").write("1")
+            os.replace("c.tmp", "c.csv")
+            open("c.csv").read()
+        """,
+    ),
+]
+
+
+@pytest.mark.parametrize("name,body", UNREACHED, ids=[c[0] for c in UNREACHED])
+def test_evidence_only_inside_functions_the_module_never_calls_is_not_high(name, body):
+    route = _route(body, cwd=runroute.CWD_PROJECT)
+    assert route.execution == "safe", route.public()
+    assert route.confidence == runroute.CONFIDENCE_MEDIUM
+
+
+REACHED = [
+    (
+        "called_at_module_level",
+        """
+        import matplotlib.pyplot as plt
+        def helper():
+            plt.savefig("x.png")
+            open("x.png", "rb").read()
+        helper()
+        """,
+    ),
+    (
+        "called_under_main_guard",
+        """
+        import matplotlib.pyplot as plt
+        def main():
+            plt.savefig("x.png")
+            open("x.png", "rb").read()
+        if __name__ == "__main__":
+            main()
+        """,
+    ),
+    (
+        "transitively_called",
+        """
+        import matplotlib.pyplot as plt
+        def inner():
+            plt.savefig("x.png")
+            open("x.png", "rb").read()
+        def outer():
+            inner()
+        outer()
+        """,
+    ),
+    (
+        "nested_function_called_by_parent",
+        """
+        import matplotlib.pyplot as plt
+        def outer():
+            def inner():
+                plt.savefig("x.png")
+                open("x.png", "rb").read()
+            inner()
+        outer()
+        """,
+    ),
+]
+
+
+@pytest.mark.parametrize("name,body", REACHED, ids=[c[0] for c in REACHED])
+def test_functions_the_module_calls_keep_their_evidence_high(name, body):
+    route = _route(body)
+    assert route.execution == "native" and "R1" in _rules(route), route.public()

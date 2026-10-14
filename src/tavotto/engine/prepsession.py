@@ -938,9 +938,10 @@ def target_key(target: dict) -> str:
     # safe 计划。非 safe 加**前缀**（不是后缀）：素材 id 是不透明的、本身可能以任何串结尾，后缀会撞上别的
     # safe key；原 key 恒以 `script:` / `asset:` 开头，`<执行语义>|` 前缀的 key 因此不可能等于任何 safe key。
     # safe 的 key 与此前逐字节相同（现有会话与用例不失效）
-    execution = target.get("execution") or execspec.PROFILE_SAFE
-    # `auto`（V2 PR2）是「让路由挑」：会话键与省略时相同（路由的结论在计划里，`plan.execution` 才是解析后的语义）
-    if execution in (execspec.PROFILE_SAFE, runroute.EXECUTION_AUTO):
+    execution = target.get("execution") or runroute.EXECUTION_AUTO
+    # `auto`（V2 PR2）是「让路由挑」，与省略同键（路由的结论在计划里，`plan.execution` 才是解析后的语义）；
+    # 显式 safe / native 是调用方的明确选择，各有各的会话（否则显式 safe 会复用路由选了 native 的会话）
+    if execution == runroute.EXECUTION_AUTO:
         return key
     return f"{execution}|{key}"
 

@@ -63,7 +63,17 @@ CONFIDENCES = (CONFIDENCE_HIGH, CONFIDENCE_MEDIUM, CONFIDENCE_LOW)
 
 RULE_R1, RULE_R2, RULE_R3, RULE_R3_PARTIAL, RULE_R4 = "R1", "R2", "R3", "R3_partial", "R4"
 RULE_R1_CROSS_SCOPE = "R1_cross_scope"
-RULES = (RULE_R1, RULE_R1_CROSS_SCOPE, RULE_R2, RULE_R3, RULE_R3_PARTIAL, RULE_R4)
+#: 证据成立的前提没证明：`savefig` 的接收者解析不到 matplotlib，或证据只在模块从没调用到的函数体里（只记，不直达）
+RULE_R1_UNPROVEN = "R1_unproven"
+RULES = (
+    RULE_R1,
+    RULE_R1_CROSS_SCOPE,
+    RULE_R1_UNPROVEN,
+    RULE_R2,
+    RULE_R3,
+    RULE_R3_PARTIAL,
+    RULE_R4,
+)
 
 #: 与 `worker.REQUIRED_EXECUTION_FILE_SEMANTICS`（ADR 0003 的 `error.required_execution`）同一个词：路由原因与运行期错误
 #: 是一套话术。worker 不在 Flask 进程里 import，这里镜像字符串，`tests/test_runroute.py` 钉相等。
@@ -200,6 +210,8 @@ class Event:
     branches: tuple[tuple[int, int], ...]
     path: PathVal | None  # 主路径（move 的源）；折叠不出 = None（动态）
     dest: PathVal | None = None  # move 的目的
+    #: savefig 的接收者确实解析到 matplotlib（`plt.savefig` / 来自 `plt.figure()` 等的 Figure）；其它事件恒 True
+    certain: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -210,18 +222,25 @@ class ScriptFacts:
     too_large: bool = False
     events: tuple[Event, ...] = ()
     parse_ms: float = 0.0
+    #: 模块执行时会真走到的作用域（模块顶层、类体，以及被可达代码按名字调用到的函数体）。其余作用域里的证据不够直达 native
+    live_scopes: frozenset[int] = frozenset()
 
 
 _EMPTY = ScriptFacts(parsed=False)
 
 
 class _Scope:
-    __slots__ = ("node", "parent", "assigns", "poisoned", "ident")
+    __slots__ = ("node", "parent", "assigns", "poisoned", "ident", "poison_n", "unpacks", "defs")
 
     def __init__(self, node, parent, ident: int) -> None:
         self.node, self.parent, self.ident = node, parent, ident
         self.assigns: dict[str, list[ast.expr]] = {}
         self.poisoned: set[str] = set()
+        self.poison_n: dict[str, int] = {}
+        #: `fig, ax = call(...)` 的元组解包：名字 → (调用表达式, 下标)
+        self.unpacks: dict[str, tuple[ast.expr, int]] = {}
+        #: 本作用域里 `def` 出来的函数：名字 → 函数作用域（同名定义多次 = None）
+        self.defs: dict[str, "_Scope | None"] = {}
 
 
 def _target_names(target: ast.AST) -> list[str]:
@@ -238,6 +257,8 @@ class _Collector:
         self.scopes[id(tree)] = self.module
         self.aliases: dict[str, str | None] = {}
         self.events: list[Event] = []
+        #: 每个作用域里按名字发生的调用：(调用方作用域, 名字)，供可达性推导
+        self.calls: list[tuple[_Scope, str]] = []
         #: `with open(...) as fh` 绑出来的文件句柄名：把它交给 `savefig` 不是动态路径
         self.handles: set[str] = set()
         self._next = 1
@@ -249,6 +270,8 @@ class _Collector:
             self._bind(child, scope)
 
     def _poison(self, scope: _Scope, names) -> None:
+        for n in names:
+            scope.poison_n[n] = scope.poison_n.get(n, 0) + 1
         scope.poisoned.update(names)
 
     def _bind(self, node: ast.AST, scope: _Scope) -> None:
@@ -257,6 +280,7 @@ class _Collector:
             inner = _Scope(node, scope, self._next)
             self._next += 1
             self.scopes[id(node)] = inner
+            scope.defs[node.name] = None if node.name in scope.defs else inner
             args = node.args
             names = [a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)]
             names += [a.arg for a in (args.vararg, args.kwarg) if a is not None]
@@ -294,6 +318,14 @@ class _Collector:
                 for t, v in zip(tgt.elts, node.value.elts, strict=True):
                     scope.assigns.setdefault(t.id, []).append(v)
             else:
+                if (
+                    isinstance(tgt, (ast.Tuple, ast.List))
+                    and isinstance(node.value, ast.Call)
+                    and not any(isinstance(t, ast.Starred) for t in tgt.elts)
+                ):
+                    for i, t in enumerate(tgt.elts):
+                        if isinstance(t, ast.Name):
+                            scope.unpacks[t.id] = (node.value, i)
                 for t in node.targets:
                     self._poison(scope, _target_names(t))
         elif isinstance(node, ast.AnnAssign):
@@ -586,11 +618,41 @@ class _Collector:
                     self._walk(stmt, scope, (*branches, (id(node), i)))
             return
         if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                self.calls.append((scope, node.func.id))
             self._call(node, scope, branches)
         for child in ast.iter_child_nodes(node):
             self._walk(child, scope, branches)
 
-    def _add(self, kind, op, node, scope, branches, path, dest=None) -> None:
+    def live_scopes(self) -> frozenset[int]:
+        """模块执行真会走到的作用域：模块、类体（定义时执行）、被可达作用域按名字调用到的函数。"""
+        live: set[int] = {self.module.ident}
+        for sc in self.scopes.values():
+            if isinstance(sc.node, ast.ClassDef) and sc.parent is not None:
+                pass  # 类体随其父作用域是否可达，下面迭代里处理
+        changed = True
+        while changed:
+            changed = False
+            for sc in self.scopes.values():
+                if sc.ident not in live and isinstance(sc.node, ast.ClassDef):
+                    if sc.parent is not None and sc.parent.ident in live:
+                        live.add(sc.ident)
+                        changed = True
+            for caller, name in self.calls:
+                if caller.ident not in live:
+                    continue
+                s: _Scope | None = caller
+                while s is not None:
+                    if name in s.defs:
+                        target = s.defs[name]
+                        if target is not None and target.ident not in live:
+                            live.add(target.ident)
+                            changed = True
+                        break
+                    s = s.parent
+        return frozenset(live)
+
+    def _add(self, kind, op, node, scope, branches, path, dest=None, certain=True) -> None:
         self.events.append(
             Event(
                 kind=kind,
@@ -601,6 +663,7 @@ class _Collector:
                 branches=branches,
                 path=path,
                 dest=dest,
+                certain=certain,
             )
         )
 
@@ -635,6 +698,41 @@ class _Collector:
             return bool(vals) and self._file_like(vals[0], scope)
         return False
 
+    _FIGURE_MAKERS = frozenset(
+        {"matplotlib.pyplot.figure", "matplotlib.pyplot.gcf", "matplotlib.figure.Figure"}
+    )
+
+    def _is_figure(self, node: ast.AST | None, scope: _Scope, depth: int = 0) -> bool:
+        """表达式确实是一个 matplotlib Figure：`plt.figure()` / `plt.gcf()` / `Figure()`，或由它们（单次）赋值 /
+        `fig, ax = plt.subplots()` 解包得来的名字。解析不到 = False（不猜）。"""
+        if node is None or depth > _MAX_DEPTH:
+            return False
+        if isinstance(node, ast.Call):
+            return self.qual(node.func) in self._FIGURE_MAKERS
+        if isinstance(node, ast.Name):
+            vals = self._lookup(node.id, scope)
+            if vals:
+                return self._is_figure(vals[0], scope, depth + 1)
+            s: _Scope | None = scope
+            while s is not None:
+                if node.id in s.poisoned or node.id in s.assigns:
+                    pair = s.unpacks.get(node.id)
+                    return (
+                        pair is not None
+                        and s.poison_n.get(node.id) == 1
+                        and node.id not in s.assigns
+                        and pair[1] == 0
+                        and isinstance(pair[0], ast.Call)
+                        and self.qual(pair[0].func) == "matplotlib.pyplot.subplots"
+                    )
+                s = s.parent
+        return False
+
+    def _savefig_is_matplotlib(self, func: ast.AST, scope: _Scope) -> bool:
+        if self.qual(func) == "matplotlib.pyplot.savefig":
+            return True
+        return isinstance(func, ast.Attribute) and self._is_figure(func.value, scope)
+
     def _call(self, node: ast.Call, scope: _Scope, branches: tuple) -> None:
         func = node.func
         q = self.qual(func)
@@ -650,7 +748,15 @@ class _Collector:
         if tail == "savefig":
             target = self._arg(node, 0, "fname")
             if target is not None and not self._file_like(target, scope):
-                at(_E_SAVEFIG, "savefig", self.value(target, scope))
+                self._add(
+                    _E_SAVEFIG,
+                    "savefig",
+                    node,
+                    scope,
+                    branches,
+                    self.value(target, scope),
+                    certain=self._savefig_is_matplotlib(func, scope),
+                )
             return
         if q in _MOVE_FUNCS:
             at(
@@ -733,6 +839,7 @@ def _collect(source: str) -> ScriptFacts:
     return ScriptFacts(
         parsed=True,
         events=tuple(sorted(col.events, key=lambda e: (e.line, e.col))),
+        live_scopes=col.live_scopes(),
         parse_ms=(time.perf_counter() - started) * 1000.0,
     )
 
@@ -912,9 +1019,14 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
                 continue
             same_scope = r.scope == s.scope
             if r.kind == _E_READ:
-                rule = RULE_R1 if same_scope else RULE_R1_CROSS_SCOPE
-                if same_scope:
+                if not same_scope:
+                    rule = RULE_R1_CROSS_SCOPE
+                elif s.certain and s.scope in facts.live_scopes:
+                    rule = RULE_R1
                     high_r1 = True
+                else:
+                    # 接收者解析不到 matplotlib（用户对象 / 同名函数 / 参数），或证据在模块没调用到的函数体里：只记，不直达
+                    rule = RULE_R1_UNPROVEN
             else:
                 rule = RULE_R2
             if (rule, s.line, r.line) not in seen:
@@ -930,7 +1042,11 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
         if not inside:
             continue
         wrote = any(
-            wk == mk and x.kind in (_E_WRITE, _E_SAVEFIG) and x.scope == m.scope and _after(m, x)
+            wk == mk
+            and x.kind in (_E_WRITE, _E_SAVEFIG)
+            and x.certain
+            and x.scope == m.scope
+            and _after(m, x)
             for x, wk in keyed
         )
         read_line = None
@@ -944,7 +1060,7 @@ def _static(facts: ScriptFacts, w: _Where) -> tuple[list[dict], int, bool, bool]
                 ):
                     read_line = r.line
                     break
-        if wrote and read_line is not None:
+        if wrote and read_line is not None and m.scope in facts.live_scopes:
             ev(RULE_R3, KIND_RENAME, m.op, m.line, read_line)
             high_r3 = True
         else:
