@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import app as m, security
-from tavotto.engine import preparation
+from tavotto.engine import pool as engine_pool, preparation
 from tavotto.engine.session_client import AUTH_HEADER
 from test_execution_fallback import BLOCKED, _history  # noqa: F401
 from test_preparation_api import (  # noqa: F401
@@ -40,7 +40,7 @@ NONCE, SECRET = "nonce-origin-test", "secret-origin-test"
 
 
 @pytest.fixture
-def native(monkeypatch):
+def native(monkeypatch, fake_pool, tmp_path):
     """只数调用的 native runner 替身；**不**改 `_desktop_initiated`（走真判据）。"""
     box = {"calls": []}
 
@@ -49,6 +49,12 @@ def native(monkeypatch):
         return _FakeWorker(Path(pl.project_root)), _build_resp(), True
 
     monkeypatch.setattr(m, "_native_preparation_runner", runner)
+    # 假解释器必须是**本平台的绝对路径**：桌面拥有的 native 计划（`execspec.desktop_native_spec`）用 `os.path.isabs`
+    # 校验解释器与 cwd，Windows 上 `/envs/fake/bin/python` 不是绝对路径，回退计划就算不出来
+    fake_python = str(tmp_path / "envs" / "fake" / "bin" / "python")
+    monkeypatch.setattr(
+        engine_pool, "resolve_worker_python", lambda root=None, **kw: (fake_python, "system")
+    )
     return box
 
 
