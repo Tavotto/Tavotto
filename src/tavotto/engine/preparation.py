@@ -216,7 +216,7 @@ class PreparationPlan:
     retry_of: str | None = None
     retry_cause: str = ""
     retry_changed: tuple[str, ...] = ()
-    #: 运行前路由的结果（V2 PR2，ADR 0128）：只有调用方给了 `execution="auto"` 才有（`runroute.Route.public()`：闭集原因 /
+    #: 运行前路由的结果（V2 PR2，ADR 0129）：只有调用方给了 `execution="auto"` 才有（`runroute.Route.public()`：闭集原因 /
     #: 置信度 / 命中规则 / 行号 / 耗时，不含路径与源码）；显式 safe / native 恒 None。**不入语义指纹**（`execution` 已在里面）
     route: dict | None = None
     #: 登记那一刻项目的关闭代次（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章）。启动时带给注册表：
@@ -480,7 +480,7 @@ def plan_for(
         )
     route = None
     if execution == runroute.EXECUTION_AUTO:
-        # 运行前路由（V2 PR2，ADR 0128）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
+        # 运行前路由（V2 PR2，ADR 0129）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
         execution = execspec.PROFILE_SAFE
         if script is not None and target == TARGET_SCRIPT:
             route = _route_of(root, script, python=python, source=source, decision=decision)

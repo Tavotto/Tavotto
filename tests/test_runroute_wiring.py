@@ -1,4 +1,4 @@
-"""V2 PR2：运行前路由接进桌面准备会话（ADR 0128）——**假 pool、假 native runner**。
+"""V2 PR2：运行前路由接进桌面准备会话（ADR 0129）——**假 pool、假 native runner**。
 
 验接线：桌面准备会话不指定 `execution` 时由 `runroute` 在 safe / native 之间挑；高置信读回直达 native（safe 一次都不跑）；
 普通绘图走 safe；`safe_only` / 运维开关 / 上次 native 成功各自的优先级；显式 `execution` 与 CLI / MCP 路径不经路由。

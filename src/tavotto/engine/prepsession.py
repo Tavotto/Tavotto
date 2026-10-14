@@ -1200,7 +1200,7 @@ class SessionService:
             original_artifact=target.get("original_artifact"),
             original_path=target.get("original_path"),
             target=target["kind"],
-            # 桌面用户发起的脚本运行：不指定执行语义时让运行前路由挑 safe / native（V2 PR2，ADR 0128）；
+            # 桌面用户发起的脚本运行：不指定执行语义时让运行前路由挑 safe / native（V2 PR2，ADR 0129）；
             # 素材目标（已知的一张图）没有「第一次运行」的路由问题，仍是 safe
             execution=target.get("execution")
             or (
@@ -1611,7 +1611,7 @@ class SessionService:
             )
         base = sess.plan
         if base.route and base.execution == execspec.PROFILE_NATIVE and not desktop:
-            # 路由（ADR 0128）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
+            # 路由（ADR 0129）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
             # 完全一致，非桌面来源不能被路由到 native。检查时拿不到来源，所以在认领这一刻按 safe 重新规划（只读）
             safe = self._plan_of(
                 sess.project_id,

@@ -1,4 +1,4 @@
-"""V2 PR2：运行前路由 `runroute`（ADR 0128）的规则向量、优先级与同源钉。
+"""V2 PR2：运行前路由 `runroute`（ADR 0129）的规则向量、优先级与同源钉。
 
 向量表驱动：脚本片段 → 期望的路由 / 命中规则。每条「高置信直达 native」的向量对应一个运行期会被拦的形状
 （`BlockedFileOps` 的观察：`tests/test_runroute_consistency.py` 用真 safe worker 逐条核对静态与运行期不分叉）。
@@ -592,7 +592,7 @@ def test_a_large_script_is_analyzed_in_milliseconds_not_seconds():
     )
     start = runroute.time.perf_counter()
     runroute.decide(runroute.facts_of(body), cwd_mode="sandbox", project_root=ROOT, script=SCRIPT)
-    assert runroute.time.perf_counter() - start < 5.0  # 上限护栏，不是基准；基准数字记在 ADR 0128
+    assert runroute.time.perf_counter() - start < 5.0  # 上限护栏，不是基准；基准数字记在 ADR 0129
 
 
 # ---------------------------------------------------------------- 同源钉
