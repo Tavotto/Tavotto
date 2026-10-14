@@ -674,7 +674,7 @@ def start(
         },
     )
     # launch_id 复用：会话 id 也是租约键，后者会被前者的回调放掉。原子占位，先于租约与 spawn 拒绝
-    registry.reserve(launch.launch_id)
+    registry.reserve(launch.launch_id, spec.project_root)
     try:
         envlease.acquire_native(spec.interpreter, session_id)  # 先于一切：拿不到就一行都不跑
     except BaseException:

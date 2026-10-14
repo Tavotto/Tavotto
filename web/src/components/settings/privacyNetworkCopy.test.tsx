@@ -64,3 +64,20 @@ it.each(['en-US', 'zh-CN'] as const)('discloses package and assistant networking
   }
   expect(fetch).not.toHaveBeenCalled()
 })
+
+// 「支持 Tavotto」只是一条去官网支持页的链接：语言跟着界面走，新窗口打开，页内不发请求
+it.each([
+  ['en-US', 'https://www.tavotto.com/support/', 'Support Tavotto'],
+  ['zh-CN', 'https://www.tavotto.com/zh/support/', '支持 Tavotto'],
+] as const)('links the About page to the website support page in %s', async (locale, href, label) => {
+  initI18n(locale)
+  useUpdateStore.setState({
+    status: { current: '0.17.0', auto_check: true, desktop: false, repo_url: '', releases_url: '' } as never,
+    desktopChecked: true, desktopPhase: 'idle', desktopUpdate: null,
+  })
+  await act(async () => { root.render(<TooltipProvider><PrivacyAboutSettings /></TooltipProvider>) })
+  const link = host.querySelector<HTMLAnchorElement>('[data-about-support]')!
+  expect(link.getAttribute('href')).toBe(href)
+  expect(link.getAttribute('target')).toBe('_blank')
+  expect(link.textContent).toBe(label)
+})
