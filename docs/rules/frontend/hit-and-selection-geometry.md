@@ -142,12 +142,12 @@
   构造唯一出处 `lib/snapFeedback.feedbackFor`：`self` = 被拖元素**吸附后**此刻的框（图内拖动；⇧ 锁向没被
   采用的轴不给；子图缩放手柄 = 调用方钳位后的最终框，所以 `axesResizeSnapper.report(rect)` 要等钳位完才发），
   `target` 仅当胜出线来自**别的面板**且是子图 / 色条 / 图例等元素（带 `rect`，出身不是 frame / figure /
-  page / guide / grid）时给对方框。⌘ / Ctrl、快速编辑、旋转面板没有反馈；画布对象平移与非等比缩放、端点拖动
+  page / guide / grid）时给对方框。⌘ / Ctrl、旋转面板没有反馈；快速编辑里自身反馈照常显示（本图线、参考线吸上时同样有用），只是没有跨图候选，所以不会有对方框；画布对象平移与非等比缩放、端点拖动
   不给反馈（`setSnap` 不带第三参 = 清空）。绘制在 `OverlaySvg.SnapFeedbackMark`。
   看护：`lib/snapNearest.test.ts`（挑法 / 保持 / 不来回跳 / 类型推断）、
   `canvas/inFigureDrag.test.tsx`「图内拖动：吸住后保持」、`lib/crossFigureSnap.test.ts`（候选出线规则与配对）、
   `canvas/crossFigureDrag.test.tsx`（集成：跨图 / 参考线 / 缩放手柄 / 吸附反馈）、
-  `store/interactionStore.test.ts`（反馈生命周期）、`canvas/overlayGrammar.test.tsx`（反馈绘制）、`e2e/cross-figure-align.spec.ts`
+  `store/interactionStore.test.ts`（反馈生命周期）、`canvas/overlayGrammar.test.tsx`（反馈绘制）、`canvas/snapFeedbackOrder.test.tsx`（反馈画在选中框之上、手柄之下——图内编辑态的反馈在 `ElementBoxes` 里画，主层只画画布对象的）、`e2e/cross-figure-align.spec.ts`
   （功能 `figure.cross-figure-align`）。
 - **等比缩放吸附**（ADR 0128 §三）：画布对象锁比例的角柄 / ⇧ 强制等比（含形状）缩放也吸。
   纯函数与候选 / 锚点构造唯一出处 `lib/scaleSnap.ts`，`startResizeDrag` 只接线。

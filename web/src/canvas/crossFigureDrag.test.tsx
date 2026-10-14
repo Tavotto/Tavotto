@@ -484,6 +484,17 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     near(y.target!.h, 0.1 * H)
   })
 
+  it('快速编辑：吸上本图线照样有 self（没有跨图候选，所以没有 target）', async () => {
+    await setup({ p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }) })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    const fb = feedbackAt(0, -(0.12 / PX_Y) + 1)
+    const y = fb.find((f) => f.axis === 'y')!
+    expect(y).toBeTruthy()
+    near(y.self.y, 0.5 * H)
+    expect(fb.every((f) => f.target === undefined)).toBe(true)
+  })
+
   it('松手后反馈消失', async () => {
     await setup({ p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }) })
     startElementDrag(down(), livePanel(), legendP1, layout)

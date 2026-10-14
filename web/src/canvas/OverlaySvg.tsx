@@ -341,9 +341,8 @@ export function OverlaySvg() {
       ))}
 
       {/* 吸附反馈（ADR 0128 §四）：自身所属框虚线 + 吸上的那条边加粗；目标在别的图时对方元素也虚线框出 */}
-      {snapFeedback.map((f, i) => (
-        <SnapFeedbackMark key={`sf-${i}`} f={f} t={t} />
-      ))}
+      {/* 图内编辑态的反馈画在 ElementBoxes 里（选中框之上、手柄之下，否则同坐标的选中实线会盖住虚线框） */}
+      {!elementPanel && snapFeedback.map((f, i) => <SnapFeedbackMark key={`sf-${i}`} f={f} t={t} />)}
 
       {/* 框选：实线框 + 极淡的底（它不是选中，是「正在圈」的范围；虚线只给暂定的东西） */}
       {marquee && (
@@ -792,6 +791,7 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
   const gidDrag = useInteractionStore((s) => s.gidDrag)
   const preview = useInteractionStore((s) => s.elementPreview)
   const arrowPreview = useInteractionStore((s) => s.arrowPreview)
+  const snapFeedback = useInteractionStore((s) => s.snapFeedback)
   const selectedGids = useUiStore((s) => s.selectedGids)
   const selectedGid = selectedGids.at(-1) ?? null
   if (!manifest) return null
@@ -963,6 +963,11 @@ function ElementBoxes({ panel, t }: { panel: PanelObject; t: ViewTransform }) {
             />
           ),
         )}
+
+        {/* 吸附反馈：在选中框之上、手柄之下 */}
+        {snapFeedback.map((f, i) => (
+          <SnapFeedbackMark key={`sf-${i}`} f={f} t={t} />
+        ))}
 
         {memberBoxes.map((r) => (
           <rect
