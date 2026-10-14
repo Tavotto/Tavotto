@@ -988,6 +988,22 @@
         "粘 `http://localhost:5189/…`、一个没人监听的端口、以及 0.17.0 服务器的地址：分别说清「要写 127.0.0.1」「连不上」「服务器上的 Tavotto 太旧」，窗口留在连接页",
         "远程窗口有未保存修改时点红灯：先问再关；主窗口不弹框"
       ]
+    },
+    {
+      "id": "figure.cross-figure-align",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内编辑时，拖元素 / 子图缩放手柄会吸到别的图里的同类元素和页面参考线上",
+        "en-US": "While editing inside a figure, dragging an element or an axes resize handle snaps to the same kind of element in other figures and to page guides"
+      },
+      "entry": "画布 → 双击进图内编辑 → 拖图例 / 轴标题 / 子图（旁边有另一张图时）",
+      "e2e": [
+        {
+          "spec": "cross-figure-align.spec.ts",
+          "title": "图内编辑拖图例靠近另一张图的图例：左边与对方图例左边对齐（页面 mm 误差 < 0.1）"
+        }
+      ]
     }
   ]
 }
