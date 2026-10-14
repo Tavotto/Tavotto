@@ -2503,8 +2503,7 @@ def test_v1_timings_have_the_documented_shape(worker):
     assert all(isinstance(v, float) and v >= 0 for v in t.values())
     assert t["canvas_draw_ms"] > 0 and t["manifest_ms"] > 0
     assert (
-        abs(t["manifest_prepare_ms"] + t["manifest_final_geometry_ms"] - t["manifest_ms"])
-        <= 0.01
+        abs(t["manifest_prepare_ms"] + t["manifest_final_geometry_ms"] - t["manifest_ms"]) <= 0.01
     )
     # ticklabel_memo / vector_text_metrics 上下文收尾在 prepare 里但不属于测量。
     # 不得让漏算了大量时间的分段报告自称完整。

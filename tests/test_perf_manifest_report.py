@@ -94,7 +94,6 @@ def test_foreign_or_empty_report_is_not_pass():
         raise AssertionError("foreign JSON should be rejected")
 
 
-
 def test_manifest_stage_coverage_fails_when_timing_is_mostly_unaccounted_for():
     """即使 prepare + final 等于总量，也不允许 layout/measure 都是假零。"""
     source = report()
