@@ -216,6 +216,9 @@ class PreparationPlan:
     #: 登记那一刻项目的关闭代次（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章）。启动时带给注册表：
     #: 关闭之后才走到起进程的旧计划，即使项目已重新打开也被拒（代次对不上）
     project_epoch: int | None = None
+    #: 登记序号（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章，单调递增）。启动的票据与会话都带着它：
+    #: 同脚本重跑只取消序号**更小**（更早登记）的启动，序号是唯一的先后依据——和准备层的取消同一个顺序
+    launch_order: int | None = None
 
     def to_payload(self) -> dict:
         return {
@@ -679,6 +682,7 @@ class PreparationService:
         self._lock = threading.Lock()
         #: `cancel_project(project_id, script, keep)` 之前调的回调（准备会话登记；纯标记，不取别的锁）
         self.project_cancel_listeners: list = []
+        self._order = 0  # 登记序号计数（`PreparationPlan.launch_order`）
 
     # ---- 登记 ----
     def register(self, plan: PreparationPlan, *, force_rebuild: bool = False) -> PreparationResult:
@@ -702,9 +706,14 @@ class PreparationService:
             )
             result.finished_at = time.time()
             result.status = STATUS_NEEDS_INPUT
+        with self._lock:
+            self._order += 1
+            order = self._order
         if plan.execution == execspec.PROFILE_NATIVE:
             plan = dataclasses.replace(
-                plan, project_epoch=nativesession.REGISTRY.project_epoch(plan.project_root)
+                plan,
+                project_epoch=nativesession.REGISTRY.project_epoch(plan.project_root),
+                launch_order=order,
             )
         with self._lock:
             self._sweep()
@@ -769,6 +778,7 @@ class PreparationService:
             created_at=plan.created_at,
             static_source=plan.static_source,
             project_epoch=plan.project_epoch,
+            launch_order=plan.launch_order,
         )
         entry.plan = fresh
         return fresh

@@ -342,6 +342,8 @@ class NativeSession:
         self.launch_id = str(meta.get("launch_id") or "")
         #: 这条会话是被所有者取消结束的（与脚本自己退出、崩溃分开记）
         self.cancelled = False
+        #: 所属计划的登记序号（桌面拥有的会话由 `desktopproc.start` 盖；终端拥有的恒 None）
+        self.launch_order: int | None = None
         #: 脚本此刻正停在的那一次提问（桌面拥有的才有；事实在后端，不属于某个窗口）。键：`request_id` / `kind` /
         #: `prompt` / `masked` / `ordinal` / `at`。**答复从不存在这里**。
         self._pending_input: dict | None = None
@@ -942,14 +944,18 @@ class StartTicket:
     `shutdown_all` 的快照里要么看得到它（并标 `cancelled`，之后挂所有者的一步会被拒），要么注册表已 closing
     根本领不到——两者之间没有「进程已起、谁也看不见」的窗口。"""
 
-    __slots__ = ("launch_id", "project_root", "script", "owner", "cancelled", "done")
+    __slots__ = ("launch_id", "project_root", "script", "order", "owner", "cancelled", "done")
 
-    def __init__(self, launch_id: str, project_root: str = "", script: str = ""):
+    def __init__(
+        self, launch_id: str, project_root: str = "", script: str = "", order: int | None = None
+    ):
         self.launch_id = launch_id
         #: 这次启动属于哪个项目(项目关闭据此取消在途启动);空 = 不属于任何项目
         self.project_root = project_root
         #: 启动的脚本(`spec.target`,项目相对);同一脚本的重新运行据此取消在途启动
         self.script = script
+        #: 所属计划的登记序号（`PreparationPlan.launch_order`）；None = 未知
+        self.order = order
         self.owner = None
         self.cancelled = False
         #: 启动线程走完（成功或失败收尾都做完）时置位：关停据此等「在途的启动线程」，哪怕它还没 Popen
@@ -1055,13 +1061,18 @@ class NativeSessionRegistry:
             self._reserved.add(launch_id)
 
     def begin_start(
-        self, launch_id: str, project_root: str = "", script: str = "", epoch: int | None = None
+        self,
+        launch_id: str,
+        project_root: str = "",
+        script: str = "",
+        epoch: int | None = None,
+        order: int | None = None,
     ) -> StartTicket:
         """spawn **之前**领在途登记；closing 时拒绝（一行用户代码都没跑）。"""
         with self._lock:
             self._refuse_if_closed(project_root, epoch)
             ticket = StartTicket(
-                launch_id, os.path.realpath(project_root) if project_root else "", script
+                launch_id, os.path.realpath(project_root) if project_root else "", script, order
             )
             self._starting[launch_id] = ticket
             return ticket
@@ -1241,7 +1252,9 @@ class NativeSessionRegistry:
             self._drop_routes(s.session_id)
         return len(victims)
 
-    def cancel_project(self, project_root: str, *, script: str = "") -> int:
+    def cancel_project(
+        self, project_root: str, *, script: str = "", older_than: int | None = None
+    ) -> int:
         """结束这个项目里**桌面拥有的**还活着的会话（项目关闭 / 同一脚本重新运行）；返回结束了几条。
 
         终端拥有的一条不碰（用户的进程，关项目不该带走它，ADR 0021 §8.1）。`script` 非空 = 只结束这个脚本的
@@ -1254,7 +1267,9 @@ class NativeSessionRegistry:
             flying = [
                 t
                 for t in self._starting.values()
-                if t.project_root == root and (not script or t.script == script)
+                if t.project_root == root
+                and (not script or t.script == script)
+                and _is_older(t.order, older_than)
             ]
             for t in flying:
                 t.cancelled = True
@@ -1265,6 +1280,7 @@ class NativeSessionRegistry:
             if s.owned is not None
             and not s.owned.finished
             and (not script or (s.spec is not None and s.spec.target == script))
+            and _is_older(s.launch_order, older_than)
         ]
         threads = [
             threading.Thread(target=_run_quiet, args=(fn,), daemon=True)
@@ -1310,6 +1326,12 @@ class NativeSessionRegistry:
         for t in tickets:
             t.done.wait(max(0.0, deadline - time.monotonic()))
         return len(sessions) + len(tickets)
+
+
+def _is_older(order: int | None, older_than: int | None) -> bool:
+    """重跑的先后判定:没给 `older_than`（关项目等）全部命中；给了就只命中**序号更小**的，序号未知的（终端拥有的、
+    不经准备计划的）不碰——顺序的唯一出处是 `PreparationService` 的登记序号。"""
+    return older_than is None or (order is not None and order < older_than)
 
 
 def _run_quiet(fn) -> None:
