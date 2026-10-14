@@ -132,7 +132,7 @@ export function App() {
         {/* 通知轨也挂在这一层（它自己 absolute 贴底）：引擎退出的修复卡 / 上次没正常退出的提示卡
             不能等用户先打开项目才看得见。Workspace 分支里它在画布角位里，两个分支互斥，不会挂两份 */}
         <div data-picker-notification-host className="pointer-events-none fixed inset-0 z-canvas-chrome">
-          <NotificationRail />
+          <NotificationRail announceRole={null} />
         </div>
       </>
     )

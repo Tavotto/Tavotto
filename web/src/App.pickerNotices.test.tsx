@@ -55,4 +55,19 @@ describe('项目选择页的通知轨（#1040 B1）', () => {
     expect(host.querySelectorAll('[data-engine-exited-card]')).toHaveLength(1)
     expect(host.querySelectorAll('[data-picker-notification-host]')).toHaveLength(1)
   })
+
+  it('选择页那份通知轨不贡献 role=alert（选择页自己的报错是唯一的 alert），assertive 播报区仍在', async () => {
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>,
+      )
+    })
+    const rail = host.querySelector('[data-picker-notification-host]')!
+    expect(rail.querySelectorAll('[role="alert"]')).toHaveLength(0)
+    expect(rail.querySelectorAll('[aria-live="assertive"]').length).toBeGreaterThanOrEqual(2)
+    await act(async () => useExitNoticeStore.getState().setEngineExit('nonzero'))
+    expect(rail.querySelectorAll('[role="alert"]')).toHaveLength(0)
+  })
 })

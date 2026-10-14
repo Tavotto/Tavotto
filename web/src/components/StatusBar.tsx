@@ -264,7 +264,12 @@ function useArrivalOrder() {
  * aria-live 的契约不变：状态区 `data-status-live`（e2e 认它，不认 role=status）、错误 assertive；
  * 提示区只有 aria-live 没有 role（`role=status` 全产品只留状态区那一个）。
  */
-export function NotificationRail() {
+/**
+ * `announceRole`：两个 assertive 播报区默认带 `role="alert"`（工作区里一直如此）。项目选择页另挂一份（引擎退出 /
+ * 上次没正常退出的卡片不能等打开项目才看得见），那里传 `null`：只留 `aria-live="assertive"`（读屏照样立刻播报），
+ * 不再算作 alert——选择页自己的报错是页面上唯一的 alert（e2e 与读屏的「当前错误」都按它认）。
+ */
+export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'alert' | null } = {}) {
   const { t } = useTranslation('workspace')
   const fmt = useFormatMessage()
   const status = useUiStore((s) => s.status)
@@ -440,7 +445,7 @@ export function NotificationRail() {
       >
         {tone !== 'error' ? liveText : ''}
       </div>
-      <div aria-live="assertive" role="alert" className="sr-only">
+      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
         {tone === 'error' ? liveText : ''}
       </div>
       <div aria-live="polite" className="sr-only">
@@ -455,7 +460,7 @@ export function NotificationRail() {
       <div aria-live="polite" className="sr-only">
         {unexpected && unexpectedHasSlot ? translate('unexpectedError.text', { ns: 'workspace' }) : ''}
       </div>
-      <div aria-live="assertive" role="alert" className="sr-only">
+      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
         {engineExit ? translate('exitNotice.engine.text', { ns: 'workspace' }) : ''}
       </div>
       <div aria-live="polite" className="sr-only">
