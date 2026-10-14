@@ -47,6 +47,7 @@ from . import (
     execpolicy,
     execspec,
     pool,
+    nativesession,
     preparation,
     rasterhint,
     registry,
@@ -761,6 +762,9 @@ class _Attempt:
     missing: dict | None = None
     #: 这次尝试的执行语义（V2，ADR 0127）：一次运行里第二次尝试可以是 native 回退
     profile: str = execspec.PROFILE_SAFE
+    #: 这次运行开始（认领）那一刻项目的关闭代次（`nativesession.REGISTRY.project_epoch`）。回退的最后一刻与此刻比：
+    #: 关闭再重开会升代次，关闭之前开始的运行不得在重开后的项目里起 native 进程（#1022 的代次合同延伸到回退）
+    epoch: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1602,6 +1606,7 @@ class SessionService:
             config_revision=sess.config_revision,
             created_at=self._clock(),
             profile=plan.execution,
+            epoch=nativesession.REGISTRY.project_epoch(sess.project_root),
         )
         # 新的一次用户发起的运行：回退预算与取消标记都从头算（ADR 0127）
         sess.ledger.begin_run()
@@ -1830,6 +1835,9 @@ class SessionService:
             # 现在接上就会结束新一次的运行——与取消标记同一把锁、同一时刻的最后复核（Codex #1028 r4268196418）
             self._decline(sess, attempt, execpolicy.REASON_SUPERSEDED)
             return
+        if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+            self._decline(sess, attempt, execpolicy.REASON_PROJECT_REOPENED)
+            return
         decision = execpolicy.decide_fallback(
             mode=execpolicy.mode_for(sess.project_root),
             enabled=execpolicy.fallback_enabled(),
@@ -1848,6 +1856,7 @@ class SessionService:
             config_revision=sess.config_revision,
             created_at=self._clock(),
             profile=nplan.execution,
+            epoch=attempt.epoch,
         )
         sess.ledger.record(nplan.plan_id, key, cause=code)
         self._prep.register(nplan)
