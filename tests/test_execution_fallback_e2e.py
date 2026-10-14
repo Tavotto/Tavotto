@@ -12,8 +12,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import subprocess
+import sys
 import time
+import urllib.request
 from pathlib import Path
 
 from support import foundation_app as fa, nativekit
@@ -24,6 +29,74 @@ ROOT = Path(__file__).resolve().parent.parent
 pytestmark = nativekit.needs_user_python
 
 ENV = {"TAVOTTO_USER_ENV_DISCOVERY": "0", "PYTHONPATH": str(ROOT / "src")}
+NONCE = "e2e-desktop-nonce-0123456789"
+
+
+@contextlib.contextmanager
+def sidecar_app(project: Path, work: Path, *, env_overrides: dict | None = None):
+    """真的 `tavotto --desktop-sidecar`（Tauri 壳启动它的方式）：启动 nonce 走 stdin，窗口用它兑换会话 cookie。
+    回退只授权给这条来源（桌面用户主动发起）——浏览器模式的 `fa.running_app` 在这里是反例。"""
+    data_dir, config_dir, home = work / "data", work / "config", work / "home"
+    for d in (data_dir, config_dir, home):
+        d.mkdir(parents=True, exist_ok=True)
+    handshake = work / "handshake.json"
+    env = {
+        **os.environ,
+        "TAVOTTO_DATA_DIR": str(data_dir),
+        "TAVOTTO_CONFIG_DIR": str(config_dir),
+        "HOME": str(home),
+        "TAVOTTO_NO_UPDATE_CHECK": "1",
+        "TAVOTTO_NO_TELEMETRY": "1",
+        "TAVOTTO_DESKTOP_HANDSHAKE": str(handshake),
+        **(env_overrides or {}),
+    }
+    for name in ("TAVOTTO_INSECURE_NO_AUTH", "TAVOTTO_WORKER_PYTHON", "MM_WORKER_PYTHON"):
+        env.pop(name, None)
+    log_path = work / "server.log"
+    log = log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-m", "tavotto", "--figures", str(project), "--desktop-sidecar"],
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        cwd=str(work),
+        text=True,
+    )
+    try:
+        proc.stdin.write(json.dumps({"nonce": NONCE}) + "\n")
+        proc.stdin.flush()
+        deadline = time.time() + 120
+        port = None
+        while time.time() < deadline:
+            assert proc.poll() is None, log_path.read_text("utf-8")[-2000:]
+            with contextlib.suppress(OSError, ValueError):
+                shake = json.loads(handshake.read_text("utf-8"))
+                if shake.get("ready"):
+                    port = shake["port"]
+                    break
+            time.sleep(0.2)
+        assert port, "sidecar 没有就绪"
+        base = f"http://127.0.0.1:{port}"
+        req = urllib.request.Request(
+            base + "/api/session/bootstrap",
+            data=json.dumps({"nonce": NONCE}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+            cookie = resp.headers["Set-Cookie"].split(";", 1)[0]
+        yield fa.RunningApp(base, {"Cookie": cookie}, proc, log_path, work)
+    finally:
+        with contextlib.suppress(Exception):
+            proc.stdin.close()  # EOF = 父进程没了 → sidecar 跟随关闭
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=30)
+        log.close()
+
+
 SESSIONS = "/api/engine/preparation-sessions"
 SETTLED = (
     "completed",
@@ -127,7 +200,7 @@ def _runs(log: Path) -> int:
 
 def test_blocked_replace_falls_back_to_native_in_the_same_session_and_runs_twice(tmp_path):
     proj, log = _project(tmp_path, REPLACE_SCRIPT)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
         sid = _run(app, first)
         final = _settled(app, sid)
@@ -163,7 +236,7 @@ def test_blocked_replace_falls_back_to_native_in_the_same_session_and_runs_twice
 
 def test_a_division_by_zero_script_runs_once_and_does_not_fall_back(tmp_path):
     proj, log = _project(tmp_path, DIVIDE_SCRIPT)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         sid = _run(app, _create(app))
         final = _settled(app, sid)
         time.sleep(3)  # 给「偷偷再跑」留出发生的时间
@@ -175,7 +248,7 @@ def test_a_division_by_zero_script_runs_once_and_does_not_fall_back(tmp_path):
 
 def test_a_missing_package_does_not_fall_back(tmp_path):
     proj, log = _project(tmp_path, MISSING_SCRIPT)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         report = _create(app)
         runnable = [a for a in report["actions"] if a["kind"] == "run"]
         if runnable:
@@ -196,7 +269,7 @@ def test_a_safe_only_project_is_respected(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(work / "config"))
     (work / "config").mkdir(parents=True)
     execpolicy.set_mode(proj, execpolicy.MODE_SAFE_ONLY)  # 与被测服务共用同一份项目设置
-    with fa.running_app(proj, work, env_overrides=ENV) as app:
+    with sidecar_app(proj, work, env_overrides=ENV) as app:
         sid = _run(app, _create(app))
         final = _settled(app, sid)
         time.sleep(3)
@@ -209,7 +282,7 @@ def test_a_safe_only_project_is_respected(tmp_path, monkeypatch):
 
 def test_the_kill_switch_disables_the_fallback(tmp_path):
     proj, log = _project(tmp_path, REPLACE_SCRIPT)
-    with fa.running_app(
+    with sidecar_app(
         proj, tmp_path / "work", env_overrides={**ENV, execpolicy.FALLBACK_ENV: "0"}
     ) as app:
         sid = _run(app, _create(app))
@@ -223,7 +296,7 @@ def test_the_kill_switch_disables_the_fallback(tmp_path):
 
 def test_cancel_before_the_fallback_starts_no_native_run(tmp_path):
     proj, log = _project(tmp_path, SLOW_REPLACE_SCRIPT)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         report = _create(app)
         sid = _run(app, report)
         _wait(lambda: _runs(log) >= 1, "脚本开始执行")
@@ -240,3 +313,18 @@ def test_cancel_before_the_fallback_starts_no_native_run(tmp_path):
         time.sleep(3)
         assert _runs(log) == 1, "取消之后不应再起 native"
         assert _native_sessions(app, proj) == [], "取消之后不应再起 native"
+
+
+def test_a_browser_mode_service_never_falls_back_to_native(tmp_path):
+    """反例：同一份脚本、同一个会话端点，但服务是浏览器模式（本机凭据头认证，不是桌面窗口）：safe 的限制照旧如实报告，
+    一个 native 进程都不起、脚本只执行 1 次、历史里写明为什么没回退。"""
+    proj, log = _project(tmp_path, REPLACE_SCRIPT)
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        sid = _run(app, _create(app))
+        final = _settled(app, sid)
+        time.sleep(3)
+        assert _runs(log) == 1
+        assert final["outcome"]["code"] == "safe_file_operation_blocked"
+        assert final["attempt_history"][0]["declined"] == "not_desktop_initiated"
+        assert _native_sessions(app, proj) == []
+        assert not (proj / "cache.csv").exists()

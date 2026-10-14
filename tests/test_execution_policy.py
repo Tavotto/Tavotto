@@ -137,6 +137,7 @@ def _decide(ledger=None, **kw):
         ledger=ledger or _ledger_with_safe(),
         cause_code=BLOCKED,
         nxt=NATIVE,
+        desktop_initiated=True,
     )
     base.update(kw)
     return execpolicy.decide_fallback(**base)
@@ -157,6 +158,7 @@ def test_blocked_safe_attempt_is_admitted_to_one_native_fallback():
 @pytest.mark.parametrize(
     ("kw", "reason"),
     [
+        ({"desktop_initiated": False}, "not_desktop_initiated"),
         ({"enabled": False}, "fallback_disabled"),
         ({"mode": "safe_only"}, "policy_safe_only"),
         ({"cancelled": True}, "cancelled"),
@@ -170,6 +172,15 @@ def test_every_refusal_has_its_closed_reason(kw, reason):
     d = _decide(**kw)
     assert d.ok is False and d.reason == reason
     assert reason in execpolicy.REASONS
+
+
+def test_desktop_initiation_defaults_to_false_and_wins_over_everything():
+    """D1 只授权桌面用户主动发起的运行：不传就是 fail closed，且先于其它所有判断。"""
+    kw = dict(
+        mode="compatible", enabled=True, ledger=_ledger_with_safe(), cause_code=BLOCKED, nxt=NATIVE
+    )
+    assert execpolicy.decide_fallback(**kw).reason == "not_desktop_initiated"
+    assert execpolicy.decide_fallback(**{**kw, "enabled": False}).reason == "not_desktop_initiated"
 
 
 def test_kill_switch_and_safe_only_win_over_everything_else():

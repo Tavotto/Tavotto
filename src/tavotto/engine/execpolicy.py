@@ -59,6 +59,9 @@ _STALE_CODE = "preparation_plan_stale"
 
 # ---------------------------------------------------------------- 不回退 / 不重试的理由（闭集；诊断与测试都读它）
 REASON_OK = ""
+REASON_NOT_DESKTOP = (
+    "not_desktop_initiated"  # 不是桌面用户主动发起的运行（浏览器 / API 客户端 / 无认证）
+)
 REASON_DISABLED = "fallback_disabled"  # 运维开关关了
 REASON_SAFE_ONLY = "policy_safe_only"  # 用户明确只要 safe
 REASON_NOT_BLOCKED = "not_blocked"  # 原因不是 safe 自己的限制：换语义不会变好
@@ -72,6 +75,7 @@ REASON_INTERPRETER_CHANGED = "interpreter_changed"  # native 计划解出的解�
 REASON_PLAN_UNAVAILABLE = "plan_unavailable"  # native 计划算不出来
 REASON_LAUNCH_FAILED = "launch_failed"  # 交给执行线程时失败
 REASONS = (
+    REASON_NOT_DESKTOP,
     REASON_DISABLED,
     REASON_SAFE_ONLY,
     REASON_NOT_BLOCKED,
@@ -355,10 +359,15 @@ def decide_fallback(
     nxt: SpecKey,
     cancelled: bool = False,
     stale: bool = False,
+    desktop_initiated: bool = False,
 ) -> Decision:
     """safe 尝试以 `cause_code` 收场之后，要不要立刻用 `nxt`（native）再来一次。纯函数（读账本快照）。
 
-    顺序即优先级：先看用户 / 运维有没有关掉，再看有没有被取消 / 过期，再看原因本身该不该回退，最后过通用闸门。"""
+    顺序即优先级：先看是不是桌面用户主动发起的（调用方须传服务端验证过的事实，默认 False），再看用户 / 运维有没有关掉，再看有没有被取消 / 过期，再看原因本身该不该回退，最后过通用闸门。"""
+    if not desktop_initiated:
+        return Decision(
+            False, REASON_NOT_DESKTOP
+        )  # D1 只授权桌面用户主动发起的运行：默认 fail closed
     if not enabled:
         return Decision(False, REASON_DISABLED)
     if mode == MODE_SAFE_ONLY:

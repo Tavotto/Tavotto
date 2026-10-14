@@ -1236,6 +1236,12 @@ class PreparationService:
             ]
         return sum(1 for pid in mine if self.cancel(pid, project_id).get("accepted"))
 
+    def older_than(self, keep: str) -> frozenset[str]:
+        """登记得比 `keep` 更早的计划号（登记顺序 = 计划的先后）；`keep` 未登记 = 空。`cancel_project(keep=)` 取消的就是这一批。"""
+        with self._lock:
+            order = list(self._entries)
+        return frozenset(order[: order.index(keep)]) if keep in order else frozenset()
+
     def cancel_plan(self, plan_id: str) -> bool:
         """按计划号取消(界面只拿到 native 会话的 `launch_id` 时用:它就是计划号)。没有这个计划 / 已终局回 False。"""
         entry = self._entry(plan_id)

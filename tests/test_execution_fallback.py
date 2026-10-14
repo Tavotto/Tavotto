@@ -52,6 +52,9 @@ def native(monkeypatch):
         return _FakeWorker(Path(pl.project_root)), _build_resp(), True
 
     monkeypatch.setattr(m, "_native_preparation_runner", runner)
+    # 回退只授权给桌面用户主动发起的运行（ADR 0127）：本文件的用例默认就是桌面发起；非桌面来源的用例在
+    # `test_execution_fallback_origin.py` 里走真判据
+    monkeypatch.setattr(m, "_desktop_initiated", lambda: True, raising=False)
     return box
 
 
@@ -248,6 +251,15 @@ def test_closing_the_project_before_the_fallback_starts_no_native_run(
     assert _history(final)[0]["declined"] == "cancelled" and len(_history(final)) == 1
 
 
+def _register_newer_plan(report, plan_id="prep-newer-rerun"):
+    """登记一份比会话现有尝试更晚的同脚本计划（只登记不执行），当 `cancel_project(keep=)` 的「新计划」。"""
+    import dataclasses
+
+    template, _ = preparation.SERVICE.get(report["provider"]["attempt_id"], report["project_id"])
+    preparation.SERVICE.register(dataclasses.replace(template, plan_id=plan_id))
+    return plan_id
+
+
 def _window(monkeypatch):
     """把 `_plan_fallback` 停在「safe 已终局、回退还没接上」的窗口里。"""
     entered, release = threading.Event(), threading.Event()
@@ -269,12 +281,30 @@ def test_a_same_script_rerun_elsewhere_cancels_a_session_waiting_to_fall_back(
     entered, release = _window(monkeypatch)
     sid = _start(client, tmp_path, fake_pool)
     assert entered.wait(10)
-    pid = _get(client, sid).get_json()["project_id"]
-    preparation.SERVICE.cancel_project(pid, script="fig.py", keep="prep-someone-elses")
+    mid = _get(client, sid).get_json()
+    keep = _register_newer_plan(mid)
+    preparation.SERVICE.cancel_project(mid["project_id"], script="fig.py", keep=keep)
     release.set()
     final = _settle(client, sid)
     time.sleep(0.2)
     assert native["calls"] == [] and _history(final)[0]["declined"] == "cancelled"
+
+
+def test_an_older_rerun_elsewhere_does_not_cancel_a_newer_attempt(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """只让比 `keep` 更早登记的尝试让位：本会话的第二次运行比 keep（第一次运行的旧计划）更新，它的回退不受影响。"""
+    sid = _start(client, tmp_path, fake_pool)
+    first = _settle(client, sid)
+    older_attempt = first["provider"]["attempt_id"]
+    entered, release = _window(monkeypatch)
+    resp = _act(client, sid, _action(first, "run")["id"], first["config_revision"])
+    assert resp.status_code == 202, resp.get_json()
+    assert entered.wait(10)
+    preparation.SERVICE.cancel_project(first["project_id"], script="fig.py", keep=older_attempt)
+    release.set()
+    final = _settle(client, sid)
+    assert len(native["calls"]) == 2 and final["phase"] == "completed"
 
 
 def test_a_rerun_of_another_script_does_not_stop_the_fallback(
@@ -283,8 +313,9 @@ def test_a_rerun_of_another_script_does_not_stop_the_fallback(
     entered, release = _window(monkeypatch)
     sid = _start(client, tmp_path, fake_pool)
     assert entered.wait(10)
-    pid = _get(client, sid).get_json()["project_id"]
-    preparation.SERVICE.cancel_project(pid, script="other.py", keep="prep-x")
+    mid = _get(client, sid).get_json()
+    keep = _register_newer_plan(mid)
+    preparation.SERVICE.cancel_project(mid["project_id"], script="other.py", keep=keep)
     release.set()
     final = _settle(client, sid)
     assert len(native["calls"]) == 1 and final["phase"] == "completed"
@@ -316,7 +347,7 @@ def test_a_same_script_rerun_elsewhere_cancels_a_running_fallback_attempt(
         time.sleep(0.02)
     mid = _get(client, sid).get_json()
     got = preparation.SERVICE.cancel_project(
-        mid["project_id"], script="fig.py", keep="prep-someone-elses"
+        mid["project_id"], script="fig.py", keep=_register_newer_plan(mid)
     )
     assert got >= 1
     native["gate"].set()
@@ -429,6 +460,59 @@ def test_the_legacy_preparation_endpoint_never_falls_back(
     final = preparation.SERVICE.get(pid, body["plan"]["project_id"])[1]
     assert final.error["code"] == "safe_file_operation_blocked"
     assert native["calls"] == [] and fake_pool["build_calls"] == 1
+
+
+def _record_native_retirements(monkeypatch):
+    calls = []
+    real = m.engine_nativesession.REGISTRY.cancel_project
+    monkeypatch.setattr(
+        m.engine_nativesession.REGISTRY,
+        "cancel_project",
+        lambda root, script=None, **kw: (
+            calls.append((str(root), script)) or real(root, script=script)
+        ),
+    )
+    return calls
+
+
+def test_a_safe_rerun_retires_the_previous_native_session_of_the_same_script(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """P2：回退成功后 native 进程停在屏障上占着环境租约；用户改完脚本再点运行（safe 成功）时，上一次桌面 native 会话要让位，
+    复用 #1022 的 `REGISTRY.cancel_project(script=)` 与计划票据取消，不再造一套。"""
+    sid = _start(client, tmp_path, fake_pool)
+    final = _settle(client, sid)
+    assert len(native["calls"]) == 1 and final["phase"] == "completed"
+    retired = _record_native_retirements(monkeypatch)
+    cancelled = []
+    real = preparation.SERVICE.cancel_project
+    monkeypatch.setattr(
+        preparation.SERVICE,
+        "cancel_project",
+        lambda pid, script=None, keep=None: (
+            cancelled.append((script, keep)) or real(pid, script, keep)
+        ),
+    )
+    fake_pool["error"] = None  # 用户改掉了被拦的操作：这次 safe 成功
+    resp = _act(client, sid, _action(final, "run")["id"], final["config_revision"])
+    assert resp.status_code == 202, resp.get_json()
+    again = _settle(client, sid)
+    assert again["phase"] == "completed" and len(native["calls"]) == 1  # 这次没有回退
+    assert [r[1] for r in retired] == ["fig.py"]  # 上一次桌面 native 会话让位（只此一次）
+    newest = again["provider"]["attempt_id"]
+    assert cancelled == [("fig.py", newest)]  # 同脚本更早的计划票据也让位，放过本次自己
+
+
+def test_a_first_safe_run_and_a_legacy_asset_preparation_do_not_retire_native_sessions(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """只有会话里的重跑让位；旧端点按素材做准备（面板展示）不能顺手结束用户正在编辑的 native 活图。"""
+    retired = _record_native_retirements(monkeypatch)
+    _open(client, _project(tmp_path, "p"))
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    assert resp.status_code == 202
+    time.sleep(0.3)
+    assert retired == []
 
 
 def test_attempt_history_is_public_safe(client, tmp_path, fake_pool, native, sessions):
