@@ -1735,7 +1735,9 @@ def _probe_in(
     # `sys.path[0]` 是那个临时目录，不是 cwd；`-s` 不加用户 site。不用 `-I`（会丢掉我们刻意复现的 MPL* 变量）。
     probe_main = Path(trusted) / "probe_main.py"
     probe_main.write_text(_PROBE_CODE, encoding="utf-8")
-    fontcache = Path(trusted) / "mplcache"  # 探针的字体缓存落点（见 `_PROBE_CODE`），随 trusted 一起删
+    fontcache = (
+        Path(trusted) / "mplcache"
+    )  # 探针的字体缓存落点（见 `_PROBE_CODE`），随 trusted 一起删
     fontcache.mkdir(exist_ok=True)
     env["TAVOTTO_PROBE_FONTCACHE"] = str(fontcache)
     try:

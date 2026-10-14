@@ -602,7 +602,11 @@ def test_unexpected_error_event_keeps_only_closed_fields():
         "message_hash": "err:0123456789ab",
     }
     out = dfe.sanitize_event(ok, _redact)
-    assert out is not None and out["source"] == "window_error" and out["message_hash"] == "err:0123456789ab"
+    assert (
+        out is not None
+        and out["source"] == "window_error"
+        and out["message_hash"] == "err:0123456789ab"
+    )
     # message / stack 原文、开集错误名、未知来源：整条丢
     for bad in (
         {"message": SECRET_TITLE},

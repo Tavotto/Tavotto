@@ -4055,7 +4055,9 @@ class TestIssue1012BackendItems:
         cfg = tmp_path / "mplcfg"
         cfg.mkdir()
         before = sorted(p.name for p in cfg.rglob("*"))
-        monkeypatch.setattr(diagdetail, "PROBE_TIMEOUT_S", 120)  # 空缓存要现建字体表，慢机器上超过默认 10 s
+        monkeypatch.setattr(
+            diagdetail, "PROBE_TIMEOUT_S", 120
+        )  # 空缓存要现建字体表，慢机器上超过默认 10 s
         out = REAL_PROBE(py, bundled, str(tmp_path), {"MPLCONFIGDIR": str(cfg)})
         assert out["status"] == "ok", out
         assert sorted(p.name for p in cfg.rglob("*")) == before == []
@@ -4093,7 +4095,12 @@ class TestIssue1012BackendItems:
         probe = doc["probe"]
         assert probe["status"] == "ok"
         assert probe["may_differ"] == "user_import_paths_not_reproduced"
-        assert probe["shadowing_candidates"] == ["matplotlib.py", "matplotlib/", "numpy.py", "numpy/"]
+        assert probe["shadowing_candidates"] == [
+            "matplotlib.py",
+            "matplotlib/",
+            "numpy.py",
+            "numpy/",
+        ]
         assert not marker.exists(), "探针不能执行项目里的同名模块"
 
     def test_clean_project_has_the_mark_and_an_empty_candidate_list(self, monkeypatch, tmp_path):
