@@ -273,3 +273,36 @@ def test_registration_failure_ends_the_native_session(tmp_path, monkeypatch):
     assert out["registered"] is False
     dk.wait_until(lambda: session.owned.finished, what="登记失败后进程被结束")
     assert not dk.holds_lease(session)
+
+
+def test_app_close_project_cancels_preparations_and_marks_the_project_closed(tmp_path):
+    """`app.close_project` 的接线:该项目的准备被取消、注册表标记关闭;重新 `open_project` 后标记清掉。"""
+    from tavotto import app as m
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "fig.py").write_text(SCRIPT, encoding="utf-8")
+    info = m.open_project(str(proj), make_default=False)
+    pid = info["id"]
+    plan = preparation.plan_for(
+        project_id=pid,
+        project_root=str(proj),
+        asset_id="",
+        stem="",
+        script="fig.py",
+        entry="__main__",
+        original_artifact=None,
+        target=preparation.TARGET_SCRIPT,
+        execution="native",
+    )
+    preparation.SERVICE.register(plan)
+    assert m.close_project(pid) is True
+    _, result = preparation.SERVICE.get(plan.plan_id, pid)
+    assert result.status == preparation.STATUS_CANCELLED
+    with pytest.raises(runcodes.RunError) as err:
+        nativesession.REGISTRY.reserve("after-close", str(proj))
+    assert err.value.code == runcodes.NATIVE_REGISTRY_CLOSING
+    m.open_project(str(proj), make_default=False)
+    nativesession.REGISTRY.reserve("after-reopen", str(proj))
+    nativesession.REGISTRY.unreserve("after-reopen")
+    m.close_project(pid)
