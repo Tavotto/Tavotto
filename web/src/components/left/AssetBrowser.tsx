@@ -128,13 +128,18 @@ function editabilityOf(it: LibraryItem): Editability | null {
   return PENDING_STATUSES.includes(status) ? 'pending' : null
 }
 
+// 胶囊要放进 280px 的最窄抽屉（扣掉内边距只剩 256px），四档英文加起来不能超：所以用专用短标签，
+// 不复用 statusLabel 的长句（"Layout only" / "To connect" 会把第四档挤出抽屉；Codex #1027）。
 const editabilityLabel = (v: AssetEditabilityFilter) =>
-  v === 'editable'
-    ? statusLabel('editable')
-    : v === 'layout'
-      ? statusLabel('layout_only')
-      : ab(v === 'pending' ? 'editabilityPending' : 'editabilityAll')
-
+  ab(
+    v === 'editable'
+      ? 'editabilityEditable'
+      : v === 'layout'
+        ? 'editabilityLayout'
+        : v === 'pending'
+          ? 'editabilityPending'
+          : 'editabilityAll',
+  )
 
 export function AssetBrowser() {
   const panels = useAssetStore((s) => s.panels)

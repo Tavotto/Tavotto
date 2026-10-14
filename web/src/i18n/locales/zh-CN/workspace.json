@@ -16,6 +16,8 @@
     "cardUsed_other": "当前排版已用 {{count}} 次",
     "editabilityAll": "全部",
     "editabilityAria": "按能否编辑筛选",
+    "editabilityEditable": "可编辑",
+    "editabilityLayout": "仅版面",
     "editabilityPending": "待连接",
     "emptyHint": "把 PDF/PNG 放进项目目录即可出现在这里。",
     "emptyTitle": "项目里还没有图",

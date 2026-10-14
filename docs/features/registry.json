@@ -92,6 +92,10 @@
         {
           "spec": "asset-library.spec.ts",
           "title": "能不能编辑的胶囊：可编辑 / 仅版面一点就分开，回到全部恢复"
+        },
+        {
+          "spec": "asset-library.spec.ts",
+          "title": "能不能编辑的胶囊：英文四档在 280px 最窄抽屉里不溢出"
         }
       ],
       "desktop_manual": [
