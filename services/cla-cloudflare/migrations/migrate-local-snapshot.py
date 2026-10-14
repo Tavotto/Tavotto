@@ -12,7 +12,7 @@ import sqlite3
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OBJECTS = "packets_subject_digest authority agreements state sessions oauth_states packets intents signatures eligibility_blocks audit targets outbox outbox_due deliveries published_checks _guards revision_outbox delivery_outbox agreements_update agreements_delete packets_update packets_delete signatures_update signatures_delete blocks_update blocks_delete audit_update audit_delete publication_attempts publication_unresolved reconciliation_progress agreement_documents documents_update documents_delete".split()
+OBJECTS = "packets_subject_digest authority agreements state sessions oauth_states packets intents signatures eligibility_blocks audit targets outbox outbox_due deliveries published_checks _guards revision_outbox delivery_outbox agreements_update agreements_delete packets_update packets_delete signatures_update signatures_delete blocks_update blocks_delete audit_update audit_delete publication_attempts publication_unresolved reconciliation_progress refresh_requests agreement_documents documents_update documents_delete".split()
 
 
 def namespace(s, version):

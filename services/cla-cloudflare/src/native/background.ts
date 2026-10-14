@@ -3,10 +3,10 @@ import { sameBinding } from '../core/identity.ts';
 import type { Job, Proof } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import type { LiveService } from './service.ts';
-import type { Publication } from './store.ts';
-import { BudgetDeferred } from './budget.ts';
+import type { Publication, RefreshRequest } from './store.ts';
+import { BudgetDeferred, FREE_BUDGET } from './budget.ts';
 
-async function one(s:LiveService,job:Job,p:Publication,revision:number):Promise<string> {
+async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number):Promise<string> {
   let previous:Proof;try{previous=JSON.parse(p.proof_text.split('\n').slice(1).join('\n'));}catch{throw new Rejected('stored_proof_unavailable');}
   if(previous.protocol!=='tavotto-cla-v1' || previous.repository_id!==s.c.repositoryId || previous.head_sha!==p.head_sha ||
     previous.revision!==p.revision || previous.expires_at!==p.expires || canonical(previous)!==p.proof_text.slice('tavotto-cla-v1\n'.length))throw new Rejected('stored_proof_unavailable');
@@ -18,7 +18,7 @@ async function one(s:LiveService,job:Job,p:Publication,revision:number):Promise<
   }
   let valid=p.conclusion==='success' && revision===p.revision && await s.store.databaseNow()<p.expires;
   if(valid) {
-    try {const current=await s.evaluate((await s.store.target(job.target_key) as {number:number}).number);
+    try {const current=await s.evaluate(pr);
       valid=current.conclusion==='success' && current.proof.revision===p.revision && sameBinding(previous,current.proof);}
     catch(error){if(error instanceof Rejected && ['trusted_policy_changed','agreement_hash_mismatch','pr_mismatch'].includes(error.code))valid=false;else throw error;}
   }
@@ -29,6 +29,54 @@ async function one(s:LiveService,job:Job,p:Publication,revision:number):Promise<
   await s.github.withdraw(p,remote.id,revision);
   s.store.budget!.settlement();
   await s.store.recordReconciliation(job,p,'resolved',remote.id,'remote_failure_verified',revision);return 'remote_failure_verified';
+}
+
+// A fresh evaluation is a different invocation from withdrawal. No eligibility
+// checkpoint is reused; only the source attempt/revision deduplication survives.
+async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<string> {
+  const budget=s.store.budget!;let attempt:string|undefined;
+  try {
+    if(!s.c.checkPublishingEnabled)throw new Rejected('publication_disabled');
+    const target=await s.store.target(job.target_key);
+    if(target.kind!=='pr')throw new Rejected('merge_queue_not_implemented');
+    // After evaluate: predecessor read (1), final clock (1), issued batch (4).
+    // Including claim/task/target and evaluate itself: 12 + 2*N work SQL.
+    const check=await s.evaluate(target.number,6);
+    if(check.proof.revision!==request.revision)throw new Rejected('state_changed');
+    if(check.conclusion!=='success') {
+      budget.settlement();await s.store.completeRefresh(job,request,'qualification_not_complete');
+      return 'refresh_not_qualified';
+    }
+    // Confirmation uses 14 fixed work statements; reserve two additional
+    // reads to authorize withdrawal if revalidation fails, plus two per actor.
+    const exemptions=new Set(Object.values(s.c.exemptionIds));
+    if(16+2*check.proof.contributors.filter(person=>!exemptions.has(person.id)).length>FREE_BUDGET.sqlWork)
+      throw new BudgetDeferred('sql');
+    const predecessor=await s.store.refreshPredecessor(job.target_key,check.headSha);
+    if(!predecessor || predecessor.id!==request.source_attempt)throw new Rejected('refresh_predecessor_unavailable');
+    const receipt=await s.github.publishFresh(check,predecessor,async()=>{
+      // All token exchange and predecessor reads have already completed.
+      // Mint an independent proof, then commit the send intent before HTTP.
+      const fresh=await s.freshBinding(target.number);
+      if(!sameBinding(check.proof,fresh))throw new Rejected('state_changed');
+      const now=await s.store.databaseNow();check.proof.issued_at=now;check.proof.expires_at=now+120;
+      check.text='tavotto-cla-v1\n'+canonical(check.proof);
+      attempt=await s.store.beginFreshPublication(job,request,check,predecessor);return attempt;
+    });
+    budget.settlement();
+    await s.store.settleFreshPublication(job,attempt!,'reconcile',receipt.id);
+    return 'fresh_publication_requires_reconciliation';
+  }catch {
+    budget.settlement();
+    if(attempt) {
+      try{await s.store.settleFreshPublication(job,attempt,'unknown');}catch{}
+      return 'fresh_publication_unknown_no_replay';
+    }
+    // If an issued transaction committed but its receipt was lost, this guarded
+    // pending-only update cannot reset it. Reclaim will observe the issued row.
+    try{await s.store.failRefresh(job,request);}catch{}
+    return 'refresh_retry_pending_or_manual';
+  }
 }
 
 // A fixed durable pass horizon prevents a stream of newer rows from starving older heads.
@@ -42,12 +90,15 @@ export async function reconcileOne(s:LiveService):Promise<{disposition:string;bu
   budget.bindLease(job.lease_until,job.lease_clock);
   let selected:Publication|undefined,revision:number|undefined,committed=false;
   try {
-    if((await s.store.target(job.target_key)).kind!=='pr')throw new Rejected('merge_queue_not_implemented');
+    const refresh=await s.store.refreshRequest(job);
+    if(refresh)return result(await refreshOne(s,job,refresh));
+    const target=await s.store.target(job.target_key);
+    if(target.kind!=='pr')throw new Rejected('merge_queue_not_implemented');
     revision=await s.store.revision();const progress=await s.store.openProgress(job,revision);
     const records=await s.store.publicationBatch(job,progress);let disposition='no_due_publication';
     for(const p of records) {
       selected=p;
-      try{disposition=await one(s,job,p,revision);committed=true;}
+      try{disposition=await one(s,job,p,revision,target.number);committed=true;}
       catch(error){if(error instanceof BudgetDeferred)throw error;budget.settlement();await s.store.publicationFailure(job,p,revision);committed=true;disposition='head_retry_pending_or_exhausted';}
     }
     budget.settlement();await s.store.finishBatch(job,revision);return result(disposition);

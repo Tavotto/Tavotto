@@ -1,6 +1,6 @@
 import type { CheckProposal, D1Database, D1Statement, Job, Packet, Role, Session } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
-import { randomToken } from '../core/crypto.ts';
+import { canonical, randomToken } from '../core/crypto.ts';
 import { Store } from '../core/store.ts';
 import { BudgetDeferred, FREE_BUDGET, InvocationBudget, meterDatabase } from './budget.ts';
 
@@ -9,7 +9,7 @@ const objects = ['packets_subject_digest','authority','agreements','state','sess
   'eligibility_blocks','audit','targets','outbox','outbox_due','deliveries','published_checks','_guards',
   'revision_outbox','delivery_outbox','agreements_update','agreements_delete','packets_update','packets_delete',
   'signatures_update','signatures_delete','blocks_update','blocks_delete','audit_update','audit_delete',
-  'publication_attempts','publication_unresolved','reconciliation_progress','agreement_documents','documents_update','documents_delete'];
+  'publication_attempts','publication_unresolved','reconciliation_progress','refresh_requests','agreement_documents','documents_update','documents_delete'];
 // Only trusted source SQL is passed here; identifiers cannot come from a request.
 export const nativeSQL = (sql: string) => sql.replace(/\b[A-Za-z_][A-Za-z_0-9]*\b/g,
   word => objects.includes(word) ? PREFIX+word : word);
@@ -20,6 +20,7 @@ export const DB_NOW = "CAST(strftime('%s','now') AS INTEGER)";
 export interface SignatureRow { role:Role; actor:number; evidence_cipher:string; evidence_hash:string; created:number }
 export interface Document {digest:string;kind:string;version:string;source_sha:string;content:string}
 export interface Publication {id:string;target_key:string;head_sha:string;revision:number;expires:number;phase:string;run_id:number|null;conclusion:'success'|'failure';proof_text:string;observation:string;position?:number;reconcile_attempts?:number}
+export interface RefreshRequest {target_key:string;source_attempt:string;revision:number;status:'pending'|'done'|'manual';attempts:number;due:number;reason:string}
 export interface Progress {cursor:number;horizon:number}
 export interface ClaimedJob extends Job {lease_clock:number}
 export class LiveStore extends Store {
@@ -60,6 +61,73 @@ export class LiveStore extends Store {
   async confirmedPublication(key:string,head:string,run:number,attempt:string):Promise<Publication|null> {
     return this.stmt(`SELECT * FROM publication_attempts p WHERE target_key=? AND head_sha=? AND run_id=? AND id=? AND phase='confirmed'
       AND rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`,key,head,run,attempt).first<Publication>();
+  }
+  async refreshRequest(job:Job):Promise<RefreshRequest|null> {
+    return this.stmt(`SELECT r.* FROM refresh_requests r WHERE r.target_key=? AND r.status='pending'
+      AND r.revision=(SELECT revision FROM state WHERE id=1) AND r.due<=${DB_NOW} AND r.attempts<3
+      AND r.source_attempt=coalesce((SELECT p.id FROM publication_attempts p WHERE p.target_key=r.target_key ORDER BY p.rowid DESC LIMIT 1),'')
+      AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=r.target_key AND p.phase!='resolved')
+      AND EXISTS(SELECT 1 FROM outbox o WHERE o.target_key=r.target_key AND o.lease=? AND o.generation=? AND o.lease_until>${DB_NOW})`,
+      job.target_key,job.lease,job.generation).first<RefreshRequest>();
+  }
+  async refreshPredecessor(key:string,head:string):Promise<Publication|null> {
+    return this.stmt(`SELECT p.* FROM publication_attempts p WHERE p.target_key=? AND p.head_sha=? AND p.phase='resolved'
+      AND p.run_id IS NOT NULL AND p.run_id>0
+      AND p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`,key,head).first<Publication>();
+  }
+  private refreshGuard(job:Job,r:RefreshRequest,extra='1',values:unknown[]=[]):D1Statement[] {
+    if(r.target_key!==job.target_key || r.status!=='pending')throw new Rejected('refresh_changed');
+    return this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND generation=? AND lease_until>${DB_NOW})
+      AND (SELECT revision FROM state WHERE id=1)=?
+      AND EXISTS(SELECT 1 FROM refresh_requests r WHERE r.target_key=? AND r.source_attempt=? AND r.revision=?
+        AND r.status='pending' AND r.attempts=? AND r.attempts<3 AND r.due=? AND r.due<=${DB_NOW} AND r.reason=?
+        AND r.source_attempt=coalesce((SELECT p.id FROM publication_attempts p WHERE p.target_key=r.target_key ORDER BY p.rowid DESC LIMIT 1),''))
+      AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND phase!='resolved') AND (${extra})`,
+      job.target_key,job.lease,job.generation,r.revision,job.target_key,r.source_attempt,r.revision,r.attempts,r.due,r.reason,job.target_key,...values);
+  }
+  async beginFreshPublication(job:Job,r:RefreshRequest,check:CheckProposal,predecessor:Publication):Promise<string> {
+    if(check.conclusion!=='success' || check.proof.head_sha!==check.headSha || check.proof.revision!==r.revision ||
+      !Number.isSafeInteger(check.proof.issued_at) || !Number.isSafeInteger(check.proof.expires_at) ||
+      check.proof.expires_at!==check.proof.issued_at+120 || check.text!=='tavotto-cla-v1\n'+canonical(check.proof))throw new Rejected('fresh_proof_unavailable');
+    if(predecessor.id!==r.source_attempt || predecessor.target_key!==job.target_key || predecessor.head_sha!==check.headSha ||
+      predecessor.phase!=='resolved' || predecessor.run_id===null || !Number.isSafeInteger(predecessor.run_id) || predecessor.run_id<=0)throw new Rejected('fresh_predecessor_unavailable');
+    const id=randomToken();
+    // The request and the exact resolved source are consumed in the same transaction
+    // as the new issued journal. A fresh attempt never mutates the old proof or expiry.
+    await this.batch([
+      ...this.refreshGuard(job,r,`${DB_NOW}<? AND ?<=${DB_NOW} AND EXISTS(SELECT 1 FROM publication_attempts p
+        WHERE p.id=? AND p.target_key=? AND p.head_sha=? AND p.phase='resolved' AND p.run_id=? AND p.revision=?)`,
+        [check.proof.expires_at,check.proof.issued_at,predecessor.id,job.target_key,predecessor.head_sha,predecessor.run_id,predecessor.revision]),
+      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,run_id,phase,created,updated,conclusion,proof_text)
+        VALUES(?,?,?,?,?,?,'issued',${DB_NOW},${DB_NOW},?,?)`,id,job.target_key,check.headSha,check.proof.revision,check.proof.expires_at,predecessor.run_id,check.conclusion,check.text),
+      this.stmt("UPDATE refresh_requests SET status='done',reason='fresh_publication_issued' WHERE target_key=?",job.target_key),
+    ]);return id;
+  }
+  async completeRefresh(job:Job,r:RefreshRequest,reason:string):Promise<void> {
+    await this.batch([...this.refreshGuard(job,r),
+      this.stmt("UPDATE refresh_requests SET status='done',reason=? WHERE target_key=?",reason,job.target_key),
+      this.stmt('DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?',job.target_key,job.lease,job.generation)]);
+  }
+  async failRefresh(job:Job,r:RefreshRequest):Promise<void> {
+    await this.batch([...this.refreshGuard(job,r),
+      this.stmt(`UPDATE refresh_requests SET status=CASE WHEN attempts>=2 THEN 'manual' ELSE 'pending' END,
+        reason=CASE WHEN attempts>=2 THEN 'refresh_retry_exhausted' ELSE 'refresh_retry_pending' END,
+        attempts=min(3,attempts+1),due=${DB_NOW}+60 WHERE target_key=?`,job.target_key),
+      this.stmt(`DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?
+        AND EXISTS(SELECT 1 FROM refresh_requests r WHERE r.target_key=outbox.target_key AND r.status='manual')`,job.target_key,job.lease,job.generation),
+      this.stmt(`UPDATE outbox SET due=(SELECT due FROM refresh_requests WHERE target_key=outbox.target_key),lease='',lease_until=0,attempts=0
+        WHERE target_key=? AND lease=? AND generation=?`,job.target_key,job.lease,job.generation)]);
+  }
+  async settleFreshPublication(job:Job,id:string,phase:'reconcile'|'unknown',run:number|null=null):Promise<void> {
+    // HTTP may finish after the revision/generation changes. Preserve its journal,
+    // but never release or reschedule an outbox belonging to the newer generation.
+    await this.batch([
+      this.stmt(`UPDATE publication_attempts SET phase=?,run_id=coalesce(?,run_id),updated=${DB_NOW},reconcile_due=0
+        WHERE id=? AND target_key=? AND phase='issued' AND (? IS NULL OR run_id=?)`,phase,run,id,job.target_key,run,run),
+      ...this.guard('changes()=1'),
+      this.stmt(`UPDATE outbox SET due=0,lease='',lease_until=0,attempts=0
+        WHERE target_key=? AND lease=? AND generation=?`,job.target_key,job.lease,job.generation),
+    ]);
   }
   private leaseGuard(job:Job,revision:number):D1Statement[] {
     return this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)
@@ -108,10 +176,34 @@ export class LiveStore extends Store {
     const next=await this.stmt(`SELECT min(CASE WHEN p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=? OR p.expires<=${DB_NOW}) THEN 0 ELSE p.reconcile_due END) AS due
       FROM publication_attempts p WHERE p.target_key=? AND p.phase NOT IN ('resolved','manual') AND p.reconcile_attempts<3
       AND p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`,job.generation,job.target_key).first<{due:number|null}>();
+    const pending=`SELECT r.due FROM refresh_requests r WHERE r.target_key=outbox.target_key AND r.status='pending'
+      AND r.revision=(SELECT revision FROM state WHERE id=1) AND r.attempts<3
+      AND r.source_attempt=coalesce((SELECT p.id FROM publication_attempts p WHERE p.target_key=r.target_key ORDER BY p.rowid DESC LIMIT 1),'')
+      AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=r.target_key AND p.phase!='resolved')`;
     await this.batch([...this.leaseGuard(job,revision),
-      ...(!ahead?[this.stmt('UPDATE reconciliation_progress SET cursor=0,horizon=0 WHERE target_key=?',job.target_key)]:[]),
-      ...(next?.due===null && !ahead?[this.stmt('DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?',job.target_key,job.lease,job.generation)]:
-        [this.stmt(`UPDATE outbox SET due=max(${DB_NOW}+1,?),lease='',lease_until=0,attempts=0 WHERE target_key=? AND lease=? AND generation=?`,ahead?0:next?.due ?? 0,job.target_key,job.lease,job.generation)])]);
+      ...(!ahead?[
+        this.stmt('UPDATE reconciliation_progress SET cursor=0,horizon=0 WHERE target_key=?',job.target_key),
+        this.stmt(`INSERT INTO refresh_requests(target_key,source_attempt,revision,status,attempts,due,reason)
+          SELECT t.target_key,coalesce((SELECT id FROM publication_attempts WHERE target_key=t.target_key ORDER BY rowid DESC LIMIT 1),''),?,
+            CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=t.target_key AND p.phase!='resolved'
+              AND EXISTS(SELECT 1 FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha AND q.rowid>p.rowid)) THEN 'manual' ELSE 'pending' END,
+            0,${DB_NOW},CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=t.target_key AND p.phase!='resolved'
+              AND EXISTS(SELECT 1 FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha AND q.rowid>p.rowid))
+              THEN 'superseded_history_requires_review' ELSE 'reconciliation_resolved' END
+          FROM targets t WHERE t.target_key=? AND (
+            NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=t.target_key AND phase!='resolved') OR
+            EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=t.target_key AND p.phase!='resolved'
+              AND EXISTS(SELECT 1 FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha AND q.rowid>p.rowid)))
+          ON CONFLICT(target_key) DO UPDATE SET source_attempt=excluded.source_attempt,revision=excluded.revision,
+            status=excluded.status,attempts=0,due=excluded.due,reason=excluded.reason
+          WHERE refresh_requests.status!='manual' AND (excluded.status='manual'
+            OR refresh_requests.source_attempt!=excluded.source_attempt OR refresh_requests.revision!=excluded.revision)`,revision,job.target_key),
+      ]:[]),
+      ...(next?.due===null && !ahead?[this.stmt(`DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?
+        AND NOT EXISTS(${pending})`,job.target_key,job.lease,job.generation)]:[]),
+      this.stmt(`UPDATE outbox SET due=max(${DB_NOW}+1,coalesce((${pending}),?)),lease='',lease_until=0,attempts=0
+        WHERE target_key=? AND lease=? AND generation=?`,ahead?0:next?.due ?? 0,job.target_key,job.lease,job.generation),
+    ]);
   }
   override async claim(_now:number):Promise<ClaimedJob|null> {
     const result=await this.db.batch<ClaimedJob>([this.stmt(`UPDATE outbox SET lease=?,lease_until=${DB_NOW}+120

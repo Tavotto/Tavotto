@@ -32,6 +32,10 @@ export class InvocationBudget {
     this.phase='correction';
   }
   settlement():void {this.phase='settlement';}
+  reserveWorkSQL(count:number):void {
+    this.checkWork();
+    if(!Number.isSafeInteger(count) || count<0 || this.sql+count>FREE_BUDGET.sqlWork)throw new BudgetDeferred('sql');
+  }
   chargeSQL(count:number):void {
     if(!Number.isSafeInteger(count) || count<1)throw new Rejected('sql_count_unavailable');
     if(this.clock()>=(this.phase==='settlement'?this.cleanupEnd:this.workEnd))throw new BudgetDeferred('time');

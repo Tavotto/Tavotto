@@ -14,6 +14,14 @@ CREATE TABLE reconciliation_progress (
  target_key TEXT PRIMARY KEY REFERENCES targets(target_key),
  cursor INTEGER NOT NULL DEFAULT 0 CHECK(cursor>=0), horizon INTEGER NOT NULL DEFAULT 0 CHECK(horizon>=0)
 );
+-- One refresh decision per target/source/revision. Exhaustion remains manual
+-- across later revisions; only explicit operator review may unblock it.
+CREATE TABLE refresh_requests (
+ target_key TEXT PRIMARY KEY REFERENCES targets(target_key), source_attempt TEXT NOT NULL,
+ revision INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('pending','done','manual')),
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 3), due INTEGER NOT NULL,
+ reason TEXT NOT NULL
+);
 CREATE TABLE agreement_documents (
  digest TEXT PRIMARY KEY REFERENCES agreements(digest), kind TEXT NOT NULL, version TEXT NOT NULL,
  source_sha TEXT NOT NULL, content TEXT NOT NULL

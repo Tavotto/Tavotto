@@ -299,6 +299,39 @@ export class GitHub implements GitHubPort {
     const after=await this.api(path,token);this.own(after,p);
     if(after.id!==run || after.conclusion!=='failure')throw new Rejected('check_source_mismatch');
   }
+  // Refresh only an exactly observed, durably resolved same-head predecessor.
+  // Authentication and all remote pre-reads finish before the journal callback;
+  // after it commits, there is one mutation and no automatic retry.
+  async publishFresh(check:CheckProposal,predecessor:Publication,beforeSend:()=>Promise<string>):Promise<CheckReceipt> {
+    if(!this.c.checkPublishingEnabled)throw new Rejected('publication_disabled');
+    if(check.appId!==this.c.appId || check.appSlug!==this.c.appSlug || check.name!==this.c.checkName ||
+      check.proof.repository_id!==this.c.repositoryId || check.proof.kind!=='pr' || !validSha(check.headSha) ||
+      check.headSha!==check.proof.head_sha || predecessor.head_sha!==check.headSha ||
+      predecessor.phase!=='resolved' || !validId(predecessor.run_id) || !['success','failure'].includes(check.conclusion))
+      throw new Rejected('refresh_predecessor_unavailable');
+    const token=await this.installationToken(true),runs=await this.runs(check.headSha,token);
+    const own=runs.filter(x=>x.app?.id===this.c.appId && x.app?.slug===this.c.appSlug && x.name===this.c.checkName && x.head_sha===check.headSha);
+    if(own.length!==1)throw new Rejected('ambiguous_own_check');
+    const old=own[0]!;this.own(old,predecessor);
+    if(old.id!==predecessor.run_id || old.conclusion!=='failure')throw new Rejected('refresh_predecessor_unavailable');
+    let recordedFailure=predecessor.conclusion==='failure' && old.output?.summary===predecessor.proof_text;
+    if(typeof old.output?.summary==='string' && old.output.summary.startsWith('tavotto-cla-revocation-v1\n')) {
+      try {const revoked=JSON.parse(old.output.summary.slice('tavotto-cla-revocation-v1\n'.length));
+        recordedFailure=canonical(revoked)===old.output.summary.slice('tavotto-cla-revocation-v1\n'.length) &&
+          revoked.repository_id===this.c.repositoryId && revoked.head_sha===predecessor.head_sha && revoked.attempt===predecessor.id &&
+          revoked.reason==='eligibility_requires_review' && Number.isSafeInteger(revoked.revision) &&
+          revoked.revision>=predecessor.revision && revoked.revision<=check.proof.revision;
+      }catch{recordedFailure=false;}
+    }
+    if(!recordedFailure)throw new Rejected('refresh_predecessor_unavailable');
+    const attempt=await beforeSend();
+    const data=await this.json(`https://api.github.com/repos/${this.c.repository}/check-runs/${old.id}`,'PATCH',token,
+      {name:check.name,status:'completed',conclusion:check.conclusion,external_id:attempt,
+        completed_at:new Date(this.now()*1000).toISOString(),output:{title:check.name,summary:check.text}});
+    if(data.id!==old.id || data.external_id!==attempt || data.status!=='completed' || data.conclusion!==check.conclusion ||
+      data.output?.summary!==check.text)throw new Rejected('check_source_mismatch');
+    return this.receipt(data,check);
+  }
   async publish(check: CheckProposal,externalId?:string): Promise<CheckReceipt> {
     if (!this.c.checkPublishingEnabled) throw new Rejected('publication_disabled');
     if (check.appId !== this.c.appId || check.appSlug !== this.c.appSlug || check.name !== this.c.checkName ||

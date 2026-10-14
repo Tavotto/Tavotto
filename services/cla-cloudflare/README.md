@@ -38,7 +38,7 @@ This is not a D1 migration command or authorization to read production evidence.
 
 ## Validation boundary
 
-The offline regression covers 69 Node cases, 3 SQLite migration cases and 6 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
+The offline regression covers 110 Node cases, 3 SQLite migration cases and 8 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
 
 
 The dedicated path-filtered PR workflow uses a GitHub-hosted Ubuntu runner, Node 24 and Python 3.12, with contents:read only, no secrets, no deployment and no dependency cache. It runs npm ci --ignore-scripts and npm run check. It adds no required context and does not change the existing aggregate gates. Local and CI passes do not establish live free-tier acceptance.
@@ -46,3 +46,15 @@ The dedicated path-filtered PR workflow uses a GitHub-hosted Ubuntu runner, Node
 Installation tokens are treated as opaque; the adapter does not inspect a legacy prefix or JWT structure. It accepts 520-character stateless tokens while retaining repository, permission and expiration checks. Its separate 8192-byte visible-ASCII/no-whitespace header bound is a service resource-safety limit, not an assertion about GitHub's token format. No token is logged. See https://github.blog/changelog/2026-10-02-stateless-github-app-installation-tokens-rolled-out/.
 
 The signing UI permits an expired incomplete, unblocked contributor packet to be replaced without transferring consent. Holder history uses explicitly requested, authorized packet-ID keyset pages (20 results plus one lookahead), ordered by creation time and ID. Every cursor and page is reauthorized; pagination never grants access to another contributor.
+
+Cached packet selections are authorized again for the current account. Inaccessible selections are cleared from the URL and session storage; account changes also clear prior personal fields and consent, even when both accounts can view the same packet.
+
+## Same-head background refresh candidate
+
+The withdrawal reconciler and fresh publication execute in separate scheduled invocations. After every earlier publication for a tracked target is durably resolved, a refresh decision is deduplicated by its source attempt and evidence revision. A fresh evaluation that is still ineligible finishes without a write; subsequent evidence revisions can request another evaluation. Manual or uncertain publication records block the entire target.
+
+Refresh is limited to the same head and an existing, exactly identified owned check run. It does not create runs for new heads or automatically handle a push; the explicit rights-holder check entry remains necessary for those cases. Before refreshing, the adapter verifies the predecessor run, attempt, app, name and recorded failure. After authentication and remote pre-reads, it rereads the current binding and commits a new attempt with a new 120-second proof under lease, generation and revision guards. Earlier proof text and expiry remain unchanged. Only one PATCH is attempted. Its response leaves the new attempt awaiting reconciliation; it is not immediately confirmed. A later invocation must independently observe and revalidate it. Unknown outcomes are observed or escalated for manual review, never replayed.
+
+Resource limits remain 20 work SQL statements / 40 total and 35 work external calls / 40 total per invocation. Dispatch needs 12 + 2N work SQL statements, where N is the number of non-exempt contributors. Confirmation needs 14 + 2N, plus two reserved reads if withdrawal becomes necessary. Consequently this initial automatic refresh path admits at most two non-exempt contributors. More contributors or complex remote reads can exhaust the unchanged budget: no fresh publication is sent, retries are bounded to three with 60-second backoff, then manual review is required. This is a resource/capability boundary, not a negative legal or eligibility determination. There is no automatic clearing of manual states.
+
+Dynamic success-publication-across-expiry integration validation is not part of this candidate's passing evidence. New tests are restricted to offline rejection, budget, durable deduplication and uncertainty handling with failed proposals; they do not establish successful end-to-end refresh behavior. Live GitHub/Cloudflare acceptance and the excluded integration scenario remain activation gates.

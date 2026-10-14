@@ -144,14 +144,18 @@ export class LiveService {
     if(rows.find(r=>r.role==='holder')!.created<rows.find(r=>r.role==='contributor')!.created) throw new Rejected('evidence_signing_order_invalid');
     return true;
   }
-  private async bound(pr:number):Promise<Binding> {
+  async freshBinding(pr:number):Promise<Binding> {
     const target={kind:'pr' as const,number:pr}; return binding(this.c,this.github,target,await this.github.snapshot(target));
   }
-  async evaluate(pr:number):Promise<CheckProposal> {
+  async evaluate(pr:number,reservedSQL?:number):Promise<CheckProposal> {
     if (!validId(pr)) throw new Rejected('pr_mismatch');
-    const revision=await this.store.revision(),bound=await this.bound(pr),now=await this.store.databaseNow();
+    const revision=await this.store.revision(),bound=await this.freshBinding(pr),now=await this.store.databaseNow();
     let good=this.c.policy.provider.configured===true,expires=now+120;
     const exempt=new Set(Object.values(this.c.exemptionIds));
+    // Background callers reserve their remaining journal/CAS statements before
+    // starting per-person reads. Qualification uses two SQL statements per actor.
+    if(reservedSQL!==undefined)this.store.budget?.reserveWorkSQL(
+      2*bound.contributors.filter(person=>!exempt.has(person.id)).length+1+reservedSQL);
     for (const person of bound.contributors) if (!exempt.has(person.id)) {
       if (!await this.qualified(person.id)) good=false;
     }
@@ -163,7 +167,7 @@ export class LiveService {
   async check(pr:number):Promise<{disposition:string;check:CheckProposal}> {
     // Track before evaluation: each later evidence/hold revision enqueues a durable notification intent.
     await this.store.track(this.c.repositoryId,{kind:'pr',number:pr});
-    const check=await this.evaluate(pr),fresh=await this.bound(pr);
+    const check=await this.evaluate(pr),fresh=await this.freshBinding(pr);
     if (!sameBinding(check.proof,fresh) || await this.store.revision()!==check.proof.revision ||
         await this.store.databaseNow()>=check.proof.expires_at) throw new Rejected('state_changed');
     if (!this.c.checkPublishingEnabled) return {disposition:'dry_run',check};
@@ -174,7 +178,7 @@ export class LiveService {
       const receipt=await this.github.publish(check,attempt);
       await this.store.published(key,receipt.id,
         check.headSha,check.conclusion,check.proof.revision,await this.store.databaseNow());
-      const after=await this.bound(pr);
+      const after=await this.freshBinding(pr);
       if (!sameBinding(check.proof,after) || await this.store.revision()!==check.proof.revision ||
           await this.store.databaseNow()>=check.proof.expires_at) {
         await this.store.settlePublication(attempt,'reconcile',receipt.id);
