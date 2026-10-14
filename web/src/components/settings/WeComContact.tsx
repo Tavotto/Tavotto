@@ -63,6 +63,12 @@ function WeComQrImage() {
 export function WeComContactNote({ withReportId, active }: { withReportId: boolean; active: boolean }) {
   const visible = useWeComContactVisible()
   const [qrOpen, setQrOpen] = useState(false)
+  // 离开结果态（重试 / 换项目重新备包）就把二维码收起：下一次结果出来时从折叠开始，不自己展开把页脚顶走
+  const [wasActive, setWasActive] = useState(active)
+  if (wasActive !== active) {
+    setWasActive(active)
+    if (!active) setQrOpen(false)
+  }
   if (!visible) return null
   return (
     <div

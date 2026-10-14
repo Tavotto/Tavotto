@@ -32,6 +32,7 @@ import { i18n } from '@/i18n'
 import { WECOM_CONTACT_URL } from '@/lib/contact'
 import { DiagnosticsSendDialog } from './DiagnosticsSendDialog'
 import { DiagnosticsSettings } from './DiagnosticsSettings'
+import { WeComContactNote } from './WeComContact'
 import { TooltipProvider } from '../ui/Tooltip'
 import { useEnvStore } from '@/store/envStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
@@ -179,6 +180,19 @@ describe('发送问题反馈确认框', () => {
     expect(img).not.toBeNull()
     expect(img.alt.length).toBeGreaterThan(8)
     expect(img.alt).toContain('企业微信')
+  })
+})
+
+describe('联系行的二维码折叠', () => {
+  it('离开结果态再回来，二维码从折叠开始（重试 / 重新备包后不自己展开）', async () => {
+    await render(<WeComContactNote active withReportId />)
+    await act(async () => q<HTMLButtonElement>('[data-wecom-qr-toggle]')!.click())
+    expect(q('[data-wecom-qr-img]')).not.toBeNull()
+    await act(async () => root.render(<TooltipProvider><WeComContactNote active={false} withReportId={false} /></TooltipProvider>))
+    expect(q('[data-wecom-qr-img]')).toBeNull()
+    await act(async () => root.render(<TooltipProvider><WeComContactNote active withReportId /></TooltipProvider>))
+    expect(q('[data-wecom-qr-img]')).toBeNull()
+    expect(q('[data-wecom-qr-toggle]')!.getAttribute('aria-expanded')).toBe('false')
   })
 })
 
