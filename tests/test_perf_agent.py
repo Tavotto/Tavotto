@@ -703,9 +703,7 @@ def test_long_option_abbreviation_is_not_accepted_or_treated_as_output(tmp_path,
     important = tmp_path / "non-output.json"
     important.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
     # 反证：打开 allow_abbrev 后会实际走到 pnpm 探测，不能仅靠 rc=2/文件没变。
-    monkeypatch.setattr(
-        A.shutil, "which", lambda _: pytest.fail("缩写参数不能启动任何性能子进程")
-    )
+    monkeypatch.setattr(A.shutil, "which", lambda _: pytest.fail("缩写参数不能启动任何性能子进程"))
     assert A.main(["run", "--summ", str(important), "--repeat", "3"]) == 2
     assert json.loads(important.read_text(encoding="utf-8"))["status"] == "ok"
     assert A._option_path(["--", "--out", str(important)], "--out") is None
@@ -721,8 +719,17 @@ def test_run_rejects_same_baseline_and_output_without_deleting_baseline(tmp_path
         A.subprocess, "run", lambda *a, **k: pytest.fail("不得在基线别名下启动浏览器")
     )
     rc = A.main(
-        ["run", "--repeat", "16", "--out", str(path), "--baseline", str(path),
-         "--summary", str(summary)]
+        [
+            "run",
+            "--repeat",
+            "16",
+            "--out",
+            str(path),
+            "--baseline",
+            str(path),
+            "--summary",
+            str(summary),
+        ]
     )
     assert rc == 2
     assert path.read_text(encoding="utf-8") == original
@@ -739,12 +746,17 @@ def test_baseline_same_inode_through_another_path_is_protected(tmp_path, monkeyp
     nested = tmp_path / "nested"
     nested.mkdir()
     disguised = nested / ".." / "baseline.json"
-    monkeypatch.setattr(
-        A.subprocess, "run", lambda *a, **k: pytest.fail("不允许覆盖基线")
-    )
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: pytest.fail("不允许覆盖基线"))
     rc = A.main(
-        ["run", "--out", str(disguised), "--baseline", str(base), "--summary",
-         str(tmp_path / "summary.json")]
+        [
+            "run",
+            "--out",
+            str(disguised),
+            "--baseline",
+            str(base),
+            "--summary",
+            str(tmp_path / "summary.json"),
+        ]
     )
     assert rc == 2
     assert base.read_text(encoding="utf-8") == raw
