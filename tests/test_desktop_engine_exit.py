@@ -89,8 +89,14 @@ def test_event_name_is_one_literal_on_both_sides():
 
 
 def test_closed_sets_match_between_shell_and_frontend():
-    assert _rust_as_str("EngineExit") == _ts_tuple("ENGINE_EXIT_KINDS") == ["signal", "nonzero", "zero"]
-    assert _rust_as_str("Previous") == _ts_tuple("PREVIOUS_EXITS") == ["app_unclean", "engine_exited"]
+    assert (
+        _rust_as_str("EngineExit")
+        == _ts_tuple("ENGINE_EXIT_KINDS")
+        == ["signal", "nonzero", "zero"]
+    )
+    assert (
+        _rust_as_str("Previous") == _ts_tuple("PREVIOUS_EXITS") == ["app_unclean", "engine_exited"]
+    )
 
 
 def test_marker_file_is_declared_to_users_and_documented_as_not_uploaded():
