@@ -1,7 +1,7 @@
 import type { Manifest, ManifestElement, ManifestGroup } from './api'
 import { segIntersectsSeg } from './pathGeom'
 import { msg, t, type UiMessage } from '@/i18n'
-import type { AlignMode, SnapKind, SnapLine, SnapLineCandidates } from './geometry'
+import type { AlignMode, SnapEdge, SnapKind, SnapLine, SnapLineCandidates } from './geometry'
 import {
   flipY,
   layoutBoxes,
@@ -137,6 +137,86 @@ export function inFigureSnapCandidates(
     if (box && box[2] > 0 && box[3] > 0) push(box, snapKindOf(el), el.gid)
   }
   return { xs, ys }
+}
+
+/**
+ * 跨图对齐时每种类型出哪几条边（ADR 0128 §二）。`xs` / `ys` 各自列出左中右（上中下）里要出的 edge：
+ * 子图 / 色条 / 图例四条边，轴标题 / 图标题只出中线（两个方向），普通文字出左边与中线。
+ * 刻度、数据线、箭头等不在表里 = 不参与。
+ */
+const CROSS_EDGES: Partial<Record<SnapKind, { xs: SnapEdge[]; ys: SnapEdge[] }>> = {
+  axes: { xs: [0, 2], ys: [0, 2] },
+  colorbar: { xs: [0, 2], ys: [0, 2] },
+  legend: { xs: [0, 2], ys: [0, 2] },
+  xlabel: { xs: [1], ys: [1] },
+  ylabel: { xs: [1], ys: [1] },
+  title: { xs: [1], ys: [1] },
+  text: { xs: [0, 1], ys: [1] },
+}
+
+/**
+ * 别的图里的同类元素候选线（页面 mm，ADR 0128 §二）。别的面板要满足：`type==='panel'`、未隐藏、
+ * 不是正在编辑的那个、未旋转 / 翻转、拿得到**权威** manifest（`getManifest`，ADR 0017）、
+ * 外框与视口可见矩形相交（`visible` 为 null = 视口尺寸未知，不剔）。元素：隐藏的、不可对齐的、
+ * 位图代理、独立箭头跳过；中心落在它自己面板的裁剪窗外的不出线（与 `elementSnapCandidates` 同一判断）。
+ * 只出 `CROSS_EDGES` 里那几条边。
+ */
+export function crossFigureSnapCandidates(
+  objects: readonly CanvasObject[],
+  getManifest: (panel: PanelObject) => Manifest | null,
+  editingPanelId: string,
+  visible: { x: number; y: number; w: number; h: number } | null,
+): SnapLineCandidates {
+  const xs: SnapLine[] = []
+  const ys: SnapLine[] = []
+  for (const o of objects) {
+    if (o.type !== 'panel' || o.hidden || o.id === editingPanelId) continue
+    if (panelRotation(o) || o.flipH || o.flipV) continue
+    if (
+      visible &&
+      (o.x >= visible.x + visible.w ||
+        o.x + o.w <= visible.x ||
+        o.y >= visible.y + visible.h ||
+        o.y + o.h <= visible.y)
+    )
+      continue
+    const manifest = getManifest(o)
+    if (!manifest) continue
+    for (const el of manifest.elements) {
+      if (!isAlignable(el) || isElementHidden(el) || el.arrow_endpoints || el.geom_gid) continue
+      const kind = snapKindOf(el)
+      const edges = CROSS_EDGES[kind]
+      const box = edges && elementBoxOf(o, el)
+      if (!edges || !box || box[2] <= 0 || box[3] <= 0) continue
+      const rect = fracBoxToMm(o, box)
+      const cx = rect.x + rect.w / 2
+      const cy = rect.y + rect.h / 2
+      if (cx < o.x || cx > o.x + o.w || cy < o.y || cy > o.y + o.h) continue
+      const meta = { kind, panelId: o.id, gid: el.gid, rect }
+      for (const e of edges.xs) xs.push({ v: rect.x + (rect.w * e) / 2, edge: e, ...meta })
+      for (const e of edges.ys) ys.push({ v: rect.y + (rect.h * e) / 2, edge: e, ...meta })
+    }
+  }
+  return { xs, ys }
+}
+
+/**
+ * 图内拖动的配对过滤（`snapMoveNearest` 的 `pair`）：本图的线（`panelId` 缺省或等于 `ownPanelId`，
+ * 含参考线）照旧全收；别的图的线只收 **kind 匹配**且 **自身边 === 线的边**——色条另可配子图，
+ * 但只配上下边（`xs` 里的线不配）。`xs` 用来分辨一条线属于哪个方向。
+ */
+export function crossFigurePair(
+  selfKind: SnapKind,
+  ownPanelId: string,
+  xs: readonly SnapLine[],
+): (selfEdge: SnapEdge, line: SnapLine) => boolean {
+  const isX = new Set(xs)
+  return (selfEdge, line) => {
+    if (!line.panelId || line.panelId === ownPanelId) return true
+    if (selfEdge !== line.edge) return false
+    if (line.kind === selfKind) return true
+    return selfKind === 'colorbar' && line.kind === 'axes' && !isX.has(line)
+  }
 }
 
 /**

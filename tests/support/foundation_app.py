@@ -58,7 +58,18 @@ class HttpError(Exception):
 
 
 class RunningApp:
-    def __init__(self, base: str, auth: dict, proc: subprocess.Popen, log_path: Path, work: Path):
+    def __init__(
+        self,
+        base: str,
+        auth: dict,
+        proc: subprocess.Popen,
+        log_path: Path,
+        work: Path,
+        env: dict | None = None,
+    ):
+        self.env = dict(
+            env or {}
+        )  # 服务子进程 Popen 的**完整**环境：探针要复现 worker 启动环境时用它
         self.base = base
         self.auth = auth
         self.proc = proc
@@ -189,7 +200,7 @@ def running_app(
         else:
             raise AssertionError("未认证的 /api/panels 没有被拒绝")
         assert smoke.adopt_session_credentials(data_dir, port), "本机会话凭据文件缺失"
-        app = RunningApp(base, dict(smoke._AUTH), proc, log_path, work)
+        app = RunningApp(base, dict(smoke._AUTH), proc, log_path, work, env)
         yield app
         with contextlib.suppress(Exception):
             app.call("/api/shutdown", {}, timeout=30)

@@ -21,6 +21,7 @@ export {
   previewHash,
   versionHash,
   objectHash,
+  errorMessageHash,
 } from './hash'
 export {
   readAuthority,

@@ -391,6 +391,7 @@ function DiagnosticsReportSection() {
             description={st('diagnostics.send.contact.rowHint')}
             below={<WeComQr />}
             data-diagnostics-contact
+            data-settings-anchor="diagnostics.contact"
           >
             <span className="text-sm">
               <WeComLink />

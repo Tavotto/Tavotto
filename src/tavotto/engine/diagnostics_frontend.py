@@ -227,6 +227,7 @@ EVENT_FIELDS: dict[str, frozenset[str]] = {
             "past_count",
         }
     ),
+    "ui.unexpected_error": frozenset({"error_name", "message_hash", "source"}),
     "undo.request": frozenset({"future_count", "past_count", "txn_open"}),
 }
 
@@ -245,6 +246,23 @@ _ENUM_FIELDS: dict[str, frozenset[str]] = {
     "render_status": frozenset({"idle", "rendering", "ready", "error"}),
     "selection_kind": frozenset({"none", "element", "object", "mixed"}),
     "history_mode": frozenset({"gesture", "granular"}),
+    # `ui.unexpected_error`（ADR 0118 补充 2026-10-14）：来源与内建错误名都是闭集，
+    # 与前端 `UNEXPECTED_ERROR_SOURCES` / `UNEXPECTED_ERROR_NAMES` 严格同源（test_unexpected_error_enums_match_frontend）
+    "source": frozenset({"boundary", "window_error", "unhandled_rejection", "engine_500"}),
+    "error_name": frozenset(
+        {
+            "TypeError",
+            "RangeError",
+            "ReferenceError",
+            "SyntaxError",
+            "EvalError",
+            "URIError",
+            "Error",
+            "DOMException",
+            "AbortError",
+            "other",
+        }
+    ),
     # `kind` 在事件里是不变式种类，在快照里是面板载体类型
     "kind": frozenset(
         {

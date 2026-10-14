@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useLocale } from '@/i18n/react'
+import { useRenderProgress } from '@/hooks/useRenderProgress'
 import { t as translate } from '@/i18n'
 import {
   ChartLine,
@@ -310,17 +311,22 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
   // 「需要渲染一次」也是一种空态：全站只有 EmptyState 一种形态（宪法第五节；左栏审计 L34）。
   // 渲染中把动作换成一句现状
   if (!manifest) {
-    return (
-      <EmptyState
-        icon={EditableFigureIcon}
-        title={et('needRender', { name: panel.name ?? panel.fileId })}
-        hint={rendering ? et('building') : undefined}
-        action={rendering ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
-      />
-    )
+    return <UnbuiltTree panel={panel} rendering={rendering} />
   }
 
   return <TreeView key={panel.id} panel={panel} manifest={manifest} chrome={chrome} />
+}
+
+/** 计时只更新空态叶子；已经有元素的树不订阅进度或每秒重画。 */
+function UnbuiltTree({ panel, rendering }: { panel: PanelObject; rendering: boolean }) {
+  const progress = useRenderProgress(panel.fileId, rendering, et('building'))
+  return <EmptyState
+    data-render-progress={progress.active ? progress.phase : undefined}
+    icon={EditableFigureIcon}
+    title={et('needRender', { name: panel.name ?? panel.fileId })}
+    hint={progress.active ? progress.text : undefined}
+    action={progress.active ? undefined : { label: et('load'), onClick: () => enterElementEdit(panel.id) }}
+  />
 }
 
 function TreeView({

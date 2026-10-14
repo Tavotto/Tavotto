@@ -263,6 +263,39 @@ class TestReport:
         rep = CM.build_report(cases, results, {}, "current", "all")
         assert [c["id"] for c in rep["cases"]] == ["a", "b"]
 
+    def test_v2_observation_is_engine_layer_and_unobserved_metrics_are_null(self):
+        """V2 基线指标：首次有效出图是引擎层口径（execute+capture+open）；回退率 / 干预次数 / 执行次数 /
+        端到端 p50 p95 在这一层拿不到——必须是 null 并写明原因，不是 0（05_TEST_STRATEGY §7）。"""
+        cases, results = self._fixture()
+        obs = CM.build_report(cases, results, {}, "current", "all")["v2_observation"]
+        assert obs["layer"] == "engine_one_shot"
+        ff = obs["first_valid_figure"]
+        assert (ff["passed"], ff["total"]) == (2, 2) and ff["rate"] == 1.0
+        for key in (
+            "exec_count",
+            "fallback_rate",
+            "intervention_count",
+            "e2e_first_figure_ms_p50_p95",
+        ):
+            assert obs[key] is None, key
+            assert obs["unobserved"].get(key), key
+
+    def test_v2_case_duration_counts_each_measured_group_once(self):
+        """`_finish()` 把整组的耗时抄给组内每个 case；同一脚本三个 stem 不能给 p50/p95 投三票。"""
+        cases = [dict(case(f"g{i}"), script="s.py") for i in range(3)] + [
+            dict(case("h"), script="t.py")
+        ]
+        results = {}
+        for c in cases:
+            results[c["id"]] = {
+                "id": c["id"],
+                "stages": {"execute": True, "capture": True, "open": True},
+                "duration_ms": 9000.0 if c["script"] == "s.py" else 1000.0,
+            }
+        dur = CM.v2_observation(cases, results)["case_duration_ms"]
+        assert dur["groups"] == 2
+        assert dur["p50"] == 5000.0  # {1000, 9000}；逐 case 计则是 9000
+
     def test_report_json_is_deterministic(self):
         cases, results = self._fixture()
         a = CM.build_report(cases, results, {}, "current", "all")

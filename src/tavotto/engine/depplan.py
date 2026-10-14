@@ -1096,7 +1096,7 @@ def _is_binding(c) -> bool:
     共用这一处（`_relevant_declarations` / `_arbitrate_providers`）——可选 / 条件 / `TYPE_CHECKING` / 未使用的 import 两处都不算。"""
     return (
         c.bucket in (importscan.BUCKET_THIRD_PARTY, importscan.BUCKET_UNKNOWN)
-        and c.context in _BINDING_CONTEXTS
+        and any(ctx in _BINDING_CONTEXTS for ctx in (c.enclosing_contexts or (c.context,)))
         and not c.unused
     )
 

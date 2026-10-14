@@ -1,18 +1,45 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { requestBlankStart } from '@/store/documentStore'
 import { t } from '@/i18n'
+import { reportUnexpectedError } from '@/lib/unexpectedErrors'
+import { DiagnosticsSendHost } from './DiagnosticsSendHost'
+import { SendReportButton } from './SendReportButton'
 import { Button } from './ui/Button'
 import { Details, Summary } from './ui/Details'
 import { dragRegionProps } from '@/lib/desktop'
+import { TooltipProvider } from './ui/Tooltip'
+import { useDiagSendStore } from '@/store/diagSendStore'
 
 interface State {
   error: Error | null
 }
 
 /**
+ * 崩溃页里的发送对话框的**内层兜底**：对话框自己抛错时退回空，崩溃页不能二次崩（外层 ErrorBoundary 再捕获就是死循环）。
+ * 故意不上报 `reportUnexpectedError`——诊断 / 发送流程自身的错不许触发提示（防递归），console 环仍会记到。
+ */
+class SendHostBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  componentDidCatch(error: Error) {
+    console.error('发送问题反馈对话框出错:', error)
+  }
+  render() {
+    return this.state.failed ? null : this.props.children
+  }
+}
+
+/**
  * 全局兜底：任何组件抛错不再白屏。文档由 documentStore 的防抖自动保存
  * 兜住（localStorage），刷新即可恢复到最后一次快照。
  * 只依赖最朴素的几个 ui 原语（Button / Details：没有 store、没有 portal）——它们崩了这里还得能渲染。
+ *
+ * **放宽的边界（PR A，ADR 0118 补充 2026-10-14）只有两样**：崩溃页的「详情」里多一颗 `SendReportButton`，
+ * 以及崩溃页自己渲染一份 `DiagnosticsSendHost`（App 树已死，App 里那份跟着没了）——后者包在 `TooltipProvider` 与
+ * `SendHostBoundary` 里。除 `diagSendStore` 与对话框外这里仍然什么 store 都不碰；「发送问题反馈」关着
+ * （`capability === null`）时两样都渲染为空，崩溃页与改动前逐元素一致。
  *
  * 同样刻意**不用 useTranslation**：这是 class 组件，而且它渲染的时候
  * 界面已经崩了，能少一层订阅就少一层。直接取当前语言的文本。
@@ -27,6 +54,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // console 是开发/诊断通道，不翻译（见 docs/i18n.md 的边界一节）
     console.error('界面崩溃:', error, info.componentStack)
+    // 记 `ui.unexpected_error`（source=boundary）并把栈 + componentStack 补进未捕获错误环；永不抛
+    reportUnexpectedError({ source: 'boundary', error, componentStack: info.componentStack ?? undefined })
+    // 首次渲染就崩时 App 的 effect 没跑过、能力说明从没取过：崩溃页自己取一次（本机请求、失败即关），否则永远没有发送入口
+    if (useDiagSendStore.getState().capability === null) void useDiagSendStore.getState().load()
   }
 
   render() {
@@ -54,6 +85,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
               >
                 {t('actions.copy')}
               </Button>
+              <SendReportButton />
             </div>
           </Details>
           {/* 页脚：主动作是「重新加载」（文档有自动保存兜底）；「从空白开始」会丢掉恢复的那份，
@@ -76,6 +108,11 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
             </Button>
           </div>
         </div>
+        <TooltipProvider>
+          <SendHostBoundary>
+            <DiagnosticsSendHost />
+          </SendHostBoundary>
+        </TooltipProvider>
       </div>
     )
   }

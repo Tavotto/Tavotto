@@ -100,3 +100,15 @@
 - **名字解析。** 网络概况对 `tavotto.cn` / `github.com` 各做一次系统名字解析（不建立连接，线程里做、≤2 s，超时记 unknown），这是 prepare「零网络」里唯一的 DNS 查询；用来判断 TUN 把域名改写进 `198.18.0.0/15`。
 - **ZIP 形状（服务端（infra 诊断服务）对上传 ZIP 的检查：条目名匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`（无目录 / 斜杠）、整包 ≤ 32 条、单条目 `file_size > 1024 且 > 200 × compress_size` 被拒、单条目解压后 ≤ 128 MiB、总解压后 ≤ 256 MiB、`manifest.json` ≤ 64 KiB）。** 所以条目名一律扁平（`detail-errors.json`、`detail-app-log.txt`……），多文件的类别（会话状态、样式改动、源码、崩溃报告、损坏副本）各打成**一个内层 zip**（内层可有目录与 `index.json`），整包最大配置约 25 条；出包后 `ratio_safe` 把压缩比超限的条目改存 STORED，再用 `diagsend.zip_problem`（同一组判据）自检，不合规当内部错误 `bundle_invalid`、不发送。`bundle_schema` 取值范围 1–99，8 无问题。
 - **已知局限。** 默认收集的自由文本只按「秘密词 + 分隔符」「PEM / JWT / 长十六进制 / 服务商令牌前缀」等形状清理（fail-closed：命中后从值起点抹到行尾，不确定抹到输入末尾），日志里没有标注成密钥的口令无法自动识别；缓解是逐次确认、确认框可展开看清单、可先保存同一份 ZIP 检查。逐条局限与取舍见 `docs/rules/backend/diagnostics.md`。
+
+## 补充（2026-10-14）：意外错误入口
+
+目的：用户遇到「界面出错」时不必自己想到去设置页找入口——自动提示可以出现，**上传仍只在确认框里点「发送」**。仅在「发送问题反馈」开着（`diagSendStore.capability !== null`）时才有任何新界面；关着时与改动前逐元素一致，/try 不受影响。
+
+- **来源只有四个，汇聚点只有一个**（`lib/unexpectedErrors.ts`）：window `error` / `unhandledrejection`（订阅 `diagnostics/detail.ts` 已有的那一份监听，不另装）、ErrorBoundary 的 `componentDidCatch`、`lib/api.ts` `jsonFetch` 里 `status >= 500 && code === 'internal_error'`（只认兜底码，具体业务码各有各的卡）。
+- **诊断环事件 `ui.unexpected_error`**（进 `frontend_state` 同源的 trace，导出路径也带）：字段闭集 `source`（`boundary` / `window_error` / `unhandled_rejection` / `engine_500`）、`error_name`（内建错误名，其余 `other`）、`message_hash`（`err:` 前缀的 `diagnosticHash`）。**导出路径的老隐私规则不变：trace 里没有 message / stack 原文。** 原文与调用栈（含 ErrorBoundary 的 componentStack、引擎 500 的 `engine internal_error <方法> <路由>`）进 #1003 的未捕获错误环，只随发送包的 `detail-errors.json` 走（用户裁决：发送包要原文）。不升 bundle schema——只是新增一种事件类型。
+- **分类靠结构，不靠关键词猜严重度**：`ApiError` 与一切业务自己的错误类（原型不是内建错误原型的，如 `EngineError` / `PendingConflict` / `ArtifactValidationError`）、AbortError、`ResizeObserver loop…`、跨域 `Script error.`、pyodide / web worker 的 onerror、非 Error 的拒绝（取消令牌）一律忽略（连 trace 也不记）。用户脚本运行错误、缺依赖、业务校验失败、取消本来就是结构化结果，不经这里。
+- **去重与风暴上界**（常量 `MAX_FINGERPRINTS = 64` / `MAX_PROMPTS_PER_SESSION = 5`）：指纹 = `source + error_name + message_hash`（引擎 500 用 `source + 方法 + 路由规则`，路由里非纯小写词的段规整成 `:id`）；同一指纹每会话最多提示一次，关掉后不再提示；去重集合 LRU；同时最多 1 张卡在轨上；总数超限只记环不弹。
+- **防递归**：诊断 / 发送流程自身抛的错（发送对话框开着、或栈指回 `diagnostics/` / `DiagnosticsSendDialog` / `diagSend`）照记 trace 与环，**不触发提示**。
+- **卡片**在通知轨（`NotificationRail`，绝不进 `BannerStack`）：error 语气、一句固定的话 + 主动作「发送问题反馈」+ ×，不带错误原文；点主动作只是 `diagSendStore.setOpen(true)`（打开 = 本机备包，沿用既有确认框，不新增 prepare / start 以外的路径）。最多两条的仲裁：低于「刚为编辑加入」、高于全部提示类（已改用环境 / 已用上次的答案 / 操作提示）。
+- **崩溃页**：主按钮仍是「重新加载」；「发送问题反馈」放进折叠的「详情」（secondary）。App 树已崩，崩溃页自己渲染一份 `DiagnosticsSendHost`（外套 `TooltipProvider` 与内层 `SendHostBoundary`——对话框出错时退回空，崩溃页不二次崩）。这是对「崩溃页只依赖最朴素原语」的**有意放宽，范围仅限 `diagSendStore` 与发送对话框**。ErrorBoundary 来源不登记通知轨卡片（轨已随 App 树消失），只记 trace 与环。
