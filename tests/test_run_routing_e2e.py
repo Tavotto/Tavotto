@@ -25,6 +25,7 @@ from test_execution_fallback_e2e import (
     _run,
     _runs,
     _settled,
+    sidecar_app,
 )
 
 pytestmark = nativekit.needs_user_python
@@ -96,7 +97,7 @@ def _history(final):
 
 def test_an_ordinary_plot_runs_once_in_safe(tmp_path):
     proj, log = _project(tmp_path, PLAIN)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
         route = first["plan"]["route"]
         assert (route["execution"], route["reason"]) == ("safe", "ordinary_plot")
@@ -110,7 +111,7 @@ def test_an_ordinary_plot_runs_once_in_safe(tmp_path):
 
 def test_savefig_then_image_open_goes_straight_to_native_and_executes_once(tmp_path):
     proj, log = _project(tmp_path, READBACK)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
         route = first["plan"]["route"]
         assert (route["execution"], route["reason"], route["confidence"]) == (
@@ -132,7 +133,7 @@ def test_savefig_then_image_open_goes_straight_to_native_and_executes_once(tmp_p
 
 def test_tmp_write_replace_then_read_goes_straight_to_native_and_replaces_for_real(tmp_path):
     proj, log = _project(tmp_path, REPLACE)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
         route = first["plan"]["route"]
         assert (route["execution"], route["reason"]) == ("native", "native_file_semantics_required")
@@ -147,7 +148,7 @@ def test_tmp_write_replace_then_read_goes_straight_to_native_and_replaces_for_re
 
 def test_a_dynamic_path_runs_safe_first_then_falls_back_to_native(tmp_path):
     proj, log = _project(tmp_path, DYNAMIC)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
         route = first["plan"]["route"]
         assert (route["execution"], route["confidence"]) == ("safe", "low")
@@ -165,7 +166,7 @@ def test_a_safe_only_project_never_goes_native(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(work / "config"))
     (work / "config").mkdir(parents=True)
     execpolicy.set_mode(proj, execpolicy.MODE_SAFE_ONLY)  # 与被测服务共用同一份项目设置
-    with fa.running_app(proj, work, env_overrides=ENV) as app:
+    with sidecar_app(proj, work, env_overrides=ENV) as app:
         first = _create(app)
         route = first["plan"]["route"]
         assert (route["execution"], route["reason"]) == ("safe", "user_explicit_profile")
@@ -178,7 +179,7 @@ def test_a_safe_only_project_never_goes_native(tmp_path, monkeypatch):
 
 def test_a_script_that_succeeded_in_native_before_runs_native_directly_next_time(tmp_path):
     proj, log = _project(tmp_path, DYNAMIC)
-    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+    with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
         final = _settled(app, _run(app, first))
         assert _history(final) == [("safe", "blocked"), ("native", "succeeded")]
@@ -205,3 +206,15 @@ def test_a_script_that_succeeded_in_native_before_runs_native_directly_next_time
         (proj / "fig.py").write_text((proj / "fig.py").read_text() + "\n# edit\n", encoding="utf-8")
         edited = _reopen(app)
         assert edited["plan"]["route"]["reason"] == "ordinary_plot"
+
+
+def test_a_browser_mode_session_is_never_routed_to_native(tmp_path):
+    """非桌面来源（这里：浏览器模式的服务，无桌面窗口 cookie）不能被路由到 native：授权边界与回退一致。"""
+    proj, log = _project(tmp_path, READBACK)
+    with fa.running_app(proj, tmp_path / "work", env_overrides=ENV) as app:
+        final = _settled(app, _run(app, _create(app)))
+        time.sleep(2)
+        assert _runs(log) == 1
+        assert _history(final) == [("safe", "blocked")]
+        assert final["plan"]["route"]["declined"] == "not_desktop_initiated"
+        assert _native_sessions(app, proj) == []

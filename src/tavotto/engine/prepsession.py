@@ -1604,8 +1604,28 @@ class SessionService:
                 409,
                 {"reason": stale[0], "executed": False},
             )
+        base = sess.plan
+        if base.route and base.execution == execspec.PROFILE_NATIVE and not desktop:
+            # 路由（ADR 0128）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
+            # 完全一致，非桌面来源不能被路由到 native。检查时拿不到来源，所以在认领这一刻按 safe 重新规划（只读）
+            safe = self._plan_of(
+                sess.project_id,
+                sess.project_root,
+                {**sess.target, "execution": execspec.PROFILE_SAFE},
+            )
+            base = dataclasses.replace(
+                safe,
+                route={
+                    **base.route,
+                    "execution": execspec.PROFILE_SAFE,
+                    "declined": execpolicy.REASON_NOT_DESKTOP,
+                },
+            )
+            # 会话的计划跟上（不加修订，同「点运行时采用了项目环境」）：报告里的 route 如实说这次没走 native
+            sess.plan = base
+            sess.fingerprint = _fingerprint(base)
         plan = dataclasses.replace(
-            sess.plan, plan_id=f"prep-{uuid.uuid4().hex}", created_at=self._clock()
+            base, plan_id=f"prep-{uuid.uuid4().hex}", created_at=self._clock()
         )
         sess.dependency_delta = None  # 新的一次尝试：上一次依赖准备留下的差额已经被这次执行消费
         attempt = _Attempt(

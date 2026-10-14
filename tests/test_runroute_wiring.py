@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tavotto import app as m, security
 from tavotto.engine import (
     execpolicy,
     launchctx,
@@ -23,9 +24,18 @@ from tavotto.engine import (
     runconfig,
     runroute,
 )
-from test_execution_fallback import BLOCKED, native  # noqa: F401
+from tavotto.engine.session_client import AUTH_HEADER
+from test_execution_fallback import BLOCKED  # noqa: F401
+from test_execution_fallback_origin import (  # noqa: F401
+    NONCE,
+    SECRET,
+    _mode,
+    _restore_auth_config,
+    native,
+)
 from test_preparation_api import _open, _project, client, fake_pool  # noqa: F401
 from test_preparation_session import (  # noqa: F401
+    SESSIONS,
     _act,
     _action,
     _create,
@@ -33,6 +43,18 @@ from test_preparation_session import (  # noqa: F401
     _settle,
     sessions,
 )
+
+
+@pytest.fixture(autouse=True)
+def _desktop_window(request, client, _restore_auth_config):
+    """默认：桌面窗口发起（cookie 兑换自启动 nonce）。非桌面来源的反例用例用 `no_desktop` 标记自己建来源。"""
+    if "nondesktop" in request.node.name:
+        yield
+        return
+    state = _mode(desktop=True, secret=None)
+    client.set_cookie(security.COOKIE_NAME, state.redeem(NONCE))
+    yield
+
 
 READBACK = """\
 import matplotlib.pyplot as plt
@@ -324,3 +346,123 @@ def test_a_v1_record_is_still_readable_and_means_safe(old_version):
     assert launchctx.verify(
         {"version": 3}, project_root=".", script="s.py", python=None, python_source=None
     ) == (launchctx.REASON_VERSION)
+
+
+def _route_after_run(client, hdr=None):
+    kw = {"headers": hdr} if hdr else {}
+    report = client.post(SESSIONS, json={"script": "fig.py"}, **kw).get_json()
+    assert report["plan"]["route"]["execution"] == "native"  # 检查时拿不到来源，路由只是预判
+    resp = client.post(
+        f"{SESSIONS}/{report['session_id']}/actions",
+        json={
+            "action_id": _action(report, "run")["id"],
+            "expected_config_revision": report["config_revision"],
+        },
+        **kw,
+    )
+    assert resp.status_code == 202, resp.get_json()
+    return report, kw
+
+
+def _settled_via(client, report, kw):
+    import time
+
+    deadline = time.time() + 10
+    while True:
+        final = client.get(f"{SESSIONS}/{report['session_id']}", **kw).get_json()
+        if final["phase"] not in ("running", "awaiting_runtime_input"):
+            break
+        assert time.time() < deadline
+        time.sleep(0.02)
+    time.sleep(0.2)
+    return final
+
+
+def _assert_not_routed(final, native, fake_pool):
+    assert native["calls"] == [], "非桌面来源不能被路由到 native"
+    assert fake_pool["build_calls"] == 1
+    assert [h["profile"] for h in final["attempt_history"]] == ["safe"]
+    assert final["plan"]["route"]["declined"] == "not_desktop_initiated"
+    assert final["plan"]["route"]["execution"] == "safe"
+
+
+def test_nondesktop_plain_client_is_never_routed_to_native(
+    client, tmp_path, fake_pool, native, sessions
+):
+    _setup(client, tmp_path, READBACK)
+    m.app.config.pop("TAVOTTO_DESKTOP_MODE", None)
+    report, kw = _route_after_run(client)
+    _assert_not_routed(_settled_via(client, report, kw), native, fake_pool)
+
+
+def test_nondesktop_browser_mode_is_never_routed_to_native(
+    client, tmp_path, fake_pool, native, sessions
+):
+    _setup(client, tmp_path, READBACK)
+    state = _mode(desktop=False, secret=SECRET)
+    client.set_cookie(security.COOKIE_NAME, state.redeem(NONCE))
+    report, kw = _route_after_run(client)
+    _assert_not_routed(_settled_via(client, report, kw), native, fake_pool)
+
+
+def test_nondesktop_api_client_mcp_style_is_never_routed_to_native(
+    client, tmp_path, fake_pool, native, sessions
+):
+    _setup(client, tmp_path, READBACK)
+    _mode(desktop=True, secret=SECRET)
+    report, kw = _route_after_run(client, {AUTH_HEADER: SECRET})
+    _assert_not_routed(_settled_via(client, report, kw), native, fake_pool)
+
+
+def test_nondesktop_run_when_ready_is_never_routed_to_native(
+    client, tmp_path, fake_pool, native, sessions
+):
+    _setup(client, tmp_path, READBACK)
+    _mode(desktop=True, secret=SECRET)
+    kw = {"headers": {AUTH_HEADER: SECRET}}
+    report = client.post(SESSIONS, json={"script": "fig.py"}, **kw).get_json()
+    arm = _action(report, "run_when_ready")
+    resp = client.post(
+        f"{SESSIONS}/{report['session_id']}/actions",
+        json={
+            "action_id": arm["id"],
+            "expected_config_revision": report["config_revision"],
+            "impact_digest": arm["impact"]["impact_digest"],
+        },
+        **kw,
+    )
+    assert resp.status_code in (200, 202), resp.get_json()
+    _assert_not_routed(_settled_via(client, report, kw), native, fake_pool)
+
+
+def test_nondesktop_legacy_preparation_endpoint_is_never_routed(
+    client, tmp_path, fake_pool, native, sessions
+):
+    _setup(client, tmp_path, READBACK)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    assert resp.status_code == 202, resp.get_json()
+    assert resp.get_json()["plan"].get("route") is None  # 旧端点走显式 safe，不经路由
+    import time
+
+    time.sleep(0.5)
+    assert native["calls"] == []
+
+
+def test_the_desktop_window_run_when_ready_is_routed_to_native(
+    client, tmp_path, fake_pool, native, sessions
+):
+    _setup(client, tmp_path, READBACK)
+    report = client.post(SESSIONS, json={"script": "fig.py"}).get_json()
+    arm = _action(report, "run_when_ready")
+    resp = client.post(
+        f"{SESSIONS}/{report['session_id']}/actions",
+        json={
+            "action_id": arm["id"],
+            "expected_config_revision": report["config_revision"],
+            "impact_digest": arm["impact"]["impact_digest"],
+        },
+    )
+    assert resp.status_code in (200, 202), resp.get_json()
+    final = _settle(client, report["session_id"])
+    assert len(native["calls"]) == 1 and fake_pool["build_calls"] == 0
+    assert [h["profile"] for h in final["attempt_history"]] == ["native"]
