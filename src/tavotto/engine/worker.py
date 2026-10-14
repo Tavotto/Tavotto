@@ -1054,7 +1054,9 @@ class Worker(wireproto.V1Handler):
                 if exc.code not in (None, 0):
                     # 被拦下的操作之后观察到不同的世界而退出：原因是守卫，不是脚本自己想退（P01a）
                     # `savefig(p); if not exists(p): sys.exit(1)`：退出分支在直接运行里走不到——也是守卫造成的
-                    if ledger.material() or ledger.explain_exit():
+                    if ledger.material() or (
+                        not _raised_by_cli_parser(exc) and ledger.explain_exit()
+                    ):
                         raise _blocked_operations_error(
                             ledger.material(), cause=exc, fidelity=ledger.summary()
                         ) from exc

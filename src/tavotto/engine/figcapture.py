@@ -2082,6 +2082,21 @@ class BlockedFileOps:
     KIND_WRITE = "write"
     KIND_SAVEFIG = "savefig"
 
+    #: 账本里 `op` 的闭集：守卫记账时用的名字（worker 的 `_guard_delete` / `Path.unlink` / `write_text` / `savefig`）。
+    #: 回执只收这些，开放字符串（路径）一律丢弃；加守卫入口时同步（`tests/test_worker_fidelity.py` 对照 worker 源码）。
+    OPS = (
+        "Path.unlink",
+        "Path.write_text",
+        "os.remove",
+        "os.unlink",
+        "os.rmdir",
+        "os.rename",
+        "os.replace",
+        "shutil.rmtree",
+        "shutil.move",
+        "savefig",
+    )
+
     #: 弱信号（`suspects()`）的 `via` 闭集：只有这些字符串会出现在回执 / 诊断里。
     VIA_STAT = "stat"  # 脚本查了被拦截 savefig 目标的状态（`exists` / `getsize` / `Path.stat`…）
     VIA_PROBE_FAILED = (
@@ -2117,6 +2132,8 @@ class BlockedFileOps:
         self._counts: dict[tuple[str, str], int] = {}
         #: 正在执行的「探路」调用（`exists` / `isfile` / `Path.exists`…）深度：它们本来就靠 stat 落空作答，不算 stat 失败
         self._check_depth = 0
+        #: 观察序号：每次脚本的 open / stat / 列目录 +1。`explain_exit` 要求"落空的 savefig 目标探测"是退出前最后一次观察。
+        self._seq = 0
 
     # ---- 记账 ----
     @staticmethod
@@ -2237,6 +2254,7 @@ class BlockedFileOps:
             return
         self._busy = True
         try:
+            self._seq += 1
             if not isinstance(mode, str):
                 return
             real = self._norm(path)
@@ -2414,6 +2432,7 @@ class BlockedFileOps:
             return
         self._busy = True
         try:
+            self._seq += 1
             real = self._norm(path)
             if real is not None:
                 self._mark(real, via_stat=True)
@@ -2452,6 +2471,7 @@ class BlockedFileOps:
             return
         self._busy = True
         try:
+            self._seq += 1
             real = self._norm(path if path is not None else ".")
             if real is None:
                 return
@@ -2513,13 +2533,29 @@ class BlockedFileOps:
         except Exception:  # noqa: BLE001
             return False
 
+    def note_missing_stat(self, exc: BaseException) -> None:
+        """被拦截的 savefig 目标上的 stat 落空了（任何探路都算）：记下此刻的观察序号，供 `explain_exit` 判"退出由它控制"。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            for ev in self._failure_events(exc):
+                if ev["kind"] == self.KIND_SAVEFIG:
+                    ev["miss_seq"] = self._seq
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
     def explain_exit(self) -> bool:
-        """脚本以非零状态退出，且此前查过被拦截 savefig 目标的状态（典型：`if not os.path.exists(out): sys.exit(1)`）：
-        直接运行里那个目标存在，退出分支不会走——退出是守卫造成的。把查过的 savefig 事件记为已观察。永不抛。"""
+        """脚本以非零状态退出，且退出前**最后一次**观察就是被拦截 savefig 目标的落空探测
+        （典型：`if not os.path.exists(out): sys.exit(1)`）：直接运行里那个目标存在，退出分支不会走——退出是守卫造成的。
+        探测之后脚本又做了别的观察（读别的文件、列目录…）说明退出未必由它控制，保留原分类。
+        参数解析库自己的退出由调用方排除。把这些 savefig 事件记为已观察。永不抛。"""
         try:
             hit = False
             for ev in (*self._events, *self._spill.values()):
-                if ev["kind"] == self.KIND_SAVEFIG and ev.get("stat_seen"):
+                if ev["kind"] == self.KIND_SAVEFIG and ev.get("miss_seq") == self._seq:
                     ev["observed"] = True
                     hit = True
             return hit
@@ -2614,10 +2650,14 @@ class BlockedFileOps:
             )
 
         def watched_stat(path, *args, **kwargs):
-            ledger.observe_stat(path)
+            if (
+                not ledger._check_depth
+            ):  # 探路包装已经观察过这一次（POSIX 上 exists 内部再走 os.stat）：只算一次
+                ledger.observe_stat(path)
             try:
                 return real_stat(path, *args, **kwargs)
             except FileNotFoundError as exc:
+                ledger.note_missing_stat(exc)
                 if (
                     not ledger._check_depth
                 ):  # `exists()` 一类探路本来就靠落空作答；`getsize` / `stat()` 的落空才是信号
@@ -2644,6 +2684,8 @@ class BlockedFileOps:
 
         def _counting(original):
             def counted(*args, **kwargs):
+                if not ledger._check_depth and args:
+                    ledger.observe_stat(args[0])
                 ledger._check_depth += 1
                 try:
                     return original(*args, **kwargs)
@@ -2658,7 +2700,8 @@ class BlockedFileOps:
 
         def _wrap_check(original):
             def watched_check(path, *args, **kwargs):
-                ledger.observe_stat(path)
+                if not ledger._check_depth:
+                    ledger.observe_stat(path)
                 ledger._check_depth += 1
                 try:
                     return original(path, *args, **kwargs)

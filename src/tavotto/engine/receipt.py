@@ -80,6 +80,7 @@ REPORT_ORIGIN_BUILD = "build"
 #: 自报的执行保真度（`runtime["fidelity"]`，V2 PR3a）里允许出现的闭集：与 safe 账本同源（`figcapture.BlockedFileOps`）。
 FIDELITY_LEVELS = figcapture.BlockedFileOps.LEVELS
 FIDELITY_VIAS = figcapture.BlockedFileOps.SIGNAL_VIAS
+FIDELITY_OPS = figcapture.BlockedFileOps.OPS
 FIDELITY_KINDS = (
     figcapture.BlockedFileOps.KIND_RENAME,
     figcapture.BlockedFileOps.KIND_DELETE,
@@ -199,7 +200,7 @@ class ExecutionReceipt:
                         out.append(clean)
             return out
 
-        op_fields = {"op": (), "kind": FIDELITY_KINDS}
+        op_fields = {"op": FIDELITY_OPS, "kind": FIDELITY_KINDS}
         return {
             "level": level,
             "blocked": rows("blocked", op_fields),

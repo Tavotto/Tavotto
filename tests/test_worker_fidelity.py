@@ -382,3 +382,83 @@ def test_the_receipt_keeps_only_closed_set_fidelity_fields():
     for bad in ({"level": "exact"}, "suspect", None):
         r = receipt.ExecutionReceipt(**{**_fields(rcpt), "runtime": {"fidelity": bad}})
         assert r.fidelity is None
+
+
+# ============================================================ Codex #1024 评审三条
+def test_the_receipt_drops_operation_names_outside_the_closed_set():
+    """P1：`op` 不能是开放字符串，否则不可信 worker 能把机器路径塞进公开投影。"""
+    rcpt = receipt.ExecutionReceipt(
+        profile="safe",
+        control_plane="python_pool",
+        python_source="",
+        generation=1,
+        source_revision="",
+        spec_stable={},
+        launch_context={},
+        interpreter="",
+        project_root="",
+        runtime={
+            "fidelity": {
+                "level": "deviated",
+                "blocked": [
+                    {"op": "/Users/u/secret.png", "kind": "savefig", "count": 1},
+                    {"op": "os.replace", "kind": "rename", "count": 1},
+                ],
+                "intercepted": [{"op": "C:\\data\\x", "kind": "rename", "count": 1}],
+            }
+        },
+    )
+    fid = rcpt.fidelity
+    assert fid["blocked"] == [{"op": "os.replace", "kind": "rename", "count": 1}]
+    assert fid["intercepted"] == []
+    assert "secret" not in json.dumps(rcpt.public_facts())
+    assert "savefig" in receipt.FIDELITY_OPS and "os.replace" in receipt.FIDELITY_OPS
+
+
+def test_every_op_the_worker_records_is_in_the_closed_set():
+    import re
+
+    src = (Path(__file__).parent.parent / "src/tavotto/engine/worker.py").read_text("utf-8")
+    recorded = set(re.findall(r'ledger\.blocked\(\s*"([^"]+)"', src)) | set(
+        re.findall(r'_guard_delete\(\s*"[^"]+",\s*[\w.]+,\s*"([^"]+)"', src)
+    )
+    recorded.add("savefig")
+    assert recorded and recorded <= set(receipt.FIDELITY_OPS), recorded - set(receipt.FIDELITY_OPS)
+
+
+def test_one_path_probe_is_counted_once(tmp_path, ledger):
+    """P2：POSIX 上 `os.path.exists` 先被 `watched_check` 观察、内部又走 `os.stat`——一次探路只算一次。"""
+    import os
+    import pathlib
+
+    target = tmp_path / "o.png"
+    ledger.blocked("savefig", ledger.KIND_SAVEFIG, str(target))
+    ledger.install()
+    try:
+        os.path.exists(str(target))
+        pathlib.Path(target).exists()
+        os.path.isfile(str(target))
+    finally:
+        ledger.uninstall()
+    counts = {(s["kind"], s["via"]): s["count"] for s in ledger.suspects()}
+    assert counts == {("savefig", "stat"): 3}, counts
+
+
+EXIT_AFTER_UNRELATED = (
+    "fig.savefig('o.png')\nprint(os.path.exists('o.png'))\n"
+    "import argparse\np = argparse.ArgumentParser(); p.add_argument('--need', required=True)\n"
+    "p.parse_args()\n"
+)
+
+
+@needs_worker
+def test_an_unrelated_nonzero_exit_keeps_its_own_classification(figs):
+    """P2：查过 savefig 目标、之后因为别的原因退出（缺参数 / 之后又做了别的事）不是守卫造成的。"""
+    e = _deviated(figs, HDR + EXIT_AFTER_UNRELATED, "sandbox")
+    assert e.code == "script_needs_arguments", (e.code, str(e))
+    e = _deviated(
+        figs,
+        HDR + "fig.savefig('o.png')\nos.path.exists('o.png')\nopen(__file__).read()\nsys.exit(3)\n",
+        "sandbox",
+    )
+    assert e.code != CODE, e.code
