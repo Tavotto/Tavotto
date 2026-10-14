@@ -500,36 +500,35 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     expect(fb.every((f) => f.target === undefined)).toBe(true)
   })
 
-  it('跨图候选在正在编辑的面板之外：不参与（拖到它旁边不吸、没有吸附线也没有反馈）', async () => {
+  it('图例拖向面板外的相邻图同类图例（y 向）：照吸，有 target（图例提交的是未钳位的锚点，够得着）', async () => {
     // p2 下移 50 mm：它的图例底边在页面 y = 50 + 0.725·H ≈ 105 mm，落在 p1（0..H）之外
     await setup({
       p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }),
       p2Extra: { y: 50 },
     })
     const lineY = 50 + 0.725 * H
-    const startBottom = 0.72 * H
     startElementDrag(down(), livePanel(), legendP1, layout)
-    const fb = feedbackAt(0, (lineY - startBottom) / MM_PER_PX + 1)
-    expect(fb).toHaveLength(0)
-    expect(heldYs).toHaveLength(0)
-    // 落点就是手指停的位置（差 1 px），没有被拽到那条线上
-    const y = overrideOf('axes_0.legend', 'loc_frac')![1] * H
-    expect(Math.abs(y - (lineY + MM_PER_PX))).toBeLessThan(0.2)
+    const fb = feedbackAt(0, (lineY - 0.72 * H) / MM_PER_PX + 1)
+    const y = fb.find((f) => f.axis === 'y')
+    expect(y).toBeTruthy()
+    expect(y!.target).toBeTruthy()
+    expect(heldYs.length).toBeGreaterThan(0)
+    expect(Math.abs(overrideOf('axes_0.legend', 'loc_frac')![1] * H - lineY)).toBeLessThan(0.2)
   })
 
-  it('子图缩放手柄：最小尺寸钳位使线够不着：无吸附线、无反馈', async () => {
+  it('子图被钳在图内：面板外的线不参与，不遮住范围内的整图边', async () => {
     await setup()
-    // 左柄拖过头：左边最多到 右边 − 0.05（页面 0.40·W）。参考线在它右侧 0.5 mm 处（范围内）——吸它要越过钳位
+    // 子图下沿被钳在 H；参考线在 H + 0.2（图外）。未过滤时它比整图下边（H）更近、吸上后因钳位够不着，整个吸附落空
     useDocumentStore.getState().commit(literal('加参考线'), (d) => {
-      d.guides.push({ axis: 'x', pos: 0.4 * W + 0.5 })
+      d.guides.push({ axis: 'y', pos: H + 0.2 })
     })
-    startAxesDrag(down(), livePanel(), axes0, layout, 'w')
-    const fb = feedbackAt(0.5 / PX_X, 0)
-    expect(fb.some((f) => f.axis === 'x')).toBe(false)
-    expect(heldXs).toHaveLength(0)
+    startAxesDrag(down(), livePanel(), axes0, layout, 'move')
+    const fb = feedbackAt(0, (0.5 * H + 0.3) / MM_PER_PX)
+    expect(fb.find((f) => f.axis === 'y')).toBeTruthy()
+    expect(heldYs).toEqual([H])
   })
 
-  it('跨图候选在面板右侧之外（x 向）：不参与', async () => {
+  it('图例拖向面板外的相邻图同类图例（x 向）：照吸', async () => {
     await setup({
       p2: manifestOf({ ...legendAt(0.725), gid: 'axes_0.legend' }),
       p2Extra: { x: 150 },
@@ -537,9 +536,8 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     const lineX = 150 + 0.6 * W // 对方图例左边，p1 之外
     startElementDrag(down(), livePanel(), legendP1, layout)
     const fb = feedbackAt((lineX - 0.6 * W) / MM_PER_PX + 1, 0)
-    // 对方图例与自己等高，y 向照常吸（范围内）；x 向那条在 p1 之外，不参与
-    expect(fb.some((f) => f.axis === 'x')).toBe(false)
-    expect(heldXs).toHaveLength(0)
+    expect(fb.find((f) => f.axis === 'x')?.target).toBeTruthy()
+    expect(heldXs.length).toBeGreaterThan(0)
   })
 
   it('恰在面板边界上的参考线（含边界）：照吸', async () => {
@@ -552,14 +550,15 @@ describe('吸附反馈：自身所属框与跨图目标框', () => {
     expect(fb.find((f) => f.axis === 'y')).toBeTruthy()
   })
 
-  it('参考线在正在编辑的面板之外：同样不参与', async () => {
+  it('图例拖向面板外的参考线：照吸，有吸附线', async () => {
     await setup()
     useDocumentStore.getState().commit(literal('加参考线'), (d) => {
       d.guides.push({ axis: 'y', pos: 1.5 * H })
     })
     startElementDrag(down(), livePanel(), legendP1, layout)
-    expect(feedbackAt(0, (1.5 * H - 0.72 * H) / MM_PER_PX + 1)).toHaveLength(0)
-    expect(heldYs).toHaveLength(0)
+    const fb = feedbackAt(0, (1.5 * H - 0.72 * H) / MM_PER_PX + 1)
+    expect(fb.find((f) => f.axis === 'y')).toBeTruthy()
+    expect(heldYs).toEqual([1.5 * H])
   })
 
   it('子图被拖向图边被钳住、线在范围内却够不着：无吸附线、无反馈', async () => {
