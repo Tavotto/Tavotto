@@ -162,3 +162,13 @@ def test_actions_baseline_artifact_path_matches_actual_upload_root():
     assert 'web/test-results/perf-agent/**' in workflow
     assert '"$target/test-results/perf-agent/run.json"' in workflow
     assert '"$target/perf-agent/run.json"' not in workflow
+
+
+
+def test_browser_suite_failure_has_an_unambiguous_machine_readable_summary():
+    failure = A.failed_run_summary(True)
+    assert failure["status"] == "failed"
+    assert failure["suites"] == {"symbol_ui": "failed", "canvas_drag": "not_started"}
+    assert failure["comparison_verdict"] == "not_checked"
+    assert failure["scenarios"] == {}
+    assert A.failed_run_summary(False)["suites"]["canvas_drag"] == "not_requested"

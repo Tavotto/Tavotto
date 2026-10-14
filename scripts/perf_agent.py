@@ -140,6 +140,22 @@ def summarize(data: dict) -> dict:
     }
 
 
+def failed_run_summary(include_drag: bool) -> dict:
+    """浏览器还没产出有效 run.json 就失败时，也必须给 Agent 一个明确状态。"""
+    return {
+        "schema": SCHEMA,
+        "status": "failed",
+        "comparison_verdict": "not_checked",
+        "coverage": "browser_webview_proxy_only",
+        "scenarios": {},
+        "suites": {
+            "symbol_ui": "failed",
+            "canvas_drag": "not_started" if include_drag else "not_requested",
+        },
+        "not_covered": ["native_window_drag", "gpu_compositor", "macos_windowserver"],
+    }
+
+
 def compose_run_summary(symbol: dict, drag_status: str) -> dict:
     """Agent 所读的 summary.json 必须反映整次任务，不能因第一段绿掩盖第二段失败。"""
     if drag_status not in ("not_requested", "pending", "ok", "failed"):
@@ -296,6 +312,10 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=1800,
             )
             if proc.returncode != 0 or not output.is_file():
+                result = failed_run_summary(args.include_drag)
+                if args.summary:
+                    _write(args.summary, result)
+                _append_gha_summary(result)
                 print("error: perf_agent_browser_run_failed", file=sys.stderr)
                 return 2
             result = summarize(load(output))
@@ -389,6 +409,12 @@ def main(argv: list[str] | None = None) -> int:
             _write(args.json, result)
         return 0 if result["status"] == "pass" else 3
     except (OSError, json.JSONDecodeError, ValueError, subprocess.TimeoutExpired) as exc:
+        # 超时/浏览器崩溃时仍输出机器可读失败，避免 Agent 只看残留 run.json。
+        if args.command == "run" and args.summary:
+            try:
+                _write(args.summary, failed_run_summary(args.include_drag))
+            except OSError:
+                pass
         # 不把用户路径或操作数据写进控制台。
         print(f"error: {type(exc).__name__} (invalid or unavailable benchmark)", file=sys.stderr)
         return 2
