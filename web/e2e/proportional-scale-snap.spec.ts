@@ -126,11 +126,16 @@ async function dragCorner(page: Page, mods: { meta?: boolean }, offPx: number) {
   // 沿对角线拖：等比缩放取 max(宽比, 高比)，只拖一个轴缩小时会被另一个轴顶住
   const dy = (dx * a.h) / a.w
   for (let i = 1; i <= 8; i++) await page.mouse.move(hx + (dx * i) / 8, hy + (dy * i) / 8)
+  // 松手前的吸附反馈（ADR 0128 §四）：自身子图虚线框 + 对方（B）子图虚线框
+  const feedback = {
+    self: await page.locator('[data-snap-self]').count(),
+    target: await page.locator('[data-snap-target]').count(),
+  }
   await page.mouse.up()
   if (mods.meta) await page.keyboard.up('Meta')
   await page.waitForTimeout(500)
   const [a2, b2] = await panels(page)
-  return { before: a, a: a2, b: b2, diffPx: a2.x + A_RIGHT * a2.w - (b2.x + B_RIGHT * b2.w) }
+  return { before: a, a: a2, b: b2, feedback, diffPx: a2.x + A_RIGHT * a2.w - (b2.x + B_RIGHT * b2.w) }
 }
 
 test(
@@ -148,10 +153,12 @@ test(
     expect(Math.abs(snapped.diffPx), '松手后两条子图右边应对齐').toBeLessThan(0.1)
     expect(snapped.a.w / snapped.a.h).toBeCloseTo(snapped.before.w / snapped.before.h, 3)
     expect(snapped.a.w, 'A 确实被缩小了').toBeLessThan(snapped.before.w - 50)
+    expect(snapped.feedback, '吸上时出现自身框与对方（B 的子图）目标框').toEqual({ self: 1, target: 1 })
 
     // 对照：⌘ 临时不吸——同样的手势停在手指的位置，差距还在（证明上面的对齐不是巧合）
     const free = await dragCorner(page, { meta: true }, 3)
     console.log(`[scale-snap e2e] 对照（⌘）差距 ${free.diffPx.toFixed(3)} px`)
     expect(Math.abs(free.diffPx), '⌘ 不吸：差距应约等于手指停的 3 px').toBeGreaterThan(1.5)
+    expect(free.feedback, '⌘ 不吸：没有反馈').toEqual({ self: 0, target: 0 })
   },
 )
