@@ -146,6 +146,22 @@ describe('崩溃页的「发送问题反馈」入口（PR A）', () => {
     expect(host.querySelector('[data-fake-send-dialog]')).toBeNull()
   })
 
+  it('首次渲染就崩（App 的 effect 没机会取能力说明）：崩溃页自己取一次，能力开着就出现发送入口', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ enabled: true }), headers: new Headers() })),
+    )
+    try {
+      expect(useDiagSendStore.getState().capability).toBeNull()
+      crash()
+      await act(async () => {})
+      expect(useDiagSendStore.getState().capability).toMatchObject({ enabled: true })
+      expect(host.querySelector('[data-send-report]')).not.toBeNull()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('componentDidCatch：trace 记 source=boundary（无原文）；原文与 componentStack 进未捕获错误环', () => {
     crash()
     const ev = readDiagnosticTrace().find((e) => e.type === 'ui.unexpected_error')!

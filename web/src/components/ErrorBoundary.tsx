@@ -8,6 +8,7 @@ import { Button } from './ui/Button'
 import { Details, Summary } from './ui/Details'
 import { dragRegionProps } from '@/lib/desktop'
 import { TooltipProvider } from './ui/Tooltip'
+import { useDiagSendStore } from '@/store/diagSendStore'
 
 interface State {
   error: Error | null
@@ -55,6 +56,8 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     console.error('界面崩溃:', error, info.componentStack)
     // 记 `ui.unexpected_error`（source=boundary）并把栈 + componentStack 补进未捕获错误环；永不抛
     reportUnexpectedError({ source: 'boundary', error, componentStack: info.componentStack ?? undefined })
+    // 首次渲染就崩时 App 的 effect 没跑过、能力说明从没取过：崩溃页自己取一次（本机请求、失败即关），否则永远没有发送入口
+    if (useDiagSendStore.getState().capability === null) void useDiagSendStore.getState().load()
   }
 
   render() {

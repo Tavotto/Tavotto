@@ -4103,6 +4103,19 @@ class TestIssue1012BackendItems:
         ]
         assert not marker.exists(), "探针不能执行项目里的同名模块"
 
+    def test_a_symlinked_package_directory_counts_as_a_shadowing_candidate(
+        self, monkeypatch, tmp_path
+    ):
+        proj = tmp_path / "proj"
+        (tmp_path / "vendor" / "numpy").mkdir(parents=True)
+        proj.mkdir()
+        try:
+            os.symlink(tmp_path / "vendor" / "numpy", proj / "numpy", target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable (Windows without privilege)")
+        probe = self._render_env(monkeypatch, proj)["probe"]
+        assert probe["shadowing_candidates"] == ["numpy/"]
+
     def test_clean_project_has_the_mark_and_an_empty_candidate_list(self, monkeypatch, tmp_path):
         proj = tmp_path / "clean"
         proj.mkdir()
