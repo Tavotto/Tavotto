@@ -1523,11 +1523,11 @@ def _probe_in(
     # `json.py` / `platform.py` / `matplotlib.py` 会在「打开对话框」这一刻就被 import 执行，绕过 worker 的文件系统守卫。
     # 所以把探针代码写进我们自己建的临时目录（0700）里的脚本文件，`python -s -B <脚本>` 启动：
     # `sys.path[0]` 是那个临时目录，不是 cwd；`-s` 不加用户 site。不用 `-I`（会丢掉我们刻意复现的 MPL* 变量）。
-    script = Path(trusted) / "probe_main.py"
-    script.write_text(_PROBE_CODE, encoding="utf-8")
+    probe_main = Path(trusted) / "probe_main.py"
+    probe_main.write_text(_PROBE_CODE, encoding="utf-8")
     try:
         proc = subprocess.run(
-            [python, "-E", *runtime.probe_args(bundled=bundled), "-s", str(script)],
+            [python, "-E", *runtime.probe_args(bundled=bundled), "-s", str(probe_main)],
             capture_output=True,
             text=True,
             encoding="utf-8",

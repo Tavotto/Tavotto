@@ -887,6 +887,7 @@ class TestSecretShapeMatrix:
             "-----BEGIN PRIVATE KEY-----\nREALPEM1\n-----END PRIVATE KEY-----\nmid SAFE_MID\n"
             "-----BEGIN PRIVATE KEY-----\nREALPEM2\n-----END PRIVATE KEY-----\nSAFE_TAIL",
         ],
+        ids=["long-with-end", "long-missing-end", "two-blocks"],
     )
     def test_pem_blocks_of_any_length_and_without_end(self, text):
         out = diagdetail.Scrubber().text(text)
@@ -1137,6 +1138,7 @@ class TestContainerSecrets:
             + "x" * 20000
             + '",\n  "raw": "REAL_SECRET"\n',  # 没有闭括号
         ],
+        ids=["open-brace", "open-bracket", "long-multiline-open-brace"],
     )
     def test_unbalanced_containers_are_erased_to_the_end_of_the_input(self, text):
         out = diagdetail.Scrubber().text(text)
@@ -1307,6 +1309,7 @@ class TestFailClosedScanner:
             ("postgres://user:pa@ss:REAL_SECRET@db/x?x=1 tail", "REAL_SECRET"),
             ("see ftp://REAL_SECRET@host/f and more", "REAL_SECRET"),
         ],
+        ids=["long-password", "multiple-at", "at-in-password", "user-only"],
     )
     def test_url_userinfo_has_no_length_window(self, url, gone):
         out = diagdetail.Scrubber().text(url)
