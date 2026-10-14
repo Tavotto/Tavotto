@@ -21,13 +21,20 @@ export function initExitNotices(loaded: Promise<void>): () => void {
   let unlisten: (() => void) | null = null
   const store = useExitNoticeStore.getState()
 
-  void onEngineExited((kind) => store.setEngineExit(kind)).then((off) => {
-    if (disposed) off()
-    else unlisten = off
-  })
-  void getEngineExited().then((kind) => {
-    if (kind && !disposed) store.setEngineExit(kind)
-  })
+  // **先等监听装好，再回读一次当前状态**：反过来的话，读到 null 之后、监听装好之前引擎恰好退出，事件没人接、
+  // 读到的状态也已过期，修复卡要等重载页面才出现。两路写同一个 store，重复写入幂等。
+  // 监听装好前已卸载：只撤销监听，不回读。
+  void onEngineExited((kind) => store.setEngineExit(kind))
+    .then(async (off) => {
+      if (disposed) {
+        off()
+        return
+      }
+      unlisten = off
+      const kind = await getEngineExited()
+      if (kind && !disposed) store.setEngineExit(kind)
+    })
+    .catch(() => {})
   void loaded.then(async () => {
     if (useDiagSendStore.getState().capability === null) return
     // 取走即清空：开发态 StrictMode 的第一轮已卸载也要登记，不然这一次提示就丢了（showPrevious 幂等）
