@@ -908,7 +908,10 @@ def test_report_atomic_temp_cannot_clobber_baseline_named_output_tmp(tmp_path, l
     elif link_type == "hardlink":
         baseline.hardlink_to(original)
     else:
-        baseline.symlink_to(original)
+        try:
+            baseline.symlink_to(original)
+        except (OSError, NotImplementedError):
+            pytest.skip("This Windows runner cannot create symlinks without elevated privileges")
     before = original.read_bytes()
     rc = A.main(["compare", str(current), str(baseline), "--json", str(output)])
     assert rc == 0
