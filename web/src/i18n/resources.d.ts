@@ -2339,7 +2339,7 @@ export default interface Resources {
       "runtime_asset_unknown": "运行时素材没有记录：{{id}}。重新运行该脚本即可重新建立关联；若它来自带参数的运行，请用原参数重新运行。",
       "runtime_cache_missing": "该运行时素材尚未生成预览。运行脚本后会自动生成。",
       "runtime_source_writeback_unsupported": "暂不支持把修改写回脚本源码。运行时素材的编辑只保存在排版中。",
-      "safe_file_operation_blocked": "脚本改了项目里的文件又去读它；安全运行不会真改文件，读到的会和直接运行不同，所以这次没有出图，桌面版暂时没有按真实文件运行的方式（终端里可用「tavotto run」）。",
+      "safe_file_operation_blocked": "脚本改了项目里的文件或读了刚存的图，而安全运行不会真改文件、读到的会和直接运行不同，所以这次没有出图；这类脚本需要按真实文件运行（终端里的「tavotto run」就是这样跑的）。",
       "scan_failed": "扫描失败：{{reason}}",
       "script_backup_failed": "备份写不进去，脚本没有被修改：{{script}}。请检查磁盘空间和目录权限。",
       "script_backup_unknown": "找不到这份备份：{{id}}",

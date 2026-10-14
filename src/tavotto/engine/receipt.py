@@ -37,6 +37,9 @@
   `DataSource.open`（`np.loadtxt` / `np.genfromtxt`，2026-09-24）只读打开的
   项目内文件（相对路径 + sha256）与 import 到的本地模块；`observation=partial` 永远如实——原生 I/O / 网络 /
   子进程看不见（D13 / FO-061）。观察到的文件身份**进公开语义身份**（数据换了就是另一次执行），机器路径不进。
+* **执行保真度**（`runtime["fidelity"]`，safe 账本 `BlockedFileOps.summary()`，V2 PR3a）：`level` 三档（`deviated` /
+  `suspect` / `none_observed`）+ 拦下的操作类别与次数 + 弱信号计数；只收闭集枚举与有界整数，无路径。
+  **不进**公开语义身份（疑似偏差不是另一次执行）；native 回执没有这一段（None）。
 * **数据绑定**（`binding`，控制面给）：准备计划在预检那一刻按静态证据记下的「打算读哪些文件、内容是什么」
   （`databinding.binding_for()`），回执把它与观察到的输入逐条对：`binding_check()` 回 `matched ∈ {True, False,
   None}`——None = 一条都没观察到（原生读），不冒充核过。
@@ -73,6 +76,17 @@ RUNTIME_REJECTIONS = (RUNTIME_REJECTED_NOT_BUILD, RUNTIME_REJECTED_PID)
 #: 自报里必须是 `build` 的那个字面量（与 `figsession.REPORT_ORIGIN_BUILD` 同源；worker 侧平铺 import 不到本模块，
 #: `tests/test_execution_receipt.py` 钉两边相等）。
 REPORT_ORIGIN_BUILD = "build"
+
+#: 自报的执行保真度（`runtime["fidelity"]`，V2 PR3a）里允许出现的闭集：与 safe 账本同源（`figcapture.BlockedFileOps`）。
+FIDELITY_LEVELS = figcapture.BlockedFileOps.LEVELS
+FIDELITY_VIAS = figcapture.BlockedFileOps.SIGNAL_VIAS
+FIDELITY_KINDS = (
+    figcapture.BlockedFileOps.KIND_RENAME,
+    figcapture.BlockedFileOps.KIND_DELETE,
+    figcapture.BlockedFileOps.KIND_DELETE_DIR,
+    figcapture.BlockedFileOps.KIND_WRITE,
+    figcapture.BlockedFileOps.KIND_SAVEFIG,
+)
 
 PID_CHECK_OK = "ok"
 #: 控制面起的那个进程是个 launcher（Windows 上 venv 的 `python.exe` 就是：它 CreateProcess 出真正的解释器再等它），
@@ -153,6 +167,46 @@ class ExecutionReceipt:
         rt = self.runtime or {}
         ins = rt.get("inputs")
         return dict(ins) if isinstance(ins, dict) else None
+
+    @property
+    def fidelity(self) -> dict | None:
+        """safe worker 自报的执行保真度（`figcapture.BlockedFileOps.summary()`，V2 PR3a）：
+        `level`（`deviated` / `suspect` / `none_observed`）、拦下的操作类别与次数、弱信号计数、盲区。
+        worker 自报是不可信输入：这里只收闭集枚举与有界整数，其余丢弃；没报（native / 老 worker）是 None。"""
+        rt = self.runtime or {}
+        raw = rt.get("fidelity")
+        if not isinstance(raw, dict):
+            return None
+        level = raw.get("level")
+        if level not in FIDELITY_LEVELS:
+            return None
+
+        def rows(key: str, fields: dict[str, tuple[str, ...]]) -> list[dict]:
+            out: list[dict] = []
+            for row in (raw.get(key) or [])[:32]:
+                if not isinstance(row, dict):
+                    continue
+                clean = {}
+                for field, allowed in fields.items():
+                    value = row.get(field)
+                    if not isinstance(value, str) or (allowed and value not in allowed):
+                        break
+                    clean[field] = value
+                else:
+                    count = row.get("count")
+                    if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                        clean["count"] = min(count, 9999)
+                        out.append(clean)
+            return out
+
+        op_fields = {"op": (), "kind": FIDELITY_KINDS}
+        return {
+            "level": level,
+            "blocked": rows("blocked", op_fields),
+            "intercepted": rows("intercepted", op_fields),
+            "signals": rows("signals", {"kind": FIDELITY_KINDS, "via": FIDELITY_VIAS}),
+            "unobserved": [u for u in (raw.get("unobserved") or [])[:16] if isinstance(u, str)],
+        }
 
     def observed_files(self) -> dict[str, str | None]:
         """观察到的项目内文件：相对 POSIX 路径 → sha256（大文件没算 hash 是 None）。"""
@@ -272,6 +326,7 @@ class ExecutionReceipt:
             "packages": dict(rt.get("packages") or {}),
             "cwd_origin": self.launch_context.get("cwd_origin"),
             "observation": (self.inputs or {}).get("observation"),
+            "fidelity": self.fidelity,
             "binding": {
                 "revision": check["revision"],
                 "matched": check["matched"],
@@ -288,6 +343,8 @@ class ExecutionReceipt:
         版本类字段，私有那几项归 `include_private`。
         """
         rt = self.runtime
+        if rt is not None and "fidelity" in rt:
+            rt = {**rt, "fidelity": self.fidelity}  # 自报的原样段不外泄：只出过滤后的闭集
         if rt is not None and not include_private:
             rt = {
                 k: v
@@ -310,6 +367,7 @@ class ExecutionReceipt:
             "runtime_rejected": self.runtime_rejected,
             "pid_check": self.pid_check,
             "inputs": self.inputs,
+            "fidelity": self.fidelity,
             "binding": dict(self.binding) if self.binding is not None else None,
             "binding_check": self.binding_check(),
             "descriptors": [dict(d) for d in self.descriptors],

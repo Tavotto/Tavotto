@@ -2051,11 +2051,18 @@ class BlockedFileOps:
       （去重、有上限，再超则粗化为父目录，最后记「丢失」＝此后任何观察都算命中）；回读第 201+ 个被拦路径
       同样判失败，拦下几百次但从不回读照旧成功。
     * **事实在带外账本里，不在异常里**：脚本 `except Exception: pass` 吞掉什么都洗不掉它。
-    * **盲区写在明处（判不出就别判）**：C 扩展直接 `fopen`、`os.open`、`os.scandir` / `listdir` / `glob`、
-      `os.access`、`os.path.samefile` 等不在包装清单里的状态查询观察不到——这些不会产生 `material()`，
-      也就**不宣称**它们干净；账本只回答「观察到了」，不回答「没观察到所以没事」。被拦截的 `savefig`
-      目标只认**读内容**（open），不认 `exists` / `getsize` 这类 stat：`savefig(p); print(os.path.exists(p))`
+    * **盲区写在明处（判不出就别判）**：C 扩展直接 `fopen`、子进程、`os.access`、`os.path.samefile` 等
+      不在包装清单里的状态查询观察不到——这些不会产生 `material()`，也就**不宣称**它们干净；
+      账本只回答「观察到了」，不回答「没观察到所以没事」。被拦截的 `savefig`
+      目标的 `exists` / `getsize` 这类 stat 不进 `material()`：`savefig(p); print(os.path.exists(p))`
       是常见的校验打印，据此判失败会把原本能出图的脚本变成失败。
+    * **三档（V2 PR3a）**：`material()` 非空 = 确定偏差（`deviated`，build 失败）；没有确定偏差、但记过弱信号
+      （`suspects()`：savefig 目标被 stat、stat / `os.open` / 改名落空、`listdir` / `scandir`（`glob` 经它）计数受影响、
+      改名的源就是被拦截的 savefig 目标）= 疑似（`suspect`，build 照常成功、回执标注）；都没有 = `none_observed`
+      （只表示这些通道没看到，盲区仍在）。弱信号只存 (kind, via) 的计数。
+    * **savefig 目标衍生的 `FileNotFoundError` 是守卫造成的**：直接运行时 `savefig(p)` 之后 `p` 必然存在，
+      所以异常链里指向被拦截 savefig 目标（或被拦改名的路径）的 `FileNotFoundError` 一旦到达终局，
+      `explains(exc)` 把它升为确定偏差——脚本自己吞掉的那些落在弱信号档。
     * 记账只存**操作类别与次数**，路径只在进程内用来比对，不出进程、不进 message / 诊断。
 
     `install()` 装的 open / `os.stat` / `os.path.exists` 系包装在没有任何阻断记录时是一次属性读取就返回；`stop()`
@@ -2075,6 +2082,26 @@ class BlockedFileOps:
     KIND_WRITE = "write"
     KIND_SAVEFIG = "savefig"
 
+    #: 弱信号（`suspects()`）的 `via` 闭集：只有这些字符串会出现在回执 / 诊断里。
+    VIA_STAT = "stat"  # 脚本查了被拦截 savefig 目标的状态（`exists` / `getsize` / `Path.stat`…）
+    VIA_PROBE_FAILED = (
+        "probe_failed"  # stat / `os.open` 落在受影响路径上 FileNotFoundError（可能被脚本吞了）
+    )
+    VIA_LISTING = (
+        "listing"  # `listdir` / `scandir`（`glob` / `os.walk` 经它）列了受影响路径所在的目录
+    )
+    VIA_MOVE_FAILED = "move_failed"  # 删除 / 改名 / 移动落在受影响路径上 FileNotFoundError
+    VIA_RENAME_SRC = "rename_src"  # 被守卫拦下的改名，源就是被拦截的 savefig 目标
+    SIGNAL_VIAS = (VIA_STAT, VIA_PROBE_FAILED, VIA_LISTING, VIA_MOVE_FAILED, VIA_RENAME_SRC)
+
+    #: `summary()["level"]` 的闭集。
+    LEVEL_DEVIATED = "deviated"
+    LEVEL_SUSPECT = "suspect"
+    LEVEL_NONE_OBSERVED = "none_observed"
+    LEVELS = (LEVEL_DEVIATED, LEVEL_SUSPECT, LEVEL_NONE_OBSERVED)
+
+    MAX_COUNT = 9999
+
     def __init__(self) -> None:
         self._events: list[dict] = []
         self._spill: dict[tuple[str, str], dict] = {}
@@ -2085,6 +2112,11 @@ class BlockedFileOps:
         self._rewritten: set[str] = set()
         #: 只读相对路径回退的解析函数（worker 装回退后挂上）：脚本交出的路径 → 回退实际会去读的路径。
         self.read_redirect = None
+        #: 弱信号计数 {(kind, via): n}；拦下的操作计数 {(op, kind): n}（含没被回读的，只存次数）
+        self._signals: dict[tuple[str, str], int] = {}
+        self._counts: dict[tuple[str, str], int] = {}
+        #: 正在执行的「探路」调用（`exists` / `isfile` / `Path.exists`…）深度：它们本来就靠 stat 落空作答，不算 stat 失败
+        self._check_depth = 0
 
     # ---- 记账 ----
     @staticmethod
@@ -2118,6 +2150,11 @@ class BlockedFileOps:
             affected = [p for p in (self._norm(x) for x in paths) if p]
             if not affected:
                 return
+            key = (op, kind)
+            self._counts[key] = min(self._counts.get(key, 0) + 1, self.MAX_COUNT)
+            if kind == self.KIND_RENAME and self._savefig_covers(affected[0]):
+                # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
+                self._signal(kind, self.VIA_RENAME_SRC)
             dest_set = {p for p in (self._norm(x) for x in dests) if p}
             if self._rewritten:  # 新的阻断重新盖住这些路径：之前的「已重写」不再作数
                 self._rewritten = {
@@ -2131,6 +2168,21 @@ class BlockedFileOps:
             )
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
+
+    def _savefig_covers(self, real: str) -> bool:
+        for ev in (*self._events, *self._spill.values()):
+            if ev["kind"] != self.KIND_SAVEFIG:
+                continue
+            if isinstance(ev["paths"], list):
+                if any(self._covers(p, real) for p in ev["paths"]):
+                    return True
+            elif self._spill_hit(ev, real):
+                return True
+        return False
+
+    def _signal(self, kind: str, via: str) -> None:
+        key = (kind, via)
+        self._signals[key] = min(self._signals.get(key, 0) + 1, self.MAX_COUNT)
 
     def _spill_paths(
         self, op: str, kind: str, affected: list[str], dest_set: frozenset | set = frozenset()
@@ -2375,16 +2427,104 @@ class BlockedFileOps:
             return  # 读到的是脚本自己写的（阻断在其后会撤销这条）
         for ev in self._events:
             # 被拦截的 savefig 目标：`exists` / `getsize` 多是「存好了」的校验打印，不据此判分叉；
-            # 读内容（open）才算——`Image.open` / `imread` / `open('rb')` 读到的才是错的数据
+            # 读内容（open）才算——`Image.open` / `imread` / `open('rb')` 读到的才是错的数据。
+            # 但它是弱信号（V2 PR3a）：回执标 `suspect`；脚本随后以非零退出时 `explain_exit` 才升级
             if via_stat and ev["kind"] == self.KIND_SAVEFIG:
+                if any(self._covers(p, real) for p in ev["paths"]):
+                    ev["stat_seen"] = True
+                    self._signal(self.KIND_SAVEFIG, self.VIA_STAT)
                 continue
             if not ev["observed"] and any(self._covers(p, real) for p in ev["paths"]):
                 ev["observed"] = True
         for ev in self._spill.values():
             if via_stat and ev["kind"] == self.KIND_SAVEFIG:
+                if self._spill_hit(ev, real):
+                    ev["stat_seen"] = True
+                    self._signal(self.KIND_SAVEFIG, self.VIA_STAT)
                 continue
             if not ev["observed"] and self._spill_hit(ev, real):
                 ev["observed"] = True
+
+    # ---- 弱信号 / 异常归因（V2 PR3a） ----
+    def observe_listing(self, path) -> None:
+        """脚本列了目录 `path`（`listdir` / `scandir`）。目录里有受影响路径时，条目数与直接运行不同：弱信号。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            real = self._norm(path if path is not None else ".")
+            if real is None:
+                return
+            prefix = real.rstrip(os.sep) + os.sep
+            for ev in (*self._events, *self._spill.values()):
+                if ev.get("lost") or any(p.startswith(prefix) for p in ev["paths"]):
+                    self._signal(ev["kind"], self.VIA_LISTING)
+                    return
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def _failure_events(self, exc: BaseException | None) -> list[dict]:
+        """异常链里的「文件不存在」指向的路径，落在被拦截 savefig 目标或被拦改名的路径上的那些事件。"""
+        fnf = _file_not_found_in(exc)
+        if fnf is None:
+            return []
+        reals = []
+        for attr in ("filename", "filename2"):
+            real = self._norm(getattr(fnf, attr, None))
+            if real is not None and real not in self._rewritten:
+                reals.append(real)
+        if not reals:
+            return []
+        hits = []
+        for ev in (*self._events, *self._spill.values()):
+            if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME):
+                continue
+            if isinstance(ev["paths"], list):
+                if any(self._covers(p, r) for p in ev["paths"] for r in reals):
+                    hits.append(ev)
+            elif any(self._spill_hit(ev, r) for r in reals):
+                hits.append(ev)
+        return hits
+
+    def note_failed_call(self, exc: BaseException, via: str) -> None:
+        """某个被包装的调用（stat / `os.open` / 守卫放行的改名删除）抛了文件不存在，且指向受影响路径：弱信号
+        （脚本可能 `except OSError` 吞掉）。异常若一路到达终局，`explains` 再升级。永不抛。"""
+        if not (self._events or self._spill) or not self._active or self._busy:
+            return
+        self._busy = True
+        try:
+            for ev in self._failure_events(exc)[:1]:
+                self._signal(ev["kind"], via)
+        except Exception:  # noqa: BLE001
+            return
+        finally:
+            self._busy = False
+
+    def explains(self, exc: BaseException) -> bool:
+        """终局的异常是不是守卫造成的：它的 `FileNotFoundError` 指向被拦截的 savefig 目标（直接运行时它必然存在）
+        或被拦改名的路径。是 → 那些事件记为已观察（确定偏差），`material()` 随之非空。永不抛。"""
+        try:
+            events = self._failure_events(exc)
+            for ev in events:
+                ev["observed"] = True
+            return bool(events)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def explain_exit(self) -> bool:
+        """脚本以非零状态退出，且此前查过被拦截 savefig 目标的状态（典型：`if not os.path.exists(out): sys.exit(1)`）：
+        直接运行里那个目标存在，退出分支不会走——退出是守卫造成的。把查过的 savefig 事件记为已观察。永不抛。"""
+        try:
+            hit = False
+            for ev in (*self._events, *self._spill.values()):
+                if ev["kind"] == self.KIND_SAVEFIG and ev.get("stat_seen"):
+                    ev["observed"] = True
+                    hit = True
+            return hit
+        except Exception:  # noqa: BLE001
+            return False
 
     # ---- 终局 ----
     def material(self) -> list[dict]:
@@ -2395,6 +2535,37 @@ class BlockedFileOps:
                 key = (ev["op"], ev["kind"])
                 counts[key] = counts.get(key, 0) + 1
         return [{"op": op, "kind": kind, "count": n} for (op, kind), n in sorted(counts.items())]
+
+    def suspects(self) -> list[dict]:
+        """弱信号（疑似偏差）：`[{kind, via, count}]`，只有闭集枚举与计数，没有路径。"""
+        return [
+            {"kind": kind, "via": via, "count": n}
+            for (kind, via), n in sorted(self._signals.items())
+            if via in self.SIGNAL_VIAS
+        ]
+
+    def summary(self) -> dict:
+        """回执 / 失败诊断的 `fidelity` 段：`level`（三档）、确定偏差的操作、拦下的操作类别与次数、弱信号、盲区。
+        全是闭集枚举与计数——没有路径、argv、stem。"""
+        material = self.material()
+        signals = self.suspects()
+        level = (
+            self.LEVEL_DEVIATED
+            if material
+            else self.LEVEL_SUSPECT
+            if signals
+            else self.LEVEL_NONE_OBSERVED
+        )
+        return {
+            "level": level,
+            "blocked": material,
+            "intercepted": [
+                {"op": op, "kind": kind, "count": n}
+                for (op, kind), n in sorted(self._counts.items())
+            ],
+            "signals": signals,
+            "unobserved": list(INPUT_OBSERVER_UNOBSERVED),
+        }
 
     def stop(self) -> None:
         """脚本跑完：之后一切观察都不算（引擎自己的读写不是脚本的）。"""
@@ -2444,7 +2615,42 @@ class BlockedFileOps:
 
         def watched_stat(path, *args, **kwargs):
             ledger.observe_stat(path)
-            return real_stat(path, *args, **kwargs)
+            try:
+                return real_stat(path, *args, **kwargs)
+            except FileNotFoundError as exc:
+                if (
+                    not ledger._check_depth
+                ):  # `exists()` 一类探路本来就靠落空作答；`getsize` / `stat()` 的落空才是信号
+                    ledger.note_failed_call(exc, ledger.VIA_PROBE_FAILED)
+                raise
+
+        real_os_open = os.open
+        real_listdir, real_scandir = os.listdir, os.scandir
+
+        def watched_os_open(path, *args, **kwargs):
+            try:
+                return real_os_open(path, *args, **kwargs)
+            except FileNotFoundError as exc:
+                ledger.note_failed_call(exc, ledger.VIA_PROBE_FAILED)
+                raise
+
+        def watched_listdir(path=None):
+            ledger.observe_listing(path)
+            return real_listdir() if path is None else real_listdir(path)
+
+        def watched_scandir(path=None):
+            ledger.observe_listing(path)
+            return real_scandir() if path is None else real_scandir(path)
+
+        def _counting(original):
+            def counted(*args, **kwargs):
+                ledger._check_depth += 1
+                try:
+                    return original(*args, **kwargs)
+                finally:
+                    ledger._check_depth -= 1
+
+            return counted
 
         # Windows 3.12+ 的 `os.path.exists` / `isfile` / `isdir` / `islink` / `lexists` 是 C 实现，
         # 不经 `os.stat`：逐个包上（POSIX 上它们本来经 `os.stat`，重复观察是幂等的）
@@ -2453,7 +2659,11 @@ class BlockedFileOps:
         def _wrap_check(original):
             def watched_check(path, *args, **kwargs):
                 ledger.observe_stat(path)
-                return original(path, *args, **kwargs)
+                ledger._check_depth += 1
+                try:
+                    return original(path, *args, **kwargs)
+                finally:
+                    ledger._check_depth -= 1
 
             return watched_check
 
@@ -2463,10 +2673,21 @@ class BlockedFileOps:
                 real_path_checks[name] = fn
                 setattr(os.path, name, _wrap_check(fn))
 
+        # `Path.exists` / `is_file` / `is_dir` / `is_symlink` 也是探路（3.12+ 里它们不一定经 `os.path.*`）
+        real_path_checks_methods: dict[str, object] = {}
+        for name in ("exists", "is_file", "is_dir", "is_symlink"):
+            fn = getattr(pathlib.Path, name, None)
+            if fn is not None:
+                real_path_checks_methods[name] = fn
+                setattr(pathlib.Path, name, _counting(fn))
+
         builtins.open = _wrap(real_open)
         io.open = _wrap(real_io_open)
         pathlib.Path.open = watched_path_open
         os.stat = watched_stat
+        os.open = watched_os_open
+        os.listdir = watched_listdir
+        os.scandir = watched_scandir
 
         def watched_mkdir(path, *args, **kwargs):
             tolerant, parents = mk_ctx[-1] if mk_ctx else (False, False)
@@ -2516,8 +2737,13 @@ class BlockedFileOps:
             io.open = real_io_open
             pathlib.Path.open = real_path_open
             os.stat = real_stat
+            os.open = real_os_open
+            os.listdir = real_listdir
+            os.scandir = real_scandir
             for name, fn in real_path_checks.items():
                 setattr(os.path, name, fn)
+            for name, fn in real_path_checks_methods.items():
+                setattr(pathlib.Path, name, fn)
 
         self._uninstall = uninstall
         return uninstall
