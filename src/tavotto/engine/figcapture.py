@@ -2045,11 +2045,18 @@ _PROBE_CALL_NAMES = frozenset(
 
 
 def exit_controlled_by_probe(source: str, exit_line: int | None) -> bool:
-    """`exit_line` 那一行的退出，在脚本源码里是不是位于"由探路调用控制的分支"之下。纯函数，永不抛。
+    """`exit_line` 那一行的退出，是不是由"落空的 savefig 目标探测"决定的。纯函数，永不抛。
 
-    成立条件：该行的最内层语句有祖先 `if` / `while` / 三元 / `and`-`or` 链，且这个祖先的**条件**（不是被控制的分支体）
-    里含对 `_PROBE_CALL_NAMES` 的调用。条件里没有探路调用、或探路调用只在分支体里、或无条件退出，都不成立。
-    判不出（语法错、没有行号、探测结果先存进变量再判断）一律 False——保留原分类，宁可不归因。"""
+    只在能证明时成立：该行位于某个 `if` / `while` / 三元 / `and`-`or` 链的分支之下，且**对分支而言必要**的条件
+    就是对 savefig 目标的探测——
+    * `if not P: <退出>`、`while not P:`、`if A and not P: …`（合取里有 `not P`：P 为真则分支不进）；
+    * `if P: … else: <退出>`（else 侧：只有条件整体就是 `P` 才必要）；
+    * `P or <退出>`（先于退出的任一操作数是 `P`）、`not P and <退出>`；
+    * 三元同 if。
+    `P` 是对 `_PROBE_CALL_NAMES` 的调用，且被探测的对象与脚本里某次 `savefig(…)` 的目标**是同一个**（同一常量路径、
+    或同一个表达式 / 变量；`Path(x)` / `str(x)` / `os.fspath(x)` 视同 `x`）。
+    不成立：无条件退出；`not P or 别的`（别的独立为真也进分支）；`or` 的非必要析取；探测的是别的文件；
+    探测结果先存进变量再判断；源码里没有 savefig 目标；语法错。判不出一律 False——保留原分类，宁可不归因。"""
     if not isinstance(source, str) or not isinstance(exit_line, int):
         return False
     try:
@@ -2059,30 +2066,110 @@ def exit_controlled_by_probe(source: str, exit_line: int | None) -> bool:
     except (SyntaxError, ValueError, RecursionError):
         return False
 
-    def has_probe(node) -> bool:
-        for sub in ast.walk(node):
-            if isinstance(sub, ast.Call):
-                fn = sub.func
-                name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
-                if name in _PROBE_CALL_NAMES:
-                    return True
+    wrappers = {"Path", "PurePath", "PosixPath", "WindowsPath", "str", "fspath"}
+
+    # 只被赋值过一次的常量字符串变量按常量算：`o = 'o.png'; savefig(o); exists('o.png')` 是同一个目标
+    assigned: dict[str, list] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    assigned.setdefault(t.id, []).append(node.value)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+            t = node.target
+            if isinstance(t, ast.Name):
+                assigned.setdefault(t.id, []).append(None)
+    constants = {
+        name: values[0].value
+        for name, values in assigned.items()
+        if len(values) == 1
+        and isinstance(values[0], ast.Constant)
+        and isinstance(values[0].value, str)
+    }
+
+    def target_key(node):
+        while (
+            isinstance(node, ast.Call) and node.args and len(node.args) == 1 and not node.keywords
+        ):
+            fn = node.func
+            name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+            if name not in wrappers:
+                break
+            node = node.args[0]
+        if isinstance(node, ast.Name) and node.id in constants:
+            return ("c", os.path.normpath(constants[node.id]))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return ("c", os.path.normpath(node.value))
+        return ("d", ast.dump(node))
+
+    savefig_keys = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "savefig"
+        ):
+            arg = node.args[0] if node.args else None
+            for kw in node.keywords:
+                if kw.arg in ("fname", "path"):
+                    arg = kw.value
+            if arg is not None:
+                savefig_keys.add(target_key(arg))
+    if not savefig_keys:
+        return False
+
+    def is_probe(node) -> bool:
+        """`node` 就是一次对 savefig 目标的探路调用。"""
+        if not isinstance(node, ast.Call):
+            return False
+        fn = node.func
+        name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", None)
+        if name not in _PROBE_CALL_NAMES:
+            return False
+        if node.args:  # os.path.exists(o) / os.path.getsize(o) / os.stat(o)
+            return target_key(node.args[0]) in savefig_keys
+        if isinstance(fn, ast.Attribute):  # Path(o).exists() / out.exists()
+            return target_key(fn.value) in savefig_keys
+        return False
+
+    def negated_probe(node) -> bool:
+        return (
+            isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, ast.Not)
+            and is_probe(node.operand)
+        )
+
+    def needs_probe_false(test) -> bool:
+        """条件为真 ⇒ 探测落空（探测落空是进入 body 的必要条件）。"""
+        if negated_probe(test):
+            return True
+        if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+            return any(needs_probe_false(v) for v in test.values)
         return False
 
     def contains(node, line: int) -> bool:
         return getattr(node, "lineno", 0) <= line <= getattr(node, "end_lineno", 0)
 
     def walk(node, line: int) -> bool:
-        """沿着包含 `line` 的节点链下降；链上每个 if / while / ifexp / boolop：行落在条件之外且条件里有探路调用 → True。"""
         for child in ast.iter_child_nodes(node):
             if not contains(child, line):
                 continue
-            if isinstance(node, (ast.If, ast.While, ast.IfExp)) and child is not node.test:
-                if not contains(node.test, line) and has_probe(node.test):
+            if isinstance(node, (ast.If, ast.While, ast.IfExp)) and not contains(node.test, line):
+                in_orelse = child in getattr(node, "orelse", []) or child is getattr(
+                    node, "orelse", None
+                )
+                if in_orelse:
+                    if is_probe(node.test):  # 条件整体是 P：走 else ⇒ P 为假
+                        return True
+                elif needs_probe_false(node.test):
                     return True
-            if isinstance(node, ast.BoolOp):
-                idx = node.values.index(child) if child in node.values else -1
-                if idx > 0 and any(has_probe(v) for v in node.values[:idx]):
-                    return True
+            if isinstance(node, ast.BoolOp) and child in node.values:
+                idx = node.values.index(child)
+                before = node.values[:idx]
+                if isinstance(node.op, ast.Or) and any(is_probe(v) for v in before):
+                    return True  # 走到后面的操作数 ⇒ 前面的 P 为假
+                if isinstance(node.op, ast.And) and any(negated_probe(v) for v in before):
+                    return True  # 走到后面 ⇒ `not P` 为真 ⇒ P 落空
             if walk(child, line):
                 return True
         return False
@@ -2535,7 +2622,10 @@ class BlockedFileOps:
                 return
             prefix = real.rstrip(os.sep) + os.sep
             for ev in (*self._events, *self._spill.values()):
-                if ev.get("lost") or any(p.startswith(prefix) for p in ev["paths"]):
+                # 受影响路径在被列目录之内、就是它、或者它在受影响目录之内（被拦的 rmtree 留下的目录仍在）
+                if ev.get("lost") or any(
+                    p.startswith(prefix) or self._covers(p, real) for p in ev["paths"]
+                ):
                     self._signal(ev["kind"], self.VIA_LISTING)
                     return
         except Exception:  # noqa: BLE001

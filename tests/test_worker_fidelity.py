@@ -587,43 +587,122 @@ def test_the_one_projection_function_is_the_only_public_path():
 
 
 # ---- 退出归因：纯函数 ----
+PRE = "import os, sys, pathlib\nfrom pathlib import Path\no = 'o.png'\nfig.savefig(o)\n"
+#: (源码，退出是否由"落空的那次探测"决定)。`# EXIT` 标出退出所在的行。
 EXIT_CASES = {
-    "return_after_probe": ("import os\nos.path.exists('o.png')\n", None, False),
-    "unrelated_exit_after_probe": (
-        "import os, sys\nos.path.exists('o.png')\nsys.exit(7)\n",
-        3,
-        False,
-    ),
-    "if_not_exists_exit": (
-        "import os, sys\nif not os.path.exists('o.png'):\n    sys.exit(3)\n",
-        3,
+    "return_after_probe": (PRE + "os.path.exists(o)\n", False),
+    "unrelated_exit_after_probe": (PRE + "os.path.exists(o)\nsys.exit(7)  # EXIT\n", False),
+    "if_not_exists_exit": (PRE + "if not os.path.exists(o):\n    sys.exit(3)  # EXIT\n", True),
+    "const_path_matches_variable": (
+        PRE + "if not os.path.exists('o.png'):\n    sys.exit(3)  # EXIT\n",
         True,
     ),
-    "exit_in_function_under_probe_branch": (
-        "import os, sys\ndef main():\n    if not os.path.isfile('o.png'):\n"
-        "        print('x')\n        sys.exit(2)\nmain()\n",
-        5,
+    "path_object_probe": (PRE + "if not Path(o).exists():\n    sys.exit(3)  # EXIT\n", True),
+    "probe_in_function_branch": (
+        PRE + "def main():\n    if not os.path.isfile(o):\n        print('x')\n"
+        "        sys.exit(2)  # EXIT\nmain()\n",
         True,
     ),
-    "exit_in_the_condition_of_a_different_if": (
-        "import os, sys\nos.path.exists('o.png')\nif len(sys.argv) > 5:\n    sys.exit(2)\n",
-        4,
+    "or_chain_after_positive_probe": (PRE + "os.path.exists(o) or sys.exit(4)  # EXIT\n", True),
+    "and_chain_after_positive_probe": (PRE + "os.path.exists(o) and sys.exit(4)  # EXIT\n", False),
+    "necessary_conjunct": (
+        PRE + "flag = True\nif not os.path.exists(o) and flag:\n    sys.exit(3)  # EXIT\n",
+        True,
+    ),
+    # Codex #1024 r4267638142：条件里有探测，但探测不是进入分支的必要条件
+    "or_with_independent_disjunct": (
+        PRE
+        + "must_abort = True\nif not os.path.exists(o) or must_abort:\n    sys.exit(7)  # EXIT\n",
         False,
     ),
-    "and_chain": ("import os, sys\nos.path.exists('o.png') or sys.exit(4)\n", 2, True),
-    "probe_in_body_not_test": (
-        "import os, sys\nif len(sys.argv) > 5:\n    os.path.exists('o.png')\n    sys.exit(2)\n",
-        4,
+    "conjunction_without_a_failed_probe": (
+        PRE + "a = b = True\nif a and b:\n    sys.exit(3)  # EXIT\n",
         False,
     ),
-    "unparseable": ("def (:\n", 1, False),
+    "conjunction_with_a_positive_probe": (
+        PRE + "a = True\nif a and os.path.exists(o):\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "probe_of_a_different_file": (
+        PRE + "if not os.path.exists('data.csv'):\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "probe_of_a_different_variable": (
+        PRE + "other = 'x.csv'\nif not os.path.exists(other):\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "else_branch_of_positive_probe": (
+        PRE + "if os.path.exists(o):\n    pass\nelse:\n    sys.exit(3)  # EXIT\n",
+        True,
+    ),
+    "else_branch_of_negated_probe": (
+        PRE + "if not os.path.exists(o):\n    pass\nelse:\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "exit_under_unrelated_if": (
+        PRE + "os.path.exists(o)\nif len(sys.argv) > 5:\n    sys.exit(2)  # EXIT\n",
+        False,
+    ),
+    "probe_only_in_body": (
+        PRE + "if len(sys.argv) > 5:\n    os.path.exists(o)\n    sys.exit(2)  # EXIT\n",
+        False,
+    ),
+    "result_stored_first_is_not_proven": (
+        PRE + "ok = os.path.exists(o)\nif not ok:\n    sys.exit(3)  # EXIT\n",
+        False,
+    ),
+    "unparseable": ("def (:  # EXIT\n", False),
 }
 
 
+def _exit_line(source: str):
+    for i, line in enumerate(source.splitlines(), 1):
+        if "# EXIT" in line:
+            return i
+    return None
+
+
 @pytest.mark.parametrize("name", sorted(EXIT_CASES))
-def test_exit_is_attributed_only_when_it_sits_under_a_probe_controlled_branch(name):
-    source, line, expected = EXIT_CASES[name]
-    assert figcapture.exit_controlled_by_probe(source, line) is expected
+def test_exit_is_attributed_only_when_the_failed_probe_decides_the_branch(name):
+    source, expected = EXIT_CASES[name]
+    assert figcapture.exit_controlled_by_probe(source, _exit_line(source)) is expected
+
+
+def test_exit_attribution_needs_a_savefig_target_to_match():
+    src = "import os, sys\nif not os.path.exists('o.png'):\n    sys.exit(3)\n"
+    assert figcapture.exit_controlled_by_probe(src, 3) is False  # 源码里没有 savefig 目标可对
+
+
+def test_listing_the_affected_directory_itself_or_below_it_is_a_signal(tmp_path):
+    import os
+
+    for listed in ("cache", "cache/sub"):
+        (tmp_path / "cache" / "sub").mkdir(parents=True, exist_ok=True)
+        led = figcapture.BlockedFileOps()
+        led.blocked("shutil.rmtree", led.KIND_DELETE_DIR, str(tmp_path / "cache"))
+        led.install()
+        try:
+            os.listdir(tmp_path / listed)
+        finally:
+            led.uninstall()
+        assert {(x["kind"], x["via"]) for x in led.suspects()} == {("delete_dir", "listing")}, (
+            listed
+        )
+        assert led.material() == []  # 只是 suspect，不升级
+
+
+def test_listing_an_unrelated_directory_is_not_a_signal(tmp_path):
+    import os
+
+    (tmp_path / "other").mkdir()
+    led = figcapture.BlockedFileOps()
+    led.blocked("shutil.rmtree", led.KIND_DELETE_DIR, str(tmp_path / "cache"))
+    led.install()
+    try:
+        os.listdir(tmp_path / "other")
+    finally:
+        led.uninstall()
+    assert led.suspects() == []
 
 
 def test_explain_exit_needs_both_the_last_missing_probe_and_a_controlled_branch(tmp_path):
