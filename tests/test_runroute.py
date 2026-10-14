@@ -1132,6 +1132,10 @@ R3_NOT_UNCONDITIONAL = [
     ("try_body", f"import os\ntry:\n{_ind(R3_CHAIN)}\nexcept Exception:\n    pass\n"),
     ("with_body", f"import os\nwith ctx():\n{_ind(R3_CHAIN)}\n"),
     (
+        "only_the_write_is_conditional",
+        'import os\nif flag:\n    open("c.tmp", "w").write("1")\nos.replace("c.tmp", "c.csv")\nopen("c.csv").read()\n',
+    ),
+    (
         "only_the_read_is_conditional",
         'import os\nopen("c.tmp", "w").write("1")\nos.replace("c.tmp", "c.csv")\nif flag:\n    open("c.csv").read()\n',
     ),
