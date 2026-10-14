@@ -316,7 +316,8 @@ describe('图内子图缩放手柄：吸别的图子图的同一条边', () => {
   const leftMm = 0.1 * W + 1 * MM_PER_PX
   const r2 = (rightMm - P2_X) / W
   const l2 = (leftMm - P2_X) / W
-  const p2Axes = () => manifestOf(axesAt('axes_0', [l2, 0.1, r2 - l2, 0.4]))
+  // 上下沿也各比 p1 的偏 1px（贴近容差内），用来证明右柄不会去吸不动的上下沿
+  const p2Axes = () => manifestOf(axesAt('axes_0', [l2, 0.5 + PX_Y, r2 - l2, 0.4]))
 
   it('右柄：右边吸到另一张图子图的右边；不动的左边不吸（哪怕对方左边也贴近）', async () => {
     await setup({ p2: p2Axes() })
@@ -327,6 +328,18 @@ describe('图内子图缩放手柄：吸别的图子图的同一条边', () => {
     expect(pos[2]).toBeCloseTo(0.35 + 2 * PX_X, 3)
     // 页面 mm 对齐误差 < 0.1
     expect(Math.abs((pos[0] + pos[2]) * W - rightMm)).toBeLessThan(0.1)
+  })
+
+  it('右柄：不动的上下沿即使贴近对方的上下沿，也不出水平吸附线', async () => {
+    await setup({ p2: p2Axes() })
+    startAxesDrag(down(), livePanel(), axes0, layout, 'e')
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', (3 * i) / 10, 0)
+      flushPreviewFrame()
+    }
+    expect(useInteractionStore.getState().snapXs.length).toBeGreaterThan(0)
+    expect(useInteractionStore.getState().snapYs).toHaveLength(0)
+    fire('pointerup', 3, 0)
   })
 
   it('左柄：左边吸到对方子图的左边', async () => {
