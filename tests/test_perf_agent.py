@@ -14,6 +14,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import perf_agent as A  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _synthetic_pnpm_for_mocked_runner(monkeypatch):
+    """These are unit tests with a mocked subprocess, not real Playwright runs.
+
+    Backend-only CI images do not install pnpm. Patch just executable discovery,
+    so synthetic subprocess tests reach their intended failure/baseline paths.
+    The explicit unavailable-pnpm test overrides this fixture to assert rc=2.
+    """
+    real_which = A.shutil.which
+    monkeypatch.setattr(
+        A.shutil,
+        "which",
+        lambda name: "pnpm" if name == "pnpm" else real_which(name),
+    )
+
+
 def report(n=16, value=20, browser="chromium"):
     return {
         "schema": A.SCHEMA,
