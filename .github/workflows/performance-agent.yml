@@ -125,8 +125,8 @@ jobs:
             fi
             target="$RUNNER_TEMP/tavotto-perf-baseline-$id"
             if gh run download "$id" --repo "$GH_REPO" --name "tavotto-performance-agent-$id" --dir "$target" >/dev/null 2>&1; then
-              if [[ -f "$target/perf-agent/run.json" ]]; then
-                BASE="$target/perf-agent/run.json"
+              if [[ -f "$target/test-results/perf-agent/run.json" ]]; then
+                BASE="$target/test-results/perf-agent/run.json"
                 echo "Historical main run: $id" >> "$GITHUB_STEP_SUMMARY"
                 break
               fi

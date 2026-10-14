@@ -98,6 +98,7 @@ export function PresetsDialog({ open, onClose }: { open: boolean; onClose: () =>
               <button
                 key={s}
                 type="button"
+                data-symbol={s}
                 onClick={() => {
                   insertSymbol(s)
                   onClose()

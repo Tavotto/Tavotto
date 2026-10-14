@@ -152,3 +152,13 @@ def test_composed_summary_does_not_hide_later_drag_failure():
     assert A.compose_run_summary(symbols, "not_requested")["status"] == "ok"
     bad = {**symbols, "status": "incomplete"}
     assert A.compose_run_summary(bad, "pending")["status"] == "incomplete"
+
+
+def test_actions_baseline_artifact_path_matches_actual_upload_root():
+    """Actions 产物上传公共根是 web/；下载后包含 test-results/ 层级。"""
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/performance-agent.yml"
+    ).read_text(encoding="utf-8")
+    assert 'web/test-results/perf-agent/**' in workflow
+    assert '"$target/test-results/perf-agent/run.json"' in workflow
+    assert '"$target/perf-agent/run.json"' not in workflow

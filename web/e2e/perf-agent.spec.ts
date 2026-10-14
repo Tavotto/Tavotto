@@ -51,7 +51,7 @@ async function measuredClick(page: Page, target: Locator): Promise<number> {
 
 async function openPresets(page: Page): Promise<number> {
   await page.locator('[data-tool-menu="annotate"]').click()
-  const item = page.getByRole('menuitem', { name: /科研预设与符号/ })
+  const item = page.locator('[data-perf-open-presets]')
   const delay = await measuredClick(page, item)
   await expect(page.locator('[data-dialog="presets"]')).toBeVisible()
   return delay
@@ -74,23 +74,23 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
 
   const a = await app()
   await page.goto(a.baseURL)
-  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.locator('[data-card^="Fig1_kinetics."]').dblclick({ timeout: 30_000 })
   await page.locator('[data-context-back]').click()
   await waitForDocumentReady(page)
   await expect(page.locator('[data-canvas-toolbar]')).toBeVisible()
 
   // 预热：安装 font cache、首次对话框创建、React 首次布局不纳入热态对比。
   await openPresets(page)
-  await page.locator('[data-dialog="presets"]').getByRole('button', { name: /插入符号 α/ }).click()
+  await page.locator('[data-dialog="presets"] [data-symbol="α"]').click()
   await expect(page.locator('[data-dialog="presets"]')).toBeHidden()
   await page.evaluate(() => new Promise<void>((resolve) =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
   ))
 
   const cases = [
-    { key: 'symbol.alpha', aria: /插入符号 α/ },
-    { key: 'symbol.superscript_2', aria: /插入符号 ²/ },
-    { key: 'symbol.micron', aria: /插入符号 μm/ },
+    { key: 'symbol.alpha', symbol: 'α' },
+    { key: 'symbol.superscript_2', symbol: '²' },
+    { key: 'symbol.micron', symbol: 'μm' },
   ] as const
 
   // 循环每一档，交错而不是先测完 alpha 再测 superscript，减少热态顺序偏差。
@@ -98,7 +98,7 @@ test('agent: 自动重复符号插入与预设 UI 交互', async ({ app, page, b
     for (const item of cases) {
       results['dialog.presets_open'].push(await openPresets(page))
       const before = await countObjects(page)
-      const click = page.locator('[data-dialog="presets"]').getByRole('button', { name: item.aria })
+      const click = page.locator(`[data-dialog="presets"] [data-symbol="${item.symbol}"]`)
       const measured = await measuredClick(page, click)
       results[item.key].push(measured)
       await expect.poll(() => countObjects(page)).toBe(before + 1)
