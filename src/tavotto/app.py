@@ -7320,6 +7320,7 @@ def _plan_pin(pl):
         python=pl.interpreter,
         source=str(env.get("source") or ""),
         generation=str(env.get("generation") or ""),
+        env_state=str(getattr(pl, "environment_state", "") or ""),
     )
 
 

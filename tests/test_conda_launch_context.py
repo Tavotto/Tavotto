@@ -2398,6 +2398,9 @@ def test_an_environment_change_after_prewarm_never_runs_the_capture_under_the_po
         under_lock.append(_pool._lock.locked())  # noqa: SLF001
         return real_capture(*a, **k)
 
+    # 只测“锁内缓存没命中不在锁里捕获”：不让检测模式钉下决定（钉下之后环境再变是另一条路——`environment_changed`，
+    # 由 test_a_pinned_decision_and_a_plan_go_stale_when_the_conda_environment_changes_in_place 管）
+    monkeypatch.setattr(_pool, "ENVIRONMENT_DECIDERS", [])
     monkeypatch.setattr(launcher, "prewarm", racing_prewarm)
     monkeypatch.setattr(launcher, "_capture", spy_capture)
     launcher.reset_captures()
@@ -2556,3 +2559,62 @@ def test_the_package_inventory_shares_its_budget_with_the_activation(monkeypatch
         runtime.probe_packages(sys.executable, ["json"], env_for=slow_env)
     assert exc.value.code == "conda_launcher_unavailable" and "run_timeout" not in seen
     assert issubclass(launcher.LauncherUnavailable, runtime.ActivationUnavailable)
+
+
+@posix_only
+def test_a_pinned_decision_and_a_plan_go_stale_when_the_conda_environment_changes_in_place(
+    tmp_path, monkeypatch
+):
+    """计划 / 钉下的决定之后 conda install / 改 activate.d：环境代不变，但激活后的环境变了——决定对不上、计划判过期，
+    不许在计划没验证过的环境里跑。"""
+    import types
+
+    from tavotto.engine import preparation, projectenv
+
+    prefix, conda, log = make_fake_conda(tmp_path, sys.executable)
+    monkeypatch.setenv("CONDA_EXE", str(conda))
+    py = str(prefix / "bin" / "python")
+    decision = _pool.EnvironmentDecision(
+        python=py,
+        source="system",
+        generation=projectenv.environment_generation(py),
+        env_state=launcher.env_state_of(py),
+    )
+    assert decision.env_state and decision.matches(py)
+    worker = types.SimpleNamespace(
+        python=py, python_generation=decision.generation, env_state=decision.env_state
+    )
+    assert decision.matches_worker(worker)
+    plan = types.SimpleNamespace(
+        project_root=str(tmp_path),
+        grant=None,
+        input_remap_generation=None,
+        interpreter=py,
+        script=None,
+        script_revision=None,
+        binding=None,
+        environment={"generation": decision.generation},
+        environment_state=decision.env_state,
+    )
+    monkeypatch.setattr(preparation.workdir, "grant_for", lambda root: None)
+    monkeypatch.setattr(
+        preparation.pool, "resolve_worker_python", lambda root, script=None: (py, "system")
+    )
+    assert preparation.PreparationService._stale_reason(plan) is None  # 环境没变：计划有效
+    with open(prefix / "conda-meta" / "history", "a", encoding="utf-8") as fh:
+        fh.write("# cmd: conda install vendor-sdk\n")
+    assert projectenv.environment_generation(py) == decision.generation  # 代没变……
+    assert preparation.PreparationService._stale_reason(plan)[0] == preparation.STALE_ENVIRONMENT
+    assert not decision.matches(py)
+    assert _pool.pin_of_worker(worker).env_state == worker.env_state
+
+
+def test_activate_within_shares_one_budget(monkeypatch):
+    """有总预算的探测：激活用掉的时间从子进程的预算里扣；用完了 = 瞬时的激活不可用。"""
+    monkeypatch.setattr(
+        launcher, "activate_env", lambda python, base=None, *, timeout=None: time.sleep(0.4) or base
+    )
+    env, remaining = launcher.activate_within(sys.executable, {"A": "1"}, 5.0)
+    assert env == {"A": "1"} and remaining <= 5.0 - 0.4
+    with pytest.raises(launcher.LauncherUnavailable):
+        launcher.activate_within(sys.executable, {}, 0.2)

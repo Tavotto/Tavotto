@@ -2389,6 +2389,10 @@ def worker_self_test(python: str) -> dict:
         )
         env_build = pool.build_envelope({"cmd": "build"})
         env_stop = pool.build_envelope({"cmd": "shutdown"})
+        # Conda 环境：自检也用激活后的环境（与 worker 同一个启动决策：解释器路径的纯函数）；激活与自检共用一个预算
+        child_env, remaining = launcher.activate_within(
+            python, runtime.owned_env(python), SELFTEST_TIMEOUT_S
+        )
         proc = subprocess.Popen(
             argv,
             stdin=subprocess.PIPE,
@@ -2398,8 +2402,7 @@ def worker_self_test(python: str) -> dict:
             encoding="utf-8",
             errors="replace",
             # 与池里起 worker 同一份 env 判据（受管环境的 matplotlib 缓存落回数据目录）
-            # Conda 环境：自检也用激活后的环境（与 worker 同一个启动决策：解释器路径的纯函数）
-            env=launcher.activate_env(python, runtime.owned_env(python)),
+            env=child_env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
         try:
@@ -2408,7 +2411,7 @@ def worker_self_test(python: str) -> dict:
             # 别的 JSON（`{"ok": true}` 之类）一律当日志，不能冒充 worker 的回复。
             stdout, stderr = proc.communicate(
                 json.dumps(env_build) + "\n" + json.dumps(env_stop) + "\n",
-                timeout=SELFTEST_TIMEOUT_S,
+                timeout=remaining,
             )
         except subprocess.TimeoutExpired:
             _kill(proc)
@@ -5466,16 +5469,20 @@ def probe_imports(python: str, names: tuple[str, ...] | list[str]) -> dict[str, 
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
+        # 激活捕获与 import 探测共用一个预算
+        env, remaining = launcher.activate_within(
+            python, runtime.owned_env(python), projectenv.PROBE_TIMEOUT_S
+        )
         proc = subprocess.run(
             [str(python), *runtime.probe_args(), "-c", _IMPORTS_PROBE_SRC, *names],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=projectenv.PROBE_TIMEOUT_S,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=launcher.activate_env(python, runtime.owned_env(python)),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -6415,6 +6422,7 @@ def _detect_environment_pinned(
             python=python,
             source=source,
             generation=projectenv.environment_generation(python),
+            env_state=launcher.env_state_of(python),
         )
 
 

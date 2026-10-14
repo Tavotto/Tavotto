@@ -501,16 +501,20 @@ def target_facts(python: str, *, use_cache: bool = True) -> TargetFacts | None:
     scratch = ""
     try:
         scratch = projectenv._probe_scratch_dir()
+        # 激活捕获与事实探测共用 `FACTS_TIMEOUT_S` 一个预算
+        env, remaining = launcher.activate_within(
+            python, runtime.owned_env(python), FACTS_TIMEOUT_S
+        )
         proc = subprocess.run(
             [str(python), *runtime.probe_args(), "-c", _FACTS_SRC],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=FACTS_TIMEOUT_S,
+            timeout=remaining,
             stdin=subprocess.DEVNULL,
             cwd=scratch,
-            env=launcher.activate_env(python, runtime.owned_env(python)),
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
         )
     except launcher.LauncherUnavailable as exc:

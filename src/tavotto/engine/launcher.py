@@ -619,6 +619,17 @@ def merge_env(
     return env
 
 
+def activate_within(python, base: dict | None, budget: float) -> tuple[dict | None, float]:
+    """有总预算的探测取 env 的唯一写法：激活捕获用 `budget`，回 (env, 剩给子进程的秒数)。预算被激活用完抛
+    `LauncherUnavailable`（瞬时）——子进程不能再拿一份完整的超时（那样名义 30s 的探测能拖到 90s）。"""
+    deadline = time.monotonic() + budget
+    env = activate_env(python, base, timeout=budget)
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise LauncherUnavailable("经 Conda 激活取环境用完了这次探测的时间预算；请稍后再试")
+    return env, remaining
+
+
 def activate_env(python, base: dict | None = None, *, timeout: float | None = None) -> dict | None:
     """所有「用目标解释器起子进程」的地方取 env 的唯一入口：`launcher_for_interpreter` 的决策 + 合并激活增量。
     Conda 环境捕获失败抛 `LauncherUnavailable`——**没有**“范围外降级成裸起”的分支。"""

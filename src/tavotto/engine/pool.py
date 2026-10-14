@@ -3158,6 +3158,9 @@ class EnvironmentDecision:
     python: str = ""
     source: str = ""
     generation: str = ""
+    #: 钉下那一刻的 Conda 环境版本（`launcher.env_state_of`；不是 Conda 环境 = 空）。conda install / 改 activate.d 不换代，
+    #: 但激活后的环境变了——计划验证的不是那个环境（P09）
+    env_state: str = ""
 
     @property
     def pinned(self) -> bool:
@@ -3171,6 +3174,7 @@ class EnvironmentDecision:
             and (
                 not self.generation or projectenv.environment_generation(python) == self.generation
             )
+            and (not self.env_state or launcher_mod.env_state_of(python) == self.env_state)
         )
 
     def matches_worker(self, worker) -> bool:
@@ -3181,6 +3185,8 @@ class EnvironmentDecision:
         if not (self.pinned and same_python(getattr(worker, "python", ""), self.python)):
             return False
         born = getattr(worker, "python_generation", "") or ""
+        if self.env_state and (getattr(worker, "env_state", "") or "") != self.env_state:
+            return False
         return not self.generation or born == self.generation
 
 
@@ -3205,6 +3211,7 @@ def pin_of_worker(worker) -> EnvironmentDecision:
         python=getattr(worker, "python", "") or "",
         source=getattr(worker, "python_source", "") or "",
         generation=getattr(worker, "python_generation", "") or "",
+        env_state=getattr(worker, "env_state", "") or "",
     )
 
 

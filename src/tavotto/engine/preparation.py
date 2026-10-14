@@ -67,6 +67,7 @@ from . import (
     figcapture,
     inputbroker,
     inputremap,
+    launcher,
     pool,
     projectenv,
     receipt,
@@ -198,6 +199,9 @@ class PreparationPlan:
     #: 私有：不进 `to_payload()`（公开的是 `launch_context`）。就地重算计划、复用现有会话都按它对账，
     #: 不得悄悄回落成 safe。
     execution: str = execspec.PROFILE_SAFE
+    #: 计划那一刻解释器所在 Conda 环境的版本（`launcher.env_state_of`；不是 Conda 环境 = 空）。私有。conda install /
+    #: 改 activate.d 不换「代」，但激活后的环境变了：执行前 `_stale_reason` 比它，对不上 = 计划过期（P09）
+    environment_state: str = ""
 
     def to_payload(self) -> dict:
         return {
@@ -315,6 +319,11 @@ def plan_for(
     discovery = pool.first_open_outcome(root)
     # 作废的事实只报一次：写进这一份计划就消费掉，后面的检查不再重复说「换过了」
     invalidated = pool.consume_invalidated(root)
+    # Conda 环境版本的快照（私有，进 `PreparationPlan.environment_state`）：与上面的「代」同一刻、同一份决定取。
+    # 必须在这里取——下面 `decision` 这个名字会被工作目录的决定覆盖
+    environment_state = (
+        (decision.env_state if decision.pinned else launcher.env_state_of(python)) if python else ""
+    )
     environment = {
         "python": _project_relative(root, python) if python else None,
         "source": source,
@@ -492,6 +501,7 @@ def plan_for(
         run=run,
         input_remap_generation=remap_generation,
         script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
+        environment_state=environment_state,
     )
 
 
@@ -1011,6 +1021,11 @@ class PreparationService:
             # 路径没变、环境换了一代（删了重建）：计划确认的是上一代（ADR 0114 §四）
             planned = (plan.environment or {}).get("generation")
             if planned and projectenv.environment_generation(plan.interpreter) != planned:
+                return STALE_ENVIRONMENT, {}
+            # Conda 环境原地变了（conda install / 改 activate.d / env config vars）：代没变，激活后的环境变了
+            if plan.environment_state and (
+                launcher.env_state_of(plan.interpreter) != plan.environment_state
+            ):
                 return STALE_ENVIRONMENT, {}
         if (
             source
