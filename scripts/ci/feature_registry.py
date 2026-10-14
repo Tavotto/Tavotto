@@ -348,6 +348,44 @@ def check(
     return problems
 
 
+def verify_run_shard(
+    feats: list[Feature], planned: dict[Ref, Listed], actual: dict[Ref, Listed]
+) -> tuple[list[str], int]:
+    """核对本 shard 计划执行的每个 active 用例/project，不要求其他 shard 的用例。
+
+    未分片的 frontend 静态门禁核实 active 引用全部存在；Playwright --shard
+    负责覆盖所有 project/case。每个 shard 只对自己计划中的 active 用例作真跑核验。
+    """
+    problems: list[str] = []
+    counted = 0
+    for feature in feats:
+        if feature.status != "active":
+            continue
+        for ref in feature.e2e:
+            expectation = planned.get(ref)
+            if expectation is None:
+                continue
+            observed = actual.get(ref)
+            for project in sorted(expectation.projects):
+                if expectation.expected.get(project) != "passed":
+                    problems.append(f"{feature.id}：{ref.show()} 的 {project} 声明期被跳过")
+                    continue
+                statuses = [] if observed is None else [
+                    status for name, status in observed.outcomes if name == project
+                ]
+                if not statuses:
+                    problems.append(
+                        f"{feature.id}：本 shard 应执行 {ref.show()} ({project}) 却没有结果——没跑不是绿"
+                    )
+                elif any(status not in RAN_OK for status in statuses):
+                    problems.append(
+                        f"{feature.id}：本 shard {ref.show()} ({project}) 的结果 {statuses} 不通过"
+                    )
+                else:
+                    counted += 1
+    return problems, counted
+
+
 def verify_run(feats: list[Feature], report: dict[Ref, Listed]) -> tuple[list[str], int]:
     problems: list[str] = []
     counted = 0
@@ -492,6 +530,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--scan-json", type=Path, help="离线：已存好的 e2e-skip-scan 输出")
     v = sub.add_parser("verify-run", help="合并态真跑的报告：登记的用例都真的执行且通过")
     v.add_argument("report", type=Path)
+    v.add_argument("--expected-list", type=Path, help="本 shard 的 Playwright --list JSON")
     t = sub.add_parser("transitions", help="与 base 比：条目不许消失，下线 / 降级要标签")
     t.add_argument("--base", required=True, help="base 提交 SHA")
     t.add_argument(
@@ -532,6 +571,16 @@ def main(argv: list[str] | None = None) -> int:
             report = parse_playwright_json(
                 json.loads(args.report.read_text(encoding="utf-8")), str(args.report)
             )
+            if args.expected_list is not None:
+                planned = parse_playwright_json(
+                    json.loads(args.expected_list.read_text(encoding="utf-8")),
+                    str(args.expected_list),
+                )
+                problems, counted = verify_run_shard(feats, planned, report)
+                return _report(
+                    shape + problems,
+                    f"功能登记表：本 shard 计划中的 {counted} 条 active 用例/project 实际通过",
+                )
             problems, counted = verify_run(feats, report)
             if not problems and counted == 0:
                 raise InputError("一条登记的用例都没数到——登记表是空的还是报告不对？")
