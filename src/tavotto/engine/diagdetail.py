@@ -295,23 +295,58 @@ _URL_SCHEME = re.compile(r"(?<![A-Za-z0-9+.\-])[A-Za-z][A-Za-z0-9+.\-]{0,31}://"
 _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b")
 _REDACTED = "<redacted>"
 #: 没有键名可依的形状：PEM 私钥块、常见服务商的令牌前缀（AWS 访问密钥 id、GitHub 细粒度、Slack、Google API key）
-_PEM_BEGIN = re.compile(
-    r"-----BEGIN[ \t]+((?:[A-Za-z]+[ \t]+){0,5}PRIVATE[ \t]+KEY)[ \t]*-----", re.I
-)
+_PEM_BEGIN = re.compile(r"-----BEGIN[ \t]+([A-Za-z0-9][A-Za-z0-9 \t]{0,60}?)[ \t]*-----", re.I)
+#: 标签里含这些词的 armor 块是秘密：`PRIVATE KEY`、`ENCRYPTED PRIVATE KEY`、`OPENSSH PRIVATE KEY`、`SSH2 ENCRYPTED PRIVATE KEY`、
+#: `PGP PRIVATE KEY BLOCK`、`PUTTY`…；标签里有 `PUBLIC` 的（公钥、`PGP PUBLIC KEY BLOCK`）、证书、`PGP SIGNATURE` 不是秘密，保留
+_PEM_SECRET_WORDS = ("PRIVATE", "SECRET", "ENCRYPTED", "KEY BLOCK", "OPENSSH", "PUTTY")
+#: PuTTY 的 `.ppk` 不是 armor：`Private-Lines: N` 之后的 N 行是私钥体
+_PPK_PRIVATE = re.compile(r"^Private-Lines:[ \t]*(\d{1,6})[ \t]*\n", re.M | re.I)
 
 
-def _redact_pem(text: str) -> str:
-    """PEM 私钥块整段换掉。线性：每个 BEGIN 向后找**同一标签**的 END（`BEGIN PRIVATE KEY` 只认 `END PRIVATE KEY`，
-    大小写 / 空白变体算同一个；中间夹着别的标签的 END——比如证书——不算收尾），换掉之后从块尾继续、不回头，所以总扫描量
-    不超过输入长度。**找不到配对的 END（截断 / 不完整的块）就一直抹到输入末尾**。"""
-    if _PEM_BEGIN.search(text) is None:
+def _pem_is_secret(label: str) -> bool:
+    n = " ".join(label.upper().split())
+    return "PUBLIC" not in n and any(w in n for w in _PEM_SECRET_WORDS)
+
+
+def _redact_ppk(text: str) -> str:
+    if "rivate-Lines" not in text and "RIVATE-LINES" not in text.upper():
         return text
     out: list[str] = []
     pos = 0
+    for m in _PPK_PRIVATE.finditer(text):
+        if m.start() < pos:
+            continue
+        end = m.end()
+        for _ in range(int(m.group(1))):
+            nl = text.find("\n", end)
+            if nl < 0:
+                end = len(text)
+                break
+            end = nl + 1
+        out += [text[pos : m.end()], _REDACTED, "\n" if text[end - 1 : end] == "\n" else ""]
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _redact_pem(text: str) -> str:
+    """私钥 armor 块整段换掉（PEM 私钥、加密私钥、OpenSSH、SSH2、PGP 私钥块、PuTTY…，见 `_PEM_SECRET_WORDS`）。线性：每个
+    BEGIN 向后找**同一标签**的 END（`BEGIN PRIVATE KEY` 只认 `END PRIVATE KEY`，大小写 / 空白变体算同一个；中间夹着别的标签的
+    END——比如证书——不算收尾），换掉之后从块尾继续、不回头，所以总扫描量不超过输入长度。**找不到配对的 END（截断 / 不完整
+    的块）就一直抹到输入末尾**。armor 头字段（`Version:` / `Comment:`）和 CRC 行在块内，一起抹。`.ppk` 另按 `Private-Lines: N`。"""
+    text = _redact_ppk(text)
+    if "-----" not in text:
+        return text
+    out: list[str] = []
+    pos = 0
+    search = 0
     while True:
-        m = _PEM_BEGIN.search(text, pos)
+        m = _PEM_BEGIN.search(text, search)
         if m is None:
             break
+        if not _pem_is_secret(m.group(1)):
+            search = m.end()
+            continue
         words = m.group(1).upper().split()
         end_re = re.compile(
             r"-----END[ \t]+" + r"[ \t]+".join(map(re.escape, words)) + r"[ \t]*-----", re.I
@@ -320,7 +355,7 @@ def _redact_pem(text: str) -> str:
         stop = e.end() if e is not None else len(text)
         out.append(text[pos : m.start()])
         out.append(_REDACTED)
-        pos = stop
+        pos = search = stop
     out.append(text[pos:])
     return "".join(out)
 

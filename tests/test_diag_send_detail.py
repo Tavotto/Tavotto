@@ -3534,3 +3534,77 @@ class TestPlaceholderWhitelist:
             assert "REAL" not in s.text(f"password=[{v}]") and "hunter2" not in s.text(
                 f"token=({v})"
             )
+
+
+class TestPrivateKeyArmorFamily:
+    """任何标签含 PRIVATE / SECRET / ENCRYPTED / KEY BLOCK / OPENSSH / PUTTY 的 armor 块都按 PEM 规则抹到同标签 END。"""
+
+    PGP = (
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: GnuPG v2\nComment: alice KEYSECRETxyz\n\n"
+        "lQOYBF9KEYSECRETxyzAAA\n=abcd\n-----END PGP PRIVATE KEY BLOCK-----\n"
+    )
+    SECRET_BLOCKS = [
+        PGP,
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF9KEYSECRETxyz\n",  # 无 END：抹到末尾
+        "-----BEGIN SSH2 ENCRYPTED PRIVATE KEY-----\nKEYSECRETxyz\n-----END SSH2 ENCRYPTED PRIVATE KEY-----\n",
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----\nKEYSECRETxyz\n-----END ENCRYPTED PRIVATE KEY-----\n",
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nKEYSECRETxyz\n-----END OPENSSH PRIVATE KEY-----\n",
+        "-----BEGIN RSA PRIVATE KEY-----\nKEYSECRETxyz\n-----END RSA PRIVATE KEY-----\n",
+        "-----BEGIN SECRET KEY-----\nKEYSECRETxyz\n-----END SECRET KEY-----\n",
+        "-----BEGIN PUTTY KEY-----\nKEYSECRETxyz\n-----END PUTTY KEY-----\n",
+    ]
+    PUBLIC_BLOCKS = [
+        "-----BEGIN PUBLIC KEY-----\nPUBKEYok\n-----END PUBLIC KEY-----\n",
+        "-----BEGIN RSA PUBLIC KEY-----\nPUBKEYok\n-----END RSA PUBLIC KEY-----\n",
+        "-----BEGIN CERTIFICATE-----\nPUBKEYok\n-----END CERTIFICATE-----\n",
+        "-----BEGIN PGP PUBLIC KEY BLOCK-----\nPUBKEYok\n-----END PGP PUBLIC KEY BLOCK-----\n",
+        "-----BEGIN PGP SIGNATURE-----\nPUBKEYok\n-----END PGP SIGNATURE-----\n",
+        "-----BEGIN SSH2 PUBLIC KEY-----\nPUBKEYok\n-----END SSH2 PUBLIC KEY-----\n",
+    ]
+
+    @pytest.mark.parametrize("block", [b for b in SECRET_BLOCKS])
+    def test_secret_blocks_are_erased(self, block):
+        s = diagdetail.Scrubber()
+        for text in (f"before\n{block}after", f"before\n{block}"):
+            out = s.text(text)
+            assert (
+                "KEYSECRETxyz" not in out and "=abcd" not in out and out.startswith("before\n")
+            ), out
+        assert "KEYSECRETxyz" not in diagdetail.scrub_script(
+            "# " + block.replace("\n", "\n# "), "a.py", s, diagdetail.Scrubber(source_mode=True)
+        )
+
+    def test_pgp_block_with_end_keeps_what_follows(self):
+        out = diagdetail.Scrubber().text("x\n" + self.PGP + "after: kept")
+        assert out == "x\n<redacted>\nafter: kept"
+
+    @pytest.mark.parametrize("block", PUBLIC_BLOCKS)
+    def test_public_material_is_kept(self, block):
+        s = diagdetail.Scrubber()
+        assert s.text(f"tls:\n{block}end") == f"tls:\n{block}end"
+
+    def test_public_block_before_a_private_one_is_kept_and_private_is_erased(self):
+        text = self.PUBLIC_BLOCKS[2] + self.PGP + self.PUBLIC_BLOCKS[0]
+        out = diagdetail.Scrubber().text(text)
+        assert out.count("PUBKEYok") == 2 and "KEYSECRETxyz" not in out
+
+    def test_putty_ppk_private_lines(self):
+        ppk = (
+            "PuTTY-User-Key-File-3: ssh-rsa\nEncryption: none\nComment: me\nPublic-Lines: 2\n"
+            "PUBLINE1\nPUBLINE2\nPrivate-Lines: 3\nKEYSECRETxyz1\nKEYSECRETxyz2\nKEYSECRETxyz3\n"
+            "Private-MAC: abc123\ntrailer: kept\n"
+        )
+        out = diagdetail.Scrubber().text(ppk)
+        assert "KEYSECRETxyz" not in out and "trailer: kept" in out and "PUBLINE1" in out
+        assert out.count("<redacted>") == 1
+        short = diagdetail.Scrubber().text("Private-Lines: 9\nKEYSECRETxyz1\n")
+        assert "KEYSECRETxyz" not in short
+
+    def test_pem_scan_stays_linear(self):
+        import time
+
+        t = time.monotonic()
+        diagdetail.Scrubber().text("-----BEGIN PGP PRIVATE KEY BLOCK-----\n" * 4000)
+        diagdetail.Scrubber().text("-----BEGIN CERTIFICATE-----\n" * 20000)
+        diagdetail.Scrubber().text("-----BEGIN " + "A" * 5000)
+        assert time.monotonic() - t < 3
