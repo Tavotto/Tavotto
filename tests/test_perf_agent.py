@@ -965,9 +965,7 @@ def test_all_report_subparsers_reject_abbreviated_json_flag(tmp_path, command):
 
 
 @pytest.mark.parametrize("output_name", ["drag.json", "drag-findings.json"])
-def test_run_rejects_symbol_output_colliding_with_drag_sidecars(
-    tmp_path, monkeypatch, output_name
-):
+def test_run_rejects_symbol_output_colliding_with_drag_sidecars(tmp_path, monkeypatch, output_name):
     """真实 Agent 不可先报符号通过再让 sidecar 覆写 --out。"""
     output = tmp_path / output_name
     output.write_text(json.dumps(report()), encoding="utf-8")
@@ -990,10 +988,18 @@ def test_drag_sidecar_cannot_unlink_the_readonly_baseline(tmp_path, monkeypatch,
     monkeypatch.setattr(
         A.subprocess, "run", lambda *a, **k: pytest.fail("No benchmark may be launched")
     )
-    rc = A.main([
-        "run", "--include-drag", "--out", str(tmp_path / "run.json"),
-        "--baseline", str(base), "--summary", str(tmp_path / "summary.json"),
-    ])
+    rc = A.main(
+        [
+            "run",
+            "--include-drag",
+            "--out",
+            str(tmp_path / "run.json"),
+            "--baseline",
+            str(base),
+            "--summary",
+            str(tmp_path / "summary.json"),
+        ]
+    )
     assert rc == 2
     assert base.read_bytes() == before
     result = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
@@ -1029,9 +1035,20 @@ def test_incomplete_symbol_with_requested_baseline_is_terminal_not_pending(tmp_p
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(A.subprocess, "run", write_incomplete)
-    assert A.main([
-        "run", "--out", str(raw), "--baseline", str(baseline), "--summary", str(summary),
-    ]) == 2
+    assert (
+        A.main(
+            [
+                "run",
+                "--out",
+                str(raw),
+                "--baseline",
+                str(baseline),
+                "--summary",
+                str(summary),
+            ]
+        )
+        == 2
+    )
     result = json.loads(summary.read_text(encoding="utf-8"))
     assert result["suites"]["symbol_ui"] == "incomplete"
     assert result["status"] == "incomplete"

@@ -501,7 +501,9 @@ def main(argv: list[str] | None = None) -> int:
                 summary_safe = (
                     args.summary is not None
                     and all(not _same_report_path(args.summary, path) for path in write_targets)
-                    and (args.baseline is None or not _same_report_path(args.summary, args.baseline))
+                    and (
+                        args.baseline is None or not _same_report_path(args.summary, args.baseline)
+                    )
                 )
                 if summary_safe:
                     failed = failed_run_summary(args.include_drag)
@@ -727,13 +729,14 @@ def main(argv: list[str] | None = None) -> int:
             failed.update(status="failed", reason="invalid_or_unavailable_benchmark")
             try:
                 if args.json and not (
-                    (args.command == "compare"
-                     and (
-                         _same_report_path(args.json, args.current)
-                         or _same_report_path(args.json, args.baseline)
-                     ))
-                    or (args.command == "summarize"
-                        and _same_report_path(args.json, args.report))
+                    (
+                        args.command == "compare"
+                        and (
+                            _same_report_path(args.json, args.current)
+                            or _same_report_path(args.json, args.baseline)
+                        )
+                    )
+                    or (args.command == "summarize" and _same_report_path(args.json, args.report))
                 ):
                     _write(args.json, failed)
                 if comparison_summary is not None and not (
