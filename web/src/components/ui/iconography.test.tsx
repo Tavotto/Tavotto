@@ -210,11 +210,18 @@ export function audit(path: string, src: string): Finding[] {
   return out
 }
 
+// Test-only raw sources never mutate: build AST findings just once at module load.
+// Prior offenders() parsed all ~1000 source files per rule, competing with 470+
+// Vitest suites; a 5-second single-test timeout in the merge queue was hit.
+// The separate audit(path, src) below remains uncached for mutation/negative tests.
+const STATIC_FINDINGS = Object.entries(SOURCES)
+  .filter(([path]) => !isTest(path))
+  .map(([path, src]) => ({ path, findings: audit(path, src) }))
+
 function offenders(kind: Finding['kind']): string[] {
   const rows: string[] = []
-  for (const [path, src] of Object.entries(SOURCES)) {
-    if (isTest(path)) continue
-    const hits = audit(path, src).filter((f) => f.kind === kind)
+  for (const { path, findings } of STATIC_FINDINGS) {
+    const hits = findings.filter((f) => f.kind === kind)
     if (kind === 'inline-svg') {
       const allowed = SVG_ALLOWLIST[path] ?? 0
       if (hits.length > allowed) rows.push(`${path}（${hits.length} 处，豁免 ${allowed}）`)
@@ -227,6 +234,16 @@ function offenders(kind: Finding['kind']): string[] {
 }
 
 describe('图标只有一套：components/ui/icons + Icon.tsx 的阶梯', () => {
+  it('静态规则分析覆盖全部非测试源码，查询之间只复用一次 AST 结果', () => {
+    const expected = Object.keys(SOURCES).filter((path) => !isTest(path))
+    expect(STATIC_FINDINGS.map((row) => row.path)).toEqual(expected)
+    // 规则自身的负例仍直接调用 audit(path, src)，不允许缓存妨碍检测新违规。
+    const raw = 'const a = <Check strokeWidth={3} />'
+    expect(audit('/synthetic.tsx', raw).map((finding) => finding.kind)).toContain('raw-stroke')
+    expect(audit('/synthetic.tsx', raw.replace('strokeWidth={3}', 'strokeWidth={ICON_STROKE.regular}'))).toEqual([])
+  })
+
+
   it('没有手写的内联 svg 图标（样本图 / 画布本体 / 品牌标 / 图标集本体按个数豁免）', () => {
     expect(
       offenders('inline-svg'),
