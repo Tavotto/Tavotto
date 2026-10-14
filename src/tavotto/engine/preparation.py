@@ -1242,6 +1242,20 @@ class PreparationService:
             order = list(self._entries)
         return frozenset(order[: order.index(keep)]) if keep in order else frozenset()
 
+    def superseded(self, plan_id: str) -> bool:
+        """同项目同脚本里有没有登记得比 `plan_id` 更晚的计划（登记顺序 = 计划的先后）：有 = 这份计划已被更新的重跑取代。
+        `plan_id` 未登记按「没被取代」。"""
+        with self._lock:
+            order = list(self._entries)
+            if plan_id not in order:
+                return False
+            mine = self._entries[plan_id].plan
+            return any(
+                self._entries[pid].plan.project_id == mine.project_id
+                and self._entries[pid].plan.script == mine.script
+                for pid in order[order.index(plan_id) + 1 :]
+            )
+
     def cancel_plan(self, plan_id: str) -> bool:
         """按计划号取消(界面只拿到 native 会话的 `launch_id` 时用:它就是计划号)。没有这个计划 / 已终局回 False。"""
         entry = self._entry(plan_id)
