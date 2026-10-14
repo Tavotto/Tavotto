@@ -15,6 +15,9 @@ matplotlib + 基座 `pathgeom`（图幅换算，ADR 0098）+ 更早切出的族�
 
 from __future__ import annotations
 
+import hashlib
+import threading
+import weakref
 from typing import Protocol
 
 import pathgeom
@@ -723,10 +726,10 @@ class _ColourTube:
     表里记的是离它最近的那格（同一种颜色挨着好几格时按距离取最近）。
     """
 
-    def __init__(self, cmap):
+    def __init__(self, cmap, *, entries=None):
         import numpy as np
 
-        lut, t = _cmap_entries(cmap)
+        lut, t = _cmap_entries(cmap) if entries is None else entries
         n = len(lut)
         r = int(np.ceil(_FIELD_TOL))
         g = np.arange(-r, r + 1, dtype=np.int16)
@@ -788,6 +791,29 @@ class _ColourTube:
         return table
 
 
+_COLOUR_TUBES: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+_COLOUR_TUBE_LOCK = threading.Lock()
+
+
+def _shared_colour_tube(cmap):
+    """Share the immutable lookup payload while any bound field still needs it (#546).
+
+    Key the actual float colours and positions, not a mutable Colormap's name/identity or only
+    rounded RGB: both nearest-colour ties and repeated-colour positions affect recolouring.
+    Hash the contiguous arrays directly: the key retains two 32-byte digests, not colour bytes.
+    Weak values keep the cache from extending a Figure/field's lifetime. The lock prevents two
+    concurrent bindings from retaining duplicate tables; it does not create a background thread.
+    """
+    lut, t = _cmap_entries(cmap)
+    key = (_FIELD_TOL, hashlib.sha256(lut).digest(), hashlib.sha256(t).digest())
+    with _COLOUR_TUBE_LOCK:
+        tube = _COLOUR_TUBES.get(key)
+        if tube is None:
+            tube = _ColourTube(cmap, entries=(lut, t))
+            _COLOUR_TUBES[key] = tube
+    return tube
+
+
 class RasterField:
     """一张**已经成色**的位图（`imshow` 吃进去的 RGB(A)），经一条独立 mappable 色条的
     色图反解回标量场——色条换色图 / 改上下限时，位图跟着重新着色。
@@ -804,7 +830,8 @@ class RasterField:
     **内存只跟输出走**（#538 评审之后重做）。新颜色只取决于像素落在色图的哪一格：
     `_ColourTube` 把「颜色 → 格号」列成与图大小无关的表，换色图时先算 N 项的「格号 →
     新颜色」，再按二维小块逐块查表写进一份 uint8 缓冲——每像素常驻 3–4 字节（就是画出来的
-    那张图本身），不存逐像素的数值、底色、权重，查表也不常驻；叠加物的边缘逐块现算，
+    那张图本身），不存逐像素的数值、底色、权重；紧凑的查色表按真实颜色与位置共用，
+    只由活着的绑定字段持有（#546），32 MiB 直查表每轮现建；叠加物的边缘逐块现算，
     只在总量不大时缓存（`_recolor`）。「在色图上」还要连成片（`_field_mask`），
     照片里偶然落进容差带的孤点不算。不在色图上的（流线、球、文字）原样保留；
     只有它们的抗锯齿边缘需要看邻域，按「离底色距离 / 邻域线芯距离」把底色的变化量按比例
@@ -821,7 +848,7 @@ class RasterField:
         self.original = image.get_array()
         self.cmap0 = m.get_cmap()
         self.norm0 = copy.deepcopy(m.norm)
-        self.tube = tube if tube is not None else _ColourTube(self.cmap0)
+        self.tube = tube if tube is not None else _shared_colour_tube(self.cmap0)
         self.key0 = self._key()
         self._applied = self.key0
         self._edges = None
@@ -938,7 +965,8 @@ class RasterField:
         m = self.cb.mappable
         lut = self.tube.lut
         # 格号 → 新颜色：只有 N 项。格 i 的数值是 norm0 的反函数在它的色图位置 t_i 处
-        values = np.asarray(self.norm0.inverse(self.tube.t), dtype=np.float64)
+        # User-defined inverse may reuse/mutate its input. Never expose the shared positions.
+        values = np.asarray(self.norm0.inverse(self.tube.t.copy()), dtype=np.float64)
         new = np.clip(np.rint(np.asarray(m.to_rgba(values))[:, :3] * 255.0), 0, 255)
         new = new.astype(np.uint8)
         shift_tab = new.astype(np.float32) - lut  # 每一格的底色变化量
@@ -1142,7 +1170,7 @@ def bind_raster_fields(cbar_of_ax: dict, axes) -> None:
         if not candidates:
             continue  # 没有候选位图就不建查色表（它跟色图格数成正比，不白花）
         try:
-            tube = _ColourTube(m.get_cmap())
+            tube = _shared_colour_tube(m.get_cmap())
         except Exception:  # noqa: BLE001 — 建不出查色表：不配对
             continue
         best, score = None, _FIELD_MIN_ON
