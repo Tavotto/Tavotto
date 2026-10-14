@@ -2106,8 +2106,10 @@ jobs:
           pnpm exec playwright install --with-deps chromium
           # 先让 Playwright 报出本 shard 的预期用例，再真正执行；
           # 注册表校验以计划的身份集合为主语，不许因为没有执行就悄悄漏报。
-          pnpm exec playwright test --list --reporter=json --project=chromium --project=chromium-en \
-            --shard=${{ matrix.shard }}/3 > "$RUNNER_TEMP/e2e-planned.json"
+          # 防止 config 的 TAVOTTO_E2E_JSON 把 --list 的 JSON 输到真实运行报告路径。
+          TAVOTTO_E2E_JSON= pnpm exec playwright test --list --reporter=json \
+            --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3 \
+            > "$RUNNER_TEMP/e2e-planned.json"
           pnpm e2e --project=chromium --project=chromium-en --shard=${{ matrix.shard }}/3
 
       # 功能登记表的「真跑」那一半（ADR 0097）：合并态这次运行的报告里，每个 active 功能登记的
