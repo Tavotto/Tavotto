@@ -188,6 +188,11 @@ def test_agent_drag_timeout_preserves_passed_symbol_suite(tmp_path, monkeypatch)
             output.write_text(json.dumps(report()), encoding="utf-8")
             return SimpleNamespace(returncode=0)
         if "playwright.config.ts" in argv:
+            # 反证：删除生产代码里“转 pending 后保存摘要”这一行，测试必须红。
+            # 主语是子进程真正启动那一刻持久化的 summary.json，而非内存状态。
+            in_flight = json.loads(summary.read_text(encoding="utf-8"))
+            assert in_flight["status"] == "pending"
+            assert in_flight["suites"] == {"symbol_ui": "ok", "canvas_drag": "pending"}
             raise subprocess.TimeoutExpired(argv, 900)
         raise AssertionError("unexpected subprocess")
 
