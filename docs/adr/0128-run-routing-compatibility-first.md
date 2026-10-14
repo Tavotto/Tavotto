@@ -56,6 +56,8 @@
 * 路由要多读一遍脚本：1093 行 / 42 KB 的脚本约 5–15 ms（审计 B 实测同量级；不是缺口，且有 64 项 LRU）。没有现成耗时门禁，本 PR 也只断言解析次数（每个文件修订 1 次）而不断言毫秒。
 * 上次 native 成功沿用意味着：重新打开并运行会**真执行一次**，native 会真写盘——与 safe 重开同样会重跑是一致的，区别只在 native 的写是真的。用户随时可以在项目设置选 `safe_only`。
 * 已知局限：`launchctx` 记录按脚本一份（不分 argv）；`native` 记录的 `cwd_mode` 取计划那一刻的档位。
+* 证据只认能证明会执行、且确属 matplotlib 的调用（#1034 评审）：`savefig` 的接收者必须解析到 matplotlib（`plt.savefig`、`from matplotlib.pyplot import savefig`、`plt.figure()` / `plt.gcf()` / `Figure()` / `plt.subplots()` 得来的 Figure）；用户自定义同名函数 / 方法、形参、被重新赋值的名字解析不了，记 `R1_unproven`（medium，走 safe）。证据只出现在模块从未调用到的函数体里时（未调用的 helper、未被调用的 `main`），R1 记 `R1_unproven`、R3 降为 `R3_partial`，都不直达 native；经 `atexit` / 线程 / 回调间接调用的函数视为不可达——宁可走 safe 再回退。
+* 用户显式 `execution: "safe"` 一律走 safe，路由不覆盖；省略（或 `auto`）才由路由决定。显式 safe / native 各有自己的会话键，不复用路由选了 native 的会话。
 
 ## 修订的既有条款
 
