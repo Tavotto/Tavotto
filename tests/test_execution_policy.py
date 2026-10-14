@@ -337,5 +337,6 @@ def test_importing_the_cli_does_not_load_the_policy_module():
         env={**__import__("os").environ, "PYTHONPATH": str(ROOT / "src")},
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     assert done.returncode == 0, done.stderr

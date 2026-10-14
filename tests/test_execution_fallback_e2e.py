@@ -62,6 +62,7 @@ def sidecar_app(project: Path, work: Path, *, env_overrides: dict | None = None)
         stderr=subprocess.STDOUT,
         cwd=str(work),
         text=True,
+        encoding="utf-8",
     )
     try:
         proc.stdin.write(json.dumps({"nonce": NONCE}) + "\n")
