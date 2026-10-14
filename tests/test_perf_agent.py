@@ -655,3 +655,26 @@ def test_help_does_not_destroy_existing_successful_report(tmp_path):
     summary.write_text(json.dumps(good), encoding="utf-8")
     assert A.main(["run", "--help", "--summary", str(summary)]) == 0
     assert json.loads(summary.read_text(encoding="utf-8")) == good
+
+
+def test_range_invalid_run_removes_stale_raw_report_before_failing(tmp_path, monkeypatch):
+    """数字解析成功但超界，也不能让 Agent 继续读取旧成功 run.json。"""
+    out = tmp_path / "run.json"
+    summary = tmp_path / "summary.json"
+    out.write_text(json.dumps(report()), encoding="utf-8")
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: pytest.fail("Must not start browser"))
+    rc = A.main(["run", "--repeat", "2", "--out", str(out), "--summary", str(summary)])
+    assert rc == 2
+    assert not out.exists()
+    assert json.loads(summary.read_text(encoding="utf-8"))["status"] == "failed"
+
+
+def test_perf_playwright_cleanup_cannot_erase_agent_pending_summary():
+    """独立 outputDir 的主语是 Playwright 真正会清理的目录，而非报告文件名。"""
+    root = Path(__file__).resolve().parents[1]
+    config = (root / "web/playwright.perf.config.ts").read_text(encoding="utf-8")
+    assert "outputDir: './test-results-perf-agent-playwright'" in config
+    assert "outputDir: './test-results'" not in config
+    workflow = (root / ".github/workflows/performance-agent.yml").read_text(encoding="utf-8")
+    assert "web/test-results/perf-agent/**" in workflow
+    assert "web/test-results-perf-agent-playwright/**" in workflow

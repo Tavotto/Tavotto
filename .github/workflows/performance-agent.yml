@@ -184,6 +184,7 @@ jobs:
           name: tavotto-performance-agent-${{ github.run_id }}
           path: |
             web/test-results/perf-agent/**
+            web/test-results-perf-agent-playwright/**
             web/test-results/**/trace.zip
             web/test-results/**/test-failed-*.png
             web/test-results-perf-drag/**

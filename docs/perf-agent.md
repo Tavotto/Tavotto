@@ -88,3 +88,17 @@ GitHub Actions `Performance Agent` 在成功跑完测试后，使用只读的 Ac
 一旦拖动启动，其失败仍单独归到 `canvas_drag=failed`。
 本地 Agent CLI 与 Actions 一样，强制传入 `TAVOTTO_NO_UPDATE_CHECK=1`，
 避免在首次运行时由自动更新请求污染性能计时。
+
+
+## 自动测试进行中的摘要持久化
+
+Playwright 开始一轮测试前清理的是配置的 `outputDir`；不能让这个目录和
+Agent 原始报告 / `pending` 摘要同根，否则长时间运行时摘要会突然消失。
+专用 `playwright.perf.config.ts` 使用
+`web/test-results-perf-agent-playwright` 保存 Playwright 的 trace 与截图，
+Agent 持续可读的数字 JSON 则保留在 `web/test-results/perf-agent`；
+Actions 同时归档两者。拖动 E2E 的 `--output test-results-perf-drag`
+也不覆盖这两个目录。
+
+超范围但语法合法的选项（例如 `run --repeat 2`）先删除同一路径的旧
+`run.json` 再返回失败摘要，避免 Agent 因看到上一轮成功数据而误判本轮。

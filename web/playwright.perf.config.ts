@@ -7,6 +7,10 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   testMatch: 'perf-agent.spec.ts',
+  // Playwright 启动时会删除整个 outputDir。
+  // 性能原始报告和 pending/failed summary 放在 web/test-results/perf-agent；
+  // 这里必须独立，避免在长时间子进程执行中间抹掉 Agent 可读状态。
+  outputDir: './test-results-perf-agent-playwright',
   timeout: 360_000,
   expect: { timeout: 20_000 },
   workers: 1,

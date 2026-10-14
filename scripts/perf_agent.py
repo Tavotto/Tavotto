@@ -395,11 +395,13 @@ def main(argv: list[str] | None = None) -> int:
             result["status"] = "pending"
             # 先作废上次的成功摘要；启动失败/超时也必须交出本次任务的明确结论。
             save_suite_summary()
+            # 即使参数是合法浮点/整型、但超出允许区间，也必须先作废旧原始报告。
+            # 否则 --repeat 2 --out old-run.json 会留下上一轮成功采样。
+            output = args.out.resolve()
+            output.unlink(missing_ok=True)
             if not 3 <= args.repeat <= 60 or not 1 <= args.regression_pct <= 200:
                 raise ValueError("invalid_run_parameters")
-            output = args.out.resolve()
             output.parent.mkdir(parents=True, exist_ok=True)
-            output.unlink(missing_ok=True)  # 不许把上一轮成功报告误当作本轮通过
             pnpm = shutil.which("pnpm")
             if pnpm is None:
                 result["status"] = "failed"
