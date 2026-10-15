@@ -93,13 +93,17 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
     if (Math.abs(off) < FLOOR_EPS) return null
     const s = (line.v - a.f) / off
     if (!Number.isFinite(s) || s * size.w < minW || s * size.h < minH) return null
-    return { s, dist: Math.abs(a.f + off * s0 - line.v), anchor, line }
+    // 手柄跳变：这次吸附让框尺寸变化多少 mm（≈ 被拖手柄的位移）；锚点贴近固定点时
+    // 小误差会被放大成巨大缩放，跳变超过容差的对不吸
+    const jump = Math.abs(s - s0) * Math.max(size.w, size.h)
+    return { s, dist: Math.abs(a.f + off * s0 - line.v), jump, anchor, line }
   }
 
   const held = hold?.held
   if (held) {
     const r = evalPair(held.axis, held.ai, held.li)
-    if (r && r.dist < tol * HOLD_FACTOR) return { s: r.s, axis: held.axis, anchor: r.anchor, line: r.line }
+    if (r && r.dist < tol * HOLD_FACTOR && r.jump < tol * HOLD_FACTOR)
+      return { s: r.s, axis: held.axis, anchor: r.anchor, line: r.line }
   }
 
   let best: { tier: number; dist: number; axis: 'x' | 'y'; ai: number; li: number; s: number } | null = null
@@ -107,7 +111,7 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
     for (let ai = 0; ai < as.length; ai++) {
       for (let li = 0; li < ls.length; li++) {
         const r = evalPair(axis, ai, li)
-        if (!r || r.dist >= tol) continue
+        if (!r || r.dist >= tol || r.jump >= tol) continue
         const tier = scaleTier(as[ai].frame, ls[li])
         if (!best || tier < best.tier || (tier === best.tier && r.dist < best.dist))
           best = { tier, dist: r.dist, axis, ai, li, s: r.s }

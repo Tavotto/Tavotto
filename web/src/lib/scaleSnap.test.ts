@@ -69,7 +69,7 @@ describe('snapScaleNearest', () => {
   it('页面 / 参考线 / 网格对内容锚点也是第一档', () => {
     const hit = snapScaleNearest({
       ...base,
-      s0: 1.98,
+      s0: 1.99,
       anchors: anchorsOf([{ v: 40, frame: false, rect: { x: 20, y: 0, w: 20, h: 10 } }]),
       cands: { xs: [line(69.5, 'frame'), line(70.3, 'guide')], ys: [] },
     })
@@ -122,6 +122,28 @@ describe('snapScaleNearest', () => {
     expect(
       snapScaleNearest({ ...base, s0: 1, anchors: anchorsOf(), cands: { xs: [line(9.5, 'page')], ys: [] } }),
     ).toBeNull()
+  })
+
+  it('手柄跳变闸门：锚点离固定点 0.1、线离固定点 1，误差 0.9 在容差内也不吸（会把框放大 10 倍）', () => {
+    const anchors = anchorsOf([{ v: 10.1, frame: false, rect: { x: 10.1, y: 0, w: 5, h: 5 } }])
+    const hit = snapScaleNearest({ ...base, s0: 1, anchors, cands: { xs: [line(11, 'guide')], ys: [] } })
+    // 外框锚点（x=10/30/50）到 11 都不在容差内，唯一在容差内的是近固定点锚点，它被跳变闸门拒绝
+    expect(hit).toBeNull()
+  })
+
+  it('手柄跳变闸门：远锚点（跳变 < 容差）照常吸', () => {
+    const hit = snapScaleNearest({ ...base, s0: 1.49, anchors: anchorsOf(), cands: { xs: [line(70)], ys: [] } })
+    expect(hit?.s).toBeCloseTo(1.5, 9)
+  })
+
+  it('手柄跳变闸门：hold 分支同理——已吸住的对在跳变 ≥ 2×容差时放开', () => {
+    const anchors = anchorsOf([{ v: 10.1, frame: false, rect: { x: 10.1, y: 0, w: 5, h: 5 } }])
+    const cands = { xs: [line(11, 'guide')], ys: [] }
+    const hold = createScaleHold()
+    hold.held = { axis: 'x', ai: anchors.xs.length - 1, li: 0 }
+    const hit = snapScaleNearest({ ...base, s0: 1, anchors, cands, hold })
+    expect(hit).toBeNull()
+    expect(hold.held).toBeNull()
   })
 
   it('吸住后保持：同一对距离 < 2×容差继续吸，超过放开', () => {
