@@ -26,6 +26,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { ALT, cn, combo, isMac } from '@/lib/utils'
 import { dropLineClass, listRowClass } from '@/components/ui/listRow'
+import { isTreeNavKey, treeKeyAction } from '@/components/ui/treeKeys'
 import { TreeChevron, TreeIcon, treeIndent } from '@/components/ui/TreeRow'
 import { useRenameFocusReturn } from '@/components/ui/useRenameFocusReturn'
 import { useFlip } from '@/lib/motion'
@@ -121,10 +122,24 @@ export function LayerTree() {
   const focusRow = (key: string) =>
     listRef.current?.querySelector<HTMLElement>(`[data-layer="${CSS.escape(key)}"]`)?.focus()
 
-  const moveFocus = (from: string, delta: number) => {
-    const i = rows.findIndex((r) => keyOf(r) === from)
-    const next = rows[i + delta]
-    if (next) focusRow(keyOf(next))
+  // 树键位（`ui/treeKeys`，与元素树同一份）：true = 这个键归树管、行该 preventDefault
+  const navKey = (from: string, key: string) => {
+    const action = treeKeyAction(
+      key,
+      rows.map((r) =>
+        r.kind === 'group'
+          ? { level: 0, expanded: !collapsed[r.gid] }
+          : { level: r.depth },
+      ),
+      rows.findIndex((r) => keyOf(r) === from),
+    )
+    if (!action) return false
+    if (action.type === 'focus') focusRow(keyOf(rows[action.index]))
+    else if (from.startsWith('g:')) {
+      const gid = from.slice(2)
+      setCollapsed((s) => ({ ...s, [gid]: action.type === 'collapse' }))
+    }
+    return true
   }
 
   // Alt+方向键调整 z 序；行的 DOM 会重建，等提交后把焦点接回来
@@ -167,7 +182,7 @@ export function LayerTree() {
               tabbable={focusKey === `g:${r.gid}`}
               allSelected={r.members.every((m) => selectedIds.includes(m.id))}
               onToggle={() => setCollapsed((s) => ({ ...s, [r.gid]: !s[r.gid] }))}
-              onMoveFocus={(d) => moveFocus(`g:${r.gid}`, d)}
+              onNavKey={(k) => navKey(`g:${r.gid}`, k)}
             />
           )
         }
@@ -189,7 +204,7 @@ export function LayerTree() {
             canMoveUp={zi > 0}
             canMoveDown={zi >= 0 && zi < flatIds.length - 1}
             onDropHint={setDropHint}
-            onMoveFocus={(d) => moveFocus(o.id, d)}
+            onNavKey={(k) => navKey(o.id, k)}
             onReorder={(d) => reorder(o.id, d)}
           />
         )
@@ -209,7 +224,7 @@ function GroupRow({
   tabbable,
   allSelected,
   onToggle,
-  onMoveFocus,
+  onNavKey,
 }: {
   gid: string
   members: CanvasObject[]
@@ -220,7 +235,8 @@ function GroupRow({
   tabbable: boolean
   allSelected: boolean
   onToggle: () => void
-  onMoveFocus: (delta: number) => void
+  /** 树键位：true = 已处理 */
+  onNavKey: (key: string) => boolean
 }) {
   useTranslation('workspace')
   const selectAllMembers = () => useSelectionStore.getState().set(members.map((m) => m.id))
@@ -247,18 +263,11 @@ function GroupRow({
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-          e.preventDefault()
-          e.stopPropagation()
-          onMoveFocus(e.key === 'ArrowDown' ? 1 : -1)
-        } else if (e.key === 'ArrowRight' && collapsed) {
-          e.preventDefault()
-          e.stopPropagation()
-          onToggle()
-        } else if (e.key === 'ArrowLeft' && !collapsed) {
-          e.preventDefault()
-          e.stopPropagation()
-          onToggle()
+        if (isTreeNavKey(e.key)) {
+          if (onNavKey(e.key)) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()
@@ -295,7 +304,8 @@ interface RowProps {
   canMoveUp: boolean
   canMoveDown: boolean
   onDropHint: (h: { id: string; pos: 'above' | 'below' } | null) => void
-  onMoveFocus: (delta: number) => void
+  /** 树键位：true = 已处理 */
+  onNavKey: (key: string) => boolean
   onReorder: (delta: -1 | 1) => void
 }
 
@@ -311,7 +321,7 @@ function LayerRow({
   canMoveUp,
   canMoveDown,
   onDropHint,
-  onMoveFocus,
+  onNavKey,
   onReorder,
 }: RowProps) {
   useTranslation('workspace')
@@ -359,12 +369,15 @@ function LayerRow({
         if (e.defaultPrevented || e.target !== e.currentTarget) return
         // 键位契约（2026-10-07 设计审计 §10.3）：↑↓ 走行 · Enter 主操作（只选这一个）· F2 改名 ·
         // ⌥↑↓ 改层级 · ⇧F10 菜单 · Esc 清选区。此前 Enter 是改名，与其它列表的 Enter 不是一件事
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
           e.preventDefault()
           e.stopPropagation()
-          const delta = e.key === 'ArrowDown' ? 1 : -1
-          if (e.altKey) onReorder(delta as -1 | 1)
-          else onMoveFocus(delta)
+          onReorder(e.key === 'ArrowDown' ? 1 : -1)
+        } else if (isTreeNavKey(e.key)) {
+          if (onNavKey(e.key)) {
+            e.preventDefault()
+            e.stopPropagation()
+          }
         } else if (e.key === 'Enter') {
           e.preventDefault()
           e.stopPropagation()

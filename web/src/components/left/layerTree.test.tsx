@@ -266,3 +266,51 @@ describe('树的语义与键位契约（2026-10-07 设计审计 §10.3）', () =
     expect(document.querySelector('[role="menu"]')).not.toBeNull()
   })
 })
+
+describe('图层树的树键位（WAI-ARIA tree，与元素树同一份 ui/treeKeys）', () => {
+  const press = async (el: HTMLElement, key: string) => {
+    await act(async () => {
+      el.focus()
+      el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    })
+    await act(async () => {})
+  }
+  const grouped = () => [
+    panel('p1', 'A'),
+    { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject,
+    { ...panel('p3', 'C'), groupId: 'g1' } as CanvasObject,
+    panel('p4', 'D'),
+  ]
+  const keys = () => rows().map((r) => r.dataset.layer)
+
+  it('Home / End 跳到第一行 / 最后一行', async () => {
+    await mount(grouped())
+    await press(rows()[1], 'End')
+    expect((document.activeElement as HTMLElement).dataset.layer).toBe(keys().at(-1))
+    await press(document.activeElement as HTMLElement, 'Home')
+    expect((document.activeElement as HTMLElement).dataset.layer).toBe(keys()[0])
+  })
+
+  it('组标题：→ 在已展开时进第一个成员，← 先收起；成员 ← 回组标题', async () => {
+    await mount(grouped())
+    const group = () => rows().find((r) => r.dataset.layer!.startsWith('g:'))!
+    expect(group().getAttribute('aria-expanded')).toBe('true')
+    await press(group(), 'ArrowRight')
+    const member = document.activeElement as HTMLElement
+    expect(member.getAttribute('aria-level')).toBe('2')
+    await press(member, 'ArrowLeft')
+    expect(document.activeElement).toBe(group())
+    await press(group(), 'ArrowLeft')
+    expect(group().getAttribute('aria-expanded')).toBe('false')
+    expect(rows().some((r) => r.getAttribute('aria-level') === '2')).toBe(false)
+    await press(group(), 'ArrowRight')
+    expect(group().getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('顶层叶子行 ← 不动', async () => {
+    await mount(grouped())
+    const top = rows()[0]
+    await press(top, 'ArrowLeft')
+    expect(document.activeElement).toBe(top)
+  })
+})
