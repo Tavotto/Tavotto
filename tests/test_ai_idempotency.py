@@ -824,3 +824,47 @@ def test_a_failing_history_write_leaves_no_snapshot_files_behind(tmp_path, cli, 
     assert _spawned(counter) == 0
     snaps = list((tmp_path / "snapshots").glob("*")) if (tmp_path / "snapshots").exists() else []
     assert snaps == [], snaps
+
+
+def _pending_rids(client):
+    return [p["rid"] for p in client.get("/api/ai/drafts/pending").get_json()["pendings"]]
+
+
+def test_a_rejected_run_deletes_its_pending_row_for_every_kind_of_rejection(
+    client, tmp_path, cli, monkeypatch
+):
+    """两类拒绝路径：被 `abort()` 打断的（HTTPException），和正常返回 4xx/5xx 响应的（AgentError → `_agent_error`、404 not_parameterizable）。
+    两类都由后端把这个 rid 的待确认行删掉——客户端没有 DELETE。"""
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    sent = {"scope": "figure", "gid": None, "label": None, "target": "整张图"}
+
+    def put_pending(rid):
+        r = client.put(
+            f"/api/ai/drafts/pending/{rid}", json={"file": "Fig1.pdf", "text": "t", "sent": sent}
+        )
+        assert r.status_code == 200, r.data
+
+    # 1) 正常返回的错误响应：同一脚本上已有任务在跑 → 409 ai_script_busy（不同 rid）
+    state, _ = cli
+    state["delay"] = 1.0
+    assert _post(client, rid="rid-first-00000001").status_code == 200
+    put_pending(RID)
+    r = _post(client, rid=RID)
+    assert r.status_code == 409 and r.get_json()["code"] == "ai_script_busy"
+    assert RID not in _pending_rids(client)
+    # 2) abort()：空提示词 → 400
+    rid2 = "rid-abort-00000001"
+    put_pending(rid2)
+    r = client.post(
+        "/api/ai/run",
+        json={"agent": "codex", "id": "Fig1.pdf", "prompt": "  ", "client_request_id": rid2},
+    )
+    assert r.status_code == 400
+    assert rid2 not in _pending_rids(client)
+    # 3) 成功的请求不删（只有 accept 删）
+    rid3 = "rid-okreq-00000001"
+    put_pending(rid3)
+    assert _post(client, rid=rid3).status_code == 200
+    assert rid3 in _pending_rids(client)
+    _wait_idle()
