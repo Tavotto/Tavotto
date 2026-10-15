@@ -111,7 +111,6 @@ export function useAiDraft(panel: PanelObject | null) {
     inflight.current = mySeq
     const p = saveDraftStamped(pj, f, body, keepalive, myStamp).then(async ({ result: r, stamp }) => {
       if (key.current.epoch !== epoch) return // 目标已换：那一边的收尾由切目标时的冲刷负责，不动当前目标的版本
-      if (retired.current) return // 实例已退役：不重试、不重写、不动任何版本状态
       inflight.current = null
       if (r === 'stale') {
         // 服务端说：它那里有比这次写入**更新的戳**，这次没被采纳（`saveDraft` 已按服务端回的戳抬高了本页下限，
@@ -314,8 +313,6 @@ export function useAiDraft(panel: PanelObject | null) {
     retired.current = false
     return () => {
       retired.current = true
-      clearTimeout(retry.current)
-      clearTimeout(timer.current)
     }
   }, [])
 
