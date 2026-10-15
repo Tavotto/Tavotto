@@ -690,6 +690,12 @@
   outline-offset: -2px;
 }
 
+/* 被拖行的淡化：拖动期间留在原位的那一行压到 60%（隐藏项 45%、禁用 40% 之上）。HTML5 DnD 的拖影在 dragstart
+   那一刻已经截好，所以拖影是实色、原位这一行淡下去——一眼分得出「在拿的」和「放哪儿」（2026-10 UI 审计 G11）。 */
+@utility opacity-dragging {
+  opacity: 0.6;
+}
+
 /* 层级工具类：值在 :root 的 --z-*（见上），组件只写名字 */
 @utility z-sticky {
   z-index: var(--z-sticky);

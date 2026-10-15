@@ -23,12 +23,15 @@ export function listRowClass({
   selected = false,
   muted = false,
   hidden = false,
+  dragging = false,
 }: {
   size?: ListRowSize
   selected?: boolean
   /** 分组行这类次级行：常态用 ink-2 */
   muted?: boolean
   hidden?: boolean
+  /** 这一行正被拖着：原位淡到 `opacity-dragging`（压过 hidden 的 45%） */
+  dragging?: boolean
 } = {}): string {
   return cn(
     'group relative mx-1 flex cursor-default items-center gap-1 rounded-md outline-none',
@@ -37,7 +40,7 @@ export function listRowClass({
     selected
       ? 'bg-selected font-semibold text-ink'
       : cn(muted ? 'text-ink-2' : 'text-ink', 'hover:bg-surface-hover'),
-    hidden && 'opacity-45',
+    dragging ? 'opacity-dragging' : hidden && 'opacity-45',
   )
 }
 

@@ -344,3 +344,21 @@ describe('选中图层滚入视野（G6）', () => {
     }
   })
 })
+
+describe('被拖行淡化（G11）', () => {
+  it('dragstart 时原位那一行淡化，dragend 还原', async () => {
+    await mount([panel('p1', 'A'), panel('p2', 'B')])
+    const row = rows()[0]
+    expect(row.className).not.toMatch(/opacity-dragging/)
+    const ev = (type: string) => {
+      const e = new Event(type, { bubbles: true, cancelable: true }) as Event & { dataTransfer: unknown }
+      e.dataTransfer = { setData() {}, effectAllowed: '', types: [] }
+      return e
+    }
+    await act(async () => row.dispatchEvent(ev('dragstart')))
+    expect(rows()[0].className).toMatch(/\bopacity-dragging\b/)
+    expect(rows()[0].dataset.dragging).toBe('true')
+    await act(async () => rows()[0].dispatchEvent(ev('dragend')))
+    expect(rows()[0].className).not.toMatch(/opacity-dragging/)
+  })
+})

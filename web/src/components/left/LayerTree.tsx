@@ -347,6 +347,7 @@ function LayerRow({
   const Icon = iconFor(obj)
   const isScript = obj.type === 'panel' && !!obj.script
   const pointerFocusing = useRef(false)
+  const [dragging, setDragging] = useState(false)
   const labelRef = useRef<HTMLSpanElement>(null)
   useBoldTrackingLock(labelRef, selected)
   // 可编辑（能进图内编辑）与隐藏 / 锁定一样进可达名：角标只是视觉记号
@@ -413,7 +414,10 @@ function LayerRow({
       onDragStart={(e) => {
         e.dataTransfer.setData('application/x-layer-id', obj.id)
         e.dataTransfer.effectAllowed = 'move'
+        setDragging(true)
       }}
+      onDragEnd={() => setDragging(false)}
+      data-dragging={dragging || undefined}
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes('application/x-layer-id')) return
         e.preventDefault()
@@ -441,7 +445,7 @@ function LayerRow({
       }}
       onDoubleClick={() => setEditing(true)}
       style={treeIndent(depth)}
-      className={cn(listRowClass({ selected, hidden: obj.hidden }), 'pr-0.5')}
+      className={cn(listRowClass({ selected, hidden: obj.hidden, dragging }), 'pr-0.5')}
     >
       {/* 落点线：2px accent + 圆点（`dropLineClass`，此前是 1px 的内阴影线，几乎看不见） */}
       <span aria-hidden data-layer-drop={dropHint ?? undefined} className={dropLineClass(dropHint === 'above' ? 'before' : dropHint === 'below' ? 'after' : null)} />
