@@ -54,6 +54,23 @@ import { usePresence } from '@/lib/motion'
 
 const MARGIN = 8
 
+/** 退场保活期间在根上吞掉输入类事件（捕获阶段先于子控件的 onChange / onKeyDown / onClick） */
+const swallow = (e: { stopPropagation: () => void; preventDefault: () => void }) => {
+  e.stopPropagation()
+  e.preventDefault()
+}
+const SWALLOW = {
+  onChangeCapture: swallow,
+  onInputCapture: swallow,
+  onBeforeInputCapture: swallow,
+  onKeyDownCapture: swallow,
+  onKeyUpCapture: swallow,
+  onPasteCapture: swallow,
+  onCutCapture: swallow,
+  onClickCapture: swallow,
+  onPointerDownCapture: swallow,
+}
+
 /** 快捷编辑的文案（workspace:quickEdit.*） */
 const qe = (key: string, values?: Record<string, unknown>) =>
   translate(`quickEdit.${key}`, { ns: 'workspace', ...(values ?? {}) })
@@ -109,6 +126,7 @@ function ElementPopover({
   useTranslation('workspace')
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState(at)
+  const opener = useRef<HTMLElement | null>(null)
 
   // 量出实际尺寸再贴边，避免弹层被视口切掉
   useLayoutEffect(() => {
@@ -119,6 +137,11 @@ function ElementPopover({
       x: Math.max(MARGIN, Math.min(at.x, window.innerWidth - w - MARGIN)),
       y: Math.max(MARGIN, Math.min(at.y, window.innerHeight - BOTTOM_SAFE - h - MARGIN)),
     })
+    // 记下打开前的焦点：退场开始时还给它（没有就让焦点落回 body，全局快捷键照常）
+    if (!opener.current) {
+      const prev = document.activeElement
+      if (prev instanceof HTMLElement && prev !== document.body && !el?.contains(prev)) opener.current = prev
+    }
     // 双击文字进来的直接聚焦内容框（全选便于整段替换）；
     // 其余情况焦点给容器，Tab 才能走到弹层里的控件
     const ta = target.focusText ? el?.querySelector('textarea') : null
@@ -129,6 +152,18 @@ function ElementPopover({
       el?.focus({ preventScroll: true })
     }
   }, [target, at])
+
+  // 退场开始的同一帧：焦点离开保活的子树（还给打开者，没有就失焦回 body），否则 textarea 仍握着焦点，
+  // 退场那 90ms 里的键入会继续写 override、吞掉全局快捷键（Codex #1101 P2）
+  useLayoutEffect(() => {
+    if (state !== 'closed') return
+    const root = ref.current
+    const active = document.activeElement
+    if (!root || !(active instanceof HTMLElement) || !root.contains(active)) return
+    const back = opener.current
+    if (back?.isConnected) back.focus({ preventScroll: true })
+    else active.blur()
+  }, [state])
 
   useEffect(() => {
     if (state === 'closed') return
@@ -171,6 +206,9 @@ function ElementPopover({
       data-quick-popover
       data-state={state}
       aria-hidden={state === 'closed' || undefined}
+      // 退场中整棵保活子树 inert（不可聚焦、不收指针 / 键盘），再用捕获层兜底：退场期间任何输入 / 点击都不进子控件
+      inert={state === 'closed'}
+      {...(state === 'closed' ? SWALLOW : undefined)}
       onContextMenu={(e) => e.preventDefault()}
       style={{ left: pos.x, top: pos.y }}
       className={cn(

@@ -524,6 +524,52 @@ describe('画布上的两个快捷入口也按页面值进出', () => {
     vi.unstubAllGlobals()
   })
 
+  it('退场保活的 90ms 里键盘 inert：根带 inert、焦点还给打开者、键入 / 点击都不写 override（Codex #1101 P2）', async () => {
+    reduceMotion(false)
+    await seed(0.6, manifest({ legend: true }))
+    await mountAlone(
+      <>
+        <button data-opener>opener</button>
+        <QuickEdit />
+      </>,
+    )
+    const opener = document.querySelector<HTMLButtonElement>('[data-opener]')!
+    opener.focus()
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.legend' }, 120, 80)
+    })
+    const input = numberInput()
+    await act(async () => input.focus())
+    expect(popover()!.contains(document.activeElement)).toBe(true)
+    expect(popover()!.hasAttribute('inert')).toBe(false)
+    await act(async () => useQuickEdit.getState().close())
+    // 退场开始的同一帧：整棵保活子树 inert，焦点已经回到打开者
+    expect(popover()?.dataset.state).toBe('closed')
+    expect(popover()!.hasAttribute('inert')).toBe(true)
+    expect(document.activeElement).toBe(opener)
+    // 保活期间硬键入（绕过 focus，直接对旧输入框派发 input / click）：不写 override
+    const before = overrideOf('axes_0.legend', 'fontsize')
+    await type(input, '9')
+    await act(async () => {
+      popover()!.querySelector<HTMLElement>('button')?.click()
+    })
+    expect(overrideOf('axes_0.legend', 'fontsize')).toBe(before)
+    // 全局快捷键照常：键盘事件落在打开者上，冒泡到 window，没被弹层吞掉
+    let reached = false
+    const onKey = () => (reached = true)
+    window.addEventListener('keydown', onKey)
+    await act(async () => {
+      opener.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true }))
+    })
+    window.removeEventListener('keydown', onKey)
+    expect(reached).toBe(true)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 160))
+    })
+    expect(popover()).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
   it('reduced-motion：关闭即卸载，不留退场空档期', async () => {
     reduceMotion(true)
     await seed(0.6, manifest({ legend: true }))
