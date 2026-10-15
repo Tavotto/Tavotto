@@ -1476,6 +1476,16 @@ GATED = [
         MPL + "from matplotlib.backends.backend_pdf import PdfPages\nPdfPages('v.pdf')\n" + TAIL,
     ),
     ("excel_writer_alias", MPL + "import pandas as pd\nW = pd.ExcelWriter\nW('v.xlsx')\n" + TAIL),
+    # Codex r4286575586：不经直接调用的 open
+    (
+        "path_open_alias",
+        MPL + "from pathlib import Path\no = Path('victim').open\no('w').write('x')\n" + TAIL,
+    ),
+    ("builtin_open_alias", MPL + "o = open\no('victim', 'w').write('x')\n" + TAIL),
+    (
+        "getattr_literal_open",
+        MPL + "from pathlib import Path\ngetattr(Path('v'), 'open')('w')\n" + TAIL,
+    ),
     ("numpy_save_alias", MPL + "import numpy as np\nsv = np.save\nsv('v.npy', [1])\n" + TAIL),
 ]
 

@@ -944,7 +944,11 @@ class _Collector:
                 and any(
                     isinstance(a, ast.Constant)
                     and isinstance(a.value, str)
-                    and (self._writer_tail(a.value) or a.value in self._GENERIC_TAILS)
+                    and (
+                        self._writer_tail(a.value)
+                        or a.value in self._GENERIC_TAILS
+                        or a.value == "open"
+                    )
                     for a in n.args
                 )
             ):
@@ -953,6 +957,10 @@ class _Collector:
                 continue
             if isinstance(n, ast.Attribute):
                 q = self.qual(n) or ""
+                # 不经直接调用的 `.open`（`o = Path("v").open; o("w")`）：调用点的 mode 看不到，宁宽（Codex #1034 r4286575586）；
+                # 只读的 `PIL.Image.open` 除外
+                if n.attr == "open" and not q.startswith(self._READONLY_OPEN_ROOTS):
+                    return True
                 if (
                     self._writer_tail(n.attr)
                     or q in qualified
