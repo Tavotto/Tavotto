@@ -77,6 +77,7 @@ import { Button, IconButton } from './ui/Button'
 import { Details, Summary } from './ui/Details'
 import { TextInput } from './ui/Input'
 import { Menu, MenuItem } from './ui/Menu'
+import { ProgressBar } from './ui/ProgressBar'
 import { Radio } from './ui/Radio'
 
 const pt = (key: string, values?: Record<string, unknown>) =>
@@ -408,11 +409,8 @@ function Pill({
   )
 }
 
-const Progress = () => (
-  <div className="relative h-1 overflow-hidden rounded-full bg-surface-active" data-prep-progress aria-hidden>
-    <span className="absolute inset-y-0 left-0 w-1/3 animate-sweep rounded-full bg-ink motion-reduce:animate-none" />
-  </div>
-)
+/** 不定态进度：唯一实现是 `ui/ProgressBar`（pct=null）；没有真数字就不画百分比 */
+const Progress = () => <ProgressBar pct={null} label={pt('progress')} data-prep-progress />
 
 const Later = ({ onClick }: { onClick?: () => void }) => (
   <Button

@@ -1188,7 +1188,8 @@
         "distribution_unverifiable": "Can't read what's in this package, so it can't be confirmed.",
         "unknown": "What was installed doesn't match the plan."
       }
-    }
+    },
+    "progress": "In progress"
   },
   "canvasMenu": {
     "aria": "Canvas actions",

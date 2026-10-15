@@ -187,7 +187,8 @@ const projectEnvDeferred = (report: PreparationReport): boolean =>
   report.checks.some((c) => c.id === 'dependencies' && c.detail?.deferred === 'project_environment')
 
 const offline = (v: Record<string, unknown>, engineExited?: boolean) =>
-  view('offline', engineExited ? 'engineStopped' : 'offline', v, null, { tone: 'mute', slot: 'progress', step: 1 })
+  // 不画活动条：断线 / 引擎已停时没有任何东西在推进，一条在扫的条是假的「还在动」
+  view('offline', engineExited ? 'engineStopped' : 'offline', v, null, { tone: 'mute', step: 1 })
 
 function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContext, script: string): PrepView {
   const v = { script }

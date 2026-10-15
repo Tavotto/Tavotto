@@ -1123,7 +1123,8 @@
         "distribution_unverifiable": "读不出这个包里有什么，没法确认它是对的。",
         "unknown": "装上的东西和计划对不上。"
       }
-    }
+    },
+    "progress": "进行中"
   },
   "canvasMenu": {
     "aria": "画布操作",

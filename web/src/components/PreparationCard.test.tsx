@@ -454,6 +454,32 @@ const toggleDetails = () =>
   act(async () => (panel().querySelector('[data-prep-details-toggle]') as HTMLButtonElement).click())
 const details = () => panel().querySelector('[data-prep-details]') as HTMLElement | null
 
+describe('进度条：唯一实现是 ui/ProgressBar，断线时不画假活动', () => {
+  const bar = () => panel().querySelector('[data-prep-progress]') as HTMLElement | null
+  it('运行中：不定态进度条是 ui/ProgressBar（role=progressbar、不报 valuenow）', async () => {
+    await mount()
+    await openWith(report(STATES.running))
+    expect(bar()).not.toBeNull()
+    expect(bar()!.getAttribute('role')).toBe('progressbar')
+    expect(bar()!.hasAttribute('aria-valuenow')).toBe(false)
+    expect(bar()!.dataset.progressIndeterminate).toBeDefined()
+  })
+
+  it('断线 / 引擎已停：只有那一句，没有在扫的条', async () => {
+    await mount()
+    await openWith(report(STATES.running))
+    expect(bar()).not.toBeNull() // 对照：同一张卡连着时有条
+    const key = useProjectPreparationStore.getState().focus!
+    await act(async () => {
+      useProjectPreparationStore.setState((st) => ({
+        entries: { ...st.entries, [key]: { ...st.entries[key], connection: 'lost' } },
+      }))
+    })
+    expect(panel().querySelector('[data-prep-line]')).not.toBeNull()
+    expect(bar()).toBeNull()
+  })
+})
+
 describe('safe 守卫拦下文件操作之后的失败（P01a）', () => {
   it('说清是失败、没有出图，且没有「再试一次」「运行」这类会得到同一结果的主按钮', async () => {
     await mount()
