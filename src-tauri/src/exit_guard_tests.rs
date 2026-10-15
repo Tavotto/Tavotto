@@ -48,10 +48,19 @@ fn flatten(tree: &syn::UseTree, prefix: &mut Vec<String>, scan: &mut Scan) {
             flatten(&p.tree, prefix, scan);
             prefix.pop();
         }
+        // `use a::b::{self}` / `{self as x}`：`self` 指父路径本身（名字是父路径末段 / 别名），不是名为 self 的子项
+        syn::UseTree::Name(n) if n.ident == "self" => {
+            if let Some(last) = prefix.last() {
+                scan.aliases.push((last.clone(), prefix.clone()));
+            }
+        }
         syn::UseTree::Name(n) => {
             let mut full = prefix.clone();
             full.push(n.ident.to_string());
             scan.aliases.push((n.ident.to_string(), full));
+        }
+        syn::UseTree::Rename(r) if r.ident == "self" => {
+            scan.aliases.push((r.rename.to_string(), prefix.clone()));
         }
         syn::UseTree::Rename(r) => {
             let mut full = prefix.clone();
@@ -323,7 +332,11 @@ fn the_scanner_sees_every_way_of_writing_an_exit() {
         "use std::process::exit as quit; fn f() { quit(1) }",
         "use std::process::*; fn f() { exit(1) }",
         "use std::*; fn f() { process::exit(1) }",
-        "use std::process::{self as p, exit as q}; fn f() { p::exit(1); q(2) }",
+        // 每种写法单独一条：同一条里混两种写法，一个被认出就会掩盖另一个漏报
+        "use std::process::{self as p}; fn f() { p::exit(1) }",
+        "use std::process::{self}; fn f() { process::exit(1) }",
+        "use std::{process::{self as p}}; fn f() { p::exit(1) }",
+        "use std::process::{exit as q}; fn f() { q(2) }",
         "fn f() { let g = std::process::exit; g(1) }",
         "fn f() { std :: process\n  :: exit ( 1 ) }",
         "fn f() { println!(\"{}\", std::process::exit(1)) }",
