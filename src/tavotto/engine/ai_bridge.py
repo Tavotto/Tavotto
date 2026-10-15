@@ -1206,10 +1206,17 @@ SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
 )
 
 
+#: 状态本身就是确定终态的会话：之后不会再有结果补进来（`interrupted` 由 `interrupt_all` / 启动清理写，进程已经没了）。
+#: `cancelled` **不在其中**：`cancel` 之后 `_pump` 还会补 changed / diff / refresh，要看 `ended_ms` 是否已写。
+FINAL_STATUSES: frozenset[str] = frozenset({"done", "failed", "timeout", "interrupted"})
+
+
 def _history_final(hist: dict) -> bool:
-    """历史库里这一行是不是终态：写了 `ended_ms`（`record_end` / 启动清理才写）。`cancel` 只改 status、不写 ended_ms——
-    那一刻 changed / diff / refresh 还没算出来；若这行属于另一个仍活着的服务进程，它的 `_pump` 之后才会收尾。"""
-    return hist.get("ended_ms") is not None
+    """历史库里这一行是不是终态：状态本身是确定终态（`FINAL_STATUSES`），或写了 `ended_ms`（`record_end` / 启动清理才写）。
+    `cancel` 只改 status、不写 ended_ms——那一刻 changed / diff / refresh 还没算出来；若这行属于另一个仍活着的服务进程，
+    它的 `_pump` 之后才会收尾。`interrupt_all`（/api/shutdown）写 interrupted 也不写 ended_ms、进程随后就没了：
+    不能因此永远 `final: false`。"""
+    return hist.get("status") in FINAL_STATUSES or hist.get("ended_ms") is not None
 
 
 def _session_dto(raw: dict) -> dict:

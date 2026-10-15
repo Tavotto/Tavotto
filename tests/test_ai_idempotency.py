@@ -1379,3 +1379,42 @@ def test_session_detail_endpoint_carries_final(client, tmp_path, cli):
     ai_history.record_end("endpoint0001", "done")
     body = client.get("/api/ai/sessions/endpoint0001").get_json()
     assert body["final"] is True
+
+
+def test_interrupted_rows_are_final_even_without_ended_ms(tmp_path, cli):
+    """/api/shutdown 的 `interrupt_all` 写 interrupted 却不写 ended_ms，进程可能在 `_pump` 的 record_end 之前就退出：
+    确定终态的 status 直接算 final；只有 cancelled 才要看 ended_ms（cancel 之后 pump 还会补结果）。"""
+    figs = _project(tmp_path)
+    project_key = str(figs.resolve())
+
+    def start(sid, rid):
+        ai_history.record_start(
+            {
+                "id": sid,
+                "project": project_key,
+                "provider": "codex",
+                "script": f"{sid}.py",
+                "client_request_id": rid,
+                "owner_pid": 0,
+            }
+        )
+
+    start("intr-unended1", "rid-intr-000001")
+    ai_history.update_status("intr-unended1", "interrupted")  # 没有 ended_ms
+    assert ai_bridge.get("intr-unended1")["final"] is True
+    start("canc-unended1", "rid-canc-000001")
+    ai_history.update_status("canc-unended1", "cancelled")
+    assert (
+        ai_bridge.get("canc-unended1")["final"] is False
+    )  # cancelled 且 ended_ms 为空：pump 还会补结果
+    for status in ("done", "failed", "timeout"):
+        start(f"{status}-1", f"rid-{status}-000001")
+        ai_history.update_status(f"{status}-1", status)
+        assert ai_bridge.get(f"{status}-1")["final"] is True, status
+    assert ai_history.mark_interrupted_running() >= 0
+    # 启动清理给属主已死、ended_ms 为空的 interrupted / cancelled 行补上 ended_ms
+    ended = {
+        r["id"]: r["ended_ms"] for r in ai_history.list_sessions(project_key, limit=100)["sessions"]
+    }
+    assert ended["intr-unended1"] is not None and ended["canc-unended1"] is not None
+    assert ai_bridge.get("canc-unended1")["final"] is True  # 补上之后 cancelled 也收尾了
