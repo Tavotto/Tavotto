@@ -12,6 +12,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   fetchPanels: vi.fn(),
+  // 渲染 hook 的用例要拿到它交给 SSE 订阅的两个回调（事件 / 重连）；其余用例直接驱动 `handleServerEvent`
+  subscribeEvents: vi.fn(() => () => {}),
   refreshProject: vi.fn().mockResolvedValue({}),
   fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
   fetchRegistry: vi.fn().mockResolvedValue({
@@ -50,7 +52,10 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { literal } from '@/i18n'
 import { useDepRepairStore } from '@/store/depRepairStore'
-import { handleServerEvent, reconcileInstalls, resetProjectErrorSeq } from './useServerEvents'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { subscribeEvents } from '@/lib/api'
+import { handleServerEvent, reconcileInstalls, resetProjectErrorSeq, useServerEvents } from './useServerEvents'
 
 const mockPanels = vi.mocked(fetchPanels)
 const mockRefresh = vi.mocked(refreshProject)
@@ -875,5 +880,35 @@ describe('project.error 的撤销', () => {
     handleServerEvent(ev({ kind: 'registry.changed', pj: 'p1', scripts: [] }))
     expect(useUiStore.getState().status).not.toBeNull()
     useUiStore.getState().setStatus(null)
+  })
+})
+
+describe('useServerEvents 的 SSE 重连回调', () => {
+  it('重连清零 project.error 的 seq：已见 seq=5 之后，新进程从头计的 recovered(seq=1) 仍能撤掉 toast', async () => {
+    ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    mockPanels.mockResolvedValue({ figures_dir: '/f', panels: [] } as never)
+    const sub = vi.mocked(subscribeEvents)
+    sub.mockClear()
+    const Probe = () => {
+      useServerEvents()
+      return null
+    }
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    await act(async () => { root.render(createElement(Probe)) })
+    const call = sub.mock.calls.at(-1)!
+    const onEvent = call[0]
+    const onOpen = call[1]!
+    resetProjectErrorSeq()
+    useUiStore.getState().setStatus(null)
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 5 })))
+    expect(useUiStore.getState().status).not.toBeNull()
+    // 对照：没重连时 seq=1 是迟到的旧事件，撤不掉
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 })))
+    expect(useUiStore.getState().status).not.toBeNull()
+    await act(async () => { onOpen() }) // SSE 重连（后端可能重启，seq 从头计）
+    act(() => onEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 })))
+    expect(useUiStore.getState().status).toBeNull()
+    await act(async () => { root.unmount() })
   })
 })
