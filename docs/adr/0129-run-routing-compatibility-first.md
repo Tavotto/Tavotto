@@ -58,6 +58,8 @@
 * **无后缀 `savefig`**（#1034 第五轮）：没有后缀且没有字面非 None `format=` 的 `savefig("stage")` 实际写 `stage.<savefig.format>`（运行期账本 `figcapture.savefig_effective_names` 同一规则，不记字面名）；静态侧不复刻 rcParams，这种调用的字面目标不算确定，不产生 R1 / R3 的 high（medium，走 safe）。字面 `format="svg"` 时文件名原样，照常。`**kwargs` / 多于一个位置实参 / 非字面 `format` 同样不算确定。
 * **无条件终止之后**（#1034 第五轮）：同一语句序列里，`return` / `raise` / `sys.exit()`·`os._exit()`·内建 `exit()`·`quit()`（解析到且未被重新绑定）/ `assert False` / 没有 `break` 的 `while True` / body 以终止结尾的 `__main__` 守卫之后的语句，证据与按名调用都不再算「无条件执行」（不升 high）。只认能证明无条件的终止；条件内的终止不影响后面。
 * **终止的外延**（#1034 第五轮续）：常量真分支（`if True:` / `if 1:`）的 body 以无条件终止结尾，视为外层序列的终止；`try` / `with` 块内（含 handler / `else` / `finally`）出现任何无条件终止，其后外层语句也不算——这类终止可能被吞掉，证明不了，按「宁可漏判」处理。本模块唯一绑定、无装饰器、非生成器的 `def f()`，函数体顶层序列在任何 `return` 之前无条件 `raise` / 已解析的 exit 族（可经同样的 `def` 链递推），则顶层 `f()` 调用视为终止（无条件 `return` 不算）；类体在定义时执行，其中的终止让后续模块语句不再算无条件。不做跨模块、数据流推导。
+* **同一份内容**（#1034 第六轮）：`plan_for` 里路由分析的字节与计划的 `script_revision` 必须是同一份——路由读一次字节、记下 sha256，计划末尾算出 revision 后核对其字节摘要；不一致（分析之后脚本被改写）则 native 降回 safe，`declined: script_changed`。
+* **`async def` / 生成器**（#1034 第六轮）：裸调用 `f()` 只造出协程 / 生成器对象，不执行函数体；`async def` 与体内（不含嵌套 def / lambda / 类）有 `yield` / `yield from` 的函数，体内证据不算可达（`R1_unproven`、R3 降 `R3_partial`），其调用也不算终止；不推导 await / 迭代是否发生。
 * **Windows 根路径**：`C:\`、`C:/`、`C:foo`、`\\server\share`、单分隔符根 `\foo` 一律按「不在项目内」，用 `ntpath` 判，不依赖当前平台。
 * **native 启动记录**与运行默认值走 `runconfig.commit_success` 同一次写入，不分两步。
 * **收口原则**：静态规则还会被找出新的边角。**漏判**（该升 high 没升）退化为 safe + 0127 回退，无副作用，记 issue 收口、不在评审轮里逐个追；只有**误判升 high**（不该直达 native 却直达了）才继续修。新增规则一律往保守方向走。

@@ -750,6 +750,21 @@ class _Collector:
             return any(self._terminates(s, inner_scope, False, seen) for s in stmt.body)
         return False
 
+    @staticmethod
+    def _runs_on_call(node: ast.AST) -> bool:
+        """裸调用 `f()` 会立刻执行函数体：普通 `def`（不是 `async def`，体内——不含嵌套 def / lambda / 类——没有 `yield`）。"""
+        if not isinstance(node, ast.FunctionDef):
+            return not isinstance(node, ast.AsyncFunctionDef)  # 类体等照旧
+        stack = list(node.body)
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.Yield, ast.YieldFrom)):
+                return False
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                continue
+            stack.extend(ast.iter_child_nodes(n))
+        return True
+
     def _call_always_raises(self, func: ast.AST, scope: _Scope, seen: frozenset) -> bool:
         """`f()`：f 是本模块唯一绑定的 `def`，函数体顶层序列在任何 `return` 之前无条件 raise / exit。"""
         if not isinstance(func, ast.Name) or self.bind_total.get(func.id) != 1:
@@ -767,7 +782,7 @@ class _Collector:
                     not isinstance(node, ast.FunctionDef)
                     or node.decorator_list
                     or id(node) in seen
-                    or any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
+                    or not self._runs_on_call(node)
                 ):
                     return False
                 seen = seen | {id(node)}
@@ -812,6 +827,9 @@ class _Collector:
                         target = s.defs[name]
                         # 名字在模块任何地方被重新绑定过（赋值 / 再次 def / 形参 / import 同名）：调用的未必是这个 def，不证明可达
                         if self.bind_total.get(name) != 1 or name in self.aliases:
+                            target = None
+                        # `async def` / 生成器：裸调用只造出协程 / 生成器对象，不执行函数体；await / 迭代是否发生不推导
+                        if target is not None and not self._runs_on_call(target.node):
                             target = None
                         if target is not None and target.ident not in live:
                             live.add(target.ident)
@@ -1352,12 +1370,23 @@ def route_for_file(
     policy: str = POLICY_COMPATIBLE,
     last_success: str | None = None,
     operator_enabled: bool = True,
+    source: bytes | None = None,
 ) -> Route:
     """`facts_of_file` + `decide`，并量总耗时（`Route.elapsed_ms`，本地诊断 / 基准读；不进遥测）。
     用户显式 / 运维关闭 / 沿用上次成功这三条不需要读脚本，直接决定。"""
     started = time.perf_counter()
     needs_facts = policy != POLICY_SAFE_ONLY and operator_enabled and last_success not in EXECUTIONS
-    facts = facts_of_file(script_path) if needs_facts else None
+    if not needs_facts:
+        facts = None
+    elif source is not None:
+        # 调用方已读好的字节（与计划的 revision 核对同一份，见 preparation.plan_for）：分析它，不再读第二遍
+        facts = (
+            ScriptFacts(parsed=False, too_large=True)
+            if len(source) > MAX_SOURCE_BYTES
+            else _collect(source.decode("utf-8", errors="replace"))
+        )
+    else:
+        facts = facts_of_file(script_path)
     route = decide(
         facts,
         cwd_mode=cwd_mode,

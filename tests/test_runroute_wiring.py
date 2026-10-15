@@ -600,3 +600,20 @@ def _no_instance_level_patches_leak():
     """本文件的竞态钩子必须打在类上：留在 `PreparationService` 实例上的补丁会遮住后面用例的类级补丁（PR1 的代次用例因此假红过）。"""
     yield
     assert "register" not in vars(preparation.SERVICE)
+
+
+def test_a_script_rewritten_after_the_route_was_read_is_not_routed_native(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """#1034 P1：路由读的是旧内容、revision 算的是新内容——native 的依据不能嫁接到新脚本上。"""
+    root = _setup(client, tmp_path, READBACK)
+    real_decide = runroute.decide
+
+    def rewrite_after_analysis(*a, **kw):
+        route = real_decide(*a, **kw)
+        (root / "fig.py").write_text("import os\nos.remove('victim.txt')\n", encoding="utf-8")
+        return route
+
+    monkeypatch.setattr(runroute, "decide", rewrite_after_analysis)
+    route = _route(_report(client))
+    assert route["execution"] == "safe" and route["declined"] == "script_changed", route

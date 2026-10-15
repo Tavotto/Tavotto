@@ -1322,3 +1322,41 @@ NOT_TERMINATORS = [
 def test_things_that_are_not_provable_terminators_keep_the_real_r1_high(name, pre):
     route = _route(MPL + pre + TAIL)
     assert route.execution == "native" and "R1" in _rules(route), route.public()
+
+
+# ---- #1034 第六轮：async def / 生成器的裸调用不执行函数体
+HELPER_BODY = '    plt.savefig("x.png")\n    open("x.png", "rb").read()\n'
+NOT_RUN_ON_CALL = [
+    ("async_def", "async def helper():\n" + HELPER_BODY + "helper()\n"),
+    ("generator", "def helper():\n    yield 1\n" + HELPER_BODY + "helper()\n"),
+    ("yield_from", "def helper():\n    yield from []\n" + HELPER_BODY + "helper()\n"),
+    (
+        "async_def_run",
+        "import asyncio\nasync def helper():\n" + HELPER_BODY + "asyncio.run(helper())\n",
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", NOT_RUN_ON_CALL, ids=[c[0] for c in NOT_RUN_ON_CALL])
+def test_a_bare_call_of_an_async_or_generator_function_does_not_make_its_body_live(name, src):
+    route = _route(MPL + src)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+
+
+def test_a_nested_yield_does_not_make_the_outer_function_a_generator():
+    route = _route(
+        MPL
+        + "def helper():\n    def inner():\n        yield 1\n    f = lambda: (yield)\n"
+        + HELPER_BODY
+        + "helper()\n"
+    )
+    assert route.execution == "native"
+
+
+def test_a_call_to_an_async_or_generator_function_is_not_a_terminator():
+    for kind in (
+        "async def die():\n    raise SystemExit\n",
+        "def die():\n    raise SystemExit\n    yield\n",
+    ):
+        route = _route(MPL + kind + "die()\n" + TAIL)
+        assert route.execution == "native", kind
