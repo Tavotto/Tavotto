@@ -205,6 +205,8 @@ export const capturedOf = (report: PreparationReport | null): CapturedFigureDesc
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const pollStep = new Map<string, number>()
 const inflight = new Map<string, Promise<void>>()
+/** 正在由显式「打开并运行」认领 `run`（已跑完的会话只给 `run`）的条目：这次动作成功后才武装自动进入编辑 */
+const armRunKeys = new Set<string>()
 
 function stopTimer(key: string): void {
   const t = timers.get(key)
@@ -407,14 +409,30 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
     const e = entry(key)
     const report = e?.report
     if (!e || !report || e.failure || e.pending || e.connection !== 'ok' || 'id' in e.target) return
-    if (!report.actions.some((a) => a.kind === 'run_when_ready')) return
+    // 后端对已经跑完的会话只给 `run`（没有 `run_when_ready`）：显式「打开并运行」点在它上面就是要再跑一次，认领 `run` 并武装这一次的新尝试
+    // （旧的 completed 结果不触发自动进入：武装只在动作成功之后，且 `accept` 只在 completed 的「新一轮」上进入）
+    const rerun =
+      !report.actions.some((a) => a.kind === 'run_when_ready') &&
+      report.actions.some((a) => a.kind === 'run') &&
+      report.phase === 'completed'
+    if (!rerun && !report.actions.some((a) => a.kind === 'run_when_ready')) return
     // 只在卡片会说「可以运行了」（`ready`，没有要用户先看的事）时代认领：要先答的事（运行目录 / 环境 / 数据 / 必填参数）、要装的组件（用户该先看见
     // 装什么、装到哪）、弹窗 / 来源不明的提醒、重启后重建的会话都停在各自的卡上，由用户点那张卡的主按钮（它同样是 run_when_ready）
     const missing = missingArgsFor(e, e.target.argv ?? [])
-    if (prepView(e, { argsChanged: draftDiffers(e.target), editReady: false, missingArgs: missing }).state !== 'ready') return
+    const state = prepView(e, { argsChanged: draftDiffers(e.target), editReady: false, missingArgs: missing }).state
+    if (rerun ? state !== 'completed' && state !== 'completed_unlinked' : state !== 'ready') return
     // 沿用了上次成功的参数：一键运行之前让用户看一眼「将沿用 N 个参数」（卡上有清除），所以这一次不代认领
     if (reusedArgCount(e) > 0) return
-    await get().act(key, 'run_when_ready')
+    if (!rerun) {
+      await get().act(key, 'run_when_ready')
+      return
+    }
+    armRunKeys.add(key)
+    try {
+      await get().act(key, 'run')
+    } finally {
+      armRunKeys.delete(key)
+    }
   }
 
   return {
@@ -554,7 +572,10 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         )
         if (!live(key, g)) return
         // 认领了「打开并运行」：这一轮跑完时自动进入编辑（先记下，再接这份报告——它可能已经是 running）
-        patch(key, () => ({ pending: null, ...(kind === 'run_when_ready' ? { armed: true, transferFrom: null } : {}) }))
+        patch(key, () => ({
+          pending: null,
+          ...(kind === 'run_when_ready' ? { armed: true, transferFrom: null } : armRunKeys.has(key) ? { armed: true } : {}),
+        }))
         pollStep.delete(key)
         accept(key, res.report)
       } catch (err) {

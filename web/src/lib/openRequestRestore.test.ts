@@ -295,7 +295,7 @@ describe('用户级入口在恢复中排队（素材卡双击 / 加入排版 / �
     expect(panelsOf(app)).toEqual([])
   })
 
-  it('自动进入编辑（enterEdit）在恢复中排队、图还不在文档里：落定前切走 → 不插入面板、不取景、不进编辑；仍在看则照常插入并进入', async () => {
+  it('自动进入编辑（enterEdit）在恢复中排队、图还不在文档里：落定前切走 → 不插入面板、不进编辑、不记编辑', async () => {
     const app = await setAssets(await boot())
     const { enterEdit } = await import('@/store/prepEnterEdit')
     const desc = {

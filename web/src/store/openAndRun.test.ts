@@ -407,6 +407,41 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
   })
 })
 
+describe('已跑完的会话只给 run（没有 run_when_ready）：显式「打开并运行」认领 run 并武装这一次的新尝试（Codex #1044 r4280299198）', () => {
+  const finished = () => done(['a'], 'att-1', 3, { actions: [action('run'), action('recheck')] })
+
+  it('显式 run:true：认领 run，旧的 completed 结果不触发自动进入；新尝试跑完才进入', async () => {
+    mockCreate.mockResolvedValueOnce(finished())
+    mockAct.mockResolvedValueOnce({ claimed: true, report: running(4, { provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null } }) })
+    await open()
+    expect(mockAct).toHaveBeenCalledTimes(1)
+    expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-run' })
+    expect(entry().armed).toBe(true)
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled() // 旧结果不进
+    mockGet.mockResolvedValueOnce(done(['a'], 'att-2', 5, { actions: [action('recheck')] }))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+  })
+
+  it('认领 run 的响应里报告还是旧的 completed：武装了也不进入旧结果，等新尝试', async () => {
+    mockCreate.mockResolvedValueOnce(finished())
+    mockAct.mockResolvedValueOnce({ claimed: true, report: finished() })
+    await open()
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+    expect(entry().armed).toBe(true)
+  })
+
+  it('非显式打开（只是查看）：不认领 run、不跑', async () => {
+    mockCreate.mockResolvedValueOnce(finished())
+    await open(false)
+    expect(mockAct).not.toHaveBeenCalled()
+    expect(entry().armed).toBe(false)
+  })
+})
+
 describe('只有明确的入口才认领', () => {
   it('普通 open（只检查）：报告里有 run_when_ready 也不认领', async () => {
     mockCreate.mockResolvedValueOnce(report())
