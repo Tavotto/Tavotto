@@ -158,6 +158,14 @@ impl Marker {
         self.write("running");
     }
 
+    /// 引擎重启成功：这次崩溃已经"处理"掉了，持久化的类型一并清掉并立即重写（状态仍是 `running`）。
+    /// 否则之后正常退出写 `clean` 时还带着它，下次启动又弹一次「上次引擎退出」。
+    /// 重启后再崩一次，[`Marker::mark_engine_exit`] 照样粘住新的类型。
+    pub fn clear_engine_exit(&self) {
+        *self.engine.lock().unwrap() = None;
+        self.write("running");
+    }
+
     /// 正常退出（`engine_exit` 不清，见 [`judge`]）——也是所有绕过 `RunEvent::Exit` 的退出路径必须先调的那一句。幂等。
     pub fn mark_clean(&self) {
         self.write("clean");
@@ -310,6 +318,56 @@ mod tests {
         next.mark_running();
         next.mark_clean();
         assert_eq!(Marker::new(Some(&dir), "1.0.2").read_previous(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_successful_restart_clears_the_sticky_engine_exit() {
+        let dir = tmp_dir("restart");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        m.clear_engine_exit();
+        assert!(
+            !read(&dir).contains("engine_exit"),
+            "重启成功后文件里不再带类型"
+        );
+        // 崩 → 重启成功 → 正常退出：下次启动无提示
+        m.mark_clean();
+        assert_eq!(Marker::new(Some(&dir), "1.0.1").read_previous(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_restart_keeps_the_engine_exit_through_clean() {
+        let dir = tmp_dir("norestart");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Signal);
+        m.mark_clean();
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn crashing_again_after_a_restart_sticks_the_new_kind() {
+        let dir = tmp_dir("recrash");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        m.clear_engine_exit();
+        m.mark_engine_exit(EngineExit::Signal);
+        assert!(read(&dir).contains(r#""engine_exit":"signal""#));
+        m.mark_clean();
+        assert_eq!(m.read_previous(), Some(Previous::EngineExited));
+        // 崩 → 重启成功 → 再崩 → 不重启就退出：仍提示
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

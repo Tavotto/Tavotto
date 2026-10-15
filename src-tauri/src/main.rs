@@ -1440,6 +1440,11 @@ fn restart_engine_blocking(app: &tauri::AppHandle) -> bool {
     let ok = boot_engine(app, false);
     if ok {
         *state.engine_exit.lock().unwrap() = None;
+        // 持久化的类型一并清掉（ADR 0129）：否则之后正常退出写 clean 仍带着它，下次启动重复提示。
+        // 内存里的 previous_exit 不动——它正是「先重启再发」的那张卡，由新页面取走
+        if let Some(m) = state.marker.get() {
+            m.clear_engine_exit();
+        }
     }
     ok
 }
@@ -1819,6 +1824,17 @@ mod tests {
         // 所有 UpdaterBuilder 都经助手
         assert!(!main.contains("|| handle.updater_builder()"));
         assert!(!main.contains("|| app.updater_builder()"));
+    }
+
+    #[test]
+    fn a_successful_engine_restart_clears_the_persisted_engine_exit() {
+        let main = &production_sources()[0].1;
+        let body = body_of(main, "fn restart_engine_blocking(");
+        let ok = body.find("if ok {").expect("重启成功分支");
+        assert!(
+            body[ok..].contains("clear_engine_exit()"),
+            "重启成功要清持久化类型"
+        );
     }
 
     #[test]
