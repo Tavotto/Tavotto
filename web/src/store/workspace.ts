@@ -145,8 +145,16 @@ export function addRuntimePanelToCanvas(
   desc: CapturedFigureDescriptor,
   atX?: number,
   atY?: number,
+  opts?: { guard?: () => boolean },
 ): PanelObject | null {
-  if (deferUserEntry(() => void addRuntimePanelToCanvas(desc)) !== 'run') return null
+  // `guard` 同 `openFastEdit`：自动进入编辑的排队插入面板（连同取景）在执行前也要过守卫，切走后不留下没人要的面板
+  if (
+    deferUserEntry(() => {
+      if (opts?.guard && !opts.guard()) return
+      void addRuntimePanelToCanvas(desc)
+    }) !== 'run'
+  )
+    return null
   return placeRuntimePanelToCanvas(desc, atX, atY)
 }
 

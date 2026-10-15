@@ -72,7 +72,9 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
   // 只有文档才是已经加过一次的权威（补审 #914 r4236701619）。这两步之间没有 await，第二个续延必然看到第一个加的面板
   const known = (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)
   if (!known && !findFigurePanel(d.asset_id)) {
-    addRuntimePanelToCanvas(d)
+    // 与下面的 `openFastEdit` 同一个守卫：恢复期间两者都是排队的副作用（插入面板 + 取景 / 进入编辑 / 收卡片），切走后一个都不许执行
+    if (host.stillWanted) addRuntimePanelToCanvas(d, undefined, undefined, { guard: host.stillWanted })
+    else addRuntimePanelToCanvas(d)
   }
   const outcome = host.stillWanted ? openFastEdit(d.asset_id, { guard: host.stillWanted }) : openFastEdit(d.asset_id)
   // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个；
