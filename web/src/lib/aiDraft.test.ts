@@ -144,6 +144,45 @@ describe('请求 id 与删除时机', () => {
   })
 })
 
+describe('两个标签页写同一份草稿（Codex #1098 P1）', () => {
+  it('A 记下待确认 → B 改了文本 → A 收到会话：B 的新稿还在，账本清掉', () => {
+    markSubmitted('pj', 'F', 'A 发出去的话', 'rid-aaaaaaaa', T)
+    saveDraft('pj', 'F', 'B 后来写的话')
+    removeAccepted('pj', 'F', 'rid-aaaaaaaa')
+    const d = loadDraft('pj', 'F')
+    expect(d?.text).toBe('B 后来写的话')
+    expect(d?.rid).toBeUndefined()
+  })
+
+  it('对照：文本没被动过，确认之后草稿照常删掉', () => {
+    markSubmitted('pj', 'F', '同一句话', 'rid-aaaaaaaa', T)
+    saveDraft('pj', 'F', '同一句话')
+    removeAccepted('pj', 'F', 'rid-aaaaaaaa')
+    expect(loadDraft('pj', 'F')).toBeNull()
+  })
+
+  it('账本在时，刷新读到的是提交时的原文 + rid，不是 B 的新稿', () => {
+    markSubmitted('pj', 'F', 'A 发出去的话', 'rid-aaaaaaaa', T)
+    saveDraft('pj', 'F', 'B 后来写的话')
+    expect(loadDraft('pj', 'F')).toMatchObject({ text: 'A 发出去的话', rid: 'rid-aaaaaaaa', sent: T })
+  })
+
+  it('B 的文本写入与清空都不动账本', () => {
+    markSubmitted('pj', 'F', '指令', 'rid-aaaaaaaa', T)
+    saveDraft('pj', 'F', '')
+    expect(loadDraft('pj', 'F')?.rid).toBe('rid-aaaaaaaa')
+  })
+
+  it('账本按 rid 认：别的请求的确认 / 拒绝不动它；过期的账本被清扫', () => {
+    markSubmitted('pj', 'F', '指令', 'rid-aaaaaaaa', T, 1_000)
+    removeAccepted('pj', 'F', 'rid-bbbbbbbb')
+    clearSubmitted('pj', 'F', 'rid-bbbbbbbb')
+    expect(loadDraft('pj', 'F', 2_000)?.rid).toBe('rid-aaaaaaaa')
+    sweepDrafts({ now: 1_000 + DRAFT_TTL_MS + DAY })
+    expect(loadDraft('pj', 'F', 1_000 + DRAFT_TTL_MS + DAY)).toBeNull()
+  })
+})
+
 describe('localStorage 不可用时只是退回内存', () => {
   it('读写删全抛：函数照常返回、不抛', () => {
     const boom = () => {

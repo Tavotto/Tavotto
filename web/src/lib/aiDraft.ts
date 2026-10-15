@@ -110,7 +110,59 @@ function drop(ls: Storage, project: string, fileId: string): void {
   }
 }
 
-/** 读一份草稿。过期 / 损坏的当场删掉并回 null；读到的算一次「用过」（刷新 LRU 时间） */
+/**
+ * 「已发出、等后端确认」的账本：**独立键、独立于草稿文本**（`tavotto.ai.pending.v1.<项目>.<fileId>`）。
+ * 草稿文本是别的标签页也会写的（同项目同面板，localStorage 共享）；账本若并在它里面，
+ * 一个标签页的防抖保存会带着另一个标签页的 rid 把文本覆盖掉，确认到达时按 rid 删整条又会把
+ * 后写的那份未发送草稿一起丢掉。账本里记下提交时的**原文**：确认之后只有「草稿文本仍等于这份原文」
+ * 才删草稿，否则只清账本、保留文本（Codex #1098 P1）。
+ */
+export const PENDING_PREFIX = 'tavotto.ai.pending.v1.'
+const pendingKey = (project: string, fileId: string) => `${PENDING_PREFIX}${project}.${fileId}`
+
+interface Pending {
+  project: string
+  fileId: string
+  rid: string
+  sent: DraftTarget
+  text: string
+  at: number
+}
+
+function readPending(ls: Storage, project: string, fileId: string): Pending | null {
+  try {
+    const v = JSON.parse(ls.getItem(pendingKey(project, fileId)) ?? 'null') as Partial<Pending> | null
+    if (
+      !v ||
+      v.project !== project ||
+      v.fileId !== fileId ||
+      typeof v.rid !== 'string' ||
+      !v.rid ||
+      typeof v.text !== 'string' ||
+      typeof v.at !== 'number' ||
+      !v.sent ||
+      typeof v.sent !== 'object'
+    ) {
+      return null
+    }
+    return v as Pending
+  } catch {
+    return null
+  }
+}
+
+function dropPending(ls: Storage, project: string, fileId: string): void {
+  try {
+    ls.removeItem(pendingKey(project, fileId))
+  } catch {
+    /* 缓存而已 */
+  }
+}
+
+/**
+ * 读一份草稿。过期 / 损坏的当场删掉并回 null；读到的算一次「用过」（刷新 LRU 时间）。
+ * 有未落定的提交账本时，返回的是**提交时的原文**连同 `rid` / `sent`（界面据此还原「已发出未确认」）。
+ */
 export function loadDraft(project: string | null, fileId: string | null, now = Date.now()): Draft | null {
   if (!project || !fileId) return null
   const ls = store()
@@ -121,19 +173,23 @@ export function loadDraft(project: string | null, fileId: string | null, now = D
   } catch {
     return null
   }
-  const d = parse(raw, project, fileId)
+  let d = parse(raw, project, fileId)
   if (!d || now - d.at > DRAFT_TTL_MS) {
     if (raw) drop(ls, project, fileId)
-    return null
+    d = null
   }
+  const pend = readPending(ls, project, fileId)
+  if (pend && now - pend.at > DRAFT_TTL_MS) {
+    dropPending(ls, project, fileId)
+  } else if (pend) {
+    return { project, fileId, text: pend.text, at: now, rid: pend.rid, sent: pend.sent }
+  }
+  if (!d) return null
   write(ls, { ...d, at: now })
   return d
 }
 
-/**
- * 写（或删）一份草稿的**文本**。已有的 `rid` / `sent` 原样保留——正在等后端确认的那条不能被
- * 文本防抖冲掉。空文本且没有待确认的请求 = 删键。
- */
+/** 写（或删）一份草稿的**文本**。不碰提交账本。空文本 = 删键；超限 = 不存也不截断 */
 export function saveDraft(
   project: string | null,
   fileId: string | null,
@@ -143,14 +199,7 @@ export function saveDraft(
   if (!project || !fileId) return 'unavailable'
   const ls = store()
   if (!ls) return 'unavailable'
-  const prev = (() => {
-    try {
-      return parse(ls.getItem(keyOf(project, fileId)), project, fileId)
-    } catch {
-      return null
-    }
-  })()
-  if (text === '' && !prev?.rid) {
+  if (text === '') {
     drop(ls, project, fileId)
     return 'removed'
   }
@@ -159,13 +208,12 @@ export function saveDraft(
     drop(ls, project, fileId)
     return 'too_large'
   }
-  const d: Draft = { project, fileId, text, at: now, ...(prev?.rid ? { rid: prev.rid, sent: prev.sent } : {}) }
-  if (!write(ls, d)) return 'unavailable'
+  if (!write(ls, { project, fileId, text, at: now })) return 'unavailable'
   evictOverflow(ls, `${project}\u0000${fileId}`)
   return 'saved'
 }
 
-/** 点发送：把「这条已发出、等后端确认」记进草稿（同步落盘，刷新也认得）。文本超限时也要记下 rid */
+/** 点发送：同步落一条提交账本（刷新也认得「这条发出过」），原文一并记下；文本也作为草稿留着直到确认 */
 export function markSubmitted(
   project: string | null,
   fileId: string | null,
@@ -177,31 +225,35 @@ export function markSubmitted(
   if (!project || !fileId) return
   const ls = store()
   if (!ls) return
-  write(ls, { project, fileId, text, at: now, rid, sent })
+  try {
+    ls.setItem(pendingKey(project, fileId), JSON.stringify({ project, fileId, rid, sent, text, at: now } satisfies Pending))
+  } catch {
+    /* 同上 */
+  }
+  if (byteLength(text) <= DRAFT_MAX_BYTES) write(ls, { project, fileId, text, at: now })
 }
 
-/**
- * 后端明确拒绝：请求 id 作废、文本留着让用户改。`rid` 对不上就不动——那是另一次发送的记录。
- */
+/** 后端明确拒绝：请求 id 作废（只清账本），文本留着让用户改。`rid` 对不上就不动——那是另一次发送的记录 */
 export function clearSubmitted(project: string | null, fileId: string | null, rid: string): void {
   if (!project || !fileId) return
   const ls = store()
   if (!ls) return
-  const cur = parse(safeGet(ls, keyOf(project, fileId)), project, fileId)
-  if (!cur || cur.rid !== rid) return
-  write(ls, { project, fileId, text: cur.text, at: cur.at })
+  if (readPending(ls, project, fileId)?.rid === rid) dropPending(ls, project, fileId)
 }
 
 /**
- * **只在后端给出会话 id（请求已被接受）之后**调用。`rid` 对不上不删：
- * 另一个标签页 / 之后重新写下的草稿不是这条，不能被这条的确认抹掉。
+ * **只在后端给出会话 id（请求已被接受）之后**调用。账本 `rid` 对不上什么都不动；对上了清账本，
+ * 且**只有草稿文本仍等于提交时的原文才删草稿**——另一个标签页在这之间写的新稿不能被这条的确认抹掉。
  */
 export function removeAccepted(project: string | null, fileId: string | null, rid: string): void {
   if (!project || !fileId) return
   const ls = store()
   if (!ls) return
+  const pend = readPending(ls, project, fileId)
+  if (!pend || pend.rid !== rid) return
+  dropPending(ls, project, fileId)
   const cur = parse(safeGet(ls, keyOf(project, fileId)), project, fileId)
-  if (cur?.rid === rid) drop(ls, project, fileId)
+  if (cur && cur.text === pend.text) drop(ls, project, fileId)
 }
 
 const safeGet = (ls: Storage, key: string): string | null => {
@@ -252,7 +304,7 @@ function evictOverflow(ls: Storage, keepId: string): void {
 
 /**
  * 清扫：过期的、损坏的、超出份数的，以及（给了 `exists` 时）目标面板已经不存在的。
- * 有待确认请求（`rid`）的草稿**不因目标消失而删**——请求可能已被后端接受，那条记录是用户
+ * 有未落定提交账本的草稿**不因目标消失而删**——请求可能已被后端接受，那条记录是用户
  * 找回「到底发出去没有」的唯一线索，留给过期去收。
  */
 export function sweepDrafts(
@@ -263,7 +315,7 @@ export function sweepDrafts(
   const now = opts.now ?? Date.now()
   let removed = 0
   for (const { key, d } of allDrafts(ls)) {
-    const dead = !d || now - d.at > DRAFT_TTL_MS || (!d.rid && opts.exists && !opts.exists(d.project, d.fileId))
+    const dead = !d || now - d.at > DRAFT_TTL_MS || (opts.exists && !readPending(ls, d.project, d.fileId) && !opts.exists(d.project, d.fileId))
     if (!dead) continue
     try {
       ls.removeItem(key)
@@ -272,8 +324,41 @@ export function sweepDrafts(
       /* 同上 */
     }
   }
+  // 账本：只按过期 / 损坏清（有账本的草稿不因目标消失而删，见上）
+  for (const key of pendingKeys(ls)) {
+    const v = safeParse(safeGet(ls, key)) as Partial<Pending> | null
+    if (!v || typeof v.at !== 'number' || now - v.at > DRAFT_TTL_MS) {
+      try {
+        ls.removeItem(key)
+        removed++
+      } catch {
+        /* 同上 */
+      }
+    }
+  }
   evictOverflow(ls, '')
   return removed
+}
+
+const safeParse = (raw: string | null): unknown => {
+  try {
+    return JSON.parse(raw ?? 'null')
+  } catch {
+    return null
+  }
+}
+
+function pendingKeys(ls: Storage): string[] {
+  const keys: string[] = []
+  try {
+    for (let i = 0; i < ls.length; i++) {
+      const k = ls.key(i)
+      if (k && k.startsWith(PENDING_PREFIX)) keys.push(k)
+    }
+  } catch {
+    return []
+  }
+  return keys
 }
 
 /** 现在就能判：写盘之前先给界面一个「过长」的答案，不等防抖 */
