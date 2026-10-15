@@ -1387,6 +1387,32 @@ class PreparationService:
                 for pid in order[order.index(plan_id) + 1 :]
             )
 
+    def launch_blocked(self, plan_id: str) -> bool:
+        """native 起进程闸门的判定（`reserve` / `begin_start` / `check_start` 共用）：计划已被取消，**或**同项目同脚本里已有登记得
+        更晚的脚本目标计划。后者与 `register` 同一把锁里读登记表：更新的重跑「登记了、还没轮到自己的 `cancel_project(keep=)`」
+        的窗口里，`entry.cancel` 还没置位，旧计划不能因此起进程；闸门放行之后才登记的更新重跑，则必然走
+        `cancel_project(keep=)` 的真终止路径（Codex #1028 P1：启动认领与被取代判定同序）。"""
+        with self._lock:
+            entry = self._entries.get(plan_id)
+            if entry is None:
+                return False
+            if entry.cancel.is_set():
+                return True
+            mine = entry.plan
+            after = False
+            for pid, e in self._entries.items():
+                if pid == plan_id:
+                    after = True
+                    continue
+                if (
+                    after
+                    and e.plan.target == TARGET_SCRIPT
+                    and e.plan.project_id == mine.project_id
+                    and e.plan.script == mine.script
+                ):
+                    return True
+            return False
+
     def cancel_plan(self, plan_id: str) -> bool:
         """按计划号取消(界面只拿到 native 会话的 `launch_id` 时用:它就是计划号)。没有这个计划 / 已终局回 False。"""
         entry = self._entry(plan_id)
