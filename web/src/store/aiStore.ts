@@ -783,35 +783,23 @@ function dropUnclaimedRestoreBuffer(): void {
   restoreBuffered.clear()
 }
 
-/** 恢复运行中会话时每页取多少（接口单页上限 100）/ 最多取几页（防失控；100×50 远超任何真实并发数） */
-const RESTORE_PAGE_SIZE = 100
-const RESTORE_MAX_PAGES = 50
-
 async function doRestore(): Promise<void> {
   const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
   const born = get().generation
   const pj = currentProjectId()
   restoringActive++
   try {
-    // 运行中清单按接口的分页（limit/offset，单页上限 100）**一直取到全部**：超过一页的并发任务也要恢复成占位并锁住脚本。
-    // 每页之间检查代次 / 项目，换了就中止（这些会话属于旧项目，不落）
-    const list: AiHistoryEntry[] = []
-    for (let page = 0; page < RESTORE_MAX_PAGES; page++) {
-      let res
-      try {
-        res = await fetchAiHistory({ status: 'running', limit: RESTORE_PAGE_SIZE, offset: list.length }, pj)
-      } catch {
-        if (page === 0) return // 联系不上 / 老后端：什么都不动，下一次重连再来
-        break // 中途失败：已取到的照常恢复，其余等下一次重连
-      }
-      if (born !== get().generation || pj !== currentProjectId()) return
-      if (!Array.isArray(res?.sessions)) {
-        if (page === 0) return
-        break
-      }
-      list.push(...res.sessions)
-      if (res.sessions.length < RESTORE_PAGE_SIZE || (typeof res.total === 'number' && list.length >= res.total)) break
+    // 运行中清单**一次请求取全**：后端对 `status=running` 不分页（运行中的会话天然有上限，翻页期间集合会变，offset 翻页会漏掉
+    // 仍在运行的）。`limit` 只是给不认这个约定的老后端的兜底。
+    let list: AiHistoryEntry[]
+    try {
+      const res = await fetchAiHistory({ status: 'running', limit: 100 }, pj)
+      if (!Array.isArray(res?.sessions)) return
+      list = res.sessions
+    } catch {
+      return // 联系不上 / 老后端：什么都不动，下一次重连再来
     }
+    // 拉的过程中换了项目：这些会话属于旧项目，不落
     if (born !== get().generation || pj !== currentProjectId()) return
     const caps = get().caps
     for (const e of list) {

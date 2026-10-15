@@ -800,3 +800,59 @@ def test_stale_response_carries_the_hash_of_the_current_row_text(client, two):
     put_s(client, a, "F", "", 6_000)
     r3 = put_s(client, a, "F", "旧", 5_500)
     assert r3["text_hash"] == ai_history.text_hash("")
+# GET /api/ai/history?status=running：一次返回全部，不分页（#1111 Codex P2）
+# ---------------------------------------------------------------------------
+def _seed_sessions(tmp_path, name, n_running, n_done=0):
+    project = str((tmp_path / name).resolve())
+    for i in range(n_running):
+        ai_history.record_start(
+            {
+                "id": f"run{i:04d}",
+                "project": project,
+                "provider": "codex",
+                "prompt": f"p{i}",
+                "script": f"f{i}.py",
+            }
+        )
+    for i in range(n_done):
+        sid = f"done{i:04d}"
+        ai_history.record_start(
+            {"id": sid, "project": project, "provider": "codex", "prompt": f"d{i}"}
+        )
+        ai_history.record_end(sid, "done")
+
+
+def _history(client, pj, **qs):
+    return client.get("/api/ai/history", query_string=qs, headers=H(pj)).get_json()
+
+
+def test_history_running_returns_every_running_row_regardless_of_paging(client, two, tmp_path):
+    a, _ = two
+    _seed_sessions(tmp_path, "a", n_running=150, n_done=5)
+    got = _history(
+        client, a, status="running", limit=20, offset=100
+    )  # 翻页参数被忽略：运行中的集合一次取全
+    assert got["total"] == 150 and len(got["sessions"]) == 150
+    assert {r["id"] for r in got["sessions"]} == {f"run{i:04d}" for i in range(150)}
+    assert got["truncated"] is False
+
+
+def test_history_running_is_truncated_only_past_the_hard_limit(client, two, tmp_path, monkeypatch):
+    a, _ = two
+    monkeypatch.setattr(m, "RUNNING_HISTORY_HARD_LIMIT", 10)
+    _seed_sessions(tmp_path, "a", n_running=15)
+    got = _history(client, a, status="running")
+    assert got["total"] == 15 and len(got["sessions"]) == 10 and got["truncated"] is True
+
+
+def test_history_other_queries_keep_paging(client, two, tmp_path):
+    a, _ = two
+    _seed_sessions(tmp_path, "a", n_running=4, n_done=5)
+    page1 = _history(client, a, status="done", limit=2, offset=0)
+    page2 = _history(client, a, status="done", limit=2, offset=2)
+    assert page1["total"] == 5 and len(page1["sessions"]) == 2 and len(page2["sessions"]) == 2
+    assert not {r["id"] for r in page1["sessions"]} & {r["id"] for r in page2["sessions"]}
+    assert "truncated" not in page1
+    # 带搜索词的 running 查询仍是分页（那是用户在翻历史，不是恢复）
+    searched = _history(client, a, status="running", q="p", limit=3)
+    assert len(searched["sessions"]) == 3 and searched["total"] == 4

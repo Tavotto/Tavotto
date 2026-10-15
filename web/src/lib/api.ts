@@ -3082,7 +3082,7 @@ export const fetchAiHistory = (
   if (opts.pinned) params.set('pinned', '1')
   params.set('limit', String(opts.limit ?? 20))
   params.set('offset', String(opts.offset ?? 0))
-  return jsonFetch<{ total: number; sessions: AiHistoryEntry[] }>(
+  return jsonFetch<{ total: number; sessions: AiHistoryEntry[]; truncated?: boolean }>(
     `/api/ai/history?${params}`,
     undefined,
     pj,
