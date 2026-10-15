@@ -1,4 +1,4 @@
-# ADR 0129：运行前路由——桌面用户发起的运行里，凭静态证据在 safe / native 之间先选一次
+# ADR 0133：运行前路由——桌面用户发起的运行里，凭静态证据在 safe / native 之间先选一次
 
 日期：2026-10-14 · 状态：**Accepted**（兼容性改造 V2 PR2；用户 2026-10-14 裁决 D1–D5；叠在 [0127](0127-execution-policy-and-unified-retry-guard.md) 之上）
 相关：[0127 执行策略与统一重试闸门](0127-execution-policy-and-unified-retry-guard.md)（本 ADR 兑现其 D2 里「路由器是后续 PR」）、
@@ -58,9 +58,25 @@
 * **无后缀 `savefig`**（#1034 第五轮）：没有后缀且没有字面非 None `format=` 的 `savefig("stage")` 实际写 `stage.<savefig.format>`（运行期账本 `figcapture.savefig_effective_names` 同一规则，不记字面名）；静态侧不复刻 rcParams，这种调用的字面目标不算确定，不产生 R1 / R3 的 high（medium，走 safe）。字面 `format="svg"` 时文件名原样，照常。`**kwargs` / 多于一个位置实参 / 非字面 `format` 同样不算确定。
 * **无条件终止之后**（#1034 第五轮）：同一语句序列里，`return` / `raise` / `sys.exit()`·`os._exit()`·内建 `exit()`·`quit()`（解析到且未被重新绑定）/ `assert False` / 没有 `break` 的 `while True` / body 以终止结尾的 `__main__` 守卫之后的语句，证据与按名调用都不再算「无条件执行」（不升 high）。只认能证明无条件的终止；条件内的终止不影响后面。
 * **终止的外延**（#1034 第五轮续）：常量真分支（`if True:` / `if 1:`）的 body 以无条件终止结尾，视为外层序列的终止；`try` / `with` 块内（含 handler / `else` / `finally`）出现任何无条件终止，其后外层语句也不算——这类终止可能被吞掉，证明不了，按「宁可漏判」处理。本模块唯一绑定、无装饰器、非生成器的 `def f()`，函数体顶层序列在任何 `return` 之前无条件 `raise` / 已解析的 exit 族（可经同样的 `def` 链递推），则顶层 `f()` 调用视为终止（无条件 `return` 不算）；类体在定义时执行，其中的终止让后续模块语句不再算无条件。不做跨模块、数据流推导。
+* **同一份内容**（#1034 第六轮）：`plan_for` 里路由分析的字节与计划的 `script_revision` 必须是同一份——路由读一次字节、记下 sha256，计划末尾算出 revision 后核对其字节摘要；不一致（分析之后脚本被改写）则 native 降回 safe，`declined: script_changed`。
+* **`async def` / 生成器**（#1034 第六轮）：裸调用 `f()` 只造出协程 / 生成器对象，不执行函数体；`async def` 与体内（不含嵌套 def / lambda / 类）有 `yield` / `yield from` 的函数，体内证据不算可达（`R1_unproven`、R3 降 `R3_partial`），其调用也不算终止；不推导 await / 迭代是否发生。
+* **`__main__` 守卫的前提**（#1034 第八轮）：`if __name__ == "__main__":` 的 body 按无条件处理，只在 `__name__` 在模块**任何位置**从没被绑定时成立（赋值 / augassign / 注解赋值 / walrus / `del` / `for`·`with`·`except` 目标 / 形参 / `def`·`class` / `import as` / `global`·`nonlocal` / `match` 捕获，或出现 `globals()` / `vars()`——宁宽）。否则守卫体不算无条件。
 * **Windows 根路径**：`C:\`、`C:/`、`C:foo`、`\\server\share`、单分隔符根 `\foo` 一律按「不在项目内」，用 `ntpath` 判，不依赖当前平台。
 * **native 启动记录**与运行默认值走 `runconfig.commit_success` 同一次写入，不分两步。
 * **收口原则**：静态规则还会被找出新的边角。**漏判**（该升 high 没升）退化为 safe + 0127 回退，无副作用，记 issue 收口、不在评审轮里逐个追；只有**误判升 high**（不该直达 native 却直达了）才继续修。新增规则一律往保守方向走。
+
+### 伤害闸门（#1034 第七轮起，取代「逐个证明可达」）
+
+前几轮不断补「这条证据走不走得到」（常量假分支、终止语句、`async` / 生成器、`__name__` 改写、条件绑定的路径……），评审每轮都能再找出一种写法。这一族是**静态可达性证明**，补不完；而它们的**伤害**始终是同一个：路由成 native 后，safe 守卫本会拦下的文件操作（删除 / 改名 / `write_text`）真实执行了。所以改为结构性收口：
+
+* **闸门**：脚本源码全文件（任何位置——函数体 / 条件 / 类体 / lambda，不做可达性推导）只要出现 safe 守卫会拦的操作形状，`auto` 路由一律不出 native 高置信：回 safe，reason `guarded_file_ops_present`，置信度 medium，R1 / R3 证据照实带出。靠 0127 的静默回退兜底——真需要 native 的脚本多一次 safe 白跑，但守卫拦住了，无副作用。
+* **守卫表同源**：形状清单取自 `figcapture.BlockedFileOps.OPS`（safe worker 守卫记账的同一张表）去掉 `savefig`；`runroute` 导入它（唯一允许的非标准库导入，`test_runroute_boundary` 钉），不另抄。匹配宁宽勿窄：限定名（`os.remove|unlink|rmdir|rename|replace`、`shutil.rmtree|move`，按 import 绑定解析，头名被重绑也按字面名算）；方法名 `.unlink` / `.rmdir` / `.rename` / `.rmtree` / `.write_text`；单实参的 `.replace(x)`（`Path.replace`；`str.replace` 至少两个实参）。`list.remove` / 泛名 `.move` 只认限定名。表里没有的（`write_bytes`、`open("w")`）以守卫表为准，不算。
+* **写入同属闸门**（#1034 第八轮）：safe 模式下普通写入落到沙箱、native 落到真实目录，二者的差异本身就是伤害面（`open("victim", "w").write(...)` 在 native 里会截断用户真实的 `victim`）。所以写打开也算守卫操作：`open` / `io.open` / `Path.open` 的 mode 为字面量且含 `w` / `a` / `x` / `+`，mode 不是字面量或实参带 `*` / `**`（判不了，宁宽），`os.open` 的 flags 不是 `os.O_RDONLY`；另有 `write_bytes` / `mkdir` / `touch` / `os.mkdir` / `os.makedirs` / `shutil.copy*`。只读打开（默认 mode、`r` / `rb`、`PIL.Image.open`）不算；`savefig` 本身不算（它是证据）。
+* **已知写出器同属闸门**（#1034 第九轮）：事件收集里已认的写出器（`_NUMPY_WRITE`、`_DATA_WRITE_TAILS`）与常见科学 / 数据写出口按方法名或限定名末段认，不看接收者——`save` / `imsave` / `imwrite` / `savemat` / `to_netcdf` / `to_zarr` / `to_sql` / `write_image` / `symlink_to` / `chmod`…；限定名 `os.write|truncate|symlink|link|chmod|chown|utime|renames|removedirs`、`sqlite3.connect`、`dbm.open`、`shelve.open`、`shutil.copy*|make_archive|unpack_archive`；**任意调用**的 `mode=` 实参或第二个位置实参是可写的 mode 样字面量（`ZipFile(p, "w")`、`h5py.File(p, mode="a")`、`tarfile.open(p, "w:gz")`），字符串方法（`replace` / `split`…）除外。`.rename` 只认恰一个位置实参、无关键字的形状（`Path.rename(t)`；`df.rename(columns=…)` 不算）。这仍是启发式清单：清单外的写出（第三方库自定义写函数）看不见，记 #1086。
+* **后果**：R3 的链（写 → `os.replace` / `rename` / `move` → 读）本身含守卫操作，所以 R3 在生产路径上不再直达 native（规则与证据仍计算、仍进 `Route.evidence`）；R1（`savefig` → 读回）不含守卫操作的脚本照旧直达。不含守卫操作的脚本误判的后果与终端直接运行相同，没有伤害。
+* **源码解码**（#1034 第十轮）：按 Python 自己的规则解码（PEP 263 声明 / BOM / 默认 UTF-8，复用 `scriptargs.decode_source`）；解不开就当作没读懂（`parsed=False`，走 safe）。不用 replacement 字符糊过去——那会把 Latin-1 的 `café` / `cañ` 折成同一个路径，伪造出读回。
+* **路径与当前目录**（#1034 第十一轮）：路径规范化只折叠证明得了的写法——POSIX 上反斜杠是文件名字符、任何 `..` 段可能经符号链接指向别处，都按「不可比」处理（不升格）；`Path.parent` 按字面取上级。脚本任何位置调用 `chdir` / `fchdir`（含 `contextlib.chdir`）时，cwd 相对的「存」与「读」可能不在同一目录，R1 / R3 不直达（medium，走 safe + 回退）。
+* **不在静态可见范围**：动态混淆（`getattr(os, "re" + "move")`、`__import__`、`exec`、`subprocess` 搬文件）看不见，记 #1086。
 
 ## 后果
 

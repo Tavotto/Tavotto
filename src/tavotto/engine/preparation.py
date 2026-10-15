@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import logging
 import threading
 import time
@@ -89,6 +90,8 @@ PLAN_VERSION = 1
 
 TARGET_ASSET = "asset"
 TARGET_SCRIPT = "script"
+#: 脚本目标的执行语义「让运行前路由挑」（ADR 0133）：HTTP 入口在请求省略执行语义时带进目标；引擎层省略 = safe
+EXECUTION_AUTO = runroute.EXECUTION_AUTO
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
@@ -216,7 +219,7 @@ class PreparationPlan:
     retry_of: str | None = None
     retry_cause: str = ""
     retry_changed: tuple[str, ...] = ()
-    #: 运行前路由的结果（V2 PR2，ADR 0129）：只有调用方给了 `execution="auto"` 才有（`runroute.Route.public()`：闭集原因 /
+    #: 运行前路由的结果（V2 PR2，ADR 0133）：只有调用方给了 `execution="auto"` 才有（`runroute.Route.public()`：闭集原因 /
     #: 置信度 / 命中规则 / 行号 / 耗时，不含路径与源码）；显式 safe / native 恒 None。**不入语义指纹**（`execution` 已在里面）
     route: dict | None = None
     #: 登记那一刻项目的关闭代次（私有，仅桌面拥有的 native 计划；`PreparationService.register` 盖章）。启动时带给注册表：
@@ -300,22 +303,30 @@ def _last_success_profile(
 
 def _route_of(
     root: str, script: str, *, python: str, source: str, decision: dict | None, run=None
-) -> runroute.Route:
-    """`execution="auto"` 的落点：策略 / 运维开关 / 上次成功 / 静态证据 → 路由（零执行用户代码）。"""
+) -> tuple[runroute.Route, str | None]:
+    """`execution="auto"` 的落点：策略 / 运维开关 / 上次成功 / 静态证据 → 路由（零执行用户代码）。
+    同时返回路由分析的那份字节的 sha256，`plan_for` 用它核对计划的 `script_revision`（#1034：分析与 revision 须是同一份内容）。"""
     policy = execpolicy.mode_for(root)
     enabled = execpolicy.fallback_enabled()
     last = None
     if policy != execpolicy.MODE_SAFE_ONLY and enabled:
         last = _last_success_profile(root, script, python=python, source=source, run=run)
     mode = decision["mode"] if decision else workdir.mode_for(root)
+    path = Path(root) / figcapture.normalize_relative_script(script)
+    try:
+        with open(path, "rb") as fh:
+            raw: bytes | None = fh.read(runroute.MAX_SOURCE_BYTES + 1)
+    except OSError:
+        raw = None
     route = runroute.route_for_file(
-        Path(root) / figcapture.normalize_relative_script(script),
+        path,
         cwd_mode=mode,
         project_root=root,
         script=script,
         policy=policy,
         last_success=last,
         operator_enabled=enabled,
+        source=raw,
     )
     LOG.info(
         "run route %s reason=%s confidence=%s rules=%s ms=%.2f",
@@ -325,7 +336,7 @@ def _route_of(
         ",".join(sorted({e["rule"] for e in route.evidence})) or "-",
         route.elapsed_ms,
     )
-    return route
+    return route, (hashlib.sha256(raw).hexdigest() if raw is not None else None)
 
 
 def plan_for(
@@ -493,16 +504,25 @@ def plan_for(
             decision["mode"] if decision else workdir.mode_for(root),
         )
     route = None
-    if execution == runroute.EXECUTION_AUTO:
-        # 运行前路由（V2 PR2，ADR 0129）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
+    if execution == EXECUTION_AUTO:
+        # 运行前路由（V2 PR2，ADR 0133）：只在用户发起的桌面运行里由准备会话要 `auto`；CLI / MCP 永远是显式 safe
         execution = execspec.PROFILE_SAFE
         if script is not None and target == TARGET_SCRIPT:
-            route = _route_of(
+            route, routed_digest = _route_of(
                 root, script, python=python, source=source, decision=decision, run=run
             )
             if route.execution == execspec.PROFILE_NATIVE and not python:
                 route = route.downgraded("no_interpreter")  # 没有解释器就没有 native 可起
             execution = route.execution
+    script_revision = _script_revision(root, script) if target == TARGET_SCRIPT else None
+    if (
+        route is not None
+        and route.execution == execspec.PROFILE_NATIVE
+        and (script_revision is None or routed_digest != script_revision.split(":", 1)[0])
+    ):
+        # 路由分析之后脚本又被改写：native 的依据是旧内容，新内容没有被证明过。回 safe，下次检查再路由
+        route = route.downgraded("script_changed")
+        execution = route.execution
     if script is not None and python and execution == execspec.PROFILE_NATIVE:
         mode = decision["mode"] if decision else workdir.mode_for(root)
         spec = execspec.desktop_native_spec(
@@ -612,7 +632,7 @@ def plan_for(
         target=target,
         run=run,
         input_remap_generation=remap_generation,
-        script_revision=_script_revision(root, script) if target == TARGET_SCRIPT else None,
+        script_revision=script_revision,
         native_spec=native_spec,
         environment_state=environment_state,
     )

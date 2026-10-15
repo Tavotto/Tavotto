@@ -51,7 +51,6 @@ from . import (
     preparation,
     rasterhint,
     registry,
-    runroute,
     scriptargs,
     taskdiag,
 )
@@ -941,10 +940,10 @@ def target_key(target: dict) -> str:
     # safe 计划。非 safe 加**前缀**（不是后缀）：素材 id 是不透明的、本身可能以任何串结尾，后缀会撞上别的
     # safe key；原 key 恒以 `script:` / `asset:` 开头，`<执行语义>|` 前缀的 key 因此不可能等于任何 safe key。
     # safe 的 key 与此前逐字节相同（现有会话与用例不失效）
-    execution = target.get("execution") or runroute.EXECUTION_AUTO
-    # `auto`（V2 PR2）是「让路由挑」，与省略同键（路由的结论在计划里，`plan.execution` 才是解析后的语义）；
-    # 显式 safe / native 是调用方的明确选择，各有各的会话（否则显式 safe 会复用路由选了 native 的会话）
-    if execution == runroute.EXECUTION_AUTO:
+    execution = target.get("execution") or execspec.PROFILE_SAFE
+    # `auto`（V2 PR2）是「让路由挑」，与显式 safe / native 各有各的会话（否则显式 safe 会复用路由选了 native
+    # 的会话）；它同样走前缀，省略 / safe 的 key 仍与 main 逐字节相同
+    if execution == execspec.PROFILE_SAFE:
         return key
     return f"{execution}|{key}"
 
@@ -1199,14 +1198,8 @@ class SessionService:
             original_artifact=target.get("original_artifact"),
             original_path=target.get("original_path"),
             target=target["kind"],
-            # 桌面用户发起的脚本运行：不指定执行语义时让运行前路由挑 safe / native（V2 PR2，ADR 0129）；
-            # 素材目标（已知的一张图）没有「第一次运行」的路由问题，仍是 safe
-            execution=target.get("execution")
-            or (
-                runroute.EXECUTION_AUTO
-                if target["kind"] == TARGET_SCRIPT
-                else execspec.PROFILE_SAFE
-            ),
+            # 省略 = safe（与 main 相同）；`auto` 由 HTTP 入口在请求省略执行语义时显式带进脚本目标（V2 PR2，ADR 0133）
+            execution=target.get("execution") or execspec.PROFILE_SAFE,
             **({"run": target["run"]} if target.get("run") is not None else {}),
         )
 
@@ -1610,7 +1603,7 @@ class SessionService:
             )
         base = sess.plan
         if base.route and base.execution == execspec.PROFILE_NATIVE and not desktop:
-            # 路由（ADR 0129）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
+            # 路由（ADR 0133）选了 native，但这次动作不是桌面窗口发起的（浏览器 / 本机凭据客户端 / 无认证入口）：授权边界与回退
             # 完全一致，非桌面来源不能被路由到 native。检查时拿不到来源，所以在认领这一刻按 safe 重新规划（只读）
             safe = self._plan_of(
                 sess.project_id,

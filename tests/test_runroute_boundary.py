@@ -1,4 +1,4 @@
-"""V2 PR2：运行前路由的边界——零执行、只在用户发起的路径里被调用（ADR 0129）。
+"""V2 PR2：运行前路由的边界——零执行、只在用户发起的路径里被调用（ADR 0133）。
 
 * `runroute` 只做 `ast.parse` 与文本运算：不 import 用户代码、不起进程、不连网络、不 `find_spec`；
 * 被动扫描（项目打开 / 刷新 / 清单）一次都不调它；除准备计划（`preparation`）外没有任何模块 import 它；
@@ -88,7 +88,9 @@ def test_routing_a_hostile_script_executes_nothing_and_touches_no_process_or_imp
 
     assert calls == []
     assert list(sentinel.iterdir()) == []
-    assert route.execution == "native"  # 它确实读懂了这份脚本，只是没执行它
+    # 它确实读懂了这份脚本（R1 证据在），只是没执行它；脚本里有守卫操作（Path.write_text），伤害闸门把路由留在 safe
+    assert "R1" in {e["rule"] for e in route.evidence}
+    assert route.execution == "safe" and route.reason == runroute.REASON_GUARDED_FILE_OPS
 
 
 def test_runroute_imports_only_the_standard_library():
@@ -99,6 +101,12 @@ def test_runroute_imports_only_the_standard_library():
             mods |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom):
             assert node.level == 0, "runroute 不 import 兄弟模块（纯标准库、不进 import 环）"
+            if node.module == "tavotto.engine" and {a.name for a in node.names} <= {
+                "figcapture",
+                "scriptargs",
+            }:
+                # 仅有的例外：守卫操作表 `BlockedFileOps.OPS` 的出处，与 PEP 263 源码解码的唯一实现（两者都只依赖标准库，不会成环）
+                continue
             mods.add((node.module or "").split(".")[0])
     stdlib = set(sys.stdlib_module_names)
     assert mods <= stdlib, mods - stdlib
@@ -121,7 +129,7 @@ def test_only_the_preparation_layer_imports_runroute():
                 a.name.endswith("runroute") for a in node.names
             ):
                 importers.append(path.relative_to(SRC).as_posix())
-    assert sorted(set(importers)) == ["engine/preparation.py", "engine/prepsession.py"]
+    assert sorted(set(importers)) == ["engine/preparation.py"]
 
 
 def test_passive_project_scanning_never_calls_the_router(tmp_path, monkeypatch):

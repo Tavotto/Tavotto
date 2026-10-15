@@ -1,4 +1,4 @@
-"""运行前路由（V2 PR2，ADR 0129）：用户在桌面「打开并运行」一份脚本时，**执行之前**凭静态证据挑 `safe` 还是 `native`。
+"""运行前路由（V2 PR2，ADR 0133）：用户在桌面「打开并运行」一份脚本时，**执行之前**凭静态证据挑 `safe` 还是 `native`。
 
 只回答一个问题：这份脚本第一次就该用保留文件语义的 native 跑吗？默认答案是 `safe`（普通绘图）。只有**高置信度**才直达
 native；其余一律 safe，由运行期账本（`BlockedFileOps`）观察，真被拦下再由 PR1 的同会话回退接手（`execpolicy`）。
@@ -29,10 +29,14 @@ import dataclasses
 import ntpath
 import os
 import posixpath
+import re
 import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
+
+# figcapture：守卫操作表的唯一出处（BlockedFileOps.OPS），见 _guarded_call；scriptargs：按 PEP 263 解码源码的唯一实现
+from tavotto.engine import figcapture, scriptargs
 
 # ---------------------------------------------------------------- 词汇（闭集）
 EXECUTION_SAFE = "safe"
@@ -48,6 +52,8 @@ REASON_PREVIOUS_SUCCESS = "previous_successful_profile"
 REASON_USER_EXPLICIT = "user_explicit_profile"
 #: 运维开关 `TAVOTTO_EXECUTION_FALLBACK=0` 关着：整个 V2 的自动选语义都停（直达 native 与回退同一个开关）
 REASON_OPERATOR_DISABLED = "operator_disabled"
+#: 伤害闸门：脚本里出现 safe 守卫会拦的文件操作形状，运行前不直达 native（ADR 0133「伤害闸门」）
+REASON_GUARDED_FILE_OPS = "guarded_file_ops_present"
 REASONS = (
     REASON_ORDINARY_PLOT,
     REASON_SAVEFIG_READBACK,
@@ -55,6 +61,7 @@ REASONS = (
     REASON_PREVIOUS_SUCCESS,
     REASON_USER_EXPLICIT,
     REASON_OPERATOR_DISABLED,
+    REASON_GUARDED_FILE_OPS,
 )
 
 CONFIDENCE_HIGH = "high"
@@ -126,15 +133,12 @@ _NUMPY_WRITE = frozenset({"save", "savez", "savez_compressed", "savetxt"})
 _DATA_WRITE_TAILS = frozenset(
     {"to_csv", "to_excel", "to_parquet", "to_json", "to_pickle", "to_hdf", "to_feather", "tofile"}
 )
-_PATH_CTORS = frozenset(
-    {
-        "pathlib.Path",
-        "pathlib.PurePath",
-        "pathlib.PosixPath",
-        "pathlib.WindowsPath",
-        "pathlib.PurePosixPath",
-        "pathlib.PureWindowsPath",
-    }
+#: 只认与本机路径语义一致的构造器：另一种风格的纯路径（POSIX 上的 `PureWindowsPath` 序列化成 `a\\b.png`）
+#: 与按字面折叠的文本不是同一个文件，不认（Codex #1034 r4284099949）
+_PATH_CTORS = frozenset({"pathlib.Path", "pathlib.PurePath"}) | (
+    frozenset({"pathlib.WindowsPath", "pathlib.PureWindowsPath"})
+    if os.sep == "\\"
+    else frozenset({"pathlib.PosixPath", "pathlib.PurePosixPath"})
 )
 _FILE_LIKE_CTORS = frozenset({"io.BytesIO", "io.StringIO"})
 _STR_PASS = frozenset(
@@ -165,8 +169,16 @@ def _is_abs_text(text: str) -> bool:
 
 
 def _norm(text: str) -> str:
-    out = posixpath.normpath(text.replace("\\", "/")) if text else "."
-    return out
+    """规范化路径文本。证明不了文件系统语义的一律变成 `<mixed>`（比较时 = 不可比，不升格；Codex #1034 r4283860490）：
+    POSIX 上反斜杠是文件名字符而不是分隔符；任何 `..` 段经符号链接可能指向别处，不能按字面折叠。"""
+    if not text:
+        return "."
+    if "\\" in text and os.sep != "\\":  # 只有 Windows 的分隔符是反斜杠
+        return "<mixed>"
+    t = text.replace("\\", "/")
+    if ".." in t.split("/"):
+        return "<mixed>"
+    return posixpath.normpath(t)
 
 
 def _from_text(text: str, *, pathobj: bool = False) -> PathVal | None:
@@ -195,7 +207,11 @@ def _parent(v: PathVal) -> PathVal | None:
     if v.base == "abs":
         parent = posixpath.dirname(v.text) or v.text
         return PathVal("abs", parent, v.pathobj)
-    return PathVal(v.base, _norm(posixpath.join(v.text, "..")), v.pathobj)
+    # 字面取上级（`Path.parent` 的语义），不经 `..` 段：`_norm` 把含 `..` 的路径视为证明不了
+    parent = posixpath.dirname(v.text.rstrip("/"))
+    if v.text in (".", ""):
+        return PathVal(v.base, "<mixed>", v.pathobj)
+    return PathVal(v.base, parent or ".", v.pathobj)
 
 
 # ---------------------------------------------------------------- 事实
@@ -213,6 +229,9 @@ class Event:
     certain: bool = True
     #: 在会无条件执行的位置（模块 / 函数体顶层语句序列；不在条件 / 循环 / try / with 体 / lambda / 推导式里）
     top: bool = True
+    #: 调用表达式的结束坐标：嵌在它实参里的调用先于它求值（`savefig(p, metadata={"T": open(p).read()})`）
+    end_line: int = 0
+    end_col: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -225,6 +244,10 @@ class ScriptFacts:
     parse_ms: float = 0.0
     #: 模块执行时会真走到的作用域（模块顶层、类体，以及被可达代码按名字调用到的函数体）。其余作用域里的证据不够直达 native
     live_scopes: frozenset[int] = frozenset()
+    #: 全文件任何位置（含函数体 / 条件 / 类体 / lambda，不做可达性推导）出现 safe 守卫会拦的文件操作调用形状
+    guarded_ops: bool = False
+    #: 脚本里任何位置改了当前目录（`os.chdir` / `os.fchdir` / `contextlib.chdir`…）：cwd 相对的证据前后可能不是同一个目录
+    cwd_changes: bool = False
 
 
 _EMPTY = ScriptFacts(parsed=False)
@@ -454,7 +477,12 @@ class _Collector:
             for part in node.values:
                 if isinstance(part, ast.Constant) and isinstance(part.value, str):
                     out.append(part.value)
-                elif isinstance(part, ast.FormattedValue) and part.format_spec is None:
+                elif (
+                    isinstance(part, ast.FormattedValue)
+                    and part.format_spec is None
+                    and part.conversion
+                    in (-1, ord("s"))  # `!r` / `!a` 会加引号 / 转义，不按原值折叠
+                ):
                     got = self.string(part.value, scope, depth + 1)
                     if got is None:
                         got = self._text_of(part.value, scope, depth + 1)
@@ -599,10 +627,225 @@ class _Collector:
                 new = (
                     posixpath.join(base, tail)
                     if name == "with_name"
-                    else (root if tail else recv.text) + tail
+                    else root + tail  # `with_suffix("")` 去掉后缀（pathlib 语义），不是保留原名
                 )
                 return PathVal(recv.base, _norm(new), True)
         return None
+
+    # ---- 伤害闸门
+    #: 守卫表同源：`BlockedFileOps.OPS` 减去 savefig（safe worker 守卫记账的操作名）
+    _GUARDED = tuple(op for op in figcapture.BlockedFileOps.OPS if op != "savefig")
+    #: 带模块前缀的限定名（`os.remove` / `shutil.rmtree`…）
+    _GUARDED_QUALIFIED = frozenset(op for op in _GUARDED if op.split(".")[0] in ("os", "shutil"))
+    #: 方法名太泛（`list.remove` / `str.replace` / `obj.move`）的，只认限定名（`replace` 另按单实参判）
+    _GENERIC_TAILS = frozenset(
+        {"remove", "replace", "move", "rename"}
+    )  # `df.rename(columns=…)` 另按单实参判
+    _GUARDED_TAILS = frozenset(op.rsplit(".", 1)[1] for op in _GUARDED) - _GENERIC_TAILS
+
+    _MODE_LIKE = re.compile(r"[rwxabtU+]+")
+    _READONLY_OPEN_ROOTS = ("PIL.",)
+    #: 方法名 / 限定名末段即可判定为写出的调用（savefig 不在内：它是证据）
+    _WRITER_TAILS = (
+        _NUMPY_WRITE
+        | _DATA_WRITE_TAILS
+        | frozenset(
+            {
+                "save",
+                "imsave",
+                "imwrite",
+                "savemat",
+                "to_netcdf",
+                "to_zarr",
+                "to_stata",
+                "to_sql",
+                "write_image",
+                "write_html",
+                "symlink_to",
+                "hardlink_to",
+                "chmod",
+                "rmdir",
+                "unlink",
+                "write_text",
+                "write_bytes",
+                "mkdir",
+                "touch",
+            }
+        )
+    )
+    #: 只认限定名的写 / 改元数据调用
+    _WRITER_QUALIFIED = frozenset(
+        {
+            "os.write",
+            "os.truncate",
+            "os.ftruncate",
+            "os.symlink",
+            "os.link",
+            "os.chmod",
+            "os.chown",
+            "os.utime",
+            "os.mkfifo",
+            "os.renames",
+            "os.removedirs",
+            "os.mkdir",
+            "os.makedirs",
+            "sqlite3.connect",
+            "dbm.open",
+            "shelve.open",
+        }
+    )
+    _WRITER_PREFIXES = ("shutil.copy", "shutil.make_archive", "shutil.unpack_archive")
+    #: 第二个实参是 mode 时这些字符串方法会撞形（`s.replace("x", "a")`），不按 mode 判
+    _STR_METHODS = frozenset(
+        {
+            "replace",
+            "split",
+            "rsplit",
+            "strip",
+            "join",
+            "count",
+            "find",
+            "index",
+            "get",
+            "partition",
+        }
+    )
+
+    def _mode_arg_writes(self, node: ast.Call, func: ast.expr) -> bool:
+        """任意调用的 `mode=` 实参，或第二个位置实参是 mode 样字面量（`ZipFile(p, "w")` / `h5py.File(p, "a")` /
+        `tarfile.open(p, "w:gz")` / `gzip.open(p, "wb")`），且可能写：按写出算。"""
+        for k in node.keywords:
+            if (
+                k.arg == "mode"
+                and isinstance(k.value, ast.Constant)
+                and isinstance(k.value.value, str)
+            ):
+                if self._mode_writes(k.value):
+                    return True
+        if isinstance(func, ast.Attribute) and func.attr in self._STR_METHODS:
+            return False
+        if len(node.args) > 1:
+            a = node.args[1]
+            if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                head = a.value.split(":", 1)[0]
+                if head and self._MODE_LIKE.fullmatch(head) and any(c in head for c in "wax+"):
+                    return True
+        return False
+
+    @staticmethod
+    def _mode_writes(arg: ast.expr | None) -> bool:
+        """mode 实参是否可能写：字面量含 `w` / `a` / `x` / `+`；不是字面量（判不了）按「可能写」算。"""
+        if arg is None:
+            return False
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return any(c in arg.value for c in "wax+")
+        return True
+
+    def _write_open(self, node: ast.Call, q: str | None) -> bool:
+        func = node.func
+        if any(isinstance(a, ast.Starred) for a in node.args) or any(
+            k.arg is None for k in node.keywords
+        ):
+            return (
+                (isinstance(func, ast.Attribute) and func.attr == "open")
+                or (isinstance(func, ast.Name) and func.id == "open")
+                or q in _BUILTIN_OPEN
+                or q == "os.open"
+            )
+        kw = {k.arg: k.value for k in node.keywords}
+        if q == "os.open":
+            flags = node.args[1] if len(node.args) > 1 else kw.get("flags")
+            return not (isinstance(flags, ast.Attribute) and flags.attr == "O_RDONLY")
+        if q in _BUILTIN_OPEN or (isinstance(func, ast.Name) and func.id == "open"):
+            return self._mode_writes(node.args[1] if len(node.args) > 1 else kw.get("mode"))
+        if isinstance(func, ast.Attribute) and func.attr == "open":
+            if q is not None and q.startswith(self._READONLY_OPEN_ROOTS):
+                return False  # Image.open 只读
+            if "mode" in kw:
+                return self._mode_writes(kw["mode"])
+            if node.args:  # Path.open(mode) / obj.open(path)：首个实参是 mode 样的字面量才按 mode 判，路径样字面量是只读
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    return bool(self._MODE_LIKE.fullmatch(first.value)) and self._mode_writes(first)
+                return True
+        return False
+
+    def _guarded_call(self, node: ast.Call) -> bool:
+        func = node.func
+        names = {self.qual(func)}
+        parts: list[str] = []
+        cur = func
+        while isinstance(cur, ast.Attribute):
+            parts.append(cur.attr)
+            cur = cur.value
+        if isinstance(cur, ast.Name):
+            names.add(".".join([cur.id, *reversed(parts)]))  # 头名被重绑（qual 不认）也按字面名算
+        if names & self._GUARDED_QUALIFIED:
+            return True
+        # 写入：safe 模式落到沙箱、native 落到真实目录，这个差异本身就是伤害面（ADR 0133「伤害闸门」）；savefig 不算（它是证据）
+        q = self.qual(func)
+        if names & {"os.mkdir", "os.makedirs"} or any(
+            n.startswith("shutil.copy") for n in names if n
+        ):
+            return True
+        if isinstance(func, ast.Attribute) and func.attr in ("write_bytes", "mkdir", "touch"):
+            return True
+        if self._write_open(node, q):
+            return True
+        # 已知写出器（与事件收集里 `_NUMPY_WRITE` / `_DATA_WRITE_TAILS` 同一份集合，外加常见科学 / 数据库写出口），按方法名或
+        # 限定名末段认，不看接收者是谁——宁宽（Codex #1034 r4283254482）
+        last = (q or "").rsplit(".", 1)[-1] if q else None
+        tails = {func.attr} if isinstance(func, ast.Attribute) else set()
+        if last:
+            tails.add(last)
+        if tails & self._WRITER_TAILS:
+            return True
+        if names & self._WRITER_QUALIFIED or any(
+            n.startswith(self._WRITER_PREFIXES) for n in names if n
+        ):
+            return True
+        if self._mode_arg_writes(node, func):
+            return True
+        # `Path.rename(target)`：恰一个位置实参、无关键字；`df.rename(columns=…)` 不算
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "rename"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            return True
+        if isinstance(func, ast.Attribute):
+            if func.attr in self._GUARDED_TAILS:
+                return True
+            # `Path.replace(target)`：恰一个实参；`str.replace(a, b)` 至少两个
+            if (
+                func.attr == "replace"
+                and "os.replace" in self._GUARDED_QUALIFIED
+                and len(node.args) + len(node.keywords) == 1
+            ):
+                return True
+        return False
+
+    def has_cwd_changes(self) -> bool:
+        """宁宽：任何名为 `chdir` / `fchdir` 的调用（方法名、限定名末段或裸名）都算改了当前目录（Codex #1034 r4283860478）。"""
+        for n in ast.walk(self.tree):
+            if not isinstance(n, ast.Call):
+                continue
+            f = n.func
+            name = (
+                f.attr
+                if isinstance(f, ast.Attribute)
+                else f.id
+                if isinstance(f, ast.Name)
+                else None
+            )
+            q = self.qual(f) or ""
+            if name in ("chdir", "fchdir") or q.rsplit(".", 1)[-1] in ("chdir", "fchdir"):
+                return True
+        return False
+
+    def has_guarded_ops(self) -> bool:
+        return any(isinstance(n, ast.Call) and self._guarded_call(n) for n in ast.walk(self.tree))
 
     # ---- 第二遍：事件
     def collect(self) -> None:
@@ -619,9 +862,48 @@ class _Collector:
         ast.GeneratorExp,
     )
 
-    @staticmethod
-    def _main_guard(test: ast.expr) -> bool:
-        """`if __name__ == "__main__":`——作为脚本运行时恒真，它的 body 按无条件处理（几乎所有脚本都这么写入口）。"""
+    def _name_rebound(self) -> bool:
+        """模块任何位置对 `__name__` 有绑定（赋值 / augassign / del / walrus / for·with·except 目标 / 形参 / def·class /
+        import as / global·nonlocal / match 捕获），或碰了 `globals()`（可写 `__name__`）：宁宽。"""
+        cached = getattr(self, "_name_rebound_cache", None)
+        if cached is not None:
+            return cached
+        hit = False
+        for n in ast.walk(self.tree):
+            if isinstance(n, ast.Name) and (
+                (n.id == "__name__" and not isinstance(n.ctx, ast.Load))
+                or n.id in ("globals", "vars")
+            ):
+                hit = True
+            elif isinstance(n, (ast.Global, ast.Nonlocal)) and "__name__" in n.names:
+                hit = True
+            elif isinstance(n, ast.arg) and n.arg == "__name__":
+                hit = True
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and (
+                n.name == "__name__"
+            ):
+                hit = True
+            elif isinstance(n, ast.ExceptHandler) and n.name == "__name__":
+                hit = True
+            elif isinstance(n, ast.alias) and (n.asname or n.name.split(".")[0]) == "__name__":
+                hit = True
+            elif (
+                isinstance(n, (ast.MatchAs, ast.MatchStar))
+                and getattr(n, "name", None) == "__name__"
+            ):
+                hit = True
+            elif isinstance(n, ast.MatchMapping) and n.rest == "__name__":
+                hit = True
+            if hit:
+                break
+        self._name_rebound_cache = hit
+        return hit
+
+    def _main_guard(self, test: ast.expr) -> bool:
+        """`if __name__ == "__main__":`——作为脚本运行时恒真，它的 body 按无条件处理（几乎所有脚本都这么写入口）。
+        前提是 `__name__` 在模块里从没被绑定过（改写之后守卫体可能永远走不到，不再给例外）。"""
+        if self._name_rebound():
+            return False
         return (
             isinstance(test, ast.Compare)
             and isinstance(test.left, ast.Name)
@@ -635,7 +917,7 @@ class _Collector:
 
     def _walk(self, node: ast.AST, scope: _Scope, branches: tuple, top: bool = True) -> None:
         """`top`：这个节点是否在「会无条件执行」的位置（模块 / 函数体的顶层语句序列；不在任何条件分支、循环、try、with 体、
-        lambda / 推导式 / 三元里）。只有 `top` 的事件才够格升 high（ADR 0129「保守边界」）。"""
+        lambda / 推导式 / 三元里）。只有 `top` 的事件才够格升 high（ADR 0133「保守边界」）。"""
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             inner = self.scopes.get(id(node), scope)
             for dec in node.decorator_list:
@@ -750,6 +1032,21 @@ class _Collector:
             return any(self._terminates(s, inner_scope, False, seen) for s in stmt.body)
         return False
 
+    @staticmethod
+    def _runs_on_call(node: ast.AST) -> bool:
+        """裸调用 `f()` 会立刻执行函数体：普通 `def`（不是 `async def`，体内——不含嵌套 def / lambda / 类——没有 `yield`）。"""
+        if not isinstance(node, ast.FunctionDef):
+            return not isinstance(node, ast.AsyncFunctionDef)  # 类体等照旧
+        stack = list(node.body)
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.Yield, ast.YieldFrom)):
+                return False
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+                continue
+            stack.extend(ast.iter_child_nodes(n))
+        return True
+
     def _call_always_raises(self, func: ast.AST, scope: _Scope, seen: frozenset) -> bool:
         """`f()`：f 是本模块唯一绑定的 `def`，函数体顶层序列在任何 `return` 之前无条件 raise / exit。"""
         if not isinstance(func, ast.Name) or self.bind_total.get(func.id) != 1:
@@ -767,7 +1064,7 @@ class _Collector:
                     not isinstance(node, ast.FunctionDef)
                     or node.decorator_list
                     or id(node) in seen
-                    or any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
+                    or not self._runs_on_call(node)
                 ):
                     return False
                 seen = seen | {id(node)}
@@ -813,6 +1110,9 @@ class _Collector:
                         # 名字在模块任何地方被重新绑定过（赋值 / 再次 def / 形参 / import 同名）：调用的未必是这个 def，不证明可达
                         if self.bind_total.get(name) != 1 or name in self.aliases:
                             target = None
+                        # `async def` / 生成器：裸调用只造出协程 / 生成器对象，不执行函数体；await / 迭代是否发生不推导
+                        if target is not None and not self._runs_on_call(target.node):
+                            target = None
                         if target is not None and target.ident not in live:
                             live.add(target.ident)
                             changed = True
@@ -843,6 +1143,8 @@ class _Collector:
                 dest=dest,
                 certain=certain,
                 top=self._top,
+                end_line=getattr(node, "end_lineno", None) or node.lineno,
+                end_col=getattr(node, "end_col_offset", None) or node.col_offset,
             )
         )
 
@@ -1023,6 +1325,15 @@ class _Collector:
                 at(_E_WRITE, tail, self.value(target, scope))
 
 
+def _collect_bytes(raw: bytes) -> ScriptFacts:
+    """按 Python 自己的源码编码规则（PEP 263 声明 / BOM / 默认 UTF-8）解码再分析；解不开 = 看不懂 = 不路由（未解析，走 safe）。
+    不用 replacement 字符糊过去：那会把 Latin-1 的 `café` / `cañ` 折成同一个路径，伪造出读回（Codex #1034 r4283569553）。"""
+    text = scriptargs.decode_source(raw)
+    if text is None:
+        return ScriptFacts(parsed=False)
+    return _collect(text)
+
+
 def _collect(source: str) -> ScriptFacts:
     started = time.perf_counter()
     try:
@@ -1038,6 +1349,8 @@ def _collect(source: str) -> ScriptFacts:
         parsed=True,
         events=tuple(sorted(col.events, key=lambda e: (e.line, e.col))),
         live_scopes=col.live_scopes(),
+        guarded_ops=col.has_guarded_ops(),
+        cwd_changes=col.has_cwd_changes(),
         parse_ms=(time.perf_counter() - started) * 1000.0,
     )
 
@@ -1070,10 +1383,10 @@ def facts_of_file(path: str | os.PathLike) -> ScriptFacts:
         facts = ScriptFacts(parsed=False, too_large=True)
     else:
         try:
-            source = Path(real).read_text(encoding="utf-8", errors="replace")
+            raw = Path(real).read_bytes()
         except OSError:
             return _EMPTY
-        facts = _collect(source)
+        facts = _collect_bytes(raw)
     with _cache_lock:
         _cache[key] = facts
         while len(_cache) > CACHE_SIZE:
@@ -1195,7 +1508,11 @@ def _exclusive(a: Event, b: Event) -> bool:
 
 
 def _after(later: Event, earlier: Event) -> bool:
-    return (later.line, later.col) > (earlier.line, earlier.col) and not _exclusive(earlier, later)
+    """`later` 在 `earlier` 之后求值。嵌在 `earlier` 调用表达式里的（它的实参）先于它求值，不算之后（Codex #1034 r4283403948）。"""
+    start = (later.line, later.col)
+    if start <= (earlier.end_line, earlier.end_col):
+        return False
+    return start > (earlier.line, earlier.col) and not _exclusive(earlier, later)
 
 
 # ---------------------------------------------------------------- 决定
@@ -1316,6 +1633,22 @@ def decide(
         return Route(EXECUTION_SAFE, REASON_ORDINARY_PLOT, CONFIDENCE_LOW, blind_spots=(blind,))
     evidence, dynamic, high_r1, high_r3 = _static(facts, _where(project_root, script, cwd_mode))
     blind = BLIND_SPOTS
+    if (high_r1 or high_r3) and facts.guarded_ops:
+        # 伤害闸门：存在 safe 守卫会拦的操作时，不为「可达性证明」赌——直达 native 会让它们真实执行。
+        # 静默回退（ADR 0127）兜住真需要 native 的脚本；证据照实带出
+        return Route(
+            EXECUTION_SAFE,
+            REASON_GUARDED_FILE_OPS,
+            CONFIDENCE_MEDIUM,
+            tuple(evidence),
+            dynamic,
+            blind,
+        )
+    if (high_r1 or high_r3) and facts.cwd_changes:
+        # 脚本改了当前目录：cwd 相对的「存」与「读」可能不在同一个目录，证明不了是同一个文件——不直达，走 safe + 回退
+        return Route(
+            EXECUTION_SAFE, REASON_ORDINARY_PLOT, CONFIDENCE_MEDIUM, tuple(evidence), dynamic, blind
+        )
     if high_r1:
         return Route(
             EXECUTION_NATIVE,
@@ -1352,12 +1685,23 @@ def route_for_file(
     policy: str = POLICY_COMPATIBLE,
     last_success: str | None = None,
     operator_enabled: bool = True,
+    source: bytes | None = None,
 ) -> Route:
     """`facts_of_file` + `decide`，并量总耗时（`Route.elapsed_ms`，本地诊断 / 基准读；不进遥测）。
     用户显式 / 运维关闭 / 沿用上次成功这三条不需要读脚本，直接决定。"""
     started = time.perf_counter()
     needs_facts = policy != POLICY_SAFE_ONLY and operator_enabled and last_success not in EXECUTIONS
-    facts = facts_of_file(script_path) if needs_facts else None
+    if not needs_facts:
+        facts = None
+    elif source is not None:
+        # 调用方已读好的字节（与计划的 revision 核对同一份，见 preparation.plan_for）：分析它，不再读第二遍
+        facts = (
+            ScriptFacts(parsed=False, too_large=True)
+            if len(source) > MAX_SOURCE_BYTES
+            else _collect_bytes(source)
+        )
+    else:
+        facts = facts_of_file(script_path)
     route = decide(
         facts,
         cwd_mode=cwd_mode,

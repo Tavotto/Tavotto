@@ -1,11 +1,11 @@
-"""V2 PR2 验收：真服务子进程 + 真用户 Python + 真文件，穿过**真实公共入口**（准备会话）的运行前路由（ADR 0129）。
+"""V2 PR2 验收：真服务子进程 + 真用户 Python + 真文件，穿过**真实公共入口**（准备会话）的运行前路由（ADR 0133）。
 
 独立可观测事实只来自脚本自己写在项目外的文件（`compute.log`：脚本每执行一遍写一个字符）与项目里真实发生的文件操作，
 不来自被测接口的回显。**这里不是真桌面窗口**：窗口 / Tauri 壳 / Windows 真机归 P10。
 
 * 普通绘图 → safe 一次成功；
 * `savefig` → `Image.open` 读回 → 直达 native，脚本只执行 1 次（safe 不白跑）；
-* 临时文件 → `os.replace` → 读回（路径可静态折叠）→ 直达 native，1 次，`os.replace` 真实发生；
+* 临时文件 → `os.replace` → 读回：含守卫操作，伤害闸门留在 safe，被拦后同会话回退 native，共 2 次，`os.replace` 最终真实发生；
 * 动态路径（路由看不出）→ safe 被拦 → 同会话回退 native，共 2 次；
 * `safe_only` 项目 → 不走 native；
 * 上次 native 成功的脚本再次运行 → 不沿用 native（记录没观察过 helper / 数据），回到静态路由。
@@ -30,8 +30,10 @@ from test_execution_fallback_e2e import (
 
 pytestmark = nativekit.needs_user_python
 
+#: 执行次数：脚本每跑一遍写一个字符。写文件的是计数仪器而不是被测脚本形状——用 getattr 取 open，免得伤害闸门
+#: （脚本里出现写入就不直达 native）把每个 e2e 脚本都拦成 safe；动态取名与非字面 mode（`chr(97)` = "a"）本来就在闸门的静态可见范围之外（#1086）
 COUNT = """\
-with open({log!r}, "a") as f:   # 执行次数：脚本每跑一遍写一个字符
+with getattr(__import__("builtins"), "op" + "en")({log!r}, chr(97)) as f:
     f.write("x")
 """
 HEAD = """\
@@ -131,19 +133,22 @@ def test_savefig_then_image_open_goes_straight_to_native_and_executes_once(tmp_p
         assert len(live) == 1 and live[0]["owner"] == "desktop"
 
 
-def test_tmp_write_replace_then_read_goes_straight_to_native_and_replaces_for_real(tmp_path):
+def test_tmp_write_replace_then_read_is_gated_to_safe_and_falls_back_to_native(tmp_path):
+    """伤害闸门（ADR 0133）：含守卫操作（`os.replace`）的脚本运行前不直达 native；safe 被拦后由 0127 同会话静默回退，
+    `os.replace` 最终在 native 里真实发生。"""
     proj, log = _project(tmp_path, REPLACE)
     with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:
         first = _create(app)
         route = first["plan"]["route"]
-        assert (route["execution"], route["reason"]) == ("native", "native_file_semantics_required")
-        assert route["required_execution"] == "preserve_file_semantics"
+        assert (route["execution"], route["reason"]) == ("safe", "guarded_file_ops_present")
         final = _settled(app, _run(app, first))
         assert final["phase"] == "completed", final
         time.sleep(2)
-        assert _runs(log) == 1
-        assert _history(final) == [("native", "succeeded")]
-        assert (proj / "cache.csv").read_text() == "2" and not (proj / "cache.tmp").exists()
+        assert _runs(log) == 2, "safe 一次（被拦）+ native 一次"
+        assert _history(final) == [("safe", "blocked"), ("native", "succeeded")]
+        assert (proj / "cache.csv").read_text(encoding="utf-8") == "2" and not (
+            proj / "cache.tmp"
+        ).exists()
 
 
 def test_a_dynamic_path_runs_safe_first_then_falls_back_to_native(tmp_path):
@@ -200,7 +205,9 @@ def test_a_native_success_is_not_reused_while_its_helper_inputs_were_never_obser
         assert [h["profile"] for h in settled["attempt_history"]][-2:] == ["safe", "native"]
 
         # 改了脚本：照旧回到静态判断
-        (proj / "fig.py").write_text((proj / "fig.py").read_text() + "\n# edit\n", encoding="utf-8")
+        (proj / "fig.py").write_text(
+            (proj / "fig.py").read_text(encoding="utf-8") + "\n# edit\n", encoding="utf-8"
+        )
         assert _reopen(app)["plan"]["route"]["reason"] == "ordinary_plot"
 
 

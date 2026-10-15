@@ -1,4 +1,4 @@
-"""V2 PR2：运行前路由 `runroute`（ADR 0129）的规则向量、优先级与同源钉。
+"""V2 PR2：运行前路由 `runroute`（ADR 0133）的规则向量、优先级与同源钉。
 
 向量表驱动：脚本片段 → 期望的路由 / 命中规则。每条「高置信直达 native」的向量对应一个运行期会被拦的形状
 （`BlockedFileOps` 的观察：`tests/test_runroute_consistency.py` 用真 safe worker 逐条核对静态与运行期不分叉）。
@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+import os
 import textwrap
 
 import pytest
@@ -16,8 +18,17 @@ ROOT = "/proj"
 SCRIPT = "figs/fig.py"
 
 
-def _route(src, *, cwd=runroute.CWD_SANDBOX, **kw):
+def _ungated(src):
+    """规则引擎向量用：抹掉伤害闸门的事实（见 `_route`）。"""
+    return dataclasses.replace(runroute.facts_of(src), guarded_ops=False)
+
+
+def _route(src, *, cwd=runroute.CWD_SANDBOX, gate=False, **kw):
+    """`gate=False`：这些向量测的是 R1–R4 **规则引擎**本身，所以抹掉伤害闸门的事实（ADR 0133「伤害闸门」）；
+    闸门自己的用例显式 `gate=True`。生产路径永远带闸门：含守卫操作的脚本（R3 的 `os.replace` 就是）一律不直达 native。"""
     facts = runroute.facts_of(textwrap.dedent(src))
+    if not gate:
+        facts = dataclasses.replace(facts, guarded_ops=False)
     return runroute.decide(facts, cwd_mode=cwd, project_root=ROOT, script=SCRIPT, **kw)
 
 
@@ -579,7 +590,7 @@ def test_a_large_script_is_analyzed_in_milliseconds_not_seconds():
     )
     start = runroute.time.perf_counter()
     runroute.decide(runroute.facts_of(body), cwd_mode="sandbox", project_root=ROOT, script=SCRIPT)
-    assert runroute.time.perf_counter() - start < 5.0  # 上限护栏，不是基准；基准数字记在 ADR 0129
+    assert runroute.time.perf_counter() - start < 5.0  # 上限护栏，不是基准；基准数字记在 ADR 0133
 
 
 # ---------------------------------------------------------------- 同源钉
@@ -963,7 +974,7 @@ os.replace("out/t", "out/f")
 open("out/f").read()
 """
     route = runroute.decide(
-        runroute.facts_of(textwrap.dedent(src)),
+        _ungated(textwrap.dedent(src)),
         cwd_mode="project_root",
         project_root=proj,
         script="fig.py",
@@ -1030,7 +1041,7 @@ open({final!r}).read()
 
 def _win_route(src, cwd=runroute.CWD_PROJECT_ROOT):
     return runroute.decide(
-        runroute.facts_of(src), cwd_mode=cwd, project_root=r"C:\proj", script=r"figs\fig.py"
+        _ungated(src), cwd_mode=cwd, project_root=r"C:\proj", script=r"figs\fig.py"
     )
 
 
@@ -1322,3 +1333,392 @@ NOT_TERMINATORS = [
 def test_things_that_are_not_provable_terminators_keep_the_real_r1_high(name, pre):
     route = _route(MPL + pre + TAIL)
     assert route.execution == "native" and "R1" in _rules(route), route.public()
+
+
+# ---- #1034 第六轮：async def / 生成器的裸调用不执行函数体
+HELPER_BODY = '    plt.savefig("x.png")\n    open("x.png", "rb").read()\n'
+NOT_RUN_ON_CALL = [
+    ("async_def", "async def helper():\n" + HELPER_BODY + "helper()\n"),
+    ("generator", "def helper():\n    yield 1\n" + HELPER_BODY + "helper()\n"),
+    ("yield_from", "def helper():\n    yield from []\n" + HELPER_BODY + "helper()\n"),
+    (
+        "async_def_run",
+        "import asyncio\nasync def helper():\n" + HELPER_BODY + "asyncio.run(helper())\n",
+    ),
+]
+
+
+@pytest.mark.parametrize("name,src", NOT_RUN_ON_CALL, ids=[c[0] for c in NOT_RUN_ON_CALL])
+def test_a_bare_call_of_an_async_or_generator_function_does_not_make_its_body_live(name, src):
+    route = _route(MPL + src)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+
+
+def test_a_nested_yield_does_not_make_the_outer_function_a_generator():
+    route = _route(
+        MPL
+        + "def helper():\n    def inner():\n        yield 1\n    f = lambda: (yield)\n"
+        + HELPER_BODY
+        + "helper()\n"
+    )
+    assert route.execution == "native"
+
+
+def test_a_call_to_an_async_or_generator_function_is_not_a_terminator():
+    for kind in (
+        "async def die():\n    raise SystemExit\n",
+        "def die():\n    raise SystemExit\n    yield\n",
+    ):
+        route = _route(MPL + kind + "die()\n" + TAIL)
+        assert route.execution == "native", kind
+
+
+# ---- 伤害闸门（#1034 第七轮）：存在 safe 守卫会拦的文件操作，运行前一律不直达 native
+GATED = [
+    # Codex r4282091155：条件绑定路径 + 被守卫的 unlink
+    (
+        "conditional_path_binding",
+        MPL
+        + 'from pathlib import Path\nPath("victim").unlink()\n'
+        + 'if len(__import__("sys").argv) > 1:\n    p = "x.png"\nelse:\n    raise SystemExit\n'
+        + "plt.savefig(p)\nopen(p).read()\n",
+    ),
+    ("plain_write_then_readback", MPL + 'open("victim", "w").write("x")\n' + TAIL),
+    ("path_unlink_in_a_dead_function", MPL + "def f(p):\n    p.unlink()\n" + TAIL),
+    (
+        "path_unlink_attribute",
+        MPL + 'from pathlib import Path\nPath("v").unlink(missing_ok=True)\n' + TAIL,
+    ),
+    ("os_rename", MPL + 'import os\nos.rename("a", "b")\n' + TAIL),
+    ("os_unlink_from_import", MPL + "from os import unlink as rm\nrm('a')\n" + TAIL),
+    ("os_rmdir", MPL + 'import os\nos.rmdir("d")\n' + TAIL),
+    ("shutil_rmtree", MPL + 'import shutil\nshutil.rmtree("d")\n' + TAIL),
+    ("shutil_move_from_import", MPL + 'from shutil import move\nmove("a", "b")\n' + TAIL),
+    ("path_replace_one_arg", MPL + 'from pathlib import Path\nPath("a").replace("b")\n' + TAIL),
+    ("path_write_bytes", MPL + 'from pathlib import Path\nPath("a").write_bytes(b"")\n' + TAIL),
+    ("path_write_text", MPL + 'from pathlib import Path\nPath("a").write_text("x")\n' + TAIL),
+    ("rebound_os_head", MPL + 'import os\nos = os\nos.remove("a")\n' + TAIL),
+    ("inside_lambda", MPL + 'import os\ncb = lambda: os.remove("a")\n' + TAIL),
+    ("inside_class_body", MPL + 'import os\nclass K:\n    os.remove("a")\n' + TAIL),
+    # Codex r4283254482：已知写出器（与事件收集同一份集合）+ 常见科学 / 数据库写出口
+    (
+        "numpy_save_before_dead_pair",
+        MPL
+        + 'import numpy as np\nnp.save("victim.npy", [1])\n'
+        + 'if len(__import__("sys").argv) > 1:\n    p = "x.png"\nelse:\n    raise SystemExit\n'
+        + "plt.savefig(p)\nopen(p).read()\n",
+    ),
+    ("pandas_to_csv", MPL + "import pandas as pd\npd.DataFrame().to_csv('victim.csv')\n" + TAIL),
+    ("pil_save", MPL + "from PIL import Image\nImage.new('L', (1, 1)).save('v.png')\n" + TAIL),
+    ("scipy_savemat", MPL + "from scipy.io import savemat\nsavemat('v.mat', {})\n" + TAIL),
+    ("zipfile_write_mode", MPL + "import zipfile\nzipfile.ZipFile('v.zip', 'w')\n" + TAIL),
+    ("h5py_mode_kw", MPL + "import h5py\nh5py.File('v.h5', mode='a')\n" + TAIL),
+    ("tarfile_w_gz", MPL + "import tarfile\ntarfile.open('v.tgz', 'w:gz')\n" + TAIL),
+    ("sqlite_connect", MPL + "import sqlite3\nsqlite3.connect('v.db')\n" + TAIL),
+    ("os_symlink", MPL + "import os\nos.symlink('a', 'b')\n" + TAIL),
+    ("path_rename_one_arg", MPL + "from pathlib import Path\nPath('a').rename('b')\n" + TAIL),
+]
+
+
+@pytest.mark.parametrize("name,src", GATED, ids=[c[0] for c in GATED])
+def test_any_guarded_file_operation_in_the_script_keeps_the_route_in_safe(name, src):
+    route = _route(src, gate=True)
+    assert route.execution == "safe" and route.reason == runroute.REASON_GUARDED_FILE_OPS, route
+    assert route.confidence == runroute.CONFIDENCE_MEDIUM
+
+
+UNGATED = [
+    ("plain_readback", MPL + TAIL),
+    ("str_replace_two_args", MPL + 'name = "a.b".replace(".", "_")\n' + TAIL),
+    ("list_remove", MPL + "xs = [1]\nxs.remove(1)\n" + TAIL),
+    ("read_only_pathlib", MPL + 'from pathlib import Path\nPath("a").read_text()\n' + TAIL),
+    (
+        "pandas_rename_columns",
+        MPL + "import pandas as pd\npd.DataFrame().rename(columns={'a': 'b'})\n" + TAIL,
+    ),
+    ("str_replace_mode_like", MPL + 'name = "x".replace("x", "a")\n' + TAIL),
+    ("zipfile_read_mode", MPL + "import zipfile\nzipfile.ZipFile('v.zip', 'r')\n" + TAIL),
+]
+
+
+@pytest.mark.parametrize("name,src", UNGATED, ids=[c[0] for c in UNGATED])
+def test_scripts_without_guarded_operations_keep_the_rule_engine_verdict(name, src):
+    route = _route(src, gate=True)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+def test_the_gate_table_is_the_safe_guard_table():
+    from tavotto.engine import figcapture
+
+    ops = {o for o in figcapture.BlockedFileOps.OPS if o != "savefig"}
+    assert ops == {
+        "Path.unlink", "Path.write_text", "os.remove", "os.unlink", "os.rmdir",
+        "os.rename", "os.replace", "shutil.rmtree", "shutil.move",
+    }  # fmt: skip
+    for op in sorted(ops):
+        mod, _, fn = op.rpartition(".")
+        src = (
+            MPL
+            + (
+                f"import {mod}\n{mod}.{fn}('a')\n"
+                if mod in ("os", "shutil")
+                else f"from pathlib import Path\nPath('a').{fn}('a')\n"
+            )
+            + TAIL
+        )
+        assert _route(src, gate=True).reason == runroute.REASON_GUARDED_FILE_OPS, op
+
+
+def test_the_r3_rule_still_reports_its_evidence_when_the_gate_holds_it_back():
+    src = """
+        import os
+        open("c.tmp", "w").write("1")
+        os.replace("c.tmp", "c.csv")
+        open("c.csv").read()
+        """
+    route = _route(src, cwd=runroute.CWD_PROJECT, gate=True)
+    assert route.execution == "safe" and "R3" in _rules(route), route
+
+
+# ---- 写入也是闸门的一部分；`__main__` 守卫例外要求 `__name__` 从没被绑定
+WRITES = [
+    ("open_w", 'open("a", "w")'),
+    ("open_a", 'open("a", mode="a")'),
+    ("open_x", 'open("a", "x")'),
+    ("open_rplus", 'open("a", "r+")'),
+    ("open_wb", 'open("a", "wb")'),
+    ("open_mode_variable", 'M = input()\nopen("a", M)'),
+    ("open_star_args", 'open(*["a", "w"])'),
+    ("open_kwargs", 'open("a", **{"mode": "w"})'),
+    ("io_open", 'import io\nio.open("a", "w")'),
+    ("path_open_w", 'from pathlib import Path\nPath("a").open("w")'),
+    ("path_open_mode_kw", 'from pathlib import Path\nPath("a").open(mode="a")'),
+    ("path_open_mode_variable", 'from pathlib import Path\nM = input()\nPath("a").open(M)'),
+    ("os_open_creat", 'import os\nos.open("a", os.O_WRONLY | os.O_CREAT)'),
+    ("os_makedirs", 'import os\nos.makedirs("d")'),
+    ("os_mkdir", 'import os\nos.mkdir("d")'),
+    ("path_mkdir", 'from pathlib import Path\nPath("d").mkdir()'),
+    ("path_touch", 'from pathlib import Path\nPath("d").touch()'),
+    ("shutil_copy", 'import shutil\nshutil.copy("a", "b")'),
+    ("shutil_copyfile", 'import shutil\nshutil.copyfile("a", "b")'),
+    ("shutil_copytree", 'from shutil import copytree\ncopytree("a", "b")'),
+]
+
+
+@pytest.mark.parametrize("name,call", WRITES, ids=[c[0] for c in WRITES])
+def test_any_write_in_the_script_keeps_the_route_in_safe(name, call):
+    route = _route(MPL + call + "\n" + TAIL, gate=True)
+    assert route.execution == "safe" and route.reason == runroute.REASON_GUARDED_FILE_OPS, route
+
+
+READS = [
+    ("open_default", 'open("a")'),
+    ("open_r", 'open("a", "r")'),
+    ("open_rb", 'open("a", mode="rb")'),
+    ("image_open_variable", "from PIL import Image\nP = input()\nImage.open(P)"),
+    ("image_open_literal", 'from PIL import Image\nImage.open("a.png")'),
+    ("path_open_read", 'from pathlib import Path\nPath("a").open("rb")'),
+    ("os_open_rdonly", 'import os\nos.open("a", os.O_RDONLY)'),
+]
+
+
+@pytest.mark.parametrize("name,call", READS, ids=[c[0] for c in READS])
+def test_read_only_opens_do_not_trip_the_gate(name, call):
+    route = _route(MPL + call + "\n" + TAIL, gate=True)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+REBINDS = [
+    ("assign", '__name__ = "disabled"'),
+    ("augassign", '__name__ += "x"'),
+    ("annassign", '__name__: str = "x"'),
+    ("walrus", '(__name__ := "x")'),
+    ("delete", "del __name__"),
+    ("for_target", 'for __name__ in ["x"]:\n    pass'),
+    ("with_target", "import io\nwith io.StringIO() as __name__:\n    pass"),
+    ("import_as", "import os as __name__"),
+    ("from_import_as", "from os import path as __name__"),
+    ("global_stmt", 'def f():\n    global __name__\n    __name__ = "x"'),
+    ("def_name", "def __name__():\n    pass"),
+    ("param", "def f(__name__):\n    pass"),
+    ("globals_call", 'globals()["__name__"] = "x"'),
+    ("except_target", "try:\n    pass\nexcept Exception as __name__:\n    pass"),
+]
+
+
+@pytest.mark.parametrize("name,stmt", REBINDS, ids=[c[0] for c in REBINDS])
+def test_a_main_guard_body_is_not_unconditional_when_name_is_rebound_anywhere(name, stmt):
+    src = (
+        MPL
+        + stmt
+        + '\nif __name__ == "__main__":\n    plt.savefig("x.png")\n    open("x.png").read()\n'
+    )
+    route = _route(src, gate=True)
+    assert route.execution == "safe" and "R1" not in _rules(route), route
+
+
+def test_an_untouched_name_keeps_the_main_guard_exception():
+    route = _route(
+        MPL + 'if __name__ == "__main__":\n    plt.savefig("x.png")\n    open("x.png").read()\n',
+        gate=True,
+    )
+    assert route.execution == "native"
+
+
+def test_a_plain_write_followed_by_a_dead_main_guard_pair_stays_in_safe():
+    """Codex r4283063681：写入 + 改写 `__name__` + 走不到的守卫体；守卫例外不成立，R1 不出，且写入本身也触发闸门。"""
+    src = (
+        MPL
+        + 'open("victim", "w").write("x")\n__name__ = "disabled"\n'
+        + 'if __name__ == "__main__":\n    plt.savefig("x.png")\n    open("x.png").read()\n'
+    )
+    route = _route(src, gate=True)
+    assert route.execution == "safe" and "R1" not in _rules(route), route
+    assert runroute.facts_of(src).guarded_ops
+
+
+# ---- 求值顺序（Codex #1034 r4283403948）：嵌在 savefig 实参里的读先于 savefig 求值，不是「存后读回」
+@pytest.mark.parametrize(
+    "src",
+    [
+        MPL + 'plt.savefig("x.png", metadata={"Title": open("x.png").read()})\n',
+        MPL
+        + 'plt.savefig(\n    "x.png",\n    metadata={"Title": open("x.png", "rb").read().hex()},\n)\n',
+    ],
+    ids=["same_line", "multi_line"],
+)
+def test_a_read_nested_in_the_savefig_arguments_is_not_a_readback(src):
+    route = _route(src)
+    assert route.execution == "safe", route
+
+
+def test_a_read_after_the_savefig_call_on_the_same_line_is_still_a_readback():
+    route = _route(MPL + 'plt.savefig("x.png"); open("x.png", "rb").read()\n')
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+# ---- 源码编码（Codex #1034 r4283569553）：按 PEP 263 解码，不用 replacement 把不同路径折成同一个
+def test_a_latin1_script_keeps_distinct_paths_distinct(tmp_path):
+    src = '# -*- coding: latin-1 -*-\nimport matplotlib.pyplot as plt\nplt.savefig("caf\xe9.png")\nopen("caf\xf1.png", "rb").read()\n'
+    script = tmp_path / "fig.py"
+    script.write_bytes(src.encode("latin-1"))
+    route = runroute.route_for_file(
+        script, cwd_mode="project", project_root=tmp_path, script="fig.py"
+    )
+    assert route.execution == "safe", route
+    route = runroute.route_for_file(
+        script,
+        cwd_mode="project",
+        project_root=tmp_path,
+        script="fig.py",
+        source=script.read_bytes(),
+    )
+    assert route.execution == "safe", route
+
+
+def test_a_latin1_script_with_a_real_readback_is_still_understood(tmp_path):
+    src = '# -*- coding: latin-1 -*-\nimport matplotlib.pyplot as plt\nplt.savefig("caf\xe9.png")\nopen("caf\xe9.png", "rb").read()\n'
+    script = tmp_path / "fig.py"
+    script.write_bytes(src.encode("latin-1"))
+    route = runroute.route_for_file(
+        script, cwd_mode="project", project_root=tmp_path, script="fig.py"
+    )
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+def test_an_undecodable_script_is_not_routed(tmp_path):
+    script = tmp_path / "fig.py"
+    script.write_bytes(
+        b'import matplotlib.pyplot as plt\nplt.savefig("\xff.png")\nopen("\xff.png", "rb").read()\n'
+    )
+    route = runroute.route_for_file(
+        script, cwd_mode="project", project_root=tmp_path, script="fig.py"
+    )
+    assert route.execution == "safe", route
+
+
+# ---- `with_suffix("")` 去掉后缀（Codex #1034 r4283716227）
+def test_with_suffix_empty_removes_the_suffix():
+    src = (
+        MPL
+        + 'from pathlib import Path\np = Path("x.png").with_suffix("")\n'
+        + 'plt.savefig(p, format="png")\nopen("x.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "safe", route
+
+
+def test_with_suffix_replacement_still_folds():
+    src = (
+        MPL
+        + 'from pathlib import Path\np = Path("x.jpg").with_suffix(".png")\n'
+        + 'plt.savefig(p)\nopen("x.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+# ---- 改当前目录（Codex #1034 r4283860478）：cwd 相对的存与读可能不在同一目录
+@pytest.mark.parametrize(
+    "mid",
+    [
+        'import os\nos.chdir("sub")\n',
+        "from os import chdir\nchdir('sub')\n",
+        "import contextlib\nwith contextlib.chdir('sub'):\n    pass\n",
+    ],
+    ids=["os_chdir", "from_import", "contextlib_chdir"],
+)
+def test_a_cwd_change_keeps_cwd_relative_readbacks_out_of_native(mid):
+    src = MPL + 'plt.savefig("x.png")\n' + mid + 'open("x.png", "rb").read()\n'
+    route = _route(src)
+    assert route.execution == "safe" and route.confidence == runroute.CONFIDENCE_MEDIUM, route
+
+
+# ---- 路径规范化保留文件系统语义（Codex #1034 r4283860490）
+@pytest.mark.skipif(os.name == "nt", reason="Windows 上反斜杠就是分隔符")
+def test_a_backslash_is_a_filename_character_on_posix():
+    route = _route(MPL + 'plt.savefig(r"a\\b.png")\nopen("a/b.png", "rb").read()\n')
+    assert route.execution == "safe", route
+
+
+def test_a_dotdot_component_is_not_folded_through_a_possible_symlink():
+    route = _route(MPL + 'plt.savefig("link/../x.png")\nopen("x.png", "rb").read()\n')
+    assert route.execution == "safe", route
+
+
+def test_path_parent_still_folds():
+    src = (
+        MPL
+        + 'from pathlib import Path\np = Path("out/sub/x.png")\n'
+        + 'plt.savefig(p.parent / "y.png")\nopen("out/sub/y.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+# ---- f-string 转换与异风格纯路径（Codex #1034 r4284099930 / r4284099949）
+@pytest.mark.parametrize("conv", ["!r", "!a"])
+def test_an_fstring_conversion_is_not_folded_as_the_raw_value(conv):
+    src = (
+        MPL
+        + f'p = "x.png"\nplt.savefig(f"{{p{conv}}}", format="png")\nopen("x.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "safe", route
+
+
+def test_an_fstring_str_conversion_still_folds():
+    src = MPL + 'p = "x.png"\nplt.savefig(f"{p!s}")\nopen("x.png", "rb").read()\n'
+    route = _route(src)
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+@pytest.mark.skipif(os.sep == "\\", reason="Windows 上 PureWindowsPath 就是本机风格")
+def test_a_foreign_flavor_pure_path_is_not_comparable_on_posix():
+    src = (
+        MPL
+        + 'from pathlib import PureWindowsPath\nplt.savefig(PureWindowsPath("a/b.png"))\n'
+        + 'open("a/b.png", "rb").read()\n'
+    )
+    route = _route(src)
+    assert route.execution == "safe", route
