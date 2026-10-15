@@ -74,6 +74,7 @@
 * **写入同属闸门**（#1034 第八轮）：safe 模式下普通写入落到沙箱、native 落到真实目录，二者的差异本身就是伤害面（`open("victim", "w").write(...)` 在 native 里会截断用户真实的 `victim`）。所以写打开也算守卫操作：`open` / `io.open` / `Path.open` 的 mode 为字面量且含 `w` / `a` / `x` / `+`，mode 不是字面量或实参带 `*` / `**`（判不了，宁宽），`os.open` 的 flags 不是 `os.O_RDONLY`；另有 `write_bytes` / `mkdir` / `touch` / `os.mkdir` / `os.makedirs` / `shutil.copy*`。只读打开（默认 mode、`r` / `rb`、`PIL.Image.open`）不算；`savefig` 本身不算（它是证据）。
 * **已知写出器同属闸门**（#1034 第九轮）：事件收集里已认的写出器（`_NUMPY_WRITE`、`_DATA_WRITE_TAILS`）与常见科学 / 数据写出口按方法名或限定名末段认，不看接收者——`save` / `imsave` / `imwrite` / `savemat` / `to_netcdf` / `to_zarr` / `to_sql` / `write_image` / `symlink_to` / `chmod`…；限定名 `os.write|truncate|symlink|link|chmod|chown|utime|renames|removedirs`、`sqlite3.connect`、`dbm.open`、`shelve.open`、`shutil.copy*|make_archive|unpack_archive`；**任意调用**的 `mode=` 实参或第二个位置实参是可写的 mode 样字面量（`ZipFile(p, "w")`、`h5py.File(p, mode="a")`、`tarfile.open(p, "w:gz")`），字符串方法（`replace` / `split`…）除外。`.rename` 只认恰一个位置实参、无关键字的形状（`Path.rename(t)`；`df.rename(columns=…)` 不算）。这仍是启发式清单：清单外的写出（第三方库自定义写函数）看不见，记 #1086。
 * **后果**：R3 的链（写 → `os.replace` / `rename` / `move` → 读）本身含守卫操作，所以 R3 在生产路径上不再直达 native（规则与证据仍计算、仍进 `Route.evidence`）；R1（`savefig` → 读回）不含守卫操作的脚本照旧直达。不含守卫操作的脚本误判的后果与终端直接运行相同，没有伤害。
+* **源码解码**（#1034 第十轮）：按 Python 自己的规则解码（PEP 263 声明 / BOM / 默认 UTF-8，复用 `scriptargs.decode_source`）；解不开就当作没读懂（`parsed=False`，走 safe）。不用 replacement 字符糊过去——那会把 Latin-1 的 `café` / `cañ` 折成同一个路径，伪造出读回。
 * **不在静态可见范围**：动态混淆（`getattr(os, "re" + "move")`、`__import__`、`exec`、`subprocess` 搬文件）看不见，记 #1086。
 
 ## 后果
