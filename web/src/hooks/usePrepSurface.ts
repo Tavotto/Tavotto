@@ -9,7 +9,9 @@ export function usePrepSurface() {
   const focus = useProjectPreparationStore((s) => s.focus)
   const entries = useProjectPreparationStore((s) => s.entries)
   const guideCard = useUiStore((s) => s.guideCard)
-  const hidden =
-    useProjectStore((s) => s.project?.tutorial === true) || useOnboardingStore((s) => s.status === 'active')
+  // 两个订阅都无条件调用（`||` 短路会让第二个 hook 有时不跑，违反 hooks 调用顺序）
+  const tutorialProject = useProjectStore((s) => s.project?.tutorial === true)
+  const onboardingActive = useOnboardingStore((s) => s.status === 'active')
+  const hidden = tutorialProject || onboardingActive
   return { hidden, surface: visiblePrepSurface({ focus, entries, guideCard, hidden }) }
 }
