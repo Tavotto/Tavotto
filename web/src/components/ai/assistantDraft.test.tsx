@@ -1425,7 +1425,7 @@ describe('已发出未确认：不能盲目重发', () => {
 
   it('同脚本有运行中的会话（含接回的占位）又有未确认的提交：按钮是「中止」且可点，不被未确认禁掉', async () => {
     useAiStore.setState({
-      sessions: [failedSession({ id: 's-run', status: 'running', finalized: false, restored: true, finishedAt: undefined, panelId: null, fileId: null, changed: false })],
+      sessions: [failedSession({ id: 's-run', status: 'running', finalized: false, restored: true, script: 'p1.py', finishedAt: undefined, panelId: null, fileId: null, changed: false })],
     })
     be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-both-00001', text: '加粗线条', sent: SENT }])
     await mount()
