@@ -101,8 +101,12 @@ def test_runroute_imports_only_the_standard_library():
             mods |= {a.name.split(".")[0] for a in node.names}
         elif isinstance(node, ast.ImportFrom):
             assert node.level == 0, "runroute 不 import 兄弟模块（纯标准库、不进 import 环）"
-            if node.module == "tavotto.engine" and [a.name for a in node.names] == ["figcapture"]:
-                continue  # 唯一例外：守卫操作表 `BlockedFileOps.OPS` 的出处（figcapture 自己只依赖标准库，不会成环）
+            if node.module == "tavotto.engine" and {a.name for a in node.names} <= {
+                "figcapture",
+                "scriptargs",
+            }:
+                # 仅有的例外：守卫操作表 `BlockedFileOps.OPS` 的出处，与 PEP 263 源码解码的唯一实现（两者都只依赖标准库，不会成环）
+                continue
             mods.add((node.module or "").split(".")[0])
     stdlib = set(sys.stdlib_module_names)
     assert mods <= stdlib, mods - stdlib

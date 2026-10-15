@@ -35,9 +35,8 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from tavotto.engine import (
-    figcapture,
-)  # 守卫操作表的唯一出处（BlockedFileOps.OPS），见 _guarded_call
+# figcapture：守卫操作表的唯一出处（BlockedFileOps.OPS），见 _guarded_call；scriptargs：按 PEP 263 解码源码的唯一实现
+from tavotto.engine import figcapture, scriptargs
 
 # ---------------------------------------------------------------- 词汇（闭集）
 EXECUTION_SAFE = "safe"
@@ -1292,6 +1291,15 @@ class _Collector:
                 at(_E_WRITE, tail, self.value(target, scope))
 
 
+def _collect_bytes(raw: bytes) -> ScriptFacts:
+    """按 Python 自己的源码编码规则（PEP 263 声明 / BOM / 默认 UTF-8）解码再分析；解不开 = 看不懂 = 不路由（未解析，走 safe）。
+    不用 replacement 字符糊过去：那会把 Latin-1 的 `café` / `cañ` 折成同一个路径，伪造出读回（Codex #1034 r4283569553）。"""
+    text = scriptargs.decode_source(raw)
+    if text is None:
+        return ScriptFacts(parsed=False)
+    return _collect(text)
+
+
 def _collect(source: str) -> ScriptFacts:
     started = time.perf_counter()
     try:
@@ -1340,10 +1348,10 @@ def facts_of_file(path: str | os.PathLike) -> ScriptFacts:
         facts = ScriptFacts(parsed=False, too_large=True)
     else:
         try:
-            source = Path(real).read_text(encoding="utf-8", errors="replace")
+            raw = Path(real).read_bytes()
         except OSError:
             return _EMPTY
-        facts = _collect(source)
+        facts = _collect_bytes(raw)
     with _cache_lock:
         _cache[key] = facts
         while len(_cache) > CACHE_SIZE:
@@ -1650,7 +1658,7 @@ def route_for_file(
         facts = (
             ScriptFacts(parsed=False, too_large=True)
             if len(source) > MAX_SOURCE_BYTES
-            else _collect(source.decode("utf-8", errors="replace"))
+            else _collect_bytes(source)
         )
     else:
         facts = facts_of_file(script_path)

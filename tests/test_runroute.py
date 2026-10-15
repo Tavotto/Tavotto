@@ -1594,3 +1594,43 @@ def test_a_read_nested_in_the_savefig_arguments_is_not_a_readback(src):
 def test_a_read_after_the_savefig_call_on_the_same_line_is_still_a_readback():
     route = _route(MPL + 'plt.savefig("x.png"); open("x.png", "rb").read()\n')
     assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+# ---- 源码编码（Codex #1034 r4283569553）：按 PEP 263 解码，不用 replacement 把不同路径折成同一个
+def test_a_latin1_script_keeps_distinct_paths_distinct(tmp_path):
+    src = '# -*- coding: latin-1 -*-\nimport matplotlib.pyplot as plt\nplt.savefig("caf\xe9.png")\nopen("caf\xf1.png", "rb").read()\n'
+    script = tmp_path / "fig.py"
+    script.write_bytes(src.encode("latin-1"))
+    route = runroute.route_for_file(
+        script, cwd_mode="project", project_root=tmp_path, script="fig.py"
+    )
+    assert route.execution == "safe", route
+    route = runroute.route_for_file(
+        script,
+        cwd_mode="project",
+        project_root=tmp_path,
+        script="fig.py",
+        source=script.read_bytes(),
+    )
+    assert route.execution == "safe", route
+
+
+def test_a_latin1_script_with_a_real_readback_is_still_understood(tmp_path):
+    src = '# -*- coding: latin-1 -*-\nimport matplotlib.pyplot as plt\nplt.savefig("caf\xe9.png")\nopen("caf\xe9.png", "rb").read()\n'
+    script = tmp_path / "fig.py"
+    script.write_bytes(src.encode("latin-1"))
+    route = runroute.route_for_file(
+        script, cwd_mode="project", project_root=tmp_path, script="fig.py"
+    )
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
+
+
+def test_an_undecodable_script_is_not_routed(tmp_path):
+    script = tmp_path / "fig.py"
+    script.write_bytes(
+        b'import matplotlib.pyplot as plt\nplt.savefig("\xff.png")\nopen("\xff.png", "rb").read()\n'
+    )
+    route = runroute.route_for_file(
+        script, cwd_mode="project", project_root=tmp_path, script="fig.py"
+    )
+    assert route.execution == "safe", route
