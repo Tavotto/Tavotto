@@ -53,7 +53,7 @@ python scripts/perf_macos_window.py compare idle.json drag.json --json window-di
 
 ## compare 的可比条件清单
 
-全部集中在 `scripts/perf_macos_window.py` 的 `failed_conditions()` 一张表；任一条不满足即 `incomparable`，`--json` 输出的 `failed_conditions` 列出未满足的条件名。加条件只改这张表并同步本清单。
+全部集中在 `scripts/perf_macos_window.py` 的 `failed_conditions()` 一张表，所有条件缺信息一律不满足（fail-closed）。`compare` 总是执行这些检查并把状态与未满足条件打印到 stdout，`--json` 只决定是否另写文件；必须正好给两份报告。任一条不满足即 `incomparable`，`--json` 输出的 `failed_conditions` 列出未满足的条件名。加条件只改这张表并同步本清单。
 
 | 条件名 | 含义 |
 |---|---|
@@ -61,6 +61,9 @@ python scripts/perf_macos_window.py compare idle.json drag.json --json window-di
 | `same_arch` | 两份 CPU 架构相同且非空 |
 | `same_macos_version` | 两份 macOS 版本相同且非空 |
 | `same_sample_interval` | 两份 `sample_interval_seconds` 都有效且相等（区间 CPU 的平滑程度取决于采样间隔） |
+| `same_capture_environment` | 两份 `environment` 都完整（任一字段未知即不满足，两边都未知也不行）且逐项相等：机型标识符 `hw_model`、供电 `power_source`（ac/battery）、`low_power_mode`、各显示器分辨率/刷新率 `displays`、`tavotto_version`。不记主机名、序列号、显示器名称、路径 |
 | `at_least_5_samples_each` | 每份至少 5 个样本 |
 | `at_least_5_valid_cpu_samples_each` | 每份至少 5 个有效（非 null）家族 CPU 样本 |
-| `single_tavotto_family_throughout` | 每个样本都正好一棵顶层 Tavotto 进程树（打包的 sidecar 也叫 Tavotto，但它是主进程后代，不算第二棵；同时开两个实例或有孤儿 Tavotto 进程则 `record` 直接拒绝） |
+| `single_tavotto_family_throughout` | 每个样本都是对象且带整数 `root_count`，并且都等于 1（缺字段、类型不对、非对象一律不满足，不按默认值放行）：正好一棵顶层 Tavotto 进程树（打包的 sidecar 也叫 Tavotto，但它是主进程后代，不算第二棵；同时开两个实例或有孤儿 Tavotto 进程则 `record` 直接拒绝） |
+
+`record` 的 `environment` 取不到的字段记为 null（pmset/system_profiler 失败等），这样的报告无法通过 `same_capture_environment`；这些条件只能证明两次录制的环境事实一致，不能替代「同一台机器、同一显示器、同一电源模式」的人工操作约定。

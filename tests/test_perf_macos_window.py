@@ -7,6 +7,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import perf_macos_window as P  # noqa: E402
 
+ENV = {
+    "hw_model": "Mac15,3",
+    "power_source": "ac",
+    "low_power_mode": False,
+    "displays": ["3024 x 1964 @ 120.00Hz"],
+    "tavotto_version": "1.0.0",
+}
+
 
 def test_process_family_excludes_unrelated_webkit_and_counts_descendants():
     rows = P.parse_ps(
@@ -73,8 +81,14 @@ def test_native_resource_delta_is_not_mislabeled_as_presentation_pass():
         "macos_version": "26.1",
         "arch": "arm64",
         "sample_interval_seconds": 0.25,
+        "environment": dict(ENV),
         "samples": [
-            {"family_cpu_pct": 2.0, "family_rss_sum_mib": 120.0, "windowserver_global_cpu_pct": 8.0}
+            {
+                "root_count": 1,
+                "family_cpu_pct": 2.0,
+                "family_rss_sum_mib": 120.0,
+                "windowserver_global_cpu_pct": 8.0,
+            }
             for _ in range(8)
         ],
     }
@@ -83,6 +97,7 @@ def test_native_resource_delta_is_not_mislabeled_as_presentation_pass():
         "stage": "drag",
         "samples": [
             {
+                "root_count": 1,
                 "family_cpu_pct": 8.0,
                 "family_rss_sum_mib": 128.0,
                 "windowserver_global_cpu_pct": 21.0,
@@ -104,6 +119,7 @@ def test_native_resource_delta_rejects_cross_os_samples():
         "macos_version": "26.1",
         "arch": "arm64",
         "sample_interval_seconds": 0.25,
+        "environment": dict(ENV),
         "samples": [{"family_cpu_pct": 1.0, "family_rss_sum_mib": 100.0} for _ in range(8)],
     }
     active = {**report, "stage": "drag", "macos_version": "25.4"}
@@ -127,6 +143,7 @@ def _fake_record_env(monkeypatch, ps_outputs):
             self.stdout = stdout
 
     monkeypatch.setattr(P.sys, "platform", "darwin")
+    monkeypatch.setattr(P, "collect_environment", lambda root_command: dict(ENV))
     monkeypatch.setattr(P.subprocess, "run", lambda *a, **k: Done(next(outputs)))
     monkeypatch.setattr(P.time, "monotonic", lambda: clock["t"])
     monkeypatch.setattr(P.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
@@ -196,6 +213,7 @@ def test_compare_marks_reports_with_missing_app_samples_incomparable():
             "macos_version": "26.1",
             "arch": "arm64",
             "sample_interval_seconds": 0.25,
+            "environment": dict(ENV),
             "samples": [
                 {"root_count": n, "family_cpu_pct": 1.0, "family_rss_sum_mib": 10.0}
                 for n in root_counts
@@ -250,6 +268,7 @@ def test_compare_needs_five_valid_cpu_samples_per_side():
             "macos_version": "26.1",
             "arch": "arm64",
             "sample_interval_seconds": 0.25,
+            "environment": dict(ENV),
             "samples": [
                 {"root_count": 1, "family_cpu_pct": c, "family_rss_sum_mib": 10.0} for c in cpus
             ],
@@ -268,6 +287,7 @@ def _cmp_report(stage, **over):
         "macos_version": "26.1",
         "arch": "arm64",
         "sample_interval_seconds": 0.25,
+        "environment": dict(ENV),
         "samples": [
             {"root_count": 1, "family_cpu_pct": 1.0, "family_rss_sum_mib": 10.0} for _ in range(6)
         ],
@@ -326,3 +346,140 @@ def test_record_stores_sample_interval(monkeypatch):
     one = f"100 1 0:00.00 1024 {APP}\n"
     _fake_record_env(monkeypatch, [one] * 4)
     assert P.record("idle", 2, 0.5)["sample_interval_seconds"] == 0.5
+
+
+def test_compare_without_json_still_runs_the_comparison(tmp_path, capsys):
+    idle = _cmp_report("idle")
+    drag = _cmp_report("drag", macos_version="25.4")
+    (tmp_path / "i.json").write_text(json.dumps(idle), encoding="utf-8")
+    (tmp_path / "d.json").write_text(json.dumps(drag), encoding="utf-8")
+    code = P.main(["compare", str(tmp_path / "i.json"), str(tmp_path / "d.json")])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "incomparable" in out and "same_macos_version" in out
+    ok = tmp_path / "ok.json"
+    ok.write_text(json.dumps(_cmp_report("drag")), encoding="utf-8")
+    assert P.main(["compare", str(tmp_path / "i.json"), str(ok)]) == 0
+    assert "diagnostic_only" in capsys.readouterr().out
+
+
+def test_compare_needs_exactly_two_reports(tmp_path, capsys):
+    f = tmp_path / "i.json"
+    f.write_text(json.dumps(_cmp_report("idle")), encoding="utf-8")
+    assert P.main(["compare", str(f)]) == 2
+
+
+def test_compare_rejects_different_capture_environments():
+    for key, other in (
+        ("hw_model", "Mac14,2"),
+        ("power_source", "battery"),
+        ("low_power_mode", True),
+        ("displays", ["2560 x 1440 @ 60.00Hz"]),
+        ("tavotto_version", "1.0.1"),
+    ):
+        drag = _cmp_report("drag")
+        drag["environment"][key] = other
+        result = P.compare_reports(_cmp_report("idle"), drag)
+        assert result["status"] == "incomparable", key
+        assert "same_capture_environment" in result["failed_conditions"], key
+
+
+def test_compare_fails_closed_on_missing_or_unknown_environment():
+    missing = _cmp_report("drag")
+    del missing["environment"]
+    unknown = _cmp_report("drag")
+    unknown["environment"]["power_source"] = None
+    idle_unknown = _cmp_report("idle")
+    idle_unknown["environment"]["power_source"] = None
+    for idle, drag in (
+        (_cmp_report("idle"), missing),
+        (_cmp_report("idle"), unknown),
+        (idle_unknown, unknown),  # 两边都「未知」不能因为相等就放行
+    ):
+        assert P.compare_reports(idle, drag)["status"] == "incomparable"
+
+
+def test_compare_fails_closed_on_missing_or_malformed_root_evidence():
+    def with_samples(samples):
+        return _cmp_report("drag", samples=samples)
+
+    good = [{"root_count": 1, "family_cpu_pct": 1.0, "family_rss_sum_mib": 10.0}] * 6
+    no_field = [{"family_cpu_pct": 1.0, "family_rss_sum_mib": 10.0}] * 6
+    wrong_type = [{**good[0], "root_count": "1"}] * 6
+    bool_type = [{**good[0], "root_count": True}] * 6
+    non_dict = [*good[:5], "garbage"]
+    for samples in (no_field, wrong_type, bool_type, non_dict):
+        result = P.compare_reports(_cmp_report("idle"), with_samples(samples))
+        assert result["status"] == "incomparable"
+        assert "single_tavotto_family_throughout" in result["failed_conditions"]
+    assert P.compare_reports(_cmp_report("idle"), with_samples(good))["status"] == (
+        "diagnostic_only"
+    )
+
+
+def test_record_stores_environment_without_identifying_facts(monkeypatch):
+    one = f"100 1 0:00.00 1024 {APP}\n"
+    _fake_record_env(monkeypatch, [one] * 4)
+    report = P.record("idle", 2, 0.5)
+    assert report["environment"] == ENV
+    assert "/Applications" not in json.dumps(report)
+
+
+def test_collect_environment_reads_only_non_identifying_facts(monkeypatch, tmp_path):
+    app = tmp_path / "Tavotto.app" / "Contents"
+    (app / "MacOS").mkdir(parents=True)
+    (app / "Info.plist").write_bytes(
+        b'<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>'
+        b"<key>CFBundleShortVersionString</key><string>1.2.3</string></dict></plist>"
+    )
+    answers = {
+        "sysctl": "Mac15,3\n",
+        "pmset": "Now drawing from 'Battery Power'\n lowpowermode 1\n",
+        "system_profiler": json.dumps(
+            {
+                "SPDisplaysDataType": [
+                    {
+                        "_name": "Apple M3",
+                        "spdisplays_ndrvs": [
+                            {
+                                "_name": "Jiaqi's Studio Display",
+                                "_spdisplays_serial": "SECRET",
+                                "_spdisplays_resolution": "2560 x 1440 @ 60.00Hz",
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+    }
+
+    class Done:
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    monkeypatch.setattr(P.subprocess, "run", lambda cmd, **k: Done(answers[cmd[0]]))
+    env = P.collect_environment(str(app / "MacOS" / "Tavotto"))
+    assert env == {
+        "hw_model": "Mac15,3",
+        "power_source": "battery",
+        "low_power_mode": True,
+        "displays": ["2560 x 1440 @ 60.00Hz"],
+        "tavotto_version": "1.2.3",
+    }
+    dumped = json.dumps(env)
+    assert "SECRET" not in dumped and "Jiaqi" not in dumped and str(tmp_path) not in dumped
+
+
+def test_collect_environment_marks_failures_unknown(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no such tool")
+
+    monkeypatch.setattr(P.subprocess, "run", boom)
+    env = P.collect_environment("/nowhere/Tavotto")
+    assert env == {
+        "hw_model": None,
+        "power_source": None,
+        "low_power_mode": None,
+        "displays": None,
+        "tavotto_version": None,
+    }

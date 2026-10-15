@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import plistlib
+import re
 import subprocess
 import sys
 import time
@@ -102,6 +104,7 @@ def classify(processes: list[Process]) -> dict:
         "family_processes": len(members),
         # 下面两个以 pid 为键的累计 CPU 时间只在内存里用于差分，record 不写进报告。
         "_roots": frozenset(roots),
+        "_root_command": min((by_pid[pid].command for pid in roots), default=None),
         "_family_cpu_s": {p.pid: p.cpu_seconds for p in members},
         "_windowserver_cpu_s": {
             p.pid: p.cpu_seconds for p in processes if Path(p.command).name == "WindowServer"
@@ -137,6 +140,65 @@ def interval_cpu_pct(
         return None
     used = sum(max(0.0, t - previous.get(pid, 0.0)) for pid, t in current.items())
     return round(used / wall_seconds * 100, 2)
+
+
+def _run_text(cmd: list[str], timeout: float = 10) -> str | None:
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if isinstance(done.stdout, str) else None
+
+
+def collect_environment(root_command: str | None) -> dict:
+    """采集会影响可比性的非标识性环境事实；取不到的字段为 None（compare 视为不满足）。
+
+    只记机型标识符、供电状态、低电量模式、各显示器的分辨率/刷新率字符串、Tavotto 版本。
+    不记主机名、序列号、显示器名称或任何路径。
+    """
+    model = (_run_text(["sysctl", "-n", "hw.model"]) or "").strip() or None
+    batt = _run_text(["pmset", "-g", "batt"])
+    power_source = None
+    if batt is not None:
+        if "'AC Power'" in batt:
+            power_source = "ac"
+        elif "'Battery Power'" in batt:
+            power_source = "battery"
+    settings = _run_text(["pmset", "-g"])
+    low_power = None
+    if settings is not None:
+        found = re.search(r"lowpowermode\s+(\d)", settings)
+        # 没有这一行 = 本机不支持或未开启，视为 False；pmset 本身失败才是未知。
+        low_power = found.group(1) == "1" if found else False
+    displays = None
+    raw = _run_text(["system_profiler", "SPDisplaysDataType", "-json"], timeout=30)
+    if raw is not None:
+        try:
+            gpus = json.loads(raw).get("SPDisplaysDataType", [])
+            displays = sorted(
+                str(d["_spdisplays_resolution"])
+                for gpu in gpus
+                for d in gpu.get("spdisplays_ndrvs", [])
+                if isinstance(d, dict) and d.get("_spdisplays_resolution")
+            )
+        except (ValueError, AttributeError, TypeError):
+            displays = None
+    version = None
+    marker = "/Contents/MacOS/"
+    if root_command and marker in root_command:
+        plist = Path(root_command.split(marker)[0] + "/Contents/Info.plist")
+        try:
+            value = plistlib.loads(plist.read_bytes()).get("CFBundleShortVersionString")
+            version = value if isinstance(value, str) and value else None
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            version = None
+    return {
+        "hw_model": model,
+        "power_source": power_source,
+        "low_power_mode": low_power,
+        "displays": displays,
+        "tavotto_version": version,
+    }
 
 
 def quantile(xs: list[float], q: float) -> float | None:
@@ -180,8 +242,27 @@ def _valid_interval(report: dict) -> float | None:
 
 
 def _single_family_throughout(report: dict) -> bool:
-    """每个样本都必须正好一棵顶层 Tavotto 树：0 = 进程丢失，>1 = 多实例/孤儿。"""
-    return all(not isinstance(s, dict) or s.get("root_count", 1) == 1 for s in report["samples"])
+    """每个样本都必须是 dict 且带整数 root_count == 1：缺字段/类型不对/0（丢失）/>1（多树）都不满足。"""
+    return all(
+        isinstance(s, dict)
+        and isinstance(s.get("root_count"), int)
+        and not isinstance(s["root_count"], bool)
+        and s["root_count"] == 1
+        for s in report["samples"]
+    )
+
+
+ENVIRONMENT_FIELDS = ("hw_model", "power_source", "low_power_mode", "displays", "tavotto_version")
+
+
+def _same_known_environment(idle: dict, drag: dict) -> bool:
+    """两边都必须完整记录每个环境字段（None = 未知 = 不满足，即使两边都未知）且逐项相等。"""
+    envs = (idle.get("environment"), drag.get("environment"))
+    if not all(isinstance(e, dict) for e in envs):
+        return False
+    return all(e.get(field) is not None for e in envs for field in ENVIRONMENT_FIELDS) and all(
+        envs[0][field] == envs[1][field] for field in ENVIRONMENT_FIELDS
+    )
 
 
 def failed_conditions(idle: dict, drag: dict, a: dict, b: dict) -> list[str]:
@@ -198,6 +279,7 @@ def failed_conditions(idle: dict, drag: dict, a: dict, b: dict) -> list[str]:
             "same_sample_interval",
             _valid_interval(idle) is not None and _valid_interval(idle) == _valid_interval(drag),
         ),
+        ("same_capture_environment", _same_known_environment(idle, drag)),
         ("at_least_5_samples_each", a["count"] >= 5 and b["count"] >= 5),
         (
             "at_least_5_valid_cpu_samples_each",
@@ -246,6 +328,7 @@ def record(stage: str, seconds: float, interval: float) -> dict:
     start = time.monotonic()
     samples = []
     first_roots: frozenset[int] | None = None
+    first_command: str | None = None
     previous: dict | None = None
     previous_at = start
     while time.monotonic() - start < seconds:
@@ -253,6 +336,7 @@ def record(stage: str, seconds: float, interval: float) -> dict:
         now = time.monotonic()
         if first_roots is None:
             first_roots = row["_roots"]
+            first_command = row["_root_command"]
         if row["root_count"] != 1:
             raise ValueError(
                 f"need exactly one top-level Tavotto process tree, found {row['root_count']}; "
@@ -294,6 +378,7 @@ def record(stage: str, seconds: float, interval: float) -> dict:
         "arch": platform.machine(),
         "requested_seconds": seconds,
         "sample_interval_seconds": interval,
+        "environment": collect_environment(first_command),
         "samples": samples,
         "limits": [
             "rss_is_sum_with_possible_shared_pages",
@@ -328,17 +413,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Saved {args.output.name}: {len(output['samples'])} numeric-only samples")
         else:
             reports = [json.loads(path.read_text(encoding="utf-8")) for path in args.reports]
+            if len(reports) != 2:
+                raise ValueError("compare needs exactly two reports: idle then active")
             for source in reports:
                 print(json.dumps(summarize(source), ensure_ascii=False))
+            result = compare_reports(*reports)
+            print(f"Comparison status: {result['status']} (never pass)")
+            if result["failed_conditions"]:
+                print("Failed conditions: " + ", ".join(result["failed_conditions"]))
+            else:
+                print("delta_p95: " + json.dumps(result["delta_p95"]))
             if args.json:
-                if len(reports) != 2:
-                    raise ValueError("--json needs exactly two reports: idle then active")
-                result = compare_reports(*reports)
                 args.json.parent.mkdir(parents=True, exist_ok=True)
                 tmp = args.json.with_suffix(args.json.suffix + ".tmp")
                 tmp.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
                 tmp.replace(args.json)
-                print(f"Machine-readable status: {result['status']} (never pass)")
             print(
                 "WindowServer CPU is system-wide; a delta cannot prove Tavotto caused dragging ghosts."
             )
