@@ -11,7 +11,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aiRun, ApiError, fetchAiRequest, fetchAiSession } from '@/lib/api'
-import { DRAFT_MAX_BYTES, DRAFT_PREFIX, loadDraft, markSubmitted } from '@/lib/aiDraft'
+import { DRAFT_MAX_BYTES, DRAFT_PREFIX, loadDraft, markSubmitted, saveDraft } from '@/lib/aiDraft'
 import { setCurrentProjectId } from '@/lib/session'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { agentCaps, capsOf } from '@/components/settings/testCaps'
@@ -21,6 +21,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { AssistantPanel } from './AiPanel'
+import { __resetDraftSweepForTests } from './useAiDraft'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -158,6 +159,18 @@ describe('草稿落盘与恢复', () => {
     setCurrentProjectId('pa')
     await act(async () => useAiStore.getState().clear())
     expect(input().value).toBe('A 项目的话')
+  })
+
+  it('刷新后文档还没恢复完（面板列表为空）时挂载：草稿不会被当成「目标已删」清掉，面板到了就恢复', async () => {
+    saveDraft('pa', 'Fig1.pdf', '上次没发出的话')
+    __resetDraftSweepForTests() // 让「首次挂载清扫」在这条用例里真的发生
+    useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [] } }) as never)
+    useSelectionStore.setState({ ids: [] } as never)
+    await mount()
+    expect(loadDraft('pa', 'Fig1.pdf')?.text).toBe('上次没发出的话') // 对照：空面板列表那一刻没把它清掉
+    useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panelOf('Fig1.pdf', 'p1')] } }) as never)
+    await select('p1')
+    expect(input().value).toBe('上次没发出的话')
   })
 
   it('超过 20 KB：不落盘、不截断，并说「过长」', async () => {

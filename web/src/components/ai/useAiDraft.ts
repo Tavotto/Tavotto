@@ -10,6 +10,10 @@ import type { PanelObject } from '@/types/document'
 const WRITE_DEBOUNCE_MS = 400
 
 let swept = false
+/** 仅测试：让「首次挂载清扫」能在同一个模块实例里再发生一次 */
+export const __resetDraftSweepForTests = () => {
+  swept = false
+}
 
 /**
  * 助手输入框的草稿（ADR 0131）：绑定 **项目 × 面板文件**，切目标面板时存旧的、读新的。
@@ -62,11 +66,11 @@ export function useAiDraft(panel: PanelObject | null) {
     const project = currentProjectId()
     if (!swept) {
       swept = true
-      // 过期 / 超量 / 目标面板已不存在的草稿；有待确认请求的不因面板消失而删（见 sweepDrafts）
-      sweepDrafts({
-        exists: (pj, f) =>
-          pj !== project || useDocumentStore.getState().doc.objects.some((o) => o.type === 'panel' && (o as PanelObject).fileId === f),
-      })
+      // 只清过期 / 损坏 / 超量的。**不按「目标面板还在不在」清**：挂载那一刻文档往往还没恢复完（刷新后
+      // 面板列表是稍后才到的），那时「面板不在」是假象，按它清会在每次启动时把草稿全删掉
+      // （e2e/ai-draft.spec.ts 刷新那一步量到的）。恢复本身只发生在当前目标面板上，所以「目标已删」
+      // 的草稿读不到、也不会显示；留下的死稿由 30 天过期与 LRU 收走。
+      sweepDrafts()
     }
     const d = loadDraft(project, fileId)
     latest.current = { project, fileId, text: d?.text ?? '', dirty: false }

@@ -39,6 +39,17 @@
   为 key 重挂，任务历史视图钉在打开它的项目上。**后端任务不取消**——照样改完、记进 A 的历史（按项目存），
   切回 A 在历史里看得到；首选 Agent / 作用范围 / 模型 / `caps` 是本机偏好，不清。看护
   `store/projectSwitchAi.test.ts`、`components/ai/assistantProjectScope.test.tsx`。
+  **提交可靠性与草稿（ADR 0131）**：不变式是「同一条 AI 修改不得被无意执行两次」。`start()` 生成请求 id
+  （`client_request_id`）进 `submissions`：`aiRun` 有 30 s 超时，**超时 / 断网 / 无 code 的 5xx / 读不出响应都是
+  「已发出未确认」不是失败**——此态禁用一切发送与重试，只能 `queryRequest(rid)`（`GET /api/ai/requests/<id>`）；
+  只有后端自己的 404 `ai_request_not_found` 才放开 `resend`，且复用**同一个** rid（后端按 rid 去重兜底）；明确的
+  4xx / 带稳定 code 的 5xx 才算失败，下一次发送换新 rid。会话终态只认第一条 `ai.done`（`finalized`），早于
+  `aiRun` 响应的 `ai.delta` / `ai.done` 按 rid 暂存、会话建好后回放；`cancel` 回 `ok:false` 不标 cancelled。
+  失败会话 `changed=true` 的「重试」先 `askConfirm`。草稿 `lib/aiDraft.ts`（键 `tavotto.ai.draft.v1.<项目>.<fileId>`，
+  **只是缓存**：桌面端口变化会丢，已知降级；20 KB / 30 份 / 30 天；只在后端给出会话 id 之后、且 rid 对得上才删）。
+  aiStore 经 `setAiSubmissionLedger` 注入落盘（Codex 内嵌画布与 playground 的包里带着 aiStore 但不得带草稿模块）。
+  草稿与 rid 不进日志 / 追踪环 / frontend-state。看护 `store/aiSubmission.test.ts`、`lib/aiDraft.test.ts`、
+  `lib/aiDraft.hosts.test.ts`、`lib/aiDraft.privacy.test.ts`、`components/ai/assistantDraft.test.tsx`、`e2e/ai-draft.spec.ts`。
 - **`assetStore` 的清单纪律**（`/api/panels`：面板、`unsupported`、目录；本条是全文，
   `project-document-and-autosave.md` 只引用）：**请求序号**挡旧响应覆盖新响应（不是"谁最后返回"）；
   **发请求那一刻的 pj** 挡串项目（`null` 与具体 id 是两个取值）；**项目代际**——`resetForNewProject()`
