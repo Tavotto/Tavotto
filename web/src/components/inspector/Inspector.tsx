@@ -8,6 +8,7 @@ import { t as translate } from '@/i18n'
 import { formatMm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { ResizeHandle } from '@/components/ui/ResizeHandle'
+import { registerPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
@@ -190,6 +191,7 @@ function WidthHandle() {
   return (
     <ResizeHandle
       name="inspector"
+      registerCancel={registerPointerCancel}
       side="left"
       value={width}
       min={RIGHT_MIN}

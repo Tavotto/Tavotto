@@ -203,3 +203,38 @@ test('分栏手柄：双击复位、拖动中 Esc 回滚、键盘步进与 Home/
   await expect(handle).toHaveAttribute('aria-valuenow', '330')
   await expect.poll(widthOf).toBe(330)
 })
+
+test('拖分栏手柄时按 Esc：宽度复原，且选中对象的上下文栏不被一并关掉', async ({ app, page }) => {
+  const a = await app()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(a.baseURL)
+  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await page.getByRole('button', { name: /返回画布|Back to canvas/ }).first().click()
+  const panel = page.locator('[data-object-id]').first()
+  await expect(panel).toBeVisible()
+  await panel.click()
+  const bar = page.locator('[data-context-bar]')
+  await expect(bar).toBeVisible()
+
+  const rail = page.locator('[data-rail="assets"]')
+  if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
+  const handle = page.locator('[data-resize-handle="left-drawer"]')
+  await expect(handle).toHaveCount(1)
+  await expect(handle).toHaveAttribute('aria-valuenow', '300')
+  await panel.click() // 点抽屉按钮可能改了选区；重新选中，保证工具条在
+  await expect(bar).toBeVisible()
+
+  const box = (await handle.boundingBox())!
+  const x = box.x + box.width / 2
+  const y = box.y + 300
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 40, y, { steps: 6 })
+  await expect(handle).toHaveAttribute('aria-valuenow', '340')
+  await page.keyboard.press('Escape')
+  await expect(handle).toHaveAttribute('aria-valuenow', '300')
+  await page.mouse.up()
+  await expect(handle).toHaveAttribute('aria-valuenow', '300')
+  // 这一下 Esc 只属于拖动：选区还在，上下文栏仍可见
+  await expect(bar).toBeVisible()
+})

@@ -6,6 +6,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { ResizeHandle } from '@/components/ui/ResizeHandle'
+import { registerPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -145,6 +146,7 @@ function WidthHandle() {
   return (
     <ResizeHandle
       name="left-drawer"
+      registerCancel={registerPointerCancel}
       side="right"
       value={width}
       min={LEFT_MIN}

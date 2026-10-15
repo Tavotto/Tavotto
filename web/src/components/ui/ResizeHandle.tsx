@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils'
  * WAI-ARIA window splitter：`role="separator"` + `aria-valuenow / min / max`，一个 Tab 停靠点。
  *
  * - 指针：按下抓住（pointer capture，指针出了 8px 命中条甚至出了窗口都还在拖），拖动实时调宽；
- *   **Esc 回滚**到按下时的宽度；`pointercancel`（系统打断）同样回滚；松手即定。
+ *   **Esc 回滚**到按下时的宽度（经 `registerPointerCancel`：`useKeyboard` 的 Esc 先取消进行中的指针手势，与画布拖动同一条路）；`pointercancel`（系统打断）同样回滚；松手即定。
  * - **双击复位**到默认宽度。
  * - 键盘：←/→ 按 `step`（16px）步进，朝「变宽」的那个方向由 `side` 定；Home / End 到下限 / 上限。
  * - 拖拽态：`data-dragging` 期间发丝线保持 2px accent（不靠 hover——指针早就离开了 8px 条）。
@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
  */
 export function ResizeHandle({
   name,
+  registerCancel,
   side,
   value,
   min,
@@ -27,6 +28,11 @@ export function ResizeHandle({
   label,
   step = 16,
 }: {
+  /**
+   * 登记「取消这次拖动」的出口，返回注销函数（调用方传 `store/gestureCoordinator.registerPointerCancel`：
+   * 原语不 import store）。拖动期间 `useKeyboard` 的 Esc 经它回滚，ContextBar 等别的 Esc 监听据此让位
+   */
+  registerCancel: (cancel: () => void) => () => void
   /** 稳定钩子 `data-resize-handle`（`left-drawer` / `inspector`）：e2e 按它找，不按 role + aria-value* */
   name: string
   /** 把手贴在容器的哪一边：右缘（左抽屉，向右拖 = 变宽）或左缘（属性栏，向左拖 = 变宽） */
@@ -44,6 +50,7 @@ export function ResizeHandle({
   const grow = side === 'right' ? 1 : -1
   const ref = useRef<HTMLDivElement>(null)
   const drag = useRef<{ id: number; x0: number; from: number } | null>(null)
+  const unregister = useRef<(() => void) | null>(null)
   const [dragging, setDragging] = useState(false)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
@@ -52,6 +59,8 @@ export function ResizeHandle({
     const d = drag.current
     if (!d) return
     drag.current = null
+    unregister.current?.()
+    unregister.current = null
     setDragging(false)
     try {
       ref.current?.releasePointerCapture?.(d.id)
@@ -61,26 +70,24 @@ export function ResizeHandle({
     if (rollback) onChangeRef.current(d.from)
   }
 
-  // 拖动中 Esc：不管焦点在哪都回滚（指针按下会把焦点接过来，但别指望它）。捕获阶段先拦，不让它再去清选区 / 退编辑
-  useEffect(() => {
-    if (!dragging) return
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      e.stopPropagation()
-      finish(true)
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragging])
   // 卸载时若还在拖，只清掉本地状态（宽度保持当前值）
-  useEffect(() => () => void (drag.current = null), [])
+  useEffect(
+    () => () => {
+      drag.current = null
+      unregister.current?.()
+      unregister.current = null
+    },
+    [],
+  )
 
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return
     e.preventDefault()
     drag.current = { id: e.pointerId, x0: e.clientX, from: value }
+    // Esc 的归属走仓库现成的指针手势协议：登记取消出口，`useKeyboard` 在 Esc 时先 `cancelActivePointerGesture()`
+    // 并吞掉这一下——不自己在 window 上再挂一个 Esc 监听（那挡不住 ContextBar 等其它捕获监听，Codex #1102）
+    unregister.current?.()
+    unregister.current = registerCancel(() => finish(true))
     try {
       e.currentTarget.setPointerCapture?.(e.pointerId)
     } catch {

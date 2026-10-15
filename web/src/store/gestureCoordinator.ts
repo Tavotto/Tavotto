@@ -89,6 +89,9 @@ export function cancelActivePointerGesture(): boolean {
   return true
 }
 
+/** 此刻有没有进行中的指针手势：Esc 的归属判据——有的话这一下 Esc 属于它（`useKeyboard` 会取消它），别的 Esc 监听别抢 */
+export const hasActivePointerGesture = (): boolean => pointerCancel != null
+
 /** 现在有没有开着的一轮（开发态不变式与测试用） */
 export const hasActiveGesture = (): boolean => active != null
 

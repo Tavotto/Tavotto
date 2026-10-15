@@ -5,6 +5,7 @@
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { cancelActivePointerGesture, hasActivePointerGesture, registerPointerCancel } from '@/store/gestureCoordinator'
 import { ResizeHandle } from './ResizeHandle'
 
 declare global {
@@ -37,6 +38,7 @@ function Harness({ side, start = 300 }: { side: 'left' | 'right'; start?: number
         }}
         label="调整宽度"
         name="test-handle"
+        registerCancel={registerPointerCancel}
       />
     </div>
   )
@@ -106,23 +108,33 @@ describe('ResizeHandle', () => {
     await pointer(sep(), 'pointerup', 70)
   })
 
-  it('拖动中 Esc 回滚到按下时的宽度，并结束拖拽；Esc 不再冒泡给别人', async () => {
+  it('拖动中登记指针手势（Esc 的归属）；useKeyboard 的 Esc = cancelActivePointerGesture() 回滚到按下时的宽度并结束拖拽', async () => {
     await mount('right', 300)
-    let leaked = false
-    const spy = () => (leaked = true)
-    window.addEventListener('keydown', spy) // 冒泡阶段：捕获阶段已 stopPropagation，到不了
+    expect(hasActivePointerGesture()).toBe(false)
     await pointer(sep(), 'pointerdown', 100)
+    expect(hasActivePointerGesture()).toBe(true)
     await pointer(sep(), 'pointermove', 140)
     expect(width).toBe(340)
-    await key(document.body, 'Escape')
+    await act(async () => void expect(cancelActivePointerGesture()).toBe(true)) // useKeyboard 在 Esc 时做的第一件事
     expect(width).toBe(300)
     expect(sep().dataset.dragging).toBeUndefined()
-    expect(leaked).toBe(false)
+    expect(hasActivePointerGesture()).toBe(false)
     // 回滚之后的 pointermove / pointerup 不再改宽
     await pointer(sep(), 'pointermove', 200)
     await pointer(sep(), 'pointerup', 200)
     expect(width).toBe(300)
-    window.removeEventListener('keydown', spy)
+  })
+
+  it('松手 / 卸载后注销手势登记：之后的 Esc 不再归它', async () => {
+    await mount('right', 300)
+    await pointer(sep(), 'pointerdown', 100)
+    await pointer(sep(), 'pointerup', 100)
+    expect(hasActivePointerGesture()).toBe(false)
+    await pointer(sep(), 'pointerdown', 100)
+    expect(hasActivePointerGesture()).toBe(true)
+    await act(async () => root.unmount())
+    expect(hasActivePointerGesture()).toBe(false)
+    root = createRoot(host)
   })
 
   it('没在拖时 Esc 不被吞（留给别的处理者）', async () => {
