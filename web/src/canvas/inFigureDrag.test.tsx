@@ -569,12 +569,12 @@ describe('图内拖动：吸住后保持', () => {
   }
   const leftOf = () => (overrideOf('axes_0.texts_0', 'pos_frac') as number[])[0]
 
-  it('吸住后拖开超过一倍容差仍保持，超过两倍才放开', async () => {
+  it('吸住后拖开超过一倍容差仍保持，超过 1.75 倍才放开', async () => {
     await setup()
     startElementDrag(down(0, 0), livePanel(), vacuum, layout)
     moveThrough([[3], [8]])
     // 8px 已出 6px 容差（别处的线此刻还在 2px 内，没保持的话会被它吸走），
-    // 但这一对还在 2 倍（12px）内：仍吸着，落点不动
+    // 但这一对还在 1.75 倍（10.5px）内：仍吸着，落点不动
     fire('pointerup', 8, 0)
     expect(leftOf()).toBeCloseTo(0.2, 6)
 
@@ -583,6 +583,20 @@ describe('图内拖动：吸住后保持', () => {
     moveThrough([[3], [8], [14]])
     fire('pointerup', 14, 0)
     // 放开了：不再钉在 0.2 上（落点可能被别处的线再吸走，所以只断言离开了 0.2）
+    expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
+  })
+
+  it('松开距离 1.75× 边界两侧：10px（< 10.5px）仍保持，11px（> 10.5px）放开', async () => {
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    moveThrough([[3], [10]])
+    fire('pointerup', 10, 0)
+    expect(leftOf()).toBeCloseTo(0.2, 6)
+
+    await setup()
+    startElementDrag(down(0, 0), livePanel(), vacuum, layout)
+    moveThrough([[3], [11]])
+    fire('pointerup', 11, 0)
     expect(leftOf() - 0.2).toBeGreaterThan(5 / W)
   })
 
@@ -629,7 +643,7 @@ describe('图内拖动：吸住后保持', () => {
       startElementDrag(down(0, 0), livePanel(), vacuum, layout)
       mv(0, 2) // 下边离 y=0.30 的线 3.8px：吸上，y 轴记下这一对
       mv(30, 2, { shiftKey: true }) // 锁水平：y 不走也不吸，保持必须清掉
-      mv(30, -2.2) // 松开 ⇧：下边离旧线 8px（1×–2× 容差之间），别处 6px 内没线
+      mv(30, -2.2) // 松开 ⇧：下边离旧线 8px（1×–1.75× 容差之间），别处 6px 内没线
       fire('pointerup', 30, -2.2)
       // 若保持没清，这里会被钉回 0.30
       expect(posOf()[1]).toBeCloseTo(0.28 - 2.2 / H, 5)

@@ -13,7 +13,7 @@ import {
   isElementHidden,
   snapKindOf,
 } from '@/lib/elementGeom'
-import { rectsIntersect, visualBounds } from '@/lib/geometry'
+import { rectsIntersect, SNAP_HOLD_FACTOR, visualBounds } from '@/lib/geometry'
 import type { Rect, ResizeDir, SnapLine, SnapLineCandidates, SnapTargets } from '@/lib/geometry'
 import type { CanvasObject, PanelObject } from '@/types/document'
 import { panelRotation } from '@/types/document'
@@ -60,8 +60,14 @@ export interface ScaleSnapParams {
   hold?: ScaleHold
 }
 
-/** 放开一对的距离 = 这个倍数 × 容差（与 PR1 的 SNAP_HOLD_FACTOR 同值） */
-const HOLD_FACTOR = 2
+/** 放开一对的距离 = 这个倍数 × 容差（直接复用图内吸附的 SNAP_HOLD_FACTOR，两处永远同值） */
+const HOLD_FACTOR = SNAP_HOLD_FACTOR
+
+/**
+ * 手柄跳变上限 = 这个倍数 × 容差：这次吸附让框尺寸变化（≈ 被拖手柄的位移 mm）超过它的对不吸。
+ * 比 1× 更紧——用户在手感调试页上实拖后拍板 0.5（2026-10-15，ADR 0128），宁可少吸也不让手柄一下蹦远。
+ */
+export const SCALE_JUMP_FACTOR = 0.5
 
 const FLOOR_EPS = 1e-6
 
@@ -74,7 +80,7 @@ export function scaleTier(anchorIsFrame: boolean, line: SnapLine): 0 | 1 {
 /**
  * 在锚点 × 候选线里挑一对：容差内（按锚点**当前位置**到线的距离）→ 先档位、后距离。
  * 解出的 s 太小（宽或高低于最小尺寸）的对不参与。带 `hold` 时上一帧那一对只要距离仍
- * < 2×容差就继续吸它，否则放开重挑。X / Y 合在一起挑一对（宽高共用一个 s）。
+ * < 1.75×容差就继续吸它，否则放开重挑。X / Y 合在一起挑一对（宽高共用一个 s）。
  */
 export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
   const { fixed, size, s0, anchors, cands, tol, hold } = p
@@ -94,7 +100,7 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
     const s = (line.v - a.f) / off
     if (!Number.isFinite(s) || s * size.w < minW || s * size.h < minH) return null
     // 手柄跳变：这次吸附让框尺寸变化多少 mm（≈ 被拖手柄的位移）；锚点贴近固定点时
-    // 小误差会被放大成巨大缩放，跳变超过容差的对不吸
+    // 小误差会被放大成巨大缩放，跳变超过 0.5×容差的对不吸
     const jump = Math.abs(s - s0) * Math.max(size.w, size.h)
     return { s, dist: Math.abs(a.f + off * s0 - line.v), jump, anchor, line }
   }
@@ -102,7 +108,7 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
   const held = hold?.held
   if (held) {
     const r = evalPair(held.axis, held.ai, held.li)
-    if (r && r.dist < tol * HOLD_FACTOR && r.jump < tol * HOLD_FACTOR)
+    if (r && r.dist < tol * HOLD_FACTOR && r.jump < tol * SCALE_JUMP_FACTOR * HOLD_FACTOR)
       return { s: r.s, axis: held.axis, anchor: r.anchor, line: r.line }
   }
 
@@ -111,7 +117,7 @@ export function snapScaleNearest(p: ScaleSnapParams): ScalePick | null {
     for (let ai = 0; ai < as.length; ai++) {
       for (let li = 0; li < ls.length; li++) {
         const r = evalPair(axis, ai, li)
-        if (!r || r.dist >= tol || r.jump >= tol) continue
+        if (!r || r.dist >= tol || r.jump >= tol * SCALE_JUMP_FACTOR) continue
         const tier = scaleTier(as[ai].frame, ls[li])
         if (!best || tier < best.tier || (tier === best.tier && r.dist < best.dist))
           best = { tier, dist: r.dist, axis, ai, li, s: r.s }

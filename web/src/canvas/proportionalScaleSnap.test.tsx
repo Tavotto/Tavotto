@@ -153,7 +153,7 @@ describe('等比缩放吸附', () => {
     expect(a.h).toBeCloseTo(75, 6)
   })
 
-  it('⌘ 那帧清掉保持：松开 ⌘ 后离旧吸点 2mm（> 容差、< 2×容差）不再被拽回去', () => {
+  it('⌘ 那帧清掉保持：松开 ⌘ 后离旧吸点 2mm（> 容差、< 1.75×容差）不再被拽回去', () => {
     startResizeDrag(down(0, 0), 'pa', 'se')
     fire('pointermove', [16, 0])
     expect((get('pa') as PanelObject).w).toBeCloseTo(100 * (70 / 60), 6) // 吸上
@@ -215,8 +215,11 @@ describe('等比缩放吸附', () => {
     startResizeDrag(down(0, 0), 'pa', 'se')
     fire('pointermove', [16, 0])
     expect((get('pa') as PanelObject).w).toBeCloseTo(100 * (70 / 60), 6)
-    fire('pointermove', [17.5, 0]) // 子图右边 70.5（0.5mm 外，超过「新挑」的 0.4 但仍 < 2×容差）
+    fire('pointermove', [17.5, 0]) // 子图右边 70.5（0.5mm 外，超过「新挑」的 0.4 但仍在保持范围内）
     expect((get('pa') as PanelObject).w).toBeCloseTo(100 * (70 / 60), 6)
+    // 保持上限 = 0.5×1.75×容差（跳变口径）：子图右边 71.1，保持上限 0.5×1.75×tol 已过 → 放开（改成 2× 时上限更大、仍会保持）
+    fire('pointermove', [18.1, 0])
+    expect((get('pa') as PanelObject).w).toBeCloseTo(118.1, 6)
     fire('pointermove', [40, 0])
     expect((get('pa') as PanelObject).w).toBeCloseTo(140, 6)
     fire('pointerup', [40, 0])
@@ -243,14 +246,16 @@ describe('「吸附到对象」关掉（Codex #1033 r4268157398）', () => {
     expect((get('pa') as PanelObject).w).toBeCloseTo(110, 6)
   })
 
-  it('别的对象外框不吸：B 外框右边 100，A 拖到 100.6 停在手指处；开着时吸到 100', () => {
+  it('别的对象外框不吸：B 外框右边 100，A 拖到 100.6 停在手指处；开着时吸到 100', async () => {
     useUiStore.setState({ snapToObjects: false })
     drag('se', [0.6, 0])
     expect((get('pa') as PanelObject).w).toBeCloseTo(100.6, 6)
+    await setup() // 复位 A 的宽（跳变口径按本帧起点算，别叠在上一次的落点上）
     useUiStore.setState({ snapToObjects: true })
     drag('se', [0.6, 0])
     expect((get('pa') as PanelObject).w).toBeCloseTo(100, 6)
   })
+
 })
 
 describe('平移候选不变', () => {

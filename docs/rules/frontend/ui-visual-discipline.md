@@ -107,7 +107,7 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 
 **2026-10-07 外壳与画布浮层（宪法第二十七节·外壳）**——与下文冲突处以它为准：画布视口四个角位各 12px 内距，右上一个堆叠容器
 （缩放 → 会话卡 → 探针，`data-canvas-corner="top-right"`）；覆盖层只描边不着色、虚线只有 `--sel-dash` 一种且只给暂定的东西、框选实线、
-手柄 8 + 16 命中 + 沿边命中带、吸附线带 × 帽、吸附反馈（自身与跨图目标的 `--sel-dash` 虚线框 + 自身那条边加粗 2px）；拖动读数贴着选区（`canvas/MeasureChip`：读数是逻辑盒，贴在 `visualBounds` 的并下面；标尺选区带同样按 `visualBounds`，与 `zoomToSelection` 同口径，取的对象也同一判据 `renderedSelection`——快速编辑里只认正在编辑的那张图，Codex #833），HUD 只剩工具提示；顶栏 = 首页胶囊（含品牌）/ 面包屑 /
+手柄 8 + 16 命中 + 沿边命中带、吸附线带 × 帽、吸附反馈（跨图目标的 `--sel-dash` 虚线框，不框自身 + 自身那条边加粗 2px）；拖动读数贴着选区（`canvas/MeasureChip`：读数是逻辑盒，贴在 `visualBounds` 的并下面；标尺选区带同样按 `visualBounds`，与 `zoomToSelection` 同口径，取的对象也同一判据 `renderedSelection`——快速编辑里只认正在编辑的那张图，Codex #833），HUD 只剩工具提示；顶栏 = 首页胶囊（含品牌）/ 面包屑 /
 项目锚点（项目接入状态胶囊）/ 文档状态芯片 / 时间线 ……撤销重做 / 导出 / 更多（空心环 = 未写进项目文件，实心 accent 点 = 有更新）；工作面板里的提示条只剩「构建版本不一致」（`BannerStack`，2026-10 设计审计第二轮）；
 快捷键只出自 `lib/keymap.ts`（`lib/keymap.test.tsx` 对拍 `useKeyboard`，按美式布局合成真浏览器给的事件：⇧ 改写后的 key，⇧⌘] 是 `}`）；命令面板 = `Dialog chrome="palette"`。
 
