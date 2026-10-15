@@ -3,11 +3,11 @@
  * 锁住同一脚本的发送；之后的 `ai.delta` / `ai.done` 认领到它上面；结束后转成普通终态。
  * 全部走真实的 `fetchAiHistory` / `fetchAiSession`（只替掉全局 `fetch`）。
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { handleServerEvent } from '@/hooks/useServerEvents'
 import { setCurrentProjectId } from '@/lib/session'
-import { isSessionOf, submissionBlocks, useAiStore } from './aiStore'
+import { isSessionOf, setAiSubmissionLedger, submissionBlocks, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
 const json = (b: unknown, status = 200) =>
@@ -21,6 +21,7 @@ const row = (over: Row = {}): Row => ({
   ...over,
 })
 let history: Record<string, Row[]> = {} // pj → 运行中清单
+let requestsDb: Record<string, Row> = {} // rid → `GET /api/ai/requests/<rid>` 的回答（没有 = 后端没登记过）
 let holds: Record<string, Promise<void>> = {} // pj → 扣住该项目的历史请求（「恢复在途」）
 const historyCalls: string[] = [] // 发过历史请求的项目
 let detail: Record<string, Row> = {}
@@ -37,6 +38,8 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     if (gate) await gate
     return json({ total: 0, sessions: history[pj] ?? [] })
   }
+  const rq = /\/api\/ai\/requests\/([^/?]+)$/.exec(u.split('?')[0])
+  if (rq) return requestsDb[rq[1]] ? json(requestsDb[rq[1]]) : json({ error: 'x', code: 'ai_request_not_found' }, 404)
   const m = /\/api\/ai\/sessions\/([^/?]+)$/.exec(u.split('?')[0])
   if (m) return detail[m[1]] ? json(detail[m[1]]) : json({ error: 'nf' }, 404)
   if (u.includes('/cancel')) return json({ ok: true })
@@ -48,6 +51,7 @@ const sessions = () => useAiStore.getState().sessions
 
 beforeEach(() => {
   history = {}
+  requestsDb = {}
   holds = {}
   historyCalls.length = 0
   detail = {}
@@ -309,17 +313,6 @@ describe('占位与「已发出未确认」「按脚本的发送锁」并存（P
     })
     expect(Object.keys(useAiStore.getState().submissions)).toEqual(['rid-mine-0000001'])
   })
-
-  it('结构性（源码）：「已被接受」只有 accept 一处；占位对上请求 id 与请求快照共用它（没有第二套 adopt 逻辑）', async () => {
-    const src = (await import('./aiStore.ts?raw')).default as string
-    expect(src).not.toContain('adoptRunningSession')
-    expect(src.match(/fetchAiSession\(/g)).toHaveLength(1) // 快照的详情只在 readSessionDetail 一处读（restore 收尾与 settleFromSnapshot 共用）
-    // 定义 + settleFromSnapshot + settleRunningSessions：断线收尾只有 settleRunningSessions 这一条路径（restoreRunning 调它，不自带第二份）
-    expect(src.match(/readSessionDetail\(/g)).toHaveLength(3)
-    expect(src).toMatch(/await get\(\)\.settleRunningSessions\(live\)/)
-    // acceptRunning 只是把占位当「请求快照说 running」交给 accept
-    expect(src).toMatch(/function acceptRunning[\s\S]{0,200}accept\(rid, session\.id/)
-  })
 })
 
 describe('恢复进行中到达的事件 / 并发恢复按项目分键（#1111 Codex P2）', () => {
@@ -407,5 +400,68 @@ describe('恢复进行中到达的事件 / 并发恢复按项目分键（#1111 C
     await Promise.all([p1, p2])
     expect(historyCalls).toEqual(['pa'])
     expect(sessions()).toHaveLength(1)
+  })
+})
+
+describe('「已被接受」不管从哪条路径进来，效果都一样（行为矩阵，不数源码）', () => {
+  // 结构性不变式用行为验：每条路径都必须清账本（恰好一次）、把提交归属并到唯一的会话上、去掉未确认状态。
+  // 盲点（写在明处）：新增第五条「已被接受」的入口，若不加进下面的矩阵，这里测不到它有没有绕开 `accept`。
+  const removeAccepted = vi.fn(async () => {})
+  const SUB = {
+    rid: 'rid-matrix-0001', project: 'pa', fileId: 'Fig1.pdf', panelId: 'p1', script: 'fig1.py', prompt: '把线条加粗',
+    target: { scope: 'figure' as const, gid: null, label: null, target: '整张图' }, canvas: null, overrides: [],
+  }
+  const submit = () => useAiStore.getState().restoreSubmission(SUB)
+
+  beforeEach(() => {
+    removeAccepted.mockClear()
+    setAiSubmissionLedger({ markSubmitted: async () => true, clearSubmitted: async () => {}, removeAccepted })
+  })
+  afterEach(() => setAiSubmissionLedger(null))
+
+  const entries: Record<string, () => Promise<void>> = {
+    用户点查询: async () => {
+      requestsDb[SUB.rid] = { session: 's-run', status: 'running', changed: false, script: 'fig1.py' }
+      detail['s-run'] = { agent: 'codex', status: 'running', changed: false, diff: '', transcript: [] }
+      submit()
+      await useAiStore.getState().queryRequest(SUB.rid)
+    },
+    占位先到_提交后到: async () => {
+      history.pa = [row({ id: 's-run', client_request_id: SUB.rid })]
+      await useAiStore.getState().restoreRunning()
+      submit()
+    },
+    提交先到_占位后到: async () => {
+      submit()
+      history.pa = [row({ id: 's-run', client_request_id: SUB.rid })]
+      await useAiStore.getState().restoreRunning()
+    },
+  }
+
+  it.each(Object.keys(entries))('%s：账本恰好清一次，归属并到唯一的会话，不再是未确认', async (name) => {
+    await entries[name]()
+    expect(removeAccepted).toHaveBeenCalledTimes(1)
+    expect(removeAccepted).toHaveBeenCalledWith('pa', 'Fig1.pdf', SUB.rid)
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([])
+    expect(sessions()).toHaveLength(1)
+    expect(sessions()[0]).toMatchObject({ id: 's-run', fileId: 'Fig1.pdf', panelId: 'p1', status: 'running' })
+    expect(sessions()[0].restored).not.toBe(true)
+  })
+
+  it('断线收尾：每个本地 running 会话的详情只读一次（经 restoreRunning 或直接对账都一样）', async () => {
+    const mk = (id: string) => ({
+      id, project: 'pa', agent: 'codex', agentLabel: 'Codex', prompt: 'p', script: 'fig1.py', panelId: 'p1', fileId: 'Fig1.pdf',
+      gid: null, scope: 'figure' as const, target: '整张图', entries: [], status: 'running' as const, changed: false, diff: '', startedAt: 1,
+    })
+    useAiStore.setState({ sessions: [mk('s-1'), mk('s-2')] })
+    detail['s-1'] = { status: 'done', changed: false, diff: '', transcript: [] }
+    detail['s-2'] = { status: 'done', changed: false, diff: '', transcript: [] }
+    await useAiStore.getState().restoreRunning() // 历史说没有在跑的 → 两个都走收尾
+    const reads = (id: string) => urls.filter((u) => u.includes(`/api/ai/sessions/${id}`) && !u.includes('/cancel')).length
+    expect([reads('s-1'), reads('s-2')]).toEqual([1, 1])
+    expect(sessions().map((x) => x.status)).toEqual(['done', 'done'])
+    urls.length = 0
+    await useAiStore.getState().settleRunningSessions() // 已终态：不再读
+    expect(urls.filter((u) => u.includes('/api/ai/sessions/'))).toEqual([])
   })
 })
