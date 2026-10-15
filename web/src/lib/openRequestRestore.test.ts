@@ -278,6 +278,23 @@ describe('用户级入口在恢复中排队（素材卡双击 / 加入排版 / �
     expect(panelsOf(app)).toHaveLength(1)
   })
 
+  it('自动进入编辑传的守卫：恢复期间排队，落定时守卫不满足 → 入口不执行（不放图、不进编辑）；满足才执行', async () => {
+    const app = await setAssets(await boot())
+    const ws = await import('@/store/workspace')
+    const hold = gate()
+    be.state.hold.session = hold.promise
+    const restoring = app.doc.restoreSession()
+    await vi.waitFor(() => expect(be.state.calls).toContain('GET session'))
+    let wanted = true
+    expect(ws.openFastEdit('Fig1.pdf', { guard: () => wanted })).toBe('deferred')
+    wanted = false // 用户在恢复期间把卡放到后台 / 切去别的卡
+    hold.release()
+    await restoring
+    await vi.waitFor(() => expect(app.doc.getRestoreGate().state).toBe('ready'))
+    await new Promise((r) => setTimeout(r, 30))
+    expect(panelsOf(app)).toEqual([])
+  })
+
   it('拖放 / 选图对话框的加图（addPanelToCanvas）同样排队，返回 null', async () => {
     const app = await setAssets(await boot())
     const ws = await import('@/store/workspace')

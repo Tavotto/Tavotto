@@ -214,7 +214,7 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
-    expect(openFastEdit).toHaveBeenCalledWith('runtime:plot.py#a')
+    expect(openFastEdit).toHaveBeenCalledWith('runtime:plot.py#a', expect.anything())
     expect(entry().editing).toEqual(['runtime:plot.py#a'])
     expect(entry().armed).toBe(false)
     expect(useUiStore.getState().guideCard).toBe('closed') // 进入编辑后卡片收起
@@ -324,18 +324,27 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     claimed(running())
     await open()
     let finish: (r: 'ran') => void = () => {}
-    vi.mocked(openFastEdit).mockImplementation((id: string) => {
-      putPanel(id)
+    // 排队的入口：恢复落定后才执行，执行前过传进来的守卫（真实现见 openRequestRestore.test）
+    let entered = false
+    let queued: () => void = () => {}
+    vi.mocked(openFastEdit).mockImplementation(((id: string, opts?: { guard?: () => boolean }) => {
+      queued = () => {
+        if (opts?.guard && !opts.guard()) return
+        entered = true
+        putPanel(id)
+      }
       return 'deferred'
-    })
+    }) as never)
     vi.mocked(takeDeferredEntryOutcome).mockReturnValueOnce(new Promise((r) => (finish = r as never)) as never)
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
     if (!stays) store().blur()
+    queued()
     finish('ran')
     await flush()
     await flush()
+    expect(entered).toBe(stays) // 切走之后排队的入口自己就不执行：不替换他此刻的工作区
     expect(useUiStore.getState().guideCard).toBe(stays ? 'closed' : 'card')
     expect(entry().editing.length).toBe(stays ? 1 : 0)
   })

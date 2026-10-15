@@ -74,7 +74,7 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
   if (!known && !findFigurePanel(d.asset_id)) {
     addRuntimePanelToCanvas(d)
   }
-  const outcome = openFastEdit(d.asset_id)
+  const outcome = openFastEdit(d.asset_id, host.stillWanted ? { guard: host.stillWanted } : undefined)
   // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个；
   // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
   const landed = () => {

@@ -231,8 +231,13 @@ export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing' | 'defer
  * （`ObjectView` 双击、`enterElementEdit`）。**不在这里另起一份判据**
  * ——状态与措辞归 `lib/readinessText.ts`，两者不是一件事。
  */
-export function openFastEdit(figureId: string): OpenFastEditOutcome {
-  const entry = deferUserEntry(() => void openFastEdit(figureId))
+export function openFastEdit(figureId: string, opts?: { guard?: () => boolean }): OpenFastEditOutcome {
+  // `guard`（只有自动进入编辑传）：入口在恢复期间排队时，真正执行前再核一次「用户还要这个入口」——
+  // 不满足就整个不执行（不替换他此刻的工作区）；用户手动的入口不传，行为不变
+  const entry = deferUserEntry(() => {
+    if (opts?.guard && !opts.guard()) return
+    void openFastEdit(figureId)
+  })
   if (entry !== 'run') return entry === 'deferred' ? 'deferred' : 'blocked'
   const got = ensurePanel(figureId, 'docOnly')
   if (!got) {
