@@ -1400,9 +1400,9 @@ export function ExportDialog() {
                 <CheckRow
                   summary={summary}
                   scopeHint={ex(scope === "original" && panel ? "checkScopeFigure" : "checkScopeCanvas")}
-                  onOpenPanel={(severities) => {
+                  onOpenPanel={(opts) => {
                     park();
-                    openProblems({ severities, target: problemsTarget });
+                    openProblems({ severities: opts?.severities, target: problemsTarget });
                   }}
                 />
               </FormRow>
@@ -1898,7 +1898,11 @@ function CheckRow({
   summary: ValidationSummary;
   /** 这份摘要算的是哪个范围（只算这张图 / 整个画布） */
   scopeHint: string;
-  onOpenPanel: (severities?: Severity[]) => void;
+  /**
+   * 带名字的 options 对象，不是裸的 `severities?`：`onClick={onOpenPanel}` 时 React 的 click event 会被当成
+   * 第一个参数——裸数组签名下它被存进 problemFilter、面板一打开就崩（#1106 P2）；对象签名下 event 过不了类型检查。
+   */
+  onOpenPanel: (opts?: { severities: Severity[] }) => void;
 }) {
   useTranslation(["dialogs", "errors"]);
   // 「查不了」与「没问题」是两个答案。压成一个 = 用户带着一屏静悄悄的绿投稿
@@ -1909,7 +1913,7 @@ function CheckRow({
           <TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden />
           {ex(summary.total ? "preflightFailedKept" : "preflightFailed")}
         </span>
-        <OpenProblems onClick={onOpenPanel} />
+        <OpenProblems onOpen={() => onOpenPanel()} />
       </div>
     );
   }
@@ -1949,21 +1953,22 @@ function CheckRow({
             tone={c.tone}
             count={summary.counts[c.sev]}
             label={ex(c.key, { count: summary.counts[c.sev] })}
-            onClick={() => onOpenPanel([c.sev])}
+            onClick={() => onOpenPanel({ severities: [c.sev] })}
           />
         ))}
         <span className="sr-only">{scopeHint}</span>
       </span>
-      <OpenProblems onClick={() => onOpenPanel()} />
+      <OpenProblems onOpen={() => onOpenPanel()} />
     </div>
   );
 }
 
-function OpenProblems({ onClick }: { onClick: () => void }) {
+/** `onOpen` 不收参数，内部一律无参调用——不把 click event 递给上游那些带可选参数的回调 */
+function OpenProblems({ onOpen }: { onOpen: () => void }) {
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => onOpen()}
       className="shrink-0 rounded-md text-sm text-ink-2 outline-none hover:underline focus-visible:focus-ring"
     >
       {ex("openProblems")}

@@ -1752,6 +1752,21 @@ describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#
     expect(all.length, '前提：整份排版里确实比 A 多').toBeGreaterThan(listed.length)
   })
 
+  it('校验失败、保留上一轮结果的分支：「在问题面板中查看」打开面板，problemFilter 是 null 而不是 click event', async () => {
+    await twoWithErrorOnP2()
+    await act(async () => {
+      useValidationStore.setState({ failed: true })
+    })
+    expect(text()).toContain('来自更早一次')
+    useUiStore.getState().setProblemFilter(['warn'])
+    await click(button('在问题面板中查看')!)
+    expect(useUiStore.getState().leftTab).toBe('problems')
+    // 筛选必须是 null 或等级数组——click event 被当成 severities 存进去，面板一打开 `.includes` 就崩
+    const f = useUiStore.getState().problemFilter
+    expect(f === null || (Array.isArray(f) && f.every((x) => typeof x === 'string'))).toBe(true)
+    expect(f).toBeNull()
+  })
+
   it('「在问题面板中查看」与「还有 N 项」同样带目标', async () => {
     await twoWithErrorOnP2()
     await click(button('在问题面板中查看')!)
