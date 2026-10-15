@@ -20,7 +20,6 @@ import {
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
-  cancelNativeSession,
   fetchDependencyOffer,
   isNativeTerminal,
   type GuiDialogPayload,
@@ -596,7 +595,7 @@ function useStopRun(entry: PrepEntry): () => void {
     const owned = plan
       ? Object.values(sessions).find((s) => s.owner === 'desktop' && s.launch_id === plan && !isNativeTerminal(s.state))
       : undefined
-    if (owned) void cancelNativeSession(owned.session_id).catch(() => undefined)
+    if (owned) void useProjectPreparationStore.getState().stopOwned(entry.key, owned.session_id)
     else void useProjectPreparationStore.getState().act(entry.key, 'cancel')
   }
 }

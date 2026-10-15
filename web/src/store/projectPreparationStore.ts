@@ -25,6 +25,7 @@ import { create } from 'zustand'
 import {
   actOnPreparationSession,
   ApiError,
+  cancelNativeSession,
   createPreparationSession,
   fetchPreparationSession,
   type CapturedFigureDescriptor,
@@ -123,6 +124,11 @@ interface PreparationState {
   refreshAll: () => void
   /** 认领后端生成的动作（run / cancel / recheck / prepare_dependencies）；报告里没有这个动作就什么都不做 */
   act: (key: string, kind: PreparationActionKind, retried?: boolean) => Promise<void>
+  /**
+   * 「停止运行」且这次运行有桌面拥有的进程：结束它（后端同一个端点连准备计划一起取消）。走与 `act` 同一套 pending / 拒绝 / 连接状态：
+   * 请求中按钮置忙；被拒显示后端稳定码对应的那一句；连接失败 = `connection: 'lost'`（卡片说「连不上」并继续补拉），不再吞掉
+   */
+  stopOwned: (key: string, nativeSessionId: string) => Promise<void>
   /** 环境 / 运行目录 / 数据位置答完了：空闲的会话只读地重新检查（不运行） */
   recheckIdle: () => void
   /** 「进入编辑」：记下加进画布的那张图与它的面板 / 渲染键（呈现层用它观察首次编辑渲染） */
@@ -584,6 +590,29 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       } finally {
         if (live(key, g)) schedule(key)
       }
+    },
+
+    stopOwned: async (key, nativeSessionId) => {
+      const e = entry(key)
+      if (!e || e.pending) return
+      const g = guardOf(key)
+      patch(key, () => ({ pending: 'cancel', rejection: null }))
+      try {
+        await cancelNativeSession(nativeSessionId)
+        if (!live(key, g)) return
+        patch(key, () => ({ pending: null }))
+      } catch (err) {
+        if (!live(key, g)) return
+        patch(key, () => ({ pending: null }))
+        if (isConnectionFailure(err)) patch(key, () => ({ connection: 'lost' }))
+        else {
+          const { code, params } = apiCode(err)
+          patch(key, () => ({ rejection: { code, params } }))
+        }
+      }
+      if (!live(key, g)) return
+      await get().refresh(key)
+      if (live(key, g)) schedule(key)
     },
 
     recheckIdle: () => {

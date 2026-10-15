@@ -2094,6 +2094,31 @@ describe('停止运行（V2 PR4 第二轮）：用户不感知运行层，只有
     expect(mockAct).toHaveBeenCalledTimes(1)
   })
 
+  // Codex #1044 r4280206157：取消请求失败不许被吞——按钮置忙、被拒说一句、连不上走离线态
+  it('停止请求被后端拒绝：请求中按钮置忙，失败后卡上有后端稳定码对应的一句话，按钮恢复可再点', async () => {
+    await mount()
+    putNative()
+    await openWith(runningNative())
+    let reject: (e: unknown) => void = () => {}
+    vi.mocked(cancelNativeSession).mockImplementationOnce(() => new Promise((_, r) => (reject = r)))
+    const stop = () => panel().querySelector('[data-prep-stop]') as HTMLButtonElement
+    await act(async () => stop().click())
+    expect(stop().disabled).toBe(true)
+    vi.mocked(fetchPreparationSession).mockResolvedValueOnce(runningNative({ observation_seq: 9 })) // 被拒之后重读报告
+    await act(async () => reject(new ApiError('x', 409, { code: 'script_not_found' })))
+    expect(panel().dataset.prepState).toBe('rejected') // 一句话：这次没成（详情里是稳定码对应的原因）
+    expect(stop().disabled).toBe(false)
+  })
+
+  it('停止请求连接失败：卡片转为连不上的状态（继续补拉），不再无反应', async () => {
+    await mount()
+    putNative()
+    await openWith(runningNative())
+    vi.mocked(cancelNativeSession).mockRejectedValueOnce(new TypeError('network'))
+    await act(async () => (panel().querySelector('[data-prep-stop]') as HTMLButtonElement).click())
+    expect(panel().dataset.prepConnection).toBe('lost')
+  })
+
   it('角标上运行中也有「停止运行」（同一条路径）；文案里没有 native / tavotto run', async () => {
     await mount()
     putNative()
