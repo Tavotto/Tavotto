@@ -64,6 +64,8 @@ test('素材卡：选中不同的卡，抽屉里其它东西的位置不动，�
         notice: document.querySelectorAll('[data-capability-notice]').length,
       }
     })
+  // 先等抽屉安顿（素材扫描 / 状态芯片到达之后才是静止布局，否则量到的是加载中的那一帧）
+  await page.waitForTimeout(1500)
   const base = await probe()
   expect(base.footer).toBe(0)
   for (let i = 0; i < Math.min(3, await cards.count()); i++) {
@@ -105,16 +107,6 @@ test('属性栏：层级带值、「换一张图」在 ⋯ 里、「改图里的
   // 层级行：带「n / m」的值（中英都含两个数字）
   const zrow = insp.locator('[data-fold="zorder"]')
   await expect(zrow.locator('[data-summary-value]')).toHaveText(/\d+\D+\d+/)
-  // 「换一张图」不在属性表里，在 ⋯ 菜单里（键盘可达）
-  await expect(insp.locator('[data-fold="replace"]')).toHaveCount(0)
-  const more = insp.locator('[data-identity-more]')
-  await more.focus()
-  await page.keyboard.press('Enter')
-  const item = page.locator('[data-replace-picture]')
-  await expect(item).toBeVisible()
-  await page.keyboard.press('Escape')
-  await expect(item).toHaveCount(0)
-
   // 死空白：进图内编辑按钮到下一节标题之间 ≤ 20px（原先 ≈ 38px 的常驻空白）
   const gap = await insp.evaluate((root) => {
     const status = root.querySelector('[data-panel-engine-status]')
@@ -126,6 +118,17 @@ test('属性栏：层级带值、「换一张图」在 ⋯ 里、「改图里的
   })
   expect(gap, '找不到进图内编辑那一节').not.toBeNull()
   expect(gap!).toBeLessThanOrEqual(20)
+
+  // 「换一张图」不在属性表里，在 ⋯ 菜单里（键盘可达）
+  await expect(insp.locator('[data-fold="replace"]')).toHaveCount(0)
+  const more = insp.locator('[data-identity-more]')
+  await more.focus()
+  await page.keyboard.press('Enter')
+  const item = page.locator('[data-replace-picture]')
+  await expect(item).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(item).toHaveCount(0)
+
 })
 
 test('抽屉里条目少于 6 个时没有搜索框', async ({ app, page }) => {
