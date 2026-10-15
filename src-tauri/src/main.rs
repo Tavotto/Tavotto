@@ -6,6 +6,7 @@
 mod app_update;
 #[cfg(test)]
 mod app_update_flow_tests;
+mod crash_dump;
 // 分派只有 macOS 的 native_drop 在用；别的平台上它只剩单测（分派规则各平台一样，照样跑）
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod drop_paths;
@@ -1602,6 +1603,8 @@ async fn desktop_update_install(
 }
 
 fn main() {
+    // 最先：越早装，启动早期的崩溃越有转储可收（仅 Windows 生效，见 crash_dump.rs）
+    crash_dump::install();
     let state = AppState {
         sidecar: Mutex::new(None),
         port: Arc::new(Mutex::new(None)),
