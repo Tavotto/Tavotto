@@ -709,22 +709,75 @@ class _Collector:
                 dead = True
         return dead
 
-    def _terminates(self, stmt: ast.stmt, scope: _Scope) -> bool:
-        if isinstance(stmt, (ast.Return, ast.Raise, ast.Continue, ast.Break)):
+    def _terminates(
+        self, stmt: ast.stmt, scope: _Scope, ret: bool = True, seen: frozenset = frozenset()
+    ) -> bool:
+        """这条语句执行后，同一序列里后面的语句是否一定走不到。`ret=False`：`return` 不算（函数体里的无条件 return
+        只是回到调用处，调用处后面还会执行）。拿不准一律按「终止」处理——后面的语句因此不出证据（保守方向）。"""
+        if isinstance(stmt, ast.Raise):
             return True
+        if isinstance(stmt, (ast.Return, ast.Continue, ast.Break)):
+            return ret
         if isinstance(stmt, ast.Assert):
             return isinstance(stmt.test, ast.Constant) and not stmt.test.value
         if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             func = stmt.value.func
             if self.qual(func) in ("sys.exit", "os._exit", "os.abort"):
                 return True
-            return any(self._is_exit_builtin(func, n, scope) for n in ("exit", "quit"))
-        if isinstance(stmt, ast.If) and self._main_guard(stmt.test):
-            return any(self._terminates(s, scope) for s in stmt.body)
+            if any(self._is_exit_builtin(func, n, scope) for n in ("exit", "quit")):
+                return True
+            return self._call_always_raises(func, scope, seen)
+        if isinstance(stmt, ast.If):
+            const_true = isinstance(stmt.test, ast.Constant) and bool(stmt.test.value)
+            if const_true or self._main_guard(stmt.test):
+                return any(self._terminates(s, scope, ret, seen) for s in stmt.body)
+            return False
         if isinstance(stmt, ast.While):
             t = stmt.test
             if isinstance(t, ast.Constant) and t.value and not stmt.orelse:
                 return not any(isinstance(n, ast.Break) for b in stmt.body for n in ast.walk(b))
+            return False
+        if isinstance(stmt, (ast.Try, getattr(ast, "TryStar", ast.Try), ast.With, ast.AsyncWith)):
+            # try / with 里的终止可能被 except / 上下文管理器吞掉，证明不了：块内出现任何无条件终止，后面都不算
+            inner = [*stmt.body]
+            if not isinstance(stmt, (ast.With, ast.AsyncWith)):
+                inner += [*stmt.orelse, *stmt.finalbody]
+                for h in stmt.handlers:
+                    inner += h.body
+            return any(self._terminates(s, scope, ret, seen) for s in inner)
+        if isinstance(stmt, ast.ClassDef):  # 类体在定义时执行
+            inner_scope = self.scopes.get(id(stmt), scope)
+            return any(self._terminates(s, inner_scope, False, seen) for s in stmt.body)
+        return False
+
+    def _call_always_raises(self, func: ast.AST, scope: _Scope, seen: frozenset) -> bool:
+        """`f()`：f 是本模块唯一绑定的 `def`，函数体顶层序列在任何 `return` 之前无条件 raise / exit。"""
+        if not isinstance(func, ast.Name) or self.bind_total.get(func.id) != 1:
+            return False
+        if func.id in self.aliases:
+            return False
+        s: _Scope | None = scope
+        while s is not None:
+            if func.id in s.defs:
+                target = s.defs[func.id]
+                if target is None:
+                    return False
+                node = target.node
+                if (
+                    not isinstance(node, ast.FunctionDef)
+                    or node.decorator_list
+                    or id(node) in seen
+                    or any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(node))
+                ):
+                    return False
+                seen = seen | {id(node)}
+                for stmt in node.body:
+                    if self._terminates(stmt, target, False, seen):
+                        return True
+                    if any(isinstance(n, ast.Return) for n in ast.walk(stmt)):
+                        return False
+                return False
+            s = s.parent
         return False
 
     def _is_exit_builtin(self, func: ast.AST, name: str, scope: _Scope) -> bool:

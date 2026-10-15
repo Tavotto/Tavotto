@@ -1271,3 +1271,54 @@ def test_a_conditional_terminator_does_not_hide_real_evidence():
     assert route.execution == "native"
     route = _route(MPL + "while True:\n    break\n" + tail)
     assert route.execution == "native"
+
+
+# ---- #1034 第五轮续：常量真分支 / try·with / 总是 raise 的函数 / 类体
+TAIL = 'plt.savefig("x.png")\nopen("x.png", "rb").read()\n'
+UNREACHABLE_MORE = [
+    ("if_true_raise", "if True:\n    raise SystemExit\n"),
+    ("if_one_exit", "import sys\nif 1:\n    sys.exit()\n"),
+    ("try_raise", "try:\n    raise SystemExit\nexcept Exception:\n    pass\n"),
+    ("try_finally_exit", "import sys\ntry:\n    pass\nfinally:\n    sys.exit()\n"),
+    (
+        "with_raise",
+        "import contextlib\nwith contextlib.suppress(Exception):\n    raise SystemExit\n",
+    ),
+    ("function_always_raises", "def die():\n    raise SystemExit\ndie()\n"),
+    ("function_calls_exit", "import sys\ndef die():\n    print(1)\n    sys.exit(1)\ndie()\n"),
+    ("function_chain", "def a():\n    raise SystemExit\ndef b():\n    a()\nb()\n"),
+    ("class_body_raise", "class Boom:\n    raise SystemExit\n"),
+]
+
+
+@pytest.mark.parametrize("name,stop", UNREACHABLE_MORE, ids=[c[0] for c in UNREACHABLE_MORE])
+def test_evidence_after_a_provable_or_unprovable_terminator_does_not_count(name, stop):
+    route = _route(MPL + stop + TAIL)
+    assert route.execution == "safe" and "R1" not in _rules(route), route.public()
+
+
+NOT_TERMINATORS = [
+    ("if_false_raise", "if False:\n    raise SystemExit\n"),
+    ("conditional_function", "def f(x):\n    if x:\n        raise SystemExit\nf(1)\n"),
+    ("function_returns_first", "def f():\n    return\n    raise SystemExit\nf()\n"),
+    ("function_plain_return", "def f():\n    return 1\nf()\n"),
+    (
+        "function_early_conditional_return",
+        "def f(x):\n    if x:\n        return\n    raise SystemExit\nf(0)\n",
+    ),
+    (
+        "decorated_function",
+        "def deco(fn):\n    return fn\n@deco\ndef f():\n    raise SystemExit\nf()\n",
+    ),
+    ("generator_function", "def f():\n    raise SystemExit\n    yield\nf()\n"),
+    ("rebound_function", "def f():\n    raise SystemExit\nf = print\nf()\n"),
+    ("uncalled_function", "def f():\n    raise SystemExit\n"),
+    ("try_without_terminator", "try:\n    pass\nexcept Exception:\n    pass\n"),
+    ("class_body_plain", "class K:\n    x = 1\n"),
+]
+
+
+@pytest.mark.parametrize("name,pre", NOT_TERMINATORS, ids=[c[0] for c in NOT_TERMINATORS])
+def test_things_that_are_not_provable_terminators_keep_the_real_r1_high(name, pre):
+    route = _route(MPL + pre + TAIL)
+    assert route.execution == "native" and "R1" in _rules(route), route.public()
