@@ -531,7 +531,9 @@ def put_draft(
     now = _now_ms()
     too_large = len(text.encode("utf-8")) > DRAFT_MAX_BYTES
     rev = 0
-    with _connect(db_path) as con:
+    # 读旧戳 → 判断 → 写 **整个在一个 `BEGIN IMMEDIATE` 事务里**：否则两个连接（两个服务进程）都先读到旧戳，
+    # 新的先提交，旧的随后用过期的 prev_stamp 判断并覆盖回去
+    with _immediate(db_path) as con:
         prev = con.execute(
             "SELECT revision, stamp FROM ai_drafts WHERE project=? AND file_id=?",
             (project, file_id),
@@ -611,7 +613,7 @@ def put_pending(
     if len(text.encode("utf-8")) > PENDING_MAX_BYTES:
         raise DraftTooLarge(PENDING_MAX_BYTES)
     now = _now_ms()
-    with _connect(db_path) as con:
+    with _immediate(db_path) as con:  # 数名额与写入同一个事务：并发提交不会同时挤过上限
         # 同 rid 的重写（重试写账本）不占新名额；其它 rid 满了就拒绝
         exists = con.execute(
             "SELECT 1 FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
@@ -656,7 +658,7 @@ def accept_pending(project: str, file_id: str, rid: str, db_path: Path | None = 
     """请求已被后端接受：清这条账本；**草稿自提交之后没被改过**（草稿当前的写入戳等于提交时记下的 `draft_stamp`）
     才一并删（一个事务里判与删）。**不比文本**：提交文本是 trim 过的、草稿是原样，文本比较会让已被接受的指令
     留在输入框里再被发一次。账本没记戳 = 不知道，不动草稿。返回 `{cleared, draft_deleted}`。"""
-    with _connect(db_path) as con:
+    with _immediate(db_path) as con:  # 读账本 → 删 → 按戳删草稿，同一个事务
         pend = con.execute(
             "SELECT draft_stamp FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
             (project, file_id, rid),

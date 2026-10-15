@@ -9247,6 +9247,15 @@ def api_ai_run():
     request_id = body.get("client_request_id")
     if request_id is not None and not _valid_client_request_id(request_id):
         abort(400)
+    if request_id:
+        # **先去重、后解析面板 / 注册表**：这两样是可变目标。原请求登记之后输出文件或注册表映射变了，同 id 的重发若先走
+        # 校验就会 404——前端把 404 当「明确拒绝」、删掉账本后换新 id 重发，同一条修改执行两次
+        known = engine_ai.find_request(str(require_project().resolve()), request_id)
+        if known is not None:
+            LOG.info("AI 任务请求重复，返回既有会话（session %s）", known["session"])
+            return jsonify(
+                {"session": known["session"], "script": known.get("script") or "", "deduped": True}
+            )
     path = safe_resolve(body.get("id", ""))
     info = current_registry().for_stem(path.stem)
     if info is None:

@@ -573,6 +573,87 @@ def test_pending_text_over_the_shared_limit_is_413_like_a_draft(client, two):
     assert ok.status_code == 200
 
 
+# ---------------------------------------------------------------------------
+# 读旧戳 → 判断 → 写 必须在同一个写事务里（Codex #1098 P1 r4289174818）
+# ---------------------------------------------------------------------------
+def test_put_draft_read_check_write_is_one_transaction(tmp_path, monkeypatch):
+    """两个独立连接：旧戳的写入先读完旧状态、卡在「写」之前；新戳的写入此时进来。读-判-写不在同一个写事务里时，
+    旧的会带着过期的视图覆盖回去（或撞库锁）；在 `BEGIN IMMEDIATE` 里，旧的持锁期间新的等着，之后按真实戳判——结果恒为新的。"""
+    import threading
+    import time as _time
+
+    db = tmp_path / "hist.sqlite3"
+    real_connect = ai_history._connect
+
+    def slow_connect(db_path=None):
+        con = real_connect(db_path)
+        # 在 INSERT 真正执行前卡一下（此时旧戳的写入已经读完 prev）：放大「读完到写之间」的窗口
+        con.set_trace_callback(
+            lambda stmt: (
+                _time.sleep(0.4)
+                if "INSERT OR REPLACE INTO ai_drafts" in stmt and "旧戳的稿" in stmt
+                else None
+            )
+        )
+        return con
+
+    monkeypatch.setattr(ai_history, "_connect", slow_connect)
+    errors: list[BaseException] = []
+
+    def put_old():
+        try:
+            ai_history.put_draft("/p", "F", "旧戳的稿", db_path=db, stamp=100)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    def put_new():
+        try:
+            ai_history.put_draft("/p", "F", "新戳的稿", db_path=db, stamp=200)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t_old = threading.Thread(target=put_old)
+    t_old.start()
+    _time.sleep(0.1)  # 旧的已经读完 prev、卡在写之前
+    t_new = threading.Thread(target=put_new)
+    t_new.start()
+    t_old.join()
+    t_new.join()
+    assert errors == []
+    got = ai_history.get_draft("/p", "F", db_path=db)
+    assert got["draft"]["text"] == "新戳的稿" and got["stamp"] == 200  # 旧戳没有覆盖回去
+
+
+def test_pending_cap_holds_under_concurrent_writers(tmp_path, monkeypatch):
+    """数名额与写入在同一个写事务里：十几个连接同时往同一面板提交，恰好 PENDING_MAX_PER_FILE 条成功，其余被拒（不超发）。"""
+    import threading
+
+    db = tmp_path / "hist.sqlite3"
+    n = ai_history.PENDING_MAX_PER_FILE + 6
+    barrier = threading.Barrier(n)
+    results: list[str] = []
+    lock = threading.Lock()
+
+    def submit(i):
+        barrier.wait()
+        try:
+            ai_history.put_pending("/p", "F", f"rid-cap-{i:08d}", "t", SENT, db_path=db)
+            out = "ok"
+        except ai_history.PendingLimit:
+            out = "full"
+        with lock:
+            results.append(out)
+
+    ts = [threading.Thread(target=submit, args=(i,)) for i in range(n)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert results.count("ok") == ai_history.PENDING_MAX_PER_FILE and results.count("full") == 6
+    assert (
+        len(ai_history.get_draft("/p", "F", db_path=db)["pendings"])
+        == ai_history.PENDING_MAX_PER_FILE
+    )
+
+
 def test_concurrent_first_connections_to_a_new_database_do_not_race_on_alter(tmp_path):
     """两个服务进程（或线程）同时打开同一个还没迁移过的库：「先查列有没有再 ALTER」不是原子的，后到的撞
     `duplicate column name`。窗口很窄，所以多轮、每轮一个全新的库。"""

@@ -733,3 +733,34 @@ def test_pid_alive_tells_a_finished_process_from_a_live_one():
     assert pid_alive(os.getpid()) is True
     assert pid_alive(_dead_pid()) is False
     assert pid_alive(0) is False
+
+
+def test_resend_is_deduped_before_the_panel_and_registry_are_revalidated(
+    client, tmp_path, cli, monkeypatch
+):
+    """原请求登记之后，输出文件 / 注册表映射变了（可变目标）：同 id 的重发要先去重、返回既有会话，而不是 404——
+    前端把 404 当「明确拒绝」，会删掉账本、换新 id 重发，同一条修改执行两次。"""
+    state, counter = cli
+    state["delay"] = 0.3
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    first = _post(client)
+    assert first.status_code == 200
+    _wait_idle()
+
+    class _Gone:  # 注册表里这个面板的映射没了
+        def for_stem(self, _stem):
+            return None
+
+    monkeypatch.setattr(m, "current_registry", lambda: _Gone())
+    again = _post(client)  # 同一个 id
+    assert again.status_code == 200, (
+        again.get_json()
+    )  # 对照：先校验后去重时这里是 404 not_parameterizable
+    assert (
+        again.get_json()["session"] == first.get_json()["session"]
+        and again.get_json()["deduped"] is True
+    )
+    fresh = _post(client, rid="rid-fresh-00000002")  # 新 id 仍然要过校验
+    assert fresh.status_code == 404 and fresh.get_json()["code"] == "not_parameterizable"
+    assert _spawned(counter) == 1
