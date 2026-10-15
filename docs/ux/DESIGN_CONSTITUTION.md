@@ -909,7 +909,7 @@ reduced-motion 契约）；68/85 命中 `foundation.test`（533 处）；弹簧 
   图与页面内容（纸）才是真白。
 
 ### 逐页 · 主页 / Playground / MCP 画布（2026-10-07，审计 §4.2 / §10.4）
-- **拖放接收态只有一种样子**（`ui/dropZone.dropZoneClass`）：静态什么都不画（没有常驻虚线框）；有东西拖到上面时 1.5px
+- **拖放接收态只有一种样子**（`ui/dropZone.dropZoneClass`）：静态什么都不画（没有常驻虚线框）；有东西拖到上面时 1px
   accent 虚线 + accent-subtle 底 + 一圈柔和外发光，画在 outline 上、几何不变。主页拖放区、/try 上传区与试验台共用。
 - **`sel` 只在画布上**：内嵌面（/try、MCP）的拖动、接收、进行中用 accent，横幅用 Notice / ink 胶囊。
 - **代码着色七档 token** `syntax-keyword / function / string / number / comment / type / builtin`：只读代码块不写 hex，

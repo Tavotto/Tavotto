@@ -210,6 +210,8 @@
   /* 改图助手输入框：浮在对话流上的玻璃（2026-09-15 参考 Codex 的 _ComposerLayoutBody，用户拍板）。
      底 = field 90% 不透明 + backdrop-filter blur、无边、三层投影；内容从它底下滚过时被糊掉——玻璃只在它浮着的时候成立。 */
   --color-glass: color-mix(in srgb, var(--color-field) 90%, transparent);
+  /* 拖放接收态的外发光（ui/dropZone）：accent 14% 的 4px 环，不透明度走 color-mix，不在组件里手写任意投影 */
+  --shadow-drop: 0 0 0 4px color-mix(in srgb, var(--color-accent) 14%, transparent);
   --shadow-composer:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 4%, transparent),
     0 2px 8px color-mix(in srgb, var(--color-shadow) 4%, transparent),
