@@ -1,0 +1,140 @@
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import { cn } from '@/lib/utils'
+
+/**
+ * 抽屉 / 栏的**宽度把手**（左抽屉右缘、属性栏左缘各一个，此前是两份复制的 `WidthHandle`）。
+ * WAI-ARIA window splitter：`role="separator"` + `aria-valuenow / min / max`，一个 Tab 停靠点。
+ *
+ * - 指针：按下抓住（pointer capture，指针出了 8px 命中条甚至出了窗口都还在拖），拖动实时调宽；
+ *   **Esc 回滚**到按下时的宽度；`pointercancel`（系统打断）同样回滚；松手即定。
+ * - **双击复位**到默认宽度。
+ * - 键盘：←/→ 按 `step`（16px）步进，朝「变宽」的那个方向由 `side` 定；Home / End 到下限 / 上限。
+ * - 拖拽态：`data-dragging` 期间发丝线保持 2px accent（不靠 hover——指针早就离开了 8px 条）。
+ * - 视觉：命中区 8px、整条在容器内侧（外层 `overflow-hidden` 是开合动效要用的，伸到外面会被剪掉）；
+ *   看得见的只有贴边的一根发丝线：hover 1px border-strong，键盘聚焦 / 拖拽 2px accent（蓝色不做大块背景）。
+ *
+ * 宽度本身不在这里存：`value` 进、`onChange(px)` 出，调用方（uiStore 的 `setLeftWidth` / `setRightWidth`）
+ * 负责夹值与持久化。`data-drawer-resize-line` 是发丝线的稳定钩子。
+ */
+export function ResizeHandle({
+  side,
+  value,
+  min,
+  max,
+  defaultValue,
+  onChange,
+  label,
+  step = 16,
+}: {
+  /** 把手贴在容器的哪一边：右缘（左抽屉，向右拖 = 变宽）或左缘（属性栏，向左拖 = 变宽） */
+  side: 'left' | 'right'
+  value: number
+  min: number
+  max: number
+  /** 双击复位到它 */
+  defaultValue: number
+  onChange: (px: number) => void
+  /** 可达名（含值域，调用方走 i18n） */
+  label: string
+  step?: number
+}) {
+  const grow = side === 'right' ? 1 : -1
+  const ref = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ id: number; x0: number; from: number } | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
+  const finish = (rollback: boolean) => {
+    const d = drag.current
+    if (!d) return
+    drag.current = null
+    setDragging(false)
+    try {
+      ref.current?.releasePointerCapture?.(d.id)
+    } catch {
+      // 已经释放了
+    }
+    if (rollback) onChangeRef.current(d.from)
+  }
+
+  // 拖动中 Esc：不管焦点在哪都回滚（指针按下会把焦点接过来，但别指望它）。捕获阶段先拦，不让它再去清选区 / 退编辑
+  useEffect(() => {
+    if (!dragging) return
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      finish(true)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragging])
+  // 卸载时若还在拖，只清掉本地状态（宽度保持当前值）
+  useEffect(() => () => void (drag.current = null), [])
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    drag.current = { id: e.pointerId, x0: e.clientX, from: value }
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId)
+    } catch {
+      // 合成事件没有活动指针
+    }
+    ;(e.currentTarget as HTMLElement).focus({ preventScroll: true })
+    setDragging(true)
+  }
+  const onPointerMove = (e: PointerEvent) => {
+    const d = drag.current
+    if (!d || e.pointerId !== d.id) return
+    onChange(d.from + grow * (e.clientX - d.x0))
+  }
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return
+    let next: number | null = null
+    if (e.key === 'ArrowRight') next = value + grow * step
+    else if (e.key === 'ArrowLeft') next = value - grow * step
+    else if (e.key === 'Home') next = min
+    else if (e.key === 'End') next = max
+    if (next === null) return
+    e.preventDefault()
+    onChange(next)
+  }
+
+  return (
+    <div
+      ref={ref}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={label}
+      aria-valuenow={Math.round(value)}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      tabIndex={0}
+      data-dragging={dragging || undefined}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={() => finish(false)}
+      onPointerCancel={() => finish(true)}
+      onLostPointerCapture={() => finish(false)}
+      onDoubleClick={() => onChange(defaultValue)}
+      onKeyDown={onKeyDown}
+      className={cn(
+        'group/resize absolute inset-y-0 z-canvas-chrome flex w-2 cursor-col-resize outline-none',
+        side === 'right' ? 'right-0 justify-end' : 'left-0 justify-start',
+      )}
+    >
+      <span
+        aria-hidden
+        data-drawer-resize-line
+        className={cn(
+          'h-full w-px bg-transparent transition-colors duration-fast',
+          'group-hover/resize:bg-border-strong group-focus-visible/resize:w-0.5 group-focus-visible/resize:bg-accent',
+          'group-data-[dragging]/resize:w-0.5 group-data-[dragging]/resize:bg-accent',
+        )}
+      />
+    </div>
+  )
+}

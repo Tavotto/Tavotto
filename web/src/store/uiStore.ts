@@ -64,6 +64,7 @@ const LS_KEY = UI_PREFS_KEY
 
 export const LEFT_MIN = 280
 export const LEFT_MAX = 360
+export const LEFT_DEFAULT = 300
 /**
  * 右栏 320–480px（默认 360）。296–320 的旧宽度装不下「可见标签 + 控件」的
  * 检查器排版——字体/字号只能挤成无标签的一行（见 docs/ux/INSPECTOR_REDESIGN.md
@@ -143,7 +144,7 @@ const DEFAULTS: Persisted = {
   prefsVersion: PREFS_VERSION,
   // 素材抽屉 + 右栏都开着：属性栏是编辑过程持续要看的，让它常驻
   leftOpen: true,
-  leftWidth: 300,
+  leftWidth: LEFT_DEFAULT,
   rightWidth: RIGHT_DEFAULT,
   leftPinned: false,
   rightPinned: true,
