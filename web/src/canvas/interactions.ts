@@ -1578,11 +1578,15 @@ function trackInFigureMove(
   // 吸上后手不动、只按下 / 松开 ⌘ / Ctrl 没有新的 pointermove，预览与提交都得按此刻的修饰键重算
   // （与 startAxesDrag 同一做法）；带着走的内容预览也在 frame 里随修饰键换
   let raw: [number, number] = [0, 0]
+  // raw 是按最后一次 pointermove 的 ⇧ 锁向算的；重算时 ⇧ 沿用它，只换 ⌘ / Ctrl（否则松手前先松 ⇧
+  // 会让吸附放开被锁的那一轴、提交与最后的预览不一致，Codex #1069）
+  let rawShift = false
   let last: [number, number] = [0, 0]
   let started = false
   const box0 = mv.snapBox
   const snapper = box0 ? inFigureSnapper(panel, mv.moving, mv.snapKind, mv.clampedToPanel) : null
-  const frame = (mods: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }) => {
+  const frame = (ev: { metaKey: boolean; ctrlKey: boolean }) => {
+    const mods = { metaKey: ev.metaKey, ctrlKey: ev.ctrlKey, shiftKey: rawShift }
     let [dfx, dfy] = raw
     if (snapper && box0) {
       const [sx, sy] = snapper([box0[0] + dfx, box0[1] + dfy, box0[2], box0[3]], mods, [dfx, dfy])
@@ -1605,6 +1609,7 @@ function trackInFigureMove(
       let [dfx, dfy] = toContent(dxPx, dyPx)
       if (ev.shiftKey) [dfx, dfy] = contentAxisLock(layout, dfx, dfy)
       raw = [dfx, dfy]
+      rawShift = ev.shiftKey
       started = true
       frame(ev)
     },

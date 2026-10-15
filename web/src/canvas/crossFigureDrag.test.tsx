@@ -124,7 +124,7 @@ const fire = (
   type: 'pointermove' | 'pointerup',
   clientX: number,
   clientY: number,
-  mods: { metaKey?: boolean; ctrlKey?: boolean } = {},
+  mods: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean } = {},
 ) => window.dispatchEvent(new MouseEvent(type, { clientX, clientY, bubbles: true, ...mods }))
 
 function dragTo(x: number, y: number, mods: { metaKey?: boolean } = {}, steps = 10) {
@@ -682,6 +682,22 @@ describe('图内拖动：修饰键变化重算吸附', () => {
     expect(useInteractionStore.getState().snapYs.length).toBeGreaterThan(0)
     fire('pointerup', 0, 2)
     expect(overrideOf('axes_0.legend', 'loc_frac')![1]).toBeCloseTo(0.725, 3)
+  })
+
+  it('⇧ 锁向拖动、松手前先松 ⇧：松手不放开被锁的那一轴（沿用最后一次移动的 ⇧，Codex #1069）', async () => {
+    await setup()
+    // 竖直参考线在图例左边右侧 2 px：不锁向时 x 会吸过去；⇧ 锁成竖直拖动时 x 不动
+    useDocumentStore.getState().commit(literal('加参考线'), (d) => {
+      d.guides.push({ axis: 'x', pos: livePanel().x + 0.6 * W + 2 * MM_PER_PX })
+    })
+    startElementDrag(down(), livePanel(), legendP1, layout)
+    for (let i = 1; i <= 10; i++) {
+      fire('pointermove', (0.5 * i) / 10, (20 * i) / 10, { shiftKey: true })
+      flushPreviewFrame()
+    }
+    expect(useInteractionStore.getState().snapXs).toHaveLength(0)
+    fire('pointerup', 0.5, 20)
+    expect(overrideOf('axes_0.legend', 'loc_frac')![0]).toBeCloseTo(0.6, 3)
   })
 
   it('松手事件带 Ctrl（中间没收到按键事件）：同样提交未吸附位移', async () => {
