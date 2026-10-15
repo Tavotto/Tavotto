@@ -16,6 +16,10 @@ export interface DraftBackend {
   holdReads: () => () => void
   /** 扣住草稿的 PUT（请求「在途」：后端还没收到）；返回放行函数 */
   holdDraftPuts: () => () => void
+  /** 只扣住**下一个**草稿 PUT（之后的照常落地）：模拟「A 在途、B 先落地」；返回放行函数 */
+  holdNextDraftPut: () => () => void
+  /** 另一个标签页以指定写入戳写草稿（走与 PUT 相同的接受 / 拒绝规则）；回是否被接受 */
+  putStamped: (pj: string, file: string, text: string, stamp: number) => boolean
   /** 只让「读项目级账本列表」失败（草稿的读照常成功） */
   setPendingListFails: (fails: boolean) => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
@@ -37,6 +41,8 @@ export function createDraftBackend(): DraftBackend {
   let pendingWriteFails = false
   let pendingListFails = false
   let hold: Promise<void> | null = null
+  let holdNext: Promise<void> | null = null
+  const stamps = new Map<string, number>()
   let readHold: Promise<void> | null = null
   const calls: DraftBackend['calls'] = []
   let down = false
@@ -76,7 +82,10 @@ export function createDraftBackend(): DraftBackend {
         if (!p) return json({ cleared: false, draft_deleted: false })
         pendings.set(key(pj, file), list.filter((x) => x.rid !== rid))
         const del = drafts.get(key(pj, file)) === p.text
-        if (del) drafts.delete(key(pj, file))
+        if (del) {
+          drafts.delete(key(pj, file))
+          stamps.set(key(pj, file), Math.max((stamps.get(key(pj, file)) ?? 0) + 1, Date.now() * 1000))
+        }
         return json({ cleared: true, draft_deleted: del })
       }
       if (method === 'PUT') {
@@ -104,18 +113,31 @@ export function createDraftBackend(): DraftBackend {
       }
       const file = String(body.file ?? '')
       if (method === 'PUT') {
+        // 与后端 `put_draft` 同语义：带戳的写入只有比已存戳更新才接受；空文本 / 超限 = 删但留墓碑（戳还在）
         const apply = (): Response => {
           const text = String(body.text)
+          const stamp = typeof body.stamp === 'number' ? body.stamp : Date.now() * 1000
+          const prev = stamps.get(key(pj, file))
+          if (prev !== undefined && stamp <= prev) return json({ stale: true, revision: 1, stamp: prev })
+          stamps.set(key(pj, file), stamp)
           if (text === '' || bytes(text) > MAX) drafts.delete(key(pj, file))
           else drafts.set(key(pj, file), text)
           if (bytes(text) > MAX) return json({ error: 'too large', code: 'ai_draft_too_large', params: { limit_kb: 20 } }, 413)
-          return json({ revision: 1 })
+          return json({ revision: 1, stamp })
+        }
+        if (holdNext) {
+          const wait = holdNext
+          holdNext = null
+          return wait.then(apply)
         }
         return hold ? hold.then(apply) : apply()
       }
       if (method === 'DELETE') {
         const del = drafts.get(key(pj, file)) === body.if_text
-        if (del) drafts.delete(key(pj, file))
+        if (del) {
+          drafts.delete(key(pj, file))
+          stamps.set(key(pj, file), Math.max((stamps.get(key(pj, file)) ?? 0) + 1, Date.now() * 1000))
+        }
         return json({ deleted: del })
       }
     }
@@ -140,6 +162,21 @@ export function createDraftBackend(): DraftBackend {
       })
       return release
     },
+    holdNextDraftPut: () => {
+      let release!: () => void
+      holdNext = new Promise<void>((r) => {
+        release = () => r()
+      })
+      return release
+    },
+    putStamped: (pj, f, t, stamp) => {
+      const prev = stamps.get(key(pj, f))
+      if (prev !== undefined && stamp <= prev) return false
+      stamps.set(key(pj, f), stamp)
+      if (t === '') drafts.delete(key(pj, f))
+      else drafts.set(key(pj, f), t)
+      return true
+    },
     holdDraftPuts: () => {
       let release!: () => void
       hold = new Promise<void>((r) => {
@@ -158,6 +195,6 @@ export function createDraftBackend(): DraftBackend {
     },
     draft: (pj, f) => drafts.get(key(pj, f)),
     pending: (pj, f) => (pendings.get(key(pj, f)) ?? []).map((p) => p.rid),
-    put: (pj, f, t) => void drafts.set(key(pj, f), t),
+    put: (pj, f, t) => void drafts.set(key(pj, f), t), // 测试直接塞值：不动戳（视为「更早」的存量）
   }
 }

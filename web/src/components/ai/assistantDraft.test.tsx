@@ -335,6 +335,67 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('写入戳：A 在途时 keepalive 发出 B，B 先落地、A 后落地——服务器最终保留 B，重开显示 B（旧请求赢在服务端不可能发生）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const releaseA = be.holdNextDraftPut() // 只扣住下一个 PUT（A）
+      await typeText('A 版')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // 防抖到点：PUT A 在途
+      await settle()
+      await typeText('B 版（更新）')
+      await act(async () => window.dispatchEvent(new Event('pagehide'))) // keepalive 冲刷：PUT B 并发发出，先落地
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('B 版（更新）')
+      releaseA() // A 现在才落地：戳更旧，必须被拒
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('B 版（更新）') // 对照：没有写入戳时这里会被 A 覆盖
+      expect(input().value).toBe('B 版（更新）')
+      // 重开面板：显示 B
+      await unmount()
+      await settle()
+      await mount()
+      expect(input().value).toBe('B 版（更新）')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('跨标签页以写入戳最新者为准：本地最新内容被别的标签页更新的写入压过 → 放弃这次写入、采纳服务器的值；之后的写入照常被接受', async () => {
+    await mount()
+    be.putStamped('pa', 'Fig1.pdf', '别的标签页更新的稿', Date.now() * 1000 + 5_000_000_000) // 戳在「未来」：比本页任何写入都新
+    await typeText('我本地的稿')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页更新的稿') // 没被旧戳覆盖
+    expect(input().value).toBe('别的标签页更新的稿') // 采纳服务器的值
+    await typeText('别的标签页更新的稿 + 我接着写') // 之后的写入戳已抬高到服务器戳之上
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await settle()
+    expect(be.draft('pa', 'Fig1.pdf')).toBe('别的标签页更新的稿 + 我接着写')
+  })
+
+  it('被判 stale 时本地之后又有更新的内容：再写一次（新戳大于服务器的），以本地为准', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      const releaseA = be.holdNextDraftPut()
+      await typeText('A 版')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // PUT A 在途
+      await settle()
+      be.putStamped('pa', 'Fig1.pdf', '别的标签页的稿', Date.now() * 1000 + 5_000_000_000) // A 落地前，别的标签页写了更新的戳
+      await typeText('B 版（A 之后本地又改的）')
+      releaseA() // A 被拒（stale）；本地有更新的内容 → 以本地为准再写一次
+      await settle()
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('B 版（A 之后本地又改的）')
+      expect(input().value).toBe('B 版（A 之后本地又改的）')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('已被接受的文本，其草稿 PUT 若迟于确认才落地：落地后被条件删掉，不会作为草稿复活', async () => {
     vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
     await mount()

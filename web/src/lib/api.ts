@@ -3184,10 +3184,10 @@ export const fetchAiDraft = (file: string, pj: string | null) =>
  * 全文覆盖（最后写入为准）；空文本 = 删。`keepalive`：页面正在关 / 刷新（pagehide）时用，浏览器会在
  * 页面销毁后继续把这个请求发完（正文有 64 KB 的 keepalive 上限，草稿 ≤ 20 KB 够用）。
  */
-export const putAiDraft = (file: string, text: string, pj: string | null, keepalive = false) =>
-  jsonFetch<{ revision: number }>(
+export const putAiDraft = (file: string, text: string, pj: string | null, keepalive = false, stamp?: number) =>
+  jsonFetch<{ revision: number; stamp: number; stale?: boolean }>(
     '/api/ai/drafts',
-    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text }), keepalive },
+    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, stamp }), keepalive },
     pj,
   )
 

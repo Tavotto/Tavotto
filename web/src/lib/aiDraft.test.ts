@@ -13,6 +13,8 @@ import {
   isDraftTooLarge,
   loadDraft,
   markSubmitted,
+  nextWriteStamp,
+  observeStamp,
   removeAccepted,
   saveDraft,
   type DraftTarget,
@@ -96,6 +98,41 @@ describe('keepalive 冲刷', () => {
   it('正文超过 keepalive 的 64 KB 上限就不带（带了浏览器会直接拒）', async () => {
     await saveDraft('pj', 'F', 'a'.repeat(100 * 1024), true) // 后端会 413，但请求本身不该因 keepalive 被浏览器拒
     expect(be.calls[0].keepalive).toBe(false)
+  })
+})
+
+describe('写入戳', () => {
+  it('nextWriteStamp 严格递增，即使墙钟回拨；observeStamp 把下限抬到服务端见过的戳之上', () => {
+    const real = Date.now
+    try {
+      const a = nextWriteStamp()
+      Date.now = () => 1 // 墙钟回拨
+      const b = nextWriteStamp()
+      const c = nextWriteStamp()
+      expect(b).toBeGreaterThan(a)
+      expect(c).toBeGreaterThan(b)
+      observeStamp(c + 1_000_000)
+      expect(nextWriteStamp()).toBeGreaterThan(c + 1_000_000)
+      observeStamp('garbage') // 不是数字：忽略
+      observeStamp(Number.NaN)
+    } finally {
+      Date.now = real
+    }
+  })
+
+  it('每次 PUT 都带一个新的、更大的戳（含 keepalive）；被服务端判 stale 回 stale', async () => {
+    await saveDraft('pj', 'F', 'a')
+    await saveDraft('pj', 'F', 'b', true)
+    const stamps = be.calls.filter((c) => c.method === 'PUT').map((c) => c.body.stamp as number)
+    expect(stamps).toHaveLength(2)
+    expect(stamps[1]).toBeGreaterThan(stamps[0])
+    // 别的标签页用更大的戳写过：本页之后的写入（戳更小）被判 stale，且不覆盖
+    be.putStamped('pj', 'F', '别的标签页', Date.now() * 1000 + 9_000_000_000)
+    expect(await saveDraft('pj', 'F', '本页的')).toBe('stale')
+    expect(be.draft('pj', 'F')).toBe('别的标签页')
+    // 本页抬高了下限：再写一次就比它新，被接受
+    expect(await saveDraft('pj', 'F', '本页再写')).toBe('saved')
+    expect(be.draft('pj', 'F')).toBe('本页再写')
   })
 })
 

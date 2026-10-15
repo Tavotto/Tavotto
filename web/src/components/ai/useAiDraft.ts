@@ -98,6 +98,19 @@ export function useAiDraft(panel: PanelObject | null) {
       inflight.current = null
       const pendingDelete = deleteAfterFlight.current
       deleteAfterFlight.current = null
+      if (r === 'stale') {
+        // 服务端说：它那里有比这次写入**更新的戳**，这次的内容不是最新的，没有被采纳
+        if (seq.current > mySeq) {
+          // 本地之后又有更新的内容（同页内的并发写：B 先落地、A 后落地）：它自己的写入会推进 acked；
+          // 没推进就再写一次（新戳一定比服务端的大，`saveDraft` 已抬高下限）
+          if (seq.current > acked.current) persist(false)
+          return
+        }
+        // 这就是本地最新的内容，却被另一个标签页**更新的写入**压过：以写入戳最新者为准——放弃这次写入、采纳服务器的值
+        acked.current = Math.max(acked.current, mySeq)
+        void reconcile('focus')
+        return
+      }
       if (r === 'unavailable') {
         // 没写成：文本还在内存里，序号没确认——3 秒后重试（用户又改了就走新的防抖）
         clearTimeout(retry.current)

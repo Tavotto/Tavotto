@@ -53,7 +53,22 @@ export interface Draft {
 }
 
 /** `saved` 已存；`removed` 空文本 = 已删；`too_large` 后端 413（旧稿也已删）；`unavailable` 没存成（网络 / 后端错），调用方重试 */
-export type SaveResult = 'saved' | 'removed' | 'too_large' | 'unavailable'
+export type SaveResult = 'saved' | 'removed' | 'too_large' | 'unavailable' | 'stale'
+
+/**
+ * 写入戳：单调递增的整数（墙钟微秒；同一页内再 +1 保证严格递增），**跨标签页可比**（同一台机器的墙钟）。
+ * 服务端 `ai_drafts.stamp` 只接受比已存戳更新的写入——pagehide 的 keepalive 拿不到响应、前端排队救不了，
+ * 所以「旧请求赢」必须在服务端就不可能发生。收到服务端的戳（含被判 stale 时回的那个）就抬高本页的下限，
+ * 之后的写入一定比它新。
+ */
+let lastStamp = 0
+export function nextWriteStamp(): number {
+  lastStamp = Math.max(lastStamp + 1, Date.now() * 1000)
+  return lastStamp
+}
+export function observeStamp(serverStamp: unknown): void {
+  if (typeof serverStamp === 'number' && Number.isFinite(serverStamp) && serverStamp > lastStamp) lastStamp = serverStamp
+}
 
 const byteLength = (text: string): number => {
   try {
@@ -98,7 +113,10 @@ export async function saveDraft(
 ): Promise<SaveResult> {
   if (!project || !fileId) return 'unavailable'
   try {
-    await putAiDraft(fileId, text, project, keepalive && byteLength(text) < 60 * 1024)
+    // 每次写入在**发出那一刻**取一个新的写入戳；服务端只接受比已存戳更新的写入，旧写入不管何时落地都不会覆盖新的
+    const res = await putAiDraft(fileId, text, project, keepalive && byteLength(text) < 60 * 1024, nextWriteStamp())
+    observeStamp(res.stamp)
+    if (res.stale) return 'stale'
     return text === '' ? 'removed' : 'saved'
   } catch (e) {
     if (e instanceof ApiError && e.status === 413) return 'too_large'
