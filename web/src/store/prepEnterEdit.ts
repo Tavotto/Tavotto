@@ -36,6 +36,11 @@ export interface EnterEditHost {
   epoch: () => number
   /** 记入编辑记录：资产 id + 它在画布上那个面板的渲染键 */
   note: (assetId: string, render?: EditRender) => void
+  /**
+   * 自动进入专用：素材清单的 await 之后、真正动工作区之前再核一次「用户还在看这张卡」。
+   * 不满足就放弃（回 `'stale'`，什么都没做）；用户手点「进入编辑」不传它，中途切走仍按原行为。
+   */
+  stillWanted?: () => boolean
 }
 
 /**
@@ -62,6 +67,7 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
   const guard = captureProjectEpoch(host.epoch)
   await useRuntimeAssetStore.getState().loadAssets()
   if (!guard.still()) return 'stale'
+  if (host.stillWanted && !host.stillWanted()) return 'stale'
   // 清单里没有、文档里也还没有这张图才加：清单请求在途时连点两下，两个续延都看到「清单里没有」，
   // 只有文档才是已经加过一次的权威（补审 #914 r4236701619）。这两步之间没有 await，第二个续延必然看到第一个加的面板
   const known = (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)

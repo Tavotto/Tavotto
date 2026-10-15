@@ -271,6 +271,40 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     expect(entry().report?.captured).toHaveLength(1) // 结果还在，用户随时点「进入编辑」
   })
 
+  it.each(['pill', 'closed'] as const)('自动进入等素材清单期间用户把卡放到后台 / 收起（%s）：落地前复核，放弃进入，卡上仍可手动进入', async (mode) => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    let release: () => void = () => {}
+    useRuntimeAssetStore.setState({ loadAssets: () => new Promise<void>((r) => (release = r)) })
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await flush()
+    useUiStore.setState({ guideCard: mode })
+    release()
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
+    expect(entry().report?.captured).toHaveLength(1)
+  })
+
+  it('自动进入等素材清单期间用户切去别的卡（焦点换了）：同样放弃', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    let release: () => void = () => {}
+    useRuntimeAssetStore.setState({ loadAssets: () => new Promise<void>((r) => (release = r)) })
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await flush()
+    store().blur()
+    release()
+    await flush()
+    await flush()
+    expect(openFastEdit).not.toHaveBeenCalled()
+  })
+
   it('用户切去看了别的脚本的卡（聚焦不在这个条目）：同样不自动进入', async () => {
     mockCreate.mockResolvedValueOnce(report())
     claimed(running())

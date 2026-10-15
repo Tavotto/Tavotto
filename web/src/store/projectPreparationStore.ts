@@ -614,7 +614,15 @@ async function autoEnterEdit(key: string, figure: CapturedFigureDescriptor, owne
     const { enterEdit } = await import('@/store/prepEnterEdit')
     if (!owner.still()) return
     const store = useProjectPreparationStore.getState
-    await enterEdit({ epoch: () => store().epoch, note: (id, render) => store().noteEditing(key, id, render) }, figure)
+    await enterEdit(
+      {
+        epoch: () => store().epoch,
+        note: (id, render) => store().noteEditing(key, id, render),
+        // 素材清单的 await 期间用户可能已把卡放到后台 / 收起 / 切去别的卡：落地前复核，别抢他的工作区
+        stillWanted: () => store().focus === key && useUiStore.getState().guideCard === 'card',
+      },
+      figure,
+    )
   } catch {
     /* 尽力而为：自动进入没成，卡片上的「进入编辑」仍在 */
   }
