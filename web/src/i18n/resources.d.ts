@@ -3013,6 +3013,7 @@ export default interface Resources {
       "none": "未发现问题",
       "noneEvidenceMulti_other": "按 {{specCount}} 套规范（{{specs}}）检查了 {{count}} 张图 · {{when}}",
       "noneEvidence_other": "按「{{spec}}」检查了 {{count}} 张图 · {{when}}",
+      "noneInCanvas": "画布「{{name}}」上没有问题",
       "noneInFilter": "当前筛选下没有问题",
       "noneInScope": "这张图上没有问题",
       "noneInScopeHint_other": "整份排版里还有 {{count}} 项问题。",

@@ -780,6 +780,7 @@
     "next": "Next",
     "none": "No problems found",
     "noneInFilter": "No problems match this filter",
+    "noneInCanvas": "No problems on canvas “{{name}}”",
     "noneInScope": "No problems on this figure",
     "noneInScopeHint_one": "The whole layout still has {{count}} problem.",
     "noneInScopeHint_other": "The whole layout still has {{count}} problems.",

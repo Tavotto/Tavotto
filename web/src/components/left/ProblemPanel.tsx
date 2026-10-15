@@ -467,7 +467,8 @@ export function ProblemPanel() {
           /* 范围裁掉了：整份排版里有问题、这张图上没有——是两句不同的话 */
           <EmptyState
             icon={CircleCheck}
-            title={pr('noneInScope')}
+            // 按范围说：当前图 =「这张图上」、当前画布 =「画布「X」上」——范围选了画布、清单是空的，却说「这张图」是自相矛盾
+            title={scope === 'canvas' ? pr('noneInCanvas', { name: canvasName }) : pr('noneInScope')}
             hint={pr('noneInScopeHint', { count: all.length })}
             action={{
               label: pr('scopeDocument'),

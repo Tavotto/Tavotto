@@ -433,6 +433,39 @@ describe('空态、筛选与「查不了」', () => {
     expect(container.querySelectorAll('[data-issue-row]').length).toBe(0)
   })
 
+  it('范围裁空时的空态文案按所选范围说：当前图「这张图上」、当前画布「画布「X」上」、整份排版「未发现问题」', async () => {
+    await seed()
+    const first = useDocumentStore.getState().activeCanvasId
+    const name = useDocumentStore.getState().canvases.find((c) => c.id === first)!.name
+    // 当前图：搬走这张图的问题（别的图上仍有），清单为空而整份排版不空
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      useValidationStore.setState({ issues: cur.map((i) => ({ ...i, objectRef: { ...i.objectRef, objectId: 'p_other', canvasId: 'c_other' } })) })
+    })
+    useSelectionStore.getState().set(['p1'])
+    useUiStore.getState().setProblemScope('figure')
+    await mount(<ProblemPanel />)
+    expect(text()).toContain('这张图上没有问题')
+    expect(text()).not.toContain('上没有问题」')
+    // 当前画布：同一份清单（都在别的画布上），文案换成画布名
+    await act(async () => {
+      useUiStore.getState().setProblemScope('canvas')
+    })
+    expect(text()).toContain(`画布「${name}」上没有问题`)
+    expect(text(), '范围选了画布，不许再说「这张图」').not.toContain('这张图上没有问题')
+    // 整份排版：清单不空（别的画布的问题都在）→ 不是空态
+    await act(async () => {
+      useUiStore.getState().setProblemScope('document')
+    })
+    expect(text()).not.toContain('上没有问题')
+    expect(text()).not.toContain('未发现问题')
+    // 整份排版真的没有问题：「未发现问题」
+    await act(async () => {
+      useValidationStore.setState({ issues: [] })
+    })
+    expect(text()).toContain('未发现问题')
+  })
+
   it('等级筛选是可切换的开关，带 aria-pressed', async () => {
     await seed()
     await mount(<ProblemPanel />)
