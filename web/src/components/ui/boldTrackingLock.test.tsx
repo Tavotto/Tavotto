@@ -6,7 +6,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { graphemeCount, useBoldTrackingLock } from './useBoldWidthLock'
+import { useBoldTrackingLock } from './useBoldWidthLock'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -64,8 +64,8 @@ beforeEach(() => {
     function (this: Range) {
       rangeCalls++
       const el = this.commonAncestorContainer as HTMLElement
-      // 与浏览器一致：宽度与字距都按字素簇计
-      const n = graphemeCount(el.textContent ?? '')
+      // 与浏览器一致：宽度与字距都按「渲染单位」计——连续空白折叠成一个、组合符 / ZWJ 序列算一个字素簇
+      const n = renderedUnits(el.textContent ?? '')
       const perChar = el.style.fontWeight === '600' ? 6.2 : 6
       return { width: n * perChar + n * parseFloat(el.style.letterSpacing || '0') } as DOMRect
     }
@@ -77,6 +77,9 @@ afterEach(async () => {
 })
 
 const n600 = (g: number) => g * 6.2
+// 浏览器怎么排版就怎么数（测试里的「浏览器」）：`truncate` 折叠连续空白，再按字素簇
+const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+const renderedUnits = (text: string) => [...seg.segment(text.replace(/\s+/g, ' '))].length
 const label = () => host.querySelector<HTMLElement>('[data-label]')!
 const render = (selected: boolean, text = '曲线 “Catalyst (k = 0.125 min⁻¹)”') =>
   act(async () => root.render(<Label text={text} selected={selected} />))
@@ -97,13 +100,29 @@ describe('useBoldTrackingLock', () => {
     expect(n * 6.2 + n * ls).toBeCloseTo(n * 6, 5)
   })
 
-  it('组合符 / ZWJ emoji：按字素簇数补偿，不按码点数（否则少补、截断点仍会挪）', async () => {
-    const text = '图例项 “Re\u0301sume\u0301 👨\u200d👩\u200d👧 data”'
-    expect([...text].length).toBeGreaterThan(graphemeCount(text))
-    await render(true, text)
-    const g = graphemeCount(text)
+  // 补偿后 600 的总宽 = 400 的总宽（桩按渲染单位计宽，字距对每个单位生效，与浏览器一致）
+  const lockedWidth = (text: string) => {
+    const units = renderedUnits(text)
     const ls = parseFloat(label().style.letterSpacing)
-    expect(n600(g) + g * ls).toBeCloseTo(g * 6, 5)
+    return { w600: n600(units) + units * ls, w400: units * 6, ls }
+  }
+
+  it('连续多个空格（truncate 折叠成一个）：按渲染单位补偿，不按源串字数', async () => {
+    const text = 'Catalyst        result      with     gaps  and   more   long   text'
+    expect(renderedUnits(text)).toBeLessThan([...text].length)
+    await render(true, text)
+    const { w600, w400, ls } = lockedWidth(text)
+    expect(ls).toBeLessThan(0)
+    expect(w600).toBeCloseTo(w400, 5)
+  })
+
+  it('组合符 / ZWJ emoji：补偿后 600 的总宽仍等于 400 的总宽', async () => {
+    const text = '图例项 “Re\u0301sume\u0301 👨\u200d👩\u200d👧 data”'
+    expect(renderedUnits(text)).toBeLessThan([...text].length)
+    await render(true, text)
+    const { w600, w400, ls } = lockedWidth(text)
+    expect(ls).toBeLessThan(0)
+    expect(w600).toBeCloseTo(w400, 5)
   })
 
   it('选中 → 取消选中：字距还原；换字后重新量', async () => {
@@ -133,7 +152,7 @@ describe('useBoldTrackingLock', () => {
     const text = '计数专用的一段很长的名字 counting counting'
     await render(true, text)
     const first = rangeCalls
-    expect(first).toBe(2) // 400 与 600 各一次
+    expect(first).toBe(3) // 400、600、600 + 1px 字距（量单位数）各一次
     // 同 props 重渲染：effect 根本不触发（命中缓存也不算——连样式都不该读）
     const styleReads = vi.spyOn(window, 'getComputedStyle')
     for (let i = 0; i < 5; i++) await render(true, text)
@@ -146,7 +165,7 @@ describe('useBoldTrackingLock', () => {
     expect(rangeCalls).toBe(first)
   })
 
-  it('多选 200 行同名：只量一次（2 次 Range 读），重渲染 0 次', async () => {
+  it('多选 200 行同名：只量一次（3 次 Range 读），重渲染 0 次', async () => {
     const text = '二百行共用的一段很长的名字 shared shared shared'
     const Many = () => (
       <>
@@ -156,11 +175,11 @@ describe('useBoldTrackingLock', () => {
       </>
     )
     await act(async () => root.render(<Many />))
-    expect(rangeCalls).toBe(2)
+    expect(rangeCalls).toBe(3)
     const spaced = host.querySelectorAll<HTMLElement>('[data-label]')
     expect([...spaced].every((el) => el.style.letterSpacing !== '')).toBe(true)
     await act(async () => root.render(<Many />))
-    expect(rangeCalls).toBe(2)
+    expect(rangeCalls).toBe(3)
   })
 
   it('选中长名 → 进入改名（标签被输入框顶替）→ 取消：重新挂载的标签上字距仍在', async () => {

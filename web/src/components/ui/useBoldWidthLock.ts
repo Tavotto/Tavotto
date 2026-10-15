@@ -23,7 +23,7 @@ export function useBoldWidthLock(ref: RefObject<HTMLElement | null>) {
 }
 
 /** (字体 + 文字) → 400 与 600 的排版宽度。同名反复量只量一次；字体加载完成后整表作废 */
-const boldWidthCache = new Map<string, { w400: number; w600: number }>()
+const boldWidthCache = new Map<string, { w400: number; w600: number; units: number }>()
 if (typeof document !== 'undefined') {
   document.fonts?.addEventListener?.('loadingdone', () => boldWidthCache.clear())
 }
@@ -33,24 +33,6 @@ if (typeof document !== 'undefined') {
  * 选中期间拖窄 / 拉宽抽屉会改变「放不放得下」，回调里只用缓存的 w400 / w600 对新的 clientWidth 重判，不重新量 Range。
  */
 let sharedRO: ResizeObserver | null = null
-// CSS 的 letter-spacing 加在每个排版字符单位之后——按字素簇数，不是码点数：
-// 「é」（e + 组合符）、ZWJ 家庭 emoji 是多个码点、一个单位，按码点除会少补，选中后截断点照样挪
-// 懒构造 + 特性检测（与 lib/streamMarkdown 同一写法）：没有 Intl.Segmenter 的 WebView 里模块顶层不能抛，
-// 退回按码点数——只对组合符 / ZWJ 序列少补，不影响导入
-let graphemes: Intl.Segmenter | null | undefined
-export function graphemeCount(text: string): number {
-  if (graphemes === undefined) {
-    graphemes =
-      typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
-        ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-        : null
-  }
-  let n = 0
-  if (graphemes) for (const _ of graphemes.segment(text)) n++
-  else for (const _ of text) n++
-  return n
-}
-
 const roCallbacks = new WeakMap<Element, () => void>()
 function watchSize(el: HTMLElement, recheck: () => void) {
   if (typeof ResizeObserver === 'undefined') return
@@ -72,6 +54,7 @@ function unwatchSize(el: HTMLElement) {
  * （那是给不截断的页签留 `min-width`；给截断的标签加 `min-width` 只会把行撑出去）。
  *
  * 做法：选中且**会被截断**（600 的宽度超出标签盒）时，用等量的负字距吃掉 600 比 400 多出的宽度——
+ * 字距 = 差值 ÷ 单位数，单位数是量出来的（600 下字距 0 与 1px 的宽度差），不是数出来的——
  * 字仍是 600，整段宽度与 400 时一样，截断点不动。不截断的行什么都不做（加粗本来就不该被压窄）。
  * 量宽用 Range（不受 `overflow:hidden` 剪裁影响）。
  *
@@ -90,8 +73,7 @@ export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text
     el.style.letterSpacing = ''
     // 每次都先撤掉上一次装的观察回调：它捕获的是旧文字的宽度，改名后留着，之后调抽屉宽会把旧字距套到新标签上
     unwatchSize(el)
-    const chars = graphemeCount(text)
-    if (!active || !chars) return
+    if (!active || !text) return
     const cs = getComputedStyle(el)
     const key = `${cs.fontFamily}|${cs.fontSize}|${text}`
     let hit = boldWidthCache.get(key)
@@ -109,17 +91,23 @@ export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text
       const w400 = range.getBoundingClientRect().width
       el.style.fontWeight = '600'
       const w600 = range.getBoundingClientRect().width
+      // 再量一次 600 + 1px 字距：差值就是**实际参与字距的单位数**。不数字符——`truncate` 折叠连续空白、
+      // 组合符 / ZWJ 序列 / 连字都是一个单位，浏览器自己算（数源串、数码点、数字素簇都被挑出过少补）
+      el.style.letterSpacing = '1px'
+      const w600s = range.getBoundingClientRect().width
+      el.style.letterSpacing = ''
       el.style.fontWeight = prev
       el.style.transition = prevTransition
-      hit = { w400, w600 }
+      hit = { w400, w600, units: w600s - w600 }
       if (boldWidthCache.size > 500) boldWidthCache.clear()
       boldWidthCache.set(key, hit)
     }
-    const { w400, w600 } = hit
+    const { w400, w600, units } = hit
     const decide = () => {
       const delta = w600 - w400
       // 不截断（600 的宽度放得下标签盒）：不需要锁
-      el.style.letterSpacing = delta > 0.05 && w600 > el.clientWidth ? `${-delta / chars}px` : ''
+      el.style.letterSpacing =
+        delta > 0.05 && units >= 0.5 && w600 > el.clientWidth ? `${-delta / units}px` : ''
     }
     decide()
     if (w600 - w400 > 0.05) watchSize(el, decide)
