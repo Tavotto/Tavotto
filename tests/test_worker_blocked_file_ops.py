@@ -784,9 +784,6 @@ def test_p1_default_sandbox_ledger_sees_the_requested_path_not_the_fallback_rewr
 @pytest.mark.parametrize(
     ("call", "readback"),
     [
-        ('fig.savefig("stage")', '"stage.png"'),
-        ('fig.savefig(Path("stage"))', '"stage.png"'),
-        ('fig.savefig("stage.")', '"stage.png"'),
         ('fig.savefig(Path("stage.png"))', '"stage.png"'),
         ('fig.savefig("stage.png")', 'Path("stage.png")'),
         ('fig.savefig("stage.png")', '"./stage.png"'),
@@ -801,13 +798,25 @@ def test_p1_savefig_target_forms_all_meet_the_readback(figs, project_mode, call,
 
 
 @needs_worker
-def test_p1_default_format_comes_from_rcparams(figs):
+@pytest.mark.parametrize("project_mode", [False, True], ids=["sandbox", "project"])
+@pytest.mark.parametrize(
+    "call", ['fig.savefig("stage")', 'fig.savefig(Path("stage"))', 'fig.savefig("stage.")']
+)
+def test_extensionless_savefig_readback_is_an_accepted_miss(figs, project_mode, call):
+    """已接受的漏判（#1076 一族，记 #1029）：无后缀且无显式 format 的 savefig，补出来的名字是推测
+    （canvas 默认格式不推断），不进账本；读那个名字不会被发现。证明不了就不归因。"""
+    _build(
+        figs, "forms_miss.py", _savefig_then_read(call, '"stage.png"'), project_mode=project_mode
+    )
+
+
+@needs_worker
+def test_extensionless_savefig_with_rcparams_format_is_an_accepted_miss(figs):
     (figs / "stage.svg").write_text("<svg/>", encoding="utf-8")
     src = _savefig_then_read(
         'fig.savefig("stage")', '"stage.svg"', pre='plt.rcParams["savefig.format"] = "svg"'
     ).replace("Image.open(", "open(")
-    e = _blocked(figs, "rcfmt.py", src, project_mode=False)
-    assert e.code == CODE, (e.code, str(e))
+    _build(figs, "rcfmt.py", src, project_mode=False)
 
 
 @needs_worker
@@ -871,6 +880,14 @@ def test_savefig_effective_names_cover_what_matplotlib_really_writes(
         plt.close(fig)
     written = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
     assert len(written) == 1
+    if (
+        kwargs.get("format") is None
+        and not Path(str(target)).suffix.lstrip(".")
+        or target == "stage."
+    ):
+        # 无后缀且无显式 format：补出来的名字是推测（canvas 默认格式不推断），一个都不记——接受为漏判（#1076）
+        assert names == [], names
+        return
     assert {Path(n).as_posix() for n in names} >= written, (names, written)
 
 
@@ -1059,13 +1076,23 @@ def test_p2_extensionless_savefig_does_not_taint_an_unrelated_file_of_that_name(
     (figs / "stage").write_text("unrelated", encoding="utf-8")
     src = _PLOT + 'fig.savefig("stage")\nwith open("stage") as f:\n    data = f.read()\n'
     _build(figs, "noext_ok.py", src, project_mode=False)
-    # 补出来的后缀名仍然算：读 stage.png 才是读到了被拦的那份
+    # 补出来的 stage.png 是推测（canvas 默认格式不推断），不进账本：读它不归因。这是接受的漏判（#1076 一族）；
+    # 同一个 savefig 写成显式 `stage.png` 就归因（见 test_ex02_*）
     src2 = _PLOT + 'fig.savefig("stage")\nwith open("stage.png", "rb") as f:\n    data = f.read()\n'
-    e = _blocked(figs, "noext_bad.py", src2, project_mode=False)
-    assert e.code == CODE, (e.code, str(e))
+    _build(figs, "noext_leak.py", src2, project_mode=False)
 
 
 SVG_DEFAULT_PLOT = _PLOT + "matplotlib.rcParams['savefig.format'] = 'svg'\n"
+
+
+@needs_worker
+def test_retro_open_of_a_speculative_name_is_not_blamed(figs):
+    """#1076 Codex P2：SVG 默认下 `savefig('out'); open('out.png','rb')` 直接运行同样 FileNotFoundError，不能归因。"""
+    src = (
+        SVG_DEFAULT_PLOT
+        + 'fig.savefig("out")\ntry:\n    open("out.png", "rb")\nexcept FileNotFoundError:\n    pass\n'
+    )
+    _build(figs, "open_spec.py", src, project_mode=False)
 
 
 @needs_worker
@@ -1130,45 +1157,6 @@ def test_retro_definitive_candidate_is_still_blamed_after_overflow(figs):
     assert e.code == CODE, (e.code, str(e))
 
 
-@pytest.mark.parametrize("overflow", [False, True], ids=["inline", "after_overflow"])
-def test_retro_exit_and_missing_probe_attribution_skips_speculative_candidates(tmp_path, overflow):
-    """探测落空 + 退出归因（note_missing_path / explain_exit）与 FileNotFoundError 解释共用同一个判据。
-    静态闸门（exit_controlled_by_probe）要求探测对象与 savefig 目标同源，所以这里直接在账本层断言。"""
-
-    def ledger(*, speculative=True):
-        led = figcapture.BlockedFileOps()
-        if overflow:
-            for i in range(led.MAX_EVENTS):
-                led.blocked("os.remove", led.KIND_DELETE, str(tmp_path / f"f{i}"))
-        led.blocked(
-            "savefig",
-            led.KIND_SAVEFIG,
-            str(tmp_path / "out.svg"),
-            str(tmp_path / "out.png"),
-            weak=[str(tmp_path / "out.svg"), str(tmp_path / "out.png")] if speculative else (),
-        )
-        led._seq = 3
-        return led
-
-    weak = ledger()
-    weak.note_missing_path(str(tmp_path / "out.png"))
-    assert weak.explain_exit(controlled=True) is False
-    assert weak.material() == []
-    weak_svg = ledger()
-    weak_svg.note_missing_path(str(tmp_path / "out.svg"))
-    assert weak_svg.explain_exit(controlled=True) is False
-    strong = ledger(speculative=False)  # 显式后缀 / format= 的目标：确定候选
-    strong.note_missing_path(str(tmp_path / "out.svg"))
-    assert strong.explain_exit(controlled=True) is True
-
-
-def test_retro_every_extensionless_candidate_is_speculative_and_explicit_ones_are_not():
-    names, spec = figcapture.savefig_name_candidates("out", {})
-    assert names and sorted(spec) == sorted(names)
-    assert figcapture.savefig_name_candidates("out.svg", {}) == (["out.svg"], [])
-    assert figcapture.savefig_name_candidates("out", {"format": "png"}) == (["out"], [])
-
-
 RENAME_SPECULATIVE_SRC = (
     "import os\n"
     + SVG_DEFAULT_PLOT
@@ -1182,12 +1170,6 @@ RENAME_SPECULATIVE_SRC = (
     + "except FileNotFoundError:\n"
     + "    pass\n"
 )
-
-
-@needs_worker
-def test_retro_rename_of_a_speculative_savefig_target_is_not_propagated_into_a_blocked_event(figs):
-    """#1076 Codex P2：推测的 savefig 候选当改名的源时，不能升成强的改名事件（随后访问目的地就归因守卫）。"""
-    _build(figs, "ren_weak.py", RENAME_SPECULATIVE_SRC, project_mode=True)
 
 
 @needs_worker
@@ -1207,21 +1189,11 @@ def test_retro_rename_of_a_definitive_savefig_target_is_still_blamed(figs):
     assert e.code == CODE, (e.code, str(e))
 
 
-def test_retro_consumer_audit_only_attribution_sites_use_the_shared_predicate():
-    """savefig 事件 paths 的消费方清单（记账 / 回读不归因，其余必须走 `_attributes`）：
-    `_failure_events`、`note_missing_path`、`_savefig_covers`（改名源传播）。"""
-    import inspect
-
-    for name in ("_failure_events", "note_missing_path", "_savefig_covers"):
-        src = inspect.getsource(getattr(figcapture.BlockedFileOps, name))
-        assert "_attributes" in src, name
-
-
 def test_savefig_effective_names_skip_the_literal_name_when_matplotlib_appends_a_suffix():
-    assert "stage" not in figcapture.savefig_effective_names("stage", {})
-    assert "stage" not in figcapture.savefig_effective_names("stage.", {})
+    assert figcapture.savefig_effective_names("stage", {}) == []
+    assert figcapture.savefig_effective_names("stage.", {}) == []
     assert "stage" in figcapture.savefig_effective_names("stage", {"format": "png"})
-    assert "stage.png" in figcapture.savefig_effective_names("stage", {})
+    assert figcapture.savefig_effective_names("stage.png", {}) == ["stage.png"]
 
 
 RMTREE_RECREATE = """\

@@ -1311,37 +1311,19 @@ def savefig_effective_names(fname, kwargs: dict) -> list:
 
     `print_figure` 的规则：显式 `format=` 时文件名**原样**（不补后缀）；否则 `str` / `PathLike`
     取文件名后缀作格式，**没有后缀**就补默认格式（`stage` → `stage.png`，`stage.` → `stage.png`）。
-    默认格式由 canvas 决定、用户可重载（`savefig_call` 因此不把它当已确定），这里不调用任何用户方法：
-    显式 `format=` / 有后缀 / `bytes` 只记字面名；否则字面名**不会**被写出，只记补 `rcParams["savefig.format"]` 与 `png` 两个候选后缀名——多记一个候选只会让
-    「读了那个名字」多算一次回读，不会漏。`bytes` 目的地 matplotlib 不补后缀，只记字面名。
+    默认格式由 canvas 决定、用户可重载（`savefig_call` 因此不把它当已确定），我们不去推断它（不调用任何用户方法，
+    也不信 `rcParams["savefig.format"]`）：**无后缀且无显式 `format=` 的目标，补出来的名字全是推测，一个都不进账本**
+    （返回空）——推测名字既不记事件、不算回读，也不传播成改名事件，守卫对它们不产生任何归因输入。代价是漏判：
+    脚本随后读到那个名字（比如预先存在的 `out.png`）不会被发现（证明不了就不归因；#1076 Codex P2 一族）。
+    只有显式 `format=` / 有后缀 / `bytes` 的目标是确定的，记字面名；`bytes` 目的地 matplotlib 不补后缀。
     """
-    return savefig_name_candidates(fname, kwargs)[0]
-
-
-def savefig_name_candidates(fname, kwargs: dict) -> tuple[list, list]:
-    """`savefig_effective_names` 加上其中**只是推测**的那几个：`(names, speculative)`。
-
-    没有后缀也没有显式 `format=` 时，matplotlib 补哪个后缀由 canvas 的 `get_default_filetype()` 决定（可被自定义
-    canvas 重载，不一定等于 `rcParams["savefig.format"]`），我们不去推断它：**这时所有补出来的候选一律是推测**——
-    照样记账（读它算回读），但不拿它去解释任何失败（FileNotFoundError、探测落空、退出）。只有显式后缀 / 显式
-    `format=` / `bytes` 的目标才是确定候选（#1065 / #1076 Codex P2：证明不了就不归因）。"""
     if not savefig_targets_path(fname):
-        return [], []
-    name = os.fsdecode(fname)
-    names = [fname]
+        return []
     if kwargs.get("format") is not None or isinstance(fname, bytes):
-        return names, []
-    if os.path.splitext(name)[1][1:]:
-        return names, []
-    mpl = sys.modules.get("matplotlib")
-    rc = getattr(mpl, "rcParams", None) or {}
-    fmts = (rc.get("savefig.format"), "png")
-    # 没有后缀也没有显式 format：matplotlib 写的是补了后缀的名字，字面名不会被写出——不记，
-    # 否则同名的无关旧文件被读时会被误判成回读被拦下的 savefig（#952 Codex P2）
-    cands = [f for f in dict.fromkeys(f for f in fmts if isinstance(f, str) and f)]
-    out = [name.rstrip(".") + "." + fmt for fmt in cands]
-    spec = list(out)
-    return out, spec
+        return [fname]
+    if os.path.splitext(os.fsdecode(fname))[1][1:]:
+        return [fname]
+    return []
 
 
 def savefig_call(fname, kwargs: dict) -> dict:
@@ -2356,7 +2338,7 @@ class BlockedFileOps:
         except (OSError, ValueError):
             return None
 
-    def blocked_savefig(self, names, fmt, supported, speculative=()) -> None:
+    def blocked_savefig(self, names, fmt, supported) -> None:
         """被拦截的 `savefig` 记账——**只在保存本身在真实语义下能成功时**才记。目标目录不存在、格式不支持（或确认不了）时，
         直接运行里 `savefig` 自己就会失败：之后的 `FileNotFoundError` 不是守卫造成的，不能算到它头上。
         `names` 是 `savefig_effective_names`，`fmt` 是显式 `format=`，`supported` 是 matplotlib 认的格式集合（None = 确认不了）。
@@ -2378,13 +2360,12 @@ class BlockedFileOps:
             return
         finally:
             self._busy = was
-        self.blocked("savefig", self.KIND_SAVEFIG, *names, weak=speculative)
+        self.blocked("savefig", self.KIND_SAVEFIG, *names)
 
-    def blocked(self, op: str, kind: str, *paths, dests=(), weak=()) -> None:
+    def blocked(self, op: str, kind: str, *paths, dests=()) -> None:
         """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。
 
-        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。
-        `weak`：`paths` 里只是推测的候选（见 `savefig_name_candidates`）：记账、算回读，但不用来解释 FileNotFoundError。"""
+        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。"""
         try:
             if not self._active:
                 return
@@ -2393,63 +2374,28 @@ class BlockedFileOps:
                 return
             key = (op, kind)
             self._counts[key] = min(self._counts.get(key, 0) + 1, self.MAX_COUNT)
-            if kind == self.KIND_RENAME:
-                if self._savefig_covers(affected[0]):
-                    # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
-                    self._signal(kind, self.VIA_RENAME_SRC)
-                elif self._savefig_covers(affected[0], speculative=True) and not self._exists(
-                    affected[0]
-                ):
-                    # 源只是推测的 savefig 候选、且此刻并不真实存在：直接运行里这次改名可能本来就失败，
-                    # 不把这个猜测升成强的改名事件。源真实存在（项目里本来就有那个文件）时照常记普通改名事件
-                    return
+            if kind == self.KIND_RENAME and self._savefig_covers(affected[0]):
+                # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
+                self._signal(kind, self.VIA_RENAME_SRC)
             dest_set = {p for p in (self._norm(x) for x in dests) if p}
-            weak_set = {p for p in (self._norm(x) for x in weak) if p}
             if self._rewritten:  # 新的阻断重新盖住这些路径：之前的「已重写」不再作数
                 self._rewritten = {
                     r for r in self._rewritten if not any(self._covers(p, r) for p in affected)
                 }
             if len(self._events) >= self.MAX_EVENTS:
-                strong = [p for p in affected if p not in weak_set]
-                if strong:
-                    self._spill_paths(op, kind, strong, dest_set)
-                if len(strong) != len(affected):  # 推测路径单独溢出，归因判据照样跳过它
-                    self._spill_paths(
-                        op, kind, [p for p in affected if p in weak_set], frozenset(), weak=True
-                    )
+                self._spill_paths(op, kind, affected, dest_set)
                 return
             self._events.append(
-                {
-                    "op": op,
-                    "kind": kind,
-                    "paths": affected,
-                    "dests": dest_set,
-                    "observed": False,
-                    "weak": weak_set,
-                }
+                {"op": op, "kind": kind, "paths": affected, "dests": dest_set, "observed": False}
             )
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
 
-    def _exists(self, real: str) -> bool:
-        """真实文件系统上 `real` 此刻存在（含断链）。判断不是脚本的观察：临时置 busy，不记账。"""
-        was, self._busy = self._busy, True
-        try:
-            return os.path.lexists(real)
-        except Exception:  # noqa: BLE001
-            return False
-        finally:
-            self._busy = was
-
-    def _savefig_covers(self, real: str, *, speculative: bool = False) -> bool:
-        """`real` 是不是某个被拦 savefig 的目标。默认只认确定候选（走 `_attributes`）；`speculative=True` 连推测候选也算。"""
+    def _savefig_covers(self, real: str) -> bool:
         for ev in (*self._events, *self._spill.values()):
             if ev["kind"] != self.KIND_SAVEFIG:
                 continue
-            if not speculative:
-                if self._attributes(ev, real):
-                    return True
-            elif isinstance(ev["paths"], list):
+            if isinstance(ev["paths"], list):
                 if any(self._covers(p, real) for p in ev["paths"]):
                     return True
             elif self._spill_hit(ev, real):
@@ -2461,21 +2407,12 @@ class BlockedFileOps:
         self._signals[key] = min(self._signals.get(key, 0) + 1, self.MAX_COUNT)
 
     def _spill_paths(
-        self,
-        op: str,
-        kind: str,
-        affected: list[str],
-        dest_set: frozenset | set = frozenset(),
-        *,
-        weak: bool = False,
+        self, op: str, kind: str, affected: list[str], dest_set: frozenset | set = frozenset()
     ) -> None:
-        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。
-        推测路径（`weak`）进单独的溢出集合，`_attributes` 整个跳过它。"""
-        key = (op, kind, "weak") if weak else (op, kind)
-        ev = self._spill.get(key)
+        """超过 `MAX_EVENTS` 的操作不丢：影响的路径并进该 (op, kind) 的溢出集合，终局仍能判回读。"""
+        ev = self._spill.get((op, kind))
         if ev is None:
-            ev = self._spill[key] = {
-                "weak_only": weak,
+            ev = self._spill[(op, kind)] = {
                 "op": op,
                 "kind": kind,
                 "paths": set(),
@@ -2497,22 +2434,6 @@ class BlockedFileOps:
                 ev["paths"] = {os.path.dirname(p) or p for p in ev["paths"]}
                 if len(ev["paths"]) > self.MAX_SPILL_PATHS:
                     ev["lost"], ev["paths"] = True, set()
-
-    def _attributes(self, ev: dict, real: str) -> bool:
-        """归因判据（唯一）：这个事件能不能用来解释「`real` 不存在 / 探测落空」。推测候选（`weak`）不能——
-        直接运行里它同样不存在。FileNotFoundError 解释、探测落空、退出归因都走这里。
-
-        savefig 事件 `paths` 的消费方清单（#1076 扫过一遍）：归因类必须走本判据——`_failure_events`（含
-        `note_missing_stat` / `note_failed_call` / `explains`）、`note_missing_path`（→ `explain_exit`）、
-        `_savefig_covers`（改名源传播，推测源不升成强的改名事件）；只记账 / 算回读、不归因的照旧认全部候选——
-        `_mark`（读 / stat 的回读与弱信号）、`observe_listing`（目录弱信号）、`opened`（脚本自写清嫌疑）、
-        溢出合并（推测路径进 weak_only 集合）。"""
-        if isinstance(ev["paths"], list):
-            weak = ev.get("weak") or ()
-            return any(self._covers(p, real) for p in ev["paths"] if p not in weak)
-        if ev.get("weak_only"):
-            return False
-        return self._spill_hit(ev, real)
 
     @staticmethod
     def _spill_hit(ev: dict, real: str) -> bool:
@@ -2803,7 +2724,10 @@ class BlockedFileOps:
         for ev in (*self._events, *self._spill.values()):
             if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME):
                 continue
-            if any(self._attributes(ev, r) for r in reals):
+            if isinstance(ev["paths"], list):
+                if any(self._covers(p, r) for p in ev["paths"] for r in reals):
+                    hits.append(ev)
+            elif any(self._spill_hit(ev, r) for r in reals):
                 hits.append(ev)
         return hits
 
@@ -2870,7 +2794,12 @@ class BlockedFileOps:
             for ev in (*self._events, *self._spill.values()):
                 if ev["kind"] != self.KIND_SAVEFIG:
                     continue
-                if self._attributes(ev, real):
+                hit = (
+                    any(self._covers(p, real) for p in ev["paths"])
+                    if isinstance(ev["paths"], list)
+                    else self._spill_hit(ev, real)
+                )
+                if hit:
                     ev["miss_seq"] = self._seq
         except Exception:  # noqa: BLE001
             return
