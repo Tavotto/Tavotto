@@ -10,8 +10,10 @@ import { uiHTML, uiCSS, uiScript } from './ui.ts';
 import { reconcileOne } from './background.ts';
 import { verification } from './verification.ts';
 import { InvocationBudget } from './budget.ts';
+import { validId, validSha } from '../core/policy.ts';
 
 export interface Env {
+  CLA_VERIFICATION_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
   CLA_OAUTH_LIMITER?:{limit(input:{key:string}):Promise<{success:boolean}>};
   CLA_PUBLIC_AGREEMENT?:{fetch(request:Request):Promise<Response>};
   DB:D1Database; CLA_CONFIG?:string; CLA_EVIDENCE_KEY?:string; CLA_CLIENT_SECRET?:string; CLA_APP_PKCS8?:string;
@@ -92,7 +94,14 @@ export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
       if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
       if([...url.searchParams.keys()].sort().join(',')!=='attempt,head,pr,run' || !/^[1-9][0-9]*$/.test(url.searchParams.get('pr') ?? '') ||
         !/^[1-9][0-9]*$/.test(url.searchParams.get('run') ?? ''))throw new Rejected('verification_invalid');
-      return json(await verification(await service(env),Number(url.searchParams.get('pr')),url.searchParams.get('head')!,Number(url.searchParams.get('run')),url.searchParams.get('attempt')!));
+      const pr=Number(url.searchParams.get('pr')),run=Number(url.searchParams.get('run')),head=url.searchParams.get('head')!,attempt=url.searchParams.get('attempt')!;
+      if(!validId(pr) || !validId(run) || !validSha(head) || !/^[A-Za-z0-9_-]{43}$/.test(attempt))throw new Rejected('verification_invalid');
+      if(!env.CLA_VERIFICATION_LIMITER)return json({error:'verification_abuse_control_required'},503);
+      let admitted=false;
+      try{admitted=(await env.CLA_VERIFICATION_LIMITER.limit({key:'verification-pr'})).success===true;}
+      catch{return json({error:'verification_abuse_control_unavailable'},503);}
+      if(!admitted)return json({error:'verification_busy'},429,{'retry-after':'60'});
+      return json(await verification(await service(env,new InvocationBudget()),pr,head,run,attempt));
     }
     if(req.method==='GET' && url.pathname==='/agreement' && !url.search)return publicAgreement(env,c);
     if(req.method==='POST' && url.pathname==='/oauth/start' && !url.search) {

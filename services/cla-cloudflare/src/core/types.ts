@@ -1,3 +1,4 @@
+export const MAX_CONTRIBUTORS = 1000;
 export type Role = 'contributor' | 'holder';
 export type IntentRole = Role | 'hold';
 export type AgreementKind = 'individual' | 'corporate';

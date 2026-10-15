@@ -38,7 +38,7 @@ This is not a D1 migration command or authorization to read production evidence.
 
 ## Validation boundary
 
-The offline regression covers 134 Node cases, 3 SQLite migration cases and 10 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
+The offline regression covers 156 Node cases, 3 SQLite migration cases and 12 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
 
 
 The dedicated path-filtered PR workflow uses a GitHub-hosted Ubuntu runner, Node 24 and Python 3.12, with contents:read only, no secrets, no deployment and no dependency cache. It runs npm ci --ignore-scripts and npm run check. It adds no required context and does not change the existing aggregate gates. Local and CI passes do not establish live free-tier acceptance.
@@ -111,3 +111,37 @@ creation, signing and eligibility retain their existing policy/identity checks.
 Requests containing `packet` still require the appropriate session and return
 that packet's immutable historical document. This PR supplies only synthetic
 asset fixtures, no real agreement asset upload or deployment configuration.
+
+### Identity fan-out and verification admission
+
+Binding construction now validates and deduplicates all local commit identities
+before resolving any login. The producer and proof parser share the 1,000-person
+limit. Commit text is bounded to 200,000 characters per commit and 2,000,000 UTF-8
+bytes across the candidate. A single binding permits at most 10 unique remote
+identity lookups, including exemption identity checks; larger remote-lookup
+requirements fail closed and need manual handling. This is not support for 1,000
+remotely resolved coauthors. Repeated trailers already matching a trusted commit
+identity need no extra lookup. A login/ID mismatch is never silently exempted.
+Each exemption actually used by a candidate is resolved against GitHub during
+that binding and checked against both the policy login and configured ID. No
+identity result is cached across binding/proof evaluations. These extra remote
+reads remain subject to the existing invocation budget in background work.
+
+Before enabling public CI verification, supply a separate
+`CLA_VERIFICATION_LIMITER` Rate Limiting binding (suggested 10 calls per 60 seconds,
+operator-selected namespace). Locator syntax is validated before the limiter,
+key import or D1, and an admitted request uses one shared `InvocationBudget`
+through database reads and GitHub reevaluation. Missing/error bindings return
+503, denial returns 429, and exhausted work fails closed. The CI caller needs no
+new secret; temporary admission or budget failures do not yield eligibility.
+The binding has the same per-location/eventual-consistency limitations described
+above; this does not guarantee protection from a distributed quota-exhaustion
+attack. No cached successful verification or renewed old proof is introduced.
+
+Repeated authenticated packet creation may return an existing eligible-for-reuse
+packet only after checking its subject, configured agreement version/digest,
+immutable document hash and subject-wide holds. That metadata-only response
+makes no GitHub request, creates no intent or signature, and is not a fresh
+qualification result. Expired incomplete packets still require a new upstream
+policy/agreement validation before atomic replacement creation. Existing signing
+and fresh qualification checks remain separate from packet retrieval.

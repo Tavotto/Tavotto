@@ -49,6 +49,15 @@ export class LiveService {
     if (kind !== 'individual') throw new Rejected('corporate_manual_review_required');
     if (s.actor===this.c.holderId) throw new Rejected('distinct_parties_required');
     const a=this.c.policy.agreements.individual,now=await this.store.databaseNow();
+    if(await this.store.subjectBlocked(s.actor))throw new Rejected('packet_ineligible');
+    const existing=await this.store.reusablePacket(s.actor,a.sha256);
+    if(existing) {
+      const d=await this.store.document(existing.digest);
+      if(!packetAgreementMatches(this.c,existing) || !d || d.kind!==existing.kind || d.version!==existing.version ||
+        await sha256(d.content)!==existing.digest || await this.store.subjectBlocked(s.actor))throw new Rejected('packet_ineligible');
+      // Return metadata only. This does not create an intent, sign, or establish fresh eligibility.
+      return existing;
+    }
     await this.store.saveDocument(await this.github.agreement('individual'));
     const p=await this.store.createAuthenticatedPacket(s,{id:randomToken(),subject:s.actor,kind,version:a.version,digest:a.sha256,
       created:now,valid_until:now+7*86400});

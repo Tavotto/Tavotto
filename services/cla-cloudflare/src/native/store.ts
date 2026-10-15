@@ -274,6 +274,13 @@ export class LiveStore extends Store {
       JOIN signatures h ON h.packet=p.id AND h.role='holder' AND h.actor=(SELECT holder FROM authority WHERE id=1) AND h.actor!=p.subject
       WHERE p.id=?`,id).first();
   }
+  async reusablePacket(subject:number,digest:string):Promise<Packet|null> {
+    const rows=(await this.stmt(`SELECT p.* FROM packets p WHERE subject=? AND digest=? AND
+      (p.valid_until>${DB_NOW} OR EXISTS(SELECT 1 FROM signatures c JOIN signatures h ON h.packet=c.packet
+        WHERE c.packet=p.id AND c.role='contributor' AND c.actor=p.subject AND h.role='holder'
+        AND h.actor=(SELECT holder FROM authority WHERE id=1) AND h.actor!=p.subject)) LIMIT 2`,subject,digest).all<Packet>()).results;
+    if(rows.length>1)throw new Rejected('packet_ineligible');return rows[0] ?? null;
+  }
   async createAuthenticatedPacket(s:Session,p:Packet):Promise<Packet> {
     // D1 batch is one transaction. A racing creator sees the previous committed
     // active/completed row; no signature or prior packet is copied or extended.
