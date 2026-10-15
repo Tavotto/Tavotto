@@ -584,10 +584,15 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
           ),
         )
         if (!live(key, g)) return
-        // 认领了「打开并运行」：这一轮跑完时自动进入编辑（先记下，再接这份报告——它可能已经是 running）
+        // 认领了「打开并运行」：这一轮跑完时自动进入编辑（先记下，再接这份报告——它可能已经是 running）。认领成功就是确知的结论：
+        // 之前响应丢了留下的 `armMaybe` 一组恢复记号一并清掉，否则这轮跑完后重复的已完成报告会被当成那次旧点击的恢复而再次武装（Codex #1044 r4285832844）
         patch(key, () => ({
           pending: null,
-          ...(kind === 'run_when_ready' ? { armed: true, transferFrom: null } : opts?.arm ? { armed: true } : {}),
+          ...(kind === 'run_when_ready'
+            ? { armed: true, transferFrom: null, armMaybe: false, armMaybeBaseline: null, armMaybeFrom: null }
+            : opts?.arm
+              ? { armed: true }
+              : {}),
         }))
         pollStep.delete(key)
         accept(key, res.report)

@@ -834,6 +834,21 @@ describe('状态丢失后以后端报告为准（Codex #1044 r4271063082 / r4271
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
   })
 
+  it('认领响应丢了、再点一次认领成功：armMaybe 一组记号清掉，跑完后重复的已完成报告不再武装（Codex #1044 r4285832844）', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    await open(false)
+    mockAct.mockRejectedValueOnce(new TypeError('network'))
+    mockGet.mockRejectedValueOnce(new TypeError('network'))
+    await store().act(KEY, 'run_when_ready')
+    expect(entry().armMaybe).toBe(true)
+    claimed(live())
+    await store().act(KEY, 'run_when_ready')
+    expect(entry().armed).toBe(true)
+    expect(entry().armMaybe).toBe(false)
+    expect(entry().armMaybeBaseline).toBe(null)
+    expect(entry().armMaybeFrom).toBe(null)
+  })
+
   it('认领响应丢了、但已跑完的报告带的是点击前就有的旧意图：不算这次点击，不自动进入', async () => {
     mockCreate.mockResolvedValueOnce(report({ intent: live().intent }))
     await open(false)
