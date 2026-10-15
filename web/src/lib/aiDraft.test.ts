@@ -12,6 +12,7 @@ import {
   DRAFT_TTL_MS,
   loadDraft,
   markSubmitted,
+  PENDING_MAX_PER_FILE,
   removeAccepted,
   saveDraft,
   sweepDrafts,
@@ -179,6 +180,39 @@ describe('两个标签页写同一份草稿（Codex #1098 P1）', () => {
     clearSubmitted('pj', 'F', 'rid-bbbbbbbb')
     expect(loadDraft('pj', 'F', 2_000)?.rid).toBe('rid-aaaaaaaa')
     sweepDrafts({ now: 1_000 + DRAFT_TTL_MS + DAY })
+    expect(loadDraft('pj', 'F', 1_000 + DRAFT_TTL_MS + DAY)).toBeNull()
+  })
+})
+
+describe('多个标签页各自的待确认请求并存（Codex #1098 P1）', () => {
+  it('同项目同面板两个 rid：一边被拒绝只清自己那条，另一条还在、仍可查询', () => {
+    markSubmitted('pj', 'F', 'A 的话', 'rid-aaaaaaaa', T, 1_000)
+    markSubmitted('pj', 'F', 'B 的话', 'rid-bbbbbbbb', T, 2_000) // 对照：旧实现在这里把 A 的覆盖了
+    expect(loadDraft('pj', 'F', 3_000)?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa', 'rid-bbbbbbbb'])
+    clearSubmitted('pj', 'F', 'rid-bbbbbbbb') // B 收到 ai_script_busy
+    expect(loadDraft('pj', 'F', 3_000)?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa'])
+    expect(loadDraft('pj', 'F', 3_000)?.text).toBe('A 的话')
+  })
+
+  it('A 被接受只清 A；B 还在', () => {
+    markSubmitted('pj', 'F', 'A 的话', 'rid-aaaaaaaa', T, 1_000)
+    markSubmitted('pj', 'F', 'B 的话', 'rid-bbbbbbbb', T, 2_000)
+    removeAccepted('pj', 'F', 'rid-aaaaaaaa')
+    expect(loadDraft('pj', 'F', 3_000)?.pendings?.map((p) => p.rid)).toEqual(['rid-bbbbbbbb'])
+  })
+
+  it('别的面板 / 别的项目的账本不混进来', () => {
+    markSubmitted('pj', 'F', 'x', 'rid-aaaaaaaa', T)
+    markSubmitted('pj', 'G', 'y', 'rid-bbbbbbbb', T)
+    markSubmitted('pk', 'F', 'z', 'rid-cccccccc', T)
+    expect(loadDraft('pj', 'F')?.pendings?.map((p) => p.rid)).toEqual(['rid-aaaaaaaa'])
+  })
+
+  it('每个 (项目, 面板) 最多 8 条：超出丢最老的；过期的条目读到时清掉', () => {
+    for (let i = 0; i < PENDING_MAX_PER_FILE + 2; i++) markSubmitted('pj', 'F', `t${i}`, `rid-${String(i).padStart(8, '0')}`, T, 1_000 + i)
+    const rids = loadDraft('pj', 'F', 5_000)?.pendings?.map((p) => p.rid) ?? []
+    expect(rids).toHaveLength(PENDING_MAX_PER_FILE)
+    expect(rids[0]).toBe('rid-00000002')
     expect(loadDraft('pj', 'F', 1_000 + DRAFT_TTL_MS + DAY)).toBeNull()
   })
 })

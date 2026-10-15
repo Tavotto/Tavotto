@@ -45,6 +45,8 @@ export interface Draft {
    * 有它的草稿在刷新后恢复成「已发出未确认」，普通重试被禁用（不得静默重发）。
    */
   rid?: string
+  /** 全部未落定的提交（`rid` / `sent` 是其中最老的一条）；每条各自还原成「已发出未确认」 */
+  pendings?: { rid: string; text: string; sent: DraftTarget }[]
   /** 与 `rid` 一起存：重发要钉在**发出那一刻**的目标上，不跟着此刻的选择走 */
   sent?: DraftTarget
 }
@@ -111,14 +113,17 @@ function drop(ls: Storage, project: string, fileId: string): void {
 }
 
 /**
- * 「已发出、等后端确认」的账本：**独立键、独立于草稿文本**（`tavotto.ai.pending.v1.<项目>.<fileId>`）。
+ * 「已发出、等后端确认」的账本：**独立键、独立于草稿文本**（`tavotto.ai.pending.v1.<项目>.<fileId>.<rid>`）。
+按 rid 一条一键：两个标签页同时发（同项目同面板）时各自的 rid 都在，一边被拒绝清自己那条不会带走另一边的。
  * 草稿文本是别的标签页也会写的（同项目同面板，localStorage 共享）；账本若并在它里面，
  * 一个标签页的防抖保存会带着另一个标签页的 rid 把文本覆盖掉，确认到达时按 rid 删整条又会把
  * 后写的那份未发送草稿一起丢掉。账本里记下提交时的**原文**：确认之后只有「草稿文本仍等于这份原文」
  * 才删草稿，否则只清账本、保留文本（Codex #1098 P1）。
  */
 export const PENDING_PREFIX = 'tavotto.ai.pending.v1.'
-const pendingKey = (project: string, fileId: string) => `${PENDING_PREFIX}${project}.${fileId}`
+const pendingKey = (project: string, fileId: string, rid: string) => `${PENDING_PREFIX}${project}.${fileId}.${rid}`
+/** 同一个 (项目, fileId) 下最多保留几条未落定的提交：超出丢最老的（极端情形，正常 1–2 条） */
+export const PENDING_MAX_PER_FILE = 8
 
 interface Pending {
   project: string
@@ -129,9 +134,9 @@ interface Pending {
   at: number
 }
 
-function readPending(ls: Storage, project: string, fileId: string): Pending | null {
+function parsePending(raw: string | null, project: string, fileId: string): Pending | null {
   try {
-    const v = JSON.parse(ls.getItem(pendingKey(project, fileId)) ?? 'null') as Partial<Pending> | null
+    const v = JSON.parse(raw ?? 'null') as Partial<Pending> | null
     if (
       !v ||
       v.project !== project ||
@@ -151,9 +156,33 @@ function readPending(ls: Storage, project: string, fileId: string): Pending | nu
   }
 }
 
-function dropPending(ls: Storage, project: string, fileId: string): void {
+function readPending(ls: Storage, project: string, fileId: string, rid: string): Pending | null {
+  return parsePending(safeGet(ls, pendingKey(project, fileId, rid)), project, fileId)
+}
+
+/** 这个 (项目, fileId) 下所有未落定的提交，由老到新；过期的当场清掉 */
+function readPendings(ls: Storage, project: string, fileId: string, now: number): Pending[] {
+  const prefix = `${PENDING_PREFIX}${project}.${fileId}.`
+  const out: Pending[] = []
+  for (const key of pendingKeys(ls)) {
+    if (!key.startsWith(prefix)) continue
+    const p = parsePending(safeGet(ls, key), project, fileId)
+    if (!p || now - p.at > DRAFT_TTL_MS) {
+      try {
+        ls.removeItem(key)
+      } catch {
+        /* 缓存而已 */
+      }
+      continue
+    }
+    out.push(p)
+  }
+  return out.sort((x, y) => x.at - y.at)
+}
+
+function dropPending(ls: Storage, project: string, fileId: string, rid: string): void {
   try {
-    ls.removeItem(pendingKey(project, fileId))
+    ls.removeItem(pendingKey(project, fileId, rid))
   } catch {
     /* 缓存而已 */
   }
@@ -178,11 +207,19 @@ export function loadDraft(project: string | null, fileId: string | null, now = D
     if (raw) drop(ls, project, fileId)
     d = null
   }
-  const pend = readPending(ls, project, fileId)
-  if (pend && now - pend.at > DRAFT_TTL_MS) {
-    dropPending(ls, project, fileId)
-  } else if (pend) {
-    return { project, fileId, text: pend.text, at: now, rid: pend.rid, sent: pend.sent }
+  const pends = readPendings(ls, project, fileId, now)
+  if (pends.length > 0) {
+    // 未落定的提交优先：文本取最老那条提交时的原文（界面据此逐条还原「已发出未确认」）
+    const first = pends[0]
+    return {
+      project,
+      fileId,
+      text: first.text,
+      at: now,
+      rid: first.rid,
+      sent: first.sent,
+      pendings: pends.map((p) => ({ rid: p.rid, text: p.text, sent: p.sent })),
+    }
   }
   if (!d) return null
   write(ls, { ...d, at: now })
@@ -226,11 +263,13 @@ export function markSubmitted(
   const ls = store()
   if (!ls) return
   try {
-    ls.setItem(pendingKey(project, fileId), JSON.stringify({ project, fileId, rid, sent, text, at: now } satisfies Pending))
+    ls.setItem(pendingKey(project, fileId, rid), JSON.stringify({ project, fileId, rid, sent, text, at: now } satisfies Pending))
   } catch {
     /* 同上 */
   }
   if (byteLength(text) <= DRAFT_MAX_BYTES) write(ls, { project, fileId, text, at: now })
+  const all = readPendings(ls, project, fileId, now)
+  for (const old of all.slice(0, Math.max(0, all.length - PENDING_MAX_PER_FILE))) dropPending(ls, project, fileId, old.rid)
 }
 
 /** 后端明确拒绝：请求 id 作废（只清账本），文本留着让用户改。`rid` 对不上就不动——那是另一次发送的记录 */
@@ -238,7 +277,7 @@ export function clearSubmitted(project: string | null, fileId: string | null, ri
   if (!project || !fileId) return
   const ls = store()
   if (!ls) return
-  if (readPending(ls, project, fileId)?.rid === rid) dropPending(ls, project, fileId)
+  dropPending(ls, project, fileId, rid)
 }
 
 /**
@@ -249,9 +288,9 @@ export function removeAccepted(project: string | null, fileId: string | null, ri
   if (!project || !fileId) return
   const ls = store()
   if (!ls) return
-  const pend = readPending(ls, project, fileId)
-  if (!pend || pend.rid !== rid) return
-  dropPending(ls, project, fileId)
+  const pend = readPending(ls, project, fileId, rid)
+  if (!pend) return
+  dropPending(ls, project, fileId, rid)
   const cur = parse(safeGet(ls, keyOf(project, fileId)), project, fileId)
   if (cur && cur.text === pend.text) drop(ls, project, fileId)
 }
@@ -315,7 +354,7 @@ export function sweepDrafts(
   const now = opts.now ?? Date.now()
   let removed = 0
   for (const { key, d } of allDrafts(ls)) {
-    const dead = !d || now - d.at > DRAFT_TTL_MS || (opts.exists && !readPending(ls, d.project, d.fileId) && !opts.exists(d.project, d.fileId))
+    const dead = !d || now - d.at > DRAFT_TTL_MS || (opts.exists && readPendings(ls, d.project, d.fileId, now).length === 0 && !opts.exists(d.project, d.fileId))
     if (!dead) continue
     try {
       ls.removeItem(key)

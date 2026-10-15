@@ -77,18 +77,20 @@ export function useAiDraft(panel: PanelObject | null) {
     setPromptState(d?.text ?? '')
     setRestored(!!d && d.text !== '')
     setTooLarge(false)
-    if (d?.rid && d.sent && panel) {
-      // 刷新 / 重挂之前发出去、后端还没确认的那一条：还原成「已发出未确认」，不让它变回一条可以普通重发的草稿
-      useAiStore.getState().restoreSubmission({
-        rid: d.rid,
-        project,
-        fileId: d.fileId,
-        panelId: panel.id,
-        prompt: d.text,
-        target: d.sent,
-        canvas: useDocumentStore.getState().activeCanvasId,
-        overrides: panel.overrides,
-      })
+    if (panel) {
+      // 刷新 / 重挂之前发出去、后端还没确认的每一条（两个标签页同时发时不止一条）：各自还原成「已发出未确认」
+      for (const p of d?.pendings ?? []) {
+        useAiStore.getState().restoreSubmission({
+          rid: p.rid,
+          project,
+          fileId: panel.fileId,
+          panelId: panel.id,
+          prompt: p.text,
+          target: p.sent,
+          canvas: useDocumentStore.getState().activeCanvasId,
+          overrides: panel.overrides,
+        })
+      }
     }
     return flush
     // panel 的其余字段（overrides 等）变化不该触发重读草稿
