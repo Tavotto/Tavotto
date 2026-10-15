@@ -4,40 +4,6 @@ import { Button } from './Button'
 import type { Variant } from './buttonClass'
 
 /**
- * 抽屉 / 面板列表里的空态（2026-10-16，UI 2.0「空态统一」）：列表顶部**一行** ink-3 灰字 +（至多）一个 accent
- * 文字动作——不放图标、不放标题、不居中。画布这种主工作区的空态仍用 `EmptyState`。
- * 常驻的解释性长句不该写在这里（进 ⓘ tooltip）；这一行只回答「为什么空 / 下一步做什么」。
- */
-export function EmptyLine({
-  text,
-  action,
-  ...rest
-}: {
-  text: string
-  /** 悬停说明（常驻不了的那句解释放这里） */
-  title?: string
-  action?: { label: string; onClick: () => void }
-} & Record<`data-${string}`, string | number | boolean | undefined>) {
-  return (
-    <p {...rest} data-empty-line className="px-3 py-2 text-sm text-ink-3">
-      {text}
-      {action && (
-        <>
-          {' · '}
-          <button
-            type="button"
-            onClick={action.onClick}
-            className="rounded-sm text-accent outline-none hover:underline focus-visible:focus-ring"
-          >
-            {action.label}
-          </button>
-        </>
-      )}
-    </p>
-  )
-}
-
-/**
  * 条目少于这个数时不显示搜索框（有搜索词时保留，免得把人困在筛空的列表里）：
  * 三五个条目靠眼睛扫比敲字快，常驻一个搜索框只是占 36px。
  */

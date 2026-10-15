@@ -78,7 +78,7 @@ describe('画布抽屉', () => {
     expect(host.querySelector('[data-empty-state]')).toBeNull()
     expect(line.querySelector('svg')).toBeNull()
     const act1 = line.querySelector<HTMLButtonElement>('button')!
-    expect(act1.className).toContain('text-accent')
+    expect(act1.className).toContain('text-info-content')
     await act(async () => act1.click())
     expect(host.querySelector('[data-empty-line]')).toBeNull()
     expect(search()!.value).toBe('')

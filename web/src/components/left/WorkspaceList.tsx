@@ -12,7 +12,8 @@ import { TailPath, useProjectEntry } from '../ProjectPicker'
 import { BookmarkFilled, ProjectRow, RevealItem } from '../ProjectPickerRow'
 import { Button, IconButton } from '../ui/Button'
 import { Card } from '../ui/Card'
-import { EmptyLine, SEARCH_MIN_ITEMS } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
+import { SEARCH_MIN_ITEMS } from '../ui/EmptyState'
 import { MenuItem, MenuSeparator } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
 import { SearchInput } from '../ui/SearchInput'
@@ -190,12 +191,11 @@ export function WorkspaceList() {
 
         {nothing &&
           (filtered ? (
-            <EmptyLine
-              text={ws('noMatch')}
-              action={{ label: translate('actions.clearSearch'), onClick: () => setQuery('') }}
-            />
+            <EmptyLine action={{ label: translate('actions.clearSearch'), onClick: () => setQuery('') }}>
+              {ws('noMatch')}
+            </EmptyLine>
           ) : (
-            <EmptyLine text={ws('emptyRecent')} action={{ label: ws('openFolder'), onClick: entry.startOpen }} />
+            <EmptyLine action={{ label: ws('openFolder'), onClick: entry.startOpen }}>{ws('emptyRecent')}</EmptyLine>
           ))}
       </div>
 

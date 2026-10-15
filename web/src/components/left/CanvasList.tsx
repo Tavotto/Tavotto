@@ -17,7 +17,8 @@ import { askConfirm, useUiStore } from '@/store/uiStore'
 import type { CanvasData } from '@/types/document'
 import { IconButton } from '../ui/Button'
 import { CanvasThumb } from '../CanvasThumb'
-import { EmptyLine, SEARCH_MIN_ITEMS } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
+import { SEARCH_MIN_ITEMS } from '../ui/EmptyState'
 import { MenuItem, MenuSeparator } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
 import { SearchInput } from '../ui/SearchInput'
@@ -113,10 +114,9 @@ export function CanvasList() {
         ))}
         {rows.length === 0 && (
           <li>
-            <EmptyLine
-              text={cl('noMatch')}
-              action={{ label: translate('actions.clearSearch'), onClick: () => setQuery('') }}
-            />
+            <EmptyLine action={{ label: translate('actions.clearSearch'), onClick: () => setQuery('') }}>
+              {cl('noMatch')}
+            </EmptyLine>
           </li>
         )}
       </ul>

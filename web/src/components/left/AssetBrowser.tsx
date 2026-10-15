@@ -48,7 +48,8 @@ import { isBusyPhase, useScriptRunStore } from '@/store/scriptRunStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Card } from '../ui/Card'
-import { EmptyLine, EmptyState, SEARCH_MIN_ITEMS } from '../ui/EmptyState'
+import { EmptyLine } from '../ui/EmptyLine'
+import { EmptyState, SEARCH_MIN_ITEMS } from '../ui/EmptyState'
 import { MenuItem, PointMenu } from '../ui/Menu'
 import { Notice } from '../ui/Notice'
 import { Dialog } from '../ui/Dialog'
@@ -483,7 +484,6 @@ export function AssetBrowser() {
             query || chips.length || editability !== 'all' ? (
               <EmptyLine
                 data-asset-no-match
-                text={ab('noMatch')}
                 action={{
                   label: translate('actions.clearSearch'),
                   onClick: () => {
@@ -491,15 +491,18 @@ export function AssetBrowser() {
                     setFilters(DEFAULT_FILTERS)
                   },
                 }}
-              />
+              >
+                {ab('noMatch')}
+              </EmptyLine>
             ) : (
               /* 一句话 + 一个动作；「把文件放进目录」的说明在 title 里，不常驻 */
               <EmptyLine
                 data-asset-empty
-                text={ab('emptyTitle')}
                 title={ab('emptyHint')}
                 action={{ label: ab('refresh'), onClick: refreshNow }}
-              />
+              >
+                {ab('emptyTitle')}
+              </EmptyLine>
             )
           )}
 
