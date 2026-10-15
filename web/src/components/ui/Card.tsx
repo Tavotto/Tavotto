@@ -76,7 +76,9 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
           !selected &&
           appearance === 'raised' &&
           cn(
-            'hover:shadow-lift has-[:focus-visible]:shadow-lift',
+            // 静止态就写 translate-y-0（恒等位移，不是 none）：translate 在 none ↔ 非 none 之间切换会让 Blink 每次 hover 整页重排一次
+            // （LayoutCount +1 / hover，TaskDuration +50%）；一直带着恒等位移就只剩合成 / 绘制。不用 will-change 常驻
+            'translate-y-0 hover:shadow-lift has-[:focus-visible]:shadow-lift',
             'motion-safe:hover:-translate-y-px motion-safe:has-[:focus-visible]:-translate-y-px',
             'has-[>button:active:not(:disabled)]:translate-y-0 has-[>button:active:not(:disabled)]:shadow-card',
           ),

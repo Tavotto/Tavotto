@@ -162,7 +162,7 @@ test('最近项目卡 lift：hover/聚焦 -1px + 阴影升档、按下回落、�
     )
   const rest = await layout()
   const restState = await state(1)
-  expect(restState.translate).toBe('none')
+  expect(restState.translate).toBe('0px') // 恒等位移（不是 none：none ↔ 非 none 的切换会让每次 hover 重排一次）
 
   // ---- hover：恰好 -1px，阴影升档，其余卡与自己的 li 不动
   await cards.nth(1).locator('button').first().hover()
@@ -176,12 +176,31 @@ test('最近项目卡 lift：hover/聚焦 -1px + 阴影升档、按下回落、�
     else expect(lifted[i].card, `兄弟卡 ${i}`).toEqual(r.card)
   })
 
+  // ---- hover 不引发重排（chromium CDP）：translate 若在 none ↔ 非 none 间切换，Blink 每次 hover 重排一次（实测 +1 / hover）；
+  // 静止态写恒等位移后只剩合成 / 绘制。10 次 hover 的 LayoutCount 增量必须 ≤2（排除偶发的字体 / 图像回流）
+  if (browserName === 'chromium') {
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Performance.enable')
+    const layouts = async () =>
+      (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === 'LayoutCount')!.value
+    await page.mouse.move(2, 2)
+    await page.waitForTimeout(400)
+    const before = await layouts()
+    for (let i = 0; i < 10; i++) {
+      await cards.nth(i % 3).locator('button').first().hover()
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+    }
+    expect((await layouts()) - before, '10 次 hover 的重排次数').toBeLessThanOrEqual(2)
+    await page.mouse.move(2, 2)
+    await expect.poll(async () => (await state(1)).translate).toBe('0px')
+  }
+
   // ---- 按下回落到 0
   await page.mouse.down()
-  await expect.poll(async () => (await state(1)).translate).toMatch(/^(0px|0px 0px|none)$/)
+  await expect.poll(async () => (await state(1)).translate).toMatch(/^(0px|0px 0px)$/)
   await page.mouse.move(2, 2)
   await page.mouse.up()
-  await expect.poll(async () => (await state(1)).translate).toBe('none')
+  await expect.poll(async () => (await state(1)).translate).toBe('0px')
 
   // ---- 键盘聚焦同样浮起（WebKit：程序化聚焦不算 :focus-visible、Tab 又不停在按钮上，这一步只在 chromium 量）
   if (browserName !== 'webkit') {
@@ -197,7 +216,7 @@ test('最近项目卡 lift：hover/聚焦 -1px + 阴影升档、按下回落、�
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await cards.nth(0).locator('button').first().hover()
   await expect.poll(async () => (await state(0)).shadow).not.toBe(restState.shadow)
-  expect((await state(0)).translate).toBe('none')
+  expect((await state(0)).translate).toBe('0px')
   await page.emulateMedia({ reducedMotion: 'no-preference' })
 
   // ---- 切换中（置灰）：hover 不浮起
@@ -206,6 +225,6 @@ test('最近项目卡 lift：hover/聚焦 -1px + 阴影升档、按下回落、�
   await expect(cards.nth(0)).toHaveAttribute('data-disabled', 'true')
   await cards.nth(1).locator('button').first().hover({ force: true })
   await page.waitForTimeout(400)
-  expect((await state(1)).translate).toBe('none')
+  expect((await state(1)).translate, '置灰的卡没有位移样式').toBe('none')
   expect((await state(1)).shadow).toBe(restState.shadow)
 })
