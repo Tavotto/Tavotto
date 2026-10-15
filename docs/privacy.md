@@ -380,7 +380,9 @@ their payments with the totals. The address and the amounts are kept so that
 payments from the same person can add up to an avatar on the wall, so that a
 membership can be shown while it is paid up, and so that the maintainer can
 later contact supporters about supporter benefits, such as a discount on a
-future Pro edition. They are never shown on the website or shared. Only if the
+future Pro edition. They are never shown on the website and never shared with
+anyone, except that the address is handed to the website's mail provider to
+deliver these mails and both are held by its database provider. Only if the
 supporter fills in the form are the display name and optional avatar they
 chose kept. A name or avatar appears on the page only after the supporter
 submitted it and the maintainer approved it; a supporter who stays anonymous is
@@ -392,10 +394,11 @@ the month and time, the amount, and whether it allows an avatar; the supporter's
 爱发电 user id is kept only as a keyed hash, under which the website also keeps
 the list of that person's orders and their total. To appear on the wall, the
 supporter enters an order number on the support page and gets the same form;
-the rest is as for Ko-fi above. Next to the order number the supporter may type
-an email address: it receives a thank-you mail carrying the same form link (at
-most one per order), and a mail when their orders first add up to an avatar,
-and it is kept with their orders for the purposes above.
+the rest is as for Ko-fi above. Registering asks for an email address, next to
+the order number (or on the form itself when the support page opened it
+directly): it receives a thank-you mail carrying the same form link (at most
+one per order), and a mail when their orders first add up to an avatar, and it
+is kept with their orders for the purposes above.
 
 To change or remove an entry, or to have your email address and payment
 records deleted, write to <hello@tavotto.com>.
