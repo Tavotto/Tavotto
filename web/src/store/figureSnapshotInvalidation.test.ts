@@ -6,6 +6,7 @@ import { invalidateCapturedFigureSnapshots } from './figureSnapshotInvalidation'
 
 vi.mock('./documentStore', () => ({
   invalidateFigureSnapshots: vi.fn(),
+  getRestoreGate: () => ({ state: 'ready', reason: 'restored', pj: 'project-a', docId: 'doc' }),
   useDocumentStore: { getState: vi.fn() },
 }))
 
@@ -17,6 +18,7 @@ beforeEach(() => {
 describe('successful run invalidation covers the whole open document', () => {
   it('maps sources from inactive canvases as well as the currently displayed one', () => {
     vi.mocked(useDocumentStore.getState).mockReturnValue({
+      documentId: 'doc',
       buildProject: () => ({ canvases: [
         { objects: [{ type: 'panel', fileKind: 'pdf', fileId: 'Fig1.pdf', script: 'plot.py' }] },
         { objects: [{ type: 'panel', fileKind: 'pdf', fileId: 'Fig2.pdf', script: 'plot.py' }] },
@@ -39,6 +41,7 @@ describe('successful run invalidation covers the whole open document', () => {
 
   it('also invalidates a removed disk panel retained only in another canvas undo history', () => {
     vi.mocked(useDocumentStore.getState).mockReturnValue({
+      documentId: 'doc',
       buildProject: () => ({ canvases: [{ objects: [] }] }),
       past: [], future: [], txn: null,
       canvasSessions: { old: { past: [{ inverse: [{ op: 'add', path: ['objects', 0], value: {

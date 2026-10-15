@@ -1,6 +1,7 @@
 import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 import { artifactBackgroundOriginal, artifactRequestFields, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
+import { invalidateExecutedFigureSnapshots } from '@/store/figureSnapshotInvalidation'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { requestRender, type RenderPolicy } from '@/store/renderScheduler'
 import { isJustBakedBaselineOf } from '@/lib/bakedBaseline'
@@ -60,7 +61,6 @@ import type { ProjectFileBinding } from '@/lib/projectFile'
 import { useAssetStore } from './assetStore'
 import { useEnvStore } from './envStore'
 import {
-  invalidateFigureSnapshots,
   readAutosaveDoc,
   saveNowWithResult,
   setProjectFile,
@@ -1280,6 +1280,7 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   finishActiveGesture()
   const fileId = panel.fileId
   const owner = captureProjectEpoch(() => useDocumentStore.getState().documentId)
+  const executionOwner = captureProjectEpoch()
   let invalidated = false
   if (!engineTransport()) {
     try {
@@ -1304,9 +1305,12 @@ export async function rebuildPanel(panelId: string): Promise<RebuildOutcome> {
   const key = renderKeyOf(fresh)
   await store.render(fileId, fresh.overrides, undefined, 'immediate', undefined, fresh.artifactValidation)
   await settledRender(key)
+  const succeeded = useRenderStore.getState().get(key).status === 'ready'
+  // A successful execution is a project fact even if the user changed documents during rendering.
+  // Only the original panel/UI result remains subject to the narrower document owner.
+  if (invalidated && succeeded && executionOwner.still()) invalidateExecutedFigureSnapshots([fileId], executionOwner.pj)
   if (!owner.still()) return 'skipped'
-  if (useRenderStore.getState().get(key).status !== 'ready') return 'failed'
-  if (invalidated) invalidateFigureSnapshots([fileId], owner.pj)
+  if (!succeeded) return 'failed'
   status(note(invalidated ? 'panelRebuilt' : 'panelRerenderedNoRerun'), 'done')
   return invalidated ? 'rebuilt' : 'rerendered'
 }

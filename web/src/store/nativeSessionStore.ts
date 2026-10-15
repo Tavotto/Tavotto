@@ -15,8 +15,7 @@ import {
   type NativeSessionInfo,
 } from '@/lib/api'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
-import { currentProjectId } from '@/lib/session'
-import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
 import { invalidateCapturedFigureSnapshots } from '@/store/figureSnapshotInvalidation'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
@@ -360,7 +359,10 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
           ? { executedBarrierSeq: { ...s.executedBarrierSeq, [sessionId]: -1 } }
           : {}),
       }))
-      placeNativeFiguresWhenReady(res.descriptors, epoch, invalidateSnapshots)
+      // Execution is already accepted even if placement must wait for restoration. Register it once;
+      // the snapshot coordinator retains it across project switches independently of this UI callback.
+      if (invalidateSnapshots) invalidateCapturedFigureSnapshots(res.descriptors, owner.pj)
+      placeNativeFiguresWhenReady(res.descriptors, owner)
     } catch (e) {
       if (get().epoch !== epoch) return
       // build 失败不改变会话状态——那由 SSE 说了算。这里只记一条原因。
@@ -487,15 +489,11 @@ function runAction(
  */
 function placeNativeFiguresWhenReady(
   descriptors: CapturedFigureDescriptor[],
-  epoch: number,
-  invalidateSnapshots = false,
+  owner: ProjectEpochGuard,
 ): void {
-  if (!descriptors.length) return
-  const pj = currentProjectId()
-  const place = () => {
-    if (invalidateSnapshots) invalidateCapturedFigureSnapshots(descriptors, pj)
-    placeNativeFigures(descriptors)
-  }
+  if (!descriptors.length || !owner.still()) return
+  const pj = owner.pj
+  const place = () => placeNativeFigures(descriptors)
   const gate = getRestoreGate()
   if (gate.state === 'ready') {
     if (gate.reason === 'initial' || gate.pj === pj) place()
@@ -504,11 +502,11 @@ function placeNativeFiguresWhenReady(
   // build 已消费屏障序号；恢复待用户处理时，保留这批 descriptor，等文档真的可写后再放置。
   // 超时只结束这一段等待，仍留在同项目时继续等；换项目 / 清掉原生会话则作废。
   void (async () => {
-    while (useNativeSessionStore.getState().epoch === epoch && currentProjectId() === pj) {
+    while (owner.still()) {
       const verdict = await whenDocumentReady(pj)
       if (verdict === 'superseded') return
       if (verdict === 'ready') {
-        if (useNativeSessionStore.getState().epoch === epoch && currentProjectId() === pj) place()
+        if (owner.still()) place()
         return
       }
     }

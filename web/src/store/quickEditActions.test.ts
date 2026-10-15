@@ -405,6 +405,20 @@ describe('rebuildPanel：作废热会话 + 按当前 overrides 重画', () => {
     expect(invalidateFigureSnapshots).not.toHaveBeenCalled()
   })
 
+  it('a successful rebuild still retires its source after switching documents in the same project', async () => {
+    setCurrentProjectId('rebuild-a')
+    let resolve!: (r: unknown) => void
+    engineRender.mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+    const rebuild = rebuildPanel('p1')
+    await flush()
+    const next = emptyProject()
+    next.canvases[0].objects = [panel('new-panel')]
+    await useDocumentStore.getState().switchDocument(next, 'other-document')
+    resolve({ rev: 2, manifest: { elements: [] }, warnings: [] })
+    expect(await rebuild).toBe('skipped') // The old panel's UI result has no authority here.
+    expect(invalidateFigureSnapshots).toHaveBeenCalledExactlyOnceWith(['Fig1.pdf'], 'rebuild-a')
+  })
+
   it('successful rendering after a project round trip cannot retire the current document snapshots', async () => {
     setCurrentProjectId('rebuild-a')
     let resolve!: (r: unknown) => void

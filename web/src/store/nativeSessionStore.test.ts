@@ -376,7 +376,7 @@ describe('屏障 → build → 图进画布', () => {
     expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
   })
 
-  it('successful native capture waits for the restored document before invalidating its snapshots', async () => {
+  it('successful native capture registers its fact once while placement waits for restoration', async () => {
     const token = beginRestore('p_a')
     settleRestore(token, {
       state: 'needs_user',
@@ -386,10 +386,26 @@ describe('屏障 → build → 图进画布', () => {
     mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
     store().applyEvent(session({ state: 'running_script', sequence: 3 }))
     store().applyEvent(barrier)
-    await vi.waitFor(() => expect(mockBuild).toHaveBeenCalledTimes(1))
-    expect(invalidateCapturedFigureSnapshots).not.toHaveBeenCalled()
-    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
     await vi.waitFor(() => expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledExactlyOnceWith([desc('Fig1')], 'p_a'))
+    expect(mockAddPanel).not.toHaveBeenCalled()
+    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
+    await vi.waitFor(() => expect(mockAddPanel).toHaveBeenCalledTimes(1))
+    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
+  })
+
+  it('accepted native capture remains registered but stale placement cannot revive after A → B → A', async () => {
+    beginRestore('p_a')
+    const barrier = session({ state: 'barrier', sequence: 4 })
+    mockBuild.mockResolvedValue({ session: barrier, stems: {}, descriptors: [desc('Fig1')] })
+    store().applyEvent(session({ state: 'running_script', sequence: 3 }))
+    store().applyEvent(barrier)
+    await vi.waitFor(() => expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1))
+    setCurrentProjectId('p_b')
+    setCurrentProjectId('p_a')
+    settleRestore(beginRestore('p_a'), { state: 'ready', reason: 'empty' })
+    await Promise.resolve()
+    expect(invalidateCapturedFigureSnapshots).toHaveBeenCalledTimes(1)
+    expect(mockAddPanel).not.toHaveBeenCalled()
   })
 
   it('late native build success cannot clear snapshots after a project A → B → A round trip', async () => {

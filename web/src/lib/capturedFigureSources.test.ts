@@ -34,6 +34,13 @@ describe('captured Figure source identities', () => {
     ])).toEqual(['runtime:opaque'])
   })
 
+  it('maps retained exact artifacts back to legacy IDs without inferring a sibling format', () => {
+    expect(capturedFigureSources([], [
+      panel(String.raw`sub\Fig1.png`, { script: null }), panel('sub/Fig1.pdf'),
+      panel('elsewhere/Fig1.png'), panel('runtime:other', { fileKind: 'runtime' }),
+    ], ['sub/Fig1.png'])).toEqual(['sub/Fig1.png', String.raw`sub\Fig1.png`])
+  })
+
   it('preserves directory identity and accepts persisted Windows separators', () => {
     expect(capturedFigureSources([captured({ original_artifact: null })], [
       panel('sub\\Fig1.pdf'), panel('elsewhere/Fig1.pdf'), panel('sub/Fig1.pdf', { script: null }),
