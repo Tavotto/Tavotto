@@ -680,6 +680,27 @@ class TestOptionalContent:
         dmp = {r["name"]: r for r in index["reports"] if r["name"].endswith(".dmp")}
         assert dmp["Tavotto.exe.1234.dmp"]["content"] == "raw_binary"
 
+    def test_shell_written_minidumps_with_a_timestamp_are_collected(self, world):
+        """壳自写的小型转储文件名是 `Tavotto.exe.<pid>.<毫秒戳>.dmp`（src-tauri/src/crash_dump.rs，#1068 r4280527495）：
+        取第一个 `.` 之前的 `Tavotto` 判归属，新旧两种格式都要被收到；别人的带戳转储照旧不收。"""
+        crash = world["crash"]
+        (crash / "Tavotto.exe.4242.987654321.dmp").write_bytes(b"MDMP_NEW_FORMAT")
+        (crash / "Tavotto.exe.4242.dmp").write_bytes(b"MDMP_OLD_FORMAT")
+        (crash / "chrome.exe.9.123456.dmp").write_bytes(b"DMP_CHROME_STAMPED")
+        items = diagdetail.collect_crash_reports(
+            diagdetail.Sources(),
+            diagdetail.DetailOptions(crash_reports=True),
+            diagdetail.Scrubber(),
+        )
+        dumps = {i.path: i.data for i in items if i.path.endswith(".dmp")}
+        assert dumps == {
+            "Tavotto.exe.4242.987654321.dmp": b"MDMP_NEW_FORMAT",
+            "Tavotto.exe.4242.dmp": b"MDMP_OLD_FORMAT",
+        }
+        index = json.loads(next(i for i in items if i.path.endswith("index.json")).data)
+        rows = {r["name"]: r for r in index["reports"] if r["name"].endswith(".dmp")}
+        assert rows["Tavotto.exe.4242.987654321.dmp"]["content"] == "raw_binary"
+
     def test_dumps_are_taken_whole_newest_first_and_the_rest_is_recorded(self, world, monkeypatch):
         crash = world["crash"]
         now = time.time()
