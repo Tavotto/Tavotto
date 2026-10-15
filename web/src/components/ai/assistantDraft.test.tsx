@@ -676,6 +676,62 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     expect(q('[data-ai-session="running"]')).toBeTruthy()
   })
 
+  it('戳在编辑时分配：同一版本的失败重试带同一个戳；下一次编辑的戳更大', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      be.setDraftPutFails(true)
+      await typeText('第一版')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50)) // 第一次发送（失败）
+      await settle()
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS + 50)) // 重试（仍失败）
+      await settle()
+      be.setDraftPutFails(false)
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS + 50)) // 再重试（成功）
+      await settle()
+      const puts = () => be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
+      expect(puts()).toHaveLength(3)
+      expect(new Set(puts().map((c) => c.body.stamp)).size).toBe(1) // 对照：旧实现每次发送重新取戳，三次三个值
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('第一版')
+      const v1 = puts()[0].body.stamp as number
+      await typeText('第二版')
+      await act(async () => void vi.advanceTimersByTime(WRITE_DEBOUNCE_MS + 50))
+      await settle()
+      expect(puts()[3].body.stamp as number).toBeGreaterThan(v1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('卸载时的 keepalive 写入失败：退役实例不再重试；重新挂载并保存新文本后，旧实例之后不再写（即使旧版本重试，服务器也拒）', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      await typeText('旧文本')
+      be.setDraftPutFails(true)
+      await unmount() // 卸载：keepalive 冲刷「旧文本」，失败
+      await settle()
+      be.setDraftPutFails(false)
+      await mount() // 新实例
+      await typeText('新文本')
+      await act(async () => window.dispatchEvent(new Event('pagehide'))) // 新文本落地
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('新文本')
+      const putsBefore = be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts').length
+      await act(async () => void vi.advanceTimersByTime(RETRY_MS * 3)) // 旧实例若还会重试，现在早该发了
+      await settle()
+      const puts = be.calls.filter((c) => c.method === 'PUT' && c.path === '/api/ai/drafts')
+      expect(puts.length).toBe(putsBefore) // 退役实例没有再发任何写入
+      expect(puts.map((c) => c.body.text)).toEqual(['旧文本', '新文本'])
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('新文本') // 对照：旧实现这里会被旧文本覆盖
+      await unmount()
+      await mount()
+      expect(input().value).toBe('新文本') // 重开显示新文本
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('没有未落定的本地写入时，对账读回的文本照常应用（另一个标签页的新稿进来）', async () => {
     await mount()
     be.put('pa', 'Fig1.pdf', '别的标签页写的')

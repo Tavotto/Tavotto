@@ -142,11 +142,16 @@ export async function saveDraftStamped(
   fileId: string | null,
   text: string,
   keepalive = false,
+  /**
+   * 这一版内容的写入戳。**戳代表「内容版本的时刻」（编辑发生时分配），不是「发送尝试的时刻」**：同一版本的所有 PUT、
+   * 重试、keepalive 都带同一个戳，旧版本无论何时重试，戳都更小、一定被服务器拒绝。不传才在此刻现取（一次性写入用）。
+   */
+  stamp: number = nextWriteStamp(),
 ): Promise<{ result: SaveResult; stamp?: number }> {
   if (!project || !fileId) return { result: 'unavailable' }
   try {
-    // 每次写入在**发出那一刻**取一个新的写入戳；服务端只接受比已存戳更新的写入，旧写入不管何时落地都不会覆盖新的
-    const res = await putAiDraft(fileId, text, project, keepalive && byteLength(text) < 60 * 1024, nextWriteStamp())
+    // 服务端只接受比已存戳更新的写入，旧版本不管何时落地都不会覆盖新的
+    const res = await putAiDraft(fileId, text, project, keepalive && byteLength(text) < 60 * 1024, stamp)
     observeStamp(res.stamp)
     if (res.stale) return { result: 'stale' }
     return { result: text === '' ? 'removed' : 'saved', stamp: res.stamp }

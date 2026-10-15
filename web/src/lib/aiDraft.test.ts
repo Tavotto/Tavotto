@@ -137,6 +137,28 @@ describe('写入戳', () => {
   })
 })
 
+describe('戳代表内容版本的时刻，不是发送尝试的时刻', () => {
+  it('显式给的戳原样上线；旧版本哪怕更晚才发（重试 / keepalive），戳更小就被服务端拒绝，不覆盖新版本', async () => {
+    const vOld = nextWriteStamp() // 旧版本编辑时分配的戳
+    const vNew = nextWriteStamp() // 新版本（更晚编辑）
+    expect((await saveDraftStamped('pj', 'F', '新版本', false, vNew)).result).toBe('saved')
+    // 旧版本现在才重试：戳是它自己编辑时的，更小
+    expect((await saveDraftStamped('pj', 'F', '旧版本', true, vOld)).result).toBe('stale')
+    expect(be.draft('pj', 'F')).toBe('新版本')
+    expect(be.calls.map((c) => c.body.stamp)).toEqual([vNew, vOld]) // 上线的就是调用方给的戳，发送时没有重新取
+  })
+
+  it('同一版本的多次发送带同一个戳', async () => {
+    const v = nextWriteStamp()
+    be.setDown(true)
+    await saveDraftStamped('pj', 'F', '同一版', false, v)
+    await saveDraftStamped('pj', 'F', '同一版', false, v)
+    be.setDown(false)
+    await saveDraftStamped('pj', 'F', '同一版', false, v)
+    expect(new Set(be.calls.filter((c) => c.method === 'PUT').map((c) => c.body.stamp))).toEqual(new Set([v]))
+  })
+})
+
 describe('账本按 rid 一条，删除带条件（两个标签页）', () => {
   it('A 记下待确认 → B 改了文本 → A 收到会话：B 的新稿还在，账本清掉', async () => {
     const a = await saveDraftStamped('pj', 'F', 'A 发出去的话')

@@ -5,6 +5,7 @@ import {
   fetchDraftState,
   isDraftTooLarge,
   loadProjectPendings,
+  nextWriteStamp,
   saveDraftStamped,
   type DraftTarget,
 } from '@/lib/aiDraft'
@@ -77,6 +78,13 @@ export function useAiDraft(panel: PanelObject | null) {
   const inflightP = useRef<Promise<void> | null>(null)
   /** 服务器上**与本地文本一致**的那一行的写入戳（PUT 被接受 / 对账读到时更新）；发送前拿它记进账本 */
   const draftStamp = useRef<number | null>(null)
+  /**
+   * 当前本地版本的写入戳：**每次本地编辑（`seq++`）时分配**，这一版的所有 PUT / 重试 / keepalive 都带它，发送时不重新取。
+   * 所以旧版本无论什么时候重试，戳都比新版本小，服务器一定拒绝；只有「本页用户真实输入的最新版本」被判 stale 时才给它换更大的戳。
+   */
+  const versionStamp = useRef<number>(0)
+  /** 本实例已退役（卸载）：退役后的回调不再安排任何重试 / 重写，免得拿着旧文本去覆盖重新挂载后保存的新草稿 */
+  const retired = useRef(false)
   /** 同一段本地内容连续被判 stale 的次数（墙钟回拨 / 并发写时有界重写，免得两端互相覆盖没完） */
   const staleRetries = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -94,13 +102,16 @@ export function useAiDraft(panel: PanelObject | null) {
     clearTimeout(timer.current)
     timer.current = undefined
     if (seq.current === acked.current) return Promise.resolve()
+    if (retired.current && !keepalive) return Promise.resolve() // 退役实例不再发起任何写入
     if (inflight.current !== null && !keepalive) return inflightP.current ?? Promise.resolve() // 在途的落地时会检查并补写
     const mySeq = seq.current
     const { project: pj, fileId: f, epoch } = key.current
     const body = text.current
+    const myStamp = versionStamp.current // 这一版的戳（编辑时分配）：重试、keepalive 都用它
     inflight.current = mySeq
-    const p = saveDraftStamped(pj, f, body, keepalive).then(async ({ result: r, stamp }) => {
+    const p = saveDraftStamped(pj, f, body, keepalive, myStamp).then(async ({ result: r, stamp }) => {
       if (key.current.epoch !== epoch) return // 目标已换：那一边的收尾由切目标时的冲刷负责，不动当前目标的版本
+      if (retired.current) return // 实例已退役：不重试、不重写、不动任何版本状态
       inflight.current = null
       if (r === 'stale') {
         // 服务端说：它那里有比这次写入**更新的戳**，这次没被采纳（`saveDraft` 已按服务端回的戳抬高了本页下限，
@@ -113,6 +124,9 @@ export function useAiDraft(panel: PanelObject | null) {
             retry.current = setTimeout(() => persist(false), RETRY_MS)
             return
           }
+          // 被拒的这一版**仍是本页最新的内容**才给它换一个更大的戳（`saveDraftStamped` 已按服务端回的戳抬高了下限）；
+          // 已经有更新的版本时，那一版带着自己的戳，旧版本不换戳、不重写——旧版本的戳永远小
+          if (seq.current === mySeq) versionStamp.current = nextWriteStamp()
           await persist(false)
         }
         return
@@ -140,6 +154,7 @@ export function useAiDraft(panel: PanelObject | null) {
       const value = typeof next === 'function' ? next(text.current) : next
       text.current = value
       seq.current++
+      versionStamp.current = nextWriteStamp() // 这一版内容的戳：编辑发生的时刻
       setPromptState(value)
       setRestored(false)
       setTooLarge(isDraftTooLarge(value))
@@ -291,6 +306,17 @@ export function useAiDraft(panel: PanelObject | null) {
     clearTimeout(retry.current)
     setPromptState('')
     setTooLarge(false)
+  }, [])
+
+  // 卸载 = 本实例退役：之后任何迟到的回调（keepalive 失败的回调、重试定时器）都不得再写。声明在其他 effect 之后，
+  // 所以卸载时它们的 cleanup（含最后一次 keepalive 冲刷）先跑、这个标志最后才置位
+  useEffect(() => {
+    retired.current = false
+    return () => {
+      retired.current = true
+      clearTimeout(retry.current)
+      clearTimeout(timer.current)
+    }
   }, [])
 
   /** 账本读失败后的「重试」：就是再对账一次（同一个入口） */
