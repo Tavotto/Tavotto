@@ -553,6 +553,12 @@ export const useEnvStore = create<EnvState>((set, get) => ({
       // 响应本身就是一份快照（带新 attempt；终态响应立即应用）。老后端没有 attempt：待定留到观察到 running / 终态
       // 或 30 s 兜底
       applyBootstrap(res, (p) => set(p))
+      if (pendingFloor !== null && typeof res.attempt === 'number') {
+        // 响应带着 (boot, attempt)：它就是这次点击的结算。attempt 比点击时更大 = 开出了新的一次（上面已采用并解除）；
+        // 没变 = 这次点击没开出新尝试（已经在跑 / 装不了）——按响应里的状态说话，待定到此为止，不再等一个永远不来的新 attempt
+        clearPending()
+        set({ installing: bootstrapKnown.state === 'running' })
+      }
       if (pendingFloor !== null && typeof res.attempt !== 'number') {
         pendingTimer = setTimeout(() => {
           pendingTimer = null

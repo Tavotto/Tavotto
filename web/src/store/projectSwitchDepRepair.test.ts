@@ -1177,6 +1177,17 @@ describe('SSE 断线后的对账（reconcile）：丢了终态事件，卡片不
       expect(installing()).toBe(false)
     })
 
+    it('POST 成功但没开出新尝试（响应 attempt 不变）：以响应结算待定，installing 收掉，不永远等新 attempt', async () => {
+      sse(3, 'done', { boot: 'b1' })
+      const c = await clickInstall()
+      expect(installing()).toBe(true)
+      await c.respond({ ok: true, ...snap(3, 'done', { boot: 'b1' }) })
+      expect(installing()).toBe(false)
+      // 待定已结算：之后旧 idle 快照照旧不会误开，新一次的 running 照常采用
+      sse(4, 'running', { boot: 'b1' })
+      expect(installing()).toBe(true)
+    })
+
     it('终态锁定：同一次的终态重复（带别的内容）不覆盖已采用的那份', () => {
       sse(5, 'failed', { error: '第一份' })
       sse(5, 'failed', { error: '第二份' })

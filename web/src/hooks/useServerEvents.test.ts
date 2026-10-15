@@ -50,7 +50,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { literal } from '@/i18n'
 import { useDepRepairStore } from '@/store/depRepairStore'
-import { handleServerEvent, reconcileInstalls } from './useServerEvents'
+import { handleServerEvent, reconcileInstalls, resetProjectErrorSeq } from './useServerEvents'
 
 const mockPanels = vi.mocked(fetchPanels)
 const mockRefresh = vi.mocked(refreshProject)
@@ -844,6 +844,22 @@ describe('project.error 的撤销', () => {
     handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz' }))
     expect(useUiStore.getState().status).not.toBeNull()
     handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true }))
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
+  it('seq：恢复之后迟到的旧错误（seq 更小）不把 toast 顶回来；重连清零后新进程的 seq 从头计也认', () => {
+    resetProjectErrorSeq()
+    useUiStore.getState().setStatus(null)
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 4 }))
+    expect(useUiStore.getState().status).not.toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 6 }))
+    expect(useUiStore.getState().status).toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 5 })) // 迟到
+    expect(useUiStore.getState().status).toBeNull()
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: 'no_such_code_xyz', seq: 7 })) // 更新的错误照常
+    expect(useUiStore.getState().status).not.toBeNull()
+    resetProjectErrorSeq() // SSE 重连（后端可能重启，seq 从头计）
+    handleServerEvent(ev({ kind: 'project.error', pj: 'p1', code: '', recovered: true, seq: 1 }))
     expect(useUiStore.getState().status).toBeNull()
   })
 

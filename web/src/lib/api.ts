@@ -3285,6 +3285,8 @@ export type ServerEvent =
       params?: Record<string, string>
       /** 上一次后台刷新失败之后又成功了一次（成功但无差异时 `registry.changed` 不发）：撤掉那条错误提示，`code` 为空 */
       recovered?: boolean
+      /** 后端分配的单调序号（失败与恢复同一个计数）：比已见过的更小就是迟到的旧事件，丢弃；老后端没有 */
+      seq?: number
     } & ProjectScoped)
   | ({ kind: 'probe.started'; script: string } & ProjectScoped)
   | ({

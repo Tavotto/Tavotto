@@ -42,6 +42,10 @@ const costHint = (cost: string): string =>
 
 export { renderFailureOwner }
 
+/** 每个项目已见过的 `project.error` 最大 seq。seq 是后端进程内计数，后端重启会从头计：SSE 重连时清空（见 `resetProjectErrorSeq`），否则新进程的事件全被当成旧的 */
+const lastProjectErrorSeq = new Map<string, number>()
+export const resetProjectErrorSeq = () => lastProjectErrorSeq.clear()
+
 /** 「后台刷新失败」那条常驻提示的主人：按项目；刷新恢复（`registry.changed` / `assets.changed`）时撤 */
 export const projectErrorOwner = (pj: string | null | undefined) => `project.error:${pj ?? ''}`
 
@@ -228,6 +232,11 @@ export function handleServerEvent(ev: ServerEvent) {
     }
 
     case 'project.error': {
+      // 迟到的旧事件（seq 不比已见过的大）丢弃：恢复提示撤掉 toast 之后，旧错误不能再把它顶回来。老后端没有 seq 就不判
+      if (typeof ev.seq === 'number') {
+        if (ev.seq <= (lastProjectErrorSeq.get(ev.pj ?? '') ?? 0)) break
+        lastProjectErrorSeq.set(ev.pj ?? '', ev.seq)
+      }
       if (ev.recovered) {
         // 后台刷新又成功了（含「文件改回原样、没有语义差异」那种不发 registry.changed 的）：撤掉先前那条
         useUiStore.getState().clearStatusOwnedBy(projectErrorOwner(ev.pj))
@@ -344,6 +353,7 @@ export function useServerEvents() {
         // 后端重启后 SSE 会重连，借这个时机让版本自检立刻复查一次
         window.dispatchEvent(new Event('mm:sse-open'))
         // 断线期间发生的事件全都没收到：补一次素材刷新 + 派生同步（节流）
+        resetProjectErrorSeq()
         recoverAfterReconnect()
         // 还在等作答的脚本输入（ADR 0099）也要接回来；顺带取记住的答案（脚本行的入口靠它）
         void useScriptInputStore.getState().loadAnswers()

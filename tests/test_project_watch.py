@@ -1220,6 +1220,36 @@ class TestEndToEnd:
         w.poll()
         assert not [1 for ev, _ in sse_spy if ev == "project.error"], sse_spy
 
+    def test_project_error_events_carry_a_monotonic_seq_and_recovery_follows_the_refresh_result(
+        self, client, tmp_path, sse_spy
+    ):
+        """失败与恢复共用一个单调 `seq`（分配与发布同锁）；恢复一定排在同一次刷新的结果事件（`registry.changed`）之后，
+        前端凭 seq 丢迟到的旧错误，恢复提示不会被顶回去。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+        ctx = m.PROJECTS[body["id"]]
+        engine_watch.stop()
+        m.refresh_project(ctx, reason="manual")
+        reg = figs / "tavotto_registry.json"
+        good = reg.read_text(encoding="utf-8")
+        w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
+        w.prime()
+        sse_spy.clear()
+        reg.write_text("{ 这不是 JSON", encoding="utf-8")
+        w.poll()
+        reg.write_text(good, encoding="utf-8")
+        _script(figs, "fig2.py", "Fig2")  # 恢复的那次刷新带着真实差异
+        m.refresh_project(ctx, reason="manual")
+        errs = [d for ev, d in sse_spy if ev == "project.error"]
+        assert len(errs) == 2 and errs[0]["seq"] < errs[1]["seq"], sse_spy
+        assert errs[1]["recovered"] is True
+        kinds = [ev for ev, _ in sse_spy]
+        assert kinds.index("registry.changed") < len(kinds) - 1 - kinds[::-1].index(
+            "project.error"
+        ), kinds
+
     def test_recovery_is_only_announced_after_the_failed_refresh_really_succeeds(
         self, client, tmp_path, sse_spy, monkeypatch
     ):
