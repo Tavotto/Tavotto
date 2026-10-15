@@ -1399,6 +1399,23 @@ GATED = [
     ("rebound_os_head", MPL + 'import os\nos = os\nos.remove("a")\n' + TAIL),
     ("inside_lambda", MPL + 'import os\ncb = lambda: os.remove("a")\n' + TAIL),
     ("inside_class_body", MPL + 'import os\nclass K:\n    os.remove("a")\n' + TAIL),
+    # Codex r4283254482：已知写出器（与事件收集同一份集合）+ 常见科学 / 数据库写出口
+    (
+        "numpy_save_before_dead_pair",
+        MPL
+        + 'import numpy as np\nnp.save("victim.npy", [1])\n'
+        + 'if len(__import__("sys").argv) > 1:\n    p = "x.png"\nelse:\n    raise SystemExit\n'
+        + "plt.savefig(p)\nopen(p).read()\n",
+    ),
+    ("pandas_to_csv", MPL + "import pandas as pd\npd.DataFrame().to_csv('victim.csv')\n" + TAIL),
+    ("pil_save", MPL + "from PIL import Image\nImage.new('L', (1, 1)).save('v.png')\n" + TAIL),
+    ("scipy_savemat", MPL + "from scipy.io import savemat\nsavemat('v.mat', {})\n" + TAIL),
+    ("zipfile_write_mode", MPL + "import zipfile\nzipfile.ZipFile('v.zip', 'w')\n" + TAIL),
+    ("h5py_mode_kw", MPL + "import h5py\nh5py.File('v.h5', mode='a')\n" + TAIL),
+    ("tarfile_w_gz", MPL + "import tarfile\ntarfile.open('v.tgz', 'w:gz')\n" + TAIL),
+    ("sqlite_connect", MPL + "import sqlite3\nsqlite3.connect('v.db')\n" + TAIL),
+    ("os_symlink", MPL + "import os\nos.symlink('a', 'b')\n" + TAIL),
+    ("path_rename_one_arg", MPL + "from pathlib import Path\nPath('a').rename('b')\n" + TAIL),
 ]
 
 
@@ -1414,6 +1431,12 @@ UNGATED = [
     ("str_replace_two_args", MPL + 'name = "a.b".replace(".", "_")\n' + TAIL),
     ("list_remove", MPL + "xs = [1]\nxs.remove(1)\n" + TAIL),
     ("read_only_pathlib", MPL + 'from pathlib import Path\nPath("a").read_text()\n' + TAIL),
+    (
+        "pandas_rename_columns",
+        MPL + "import pandas as pd\npd.DataFrame().rename(columns={'a': 'b'})\n" + TAIL,
+    ),
+    ("str_replace_mode_like", MPL + 'name = "x".replace("x", "a")\n' + TAIL),
+    ("zipfile_read_mode", MPL + "import zipfile\nzipfile.ZipFile('v.zip', 'r')\n" + TAIL),
 ]
 
 

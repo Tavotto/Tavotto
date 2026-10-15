@@ -620,11 +620,99 @@ class _Collector:
     #: 带模块前缀的限定名（`os.remove` / `shutil.rmtree`…）
     _GUARDED_QUALIFIED = frozenset(op for op in _GUARDED if op.split(".")[0] in ("os", "shutil"))
     #: 方法名太泛（`list.remove` / `str.replace` / `obj.move`）的，只认限定名（`replace` 另按单实参判）
-    _GENERIC_TAILS = frozenset({"remove", "replace", "move"})
+    _GENERIC_TAILS = frozenset(
+        {"remove", "replace", "move", "rename"}
+    )  # `df.rename(columns=…)` 另按单实参判
     _GUARDED_TAILS = frozenset(op.rsplit(".", 1)[1] for op in _GUARDED) - _GENERIC_TAILS
 
     _MODE_LIKE = re.compile(r"[rwxabtU+]+")
     _READONLY_OPEN_ROOTS = ("PIL.",)
+    #: 方法名 / 限定名末段即可判定为写出的调用（savefig 不在内：它是证据）
+    _WRITER_TAILS = (
+        _NUMPY_WRITE
+        | _DATA_WRITE_TAILS
+        | frozenset(
+            {
+                "save",
+                "imsave",
+                "imwrite",
+                "savemat",
+                "to_netcdf",
+                "to_zarr",
+                "to_stata",
+                "to_sql",
+                "write_image",
+                "write_html",
+                "symlink_to",
+                "hardlink_to",
+                "chmod",
+                "rmdir",
+                "unlink",
+                "write_text",
+                "write_bytes",
+                "mkdir",
+                "touch",
+            }
+        )
+    )
+    #: 只认限定名的写 / 改元数据调用
+    _WRITER_QUALIFIED = frozenset(
+        {
+            "os.write",
+            "os.truncate",
+            "os.ftruncate",
+            "os.symlink",
+            "os.link",
+            "os.chmod",
+            "os.chown",
+            "os.utime",
+            "os.mkfifo",
+            "os.renames",
+            "os.removedirs",
+            "os.mkdir",
+            "os.makedirs",
+            "sqlite3.connect",
+            "dbm.open",
+            "shelve.open",
+        }
+    )
+    _WRITER_PREFIXES = ("shutil.copy", "shutil.make_archive", "shutil.unpack_archive")
+    #: 第二个实参是 mode 时这些字符串方法会撞形（`s.replace("x", "a")`），不按 mode 判
+    _STR_METHODS = frozenset(
+        {
+            "replace",
+            "split",
+            "rsplit",
+            "strip",
+            "join",
+            "count",
+            "find",
+            "index",
+            "get",
+            "partition",
+        }
+    )
+
+    def _mode_arg_writes(self, node: ast.Call, func: ast.expr) -> bool:
+        """任意调用的 `mode=` 实参，或第二个位置实参是 mode 样字面量（`ZipFile(p, "w")` / `h5py.File(p, "a")` /
+        `tarfile.open(p, "w:gz")` / `gzip.open(p, "wb")`），且可能写：按写出算。"""
+        for k in node.keywords:
+            if (
+                k.arg == "mode"
+                and isinstance(k.value, ast.Constant)
+                and isinstance(k.value.value, str)
+            ):
+                if self._mode_writes(k.value):
+                    return True
+        if isinstance(func, ast.Attribute) and func.attr in self._STR_METHODS:
+            return False
+        if len(node.args) > 1:
+            a = node.args[1]
+            if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                head = a.value.split(":", 1)[0]
+                if head and self._MODE_LIKE.fullmatch(head) and any(c in head for c in "wax+"):
+                    return True
+        return False
 
     @staticmethod
     def _mode_writes(arg: ast.expr | None) -> bool:
@@ -685,6 +773,28 @@ class _Collector:
         if isinstance(func, ast.Attribute) and func.attr in ("write_bytes", "mkdir", "touch"):
             return True
         if self._write_open(node, q):
+            return True
+        # 已知写出器（与事件收集里 `_NUMPY_WRITE` / `_DATA_WRITE_TAILS` 同一份集合，外加常见科学 / 数据库写出口），按方法名或
+        # 限定名末段认，不看接收者是谁——宁宽（Codex #1034 r4283254482）
+        last = (q or "").rsplit(".", 1)[-1] if q else None
+        tails = {func.attr} if isinstance(func, ast.Attribute) else set()
+        if last:
+            tails.add(last)
+        if tails & self._WRITER_TAILS:
+            return True
+        if names & self._WRITER_QUALIFIED or any(
+            n.startswith(self._WRITER_PREFIXES) for n in names if n
+        ):
+            return True
+        if self._mode_arg_writes(node, func):
+            return True
+        # `Path.rename(target)`：恰一个位置实参、无关键字；`df.rename(columns=…)` 不算
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "rename"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
             return True
         if isinstance(func, ast.Attribute):
             if func.attr in self._GUARDED_TAILS:
