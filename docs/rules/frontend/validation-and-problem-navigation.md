@@ -115,7 +115,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   `useDisplayedExactManifest` + `geomTarget` + `panelFullRect`，再套面板内容的显示变换 `lib/panelTransform.panelTransformSvg(panelContentTransform())`——先翻转、再旋转，与 `PanelView` 的 CSS 同一份权威，只转不翻会在翻转过的图上描到镜像位置；解不出来才退回整张图，Codex #832；看护 `canvas/issueHoverDisplay.test.tsx`：真实 PanelView + OverlaySvg + ProblemPanel，130%，翻转 / 翻转 + 旋转逐一比对）——行 / 卡片只经 `problemTree.useIssueHover()` 写它（指针进出与键盘焦点 / 失焦都算，分桶钮与对象行同一条路，Codex #832），撤一律**比对后再清**
   （`releaseIssueHover`：对象身份即主人，被别的行顶掉的不动）；行被修好 / 筛掉 / 换文档卸载时不发
   pointerleave / blur，卸载时再撤一次，不靠面板卸载那一道（Codex #832）；「⋯」里可打开**画布等级标记**（`uiStore.problemPins`：每张有问题的图右上角外侧一枚（屏幕空间：按 `visualBounds` 的外接框放、整组不随对象旋转，项数永远正着，Codex #832；让开 ne 缩放手柄；底色与项数字色成对取 `canvas/issuePinColors.PIN_COLORS`，`tokenContrast.test` 逐对量 ≥4.5:1——warn 用 `warn-content` 底，锚点 #b07400 衬白字只有 3.9:1，Codex #832），
-  点它 = `openProblemAt`）。摘要条（32px）只有等级开关（只有阻断着色）与唯一一颗填色主动作「全部修复 N」；
+  点它 = `openProblemAt`）。摘要条（32px）只有等级开关（`ui/CountChip`：颜色只在 6px 圆点上，数字与文字是中性墨色）与一颗 ghost 动作「全部修复 N」（不是填色主按钮，UI 2.0 第二轮 03）；
   正在重新检查时标题行一段 shimmer（`validationStore.queued`，延迟 300ms 才出），首检是静态骨架，「未发现问题」
   带证据（按哪套规范、查了几张图、`validationStore.checkedAt`——「刚刚 / N 分钟前」由证据自己按整分钟走表刷新，不等别的重渲染，Codex #832；规范按**每张装着图的画布各自的绑定**说，与
   `collectCanvases()` 同一份判据——几张画布绑了不同规范时说「按 N 套规范（A、B）」，不拿当前画布那一套冒充全部，Codex #832）。
