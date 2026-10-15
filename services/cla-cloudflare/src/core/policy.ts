@@ -13,6 +13,7 @@ export function validateConfig(c: Config): void {
   if (canonical([...names].sort()) !== canonical(Object.keys(c.exemptionIds).sort())) throw new Rejected('exemptions_unpinned');
   const ids = Object.values(c.exemptionIds);
   if (!ids.every(validId) || new Set(ids).size !== ids.length || c.exemptionIds.erwanjun !== c.holderId) throw new Rejected('exemptions_invalid');
+  if(canonical(Object.keys(c.policy.agreements).sort())!==canonical(['corporate','individual']))throw new Rejected('agreement_invalid');
   for (const a of Object.values(c.policy.agreements)) {
     if (a.version !== '1.0' || !/^[a-f0-9]{64}$/.test(a.sha256)) throw new Rejected('agreement_invalid');
   }

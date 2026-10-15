@@ -5,6 +5,11 @@ import { Rejected } from '../core/types.ts';
 // These ceilings leave headroom below Free's 50 external requests / 50 D1 queries.
 export const FREE_BUDGET = Object.freeze({heads:1,external:40,externalWork:35,sql:40,sqlWork:20,
   workMs:60_000,cleanupMs:90_000,leaseMarginMs:30_000});
+// Verification uses eight fixed SQL statements plus two per non-exempt person.
+export const VERIFICATION_FINAL_SQL = 3;
+export const VERIFICATION_FIXED_SQL = 2+3+VERIFICATION_FINAL_SQL;
+export const QUALIFICATION_SQL_PER_PERSON = 2;
+export const MAX_SUCCESS_CONTRIBUTORS = Math.floor((FREE_BUDGET.sqlWork-VERIFICATION_FIXED_SQL)/QUALIFICATION_SQL_PER_PERSON);
 export class BudgetDeferred extends Rejected {
   readonly reason:string;
   constructor(reason:string) {super('budget_deferred');this.reason=reason;}

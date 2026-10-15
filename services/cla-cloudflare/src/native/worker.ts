@@ -70,7 +70,7 @@ export function config(env:Env):LiveConfig {
 export async function service(env:Env,budget?:InvocationBudget):Promise<LiveService> {
   const c=config(env),secrets:Secrets={clientSecret:env.CLA_CLIENT_SECRET ?? '',pkcs8:env.CLA_APP_PKCS8 ?? '',evidenceKey:env.CLA_EVIDENCE_KEY ?? ''};
   const key=await importAes(unbase64(secrets.evidenceKey));
-  return new LiveService(c,new LiveStore(env.DB,budget),new GitHub(c,secrets,undefined,undefined,budget),key);
+  return new LiveService(c,new LiveStore(env.DB,budget,c),new GitHub(c,secrets,undefined,undefined,budget),key);
 }
 export default {async scheduled(_controller:unknown,env:Env):Promise<void> {
   if(env.CLA_BACKGROUND_ENABLED!=='true')return;

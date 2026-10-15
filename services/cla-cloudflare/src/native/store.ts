@@ -1,4 +1,4 @@
-import type { CheckProposal, D1Database, D1Statement, Job, Packet, Role, Session } from '../core/types.ts';
+import type { CheckProposal, Config, D1Database, D1Statement, Job, Packet, Role, Session } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import { canonical, randomToken } from '../core/crypto.ts';
 import { Store } from '../core/store.ts';
@@ -9,7 +9,7 @@ const objects = ['oauth_expiry','packets_subject_digest','authority','agreements
   'eligibility_blocks','audit','targets','outbox','outbox_due','deliveries','published_checks','_guards',
   'revision_outbox','delivery_outbox','agreements_update','agreements_delete','packets_update','packets_delete',
   'signatures_update','signatures_delete','blocks_update','blocks_delete','audit_update','audit_delete',
-  'publication_attempts','publication_unresolved','reconciliation_progress','refresh_requests','agreement_documents','documents_update','documents_delete'];
+  'publication_attempts','publication_unresolved','reconciliation_progress','refresh_requests','agreement_documents','documents_update','documents_delete','authority_update','authority_delete'];
 // Only trusted source SQL is passed here; identifiers cannot come from a request.
 export const nativeSQL = (sql: string) => sql.replace(/\b[A-Za-z_][A-Za-z_0-9]*\b/g,
   word => objects.includes(word) ? PREFIX+word : word);
@@ -25,7 +25,23 @@ export interface Progress {cursor:number;horizon:number}
 export interface ClaimedJob extends Job {lease_clock:number}
 export class LiveStore extends Store {
   readonly budget:InvocationBudget|undefined;
-  constructor(db: D1Database,budget?:InvocationBudget) { super(namespace(budget?meterDatabase(db,budget):db));this.budget=budget; }
+  readonly expectedConfig:Config|undefined;
+  constructor(db: D1Database,budget?:InvocationBudget,expectedConfig?:Config) { super(namespace(budget?meterDatabase(db,budget):db));this.budget=budget;this.expectedConfig=expectedConfig; }
+  readiness():{sql:string;values:unknown[]} {
+    const c=this.expectedConfig;if(!c)return {sql:'1',values:[]};
+    return {sql:`(SELECT count(*) FROM authority)=1 AND EXISTS(SELECT 1 FROM authority WHERE id=1 AND holder=?)
+      AND (SELECT count(*) FROM agreements)=2 AND EXISTS(SELECT 1 FROM agreements WHERE kind='individual' AND version=? AND digest=?)
+      AND EXISTS(SELECT 1 FROM agreements WHERE kind='corporate' AND version=? AND digest=?)`,
+      values:[c.holderId,c.policy.agreements.individual.version,c.policy.agreements.individual.sha256,c.policy.agreements.corporate.version,c.policy.agreements.corporate.sha256]};
+  }
+  async assertReady():Promise<void> {
+    const ready=this.readiness();const row=await this.stmt(`SELECT CASE WHEN (${ready.sql}) THEN 1 ELSE 0 END AS ready`,...ready.values).first<{ready:number}>();
+    if(row?.ready!==1)throw new Rejected('database_configuration_uninitialized_or_mismatched');
+  }
+  override async revision():Promise<number> {
+    const ready=this.readiness();const row=await this.stmt(`SELECT revision FROM state WHERE id=1 AND (${ready.sql})`,...ready.values).first<{revision:number}>();
+    if(!row)throw new Rejected('database_configuration_uninitialized_or_mismatched');return row.revision;
+  }
   override async batch(stmts:D1Statement[]):Promise<void> {
     try{const results=await this.db.batch(stmts);if(results.some(r=>!r.success))throw new Error();}
     catch(error){if(error instanceof BudgetDeferred)throw error;throw new Rejected('transaction_rejected');}

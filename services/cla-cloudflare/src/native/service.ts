@@ -5,6 +5,7 @@ import { binding, sameBinding } from '../core/identity.ts';
 import { currentPacket, packetAgreementMatches, validId } from '../core/policy.ts';
 import type { LiveConfig } from './config.ts';
 import { attestations, validateLive } from './config.ts';
+import { MAX_SUCCESS_CONTRIBUTORS } from './budget.ts';
 import { GitHub } from './github.ts';
 import { LiveStore, type SignatureRow } from './store.ts';
 
@@ -28,12 +29,14 @@ export class LiveService {
   signing():void { if (!this.c.signingEnabled) throw new Rejected('signing_disabled'); }
   async startOAuth(origin:string|null):Promise<{browser:string;url:string}> {
     this.sameOrigin(origin); if (!this.c.oauthEnabled) throw new Rejected('oauth_disabled');
+    await this.store.assertReady();
     const state=randomToken(),browser=randomToken(),verifier=randomToken(),hash=await sha256(state);
     await this.store.addOAuth(hash,await sha256(browser),await seal(this.key,verifier,'oauth:'+hash),(await this.store.databaseNow())+300);
     return {browser,url:this.github.authorizeURL(state,base64url(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes(verifier)))))};
   }
   async completeOAuth(state:string,browser:string,code:string):Promise<{token:string;csrf:string}> {
     if (!this.c.oauthEnabled || !TOKEN.test(state) || !TOKEN.test(browser) || !/^[A-Za-z0-9_.-]{1,256}$/.test(code)) throw new Rejected('oauth_rejected');
+    await this.store.assertReady();
     const hash=await sha256(state),cipher=await this.store.consumeOAuth(hash,await sha256(browser),0);
     const user=await this.github.oauthIdentity(code,await open(this.key,cipher,'oauth:'+hash));
     const token=randomToken(),csrf=randomToken();
@@ -48,6 +51,7 @@ export class LiveService {
     this.signing(); const s=await this.authorize(token,csrf,origin);
     if (kind !== 'individual') throw new Rejected('corporate_manual_review_required');
     if (s.actor===this.c.holderId) throw new Rejected('distinct_parties_required');
+    await this.store.assertReady();
     const a=this.c.policy.agreements.individual,now=await this.store.databaseNow();
     if(await this.store.subjectBlocked(s.actor))throw new Rejected('packet_ineligible');
     const existing=await this.store.reusablePacket(s.actor,a.sha256);
@@ -66,6 +70,7 @@ export class LiveService {
   async intent(token:string,csrf:string,origin:string|null,packet:string,role:unknown):Promise<string> {
     this.signing(); const s=await this.authorize(token,csrf,origin),p=await this.packetFor(s,packet),now=await this.store.databaseNow();
     if (!['contributor','holder','hold'].includes(role as string) || (role!=='hold' && !currentPacket(this.c,p,now))) throw new Rejected('role_rejected');
+    await this.store.assertReady();
     const nonce=randomToken(); await this.store.addAuthenticatedIntent(await sha256(nonce),s,p,role as Role|'hold',now+300); return nonce;
   }
   private validateEvidence(input:EvidenceInput,role:Role):void {
@@ -85,12 +90,14 @@ export class LiveService {
     const record={...input,protocol:'cla-signature-v1',packet:p.id,agreement_kind:p.kind,agreement_version:p.version,
       agreement_sha256:p.digest,role:requested,github_id:s.actor,github_login_at_signing:s.login,signed_at_unix:now,consent_ui_version:'1'};
     const raw=canonical(record),cipher=await seal(this.key,raw,`signature:${p.id}:${requested}:${p.digest}`);
+    await this.store.assertReady();
     const committed=await this.store.signAtomic({session:s,packet:p,intentHash:await sha256(nonce),role:requested,cipher,
       evidenceHash:await sha256(raw),created:now,revision}); return {revision:committed};
   }
   async hold(token:string,csrf:string,origin:string|null,packet:string,nonce:string):Promise<{revision:number}> {
     this.signing(); if (!TOKEN.test(nonce)) throw new Rejected('intent_rejected');
     const s=await this.authorize(token,csrf,origin),p=await this.packetFor(s,packet);
+    await this.store.assertReady();
     return {revision:await this.store.holdAtomic(s,p,await sha256(nonce),await this.store.revision(),await this.store.databaseNow())};
   }
   private async evidenceRecord(p:Packet,row:SignatureRow):Promise<Record<string,unknown>> {
@@ -161,6 +168,8 @@ export class LiveService {
     const revision=await this.store.revision(),bound=await this.freshBinding(pr),now=await this.store.databaseNow();
     let good=this.c.policy.provider.configured===true,expires=now+120;
     const exempt=new Set(Object.values(this.c.exemptionIds));
+    if(bound.contributors.filter(person=>!exempt.has(person.id)).length>MAX_SUCCESS_CONTRIBUTORS)
+      throw new Rejected('contributor_capacity_exceeded');
     // Background callers reserve their remaining journal/CAS statements before
     // starting per-person reads. Qualification uses two SQL statements per actor.
     if(reservedSQL!==undefined)this.store.budget?.reserveWorkSQL(
@@ -175,6 +184,7 @@ export class LiveService {
   }
   async check(pr:number):Promise<{disposition:string;check:CheckProposal}> {
     // Track before evaluation: each later evidence/hold revision enqueues a durable notification intent.
+    await this.store.assertReady();
     await this.store.track(this.c.repositoryId,{kind:'pr',number:pr});
     const check=await this.evaluate(pr),fresh=await this.freshBinding(pr);
     if (!sameBinding(check.proof,fresh) || await this.store.revision()!==check.proof.revision ||

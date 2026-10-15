@@ -40,7 +40,7 @@ async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<
     const target=await s.store.target(job.target_key);
     if(target.kind!=='pr')throw new Rejected('merge_queue_not_implemented');
     // After evaluate: predecessor read (1), final clock (1), issued batch (4).
-    // Including claim/task/target and evaluate itself: 12 + 2*N work SQL.
+    // Including initial readiness/revision, claim/task/target and evaluate: 13 + 2*N work SQL.
     const check=await s.evaluate(target.number,6);
     if(check.proof.revision!==request.revision)throw new Rejected('state_changed');
     if(check.conclusion!=='success') {
@@ -86,6 +86,7 @@ export async function reconcileOne(s:LiveService):Promise<{disposition:string;bu
   const budget=s.store.budget;
   if(!budget || s.github.budget!==budget)throw new Rejected('invocation_budget_required');
   const result=(disposition:string)=>({disposition,budget:budget.snapshot()});
+  const initialRevision=await s.store.revision();
   const job=await s.store.claim(0);if(!job)return {disposition:'idle'};
   budget.bindLease(job.lease_until,job.lease_clock);
   let selected:Publication|undefined,revision:number|undefined,committed=false;
@@ -94,7 +95,7 @@ export async function reconcileOne(s:LiveService):Promise<{disposition:string;bu
     if(refresh)return result(await refreshOne(s,job,refresh));
     const target=await s.store.target(job.target_key);
     if(target.kind!=='pr')throw new Rejected('merge_queue_not_implemented');
-    revision=await s.store.revision();const progress=await s.store.openProgress(job,revision);
+    revision=initialRevision;const progress=await s.store.openProgress(job,revision);
     const records=await s.store.publicationBatch(job,progress);let disposition='no_due_publication';
     for(const p of records) {
       selected=p;

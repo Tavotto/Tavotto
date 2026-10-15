@@ -1,3 +1,4 @@
+import { VERIFICATION_FINAL_SQL } from './budget.ts';
 import { parseProof } from '../core/proof.ts';
 import { sameBinding } from '../core/identity.ts';
 import { sha256 } from '../core/crypto.ts';
@@ -10,7 +11,7 @@ export async function verification(s:LiveService,pr:number,head:string,run:numbe
   if(!p || p.conclusion!=='success')throw new Rejected('proof_not_confirmed');
   const proof=parseProof(p.proof_text,await s.store.databaseNow());
   if(p.revision!==proof.revision || p.expires!==proof.expires_at)throw new Rejected('proof_not_confirmed');
-  const current=await s.evaluate(pr);
+  const current=await s.evaluate(pr,VERIFICATION_FINAL_SQL);
   if(proof.pr!==pr || proof.head_sha!==head || proof.repository_id!==s.c.repositoryId || current.conclusion!=='success' ||
     current.proof.revision!==proof.revision || !sameBinding(proof,current.proof))throw new Rejected('qualification_changed');
   await s.github.readPublication(p);

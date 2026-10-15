@@ -8,6 +8,8 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 // Each mutation changes one asserted source location in an isolated copy; a
 // nonzero test exit proves the named behavioral regression is actually detected.
 const cases=[
+ {name:'verification producer capacity',file:'src/native/service.ts',before:'length>MAX_SUCCESS_CONTRIBUTORS)',after:'length>MAX_SUCCESS_CONTRIBUTORS+1)',pattern:'seven-person producer rejects capacity before qualification or any publication',testFile:'tests/independent-bootstrap-budget.test.mjs'},
+ {name:'production bootstrap readiness',file:'src/native/worker.ts',before:'new LiveStore(env.DB,budget,c)',after:'new LiveStore(env.DB,budget)',pattern:'production service fresh schema refuses writes without fixture initialization',testFile:'tests/independent-bootstrap-budget.test.mjs'},
  {name:'identity lookup preflight cap',file:'src/core/identity.ts',before:"if(resolve.size>10)throw new Rejected('identity_lookup_limit');",after:"if(resolve.size>11)throw new Rejected('identity_lookup_limit');",pattern:'11 unique lookup identities fail before any remote lookup',testFile:'tests/independent-identity-admission.test.mjs'},
  {name:'fresh exemption identity',file:'src/core/identity.ts',before:'resolve.set(normalized,id);',after:'// mutation: trust configured exemption ID',pattern:'exemption login match still requires fresh trusted ID resolution',testFile:'tests/independent-identity-admission.test.mjs'},
  {name:'OAuth bounded burst',file:'src/native/store.ts',before:'WHERE expires>${DB_NOW} LIMIT 10))<10',after:'WHERE expires>${DB_NOW} LIMIT 10))<11',pattern:'OAuth burst accepts 10 and rejects 11th without adding a row',testFile:'tests/independent-public-abuse.test.mjs'},
@@ -22,7 +24,7 @@ const cases=[
  {name:'evidence hash',file:'src/native/service.ts',before:"if (await sha256(raw)!==row.evidence_hash) throw new Rejected('evidence_unavailable');",after:'// mutation: skip evidence hash validation',pattern:'wrong-hash'},
 ];
 for(const c of cases){const tmp=mkdtempSync(path.join(os.tmpdir(),'cla-mutation-'));try{
- for(const p of ['src','tests','package.json'])cpSync(path.join(root,p),path.join(tmp,p),{recursive:true});
+ for(const p of ['src','tests','scripts','package.json'])cpSync(path.join(root,p),path.join(tmp,p),{recursive:true});
  const file=path.join(tmp,c.file),before=readFileSync(file,'utf8');assert.equal(before.split(c.before).length-1,1,c.name+' mutation location');
  const changed=before.replace(c.before,c.after);assert.notEqual(changed,before);writeFileSync(file,changed);assert.ok(readFileSync(file,'utf8').includes(c.after));
  const r=spawnSync(process.execPath,['--test','--test-name-pattern='+c.pattern,c.testFile??'tests/independent-lifecycle.test.mjs'],{cwd:tmp,encoding:'utf8'});

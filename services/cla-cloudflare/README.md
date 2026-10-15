@@ -38,7 +38,7 @@ This is not a D1 migration command or authorization to read production evidence.
 
 ## Validation boundary
 
-The offline regression covers 156 Node cases, 3 SQLite migration cases and 12 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
+The offline regression covers 169 Node cases, 3 SQLite migration cases and 14 isolated mutation checks, including wrong/invalid encryption keys, tampered evidence, expired intents, role/order checks, exact deadline boundaries, completed qualification after eight days and subject-wide holds. Re-run the commands above for the checkout under review. Local passes do not establish legal sufficiency or live GitHub/Cloudflare behavior.
 
 
 The dedicated path-filtered PR workflow uses a GitHub-hosted Ubuntu runner, Node 24 and Python 3.12, with contents:read only, no secrets, no deployment and no dependency cache. It runs npm ci --ignore-scripts and npm run check. It adds no required context and does not change the existing aggregate gates. Local and CI passes do not establish live free-tier acceptance.
@@ -55,7 +55,7 @@ The withdrawal reconciler and fresh publication execute in separate scheduled in
 
 Refresh is limited to the same head and an existing, exactly identified owned check run. It does not create runs for new heads or automatically handle a push; the explicit rights-holder check entry remains necessary for those cases. Before refreshing, the adapter verifies the predecessor run, attempt, app, name and recorded failure. After authentication and remote pre-reads, it rereads the current binding and commits a new attempt with a new 120-second proof under lease, generation and revision guards. Earlier proof text and expiry remain unchanged. Only one PATCH is attempted. Its response leaves the new attempt awaiting reconciliation; it is not immediately confirmed. A later invocation must independently observe and revalidate it. Unknown outcomes are observed or escalated for manual review, never replayed.
 
-Resource limits remain 20 work SQL statements / 40 total and 35 work external calls / 40 total per invocation. Dispatch needs 12 + 2N work SQL statements, where N is the number of non-exempt contributors. Confirmation needs 14 + 2N, plus two reserved reads if withdrawal becomes necessary. Consequently this initial automatic refresh path admits at most two non-exempt contributors. More contributors or complex remote reads can exhaust the unchanged budget: no fresh publication is sent, retries are bounded to three with 60-second backoff, then manual review is required. This is a resource/capability boundary, not a negative legal or eligibility determination. There is no automatic clearing of manual states.
+Resource limits remain 20 work SQL statements / 40 total and 35 work external calls / 40 total per invocation. Dispatch needs 13 + 2N work SQL statements, where N is the number of non-exempt contributors. Confirmation needs 14 + 2N, plus two reserved reads if withdrawal becomes necessary. Consequently this initial automatic refresh path admits at most two non-exempt contributors. More contributors or complex remote reads can exhaust the unchanged budget: no fresh publication is sent, retries are bounded to three with 60-second backoff, then manual review is required. This is a resource/capability boundary, not a negative legal or eligibility determination. There is no automatic clearing of manual states.
 
 Dynamic success-publication-across-expiry integration validation is not part of this candidate's passing evidence. New tests are restricted to offline rejection, budget, durable deduplication and uncertainty handling with failed proposals; they do not establish successful end-to-end refresh behavior. Live GitHub/Cloudflare acceptance and the excluded integration scenario remain activation gates.
 
@@ -145,3 +145,53 @@ makes no GitHub request, creates no intent or signature, and is not a fresh
 qualification result. Expired incomplete packets still require a new upstream
 policy/agreement validation before atomic replacement creation. Existing signing
 and fresh qualification checks remain separate from packet retrieval.
+
+
+### Explicit database bootstrap and consumable proposal limits
+
+The production service binds every store to its configured holder and exact two
+agreement kind/version/digest rows. The existing revision read incorporates this
+shared readiness predicate without adding a query to evaluation/verification.
+Signing/OAuth writes also perform an explicit read-only readiness check. The
+background driver reads readiness/revision before claiming work; normal
+confirmation keeps its previous statement count, while fresh dispatch adds one
+read (13 + 2N). Actual budget charging and pre-send reservations still apply.
+Missing, extra or mismatched configuration rows fail closed; request handlers do
+not initialize or repair them. Authority and agreement rows are immutable.
+
+For a new database, prepare initialization explicitly before enabling service:
+
+    node scripts/generate-bootstrap.mjs CONFIG.json > bootstrap.sql
+
+This command reads only the supplied configuration and emits SQL. It opens no
+database, accesses no network and deploys nothing. The output targets only the
+v2 namespace and records a digest of the seed configuration. Rehearse it against
+a disposable local database containing the raw namespaced base/native schema.
+Its SQLite transaction inserts missing exact configuration rows, is idempotent
+for a matching database, and rolls back on mismatch or incomplete seeding. It
+never overwrites an existing holder/agreement or removes signing history.
+Do not feed the explicit SQLite BEGIN/COMMIT script directly to D1 as an assumed
+supported migration: an independently approved D1 integration must apply the
+same ordered statements atomically through its batch mechanism and verify
+readiness before enabling requests. Existing v2 schema upgrades also need the
+new immutable authority triggers. No live initialization is authorized here.
+
+A proposal that can become successful is limited to six non-exempt contributors:
+verification requires eight fixed SQL reads plus two per contributor, so six
+uses the unchanged 20-work-statement ceiling. The producer rejects seven or more
+with `contributor_capacity_exceeded` before qualification/publication. This is a
+service-capacity limitation, not a legal eligibility determination. Verification
+reserves its final three reads; old proofs are never extended. Automatic
+background refresh retains its stricter two-person bound. Read-only fixed-time
+verification budget tests do not publish a check or exercise expiry transitions.
+
+For review of that future D1 batch, generate the same source statements without
+SQLite transaction wrappers:
+
+    node scripts/generate-bootstrap.mjs CONFIG.json --d1-statements > bootstrap-statements.json
+
+The JSON array is data only, not an uploader. After separate authorization, an
+integration can map each string to `db.prepare(sql)` and submit the entire array
+in one `db.batch(...)`, then perform the production readiness read. Do not split
+it into independently committed requests. The local adapter test exercises this
+single-batch shape without invoking Cloudflare.

@@ -31,3 +31,6 @@ CREATE TRIGGER documents_delete BEFORE DELETE ON agreement_documents BEGIN SELEC
 
 -- Bounded OAuth admission and expiry pruning use this index.
 CREATE INDEX oauth_expiry ON oauth_states(expires,state_hash);
+
+CREATE TRIGGER authority_update BEFORE UPDATE ON authority BEGIN SELECT RAISE(ABORT,'immutable'); END;
+CREATE TRIGGER authority_delete BEFORE DELETE ON authority BEGIN SELECT RAISE(ABORT,'immutable'); END;
