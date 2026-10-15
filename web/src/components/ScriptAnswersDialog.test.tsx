@@ -98,8 +98,13 @@ beforeEach(() => {
   root = createRoot(host)
 })
 
-afterEach(() => {
-  act(() => root.unmount())
+afterEach(async () => {
+  await act(async () => {
+    root.unmount()
+    // Retire this test's batch before the next case resets mocks. Clearing only
+    // byScript would wake an old batch and let it run the next configuration.
+    useScriptRunStore.getState().clear()
+  })
   host.remove()
   useScriptInputStore.getState().clear()
 })
@@ -640,10 +645,18 @@ describe('批量保存涉及多份配置：逐份真的重跑（Codex #816 P1）
       await openTwoConfigs()
       await click(saveButton())
       await flush()
-      setCurrentProjectId('pj-b') // 第一份还在飞，用户切走了
-      await act(async () => reject(new Error('boom')))
+      const runEpoch = useScriptRunStore.getState().epoch
+      await act(async () => {
+        setCurrentProjectId('pj-b') // 第一份还在飞，用户切走了
+        // Production resetForNewProject retires both the row and the batch epoch.
+        useScriptRunStore.getState().clear()
+        reject(new Error('boom'))
+      })
       await flush()
       await flush()
+      expect(mockProbe.mock.calls.map((c) => c[2])).toEqual([{ run_config: 'rc_a' }])
+      expect(useScriptRunStore.getState().epoch).toBe(runEpoch + 1)
+      expect(useScriptRunStore.getState().byScript).toEqual({})
       expect(JSON.stringify(useUiStore.getState().status)).not.toContain('manageRerunFailed')
     } finally {
       setCurrentProjectId(null)

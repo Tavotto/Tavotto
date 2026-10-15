@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
 import { buildExportRequest } from '@/lib/exportRequest'
 import { setCurrentProjectId } from '@/lib/session'
-import { emptyProject, type FigureSnapshot, type PanelObject } from '@/types/document'
+import { emptyProject, type FigureSnapshot, type PanelObject, type ProjectDocument } from '@/types/document'
 import {
   applyDerivedUpdate, captureFigureSnapshotSave, invalidateFigureSnapshots,
-  mergeSavedFigureSnapshots, saveNow, startAutosave, useDocumentStore,
+  flushAutosave, mergeSavedFigureSnapshots, readAutosaveDoc, saveNow, startAutosave, useDocumentStore,
 } from './documentStore'
 
 const s = () => useDocumentStore.getState()
@@ -39,6 +39,50 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
+/** Real autosave API/queue boundaries with a controllable in-memory disk, not a mocked store callback. */
+function autosaveDisk() {
+  const slots = new Map<string, ProjectDocument>()
+  const puts: { id: string; doc: ProjectDocument }[] = []
+  let snapshots: Record<string, FigureSnapshot> = { p1: ref() }
+  let hold: Promise<void> | undefined
+  let completed = 0
+  fetchMock.mockImplementation(async (url: unknown, init?: RequestInit) => {
+    const id = String(url).match(/\/api\/autosave\/([^/?]+)/)?.[1]
+    if (!id) return new Response('{}', { status: 404 })
+    if (init?.method !== 'PUT') {
+      const doc = slots.get(id)
+      return new Response(JSON.stringify(doc ?? {}), {
+        status: doc ? 200 : 404, headers: doc ? { 'X-Tavotto-Revision': `disk-${puts.length}` } : undefined,
+      })
+    }
+    const doc = JSON.parse(String(init.body)) as ProjectDocument
+    const captured = snapshots
+    const pending = hold
+    hold = undefined
+    puts.push({ id, doc: structuredClone(doc) })
+    if (pending) await pending
+    for (const canvas of doc.canvases) for (const object of canvas.objects) {
+      if (object.type !== 'panel') continue
+      if (captured[object.id]) object.figureSnapshot = { ...captured[object.id] }
+      else delete object.figureSnapshot
+    }
+    slots.set(id, doc)
+    completed += 1
+    return new Response(JSON.stringify({
+      ok: true, saved_at: Date.now(), revision: `disk-${puts.length}`, figure_snapshots: captured,
+    }))
+  })
+  return {
+    slots, puts, completed: () => completed,
+    snapshots: (next: Record<string, FigureSnapshot>) => { snapshots = next },
+    holdNext: () => {
+      let release!: () => void
+      hold = new Promise<void>((resolve) => { release = resolve })
+      return release
+    },
+  }
+}
+
 describe('immutable Figure snapshot association', () => {
   it('merges a verified save response without edits, history, dirty state or another autosave', async () => {
     stopAutosave = startAutosave()
@@ -61,6 +105,123 @@ describe('immutable Figure snapshot association', () => {
     await saveNow()
     expect(currentPanel().figureSnapshot).toEqual(ref())
     expect(s().saveState).toBe('saved')
+  })
+
+  it.each(['cleared', 'new-receipt'] as const)('automatically persists rerun invalidation and reloads only the %s result', async (outcome) => {
+    const disk = autosaveDisk()
+    await saveNow()
+    const id = s().documentId
+    expect(currentPanel().figureSnapshot).toEqual(ref())
+    expect((disk.slots.get(id)!.canvases[0].objects[0] as PanelObject).figureSnapshot).toEqual(ref())
+    const nextRef = outcome === 'new-receipt' ? { ...ref(), receiptId: 'receipt-two', snapshotId: 'snap-two' } : undefined
+    disk.snapshots(nextRef ? { p1: nextRef } : {})
+    stopAutosave = startAutosave()
+    invalidateFigureSnapshots(['one.pdf'])
+    // No manual Save or unload flush: the actual debounce subscriber must enqueue this write itself.
+    await vi.waitFor(() => expect(disk.puts).toHaveLength(2), { timeout: 2200 })
+    await vi.waitFor(() => expect(s().saveState).toBe('saved'))
+    expect((disk.puts[1].doc.canvases[0].objects[0] as PanelObject).figureSnapshot).toBeUndefined()
+    expect((disk.slots.get(id)!.canvases[0].objects[0] as PanelObject).figureSnapshot).toEqual(nextRef)
+    // The backend response may attach a new reference, but that already-persisted metadata must not loop.
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    expect(disk.puts).toHaveLength(2)
+    stopAutosave()
+    stopAutosave = undefined
+    const restored = await readAutosaveDoc(id)
+    expect(restored.doc).not.toBeNull()
+    await s().switchDocument(restored.doc!, id)
+    expect(currentPanel().figureSnapshot).toEqual(nextRef)
+  })
+
+  it.each([true, false])('keeps rerun dirty after a stale save reply (live ref=%s)', async (hasLiveRef) => {
+    const disk = autosaveDisk()
+    if (!hasLiveRef) disk.snapshots({})
+    await saveNow()
+    expect(!!currentPanel().figureSnapshot).toBe(hasLiveRef)
+    disk.snapshots({ p1: ref() })
+    stopAutosave = startAutosave()
+    const release = disk.holdNext()
+    flushAutosave()
+    await vi.waitFor(() => expect(disk.puts).toHaveLength(2))
+    disk.snapshots({})
+    invalidateFigureSnapshots(['one.pdf'])
+    release()
+    await vi.waitFor(() => expect(disk.completed()).toBe(2))
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    expect(s().dirty).toBe(true)
+    expect(s().saveState).toBe('dirty')
+    await vi.waitFor(() => expect(disk.puts).toHaveLength(3), { timeout: 2200 })
+    await vi.waitFor(() => expect(s().saveState).toBe('saved'))
+    expect((disk.slots.get(s().documentId)!.canvases[0].objects[0] as PanelObject).figureSnapshot).toBeUndefined()
+  })
+
+  it('persists a second rerun queued while the first rerun save still has no live reference', async () => {
+    const disk = autosaveDisk()
+    await saveNow()
+    const id = s().documentId
+    stopAutosave = startAutosave()
+    disk.snapshots({ p1: { ...ref(), receiptId: 'run-one' } })
+    const release = disk.holdNext()
+    invalidateFigureSnapshots(['one.pdf'])
+    try {
+      await vi.waitFor(() => expect(disk.puts).toHaveLength(2), { timeout: 2200 })
+      expect(currentPanel().figureSnapshot).toBeUndefined()
+      disk.snapshots({ p1: { ...ref(), receiptId: 'run-two' } })
+      invalidateFigureSnapshots(['one.pdf'])
+      // Let the debounce queue the corrective snapshot behind the blocked first write.
+      await new Promise((resolve) => setTimeout(resolve, 1100))
+      expect(disk.puts).toHaveLength(2)
+    } finally {
+      release()
+    }
+    await vi.waitFor(() => expect(disk.puts).toHaveLength(3))
+    await vi.waitFor(() => expect(s().saveState).toBe('saved'))
+    expect(currentPanel().figureSnapshot?.receiptId).toBe('run-two')
+    expect((disk.slots.get(id)!.canvases[0].objects[0] as PanelObject).figureSnapshot?.receiptId).toBe('run-two')
+  })
+
+  it('flushes an inactive-canvas invalidation to the original document when switching away', async () => {
+    const disk = autosaveDisk()
+    await saveNow()
+    const id = s().documentId
+    const canvasId = s().activeCanvasId
+    s().addCanvas()
+    await saveNow()
+    disk.snapshots({})
+    stopAutosave = startAutosave()
+    invalidateFigureSnapshots(['one.pdf'])
+    expect(s().dirty).toBe(true)
+    await s().switchDocument(emptyProject(), 'after-rerun')
+    await vi.waitFor(() => expect(disk.puts.filter((put) => put.id === id)).toHaveLength(3))
+    const oldCanvas = disk.slots.get(id)!.canvases.find((canvas) => canvas.id === canvasId)!
+    expect((oldCanvas.objects[0] as PanelObject).figureSnapshot).toBeUndefined()
+    expect(s().documentId).toBe('after-rerun')
+    expect(s().doc.objects).toHaveLength(0)
+  })
+
+  it('retains a ref-free recovery copy and an error state if the rerun autosave fails', async () => {
+    const disk = autosaveDisk()
+    await saveNow()
+    const id = s().documentId
+    stopAutosave = startAutosave()
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 500 }))
+    invalidateFigureSnapshots(['one.pdf'])
+    await vi.waitFor(() => expect(s().saveState).toBe('save_error'), { timeout: 2200 })
+    expect(currentPanel().figureSnapshot).toBeUndefined()
+    const recovery = JSON.parse(localStorage.getItem(`tavotto.autosave.${id}`)!) as ProjectDocument
+    expect((recovery.canvases[0].objects[0] as PanelObject).figureSnapshot).toBeUndefined()
+    // The failed write must not silently report success or erase the only newer recovery copy.
+    expect((disk.slots.get(id)!.canvases[0].objects[0] as PanelObject).figureSnapshot).toEqual(ref())
+  })
+
+  it('does not schedule a write for an unrelated successful execution', async () => {
+    const disk = autosaveDisk()
+    await saveNow()
+    stopAutosave = startAutosave()
+    invalidateFigureSnapshots(['unrelated.pdf'])
+    expect(s().dirty).toBe(false)
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+    expect(disk.puts).toHaveLength(1)
   })
 
   it('updates all canvases and removes missing candidate refs but leaves newer panels alone', () => {
@@ -137,7 +298,7 @@ describe('immutable Figure snapshot association', () => {
     expect(currentPanel().figureSnapshot).toBeUndefined()
   })
 
-  it('successful rerun clears refs, blocks delayed replies and does not dirty the document', () => {
+  it('successful rerun clears refs, blocks delayed replies and becomes dirty without an undo entry', () => {
     mergeSavedFigureSnapshots(saved(), { p1: ref() })
     stopAutosave = startAutosave()
     const before = s()
@@ -145,8 +306,8 @@ describe('immutable Figure snapshot association', () => {
     invalidateFigureSnapshots(['one.pdf'])
     mergeSavedFigureSnapshots(context, { p1: ref() })
     expect(currentPanel().figureSnapshot).toBeUndefined()
-    expect(s().dirty).toBe(before.dirty)
-    expect(s().saveState).toBe(before.saveState)
+    expect(s().dirty).toBe(true)
+    expect(s().saveState).toBe('dirty')
     expect(s().past).toBe(before.past)
     mergeSavedFigureSnapshots(saved(), { p1: { ...ref(), receiptId: 'new-run' } })
     s().commit(literal('move'), (d) => { d.objects[0].x += 1 })

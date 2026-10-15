@@ -685,7 +685,7 @@ describe('project saves return immutable Figure references', () => {
     if (rerun) beforeLayoutWrite = () => invalidateFigureSnapshots(['source.pdf'], 'pjA')
     await runManualSave()
     expect((s().doc.objects[0] as PanelObject).figureSnapshot).toEqual(rerun ? undefined : snapshot)
-    expect(s().projectFile?.dirty).toBe(false)
+    expect(s().projectFile?.dirty).toBe(rerun)
     expect(written).toHaveLength(1)
   })
 })

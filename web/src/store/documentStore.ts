@@ -504,7 +504,7 @@ interface DocumentState {
    * 不吞）——那是"这次写成了没有"，用户必须看得见。
    */
   derivedSeq: number
-  /** Snapshot receipts changed without a user edit or another autosave. */
+  /** Already-persisted snapshot receipts merged from a save response; do not autosave them again. */
   snapshotSeq: number
   /** 上次写入本机自动保存的时间戳 */
   lastPersisted: number | null
@@ -2204,7 +2204,7 @@ export function mergeSavedFigureSnapshots(
   }
 }
 
-/** Only explicit successful execution calls this; disk documents retain their immutable saved references. */
+/** Explicit successful execution changes the live document; separately saved disk documents retain their references. */
 export function invalidateFigureSnapshots(sourceIds: readonly string[], pj: string | null = currentProjectId()): void {
   if (pj !== currentProjectId() || writesBlocked(false)) return
   const ids = new Set(sourceIds)
@@ -2223,14 +2223,24 @@ export function invalidateFigureSnapshots(sourceIds: readonly string[], pj: stri
   }
   remember([state.doc, state.canvases, state.past, state.future, state.canvasSessions, state.txn])
   const clear = (objects: FigureDocument['objects']) => {
-    for (const panel of objects) if (panel.type === 'panel' && ids.has(panel.fileId)) delete panel.figureSnapshot
+    for (let i = 0; i < objects.length; i++) {
+      const panel = objects[i]
+      if (panel.type !== 'panel' || !ids.has(panel.fileId)) continue
+      // Even without a live ref, an in-flight save may have captured the preceding run.
+      // Publish a persistent change so a corrective save follows that stale write.
+      objects[i] = { ...panel }
+      delete (objects[i] as PanelObject).figureSnapshot
+    }
   }
   const [doc, docPatches] = produceWithPatches(state.doc, (d) => clear(d.objects))
   const [canvases, canvasPatches] = produceWithPatches(state.canvases, (cs) => {
     for (const canvas of cs) clear(canvas.objects)
   })
   if (docPatches.length || canvasPatches.length) {
-    useDocumentStore.setState({ doc, canvases, snapshotSeq: state.snapshotSeq + 1 })
+    // A rerun affects what this document exports: normal dirty/save scheduling applies,
+    // including the bound project file, but execution itself adds no undo entry.
+    // Only already-persisted save responses may bypass this via snapshotSeq.
+    useDocumentStore.setState({ doc, canvases })
   }
 }
 
