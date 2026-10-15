@@ -1315,23 +1315,34 @@ def savefig_effective_names(fname, kwargs: dict) -> list:
     显式 `format=` / 有后缀 / `bytes` 只记字面名；否则字面名**不会**被写出，只记补 `rcParams["savefig.format"]` 与 `png` 两个候选后缀名——多记一个候选只会让
     「读了那个名字」多算一次回读，不会漏。`bytes` 目的地 matplotlib 不补后缀，只记字面名。
     """
+    return savefig_name_candidates(fname, kwargs)[0]
+
+
+def savefig_name_candidates(fname, kwargs: dict) -> tuple[list, list]:
+    """`savefig_effective_names` 加上其中**只是推测**的那几个：`(names, speculative)`。
+
+    没有后缀也没有显式 `format=` 时，确定的候选是 `rcParams["savefig.format"]` 补出的名字；`png`（canvas 默认格式
+    可被用户重载）只是兜底推测。推测候选照样记账（读它算回读），但**不能**拿它去解释一次 FileNotFoundError：
+    默认格式不是 png 时，读 `out.png` 直接运行同样失败，归给守卫就是误归因（#1065 Codex P2）。"""
     if not savefig_targets_path(fname):
-        return []
+        return [], []
     name = os.fsdecode(fname)
     names = [fname]
     if kwargs.get("format") is not None or isinstance(fname, bytes):
-        return names
+        return names, []
     if os.path.splitext(name)[1][1:]:
-        return names
+        return names, []
     mpl = sys.modules.get("matplotlib")
     rc = getattr(mpl, "rcParams", None) or {}
     fmts = (rc.get("savefig.format"), "png")
     # 没有后缀也没有显式 format：matplotlib 写的是补了后缀的名字，字面名不会被写出——不记，
     # 否则同名的无关旧文件被读时会被误判成回读被拦下的 savefig（#952 Codex P2）
-    return [
-        name.rstrip(".") + "." + fmt
-        for fmt in dict.fromkeys(f for f in fmts if isinstance(f, str) and f)
-    ]
+    cands = [f for f in dict.fromkeys(f for f in fmts if isinstance(f, str) and f)]
+    out = [name.rstrip(".") + "." + fmt for fmt in cands]
+    configured = fmts[0] if isinstance(fmts[0], str) and fmts[0] else None
+    # 配置的格式不是 png：png 只是推测；配置缺失 / 不是字符串时 png 是唯一候选，照旧当确定的
+    spec = [name.rstrip(".") + ".png"] if configured and configured.lower() != "png" else []
+    return out, spec
 
 
 def savefig_call(fname, kwargs: dict) -> dict:
@@ -2346,7 +2357,7 @@ class BlockedFileOps:
         except (OSError, ValueError):
             return None
 
-    def blocked_savefig(self, names, fmt, supported) -> None:
+    def blocked_savefig(self, names, fmt, supported, speculative=()) -> None:
         """被拦截的 `savefig` 记账——**只在保存本身在真实语义下能成功时**才记。目标目录不存在、格式不支持（或确认不了）时，
         直接运行里 `savefig` 自己就会失败：之后的 `FileNotFoundError` 不是守卫造成的，不能算到它头上。
         `names` 是 `savefig_effective_names`，`fmt` 是显式 `format=`，`supported` 是 matplotlib 认的格式集合（None = 确认不了）。
@@ -2368,12 +2379,13 @@ class BlockedFileOps:
             return
         finally:
             self._busy = was
-        self.blocked("savefig", self.KIND_SAVEFIG, *names)
+        self.blocked("savefig", self.KIND_SAVEFIG, *names, weak=speculative)
 
-    def blocked(self, op: str, kind: str, *paths, dests=()) -> None:
+    def blocked(self, op: str, kind: str, *paths, dests=(), weak=()) -> None:
         """守卫拦下了 `op`（`os.replace` / `Path.unlink` / `savefig`…）：记它影响的路径。永不抛。
 
-        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。"""
+        `dests`：`paths` 里属于改名 / 移动**目的**的那几条（直接运行后它们存在、不是被移走的）。
+        `weak`：`paths` 里只是推测的候选（见 `savefig_name_candidates`）：记账、算回读，但不用来解释 FileNotFoundError。"""
         try:
             if not self._active:
                 return
@@ -2386,6 +2398,7 @@ class BlockedFileOps:
                 # 直接运行时这次改名必然成功（源刚被 savefig 写出）；这里被守卫静默跳过，目的地永远不会出现
                 self._signal(kind, self.VIA_RENAME_SRC)
             dest_set = {p for p in (self._norm(x) for x in dests) if p}
+            weak_set = {p for p in (self._norm(x) for x in weak) if p}
             if self._rewritten:  # 新的阻断重新盖住这些路径：之前的「已重写」不再作数
                 self._rewritten = {
                     r for r in self._rewritten if not any(self._covers(p, r) for p in affected)
@@ -2394,7 +2407,14 @@ class BlockedFileOps:
                 self._spill_paths(op, kind, affected, dest_set)
                 return
             self._events.append(
-                {"op": op, "kind": kind, "paths": affected, "dests": dest_set, "observed": False}
+                {
+                    "op": op,
+                    "kind": kind,
+                    "paths": affected,
+                    "dests": dest_set,
+                    "observed": False,
+                    "weak": weak_set,
+                }
             )
         except Exception:  # noqa: BLE001 —— 记账失败就少一条，不影响脚本
             return
@@ -2733,7 +2753,8 @@ class BlockedFileOps:
             if ev["kind"] not in (self.KIND_SAVEFIG, self.KIND_RENAME):
                 continue
             if isinstance(ev["paths"], list):
-                if any(self._covers(p, r) for p in ev["paths"] for r in reals):
+                weak = ev.get("weak") or ()
+                if any(self._covers(p, r) for p in ev["paths"] if p not in weak for r in reals):
                     hits.append(ev)
             elif any(self._spill_hit(ev, r) for r in reals):
                 hits.append(ev)

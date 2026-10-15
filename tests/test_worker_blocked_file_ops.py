@@ -1065,6 +1065,26 @@ def test_p2_extensionless_savefig_does_not_taint_an_unrelated_file_of_that_name(
     assert e.code == CODE, (e.code, str(e))
 
 
+SVG_DEFAULT_PLOT = _PLOT + "matplotlib.rcParams['savefig.format'] = 'svg'\n"
+
+
+@needs_worker
+def test_retro_ambiguous_png_candidate_is_not_blamed_when_the_default_format_is_svg(figs):
+    """#1065 Codex P2：默认格式 svg 时 `savefig('out')` 写的是 out.svg；读 out.png 直接运行也 FileNotFoundError，
+    推测的 png 候选不能被归因成守卫造成的 `safe_file_operation_blocked`。"""
+    src = SVG_DEFAULT_PLOT + 'fig.savefig("out")\nimport os\nos.path.getsize("out.png")\n'
+    with pytest.raises(engine_pool.WorkerError) as err:
+        _build(figs, "amb_png.py", src, project_mode=False)
+    assert err.value.code != CODE, (err.value.code, str(err.value))
+
+
+@needs_worker
+def test_retro_definitive_candidate_is_still_blamed_when_the_default_format_is_svg(figs):
+    src = SVG_DEFAULT_PLOT + 'fig.savefig("out")\nimport os\nos.path.getsize("out.svg")\n'
+    e = _blocked(figs, "def_svg.py", src, project_mode=False)
+    assert e.code == CODE, (e.code, str(e))
+
+
 def test_savefig_effective_names_skip_the_literal_name_when_matplotlib_appends_a_suffix():
     assert "stage" not in figcapture.savefig_effective_names("stage", {})
     assert "stage" not in figcapture.savefig_effective_names("stage.", {})
