@@ -8,7 +8,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { Button } from './Button'
-import { Notice, type StatusTone } from './Notice'
+import { Notice, NoticeReveal, type StatusTone } from './Notice'
 import { TooltipProvider } from './Tooltip'
 
 declare global {
@@ -119,5 +119,27 @@ describe('Notice：一行中性提示', () => {
     await act(async () => copy.click())
     expect(writeText).toHaveBeenCalledWith('HTTP 500request 3f9a')
     expect(copy.textContent).toBe('已复制')
+  })
+})
+
+describe('NoticeReveal：退场保活期间旧子树不可交互', () => {
+  it('open 变 false 后，旧按钮所在的子树 inert + aria-hidden；重新打开后撤掉', async () => {
+    const T2 = 'old'
+    const view = (open: boolean) => (
+      <NoticeReveal open={open}>
+        <Notice action={<Button data-old-action>{T2}</Button>}>{T2}</Notice>
+      </NoticeReveal>
+    )
+    await render(view(true))
+    expect(q('[data-reveal]')!.hasAttribute('inert')).toBe(false)
+    await render(view(false))
+    // 收起动画还在播：旧子树仍挂着，但已 inert，读屏也不念
+    const closing = q('[data-reveal]')!
+    expect(closing.getAttribute('data-state')).toBe('closed')
+    expect(closing.hasAttribute('inert')).toBe(true)
+    expect(closing.getAttribute('aria-hidden')).toBe('true')
+    expect(closing.querySelector('[data-old-action]')).not.toBeNull()
+    await render(view(true))
+    expect(q('[data-reveal]')!.hasAttribute('inert')).toBe(false)
   })
 })

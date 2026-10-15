@@ -141,6 +141,8 @@ function Toast({
     <div
       {...rest}
       data-state={state}
+      // 退场保活期间不可点 / 不可聚焦（旧 toast 的动作还会触发回调）
+      inert={state === 'closed'}
       data-toast-layout="pill"
       data-toast-tone={tone}
       title={note}
