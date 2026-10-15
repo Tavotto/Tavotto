@@ -28,18 +28,14 @@ struct Scan {
     hits: Vec<Hit>,
 }
 
+/// 只认**整串就是** `#[cfg(test)]` 的项：`cfg(not(test))`、`cfg(any(test, ..))`、`cfg(all(..))` 等
+/// 都可能在生产构建里生效，一律照扫（宁可多扫，不可漏扫）。
 fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| {
-        a.path().is_ident("cfg") && {
-            let mut test = false;
-            let _ = a.parse_nested_meta(|m| {
-                if m.path.is_ident("test") {
-                    test = true;
-                }
-                Ok(())
-            });
-            test
+    attrs.iter().any(|a| match &a.meta {
+        syn::Meta::List(l) if l.path.is_ident("cfg") => {
+            syn::parse2::<syn::Ident>(l.tokens.clone()).is_ok_and(|i| i == "test")
         }
+        _ => false,
     })
 }
 
@@ -500,3 +496,20 @@ ignores!(
     "fn f() { tracing::info!(\"restart failed\"); }"
 );
 ignores!(macro_string_exit, "fn f() { println!(\"exit\"); }");
+
+// 只在生产构建生效 / 测试与生产都生效的 cfg 不许被当成测试代码跳过（#1070 r4280166858）
+catches!(
+    cfg_not_test_fn,
+    "process::exit",
+    "#[cfg(not(test))] fn f() { std::process::exit(1) }"
+);
+catches!(
+    cfg_any_test_fn,
+    "process::exit",
+    "#[cfg(any(test, windows))] fn f() { std::process::exit(1) }"
+);
+catches!(
+    cfg_not_test_mod,
+    "process::exit",
+    "#[cfg(not(test))] mod m { fn f() { std::process::exit(1) } }"
+);
