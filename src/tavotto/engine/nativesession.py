@@ -143,6 +143,15 @@ def interpreter_fingerprint(python: str) -> str:
     return hashlib.sha256(os.path.realpath(str(python)).encode("utf-8")).hexdigest()[:16]
 
 
+class _RequestOutcomeUnknown(RunError):
+    """Local transport evidence: bytes may have reached the runner, no valid reply.
+
+    This does not assert that user code resumed. It only prevents reusing a
+    pre-release Figure receipt after a possibly dispatched continue command.
+    The distinction stays local; error codes and wire payloads are unchanged.
+    """
+
+
 class NativeTransport:
     """一条已认证的控制连接：**一个**常驻 reader + 按 request_id 配对。"""
 
@@ -261,16 +270,29 @@ class NativeTransport:
             raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
         env = pool.build_envelope(obj, generation=generation, revision=revision)
         rid = env["request_id"]
+        data = (json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8")
         slot = {"event": threading.Event(), "frame": None}
-        with self._lock:
-            self._waiters[rid] = slot
-        try:
-            with self._send_lock:
-                self.sock.sendall((json.dumps(env, ensure_ascii=False) + "\n").encode("utf-8"))
-        except OSError as exc:
+        with self._send_lock:
             with self._lock:
-                self._waiters.pop(rid, None)
-            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED) from exc
+                # Recheck after waiting for the sender lock. A known closed or
+                # poisoned channel has not dispatched this request at all.
+                if self.poison is not None:
+                    raise RunError(runcodes.NATIVE_RELAY_FAILED)
+                if self._closed:
+                    raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+                self._waiters[rid] = slot
+            try:
+                self.sock.sendall(data)
+            except OSError as exc:
+                with self._lock:
+                    self._waiters.pop(rid, None)
+                    if self.poison is None:
+                        self.poison = {
+                            "code": runcodes.NATIVE_SESSION_DISCONNECTED,
+                            "detail": "请求发送失败，执行结果未知",
+                        }
+                # sendall may write part or all of a frame before failing.
+                raise _RequestOutcomeUnknown(runcodes.NATIVE_SESSION_DISCONNECTED) from exc
         if not slot["event"].wait(timeout):
             with self._lock:
                 self._waiters.pop(rid, None)
@@ -281,10 +303,10 @@ class NativeTransport:
                         "code": runcodes.NATIVE_RELAY_FAILED,
                         "detail": f"请求超时（{int(timeout)}s）",
                     }
-            raise RunError(runcodes.NATIVE_RELAY_FAILED)
+            raise _RequestOutcomeUnknown(runcodes.NATIVE_RELAY_FAILED)
         frame = slot["frame"]
         if frame is None:
-            raise RunError(runcodes.NATIVE_SESSION_DISCONNECTED)
+            raise _RequestOutcomeUnknown(runcodes.NATIVE_SESSION_DISCONNECTED)
         got, ver = frame.get("request_id"), frame.get("protocol_version")
         if got != rid or ver != pool.PROTOCOL_VERSION:
             with self._lock:
@@ -292,7 +314,16 @@ class NativeTransport:
                     "code": runcodes.NATIVE_RELAY_FAILED,
                     "detail": f"回显对不上: request_id={got!r} protocol_version={ver!r}",
                 }
-            raise RunError(runcodes.NATIVE_RELAY_FAILED)
+            raise _RequestOutcomeUnknown(runcodes.NATIVE_RELAY_FAILED)
+        if not isinstance(frame.get("ok"), bool) or (
+            frame.get("ok") is False and not isinstance(frame.get("error") or {}, dict)
+        ):
+            with self._lock:
+                self.poison = {
+                    "code": runcodes.NATIVE_RELAY_FAILED,
+                    "detail": "响应缺少有效的成功或失败结果",
+                }
+            raise _RequestOutcomeUnknown(runcodes.NATIVE_RELAY_FAILED)
         if not frame.get("ok"):
             err = frame.get("error") or {}
             raise pool.WorkerError(
@@ -379,6 +410,9 @@ class NativeSession:
         # Wire generation remains unchanged; repeated build/render requests at
         # the same barrier must keep a stable Figure snapshot identity.
         self.snapshot_epoch = 0
+        # The receipt epoch at entry to this barrier. EOF and a failed release
+        # waiter can revoke it concurrently; both must count the same loss once.
+        self._barrier_snapshot_epoch: int | None = None
         # Set only at the authenticated runner's compiled target exec boundary
         # or successful barrier release; never hello, spawn or failed preflight.
         self.execution_id: str | None = None
@@ -417,10 +451,17 @@ class NativeSession:
     # ------------------------------------------------------------------
     # 状态机
     # ------------------------------------------------------------------
-    def _set_state(self, state: str, **fields) -> None:
+    def _set_state(
+        self, state: str, *, _expected_snapshot_epoch: int | None = None, **fields
+    ) -> None:
         if state not in STATES:
             raise ValueError(f"未知的 native 会话状态: {state!r}")
         with self._changed:
+            if (
+                _expected_snapshot_epoch is not None
+                and self.snapshot_epoch != _expected_snapshot_epoch
+            ):
+                return  # A newer barrier/event has already superseded this response.
             if self.state in TERMINAL_STATES and state not in TERMINAL_STATES:
                 # 终态不回头。回头的具体形状是：脚本已经退出了，UI 却因为一条
                 # 迟到的事件又显示成"正在运行"。
@@ -490,6 +531,7 @@ class NativeSession:
             with self._lock:
                 if self.state != BARRIER:
                     self.snapshot_epoch += 1
+                    self._barrier_snapshot_epoch = self.snapshot_epoch
             stems = frame.get("stems") or []
             facts = frame.get("figure_facts")
             if isinstance(facts, list):
@@ -511,10 +553,13 @@ class NativeSession:
                         return
                 if self.state == BARRIER:
                     self.snapshot_epoch += 1
+                self._barrier_snapshot_epoch = None  # The runner confirms release.
             self._set_state(RUNNING_SCRIPT, barrier_reason="")
         elif name == INPUT_REQUEST_EVENT:
             self._on_input_request(frame)
         elif name == "exit":
+            with self._lock:
+                self._barrier_snapshot_epoch = None
             self._release_lease()
             self._set_state(
                 ENDED,
@@ -522,6 +567,8 @@ class NativeSession:
                 figures_captured=_as_int(frame.get("figures")) or 0,
             )
         elif name == "shutdown":
+            with self._lock:
+                self._barrier_snapshot_epoch = None
             self._release_lease()
             self._set_state(ENDED)
 
@@ -547,14 +594,35 @@ class NativeSession:
         self.execution_started_ns = started_ns
         return True
 
+    def _revoke_pending_barrier(self) -> bool:
+        """Revoke one unconfirmed barrier, with ``_lock`` held.
+
+        Local terminal states (notably one-way terminate) are not runner
+        acknowledgements. Only trusted release/end frames or a successful
+        continue response clear this pending barrier without uncertainty.
+        """
+        if self._barrier_snapshot_epoch is not None:
+            changed = self.snapshot_epoch == self._barrier_snapshot_epoch
+            if changed:
+                self.snapshot_epoch += 1
+            self._barrier_snapshot_epoch = None
+            return changed
+        return False
+
     def _on_transport_closed(self, reason: dict | None) -> None:
         owned = self.owned
         if reason is not None and owned is not None and owned.cancelled:
             # 所有者主动取消（SIGTERM / TerminateJobObject）：对端被杀，Windows 上 reader 读到的是
             # `ConnectionResetError` 而不是干净 EOF——那是取消的后果，不是「连接故障」。取消的终态是 ENDED
             reason = None
+        with self._lock:
+            # EOF releases a runner barrier even without a continue request.
+            # Its Figure may change after contact is lost; do not assert exec.
+            revoked = self._revoke_pending_barrier()
         self._release_lease()
         if self.state in TERMINAL_STATES:
+            if revoked:
+                self._publish()  # Local optimistic ENDED is not a runner acknowledgement.
             return
         if reason is None:
             self._set_state(ENDED)
@@ -933,6 +1001,14 @@ class NativeSession:
             previous_epoch = self.snapshot_epoch
             try:
                 resp = self._request({"cmd": "continue"}, REQUEST_TIMEOUT)
+            except _RequestOutcomeUnknown:
+                with self._lock:
+                    # The release event may already have revoked this epoch.
+                    # Never manufacture execution_id: resumption is unknown.
+                    if self.snapshot_epoch == previous_epoch:
+                        self.snapshot_epoch += 1
+                self._publish()
+                raise
             except pool.WorkerError as exc:
                 if getattr(exc, "code", "") == runcodes.NATIVE_FIGURE_INCONSISTENT:
                     raise RunError(runcodes.NATIVE_FIGURE_INCONSISTENT) from exc
@@ -945,7 +1021,16 @@ class NativeSession:
                 # including when the script ends without another barrier.
                 if self.snapshot_epoch == previous_epoch:
                     self.snapshot_epoch += 1
-            self._set_state(then)
+                if self._barrier_snapshot_epoch == previous_epoch:
+                    self._barrier_snapshot_epoch = None
+                if then == DETACHED:
+                    # The next barrier can arrive before this response. Detach
+                    # closes that barrier too, while resume must preserve it.
+                    self._revoke_pending_barrier()
+            self._set_state(
+                then,
+                _expected_snapshot_epoch=previous_epoch + 1 if then == CONTINUING else None,
+            )
             return resp
 
     def terminate(self) -> dict:
@@ -967,6 +1052,10 @@ class NativeSession:
         放开屏障（ADR 0021 §8.1），脚本照常跑完——这正是"关掉 App 默认
         detach and continue"的机制。
         """
+        with self._lock:
+            # Controller shutdown is detach-and-continue, unlike a trusted
+            # runner "shutdown" event. Revoke before publishing DETACHED.
+            revoked = self._revoke_pending_barrier()
         self._release_lease()
         # **先标状态再关连接**：关连接会让 reader 线程走到 `_on_transport_closed`，
         # 那条路把会话记成 `ended`（对端正常收摊）。反过来做的话，我们自己
@@ -974,6 +1063,8 @@ class NativeSession:
         # 显示"会话已结束 退出码 None"，用户以为他的脚本被杀了。
         if self.state not in TERMINAL_STATES:
             self._set_state(DETACHED)
+        elif revoked:
+            self._publish()
         if self.transport is not None:
             self.transport.close()
 

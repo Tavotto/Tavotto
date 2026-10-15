@@ -139,6 +139,7 @@ def test_actual_start_module_keeps_real_python_invocation_semantics(tmp_path, ta
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=15,
         check=True,
     )

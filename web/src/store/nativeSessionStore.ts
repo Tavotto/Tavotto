@@ -17,8 +17,9 @@ import {
 import { addRuntimePanelToCanvas } from '@/store/workspace'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { getRestoreGate, useDocumentStore, whenDocumentReady } from '@/store/documentStore'
-import '@/store/figureSnapshotInvalidation'
+import { hasAcceptedFigureExecution } from '@/store/figureSnapshotInvalidation'
 import { observeFigureExecution } from '@/lib/figureExecutionEvents'
+import { registerNativeExecutionCapture } from '@/lib/nativeExecutionAdmission'
 import { useFigurePickerStore } from '@/store/figurePickerStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -75,6 +76,9 @@ const toNativeError = (e: unknown): NativeError => {
 }
 
 const baselineExecutions = new Set<string>()
+// Pending approvals outlive the current project. Missing authority is explicit,
+// so their later HTTP actions cannot assume the card belongs to this document.
+const sessionProjects = new Map<string, string | null>()
 const nativeExecutionKey = (sessionId: string, executionId: string) => JSON.stringify([sessionId, executionId])
 function observeNativeExecution(session: NativeSessionInfo, previous: NativeSessionInfo | undefined, pj: string | null): void {
   const fact = session.figure_snapshot_invalidation
@@ -277,6 +281,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
   approve: async (id, remember) => {
     const one = get().pendingQueue.find((p) => p.native_id === id)
     if (!one || one.submitting || !one.info) return
+    const owner = captureProjectEpoch(() => get().epoch)
     set((s) => ({
       pendingQueue: s.pendingQueue.map((p) =>
         p.native_id === id ? { ...p, submitting: true, error: null } : p,
@@ -284,9 +289,23 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     }))
     try {
       const res = await approveNativePending(id, remember)
+      sessionProjects.set(res.session.session_id, res.pj || null)
+      const current = get().sessions[res.session.session_id]
+      const currentFact = current?.figure_snapshot_invalidation
+      const fact = res.session.figure_snapshot_invalidation
+      const fresh = !current || res.session.sequence > current.sequence ||
+        (res.session.sequence === current.sequence && (!currentFact || currentFact.execution_id === fact?.execution_id))
+      if (fresh && owner.still() && res.pj && res.pj === owner.pj && fact) {
+        baselineExecutions.delete(nativeExecutionKey(res.session.session_id, fact.execution_id))
+        observeFigureExecution(fact, owner.pj)
+      } else if (fact && !hasAcceptedFigureExecution(res.pj ?? null, fact.execution_id)) {
+        // A late/foreign approval can keep its card, but its already-finished
+        // execution must not acquire document authority through a later action.
+        baselineExecutions.add(nativeExecutionKey(res.session.session_id, fact.execution_id))
+      }
       set((s) => ({
         pendingQueue: s.pendingQueue.filter((p) => p.native_id !== id),
-        sessions: { ...s.sessions, [res.session.session_id]: res.session },
+        ...(fresh ? { sessions: { ...s.sessions, [res.session.session_id]: res.session } } : {}),
       }))
     } catch (e) {
       // 连不上 / 环境被占 / 已被处理：**留在队列里**并显示原因。
@@ -326,7 +345,9 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     // 间没有次序保证；照单全收的表现是脚本已经退出了、卡片又变回"正在
     // 运行"。终态不回头是这条的推论（后端进终态之后 sequence 只会更大）。
     if (prev && session.sequence <= prev.sequence) return
-    observeNativeExecution(session, prev, captureProjectEpoch().pj)
+    const pj = captureProjectEpoch().pj
+    sessionProjects.set(session.session_id, pj)
+    observeNativeExecution(session, prev, pj)
     const witnessedExecution = session.state === 'barrier' && prev &&
       ['starting_python', 'running_script', 'waiting_for_figure', 'continuing'].includes(prev.state)
     set((s) => ({
@@ -397,7 +418,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
     }
   },
 
-  resume: (sessionId) => runAction(sessionId, continueNativeSession, set, get, true),
+  resume: (sessionId) => runAction(sessionId, continueNativeSession, set, get),
   detach: (sessionId) => runAction(sessionId, detachNativeSession, set, get),
   terminate: (sessionId) => runAction(sessionId, terminateNativeSession, set, get),
 
@@ -422,7 +443,18 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
         return { sessions }
       })
       if (owner.still()) for (const execution of executions) {
-        observeNativeExecution(execution.session, execution.previous, owner.pj)
+        const id = execution.session.session_id
+        // An unfiltered list includes other projects. It cannot replace an
+        // approval's explicit project identity or establish one from the UI.
+        if (!sessionProjects.has(id)) sessionProjects.set(id, null)
+        if (projectRoot && execution.session.project_root === projectRoot && sessionProjects.get(id) === null) {
+          sessionProjects.set(id, owner.pj)
+        }
+        if (owner.pj && sessionProjects.get(id) === owner.pj) {
+          observeNativeExecution(execution.session, execution.previous, owner.pj)
+        } else if (!execution.previous && execution.session.figure_snapshot_invalidation) {
+          baselineExecutions.add(nativeExecutionKey(id, execution.session.figure_snapshot_invalidation.execution_id))
+        }
       }
       // 重连 / 刷新页面时把还在等的问接回来（断线期间发的那条事件收不到）
       // 只同步**合并后**的当前会话：被序号挡掉的旧快照不许复活已答 / 已结束的问
@@ -452,6 +484,7 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
 
   clear: () => {
     baselineExecutions.clear()
+    sessionProjects.clear()
     set((s) => ({
       epoch: s.epoch + 1,
       // **`pendingQueue` 刻意不清。** 待确认的交接不属于任何一个界面项目：
@@ -476,34 +509,64 @@ export const useNativeSessionStore = create<NativeSessionStore>((set, get) => ({
 type SetFn = (fn: (s: NativeSessionStore) => Partial<NativeSessionStore>) => void
 type GetFn = () => NativeSessionStore
 
+/** Capture before a known-session HTTP request; every action shares the same evidence boundary. */
+function captureNativeExecutionResponse(sessionId: string) {
+  const get = useNativeSessionStore.getState
+  const request = get().sessions[sessionId]
+  const owner = captureProjectEpoch(() => get().epoch)
+  const requestExecutionId = request?.figure_snapshot_invalidation?.execution_id
+  const ownsSession = () => !!request && !!get().sessions[sessionId] && owner.still() &&
+    (!sessionProjects.has(sessionId) || sessionProjects.get(sessionId) === owner.pj)
+  const acceptsExecution = (execution: NativeSessionInfo['figure_snapshot_invalidation']): boolean => {
+    if (!execution || !ownsSession() || baselineExecutions.has(nativeExecutionKey(sessionId, execution.execution_id))) return false
+    const currentId = get().sessions[sessionId]?.figure_snapshot_invalidation?.execution_id
+    // An action may advance the request's execution token. Once another token has
+    // been observed meanwhile, only that current execution may add evidence.
+    return !currentId || currentId === requestExecutionId || currentId === execution.execution_id
+  }
+  return {
+    acceptSession: (session: NativeSessionInfo) => {
+      if (!request || !owner.still() || session.session_id !== sessionId) return
+      const current = get().sessions[sessionId]
+      if (!current) return
+      if (current && session.sequence < current.sequence) return
+      const fact = session.figure_snapshot_invalidation
+      const currentFact = current?.figure_snapshot_invalidation
+      if (current && session.sequence === current.sequence && currentFact && currentFact.execution_id !== fact?.execution_id) return
+      if (fact && ownsSession() && !baselineExecutions.has(nativeExecutionKey(sessionId, fact.execution_id))) observeFigureExecution(fact, owner.pj)
+      useNativeSessionStore.setState(s => ({ sessions: { ...s.sessions, [sessionId]: session } }))
+    },
+    acceptError: (error: unknown) => {
+      if (!(error instanceof ApiError)) return
+      const execution = error.body.figure_snapshot_invalidation as NativeSessionInfo['figure_snapshot_invalidation']
+      if (acceptsExecution(execution)) observeFigureExecution(execution, owner.pj)
+    },
+  }
+}
+
+registerNativeExecutionCapture(captureNativeExecutionResponse)
+
 /** continue / detach / terminate 三个动作同一个形状：互斥闸 + 代际 + 如实记错。 */
 function runAction(
   sessionId: string,
   call: (id: string) => Promise<{ session: NativeSessionInfo }>,
   set: SetFn,
   get: GetFn,
-  mayExecute = false,
 ): Promise<void> {
   const session = get().sessions[sessionId]
   if (!session || get().busy[sessionId] || isNativeTerminal(session.state)) {
     return Promise.resolve()
   }
   const epoch = get().epoch
-  const owner = captureProjectEpoch(() => get().epoch)
+  const execution = captureNativeExecutionResponse(sessionId)
   set((s) => ({ busy: { ...s.busy, [sessionId]: true }, errors: { ...s.errors, [sessionId]: null } }))
   return call(sessionId)
     .then((res) => {
-      if (get().epoch !== epoch) return
-      const prev = get().sessions[sessionId]
-      // 响应里带的是这一刻的快照；SSE 可能已经送来更新的了
-      if (!prev || res.session.sequence >= prev.sequence) {
-        if (mayExecute && owner.still()) observeNativeExecution(res.session, session, owner.pj)
-        set((s) => ({ sessions: { ...s.sessions, [sessionId]: res.session } }))
-      }
+      execution.acceptSession(res.session)
     })
     .catch((e) => {
       if (get().epoch !== epoch) return
-      if (mayExecute && owner.still() && e instanceof ApiError) observeFigureExecution(e.body.figure_snapshot_invalidation, owner.pj)
+      execution.acceptError(e)
       set((s) => ({ errors: { ...s.errors, [sessionId]: toNativeError(e) } }))
     })
     .finally(() => {

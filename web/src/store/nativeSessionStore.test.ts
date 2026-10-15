@@ -5,6 +5,7 @@ import {
   buildNativeSession,
   cancelNativePending,
   continueNativeSession,
+  detachNativeSession,
   fetchNativePending,
   fetchNativeSessions,
   fetchPanels,
@@ -44,7 +45,7 @@ vi.mock('@/lib/api', async (orig) => {
 
 vi.mock('@/store/workspace', () => ({ addRuntimePanelToCanvas: vi.fn() }))
 // These tests cover entry admission; replay deduplication belongs to the snapshot coordinator.
-vi.mock('./figureSnapshotInvalidation', () => ({}))
+vi.mock('./figureSnapshotInvalidation', () => ({ hasAcceptedFigureExecution: () => false }))
 const acceptedExecution = vi.fn()
 
 const mockPending = vi.mocked(fetchNativePending)
@@ -52,6 +53,7 @@ const mockApprove = vi.mocked(approveNativePending)
 const mockCancel = vi.mocked(cancelNativePending)
 const mockBuild = vi.mocked(buildNativeSession)
 const mockContinue = vi.mocked(continueNativeSession)
+const mockDetach = vi.mocked(detachNativeSession)
 const mockTerminate = vi.mocked(terminateNativeSession)
 const mockList = vi.mocked(fetchNativeSessions)
 const mockAddPanel = vi.mocked(addRuntimePanelToCanvas)
@@ -682,6 +684,113 @@ describe('屏障 → build → 图进画布', () => {
 })
 
 describe('动作互斥与代际', () => {
+  it.each(['p_a', 'p_b', null, undefined])('approval uses only the response project authority: %s', async (pj) => {
+    useNativeSessionStore.setState({ pendingQueue: [{ native_id: ID, info: pending(), loading: false, submitting: false, error: null }] })
+    mockApprove.mockResolvedValueOnce({ session: session({ state: 'running_script', sequence: 5, figure_snapshot_invalidation: executionFact() }), pj })
+    await store().approve(ID, false)
+    expect(acceptedExecution).toHaveBeenCalledTimes(pj === 'p_a' ? 1 : 0)
+    expect(store().pendingQueue).toEqual([])
+  })
+
+  it.each(['project-round-trip', 'newer-sequence'] as const)('late approval cannot retire references after %s', async (change) => {
+    useNativeSessionStore.setState({ pendingQueue: [{ native_id: ID, info: pending(), loading: false, submitting: false, error: null }] })
+    let resolve!: (value: Awaited<ReturnType<typeof approveNativePending>>) => void
+    mockApprove.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const approval = store().approve(ID, false)
+    if (change === 'project-round-trip') { setCurrentProjectId('p_b'); setCurrentProjectId('p_a') }
+    else store().applyEvent(session({ state: 'running_script', sequence: 6, figure_snapshot_invalidation: executionFact({ execution_id: 'newer-token' }) }))
+    acceptedExecution.mockClear()
+    resolve({ session: session({ state: 'running_script', sequence: 5, figure_snapshot_invalidation: executionFact() }), pj: 'p_a' })
+    await approval
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    if (change === 'newer-sequence') expect(store().sessions[`native-${ID}`].sequence).toBe(6)
+  })
+
+  describe.each([
+    ['resume', mockContinue], ['detach', mockDetach], ['terminate', mockTerminate],
+  ] as const)('%s execution evidence', (action, call) => {
+    it.each(['success', 'error'] as const)('accepts a trusted new token from the %s response without SSE', async (outcome) => {
+      seed({ state: 'barrier', sequence: 4, figure_snapshot_invalidation: executionFact({ execution_id: 'request-token' }) })
+      const fact = executionFact({ receipt_ids: ['old-receipt'] })
+      if (outcome === 'success') call.mockResolvedValueOnce({ session: session({ state: 'ended', sequence: 5, figure_snapshot_invalidation: fact }) })
+      else call.mockRejectedValueOnce(new ApiError('failed after start', 500, { figure_snapshot_invalidation: fact }))
+      await store()[action](`native-${ID}`)
+      expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'p_a')
+    })
+
+    it.each(['cancelled', 'failed', 'pre-start-error'] as const)('does not infer execution from %s without a fact', async (outcome) => {
+      seed({ state: 'barrier', sequence: 4 })
+      if (outcome === 'pre-start-error') call.mockRejectedValueOnce(apiError('native_session_disconnected'))
+      else call.mockResolvedValueOnce({ session: session({ state: outcome === 'failed' ? 'failed' : 'ended', sequence: 5, cancelled: outcome === 'cancelled' }) })
+      await store()[action](`native-${ID}`)
+      expect(acceptedExecution).not.toHaveBeenCalled()
+    })
+
+    it('does not replay a passive baseline fact', async () => {
+      const baseline = session({ state: 'running_script', sequence: 4, figure_snapshot_invalidation: executionFact() })
+      mockList.mockResolvedValueOnce({ sessions: [baseline] })
+      await store().refresh('/p/figures')
+      call.mockResolvedValueOnce({ session: { ...baseline, state: 'ended', sequence: 5 } })
+      await store()[action](`native-${ID}`)
+      expect(acceptedExecution).not.toHaveBeenCalled()
+    })
+
+    it.each(['success', 'error'] as const)('rejects late %s evidence after another current token has been observed', async (outcome) => {
+      seed({ state: 'barrier', sequence: 4, figure_snapshot_invalidation: executionFact({ execution_id: 'request-token' }) })
+      let resolve!: (value: { session: NativeSessionInfo }) => void
+      let reject!: (error: unknown) => void
+      call.mockImplementationOnce(() => new Promise((yes, no) => { resolve = yes; reject = no }))
+      const pending = store()[action](`native-${ID}`)
+      store().applyEvent(session({ state: 'running_script', sequence: 6, figure_snapshot_invalidation: executionFact({ execution_id: 'current-token' }) }))
+      acceptedExecution.mockClear()
+      const late = executionFact({ receipt_ids: ['late-old-receipt'] })
+      if (outcome === 'success') resolve({ session: session({ state: 'ended', sequence: 5, figure_snapshot_invalidation: late }) })
+      else reject(new ApiError('late failure', 500, { figure_snapshot_invalidation: late }))
+      await pending
+      expect(acceptedExecution).not.toHaveBeenCalled()
+    })
+
+    it('accepts a newer HTTP sequence after an intermediate SSE token', async () => {
+      seed({ state: 'barrier', sequence: 4, figure_snapshot_invalidation: executionFact({ execution_id: 'request-token' }) })
+      let resolve!: (value: { session: NativeSessionInfo }) => void
+      call.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+      const pending = store()[action](`native-${ID}`)
+      store().applyEvent(session({ state: 'running_script', sequence: 5, figure_snapshot_invalidation: executionFact({ execution_id: 'intermediate-token' }) }))
+      acceptedExecution.mockClear()
+      const fact = executionFact({ execution_id: 'newest-token' })
+      resolve({ session: session({ state: 'ended', sequence: 6, figure_snapshot_invalidation: fact }) })
+      await pending
+      expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(fact, 'p_a')
+    })
+
+    it.each(['equal-sequence-token-mismatch', 'dismissed'] as const)('rejects a response after %s', async (change) => {
+      seed({ state: 'barrier', sequence: 4 })
+      let resolve!: (value: { session: NativeSessionInfo }) => void
+      call.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+      const pending = store()[action](`native-${ID}`)
+      store().applyEvent(session({ state: 'ended', sequence: 5, figure_snapshot_invalidation: executionFact({ execution_id: 'current-token' }) }))
+      if (change === 'dismissed') store().dismiss(`native-${ID}`)
+      acceptedExecution.mockClear()
+      resolve({ session: session({ state: 'ended', sequence: 5, figure_snapshot_invalidation: executionFact() }) })
+      await pending
+      expect(acceptedExecution).not.toHaveBeenCalled()
+      if (change === 'dismissed') expect(store().sessions[`native-${ID}`]).toBeUndefined()
+    })
+
+    it.each(['success', 'error'] as const)('rejects %s facts after A → B → A even without a store reset', async (outcome) => {
+      seed({ state: 'barrier', sequence: 4 })
+      let resolve!: (value: { session: NativeSessionInfo }) => void
+      let reject!: (error: unknown) => void
+      call.mockImplementationOnce(() => new Promise((yes, no) => { resolve = yes; reject = no }))
+      const pending = store()[action](`native-${ID}`)
+      setCurrentProjectId('p_b'); setCurrentProjectId('p_a')
+      if (outcome === 'success') resolve({ session: session({ state: 'ended', sequence: 5, figure_snapshot_invalidation: executionFact() }) })
+      else reject(new ApiError('late failure', 500, { figure_snapshot_invalidation: executionFact() }))
+      await pending
+      expect(acceptedExecution).not.toHaveBeenCalled()
+    })
+  })
+
   it('连点两次「继续运行脚本」只发一条请求', async () => {
     seed({ state: 'barrier', sequence: 4 })
     let release!: () => void
@@ -729,6 +838,40 @@ describe('动作互斥与代际', () => {
 })
 
 describe('对账与收卡片', () => {
+  it('filtered reconciliation upgrades unknown authority without replaying its initial execution baseline', async () => {
+    const initial = session({ state: 'running_script', sequence: 4, figure_snapshot_invalidation: executionFact() })
+    mockList.mockResolvedValueOnce({ sessions: [initial] })
+    await store().refresh()
+    mockList.mockResolvedValueOnce({ sessions: [{ ...initial, sequence: 5 }] })
+    await store().refresh('/p/figures')
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    const next = executionFact({ execution_id: 'new-after-filter' })
+    mockContinue.mockResolvedValueOnce({ session: { ...initial, sequence: 6, figure_snapshot_invalidation: next } })
+    await store().resume(initial.session_id)
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(next, 'p_a')
+  })
+
+  it('an unfiltered first listing cannot authorize later actions; a filtered current-project listing can', async () => {
+    const unknown = session({ state: 'running_script', sequence: 4 })
+    mockList.mockResolvedValueOnce({ sessions: [unknown] })
+    await store().refresh()
+    mockContinue.mockResolvedValueOnce({ session: { ...unknown, sequence: 5, figure_snapshot_invalidation: executionFact() } })
+    await store().resume(unknown.session_id)
+    expect(acceptedExecution).not.toHaveBeenCalled()
+    const current = { ...unknown, sequence: 6, figure_snapshot_invalidation: executionFact({ execution_id: 'filtered-new-token' }) }
+    mockList.mockResolvedValueOnce({ sessions: [current] })
+    await store().refresh('/p/figures')
+    expect(acceptedExecution).toHaveBeenCalledExactlyOnceWith(current.figure_snapshot_invalidation, 'p_a')
+  })
+
+  it('a filtered listing cannot prove a returned session with a different project root', async () => {
+    mockList.mockResolvedValueOnce({ sessions: [session({ project_root: '/foreign', state: 'running_script', sequence: 4 })] })
+    await store().refresh('/p/figures')
+    mockContinue.mockResolvedValueOnce({ session: session({ project_root: '/foreign', state: 'ended', sequence: 5, figure_snapshot_invalidation: executionFact() }) })
+    await store().resume(`native-${ID}`)
+    expect(acceptedExecution).not.toHaveBeenCalled()
+  })
+
   it('重连之后的清单不覆盖 SSE 已经送到的更新状态', async () => {
     seed({ state: 'ended', sequence: 9, exit_code: 0 })
     mockList.mockResolvedValue({ sessions: [session({ state: 'barrier', sequence: 4 })] })

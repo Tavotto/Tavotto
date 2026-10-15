@@ -666,7 +666,7 @@ def _refresh_error(exc):
     return jsonify(exc.as_payload()), 400
 
 
-def _worker_error_payload(exc, stage: str = "") -> dict:
+def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=None) -> dict:
     """worker 错误的统一响应体。
 
     `stage` 非空时一并带上：写回事务的 verify 段挂掉回 409 + `stage: "verify"`，
@@ -677,6 +677,8 @@ def _worker_error_payload(exc, stage: str = "") -> dict:
     的环境」这个可执行出口，而不是甩一段 ModuleNotFoundError。
     """
     body = {"error": str(exc), "traceback": exc.traceback_text, "code": exc.code}
+    if figure_snapshot_invalidation is not None:
+        body["figure_snapshot_invalidation"] = figure_snapshot_invalidation
     if stage:
         body["stage"] = stage
     if exc.code in (*engine_pool.INPUT_ERROR_CODES, engine_pool.ARGUMENTS_ERROR_CODE):
@@ -5495,7 +5497,15 @@ def api_native_approve(native_id: str):
             meta.get("permission_key", ""),
             interpreter=meta.get("interpreter", ""),
         )
-    return jsonify({"ok": True, "session": session.public_state()})
+    # Approval is cross-project: the pending queue survives a workspace switch.
+    # Attribute a fast runner's execution fact to the attached session, never
+    # the request's current/default project. Failure to identify it is not a
+    # failed attach and grants the frontend no document-invalidation authority.
+    try:
+        pj = _project_id(Path(session.project_root))
+    except (OSError, ValueError):
+        pj = None
+    return jsonify({"ok": True, "pj": pj, "session": session.public_state()})
 
 
 @app.post("/api/native/pending/<native_id>/cancel")
@@ -6135,13 +6145,11 @@ def api_engine_render():
         if exc.code in _RESYNC_RENDER_CODES:
             _resync_registration(current_ctx(), worker)
         sse_publish("render.failed", {"pj": pj, "id": rel_id, "error": str(exc)})
-        return jsonify(
-            {
-                **_worker_error_payload(exc),
-                **_svg_execution_result(worker),
-                **{k: v for k, v in exc.extra.items() if k == "figure_snapshot_invalidation"},
-            }
-        ), 500
+        evidence = _svg_execution_result(worker)
+        fact = exc.extra.get(
+            "figure_snapshot_invalidation", evidence.get("figure_snapshot_invalidation")
+        )
+        return jsonify(_worker_error_payload(exc, figure_snapshot_invalidation=fact)), 500
     except Exception as exc:
         # 事件契约是「render.started 之后必有 done 或 failed」，与异常类型无关：
         # 前端文件级 building 表只由这两个事件清（#478）。重试路上的

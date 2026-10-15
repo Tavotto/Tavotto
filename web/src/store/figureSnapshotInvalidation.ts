@@ -21,6 +21,9 @@ interface AcceptedExecution {
   consumed?: { documentId: string; loadSeq: number }
 }
 const acceptedExecutions = new Map<string, AcceptedExecution>()
+export function hasAcceptedFigureExecution(pj: string | null, executionId: string): boolean {
+  return acceptedExecutions.has(JSON.stringify([pj, executionId]))
+}
 const pendingExecutions = new Map<string | null, Set<AcceptedExecution>>()
 const currentInstallation = () => {
   const { documentId, loadSeq } = useDocumentStore.getState()

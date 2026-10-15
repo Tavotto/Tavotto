@@ -6013,7 +6013,7 @@ export const fetchNativePending = (nativeId: string) =>
  * （「请求体不能替换 invocation」由后端用例看护）。
  */
 export const approveNativePending = (nativeId: string, remember: boolean) =>
-  jsonFetch<{ session: NativeSessionInfo }>(
+  jsonFetch<{ session: NativeSessionInfo; pj?: string | null }>(
     `/api/native/pending/${encodeURIComponent(nativeId)}/approve`,
     {
       method: 'POST',
