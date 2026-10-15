@@ -330,7 +330,8 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
  * 浅色里 `--color-field`（#f2f2f0）对灰桌面（#efefed）只有 ≈1.04:1，框直接坐在桌面上等于没有框；
  * 桌面子树（左抽屉 / 嵌入头）因此把 field 重定向成白面。这把尺子在真页面上量「每个框原语（`bg-field`）的底、它背后第一个
  * 不透明祖先是什么」，对比不到 `min` 的返回一行描述。
- * 只量静态：hover 态不在这里（框的 hover 底在重定向后是 surface-2，由 tokenContrast.test 守着不比所在面更暗）。
+ * 量的是**此刻**的底：要量 hover 就先把指针移到框上（a11y 工作台用例对左抽屉搜索框各量一次）；
+ * 桌面子树里 hover 底是 field-hover-desk，两套主题的阈值由 tokenContrast.test 逐值守着。
  */
 export async function indistinctFieldBoxes(page: Page, min = 1.1): Promise<string[]> {
   return page.evaluate((minRatio) => {
