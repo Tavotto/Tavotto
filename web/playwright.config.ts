@@ -111,6 +111,8 @@ export default defineConfig({
         'export-preview.spec.ts',
         // 素材卡 / 属性栏底部：英文文案更长，量盒子位置两种语言各一遍
         'inspector-assets.spec.ts',
+        // 说明条 + 不推挤（UI 2.0 PR10）：构建不一致芯片不位移、刷新失败 Notice 顺着滑出；英文文案更长，两种语言各量
+        'notice-no-push.spec.ts',
       ],
     },
   ],

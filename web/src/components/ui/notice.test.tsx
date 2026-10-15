@@ -1,0 +1,117 @@
+/**
+ * Notice 原语（2026-10-16 UI 2.0「错误与警告」）：一行中性提示。
+ * 判据全是正面形式：文字不染色、只有 attention 档（danger）图标染色、详情默认折叠且可复制、一个主动作、
+ * 所有语气的 a11y role 不变。选择器认 data-*，类名断言只证明「走了哪一档 token」。
+ */
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { Button } from './Button'
+import { Notice, type StatusTone } from './Notice'
+import { TooltipProvider } from './Tooltip'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var IS_REACT_ACT_ENVIRONMENT: boolean
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+let root: Root
+let host: HTMLDivElement
+beforeEach(() => {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+})
+afterEach(async () => {
+  await act(async () => root.unmount())
+  host.remove()
+})
+const render = (node: React.ReactNode) => act(async () => root.render(<TooltipProvider>{node}</TooltipProvider>))
+const q = <E extends Element = HTMLElement>(sel: string) => host.querySelector<E>(sel)
+const TONES: StatusTone[] = ['neutral', 'info', 'ok', 'warn', 'danger']
+
+describe('Notice：一行中性提示', () => {
+  it.each(TONES)('tone=%s：底是中性 surface-hover，无边框 / 无彩色底，文字不染色', async (tone) => {
+    await render(<Notice tone={tone} title="没有发出去">原因</Notice>)
+    const n = q(`[data-notice="${tone}"]`)!
+    expect(n.className).toContain('bg-surface-hover')
+    expect(n.className).toContain('text-ink')
+    // 正面形式：根上只允许 ink 系文字色 / 中性底，没有任何语义色 token、没有描边环
+    expect(n.className).not.toMatch(/(?:danger|warn|ok|info)(?:-surface|-border|-content)?\b/)
+    expect(n.className).not.toMatch(/\b(?:border|ring|inset-ring)\b/)
+    // 标题与次要文字都没有自带语义色
+    for (const el of n.querySelectorAll('p, div')) expect(el.className).not.toMatch(/text-(?:danger|warn|ok|info)/)
+  })
+
+  it.each(TONES)('tone=%s：只有 danger 档的图标染色（danger 色），其余 ink-3', async (tone) => {
+    await render(<Notice tone={tone}>x</Notice>)
+    const icon = q('[data-notice-icon]')!
+    expect(icon).not.toBeNull()
+    if (tone === 'danger') {
+      expect(icon.getAttribute('data-notice-icon')).toBe('attention')
+      expect(icon.getAttribute('class')).toContain('text-danger')
+    } else {
+      expect(icon.getAttribute('data-notice-icon')).toBe('')
+      expect(icon.getAttribute('class')).toContain('text-ink-3')
+      expect(icon.getAttribute('class')).not.toMatch(/text-(?:danger|warn|ok|info)\b/)
+    }
+  })
+
+  it.each(TONES)('tone=%s：a11y role 不变（只有 danger 是 alert）', async (tone) => {
+    await render(<Notice tone={tone}>x</Notice>)
+    expect(q(`[data-notice="${tone}"]`)!.getAttribute('role')).toBe(tone === 'danger' ? 'alert' : null)
+  })
+
+  it('调用方显式传的 role 照旧生效（status / alert）', async () => {
+    await render(<Notice tone="warn" role="status">x</Notice>)
+    expect(q('[data-notice]')!.getAttribute('role')).toBe('status')
+  })
+
+  it('有 title 时 children 是次要灰字；没有 title 时 children 就是主句（ink）', async () => {
+    await render(
+      <>
+        <Notice data-a title="主句">次要</Notice>
+        <Notice data-b>只有一句</Notice>
+      </>,
+    )
+    expect(q('[data-a] div.text-ink-3')!.textContent).toBe('次要')
+    expect(q('[data-b] div.text-ink-3')).toBeNull()
+  })
+
+  it('没有 detail 就没有「详情」钮；动作槽里是调用方给的那一个', async () => {
+    const onClick = vi.fn()
+    await render(<Notice action={<Button data-act onClick={onClick}>go</Button>}>x</Notice>)
+    expect(q('[data-notice-detail-toggle]')).toBeNull()
+    expect(host.querySelectorAll('[data-notice] button')).toHaveLength(1)
+    await act(async () => q<HTMLButtonElement>('[data-act]')!.click())
+    expect(onClick).toHaveBeenCalledOnce()
+  })
+
+  it('详情默认折叠（不在 DOM 里）；点「详情」展开，aria-expanded 同步；再点收起', async () => {
+    await render(<Notice tone="danger" detail="HTTP 500 · upstream timeout">没有发出去</Notice>)
+    const toggle = q<HTMLButtonElement>('[data-notice-detail-toggle]')!
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(q('[data-notice-detail]')).toBeNull()
+    expect(host.textContent).not.toContain('upstream timeout')
+    await act(async () => toggle.click())
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(q('[data-notice-detail]')!.textContent).toContain('upstream timeout')
+    await act(async () => toggle.click())
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('详情里的「复制」把它渲染出来的文字写进剪贴板，并给一个「已复制」回执', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await render(
+      <Notice tone="danger" detail={<>HTTP 500<br />request 3f9a</>}>没有发出去</Notice>,
+    )
+    await act(async () => q<HTMLButtonElement>('[data-notice-detail-toggle]')!.click())
+    const copy = q<HTMLButtonElement>('[data-notice-copy]')!
+    await act(async () => copy.click())
+    expect(writeText).toHaveBeenCalledWith('HTTP 500request 3f9a')
+    expect(copy.textContent).toBe('已复制')
+  })
+})

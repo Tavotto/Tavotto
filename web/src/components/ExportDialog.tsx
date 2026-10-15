@@ -1033,7 +1033,6 @@ export function ExportDialog() {
           action={
             <Button
               data-export-status-retry
-              variant="secondary"
               size="sm"
               disabled={refreshing}
               onClick={() => void refreshExportStatus()}
@@ -2112,7 +2111,7 @@ export function ResultBlock({
         tone="warn"
         data-export-job-lost
         action={
-          <Button variant="secondary" size="sm" onClick={onRetry}>
+          <Button size="sm" onClick={onRetry}>
             {ex("retry")}
           </Button>
         }
@@ -2128,7 +2127,7 @@ export function ResultBlock({
         data-export-failed
         action={
           job.error?.recoverable !== false ? (
-            <Button variant="secondary" size="sm" onClick={onRetry}>
+            <Button size="sm" onClick={onRetry}>
               {ex("retry")}
             </Button>
           ) : (

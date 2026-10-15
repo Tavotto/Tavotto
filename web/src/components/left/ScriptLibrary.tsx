@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntry } from '@/lib/api'
+import { splitNoticeText } from '@/lib/noticeText'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
@@ -148,8 +149,13 @@ export function ScriptLibrary({ query }: { query: string }) {
   if (error && !view) {
     return (
       <div className="px-3 pb-2">
-        <Notice tone="danger" data-script-load-failed>
-          {sc('loadFailed', { error })}
+        <Notice
+          tone="danger"
+          data-script-load-failed
+          title={sc('loadFailed')}
+          detail={splitNoticeText(error).detail}
+        >
+          {splitNoticeText(error).inline}
         </Notice>
       </div>
     )

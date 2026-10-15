@@ -120,6 +120,7 @@ export default interface Resources {
       "send": "发送（{{key}}）",
       "sendAria": "发送",
       "sendFailed": "没有发出去",
+      "sendFailedReason": "助手服务暂时出错",
       "stepRan": "运行",
       "targetAria": "作用目标：{{target}}",
       "taskHistory": "任务历史",
@@ -195,6 +196,10 @@ export default interface Resources {
       "pxSize": "{{w}} × {{h}} px"
     },
     "mixed": "多个值",
+    "notice": {
+      "copied": "已复制",
+      "details": "详情"
+    },
     "objectType": {
       "arrow": "箭头",
       "emptyText": "空文字",
@@ -4635,7 +4640,7 @@ export default interface Resources {
       "openAria": "编辑原图 {{name}}",
       "openFigure": "编辑原图",
       "refresh": "刷新项目",
-      "refreshFailed": "无法刷新。{{error}}",
+      "refreshFailed": "无法刷新",
       "refreshTip": "检查项目里的新文件与脚本改动",
       "refreshing": "正在检查新文件…",
       "removeFilter": "移除筛选：{{label}}",
@@ -5538,7 +5543,7 @@ export default interface Resources {
       "group_notRun": "尚未运行",
       "group_runtimeNames": "运行后才知道输出",
       "linkedCount_other": "已关联 {{count}} 张图",
-      "loadFailed": "无法读取脚本清单。{{error}}",
+      "loadFailed": "无法读取脚本清单",
       "loading": "正在读取脚本清单…",
       "noMatch": "没有符合条件的脚本",
       "notRunNote": "脚本尚未运行",
@@ -5812,7 +5817,7 @@ export default interface Resources {
     },
     "update": {
       "banner": "工具已更新，刷新后使用新版本",
-      "later": "稍后"
+      "chip": "界面需要刷新"
     }
   }
 }

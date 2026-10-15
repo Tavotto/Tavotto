@@ -173,12 +173,11 @@ describe('Card', () => {
 })
 
 describe('Notice / StatusPill', () => {
-  it.each(['neutral', 'info', 'ok', 'warn', 'danger'] as const)('Notice tone=%s：data-notice 落在根上，字走 -content（neutral 是 ink-2）', async (tone) => {
+  it.each(['neutral', 'info', 'ok', 'warn', 'danger'] as const)('Notice tone=%s：data-notice 落在根上，8 圆角、中性底、无彩框，role 不随改版变', async (tone) => {
     await render(<Notice tone={tone} title={T} action={<Button data-n-action>{T}</Button>}>{T}</Notice>)
     const n = q(`[data-notice="${tone}"]`)!
     expect(n).not.toBeNull()
     expect(n.className).toMatch(/\brounded-md\b/)
-    expect(n.className).toContain(tone === 'neutral' ? 'text-ink-2' : `text-${tone}-content`)
     expect(n.querySelector('[data-n-action]')).not.toBeNull()
     expect(n.getAttribute('role')).toBe(tone === 'danger' ? 'alert' : null)
   })

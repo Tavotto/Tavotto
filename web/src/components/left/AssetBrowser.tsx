@@ -53,7 +53,8 @@ import { EmptyLine } from '../ui/EmptyLine'
 import { EmptyState } from '../ui/EmptyState'
 import { SEARCH_MIN_ITEMS } from '../ui/searchThreshold'
 import { MenuItem, PointMenu } from '../ui/Menu'
-import { Notice } from '../ui/Notice'
+import { Notice, NoticeReveal } from '../ui/Notice'
+import { splitNoticeText } from '@/lib/noticeText'
 import { Dialog } from '../ui/Dialog'
 import { Popover } from '../ui/Popover'
 import { Row } from '../ui/Field'
@@ -496,19 +497,26 @@ export function AssetBrowser() {
             `/api/panels` 却失败——`assetStore.load()` 吞掉错误返回 null，`refreshProjectNow()` 照常
             resolve、不弹提示，而这条 Notice 若在 hidden 的网格里，用户只看到图标停转（Codex #832）。
             错误挂在区头下面、不跟着折叠走，展开与否都看得见 */}
-        {error && (
+        {/* 事后才冒出来的一条：包 NoticeReveal，下面的网格是顺着滑下去的而不是瞬间跳一格 */}
+        <NoticeReveal open={!!error}>
           <div className="px-3 pb-2">
             {/* 刷新失败：一条 Notice 坐在它说的那一区里（此前是贴着工具栏的一条红带）；
-                加载过就照旧列保留下来的那份，卡片不消失 */}
+                加载过就照旧列保留下来的那份，卡片不消失。一句话的原因留在正文，长的进「详情」 */}
             {loaded ? (
-              <Notice tone="danger" role="status" data-asset-refresh-failed>
-                {ab('refreshFailed', { error })}
+              <Notice
+                tone="danger"
+                role="status"
+                data-asset-refresh-failed
+                title={ab('refreshFailed')}
+                detail={splitNoticeText(error).detail}
+              >
+                {splitNoticeText(error).inline}
               </Notice>
             ) : (
               <EmptyState
                 icon={TriangleAlert}
                 title={ab('loadFailed')}
-                hint={error}
+                hint={error ?? undefined}
                 action={{
                   label: ab('retry'),
                   // 首次加载失败后的重试：**强制**另起一次，不复用可能同样
@@ -518,7 +526,7 @@ export function AssetBrowser() {
               />
             )}
           </div>
-        )}
+        </NoticeReveal>
         {/* 网格容器常驻（收起时只是 hidden）：列数由它的实测宽度决定，ResizeObserver
             只在挂载时接一次，卸了再挂就量不到了；display:none 报 0 宽 → 单列，再展开时
             报回真实宽度 → 双列，同一个观察者两边都接得住 */}
