@@ -110,6 +110,7 @@ print(json.dumps({'pdf': result['pdf'].hex(), 'svg': result['svg'].hex()}))
         [sys.executable, "-c", code, str(store[0]), SOURCE, PATCH],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
         timeout=15,
         env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
@@ -481,6 +482,7 @@ with svgstore._guard(root):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
         env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")},
     ) as process:
         assert process.stdout.readline().strip() == "locked"
@@ -548,6 +550,7 @@ assert 'tavotto.engine.pool' not in sys.modules
         [sys.executable, "-c", code, str(moved), SOURCE, PATCH, PDF.hex(), SVG.hex()],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
         timeout=15,
         env={
