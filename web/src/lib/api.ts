@@ -3294,7 +3294,7 @@ export type ServerEvent =
       /** 这一步本身：`{seq, state, at, …}`（时间线用） */
       event: { seq: number; state: NativeSessionState; at: number } & Record<string, unknown>
     } & ProjectScoped)
-  | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null }
+  | { kind: 'engine.bootstrap'; state: string; log: string; error: string | null; attempt?: number }
   | ({ kind: 'engine.dependency' } & DependencyProgress)
   /** 跑前的门自动改用了用户自己的环境（ADR 0079）；不带路径 */
   | ({
@@ -3962,6 +3962,8 @@ export interface EngineEnvironment {
   bundled: boolean
   runtime: BundledRuntime
   state: 'idle' | 'running' | 'done' | 'failed'
+  /** 引擎 bootstrap 的尝试身份（单调递增，0 = 从没装过）；老后端没有 */
+  attempt?: number
   /** ok=false 时才有：能不能替用户装一个 */
   can_install?: boolean
   base_python?: string | null
@@ -3981,6 +3983,8 @@ export interface BootstrapProgress {
   state: 'idle' | 'running' | 'done' | 'failed'
   log: string
   error: string | null
+  /** 尝试身份（`engine.bootstrap` 事件 / 环境状态 / install 响应都带）；老后端没有 */
+  attempt?: number
 }
 
 export const fetchEngineEnvironment = (probe?: boolean) =>

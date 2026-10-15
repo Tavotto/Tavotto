@@ -33,7 +33,11 @@ INSTALL_TIMEOUT_S = 900  # 首次装 matplotlib 要下几十 MB，网络慢时�
 PROBE_TIMEOUT_S = 30
 
 _lock = threading.Lock()
-_progress: dict = {"state": "idle", "log": "", "error": None}
+#: `attempt`：尝试身份，单调递增、进程内从 1 起（0 = 从没装过）。每开始一次**新**安装加一；`engine.bootstrap` 事件、
+#: 环境状态 GET、install POST 响应都带它——前端凭它判「这条快照说的是哪一次」，不靠推断。
+_progress: dict = {"state": "idle", "log": "", "error": None, "attempt": 0}
+#: 保护「判有没有在跑 + 置 running + attempt 加一」这一小段（install_async 与直接调 install 都经过）
+_attempt_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +150,7 @@ def status() -> dict:
             # 回退是静默的，不报出来就只能靠「怎么有点慢」去猜。
             "control_plane": pool.control_plane(),
             "state": _progress["state"],
+            "attempt": _progress["attempt"],
         }
     except pool.WorkerError as exc:
         code = exc.code
@@ -165,6 +170,7 @@ def status() -> dict:
         "can_install": base is not None and not rt["expected"],
         "base_python": base,
         "state": _progress["state"],
+        "attempt": _progress["attempt"],
         "error": (runtime.repair_hint() if rt["expected"] else _progress["error"]),
     }
 
@@ -188,7 +194,11 @@ def install(on_event=None) -> dict:
     if not _lock.acquire(blocking=False):
         return {"ok": False, "error": "安装已在进行中"}
     try:
-        _progress.update(state="running", log="", error=None)
+        with _attempt_lock:
+            # 经 `install_async` 来的已经在调用线程里同步置过 running 并加过 attempt；直接调用的（脚本 / 测试）在这里开始新一次
+            if _progress["state"] != "running":
+                _progress["attempt"] += 1
+            _progress.update(state="running", log="", error=None)
         _emit(on_event)
 
         # 桌面版该有内置 runtime。走到这里说明它缺了或坏了——那时该做的是重装，
@@ -291,6 +301,8 @@ def _emit(on_event) -> None:
 def install_async(on_event=None) -> None:
     # 同步把状态置为 running 再返回：调用方（POST 接口）拿到的响应与随后的任何读取都已经看得见这次尝试，
     # 而不是等线程调度起来才变。已有安装在跑时不动（别把它的日志清掉）
-    if not _lock.locked():
-        _progress.update(state="running", log="", error=None)
+    with _attempt_lock:
+        if not _lock.locked() and _progress["state"] != "running":
+            _progress["attempt"] += 1
+            _progress.update(state="running", log="", error=None)
     threading.Thread(target=lambda: install(on_event), daemon=True, name="mm-bootstrap").start()

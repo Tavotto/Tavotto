@@ -248,3 +248,35 @@ def test_install_async_marks_running_before_returning(monkeypatch):
         assert bootstrap.progress()["state"] == "running"
     finally:
         gate.set()
+
+
+def test_every_new_install_gets_the_next_attempt_and_events_carry_it(monkeypatch):
+    """尝试身份：新安装 attempt +1；同一次的事件、`progress()`、`status()` 带同一个 attempt。"""
+    monkeypatch.setattr(pool, "find_worker_python", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(bootstrap, "matplotlib_version", lambda p, **_kw: "3.11.1")
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
+    base = bootstrap.progress()["attempt"]
+    seen = []
+    for expected in (base + 1, base + 2):
+        events = []
+        bootstrap.install(events.append)  # 没有 base python：同步失败收场，仍是一次完整的尝试
+        seen.append([e["attempt"] for e in events])
+        assert {e["attempt"] for e in events} == {expected}
+        assert bootstrap.progress()["attempt"] == expected
+        assert bootstrap.status()["attempt"] == expected
+    assert seen[0] and seen[1]
+
+
+def test_a_second_install_request_while_running_keeps_the_current_attempt(monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    monkeypatch.setattr(bootstrap, "install", lambda on_event=None: gate.wait(5))
+    try:
+        bootstrap.install_async()
+        first = bootstrap.progress()["attempt"]
+        bootstrap.install_async()
+        assert bootstrap.progress()["attempt"] == first
+        assert bootstrap.progress()["state"] == "running"
+    finally:
+        gate.set()
