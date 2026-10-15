@@ -576,6 +576,60 @@ def test_diff_collected_runtime_reports_rewritten_and_missing_files(tmp_path):
     ]
 
 
+def test_diff_collected_runtime_reports_files_only_in_the_packed_tree(tmp_path):
+    """成员也要相同：打包器往 runtime/ 里多塞的文件（原件一个没动）同样算不一致。"""
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _fake_runtime(src)
+    shutil.copytree(src, dst)
+    (dst / "lib" / "libgfortran.5.dylib").write_bytes(b"\xcf\xfa\xed\xfe")
+    assert brt.diff_collected_runtime(src, dst) == [
+        os.path.join("lib", "libgfortran.5.dylib") + "（多出）"
+    ]
+
+
+def test_runtime_toc_problems_flags_copies_outside_and_reclassified_entries(tmp_path):
+    """v0.18.0 macOS 的 TOC 形状（PyInstaller 6.22.3 实测）：runtime 里 numpy/.dylibs 的库被依赖分析
+    以 BINARY 复制到顶层；runtime 自己的扩展模块被改判成 BINARY。冻结层自己的同名库（来源不在
+    runtime 下）不算。"""
+    rt = tmp_path / "runtime-src"
+    _fake_runtime(rt)
+    dylibs = rt / "lib" / "site-packages" / "numpy" / ".dylibs"
+    so = rt / "lib" / "site-packages" / "numpy" / "_core" / "_multiarray_umath.so"
+    host_crypto = tmp_path / "host" / "libcrypto.3.dylib"
+    host_crypto.parent.mkdir()
+    host_crypto.write_bytes(b"x")
+    ok = [
+        (
+            os.path.join("runtime", "runtime-manifest.json"),
+            str(rt / "runtime-manifest.json"),
+            "DATA",
+        ),
+        ("libcrypto.3.dylib", str(host_crypto), "BINARY"),
+        (os.path.join("runtime", "bin", "python3"), "python3.13", "SYMLINK"),
+    ]
+    assert brt.runtime_toc_problems(ok, rt) == []
+
+    copied = ("libscipy_openblas64_.dylib", str(dylibs / "libscipy_openblas64_.dylib"), "BINARY")
+    rewritten = (
+        os.path.join("runtime", "lib", "site-packages", "numpy", "_core", so.name),
+        str(so),
+        "EXTENSION",
+    )
+    bad = brt.runtime_toc_problems([*ok, copied, rewritten], rt)
+    assert len(bad) == 2
+    assert bad[0].startswith("libscipy_openblas64_.dylib ← ") and "外面" in bad[0]
+    assert "typecode=EXTENSION" in bad[1]
+
+
+def test_spec_runs_the_runtime_toc_gate_after_adding_the_runtime():
+    """闸要在 Tree 加进去之后、COLLECT 之前跑，对象是 binaries + datas 全体，失败就拒绝打包。"""
+    spec = (REPO / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    tree_at = spec.index('Tree(str(_RUNTIME_AFTER_ANALYSIS), prefix="runtime")')
+    gate_at = spec.index("runtime_toc_problems([*a.binaries, *a.datas], RUNTIME)")
+    assert tree_at < gate_at < spec.index("coll = COLLECT(")
+    assert "raise SystemExit" in spec[gate_at : gate_at + 300]
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="建符号链接要特权")
 def test_diff_collected_runtime_accepts_a_flattened_symlink(tmp_path):
     """Tree 与 Tauri 都会把符号链接拍平成真文件；那不是改写。"""

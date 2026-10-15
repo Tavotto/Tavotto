@@ -129,7 +129,12 @@ for name in ("worker.py", "manifest.py", "overrides.py", "patchspec.py",
 # 「这份 runtime 配不配得上这次构建」的判据只有一份，在构建脚本里
 # （build_desktop.py 复用同一个函数）。分头各写一遍的话，迟早一边放行
 # 另一边拦住，而放行的那一边才是发出去的。来源目录同理（打包后逐字节核对的也是它）。
-from build_worker_runtime import BuildError, check_runtime_dir, runtime_source_dir  # noqa: E402
+from build_worker_runtime import (  # noqa: E402
+    BuildError,
+    check_runtime_dir,
+    runtime_source_dir,
+    runtime_toc_problems,
+)
 
 RUNTIME = runtime_source_dir(ROOT)
 _require = os.environ.get("TAVOTTO_REQUIRE_RUNTIME") in ("1", "true", "yes")
@@ -272,6 +277,16 @@ a = Analysis(
 )
 if _RUNTIME_AFTER_ANALYSIS is not None:
     a.datas += Tree(str(_RUNTIME_AFTER_ANALYSIS), prefix="runtime")  # noqa: F821 — spec 作用域里的 PyInstaller 内置
+
+# 构建期闸门：来源在 runtime 下的 TOC 条目只许以 DATA 原样落进 runtime/——被依赖分析复制到 `_internal/`
+# 顶层的副本、被改判成 BINARY（会被改写）的条目都在这里拦下（文件头说明 3）。打包后
+# build_desktop.py / CI 再用 diff_collected_runtime() 逐字节核对 runtime/ 这棵树本身。
+_runtime_toc_bad = runtime_toc_problems([*a.binaries, *a.datas], RUNTIME)
+if _runtime_toc_bad:
+    raise SystemExit(
+        f"[tavotto.spec] 内置 runtime 没有原样进包（{len(_runtime_toc_bad)} 处），例如：\n  "
+        + "\n  ".join(_runtime_toc_bad[:10])
+    )
 
 # 构建期闸门（#1051）：顶层的 libcrypto / libssl 必须与 `_ssl.pyd` 同源，否则宁可这里就失败，
 # 不要打出一个一启动就 `DLL load failed while importing _ssl` 的包（只在 Windows 上存在这种同名 DLL 竞争）。

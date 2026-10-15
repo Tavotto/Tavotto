@@ -331,22 +331,63 @@ def diff_collected_runtime(src: Path, dst: Path) -> list[str]:
 
     判据的主语是**发出去的字节**：spec 那一侧写对了不算数，要看 PyInstaller 真产出了什么——
     哪天打包器又在别处改判 / 改写 / 重签，这里以「某个文件字节变了」直接报出来。
+    目标里**多出来**的文件同样算不一致（成员也要相同，不只是已有文件的字节）。
+
+    盲点：这里只看 `dst` 这棵树；runtime 的依赖被复制到它**外面**（`_internal/` 顶层）这一种，
+    由 spec 里的 `runtime_toc_problems()` 按 TOC 的来源路径拦。
     """
     src, dst = Path(src), Path(dst)
     bad: list[str] = []
+    expected: set[str] = set()
+    linked: list[str] = []
     for dirpath, dirnames, filenames in os.walk(src):
         for name in dirnames + filenames:
             s = os.path.join(dirpath, name)
             rel = os.path.relpath(s, src)
             d = os.path.join(dst, rel)
             if os.path.islink(s):
+                expected.add(rel)
+                linked.append(rel + os.sep)  # 指向目录的链接被拍平后，下面的文件都算它的
                 if not os.path.lexists(d):
                     bad.append(f"{rel}（缺）")
             elif name in filenames:
+                expected.add(rel)
                 if not os.path.isfile(d):
                     bad.append(f"{rel}（缺）")
                 elif not filecmp.cmp(s, d, shallow=False):
                     bad.append(f"{rel}（字节不同）")
+    for dirpath, _dirnames, filenames in os.walk(dst):
+        for name in filenames:
+            rel = os.path.relpath(os.path.join(dirpath, name), dst)
+            if rel not in expected and not any(rel.startswith(p) for p in linked):
+                bad.append(f"{rel}（多出）")
+    return sorted(bad)
+
+
+def runtime_toc_problems(toc, runtime_root: Path, prefix: str = "runtime") -> list[str]:
+    """PyInstaller 的 TOC 里，来源在 runtime 下的条目只许原样落进 `<prefix>/`、typecode=DATA。
+
+    packaging/tavotto.spec 在 Analysis 之后、COLLECT 之前对 `a.binaries + a.datas` 跑它。主语是
+    **TOC 条目的来源路径**：被依赖分析复制到 `_internal/` 顶层的 openblas / gfortran / tcl 副本，
+    来源正是 runtime 里的 `.dylibs/` 等（v0.18.0 macOS ≈ 48 MB），它们的落点在 `diff_collected_runtime()`
+    比对的那棵树外面、按名字又与冻结层自己的同名库（libcrypto 等）分不开，按来源判才分得开。
+    """
+    root = os.path.realpath(runtime_root)
+    bad: list[str] = []
+    for entry in toc:
+        dest, src, typecode = entry[0], entry[1], entry[2]
+        if typecode == "SYMLINK" or not src:
+            continue
+        real = os.path.realpath(src)
+        if os.path.commonpath([root, real]) != root:
+            continue
+        parts = Path(dest).parts
+        if not parts or parts[0] != prefix:
+            bad.append(
+                f"{dest} ← {os.path.relpath(real, root)}（runtime 的文件落到了 {prefix}/ 外面）"
+            )
+        elif typecode != "DATA":
+            bad.append(f"{dest}（typecode={typecode}，会被改写）")
     return sorted(bad)
 
 
