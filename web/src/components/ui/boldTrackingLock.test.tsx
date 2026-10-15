@@ -67,7 +67,10 @@ beforeEach(() => {
       // 与浏览器一致：宽度与字距都按「渲染单位」计——连续空白折叠成一个、组合符 / ZWJ 序列算一个字素簇
       const n = renderedUnits(el.textContent ?? '')
       const perChar = el.style.fontWeight === '600' ? 6.2 : 6
-      return { width: n * perChar + n * parseFloat(el.style.letterSpacing || '0') } as DOMRect
+      const ls = parseFloat(el.style.letterSpacing || '0')
+      // 连字模型：字距为 0 时 `fi` 连成一个字形、每处窄 1.5px；字距非 0 时浏览器关掉连字
+      const ligatures = ls === 0 ? ligatureCount(el.textContent ?? '') : 0
+      return { width: n * perChar + n * ls - ligatures * 1.5 } as DOMRect
     }
 })
 afterEach(async () => {
@@ -79,6 +82,7 @@ afterEach(async () => {
 const n600 = (g: number) => g * 6.2
 // 浏览器怎么排版就怎么数（测试里的「浏览器」）：`truncate` 折叠连续空白，再按字素簇
 const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+const ligatureCount = (text: string) => (text.match(/fi/g) ?? []).length
 const renderedUnits = (text: string) => [...seg.segment(text.replace(/\s+/g, ' '))].length
 const label = () => host.querySelector<HTMLElement>('[data-label]')!
 const render = (selected: boolean, text = '曲线 “Catalyst (k = 0.125 min⁻¹)”') =>
@@ -104,12 +108,22 @@ describe('useBoldTrackingLock', () => {
   const lockedWidth = (text: string) => {
     const units = renderedUnits(text)
     const ls = parseFloat(label().style.letterSpacing)
-    return { w600: n600(units) + units * ls, w400: units * 6, ls }
+    // 400（未选中，字距 0，连字开着）真正画出来的宽度；600 选中后字距非 0、连字关闭
+    return { w600: n600(units) + units * ls, w400: units * 6 - ligatureCount(text) * 1.5, ls }
   }
 
   it('连续多个空格（truncate 折叠成一个）：按渲染单位补偿，不按源串字数', async () => {
     const text = 'Catalyst        result      with     gaps  and   more   long   text'
     expect(renderedUnits(text)).toBeLessThan([...text].length)
+    await render(true, text)
+    const { w600, w400, ls } = lockedWidth(text)
+    expect(ls).toBeLessThan(0)
+    expect(w600).toBeCloseTo(w400, 5)
+  })
+
+  it('带连字的名字：基准在连字关闭的状态下量，补偿后 600 的总宽仍等于 400 真正画出来的宽度', async () => {
+    const text = 'Specific final profile fitting of first-order kinetic fits'
+    expect(ligatureCount(text)).toBeGreaterThanOrEqual(4)
     await render(true, text)
     const { w600, w400, ls } = lockedWidth(text)
     expect(ls).toBeLessThan(0)

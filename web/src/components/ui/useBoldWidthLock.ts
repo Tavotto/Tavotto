@@ -23,14 +23,14 @@ export function useBoldWidthLock(ref: RefObject<HTMLElement | null>) {
 }
 
 /** (字体 + 文字) → 400 与 600 的排版宽度。同名反复量只量一次；字体加载完成后整表作废 */
-const boldWidthCache = new Map<string, { w400: number; w600: number; units: number }>()
+const boldWidthCache = new Map<string, { w400: number; w600eff: number; units: number }>()
 if (typeof document !== 'undefined') {
   document.fonts?.addEventListener?.('loadingdone', () => boldWidthCache.clear())
 }
 
 /**
  * 选中行标签的尺寸观察：整个应用共用**一个** ResizeObserver（懒建），按元素登记回调。
- * 选中期间拖窄 / 拉宽抽屉会改变「放不放得下」，回调里只用缓存的 w400 / w600 对新的 clientWidth 重判，不重新量 Range。
+ * 选中期间拖窄 / 拉宽抽屉会改变「放不放得下」，回调里只用缓存的 w400 / w600eff 对新的 clientWidth 重判，不重新量 Range。
  */
 let sharedRO: ResizeObserver | null = null
 const roCallbacks = new WeakMap<Element, () => void>()
@@ -54,7 +54,7 @@ function unwatchSize(el: HTMLElement) {
  * （那是给不截断的页签留 `min-width`；给截断的标签加 `min-width` 只会把行撑出去）。
  *
  * 做法：选中且**会被截断**（600 的宽度超出标签盒）时，用等量的负字距吃掉 600 比 400 多出的宽度——
- * 字距 = 差值 ÷ 单位数，单位数是量出来的（600 下字距 0 与 1px 的宽度差），不是数出来的——
+ * 字距 = 差值 ÷ 单位数，单位数是量出来的（600 下字距 1px 与 2px 的宽度差），不是数出来的——
  * 字仍是 600，整段宽度与 400 时一样，截断点不动。不截断的行什么都不做（加粗本来就不该被压窄）。
  * 量宽用 Range（不受 `overflow:hidden` 剪裁影响）。
  *
@@ -89,28 +89,32 @@ export function useBoldTrackingLock<T extends HTMLElement>(active: boolean, text
       el.style.transition = 'none'
       el.style.fontWeight = '400'
       const w400 = range.getBoundingClientRect().width
+      // 选中后实际渲染时字距一定不是 0——浏览器在字距非 0 时关掉连字。所以 600 这一侧的基准也要在「连字关闭」
+      // 的状态下量：分别量字距 1px 与 2px 的宽度，差值是**实际参与字距的单位数**（不数字符：`truncate` 折叠连续空白，
+      // 组合符 / ZWJ 序列 / 连字都是一个单位，浏览器自己算），w600eff = w(1px) − units 是等效的零字距宽度。
+      // 400 那一侧不处理：未选中时字距为 0、连字开着，原样量就是浏览器真正画出来的宽度
       el.style.fontWeight = '600'
-      const w600 = range.getBoundingClientRect().width
-      // 再量一次 600 + 1px 字距：差值就是**实际参与字距的单位数**。不数字符——`truncate` 折叠连续空白、
-      // 组合符 / ZWJ 序列 / 连字都是一个单位，浏览器自己算（数源串、数码点、数字素簇都被挑出过少补）
       el.style.letterSpacing = '1px'
-      const w600s = range.getBoundingClientRect().width
+      const w1 = range.getBoundingClientRect().width
+      el.style.letterSpacing = '2px'
+      const w2 = range.getBoundingClientRect().width
       el.style.letterSpacing = ''
       el.style.fontWeight = prev
       el.style.transition = prevTransition
-      hit = { w400, w600, units: w600s - w600 }
+      const units = w2 - w1
+      hit = { w400, w600eff: w1 - units, units }
       if (boldWidthCache.size > 500) boldWidthCache.clear()
       boldWidthCache.set(key, hit)
     }
-    const { w400, w600, units } = hit
+    const { w400, w600eff, units } = hit
     const decide = () => {
-      const delta = w600 - w400
+      const delta = w600eff - w400
       // 不截断（600 的宽度放得下标签盒）：不需要锁
       el.style.letterSpacing =
-        delta > 0.05 && units >= 0.5 && w600 > el.clientWidth ? `${-delta / units}px` : ''
+        delta > 0.05 && units >= 0.5 && w600eff > el.clientWidth ? `${-delta / units}px` : ''
     }
     decide()
-    if (w600 - w400 > 0.05) watchSize(el, decide)
+    if (w600eff - w400 > 0.05) watchSize(el, decide)
   }, [])
 
   // 标签元素被换掉（行内改名：输入框顶替标签、关掉后标签重新挂载）时，[active, text] 都没变，
