@@ -13,7 +13,8 @@
 //!   后缀在栈上的定长缓冲里拼。写完返回 `EXCEPTION_CONTINUE_SEARCH`，系统照常处理崩溃（WER / 退出码不变）。
 //!   重入（过滤器自己又崩）用一个原子旗标挡掉。
 //! - 初始化时轮转旧转储：只认 `Tavotto.exe.<数字>.dmp`（别的程序的 / 用户的文件一个都不碰），
-//!   留 [`MAX_DUMPS`] - 1 份，给这一次崩溃腾位置。
+//!   留 [`MAX_DUMPS`] 份——不为「也许会来的」崩溃提前删掉一份（#1068 r4280472040）；崩溃落盘后磁盘上
+//!   短暂可有 MAX_DUMPS + 1 份，下次启动再轮回 MAX_DUMPS。
 //! - 已知覆盖不到的：Rust `panic!`（走 unwind / abort，不经未处理异常过滤器）、`__fastfail`。
 //!   Python sidecar 不覆盖——它是 Python 进程，崩溃信息靠 traceback 与 faulthandler；
 //!   `tavotto-workerd` 是另一个 crate，见 `workerd/src/crash_dump.rs`。
@@ -117,7 +118,7 @@ mod imp {
         if std::fs::create_dir_all(dir).is_err() {
             return;
         }
-        rotate(dir, exe, MAX_DUMPS - 1);
+        rotate(dir, exe, MAX_DUMPS);
         let prefix = format!("{}\\{exe}.", dir.display());
         let wide: Vec<u16> = prefix.encode_utf16().collect();
         // 前缀 + 最长 pid（10 位）+ ".dmp" + NUL 必须放得进栈缓冲
@@ -238,6 +239,22 @@ mod tests {
         }
     }
 
+    /// 启动时轮转留满 MAX_DUMPS 份（不预先给下一次崩溃腾位置），#1068 r4280472040。
+    #[test]
+    fn startup_rotation_keeps_all_max_dumps() {
+        let src = include_str!("crash_dump.rs");
+        let prod = &src[..src.find("#[cfg(test)]\nmod tests").unwrap_or(src.len())];
+        let calls: Vec<&str> = prod
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//") && l.contains("rotate(dir, exe,"))
+            .collect();
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert!(
+            calls[0].contains("rotate(dir, exe, MAX_DUMPS);"),
+            "{calls:?}"
+        );
+    }
+
     #[test]
     fn rotate_keeps_the_newest_and_touches_nothing_else() {
         let dir = std::env::temp_dir().join(format!("tavotto-dump-rot-{}", std::process::id()));
@@ -249,7 +266,7 @@ mod tests {
         touch(&dir, "python.exe.9.dmp", 9000);
         touch(&dir, "readme.txt", 9000);
 
-        assert_eq!(rotate(&dir, DUMP_EXE, MAX_DUMPS - 1), 2);
+        assert_eq!(rotate(&dir, DUMP_EXE, 4), 2);
         let mut left: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -268,7 +285,7 @@ mod tests {
             ]
         );
         // 已经不超就不动；目录不存在当作没有
-        assert_eq!(rotate(&dir, DUMP_EXE, MAX_DUMPS - 1), 0);
+        assert_eq!(rotate(&dir, DUMP_EXE, 4), 0);
         assert_eq!(rotate(&dir.join("nope"), DUMP_EXE, 0), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
