@@ -684,6 +684,110 @@ test(
 )
 
 test(
+  '功能：画布文字导出 SVG，文件落盘、文字转轮廓且物理尺寸正确',
+  { tag: ['@feature:export.svg'] },
+  async ({ app, page }) => {
+    test.setTimeout(300_000)
+    const a = await app()
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+    const objects = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(objects).toHaveCount(0)
+
+    // 用真实命令新建文字；没有已验证 SVG 同源表示的静态 PDF 不支持 SVG 导出。
+    await page.keyboard.press('ControlOrMeta+k')
+    const addText = page.locator('[data-cmd-id="add-text"]')
+    await expect(addText).toBeVisible()
+    await page.keyboard.type('text')
+    await expectInViewport(page, addText, '添加文字命令')
+    await expectHittable(addText, '添加文字命令')
+    await addText.click()
+    await expect(objects).toHaveCount(1)
+    await expectInViewport(page, objects, '新建的画布文字')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('ControlOrMeta+e')
+
+    const svg = page.locator('[data-export-format="svg"] input')
+    await svg.check()
+    for (const format of ['pdf', 'png', 'eps', 'tiff']) {
+      const checkbox = page.locator(`[data-export-format="${format}"] input`)
+      if (await checkbox.isChecked()) await checkbox.uncheck()
+    }
+    await expect(page.locator('[data-export-svg-note]')).toBeVisible()
+    // 文件名尚无 data 锚点，使用产品的稳定表单 id；独立名称排除夹具里的历史导出。
+    const filename = `feature-svg-${Date.now()}`
+    await page.locator('#export-filename').fill(filename)
+    const confirm = page.locator('input[data-export-confirm]')
+    if (await confirm.count()) await confirm.check()
+    const start = page.locator('[data-export-start]')
+    await expect(start).toBeEnabled()
+    await expectInViewport(page, start, '开始导出 SVG')
+    await expectHittable(start, '开始导出 SVG')
+    const started = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST',
+    )
+    await start.click()
+    const response = await started
+    expect(response.ok()).toBe(true)
+    const request = response.request().postDataJSON() as {
+      scope: string
+      formats: string[]
+      ppi: number | null
+      canvas: { page_w_mm: number; page_h_mm: number; objects: { type: string; text?: string }[] }
+    }
+    expect(request.scope).toBe('canvas')
+    expect(request.formats).toEqual(['svg'])
+    expect(request.ppi).toBeNull()
+    expect(request.canvas.objects).toHaveLength(1)
+    expect(request.canvas.objects[0]).toMatchObject({ type: 'text', text: expect.any(String) })
+    expect(request.canvas.objects[0].text!.trim().length).toBeGreaterThan(0)
+    const job = await response.json() as { export_dir: string }
+    expect(job.export_dir).toBeTruthy()
+    await expect(page.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
+    await expect(page.locator('[data-export-finish]')).toBeVisible()
+    await expect(page.locator('[data-export-failed]')).toHaveCount(0)
+
+    const output = path.join(job.export_dir, `${filename}.svg`)
+    await expect.poll(() => existsSync(output), { timeout: 60_000 }).toBe(true)
+    // 解析的是这次真正落盘的文件，不是画布 DOM 或预览 SVG。
+    const artifact = await page.evaluate((source) => {
+      const doc = new DOMParser().parseFromString(source, 'image/svg+xml')
+      const root = doc.documentElement
+      return {
+        name: root.localName,
+        namespace: root.namespaceURI,
+        parseErrors: doc.querySelectorAll('parsererror').length,
+        paths: Array.from(doc.querySelectorAll('path')).filter((p) => p.getAttribute('d')?.trim()).length,
+        texts: doc.querySelectorAll('text').length,
+        images: doc.querySelectorAll('image').length,
+        width: root.getAttribute('width'),
+        height: root.getAttribute('height'),
+        viewBox: root.getAttribute('viewBox'),
+      }
+    }, readFileSync(output, 'utf8'))
+    expect(artifact).toMatchObject({
+      name: 'svg', namespace: 'http://www.w3.org/2000/svg', parseErrors: 0, texts: 0, images: 0,
+    })
+    expect(artifact.paths, '画布文字必须写成真实字形路径，不能丢字或栅格化').toBeGreaterThan(0)
+    const widthPt = request.canvas.page_w_mm * 72 / 25.4
+    const heightPt = request.canvas.page_h_mm * 72 / 25.4
+    expect(widthPt).toBeGreaterThan(0)
+    expect(heightPt).toBeGreaterThan(0)
+    expect(artifact.width).toMatch(/^[\d.]+pt$/)
+    expect(artifact.height).toMatch(/^[\d.]+pt$/)
+    expect(parseFloat(artifact.width!)).toBeCloseTo(widthPt, 3)
+    expect(parseFloat(artifact.height!)).toBeCloseTo(heightPt, 3)
+    const viewBox = artifact.viewBox!.trim().split(/\s+/).map(Number)
+    expect(viewBox).toHaveLength(4)
+    expect(viewBox.slice(0, 2)).toEqual([0, 0])
+    expect(viewBox[2]).toBeCloseTo(widthPt, 3)
+    expect(viewBox[3]).toBeCloseTo(heightPt, 3)
+  },
+)
+
+test(
   '功能：命令面板 ⌘K 搜索并执行命令——加一段文字、打开快捷键帮助',
   { tag: ['@feature:command.palette'] },
   async ({ app, page }) => {
