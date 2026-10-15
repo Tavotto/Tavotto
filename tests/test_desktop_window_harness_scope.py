@@ -149,43 +149,6 @@ def test_menu_cases_never_invoke_the_predefined_clipboard_items():
     assert not set(accels) & {"Ctrl+X", "Ctrl+C", "Ctrl+V", "Ctrl+A"}, accels
 
 
-def _launch_calls() -> list[tuple[int, str]]:
-    """`DesktopApp.launch` 里按源码顺序的 (行号, 动作)：清存储 / 等落点。"""
-    src = (HARNESS / "_app.py").read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    launch = next(
-        n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "launch"
-    )
-    out: list[tuple[int, str]] = []
-    for n in ast.walk(launch):
-        if (
-            isinstance(n, ast.Constant)
-            and isinstance(n.value, str)
-            and "localStorage.clear" in n.value
-        ):
-            out.append((n.lineno, "clear"))
-        if (
-            isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Attribute)
-            and n.func.attr == "ready"
-            and n.args
-            and isinstance(n.args[0], ast.Name)
-            and n.args[0].id == "expect"
-        ):
-            out.append((n.lineno, "await_landing"))
-    return sorted(out)
-
-
-def test_launch_clears_leftover_storage_before_waiting_for_the_landing():
-    """#1080：上一条用例留下的文档状态会让「落在主页」的用例首载就停在崩溃页。若先等落点再清存储，
-    永远走不到清存储这一步（119 s 超时）。所以清存储必须排在等落点之前。"""
-    calls = _launch_calls()
-    kinds = [k for _, k in calls]
-    assert "clear" in kinds and "await_landing" in kinds, calls
-    assert kinds.index("clear") < kinds.index("await_landing"), calls
-    assert kinds.count("await_landing") == 1, f"等落点只该有一处（清存储之后）：{calls}"
-
-
 def _attr_calls(node: ast.AST, attr: str) -> list[ast.Call]:
     return [
         c

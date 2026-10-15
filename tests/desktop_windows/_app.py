@@ -132,15 +132,13 @@ class DesktopApp:
 
         # ③ 附着并等页面换到 sidecar 的源上
         self.driver = Driver(self.driver_url, f"127.0.0.1:{self.port}")
-        self.ready("any", timeout=max(5.0, deadline - time.monotonic()), inject=False)
+        self.ready(expect, timeout=max(5.0, deadline - time.monotonic()))
         # ④ 用例之间的隔离：壳把端口记在 Tauri 的 app_config_dir（#718，ADR 0108——这正是 #715 要的
         # 「origin 跨启动不变」），WebView2 的用户数据目录也是全机一份。于是本 job 里所有启动（前面装机
         # 冒烟的、上一条用例的）落在同一个 origin，UI 偏好（左栏收起、上次打开的排版……）跨用例带过来：
         # 2026-09-30 nightly 36588916009 里 9/12 条都卡在「左栏收起、找不到素材卡」。以前每次启动端口随机
         # = 新 origin = 空存储，隔离是白捡的。这里在**本条用例第一次**起来时清掉这个 origin 的本机存储
         # 再重载；同一条用例里的「关掉再开 / 强杀再开」不清——第 9 / 12 项量的正是它们跨启动留下来。
-        # **清存储必须先于等落点**：上一条用例留下的文档状态（#1080：drag_undo 放过图）会让「落在主页」
-        # 的那条用例首载就停在崩溃页，若先等落点就永远走不到清存储这一步（119 s 超时）
         # 不靠 WEBVIEW2_USER_DATA_FOLDER / 改 LOCALAPPDATA：Tauri 自己给 WebView2 传数据目录（取自系统
         # 已知文件夹），环境变量是否生效要另证，而这条做法不依赖它
         if self.fresh:
@@ -155,7 +153,7 @@ class DesktopApp:
                 "addEventListener('pagehide', () => { localStorage.clear(); sessionStorage.clear() },"
                 " { once: true }); location.reload()"
             )
-        self.ready(expect, timeout=max(5.0, deadline - time.monotonic()))
+            self.ready(expect, timeout=max(5.0, deadline - time.monotonic()))
         # sidecar 等子进程：关掉 / 杀掉之后要逐个确认它们跟着没了
         self._capture_tree()
         return self.driver
@@ -173,7 +171,7 @@ class DesktopApp:
             p.close()
         self.tree = []
 
-    def ready(self, expect: str = "project", timeout: float = 60.0, inject: bool = True) -> None:
+    def ready(self, expect: str = "project", timeout: float = 60.0) -> None:
         """等界面落到 `expect`（project / home / any）；页面重新加载之后也调它。"""
         d = self.driver
         assert d is not None
@@ -182,7 +180,7 @@ class DesktopApp:
             d.wait_js(PROJECT_OPEN, timeout=timeout, what="项目编辑器（data-project-switcher）")
         elif expect == "home":
             d.wait_js(HOME_SHOWN, timeout=timeout, what="主页（data-home-variant）")
-        if inject and self.inject_js:
+        if self.inject_js:
             d.js(self.inject_js)
 
     def window(self) -> w.Window | None:
