@@ -64,7 +64,7 @@ import { Notice } from '../ui/Notice'
 import { Tip } from '../ui/Tooltip'
 import { DrawerHeaderActions, DrawerTitleMeta } from './DrawerHeader'
 import { runBatchFix, useBatchable } from './IssueFixButton'
-import { CategoryCards, FigureCards, SeverityGlyph, UnverifiableEntry } from './ProblemCards'
+import { CategoryCards, FigureCards, UnverifiableEntry } from './ProblemCards'
 import { ProblemTreeContext, type ProblemTreeCtx } from './problemTree'
 import { GroupNode } from './ProblemTreeRows'
 import { useScopedProblems } from './useProblemScope'
@@ -87,11 +87,11 @@ const pr = (key: string, values?: Record<string, unknown>) =>
  * * **标题行**（`LeftPanel` 的 36px 头）：「问题」+ 范围胶囊「当前图 13 ▾」（两档各带自己的数，
  *   判据 `lib/problemList`，与清单同一份）+ 正在重新检查的 shimmer；「⋯」里是分组方式（按图 / 按类别）、
  *   画布标记开关、重新检查。轨道上不挂数字：有阻断项时一颗红点，数字在可达名里。
- * * **摘要条**（32px）：等级开关（只有阻断着色）+ 唯一一颗填色主动作「全部修复 N」（`batchable()`，不含建议档）。
+ * * **摘要条**（32px）：等级开关（计数芯片，颜色只在圆点上）+ ghost 的「全部修复 N」（`batchable()`，不含建议档）。
  *   总数与等级比例条删掉了——数字在开关上各说一遍。
  * * **树**：图（32）→ 子图（28）→ 规则（28）→ 对象（28），全部建在 `listRowClass` 上、**就地展开**；
  *   「按类别」是 类别 → 规则 → 对象。只有一张拆不出子图的图时跳过分桶层，规则直接在顶层。
- *   每行一个 88px 尾随格：静止时是值，指到 / 聚焦 / 当前时同一格换成「修复」（一个动词：修复 / 修复… / 修复 N）。
+ *   每行一个 112px 尾随格：静止时是值，指到 / 聚焦 / 当前时同一格换成「修复」（一个动词：修复 / 修复… / 修复 N）。
  *   「无法核验」不进分桶，在树底只占一行。
  * * **定位后清单留在原地**：点一行 = `focusIssue`，正在处理的那一条是选中底（600 + selected，
  *   不只靠颜色）；底部「上一项 / 下一项」，F8 / ⇧F8 同一个动作，走到一支的尽头接着走下一支。
@@ -680,8 +680,8 @@ function PanelMenu({ view }: { view: ProblemView }) {
 /* ------------------------------- 摘要条 ----------------------------------- */
 
 /**
- * 等级开关：记号 + 数，可切换（aria-pressed）。与导出对话框的检查摘要同一个小组件（`ui/CountChip`）：
- * 底一律中性，不再给阻断整块染色——等级由记号的形状与颜色说，名字在可达名里。
+ * 等级开关：圆点 + 数，可切换（aria-pressed）。与导出对话框的检查摘要同一个小组件（`ui/CountChip`）：
+ * 底与数字一律中性，颜色只在 6px 圆点上（要改 = danger、留意 = warn，其余灰）；等级名在可达名里。
  */
 function SeverityToggle({ severity, count, active }: { severity: Severity; count: number; active: boolean }) {
   const label = severityLabel(severity)
@@ -697,7 +697,7 @@ function SeverityToggle({ severity, count, active }: { severity: Severity; count
         data-problem-severity={severity}
         pressed={active}
         aria-label={pr('filterAria', { label, count })}
-        lead={<SeverityGlyph severity={severity} size="sm" />}
+        tone={severity === 'error' ? 'danger' : severity === 'warn' ? 'warn' : 'quiet'}
         count={count}
         label={label}
         hideLabel
