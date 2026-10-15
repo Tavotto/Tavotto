@@ -32,7 +32,8 @@ export function ResizeHandle({
    * 登记「取消这次拖动」的出口，返回注销函数（调用方传 `store/gestureCoordinator.registerPointerCancel`：
    * 原语不 import store）。拖动期间 `useKeyboard` 的 Esc 经它回滚，ContextBar 等别的 Esc 监听据此让位
    */
-  registerCancel: (cancel: () => void) => () => void
+  /** 登记 Esc 的取消出口；别的指针手势占着时回 null——这时不开始拖动（不抢它的出口） */
+  registerCancel: (cancel: () => void) => (() => void) | null
   /** 稳定钩子 `data-resize-handle`（`left-drawer` / `inspector`）：e2e 按它找，不按 role + aria-value* */
   name: string
   /** 把手贴在容器的哪一边：右缘（左抽屉，向右拖 = 变宽）或左缘（属性栏，向左拖 = 变宽） */
@@ -91,11 +92,13 @@ export function ResizeHandle({
     e.preventDefault()
     // 已经在拖：第二根手指 / 第二支笔不接管（否则会覆盖起点、注销第一支的 Esc 回滚出口）
     if (drag.current) return
-    drag.current = { id: e.pointerId, x0: e.clientX, from: value }
     // Esc 的归属走仓库现成的指针手势协议：登记取消出口，`useKeyboard` 在 Esc 时先 `cancelActivePointerGesture()`
-    // 并吞掉这一下——不自己在 window 上再挂一个 Esc 监听（那挡不住 ContextBar 等其它捕获监听，Codex #1102）
-    unregister.current?.()
-    unregister.current = registerCancel(() => finish(true))
+    // 并吞掉这一下——不自己在 window 上再挂一个 Esc 监听（那挡不住 ContextBar 等其它捕获监听，Codex #1102）。
+    // 别的指针手势（画布拖动）正占着出口时不开始：它的 Esc 回滚不能被我们顶掉
+    const release = registerCancel(() => finish(true))
+    if (!release) return
+    unregister.current = release
+    drag.current = { id: e.pointerId, x0: e.clientX, from: value }
     try {
       e.currentTarget.setPointerCapture?.(e.pointerId)
     } catch {

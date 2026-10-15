@@ -5,7 +5,12 @@
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { cancelActivePointerGesture, hasActivePointerGesture, registerPointerCancel } from '@/store/gestureCoordinator'
+import {
+  cancelActivePointerGesture,
+  hasActivePointerGesture,
+  registerPointerCancel,
+  tryRegisterPointerCancel,
+} from '@/store/gestureCoordinator'
 import { ResizeHandle } from './ResizeHandle'
 
 declare global {
@@ -38,7 +43,7 @@ function Harness({ side, start = 300 }: { side: 'left' | 'right'; start?: number
         }}
         label="调整宽度"
         name="test-handle"
-        registerCancel={registerPointerCancel}
+        registerCancel={tryRegisterPointerCancel}
       />
     </div>
   )
@@ -165,6 +170,23 @@ describe('ResizeHandle', () => {
     await act(async () => void expect(cancelActivePointerGesture()).toBe(true))
     expect(width).toBe(300)
     expect(sep().dataset.dragging).toBeUndefined()
+  })
+
+  it('别的指针手势（画布拖动）占着 Esc 出口时，按到把手不开始拖动、不顶掉它的出口', async () => {
+    await mount('right', 300)
+    let canvasCancelled = 0
+    const releaseCanvas = registerPointerCancel(() => void canvasCancelled++)
+    try {
+      await pointer(sep(), 'pointerdown', 100, { pointerId: 2 })
+      expect(sep().dataset.dragging).toBeUndefined()
+      await pointer(sep(), 'pointermove', 150, { pointerId: 2 })
+      expect(width).toBe(300)
+      await act(async () => void expect(cancelActivePointerGesture()).toBe(true))
+      expect(canvasCancelled).toBe(1)
+      expect(width).toBe(300)
+    } finally {
+      releaseCanvas()
+    }
   })
 
   it('pointercancel（系统打断）同样回滚', async () => {
