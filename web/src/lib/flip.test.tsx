@@ -78,9 +78,9 @@ function stubGeometry() {
   })
 }
 
-function List({ ids }: { ids: string[] }) {
+function List({ ids, skipKey }: { ids: string[]; skipKey?: string }) {
   const ref = useRef<HTMLDivElement>(null)
-  useFlip(ref)
+  useFlip(ref, 'data-flip-id', skipKey)
   return (
     <div ref={ref}>
       {ids.map((id) => (
@@ -137,6 +137,23 @@ describe('useFlip', () => {
     expect(by.b.dy).toBe(24)
     expect(by.c.dy).toBe(24)
     expect(calls.every((c) => c.dx === 0)).toBe(true)
+  })
+
+  it('skipKey 变了的那一次提交只记位置、不播（别的动画在管这批位移）；之后的重排照常播', () => {
+    place(['a', 'b', 'c'])
+    act(() => root.render(<List ids={['a', 'b', 'c']} skipKey="" />))
+    // 展开 / 折叠：下面的行位移了，skipKey 同时变——不播
+    place(['a', 'b', 'c'])
+    layout.set('b', { left: 0, top: 80 })
+    layout.set('c', { left: 0, top: 104 })
+    calls = []
+    act(() => root.render(<List ids={['a', 'b', 'c']} skipKey="g1" />))
+    expect(calls, 'skipKey 变了：FLIP 不叠加子树自己的高度过渡').toHaveLength(0)
+    // 基准已更新：同一 skipKey 下再重排，照常播
+    place(['c', 'b', 'a'])
+    calls = []
+    act(() => root.render(<List ids={['c', 'b', 'a']} skipKey="g1" />))
+    expect(calls.length).toBeGreaterThan(0)
   })
 
   it('位置没变的项一个都不播', () => {

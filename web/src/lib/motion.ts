@@ -213,8 +213,17 @@ export function drawerMotion({ state, overlay, width, side }: DrawerMotionOption
  *    那套两帧把戏，也不会和元素自己的 transform 类抢同一个属性声明。
  *    reduced-motion 下整个跳过——WAAPI 同样不受 index.css 的全局 override 管。
  */
-export function useFlip(container: RefObject<HTMLElement | null>, attr = 'data-flip-id'): void {
+export function useFlip(
+  container: RefObject<HTMLElement | null>,
+  attr = 'data-flip-id',
+  skipKey?: unknown,
+): void {
   const prev = useRef(new Map<string, { left: number; top: number }>())
+  // `skipKey` 与上一次提交不同 = 这一次的位移另有动画负责（树里展开 / 折叠一个组：子树自己有 grid 高度过渡，
+  // 下面的行再被 FLIP 滑一遍就是两倍位移，还会先往上跳），照常量位置存基准，只是不播
+  const prevSkip = useRef(skipKey)
+  const skipThis = prevSkip.current !== skipKey
+  prevSkip.current = skipKey
 
   useLayoutEffect(() => {
     const root = container.current
@@ -241,7 +250,7 @@ export function useFlip(container: RefObject<HTMLElement | null>, attr = 'data-f
       const left = r.left - t.x - ox
       const top = r.top - t.y - oy
       next.set(id, { left, top })
-      if (reduced) continue
+      if (reduced || skipThis) continue
       const old = prev.current.get(id)
       if (!old) continue // 新来的项没有「原来的位置」，直接就位
       // 布局没变：正在播的那段（如果有）照常播完，不打断、不重起

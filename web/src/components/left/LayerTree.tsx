@@ -80,7 +80,13 @@ export function LayerTree() {
   const listRef = useRef<HTMLUListElement>(null)
   // 重排是 drop 那一刻整列换位的（拖动中只有一条落点提示线）；折叠/展开组
   // 也会让下面所有行整体位移。不给动效的话行「啪」地跳，看不出是哪一行动了
-  useFlip(listRef, 'data-layer')
+  // 展开 / 折叠一个组时，组成员的 grid 高度过渡（`TreeBranch`）已经在负责下面行的位移，FLIP 这一次不播
+  // （否则位移叠成两倍，还会先往上跳）；FLIP 只留给重排（拖放、层级调整）
+  const collapsedKey = Object.keys(collapsed)
+    .filter((k) => collapsed[k])
+    .sort()
+    .join(',')
+  useFlip(listRef, 'data-layer', collapsedKey)
 
   // 画布 / 其他面板上改选的图层可能在长列表的视口之外：一律滚到恰好看得见（与图内元素树同一写法；
   // 不平滑，所以 reduced-motion 下也是即时的）——哪怕树此刻还持有焦点。只有**用户在树里**用键盘 / 点击

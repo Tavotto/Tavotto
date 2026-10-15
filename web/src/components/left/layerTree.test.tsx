@@ -420,3 +420,42 @@ describe('空态（UI 2.0 第二轮 09）', () => {
     expect(line.querySelector('button, a, [role="button"], [role="link"]')).toBeNull()
   })
 })
+
+describe('展开 / 折叠组时不走 FLIP（TreeBranch 的 grid 过渡单独负责），重排照旧', () => {
+  it('折叠 / 展开组的那次提交里，下面的行位移不播 FLIP；之后别的原因造成的位移照播', async () => {
+    const anims: string[] = []
+    let shift = 0
+    const protoRect = HTMLElement.prototype.getBoundingClientRect
+    const protoAnimate = (Element.prototype as { animate?: unknown }).animate
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      const id = this.getAttribute('data-layer')
+      const top = id === 'p4' ? 100 + shift : id ? 10 : 0
+      return { left: 0, top, width: 100, height: 20, right: 100, bottom: top + 20, x: 0, y: top } as DOMRect
+    }
+    ;(Element.prototype as { animate?: unknown }).animate = function (this: Element) {
+      anims.push((this as HTMLElement).dataset.layer ?? '')
+      return { finished: Promise.resolve(), cancel() {} } as unknown as Animation
+    }
+    try {
+      await mount([
+        panel('p1', 'A'),
+        { ...panel('p2', 'B'), groupId: 'g1' } as CanvasObject,
+        { ...panel('p3', 'C'), groupId: 'g1' } as CanvasObject,
+        panel('p4', 'D'),
+      ])
+      anims.length = 0
+      // 折叠组：p4 随之上移 40，同一次提交——不播
+      shift = -40
+      const toggle = rows().find((r) => r.dataset.layer === 'g:g1')!.querySelector('button')!
+      await act(async () => toggle.click())
+      expect(anims).not.toContain('p4')
+      // 之后因别的原因（重排）位移：照播
+      shift = 20
+      await act(async () => useSelectionStore.getState().set(['p4']))
+      expect(anims).toContain('p4')
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = protoRect
+      ;(Element.prototype as { animate?: unknown }).animate = protoAnimate
+    }
+  })
+})
