@@ -201,7 +201,7 @@ function ErrorBody({ text }: { text: string }) {
   }, [copied])
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
-      <span className="shrink-0 font-medium text-danger-content">{t('status.errorTitle')}</span>
+      <span className="shrink-0 font-medium text-ink">{t('status.errorTitle')}</span>
       <span aria-hidden className="shrink-0 text-ink-faint">·</span>
       {/* 截断落在里层且是块级：行内的 span 上 overflow / text-overflow 不生效，长路径会穿到按钮底下（Codex #995） */}
       <SwapText className="min-w-0 flex-1" textClassName="block truncate text-ink-2" text={text} title={text} />

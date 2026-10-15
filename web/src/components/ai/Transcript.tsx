@@ -123,7 +123,7 @@ export function Turn({
         <span className="shrink-0">{sessionAgentLabel(caps, session)} ·</span>
         <SwapText
           text={statusText(session)}
-          textClassName={running ? 'text-shimmer' : failed ? 'text-danger' : 'text-ink-3'}
+          textClassName={running ? 'text-shimmer' : 'text-ink-3'}
           data-ai-status={session.status}
         />
         {total != null && !running && <span className="type-number shrink-0 text-ink-3">· {formatDuration(total)}</span>}
