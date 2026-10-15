@@ -4,12 +4,6 @@ import { Button } from './Button'
 import type { Variant } from './buttonClass'
 
 /**
- * 条目少于这个数时不显示搜索框（有搜索词时保留，免得把人困在筛空的列表里）：
- * 三五个条目靠眼睛扫比敲字快，常驻一个搜索框只是占 36px。
- */
-export const SEARCH_MIN_ITEMS = 6
-
-/**
  * 统一空状态（v2，2026-10-07 设计审计 §3.9）：一枚图标坐在 40px 的 lg 圆角底座上（surface-hover）+
  * 标题（type-title 15 / 600）+ 至多一句说明（type-caption，限宽 42ch）+ 至多一个主动作（32px `lg`）
  * （+ 至多一个次级链接，只给画布这种「起步」空态用），在可用区域内水平垂直居中。
