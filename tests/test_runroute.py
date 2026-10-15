@@ -1,4 +1,4 @@
-"""V2 PR2：运行前路由 `runroute`（ADR 0130）的规则向量、优先级与同源钉。
+"""V2 PR2：运行前路由 `runroute`（ADR 0133）的规则向量、优先级与同源钉。
 
 向量表驱动：脚本片段 → 期望的路由 / 命中规则。每条「高置信直达 native」的向量对应一个运行期会被拦的形状
 （`BlockedFileOps` 的观察：`tests/test_runroute_consistency.py` 用真 safe worker 逐条核对静态与运行期不分叉）。
@@ -24,7 +24,7 @@ def _ungated(src):
 
 
 def _route(src, *, cwd=runroute.CWD_SANDBOX, gate=False, **kw):
-    """`gate=False`：这些向量测的是 R1–R4 **规则引擎**本身，所以抹掉伤害闸门的事实（ADR 0130「伤害闸门」）；
+    """`gate=False`：这些向量测的是 R1–R4 **规则引擎**本身，所以抹掉伤害闸门的事实（ADR 0133「伤害闸门」）；
     闸门自己的用例显式 `gate=True`。生产路径永远带闸门：含守卫操作的脚本（R3 的 `os.replace` 就是）一律不直达 native。"""
     facts = runroute.facts_of(textwrap.dedent(src))
     if not gate:
@@ -590,7 +590,7 @@ def test_a_large_script_is_analyzed_in_milliseconds_not_seconds():
     )
     start = runroute.time.perf_counter()
     runroute.decide(runroute.facts_of(body), cwd_mode="sandbox", project_root=ROOT, script=SCRIPT)
-    assert runroute.time.perf_counter() - start < 5.0  # 上限护栏，不是基准；基准数字记在 ADR 0130
+    assert runroute.time.perf_counter() - start < 5.0  # 上限护栏，不是基准；基准数字记在 ADR 0133
 
 
 # ---------------------------------------------------------------- 同源钉

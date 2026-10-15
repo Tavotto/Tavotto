@@ -1,4 +1,4 @@
-"""V2 PR2：运行前路由接进桌面准备会话（ADR 0130）——**假 pool、假 native runner**。
+"""V2 PR2：运行前路由接进桌面准备会话（ADR 0133）——**假 pool、假 native runner**。
 
 验接线：桌面准备会话不指定 `execution` 时由 `runroute` 在 safe / native 之间挑；高置信读回直达 native（safe 一次都不跑）；
 普通绘图走 safe；`safe_only` / 运维开关 / 上次 native 成功各自的优先级；显式 `execution` 与 CLI / MCP 路径不经路由。
@@ -370,9 +370,10 @@ def test_the_route_reaches_the_local_diagnostics_as_closed_sets_only(
     assert str(tmp_path) not in blob and "stage.png" not in blob and "Image" not in blob
 
 
-def test_session_key_of_auto_equals_the_default_key():
+def test_session_key_of_auto_is_prefixed_and_the_default_key_is_unchanged():
     base = {"kind": "script", "script": "fig.py"}
-    assert prepsession.target_key({**base, "execution": "auto"}) == prepsession.target_key(base)
+    assert prepsession.target_key(base) == "script:fig.py"
+    assert prepsession.target_key({**base, "execution": "auto"}) == "auto|script:fig.py"
     assert prepsession.target_key({**base, "execution": "native"}).startswith("native|")
 
 
@@ -528,12 +529,19 @@ def test_an_explicit_safe_request_is_never_overridden_by_the_router(
     assert final["attempt_history"][0]["profile"] == "safe"
 
 
-def test_explicit_safe_and_omitted_execution_are_different_sessions():
+def test_explicit_safe_and_auto_execution_are_different_sessions():
+    """引擎层省略 = safe（会话键与 main 逐字节相同）；`auto` 由 HTTP 入口显式带进目标，与 safe / native 各有各的会话。"""
     base = {"kind": "script", "script": "fig.py"}
-    assert prepsession.target_key({**base, "execution": "safe"}) != prepsession.target_key(base)
-    assert prepsession.target_key({**base, "execution": "safe"}) != prepsession.target_key(
-        {**base, "execution": "auto"}
-    )
+    assert prepsession.target_key({**base, "execution": "safe"}) == prepsession.target_key(base)
+    auto = prepsession.target_key({**base, "execution": "auto"})
+    assert auto != prepsession.target_key(base)
+    assert auto != prepsession.target_key({**base, "execution": "native"})
+
+
+def test_an_omitted_execution_in_the_request_reaches_the_router_as_auto(client, tmp_path):
+    _setup(client, tmp_path, READBACK)
+    report = client.post(SESSIONS, json={"script": "fig.py"}).get_json()
+    assert report["plan"].get("route") is not None
 
 
 def _claim_with_hook(client, tmp_path, fake_pool, native, hook, monkeypatch):

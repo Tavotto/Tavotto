@@ -1,4 +1,4 @@
-"""V2 PR2 验收：真服务子进程 + 真用户 Python + 真文件，穿过**真实公共入口**（准备会话）的运行前路由（ADR 0130）。
+"""V2 PR2 验收：真服务子进程 + 真用户 Python + 真文件，穿过**真实公共入口**（准备会话）的运行前路由（ADR 0133）。
 
 独立可观测事实只来自脚本自己写在项目外的文件（`compute.log`：脚本每执行一遍写一个字符）与项目里真实发生的文件操作，
 不来自被测接口的回显。**这里不是真桌面窗口**：窗口 / Tauri 壳 / Windows 真机归 P10。
@@ -134,7 +134,7 @@ def test_savefig_then_image_open_goes_straight_to_native_and_executes_once(tmp_p
 
 
 def test_tmp_write_replace_then_read_is_gated_to_safe_and_falls_back_to_native(tmp_path):
-    """伤害闸门（ADR 0130）：含守卫操作（`os.replace`）的脚本运行前不直达 native；safe 被拦后由 0127 同会话静默回退，
+    """伤害闸门（ADR 0133）：含守卫操作（`os.replace`）的脚本运行前不直达 native；safe 被拦后由 0127 同会话静默回退，
     `os.replace` 最终在 native 里真实发生。"""
     proj, log = _project(tmp_path, REPLACE)
     with sidecar_app(proj, tmp_path / "work", env_overrides=ENV) as app:

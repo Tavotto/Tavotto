@@ -1,4 +1,4 @@
-"""V2 PR2：运行前路由的边界——零执行、只在用户发起的路径里被调用（ADR 0130）。
+"""V2 PR2：运行前路由的边界——零执行、只在用户发起的路径里被调用（ADR 0133）。
 
 * `runroute` 只做 `ast.parse` 与文本运算：不 import 用户代码、不起进程、不连网络、不 `find_spec`；
 * 被动扫描（项目打开 / 刷新 / 清单）一次都不调它；除准备计划（`preparation`）外没有任何模块 import 它；
@@ -129,7 +129,7 @@ def test_only_the_preparation_layer_imports_runroute():
                 a.name.endswith("runroute") for a in node.names
             ):
                 importers.append(path.relative_to(SRC).as_posix())
-    assert sorted(set(importers)) == ["engine/preparation.py", "engine/prepsession.py"]
+    assert sorted(set(importers)) == ["engine/preparation.py"]
 
 
 def test_passive_project_scanning_never_calls_the_router(tmp_path, monkeypatch):

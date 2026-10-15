@@ -121,7 +121,7 @@ import matplotlib.pyplot as plt
 with open({log!r}, "a") as f:   # 执行次数：脚本每跑一遍写一个字符
     f.write("x")
 here = Path(__file__).resolve().parent
-name = os.environ.get("CACHE_NAME", "cache")  # 动态路径：运行前路由（ADR 0130）看不出读回，留给 safe 实跑 + 回退
+name = os.environ.get("CACHE_NAME", "cache")  # 动态路径：运行前路由（ADR 0133）看不出读回，留给 safe 实跑 + 回退
 tmp, final = here / (name + ".tmp"), here / (name + ".csv")
 tmp.write_text("2")
 os.replace(tmp, final)
