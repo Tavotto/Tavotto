@@ -562,12 +562,11 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   restoreSubmission: (sub) => {
     if (get().submissions[sub.rid]) return
-    // 这条请求对应的运行中会话已经作为占位接回来了（`restoreRunning` 先到）：已被后端接受，直接并上去，不再摆「未确认」
-    if (get().sessions.some((x) => x.requestId === sub.rid)) {
-      adoptRunningSession(sub.rid, { ...sub, phase: 'unconfirmed' })
-      return
-    }
     set((s) => ({ submissions: { ...s.submissions, [sub.rid]: { ...sub, phase: 'unconfirmed' } } }))
+    // 这条请求对应的运行中会话已经作为占位接回来了（`restoreRunning` 先到）：后端的运行中记录就是它被接受的证据，
+    // 走**同一个**「已被接受」函数 `accept`（与 `settleFromSnapshot` 的收尾同一处），不再摆「未确认」
+    const placeholder = get().sessions.find((x) => x.requestId === sub.rid)
+    if (placeholder) acceptRunning(sub.rid, placeholder)
   },
 
   appendDelta: (sid, kind, text, rid) => {
@@ -682,32 +681,29 @@ export const useAiStore = create<AiState>((set, get) => ({
 }))
 
 /**
- * 一条未落定的提交遇到了带同一个请求 id 的运行中会话（占位）：这条请求**已被后端接受**。
- * 清账本（草稿文本照旧按「仍等于提交原文才删」）、把提交的归属（面板 / 目标 / 原文）并到占位上、去掉未确认状态。
- * 两个入口（`restoreRunning` 与 `reconcile`→`restoreSubmission`）谁先到都走这里，不各写各的。
+ * 一条未落定的提交遇到了带同一个请求 id 的运行中会话（占位）= 这条请求**已被后端接受**，仍在运行。
+ * 判断「已被接受」只有 `accept` 一处：这里不另写一套，只是把占位当作「请求快照说 running」交给它——
+ * 它清账本（草稿按「仍等于提交原文才删」）、把提交的归属并到已有的同 id 会话上、去掉未确认状态。
+ * 两个入口（`restoreRunning` 与 `reconcile`→`restoreSubmission`）谁先到都走这里。
  */
-function adoptRunningSession(rid: string, sub: AiSubmission): void {
-  removeAccepted(sub.project, sub.fileId, rid)
-  useAiStore.setState((s) => {
-    const { [rid]: _gone, ...rest } = s.submissions
-    return {
-      submissions: rest,
-      sessions: s.sessions.map((x) =>
-        x.requestId === rid
-          ? {
-              ...x,
-              panelId: sub.panelId,
-              fileId: sub.fileId,
-              gid: sub.target.gid,
-              scope: sub.target.scope,
-              target: sub.target.target,
-              prompt: sub.prompt,
-              restored: false,
-            }
-          : x,
-      ),
-    }
-  })
+function acceptRunning(rid: string, session: AiSession): void {
+  accept(rid, session.id, session.script, { kind: 'queried', status: 'running', changed: false, detail: null })
+}
+
+/**
+ * 读一个会话的详情快照（**全文件只有这一处调 `fetchAiSession`**，`settleFromSnapshot` 与断线收尾共用）：
+ * `{ ok: true, detail }`；后端明确说没有详情（404）→ `{ ok: true, detail: null }`；其余失败 = 不知道 → `{ ok: false }`。
+ */
+async function readSessionDetail(
+  sid: string,
+  project: string | null,
+): Promise<{ ok: true; detail: AiSessionDetail | null } | { ok: false }> {
+  try {
+    return { ok: true, detail: await fetchAiSession(sid, project) }
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) return { ok: true, detail: null }
+    return { ok: false }
+  }
 }
 
 let restoring: Promise<void> | null = null
@@ -764,12 +760,13 @@ async function doRestore(): Promise<void> {
       // 对应的提交（`reconcile` 先到、占位后到）已在列表里：后端的运行中记录就是它被接受的证据——直接并上去
       const rid = e.client_request_id
       const sub = rid ? get().submissions[rid] : undefined
-      if (rid && sub) adoptRunningSession(rid, sub)
+      if (rid && sub) acceptRunning(rid, get().sessions.find((x) => x.id === e.id) as AiSession)
     }
     // 本地还当它在跑、后端的运行中清单里却没有：它在断线期间结束了，`ai.done` 没收到——以后端为准收尾
     for (const x of get().sessions) {
       if (x.status !== 'running' || x.finalized || live.has(x.id)) continue
-      const d = await fetchAiSession(x.id, x.project).catch(() => null)
+      const snap = await readSessionDetail(x.id, x.project)
+      const d = snap.ok ? snap.detail : null
       if (born !== get().generation || typeof d?.status !== 'string' || d.status === 'running') continue
       const done: DonePayload = {
         session: x.id,

@@ -302,4 +302,13 @@ describe('占位与「已发出未确认」「按脚本的发送锁」并存（P
     })
     expect(Object.keys(useAiStore.getState().submissions)).toEqual(['rid-mine-0000001'])
   })
+
+  it('结构性（源码）：「已被接受」只有 accept 一处；占位对上请求 id 与请求快照共用它（没有第二套 adopt 逻辑）', async () => {
+    const src = (await import('./aiStore.ts?raw')).default as string
+    expect(src).not.toContain('adoptRunningSession')
+    expect(src.match(/fetchAiSession\(/g)).toHaveLength(1) // 快照的详情只在 readSessionDetail 一处读（restore 收尾与 settleFromSnapshot 共用）
+    expect(src.match(/readSessionDetail\(/g)!.length).toBeGreaterThanOrEqual(3) // 定义 + settleFromSnapshot + 断线收尾
+    // acceptRunning 只是把占位当「请求快照说 running」交给 accept
+    expect(src).toMatch(/function acceptRunning[\s\S]{0,200}accept\(rid, session\.id/)
+  })
 })
