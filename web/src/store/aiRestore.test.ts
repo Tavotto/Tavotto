@@ -21,6 +21,7 @@ const row = (over: Row = {}): Row => ({
   ...over,
 })
 let history: Record<string, Row[]> = {} // pj → 运行中清单
+let requestsDown = false // `GET /api/ai/requests/<rid>` 回 500（读不到）
 let requestsDb: Record<string, Row> = {} // rid → `GET /api/ai/requests/<rid>` 的回答（没有 = 后端没登记过）
 let holds: Record<string, Promise<void>> = {} // pj → 扣住该项目的历史请求（「恢复在途」）
 const historyCalls: string[] = [] // 发过历史请求的项目
@@ -39,6 +40,7 @@ globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     return json({ total: 0, sessions: history[pj] ?? [] })
   }
   const rq = /\/api\/ai\/requests\/([^/?]+)$/.exec(u.split('?')[0])
+  if (rq && requestsDown) return json({ error: 'boom', code: 'internal_error' }, 500)
   if (rq) return requestsDb[rq[1]] ? json(requestsDb[rq[1]]) : json({ error: 'x', code: 'ai_request_not_found' }, 404)
   const m = /\/api\/ai\/sessions\/([^/?]+)$/.exec(u.split('?')[0])
   if (m) return detail[m[1]] ? json(detail[m[1]]) : json({ error: 'nf' }, 404)
@@ -51,6 +53,7 @@ const sessions = () => useAiStore.getState().sessions
 
 beforeEach(() => {
   history = {}
+  requestsDown = false
   requestsDb = {}
   holds = {}
   historyCalls.length = 0
@@ -463,5 +466,64 @@ describe('「已被接受」不管从哪条路径进来，效果都一样（行�
     urls.length = 0
     await useAiStore.getState().settleRunningSessions() // 已终态：不再读
     expect(urls.filter((u) => u.includes('/api/ai/sessions/'))).toEqual([])
+  })
+})
+
+describe('还原出的未确认提交自动按快照收尾，不等用户点「查询结果」（#1111 Codex P2）', () => {
+  const SUB = {
+    rid: 'rid-auto-00001', project: 'pa', fileId: 'Fig1.pdf', panelId: 'p1', script: 'fig1.py', prompt: '把线条加粗',
+    target: { scope: 'figure' as const, gid: null, label: null, target: '整张图' }, canvas: null, overrides: [],
+  }
+  beforeEach(() => useAiStore.getState().clear()) // 自动收尾的次数记录按代次清零（rid 在用例间复用）
+  const requestReads = () => urls.filter((u) => u.includes('/api/ai/requests/')).length
+  const runPosts = () => urls.filter((u) => u.includes('/api/ai/run')).length
+
+  it('刷新期间任务结束：运行中历史是空的、账本稍后才到——会话自动收尾成终态、有通知、脚本不锁，全程没点查询', async () => {
+    history.pa = [] // 刷新时任务已经结束：运行中清单里没有它
+    await useAiStore.getState().restoreRunning()
+    expect(sessions()).toEqual([])
+    requestsDb[SUB.rid] = { session: 's-end', status: 'done', changed: true, script: 'fig1.py' }
+    detail['s-end'] = { agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' } }
+    useAiStore.getState().restoreSubmission(SUB) // 账本稍后到（reconcile 还原）
+    await vi.waitFor(() => expect(sessions()).toHaveLength(1))
+    expect(sessions()[0]).toMatchObject({ id: 's-end', status: 'done', changed: true, finalized: true }) // 对照：旧实现停在「未确认」等用户点
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([])
+    expect(sessions().some((x) => x.status === 'running')).toBe(false) // 发送解锁
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed') // 通知（含 refresh 警告）
+    expect(runPosts()).toBe(0) // 只读：没有发出任何 run
+  })
+
+  it('同一个 rid 在途时只查一次（去重）：对账连着带来同一条也不重复请求', async () => {
+    requestsDb[SUB.rid] = { session: 's-end', status: 'done', changed: false, script: 'fig1.py' }
+    detail['s-end'] = { agent: 'codex', status: 'done', changed: false, diff: '', transcript: [] }
+    const st = useAiStore.getState()
+    st.restoreSubmission(SUB)
+    st.restoreSubmission(SUB)
+    st.restoreSubmission(SUB)
+    await vi.waitFor(() => expect(sessions()).toHaveLength(1))
+    expect(requestReads()).toBe(1)
+  })
+
+  it('有上限：读不到时每个 rid 最多自动查 5 次，之后不再自动查（手动「查询结果」仍可用）', async () => {
+    requestsDown = true
+    const st = useAiStore.getState()
+    for (let i = 0; i < 8; i++) {
+      st.restoreSubmission(SUB) // 每次对账都带来同一条
+      await vi.waitFor(() => expect(urls.filter((u) => u.includes('/api/ai/requests/')).length).toBeGreaterThanOrEqual(Math.min(i + 1, 5)))
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    expect(requestReads()).toBe(5)
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual([SUB.rid]) // 仍是未确认，等手动兜底
+    requestsDown = false
+    requestsDb[SUB.rid] = { session: 's-end', status: 'done', changed: false, script: 'fig1.py' }
+    detail['s-end'] = { agent: 'codex', status: 'done', changed: false, diff: '', transcript: [] }
+    await expect(useAiStore.getState().queryRequest(SUB.rid)).resolves.toBe('accepted') // 「查询结果」按钮的路径照常
+  })
+
+  it('绝不自动重发：后端说没登记过（404）只是进入 not_received，仍要用户点「重新发送」；全程没有 run 请求', async () => {
+    useAiStore.getState().restoreSubmission(SUB) // requestsDb 里没有 = 后端的 404 ai_request_not_found
+    await vi.waitFor(() => expect(useAiStore.getState().submissions[SUB.rid]?.phase).toBe('not_received'))
+    expect(runPosts()).toBe(0)
+    expect(sessions()).toEqual([])
   })
 })

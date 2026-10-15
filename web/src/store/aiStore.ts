@@ -562,12 +562,19 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 
   restoreSubmission: (sub) => {
-    if (get().submissions[sub.rid]) return
+    const existing = get().submissions[sub.rid]
+    if (existing) {
+      // 对账再次带来同一条（焦点 / 重连）：还停在「未确认」就再自动按快照收尾一次（有上限，在途去重）
+      if (existing.phase === 'unconfirmed') autoSettleRestored(sub.rid)
+      return
+    }
     set((s) => ({ submissions: { ...s.submissions, [sub.rid]: { ...sub, phase: 'unconfirmed' } } }))
     // 这条请求对应的运行中会话已经作为占位接回来了（`restoreRunning` 先到）：后端的运行中记录就是它被接受的证据，
     // 走**同一个**「已被接受」函数 `accept`（与 `settleFromSnapshot` 的收尾同一处），不再摆「未确认」
     const placeholder = get().sessions.find((x) => x.requestId === sub.rid)
     if (placeholder) acceptRunning(sub.rid, placeholder)
+    // 没有占位：别等用户手动点「查询结果」——自动对它按快照收尾（刷新期间任务可能已经结束，运行中历史是空的、事件也没有）
+    else autoSettleRestored(sub.rid)
   },
 
   appendDelta: (sid, kind, text, rid) => {
@@ -686,10 +693,30 @@ export const useAiStore = create<AiState>((set, get) => ({
     // 提交记录也属于旧项目：在途请求回来时代际对不上，不落会话（但接受了的仍会删草稿，见 `accept`）。
     // 草稿文件里的 rid 还在——切回 A 会还原成「已发出未确认」，由用户查询，而不是盲目重发
     early.clear()
+    autoSettle.attempts.clear()
     restoring = null // 旧代次的在途恢复作废（它回来时代次对不上、结果会被丢弃）；新项目挂载时发起自己的
     set((s) => ({ sessions: [], submissions: {}, generation: s.generation + 1 }))
   },
 }))
+
+/**
+ * **自动收尾还原出来的未确认提交**：不再等用户手动点「查询结果」，更不依赖暂存事件与并行请求的时序。
+ * 只读：`settleFromSnapshot` 只问后端、绝不 `aiRun`；后端回 404（没登记过）也只是进入 `not_received`——
+ * 允许同 rid 重发这一步**仍然需要用户点击**。所以自动做是安全的（不会让任何东西被执行）。
+ * 有上限（每个 rid 最多 `AUTO_SETTLE_MAX` 次，换代清零）并去重（同一个 rid 在途时只查一次）；「查询结果」按钮保留作手动兜底。
+ */
+const AUTO_SETTLE_MAX = 5
+const autoSettle = { inflight: new Set<string>(), attempts: new Map<string, number>() }
+function autoSettleRestored(rid: string): void {
+  const sub = useAiStore.getState().submissions[rid]
+  if (!sub || sub.phase !== 'unconfirmed') return
+  if (autoSettle.inflight.has(rid)) return
+  const n = autoSettle.attempts.get(rid) ?? 0
+  if (n >= AUTO_SETTLE_MAX) return
+  autoSettle.attempts.set(rid, n + 1)
+  autoSettle.inflight.add(rid)
+  void settleFromSnapshot(rid).finally(() => autoSettle.inflight.delete(rid))
+}
 
 /**
  * 一条未落定的提交遇到了带同一个请求 id 的运行中会话（占位）= 这条请求**已被后端接受**，仍在运行。

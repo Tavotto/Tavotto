@@ -1163,6 +1163,22 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('刷新期间任务结束（运行中历史是空的、账本稍后到）：挂载对账还原出未确认后自动收尾成终态，有通知、发送解锁，全程没点「查询结果」', async () => {
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-auto-end-001', text: '把线条加粗', sent: SENT, script: 'p1.py' }])
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-end', status: 'done', changed: true, script: 'p1.py' })
+    vi.mocked(fetchAiSession).mockResolvedValue({
+      agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' },
+    })
+    await mount()
+    await settle()
+    expect(q('[data-ai-submission]')).toBeNull() // 不停在「未确认」
+    expect(q('[data-ai-session="done"]')).toBeTruthy()
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
+    expect(aiRun).not.toHaveBeenCalled() // 只读，没有重发
+    await typeText('再来一条')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(false) // 发送解锁
+  })
+
   it('没有未落定的本地写入时，对账读回的文本照常应用（另一个标签页的新稿进来）', async () => {
     await mount()
     be.put('pa', 'Fig1.pdf', '别的标签页写的')
