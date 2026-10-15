@@ -1013,6 +1013,52 @@ describe('SSE 断线后的对账（reconcile）：丢了终态事件，卡片不
     holding.clear()
   })
 
+  it('envStore bootstrap：refresh 在飞时回放的旧 running 不改变「这次尝试」，随后的 done 回包照样收尾', async () => {
+    useEnvStore.setState({ installing: true })
+    holding.add('/api/engine/environment')
+    const refresh = useEnvStore.getState().refresh()
+    await vi.waitFor(() => expect(held.has('/api/engine/environment')).toBe(true))
+    useEnvStore.getState().onProgress({ state: 'running', log: '', error: null } as never) // 缓冲回放
+    held.get('/api/engine/environment')?.({ ok: true, state: 'done', project: { open: true } })
+    await refresh
+    expect(useEnvStore.getState().installing).toBe(false)
+    holding.clear()
+  })
+
+  it('envStore bootstrap：终态之后到的旧 running 被锁住；本地重新安装才重新打开', async () => {
+    useEnvStore.setState({ installing: true })
+    useEnvStore.getState().onProgress({ state: 'failed', log: '', error: 'x' } as never)
+    expect(useEnvStore.getState().installing).toBe(false)
+    useEnvStore.getState().onProgress({ state: 'running', log: '', error: null } as never) // 缓冲里更早的
+    expect(useEnvStore.getState().installing).toBe(false)
+    holding.add('/api/engine/environment/install')
+    const install = useEnvStore.getState().install()
+    expect(useEnvStore.getState().installing).toBe(true)
+    held.get('/api/engine/environment/install')?.({ started: true, state: 'running', log: '', error: null })
+    await install
+    useEnvStore.getState().onProgress({ state: 'running', log: '', error: null } as never)
+    expect(useEnvStore.getState().installing).toBe(true)
+    holding.clear()
+  })
+
+  it('depRepair：reconcile 应用了 done 之后，缓冲里旧的 verifying（SSE）到达：仍是 done', async () => {
+    await startInstallOnA()
+    stateAnswer = progress('done')
+    await useDepRepairStore.getState().reconcile()
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+    useDepRepairStore.getState().onProgress(progress('verifying'))
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
+  it('depRepair：SSE 先到 done，迟到的 installing 快照：仍是 done；同状态的重复（下载字节）照常收', async () => {
+    await startInstallOnA()
+    useDepRepairStore.getState().onProgress(progress('installing', { log: 'line 2' }))
+    expect(useDepRepairStore.getState().progress?.log).toBe('line 2')
+    useDepRepairStore.getState().onProgress(progress('done'))
+    useDepRepairStore.getState().onProgress(progress('installing'))
+    expect(useDepRepairStore.getState().progress?.state).toBe('done')
+  })
+
   it('depRepair：缓冲里先到的 verifying 之后，在飞的 done 回包仍然被接受（更靠后的终态）', async () => {
     await startInstallOnA()
     holding.add('/api/engine/dependency/state')

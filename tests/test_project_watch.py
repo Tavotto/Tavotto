@@ -1188,6 +1188,38 @@ class TestEndToEnd:
         w.poll()
         assert not [1 for ev, _ in sse_spy if ev == "project.error"]
 
+    def test_a_manual_refresh_that_succeeds_also_announces_recovery(
+        self, client, tmp_path, sse_spy
+    ):
+        """「恢复了」放在统一刷新的成功边界：用户手动刷新成功（无语义差异）也撤错误，且只报一次；
+        从没失败过的成功刷新不报；watcher 随后的无事轮询不重复报。"""
+        figs = _project(tmp_path)
+        _script(figs, "fig1.py", "Fig1")
+        _pdf(figs / "Fig1.pdf")
+        body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+        ctx = m.PROJECTS[body["id"]]
+        engine_watch.stop()
+        sse_spy.clear()
+        m.refresh_project(ctx, reason="manual")
+        assert not [1 for ev, d in sse_spy if ev == "project.error"], sse_spy  # 没失败过：不报
+
+        reg = figs / "tavotto_registry.json"
+        good = reg.read_text(encoding="utf-8")
+        reg.write_text("{ 这不是 JSON", encoding="utf-8")
+        with pytest.raises(engine_refresh.RefreshError):
+            m.refresh_project(ctx, reason="manual")
+        sse_spy.clear()
+        reg.write_text(good, encoding="utf-8")
+        m.refresh_project(ctx, reason="manual")
+        rec = [d for ev, d in sse_spy if ev == "project.error"]
+        assert len(rec) == 1 and rec[0]["recovered"] is True and rec[0]["pj"] == ctx.id, sse_spy
+        sse_spy.clear()
+        m.refresh_project(ctx, reason="manual")
+        w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
+        w.prime()
+        w.poll()
+        assert not [1 for ev, _ in sse_spy if ev == "project.error"], sse_spy
+
     def test_recovery_is_only_announced_after_the_failed_refresh_really_succeeds(
         self, client, tmp_path, sse_spy, monkeypatch
     ):
@@ -1205,7 +1237,7 @@ class TestEndToEnd:
         w = engine_watch.ProjectWatcher(ctx, sink=m._watch_sink(ctx), interval=0.01, debounce=0.0)
         w.prime()
 
-        real = m.refresh_project
+        real = engine_refresh.refresh_project_index
         broken = {"on": True}
 
         def flaky(c, **kw):
@@ -1213,7 +1245,7 @@ class TestEndToEnd:
                 raise engine_refresh.RefreshError("scan_failed", "脚本读不了", {"reason": "x"})
             return real(c, **kw)
 
-        monkeypatch.setattr(m, "refresh_project", flaky)
+        monkeypatch.setattr(engine_refresh, "refresh_project_index", flaky)
         _script(figs, "fig2.py", "Fig2")  # 一次真实变化触发失败的刷新
         w.poll()
         assert [d for ev, d in sse_spy if ev == "project.error" and d.get("code") == "scan_failed"]

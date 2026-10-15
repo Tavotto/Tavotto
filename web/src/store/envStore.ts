@@ -212,6 +212,14 @@ let projectEpoch = 0
 let installGen = 0
 /** 本地刚点了安装、服务端还没确认（POST 没回）：这段时间任何 refresh 回包都不许清 `installing` */
 let installPending = false
+/**
+ * 引擎 bootstrap 的**终态锁**：服务端没有给尝试身份（`engine.bootstrap` 与环境状态里只有 state / log / error，没有
+ * attempt / job id），所以用「状态只前进 + 终态锁定」代替：见过 done / failed 之后，缓冲 / 重放的 `running` 事件不能把
+ * `installing` 拨回去；锁只被两件事打开——本地重新点安装（`install()`），或**比这次终态更晚发起**的环境读取明确说在跑
+ * （`terminalSeq` 比对）。取舍：别的标签页在我们见到终态之后另起的安装，要等下一次对账读到 running 才跟上。
+ */
+let bootstrapLocked = false
+let terminalSeq = 0
 
 /**
  * 后端刚关掉本项目的会话、且变的东西说不清影响哪些面板（换环境、改指表增 / 换 / 删）：
@@ -453,6 +461,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
     const epoch = projectEpoch
     const installAtStart = installGen
     const pendingAtStart = installPending
+    const terminalAtStart = terminalSeq
     // 读取在路上时 env 被别的回包写过（确认运行目录 / 采用环境 / 另一次读取）：这份快照可能是那次写**之前**的，
     // 整份写进来就把刚确认的事实盖回去（T12：装载期那次读取比紧接着的确认晚回来）。不盖，按此刻再读一次；
     // 再读的那份在路上又被写过就不落地——store 里已经是更晚到的事实
@@ -469,6 +478,14 @@ export const useEnvStore = create<EnvState>((set, get) => ({
         // 安装进度只靠 SSE：断线期间丢了终态事件，`installing` 会永久为真。后端说不在跑了就收尾
         // 只认**发请求那一刻**的安装代际：这份快照若产生在服务端切到 running 之前（refresh 在飞时才开始安装），
         // 它说的 idle / done 是上一轮的，不能清掉这一轮的 `installing`
+        if (env.state === 'done' || env.state === 'failed') {
+          bootstrapLocked = true
+          terminalSeq += 1
+        } else if (env.state === 'running' && bootstrapLocked && terminalAtStart === terminalSeq) {
+          // 比锁定的那次终态更晚发起的读取说在跑：新的一次安装开始了
+          bootstrapLocked = false
+          set({ installing: true })
+        }
         if (get().installing && env.state !== 'running' && !installPending && !pendingAtStart && installAtStart === installGen) {
           set({ installing: false, ...(env.state === 'failed' && env.error ? { log: env.error } : {}) })
         }
@@ -486,6 +503,7 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   install: async () => {
     if (get().installing) return
     installPending = true
+    bootstrapLocked = false
     set({ installing: true, log: '' })
     try {
       await installEngineEnvironment()
@@ -681,11 +699,13 @@ export const useEnvStore = create<EnvState>((set, get) => ({
   onProgress: (p) => {
     set({ log: p.log })
     if (p.state === 'done' || p.state === 'failed') {
+      bootstrapLocked = true
+      terminalSeq += 1
+      installPending = false
       set({ installing: false })
       void get().refresh()
-    } else if (p.state === 'running') {
+    } else if (p.state === 'running' && !bootstrapLocked) {
       installPending = false
-      installGen += 1
       set({ installing: true })
     }
   },

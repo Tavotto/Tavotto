@@ -885,6 +885,14 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
   },
 
   onProgress: (p) => {
+    // 作业状态只前进（SSE、对账回包、POST 失败后的实况接回都经过这里，判据只此一处）：同一 plan 已经到过终态，
+    // 任何后来的快照（终态的重复、缓冲里的旧非终态）一律丢弃；非终态之间只丢「更早的」——同一状态的重复要收
+    // （下载字节数就是同一状态里一条条来的）
+    const seen = get().progress?.plan_id === p.plan_id ? get().progress : Object.values(get().parked).find((q) => q.plan_id === p.plan_id)
+    if (seen) {
+      if (TERMINAL.includes(seen.state)) return
+      if (!TERMINAL.includes(p.state) && STATE_ORDER[p.state] < STATE_ORDER[seen.state]) return
+    }
     // 重建到了终局：那个项目的单飞放开——不管此刻开着哪个项目
     if (TERMINAL.includes(p.state)) {
       const owner = startedPlans.get(p.plan_id)
@@ -973,12 +981,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
           return // 问不到实况不打扰：下一次重连 / 回到页面再对
         }
         if (actual.plan_id !== id || actual.state === 'idle') return
-        // 等回包期间 SSE 已经把它推到终态：这份快照是更早的，不能把终局盖回去
-        const { progress, parked } = get()
-        const known = progress?.plan_id === id ? progress : Object.values(parked).find((q) => q.plan_id === id)
-        // 单调：只接受比当前**更靠后**的状态（终态一律比非终态靠后）；同序 / 更早的是缓冲里的旧快照，不倒退
-        if (!known || TERMINAL.includes(known.state) || STATE_ORDER[actual.state] <= STATE_ORDER[known.state]) return
-        get().onProgress(actual)
+        get().onProgress(actual) // 先后判据在 `onProgress`（唯一落点）
       }),
     )
   },
@@ -1089,13 +1092,17 @@ function releaseRebuild(owner: string | null, id: string): void {
  */
 function adoptActualRebuild(owner: string | null, actual: DependencyProgress): void {
   const store = useDepRepairStore.getState()
-  // 同一条规则：所属项目此刻开着（含 A → B → A 已经切回）就接到当前卡片上，否则停放到它那格
+  // 同一条规则：所属项目此刻开着（含 A → B → A 已经切回）就接到当前卡片上，否则停放到它那格。
+  // 终态不在这里预写进度：交给 `onProgress`（先后判据与终局副作用的唯一落点，预写了它会当成重复丢掉）
+  const terminal = TERMINAL.includes(actual.state)
   deliverToOwner(
     owner,
-    () => useDepRepairStore.setState({ busy: false, progress: actual }),
-    () => useDepRepairStore.setState({ parked: { ...store.parked, [projectKey(owner)]: actual } }),
+    () => useDepRepairStore.setState(terminal ? { busy: false } : { busy: false, progress: actual }),
+    () => {
+      if (!terminal) useDepRepairStore.setState({ parked: { ...store.parked, [projectKey(owner)]: actual } })
+    },
   )
-  if (TERMINAL.includes(actual.state)) useDepRepairStore.getState().onProgress(actual)
+  if (terminal) useDepRepairStore.getState().onProgress(actual)
 }
 const TERMINAL: readonly DependencyProgress['state'][] = ['done', 'failed', 'cancelled']
 /**

@@ -230,9 +230,6 @@ class WatchSink:
     script_changed: Callable[[list[str]], None] | None = None
     #: 后台刷新失败（→ 项目级可恢复错误）。参数是稳定 code 与它的 params。
     error: Callable[[str, dict], None] | None = None
-    #: 上一次后台刷新失败之后，又有一次刷新成功了（→ 前端撤掉那条常驻错误）。
-    #: 刷新成功但没有语义差异时统一刷新什么都不发，所以「恢复」要有自己的出口。
-    recovered: Callable[[], None] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +266,8 @@ class ProjectWatcher:
 
         self._snapshot: Snapshot | None = None
         self._pending = Delta()
-        #: 最近一次后台刷新是以失败收场的（让下一次成功的刷新能说一声「恢复了」）
+        #: 最近一次后台刷新是以失败收场的：只用来决定「注册表变化被判为自写」时要不要仍然刷新一次。
+        #: 「恢复了」由统一刷新的成功边界（`app.refresh_project`）报，不在这里
         self._errored = False
         self._first_seen: float | None = None
         self._last_seen: float | None = None
@@ -433,23 +431,12 @@ class ProjectWatcher:
                 LOG.debug("注册表变化来自本次刷新自己的写入，不再触发第二轮")
         return keep.paths()
 
-    def _announce_recovery(self) -> None:
-        """上次后台刷新失败过、这次已经好了：说一声（只说一次）。"""
-        if not self._errored:
-            return
-        self._errored = False
-        if self.sink.recovered is not None:
-            try:
-                self.sink.recovered()
-            except Exception:  # noqa: BLE001
-                LOG.exception("watcher 恢复回调抛出，已忽略")
-
     def _refresh(self, paths: list[str]) -> None:
         if self.sink.refresh is None:
             return
         try:
             self.sink.refresh(paths)
-            self._announce_recovery()
+            self._errored = False
         except project_refresh.RefreshError as exc:
             # 刷新失败是**可恢复**的：内存里的注册表原封不动（ADR 0025），
             # watcher 线程继续。注册表被改成非法 JSON 走的正是这条路——
