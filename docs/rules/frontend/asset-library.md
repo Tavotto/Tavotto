@@ -55,7 +55,12 @@
   aiStore；草稿文本则**带写入版本**应用：本地每次改动 `seq++`、后端确认后 `acked` 追上、在途 PUT 记 `inflight`，
   只要 `seq > acked`（没发出 / 在途 / 失败待重试）读回的文本就不覆盖输入框，对账期间本地又改过同样不覆盖；PUT 落地时
   本地若有更新的写入以本地为准补写一次；读失败是「不知道」、不是「服务器说空」。`clearIf` 清输入框时若该文本的
-  PUT 还在途，落地后条件删一次，防止已被接受的文本复活。看护 `components/ai/assistantDraft.test.tsx` 的
+  PUT 还在途，落地后条件删一次，防止已被接受的文本复活。
+  **账本恢复状态 `LedgerState`（unknown / ok / failed，与 `reconcile` 共用一个状态源）**：只有成功对账过一次（草稿 +
+  项目级账本都读成功、pendings 已还原）才允许发送；还在读（unknown）或读失败（failed，一句话 + 重试）一律锁——
+  读失败是「不知道」，不是空账本；成功过之后一次读失败不降级。**「首个 POST 不确定」引出的所有分支**（用户点查询、
+  同 id 重发返回 `deduped:true`）都收在 `aiStore.settleFromSnapshot`：向后端要请求 + 会话快照，按快照的真实状态收尾
+  （终态走正常完成路径含 refresh 警告，仍在跑才是 running，读不到保持未确认、绝不凭摘要或 deduped 响应建 running 会话）。看护 `components/ai/assistantDraft.test.tsx` 的
   「同步状态机」一组（含两条入口同路径的结构性用例）。
   **草稿文本与待确认提交原文是两份独立状态**：输入框永远显示草稿（`loadDraft().text`），待确认原文在
   `pendings[].text`、只在「已发出未确认」那一行里展示（`data-ai-submission-text`），确认只清待确认、不碰草稿——
