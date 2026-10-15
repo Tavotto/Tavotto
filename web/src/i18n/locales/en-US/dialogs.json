@@ -914,6 +914,7 @@
           "context_bar_multi_used": "The multi-selection bar: which button, and the size bucket of the selection.",
           "document_saved": "A save to disk: manual or auto, and whether it ended ok, in conflict, or failed.",
           "export_completed": "A successful export: the format, whether it included a report, and how many figures.",
+          "export_result": "How an export ended: done, partial, failed or cancelled, which formats were requested, how many files were written, the step it stopped at and a broad error category. Never file names, paths or error text.",
           "figure_edit_completed": "One completed edit: the kind of change and how many.",
           "figure_opened": "Entering in-figure editing: PDF or raster image, and whether it’s editable.",
           "package_action": "A package job: install, update or remove, and how it ended. Never the package name.",

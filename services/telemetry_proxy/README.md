@@ -169,6 +169,11 @@ deduplicate on it explicitly (see `docs/analytics/yc-dashboard.json`).
     stem, prompt, `$ip`-derived geo, or user agent.
 14. **Only then ship telemetry-enabled Tavotto builds.**
 
+> `export_result` (2026-10-15) is a new allowlisted event: its entry in
+> `contract.py` mirrors `engine/telemetry.py` and must be deployed (step 1 below)
+> **before** the client that sends it, or it is silently 400'd. Nothing else in the
+> proxy changes (no new secrets, no new routes).
+
 ### Deployment order (matters)
 
 ```

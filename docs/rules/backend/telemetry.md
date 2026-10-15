@@ -48,10 +48,20 @@
   零网络探针因此截 `urllib.request.OpenerDirector.open`（`urlopen` 与现建 opener 都经过它），
   用例替换传输层也换这一个。看护：`tests/test_outbound_https_trust.py`（缺根 / 主机名不符 / 注入
   测试根投递成功 / 断网与协议层 SSLError 不记日志 / AST 钉「出站 HTTPS 只经 tlstrust」）。
-- **成功边界埋点，不是点击埋点**：`export_completed` 在 `/api/export` 文件
-  全部写完之后、正常响应之前（服务端）；`ai_assistant_invoked` 在
+- **成功边界埋点，不是点击埋点**：`export_completed` 在导出作业以 `done` / `partial`
+  结束时（至少写成一个请求的图；**不是**「全部请求的文件都写完」，服务端）；`ai_assistant_invoked` 在
   `engine_ai.run()` 真的回了 session 之后（服务端）；pip/pipx 的
   `update_completed` 在升级命令成功之后。前端记的是「点了」，点了还会失败。
+- **`export_result`（2026-10-15 引入）是终态事件，出处只有一个**：`exportjob._emit` 在作业走到
+  终局时调 `ExportJob.on_terminal`（`_terminal_notified` 去重，**每个作业最多一次**），回调由
+  `_prepare_export_job` 在作业被受理后挂上（`app._export_result_telemetry` →
+  `engine/exporttelemetry.properties`）。同步 / 后台 / `run()` 早退 / 取消 / SSE 补拉与 `/state`
+  轮询都不另发。**被拒（`prepare` 抛）与 `conflict` 不发**；用户重新提交 = 新作业 = 新尝试。
+  不新增 `export_started`（无可安全联结的尝试标识，分母会诱导错误的 start/result 比较）。
+  `export_completed` 语义不变（`done` 或 `partial` 才发），**不得**把它补读成 `export_result`。
+  属性只含请求格式布尔 / `delivered` / `stage` / `error_class` 闭集，不含错误码原文。
+  同意版本未升（同类、有限闭集、失败结局 `document_saved` / `package_action` 已在 v2 内）——
+  这是一个可被维护者推翻的判断，推翻就按本文「改采集范围」升版。
 - **编辑埋点只有一个调用点**：`documentStore.pushHistory`（commit 与 endTxn
   的共同漏斗）。一次拖动 = 一条事务 = 一条历史 = **一个事件**，不是 120 次
   pointermove；预览平面不 commit，因此天然不产生事件。`edit_kind` 由**历史

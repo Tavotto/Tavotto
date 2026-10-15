@@ -135,8 +135,9 @@ explicitly opts in**, either in the one-time first-run prompt or under
   this is pseudonymous rather than anonymised, and the sections below describe
   exactly what that pseudonym is attached to.
 * **What is sent.** Broad product events (application started, a figure opened
-  for editing, an edit committed, a canvas created, a preflight run finished, an
-  export succeeded, the assistant started, an update installed; since consent
+  for editing, an edit committed, a canvas created, a preflight run finished, how an
+  export ended (done, partly done, failed or cancelled — with which formats were
+  requested, never a file name or error text), the assistant started, an update installed; since consent
   version 2 also: a project refresh completed and which entry point triggered it,
   the readiness view opened and from where, which tutorial step was completed,
   which kind of multi-selection arrange button was used, how a save / recovery /
@@ -145,6 +146,11 @@ explicitly opts in**, either in the one-time first-run prompt or under
   how Tavotto was installed (desktop/pipx/pip/source/unknown). Every value is a
   fixed enumeration or a bucketed count; the full list is in
   [`docs/analytics/telemetry-events.md`](analytics/telemetry-events.md).
+* **Export outcome (2026-10-15, no consent bump).** The `export_result` event reports
+  how an accepted export ended. It is the same kind of information as the existing
+  export event (a handful of enumerations and booleans about the export's shape, none
+  of it content), and failure outcomes were already collected for saves and package
+  operations under consent version 2, so consent was not re-asked.
 * **Consent version 2 (2026-09-02).** Adding those events widened the scope, so the
   consent version was raised: consent given for version 1 stopped being sufficient
   at that moment, no event is transmitted until the user is asked again, and the
