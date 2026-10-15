@@ -91,6 +91,7 @@ def fake_pool(monkeypatch):
         "build_calls": 0,
         "force_cancel": [],
         "gate": threading.Event(),
+        "build_entered": threading.Event(),
         "error": None,
         "worker_factory": None,
     }
@@ -109,6 +110,7 @@ def fake_pool(monkeypatch):
         worker = factory()
         if box["announce"] and kw.get("on_acquired") is not None:
             kw["on_acquired"](worker, created)
+        box["build_entered"].set()
         box["gate"].wait(timeout=30)
         if box["killed"].is_set():
             raise engine_pool.WorkerError("worker 被关掉", code="worker_crashed")
@@ -351,6 +353,8 @@ def test_cancel_during_build_kills_only_a_session_this_plan_created(client, tmp_
     fake_pool["gate"].clear()  # build 卡住
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     plan_id = resp.get_json()["plan"]["plan_id"]
+    assert fake_pool["build_entered"].wait(5), "cancel must happen after pool ownership is assigned"
+    assert fake_pool["build_calls"] == 1
     deadline = time.time() + 5
     while (
         client.get(f"/api/engine/preparation/{plan_id}").get_json()["result"]["status"] != "running"
@@ -383,7 +387,8 @@ def test_cancel_never_touches_a_session_that_belongs_to_someone_else(client, tmp
     fake_pool["gate"].clear()
     resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
     plan_id = resp.get_json()["plan"]["plan_id"]
-    time.sleep(0.05)
+    assert fake_pool["build_entered"].wait(5), "cancel must happen after pool ownership is assigned"
+    assert fake_pool["build_calls"] == 1
     assert client.post(f"/api/engine/preparation/{plan_id}/cancel").get_json()["cancelling"] is True
     fake_pool["gate"].set()
     body = _wait(client, plan_id)

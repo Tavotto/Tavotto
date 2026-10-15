@@ -4796,6 +4796,15 @@ def _resolve_project_script(ctx: "ProjectCtx", raw: str):
     return target.relative_to(root).as_posix(), None
 
 
+def _register_probed_execution(ctx, script, result, worker, execution_id, *, cost="medium"):
+    # Only the registry publication is serialized with refresh. User execution
+    # and figure capture remain outside this lock.
+    with engine_refresh.publishing_execution(ctx, worker, execution_id) as on_registered:
+        return engine_probe.register_probed(
+            ctx.path, script, result, cost=cost, on_registered=on_registered
+        )
+
+
 @app.post("/api/registry/probe")
 def api_registry_probe():
     """试运行一个脚本，按**真实产出**的文件名登记 stem。
@@ -4863,6 +4872,14 @@ def api_registry_probe():
             cost=str(body.get("cost") or "medium"),
             should_cancel=cancel_ev.is_set,
             on_acquired=note_owner,
+            register_result=lambda result, worker, execution: _register_probed_execution(
+                ctx,
+                script,
+                result,
+                worker,
+                execution,
+                cost=str(body.get("cost") or "medium"),
+            ),
             **({"run": run} if run is not None else {}),
         )
         if result.get("registered"):
@@ -8915,8 +8932,17 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
     if not stems:
         return {"registered": False, "code": "no_figures_captured"}
     descriptors = list(captured.get("descriptors") or [])
-    registered = engine_probe.register_probed(
-        ctx.path,
+    publication_worker = None
+    instance = getattr(getattr(result, "receipt", None), "instance", None)
+    if getattr(plan, "execution", None) != engine_execspec.PROFILE_NATIVE:
+        run = getattr(plan, "run", None)
+        candidate = engine_pool.peek(
+            plan.script, ctx.path, **({"run": run} if run is not None else {})
+        )
+        if instance and instance == getattr(candidate, "last_build_execution_id", None):
+            publication_worker = candidate
+    registered = _register_probed_execution(
+        ctx,
         plan.script,
         {
             "script": plan.script,
@@ -8935,6 +8961,8 @@ def _finalize_script_attempt(ctx: "ProjectCtx", plan, result) -> dict:
                 {"run_config": plan.run.config_id} if getattr(plan, "run", None) is not None else {}
             ),
         },
+        publication_worker,
+        instance,
     )
     if not registered.get("registered"):
         if getattr(plan, "execution", None) == engine_execspec.PROFILE_NATIVE:

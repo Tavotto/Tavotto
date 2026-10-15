@@ -7,6 +7,7 @@ runner, while a known refusal before sending cannot manufacture execution.
 from __future__ import annotations
 
 import concurrent.futures
+import errno
 import json
 import socket
 import sys
@@ -52,9 +53,20 @@ def connected(tmp_path):
         yield session, peer
     finally:
         session.transport.close()
+        if peer.fileno() >= 0:
+            # The fixture owns both ends. On Windows, local shutdown need not
+            # release an already-blocked recv; its BufferedReader still owns
+            # the socket. Finish the peer's EOF handshake before joining or
+            # closing that reader, rather than waiting for TCP's timeout.
+            try:
+                while peer.recv(8192):
+                    pass
+                _close_peer(peer, eof_received=True)
+            finally:
+                peer.close()
         session.transport.join_reader(3)
+        assert not session.transport._reader.is_alive()
         session.transport._rfile.close()
-        peer.close()
 
 
 def _receipt_id(session):
@@ -82,6 +94,111 @@ def _serve(peer, action):
     return request
 
 
+def _close_peer(peer, *, eof_received):
+    try:
+        peer.shutdown(socket.SHUT_RDWR)
+    except OSError as exc:
+        # macOS can report ENOTCONN after the other side's SHUT_WR and
+        # an observed EOF. Other errors, or ENOTCONN without EOF, are failures.
+        if not eof_received or exc.errno != errno.ENOTCONN:
+            raise
+    peer.close()
+
+
+@pytest.mark.parametrize(
+    ("eof_received", "shutdown_errno"),
+    [(True, errno.ENOTCONN), (False, errno.ENOTCONN), (True, errno.EBADF), (True, errno.EINVAL)],
+)
+def test_peer_close_accepts_only_enotconn_after_observed_eof(
+    connected, eof_received, shutdown_errno
+):
+    session, peer = connected
+    if eof_received:
+        session.transport.sock.shutdown(socket.SHUT_WR)
+        assert peer.recv(1) == b""
+
+    class ShutdownFailure:
+        def shutdown(self, how):
+            assert how == socket.SHUT_RDWR
+            raise OSError(shutdown_errno, "injected peer shutdown failure")
+
+        def close(self):
+            peer.close()
+
+    if eof_received and shutdown_errno == errno.ENOTCONN:
+        _close_peer(ShutdownFailure(), eof_received=eof_received)
+        session.transport.join_reader(3)
+        assert not session.transport._reader.is_alive()
+        assert session.transport.closed and session.transport.poison is None
+        assert session.state == nativesession.ENDED
+    else:
+        with pytest.raises(OSError) as error:
+            _close_peer(ShutdownFailure(), eof_received=eof_received)
+        assert error.value.errno == shutdown_errno
+        assert peer.fileno() >= 0
+
+
+@pytest.mark.parametrize("already_closed", [False, True])
+def test_fixture_closes_peer_before_waiting_for_pending_receive(
+    tmp_path, monkeypatch, already_closed
+):
+    socketpair = socket.socketpair
+
+    class PendingReceiveSocket:
+        def __init__(self, sock):
+            self.sock = sock
+
+        def shutdown(self, how):
+            # Keep the real receive pending until the peer sends EOF, as a
+            # Winsock receive already in progress can outlive local shutdown.
+            self.sock.shutdown(socket.SHUT_WR if how == socket.SHUT_RDWR else how)
+
+        def __getattr__(self, name):
+            return getattr(self.sock, name)
+
+    def pair():
+        parent, peer = socketpair()
+        return PendingReceiveSocket(parent), peer
+
+    monkeypatch.setattr(socket, "socketpair", pair)
+    fixture = connected.__wrapped__(tmp_path)
+    session, peer = next(fixture)
+    reader_file = session.transport._rfile
+
+    class ReaderFile:
+        def readline(self):
+            return reader_file.readline()
+
+        def close(self):
+            # Fail before acquiring BufferedReader's lock if teardown regresses.
+            assert peer.fileno() == -1, "peer must close before the reader file"
+            assert not session.transport._reader.is_alive()
+            reader_file.close()
+
+    session.transport._rfile = ReaderFile()
+    try:
+        if already_closed:
+            session.transport.close()
+        assert session.transport._reader.is_alive()
+        with pytest.raises(StopIteration):
+            next(fixture)
+        assert peer.fileno() == -1
+        assert not session.transport._reader.is_alive()
+        assert reader_file.closed
+    finally:
+        # Also release the real receive if the ordering assertion fails.
+        session.transport.close()
+        if peer.fileno() >= 0:
+            try:
+                while peer.recv(8192):
+                    pass
+                _close_peer(peer, eof_received=True)
+            finally:
+                peer.close()
+        session.transport.join_reader(3)
+        reader_file.close()
+
+
 @pytest.mark.parametrize("action", ["resume", "detach"])
 @pytest.mark.parametrize(
     "failure", ["eof", "timeout", "bad_frame", "bad_echo", "wrong_id", "bad_result", "bad_error"]
@@ -103,7 +220,7 @@ def test_dispatched_release_with_unknown_result_revokes_only_receipt(
 
     def respond(request):
         if failure == "eof":
-            peer.shutdown(socket.SHUT_RDWR)
+            peer.shutdown(socket.SHUT_WR)
         elif failure == "bad_frame":
             peer.sendall(b"{broken json\n")
         elif failure == "bad_echo":
@@ -190,7 +307,7 @@ def test_failed_waiter_and_late_close_callback_revoke_same_barrier_only_once(con
 
     session.transport._on_close = delayed_close
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        sent = executor.submit(_serve, peer, lambda request: peer.shutdown(socket.SHUT_RDWR))
+        sent = executor.submit(_serve, peer, lambda request: peer.shutdown(socket.SHUT_WR))
         try:
             with pytest.raises(RunError):
                 session.resume()
@@ -294,7 +411,7 @@ def test_live_barrier_disconnect_without_continue_revokes_current_receipt(connec
         _receipt_id(session),
         session.execution_id,
     )
-    peer.shutdown(socket.SHUT_RDWR)
+    peer.shutdown(socket.SHUT_WR)
     assert session.wait_for_state([nativesession.ENDED], 3) == nativesession.ENDED
     assert session.snapshot_epoch == epoch + 1 and _receipt_id(session) != old_receipt
     assert session.execution_id == execution_id
@@ -305,7 +422,7 @@ def test_confirmed_runner_end_then_eof_does_not_revoke_receipt(connected, event)
     session, peer = connected
     epoch, old_receipt = session.snapshot_epoch, _receipt_id(session)
     session._on_frame({"bridge_event": event, "code": 0, "reason": "terminate"})
-    peer.shutdown(socket.SHUT_RDWR)
+    peer.shutdown(socket.SHUT_WR)
     session.transport.join_reader(3)
     assert session.snapshot_epoch == epoch and _receipt_id(session) == old_receipt
 
@@ -333,11 +450,13 @@ def test_controller_shutdown_revokes_before_optimistic_detached_state(connected,
         session._on_change = observed
         getattr(session, action)()
     assert peer.recv(1) == b""
-    session.transport.join_reader(3)
     assert session.state == nativesession.DETACHED
     assert session.snapshot_epoch == epoch + 1 and _receipt_id(session) != old_receipt
     assert session.execution_id == execution_id
     assert detached_epochs and all(value == epoch + 1 for value in detached_epochs)
+    _close_peer(peer, eof_received=True)
+    session.transport.join_reader(3)
+    assert not session.transport._reader.is_alive()
     session.shutdown()
     assert session.snapshot_epoch == epoch + 1
 
@@ -353,6 +472,13 @@ def test_unacknowledged_terminate_then_eof_cannot_preserve_old_receipt(connected
     )
     observed = []
     session._on_change = lambda current, event: observed.append(current.snapshot_epoch)
+    close_events = []
+
+    def closed(reason):
+        close_events.append((reason, threading.current_thread()))
+        session._on_transport_closed(reason)
+
+    session.transport._on_close = closed
     if delivery == "failed":
         # Actual socket half-close: send_oneway suppresses the resulting error,
         # but the reader remains alive and no runner acknowledgement exists.
@@ -364,11 +490,21 @@ def test_unacknowledged_terminate_then_eof_cannot_preserve_old_receipt(connected
             assert json.loads(stream.readline())["cmd"] == "terminate"
     else:
         assert peer.recv(1) == b""
+    assert session.transport._reader.is_alive()
     if close == "peer":
-        peer.shutdown(socket.SHUT_RDWR)
+        _close_peer(peer, eof_received=delivery == "failed")
     else:
         session.shutdown()
+        # Assert controller revocation before the fixture peer acknowledges EOF.
+        assert session.snapshot_epoch == epoch + 1 and _receipt_id(session) != old_receipt
+        assert peer.recv(1) == b""
+        _close_peer(peer, eof_received=True)
     session.transport.join_reader(3)
+    assert not session.transport._reader.is_alive()
+    assert session.transport.closed and session.transport.poison is None
+    assert len(close_events) == 1 and close_events[0][0] is None
+    if close == "peer":
+        assert close_events[0][1] is session.transport._reader
     assert session.snapshot_epoch == epoch + 1 and _receipt_id(session) != old_receipt
     assert session.execution_id == execution_id
     assert observed[-1] == epoch + 1
@@ -402,7 +538,7 @@ def test_late_continue_reply_never_clears_the_next_barrier(connected, action):
         sent.result(timeout=3)
     if action == "resume":
         assert session.state == nativesession.BARRIER and session.snapshot_epoch == epoch + 2
-        peer.shutdown(socket.SHUT_RDWR)
+        peer.shutdown(socket.SHUT_WR)
         session.transport.join_reader(3)
     else:
         assert session.state == nativesession.DETACHED

@@ -40,6 +40,7 @@ import subprocess
 import sys
 import threading
 import tokenize
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from . import atomicio, figcapture, inputremap, projectenv, registry, runtime, scanbudget
@@ -1435,7 +1436,9 @@ def build_draft(figures_dir: str | Path, *, target_python: str | None = None) ->
     return {"version": 1, "scripts": cfg}, rep
 
 
-def write_config(figures_dir: str | Path, cfg: dict) -> Path:
+def write_config(
+    figures_dir: str | Path, cfg: dict, *, on_written: Callable[[str], None] | None = None
+) -> Path:
     """注册表落盘 —— 走 `engine/atomicio`（ADR 0023 的唯一写入实现）。
 
     直写会在进程被杀的那一刻把 `tavotto_registry.json` 截断成非法 JSON——桌面壳
@@ -1451,9 +1454,14 @@ def write_config(figures_dir: str | Path, cfg: dict) -> Path:
     空文件。`atomicio.write_bytes()` 把六步序列（同目录临时文件 → flush →
     fsync 文件 → replace → fsync 目录 → 失败清理）收成一份，顺带让写失败带上
     结构化 `code`，不再是一个裸 OSError。
+
+    `on_written` 只在原子写成功后接收本次字节的修订号，不把随后外部替换的文件
+    误认成本次写入。返回值仍是路径。
     """
     path = registry.registry_path(figures_dir)
-    atomicio.write_json(path, cfg, indent=1)
+    revision = atomicio.write_json(path, cfg, indent=1)
+    if on_written is not None:
+        on_written(revision)
     return path
 
 
@@ -1512,6 +1520,7 @@ def register(
     notes: str = "",
     *,
     append: bool = False,
+    on_written: Callable[[str], None] | None = None,
 ) -> dict:
     """把一个脚本的 stem 归属写进注册表（试运行探测确认后调用）。
 
@@ -1526,9 +1535,12 @@ def register(
 
     整段读改写在**项目锁**里（`inputremap.project_mutex`，ADR 0106 §五）：两个脚本同时重新登记时，后写的一方
     不许整值覆盖掉先写的那份（Codex 评 #716 P1）。调用方已持锁（登记落地在 `landing()` 里）时可重入。
+    `on_written` 在锁内、原子写成功后收到本次字节的修订号；返回值仍是配置。
     """
     with inputremap.project_mutex(figures_dir):
-        return _register_locked(figures_dir, script, stems, entry, cost, notes, append=append)
+        return _register_locked(
+            figures_dir, script, stems, entry, cost, notes, append=append, on_written=on_written
+        )
 
 
 def registered_stems(figures_dir: str | Path, script: str) -> list[str]:
@@ -1545,7 +1557,17 @@ def registered_stems(figures_dir: str | Path, script: str) -> list[str]:
     return [str(s) for s in entry.get("stems") or []]
 
 
-def _register_locked(figures_dir, script, stems, entry, cost, notes, *, append: bool) -> dict:
+def _register_locked(
+    figures_dir,
+    script,
+    stems,
+    entry,
+    cost,
+    notes,
+    *,
+    append: bool,
+    on_written: Callable[[str], None] | None = None,
+) -> dict:
     path = registry.existing_registry_path(figures_dir)
     try:
         cfg = json.loads(path.read_text(encoding="utf-8")) if path else {}
@@ -1574,7 +1596,10 @@ def _register_locked(figures_dir, script, stems, entry, cost, notes, *, append: 
         }
     else:
         scripts.pop(script, None)
-    write_config(figures_dir, cfg)
+    if on_written is None:
+        write_config(figures_dir, cfg)
+    else:
+        write_config(figures_dir, cfg, on_written=on_written)
     return cfg
 
 

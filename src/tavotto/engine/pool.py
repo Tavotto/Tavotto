@@ -380,6 +380,9 @@ _worker_python: str | None = None
 _worker_ctx: str = ""
 _worker_source: str = ""
 _workers: dict[tuple[str, ...], "EngineWorker"] = {}
+# Detached workerd handles whose supervisor close has not been confirmed. A
+# parent object's _dead flag does not prove its spawn-hash entry was removed.
+_pending_retirements: dict[tuple[str, ...], list["WorkerdWorker"]] = {}
 
 
 def _run_payload(run) -> dict:
@@ -2951,6 +2954,12 @@ def _worker_error(
     return err
 
 
+def _workerd_close_confirmed(response) -> bool:
+    return isinstance(response, dict) and (
+        response.get("closed") is True or response.get("known") is False
+    )
+
+
 class WorkerdWorker:
     """`EngineWorker` 的等价物，但生命周期由 tavotto-workerd 管。
 
@@ -3385,19 +3394,20 @@ class WorkerdWorker:
             payload={"patches": patches, "width": width_px, "with_manifest": True},
         )
 
-    def shutdown(self) -> None:
-        """优雅关会话；workerd 收不到就当它已经没了（不许把退出流程挂住）。"""
+    def shutdown(self) -> bool:
+        """Graceful release; report whether the supervisor actually retired it."""
         from . import workerd_client
 
         if not self._session_id:
-            return
+            return True
         try:
-            # 退出路径不许被一个卡住的 supervisor 拖住：余量收到 5 秒
-            self._client.call(
+            response = self._client.call(
                 "close_session", session_id=self._session_id, timeout=SHUTDOWN_TIMEOUT, slack=5.0
             )
+            # A released reference can leave the same spawn cached and alive.
+            return _workerd_close_confirmed(response)
         except workerd_client.WorkerdError:
-            pass
+            return False
         finally:
             self._dead = True
             _stopped_execution(self)
@@ -3409,7 +3419,7 @@ class WorkerdWorker:
         if not self._session_id:
             return True
         try:
-            self._client.call(
+            response = self._client.call(
                 "close_session",
                 session_id=self._session_id,
                 payload={"force": True},
@@ -3419,7 +3429,7 @@ class WorkerdWorker:
         except workerd_client.WorkerdError:
             return False
         else:
-            return True
+            return _workerd_close_confirmed(response)
         finally:
             self._dead = True
             _stopped_execution(self)
@@ -3979,7 +3989,21 @@ def acquire(
     # 依赖门，本该自动改用的只会弹框。第二遍一定已经决定过，所以最多两遍。
     force_decide = False
     rewarms = 0
+    watcher_synced = False
+    needs_watch_sync = False
+    retiring = ()
     while True:
+        if retiring:
+            _confirm_retirements(key, retiring)
+            retiring = ()
+        if needs_watch_sync:
+            # Only a new/replacement execution boundary, never a hot render.
+            # This must stay outside _lock (watcher -> refresh -> pool).
+            from . import project_watch
+
+            project_watch.before_acquire(figures_dir, script_name)
+            watcher_synced = True
+            needs_watch_sync = False
         # **在锁外**算这个项目现在该用哪个解释器：worker 构造函数自己也会调它，
         # 在 `_lock` 里再调一次就是自锁。缓存命中时这是一次字典查询。首开的发现 + 体检
         # （U03）也发生在这里——在起任何会话**之前**，脚本目录决定从哪层往上找 venv。
@@ -4045,6 +4069,17 @@ def acquire(
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图
                     why = "改指表已变"
+            if (w is None or why or getattr(w, "build_failed", False)) and not watcher_synced:
+                needs_watch_sync = True
+                continue
+            if w is None or why:
+                retiring = tuple(_pending_retirements.get(key, ()))
+                if retiring:
+                    continue  # bounded close confirmation is outside every pool/watch lock
+                if sum(map(len, _pending_retirements.values())) >= MAX_ALIVE:
+                    # Unknown retirements count against cold-session capacity.
+                    # Never drop a fence merely to admit a different script.
+                    raise WorkerError("旧渲染会话尚未确认关闭，请重试", code="session_dead")
             if (w is None or why) and not decided:
                 force_decide = True
                 continue  # 出锁：决定要体检子进程，不能占着池锁
@@ -4500,6 +4535,67 @@ def _build_with(
     return worker, worker.ensure_built(), created or created_again
 
 
+def _remember_retirements(victims) -> None:
+    """Called under _lock, atomically with detaching the original instances."""
+    for key, worker in victims:
+        if isinstance(worker, WorkerdWorker):
+            pending = _pending_retirements.setdefault(key, [])
+            if not any(old is worker for old in pending):
+                pending.append(worker)
+
+
+def _forget_retirement(key, worker) -> None:
+    with _lock:
+        pending = _pending_retirements.get(key, ())
+        kept = [old for old in pending if old is not worker]
+        if kept:
+            _pending_retirements[key] = kept
+        else:
+            _pending_retirements.pop(key, None)
+
+
+def _shutdown_retired(key, worker) -> None:
+    if worker.shutdown() is True:
+        _forget_retirement(key, worker)
+
+
+def _confirm_retirements(key, workers) -> None:
+    # No pool or watcher lock: another request can keep using an unrelated hot
+    # session, and shutdown callbacks may acquire their own bookkeeping locks.
+    for worker in workers:
+        if worker.force_kill() is False:
+            raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
+        _forget_retirement(key, worker)
+
+
+@dataclass(frozen=True)
+class WorkerTarget:
+    """A notification's original pool instance, never a path-only authority."""
+
+    key: tuple[str, ...]
+    worker: object
+    generation: int | None
+
+
+def invalidation_targets(script_name: str | None, figures_dir: str) -> tuple[WorkerTarget, ...]:
+    """Bind all run configurations while the observer still owns its baseline."""
+    prefix = (_norm_dir(figures_dir), script_name)
+    with _lock:
+        return tuple(
+            WorkerTarget(key, worker, getattr(worker, "generation", None))
+            for key, worker in _workers.items()
+            if key[0] == prefix[0] and (script_name is None or key[1] == script_name)
+        )
+
+
+def _target_matches(target: WorkerTarget, key: tuple[str, ...], worker) -> bool:
+    return (
+        target.key == key
+        and target.worker is worker
+        and target.generation == getattr(worker, "generation", None)
+    )
+
+
 def invalidate(
     script_name: str,
     figures_dir: str | None = None,
@@ -4507,6 +4603,8 @@ def invalidate(
     *,
     only_run: bool = False,
     force: bool = False,
+    targets: tuple[WorkerTarget, ...] | None = None,
+    preserve: tuple[WorkerTarget, ...] = (),
 ) -> None:
     """脚本文件变更后作废其会话（下次请求自动重建）。
 
@@ -4529,6 +4627,20 @@ def invalidate(
             keys = [k for k in _workers if k == _worker_key(figures_dir, script_name, None, run)]
         else:
             keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
+        if targets is not None:
+            # Compare and detach under the same lock. An old delayed event must
+            # not retire the replacement now occupying its original pool key.
+            keys = [
+                key
+                for key in keys
+                if any(_target_matches(target, key, _workers[key]) for target in targets)
+            ]
+        if preserve and not force:
+            keys = [
+                key
+                for key in keys
+                if not any(_target_matches(target, key, _workers[key]) for target in preserve)
+            ]
         if force:
             for key in keys:
                 worker = _workers[key]
@@ -4538,12 +4650,15 @@ def invalidate(
                     raise WorkerError("无法确认旧渲染会话已关闭，请重试", code="session_dead")
                 _workers.pop(key, None)
             return
-        victims = [_workers.pop(k) for k in keys]
-    for w in victims:
-        threading.Thread(target=w.shutdown, daemon=True).start()
+        victims = [(key, _workers.pop(key)) for key in keys]
+        _remember_retirements(victims)
+    for key, worker in victims:
+        threading.Thread(target=_shutdown_retired, args=(key, worker), daemon=True).start()
 
 
-def invalidate_project(figures_dir: str | Path) -> None:
+def invalidate_project(
+    figures_dir: str | Path, *, targets: tuple[WorkerTarget, ...] | None = None
+) -> None:
     """作废**一个项目**的全部会话（共享样式模块变更走这条路）。
 
     与 `shutdown_all(figures_dir)` 的差别在语义而不在实现：那个是"这个项目
@@ -4556,9 +4671,16 @@ def invalidate_project(figures_dir: str | Path) -> None:
     target = _norm_dir(figures_dir)
     with _lock:
         keys = [k for k in _workers if k[0] == target]
-        victims = [_workers.pop(k) for k in keys]
-    for w in victims:
-        threading.Thread(target=w.shutdown, daemon=True).start()
+        if targets is not None:
+            keys = [
+                key
+                for key in keys
+                if any(_target_matches(item, key, _workers[key]) for item in targets)
+            ]
+        victims = [(key, _workers.pop(key)) for key in keys]
+        _remember_retirements(victims)
+    for key, worker in victims:
+        threading.Thread(target=_shutdown_retired, args=(key, worker), daemon=True).start()
 
 
 def force_cancel(

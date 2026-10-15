@@ -7,6 +7,7 @@ its exec boundary emits execution_started. This limitation is deliberate.
 
 from __future__ import annotations
 
+import errno
 import json
 import socket
 import subprocess
@@ -19,7 +20,16 @@ from tavotto.engine import bridge, desktopproc, executionfact, nativesession, po
 from tavotto.engine.runcodes import RunError
 
 
-def _run(project, target, *, kind="script", argv=(), python=None, continue_barriers=False):
+def _run(
+    project,
+    target,
+    *,
+    kind="script",
+    argv=(),
+    python=None,
+    continue_barriers=False,
+    expected_abrupt_exit=None,
+):
     """Real runner and authenticated-shaped control handshake; no scientific stack."""
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
@@ -53,7 +63,18 @@ def _run(project, target, *, kind="script", argv=(), python=None, continue_barri
                         assert hello["bridge_hello"] == 1
                         connection.sendall(b'{"ok":true}\n')
                         events = []
-                        for line in stream:
+                        while True:
+                            try:
+                                line = next(stream)
+                            except StopIteration:
+                                break
+                            except ConnectionResetError:
+                                # os._exit can end the Windows socket with RST,
+                                # not EOF. Only the explicit abrupt-exit probe
+                                # permits this; keep every frame actually read.
+                                if expected_abrupt_exit is None:
+                                    raise
+                                break
                             frame = json.loads(line)
                             events.append(frame)
                             if continue_barriers and frame.get("bridge_event") == "barrier":
@@ -69,6 +90,10 @@ def _run(project, target, *, kind="script", argv=(), python=None, continue_barri
                                     + b"\n"
                                 )
                 stdout, stderr = process.communicate(timeout=15)
+                if expected_abrupt_exit is not None:
+                    assert process.returncode == expected_abrupt_exit, (
+                        f"expected abrupt exit {expected_abrupt_exit}, got {process.returncode}"
+                    )
             finally:
                 if process.poll() is None:
                     process.kill()
@@ -108,14 +133,73 @@ def test_script_compile_or_open_failure_never_emits_start(tmp_path, source):
     assert events[-1]["bridge_event"] == "exit"
 
 
-def test_start_event_is_before_first_user_statement(tmp_path):
+def _inject_terminal_control_error(monkeypatch, error):
+    """Replace only the real socket's EOF/RST, never its received event bytes."""
+    readinto = socket.SocketIO.readinto
+    injected = []
+
+    def fail_at_end(stream, buffer):
+        try:
+            size = readinto(stream, buffer)
+        except ConnectionResetError:
+            size = 0
+        if size == 0:
+            injected.append(error)
+            raise error
+        return size
+
+    monkeypatch.setattr(socket.SocketIO, "readinto", fail_at_end)
+    return injected
+
+
+@pytest.mark.parametrize("inject_reset", [False, True])
+def test_start_event_is_before_first_user_statement(tmp_path, monkeypatch, inject_reset):
     # The first statement forces process exit without runner cleanup. Only a
     # pre-exec event can reach the controller in this case.
     (tmp_path / "plot.py").write_text("import os\nos._exit(17)\n", encoding="utf-8")
-    code, events, _, _ = _run(tmp_path, "plot.py")
+    if inject_reset:
+        injected = _inject_terminal_control_error(
+            monkeypatch, ConnectionResetError(errno.ECONNRESET, "injected terminal reset")
+        )
+    code, events, _, _ = _run(tmp_path, "plot.py", expected_abrupt_exit=17)
+    if inject_reset:
+        assert len(injected) == 1
     assert code == 17
-    assert len(_starts(events)) == 1
-    assert len(events) == 1
+    [start] = _starts(events)
+    assert executionfact.valid_id(start["execution_id"])
+    assert start["script"] == "plot.py"
+    assert events == [start]
+
+
+@pytest.mark.parametrize(
+    "error_type,expected_abrupt_exit",
+    [
+        (ConnectionResetError, None),
+        (ConnectionAbortedError, 17),
+        (BrokenPipeError, 17),
+        (TimeoutError, 17),
+        (OSError, 17),
+    ],
+)
+def test_runner_fixture_rejects_unexpected_control_errors(
+    tmp_path, monkeypatch, error_type, expected_abrupt_exit
+):
+    source = "pass\n" if expected_abrupt_exit is None else "import os\nos._exit(17)\n"
+    (tmp_path / "plot.py").write_text(source, encoding="utf-8")
+    error = error_type("injected terminal error")
+    injected = _inject_terminal_control_error(monkeypatch, error)
+    with pytest.raises(error_type) as caught:
+        _run(tmp_path, "plot.py", expected_abrupt_exit=expected_abrupt_exit)
+    assert caught.value is error and injected == [error]
+
+
+def test_runner_fixture_reset_requires_the_real_expected_exit_code(tmp_path, monkeypatch):
+    (tmp_path / "plot.py").write_text("import os\nos._exit(18)\n", encoding="utf-8")
+    error = ConnectionResetError(errno.ECONNRESET, "injected terminal reset")
+    injected = _inject_terminal_control_error(monkeypatch, error)
+    with pytest.raises(AssertionError, match="expected abrupt exit 17, got 18"):
+        _run(tmp_path, "plot.py", expected_abrupt_exit=17)
+    assert injected == [error]
 
 
 PROBE = """import json, sys

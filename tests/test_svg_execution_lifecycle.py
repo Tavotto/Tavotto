@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import threading
 import time
@@ -16,7 +17,8 @@ from test_export_svg import document, spec
 
 
 @pytest.fixture
-def project(tmp_path, monkeypatch):
+def project(tmp_path, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="tavotto")
     yield from svg_cases.project.__wrapped__(tmp_path, monkeypatch)
 
 
@@ -57,6 +59,12 @@ def save(client, source, name="saved", reference=None):
     return response.get_json()
 
 
+def saved_reference(client, source, name="saved"):
+    saved = save(client, source, name)
+    assert "panel" in saved["figure_snapshots"], saved
+    return saved["figure_snapshots"]["panel"]
+
+
 def exported(client, source, reference):
     response = client.post(
         "/api/export",
@@ -71,7 +79,7 @@ def test_actual_execution_retires_omitted_failed_and_zero_outputs(project, mode)
     (root / "plot.py").write_text(SCRIPT, encoding="utf-8")
     first = run(client, root, "both")
     source = next(d["asset_id"] for d in first["descriptors"] if d["stem"] == "B")
-    reference = save(client, source)["figure_snapshots"]["panel"]
+    reference = saved_reference(client, source)
     assert reference["executionOwner"] == {"script": "plot.py", "run_config": None}
     next_run = run(client, root, mode)
     fact = next_run["figure_snapshot_invalidation"]
@@ -93,10 +101,10 @@ def test_other_configuration_and_explicit_cold_history_remain_valid(project, mon
     (root / "plot.py").write_text(SCRIPT, encoding="utf-8")
     first = run(client, root, "both")
     source = next(d["asset_id"] for d in first["descriptors"] if d["stem"] == "B")
-    old = save(client, source)["figure_snapshots"]["panel"]
+    old = saved_reference(client, source)
     other_run = run(client, root, "both", argv=["--other"])
     other_source = next(d["asset_id"] for d in other_run["descriptors"] if d["stem"] == "B")
-    other = save(client, other_source, "other")["figure_snapshots"]["panel"]
+    other = saved_reference(client, other_source, "other")
     run(client, root, "one")
     assert exported(client, source, old)["status"] == "failed"
     assert exported(client, other_source, other)["status"] == "done"
@@ -119,7 +127,7 @@ def test_inflight_and_started_cancellation_revoke_before_probe_finishes(
     (root / "plot.py").write_text(SCRIPT, encoding="utf-8")
     first = run(client, root, "both")
     source = next(d["asset_id"] for d in first["descriptors"] if d["stem"] == "B")
-    reference = save(client, source)["figure_snapshots"]["panel"]
+    reference = saved_reference(client, source)
     (root / "mode.txt").write_text("wait", encoding="utf-8")
     results = []
     if observation == "synchronous":
@@ -192,7 +200,7 @@ def test_unknown_new_attempt_blocks_cold_reference_without_claiming_execution(pr
     client, root = project
     first = svg_cases.run_script(client)
     source = first["descriptors"][0]["asset_id"] if isinstance(first, dict) else first
-    reference = save(client, source)["figure_snapshots"]["panel"]
+    reference = saved_reference(client, source)
     pool.shutdown_all(figures_dir=str(root), wait=True)
     m.reset_projects()
     m.open_project(str(root))
@@ -381,10 +389,10 @@ def test_legacy_ownerless_runtime_history_only_revoked_by_proven_matching_owner(
     monkeypatch.setattr(m, "_save_svg_snapshot", legacy_save)
     first = run(client, root, "both")
     source = next(d["asset_id"] for d in first["descriptors"] if d["stem"] == "B")
-    reference = save(client, source)["figure_snapshots"]["panel"]
+    reference = saved_reference(client, source)
     other_run = run(client, root, "both", argv=["--other"])
     other_source = next(d["asset_id"] for d in other_run["descriptors"] if d["stem"] == "B")
-    other_ref = save(client, other_source, "other")["figure_snapshots"]["panel"]
+    other_ref = saved_reference(client, other_source, "other")
     assert "executionOwner" not in reference and "executionOwner" not in other_ref
     monkeypatch.setattr(m, "_save_svg_snapshot", original_save)
     pool.shutdown_all(figures_dir=str(root), wait=True)
@@ -406,3 +414,79 @@ def test_legacy_ownerless_runtime_history_only_revoked_by_proven_matching_owner(
         lambda *args: {"descriptor": {"script": "plot.py", "stem": "different"}},
     )
     assert m._svg_legacy_runtime_owner(root, source) is None
+
+
+@pytest.fixture
+def manual_watch_project(tmp_path, monkeypatch, caplog):
+    from tavotto.engine import project_watch
+
+    monkeypatch.setattr(project_watch.ProjectWatcher, "run", lambda self: self.stop_event.wait())
+    caplog.set_level(logging.INFO, logger="tavotto")
+    yield from svg_cases.project.__wrapped__(tmp_path, monkeypatch)
+
+
+def test_late_watcher_notifications_preserve_both_captured_figures(
+    manual_watch_project, monkeypatch
+):
+    """Drive the real script and registry notification outlets between A and B."""
+    from tavotto.engine import project_watch
+
+    client, root = manual_watch_project
+    (root / "plot.py").write_text(SCRIPT, encoding="utf-8")
+    watcher = project_watch.watcher_of(root)
+    clock = [0.0]
+    watcher.clock = lambda: clock[0]
+    capture = m._capture_svg_snapshot
+    observed = []
+
+    def capture_then_poll(worker, descriptor):
+        capture(worker, descriptor)
+        if descriptor["stem"] == "A" and not observed:
+            observed.append(worker)
+            watcher.poll()
+            clock[0] += 1
+            watcher.poll()
+            assert pool.peek("plot.py", root) is worker
+            assert worker.alive()
+
+    monkeypatch.setattr(m, "_capture_svg_snapshot", capture_then_poll)
+    first = run(client, root, "both")
+    assert len(observed) == 1
+    for descriptor in first["descriptors"]:
+        reference = saved_reference(client, descriptor["asset_id"], name=descriptor["stem"])
+        assert reference["executionOwner"] == {"script": "plot.py", "run_config": None}
+    # A later real edit must still retire this worker; the earlier notification
+    # being harmless does not authorize future source changes.
+    (root / "plot.py").write_text(SCRIPT + "\n# after successful capture\n", encoding="utf-8")
+    watcher.poll()
+    clock[0] += 1
+    watcher.poll()
+    assert pool.peek("plot.py", root) is None
+
+
+def test_unchanged_preparation_reuses_current_multifigure_worker(manual_watch_project):
+    client, root = manual_watch_project
+    (root / "plot.py").write_text(SCRIPT, encoding="utf-8")
+    first = run(client, root, "both")
+    assert len(first["descriptors"]) == 2
+    worker = pool.peek("plot.py", root)
+    execution = worker.execution_id
+    report = client.post("/api/engine/preparation-sessions", json={"script": "plot.py"}).get_json()
+    (action,) = [item for item in report["actions"] if item["kind"] == "run"]
+    url = f"/api/engine/preparation-sessions/{report['session_id']}"
+    response = client.post(
+        f"{url}/actions",
+        json={"action_id": action["id"], "expected_config_revision": report["config_revision"]},
+    )
+    assert response.status_code == 202, response.get_json()
+    deadline = time.monotonic() + 30
+    while True:
+        final = client.get(url).get_json()
+        if final["phase"] not in {"running", "starting_runtime"}:
+            break
+        assert time.monotonic() < deadline, final
+        time.sleep(0.02)
+    assert final["phase"] == "completed", final
+    assert final["result"]["created_runtime"] is False
+    assert pool.peek("plot.py", root) is worker
+    assert worker.execution_id == execution
