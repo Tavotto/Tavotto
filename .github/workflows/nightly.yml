@@ -426,6 +426,19 @@ jobs:
           $pdb = "src-tauri\target\release\tavotto_desktop.pdb"
           if (-not (Test-Path $pdb) -or (Get-Item $pdb).Length -le 0) { throw "缺 $pdb（或为空）" }
 
+      # 壳自写的小型转储（src-tauri/src/crash_dump.rs）。PR 级 CI 没有 Windows 上的 cargo test
+      # （desktop-shell 只有 ubuntu + macos），所以「真崩一次、.dmp 真落盘」只在这里验：
+      # a_real_access_violation_leaves_a_minidump 起一个子进程触发 access violation，
+      # 断言 %TEMP% 下留下 Tavotto.exe.<pid>.dmp 且是 MDMP 格式。src-tauri 的 target 在上一步
+      # 已有缓存，这里只多编一遍 test 档。
+      - name: 壳崩溃转储（真实 access violation → .dmp）
+        if: matrix.python == 'none'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo test --manifest-path src-tauri\Cargo.toml crash_dump -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { throw "crash_dump 测试失败（$LASTEXITCODE）" }
+
       # 仓库模板只是原料：真正喂给 makensis 的是 Tauri 把 {{...}} 展开后的
       # 那份中间脚本。installMode / license / startMenuFolder / 语言表都是
       # 打包器那一刻才落定的——「没配许可证所以没有许可证页」这种话，只有
