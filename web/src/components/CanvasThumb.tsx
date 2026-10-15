@@ -48,17 +48,26 @@ export function CanvasThumb({
   page,
   objects,
   className,
+  transparent = false,
 }: {
   page: ThumbPage
   objects: readonly ThumbObject[]
   /** 尺寸由调用方给，默认与画布列表一致 */
   className?: string
+  /**
+   * 页面画成棋盘格（导出勾了透明背景时用）：只换页面底色，别的一概不动。
+   * 默认 false 时 DOM 与不带这个 prop 之前逐字相同（画布列表 / 版本列表共用，`canvasThumb.test.tsx` 钉着）。
+   */
+  transparent?: boolean
 }) {
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
   const nonce = useRuntimeAssetStore((s) => s.previewNonce)
   // 裁切 id 只由页面尺寸决定：同一份内容在画布列表与版本列表里画出的 DOM 逐字相同（同尺寸的两张共用一个也无妨，几何一样）
   const clip = `thumb-page-${w}x${h}`
+  const checker = `thumb-checker-${w}x${h}`
+  // 棋盘格的格子：长边切成 ~16 份，两格一个周期；只有 transparent 才用
+  const cell = Math.max(w, h) / 16
   // 盒子是透明的，**画出来的是页面本身**（2026-10-07 设计审计 §10.3）：此前白底与边框画在 svg 盒上，
   // 横版与竖版的缩略图一模一样（都是一个 56×40 的白框）。现在页面矩形按真实比例居中，方向一眼可辨；
   // 圆角 4px（缩略图半径族 4 / 6 的小档），按默认盒子的缩放折成用户单位
@@ -93,6 +102,14 @@ export function CanvasThumb({
         <clipPath id={clip}>
           <rect x={0} y={0} width={w} height={h} rx={radius} />
         </clipPath>
+        {transparent && (
+          // 纸白底 + 纸墨 10% 的格：纸上的记号用纸上的墨，两套主题同值，不抢画面
+          <pattern id={checker} width={2 * cell} height={2 * cell} patternUnits="userSpaceOnUse">
+            <rect width={2 * cell} height={2 * cell} fill="var(--color-paper)" />
+            <rect width={cell} height={cell} fill="var(--color-paper-ink)" fillOpacity={0.1} />
+            <rect x={cell} y={cell} width={cell} height={cell} fill="var(--color-paper-ink)" fillOpacity={0.1} />
+          </pattern>
+        )}
       </defs>
       {/* 页面：纸白 + 一圈 hairline（1px，不随缩放变粗变细） */}
       <rect
@@ -102,7 +119,8 @@ export function CanvasThumb({
         width={w}
         height={h}
         rx={radius}
-        fill="var(--color-paper)"
+        fill={transparent ? `url(#${checker})` : 'var(--color-paper)'}
+        data-thumb-transparent={transparent ? '' : undefined}
         stroke="var(--color-border-strong)"
         strokeWidth={1}
         vectorEffect="non-scaling-stroke"
