@@ -1553,16 +1553,41 @@ out = {"python": {
     "in_venv": sys.prefix != sys.base_prefix, "platform": platform.platform()}}
 _tmp_cache, _own_cache = os.environ.get("TAVOTTO_PROBE_FONTCACHE"), False
 try:
-    import matplotlib
-    # 探针是只读的：font_manager 在没有字体缓存时会把 fontlist-v*.json 写进用户的 Matplotlib 缓存目录。
-    # 配置事实（matplotlibrc / configdir / cachedir / rcParams）照旧取真实目录；字体缓存换到一个临时目录——
-    # 已有的 fontlist 复制过去照样命中（不白重建），没有就在临时目录里建。临时目录由父进程在可信目录下给出
-    # （探针超时被杀时也由父进程清掉）；没给就自己建、自己删。
+    # 探针是只读的：matplotlib 的 get_configdir() / get_cachedir() 会 mkdir -p（`import matplotlib` 本身就会建
+    # 配置目录），font_manager 在没有字体缓存时还会把 fontlist-v*.json 写进缓存目录。所以：
+    # 1) 真实的配置 / 缓存目录用无副作用的方式按 matplotlib 的规则算出来（只报路径，不建）；
+    # 2) 真实配置目录不存在时，import 之前把 MPLCONFIGDIR 指到临时目录——import 的 mkdir 落在那里
+    #    （目录不存在 = 里面本来就没有 matplotlibrc，探到的事实相同）；
+    # 3) 字体缓存换到临时目录——已有的 fontlist 复制过去照样命中（不白重建），没有就在临时目录里建。
+    # 临时目录由父进程在可信目录下给出（探针超时被杀时也由父进程清掉）；没给就自己建、自己删。
     import glob, shutil, tempfile
-    real_cache = matplotlib.get_cachedir()
+    from pathlib import Path
+
+    def _real_dir(xdg_env, xdg_default):
+        try:
+            c = os.environ.get("MPLCONFIGDIR")
+            if c:
+                d = Path(c)
+            elif sys.platform.startswith(("linux", "freebsd")):
+                d = Path(os.environ.get(xdg_env) or str(Path.home() / xdg_default), "matplotlib")
+            elif sys.platform == "win32":
+                old = Path.home() / ".matplotlib"
+                la = os.environ.get("LOCALAPPDATA")
+                d = old if (old.is_dir() or not la) else Path(la) / "matplotlib"
+            else:
+                d = Path.home() / ".matplotlib"
+            return str(d.resolve())
+        except Exception:
+            return None
+
+    real_cfg, real_cache = _real_dir("XDG_CONFIG_HOME", ".config"), _real_dir("XDG_CACHE_HOME", ".cache")
     if not _tmp_cache:
         _tmp_cache, _own_cache = tempfile.mkdtemp(prefix="tavotto-mplcache-"), True
-    for _f in glob.glob(os.path.join(real_cache, "fontlist-v*.json")):
+    redirected_cfg = bool(real_cfg) and not os.path.isdir(real_cfg)
+    if redirected_cfg:
+        os.environ["MPLCONFIGDIR"] = os.path.join(_tmp_cache, "mplconfig")
+    import matplotlib
+    for _f in glob.glob(os.path.join(real_cache or "", "fontlist-v*.json")):
         try:
             shutil.copy(_f, _tmp_cache)
         except OSError:
@@ -1612,8 +1637,8 @@ try:
             fonts.append({"list": key, "family": f, "present": str(f).lower() in names})
     out["matplotlib"] = {
         "version": matplotlib.__version__, "backend": backend,
-        "matplotlibrc": matplotlib.matplotlib_fname(), "configdir": matplotlib.get_configdir(),
-        "cachedir": real_cache, "non_default_rcparams": nondefault,
+        "matplotlibrc": matplotlib.matplotlib_fname(), "configdir": real_cfg if redirected_cfg else matplotlib.get_configdir(),
+        "cachedir": real_cache or "unknown", "non_default_rcparams": nondefault,
         "font_count": len(fm.fontManager.ttflist), "font_family_count": len(names), "fonts": fonts,
         "font_note": "system fonts known to matplotlib in this probe; fonts registered by the Tavotto worker at render time are not loaded here"}
 except Exception as exc:

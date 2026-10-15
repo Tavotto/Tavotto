@@ -4054,18 +4054,30 @@ class TestIssue1012BackendItems:
     def test_probe_does_not_write_the_matplotlib_font_cache(self, tmp_path, monkeypatch):
         """3：空缓存目录跑真探针，前后各列一次目录，内容不变；字体数量与字体族仍报得出。"""
         py, bundled = self._python()
-        cfg = tmp_path / "mplcfg"
-        cfg.mkdir()
-        before = sorted(p.name for p in cfg.rglob("*"))
+        cfg = tmp_path / "mplcfg"  # 故意不预建：新用户环境里它本来就不存在
         monkeypatch.setattr(
             diagdetail, "PROBE_TIMEOUT_S", 120
         )  # 空缓存要现建字体表，慢机器上超过默认 10 s
         out = REAL_PROBE(py, bundled, str(tmp_path), {"MPLCONFIGDIR": str(cfg)})
         assert out["status"] == "ok", out
-        assert sorted(p.name for p in cfg.rglob("*")) == before == []
+        assert not cfg.exists(), (
+            "探针（含 import matplotlib / get_cachedir）不许把真实缓存目录建出来"
+        )
         mpl = out["matplotlib"]
         assert mpl["font_count"] > 0 and mpl["font_family_count"] > 0 and mpl["fonts"]
         assert mpl["cachedir"] == str(cfg)  # 报的是真实缓存目录，不是临时目录
+        assert mpl["configdir"] == str(cfg)
+
+    def test_probe_leaves_an_existing_cache_dir_untouched(self, tmp_path, monkeypatch):
+        """3：目录已存在时前后列表不变（空缓存也不写 fontlist）。"""
+        py, bundled = self._python()
+        cfg = tmp_path / "mplcfg"
+        cfg.mkdir()
+        monkeypatch.setattr(diagdetail, "PROBE_TIMEOUT_S", 120)
+        out = REAL_PROBE(py, bundled, str(tmp_path), {"MPLCONFIGDIR": str(cfg)})
+        assert out["status"] == "ok", out
+        assert sorted(p.name for p in cfg.rglob("*")) == []
+        assert out["matplotlib"]["cachedir"] == str(cfg)
 
     def _render_env(self, monkeypatch, project, overrides=None):
         py, bundled = self._python()
