@@ -127,7 +127,7 @@
     "targetAria": "Target: {{target}}",
     "taskHistory": "Task history",
     "techDetails": "Technical details",
-    "unconfirmedBody": "This request may already be running. Check the result first — nothing is sent again until you do.",
+    "unconfirmedBody": "This request may already be running. Check the result first.",
     "unconfirmedTitle": "Sent, not yet confirmed"
   },
   "process": {

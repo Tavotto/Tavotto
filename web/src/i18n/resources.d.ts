@@ -126,7 +126,7 @@ export default interface Resources {
       "targetAria": "作用目标：{{target}}",
       "taskHistory": "任务历史",
       "techDetails": "技术详情",
-      "unconfirmedBody": "这条指令可能已经在执行。先查询结果——确认之前不会重复发送。",
+      "unconfirmedBody": "这条指令可能已经在执行，先查询结果。",
       "unconfirmedTitle": "已发出，尚未收到确认"
     },
     "process": {
