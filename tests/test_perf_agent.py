@@ -669,6 +669,45 @@ def test_range_invalid_run_removes_stale_raw_report_before_failing(tmp_path, mon
     assert json.loads(summary.read_text(encoding="utf-8"))["status"] == "failed"
 
 
+def test_new_run_clears_stale_derived_reports_even_when_not_requested(tmp_path, monkeypatch):
+    """复用输出目录时，上次的 drag / findings / comparison 不得被本次调用当作证据留下。"""
+    out = tmp_path / "run.json"
+    derived = [
+        tmp_path / "drag.json",
+        tmp_path / "drag-findings.json",
+        tmp_path / "run.comparison.json",
+    ]
+    for path in derived:
+        path.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1))
+    # 本次既没要 drag 也没给 baseline，且浏览器阶段直接失败。
+    assert A.main(["run", "--out", str(out)]) == 2
+    assert [p.exists() for p in derived] == [False, False, False]
+    # 给了 baseline 时基线本身是只读证据，绝不能被当作派生物删掉。
+    stale = tmp_path / "run.comparison.json"
+    stale.write_text("{}", encoding="utf-8")
+    assert A.main(["run", "--out", str(out), "--baseline", str(baseline)]) == 2
+    assert not stale.exists()
+    assert baseline.is_file()
+
+
+def test_new_run_clearing_derived_reports_spares_baseline_and_summary(tmp_path, monkeypatch):
+    """基线/摘要恰好叫 drag.json 时，清理派生物不能误删它们。"""
+    out = tmp_path / "run.json"
+    baseline = tmp_path / "drag.json"
+    baseline.write_text(json.dumps(report()), encoding="utf-8")
+    summary = tmp_path / "drag-findings.json"
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1))
+    assert (
+        A.main(["run", "--out", str(out), "--baseline", str(baseline), "--summary", str(summary)])
+        == 2
+    )
+    assert json.loads(baseline.read_text(encoding="utf-8"))["schema"] == A.SCHEMA
+    assert json.loads(summary.read_text(encoding="utf-8"))["status"] == "failed"
+
+
 def test_perf_playwright_cleanup_cannot_erase_agent_pending_summary():
     """独立 outputDir 的主语是 Playwright 真正会清理的目录，而非报告文件名。"""
     root = Path(__file__).resolve().parents[1]

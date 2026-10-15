@@ -546,6 +546,19 @@ def main(argv: list[str] | None = None) -> int:
                 result["regression_status"] = "failed"
                 raise ValueError("baseline_aliases_run_output")
             output.unlink(missing_ok=True)
+            # 复用输出目录时，上次的派生报告（拖动 / 拖动分析 / 基线比较）同样会被
+            # 当成本次证据读走，而本次可能没请求它们或在其生成前就失败。一并作废；
+            # 只跳过与基线或摘要同一文件的路径，它们不是本次的派生物。
+            for stale in (
+                output.with_name("drag.json"),
+                output.with_name("drag-findings.json"),
+                output.with_suffix(".comparison.json"),
+            ):
+                if (args.baseline is not None and _same_report_path(stale, args.baseline)) or (
+                    args.summary is not None and _same_report_path(stale, args.summary)
+                ):
+                    continue
+                stale.unlink(missing_ok=True)
             if not 3 <= args.repeat <= 60 or not 1 <= args.regression_pct <= 200:
                 raise ValueError("invalid_run_parameters")
             output.parent.mkdir(parents=True, exist_ok=True)
