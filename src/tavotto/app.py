@@ -9435,6 +9435,14 @@ def api_ai_pending_put(rid):
         )
     except engine_ai_history.DraftTooLarge as exc:
         return _draft_too_large(exc)
+    except engine_ai_history.PendingLimit as exc:
+        return jsonify(
+            {
+                "error": "还有已发出的指令没确认",
+                "code": "ai_pending_limit",
+                "params": {"count": exc.count},
+            }
+        ), 409
     return jsonify({"ok": True})
 
 

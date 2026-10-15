@@ -128,7 +128,7 @@
   的 `ai_drafts` / `ai_pending`（主语 (项目, fileId[, rid])，按项目隔离，不进项目目录 / 日志 / 遥测 / 诊断包）。
   端点 `GET|PUT|DELETE /api/ai/drafts`（PUT 全文覆盖、>20 KB 413 `ai_draft_too_large` 不截断；DELETE 带 `if_text`
   条件删除）、`PUT` 带单调写入戳 `stamp`（旧戳 → `{stale:true,stamp}` 不覆盖；空文本 / 超限留墓碑；条件删除与 accept 推进戳；`ai_drafts.stamp` 旧表补列），`PUT|DELETE /api/ai/drafts/pending/<rid>`、`POST /api/ai/drafts/pending/<rid>/accept`（事务内清账本，
-  仅当草稿当前的写入戳仍等于账本记的 `draft_stamp`（提交时草稿的戳；自提交后没被改过）才删草稿，**不比文本**——提交文本是 trim 过的；账本没记戳就不动草稿；`GET /api/ai/drafts` 回行戳 `stamp`（含墓碑）供客户端抬高戳下限）。每项目 30 份、每面板 8 条账本、30 天过期（启动与写入时有界清理）。
+  仅当草稿当前的写入戳仍等于账本记的 `draft_stamp`（提交时草稿的戳；自提交后没被改过）才删草稿，**不比文本**——提交文本是 trim 过的；账本没记戳就不动草稿；`GET /api/ai/drafts` 回行戳 `stamp`（含墓碑）供客户端抬高戳下限）。每项目 30 份、每面板 8 条未解决账本（满了拒绝新提交 409 `ai_pending_limit`，不淘汰旧的）、30 天过期（启动与写入时有界清理）。
   **`run()` 先写幂等记录再 spawn**：写库失败不 spawn，spawn 失败标 `failed`。看护 `tests/test_ai_drafts.py`。
 - 会话历史在 `engine/ai_history.py`（SQLite `cache/ai_history.sqlite3`，
   按 project 列过滤）；启动时 running→interrupted + purge(180d，pinned 豁免)；

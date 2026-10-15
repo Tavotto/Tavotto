@@ -263,6 +263,8 @@ USER_VISIBLE_CODES = {
     "ai_request_not_found": set(),
     # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
     "ai_draft_too_large": {"limit_kb"},
+    # 同一面板未解决的待确认提交已满（409，拒绝新的、不淘汰旧的）
+    "ai_pending_limit": {"count"},
     # --- 编码 Agent 注册表（ADR 0013）：全部经 AgentError 抛出、
     #     由 app.py 的 _agent_error 一个漏斗转成 JSON ---
     "ai_agent_unknown": {"agent"},

@@ -220,15 +220,47 @@ def test_get_reports_the_row_stamp_even_for_a_tombstone(client, two):
 
 def test_pending_cap_per_file_and_rid_validation(client, two):
     a, _ = two
+    codes = []
     for i in range(ai_history.PENDING_MAX_PER_FILE + 2):
         rid = f"rid-{i:08d}"
-        client.put(
+        r = client.put(
             f"/api/ai/drafts/pending/{rid}",
             json={"file": "F", "text": "t", "sent": SENT},
             headers=H(a),
         )
+        codes.append(r.status_code)
+    # 满了**拒绝新的、不删旧的**：旧的可能正是后端已接受、等着被查询的那条（删了就可能被同一条指令换新 id 再执行）
+    n = ai_history.PENDING_MAX_PER_FILE
+    assert codes == [200] * n + [409] * 2
     rids = [p["rid"] for p in get(client, a, "F")["pendings"]]
-    assert len(rids) == ai_history.PENDING_MAX_PER_FILE and "rid-00000000" not in rids
+    assert sorted(rids) == [f"rid-{i:08d}" for i in range(n)]  # 最老的那条还在，新的两条没进
+    over = client.put(
+        "/api/ai/drafts/pending/rid-99999999",
+        json={"file": "F", "text": "t", "sent": SENT},
+        headers=H(a),
+    )
+    assert over.get_json()["code"] == "ai_pending_limit" and over.get_json()["params"] == {
+        "count": n
+    }
+    # 同 rid 重写（重试写账本）不占新名额
+    assert (
+        client.put(
+            "/api/ai/drafts/pending/rid-00000000",
+            json={"file": "F", "text": "t2", "sent": SENT},
+            headers=H(a),
+        ).status_code
+        == 200
+    )
+    # 解决一条（确认 / 清掉）之后腾出名额，新的可以进
+    client.delete("/api/ai/drafts/pending/rid-00000003?file=F", headers=H(a))
+    assert (
+        client.put(
+            "/api/ai/drafts/pending/rid-99999999",
+            json={"file": "F", "text": "t", "sent": SENT},
+            headers=H(a),
+        ).status_code
+        == 200
+    )
     assert client.put(
         "/api/ai/drafts/pending/bad rid!",
         json={"file": "F", "text": "t", "sent": SENT},

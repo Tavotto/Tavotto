@@ -26,6 +26,8 @@ export interface DraftBackend {
   setPendingListFails: (fails: boolean) => void
   /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
   setPendingWriteFails: (fails: boolean) => void
+  /** 模拟「这个面板未解决的提交已满」：新 rid 一律 409 `ai_pending_limit`（params.count = 传入的数）；null = 不限 */
+  setPendingLimit: (limit: number | null) => void
   /** 直接读 / 写（模拟另一个标签页） */
   draft: (pj: string, file: string) => string | undefined
   pending: (pj: string, file: string) => string[]
@@ -44,6 +46,7 @@ export function createDraftBackend(): DraftBackend {
     { rid: string; text: string; sent: unknown; script?: string | null; draftStamp?: number | null }[]
   >()
   let pendingWriteFails = false
+  let pendingLimit: number | null = null
   let pendingListFails = false
   let draftPutFails = false
   let hold: Promise<void> | null = null
@@ -99,6 +102,8 @@ export function createDraftBackend(): DraftBackend {
       }
       if (method === 'PUT') {
         if (pendingWriteFails) return json({ error: 'boom', code: 'internal_error' }, 500)
+        if (pendingLimit !== null && !list.some((x) => x.rid === rid))
+          return json({ error: 'full', code: 'ai_pending_limit', params: { count: pendingLimit } }, 409)
         const next = [
           ...list.filter((x) => x.rid !== rid),
           {
@@ -209,6 +214,9 @@ export function createDraftBackend(): DraftBackend {
     },
     setPendingListFails: (f) => {
       pendingListFails = f
+    },
+    setPendingLimit: (n) => {
+      pendingLimit = n
     },
     setPendingWriteFails: (f) => {
       pendingWriteFails = f

@@ -191,7 +191,9 @@ export async function markSubmitted(
   try {
     await putAiPending(rid, fileId, text, sent, project, script, draftStamp)
     return true
-  } catch {
+  } catch (e) {
+    // 这个面板已发出未确认的提交满了：这是**明确的拒绝原因**，抛出去让界面说一句话（不是「记账失败」）
+    if (e instanceof ApiError && e.status === 409 && e.body?.code === 'ai_pending_limit') throw e
     return false
   }
 }

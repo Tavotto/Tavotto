@@ -22,6 +22,7 @@
     "ai_agent_probe_timeout": "Checking {{path}} timed out. You can try again; your previous setting is unchanged.",
     "ai_agent_unknown": "Unknown figure assistant: {{agent}}.",
     "ai_draft_too_large": "This instruction is too long (over {{limit_kb}} KB) to keep as a draft.",
+    "ai_pending_limit": "This figure still has {{count}} sent instructions awaiting confirmation. Wait for them to finish (or check their results) before sending another.",
     "ai_request_not_found": "The backend never received this request.",
     "ai_revert_conflict": "{{script}} has changed since this AI edit. Reverting would overwrite those later changes, so nothing was reverted.",
     "ai_revert_failed": "Couldn’t revert the AI changes: {{reason}}",

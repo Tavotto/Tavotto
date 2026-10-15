@@ -1033,6 +1033,18 @@ describe('已发出未确认：不能盲目重发', () => {
     expect(aiRun).toHaveBeenCalledTimes(1)
   })
 
+  it('这个面板未确认的提交已满（后端 409 ai_pending_limit）：不发、不留「发送中」，一句话说明还有 N 条没确认（不淘汰旧的由后端用例钉住）', async () => {
+    be.setPendingLimit(8)
+    await mount()
+    await typeText('新指令')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(q('[data-ai-error="send"]')?.textContent).toContain('还有 8 条已发出的指令没确认')
+    expect(q('[data-ai-submission]')).toBeNull()
+    expect(input().value).toBe('新指令') // 草稿还在，用户可以等一等再发
+  })
+
   it('「改写后再发」：放弃这条等待、输入框可改，下一次发送是新 rid', async () => {
     await mount()
     await sendIt('旧指令')

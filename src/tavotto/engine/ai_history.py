@@ -86,6 +86,15 @@ PENDING_MAX_PER_FILE = 8
 DRAFT_KEEP_DAYS = 30
 
 
+class PendingLimit(ValueError):
+    """这个面板未解决的待确认提交已满：**拒绝新的、不删旧的**（旧的可能正是后端已接受、等着被查询的那条，
+    删了它就查不到、可能被同一条指令换新 id 再执行一遍）。调用方回 409 `ai_pending_limit`。"""
+
+    def __init__(self, count: int):
+        super().__init__(count)
+        self.count = count
+
+
 class DraftTooLarge(ValueError):
     """文本超过上限：调用方回 413 `ai_draft_too_large`，**不截断**（截断会让恢复出来的是一句被砍掉的指令）。"""
 
@@ -491,7 +500,7 @@ def put_pending(
     script: str | None = None,
     draft_stamp: int | None = None,
 ) -> None:
-    """记一条待确认提交（按 rid 一条）。每 (项目, 面板) 最多 8 条，超出丢最老的。
+    """记一条待确认提交（按 rid 一条）。每 (项目, 面板) 最多 8 条未解决的；满了**拒绝新的**（`PendingLimit`），绝不淘汰旧的。
 
     `draft_stamp`：提交那一刻草稿的写入戳（前端发送前先把草稿写成功、拿到它）。`accept_pending` 据此判
     「草稿在提交之后有没有被改过」；没有（None）= 不知道，确认时不动草稿。"""
@@ -499,6 +508,17 @@ def put_pending(
         raise DraftTooLarge(PENDING_MAX_BYTES)
     now = _now_ms()
     with _connect(db_path) as con:
+        # 同 rid 的重写（重试写账本）不占新名额；其它 rid 满了就拒绝
+        exists = con.execute(
+            "SELECT 1 FROM ai_pending WHERE project=? AND file_id=? AND rid=?",
+            (project, file_id, rid),
+        ).fetchone()
+        if not exists:
+            n = con.execute(
+                "SELECT COUNT(*) FROM ai_pending WHERE project=? AND file_id=?", (project, file_id)
+            ).fetchone()[0]
+            if n >= PENDING_MAX_PER_FILE:
+                raise PendingLimit(n)
         con.execute(
             "INSERT OR REPLACE INTO ai_pending (project, file_id, rid, text, sent, script, draft_stamp, created_ms) "
             "VALUES (?,?,?,?,?,?,?,?)",
@@ -512,11 +532,6 @@ def put_pending(
                 draft_stamp,
                 now,
             ),
-        )
-        con.execute(
-            "DELETE FROM ai_pending WHERE project=? AND file_id=? AND rid NOT IN "
-            "(SELECT rid FROM ai_pending WHERE project=? AND file_id=? ORDER BY created_ms DESC LIMIT ?)",
-            (project, file_id, project, file_id, PENDING_MAX_PER_FILE),
         )
         _prune_drafts(con, project, now)
 

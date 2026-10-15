@@ -408,13 +408,22 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
     set((s) => ({ submissions: { ...s.submissions, [rid]: sub } }))
     // spawn 之前先把账本写进后端（原文 + 目标）：刷新 / 崩溃 / 换端口之后还认得「这条发出过」
-    const marked = markSubmitted(project, fileId, prompt, rid, sent, script, draftStamp)
-    if (marked && !(await marked)) {
-      // 账本没写成：**不发**。丢了响应之后没有 rid 可查，刷新就会放行同一条指令换新 id 再执行
+    const dropSub = () =>
       set((s) => {
         const { [rid]: _gone, ...rest } = s.submissions
         return { submissions: rest }
       })
+    const marked = markSubmitted(project, fileId, prompt, rid, sent, script, draftStamp)
+    let recorded: boolean | undefined
+    try {
+      recorded = marked ? await marked : undefined
+    } catch (e) {
+      dropSub() // 后端明确拒绝记账（如未确认的提交已满，`ai_pending_limit`）：不发，原因原样交给界面
+      throw e
+    }
+    if (marked && !recorded) {
+      // 账本没写成：**不发**。丢了响应之后没有 rid 可查，刷新就会放行同一条指令换新 id 再执行
+      dropSub()
       throw new AiLedgerError()
     }
     return dispatch(rid, get().generation)

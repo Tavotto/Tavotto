@@ -27,7 +27,7 @@
   ② 与 `ai_history` 同一边界——用户本机 `data_dir()`，指令原文本来就在那里；
   ③ 多标签页要「后端为准」，浏览器存储做不到条件删除（读-判-删不是一个事务）。
   做法：`ai_history.sqlite3` 里两张表，主语 (项目, fileId[, rid])：`ai_drafts`（全文覆盖，最后写入为准）与
-  `ai_pending`（待确认提交，**按 rid 一条**，每面板最多 8 条，记提交时的原文与目标）。
+  `ai_pending`（待确认提交，**按 rid 一条**，每面板最多 8 条**未解决的**，满了拒绝新的（409 `ai_pending_limit`）、**绝不淘汰旧的**——旧的可能正是后端已接受、等着被查询的那条；记提交时的原文与目标）。
   端点（全部走会话认证 ADR 0008 与 `require_project` 隔离）：`GET/PUT/DELETE /api/ai/drafts`
   （DELETE 带 `if_text`，文本对不上不删）、`PUT|DELETE /api/ai/drafts/pending/<rid>`、
   `POST /api/ai/drafts/pending/<rid>/accept`（一个事务里清账本，且仅当草稿文本仍等于提交原文才删草稿）。
