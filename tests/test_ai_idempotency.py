@@ -1304,10 +1304,18 @@ def _ended(db):
 
 # 会话详情的 `final`：cancel 之后 status 立刻是 cancelled，但 changed / diff / refresh 要等 _pump 收尾才算出来
 # ---------------------------------------------------------------------------
-def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli):
+def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli, monkeypatch):
     state, _ = cli
     state["delay"] = 2.0
     figs = _project(tmp_path)
+    gate = threading.Event()
+    real_refresh = ai_bridge.refresh_outcome
+
+    def slow_refresh(*a, **k):
+        gate.wait(10)  # 把 pump 钉在「changed / diff 已算、refresh 还没出」的位置
+        return real_refresh(*a, **k)
+
+    monkeypatch.setattr(ai_bridge, "refresh_outcome", slow_refresh)
     sid = ai_bridge.run("codex", "fig1.py", "p", str(figs))
     assert ai_bridge.get(sid)["final"] is False  # 刚起：不是终态
     assert ai_bridge.cancel(sid) is True
@@ -1315,13 +1323,45 @@ def test_session_detail_is_not_final_until_the_pump_finishes(tmp_path, cli):
     assert (
         detail["status"] == "cancelled" and detail["final"] is False
     )  # cancel 之后、pump 结束之前
-    _wait_idle()
+    time.sleep(0.5)  # 进程已被终止，pump 卡在 refresh 上：仍不是终态
+    assert ai_bridge.get(sid)["final"] is False
+    gate.set()
     deadline = time.time() + 15
     while time.time() < deadline and not ai_bridge.SESSIONS[sid].get("final"):
         time.sleep(0.05)
     done = ai_bridge.get(sid)
     assert done["final"] is True and done["status"] in ("cancelled", "done", "failed")
+    _wait_idle()
     engine_watch.stop()
+
+
+def test_concurrent_first_connections_to_an_old_database_do_not_race_on_alter(tmp_path):
+    """两个服务进程（或线程）同时打开同一个旧库：「先查列有没有再 ALTER」不是原子的，后到的撞 `duplicate column name`。"""
+    db = tmp_path / "old.sqlite3"
+    raw = sqlite3.connect(db)
+    raw.execute(
+        "CREATE TABLE sessions (id TEXT PRIMARY KEY, project TEXT NOT NULL, canvas TEXT, panel TEXT, element TEXT,"
+        " provider TEXT NOT NULL, model TEXT, effort TEXT, scope TEXT, target TEXT, script TEXT, prompt TEXT NOT NULL,"
+        " status TEXT NOT NULL, diff TEXT NOT NULL DEFAULT '', changed INTEGER NOT NULL DEFAULT 0, error TEXT,"
+        " transcript TEXT NOT NULL DEFAULT '[]', started_ms INTEGER NOT NULL, ended_ms INTEGER, snapshot_path TEXT,"
+        " pinned INTEGER NOT NULL DEFAULT 0)"
+    )
+    raw.commit()
+    raw.close()
+    errors: list[BaseException] = []
+    barrier = threading.Barrier(8)
+
+    def open_it():
+        barrier.wait()
+        try:
+            ai_history.find_by_request("/p", "rid-x", db_path=db)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    ts = [threading.Thread(target=open_it) for _ in range(8)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert errors == []
 
 
 def test_detail_from_history_is_final_only_when_the_row_was_ended(tmp_path, cli):
