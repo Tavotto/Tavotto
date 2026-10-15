@@ -313,6 +313,10 @@ function AssistantPanelBody() {
   const sourceGone =
     !!submission && !docObjects.some((o) => o.type === 'panel' && (o as PanelObject).fileId === submission.fileId)
   const sending = submission?.phase === 'sending'
+  // 面板挂载（刷新、切页签回来、A→B→A 回切时按代际重挂）：把后端仍在跑的会话接回来
+  useEffect(() => {
+    void useAiStore.getState().restoreRunning()
+  }, [])
   const [checkNote, setCheckNote] = useState<'unreachable' | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)

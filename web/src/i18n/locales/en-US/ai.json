@@ -159,6 +159,7 @@
   "session": {
     "doneChanged": "Changes written to the script.",
     "doneNoChange": "Finished; the script is unchanged",
+    "restoredNote": "Reconnected to a task that is still running. Earlier output isn’t shown; the result appears when it finishes.",
     "reverted": "Reverted. The script is back to its previous state.",
     "revertedStatus": "Reverted the assistant’s change. Rebuilding the figure…",
     "running": "Editing the script…"

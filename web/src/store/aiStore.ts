@@ -11,6 +11,7 @@ import {
   ApiError,
   effectiveAgent,
   fetchAiCapabilities,
+  fetchAiHistory,
   fetchAiRequest,
   fetchAiSession,
   isDefiniteRunFailure,
@@ -72,6 +73,11 @@ export interface AiSession {
    * 本地先标的 `cancelled` 不算——真正的结局（diff、changed）还要靠随后那条 `ai.done` 补上。
    */
   finalized?: boolean
+  /**
+   * 刷新 / 重连 / 回切之后从后端历史**接回来**的运行中会话（只读占位，PR4b）：此前的输出不再回放，
+   * 之后的 `ai.delta` / `ai.done` 按 session id 认领到它上面；它同样锁住同一脚本的发送、可中止。
+   */
+  restored?: boolean
 }
 
 /**
@@ -192,6 +198,11 @@ interface AiState {
     /** 提交时草稿的写入戳（发送前已把草稿写成功拿到的）；确认后后端按「草稿戳没变」清草稿，不比文本 */
     draftStamp?: number | null
   }) => Promise<SubmitOutcome>
+  /**
+   * 把后端此刻仍在跑的会话接回来（只读占位），并把本地还当它在跑、后端却已结束的会话收尾
+   * （断线期间的 `ai.done` 没收到）。刷新 / SSE 重连 / 面板挂载时调用；只读，按项目隔离，失败静默。
+   */
+  restoreRunning: () => Promise<void>
   /** 问后端「这个请求 id 你登记过吗」：只读，不会让任何东西被执行 */
   queryRequest: (rid: string) => Promise<QueryOutcome>
   /**
@@ -645,6 +656,14 @@ export const useAiStore = create<AiState>((set, get) => ({
     }))
   },
 
+  restoreRunning: async () => {
+    if (restoring) return restoring
+    restoring = doRestore().finally(() => {
+      restoring = null
+    })
+    return restoring
+  },
+
   clear: () => {
     ledgerUnknown.clear()
     supersedeQueue.clear()
@@ -655,9 +674,85 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 }))
 
+let restoring: Promise<void> | null = null
+/** 正在拉历史的那一小段里到的事件也要留着：占位还没建，它们不是「别人的」 */
+let restoringActive = 0
+
+async function doRestore(): Promise<void> {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  const born = get().generation
+  const pj = currentProjectId()
+  restoringActive++
+  try {
+    let list
+    try {
+      list = (await fetchAiHistory({ status: 'running', limit: 50 }, pj))?.sessions
+    } catch {
+      return // 联系不上 / 老后端：什么都不动，下一次重连再来
+    }
+    // 拉的过程中换了项目：这些会话属于旧项目，不落
+    if (born !== get().generation || pj !== currentProjectId() || !Array.isArray(list)) return
+    const caps = get().caps
+    const live = new Set<string>()
+    for (const e of list) {
+      if (e.status !== 'running') continue
+      live.add(e.id)
+      if (get().sessions.some((x) => x.id === e.id)) continue
+      const session: AiSession = {
+        id: e.id,
+        project: pj,
+        agent: e.provider,
+        agentLabel: agentDisplayName(caps, e.provider),
+        prompt: e.prompt,
+        script: e.script ?? '',
+        panelId: null,
+        fileId: null,
+        gid: null,
+        scope: (['element', 'axes', 'figure'].includes(e.scope ?? '') ? e.scope : 'figure') as AiScope,
+        target: e.target ?? '',
+        entries: [],
+        status: 'running',
+        changed: false,
+        diff: '',
+        startedAt: e.started_ms,
+        restored: true,
+      }
+      set((s) => ({ sessions: [...s.sessions, session] }))
+      const pending = early.get(e.id)
+      early.delete(e.id)
+      for (const ev of pending ?? []) {
+        if (ev.t === 'delta') get().appendDelta(e.id, ev.kind, ev.text)
+        else if (get().finish(ev.p)) settledNotifier?.(ev.p)
+      }
+    }
+    // 本地还当它在跑、后端的运行中清单里却没有：它在断线期间结束了，`ai.done` 没收到——以后端为准收尾
+    for (const x of get().sessions) {
+      if (x.status !== 'running' || x.finalized || live.has(x.id)) continue
+      const d = await fetchAiSession(x.id, x.project).catch(() => null)
+      if (born !== get().generation || !d || d.status === 'running') continue
+      const done: DonePayload = {
+        session: x.id,
+        status: d.status,
+        changed: !!d.changed,
+        diff: d.diff ?? '',
+      }
+      if (x.entries.length === 0 && d.transcript?.length) {
+        set((s) => ({
+          sessions: s.sessions.map((y) =>
+            y.id === x.id ? { ...y, entries: d.transcript.map((t) => ({ kind: t.kind as AiDeltaKind, text: t.text })) } : y,
+          ),
+        }))
+      }
+      if (get().finish(done)) settledNotifier?.(done)
+    }
+  } finally {
+    restoringActive--
+  }
+}
+
 function bufferEarly(sid: string, rid: string | undefined, ev: EarlyEvent): void {
   const subs = useAiStore.getState().submissions
-  const pending = Object.keys(subs).length > 0
+  const pending = Object.keys(subs).length > 0 || restoringActive > 0
   // 没有任何在途提交 = 这是别人的 / 已经丢弃的会话的事件，不留；带了 rid 的必须对得上一条提交
   if (!pending || (rid && !subs[rid])) return
   let list = early.get(sid)

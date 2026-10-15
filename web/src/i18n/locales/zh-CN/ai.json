@@ -156,6 +156,7 @@
   "session": {
     "doneChanged": "改动已写入脚本",
     "doneNoChange": "已完成，脚本没有变化",
+    "restoredNote": "已接回仍在运行的任务；此前的输出不再显示，结束后会更新结果。",
     "reverted": "已回滚，脚本已恢复到修改前。",
     "revertedStatus": "已回滚助手的修改，正在重建图表…",
     "running": "正在修改脚本…"
