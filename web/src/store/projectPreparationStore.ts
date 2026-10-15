@@ -459,6 +459,9 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       // 沿用标志换了（「清除」）也是另一个会话（不同运行配置），上一份报告不许留；但它不算「草稿与会话冻结的参数不同」（`draftDiffers`）
       const reuseOf = (t: PreparationTarget) => !('id' in t) && !!t.reuse_last_success
       const sameTarget = !!prev && !targetChanged(prev.target, target) && reuseOf(prev.target) === reuseOf(target)
+      // 同参数再点一次「打开并运行」是同一个意图：已有的认领记号（含响应丢了的 `armMaybe`）留着——否则第二次检查回来前脚本
+      // 已跑完，`accept` 拿到的是没有 `armMaybe` 的已完成报告，答应过的「准备完自动进入编辑」就丢了（Codex #1044 r4285653253）
+      const keepArm = sameTarget && !!opts?.run && !!prev
       if (prev && !sameTarget) {
         targetGens.set(key, (targetGens.get(key) ?? 0) + 1)
         stopTimer(key)
@@ -483,11 +486,11 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             // 「进入编辑」的记录属于那份目标的结果：换了参数就是另一批图，旧图的编辑不许混进新结果的判断
             editing: sameTarget ? (prev?.editing ?? []) : [],
             editRenders: sameTarget ? (prev?.editRenders ?? {}) : {},
-            // 「打开并运行」的意图记号只属于明确点过它的这一次；同参数再打开不带过去，换参数时看旧会话里还有没有在等的意图
-            armed: false,
-            armMaybe: false,
-            armMaybeBaseline: null,
-            armMaybeFrom: null,
+            // 「打开并运行」的意图记号只属于明确点过它的这一次；同参数只打开不运行不带过去，换参数时看旧会话里还有没有在等的意图
+            armed: keepArm ? prev.armed : false,
+            armMaybe: keepArm ? prev.armMaybe : false,
+            armMaybeBaseline: keepArm ? prev.armMaybeBaseline : null,
+            armMaybeFrom: keepArm ? prev.armMaybeFrom : null,
             wantsRun: !!opts?.run,
             transferFrom: sameTarget
               ? (prev?.transferFrom ?? null)

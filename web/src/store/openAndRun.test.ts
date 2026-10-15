@@ -812,6 +812,28 @@ describe('状态丢失后以后端报告为准（Codex #1044 r4271063082 / r4271
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
   })
 
+  it('运行中再点一次同参数「打开并运行」、检查回来时脚本已跑完：记号不被重置，自动进入编辑照样兑现（Codex #1044 r4285653253）', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(live())
+    await open()
+    expect(entry().armed).toBe(true)
+    mockCreate.mockResolvedValueOnce(done(['a'], 'att-1', 4, { intent: live().intent }))
+    await open()
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+  })
+
+  it('认领响应丢了、再点一次同参数「打开并运行」：armMaybe 留着，本次点击的意图跑完照样进入', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    await open(false)
+    mockAct.mockRejectedValueOnce(new TypeError('network'))
+    mockGet.mockRejectedValueOnce(new TypeError('network'))
+    await store().act(KEY, 'run_when_ready')
+    expect(entry().armMaybe).toBe(true)
+    mockCreate.mockResolvedValueOnce(done(['a'], 'att-1', 4, { intent: live().intent }))
+    await open()
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+  })
+
   it('认领响应丢了、但已跑完的报告带的是点击前就有的旧意图：不算这次点击，不自动进入', async () => {
     mockCreate.mockResolvedValueOnce(report({ intent: live().intent }))
     await open(false)
