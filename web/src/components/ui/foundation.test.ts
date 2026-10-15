@@ -95,6 +95,13 @@ const RULES: Rule[] = [
     spares: '<div className="transition duration-fast" />',
   },
   {
+    name: '时长 token 用同名工具类，不拿任意值写 duration-[var(--duration-*)]（值相同，写法只许一种）',
+    pattern: /\bduration-\[var\(--duration-/,
+    fix: 'duration-fast / duration-base / duration-slow / duration-exit',
+    catches: '<div className="transition duration-[var(--duration-base)]" />',
+    spares: '<div className="transition duration-base" />',
+  },
+  {
     name: '分区小标题是 type-section，不手拼大写 + 字距',
     pattern: /\buppercase tracking-/,
     fix: 'className="type-section"',
@@ -289,7 +296,7 @@ const RULES: Rule[] = [
     exempt: {
       '/src/components/StyleDialog.tsx': { count: 2, why: '文档数据：文字样式的缺省颜色 #000000' },
       '/src/components/VersionDialog.tsx': { count: 2, why: '文档数据：页面底色缺省 #FFFFFF（比较两版页面是否同底）' },
-      '/src/components/CanvasTabs.tsx': { count: 4, why: '遮罩：标签条两端渐隐的 mask-image，黑只表示不透明度' },
+      '/src/components/ui/scrollFade.ts': { count: 4, why: '遮罩：滚动边缘渐隐的 mask-image（原在 CanvasTabs，抽成共享件后豁免随之搬来、个数不变），黑只表示不透明度' },
       '/src/components/ui/Input.tsx': { count: 1, why: '文档数据：原生取色框没有值时的占位 #000000（input[type=color] 只认 hex）' },
       '/src/components/ui/icons/createIcon.tsx': { count: 4, why: '遮罩：图标的镂空 mask（白 = 留、黑 = 挖），不是颜色' },
       '/src/components/inspector/StrokeSection.tsx': { count: 1, why: '文档数据：新加填充的缺省色 #FFFFFF' },
