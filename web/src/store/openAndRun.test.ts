@@ -297,6 +297,32 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     expect(entry().report?.captured).toHaveLength(1)
   })
 
+  it('清单缓存里这张图的条目 descriptor 为 null（跑完前发出的清单请求被合并）：用报告里的描述符插入，仍能进入编辑', async () => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    useRuntimeAssetStore.setState({ assets: [{ id: 'runtime:plot.py#a', descriptor: null } as never] })
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['missing', 'layout_only'] as const)('openFastEdit 回 %s（没真的进入编辑）：不收卡、不记编辑，卡上保留手动「进入编辑」', async (outcome) => {
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await open()
+    vi.mocked(openFastEdit).mockReset()
+    vi.mocked(openFastEdit).mockReturnValue(outcome)
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    await flush()
+    expect(useUiStore.getState().guideCard).toBe('card')
+    expect(entry().editing).toEqual([])
+    expect(entry().report?.captured).toHaveLength(1)
+  })
+
   it('自动进入等素材清单期间换参数重开同一脚本（key / 焦点 / 展开都没变）：不打开旧配置跑出的图，也不记到新条目上', async () => {
     mockCreate.mockResolvedValueOnce(report())
     claimed(running())

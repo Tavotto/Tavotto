@@ -58,9 +58,11 @@ export function noteAddedPanelFor(host: EnterEditHost, assetId: string, added: P
  * 素材清单还没取到这张新图时先用这次捕获的描述符把它加进画布，再进入编辑。只处理**一张**图（多张要用户挑，调用方不走这里）。
  *
  * 回 `'entered'`（已进入且卡片收起）/ `'deferred'`（上次的排版还在恢复：入口已排队，落地后才收卡片）/
- * `'blocked'`（上次的排版还要用户先处理，什么都没放进去，卡片留着）/ `'stale'`（挂起期间换了项目，什么都没做）。
+ * `'blocked'`（上次的排版还要用户先处理，什么都没放进去，卡片留着）/ `'stale'`（挂起期间换了项目，什么都没做）/
+ * `'not_entered'`（图找不到可用来源 `missing`、或进不了图内编辑 `layout_only`：没有真的进入编辑，卡片留着，手动「进入编辑」仍在）。
+ * **只有真正进入编辑（`openFastEdit` 回 `editing`）才收卡片、记编辑。**
  */
-export type EnterEditOutcome = 'entered' | 'deferred' | 'blocked' | 'stale'
+export type EnterEditOutcome = 'entered' | 'deferred' | 'blocked' | 'stale' | 'not_entered'
 
 export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor): Promise<EnterEditOutcome> {
   // 挂起期间可能切了项目：续延带着 A 的描述符，绝不能把 A 的面板加进 B 的版面
@@ -70,7 +72,9 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
   if (host.stillWanted && !host.stillWanted()) return 'stale'
   // 清单里没有、文档里也还没有这张图才加：清单请求在途时连点两下，两个续延都看到「清单里没有」，
   // 只有文档才是已经加过一次的权威（补审 #914 r4236701619）。这两步之间没有 await，第二个续延必然看到第一个加的面板
-  const known = (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id)
+  // 只认带描述符的条目：开始于跑完之前的清单请求被 `loadAssets()` 合并时，缓存里这张图的条目可能还是 `descriptor: null`，
+  // 这时 `openFastEdit` 找不到可用来源——用报告里这次捕获的描述符 `d` 补上
+  const known = (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === d.asset_id && !!a.descriptor)
   if (!known && !findFigurePanel(d.asset_id)) {
     // 与下面的 `openFastEdit` 同一个守卫：恢复期间两者都是排队的副作用（插入面板 + 取景 / 进入编辑 / 收卡片），切走后一个都不许执行
     if (host.stillWanted) addRuntimePanelToCanvas(d, undefined, undefined, { guard: host.stillWanted })
@@ -99,6 +103,10 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
       if (result === 'ran' && guard.still() && findFigurePanel(d.asset_id) && (!host.stillWanted || host.stillWanted())) landed()
     })
     return 'deferred'
+  }
+  if (outcome !== 'editing') {
+    // `missing`（没有可用来源，工作区没动，已经说了一句）/ `layout_only`（图进来了但进不了图内编辑）：不算进入编辑，不收卡、不记编辑
+    return 'not_entered'
   }
   landed()
   return 'entered'
