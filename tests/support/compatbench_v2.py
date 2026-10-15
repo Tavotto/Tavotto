@@ -686,6 +686,17 @@ def main(argv: list[str] | None = None) -> int:
             else "smoke"
         )
         expected = list(cs.SCENARIOS) if scope == "all" else list(cs.SMOKE)
+    # 状态是闭集：认不得的（拼错 / 更新的产出方）不算覆盖，直接失败——否则它算进 present 又被下面两个过滤同时丢掉
+    unknown = sorted(
+        {
+            str(r.get("status"))
+            for r in records
+            if r.get("status", STATUS_OBSERVED) not in (STATUS_OBSERVED, STATUS_NOT_RUN)
+        }
+    )
+    if unknown:
+        print(f"{args.dir} 里有认不得的记录状态: {unknown}")
+        return 2
     present = {r["scenario"] for r in records}
     absent = [sid for sid in expected if sid not in present]
     if absent:

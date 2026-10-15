@@ -808,3 +808,11 @@ def test_not_run_reason_is_a_closed_set():
 def test_default_scope_is_the_smoke_set_and_missing_ones_fail(tmp_path):
     (tmp_path / "s01_plain.json").write_text(json.dumps(_obs_rec("s01_plain")), "utf-8")
     assert cb.main(["summarize", str(tmp_path), "--scope", "smoke"]) == 2
+
+
+def test_summarize_rejects_an_unknown_record_status(tmp_path):
+    """#1076 Codex P2：认不得的 status 曾算进覆盖、又被观测 / not_run 两个过滤同时丢掉，汇总静默少一个场景。"""
+    (tmp_path / "a.json").write_text(json.dumps(_obs_rec("a")), "utf-8")
+    odd = dict(_obs_rec("b"), status="observd")
+    (tmp_path / "b.json").write_text(json.dumps(odd), "utf-8")
+    assert cb.main(["summarize", str(tmp_path), "--expect", "a", "b"]) == 2
