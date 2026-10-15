@@ -16,7 +16,7 @@ import { expect, test, waitForFigureEdit, type RunningApp } from './fixtures'
  * 其余睡一秒就退出），后端的能力探测会把它当成已安装且已登录。POSIX only。
  * 定位一律走 `data-*`，中英两个 locale 都跑。
  */
-test.skip(process.platform === 'win32', '假 CLI 是 shell 脚本')
+test.skip(process.platform === 'win32', '假 CLI 是 shell 脚本，只在 posix-e2e 腿执行')
 
 /** `editThenFail`：执行时先改一下 cwd（图库目录）里的脚本再以非零退出——「失败了，但脚本已经被改过」 */
 function fakeCodexDir(editThenFail = false): string {

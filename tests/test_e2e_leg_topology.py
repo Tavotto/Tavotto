@@ -71,6 +71,12 @@ PLATFORM_SKIPS = {
     "project-scan.spec.ts": 1,
     # Import Origin 验收：离线入口 / 夹具世界是 POSIX 的 Python 脚本（tests/ 在 windows-exe-smoke 的产物里不存在）→ posix-e2e 腿执行
     "import-origin.spec.ts": 1,
+    # 助手草稿 / 提交可靠性（ADR 0132）：要一个「可用」的改图助手才能发，夹具往 PATH 里放一个假的 `codex`
+    # （POSIX shell 脚本）。Windows 上后端找的是 npm 的 `codex.cmd` shim / 桌面版自带 exe，不是 PATH 里的无扩展名脚本，
+    # 且 windows-exe-smoke 跑的是 PyInstaller 产物、没有源码形态的夹具世界 → 只在 posix-e2e 腿（ubuntu-24.04，
+    # chromium + chromium-en 两个 project）执行；Windows 腿跳过。不让假 CLI 跨平台，是因为那要在 exe 形态下
+    # 伪造一份 `codex.cmd` → node 脚本的 shim 解析链，造出来的就不是产品真实走的那条路了
+    "ai-draft.spec.ts": 1,
 }
 
 
