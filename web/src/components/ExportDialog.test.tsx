@@ -1540,6 +1540,11 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
     })
     await mountDialogs()
     await openDialog()
+    // 夹具本身不产出「建议」：补一条（同一份清单里改等级），才能证明「建议」那颗芯片确实是灰的
+    await act(async () => {
+      const cur = useValidationStore.getState().issues
+      useValidationStore.setState({ issues: [...cur, { ...cur[0], issueId: 'extra-suggestion', severity: 'suggestion' }] })
+    })
     const counts = useValidationStore.getState().issues.reduce<Record<string, number>>((m, i) => {
       m[i.severity] = (m[i.severity] ?? 0) + 1
       return m
