@@ -1545,6 +1545,46 @@ def collect_overrides(src: Sources, opts: DetailOptions, scrub: Scrubber) -> lis
 # ---------------------------------------------------------------------------
 # 6 渲染环境
 # ---------------------------------------------------------------------------
+# matplotlib `_get_config_or_cache_dir` 的路径规则（只算路径，不建目录），探针里用；单独成串是为了测试能在进程内
+# 模拟平台去 exec 它。规则逐版本不同：3.11 起 Windows 有「旧 ~/.matplotlib 存在就沿用，否则 %LOCALAPPDATA%/matplotlib」，
+# 3.10 及以前 Linux / FreeBSD 以外一律 ~/.matplotlib——所以先读（不 import）matplotlib/__init__.py 看有没有 LOCALAPPDATA 分支。
+_MPL_DIRS_CODE = r"""
+def _mpl_uses_localappdata():
+    try:
+        import importlib.util
+        with open(importlib.util.find_spec("matplotlib").origin, encoding="utf-8") as fh:
+            return "LOCALAPPDATA" in fh.read()
+    except Exception:
+        return False
+
+def _real_dir(xdg_env, xdg_default):
+    c = os.environ.get("MPLCONFIGDIR")
+    d = None
+    if c:
+        d = Path(c)
+    elif sys.platform.startswith(("linux", "freebsd")):
+        try:
+            d = Path(os.environ.get(xdg_env) or str(Path.home() / xdg_default), "matplotlib")
+        except RuntimeError:
+            pass
+    elif sys.platform == "win32" and _mpl_uses_localappdata():
+        la = os.environ.get("LOCALAPPDATA")
+        try:
+            old = Path.home() / ".matplotlib"
+            d = old if (old.is_dir() or not la) else Path(la) / "matplotlib"
+        except RuntimeError:
+            if la:
+                d = Path(la) / "matplotlib"
+    else:
+        try:
+            d = Path.home() / ".matplotlib"
+        except RuntimeError:
+            pass
+    try:
+        return str(d.resolve()) if d else None
+    except Exception:
+        return None
+"""
 _PROBE_CODE = r"""
 import json, sys, platform, os
 out = {"python": {
@@ -1563,23 +1603,7 @@ try:
     import glob, shutil, tempfile
     from pathlib import Path
 
-    def _real_dir(xdg_env, xdg_default):
-        try:
-            c = os.environ.get("MPLCONFIGDIR")
-            if c:
-                d = Path(c)
-            elif sys.platform.startswith(("linux", "freebsd")):
-                d = Path(os.environ.get(xdg_env) or str(Path.home() / xdg_default), "matplotlib")
-            elif sys.platform == "win32":
-                old = Path.home() / ".matplotlib"
-                la = os.environ.get("LOCALAPPDATA")
-                d = old if (old.is_dir() or not la) else Path(la) / "matplotlib"
-            else:
-                d = Path.home() / ".matplotlib"
-            return str(d.resolve())
-        except Exception:
-            return None
-
+    #MPL_DIRS#
     real_cfg, real_cache = _real_dir("XDG_CONFIG_HOME", ".config"), _real_dir("XDG_CACHE_HOME", ".cache")
     if not _tmp_cache:
         _tmp_cache, _own_cache = tempfile.mkdtemp(prefix="tavotto-mplcache-"), True
@@ -1655,6 +1679,10 @@ except Exception as exc:
     out["packages_error"] = type(exc).__name__
 sys.stdout.write(json.dumps(out))
 """
+_PROBE_CODE = _PROBE_CODE.replace(
+    "    #MPL_DIRS#\n",
+    "".join("    " + ln + "\n" if ln else "\n" for ln in _MPL_DIRS_CODE.strip("\n").split("\n")),
+)
 
 
 PROBE_DIR_PREFIX = "tavotto-probe-script-"
