@@ -338,7 +338,7 @@ describe('键盘', () => {
 describe('空态', () => {
   const et = (key: string) => t(`elementTree.${key}`, { ns: 'workspace' })
 
-  it('一张可编辑的图都没有：说清原因，主动作是打开素材', async () => {
+  it('一张可编辑的图都没有：只说清原因，不配任何按钮 / 链接（起步动作只有画布中央的「添加图」，审计 T03）', async () => {
     useUiStore.getState().setElementPanel(null)
     useSelectionStore.getState().set([])
     useDocumentStore.getState().commit(literal('清空'), (d) => {
@@ -347,10 +347,8 @@ describe('空态', () => {
     await mount()
     expect(host.textContent).toContain(et('noEditableTitle'))
     expect(host.textContent).not.toContain('参数化')
-    const btn = [...host.querySelectorAll('button')].find((b) => b.textContent === et('openAssets'))!
-    expect(btn).toBeTruthy()
-    await act(async () => btn.click())
-    expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(host.querySelector('[data-left-drawer] button, button')).toBeNull()
+    expect(host.querySelector('a, [role="button"], [role="link"]')).toBeNull()
   })
 
   it('有可编辑的图但没选中：主动作选中它，树随即出现', async () => {
@@ -456,7 +454,7 @@ describe('空态与搜索框（UI 2.0 第二轮 09）', () => {
     expect(search()).not.toBeNull()
   })
 
-  it('画布上没有可编辑的图：列表顶部一行灰字 + 一个文字动作，没有大图标与标题；动作打开素材', async () => {
+  it('画布上没有可编辑的图：列表顶部一行灰字，没有大图标与标题，也没有任何按钮 / 链接', async () => {
     await act(async () => {
       useDocumentStore.getState().commit(literal('去掉脚本'), (d) => {
         d.objects = [{ ...panel, script: undefined } as unknown as CanvasObject]
@@ -466,14 +464,10 @@ describe('空态与搜索框（UI 2.0 第二轮 09）', () => {
     useSelectionStore.getState().set([])
     await mount()
     const line = emptyLine()!
-    expect(line.textContent).toContain(t('elementTree.noEditableTitle', { ns: 'workspace' }))
+    expect(line.textContent).toBe(t('elementTree.noEditableTitle', { ns: 'workspace' }))
     expect(host.querySelector('[data-empty-state]')).toBeNull()
     expect(line.querySelector('svg')).toBeNull()
-    const btn = line.querySelector('button')!
-    expect(btn.textContent).toBe(t('elementTree.openAssets', { ns: 'workspace' }))
-    useUiStore.getState().setLeftTab('elements')
-    await act(async () => btn.click())
-    expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(line.querySelector('button, a, [role="button"], [role="link"]')).toBeNull()
   })
 
   it('有可编辑的图但没选中：一行灰字 + 「选中一张可编辑的图」', async () => {

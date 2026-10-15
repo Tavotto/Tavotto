@@ -285,12 +285,8 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
     const editable = objects.filter((o): o is PanelObject => o.type === 'panel' && !!o.script)
     if (editable.length === 0) {
       return (
-        <EmptyLine
-          title={et('noEditableHint')}
-          action={{ label: et('openAssets'), onClick: () => useUiStore.getState().setLeftTab('assets') }}
-        >
-          {et('noEditableTitle')}
-        </EmptyLine>
+        // 画布上一张可编辑的图都没有：纯占位，不配动作（起步动作只有画布中央的「添加图」，审计 T03）
+        <EmptyLine title={et('noEditableHint')}>{et('noEditableTitle')}</EmptyLine>
       )
     }
     return (

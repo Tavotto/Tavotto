@@ -223,8 +223,7 @@
     "noPanelTitle": "选择一张可编辑的图以查看图内元素",
     "noEditableTitle": "画布上还没有可编辑的图",
     "noEditableHint": "由脚本生成的图才能改图内对象",
-    "locateEditable": "选中一张可编辑的图",
-    "openAssets": "打开素材"
+    "locateEditable": "选中一张可编辑的图"
   },
   "fastEdit": {
     "addToCanvas": "添加到画布",
@@ -348,7 +347,6 @@
   "layerTree": {
     "collapseGroup": "折叠组",
     "count_other": "{{count}} 个对象",
-    "emptyAction": "从素材添加",
     "emptyTitle": "画布上还没有对象",
     "expandGroup": "展开组",
     "groupAriaWithLayout_other": "组（{{count}} 个对象），{{layout}}",

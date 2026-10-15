@@ -411,16 +411,12 @@ describe('被拖行淡化（G11）', () => {
 })
 
 describe('空态（UI 2.0 第二轮 09）', () => {
-  it('没有对象：列表顶部一行灰字 + 「从素材添加」，没有大图标与标题；动作打开素材', async () => {
+  it('没有对象：列表顶部一行灰字，没有大图标与标题，也没有任何按钮 / 链接（起步动作只有画布中央的「添加图」，审计 T03）', async () => {
     await mount([])
     const line = document.querySelector<HTMLElement>('[data-empty-line]')!
-    expect(line.textContent).toContain(lt('emptyTitle'))
+    expect(line.textContent).toBe(lt('emptyTitle'))
     expect(document.querySelector('[data-empty-state]')).toBeNull()
     expect(line.querySelector('svg')).toBeNull()
-    const btn = line.querySelector('button')!
-    expect(btn.textContent).toBe(lt('emptyAction'))
-    useUiStore.getState().setLeftTab('layers')
-    await act(async () => btn.click())
-    expect(useUiStore.getState().leftTab).toBe('assets')
+    expect(line.querySelector('button, a, [role="button"], [role="link"]')).toBeNull()
   })
 })

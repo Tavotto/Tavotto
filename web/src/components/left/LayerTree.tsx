@@ -35,7 +35,6 @@ import { useFlip } from '@/lib/motion'
 import { renameObject, reorderObject, toggleHidden, toggleLocked } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useUiStore } from '@/store/uiStore'
 import { objectLabel, type CanvasObject, type LayoutGroup } from '@/types/document'
 import { layoutKindLabel } from '@/store/actions'
 import { Badge } from '../ui/Badge'
@@ -118,11 +117,8 @@ export function LayerTree() {
   // 轻量占位：起步的那个主要行动（「添加图」）只在画布中央出现一次（审计 T03），
   // 侧栏不再各配一颗按钮
   if (!zOrder.length) {
-    return (
-      <EmptyLine action={{ label: lt('emptyAction'), onClick: () => useUiStore.getState().setLeftTab('assets') }}>
-        {lt('emptyTitle')}
-      </EmptyLine>
-    )
+    // 画布空时工作台的起步动作只有画布中央的「添加图」：抽屉空态是纯占位，不配按钮 / 链接（审计 T03）
+    return <EmptyLine>{lt('emptyTitle')}</EmptyLine>
   }
 
   // 成组的对象折进组标题下（在最上层成员的位置出现一次）。树的语义（2026-10-07 设计审计 §10.3：
