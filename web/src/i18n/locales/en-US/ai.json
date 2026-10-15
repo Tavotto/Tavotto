@@ -99,6 +99,7 @@
     "emptyHint": "The assistant edits the script directly; every change can be reverted.",
     "emptyTitle": "How should this figure change?",
     "inputAria": "Describe how to change this figure",
+    "ledgerFailed": "Couldn’t save a record of this request, so it wasn’t sent. Check the connection and retry.",
     "noCli": "No figure assistant available.",
     "noPanelTitle": "Select an editable figure",
     "none": "—",
@@ -128,6 +129,7 @@
     "taskHistory": "Task history",
     "techDetails": "Technical details",
     "unconfirmedBody": "This request may already be running. Check the result first.",
+    "unconfirmedGoneBody": "The figure that sent this is no longer on the canvas. You can still check the result.",
     "unconfirmedTitle": "Sent, not yet confirmed"
   },
   "process": {

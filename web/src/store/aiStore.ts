@@ -119,6 +119,13 @@ export interface DonePayload {
   refresh?: AiRefreshOutcome
 }
 
+/** 发送前要先把提交记进后端账本；没记成就不发（界面一句话 + 重试） */
+export class AiLedgerError extends Error {
+  constructor() {
+    super('ledger-unavailable')
+  }
+}
+
 export type SubmitOutcome = 'accepted' | 'unconfirmed'
 /** `already_run`：后端登记过它、但任务历史被用户删了（结局不可知）——已执行过，绝不重发 */
 export type QueryOutcome = 'accepted' | 'already_run' | 'not_received' | 'unreachable' | 'gone'
@@ -213,7 +220,14 @@ export function setAiSettledNotifier(fn: ((p: DonePayload) => void) | null): voi
  * （`lib/aiDraft.hosts.test.ts` 用 import 图钉住）。桌面 / 浏览器宿主在 `lib/aiDraftLedger.ts` 里注册。
  */
 export interface SubmissionLedger {
-  markSubmitted: (project: string | null, fileId: string, text: string, rid: string, sent: DraftTarget) => Promise<void>
+  markSubmitted: (
+    project: string | null,
+    fileId: string,
+    text: string,
+    rid: string,
+    sent: DraftTarget,
+    script: string | null,
+  ) => Promise<boolean>
   clearSubmitted: (project: string | null, fileId: string, rid: string) => Promise<void>
   removeAccepted: (project: string | null, fileId: string, rid: string) => Promise<void>
 }
@@ -221,8 +235,8 @@ let ledger: SubmissionLedger | null = null
 export function setAiSubmissionLedger(l: SubmissionLedger | null): void {
   ledger = l
 }
-// 落盘都是请求后端：markSubmitted 在 spawn 之前**等它写完**（start 里 await）；其余是尽力而为、不挡界面
-const markSubmitted = (...a: Parameters<SubmissionLedger['markSubmitted']>): Promise<void> | undefined =>
+// 落盘都是请求后端：markSubmitted 在 spawn 之前**等它写成功**（start 里 await，失败不发）；其余是尽力而为、不挡界面
+const markSubmitted = (...a: Parameters<SubmissionLedger['markSubmitted']>): Promise<boolean> | undefined =>
   ledger?.markSubmitted(...a)
 const clearSubmitted = (...a: Parameters<SubmissionLedger['clearSubmitted']>): void => void ledger?.clearSubmitted(...a)
 const removeAccepted = (...a: Parameters<SubmissionLedger['removeAccepted']>): void => void ledger?.removeAccepted(...a)
@@ -385,8 +399,15 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
     set((s) => ({ submissions: { ...s.submissions, [rid]: sub } }))
     // spawn 之前先把账本写进后端（原文 + 目标）：刷新 / 崩溃 / 换端口之后还认得「这条发出过」
-    const marked = markSubmitted(project, fileId, prompt, rid, sent)
-    if (marked) await marked
+    const marked = markSubmitted(project, fileId, prompt, rid, sent, script)
+    if (marked && !(await marked)) {
+      // 账本没写成：**不发**。丢了响应之后没有 rid 可查，刷新就会放行同一条指令换新 id 再执行
+      set((s) => {
+        const { [rid]: _gone, ...rest } = s.submissions
+        return { submissions: rest }
+      })
+      throw new AiLedgerError()
+    }
     return dispatch(rid, get().generation)
   },
 
@@ -430,7 +451,15 @@ export const useAiStore = create<AiState>((set, get) => ({
       return 'already_run'
     }
     // 补全转录 / diff / 执行器（刷新之后这些都在后端）；失败就用查询给的摘要
-    const detail = await fetchAiSession(found.session, sub.project).catch(() => null)
+    let detail: AiSessionDetail | null = null
+    try {
+      detail = await fetchAiSession(found.session, sub.project)
+    } catch (e) {
+      // 只有「后端明确说没有详情」（404）才凭摘要往下走；读详情**暂时失败**不收尾——摘要里没有 refresh 结局，
+      // 凭它把会话标成终态会把「改成了、项目没刷新」悄悄吞掉，且提交记录一删就再也查不回来。
+      // 保持「已发出未确认」，让用户再查一次
+      if (!(e instanceof ApiError && e.status === 404)) return 'unreachable'
+    }
     if (born !== get().generation) {
       removeAccepted(sub.project, sub.fileId, rid)
       return 'gone'
@@ -719,6 +748,26 @@ export const hasUsableAgent = (caps: AiCapabilities | null): boolean =>
 /** 作用域名；是函数不是常量表——常量在模块求值时就把语言定死了 */
 export const scopeLabel = (scope: AiScope): string => t(`scope.${scope}`, { ns: 'ai' })
 
+/** 脚本路径的比较身份：统一分隔符、去掉 `./` 前缀与重复斜杠（不改大小写，与后端 `script_busy` 的 realpath 同向保守） */
+const scriptIdentity = (p: string): string => p.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/^(\.\/)+/, '')
+const isAbsolutePath = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:\//.test(p)
+
+/**
+ * 两个脚本路径是不是同一份脚本：比**完整的项目相对路径**，不比文件名——`a/plot.py` 与 `b/plot.py` 是两份脚本，
+ * 按文件名比会让一个的未确认请求锁住另一个（也会把待确认记录显示在不相干的面板上）。
+ * 一边是绝对路径（旧数据）时，另一边的相对路径必须是它的路径后缀。
+ */
+export function sameScript(a: string, b: string): boolean {
+  const x = scriptIdentity(a)
+  const y = scriptIdentity(b)
+  if (x === y) return true
+  const xa = isAbsolutePath(x)
+  const ya = isAbsolutePath(y)
+  if (xa && !ya) return x.endsWith('/' + y)
+  if (ya && !xa) return y.endsWith('/' + x)
+  return false
+}
+
 /** 这条没落定的提交是否锁住 (fileId, script) 这个面板：同面板，或同一份脚本（按文件名比，同 `isSessionOf`） */
 export function submissionBlocks(
   sub: Pick<AiSubmission, 'fileId' | 'script'>,
@@ -726,7 +775,7 @@ export function submissionBlocks(
   script: string | null | undefined,
 ): boolean {
   if (sub.fileId === fileId) return true
-  return !!script && !!sub.script && scriptName(sub.script) === scriptName(script)
+  return !!script && !!sub.script && sameScript(sub.script, script)
 }
 
 /** 路径取文件名：会话与面板可能一个存绝对路径一个存相对路径 */
@@ -742,5 +791,5 @@ export function isSessionOf(
   panel: { id: string; fileId: string; script?: string | null },
 ): boolean {
   if (s.panelId === panel.id || s.fileId === panel.fileId) return true
-  return !!panel.script && scriptName(s.script) === scriptName(panel.script)
+  return !!panel.script && sameScript(s.script, panel.script)
 }

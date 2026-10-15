@@ -99,6 +99,7 @@ export default interface Resources {
       "emptyHint": "助手会直接修改脚本，改动可回滚。",
       "emptyTitle": "想怎么改这张图？",
       "inputAria": "描述要怎么改这张图",
+      "ledgerFailed": "没能保存这条指令的发送记录，所以没有发出。检查连接后重试。",
       "noCli": "没有可用的改图助手。",
       "noPanelTitle": "选中一张可编辑的图",
       "none": "—",
@@ -127,6 +128,7 @@ export default interface Resources {
       "taskHistory": "任务历史",
       "techDetails": "技术详情",
       "unconfirmedBody": "这条指令可能已经在执行，先查询结果。",
+      "unconfirmedGoneBody": "发起这条指令的图已不在画布上，仍可查询结果。",
       "unconfirmedTitle": "已发出，尚未收到确认"
     },
     "process": {

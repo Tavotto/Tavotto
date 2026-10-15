@@ -40,7 +40,7 @@ describe('存与读：按项目 × 面板文件', () => {
     expect(await saveDraft(null, 'F', 'x')).toBe('unavailable')
     expect(await saveDraft('pj', null, 'x')).toBe('unavailable')
     expect(await loadDraft(null, null)).toBeNull()
-    await markSubmitted(null, 'F', 'x', 'rid-aaaaaaaa', T)
+    await expect(markSubmitted(null, 'F', 'x', 'rid-aaaaaaaa', T)).resolves.toBe(true) // 没有项目认领：无从记账
     expect(be.calls).toEqual([])
   })
 
@@ -80,7 +80,7 @@ describe('失败时不抛、回枚举', () => {
     be.setDown(true)
     await expect(saveDraft('pj', 'F', 'x')).resolves.toBe('unavailable')
     await expect(loadDraft('pj', 'F')).resolves.toBeNull()
-    await expect(markSubmitted('pj', 'F', 'x', 'rid-aaaaaaaa', T)).resolves.toBeUndefined()
+    await expect(markSubmitted('pj', 'F', 'x', 'rid-aaaaaaaa', T)).resolves.toBe(false) // 没写成：调用方据此不发
     await expect(clearSubmitted('pj', 'F', 'rid-aaaaaaaa')).resolves.toBeUndefined()
     await expect(removeAccepted('pj', 'F', 'rid-aaaaaaaa')).resolves.toBeUndefined()
     await expect(deleteDraftIf('pj', 'F', 'x')).resolves.toBe(false)

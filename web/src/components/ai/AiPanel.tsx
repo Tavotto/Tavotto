@@ -32,7 +32,7 @@ import { cn, modKey } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
-import { isSessionOf, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { AiLedgerError, isSessionOf, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -264,6 +264,10 @@ function AssistantPanelBody() {
         (x) => x.project === claimedProject && submissionBlocks(x, panel.fileId, panel.script),
       )
     : undefined
+  const docObjects = useDocumentStore((s) => s.doc.objects)
+  // 发起这条请求的图已不在画布上（删了 / 换了图）：仍要显示、仍能查询结果，只是说明一句来源不在了
+  const sourceGone =
+    !!submission && !docObjects.some((o) => o.type === 'panel' && (o as PanelObject).fileId === submission.fileId)
   const sending = submission?.phase === 'sending'
   const [checkNote, setCheckNote] = useState<'unreachable' | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -401,7 +405,13 @@ function AssistantPanelBody() {
       // 只有后端给出会话 id 才算送达、才清输入框；`unconfirmed` 时文本原样留着（面板进「已发出未确认」）
       if (outcome === 'accepted' && override == null) clearIf(text)
     } catch (e) {
-      setError({ text: backendErrorText(e), prompt: text, target: ctx, panelId: panel.id })
+      // 发送记录没写进后端 = 没有发：一句话 + 重试（不是「尽力写、照样发」）
+      setError({
+        text: e instanceof AiLedgerError ? ai('panel.ledgerFailed') : backendErrorText(e),
+        prompt: text,
+        target: ctx,
+        panelId: panel.id,
+      })
     }
   }
 
@@ -606,7 +616,11 @@ function AssistantPanelBody() {
                 </Button>
               }
             >
-              {checkNote === 'unreachable' ? ai('panel.checkUnreachable') : ai('panel.unconfirmedBody')}
+              {checkNote === 'unreachable'
+                ? ai('panel.checkUnreachable')
+                : sourceGone
+                  ? ai('panel.unconfirmedGoneBody')
+                  : ai('panel.unconfirmedBody')}
             </Notice>
           )}
           {/* 查过了，后端明确说没收到：这时才允许重发，而且用同一个请求 id */}

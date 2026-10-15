@@ -108,7 +108,7 @@ beforeEach(async () => {
   vi.mocked(aiRun).mockReset()
   vi.mocked(fetchAiRequest).mockReset()
   vi.mocked(fetchAiSession).mockReset()
-  vi.mocked(fetchAiSession).mockRejectedValue(new Error('no detail'))
+  vi.mocked(fetchAiSession).mockRejectedValue(new ApiError('nf', 404, {})) // 后端明确没有详情：凭摘要往下走
   useUiStore.setState({ status: null, confirm: null, elementPanelId: null, selectedGids: [] } as never)
   useAiStore.setState({
     sessions: [], submissions: {}, scope: 'figure',
@@ -372,11 +372,47 @@ describe('已发出未确认：不能盲目重发', () => {
   })
 
   it('刷新后在兄弟面板上挂载：A 面板的待确认账本也还原，发送仍锁住', async () => {
-    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-sibling-0001', text: 'A 面板发出的话', sent: SENT }])
+    be.pendings.set('pa\u0000Fig1.pdf', [{ rid: 'rid-sibling-0001', text: 'A 面板发出的话', sent: SENT, script: 'p1.py' }])
     useSelectionStore.setState({ ids: ['p3'] } as never)
     await mount()
     expect(q('[data-ai-submission="unconfirmed"]')).toBeTruthy()
     expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+  })
+
+  it('发起请求的面板已不在（删了 / 换图）：同脚本的面板上仍还原这条未确认，说明来源不在了，且能查询', async () => {
+    // Gone.pdf 这个面板文档里没有；它的账本带着 script，与 p3（脚本 p1.py）同脚本
+    be.pendings.set('pa\u0000Gone.pdf', [{ rid: 'rid-gone-000001', text: '孤儿面板发出的话', sent: SENT, script: 'p1.py' }])
+    be.pendings.set('pa\u0000Other.pdf', [{ rid: 'rid-other-000001', text: '别的脚本的话', sent: SENT, script: 'zzz.py' }])
+    useSelectionStore.setState({ ids: ['p3'] } as never)
+    await mount()
+    const notice = q('[data-ai-submission="unconfirmed"]')
+    expect(notice).toBeTruthy()
+    expect(notice!.textContent).toContain('已不在画布')
+    expect(q<HTMLButtonElement>('[data-ai-send]')!.disabled).toBe(true)
+    expect(Object.keys(useAiStore.getState().submissions)).toEqual(['rid-gone-000001']) // 别的脚本的不混进来
+    // 能查：后端已登记 → 进会话、不再发
+    vi.mocked(fetchAiRequest).mockResolvedValue({ session: 's-5', status: 'running', changed: false, script: 'p1.py' })
+    await click(q('[data-ai-check]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(useAiStore.getState().sessions.map((x) => x.id)).toEqual(['s-5'])
+  })
+
+  it('账本写不进后端：不发、一句话 + 重试；后端恢复后重试才发', async () => {
+    vi.mocked(aiRun).mockResolvedValue({ session: 's-1', script: 'p1.py' })
+    be.setPendingWriteFails(true)
+    await mount()
+    await typeText('把线条加粗一点')
+    await click(q('[data-ai-send="send"]'))
+    await settle()
+    expect(aiRun).not.toHaveBeenCalled()
+    expect(q('[data-ai-error="send"]')?.textContent).toContain('没有发出')
+    expect(q('[data-ai-submission]')).toBeNull()
+    expect(input().readOnly).toBe(false)
+    be.setPendingWriteFails(false)
+    await click(q('[data-ai-retry]'))
+    await settle()
+    expect(aiRun).toHaveBeenCalledTimes(1)
   })
 
   it('「改写后再发」：放弃这条等待、输入框可改，下一次发送是新 rid', async () => {

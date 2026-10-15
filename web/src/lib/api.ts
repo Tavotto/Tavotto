@@ -3199,12 +3199,25 @@ export const deleteAiDraftIf = (file: string, ifText: string, pj: string | null)
     pj,
   )
 
-export const putAiPending = (rid: string, file: string, text: string, sent: unknown, pj: string | null) =>
+export const putAiPending = (
+  rid: string,
+  file: string,
+  text: string,
+  sent: unknown,
+  pj: string | null,
+  script: string | null = null,
+) =>
   jsonFetch<{ ok: boolean }>(
     `/api/ai/drafts/pending/${encodeURIComponent(rid)}`,
-    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, sent }) },
+    { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ file, text, sent, script }) },
     pj,
   )
+
+/** 本项目全部未落定的提交（跨面板，带 script）：发起它的面板已不在时也找得回来 */
+export const fetchAiPendings = (pj: string | null) =>
+  jsonFetch<{
+    pendings: { file: string; rid: string; text: string; sent: unknown; script: string | null; created_ms: number }[]
+  }>('/api/ai/drafts/pending', undefined, pj)
 
 export const clearAiPending = (rid: string, file: string, pj: string | null) =>
   jsonFetch<{ cleared: boolean }>(

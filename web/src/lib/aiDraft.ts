@@ -23,6 +23,7 @@ import {
   clearAiPending,
   deleteAiDraftIf,
   fetchAiDraft,
+  fetchAiPendings,
   putAiDraft,
   putAiPending,
 } from '@/lib/api'
@@ -106,19 +107,38 @@ export async function deleteDraftIf(project: string | null, fileId: string | nul
   }
 }
 
-/** 点发送：在 spawn 之前把这条提交（原文 + 目标）记进后端账本；失败不挡发送（只是少一份刷新后的线索） */
+/**
+ * 点发送：在 spawn 之前把这条提交（原文 + 目标 + 脚本）记进后端账本。**回是否写成功**：
+ * 没写成（网络 / 后端错 / 超限）就不该发——账本是「响应丢了之后还能查到这条」的唯一线索，
+ * 「尽力写、照样发」会让丢响应后的刷新没有 rid 可查、同一条指令换新 id 再执行一遍（Codex #1098）。
+ * 没有项目认领时无从记账，回 true 由调用方照旧处理（那时本来也发不出去）。
+ */
 export async function markSubmitted(
   project: string | null,
   fileId: string | null,
   text: string,
   rid: string,
   sent: DraftTarget,
-): Promise<void> {
-  if (!project || !fileId) return
+  script: string | null = null,
+): Promise<boolean> {
+  if (!project || !fileId) return true
   try {
-    await putAiPending(rid, fileId, text, sent, project)
+    await putAiPending(rid, fileId, text, sent, project, script)
+    return true
   } catch {
-    /* 同上 */
+    return false
+  }
+}
+
+/** 本项目全部未落定的提交（跨面板，带 script）；读失败回空。发起它的面板已被删 / 换图时靠它找回 */
+export async function loadProjectPendings(
+  project: string | null,
+): Promise<{ file: string; rid: string; text: string; sent: DraftTarget; script: string | null }[]> {
+  if (!project) return []
+  try {
+    return (await fetchAiPendings(project)).pendings.map((p) => ({ ...p, sent: p.sent as DraftTarget }))
+  } catch {
+    return []
   }
 }
 

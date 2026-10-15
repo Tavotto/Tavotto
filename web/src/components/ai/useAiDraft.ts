@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import '@/lib/aiDraftLedger'
-import { isDraftTooLarge, loadDraft, saveDraft } from '@/lib/aiDraft'
+import { isDraftTooLarge, loadDraft, loadProjectPendings, saveDraft } from '@/lib/aiDraft'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
-import { useAiStore } from '@/store/aiStore'
+import { sameScript, useAiStore } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import type { PanelObject } from '@/types/document'
-
-const scriptBase = (p: string) => p.split(/[\\/]/).pop() ?? p
 
 /** 打字停多久才写后端：每个键都发请求没必要，丢的也只是最后半秒（pagehide 会冲刷） */
 export const WRITE_DEBOUNCE_MS = 600
@@ -117,36 +115,29 @@ export function useAiDraft(panel: PanelObject | null) {
         }
       }
     })
-    if (panel?.script) {
-      // 同一份脚本的**别的面板**上没落定的提交同样要还原：发送锁按脚本判（不然刷新后切到兄弟面板就绕过了）。
-      // 只取账本，不动那边的草稿文本
-      const mine = scriptBase(panel.script)
-      const siblings = useDocumentStore
-        .getState()
-        .doc.objects.filter(
-          (o): o is PanelObject => o.type === 'panel' && !!(o as PanelObject).script && (o as PanelObject).fileId !== panel.fileId && scriptBase((o as PanelObject).script as string) === mine,
-        )
-      const seen = new Set<string>()
-      for (const sib of siblings) {
-        if (seen.has(sib.fileId)) continue
-        seen.add(sib.fileId)
-        void loadDraft(project, sib.fileId).then((d) => {
-          if (token !== loadToken.current) return
-          for (const p of d?.pendings ?? []) {
-            useAiStore.getState().restoreSubmission({
-              rid: p.rid,
-              project,
-              fileId: sib.fileId,
-              panelId: sib.id,
-              script: sib.script ?? null,
-              prompt: p.text,
-              target: p.sent,
-              canvas: useDocumentStore.getState().activeCanvasId,
-              overrides: sib.overrides,
-            })
-          }
-        })
-      }
+    if (panel) {
+      // 这个项目里**所有**未落定的提交（跨面板，带 script）：同一份脚本的别的面板上发出的要还原（发送锁按脚本判）；
+      // 发起它的面板已被删 / 换图时也找得回来——不依赖「文档里现在有哪些面板」（Codex #1098）
+      void loadProjectPendings(project).then((list) => {
+        if (token !== loadToken.current) return
+        const objects = useDocumentStore.getState().doc.objects
+        for (const p of list) {
+          const sameFile = p.file === panel.fileId
+          if (!sameFile && !(panel.script && p.script && sameScript(p.script, panel.script))) continue
+          const source = objects.find((o) => o.type === 'panel' && (o as PanelObject).fileId === p.file) as PanelObject | undefined
+          useAiStore.getState().restoreSubmission({
+            rid: p.rid,
+            project,
+            fileId: p.file,
+            panelId: source?.id ?? '',
+            script: p.script ?? (sameFile ? (panel.script ?? null) : null),
+            prompt: p.text,
+            target: p.sent,
+            canvas: useDocumentStore.getState().activeCanvasId,
+            overrides: sameFile ? panel.overrides : (source?.overrides ?? []),
+          })
+        }
+      })
     }
     return () => {
       loadToken.current++

@@ -12,7 +12,7 @@ import { AI_RUN_TIMEOUT_MS } from '@/lib/api'
 import { createDraftBackend } from '@/test/aiDraftBackend'
 import '@/lib/aiDraftLedger'
 import { setCurrentProjectId } from '@/lib/session'
-import { useAiStore } from './aiStore'
+import { AiLedgerError, sameScript, useAiStore } from './aiStore'
 import { useUiStore } from './uiStore'
 
 type Handler = (url: string, init: RequestInit | undefined) => Promise<Response> | Response
@@ -407,7 +407,7 @@ describe('发送锁按脚本判，不按面板（Codex #1098 P1）', () => {
     handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
     await expect(sendOn('Fig1.pdf', 'sub/fig1.py')).resolves.toBe('unconfirmed')
     const before = runCalls()
-    await expect(sendOn('Fig2.pdf', 'fig1.py')).rejects.toThrow('submission-pending') // 同脚本（按文件名比）
+    await expect(sendOn('Fig2.pdf', './sub\\fig1.py')).rejects.toThrow('submission-pending') // 同一份脚本（路径写法不同）
     expect(runCalls()).toBe(before)
     handler = defaultHandler
     await expect(sendOn('Fig3.pdf', 'other.py')).resolves.toBe('accepted') // 对照：别的脚本不受影响
@@ -421,5 +421,103 @@ describe('发送锁按脚本判，不按面板（Codex #1098 P1）', () => {
     handler = defaultHandler
     setCurrentProjectId('pb')
     await expect(sendOn('Fig2.pdf', 'fig1.py')).resolves.toBe('accepted')
+  })
+})
+
+describe('发送锁比完整的项目相对路径，不比文件名（Codex #1098 P2）', () => {
+  it('a/plot.py 的未确认请求不锁 b/plot.py；同一路径（写法不同）才锁', async () => {
+    handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
+    await sendOn('FigA.pdf', 'a/plot.py')
+    handler = defaultHandler
+    await expect(sendOn('FigB.pdf', 'b/plot.py')).resolves.toBe('accepted') // 旧实现按文件名比，这里被误锁
+    await expect(sendOn('FigC.pdf', 'a\\plot.py')).rejects.toThrow('submission-pending')
+  })
+
+  it('sameScript：分隔符与 ./ 不影响；绝对路径只与它的路径后缀相等', () => {
+    expect(sameScript('a/plot.py', 'a/plot.py')).toBe(true)
+    expect(sameScript('./a//plot.py', 'a\\plot.py')).toBe(true)
+    expect(sameScript('a/plot.py', 'b/plot.py')).toBe(false)
+    expect(sameScript('plot.py', 'a/plot.py')).toBe(false)
+    expect(sameScript('/proj/a/plot.py', 'a/plot.py')).toBe(true)
+    expect(sameScript('/proj/a/plot.py', 'b/plot.py')).toBe(false)
+    expect(sameScript('/proj/xa/plot.py', 'a/plot.py')).toBe(false)
+  })
+})
+
+describe('发送前必须先把账本写进后端（Codex #1098 P1）', () => {
+  it('写账本失败（后端 5xx）：不发 run、提交记录删掉、抛 AiLedgerError', async () => {
+    draftBe.setPendingWriteFails(true)
+    try {
+      await expect(send()).rejects.toBeInstanceOf(AiLedgerError)
+    } finally {
+      draftBe.setPendingWriteFails(false)
+    }
+    expect(runCalls()).toBe(0) // 对照：旧实现吞掉失败、照样发
+    expect(subs()).toEqual([])
+    expect(pend()).toEqual([])
+  })
+
+  it('后端整个不可用：同样不发', async () => {
+    draftBe.setDown(true)
+    try {
+      await expect(send()).rejects.toBeInstanceOf(AiLedgerError)
+    } finally {
+      draftBe.setDown(false)
+    }
+    expect(runCalls()).toBe(0)
+  })
+
+  it('账本写成功后才发：run 发出的那一刻账本里已有这条', async () => {
+    let seenAtRun: string[] = []
+    handler = (url) => {
+      if (url.includes('/api/ai/run')) seenAtRun = pend()
+      return defaultHandler(url, undefined)
+    }
+    await send()
+    expect(seenAtRun).toHaveLength(1)
+  })
+
+  it('失败后恢复：再发一次正常发出（新的请求 id）', async () => {
+    draftBe.setPendingWriteFails(true)
+    await expect(send()).rejects.toBeInstanceOf(AiLedgerError)
+    draftBe.setPendingWriteFails(false)
+    await expect(send()).resolves.toBe('accepted')
+    expect(runCalls()).toBe(1)
+  })
+})
+
+describe('读会话详情暂时失败时不收尾（Codex #1098 P1）', () => {
+  const found = (status = 'done') => json({ session: 's-9', status, changed: true, script: 'fig1.py' })
+  beforeEach(async () => {
+    handler = (url) => (url.includes('/api/ai/run') ? Promise.reject(new TypeError('down')) : json({}))
+    await send()
+  })
+
+  it('请求状态是终态、详情读失败（网络 / 5xx）：保持未确认、提交记录与账本都在、可再查', async () => {
+    const rid = onlySub().rid
+    for (const detail of [
+      (() => Promise.reject(new TypeError('down'))) as Handler,
+      (() => json({ error: 'boom', code: 'internal_error' }, 500)) as Handler,
+    ]) {
+      handler = (url) => (url.includes('/api/ai/requests/') ? found() : detail(url, undefined))
+      await expect(useAiStore.getState().queryRequest(rid)).resolves.toBe('unreachable')
+      expect(useAiStore.getState().sessions).toEqual([])
+      expect(onlySub().phase).toBe('unconfirmed')
+      expect(pend()).toEqual([rid])
+    }
+    // 详情恢复后再查：带着 refresh 结局收尾，警告说得出口
+    handler = (url) =>
+      url.includes('/api/ai/requests/')
+        ? found()
+        : json({ agent: 'codex', status: 'done', changed: true, diff: 'D', transcript: [], refresh: { status: 'failed', code: 'scan_failed' } })
+    await expect(useAiStore.getState().queryRequest(rid)).resolves.toBe('accepted')
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('aiChangedRefreshFailed')
+  })
+
+  it('对照：后端明确说没有详情（404）才凭摘要往下走', async () => {
+    const rid = onlySub().rid
+    handler = (url) => (url.includes('/api/ai/requests/') ? found() : json({ error: 'nf' }, 404))
+    await expect(useAiStore.getState().queryRequest(rid)).resolves.toBe('accepted')
+    expect(useAiStore.getState().sessions[0]).toMatchObject({ id: 's-9', status: 'done', changed: true })
   })
 })

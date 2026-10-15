@@ -8,10 +8,12 @@ export interface DraftBackend {
   /** 命中草稿相关路由返回 Response，否则 null（调用方继续处理别的路径） */
   handle: (url: string, init?: RequestInit) => Response | null
   drafts: Map<string, string>
-  pendings: Map<string, { rid: string; text: string; sent: unknown }[]>
+  pendings: Map<string, { rid: string; text: string; sent: unknown; script?: string | null }[]>
   calls: { method: string; path: string; keepalive: boolean; body: Record<string, unknown> }[]
   /** 让后端「不可用」（fetch 抛网络错误） */
   setDown: (down: boolean) => void
+  /** 只让「写账本」失败（PUT pending 回 500），别的照常 */
+  setPendingWriteFails: (fails: boolean) => void
   /** 直接读 / 写（模拟另一个标签页） */
   draft: (pj: string, file: string) => string | undefined
   pending: (pj: string, file: string) => string[]
@@ -25,7 +27,8 @@ const key = (pj: string, f: string) => `${pj}\u0000${f}`
 
 export function createDraftBackend(): DraftBackend {
   const drafts = new Map<string, string>()
-  const pendings = new Map<string, { rid: string; text: string; sent: unknown }[]>()
+  const pendings = new Map<string, { rid: string; text: string; sent: unknown; script?: string | null }[]>()
+  let pendingWriteFails = false
   const calls: DraftBackend['calls'] = []
   let down = false
   const bytes = (t: string) => new TextEncoder().encode(t).length
@@ -39,6 +42,13 @@ export function createDraftBackend(): DraftBackend {
     const method = (init?.method ?? 'GET').toUpperCase()
     const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {}
     calls.push({ method, path: u.pathname, keepalive: !!init?.keepalive, body })
+    if (u.pathname === '/api/ai/drafts/pending' && method === 'GET') {
+      const prefix = key(pj, '')
+      const all = [...pendings.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .flatMap(([k, list]) => list.map((p) => ({ file: k.slice(prefix.length), ...p, script: p.script ?? null, created_ms: 1 })))
+      return json({ pendings: all })
+    }
     const m = /^\/api\/ai\/drafts\/pending\/([^/]+)(\/accept)?$/.exec(u.pathname)
     if (m) {
       const rid = decodeURIComponent(m[1])
@@ -53,7 +63,11 @@ export function createDraftBackend(): DraftBackend {
         return json({ cleared: true, draft_deleted: del })
       }
       if (method === 'PUT') {
-        const next = [...list.filter((x) => x.rid !== rid), { rid, text: String(body.text), sent: body.sent }]
+        if (pendingWriteFails) return json({ error: 'boom', code: 'internal_error' }, 500)
+        const next = [
+          ...list.filter((x) => x.rid !== rid),
+          { rid, text: String(body.text), sent: body.sent, script: (body.script as string | null) ?? null },
+        ]
         pendings.set(key(pj, file), next.slice(-8))
         return json({ ok: true })
       }
@@ -95,6 +109,9 @@ export function createDraftBackend(): DraftBackend {
     calls,
     setDown: (d) => {
       down = d
+    },
+    setPendingWriteFails: (f) => {
+      pendingWriteFails = f
     },
     draft: (pj, f) => drafts.get(key(pj, f)),
     pending: (pj, f) => (pendings.get(key(pj, f)) ?? []).map((p) => p.rid),
