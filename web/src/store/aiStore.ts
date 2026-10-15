@@ -2,18 +2,26 @@ import { create } from 'zustand'
 import { t } from '@/i18n'
 import { currentProjectId } from '@/lib/session'
 import {
+  AI_REQUEST_NOT_FOUND,
   agentById,
   agentDisplayName,
   aiCancel,
   aiRevert,
   aiRun,
+  ApiError,
   effectiveAgent,
   fetchAiCapabilities,
+  fetchAiRequest,
+  fetchAiSession,
+  isDefiniteRunFailure,
   usableAgents,
+  type AiSessionDetail,
   type AiAgentId,
   type AiCapabilities,
   type AiDeltaKind,
+  type AiRefreshOutcome,
 } from '@/lib/api'
+import { clearSubmitted, markSubmitted, removeAccepted, type DraftTarget } from '@/lib/aiDraft'
 
 export type AiStatus = 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'reverted'
 /** 改动作用范围：决定发给后端的上下文粒度（gid/label 怎么拼） */
@@ -59,7 +67,55 @@ export interface AiSession {
   startedAt: number
   /** 会话结束（done / failed / timeout / cancelled）的时刻：状态行的总耗时与最后一步的耗时以它收尾 */
   finishedAt?: number
+  /**
+   * 后端的 `ai.done` 已经落过一次（终态只认第一次）：重复 / 迟到的 `ai.done` 不改写它。
+   * 本地先标的 `cancelled` 不算——真正的结局（diff、changed）还要靠随后那条 `ai.done` 补上。
+   */
+  finalized?: boolean
 }
+
+/**
+ * 一次**已点发送、后端还没给出会话 id** 的提交（ADR 0131）。它是「不得让同一条 AI 修改被无意执行两次」
+ * 的前端半边：
+ * - `sending`：请求在路上（`aiRun` 有 30 s 超时）。
+ * - `unconfirmed`：已发出，但没收到明确答复（超时 / 断网 / 网关错）。**后端可能已经接受并在改脚本**，
+ *   所以此态禁用一切「发送 / 重试」，只允许 `queryRequest`（按同一个 rid 问后端）。
+ * - `not_received`：问过了，后端明确说没登记过——此时才允许用**同一个 rid** 重发（后端按 rid 去重，
+ *   与迟到的原请求赛跑也不会双跑）。
+ * 后端明确拒绝（4xx / 带稳定 code 的 5xx）不在这里：那是失败，提交记录当场删掉，下一次发送换新 rid。
+ */
+export type SubmissionPhase = 'sending' | 'unconfirmed' | 'not_received'
+
+export interface AiSubmission {
+  rid: string
+  project: string | null
+  fileId: string
+  panelId: string
+  prompt: string
+  /** 发出那一刻钉住的目标（重发不跟着此刻的选择走） */
+  target: DraftTarget
+  canvas: string | null
+  overrides: unknown[]
+  phase: SubmissionPhase
+}
+
+/** 早于 HTTP 响应到达的 SSE 事件，等会话建好再按序回放 */
+type EarlyEvent =
+  | { t: 'delta'; kind: AiDeltaKind; text: string }
+  | { t: 'done'; p: DonePayload }
+
+export interface DonePayload {
+  session: string
+  status: string
+  changed: boolean
+  diff: string
+  error?: string
+  client_request_id?: string
+  refresh?: AiRefreshOutcome
+}
+
+export type SubmitOutcome = 'accepted' | 'unconfirmed'
+export type QueryOutcome = 'accepted' | 'not_received' | 'unreachable' | 'gone'
 
 interface AiState {
   /**
@@ -88,6 +144,12 @@ interface AiState {
   setScope: (s: AiScope) => void
   setModel: (agent: AiAgentId, model: string) => void
   setEffort: (agent: AiAgentId, effort: string) => void
+  /** 已点发送、后端还没给会话 id 的提交，按请求 id 索引（见 `AiSubmission`） */
+  submissions: Record<string, AiSubmission>
+  /**
+   * 发一条新任务（生成新的请求 id）。后端明确拒绝时**抛出**（提交记录已删，可换新 id 重试）；
+   * 超时 / 断网等「不知道后端收到没有」回 `'unconfirmed'`，不抛——那不是失败。
+   */
   start: (req: {
     prompt: string
     fileId: string
@@ -98,10 +160,18 @@ interface AiState {
     target: string
     overrides: unknown[]
     canvas?: string | null
-  }) => Promise<void>
-  appendDelta: (sid: string, kind: AiDeltaKind, text: string) => void
-  /** 回 `true` = 这是本标签页此刻持有的会话；`false` 时调用方不许再做任何副作用（#589） */
-  finish: (p: { session: string; status: string; changed: boolean; diff: string; error?: string }) => boolean
+  }) => Promise<SubmitOutcome>
+  /** 问后端「这个请求 id 你登记过吗」：只读，不会让任何东西被执行 */
+  queryRequest: (rid: string) => Promise<QueryOutcome>
+  /** 后端明确说没收到之后，用**同一个**请求 id 重发 */
+  resend: (rid: string) => Promise<SubmitOutcome>
+  /** 放弃等待这条提交（用户改写后重新发）：之后的发送换新 id。仅 `not_received` 时由界面提供 */
+  dismissSubmission: (rid: string) => void
+  /** 刷新 / 重挂后按草稿里的 rid 还原「已发出未确认」 */
+  restoreSubmission: (sub: Omit<AiSubmission, 'phase'>) => void
+  appendDelta: (sid: string, kind: AiDeltaKind, text: string, rid?: string) => void
+  /** 回 `true` = 这是本标签页此刻持有的会话、且这是它的第一条 `ai.done`；`false` 时调用方不许再做任何副作用（#589） */
+  finish: (p: DonePayload) => boolean
   /** 回 `false` = 这次撤销的结果被丢弃了（期间换过项目）：调用方不许再往别的 store 里写它的后果 */
   revert: (sid: string) => Promise<boolean>
   cancel: (sid: string) => Promise<void>
@@ -115,6 +185,37 @@ interface AiState {
 }
 
 const MAX_LINES = 600
+
+/** 早到事件缓冲的上限：只为「事件比 HTTP 响应先到」的那几十毫秒，不是日志 */
+const EARLY_MAX_SIDS = 16
+const EARLY_MAX_EVENTS = 500
+const early = new Map<string, EarlyEvent[]>()
+
+/**
+ * 会话在「建好之后才到的 `ai.done`」那条路上也要有和直达路径一样的提示（状态栏）。副作用在
+ * `useServerEvents`，而它 import 本 store——回调注册制（同 `setEngine500Handler`）避免成环。
+ */
+let settledNotifier: ((p: DonePayload) => void) | null = null
+export function setAiSettledNotifier(fn: ((p: DonePayload) => void) | null): void {
+  settledNotifier = fn
+}
+
+/** 请求 id：安全上下文里用 `randomUUID`，否则用 `getRandomValues` 拼 v4（后端只要求 `[A-Za-z0-9_-]{8,64}`） */
+export function newRequestId(): string {
+  const c = globalThis.crypto
+  if (c?.randomUUID) return c.randomUUID()
+  const b = new Uint8Array(16)
+  if (c?.getRandomValues) c.getRandomValues(b)
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256)
+  b[6] = (b[6] & 0x0f) | 0x40
+  b[8] = (b[8] & 0x3f) | 0x80
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
+}
+
+const KNOWN_STATUS: AiStatus[] = ['running', 'done', 'failed', 'timeout', 'cancelled', 'reverted']
+/** 后端还有 `interrupted`（重启时被中断）等前端不单列的终态：按失败呈现，不当成「还在跑」 */
+const toStatus = (s: string): AiStatus => ((KNOWN_STATUS as string[]).includes(s) ? (s as AiStatus) : 'failed')
 
 const LS_AGENT = 'tavotto.ai.agent'
 const LS_PREFS = 'tavotto.ai.prefs'
@@ -231,46 +332,96 @@ export const useAiStore = create<AiState>((set, get) => ({
     })
   },
 
+  submissions: {},
+
   start: async ({ prompt, fileId, panelId, gid, label, scope, target, overrides, canvas }) => {
     // 发任务前再确认一次：首选那个可能刚被关掉 / 刚被检测成不可用
-    const caps = get().caps
-    const agent = effectiveAgent(get().agent, caps)
-    if (!agent) throw new Error('no-usable-agent')
-    const info = agentById(caps, agent)
-    const model = get().models[agent] ?? info?.default_model ?? null
-    const effort = info?.efforts.length
-      ? (get().efforts[agent] ?? info.default_effort ?? null)
-      : null
-    const born = get().generation
+    if (!effectiveAgent(get().agent, get().caps)) throw new Error('no-usable-agent')
     const project = currentProjectId()
-    const res = await aiRun(
-      { agent, id: fileId, prompt, gid, label, overrides, model, effort, scope, target, canvas },
+    const rid = newRequestId()
+    const sent: DraftTarget = { scope, gid, label, target }
+    const sub: AiSubmission = {
+      rid,
       project,
-    )
-    // 发起之后换了项目：这次任务属于 A（后端照样跑完、记进 A 的历史），B 的面板里不许出现它
-    if (born !== get().generation) return
-    const session: AiSession = {
-      id: res.session,
-      project,
-      agent,
-      agentLabel: agentDisplayName(caps, agent),
-      prompt,
-      script: res.script,
-      panelId,
       fileId,
-      gid,
-      scope,
-      target,
-      entries: [],
-      status: 'running',
-      changed: false,
-      diff: '',
-      startedAt: Date.now(),
+      panelId,
+      prompt,
+      target: sent,
+      canvas: canvas ?? null,
+      overrides,
+      phase: 'sending',
     }
-    set((s) => ({ sessions: [...s.sessions, session] }))
+    set((s) => ({ submissions: { ...s.submissions, [rid]: sub } }))
+    // 同步落盘：刷新 / 崩溃之后还认得「这条发出过」
+    markSubmitted(project, fileId, prompt, rid, sent)
+    return dispatch(rid, get().generation)
   },
 
-  appendDelta: (sid, kind, text) =>
+  resend: async (rid) => {
+    const sub = get().submissions[rid]
+    // 只有「后端明确说没收到」才允许用同一个 id 重发；其余相位的重发就是盲目重复执行
+    if (!sub || sub.phase !== 'not_received') return 'unconfirmed'
+    if (!effectiveAgent(get().agent, get().caps)) throw new Error('no-usable-agent')
+    return dispatch(rid, get().generation)
+  },
+
+  queryRequest: async (rid) => {
+    const sub = get().submissions[rid]
+    if (!sub) return 'gone'
+    const born = get().generation
+    let found
+    try {
+      found = await fetchAiRequest(rid, sub.project)
+    } catch (e) {
+      if (born !== get().generation) return 'gone'
+      // 只有后端自己的「没登记过」是结论；404 来自别处（老后端没这个端点）、断网、5xx 都不是
+      if (e instanceof ApiError && e.status === 404 && e.body?.code === AI_REQUEST_NOT_FOUND) {
+        set((s) =>
+          s.submissions[rid] ? { submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'not_received' } } } : s,
+        )
+        return 'not_received'
+      }
+      return 'unreachable'
+    }
+    if (born !== get().generation) {
+      removeAccepted(sub.project, sub.fileId, rid)
+      return 'gone'
+    }
+    // 补全转录 / diff / 执行器（刷新之后这些都在后端）；失败就用查询给的摘要
+    const detail = await fetchAiSession(found.session, sub.project).catch(() => null)
+    if (born !== get().generation) {
+      removeAccepted(sub.project, sub.fileId, rid)
+      return 'gone'
+    }
+    accept(rid, found.session, found.script, {
+      kind: 'queried',
+      status: found.status,
+      changed: found.changed,
+      detail,
+    })
+    return 'accepted'
+  },
+
+  dismissSubmission: (rid) => {
+    const sub = get().submissions[rid]
+    if (!sub) return
+    clearSubmitted(sub.project, sub.fileId, rid)
+    set((s) => {
+      const { [rid]: _gone, ...rest } = s.submissions
+      return { submissions: rest }
+    })
+  },
+
+  restoreSubmission: (sub) => {
+    if (get().submissions[sub.rid]) return
+    set((s) => ({ submissions: { ...s.submissions, [sub.rid]: { ...sub, phase: 'unconfirmed' } } }))
+  },
+
+  appendDelta: (sid, kind, text, rid) => {
+    if (!get().sessions.some((x) => x.id === sid)) {
+      bufferEarly(sid, rid, { t: 'delta', kind, text })
+      return
+    }
     set((s) => ({
       sessions: s.sessions.map((x) => {
         if (x.id !== sid) return x
@@ -293,16 +444,26 @@ export const useAiStore = create<AiState>((set, get) => ({
         }
         return { ...x, entries: entries.slice(-MAX_LINES) }
       }),
-    })),
+    }))
+  },
 
-  finish: ({ session, status, changed, diff, error }) => {
-    if (!get().sessions.some((x) => x.id === session)) return false
+  finish: (p) => {
+    const { session, status, changed, diff, error } = p
+    const cur = get().sessions.find((x) => x.id === session)
+    if (!cur) {
+      // 事件先于 `aiRun` 的响应到：先留着，会话建好之后回放（否则会话永远停在 running）
+      bufferEarly(session, p.client_request_id, { t: 'done', p })
+      return false
+    }
+    // 终态只认第一条 `ai.done`：重复 / 迟到的不改写（cancelled 后到的 done 改回 done 之类）
+    if (cur.finalized) return false
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === session
           ? {
               ...x,
-              status: (status as AiStatus) || 'done',
+              finalized: true,
+              status: toStatus(status || 'done'),
               changed,
               diff,
               error,
@@ -334,18 +495,156 @@ export const useAiStore = create<AiState>((set, get) => ({
     const target = get().sessions.find((x) => x.id === sid)
     if (!target) return
     const born = get().generation
-    await aiCancel(sid, target.project)
+    const res = await aiCancel(sid, target.project)
     // 换代之后会话列表已清空、sid 不复用，下面这次按 sid 写本来就落空——这一判是防御，量不出来
     if (born !== get().generation) return
+    // 后端说 `ok: false` = 这个会话已经结束（或不认得它）：真实结局由 `ai.done` 给出，
+    // 不抢先标成 cancelled——那会把真实的 done / failed 盖掉
+    if (!res?.ok) return
     set((s) => ({
       sessions: s.sessions.map((x) =>
-        x.id === sid ? { ...x, status: 'cancelled', finishedAt: x.finishedAt ?? Date.now() } : x,
+        x.id === sid && x.status === 'running'
+          ? { ...x, status: 'cancelled', finishedAt: x.finishedAt ?? Date.now() }
+          : x,
       ),
     }))
   },
 
-  clear: () => set((s) => ({ sessions: [], generation: s.generation + 1 })),
+  clear: () => {
+    // 提交记录也属于旧项目：在途请求回来时代际对不上，不落会话（但接受了的仍会删草稿，见 `accept`）。
+    // 草稿文件里的 rid 还在——切回 A 会还原成「已发出未确认」，由用户查询，而不是盲目重发
+    early.clear()
+    set((s) => ({ sessions: [], submissions: {}, generation: s.generation + 1 }))
+  },
 }))
+
+function bufferEarly(sid: string, rid: string | undefined, ev: EarlyEvent): void {
+  const subs = useAiStore.getState().submissions
+  const pending = Object.keys(subs).length > 0
+  // 没有任何在途提交 = 这是别人的 / 已经丢弃的会话的事件，不留；带了 rid 的必须对得上一条提交
+  if (!pending || (rid && !subs[rid])) return
+  let list = early.get(sid)
+  if (!list) {
+    if (early.size >= EARLY_MAX_SIDS) early.delete(early.keys().next().value as string)
+    list = []
+    early.set(sid, list)
+  }
+  if (list.length < EARLY_MAX_EVENTS) list.push(ev)
+}
+
+/** 一次发送（新发或同 id 重发）：只回 `accepted` / `unconfirmed`，后端明确拒绝时抛 */
+async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  const sub = get().submissions[rid]
+  if (!sub) return 'unconfirmed'
+  const caps = get().caps
+  const agent = effectiveAgent(get().agent, caps) as AiAgentId
+  const info = agentById(caps, agent)
+  const model = get().models[agent] ?? info?.default_model ?? null
+  const effort = info?.efforts.length ? (get().efforts[agent] ?? info.default_effort ?? null) : null
+  set((s) => ({ submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'sending' } } }))
+  let res
+  try {
+    res = await aiRun(
+      {
+        agent,
+        id: sub.fileId,
+        prompt: sub.prompt,
+        gid: sub.target.gid,
+        label: sub.target.label,
+        overrides: sub.overrides,
+        model,
+        effort,
+        scope: sub.target.scope,
+        target: sub.target.target,
+        canvas: sub.canvas,
+        client_request_id: rid,
+      },
+      sub.project,
+    )
+  } catch (e) {
+    if (isDefiniteRunFailure(e)) {
+      // 后端明确拒绝 = 一定没执行：提交记录作废（下一次发送换新 id），文本留给用户改
+      clearSubmitted(sub.project, sub.fileId, rid)
+      if (born === get().generation) {
+        set((s) => {
+          const { [rid]: _gone, ...rest } = s.submissions
+          return { submissions: rest }
+        })
+      }
+      throw e
+    }
+    // 超时 / 断网 / 网关错 / 读不出响应：**不知道**后端收到没有。绝不当失败，不开普通重试
+    if (born === get().generation) {
+      set((s) =>
+        s.submissions[rid]
+          ? { submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'unconfirmed' } } }
+          : s,
+      )
+    }
+    return 'unconfirmed'
+  }
+  // 发起之后换了项目：这次任务属于 A（后端照样跑完、记进 A 的历史），B 的面板里不许出现它——
+  // 但它**已经被接受**了，A 的草稿该删
+  if (born !== get().generation) {
+    removeAccepted(sub.project, sub.fileId, rid)
+    return 'accepted'
+  }
+  accept(rid, res.session, res.script, { kind: 'fresh', agent, agentLabel: agentDisplayName(caps, agent) })
+  return 'accepted'
+}
+
+/**
+ * 后端给出了会话 id = 这条请求**已被接受**：此刻（也只有此刻）删草稿，建会话，回放早到的事件。
+ * 事件回放在建会话**之后**走公开的 `appendDelta` / `finish`，与直达路径同一份逻辑。
+ */
+function accept(
+  rid: string,
+  sid: string,
+  script: string,
+  how:
+    | { kind: 'fresh'; agent: AiAgentId; agentLabel: string }
+    | { kind: 'queried'; status: string; changed: boolean; detail: AiSessionDetail | null },
+): void {
+  const { get, set } = { get: useAiStore.getState, set: useAiStore.setState }
+  const sub = get().submissions[rid]
+  if (!sub) return
+  removeAccepted(sub.project, sub.fileId, rid)
+  const caps = get().caps
+  const detail = how.kind === 'queried' ? how.detail : null
+  const agent: AiAgentId = how.kind === 'fresh' ? how.agent : (detail?.agent ?? effectiveAgent(get().agent, caps) ?? '')
+  const status = how.kind === 'queried' ? how.status : 'running'
+  const settled = how.kind === 'queried' && status !== 'running'
+  const session: AiSession = {
+    id: sid,
+    project: sub.project,
+    agent,
+    agentLabel: how.kind === 'fresh' ? how.agentLabel : agentDisplayName(caps, agent),
+    prompt: sub.prompt,
+    script,
+    panelId: sub.panelId,
+    fileId: sub.fileId,
+    gid: sub.target.gid,
+    scope: sub.target.scope,
+    target: sub.target.target,
+    entries: (detail?.transcript ?? []).map((e) => ({ kind: e.kind as AiDeltaKind, text: e.text })),
+    status: toStatus(status),
+    changed: how.kind === 'queried' ? !!(how.changed || detail?.changed) : false,
+    diff: detail?.diff ?? '',
+    startedAt: Date.now(),
+    ...(settled ? { finalized: true, finishedAt: Date.now() } : {}),
+  }
+  set((s) => {
+    const { [rid]: _gone, ...rest } = s.submissions
+    return { submissions: rest, sessions: [...s.sessions, session] }
+  })
+  const pending = early.get(sid)
+  early.delete(sid)
+  for (const ev of pending ?? []) {
+    if (ev.t === 'delta') get().appendDelta(sid, ev.kind, ev.text)
+    else if (get().finish(ev.p)) settledNotifier?.(ev.p)
+  }
+}
 
 /** 会话标签：优先用当前 capabilities 的显示名，探测不可用时回退到快照。 */
 export const sessionAgentLabel = (
