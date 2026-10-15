@@ -205,6 +205,20 @@ for (const theme of THEMES) {
       }
     })
 
+    it('桌面（bg）上的可编辑框：field 本身对桌面分不出（<1.1），所以桌面子树把 field 重定向成白面；重定向后看得见、hover 不比所在面更暗', () => {
+      const bg = token('bg')
+      // 这是重定向存在的理由：浅色里不重定向，框直接坐在桌面上就「消失」（field 对桌面约 1.04:1）；暗色本来就分得开，重定向无害
+      if (theme === 'light') expect(contrast(token('field'), bg)).toBeLessThan(1.1)
+      // 重定向（LeftPanel 的 `[--color-field:var(--color-surface)]`、`[--color-field-hover:var(--color-surface-2)]`）之后：
+      expect(contrast(token('surface'), bg), '静态框对桌面').toBeGreaterThanOrEqual(1.1)
+      // hover 的 surface-2 不得比所在的桌面更暗（浅色里是更亮的一格，暗色里更亮一级）
+      expect(luminance(token('surface-2'))).toBeGreaterThan(luminance(bg))
+      for (const f of [readFileSync(path.resolve(HERE, 'components/left/LeftPanel.tsx'), 'utf8'), readFileSync(path.resolve(HERE, 'embedded/WidgetHeader.tsx'), 'utf8')]) {
+        expect(f).toContain('[--color-field:var(--color-surface)]')
+        expect(f).toContain('[--color-field-hover:var(--color-surface-2)]')
+      }
+    })
+
     it('field 底上要读的字（值 ink、占位 / 单位 / 前缀 ink-3）≥4.5:1；hover 底上也是', () => {
       for (const name of ['ink', 'ink-2', 'ink-3']) {
         for (const g of ['field', 'field-hover']) {

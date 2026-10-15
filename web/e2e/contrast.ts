@@ -323,3 +323,71 @@ export async function lowContrastNodes(page: Page, root = 'body'): Promise<strin
     return out
   }, root)
 }
+
+/**
+ * 可编辑框的**底**对它所在的面：不许分不出（A7，2026-10-15 UI 2.0 精修）。
+ *
+ * 浅色里 `--color-field`（#f2f2f0）对灰桌面（#efefed）只有 ≈1.04:1，框直接坐在桌面上等于没有框；
+ * 桌面子树（左抽屉 / 嵌入头）因此把 field 重定向成白面。这把尺子在真页面上量「谁的底色**解析后**等于 field /
+ * field-hover、它背后第一个不透明祖先是什么」，对比不到 `min` 的返回一行描述。
+ * 只量静态：hover 态不在这里（框的 hover 底在重定向后是 surface-2，由 tokenContrast.test 守着不比所在面更暗）。
+ */
+export async function indistinctFieldBoxes(page: Page, min = 1.1): Promise<string[]> {
+  return page.evaluate((minRatio) => {
+    const probe = document.createElement('canvas')
+    probe.width = probe.height = 1
+    const ctx = probe.getContext('2d', { willReadFrequently: true })!
+    const parse = (s: string): number[] => {
+      ctx.clearRect(0, 0, 1, 1)
+      ctx.fillStyle = s
+      ctx.fillRect(0, 0, 1, 1)
+      const d = ctx.getImageData(0, 0, 1, 1).data
+      return [d[0], d[1], d[2], d[3] / 255]
+    }
+    const lin = (c: number) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+    const lum = (c: number[]) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+    const ratio = (a: number[], b: number[]) => {
+      const x = lum(a)
+      const y = lum(b)
+      return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
+    }
+    // 解析 field / field-hover 在**某个元素上**的实际值（桌面子树里它们被重定向，所以要问那个元素）
+    const tokenAt = (el: Element, name: string): number[] => {
+      const t = document.createElement('i')
+      t.style.cssText = `position:absolute;visibility:hidden;background:var(${name})`
+      el.appendChild(t)
+      const c = parse(getComputedStyle(t).backgroundColor)
+      t.remove()
+      return c
+    }
+    const out: string[] = []
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
+      const r = el.getBoundingClientRect()
+      if (r.width < 8 || r.height < 8) continue
+      const own = parse(getComputedStyle(el).backgroundColor)
+      if (own[3] < 0.99) continue
+      const isField = [tokenAt(el, '--color-field'), tokenAt(el, '--color-field-hover')].some(
+        (f) => f[0] === own[0] && f[1] === own[1] && f[2] === own[2],
+      )
+      if (!isField) continue
+      let p = el.parentElement
+      let under: number[] | null = null
+      while (p) {
+        const b = parse(getComputedStyle(p).backgroundColor)
+        if (b[3] > 0.99) {
+          under = b
+          break
+        }
+        p = p.parentElement
+      }
+      if (!under) continue
+      // 元素自己的底与祖先底逐字相同：这不是一个「框」（例如 bg-bg 的容器恰与 field-hover 同值）
+      if (under[0] === own[0] && under[1] === own[1] && under[2] === own[2]) continue
+      const q = ratio(own, under)
+      if (q < minRatio) {
+        out.push(`${el.tagName}[${el.getAttribute('data-testid') ?? el.className.toString().slice(0, 40)}] ${q.toFixed(2)}:1 < ${minRatio}`)
+      }
+    }
+    return out
+  }, min)
+}
