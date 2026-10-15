@@ -1442,9 +1442,11 @@ fn restart_engine_blocking(app: &tauri::AppHandle) -> bool {
     // 成功后只清「这一代」，成功分支跑完前新一代若又崩了（代次已变）就保留它。
     // 内存里的 previous_exit 不动——它正是「先重启再发」的那张卡，由新页面取走
     let generation = state.marker.get().map(|m| m.engine_exit_generation());
+    // 内存里的退出状态属于刚收掉的旧引擎：在新引擎（与它的监视线程）起来**之前**清。成功后再清会把
+    // boot_engine 返回前新引擎就报上来的退出一并抹掉，新页面读 current_engine_exit 拿到 None、没有修复卡
+    *state.engine_exit.lock().unwrap() = None;
     let ok = boot_engine(app, false);
     if ok {
-        *state.engine_exit.lock().unwrap() = None;
         if let (Some(m), Some(g)) = (state.marker.get(), generation) {
             m.clear_engine_exit_if(g);
         }
@@ -1848,6 +1850,13 @@ mod tests {
         assert!(
             body[ok..].contains("clear_engine_exit_if("),
             "成功后按代次清"
+        );
+        // 内存里旧引擎的退出状态：恰好一处、在 boot_engine 之前清（成功后再清会抹掉新引擎的退出，#1070 r4280305203）
+        let mem_clear = "*state.engine_exit.lock().unwrap() = None";
+        assert_eq!(body.matches(mem_clear).count(), 1, "内存退出状态只清一处");
+        assert!(
+            body.find(mem_clear).unwrap() < boot,
+            "内存退出状态要在 boot_engine 之前清"
         );
         for banned in [
             "take_engine_exit",
