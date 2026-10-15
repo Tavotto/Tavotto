@@ -221,6 +221,9 @@ class Event:
     certain: bool = True
     #: 在会无条件执行的位置（模块 / 函数体顶层语句序列；不在条件 / 循环 / try / with 体 / lambda / 推导式里）
     top: bool = True
+    #: 调用表达式的结束坐标：嵌在它实参里的调用先于它求值（`savefig(p, metadata={"T": open(p).read()})`）
+    end_line: int = 0
+    end_col: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1107,6 +1110,8 @@ class _Collector:
                 dest=dest,
                 certain=certain,
                 top=self._top,
+                end_line=getattr(node, "end_lineno", None) or node.lineno,
+                end_col=getattr(node, "end_col_offset", None) or node.col_offset,
             )
         )
 
@@ -1460,7 +1465,11 @@ def _exclusive(a: Event, b: Event) -> bool:
 
 
 def _after(later: Event, earlier: Event) -> bool:
-    return (later.line, later.col) > (earlier.line, earlier.col) and not _exclusive(earlier, later)
+    """`later` 在 `earlier` 之后求值。嵌在 `earlier` 调用表达式里的（它的实参）先于它求值，不算之后（Codex #1034 r4283403948）。"""
+    start = (later.line, later.col)
+    if start <= (earlier.end_line, earlier.end_col):
+        return False
+    return start > (earlier.line, earlier.col) and not _exclusive(earlier, later)
 
 
 # ---------------------------------------------------------------- 决定

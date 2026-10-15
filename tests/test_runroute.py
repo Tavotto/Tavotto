@@ -1574,3 +1574,23 @@ def test_a_plain_write_followed_by_a_dead_main_guard_pair_stays_in_safe():
     route = _route(src, gate=True)
     assert route.execution == "safe" and "R1" not in _rules(route), route
     assert runroute.facts_of(src).guarded_ops
+
+
+# ---- 求值顺序（Codex #1034 r4283403948）：嵌在 savefig 实参里的读先于 savefig 求值，不是「存后读回」
+@pytest.mark.parametrize(
+    "src",
+    [
+        MPL + 'plt.savefig("x.png", metadata={"Title": open("x.png").read()})\n',
+        MPL
+        + 'plt.savefig(\n    "x.png",\n    metadata={"Title": open("x.png", "rb").read().hex()},\n)\n',
+    ],
+    ids=["same_line", "multi_line"],
+)
+def test_a_read_nested_in_the_savefig_arguments_is_not_a_readback(src):
+    route = _route(src)
+    assert route.execution == "safe", route
+
+
+def test_a_read_after_the_savefig_call_on_the_same_line_is_still_a_readback():
+    route = _route(MPL + 'plt.savefig("x.png"); open("x.png", "rb").read()\n')
+    assert route.execution == "native" and route.reason == runroute.REASON_SAVEFIG_READBACK, route
