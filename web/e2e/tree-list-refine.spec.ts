@@ -254,6 +254,7 @@ test('拖分栏手柄时按 Esc：宽度复原，且选中对象的上下文栏�
   await expect(handle).toHaveAttribute('aria-valuenow', '300')
   // 这一下 Esc 只属于拖动：选区还在，上下文栏仍可见
   await expect(bar).toBeVisible()
+})
 
 test('展开 / 折叠：子树高度过渡（收起期间 inert、播完卸载）；reduced-motion 直接切', async ({ app, page }) => {
   const a = await app()
