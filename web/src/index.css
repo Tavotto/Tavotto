@@ -821,6 +821,8 @@
   font-size: var(--text-base);
   line-height: 1.6;
   color: var(--color-ink);
+  /* 段落末行避免孤字（不支持的引擎无效果） */
+  text-wrap: pretty;
 }
 @utility type-section {
   font-size: var(--text-sm);
@@ -844,6 +846,7 @@
   font-size: var(--text-sm);
   line-height: 1.5;
   color: var(--color-ink-3);
+  text-wrap: pretty;
 }
 @utility type-meta {
   font-size: var(--text-xs);
