@@ -141,6 +141,23 @@ test('画布页签条没有纵向溢出、不画滚动条，页签多了仍能�
   expect(h.atStart, JSON.stringify(h)).toBe(0)
   expect(h.atEnd, JSON.stringify(h)).toBeGreaterThan(0)
 
+  // 溢出边缘的渐隐（ui/scrollFade）：还能往哪边滚，哪边就有 data-fade-*（并真的挂了 mask）；滚到头那一侧就收
+  const maskOf = () =>
+    strip.evaluate((el) => {
+      const cs = getComputedStyle(el)
+      return cs.maskImage || cs.getPropertyValue('-webkit-mask-image') || 'none'
+    })
+  await strip.evaluate((el) => (el.scrollLeft = 0))
+  await expect(strip).toHaveAttribute('data-fade-end', 'true')
+  await expect(strip).not.toHaveAttribute('data-fade-start')
+  expect(await maskOf(), '起点：只有终点侧渐隐').toContain('linear-gradient')
+  await strip.evaluate((el) => (el.scrollLeft = el.scrollWidth))
+  await expect(strip).not.toHaveAttribute('data-fade-end')
+  await expect(strip).toHaveAttribute('data-fade-start', 'true')
+  await strip.evaluate((el) => (el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2))
+  await expect(strip).toHaveAttribute('data-fade-end', 'true')
+  await expect(strip).toHaveAttribute('data-fade-start', 'true')
+
   // 横滚条藏起来之后，纵向照样不许溢出
   const many = await verticalOverflow(strip)
   expect(many.scrollHeight, JSON.stringify(many)).toBeLessThanOrEqual(many.clientHeight)
