@@ -11,7 +11,7 @@ import { expect, test, waitForFigureEdit } from './fixtures'
  * 假 `codex`：`--version` / `login status` 答话；执行时一直等到「放行文件」出现才退出（用例自己放行，
  * 不靠 sleep 的运气）。POSIX only。定位走 `data-*`，中英各跑一遍。
  */
-test.skip(process.platform === 'win32', '假 CLI 是 shell 脚本')
+test.skip(process.platform === 'win32', '假 CLI 是 shell 脚本，只在 posix-e2e 腿执行')
 
 function fakeRunningCodex(): { PATH: string; release: string } {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'tavotto-fake-codex-'))
