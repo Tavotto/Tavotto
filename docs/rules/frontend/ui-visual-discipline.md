@@ -67,8 +67,9 @@ cursor-not-allowed`；未选中复选框 / 单选边框与关态开关轨道 `bo
 由 `ui/slidingIndicator` 滑动（jsdom 量不到几何，用例要自己给 `offsetLeft / offsetWidth` 装值）；折叠
 分组的展开走 `ui/Field.Reveal`（`usePresence` 保活退场那 90ms，所以收起后内容还在 DOM 里一小会儿）；
 没写时长的 `transition-*` 默认就是 `--duration-fast` + `--ease-standard`（`motion.test` 守着）。
-**Card 几何默认不变，`lift` 是登记豁免**（2026-10-15，宪法第二十五节「Card `lift`」）：`<Card lift>` 在 hover / 键盘聚焦时 translateY(-1px)（上限 2px、整数像素、无 scale、无光晕、无常驻 `will-change`）并把阴影升到 `shadow-lift`，按下回落，reduced-motion 下只换阴影，disabled / selected 不浮起；
-只许首页最近项目卡用，别处不开。门禁 `foundation.test`（交互态位移 / 缩放仅 Card.tsx 一处）+ `foundationPrimitives.test`。
+**Card 几何默认不变，`lift` 是登记豁免**（宪法第二十五节「Card `lift`」，用户 2026-10-15 裁决）：`<Card lift>` 在 hover / 键盘聚焦时 translateY(-2px) + scale(`--card-lift-scale`，默认 1.015、上限 1.02) + 阴影升到 `shadow-lift`（含 accent 极淡光晕），按下回落，
+reduced-motion 下只换阴影 / 光晕，disabled / selected 不浮起；静止态写恒等变换（`translate-y-0 scale-100`）以免 none↔非 none 引发重排。只许首页项目卡（品牌位置）用，别处不开。
+门禁 `foundation.test`（交互态位移 / 缩放仅 Card.tsx 一处）+ `foundationPrimitives.test`（≤2px 整数、缩放 ≤1.02）。
 **键盘契约在原语里**（2026-09-14 apple-design 审计批次 1）：Dialog 打开后焦点
 在容器、关闭钮 DOM 排最后；Segmented / Tabs 一个 Tab 停靠点 + 方向键；`keyboardPrimitives.test`
 与 `foundation.test`（`role="radio"` / `aria-haspopup` / disabled 写法 / `ring-accent/N`）守着。

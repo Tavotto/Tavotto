@@ -124,13 +124,13 @@ const RULES: Rule[] = [
   },
   {
     // 「几何永不变化」的唯一登记豁免是 ui/Card 的 lift 变体（ui-visual-discipline.md「Card lift」）：别处不许在交互态上写位移 / 缩放
-    name: '交互态不位移不缩放：hover: / active: / focus-visible: 之后没有 scale-* / translate-*（唯一豁免 ui/Card 的 lift：整数 px translateY）',
+    name: '交互态不位移不缩放：hover: / active: / focus-visible: 之后没有 scale-* / translate-*（唯一豁免 ui/Card 的 lift：translateY ≤2px 整数 + scale ≤1.02，用户 2026-10-15 裁决）',
     pattern: /\b(hover|active|focus-visible|group-hover|has-\[[^\]]*\]):(motion-safe:)?-?(scale|translate)-/,
     fix: '用 outline / 背景色 / 阴影表达交互态；要浮起走 <Card lift>（只首页最近项目卡）',
     catches: '<div className="hover:scale-105" />',
     spares: '<div className="hover:bg-surface-hover" />',
     exempt: {
-      '/src/components/ui/Card.tsx': { count: 3, why: 'lift 变体：hover / 聚焦 -translate-y-px、按下 translate-y-0（整数 px，上限 2px，无 scale）' },
+      '/src/components/ui/Card.tsx': { count: 6, why: 'lift 变体（用户 2026-10-15 裁决）：hover / 聚焦各 -translate-y-0.5 + scale-(--card-lift-scale)（≤2px、≤1.02，读 index.css 变量，foundationPrimitives.test 钉上限）、按下 translate-y-0 / scale-100' },
     },
   },
   {

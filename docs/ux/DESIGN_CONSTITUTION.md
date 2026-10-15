@@ -164,11 +164,13 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **Card**：`appearance` raised（白 + shadow-card）/ subtle（surface-2 填充）/ plain；`padding` none / sm 8 / md 12；
   `interactive`（hover 画 1px outline，offset -1，几何不变；`lift` 是登记豁免，见下条）/ `selected`（border-strong outline + selected 底）；可交互的卡
   `:has(:focus-visible)` 画 accent 环。圆角 lg 12。`shadow-card` 只在 `Card.tsx` 里写（门禁）。
-- **Card `lift`（几何不变的唯一登记豁免，2026-10-15 用户拍板）**：首页最近项目卡这类「品牌特色位置」允许克制浮起——hover 与键盘聚焦时整卡
-  `translateY(-1px)`（上限 2px，只许整数像素）+ 阴影从 `shadow-card` 升到 `shadow-lift`，按下回落到 0；`prefers-reduced-motion` 下不位移只换阴影；
-  `disabled` / `selected` 不浮起。**禁**：scale、径向光晕 / 高光、陶土色、常驻 `will-change`、`filter` / `backdrop`。只在 `<Card lift>`
+- **Card `lift`（几何不变的唯一登记豁免；2026-10-15 用户拍板，同日晚放宽）**：首页项目卡这类「品牌位置」允许明显浮起——hover 与键盘聚焦时整卡
+  `translateY(-2px)`（上限 2px、只许整数像素）+ `scale(var(--card-lift-scale))`（默认 1.015，上限 1.02）+ 阴影从 `shadow-card` 升到 `shadow-lift`
+  （接触影 + 大主影 + accent 10% 的极淡外发光 `--lift-halo`），时长 `duration-base`、`--ease-pop`；按下回落（位移 0、缩放 1，像被按下去）；
+  `prefers-reduced-motion` 下不位移不缩放、只换阴影 / 光晕；`disabled` / `selected` 不浮起。静止态写恒等变换（`translate-y-0 scale-100`，不是 none——
+  none ↔ 非 none 会让每次 hover 整页重排一次）。**禁**：超过上述上限、径向高光、陶土色、常驻 `will-change`、`filter` / `backdrop`。只在 `<Card lift>`
   显式开启（目前仅 `HomeView` 的最近项目卡），其余卡一律「默认几何不变」。门禁：`foundation.test`（交互态位移 / 缩放只有 Card.tsx 一处）、
-  `foundationPrimitives.test`（lift 只许整数 px translateY ≤2px、无 scale）。
+  `foundationPrimitives.test`（位移 ≤2px 整数、缩放只读 `--card-lift-scale` 且 ≤1.02）。
 - **Section / SettingSection / Disclosure / Details**：分区与折叠。
 - **「去到」的记号只有一枚**（2026-09-14 审计 A4）：尾随的 `ChevronRight`（xs），给「X 轴刻度 ›」
   「在子图页编辑刻度线与边框 ›」这种往下 / 往旁边走的入口；往上走的路是身份头的**面包屑**，

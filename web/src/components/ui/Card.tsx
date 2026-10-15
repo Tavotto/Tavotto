@@ -63,24 +63,27 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
         APPEARANCE[appearance],
         PADDING[padding],
         (interactive || selected) &&
-          'outline-1 -outline-offset-1 outline-transparent duration-fast',
+          'outline-1 -outline-offset-1 outline-transparent',
+        (interactive || selected) && !lift && 'duration-fast',
         // lift 变体多过渡位移与阴影（`translate` 是 Tailwind v4 translate 工具类写的独立属性）
         (interactive || selected) &&
-          (lift ? 'transition-[outline-color,background-color,translate,box-shadow]' : 'transition-[outline-color,background-color]'),
+          (lift ? 'transition-[outline-color,background-color,translate,scale,box-shadow] duration-base ease-[var(--ease-pop)]' : 'transition-[outline-color,background-color]'),
         live && 'hover:outline-border',
         // 选中的卡底色另有主人（bg-selected），按压不去抢；直接子按钮 = 整卡大小的主控件（⋯ 菜单钮等深层控件不算）
         live && !selected && 'has-[>button:active:not(:disabled)]:bg-surface-active',
-        // lift：hover / 键盘聚焦 → 上浮 1px + 阴影升一档；按下回落（位移 0、阴影回 card 档）。位移只在 motion-safe 下有
+        // lift：hover / 键盘聚焦 → 上浮 2px + 放大 --card-lift-scale（≤1.02）+ 阴影 / 光晕升档；按下回落（像被按下去：位移 0、缩放 1、阴影回 card 档）。
+        // 位移与缩放只在 motion-safe 下有，reduced-motion 只换阴影 / 光晕。
+        // 静止态就写 translate-y-0 scale-100（恒等变换，不是 none）：none ↔ 非 none 的切换会让 Blink 每次 hover 整页重排一次
+        // （LayoutCount +1 / hover，TaskDuration +50%）；一直带着恒等变换就只剩合成 / 绘制。不用 will-change 常驻
         live &&
           lift &&
           !selected &&
           appearance === 'raised' &&
           cn(
-            // 静止态就写 translate-y-0（恒等位移，不是 none）：translate 在 none ↔ 非 none 之间切换会让 Blink 每次 hover 整页重排一次
-            // （LayoutCount +1 / hover，TaskDuration +50%）；一直带着恒等位移就只剩合成 / 绘制。不用 will-change 常驻
-            'translate-y-0 hover:shadow-lift has-[:focus-visible]:shadow-lift',
-            'motion-safe:hover:-translate-y-px motion-safe:has-[:focus-visible]:-translate-y-px',
-            'has-[>button:active:not(:disabled)]:translate-y-0 has-[>button:active:not(:disabled)]:shadow-card',
+            'translate-y-0 scale-100 hover:shadow-lift has-[:focus-visible]:shadow-lift',
+            'motion-safe:hover:-translate-y-0.5 motion-safe:hover:scale-(--card-lift-scale)',
+            'motion-safe:has-[:focus-visible]:-translate-y-0.5 motion-safe:has-[:focus-visible]:scale-(--card-lift-scale)',
+            'has-[>button:active:not(:disabled)]:translate-y-0 has-[>button:active:not(:disabled)]:scale-100 has-[>button:active:not(:disabled)]:shadow-card',
           ),
         selected && 'bg-selected outline-border-strong hover:outline-border-strong',
         // 焦点环只给可交互的卡：静态卡里的按钮自己有焦点环，外面再套一圈就成了两道
