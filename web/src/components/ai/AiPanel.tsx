@@ -533,19 +533,16 @@ function AssistantPanelBody() {
               data-ai-error="send"
               className="mb-2"
               // 一句话「没有发出去 · 原因」+ 「重试」；HTTP 状态 / 后端 detail / 诊断引用在「详情」里
-              title={
-                <>
-                  {ai('panel.sendFailed')}
-                  <span className="text-ink-3"> · {error.text}</span>
-                </>
-              }
+              title={ai('panel.sendFailed')}
               detail={error.detail}
               action={
                 <Button data-ai-retry size="sm" disabled={!canSend} onClick={() => send(error.prompt, error.target)}>
                   {ai('panel.retry')}
                 </Button>
               }
-            />
+            >
+              {error.text}
+            </Notice>
           )}
           {noAgent && (
             // 「没装 CLI」不是错误，用中性语气 + 一个可执行的下一步

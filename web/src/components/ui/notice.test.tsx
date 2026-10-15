@@ -30,6 +30,8 @@ afterEach(async () => {
 })
 const render = (node: React.ReactNode) => act(async () => root.render(<TooltipProvider>{node}</TooltipProvider>))
 const q = <E extends Element = HTMLElement>(sel: string) => host.querySelector<E>(sel)
+const T = 'x'
+const NEXT = 'next line'
 const TONES: StatusTone[] = ['neutral', 'info', 'ok', 'warn', 'danger']
 
 describe('Notice：一行中性提示', () => {
@@ -69,20 +71,24 @@ describe('Notice：一行中性提示', () => {
     expect(q('[data-notice]')!.getAttribute('role')).toBe('status')
   })
 
-  it('有 title 时 children 是次要灰字；没有 title 时 children 就是主句（ink）', async () => {
+  it('title + 字符串 children：同一行「主句 · 原因」，原因是次要灰字；title + 节点 children：另起一行的次要灰字；只有 children：就是主句（ink）', async () => {
     await render(
       <>
-        <Notice data-a title="主句">次要</Notice>
-        <Notice data-b>只有一句</Notice>
+        <Notice data-a title="主句">原因</Notice>
+        <Notice data-b title="主句"><span>{NEXT}</span></Notice>
+        <Notice data-c>只有一句</Notice>
       </>,
     )
-    expect(q('[data-a] div.text-ink-3')!.textContent).toBe('次要')
-    expect(q('[data-b] div.text-ink-3')).toBeNull()
+    expect(q('[data-a] p')!.textContent).toBe('主句 · 原因')
+    expect(q('[data-a] span.text-ink-2')!.textContent).toBe(' · 原因')
+    expect(q('[data-b] p')!.textContent).toBe('主句')
+    expect(q('[data-b] div.text-ink-2')!.textContent).toBe(NEXT)
+    expect(q('[data-c] div.text-ink-2, [data-c] span.text-ink-2')).toBeNull()
   })
 
   it('没有 detail 就没有「详情」钮；动作槽里是调用方给的那一个', async () => {
     const onClick = vi.fn()
-    await render(<Notice action={<Button data-act onClick={onClick}>go</Button>}>x</Notice>)
+    await render(<Notice action={<Button data-act onClick={onClick}>{T}</Button>}>x</Notice>)
     expect(q('[data-notice-detail-toggle]')).toBeNull()
     expect(host.querySelectorAll('[data-notice] button')).toHaveLength(1)
     await act(async () => q<HTMLButtonElement>('[data-act]')!.click())

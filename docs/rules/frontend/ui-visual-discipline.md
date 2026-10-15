@@ -149,7 +149,7 @@ strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽
 用户原话：「大卡片黄色/红色字体图标有点丑」「看到这些红色橙色的大块图标就很焦虑」「不太喜欢突然出现一段文字，然后把整体页面往下移」。
 
 - **`ui/Notice` = 一行中性提示**：8 圆角（`rounded-md`）、`bg-surface-hover` 底、**无边框**、最小高 30；**文字永远是 ink**（有 `title` 时
-  `children` 是它下面的次要灰字 ink-3，不是染色）；图标 14px 单色 ink-3，**只有 `tone="danger"`（需要用户处理的那一档）图标染 danger 色**；
+  `children` 是次要灰字 ink-2——不用 ink-3，说明条常坐在桌面灰上，ink-3 叠 5% 墨底实测 4.2:1 过不了 AA；不是染色）；图标 14px 单色 ink-3，**只有 `tone="danger"`（需要用户处理的那一档）图标染 danger 色**；
   warn / info / ok / neutral 同样安静，靠图标形状分严重度（警告三角 / 信息圆 / 完成对勾 / 阻断圆叹号），不再是「同形换色」。
   `role` 不变（只有 danger 默认 `alert`，其余不带，调用方可显式传）。
 - **一句话 + 至多一个动作 + 可选详情**：`title`（主句）· `children`（次要灰字）· `action`（**一颗 ghost `sm` 按钮**，不再是 secondary 灰底）· `detail`

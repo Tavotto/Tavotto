@@ -158,7 +158,7 @@ Tavotto 是「紧凑工具」那一档：**控件一律 28px（`h-7`）**——�
 - **SearchInput**：面板顶部的搜索框，唯一的一种——与其它可编辑框同一副框（S8 之前是安静的
   surface-2 填充框）；左侧放大镜固定列，有内容才出清除钮；Esc 先清空再失焦。
 - **说明条 `Notice`**（2026-10-07 恢复为原语，第二十六节；2026-09-15 那次删除作废；**2026-10-16 改版为「一行中性提示」**）：`tone` neutral / info / ok /
-  warn / danger，8 圆角、`surface-hover` 底、**无边框**、最小高 30，**文字永远 ink**（`title` 之下的 `children` 是次要灰字 ink-3），图标 14px 单色 ink-3、
+  warn / danger，8 圆角、`surface-hover` 底、**无边框**、最小高 30，**文字永远 ink 一族**（`title` 之下的 `children` 是次要灰字 ink-2），图标 14px 单色 ink-3、
   **只有 danger 档图标染 danger 色**，图标按语气（阻断圆叹号 / 警告三角 / 信息圆 / 完成对勾），可选 `title`、右侧**一颗 ghost** `action`、折叠的 `detail`
   （「详情 ›」+ 等宽灰底块 +「复制」）。对话框里放在页脚上方（加载错误放顶部）；设置组里作为组内最后一行。设置页的 `InlineWarning` 逐页迁到它。
   细则与门禁见 `docs/rules/frontend/ui-visual-discipline.md`「说明条与不推挤」。

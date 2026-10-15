@@ -20,8 +20,9 @@ const ICON: Record<StatusTone, IconComponent> = {
 /**
  * 说明条（2026-10-16 UI 2.0「错误与警告」改版）：**一行中性提示**。
  *
- * - 一块 8 圆角的 `surface-hover` 底，**无边框**；文字永远是 ink（有 `title` 时 children 是它下面的次要灰字 ink-3），
- *   不随语气染色；
+ * - 一块 8 圆角的 `surface-hover` 底，**无边框**；文字永远是 ink 一族（有 `title` 时 children 是次要灰字 ink-2：字符串接在
+ *   主句后面同一行 ` · 原因`，节点则另起一行），不随语气染色。次要字用 ink-2 而不是 ink-3：说明条常坐在桌面灰上，
+ *   ink-3 叠 5% 墨底实测 4.2:1（axe color-contrast），过不了 AA；
  * - 图标 14px 单色 ink-3；**只有 danger（需要你处理的那一档）图标染 danger 色**，warn / info / ok 同样安静，
  *   靠图标形状分严重度——它们不再是「同形换色」；
  * - 结构：图标 · 一句话 · 至多一个动作（ghost 按钮）· 可选「详情 ›」。技术信息（错误码、HTTP 状态、后端 detail、
@@ -73,13 +74,26 @@ export function Notice({
           />
         )}
         <div className="min-w-0 flex-1 break-words">
-          {title != null && <p>{title}</p>}
-          {children != null && <div className={title != null ? 'text-ink-3' : undefined}>{children}</div>}
+          {title != null && typeof children === 'string' ? (
+            // 主句 + 一句原因：同一行（「没有发出去 · 助手服务暂时出错」），原因是次要灰字
+            <p>
+              {title}
+              <span className="text-ink-2">
+                {' · '}
+                {children}
+              </span>
+            </p>
+          ) : (
+            <>
+              {title != null && <p>{title}</p>}
+              {children != null && <div className={title != null ? 'text-ink-2' : undefined}>{children}</div>}
+            </>
+          )}
         </div>
         {hasDetail && (
           <Button
             size="sm"
-            className="-my-1 shrink-0 text-ink-3"
+            className="-my-1 shrink-0 text-ink-2"
             aria-expanded={open}
             data-notice-detail-toggle
             onClick={() => setOpen((v) => !v)}
@@ -121,7 +135,7 @@ function NoticeDetail({ children }: { children: ReactNode }) {
         </div>
         <Button
           size="sm"
-          className="-my-0.5 shrink-0 text-ink-3"
+          className="-my-0.5 shrink-0 text-ink-2"
           data-notice-copy
           onClick={() => {
             void navigator.clipboard?.writeText(body.current?.textContent ?? '').then(

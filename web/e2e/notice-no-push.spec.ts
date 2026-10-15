@@ -58,7 +58,7 @@ test('构建版本不一致：是顶栏芯片，工作面板里的标签行与�
   const before = await layoutBoxes(page)
 
   // 让下一次版本自检认为后端换了构建：芯片出现
-  await page.route('**/api/version', (route) => route.fulfill({ json: { build: 'index-someothernewbuild', version: 'x' } }))
+  await page.route(/\/api\/version(\?|$)/, (route) => route.fulfill({ json: { build: 'index-someothernewbuild', version: 'x' } }))
   await page.evaluate(() => window.dispatchEvent(new Event('mm:sse-open')))
   const chip = page.locator('[data-topbar] [data-build-mismatch]')
   await expect(chip).toHaveCount(1)
@@ -126,9 +126,11 @@ test('左栏刷新失败：Notice 顺着滑出来（有过渡帧），终态位�
   const tops = (await page.evaluate(() => (window as unknown as { __tops: number[] }).__tops)) as number[]
   const final = tops[tops.length - 1] - top0
   const nb = await box(page, '[data-asset-refresh-failed]')
-  // 终态位移：多出来的就是这条 Notice 自己的高度（容器的 pb-2 = 8），别无其它
-  expect(final).toBeGreaterThan(20)
-  expect(Math.abs(final - (nb.h + 8))).toBeLessThanOrEqual(1.5)
+  // 一行（30 左右）、不是两三行的大块；终态位移不超过这条 Notice 自己的高度 + 容器 pb-2 的 8
+  // （同一时刻「正在刷新…」那一行收走了，所以只会小不会大）
+  expect(nb.h, 'Notice 是一行中性提示').toBeLessThanOrEqual(32)
+  expect(final).toBeGreaterThan(10)
+  expect(final, `终态位移 ${final}，Notice 高 ${nb.h}`).toBeLessThanOrEqual(nb.h + 8 + 1.5)
   // 过渡：起点 0 → 终点 final 之间至少有两帧停在中间（不是瞬间跳一格）
   const mid = new Set(tops.map((t) => Math.round(t - top0)).filter((d) => d > 1 && d < final - 1))
   expect(mid.size, `网格顶边的逐帧轨迹：${tops.join(',')}`).toBeGreaterThanOrEqual(2)
