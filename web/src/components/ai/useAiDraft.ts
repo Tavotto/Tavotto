@@ -11,6 +11,7 @@ import {
   flush as outboxFlush,
   has as outboxHas,
   hasSeen as outboxHasSeen,
+  isStalled as outboxIsStalled,
   markUnknown as outboxMarkUnknown,
   observe as outboxObserve,
   peek as outboxPeek,
@@ -76,6 +77,8 @@ export function useAiDraft(panel: PanelObject | null) {
    * 每一次本地编辑都一定基于本页「已见」的服务器版本，所以 stale 里「没见过」只可能是别的标签页写的）；
    * 读失败（`failed`）= 不知道服务器上有没有更新的版本：允许编辑（用户的输入不能丢），见发件箱的「基线未知」。
    */
+  /** 写入已连续失败超过一分钟（发件箱宣布）：输入框上方一行安静的灰字 */
+  const [draftStalled, setDraftStalled] = useState(false)
   const [draftRead, setDraftRead] = useState<'loading' | 'ok' | 'failed'>('loading')
 
   const key = useRef<{ project: string | null; fileId: string | null; epoch: number }>({
@@ -204,7 +207,12 @@ export function useAiDraft(panel: PanelObject | null) {
     setTooLarge(held !== null && isDraftTooLarge(held))
     setLedgerState('unknown') // 换目标 / 重挂：这张图的账本还没读过
     if (!project || !fileId) return
+    setDraftStalled(outboxIsStalled(project, fileId))
     const off = outboxSubscribe(project, fileId, (e) => {
+      if (e.kind === 'stalled') {
+        setDraftStalled(e.on)
+        return
+      }
       if (e.kind === 'abandoned') {
         // 服务器上有本页没见过的更新版本（别的标签页写的）：本版已放弃，对账采纳服务器值
         void reconcileRef.current?.('conflict')
@@ -298,5 +306,6 @@ export function useAiDraft(panel: PanelObject | null) {
     ledgerState,
     retryLedger,
     draftLoading: draftRead === 'loading',
+    draftStalled,
   }
 }

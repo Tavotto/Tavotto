@@ -23,8 +23,11 @@ import { nextWriteStamp, saveDraftStamped, type SaveResult } from './aiDraft'
 export const WRITE_DEBOUNCE_MS = 600
 /** 写失败（离线 / 后端暂时不可用）后多久重试：文本一直留在发件箱里，不丢 */
 export const RETRY_MS = 3000
-/** 连续失败重试的上限（约 1 分钟）；之后停下，等下一次冲刷（回到前台 / 再编辑）再试 */
-const MAX_RETRIES = 20
+/** 重试间隔的上限：前 3 次仍是 `RETRY_MS`，之后逐步加长到最多这么久。**槽不会因为时间放弃**——只要页面还在就一直试 */
+export const RETRY_MAX_MS = 30_000
+/** 连续失败超过这么久，才对界面说一句「还没保存到本机项目，正在重试」（短暂抖动不打扰用户） */
+export const STALLED_AFTER_MS = 60_000
+const retryDelay = (n: number): number => (n <= 3 ? RETRY_MS : Math.min(RETRY_MS * 2 ** (n - 3), RETRY_MAX_MS))
 /** 同一个版本连续被判 stale（已见）重写的上限 */
 const MAX_STALE_RETRIES = 5
 
@@ -33,6 +36,8 @@ export type OutboxEvent =
   | { kind: 'accepted'; stamp?: number; result: 'saved' | 'removed' | 'too_large' }
   /** 服务器上有本页没见过的更新版本（别的标签页写的）：本版放弃，调用方对账采纳服务器值 */
   | { kind: 'abandoned' }
+  /** 连续失败超过 `STALLED_AFTER_MS`（`on: true`）/ 恢复（`on: false`）：界面据此显示一行安静的灰字 */
+  | { kind: 'stalled'; on: boolean }
 
 interface Entry {
   text: string
@@ -52,6 +57,9 @@ interface Slot {
   inflight: Promise<'accepted' | 'unavailable' | 'abandoned'> | null
   /** 本页见过的服务器戳（GET 读到的、自己 PUT 被接受的、stale 回的） */
   seen: Set<number>
+  /** 当前这一轮连续失败超过一分钟的计时器 / 是否已对界面宣布 */
+  stallTimer?: ReturnType<typeof setTimeout>
+  stalled: boolean
   /** 一次都没读成功过：编辑是在不知道服务器版本的情况下做的，stale 按「已见」处理（用户的输入不能丢） */
   unknown: boolean
   listeners: Set<(e: OutboxEvent) => void>
@@ -65,7 +73,7 @@ function slotOf(project: string, fileId: string): Slot {
   const k = keyOf(project, fileId)
   let s = slots.get(k)
   if (!s) {
-    s = { project, fileId, entry: null, inflight: null, seen: new Set(), unknown: false, listeners: new Set() }
+    s = { project, fileId, entry: null, inflight: null, seen: new Set(), unknown: false, listeners: new Set(), stalled: false }
     slots.set(k, s)
   }
   return s
@@ -73,6 +81,26 @@ function slotOf(project: string, fileId: string): Slot {
 
 const emit = (slot: Slot, e: OutboxEvent): void => {
   for (const l of [...slot.listeners]) l(e)
+}
+
+/** 一轮失败开始：计时，超过一分钟还没好就宣布「卡住」 */
+function beginFailing(slot: Slot): void {
+  if (slot.stallTimer !== undefined || slot.stalled) return
+  slot.stallTimer = setTimeout(() => {
+    slot.stallTimer = undefined
+    if (!slot.entry) return
+    slot.stalled = true
+    emit(slot, { kind: 'stalled', on: true })
+  }, STALLED_AFTER_MS)
+}
+/** 这一轮失败结束（服务器处理了 / 放弃 / 槽空了） */
+function endFailing(slot: Slot): void {
+  clearTimeout(slot.stallTimer)
+  slot.stallTimer = undefined
+  if (slot.stalled) {
+    slot.stalled = false
+    emit(slot, { kind: 'stalled', on: false })
+  }
 }
 
 function clearTimers(entry: Entry): void {
@@ -99,6 +127,9 @@ export function post(project: string, fileId: string, text: string): void {
 
 /** 槽里有没有未落定的版本 */
 export const has = (project: string, fileId: string): boolean => !!slots.get(keyOf(project, fileId))?.entry
+
+/** 这个目标的写入是否已连续失败超过一分钟（重新挂载时界面用它给初值） */
+export const isStalled = (project: string, fileId: string): boolean => !!slots.get(keyOf(project, fileId))?.stalled
 
 /** 未落定的版本的文本（重新挂载同一目标时先显示它）；没有 = null */
 export function peek(project: string, fileId: string): string | null {
@@ -172,10 +203,12 @@ async function land(
 
   if (result === 'unavailable') {
     // 没写成：文本还在槽里。只有最新版本替自己重试（旧版本已被取代，新版本有自己的防抖 / 冲刷）
-    if (entry && latest && entry.retries < MAX_RETRIES) {
+    // **不因时间放弃**：只要页面还在就一直试，间隔有上限的退避；页面回到可见 / 网络恢复时立即再试一次
+    if (entry) beginFailing(slot)
+    if (entry && latest) {
       entry.retries++
       clearTimeout(entry.retry)
-      entry.retry = setTimeout(() => void send(slot, false), RETRY_MS)
+      entry.retry = setTimeout(() => void send(slot, false), retryDelay(entry.retries))
     }
     return 'unavailable'
   }
@@ -192,6 +225,7 @@ async function land(
     if (!seen) {
       clearTimers(entry)
       slot.entry = null
+      endFailing(slot)
       emit(slot, { kind: 'abandoned' })
       return 'abandoned'
     }
@@ -210,6 +244,7 @@ async function land(
   if (entry && latest) {
     clearTimers(entry)
     slot.entry = null
+    endFailing(slot)
     emit(slot, { kind: 'accepted', result, ...(serverStamp !== undefined ? { stamp: serverStamp } : {}) })
     return 'accepted'
   }
@@ -217,9 +252,21 @@ async function land(
   return 'accepted'
 }
 
+/** 页面回到可见 / 网络恢复：有失败待重试的槽立即再试一次（不等退避） */
+export function retryNow(): void {
+  for (const slot of slots.values()) {
+    if (!slot.entry || slot.inflight) continue
+    clearTimers(slot.entry)
+    void send(slot, false)
+  }
+}
+
 /** 仅测试：发件箱是模块级状态，用例之间要能回到空 */
 export function __resetOutboxForTests(): void {
-  for (const slot of slots.values()) if (slot.entry) clearTimers(slot.entry)
+  for (const slot of slots.values()) {
+    if (slot.entry) clearTimers(slot.entry)
+    clearTimeout(slot.stallTimer)
+  }
   slots.clear()
   versionCounter = 0
 }
@@ -229,5 +276,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', () => flushAll(true))
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushAll(true)
+    else retryNow()
   })
+  window.addEventListener('online', () => retryNow())
 }

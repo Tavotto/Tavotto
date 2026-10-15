@@ -494,6 +494,84 @@ describe('同步状态机：单一 reconcile + 写入版本（#1098）', () => {
     }
   })
 
+  it('发件箱不因时间放弃：后端断开 5 分钟后恢复，编辑不丢；退避有上限（≤ 30 s 一次），不是 3 s 死磕', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      be.setDraftPutFails(true)
+      await typeText('断网五分钟也不能丢的稿')
+      for (let i = 0; i < 30; i++) {
+        await act(async () => void vi.advanceTimersByTime(10_000)) // 共 5 分钟
+        await settle()
+      }
+      const attempts = putsOf().length
+      expect(attempts).toBeGreaterThanOrEqual(10) // 一直在试：最长间隔 30 s，5 分钟至少 10 次
+      expect(attempts).toBeLessThan(25) // 退避：不是每 3 s 一次（那会有 100 次）
+      expect(be.draft('pa', 'Fig1.pdf')).toBeUndefined()
+      be.setDraftPutFails(false)
+      await act(async () => void vi.advanceTimersByTime(30_000 + 50)) // 退避上限之内一定再试
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('断网五分钟也不能丢的稿') // 对照：旧实现约 1 分钟就放弃，这里永远是 undefined
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('发件箱：网络恢复（online）/ 页面回到可见时立即重试一次，不等退避', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      be.setDraftPutFails(true)
+      await typeText('等网络的稿')
+      for (let i = 0; i < 12; i++) {
+        await act(async () => void vi.advanceTimersByTime(10_000)) // 退避已拉长到 30 s 档
+        await settle()
+      }
+      be.setDraftPutFails(false)
+      await act(async () => window.dispatchEvent(new Event('online'))) // 没有推进任何时间
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('等网络的稿')
+      // 页面回到可见同理
+      be.setDraftPutFails(true)
+      await typeText('再来一版')
+      for (let i = 0; i < 12; i++) {
+        await act(async () => void vi.advanceTimersByTime(10_000))
+        await settle()
+      }
+      be.setDraftPutFails(false)
+      await act(async () => document.dispatchEvent(new Event('visibilitychange')))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('再来一版')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('发件箱：连续失败超过一分钟才在输入框上方出一行安静的灰字；写成功后消失；短暂失败不打扰', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await mount()
+      be.setDraftPutFails(true)
+      await typeText('写不进去的稿')
+      await act(async () => void vi.advanceTimersByTime(30_000))
+      await settle()
+      expect(q('[data-ai-draft-note="stalled"]')).toBeNull() // 才失败 30 s：不打扰
+      await act(async () => void vi.advanceTimersByTime(35_000)) // 失败的计时从第一次响应回来才开始，再多给一点
+      await settle()
+      expect(q('[data-ai-draft-note="stalled"]')).toBeNull() // 失败刚满 35 s：还没到一分钟
+      await act(async () => void vi.advanceTimersByTime(35_000))
+      await settle()
+      expect(q('[data-ai-draft-note="stalled"]')?.textContent).toBe('草稿还没保存到本机项目，正在重试')
+      be.setDraftPutFails(false)
+      await act(async () => window.dispatchEvent(new Event('online')))
+      await settle()
+      expect(be.draft('pa', 'Fig1.pdf')).toBe('写不进去的稿')
+      expect(q('[data-ai-draft-note="stalled"]')).toBeNull() // 成功后消失
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('发件箱：页面离开（pagehide）对所有未落定的槽发 keepalive，包括没有实例挂载的目标', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {

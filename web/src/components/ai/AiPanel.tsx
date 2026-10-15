@@ -276,6 +276,7 @@ function AssistantPanelBody() {
     ledgerState,
     retryLedger,
     draftLoading,
+    draftStalled,
   } = useAiDraft(panel)
   // 发送从「取草稿快照」到 start 返回是异步的：这一段里再点 / ⌘↵ 不许开第二次发送
   const sendInFlight = useRef(false)
@@ -761,9 +762,16 @@ function AssistantPanelBody() {
             </Notice>
           )}
           {/* 草稿提示：安静的一行字，不是横条——不挤页面，打字或发送即消失 */}
-          {panel && (tooLarge || (restored && prompt !== '')) && (
-            <p data-ai-draft-note={tooLarge ? 'too-large' : 'restored'} className="mb-1.5 px-1 text-xs text-ink-3">
-              {tooLarge ? ai('panel.draftTooLong', { limit: INSTRUCTION_MAX_BYTES / 1024 }) : ai('panel.draftRestored')}
+          {panel && (tooLarge || draftStalled || (restored && prompt !== '')) && (
+            <p
+              data-ai-draft-note={tooLarge ? 'too-large' : draftStalled ? 'stalled' : 'restored'}
+              className="mb-1.5 px-1 text-xs text-ink-3"
+            >
+              {tooLarge
+                ? ai('panel.draftTooLong', { limit: INSTRUCTION_MAX_BYTES / 1024 })
+                : draftStalled
+                  ? ai('panel.draftStalled')
+                  : ai('panel.draftRestored')}
             </p>
           )}
           {panel && (
