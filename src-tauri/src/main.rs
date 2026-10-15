@@ -1438,15 +1438,16 @@ fn restart_engine_blocking(app: &tauri::AppHandle) -> bool {
     if let Some(sc) = old {
         sc.shutdown();
     }
-    // 持久化的旧类型在新 sidecar / 新监视线程**起来之前**取走（ADR 0129）：之后新一代若在成功分支跑完前就崩了，
-    // 它写进来的类型不会被误清；重启失败再把旧类型写回，下次启动仍提示。
+    // 按代次清持久化的 engine_exit（ADR 0129）：重启开始只**记下**当前代次、不清——重启期间用户正常退出，旧崩溃仍会被提示；
+    // 成功后只清「这一代」，成功分支跑完前新一代若又崩了（代次已变）就保留它。
     // 内存里的 previous_exit 不动——它正是「先重启再发」的那张卡，由新页面取走
-    let stale = state.marker.get().and_then(|m| m.take_engine_exit());
+    let generation = state.marker.get().map(|m| m.engine_exit_generation());
     let ok = boot_engine(app, false);
     if ok {
         *state.engine_exit.lock().unwrap() = None;
-    } else if let (Some(m), Some(kind)) = (state.marker.get(), stale) {
-        m.restore_engine_exit(kind);
+        if let (Some(m), Some(g)) = (state.marker.get(), generation) {
+            m.clear_engine_exit_if(g);
+        }
     }
     ok
 }
@@ -1829,20 +1830,32 @@ mod tests {
     }
 
     #[test]
-    fn engine_restart_takes_the_persisted_kind_before_booting_and_restores_it_on_failure() {
+    fn engine_restart_clears_the_persisted_kind_by_generation_only_after_success() {
         let main = &production_sources()[0].1;
         let body = body_of(main, "fn restart_engine_blocking(");
-        let take = body
-            .find("take_engine_exit()")
-            .expect("重启前要取走持久化类型");
+        let gen_at = body
+            .find("engine_exit_generation()")
+            .expect("重启开始要记代次");
         let boot = body.find("boot_engine(").expect("boot_engine");
-        assert!(take < boot, "取走必须在新 sidecar / 监视线程起来之前");
-        let after = &body[boot..];
-        assert!(after.contains("restore_engine_exit("), "失败要写回旧类型");
-        assert!(
-            !body.contains("clear_engine_exit"),
-            "成功分支不能再无条件清：会误清新一代刚写进去的崩溃"
+        assert!(gen_at < boot, "代次在新 sidecar / 监视线程起来之前记下");
+        let ok = body.find("if ok {").expect("成功分支");
+        assert!(ok > boot, "清除只在成功分支");
+        assert_eq!(
+            body.matches("clear_engine_exit_if(").count(),
+            1,
+            "只允许成功分支里一处按代次清"
         );
+        assert!(
+            body[ok..].contains("clear_engine_exit_if("),
+            "成功后按代次清"
+        );
+        for banned in [
+            "take_engine_exit",
+            "restore_engine_exit",
+            "clear_engine_exit(",
+        ] {
+            assert!(!body.contains(banned), "{banned}：不能提前清或无条件清");
+        }
     }
 
     #[test]

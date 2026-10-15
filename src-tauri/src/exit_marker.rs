@@ -126,7 +126,8 @@ pub struct Marker {
     app: String,
     closed: Arc<AtomicBool>,
     /// 本次会话里引擎意外退出的类型：之后每次落盘（含 clean）都带着它
-    engine: Arc<Mutex<Option<EngineExit>>>,
+    /// 并带一个代次：每次 `mark_engine_exit` 加一，重启成功时只清「重启开始时看到的那一代」
+    engine: Arc<Mutex<(u64, Option<EngineExit>)>>,
 }
 
 impl Marker {
@@ -139,7 +140,7 @@ impl Marker {
                 .unwrap_or(0),
             app: app.to_string(),
             closed: Arc::new(AtomicBool::new(false)),
-            engine: Arc::new(Mutex::new(None)),
+            engine: Arc::new(Mutex::new((0, None))),
         }
     }
 
@@ -152,32 +153,33 @@ impl Marker {
         self.write("running");
     }
 
-    /// 引擎意外退出：状态仍是 `running`（壳还活着），只多一个类型。
+    /// 引擎意外退出：状态仍是 `running`（壳还活着），只多一个类型；代次加一。
     pub fn mark_engine_exit(&self, kind: EngineExit) {
-        *self.engine.lock().unwrap() = Some(kind);
-        self.write("running");
-    }
-
-    /// 重启引擎**之前**取走并清掉持久化的类型（立即重写文件，状态仍是 `running`）。
-    /// 必须在新 sidecar 与新监视线程起来之前做：之后新一代若立刻崩了，它写进来的类型就不会被"成功分支"误清。
-    /// 返回被清的旧类型，重启失败时用 [`Marker::restore_engine_exit`] 写回。
-    pub fn take_engine_exit(&self) -> Option<EngineExit> {
-        let old = self.engine.lock().unwrap().take();
-        self.write("running");
-        old
-    }
-
-    /// 重启失败：把 [`Marker::take_engine_exit`] 取走的旧类型写回，保证下次启动仍会提示。
-    /// 已经有更新的类型（新一代在失败前崩了）就不动它。
-    pub fn restore_engine_exit(&self, old: EngineExit) {
         {
             let mut g = self.engine.lock().unwrap();
-            if g.is_some() {
-                return;
-            }
-            *g = Some(old);
+            g.0 += 1;
+            g.1 = Some(kind);
         }
         self.write("running");
+    }
+
+    /// 当前的引擎退出代次。重启开始时记下它（**不清除**）：重启期间用户正常退出，文件里仍带着旧类型，下次启动照样提示。
+    pub fn engine_exit_generation(&self) -> u64 {
+        self.engine.lock().unwrap().0
+    }
+
+    /// 重启成功之后：只有文件里的类型仍是 `generation` 那一代才清（立即重写，状态仍是 `running`）。
+    /// 这期间新一代若又崩了（代次已变），它的类型保留。返回是否清了。
+    pub fn clear_engine_exit_if(&self, generation: u64) -> bool {
+        {
+            let mut g = self.engine.lock().unwrap();
+            if g.0 != generation || g.1.is_none() {
+                return false;
+            }
+            g.1 = None;
+        }
+        self.write("running");
+        true
     }
 
     /// 正常退出（`engine_exit` 不清，见 [`judge`]）——也是所有绕过 `RunEvent::Exit` 的退出路径必须先调的那一句。幂等。
@@ -187,7 +189,7 @@ impl Marker {
     }
 
     fn write(&self, state: &str) {
-        let engine_exit = *self.engine.lock().unwrap();
+        let engine_exit = self.engine.lock().unwrap().1;
         if self.closed.load(Ordering::SeqCst) {
             return;
         }
@@ -336,20 +338,33 @@ mod tests {
     }
 
     #[test]
-    fn a_successful_restart_leaves_no_sticky_engine_exit() {
+    fn a_successful_restart_clears_the_generation_it_started_from() {
         let dir = tmp_dir("restart");
         let m = Marker::new(Some(&dir), "1.0.0");
         m.mark_running();
         m.mark_engine_exit(EngineExit::Nonzero);
-        // 重启前取走；成功分支不再动文件
-        assert_eq!(m.take_engine_exit(), Some(EngineExit::Nonzero));
-        assert!(
-            !read(&dir).contains("engine_exit"),
-            "取走后文件里不再带类型"
-        );
+        let g = m.engine_exit_generation(); // 重启开始：只记代次，不清
+        assert!(read(&dir).contains(r#""engine_exit":"nonzero""#));
+        assert!(m.clear_engine_exit_if(g));
+        assert!(!read(&dir).contains("engine_exit"));
         // 崩 → 重启成功 → 正常退出：下次启动无提示
         m.mark_clean();
         assert_eq!(Marker::new(Some(&dir), "1.0.1").read_previous(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quitting_during_a_restart_still_prompts_for_the_old_crash() {
+        let dir = tmp_dir("quit-mid-restart");
+        let m = Marker::new(Some(&dir), "1.0.0");
+        m.mark_running();
+        m.mark_engine_exit(EngineExit::Nonzero);
+        let _g = m.engine_exit_generation(); // 重启开始，尚未成功
+        m.mark_clean(); // 用户此刻正常退出
+        assert_eq!(
+            Marker::new(Some(&dir), "1.0.1").read_previous(),
+            Some(Previous::EngineExited)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -359,9 +374,9 @@ mod tests {
         let m = Marker::new(Some(&dir), "1.0.0");
         m.mark_running();
         m.mark_engine_exit(EngineExit::Nonzero);
-        let _old = m.take_engine_exit(); // 重启开始
-        m.mark_engine_exit(EngineExit::Signal); // 新 sidecar / 新监视线程已起，成功分支还没跑完时就崩了
-                                                // 成功分支什么都不再清；用户之后正常退出：仍提示
+        let g = m.engine_exit_generation();
+        m.mark_engine_exit(EngineExit::Signal); // 新 sidecar / 监视线程已起，成功分支还没跑完时就崩了
+        assert!(!m.clear_engine_exit_if(g), "代次已变：不清");
         m.mark_clean();
         assert!(read(&dir).contains(r#""engine_exit":"signal""#));
         assert_eq!(
@@ -372,32 +387,17 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_restart_restores_the_old_kind() {
+    fn a_failed_restart_keeps_the_old_kind() {
         let dir = tmp_dir("failed");
         let m = Marker::new(Some(&dir), "1.0.0");
         m.mark_running();
         m.mark_engine_exit(EngineExit::Nonzero);
-        let old = m.take_engine_exit().unwrap();
-        m.restore_engine_exit(old);
-        assert!(read(&dir).contains(r#""engine_exit":"nonzero""#));
+        let _g = m.engine_exit_generation(); // 失败分支不调 clear
         m.mark_clean();
         assert_eq!(
             Marker::new(Some(&dir), "1.0.1").read_previous(),
             Some(Previous::EngineExited)
         );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn restoring_never_overwrites_a_newer_kind() {
-        let dir = tmp_dir("restore-newer");
-        let m = Marker::new(Some(&dir), "1.0.0");
-        m.mark_running();
-        m.mark_engine_exit(EngineExit::Nonzero);
-        let old = m.take_engine_exit().unwrap();
-        m.mark_engine_exit(EngineExit::Signal);
-        m.restore_engine_exit(old);
-        assert!(read(&dir).contains(r#""engine_exit":"signal""#));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -421,7 +421,8 @@ mod tests {
         let m = Marker::new(Some(&dir), "1.0.0");
         m.mark_running();
         m.mark_engine_exit(EngineExit::Nonzero);
-        let _ = m.take_engine_exit();
+        let g = m.engine_exit_generation();
+        assert!(m.clear_engine_exit_if(g));
         m.mark_engine_exit(EngineExit::Signal);
         assert!(read(&dir).contains(r#""engine_exit":"signal""#));
         m.mark_clean();
