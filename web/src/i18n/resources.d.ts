@@ -367,6 +367,7 @@ export default interface Resources {
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "targetNoFigure": "当前没有图",
+      "thumbNote": "缩略图仅为示意 · 非最终文件",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",
       "transparent": "透明背景（仅 PNG / TIFF）",

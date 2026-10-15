@@ -2143,3 +2143,78 @@ describe('状态区与完成态脚部', () => {
     expect(document.body.querySelector('[data-export-reveal-error]')).toBeNull()
   })
 })
+
+describe('预览信息完善（PR3）：缩略图说真话', () => {
+  const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+  const target = () => q('[data-export-target]')!
+
+  it('对象头缩略图旁有「示意 · 非最终文件」的标注（两种范围都有），且不是警告色', async () => {
+    await setup(9)
+    expect(target().querySelector('[data-export-thumb-note]')?.textContent).toBe(
+      '缩略图仅为示意 · 非最终文件',
+    )
+    expect(target().querySelector('[data-export-thumb-note]')?.className).not.toContain('warn')
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    expect(target().querySelector('[data-export-thumb-note]')).toBeTruthy()
+  })
+
+  it('勾了透明背景（PNG 画布范围）：对象头缩略图的页面画成棋盘格；不勾就是纸白', async () => {
+    await setup(9)
+    expect(target().querySelector('[data-thumb-transparent]')).toBeNull()
+    expect(formatBox('PNG').checked, '默认就带 PNG').toBe(true)
+    const toggle = document.body.querySelector<HTMLElement>('[aria-label="透明背景（仅 PNG / TIFF）"]')!
+    await click(toggle)
+    const page = target().querySelector('[data-thumb-page]')!
+    expect(page.hasAttribute('data-thumb-transparent')).toBe(true)
+    expect(page.getAttribute('fill')).toMatch(/^url\(#thumb-checker-/)
+    expect(target().querySelector('pattern')).toBeTruthy()
+    await click(toggle)
+    expect(target().querySelector('[data-thumb-transparent]')).toBeNull()
+    expect(target().querySelector('[data-thumb-page]')!.getAttribute('fill')).toBe('var(--color-paper)')
+  })
+
+  it('原图范围：对象头与图清单行取同一份图——有图内修改就都是引擎 SVG（导出的正是重渲那一版）', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = [
+        { gid: 'axes_0.xticks', prop: 'fontsize', value: 9 },
+      ]
+    })
+    const edited = useDocumentStore.getState().doc.objects[0] as PanelObject
+    seedExactRender(edited, manifest(9) as never, { svg: '<svg data-marker="edited"></svg>' })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    const head = target().querySelector('[data-export-thumb="svg"]')
+    const row = q('[data-export-figure="Fig1.pdf"] [data-export-thumb="svg"]')
+    expect(head, '对象头读的是编辑后的引擎 SVG，不是磁盘原图').toBeTruthy()
+    expect(row).toBeTruthy()
+    expect(head!.innerHTML).toBe(row!.innerHTML)
+    expect(head!.innerHTML).toContain('data-marker="edited"')
+    expect(target().querySelector('[data-export-thumb="file"]')).toBeNull()
+  })
+
+  it('原图缩略图的盒按真实图幅比例（不是固定 60×40）：竖图贴高、宽图贴宽，外框尺寸不变', async () => {
+    await setup(9)
+    useDocumentStore.getState().commit(literal('改'), (d) => {
+      ;(d.objects[0] as PanelObject).overrides = [
+        { gid: 'axes_0.xticks', prop: 'fontsize', value: 9 },
+      ]
+    })
+    const edited = useDocumentStore.getState().doc.objects[0] as PanelObject
+    // 竖图 40×80：manifest 的图幅 → 比例 0.5
+    seedExactRender(edited, { ...manifest(9), size_mm: [40, 80] } as never, { svg: '<svg></svg>' })
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    const box = target().querySelector<HTMLElement>('[data-export-thumb="svg"]')!
+    expect(box.style.aspectRatio.replace(' / 1', '')).toBe('0.5')
+    expect(box.style.height).toBe('100%')
+    expect(box.style.maxWidth).toBe('100%')
+    // 外框仍是 60×40
+    expect(box.parentElement!.className).toContain('h-10')
+    expect(box.parentElement!.className).toContain('w-[60px]')
+  })
+})

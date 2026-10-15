@@ -126,6 +126,7 @@
     "sizeUnknownShort": "尺寸未知",
     "start": "开始导出",
     "targetNoFigure": "当前没有图",
+    "thumbNote": "缩略图仅为示意 · 非最终文件",
     "tiffHint": "位图 · 无损压缩",
     "title": "导出",
     "transparent": "透明背景（仅 PNG / TIFF）",
