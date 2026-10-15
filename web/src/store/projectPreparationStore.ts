@@ -123,7 +123,7 @@ interface PreparationState {
   /** 事件流（重）连上：断线期间的进展一律以 GET 补拉（重启过的后端 404 → 重建只读检查） */
   refreshAll: () => void
   /** 认领后端生成的动作（run / cancel / recheck / prepare_dependencies）；报告里没有这个动作就什么都不做 */
-  act: (key: string, kind: PreparationActionKind, retried?: boolean) => Promise<void>
+  act: (key: string, kind: PreparationActionKind, retried?: boolean, opts?: { arm?: boolean }) => Promise<void>
   /**
    * 「停止运行」且这次运行有桌面拥有的进程：结束它（后端同一个端点连准备计划一起取消）。走与 `act` 同一套 pending / 拒绝 / 连接状态：
    * 请求中按钮置忙；被拒显示后端稳定码对应的那一句；连接失败 = `connection: 'lost'`（卡片说「连不上」并继续补拉），不再吞掉
@@ -205,8 +205,6 @@ export const capturedOf = (report: PreparationReport | null): CapturedFigureDesc
 const timers = new Map<string, ReturnType<typeof setTimeout>>()
 const pollStep = new Map<string, number>()
 const inflight = new Map<string, Promise<void>>()
-/** 正在由显式「打开并运行」认领 `run`（已跑完的会话只给 `run`）的条目：这次动作成功后才武装自动进入编辑 */
-const armRunKeys = new Set<string>()
 
 function stopTimer(key: string): void {
   const t = timers.get(key)
@@ -427,12 +425,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       await get().act(key, 'run_when_ready')
       return
     }
-    armRunKeys.add(key)
-    try {
-      await get().act(key, 'run')
-    } finally {
-      armRunKeys.delete(key)
-    }
+    // 武装标记随这一次调用走（不放模块级状态：A 项目在途的请求不能影响同名脚本键下 B 项目的动作）
+    await get().act(key, 'run', false, { arm: true })
   }
 
   return {
@@ -521,7 +515,8 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
           }
           if (isConnectionFailure(err)) patch(key, () => ({ connection: 'lost' }))
         } finally {
-          inflight.delete(key)
+          // 只删自己：项目切换后同键下 B 的刷新不能被 A 迟到的收尾顶掉
+          if (inflight.get(key) === promise) inflight.delete(key)
           if (live(key, g)) schedule(key)
         }
       })()
@@ -545,7 +540,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
       }
     },
 
-    act: async (key, kind, retried = false) => {
+    act: async (key, kind, retried = false, opts) => {
       const e = entry(key)
       const report = e?.report
       if (!e || !report || e.pending) return
@@ -574,7 +569,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
         // 认领了「打开并运行」：这一轮跑完时自动进入编辑（先记下，再接这份报告——它可能已经是 running）
         patch(key, () => ({
           pending: null,
-          ...(kind === 'run_when_ready' ? { armed: true, transferFrom: null } : armRunKeys.has(key) ? { armed: true } : {}),
+          ...(kind === 'run_when_ready' ? { armed: true, transferFrom: null } : opts?.arm ? { armed: true } : {}),
         }))
         pollStep.delete(key)
         accept(key, res.report)

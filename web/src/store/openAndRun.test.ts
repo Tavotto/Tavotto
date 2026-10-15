@@ -434,6 +434,51 @@ describe('已跑完的会话只给 run（没有 run_when_ready）：显式「打
     expect(entry().armed).toBe(true)
   })
 
+  // Codex #1044 r4280400832：武装标记不能是跨项目共享的模块级状态
+  const defer = <T,>() => {
+    let resolve!: (v: T) => void
+    const promise = new Promise<T>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+
+  it('A 的 rerun 在途时切到 B（同相对脚本路径）：B 的普通 run 不武装', async () => {
+    mockCreate.mockResolvedValueOnce(finished())
+    const a = defer<{ claimed: boolean; report: PreparationReport }>()
+    mockAct.mockReturnValueOnce(a.promise as never)
+    const opening = open()
+    await vi.waitFor(() => expect(mockAct).toHaveBeenCalledTimes(1))
+    store().clear()
+    setCurrentProjectId('pj-b')
+    mockCreate.mockResolvedValueOnce(finished())
+    await open(false)
+    mockAct.mockResolvedValueOnce({ claimed: true, report: running(4, { provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null } }) })
+    await store().act(KEY, 'run') // 普通运行，不是一键
+    expect(entry().armed).toBe(false)
+    a.resolve({ claimed: true, report: running(4) })
+    await opening
+    expect(entry().armed).toBe(false)
+  })
+
+  it('B 的 rerun 在途时 A 迟到收尾：不影响 B 的武装', async () => {
+    mockCreate.mockResolvedValueOnce(finished())
+    const a = defer<{ claimed: boolean; report: PreparationReport }>()
+    mockAct.mockReturnValueOnce(a.promise as never)
+    const openingA = open()
+    await vi.waitFor(() => expect(mockAct).toHaveBeenCalledTimes(1))
+    store().clear()
+    setCurrentProjectId('pj-b')
+    mockCreate.mockResolvedValueOnce(finished())
+    const b = defer<{ claimed: boolean; report: PreparationReport }>()
+    mockAct.mockReturnValueOnce(b.promise as never)
+    const openingB = open()
+    await vi.waitFor(() => expect(mockAct).toHaveBeenCalledTimes(2))
+    a.resolve({ claimed: true, report: running(4) }) // A 迟到收尾
+    await openingA
+    b.resolve({ claimed: true, report: running(4, { provider: { plan_id: 'prep-plan', attempt_id: 'att-2', attempts: 2, dependency: null } }) })
+    await openingB
+    expect(entry().armed).toBe(true)
+  })
+
   it('非显式打开（只是查看）：不认领 run、不跑', async () => {
     mockCreate.mockResolvedValueOnce(finished())
     await open(false)
