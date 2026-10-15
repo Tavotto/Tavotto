@@ -13,6 +13,8 @@ import tracemalloc
 import weakref
 from pathlib import Path
 
+sys.stdout.reconfigure(encoding="utf-8")
+
 ENGINE = Path(__file__).resolve().parents[2] / "src" / "tavotto" / "engine"
 sys.path.insert(0, str(ENGINE))
 

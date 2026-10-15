@@ -24,7 +24,9 @@ PROBE = ROOT / "tests" / "support" / "colour_tube_cache_probe.py"
 
 @pytest.fixture(scope="module")
 def facts():
-    proc = subprocess.run([WORKER_PY, str(PROBE)], capture_output=True, text=True, timeout=120)
+    proc = subprocess.run(
+        [WORKER_PY, str(PROBE)], capture_output=True, text=True, encoding="utf-8", timeout=120
+    )
     assert proc.returncode == 0, proc.stderr
     result = json.loads(proc.stdout)
     assert (
