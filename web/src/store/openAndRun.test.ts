@@ -276,10 +276,11 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     claimed(running())
     await open()
     let release: () => void = () => {}
-    useRuntimeAssetStore.setState({ loadAssets: () => new Promise<void>((r) => (release = r)) })
+    const loadAssets = vi.fn(() => new Promise<void>((r) => (release = r)))
+    useRuntimeAssetStore.setState({ loadAssets })
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
-    await flush()
+    await vi.waitFor(() => expect(loadAssets).toHaveBeenCalled()) // 已挂在素材清单的 await 上
     useUiStore.setState({ guideCard: mode })
     release()
     await flush()
@@ -294,10 +295,11 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     claimed(running())
     await open()
     let release: () => void = () => {}
-    useRuntimeAssetStore.setState({ loadAssets: () => new Promise<void>((r) => (release = r)) })
+    const loadAssets = vi.fn(() => new Promise<void>((r) => (release = r)))
+    useRuntimeAssetStore.setState({ loadAssets })
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
-    await flush()
+    await vi.waitFor(() => expect(loadAssets).toHaveBeenCalled()) // 已挂在素材清单的 await 上
     store().blur()
     release()
     await flush()
